@@ -49,15 +49,25 @@ class TestOCRServiceEngine:
     def test_engine_lazy_loading(self):
         """引擎仅在首次访问时创建。"""
         service = OCRService()
-        # 清除现有引擎（如果有）
+        # 清除现有引擎
         OCRService._engine = None
+        # 如果有实例属性也清除
+        if "_engine" in service.__dict__:
+            del service.__dict__["_engine"]
 
+        # 首次访问前，引擎应该为 None
         assert OCRService._engine is None
-        _ = service.engine
-        assert OCRService._engine is not None
+        # 访问 engine 属性
+        engine = service.engine
+        # 首次访问后，引擎应该被创建
+        assert engine is not None
+        # 后续访问返回同一引擎
+        assert service.engine is engine
 
         # 清理
         OCRService._engine = None
+        if "_engine" in service.__dict__:
+            del service.__dict__["_engine"]
 
 
 @pytest.mark.skipif(not HAS_ONNXRUNTIME, reason="onnxruntime not installed")
