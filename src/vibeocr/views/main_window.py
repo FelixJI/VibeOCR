@@ -9,9 +9,11 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QMessageBox,
     QApplication,
+    QMenuBar,
+    QStatusBar,
 )
 from PySide6.QtCore import Slot, QThreadPool, QRunnable, Signal, QObject, QTimer, QBuffer
-from PySide6.QtGui import QPixmap
+from PySide6.QtGui import QPixmap, QAction
 from PySide6.QtUiTools import QUiLoader
 
 from vibeocr.widgets.preview_widget import PreviewWidget
@@ -55,6 +57,7 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self._setup_ui()
+        self._create_menus()
         self._connect_signals()
         self._thread_pool = QThreadPool()
 
@@ -74,16 +77,47 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("VibeOCR")
         self.resize(900, 600)
 
+        # 创建状态栏
+        self._statusbar = QStatusBar(self)
+        self.setStatusBar(self._statusbar)
+
         # 创建截图组件
         self._screenshot_widget = ScreenshotWidget()
+
+    def _create_menus(self) -> None:
+        """创建菜单栏"""
+        menubar = self.menuBar()
+
+        # 文件菜单
+        file_menu = menubar.addMenu("文件")
+
+        self._action_open_image = QAction("打开图片", self)
+        self._action_open_image.setShortcut("Ctrl+O")
+        file_menu.addAction(self._action_open_image)
+
+        self._action_screenshot = QAction("截图", self)
+        self._action_screenshot.setShortcut("Ctrl+S")
+        file_menu.addAction(self._action_screenshot)
+
+        file_menu.addSeparator()
+
+        self._action_exit = QAction("退出", self)
+        self._action_exit.setShortcut("Ctrl+Q")
+        file_menu.addAction(self._action_exit)
+
+        # 帮助菜单
+        help_menu = menubar.addMenu("帮助")
+
+        self._action_about = QAction("关于", self)
+        help_menu.addAction(self._action_about)
 
     def _connect_signals(self) -> None:
         """连接信号槽"""
         # 菜单动作
-        self._ui.actionOpenImage.triggered.connect(self._on_open_image)
-        self._ui.actionScreenshot.triggered.connect(self._on_screenshot)
-        self._ui.actionExit.triggered.connect(self.close)
-        self._ui.actionAbout.triggered.connect(self._on_about)
+        self._action_open_image.triggered.connect(self._on_open_image)
+        self._action_screenshot.triggered.connect(self._on_screenshot)
+        self._action_exit.triggered.connect(self.close)
+        self._action_about.triggered.connect(self._on_about)
 
         # 截图组件
         self._screenshot_widget.captured.connect(self._on_screenshot_captured)
@@ -129,7 +163,7 @@ class MainWindow(QMainWindow):
         """执行OCR识别"""
         self._ui.textResult.clear()
         self._ui.textResult.setPlaceholderText("正在识别...")
-        self._ui.statusbar.showMessage("正在识别...")
+        self._statusbar.showMessage("正在识别...")
 
         # 在主线程中将 QPixmap 转换为字节（线程安全）
         buffer = QBuffer()
@@ -149,17 +183,17 @@ class MainWindow(QMainWindow):
         self._ui.textResult.setPlaceholderText("识别结果将显示在这里...")
         if result:
             self._ui.textResult.setPlainText(result)
-            self._ui.statusbar.showMessage(f"识别完成，共 {len(result)} 个字符")
+            self._statusbar.showMessage(f"识别完成，共 {len(result)} 个字符")
         else:
             self._ui.textResult.setPlainText("未识别到文字")
-            self._ui.statusbar.showMessage("未识别到文字")
+            self._statusbar.showMessage("未识别到文字")
 
     @Slot(str)
     def _on_ocr_error(self, error_msg: str) -> None:
         """OCR识别失败"""
         self._ui.textResult.setPlaceholderText("识别结果将显示在这里...")
         self._ui.textResult.setPlainText(f"识别失败：{error_msg}")
-        self._ui.statusbar.showMessage(f"识别失败：{error_msg}")
+        self._statusbar.showMessage(f"识别失败：{error_msg}")
 
     @Slot()
     def _on_copy_result(self) -> None:
@@ -168,7 +202,7 @@ class MainWindow(QMainWindow):
         if text:
             clipboard = QApplication.clipboard()
             clipboard.setText(text)
-            self._ui.statusbar.showMessage("已复制到剪贴板")
+            self._statusbar.showMessage("已复制到剪贴板")
 
     @Slot()
     def _on_about(self) -> None:

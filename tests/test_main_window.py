@@ -41,7 +41,7 @@ class TestMainWindow:
         main_window._ui.textResult.setPlainText("测试文本")
         qtbot.mouseClick(main_window._ui.btnCopy, Qt.MouseButton.LeftButton)
 
-        assert "复制" in main_window._ui.statusbar.currentMessage()
+        assert "复制" in main_window._statusbar.currentMessage()
 
     def test_open_image_file_loads_pixmap(self, main_window, qtbot, temp_image_file):
         """直接加载图片文件到预览组件。"""
