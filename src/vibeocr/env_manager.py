@@ -9,6 +9,8 @@ from pathlib import Path
 from urllib.request import Request, urlopen
 from typing import Literal, Optional
 
+from vibeocr.machine_cache import is_cache_valid, create_cache_entry
+
 
 # 嵌入式Python版本
 PYTHON_VERSION = "3.12.8"
@@ -345,17 +347,34 @@ def check_current_environment_dependencies() -> dict[str, bool]:
     return dependencies
 
 
-def check_embedded_environment_dependencies(project_root: Path) -> dict[str, bool]:
+def check_embedded_environment_dependencies(
+    project_root: Path,
+    use_cache: bool = True
+) -> dict[str, bool]:
     """检查嵌入式Python环境的OCR依赖是否已安装
 
     用于检测 PaddlePaddle, PaddleX 等OCR功能依赖
+    注意：paddlepaddle-gpu 和 paddlepaddle 是二选一关系，
+    检测 paddle 模块即可（GPU或CPU版本都会导入为 paddle）
 
     Args:
         project_root: 项目根目录
+        use_cache: 是否使用缓存（默认True）
 
     Returns:
-        依赖状态字典
+        依赖状态字典，包含:
+        - paddlepaddle: 是否安装了PaddlePaddle（GPU或CPU版本）
+        - paddlex: 是否安装了PaddleX
+        - is_gpu: 是否是GPU版本（可选字段）
     """
+    # 1. 尝试使用缓存
+    if use_cache:
+        is_valid, cached_data = is_cache_valid(project_root)
+        if is_valid and cached_data:
+            print("[依赖检测] 使用缓存结果")
+            return cached_data.get("dependencies", {})
+
+    # 2. 执行实际检测（原有逻辑）
     python_exe = get_embedded_python_executable(project_root)
 
     if not python_exe.exists():
@@ -366,20 +385,51 @@ def check_embedded_environment_dependencies(project_root: Path) -> dict[str, boo
         "paddlex": False,
     }
 
-    for pkg in dependencies.keys():
-        try:
-            result = subprocess.run(
-                [str(python_exe), "-c", f"import {pkg}"],
-                capture_output=True,
-                text=True,
-                timeout=5,
-                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
-            )
-            dependencies[pkg] = result.returncode == 0
-        except Exception:
-            dependencies[pkg] = False
+    # 检测 PaddlePaddle（GPU或CPU版本都会导入为 paddle）
+    try:
+        result = subprocess.run(
+            [str(python_exe), "-c", "import paddle; print(paddle.device.is_compiled_with_cuda() if hasattr(paddle.device, 'is_compiled_with_cuda') else False)"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+        )
+        if result.returncode == 0:
+            dependencies["paddlepaddle"] = True
+            # 解析是否是GPU版本
+            is_gpu = result.stdout.strip().lower() == "true"
+            dependencies["is_gpu"] = is_gpu
+            print(f"[依赖检测] PaddlePaddle已安装, GPU版本: {is_gpu}")
+    except Exception as e:
+        print(f"[依赖检测] PaddlePaddle检测失败: {e}")
+        dependencies["paddlepaddle"] = False
+
+    # 检测 PaddleX
+    try:
+        result = subprocess.run(
+            [str(python_exe), "-c", "import paddlex"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+        )
+        dependencies["paddlex"] = result.returncode == 0
+    except Exception:
+        dependencies["paddlex"] = False
+
+    # 3. 更新缓存
+    hardware_info = {
+        "has_gpu": dependencies.get("is_gpu", False),
+        "cuda_version": detect_cuda_version()
+    }
+    create_cache_entry(project_root, dependencies, hardware_info)
 
     return dependencies
+
+
+def check_embedded_environment_dependencies_fresh(project_root: Path) -> dict[str, bool]:
+    """强制重新检测依赖（忽略缓存）"""
+    return check_embedded_environment_dependencies(project_root, use_cache=False)
 
 
 def check_dependencies(project_root: Path) -> dict[str, bool]:
@@ -388,6 +438,9 @@ def check_dependencies(project_root: Path) -> dict[str, bool]:
     注意：此函数检测的是嵌入式环境的依赖，包括生产依赖和OCR依赖。
     对于生产环境依赖检测，请使用 check_current_environment_dependencies()
     对于仅检测OCR依赖，请使用 check_embedded_environment_dependencies()
+
+    注意：paddlepaddle-gpu 和 paddlepaddle 是二选一关系，
+    检测 paddle 模块即可（GPU或CPU版本都会导入为 paddle）
     """
     python_exe = get_embedded_python_executable(project_root)
 
@@ -401,7 +454,8 @@ def check_dependencies(project_root: Path) -> dict[str, bool]:
         "PIL": False,
     }
 
-    for pkg in dependencies.keys():
+    # 检测基础依赖
+    for pkg in ["PySide6", "PIL"]:
         try:
             result = subprocess.run(
                 [str(python_exe), "-c", f"import {pkg}"],
@@ -413,6 +467,32 @@ def check_dependencies(project_root: Path) -> dict[str, bool]:
             dependencies[pkg] = result.returncode == 0
         except Exception:
             dependencies[pkg] = False
+
+    # 检测 PaddlePaddle（使用 paddle 模块名）
+    try:
+        result = subprocess.run(
+            [str(python_exe), "-c", "import paddle"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+        )
+        dependencies["paddlepaddle"] = result.returncode == 0
+    except Exception:
+        dependencies["paddlepaddle"] = False
+
+    # 检测 PaddleX
+    try:
+        result = subprocess.run(
+            [str(python_exe), "-c", "import paddlex"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+        )
+        dependencies["paddlex"] = result.returncode == 0
+    except Exception:
+        dependencies["paddlex"] = False
 
     return dependencies
 
@@ -443,7 +523,9 @@ def is_embedded_environment_ready(project_root: Path) -> tuple[bool, list[str]]:
         return False, ["嵌入式Python未安装"]
 
     deps = check_embedded_environment_dependencies(project_root)
-    missing = [pkg for pkg, installed in deps.items() if not installed]
+    # 只检查 paddlepaddle 和 paddlex，排除 is_gpu 元数据字段
+    required_deps = ["paddlepaddle", "paddlex"]
+    missing = [pkg for pkg in required_deps if pkg not in deps or not deps[pkg]]
     return len(missing) == 0, missing
 
 

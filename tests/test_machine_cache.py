@@ -194,3 +194,54 @@ class TestCacheOperations:
         # 验证已保存到文件
         loaded = load_cache(tmp_path)
         assert loaded == result
+
+
+class TestEnvManagerIntegration:
+    """Tests for env_manager integration with cache."""
+
+    def test_check_dependencies_uses_cache(self, tmp_path, monkeypatch):
+        """Should use cached result if available."""
+        from vibeocr.machine_cache import save_cache, generate_machine_id
+        from vibeocr.env_manager import check_embedded_environment_dependencies
+
+        # 创建假的 Python 环境
+        python_dir = tmp_path / "python"
+        python_dir.mkdir()
+
+        # 创建假的缓存
+        machine_id = generate_machine_id()
+        cache_data = {
+            "version": 1,
+            "machine_id": machine_id,
+            "dependencies": {
+                "paddlepaddle": True,
+                "paddlex": True,
+                "is_gpu": True
+            }
+        }
+        save_cache(tmp_path, cache_data)
+
+        # 应该返回缓存的依赖状态（不实际检测）
+        result = check_embedded_environment_dependencies(tmp_path, use_cache=True)
+        assert result == cache_data["dependencies"]
+
+    def test_check_dependencies_fresh_ignores_cache(self, tmp_path):
+        """Should ignore cache when use_cache=False."""
+        from vibeocr.machine_cache import save_cache, generate_machine_id
+        from vibeocr.env_manager import check_embedded_environment_dependencies
+
+        # 创建假的缓存
+        machine_id = generate_machine_id()
+        cache_data = {
+            "version": 1,
+            "machine_id": machine_id,
+            "dependencies": {
+                "paddlepaddle": True,
+                "paddlex": True,
+            }
+        }
+        save_cache(tmp_path, cache_data)
+
+        # 不使用缓存时，应该返回空（因为 Python 不存在）
+        result = check_embedded_environment_dependencies(tmp_path, use_cache=False)
+        assert result == {}  # Python 不存在，返回空
