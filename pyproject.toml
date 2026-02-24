@@ -2,11 +2,10 @@
 name = "vibeocr"
 version = "0.1.0"
 description = "A screenshot OCR application"
-readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.13"
 dependencies = [
-    "pyside6>=6.8.0",
-    "rapidocr>=3.6.0",
+    # 生产环境依赖 - 打包时包含
+    "pyside6>=6.10.2",
     "pillow>=11.0.0",
 ]
 
@@ -14,18 +13,51 @@ dependencies = [
 vibeocr = "vibeocr.main:main"
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling>=1.0.0"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/vibeocr"]
 
+[tool.hatch.build]
+sources = ["src"]
+
 [project.optional-dependencies]
-test = [
+# 开发/测试依赖
+dev = [
     "pytest>=8.0.0",
     "pytest-qt>=4.4.0",
     "pytest-cov>=4.1.0",
 ]
+
+# 嵌入式环境依赖 - OCR功能需要，客户机器安装
+embedded = [
+    "paddlepaddle-gpu==3.3.0",
+    # cuDNN 运行时库 - PaddlePaddle GPU 需要此依赖
+    # nvidia-cudnn-cu12 会自动安装所有相关的 NVIDIA 库 (cufft, cublas, curand, cusolver, cusparse)
+    "nvidia-cudnn-cu12",
+    "paddlex[ocr]>=3.4.2",
+]
+
+# 嵌入式环境依赖 (CUDA 11.x)
+embedded-cu11 = [
+    "paddlepaddle-gpu==3.3.0",
+    # cuDNN 运行时库 - CUDA 11.x 版本
+    "nvidia-cudnn-cu11",
+    "paddlex[ocr]>=3.4.2",
+]
+
+# 嵌入式环境依赖 (CPU 版本)
+embedded-cpu = [
+    "paddlepaddle==3.3.0",
+    "paddlex[ocr]>=3.4.2",
+]
+
+# 完整安装（开发使用）
+full = ["vibeocr[dev,embedded]"]
+
+# 保留旧名称兼容性
+test = ["vibeocr[dev]"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -34,3 +66,14 @@ python_classes = ["Test*"]
 python_functions = ["test_*"]
 qt_api = "pyside6"
 addopts = "-v --tb=short"
+
+
+
+# uv 包管理器配置 - 添加 PaddlePaddle 镜像源
+[tool.uv]
+extra-index-url = [
+    "https://www.paddlepaddle.org.cn/packages/stable/cu129/",
+    # NVIDIA cuDNN 库需要官方 PyPI 源
+    "https://pypi.org/simple",
+]
+index-strategy = "unsafe-best-match"

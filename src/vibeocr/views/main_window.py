@@ -12,6 +12,8 @@ from PySide6.QtWidgets import (
     QApplication,
     QMenuBar,
     QStatusBar,
+    QWidget,
+    QVBoxLayout,
 )
 from PySide6.QtCore import Slot, QThreadPool, QRunnable, Signal, QObject, QTimer, QBuffer
 from PySide6.QtGui import QPixmap, QAction
@@ -124,7 +126,6 @@ class MainWindow(QMainWindow):
         if container:
             container_layout = container.layout()
             if not container_layout:
-                from PySide6.QtWidgets import QVBoxLayout
                 container_layout = QVBoxLayout(container)
                 container_layout.setContentsMargins(0, 0, 0, 0)
             container_layout.addWidget(self._console)
