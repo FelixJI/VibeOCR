@@ -49,9 +49,13 @@ class OCRTask(QRunnable):
             buffer = io.BytesIO(self._image_data)
             pil_image = Image.open(buffer)
 
+            # 转换为 numpy 数组（PaddleX 只接受 numpy.ndarray 或 str）
+            import numpy as np
+            image_array = np.array(pil_image)
+
             # 执行OCR
             ocr = OCRService()
-            result = ocr.recognize(pil_image)
+            result = ocr.recognize(image_array)
             self.signals.finished.emit(result)
         except Exception as e:
             self.signals.error.emit(str(e))
@@ -72,8 +76,27 @@ class DependencyCheckTask(QRunnable):
         self.signals = DependencyCheckSignals()
 
     def run(self) -> None:
-        """检查嵌入式OCR依赖"""
+        """检查OCR依赖
+
+        统一使用 env_manager.is_embedded_environment_ready() 检查
+        支持虚拟环境模式和便携式模式
+        """
+        # 记录环境模式
+        mode = env_manager.get_environment_mode(self._project_root)
+        logging.info(f"[依赖检查] 环境模式: {mode}")
+
+        # 获取目标Python路径
+        python_exe = env_manager.get_embedded_python_executable(self._project_root)
+        logging.info(f"[依赖检查] 目标Python: {python_exe}")
+
+        # 使用统一的依赖检查接口
         ready, missing = env_manager.is_embedded_environment_ready(self._project_root)
+
+        if ready:
+            logging.info("[依赖检查] OCR依赖已就绪")
+        else:
+            logging.warning(f"[依赖检查] OCR依赖缺失: {missing}")
+
         self.signals.finished.emit(ready, missing)
 
 
@@ -155,6 +178,14 @@ class MainWindow(QMainWindow):
         self._action_exit.setShortcut("Ctrl+Q")
         file_menu.addAction(self._action_exit)
 
+        # 工具菜单
+        tools_menu = menubar.addMenu("工具")
+
+        self._action_refresh_cache = QAction("刷新依赖缓存", self)
+        self._action_refresh_cache.setShortcut("Ctrl+Shift+R")
+        self._action_refresh_cache.setStatusTip("清除缓存并重新检测OCR依赖")
+        tools_menu.addAction(self._action_refresh_cache)
+
         # 帮助菜单
         help_menu = menubar.addMenu("帮助")
 
@@ -168,6 +199,7 @@ class MainWindow(QMainWindow):
         self._action_screenshot.triggered.connect(self._on_screenshot)
         self._action_exit.triggered.connect(self.close)
         self._action_about.triggered.connect(self._on_about)
+        self._action_refresh_cache.triggered.connect(self._on_refresh_cache)
 
         # 截图组件
         self._screenshot_widget.captured.connect(self._on_screenshot_captured)
@@ -206,7 +238,9 @@ class MainWindow(QMainWindow):
             self,
             "OCR功能需要安装依赖",
             f"OCR功能需要安装以下依赖:\n{missing_str}\n\n"
-            "这将下载并安装 PaddlePaddle 和 PaddleX。\n"
+            "这将下载并安装PaddlePaddle和PaddleX。\n"
+            "系统会自动检测GPU，优先安装GPU版本（如有CUDA环境），\n"
+            "否则安装CPU版本。GPU版本需要cuDNN运行时库。\n"
             "可能需要几分钟时间。\n\n"
             "是否现在安装？",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
@@ -350,6 +384,33 @@ class MainWindow(QMainWindow):
             "一个简单的截图OCR识别工具\n\n"
             "使用 PaddleOCR 进行文字识别",
         )
+
+    @Slot()
+    def _on_refresh_cache(self) -> None:
+        """刷新依赖缓存"""
+        from vibeocr.machine_cache import clear_cache
+
+        logging.info("正在清除依赖缓存...")
+        clear_cache(self._project_root)
+        self._statusbar.showMessage("缓存已清除，正在重新检测依赖...")
+
+        # 重新检测依赖
+        task = DependencyCheckTask(self._project_root)
+        task.signals.finished.connect(self._on_refresh_cache_finished)
+        self._thread_pool.start(task)
+
+    @Slot(bool, list)
+    def _on_refresh_cache_finished(self, ready: bool, missing: list) -> None:
+        """刷新缓存完成"""
+        if ready:
+            self._ocr_ready = True
+            self._statusbar.showMessage("依赖检测完成，OCR功能已就绪")
+            logging.info("依赖缓存刷新完成，OCR功能已就绪")
+        else:
+            self._ocr_ready = False
+            missing_str = ", ".join(missing)
+            self._statusbar.showMessage(f"依赖检测完成，缺失: {missing_str}")
+            logging.warning(f"依赖缓存刷新完成，缺失: {missing_str}")
 
     def closeEvent(self, event) -> None:
         """关闭窗口事件"""
