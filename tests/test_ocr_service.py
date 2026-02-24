@@ -8,13 +8,13 @@ from PIL import Image
 
 from vibeocr.services.ocr_service import OCRService
 
-# 检查 onnxruntime 是否可用
+# 检查 paddlex 是否可用
 try:
-    import onnxruntime  # noqa: F401
+    from paddlex import create_pipeline  # noqa: F401
 
-    HAS_ONNXRUNTIME = True
+    HAS_PADDLEX = True
 except ImportError:
-    HAS_ONNXRUNTIME = False
+    HAS_PADDLEX = False
 
 
 class TestOCRServiceSingleton:
@@ -42,35 +42,35 @@ class TestOCRServiceSingleton:
         assert all(inst is instances[0] for inst in instances)
 
 
-@pytest.mark.skipif(not HAS_ONNXRUNTIME, reason="onnxruntime not installed")
-class TestOCRServiceEngine:
-    """测试 OCR 引擎懒加载。"""
+@pytest.mark.skipif(not HAS_PADDLEX, reason="paddlex not installed")
+class TestOCRServicePipeline:
+    """测试 OCR 产线懒加载。"""
 
-    def test_engine_lazy_loading(self):
-        """引擎仅在首次访问时创建。"""
+    def test_pipeline_lazy_loading(self):
+        """产线仅在首次访问时创建。"""
         service = OCRService()
-        # 清除现有引擎
-        OCRService._engine = None
+        # 清除现有产线
+        OCRService._pipeline = None
         # 如果有实例属性也清除
-        if "_engine" in service.__dict__:
-            del service.__dict__["_engine"]
+        if "_pipeline" in service.__dict__:
+            del service.__dict__["_pipeline"]
 
-        # 首次访问前，引擎应该为 None
-        assert OCRService._engine is None
-        # 访问 engine 属性
-        engine = service.engine
-        # 首次访问后，引擎应该被创建
-        assert engine is not None
-        # 后续访问返回同一引擎
-        assert service.engine is engine
+        # 首次访问前，产线应该为 None
+        assert OCRService._pipeline is None
+        # 访问 pipeline 属性
+        pipeline = service.pipeline
+        # 首次访问后，产线应该被创建
+        assert pipeline is not None
+        # 后续访问返回同一产线
+        assert service.pipeline is pipeline
 
         # 清理
-        OCRService._engine = None
-        if "_engine" in service.__dict__:
-            del service.__dict__["_engine"]
+        OCRService._pipeline = None
+        if "_pipeline" in service.__dict__:
+            del service.__dict__["_pipeline"]
 
 
-@pytest.mark.skipif(not HAS_ONNXRUNTIME, reason="onnxruntime not installed")
+@pytest.mark.skipif(not HAS_PADDLEX, reason="paddlex not installed")
 class TestOCRServiceRecognize:
     """测试 OCR 识别功能。"""
 
@@ -81,7 +81,7 @@ class TestOCRServiceRecognize:
         service = OCRService()
         img = Image.open(io.BytesIO(sample_image_with_text_bytes))
         result = service.recognize(img)
-        # 注意：实际识别结果取决于 RapidOCR
+        # 注意：实际识别结果取决于 PaddleX
         assert isinstance(result, str)
 
     def test_recognize_numpy_array(self, sample_image_with_text_bytes):
