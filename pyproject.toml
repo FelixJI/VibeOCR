@@ -2,7 +2,7 @@
 name = "vibeocr"
 version = "0.1.0"
 description = "A screenshot OCR application"
-requires-python = ">=3.10,<3.13"
+requires-python = ">=3.10,<3.14"
 dependencies = [
     # 生产环境依赖 - 打包时包含
     "pyside6>=6.10.2",
@@ -37,6 +37,8 @@ embedded = [
     # nvidia-cudnn-cu12 会自动安装所有相关的 NVIDIA 库 (cufft, cublas, curand, cusolver, cusparse)
     "nvidia-cudnn-cu12",
     "paddlex[ocr]>=3.4.2",
+    # chardet 版本约束：requests 要求 <6.0.0， paddlex 需要 chardet
+    "chardet>=5.0.0,<6.0.0",
 ]
 
 # 嵌入式环境依赖 (CUDA 11.x)
@@ -45,12 +47,14 @@ embedded-cu11 = [
     # cuDNN 运行时库 - CUDA 11.x 版本
     "nvidia-cudnn-cu11",
     "paddlex[ocr]>=3.4.2",
+    "chardet>=5.0.0,<6.0.0",
 ]
 
 # 嵌入式环境依赖 (CPU 版本)
 embedded-cpu = [
     "paddlepaddle==3.3.0",
     "paddlex[ocr]>=3.4.2",
+    "chardet>=5.0.0,<6.0.0",
 ]
 
 # 完整安装（开发使用）
