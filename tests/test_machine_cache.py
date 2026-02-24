@@ -36,3 +36,62 @@ class TestGenerateMachineId:
         result = generate_machine_id()
         assert isinstance(result, str)
         assert len(result) == 64
+
+
+class TestCachePath:
+    """Tests for cache path functions."""
+
+    def test_get_cache_dir(self, tmp_path):
+        """Should return .vibeocr directory path."""
+        from vibeocr.machine_cache import get_cache_dir
+
+        result = get_cache_dir(tmp_path)
+        assert result == tmp_path / ".vibeocr"
+
+    def test_get_cache_path(self, tmp_path):
+        """Should return cache.json path."""
+        from vibeocr.machine_cache import get_cache_path
+
+        result = get_cache_path(tmp_path)
+        assert result == tmp_path / ".vibeocr" / "cache.json"
+
+
+class TestCacheReadWrite:
+    """Tests for cache read/write functions."""
+
+    def test_save_and_load_cache(self, tmp_path):
+        """Should save and load cache correctly."""
+        from vibeocr.machine_cache import save_cache, load_cache
+
+        data = {"test": "value", "number": 123}
+        assert save_cache(tmp_path, data) is True
+
+        loaded = load_cache(tmp_path)
+        assert loaded == data
+
+    def test_load_cache_returns_none_if_not_exists(self, tmp_path):
+        """Should return None if cache file doesn't exist."""
+        from vibeocr.machine_cache import load_cache
+
+        result = load_cache(tmp_path)
+        assert result is None
+
+    def test_load_cache_returns_none_if_corrupted(self, tmp_path):
+        """Should return None if cache file is corrupted JSON."""
+        from vibeocr.machine_cache import load_cache
+
+        cache_dir = tmp_path / ".vibeocr"
+        cache_dir.mkdir()
+        cache_file = cache_dir / "cache.json"
+        cache_file.write_text("not valid json{")
+
+        result = load_cache(tmp_path)
+        assert result is None
+
+    def test_save_cache_creates_directory(self, tmp_path):
+        """Should create .vibeocr directory if it doesn't exist."""
+        from vibeocr.machine_cache import save_cache
+
+        data = {"test": "value"}
+        assert save_cache(tmp_path, data) is True
+        assert (tmp_path / ".vibeocr").exists()
