@@ -1,6 +1,7 @@
 """Main window view logic"""
 
 import io
+import logging
 from pathlib import Path
 
 from PIL import Image
@@ -18,7 +19,10 @@ from PySide6.QtUiTools import QUiLoader
 
 from vibeocr.widgets.preview_widget import PreviewWidget
 from vibeocr.widgets.screenshot_widget import ScreenshotWidget
+from vibeocr.widgets.console_widget import ConsoleWidget
 from vibeocr.services.ocr_service import OCRService
+from vibeocr.services.log_service import setup_logging
+from vibeocr import env_manager
 
 
 class OCRSignals(QObject):
@@ -51,15 +55,41 @@ class OCRTask(QRunnable):
             self.signals.error.emit(str(e))
 
 
+class DependencyCheckSignals(QObject):
+    """依赖检查信号"""
+
+    finished = Signal(bool, list)  # (是否就绪, 缺失依赖列表)
+
+
+class DependencyCheckTask(QRunnable):
+    """依赖检查任务（在后台线程执行）"""
+
+    def __init__(self, project_root: Path) -> None:
+        super().__init__()
+        self._project_root = project_root
+        self.signals = DependencyCheckSignals()
+
+    def run(self) -> None:
+        """检查嵌入式OCR依赖"""
+        ready, missing = env_manager.is_embedded_environment_ready(self._project_root)
+        self.signals.finished.emit(ready, missing)
+
+
 class MainWindow(QMainWindow):
     """主窗口"""
 
     def __init__(self) -> None:
         super().__init__()
+        self._project_root = env_manager.get_project_root()
+        self._ocr_ready = False
         self._setup_ui()
+        self._setup_console()
         self._create_menus()
         self._connect_signals()
         self._thread_pool = QThreadPool()
+
+        # 延迟检查嵌入式依赖（在UI显示后）
+        QTimer.singleShot(100, self._check_embedded_dependencies)
 
     def _setup_ui(self) -> None:
         """设置UI"""
@@ -83,6 +113,25 @@ class MainWindow(QMainWindow):
 
         # 创建截图组件
         self._screenshot_widget = ScreenshotWidget()
+
+    def _setup_console(self) -> None:
+        """初始化控制台"""
+        # 创建控制台控件
+        self._console = ConsoleWidget(self)
+
+        # 将控制台添加到 UI 中的容器
+        container = self._ui.findChild(QWidget, "consoleContainer")
+        if container:
+            container_layout = container.layout()
+            if not container_layout:
+                from PySide6.QtWidgets import QVBoxLayout
+                container_layout = QVBoxLayout(container)
+                container_layout.setContentsMargins(0, 0, 0, 0)
+            container_layout.addWidget(self._console)
+
+        # 配置日志
+        setup_logging(self._console.append_log)
+        logging.info("VibeOCR 启动")
 
     def _create_menus(self) -> None:
         """创建菜单栏"""
@@ -128,9 +177,73 @@ class MainWindow(QMainWindow):
         # 复制按钮
         self._ui.btnCopy.clicked.connect(self._on_copy_result)
 
+    def _check_embedded_dependencies(self) -> None:
+        """异步检查嵌入式OCR依赖"""
+        task = DependencyCheckTask(self._project_root)
+        task.signals.finished.connect(self._on_dependency_check_finished)
+        self._thread_pool.start(task)
+
+    @Slot(bool, list)
+    def _on_dependency_check_finished(self, ready: bool, missing: list) -> None:
+        """依赖检查完成"""
+        if ready:
+            self._ocr_ready = True
+            self._statusbar.showMessage("OCR功能已就绪")
+            logging.info("OCR功能已就绪")
+        else:
+            self._ocr_ready = False
+            missing_str = ", ".join(missing)
+            self._statusbar.showMessage(f"OCR功能未就绪: {missing_str}")
+            logging.warning(f"OCR功能未就绪，缺少: {missing_str}")
+            # 显示安装提示对话框
+            self._show_install_dialog(missing)
+
+    def _show_install_dialog(self, missing: list) -> None:
+        """显示安装提示对话框"""
+        missing_str = ", ".join(missing)
+        reply = QMessageBox.question(
+            self,
+            "OCR功能需要安装依赖",
+            f"OCR功能需要安装以下依赖:\n{missing_str}\n\n"
+            "这将下载并安装 PaddlePaddle 和 PaddleX。\n"
+            "可能需要几分钟时间。\n\n"
+            "是否现在安装？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+
+        if reply == QMessageBox.StandardButton.Yes:
+            self._start_install()
+        else:
+            QMessageBox.information(
+                self,
+                "提示",
+                "OCR功能将不可用。\n您可以稍后通过菜单重新安装。"
+            )
+
+    def _start_install(self) -> None:
+        """开始安装依赖"""
+        from vibeocr.widgets.install_dialog import InstallDialog
+
+        dialog = InstallDialog(self._project_root, self)
+        dialog.finished.connect(self._on_install_finished)
+        dialog.exec()
+
+    @Slot(int)
+    def _on_install_finished(self, result: int) -> None:
+        """安装完成"""
+        if result == 1:  # 安装成功
+            self._ocr_ready = True
+            self._statusbar.showMessage("OCR依赖安装成功")
+            QMessageBox.information(self, "安装成功", "OCR依赖安装成功，现在可以使用OCR功能。")
+        else:
+            self._statusbar.showMessage("OCR依赖安装失败")
+
     @Slot()
     def _on_open_image(self) -> None:
         """打开图片文件"""
+        if not self._check_ocr_ready():
+            return
+
         file_path, _ = QFileDialog.getOpenFileName(
             self,
             "打开图片",
@@ -143,9 +256,26 @@ class MainWindow(QMainWindow):
                 self._ui.previewWidget.set_pixmap(pixmap)
                 self._run_ocr(pixmap)
 
+    def _check_ocr_ready(self) -> bool:
+        """检查OCR功能是否可用"""
+        if not self._ocr_ready:
+            reply = QMessageBox.question(
+                self,
+                "OCR功能未就绪",
+                "OCR功能需要安装依赖才能使用。\n\n是否现在安装？",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if reply == QMessageBox.StandardButton.Yes:
+                self._start_install()
+            return False
+        return True
+
     @Slot()
     def _on_screenshot(self) -> None:
         """开始截图"""
+        if not self._check_ocr_ready():
+            return
+
         self.showMinimized()
         # 延迟启动截图，让窗口有时间最小化
         QTimer.singleShot(200, self._screenshot_widget.start_capture)
@@ -212,7 +342,7 @@ class MainWindow(QMainWindow):
             "关于 VibeOCR",
             "VibeOCR v0.1.0\n\n"
             "一个简单的截图OCR识别工具\n\n"
-            "使用 RapidOCR 进行文字识别",
+            "使用 PaddleOCR 进行文字识别",
         )
 
     def closeEvent(self, event) -> None:
