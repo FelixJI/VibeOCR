@@ -243,6 +243,7 @@ class MainWindow(QMainWindow):
         """打开图片文件"""
         if not self._check_ocr_ready():
             return
+        logging.info("打开图片文件对话框")
 
         file_path, _ = QFileDialog.getOpenFileName(
             self,
@@ -291,6 +292,7 @@ class MainWindow(QMainWindow):
 
     def _run_ocr(self, pixmap: QPixmap) -> None:
         """执行OCR识别"""
+        logging.info("开始 OCR 识别")
         self._ui.textResult.clear()
         self._ui.textResult.setPlaceholderText("正在识别...")
         self._statusbar.showMessage("正在识别...")
@@ -310,6 +312,8 @@ class MainWindow(QMainWindow):
     @Slot(str)
     def _on_ocr_finished(self, result: str) -> None:
         """OCR识别完成"""
+        char_count = len(result) if result else 0
+        logging.info(f"OCR 识别完成，共 {char_count} 个字符")
         self._ui.textResult.setPlaceholderText("识别结果将显示在这里...")
         if result:
             self._ui.textResult.setPlainText(result)
@@ -321,6 +325,7 @@ class MainWindow(QMainWindow):
     @Slot(str)
     def _on_ocr_error(self, error_msg: str) -> None:
         """OCR识别失败"""
+        logging.error(f"OCR 识别失败: {error_msg}")
         self._ui.textResult.setPlaceholderText("识别结果将显示在这里...")
         self._ui.textResult.setPlainText(f"识别失败：{error_msg}")
         self._statusbar.showMessage(f"识别失败：{error_msg}")
