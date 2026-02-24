@@ -95,3 +95,102 @@ class TestCacheReadWrite:
         data = {"test": "value"}
         assert save_cache(tmp_path, data) is True
         assert (tmp_path / ".vibeocr").exists()
+
+
+class TestCacheValidation:
+    """Tests for cache validation."""
+
+    def test_is_cache_valid_returns_false_if_no_cache(self, tmp_path):
+        """Should return (False, None) if no cache exists."""
+        from vibeocr.machine_cache import is_cache_valid
+
+        is_valid, data = is_cache_valid(tmp_path)
+        assert is_valid is False
+        assert data is None
+
+    def test_is_cache_valid_returns_false_if_machine_id_mismatch(self, tmp_path):
+        """Should return (False, None) if machine ID doesn't match."""
+        from vibeocr.machine_cache import save_cache, is_cache_valid
+
+        # 保存一个使用假机器码的缓存
+        cache_data = {
+            "version": 1,
+            "machine_id": "fake_machine_id_12345",
+            "dependencies": {"paddlepaddle": True}
+        }
+        save_cache(tmp_path, cache_data)
+
+        is_valid, data = is_cache_valid(tmp_path)
+        assert is_valid is False
+        assert data is None
+
+    def test_is_cache_valid_returns_true_if_machine_id_matches(self, tmp_path):
+        """Should return (True, data) if machine ID matches."""
+        from vibeocr.machine_cache import save_cache, is_cache_valid, generate_machine_id
+
+        machine_id = generate_machine_id()
+        cache_data = {
+            "version": 1,
+            "machine_id": machine_id,
+            "dependencies": {"paddlepaddle": True}
+        }
+        save_cache(tmp_path, cache_data)
+
+        is_valid, data = is_cache_valid(tmp_path)
+        assert is_valid is True
+        assert data == cache_data
+
+    def test_is_cache_valid_returns_false_if_version_mismatch(self, tmp_path):
+        """Should return (False, None) if cache version doesn't match."""
+        from vibeocr.machine_cache import save_cache, is_cache_valid, generate_machine_id
+
+        machine_id = generate_machine_id()
+        cache_data = {
+            "version": 999,  # 旧版本
+            "machine_id": machine_id,
+            "dependencies": {"paddlepaddle": True}
+        }
+        save_cache(tmp_path, cache_data)
+
+        is_valid, data = is_cache_valid(tmp_path)
+        assert is_valid is False
+
+
+class TestCacheOperations:
+    """Tests for cache operations."""
+
+    def test_clear_cache_removes_file(self, tmp_path):
+        """Should remove cache file."""
+        from vibeocr.machine_cache import save_cache, clear_cache, load_cache
+
+        save_cache(tmp_path, {"test": "value"})
+        assert load_cache(tmp_path) is not None
+
+        result = clear_cache(tmp_path)
+        assert result is True
+        assert load_cache(tmp_path) is None
+
+    def test_clear_cache_returns_true_if_no_file(self, tmp_path):
+        """Should return True even if no cache file exists."""
+        from vibeocr.machine_cache import clear_cache
+
+        result = clear_cache(tmp_path)
+        assert result is True
+
+    def test_create_cache_entry(self, tmp_path):
+        """Should create a valid cache entry."""
+        from vibeocr.machine_cache import create_cache_entry, load_cache, generate_machine_id
+
+        dependencies = {"paddlepaddle": True, "paddlex": True, "is_gpu": True}
+        hardware_info = {"has_gpu": True, "cuda_version": "cu126"}
+
+        result = create_cache_entry(tmp_path, dependencies, hardware_info)
+        assert result is not None
+        assert result["version"] == 1
+        assert result["machine_id"] == generate_machine_id()
+        assert result["dependencies"] == dependencies
+        assert result["hardware_info"] == hardware_info
+
+        # 验证已保存到文件
+        loaded = load_cache(tmp_path)
+        assert loaded == result

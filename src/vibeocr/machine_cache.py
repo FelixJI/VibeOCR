@@ -171,3 +171,91 @@ def load_cache(project_root: Path) -> Optional[dict]:
     except Exception as e:
         print(f"[缓存] 加载缓存失败: {e}")
         return None
+
+
+def is_cache_valid(project_root: Path) -> tuple[bool, Optional[dict]]:
+    """
+    检查缓存是否有效
+
+    缓存有效的条件：
+    1. 缓存文件存在
+    2. 缓存版本匹配
+    3. 机器码匹配
+
+    Args:
+        project_root: 项目根目录
+
+    Returns:
+        (是否有效, 缓存数据或None)
+    """
+    cache_data = load_cache(project_root)
+    if cache_data is None:
+        return False, None
+
+    # 检查版本
+    if cache_data.get("version") != CACHE_VERSION:
+        print(f"[缓存] 缓存版本不匹配: {cache_data.get('version')} != {CACHE_VERSION}")
+        return False, None
+
+    # 检查机器码
+    current_machine_id = generate_machine_id()
+    cached_machine_id = cache_data.get("machine_id", "")
+    if current_machine_id != cached_machine_id:
+        print("[缓存] 机器码不匹配，可能是不同机器或硬件已变更")
+        return False, None
+
+    return True, cache_data
+
+
+def clear_cache(project_root: Path) -> bool:
+    """
+    清除缓存文件
+
+    Args:
+        project_root: 项目根目录
+
+    Returns:
+        是否清除成功
+    """
+    try:
+        cache_file = get_cache_path(project_root)
+        if cache_file.exists():
+            cache_file.unlink()
+            print("[缓存] 缓存已清除")
+        return True
+    except Exception as e:
+        print(f"[缓存] 清除缓存失败: {e}")
+        return False
+
+
+def create_cache_entry(
+    project_root: Path,
+    dependencies: dict,
+    hardware_info: dict
+) -> Optional[dict]:
+    """
+    创建新的缓存条目
+
+    Args:
+        project_root: 项目根目录
+        dependencies: 依赖检测结果
+        hardware_info: 硬件信息
+
+    Returns:
+        创建的缓存数据，失败返回 None
+    """
+    import sys
+
+    cache_data = {
+        "version": CACHE_VERSION,
+        "machine_id": generate_machine_id(),
+        "last_check_time": datetime.now().isoformat(),
+        "python_version": f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
+        "dependencies": dependencies,
+        "hardware_info": hardware_info,
+    }
+
+    if save_cache(project_root, cache_data):
+        print("[缓存] 缓存已更新")
+        return cache_data
+    return None
