@@ -1,7 +1,12 @@
 """VibeOCR 应用程序入口点"""
 
+import os
 import sys
 from pathlib import Path
+
+# 设置环境变量以抑制不必要的警告
+# 禁用 PaddleX 的模型源连接检查
+os.environ.setdefault("PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK", "True")
 
 # 导入环境管理模块
 from vibeocr import env_manager

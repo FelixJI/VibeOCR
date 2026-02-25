@@ -1,8 +1,8 @@
 """控制台输出控件"""
 
 import logging
-from datetime import datetime
-from typing import List, Optional
+import re
+from typing import List, Optional, Dict
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
@@ -15,14 +15,17 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QApplication,
 )
-from PySide6.QtCore import Slot, Qt
-from PySide6.QtGui import QColor, QFont
+from PySide6.QtCore import Slot, Qt, Signal
+from PySide6.QtGui import QColor, QKeySequence
 
 from vibeocr.services.log_service import LogEntry
 
 
 class ConsoleWidget(QWidget):
     """控制台输出控件 - 表格形式显示日志"""
+
+    # 低置信度计数变化信号
+    low_confidence_count_changed = Signal(int)  # 低置信度文本块数量
 
     # 日志级别颜色
     LEVEL_COLORS = {
@@ -32,6 +35,10 @@ class ConsoleWidget(QWidget):
         "DEBUG": QColor("#9E9E9E"),
     }
 
+    # 低置信度阈值和颜色
+    LOW_CONFIDENCE_THRESHOLD = 0.80  # 80% 以下标红
+    LOW_CONFIDENCE_COLOR = QColor("#F44336")  # 红色
+
     # 时间格式（表格显示）
     TIME_FORMAT = "%m-%d %H:%M:%S"
 
@@ -39,6 +46,8 @@ class ConsoleWidget(QWidget):
         super().__init__(parent)
         self._all_logs: List[LogEntry] = []
         self._current_filter = "ALL"
+        self._row_to_log_index: Dict[int, int] = {}  # 表格行 -> 日志索引
+        self._low_confidence_count: int = 0  # 低置信度文本块数量
         self._setup_ui()
 
     def _setup_ui(self) -> None:
@@ -115,6 +124,9 @@ class ConsoleWidget(QWidget):
         """清空所有日志"""
         self._all_logs.clear()
         self._table.setRowCount(0)
+        self._row_to_log_index.clear()
+        self._low_confidence_count = 0
+        self.low_confidence_count_changed.emit(0)
 
     @Slot(str)
     def _on_filter_changed(self, text: str) -> None:
@@ -124,6 +136,9 @@ class ConsoleWidget(QWidget):
 
     def _refresh_table(self) -> None:
         """刷新表格显示"""
+        self._row_to_log_index.clear()
+        self._low_confidence_count = 0
+
         # 过滤日志
         if self._current_filter == "ALL":
             filtered_logs = self._all_logs
@@ -133,7 +148,11 @@ class ConsoleWidget(QWidget):
         # 更新表格
         self._table.setRowCount(len(filtered_logs))
         for row, entry in enumerate(filtered_logs):
+            self._row_to_log_index[row] = self._all_logs.index(entry)
             self._add_table_row(row, entry)
+
+        # 发送低置信度计数信号
+        self.low_confidence_count_changed.emit(self._low_confidence_count)
 
         # 滚动到底部
         if filtered_logs:
@@ -142,17 +161,38 @@ class ConsoleWidget(QWidget):
     def _add_table_row(self, row: int, entry: LogEntry) -> None:
         """添加表格行"""
         # 时间
-        time_item = QTableWidgetItem(entry.timestamp.strftime(self.TIME_FORMAT))
+        time_str = entry.timestamp.strftime(self.TIME_FORMAT)
+        time_item = QTableWidgetItem(time_str)
         time_item.setData(Qt.ItemDataRole.UserRole, entry)  # 保存完整数据
 
         # 级别
         level_item = QTableWidgetItem(entry.level)
         level_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-        color = self.LEVEL_COLORS.get(entry.level, QColor("#000000"))
-        level_item.setForeground(color)
+        level_color = self.LEVEL_COLORS.get(entry.level, QColor("#000000"))
+        level_item.setForeground(level_color)
 
-        # 消息
-        msg_item = QTableWidgetItem(entry.message)
+        # 消息 - 处理多行文本，只显示第一行（完整内容在 tooltip 中）
+        msg_lines = entry.message.split('\n')
+        msg_text = msg_lines[0] if msg_lines else entry.message
+        msg_item = QTableWidgetItem(msg_text)
+
+        # 如果有多行，设置 tooltip 显示完整内容
+        if len(msg_lines) > 1:
+            msg_item.setToolTip(entry.message)
+
+        # 检测低置信度
+        # 匹配 "置信度: XX.XX%" 或 "置信度:XX.XX%" 格式
+        confidence_match = re.search(r"置信度:\s*(\d+\.?\d*)\s*%", entry.message)
+        if confidence_match:
+            try:
+                confidence = float(confidence_match.group(1)) / 100
+                if confidence < self.LOW_CONFIDENCE_THRESHOLD:
+                    # 标红消息列
+                    msg_item.setForeground(self.LOW_CONFIDENCE_COLOR)
+                    # 计数低置信度
+                    self._low_confidence_count += 1
+            except (ValueError, ZeroDivisionError):
+                pass
 
         # 添加到表格
         self._table.setItem(row, 0, time_item)
@@ -161,7 +201,7 @@ class ConsoleWidget(QWidget):
 
     def keyPressEvent(self, event) -> None:
         """键盘事件处理 - 支持复制"""
-        if event.matches(Qt.KeySequence.StandardKey.Copy):
+        if event.matches(QKeySequence.StandardKey.Copy):
             self._copy_selected()
         else:
             super().keyPressEvent(event)

@@ -22,6 +22,7 @@ class TestScreenshotWidget:
         assert widget._end_pos is None
         assert widget._selection_rect is None
         assert widget._screen_pixmap is None
+        assert widget._device_pixel_ratio == 1.0
 
     def test_mouse_press_creates_selection(self, qapp):
         """鼠标按下创建选区。"""
@@ -87,6 +88,7 @@ class TestScreenshotWidget:
         widget._end_pos = QPoint(100, 100)
         widget._selection_rect = QRect(10, 10, 90, 90)
         widget._screen_pixmap = QPixmap(100, 100)
+        widget._device_pixel_ratio = 2.0
 
         widget._reset()
 
@@ -94,3 +96,38 @@ class TestScreenshotWidget:
         assert widget._end_pos is None
         assert widget._selection_rect is None
         assert widget._screen_pixmap is None
+        assert widget._device_pixel_ratio == 1.0
+
+    def test_capture_respects_device_pixel_ratio(self, qapp):
+        """截图复制时正确处理设备像素比，保留物理像素分辨率。"""
+        widget = ScreenshotWidget()
+        # 模拟高DPI环境（2倍缩放）
+        widget._device_pixel_ratio = 2.0
+
+        # 创建一个设置了DPR的pixmap（200x200物理像素，DPR=2表示100x100逻辑像素）
+        widget._screen_pixmap = QPixmap(200, 200)
+        widget._screen_pixmap.fill(Qt.GlobalColor.white)
+        widget._screen_pixmap.setDevicePixelRatio(2.0)
+
+        # 创建选区（逻辑像素坐标）
+        widget._selection_rect = QRect(10, 10, 50, 50)
+
+        captured = []
+        widget.captured.connect(lambda p: captured.append(p))
+
+        # 模拟鼠标释放
+        class MockEvent:
+            def button(self):
+                return Qt.MouseButton.LeftButton
+
+        widget.mouseReleaseEvent(MockEvent())
+
+        # 验证捕获的图片尺寸正确
+        assert len(captured) == 1
+        captured_pixmap = captured[0]
+        # DPR 重置为 1.0，但尺寸是物理像素（保留原始分辨率给 OCR）
+        assert captured_pixmap.devicePixelRatio() == 1.0
+        # 实际尺寸应该是 100x100（物理像素 = 逻辑像素 × DPR）
+        # 这样 OCR 才能获得高质量的图片
+        assert captured_pixmap.width() == 100
+        assert captured_pixmap.height() == 100

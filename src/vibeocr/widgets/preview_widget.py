@@ -64,11 +64,18 @@ class PreviewWidget(QWidget):
     def _update_display(self) -> None:
         """更新图片显示"""
         if self._pixmap:
+            # 获取 label 的物理像素尺寸（考虑高DPI）
+            label_size = self._image_label.size()
+            dpr = self._image_label.devicePixelRatio()
+            physical_size = label_size * dpr
+
             scaled = self._pixmap.scaled(
-                self._image_label.size(),
+                physical_size,
                 Qt.AspectRatioMode.KeepAspectRatio,
                 Qt.TransformationMode.SmoothTransformation,
             )
+            # 设置缩放后图片的设备像素比，确保在高DPI下正确显示
+            scaled.setDevicePixelRatio(dpr)
             self._image_label.setPixmap(scaled)
             self._image_label.setStyleSheet(
                 "QLabel { background-color: #fff; border: 1px solid #ddd; }"

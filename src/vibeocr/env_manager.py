@@ -31,6 +31,18 @@ TEST_URLS = {
     "baidu": "https://www.baidu.com",
 }
 
+# PaddleX 模型下载源
+PADDLEX_MODEL_SOURCES = {
+    "bos": "BOS",  # 百度对象存储（国内快）
+    "huggingface": "HuggingFace",  # HuggingFace（国际）
+}
+
+# PaddleX 模型下载源测试URL
+PADDLEX_SOURCE_TEST_URLS = {
+    "bos": "https://paddle-model-ecology.bj.bcebos.com",  # 百度BOS
+    "huggingface": "https://huggingface.co",  # HuggingFace
+}
+
 # 嵌入式Python下载URL
 PYTHON_EMBED_URL = f"https://www.python.org/ftp/python/{PYTHON_VERSION}/python-{PYTHON_VERSION}-embed-amd64.zip"
 GET_PIP_URL = "https://bootstrap.pypa.io/get-pip.py"
@@ -90,6 +102,84 @@ def ping_url(url: str, timeout: int = 3) -> bool:
             return response.status == 200
     except Exception:
         return False
+
+
+def detect_paddlex_model_source(timeout: int = 5) -> tuple[str, str]:
+    """
+    检测并选择最快的 PaddleX 模型下载源
+
+    通过测试各源的响应速度，选择最优的下载源。
+    对于国内用户，BOS 通常更快；国际用户 HuggingFace 可能更快。
+
+    Args:
+        timeout: 每个源的超时时间（秒）
+
+    Returns:
+        (环境变量值, 源名称)
+        - ("BOS", "bos"): 使用百度对象存储
+        - ("HuggingFace", "huggingface"): 使用 HuggingFace
+    """
+    import time
+
+    print("[模型源检测] 正在检测最快的模型下载源...")
+
+    results = {}
+
+    # 测试每个源的响应速度
+    for source_name, test_url in PADDLEX_SOURCE_TEST_URLS.items():
+        start_time = time.time()
+        try:
+            req = Request(test_url, headers={"User-Agent": "Mozilla/5.0"})
+            with urlopen(req, timeout=timeout) as response:
+                if response.status == 200:
+                    elapsed = time.time() - start_time
+                    results[source_name] = elapsed
+                    print(f"[模型源检测] {source_name}: {elapsed:.2f}秒")
+        except Exception as e:
+            print(f"[模型源检测] {source_name}: 不可访问 ({type(e).__name__})")
+            results[source_name] = float('inf')  # 不可访问
+
+    # 选择最快的源
+    if not results:
+        print("[模型源检测] 无法访问任何源，使用默认 BOS")
+        return "BOS", "bos"
+
+    best_source = min(results.keys(), key=lambda k: results[k])
+
+    if results[best_source] == float('inf'):
+        print("[模型源检测] 所有源都不可访问，使用默认 BOS")
+        return "BOS", "bos"
+
+    env_value = PADDLEX_MODEL_SOURCES[best_source]
+    print(f"[模型源检测] 选择最快源: {best_source} ({results[best_source]:.2f}秒)")
+
+    return env_value, best_source
+
+
+def setup_paddlex_model_source(timeout: int = 5) -> str:
+    """
+    设置 PaddleX 模型下载源环境变量
+
+    自动检测最快的源并设置 PADDLE_PDX_MODEL_SOURCE 环境变量。
+    应在导入 paddlex 之前调用。
+
+    Args:
+        timeout: 每个源的超时时间（秒）
+
+    Returns:
+        选择的源名称（"bos" 或 "huggingface"）
+    """
+    # 如果已经设置过，直接返回
+    current_source = os.environ.get("PADDLE_PDX_MODEL_SOURCE")
+    if current_source:
+        print(f"[模型源] 已设置模型源: {current_source}")
+        return current_source.lower()
+
+    env_value, source_name = detect_paddlex_model_source(timeout)
+    os.environ["PADDLE_PDX_MODEL_SOURCE"] = env_value
+    print(f"[模型源] 已设置环境变量 PADDLE_PDX_MODEL_SOURCE={env_value}")
+
+    return source_name
 
 
 def detect_network_source() -> Literal["domestic", "international"]:

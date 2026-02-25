@@ -36,6 +36,7 @@ except ImportError:
 IS_CI = os.environ.get("CI", "false").lower() == "true"
 
 
+@pytest.mark.skipif(not HAS_SUBPROCESS_OCR, reason="subprocess OCR not available")
 class TestSharedMemoryProtocol:
     """测试共享内存协议。"""
 

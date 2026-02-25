@@ -9,6 +9,7 @@ from PySide6.QtGui import (
     QColor,
     QPen,
     QPixmap,
+    QRegion,
     QGuiApplication,
 )
 
@@ -28,13 +29,17 @@ class ScreenshotWidget(QWidget):
             | Qt.WindowType.WindowStaysOnTopHint
             | Qt.WindowType.Tool
         )
+        # 设置背景透明和防闪烁属性
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent)
+        self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground)
 
         self._start_pos = None
         self._end_pos = None
         self._selection_rect: Optional[QRect] = None
         self._screen_pixmap: Optional[QPixmap] = None
         self._virtual_geometry = QRect()
+        self._device_pixel_ratio = 1.0
 
     def start_capture(self) -> None:
         """开始截图（支持多屏幕和高DPI）"""
@@ -51,17 +56,19 @@ class ScreenshotWidget(QWidget):
         self.setGeometry(self._virtual_geometry)
 
         # 获取最高的设备像素比（用于高DPI支持）
-        max_dpr = max(screen.devicePixelRatio() for screen in screens)
+        self._device_pixel_ratio = max(
+            screen.devicePixelRatio() for screen in screens
+        )
 
         # 创建合并所有屏幕的截图 - 使用物理像素尺寸
-        physical_size = self._virtual_geometry.size() * max_dpr
+        physical_size = self._virtual_geometry.size() * self._device_pixel_ratio
         pixmap = QPixmap(physical_size)
         if pixmap.isNull():
             return
 
         pixmap.fill(Qt.GlobalColor.black)
         # 设置设备像素比，确保后续坐标计算正确
-        pixmap.setDevicePixelRatio(max_dpr)
+        pixmap.setDevicePixelRatio(self._device_pixel_ratio)
 
         painter = QPainter(pixmap)
         for screen in screens:
@@ -75,25 +82,35 @@ class ScreenshotWidget(QWidget):
         painter.end()
 
         self._screen_pixmap = pixmap
+
+        # 确保截图准备好后再显示窗口
+        self.repaint()  # 强制完成首次绘制
         self.show()
         self.activateWindow()
         self.grabMouse()
 
     def paintEvent(self, _event) -> None:
-        """绘制遮罩和选区"""
+        """绘制遮罩和选区（采用镂空方案，避免选区内容抖动）"""
         painter = QPainter(self)
 
-        # 绘制半透明遮罩
+        # 1. 先绘制整个截图作为背景
+        if self._screen_pixmap:
+            # 计算绘制位置（考虑虚拟桌面偏移）
+            offset = self._virtual_geometry.topLeft()
+            painter.drawPixmap(offset, self._screen_pixmap)
+
+        # 2. 创建遮罩区域（减去选区，形成镂空效果）
+        mask_region = QRegion(self.rect())
+        if self._selection_rect:
+            mask_region = mask_region.subtracted(QRegion(self._selection_rect))
+
+        # 3. 只在非选区绘制半透明遮罩
+        painter.setClipRegion(mask_region)
         painter.fillRect(self.rect(), QColor(0, 0, 0, 100))
 
+        # 4. 绘制选区边框和尺寸信息（禁用裁剪）
         if self._selection_rect:
-            # 清除选区内的遮罩，显示原始截图
-            if self._screen_pixmap:
-                painter.drawPixmap(
-                    self._selection_rect,
-                    self._screen_pixmap,
-                    self._selection_rect,
-                )
+            painter.setClipping(False)
 
             # 绘制选区边框
             pen = QPen(QColor(0, 120, 215), 2)
@@ -128,7 +145,19 @@ class ScreenshotWidget(QWidget):
                 and self._selection_rect.width() > self.MIN_SELECTION_SIZE
                 and self._selection_rect.height() > self.MIN_SELECTION_SIZE
             ):
-                captured = self._screen_pixmap.copy(self._selection_rect)
+                # 计算源矩形（考虑虚拟桌面偏移和设备像素比）
+                # _selection_rect 是相对于窗口的坐标（逻辑像素）
+                # _screen_pixmap 是从虚拟桌面原点开始的物理像素图像
+                offset = self._virtual_geometry.topLeft()
+                src_x = int((self._selection_rect.x() + offset.x()) * self._device_pixel_ratio)
+                src_y = int((self._selection_rect.y() + offset.y()) * self._device_pixel_ratio)
+                src_w = int(self._selection_rect.width() * self._device_pixel_ratio)
+                src_h = int(self._selection_rect.height() * self._device_pixel_ratio)
+                src_rect = QRect(src_x, src_y, src_w, src_h)
+
+                captured = self._screen_pixmap.copy(src_rect)
+                # 复位 devicePixelRatio 为 1.0，确保后续使用时坐标一致
+                captured.setDevicePixelRatio(1.0)
                 self.captured.emit(captured)
             self._reset()
             self.hide()
@@ -147,4 +176,5 @@ class ScreenshotWidget(QWidget):
         self._selection_rect = None
         self._screen_pixmap = None
         self._virtual_geometry = QRect()
+        self._device_pixel_ratio = 1.0
         self.update()
