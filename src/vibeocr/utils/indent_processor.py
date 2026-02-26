@@ -16,5 +16,5 @@ class IndentProcessor:
 
     CHINESE_PATTERN = re.compile(r'[\u4e00-\u9fff\u3400-\u4dbf\U00020000-\U0002a6df]')
 
-    def __init__(self, config: IndentConfig = None):
+    def __init__(self, config: IndentConfig | None = None):
         self.config = config or IndentConfig()
