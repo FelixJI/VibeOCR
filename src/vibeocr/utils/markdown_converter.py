@@ -6,6 +6,8 @@ from typing import Optional
 import markdown
 from markdown.extensions.tables import TableExtension
 
+from .indent_processor import IndentProcessor
+
 _logger = logging.getLogger(__name__)
 
 # HTML 样式：用于 QTextEdit 显示
@@ -115,12 +117,17 @@ def markdown_to_html(
     # 预处理：将 LaTeX 公式转换为 HTML span 标签
     processed_text = _process_latex_formulas(markdown_text)
 
+    # 预处理：处理中文段落缩进
+    indent_processor = IndentProcessor()
+    processed_text = indent_processor.process_markdown(processed_text)
+
     # 默认扩展：支持表格等
     if extensions is None:
         extensions = [
             TableExtension(),
             "fenced_code",
             "nl2br",  # 换行转 <br>
+            "sane_lists",  # 更严格的列表处理
         ]
 
     try:
