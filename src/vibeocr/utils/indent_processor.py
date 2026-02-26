@@ -18,3 +18,18 @@ class IndentProcessor:
 
     def __init__(self, config: IndentConfig | None = None):
         self.config = config or IndentConfig()
+
+    def is_chinese_text(self, text: str) -> bool:
+        """检测文本是否主要为中文
+
+        Args:
+            text: 待检测文本
+
+        Returns:
+            如果中文字符占比 >= chinese_threshold 则返回 True
+        """
+        if not text.strip():
+            return False
+        chinese_chars = len(self.CHINESE_PATTERN.findall(text))
+        total_chars = len(text.strip())
+        return chinese_chars / total_chars >= self.config.chinese_threshold
