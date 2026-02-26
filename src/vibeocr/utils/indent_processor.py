@@ -46,36 +46,54 @@ class IndentProcessor:
         if not markdown_text:
             return ""
 
-        # 检测代码块和表格的正则
-        code_block_pattern = re.compile(r'^```.*?^```', re.MULTILINE | re.DOTALL)
-        table_pattern = re.compile(r'^\|.*\|$', re.MULTILINE)
-        list_pattern = re.compile(r'^[\*\-\+]\s|^\d+\.\s', re.MULTILINE)
+        # 用于检测特殊元素的正则
+        table_line_pattern = re.compile(r'^\|.*\|$')
+        list_line_pattern = re.compile(r'^[\*\-\+]\s|^\d+\.\s')
 
-        # 跳过代码块、表格、列表
-        if code_block_pattern.search(markdown_text):
-            return markdown_text
-        if table_pattern.search(markdown_text):
-            return markdown_text
-        if list_pattern.search(markdown_text):
-            return markdown_text
+        # 先按代码块分割，保留代码块内容不变
+        code_block_pattern = re.compile(r'(```.*?```)', re.DOTALL)
+        parts = code_block_pattern.split(markdown_text)
 
-        # 按双换行分割段落
-        paragraphs = markdown_text.split('\n\n')
-        processed = []
-
-        for para in paragraphs:
-            para = para.strip()
-            if not para:
+        processed_parts = []
+        for part in parts:
+            # 如果是代码块，直接保留
+            if part.startswith('```') and part.endswith('```'):
+                processed_parts.append(part)
                 continue
 
-            # 跳过单行代码块标记
-            if para.startswith('```'):
-                processed.append(para)
-                continue
+            # 对非代码块部分，按双换行分割段落
+            paragraphs = part.split('\n\n')
+            processed_paras = []
 
-            if self.is_chinese_text(para):
-                processed.append(f'<div class="zh-paragraph">{para}</div>')
-            else:
-                processed.append(para)
+            for para in paragraphs:
+                para = para.strip()
+                if not para:
+                    continue
 
-        return '\n\n'.join(processed)
+                # 检查段落是否包含表格行或列表行
+                lines = para.split('\n')
+                has_table_or_list = any(
+                    table_line_pattern.match(line.strip()) or
+                    list_line_pattern.match(line.strip())
+                    for line in lines
+                )
+
+                # 跳过表格和列表段落
+                if has_table_or_list:
+                    processed_paras.append(para)
+                    continue
+
+                # 跳过单行代码块标记
+                if para.startswith('```'):
+                    processed_paras.append(para)
+                    continue
+
+                if self.is_chinese_text(para):
+                    processed_paras.append(f'<div class="zh-paragraph">{para}</div>')
+                else:
+                    processed_paras.append(para)
+
+            if processed_paras:
+                processed_parts.append('\n\n'.join(processed_paras))
+
+        return '\n\n'.join(processed_parts)

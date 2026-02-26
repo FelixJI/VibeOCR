@@ -26,6 +26,7 @@ from vibeocr.widgets.screenshot_widget import ScreenshotWidget
 from vibeocr.widgets.console_widget import ConsoleWidget
 from vibeocr.services.ocr_service import OCRService, OCRPreset, OCRPipeline, OCROptions
 from vibeocr.services.log_service import setup_logging
+from vibeocr.models.ocr_result import OCRResult
 from vibeocr import env_manager
 from vibeocr.machine_cache import is_cache_valid
 
@@ -33,7 +34,7 @@ from vibeocr.machine_cache import is_cache_valid
 class OCRSignals(QObject):
     """OCR任务信号（用于线程安全通信）"""
 
-    finished = Signal(str, list)  # 识别完成 (文本, [(文本块, 置信度), ...])
+    finished = Signal(object)  # 识别完成 (OCRResult)
     error = Signal(str)  # 识别失败
 
 
@@ -59,8 +60,8 @@ class OCRTask(QRunnable):
 
             # 执行OCR
             ocr = OCRService()
-            result, text_with_scores = ocr.recognize(image_array, self._options)
-            self.signals.finished.emit(result, text_with_scores)
+            result = ocr.recognize(image_array, self._options)
+            self.signals.finished.emit(result)
         except Exception as e:
             self.signals.error.emit(str(e))
 
@@ -172,7 +173,7 @@ class MainWindow(QMainWindow):
         self._screenshot_widget = ScreenshotWidget()
 
         # 创建复制成功提示标签
-        self._copy_toast = QLabel("已复制到剪贴板", self._ui.btnCopy)
+        self._copy_toast = QLabel("已复制到剪贴板", self._ui.btnCopyRich)
         self._copy_toast.setStyleSheet("""
             QLabel {
                 background-color: #333333;
@@ -183,6 +184,9 @@ class MainWindow(QMainWindow):
             }
         """)
         self._copy_toast.hide()
+
+        # 保存当前 OCR 结果（用于复制）
+        self._current_ocr_result: OCRResult | None = None
 
     def _init_preset_combo(self) -> None:
         """初始化 OCR 管道和选项按钮"""
@@ -285,7 +289,7 @@ class MainWindow(QMainWindow):
         self._screenshot_widget = ScreenshotWidget()
 
         # 创建复制成功提示标签
-        self._copy_toast = QLabel("已复制到剪贴板", self._ui.btnCopy)
+        self._copy_toast = QLabel("已复制到剪贴板", self._ui.btnCopyRich)
         self._copy_toast.setStyleSheet("""
             QLabel {
                 background-color: #333333;
@@ -296,6 +300,9 @@ class MainWindow(QMainWindow):
             }
         """)
         self._copy_toast.hide()
+
+        # 保存当前 OCR 结果（用于复制）
+        self._current_ocr_result: OCRResult | None = None
 
     def _on_pipeline_clicked(self, pipeline: OCRPipeline) -> None:
         """管道按钮点击时更新 UI"""
@@ -424,7 +431,9 @@ class MainWindow(QMainWindow):
         self._ui.previewWidget.screenshot_requested.connect(self._on_screenshot)
 
         # 复制按钮
-        self._ui.btnCopy.clicked.connect(self._on_copy_result)
+        self._ui.btnCopyRich.clicked.connect(self._on_copy_rich)
+        self._ui.btnCopyMarkdown.clicked.connect(self._on_copy_markdown)
+        self._ui.btnCopyPlain.clicked.connect(self._on_copy_plain)
 
     def _try_load_cache(self) -> None:
         """尝试从缓存加载依赖检测结果"""
@@ -628,74 +637,183 @@ class MainWindow(QMainWindow):
         task.signals.error.connect(self._on_ocr_error)
         self._thread_pool.start(task)
 
-    @Slot(str, list)
-    def _on_ocr_finished(self, result: str, text_with_scores: list) -> None:
+    @Slot(object)
+    def _on_ocr_finished(self, result: OCRResult) -> None:
         """OCR识别完成"""
-        char_count = len(result) if result else 0
-        block_count = len(text_with_scores)
+        # 保存结果用于复制
+        self._current_ocr_result = result
+
+        char_count = len(result.raw_text) if result.raw_text else 0
+        block_count = len(result.text_with_scores)
         logging.info(f"OCR 识别完成，共 {block_count} 个文本块，{char_count} 个字符")
 
-        # 计算平均置信度和收集低置信度信息
-        avg_score = 0.0
-        low_confidence_items = []
-        if text_with_scores:
+        # 记录置信度详情
+        if result.text_with_scores:
             logging.info("=== OCR 置信度详情 ===")
-            for i, (text, score) in enumerate(text_with_scores, 1):
+            for i, (text, score) in enumerate(result.text_with_scores, 1):
                 # 截断长文本用于显示
                 display_text = text[:30] + "..." if len(text) > 30 else text
                 display_text = display_text.replace("\n", " ")
                 logging.info(f"  [{i}] 置信度: {score:.2%} | {display_text}")
-                # 收集低置信度文本块（低于80%）
-                if score < 0.80:
-                    low_confidence_items.append((text[:20], score))
-            # 计算平均置信度
-            avg_score = sum(s for _, s in text_with_scores) / len(text_with_scores)
-            logging.info(f"  平均置信度: {avg_score:.2%}")
+            logging.info(f"  平均置信度: {result.avg_score:.2%}")
             logging.info("======================")
 
         self._ui.textResult.setPlaceholderText("识别结果将显示在这里...")
-        if result:
-            self._ui.textResult.setPlainText(result)
-            # 构建状态栏消息（直接包含低置信度信息）
-            if text_with_scores:
-                base_msg = f"识别完成，{block_count} 个文本块，平均置信度: {avg_score:.0%}"
-                if low_confidence_items:
+        if result.has_rich_content:
+            # 有富文本内容（表格、公式等），使用 HTML 显示
+            self._ui.textResult.setHtml(result.html_text)
+        elif result.raw_text:
+            # 普通文本
+            self._ui.textResult.setPlainText(result.raw_text)
+        else:
+            self._ui.textResult.setPlainText("未识别到文字")
+
+        # 构建状态栏消息
+        if result.raw_text:
+            if result.text_with_scores:
+                base_msg = f"识别完成，{block_count} 个文本块，平均置信度: {result.avg_score:.0%}"
+                if result.low_confidence_items:
                     details = []
-                    for text, confidence in low_confidence_items:
+                    for text, confidence in result.low_confidence_items:
                         display_text = text[:20] + "..." if len(text) > 20 else text
                         details.append(f"'{display_text}' ({confidence:.0%})")
                     detail_str = "、".join(details)
-                    self._statusbar.showMessage(f"{base_msg}，{len(low_confidence_items)} 个低置信度: {detail_str}")
+                    self._statusbar.showMessage(
+                        f"{base_msg}，{len(result.low_confidence_items)} 个低置信度: {detail_str}"
+                    )
                 else:
                     self._statusbar.showMessage(base_msg)
             else:
-                self._statusbar.showMessage(f"识别完成，共 {len(result)} 个字符")
+                self._statusbar.showMessage(f"识别完成，共 {char_count} 个字符")
         else:
-            self._ui.textResult.setPlainText("未识别到文字")
             self._statusbar.showMessage("未识别到文字")
 
     @Slot(str)
     def _on_ocr_error(self, error_msg: str) -> None:
         """OCR识别失败"""
         logging.error(f"OCR 识别失败: {error_msg}")
+        self._current_ocr_result = None
         self._ui.textResult.setPlaceholderText("识别结果将显示在这里...")
         self._ui.textResult.setPlainText(f"识别失败：{error_msg}")
         self._statusbar.showMessage(f"识别失败：{error_msg}")
 
     @Slot()
-    def _on_copy_result(self) -> None:
-        """复制识别结果"""
-        text = self._ui.textResult.toPlainText()
-        if text:
-            clipboard = QApplication.clipboard()
-            clipboard.setText(text)
-            self._statusbar.showMessage("已复制到剪贴板")
-            self._show_copy_toast()
+    def _on_copy_rich(self) -> None:
+        """复制为富文本格式（支持 Word/Excel 的 CF_HTML 格式）"""
+        if not self._current_ocr_result:
+            return
+
+        clipboard = QApplication.clipboard()
+        mime_data = clipboard.mimeData()
+
+        if self._current_ocr_result.has_rich_content:
+            html_content = self._current_ocr_result.html_text
+
+            # 设置标准 HTML 格式
+            mime_data.setHtml(html_content)
+
+            # 设置 CF_HTML 格式（Microsoft Office 专用）
+            # 格式名称是 "HTML Format"，不是 "text/html"
+            cf_html = self._create_cf_html(html_content)
+            mime_data.setData("HTML Format", cf_html.encode("utf-8"))
+
+            # 同时设置纯文本（作为备选）
+            mime_data.setText(self._current_ocr_result.markdown_text)
+
+            clipboard.setMimeData(mime_data)
+            self._statusbar.showMessage("已复制富文本到剪贴板")
+        else:
+            # 没有富文本，复制纯文本
+            clipboard.setText(self._current_ocr_result.raw_text)
+            self._statusbar.showMessage("已复制纯文本到剪贴板")
+
+        self._show_copy_toast()
+
+    def _create_cf_html(self, html_fragment: str) -> str:
+        """创建 CF_HTML 格式的剪贴板内容
+
+        CF_HTML 是 Microsoft Office 使用的剪贴板格式，
+        需要包含特殊的头部结构和字节偏移量。
+
+        Args:
+            html_fragment: HTML 片段内容
+
+        Returns:
+            CF_HTML 格式的完整字符串
+        """
+        # 构建 HTML 上下文
+        html_template = """<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"></head>
+<body>
+<!--StartFragment-->{}<!--EndFragment-->
+</body>
+</html>"""
+
+        full_html = html_template.format(html_fragment)
+
+        # 计算偏移量（使用 UTF-8 字节计数）
+        # 头部占位符长度（偏移量使用 10 位数字）
+        header_template = (
+            "Version:0.9\r\n"
+            "StartHTML:0000000000\r\n"
+            "EndHTML:0000000000\r\n"
+            "StartFragment:0000000000\r\n"
+            "EndFragment:0000000000\r\n"
+        )
+
+        # 头部实际长度
+        header_len = len(header_template.encode("utf-8"))
+
+        # 计算 StartFragment 位置（头部 + <!--StartFragment--> 之前的内容）
+        start_fragment_marker = "<!--StartFragment-->"
+        end_fragment_marker = "<!--EndFragment-->"
+        start_fragment_pos = full_html.find(start_fragment_marker)
+        end_fragment_pos = full_html.find(end_fragment_marker)
+
+        # 字节偏移
+        start_fragment_byte = header_len + len(full_html[:start_fragment_pos + len(start_fragment_marker)].encode("utf-8"))
+        end_fragment_byte = header_len + len(full_html[:end_fragment_pos].encode("utf-8"))
+        end_html_byte = header_len + len(full_html.encode("utf-8"))
+
+        # 格式化偏移量（10 位数字）
+        cf_html = (
+            f"Version:0.9\r\n"
+            f"StartHTML:{header_len:010d}\r\n"
+            f"EndHTML:{end_html_byte:010d}\r\n"
+            f"StartFragment:{start_fragment_byte:010d}\r\n"
+            f"EndFragment:{end_fragment_byte:010d}\r\n"
+            f"{full_html}"
+        )
+
+        return cf_html
+
+    @Slot()
+    def _on_copy_markdown(self) -> None:
+        """复制为 Markdown 格式"""
+        if not self._current_ocr_result:
+            return
+
+        clipboard = QApplication.clipboard()
+        clipboard.setText(self._current_ocr_result.markdown_text)
+        self._statusbar.showMessage("已复制 Markdown 到剪贴板")
+        self._show_copy_toast()
+
+    @Slot()
+    def _on_copy_plain(self) -> None:
+        """复制为纯文本格式"""
+        if not self._current_ocr_result:
+            return
+
+        clipboard = QApplication.clipboard()
+        clipboard.setText(self._current_ocr_result.raw_text)
+        self._statusbar.showMessage("已复制纯文本到剪贴板")
+        self._show_copy_toast()
 
     def _show_copy_toast(self) -> None:
         """显示复制成功提示"""
         # 调整提示标签位置（按钮上方居中）
-        btn = self._ui.btnCopy
+        btn = self._ui.btnCopyRich
         toast = self._copy_toast
         toast.adjustSize()
         x = (btn.width() - toast.width()) // 2

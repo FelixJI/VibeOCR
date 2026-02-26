@@ -7,6 +7,7 @@ import pytest
 from PIL import Image
 
 from vibeocr.services.ocr_service import OCRService, OCRPipeline, OCROptions
+from vibeocr.models.ocr_result import OCRResult
 
 # 检查 paddlex 是否可用
 try:
@@ -136,10 +137,11 @@ class TestOCRServiceRecognize:
 
         service = OCRService()
         img = Image.open(io.BytesIO(sample_image_with_text_bytes))
-        result, text_with_scores = service.recognize(img)
-        # 注意：实际识别结果取决于 PaddleX
-        assert isinstance(result, str)
-        assert isinstance(text_with_scores, list)
+        result = service.recognize(img)
+        # 验证返回类型
+        assert isinstance(result, OCRResult)
+        assert isinstance(result.raw_text, str)
+        assert isinstance(result.text_with_scores, list)
 
     def test_recognize_numpy_array(self, sample_image_with_text_bytes):
         """识别 numpy 数组格式。"""
@@ -148,18 +150,20 @@ class TestOCRServiceRecognize:
         service = OCRService()
         img = Image.open(io.BytesIO(sample_image_with_text_bytes))
         arr = np.array(img)
-        result, text_with_scores = service.recognize(arr)
-        assert isinstance(result, str)
-        assert isinstance(text_with_scores, list)
+        result = service.recognize(arr)
+        assert isinstance(result, OCRResult)
+        assert isinstance(result.raw_text, str)
+        assert isinstance(result.text_with_scores, list)
 
     def test_recognize_empty_image_returns_empty_string(self):
         """空白图片返回空字符串。"""
         service = OCRService()
         img = Image.new("RGB", (100, 50), color="white")
-        result, text_with_scores = service.recognize(img)
+        result = service.recognize(img)
         # 空白图片可能返回空字符串或极少文字
-        assert isinstance(result, str)
-        assert isinstance(text_with_scores, list)
+        assert isinstance(result, OCRResult)
+        assert isinstance(result.raw_text, str)
+        assert isinstance(result.text_with_scores, list)
 
     def test_recognize_with_options(self, sample_image_with_text_bytes):
         """测试使用 OCROptions 进行识别。"""
@@ -174,6 +178,7 @@ class TestOCRServiceRecognize:
             use_doc_orientation_classify=True,
             use_doc_unwarping=False,
         )
-        result, scores = service.recognize(img, options)
-        assert isinstance(result, str)
-        assert isinstance(scores, list)
+        result = service.recognize(img, options)
+        assert isinstance(result, OCRResult)
+        assert isinstance(result.raw_text, str)
+        assert isinstance(result.text_with_scores, list)

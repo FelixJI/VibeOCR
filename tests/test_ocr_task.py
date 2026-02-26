@@ -4,6 +4,7 @@ import pytest
 from PySide6.QtCore import QThreadPool
 
 from vibeocr.views.main_window import OCRTask
+from vibeocr.models.ocr_result import OCRResult
 
 
 class TestOCRTask:
@@ -28,7 +29,7 @@ class TestOCRTask:
 
         assert results["error"] is None
         assert results["finished"] is not None
-        assert isinstance(results["finished"], str)
+        assert isinstance(results["finished"], OCRResult)
 
     def test_error_signal_on_invalid_data(self, qapp):
         """无效数据时发送 error 信号。"""
@@ -67,3 +68,4 @@ class TestOCRTask:
             pass
 
         assert results["finished"] is not None
+        assert isinstance(results["finished"], OCRResult)

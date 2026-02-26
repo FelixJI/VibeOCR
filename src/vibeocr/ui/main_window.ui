@@ -411,11 +411,41 @@
            </widget>
           </item>
           <item>
-           <widget class="QPushButton" name="btnCopy">
-            <property name="text">
-             <string>复制结果</string>
+           <layout class="QHBoxLayout" name="copyButtonsLayout">
+            <property name="spacing">
+             <number>4</number>
             </property>
-           </widget>
+            <item>
+             <widget class="QPushButton" name="btnCopyRich">
+              <property name="toolTip">
+               <string>复制为富文本格式，可粘贴到 Word/Excel 保留表格格式</string>
+              </property>
+              <property name="text">
+               <string>富文本</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QPushButton" name="btnCopyMarkdown">
+              <property name="toolTip">
+               <string>复制为 Markdown 格式，保留表格和公式结构</string>
+              </property>
+              <property name="text">
+               <string>Markdown</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QPushButton" name="btnCopyPlain">
+              <property name="toolTip">
+               <string>复制为纯文本格式</string>
+              </property>
+              <property name="text">
+               <string>纯文本</string>
+              </property>
+             </widget>
+            </item>
+           </layout>
           </item>
          </layout>
         </widget>

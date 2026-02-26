@@ -9,6 +9,9 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Optional
 
+from vibeocr.models.ocr_result import OCRResult
+from vibeocr.utils.markdown_converter import markdown_to_html
+
 # 禁用 OneDNN 并强制使用 CPU 模式以兼容性
 os.environ.setdefault("FLAGS_enable_onednn_backend", "0")
 os.environ.setdefault("FLAGS_use_mkldnn", "0")
@@ -282,7 +285,7 @@ class OCRService:
         self,
         image: Image.Image | np.ndarray | str,
         options: OCROptions | None = None,
-    ) -> tuple[str, list[tuple[str, float]]]:
+    ) -> OCRResult:
         """
         对图像执行 OCR 识别
 
@@ -291,7 +294,7 @@ class OCRService:
             options: OCR 识别选项
 
         Returns:
-            (识别出的文本内容, [(文本块, 置信度), ...])
+            OCRResult 对象，包含识别结果和置信度信息
         """
 
         actual_options = options if options is not None else OCROptions()
@@ -312,10 +315,10 @@ class OCRService:
         self,
         image: Image.Image | np.ndarray | str,
         options: OCROptions,
-    ) -> tuple[str, list[tuple[str, float]]]:
+    ) -> OCRResult:
         """通用 OCR 识别"""
 
-        def _do_recognize(img: Image.Image | np.ndarray | str) -> tuple[str, list[tuple[str, float]]]:
+        def _do_recognize(img: Image.Image | np.ndarray | str) -> OCRResult:
             pipeline = self.get_pipeline(OCRPipeline.OCR)
             output = pipeline.predict(
                 input=img,
@@ -339,10 +342,10 @@ class OCRService:
         self,
         image: Image.Image | np.ndarray | str,
         options: OCROptions,
-    ) -> tuple[str, list[tuple[str, float]]]:
+    ) -> OCRResult:
         """表格识别"""
 
-        def _do_recognize(img: Image.Image | np.ndarray | str) -> tuple[str, list[tuple[str, float]]]:
+        def _do_recognize(img: Image.Image | np.ndarray | str) -> OCRResult:
             pipeline = self.get_pipeline(OCRPipeline.TABLE_RECOGNITION)
             output = pipeline.predict(
                 input=img,
@@ -379,13 +382,15 @@ class OCRService:
                                 text_with_scores.append((text, float(score)))
 
             # 组合结果：HTML 表格 + 文本
-            full_text = "\n\n".join(html_tables) if html_tables else ""
-            if text_with_scores:
-                if full_text:
-                    full_text += "\n\n"
-                full_text += "\n".join(t for t, _ in text_with_scores)
+            html_text = "\n\n".join(html_tables) if html_tables else ""
+            raw_text = "\n".join(t for t, _ in text_with_scores) if text_with_scores else ""
 
-            return full_text, text_with_scores
+            return self._build_ocr_result(
+                raw_text=raw_text,
+                html_text=html_text,
+                text_with_scores=text_with_scores,
+                pipeline_type="table_recognition",
+            )
 
         try:
             return _do_recognize(image)
@@ -400,10 +405,10 @@ class OCRService:
         self,
         image: Image.Image | np.ndarray | str,
         options: OCROptions,
-    ) -> tuple[str, list[tuple[str, float]]]:
+    ) -> OCRResult:
         """公式识别"""
 
-        def _do_recognize(img: Image.Image | np.ndarray | str) -> tuple[str, list[tuple[str, float]]]:
+        def _do_recognize(img: Image.Image | np.ndarray | str) -> OCRResult:
             pipeline = self.get_pipeline(OCRPipeline.FORMULA_RECOGNITION)
             output = pipeline.predict(
                 input=img,
@@ -413,20 +418,32 @@ class OCRService:
             )
 
             text_with_scores: list[tuple[str, float]] = []
+            markdown_parts: list[str] = []
 
             for res in output:
                 # 提取公式 LaTeX 代码
                 if hasattr(res, "rec_formula"):
                     formula = res.rec_formula
                     if formula:
+                        markdown_parts.append(f"$$\n{formula}\n$$")
                         text_with_scores.append((formula, 1.0))
                 elif isinstance(res, dict):
                     formula = res.get("rec_formula", "")
                     if formula:
+                        markdown_parts.append(f"$$\n{formula}\n$$")
                         text_with_scores.append((formula, 1.0))
 
-            full_text = "\n".join(t for t, _ in text_with_scores)
-            return full_text, text_with_scores
+            markdown_text = "\n\n".join(markdown_parts)
+            raw_text = "\n".join(t for t, _ in text_with_scores)
+            html_text = markdown_to_html(markdown_text)
+
+            return self._build_ocr_result(
+                raw_text=raw_text,
+                markdown_text=markdown_text,
+                html_text=html_text,
+                text_with_scores=text_with_scores,
+                pipeline_type="formula_recognition",
+            )
 
         try:
             return _do_recognize(image)
@@ -441,10 +458,10 @@ class OCRService:
         self,
         image: Image.Image | np.ndarray | str,
         options: OCROptions,
-    ) -> tuple[str, list[tuple[str, float]]]:
+    ) -> OCRResult:
         """版面解析（PP-StructureV3）"""
 
-        def _do_recognize(img: Image.Image | np.ndarray | str) -> tuple[str, list[tuple[str, float]]]:
+        def _do_recognize(img: Image.Image | np.ndarray | str) -> OCRResult:
             pipeline = self.get_pipeline(OCRPipeline.PP_STRUCTURE_V3)
             output = pipeline.predict(
                 input=img,
@@ -458,6 +475,7 @@ class OCRService:
 
             text_with_scores: list[tuple[str, float]] = []
             markdown_parts: list[str] = []
+            images: dict[str, Any] = {}
 
             for res in output:
                 # 提取 Markdown 结果（如果有）
@@ -469,20 +487,31 @@ class OCRService:
                         markdown_text = markdown_data.get("markdown_texts", "")
                         if markdown_text:
                             markdown_parts.append(markdown_text)
+                        # 提取图像字典
+                        if "markdown_images" in markdown_data:
+                            images.update(markdown_data["markdown_images"])
                     elif isinstance(markdown_data, str):
                         markdown_parts.append(markdown_data)
 
-                # 提取 OCR 文本
+                # 提取 OCR 文本和置信度
                 if hasattr(res, "rec_texts") and hasattr(res, "rec_scores"):
                     for text, score in zip(res.rec_texts, res.rec_scores):
                         if text:
                             text_with_scores.append((text, float(score)))
 
-                # 提取表格 HTML
+                # 提取表格 HTML（转换为 Markdown 表格）
                 if hasattr(res, "table_res_list"):
                     for table_res in res.table_res_list:
                         if hasattr(table_res, "pred_html"):
-                            markdown_parts.append(table_res.pred_html)
+                            html_table = table_res.pred_html
+                            markdown_parts.append(html_table)
+                        # 提取表格 OCR 的置信度
+                        if hasattr(table_res, "table_ocr_pred"):
+                            ocr_pred = table_res.table_ocr_pred
+                            if hasattr(ocr_pred, "rec_texts") and hasattr(ocr_pred, "rec_scores"):
+                                for text, score in zip(ocr_pred.rec_texts, ocr_pred.rec_scores):
+                                    if text:
+                                        text_with_scores.append((text, float(score)))
 
                 # 提取公式 LaTeX
                 if hasattr(res, "formula_res_list"):
@@ -501,17 +530,54 @@ class OCRService:
                             markdown_text = markdown_data.get("markdown_texts", "")
                             if markdown_text:
                                 markdown_parts.append(markdown_text)
+                            if "markdown_images" in markdown_data:
+                                images.update(markdown_data["markdown_images"])
                         elif isinstance(markdown_data, str):
                             markdown_parts.append(markdown_data)
+
+                    # 提取 OCR 文本
                     rec_texts = res.get("rec_texts", [])
                     rec_scores = res.get("rec_scores", [])
                     for text, score in zip(rec_texts, rec_scores):
                         if text:
                             text_with_scores.append((text, float(score)))
 
-            # 优先使用 Markdown，否则使用文本
-            full_text = "\n\n".join(markdown_parts) if markdown_parts else "\n".join(t for t, _ in text_with_scores)
-            return full_text, text_with_scores
+                    # 提取表格结果
+                    for table_res in res.get("table_res_list", []):
+                        if "pred_html" in table_res:
+                            markdown_parts.append(table_res["pred_html"])
+                        ocr_pred = table_res.get("table_ocr_pred", {})
+                        for text, score in zip(
+                            ocr_pred.get("rec_texts", []),
+                            ocr_pred.get("rec_scores", []),
+                        ):
+                            if text:
+                                text_with_scores.append((text, float(score)))
+
+                    # 提取公式结果
+                    for formula_res in res.get("formula_res_list", []):
+                        latex = formula_res.get("rec_formula", "")
+                        if latex:
+                            markdown_parts.append(f"$$\n{latex}\n$$")
+                            text_with_scores.append((latex, 1.0))
+
+            # 组合 Markdown 文本
+            markdown_text = "\n\n".join(markdown_parts) if markdown_parts else ""
+
+            # 转换 Markdown 为 HTML
+            html_text = markdown_to_html(markdown_text) if markdown_text else ""
+
+            # 生成纯文本
+            raw_text = "\n".join(t for t, _ in text_with_scores) if text_with_scores else ""
+
+            return self._build_ocr_result(
+                raw_text=raw_text,
+                markdown_text=markdown_text,
+                html_text=html_text,
+                text_with_scores=text_with_scores,
+                pipeline_type="PP-StructureV3",
+                images=images,
+            )
 
         try:
             return _do_recognize(image)
@@ -522,7 +588,7 @@ class OCRService:
                 return _do_recognize(image)
             raise
 
-    def _extract_ocr_result(self, output) -> tuple[str, list[tuple[str, float]]]:
+    def _extract_ocr_result(self, output) -> OCRResult:
         """从 OCR 输出中提取结果"""
         text_with_scores: list[tuple[str, float]] = []
         for res in output:
@@ -549,5 +615,56 @@ class OCRService:
                         if text:
                             text_with_scores.append((text, 1.0))
 
-        full_text = "\n".join(t for t, _ in text_with_scores)
-        return full_text, text_with_scores
+        raw_text = "\n".join(t for t, _ in text_with_scores)
+
+        return self._build_ocr_result(
+            raw_text=raw_text,
+            text_with_scores=text_with_scores,
+            pipeline_type="OCR",
+        )
+
+    def _build_ocr_result(
+        self,
+        raw_text: str,
+        markdown_text: str = "",
+        html_text: str = "",
+        text_with_scores: list[tuple[str, float]] | None = None,
+        pipeline_type: str = "OCR",
+        images: dict[str, Any] | None = None,
+    ) -> OCRResult:
+        """构建 OCRResult 对象
+
+        Args:
+            raw_text: 纯文本
+            markdown_text: Markdown 格式文本
+            html_text: HTML 格式文本
+            text_with_scores: 文本块及置信度列表
+            pipeline_type: 管道类型
+            images: 图像字典
+
+        Returns:
+            OCRResult 对象
+        """
+        if text_with_scores is None:
+            text_with_scores = []
+
+        # 计算平均置信度
+        avg_score = 0.0
+        if text_with_scores:
+            avg_score = sum(s for _, s in text_with_scores) / len(text_with_scores)
+
+        # 收集低置信度项（低于 80%）
+        low_confidence_items = [
+            (text, score) for text, score in text_with_scores if score < 0.80
+        ]
+
+        return OCRResult(
+            raw_text=raw_text,
+            markdown_text=markdown_text or raw_text,
+            html_text=html_text or raw_text,
+            text_with_scores=text_with_scores,
+            avg_score=avg_score,
+            low_confidence_items=low_confidence_items,
+            pipeline_type=pipeline_type,
+            images=images or {},
+        )
