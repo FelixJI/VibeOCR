@@ -1,9 +1,12 @@
 """环境管理模块：负责自动部署嵌入式Python和管理项目依赖"""
 
 import os
+import ssl
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 import zipfile
 from pathlib import Path
 from urllib.request import Request, urlopen
@@ -104,56 +107,82 @@ def ping_url(url: str, timeout: int = 3) -> bool:
         return False
 
 
-def detect_paddlex_model_source(timeout: int = 5) -> tuple[str, str]:
+def detect_paddlex_model_source(timeout: int = 3) -> tuple[str, str]:
     """
     检测并选择最快的 PaddleX 模型下载源
 
-    通过测试各源的响应速度，选择最优的下载源。
-    对于国内用户，BOS 通常更快；国际用户 HuggingFace 可能更快。
+    通过并发测试 baidu.com 和 google.com 的响应速度来判断网络环境，
+    然后选择对应的模型下载源：
+    - 国内网络环境（baidu 更快或 google 不可用）-> 使用 BOS
+    - 国际网络环境（google 更快且可用）-> 使用 HuggingFace
 
     Args:
-        timeout: 每个源的超时时间（秒）
+        timeout: 每个源的超时时间（秒），默认3秒
 
     Returns:
         (环境变量值, 源名称)
         - ("BOS", "bos"): 使用百度对象存储
         - ("HuggingFace", "huggingface"): 使用 HuggingFace
     """
-    import time
-
-    print("[模型源检测] 正在检测最快的模型下载源...")
+    print("[模型源检测] 正在检测网络环境...")
 
     results = {}
+    results_lock = threading.Lock()
 
-    # 测试每个源的响应速度
-    for source_name, test_url in PADDLEX_SOURCE_TEST_URLS.items():
-        start_time = time.time()
+    # 网络环境测试 URL
+    network_test_urls = {
+        "domestic": "https://www.baidu.com",  # 国内网络
+        "international": "https://www.google.com",  # 国际网络
+    }
+
+    def test_network(env_type: str, test_url: str):
+        """测试网络环境"""
         try:
-            req = Request(test_url, headers={"User-Agent": "Mozilla/5.0"})
-            with urlopen(req, timeout=timeout) as response:
+            start_time = time.time()
+            ssl_context = ssl.create_default_context()
+            ssl_context.check_hostname = False
+            ssl_context.verify_mode = ssl.CERT_NONE
+
+            req = Request(test_url, method='HEAD', headers={"User-Agent": "Mozilla/5.0"})
+            with urlopen(req, timeout=timeout, context=ssl_context) as response:
                 if response.status == 200:
                     elapsed = time.time() - start_time
-                    results[source_name] = elapsed
-                    print(f"[模型源检测] {source_name}: {elapsed:.2f}秒")
-        except Exception as e:
-            print(f"[模型源检测] {source_name}: 不可访问 ({type(e).__name__})")
-            results[source_name] = float('inf')  # 不可访问
+                    with results_lock:
+                        results[env_type] = elapsed
+                    print(f"[模型源检测] {env_type} ({test_url}): {elapsed:.2f}秒 [OK]")
+                    return
+        except Exception:
+            pass
+        with results_lock:
+            results[env_type] = float('inf')
+        print(f"[模型源检测] {env_type} ({test_url}): 不可访问 [FAIL]")
 
-    # 选择最快的源
-    if not results:
-        print("[模型源检测] 无法访问任何源，使用默认 BOS")
+    # 并发测试网络环境
+    threads = []
+    for env_type, test_url in network_test_urls.items():
+        t = threading.Thread(target=test_network, args=(env_type, test_url))
+        t.start()
+        threads.append(t)
+
+    # 等待所有线程完成
+    for t in threads:
+        t.join(timeout=timeout + 1)
+
+    # 根据网络环境选择模型源
+    domestic_time = results.get("domestic", float('inf'))
+    international_time = results.get("international", float('inf'))
+
+    # 如果国际网络更快且可用，使用 HuggingFace
+    if international_time < domestic_time and international_time < float('inf'):
+        print(f"[模型源检测] 检测到国际网络环境，使用 HuggingFace")
+        return "HuggingFace", "huggingface"
+    else:
+        # 国内网络或两者都不可用时，使用 BOS
+        if domestic_time < float('inf'):
+            print(f"[模型源检测] 检测到国内网络环境，使用 BOS")
+        else:
+            print(f"[模型源检测] 无法确定网络环境，使用默认 BOS")
         return "BOS", "bos"
-
-    best_source = min(results.keys(), key=lambda k: results[k])
-
-    if results[best_source] == float('inf'):
-        print("[模型源检测] 所有源都不可访问，使用默认 BOS")
-        return "BOS", "bos"
-
-    env_value = PADDLEX_MODEL_SOURCES[best_source]
-    print(f"[模型源检测] 选择最快源: {best_source} ({results[best_source]:.2f}秒)")
-
-    return env_value, best_source
 
 
 def setup_paddlex_model_source(timeout: int = 5) -> str:

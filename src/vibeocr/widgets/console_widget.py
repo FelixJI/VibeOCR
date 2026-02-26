@@ -24,8 +24,8 @@ from vibeocr.services.log_service import LogEntry
 class ConsoleWidget(QWidget):
     """控制台输出控件 - 表格形式显示日志"""
 
-    # 低置信度计数变化信号
-    low_confidence_count_changed = Signal(int)  # 低置信度文本块数量
+    # 低置信度计数变化信号 (数量, [(文本, 置信度), ...])
+    low_confidence_count_changed = Signal(int, list)
 
     # 日志级别颜色
     LEVEL_COLORS = {
@@ -48,6 +48,7 @@ class ConsoleWidget(QWidget):
         self._current_filter = "ALL"
         self._row_to_log_index: Dict[int, int] = {}  # 表格行 -> 日志索引
         self._low_confidence_count: int = 0  # 低置信度文本块数量
+        self._low_confidence_items: List[tuple] = []  # 低置信度文本块详情 [(文本, 置信度), ...]
         self._setup_ui()
 
     def _setup_ui(self) -> None:
@@ -126,7 +127,8 @@ class ConsoleWidget(QWidget):
         self._table.setRowCount(0)
         self._row_to_log_index.clear()
         self._low_confidence_count = 0
-        self.low_confidence_count_changed.emit(0)
+        self._low_confidence_items.clear()
+        self.low_confidence_count_changed.emit(0, [])
 
     @Slot(str)
     def _on_filter_changed(self, text: str) -> None:
@@ -138,6 +140,7 @@ class ConsoleWidget(QWidget):
         """刷新表格显示"""
         self._row_to_log_index.clear()
         self._low_confidence_count = 0
+        self._low_confidence_items.clear()
 
         # 过滤日志
         if self._current_filter == "ALL":
@@ -151,8 +154,8 @@ class ConsoleWidget(QWidget):
             self._row_to_log_index[row] = self._all_logs.index(entry)
             self._add_table_row(row, entry)
 
-        # 发送低置信度计数信号
-        self.low_confidence_count_changed.emit(self._low_confidence_count)
+        # 发送低置信度计数信号（带详情）
+        self.low_confidence_count_changed.emit(self._low_confidence_count, self._low_confidence_items)
 
         # 滚动到底部
         if filtered_logs:
@@ -189,8 +192,12 @@ class ConsoleWidget(QWidget):
                 if confidence < self.LOW_CONFIDENCE_THRESHOLD:
                     # 标红消息列
                     msg_item.setForeground(self.LOW_CONFIDENCE_COLOR)
-                    # 计数低置信度
+                    # 计数低置信度并收集详情
                     self._low_confidence_count += 1
+                    # 提取文本内容（格式: "  [N] 置信度: XX.XX% | 文本内容"）
+                    text_match = re.search(r"\|\s*(.+)$", entry.message)
+                    text_content = text_match.group(1).strip() if text_match else "未知"
+                    self._low_confidence_items.append((text_content, confidence))
             except (ValueError, ZeroDivisionError):
                 pass
 

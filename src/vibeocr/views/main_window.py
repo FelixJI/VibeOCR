@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QLabel,
 )
-from PySide6.QtCore import Slot, QThreadPool, QRunnable, Signal, QObject, QTimer, QBuffer, Qt
+from PySide6.QtCore import Slot, QThreadPool, QRunnable, Signal, QObject, QTimer, QBuffer
 from PySide6.QtGui import QPixmap, QAction
 from PySide6.QtUiTools import QUiLoader
 
@@ -107,6 +107,9 @@ class DependencyCheckTask(QRunnable):
 class MainWindow(QMainWindow):
     """主窗口"""
 
+    # 状态更新信号（用于线程安全的状态栏更新）
+    _status_update_signal = Signal(str)
+
     def __init__(self) -> None:
         super().__init__()
         self._project_root = env_manager.get_project_root()
@@ -118,10 +121,29 @@ class MainWindow(QMainWindow):
         self._connect_signals()
         self._thread_pool = QThreadPool()
 
+        # 设置 OCRService 状态回调（用于显示模型下载进度）
+        self._setup_ocr_status_callback()
+
         # 启动时立即读取缓存，如果有有效缓存则直接更新状态
         self._try_load_cache()
         # 异步检查嵌入式依赖（在UI显示后）
         QTimer.singleShot(100, self._check_embedded_dependencies)
+
+    def _setup_ocr_status_callback(self) -> None:
+        """设置 OCR 状态回调，用于在状态栏显示模型下载进度"""
+        def on_ocr_status(stage: str, message: str) -> None:
+            """OCR 状态回调（可能从后台线程调用）"""
+            # 使用信号确保在主线程中更新 UI
+            self._status_update_signal.emit(message)
+
+        # 连接信号到状态栏更新槽
+        self._status_update_signal.connect(self._on_status_update)
+        OCRService.set_status_callback(on_ocr_status)
+
+    @Slot(str)
+    def _on_status_update(self, message: str) -> None:
+        """状态更新槽（线程安全）"""
+        self._statusbar.showMessage(message)
 
     def _setup_ui(self) -> None:
         """设置UI"""
@@ -323,17 +345,33 @@ class MainWindow(QMainWindow):
         setup_logging(self._console.append_log)
         logging.info("VibeOCR 启动")
 
-    @Slot(int)
-    def _on_low_confidence_changed(self, count: int) -> None:
-        """低置信度文本块数量变化"""
+    @Slot(int, list)
+    def _on_low_confidence_changed(self, count: int, items: list) -> None:
+        """低置信度文本块数量变化
+
+        Args:
+            count: 低置信度文本块数量
+            items: 低置信度文本块详情列表 [(文本, 置信度), ...]
+        """
         if count > 0:
+            # 构建低置信度详情信息
+            details = []
+            for text, confidence in items:
+                # 截断长文本
+                display_text = text[:20] + "..." if len(text) > 20 else text
+                details.append(f"'{display_text}' ({confidence:.0%})")
+
+            detail_str = "、".join(details)
+            message = f"{count} 个低置信度文本块: {detail_str}"
+
             # 在状态栏显示低置信度信息
             current_msg = self._statusbar.currentMessage()
-            # 如果当前消息是 OCR 识别完成相关的，追加低置信度信息
+            # 如果当前消息是 OCR 识别完成相关的，替换为带详情的消息
             if "识别完成" in current_msg:
-                self._statusbar.showMessage(f"{current_msg}，{count} 个低置信度文本块")
+                # 从原消息中提取文本块数和平均置信度
+                self._statusbar.showMessage(f"{current_msg}，{message}")
             else:
-                self._statusbar.showMessage(f"{count} 个低置信度文本块", 3000)
+                self._statusbar.showMessage(message, 5000)  # 显示5秒
 
     def _create_menus(self) -> None:
         """创建菜单栏"""
@@ -597,8 +635,9 @@ class MainWindow(QMainWindow):
         block_count = len(text_with_scores)
         logging.info(f"OCR 识别完成，共 {block_count} 个文本块，{char_count} 个字符")
 
-        # 在控制台输出置信度信息
+        # 计算平均置信度和收集低置信度信息
         avg_score = 0.0
+        low_confidence_items = []
         if text_with_scores:
             logging.info("=== OCR 置信度详情 ===")
             for i, (text, score) in enumerate(text_with_scores, 1):
@@ -606,6 +645,9 @@ class MainWindow(QMainWindow):
                 display_text = text[:30] + "..." if len(text) > 30 else text
                 display_text = display_text.replace("\n", " ")
                 logging.info(f"  [{i}] 置信度: {score:.2%} | {display_text}")
+                # 收集低置信度文本块（低于80%）
+                if score < 0.80:
+                    low_confidence_items.append((text[:20], score))
             # 计算平均置信度
             avg_score = sum(s for _, s in text_with_scores) / len(text_with_scores)
             logging.info(f"  平均置信度: {avg_score:.2%}")
@@ -614,10 +656,18 @@ class MainWindow(QMainWindow):
         self._ui.textResult.setPlaceholderText("识别结果将显示在这里...")
         if result:
             self._ui.textResult.setPlainText(result)
+            # 构建状态栏消息（直接包含低置信度信息）
             if text_with_scores:
-                self._statusbar.showMessage(
-                    f"识别完成，{block_count} 个文本块，平均置信度: {avg_score:.0%}"
-                )
+                base_msg = f"识别完成，{block_count} 个文本块，平均置信度: {avg_score:.0%}"
+                if low_confidence_items:
+                    details = []
+                    for text, confidence in low_confidence_items:
+                        display_text = text[:20] + "..." if len(text) > 20 else text
+                        details.append(f"'{display_text}' ({confidence:.0%})")
+                    detail_str = "、".join(details)
+                    self._statusbar.showMessage(f"{base_msg}，{len(low_confidence_items)} 个低置信度: {detail_str}")
+                else:
+                    self._statusbar.showMessage(base_msg)
             else:
                 self._statusbar.showMessage(f"识别完成，共 {len(result)} 个字符")
         else:

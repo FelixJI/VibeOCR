@@ -100,6 +100,26 @@ class OCRService:
     _device: Optional[str] = None
     _lock = threading.Lock()
     _initialized = False
+    _status_callback: Optional[callable] = None  # 状态回调函数
+
+    @classmethod
+    def set_status_callback(cls, callback: Optional[callable]) -> None:
+        """设置状态回调函数
+
+        Args:
+            callback: 回调函数，接收 (stage, message) 参数
+                     例如: ("模型下载", "正在下载 OCR 模型...")
+        """
+        cls._status_callback = callback
+
+    @classmethod
+    def _notify_status(cls, stage: str, message: str) -> None:
+        """通知状态变化"""
+        if cls._status_callback:
+            try:
+                cls._status_callback(stage, message)
+            except Exception:
+                pass  # 忽略回调错误
 
     def __new__(cls) -> "OCRService":
         if cls._instance is None:
@@ -193,11 +213,25 @@ class OCRService:
 
     def _create_pipeline(self, pipeline_name: str, device: str) -> Any:
         """创建指定管道"""
+        # 获取管道显示名称
+        display_name = pipeline_name
+        for p in OCRPipeline:
+            if p.value == pipeline_name:
+                display_name = p.display_name
+                break
+
+        # 通知正在初始化/下载模型
+        self._notify_status("模型初始化", f"正在初始化 {display_name} 管道（首次使用需要下载模型）...")
+
         pipeline = create_pipeline(
             pipeline=pipeline_name,
             device=device,
         )
         _logger.info("管道 %s 初始化于设备: %s", pipeline_name, device)
+
+        # 通知初始化完成
+        self._notify_status("模型初始化", f"{display_name} 管道初始化完成")
+
         return pipeline
 
     def _is_gpu_error(self, error: Exception) -> bool:
@@ -427,8 +461,16 @@ class OCRService:
 
             for res in output:
                 # 提取 Markdown 结果（如果有）
+                # 注意：res.markdown 返回的是字典，包含 markdown_texts 等键
                 if hasattr(res, "markdown"):
-                    markdown_parts.append(res.markdown)
+                    markdown_data = res.markdown
+                    if isinstance(markdown_data, dict):
+                        # 提取 markdown_texts 字符串
+                        markdown_text = markdown_data.get("markdown_texts", "")
+                        if markdown_text:
+                            markdown_parts.append(markdown_text)
+                    elif isinstance(markdown_data, str):
+                        markdown_parts.append(markdown_data)
 
                 # 提取 OCR 文本
                 if hasattr(res, "rec_texts") and hasattr(res, "rec_scores"):
@@ -454,7 +496,13 @@ class OCRService:
                 # 字典格式处理
                 if isinstance(res, dict):
                     if "markdown" in res:
-                        markdown_parts.append(res["markdown"])
+                        markdown_data = res["markdown"]
+                        if isinstance(markdown_data, dict):
+                            markdown_text = markdown_data.get("markdown_texts", "")
+                            if markdown_text:
+                                markdown_parts.append(markdown_text)
+                        elif isinstance(markdown_data, str):
+                            markdown_parts.append(markdown_data)
                     rec_texts = res.get("rec_texts", [])
                     rec_scores = res.get("rec_scores", [])
                     for text, score in zip(rec_texts, rec_scores):
