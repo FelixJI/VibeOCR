@@ -1,13 +1,17 @@
 """PaddleX OCR 服务"""
 
+from __future__ import annotations
+
 import logging
 import os
 import sys
 import threading
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, Callable, TYPE_CHECKING
 
 from vibeocr.models.ocr_result import OCRResult
 from vibeocr.utils.markdown_converter import markdown_to_html
@@ -16,25 +20,30 @@ from vibeocr.utils.markdown_converter import markdown_to_html
 os.environ.setdefault("FLAGS_enable_onednn_backend", "0")
 os.environ.setdefault("FLAGS_use_mkldnn", "0")
 
-import numpy as np
-import paddle
-from PIL import Image
+# 注意：GPU 模式需要确保所有 Paddle 操作在同一线程中执行
+# 工作线程设计已确保这一点
 
-# 在导入 paddlex 之前设置模型下载源
-# 这会自动检测最快的源（BOS 或 HuggingFace）
-from vibeocr.env_manager import setup_paddlex_model_source
-setup_paddlex_model_source()
+# 延迟导入: numpy, paddle, PIL 这些模块在首次使用时才导入
+# import numpy as np
+# import paddle
+# from PIL import Image
 
-# 导入模型缓存管理器
+# 导入模型缓存管理器（轻量级，可以保留）
 from vibeocr.model_cache_manager import (
     is_pipeline_cached,
     quick_check_all_models,
     get_paddlex_home,
 )
 
-from paddlex import create_pipeline
+# 延迟导入: PaddleX 和模型源设置（这些是启动慢的主要原因）
+# setup_paddlex_model_source() 和 create_pipeline 会在首次使用时才调用
 
 _logger = logging.getLogger(__name__)
+
+# 类型检查时导入（不影响运行时）
+if TYPE_CHECKING:
+    import numpy as np
+    from PIL import Image
 
 
 class OCRPipeline(Enum):
@@ -111,6 +120,13 @@ class OCRService:
     _lock = threading.Lock()
     _initialized = False
     _status_callback: Optional[callable] = None  # 状态回调函数
+    _source_configured = False  # 模型源是否已配置
+
+    # 预加载相关状态
+    _preload_progress_callback: Optional[Callable[[str, int, int], None]] = None  # (pipeline_name, current, total)
+    _preloaded_pipelines: set[str] = set()  # 已预加载的管道名称
+    _is_preloading = False  # 是否正在预加载
+    _preload_lock = threading.Lock()  # 预加载专用锁，保护 _preloaded_pipelines 和 _is_preloading
 
     @classmethod
     def set_status_callback(cls, callback: Optional[callable]) -> None:
@@ -130,6 +146,14 @@ class OCRService:
                 cls._status_callback(stage, message)
             except Exception:
                 pass  # 忽略回调错误
+
+    @classmethod
+    def _ensure_source_configured(cls) -> None:
+        """确保模型下载源已配置（延迟调用）"""
+        if not cls._source_configured:
+            from vibeocr.env_manager import setup_paddlex_model_source
+            setup_paddlex_model_source()
+            cls._source_configured = True
 
     def __new__(cls) -> "OCRService":
         if cls._instance is None:
@@ -158,12 +182,188 @@ class OCRService:
             _logger.warning(f"预加载模型缓存失败: {e}")
             return {}
 
+    @classmethod
+    def set_preload_progress_callback(cls, callback: Optional[Callable[[str, int, int], None]]) -> None:
+        """设置预加载进度回调函数
+
+        Args:
+            callback: 回调函数，接收 (pipeline_name, current, total) 参数
+                     例如: ("OCR", 1, 3) 表示正在加载第 1 个管道，共 3 个
+        """
+        cls._preload_progress_callback = callback
+
+    @classmethod
+    def is_pipeline_preloaded(cls, pipeline: "OCRPipeline") -> bool:
+        """检查指定管道是否已预加载
+
+        Args:
+            pipeline: 管道类型
+
+        Returns:
+            是否已预加载
+        """
+        with cls._preload_lock:
+            return pipeline.value in cls._preloaded_pipelines
+
+    @classmethod
+    def get_preloaded_pipelines(cls) -> list[str]:
+        """获取已预加载的管道名称列表"""
+        with cls._preload_lock:
+            return list(cls._preloaded_pipelines)
+
+    @classmethod
+    def preload_pipeline(cls, pipeline: "OCRPipeline") -> bool:
+        """预加载单个管道（同步）
+
+        Args:
+            pipeline: 要预加载的管道
+
+        Returns:
+            是否成功加载
+        """
+        pipeline_name = pipeline.value
+        
+        # 检查是否已缓存（使用主锁保护 _pipelines）
+        with cls._lock:
+            if pipeline_name in cls._pipelines:
+                with cls._preload_lock:
+                    cls._preloaded_pipelines.add(pipeline_name)
+                return True
+
+        try:
+            _logger.info(f"[预加载] 开始加载管道: {pipeline.display_name}")
+            instance = cls()
+            instance.get_pipeline(pipeline)
+            
+            # 更新预加载状态（使用预加载锁）
+            with cls._preload_lock:
+                cls._preloaded_pipelines.add(pipeline_name)
+            
+            _logger.info(f"[预加载] 管道加载完成: {pipeline.display_name}")
+            return True
+        except Exception as e:
+            _logger.error(f"[预加载] 管道加载失败 {pipeline.display_name}: {e}")
+            return False
+
+    @classmethod
+    def preload_pipelines_sequential(
+        cls,
+        pipelines: list["OCRPipeline"],
+        progress_callback: Optional[Callable[[str, int, int], None]] = None
+    ) -> dict[str, bool]:
+        """顺序预加载多个管道
+
+        Args:
+            pipelines: 要预加载的管道列表
+            progress_callback: 进度回调 (pipeline_name, current, total)
+
+        Returns:
+            各管道加载结果 {pipeline_name: success}
+        """
+        # 检查是否有预加载任务在进行中
+        with cls._preload_lock:
+            if cls._is_preloading:
+                _logger.warning("[预加载] 已有预加载任务在进行中")
+                return {}
+            cls._is_preloading = True
+        
+        results = {}
+        total = len(pipelines)
+
+        try:
+            for i, pipeline in enumerate(pipelines, 1):
+                pipeline_name = pipeline.value
+                display_name = pipeline.display_name
+
+                # 通知进度
+                if progress_callback:
+                    progress_callback(pipeline_name, i, total)
+                if cls._preload_progress_callback:
+                    cls._preload_progress_callback(pipeline_name, i, total)
+
+                _logger.info(f"[预加载] ({i}/{total}) 加载 {display_name}...")
+                results[pipeline_name] = cls.preload_pipeline(pipeline)
+
+            # 汇总结果
+            success_count = sum(1 for v in results.values() if v)
+            _logger.info(f"[预加载] 完成: {success_count}/{total} 个管道加载成功")
+            
+        finally:
+            # 确保重置状态
+            with cls._preload_lock:
+                cls._is_preloading = False
+
+        return results
+
+    @classmethod
+    def preload_pipelines_parallel(
+        cls,
+        pipelines: list["OCRPipeline"],
+        max_workers: int = 2,
+        progress_callback: Optional[Callable[[str, int, int], None]] = None
+    ) -> dict[str, bool]:
+        """预加载多个管道（顺序执行，避免CUDA上下文问题）
+
+        注意：由于 PaddlePaddle CUDA 上下文不能跨线程共享，
+        此方法实际采用顺序加载以确保稳定性。
+
+        Args:
+            pipelines: 要预加载的管道列表
+            max_workers: 参数保留用于兼容，实际不使用
+            progress_callback: 进度回调 (pipeline_name, current, total)
+
+        Returns:
+            各管道加载结果 {pipeline_name: success}
+        """
+        # 使用顺序加载，避免CUDA上下文问题
+        return cls.preload_pipelines_sequential(pipelines, progress_callback)
+
+    @classmethod
+    def preload_in_background(
+        cls,
+        pipelines: list["OCRPipeline"],
+        parallel: bool = True,
+        max_workers: int = 2,
+        on_complete: Optional[Callable[[dict[str, bool]], None]] = None
+    ) -> threading.Thread:
+        """在后台线程中预加载管道（非阻塞）
+
+        Args:
+            pipelines: 要预加载的管道列表
+            parallel: 是否并行加载（默认 True）
+            max_workers: 并行加载的最大工作线程数
+            on_complete: 完成回调，接收加载结果字典
+
+        Returns:
+            后台线程对象
+        """
+        def _preload_task():
+            try:
+                if parallel:
+                    results = cls.preload_pipelines_parallel(pipelines, max_workers)
+                else:
+                    results = cls.preload_pipelines_sequential(pipelines)
+
+                if on_complete:
+                    on_complete(results)
+            except Exception as e:
+                _logger.error(f"[预加载] 后台预加载任务失败: {e}")
+                if on_complete:
+                    on_complete({})
+
+        thread = threading.Thread(target=_preload_task, daemon=True, name="PipelinePreload")
+        thread.start()
+        return thread
+
     def _init_gpu(self) -> None:
         """初始化 GPU 环境并检查可用性"""
+        # 延迟导入: paddle（首次使用时才导入）
+        import paddle
+
         try:
             is_compiled_with_cuda = paddle.is_compiled_with_cuda()
             current_device = paddle.device.get_device()
-            
+
             _logger.info(f"Paddle 编译时包含 CUDA: {is_compiled_with_cuda}")
             _logger.info(f"当前 Paddle 设备: {current_device}")
 
@@ -171,7 +371,7 @@ class OCRService:
                 # 如果在 Windows 上，尝试设置 CUDA 路径
                 if os.name == "nt":
                     self._setup_cuda_paths_windows()
-                
+
                 # 通过 run_check 检查 GPU 是否实际可用
                 try:
                     # 仅在尚未确认 GPU 工作的情况下运行检查
@@ -225,9 +425,10 @@ class OCRService:
         if paths_to_add:
             _logger.info(f"临时添加 CUDA 路径到当前进程环境: {paths_to_add}")
             os.environ["PATH"] = os.pathsep.join(paths_to_add + [current_path])
-            
+
             # 更新路径后重新检查设备（可能需要重启或重新加载库，但值得一试）
             try:
+                import paddle
                 if "gpu" not in paddle.device.get_device():
                     # 如果可能，强制重新检查？ paddle 通常会缓存设备信息。
                     pass
@@ -236,6 +437,12 @@ class OCRService:
 
     def _create_pipeline(self, pipeline_name: str, device: str) -> Any:
         """创建指定管道"""
+        # 延迟导入: 确保模型源已配置（首次使用时才执行网络检测）
+        self._ensure_source_configured()
+
+        # 延迟导入: PaddleX（这是启动慢的主要原因，~30s）
+        from paddlex import create_pipeline
+
         # 获取管道显示名称
         display_name = pipeline_name
         for p in OCRPipeline:
@@ -328,18 +535,25 @@ class OCRService:
         """
 
         actual_options = options if options is not None else OCROptions()
+        _logger.info(f"[recognize] 开始识别，管道: {actual_options.pipeline.value}")
 
         # 根据管道类型分发
-        if actual_options.pipeline == OCRPipeline.OCR:
-            return self._recognize_ocr(image, actual_options)
-        elif actual_options.pipeline == OCRPipeline.TABLE_RECOGNITION:
-            return self._recognize_table(image, actual_options)
-        elif actual_options.pipeline == OCRPipeline.FORMULA_RECOGNITION:
-            return self._recognize_formula(image, actual_options)
-        elif actual_options.pipeline == OCRPipeline.PP_STRUCTURE_V3:
-            return self._recognize_structure(image, actual_options)
-        else:
-            return self._recognize_ocr(image, actual_options)
+        try:
+            if actual_options.pipeline == OCRPipeline.OCR:
+                result = self._recognize_ocr(image, actual_options)
+            elif actual_options.pipeline == OCRPipeline.TABLE_RECOGNITION:
+                result = self._recognize_table(image, actual_options)
+            elif actual_options.pipeline == OCRPipeline.FORMULA_RECOGNITION:
+                result = self._recognize_formula(image, actual_options)
+            elif actual_options.pipeline == OCRPipeline.PP_STRUCTURE_V3:
+                result = self._recognize_structure(image, actual_options)
+            else:
+                result = self._recognize_ocr(image, actual_options)
+            _logger.info(f"[recognize] 识别完成，返回 {len(result.raw_text)} 字符")
+            return result
+        except Exception as e:
+            _logger.error(f"[recognize] 识别过程中发生异常: {e}", exc_info=True)
+            raise
 
     def _recognize_ocr(
         self,
@@ -349,15 +563,27 @@ class OCRService:
         """通用 OCR 识别"""
 
         def _do_recognize(img: Image.Image | np.ndarray | str) -> OCRResult:
+            _logger.info("[_recognize_ocr] 获取 OCR 管道...")
             pipeline = self.get_pipeline(OCRPipeline.OCR)
-            output = pipeline.predict(
-                input=img,
-                use_doc_orientation_classify=options.use_doc_orientation_classify,
-                use_doc_unwarping=options.use_doc_unwarping,
-                use_textline_orientation=options.use_textline_orientation,
-            )
+            _logger.info("[_recognize_ocr] 执行 predict...")
+            try:
+                # 调用 predict
+                output = pipeline.predict(
+                    input=img,
+                    use_doc_orientation_classify=options.use_doc_orientation_classify,
+                    use_doc_unwarping=options.use_doc_unwarping,
+                    use_textline_orientation=options.use_textline_orientation,
+                )
+                _logger.info(f"[_recognize_ocr] predict 返回，类型: {type(output)}")
+            except Exception as e:
+                _logger.error(f"[_recognize_ocr] predict 调用失败: {e}", exc_info=True)
+                raise
 
-            return self._extract_ocr_result(output)
+            # 安全地处理输出 - 使用安全消费方法（内部会禁用 GC）
+            _logger.info("[_recognize_ocr] 开始处理输出...")
+            result = self._process_ocr_output_safe(output)
+            _logger.info(f"[_recognize_ocr] 结果处理完成: {len(result.raw_text)} 字符")
+            return result
 
         try:
             return _do_recognize(image)
@@ -384,10 +610,13 @@ class OCRService:
                 use_layout_detection=options.use_layout_detection,
             )
 
+            # 确保 GPU 操作完成后再处理结果 - 使用安全消费方法
+            output_list = self._consume_generator_safely(output)
+
             text_with_scores: list[tuple[str, float]] = []
             html_tables: list[str] = []
 
-            for res in output:
+            for res in output_list:
                 # 提取表格 HTML
                 if hasattr(res, "table_res_list"):
                     for table_res in res.table_res_list:
@@ -447,10 +676,13 @@ class OCRService:
                 use_layout_detection=options.use_layout_detection,
             )
 
+            # 确保 GPU 操作完成后再处理结果 - 使用安全消费方法
+            output_list = self._consume_generator_safely(output)
+
             text_with_scores: list[tuple[str, float]] = []
             markdown_parts: list[str] = []
 
-            for res in output:
+            for res in output_list:
                 # 提取公式 LaTeX 代码
                 if hasattr(res, "rec_formula"):
                     formula = res.rec_formula
@@ -503,11 +735,14 @@ class OCRService:
                 use_chart_recognition=options.use_chart_recognition,
             )
 
+            # 确保 GPU 操作完成后再处理结果 - 使用安全消费方法
+            output_list = self._consume_generator_safely(output)
+
             text_with_scores: list[tuple[str, float]] = []
             markdown_parts: list[str] = []
             images: dict[str, Any] = {}
 
-            for res in output:
+            for res in output_list:
                 # 提取 Markdown 结果（如果有）
                 # 注意：res.markdown 返回的是字典，包含 markdown_texts 等键
                 if hasattr(res, "markdown"):
@@ -618,34 +853,98 @@ class OCRService:
                 return _do_recognize(image)
             raise
 
-    def _extract_ocr_result(self, output) -> OCRResult:
-        """从 OCR 输出中提取结果"""
+    def _sync_cuda_if_available(self) -> None:
+        """如果使用 GPU，同步 CUDA 操作以确保完成"""
+        if self._device and "gpu" in self._device:
+            try:
+                import paddle
+                # 使用新的 API，避免 deprecation warning
+                paddle.device.synchronize()
+                _logger.debug("[CUDA] 同步完成")
+            except Exception as e:
+                _logger.warning(f"[CUDA] 同步失败（可能在 CPU 模式）: {e}")
+
+    def _consume_generator_safely(self, output) -> list:
+        """安全地消费 generator
+
+        关键：在消费 generator 时禁用 Python GC，
+        避免 GC 与 CUDA 内存管理冲突导致堆损坏。
+        """
+        import gc
+
+        # 同步确保 GPU 操作完成
+        self._sync_cuda_if_available()
+
+        # 禁用 GC 以避免堆损坏
+        gc_was_enabled = gc.isenabled()
+        gc.disable()
+
+        try:
+            _logger.debug("[安全消费] 开始消费 generator...(GC 已禁用)")
+            output_list = list(output)
+            _logger.debug(f"[安全消费] 获取到 {len(output_list)} 个结果项")
+
+            # 再次同步确保数据完全就绪
+            self._sync_cuda_if_available()
+
+            return output_list
+        except Exception as e:
+            _logger.error(f"[安全消费] 消费 generator 时出错: {e}", exc_info=True)
+            return []
+        finally:
+            # 恢复 GC 状态
+            if gc_was_enabled:
+                gc.enable()
+            _logger.debug("[安全消费] GC 已恢复")
+
+    def _process_ocr_output_safe(self, output) -> OCRResult:
+        """从 OCR 输出中提取结果（安全版本）
+
+        关键：先将 generator 完全消费为 list，确保所有 GPU 计算在当前线程完成，
+        然后再提取数据。这避免了 generator 跨线程访问 GPU 资源导致的崩溃。
+        """
+        _logger.info("[_process_ocr_output_safe] 开始提取结果...")
         text_with_scores: list[tuple[str, float]] = []
-        for res in output:
-            if hasattr(res, "rec_texts") and hasattr(res, "rec_scores"):
-                for text, score in zip(res.rec_texts, res.rec_scores):
-                    if text:  # 跳过空文本
-                        text_with_scores.append((text, float(score)))
-            elif hasattr(res, "rec_texts"):
-                # 没有置信度信息时，使用默认值
-                for text in res.rec_texts:
-                    if text:
-                        text_with_scores.append((text, 1.0))
-            elif hasattr(res, "ocr_text"):
-                text_with_scores.append((res.ocr_text, 1.0))
-            elif isinstance(res, dict):
-                rec_texts = res.get("rec_texts", [])
-                rec_scores = res.get("rec_scores", [])
-                if rec_scores:
-                    for text, score in zip(rec_texts, rec_scores):
-                        if text:
+
+        # 关键修复：使用安全的 generator 消费方法（禁用 GC）
+        output_list = self._consume_generator_safely(output)
+
+        # 处理结果列表（此时数据已在 CPU 内存中，安全访问）
+        result_count = 0
+        for res in output_list:
+            result_count += 1
+            if result_count > 100:  # 防止异常情况
+                _logger.warning("[_process_ocr_output_safe] 结果项过多，可能有问题")
+                break
+            try:
+                if hasattr(res, "rec_texts") and hasattr(res, "rec_scores"):
+                    for text, score in zip(res.rec_texts, res.rec_scores):
+                        if text:  # 跳过空文本
                             text_with_scores.append((text, float(score)))
-                else:
-                    for text in rec_texts:
+                elif hasattr(res, "rec_texts"):
+                    # 没有置信度信息时，使用默认值
+                    for text in res.rec_texts:
                         if text:
                             text_with_scores.append((text, 1.0))
+                elif hasattr(res, "ocr_text"):
+                    text_with_scores.append((res.ocr_text, 1.0))
+                elif isinstance(res, dict):
+                    rec_texts = res.get("rec_texts", [])
+                    rec_scores = res.get("rec_scores", [])
+                    if rec_scores:
+                        for text, score in zip(rec_texts, rec_scores):
+                            if text:
+                                text_with_scores.append((text, float(score)))
+                    else:
+                        for text in rec_texts:
+                            if text:
+                                text_with_scores.append((text, 1.0))
+            except Exception as e:
+                _logger.error(f"[_process_ocr_output_safe] 处理结果项 #{result_count} 时出错: {e}")
+                continue
 
         raw_text = "\n".join(t for t, _ in text_with_scores)
+        _logger.info(f"[_process_ocr_output_safe] 处理完成: 共 {result_count} 个结果项, {len(text_with_scores)} 个文本块")
 
         return self._build_ocr_result(
             raw_text=raw_text,

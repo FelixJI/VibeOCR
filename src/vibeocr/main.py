@@ -4,6 +4,19 @@ import os
 import sys
 from pathlib import Path
 
+# ============================================================
+# 重要：必须在导入任何其他模块之前设置以下环境变量
+# 这些设置解决 Windows + PaddlePaddle + NumPy 环境下的常见崩溃问题
+# ============================================================
+
+# 解决 OpenMP 库冲突 (libiomp5md.dll 重复加载导致 0xC0000005 崩溃)
+# 当多个库（PaddlePaddle、NumPy、Intel MKL）各自捆绑不同版本的 OpenMP 时会发生冲突
+os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
+
+# 禁用 OneDNN 以提高兼容性（某些 CPU 指令集不兼容会导致崩溃）
+os.environ.setdefault("FLAGS_enable_onednn_backend", "0")
+os.environ.setdefault("FLAGS_use_mkldnn", "0")
+
 # 设置环境变量以抑制不必要的警告
 # 禁用 PaddleX 的模型源连接检查
 os.environ.setdefault("PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK", "True")
