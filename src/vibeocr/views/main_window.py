@@ -1018,20 +1018,24 @@ class MainWindow(QMainWindow):
             self._run_ocr(pixmap)
 
     def _run_ocr(self, pixmap: QPixmap) -> None:
-        """执行OCR识别
+        """Execute OCR recognition
 
-        由于 PaddlePaddle GPU 与 QThread 工作线程存在堆损坏问题，
-        改为在主线程中直接执行 OCR。
+        Supports two modes:
+        1. Subprocess mode (default): Execute OCR via subprocess to avoid UI freezing
+        2. Direct mode: Execute OCR directly in main thread (for debugging)
+
+        Mode switching controlled by environment variable VIBEOCR_USE_SUBPROCESS.
         """
-        # 延迟导入: OCR 相关类型
-        from vibeocr.services.ocr_service import OCRService, OCROptions, OCRPipeline
+        # Lazy import: OCR related types
+        from vibeocr.services.ocr_service import OCROptions, OCRPipeline
+        from vibeocr.services import USE_SUBPROCESS, get_ocr_service
 
-        logging.info("开始 OCR 识别")
+        logging.info("Starting OCR recognition")
         self._ui.textResult.clear()
-        self._ui.textResult.setPlaceholderText("正在识别...")
-        self._statusbar.showMessage("正在识别...")
+        self._ui.textResult.setPlaceholderText("Recognizing...")
+        self._statusbar.showMessage("Recognizing...")
 
-        # 强制处理 UI 事件，显示“正在识别”提示
+        # Force UI update to show "Recognizing" message
         QApplication.processEvents()
 
         # 获取当前选择的管道
@@ -1067,30 +1071,36 @@ class MainWindow(QMainWindow):
             logging.info(f"子产线: 表格={use_table}, 公式={use_formula}, 印章={use_seal}, 图表={use_chart}")
 
         try:
-            # 将 QPixmap 转换为 numpy 数组
+            # 将 QPixmap 转换为图像数据
             buffer = QBuffer()
             buffer.open(QBuffer.OpenModeFlag.ReadWrite)
             pixmap.save(buffer, "PNG")
             image_data = bytes(buffer.data().data())
             buffer.close()
 
-            # 解码图像
-            pil_image = Image.open(io.BytesIO(image_data))
-            import numpy as np
-            image_array = np.array(pil_image)
-            logging.info(f"[主线程OCR] 图像尺寸: {pil_image.size}, 数组形状: {image_array.shape}")
-
-            # 直接在主线程中执行 OCR
-            logging.info("[主线程OCR] 开始识别...")
-            ocr_service = OCRService()
-            result = ocr_service.recognize(image_array, options)
-            logging.info(f"[主线程OCR] 识别完成，{len(result.raw_text)} 字符")
+            # 根据模式选择执行方式
+            if USE_SUBPROCESS:
+                # 子进程模式
+                logging.info("[子进程OCR] 开始识别...")
+                ocr_service = get_ocr_service()
+                result = ocr_service.recognize(image_data, options)
+                logging.info(f"[子进程OCR] 识别完成，{len(result.raw_text)} 字符")
+            else:
+                # 直接模式（用于调试）
+                pil_image = Image.open(io.BytesIO(image_data))
+                import numpy as np
+                image_array = np.array(pil_image)
+                logging.info(f"[主线程OCR] 图像尺寸: {pil_image.size}, 数组形状: {image_array.shape}")
+                logging.info("[主线程OCR] 开始识别...")
+                ocr_service = get_ocr_service()
+                result = ocr_service.recognize(image_array, options)
+                logging.info(f"[主线程OCR] 识别完成，{len(result.raw_text)} 字符")
 
             # 调用完成回调
             self._on_ocr_finished(result)
 
         except Exception as e:
-            logging.error(f"[主线程OCR] 识别失败: {e}", exc_info=True)
+            logging.error(f"OCR 识别失败: {e}", exc_info=True)
             self._on_ocr_error(str(e))
 
     @Slot(object)
@@ -1609,13 +1619,23 @@ class MainWindow(QMainWindow):
         if not self._thread_pool.waitForDone(5000):
             logging.warning("部分任务未能在超时时间内完成，强制退出")
 
-        # 清理 OCR 服务的管道缓存（释放内存和 GPU 资源）
+        # 清理 OCR 服务资源
         try:
-            from vibeocr.services.ocr_service import OCRService
-            OCRService._pipelines.clear()
-            logging.info("OCR 管道缓存已清理")
+            from vibeocr.services import USE_SUBPROCESS
+
+            if USE_SUBPROCESS:
+                # 子进程模式：关闭子进程服务
+                from vibeocr.services.ocr_service_subprocess import OCRServiceSubprocess
+                if OCRServiceSubprocess._instance is not None:
+                    OCRServiceSubprocess._instance.shutdown()
+                    logging.info("OCR 子进程服务已关闭")
+            else:
+                # 直接模式：清理管道缓存
+                from vibeocr.services.ocr_service import OCRService
+                OCRService._pipelines.clear()
+                logging.info("OCR 管道缓存已清理")
         except Exception as e:
-            logging.warning(f"清理 OCR 缓存失败: {e}")
+            logging.warning(f"清理 OCR 资源失败: {e}")
 
         event.accept()
         logging.info("应用程序已关闭")
