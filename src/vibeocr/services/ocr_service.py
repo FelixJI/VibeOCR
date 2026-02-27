@@ -25,6 +25,13 @@ from PIL import Image
 from vibeocr.env_manager import setup_paddlex_model_source
 setup_paddlex_model_source()
 
+# 导入模型缓存管理器
+from vibeocr.model_cache_manager import (
+    is_pipeline_cached,
+    quick_check_all_models,
+    get_paddlex_home,
+)
+
 from paddlex import create_pipeline
 
 _logger = logging.getLogger(__name__)
@@ -138,6 +145,19 @@ class OCRService:
                     self._init_gpu()
                     self._initialized = True
 
+    @classmethod
+    def preload_model_cache(cls) -> dict[str, bool]:
+        """预加载模型缓存信息，加速后续初始化
+
+        Returns:
+            各管道模型就绪状态
+        """
+        try:
+            return quick_check_all_models()
+        except Exception as e:
+            _logger.warning(f"预加载模型缓存失败: {e}")
+            return {}
+
     def _init_gpu(self) -> None:
         """初始化 GPU 环境并检查可用性"""
         try:
@@ -223,8 +243,17 @@ class OCRService:
                 display_name = p.display_name
                 break
 
-        # 通知正在初始化/下载模型
-        self._notify_status("模型初始化", f"正在初始化 {display_name} 管道（首次使用需要下载模型）...")
+        # 检查模型是否已缓存（快速检查，避免重复提示）
+        models_cached = is_pipeline_cached(pipeline_name)
+
+        if not models_cached:
+            # 模型未缓存，需要下载，显示初始化提示
+            self._notify_status("模型初始化", f"正在初始化 {display_name} 管道（首次使用需要下载模型）...")
+        else:
+            # 模型已缓存，只显示简洁的加载信息
+            _logger.info(f"管道 {display_name} 模型已存在，直接加载...")
+            # 可以选择性地通知，或者完全跳过以减少干扰
+            # self._notify_status("模型加载", f"正在加载 {display_name}...")
 
         pipeline = create_pipeline(
             pipeline=pipeline_name,
@@ -233,7 +262,8 @@ class OCRService:
         _logger.info("管道 %s 初始化于设备: %s", pipeline_name, device)
 
         # 通知初始化完成
-        self._notify_status("模型初始化", f"{display_name} 管道初始化完成")
+        if not models_cached:
+            self._notify_status("模型初始化", f"{display_name} 管道初始化完成")
 
         return pipeline
 
