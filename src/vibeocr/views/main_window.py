@@ -7,7 +7,6 @@ import io
 import logging
 from pathlib import Path
 from typing import Optional, TYPE_CHECKING
-from queue import Queue
 
 from PIL import Image
 from PySide6.QtWidgets import (
@@ -34,7 +33,7 @@ from vibeocr.services.log_service import setup_logging
 from vibeocr.models.ocr_result import OCRResult
 from vibeocr import env_manager
 from vibeocr.machine_cache import is_cache_valid
-from vibeocr.utils.qt_async import run_coroutine, async_slot
+from vibeocr.utils.qt_async import run_coroutine
 
 # 延迟导入: OCR 服务模块导入很慢（~33s），延迟到首次使用时导入
 if TYPE_CHECKING:
@@ -264,9 +263,6 @@ class MainWindow(QMainWindow):
 
     # 状态更新信号（用于线程安全的状态栏更新）
     _status_update_signal = Signal(str)
-    # 预加载进度信号
-    _preload_progress_signal = Signal(str, int, int)  # (pipeline_name, current, total)
-    _preload_finished_signal = Signal(dict)  # {pipeline_name: success}
     # 子进程 Worker 就绪信号
     _subprocess_ready_signal = Signal(bool)
 
@@ -280,9 +276,12 @@ class MainWindow(QMainWindow):
 
         # 创建专用 OCR 工作线程
         self._ocr_worker_thread = OCRWorkerThread()
-        
+
         # 子进程 OCR 服务（延迟初始化）
         self._subprocess_service = None
+
+        # 当前 OCR 结果（用于复制操作）
+        self._current_ocr_result: OCRResult | None = None
 
         self._setup_ui()
         self._setup_console()
@@ -293,10 +292,6 @@ class MainWindow(QMainWindow):
         # 设置 OCRService 状态回调（用于显示模型下载进度）
         self._setup_ocr_status_callback()
 
-        # 连接预加载信号
-        self._preload_progress_signal.connect(self._on_preload_progress)
-        self._preload_finished_signal.connect(self._on_preload_finished)
-        
         # 连接子进程 Worker 就绪信号
         self._subprocess_ready_signal.connect(self._on_subprocess_worker_ready)
 
@@ -343,27 +338,8 @@ class MainWindow(QMainWindow):
         self._statusbar = QStatusBar(self)
         self.setStatusBar(self._statusbar)
 
-        # 初始化 OCR 预设下拉框
+        # 初始化 OCR 预设下拉框（包含截图组件和复制提示的初始化）
         self._init_preset_combo()
-
-        # 创建截图组件
-        self._screenshot_widget = ScreenshotWidget()
-
-        # 创建复制成功提示标签
-        self._copy_toast = QLabel("已复制到剪贴板", self._ui.btnCopyRich)
-        self._copy_toast.setStyleSheet("""
-            QLabel {
-                background-color: #333333;
-                color: white;
-                padding: 6px 12px;
-                border-radius: 4px;
-                font-size: 12px;
-            }
-        """)
-        self._copy_toast.hide()
-
-        # 保存当前 OCR 结果（用于复制）
-        self._current_ocr_result: OCRResult | None = None
 
     def _init_preset_combo(self) -> None:
         """初始化 OCR 管道和选项按钮"""
@@ -480,9 +456,6 @@ class MainWindow(QMainWindow):
             }
         """)
         self._copy_toast.hide()
-
-        # 保存当前 OCR 结果（用于复制）
-        self._current_ocr_result: OCRResult | None = None
 
     def _on_pipeline_clicked(self, pipeline) -> None:
         """管道按钮点击时更新 UI"""
@@ -871,42 +844,6 @@ class MainWindow(QMainWindow):
         worker = self._ocr_worker_thread.worker
         if worker:
             worker.request_preload.emit(pipelines_to_preload, parallel, max_workers)
-
-    @Slot(str, int, int)
-    def _on_preload_progress(self, pipeline_name: str, current: int, total: int) -> None:
-        """预加载进度回调"""
-        # 延迟导入: OCRPipeline 枚举
-        from vibeocr.services.ocr_service import OCRPipeline
-
-        # 获取显示名称
-        display_name = pipeline_name
-        for p in OCRPipeline:
-            if p.value == pipeline_name:
-                display_name = p.display_name
-                break
-
-        message = f"正在预热 {display_name} 模型 ({current}/{total})..."
-        self._statusbar.showMessage(message)
-        logging.info(f"[预加载] {message}")
-
-    @Slot(dict)
-    def _on_preload_finished(self, results: dict) -> None:
-        """预加载完成回调"""
-        self._preload_complete = True
-
-        success_count = sum(1 for v in results.values() if v)
-        total_count = len(results)
-
-        if success_count == total_count:
-            self._statusbar.showMessage("OCR 模型预热完成")
-            logging.info(f"[预加载] 完成: {success_count}/{total_count} 个管道加载成功")
-        else:
-            failed = [k for k, v in results.items() if not v]
-            self._statusbar.showMessage(f"OCR 模型预热部分完成 ({success_count}/{total_count})")
-            logging.warning(f"[预加载] 部分失败: {failed}")
-
-        # 更新设置页面的预加载状态
-        self._update_preload_status()
 
     def _show_install_dialog(self, missing: list) -> None:
         """显示安装提示对话框"""

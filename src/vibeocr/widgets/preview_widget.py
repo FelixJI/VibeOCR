@@ -11,7 +11,7 @@ class PreviewWidget(QWidget):
     """图片预览组件，无图片时点击可触发截图"""
 
     screenshot_requested = Signal()  # 请求截图信号
-    image_changed = Signal()  # 图片改变信号
+    image_changed = Signal()  # 图片改变信号（可用于启用/禁用复制按钮等）
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)

@@ -10,7 +10,7 @@ import time
 import zipfile
 from pathlib import Path
 from urllib.request import Request, urlopen
-from typing import Literal, Optional
+from typing import Literal
 
 from vibeocr.machine_cache import is_cache_valid, create_cache_entry
 
@@ -38,12 +38,6 @@ TEST_URLS = {
 PADDLEX_MODEL_SOURCES = {
     "bos": "BOS",  # 百度对象存储（国内快）
     "huggingface": "HuggingFace",  # HuggingFace（国际）
-}
-
-# PaddleX 模型下载源测试URL
-PADDLEX_SOURCE_TEST_URLS = {
-    "bos": "https://paddle-model-ecology.bj.bcebos.com",  # 百度BOS
-    "huggingface": "https://huggingface.co",  # HuggingFace
 }
 
 # 嵌入式Python下载URL
@@ -1180,156 +1174,3 @@ def get_project_root() -> Path:
         current = current.parent
     # 默认返回main.py的父目录的父目录
     return Path(__file__).parent.parent.parent
-
-
-# ============================================================
-# 便携式 Python 支持辅助函数
-# ============================================================
-
-def get_embedded_python(project_root: Optional[Path] = None) -> Path:
-    """获取嵌入式 Python 可执行文件路径（便捷函数）
-
-    优先使用虚拟环境 (.venv)，如果不存在则使用便携式 python/ 目录
-
-    Args:
-        project_root: 项目根目录，如果为 None 则自动检测
-
-    Returns:
-        嵌入式 Python 可执行文件路径
-    """
-    if project_root is None:
-        project_root = get_project_root()
-    return get_embedded_python_executable(project_root)
-
-
-def get_embedded_venv_python(project_root: Optional[Path] = None) -> Path:
-    """获取虚拟环境 Python 可执行文件路径
-
-    Args:
-        project_root: 项目根目录，如果为 None 则自动检测
-
-    Returns:
-        虚拟环境 Python 可执行文件路径
-    """
-    if project_root is None:
-        project_root = get_project_root()
-
-    if os.name == "nt":  # Windows
-        return project_root / ".venv" / "Scripts" / "python.exe"
-    else:
-        return project_root / ".venv" / "bin" / "python"
-
-
-def get_embedded_portable_python(project_root: Optional[Path] = None) -> Path:
-    """获取便携式 Python 可执行文件路径
-
-    Args:
-        project_root: 项目根目录，如果为 None 则自动检测
-
-    Returns:
-        便携式 Python 可执行文件路径
-    """
-    if project_root is None:
-        project_root = get_project_root()
-
-    if os.name == "nt":  # Windows
-        return project_root / "python" / "python.exe"
-    else:
-        return project_root / "python" / "bin" / "python"
-
-
-def is_embedded_python_ready(project_root: Optional[Path] = None) -> bool:
-    """检查嵌入式 Python 是否已准备好
-
-    Args:
-        project_root: 项目根目录，如果为 None 则自动检测
-
-    Returns:
-        是否准备好
-    """
-    if project_root is None:
-        project_root = get_project_root()
-
-    # 检查 Python 可执行文件
-    python_exe = get_embedded_python(project_root)
-    if not python_exe.exists():
-        return False
-
-    # 检查 PaddleX 依赖
-    try:
-        result = subprocess.run(
-            [str(python_exe), "-c", "import paddlex"],
-            capture_output=True,
-            timeout=10
-        )
-        return result.returncode == 0
-    except Exception:
-        return False
-
-
-def get_embedded_python_info(project_root: Optional[Path] = None) -> dict:
-    """获取嵌入式 Python 的详细信息
-
-    Args:
-        project_root: 项目根目录，如果为 None 则自动检测
-
-    Returns:
-        包含以下键的字典：
-        - exists: 是否存在
-        - path: Python 路径
-        - version: Python 版本
-        - has_paddle: 是否安装了 PaddlePaddle
-        - has_paddlex: 是否安装了 PaddleX
-        - mode: 环境模式（venv 或 portable）
-    """
-    if project_root is None:
-        project_root = get_project_root()
-
-    python_exe = get_embedded_python(project_root)
-    info = {
-        'exists': python_exe.exists(),
-        'path': str(python_exe),
-        'version': None,
-        'has_paddle': False,
-        'has_paddlex': False,
-        'mode': 'unknown'
-    }
-
-    if not info['exists']:
-        return info
-
-    # 检测模式
-    if '.venv' in str(python_exe):
-        info['mode'] = 'venv'
-    elif 'python' in str(python_exe).split(os.sep)[-2]:
-        info['mode'] = 'portable'
-
-    # 获取版本
-    try:
-        result = subprocess.run(
-            [str(python_exe), "--version"],
-            capture_output=True,
-            text=True,
-            timeout=10
-        )
-        if result.returncode == 0:
-            info['version'] = result.stdout.strip() or result.stderr.strip()
-    except Exception:
-        pass
-
-    # 检查依赖
-    for pkg in ['paddlepaddle', 'paddlex']:
-        try:
-            result = subprocess.run(
-                [str(python_exe), "-c", f"import {pkg}"],
-                capture_output=True,
-                timeout=10
-            )
-            if pkg == 'paddlepaddle':
-                info['has_paddle'] = result.returncode == 0
-            else:
-                info['has_paddlex'] = result.returncode == 0
-        except Exception:
-            pass
-
-    return info

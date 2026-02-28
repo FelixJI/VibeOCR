@@ -273,13 +273,13 @@ def get_preload_pipelines(project_root: Path) -> list[str]:
         project_root: 项目根目录
 
     Returns:
-        预加载管道名称列表，如果未配置则返回默认值 ["general"]
+        预加载管道名称列表，如果未配置则返回默认值 ["OCR"]
     """
     cache_data = load_cache(project_root)
     if cache_data is None:
-        return ["general"]  # 默认预加载 general 管道
+        return ["OCR"]  # 默认预加载 OCR 管道
 
-    return cache_data.get("preload_pipelines", ["general"])
+    return cache_data.get("preload_pipelines", ["OCR"])
 
 
 def set_preload_pipelines(project_root: Path, pipelines: list[str]) -> bool:
@@ -310,20 +310,3 @@ def set_preload_pipelines(project_root: Path, pipelines: list[str]) -> bool:
         print(f"[缓存] 预加载管道配置已保存: {pipelines}")
         return True
     return False
-
-
-def get_available_pipelines() -> list[str]:
-    """
-    获取所有可用的管道名称
-
-    Returns:
-        可用管道名称列表
-    """
-    # 标准管道列表
-    return [
-        "general",      # 通用场景
-        "handwriting",  # 手写识别
-        "table",        # 表格识别
-        "formula",      # 公式识别
-        "seal",         # 印章识别
-    ]
