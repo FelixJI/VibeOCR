@@ -50,15 +50,27 @@ def launch_application() -> int:
     """启动应用程序"""
     from PySide6.QtWidgets import QApplication
     from vibeocr.views.main_window import MainWindow
+    from vibeocr.utils.qt_async import create_qasync_event_loop
 
     app = QApplication(sys.argv)
     app.setApplicationName("VibeOCR")
     app.setApplicationVersion("0.1.0")
 
+    # 创建 qasync 事件循环（整合 Qt 和 asyncio）
+    loop = create_qasync_event_loop(app)
+
     window = MainWindow()
     window.show()
 
-    return app.exec()
+    # 使用 qasync 事件循环运行应用
+    try:
+        with loop:
+            loop.run_forever()
+    except Exception as e:
+        print(f"[VibeOCR] 应用异常退出: {e}")
+        return 1
+    
+    return 0
 
 
 def main() -> int:

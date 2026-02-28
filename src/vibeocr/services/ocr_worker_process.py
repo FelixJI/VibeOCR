@@ -1,14 +1,16 @@
 """OCR Worker 进程管理器
 
 管理单个 OCR Worker 子进程的生命周期。
+支持双共享内存设计：数据通道（OCR请求/结果）和日志通道。
 """
 
 import logging
 import subprocess
+import threading
 import time
 import uuid
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Callable
 
 from vibeocr.utils.shared_memory import (
     SharedMemoryProtocol,
@@ -17,8 +19,14 @@ from vibeocr.utils.shared_memory import (
     MSG_RESULT,
     MSG_ERROR,
     MSG_ACK,
+    MSG_PRELOAD,
+    MSG_PRELOAD_DONE,
+    MSG_LOG,
     serialize_request,
     deserialize_result,
+    serialize_preload_request,
+    deserialize_preload_result,
+    deserialize_log_entries,
 )
 
 logger = logging.getLogger(__name__)
@@ -49,25 +57,41 @@ class OCRWorkerProcess:
         self,
         worker_id: int,
         use_gpu: bool = True,
-        shm_size: int = 10 * 1024 * 1024
+        shm_size: int = 10 * 1024 * 1024,
+        log_shm_size: int = 1 * 1024 * 1024,
+        log_callback: Optional[Callable[[dict], None]] = None
     ):
         """初始化 Worker 进程管理器
 
         Args:
             worker_id: Worker 标识符
             use_gpu: 是否使用 GPU
-            shm_size: 共享内存大小（字节）
+            shm_size: 数据共享内存大小（字节）
+            log_shm_size: 日志共享内存大小（字节）
+            log_callback: 日志回调函数，接收日志条目字典
         """
         self.worker_id = worker_id
         self.use_gpu = use_gpu
         self.shm_size = shm_size
+        self.log_shm_size = log_shm_size
+        self.log_callback = log_callback
 
-        # 生成唯一的共享内存名称
-        self.shm_name = f"vibeocr_shm_{uuid.uuid4().hex[:16]}_{worker_id}"
+        # 生成唯一的共享内存名称（双共享内存设计）
+        unique_id = uuid.uuid4().hex[:16]
+        self.data_shm_name = f"vibeocr_data_{unique_id}_{worker_id}"
+        self.log_shm_name = f"vibeocr_log_{unique_id}_{worker_id}"
+        
+        # 保留旧属性用于兼容
+        self.shm_name = self.data_shm_name
 
         # 进程和通信
         self.process: Optional[subprocess.Popen] = None
         self.protocol: Optional[SharedMemoryProtocol] = None
+        self.log_protocol: Optional[SharedMemoryProtocol] = None
+
+        # 日志接收线程
+        self._log_thread: Optional[threading.Thread] = None
+        self._log_thread_stop = threading.Event()
 
         # 状态
         self.busy = False
@@ -109,13 +133,23 @@ class OCRWorkerProcess:
 
         logger.info(f"启动 Worker {self.worker_id}...")
 
-        # 创建共享内存
+        # 创建数据共享内存
         try:
-            self.protocol = SharedMemoryProtocol(self.shm_name, self.shm_size)
+            self.protocol = SharedMemoryProtocol(self.data_shm_name, self.shm_size)
             self.protocol.create()
-            logger.debug(f"创建共享内存: {self.shm_name}")
+            logger.debug(f"创建数据共享内存: {self.data_shm_name}")
         except Exception as e:
-            raise OCRWorkerProcessError(f"创建共享内存失败: {e}")
+            raise OCRWorkerProcessError(f"创建数据共享内存失败: {e}")
+
+        # 创建日志共享内存
+        try:
+            self.log_protocol = SharedMemoryProtocol(self.log_shm_name, self.log_shm_size)
+            self.log_protocol.create()
+            logger.debug(f"创建日志共享内存: {self.log_shm_name}")
+        except Exception as e:
+            self.protocol.close()
+            self.protocol.unlink()
+            raise OCRWorkerProcessError(f"创建日志共享内存失败: {e}")
 
         # 启动子进程
         python_exe = self._get_python_executable()
@@ -123,8 +157,10 @@ class OCRWorkerProcess:
             python_exe,
             "-m",
             "vibeocr.workers.ocr_worker",
-            "--shm-name", self.shm_name,
+            "--shm-name", self.data_shm_name,
             "--shm-size", str(self.shm_size),
+            "--log-shm-name", self.log_shm_name,
+            "--log-shm-size", str(self.log_shm_size),
             "--use-gpu" if self.use_gpu else "--no-gpu"
         ]
 
@@ -140,6 +176,8 @@ class OCRWorkerProcess:
         except Exception as e:
             self.protocol.close()
             self.protocol.unlink()
+            self.log_protocol.close()
+            self.log_protocol.unlink()
             raise OCRWorkerProcessError(f"启动子进程失败: {e}")
 
         # 等待就绪信号
@@ -157,6 +195,9 @@ class OCRWorkerProcess:
                 if msg_type == MSG_ACK and data == b"READY":
                     self._ready = True
                     logger.info(f"Worker {self.worker_id} 已就绪")
+                    
+                    # 启动日志接收线程
+                    self._start_log_receiver()
                     return
             except SharedMemoryProtocolError:
                 # 超时，继续等待
@@ -220,6 +261,119 @@ class OCRWorkerProcess:
         finally:
             self.busy = False
 
+    def preload_pipelines(
+        self,
+        pipelines: list[str],
+        timeout: float = 180.0
+    ) -> dict[str, bool]:
+        """预加载指定管道
+        
+        Args:
+            pipelines: 管道名称列表 ["ocr", "table_recognition", ...]
+            timeout: 超时时间（秒）
+        
+        Returns:
+            {pipeline_name: success} 结果字典
+        
+        Raises:
+            OCRWorkerProcessError: 预加载失败
+        """
+        if not self.is_ready:
+            raise OCRWorkerProcessError(f"Worker {self.worker_id} 未就绪")
+
+        if self.busy:
+            raise OCRWorkerProcessError(f"Worker {self.worker_id} 正忙")
+
+        self.busy = True
+
+        try:
+            # 序列化并发送预加载请求
+            request_data = serialize_preload_request(pipelines)
+            self.protocol.write_message(MSG_PRELOAD, request_data, timeout=timeout)
+
+            # 等待预加载结果
+            msg_type, data = self.protocol.read_message(timeout=timeout)
+
+            if msg_type == MSG_PRELOAD_DONE:
+                # 反序列化结果
+                results = deserialize_preload_result(data)
+                logger.info(f"Worker {self.worker_id} 预加载完成: {results}")
+                return results
+
+            elif msg_type == MSG_ERROR:
+                error_msg = data.decode("utf-8", errors="replace")
+                raise OCRWorkerProcessError(f"预加载失败: {error_msg}")
+
+            else:
+                raise OCRWorkerProcessError(f"未知响应类型: {msg_type}")
+
+        except SharedMemoryProtocolError as e:
+            raise OCRWorkerProcessError(f"通信错误: {e}")
+
+        finally:
+            self.busy = False
+
+    def _start_log_receiver(self) -> None:
+        """启动日志接收线程"""
+        if self._log_thread is not None and self._log_thread.is_alive():
+            return
+        
+        self._log_thread_stop.clear()
+        self._log_thread = threading.Thread(
+            target=self._log_receiver_loop,
+            name=f"LogReceiver-{self.worker_id}",
+            daemon=True
+        )
+        self._log_thread.start()
+        logger.debug(f"Worker {self.worker_id} 日志接收线程已启动")
+
+    def _stop_log_receiver(self) -> None:
+        """停止日志接收线程"""
+        if self._log_thread is None:
+            return
+        
+        self._log_thread_stop.set()
+        self._log_thread.join(timeout=2.0)
+        self._log_thread = None
+        logger.debug(f"Worker {self.worker_id} 日志接收线程已停止")
+
+    def _log_receiver_loop(self) -> None:
+        """日志接收循环"""
+        while not self._log_thread_stop.is_set():
+            if not self.log_protocol:
+                break
+            
+            try:
+                msg_type, data = self.log_protocol.read_message(timeout=0.1)
+                if msg_type == MSG_LOG:
+                    entries = deserialize_log_entries(data)
+                    for entry in entries:
+                        self._emit_log(entry)
+            except SharedMemoryProtocolError:
+                # 超时或读取失败，继续循环
+                pass
+            except Exception as e:
+                logger.warning(f"日志接收错误: {e}")
+
+    def _emit_log(self, log_entry: dict) -> None:
+        """将 Worker 日志转发到主进程日志系统
+        
+        Args:
+            log_entry: 日志条目字典，包含 level, name, message, time
+        """
+        # 如果有回调，调用回调
+        if self.log_callback:
+            try:
+                self.log_callback(log_entry)
+            except Exception as e:
+                logger.warning(f"日志回调错误: {e}")
+        
+        # 同时输出到主进程日志
+        level_name = log_entry.get("level", "INFO")
+        level = getattr(logging, level_name, logging.INFO)
+        message = log_entry.get("message", "")
+        logger.log(level, f"[Worker {self.worker_id}] {message}")
+
     def stop(self, timeout: float = 5.0) -> None:
         """停止 Worker 进程
 
@@ -230,6 +384,9 @@ class OCRWorkerProcess:
             return
 
         logger.info(f"停止 Worker {self.worker_id}...")
+
+        # 停止日志接收线程
+        self._stop_log_receiver()
 
         # 尝试发送关闭信号
         if self.protocol and self.is_running:
@@ -247,11 +404,17 @@ class OCRWorkerProcess:
             self.process.kill()
             self.process.wait(timeout=1.0)
 
-        # 关闭共享内存
+        # 关闭数据共享内存
         if self.protocol:
             self.protocol.close()
             self.protocol.unlink()
             self.protocol = None
+
+        # 关闭日志共享内存
+        if self.log_protocol:
+            self.log_protocol.close()
+            self.log_protocol.unlink()
+            self.log_protocol = None
 
         self.process = None
         self._ready = False

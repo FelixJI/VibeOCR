@@ -25,6 +25,9 @@ MSG_RESULT = b"RESL"     # 结果返回
 MSG_ERROR = b"ERR "      # 错误
 MSG_SHUTDOWN = b"SHUT"   # 关闭
 MSG_ACK = b"_ACK"        # 确认
+MSG_PRELOAD = b"PREL"    # 预加载请求
+MSG_PRELOAD_DONE = b"PRED"  # 预加载完成
+MSG_LOG = b"LOG "        # 日志消息
 
 # 头部大小: 消息类型(4) + 数据大小(4)
 HEADER_SIZE = 8
@@ -270,5 +273,62 @@ def serialize_result(result) -> bytes:
 
 def deserialize_result(data: bytes):
     """反序列化 OCR 结果"""
+    import pickle
+    return pickle.loads(data)
+
+
+def serialize_preload_request(pipelines: list[str]) -> bytes:
+    """序列化预加载请求
+    
+    Args:
+        pipelines: 管道名称列表
+    
+    Returns:
+        序列化后的字节数据
+    """
+    import pickle
+    return pickle.dumps(pipelines)
+
+
+def deserialize_preload_request(data: bytes) -> list[str]:
+    """反序列化预加载请求"""
+    import pickle
+    return pickle.loads(data)
+
+
+def serialize_preload_result(results: dict[str, bool]) -> bytes:
+    """序列化预加载结果
+    
+    Args:
+        results: {pipeline_name: success} 结果字典
+    
+    Returns:
+        序列化后的字节数据
+    """
+    import pickle
+    return pickle.dumps(results)
+
+
+def deserialize_preload_result(data: bytes) -> dict[str, bool]:
+    """反序列化预加载结果"""
+    import pickle
+    return pickle.loads(data)
+
+
+def serialize_log_entries(entries: list[dict]) -> bytes:
+    """序列化日志条目列表
+    
+    Args:
+        entries: 日志条目列表，每个条目包含 level, name, message, time
+    
+    Returns:
+        序列化后的字节数据
+    """
+    import pickle
+    return pickle.dumps(entries)
+
+
+def deserialize_log_entries(data: bytes) -> list[dict]:
+    """反序列化日志条目列表"""
     import pickle
     return pickle.loads(data)

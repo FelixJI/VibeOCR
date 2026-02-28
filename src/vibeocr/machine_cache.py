@@ -259,3 +259,71 @@ def create_cache_entry(
         print("[缓存] 缓存已更新")
         return cache_data
     return None
+
+
+# ============================================================
+# 预加载管道配置
+# ============================================================
+
+def get_preload_pipelines(project_root: Path) -> list[str]:
+    """
+    获取用户配置的预加载管道列表
+
+    Args:
+        project_root: 项目根目录
+
+    Returns:
+        预加载管道名称列表，如果未配置则返回默认值 ["general"]
+    """
+    cache_data = load_cache(project_root)
+    if cache_data is None:
+        return ["general"]  # 默认预加载 general 管道
+
+    return cache_data.get("preload_pipelines", ["general"])
+
+
+def set_preload_pipelines(project_root: Path, pipelines: list[str]) -> bool:
+    """
+    保存用户配置的预加载管道列表
+
+    Args:
+        project_root: 项目根目录
+        pipelines: 要预加载的管道名称列表
+
+    Returns:
+        是否保存成功
+    """
+    # 加载现有缓存
+    cache_data = load_cache(project_root)
+    if cache_data is None:
+        # 如果没有缓存，创建最小缓存结构
+        cache_data = {
+            "version": CACHE_VERSION,
+            "machine_id": generate_machine_id(),
+            "last_check_time": datetime.now().isoformat(),
+        }
+
+    # 更新预加载管道配置
+    cache_data["preload_pipelines"] = pipelines
+
+    if save_cache(project_root, cache_data):
+        print(f"[缓存] 预加载管道配置已保存: {pipelines}")
+        return True
+    return False
+
+
+def get_available_pipelines() -> list[str]:
+    """
+    获取所有可用的管道名称
+
+    Returns:
+        可用管道名称列表
+    """
+    # 标准管道列表
+    return [
+        "general",      # 通用场景
+        "handwriting",  # 手写识别
+        "table",        # 表格识别
+        "formula",      # 公式识别
+        "seal",         # 印章识别
+    ]

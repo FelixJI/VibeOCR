@@ -4,6 +4,7 @@
 提供与 OCRService 兼容的接口。
 """
 
+import asyncio
 import logging
 import threading
 from typing import Optional, Union
@@ -38,7 +39,8 @@ class OCRServiceSubprocess:
         max_workers: int = 1,
         use_gpu: bool = True,
         shm_size: int = 10 * 1024 * 1024,
-        auto_start: bool = True
+        auto_start: bool = True,
+        start_timeout: float = 120.0
     ) -> "OCRServiceSubprocess":
         """线程安全的单例创建
 
@@ -58,7 +60,8 @@ class OCRServiceSubprocess:
         max_workers: int = 1,
         use_gpu: bool = True,
         shm_size: int = 10 * 1024 * 1024,
-        auto_start: bool = True
+        auto_start: bool = True,
+        start_timeout: float = 120.0
     ):
         """初始化子进程 OCR 服务
 
@@ -67,6 +70,7 @@ class OCRServiceSubprocess:
             use_gpu: 是否使用 GPU
             shm_size: 每个共享内存大小（字节）
             auto_start: 是否自动启动 Worker
+            start_timeout: 启动超时时间（秒）
         """
         if self._initialized:
             return
@@ -74,6 +78,7 @@ class OCRServiceSubprocess:
         self.max_workers = max_workers
         self.use_gpu = use_gpu
         self.shm_size = shm_size
+        self.start_timeout = start_timeout
 
         self.workers: list[OCRWorkerProcess] = []
         self._round_robin_index = 0
@@ -93,7 +98,7 @@ class OCRServiceSubprocess:
 
         # 自动启动
         if auto_start:
-            self.start()
+            self.start(timeout=self.start_timeout)
 
     @classmethod
     def reset_instance(cls) -> None:
@@ -252,6 +257,67 @@ class OCRServiceSubprocess:
             return options
 
         return {}
+
+    def preload_pipelines(
+        self,
+        pipelines: list[str],
+        timeout: float = 180.0
+    ) -> dict[str, bool]:
+        """预加载指定管道
+        
+        Args:
+            pipelines: 管道名称列表 ["ocr", "table_recognition", ...]
+            timeout: 超时时间（秒）
+        
+        Returns:
+            {pipeline_name: success} 结果字典
+        """
+        # 获取可用 Worker
+        worker = self._get_available_worker()
+        
+        # 执行预加载
+        return worker.preload_pipelines(pipelines, timeout)
+
+    async def recognize_async(
+        self,
+        image: Union[bytes, "Image.Image", "np.ndarray", str],
+        options=None
+    ):
+        """异步执行 OCR 识别（asyncio 协程）
+        
+        使用 run_in_executor 将同步调用包装为异步，避免阻塞事件循环。
+        
+        Args:
+            image: 输入图像（bytes/PIL.Image/np.ndarray/str路径）
+            options: OCR 选项（OCROptions 对象）
+        
+        Returns:
+            OCRResult 对象
+        
+        Raises:
+            OCRWorkerProcessError: 识别失败
+        """
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, self.recognize, image, options)
+
+    async def preload_pipelines_async(
+        self,
+        pipelines: list[str],
+        timeout: float = 180.0
+    ) -> dict[str, bool]:
+        """异步预加载指定管道（asyncio 协程）
+        
+        Args:
+            pipelines: 管道名称列表
+            timeout: 超时时间（秒）
+        
+        Returns:
+            {pipeline_name: success} 结果字典
+        """
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            None, self.preload_pipelines, pipelines, timeout
+        )
 
     def shutdown(self) -> None:
         """关闭所有 Worker"""
