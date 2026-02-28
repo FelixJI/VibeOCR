@@ -218,45 +218,6 @@ class OCRWorkerThread:
             logging.info("[OCRWorkerThread] 工作线程已停止")
 
 
-# ============================================================
-# 旧的 OCR 任务类（保留用于向后兼容，但不再使用）
-# ============================================================
-
-class OCRSignals(QObject):
-    """OCR任务信号（用于线程安全通信）"""
-
-    finished = Signal(object)  # 识别完成 (OCRResult)
-    error = Signal(str)  # 识别失败
-
-
-class OCRTask(QRunnable):
-    """OCR识别任务（已弃用，保留用于向后兼容）"""
-
-    def __init__(self, image_data: bytes, options: "OCROptions | None" = None) -> None:
-        super().__init__()
-        self._image_data = image_data
-        self._options = options
-        self.signals = OCRSignals()
-
-    def run(self) -> None:
-        """执行OCR识别"""
-        try:
-            from vibeocr.services.ocr_service import OCRService, OCROptions
-
-            buffer = io.BytesIO(self._image_data)
-            pil_image = Image.open(buffer)
-
-            import numpy as np
-            image_array = np.array(pil_image)
-
-            ocr = OCRService()
-            options = self._options or OCROptions()
-            result = ocr.recognize(image_array, options)
-            self.signals.finished.emit(result)
-        except Exception as e:
-            self.signals.error.emit(str(e))
-
-
 class DependencyCheckSignals(QObject):
     """依赖检查信号"""
 
@@ -294,60 +255,6 @@ class DependencyCheckTask(QRunnable):
             logging.warning(f"[依赖检查] OCR依赖缺失: {missing}")
 
         self.signals.finished.emit(ready, missing)
-
-
-class PipelinePreloadSignals(QObject):
-    """管道预加载信号"""
-
-    progress = Signal(str, int, int)  # (pipeline_name, current, total)
-    finished = Signal(dict)  # {pipeline_name: success}
-
-
-class PipelinePreloadTask(QRunnable):
-    """管道预加载任务（在后台线程执行）"""
-
-    def __init__(
-        self,
-        pipelines: list,
-        parallel: bool = True,
-        max_workers: int = 2
-    ) -> None:
-        super().__init__()
-        self._pipelines = pipelines
-        self._parallel = parallel
-        self._max_workers = max_workers
-        self.signals = PipelinePreloadSignals()
-
-    def run(self) -> None:
-        """执行管道预加载"""
-        try:
-            # 延迟导入: OCR 服务模块
-            from vibeocr.services.ocr_service import OCRService
-
-            # 设置进度回调
-            def on_progress(pipeline_name: str, current: int, total: int) -> None:
-                self.signals.progress.emit(pipeline_name, current, total)
-
-            OCRService.set_preload_progress_callback(on_progress)
-
-            # 执行预加载
-            if self._parallel:
-                results = OCRService.preload_pipelines_parallel(
-                    self._pipelines,
-                    max_workers=self._max_workers
-                )
-            else:
-                results = OCRService.preload_pipelines_sequential(self._pipelines)
-
-            self.signals.finished.emit(results)
-
-        except Exception as e:
-            logging.error(f"[预加载] 管道预加载任务失败: {e}")
-            self.signals.finished.emit({})
-        finally:
-            # 清理回调
-            from vibeocr.services.ocr_service import OCRService
-            OCRService.set_preload_progress_callback(None)
 
 
 class MainWindow(QMainWindow):
