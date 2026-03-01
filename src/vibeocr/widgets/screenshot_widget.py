@@ -29,10 +29,13 @@ class ScreenshotWidget(QWidget):
             | Qt.WindowType.WindowStaysOnTopHint
             | Qt.WindowType.Tool
         )
-        # 设置背景透明和防闪烁属性
+        # 设置背景透明 - 避免白色闪烁的关键配置
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        self.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent)
+        # 不设置 WA_OpaquePaintEvent，允许透明背景
+        # 设置无边框窗口的背景模式为无背景
         self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground)
+        # 设置窗口背景为透明色
+        self.setStyleSheet("background: transparent;")
 
         self._start_pos = None
         self._end_pos = None
@@ -51,9 +54,6 @@ class ScreenshotWidget(QWidget):
         self._virtual_geometry = screens[0].geometry()
         for screen in screens[1:]:
             self._virtual_geometry = self._virtual_geometry.united(screen.geometry())
-
-        # 设置窗口大小为虚拟桌面大小（逻辑像素）
-        self.setGeometry(self._virtual_geometry)
 
         # 获取最高的设备像素比（用于高DPI支持）
         self._device_pixel_ratio = max(
@@ -83,11 +83,15 @@ class ScreenshotWidget(QWidget):
 
         self._screen_pixmap = pixmap
 
-        # 确保截图准备好后再显示窗口
-        self.repaint()  # 强制完成首次绘制
+        # 设置窗口大小为虚拟桌面大小（逻辑像素）
+        self.setGeometry(self._virtual_geometry)
+
+        # 先显示窗口但保持透明，然后立即重绘
         self.show()
         self.activateWindow()
         self.grabMouse()
+        # 强制立即重绘，确保截图内容立即可见
+        self.repaint()
 
     def paintEvent(self, _event) -> None:
         """绘制遮罩和选区（采用镂空方案，避免选区内容抖动）"""
