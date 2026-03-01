@@ -18,13 +18,15 @@ from PIL import Image, ImageDraw, ImageFont
 try:
     from vibeocr.services.ocr_worker_process import OCRWorkerProcess, OCRWorkerProcessError
     from vibeocr.services.ocr_service_subprocess import OCRServiceSubprocess
-    from vibeocr.utils.shared_memory import (
-        SharedMemoryProtocol,
-        MSG_RECOGNIZE,
-        MSG_RESULT,
+    from vibeocr.utils.shared_memory_v2 import (
+        SharedMemoryProtocolV2 as SharedMemoryProtocol,
+        SharedMemoryConfig,
+        MessageType,
         serialize_request,
         serialize_result,
     )
+    MSG_RECOGNIZE = MessageType.RECOGNIZE
+    MSG_RESULT = MessageType.RESULT
     HAS_MODULES = True
 except ImportError:
     HAS_MODULES = False
@@ -203,7 +205,7 @@ class TestSharedMemoryIntegration:
 
             img_out, opt_out = serialize_request.__wrapped__.__code__.co_consts
             # Actually deserialize
-            from vibeocr.utils.shared_memory import deserialize_request
+            from vibeocr.utils.shared_memory_v2 import deserialize_request
             img_out, opt_out = deserialize_request(data)
             assert len(img_out) == 1024 * 1024
             assert opt_out["use_angle_cls"] is True

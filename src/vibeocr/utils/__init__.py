@@ -2,8 +2,8 @@
 
 from .markdown_converter import markdown_to_html, extract_plain_text, HTML_STYLE
 from .indent_processor import IndentProcessor, IndentConfig
-from .shared_memory import (
-    SharedMemoryProtocol,
+from .shared_memory_v2 import (
+    SharedMemoryProtocolV2 as SharedMemoryProtocol,
     SharedMemoryProtocolError,
     MSG_INIT,
     MSG_RECOGNIZE,

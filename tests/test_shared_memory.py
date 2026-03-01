@@ -1,5 +1,5 @@
 """
-Tests for SharedMemoryProtocol.
+Tests for SharedMemoryProtocol V2.
 
 Tests the shared memory communication protocol for subprocess OCR.
 """
@@ -10,20 +10,23 @@ import pytest
 
 # Check if shared_memory module is available
 try:
-    from vibeocr.utils.shared_memory import (
-        SharedMemoryProtocol,
+    from vibeocr.utils.shared_memory_v2 import (
+        SharedMemoryProtocolV2 as SharedMemoryProtocol,
         SharedMemoryProtocolError,
-        MSG_INIT,
-        MSG_RECOGNIZE,
-        MSG_RESULT,
-        MSG_ERROR,
-        MSG_SHUTDOWN,
-        MSG_ACK,
+        SharedMemoryConfig,
+        MessageType,
         serialize_request,
         deserialize_request,
         serialize_result,
         deserialize_result,
     )
+    # V2 消息类型
+    MSG_INIT = MessageType.INIT
+    MSG_RECOGNIZE = MessageType.RECOGNIZE
+    MSG_RESULT = MessageType.RESULT
+    MSG_ERROR = MessageType.ERROR
+    MSG_SHUTDOWN = MessageType.SHUTDOWN
+    MSG_ACK = MessageType.ACK
     HAS_SHARED_MEMORY = True
 except ImportError:
     HAS_SHARED_MEMORY = False

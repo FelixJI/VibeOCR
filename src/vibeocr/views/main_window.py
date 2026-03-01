@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (
     QLabel,
 )
 from PySide6.QtCore import (
-    Slot, QThreadPool, QRunnable, Signal, QObject, QTimer, QBuffer, QThread, QMutex, QWaitCondition
+    Slot, QThreadPool, QRunnable, Signal, QObject, QTimer, QBuffer
 )
 from PySide6.QtGui import QPixmap, QAction
 from PySide6.QtUiTools import QUiLoader
@@ -38,185 +38,6 @@ from vibeocr.utils.qt_async import run_coroutine
 # 延迟导入: OCR 服务模块导入很慢（~33s），延迟到首次使用时导入
 if TYPE_CHECKING:
     from vibeocr.services.ocr_service import OCRService, OCRPreset, OCRPipeline, OCROptions
-
-
-# ============================================================
-# 专用 OCR 工作线程
-# 解决 PaddlePaddle GPU 上下文的线程亲和性问题
-# ============================================================
-
-class OCRWorker(QObject):
-    """专用 OCR 工作线程的处理器
-
-    所有 OCR 操作都在这个对象所在的线程中执行，
-    确保 PaddlePaddle GPU 上下文的创建和使用在同一线程中。
-
-    使用方法：
-    1. 创建 QThread
-    2. 将 OCRWorker 移动到该线程
-    3. 通过信号/槽与主线程通信
-    """
-
-    # 输出信号（从工作线程发送到主线程）
-    ocr_finished = Signal(object)  # OCR 完成 (OCRResult)
-    ocr_error = Signal(str)  # OCR 失败
-    preload_progress = Signal(str, int, int)  # 预加载进度 (pipeline_name, current, total)
-    preload_finished = Signal(dict)  # 预加载完成 {pipeline_name: success}
-    ready = Signal()  # 工作线程已就绪
-
-    # 输入信号（从主线程发送到工作线程）
-    request_ocr = Signal(bytes, object)  # 请求 OCR (image_data, options)
-    request_preload = Signal(list, bool, int)  # 请求预加载 (pipelines, parallel, max_workers)
-
-    def __init__(self) -> None:
-        super().__init__()
-        self._ocr_service = None
-        self._is_initialized = False
-        # 注意：信号连接移到 moveToThread 之后，在 OCRWorkerThread.start() 中建立
-
-    def _ensure_initialized(self) -> None:
-        """确保 OCR 服务已初始化（在工作线程中调用）"""
-        if self._is_initialized:
-            return
-
-        # 延迟导入: OCR 服务模块（在工作线程中首次导入）
-        from vibeocr.services.ocr_service import OCRService
-        self._ocr_service = OCRService()
-        self._is_initialized = True
-        logging.info("[OCRWorker] OCR 服务已初始化")
-
-    @Slot(bytes, object)
-    def _do_ocr(self, image_data: bytes, options: "OCROptions | None") -> None:
-        """执行 OCR 识别（在工作线程中调用）"""
-        try:
-            logging.info("[OCRWorker] 开始执行 OCR...")
-            self._ensure_initialized()
-
-            # 延迟导入
-            from vibeocr.services.ocr_service import OCROptions
-
-            # 从字节数据创建 PIL Image
-            logging.info("[OCRWorker] 解码图像数据...")
-            buffer = io.BytesIO(image_data)
-            pil_image = Image.open(buffer)
-            logging.info(f"[OCRWorker] 图像尺寸: {pil_image.size}, 模式: {pil_image.mode}")
-
-            # 转换为 numpy 数组
-            import numpy as np
-            image_array = np.array(pil_image)
-            logging.info(f"[OCRWorker] 转换为 numpy 数组: shape={image_array.shape}")
-
-            # 执行 OCR
-            actual_options = options if options is not None else OCROptions()
-            logging.info("[OCRWorker] 调用 OCR 服务...")
-            result = self._ocr_service.recognize(image_array, actual_options)
-            logging.info(f"[OCRWorker] OCR 完成，结果: {len(result.raw_text)} 字符")
-
-            self.ocr_finished.emit(result)
-            logging.info("[OCRWorker] 结果已发送")
-        except Exception as e:
-            logging.error(f"[OCRWorker] OCR 执行失败: {e}", exc_info=True)
-            self.ocr_error.emit(str(e))
-
-    @Slot(list, bool, int)
-    def _do_preload(self, pipelines: list, parallel: bool, max_workers: int) -> None:
-        """执行管道预加载（在工作线程中调用）"""
-        try:
-            self._ensure_initialized()
-
-            from vibeocr.services.ocr_service import OCRService
-
-            # 设置进度回调
-            def on_progress(pipeline_name: str, current: int, total: int) -> None:
-                self.preload_progress.emit(pipeline_name, current, total)
-
-            OCRService.set_preload_progress_callback(on_progress)
-
-            # 执行预加载
-            if parallel:
-                results = OCRService.preload_pipelines_parallel(pipelines, max_workers)
-            else:
-                results = OCRService.preload_pipelines_sequential(pipelines)
-
-            self.preload_finished.emit(results)
-        except Exception as e:
-            logging.error(f"[OCRWorker] 预加载失败: {e}")
-            self.preload_finished.emit({})
-        finally:
-            # 清理回调
-            from vibeocr.services.ocr_service import OCRService
-            OCRService.set_preload_progress_callback(None)
-
-    @Slot()
-    def on_thread_started(self) -> None:
-        """线程启动时调用"""
-        logging.info("[OCRWorker] 工作线程已启动")
-        self.ready.emit()
-
-
-class OCRWorkerThread:
-    """OCR 工作线程管理器
-
-    封装 QThread 和 OCRWorker 的创建和管理。
-    """
-
-    def __init__(self) -> None:
-        self._thread: Optional[QThread] = None
-        self._worker: Optional[OCRWorker] = None
-        self._ready = False
-
-    def start(self) -> None:
-        """启动工作线程"""
-        if self._thread is not None:
-            return
-
-        self._thread = QThread()
-        self._thread.setObjectName("OCRWorkerThread")
-        self._worker = OCRWorker()
-
-        # 将 worker 移动到工作线程
-        self._worker.moveToThread(self._thread)
-
-        # 在 moveToThread 之后建立信号连接，使用显式的 QueuedConnection 确保跨线程调用正确
-        from PySide6.QtCore import Qt
-        self._worker.request_ocr.connect(
-            self._worker._do_ocr,
-            Qt.ConnectionType.QueuedConnection
-        )
-        self._worker.request_preload.connect(
-            self._worker._do_preload,
-            Qt.ConnectionType.QueuedConnection
-        )
-
-        # 连接线程启动信号
-        self._thread.started.connect(self._worker.on_thread_started)
-
-        # 启动线程
-        self._thread.start()
-        logging.info("[OCRWorkerThread] 工作线程已创建")
-
-    @property
-    def worker(self) -> Optional[OCRWorker]:
-        """获取 worker 对象"""
-        return self._worker
-
-    @property
-    def is_ready(self) -> bool:
-        """检查线程是否就绪"""
-        return self._ready
-
-    def set_ready(self, ready: bool) -> None:
-        """设置就绪状态"""
-        self._ready = ready
-
-    def stop(self) -> None:
-        """停止工作线程"""
-        if self._thread is not None:
-            self._thread.quit()
-            self._thread.wait(5000)  # 等待最多 5 秒
-            self._thread = None
-            self._worker = None
-            logging.info("[OCRWorkerThread] 工作线程已停止")
 
 
 class DependencyCheckSignals(QObject):
@@ -273,9 +94,7 @@ class MainWindow(QMainWindow):
         self._dependency_check_complete = False  # 依赖检测是否完成
         self._preload_complete = False  # 预加载是否完成
         self._subprocess_worker_ready = False  # 子进程 Worker 是否就绪
-
-        # 创建专用 OCR 工作线程
-        self._ocr_worker_thread = OCRWorkerThread()
+        self._closing = False  # 是否正在关闭（防止关闭时重复启动 Worker）
 
         # 子进程 OCR 服务（延迟初始化）
         self._subprocess_service = None
@@ -624,9 +443,6 @@ class MainWindow(QMainWindow):
             self._ocr_ready = True
             self._statusbar.showMessage("OCR功能已就绪")
             logging.info("OCR功能已就绪")
-
-            # 启动专用 OCR 工作线程
-            self._start_ocr_worker()
             
             # 启动子进程 Worker（依赖检测完成后立即启动）
             self._start_subprocess_worker()
@@ -635,54 +451,20 @@ class MainWindow(QMainWindow):
             missing_str = ", ".join(missing)
             self._statusbar.showMessage(f"OCR功能未就绪: {missing_str}")
 
-    def _start_ocr_worker(self) -> None:
-        """启动专用 OCR 工作线程"""
-        if self._ocr_worker_thread.is_ready:
-            return
-
-        logging.info("[MainWindow] 正在启动 OCR 工作线程...")
-
-        # 先启动工作线程（这会创建 worker）
-        self._ocr_worker_thread.start()
-
-        # 启动后再连接工作线程的信号
-        worker = self._ocr_worker_thread.worker
-        if worker:
-            from PySide6.QtCore import Qt
-            # 使用 QueuedConnection 确保信号在接收者线程中处理
-            worker.ready.connect(self._on_ocr_worker_ready, Qt.ConnectionType.QueuedConnection)
-            worker.ocr_finished.connect(self._on_ocr_finished, Qt.ConnectionType.QueuedConnection)
-            worker.ocr_error.connect(self._on_ocr_error, Qt.ConnectionType.QueuedConnection)
-            worker.preload_progress.connect(self._on_preload_progress_from_worker, Qt.ConnectionType.QueuedConnection)
-            worker.preload_finished.connect(self._on_preload_finished_from_worker, Qt.ConnectionType.QueuedConnection)
-            logging.info("[MainWindow] OCR 工作线程信号已连接")
-
-            # 如果 worker 已经初始化完成（ready 信号可能已经发射过了），手动调用就绪处理
-            if worker._is_initialized:
-                logging.info("[MainWindow] Worker 已初始化，手动触发就绪处理")
-                self._on_ocr_worker_ready()
-        else:
-            logging.error("[MainWindow] OCR 工作线程启动失败: worker 为 None")
-
-    @Slot()
-    def _on_ocr_worker_ready(self) -> None:
-        """OCR 工作线程就绪"""
-        self._ocr_worker_thread.set_ready(True)
-        logging.info("[MainWindow] OCR 工作线程已就绪")
-
-        # 工作线程就绪后，启动管道预加载
-        self._start_pipeline_preload()
-
     def _start_subprocess_worker(self) -> None:
         """依赖检测完成后启动子进程 Worker
-        
+
         在后台线程中启动子进程 Worker，避免阻塞 UI。
         启动完成后通过 _subprocess_ready_signal 信号通知。
         """
+        if self._closing:
+            logging.info("[MainWindow] 应用程序正在关闭，跳过启动子进程 Worker")
+            return
+
         if self._subprocess_worker_ready:
             logging.info("[MainWindow] 子进程 Worker 已就绪，跳过启动")
             return
-        
+
         logging.info("[MainWindow] 正在启动子进程 Worker...")
         
         class SubprocessStartTask(QRunnable):
@@ -690,11 +472,21 @@ class MainWindow(QMainWindow):
             def __init__(self, main_window):
                 super().__init__()
                 self._main_window = main_window
-            
+
             def run(self):
+                # 检查是否正在关闭
+                if self._main_window._closing:
+                    logging.info("[MainWindow] 应用程序正在关闭，取消子进程启动任务")
+                    return
+
                 try:
                     from vibeocr.services.ocr_service_subprocess import OCRServiceSubprocess
-                    
+
+                    # 再次检查关闭标志（获取锁前）
+                    if self._main_window._closing:
+                        logging.info("[MainWindow] 应用程序正在关闭，取消子进程启动")
+                        return
+
                     # 创建并启动子进程服务
                     service = OCRServiceSubprocess(
                         max_workers=1,
@@ -758,92 +550,7 @@ class MainWindow(QMainWindow):
         
         self._thread_pool.start(PreloadTask(self._subprocess_service, pipelines, self))
 
-    @Slot(str, int, int)
-    def _on_preload_progress_from_worker(self, pipeline_name: str, current: int, total: int) -> None:
-        """从工作线程接收预加载进度"""
-        # 延迟导入: OCRPipeline 枚举
-        from vibeocr.services.ocr_service import OCRPipeline
 
-        # 获取显示名称
-        display_name = pipeline_name
-        for p in OCRPipeline:
-            if p.value == pipeline_name:
-                display_name = p.display_name
-                break
-
-        message = f"正在预热 {display_name} 模型 ({current}/{total})..."
-        self._statusbar.showMessage(message)
-        logging.info(f"[预加载] {message}")
-
-    @Slot(dict)
-    def _on_preload_finished_from_worker(self, results: dict) -> None:
-        """从工作线程接收预加载完成"""
-        self._preload_complete = True
-
-        success_count = sum(1 for v in results.values() if v)
-        total_count = len(results)
-
-        if success_count == total_count:
-            self._statusbar.showMessage("OCR 模型预热完成")
-            logging.info(f"[预加载] 完成: {success_count}/{total_count} 个管道加载成功")
-        else:
-            failed = [k for k, v in results.items() if not v]
-            self._statusbar.showMessage(f"OCR 模型预热部分完成 ({success_count}/{total_count})")
-            logging.warning(f"[预加载] 部分失败: {failed}")
-
-        # 更新设置页面的预加载状态
-        self._update_preload_status()
-
-    def _start_pipeline_preload(self) -> None:
-        """启动管道预加载（根据设置页面配置）
-
-        使用专用 OCR 工作线程执行预加载，确保 PaddlePaddle GPU 上下文
-        的创建和使用都在同一个线程中。
-        """
-        if self._preload_complete:
-            logging.info("[预加载] 已完成，跳过")
-            return
-
-        # 检查工作线程是否就绪
-        if not self._ocr_worker_thread.is_ready:
-            logging.info("[预加载] 等待 OCR 工作线程就绪...")
-            return
-
-        # 检查是否启用预加载
-        chk_enable_preload = self._ui.findChild(QWidget, "chkEnablePreload")
-        if chk_enable_preload and not chk_enable_preload.isChecked():
-            logging.info("[预加载] 预加载功能已禁用，跳过")
-            self._update_preload_status("预加载已禁用")
-            return
-
-        # 获取选中的预加载管道
-        pipelines_to_preload = self._get_selected_preload_pipelines()
-
-        if not pipelines_to_preload:
-            logging.info("[预加载] 未选择任何管道，跳过")
-            self._update_preload_status("未选择预加载管道")
-            return
-
-        # 获取预加载设置
-        chk_parallel = self._ui.findChild(QWidget, "chkParallelPreload")
-        spin_workers = self._ui.findChild(QWidget, "spinMaxWorkers")
-
-        parallel = chk_parallel.isChecked() if chk_parallel else False
-        max_workers = spin_workers.value() if spin_workers else 2
-
-        # 延迟导入: OCRPipeline 枚举
-        from vibeocr.services.ocr_service import OCRPipeline
-
-        pipeline_names = [p.display_name for p in pipelines_to_preload]
-        logging.info(f"[预加载] 开始预加载管道: {pipeline_names}")
-        logging.info(f"[预加载] 并行模式: {parallel}, 并行数: {max_workers}")
-        self._statusbar.showMessage(f"正在预热模型 ({len(pipelines_to_preload)} 个管道)...")
-        self._update_preload_status("正在预加载模型...")
-
-        # 在专用 OCR 工作线程中执行预加载（通过信号触发）
-        worker = self._ocr_worker_thread.worker
-        if worker:
-            worker.request_preload.emit(pipelines_to_preload, parallel, max_workers)
 
     def _show_install_dialog(self, missing: list) -> None:
         """显示安装提示对话框"""
@@ -1043,26 +750,56 @@ class MainWindow(QMainWindow):
 
     async def _perform_ocr_async(self, image_data: bytes, options) -> None:
         """异步执行 OCR 识别
-        
+
         使用子进程服务的异步接口执行 OCR，不阻塞 UI 线程。
-        
+
         Args:
             image_data: PNG 格式的图像数据
             options: OCR 选项
         """
         try:
+            # 检查是否正在关闭
+            if self._closing:
+                logging.info("[异步OCR] 应用程序正在关闭，取消识别")
+                return
+
             from vibeocr.services import get_ocr_service
-            
+
             logging.info("[异步OCR] 开始异步识别...")
+            logging.info("[异步OCR] 调用 get_ocr_service()...")
             ocr_service = get_ocr_service()
-            
+            logging.info(f"[异步OCR] get_ocr_service() 返回: {type(ocr_service).__name__}")
+
+            # 再次检查关闭标志
+            if self._closing:
+                logging.info("[异步OCR] 应用程序正在关闭，取消识别")
+                return
+
+            # 检查服务是否就绪
+            logging.info("[异步OCR] 检查服务是否就绪...")
+            if hasattr(ocr_service, 'is_ready'):
+                ready = ocr_service.is_ready()
+                logging.info(f"[异步OCR] 服务就绪状态: {ready}")
+                if not ready:
+                    raise RuntimeError("OCR 服务未就绪，请稍后再试")
+
             # 使用异步接口
+            logging.info("[异步OCR] 调用 recognize_async()...")
             result = await ocr_service.recognize_async(image_data, options)
-            
+            logging.info("[异步OCR] recognize_async() 返回")
+
+            # 检查关闭标志（识别完成后）
+            if self._closing:
+                logging.info("[异步OCR] 应用程序已关闭，忽略识别结果")
+                return
+
             logging.info(f"[异步OCR] 识别完成，{len(result.raw_text)} 字符")
             self._on_ocr_finished(result)
-            
+
         except Exception as e:
+            if self._closing:
+                logging.info(f"[异步OCR] 识别过程中应用程序关闭，忽略错误: {e}")
+                return
             logging.error(f"[异步OCR] 识别失败: {e}", exc_info=True)
             self._on_ocr_error(str(e))
 
@@ -1356,15 +1093,15 @@ class MainWindow(QMainWindow):
     def _on_preload_now_clicked(self) -> None:
         """立即预加载按钮点击
 
-        使用专用 OCR 工作线程执行预加载。
+        使用子进程服务执行预加载。
         """
         if not self._ocr_ready:
             QMessageBox.warning(self, "无法预加载", "OCR 功能未就绪，请先安装依赖。")
             return
 
-        # 检查工作线程是否就绪
-        if not self._ocr_worker_thread.is_ready:
-            QMessageBox.warning(self, "无法预加载", "OCR 工作线程尚未就绪，请稍后再试。")
+        # 检查子进程服务是否就绪
+        if not self._subprocess_service or not self._subprocess_service.is_ready():
+            QMessageBox.warning(self, "无法预加载", "OCR 子进程服务尚未就绪，请稍后再试。")
             return
 
         # 获取选中的管道
@@ -1405,13 +1142,8 @@ class MainWindow(QMainWindow):
         # 保存状态用于回调
         self._manual_preload_total = len(pipelines_to_preload)
 
-        # 在专用 OCR 工作线程中执行预加载
-        worker = self._ocr_worker_thread.worker
-        if worker:
-            # 临时连接手动预加载的信号
-            worker.preload_progress.connect(self._on_manual_preload_progress)
-            worker.preload_finished.connect(self._on_manual_preload_finished)
-            worker.request_preload.emit(pipelines_to_preload, parallel, max_workers)
+        # 在子进程中执行预加载
+        self._start_manual_preload(pipelines_to_preload)
 
     def _get_selected_preload_pipelines(self) -> list:
         """获取选中的预加载管道"""
@@ -1437,37 +1169,50 @@ class MainWindow(QMainWindow):
 
         return pipelines
 
-    @Slot(str, int, int)
-    def _on_manual_preload_progress(self, pipeline_name: str, current: int, total: int) -> None:
-        """手动预加载进度"""
-        progress_bar = self._ui.findChild(QWidget, "progressPreload")
-        if progress_bar:
-            progress_bar.setValue(current)
 
-        # 延迟导入: OCRPipeline 枚举
-        from vibeocr.services.ocr_service import OCRPipeline
 
-        # 获取显示名称
-        display_name = pipeline_name
-        for p in OCRPipeline:
-            if p.value == pipeline_name:
-                display_name = p.display_name
-                break
-
-        self._update_preload_status(f"正在加载 {display_name} ({current}/{total})...")
+    def _start_manual_preload(self, pipelines: list) -> None:
+        """启动手动预加载任务
+        
+        Args:
+            pipelines: 要预加载的管道列表
+        """
+        class ManualPreloadTask(QRunnable):
+            """手动预加载任务"""
+            def __init__(self, service, pipelines, main_window):
+                super().__init__()
+                self._service = service
+                self._pipelines = pipelines
+                self._main_window = main_window
+            
+            def run(self):
+                try:
+                    # 获取管道名称列表
+                    pipeline_names = [p.value if hasattr(p, 'value') else str(p) for p in self._pipelines]
+                    results = self._service.preload_pipelines(pipeline_names)
+                    # 在主线程中更新UI
+                    from PySide6.QtCore import QMetaObject, Qt, Q_ARG
+                    QMetaObject.invokeMethod(
+                        self._main_window,
+                        "_on_manual_preload_finished",
+                        Qt.ConnectionType.QueuedConnection,
+                        Q_ARG(object, results)
+                    )
+                except Exception as e:
+                    logging.error(f"[手动预加载] 失败: {e}")
+                    QMetaObject.invokeMethod(
+                        self._main_window,
+                        "_on_manual_preload_finished",
+                        Qt.ConnectionType.QueuedConnection,
+                        Q_ARG(object, {})
+                    )
+        
+        # 启动预加载任务
+        self._thread_pool.start(ManualPreloadTask(self._subprocess_service, pipelines, self))
 
     @Slot(dict)
     def _on_manual_preload_finished(self, results: dict) -> None:
         """手动预加载完成"""
-        # 断开临时信号连接
-        worker = self._ocr_worker_thread.worker
-        if worker:
-            try:
-                worker.preload_progress.disconnect(self._on_manual_preload_progress)
-                worker.preload_finished.disconnect(self._on_manual_preload_finished)
-            except RuntimeError:
-                pass  # 信号可能已断开
-
         # 恢复按钮
         btn_preload_now = self._ui.findChild(QWidget, "btnPreloadNow")
         if btn_preload_now:
@@ -1574,15 +1319,9 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event) -> None:
         """关闭窗口事件"""
         logging.info("正在关闭应用程序...")
+        self._closing = True  # 标记正在关闭，防止重复启动 Worker
 
-        # 停止专用 OCR 工作线程
-        self._ocr_worker_thread.stop()
-
-        # 等待线程池完成（最多5秒）
-        if not self._thread_pool.waitForDone(5000):
-            logging.warning("部分任务未能在超时时间内完成，强制退出")
-
-        # 清理 OCR 服务资源
+        # 关闭子进程服务（这会停止 Worker，让正在运行的任务快速失败）
         try:
             from vibeocr.services import USE_SUBPROCESS
 
@@ -1599,6 +1338,10 @@ class MainWindow(QMainWindow):
                 logging.info("OCR 管道缓存已清理")
         except Exception as e:
             logging.warning(f"清理 OCR 资源失败: {e}")
+
+        # 然后等待线程池完成（最多3秒）
+        if not self._thread_pool.waitForDone(3000):
+            logging.warning("部分任务未能在超时时间内完成，强制退出")
 
         event.accept()
         logging.info("应用程序已关闭")

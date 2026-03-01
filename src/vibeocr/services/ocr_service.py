@@ -520,14 +520,14 @@ class OCRService:
 
     def recognize(
         self,
-        image: Image.Image | np.ndarray | str,
+        image: Image.Image | np.ndarray | str | bytes,
         options: OCROptions | None = None,
     ) -> OCRResult:
         """
         对图像执行 OCR 识别
 
         Args:
-            image: PIL Image, numpy 数组, 或图像路径
+            image: PIL Image, numpy 数组, 图像路径, 或图像字节数据
             options: OCR 识别选项
 
         Returns:
@@ -536,6 +536,19 @@ class OCRService:
 
         actual_options = options if options is not None else OCROptions()
         _logger.info(f"[recognize] 开始识别，管道: {actual_options.pipeline.value}")
+
+        # 如果输入是 bytes，转换为 numpy.ndarray（PaddleX 只支持 ndarray 和 str）
+        if isinstance(image, bytes):
+            from PIL import Image as PILImage
+            import io
+            import numpy as np
+            _logger.info(f"[recognize] 输入是 bytes ({len(image)} 字节)，转换为 numpy.ndarray")
+            pil_image = PILImage.open(io.BytesIO(image))
+            # 转换为 RGB 模式（确保格式一致）再转为 numpy 数组
+            if pil_image.mode != 'RGB':
+                pil_image = pil_image.convert('RGB')
+            image = np.array(pil_image)
+            _logger.info(f"[recognize] 转换完成，数组形状: {image.shape}")
 
         # 根据管道类型分发
         try:

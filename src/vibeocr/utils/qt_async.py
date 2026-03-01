@@ -42,19 +42,24 @@ def run_coroutine(coro: Coroutine, callback: Optional[Callable] = None) -> None:
         coro: 要执行的协程
         callback: 可选的完成回调函数，接收协程返回值作为参数
     """
+    logger.info("[run_coroutine] 开始执行协程...")
     loop = asyncio.get_event_loop()
+    logger.info(f"[run_coroutine] 事件循环: {type(loop).__name__}, running={loop.is_running()}")
     
     async def wrapped():
+        logger.info("[run_coroutine] wrapped 协程开始执行")
         try:
             result = await coro
+            logger.info("[run_coroutine] 协程执行完成")
             if callback:
                 callback(result)
             return result
         except Exception as e:
-            logger.error(f"协程执行失败: {e}")
+            logger.error(f"[run_coroutine] 协程执行失败: {e}", exc_info=True)
             raise
     
-    asyncio.ensure_future(wrapped(), loop=loop)
+    future = asyncio.ensure_future(wrapped(), loop=loop)
+    logger.info(f"[run_coroutine] Future 已创建: {future}")
 
 
 def async_slot(*types):

@@ -2,15 +2,16 @@
 
 通过子进程隔离执行 OCR 识别，解决 PaddlePaddle GPU 与 QThread 的兼容性问题。
 提供与 OCRService 兼容的接口。
+
+此版本使用 WorkerManager 管理 Worker 进程，支持健康检查、自动恢复、负载均衡等功能。
 """
 
 import asyncio
 import logging
 import threading
 from typing import Optional, Union
-from pathlib import Path
 
-from vibeocr.services.ocr_worker_process import OCRWorkerProcess, OCRWorkerProcessError
+from vibeocr.services.worker_manager import WorkerManager, OCRWorkerProcessError
 
 logger = logging.getLogger(__name__)
 
@@ -80,18 +81,15 @@ class OCRServiceSubprocess:
         self.shm_size = shm_size
         self.start_timeout = start_timeout
 
-        self.workers: list[OCRWorkerProcess] = []
-        self._round_robin_index = 0
-        self._workers_lock = threading.Lock()
-
-        # 创建 Worker 实例（但不启动）
-        for i in range(max_workers):
-            worker = OCRWorkerProcess(
-                worker_id=i,
-                use_gpu=use_gpu,
-                shm_size=shm_size
-            )
-            self.workers.append(worker)
+        # 使用 WorkerManager 管理 Worker 进程
+        self._worker_manager = WorkerManager(
+            max_workers=max_workers,
+            use_gpu=use_gpu,
+            shm_size=shm_size,
+            start_timeout=start_timeout,
+            auto_restart=True,
+            max_retries=2
+        )
 
         self._initialized = True
         logger.info(f"OCRServiceSubprocess 初始化: max_workers={max_workers}, use_gpu={use_gpu}")
@@ -117,45 +115,17 @@ class OCRServiceSubprocess:
         Args:
             timeout: 每个 Worker 的启动超时时间
         """
-        with self._workers_lock:
-            for worker in self.workers:
-                if not worker.is_running:
-                    try:
-                        worker.start(timeout=timeout)
-                    except OCRWorkerProcessError as e:
-                        logger.error(f"启动 Worker {worker.worker_id} 失败: {e}")
-                        raise
+        # 检查是否已初始化（防止 shutdown 后重复启动）
+        if not self._initialized:
+            logger.warning("OCRServiceSubprocess 已关闭或未初始化，跳过启动")
+            return
 
-        logger.info("所有 Worker 已启动")
-
-    def _get_available_worker(self) -> OCRWorkerProcess:
-        """轮询获取可用的 Worker
-
-        Returns:
-            可用的 WorkerProcess
-
-        Raises:
-            OCRWorkerProcessError: 没有可用的 Worker
-        """
-        with self._workers_lock:
-            if not self.workers:
-                raise OCRWorkerProcessError("没有可用的 Worker")
-
-            # 轮询查找空闲 Worker
-            for _ in range(len(self.workers)):
-                worker = self.workers[self._round_robin_index]
-                self._round_robin_index = (self._round_robin_index + 1) % len(self.workers)
-
-                if worker.is_ready and not worker.busy:
-                    return worker
-
-            # 如果所有 Worker 都忙，等待第一个（简单策略）
-            # 在实际使用中，由于单 Worker 模式，这种情况很少发生
-            worker = self.workers[0]
-            if worker.is_ready:
-                return worker
-
-            raise OCRWorkerProcessError("所有 Worker 都忙或未就绪")
+        try:
+            self._worker_manager.start_all()
+            logger.info("所有 Worker 已启动")
+        except Exception as e:
+            logger.error(f"启动 Worker 失败: {e}")
+            raise
 
     def recognize(
         self,
@@ -177,9 +147,11 @@ class OCRServiceSubprocess:
 
         Raises:
             OCRWorkerProcessError: 识别失败
+            RuntimeError: 服务未就绪
         """
-        # 获取可用 Worker
-        worker = self._get_available_worker()
+        # 检查服务是否就绪
+        if not self._initialized:
+            raise RuntimeError("OCR 服务未初始化")
 
         # 准备图像数据
         image_data = self._prepare_image_data(image)
@@ -187,8 +159,10 @@ class OCRServiceSubprocess:
         # 准备选项字典
         options_dict = self._prepare_options_dict(options)
 
-        # 执行识别
-        return worker.recognize(image_data, options_dict)
+        # 执行识别（通过 WorkerManager 自动处理负载均衡和故障恢复）
+        return self._worker_manager.execute(
+            lambda w: w.recognize(image_data, options_dict)
+        )
 
     def _prepare_image_data(self, image) -> bytes:
         """准备图像数据
@@ -272,11 +246,10 @@ class OCRServiceSubprocess:
         Returns:
             {pipeline_name: success} 结果字典
         """
-        # 获取可用 Worker
-        worker = self._get_available_worker()
-        
-        # 执行预加载
-        return worker.preload_pipelines(pipelines, timeout)
+        # 执行预加载（通过 WorkerManager 自动处理负载均衡）
+        return self._worker_manager.execute(
+            lambda w: w.preload_pipelines(pipelines, timeout)
+        )
 
     async def recognize_async(
         self,
@@ -284,21 +257,37 @@ class OCRServiceSubprocess:
         options=None
     ):
         """异步执行 OCR 识别（asyncio 协程）
-        
+
         使用 run_in_executor 将同步调用包装为异步，避免阻塞事件循环。
-        
+
         Args:
             image: 输入图像（bytes/PIL.Image/np.ndarray/str路径）
             options: OCR 选项（OCROptions 对象）
-        
+
         Returns:
             OCRResult 对象
-        
+
         Raises:
             OCRWorkerProcessError: 识别失败
+            RuntimeError: 服务未就绪
         """
+        logger.info("[recognize_async] 开始异步识别...")
+        
+        # 检查服务是否就绪
+        if not self._initialized:
+            logger.error("[recognize_async] 服务未初始化")
+            raise RuntimeError("OCR 服务未初始化")
+
+        ready = self.is_ready()
+        logger.info(f"[recognize_async] 服务就绪状态: {ready}")
+        if not ready:
+            raise RuntimeError("OCR 服务未就绪，Worker 可能未启动")
+
+        logger.info("[recognize_async] 调用 run_in_executor...")
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, self.recognize, image, options)
+        result = await loop.run_in_executor(None, self.recognize, image, options)
+        logger.info("[recognize_async] run_in_executor 完成")
+        return result
 
     async def preload_pipelines_async(
         self,
@@ -323,41 +312,44 @@ class OCRServiceSubprocess:
         """关闭所有 Worker"""
         logger.info("关闭 OCRServiceSubprocess...")
 
-        with self._workers_lock:
-            for worker in self.workers:
-                try:
-                    worker.stop()
-                except Exception as e:
-                    logger.warning(f"停止 Worker {worker.worker_id} 时出错: {e}")
+        # 标记为已关闭，防止自动重启
+        self._initialized = False
 
-            self.workers.clear()
+        # 停止 WorkerManager
+        if hasattr(self, '_worker_manager'):
+            self._worker_manager.stop_all()
 
         logger.info("OCRServiceSubprocess 已关闭")
 
     def is_ready(self) -> bool:
         """检查服务是否就绪"""
-        with self._workers_lock:
-            return any(w.is_ready for w in self.workers)
+        if not self._initialized or not hasattr(self, '_worker_manager'):
+            return False
+        return self._worker_manager.get_status().get("healthy", False)
 
     def get_status(self) -> dict:
         """获取服务状态"""
-        with self._workers_lock:
-            workers_status = [
-                {
-                    "id": w.worker_id,
-                    "running": w.is_running,
-                    "ready": w.is_ready,
-                    "busy": w.busy
-                }
-                for w in self.workers
-            ]
-
+        if not hasattr(self, '_worker_manager'):
             return {
                 "max_workers": self.max_workers,
                 "use_gpu": self.use_gpu,
-                "ready": self.is_ready(),
-                "workers": workers_status
+                "ready": False,
+                "workers": []
             }
+        
+        manager_stats = self._worker_manager.get_stats()
+        return {
+            "max_workers": manager_stats["max_workers"],
+            "use_gpu": self.use_gpu,
+            "ready": manager_stats["ready_workers"] > 0,
+            "workers": manager_stats["workers"]
+        }
+
+    def get_stats(self) -> dict:
+        """获取详细统计信息"""
+        if not hasattr(self, '_worker_manager'):
+            return {}
+        return self._worker_manager.get_stats()
 
     def __enter__(self) -> "OCRServiceSubprocess":
         """上下文管理器入口"""

@@ -9,6 +9,7 @@ dependencies = [
     "pillow>=11.0.0",
     "markdown>=3.4",  # Markdown 转 HTML
     "qasync>=0.27.0",  # Qt-asyncio 集成
+    "paddlex==3.4.2",
 ]
 
 [project.scripts]

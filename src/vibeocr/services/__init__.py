@@ -40,7 +40,7 @@ def _should_use_portable() -> bool:
     return env_value != "direct"
 
 
-def get_ocr_service():
+def get_ocr_service(skip_auto_start: bool = False):
     """
     获取 OCR 服务实例（工厂函数）
 
@@ -48,13 +48,25 @@ def get_ocr_service():
     - VIBEOCR_USE_SUBPROCESS=true: 使用子进程模式（默认）
     - VIBEOCR_USE_SUBPROCESS=false: 使用直接模式
 
+    Args:
+        skip_auto_start: 是否跳过自动启动（用于避免重复初始化）
+
     Returns:
         OCRService 或 OCRServiceSubprocess 实例
     """
     if _should_use_subprocess():
         _logger.info("使用子进程 OCR 服务")
         from .ocr_service_subprocess import OCRServiceSubprocess
-        return OCRServiceSubprocess()
+        # 检查单例状态
+        if OCRServiceSubprocess._instance is not None:
+            _logger.info(f"[get_ocr_service] 单例已存在, _initialized={OCRServiceSubprocess._instance._initialized}")
+            if OCRServiceSubprocess._instance._initialized:
+                _logger.info("[get_ocr_service] 返回现有实例")
+                return OCRServiceSubprocess._instance
+        else:
+            _logger.info("[get_ocr_service] 单例不存在，将创建新实例")
+        _logger.info(f"[get_ocr_service] 创建 OCRServiceSubprocess, auto_start={not skip_auto_start}")
+        return OCRServiceSubprocess(auto_start=not skip_auto_start)
     else:
         _logger.info("使用直接 OCR 服务")
         if _should_use_portable():
