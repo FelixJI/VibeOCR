@@ -791,6 +791,172 @@
         </widget>
        </item>
        <item>
+        <widget class="QGroupBox" name="groupLLMConfig">
+         <property name="title">
+          <string>LLM 服务配置</string>
+         </property>
+         <layout class="QVBoxLayout" name="llmConfigLayout">
+          <property name="spacing">
+           <number>8</number>
+          </property>
+          <item>
+           <widget class="QLabel" name="labelLLMHint">
+            <property name="text">
+             <string>配置 LLM 服务以启用信息抽取功能</string>
+            </property>
+            <property name="foregroundRole">
+             <enum>QPalette::PlaceholderText</enum>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <layout class="QGridLayout" name="llmGrid">
+            <item row="0" column="0">
+             <widget class="QLabel" name="labelMLLMUrl">
+              <property name="text">
+               <string>MLLM 服务地址:</string>
+              </property>
+             </widget>
+            </item>
+            <item row="0" column="1">
+             <widget class="QLineEdit" name="editMLLMUrl">
+              <property name="placeholderText">
+               <string>http://127.0.0.1:8080/v1/chat/completions</string>
+              </property>
+             </widget>
+            </item>
+            <item row="1" column="0">
+             <widget class="QLabel" name="labelMLLMModel">
+              <property name="text">
+               <string>MLLM 模型名称:</string>
+              </property>
+             </widget>
+            </item>
+            <item row="1" column="1">
+             <widget class="QLineEdit" name="editMLLMModel">
+              <property name="placeholderText">
+               <string>PP-DocBee2</string>
+              </property>
+             </widget>
+            </item>
+            <item row="2" column="0">
+             <widget class="QLabel" name="labelLLMUrl">
+              <property name="text">
+               <string>LLM 服务地址:</string>
+              </property>
+             </widget>
+            </item>
+            <item row="2" column="1">
+             <widget class="QLineEdit" name="editLLMUrl">
+              <property name="placeholderText">
+               <string>http://127.0.0.1:8080/v1/chat/completions</string>
+              </property>
+             </widget>
+            </item>
+            <item row="3" column="0">
+             <widget class="QLabel" name="labelLLMModel">
+              <property name="text">
+               <string>LLM 模型名称:</string>
+              </property>
+             </widget>
+            </item>
+            <item row="3" column="1">
+             <widget class="QLineEdit" name="editLLMModel">
+              <property name="placeholderText">
+               <string>Qwen2.5</string>
+              </property>
+             </widget>
+            </item>
+            <item row="4" column="0">
+             <widget class="QLabel" name="labelApiKey">
+              <property name="text">
+               <string>API Key (可选):</string>
+              </property>
+             </widget>
+            </item>
+            <item row="4" column="1">
+             <widget class="QLineEdit" name="editApiKey">
+              <property name="echoMode">
+               <enum>QLineEdit::Password</enum>
+              </property>
+              <property name="placeholderText">
+               <string>留空表示不需要 API Key</string>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+          <item>
+           <widget class="QPushButton" name="btnSaveLLMConfig">
+            <property name="text">
+             <string>保存配置</string>
+            </property>
+           </widget>
+          </item>
+         </layout>
+        </widget>
+       </item>
+       <item>
+        <widget class="QGroupBox" name="groupTemplate">
+         <property name="title">
+          <string>抽取模板管理</string>
+         </property>
+         <layout class="QVBoxLayout" name="templateLayout">
+          <property name="spacing">
+           <number>8</number>
+          </property>
+          <item>
+           <widget class="QLabel" name="labelTemplateHint">
+            <property name="text">
+             <string>管理常用的抽取字段模板</string>
+            </property>
+            <property name="foregroundRole">
+             <enum>QPalette::PlaceholderText</enum>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QTableWidget" name="tableTemplates">
+            <property name="selectionBehavior">
+             <enum>QAbstractItemView::SelectRows</enum>
+            </property>
+            <column>
+             <string>模板名称</string>
+            </column>
+            <column>
+             <string>字段列表</string>
+            </column>
+           </widget>
+          </item>
+          <item>
+           <layout class="QHBoxLayout" name="templateButtons">
+            <item>
+             <widget class="QPushButton" name="btnAddTemplate">
+              <property name="text">
+               <string>添加模板</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QPushButton" name="btnEditTemplate">
+              <property name="text">
+               <string>编辑模板</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QPushButton" name="btnDeleteTemplate">
+              <property name="text">
+               <string>删除模板</string>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+         </layout>
+        </widget>
+       </item>
+       <item>
         <spacer name="verticalSpacer">
          <property name="orientation">
           <enum>Qt::Vertical</enum>

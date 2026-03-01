@@ -1114,6 +1114,24 @@ class MainWindow(QMainWindow):
         if btn_clear_cache:
             btn_clear_cache.clicked.connect(self._on_clear_cache_clicked)
 
+        # LLM 配置相关信号
+        btn_save_llm_config = self._ui.findChild(QWidget, "btnSaveLLMConfig")
+        if btn_save_llm_config:
+            btn_save_llm_config.clicked.connect(self._on_save_llm_config_clicked)
+
+        # 模板管理相关信号
+        btn_add_template = self._ui.findChild(QWidget, "btnAddTemplate")
+        if btn_add_template:
+            btn_add_template.clicked.connect(self._on_add_template_clicked)
+
+        btn_edit_template = self._ui.findChild(QWidget, "btnEditTemplate")
+        if btn_edit_template:
+            btn_edit_template.clicked.connect(self._on_edit_template_clicked)
+
+        btn_delete_template = self._ui.findChild(QWidget, "btnDeleteTemplate")
+        if btn_delete_template:
+            btn_delete_template.clicked.connect(self._on_delete_template_clicked)
+
         # 初始化设置页面状态
         self._init_settings_page()
 
@@ -1132,6 +1150,76 @@ class MainWindow(QMainWindow):
         parallel_options = self._ui.findChild(QWidget, "parallelOptions")
         if parallel_options:
             parallel_options.setVisible(False)
+
+        # 加载 LLM 配置
+        self._load_llm_config()
+
+        # 加载模板列表
+        self._load_template_list()
+
+    def _load_llm_config(self) -> None:
+        """加载 LLM 配置"""
+        from vibeocr.models.llm_config import LLMConfig
+        import json
+
+        config_path = self._project_root / "config" / "llm_config.json"
+        if config_path.exists():
+            try:
+                with open(config_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                self._llm_config = LLMConfig.from_dict(data)
+            except Exception as e:
+                logging.warning(f"加载 LLM 配置失败: {e}")
+                self._llm_config = LLMConfig()
+        else:
+            self._llm_config = LLMConfig()
+
+        # 更新 UI
+        self._update_llm_config_ui()
+
+    def _save_llm_config(self) -> None:
+        """保存 LLM 配置"""
+        import json
+
+        config_path = self._project_root / "config" / "llm_config.json"
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+
+        try:
+            with open(config_path, "w", encoding="utf-8") as f:
+                json.dump(self._llm_config.to_dict(), f, ensure_ascii=False, indent=2)
+            logging.info("LLM 配置已保存")
+        except Exception as e:
+            logging.error(f"保存 LLM 配置失败: {e}")
+
+            raise
+
+    def _update_llm_config_ui(self) -> None:
+        """更新 LLM 配置 UI"""
+        edit_mllm_url = self._ui.findChild(QWidget, "editMLLMUrl")
+        edit_mllm_model = self._ui.findChild(QWidget, "editMLLMModel")
+        edit_mllm_api_key = self._ui.findChild(QWidget, "editMLLMApiKey")
+
+        edit_llm_url = self._ui.findChild(QWidget, "editLLMUrl")
+        edit_llm_model = self._ui.findChild(QWidget, "editLLMModel")
+        edit_llm_api_key = self._ui.findChild(QWidget, "editLLMApiKey")
+
+        if hasattr(self, '_llm_config'):
+            # MLLM 配置
+            if edit_mllm_url:
+                edit_mllm_url.setText(self._llm_config.service_url)
+            if edit_mllm_model:
+                edit_mllm_model.setText(self._llm_config.model_name)
+            if edit_mllm_api_key:
+                edit_mllm_api_key.setText(self._llm_config.api_key)
+
+            # LLM 配置
+            if edit_llm_url:
+                edit_llm_url.setText(self._llm_config.service_url)
+            if edit_llm_model:
+                edit_llm_model.setText(self._llm_config.model_name)
+            if edit_llm_api_key:
+                edit_llm_api_key.setText(self._llm_config.api_key)
+
 
     def _on_enable_preload_toggled(self, checked: bool) -> None:
         """启用/禁用预加载"""
@@ -1397,6 +1485,178 @@ class MainWindow(QMainWindow):
             label_preload_status.setText(f"已预加载管道: {', '.join(preloaded)}")
         else:
             label_preload_status.setText("尚未预加载")
+
+    def _on_save_llm_config_clicked(self) -> None:
+        """保存 LLM 配置按钮点击"""
+        from PySide6.QtWidgets import QLineEdit
+
+        from vibeocr.models.llm_config import LLMConfig
+
+        # 从 UI 获取配置值
+        edit_mllm_url = self._ui.findChild(QLineEdit, "editMLLMUrl")
+        edit_mllm_model = self._ui.findChild(QLineEdit, "editMLLMModel")
+        edit_mllm_api_key = self._ui.findChild(QLineEdit, "editMLLMApiKey")
+
+        if edit_mllm_url and edit_mllm_model:
+            self._llm_config.service_url = edit_mllm_url.text()
+            self._llm_config.model_name = edit_mllm_model.text()
+            if edit_mllm_api_key:
+                self._llm_config.api_key = edit_mllm_api_key.text()
+
+        self._save_llm_config()
+        self._statusbar.showMessage("LLM 配置已保存")
+
+        # 更新信息抽取标签页的 LLM 状态
+        if hasattr(self, '_extraction_tab') and self._extraction_tab:
+            self._extraction_tab.update_llm_status(mllm_config=self._llm_config)
+
+        logging.info("LLM 配置已保存")
+
+    def _load_template_list(self) -> None:
+        """加载模板列表到 UI"""
+        from PySide6.QtWidgets import QListWidget
+        from vibeocr.models.extraction_template import ExtractionTemplate, DEFAULT_TEMPLATES
+        import json
+
+        list_template = self._ui.findChild(QListWidget, "listTemplate")
+        if not list_template:
+            return
+
+        list_template.clear()
+
+        # 添加预设模板
+        for template in DEFAULT_TEMPLATES:
+            list_template.addItem(template.name)
+
+        # 加载自定义模板
+        config_path = self._project_root / "config" / "templates.json"
+        if config_path.exists():
+                try:
+                    with open(config_path, "r", encoding="utf-8") as f:
+                        templates_data = json.load(f)
+                    for template_data in templates_data:
+                        template = ExtractionTemplate.from_dict(template_data)
+                        list_template.addItem(f"[自定义] {template.name}")
+                except Exception as e:
+                    logging.warning(f"加载自定义模板失败: {e}")
+
+    def _on_add_template_clicked(self) -> None:
+        """添加模板按钮点击"""
+        from PySide6.QtWidgets import QDialog, QVBoxLayout, QLabel, QLineEdit, QPushButton, QListWidget
+        from vibeocr.models.extraction_template import ExtractionTemplate
+        import json
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("添加模板")
+        dialog.setMinimumSize(300, 200)
+
+        layout = QVBoxLayout(dialog)
+
+        layout.addWidget(QLabel("模板名称:"))
+        name_edit = QLineEdit()
+        layout.addWidget(name_edit)
+
+        layout.addWidget(QLabel("抽取字段（每行一个）:"))
+        keys_edit = QLineEdit()
+        keys_edit.setPlaceholderText("字段1\n字段2\n字段3")
+        layout.addWidget(keys_edit)
+
+        btn_add = QPushButton("添加")
+        layout.addWidget(btn_add)
+
+        def on_add():
+            name = name_edit.text.strip()
+            keys_text = keys_edit.toPlainText().strip()
+            if not name or not keys_text:
+                return
+
+            keys = [k.strip() for k in keys_text.split("\n") if k.strip()]
+            if not keys:
+                return
+
+            # 保存到配置文件
+            config_path = self._project_root / "config" / "templates.json"
+            templates = []
+            if config_path.exists():
+                try:
+                    with open(config_path, "r", encoding="utf-8") as f:
+                    templates = json.load(f)
+                except Exception:
+                    pass
+
+            templates.append({"name": name, "keys": keys})
+
+            config_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(config_path, "w", encoding="utf-8") as f:
+                json.dump(templates, f, ensure_ascii=False, indent=2)
+
+            # 刷新列表
+            self._load_template_list()
+            dialog.accept()
+
+        btn_add.clicked.connect(on_add)
+        dialog.exec()
+
+    def _on_edit_template_clicked(self) -> None:
+        """编辑模板按钮点击"""
+        from PySide6.QtWidgets import QListWidget, QMessageBox
+        list_template = self._ui.findChild(QListWidget, "listTemplate")
+        if not list_template:
+            return
+
+        current_item = list_template.currentItem()
+        if current_item < 0:
+            QMessageBox.warning(self, "提示", "请先选择一个模板")
+            return
+
+        # TODO: 实现编辑模板对话框
+        QMessageBox.information(self, "提示", "编辑模板功能待实现")
+
+    def _on_delete_template_clicked(self) -> None:
+        """删除模板按钮点击"""
+        from PySide6.QtWidgets import QListWidget, QMessageBox
+        import json
+
+        list_template = self._ui.findChild(QListWidget, "listTemplate")
+        if not list_template:
+            return
+
+        current_item = list_template.currentItem()
+        if current_item < 0:
+            QMessageBox.warning(self, "提示", "请先选择一个模板")
+            return
+
+        template_name = list_template.item(current_item).text()
+        if template_name.startswith("[自定义]"):
+            template_name = template_name.replace("[自定义] ", "")
+        else:
+            QMessageBox.warning(self, "提示", "预设模板不能删除")
+            return
+
+        reply = QMessageBox.question(
+            self,
+            "确认删除",
+            f"确定要删除模板 '{template_name}' 吗?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+
+        if reply == QMessageBox.StandardButton.Yes:
+            # 从配置文件中删除
+            config_path = self._project_root / "config" / "templates.json"
+            if config_path.exists():
+                try:
+                    with open(config_path, "r", encoding="utf-8") as f:
+                        templates = json.load(f)
+
+                    templates = [t for t in templates if t.get("name") != template_name]
+
+                    with open(config_path, "w", encoding="utf-8") as f:
+                        json.dump(templates, f, ensure_ascii=False, indent=2)
+
+                    self._load_template_list()
+                    self._statusbar.showMessage(f"模板 '{template_name}' 已删除")
+                except Exception as e:
+                    logging.error(f"删除模板失败: {e}")
 
     def closeEvent(self, event) -> None:
         """关闭窗口事件"""
