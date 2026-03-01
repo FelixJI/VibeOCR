@@ -30,6 +30,7 @@ from vibeocr.widgets.preview_widget import PreviewWidget
 from vibeocr.widgets.screenshot_widget import ScreenshotWidget
 from vibeocr.widgets.console_widget import ConsoleWidget
 from vibeocr.services.log_service import setup_logging
+from vibeocr.views.batch_recognition_tab import BatchRecognitionTab
 from vibeocr.models.ocr_result import OCRResult
 from vibeocr import env_manager
 from vibeocr.machine_cache import is_cache_valid
@@ -160,6 +161,9 @@ class MainWindow(QMainWindow):
         # 初始化 OCR 预设下拉框（包含截图组件和复制提示的初始化）
         self._init_preset_combo()
 
+        # 添加批量识别标签页
+        self._init_batch_tab()
+
     def _init_preset_combo(self) -> None:
         """初始化 OCR 管道和选项按钮"""
         # 延迟导入: OCRPipeline 枚举
@@ -275,6 +279,17 @@ class MainWindow(QMainWindow):
             }
         """)
         self._copy_toast.hide()
+
+    def _init_batch_tab(self) -> None:
+        """初始化批量识别标签页"""
+        # 创建批量识别标签页
+        self._batch_tab = BatchRecognitionTab()
+
+        # 添加到标签页控件
+        tab_widget = self._ui.findChild(QWidget, "tabWidget")
+        if tab_widget:
+            tab_widget.addTab(self._batch_tab, "Batch Recognition")
+            logging.debug("批量识别标签页已添加")
 
     def _on_pipeline_clicked(self, pipeline) -> None:
         """管道按钮点击时更新 UI"""
@@ -557,6 +572,11 @@ class MainWindow(QMainWindow):
         if success:
             logging.info("[MainWindow] 子进程 Worker 已就绪")
             self._statusbar.showMessage("子进程 OCR 服务已就绪")
+
+            # 设置 OCR 服务到批量识别标签页
+            if hasattr(self, '_batch_tab') and self._batch_tab:
+                self._batch_tab.set_ocr_service(self._subprocess_service)
+                logging.info("[MainWindow] 批量识别标签页已连接 OCR 服务")
 
             # 子进程就绪后，触发预加载（如果配置了预加载管道）
             self._start_subprocess_preload()
