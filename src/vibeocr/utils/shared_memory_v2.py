@@ -41,7 +41,13 @@ class MessageType(bytes, Enum):
     PRELOAD = b"PREL"        # 预加载请求
     PRELOAD_DONE = b"PRED"   # 预加载完成
     LOG = b"LOG "            # 日志消息
-    HEARTBEAT = b"BEAT"      # 心跳（新增）
+    HEARTBEAT = b"BEAT"      # 心跳
+    # 批量消息类型（新增）
+    BATCH_ADD = b"BADD"      # 批量添加请求
+    BATCH_COMMIT = b"BCOM"   # 批量提交（触发推理）
+    BATCH_RESULT = b"BRES"   # 批量结果返回
+    BATCH_CANCEL = b"BCAN"   # 取消批量处理
+    BATCH_PROGRESS = b"BPRG" # 批量处理进度
 
 
 # 头部大小: 消息类型(4) + 数据大小(4)
@@ -73,6 +79,12 @@ MSG_PRELOAD = MessageType.PRELOAD
 MSG_PRELOAD_DONE = MessageType.PRELOAD_DONE
 MSG_LOG = MessageType.LOG
 MSG_HEARTBEAT = MessageType.HEARTBEAT
+# 批量消息类型别名
+MSG_BATCH_ADD = MessageType.BATCH_ADD
+MSG_BATCH_COMMIT = MessageType.BATCH_COMMIT
+MSG_BATCH_RESULT = MessageType.BATCH_RESULT
+MSG_BATCH_CANCEL = MessageType.BATCH_CANCEL
+MSG_BATCH_PROGRESS = MessageType.BATCH_PROGRESS
 
 # 状态常量
 STATE_EMPTY = 0
@@ -461,5 +473,101 @@ def serialize_log_entries(entries: list[dict]) -> bytes:
 
 def deserialize_log_entries(data: bytes) -> list[dict]:
     """反序列化日志条目列表"""
+    import pickle
+    return pickle.loads(data)
+
+
+# =============================================================================
+# 批量消息序列化/反序列化函数
+# =============================================================================
+
+def serialize_batch_request(request_id: str, image_data: bytes, options_dict: dict) -> bytes:
+    """序列化批量请求
+
+    格式: [request_id长度 1B | request_id | 图像数据大小 4B | 图像数据 | pickle(options_dict)]
+    """
+    import pickle
+
+    request_id_bytes = request_id.encode('utf-8')
+    header = struct.pack("<B", len(request_id_bytes))
+    image_header = struct.pack("<I", len(image_data))
+    options_bytes = pickle.dumps(options_dict)
+
+    return header + request_id_bytes + image_header + image_data + options_bytes
+
+
+def deserialize_batch_request(data: bytes) -> tuple[str, bytes, dict]:
+    """反序列化批量请求
+
+    Returns:
+        (request_id, image_data, options_dict)
+    """
+    import pickle
+
+    # 读取 request_id
+    id_len = struct.unpack("<B", data[:1])[0]
+    request_id = data[1:1 + id_len].decode('utf-8')
+
+    # 读取图像数据
+    offset = 1 + id_len
+    image_size = struct.unpack("<I", data[offset:offset + 4])[0]
+    offset += 4
+    image_data = data[offset:offset + image_size]
+
+    # 读取选项
+    offset += image_size
+    options_dict = pickle.loads(data[offset:])
+
+    return request_id, image_data, options_dict
+
+
+def serialize_batch_commit(preprocess_options: dict) -> bytes:
+    """序列化批量提交请求
+
+    Args:
+        preprocess_options: 预处理选项 {
+            'use_doc_orientation_classify': bool,
+            'use_doc_unwarping': bool,
+            'use_textline_orientation': bool
+        }
+    """
+    import pickle
+    return pickle.dumps(preprocess_options)
+
+
+def deserialize_batch_commit(data: bytes) -> dict:
+    """反序列化批量提交请求"""
+    import pickle
+    return pickle.loads(data)
+
+
+def serialize_batch_result(results: dict[str, object]) -> bytes:
+    """序列化批量结果
+
+    Args:
+        results: {request_id: OCRResult or error_string}
+    """
+    import pickle
+    return pickle.dumps(results)
+
+
+def deserialize_batch_result(data: bytes) -> dict:
+    """反序列化批量结果"""
+    import pickle
+    return pickle.loads(data)
+
+
+def serialize_batch_progress(completed: int, total: int, current_file: str) -> bytes:
+    """序列化批量处理进度"""
+    import pickle
+    return pickle.dumps({
+        'completed': completed,
+        'total': total,
+        'current_file': current_file
+    })
+
+
+def deserialize_batch_progress(data: bytes) -> dict:
+    """反序列化批量处理进度"""
     import pickle
     return pickle.loads(data)
