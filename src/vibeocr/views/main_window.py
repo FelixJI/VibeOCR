@@ -164,6 +164,9 @@ class MainWindow(QMainWindow):
         # 添加批量识别标签页
         self._init_batch_tab()
 
+        # 添加信息抽取标签页
+        self._init_extraction_tab()
+
     def _init_preset_combo(self) -> None:
         """初始化 OCR 管道和选项按钮"""
         # 延迟导入: OCRPipeline 枚举
@@ -291,7 +294,17 @@ class MainWindow(QMainWindow):
             tab_widget.addTab(self._batch_tab, "批量识别")
             logging.debug("批量识别标签页已添加")
 
-    def _on_pipeline_clicked(self, pipeline) -> None:
+    def _init_extraction_tab(self) -> None:
+        """初始化信息抽取标签页"""
+        from vibeocr.views.extraction_tab import ExtractionTab
+
+        self._extraction_tab = ExtractionTab()
+        tab_widget = self._ui.findChild(QWidget, "tabWidget")
+        if tab_widget:
+            tab_widget.addTab(self._extraction_tab, "信息抽取")
+            logging.debug("信息抽取标签页已添加")
+
+
         """管道按钮点击时更新 UI"""
         self._update_button_visibility(pipeline)
 
@@ -470,7 +483,7 @@ class MainWindow(QMainWindow):
         """依赖检测完成后启动子进程 Worker
 
         在后台线程中启动子进程 Worker，避免阻塞 UI。
-        显示启动进度对话框，提供详细的启动反馈。
+        启动进度通过控制台日志输出。
         启动完成后通过 _subprocess_ready_signal 信号通知。
         """
         if self._closing:
@@ -482,24 +495,7 @@ class MainWindow(QMainWindow):
             return
 
         logging.info("[MainWindow] 正在启动子进程 Worker...")
-
-        # 创建启动进度对话框
-        from PySide6.QtWidgets import QProgressDialog
-        from PySide6.QtCore import Qt
-
-        self._startup_progress = QProgressDialog(
-            "正在启动 OCR 服务，首次启动可能需要 60-120 秒...",
-            "取消",
-            0,
-            100,
-            self
-        )
-        self._startup_progress.setWindowTitle("启动中")
-        self._startup_progress.setWindowModality(Qt.WindowModality.WindowModal)
-        self._startup_progress.setAutoClose(True)
-        self._startup_progress.setAutoReset(True)
-        self._startup_progress.setMinimumDuration(500)  # 500ms 后才显示
-        self._startup_progress.setValue(0)
+        self._statusbar.showMessage("正在启动 OCR 服务...")
 
         class SubprocessStartTask(QRunnable):
             """子进程启动任务"""
@@ -508,20 +504,8 @@ class MainWindow(QMainWindow):
                 self._main_window = main_window
 
             def _update_progress(self, stage: str, percent: int):
-                """更新进度"""
-                from PySide6.QtCore import QMetaObject, Qt, Q_ARG
-                QMetaObject.invokeMethod(
-                    self._main_window._startup_progress,
-                    "setValue",
-                    Qt.ConnectionType.QueuedConnection,
-                    Q_ARG(int, percent)
-                )
-                QMetaObject.invokeMethod(
-                    self._main_window._startup_progress,
-                    "setLabelText",
-                    Qt.ConnectionType.QueuedConnection,
-                    Q_ARG(str, f"{stage} ({percent}%)")
-                )
+                """更新进度（仅输出到控制台）"""
+                logging.info(f"[OCR 启动] {stage} ({percent}%)")
 
             def run(self):
                 # 检查是否正在关闭
@@ -551,7 +535,6 @@ class MainWindow(QMainWindow):
                 except Exception as e:
                     error_msg = str(e)
                     logging.error(f"[MainWindow] 启动子进程 Worker 失败: {error_msg}")
-                    self._update_progress(f"启动失败: {error_msg[:100]}", 0)
                     self._main_window._subprocess_ready_signal.emit(False)
 
         # 在线程池中执行启动任务
@@ -562,26 +545,25 @@ class MainWindow(QMainWindow):
         """子进程 Worker 就绪回调"""
         self._subprocess_worker_ready = success
 
-        # 关闭启动进度对话框
-        if hasattr(self, '_startup_progress') and self._startup_progress:
-            if success:
-                self._startup_progress.setValue(100)
-            self._startup_progress.close()
-            self._startup_progress = None
-
         if success:
             logging.info("[MainWindow] 子进程 Worker 已就绪")
-            self._statusbar.showMessage("子进程 OCR 服务已就绪")
+            self._statusbar.showMessage("OCR 服务已就绪")
 
             # 设置 OCR 服务到批量识别标签页
             if hasattr(self, '_batch_tab') and self._batch_tab:
                 self._batch_tab.set_ocr_service(self._subprocess_service)
                 logging.info("[MainWindow] 批量识别标签页已连接 OCR 服务")
 
+            # 设置 OCR 服务到信息抽取标签页
+            if hasattr(self, '_extraction_tab') and self._extraction_tab:
+                self._extraction_tab.set_ocr_service(self._subprocess_service)
+                logging.info("[MainWindow] 信息抽取标签页已连接 OCR 服务")
+
             # 子进程就绪后，触发预加载（如果配置了预加载管道）
             self._start_subprocess_preload()
         else:
-            logging.warning("[MainWindow] 子进程 Worker 启动失败，将使用工作线程模式")
+            logging.warning("[MainWindow] 子进程 Worker 启动失败")
+            self._statusbar.showMessage("OCR 服务启动失败")
             # 显示错误提示
             QMessageBox.warning(
                 self,
@@ -591,7 +573,7 @@ class MainWindow(QMainWindow):
                 "1. 首次启动需要下载模型（请检查网络）\n"
                 "2. GPU 驱动或 CUDA 版本不兼容\n"
                 "3. 系统内存不足\n\n"
-                "将尝试使用备用模式，但性能可能受限。"
+                "请查看控制台日志了解详情。"
             )
     
     def _start_subprocess_preload(self) -> None:
