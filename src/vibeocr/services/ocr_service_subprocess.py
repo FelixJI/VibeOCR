@@ -9,9 +9,13 @@
 import asyncio
 import logging
 import threading
-from typing import Optional, Union
+import uuid
+from typing import Optional, Union, List, Callable, TYPE_CHECKING
 
 from vibeocr.services.worker_manager import WorkerManager, OCRWorkerProcessError
+
+if TYPE_CHECKING:
+    from vibeocr.models.batch_request import PreprocessOptions
 
 logger = logging.getLogger(__name__)
 
@@ -389,6 +393,95 @@ class OCRServiceSubprocess:
         if not hasattr(self, '_worker_manager'):
             return {}
         return self._worker_manager.get_stats()
+
+    # =========================================================================
+    # 批量处理接口
+    # =========================================================================
+
+    def batch_add(
+        self,
+        image: Union[bytes, "Image.Image", "np.ndarray", str],
+        options=None,
+        file_name: str = ""
+    ) -> str:
+        """添加图片到批量队列
+
+        Args:
+            image: 输入图像
+            options: OCR 选项
+            file_name: 文件名
+
+        Returns:
+            request_id: 请求标识符
+        """
+        if not self._initialized:
+            raise RuntimeError("OCR 服务未初始化")
+
+        # 准备图像数据
+        image_data = self._prepare_image_data(image)
+
+        # 准备选项字典
+        options_dict = self._prepare_options_dict(options)
+        options_dict['file_name'] = file_name
+
+        # 生成 request_id
+        request_id = uuid.uuid4().hex[:12]
+
+        # 序列化并发送
+        from vibeocr.utils.shared_memory_v2 import (
+            serialize_batch_request,
+            MessageType,
+        )
+
+        request_data = serialize_batch_request(request_id, image_data, options_dict)
+
+        # 发送到 Worker
+        self._worker_manager.execute(
+            lambda w: w._send_batch_add(request_data)
+        )
+
+        return request_id
+
+    def batch_commit(
+        self,
+        preprocess_options: "PreprocessOptions",
+        timeout: float = 300.0
+    ) -> dict:
+        """提交批量处理
+
+        Args:
+            preprocess_options: 预处理选项
+            timeout: 超时时间（秒）
+
+        Returns:
+            {request_id: result} 结果字典
+        """
+        if not self._initialized:
+            raise RuntimeError("OCR 服务未初始化")
+
+        from vibeocr.utils.shared_memory_v2 import (
+            serialize_batch_commit,
+            MessageType,
+        )
+
+        # 序列化并发送
+        commit_data = serialize_batch_commit(preprocess_options.to_dict())
+
+        # 发送并等待结果
+        return self._worker_manager.execute(
+            lambda w: w._send_batch_commit(commit_data, timeout)
+        )
+
+    def batch_cancel(self):
+        """取消批量处理"""
+        if not self._initialized:
+            return
+
+        from vibeocr.utils.shared_memory_v2 import MessageType
+
+        self._worker_manager.execute(
+            lambda w: w._send_batch_cancel()
+        )
 
     def __enter__(self) -> "OCRServiceSubprocess":
         """上下文管理器入口"""

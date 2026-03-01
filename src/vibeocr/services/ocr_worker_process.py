@@ -21,6 +21,8 @@ from vibeocr.utils.shared_memory_v2 import (
     deserialize_result,
     serialize_preload_request,
     deserialize_preload_result,
+    # 批量消息序列化函数
+    deserialize_batch_result,
 )
 
 # 消息类型别名（保持兼容）
@@ -32,6 +34,12 @@ MSG_READY = MessageType.READY
 MSG_PRELOAD = MessageType.PRELOAD
 MSG_PRELOAD_DONE = MessageType.PRELOAD_DONE
 MSG_SHUTDOWN = MessageType.SHUTDOWN
+# 批量消息类型别名
+MSG_BATCH_ADD = MessageType.BATCH_ADD
+MSG_BATCH_COMMIT = MessageType.BATCH_COMMIT
+MSG_BATCH_RESULT = MessageType.BATCH_RESULT
+MSG_BATCH_CANCEL = MessageType.BATCH_CANCEL
+MSG_BATCH_PROGRESS = MessageType.BATCH_PROGRESS
 
 logger = logging.getLogger(__name__)
 
@@ -497,6 +505,129 @@ class OCRWorkerProcess:
                 results[pipeline_name] = False
 
         return results
+
+    # =========================================================================
+    # 批量处理方法
+    # =========================================================================
+
+    def _send_batch_add(self, request_data: bytes, timeout: float = 30.0) -> bool:
+        """发送批量添加请求
+
+        Args:
+            request_data: 序列化的批量请求数据
+            timeout: 超时时间（秒）
+
+        Returns:
+            是否成功
+        """
+        if not self.is_ready:
+            raise OCRWorkerProcessError(f"Worker {self.worker_id} 未就绪")
+
+        try:
+            self.protocol.write_message(MSG_BATCH_ADD, request_data, timeout=timeout, sender='main')
+            logger.debug(f"Worker {self.worker_id} 批量添加请求已发送")
+
+            # 等待确认
+            msg_type, data = self.protocol.read_message(timeout=timeout, expected_sender='worker')
+            if msg_type == MSG_ACK:
+                return True
+            elif msg_type == MSG_ERROR:
+                error_msg = data.decode("utf-8", errors="replace")
+                raise OCRWorkerProcessError(f"批量添加失败: {error_msg}")
+            else:
+                raise OCRWorkerProcessError(f"意外响应类型: {msg_type}")
+
+        except SharedMemoryProtocolError as e:
+            raise OCRWorkerProcessError(f"通信错误: {e}")
+
+    def _send_batch_commit(self, commit_data: bytes, timeout: float = 300.0) -> dict:
+        """发送批量提交请求并等待结果
+
+        Args:
+            commit_data: 序列化的批量提交数据
+            timeout: 超时时间（秒）
+
+        Returns:
+            {request_id: result} 结果字典
+        """
+        if not self.is_ready:
+            raise OCRWorkerProcessError(f"Worker {self.worker_id} 未就绪")
+
+        self.busy = True
+        try:
+            self.protocol.write_message(MSG_BATCH_COMMIT, commit_data, timeout=timeout, sender='main')
+            logger.info(f"Worker {self.worker_id} 批量提交请求已发送，等待结果...")
+
+            # 等待批量结果（可能需要较长时间）
+            start_time = time.time()
+            while True:
+                remaining_timeout = timeout - (time.time() - start_time)
+                if remaining_timeout <= 0:
+                    raise OCRWorkerProcessError(f"批量处理超时 ({timeout}s)")
+
+                try:
+                    msg_type, data = self.protocol.read_message(
+                        timeout=min(remaining_timeout, 60.0),
+                        expected_sender='worker'
+                    )
+                except SharedMemoryProtocolError as e:
+                    if "读取超时" in str(e):
+                        logger.debug(f"Worker {self.worker_id} 等待批量结果中...")
+                        continue
+                    raise
+
+                if msg_type == MSG_BATCH_RESULT:
+                    # 反序列化结果
+                    results = deserialize_batch_result(data)
+                    logger.info(f"Worker {self.worker_id} 批量处理完成，返回 {len(results)} 个结果")
+                    return results
+
+                elif msg_type == MSG_BATCH_PROGRESS:
+                    # 进度更新，继续等待
+                    from vibeocr.utils.shared_memory_v2 import deserialize_batch_progress
+                    progress = deserialize_batch_progress(data)
+                    logger.debug(f"Worker {self.worker_id} 批量进度: {progress['completed']}/{progress['total']}")
+                    continue
+
+                elif msg_type == MSG_ERROR:
+                    error_msg = data.decode("utf-8", errors="replace")
+                    raise OCRWorkerProcessError(f"批量处理失败: {error_msg}")
+
+                else:
+                    logger.warning(f"Worker {self.worker_id} 收到意外消息类型: {msg_type}")
+                    continue
+
+        except SharedMemoryProtocolError as e:
+            raise OCRWorkerProcessError(f"通信错误: {e}")
+
+        finally:
+            self.busy = False
+
+    def _send_batch_cancel(self, timeout: float = 5.0) -> bool:
+        """发送批量取消请求
+
+        Args:
+            timeout: 超时时间（秒）
+
+        Returns:
+            是否成功
+        """
+        if not self.is_ready:
+            return False
+
+        try:
+            self.protocol.write_message(MSG_BATCH_CANCEL, b"", timeout=timeout, sender='main')
+            logger.info(f"Worker {self.worker_id} 批量取消请求已发送")
+
+            # 等待确认
+            msg_type, data = self.protocol.read_message(timeout=timeout, expected_sender='worker')
+            if msg_type == MSG_ACK:
+                return True
+            return False
+
+        except SharedMemoryProtocolError as e:
+            logger.warning(f"发送批量取消请求失败: {e}")
+            return False
 
     def stop(self, timeout: float = 5.0) -> None:
         """停止 Worker 进程
