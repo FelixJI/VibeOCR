@@ -197,6 +197,7 @@ class MainWindow(QMainWindow):
             OCRPipeline.TABLE_RECOGNITION: self._ui.findChild(QWidget, "btnPipelineTable"),
             OCRPipeline.FORMULA_RECOGNITION: self._ui.findChild(QWidget, "btnPipelineFormula"),
             OCRPipeline.PP_STRUCTURE_V3: self._ui.findChild(QWidget, "btnPipelineStructure"),
+            OCRPipeline.PADDLEOCR_VL: self._ui.findChild(QWidget, "btnPipelinePaddleOCRVL"),
         }
 
         # 预处理按钮
@@ -210,6 +211,13 @@ class MainWindow(QMainWindow):
         self._btn_sub_formula = self._ui.findChild(QWidget, "btnSubFormula")
         self._btn_sub_seal = self._ui.findChild(QWidget, "btnSubSeal")
         self._btn_sub_chart = self._ui.findChild(QWidget, "btnSubChart")
+
+        # PaddleOCR-VL 特有选项按钮
+        self._btn_vl_layout = self._ui.findChild(QWidget, "btnVlLayout")
+        self._btn_vl_chart = self._ui.findChild(QWidget, "btnVlChart")
+        self._btn_vl_seal = self._ui.findChild(QWidget, "btnVlSeal")
+        self._btn_vl_format = self._ui.findChild(QWidget, "btnVlFormat")
+        self._btn_vl_ocr_image = self._ui.findChild(QWidget, "btnVlOcrImage")
 
         # 应用样式并连接信号
         for pipeline, btn in self._pipeline_buttons.items():
@@ -313,9 +321,9 @@ class MainWindow(QMainWindow):
         # 使用管道的 value 属性进行比较（避免导入 OCRPipeline）
         pipeline_value = pipeline.value if hasattr(pipeline, 'value') else pipeline
 
-        # 子产线选项：仅版面解析时显示
+        # 子产线选项：版面解析和 PaddleOCR-VL 时显示
         if self._sub_pipeline_widget:
-            self._sub_pipeline_widget.setVisible(pipeline_value == "PP-StructureV3")
+            self._sub_pipeline_widget.setVisible(pipeline_value in ["PP-StructureV3", "PaddleOCR-VL"])
 
         # 文本行方向按钮：仅通用 OCR 时显示
         if self._btn_textline:
@@ -324,6 +332,27 @@ class MainWindow(QMainWindow):
         # 版面检测按钮：仅表格和公式管道时显示
         if self._btn_layout:
             self._btn_layout.setVisible(pipeline_value in ["table_recognition", "formula_recognition"])
+
+        # 版面解析子产线按钮：仅版面解析时显示
+        pp_structure_buttons = [self._btn_sub_table, self._btn_sub_formula, self._btn_sub_seal, self._btn_sub_chart]
+        vl_buttons = [self._btn_vl_layout, self._btn_vl_chart, self._btn_vl_seal, self._btn_vl_format, self._btn_vl_ocr_image]
+
+        for btn in pp_structure_buttons:
+            if btn:
+                btn.setVisible(pipeline_value == "PP-StructureV3")
+
+        # PaddleOCR-VL 特有选项按钮：仅 PaddleOCR-VL 时显示
+        for btn in vl_buttons:
+            if btn:
+                btn.setVisible(pipeline_value == "PaddleOCR-VL")
+
+        # 更新子产线标签文字
+        label_sub = self._ui.findChild(QWidget, "labelSubPipelines")
+        label_vl = self._ui.findChild(QWidget, "labelVlOptions")
+        if label_sub:
+            label_sub.setVisible(pipeline_value == "PP-StructureV3")
+        if label_vl:
+            label_vl.setVisible(pipeline_value == "PaddleOCR-VL")
 
         logging.debug(f"管道切换为 {pipeline.display_name}")
 
@@ -762,6 +791,13 @@ class MainWindow(QMainWindow):
         use_seal = self._btn_sub_seal.isChecked() if self._btn_sub_seal else False
         use_chart = self._btn_sub_chart.isChecked() if self._btn_sub_chart else False
 
+        # 获取 PaddleOCR-VL 特有选项
+        vl_use_layout = self._btn_vl_layout.isChecked() if self._btn_vl_layout else True
+        vl_use_chart = self._btn_vl_chart.isChecked() if self._btn_vl_chart else False
+        vl_use_seal = self._btn_vl_seal.isChecked() if self._btn_vl_seal else False
+        vl_format = self._btn_vl_format.isChecked() if self._btn_vl_format else False
+        vl_ocr_image = self._btn_vl_ocr_image.isChecked() if self._btn_vl_ocr_image else False
+
         # 创建 OCR 选项
         options = OCROptions(
             pipeline=pipeline,
@@ -773,6 +809,10 @@ class MainWindow(QMainWindow):
             use_formula_recognition=use_formula,
             use_seal_recognition=use_seal,
             use_chart_recognition=use_chart,
+            vl_use_layout_detection=vl_use_layout,
+            vl_use_seal_recognition=vl_use_seal,
+            vl_use_ocr_for_image_block=vl_ocr_image,
+            vl_format_block_content=vl_format,
         )
 
         logging.info(f"OCR 管道: {pipeline.display_name}, 预处理: 方向={use_orient}, 去弯={use_unwarp}")
@@ -1296,6 +1336,10 @@ class MainWindow(QMainWindow):
         chk_structure = self._ui.findChild(QWidget, "chkPreloadStructure")
         if chk_structure and chk_structure.isChecked():
             pipelines.append(OCRPipeline.PP_STRUCTURE_V3)
+
+        chk_paddleocr_vl = self._ui.findChild(QWidget, "chkPreloadPaddleOCRVL")
+        if chk_paddleocr_vl and chk_paddleocr_vl.isChecked():
+            pipelines.append(OCRPipeline.PADDLEOCR_VL)
 
         return pipelines
 

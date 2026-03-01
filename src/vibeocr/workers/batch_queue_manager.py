@@ -275,14 +275,29 @@ class BatchQueueManager:
             images = [req.image_data for req in requests]
 
             # 调用 pipeline.predict 批量推理
-            # 注意: PaddleX pipeline.predict 支持批量输入
             pipeline_options = preprocess_options.to_dict()
 
-            # 执行批量推理
-            batch_results = list(self.pipeline.predict(
-                images,
-                **pipeline_options
-            ))
+            # 根据管道类型准备参数
+            pipeline_name = getattr(preprocess_options, 'pipeline', 'PP-StructureV3')
+
+            if pipeline_name == "PaddleOCR-VL":
+                # PaddleOCR-VL 特有参数映射
+                vl_options = {
+                    'use_doc_orientation_classify': pipeline_options.get('use_doc_orientation_classify', True),
+                    'use_doc_unwarping': pipeline_options.get('use_doc_unwarping', True),
+                    'use_layout_detection': pipeline_options.get('vl_use_layout_detection', True),
+                    'use_chart_recognition': pipeline_options.get('vl_use_chart_recognition', False),
+                    'use_seal_recognition': pipeline_options.get('vl_use_seal_recognition', False),
+                    'use_ocr_for_image_block': pipeline_options.get('vl_use_ocr_for_image_block', False),
+                    'format_block_content': pipeline_options.get('vl_format_block_content', False),
+                }
+                batch_results = list(self.pipeline.predict(images, **vl_options))
+            else:
+                # PP-StructureV3 使用原始选项
+                # 移除非 PP-StructureV3 参数
+                pp_options = {k: v for k, v in pipeline_options.items()
+                             if not k.startswith('vl_') and k != 'pipeline'}
+                batch_results = list(self.pipeline.predict(images, **pp_options))
 
             # 分发结果
             for i, req in enumerate(requests):

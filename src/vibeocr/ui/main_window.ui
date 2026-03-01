@@ -190,6 +190,25 @@
              </widget>
             </item>
             <item>
+             <widget class="QPushButton" name="btnPipelinePaddleOCRVL">
+              <property name="toolTip">
+               <string>PaddleOCR-VL：端到端文档解析，支持表格、公式、印章、图表等（v1.5 支持异形框定位）</string>
+              </property>
+              <property name="text">
+               <string>PaddleOCR-VL</string>
+              </property>
+              <property name="checkable">
+               <bool>true</bool>
+              </property>
+              <property name="checked">
+               <bool>false</bool>
+              </property>
+              <property name="autoExclusive">
+               <bool>true</bool>
+              </property>
+             </widget>
+            </item>
+            <item>
              <spacer name="horizontalSpacerPipeline">
               <property name="orientation">
                <enum>Qt::Horizontal</enum>
@@ -300,7 +319,7 @@
             <property name="visible">
              <bool>false</bool>
             </property>
-            <layout class="QHBoxLayout" name="subPipelineLayout">
+            <layout class="QVBoxLayout" name="subPipelineLayout">
              <property name="leftMargin">
               <number>0</number>
              </property>
@@ -313,89 +332,200 @@
              <property name="bottomMargin">
               <number>0</number>
              </property>
+             <property name="spacing">
+              <number>4</number>
+             </property>
              <item>
-              <widget class="QLabel" name="labelSubPipelines">
-               <property name="text">
-                <string>子产线:</string>
-               </property>
-              </widget>
+              <layout class="QHBoxLayout" name="ppStructureLayout">
+               <item>
+                <widget class="QLabel" name="labelSubPipelines">
+                 <property name="text">
+                  <string>子产线:</string>
+                 </property>
+                </widget>
+               </item>
+               <item>
+                <widget class="QPushButton" name="btnSubTable">
+                 <property name="toolTip">
+                  <string>启用表格识别子产线</string>
+                 </property>
+                 <property name="text">
+                  <string>表格</string>
+                 </property>
+                 <property name="checkable">
+                  <bool>true</bool>
+                 </property>
+                 <property name="checked">
+                  <bool>true</bool>
+                 </property>
+                </widget>
+               </item>
+               <item>
+                <widget class="QPushButton" name="btnSubFormula">
+                 <property name="toolTip">
+                  <string>启用公式识别子产线</string>
+                 </property>
+                 <property name="text">
+                  <string>公式</string>
+                 </property>
+                 <property name="checkable">
+                  <bool>true</bool>
+                 </property>
+                 <property name="checked">
+                  <bool>true</bool>
+                 </property>
+                </widget>
+               </item>
+               <item>
+                <widget class="QPushButton" name="btnSubSeal">
+                 <property name="toolTip">
+                  <string>启用印章识别子产线</string>
+                 </property>
+                 <property name="text">
+                  <string>印章</string>
+                 </property>
+                 <property name="checkable">
+                  <bool>true</bool>
+                 </property>
+                 <property name="checked">
+                  <bool>false</bool>
+                 </property>
+                </widget>
+               </item>
+               <item>
+                <widget class="QPushButton" name="btnSubChart">
+                 <property name="toolTip">
+                  <string>启用图表识别子产线</string>
+                 </property>
+                 <property name="text">
+                  <string>图表</string>
+                 </property>
+                 <property name="checkable">
+                  <bool>true</bool>
+                 </property>
+                 <property name="checked">
+                  <bool>false</bool>
+                 </property>
+                </widget>
+               </item>
+               <item>
+                <spacer name="horizontalSpacerSub">
+                 <property name="orientation">
+                  <enum>Qt::Horizontal</enum>
+                 </property>
+                 <property name="sizeHint" stdset="0">
+                  <size>
+                   <width>40</width>
+                   <height>20</height>
+                  </size>
+                 </property>
+                </spacer>
+               </item>
+              </layout>
              </item>
              <item>
-              <widget class="QPushButton" name="btnSubTable">
-               <property name="toolTip">
-                <string>启用表格识别子产线</string>
-               </property>
-               <property name="text">
-                <string>表格</string>
-               </property>
-               <property name="checkable">
-                <bool>true</bool>
-               </property>
-               <property name="checked">
-                <bool>true</bool>
-               </property>
-              </widget>
-             </item>
-             <item>
-              <widget class="QPushButton" name="btnSubFormula">
-               <property name="toolTip">
-                <string>启用公式识别子产线</string>
-               </property>
-               <property name="text">
-                <string>公式</string>
-               </property>
-               <property name="checkable">
-                <bool>true</bool>
-               </property>
-               <property name="checked">
-                <bool>true</bool>
-               </property>
-              </widget>
-             </item>
-             <item>
-              <widget class="QPushButton" name="btnSubSeal">
-               <property name="toolTip">
-                <string>启用印章识别子产线</string>
-               </property>
-               <property name="text">
-                <string>印章</string>
-               </property>
-               <property name="checkable">
-                <bool>true</bool>
-               </property>
-               <property name="checked">
-                <bool>false</bool>
-               </property>
-              </widget>
-             </item>
-             <item>
-              <widget class="QPushButton" name="btnSubChart">
-               <property name="toolTip">
-                <string>启用图表识别子产线</string>
-               </property>
-               <property name="text">
-                <string>图表</string>
-               </property>
-               <property name="checkable">
-                <bool>true</bool>
-               </property>
-               <property name="checked">
-                <bool>false</bool>
-               </property>
-              </widget>
-             </item>
-             <item>
-              <spacer name="horizontalSpacerSub">
-               <property name="orientation">
-                <enum>Qt::Horizontal</enum>
-               </property>
-               <property name="sizeHint" stdset="0">
-                <size>
-                 <width>40</width>
-                 <height>20</height>
-                </size>
-               </property>
-              </spacer>
+              <layout class="QHBoxLayout" name="paddleocrVlLayout">
+               <item>
+                <widget class="QLabel" name="labelVlOptions">
+                 <property name="text">
+                  <string>V-L 选项:</string>
+                 </property>
+                </widget>
+               </item>
+               <item>
+                <widget class="QPushButton" name="btnVlLayout">
+                 <property name="toolTip">
+                  <string>启用版面区域检测排序（默认开启）</string>
+                 </property>
+                 <property name="text">
+                  <string>版面检测</string>
+                 </property>
+                 <property name="checkable">
+                  <bool>true</bool>
+                 </property>
+                 <property name="checked">
+                  <bool>true</bool>
+                 </property>
+                </widget>
+               </item>
+               <item>
+                <widget class="QPushButton" name="btnVlChart">
+                 <property name="toolTip">
+                  <string>启用图表解析功能</string>
+                 </property>
+                 <property name="text">
+                  <string>图表</string>
+                 </property>
+                 <property name="checkable">
+                  <bool>true</bool>
+                 </property>
+                 <property name="checked">
+                  <bool>false</bool>
+                 </property>
+                </widget>
+               </item>
+               <item>
+                <widget class="QPushButton" name="btnVlSeal">
+                 <property name="toolTip">
+                  <string>启用印章识别功能（v1.5 新增）</string>
+                 </property>
+                 <property name="text">
+                  <string>印章</string>
+                 </property>
+                 <property name="checkable">
+                  <bool>true</bool>
+                 </property>
+                 <property name="checked">
+                  <bool>false</bool>
+                 </property>
+                </widget>
+               </item>
+               <item>
+                <widget class="QPushButton" name="btnVlFormat">
+                 <property name="toolTip">
+                  <string>将结果格式化为 Markdown 格式</string>
+                 </property>
+                 <property name="text">
+                  <string>格式化</string>
+                 </property>
+                 <property name="checkable">
+                  <bool>true</bool>
+                 </property>
+                 <property name="checked">
+                  <bool>false</bool>
+                 </property>
+                </widget>
+               </item>
+               <item>
+                <widget class="QPushButton" name="btnVlOcrImage">
+                 <property name="toolTip">
+                  <string>对图片块中的文字进行 OCR 识别</string>
+                 </property>
+                 <property name="text">
+                  <string>图内 OCR</string>
+                 </property>
+                 <property name="checkable">
+                  <bool>true</bool>
+                 </property>
+                 <property name="checked">
+                  <bool>false</bool>
+                 </property>
+                </widget>
+               </item>
+               <item>
+                <spacer name="horizontalSpacerVl">
+                 <property name="orientation">
+                  <enum>Qt::Horizontal</enum>
+                 </property>
+                 <property name="sizeHint" stdset="0">
+                  <size>
+                   <width>40</width>
+                   <height>20</height>
+                  </size>
+                 </property>
+                </spacer>
+               </item>
+              </layout>
              </item>
             </layout>
            </widget>
@@ -570,6 +700,19 @@
                  </property>
                  <property name="text">
                   <string>版面</string>
+                 </property>
+                 <property name="checked">
+                  <bool>false</bool>
+                 </property>
+                </widget>
+               </item>
+               <item>
+                <widget class="QCheckBox" name="chkPreloadPaddleOCRVL">
+                 <property name="toolTip">
+                  <string>PaddleOCR-VL 端到端文档解析（v1.5 支持异形框定位）</string>
+                 </property>
+                 <property name="text">
+                  <string>PaddleOCR-VL</string>
                  </property>
                  <property name="checked">
                   <bool>false</bool>

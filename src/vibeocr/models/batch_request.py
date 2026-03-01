@@ -91,11 +91,21 @@ class BatchRequest:
 class PreprocessOptions:
     """预处理选项
 
-    对应 PP-StructureV3 的预处理参数。
+    对应 PP-StructureV3 和 PaddleOCR-VL 的预处理参数。
     """
+    # 通用预处理选项
     use_doc_orientation_classify: bool = True   # 文档方向分类
     use_doc_unwarping: bool = True              # 文档扭曲矫正
     use_textline_orientation: bool = False      # 文本行方向分类
+
+    # 管道类型
+    pipeline: str = "PP-StructureV3"            # 使用的管道类型
+
+    # PaddleOCR-VL 特有选项
+    vl_use_layout_detection: bool = True        # 启用版面区域检测排序
+    vl_format_block_content: bool = False       # 将 block_content 格式化为 Markdown
+    vl_use_seal_recognition: bool = False       # 启用印章识别（v1.5 新增）
+    vl_use_ocr_for_image_block: bool = False    # 对图片中的文字进行识别
 
     def to_dict(self) -> dict:
         """转换为字典"""
@@ -103,6 +113,11 @@ class PreprocessOptions:
             'use_doc_orientation_classify': self.use_doc_orientation_classify,
             'use_doc_unwarping': self.use_doc_unwarping,
             'use_textline_orientation': self.use_textline_orientation,
+            'pipeline': self.pipeline,
+            'vl_use_layout_detection': self.vl_use_layout_detection,
+            'vl_format_block_content': self.vl_format_block_content,
+            'vl_use_seal_recognition': self.vl_use_seal_recognition,
+            'vl_use_ocr_for_image_block': self.vl_use_ocr_for_image_block,
         }
 
     @classmethod
@@ -112,6 +127,11 @@ class PreprocessOptions:
             use_doc_orientation_classify=data.get('use_doc_orientation_classify', True),
             use_doc_unwarping=data.get('use_doc_unwarping', True),
             use_textline_orientation=data.get('use_textline_orientation', False),
+            pipeline=data.get('pipeline', 'PP-StructureV3'),
+            vl_use_layout_detection=data.get('vl_use_layout_detection', True),
+            vl_format_block_content=data.get('vl_format_block_content', False),
+            vl_use_seal_recognition=data.get('vl_use_seal_recognition', False),
+            vl_use_ocr_for_image_block=data.get('vl_use_ocr_for_image_block', False),
         )
 
 

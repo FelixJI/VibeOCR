@@ -53,6 +53,7 @@ class OCRPipeline(Enum):
     TABLE_RECOGNITION = "table_recognition"  # 表格识别
     FORMULA_RECOGNITION = "formula_recognition"  # 公式识别
     PP_STRUCTURE_V3 = "PP-StructureV3"  # 版面解析（包含可选的表格/公式子产线）
+    PADDLEOCR_VL = "PaddleOCR-VL"  # PaddleOCR-VL 多模态文档解析
 
     @property
     def display_name(self) -> str:
@@ -62,6 +63,7 @@ class OCRPipeline(Enum):
             OCRPipeline.TABLE_RECOGNITION: "表格识别",
             OCRPipeline.FORMULA_RECOGNITION: "公式识别",
             OCRPipeline.PP_STRUCTURE_V3: "版面解析",
+            OCRPipeline.PADDLEOCR_VL: "PaddleOCR-VL",
         }
         return names.get(self, "通用 OCR")
 
@@ -73,6 +75,7 @@ class OCRPipeline(Enum):
             OCRPipeline.TABLE_RECOGNITION: "识别表格结构，输出 HTML/Excel 格式",
             OCRPipeline.FORMULA_RECOGNITION: "识别数学公式，输出 LaTeX 格式",
             OCRPipeline.PP_STRUCTURE_V3: "解析文档版面，支持表格、公式等子产线",
+            OCRPipeline.PADDLEOCR_VL: "端到端文档解析，支持表格、公式、印章、图表等",
         }
         return descriptions.get(self, "识别图片中的文字内容")
 
@@ -109,6 +112,16 @@ class OCROptions:
     use_formula_recognition: bool = True  # 公式识别子产线
     use_seal_recognition: bool = False  # 印章识别子产线
     use_chart_recognition: bool = False  # 图表识别子产线
+    # PaddleOCR-VL 特有选项
+    vl_use_layout_detection: bool = True  # 启用版面区域检测排序（PaddleOCR-VL）
+    vl_format_block_content: bool = False  # 将 block_content 格式化为 Markdown
+    vl_use_seal_recognition: bool = False  # 启用印章识别（v1.5 新增）
+    vl_use_ocr_for_image_block: bool = False  # 对图片中的文字进行识别
+    # VLM 采样参数
+    vl_temperature: float = 0.0  # 温度参数
+    vl_top_p: float = 0.0  # top-p 参数
+    vl_max_pixels: int = 0  # 最大像素数（0 表示使用默认）
+    vl_min_pixels: int = 0  # 最小像素数（0 表示使用默认）
 
 
 class OCRService:
@@ -623,6 +636,8 @@ class OCRService:
                 result = self._recognize_formula(image, actual_options)
             elif actual_options.pipeline == OCRPipeline.PP_STRUCTURE_V3:
                 result = self._recognize_structure(image, actual_options)
+            elif actual_options.pipeline == OCRPipeline.PADDLEOCR_VL:
+                result = self._recognize_paddleocr_vl(image, actual_options)
             else:
                 result = self._recognize_ocr(image, actual_options)
             _logger.info(f"[recognize] 识别完成，返回 {len(result.raw_text)} 字符")
@@ -926,6 +941,121 @@ class OCRService:
             if self._is_gpu_error(e) and self._device != "cpu":
                 _logger.warning("预测过程中发生 GPU 错误，回退到 CPU: %s", e)
                 self._reset_pipeline_to_cpu("PP-StructureV3")
+                return _do_recognize(image)
+            raise
+
+    def _recognize_paddleocr_vl(
+        self,
+        image: "Image.Image | np.ndarray | str",
+        options: OCROptions,
+    ) -> OCRResult:
+        """PaddleOCR-VL 多模态文档解析
+
+        PaddleOCR-VL 是一款先进、高效的文档解析模型，专为文档中的元素识别设计。
+        支持 109 种语言，能识别复杂元素（文本、表格、公式、图表、印章等）。
+        """
+
+        def _do_recognize(img) -> OCRResult:
+            pipeline = self.get_pipeline(OCRPipeline.PADDLEOCR_VL)
+
+            # 构建 predict 参数
+            predict_kwargs = {
+                "input": img,
+                "use_doc_orientation_classify": options.use_doc_orientation_classify,
+                "use_doc_unwarping": options.use_doc_unwarping,
+                "use_layout_detection": options.vl_use_layout_detection,
+                "use_chart_recognition": options.use_chart_recognition,
+                "use_seal_recognition": options.vl_use_seal_recognition,
+                "use_ocr_for_image_block": options.vl_use_ocr_for_image_block,
+                "format_block_content": options.vl_format_block_content,
+            }
+
+            # 添加 VLM 采样参数（如果设置了非零值）
+            if options.vl_temperature > 0:
+                predict_kwargs["temperature"] = options.vl_temperature
+            if options.vl_top_p > 0:
+                predict_kwargs["top_p"] = options.vl_top_p
+            if options.vl_max_pixels > 0:
+                predict_kwargs["max_pixels"] = options.vl_max_pixels
+            if options.vl_min_pixels > 0:
+                predict_kwargs["min_pixels"] = options.vl_min_pixels
+
+            output = pipeline.predict(**predict_kwargs)
+
+            # 确保 GPU 操作完成后再处理结果
+            output_list = self._consume_generator_safely(output)
+
+            text_with_scores: list[tuple[str, float]] = []
+            markdown_parts: list[str] = []
+            images: dict[str, Any] = {}
+
+            for res in output_list:
+                # 提取 Markdown 结果
+                if hasattr(res, "markdown"):
+                    markdown_data = res.markdown
+                    if isinstance(markdown_data, dict):
+                        markdown_text = markdown_data.get("markdown_texts", "")
+                        if markdown_text:
+                            markdown_parts.append(markdown_text)
+                        if "markdown_images" in markdown_data:
+                            images.update(markdown_data["markdown_images"])
+                    elif isinstance(markdown_data, str):
+                        markdown_parts.append(markdown_data)
+
+                # 提取解析结果列表中的内容
+                if hasattr(res, "parsing_res_list"):
+                    for block in res.parsing_res_list:
+                        if hasattr(block, "block_content"):
+                            content = block.block_content
+                            if content:
+                                text_with_scores.append((content, 1.0))
+                        # 提取 block_label 用于调试
+                        if hasattr(block, "block_label"):
+                            _logger.debug(f"PaddleOCR-VL block: {block.block_label}")
+
+                # 字典格式处理
+                if isinstance(res, dict):
+                    if "markdown" in res:
+                        markdown_data = res["markdown"]
+                        if isinstance(markdown_data, dict):
+                            markdown_text = markdown_data.get("markdown_texts", "")
+                            if markdown_text:
+                                markdown_parts.append(markdown_text)
+                            if "markdown_images" in markdown_data:
+                                images.update(markdown_data["markdown_images"])
+                        elif isinstance(markdown_data, str):
+                            markdown_parts.append(markdown_data)
+
+                    # 提取 parsing_res_list
+                    for block in res.get("parsing_res_list", []):
+                        content = block.get("block_content", "")
+                        if content:
+                            text_with_scores.append((content, 1.0))
+
+            # 组合 Markdown 文本
+            markdown_text = "\n\n".join(markdown_parts) if markdown_parts else ""
+
+            # 转换 Markdown 为 HTML
+            html_text = markdown_to_html(markdown_text) if markdown_text else ""
+
+            # 生成纯文本
+            raw_text = "\n".join(t for t, _ in text_with_scores) if text_with_scores else ""
+
+            return self._build_ocr_result(
+                raw_text=raw_text,
+                markdown_text=markdown_text,
+                html_text=html_text,
+                text_with_scores=text_with_scores,
+                pipeline_type="PaddleOCR-VL",
+                images=images,
+            )
+
+        try:
+            return _do_recognize(image)
+        except RuntimeError as e:
+            if self._is_gpu_error(e) and self._device != "cpu":
+                _logger.warning("预测过程中发生 GPU 错误，回退到 CPU: %s", e)
+                self._reset_pipeline_to_cpu("PaddleOCR-VL")
                 return _do_recognize(image)
             raise
 

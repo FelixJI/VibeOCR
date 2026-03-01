@@ -102,41 +102,57 @@ def run_worker(
         raise OCRWorkerError(f"OCR 服务初始化失败: {e}")
 
     # 批量队列管理器（延迟初始化，仅在首次使用时创建）
-    batch_manager = None
+    batch_managers = {}  # 管道名称 -> BatchQueueManager
     PreprocessOptions = None  # 预先定义，避免未绑定错误
     batch_manager_initialized = False  # 标记是否已尝试初始化
 
-    def get_batch_manager():
-        """获取批量队列管理器（延迟初始化）"""
-        nonlocal batch_manager, batch_manager_initialized
+    def get_batch_manager(pipeline_name: str = "PP-StructureV3"):
+        """获取批量队列管理器（延迟初始化）
 
-        if batch_manager_initialized:
-            return batch_manager
+        Args:
+            pipeline_name: 管道名称 ("PP-StructureV3" 或 "PaddleOCR-VL")
+        """
+        nonlocal batch_managers, batch_manager_initialized
 
-        batch_manager_initialized = True
+        # 如果已经初始化过该管道，直接返回
+        if pipeline_name in batch_managers:
+            return batch_managers[pipeline_name]
+
+        # 首次调用，设置初始化标志
+        if not batch_manager_initialized:
+            batch_manager_initialized = True
+            try:
+                from vibeocr.models.batch_request import PreprocessOptions as _PreprocessOptions
+                nonlocal PreprocessOptions
+                PreprocessOptions = _PreprocessOptions
+            except Exception as e:
+                logger.warning(f"[Worker] 加载 PreprocessOptions 失败: {e}")
 
         try:
             from vibeocr.workers.batch_queue_manager import BatchQueueManager
-            from vibeocr.models.batch_request import PreprocessOptions as _PreprocessOptions
-            nonlocal PreprocessOptions
-            PreprocessOptions = _PreprocessOptions
-            # 尝试获取 PP-StructureV3 pipeline
-            try:
-                from paddlex import create_pipeline
+
+            # 根据管道类型创建相应的 pipeline
+            if pipeline_name == "PaddleOCR-VL":
+                logger.info("[Worker] 正在初始化批量队列管理器（PaddleOCR-VL）...")
+                # 使用 OCRService 的 get_pipeline 方法获取 PaddleOCR-VL 管道
+                vl_pipeline = ocr_service.get_pipeline(OCRPipeline.PADDLEOCR_VL)
+                batch_managers[pipeline_name] = BatchQueueManager(vl_pipeline, max_batch_size=4)
+                logger.info("[Worker] BatchQueueManager 初始化完成（使用 PaddleOCR-VL）")
+            elif pipeline_name == "PP-StructureV3":
                 logger.info("[Worker] 正在初始化批量队列管理器（PP-StructureV3）...")
-                structure_pipeline = create_pipeline("PP-StructureV3")
-                batch_manager = BatchQueueManager(structure_pipeline, max_batch_size=8)
+                structure_pipeline = ocr_service.get_pipeline(OCRPipeline.PP_STRUCTURE_V3)
+                batch_managers[pipeline_name] = BatchQueueManager(structure_pipeline, max_batch_size=8)
                 logger.info("[Worker] BatchQueueManager 初始化完成（使用 PP-StructureV3）")
-            except ImportError:
-                logger.info("[Worker] paddlex 不可用，使用 OCRService 作为批量处理器")
-                # 使用 OCRService 作为备选
-                batch_manager = BatchQueueManager(ocr_service, max_batch_size=4)
-                logger.info("[Worker] BatchQueueManager 初始化完成（使用 OCRService）")
+            else:
+                logger.warning(f"[Worker] 未知管道类型: {pipeline_name}，使用默认 PP-StructureV3")
+                structure_pipeline = ocr_service.get_pipeline(OCRPipeline.PP_STRUCTURE_V3)
+                batch_managers[pipeline_name] = BatchQueueManager(structure_pipeline, max_batch_size=8)
+
         except Exception as e:
             logger.warning(f"[Worker] BatchQueueManager 初始化失败: {e}，批量功能将不可用")
-            batch_manager = None
+            batch_managers[pipeline_name] = None
 
-        return batch_manager
+        return batch_managers.get(pipeline_name)
 
     # 发送就绪信号（简化握手：单次发送 READY）
     logger.info("[Worker] 发送 READY 信号...")
@@ -246,8 +262,11 @@ def run_worker(
                         request_id, image_data, options_dict = deserialize_batch_request(data)
                         logger.info(f"[Worker] 批量添加: {request_id}")
 
+                        # 从选项中获取管道名称
+                        pipeline_name = options_dict.get('pipeline', 'PP-StructureV3')
+
                         # 延迟初始化批量管理器
-                        mgr = get_batch_manager()
+                        mgr = get_batch_manager(pipeline_name)
                         if mgr:
                             # 添加到队列
                             mgr.add_request(
@@ -271,11 +290,16 @@ def run_worker(
                         preprocess_dict = deserialize_batch_commit(data)
                         # 确保 PreprocessOptions 已加载
                         if PreprocessOptions is None:
-                            get_batch_manager()  # 这会初始化 PreprocessOptions
+                            from vibeocr.models.batch_request import PreprocessOptions as _PreprocessOptions
+                            PreprocessOptions = _PreprocessOptions
+
                         preprocess_options = PreprocessOptions.from_dict(preprocess_dict)
 
+                        # 获取管道名称
+                        pipeline_name = preprocess_options.pipeline
+
                         # 延迟初始化批量管理器
-                        mgr = get_batch_manager()
+                        mgr = get_batch_manager(pipeline_name)
                         if mgr:
                             # 定义进度回调
                             def progress_callback(progress):
@@ -308,9 +332,14 @@ def run_worker(
                 elif msg_type == MSG_BATCH_CANCEL:
                     # 取消批量处理
                     logger.info("[Worker] 收到取消请求")
-                    mgr = get_batch_manager()
-                    if mgr:
-                        mgr.cancel()
+                    # 取消所有批量管理器
+                    for pipeline_name, mgr in batch_managers.items():
+                        if mgr:
+                            try:
+                                mgr.cancel()
+                                logger.info(f"[Worker] 已取消 {pipeline_name} 的批量处理")
+                            except Exception as e:
+                                logger.warning(f"[Worker] 取消 {pipeline_name} 批量处理失败: {e}")
                     protocol.write_message(MSG_ACK, b"cancelled", sender='worker')
 
                 elif msg_type == MSG_READY:
@@ -344,14 +373,14 @@ def run_worker(
         logger.info("收到中断信号，退出")
 
     finally:
-        # 清理批量管理器
-        mgr = get_batch_manager()
-        if mgr:
-            try:
-                mgr.close()
-                logger.info("BatchQueueManager 已关闭")
-            except Exception as e:
-                logger.warning(f"关闭 BatchQueueManager 失败: {e}")
+        # 清理所有批量管理器
+        for pipeline_name, mgr in batch_managers.items():
+            if mgr:
+                try:
+                    mgr.close()
+                    logger.info(f"[Worker] BatchQueueManager ({pipeline_name}) 已关闭")
+                except Exception as e:
+                    logger.warning(f"[Worker] 关闭 BatchQueueManager ({pipeline_name}) 失败: {e}")
         # 关闭数据共享内存
         protocol.close()
         logger.info("Worker 已退出")
