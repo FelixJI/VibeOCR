@@ -57,8 +57,13 @@ def run_worker(
         serialize_result,
         deserialize_preload_request,
         serialize_preload_result,
+        # 批量消息序列化函数
+        deserialize_batch_request,
+        deserialize_batch_commit,
+        serialize_batch_result,
+        serialize_batch_progress,
     )
-    
+
     # 消息类型别名（保持兼容）
     MSG_RECOGNIZE = MessageType.RECOGNIZE
     MSG_RESULT = MessageType.RESULT
@@ -68,6 +73,12 @@ def run_worker(
     MSG_PRELOAD = MessageType.PRELOAD
     MSG_PRELOAD_DONE = MessageType.PRELOAD_DONE
     MSG_READY = MessageType.READY
+    # 批量消息类型别名
+    MSG_BATCH_ADD = MessageType.BATCH_ADD
+    MSG_BATCH_COMMIT = MessageType.BATCH_COMMIT
+    MSG_BATCH_RESULT = MessageType.BATCH_RESULT
+    MSG_BATCH_CANCEL = MessageType.BATCH_CANCEL
+    MSG_BATCH_PROGRESS = MessageType.BATCH_PROGRESS
 
     # 连接数据共享内存
     logger.info(f"Worker 正在连接数据共享内存: {shm_name}")
@@ -89,6 +100,28 @@ def run_worker(
         logger.error(f"OCR 服务初始化失败: {e}")
         protocol.close()
         raise OCRWorkerError(f"OCR 服务初始化失败: {e}")
+
+    # 初始化批量队列管理器
+    batch_manager = None
+    PreprocessOptions = None  # 预先定义，避免未绑定错误
+    try:
+        from vibeocr.workers.batch_queue_manager import BatchQueueManager
+        from vibeocr.models.batch_request import PreprocessOptions as _PreprocessOptions
+        PreprocessOptions = _PreprocessOptions
+        # 尝试获取 PP-StructureV3 pipeline
+        try:
+            from paddlex import create_pipeline
+            structure_pipeline = create_pipeline("PP-StructureV3")
+            batch_manager = BatchQueueManager(structure_pipeline, max_batch_size=8)
+            logger.info("BatchQueueManager 初始化完成（使用 PP-StructureV3）")
+        except ImportError:
+            logger.info("paddlex 不可用，使用 OCRService 作为批量处理器")
+            # 使用 OCRService 作为备选
+            batch_manager = BatchQueueManager(ocr_service, max_batch_size=4)
+            logger.info("BatchQueueManager 初始化完成（使用 OCRService）")
+    except Exception as e:
+        logger.warning(f"BatchQueueManager 初始化失败: {e}，批量功能将不可用")
+        batch_manager = None
 
     # 发送就绪信号（简化握手：单次发送 READY）
     logger.info("[Worker] 发送 READY 信号...")
@@ -191,6 +224,72 @@ def run_worker(
                         logger.error(f"预加载失败: {error_msg}")
                         protocol.write_message(MSG_ERROR, error_msg.encode("utf-8"), sender='worker')
 
+                elif msg_type == MSG_BATCH_ADD:
+                    # 处理批量添加请求
+                    logger.info("[Worker] 收到批量添加请求")
+                    try:
+                        request_id, image_data, options_dict = deserialize_batch_request(data)
+                        logger.info(f"[Worker] 批量添加: {request_id}")
+
+                        if batch_manager:
+                            # 添加到队列
+                            batch_manager.add_request(
+                                image_data=image_data,
+                                options=options_dict,
+                                file_name=options_dict.get('file_name', 'unknown')
+                            )
+                            # 发送确认
+                            protocol.write_message(MSG_ACK, request_id.encode(), sender='worker')
+                        else:
+                            protocol.write_message(MSG_ERROR, b"BatchQueueManager not available", sender='worker')
+                    except Exception as e:
+                        error_msg = f"批量添加失败: {e}"
+                        logger.error(error_msg)
+                        protocol.write_message(MSG_ERROR, error_msg.encode(), sender='worker')
+
+                elif msg_type == MSG_BATCH_COMMIT:
+                    # 处理批量提交
+                    logger.info("[Worker] 收到批量提交请求")
+                    try:
+                        preprocess_dict = deserialize_batch_commit(data)
+                        preprocess_options = PreprocessOptions.from_dict(preprocess_dict)
+
+                        if batch_manager:
+                            # 定义进度回调
+                            def progress_callback(progress):
+                                try:
+                                    progress_data = serialize_batch_progress(
+                                        completed=progress.completed,
+                                        total=progress.total,
+                                        current_file=progress.current_file
+                                    )
+                                    protocol.write_message(MSG_BATCH_PROGRESS, progress_data, sender='worker')
+                                except Exception as e:
+                                    logger.warning(f"发送进度失败: {e}")
+
+                            batch_manager.progress_callback = progress_callback
+
+                            # 执行批量处理
+                            results = batch_manager.commit(preprocess_options)
+
+                            # 发送结果
+                            results_data = serialize_batch_result(results)
+                            protocol.write_message(MSG_BATCH_RESULT, results_data, sender='worker')
+                            logger.info(f"[Worker] 批量处理完成，返回 {len(results)} 个结果")
+                        else:
+                            protocol.write_message(MSG_ERROR, b"BatchQueueManager not available", sender='worker')
+                    except Exception as e:
+                        error_msg = f"批量处理失败: {e}"
+                        logger.error(error_msg)
+                        protocol.write_message(MSG_ERROR, error_msg.encode(), sender='worker')
+
+                elif msg_type == MSG_BATCH_CANCEL:
+                    # 取消批量处理
+                    logger.info("[Worker] 收到取消请求")
+                    if batch_manager:
+                        batch_manager.cancel()
+                    protocol.write_message(MSG_ACK, b"cancelled", sender='worker')
+
                 elif msg_type == MSG_READY:
                     # Worker 不应该读取到自己的 READY 消息
                     # 如果读取到，说明是之前残留的消息，跳过
@@ -222,6 +321,13 @@ def run_worker(
         logger.info("收到中断信号，退出")
 
     finally:
+        # 清理批量管理器
+        if batch_manager:
+            try:
+                batch_manager.close()
+                logger.info("BatchQueueManager 已关闭")
+            except Exception as e:
+                logger.warning(f"关闭 BatchQueueManager 失败: {e}")
         # 关闭数据共享内存
         protocol.close()
         logger.info("Worker 已退出")
