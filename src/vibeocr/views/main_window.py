@@ -1580,7 +1580,7 @@ class MainWindow(QMainWindow):
             if config_path.exists():
                 try:
                     with open(config_path, "r", encoding="utf-8") as f:
-                    templates = json.load(f)
+                        templates = json.load(f)
                 except Exception:
                     pass
 
