@@ -2,6 +2,7 @@
 
 import logging
 import re
+from datetime import datetime
 from typing import List, Optional, Dict
 from PySide6.QtWidgets import (
     QWidget,
@@ -129,6 +130,35 @@ class ConsoleWidget(QWidget):
         self._low_confidence_count = 0
         self._low_confidence_items.clear()
         self.low_confidence_count_changed.emit(0, [])
+
+    # 兼容性别名方法（用于批量识别标签页）
+    def clear(self) -> None:
+        """清空（clear_logs 的别名）"""
+        self.clear_logs()
+
+    def set_text(self, text: str) -> None:
+        """设置文本内容（清空后添加单条日志）
+
+        Args:
+            text: 要显示的文本内容
+        """
+        self.clear_logs()
+        self.append_text(text)
+
+    def append_text(self, text: str, level: str = "INFO") -> None:
+        """追加文本内容（以日志形式显示）
+
+        Args:
+            text: 要追加的文本内容
+            level: 日志级别，默认为 INFO
+        """
+        from datetime import datetime
+        entry = LogEntry(
+            timestamp=datetime.now(),
+            level=level,
+            message=text
+        )
+        self.append_log(entry)
 
     @Slot(str)
     def _on_filter_changed(self, text: str) -> None:

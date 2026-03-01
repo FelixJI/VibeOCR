@@ -288,7 +288,7 @@ class MainWindow(QMainWindow):
         # 添加到标签页控件
         tab_widget = self._ui.findChild(QWidget, "tabWidget")
         if tab_widget:
-            tab_widget.addTab(self._batch_tab, "Batch Recognition")
+            tab_widget.addTab(self._batch_tab, "批量识别")
             logging.debug("批量识别标签页已添加")
 
     def _on_pipeline_clicked(self, pipeline) -> None:

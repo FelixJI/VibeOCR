@@ -214,7 +214,7 @@ class BatchFileListWidget(QWidget):
         completed = len([f for f in self._files if f['status'] == 'completed'])
         failed = len([f for f in self._files if f['status'] == 'failed'])
 
-        status_text = f"Total: {total} | Pending: {pending} | Done: {completed} | Failed: {failed}"
+        status_text = f"共: {total} | 待处理: {pending} | 完成: {completed} | 失败: {failed}"
         self._status_label.setText(status_text)
 
     def clear_results(self):

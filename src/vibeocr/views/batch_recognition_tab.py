@@ -89,7 +89,7 @@ class BatchRecognitionWorker(QThread):
         # 提交批量处理
         if not self._cancelled and request_map:
             try:
-                self.progress.emit(len(request_map), total, "Processing batch...")
+                self.progress.emit(len(request_map), total, "正在处理批量任务...")
                 batch_results = self._service.batch_commit(self._preprocess_options)
 
                 # 分发结果
@@ -186,8 +186,8 @@ class BatchRecognitionTab(QWidget):
         # 底部进度区域
         progress_layout = QHBoxLayout()
 
-        self._start_btn = QPushButton("Start Recognition")
-        self._cancel_btn = QPushButton("Cancel")
+        self._start_btn = QPushButton("开始识别")
+        self._cancel_btn = QPushButton("取消")
         self._cancel_btn.setEnabled(False)
 
         self._progress_bar = QProgressBar()
@@ -217,11 +217,11 @@ class BatchRecognitionTab(QWidget):
         """开始识别"""
         files = self._file_list_widget.get_selected_files()
         if not files:
-            self._result_widget.set_text("Please select files to process.")
+            self._result_widget.set_text("请选择要处理的文件。")
             return
 
         if not self._ocr_service:
-            self._result_widget.set_text("OCR service not ready.")
+            self._result_widget.set_text("OCR 服务未就绪。")
             return
 
         # 获取预处理选项
@@ -275,8 +275,8 @@ class BatchRecognitionTab(QWidget):
             text = self._extract_text(result)
             self._result_widget.append_text(f"=== {file_name} ===\n{text}\n\n")
         elif status == 'failed':
-            error = result.get('error', 'Unknown error') if isinstance(result, dict) else 'Unknown error'
-            self._result_widget.append_text(f"=== {file_name} ===\n[FAILED] {error}\n\n")
+            error = result.get('error', '未知错误') if isinstance(result, dict) else '未知错误'
+            self._result_widget.append_text(f"=== {file_name} ===\n[失败] {error}\n\n")
 
     def _on_finished(self, results: dict):
         """处理完成"""
@@ -284,7 +284,7 @@ class BatchRecognitionTab(QWidget):
         failed = len([r for r in results.values() if 'error' in r])
 
         self._result_widget.append_text(
-            f"\n--- Batch processing completed: {completed} succeeded, {failed} failed ---"
+            f"\n--- 批量处理完成: {completed} 个成功, {failed} 个失败 ---"
         )
 
         self._reset_ui()
@@ -292,7 +292,7 @@ class BatchRecognitionTab(QWidget):
     def _on_error(self, error_msg: str):
         """处理错误"""
         logger.error(f"Batch recognition error: {error_msg}")
-        self._result_widget.append_text(f"[ERROR] {error_msg}")
+        self._result_widget.append_text(f"[错误] {error_msg}")
         self._reset_ui()
 
     def _on_file_selected(self, file_path: str):

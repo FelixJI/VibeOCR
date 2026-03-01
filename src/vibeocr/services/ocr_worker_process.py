@@ -278,7 +278,6 @@ class OCRWorkerProcess:
 
         # 尝试获取最后的日志输出
         try:
-            import time
             time.sleep(0.5)  # 等待日志刷新
         except:
             pass

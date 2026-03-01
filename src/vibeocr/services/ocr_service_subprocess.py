@@ -45,7 +45,8 @@ class OCRServiceSubprocess:
         use_gpu: bool = True,
         shm_size: int = 10 * 1024 * 1024,
         auto_start: bool = True,
-        start_timeout: float = 120.0
+        start_timeout: float = 120.0,
+        start_progress_callback: Optional[Callable[[str, int], None]] = None
     ) -> "OCRServiceSubprocess":
         """线程安全的单例创建
 
