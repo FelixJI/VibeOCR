@@ -296,27 +296,90 @@ class OCRService:
         return results
 
     @classmethod
-    def preload_pipelines_parallel(
+    def warmup_with_test_image(
         cls,
-        pipelines: list["OCRPipeline"],
-        max_workers: int = 2,
-        progress_callback: Optional[Callable[[str, int, int], None]] = None
-    ) -> dict[str, bool]:
-        """预加载多个管道（顺序执行，避免CUDA上下文问题）
+        pipeline: Optional["OCRPipeline"] = None,
+        progress_callback: Optional[Callable[[str, int], None]] = None
+    ) -> bool:
+        """使用测试图片预热 OCR 服务
 
-        注意：由于 PaddlePaddle CUDA 上下文不能跨线程共享，
-        此方法实际采用顺序加载以确保稳定性。
+        通过执行一次虚拟识别来触发模型加载和 CUDA 初始化。
+        这是真正让模型进入就绪状态的关键步骤。
 
         Args:
-            pipelines: 要预加载的管道列表
-            max_workers: 参数保留用于兼容，实际不使用
+            pipeline: 要预热的管道，None 表示使用默认 OCR 管道
+            progress_callback: 进度回调 (stage, percent)
+
+        Returns:
+            预热是否成功
+        """
+        from vibeocr.utils.warmup_utils import get_warmup_image
+
+        pipeline = pipeline or OCRPipeline.OCR
+        pipeline_name = pipeline.value
+
+        try:
+            _logger.info(f"[预热] 开始使用测试图片预热管道: {pipeline_name}")
+            if progress_callback:
+                progress_callback("准备测试图片", 10)
+
+            # 获取测试图片
+            test_image = get_warmup_image()
+            _logger.debug(f"[预热] 测试图片大小: {len(test_image)} 字节")
+
+            if progress_callback:
+                progress_callback("执行虚拟识别", 50)
+
+            # 创建选项并执行识别
+            options = OCROptions(pipeline=pipeline)
+            instance = cls()
+            result = instance.recognize(test_image, options)
+
+            if progress_callback:
+                progress_callback("预热完成", 100)
+
+            _logger.info(f"[预热] 管道 {pipeline_name} 预热成功")
+            return True
+
+        except Exception as e:
+            _logger.error(f"[预热] 管道 {pipeline_name} 预热失败: {e}")
+            return False
+
+    @classmethod
+    def warmup_pipelines(
+        cls,
+        pipelines: list["OCRPipeline"],
+        progress_callback: Optional[Callable[[str, int, int], None]] = None
+    ) -> dict[str, bool]:
+        """使用测试图片预热多个管道
+
+        Args:
+            pipelines: 要预热的管道列表
             progress_callback: 进度回调 (pipeline_name, current, total)
 
         Returns:
-            各管道加载结果 {pipeline_name: success}
+            各管道预热结果 {pipeline_name: success}
         """
-        # 使用顺序加载，避免CUDA上下文问题
-        return cls.preload_pipelines_sequential(pipelines, progress_callback)
+        results = {}
+        total = len(pipelines)
+
+        _logger.info(f"[预热] 开始批量预热 {total} 个管道")
+
+        for i, pipeline in enumerate(pipelines, 1):
+            pipeline_name = pipeline.value
+
+            def make_progress(stage: str, percent: int):
+                if progress_callback:
+                    overall_percent = int(((i - 1) * 100 + percent) / total)
+                    progress_callback(pipeline_name, i, overall_percent)
+
+            _logger.info(f"[预热] ({i}/{total}) 预热 {pipeline.display_name}...")
+            results[pipeline_name] = cls.warmup_with_test_image(pipeline, make_progress)
+
+        success_count = sum(1 for v in results.values() if v)
+        _logger.info(f"[预热] 完成: {success_count}/{total} 个管道预热成功")
+
+        return results
 
     @classmethod
     def preload_in_background(

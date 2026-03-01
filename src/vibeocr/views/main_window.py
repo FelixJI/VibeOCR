@@ -455,6 +455,7 @@ class MainWindow(QMainWindow):
         """依赖检测完成后启动子进程 Worker
 
         在后台线程中启动子进程 Worker，避免阻塞 UI。
+        显示启动进度对话框，提供详细的启动反馈。
         启动完成后通过 _subprocess_ready_signal 信号通知。
         """
         if self._closing:
@@ -466,12 +467,46 @@ class MainWindow(QMainWindow):
             return
 
         logging.info("[MainWindow] 正在启动子进程 Worker...")
-        
+
+        # 创建启动进度对话框
+        from PySide6.QtWidgets import QProgressDialog
+        from PySide6.QtCore import Qt
+
+        self._startup_progress = QProgressDialog(
+            "正在启动 OCR 服务，首次启动可能需要 60-120 秒...",
+            "取消",
+            0,
+            100,
+            self
+        )
+        self._startup_progress.setWindowTitle("启动中")
+        self._startup_progress.setWindowModality(Qt.WindowModality.WindowModal)
+        self._startup_progress.setAutoClose(True)
+        self._startup_progress.setAutoReset(True)
+        self._startup_progress.setMinimumDuration(500)  # 500ms 后才显示
+        self._startup_progress.setValue(0)
+
         class SubprocessStartTask(QRunnable):
             """子进程启动任务"""
             def __init__(self, main_window):
                 super().__init__()
                 self._main_window = main_window
+
+            def _update_progress(self, stage: str, percent: int):
+                """更新进度"""
+                from PySide6.QtCore import QMetaObject, Qt, Q_ARG
+                QMetaObject.invokeMethod(
+                    self._main_window._startup_progress,
+                    "setValue",
+                    Qt.ConnectionType.QueuedConnection,
+                    Q_ARG(int, percent)
+                )
+                QMetaObject.invokeMethod(
+                    self._main_window._startup_progress,
+                    "setLabelText",
+                    Qt.ConnectionType.QueuedConnection,
+                    Q_ARG(str, f"{stage} ({percent}%)")
+                )
 
             def run(self):
                 # 检查是否正在关闭
@@ -487,20 +522,23 @@ class MainWindow(QMainWindow):
                         logging.info("[MainWindow] 应用程序正在关闭，取消子进程启动")
                         return
 
-                    # 创建并启动子进程服务
+                    # 创建并启动子进程服务（带进度回调）
                     service = OCRServiceSubprocess(
                         max_workers=1,
                         use_gpu=True,
                         auto_start=True,
-                        start_timeout=120.0
+                        start_timeout=120.0,
+                        start_progress_callback=self._update_progress
                     )
                     self._main_window._subprocess_service = service
                     self._main_window._subprocess_ready_signal.emit(True)
                     logging.info("[MainWindow] 子进程 Worker 启动成功")
                 except Exception as e:
-                    logging.error(f"[MainWindow] 启动子进程 Worker 失败: {e}")
+                    error_msg = str(e)
+                    logging.error(f"[MainWindow] 启动子进程 Worker 失败: {error_msg}")
+                    self._update_progress(f"启动失败: {error_msg[:100]}", 0)
                     self._main_window._subprocess_ready_signal.emit(False)
-        
+
         # 在线程池中执行启动任务
         self._thread_pool.start(SubprocessStartTask(self))
     
@@ -508,14 +546,33 @@ class MainWindow(QMainWindow):
     def _on_subprocess_worker_ready(self, success: bool) -> None:
         """子进程 Worker 就绪回调"""
         self._subprocess_worker_ready = success
+
+        # 关闭启动进度对话框
+        if hasattr(self, '_startup_progress') and self._startup_progress:
+            if success:
+                self._startup_progress.setValue(100)
+            self._startup_progress.close()
+            self._startup_progress = None
+
         if success:
             logging.info("[MainWindow] 子进程 Worker 已就绪")
             self._statusbar.showMessage("子进程 OCR 服务已就绪")
-            
+
             # 子进程就绪后，触发预加载（如果配置了预加载管道）
             self._start_subprocess_preload()
         else:
             logging.warning("[MainWindow] 子进程 Worker 启动失败，将使用工作线程模式")
+            # 显示错误提示
+            QMessageBox.warning(
+                self,
+                "OCR 服务启动失败",
+                "OCR 子进程服务启动失败。\n\n"
+                "可能原因:\n"
+                "1. 首次启动需要下载模型（请检查网络）\n"
+                "2. GPU 驱动或 CUDA 版本不兼容\n"
+                "3. 系统内存不足\n\n"
+                "将尝试使用备用模式，但性能可能受限。"
+            )
     
     def _start_subprocess_preload(self) -> None:
         """在子进程中预加载用户配置的管道"""
@@ -1042,10 +1099,6 @@ class MainWindow(QMainWindow):
         if chk_enable_preload:
             chk_enable_preload.toggled.connect(self._on_enable_preload_toggled)
 
-        chk_parallel = self._ui.findChild(QWidget, "chkParallelPreload")
-        if chk_parallel:
-            chk_parallel.toggled.connect(self._on_parallel_preload_toggled)
-
         btn_preload_now = self._ui.findChild(QWidget, "btnPreloadNow")
         if btn_preload_now:
             btn_preload_now.clicked.connect(self._on_preload_now_clicked)
@@ -1070,11 +1123,13 @@ class MainWindow(QMainWindow):
         # 更新预加载状态
         self._update_preload_status()
 
-        # 初始化并行选项的可见性
+        # 隐藏并行加载相关选项（当前不可用）
         chk_parallel = self._ui.findChild(QWidget, "chkParallelPreload")
+        if chk_parallel:
+            chk_parallel.setVisible(False)
         parallel_options = self._ui.findChild(QWidget, "parallelOptions")
         if parallel_options:
-            parallel_options.setVisible(chk_parallel.isChecked() if chk_parallel else False)
+            parallel_options.setVisible(False)
 
     def _on_enable_preload_toggled(self, checked: bool) -> None:
         """启用/禁用预加载"""
@@ -1083,17 +1138,10 @@ class MainWindow(QMainWindow):
             preload_options.setEnabled(checked)
         logging.info(f"[设置] 预加载功能: {'启用' if checked else '禁用'}")
 
-    def _on_parallel_preload_toggled(self, checked: bool) -> None:
-        """启用/禁用并行加载"""
-        parallel_options = self._ui.findChild(QWidget, "parallelOptions")
-        if parallel_options:
-            parallel_options.setVisible(checked)
-        logging.info(f"[设置] 并行加载: {'启用' if checked else '禁用'}")
-
     def _on_preload_now_clicked(self) -> None:
         """立即预加载按钮点击
 
-        使用子进程服务执行预加载。
+        使用子进程服务执行预加载和测试图片预热。
         """
         if not self._ocr_ready:
             QMessageBox.warning(self, "无法预加载", "OCR 功能未就绪，请先安装依赖。")
@@ -1111,13 +1159,6 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "无法预加载", "请至少选择一个要预加载的管道。")
             return
 
-        # 获取预加载设置
-        chk_parallel = self._ui.findChild(QWidget, "chkParallelPreload")
-        spin_workers = self._ui.findChild(QWidget, "spinMaxWorkers")
-
-        parallel = chk_parallel.isChecked() if chk_parallel else False
-        max_workers = spin_workers.value() if spin_workers else 2
-
         # 禁用按钮，显示进度
         btn_preload_now = self._ui.findChild(QWidget, "btnPreloadNow")
         if btn_preload_now:
@@ -1127,23 +1168,22 @@ class MainWindow(QMainWindow):
         if progress_bar:
             progress_bar.setVisible(True)
             progress_bar.setValue(0)
-            progress_bar.setMaximum(len(pipelines_to_preload))
+            progress_bar.setMaximum(len(pipelines_to_preload) * 2)  # 加载 + 预热
 
         # 延迟导入
         from vibeocr.services.ocr_service import OCRPipeline
 
         pipeline_names = [p.display_name for p in pipelines_to_preload]
-        logging.info(f"[预加载] 开始预加载管道: {pipeline_names}")
-        logging.info(f"[预加载] 并行模式: {parallel}, 并行数: {max_workers}")
+        logging.info(f"[预加载] 开始预加载和预热管道: {pipeline_names}")
 
         # 更新状态
-        self._update_preload_status("正在预加载模型...")
+        self._update_preload_status("正在预加载和预热模型...")
 
         # 保存状态用于回调
         self._manual_preload_total = len(pipelines_to_preload)
 
-        # 在子进程中执行预加载
-        self._start_manual_preload(pipelines_to_preload)
+        # 在子进程中执行预加载和预热
+        self._start_manual_preload_with_warmup(pipelines_to_preload)
 
     def _get_selected_preload_pipelines(self) -> list:
         """获取选中的预加载管道"""
@@ -1171,25 +1211,65 @@ class MainWindow(QMainWindow):
 
 
 
-    def _start_manual_preload(self, pipelines: list) -> None:
-        """启动手动预加载任务
-        
+    def _start_manual_preload_with_warmup(self, pipelines: list) -> None:
+        """启动手动预加载和预热任务
+
+        先加载管道，然后使用测试图片预热，确保模型真正就绪。
+
         Args:
             pipelines: 要预加载的管道列表
         """
-        class ManualPreloadTask(QRunnable):
-            """手动预加载任务"""
+        class PreloadWithWarmupTask(QRunnable):
+            """预加载和预热任务"""
             def __init__(self, service, pipelines, main_window):
                 super().__init__()
                 self._service = service
                 self._pipelines = pipelines
                 self._main_window = main_window
-            
+                self._progress_bar = main_window._ui.findChild(QWidget, "progressPreload")
+
+            def _update_progress(self, value: int):
+                """更新进度条"""
+                if self._progress_bar:
+                    from PySide6.QtCore import QMetaObject, Qt, Q_ARG
+                    QMetaObject.invokeMethod(
+                        self._progress_bar,
+                        "setValue",
+                        Qt.ConnectionType.QueuedConnection,
+                        Q_ARG(int, value)
+                    )
+
             def run(self):
                 try:
-                    # 获取管道名称列表
-                    pipeline_names = [p.value if hasattr(p, 'value') else str(p) for p in self._pipelines]
-                    results = self._service.preload_pipelines(pipeline_names)
+                    total = len(self._pipelines)
+                    results = {}
+
+                    for i, pipeline in enumerate(self._pipelines):
+                        pipeline_name = pipeline.value if hasattr(pipeline, 'value') else str(pipeline)
+
+                        # 阶段1: 加载管道 (进度 0-50%)
+                        logging.info(f"[预加载] ({i+1}/{total}) 加载管道: {pipeline_name}")
+                        self._update_progress(i * 2)
+
+                        load_result = self._service.preload_pipelines([pipeline_name])
+                        loaded = load_result.get(pipeline_name, False)
+
+                        if loaded:
+                            # 阶段2: 使用测试图片预热 (进度 50-100%)
+                            logging.info(f"[预热] ({i+1}/{total}) 预热管道: {pipeline_name}")
+                            self._update_progress(i * 2 + 1)
+
+                            # 调用 warmup 接口
+                            warmup_result = self._service.warmup_pipelines([pipeline_name])
+                            warmed = warmup_result.get(pipeline_name, False)
+
+                            results[pipeline_name] = warmed
+                            logging.info(f"[预加载] 管道 {pipeline_name} 加载={'成功' if loaded else '失败'}, 预热={'成功' if warmed else '失败'}")
+                        else:
+                            results[pipeline_name] = False
+
+                    self._update_progress(total * 2)
+
                     # 在主线程中更新UI
                     from PySide6.QtCore import QMetaObject, Qt, Q_ARG
                     QMetaObject.invokeMethod(
@@ -1206,9 +1286,9 @@ class MainWindow(QMainWindow):
                         Qt.ConnectionType.QueuedConnection,
                         Q_ARG(object, {})
                     )
-        
-        # 启动预加载任务
-        self._thread_pool.start(ManualPreloadTask(self._subprocess_service, pipelines, self))
+
+        # 启动预加载和预热任务
+        self._thread_pool.start(PreloadWithWarmupTask(self._subprocess_service, pipelines, self))
 
     @Slot(dict)
     def _on_manual_preload_finished(self, results: dict) -> None:

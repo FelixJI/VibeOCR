@@ -62,7 +62,8 @@ class OCRServiceSubprocess:
         use_gpu: bool = True,
         shm_size: int = 10 * 1024 * 1024,
         auto_start: bool = True,
-        start_timeout: float = 120.0
+        start_timeout: float = 120.0,
+        start_progress_callback: Optional[Callable[[str, int], None]] = None
     ):
         """初始化子进程 OCR 服务
 
@@ -72,6 +73,7 @@ class OCRServiceSubprocess:
             shm_size: 每个共享内存大小（字节）
             auto_start: 是否自动启动 Worker
             start_timeout: 启动超时时间（秒）
+            start_progress_callback: 启动进度回调函数 (stage, percent)
         """
         if self._initialized:
             return
@@ -80,6 +82,7 @@ class OCRServiceSubprocess:
         self.use_gpu = use_gpu
         self.shm_size = shm_size
         self.start_timeout = start_timeout
+        self._start_progress_callback = start_progress_callback
 
         # 使用 WorkerManager 管理 Worker 进程
         self._worker_manager = WorkerManager(
@@ -96,7 +99,7 @@ class OCRServiceSubprocess:
 
         # 自动启动
         if auto_start:
-            self.start(timeout=self.start_timeout)
+            self.start(timeout=self.start_timeout, progress_callback=start_progress_callback)
 
     @classmethod
     def reset_instance(cls) -> None:
@@ -109,11 +112,16 @@ class OCRServiceSubprocess:
                 cls._instance.shutdown()
                 cls._instance = None
 
-    def start(self, timeout: float = 120.0) -> None:
+    def start(
+        self,
+        timeout: float = 120.0,
+        progress_callback: Optional[Callable[[str, int], None]] = None
+    ) -> None:
         """启动所有 Worker
 
         Args:
             timeout: 每个 Worker 的启动超时时间
+            progress_callback: 启动进度回调函数 (stage, percent)
         """
         # 检查是否已初始化（防止 shutdown 后重复启动）
         if not self._initialized:
@@ -121,10 +129,19 @@ class OCRServiceSubprocess:
             return
 
         try:
-            self._worker_manager.start_all()
+            logger.info("开始启动 Worker 进程...")
+            if progress_callback:
+                progress_callback("初始化 Worker 管理器", 10)
+
+            self._worker_manager.start_all(progress_callback=progress_callback)
             logger.info("所有 Worker 已启动")
+
+            if progress_callback:
+                progress_callback("Worker 启动完成", 100)
         except Exception as e:
             logger.error(f"启动 Worker 失败: {e}")
+            if progress_callback:
+                progress_callback(f"启动失败: {str(e)[:50]}", 0)
             raise
 
     def recognize(
@@ -238,17 +255,39 @@ class OCRServiceSubprocess:
         timeout: float = 180.0
     ) -> dict[str, bool]:
         """预加载指定管道
-        
+
         Args:
             pipelines: 管道名称列表 ["ocr", "table_recognition", ...]
             timeout: 超时时间（秒）
-        
+
         Returns:
             {pipeline_name: success} 结果字典
         """
         # 执行预加载（通过 WorkerManager 自动处理负载均衡）
         return self._worker_manager.execute(
             lambda w: w.preload_pipelines(pipelines, timeout)
+        )
+
+    def warmup_pipelines(
+        self,
+        pipelines: list[str],
+        timeout: float = 180.0
+    ) -> dict[str, bool]:
+        """使用测试图片预热指定管道
+
+        预热是真正的模型初始化，通过执行一次虚拟识别
+        来触发模型加载到 GPU 内存和 CUDA 上下文创建。
+
+        Args:
+            pipelines: 管道名称列表
+            timeout: 超时时间（秒）
+
+        Returns:
+            {pipeline_name: success} 结果字典
+        """
+        # 执行预热（通过 WorkerManager 自动处理负载均衡）
+        return self._worker_manager.execute(
+            lambda w: w.warmup_pipelines(pipelines, timeout)
         )
 
     async def recognize_async(

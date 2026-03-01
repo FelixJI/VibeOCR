@@ -113,11 +113,18 @@ class OCRWorkerProcess:
         # 使用模块方式运行
         return "-m"
 
-    def start(self, timeout: float = 60.0) -> None:
+    def start(
+        self,
+        timeout: float = 60.0,
+        progress_callback: Optional[Callable[[str, int], None]] = None
+    ) -> None:
         """启动 Worker 进程
 
         Args:
             timeout: 等待就绪的超时时间（秒）
+            progress_callback: 进度回调函数，接收 (stage, percent) 参数
+                stage: 启动阶段描述
+                percent: 进度百分比 (0-100)
 
         Raises:
             OCRWorkerProcessError: 启动失败
@@ -127,17 +134,30 @@ class OCRWorkerProcess:
             return
 
         logger.info(f"启动 Worker {self.worker_id}...")
+        start_time = time.time()
 
-        # 创建数据共享内存
+        def report_progress(stage: str, percent: int):
+            """报告进度"""
+            if progress_callback:
+                try:
+                    progress_callback(stage, percent)
+                except Exception:
+                    pass
+            logger.info(f"[Worker {self.worker_id}] {stage} ({percent}%)")
+
+        # 阶段1: 创建共享内存 (0-20%)
+        report_progress("创建共享内存", 10)
         try:
             config = SharedMemoryConfig(name=self.data_shm_name, size=self.shm_size)
             self.protocol = SharedMemoryProtocol(config)
             self.protocol.create()
             logger.debug(f"创建数据共享内存: {self.data_shm_name}")
+            report_progress("共享内存已创建", 20)
         except Exception as e:
             raise OCRWorkerProcessError(f"创建数据共享内存失败: {e}")
 
-        # 启动子进程
+        # 阶段2: 启动子进程 (20-40%)
+        report_progress("启动子进程", 30)
         python_exe = self._get_python_executable()
         cmd = [
             python_exe,
@@ -158,7 +178,7 @@ class OCRWorkerProcess:
                 stderr=subprocess.STDOUT,  # 合并 stderr 到 stdout
                 text=False
             )
-            
+
             # 启动一个线程读取子进程的 stdout（统一的日志通道）
             def read_stdout():
                 try:
@@ -173,20 +193,26 @@ class OCRWorkerProcess:
                                 pass
                 except Exception as e:
                     logger.debug(f"stdout reader 错误: {e}")
-            
+
             self._stdout_thread = threading.Thread(target=read_stdout, daemon=True)
             self._stdout_thread.start()
-            
+            report_progress("子进程已启动", 40)
+
         except Exception as e:
             self.protocol.close()
             self.protocol.unlink()
             raise OCRWorkerProcessError(f"启动子进程失败: {e}")
 
-        # 等待就绪信号
+        # 阶段3: 等待 Worker 就绪 (40-100%)
+        report_progress("等待 Worker 初始化...", 50)
         logger.info(f"[主进程] 等待 Worker {self.worker_id} 就绪信号...")
-        start_time = time.time()
+        wait_start_time = time.time()
         check_count = 0
-        while time.time() - start_time < timeout:
+        last_progress_time = wait_start_time
+
+        while time.time() - wait_start_time < timeout:
+            elapsed = time.time() - wait_start_time
+
             if not self.is_running:
                 # 进程已退出，读取错误信息（使用 UTF-8 解码）
                 stdout_bytes, stderr_bytes = self.process.communicate(timeout=5)
@@ -194,30 +220,77 @@ class OCRWorkerProcess:
                 stderr = stderr_bytes.decode('utf-8', errors='replace') if stderr_bytes else ""
                 error_msg = stderr or stdout or "未知错误"
                 logger.error(f"[主进程] Worker 进程退出，错误: {error_msg[:500]}")
-                raise OCRWorkerProcessError(f"Worker 进程启动失败: {error_msg}")
+                raise OCRWorkerProcessError(
+                    f"Worker 进程启动失败 (等待 {elapsed:.1f}秒): {error_msg[:200]}"
+                )
 
             try:
                 check_count += 1
-                if check_count % 10 == 0:  # 每 10 秒打印一次
-                    logger.info(f"[主进程] 等待 READY 信号... 已等待 {int(time.time() - start_time)} 秒")
+                # 每 5 秒更新一次进度
+                if time.time() - last_progress_time > 5:
+                    progress = min(40 + int(elapsed / timeout * 60), 95)
+                    report_progress(f"初始化中... ({elapsed:.0f}s)", progress)
+                    last_progress_time = time.time()
+
                 # 尝试读取就绪信号
                 msg_type, data = self.protocol.read_message(timeout=1.0, expected_sender='worker')
                 logger.info(f"[主进程] 收到消息: type={msg_type}, data={data[:50] if data else b''}")
                 if msg_type == MSG_READY:
                     # 收到 Worker 的 READY 信号
                     logger.info(f"[主进程] 收到 Worker {self.worker_id} READY 信号")
-                    
+                    report_progress("Worker 就绪", 100)
+
                     self._ready = True
-                    logger.info(f"[主进程] Worker {self.worker_id} 已就绪!")
+                    total_time = time.time() - start_time
+                    logger.info(f"[主进程] Worker {self.worker_id} 已就绪! (总耗时: {total_time:.1f}s)")
                     return
             except SharedMemoryProtocolError as e:
                 # 超时，继续等待
                 pass
 
-        # 超时
-        logger.error(f"[主进程] 等待 Worker 就绪超时 ({timeout}s)，共检查 {check_count} 次")
+        # 超时 - 提供详细的诊断信息
+        elapsed = time.time() - wait_start_time
+        logger.error(f"[主进程] 等待 Worker 就绪超时 ({elapsed:.1f}s/{timeout}s)，共检查 {check_count} 次")
+
+        # 收集诊断信息
+        diagnostics = []
+        diagnostics.append(f"超时: {elapsed:.1f}s / {timeout}s")
+        diagnostics.append(f"检查次数: {check_count}")
+
+        # 检查进程状态
+        if self.process:
+            returncode = self.process.poll()
+            diagnostics.append(f"进程状态: {'运行中' if returncode is None else f'已退出 ({returncode})'}")
+
+        # 检查共享内存
+        if self.protocol and self.protocol.shm:
+            diagnostics.append(f"共享内存: 已创建 ({self.data_shm_name})")
+        else:
+            diagnostics.append(f"共享内存: 未创建")
+
+        # 尝试获取最后的日志输出
+        try:
+            import time
+            time.sleep(0.5)  # 等待日志刷新
+        except:
+            pass
+
         self.stop()
-        raise OCRWorkerProcessError(f"等待 Worker 就绪超时 ({timeout}s)")
+
+        # 构建详细的错误信息
+        error_msg = (
+            f"Worker 启动超时 ({elapsed:.1f}s)\n"
+            f"诊断信息:\n" + "\n".join(f"  - {d}" for d in diagnostics) + "\n"
+            f"\n可能原因:\n"
+            f"  1. 首次启动需要下载/加载模型（可能需要 60-120 秒）\n"
+            f"  2. GPU 初始化较慢\n"
+            f"  3. 系统资源不足\n"
+            f"\n建议:\n"
+            f"  - 增加超时时间（当前 {timeout} 秒）\n"
+            f"  - 检查 GPU 驱动和 CUDA 版本\n"
+            f"  - 查看日志了解详细进度"
+        )
+        raise OCRWorkerProcessError(error_msg)
 
     def recognize(
         self,
@@ -390,6 +463,40 @@ class OCRWorkerProcess:
 
         finally:
             self.busy = False
+
+    def warmup_pipelines(
+        self,
+        pipelines: list[str],
+        timeout: float = 180.0
+    ) -> dict[str, bool]:
+        """使用测试图片预热指定管道
+
+        预热是真正的模型初始化，通过执行一次虚拟识别
+        来触发模型加载到 GPU 内存和 CUDA 上下文创建。
+
+        Args:
+            pipelines: 管道名称列表
+            timeout: 超时时间（秒）
+
+        Returns:
+            {pipeline_name: success} 结果字典
+        """
+        from vibeocr.utils.warmup_utils import warmup_worker_process
+
+        if not self.is_ready:
+            raise OCRWorkerProcessError(f"Worker {self.worker_id} 未就绪")
+
+        results = {}
+        for pipeline_name in pipelines:
+            try:
+                logger.info(f"[预热] Worker {self.worker_id} 预热管道: {pipeline_name}")
+                success = warmup_worker_process(self, timeout=timeout)
+                results[pipeline_name] = success
+            except Exception as e:
+                logger.error(f"[预热] Worker {self.worker_id} 预热 {pipeline_name} 失败: {e}")
+                results[pipeline_name] = False
+
+        return results
 
     def stop(self, timeout: float = 5.0) -> None:
         """停止 Worker 进程
