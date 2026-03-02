@@ -40,6 +40,12 @@ PADDLEX_MODEL_SOURCES = {
     "huggingface": "HuggingFace",  # HuggingFace（国际）
 }
 
+# PaddleX 模型源测试 URL
+PADDLEX_SOURCE_TEST_URLS = {
+    "bos": "https://paddleocr.bj.bcebos.com/PP-OCRv4/chinese/ch_PP-OCRv4_det_infer.tar",
+    "huggingface": "https://huggingface.co/PaddlePaddle/PP-OCRv4/resolve/main/ch_PP-OCRv4_det_infer.tar",
+}
+
 # 嵌入式Python下载URL
 PYTHON_EMBED_URL = f"https://www.python.org/ftp/python/{PYTHON_VERSION}/python-{PYTHON_VERSION}-embed-amd64.zip"
 GET_PIP_URL = "https://bootstrap.pypa.io/get-pip.py"
@@ -291,6 +297,52 @@ def get_embedded_python_executable(project_root: Path) -> Path:
     if venv_python.exists():
         return venv_python
     return portable_python
+
+
+def get_embedded_python(project_root: Path | None = None) -> Path:
+    """获取嵌入式Python可执行文件路径（兼容别名）
+
+    Args:
+        project_root: 项目根目录，如果为 None 则自动检测
+
+    Returns:
+        Python 可执行文件路径
+    """
+    if project_root is None:
+        project_root = get_project_root()
+    return get_embedded_python_executable(project_root)
+
+
+def get_embedded_venv_python(project_root: Path | None = None) -> Path:
+    """获取虚拟环境 Python 可执行文件路径
+
+    Args:
+        project_root: 项目根目录，如果为 None 则自动检测
+
+    Returns:
+        虚拟环境 Python 可执行文件路径
+    """
+    if project_root is None:
+        project_root = get_project_root()
+
+    if os.name == "nt":  # Windows
+        return project_root / ".venv" / "Scripts" / "python.exe"
+    else:
+        return project_root / ".venv" / "bin" / "python"
+
+
+def is_embedded_python_ready(project_root: Path | None = None) -> bool:
+    """检查嵌入式 Python 是否准备好
+
+    Args:
+        project_root: 项目根目录，如果为 None 则自动检测
+
+    Returns:
+        是否准备好
+    """
+    if project_root is None:
+        project_root = get_project_root()
+    return get_embedded_python_executable(project_root).exists()
 
 
 def is_embedded_python_installed(project_root: Path) -> bool:
