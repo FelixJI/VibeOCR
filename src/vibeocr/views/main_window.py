@@ -36,6 +36,7 @@ from vibeocr import env_manager
 from vibeocr.machine_cache import is_cache_valid
 from vibeocr.utils.qt_async import run_coroutine
 from vibeocr.managers import DependencyManager
+from vibeocr.core.constants import WindowsColors
 
 # 延迟导入: OCR 服务模块导入很慢（~33s），延迟到首次使用时导入
 if TYPE_CHECKING:
@@ -142,22 +143,22 @@ class MainWindow(QMainWindow):
         from vibeocr.services.ocr_service import OCRPipeline
 
         # 按钮样式：选中/未选中状态
-        button_style = """
-            QPushButton {
-                border: 1px solid #c0c0c0;
+        button_style = f"""
+            QPushButton {{
+                border: 1px solid {WindowsColors.BORDER};
                 border-radius: 4px;
                 padding: 4px 10px;
-                background-color: #f0f0f0;
-                color: #333;
-            }
-            QPushButton:hover {
-                background-color: #e0e0e0;
-            }
-            QPushButton:checked {
-                background-color: #0078d4;
+                background-color: {WindowsColors.BACKGROUND};
+                color: {WindowsColors.TEXT};
+            }}
+            QPushButton:hover {{
+                background-color: {WindowsColors.BACKGROUND_HOVER};
+            }}
+            QPushButton:checked {{
+                background-color: {WindowsColors.PRIMARY};
                 color: white;
-                border-color: #0078d4;
-            }
+                border-color: {WindowsColors.PRIMARY};
+            }}
         """
 
         # 管道按钮映射
@@ -195,44 +196,44 @@ class MainWindow(QMainWindow):
                 btn.clicked.connect(lambda checked, p=pipeline: self._on_pipeline_clicked(p))
 
         # 预处理按钮样式
-        preprocess_style = """
-            QPushButton {
-                border: 1px solid #c0c0c0;
+        preprocess_style = f"""
+            QPushButton {{
+                border: 1px solid {WindowsColors.BORDER};
                 border-radius: 4px;
                 padding: 4px 10px;
-                background-color: #f0f0f0;
-                color: #333;
-            }
-            QPushButton:hover {
-                background-color: #e0e0e0;
-            }
-            QPushButton:checked {
-                background-color: #f7630c;
+                background-color: {WindowsColors.BACKGROUND};
+                color: {WindowsColors.TEXT};
+            }}
+            QPushButton:hover {{
+                background-color: {WindowsColors.BACKGROUND_HOVER};
+            }}
+            QPushButton:checked {{
+                background-color: {WindowsColors.ACCENT};
                 color: white;
-                border-color: #f7630c;
-            }
+                border-color: {WindowsColors.ACCENT};
+            }}
         """
         for btn in [self._btn_orient, self._btn_unwarp, self._btn_textline, self._btn_layout]:
             if btn:
                 btn.setStyleSheet(preprocess_style)
 
         # 子产线按钮样式
-        sub_button_style = """
-            QPushButton {
-                border: 1px solid #c0c0c0;
+        sub_button_style = f"""
+            QPushButton {{
+                border: 1px solid {WindowsColors.BORDER};
                 border-radius: 4px;
                 padding: 4px 10px;
-                background-color: #f0f0f0;
-                color: #333;
-            }
-            QPushButton:hover {
-                background-color: #e0e0e0;
-            }
-            QPushButton:checked {
-                background-color: #107c10;
+                background-color: {WindowsColors.BACKGROUND};
+                color: {WindowsColors.TEXT};
+            }}
+            QPushButton:hover {{
+                background-color: {WindowsColors.BACKGROUND_HOVER};
+            }}
+            QPushButton:checked {{
+                background-color: {WindowsColors.SUCCESS};
                 color: white;
-                border-color: #107c10;
-            }
+                border-color: {WindowsColors.SUCCESS};
+            }}
         """
         for btn in [self._btn_sub_table, self._btn_sub_formula, self._btn_sub_seal, self._btn_sub_chart]:
             if btn:

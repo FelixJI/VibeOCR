@@ -13,6 +13,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Optional, Callable, TYPE_CHECKING
 
+from vibeocr.core.singleton_meta import SingletonMeta
 from vibeocr.models.ocr_result import OCRResult
 from vibeocr.utils.markdown_converter import markdown_to_html
 
@@ -124,10 +125,9 @@ class OCROptions:
     vl_min_pixels: int = 0  # 最小像素数（0 表示使用默认）
 
 
-class OCRService:
-    """OCR 识别服务 (线程安全的单例模式)"""
+class OCRService(metaclass=SingletonMeta):
+    """OCR 识别服务 (使用 SingletonMeta 实现线程安全单例)"""
 
-    _instance: Optional["OCRService"] = None
     _pipelines: dict[str, Any] = {}  # 管道缓存：{pipeline_name: pipeline_instance}
     _device: Optional[str] = None
     _lock = threading.Lock()
@@ -168,19 +168,32 @@ class OCRService:
             setup_paddlex_model_source()
             cls._source_configured = True
 
-    def __new__(cls) -> "OCRService":
-        if cls._instance is None:
-            with cls._lock:
-                if cls._instance is None:  # 双重检查
-                    cls._instance = super().__new__(cls)
-        return cls._instance
-
     def __init__(self):
+        """初始化 OCR 服务
+
+        使用 SingletonMeta 确保单例，_initialized 标志防止重复初始化。
+        """
         if not self._initialized:
             with self._lock:
                 if not self._initialized:
                     self._init_gpu()
                     self._initialized = True
+
+    @classmethod
+    def _reset(cls) -> None:
+        """重置服务状态
+
+        供 SingletonMeta.reset_instance() 调用，用于测试清理。
+        """
+        with cls._lock:
+            cls._pipelines = {}
+            cls._device = None
+            cls._initialized = False
+            cls._status_callback = None
+            cls._source_configured = False
+            cls._preload_progress_callback = None
+            cls._preloaded_pipelines = set()
+            cls._is_preloading = False
 
     @classmethod
     def preload_model_cache(cls) -> dict[str, bool]:

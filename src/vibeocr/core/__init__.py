@@ -12,6 +12,7 @@ from vibeocr.core.constants import (
     Constants,
     OCRPipeline,
     FileType,
+    WindowsColors,
     DEFAULT_SHM_SIZE,
     SHM_TIMEOUT,
     SHORT_DELAY_MS,
@@ -45,6 +46,8 @@ __all__ = [
     # 枚举
     "OCRPipeline",
     "FileType",
+    # 配色方案
+    "WindowsColors",
     # 常量（向后兼容）
     "DEFAULT_SHM_SIZE",
     "SHM_TIMEOUT",
