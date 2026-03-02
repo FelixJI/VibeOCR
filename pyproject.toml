@@ -23,12 +23,160 @@ dev = [
     "pytest>=8.0.0",
     "pytest-qt>=4.4.0",
     "pytest-cov>=4.1.0",
+    # 代码质量工具
+    "black>=24.0.0",
+    "isort>=5.13.0",
+    "ruff>=0.4.0",
+    "pyright>=0.1.0",
+    "mypy>=1.9.0",
 ]
 
 [build-system]
 requires = ["hatchling>=1.0.0"]
 build-backend = "hatchling.build"
 
+# =============================================================================
+# Black - 代码格式化
+# =============================================================================
+[tool.black]
+line-length = 88
+target-version = ["py312"]
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+    \.git
+    | \.venv
+    | \.pytest_cache
+    | \.ruff_cache
+    | __pycache__
+    | build
+    | dist
+    | \.eggs
+    | \.mypy_cache
+)/
+'''
+
+# =============================================================================
+# isort - import 排序
+# =============================================================================
+[tool.isort]
+profile = "black"
+line_length = 88
+known_first_party = ["vibeocr"]
+known_third_party = ["PySide6", "PIL", "numpy", "paddle", "paddlex"]
+sections = ["FUTURE", "STDLIB", "THIRDPARTY", "FIRSTPARTY", "LOCALFOLDER"]
+skip = [".venv", ".git", "__pycache__", ".pytest_cache", ".ruff_cache"]
+force_single_line = false
+force_sort_within_sections = true
+order_by_type = true
+
+# =============================================================================
+# Ruff - 快速 Linter (替代 flake8, isort, pydocstyle 等)
+# =============================================================================
+[tool.ruff]
+target-version = "py312"
+line-length = 88
+exclude = [
+    ".git",
+    ".venv",
+    "__pycache__",
+    ".pytest_cache",
+    ".ruff_cache",
+    "build",
+    "dist",
+    "*.egg-info",
+]
+
+[tool.ruff.lint]
+select = [
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings
+    "F",      # Pyflakes
+    "I",      # isort
+    "B",      # flake8-bugbear
+    "C4",     # flake8-comprehensions
+    "UP",     # pyupgrade
+    "ARG",    # flake8-unused-arguments
+    "SIM",    # flake8-simplify
+    "TCH",    # flake8-type-checking
+    "PTH",    # flake8-use-pathlib
+    "ERA",    # eradicate (注释掉的代码)
+    "RUF",    # Ruff 特定规则
+]
+ignore = [
+    "E501",   # 行长度由 black 处理
+    "B008",   # 函数调用中的默认参数（PySide6 信号/槽常用）
+    "B905",   # zip without strict
+    "ARG001", # 未使用的函数参数（可能是接口要求）
+    "ARG002", # 未使用的方法参数
+    "PTH123", # 使用 open() 而非 Path.open()
+    "SIM108", # 使用三元运算符
+    "TCH001", # 类型检查相关的导入
+    "TCH002",
+    "TCH003",
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["vibeocr"]
+known-third-party = ["PySide6", "PIL", "numpy", "paddle", "paddlex"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["ARG", "S101", "PLR2004"]
+"__init__.py" = ["F401"]  # 允许未使用的导入
+
+# =============================================================================
+# Pyright - 静态类型检查
+# =============================================================================
+[tool.pyright]
+pythonVersion = "3.12"
+pythonPlatform = "Windows"
+typeCheckingMode = "basic"
+include = ["src", "tests"]
+exclude = [".venv", "**/__pycache__", ".pytest_cache", ".ruff_cache"]
+reportMissingImports = true
+reportMissingTypeStubs = false
+reportUnusedImport = "warning"
+reportUnusedClass = "warning"
+reportUnusedFunction = "warning"
+reportUnusedVariable = "warning"
+reportDuplicateImport = "warning"
+# PySide6 相关
+reportAttributeAccessIssue = "warning"  # PySide6 动态属性较多
+
+# =============================================================================
+# Mypy - 类型检查
+# =============================================================================
+[tool.mypy]
+python_version = "3.12"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+check_untyped_defs = true
+ignore_missing_imports = true
+exclude = [
+    "\\.venv",
+    "\\.git",
+    "__pycache__",
+    "\\.pytest_cache",
+    "\\.ruff_cache",
+    "build",
+    "dist",
+]
+
+# PySide6 类型存根不完整
+[[tool.mypy.overrides]]
+module = ["PySide6.*"]
+ignore_errors = true
+
+# PaddlePaddle 类型存根不完整
+[[tool.mypy.overrides]]
+module = ["paddle.*", "paddlex.*"]
+ignore_errors = true
+
+# =============================================================================
+# Pytest - 测试配置
+# =============================================================================
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
@@ -37,7 +185,31 @@ python_functions = ["test_*"]
 qt_api = "pyside6"
 addopts = "-v --tb=short"
 
+# =============================================================================
+# Coverage - 测试覆盖率
+# =============================================================================
+[tool.coverage.run]
+source = ["src"]
+branch = true
+omit = [
+    "*/__pycache__/*",
+    "*/tests/*",
+    "*/.venv/*",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+]
+
+# =============================================================================
 # uv 包管理器配置 - PaddlePaddle CUDA 12 镜像源
+# =============================================================================
 [tool.uv]
 extra-index-url = [
     "https://www.paddlepaddle.org.cn/packages/stable/cu129/",
