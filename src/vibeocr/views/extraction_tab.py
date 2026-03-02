@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Signal, Slot
 from PySide6.QtUiTools import QUiLoader
 
+from vibeocr.views.tabs.base_tab import BaseOcrTab
 from vibeocr.widgets.batch_file_list_widget import BatchFileListWidget
 from vibeocr.widgets.console_widget import ConsoleWidget
 from vibeocr.models.extraction_options import ExtractionOptions
@@ -23,8 +24,10 @@ from vibeocr.models.extraction_template import DEFAULT_TEMPLATES
 logger = logging.getLogger(__name__)
 
 
-class ExtractionTab(QWidget):
+class ExtractionTab(BaseOcrTab):
     """信息抽取标签页
+
+    继承自 BaseOcrTab，提供基于 PP-ChatOCRv4 产线的信息抽取功能。
 
     布局：
     - 左侧：文件列表 + 字段配置

@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Signal, Slot, QThread
 
+from vibeocr.views.tabs.base_tab import BaseOcrTab
 from vibeocr.widgets.batch_file_list_widget import BatchFileListWidget
 from vibeocr.widgets.preprocess_options_widget import PreprocessOptionsWidget
 from vibeocr.models.batch_request import PreprocessOptions
@@ -126,8 +127,11 @@ class BatchRecognitionWorker(QThread):
             pass
 
 
-class BatchRecognitionTab(QWidget):
-    """批量识别标签页"""
+class BatchRecognitionTab(BaseOcrTab):
+    """批量识别标签页
+
+    继承自 BaseOcrTab，提供批量文件 OCR 识别功能。
+    """
 
     def __init__(self, ocr_service=None, parent=None):
         super().__init__(parent)

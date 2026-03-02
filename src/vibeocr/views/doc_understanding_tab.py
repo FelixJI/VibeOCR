@@ -23,14 +23,17 @@ from PySide6.QtCore import Signal, Slot, Qt
 from PySide6.QtUiTools import QUiLoader
 from PySide6.QtGui import QPixmap
 
+from vibeocr.views.tabs.base_tab import BaseOcrTab
 from vibeocr.widgets.chat_widget import ChatWidget
 from vibeocr.workers.doc_understanding_worker import DocUnderstandingWorker
 
 logger = logging.getLogger(__name__)
 
 
-class DocUnderstandingTab(QWidget):
+class DocUnderstandingTab(BaseOcrTab):
     """文档理解标签页
+
+    继承自 BaseOcrTab，提供基于 PaddleX doc_understanding 管道的对话式文档问答功能。
 
     布局：
     - 顶部：模型选择 + 状态显示
