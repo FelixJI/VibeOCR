@@ -1,0 +1,153 @@
+"""OCRServiceBase 测试"""
+
+import pytest
+from unittest.mock import Mock, patch
+from typing import Any, Optional
+
+from vibeocr.services.ocr_service_base import OCRServiceBase
+
+
+class ConcreteOCRService(OCRServiceBase):
+    """用于测试的具体 OCR 服务实现"""
+
+    def _init_gpu(self) -> None:
+        """初始化 GPU"""
+        self._device = "cpu"
+
+    def recognize(self, image: Any, options=None) -> dict:
+        """执行 OCR"""
+        return {"text": "test result"}
+
+    def is_ready(self) -> bool:
+        """检查是否就绪"""
+        return self._device is not None
+
+
+class TestOCRServiceBase:
+    """OCRServiceBase 测试"""
+
+    @pytest.fixture
+    def service(self):
+        """创建测试服务实例"""
+        return ConcreteOCRService()
+
+    def test_service_creation(self, service):
+        """测试服务创建"""
+        assert service is not None
+        assert service._device is None
+        assert service._pipelines == {}
+
+    def test_device_property(self, service):
+        """测试设备属性"""
+        assert service.device is None
+
+        service._device = "cuda"
+        assert service.device == "cuda"
+
+    def test_pipelines_property(self, service):
+        """测试管道属性"""
+        assert service.pipelines == {}
+
+        service._pipelines["test"] = Mock()
+        assert "test" in service.pipelines
+
+    def test_set_status_callback(self, service):
+        """测试设置状态回调"""
+        callback = Mock()
+        service.set_status_callback(callback)
+
+        assert service._status_callback is callback
+
+    def test_notify_status_calls_callback(self, service):
+        """测试状态通知调用回调"""
+        callback = Mock()
+        service.set_status_callback(callback)
+
+        service._notify_status("test_stage", "test_message")
+
+        callback.assert_called_once_with("test_stage", "test_message")
+
+    def test_notify_status_ignores_callback_error(self, service):
+        """测试状态通知忽略回调错误"""
+        def error_callback(stage, message):
+            raise ValueError("Callback error")
+
+        service.set_status_callback(error_callback)
+
+        # 不应该抛出异常
+        service._notify_status("test", "message")
+
+    def test_notify_status_without_callback(self, service):
+        """测试无回调时的状态通知"""
+        service._status_callback = None
+
+        # 不应该抛出异常
+        service._notify_status("test", "message")
+
+    def test_preload_pipelines_empty_list(self, service):
+        """测试预加载空管道列表"""
+        results = service.preload_pipelines([])
+
+        assert results == {}
+
+    def test_preload_pipelines(self, service):
+        """测试预加载管道"""
+        # 添加一个管道到缓存
+        service._pipelines["existing"] = Mock()
+
+        results = service.preload_pipelines(["existing"])
+
+        assert results["existing"] is True
+
+    def test_get_pipeline(self, service):
+        """测试获取管道"""
+        pipeline = Mock()
+        service._pipelines["test"] = pipeline
+
+        result = service.get_pipeline("test")
+
+        assert result is pipeline
+
+    def test_get_pipeline_not_found(self, service):
+        """测试获取不存在的管道"""
+        result = service.get_pipeline("nonexistent")
+
+        assert result is None
+
+    def test_clear_pipelines(self, service):
+        """测试清除管道"""
+        service._pipelines["test1"] = Mock()
+        service._pipelines["test2"] = Mock()
+
+        service.clear_pipelines()
+
+        assert service._pipelines == {}
+
+    def test_shutdown(self, service):
+        """测试关闭服务"""
+        service._device = "cuda"
+        service._pipelines["test"] = Mock()
+
+        service.shutdown()
+
+        assert service._device is None
+        assert service._pipelines == {}
+
+
+class TestOCRServiceBaseAbstract:
+    """OCRServiceBase 抽象方法测试"""
+
+    def test_cannot_instantiate_base_class(self):
+        """测试不能直接实例化基类"""
+        with pytest.raises(TypeError):
+            OCRServiceBase()
+
+    def test_subclass_must_implement_abstract_methods(self):
+        """测试子类必须实现抽象方法"""
+        class IncompleteService(OCRServiceBase):
+            def _init_gpu(self) -> None:
+                pass
+            # 缺少 recognize 和 is_ready
+
+        with pytest.raises(TypeError):
+            IncompleteService()

@@ -1,0 +1,146 @@
+"""OCR 服务抽象基类
+
+定义所有 OCR 服务实现必须遵循的接口。
+"""
+
+from abc import ABC, abstractmethod
+from typing import Any, Dict, List, Optional, Callable, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from vibeocr.models.ocr_result import OCRResult
+    from vibeocr.models.ocr_options import OCROptions
+
+
+class OCRServiceBase(ABC):
+    """OCR 服务抽象基类
+
+    定义所有 OCR 服务实现必须遵循的接口。
+    支持：
+    - 单图识别
+    - 批量处理
+    - 管道预加载
+    - GPU/CPU 模式切换
+
+    子类需要实现：
+    - _init_gpu(): 初始化 GPU 环境
+    - recognize(): 执行 OCR 识别
+    - is_ready(): 检查服务是否就绪
+    """
+
+    def __init__(self) -> None:
+        self._device: Optional[str] = None
+        self._pipelines: Dict[str, Any] = {}
+        self._status_callback: Optional[Callable[[str, str], None]] = None
+
+    @property
+    def device(self) -> Optional[str]:
+        """获取当前设备"""
+        return self._device
+
+    @property
+    def pipelines(self) -> Dict[str, Any]:
+        """获取管道缓存"""
+        return self._pipelines
+
+    def set_status_callback(self, callback: Optional[Callable[[str, str], None]]) -> None:
+        """设置状态回调函数
+
+        Args:
+            callback: 回调函数，接收 (stage, message) 参数
+        """
+        self._status_callback = callback
+
+    def _notify_status(self, stage: str, message: str) -> None:
+        """通知状态变化"""
+        if self._status_callback:
+            try:
+                self._status_callback(stage, message)
+            except Exception:
+                pass  # 忽略回调错误
+
+    @abstractmethod
+    def _init_gpu(self) -> None:
+        """初始化 GPU 环境
+
+        子类必须实现此方法来检测和配置 GPU。
+        """
+        pass
+
+    @abstractmethod
+    def recognize(
+        self,
+        image: Any,
+        options: Optional["OCROptions"] = None,
+    ) -> "OCRResult":
+        """执行 OCR 识别
+
+        Args:
+            image: 输入图像（PIL Image, numpy 数组, 路径或字节数据）
+            options: OCR 识别选项
+
+        Returns:
+            OCRResult 对象
+        """
+        pass
+
+    @abstractmethod
+    def is_ready(self) -> bool:
+        """检查服务是否就绪
+
+        Returns:
+            服务是否可以执行 OCR
+        """
+        pass
+
+    def preload_pipelines(self, pipelines: List[str]) -> Dict[str, bool]:
+        """预加载管道
+
+        Args:
+            pipelines: 要预加载的管道名称列表
+
+        Returns:
+            {pipeline_name: success} 字典
+        """
+        results = {}
+        for pipeline_name in pipelines:
+            try:
+                self._preload_pipeline(pipeline_name)
+                results[pipeline_name] = True
+            except Exception:
+                results[pipeline_name] = False
+        return results
+
+    def _preload_pipeline(self, pipeline_name: str) -> None:
+        """预加载单个管道
+
+        Args:
+            pipeline_name: 管道名称
+        """
+        # 默认实现：如果管道已存在则跳过
+        if pipeline_name in self._pipelines:
+            return
+        # 子类可以重写此方法来实现实际的预加载逻辑
+        pass
+
+    def get_pipeline(self, pipeline_name: str) -> Optional[Any]:
+        """获取管道实例
+
+        Args:
+            pipeline_name: 管道名称
+
+        Returns:
+            管道实例，如果不存在返回 None
+        """
+        return self._pipelines.get(pipeline_name)
+
+    def clear_pipelines(self) -> None:
+        """清除所有管道缓存"""
+        self._pipelines.clear()
+
+    def shutdown(self) -> None:
+        """关闭服务，释放资源
+
+        子类可以重写此方法来实现清理逻辑。
+        """
+        self.clear_pipelines()
+        self._device = None
