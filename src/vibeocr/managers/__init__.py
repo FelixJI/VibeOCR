@@ -2,8 +2,10 @@
 
 包含：
 - DependencyManager: 依赖管理
+- SubprocessManager: 子进程管理
 """
 
 from vibeocr.managers.dependency_manager import DependencyManager
+from vibeocr.managers.subprocess_manager import SubprocessManager
 
-__all__ = ["DependencyManager"]
+__all__ = ["DependencyManager", "SubprocessManager"]
