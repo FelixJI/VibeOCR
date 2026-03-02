@@ -1,0 +1,123 @@
+"""依赖管理器
+
+提供依赖检查和安装管理功能。
+"""
+
+import logging
+from pathlib import Path
+from typing import Optional, Callable
+
+from PySide6.QtCore import QObject, Signal, QRunnable, QThreadPool
+
+from vibeocr import env_manager
+
+logger = logging.getLogger(__name__)
+
+
+class DependencyCheckSignals(QObject):
+    """依赖检查信号"""
+
+    finished = Signal(bool, list)  # (是否就绪, 缺失依赖列表)
+
+
+class DependencyCheckTask(QRunnable):
+    """依赖检查任务（在后台线程执行）"""
+
+    def __init__(self, project_root: Path) -> None:
+        super().__init__()
+        self._project_root = project_root
+        self.signals = DependencyCheckSignals()
+
+    def run(self) -> None:
+        """检查OCR依赖
+
+        统一使用 env_manager.is_embedded_environment_ready() 检查
+        支持虚拟环境模式和便携式模式
+        """
+        # 记录环境模式
+        mode = env_manager.get_environment_mode(self._project_root)
+        logging.info(f"[依赖检查] 环境模式: {mode}")
+
+        # 获取目标Python路径
+        python_exe = env_manager.get_embedded_python_executable(self._project_root)
+        logging.info(f"[依赖检查] 目标Python: {python_exe}")
+
+        # 使用统一的依赖检查接口
+        ready, missing = env_manager.is_embedded_environment_ready(self._project_root)
+
+        if ready:
+            logging.info("[依赖检查] OCR依赖已就绪")
+        else:
+            logging.warning(f"[依赖检查] OCR依赖缺失: {missing}")
+
+        self.signals.finished.emit(ready, missing)
+
+
+class DependencyManager(QObject):
+    """依赖管理器
+
+    管理 OCR 依赖的检查和安装状态。
+    通过信号与 UI 通信，不直接操作 UI。
+
+    Signals:
+        check_completed(bool, list): 依赖检查完成，参数为(是否就绪, 缺失依赖列表)
+        check_started(): 依赖检查开始
+    """
+
+    check_completed = Signal(bool, list)  # (是否就绪, 缺失依赖列表)
+    check_started = Signal()
+
+    def __init__(self, project_root: Optional[Path] = None, parent=None):
+        """初始化依赖管理器
+
+        Args:
+            project_root: 项目根目录，默认为自动检测
+            parent: 父对象
+        """
+        super().__init__(parent)
+        self._project_root = project_root or env_manager.get_project_root()
+        self._thread_pool = QThreadPool()
+        self._is_checking = False
+        self._is_ready = False
+        self._missing_dependencies: list = []
+
+    def check_dependencies(self) -> None:
+        """异步检查依赖
+
+        在后台线程中执行依赖检查，通过信号返回结果。
+        """
+        if self._is_checking:
+            logger.debug("依赖检查已在进行中，跳过")
+            return
+
+        self._is_checking = True
+        self.check_started.emit()
+
+        task = DependencyCheckTask(self._project_root)
+        task.signals.finished.connect(self._on_check_finished)
+        self._thread_pool.start(task)
+
+    def _on_check_finished(self, ready: bool, missing: list) -> None:
+        """依赖检查完成回调"""
+        self._is_checking = False
+        self._is_ready = ready
+        self._missing_dependencies = missing
+        self.check_completed.emit(ready, missing)
+
+    def is_checking(self) -> bool:
+        """检查是否正在检查依赖"""
+        return self._is_checking
+
+    def is_ready(self) -> bool:
+        """检查依赖是否就绪"""
+        return self._is_ready
+
+    def get_missing_dependencies(self) -> list:
+        """获取缺失的依赖列表"""
+        return self._missing_dependencies.copy()
+
+    def reset(self) -> None:
+        """重置状态"""
+        self._is_checking = False
+        self._is_ready = False
+        self._missing_dependencies = []

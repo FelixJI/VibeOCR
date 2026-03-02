@@ -5,5 +5,7 @@ Workers 包 - 子进程 Worker 模块
 """
 
 from .ocr_worker import run_worker, OCRWorkerError
+from .doc_understanding_worker import DocUnderstandingWorker
+from .extraction_worker import ExtractionWorker
 
-__all__ = ['run_worker', 'OCRWorkerError']
+__all__ = ['run_worker', 'OCRWorkerError', 'DocUnderstandingWorker', 'ExtractionWorker']

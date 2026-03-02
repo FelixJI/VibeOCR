@@ -282,7 +282,7 @@ name = "cuda-bindings"
 version = "12.9.5"
 source = { registry = "https://www.paddlepaddle.org.cn/packages/stable/cu129/" }
 dependencies = [
-    { name = "cuda-pathfinder" },
+    { name = "cuda-pathfinder", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32')" },
 ]
 wheels = [
     { url = "https://paddle-whl.bj.bcebos.com/stable/cu129/cuda-bindings/cuda_bindings-12.9.5-cp312-cp312-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl" },
@@ -301,7 +301,7 @@ name = "cuda-python"
 version = "12.9.4"
 source = { registry = "https://www.paddlepaddle.org.cn/packages/stable/cu129/" }
 dependencies = [
-    { name = "cuda-bindings" },
+    { name = "cuda-bindings", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32')" },
 ]
 wheels = [
     { url = "https://paddle-whl.bj.bcebos.com/stable/cu129/cuda-python/cuda_python-12.9.4-py3-none-any.whl" },
@@ -944,7 +944,7 @@ name = "nvidia-cufft-cu12"
 version = "11.4.0.6"
 source = { registry = "https://www.paddlepaddle.org.cn/packages/stable/cu129/" }
 dependencies = [
-    { name = "nvidia-nvjitlink-cu12" },
+    { name = "nvidia-nvjitlink-cu12", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32')" },
 ]
 wheels = [
     { url = "https://paddle-whl.bj.bcebos.com/stable/cu129/nvidia-cufft-cu12/nvidia_cufft_cu12-11.4.0.6-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl" },
@@ -971,9 +971,9 @@ name = "nvidia-cusolver-cu12"
 version = "11.7.4.40"
 source = { registry = "https://www.paddlepaddle.org.cn/packages/stable/cu129/" }
 dependencies = [
-    { name = "nvidia-cublas-cu12" },
-    { name = "nvidia-cusparse-cu12" },
-    { name = "nvidia-nvjitlink-cu12" },
+    { name = "nvidia-cublas-cu12", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32')" },
+    { name = "nvidia-cusparse-cu12", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32')" },
+    { name = "nvidia-nvjitlink-cu12", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32')" },
 ]
 wheels = [
     { url = "https://paddle-whl.bj.bcebos.com/stable/cu129/nvidia-cusolver-cu12/nvidia_cusolver_cu12-11.7.4.40-py3-none-manylinux_2_27_x86_64.whl" },
@@ -984,7 +984,7 @@ name = "nvidia-cusparse-cu12"
 version = "12.5.9.5"
 source = { registry = "https://www.paddlepaddle.org.cn/packages/stable/cu129/" }
 dependencies = [
-    { name = "nvidia-nvjitlink-cu12" },
+    { name = "nvidia-nvjitlink-cu12", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32')" },
 ]
 wheels = [
     { url = "https://paddle-whl.bj.bcebos.com/stable/cu129/nvidia-cusparse-cu12/nvidia_cusparse_cu12-12.5.9.5-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl" },
@@ -2111,6 +2111,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "markdown" },
+    { name = "numpy" },
     { name = "nvidia-cudnn-cu12" },
     { name = "paddlepaddle-gpu" },
     { name = "paddlex", extra = ["ie", "multimodal", "ocr"] },
@@ -2130,6 +2131,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "markdown", specifier = ">=3.4" },
+    { name = "numpy", specifier = ">=1.26.0" },
     { name = "nvidia-cudnn-cu12" },
     { name = "paddlepaddle-gpu", specifier = ">=3.3.0" },
     { name = "paddlex", extras = ["ie"], specifier = ">=3.4.2" },

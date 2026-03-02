@@ -2,23 +2,24 @@
 """信息抽取工作线程"""
 
 import logging
-from typing import List, Dict, Any, Optional
 from pathlib import Path
+from typing import Any, Dict, List, Optional
 
-from PySide6.QtCore import QThread, Signal
+from PySide6.QtCore import Signal
 
+from vibeocr.core import BatchWorker
 from vibeocr.models.extraction_options import ExtractionOptions
 
 logger = logging.getLogger(__name__)
 
 
-class ExtractionWorker(QThread):
+class ExtractionWorker(BatchWorker[Dict[str, Any]]):
     """信息抽取工作线程
 
     在后台执行 PP-ChatOCRv4 产线调用，避免阻塞 UI。
     """
 
-    # 信号定义
+    # 信号定义（继承并可能扩展基类信号）
     progress = Signal(int, int, str)  # completed, total, current_file
     file_completed = Signal(str, str, dict)  # file_path, status, result
     finished = Signal(dict)  # all results
@@ -33,59 +34,42 @@ class ExtractionWorker(QThread):
         llm_config: Optional[dict] = None,
         parent=None
     ):
-        super().__init__(parent)
+        """初始化抽取 Worker
+
+        Args:
+            service: OCR 服务实例
+            files: 文件信息列表，每项为 dict 包含 path, name 等
+            keys: 要抽取的字段列表
+            options: 抽取选项
+            llm_config: LLM 配置
+            parent: 父对象
+        """
+        super().__init__(files, parent)
         self._service = service
-        self._files = files
         self._keys = keys
         self._options = options
         self._llm_config = llm_config
-        self._cancelled = False
 
-    def run(self):
-        """执行抽取任务"""
-        results = {}
-        total = len(self._files)
+    def _process_item(self, item: Dict, index: int) -> Dict[str, Any]:
+        """处理单个文件
 
-        if total == 0:
-            self.finished.emit(results)
-            return
+        Args:
+            item: 文件信息字典
+            index: 文件索引
 
-        for i, file_info in enumerate(self._files):
-            if self._cancelled:
-                break
+        Returns:
+            抽取结果字典
+        """
+        file_path = item.get("path", "")
 
-            file_path = file_info["path"]
-            file_name = file_info.get("name", Path(file_path).name)
+        # 读取文件
+        with open(file_path, "rb") as f:
+            image_data = f.read()
 
-            self.progress.emit(i, total, file_name)
+        # 执行抽取
+        return self._extract(image_data, self._get_file_name(item))
 
-            try:
-                # 读取文件
-                with open(file_path, "rb") as f:
-                    image_data = f.read()
-
-                # 调用 OCR 服务进行抽取
-                result = self._extract(image_data, file_name)
-
-                self.file_completed.emit(file_path, "completed", result)
-                results[file_path] = {
-                    "file_path": file_path,
-                    "file_name": file_name,
-                    "result": result,
-                }
-
-            except Exception as e:
-                logger.error(f"抽取失败 {file_path}: {e}")
-                self.file_completed.emit(file_path, "failed", {"error": str(e)})
-                results[file_path] = {
-                    "file_path": file_path,
-                    "file_name": file_name,
-                    "error": str(e),
-                }
-
-        self.finished.emit(results)
-
-    def _extract(self, image_data: bytes, file_name: str) -> dict:
+    def _extract(self, image_data: bytes, file_name: str) -> Dict[str, Any]:
         """执行单个文件的抽取
 
         Args:
@@ -108,7 +92,3 @@ class ExtractionWorker(QThread):
             "keys": self._keys,
             "values": {k: f"模拟值_{k}" for k in self._keys},
         }
-
-    def cancel(self):
-        """取消任务"""
-        self._cancelled = True

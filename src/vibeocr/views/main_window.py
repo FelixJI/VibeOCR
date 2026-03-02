@@ -35,49 +35,11 @@ from vibeocr.models.ocr_result import OCRResult
 from vibeocr import env_manager
 from vibeocr.machine_cache import is_cache_valid
 from vibeocr.utils.qt_async import run_coroutine
+from vibeocr.managers import DependencyManager
 
 # 延迟导入: OCR 服务模块导入很慢（~33s），延迟到首次使用时导入
 if TYPE_CHECKING:
     from vibeocr.services.ocr_service import OCRService, OCRPreset, OCRPipeline, OCROptions
-
-
-class DependencyCheckSignals(QObject):
-    """依赖检查信号"""
-
-    finished = Signal(bool, list)  # (是否就绪, 缺失依赖列表)
-
-
-class DependencyCheckTask(QRunnable):
-    """依赖检查任务（在后台线程执行）"""
-
-    def __init__(self, project_root: Path) -> None:
-        super().__init__()
-        self._project_root = project_root
-        self.signals = DependencyCheckSignals()
-
-    def run(self) -> None:
-        """检查OCR依赖
-
-        统一使用 env_manager.is_embedded_environment_ready() 检查
-        支持虚拟环境模式和便携式模式
-        """
-        # 记录环境模式
-        mode = env_manager.get_environment_mode(self._project_root)
-        logging.info(f"[依赖检查] 环境模式: {mode}")
-
-        # 获取目标Python路径
-        python_exe = env_manager.get_embedded_python_executable(self._project_root)
-        logging.info(f"[依赖检查] 目标Python: {python_exe}")
-
-        # 使用统一的依赖检查接口
-        ready, missing = env_manager.is_embedded_environment_ready(self._project_root)
-
-        if ready:
-            logging.info("[依赖检查] OCR依赖已就绪")
-        else:
-            logging.warning(f"[依赖检查] OCR依赖缺失: {missing}")
-
-        self.signals.finished.emit(ready, missing)
 
 
 class MainWindow(QMainWindow):
@@ -102,6 +64,10 @@ class MainWindow(QMainWindow):
 
         # 当前 OCR 结果（用于复制操作）
         self._current_ocr_result: OCRResult | None = None
+
+        # 依赖管理器
+        self._dependency_manager = DependencyManager(self._project_root, self)
+        self._dependency_manager.check_completed.connect(self._on_dependency_check_finished)
 
         self._setup_ui()
         self._setup_console()
@@ -166,6 +132,9 @@ class MainWindow(QMainWindow):
 
         # 添加信息抽取标签页
         self._init_extraction_tab()
+
+        # 添加文档理解标签页
+        self._init_doc_understanding_tab()
 
     def _init_preset_combo(self) -> None:
         """初始化 OCR 管道和选项按钮"""
@@ -311,6 +280,16 @@ class MainWindow(QMainWindow):
         if tab_widget:
             tab_widget.addTab(self._extraction_tab, "信息抽取")
             logging.debug("信息抽取标签页已添加")
+
+    def _init_doc_understanding_tab(self) -> None:
+        """初始化文档理解标签页"""
+        from vibeocr.views.doc_understanding_tab import DocUnderstandingTab
+
+        self._doc_understanding_tab = DocUnderstandingTab()
+        tab_widget = self._ui.findChild(QWidget, "tabWidget")
+        if tab_widget:
+            tab_widget.addTab(self._doc_understanding_tab, "文档理解")
+            logging.debug("文档理解标签页已添加")
 
 
         """管道按钮点击时更新 UI"""
@@ -488,9 +467,7 @@ class MainWindow(QMainWindow):
 
     def _check_embedded_dependencies(self) -> None:
         """异步检查嵌入式OCR依赖"""
-        task = DependencyCheckTask(self._project_root)
-        task.signals.finished.connect(self._on_dependency_check_finished)
-        self._thread_pool.start(task)
+        self._dependency_manager.check_dependencies()
 
     @Slot(bool, list)
     def _on_dependency_check_finished(self, ready: bool, missing: list) -> None:
@@ -587,6 +564,11 @@ class MainWindow(QMainWindow):
             if hasattr(self, '_extraction_tab') and self._extraction_tab:
                 self._extraction_tab.set_ocr_service(self._subprocess_service)
                 logging.info("[MainWindow] 信息抽取标签页已连接 OCR 服务")
+
+            # 设置 OCR 服务到文档理解标签页
+            if hasattr(self, '_doc_understanding_tab') and self._doc_understanding_tab:
+                self._doc_understanding_tab.set_ocr_service(self._subprocess_service)
+                logging.info("[MainWindow] 文档理解标签页已连接 OCR 服务")
 
             # 子进程就绪后，触发预加载（如果配置了预加载管道）
             self._start_subprocess_preload()
