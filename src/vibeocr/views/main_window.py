@@ -35,7 +35,7 @@ from vibeocr.models.ocr_result import OCRResult
 from vibeocr import env_manager
 from vibeocr.machine_cache import is_cache_valid
 from vibeocr.utils.qt_async import run_coroutine
-from vibeocr.managers import DependencyManager
+from vibeocr.managers import DependencyManager, SubprocessManager
 from vibeocr.core.constants import WindowsColors
 
 # 延迟导入: OCR 服务模块导入很慢（~33s），延迟到首次使用时导入
@@ -48,8 +48,6 @@ class MainWindow(QMainWindow):
 
     # 状态更新信号（用于线程安全的状态栏更新）
     _status_update_signal = Signal(str)
-    # 子进程 Worker 就绪信号
-    _subprocess_ready_signal = Signal(bool)
 
     def __init__(self) -> None:
         super().__init__()
@@ -57,11 +55,7 @@ class MainWindow(QMainWindow):
         self._ocr_ready = False
         self._dependency_check_complete = False  # 依赖检测是否完成
         self._preload_complete = False  # 预加载是否完成
-        self._subprocess_worker_ready = False  # 子进程 Worker 是否就绪
         self._closing = False  # 是否正在关闭（防止关闭时重复启动 Worker）
-
-        # 子进程 OCR 服务（延迟初始化）
-        self._subprocess_service = None
 
         # 当前 OCR 结果（用于复制操作）
         self._current_ocr_result: OCRResult | None = None
@@ -69,6 +63,11 @@ class MainWindow(QMainWindow):
         # 依赖管理器
         self._dependency_manager = DependencyManager(self._project_root, self)
         self._dependency_manager.check_completed.connect(self._on_dependency_check_finished)
+
+        # 子进程管理器
+        self._subprocess_manager = SubprocessManager(self._project_root, self)
+        self._subprocess_manager.service_ready.connect(self._on_subprocess_worker_ready)
+        self._subprocess_manager.progress_update.connect(self._on_subprocess_progress)
 
         self._setup_ui()
         self._setup_console()
@@ -78,9 +77,6 @@ class MainWindow(QMainWindow):
 
         # 设置 OCRService 状态回调（用于显示模型下载进度）
         self._setup_ocr_status_callback()
-
-        # 连接子进程 Worker 就绪信号
-        self._subprocess_ready_signal.connect(self._on_subprocess_worker_ready)
 
         # 启动时立即读取缓存，如果有有效缓存则直接更新状态
         self._try_load_cache()
@@ -489,86 +485,45 @@ class MainWindow(QMainWindow):
     def _start_subprocess_worker(self) -> None:
         """依赖检测完成后启动子进程 Worker
 
-        在后台线程中启动子进程 Worker，避免阻塞 UI。
-        启动进度通过控制台日志输出。
-        启动完成后通过 _subprocess_ready_signal 信号通知。
+        使用 SubprocessManager 管理子进程生命周期。
         """
         if self._closing:
             logging.info("[MainWindow] 应用程序正在关闭，跳过启动子进程 Worker")
             return
 
-        if self._subprocess_worker_ready:
+        if self._subprocess_manager.is_ready:
             logging.info("[MainWindow] 子进程 Worker 已就绪，跳过启动")
             return
 
         logging.info("[MainWindow] 正在启动子进程 Worker...")
         self._statusbar.showMessage("正在启动 OCR 服务...")
 
-        class SubprocessStartTask(QRunnable):
-            """子进程启动任务"""
-            def __init__(self, main_window):
-                super().__init__()
-                self._main_window = main_window
-
-            def _update_progress(self, stage: str, percent: int):
-                """更新进度（仅输出到控制台）"""
-                logging.info(f"[OCR 启动] {stage} ({percent}%)")
-
-            def run(self):
-                # 检查是否正在关闭
-                if self._main_window._closing:
-                    logging.info("[MainWindow] 应用程序正在关闭，取消子进程启动任务")
-                    return
-
-                try:
-                    from vibeocr.services.ocr_service_subprocess import OCRServiceSubprocess
-
-                    # 再次检查关闭标志（获取锁前）
-                    if self._main_window._closing:
-                        logging.info("[MainWindow] 应用程序正在关闭，取消子进程启动")
-                        return
-
-                    # 创建并启动子进程服务（带进度回调）
-                    service = OCRServiceSubprocess(
-                        max_workers=1,
-                        use_gpu=True,
-                        auto_start=True,
-                        start_timeout=120.0,
-                        start_progress_callback=self._update_progress
-                    )
-                    self._main_window._subprocess_service = service
-                    self._main_window._subprocess_ready_signal.emit(True)
-                    logging.info("[MainWindow] 子进程 Worker 启动成功")
-                except Exception as e:
-                    error_msg = str(e)
-                    logging.error(f"[MainWindow] 启动子进程 Worker 失败: {error_msg}")
-                    self._main_window._subprocess_ready_signal.emit(False)
-
-        # 在线程池中执行启动任务
-        self._thread_pool.start(SubprocessStartTask(self))
+        # 使用 SubprocessManager 启动
+        self._subprocess_manager.start(use_gpu=True, start_timeout=120.0)
     
     @Slot(bool)
     def _on_subprocess_worker_ready(self, success: bool) -> None:
         """子进程 Worker 就绪回调"""
-        self._subprocess_worker_ready = success
-
         if success:
             logging.info("[MainWindow] 子进程 Worker 已就绪")
             self._statusbar.showMessage("OCR 服务已就绪")
 
+            # 获取服务实例
+            service = self._subprocess_manager.service
+
             # 设置 OCR 服务到批量识别标签页
             if hasattr(self, '_batch_tab') and self._batch_tab:
-                self._batch_tab.set_ocr_service(self._subprocess_service)
+                self._batch_tab.set_ocr_service(service)
                 logging.info("[MainWindow] 批量识别标签页已连接 OCR 服务")
 
             # 设置 OCR 服务到信息抽取标签页
             if hasattr(self, '_extraction_tab') and self._extraction_tab:
-                self._extraction_tab.set_ocr_service(self._subprocess_service)
+                self._extraction_tab.set_ocr_service(service)
                 logging.info("[MainWindow] 信息抽取标签页已连接 OCR 服务")
 
             # 设置 OCR 服务到文档理解标签页
             if hasattr(self, '_doc_understanding_tab') and self._doc_understanding_tab:
-                self._doc_understanding_tab.set_ocr_service(self._subprocess_service)
+                self._doc_understanding_tab.set_ocr_service(service)
                 logging.info("[MainWindow] 文档理解标签页已连接 OCR 服务")
 
             # 子进程就绪后，触发预加载（如果配置了预加载管道）
@@ -587,39 +542,29 @@ class MainWindow(QMainWindow):
                 "3. 系统内存不足\n\n"
                 "请查看控制台日志了解详情。"
             )
+
+    @Slot(str, int)
+    def _on_subprocess_progress(self, stage: str, percent: int) -> None:
+        """子进程启动进度回调"""
+        self._statusbar.showMessage(f"正在启动 OCR 服务: {stage} ({percent}%)")
     
     def _start_subprocess_preload(self) -> None:
         """在子进程中预加载用户配置的管道"""
-        if not self._subprocess_service:
+        if not self._subprocess_manager.is_ready:
             return
-        
+
         # 获取用户配置的预加载管道
         from vibeocr.machine_cache import get_preload_pipelines
         pipelines = get_preload_pipelines(self._project_root)
-        
+
         if not pipelines:
             logging.info("[子进程预加载] 未配置预加载管道")
             return
-        
+
         logging.info(f"[子进程预加载] 开始预加载管道: {pipelines}")
-        
-        class PreloadTask(QRunnable):
-            """预加载任务"""
-            def __init__(self, service, pipelines, main_window):
-                super().__init__()
-                self._service = service
-                self._pipelines = pipelines
-                self._main_window = main_window
-            
-            def run(self):
-                try:
-                    results = self._service.preload_pipelines(self._pipelines)
-                    success_count = sum(1 for v in results.values() if v)
-                    logging.info(f"[子进程预加载] 完成: {success_count}/{len(results)} 个管道")
-                except Exception as e:
-                    logging.error(f"[子进程预加载] 失败: {e}")
-        
-        self._thread_pool.start(PreloadTask(self._subprocess_service, pipelines, self))
+
+        # 使用 SubprocessManager 预加载
+        self._subprocess_manager.preload_pipelines(pipelines)
 
 
 
@@ -1261,7 +1206,7 @@ class MainWindow(QMainWindow):
             return
 
         # 检查子进程服务是否就绪
-        if not self._subprocess_service or not self._subprocess_service.is_ready():
+        if not self._subprocess_manager.is_ready:
             QMessageBox.warning(self, "无法预加载", "OCR 子进程服务尚未就绪，请稍后再试。")
             return
 
@@ -1405,7 +1350,7 @@ class MainWindow(QMainWindow):
                     )
 
         # 启动预加载和预热任务
-        self._thread_pool.start(PreloadWithWarmupTask(self._subprocess_service, pipelines, self))
+        self._thread_pool.start(PreloadWithWarmupTask(self._subprocess_manager.service, pipelines, self))
 
     @Slot(dict)
     def _on_manual_preload_finished(self, results: dict) -> None:
@@ -1690,17 +1635,18 @@ class MainWindow(QMainWindow):
         logging.info("正在关闭应用程序...")
         self._closing = True  # 标记正在关闭，防止重复启动 Worker
 
-        # 关闭子进程服务（这会停止 Worker，让正在运行的任务快速失败）
+        # 关闭子进程管理器
+        try:
+            self._subprocess_manager.shutdown(timeout_ms=3000)
+            logging.info("子进程管理器已关闭")
+        except Exception as e:
+            logging.warning(f"关闭子进程管理器失败: {e}")
+
+        # 清理 OCR 资源
         try:
             from vibeocr.services import USE_SUBPROCESS
 
-            if USE_SUBPROCESS:
-                # 子进程模式：关闭子进程服务
-                from vibeocr.services.ocr_service_subprocess import OCRServiceSubprocess
-                if OCRServiceSubprocess._instance is not None:
-                    OCRServiceSubprocess._instance.shutdown()
-                    logging.info("OCR 子进程服务已关闭")
-            else:
+            if not USE_SUBPROCESS:
                 # 直接模式：清理管道缓存
                 from vibeocr.services.ocr_service import OCRService
                 OCRService._pipelines.clear()
