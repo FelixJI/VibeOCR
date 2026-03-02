@@ -227,9 +227,14 @@ class SubprocessManager(QObject):
         """
         logger.info("[SubprocessManager] 正在关闭子进程服务...")
 
-        # 取消正在进行的启动任务
+        # 取消正在进行的启动任务并断开信号
         if self._start_task is not None:
             self._start_task.cancel()
+            try:
+                self._start_task.signals.started.disconnect(self._on_started)
+                self._start_task.signals.progress.disconnect(self.progress_update.emit)
+            except RuntimeError:
+                pass  # 信号已断开
 
         # 等待线程池完成
         if not self._thread_pool.waitForDone(timeout_ms):
@@ -243,6 +248,7 @@ class SubprocessManager(QObject):
             except Exception as e:
                 logger.error(f"[SubprocessManager] 关闭服务失败: {e}")
 
+        self._start_task = None
         self._service = None
         self._is_ready = False
         return True

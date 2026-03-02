@@ -67,7 +67,17 @@ class TestSubprocessManager:
     @pytest.fixture
     def manager(self, qapp, tmp_path):
         """创建 SubprocessManager 实例"""
-        return SubprocessManager(tmp_path)
+        mgr = SubprocessManager(tmp_path)
+        yield mgr
+        # 清理：断开信号连接并关闭
+        try:
+            if mgr._start_task is not None:
+                mgr._start_task.signals.started.disconnect()
+                mgr._start_task.signals.progress.disconnect()
+                mgr._start_task = None
+            mgr.shutdown(timeout_ms=100)
+        except RuntimeError:
+            pass  # 信号已断开
 
     def test_manager_creation(self, manager):
         """测试管理器创建"""
@@ -95,8 +105,8 @@ class TestSubprocessManager:
         assert manager._start_task is not None
         assert manager._start_task._use_gpu is False
 
-        # 清理
-        manager._start_task = None
+        # 清理：取消任务并断开信号
+        manager.shutdown(timeout_ms=100)
 
     def test_start_skips_if_already_ready(self, manager):
         """测试已就绪时跳过启动"""
@@ -160,7 +170,17 @@ class TestSubprocessManagerIntegration:
     @pytest.fixture
     def manager(self, qapp, tmp_path):
         """创建 SubprocessManager 实例"""
-        return SubprocessManager(tmp_path)
+        mgr = SubprocessManager(tmp_path)
+        yield mgr
+        # 清理：断开信号连接并关闭
+        try:
+            if mgr._start_task is not None:
+                mgr._start_task.signals.started.disconnect()
+                mgr._start_task.signals.progress.disconnect()
+                mgr._start_task = None
+            mgr.shutdown(timeout_ms=100)
+        except RuntimeError:
+            pass  # 信号已断开
 
     def test_on_started_success(self, manager):
         """测试启动成功回调"""
