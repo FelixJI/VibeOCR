@@ -5,23 +5,22 @@
 
 import logging
 from pathlib import Path
-from typing import Optional, Dict, List
 
+from PySide6.QtCore import Qt, Signal, Slot
+from PySide6.QtGui import QPixmap
+from PySide6.QtUiTools import QUiLoader
 from PySide6.QtWidgets import (
-    QWidget,
-    QVBoxLayout,
+    QComboBox,
+    QFileDialog,
     QHBoxLayout,
+    QLabel,
     QListWidget,
     QListWidgetItem,
-    QFileDialog,
-    QLabel,
     QPushButton,
-    QComboBox,
     QSplitter,
+    QVBoxLayout,
+    QWidget,
 )
-from PySide6.QtCore import Signal, Slot, Qt
-from PySide6.QtUiTools import QUiLoader
-from PySide6.QtGui import QPixmap
 
 from vibeocr.views.tabs.base_tab import BaseOcrTab
 from vibeocr.widgets.chat_widget import ChatWidget
@@ -50,9 +49,9 @@ class DocUnderstandingTab(BaseOcrTab):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._ocr_service = None
-        self._worker: Optional[DocUnderstandingWorker] = None
-        self._current_file: Optional[str] = None
-        self._conversation_history: Dict[str, List[Dict]] = {}  # 文件路径 -> 对话历史
+        self._worker: DocUnderstandingWorker | None = None
+        self._current_file: str | None = None
+        self._conversation_history: dict[str, list[dict]] = {}  # 文件路径 -> 对话历史
 
         self._setup_ui()
         self._connect_signals()
@@ -82,9 +81,11 @@ class DocUnderstandingTab(BaseOcrTab):
             container_layout.addWidget(self._chat_widget)
 
         # 获取 UI 控件引用
-        self._file_list: Optional[QListWidget] = self.findChild(QListWidget, "fileListWidget")
-        self._preview_label: Optional[QLabel] = self.findChild(QLabel, "previewLabel")
-        self._label_status: Optional[QLabel] = self.findChild(QLabel, "labelStatus")
+        self._file_list: QListWidget | None = self.findChild(
+            QListWidget, "fileListWidget"
+        )
+        self._preview_label: QLabel | None = self.findChild(QLabel, "previewLabel")
+        self._label_status: QLabel | None = self.findChild(QLabel, "labelStatus")
         self._combo_model = self.findChild(QComboBox, "comboModel")
 
         # 连接 ChatWidget 信号
@@ -146,7 +147,9 @@ class DocUnderstandingTab(BaseOcrTab):
         self._preview_label = QLabel("选择文件后显示预览")
         self._preview_label.setMinimumHeight(150)
         self._preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._preview_label.setStyleSheet("background-color: #f0f0f0; border: 1px solid #ccc; border-radius: 4px;")
+        self._preview_label.setStyleSheet(
+            "background-color: #f0f0f0; border: 1px solid #ccc; border-radius: 4px;"
+        )
         right_layout.addWidget(self._preview_label)
 
         right_layout.addWidget(QLabel("对话"))
@@ -180,14 +183,11 @@ class DocUnderstandingTab(BaseOcrTab):
         filters = [
             "图片文件 (*.png *.jpg *.jpeg *.bmp *.tiff *.webp)",
             "PDF 文件 (*.pdf)",
-            "所有文件 (*)"
+            "所有文件 (*)",
         ]
 
         files, _ = QFileDialog.getOpenFileNames(
-            self,
-            "选择文档",
-            "",
-            ";;".join(filters)
+            self, "选择文档", "", ";;".join(filters)
         )
 
         for file_path in files:
@@ -230,7 +230,9 @@ class DocUnderstandingTab(BaseOcrTab):
 
         # 保存当前文件的对话历史
         if self._current_file:
-            self._conversation_history[self._current_file] = self._chat_widget.get_history()
+            self._conversation_history[self._current_file] = (
+                self._chat_widget.get_history()
+            )
 
         # 切换到新文件
         self._current_file = file_path
@@ -258,7 +260,7 @@ class DocUnderstandingTab(BaseOcrTab):
                 scaled = pixmap.scaled(
                     self._preview_label.size(),
                     Qt.AspectRatioMode.KeepAspectRatio,
-                    Qt.TransformationMode.SmoothTransformation
+                    Qt.TransformationMode.SmoothTransformation,
                 )
                 self._preview_label.setPixmap(scaled)
                 return
@@ -281,9 +283,7 @@ class DocUnderstandingTab(BaseOcrTab):
         self._update_status("处理中...")
 
         self._worker = DocUnderstandingWorker(
-            image_path=self._current_file,
-            query=query,
-            model=self.get_selected_model()
+            image_path=self._current_file, query=query, model=self.get_selected_model()
         )
         self._worker.finished.connect(self._on_worker_finished)
         self._worker.error.connect(self._on_worker_error)

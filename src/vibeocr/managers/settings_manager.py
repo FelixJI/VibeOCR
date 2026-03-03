@@ -6,13 +6,13 @@
 import json
 import logging
 from pathlib import Path
-from typing import Optional, List, Dict, Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Optional
 
 from PySide6.QtCore import QObject, Signal
 
 if TYPE_CHECKING:
-    from vibeocr.models.llm_config import LLMConfig
     from vibeocr.models.extraction_template import ExtractionTemplate
+    from vibeocr.models.llm_config import LLMConfig
 
 logger = logging.getLogger(__name__)
 
@@ -36,12 +36,12 @@ class SettingsManager(QObject):
     template_added = Signal(str)
     template_deleted = Signal(str)
 
-    def __init__(self, project_root: Path, parent: Optional[QObject] = None) -> None:
+    def __init__(self, project_root: Path, parent: QObject | None = None) -> None:
         super().__init__(parent)
         self._project_root = project_root
         self._config_dir = project_root / "config"
-        self._llm_config: Optional["LLMConfig"] = None
-        self._templates: List["ExtractionTemplate"] = []
+        self._llm_config: LLMConfig | None = None
+        self._templates: list[ExtractionTemplate] = []
 
         # 确保配置目录存在
         self._config_dir.mkdir(parents=True, exist_ok=True)
@@ -68,7 +68,7 @@ class SettingsManager(QObject):
 
         try:
             if config_path.exists():
-                with open(config_path, "r", encoding="utf-8") as f:
+                with open(config_path, encoding="utf-8") as f:
                     data = json.load(f)
                 self._llm_config = LLMConfig.from_dict(data)
                 logger.info(f"LLM 配置已加载: {config_path}")
@@ -112,9 +112,9 @@ class SettingsManager(QObject):
 
     def update_llm_config(
         self,
-        service_url: Optional[str] = None,
-        model_name: Optional[str] = None,
-        api_key: Optional[str] = None,
+        service_url: str | None = None,
+        model_name: str | None = None,
+        api_key: str | None = None,
     ) -> None:
         """更新 LLM 配置字段
 
@@ -137,13 +137,16 @@ class SettingsManager(QObject):
         if api_key is not None:
             self._llm_config.api_key = api_key
 
-    def load_templates(self) -> List[str]:
+    def load_templates(self) -> list[str]:
         """加载模板列表
 
         Returns:
             模板名称列表
         """
-        from vibeocr.models.extraction_template import ExtractionTemplate, DEFAULT_TEMPLATES
+        from vibeocr.models.extraction_template import (
+            DEFAULT_TEMPLATES,
+            ExtractionTemplate,
+        )
 
         template_names = []
 
@@ -157,7 +160,7 @@ class SettingsManager(QObject):
 
         try:
             if config_path.exists():
-                with open(config_path, "r", encoding="utf-8") as f:
+                with open(config_path, encoding="utf-8") as f:
                     templates_data = json.load(f)
                 for template_data in templates_data:
                     template = ExtractionTemplate.from_dict(template_data)
@@ -170,7 +173,7 @@ class SettingsManager(QObject):
         self.templates_loaded.emit(template_names)
         return template_names
 
-    def add_template(self, name: str, keys: List[str]) -> bool:
+    def add_template(self, name: str, keys: list[str]) -> bool:
         """添加自定义模板
 
         Args:
@@ -185,7 +188,7 @@ class SettingsManager(QObject):
 
         try:
             if config_path.exists():
-                with open(config_path, "r", encoding="utf-8") as f:
+                with open(config_path, encoding="utf-8") as f:
                     templates = json.load(f)
 
             # 检查名称是否已存在
@@ -223,7 +226,7 @@ class SettingsManager(QObject):
                 logger.warning("模板配置文件不存在")
                 return False
 
-            with open(config_path, "r", encoding="utf-8") as f:
+            with open(config_path, encoding="utf-8") as f:
                 templates = json.load(f)
 
             # 查找并删除模板
@@ -244,7 +247,7 @@ class SettingsManager(QObject):
             logger.error(f"删除模板失败: {e}")
             return False
 
-    def get_template_keys(self, name: str) -> Optional[List[str]]:
+    def get_template_keys(self, name: str) -> list[str] | None:
         """获取模板的键列表
 
         Args:
@@ -267,7 +270,7 @@ class SettingsManager(QObject):
 
         return None
 
-    def get_preload_config(self) -> Dict[str, Any]:
+    def get_preload_config(self) -> dict[str, Any]:
         """获取预加载配置
 
         Returns:

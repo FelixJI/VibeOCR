@@ -1,10 +1,8 @@
 """Preview widget for image display and screenshot trigger"""
 
-from typing import Optional
-
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QPixmap
+from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
 
 
 class PreviewWidget(QWidget):
@@ -13,9 +11,9 @@ class PreviewWidget(QWidget):
     screenshot_requested = Signal()  # 请求截图信号
     image_changed = Signal()  # 图片改变信号（可用于启用/禁用复制按钮等）
 
-    def __init__(self, parent: Optional[QWidget] = None) -> None:
+    def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self._pixmap: Optional[QPixmap] = None
+        self._pixmap: QPixmap | None = None
         self._setup_ui()
 
     def _setup_ui(self) -> None:
@@ -47,7 +45,7 @@ class PreviewWidget(QWidget):
         self._update_display()
         self.image_changed.emit()
 
-    def pixmap(self) -> Optional[QPixmap]:
+    def pixmap(self) -> QPixmap | None:
         """获取当前图片"""
         return self._pixmap
 

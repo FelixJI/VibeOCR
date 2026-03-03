@@ -19,35 +19,35 @@
 
 import logging
 import struct
-import time
 import threading
-from multiprocessing import shared_memory
-from typing import Optional
+import time
 from dataclasses import dataclass
 from enum import Enum
+from multiprocessing import shared_memory
 
 logger = logging.getLogger(__name__)
 
 
 class MessageType(bytes, Enum):
     """消息类型枚举"""
-    INIT = b"INIT"           # 初始化
-    RECOGNIZE = b"RECO"      # 识别请求
-    RESULT = b"RESL"         # 结果返回
-    ERROR = b"ERR "          # 错误
-    SHUTDOWN = b"SHUT"       # 关闭
-    ACK = b"_ACK"            # 确认
-    READY = b"REDY"          # Worker 就绪信号
-    PRELOAD = b"PREL"        # 预加载请求
-    PRELOAD_DONE = b"PRED"   # 预加载完成
-    LOG = b"LOG "            # 日志消息
-    HEARTBEAT = b"BEAT"      # 心跳
+
+    INIT = b"INIT"  # 初始化
+    RECOGNIZE = b"RECO"  # 识别请求
+    RESULT = b"RESL"  # 结果返回
+    ERROR = b"ERR "  # 错误
+    SHUTDOWN = b"SHUT"  # 关闭
+    ACK = b"_ACK"  # 确认
+    READY = b"REDY"  # Worker 就绪信号
+    PRELOAD = b"PREL"  # 预加载请求
+    PRELOAD_DONE = b"PRED"  # 预加载完成
+    LOG = b"LOG "  # 日志消息
+    HEARTBEAT = b"BEAT"  # 心跳
     # 批量消息类型（新增）
-    BATCH_ADD = b"BADD"      # 批量添加请求
-    BATCH_COMMIT = b"BCOM"   # 批量提交（触发推理）
-    BATCH_RESULT = b"BRES"   # 批量结果返回
-    BATCH_CANCEL = b"BCAN"   # 取消批量处理
-    BATCH_PROGRESS = b"BPRG" # 批量处理进度
+    BATCH_ADD = b"BADD"  # 批量添加请求
+    BATCH_COMMIT = b"BCOM"  # 批量提交（触发推理）
+    BATCH_RESULT = b"BRES"  # 批量结果返回
+    BATCH_CANCEL = b"BCAN"  # 取消批量处理
+    BATCH_PROGRESS = b"BPRG"  # 批量处理进度
 
 
 # 头部大小: 消息类型(4) + 数据大小(4)
@@ -57,12 +57,14 @@ HEADER_FORMAT = "<4sI"  # 小端序: 4字节消息类型 + 4字节数据大小
 
 class SharedMemoryProtocolError(Exception):
     """共享内存协议错误"""
+
     pass
 
 
 @dataclass
 class SharedMemoryConfig:
     """共享内存配置"""
+
     name: str
     size: int = 10 * 1024 * 1024  # 默认 10MB
 
@@ -92,16 +94,16 @@ STATE_EMPTY = 0
 
 class SharedMemoryProtocolV2:
     """共享内存通信协议 V2
-    
+
     使用指数退避等待机制实现高效的双向通信。
-    
+
     工作流程:
     1. 主进程创建共享内存
     2. Worker 连接共享内存
     3. 写方写入数据并设置状态标志
     4. 读方通过指数退避等待状态标志，然后读取数据
     5. 读方读取完成后清除状态标志，允许下一次写入
-    
+
     使用示例:
         # 主进程
         config = SharedMemoryConfig("vibeocr_shm_123", size=10*1024*1024)
@@ -111,7 +113,7 @@ class SharedMemoryProtocolV2:
         msg_type, data = protocol.read_message()
         protocol.close()
         protocol.unlink()
-        
+
         # Worker 进程
         protocol = SharedMemoryProtocolV2(config)
         protocol.connect()
@@ -119,10 +121,10 @@ class SharedMemoryProtocolV2:
         protocol.write_message(MessageType.RESULT, result_data)
         protocol.close()
     """
-    
-    def __init__(self, config: SharedMemoryConfig | str, size: int = None):
+
+    def __init__(self, config: SharedMemoryConfig | str, size: int | None = None):
         """初始化共享内存协议
-        
+
         Args:
             config: 共享内存配置对象，或共享内存名称字符串（兼容 V1）
             size: 共享内存大小（字节，当 config 为字符串时使用，兼容 V1）
@@ -133,41 +135,43 @@ class SharedMemoryProtocolV2:
         elif isinstance(config, SharedMemoryConfig):
             self.config = config
         else:
-            raise ValueError("参数错误：需要提供 SharedMemoryConfig 或 (name, size) 组合")
+            raise ValueError(
+                "参数错误：需要提供 SharedMemoryConfig 或 (name, size) 组合"
+            )
 
-        self.shm: Optional[shared_memory.SharedMemory] = None
+        self.shm: shared_memory.SharedMemory | None = None
         self._is_creator = False
-        
+
         # 数据偏移（前9字节保留给头部+状态）
         self._data_offset = 8
-        
+
         # 用于实现可中断的等待
         self._stop_event = threading.Event()
-        
+
     def create(self) -> None:
         """创建共享内存（主进程调用）
-        
+
         创建新的共享内存区域。如果已存在同名共享内存，将尝试连接。
         """
         try:
             # 创建共享内存
             self.shm = shared_memory.SharedMemory(
-                name=self.config.name,
-                create=True,
-                size=self.config.size
+                name=self.config.name, create=True, size=self.config.size
             )
             self._is_creator = True
-            
+
             # 创建 Event（用于进程间通知）
             # 注意：multiprocessing.Event 不能跨进程共享名称
             # 所以我们使用简单的状态标志在共享内存中
             self._init_state_flags()
-            
-            logger.info(f"创建共享内存: {self.config.name}, 大小: {self.config.size} 字节")
+
+            logger.info(
+                f"创建共享内存: {self.config.name}, 大小: {self.config.size} 字节"
+            )
         except FileExistsError:
             logger.warning(f"共享内存 {self.config.name} 已存在，尝试连接")
             self.connect()
-    
+
     def _init_state_flags(self) -> None:
         """初始化状态标志区域"""
         if self.shm is None:
@@ -177,16 +181,16 @@ class SharedMemoryProtocolV2:
         # 字节 4-7: 数据大小
         # 字节 8: 数据就绪标志 (0=空, 1=有数据)
         self.shm.buf[8] = 0  # 初始化为空
-    
+
     def connect(self) -> None:
         """连接共享内存（Worker 调用）
-        
+
         连接到已存在的共享内存区域。
         """
         self.shm = shared_memory.SharedMemory(name=self.config.name)
         self._is_creator = False
         logger.info(f"连接共享内存: {self.config.name}")
-    
+
     def _set_data_ready(self, ready: bool) -> None:
         """设置数据就绪标志"""
         if self.shm is None:
@@ -233,9 +237,14 @@ class SharedMemoryProtocolV2:
         """设置状态标志（兼容 V1）"""
         if self.shm:
             self.shm.buf[8] = state
-    
-    def write_message(self, msg_type: MessageType | bytes, data: bytes,
-                      timeout: float = 30.0, sender: str = None) -> int:
+
+    def write_message(
+        self,
+        msg_type: MessageType | bytes,
+        data: bytes,
+        timeout: float = 30.0,
+        sender: str | None = None,
+    ) -> int:
         """写入消息
 
         等待共享内存变为可写状态，然后写入消息并通知读方。
@@ -258,7 +267,9 @@ class SharedMemoryProtocolV2:
             msg_type = msg_type.value
 
         if len(msg_type) != 4:
-            raise SharedMemoryProtocolError(f"消息类型必须是 4 字节，当前: {len(msg_type)}")
+            raise SharedMemoryProtocolError(
+                f"消息类型必须是 4 字节，当前: {len(msg_type)}"
+            )
 
         total_size = HEADER_SIZE + len(data)
         if total_size > self.config.size - 9:  # 减去状态标志占用的 9 字节
@@ -280,7 +291,9 @@ class SharedMemoryProtocolV2:
 
             wait_count += 1
             if time.time() - start_time > timeout:
-                logger.warning(f"[SHM {self.config.name}] 写入超时: 共享内存被占用，等待了 {wait_count} 次")
+                logger.warning(
+                    f"[SHM {self.config.name}] 写入超时: 共享内存被占用，等待了 {wait_count} 次"
+                )
                 raise SharedMemoryProtocolError("写入超时: 共享内存被占用")
 
             # 使用 time.sleep 让出 CPU 时间
@@ -291,24 +304,29 @@ class SharedMemoryProtocolV2:
 
         if wait_count > 0:
             logger.debug(f"[SHM {self.config.name}] 等待了 {wait_count} 次后开始写入")
-        
+
         # 写入头部（字节 0-7）
         header = struct.pack(HEADER_FORMAT, msg_type, len(data))
         self.shm.buf[0:HEADER_SIZE] = header
-        
+
         # 写入数据（字节 9 开始）
         data_start = self._data_offset + 1
-        self.shm.buf[data_start:data_start + len(data)] = data
-        
+        self.shm.buf[data_start : data_start + len(data)] = data
+
         # 设置数据就绪标志，通知读方
         self._set_data_ready(True)
-        
-        logger.debug(f"[SHM {self.config.name}] 写入消息: type={msg_type}, size={len(data)}")
+
+        logger.debug(
+            f"[SHM {self.config.name}] 写入消息: type={msg_type}, size={len(data)}"
+        )
         return total_size
-    
-    def read_message(self, timeout: float = 60.0,
-                     check_interval: float = 0.001,
-                     expected_sender: str = None) -> tuple[bytes, bytes]:
+
+    def read_message(
+        self,
+        timeout: float = 60.0,
+        check_interval: float = 0.001,
+        expected_sender: str | None = None,
+    ) -> tuple[bytes, bytes]:
         """读取消息
 
         等待数据就绪，然后读取消息。
@@ -338,7 +356,7 @@ class SharedMemoryProtocolV2:
                 break
 
             if time.time() - start_time > timeout:
-                raise SharedMemoryProtocolError(f"读取超时: 无可用数据")
+                raise SharedMemoryProtocolError("读取超时: 无可用数据")
 
             # 使用 time.sleep 而不是 threading.Event.wait
             # 这样可以更好地让出 CPU 时间给其他进程
@@ -353,35 +371,37 @@ class SharedMemoryProtocolV2:
 
         # 读取数据
         data_start = self._data_offset + 1
-        data = bytes(self.shm.buf[data_start:data_start + data_size])
+        data = bytes(self.shm.buf[data_start : data_start + data_size])
 
         # 清除数据就绪标志，允许下一次写入
         self._set_data_ready(False)
 
-        logger.debug(f"[SHM {self.config.name}] 读取消息: type={msg_type}, size={data_size}")
+        logger.debug(
+            f"[SHM {self.config.name}] 读取消息: type={msg_type}, size={data_size}"
+        )
         return msg_type, data
-    
+
     def interrupt(self) -> None:
         """中断当前的读写操作"""
         self._stop_event.set()
-    
+
     def reset_interrupt(self) -> None:
         """重置中断状态"""
         self._stop_event.clear()
-    
+
     def close(self) -> None:
         """关闭共享内存连接
-        
+
         关闭当前进程对共享内存的访问，但不删除共享内存。
         """
         if self.shm is not None:
             self.shm.close()
             self.shm = None
             logger.debug(f"关闭共享内存连接: {self.config.name}")
-    
+
     def unlink(self) -> None:
         """删除共享内存（仅创建者调用）
-        
+
         删除共享内存区域。只有创建者应该调用此方法。
         """
         if self._is_creator and self.shm is not None:
@@ -391,11 +411,11 @@ class SharedMemoryProtocolV2:
             except Exception as e:
                 logger.warning(f"删除共享内存失败: {e}")
         self._is_creator = False
-    
+
     def __enter__(self) -> "SharedMemoryProtocolV2":
         """上下文管理器入口"""
         return self
-    
+
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:
         """上下文管理器退出"""
         self.close()
@@ -407,13 +427,14 @@ class SharedMemoryProtocolV2:
 # 序列化/反序列化函数（与 V1 兼容）
 # =============================================================================
 
+
 def serialize_request(image_data: bytes, options_dict: dict) -> bytes:
     """序列化 OCR 请求
-    
+
     格式: [图像数据大小 4B | 图像数据 | pickle(options_dict)]
     """
     import pickle
-    
+
     options_bytes = pickle.dumps(options_dict)
     header = struct.pack("<I", len(image_data))
     return header + image_data + options_bytes
@@ -422,58 +443,66 @@ def serialize_request(image_data: bytes, options_dict: dict) -> bytes:
 def deserialize_request(data: bytes) -> tuple[bytes, dict]:
     """反序列化 OCR 请求"""
     import pickle
-    
+
     image_size = struct.unpack("<I", data[:4])[0]
-    image_data = data[4:4 + image_size]
-    options_dict = pickle.loads(data[4 + image_size:])
+    image_data = data[4 : 4 + image_size]
+    options_dict = pickle.loads(data[4 + image_size :])
     return image_data, options_dict
 
 
 def serialize_result(result) -> bytes:
     """序列化 OCR 结果"""
     import pickle
+
     return pickle.dumps(result)
 
 
 def deserialize_result(data: bytes):
     """反序列化 OCR 结果"""
     import pickle
+
     return pickle.loads(data)
 
 
 def serialize_preload_request(pipelines: list[str]) -> bytes:
     """序列化预加载请求"""
     import pickle
+
     return pickle.dumps(pipelines)
 
 
 def deserialize_preload_request(data: bytes) -> list[str]:
     """反序列化预加载请求"""
     import pickle
+
     return pickle.loads(data)
 
 
 def serialize_preload_result(results: dict[str, bool]) -> bytes:
     """序列化预加载结果"""
     import pickle
+
     return pickle.dumps(results)
 
 
 def deserialize_preload_result(data: bytes) -> dict[str, bool]:
     """反序列化预加载结果"""
     import pickle
+
     return pickle.loads(data)
 
 
 def serialize_log_entries(entries: list[dict]) -> bytes:
     """序列化日志条目列表"""
     import pickle
+
     return pickle.dumps(entries)
 
 
 def deserialize_log_entries(data: bytes) -> list[dict]:
     """反序列化日志条目列表"""
     import pickle
+
     return pickle.loads(data)
 
 
@@ -481,14 +510,17 @@ def deserialize_log_entries(data: bytes) -> list[dict]:
 # 批量消息序列化/反序列化函数
 # =============================================================================
 
-def serialize_batch_request(request_id: str, image_data: bytes, options_dict: dict) -> bytes:
+
+def serialize_batch_request(
+    request_id: str, image_data: bytes, options_dict: dict
+) -> bytes:
     """序列化批量请求
 
     格式: [request_id长度 1B | request_id | 图像数据大小 4B | 图像数据 | pickle(options_dict)]
     """
     import pickle
 
-    request_id_bytes = request_id.encode('utf-8')
+    request_id_bytes = request_id.encode("utf-8")
     header = struct.pack("<B", len(request_id_bytes))
     image_header = struct.pack("<I", len(image_data))
     options_bytes = pickle.dumps(options_dict)
@@ -506,13 +538,13 @@ def deserialize_batch_request(data: bytes) -> tuple[str, bytes, dict]:
 
     # 读取 request_id
     id_len = struct.unpack("<B", data[:1])[0]
-    request_id = data[1:1 + id_len].decode('utf-8')
+    request_id = data[1 : 1 + id_len].decode("utf-8")
 
     # 读取图像数据
     offset = 1 + id_len
-    image_size = struct.unpack("<I", data[offset:offset + 4])[0]
+    image_size = struct.unpack("<I", data[offset : offset + 4])[0]
     offset += 4
-    image_data = data[offset:offset + image_size]
+    image_data = data[offset : offset + image_size]
 
     # 读取选项
     offset += image_size
@@ -532,12 +564,14 @@ def serialize_batch_commit(preprocess_options: dict) -> bytes:
         }
     """
     import pickle
+
     return pickle.dumps(preprocess_options)
 
 
 def deserialize_batch_commit(data: bytes) -> dict:
     """反序列化批量提交请求"""
     import pickle
+
     return pickle.loads(data)
 
 
@@ -548,26 +582,28 @@ def serialize_batch_result(results: dict[str, object]) -> bytes:
         results: {request_id: OCRResult or error_string}
     """
     import pickle
+
     return pickle.dumps(results)
 
 
 def deserialize_batch_result(data: bytes) -> dict:
     """反序列化批量结果"""
     import pickle
+
     return pickle.loads(data)
 
 
 def serialize_batch_progress(completed: int, total: int, current_file: str) -> bytes:
     """序列化批量处理进度"""
     import pickle
-    return pickle.dumps({
-        'completed': completed,
-        'total': total,
-        'current_file': current_file
-    })
+
+    return pickle.dumps(
+        {"completed": completed, "total": total, "current_file": current_file}
+    )
 
 
 def deserialize_batch_progress(data: bytes) -> dict:
     """反序列化批量处理进度"""
     import pickle
+
     return pickle.loads(data)

@@ -3,16 +3,16 @@
 用于配置 PP-StructureV3 和 PaddleOCR-VL 的预处理参数。
 """
 
-from PySide6.QtWidgets import (
-    QWidget,
-    QVBoxLayout,
-    QHBoxLayout,
-    QCheckBox,
-    QGroupBox,
-    QComboBox,
-    QLabel,
-)
 from PySide6.QtCore import Signal
+from PySide6.QtWidgets import (
+    QCheckBox,
+    QComboBox,
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QVBoxLayout,
+    QWidget,
+)
 
 from vibeocr.models.batch_request import PreprocessOptions
 
@@ -48,30 +48,26 @@ class PreprocessOptionsWidget(QGroupBox):
         self._pipeline_combo = QComboBox()
         self._pipeline_combo.addItem("版面解析 (PP-StructureV3)", "PP-StructureV3")
         self._pipeline_combo.addItem("PaddleOCR-VL (端到端)", "PaddleOCR-VL")
-        self._pipeline_combo.setToolTip("选择识别管道：版面解析或 PaddleOCR-VL 端到端识别")
+        self._pipeline_combo.setToolTip(
+            "选择识别管道：版面解析或 PaddleOCR-VL 端到端识别"
+        )
         pipeline_layout.addWidget(self._pipeline_combo)
         pipeline_layout.addStretch()
         layout.addLayout(pipeline_layout)
 
         # 通用预处理选项
         self._doc_orientation_cb = QCheckBox("文档方向分类")
-        self._doc_orientation_cb.setToolTip(
-            "自动检测并矫正文档方向 (0/90/180/270)"
-        )
+        self._doc_orientation_cb.setToolTip("自动检测并矫正文档方向 (0/90/180/270)")
         self._doc_orientation_cb.setChecked(True)
         layout.addWidget(self._doc_orientation_cb)
 
         self._doc_unwarping_cb = QCheckBox("文档扭曲矫正")
-        self._doc_unwarping_cb.setToolTip(
-            "矫正弯曲或折叠的文档图像"
-        )
+        self._doc_unwarping_cb.setToolTip("矫正弯曲或折叠的文档图像")
         self._doc_unwarping_cb.setChecked(True)
         layout.addWidget(self._doc_unwarping_cb)
 
         self._textline_orientation_cb = QCheckBox("文本行方向分类")
-        self._textline_orientation_cb.setToolTip(
-            "矫正倾斜的文本行"
-        )
+        self._textline_orientation_cb.setToolTip("矫正倾斜的文本行")
         self._textline_orientation_cb.setChecked(False)
         layout.addWidget(self._textline_orientation_cb)
 

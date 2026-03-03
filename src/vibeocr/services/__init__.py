@@ -11,8 +11,8 @@ OCR 服务实现方案：
 - VIBEOCR_OCR_MODE=direct: 强制使用当前 Python 环境（调试用）
 """
 
-import os
 import logging
+import os
 
 _logger = logging.getLogger(__name__)
 
@@ -57,15 +57,20 @@ def get_ocr_service(skip_auto_start: bool = False):
     if _should_use_subprocess():
         _logger.info("使用子进程 OCR 服务")
         from .ocr_service_subprocess import OCRServiceSubprocess
+
         # 检查单例状态
         if OCRServiceSubprocess._instance is not None:
-            _logger.info(f"[get_ocr_service] 单例已存在, _initialized={OCRServiceSubprocess._instance._initialized}")
+            _logger.info(
+                f"[get_ocr_service] 单例已存在, _initialized={OCRServiceSubprocess._instance._initialized}"
+            )
             if OCRServiceSubprocess._instance._initialized:
                 _logger.info("[get_ocr_service] 返回现有实例")
                 return OCRServiceSubprocess._instance
         else:
             _logger.info("[get_ocr_service] 单例不存在，将创建新实例")
-        _logger.info(f"[get_ocr_service] 创建 OCRServiceSubprocess, auto_start={not skip_auto_start}")
+        _logger.info(
+            f"[get_ocr_service] 创建 OCRServiceSubprocess, auto_start={not skip_auto_start}"
+        )
         return OCRServiceSubprocess(auto_start=not skip_auto_start)
     else:
         _logger.info("使用直接 OCR 服务")
@@ -83,6 +88,7 @@ USE_PORTABLE_OCR = _should_use_portable()
 if USE_SUBPROCESS:
     # 子进程模式
     from .ocr_service_subprocess import OCRServiceSubprocess
+
     # 别名，方便使用
     OCRService = OCRServiceSubprocess
 else:
@@ -93,9 +99,9 @@ else:
         from .ocr_service import OCRService
 
 __all__ = [
+    "USE_PORTABLE_OCR",
+    "USE_SUBPROCESS",
     "OCRService",
     "OCRServiceSubprocess",
     "get_ocr_service",
-    "USE_SUBPROCESS",
-    "USE_PORTABLE_OCR",
 ]

@@ -7,7 +7,7 @@
 """
 
 from vibeocr.managers.dependency_manager import DependencyManager
-from vibeocr.managers.subprocess_manager import SubprocessManager
 from vibeocr.managers.settings_manager import SettingsManager
+from vibeocr.managers.subprocess_manager import SubprocessManager
 
-__all__ = ["DependencyManager", "SubprocessManager", "SettingsManager"]
+__all__ = ["DependencyManager", "SettingsManager", "SubprocessManager"]

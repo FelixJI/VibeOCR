@@ -1,23 +1,22 @@
 """控制台输出控件"""
 
-import logging
 import re
 from datetime import datetime
-from typing import List, Optional, Dict
+
+from PySide6.QtCore import Qt, Signal, Slot
+from PySide6.QtGui import QColor, QKeySequence
 from PySide6.QtWidgets import (
-    QWidget,
-    QVBoxLayout,
+    QApplication,
+    QComboBox,
     QHBoxLayout,
+    QHeaderView,
+    QLabel,
+    QPushButton,
     QTableWidget,
     QTableWidgetItem,
-    QComboBox,
-    QPushButton,
-    QLabel,
-    QHeaderView,
-    QApplication,
+    QVBoxLayout,
+    QWidget,
 )
-from PySide6.QtCore import Slot, Qt, Signal
-from PySide6.QtGui import QColor, QKeySequence
 
 from vibeocr.services.log_service import LogEntry
 
@@ -43,13 +42,15 @@ class ConsoleWidget(QWidget):
     # 时间格式（表格显示）
     TIME_FORMAT = "%m-%d %H:%M:%S"
 
-    def __init__(self, parent: Optional[QWidget] = None) -> None:
+    def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self._all_logs: List[LogEntry] = []
+        self._all_logs: list[LogEntry] = []
         self._current_filter = "ALL"
-        self._row_to_log_index: Dict[int, int] = {}  # 表格行 -> 日志索引
+        self._row_to_log_index: dict[int, int] = {}  # 表格行 -> 日志索引
         self._low_confidence_count: int = 0  # 低置信度文本块数量
-        self._low_confidence_items: List[tuple] = []  # 低置信度文本块详情 [(文本, 置信度), ...]
+        self._low_confidence_items: list[tuple] = (
+            []
+        )  # 低置信度文本块详情 [(文本, 置信度), ...]
         self._setup_ui()
 
     def _setup_ui(self) -> None:
@@ -152,12 +153,8 @@ class ConsoleWidget(QWidget):
             text: 要追加的文本内容
             level: 日志级别，默认为 INFO
         """
-        from datetime import datetime
-        entry = LogEntry(
-            timestamp=datetime.now(),
-            level=level,
-            message=text
-        )
+
+        entry = LogEntry(timestamp=datetime.now(), level=level, message=text)
         self.append_log(entry)
 
     @Slot(str)
@@ -176,7 +173,9 @@ class ConsoleWidget(QWidget):
         if self._current_filter == "ALL":
             filtered_logs = self._all_logs
         else:
-            filtered_logs = [log for log in self._all_logs if log.level == self._current_filter]
+            filtered_logs = [
+                log for log in self._all_logs if log.level == self._current_filter
+            ]
 
         # 更新表格
         self._table.setRowCount(len(filtered_logs))
@@ -185,7 +184,9 @@ class ConsoleWidget(QWidget):
             self._add_table_row(row, entry)
 
         # 发送低置信度计数信号（带详情）
-        self.low_confidence_count_changed.emit(self._low_confidence_count, self._low_confidence_items)
+        self.low_confidence_count_changed.emit(
+            self._low_confidence_count, self._low_confidence_items
+        )
 
         # 滚动到底部
         if filtered_logs:
@@ -205,7 +206,7 @@ class ConsoleWidget(QWidget):
         level_item.setForeground(level_color)
 
         # 消息 - 处理多行文本，只显示第一行（完整内容在 tooltip 中）
-        msg_lines = entry.message.split('\n')
+        msg_lines = entry.message.split("\n")
         msg_text = msg_lines[0] if msg_lines else entry.message
         msg_item = QTableWidgetItem(msg_text)
 
@@ -250,7 +251,7 @@ class ConsoleWidget(QWidget):
             return
 
         # 获取选中的行号
-        rows = sorted(set(item.row() for item in selected_rows))
+        rows = sorted({item.row() for item in selected_rows})
 
         # 构建复制文本
         lines = []
@@ -259,7 +260,9 @@ class ConsoleWidget(QWidget):
             level_item = self._table.item(row, 1)
             msg_item = self._table.item(row, 2)
             if time_item and level_item and msg_item:
-                lines.append(f"[{time_item.text()}] [{level_item.text()}] {msg_item.text()}")
+                lines.append(
+                    f"[{time_item.text()}] [{level_item.text()}] {msg_item.text()}"
+                )
 
         if lines:
             clipboard = QApplication.clipboard()

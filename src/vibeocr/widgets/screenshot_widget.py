@@ -1,17 +1,15 @@
 """Screenshot overlay widget"""
 
-from typing import Optional
-
-from PySide6.QtWidgets import QWidget
-from PySide6.QtCore import Qt, QRect, Signal, QPoint
+from PySide6.QtCore import QPoint, QRect, Qt, Signal
 from PySide6.QtGui import (
-    QPainter,
     QColor,
+    QGuiApplication,
+    QPainter,
     QPen,
     QPixmap,
     QRegion,
-    QGuiApplication,
 )
+from PySide6.QtWidgets import QWidget
 
 
 class ScreenshotWidget(QWidget):
@@ -22,7 +20,7 @@ class ScreenshotWidget(QWidget):
     # 最小选区尺寸
     MIN_SELECTION_SIZE = 5
 
-    def __init__(self, parent: Optional[QWidget] = None) -> None:
+    def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint
@@ -39,8 +37,8 @@ class ScreenshotWidget(QWidget):
 
         self._start_pos = None
         self._end_pos = None
-        self._selection_rect: Optional[QRect] = None
-        self._screen_pixmap: Optional[QPixmap] = None
+        self._selection_rect: QRect | None = None
+        self._screen_pixmap: QPixmap | None = None
         self._virtual_geometry = QRect()
         self._device_pixel_ratio = 1.0
 
@@ -56,9 +54,7 @@ class ScreenshotWidget(QWidget):
             self._virtual_geometry = self._virtual_geometry.united(screen.geometry())
 
         # 获取最高的设备像素比（用于高DPI支持）
-        self._device_pixel_ratio = max(
-            screen.devicePixelRatio() for screen in screens
-        )
+        self._device_pixel_ratio = max(screen.devicePixelRatio() for screen in screens)
 
         # 创建合并所有屏幕的截图 - 使用物理像素尺寸
         physical_size = self._virtual_geometry.size() * self._device_pixel_ratio
@@ -122,7 +118,9 @@ class ScreenshotWidget(QWidget):
             painter.drawRect(self._selection_rect)
 
             # 绘制尺寸信息
-            size_text = f"{self._selection_rect.width()} x {self._selection_rect.height()}"
+            size_text = (
+                f"{self._selection_rect.width()} x {self._selection_rect.height()}"
+            )
             painter.drawText(self._selection_rect.topLeft() + QPoint(5, -5), size_text)
 
     def mousePressEvent(self, event) -> None:
@@ -153,8 +151,12 @@ class ScreenshotWidget(QWidget):
                 # _selection_rect 是相对于窗口的坐标（逻辑像素）
                 # _screen_pixmap 是从虚拟桌面原点开始的物理像素图像
                 offset = self._virtual_geometry.topLeft()
-                src_x = int((self._selection_rect.x() + offset.x()) * self._device_pixel_ratio)
-                src_y = int((self._selection_rect.y() + offset.y()) * self._device_pixel_ratio)
+                src_x = int(
+                    (self._selection_rect.x() + offset.x()) * self._device_pixel_ratio
+                )
+                src_y = int(
+                    (self._selection_rect.y() + offset.y()) * self._device_pixel_ratio
+                )
                 src_w = int(self._selection_rect.width() * self._device_pixel_ratio)
                 src_h = int(self._selection_rect.height() * self._device_pixel_ratio)
                 src_rect = QRect(src_x, src_y, src_w, src_h)

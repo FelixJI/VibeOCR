@@ -20,21 +20,18 @@ import traceback
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    handlers=[logging.StreamHandler(sys.stdout)]
+    handlers=[logging.StreamHandler(sys.stdout)],
 )
 logger = logging.getLogger(__name__)
 
 
 class OCRWorkerError(Exception):
     """OCR Worker 错误"""
+
     pass
 
 
-def run_worker(
-    shm_name: str,
-    shm_size: int,
-    use_gpu: bool
-) -> None:
+def run_worker(shm_name: str, shm_size: int, use_gpu: bool) -> None:
     """运行 Worker 主循环
 
     Args:
@@ -49,19 +46,19 @@ def run_worker(
         os.environ["VIBEOCR_USE_GPU"] = "false"
 
     from vibeocr.utils.shared_memory_v2 import (
-        SharedMemoryProtocolV2 as SharedMemoryProtocol,
-        SharedMemoryProtocolError,
         MessageType,
-        SharedMemoryConfig,
-        deserialize_request,
-        serialize_result,
-        deserialize_preload_request,
-        serialize_preload_result,
-        # 批量消息序列化函数
-        deserialize_batch_request,
+        SharedMemoryProtocolError,
         deserialize_batch_commit,
-        serialize_batch_result,
+        deserialize_batch_request,
+        deserialize_preload_request,
+        deserialize_request,
         serialize_batch_progress,
+        serialize_batch_result,
+        serialize_preload_result,
+        serialize_result,
+    )
+    from vibeocr.utils.shared_memory_v2 import (
+        SharedMemoryProtocolV2 as SharedMemoryProtocol,  # 批量消息序列化函数
     )
 
     # 消息类型别名（保持兼容）
@@ -88,18 +85,19 @@ def run_worker(
         protocol.connect()
     except Exception as e:
         logger.error(f"连接数据共享内存失败: {e}")
-        raise OCRWorkerError(f"连接数据共享内存失败: {e}")
+        raise OCRWorkerError(f"连接数据共享内存失败: {e}") from None
 
     # 初始化 OCR 服务（延迟导入以避免启动时的重型依赖）
     logger.info("正在初始化 OCR 服务...")
     try:
-        from vibeocr.services.ocr_service import OCRService, OCROptions, OCRPipeline
+        from vibeocr.services.ocr_service import OCROptions, OCRPipeline, OCRService
+
         ocr_service = OCRService()
         logger.info("OCR 服务初始化完成")
     except Exception as e:
         logger.error(f"OCR 服务初始化失败: {e}")
         protocol.close()
-        raise OCRWorkerError(f"OCR 服务初始化失败: {e}")
+        raise OCRWorkerError(f"OCR 服务初始化失败: {e}") from None
 
     # 批量队列管理器（延迟初始化，仅在首次使用时创建）
     batch_managers = {}  # 管道名称 -> BatchQueueManager
@@ -122,7 +120,10 @@ def run_worker(
         if not batch_manager_initialized:
             batch_manager_initialized = True
             try:
-                from vibeocr.models.batch_request import PreprocessOptions as _PreprocessOptions
+                from vibeocr.models.batch_request import (
+                    PreprocessOptions as _PreprocessOptions,
+                )
+
                 nonlocal PreprocessOptions
                 PreprocessOptions = _PreprocessOptions
             except Exception as e:
@@ -136,20 +137,38 @@ def run_worker(
                 logger.info("[Worker] 正在初始化批量队列管理器（PaddleOCR-VL）...")
                 # 使用 OCRService 的 get_pipeline 方法获取 PaddleOCR-VL 管道
                 vl_pipeline = ocr_service.get_pipeline(OCRPipeline.PADDLEOCR_VL)
-                batch_managers[pipeline_name] = BatchQueueManager(vl_pipeline, max_batch_size=4)
-                logger.info("[Worker] BatchQueueManager 初始化完成（使用 PaddleOCR-VL）")
+                batch_managers[pipeline_name] = BatchQueueManager(
+                    vl_pipeline, max_batch_size=4
+                )
+                logger.info(
+                    "[Worker] BatchQueueManager 初始化完成（使用 PaddleOCR-VL）"
+                )
             elif pipeline_name == "PP-StructureV3":
                 logger.info("[Worker] 正在初始化批量队列管理器（PP-StructureV3）...")
-                structure_pipeline = ocr_service.get_pipeline(OCRPipeline.PP_STRUCTURE_V3)
-                batch_managers[pipeline_name] = BatchQueueManager(structure_pipeline, max_batch_size=8)
-                logger.info("[Worker] BatchQueueManager 初始化完成（使用 PP-StructureV3）")
+                structure_pipeline = ocr_service.get_pipeline(
+                    OCRPipeline.PP_STRUCTURE_V3
+                )
+                batch_managers[pipeline_name] = BatchQueueManager(
+                    structure_pipeline, max_batch_size=8
+                )
+                logger.info(
+                    "[Worker] BatchQueueManager 初始化完成（使用 PP-StructureV3）"
+                )
             else:
-                logger.warning(f"[Worker] 未知管道类型: {pipeline_name}，使用默认 PP-StructureV3")
-                structure_pipeline = ocr_service.get_pipeline(OCRPipeline.PP_STRUCTURE_V3)
-                batch_managers[pipeline_name] = BatchQueueManager(structure_pipeline, max_batch_size=8)
+                logger.warning(
+                    f"[Worker] 未知管道类型: {pipeline_name}，使用默认 PP-StructureV3"
+                )
+                structure_pipeline = ocr_service.get_pipeline(
+                    OCRPipeline.PP_STRUCTURE_V3
+                )
+                batch_managers[pipeline_name] = BatchQueueManager(
+                    structure_pipeline, max_batch_size=8
+                )
 
         except Exception as e:
-            logger.warning(f"[Worker] BatchQueueManager 初始化失败: {e}，批量功能将不可用")
+            logger.warning(
+                f"[Worker] BatchQueueManager 初始化失败: {e}，批量功能将不可用"
+            )
             batch_managers[pipeline_name] = None
 
         return batch_managers.get(pipeline_name)
@@ -159,11 +178,11 @@ def run_worker(
     try:
         protocol.write_message(MSG_READY, b"READY", timeout=5.0)
         logger.info("[Worker] READY 信号已发送")
-        
+
         # V2 版本：发送后直接进入主循环
         # 主进程会在 read_message 中自动清除状态
         time.sleep(0.1)  # 短暂等待确保消息写入
-            
+
     except SharedMemoryProtocolError as e:
         logger.error(f"[Worker] 发送就绪信号失败: {e}")
         protocol.close()
@@ -175,7 +194,9 @@ def run_worker(
             try:
                 # 等待消息（长超时，因为可能需要等待用户操作）
                 # Worker 只读取主进程发送的消息
-                msg_type, data = protocol.read_message(timeout=300.0, expected_sender='main')
+                msg_type, data = protocol.read_message(
+                    timeout=300.0, expected_sender="main"
+                )
 
                 if msg_type == MSG_RECOGNIZE:
                     # 处理识别请求
@@ -183,26 +204,34 @@ def run_worker(
                     try:
                         # 反序列化请求
                         image_data, options_dict = deserialize_request(data)
-                        logger.info(f"[Worker] 图像大小: {len(image_data)} 字节, 选项: {options_dict}")
+                        logger.info(
+                            f"[Worker] 图像大小: {len(image_data)} 字节, 选项: {options_dict}"
+                        )
                         options = OCROptions(**options_dict)
 
                         # 执行识别
                         logger.info("[Worker] 开始执行 OCR 识别...")
                         result = ocr_service.recognize(image_data, options)
-                        logger.info(f"[Worker] OCR 识别完成，结果字符数: {len(result.raw_text) if hasattr(result, 'raw_text') else 'N/A'}")
+                        logger.info(
+                            f"[Worker] OCR 识别完成，结果字符数: {len(result.raw_text) if hasattr(result, 'raw_text') else 'N/A'}"
+                        )
 
                         # 发送结果
                         result_bytes = serialize_result(result)
-                        protocol.write_message(MSG_RESULT, result_bytes, sender='worker')
+                        protocol.write_message(
+                            MSG_RESULT, result_bytes, sender="worker"
+                        )
                         logger.info("[Worker] 识别结果已发送")
                         # 等待主进程读取响应
                         protocol.wait_for_read(timeout=5.0)
 
                     except Exception as e:
                         # 发送错误
-                        error_msg = f"{type(e).__name__}: {str(e)}"
+                        error_msg = f"{type(e).__name__}: {e!s}"
                         logger.error(f"识别失败: {error_msg}")
-                        protocol.write_message(MSG_ERROR, error_msg.encode("utf-8"), sender='worker')
+                        protocol.write_message(
+                            MSG_ERROR, error_msg.encode("utf-8"), sender="worker"
+                        )
 
                 elif msg_type == MSG_SHUTDOWN:
                     # 收到关闭信号
@@ -235,7 +264,9 @@ def run_worker(
                                 # 预加载管道
                                 success = ocr_service.preload_pipeline(pipeline_enum)
                                 results[pipeline_name] = success
-                                logger.info(f"预加载 {pipeline_name}: {'成功' if success else '失败'}")
+                                logger.info(
+                                    f"预加载 {pipeline_name}: {'成功' if success else '失败'}"
+                                )
                             except Exception as e:
                                 results[pipeline_name] = False
                                 logger.error(f"预加载 {pipeline_name} 失败: {e}")
@@ -243,27 +274,35 @@ def run_worker(
                         # 发送预加载结果
                         logger.info(f"[Worker] 准备发送预加载结果: {results}")
                         result_bytes = serialize_preload_result(results)
-                        logger.info(f"[Worker] 序列化完成，大小: {len(result_bytes)} 字节")
-                        protocol.write_message(MSG_PRELOAD_DONE, result_bytes, sender='worker')
+                        logger.info(
+                            f"[Worker] 序列化完成，大小: {len(result_bytes)} 字节"
+                        )
+                        protocol.write_message(
+                            MSG_PRELOAD_DONE, result_bytes, sender="worker"
+                        )
                         logger.info(f"[Worker] 预加载结果已发送: {results}")
                         # 等待主进程读取响应，避免自己读取到刚发送的消息
                         protocol.wait_for_read(timeout=5.0)
 
                     except Exception as e:
                         # 发送错误
-                        error_msg = f"{type(e).__name__}: {str(e)}"
+                        error_msg = f"{type(e).__name__}: {e!s}"
                         logger.error(f"预加载失败: {error_msg}")
-                        protocol.write_message(MSG_ERROR, error_msg.encode("utf-8"), sender='worker')
+                        protocol.write_message(
+                            MSG_ERROR, error_msg.encode("utf-8"), sender="worker"
+                        )
 
                 elif msg_type == MSG_BATCH_ADD:
                     # 处理批量添加请求
                     logger.info("[Worker] 收到批量添加请求")
                     try:
-                        request_id, image_data, options_dict = deserialize_batch_request(data)
+                        request_id, image_data, options_dict = (
+                            deserialize_batch_request(data)
+                        )
                         logger.info(f"[Worker] 批量添加: {request_id}")
 
                         # 从选项中获取管道名称
-                        pipeline_name = options_dict.get('pipeline', 'PP-StructureV3')
+                        pipeline_name = options_dict.get("pipeline", "PP-StructureV3")
 
                         # 延迟初始化批量管理器
                         mgr = get_batch_manager(pipeline_name)
@@ -272,16 +311,24 @@ def run_worker(
                             mgr.add_request(
                                 image_data=image_data,
                                 options=options_dict,
-                                file_name=options_dict.get('file_name', 'unknown')
+                                file_name=options_dict.get("file_name", "unknown"),
                             )
                             # 发送确认
-                            protocol.write_message(MSG_ACK, request_id.encode(), sender='worker')
+                            protocol.write_message(
+                                MSG_ACK, request_id.encode(), sender="worker"
+                            )
                         else:
-                            protocol.write_message(MSG_ERROR, b"BatchQueueManager not available", sender='worker')
+                            protocol.write_message(
+                                MSG_ERROR,
+                                b"BatchQueueManager not available",
+                                sender="worker",
+                            )
                     except Exception as e:
                         error_msg = f"批量添加失败: {e}"
                         logger.error(error_msg)
-                        protocol.write_message(MSG_ERROR, error_msg.encode(), sender='worker')
+                        protocol.write_message(
+                            MSG_ERROR, error_msg.encode(), sender="worker"
+                        )
 
                 elif msg_type == MSG_BATCH_COMMIT:
                     # 处理批量提交
@@ -290,10 +337,15 @@ def run_worker(
                         preprocess_dict = deserialize_batch_commit(data)
                         # 确保 PreprocessOptions 已加载
                         if PreprocessOptions is None:
-                            from vibeocr.models.batch_request import PreprocessOptions as _PreprocessOptions
+                            from vibeocr.models.batch_request import (
+                                PreprocessOptions as _PreprocessOptions,
+                            )
+
                             PreprocessOptions = _PreprocessOptions
 
-                        preprocess_options = PreprocessOptions.from_dict(preprocess_dict)
+                        preprocess_options = PreprocessOptions.from_dict(
+                            preprocess_dict
+                        )
 
                         # 获取管道名称
                         pipeline_name = preprocess_options.pipeline
@@ -307,9 +359,13 @@ def run_worker(
                                     progress_data = serialize_batch_progress(
                                         completed=progress.completed,
                                         total=progress.total,
-                                        current_file=progress.current_file
+                                        current_file=progress.current_file,
                                     )
-                                    protocol.write_message(MSG_BATCH_PROGRESS, progress_data, sender='worker')
+                                    protocol.write_message(
+                                        MSG_BATCH_PROGRESS,
+                                        progress_data,
+                                        sender="worker",
+                                    )
                                 except Exception as e:
                                     logger.warning(f"发送进度失败: {e}")
 
@@ -320,14 +376,24 @@ def run_worker(
 
                             # 发送结果
                             results_data = serialize_batch_result(results)
-                            protocol.write_message(MSG_BATCH_RESULT, results_data, sender='worker')
-                            logger.info(f"[Worker] 批量处理完成，返回 {len(results)} 个结果")
+                            protocol.write_message(
+                                MSG_BATCH_RESULT, results_data, sender="worker"
+                            )
+                            logger.info(
+                                f"[Worker] 批量处理完成，返回 {len(results)} 个结果"
+                            )
                         else:
-                            protocol.write_message(MSG_ERROR, b"BatchQueueManager not available", sender='worker')
+                            protocol.write_message(
+                                MSG_ERROR,
+                                b"BatchQueueManager not available",
+                                sender="worker",
+                            )
                     except Exception as e:
                         error_msg = f"批量处理失败: {e}"
                         logger.error(error_msg)
-                        protocol.write_message(MSG_ERROR, error_msg.encode(), sender='worker')
+                        protocol.write_message(
+                            MSG_ERROR, error_msg.encode(), sender="worker"
+                        )
 
                 elif msg_type == MSG_BATCH_CANCEL:
                     # 取消批量处理
@@ -337,10 +403,14 @@ def run_worker(
                         if mgr:
                             try:
                                 mgr.cancel()
-                                logger.info(f"[Worker] 已取消 {pipeline_name} 的批量处理")
+                                logger.info(
+                                    f"[Worker] 已取消 {pipeline_name} 的批量处理"
+                                )
                             except Exception as e:
-                                logger.warning(f"[Worker] 取消 {pipeline_name} 批量处理失败: {e}")
-                    protocol.write_message(MSG_ACK, b"cancelled", sender='worker')
+                                logger.warning(
+                                    f"[Worker] 取消 {pipeline_name} 批量处理失败: {e}"
+                                )
+                    protocol.write_message(MSG_ACK, b"cancelled", sender="worker")
 
                 elif msg_type == MSG_READY:
                     # Worker 不应该读取到自己的 READY 消息
@@ -380,7 +450,9 @@ def run_worker(
                     mgr.close()
                     logger.info(f"[Worker] BatchQueueManager ({pipeline_name}) 已关闭")
                 except Exception as e:
-                    logger.warning(f"[Worker] 关闭 BatchQueueManager ({pipeline_name}) 失败: {e}")
+                    logger.warning(
+                        f"[Worker] 关闭 BatchQueueManager ({pipeline_name}) 失败: {e}"
+                    )
         # 关闭数据共享内存
         protocol.close()
         logger.info("Worker 已退出")
@@ -392,48 +464,32 @@ def main():
         description="OCR Worker 子进程",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument(
-        "--shm-name",
-        required=True,
-        help="数据共享内存名称"
-    )
+    parser.add_argument("--shm-name", required=True, help="数据共享内存名称")
     parser.add_argument(
         "--shm-size",
         type=int,
         default=10 * 1024 * 1024,
-        help="数据共享内存大小（字节），默认 10MB"
+        help="数据共享内存大小（字节），默认 10MB",
     )
     parser.add_argument(
-        "--use-gpu",
-        action="store_true",
-        default=False,
-        help="使用 GPU 加速"
+        "--use-gpu", action="store_true", default=False, help="使用 GPU 加速"
     )
     parser.add_argument(
-        "--no-gpu",
-        dest="use_gpu",
-        action="store_false",
-        help="不使用 GPU"
+        "--no-gpu", dest="use_gpu", action="store_false", help="不使用 GPU"
     )
-    parser.add_argument(
-        "--debug",
-        action="store_true",
-        help="启用调试日志"
-    )
+    parser.add_argument("--debug", action="store_true", help="启用调试日志")
 
     args = parser.parse_args()
 
     if args.debug:
         logging.getLogger().setLevel(logging.DEBUG)
 
-    logger.info(f"启动 OCR Worker: shm_name={args.shm_name}, shm_size={args.shm_size}, use_gpu={args.use_gpu}")
+    logger.info(
+        f"启动 OCR Worker: shm_name={args.shm_name}, shm_size={args.shm_size}, use_gpu={args.use_gpu}"
+    )
 
     try:
-        run_worker(
-            args.shm_name,
-            args.shm_size,
-            args.use_gpu
-        )
+        run_worker(args.shm_name, args.shm_size, args.use_gpu)
     except OCRWorkerError as e:
         logger.error(f"Worker 错误: {e}")
         sys.exit(1)

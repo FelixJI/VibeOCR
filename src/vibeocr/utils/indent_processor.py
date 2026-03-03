@@ -7,6 +7,7 @@ from dataclasses import dataclass
 @dataclass
 class IndentConfig:
     """缩进配置"""
+
     chinese_indent: str = "2em"
     chinese_threshold: float = 0.05
 
@@ -14,7 +15,7 @@ class IndentConfig:
 class IndentProcessor:
     """处理文本缩进的处理器"""
 
-    CHINESE_PATTERN = re.compile(r'[\u4e00-\u9fff\u3400-\u4dbf\U00020000-\U0002a6df]')
+    CHINESE_PATTERN = re.compile(r"[\u4e00-\u9fff\u3400-\u4dbf\U00020000-\U0002a6df]")
 
     def __init__(self, config: IndentConfig | None = None):
         self.config = config or IndentConfig()
@@ -47,22 +48,22 @@ class IndentProcessor:
             return ""
 
         # 用于检测特殊元素的正则
-        table_line_pattern = re.compile(r'^\|.*\|$')
-        list_line_pattern = re.compile(r'^[\*\-\+]\s|^\d+\.\s')
+        table_line_pattern = re.compile(r"^\|.*\|$")
+        list_line_pattern = re.compile(r"^[\*\-\+]\s|^\d+\.\s")
 
         # 先按代码块分割，保留代码块内容不变
-        code_block_pattern = re.compile(r'(```.*?```)', re.DOTALL)
+        code_block_pattern = re.compile(r"(```.*?```)", re.DOTALL)
         parts = code_block_pattern.split(markdown_text)
 
         processed_parts = []
         for part in parts:
             # 如果是代码块，直接保留
-            if part.startswith('```') and part.endswith('```'):
+            if part.startswith("```") and part.endswith("```"):
                 processed_parts.append(part)
                 continue
 
             # 对非代码块部分，按双换行分割段落
-            paragraphs = part.split('\n\n')
+            paragraphs = part.split("\n\n")
             processed_paras = []
 
             for para in paragraphs:
@@ -71,10 +72,10 @@ class IndentProcessor:
                     continue
 
                 # 检查段落是否包含表格行或列表行
-                lines = para.split('\n')
+                lines = para.split("\n")
                 has_table_or_list = any(
-                    table_line_pattern.match(line.strip()) or
-                    list_line_pattern.match(line.strip())
+                    table_line_pattern.match(line.strip())
+                    or list_line_pattern.match(line.strip())
                     for line in lines
                 )
 
@@ -84,7 +85,7 @@ class IndentProcessor:
                     continue
 
                 # 跳过单行代码块标记
-                if para.startswith('```'):
+                if para.startswith("```"):
                     processed_paras.append(para)
                     continue
 
@@ -94,6 +95,6 @@ class IndentProcessor:
                     processed_paras.append(para)
 
             if processed_paras:
-                processed_parts.append('\n\n'.join(processed_paras))
+                processed_parts.append("\n\n".join(processed_paras))
 
-        return '\n\n'.join(processed_parts)
+        return "\n\n".join(processed_parts)

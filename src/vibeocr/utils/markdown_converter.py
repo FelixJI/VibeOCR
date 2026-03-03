@@ -1,7 +1,6 @@
 """Markdown 转 HTML 工具"""
 
 import logging
-from typing import Optional
 
 import markdown
 from markdown.extensions.tables import TableExtension
@@ -99,7 +98,7 @@ def markdown_to_html(
     markdown_text: str,
     *,
     include_style: bool = True,
-    extensions: Optional[list] = None,
+    extensions: list | None = None,
 ) -> str:
     """将 Markdown 转换为 HTML
 
@@ -147,8 +146,7 @@ def markdown_to_html(
         _logger.warning(f"Markdown 转换失败: {e}")
         # 转换失败时返回原文本（转义 HTML）
         escaped = (
-            markdown_text
-            .replace("&", "&amp;")
+            markdown_text.replace("&", "&amp;")
             .replace("<", "&lt;")
             .replace(">", "&gt;")
             .replace("\n", "<br>")
@@ -171,7 +169,9 @@ def _process_latex_formulas(text: str) -> str:
     def replace_block_formula(match):
         formula = match.group(1).strip()
         # 转义 HTML 特殊字符
-        formula = formula.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        formula = (
+            formula.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        )
         return f'<div class="latex-formula">{formula}</div>'
 
     # 处理行内公式 $...$
@@ -179,17 +179,19 @@ def _process_latex_formulas(text: str) -> str:
     def replace_inline_formula(match):
         formula = match.group(1).strip()
         # 转义 HTML 特殊字符
-        formula = formula.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        formula = (
+            formula.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        )
         return f'<span class="latex-inline">{formula}</span>'
 
     # 先处理块级公式 $$...$$（多行）
-    result = re.sub(r'\$\$(.*?)\$\$', replace_block_formula, text, flags=re.DOTALL)
+    result = re.sub(r"\$\$(.*?)\$\$", replace_block_formula, text, flags=re.DOTALL)
 
     # 再处理行内公式 $...$
     # 使用负向前瞻和后顾，避免匹配表格分隔符 |---|
     # 只匹配不包含换行的简单公式
     result = re.sub(
-        r'(?<![|\\])\$([^\$\n]+?)\$(?![|\\])',
+        r"(?<![|\\])\$([^\$\n]+?)\$(?![|\\])",
         replace_inline_formula,
         result,
     )
@@ -212,18 +214,18 @@ def extract_plain_text(html_text: str) -> str:
     import re
 
     # 移除 style 标签
-    text = re.sub(r'<style.*?</style>', '', html_text, flags=re.DOTALL | re.IGNORECASE)
+    text = re.sub(r"<style.*?</style>", "", html_text, flags=re.DOTALL | re.IGNORECASE)
 
     # 将块级元素替换为换行
-    text = re.sub(r'<br\s*/?>', '\n', text, flags=re.IGNORECASE)
-    text = re.sub(r'</p>', '\n', text, flags=re.IGNORECASE)
-    text = re.sub(r'</div>', '\n', text, flags=re.IGNORECASE)
-    text = re.sub(r'</tr>', '\n', text, flags=re.IGNORECASE)
-    text = re.sub(r'</td>', '\t', text, flags=re.IGNORECASE)
-    text = re.sub(r'</th>', '\t', text, flags=re.IGNORECASE)
+    text = re.sub(r"<br\s*/?>", "\n", text, flags=re.IGNORECASE)
+    text = re.sub(r"</p>", "\n", text, flags=re.IGNORECASE)
+    text = re.sub(r"</div>", "\n", text, flags=re.IGNORECASE)
+    text = re.sub(r"</tr>", "\n", text, flags=re.IGNORECASE)
+    text = re.sub(r"</td>", "\t", text, flags=re.IGNORECASE)
+    text = re.sub(r"</th>", "\t", text, flags=re.IGNORECASE)
 
     # 移除所有 HTML 标签
-    text = re.sub(r'<[^>]+>', '', text)
+    text = re.sub(r"<[^>]+>", "", text)
 
     # 解码 HTML 实体
     text = text.replace("&amp;", "&")
@@ -233,7 +235,7 @@ def extract_plain_text(html_text: str) -> str:
     text = text.replace("&quot;", '"')
 
     # 清理多余空白
-    lines = [line.strip() for line in text.split('\n')]
-    text = '\n'.join(line for line in lines if line)
+    lines = [line.strip() for line in text.split("\n")]
+    text = "\n".join(line for line in lines if line)
 
     return text

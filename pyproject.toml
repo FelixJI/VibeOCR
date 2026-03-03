@@ -114,6 +114,34 @@ ignore = [
     "TCH001", # 类型检查相关的导入
     "TCH002",
     "TCH003",
+    # 中文注释全角字符（开发者习惯）
+    "RUF001",
+    "RUF002",
+    "RUF003",
+    # __all__ 排序
+    "RUF022",
+    # Generic 类型参数（保持与 PySide6 兼容）
+    "UP046",
+    # 可变默认值为类属性（常量列表）
+    "RUF012",
+    # 隐式 Optional（风格问题）
+    "RUF013",
+    # 嵌套 if 语句
+    "SIM102",
+    # 注释掉的代码（可能是有用的注释）
+    "ERA001",
+    # 模块级导入不在文件顶部
+    "E402",
+    # try-except-pass
+    "SIM105",
+    # 未使用的 lambda 参数
+    "ARG005",
+    # 未使用的静态方法参数（单例模式保留参数作为API）
+    "ARG004",
+    # 循环变量绑定（闭包问题）
+    "B023",
+    # asyncio.ensure_future 返回值（不需要存储）
+    "RUF006",
 ]
 
 [tool.ruff.lint.isort]
@@ -142,6 +170,8 @@ reportUnusedVariable = "warning"
 reportDuplicateImport = "warning"
 # PySide6 相关
 reportAttributeAccessIssue = "warning"  # PySide6 动态属性较多
+# PaddlePaddle 相关（类型存根不完整）
+reportPrivateImportUsage = false
 
 # =============================================================================
 # Mypy - 类型检查

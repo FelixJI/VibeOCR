@@ -6,7 +6,6 @@ import os
 import subprocess
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 # 缓存版本号（用于缓存格式升级时失效旧缓存）
 CACHE_VERSION = 1
@@ -148,7 +147,7 @@ def save_cache(project_root: Path, data: dict) -> bool:
         return False
 
 
-def load_cache(project_root: Path) -> Optional[dict]:
+def load_cache(project_root: Path) -> dict | None:
     """
     加载缓存
 
@@ -163,7 +162,7 @@ def load_cache(project_root: Path) -> Optional[dict]:
         if not cache_file.exists():
             return None
 
-        with open(cache_file, "r", encoding="utf-8") as f:
+        with open(cache_file, encoding="utf-8") as f:
             return json.load(f)
     except json.JSONDecodeError:
         print("[缓存] 缓存文件损坏，将重新检测")
@@ -173,7 +172,7 @@ def load_cache(project_root: Path) -> Optional[dict]:
         return None
 
 
-def is_cache_valid(project_root: Path) -> tuple[bool, Optional[dict]]:
+def is_cache_valid(project_root: Path) -> tuple[bool, dict | None]:
     """
     检查缓存是否有效
 
@@ -229,10 +228,8 @@ def clear_cache(project_root: Path) -> bool:
 
 
 def create_cache_entry(
-    project_root: Path,
-    dependencies: dict,
-    hardware_info: dict
-) -> Optional[dict]:
+    project_root: Path, dependencies: dict, hardware_info: dict
+) -> dict | None:
     """
     创建新的缓存条目
 
@@ -264,6 +261,7 @@ def create_cache_entry(
 # ============================================================
 # 预加载管道配置
 # ============================================================
+
 
 def get_preload_pipelines(project_root: Path) -> list[str]:
     """

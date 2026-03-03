@@ -21,8 +21,8 @@ import logging
 import os
 import sys
 import threading
-from typing import Any, Optional, Union
 from pathlib import Path
+from typing import Any, Optional
 
 import numpy as np
 from PIL import Image
@@ -33,9 +33,8 @@ os.environ.setdefault("FLAGS_use_mkldnn", "0")
 
 # 导入路径管理器
 from vibeocr.python_path_manager import (
-    PythonPathManager,
-    get_python_path_manager,
     PythonPathMode,
+    get_python_path_manager,
 )
 
 _logger = logging.getLogger(__name__)
@@ -48,7 +47,7 @@ def _setup_cuda_dll_paths() -> None:
     在便携式 Python 环境中，CUDA DLL 文件可能位于 python/ 目录下的特定位置。
     此函数确保这些路径被添加到 PATH 中，以便 PaddlePaddle 可以正确加载它们。
     """
-    if hasattr(sys, 'frozen'):
+    if hasattr(sys, "frozen"):
         # 打包环境：python/ 目录在 exe 同级
         app_dir = Path(sys.executable).parent
         portable_python_dir = app_dir / "python"
@@ -62,8 +61,8 @@ def _setup_cuda_dll_paths() -> None:
     # 常见的 CUDA DLL 位置
     cuda_dll_paths = [
         portable_python_dir / "Library" / "bin",  # conda 风格
-        portable_python_dir / "DLLs",              # Windows 嵌入式 Python
-        portable_python_dir,                       # 根目录
+        portable_python_dir / "DLLs",  # Windows 嵌入式 Python
+        portable_python_dir,  # 根目录
     ]
 
     # 获取当前 PATH
@@ -77,7 +76,7 @@ def _setup_cuda_dll_paths() -> None:
 
     if paths_to_add:
         # 将新路径添加到 PATH 前面
-        os.environ["PATH"] = os.pathsep.join(paths_to_add + [current_path])
+        os.environ["PATH"] = os.pathsep.join([*paths_to_add, current_path])
         _logger.info(f"已添加 CUDA DLL 路径到 PATH: {paths_to_add}")
 
 
@@ -90,7 +89,7 @@ class OCRServicePortable:
 
     _instance: Optional["OCRServicePortable"] = None
     _pipeline: Any = None
-    _device: Optional[str] = None
+    _device: str | None = None
     _lock = threading.Lock()
 
     def __new__(cls) -> "OCRServicePortable":
@@ -119,6 +118,7 @@ class OCRServicePortable:
         """导入 PaddleX（延迟导入）"""
         try:
             from paddlex import create_pipeline
+
             return create_pipeline
         except ImportError as e:
             # 提供详细的错误信息
@@ -193,7 +193,7 @@ class OCRServicePortable:
 
     def recognize(
         self,
-        image: Union[Image.Image, np.ndarray, str],
+        image: Image.Image | np.ndarray | str,
     ) -> str:
         """
         对图像执行 OCR 识别
@@ -204,7 +204,8 @@ class OCRServicePortable:
         Returns:
             识别的文本内容
         """
-        def _do_recognize(img: Union[Image.Image, np.ndarray, str]) -> str:
+
+        def _do_recognize(img: Image.Image | np.ndarray | str) -> str:
             """执行 OCR 识别"""
             output = self.pipeline.predict(
                 input=img,
@@ -276,7 +277,7 @@ def test_portable_ocr():
 
     # 打印环境信息
     info = service.get_environment_info()
-    print(f"\n环境信息:")
+    print("\n环境信息:")
     print(f"  模式: {info['mode']}")
     print(f"  是否打包: {info['is_frozen']}")
     print(f"  Python: {info['python_executable']}")
@@ -297,4 +298,5 @@ def test_portable_ocr():
 
 if __name__ == "__main__":
     import sys
+
     sys.exit(test_portable_ocr())

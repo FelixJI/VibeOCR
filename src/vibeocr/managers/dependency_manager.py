@@ -5,9 +5,8 @@
 
 import logging
 from pathlib import Path
-from typing import Optional, Callable
 
-from PySide6.QtCore import QObject, Signal, QRunnable, QThreadPool
+from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal
 
 from vibeocr import env_manager
 
@@ -67,7 +66,7 @@ class DependencyManager(QObject):
     check_completed = Signal(bool, list)  # (是否就绪, 缺失依赖列表)
     check_started = Signal()
 
-    def __init__(self, project_root: Optional[Path] = None, parent=None):
+    def __init__(self, project_root: Path | None = None, parent=None):
         """初始化依赖管理器
 
         Args:

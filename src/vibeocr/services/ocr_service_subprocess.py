@@ -10,11 +10,15 @@ import asyncio
 import logging
 import threading
 import uuid
-from typing import Optional, Union, List, Callable, TYPE_CHECKING
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Optional, Union
 
-from vibeocr.services.worker_manager import WorkerManager, OCRWorkerProcessError
+from vibeocr.services.worker_manager import WorkerManager
 
 if TYPE_CHECKING:
+    import numpy
+    from PIL import Image
+
     from vibeocr.models.batch_request import PreprocessOptions
 
 logger = logging.getLogger(__name__)
@@ -46,7 +50,7 @@ class OCRServiceSubprocess:
         shm_size: int = 10 * 1024 * 1024,
         auto_start: bool = True,
         start_timeout: float = 120.0,
-        start_progress_callback: Optional[Callable[[str, int], None]] = None
+        start_progress_callback: Callable[[str, int], None] | None = None,
     ) -> "OCRServiceSubprocess":
         """线程安全的单例创建
 
@@ -68,7 +72,7 @@ class OCRServiceSubprocess:
         shm_size: int = 10 * 1024 * 1024,
         auto_start: bool = True,
         start_timeout: float = 120.0,
-        start_progress_callback: Optional[Callable[[str, int], None]] = None
+        start_progress_callback: Callable[[str, int], None] | None = None,
     ):
         """初始化子进程 OCR 服务
 
@@ -96,15 +100,19 @@ class OCRServiceSubprocess:
             shm_size=shm_size,
             start_timeout=start_timeout,
             auto_restart=True,
-            max_retries=2
+            max_retries=2,
         )
 
         self._initialized = True
-        logger.info(f"OCRServiceSubprocess 初始化: max_workers={max_workers}, use_gpu={use_gpu}")
+        logger.info(
+            f"OCRServiceSubprocess 初始化: max_workers={max_workers}, use_gpu={use_gpu}"
+        )
 
         # 自动启动
         if auto_start:
-            self.start(timeout=self.start_timeout, progress_callback=start_progress_callback)
+            self.start(
+                timeout=self.start_timeout, progress_callback=start_progress_callback
+            )
 
     @classmethod
     def reset_instance(cls) -> None:
@@ -120,7 +128,7 @@ class OCRServiceSubprocess:
     def start(
         self,
         timeout: float = 120.0,
-        progress_callback: Optional[Callable[[str, int], None]] = None
+        progress_callback: Callable[[str, int], None] | None = None,
     ) -> None:
         """启动所有 Worker
 
@@ -150,9 +158,7 @@ class OCRServiceSubprocess:
             raise
 
     def recognize(
-        self,
-        image: Union[bytes, "Image.Image", "np.ndarray", str],
-        options=None
+        self, image: Union[bytes, "Image.Image", "numpy.ndarray", str], options=None
     ):
         """执行 OCR 识别（与 OCRService 接口兼容）
 
@@ -206,8 +212,10 @@ class OCRServiceSubprocess:
         # 检查 PIL Image
         try:
             from PIL import Image
+
             if isinstance(image, Image.Image):
                 import io
+
                 buffer = io.BytesIO()
                 image.save(buffer, format="PNG")
                 return buffer.getvalue()
@@ -217,9 +225,12 @@ class OCRServiceSubprocess:
         # 检查 NumPy 数组
         try:
             import numpy as np
+
             if isinstance(image, np.ndarray):
-                from PIL import Image
                 import io
+
+                from PIL import Image
+
                 pil_image = Image.fromarray(image)
                 buffer = io.BytesIO()
                 pil_image.save(buffer, format="PNG")
@@ -242,11 +253,8 @@ class OCRServiceSubprocess:
             return {}
 
         # 如果是 OCROptions 对象，转换为字典
-        if hasattr(options, '__dict__'):
-            return {
-                k: v for k, v in options.__dict__.items()
-                if not k.startswith('_')
-            }
+        if hasattr(options, "__dict__"):
+            return {k: v for k, v in options.__dict__.items() if not k.startswith("_")}
 
         # 如果已经是字典
         if isinstance(options, dict):
@@ -255,9 +263,7 @@ class OCRServiceSubprocess:
         return {}
 
     def preload_pipelines(
-        self,
-        pipelines: list[str],
-        timeout: float = 180.0
+        self, pipelines: list[str], timeout: float = 180.0
     ) -> dict[str, bool]:
         """预加载指定管道
 
@@ -274,9 +280,7 @@ class OCRServiceSubprocess:
         )
 
     def warmup_pipelines(
-        self,
-        pipelines: list[str],
-        timeout: float = 180.0
+        self, pipelines: list[str], timeout: float = 180.0
     ) -> dict[str, bool]:
         """使用测试图片预热指定管道
 
@@ -296,16 +300,14 @@ class OCRServiceSubprocess:
         )
 
     async def recognize_async(
-        self,
-        image: Union[bytes, "Image.Image", "np.ndarray", str],
-        options=None
+        self, image: Union[bytes, "Image.Image", "numpy.ndarray", str], options=None
     ):
         """异步执行 OCR 识别（asyncio 协程）
 
         使用 run_in_executor 将同步调用包装为异步，避免阻塞事件循环。
 
         Args:
-            image: 输入图像（bytes/PIL.Image/np.ndarray/str路径）
+            image: 输入图像（bytes/PIL.Image/ndarray/str路径）
             options: OCR 选项（OCROptions 对象）
 
         Returns:
@@ -316,7 +318,7 @@ class OCRServiceSubprocess:
             RuntimeError: 服务未就绪
         """
         logger.info("[recognize_async] 开始异步识别...")
-        
+
         # 检查服务是否就绪
         if not self._initialized:
             logger.error("[recognize_async] 服务未初始化")
@@ -334,16 +336,14 @@ class OCRServiceSubprocess:
         return result
 
     async def preload_pipelines_async(
-        self,
-        pipelines: list[str],
-        timeout: float = 180.0
+        self, pipelines: list[str], timeout: float = 180.0
     ) -> dict[str, bool]:
         """异步预加载指定管道（asyncio 协程）
-        
+
         Args:
             pipelines: 管道名称列表
             timeout: 超时时间（秒）
-        
+
         Returns:
             {pipeline_name: success} 结果字典
         """
@@ -360,38 +360,38 @@ class OCRServiceSubprocess:
         self._initialized = False
 
         # 停止 WorkerManager
-        if hasattr(self, '_worker_manager'):
+        if hasattr(self, "_worker_manager"):
             self._worker_manager.stop_all()
 
         logger.info("OCRServiceSubprocess 已关闭")
 
     def is_ready(self) -> bool:
         """检查服务是否就绪"""
-        if not self._initialized or not hasattr(self, '_worker_manager'):
+        if not self._initialized or not hasattr(self, "_worker_manager"):
             return False
         return self._worker_manager.get_status().get("healthy", False)
 
     def get_status(self) -> dict:
         """获取服务状态"""
-        if not hasattr(self, '_worker_manager'):
+        if not hasattr(self, "_worker_manager"):
             return {
                 "max_workers": self.max_workers,
                 "use_gpu": self.use_gpu,
                 "ready": False,
-                "workers": []
+                "workers": [],
             }
-        
+
         manager_stats = self._worker_manager.get_stats()
         return {
             "max_workers": manager_stats["max_workers"],
             "use_gpu": self.use_gpu,
             "ready": manager_stats["ready_workers"] > 0,
-            "workers": manager_stats["workers"]
+            "workers": manager_stats["workers"],
         }
 
     def get_stats(self) -> dict:
         """获取详细统计信息"""
-        if not hasattr(self, '_worker_manager'):
+        if not hasattr(self, "_worker_manager"):
             return {}
         return self._worker_manager.get_stats()
 
@@ -401,9 +401,9 @@ class OCRServiceSubprocess:
 
     def batch_add(
         self,
-        image: Union[bytes, "Image.Image", "np.ndarray", str],
+        image: Union[bytes, "Image.Image", "numpy.ndarray", str],
         options=None,
-        file_name: str = ""
+        file_name: str = "",
     ) -> str:
         """添加图片到批量队列
 
@@ -423,7 +423,7 @@ class OCRServiceSubprocess:
 
         # 准备选项字典
         options_dict = self._prepare_options_dict(options)
-        options_dict['file_name'] = file_name
+        options_dict["file_name"] = file_name
 
         # 生成 request_id
         request_id = uuid.uuid4().hex[:12]
@@ -431,22 +431,17 @@ class OCRServiceSubprocess:
         # 序列化并发送
         from vibeocr.utils.shared_memory_v2 import (
             serialize_batch_request,
-            MessageType,
         )
 
         request_data = serialize_batch_request(request_id, image_data, options_dict)
 
         # 发送到 Worker
-        self._worker_manager.execute(
-            lambda w: w._send_batch_add(request_data)
-        )
+        self._worker_manager.execute(lambda w: w._send_batch_add(request_data))
 
         return request_id
 
     def batch_commit(
-        self,
-        preprocess_options: "PreprocessOptions",
-        timeout: float = 300.0
+        self, preprocess_options: "PreprocessOptions", timeout: float = 300.0
     ) -> dict:
         """提交批量处理
 
@@ -462,7 +457,6 @@ class OCRServiceSubprocess:
 
         from vibeocr.utils.shared_memory_v2 import (
             serialize_batch_commit,
-            MessageType,
         )
 
         # 序列化并发送
@@ -478,11 +472,7 @@ class OCRServiceSubprocess:
         if not self._initialized:
             return
 
-        from vibeocr.utils.shared_memory_v2 import MessageType
-
-        self._worker_manager.execute(
-            lambda w: w._send_batch_cancel()
-        )
+        self._worker_manager.execute(lambda w: w._send_batch_cancel())
 
     def __enter__(self) -> "OCRServiceSubprocess":
         """上下文管理器入口"""

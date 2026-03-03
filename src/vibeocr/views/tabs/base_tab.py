@@ -5,7 +5,7 @@
 
 import logging
 from abc import abstractmethod
-from typing import Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 from PySide6.QtWidgets import QWidget
 
@@ -27,9 +27,9 @@ class BaseOcrTab(QWidget):
     - _on_cancel(): 取消处理（可选）
     """
 
-    def __init__(self, parent: Optional[QWidget] = None) -> None:
+    def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self._ocr_service: Optional["OCRServiceSubprocess"] = None
+        self._ocr_service: OCRServiceSubprocess | None = None
         self._is_processing = False
 
         # 子类在 __init__ 中调用以下方法
@@ -53,7 +53,9 @@ class BaseOcrTab(QWidget):
             service: OCR 服务实例
         """
         self._ocr_service = service
-        logger.info(f"[{self.__class__.__name__}] OCR 服务已设置: {service is not None}")
+        logger.info(
+            f"[{self.__class__.__name__}] OCR 服务已设置: {service is not None}"
+        )
 
         # 子类可以重写此方法来响应服务变化
         self._on_service_changed(service)

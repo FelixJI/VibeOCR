@@ -6,20 +6,19 @@
 
 import logging
 from pathlib import Path
-from typing import Optional, List
 
-from PySide6.QtWidgets import (
-    QWidget,
-    QVBoxLayout,
-)
 from PySide6.QtCore import Signal, Slot
 from PySide6.QtUiTools import QUiLoader
+from PySide6.QtWidgets import (
+    QVBoxLayout,
+    QWidget,
+)
 
+from vibeocr.models.extraction_options import ExtractionOptions
+from vibeocr.models.extraction_template import DEFAULT_TEMPLATES
 from vibeocr.views.tabs.base_tab import BaseOcrTab
 from vibeocr.widgets.batch_file_list_widget import BatchFileListWidget
 from vibeocr.widgets.console_widget import ConsoleWidget
-from vibeocr.models.extraction_options import ExtractionOptions
-from vibeocr.models.extraction_template import DEFAULT_TEMPLATES
 
 logger = logging.getLogger(__name__)
 
@@ -126,14 +125,30 @@ class ExtractionTab(BaseOcrTab):
     def get_extraction_options(self) -> ExtractionOptions:
         """获取当前抽取选项"""
         return ExtractionOptions(
-            use_doc_orientation=self._chk_doc_orientation.isChecked() if self._chk_doc_orientation else True,
-            use_doc_unwarping=self._chk_doc_unwarping.isChecked() if self._chk_doc_unwarping else True,
-            use_general_ocr=self._chk_general_ocr.isChecked() if self._chk_general_ocr else True,
-            use_table_recognition=self._chk_table_recognition.isChecked() if self._chk_table_recognition else True,
-            use_seal_recognition=self._chk_seal_recognition.isChecked() if self._chk_seal_recognition else False,
+            use_doc_orientation=(
+                self._chk_doc_orientation.isChecked()
+                if self._chk_doc_orientation
+                else True
+            ),
+            use_doc_unwarping=(
+                self._chk_doc_unwarping.isChecked() if self._chk_doc_unwarping else True
+            ),
+            use_general_ocr=(
+                self._chk_general_ocr.isChecked() if self._chk_general_ocr else True
+            ),
+            use_table_recognition=(
+                self._chk_table_recognition.isChecked()
+                if self._chk_table_recognition
+                else True
+            ),
+            use_seal_recognition=(
+                self._chk_seal_recognition.isChecked()
+                if self._chk_seal_recognition
+                else False
+            ),
         )
 
-    def get_extraction_keys(self) -> List[str]:
+    def get_extraction_keys(self) -> list[str]:
         """获取抽取字段列表"""
         keys = []
 
@@ -173,7 +188,11 @@ class ExtractionTab(BaseOcrTab):
     @Slot()
     def _on_start(self):
         """开始抽取"""
-        files = self._file_list_widget.get_selected_files() if self._file_list_widget else []
+        files = (
+            self._file_list_widget.get_selected_files()
+            if self._file_list_widget
+            else []
+        )
         if not files:
             self._result_widget.append_text("请选择要处理的文件。")
             return
@@ -205,7 +224,9 @@ class ExtractionTab(BaseOcrTab):
             return
 
         # TODO: 实现导出逻辑
-        logger.info(f"导出结果，格式: {self.get_export_format()}，合并: {self.is_export_merged()}")
+        logger.info(
+            f"导出结果，格式: {self.get_export_format()}，合并: {self.is_export_merged()}"
+        )
 
     @Slot()
     def _on_go_to_settings(self):
@@ -229,12 +250,16 @@ class ExtractionTab(BaseOcrTab):
         """更新 LLM 状态显示"""
         if self._label_mllm_status:
             if mllm_config and mllm_config.is_configured():
-                self._label_mllm_status.setText(f"MLLM: ● 已连接 ({mllm_config.model_name})")
+                self._label_mllm_status.setText(
+                    f"MLLM: ● 已连接 ({mllm_config.model_name})"
+                )
             else:
                 self._label_mllm_status.setText("MLLM: ○ 未配置")
 
         if self._label_llm_status:
             if llm_config and llm_config.is_configured():
-                self._label_llm_status.setText(f"LLM: ● 已连接 ({llm_config.model_name})")
+                self._label_llm_status.setText(
+                    f"LLM: ● 已连接 ({llm_config.model_name})"
+                )
             else:
                 self._label_llm_status.setText("LLM: ○ 未配置")

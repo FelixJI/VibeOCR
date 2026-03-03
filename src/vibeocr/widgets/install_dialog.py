@@ -2,15 +2,15 @@
 
 from pathlib import Path
 
+from PySide6.QtCore import QThread, Signal, Slot
 from PySide6.QtWidgets import (
     QDialog,
-    QVBoxLayout,
     QLabel,
     QProgressBar,
     QPushButton,
     QTextEdit,
+    QVBoxLayout,
 )
-from PySide6.QtCore import QThread, Signal, Slot
 
 from vibeocr import env_manager
 
@@ -41,7 +41,9 @@ class InstallWorker(QThread):
             if not python_exe.exists():
                 # 需要先安装嵌入式Python
                 self.progress.emit("环境安装", "正在安装嵌入式Python...")
-                success, msg = env_manager.install_embedded_python(self._project_root, network_type)
+                success, msg = env_manager.install_embedded_python(
+                    self._project_root, network_type
+                )
                 if not success:
                     self.finished.emit(False, f"安装嵌入式Python失败:\n{msg}")
                     return
@@ -53,7 +55,9 @@ class InstallWorker(QThread):
                 network_type,
                 has_gpu,
                 cuda_version,
-                progress_callback=lambda stage, message: self.progress.emit(stage, message)
+                progress_callback=lambda stage, message: self.progress.emit(
+                    stage, message
+                ),
             )
 
             self.finished.emit(success, msg)

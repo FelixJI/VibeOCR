@@ -3,10 +3,9 @@
 集中管理环境相关的配置常量和工具函数。
 """
 
-import os
 import sys
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Literal
 
 # 环境模式类型
 EnvironmentMode = Literal["virtualenv", "portable", "unknown"]
@@ -82,7 +81,7 @@ def get_pip_mirror(name: str = DEFAULT_PIP_MIRROR) -> str:
     return PIP_MIRROR_SOURCES.get(name, PIP_MIRROR_SOURCES[DEFAULT_PIP_MIRROR])
 
 
-def get_paddle_cuda_version(cuda_version: str) -> Optional[str]:
+def get_paddle_cuda_version(cuda_version: str) -> str | None:
     """获取 PaddlePaddle 对应的 CUDA 版本标识
 
     Args:

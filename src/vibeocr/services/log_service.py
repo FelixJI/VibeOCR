@@ -3,13 +3,14 @@
 import logging
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Optional
+
 from PySide6.QtCore import QObject, Signal
 
 
 @dataclass
 class LogEntry:
     """日志条目"""
+
     timestamp: datetime
     level: str
     message: str
@@ -31,7 +32,7 @@ class QtLogHandler(logging.Handler, QObject):
             entry = LogEntry(
                 timestamp=datetime.fromtimestamp(record.created),
                 level=record.levelname,
-                message=msg
+                message=msg,
             )
             self.log_signal.emit(entry)
         except Exception:
@@ -48,7 +49,7 @@ def setup_logging(console_callback: callable) -> QtLogHandler:
         QtLogHandler 实例
     """
     handler = QtLogHandler()
-    handler.setFormatter(logging.Formatter('%(message)s'))
+    handler.setFormatter(logging.Formatter("%(message)s"))
     handler.log_signal.connect(console_callback)
 
     # 配置根日志器

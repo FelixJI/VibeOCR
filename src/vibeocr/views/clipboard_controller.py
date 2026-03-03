@@ -4,10 +4,10 @@
 """
 
 import logging
-from typing import Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
-from PySide6.QtWidgets import QApplication, QLabel, QWidget
 from PySide6.QtCore import QTimer
+from PySide6.QtWidgets import QApplication, QLabel, QWidget
 
 if TYPE_CHECKING:
     from vibeocr.models.ocr_result import OCRResult
@@ -35,7 +35,7 @@ class ClipboardController:
     ) -> None:
         self._status_callback = status_callback
         self._copy_button = copy_button
-        self._current_result: Optional["OCRResult"] = None
+        self._current_result: OCRResult | None = None
 
         # 创建复制成功提示标签
         self._copy_toast = QLabel("已复制到剪贴板", copy_button)
@@ -147,8 +147,12 @@ class ClipboardController:
         end_fragment_pos = full_html.find(end_fragment_marker)
 
         # 字节偏移
-        start_fragment_byte = header_len + len(full_html[:start_fragment_pos + len(start_fragment_marker)].encode("utf-8"))
-        end_fragment_byte = header_len + len(full_html[:end_fragment_pos].encode("utf-8"))
+        start_fragment_byte = header_len + len(
+            full_html[: start_fragment_pos + len(start_fragment_marker)].encode("utf-8")
+        )
+        end_fragment_byte = header_len + len(
+            full_html[:end_fragment_pos].encode("utf-8")
+        )
         end_html_byte = header_len + len(full_html.encode("utf-8"))
 
         # 格式化偏移量（10 位数字）

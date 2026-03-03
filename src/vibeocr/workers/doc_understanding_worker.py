@@ -4,7 +4,6 @@
 """
 
 import logging
-from typing import Optional
 
 from PySide6.QtCore import QThread, Signal
 
@@ -29,11 +28,7 @@ class DocUnderstandingWorker(QThread):
     ]
 
     def __init__(
-        self,
-        image_path: str,
-        query: str,
-        model: str = "PP-DocBee2-3B",
-        parent=None
+        self, image_path: str, query: str, model: str = "PP-DocBee2-3B", parent=None
     ):
         super().__init__(parent)
         self._image_path = image_path
@@ -71,16 +66,13 @@ class DocUnderstandingWorker(QThread):
             pipeline = create_pipeline(pipeline="doc_understanding")
 
             # 执行预测
-            output = pipeline.predict({
-                "image": self._image_path,
-                "query": self._query
-            })
+            output = pipeline.predict({"image": self._image_path, "query": self._query})
 
             # 提取结果
             for res in output:
                 # res.json 包含完整结果
-                if hasattr(res, 'json') and res.json:
-                    return res.json.get('result', '')
+                if hasattr(res, "json") and res.json:
+                    return res.json.get("result", "")
 
             return "无法获取回答"
 
@@ -88,7 +80,7 @@ class DocUnderstandingWorker(QThread):
             logger.warning("PaddleX 未安装，返回模拟结果")
             return f"[模拟] 针对文档 {self._image_path} 的回答：{self._query}"
         except Exception as e:
-            raise RuntimeError(f"管道调用失败: {e}")
+            raise RuntimeError(f"管道调用失败: {e}") from None
 
     def cancel(self):
         """取消任务"""

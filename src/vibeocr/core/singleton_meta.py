@@ -4,7 +4,7 @@
 """
 
 import threading
-from typing import Any, Dict
+from typing import Any
 
 
 class SingletonMeta(type):
@@ -16,7 +16,7 @@ class SingletonMeta(type):
                 pass
     """
 
-    _instances: Dict[type, Any] = {}
+    _instances: dict[type, Any] = {}
     _lock = threading.Lock()
 
     def __call__(cls, *args, **kwargs):
@@ -38,7 +38,7 @@ class SingletonMeta(type):
         with cls._lock:
             if target_class in cls._instances:
                 instance = cls._instances[target_class]
-                if hasattr(instance, '_reset'):
+                if hasattr(instance, "_reset"):
                     instance._reset()
                 del cls._instances[target_class]
 
@@ -50,6 +50,6 @@ class SingletonMeta(type):
         """
         with cls._lock:
             for instance in cls._instances.values():
-                if hasattr(instance, '_reset'):
+                if hasattr(instance, "_reset"):
                     instance._reset()
             cls._instances.clear()

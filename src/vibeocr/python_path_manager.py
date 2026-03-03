@@ -10,20 +10,20 @@ Python 路径管理模块
 3. 直接导入：使用系统 Python
 """
 
+import logging
 import os
 import sys
 from pathlib import Path
-from typing import Optional, Tuple, List
-import logging
 
 _logger = logging.getLogger(__name__)
 
 
 class PythonPathMode:
     """Python 路径模式"""
-    DEVELOPMENT = "development"   # 开发环境：使用 .venv
-    PORTABLE = "portable"         # 便携式：使用 python/
-    SYSTEM = "system"             # 系统：使用已安装的包
+
+    DEVELOPMENT = "development"  # 开发环境：使用 .venv
+    PORTABLE = "portable"  # 便携式：使用 python/
+    SYSTEM = "system"  # 系统：使用已安装的包
 
 
 class PythonPathManager:
@@ -34,7 +34,7 @@ class PythonPathManager:
     正确导入 PaddleX 等依赖。
     """
 
-    def __init__(self, project_root: Optional[Path] = None):
+    def __init__(self, project_root: Path | None = None):
         """
         初始化路径管理器
 
@@ -42,9 +42,9 @@ class PythonPathManager:
             project_root: 项目根目录，如果为 None 则自动检测
         """
         self.project_root = project_root or self._detect_project_root()
-        self._mode: Optional[str] = None
-        self._ocr_lib_path: Optional[Path] = None
-        self._python_executable: Optional[Path] = None
+        self._mode: str | None = None
+        self._ocr_lib_path: Path | None = None
+        self._python_executable: Path | None = None
 
     def _detect_project_root(self) -> Path:
         """检测项目根目录"""
@@ -63,7 +63,7 @@ class PythonPathManager:
     @property
     def is_frozen(self) -> bool:
         """检测是否为打包环境"""
-        return getattr(sys, 'frozen', False)
+        return getattr(sys, "frozen", False)
 
     @property
     def mode(self) -> str:
@@ -110,13 +110,13 @@ class PythonPathManager:
         return PythonPathMode.SYSTEM
 
     @property
-    def ocr_lib_path(self) -> Optional[Path]:
+    def ocr_lib_path(self) -> Path | None:
         """获取 OCR 库路径（site-packages）"""
         if self._ocr_lib_path is None:
             self._ocr_lib_path = self._find_ocr_lib_path()
         return self._ocr_lib_path
 
-    def _find_ocr_lib_path(self) -> Optional[Path]:
+    def _find_ocr_lib_path(self) -> Path | None:
         """查找 OCR 库路径"""
         mode = self.mode
 
@@ -136,12 +136,15 @@ class PythonPathManager:
                 # 检查是否存在，如果不存在尝试其他可能的路径
                 if not path.exists():
                     # 尝试 Resources 目录（macOS 打包常见）
-                    resources_path = app_dir / "Resources" / "python" / "Lib" / "site-packages"
+                    resources_path = (
+                        app_dir / "Resources" / "python" / "Lib" / "site-packages"
+                    )
                     if resources_path.exists():
                         return resources_path
 
                     # 记录警告但继续尝试
                     import logging
+
                     _logger = logging.getLogger(__name__)
                     _logger.warning(f"便携式 OCR 库路径不存在: {path}")
 
@@ -156,13 +159,13 @@ class PythonPathManager:
         return None
 
     @property
-    def python_executable(self) -> Optional[Path]:
+    def python_executable(self) -> Path | None:
         """获取 Python 可执行文件路径"""
         if self._python_executable is None:
             self._python_executable = self._find_python_executable()
         return self._python_executable
 
-    def _find_python_executable(self) -> Optional[Path]:
+    def _find_python_executable(self) -> Path | None:
         """查找 Python 可执行文件"""
         mode = self.mode
 
@@ -227,7 +230,9 @@ class PythonPathManager:
             "mode": self.mode,
             "is_frozen": self.is_frozen,
             "project_root": str(self.project_root),
-            "python_executable": str(self.python_executable) if self.python_executable else None,
+            "python_executable": (
+                str(self.python_executable) if self.python_executable else None
+            ),
             "ocr_lib_path": str(self.ocr_lib_path) if self.ocr_lib_path else None,
             "sys_executable": sys.executable,
             "sys_path_first_3": sys.path[:3],
@@ -247,7 +252,7 @@ class PythonPathManager:
         except ImportError:
             return False
 
-    def verify_environment(self) -> Tuple[bool, str]:
+    def verify_environment(self) -> tuple[bool, str]:
         """
         验证环境是否正确配置
 
@@ -287,10 +292,10 @@ class PythonPathManager:
 
 
 # 全局单例
-_global_manager: Optional[PythonPathManager] = None
+_global_manager: PythonPathManager | None = None
 
 
-def get_python_path_manager(project_root: Optional[Path] = None) -> PythonPathManager:
+def get_python_path_manager(project_root: Path | None = None) -> PythonPathManager:
     """
     获取全局 Python 路径管理器实例
 
@@ -308,7 +313,7 @@ def get_python_path_manager(project_root: Optional[Path] = None) -> PythonPathMa
     return _global_manager
 
 
-def setup_python_path(project_root: Optional[Path] = None) -> bool:
+def setup_python_path(project_root: Path | None = None) -> bool:
     """
     便捷函数：设置 Python 路径
 
@@ -322,7 +327,7 @@ def setup_python_path(project_root: Optional[Path] = None) -> bool:
     return manager.setup_sys_path()
 
 
-def get_environment_info(project_root: Optional[Path] = None) -> dict:
+def get_environment_info(project_root: Path | None = None) -> dict:
     """
     便捷函数：获取环境信息
 
@@ -349,7 +354,7 @@ def _auto_init():
 
 
 # 延迟初始化，避免在某些情况下（如文档生成）执行
-if not hasattr(sys, '_docutils_running'):
+if not hasattr(sys, "_docutils_running"):
     try:
         _auto_init()
     except Exception as e:

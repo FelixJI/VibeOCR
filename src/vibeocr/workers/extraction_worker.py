@@ -2,8 +2,7 @@
 """信息抽取工作线程"""
 
 import logging
-from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from PySide6.QtCore import Signal
 
@@ -13,7 +12,7 @@ from vibeocr.models.extraction_options import ExtractionOptions
 logger = logging.getLogger(__name__)
 
 
-class ExtractionWorker(BatchWorker[Dict[str, Any]]):
+class ExtractionWorker(BatchWorker[dict[str, Any]]):
     """信息抽取工作线程
 
     在后台执行 PP-ChatOCRv4 产线调用，避免阻塞 UI。
@@ -28,11 +27,11 @@ class ExtractionWorker(BatchWorker[Dict[str, Any]]):
     def __init__(
         self,
         service,
-        files: List[dict],
-        keys: List[str],
+        files: list[dict],
+        keys: list[str],
         options: ExtractionOptions,
-        llm_config: Optional[dict] = None,
-        parent=None
+        llm_config: dict | None = None,
+        parent=None,
     ):
         """初始化抽取 Worker
 
@@ -50,7 +49,7 @@ class ExtractionWorker(BatchWorker[Dict[str, Any]]):
         self._options = options
         self._llm_config = llm_config
 
-    def _process_item(self, item: Dict, index: int) -> Dict[str, Any]:
+    def _process_item(self, item: dict, index: int) -> dict[str, Any]:
         """处理单个文件
 
         Args:
@@ -69,7 +68,7 @@ class ExtractionWorker(BatchWorker[Dict[str, Any]]):
         # 执行抽取
         return self._extract(image_data, self._get_file_name(item))
 
-    def _extract(self, image_data: bytes, file_name: str) -> Dict[str, Any]:
+    def _extract(self, image_data: bytes, file_name: str) -> dict[str, Any]:
         """执行单个文件的抽取
 
         Args:

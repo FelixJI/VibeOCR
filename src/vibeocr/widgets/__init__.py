@@ -1,7 +1,7 @@
 """Widgets module"""
 
+from .chat_widget import ChatWidget
 from .preview_widget import PreviewWidget
 from .screenshot_widget import ScreenshotWidget
-from .chat_widget import ChatWidget
 
-__all__ = ["PreviewWidget", "ScreenshotWidget", "ChatWidget"]
+__all__ = ["ChatWidget", "PreviewWidget", "ScreenshotWidget"]

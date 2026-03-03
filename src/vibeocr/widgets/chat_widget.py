@@ -4,21 +4,19 @@
 """
 
 import logging
-from typing import List, Dict, Optional
 
+from PySide6.QtCore import Qt, Signal, Slot
 from PySide6.QtWidgets import (
-    QWidget,
-    QVBoxLayout,
+    QFrame,
     QHBoxLayout,
-    QScrollArea,
     QLabel,
     QLineEdit,
     QPushButton,
-    QFrame,
+    QScrollArea,
     QSizePolicy,
+    QVBoxLayout,
+    QWidget,
 )
-from PySide6.QtCore import Qt, Signal, Slot
-from PySide6.QtGui import QFont
 
 logger = logging.getLogger(__name__)
 
@@ -43,8 +41,12 @@ class MessageBubble(QFrame):
         # 消息内容
         self._content_label = QLabel(text)
         self._content_label.setWordWrap(True)
-        self._content_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        self._content_label.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
+        self._content_label.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        self._content_label.setSizePolicy(
+            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum
+        )
         layout.addWidget(self._content_label)
 
         # 设置气泡样式
@@ -78,9 +80,9 @@ class ChatWidget(QWidget):
     # 信号：用户发送消息
     message_sent = Signal(str)
 
-    def __init__(self, parent: Optional[QWidget] = None):
+    def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
-        self._messages: List[Dict] = []
+        self._messages: list[dict] = []
         self._setup_ui()
 
     def _setup_ui(self):
@@ -92,8 +94,12 @@ class ChatWidget(QWidget):
         # 消息滚动区域
         self._scroll_area = QScrollArea()
         self._scroll_area.setWidgetResizable(True)
-        self._scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self._scroll_area.setStyleSheet("QScrollArea { border: none; background: white; }")
+        self._scroll_area.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self._scroll_area.setStyleSheet(
+            "QScrollArea { border: none; background: white; }"
+        )
 
         # 消息容器
         self._messages_container = QWidget()
@@ -175,11 +181,11 @@ class ChatWidget(QWidget):
             if item.widget():
                 item.widget().deleteLater()
 
-    def get_history(self) -> List[Dict]:
+    def get_history(self) -> list[dict]:
         """获取对话历史"""
         return self._messages.copy()
 
-    def load_history(self, history: List[Dict]):
+    def load_history(self, history: list[dict]):
         """加载对话历史"""
         self.clear_chat()
 
@@ -203,7 +209,11 @@ class ChatWidget(QWidget):
     def _scroll_to_bottom(self):
         """滚动到底部"""
         from PySide6.QtCore import QTimer
+
         # 延迟滚动，确保布局已更新
-        QTimer.singleShot(100, lambda: self._scroll_area.verticalScrollBar().setValue(
-            self._scroll_area.verticalScrollBar().maximum()
-        ))
+        QTimer.singleShot(
+            100,
+            lambda: self._scroll_area.verticalScrollBar().setValue(
+                self._scroll_area.verticalScrollBar().maximum()
+            ),
+        )

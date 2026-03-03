@@ -3,25 +3,25 @@
 提供批量文件识别功能。
 """
 
+import contextlib
 import logging
 from pathlib import Path
-from typing import Optional, List
 
+from PySide6.QtCore import QThread, Signal
 from PySide6.QtWidgets import (
-    QWidget,
-    QVBoxLayout,
     QHBoxLayout,
-    QPushButton,
-    QProgressBar,
     QLabel,
+    QProgressBar,
+    QPushButton,
     QSplitter,
+    QVBoxLayout,
+    QWidget,
 )
-from PySide6.QtCore import Signal, Slot, QThread
 
+from vibeocr.models.batch_request import PreprocessOptions
 from vibeocr.views.tabs.base_tab import BaseOcrTab
 from vibeocr.widgets.batch_file_list_widget import BatchFileListWidget
 from vibeocr.widgets.preprocess_options_widget import PreprocessOptionsWidget
-from vibeocr.models.batch_request import PreprocessOptions
 
 logger = logging.getLogger(__name__)
 
@@ -37,9 +37,9 @@ class BatchRecognitionWorker(QThread):
     def __init__(
         self,
         service,
-        files: List[dict],
+        files: list[dict],
         preprocess_options: PreprocessOptions,
-        parent=None
+        parent=None,
     ):
         super().__init__(parent)
         self._service = service
@@ -62,30 +62,28 @@ class BatchRecognitionWorker(QThread):
             if self._cancelled:
                 break
 
-            file_path = file_info['path']
+            file_path = file_info["path"]
             self.progress.emit(i, total, Path(file_path).name)
 
             try:
                 # 读取文件
-                with open(file_path, 'rb') as f:
+                with open(file_path, "rb") as f:
                     image_data = f.read()
 
                 # 添加到队列
                 request_id = self._service.batch_add(
-                    image_data,
-                    file_name=file_info['name']
+                    image_data, file_name=file_info["name"]
                 )
 
                 request_map[request_id] = file_info
-                logger.debug(f"添加文件到批量队列: {file_path}, request_id={request_id}")
+                logger.debug(
+                    f"添加文件到批量队列: {file_path}, request_id={request_id}"
+                )
 
             except Exception as e:
                 logger.error(f"处理文件失败 {file_path}: {e}")
-                self.file_completed.emit(file_path, 'failed', {'error': str(e)})
-                results[file_path] = {
-                    'file_path': file_path,
-                    'error': str(e)
-                }
+                self.file_completed.emit(file_path, "failed", {"error": str(e)})
+                results[file_path] = {"file_path": file_path, "error": str(e)}
 
         # 提交批量处理
         if not self._cancelled and request_map:
@@ -97,19 +95,19 @@ class BatchRecognitionWorker(QThread):
                 for request_id, result in batch_results.items():
                     if request_id in request_map:
                         file_info = request_map[request_id]
-                        file_path = file_info['path']
+                        file_path = file_info["path"]
 
-                        if isinstance(result, dict) and 'error' in result:
-                            self.file_completed.emit(file_path, 'failed', result)
+                        if isinstance(result, dict) and "error" in result:
+                            self.file_completed.emit(file_path, "failed", result)
                             results[file_path] = {
-                                'file_path': file_path,
-                                'error': result['error']
+                                "file_path": file_path,
+                                "error": result["error"],
                             }
                         else:
-                            self.file_completed.emit(file_path, 'completed', result)
+                            self.file_completed.emit(file_path, "completed", result)
                             results[file_path] = {
-                                'file_path': file_path,
-                                'result': result
+                                "file_path": file_path,
+                                "result": result,
                             }
 
             except Exception as e:
@@ -121,10 +119,8 @@ class BatchRecognitionWorker(QThread):
     def cancel(self):
         """取消处理"""
         self._cancelled = True
-        try:
+        with contextlib.suppress(Exception):
             self._service.batch_cancel()
-        except Exception:
-            pass
 
 
 class BatchRecognitionTab(BaseOcrTab):
@@ -136,7 +132,7 @@ class BatchRecognitionTab(BaseOcrTab):
     def __init__(self, ocr_service=None, parent=None):
         super().__init__(parent)
         self._ocr_service = ocr_service
-        self._worker: Optional[BatchRecognitionWorker] = None
+        self._worker: BatchRecognitionWorker | None = None
 
         self._setup_ui()
         self._connect_signals()
@@ -177,6 +173,7 @@ class BatchRecognitionTab(BaseOcrTab):
 
         # 使用 ConsoleWidget 显示结果
         from vibeocr.widgets.console_widget import ConsoleWidget
+
         self._result_widget = ConsoleWidget()
         right_layout.addWidget(self._result_widget)
 
@@ -244,9 +241,7 @@ class BatchRecognitionTab(BaseOcrTab):
 
         # 创建工作线程
         self._worker = BatchRecognitionWorker(
-            self._ocr_service,
-            files,
-            preprocess_options
+            self._ocr_service, files, preprocess_options
         )
         self._worker.progress.connect(self._on_progress)
         self._worker.file_completed.connect(self._on_file_completed)
@@ -275,17 +270,21 @@ class BatchRecognitionTab(BaseOcrTab):
 
         # 显示结果
         file_name = Path(file_path).name
-        if status == 'completed' and result:
+        if status == "completed" and result:
             text = self._extract_text(result)
             self._result_widget.append_text(f"=== {file_name} ===\n{text}\n\n")
-        elif status == 'failed':
-            error = result.get('error', '未知错误') if isinstance(result, dict) else '未知错误'
+        elif status == "failed":
+            error = (
+                result.get("error", "未知错误")
+                if isinstance(result, dict)
+                else "未知错误"
+            )
             self._result_widget.append_text(f"=== {file_name} ===\n[失败] {error}\n\n")
 
     def _on_finished(self, results: dict):
         """处理完成"""
-        completed = len([r for r in results.values() if 'result' in r])
-        failed = len([r for r in results.values() if 'error' in r])
+        completed = len([r for r in results.values() if "result" in r])
+        failed = len([r for r in results.values() if "error" in r])
 
         self._result_widget.append_text(
             f"\n--- 批量处理完成: {completed} 个成功, {failed} 个失败 ---"
@@ -304,8 +303,8 @@ class BatchRecognitionTab(BaseOcrTab):
         # 查找对应的结果并显示
         files = self._file_list_widget._files
         for f in files:
-            if f['path'] == file_path and f.get('result'):
-                result = f['result']
+            if f["path"] == file_path and f.get("result"):
+                result = f["result"]
                 text = self._extract_text(result)
                 self._result_widget.set_text(text)
                 break
@@ -315,15 +314,15 @@ class BatchRecognitionTab(BaseOcrTab):
         if result is None:
             return ""
 
-        if hasattr(result, 'raw_text'):
+        if hasattr(result, "raw_text"):
             return result.raw_text
-        elif hasattr(result, 'text'):
+        elif hasattr(result, "text"):
             return result.text
         elif isinstance(result, dict):
-            if 'text' in result:
-                return result['text']
-            if 'raw_text' in result:
-                return result['raw_text']
+            if "text" in result:
+                return result["text"]
+            if "raw_text" in result:
+                return result["raw_text"]
             return str(result)
         else:
             return str(result)

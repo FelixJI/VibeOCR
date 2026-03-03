@@ -5,20 +5,21 @@
 
 import json
 import logging
+from collections.abc import Callable
 from pathlib import Path
-from typing import Optional, List, Callable, TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Optional
 
 from PySide6.QtWidgets import (
-    QWidget,
-    QMessageBox,
+    QCheckBox,
     QDialog,
-    QVBoxLayout,
     QLabel,
     QLineEdit,
-    QPushButton,
     QListWidget,
-    QCheckBox,
+    QMessageBox,
     QProgressBar,
+    QPushButton,
+    QVBoxLayout,
+    QWidget,
 )
 
 if TYPE_CHECKING:
@@ -51,7 +52,7 @@ class SettingsPageController:
         status_callback: Callable[[str], None],
         ocr_ready_callback: Callable[[], bool],
         subprocess_manager,
-        preload_complete_callback: Optional[Callable[[], None]] = None,
+        preload_complete_callback: Callable[[], None] | None = None,
     ) -> None:
         self._ui = ui
         self._project_root = project_root
@@ -60,7 +61,7 @@ class SettingsPageController:
         self._subprocess_manager = subprocess_manager
         self._preload_complete_callback = preload_complete_callback
 
-        self._llm_config: Optional["LLMConfig"] = None
+        self._llm_config: LLMConfig | None = None
         self._manual_preload_total = 0
 
     def connect_signals(self) -> None:
@@ -140,7 +141,7 @@ class SettingsPageController:
         config_path = self._project_root / "config" / "llm_config.json"
         if config_path.exists():
             try:
-                with open(config_path, "r", encoding="utf-8") as f:
+                with open(config_path, encoding="utf-8") as f:
                     data = json.load(f)
                 self._llm_config = LLMConfig.from_dict(data)
             except Exception as e:
@@ -193,7 +194,6 @@ class SettingsPageController:
 
     def _on_save_llm_config_clicked(self) -> None:
         """保存 LLM 配置按钮点击"""
-        from vibeocr.models.llm_config import LLMConfig
 
         edit_mllm_url = self._ui.findChild(QLineEdit, "editMLLMUrl")
         edit_mllm_model = self._ui.findChild(QLineEdit, "editMLLMModel")
@@ -227,7 +227,9 @@ class SettingsPageController:
             return
 
         if not self._subprocess_manager.is_ready:
-            QMessageBox.warning(None, "无法预加载", "OCR 子进程服务尚未就绪，请稍后再试。")
+            QMessageBox.warning(
+                None, "无法预加载", "OCR 子进程服务尚未就绪，请稍后再试。"
+            )
             return
 
         pipelines_to_preload = self._get_selected_preload_pipelines()
@@ -246,8 +248,6 @@ class SettingsPageController:
             progress_bar.setValue(0)
             progress_bar.setMaximum(len(pipelines_to_preload) * 2)
 
-        from vibeocr.services.ocr_service import OCRPipeline
-
         pipeline_names = [p.display_name for p in pipelines_to_preload]
         logger.info(f"[预加载] 开始预加载和预热管道: {pipeline_names}")
 
@@ -255,7 +255,7 @@ class SettingsPageController:
         self._manual_preload_total = len(pipelines_to_preload)
         self._start_manual_preload_with_warmup(pipelines_to_preload)
 
-    def _get_selected_preload_pipelines(self) -> List["OCRPipeline"]:
+    def _get_selected_preload_pipelines(self) -> list["OCRPipeline"]:
         """获取选中的预加载管道"""
         from vibeocr.services.ocr_service import OCRPipeline
 
@@ -283,7 +283,7 @@ class SettingsPageController:
 
         return pipelines
 
-    def _start_manual_preload_with_warmup(self, pipelines: List["OCRPipeline"]) -> None:
+    def _start_manual_preload_with_warmup(self, pipelines: list["OCRPipeline"]) -> None:
         """启动手动预加载和预热"""
         from PySide6.QtCore import QRunnable, QThreadPool
 
@@ -295,12 +295,14 @@ class SettingsPageController:
                 self._controller = controller
 
             def _update_progress(self, value: int):
-                progress_bar = self._controller._ui.findChild(QWidget, "progressPreload")
+                progress_bar = self._controller._ui.findChild(
+                    QWidget, "progressPreload"
+                )
                 if progress_bar:
                     progress_bar.setValue(value)
 
             def run(self):
-                import asyncio
+
                 results = {}
                 progress = 0
 
@@ -327,8 +329,9 @@ class SettingsPageController:
                 """预热管道"""
                 try:
                     # 使用小图片预热
-                    from PIL import Image
                     import io
+
+                    from PIL import Image
 
                     warmup_image = Image.new("RGB", (100, 100), color="white")
                     buffer = io.BytesIO()
@@ -339,9 +342,7 @@ class SettingsPageController:
                 except Exception as e:
                     logger.warning(f"预热 {pipeline.name} 失败: {e}")
 
-        task = PreloadWithWarmupTask(
-            self._subprocess_manager.service, pipelines, self
-        )
+        task = PreloadWithWarmupTask(self._subprocess_manager.service, pipelines, self)
         QThreadPool.globalInstance().start(task)
 
     def _on_manual_preload_finished(self, results: dict) -> None:
@@ -364,7 +365,7 @@ class SettingsPageController:
 
         logger.info(f"[预加载] 完成: {success_count}/{total}")
 
-    def _update_preload_status(self, status: str = None) -> None:
+    def _update_preload_status(self, status: str | None = None) -> None:
         """更新预加载状态"""
         label = self._ui.findChild(QWidget, "labelPreloadStatus")
         if label:
@@ -383,7 +384,6 @@ class SettingsPageController:
 
     def _on_refresh_cache_clicked(self) -> None:
         """刷新缓存按钮点击"""
-        from vibeocr import env_manager
         from vibeocr.machine_cache import refresh_cache
 
         self._update_cache_status("正在刷新缓存...")
@@ -408,9 +408,9 @@ class SettingsPageController:
             self._update_cache_status("缓存已清除")
             logger.info("[缓存] 已清除")
 
-    def _update_cache_status(self, status: str = None) -> None:
+    def _update_cache_status(self, status: str | None = None) -> None:
         """更新缓存状态"""
-        from vibeocr.machine_cache import is_cache_valid, get_cache_info
+        from vibeocr.machine_cache import get_cache_info, is_cache_valid
 
         label = self._ui.findChild(QWidget, "labelCacheStatus")
         if label:
@@ -443,7 +443,7 @@ class SettingsPageController:
         config_path = self._project_root / "config" / "templates.json"
         if config_path.exists():
             try:
-                with open(config_path, "r", encoding="utf-8") as f:
+                with open(config_path, encoding="utf-8") as f:
                     templates_data = json.load(f)
                 from vibeocr.models.extraction_template import ExtractionTemplate
 
@@ -455,7 +455,6 @@ class SettingsPageController:
 
     def _on_add_template_clicked(self) -> None:
         """添加模板按钮点击"""
-        from vibeocr.models.extraction_template import ExtractionTemplate
 
         dialog = QDialog(self._ui)
         dialog.setWindowTitle("添加模板")
@@ -489,7 +488,7 @@ class SettingsPageController:
             templates = []
             if config_path.exists():
                 try:
-                    with open(config_path, "r", encoding="utf-8") as f:
+                    with open(config_path, encoding="utf-8") as f:
                         templates = json.load(f)
                 except Exception:
                     pass
@@ -530,7 +529,7 @@ class SettingsPageController:
             return
 
         try:
-            with open(config_path, "r", encoding="utf-8") as f:
+            with open(config_path, encoding="utf-8") as f:
                 templates = json.load(f)
         except Exception:
             return
@@ -621,7 +620,7 @@ class SettingsPageController:
             return
 
         try:
-            with open(config_path, "r", encoding="utf-8") as f:
+            with open(config_path, encoding="utf-8") as f:
                 templates = json.load(f)
 
             templates = [t for t in templates if t.get("name") != template_name]

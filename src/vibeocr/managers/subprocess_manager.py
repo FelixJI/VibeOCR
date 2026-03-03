@@ -5,9 +5,9 @@
 
 import logging
 from pathlib import Path
-from typing import Optional, Callable, List, TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
-from PySide6.QtCore import QObject, Signal, QRunnable, QThreadPool
+from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal
 
 if TYPE_CHECKING:
     from vibeocr.services.ocr_service_subprocess import OCRServiceSubprocess
@@ -37,7 +37,7 @@ class SubprocessStartTask(QRunnable):
         self._start_timeout = start_timeout
         self._cancelled = False
         self.signals = SubprocessStartSignals()
-        self.service: Optional["OCRServiceSubprocess"] = None
+        self.service: OCRServiceSubprocess | None = None
 
     def cancel(self) -> None:
         """取消启动任务"""
@@ -95,7 +95,7 @@ class PreloadTask(QRunnable):
     def __init__(
         self,
         service: "OCRServiceSubprocess",
-        pipelines: List[str],
+        pipelines: list[str],
     ) -> None:
         super().__init__()
         self._service = service
@@ -107,7 +107,9 @@ class PreloadTask(QRunnable):
         try:
             results = self._service.preload_pipelines(self._pipelines)
             success_count = sum(1 for v in results.values() if v)
-            logger.info(f"[SubprocessManager] 预加载完成: {success_count}/{len(results)} 个管道")
+            logger.info(
+                f"[SubprocessManager] 预加载完成: {success_count}/{len(results)} 个管道"
+            )
             self.signals.finished.emit(results)
         except Exception as e:
             logger.error(f"[SubprocessManager] 预加载失败: {e}")
@@ -132,14 +134,14 @@ class SubprocessManager(QObject):
     def __init__(
         self,
         project_root: Path,
-        parent: Optional[QObject] = None,
+        parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
         self._project_root = project_root
         self._thread_pool = QThreadPool()
-        self._service: Optional["OCRServiceSubprocess"] = None
+        self._service: OCRServiceSubprocess | None = None
         self._is_ready = False
-        self._start_task: Optional[SubprocessStartTask] = None
+        self._start_task: SubprocessStartTask | None = None
 
     @property
     def service(self) -> Optional["OCRServiceSubprocess"]:
@@ -196,7 +198,7 @@ class SubprocessManager(QObject):
         else:
             logger.warning("[SubprocessManager] 子进程服务启动失败")
 
-    def preload_pipelines(self, pipelines: List[str]) -> None:
+    def preload_pipelines(self, pipelines: list[str]) -> None:
         """预加载管道
 
         Args:

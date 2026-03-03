@@ -8,14 +8,14 @@
 import logging
 import threading
 import time
-from typing import Optional, Callable
 from collections import OrderedDict
+from collections.abc import Callable
 
 from vibeocr.models.batch_request import (
+    BatchProgress,
     BatchRequest,
     BatchRequestStatus,
     PreprocessOptions,
-    BatchProgress,
 )
 from vibeocr.utils.gpu_memory_monitor import GPUMemoryMonitor
 
@@ -48,7 +48,7 @@ class BatchQueueManager:
         self,
         pipeline,
         max_batch_size: int = 8,
-        progress_callback: Optional[Callable[[BatchProgress], None]] = None
+        progress_callback: Callable[[BatchProgress], None] | None = None,
     ):
         """初始化队列管理器
 
@@ -73,17 +73,13 @@ class BatchQueueManager:
 
         # 统计信息
         self._stats = {
-            'total_requests': 0,
-            'total_batches': 0,
-            'total_time': 0.0,
+            "total_requests": 0,
+            "total_batches": 0,
+            "total_time": 0.0,
         }
 
     def add_request(
-        self,
-        image_data: bytes,
-        options: dict,
-        file_path: str = "",
-        file_name: str = ""
+        self, image_data: bytes, options: dict, file_path: str = "", file_name: str = ""
     ) -> str:
         """添加请求到队列
 
@@ -105,9 +101,11 @@ class BatchQueueManager:
 
         with self._lock:
             self._queue[request.request_id] = request
-            self._stats['total_requests'] += 1
+            self._stats["total_requests"] += 1
 
-        logger.debug(f"添加批量请求: {request.request_id}, 队列长度: {len(self._queue)}")
+        logger.debug(
+            f"添加批量请求: {request.request_id}, 队列长度: {len(self._queue)}"
+        )
         return request.request_id
 
     def clear_queue(self):
@@ -126,10 +124,7 @@ class BatchQueueManager:
         self._cancelled = True
         logger.info("批量处理已取消")
 
-    def commit(
-        self,
-        preprocess_options: PreprocessOptions
-    ) -> dict[str, object]:
+    def commit(self, preprocess_options: PreprocessOptions) -> dict[str, object]:
         """提交并执行批量处理
 
         Args:
@@ -144,7 +139,8 @@ class BatchQueueManager:
         # 获取待处理请求
         with self._lock:
             pending_requests = [
-                req for req in self._queue.values()
+                req
+                for req in self._queue.values()
                 if req.status == BatchRequestStatus.PENDING
             ]
 
@@ -172,7 +168,9 @@ class BatchQueueManager:
             batch_end = min(batch_start + batch_size, total)
             batch_requests = pending_requests[batch_start:batch_end]
 
-            logger.info(f"处理批次: {batch_start+1}-{batch_end}/{total}, batch_size={len(batch_requests)}")
+            logger.info(
+                f"处理批次: {batch_start+1}-{batch_end}/{total}, batch_size={len(batch_requests)}"
+            )
 
             # 更新进度
             progress.current_batch_size = len(batch_requests)
@@ -200,11 +198,11 @@ class BatchQueueManager:
 
             # 移动到下一批
             batch_start = batch_end
-            self._stats['total_batches'] += 1
+            self._stats["total_batches"] += 1
 
         # 记录统计
         elapsed = time.time() - start_time
-        self._stats['total_time'] += elapsed
+        self._stats["total_time"] += elapsed
 
         if self._cancelled:
             # 标记未处理的请求为取消
@@ -214,7 +212,9 @@ class BatchQueueManager:
                         req.mark_cancelled()
             logger.info(f"批量处理已取消: 完成 {completed}/{total}")
 
-        logger.info(f"批量处理完成: {completed}/{total}, 失败: {failed}, 耗时: {elapsed:.2f}s")
+        logger.info(
+            f"批量处理完成: {completed}/{total}, 失败: {failed}, 耗时: {elapsed:.2f}s"
+        )
 
         return results
 
@@ -251,9 +251,7 @@ class BatchQueueManager:
         return min(batch_size, len(requests), self.max_batch_size)
 
     def _process_batch(
-        self,
-        requests: list[BatchRequest],
-        preprocess_options: PreprocessOptions
+        self, requests: list[BatchRequest], preprocess_options: PreprocessOptions
     ) -> dict[str, object]:
         """处理单个批次
 
@@ -278,25 +276,42 @@ class BatchQueueManager:
             pipeline_options = preprocess_options.to_dict()
 
             # 根据管道类型准备参数
-            pipeline_name = getattr(preprocess_options, 'pipeline', 'PP-StructureV3')
+            pipeline_name = getattr(preprocess_options, "pipeline", "PP-StructureV3")
 
             if pipeline_name == "PaddleOCR-VL":
                 # PaddleOCR-VL 特有参数映射
                 vl_options = {
-                    'use_doc_orientation_classify': pipeline_options.get('use_doc_orientation_classify', True),
-                    'use_doc_unwarping': pipeline_options.get('use_doc_unwarping', True),
-                    'use_layout_detection': pipeline_options.get('vl_use_layout_detection', True),
-                    'use_chart_recognition': pipeline_options.get('vl_use_chart_recognition', False),
-                    'use_seal_recognition': pipeline_options.get('vl_use_seal_recognition', False),
-                    'use_ocr_for_image_block': pipeline_options.get('vl_use_ocr_for_image_block', False),
-                    'format_block_content': pipeline_options.get('vl_format_block_content', False),
+                    "use_doc_orientation_classify": pipeline_options.get(
+                        "use_doc_orientation_classify", True
+                    ),
+                    "use_doc_unwarping": pipeline_options.get(
+                        "use_doc_unwarping", True
+                    ),
+                    "use_layout_detection": pipeline_options.get(
+                        "vl_use_layout_detection", True
+                    ),
+                    "use_chart_recognition": pipeline_options.get(
+                        "vl_use_chart_recognition", False
+                    ),
+                    "use_seal_recognition": pipeline_options.get(
+                        "vl_use_seal_recognition", False
+                    ),
+                    "use_ocr_for_image_block": pipeline_options.get(
+                        "vl_use_ocr_for_image_block", False
+                    ),
+                    "format_block_content": pipeline_options.get(
+                        "vl_format_block_content", False
+                    ),
                 }
                 batch_results = list(self.pipeline.predict(images, **vl_options))
             else:
                 # PP-StructureV3 使用原始选项
                 # 移除非 PP-StructureV3 参数
-                pp_options = {k: v for k, v in pipeline_options.items()
-                             if not k.startswith('vl_') and k != 'pipeline'}
+                pp_options = {
+                    k: v
+                    for k, v in pipeline_options.items()
+                    if not k.startswith("vl_") and k != "pipeline"
+                }
                 batch_results = list(self.pipeline.predict(images, **pp_options))
 
             # 分发结果
@@ -329,7 +344,7 @@ class BatchQueueManager:
             except Exception as e:
                 logger.warning(f"进度回调失败: {e}")
 
-    def get_result(self, request_id: str) -> Optional[object]:
+    def get_result(self, request_id: str) -> object | None:
         """获取指定请求的结果"""
         with self._lock:
             request = self._queue.get(request_id)

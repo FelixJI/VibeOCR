@@ -7,34 +7,34 @@
 - AppStyles: 应用程序样式
 """
 
-from vibeocr.core.singleton_meta import SingletonMeta
+from vibeocr.core.base_worker import BaseWorker, BatchWorker
 from vibeocr.core.constants import (
-    Constants,
-    OCRPipeline,
-    FileType,
-    WindowsColors,
-    DEFAULT_SHM_SIZE,
-    SHM_TIMEOUT,
-    SHORT_DELAY_MS,
-    MEDIUM_DELAY_MS,
-    LONG_DELAY_MS,
-    TOAST_DELAY_MS,
-    DEFAULT_BATCH_SIZE,
-    MAX_BATCH_SIZE,
-    MIN_BATCH_SIZE,
-    DEFAULT_SPACING,
-    DEFAULT_MARGIN,
+    COLOR_BACKGROUND,
+    COLOR_BORDER,
+    COLOR_ERROR,
+    COLOR_HOVER,
     COLOR_PRIMARY,
     COLOR_SUCCESS,
-    COLOR_WARNING,
-    COLOR_ERROR,
     COLOR_TEXT,
-    COLOR_BORDER,
-    COLOR_BACKGROUND,
-    COLOR_HOVER,
+    COLOR_WARNING,
+    DEFAULT_BATCH_SIZE,
+    DEFAULT_MARGIN,
+    DEFAULT_SHM_SIZE,
+    DEFAULT_SPACING,
+    LONG_DELAY_MS,
+    MAX_BATCH_SIZE,
+    MEDIUM_DELAY_MS,
+    MIN_BATCH_SIZE,
+    SHM_TIMEOUT,
+    SHORT_DELAY_MS,
+    TOAST_DELAY_MS,
+    Constants,
+    FileType,
+    OCRPipeline,
+    WindowsColors,
 )
+from vibeocr.core.singleton_meta import SingletonMeta
 from vibeocr.core.styles import AppStyles
-from vibeocr.core.base_worker import BaseWorker, BatchWorker
 
 __all__ = [
     # 核心类

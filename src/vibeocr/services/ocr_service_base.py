@@ -4,11 +4,12 @@
 """
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional, Callable, TYPE_CHECKING
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any, Optional
 
 if TYPE_CHECKING:
-    from vibeocr.models.ocr_result import OCRResult
     from vibeocr.models.ocr_options import OCROptions
+    from vibeocr.models.ocr_result import OCRResult
 
 
 class OCRServiceBase(ABC):
@@ -28,21 +29,21 @@ class OCRServiceBase(ABC):
     """
 
     def __init__(self) -> None:
-        self._device: Optional[str] = None
-        self._pipelines: Dict[str, Any] = {}
-        self._status_callback: Optional[Callable[[str, str], None]] = None
+        self._device: str | None = None
+        self._pipelines: dict[str, Any] = {}
+        self._status_callback: Callable[[str, str], None] | None = None
 
     @property
-    def device(self) -> Optional[str]:
+    def device(self) -> str | None:
         """获取当前设备"""
         return self._device
 
     @property
-    def pipelines(self) -> Dict[str, Any]:
+    def pipelines(self) -> dict[str, Any]:
         """获取管道缓存"""
         return self._pipelines
 
-    def set_status_callback(self, callback: Optional[Callable[[str, str], None]]) -> None:
+    def set_status_callback(self, callback: Callable[[str, str], None] | None) -> None:
         """设置状态回调函数
 
         Args:
@@ -92,7 +93,7 @@ class OCRServiceBase(ABC):
         """
         pass
 
-    def preload_pipelines(self, pipelines: List[str]) -> Dict[str, bool]:
+    def preload_pipelines(self, pipelines: list[str]) -> dict[str, bool]:
         """预加载管道
 
         Args:
@@ -122,7 +123,7 @@ class OCRServiceBase(ABC):
         # 子类可以重写此方法来实现实际的预加载逻辑
         pass
 
-    def get_pipeline(self, pipeline_name: str) -> Optional[Any]:
+    def get_pipeline(self, pipeline_name: str) -> Any | None:
         """获取管道实例
 
         Args:

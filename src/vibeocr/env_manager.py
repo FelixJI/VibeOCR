@@ -9,11 +9,10 @@ import threading
 import time
 import zipfile
 from pathlib import Path
-from urllib.request import Request, urlopen
 from typing import Literal
+from urllib.request import Request, urlopen
 
-from vibeocr.machine_cache import is_cache_valid, create_cache_entry
-
+from vibeocr.machine_cache import create_cache_entry, is_cache_valid
 
 # 嵌入式Python版本
 PYTHON_VERSION = "3.12.8"
@@ -143,7 +142,9 @@ def detect_paddlex_model_source(timeout: int = 3) -> tuple[str, str]:
             ssl_context.check_hostname = False
             ssl_context.verify_mode = ssl.CERT_NONE
 
-            req = Request(test_url, method='HEAD', headers={"User-Agent": "Mozilla/5.0"})
+            req = Request(
+                test_url, method="HEAD", headers={"User-Agent": "Mozilla/5.0"}
+            )
             with urlopen(req, timeout=timeout, context=ssl_context) as response:
                 if response.status == 200:
                     elapsed = time.time() - start_time
@@ -154,7 +155,7 @@ def detect_paddlex_model_source(timeout: int = 3) -> tuple[str, str]:
         except Exception:
             pass
         with results_lock:
-            results[env_type] = float('inf')
+            results[env_type] = float("inf")
         print(f"[模型源检测] {env_type} ({test_url}): 不可访问 [FAIL]")
 
     # 并发测试网络环境
@@ -169,19 +170,19 @@ def detect_paddlex_model_source(timeout: int = 3) -> tuple[str, str]:
         t.join(timeout=timeout + 1)
 
     # 根据网络环境选择模型源
-    domestic_time = results.get("domestic", float('inf'))
-    international_time = results.get("international", float('inf'))
+    domestic_time = results.get("domestic", float("inf"))
+    international_time = results.get("international", float("inf"))
 
     # 如果国际网络更快且可用，使用 HuggingFace
-    if international_time < domestic_time and international_time < float('inf'):
-        print(f"[模型源检测] 检测到国际网络环境，使用 HuggingFace")
+    if international_time < domestic_time and international_time < float("inf"):
+        print("[模型源检测] 检测到国际网络环境，使用 HuggingFace")
         return "HuggingFace", "huggingface"
     else:
         # 国内网络或两者都不可用时，使用 BOS
-        if domestic_time < float('inf'):
-            print(f"[模型源检测] 检测到国内网络环境，使用 BOS")
+        if domestic_time < float("inf"):
+            print("[模型源检测] 检测到国内网络环境，使用 BOS")
         else:
-            print(f"[模型源检测] 无法确定网络环境，使用默认 BOS")
+            print("[模型源检测] 无法确定网络环境，使用默认 BOS")
         return "BOS", "bos"
 
 
@@ -235,7 +236,9 @@ def detect_network_source() -> Literal["domestic", "international"]:
     return "domestic"
 
 
-def get_pip_source(network_type: Literal["domestic", "international"] = "domestic") -> str:
+def get_pip_source(
+    network_type: Literal["domestic", "international"] = "domestic",
+) -> str:
     """根据网络类型获取pip下载源"""
     if network_type == "domestic":
         # 按优先级返回国内源
@@ -272,7 +275,11 @@ def get_embedded_python_path(project_root: Path) -> Path:
 
     优先使用 .venv 虚拟环境(开发模式),如果不存在则使用 python/ 目录(便携式部署)
     """
-    venv_python = project_root / ".venv" / "Scripts" / "python.exe" if os.name == "nt" else project_root / ".venv" / "bin" / "python"
+    venv_python = (
+        project_root / ".venv" / "Scripts" / "python.exe"
+        if os.name == "nt"
+        else project_root / ".venv" / "bin" / "python"
+    )
     portable_python = project_root / "python"
 
     # 优先使用虚拟环境
@@ -354,7 +361,9 @@ def is_embedded_python_installed(project_root: Path) -> bool:
     return python_exe.exists()
 
 
-def download_file_with_progress(url: str, dest_path: Path, description: str = "下载") -> bool:
+def download_file_with_progress(
+    url: str, dest_path: Path, description: str = "下载"
+) -> bool:
     """下载文件并显示进度"""
     try:
         print(f"[{description}] 正在下载: {url}")
@@ -375,7 +384,10 @@ def download_file_with_progress(url: str, dest_path: Path, description: str = "�
 
                     if total_size > 0:
                         progress = int(downloaded / total_size * 100)
-                        print(f"\r[{description}] 进度: {progress}% ({downloaded // 1024 // 1024}MB / {total_size // 1024 // 1024}MB)", end="")
+                        print(
+                            f"\r[{description}] 进度: {progress}% ({downloaded // 1024 // 1024}MB / {total_size // 1024 // 1024}MB)",
+                            end="",
+                        )
 
         print(f"\r[{description}] 下载完成")
         return True
@@ -385,7 +397,9 @@ def download_file_with_progress(url: str, dest_path: Path, description: str = "�
         return False
 
 
-def install_embedded_python(project_root: Path, network_type: Literal["domestic", "international"] = "domestic") -> tuple[bool, str]:
+def install_embedded_python(
+    project_root: Path, network_type: Literal["domestic", "international"] = "domestic"
+) -> tuple[bool, str]:
     """
     下载并安装嵌入式Python
 
@@ -430,17 +444,22 @@ def install_embedded_python(project_root: Path, network_type: Literal["domestic"
             print("[环境安装] 官方源下载失败，尝试国内镜像...")
             for mirror_url in PYTHON_MIRROR_URLS:
                 mirror_python_url = f"{mirror_url}{PYTHON_VERSION}/python-{PYTHON_VERSION}-embed-amd64.zip"
-                if download_file_with_progress(mirror_python_url, zip_path, "Python(镜像)"):
+                if download_file_with_progress(
+                    mirror_python_url, zip_path, "Python(镜像)"
+                ):
                     download_ok = True
                     break
 
         if not download_ok:
-            return False, f"无法下载嵌入式Python，请手动下载:\n{python_url}\n并解压到: {python_dir}"
+            return (
+                False,
+                f"无法下载嵌入式Python，请手动下载:\n{python_url}\n并解压到: {python_dir}",
+            )
 
         # 解压文件
         print("[环境安装] 正在解压Python文件...")
         try:
-            with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+            with zipfile.ZipFile(zip_path, "r") as zip_ref:
                 zip_ref.extractall(python_dir)
             print("[环境安装] 解压完成")
         except Exception as e:
@@ -478,7 +497,9 @@ def install_embedded_python(project_root: Path, network_type: Literal["domestic"
             if result.returncode == 0:
                 print("[环境安装] pip安装成功")
             else:
-                print(f"[环境安装] pip安装警告: {result.stderr[-200:] if result.stderr else ''}")
+                print(
+                    f"[环境安装] pip安装警告: {result.stderr[-200:] if result.stderr else ''}"
+                )
         except subprocess.TimeoutExpired:
             return False, "pip安装超时"
         except Exception as e:
@@ -502,7 +523,7 @@ def check_current_environment_dependencies() -> dict[str, bool]:
         "PIL": False,
     }
 
-    for pkg in dependencies.keys():
+    for pkg in dependencies:
         try:
             __import__(pkg)
             dependencies[pkg] = True
@@ -513,8 +534,7 @@ def check_current_environment_dependencies() -> dict[str, bool]:
 
 
 def check_embedded_environment_dependencies(
-    project_root: Path,
-    use_cache: bool = True
+    project_root: Path, use_cache: bool = True
 ) -> dict[str, bool]:
     """检查嵌入式Python环境的OCR依赖是否已安装
 
@@ -553,7 +573,11 @@ def check_embedded_environment_dependencies(
     # 检测 PaddlePaddle（GPU或CPU版本都会导入为 paddle）
     try:
         result = subprocess.run(
-            [str(python_exe), "-c", "import paddle; print(paddle.device.is_compiled_with_cuda() if hasattr(paddle.device, 'is_compiled_with_cuda') else False)"],
+            [
+                str(python_exe),
+                "-c",
+                "import paddle; print(paddle.device.is_compiled_with_cuda() if hasattr(paddle.device, 'is_compiled_with_cuda') else False)",
+            ],
             capture_output=True,
             text=True,
             timeout=10,
@@ -585,14 +609,16 @@ def check_embedded_environment_dependencies(
     # 3. 更新缓存
     hardware_info = {
         "has_gpu": dependencies.get("is_gpu", False),
-        "cuda_version": detect_cuda_version()
+        "cuda_version": detect_cuda_version(),
     }
     create_cache_entry(project_root, dependencies, hardware_info)
 
     return dependencies
 
 
-def check_embedded_environment_dependencies_fresh(project_root: Path) -> dict[str, bool]:
+def check_embedded_environment_dependencies_fresh(
+    project_root: Path,
+) -> dict[str, bool]:
     """强制重新检测依赖（忽略缓存）"""
     return check_embedded_environment_dependencies(project_root, use_cache=False)
 
@@ -738,13 +764,25 @@ def install_embedded_dependencies(
         # 升级pip
         report("依赖安装", "正在升级pip...")
         result = subprocess.run(
-            [str(python_exe), "-m", "pip", "install", "--upgrade", "pip", "-i", pip_source],
+            [
+                str(python_exe),
+                "-m",
+                "pip",
+                "install",
+                "--upgrade",
+                "pip",
+                "-i",
+                pip_source,
+            ],
             capture_output=True,
             text=True,
             timeout=120,
         )
         if result.returncode != 0:
-            report("依赖安装", f"pip升级警告: {result.stderr[-100:] if result.stderr else ''}")
+            report(
+                "依赖安装",
+                f"pip升级警告: {result.stderr[-100:] if result.stderr else ''}",
+            )
 
         # 选择PaddlePaddle版本和安装源
         requirements = []
@@ -753,7 +791,9 @@ def install_embedded_dependencies(
 
         if use_gpu and cuda_version:
             paddle_package = f"paddlepaddle-gpu=={paddle_version}"
-            paddle_index = f"https://www.paddlepaddle.org.cn/packages/stable/{cuda_version}/"
+            paddle_index = (
+                f"https://www.paddlepaddle.org.cn/packages/stable/{cuda_version}/"
+            )
             requirements.append(("PaddlePaddle GPU", paddle_package, paddle_index))
             report("依赖安装", f"PaddlePaddle GPU版本将使用专用源: {paddle_index}")
 
@@ -789,7 +829,15 @@ def install_embedded_dependencies(
             report("依赖安装", f"使用源: {index_url}")
 
             result = subprocess.run(
-                [str(python_exe), "-m", "pip", "install", package_spec, "-i", index_url],
+                [
+                    str(python_exe),
+                    "-m",
+                    "pip",
+                    "install",
+                    package_spec,
+                    "-i",
+                    index_url,
+                ],
                 capture_output=True,
                 text=True,
                 timeout=600,  # PaddlePaddle安装可能需要较长时间
@@ -797,7 +845,9 @@ def install_embedded_dependencies(
 
             if result.returncode != 0:
                 error_msg = result.stderr or result.stdout or "未知错误"
-                if "Could not find a version" in str(error_msg) or "No matching distribution" in str(error_msg):
+                if "Could not find a version" in str(
+                    error_msg
+                ) or "No matching distribution" in str(error_msg):
                     report("依赖安装", f"{name} 安装失败，尝试使用官方PyPI源...")
                     result = subprocess.run(
                         [str(python_exe), "-m", "pip", "install", package_spec],
@@ -847,7 +897,11 @@ def detect_cuda_version() -> str | None:
     try:
         # 方法1: 使用nvidia-smi检测CUDA版本
         result = subprocess.run(
-            ["nvidia-smi", "--query-gpu=driver_version,cuda_version", "--format=csv,noheader"],
+            [
+                "nvidia-smi",
+                "--query-gpu=driver_version,cuda_version",
+                "--format=csv,noheader",
+            ],
             capture_output=True,
             text=True,
             timeout=5,
@@ -874,7 +928,9 @@ def detect_cuda_version() -> str | None:
                         if float(supported_ver) <= version_float:
                             best_match = paddle_tag
                     if best_match:
-                        print(f"[硬件检测] 使用兼容的PaddlePaddle CUDA版本: {best_match}")
+                        print(
+                            f"[硬件检测] 使用兼容的PaddlePaddle CUDA版本: {best_match}"
+                        )
                         return best_match
 
     except (FileNotFoundError, subprocess.TimeoutExpired, Exception) as e:
@@ -892,6 +948,7 @@ def detect_cuda_version() -> str | None:
         if result.returncode == 0:
             # 输出包含: "release 12.6"
             import re
+
             match = re.search(r"release\s+(\d+\.\d+)", result.stdout)
             if match:
                 cuda_version = match.group(1)
@@ -907,7 +964,9 @@ def detect_cuda_version() -> str | None:
                         if float(supported_ver) <= version_float:
                             best_match = paddle_tag
                     if best_match:
-                        print(f"[硬件检测] 使用兼容的PaddlePaddle CUDA版本: {best_match}")
+                        print(
+                            f"[硬件检测] 使用兼容的PaddlePaddle CUDA版本: {best_match}"
+                        )
                         return best_match
 
     except (FileNotFoundError, subprocess.TimeoutExpired, Exception):
@@ -947,7 +1006,7 @@ def install_dependencies(
     project_root: Path,
     network_type: Literal["domestic", "international"] = "domestic",
     use_gpu: bool = True,
-    cuda_version: str | None = None
+    cuda_version: str | None = None,
 ) -> tuple[bool, str]:
     """
     安装项目依赖到嵌入式Python
@@ -980,13 +1039,24 @@ def install_dependencies(
         # 升级pip
         print("[依赖安装] 正在升级pip...")
         result = subprocess.run(
-            [str(python_exe), "-m", "pip", "install", "--upgrade", "pip", "-i", pip_source],
+            [
+                str(python_exe),
+                "-m",
+                "pip",
+                "install",
+                "--upgrade",
+                "pip",
+                "-i",
+                pip_source,
+            ],
             capture_output=True,
             text=True,
             timeout=120,
         )
         if result.returncode != 0:
-            print(f"[依赖安装] pip升级警告: {result.stderr[-100:] if result.stderr else ''}")
+            print(
+                f"[依赖安装] pip升级警告: {result.stderr[-100:] if result.stderr else ''}"
+            )
 
         # 安装基础依赖
         requirements = [
@@ -1000,7 +1070,9 @@ def install_dependencies(
         if use_gpu and cuda_version:
             # GPU版本使用官方专用源
             paddle_package = f"paddlepaddle-gpu=={paddle_version}"
-            paddle_index = f"https://www.paddlepaddle.org.cn/packages/stable/{cuda_version}/"
+            paddle_index = (
+                f"https://www.paddlepaddle.org.cn/packages/stable/{cuda_version}/"
+            )
             requirements.append(("PaddlePaddle GPU", paddle_package, paddle_index))
             print(f"[依赖安装] PaddlePaddle GPU版本将使用专用源: {paddle_index}")
 
@@ -1014,7 +1086,7 @@ def install_dependencies(
             paddle_package = f"paddlepaddle-gpu=={paddle_version}"
             paddle_index = "https://www.paddlepaddle.org.cn/packages/stable/cu129/"
             requirements.append(("PaddlePaddle GPU", paddle_package, paddle_index))
-            print(f"[依赖安装] 使用默认CUDA 12.9版本的PaddlePaddle GPU")
+            print("[依赖安装] 使用默认CUDA 12.9版本的PaddlePaddle GPU")
 
             # 添加 cuDNN 依赖（CUDA 12.9 使用 cu12）
             cu_dnn_package = CUDNN_PACKAGE_MAP["cu129"]
@@ -1036,7 +1108,15 @@ def install_dependencies(
             print(f"[依赖安装] 使用源: {index_url}")
 
             result = subprocess.run(
-                [str(python_exe), "-m", "pip", "install", package_spec, "-i", index_url],
+                [
+                    str(python_exe),
+                    "-m",
+                    "pip",
+                    "install",
+                    package_spec,
+                    "-i",
+                    index_url,
+                ],
                 capture_output=True,
                 text=True,
                 timeout=600,  # PaddlePaddle安装可能需要较长时间
@@ -1045,7 +1125,9 @@ def install_dependencies(
             if result.returncode != 0:
                 error_msg = result.stderr or result.stdout or "未知错误"
                 # 检查是否是网络问题，尝试备用方案
-                if "Could not find a version" in str(error_msg) or "No matching distribution" in str(error_msg):
+                if "Could not find a version" in str(
+                    error_msg
+                ) or "No matching distribution" in str(error_msg):
                     print(f"[依赖安装] {name} 安装失败，尝试使用官方PyPI源...")
                     result = subprocess.run(
                         [str(python_exe), "-m", "pip", "install", package_spec],
@@ -1114,14 +1196,18 @@ def setup_environment(project_root: Path) -> tuple[bool, str]:
     has_gpu, cuda_version = detect_gpu()
 
     # 4. 安装依赖
-    success, msg = install_dependencies(project_root, network_type, has_gpu, cuda_version)
+    success, msg = install_dependencies(
+        project_root, network_type, has_gpu, cuda_version
+    )
     if not success:
         return False, f"安装依赖失败:\n{msg}"
 
     return True, "环境配置完成！"
 
 
-def ensure_environment(project_root: Path, ask_user: bool = False) -> tuple[bool, str, bool]:
+def ensure_environment(
+    project_root: Path, ask_user: bool = False
+) -> tuple[bool, str, bool]:
     """
     确保环境就绪 - 统一的环境检查和安装入口
 
@@ -1142,7 +1228,9 @@ def ensure_environment(project_root: Path, ask_user: bool = False) -> tuple[bool
 
     # 情况1: 使用嵌入式Python运行
     current_python = Path(sys.executable).resolve()
-    is_embedded = embedded_python.exists() and current_python == embedded_python.resolve()
+    is_embedded = (
+        embedded_python.exists() and current_python == embedded_python.resolve()
+    )
 
     if is_embedded:
         print("[VibeOCR] 使用嵌入式Python环境")
@@ -1161,7 +1249,9 @@ def ensure_environment(project_root: Path, ask_user: bool = False) -> tuple[bool
         network_type = detect_network_source()
         has_gpu, cuda_version = detect_gpu()
 
-        success, msg = install_dependencies(project_root, network_type, has_gpu, cuda_version)
+        success, msg = install_dependencies(
+            project_root, network_type, has_gpu, cuda_version
+        )
         if not success:
             return False, f"依赖安装失败: {msg}", False
 
@@ -1194,7 +1284,9 @@ def ensure_environment(project_root: Path, ask_user: bool = False) -> tuple[bool
             network_type = detect_network_source()
             has_gpu, cuda_version = detect_gpu()
 
-            success, msg = install_dependencies(project_root, network_type, has_gpu, cuda_version)
+            success, msg = install_dependencies(
+                project_root, network_type, has_gpu, cuda_version
+            )
             if not success:
                 return False, f"依赖安装失败: {msg}", False
 

@@ -3,9 +3,9 @@
 支持 NVIDIA GPU（通过 pynvml）和通用 GPU（通过 paddle.device）
 """
 
+import contextlib
 import logging
 from dataclasses import dataclass
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -13,9 +13,10 @@ logger = logging.getLogger(__name__)
 @dataclass
 class GPUMemoryInfo:
     """GPU 显存信息"""
+
     total: int  # 总显存 (MB)
-    free: int   # 空闲显存 (MB)
-    used: int   # 已用显存 (MB)
+    free: int  # 空闲显存 (MB)
+    used: int  # 已用显存 (MB)
     available: bool  # 是否可用
 
 
@@ -39,16 +40,18 @@ class GPUMemoryMonitor:
         # 尝试初始化 pynvml
         try:
             import pynvml
+
             pynvml.nvmlInit()
             self._pynvml_available = True
             self._pynvml = pynvml
-            logger.info(f"pynvml 初始化成功，将使用 NVML 监控显存")
+            logger.info("pynvml 初始化成功，将使用 NVML 监控显存")
         except Exception as e:
             logger.debug(f"pynvml 不可用: {e}")
 
         # 检查 paddle 是否可用
         try:
             import paddle
+
             if paddle.is_compiled_with_cuda():
                 self._paddle_available = True
                 logger.info("Paddle CUDA 可用，可作为显存监控备选方案")
@@ -70,12 +73,7 @@ class GPUMemoryMonitor:
             return self._get_status_paddle()
 
         # 都不可用，返回默认值
-        return GPUMemoryInfo(
-            total=0,
-            free=0,
-            used=0,
-            available=False
-        )
+        return GPUMemoryInfo(total=0, free=0, used=0, available=False)
 
     def _get_status_pynvml(self) -> GPUMemoryInfo:
         """使用 pynvml 获取显存状态"""
@@ -88,10 +86,7 @@ class GPUMemoryMonitor:
             used_mb = mem_info.used // (1024 * 1024)
 
             return GPUMemoryInfo(
-                total=total_mb,
-                free=free_mb,
-                used=used_mb,
-                available=True
+                total=total_mb, free=free_mb, used=used_mb, available=True
             )
         except Exception as e:
             logger.warning(f"pynvml 获取显存失败: {e}")
@@ -114,16 +109,14 @@ class GPUMemoryMonitor:
                 total=estimated_total,
                 free=max(0, estimated_total - allocated_mb),
                 used=allocated_mb,
-                available=True
+                available=True,
             )
         except Exception as e:
             logger.warning(f"paddle 获取显存失败: {e}")
             return GPUMemoryInfo(total=0, free=0, used=0, available=False)
 
     def estimate_batch_size(
-        self,
-        avg_image_pixels: int,
-        safety_factor: float = 0.7
+        self, avg_image_pixels: int, safety_factor: float = 0.7
     ) -> int:
         """根据当前显存估算安全的 batch_size
 
@@ -159,10 +152,8 @@ class GPUMemoryMonitor:
     def close(self):
         """清理资源"""
         if self._pynvml_available:
-            try:
+            with contextlib.suppress(Exception):
                 self._pynvml.nvmlShutdown()
-            except Exception:
-                pass
 
     def __enter__(self):
         return self

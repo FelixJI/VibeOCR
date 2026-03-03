@@ -2,12 +2,13 @@
 """LLM 配置数据模型"""
 
 from dataclasses import dataclass, field
-from typing import Dict, Any, Literal
-from enum import Enum
+from enum import StrEnum
+from typing import Any
 
 
-class APIType(str, Enum):
+class APIType(StrEnum):
     """API 类型枚举"""
+
     OPENAI = "openai"
     QIANFAN = "qianfan"
 
@@ -43,7 +44,7 @@ class LLMConfig:
             return False
         return bool(self.service_url and self.model_name)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """序列化为字典"""
         return {
             "enabled": self.enabled,
@@ -55,7 +56,7 @@ class LLMConfig:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "LLMConfig":
+    def from_dict(cls, data: dict[str, Any]) -> "LLMConfig":
         """从字典创建实例"""
         return cls(
             enabled=data.get("enabled", False),

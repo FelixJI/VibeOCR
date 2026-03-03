@@ -1,19 +1,19 @@
 """批量请求数据模型"""
 
+import time
+import uuid
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Optional
-import uuid
-import time
 
 
 class BatchRequestStatus(Enum):
     """批量请求状态"""
-    PENDING = "pending"       # 等待处理
-    PROCESSING = "processing" # 处理中
-    COMPLETED = "completed"   # 已完成
-    FAILED = "failed"         # 失败
-    CANCELLED = "cancelled"   # 已取消
+
+    PENDING = "pending"  # 等待处理
+    PROCESSING = "processing"  # 处理中
+    COMPLETED = "completed"  # 已完成
+    FAILED = "failed"  # 失败
+    CANCELLED = "cancelled"  # 已取消
 
 
 @dataclass
@@ -22,6 +22,7 @@ class BatchRequest:
 
     代表一个待处理的图片识别请求。
     """
+
     # 请求标识
     request_id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
 
@@ -39,13 +40,13 @@ class BatchRequest:
     status: BatchRequestStatus = BatchRequestStatus.PENDING
 
     # 结果
-    result: Optional[object] = None
+    result: object | None = None
     error_message: str = ""
 
     # 时间戳
     created_at: float = field(default_factory=time.time)
-    started_at: Optional[float] = None
-    completed_at: Optional[float] = None
+    started_at: float | None = None
+    completed_at: float | None = None
 
     def mark_processing(self):
         """标记为处理中"""
@@ -70,7 +71,7 @@ class BatchRequest:
         self.completed_at = time.time()
 
     @property
-    def elapsed_time(self) -> Optional[float]:
+    def elapsed_time(self) -> float | None:
         """已用时间（秒）"""
         if self.started_at is None:
             return None
@@ -93,51 +94,53 @@ class PreprocessOptions:
 
     对应 PP-StructureV3 和 PaddleOCR-VL 的预处理参数。
     """
+
     # 通用预处理选项
-    use_doc_orientation_classify: bool = True   # 文档方向分类
-    use_doc_unwarping: bool = True              # 文档扭曲矫正
-    use_textline_orientation: bool = False      # 文本行方向分类
+    use_doc_orientation_classify: bool = True  # 文档方向分类
+    use_doc_unwarping: bool = True  # 文档扭曲矫正
+    use_textline_orientation: bool = False  # 文本行方向分类
 
     # 管道类型
-    pipeline: str = "PP-StructureV3"            # 使用的管道类型
+    pipeline: str = "PP-StructureV3"  # 使用的管道类型
 
     # PaddleOCR-VL 特有选项
-    vl_use_layout_detection: bool = True        # 启用版面区域检测排序
-    vl_format_block_content: bool = False       # 将 block_content 格式化为 Markdown
-    vl_use_seal_recognition: bool = False       # 启用印章识别（v1.5 新增）
-    vl_use_ocr_for_image_block: bool = False    # 对图片中的文字进行识别
+    vl_use_layout_detection: bool = True  # 启用版面区域检测排序
+    vl_format_block_content: bool = False  # 将 block_content 格式化为 Markdown
+    vl_use_seal_recognition: bool = False  # 启用印章识别（v1.5 新增）
+    vl_use_ocr_for_image_block: bool = False  # 对图片中的文字进行识别
 
     def to_dict(self) -> dict:
         """转换为字典"""
         return {
-            'use_doc_orientation_classify': self.use_doc_orientation_classify,
-            'use_doc_unwarping': self.use_doc_unwarping,
-            'use_textline_orientation': self.use_textline_orientation,
-            'pipeline': self.pipeline,
-            'vl_use_layout_detection': self.vl_use_layout_detection,
-            'vl_format_block_content': self.vl_format_block_content,
-            'vl_use_seal_recognition': self.vl_use_seal_recognition,
-            'vl_use_ocr_for_image_block': self.vl_use_ocr_for_image_block,
+            "use_doc_orientation_classify": self.use_doc_orientation_classify,
+            "use_doc_unwarping": self.use_doc_unwarping,
+            "use_textline_orientation": self.use_textline_orientation,
+            "pipeline": self.pipeline,
+            "vl_use_layout_detection": self.vl_use_layout_detection,
+            "vl_format_block_content": self.vl_format_block_content,
+            "vl_use_seal_recognition": self.vl_use_seal_recognition,
+            "vl_use_ocr_for_image_block": self.vl_use_ocr_for_image_block,
         }
 
     @classmethod
     def from_dict(cls, data: dict) -> "PreprocessOptions":
         """从字典创建"""
         return cls(
-            use_doc_orientation_classify=data.get('use_doc_orientation_classify', True),
-            use_doc_unwarping=data.get('use_doc_unwarping', True),
-            use_textline_orientation=data.get('use_textline_orientation', False),
-            pipeline=data.get('pipeline', 'PP-StructureV3'),
-            vl_use_layout_detection=data.get('vl_use_layout_detection', True),
-            vl_format_block_content=data.get('vl_format_block_content', False),
-            vl_use_seal_recognition=data.get('vl_use_seal_recognition', False),
-            vl_use_ocr_for_image_block=data.get('vl_use_ocr_for_image_block', False),
+            use_doc_orientation_classify=data.get("use_doc_orientation_classify", True),
+            use_doc_unwarping=data.get("use_doc_unwarping", True),
+            use_textline_orientation=data.get("use_textline_orientation", False),
+            pipeline=data.get("pipeline", "PP-StructureV3"),
+            vl_use_layout_detection=data.get("vl_use_layout_detection", True),
+            vl_format_block_content=data.get("vl_format_block_content", False),
+            vl_use_seal_recognition=data.get("vl_use_seal_recognition", False),
+            vl_use_ocr_for_image_block=data.get("vl_use_ocr_for_image_block", False),
         )
 
 
 @dataclass
 class BatchProgress:
     """批量处理进度"""
+
     total: int = 0
     completed: int = 0
     failed: int = 0

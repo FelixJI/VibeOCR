@@ -6,9 +6,8 @@
 import json
 import logging
 import os
-from pathlib import Path
-from typing import Optional
 from datetime import datetime
+from pathlib import Path
 
 _logger = logging.getLogger(__name__)
 
@@ -53,7 +52,7 @@ def get_paddlex_home() -> Path:
     return DEFAULT_PADDLEX_HOME
 
 
-def get_model_cache_dir(project_root: Optional[Path] = None) -> Path:
+def get_model_cache_dir(project_root: Path | None = None) -> Path:
     """获取模型缓存目录路径
 
     Args:
@@ -67,7 +66,7 @@ def get_model_cache_dir(project_root: Optional[Path] = None) -> Path:
     return project_root / ".vibeocr"
 
 
-def get_model_cache_path(project_root: Optional[Path] = None) -> Path:
+def get_model_cache_path(project_root: Path | None = None) -> Path:
     """获取模型缓存文件路径
 
     Args:
@@ -173,7 +172,7 @@ def _check_pipeline_models_ready(pipeline_name: str) -> tuple[bool, list[str]]:
     return len(missing) == 0, missing
 
 
-def check_models_cached(pipeline_names: Optional[list[str]] = None) -> dict[str, bool]:
+def check_models_cached(pipeline_names: list[str] | None = None) -> dict[str, bool]:
     """检查模型是否已缓存
 
     Args:
@@ -193,7 +192,7 @@ def check_models_cached(pipeline_names: Optional[list[str]] = None) -> dict[str,
     return result
 
 
-def load_model_cache(project_root: Optional[Path] = None) -> Optional[dict]:
+def load_model_cache(project_root: Path | None = None) -> dict | None:
     """加载模型缓存
 
     Args:
@@ -207,7 +206,7 @@ def load_model_cache(project_root: Optional[Path] = None) -> Optional[dict]:
         if not cache_file.exists():
             return None
 
-        with open(cache_file, "r", encoding="utf-8") as f:
+        with open(cache_file, encoding="utf-8") as f:
             cache = json.load(f)
 
         # 验证缓存版本
@@ -225,8 +224,8 @@ def load_model_cache(project_root: Optional[Path] = None) -> Optional[dict]:
 
 
 def save_model_cache(
-    project_root: Optional[Path] = None,
-    pipeline_status: Optional[dict[str, bool]] = None,
+    project_root: Path | None = None,
+    pipeline_status: dict[str, bool] | None = None,
 ) -> bool:
     """保存模型缓存
 
@@ -263,7 +262,7 @@ def save_model_cache(
         return False
 
 
-def is_pipeline_cached(pipeline_name: str, project_root: Optional[Path] = None) -> bool:
+def is_pipeline_cached(pipeline_name: str, project_root: Path | None = None) -> bool:
     """检查指定管道是否已缓存
 
     首先检查缓存文件，如果缓存不存在或过期则进行实际检查。
@@ -324,7 +323,7 @@ def get_pipeline_model_info(pipeline_name: str) -> dict:
     }
 
 
-def invalidate_cache(project_root: Optional[Path] = None) -> bool:
+def invalidate_cache(project_root: Path | None = None) -> bool:
     """使缓存失效并删除缓存文件
 
     Args:
@@ -344,7 +343,7 @@ def invalidate_cache(project_root: Optional[Path] = None) -> bool:
         return False
 
 
-def update_cache(project_root: Optional[Path] = None) -> dict[str, bool]:
+def update_cache(project_root: Path | None = None) -> dict[str, bool]:
     """强制更新模型缓存
 
     Args:
@@ -359,7 +358,7 @@ def update_cache(project_root: Optional[Path] = None) -> dict[str, bool]:
 
 
 # 便捷函数
-def quick_check_all_models(project_root: Optional[Path] = None) -> dict[str, bool]:
+def quick_check_all_models(project_root: Path | None = None) -> dict[str, bool]:
     """快速检查所有模型状态
 
     如果有缓存则使用缓存，否则进行实际检查。

@@ -1,6 +1,6 @@
 """Views module"""
 
-from .main_window import MainWindow
 from .doc_understanding_tab import DocUnderstandingTab
+from .main_window import MainWindow
 
-__all__ = ["MainWindow", "DocUnderstandingTab"]
+__all__ = ["DocUnderstandingTab", "MainWindow"]

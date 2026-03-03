@@ -5,7 +5,7 @@
 
 import logging
 from abc import abstractmethod
-from typing import Any, Dict, Generic, Optional, TypeVar
+from typing import Any, Generic, TypeVar
 
 from PySide6.QtCore import QThread, Signal
 
@@ -48,7 +48,7 @@ class BaseWorker(QThread, Generic[T]):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._cancelled = False
-        self._results: Dict[str, Any] = {}
+        self._results: dict[str, Any] = {}
 
     def run(self):
         """执行 Worker 任务
@@ -170,11 +170,12 @@ class BatchWorker(BaseWorker[T]):
         """获取文件列表"""
         return self._files
 
-    def _get_item_id(self, item: Dict, index: int) -> str:
+    def _get_item_id(self, item: dict, index: int) -> str:
         """获取文件路径作为标识"""
         return item.get("path", f"file_{index}")
 
-    def _get_file_name(self, item: Dict) -> str:
+    def _get_file_name(self, item: dict) -> str:
         """获取文件名"""
         from pathlib import Path
+
         return item.get("name", Path(item.get("path", "")).name)

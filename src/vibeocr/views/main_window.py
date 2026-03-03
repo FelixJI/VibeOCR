@@ -5,43 +5,42 @@ from __future__ import annotations
 import io
 import logging
 from pathlib import Path
-from typing import Optional, TYPE_CHECKING
 
 from PIL import Image
-from PySide6.QtWidgets import (
-    QMainWindow,
-    QFileDialog,
-    QMessageBox,
-    QApplication,
-    QMenuBar,
-    QStatusBar,
-    QWidget,
-    QVBoxLayout,
-    QLabel,
-)
 from PySide6.QtCore import (
-    Slot, QThreadPool, QRunnable, Signal, QObject, QTimer, QBuffer
+    QBuffer,
+    QThreadPool,
+    QTimer,
+    Signal,
+    Slot,
 )
-from PySide6.QtGui import QPixmap, QAction
+from PySide6.QtGui import QAction, QPixmap
 from PySide6.QtUiTools import QUiLoader
+from PySide6.QtWidgets import (
+    QApplication,
+    QFileDialog,
+    QMainWindow,
+    QMessageBox,
+    QStatusBar,
+    QVBoxLayout,
+    QWidget,
+)
 
+from vibeocr import env_manager
+from vibeocr.core.constants import WindowsColors
+from vibeocr.machine_cache import is_cache_valid
+from vibeocr.managers import DependencyManager, SubprocessManager
+from vibeocr.models.ocr_result import OCRResult
+from vibeocr.services.log_service import setup_logging
+from vibeocr.utils.qt_async import run_coroutine
+from vibeocr.views.batch_recognition_tab import BatchRecognitionTab
+from vibeocr.views.clipboard_controller import ClipboardController
+from vibeocr.views.settings_page_controller import SettingsPageController
+from vibeocr.widgets.console_widget import ConsoleWidget
 from vibeocr.widgets.preview_widget import PreviewWidget
 from vibeocr.widgets.screenshot_widget import ScreenshotWidget
-from vibeocr.widgets.console_widget import ConsoleWidget
-from vibeocr.services.log_service import setup_logging
-from vibeocr.views.batch_recognition_tab import BatchRecognitionTab
-from vibeocr.models.ocr_result import OCRResult
-from vibeocr import env_manager
-from vibeocr.machine_cache import is_cache_valid
-from vibeocr.utils.qt_async import run_coroutine
-from vibeocr.managers import DependencyManager, SubprocessManager
-from vibeocr.core.constants import WindowsColors
-from vibeocr.views.settings_page_controller import SettingsPageController
-from vibeocr.views.clipboard_controller import ClipboardController
 
 # 延迟导入: OCR 服务模块导入很慢（~33s），延迟到首次使用时导入
-if TYPE_CHECKING:
-    from vibeocr.services.ocr_service import OCRService, OCRPreset, OCRPipeline, OCROptions
 
 
 class MainWindow(QMainWindow):
@@ -63,7 +62,9 @@ class MainWindow(QMainWindow):
 
         # 依赖管理器
         self._dependency_manager = DependencyManager(self._project_root, self)
-        self._dependency_manager.check_completed.connect(self._on_dependency_check_finished)
+        self._dependency_manager.check_completed.connect(
+            self._on_dependency_check_finished
+        )
 
         # 子进程管理器
         self._subprocess_manager = SubprocessManager(self._project_root, self)
@@ -86,6 +87,7 @@ class MainWindow(QMainWindow):
 
     def _setup_ocr_status_callback(self) -> None:
         """设置 OCR 状态回调，用于在状态栏显示模型下载进度"""
+
         def on_ocr_status(stage: str, message: str) -> None:
             """OCR 状态回调（可能从后台线程调用）"""
             # 使用信号确保在主线程中更新 UI
@@ -95,6 +97,7 @@ class MainWindow(QMainWindow):
         self._status_update_signal.connect(self._on_status_update)
         # 延迟导入: OCR 服务模块
         from vibeocr.services.ocr_service import OCRService
+
         OCRService.set_status_callback(on_ocr_status)
 
     @Slot(str)
@@ -161,10 +164,18 @@ class MainWindow(QMainWindow):
         # 管道按钮映射
         self._pipeline_buttons = {
             OCRPipeline.OCR: self._ui.findChild(QWidget, "btnPipelineOCR"),
-            OCRPipeline.TABLE_RECOGNITION: self._ui.findChild(QWidget, "btnPipelineTable"),
-            OCRPipeline.FORMULA_RECOGNITION: self._ui.findChild(QWidget, "btnPipelineFormula"),
-            OCRPipeline.PP_STRUCTURE_V3: self._ui.findChild(QWidget, "btnPipelineStructure"),
-            OCRPipeline.PADDLEOCR_VL: self._ui.findChild(QWidget, "btnPipelinePaddleOCRVL"),
+            OCRPipeline.TABLE_RECOGNITION: self._ui.findChild(
+                QWidget, "btnPipelineTable"
+            ),
+            OCRPipeline.FORMULA_RECOGNITION: self._ui.findChild(
+                QWidget, "btnPipelineFormula"
+            ),
+            OCRPipeline.PP_STRUCTURE_V3: self._ui.findChild(
+                QWidget, "btnPipelineStructure"
+            ),
+            OCRPipeline.PADDLEOCR_VL: self._ui.findChild(
+                QWidget, "btnPipelinePaddleOCRVL"
+            ),
         }
 
         # 预处理按钮
@@ -190,7 +201,9 @@ class MainWindow(QMainWindow):
         for pipeline, btn in self._pipeline_buttons.items():
             if btn:
                 btn.setStyleSheet(button_style)
-                btn.clicked.connect(lambda checked, p=pipeline: self._on_pipeline_clicked(p))
+                btn.clicked.connect(
+                    lambda checked, p=pipeline: self._on_pipeline_clicked(p)
+                )
 
         # 预处理按钮样式
         preprocess_style = f"""
@@ -210,7 +223,12 @@ class MainWindow(QMainWindow):
                 border-color: {WindowsColors.ACCENT};
             }}
         """
-        for btn in [self._btn_orient, self._btn_unwarp, self._btn_textline, self._btn_layout]:
+        for btn in [
+            self._btn_orient,
+            self._btn_unwarp,
+            self._btn_textline,
+            self._btn_layout,
+        ]:
             if btn:
                 btn.setStyleSheet(preprocess_style)
 
@@ -232,7 +250,12 @@ class MainWindow(QMainWindow):
                 border-color: {WindowsColors.SUCCESS};
             }}
         """
-        for btn in [self._btn_sub_table, self._btn_sub_formula, self._btn_sub_seal, self._btn_sub_chart]:
+        for btn in [
+            self._btn_sub_table,
+            self._btn_sub_formula,
+            self._btn_sub_seal,
+            self._btn_sub_chart,
+        ]:
             if btn:
                 btn.setStyleSheet(sub_button_style)
 
@@ -276,18 +299,16 @@ class MainWindow(QMainWindow):
             tab_widget.addTab(self._doc_understanding_tab, "文档理解")
             logging.debug("文档理解标签页已添加")
 
-
-        """管道按钮点击时更新 UI"""
-        self._update_button_visibility(pipeline)
-
     def _update_button_visibility(self, pipeline) -> None:
         """根据管道类型更新按钮可见性"""
         # 使用管道的 value 属性进行比较（避免导入 OCRPipeline）
-        pipeline_value = pipeline.value if hasattr(pipeline, 'value') else pipeline
+        pipeline_value = pipeline.value if hasattr(pipeline, "value") else pipeline
 
         # 子产线选项：版面解析和 PaddleOCR-VL 时显示
         if self._sub_pipeline_widget:
-            self._sub_pipeline_widget.setVisible(pipeline_value in ["PP-StructureV3", "PaddleOCR-VL"])
+            self._sub_pipeline_widget.setVisible(
+                pipeline_value in ["PP-StructureV3", "PaddleOCR-VL"]
+            )
 
         # 文本行方向按钮：仅通用 OCR 时显示
         if self._btn_textline:
@@ -295,11 +316,24 @@ class MainWindow(QMainWindow):
 
         # 版面检测按钮：仅表格和公式管道时显示
         if self._btn_layout:
-            self._btn_layout.setVisible(pipeline_value in ["table_recognition", "formula_recognition"])
+            self._btn_layout.setVisible(
+                pipeline_value in ["table_recognition", "formula_recognition"]
+            )
 
         # 版面解析子产线按钮：仅版面解析时显示
-        pp_structure_buttons = [self._btn_sub_table, self._btn_sub_formula, self._btn_sub_seal, self._btn_sub_chart]
-        vl_buttons = [self._btn_vl_layout, self._btn_vl_chart, self._btn_vl_seal, self._btn_vl_format, self._btn_vl_ocr_image]
+        pp_structure_buttons = [
+            self._btn_sub_table,
+            self._btn_sub_formula,
+            self._btn_sub_seal,
+            self._btn_sub_chart,
+        ]
+        vl_buttons = [
+            self._btn_vl_layout,
+            self._btn_vl_chart,
+            self._btn_vl_seal,
+            self._btn_vl_format,
+            self._btn_vl_ocr_image,
+        ]
 
         for btn in pp_structure_buttons:
             if btn:
@@ -324,6 +358,7 @@ class MainWindow(QMainWindow):
         """获取当前选中的管道"""
         # 延迟导入: OCRPipeline 枚举
         from vibeocr.services.ocr_service import OCRPipeline
+
         for pipeline, btn in self._pipeline_buttons.items():
             if btn and btn.isChecked():
                 return pipeline
@@ -335,7 +370,9 @@ class MainWindow(QMainWindow):
         self._console = ConsoleWidget(self)
 
         # 连接低置信度计数变化信号
-        self._console.low_confidence_count_changed.connect(self._on_low_confidence_changed)
+        self._console.low_confidence_count_changed.connect(
+            self._on_low_confidence_changed
+        )
 
         # 将控制台添加到 UI 中的容器
         container = self._ui.findChild(QWidget, "consoleContainer")
@@ -434,7 +471,9 @@ class MainWindow(QMainWindow):
             copy_button=self._ui.btnCopyRich,
         )
         self._ui.btnCopyRich.clicked.connect(self._clipboard_controller.copy_rich)
-        self._ui.btnCopyMarkdown.clicked.connect(self._clipboard_controller.copy_markdown)
+        self._ui.btnCopyMarkdown.clicked.connect(
+            self._clipboard_controller.copy_markdown
+        )
         self._ui.btnCopyPlain.clicked.connect(self._clipboard_controller.copy_plain)
 
         # 设置页面控制器
@@ -478,7 +517,7 @@ class MainWindow(QMainWindow):
             self._ocr_ready = True
             self._statusbar.showMessage("OCR功能已就绪")
             logging.info("OCR功能已就绪")
-            
+
             # 启动子进程 Worker（依赖检测完成后立即启动）
             self._start_subprocess_worker()
         else:
@@ -504,7 +543,7 @@ class MainWindow(QMainWindow):
 
         # 使用 SubprocessManager 启动
         self._subprocess_manager.start(use_gpu=True, start_timeout=120.0)
-    
+
     @Slot(bool)
     def _on_subprocess_worker_ready(self, success: bool) -> None:
         """子进程 Worker 就绪回调"""
@@ -516,17 +555,17 @@ class MainWindow(QMainWindow):
             service = self._subprocess_manager.service
 
             # 设置 OCR 服务到批量识别标签页
-            if hasattr(self, '_batch_tab') and self._batch_tab:
+            if hasattr(self, "_batch_tab") and self._batch_tab:
                 self._batch_tab.set_ocr_service(service)
                 logging.info("[MainWindow] 批量识别标签页已连接 OCR 服务")
 
             # 设置 OCR 服务到信息抽取标签页
-            if hasattr(self, '_extraction_tab') and self._extraction_tab:
+            if hasattr(self, "_extraction_tab") and self._extraction_tab:
                 self._extraction_tab.set_ocr_service(service)
                 logging.info("[MainWindow] 信息抽取标签页已连接 OCR 服务")
 
             # 设置 OCR 服务到文档理解标签页
-            if hasattr(self, '_doc_understanding_tab') and self._doc_understanding_tab:
+            if hasattr(self, "_doc_understanding_tab") and self._doc_understanding_tab:
                 self._doc_understanding_tab.set_ocr_service(service)
                 logging.info("[MainWindow] 文档理解标签页已连接 OCR 服务")
 
@@ -544,14 +583,14 @@ class MainWindow(QMainWindow):
                 "1. 首次启动需要下载模型（请检查网络）\n"
                 "2. GPU 驱动或 CUDA 版本不兼容\n"
                 "3. 系统内存不足\n\n"
-                "请查看控制台日志了解详情。"
+                "请查看控制台日志了解详情。",
             )
 
     @Slot(str, int)
     def _on_subprocess_progress(self, stage: str, percent: int) -> None:
         """子进程启动进度回调"""
         self._statusbar.showMessage(f"正在启动 OCR 服务: {stage} ({percent}%)")
-    
+
     def _start_subprocess_preload(self) -> None:
         """在子进程中预加载用户配置的管道"""
         if not self._subprocess_manager.is_ready:
@@ -559,6 +598,7 @@ class MainWindow(QMainWindow):
 
         # 获取用户配置的预加载管道
         from vibeocr.machine_cache import get_preload_pipelines
+
         pipelines = get_preload_pipelines(self._project_root)
 
         if not pipelines:
@@ -569,8 +609,6 @@ class MainWindow(QMainWindow):
 
         # 使用 SubprocessManager 预加载
         self._subprocess_manager.preload_pipelines(pipelines)
-
-
 
     def _show_install_dialog(self, missing: list) -> None:
         """显示安装提示对话框"""
@@ -591,9 +629,7 @@ class MainWindow(QMainWindow):
             self._start_install()
         else:
             QMessageBox.information(
-                self,
-                "提示",
-                "OCR功能将不可用。\n您可以稍后通过菜单重新安装。"
+                self, "提示", "OCR功能将不可用。\n您可以稍后通过菜单重新安装。"
             )
 
     def _start_install(self) -> None:
@@ -610,7 +646,9 @@ class MainWindow(QMainWindow):
         if result == 1:  # 安装成功
             self._ocr_ready = True
             self._statusbar.showMessage("OCR依赖安装成功")
-            QMessageBox.information(self, "安装成功", "OCR依赖安装成功，现在可以使用OCR功能。")
+            QMessageBox.information(
+                self, "安装成功", "OCR依赖安装成功，现在可以使用OCR功能。"
+            )
         else:
             self._statusbar.showMessage("OCR依赖安装失败")
 
@@ -644,8 +682,7 @@ class MainWindow(QMainWindow):
             QMessageBox.information(
                 self,
                 "正在检测依赖",
-                "OCR依赖检测中，请稍候...\n\n"
-                "检测完成后才能使用截图识别功能。"
+                "OCR依赖检测中，请稍候...\n\n" "检测完成后才能使用截图识别功能。",
             )
             return False
 
@@ -697,8 +734,8 @@ class MainWindow(QMainWindow):
         Mode switching controlled by environment variable VIBEOCR_USE_SUBPROCESS.
         """
         # Lazy import: OCR related types
-        from vibeocr.services.ocr_service import OCROptions, OCRPipeline
         from vibeocr.services import USE_SUBPROCESS
+        from vibeocr.services.ocr_service import OCROptions, OCRPipeline
 
         logging.info("Starting OCR recognition")
         self._ui.textResult.clear()
@@ -719,16 +756,20 @@ class MainWindow(QMainWindow):
 
         # 获取子产线选项（仅版面解析管道有效）
         use_table = self._btn_sub_table.isChecked() if self._btn_sub_table else True
-        use_formula = self._btn_sub_formula.isChecked() if self._btn_sub_formula else True
+        use_formula = (
+            self._btn_sub_formula.isChecked() if self._btn_sub_formula else True
+        )
         use_seal = self._btn_sub_seal.isChecked() if self._btn_sub_seal else False
         use_chart = self._btn_sub_chart.isChecked() if self._btn_sub_chart else False
 
         # 获取 PaddleOCR-VL 特有选项
         vl_use_layout = self._btn_vl_layout.isChecked() if self._btn_vl_layout else True
-        vl_use_chart = self._btn_vl_chart.isChecked() if self._btn_vl_chart else False
+        self._btn_vl_chart.isChecked() if self._btn_vl_chart else False
         vl_use_seal = self._btn_vl_seal.isChecked() if self._btn_vl_seal else False
         vl_format = self._btn_vl_format.isChecked() if self._btn_vl_format else False
-        vl_ocr_image = self._btn_vl_ocr_image.isChecked() if self._btn_vl_ocr_image else False
+        vl_ocr_image = (
+            self._btn_vl_ocr_image.isChecked() if self._btn_vl_ocr_image else False
+        )
 
         # 创建 OCR 选项
         options = OCROptions(
@@ -747,9 +788,13 @@ class MainWindow(QMainWindow):
             vl_format_block_content=vl_format,
         )
 
-        logging.info(f"OCR 管道: {pipeline.display_name}, 预处理: 方向={use_orient}, 去弯={use_unwarp}")
+        logging.info(
+            f"OCR 管道: {pipeline.display_name}, 预处理: 方向={use_orient}, 去弯={use_unwarp}"
+        )
         if pipeline == OCRPipeline.PP_STRUCTURE_V3:
-            logging.info(f"子产线: 表格={use_table}, 公式={use_formula}, 印章={use_seal}, 图表={use_chart}")
+            logging.info(
+                f"子产线: 表格={use_table}, 公式={use_formula}, 印章={use_seal}, 图表={use_chart}"
+            )
 
         # 将 QPixmap 转换为图像数据
         buffer = QBuffer()
@@ -767,10 +812,14 @@ class MainWindow(QMainWindow):
             try:
                 pil_image = Image.open(io.BytesIO(image_data))
                 import numpy as np
+
                 image_array = np.array(pil_image)
-                logging.info(f"[主线程OCR] 图像尺寸: {pil_image.size}, 数组形状: {image_array.shape}")
+                logging.info(
+                    f"[主线程OCR] 图像尺寸: {pil_image.size}, 数组形状: {image_array.shape}"
+                )
                 logging.info("[主线程OCR] 开始识别...")
                 from vibeocr.services import get_ocr_service
+
                 ocr_service = get_ocr_service()
                 result = ocr_service.recognize(image_array, options)
                 logging.info(f"[主线程OCR] 识别完成，{len(result.raw_text)} 字符")
@@ -799,7 +848,9 @@ class MainWindow(QMainWindow):
             logging.info("[异步OCR] 开始异步识别...")
             logging.info("[异步OCR] 调用 get_ocr_service()...")
             ocr_service = get_ocr_service()
-            logging.info(f"[异步OCR] get_ocr_service() 返回: {type(ocr_service).__name__}")
+            logging.info(
+                f"[异步OCR] get_ocr_service() 返回: {type(ocr_service).__name__}"
+            )
 
             # 再次检查关闭标志
             if self._closing:
@@ -808,7 +859,7 @@ class MainWindow(QMainWindow):
 
             # 检查服务是否就绪
             logging.info("[异步OCR] 检查服务是否就绪...")
-            if hasattr(ocr_service, 'is_ready'):
+            if hasattr(ocr_service, "is_ready"):
                 ready = ocr_service.is_ready()
                 logging.info(f"[异步OCR] 服务就绪状态: {ready}")
                 if not ready:
@@ -955,6 +1006,7 @@ class MainWindow(QMainWindow):
             if not USE_SUBPROCESS:
                 # 直接模式：清理管道缓存
                 from vibeocr.services.ocr_service import OCRService
+
                 OCRService._pipelines.clear()
                 logging.info("OCR 管道缓存已清理")
         except Exception as e:

@@ -6,12 +6,11 @@ import logging
 import os
 import sys
 import threading
-import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any, Optional, Callable, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from vibeocr.core.singleton_meta import SingletonMeta
 from vibeocr.models.ocr_result import OCRResult
@@ -33,7 +32,6 @@ os.environ.setdefault("FLAGS_use_mkldnn", "0")
 from vibeocr.model_cache_manager import (
     is_pipeline_cached,
     quick_check_all_models,
-    get_paddlex_home,
 )
 
 # 延迟导入: PaddleX 和模型源设置（这些是启动慢的主要原因）
@@ -129,20 +127,24 @@ class OCRService(metaclass=SingletonMeta):
     """OCR 识别服务 (使用 SingletonMeta 实现线程安全单例)"""
 
     _pipelines: dict[str, Any] = {}  # 管道缓存：{pipeline_name: pipeline_instance}
-    _device: Optional[str] = None
+    _device: str | None = None
     _lock = threading.Lock()
     _initialized = False
-    _status_callback: Optional[callable] = None  # 状态回调函数
+    _status_callback: callable | None = None  # 状态回调函数
     _source_configured = False  # 模型源是否已配置
 
     # 预加载相关状态
-    _preload_progress_callback: Optional[Callable[[str, int, int], None]] = None  # (pipeline_name, current, total)
+    _preload_progress_callback: Callable[[str, int, int], None] | None = (
+        None  # (pipeline_name, current, total)
+    )
     _preloaded_pipelines: set[str] = set()  # 已预加载的管道名称
     _is_preloading = False  # 是否正在预加载
-    _preload_lock = threading.Lock()  # 预加载专用锁，保护 _preloaded_pipelines 和 _is_preloading
+    _preload_lock = (
+        threading.Lock()
+    )  # 预加载专用锁，保护 _preloaded_pipelines 和 _is_preloading
 
     @classmethod
-    def set_status_callback(cls, callback: Optional[callable]) -> None:
+    def set_status_callback(cls, callback: callable | None) -> None:
         """设置状态回调函数
 
         Args:
@@ -165,6 +167,7 @@ class OCRService(metaclass=SingletonMeta):
         """确保模型下载源已配置（延迟调用）"""
         if not cls._source_configured:
             from vibeocr.env_manager import setup_paddlex_model_source
+
             setup_paddlex_model_source()
             cls._source_configured = True
 
@@ -209,7 +212,9 @@ class OCRService(metaclass=SingletonMeta):
             return {}
 
     @classmethod
-    def set_preload_progress_callback(cls, callback: Optional[Callable[[str, int, int], None]]) -> None:
+    def set_preload_progress_callback(
+        cls, callback: Callable[[str, int, int], None] | None
+    ) -> None:
         """设置预加载进度回调函数
 
         Args:
@@ -219,7 +224,7 @@ class OCRService(metaclass=SingletonMeta):
         cls._preload_progress_callback = callback
 
     @classmethod
-    def is_pipeline_preloaded(cls, pipeline: "OCRPipeline") -> bool:
+    def is_pipeline_preloaded(cls, pipeline: OCRPipeline) -> bool:
         """检查指定管道是否已预加载
 
         Args:
@@ -238,7 +243,7 @@ class OCRService(metaclass=SingletonMeta):
             return list(cls._preloaded_pipelines)
 
     @classmethod
-    def preload_pipeline(cls, pipeline: "OCRPipeline") -> bool:
+    def preload_pipeline(cls, pipeline: OCRPipeline) -> bool:
         """预加载单个管道（同步）
 
         Args:
@@ -248,7 +253,7 @@ class OCRService(metaclass=SingletonMeta):
             是否成功加载
         """
         pipeline_name = pipeline.value
-        
+
         # 检查是否已缓存（使用主锁保护 _pipelines）
         with cls._lock:
             if pipeline_name in cls._pipelines:
@@ -260,11 +265,11 @@ class OCRService(metaclass=SingletonMeta):
             _logger.info(f"[预加载] 开始加载管道: {pipeline.display_name}")
             instance = cls()
             instance.get_pipeline(pipeline)
-            
+
             # 更新预加载状态（使用预加载锁）
             with cls._preload_lock:
                 cls._preloaded_pipelines.add(pipeline_name)
-            
+
             _logger.info(f"[预加载] 管道加载完成: {pipeline.display_name}")
             return True
         except Exception as e:
@@ -274,8 +279,8 @@ class OCRService(metaclass=SingletonMeta):
     @classmethod
     def preload_pipelines_sequential(
         cls,
-        pipelines: list["OCRPipeline"],
-        progress_callback: Optional[Callable[[str, int, int], None]] = None
+        pipelines: list[OCRPipeline],
+        progress_callback: Callable[[str, int, int], None] | None = None,
     ) -> dict[str, bool]:
         """顺序预加载多个管道
 
@@ -292,7 +297,7 @@ class OCRService(metaclass=SingletonMeta):
                 _logger.warning("[预加载] 已有预加载任务在进行中")
                 return {}
             cls._is_preloading = True
-        
+
         results = {}
         total = len(pipelines)
 
@@ -313,7 +318,7 @@ class OCRService(metaclass=SingletonMeta):
             # 汇总结果
             success_count = sum(1 for v in results.values() if v)
             _logger.info(f"[预加载] 完成: {success_count}/{total} 个管道加载成功")
-            
+
         finally:
             # 确保重置状态
             with cls._preload_lock:
@@ -324,8 +329,8 @@ class OCRService(metaclass=SingletonMeta):
     @classmethod
     def warmup_with_test_image(
         cls,
-        pipeline: Optional["OCRPipeline"] = None,
-        progress_callback: Optional[Callable[[str, int], None]] = None
+        pipeline: OCRPipeline | None = None,
+        progress_callback: Callable[[str, int], None] | None = None,
     ) -> bool:
         """使用测试图片预热 OCR 服务
 
@@ -359,7 +364,7 @@ class OCRService(metaclass=SingletonMeta):
             # 创建选项并执行识别
             options = OCROptions(pipeline=pipeline)
             instance = cls()
-            result = instance.recognize(test_image, options)
+            instance.recognize(test_image, options)
 
             if progress_callback:
                 progress_callback("预热完成", 100)
@@ -374,8 +379,8 @@ class OCRService(metaclass=SingletonMeta):
     @classmethod
     def warmup_pipelines(
         cls,
-        pipelines: list["OCRPipeline"],
-        progress_callback: Optional[Callable[[str, int, int], None]] = None
+        pipelines: list[OCRPipeline],
+        progress_callback: Callable[[str, int, int], None] | None = None,
     ) -> dict[str, bool]:
         """使用测试图片预热多个管道
 
@@ -394,10 +399,12 @@ class OCRService(metaclass=SingletonMeta):
         for i, pipeline in enumerate(pipelines, 1):
             pipeline_name = pipeline.value
 
-            def make_progress(stage: str, percent: int):
+            def make_progress(
+                stage: str, percent: int, idx=i, name=pipeline_name, total_count=total
+            ):
                 if progress_callback:
-                    overall_percent = int(((i - 1) * 100 + percent) / total)
-                    progress_callback(pipeline_name, i, overall_percent)
+                    overall_percent = int(((idx - 1) * 100 + percent) / total_count)
+                    progress_callback(name, idx, overall_percent)
 
             _logger.info(f"[预热] ({i}/{total}) 预热 {pipeline.display_name}...")
             results[pipeline_name] = cls.warmup_with_test_image(pipeline, make_progress)
@@ -410,10 +417,10 @@ class OCRService(metaclass=SingletonMeta):
     @classmethod
     def preload_in_background(
         cls,
-        pipelines: list["OCRPipeline"],
+        pipelines: list[OCRPipeline],
         parallel: bool = True,
         max_workers: int = 2,
-        on_complete: Optional[Callable[[dict[str, bool]], None]] = None
+        on_complete: Callable[[dict[str, bool]], None] | None = None,
     ) -> threading.Thread:
         """在后台线程中预加载管道（非阻塞）
 
@@ -426,6 +433,7 @@ class OCRService(metaclass=SingletonMeta):
         Returns:
             后台线程对象
         """
+
         def _preload_task():
             try:
                 if parallel:
@@ -440,7 +448,9 @@ class OCRService(metaclass=SingletonMeta):
                 if on_complete:
                     on_complete({})
 
-        thread = threading.Thread(target=_preload_task, daemon=True, name="PipelinePreload")
+        thread = threading.Thread(
+            target=_preload_task, daemon=True, name="PipelinePreload"
+        )
         thread.start()
         return thread
 
@@ -465,8 +475,8 @@ class OCRService(metaclass=SingletonMeta):
                 try:
                     # 仅在尚未确认 GPU 工作的情况下运行检查
                     if "gpu" not in current_device:
-                         paddle.utils.run_check()
-                         _logger.info("Paddle run_check 通过")
+                        paddle.utils.run_check()
+                        _logger.info("Paddle run_check 通过")
                 except Exception as e:
                     _logger.warning(f"Paddle run_check 失败: {e}")
 
@@ -477,12 +487,12 @@ class OCRService(metaclass=SingletonMeta):
         """尝试在 Windows 上将 CUDA DLL 路径添加到当前进程环境（不影响系统环境）"""
         # Python 环境中 CUDA DLL 的常见位置
         possible_paths = []
-        
+
         # 1. 当前环境的 Library/bin (conda 风格)
         if sys.prefix:
             possible_paths.append(Path(sys.prefix) / "Library" / "bin")
             possible_paths.append(Path(sys.prefix) / "bin")
-        
+
         # 2. Site-packages/paddle/libs (如果存在)
         for path in sys.path:
             p = Path(path)
@@ -495,7 +505,7 @@ class OCRService(metaclass=SingletonMeta):
         # 3. 如果存在且尚未在 PATH 中，则添加到当前进程的 PATH
         current_path = os.environ.get("PATH", "")
         paths_to_add = []
-        
+
         for p in possible_paths:
             if p.exists():
                 path_str = str(p)
@@ -510,18 +520,19 @@ class OCRService(metaclass=SingletonMeta):
                 # 同时也更新 PATH，以兼容旧版或依赖 PATH 查找的库
                 if path_str not in current_path:
                     paths_to_add.append(path_str)
-        
+
         if paths_to_add:
             _logger.info(f"临时添加 CUDA 路径到当前进程环境: {paths_to_add}")
-            os.environ["PATH"] = os.pathsep.join(paths_to_add + [current_path])
+            os.environ["PATH"] = os.pathsep.join([*paths_to_add, current_path])
 
             # 更新路径后重新检查设备（可能需要重启或重新加载库，但值得一试）
             try:
                 import paddle
+
                 if "gpu" not in paddle.device.get_device():
                     # 如果可能，强制重新检查？ paddle 通常会缓存设备信息。
                     pass
-            except:
+            except Exception:
                 pass
 
     def _create_pipeline(self, pipeline_name: str, device: str) -> Any:
@@ -544,7 +555,10 @@ class OCRService(metaclass=SingletonMeta):
 
         if not models_cached:
             # 模型未缓存，需要下载，显示初始化提示
-            self._notify_status("模型初始化", f"正在初始化 {display_name} 管道（首次使用需要下载模型）...")
+            self._notify_status(
+                "模型初始化",
+                f"正在初始化 {display_name} 管道（首次使用需要下载模型）...",
+            )
         else:
             # 模型已缓存，只显示简洁的加载信息
             _logger.info(f"管道 {display_name} 模型已存在，直接加载...")
@@ -578,15 +592,15 @@ class OCRService(metaclass=SingletonMeta):
                     # 尝试优先使用 GPU，失败则回退到 CPU
                     for device in ["gpu:0", "cpu"]:
                         try:
-                            self._pipelines[pipeline_name] = self._create_pipeline(pipeline_name, device)
+                            self._pipelines[pipeline_name] = self._create_pipeline(
+                                pipeline_name, device
+                            )
                             if self._device is None:
                                 self._device = device
                             break
                         except RuntimeError as e:
                             if self._is_gpu_error(e) and "gpu" in device.lower():
-                                _logger.warning(
-                                    "GPU 不可用，回退到 CPU: %s", e
-                                )
+                                _logger.warning("GPU 不可用，回退到 CPU: %s", e)
                                 continue
                             raise
                     else:
@@ -628,14 +642,18 @@ class OCRService(metaclass=SingletonMeta):
 
         # 如果输入是 bytes，转换为 numpy.ndarray（PaddleX 只支持 ndarray 和 str）
         if isinstance(image, bytes):
-            from PIL import Image as PILImage
             import io
+
             import numpy as np
-            _logger.info(f"[recognize] 输入是 bytes ({len(image)} 字节)，转换为 numpy.ndarray")
+            from PIL import Image as PILImage
+
+            _logger.info(
+                f"[recognize] 输入是 bytes ({len(image)} 字节)，转换为 numpy.ndarray"
+            )
             pil_image = PILImage.open(io.BytesIO(image))
             # 转换为 RGB 模式（确保格式一致）再转为 numpy 数组
-            if pil_image.mode != 'RGB':
-                pil_image = pil_image.convert('RGB')
+            if pil_image.mode != "RGB":
+                pil_image = pil_image.convert("RGB")
             image = np.array(pil_image)
             _logger.info(f"[recognize] 转换完成，数组形状: {image.shape}")
 
@@ -729,8 +747,12 @@ class OCRService(metaclass=SingletonMeta):
                         # 提取表格中的文本
                         if hasattr(table_res, "table_ocr_pred"):
                             ocr_pred = table_res.table_ocr_pred
-                            if hasattr(ocr_pred, "rec_texts") and hasattr(ocr_pred, "rec_scores"):
-                                for text, score in zip(ocr_pred.rec_texts, ocr_pred.rec_scores):
+                            if hasattr(ocr_pred, "rec_texts") and hasattr(
+                                ocr_pred, "rec_scores"
+                            ):
+                                for text, score in zip(
+                                    ocr_pred.rec_texts, ocr_pred.rec_scores
+                                ):
                                     if text:
                                         text_with_scores.append((text, float(score)))
                 elif isinstance(res, dict):
@@ -746,7 +768,9 @@ class OCRService(metaclass=SingletonMeta):
 
             # 组合结果：HTML 表格 + 文本
             html_text = "\n\n".join(html_tables) if html_tables else ""
-            raw_text = "\n".join(t for t, _ in text_with_scores) if text_with_scores else ""
+            raw_text = (
+                "\n".join(t for t, _ in text_with_scores) if text_with_scores else ""
+            )
 
             return self._build_ocr_result(
                 raw_text=raw_text,
@@ -877,8 +901,12 @@ class OCRService(metaclass=SingletonMeta):
                         # 提取表格 OCR 的置信度
                         if hasattr(table_res, "table_ocr_pred"):
                             ocr_pred = table_res.table_ocr_pred
-                            if hasattr(ocr_pred, "rec_texts") and hasattr(ocr_pred, "rec_scores"):
-                                for text, score in zip(ocr_pred.rec_texts, ocr_pred.rec_scores):
+                            if hasattr(ocr_pred, "rec_texts") and hasattr(
+                                ocr_pred, "rec_scores"
+                            ):
+                                for text, score in zip(
+                                    ocr_pred.rec_texts, ocr_pred.rec_scores
+                                ):
                                     if text:
                                         text_with_scores.append((text, float(score)))
 
@@ -937,7 +965,9 @@ class OCRService(metaclass=SingletonMeta):
             html_text = markdown_to_html(markdown_text) if markdown_text else ""
 
             # 生成纯文本
-            raw_text = "\n".join(t for t, _ in text_with_scores) if text_with_scores else ""
+            raw_text = (
+                "\n".join(t for t, _ in text_with_scores) if text_with_scores else ""
+            )
 
             return self._build_ocr_result(
                 raw_text=raw_text,
@@ -959,7 +989,7 @@ class OCRService(metaclass=SingletonMeta):
 
     def _recognize_paddleocr_vl(
         self,
-        image: "Image.Image | np.ndarray | str",
+        image: Image.Image | np.ndarray | str,
         options: OCROptions,
     ) -> OCRResult:
         """PaddleOCR-VL 多模态文档解析
@@ -1052,7 +1082,9 @@ class OCRService(metaclass=SingletonMeta):
             html_text = markdown_to_html(markdown_text) if markdown_text else ""
 
             # 生成纯文本
-            raw_text = "\n".join(t for t, _ in text_with_scores) if text_with_scores else ""
+            raw_text = (
+                "\n".join(t for t, _ in text_with_scores) if text_with_scores else ""
+            )
 
             return self._build_ocr_result(
                 raw_text=raw_text,
@@ -1077,6 +1109,7 @@ class OCRService(metaclass=SingletonMeta):
         if self._device and "gpu" in self._device:
             try:
                 import paddle
+
                 # 使用新的 API，避免 deprecation warning
                 paddle.device.synchronize()
                 _logger.debug("[CUDA] 同步完成")
@@ -1159,11 +1192,15 @@ class OCRService(metaclass=SingletonMeta):
                             if text:
                                 text_with_scores.append((text, 1.0))
             except Exception as e:
-                _logger.error(f"[_process_ocr_output_safe] 处理结果项 #{result_count} 时出错: {e}")
+                _logger.error(
+                    f"[_process_ocr_output_safe] 处理结果项 #{result_count} 时出错: {e}"
+                )
                 continue
 
         raw_text = "\n".join(t for t, _ in text_with_scores)
-        _logger.info(f"[_process_ocr_output_safe] 处理完成: 共 {result_count} 个结果项, {len(text_with_scores)} 个文本块")
+        _logger.info(
+            f"[_process_ocr_output_safe] 处理完成: 共 {result_count} 个结果项, {len(text_with_scores)} 个文本块"
+        )
 
         return self._build_ocr_result(
             raw_text=raw_text,

@@ -8,6 +8,7 @@ from enum import Enum, auto
 
 class OCRPipeline(Enum):
     """OCR 管道类型"""
+
     PP_STRUCTURE_V3 = "PP-StructureV3"
     PADDLEOCR_VL = "PaddleOCR-VL"
     CHATOCRv4 = "PP-ChatOCRv4"
@@ -16,6 +17,7 @@ class OCRPipeline(Enum):
 
 class FileType(Enum):
     """支持的文件类型"""
+
     PDF = auto()
     IMAGE = auto()
     DOC = auto()
@@ -38,7 +40,15 @@ class Constants:
     WINDOW_DEFAULT_HEIGHT = 900
 
     # 支持文件格式
-    SUPPORTED_IMAGE_FORMATS = ["*.png", "*.jpg", "*.jpeg", "*.bmp", "*.tiff", "*.tif", "*.webp"]
+    SUPPORTED_IMAGE_FORMATS = [
+        "*.png",
+        "*.jpg",
+        "*.jpeg",
+        "*.bmp",
+        "*.tiff",
+        "*.tif",
+        "*.webp",
+    ]
     SUPPORTED_PDF_FORMATS = ["*.pdf"]
     SUPPORTED_DOC_FORMATS = ["*.doc", "*.docx"]
 
@@ -68,6 +78,7 @@ class Constants:
     # 样式常量
     class Style:
         """UI 样式常量"""
+
         BORDER_RADIUS = 6
         BORDER_RADIUS_LARGE = 8
         PADDING_SMALL = 8
@@ -80,6 +91,7 @@ class Constants:
     # 超时配置（秒）
     class Timeout:
         """超时配置"""
+
         OCR_RECOGNIZE = 60.0
         PIPELINE_PRELOAD = 120.0
         FILE_OPERATION = 10.0

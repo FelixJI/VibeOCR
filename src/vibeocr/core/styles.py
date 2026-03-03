@@ -54,10 +54,10 @@ class AppStyles:
     @classmethod
     def get_button_style(
         cls,
-        bg_color: str = None,
-        text_color: str = None,
+        bg_color: str | None = None,
+        text_color: str | None = None,
         border_radius: int = 6,
-        padding: str = "8px 16px"
+        padding: str = "8px 16px",
     ) -> str:
         """生成按钮样式
 
@@ -114,7 +114,7 @@ class AppStyles:
         """
 
     @classmethod
-    def get_group_box_style(cls, title_color: str = None) -> str:
+    def get_group_box_style(cls, title_color: str | None = None) -> str:
         """生成分组框样式
 
         Args:
