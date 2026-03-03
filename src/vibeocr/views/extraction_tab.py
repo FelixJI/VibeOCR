@@ -5,10 +5,8 @@
 """
 
 import logging
-from pathlib import Path
 
 from PySide6.QtCore import Signal, Slot
-from PySide6.QtUiTools import QUiLoader
 from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
@@ -16,8 +14,8 @@ from PySide6.QtWidgets import (
 
 from vibeocr.models.extraction_options import ExtractionOptions
 from vibeocr.models.extraction_template import DEFAULT_TEMPLATES
+from vibeocr.ui.ui_extraction_tab import Ui_ExtractionTab
 from vibeocr.views.tabs.base_tab import BaseOcrTab
-from vibeocr.widgets.batch_file_list_widget import BatchFileListWidget
 from vibeocr.widgets.console_widget import ConsoleWidget
 
 logger = logging.getLogger(__name__)
@@ -50,48 +48,57 @@ class ExtractionTab(BaseOcrTab):
 
     def _setup_ui(self):
         """设置 UI"""
-        ui_path = Path(__file__).parent.parent / "ui" / "extraction_tab.ui"
-        if ui_path.exists():
-            loader = QUiLoader()
-            loader.registerCustomWidget(BatchFileListWidget)
-            self._ui = loader.load(str(ui_path), self)
+        # 使用预编译的 Python UI 文件
+        self._ui = Ui_ExtractionTab()
+        central_widget = QWidget()
+        layout = QVBoxLayout(central_widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+        self._ui.setupUi(central_widget)
 
-            layout = QVBoxLayout(self)
-            layout.setContentsMargins(0, 0, 0, 0)
-            layout.addWidget(self._ui)
-        else:
-            # 如果 UI 文件不存在，动态创建
-            self._create_ui_programmatically()
+        # 设置布局
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.addWidget(central_widget)
 
         # 添加 ConsoleWidget 到结果容器
         self._result_widget = ConsoleWidget()
-        container = self.findChild(QWidget, "resultsContainer")
-        if container:
+        if hasattr(self._ui, "resultsContainer"):
+            container = self._ui.resultsContainer
             container_layout = container.layout()
             if not container_layout:
                 container_layout = QVBoxLayout(container)
                 container_layout.setContentsMargins(0, 0, 0, 0)
             container_layout.addWidget(self._result_widget)
 
+        else:
+            # 备用: 直接在 self 上查找
+            container = self.findChild(QWidget, "resultsContainer")
+            if container:
+                container_layout = container.layout()
+                if not container_layout:
+                    container_layout = QVBoxLayout(container)
+                    container_layout.setContentsMargins(0, 0, 0, 0)
+                container_layout.addWidget(self._result_widget)
+
         # 获取 UI 控件引用
-        self._combo_template = self.findChild(QWidget, "comboTemplate")
-        self._text_custom_keys = self.findChild(QWidget, "textCustomKeys")
-        self._chk_doc_orientation = self.findChild(QWidget, "chkDocOrientation")
-        self._chk_doc_unwarping = self.findChild(QWidget, "chkDocUnwarping")
-        self._chk_general_ocr = self.findChild(QWidget, "chkGeneralOCR")
-        self._chk_table_recognition = self.findChild(QWidget, "chkTableRecognition")
-        self._chk_seal_recognition = self.findChild(QWidget, "chkSealRecognition")
-        self._label_mllm_status = self.findChild(QWidget, "labelMLLMStatus")
-        self._label_llm_status = self.findChild(QWidget, "labelLLMStatus")
-        self._btn_start = self.findChild(QWidget, "btnStart")
-        self._btn_cancel = self.findChild(QWidget, "btnCancel")
-        self._progress_bar = self.findChild(QWidget, "progressBar")
-        self._label_progress = self.findChild(QWidget, "labelProgress")
-        self._radio_export_separate = self.findChild(QWidget, "radioExportSeparate")
-        self._radio_export_merged = self.findChild(QWidget, "radioExportMerged")
-        self._combo_format = self.findChild(QWidget, "comboFormat")
-        self._btn_export = self.findChild(QWidget, "btnExport")
-        self._file_list_widget = self.findChild(QWidget, "fileListWidget")
+        self._combo_template = getattr(self._ui, "comboTemplate", None)
+        self._text_custom_keys = getattr(self._ui, "textCustomKeys", None)
+        self._chk_doc_orientation = getattr(self._ui, "chkDocOrientation", None)
+        self._chk_doc_unwarping = getattr(self._ui, "chkDocUnwarping", None)
+        self._chk_general_ocr = getattr(self._ui, "chkGeneralOCR", None)
+        self._chk_table_recognition = getattr(self._ui, "chkTableRecognition", None)
+        self._chk_seal_recognition = getattr(self._ui, "chkSealRecognition", None)
+        self._label_mllm_status = getattr(self._ui, "labelMLLMStatus", None)
+        self._label_llm_status = getattr(self._ui, "labelLLMStatus", None)
+        self._btn_start = getattr(self._ui, "btnStart", None)
+        self._btn_cancel = getattr(self._ui, "btnCancel", None)
+        self._progress_bar = getattr(self._ui, "progressBar", None)
+        self._label_progress = getattr(self._ui, "labelProgress", None)
+        self._radio_export_separate = getattr(self._ui, "radioExportSeparate", None)
+        self._radio_export_merged = getattr(self._ui, "radioExportMerged", None)
+        self._combo_format = getattr(self._ui, "comboFormat", None)
+        self._btn_export = getattr(self._ui, "btnExport", None)
+        self._file_list_widget = getattr(self._ui, "fileListWidget", None)
 
     def _create_ui_programmatically(self):
         """动态创建 UI（备用方案）"""

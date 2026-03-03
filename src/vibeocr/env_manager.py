@@ -60,6 +60,7 @@ PADDLE_VERSION = "3.3.0"
 
 # CUDA 版本映射到 PaddlePaddle 支持的版本
 # PaddlePaddle GPU 版本支持: cu118, cu121, cu123, cu126, cu129 等
+# 注意: CUDA 13.x 及以上版本使用最新的 cu129
 CUDA_VERSION_MAP = {
     "11.8": "cu118",
     "12.0": "cu121",
@@ -72,6 +73,10 @@ CUDA_VERSION_MAP = {
     "12.7": "cu129",
     "12.8": "cu129",
     "12.9": "cu129",
+    # CUDA 13.x 使用 cu129 (最新的兼容版本)
+    "13.0": "cu129",
+    "13.1": "cu129",
+    "13.2": "cu129",
 }
 
 # cuDNN 版本映射（基于 CUDA 版本）
@@ -902,62 +907,52 @@ def detect_cuda_version() -> str | None:
     检测系统CUDA版本
 
     Returns:
-        CUDA版本字符串（如 "12.0"），如果未检测到则返回 None
+        CUDA版本字符串（如 "cu129"），如果未检测到则返回 None
     """
     # CUDA版本映射到PaddlePaddle支持的版本
     # PaddlePaddle GPU版本支持: cu118, cu121, cu123, cu126, cu129 等
-    cuda_version_map = {
-        "11.8": "cu118",
-        "12.0": "cu121",
-        "12.1": "cu121",
-        "12.2": "cu123",
-        "12.3": "cu123",
-        "12.4": "cu126",
-        "12.5": "cu126",
-        "12.6": "cu126",
-        "12.7": "cu129",
-        "12.8": "cu129",
-        "12.9": "cu129",
-    }
+    cuda_version_map = CUDA_VERSION_MAP
+
+    def find_best_match(major_minor: str) -> str | None:
+        """查找最匹配的 PaddlePaddle CUDA 版本"""
+        if major_minor in cuda_version_map:
+            return cuda_version_map[major_minor]
+        # 尝试找到最接近的版本（向下兼容）
+        try:
+            version_float = float(major_minor)
+            best_match = None
+            for supported_ver, paddle_tag in cuda_version_map.items():
+                if float(supported_ver) <= version_float:
+                    best_match = paddle_tag
+            return best_match
+        except ValueError:
+            return None
 
     try:
-        # 方法1: 使用nvidia-smi检测CUDA版本
+        # 方法1: 解析 nvidia-smi 输出获取 CUDA 版本
+        # 注意: nvidia-smi 的 --query-gpu 不支持 cuda_version 字段
+        # 需要解析 nvidia-smi 的表头输出
         result = subprocess.run(
-            [
-                "nvidia-smi",
-                "--query-gpu=driver_version,cuda_version",
-                "--format=csv,noheader",
-            ],
+            ["nvidia-smi"],
             capture_output=True,
             text=True,
             timeout=5,
             creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
         )
-        if result.returncode == 0 and result.stdout.strip():
-            # 输出格式: "560.94, 12.6"
-            parts = result.stdout.strip().split(",")
-            if len(parts) >= 2:
-                cuda_version = parts[1].strip()
+        if result.returncode == 0 and result.stdout:
+            # 在输出中查找 "CUDA Version: X.Y"
+            import re
+
+            match = re.search(r"CUDA Version:\s*(\d+\.\d+)", result.stdout)
+            if match:
+                cuda_version = match.group(1)
                 print(f"[硬件检测] CUDA版本 (nvidia-smi): {cuda_version}")
 
-                # 解析主版本号
                 major_minor = ".".join(cuda_version.split(".")[:2])
-                if major_minor in cuda_version_map:
-                    paddle_cuda = cuda_version_map[major_minor]
+                paddle_cuda = find_best_match(major_minor)
+                if paddle_cuda:
                     print(f"[硬件检测] 对应PaddlePaddle CUDA版本: {paddle_cuda}")
                     return paddle_cuda
-                else:
-                    # 尝试找到最接近的版本
-                    version_float = float(major_minor)
-                    best_match = None
-                    for supported_ver, paddle_tag in cuda_version_map.items():
-                        if float(supported_ver) <= version_float:
-                            best_match = paddle_tag
-                    if best_match:
-                        print(
-                            f"[硬件检测] 使用兼容的PaddlePaddle CUDA版本: {best_match}"
-                        )
-                        return best_match
 
     except (FileNotFoundError, subprocess.TimeoutExpired, Exception) as e:
         print(f"[硬件检测] nvidia-smi检测失败: {e}")
@@ -980,20 +975,10 @@ def detect_cuda_version() -> str | None:
                 cuda_version = match.group(1)
                 print(f"[硬件检测] CUDA版本 (nvcc): {cuda_version}")
 
-                major_minor = cuda_version
-                if major_minor in cuda_version_map:
-                    return cuda_version_map[major_minor]
-                else:
-                    version_float = float(major_minor)
-                    best_match = None
-                    for supported_ver, paddle_tag in cuda_version_map.items():
-                        if float(supported_ver) <= version_float:
-                            best_match = paddle_tag
-                    if best_match:
-                        print(
-                            f"[硬件检测] 使用兼容的PaddlePaddle CUDA版本: {best_match}"
-                        )
-                        return best_match
+                paddle_cuda = find_best_match(cuda_version)
+                if paddle_cuda:
+                    print(f"[硬件检测] 对应PaddlePaddle CUDA版本: {paddle_cuda}")
+                    return paddle_cuda
 
     except (FileNotFoundError, subprocess.TimeoutExpired, Exception):
         pass

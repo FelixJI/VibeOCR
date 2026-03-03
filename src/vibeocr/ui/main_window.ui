@@ -1064,10 +1064,14 @@
              <enum>QAbstractItemView::SelectRows</enum>
             </property>
             <column>
-             <string>模板名称</string>
+             <property name="text">
+              <string>模板名称</string>
+             </property>
             </column>
             <column>
-             <string>字段列表</string>
+             <property name="text">
+              <string>字段列表</string>
+             </property>
             </column>
            </widget>
           </item>
@@ -1138,7 +1142,7 @@
   <customwidget>
    <class>PreviewWidget</class>
    <extends>QWidget</extends>
-   <header>vibeocr/widgets/preview_widget.h</header>
+   <header>vibeocr.widgets.preview_widget</header>
    <container>1</container>
   </customwidget>
  </customwidgets>

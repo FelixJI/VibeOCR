@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import io
 import logging
-from pathlib import Path
 
 from PIL import Image
 from PySide6.QtCore import (
@@ -15,7 +14,6 @@ from PySide6.QtCore import (
     Slot,
 )
 from PySide6.QtGui import QAction, QPixmap
-from PySide6.QtUiTools import QUiLoader
 from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
@@ -23,7 +21,6 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QStatusBar,
     QVBoxLayout,
-    QWidget,
 )
 
 from vibeocr import env_manager
@@ -32,12 +29,12 @@ from vibeocr.machine_cache import is_cache_valid
 from vibeocr.managers import DependencyManager, SubprocessManager
 from vibeocr.models.ocr_result import OCRResult
 from vibeocr.services.log_service import setup_logging
+from vibeocr.ui.ui_main_window import Ui_MainWindowWidget
 from vibeocr.utils.qt_async import run_coroutine
 from vibeocr.views.batch_recognition_tab import BatchRecognitionTab
 from vibeocr.views.clipboard_controller import ClipboardController
 from vibeocr.views.settings_page_controller import SettingsPageController
 from vibeocr.widgets.console_widget import ConsoleWidget
-from vibeocr.widgets.preview_widget import PreviewWidget
 from vibeocr.widgets.screenshot_widget import ScreenshotWidget
 
 # 延迟导入: OCR 服务模块导入很慢（~33s），延迟到首次使用时导入
@@ -107,15 +104,9 @@ class MainWindow(QMainWindow):
 
     def _setup_ui(self) -> None:
         """设置UI"""
-        ui_path = Path(__file__).parent.parent / "ui" / "main_window.ui"
-        if not ui_path.exists():
-            raise FileNotFoundError(f"UI file not found: {ui_path}")
-
-        loader = QUiLoader()
-        # 注册自定义控件
-        loader.registerCustomWidget(PreviewWidget)
-        self._ui = loader.load(str(ui_path), self)
-        self.setCentralWidget(self._ui)
+        # 使用预编译的 Python UI 文件
+        self._ui = Ui_MainWindowWidget()
+        self._ui.setupUi(self)
 
         # 设置窗口属性
         self.setWindowTitle("VibeOCR")
@@ -163,39 +154,31 @@ class MainWindow(QMainWindow):
 
         # 管道按钮映射
         self._pipeline_buttons = {
-            OCRPipeline.OCR: self._ui.findChild(QWidget, "btnPipelineOCR"),
-            OCRPipeline.TABLE_RECOGNITION: self._ui.findChild(
-                QWidget, "btnPipelineTable"
-            ),
-            OCRPipeline.FORMULA_RECOGNITION: self._ui.findChild(
-                QWidget, "btnPipelineFormula"
-            ),
-            OCRPipeline.PP_STRUCTURE_V3: self._ui.findChild(
-                QWidget, "btnPipelineStructure"
-            ),
-            OCRPipeline.PADDLEOCR_VL: self._ui.findChild(
-                QWidget, "btnPipelinePaddleOCRVL"
-            ),
+            OCRPipeline.OCR: self._ui.btnPipelineOCR,
+            OCRPipeline.TABLE_RECOGNITION: self._ui.btnPipelineTable,
+            OCRPipeline.FORMULA_RECOGNITION: self._ui.btnPipelineFormula,
+            OCRPipeline.PP_STRUCTURE_V3: self._ui.btnPipelineStructure,
+            OCRPipeline.PADDLEOCR_VL: self._ui.btnPipelinePaddleOCRVL,
         }
 
         # 预处理按钮
-        self._btn_orient = self._ui.findChild(QWidget, "btnOrient")
-        self._btn_unwarp = self._ui.findChild(QWidget, "btnUnwarp")
-        self._btn_textline = self._ui.findChild(QWidget, "btnTextline")
-        self._btn_layout = self._ui.findChild(QWidget, "btnLayout")
+        self._btn_orient = self._ui.btnOrient
+        self._btn_unwarp = self._ui.btnUnwarp
+        self._btn_textline = self._ui.btnTextline
+        self._btn_layout = self._ui.btnLayout
 
         # 子产线按钮
-        self._btn_sub_table = self._ui.findChild(QWidget, "btnSubTable")
-        self._btn_sub_formula = self._ui.findChild(QWidget, "btnSubFormula")
-        self._btn_sub_seal = self._ui.findChild(QWidget, "btnSubSeal")
-        self._btn_sub_chart = self._ui.findChild(QWidget, "btnSubChart")
+        self._btn_sub_table = self._ui.btnSubTable
+        self._btn_sub_formula = self._ui.btnSubFormula
+        self._btn_sub_seal = self._ui.btnSubSeal
+        self._btn_sub_chart = self._ui.btnSubChart
 
         # PaddleOCR-VL 特有选项按钮
-        self._btn_vl_layout = self._ui.findChild(QWidget, "btnVlLayout")
-        self._btn_vl_chart = self._ui.findChild(QWidget, "btnVlChart")
-        self._btn_vl_seal = self._ui.findChild(QWidget, "btnVlSeal")
-        self._btn_vl_format = self._ui.findChild(QWidget, "btnVlFormat")
-        self._btn_vl_ocr_image = self._ui.findChild(QWidget, "btnVlOcrImage")
+        self._btn_vl_layout = self._ui.btnVlLayout
+        self._btn_vl_chart = self._ui.btnVlChart
+        self._btn_vl_seal = self._ui.btnVlSeal
+        self._btn_vl_format = self._ui.btnVlFormat
+        self._btn_vl_ocr_image = self._ui.btnVlOcrImage
 
         # 应用样式并连接信号
         for pipeline, btn in self._pipeline_buttons.items():
@@ -260,7 +243,7 @@ class MainWindow(QMainWindow):
                 btn.setStyleSheet(sub_button_style)
 
         # 初始化子产线选项（默认隐藏，仅版面解析时显示）
-        self._sub_pipeline_widget = self._ui.findChild(QWidget, "subPipelineOptions")
+        self._sub_pipeline_widget = self._ui.subPipelineOptions
 
         # 初始化按钮可见性
         self._update_button_visibility(OCRPipeline.OCR)
@@ -274,30 +257,24 @@ class MainWindow(QMainWindow):
         self._batch_tab = BatchRecognitionTab()
 
         # 添加到标签页控件
-        tab_widget = self._ui.findChild(QWidget, "tabWidget")
-        if tab_widget:
-            tab_widget.addTab(self._batch_tab, "批量识别")
-            logging.debug("批量识别标签页已添加")
+        self._ui.tabWidget.addTab(self._batch_tab, "批量识别")
+        logging.debug("批量识别标签页已添加")
 
     def _init_extraction_tab(self) -> None:
         """初始化信息抽取标签页"""
         from vibeocr.views.extraction_tab import ExtractionTab
 
         self._extraction_tab = ExtractionTab()
-        tab_widget = self._ui.findChild(QWidget, "tabWidget")
-        if tab_widget:
-            tab_widget.addTab(self._extraction_tab, "信息抽取")
-            logging.debug("信息抽取标签页已添加")
+        self._ui.tabWidget.addTab(self._extraction_tab, "信息抽取")
+        logging.debug("信息抽取标签页已添加")
 
     def _init_doc_understanding_tab(self) -> None:
         """初始化文档理解标签页"""
         from vibeocr.views.doc_understanding_tab import DocUnderstandingTab
 
         self._doc_understanding_tab = DocUnderstandingTab()
-        tab_widget = self._ui.findChild(QWidget, "tabWidget")
-        if tab_widget:
-            tab_widget.addTab(self._doc_understanding_tab, "文档理解")
-            logging.debug("文档理解标签页已添加")
+        self._ui.tabWidget.addTab(self._doc_understanding_tab, "文档理解")
+        logging.debug("文档理解标签页已添加")
 
     def _update_button_visibility(self, pipeline) -> None:
         """根据管道类型更新按钮可见性"""
@@ -345,8 +322,8 @@ class MainWindow(QMainWindow):
                 btn.setVisible(pipeline_value == "PaddleOCR-VL")
 
         # 更新子产线标签文字
-        label_sub = self._ui.findChild(QWidget, "labelSubPipelines")
-        label_vl = self._ui.findChild(QWidget, "labelVlOptions")
+        label_sub = self._ui.labelSubPipelines
+        label_vl = self._ui.labelVlOptions
         if label_sub:
             label_sub.setVisible(pipeline_value == "PP-StructureV3")
         if label_vl:
@@ -375,7 +352,7 @@ class MainWindow(QMainWindow):
         )
 
         # 将控制台添加到 UI 中的容器
-        container = self._ui.findChild(QWidget, "consoleContainer")
+        container = self._ui.consoleContainer
         if container:
             container_layout = container.layout()
             if not container_layout:
