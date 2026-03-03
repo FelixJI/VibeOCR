@@ -149,8 +149,25 @@ known-first-party = ["vibeocr"]
 known-third-party = ["PySide6", "PIL", "numpy", "paddle", "paddlex"]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/*" = ["ARG", "S101", "PLR2004"]
+"tests/*" = [
+    "ARG",     # 未使用的函数参数
+    "S101",    # assert 警告
+    "PLR2004", # 魔法数字
+    "F401",    # 未使用的导入
+    "PTH110",  # os.path.exists
+    "PTH118",  # os.path.join
+    "PTH120",  # os.path.dirname
+    "E722",    # 裸 except
+    "C401",    # 不必要的生成器
+    "B007",    # 未使用的循环变量
+    "F841",    # 未使用的局部变量
+    "SIM117",  # 嵌套 with 语句
+    "B017",    # 盲异常断言
+    "RUF059",  # 未使用的解包变量
+]
 "__init__.py" = ["F401"]  # 允许未使用的导入
+"examples/*" = ["F401"]  # 验证脚本中的导入检查
+"scripts/*" = ["F401", "F821", "F841", "RUF059"]  # 脚本中的动态用法
 
 # =============================================================================
 # Pyright - 静态类型检查
