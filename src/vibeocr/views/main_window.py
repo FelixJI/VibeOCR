@@ -19,8 +19,10 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QMainWindow,
     QMessageBox,
+    QSizePolicy,
     QStatusBar,
     QVBoxLayout,
+    QWidget,
 )
 
 from vibeocr import env_manager
@@ -102,11 +104,33 @@ class MainWindow(QMainWindow):
         """状态更新槽（线程安全）"""
         self._statusbar.showMessage(message)
 
+    @Slot(str)
+    def _on_log_status_update(self, message: str) -> None:
+        """日志状态更新槽（用于显示 Worker 节点输出）"""
+        # 只在 OCR 服务未就绪时更新状态栏（启动/预加载阶段）
+        if not self._subprocess_manager.is_ready:
+            self._statusbar.showMessage(message)
+
     def _setup_ui(self) -> None:
         """设置UI"""
-        # 使用预编译的 Python UI 文件
+        # QMainWindow 需要一个 centralWidget 来放置主内容
+        self._central_widget = QWidget()
+        self.setCentralWidget(self._central_widget)
+
+        # 使用预编译的 Python UI 文件，设置到 centralWidget 上
         self._ui = Ui_MainWindowWidget()
-        self._ui.setupUi(self)
+        self._ui.setupUi(self._central_widget)
+
+        # 设置主布局的 stretch factor
+        # tabWidget 占据所有可用空间 (stretch=1)，consoleContainer 保持固定高度 (stretch=0)
+        self._ui.verticalLayout.setStretch(0, 1)  # tabWidget
+        self._ui.verticalLayout.setStretch(1, 0)  # consoleContainer
+
+        # 设置 tabSettings 的 sizePolicy，使其可以缩小
+        # 这样 TabWidget 不会因为设置页面的内容太多而变得很大
+        self._ui.tabSettings.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Ignored
+        )
 
         # 设置窗口属性
         self.setWindowTitle("VibeOCR")
@@ -360,8 +384,10 @@ class MainWindow(QMainWindow):
                 container_layout.setContentsMargins(0, 0, 0, 0)
             container_layout.addWidget(self._console)
 
-        # 配置日志
-        setup_logging(self._console.append_log)
+        # 配置日志，保存 handler 以便连接状态信号
+        self._log_handler = setup_logging(self._console.append_log)
+        # 连接日志状态信号到状态栏更新
+        self._log_handler.status_signal.connect(self._on_log_status_update)
         logging.info("VibeOCR 启动")
 
     @Slot(int, list)
@@ -454,8 +480,10 @@ class MainWindow(QMainWindow):
         self._ui.btnCopyPlain.clicked.connect(self._clipboard_controller.copy_plain)
 
         # 设置页面控制器
+        # 注意：传入 self (QMainWindow) 而不是 self._ui (Ui_MainWindowWidget)
+        # 因为 findChild 是 QObject 的方法，Ui_MainWindowWidget 没有此方法
         self._settings_controller = SettingsPageController(
-            ui=self._ui,
+            ui=self,
             project_root=self._project_root,
             status_callback=self._statusbar.showMessage,
             ocr_ready_callback=lambda: self._ocr_ready,
@@ -566,7 +594,8 @@ class MainWindow(QMainWindow):
     @Slot(str, int)
     def _on_subprocess_progress(self, stage: str, percent: int) -> None:
         """子进程启动进度回调"""
-        self._statusbar.showMessage(f"正在启动 OCR 服务: {stage} ({percent}%)")
+        # 直接显示阶段信息，不显示百分比
+        self._statusbar.showMessage(f"正在启动 OCR 服务: {stage}")
 
     def _start_subprocess_preload(self) -> None:
         """在子进程中预加载用户配置的管道"""

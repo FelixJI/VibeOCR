@@ -249,10 +249,11 @@ def run_worker(shm_name: str, shm_size: int, use_gpu: bool) -> None:
                         results = {}
                         for pipeline_name in pipeline_names:
                             try:
-                                # 将字符串转换为 OCRPipeline 枚举
+                                # 将字符串转换为 OCRPipeline 枚举（支持大小写不敏感匹配）
                                 pipeline_enum = None
+                                pipeline_name_lower = pipeline_name.lower()
                                 for p in OCRPipeline:
-                                    if p.value == pipeline_name:
+                                    if p.value.lower() == pipeline_name_lower:
                                         pipeline_enum = p
                                         break
 
