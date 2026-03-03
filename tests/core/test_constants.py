@@ -1,12 +1,11 @@
 """测试 Constants 常量类"""
 
-import pytest
 from vibeocr.core import (
-    Constants,
-    OCRPipeline,
-    FileType,
-    DEFAULT_SHM_SIZE,
     COLOR_PRIMARY,
+    DEFAULT_SHM_SIZE,
+    Constants,
+    FileType,
+    OCRPipeline,
 )
 
 
@@ -64,7 +63,10 @@ class TestConstants:
     def test_doc_understanding_models(self):
         """测试文档理解模型"""
         assert len(Constants.DOC_UNDERSTANDING_MODELS) > 0
-        assert Constants.DEFAULT_DOC_UNDERSTANDING_MODEL in Constants.DOC_UNDERSTANDING_MODELS
+        assert (
+            Constants.DEFAULT_DOC_UNDERSTANDING_MODEL
+            in Constants.DOC_UNDERSTANDING_MODELS
+        )
 
 
 class TestOCRPipeline:
@@ -99,11 +101,17 @@ class TestBackwardCompatibility:
 
     def test_color_constants(self):
         """测试颜色常量向后兼容"""
-        assert COLOR_PRIMARY == Constants.Style.BORDER_RADIUS or isinstance(COLOR_PRIMARY, str)
+        assert COLOR_PRIMARY == Constants.Style.BORDER_RADIUS or isinstance(
+            COLOR_PRIMARY, str
+        )
 
     def test_batch_constants(self):
         """测试批处理常量向后兼容"""
-        from vibeocr.core.constants import DEFAULT_BATCH_SIZE, MAX_BATCH_SIZE, MIN_BATCH_SIZE
+        from vibeocr.core.constants import (
+            DEFAULT_BATCH_SIZE,
+            MAX_BATCH_SIZE,
+            MIN_BATCH_SIZE,
+        )
 
         assert DEFAULT_BATCH_SIZE == Constants.DEFAULT_BATCH_SIZE
         assert MAX_BATCH_SIZE == Constants.MAX_BATCH_SIZE

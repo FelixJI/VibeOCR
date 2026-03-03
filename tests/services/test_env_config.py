@@ -1,21 +1,19 @@
 """env_config 模块测试"""
 
-import pytest
 from pathlib import Path
 from unittest.mock import patch
 
 from vibeocr.services.env_config import (
+    CONFIG_DIR,
+    PADDLE_VERSION,
+    PIP_MIRROR_SOURCES,
+    PORTABLE_PYTHON_DIR,
     PYTHON_VERSION,
     PYTHON_VERSION_SHORT,
-    PIP_MIRROR_SOURCES,
-    PADDLE_VERSION,
-    CONFIG_DIR,
-    PORTABLE_PYTHON_DIR,
-    EnvironmentMode,
-    get_project_root,
+    ensure_config_dir,
     get_config_dir,
     get_portable_python_dir,
-    ensure_config_dir,
+    get_project_root,
 )
 
 
@@ -84,7 +82,9 @@ class TestEnvConfigFunctions:
 
     def test_ensure_config_dir_creates_directory(self, tmp_path):
         """测试确保配置目录创建"""
-        with patch("vibeocr.services.env_config.get_project_root", return_value=tmp_path):
+        with patch(
+            "vibeocr.services.env_config.get_project_root", return_value=tmp_path
+        ):
             config_dir = ensure_config_dir()
             assert config_dir.exists()
             assert config_dir.is_dir()

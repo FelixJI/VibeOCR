@@ -5,8 +5,6 @@ from pathlib import Path
 # 直接添加源码路径以避免通过 views/__init__.py 导入
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
-import pytest
-from PySide6.QtWidgets import QApplication
 
 from vibeocr.views.extraction_tab import ExtractionTab
 

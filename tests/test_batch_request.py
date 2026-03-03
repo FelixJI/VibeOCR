@@ -1,13 +1,12 @@
 """测试批量请求数据模型"""
 
-import pytest
 import time
 
 from vibeocr.models.batch_request import (
+    BatchProgress,
     BatchRequest,
     BatchRequestStatus,
     PreprocessOptions,
-    BatchProgress,
 )
 
 
@@ -20,7 +19,7 @@ class TestBatchRequest:
             file_path="/path/to/image.png",
             file_name="image.png",
             image_data=b"fake_image_data",
-            options={"lang": "ch"}
+            options={"lang": "ch"},
         )
 
         assert request.status == BatchRequestStatus.PENDING
@@ -109,21 +108,21 @@ class TestPreprocessOptions:
         options = PreprocessOptions(
             use_doc_orientation_classify=False,
             use_doc_unwarping=True,
-            use_textline_orientation=True
+            use_textline_orientation=True,
         )
 
         result = options.to_dict()
 
-        assert result['use_doc_orientation_classify'] is False
-        assert result['use_doc_unwarping'] is True
-        assert result['use_textline_orientation'] is True
+        assert result["use_doc_orientation_classify"] is False
+        assert result["use_doc_unwarping"] is True
+        assert result["use_textline_orientation"] is True
 
     def test_from_dict(self):
         """测试从字典创建"""
         data = {
-            'use_doc_orientation_classify': False,
-            'use_doc_unwarping': False,
-            'use_textline_orientation': True
+            "use_doc_orientation_classify": False,
+            "use_doc_unwarping": False,
+            "use_textline_orientation": True,
         }
 
         options = PreprocessOptions.from_dict(data)

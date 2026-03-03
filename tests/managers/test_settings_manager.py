@@ -1,9 +1,8 @@
 """SettingsManager 测试"""
 
 import json
+
 import pytest
-from pathlib import Path
-from unittest.mock import Mock, patch
 
 from vibeocr.managers.settings_manager import SettingsManager
 
@@ -80,7 +79,7 @@ class TestSettingsManager:
 
         # 验证文件内容
         config_path = manager._config_dir / "llm_config.json"
-        with open(config_path, "r", encoding="utf-8") as f:
+        with open(config_path, encoding="utf-8") as f:
             data = json.load(f)
 
         assert data["service_url"] == "https://new.api.com"
@@ -116,7 +115,7 @@ class TestSettingsManager:
 
         # 验证文件内容
         config_path = manager._config_dir / "templates.json"
-        with open(config_path, "r", encoding="utf-8") as f:
+        with open(config_path, encoding="utf-8") as f:
             data = json.load(f)
 
         assert len(data) == 1
@@ -145,7 +144,7 @@ class TestSettingsManager:
 
         # 验证文件内容
         config_path = manager._config_dir / "templates.json"
-        with open(config_path, "r", encoding="utf-8") as f:
+        with open(config_path, encoding="utf-8") as f:
             data = json.load(f)
 
         assert len(data) == 0
@@ -162,6 +161,7 @@ class TestSettingsManager:
 
         # 获取第一个默认模板的名称
         from vibeocr.models.extraction_template import DEFAULT_TEMPLATES
+
         if DEFAULT_TEMPLATES:
             first_template_name = DEFAULT_TEMPLATES[0].name
             keys = manager.get_template_keys(first_template_name)

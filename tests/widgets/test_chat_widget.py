@@ -64,7 +64,7 @@ class TestChatWidget:
         widget = ChatWidget()
         history = [
             {"role": "user", "content": "历史问题"},
-            {"role": "assistant", "content": "历史回答"}
+            {"role": "assistant", "content": "历史回答"},
         ]
 
         widget.load_history(history)

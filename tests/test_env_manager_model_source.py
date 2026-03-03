@@ -1,14 +1,13 @@
 """Tests for PaddleX model source detection."""
 
 import os
-import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 from vibeocr.env_manager import (
-    detect_paddlex_model_source,
-    setup_paddlex_model_source,
     PADDLEX_MODEL_SOURCES,
     PADDLEX_SOURCE_TEST_URLS,
+    detect_paddlex_model_source,
+    setup_paddlex_model_source,
 )
 
 
@@ -35,7 +34,7 @@ class TestDetectPaddleXModelSource:
 
         def mock_response(req, *args, **kwargs):
             # 获取请求的 URL
-            url = req.full_url if hasattr(req, 'full_url') else str(req)
+            url = req.full_url if hasattr(req, "full_url") else str(req)
             response = MagicMock()
             response.status = 200
             response.__enter__ = MagicMock(return_value=response)
@@ -64,7 +63,7 @@ class TestDetectPaddleXModelSource:
         international_time = 0.1
 
         # 验证逻辑：international 更快且可用 -> HuggingFace
-        if international_time < domestic_time and international_time < float('inf'):
+        if international_time < domestic_time and international_time < float("inf"):
             expected_source = "huggingface"
             expected_value = "HuggingFace"
         else:

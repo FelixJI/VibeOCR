@@ -130,7 +130,7 @@ class OCRService(metaclass=SingletonMeta):
     _device: str | None = None
     _lock = threading.Lock()
     _initialized = False
-    _status_callback: callable | None = None  # 状态回调函数
+    _status_callback: Callable | None = None  # 状态回调函数
     _source_configured = False  # 模型源是否已配置
 
     # 预加载相关状态
@@ -144,7 +144,7 @@ class OCRService(metaclass=SingletonMeta):
     )  # 预加载专用锁，保护 _preloaded_pipelines 和 _is_preloading
 
     @classmethod
-    def set_status_callback(cls, callback: callable | None) -> None:
+    def set_status_callback(cls, callback: Callable | None) -> None:
         """设置状态回调函数
 
         Args:
@@ -314,6 +314,82 @@ class OCRService(metaclass=SingletonMeta):
 
                 _logger.info(f"[预加载] ({i}/{total}) 加载 {display_name}...")
                 results[pipeline_name] = cls.preload_pipeline(pipeline)
+
+            # 汇总结果
+            success_count = sum(1 for v in results.values() if v)
+            _logger.info(f"[预加载] 完成: {success_count}/{total} 个管道加载成功")
+
+        finally:
+            # 确保重置状态
+            with cls._preload_lock:
+                cls._is_preloading = False
+
+        return results
+
+    @classmethod
+    def preload_pipelines_parallel(
+        cls,
+        pipelines: list[OCRPipeline],
+        max_workers: int = 2,
+        progress_callback: Callable[[str, int, int], None] | None = None,
+    ) -> dict[str, bool]:
+        """并行预加载多个管道
+
+        Args:
+            pipelines: 要预加载的管道列表
+            max_workers: 最大并行工作线程数
+            progress_callback: 进度回调 (pipeline_name, current, total)
+
+        Returns:
+            各管道加载结果 {pipeline_name: success}
+        """
+        import concurrent.futures
+
+        # 检查是否有预加载任务在进行中
+        with cls._preload_lock:
+            if cls._is_preloading:
+                _logger.warning("[预加载] 已有预加载任务在进行中")
+                return {}
+            cls._is_preloading = True
+
+        results: dict[str, bool] = {}
+        total = len(pipelines)
+        completed = 0
+
+        try:
+            with concurrent.futures.ThreadPoolExecutor(
+                max_workers=max_workers
+            ) as executor:
+                future_to_pipeline = {
+                    executor.submit(cls.preload_pipeline, pipeline): pipeline
+                    for pipeline in pipelines
+                }
+
+                for future in concurrent.futures.as_completed(future_to_pipeline):
+                    pipeline = future_to_pipeline[future]
+                    pipeline_name = pipeline.value
+                    display_name = pipeline.display_name
+
+                    try:
+                        success = future.result()
+                        results[pipeline_name] = success
+                        completed += 1
+
+                        if progress_callback:
+                            progress_callback(pipeline_name, completed, total)
+                        if cls._preload_progress_callback:
+                            cls._preload_progress_callback(
+                                pipeline_name, completed, total
+                            )
+
+                        status = "成功" if success else "失败"
+                        _logger.info(
+                            f"[预加载] ({completed}/{total}) {display_name}: {status}"
+                        )
+                    except Exception as e:
+                        results[pipeline_name] = False
+                        completed += 1
+                        _logger.error(f"[预加载] {display_name} 加载异常: {e}")
 
             # 汇总结果
             success_count = sum(1 for v in results.values() if v)

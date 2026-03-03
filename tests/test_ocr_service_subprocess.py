@@ -6,13 +6,12 @@ Tests for subprocess-based OCRService.
 
 import os
 import threading
-import time
 from pathlib import Path
-from unittest.mock import Mock, patch
 
 import numpy as np
 import pytest
 from PIL import Image
+
 from vibeocr.env_manager import (
     get_embedded_python,
     get_embedded_venv_python,
@@ -105,7 +104,9 @@ class TestOCRWorker:
         assert isinstance(script_path, (str, Path))
         # 检查脚本是否存在
         if not IS_CI:
-            assert os.path.exists(script_path), f"Worker script not found: {script_path}"
+            assert os.path.exists(script_path), (
+                f"Worker script not found: {script_path}"
+            )
 
     def test_worker_image_to_bytes(self):
         """测试图像转换为字节。"""
@@ -212,7 +213,7 @@ class TestOCRServiceIntegration:
         # 使用默认字体
         try:
             font = ImageFont.truetype("arial.ttf", 20)
-        except IOError:
+        except OSError:
             font = ImageFont.load_default()
 
         draw.text((10, 10), "Hello World", fill="black", font=font)

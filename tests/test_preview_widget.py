@@ -1,8 +1,6 @@
 """Tests for PreviewWidget."""
 
-import pytest
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QPixmap
 
 from vibeocr.widgets.preview_widget import PreviewWidget
 
@@ -51,6 +49,7 @@ class TestPreviewWidget:
 
         # 使用 assertNotSignal 检查信号不被触发
         with qtbot.assertNotEmitted(widget.screenshot_requested, wait=100):
+
             class MockEvent:
                 def button(self):
                     return Qt.MouseButton.LeftButton

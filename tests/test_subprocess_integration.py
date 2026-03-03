@@ -5,26 +5,28 @@ Tests the full integration of subprocess-based OCR service.
 """
 
 import os
-import sys
 import time
-from pathlib import Path
-from unittest.mock import patch, MagicMock
 
-import numpy as np
 import pytest
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw
 
 # Check if modules are available
 try:
-    from vibeocr.services.ocr_worker_process import OCRWorkerProcess, OCRWorkerProcessError
     from vibeocr.services.ocr_service_subprocess import OCRServiceSubprocess
+    from vibeocr.services.ocr_worker_process import (
+        OCRWorkerProcess,
+        OCRWorkerProcessError,
+    )
     from vibeocr.utils.shared_memory_v2 import (
-        SharedMemoryProtocolV2 as SharedMemoryProtocol,
-        SharedMemoryConfig,
         MessageType,
+        SharedMemoryConfig,
         serialize_request,
         serialize_result,
     )
+    from vibeocr.utils.shared_memory_v2 import (
+        SharedMemoryProtocolV2 as SharedMemoryProtocol,
+    )
+
     MSG_RECOGNIZE = MessageType.RECOGNIZE
     MSG_RESULT = MessageType.RESULT
     HAS_MODULES = True
@@ -38,14 +40,17 @@ IS_CI = os.environ.get("CI", "false").lower() == "true"
 SKIP_SUBPROCESS_TESTS = IS_CI or not HAS_MODULES
 
 
-@pytest.mark.skipif(SKIP_SUBPROCESS_TESTS, reason="Subprocess tests skipped in CI or modules not available")
+@pytest.mark.skipif(
+    SKIP_SUBPROCESS_TESTS,
+    reason="Subprocess tests skipped in CI or modules not available",
+)
 class TestWorkerProcessIntegration:
     """Integration tests for OCRWorkerProcess."""
 
     @pytest.fixture
     def worker(self):
         """Create a worker process for testing."""
-        worker = OCRWorkerProcess(worker_id=0, use_gpu=False, shm_size=1024*1024)
+        worker = OCRWorkerProcess(worker_id=0, use_gpu=False, shm_size=1024 * 1024)
         yield worker
         # Cleanup
         worker.stop()
@@ -79,7 +84,10 @@ class TestWorkerProcessIntegration:
             pytest.skip(f"Worker process failed: {e}")
 
 
-@pytest.mark.skipif(SKIP_SUBPROCESS_TESTS, reason="Subprocess tests skipped in CI or modules not available")
+@pytest.mark.skipif(
+    SKIP_SUBPROCESS_TESTS,
+    reason="Subprocess tests skipped in CI or modules not available",
+)
 class TestOCRServiceSubprocessIntegration:
     """Integration tests for OCRServiceSubprocess."""
 
@@ -94,11 +102,7 @@ class TestOCRServiceSubprocessIntegration:
 
     def test_service_start_stop(self):
         """Test starting and stopping the service."""
-        service = OCRServiceSubprocess(
-            max_workers=1,
-            use_gpu=False,
-            auto_start=False
-        )
+        service = OCRServiceSubprocess(max_workers=1, use_gpu=False, auto_start=False)
 
         # Start service
         try:
@@ -118,11 +122,7 @@ class TestOCRServiceSubprocessIntegration:
 
     def test_service_with_pil_image(self):
         """Test OCR recognition with PIL image."""
-        service = OCRServiceSubprocess(
-            max_workers=1,
-            use_gpu=False,
-            auto_start=True
-        )
+        service = OCRServiceSubprocess(max_workers=1, use_gpu=False, auto_start=True)
 
         try:
             # Wait for service to be ready
@@ -206,6 +206,7 @@ class TestSharedMemoryIntegration:
             img_out, opt_out = serialize_request.__wrapped__.__code__.co_consts
             # Actually deserialize
             from vibeocr.utils.shared_memory_v2 import deserialize_request
+
             img_out, opt_out = deserialize_request(data)
             assert len(img_out) == 1024 * 1024
             assert opt_out["use_angle_cls"] is True
@@ -225,7 +226,7 @@ class TestServiceFactoryIntegration:
         os.environ["VIBEOCR_USE_SUBPROCESS"] = "true"
 
         try:
-            from vibeocr.services import get_ocr_service, OCRServiceSubprocess
+            from vibeocr.services import OCRServiceSubprocess, get_ocr_service
 
             # Reset singleton
             OCRServiceSubprocess._instance = None
@@ -252,10 +253,12 @@ class TestServiceFactoryIntegration:
         try:
             # Need to reload the module to pick up new env var
             import importlib
+
             import vibeocr.services
+
             importlib.reload(vibeocr.services)
 
-            from vibeocr.services import get_ocr_service, USE_SUBPROCESS
+            from vibeocr.services import USE_SUBPROCESS
 
             assert not USE_SUBPROCESS
 

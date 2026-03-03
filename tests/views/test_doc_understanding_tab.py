@@ -19,9 +19,10 @@ class TestDocUnderstandingTab:
         """测试标签页可以被创建"""
         # 直接导入模块，避免 views/__init__.py 中的依赖问题
         import importlib.util
+
         spec = importlib.util.spec_from_file_location(
             "doc_understanding_tab",
-            src_path / "vibeocr" / "views" / "doc_understanding_tab.py"
+            src_path / "vibeocr" / "views" / "doc_understanding_tab.py",
         )
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
@@ -33,9 +34,10 @@ class TestDocUnderstandingTab:
     def test_tab_has_chat_widget(self, qapp):
         """测试标签页包含 ChatWidget"""
         import importlib.util
+
         spec = importlib.util.spec_from_file_location(
             "doc_understanding_tab",
-            src_path / "vibeocr" / "views" / "doc_understanding_tab.py"
+            src_path / "vibeocr" / "views" / "doc_understanding_tab.py",
         )
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
@@ -47,9 +49,10 @@ class TestDocUnderstandingTab:
     def test_tab_conversation_history(self, qapp):
         """测试对话历史管理"""
         import importlib.util
+
         spec = importlib.util.spec_from_file_location(
             "doc_understanding_tab",
-            src_path / "vibeocr" / "views" / "doc_understanding_tab.py"
+            src_path / "vibeocr" / "views" / "doc_understanding_tab.py",
         )
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
@@ -63,9 +66,10 @@ class TestDocUnderstandingTab:
     def test_tab_get_selected_model(self, qapp):
         """测试获取选中的模型"""
         import importlib.util
+
         spec = importlib.util.spec_from_file_location(
             "doc_understanding_tab",
-            src_path / "vibeocr" / "views" / "doc_understanding_tab.py"
+            src_path / "vibeocr" / "views" / "doc_understanding_tab.py",
         )
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
@@ -78,15 +82,16 @@ class TestDocUnderstandingTab:
     def test_tab_supported_formats(self, qapp):
         """测试支持的文件格式"""
         import importlib.util
+
         spec = importlib.util.spec_from_file_location(
             "doc_understanding_tab",
-            src_path / "vibeocr" / "views" / "doc_understanding_tab.py"
+            src_path / "vibeocr" / "views" / "doc_understanding_tab.py",
         )
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         DocUnderstandingTab = module.DocUnderstandingTab
 
-        assert hasattr(DocUnderstandingTab, 'SUPPORTED_FORMATS')
+        assert hasattr(DocUnderstandingTab, "SUPPORTED_FORMATS")
         assert ".png" in DocUnderstandingTab.SUPPORTED_FORMATS
         assert ".jpg" in DocUnderstandingTab.SUPPORTED_FORMATS
         assert ".pdf" in DocUnderstandingTab.SUPPORTED_FORMATS

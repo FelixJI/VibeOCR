@@ -682,7 +682,7 @@ class MainWindow(QMainWindow):
             QMessageBox.information(
                 self,
                 "正在检测依赖",
-                "OCR依赖检测中，请稍候...\n\n" "检测完成后才能使用截图识别功能。",
+                "OCR依赖检测中，请稍候...\n\n检测完成后才能使用截图识别功能。",
             )
             return False
 

@@ -3,10 +3,10 @@
 Tests for batch add, commit, cancel functionality.
 """
 
-import sys
 import os
+import sys
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from vibeocr.models.batch_request import (
     BatchRequest,
@@ -14,12 +14,12 @@ from vibeocr.models.batch_request import (
     PreprocessOptions,
 )
 from vibeocr.utils.shared_memory_v2 import (
-    serialize_batch_request,
-    deserialize_batch_request,
-    serialize_batch_commit,
     deserialize_batch_commit,
-    serialize_batch_result,
+    deserialize_batch_request,
     deserialize_batch_result,
+    serialize_batch_commit,
+    serialize_batch_request,
+    serialize_batch_result,
 )
 from vibeocr.workers.batch_queue_manager import BatchQueueManager
 
@@ -30,7 +30,7 @@ def test_batch_request_model_flow():
         file_path="/test/image.png",
         file_name="image.png",
         image_data=b"fake_image_data",
-        options={"lang": "ch"}
+        options={"lang": "ch"},
     )
 
     assert request.status == BatchRequestStatus.PENDING
@@ -45,7 +45,6 @@ def test_batch_request_model_flow():
     assert request.result == result
     assert request.is_finished
 
-
     print("[OK] batch_request_model_flow")
 
 
@@ -54,7 +53,7 @@ def test_preprocess_options_serialization():
     options = PreprocessOptions(
         use_doc_orientation_classify=True,
         use_doc_unwarping=False,
-        use_textline_orientation=True
+        use_textline_orientation=True,
     )
 
     data = options.to_dict()
@@ -112,9 +111,7 @@ def test_batch_queue_manager_basic():
     # Add requests
     for i in range(3):
         manager.add_request(
-            image_data=b"image_data",
-            options={},
-            file_name=f"test_{i}.png"
+            image_data=b"image_data", options={}, file_name=f"test_{i}.png"
         )
 
     assert manager.get_queue_size() == 3

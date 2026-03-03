@@ -7,15 +7,14 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from vibeocr.model_cache_manager import (
-    get_paddlex_home,
-    get_model_cache_path,
     check_models_cached,
-    save_model_cache,
-    load_model_cache,
+    get_model_cache_path,
+    get_paddlex_home,
+    get_pipeline_model_info,
     is_pipeline_cached,
+    load_model_cache,
     quick_check_all_models,
     update_cache,
-    get_pipeline_model_info,
 )
 
 

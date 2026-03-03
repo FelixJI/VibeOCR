@@ -1,13 +1,11 @@
 """测试 DependencyManager"""
 
-import pytest
-from pathlib import Path
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import MagicMock, Mock, patch
 
 from vibeocr.managers.dependency_manager import (
-    DependencyManager,
-    DependencyCheckTask,
     DependencyCheckSignals,
+    DependencyCheckTask,
+    DependencyManager,
 )
 
 
@@ -17,7 +15,7 @@ class TestDependencyCheckSignals:
     def test_signals_exist(self, qapp):
         """测试信号存在"""
         signals = DependencyCheckSignals()
-        assert hasattr(signals, 'finished')
+        assert hasattr(signals, "finished")
 
 
 class TestDependencyCheckTask:
@@ -27,7 +25,7 @@ class TestDependencyCheckTask:
         """测试任务创建"""
         task = DependencyCheckTask(tmp_path)
         assert task._project_root == tmp_path
-        assert hasattr(task, 'signals')
+        assert hasattr(task, "signals")
 
     @patch("vibeocr.managers.dependency_manager.env_manager")
     def test_task_run_ready(self, mock_env_manager, tmp_path, qapp):
@@ -54,7 +52,10 @@ class TestDependencyCheckTask:
         """测试任务运行（依赖未就绪）"""
         mock_env_manager.get_environment_mode.return_value = "embedded"
         mock_env_manager.get_embedded_python_executable.return_value = "python.exe"
-        mock_env_manager.is_embedded_environment_ready.return_value = (False, ["paddlepaddle"])
+        mock_env_manager.is_embedded_environment_ready.return_value = (
+            False,
+            ["paddlepaddle"],
+        )
 
         task = DependencyCheckTask(tmp_path)
 
@@ -157,5 +158,5 @@ class TestDependencyManager:
     def test_signals_exist(self, qapp):
         """测试信号存在"""
         manager = DependencyManager()
-        assert hasattr(manager, 'check_completed')
-        assert hasattr(manager, 'check_started')
+        assert hasattr(manager, "check_completed")
+        assert hasattr(manager, "check_started")

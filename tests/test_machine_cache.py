@@ -1,10 +1,7 @@
 """Tests for machine_cache module."""
 
 import subprocess
-from unittest.mock import patch, MagicMock
-from pathlib import Path
-
-import pytest
+from unittest.mock import patch
 
 
 class TestGenerateMachineId:
@@ -26,7 +23,7 @@ class TestGenerateMachineId:
         result2 = generate_machine_id()
         assert result1 == result2
 
-    @patch('vibeocr.machine_cache.subprocess.run')
+    @patch("vibeocr.machine_cache.subprocess.run")
     def test_generate_machine_id_handles_subprocess_failure(self, mock_run):
         """Should still return a valid hash even if subprocess fails."""
         mock_run.side_effect = subprocess.SubprocessError("Command failed")
@@ -61,7 +58,7 @@ class TestCacheReadWrite:
 
     def test_save_and_load_cache(self, tmp_path):
         """Should save and load cache correctly."""
-        from vibeocr.machine_cache import save_cache, load_cache
+        from vibeocr.machine_cache import load_cache, save_cache
 
         data = {"test": "value", "number": 123}
         assert save_cache(tmp_path, data) is True
@@ -110,13 +107,13 @@ class TestCacheValidation:
 
     def test_is_cache_valid_returns_false_if_machine_id_mismatch(self, tmp_path):
         """Should return (False, None) if machine ID doesn't match."""
-        from vibeocr.machine_cache import save_cache, is_cache_valid
+        from vibeocr.machine_cache import is_cache_valid, save_cache
 
         # 保存一个使用假机器码的缓存
         cache_data = {
             "version": 1,
             "machine_id": "fake_machine_id_12345",
-            "dependencies": {"paddlepaddle": True}
+            "dependencies": {"paddlepaddle": True},
         }
         save_cache(tmp_path, cache_data)
 
@@ -126,13 +123,17 @@ class TestCacheValidation:
 
     def test_is_cache_valid_returns_true_if_machine_id_matches(self, tmp_path):
         """Should return (True, data) if machine ID matches."""
-        from vibeocr.machine_cache import save_cache, is_cache_valid, generate_machine_id
+        from vibeocr.machine_cache import (
+            generate_machine_id,
+            is_cache_valid,
+            save_cache,
+        )
 
         machine_id = generate_machine_id()
         cache_data = {
             "version": 1,
             "machine_id": machine_id,
-            "dependencies": {"paddlepaddle": True}
+            "dependencies": {"paddlepaddle": True},
         }
         save_cache(tmp_path, cache_data)
 
@@ -142,13 +143,17 @@ class TestCacheValidation:
 
     def test_is_cache_valid_returns_false_if_version_mismatch(self, tmp_path):
         """Should return (False, None) if cache version doesn't match."""
-        from vibeocr.machine_cache import save_cache, is_cache_valid, generate_machine_id
+        from vibeocr.machine_cache import (
+            generate_machine_id,
+            is_cache_valid,
+            save_cache,
+        )
 
         machine_id = generate_machine_id()
         cache_data = {
             "version": 999,  # 旧版本
             "machine_id": machine_id,
-            "dependencies": {"paddlepaddle": True}
+            "dependencies": {"paddlepaddle": True},
         }
         save_cache(tmp_path, cache_data)
 
@@ -161,7 +166,7 @@ class TestCacheOperations:
 
     def test_clear_cache_removes_file(self, tmp_path):
         """Should remove cache file."""
-        from vibeocr.machine_cache import save_cache, clear_cache, load_cache
+        from vibeocr.machine_cache import clear_cache, load_cache, save_cache
 
         save_cache(tmp_path, {"test": "value"})
         assert load_cache(tmp_path) is not None
@@ -179,7 +184,11 @@ class TestCacheOperations:
 
     def test_create_cache_entry(self, tmp_path):
         """Should create a valid cache entry."""
-        from vibeocr.machine_cache import create_cache_entry, load_cache, generate_machine_id
+        from vibeocr.machine_cache import (
+            create_cache_entry,
+            generate_machine_id,
+            load_cache,
+        )
 
         dependencies = {"paddlepaddle": True, "paddlex": True, "is_gpu": True}
         hardware_info = {"has_gpu": True, "cuda_version": "cu126"}
@@ -201,8 +210,8 @@ class TestEnvManagerIntegration:
 
     def test_check_dependencies_uses_cache(self, tmp_path, monkeypatch):
         """Should use cached result if available."""
-        from vibeocr.machine_cache import save_cache, generate_machine_id
         from vibeocr.env_manager import check_embedded_environment_dependencies
+        from vibeocr.machine_cache import generate_machine_id, save_cache
 
         # 创建假的 Python 环境
         python_dir = tmp_path / "python"
@@ -213,11 +222,7 @@ class TestEnvManagerIntegration:
         cache_data = {
             "version": 1,
             "machine_id": machine_id,
-            "dependencies": {
-                "paddlepaddle": True,
-                "paddlex": True,
-                "is_gpu": True
-            }
+            "dependencies": {"paddlepaddle": True, "paddlex": True, "is_gpu": True},
         }
         save_cache(tmp_path, cache_data)
 
@@ -227,8 +232,8 @@ class TestEnvManagerIntegration:
 
     def test_check_dependencies_fresh_ignores_cache(self, tmp_path):
         """Should ignore cache when use_cache=False."""
-        from vibeocr.machine_cache import save_cache, generate_machine_id
         from vibeocr.env_manager import check_embedded_environment_dependencies
+        from vibeocr.machine_cache import generate_machine_id, save_cache
 
         # 创建假的缓存
         machine_id = generate_machine_id()
@@ -238,7 +243,7 @@ class TestEnvManagerIntegration:
             "dependencies": {
                 "paddlepaddle": True,
                 "paddlex": True,
-            }
+            },
         }
         save_cache(tmp_path, cache_data)
 

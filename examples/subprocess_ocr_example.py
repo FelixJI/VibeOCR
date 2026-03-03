@@ -23,10 +23,10 @@ def create_sample_image(text: str, width: int = 400, height: int = 200) -> Image
     # 尝试使用系统字体
     try:
         font = ImageFont.truetype("arial.ttf", 32)
-    except IOError:
+    except OSError:
         try:
             font = ImageFont.truetype("DejaVuSans.ttf", 32)
-        except IOError:
+        except OSError:
             font = ImageFont.load_default()
 
     # 绘制文本
@@ -52,7 +52,7 @@ def example_basic_usage():
     # 执行识别
     try:
         text = service.recognize(img)
-        print(f"识别结果: {repr(text)}")
+        print(f"识别结果: {text!r}")
     except Exception as e:
         print(f"识别失败: {e}")
 
@@ -70,9 +70,9 @@ def example_custom_configuration():
 
         # 创建自定义配置的服务
         service = OCRServiceSubprocess(
-            max_workers=2,      # 2 个并行 worker
-            use_gpu=False,      # 使用 CPU（便于测试）
-            shm_size=5*1024*1024  # 5MB 共享内存
+            max_workers=2,  # 2 个并行 worker
+            use_gpu=False,  # 使用 CPU（便于测试）
+            shm_size=5 * 1024 * 1024,  # 5MB 共享内存
         )
 
         # 创建测试图像
@@ -81,7 +81,7 @@ def example_custom_configuration():
         # 执行识别
         try:
             text = service.recognize(img)
-            print(f"识别结果: {repr(text)}")
+            print(f"识别结果: {text!r}")
         except Exception as e:
             print(f"识别失败: {e}")
 
@@ -114,9 +114,9 @@ def example_batch_processing():
         try:
             text = service.recognize(img)
             results.append(text)
-            print(f"图像 {i+1}: {repr(text)}")
+            print(f"图像 {i + 1}: {text!r}")
         except Exception as e:
-            print(f"图像 {i+1} 识别失败: {e}")
+            print(f"图像 {i + 1} 识别失败: {e}")
 
     print()
 
@@ -129,9 +129,9 @@ def example_environment_info():
 
     try:
         from vibeocr.env_manager import (
+            get_embedded_python,
             get_embedded_python_info,
             is_embedded_python_ready,
-            get_embedded_python,
         )
 
         # 获取环境信息
@@ -153,6 +153,7 @@ def example_environment_info():
     except Exception as e:
         print(f"获取环境信息失败: {e}")
         import traceback
+
         traceback.print_exc()
 
     print()
@@ -174,7 +175,7 @@ def example_error_handling():
     # 尝试识别
     try:
         text = service.recognize(img)
-        print(f"空白图像识别结果: {repr(text)}")
+        print(f"空白图像识别结果: {text!r}")
     except RuntimeError as e:
         print(f"捕获运行时错误: {e}")
     except Exception as e:

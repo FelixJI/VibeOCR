@@ -6,12 +6,12 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from vibeocr.services.ocr_service import OCRService, OCRPipeline, OCROptions
 from vibeocr.models.ocr_result import OCRResult
+from vibeocr.services.ocr_service import OCROptions, OCRPipeline, OCRService
 
 # 检查 paddlex 是否可用
 try:
-    from paddlex import create_pipeline  # noqa: F401
+    from paddlex import create_pipeline
 
     HAS_PADDLEX = True
 except ImportError:

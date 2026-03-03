@@ -3,8 +3,8 @@
 import pytest
 from PySide6.QtWidgets import QApplication
 
-from vibeocr.widgets.preprocess_options_widget import PreprocessOptionsWidget
 from vibeocr.models.batch_request import PreprocessOptions
+from vibeocr.widgets.preprocess_options_widget import PreprocessOptionsWidget
 
 
 @pytest.fixture
@@ -37,7 +37,7 @@ class TestPreprocessOptionsWidget:
         new_options = PreprocessOptions(
             use_doc_orientation_classify=False,
             use_doc_unwarping=False,
-            use_textline_orientation=True
+            use_textline_orientation=True,
         )
 
         widget.set_options(new_options)

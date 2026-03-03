@@ -1,8 +1,6 @@
 """测试 BaseWorker 基类"""
 
-import pytest
-from unittest.mock import MagicMock, patch
-from PySide6.QtCore import QCoreApplication
+from unittest.mock import MagicMock
 
 from vibeocr.core import BaseWorker, BatchWorker
 

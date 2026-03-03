@@ -1,16 +1,16 @@
 """SubprocessManager 测试"""
 
-import pytest
 from pathlib import Path
-from unittest.mock import Mock, patch, MagicMock
-from PySide6.QtCore import QThreadPool
+from unittest.mock import Mock
+
+import pytest
 
 from vibeocr.managers.subprocess_manager import (
-    SubprocessManager,
-    SubprocessStartTask,
-    PreloadTask,
-    SubprocessStartSignals,
     PreloadSignals,
+    PreloadTask,
+    SubprocessManager,
+    SubprocessStartSignals,
+    SubprocessStartTask,
 )
 
 

@@ -1,6 +1,7 @@
 """日志服务模块"""
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -39,7 +40,7 @@ class QtLogHandler(logging.Handler, QObject):
             self.handleError(record)
 
 
-def setup_logging(console_callback: callable) -> QtLogHandler:
+def setup_logging(console_callback: Callable[[object], None]) -> QtLogHandler:
     """配置全局日志处理器
 
     Args:

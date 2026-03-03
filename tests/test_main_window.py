@@ -4,8 +4,8 @@ import pytest
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication
 
-from vibeocr.views.main_window import MainWindow
 from vibeocr.models.ocr_result import OCRResult
+from vibeocr.views.main_window import MainWindow
 
 
 @pytest.fixture

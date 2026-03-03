@@ -1,6 +1,5 @@
 """Markdown 渲染集成测试"""
 
-import pytest
 from vibeocr.utils.markdown_converter import markdown_to_html
 
 
@@ -19,9 +18,9 @@ class TestMarkdownRenderingIntegration:
 """
         html = markdown_to_html(markdown)
         # 验证中文段落有缩进类
-        assert 'zh-paragraph' in html
+        assert "zh-paragraph" in html
         # 验证列表嵌套
-        assert '<ul>' in html
+        assert "<ul>" in html
 
     def test_table_with_chinese_content(self):
         """测试中文表格"""
@@ -30,9 +29,9 @@ class TestMarkdownRenderingIntegration:
 | 项目A | 100 |
 | 项目B | 200 |"""
         html = markdown_to_html(markdown)
-        assert '<table>' in html
+        assert "<table>" in html
         # 表格不应被包装为段落
-        assert '项目A' in html
+        assert "项目A" in html
 
     def test_formula_with_chinese_context(self):
         """测试中文上下文中的公式"""
@@ -42,5 +41,5 @@ $$E = mc^2$$
 
 这个公式很重要。"""
         html = markdown_to_html(markdown)
-        assert 'latex-formula' in html
-        assert 'zh-paragraph' in html
+        assert "latex-formula" in html
+        assert "zh-paragraph" in html

@@ -8,17 +8,11 @@ from unittest.mock import Mock
 # 直接添加源码路径以避免通过 views/__init__.py 导入
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
-import pytest
-from PySide6.QtWidgets import QApplication
 
-from vibeocr.views.extraction_tab import ExtractionTab
 from vibeocr.models.extraction_options import ExtractionOptions
-
-
-from vibeocr.models.extraction_template import ExtractionTemplate, DEFAULT_TEMPLATES
+from vibeocr.models.extraction_template import DEFAULT_TEMPLATES, ExtractionTemplate
 from vibeocr.models.llm_config import LLMConfig
-
-
+from vibeocr.views.extraction_tab import ExtractionTab
 from vibeocr.workers.extraction_worker import ExtractionWorker
 
 
@@ -61,10 +55,7 @@ class TestExtractionIntegration:
 
         mock_service = Mock()
         worker = ExtractionWorker(
-            service=mock_service,
-            files=files,
-            keys=keys,
-            options=options
+            service=mock_service, files=files, keys=keys, options=options
         )
 
         assert worker is not None
@@ -79,7 +70,7 @@ class TestExtractionIntegration:
             enabled=True,
             service_url="http://localhost:8080/v1/chat/completions",
             model_name="test-model",
-            api_key="test-key"
+            api_key="test-key",
         )
 
         assert config.is_configured() is True
@@ -106,10 +97,7 @@ class TestExtractionIntegration:
         assert "金额" in invoice_template.keys
 
         # 测试自定义模板
-        custom_template = ExtractionTemplate(
-            name="测试模板",
-            keys=["字段1", "字段2"]
-        )
+        custom_template = ExtractionTemplate(name="测试模板", keys=["字段1", "字段2"])
         data = custom_template.to_dict()
         template2 = ExtractionTemplate.from_dict(data)
         assert template2.name == "测试模板"

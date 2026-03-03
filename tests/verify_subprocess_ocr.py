@@ -9,7 +9,6 @@
 4. 子进程 OCR 服务导入
 """
 
-import os
 import sys
 from pathlib import Path
 
@@ -29,10 +28,10 @@ def check_shared_memory():
 
         # 写入测试数据
         test_data = b"VibeOCR Test"
-        memory.buf[0:len(test_data)] = test_data
+        memory.buf[0 : len(test_data)] = test_data
 
         # 读取测试数据
-        read_data = bytes(memory.buf[0:len(test_data)])
+        read_data = bytes(memory.buf[0 : len(test_data)])
 
         # 清理
         memory.close()
@@ -60,9 +59,12 @@ def check_worker_script():
 
         # 检查脚本可执行性
         try:
-            with open(worker_path, 'r', encoding='utf-8') as f:
+            with open(worker_path, encoding="utf-8") as f:
                 content = f.read()
-                if 'def run_worker' in content and 'if __name__ == "__main__"' in content:
+                if (
+                    "def run_worker" in content
+                    and 'if __name__ == "__main__"' in content
+                ):
                     print("  [OK] Worker 脚本结构正确")
                     return True
                 else:
@@ -82,9 +84,9 @@ def check_env_manager():
     try:
         from vibeocr.env_manager import (
             get_embedded_python,
+            get_embedded_python_info,
             get_embedded_venv_python,
             is_embedded_python_ready,
-            get_embedded_python_info,
         )
 
         print("  [OK] 环境管理器辅助函数导入成功")
@@ -122,20 +124,23 @@ def check_subprocess_ocr_service():
         # 实际功能需要嵌入式 Python 环境
 
         # 检查文件存在
-        service_path = project_root / "src" / "vibeocr" / "services" / "ocr_service_subprocess.py"
+        service_path = (
+            project_root / "src" / "vibeocr" / "services" / "ocr_service_subprocess.py"
+        )
         if service_path.exists():
-            print(f"  [OK] 子进程 OCR 服务文件存在")
+            print("  [OK] 子进程 OCR 服务文件存在")
         else:
-            print(f"  [FAIL] 子进程 OCR 服务文件不存在")
+            print("  [FAIL] 子进程 OCR 服务文件不存在")
             return False
 
         # 尝试导入（可能会因为 PIL 失败，这是预期的）
         try:
             from vibeocr.services.ocr_service_subprocess import (
-                _SharedMemoryProtocol,
-                _OCRWorker,
                 OCRServiceSubprocess,
+                _OCRWorker,
+                _SharedMemoryProtocol,
             )
+
             print("  [OK] 子进程 OCR 服务导入成功")
             return True
         except ImportError as e:
@@ -157,10 +162,10 @@ def check_workers_init():
     init_path = project_root / "src" / "vibeocr" / "workers" / "__init__.py"
 
     if init_path.exists():
-        print(f"  [OK] workers/__init__.py 存在")
+        print("  [OK] workers/__init__.py 存在")
         return True
     else:
-        print(f"  [FAIL] workers/__init__.py 不存在")
+        print("  [FAIL] workers/__init__.py 不存在")
         return False
 
 
@@ -170,19 +175,19 @@ def check_services_init():
     init_path = project_root / "src" / "vibeocr" / "services" / "__init__.py"
 
     if init_path.exists():
-        print(f"  [OK] services/__init__.py 存在")
+        print("  [OK] services/__init__.py 存在")
 
         # 检查内容
-        with open(init_path, 'r', encoding='utf-8') as f:
+        with open(init_path, encoding="utf-8") as f:
             content = f.read()
-            if 'USE_SUBPROCESS_OCR' in content:
+            if "USE_SUBPROCESS_OCR" in content:
                 print("  [OK] services/__init__.py 包含子进程 OCR 切换逻辑")
                 return True
             else:
                 print("  [WARN] services/__init__.py 可能未更新")
                 return True
     else:
-        print(f"  [FAIL] services/__init__.py 不存在")
+        print("  [FAIL] services/__init__.py 不存在")
         return False
 
 

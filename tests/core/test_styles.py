@@ -1,6 +1,5 @@
 """测试 AppStyles 样式类"""
 
-import pytest
 from PySide6.QtGui import QColor
 
 from vibeocr.core import AppStyles
@@ -58,10 +57,7 @@ class TestAppStylesButton:
 
     def test_button_style_custom_colors(self):
         """测试自定义颜色按钮样式"""
-        style = AppStyles.get_button_style(
-            bg_color="#FF0000",
-            text_color="#FFFFFF"
-        )
+        style = AppStyles.get_button_style(bg_color="#FF0000", text_color="#FFFFFF")
         assert "#FF0000" in style
         assert "#FFFFFF" in style
 

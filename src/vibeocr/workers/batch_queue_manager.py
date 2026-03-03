@@ -169,7 +169,7 @@ class BatchQueueManager:
             batch_requests = pending_requests[batch_start:batch_end]
 
             logger.info(
-                f"处理批次: {batch_start+1}-{batch_end}/{total}, batch_size={len(batch_requests)}"
+                f"处理批次: {batch_start + 1}-{batch_end}/{total}, batch_size={len(batch_requests)}"
             )
 
             # 更新进度

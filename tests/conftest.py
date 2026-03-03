@@ -44,7 +44,7 @@ def sample_image_bytes():
 @pytest.fixture
 def sample_image_with_text_bytes():
     """提供包含简单文字的测试图片字节数据。"""
-    from PIL import ImageDraw, ImageFont
+    from PIL import ImageDraw
 
     img = Image.new("RGB", (200, 100), color="white")
     draw = ImageDraw.Draw(img)

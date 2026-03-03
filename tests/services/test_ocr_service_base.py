@@ -1,8 +1,9 @@
 """OCRServiceBase 测试"""
 
+from typing import Any
+from unittest.mock import Mock
+
 import pytest
-from unittest.mock import Mock, patch
-from typing import Any, Optional
 
 from vibeocr.services.ocr_service_base import OCRServiceBase
 
@@ -69,6 +70,7 @@ class TestOCRServiceBase:
 
     def test_notify_status_ignores_callback_error(self, service):
         """测试状态通知忽略回调错误"""
+
         def error_callback(stage, message):
             raise ValueError("Callback error")
 
@@ -144,9 +146,11 @@ class TestOCRServiceBaseAbstract:
 
     def test_subclass_must_implement_abstract_methods(self):
         """测试子类必须实现抽象方法"""
+
         class IncompleteService(OCRServiceBase):
             def _init_gpu(self) -> None:
                 pass
+
             # 缺少 recognize 和 is_ready
 
         with pytest.raises(TypeError):

@@ -1,7 +1,6 @@
 """Tests for ScreenshotWidget."""
 
-import pytest
-from PySide6.QtCore import Qt, QRect, QPoint
+from PySide6.QtCore import QPoint, QRect, Qt
 from PySide6.QtGui import QKeyEvent, QPixmap
 
 from vibeocr.widgets.screenshot_widget import ScreenshotWidget

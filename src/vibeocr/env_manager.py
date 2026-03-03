@@ -352,6 +352,32 @@ def is_embedded_python_ready(project_root: Path | None = None) -> bool:
     return get_embedded_python_executable(project_root).exists()
 
 
+def get_embedded_python_info(project_root: Path | None = None) -> dict[str, str | bool]:
+    """获取嵌入式 Python 信息
+
+    Args:
+        project_root: 项目根目录，如果为 None 则自动检测
+
+    Returns:
+        包含 Python 信息的字典:
+        - path: Python 可执行文件路径
+        - mode: 环境模式 (venv/portable/none)
+        - ready: 是否准备好
+    """
+    if project_root is None:
+        project_root = get_project_root()
+
+    python_path = get_embedded_python_executable(project_root)
+    mode = get_environment_mode(project_root)
+    ready = python_path.exists()
+
+    return {
+        "path": str(python_path),
+        "mode": mode,
+        "ready": ready,
+    }
+
+
 def is_embedded_python_installed(project_root: Path) -> bool:
     """检查嵌入式Python是否已安装(支持虚拟环境和便携式两种模式)"""
     mode = get_environment_mode(project_root)

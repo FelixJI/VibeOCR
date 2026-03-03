@@ -1,8 +1,8 @@
 """测试 SingletonMeta 元类"""
 
-import pytest
 import threading
 import time
+
 from vibeocr.core import SingletonMeta
 
 

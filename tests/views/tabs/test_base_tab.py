@@ -1,7 +1,8 @@
 """BaseOcrTab 测试"""
 
-import pytest
 from unittest.mock import Mock
+
+import pytest
 from PySide6.QtWidgets import QWidget
 
 from vibeocr.views.tabs.base_tab import BaseOcrTab

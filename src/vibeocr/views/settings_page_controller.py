@@ -275,7 +275,7 @@ class SettingsPageController:
 
         chk_structure = self._ui.findChild(QCheckBox, "chkPreloadStructure")
         if chk_structure and chk_structure.isChecked():
-            pipelines.append(OCRPipeline.STUCTURE_RECOGNITION)
+            pipelines.append(OCRPipeline.PP_STRUCTURE_V3)
 
         chk_paddlocr_vl = self._ui.findChild(QCheckBox, "chkPreloadPaddleOCRVL")
         if chk_paddlocr_vl and chk_paddlocr_vl.isChecked():

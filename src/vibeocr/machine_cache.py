@@ -308,3 +308,52 @@ def set_preload_pipelines(project_root: Path, pipelines: list[str]) -> bool:
         print(f"[缓存] 预加载管道配置已保存: {pipelines}")
         return True
     return False
+
+
+def refresh_cache(project_root: Path) -> bool:
+    """
+    刷新缓存（重新生成缓存文件）
+
+    Args:
+        project_root: 项目根目录
+
+    Returns:
+        是否刷新成功
+    """
+    import sys
+
+    try:
+        cache_data = {
+            "version": CACHE_VERSION,
+            "machine_id": generate_machine_id(),
+            "last_check_time": datetime.now().isoformat(),
+            "python_version": f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
+            "dependencies": {},
+            "hardware_info": {},
+        }
+        if save_cache(project_root, cache_data):
+            print("[缓存] 缓存已刷新")
+            return True
+        return False
+    except Exception as e:
+        print(f"[缓存] 刷新缓存失败: {e}")
+        return False
+
+
+def get_cache_info(project_root: Path) -> str:
+    """
+    获取缓存信息字符串
+
+    Args:
+        project_root: 项目根目录
+
+    Returns:
+        缓存信息字符串
+    """
+    cache_data = load_cache(project_root)
+    if cache_data is None:
+        return "无缓存"
+
+    last_check = cache_data.get("last_check_time", "未知")
+    version = cache_data.get("version", "未知")
+    return f"版本 {version}, 最后检查: {last_check}"

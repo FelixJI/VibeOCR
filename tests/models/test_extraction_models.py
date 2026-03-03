@@ -1,5 +1,4 @@
 # tests/models/test_extraction_models.py
-import pytest
 from vibeocr.models.extraction_options import ExtractionOptions
 from vibeocr.models.extraction_template import ExtractionTemplate
 from vibeocr.models.llm_config import LLMConfig
@@ -67,7 +66,7 @@ class TestLLMConfig:
             enabled=True,
             service_url="http://127.0.0.1:8080/v1/chat/completions",
             model_name="PP-DocBee2",
-            api_type="openai"
+            api_type="openai",
         )
         assert config.enabled is True
         assert config.is_mllm is True
@@ -78,8 +77,6 @@ class TestLLMConfig:
         assert empty_config.is_configured() is False
 
         valid_config = LLMConfig(
-            enabled=True,
-            service_url="http://localhost:8080",
-            model_name="model"
+            enabled=True, service_url="http://localhost:8080", model_name="model"
         )
         assert valid_config.is_configured() is True

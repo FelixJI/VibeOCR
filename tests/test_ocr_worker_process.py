@@ -4,11 +4,7 @@ Tests for OCRWorkerProcess and OCRServiceSubprocess.
 Tests the subprocess-based OCR service implementation.
 """
 
-import os
 import threading
-import time
-from unittest.mock import Mock, patch, MagicMock
-from pathlib import Path
 
 import numpy as np
 import pytest
@@ -16,27 +12,30 @@ from PIL import Image
 
 # Check if modules are available
 try:
+    from vibeocr.services.ocr_service_subprocess import OCRServiceSubprocess
     from vibeocr.services.ocr_worker_process import (
         OCRWorkerProcess,
         OCRWorkerProcessError,
     )
-    from vibeocr.services.ocr_service_subprocess import OCRServiceSubprocess
+
     HAS_SUBPROCESS_MODULES = True
 except ImportError:
     HAS_SUBPROCESS_MODULES = False
 
 
-@pytest.mark.skipif(not HAS_SUBPROCESS_MODULES, reason="subprocess modules not available")
+@pytest.mark.skipif(
+    not HAS_SUBPROCESS_MODULES, reason="subprocess modules not available"
+)
 class TestOCRWorkerProcess:
     """Tests for OCRWorkerProcess class."""
 
     def test_init(self):
         """Test worker process initialization."""
-        worker = OCRWorkerProcess(worker_id=0, use_gpu=False, shm_size=1024*1024)
+        worker = OCRWorkerProcess(worker_id=0, use_gpu=False, shm_size=1024 * 1024)
 
         assert worker.worker_id == 0
         assert worker.use_gpu is False
-        assert worker.shm_size == 1024*1024
+        assert worker.shm_size == 1024 * 1024
         assert worker.process is None
         assert not worker.busy
         assert not worker.is_running
@@ -76,10 +75,13 @@ class TestOCRWorkerProcess:
         assert isinstance(python_exe, str)
         # Should be the current Python interpreter
         import sys
+
         assert python_exe == sys.executable
 
 
-@pytest.mark.skipif(not HAS_SUBPROCESS_MODULES, reason="subprocess modules not available")
+@pytest.mark.skipif(
+    not HAS_SUBPROCESS_MODULES, reason="subprocess modules not available"
+)
 class TestOCRWorkerProcessLifeCycle:
     """Tests for worker process lifecycle (require actual subprocess)."""
 
@@ -105,7 +107,9 @@ class TestOCRWorkerProcessLifeCycle:
         assert not worker.is_running
 
 
-@pytest.mark.skipif(not HAS_SUBPROCESS_MODULES, reason="subprocess modules not available")
+@pytest.mark.skipif(
+    not HAS_SUBPROCESS_MODULES, reason="subprocess modules not available"
+)
 class TestOCRServiceSubprocess:
     """Tests for OCRServiceSubprocess class."""
 
@@ -132,7 +136,9 @@ class TestOCRServiceSubprocess:
         lock = threading.Lock()
 
         def create_instance():
-            service = OCRServiceSubprocess(max_workers=1, use_gpu=False, auto_start=False)
+            service = OCRServiceSubprocess(
+                max_workers=1, use_gpu=False, auto_start=False
+            )
             with lock:
                 instances.append(service)
 
@@ -155,11 +161,7 @@ class TestOCRServiceSubprocess:
         # Reset singleton
         OCRServiceSubprocess._instance = None
 
-        service = OCRServiceSubprocess(
-            max_workers=1,
-            use_gpu=False,
-            auto_start=False
-        )
+        service = OCRServiceSubprocess(max_workers=1, use_gpu=False, auto_start=False)
 
         assert service.max_workers == 1
         assert service.use_gpu is False
@@ -174,11 +176,7 @@ class TestOCRServiceSubprocess:
         # Reset singleton
         OCRServiceSubprocess._instance = None
 
-        service = OCRServiceSubprocess(
-            max_workers=1,
-            use_gpu=False,
-            auto_start=False
-        )
+        service = OCRServiceSubprocess(max_workers=1, use_gpu=False, auto_start=False)
 
         assert not service.is_ready()
 
@@ -191,11 +189,7 @@ class TestOCRServiceSubprocess:
         # Reset singleton
         OCRServiceSubprocess._instance = None
 
-        service = OCRServiceSubprocess(
-            max_workers=1,
-            use_gpu=False,
-            auto_start=False
-        )
+        service = OCRServiceSubprocess(max_workers=1, use_gpu=False, auto_start=False)
 
         status = service.get_status()
 
@@ -215,11 +209,7 @@ class TestOCRServiceSubprocess:
         # Reset singleton
         OCRServiceSubprocess._instance = None
 
-        service = OCRServiceSubprocess(
-            max_workers=1,
-            use_gpu=False,
-            auto_start=False
-        )
+        service = OCRServiceSubprocess(max_workers=1, use_gpu=False, auto_start=False)
 
         # Should not raise
         service.shutdown()
@@ -231,18 +221,16 @@ class TestOCRServiceSubprocess:
         """Test reset_instance class method."""
         # Reset and create
         OCRServiceSubprocess._instance = None
-        service = OCRServiceSubprocess(
-            max_workers=1,
-            use_gpu=False,
-            auto_start=False
-        )
+        service = OCRServiceSubprocess(max_workers=1, use_gpu=False, auto_start=False)
 
         # Reset should clear instance
         OCRServiceSubprocess.reset_instance()
         assert OCRServiceSubprocess._instance is None
 
 
-@pytest.mark.skipif(not HAS_SUBPROCESS_MODULES, reason="subprocess modules not available")
+@pytest.mark.skipif(
+    not HAS_SUBPROCESS_MODULES, reason="subprocess modules not available"
+)
 class TestOCRServiceSubprocessImagePreparation:
     """Tests for image preparation methods."""
 
@@ -251,11 +239,7 @@ class TestOCRServiceSubprocessImagePreparation:
         # Reset singleton
         OCRServiceSubprocess._instance = None
 
-        service = OCRServiceSubprocess(
-            max_workers=1,
-            use_gpu=False,
-            auto_start=False
-        )
+        service = OCRServiceSubprocess(max_workers=1, use_gpu=False, auto_start=False)
 
         test_bytes = b"test_image_data"
         result = service._prepare_image_data(test_bytes)
@@ -270,11 +254,7 @@ class TestOCRServiceSubprocessImagePreparation:
         # Reset singleton
         OCRServiceSubprocess._instance = None
 
-        service = OCRServiceSubprocess(
-            max_workers=1,
-            use_gpu=False,
-            auto_start=False
-        )
+        service = OCRServiceSubprocess(max_workers=1, use_gpu=False, auto_start=False)
 
         img = Image.new("RGB", (100, 50), color="white")
         result = service._prepare_image_data(img)
@@ -290,11 +270,7 @@ class TestOCRServiceSubprocessImagePreparation:
         # Reset singleton
         OCRServiceSubprocess._instance = None
 
-        service = OCRServiceSubprocess(
-            max_workers=1,
-            use_gpu=False,
-            auto_start=False
-        )
+        service = OCRServiceSubprocess(max_workers=1, use_gpu=False, auto_start=False)
 
         arr = np.zeros((50, 100, 3), dtype=np.uint8)
         arr.fill(255)  # White image
@@ -311,11 +287,7 @@ class TestOCRServiceSubprocessImagePreparation:
         # Reset singleton
         OCRServiceSubprocess._instance = None
 
-        service = OCRServiceSubprocess(
-            max_workers=1,
-            use_gpu=False,
-            auto_start=False
-        )
+        service = OCRServiceSubprocess(max_workers=1, use_gpu=False, auto_start=False)
 
         result = service._prepare_options_dict(None)
         assert result == {}
@@ -329,11 +301,7 @@ class TestOCRServiceSubprocessImagePreparation:
         # Reset singleton
         OCRServiceSubprocess._instance = None
 
-        service = OCRServiceSubprocess(
-            max_workers=1,
-            use_gpu=False,
-            auto_start=False
-        )
+        service = OCRServiceSubprocess(max_workers=1, use_gpu=False, auto_start=False)
 
         options = {"use_angle_cls": True, "lang": "ch"}
         result = service._prepare_options_dict(options)

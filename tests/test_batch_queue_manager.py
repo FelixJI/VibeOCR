@@ -1,14 +1,14 @@
 """测试批量队列管理器"""
 
-import pytest
 from unittest.mock import MagicMock, patch
 
-from vibeocr.workers.batch_queue_manager import BatchQueueManager
+import pytest
+
 from vibeocr.models.batch_request import (
-    BatchRequestStatus,
-    PreprocessOptions,
     BatchProgress,
+    PreprocessOptions,
 )
+from vibeocr.workers.batch_queue_manager import BatchQueueManager
 
 
 class MockPipeline:
@@ -36,9 +36,7 @@ class TestBatchQueueManager:
     def test_add_request(self, manager):
         """测试添加请求"""
         request_id = manager.add_request(
-            image_data=b"fake_image",
-            options={"lang": "ch"},
-            file_name="test.png"
+            image_data=b"fake_image", options={"lang": "ch"}, file_name="test.png"
         )
 
         assert request_id != ""
@@ -48,9 +46,7 @@ class TestBatchQueueManager:
         """测试添加多个请求"""
         for i in range(5):
             manager.add_request(
-                image_data=b"fake_image",
-                options={},
-                file_name=f"test_{i}.png"
+                image_data=b"fake_image", options={}, file_name=f"test_{i}.png"
             )
 
         assert manager.get_queue_size() == 5
@@ -105,9 +101,7 @@ class TestBatchQueueManager:
             progress_list.append(progress)
 
         manager = BatchQueueManager(
-            pipeline,
-            max_batch_size=2,
-            progress_callback=progress_callback
+            pipeline, max_batch_size=2, progress_callback=progress_callback
         )
 
         for i in range(4):
@@ -148,10 +142,10 @@ class TestBatchQueueManager:
 
         stats = manager.get_stats()
 
-        assert 'total_requests' in stats
-        assert 'total_batches' in stats
-        assert 'total_time' in stats
-        assert stats['total_requests'] == 2
+        assert "total_requests" in stats
+        assert "total_batches" in stats
+        assert "total_time" in stats
+        assert stats["total_requests"] == 2
 
 
 class TestBatchQueueManagerWithGPU:
@@ -161,7 +155,9 @@ class TestBatchQueueManagerWithGPU:
         """测试 GPU 显存影响 batch_size 计算"""
         pipeline = MockPipeline()
 
-        with patch('vibeocr.workers.batch_queue_manager.GPUMemoryMonitor') as MockMonitor:
+        with patch(
+            "vibeocr.workers.batch_queue_manager.GPUMemoryMonitor"
+        ) as MockMonitor:
             # 模拟显存监控器
             mock_monitor = MagicMock()
             mock_monitor.is_available.return_value = True

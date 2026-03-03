@@ -1,16 +1,15 @@
 """测试批量共享内存消息序列化"""
 
-import pytest
 from vibeocr.utils.shared_memory_v2 import (
-    serialize_batch_request,
-    deserialize_batch_request,
-    serialize_batch_commit,
-    deserialize_batch_commit,
-    serialize_batch_result,
-    deserialize_batch_result,
-    serialize_batch_progress,
-    deserialize_batch_progress,
     MessageType,
+    deserialize_batch_commit,
+    deserialize_batch_progress,
+    deserialize_batch_request,
+    deserialize_batch_result,
+    serialize_batch_commit,
+    serialize_batch_progress,
+    serialize_batch_request,
+    serialize_batch_result,
 )
 
 
@@ -31,9 +30,9 @@ def test_batch_request_serialization():
 def test_batch_commit_serialization():
     """测试批量提交序列化/反序列化"""
     options = {
-        'use_doc_orientation_classify': True,
-        'use_doc_unwarping': True,
-        'use_textline_orientation': False
+        "use_doc_orientation_classify": True,
+        "use_doc_unwarping": True,
+        "use_textline_orientation": False,
     }
 
     serialized = serialize_batch_commit(options)
@@ -58,11 +57,7 @@ def test_batch_result_serialization():
 
 def test_batch_progress_serialization():
     """测试批量进度序列化/反序列化"""
-    progress = {
-        'completed': 5,
-        'total': 10,
-        'current_file': 'image_005.png'
-    }
+    progress = {"completed": 5, "total": 10, "current_file": "image_005.png"}
 
     serialized = serialize_batch_progress(**progress)
     result = deserialize_batch_progress(serialized)

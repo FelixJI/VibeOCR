@@ -1,5 +1,6 @@
 # tests/test_indent_processor.py
 import pytest
+
 from vibeocr.utils.indent_processor import IndentConfig, IndentProcessor
 
 
@@ -27,7 +28,10 @@ class TestIsChineseText:
 
     def test_mixed_below_threshold(self, processor):
         # 1个中文字符，总长度约30，占比约3%<5%
-        assert processor.is_chinese_text("This is a long English paragraph 中 end") is False
+        assert (
+            processor.is_chinese_text("This is a long English paragraph 中 end")
+            is False
+        )
 
     def test_empty_string(self, processor):
         assert processor.is_chinese_text("") is False
@@ -90,14 +94,14 @@ class TestProcessMarkdown:
         result = processor.process_markdown(markdown)
         assert '<div class="zh-paragraph">这是中文段落</div>' in result
         assert '<div class="zh-paragraph">另一个中文段落</div>' in result
-        assert '```\ncode\n```' in result  # 代码块保持不变
+        assert "```\ncode\n```" in result  # 代码块保持不变
 
     def test_mixed_table_and_chinese(self, processor):
         """表格和中文段落混合"""
         markdown = "中文段落\n\n| A | B |\n|---|---|\n| 1 | 2 |"
         result = processor.process_markdown(markdown)
         assert '<div class="zh-paragraph">中文段落</div>' in result
-        assert '| A | B |' in result  # 表格保持不变
+        assert "| A | B |" in result  # 表格保持不变
 
     def test_mixed_list_and_chinese(self, processor):
         """列表和中文段落混合"""
@@ -105,7 +109,7 @@ class TestProcessMarkdown:
         result = processor.process_markdown(markdown)
         assert '<div class="zh-paragraph">中文段落</div>' in result
         assert '<div class="zh-paragraph">另一个中文段落</div>' in result
-        assert '- 列表项1' in result  # 列表保持不变
+        assert "- 列表项1" in result  # 列表保持不变
 
     def test_multiple_code_blocks_with_chinese(self, processor):
         """多个代码块和中文段落混合"""
@@ -114,5 +118,5 @@ class TestProcessMarkdown:
         assert '<div class="zh-paragraph">开始段落</div>' in result
         assert '<div class="zh-paragraph">中间段落</div>' in result
         assert '<div class="zh-paragraph">结束段落</div>' in result
-        assert '```python\nprint(1)\n```' in result
-        assert '```bash\necho hello\n```' in result
+        assert "```python\nprint(1)\n```" in result
+        assert "```bash\necho hello\n```" in result

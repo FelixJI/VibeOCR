@@ -6,8 +6,8 @@
 import os
 import sys
 import time
-from pathlib import Path
 from contextlib import contextmanager
+from pathlib import Path
 
 # 添加项目路径
 project_root = Path(__file__).parent.parent
@@ -81,9 +81,20 @@ def profile_imports():
         ("PySide6.QtGui", lambda: __import__("PySide6.QtGui")),
         ("PySide6.QtUiTools", lambda: __import__("PySide6.QtUiTools")),
         ("PIL.Image", lambda: __import__("PIL.Image")),
-        ("vibeocr.env_manager", lambda: __import__("vibeocr.env_manager", fromlist=["env_manager"])),
-        ("vibeocr.machine_cache", lambda: __import__("vibeocr.machine_cache", fromlist=["machine_cache"])),
-        ("vibeocr.model_cache_manager", lambda: __import__("vibeocr.model_cache_manager", fromlist=["model_cache_manager"])),
+        (
+            "vibeocr.env_manager",
+            lambda: __import__("vibeocr.env_manager", fromlist=["env_manager"]),
+        ),
+        (
+            "vibeocr.machine_cache",
+            lambda: __import__("vibeocr.machine_cache", fromlist=["machine_cache"]),
+        ),
+        (
+            "vibeocr.model_cache_manager",
+            lambda: __import__(
+                "vibeocr.model_cache_manager", fromlist=["model_cache_manager"]
+            ),
+        ),
     ]
 
     # 需要重新测试的模块（需要清除缓存）
@@ -134,7 +145,7 @@ def profile_startup():
         from PySide6.QtWidgets import QApplication
 
     with measure("导入 PySide6.QtCore"):
-        from PySide6.QtCore import QTimer
+        pass
 
     # 4. 创建 QApplication
     with measure("创建 QApplication"):
@@ -186,7 +197,6 @@ def profile_startup_full():
 
     with measure("导入 PySide6 模块"):
         from PySide6.QtWidgets import QApplication
-        from PySide6.QtCore import QTimer
 
     mark("Qt 模块导入完成")
 

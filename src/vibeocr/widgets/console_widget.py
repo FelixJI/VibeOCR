@@ -48,9 +48,9 @@ class ConsoleWidget(QWidget):
         self._current_filter = "ALL"
         self._row_to_log_index: dict[int, int] = {}  # 表格行 -> 日志索引
         self._low_confidence_count: int = 0  # 低置信度文本块数量
-        self._low_confidence_items: list[tuple] = (
-            []
-        )  # 低置信度文本块详情 [(文本, 置信度), ...]
+        self._low_confidence_items: list[
+            tuple
+        ] = []  # 低置信度文本块详情 [(文本, 置信度), ...]
         self._setup_ui()
 
     def _setup_ui(self) -> None:

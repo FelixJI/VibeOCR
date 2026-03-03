@@ -1,18 +1,17 @@
 """测试 OCR 工作线程"""
 
-import sys
 import logging
+import sys
 from pathlib import Path
-from PySide6.QtCore import QThread, Signal, QObject, Slot, QCoreApplication
-from PySide6.QtWidgets import QApplication
+
+from PySide6.QtCore import QCoreApplication, QObject, QThread, Signal, Slot
 
 # 添加项目路径
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root / "src"))
 
 logging.basicConfig(
-    level=logging.DEBUG,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+    level=logging.DEBUG, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
 )
 
 logger = logging.getLogger(__name__)
@@ -87,6 +86,7 @@ def test_basic_thread():
 
     # 等待结果
     from PySide6.QtCore import QTimer
+
     timeout_count = [0]
 
     def check_result():
@@ -120,7 +120,7 @@ def test_ocr_service():
 
     try:
         logger.info("[主线程] 导入 OCR 服务...")
-        from vibeocr.services.ocr_service import OCRService, OCROptions, OCRPipeline
+        from vibeocr.services.ocr_service import OCRPipeline, OCRService
 
         logger.info("[主线程] 创建 OCR 服务实例...")
         ocr = OCRService()
@@ -135,6 +135,7 @@ def test_ocr_service():
     except Exception as e:
         logger.error(f"[主线程] OCR 服务测试失败: {e}")
         import traceback
+
         traceback.print_exc()
         return False
 
@@ -160,7 +161,8 @@ def test_ocr_in_thread():
         def _do_init(self):
             logger.info("[OCRTestWorker] 开始初始化 OCR 服务...")
             try:
-                from vibeocr.services.ocr_service import OCRService, OCRPipeline
+                from vibeocr.services.ocr_service import OCRPipeline, OCRService
+
                 ocr = OCRService()
                 pipeline = ocr.get_pipeline(OCRPipeline.OCR)
                 logger.info(f"[OCRTestWorker] Pipeline 获取成功: {type(pipeline)}")
@@ -199,6 +201,7 @@ def test_ocr_in_thread():
 
     # 超时处理
     from PySide6.QtCore import QTimer
+
     timeout_count = [0]
 
     def check_timeout():

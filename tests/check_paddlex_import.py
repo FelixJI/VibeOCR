@@ -8,7 +8,6 @@
 """
 
 import os
-import sys
 from pathlib import Path
 
 
@@ -23,7 +22,7 @@ def check_paddlex_size():
         import pkg_resources
 
         # 获取 PaddleX 及其依赖
-        distribution = pkg_resources.get_distribution('paddlex')
+        distribution = pkg_resources.get_distribution("paddlex")
         print(f"\nPaddleX 版本: {distribution.version}")
 
         # 获取依赖
@@ -34,12 +33,18 @@ def check_paddlex_size():
 
         for dep in dependencies[:10]:  # 只显示前10个
             try:
-                dist = pkg_resources.get_distribution(str(dep).split('>=')[0].split('==')[0])
+                dist = pkg_resources.get_distribution(
+                    str(dep).split(">=")[0].split("==")[0]
+                )
                 if dist.egg_info and os.path.exists(dist.egg_info):
                     # 估算大小
                     location = dist.egg_info
                     if os.path.exists(location):
-                        size = sum(f.stat().st_size for f in Path(location).rglob('*') if f.is_file())
+                        size = sum(
+                            f.stat().st_size
+                            for f in Path(location).rglob("*")
+                            if f.is_file()
+                        )
                         total_size += size
                         print(f"  {dist.project_name}: {size / 1024 / 1024:.1f} MB")
             except:
@@ -60,12 +65,14 @@ def check_paddlex_import():
 
     try:
         import paddlex
-        print(f"✓ PaddleX 可以导入")
+
+        print("✓ PaddleX 可以导入")
 
         # 尝试创建流水线
         try:
             from paddlex import create_pipeline
-            print(f"✓ create_pipeline 可以导入")
+
+            print("✓ create_pipeline 可以导入")
 
             # 注意：不实际创建流水线，因为这需要 GPU/CUDA
             print("  （跳过实际创建流水线，避免资源占用）")
@@ -87,23 +94,23 @@ def check_pyinstaller_available():
 
     try:
         import PyInstaller
-        print(f"✓ PyInstaller 已安装")
+
+        print("✓ PyInstaller 已安装")
         print(f"  版本: {PyInstaller.__version__}")
 
         # 检查是否可以运行
         import subprocess
+
         result = subprocess.run(
-            ["pyinstaller", "--version"],
-            capture_output=True,
-            text=True
+            ["pyinstaller", "--version"], capture_output=True, text=True
         )
         if result.returncode == 0:
             print(f"  CLI 可用: {result.stdout.strip()}")
         else:
-            print(f"  CLI 不可用")
+            print("  CLI 不可用")
 
     except ImportError:
-        print(f"✗ PyInstaller 未安装")
+        print("✗ PyInstaller 未安装")
         print("\n安装命令:")
         print("  pip install pyinstaller")
 
@@ -116,22 +123,20 @@ def check_nuitka_available():
 
     try:
         import nuitka
-        print(f"✓ Nuitka 已安装")
+
+        print("✓ Nuitka 已安装")
 
         # 检查版本
         import subprocess
-        result = subprocess.run(
-            ["nuitka", "--version"],
-            capture_output=True,
-            text=True
-        )
+
+        result = subprocess.run(["nuitka", "--version"], capture_output=True, text=True)
         if result.returncode == 0:
             print(f"  版本: {result.stdout.strip()}")
         else:
-            print(f"  版本: 未知")
+            print("  版本: 未知")
 
     except ImportError:
-        print(f"✗ Nuitka 未安装")
+        print("✗ Nuitka 未安装")
         print("\n安装命令:")
         print("  pip install nuitka")
 
@@ -209,10 +214,10 @@ if __name__ == "__main__":
     print("=" * 60)
 '''
 
-    test_script.write_text(content, encoding='utf-8')
+    test_script.write_text(content, encoding="utf-8")
     print(f"✓ 测试脚本已创建: {test_script}")
-    print(f"\n运行测试:")
-    print(f"  python test_ocr_import.py")
+    print("\n运行测试:")
+    print("  python test_ocr_import.py")
 
 
 def main():

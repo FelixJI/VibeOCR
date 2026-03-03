@@ -1,11 +1,12 @@
 # tests/workers/test_extraction_worker.py
 """测试 ExtractionWorker"""
 
-import pytest
-from unittest.mock import Mock, patch, mock_open
+from unittest.mock import Mock, mock_open, patch
 
-from vibeocr.workers.extraction_worker import ExtractionWorker
+import pytest
+
 from vibeocr.models.extraction_options import ExtractionOptions
+from vibeocr.workers.extraction_worker import ExtractionWorker
 
 
 class TestExtractionWorker:
@@ -18,7 +19,7 @@ class TestExtractionWorker:
             service=Mock(),
             files=[{"path": "/tmp/test.png", "name": "test.png"}],
             keys=["姓名", "日期"],
-            options=options
+            options=options,
         )
         assert worker is not None
         assert not worker.is_cancelled
@@ -26,10 +27,7 @@ class TestExtractionWorker:
     def test_cancel_worker(self, qtbot):
         """测试取消 Worker"""
         worker = ExtractionWorker(
-            service=Mock(),
-            files=[],
-            keys=[],
-            options=ExtractionOptions()
+            service=Mock(), files=[], keys=[], options=ExtractionOptions()
         )
         worker.cancel()
         assert worker.is_cancelled is True
@@ -37,16 +35,13 @@ class TestExtractionWorker:
     def test_worker_signals(self, qtbot):
         """测试 Worker 信号定义"""
         worker = ExtractionWorker(
-            service=Mock(),
-            files=[],
-            keys=[],
-            options=ExtractionOptions()
+            service=Mock(), files=[], keys=[], options=ExtractionOptions()
         )
         # 验证信号存在
-        assert hasattr(worker, 'progress')
-        assert hasattr(worker, 'file_completed')
-        assert hasattr(worker, 'finished')
-        assert hasattr(worker, 'error')
+        assert hasattr(worker, "progress")
+        assert hasattr(worker, "file_completed")
+        assert hasattr(worker, "finished")
+        assert hasattr(worker, "error")
 
     def test_worker_initialization_with_llm_config(self, qtbot):
         """测试带 LLM 配置的 Worker 初始化"""
@@ -56,7 +51,7 @@ class TestExtractionWorker:
             files=[{"path": "/test/file.png", "name": "file.png"}],
             keys=["name"],
             options=ExtractionOptions(),
-            llm_config=llm_config
+            llm_config=llm_config,
         )
 
         assert worker._llm_config == llm_config
@@ -68,10 +63,7 @@ class TestExtractionWorker:
             {"path": "/test/file2.jpg", "name": "file2.jpg"},
         ]
         worker = ExtractionWorker(
-            service=Mock(),
-            files=files,
-            keys=["name"],
-            options=ExtractionOptions()
+            service=Mock(), files=files, keys=["name"], options=ExtractionOptions()
         )
 
         items = worker._get_items()
@@ -82,10 +74,7 @@ class TestExtractionWorker:
         """测试获取项目 ID"""
         files = [{"path": "/test/file1.png", "name": "file1.png"}]
         worker = ExtractionWorker(
-            service=Mock(),
-            files=files,
-            keys=["name"],
-            options=ExtractionOptions()
+            service=Mock(), files=files, keys=["name"], options=ExtractionOptions()
         )
 
         item_id = worker._get_item_id(files[0], 0)
@@ -97,7 +86,7 @@ class TestExtractionWorker:
             service=Mock(),
             files=[{"name": "test.png"}],
             keys=["name"],
-            options=ExtractionOptions()
+            options=ExtractionOptions(),
         )
 
         item_id = worker._get_item_id({"name": "test.png"}, 5)
@@ -107,10 +96,7 @@ class TestExtractionWorker:
         """测试获取文件名"""
         files = [{"path": "/test/file1.png", "name": "file1.png"}]
         worker = ExtractionWorker(
-            service=Mock(),
-            files=files,
-            keys=["name"],
-            options=ExtractionOptions()
+            service=Mock(), files=files, keys=["name"], options=ExtractionOptions()
         )
 
         name = worker._get_file_name(files[0])
@@ -122,7 +108,7 @@ class TestExtractionWorker:
             service=Mock(),
             files=[{"path": "/path/to/file.png"}],
             keys=["name"],
-            options=ExtractionOptions()
+            options=ExtractionOptions(),
         )
 
         name = worker._get_file_name({"path": "/path/to/file.png"})
@@ -136,7 +122,7 @@ class TestExtractionWorker:
             service=Mock(),
             files=files,
             keys=["name", "date"],
-            options=ExtractionOptions()
+            options=ExtractionOptions(),
         )
 
         result = worker._process_item(files[0], 0)
@@ -154,7 +140,7 @@ class TestExtractionWorker:
             service=None,
             files=[{"path": "/test/file.png"}],
             keys=["name"],
-            options=ExtractionOptions()
+            options=ExtractionOptions(),
         )
 
         with pytest.raises(RuntimeError, match="OCR 服务未设置"):
@@ -165,10 +151,7 @@ class TestExtractionWorker:
         from vibeocr.core import BatchWorker
 
         worker = ExtractionWorker(
-            service=Mock(),
-            files=[],
-            keys=[],
-            options=ExtractionOptions()
+            service=Mock(), files=[], keys=[], options=ExtractionOptions()
         )
 
         assert isinstance(worker, BatchWorker)
