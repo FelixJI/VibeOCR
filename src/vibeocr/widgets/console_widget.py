@@ -40,7 +40,7 @@ class ConsoleWidget(QWidget):
     LOW_CONFIDENCE_COLOR = QColor("#F44336")  # 红色
 
     # 时间格式（表格显示）
-    TIME_FORMAT = "%m-%d %H:%M:%S"
+    TIME_FORMAT = "%m-%d %H:%M:%S"  # 基础格式，毫秒在 _add_table_row 中单独处理
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -94,11 +94,17 @@ class ConsoleWidget(QWidget):
 
         return toolbar
 
+    # 来源颜色
+    SOURCE_COLORS = {
+        "主进程": QColor("#4CAF50"),  # 绿色
+        "Worker": QColor("#9C27B0"),  # 紫色（用于所有 Worker）
+    }
+
     def _create_table(self) -> QTableWidget:
         """创建日志表格"""
         table = QTableWidget()
-        table.setColumnCount(3)
-        table.setHorizontalHeaderLabels(["时间", "级别", "消息"])
+        table.setColumnCount(4)
+        table.setHorizontalHeaderLabels(["时间", "来源", "级别", "消息"])
         table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         table.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)
         table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
@@ -109,9 +115,11 @@ class ConsoleWidget(QWidget):
         header = table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
-        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
-        table.setColumnWidth(0, 100)
-        table.setColumnWidth(1, 70)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
+        table.setColumnWidth(0, 130)  # 时间列（带毫秒需要更宽）
+        table.setColumnWidth(1, 70)  # 来源列
+        table.setColumnWidth(2, 60)  # 级别列
 
         # 启用复制快捷键
         table.setStyleSheet("QTableWidget { gridline-color: #e0e0e0; }")
@@ -194,10 +202,22 @@ class ConsoleWidget(QWidget):
 
     def _add_table_row(self, row: int, entry: LogEntry) -> None:
         """添加表格行"""
-        # 时间
-        time_str = entry.timestamp.strftime(self.TIME_FORMAT)
+        # 时间（精确到毫秒: 03-04 12:34:56.789）
+        base_time = entry.timestamp.strftime(self.TIME_FORMAT)
+        milliseconds = entry.timestamp.microsecond // 1000  # 转换为毫秒
+        time_str = f"{base_time}.{milliseconds:03d}"
         time_item = QTableWidgetItem(time_str)
         time_item.setData(Qt.ItemDataRole.UserRole, entry)  # 保存完整数据
+
+        # 来源
+        source = entry.source if hasattr(entry, "source") else "主进程"
+        source_item = QTableWidgetItem(source)
+        source_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        # 根据来源设置颜色
+        if source.startswith("Worker"):
+            source_item.setForeground(self.SOURCE_COLORS["Worker"])
+        else:
+            source_item.setForeground(self.SOURCE_COLORS.get(source, QColor("#000000")))
 
         # 级别
         level_item = QTableWidgetItem(entry.level)
@@ -232,10 +252,11 @@ class ConsoleWidget(QWidget):
             except (ValueError, ZeroDivisionError):
                 pass
 
-        # 添加到表格
+        # 添加到表格（4列）
         self._table.setItem(row, 0, time_item)
-        self._table.setItem(row, 1, level_item)
-        self._table.setItem(row, 2, msg_item)
+        self._table.setItem(row, 1, source_item)
+        self._table.setItem(row, 2, level_item)
+        self._table.setItem(row, 3, msg_item)
 
     def keyPressEvent(self, event) -> None:
         """键盘事件处理 - 支持复制"""
@@ -257,11 +278,12 @@ class ConsoleWidget(QWidget):
         lines = []
         for row in rows:
             time_item = self._table.item(row, 0)
-            level_item = self._table.item(row, 1)
-            msg_item = self._table.item(row, 2)
-            if time_item and level_item and msg_item:
+            source_item = self._table.item(row, 1)
+            level_item = self._table.item(row, 2)
+            msg_item = self._table.item(row, 3)
+            if time_item and source_item and level_item and msg_item:
                 lines.append(
-                    f"[{time_item.text()}] [{level_item.text()}] {msg_item.text()}"
+                    f"[{time_item.text()}] [{source_item.text()}] [{level_item.text()}] {msg_item.text()}"
                 )
 
         if lines:

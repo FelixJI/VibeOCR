@@ -15,6 +15,7 @@ class LogEntry:
     timestamp: datetime
     level: str
     message: str
+    source: str = "主进程"  # 日志来源：主进程 / Worker-0 / Worker-1 等
 
 
 class QtLogHandler(logging.Handler, QObject):
@@ -34,16 +35,21 @@ class QtLogHandler(logging.Handler, QObject):
             try:
                 # 使用信号前检查 QObject 是否有效
                 # 如果底层 C++ 对象已被删除，访问任何属性都会失败
-                _ = self.log_signal  # noqa: F841
+                _ = self.log_signal
             except RuntimeError:
                 # Signal source has been deleted - 静默忽略
                 return
 
             msg = self.format(record)
+
+            # 解析日志来源
+            source = self._parse_source(msg)
+
             entry = LogEntry(
                 timestamp=datetime.fromtimestamp(record.created),
                 level=record.levelname,
                 message=msg,
+                source=source,
             )
             self.log_signal.emit(entry)
 
@@ -58,10 +64,38 @@ class QtLogHandler(logging.Handler, QObject):
         except Exception:
             self.handleError(record)
 
+    def _parse_source(self, msg: str) -> str:
+        """解析日志来源
+
+        从日志消息中提取来源标识：
+        - [Worker X] -> Worker-X
+        - [主进程] -> 主进程
+        - 其他 -> 主进程
+        """
+        import re
+
+        # 匹配 [Worker X] 格式
+        worker_match = re.search(r"\[Worker\s+(\d+)\]", msg)
+        if worker_match:
+            return f"Worker-{worker_match.group(1)}"
+
+        # 匹配 [主进程] 格式
+        if "[主进程]" in msg:
+            return "主进程"
+
+        # 默认为主进程
+        return "主进程"
+
     def _should_show_in_status(self, msg: str) -> bool:
         """判断日志消息是否应该显示在状态栏"""
         # 只显示与 Worker 启动/初始化相关的日志
-        keywords = ["[Worker", "[主进程]", "OCR 服务初始化", "连接数据共享内存", "READY"]
+        keywords = [
+            "[Worker",
+            "[主进程]",
+            "OCR 服务初始化",
+            "连接数据共享内存",
+            "READY",
+        ]
         return any(kw in msg for kw in keywords)
 
 

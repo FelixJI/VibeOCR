@@ -145,28 +145,27 @@ class OCRWorkerProcess:
         logger.info(f"启动 Worker {self.worker_id}...")
         start_time = time.time()
 
-        def report_progress(stage: str, percent: int):
+        def report_progress(stage: str):
             """报告进度"""
             if progress_callback:
                 with contextlib.suppress(Exception):
-                    progress_callback(stage, percent)
+                    progress_callback(stage, 0)  # 保留接口兼容，但不传递百分比
             else:
-                # 仅在没有回调时输出日志，避免重复
-                logger.info(f"[Worker {self.worker_id}] {stage} ({percent}%)")
+                logger.info(f"[Worker {self.worker_id}] {stage}")
 
-        # 阶段1: 创建共享内存 (0-20%)
-        report_progress("创建共享内存", 10)
+        # 阶段1: 创建共享内存
+        report_progress("创建共享内存")
         try:
             config = SharedMemoryConfig(name=self.data_shm_name, size=self.shm_size)
             self.protocol = SharedMemoryProtocol(config)
             self.protocol.create()
             logger.debug(f"创建数据共享内存: {self.data_shm_name}")
-            report_progress("共享内存已创建", 20)
+            report_progress("共享内存已创建")
         except Exception as e:
             raise OCRWorkerProcessError(f"创建数据共享内存失败: {e}") from None
 
         # 阶段2: 启动子进程 (20-40%)
-        report_progress("启动子进程", 30)
+        report_progress("启动子进程")
         python_exe = self._get_python_executable()
         cmd = [
             python_exe,
@@ -207,15 +206,15 @@ class OCRWorkerProcess:
 
             self._stdout_thread = threading.Thread(target=read_stdout, daemon=True)
             self._stdout_thread.start()
-            report_progress("子进程已启动", 40)
+            report_progress("子进程已启动")
 
         except Exception as e:
             self.protocol.close()
             self.protocol.unlink()
             raise OCRWorkerProcessError(f"启动子进程失败: {e}") from None
 
-        # 阶段3: 等待 Worker 就绪 (40-100%)
-        report_progress("等待 Worker 初始化...", 50)
+        # 阶段3: 等待 Worker 就绪
+        report_progress("等待 Worker 初始化...")
         logger.info(f"[主进程] 等待 Worker {self.worker_id} 就绪信号...")
         wait_start_time = time.time()
         check_count = 0
@@ -247,8 +246,7 @@ class OCRWorkerProcess:
                 check_count += 1
                 # 每 5 秒更新一次进度
                 if time.time() - last_progress_time > 5:
-                    progress = min(40 + int(elapsed / timeout * 60), 95)
-                    report_progress(f"初始化中... ({elapsed:.0f}s)", progress)
+                    report_progress("初始化中...")
                     last_progress_time = time.time()
 
                 # 尝试读取就绪信号
@@ -261,7 +259,7 @@ class OCRWorkerProcess:
                 if msg_type == MSG_READY:
                     # 收到 Worker 的 READY 信号
                     logger.info(f"[主进程] 收到 Worker {self.worker_id} READY 信号")
-                    report_progress("Worker 就绪", 100)
+                    report_progress("Worker 就绪")
 
                     self._ready = True
                     total_time = time.time() - start_time
@@ -274,15 +272,10 @@ class OCRWorkerProcess:
                 pass
 
         # 超时 - 提供详细的诊断信息
-        elapsed = time.time() - wait_start_time
-        logger.error(
-            f"[主进程] 等待 Worker 就绪超时 ({elapsed:.1f}s/{timeout}s)，共检查 {check_count} 次"
-        )
+        logger.error("[主进程] 等待 Worker 就绪超时")
 
         # 收集诊断信息
         diagnostics = []
-        diagnostics.append(f"超时: {elapsed:.1f}s / {timeout}s")
-        diagnostics.append(f"检查次数: {check_count}")
 
         # 检查进程状态
         if self.process:
@@ -307,16 +300,15 @@ class OCRWorkerProcess:
 
         # 构建详细的错误信息
         error_msg = (
-            f"Worker 启动超时 ({elapsed:.1f}s)\n"
-            f"诊断信息:\n" + "\n".join(f"  - {d}" for d in diagnostics) + "\n"
-            f"\n可能原因:\n"
-            f"  1. 首次启动需要下载/加载模型（可能需要 60-120 秒）\n"
-            f"  2. GPU 初始化较慢\n"
-            f"  3. 系统资源不足\n"
-            f"\n建议:\n"
-            f"  - 增加超时时间（当前 {timeout} 秒）\n"
-            f"  - 检查 GPU 驱动和 CUDA 版本\n"
-            f"  - 查看日志了解详细进度"
+            "Worker 启动超时\n"
+            "可能原因:\n"
+            "  1. 首次启动需要下载模型\n"
+            "  2. GPU 初始化较慢\n"
+            "  3. 系统资源不足\n"
+            "\n建议:\n"
+            "  - 请稍后重试\n"
+            "  - 检查 GPU 驱动和 CUDA 版本\n"
+            "  - 查看日志了解详细进度"
         )
         raise OCRWorkerProcessError(error_msg)
 
@@ -480,11 +472,10 @@ class OCRWorkerProcess:
             while True:
                 remaining_timeout = timeout - (time.time() - start_time)
                 if remaining_timeout <= 0:
-                    elapsed = time.time() - start_time
                     raise OCRWorkerProcessError(
-                        f"预加载超时 ({elapsed:.1f}s/{timeout}s)\n"
-                        f"可能原因：首次使用需要下载模型（可能需要数分钟）\n"
-                        f"建议：请检查网络连接，稍后重试"
+                        "预加载超时\n"
+                        "可能原因：首次使用需要下载模型\n"
+                        "建议：请检查网络连接，稍后重试"
                     )
 
                 try:
@@ -495,13 +486,9 @@ class OCRWorkerProcess:
                 except SharedMemoryProtocolError as e:
                     # 如果是读取超时，继续等待
                     if "读取超时" in str(e):
-                        elapsed = time.time() - start_time
                         # 每 5 秒报告一次进度
                         if time.time() - last_progress_time >= 5.0:
-                            logger.info(
-                                f"Worker {self.worker_id} 等待预加载响应中... "
-                                f"({elapsed:.0f}s/{timeout}s)"
-                            )
+                            logger.info(f"Worker {self.worker_id} 等待预加载响应中...")
                             if progress_callback:
                                 # 报告正在加载中
                                 with contextlib.suppress(Exception):
@@ -517,10 +504,7 @@ class OCRWorkerProcess:
                 if msg_type == MSG_PRELOAD_DONE:
                     # 反序列化结果
                     results = deserialize_preload_result(data)
-                    elapsed = time.time() - start_time
-                    logger.info(
-                        f"Worker {self.worker_id} 预加载完成: {results} (耗时 {elapsed:.1f}s)"
-                    )
+                    logger.info(f"Worker {self.worker_id} 预加载完成: {results}")
                     # 报告完成进度
                     if progress_callback:
                         with contextlib.suppress(Exception):
