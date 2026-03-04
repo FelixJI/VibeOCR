@@ -271,13 +271,14 @@ def get_preload_pipelines(project_root: Path) -> list[str]:
         project_root: 项目根目录
 
     Returns:
-        预加载管道名称列表，如果未配置则返回默认值 ["OCR"]
+        预加载管道名称列表，如果未配置则返回空列表（不预加载）
     """
     cache_data = load_cache(project_root)
     if cache_data is None:
-        return ["OCR"]  # 默认预加载 OCR 管道
+        return []  # 默认不预加载
 
-    return cache_data.get("preload_pipelines", ["OCR"])
+    # 返回用户配置的预加载管道，如果未配置则返回空列表
+    return cache_data.get("preload_pipelines", [])
 
 
 def set_preload_pipelines(project_root: Path, pipelines: list[str]) -> bool:

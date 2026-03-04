@@ -48,17 +48,9 @@ class ExtractionTab(BaseOcrTab):
 
     def _setup_ui(self):
         """设置 UI"""
-        # 使用预编译的 Python UI 文件
+        # 使用预编译的 Python UI 文件，直接在 self 上设置
         self._ui = Ui_ExtractionTab()
-        central_widget = QWidget()
-        layout = QVBoxLayout(central_widget)
-        layout.setContentsMargins(0, 0, 0, 0)
-        self._ui.setupUi(central_widget)
-
-        # 设置布局
-        main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(0, 0, 0, 0)
-        main_layout.addWidget(central_widget)
+        self._ui.setupUi(self)
 
         # 添加 ConsoleWidget 到结果容器
         self._result_widget = ConsoleWidget()

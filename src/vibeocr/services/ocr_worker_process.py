@@ -149,7 +149,9 @@ class OCRWorkerProcess:
             if progress_callback:
                 with contextlib.suppress(Exception):
                     progress_callback(stage, percent)
-            logger.info(f"[Worker {self.worker_id}] {stage} ({percent}%)")
+            else:
+                # 仅在没有回调时输出日志，避免重复
+                logger.info(f"[Worker {self.worker_id}] {stage} ({percent}%)")
 
         # 阶段1: 创建共享内存 (0-20%)
         report_progress("创建共享内存", 10)
