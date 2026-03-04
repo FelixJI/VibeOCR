@@ -602,6 +602,7 @@ def check_embedded_environment_dependencies(
     }
 
     # 检测 PaddlePaddle（GPU或CPU版本都会导入为 paddle）
+    # 注意：首次导入 PaddlePaddle 时可能需要初始化 CUDA 环境，耗时较长
     try:
         result = subprocess.run(
             [
@@ -611,7 +612,7 @@ def check_embedded_environment_dependencies(
             ],
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=60,  # 首次导入可能需要初始化CUDA，增加超时时间
             creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
         )
         if result.returncode == 0:
@@ -625,12 +626,13 @@ def check_embedded_environment_dependencies(
         dependencies["paddlepaddle"] = False
 
     # 检测 PaddleX
+    # 注意：PaddleX 导入也可能需要较长时间，因为它会加载相关依赖
     try:
         result = subprocess.run(
             [str(python_exe), "-c", "import paddlex"],
             capture_output=True,
             text=True,
-            timeout=5,
+            timeout=30,  # PaddleX 导入也可能需要时间
             creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
         )
         dependencies["paddlex"] = result.returncode == 0
@@ -691,12 +693,13 @@ def check_dependencies(project_root: Path) -> dict[str, bool]:
             dependencies[pkg] = False
 
     # 检测 PaddlePaddle（使用 paddle 模块名）
+    # 注意：首次导入 PaddlePaddle 时可能需要初始化 CUDA 环境，耗时较长
     try:
         result = subprocess.run(
             [str(python_exe), "-c", "import paddle"],
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=60,  # 首次导入可能需要初始化CUDA，增加超时时间
             creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
         )
         dependencies["paddlepaddle"] = result.returncode == 0
@@ -709,7 +712,7 @@ def check_dependencies(project_root: Path) -> dict[str, bool]:
             [str(python_exe), "-c", "import paddlex"],
             capture_output=True,
             text=True,
-            timeout=5,
+            timeout=30,  # PaddleX 导入也可能需要时间
             creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
         )
         dependencies["paddlex"] = result.returncode == 0

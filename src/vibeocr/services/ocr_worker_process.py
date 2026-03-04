@@ -12,6 +12,7 @@ import time
 import uuid
 from collections.abc import Callable
 
+from vibeocr.model_cache_manager import is_pipeline_cached
 from vibeocr.utils.shared_memory_v2 import (
     MessageType,
     SharedMemoryConfig,
@@ -433,13 +434,18 @@ class OCRWorkerProcess:
             return False
 
     def preload_pipelines(
-        self, pipelines: list[str], timeout: float = 180.0
+        self,
+        pipelines: list[str],
+        timeout: float | None = None,
+        progress_callback: Callable[[str, int, int], None] | None = None,
     ) -> dict[str, bool]:
         """预加载指定管道
 
         Args:
             pipelines: 管道名称列表 ["ocr", "table_recognition", ...]
-            timeout: 超时时间（秒）
+            timeout: 超时时间（秒），如果为 None 则根据模型缓存状态自动确定
+            progress_callback: 进度回调函数，接收 (pipeline_name, current, total) 参数
+                用于报告加载进度，特别是首次下载模型时
 
         Returns:
             {pipeline_name: success} 结果字典
@@ -449,6 +455,10 @@ class OCRWorkerProcess:
         """
         if not self.is_ready:
             raise OCRWorkerProcessError(f"Worker {self.worker_id} 未就绪")
+
+        # 智能超时：根据模型缓存状态确定超时时间
+        if timeout is None:
+            timeout = self._calculate_preload_timeout(pipelines)
 
         self.busy = True
 
@@ -464,10 +474,18 @@ class OCRWorkerProcess:
 
             # 等待预加载结果
             start_time = time.time()
+            last_progress_time = start_time
+            total_pipelines = len(pipelines)
+
             while True:
                 remaining_timeout = timeout - (time.time() - start_time)
                 if remaining_timeout <= 0:
-                    raise OCRWorkerProcessError(f"预加载超时 ({timeout}s)")
+                    elapsed = time.time() - start_time
+                    raise OCRWorkerProcessError(
+                        f"预加载超时 ({elapsed:.1f}s/{timeout}s)\n"
+                        f"可能原因：首次使用需要下载模型（可能需要数分钟）\n"
+                        f"建议：请检查网络连接，稍后重试"
+                    )
 
                 try:
                     # 使用较短的单次读取超时，但整体受 remaining_timeout 控制
@@ -477,14 +495,37 @@ class OCRWorkerProcess:
                 except SharedMemoryProtocolError as e:
                     # 如果是读取超时，继续等待
                     if "读取超时" in str(e):
-                        logger.debug(f"Worker {self.worker_id} 等待预加载响应中...")
+                        elapsed = time.time() - start_time
+                        # 每 5 秒报告一次进度
+                        if time.time() - last_progress_time >= 5.0:
+                            logger.info(
+                                f"Worker {self.worker_id} 等待预加载响应中... "
+                                f"({elapsed:.0f}s/{timeout}s)"
+                            )
+                            if progress_callback:
+                                # 报告正在加载中
+                                with contextlib.suppress(Exception):
+                                    progress_callback(
+                                        pipelines[0] if pipelines else "unknown",
+                                        0,
+                                        total_pipelines,
+                                    )
+                            last_progress_time = time.time()
                         continue
                     raise
 
                 if msg_type == MSG_PRELOAD_DONE:
                     # 反序列化结果
                     results = deserialize_preload_result(data)
-                    logger.info(f"Worker {self.worker_id} 预加载完成: {results}")
+                    elapsed = time.time() - start_time
+                    logger.info(
+                        f"Worker {self.worker_id} 预加载完成: {results} (耗时 {elapsed:.1f}s)"
+                    )
+                    # 报告完成进度
+                    if progress_callback:
+                        with contextlib.suppress(Exception):
+                            for i, pipeline_name in enumerate(pipelines, 1):
+                                progress_callback(pipeline_name, i, total_pipelines)
                     return results
 
                 elif msg_type == MSG_ERROR:
@@ -509,6 +550,42 @@ class OCRWorkerProcess:
 
         finally:
             self.busy = False
+
+    def _calculate_preload_timeout(self, pipelines: list[str]) -> float:
+        """根据模型缓存状态计算预加载超时时间
+
+        Args:
+            pipelines: 要加载的管道名称列表
+
+        Returns:
+            超时时间（秒）
+        """
+        # 超时配置常量
+        TIMEOUT_CACHED = 60.0  # 模型已缓存时的超时（秒）
+        TIMEOUT_UNCACHED = 300.0  # 模型未缓存时的超时（秒）- 5分钟
+        TIMEOUT_PER_PIPELINE = 30.0  # 每个额外管道增加的超时
+
+        # 检查是否有任何模型未缓存
+        uncached_pipelines = []
+        for pipeline_name in pipelines:
+            if not is_pipeline_cached(pipeline_name):
+                uncached_pipelines.append(pipeline_name)
+
+        if uncached_pipelines:
+            # 有模型未缓存，使用较长超时
+            logger.info(
+                f"[预加载] 检测到未缓存模型: {uncached_pipelines}，"
+                f"使用延长超时（首次使用可能需要下载模型）"
+            )
+            # 基础超时 + 每个管道额外时间
+            timeout = TIMEOUT_UNCACHED + len(pipelines) * TIMEOUT_PER_PIPELINE
+        else:
+            # 所有模型已缓存，使用较短超时
+            logger.info(f"[预加载] 所有模型已缓存，使用标准超时 ({TIMEOUT_CACHED}s)")
+            timeout = TIMEOUT_CACHED + len(pipelines) * (TIMEOUT_PER_PIPELINE / 2)
+
+        logger.debug(f"[预加载] 计算的超时时间: {timeout}s")
+        return timeout
 
     def warmup_pipelines(
         self, pipelines: list[str], timeout: float = 180.0
