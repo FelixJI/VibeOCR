@@ -8,7 +8,6 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal, Slot
 from PySide6.QtGui import QPixmap
-from PySide6.QtUiTools import QUiLoader
 from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
@@ -22,6 +21,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from vibeocr.ui.ui_doc_understanding_tab import Ui_DocUnderstandingTab
 from vibeocr.views.tabs.base_tab import BaseOcrTab
 from vibeocr.widgets.chat_widget import ChatWidget
 from vibeocr.workers.doc_understanding_worker import DocUnderstandingWorker
@@ -58,17 +58,8 @@ class DocUnderstandingTab(BaseOcrTab):
 
     def _setup_ui(self):
         """设置 UI"""
-        ui_path = Path(__file__).parent.parent / "ui" / "doc_understanding_tab.ui"
-        if ui_path.exists():
-            loader = QUiLoader()
-            self._ui = loader.load(str(ui_path), self)
-
-            layout = QVBoxLayout(self)
-            layout.setContentsMargins(0, 0, 0, 0)
-            layout.addWidget(self._ui)
-        else:
-            # 如果 UI 文件不存在，动态创建
-            self._create_ui_programmatically()
+        self._ui = Ui_DocUnderstandingTab()
+        self._ui.setupUi(self)
 
         # 添加 ChatWidget 到对话容器
         self._chat_widget = ChatWidget()
