@@ -5,6 +5,7 @@
 
 import io
 import logging
+import time
 
 _logger = logging.getLogger(__name__)
 
@@ -126,7 +127,3 @@ def warmup_worker_process(worker_process, timeout: float = 60.0) -> bool:
     except Exception as e:
         _logger.error(f"Worker {worker_process.worker_id} 预热失败: {e}")
         return False
-
-
-# 延迟导入 time 模块（避免循环导入）
-import time

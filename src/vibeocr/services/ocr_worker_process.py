@@ -419,8 +419,6 @@ class OCRWorkerProcess:
             logger.info(f"[主进程] 尝试重启 Worker {self.worker_id}...")
             self.stop()
             # 重新生成共享内存名称（避免与旧内存冲突）
-            import uuid
-
             unique_id = uuid.uuid4().hex[:16]
             self.data_shm_name = f"vibeocr_data_{unique_id}_{self.worker_id}"
             self.shm_name = self.data_shm_name
