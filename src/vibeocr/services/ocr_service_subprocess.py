@@ -19,8 +19,8 @@ if TYPE_CHECKING:
     import numpy
     from PIL import Image
 
-    from vibeocr.models.batch_request import PreprocessOptions
-    from vibeocr.models.ocr_options import OCRPipeline
+    from vibeocr.core.pipelines import OCRPipeline  # 从统一位置导入
+    from vibeocr.models.batch_request import PreprocessOptions  # 向后兼容
 
 logger = logging.getLogger(__name__)
 

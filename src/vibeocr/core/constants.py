@@ -1,18 +1,11 @@
 """全局常量定义
 
 集中管理应用程序中使用的所有常量。
+
+注意: OCRPipeline 枚举已移至 pipelines.py，此文件不再定义管道类型。
 """
 
 from enum import Enum, auto
-
-
-class OCRPipeline(Enum):
-    """OCR 管道类型"""
-
-    PP_STRUCTURE_V3 = "PP-StructureV3"
-    PADDLEOCR_VL = "PaddleOCR-VL"
-    CHATOCRv4 = "PP-ChatOCRv4"
-    DOC_UNDERSTANDING = "doc_understanding"
 
 
 class FileType(Enum):
@@ -66,14 +59,6 @@ class Constants:
     # 日志配置
     LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     LOG_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
-
-    # 文档理解模型
-    DOC_UNDERSTANDING_MODELS = [
-        "PP-DocBee-2B",
-        "PP-DocBee-7B",
-        "PP-DocBee2-3B",
-    ]
-    DEFAULT_DOC_UNDERSTANDING_MODEL = "PP-DocBee2-3B"
 
     # 样式常量
     class Style:

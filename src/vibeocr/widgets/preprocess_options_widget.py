@@ -1,7 +1,5 @@
-"""预处理选项组件
-
-用于配置 PP-StructureV3 和 PaddleOCR-VL 的预处理参数。
-"""
+# src/vibeocr/widgets/preprocess_options_widget.py
+"""预处理选项组件 - 选项卡式布局"""
 
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
@@ -10,30 +8,32 @@ from PySide6.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QLabel,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
 
-from vibeocr.models.batch_request import PreprocessOptions
+from vibeocr.core.pipelines import (
+    DEFAULT_DOC_UNDERSTANDING_MODEL,
+    DOC_UNDERSTANDING_MODELS,
+    OCRPipeline,
+    get_all_pipelines,
+    get_pipeline_display_name,
+)
+from vibeocr.models.ocr_options import OCROptions
 
 
 class PreprocessOptionsWidget(QGroupBox):
     """预处理选项组件
 
-    提供以下选项：
-    - 管道选择（PP-StructureV3 / PaddleOCR-VL）
-    - 文档方向分类
-    - 文档扭曲矫正
-    - 文本行方向分类
-    - PaddleOCR-VL 特有选项
+    选项卡式布局，根据管道动态显示选项。
     """
 
-    # 选项变更信号
-    options_changed = Signal(object)  # PreprocessOptions
+    options_changed = Signal(object)  # OCROptions
 
-    def __init__(self, parent: QWidget = None):
+    def __init__(self, parent: QWidget | None = None):
         super().__init__("识别选项", parent)
-
+        self._current_options = OCROptions()
         self._setup_ui()
         self._connect_signals()
 
@@ -44,128 +44,302 @@ class PreprocessOptionsWidget(QGroupBox):
 
         # 管道选择
         pipeline_layout = QHBoxLayout()
-        pipeline_layout.addWidget(QLabel("识别管道:"))
+        pipeline_layout.addWidget(QLabel("管道:"))
         self._pipeline_combo = QComboBox()
-        self._pipeline_combo.addItem("版面解析 (PP-StructureV3)", "PP-StructureV3")
-        self._pipeline_combo.addItem("PaddleOCR-VL (端到端)", "PaddleOCR-VL")
-        self._pipeline_combo.setToolTip(
-            "选择识别管道：版面解析或 PaddleOCR-VL 端到端识别"
-        )
+        self._populate_pipeline_combo()
         pipeline_layout.addWidget(self._pipeline_combo)
         pipeline_layout.addStretch()
         layout.addLayout(pipeline_layout)
 
-        # 通用预处理选项
+        # 选项卡
+        self._tab_widget = QTabWidget()
+        layout.addWidget(self._tab_widget)
+
+        # 预处理选项卡
+        self._preprocess_tab = self._create_preprocess_tab()
+        self._tab_widget.addTab(self._preprocess_tab, "预处理")
+
+        # 高级选项卡
+        self._advanced_tab = self._create_advanced_tab()
+        self._tab_widget.addTab(self._advanced_tab, "高级")
+
+        # 模型选项卡
+        self._model_tab = self._create_model_tab()
+        self._tab_widget.addTab(self._model_tab, "模型")
+
+        # 初始更新可见性
+        self._update_tab_visibility()
+
+    def _populate_pipeline_combo(self):
+        """填充管道下拉框"""
+        self._pipeline_combo.clear()
+        for pipeline in get_all_pipelines():
+            self._pipeline_combo.addItem(
+                get_pipeline_display_name(pipeline),
+                pipeline.value,
+            )
+
+    def _create_preprocess_tab(self) -> QWidget:
+        """创建预处理选项卡"""
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+
         self._doc_orientation_cb = QCheckBox("文档方向分类")
-        self._doc_orientation_cb.setToolTip("自动检测并矫正文档方向 (0/90/180/270)")
+        self._doc_orientation_cb.setToolTip("自动检测并矫正文档方向 (0/90/180/270度)")
         self._doc_orientation_cb.setChecked(True)
         layout.addWidget(self._doc_orientation_cb)
 
         self._doc_unwarping_cb = QCheckBox("文档扭曲矫正")
-        self._doc_unwarping_cb.setToolTip("矫正弯曲或折叠的文档图像")
+        self._doc_unwarping_cb.setToolTip("矫正文档的扭曲、倾斜、透视变形")
         self._doc_unwarping_cb.setChecked(True)
         layout.addWidget(self._doc_unwarping_cb)
 
         self._textline_orientation_cb = QCheckBox("文本行方向分类")
-        self._textline_orientation_cb.setToolTip("矫正倾斜的文本行")
+        self._textline_orientation_cb.setToolTip("检测文本行方向 (0/180度)")
         self._textline_orientation_cb.setChecked(False)
         layout.addWidget(self._textline_orientation_cb)
 
-        # PaddleOCR-VL 特有选项
-        self._vl_options_group = QGroupBox("PaddleOCR-VL 选项")
-        vl_layout = QVBoxLayout(self._vl_options_group)
+        layout.addStretch()
+        return widget
+
+    def _create_advanced_tab(self) -> QWidget:
+        """创建高级选项卡"""
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+
+        # PP-StructureV3 选项组
+        self._pp_structure_group = self._create_pp_structure_group()
+        layout.addWidget(self._pp_structure_group)
+
+        # PaddleOCR-VL 选项组
+        self._vl_group = self._create_vl_group()
+        layout.addWidget(self._vl_group)
+
+        layout.addStretch()
+        return widget
+
+    def _create_pp_structure_group(self) -> QGroupBox:
+        """创建 PP-StructureV3 选项组"""
+        group = QGroupBox("版面解析子产线")
+        layout = QVBoxLayout(group)
+
+        self._table_recognition_cb = QCheckBox("表格识别")
+        self._table_recognition_cb.setChecked(True)
+        layout.addWidget(self._table_recognition_cb)
+
+        self._formula_recognition_cb = QCheckBox("公式识别")
+        self._formula_recognition_cb.setChecked(True)
+        layout.addWidget(self._formula_recognition_cb)
+
+        self._seal_recognition_cb = QCheckBox("印章识别")
+        self._seal_recognition_cb.setChecked(False)
+        layout.addWidget(self._seal_recognition_cb)
+
+        self._chart_recognition_cb = QCheckBox("图表识别")
+        self._chart_recognition_cb.setChecked(False)
+        layout.addWidget(self._chart_recognition_cb)
+
+        return group
+
+    def _create_vl_group(self) -> QGroupBox:
+        """创建 PaddleOCR-VL 选项组"""
+        group = QGroupBox("PaddleOCR-VL 选项")
+        layout = QVBoxLayout(group)
 
         self._vl_layout_cb = QCheckBox("版面区域检测排序")
-        self._vl_layout_cb.setToolTip("启用版面区域检测和排序")
         self._vl_layout_cb.setChecked(True)
-        vl_layout.addWidget(self._vl_layout_cb)
+        layout.addWidget(self._vl_layout_cb)
 
-        self._vl_chart_cb = QCheckBox("图表解析")
-        self._vl_chart_cb.setToolTip("启用图表解析功能")
-        self._vl_chart_cb.setChecked(False)
-        vl_layout.addWidget(self._vl_chart_cb)
-
-        self._vl_seal_cb = QCheckBox("印章识别 (v1.5)")
-        self._vl_seal_cb.setToolTip("启用印章识别功能（v1.5 新增）")
+        self._vl_seal_cb = QCheckBox("印章识别")
         self._vl_seal_cb.setChecked(False)
-        vl_layout.addWidget(self._vl_seal_cb)
+        layout.addWidget(self._vl_seal_cb)
 
-        self._vl_format_cb = QCheckBox("Markdown 格式化")
-        self._vl_format_cb.setToolTip("将结果格式化为 Markdown 格式")
-        self._vl_format_cb.setChecked(False)
-        vl_layout.addWidget(self._vl_format_cb)
-
-        self._vl_ocr_image_cb = QCheckBox("图片内 OCR")
-        self._vl_ocr_image_cb.setToolTip("对图片块中的文字进行 OCR 识别")
+        self._vl_ocr_image_cb = QCheckBox("图片文字识别")
         self._vl_ocr_image_cb.setChecked(False)
-        vl_layout.addWidget(self._vl_ocr_image_cb)
+        layout.addWidget(self._vl_ocr_image_cb)
 
-        layout.addWidget(self._vl_options_group)
+        self._vl_markdown_cb = QCheckBox("Markdown 格式输出")
+        self._vl_markdown_cb.setChecked(False)
+        layout.addWidget(self._vl_markdown_cb)
 
-        self.setLayout(layout)
+        return group
 
-        # 初始化可见性
-        self._update_vl_options_visibility()
+    def _create_model_tab(self) -> QWidget:
+        """创建模型选项卡"""
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+
+        # 文档理解模型选择
+        self._doc_model_group = QGroupBox("文档理解模型")
+        doc_model_layout = QVBoxLayout(self._doc_model_group)
+
+        model_select_layout = QHBoxLayout()
+        model_select_layout.addWidget(QLabel("VLM 模型:"))
+        self._doc_model_combo = QComboBox()
+        for model in DOC_UNDERSTANDING_MODELS:
+            self._doc_model_combo.addItem(model)
+        self._doc_model_combo.setCurrentText(DEFAULT_DOC_UNDERSTANDING_MODEL)
+        model_select_layout.addWidget(self._doc_model_combo)
+        model_select_layout.addStretch()
+        doc_model_layout.addLayout(model_select_layout)
+
+        layout.addWidget(self._doc_model_group)
+
+        layout.addStretch()
+        return widget
 
     def _connect_signals(self):
         """连接信号"""
+        self._pipeline_combo.currentIndexChanged.connect(self._on_pipeline_changed)
+
+        # 预处理选项
         self._doc_orientation_cb.toggled.connect(self._on_option_changed)
         self._doc_unwarping_cb.toggled.connect(self._on_option_changed)
         self._textline_orientation_cb.toggled.connect(self._on_option_changed)
-        self._pipeline_combo.currentIndexChanged.connect(self._on_pipeline_changed)
+
+        # PP-StructureV3 选项
+        self._table_recognition_cb.toggled.connect(self._on_option_changed)
+        self._formula_recognition_cb.toggled.connect(self._on_option_changed)
+        self._seal_recognition_cb.toggled.connect(self._on_option_changed)
+        self._chart_recognition_cb.toggled.connect(self._on_option_changed)
 
         # VL 选项
         self._vl_layout_cb.toggled.connect(self._on_option_changed)
-        self._vl_chart_cb.toggled.connect(self._on_option_changed)
         self._vl_seal_cb.toggled.connect(self._on_option_changed)
-        self._vl_format_cb.toggled.connect(self._on_option_changed)
         self._vl_ocr_image_cb.toggled.connect(self._on_option_changed)
+        self._vl_markdown_cb.toggled.connect(self._on_option_changed)
+
+        # 模型选择
+        self._doc_model_combo.currentTextChanged.connect(self._on_option_changed)
 
     def _on_pipeline_changed(self):
         """管道选择变更"""
-        self._update_vl_options_visibility()
+        self._update_tab_visibility()
         self._on_option_changed()
 
-    def _update_vl_options_visibility(self):
-        """更新 VL 选项的可见性"""
-        pipeline = self._pipeline_combo.currentData()
-        is_vl = pipeline == "PaddleOCR-VL"
-        self._vl_options_group.setVisible(is_vl)
+    def _update_tab_visibility(self):
+        """根据管道更新选项卡可见性"""
+        pipeline = self.get_current_pipeline()
+        supported = self._get_supported_options(pipeline)
+
+        # 预处理选项卡
+        has_preprocess = any(
+            opt in supported
+            for opt in [
+                "use_doc_orientation_classify",
+                "use_doc_unwarping",
+                "use_textline_orientation",
+            ]
+        )
+
+        # 高级选项卡
+        has_advanced = any(
+            opt in supported
+            for opt in [
+                "use_table_recognition",
+                "use_formula_recognition",
+                "use_seal_recognition",
+                "use_chart_recognition",
+                "vl_use_layout_detection",
+            ]
+        )
+
+        # 模型选项卡
+        has_model = "doc_understanding_model" in supported
+
+        # 设置选项卡可见性
+        self._tab_widget.setTabVisible(0, has_preprocess)
+        self._tab_widget.setTabVisible(1, has_advanced)
+        self._tab_widget.setTabVisible(2, has_model)
+
+        # 设置 PP-StructureV3 组可见性
+        pp_opts = [
+            "use_table_recognition",
+            "use_formula_recognition",
+            "use_seal_recognition",
+            "use_chart_recognition",
+        ]
+        self._pp_structure_group.setVisible(any(opt in supported for opt in pp_opts))
+
+        # 设置 VL 组可见性
+        vl_opts = [
+            "vl_use_layout_detection",
+            "vl_use_seal_recognition",
+            "vl_use_ocr_for_image_block",
+            "vl_format_block_content",
+        ]
+        self._vl_group.setVisible(any(opt in supported for opt in vl_opts))
+
+        # 如果当前选项卡不可见，切换到第一个可见的
+        for i in range(self._tab_widget.count()):
+            if self._tab_widget.isTabVisible(i):
+                self._tab_widget.setCurrentIndex(i)
+                break
+
+    def _get_supported_options(self, pipeline: OCRPipeline) -> list[str]:
+        """获取管道支持的选项列表"""
+        from vibeocr.core.pipelines import get_pipeline_supported_options
+
+        return get_pipeline_supported_options(pipeline)
 
     def _on_option_changed(self):
-        """选项变更处理"""
+        """选项变更"""
         options = self.get_options()
+        self._current_options = options
         self.options_changed.emit(options)
 
-    def get_options(self) -> PreprocessOptions:
+    def get_current_pipeline(self) -> OCRPipeline:
+        """获取当前选择的管道"""
+        value = self._pipeline_combo.currentData()
+        return OCRPipeline(value)
+
+    def get_options(self) -> OCROptions:
         """获取当前选项"""
-        pipeline = self._pipeline_combo.currentData()
-        return PreprocessOptions(
+        return OCROptions(
+            pipeline=self.get_current_pipeline(),
             use_doc_orientation_classify=self._doc_orientation_cb.isChecked(),
             use_doc_unwarping=self._doc_unwarping_cb.isChecked(),
             use_textline_orientation=self._textline_orientation_cb.isChecked(),
-            pipeline=pipeline,
+            use_table_recognition=self._table_recognition_cb.isChecked(),
+            use_formula_recognition=self._formula_recognition_cb.isChecked(),
+            use_seal_recognition=self._seal_recognition_cb.isChecked(),
+            use_chart_recognition=self._chart_recognition_cb.isChecked(),
             vl_use_layout_detection=self._vl_layout_cb.isChecked(),
+            vl_format_block_content=self._vl_markdown_cb.isChecked(),
             vl_use_seal_recognition=self._vl_seal_cb.isChecked(),
             vl_use_ocr_for_image_block=self._vl_ocr_image_cb.isChecked(),
-            vl_format_block_content=self._vl_format_cb.isChecked(),
+            doc_understanding_model=self._doc_model_combo.currentText(),
         )
 
-    def set_options(self, options: PreprocessOptions):
+    def set_options(self, options: OCROptions):
         """设置选项"""
+        self._current_options = options
+
+        # 设置管道
+        index = self._pipeline_combo.findData(options.pipeline.value)
+        if index >= 0:
+            self._pipeline_combo.setCurrentIndex(index)
+
+        # 设置预处理选项
         self._doc_orientation_cb.setChecked(options.use_doc_orientation_classify)
         self._doc_unwarping_cb.setChecked(options.use_doc_unwarping)
         self._textline_orientation_cb.setChecked(options.use_textline_orientation)
 
-        # 设置管道
-        index = self._pipeline_combo.findData(options.pipeline)
-        if index >= 0:
-            self._pipeline_combo.setCurrentIndex(index)
+        # 设置 PP-StructureV3 选项
+        self._table_recognition_cb.setChecked(options.use_table_recognition)
+        self._formula_recognition_cb.setChecked(options.use_formula_recognition)
+        self._seal_recognition_cb.setChecked(options.use_seal_recognition)
+        self._chart_recognition_cb.setChecked(options.use_chart_recognition)
 
         # 设置 VL 选项
         self._vl_layout_cb.setChecked(options.vl_use_layout_detection)
+        self._vl_markdown_cb.setChecked(options.vl_format_block_content)
         self._vl_seal_cb.setChecked(options.vl_use_seal_recognition)
         self._vl_ocr_image_cb.setChecked(options.vl_use_ocr_for_image_block)
-        self._vl_format_cb.setChecked(options.vl_format_block_content)
 
-        self._update_vl_options_visibility()
+        # 设置模型
+        index = self._doc_model_combo.findText(options.doc_understanding_model)
+        if index >= 0:
+            self._doc_model_combo.setCurrentIndex(index)
+
+        self._update_tab_visibility()

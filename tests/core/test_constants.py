@@ -2,7 +2,9 @@
 
 from vibeocr.core import (
     COLOR_PRIMARY,
+    DEFAULT_DOC_UNDERSTANDING_MODEL,
     DEFAULT_SHM_SIZE,
+    DOC_UNDERSTANDING_MODELS,
     Constants,
     FileType,
     OCRPipeline,
@@ -62,11 +64,8 @@ class TestConstants:
 
     def test_doc_understanding_models(self):
         """测试文档理解模型"""
-        assert len(Constants.DOC_UNDERSTANDING_MODELS) > 0
-        assert (
-            Constants.DEFAULT_DOC_UNDERSTANDING_MODEL
-            in Constants.DOC_UNDERSTANDING_MODELS
-        )
+        assert len(DOC_UNDERSTANDING_MODELS) > 0
+        assert DEFAULT_DOC_UNDERSTANDING_MODEL in DOC_UNDERSTANDING_MODELS
 
 
 class TestOCRPipeline:
@@ -76,8 +75,12 @@ class TestOCRPipeline:
         """测试枚举值"""
         assert OCRPipeline.PP_STRUCTURE_V3.value == "PP-StructureV3"
         assert OCRPipeline.PADDLEOCR_VL.value == "PaddleOCR-VL"
-        assert OCRPipeline.CHATOCRv4.value == "PP-ChatOCRv4"
+        assert OCRPipeline.CHATOCRV4.value == "PP-ChatOCRv4"
         assert OCRPipeline.DOC_UNDERSTANDING.value == "doc_understanding"
+        # 新增管道
+        assert OCRPipeline.OCR.value == "OCR"
+        assert OCRPipeline.TABLE_RECOGNITION.value == "table_recognition"
+        assert OCRPipeline.FORMULA_RECOGNITION.value == "formula_recognition"
 
 
 class TestFileType:

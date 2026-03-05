@@ -7,14 +7,24 @@ import os
 import sys
 import threading
 from collections.abc import Callable
-from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from vibeocr.core.pipelines import OCRPipeline  # 从统一位置导入
 from vibeocr.core.singleton_meta import SingletonMeta
+from vibeocr.models.ocr_options import OCROptions  # 从统一位置导入
 from vibeocr.models.ocr_result import OCRResult
 from vibeocr.utils.markdown_converter import markdown_to_html
+
+# 重新导出以保持向后兼容性
+__all__ = [
+    "OCRService",
+    "OCROptions",
+    "OCRPipeline",
+    "OCRResult",
+    "OCRPreset",
+]
 
 # 禁用 OneDNN 并强制使用 CPU 模式以兼容性
 os.environ.setdefault("FLAGS_enable_onednn_backend", "0")
@@ -45,40 +55,6 @@ if TYPE_CHECKING:
     from PIL import Image
 
 
-class OCRPipeline(Enum):
-    """OCR 管道类型"""
-
-    OCR = "OCR"  # 通用 OCR：文本识别
-    TABLE_RECOGNITION = "table_recognition"  # 表格识别
-    FORMULA_RECOGNITION = "formula_recognition"  # 公式识别
-    PP_STRUCTURE_V3 = "PP-StructureV3"  # 版面解析（包含可选的表格/公式子产线）
-    PADDLEOCR_VL = "PaddleOCR-VL"  # PaddleOCR-VL 多模态文档解析
-
-    @property
-    def display_name(self) -> str:
-        """获取显示名称"""
-        names = {
-            OCRPipeline.OCR: "通用 OCR",
-            OCRPipeline.TABLE_RECOGNITION: "表格识别",
-            OCRPipeline.FORMULA_RECOGNITION: "公式识别",
-            OCRPipeline.PP_STRUCTURE_V3: "版面解析",
-            OCRPipeline.PADDLEOCR_VL: "PaddleOCR-VL",
-        }
-        return names.get(self, "通用 OCR")
-
-    @property
-    def description(self) -> str:
-        """获取描述"""
-        descriptions = {
-            OCRPipeline.OCR: "识别图片中的文字内容",
-            OCRPipeline.TABLE_RECOGNITION: "识别表格结构，输出 HTML/Excel 格式",
-            OCRPipeline.FORMULA_RECOGNITION: "识别数学公式，输出 LaTeX 格式",
-            OCRPipeline.PP_STRUCTURE_V3: "解析文档版面，支持表格、公式等子产线",
-            OCRPipeline.PADDLEOCR_VL: "端到端文档解析，支持表格、公式、印章、图表等",
-        }
-        return descriptions.get(self, "识别图片中的文字内容")
-
-
 class OCRPreset(Enum):
     """OCR 预设模式（用于通用 OCR 管道的预处理配置）"""
 
@@ -93,34 +69,6 @@ class OCRPreset(Enum):
             OCRPreset.SCANNED: "扫描件",
         }
         return names.get(self, "通用")
-
-
-@dataclass
-class OCROptions:
-    """OCR 识别选项"""
-
-    pipeline: OCRPipeline = OCRPipeline.OCR
-    # 通用预处理选项（对所有管道适用）
-    use_doc_orientation_classify: bool = False  # 文档方向分类
-    use_doc_unwarping: bool = False  # 文本图像去弯曲
-    # 管道特有选项
-    use_textline_orientation: bool = True  # 文本行方向分类（仅 OCR 管道）
-    use_layout_detection: bool = False  # 版面检测（表格/公式管道，用于检测目标区域）
-    # 版面解析子产线选项（仅当 pipeline == PP_STRUCTURE_V3 时有效）
-    use_table_recognition: bool = True  # 表格识别子产线
-    use_formula_recognition: bool = True  # 公式识别子产线
-    use_seal_recognition: bool = False  # 印章识别子产线
-    use_chart_recognition: bool = False  # 图表识别子产线
-    # PaddleOCR-VL 特有选项
-    vl_use_layout_detection: bool = True  # 启用版面区域检测排序（PaddleOCR-VL）
-    vl_format_block_content: bool = False  # 将 block_content 格式化为 Markdown
-    vl_use_seal_recognition: bool = False  # 启用印章识别（v1.5 新增）
-    vl_use_ocr_for_image_block: bool = False  # 对图片中的文字进行识别
-    # VLM 采样参数
-    vl_temperature: float = 0.0  # 温度参数
-    vl_top_p: float = 0.0  # top-p 参数
-    vl_max_pixels: int = 0  # 最大像素数（0 表示使用默认）
-    vl_min_pixels: int = 0  # 最小像素数（0 表示使用默认）
 
 
 class OCRService(metaclass=SingletonMeta):
@@ -745,6 +693,10 @@ class OCRService(metaclass=SingletonMeta):
                 result = self._recognize_structure(image, actual_options)
             elif actual_options.pipeline == OCRPipeline.PADDLEOCR_VL:
                 result = self._recognize_paddleocr_vl(image, actual_options)
+            elif actual_options.pipeline == OCRPipeline.CHATOCRV4:
+                result = self._recognize_chatocrv4(image, actual_options)
+            elif actual_options.pipeline == OCRPipeline.DOC_UNDERSTANDING:
+                result = self._recognize_doc_understanding(image, actual_options)
             else:
                 result = self._recognize_ocr(image, actual_options)
             _logger.info(f"[recognize] 识别完成，返回 {len(result.raw_text)} 字符")
@@ -1329,3 +1281,156 @@ class OCRService(metaclass=SingletonMeta):
             pipeline_type=pipeline_type,
             images=images or {},
         )
+
+    def _recognize_chatocrv4(
+        self,
+        image: Image.Image | np.ndarray | str,
+        options: OCROptions,
+    ) -> OCRResult:
+        """PP-ChatOCRv4 文档场景信息抽取
+
+        PP-ChatOCRv4 是结合 LLM 和 OCR 技术的文档场景信息抽取模型。
+        """
+
+        def _do_recognize(img) -> OCRResult:
+            pipeline = self.get_pipeline(OCRPipeline.CHATOCRV4)
+
+            # 构建 predict 参数
+            predict_kwargs = {
+                "input": img,
+                "use_doc_orientation_classify": options.use_doc_orientation_classify,
+                "use_doc_unwarping": options.use_doc_unwarping,
+            }
+
+            output = pipeline.predict(**predict_kwargs)
+
+            # 确保 GPU 操作完成后再处理结果
+            output_list = self._consume_generator_safely(output)
+
+            text_with_scores: list[tuple[str, float]] = []
+
+            for res in output_list:
+                # 提取识别结果
+                if hasattr(res, "rec_texts") and hasattr(res, "rec_scores"):
+                    for text, score in zip(res.rec_texts, res.rec_scores):
+                        if text:
+                            text_with_scores.append((text, float(score)))
+                elif hasattr(res, "ocr_text"):
+                    text_with_scores.append((res.ocr_text, 1.0))
+                # 字典格式处理
+                elif isinstance(res, dict):
+                    rec_texts = res.get("rec_texts", [])
+                    rec_scores = res.get("rec_scores", [])
+                    if rec_scores:
+                        for text, score in zip(rec_texts, rec_scores):
+                            if text:
+                                text_with_scores.append((text, float(score)))
+                    else:
+                        for text in rec_texts:
+                            if text:
+                                text_with_scores.append((text, 1.0))
+
+            # 生成文本
+            raw_text = (
+                "\n".join(t for t, _ in text_with_scores) if text_with_scores else ""
+            )
+
+            return self._build_ocr_result(
+                raw_text=raw_text,
+                text_with_scores=text_with_scores,
+                pipeline_type="PP-ChatOCRv4",
+            )
+
+        try:
+            return _do_recognize(image)
+        except RuntimeError as e:
+            if self._is_gpu_error(e) and self._device != "cpu":
+                _logger.warning("预测过程中发生 GPU 错误，回退到 CPU: %s", e)
+                self._reset_pipeline_to_cpu("PP-ChatOCRv4")
+                return _do_recognize(image)
+            raise
+
+    def _recognize_doc_understanding(
+        self,
+        image: Image.Image | np.ndarray | str,
+        options: OCROptions,
+    ) -> OCRResult:
+        """文档理解管道（VLM）
+
+        基于视觉-语言模型（VLM）的文档问答。
+        支持 PP-DocBee 系列模型。
+        """
+        from vibeocr.core.pipelines import (
+            DEFAULT_DOC_UNDERSTANDING_MODEL,
+            DOC_UNDERSTANDING_MODELS,
+        )
+
+        def _do_recognize(img) -> OCRResult:
+            pipeline = self.get_pipeline(OCRPipeline.DOC_UNDERSTANDING)
+
+            # 验证模型名称
+            model_name = options.doc_understanding_model
+            if model_name not in DOC_UNDERSTANDING_MODELS:
+                _logger.warning(
+                    f"模型 {model_name} 不在支持列表中，使用默认模型: {DEFAULT_DOC_UNDERSTANDING_MODEL}"
+                )
+                model_name = DEFAULT_DOC_UNDERSTANDING_MODEL
+
+            # 构建 predict 参数
+            predict_kwargs = {
+                "input": img,
+                "model": model_name,
+            }
+
+            # 添加 VLM 采样参数（如果设置了非零值）
+            if options.vl_temperature > 0:
+                predict_kwargs["temperature"] = options.vl_temperature
+            if options.vl_top_p > 0:
+                predict_kwargs["top_p"] = options.vl_top_p
+
+            output = pipeline.predict(**predict_kwargs)
+
+            # 确保 GPU 操作完成后再处理结果
+            output_list = self._consume_generator_safely(output)
+
+            text_with_scores: list[tuple[str, float]] = []
+
+            for res in output_list:
+                # 提取结果
+                if hasattr(res, "result"):
+                    result_text = res.result
+                    if result_text:
+                        text_with_scores.append((result_text, 1.0))
+                elif hasattr(res, "answer"):
+                    answer_text = res.answer
+                    if answer_text:
+                        text_with_scores.append((answer_text, 1.0))
+                elif hasattr(res, "text"):
+                    text_with_scores.append((res.text, 1.0))
+                # 字典格式处理
+                elif isinstance(res, dict):
+                    result_text = res.get(
+                        "result", res.get("answer", res.get("text", ""))
+                    )
+                    if result_text:
+                        text_with_scores.append((result_text, 1.0))
+
+            # 生成文本
+            raw_text = (
+                "\n".join(t for t, _ in text_with_scores) if text_with_scores else ""
+            )
+
+            return self._build_ocr_result(
+                raw_text=raw_text,
+                text_with_scores=text_with_scores,
+                pipeline_type="DocUnderstanding",
+            )
+
+        try:
+            return _do_recognize(image)
+        except RuntimeError as e:
+            if self._is_gpu_error(e) and self._device != "cpu":
+                _logger.warning("预测过程中发生 GPU 错误，回退到 CPU: %s", e)
+                self._reset_pipeline_to_cpu("doc_understanding")
+                return _do_recognize(image)
+            raise

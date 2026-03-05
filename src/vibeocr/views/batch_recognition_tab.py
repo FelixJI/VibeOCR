@@ -18,7 +18,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from vibeocr.models.batch_request import PreprocessOptions
+from vibeocr.models.ocr_options import OCROptions  # 向后兼容别名
+
+PreprocessOptions = OCROptions
 from vibeocr.views.tabs.base_tab import BaseOcrTab
 from vibeocr.widgets.batch_file_list_widget import BatchFileListWidget
 from vibeocr.widgets.preprocess_options_widget import PreprocessOptionsWidget

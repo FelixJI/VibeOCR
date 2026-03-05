@@ -5,6 +5,7 @@
 - SingletonMeta: 单例元类
 - Constants: 全局常量
 - AppStyles: 应用程序样式
+- OCRPipeline: OCR 管道枚举（来自 pipelines.py）
 """
 
 from vibeocr.core.base_worker import BaseWorker, BatchWorker
@@ -30,8 +31,17 @@ from vibeocr.core.constants import (
     TOAST_DELAY_MS,
     Constants,
     FileType,
-    OCRPipeline,
     WindowsColors,
+)
+from vibeocr.core.pipelines import (
+    DEFAULT_DOC_UNDERSTANDING_MODEL,
+    DOC_UNDERSTANDING_MODELS,
+    OCRPipeline,
+    get_all_pipelines,
+    get_pipeline_description,
+    get_pipeline_display_name,
+    get_pipeline_supported_options,
+    is_option_supported,
 )
 from vibeocr.core.singleton_meta import SingletonMeta
 from vibeocr.core.styles import AppStyles
@@ -46,6 +56,14 @@ __all__ = [
     # 枚举
     "OCRPipeline",
     "FileType",
+    # 管道相关
+    "DOC_UNDERSTANDING_MODELS",
+    "DEFAULT_DOC_UNDERSTANDING_MODEL",
+    "get_pipeline_display_name",
+    "get_pipeline_description",
+    "get_pipeline_supported_options",
+    "get_all_pipelines",
+    "is_option_supported",
     # 配色方案
     "WindowsColors",
     # 常量（向后兼容）

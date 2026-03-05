@@ -799,7 +799,6 @@ class MainWindow(QMainWindow):
         use_orient = self._btn_orient.isChecked() if self._btn_orient else False
         use_unwarp = self._btn_unwarp.isChecked() if self._btn_unwarp else False
         use_textline = self._btn_textline.isChecked() if self._btn_textline else True
-        use_layout = self._btn_layout.isChecked() if self._btn_layout else False
 
         # 获取子产线选项（仅版面解析管道有效）
         use_table = self._btn_sub_table.isChecked() if self._btn_sub_table else True
@@ -824,7 +823,6 @@ class MainWindow(QMainWindow):
             use_doc_orientation_classify=use_orient,
             use_doc_unwarping=use_unwarp,
             use_textline_orientation=use_textline,
-            use_layout_detection=use_layout,
             use_table_recognition=use_table,
             use_formula_recognition=use_formula,
             use_seal_recognition=use_seal,
