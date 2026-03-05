@@ -8,6 +8,7 @@
 
 from PySide6.QtCore import QCoreApplication, QMetaObject, QRect, QSize
 from PySide6.QtGui import QPalette
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -23,6 +24,7 @@ from PySide6.QtWidgets import (
     QSizePolicy,
     QSpacerItem,
     QSpinBox,
+    QSplitter,
     QTableWidget,
     QTableWidgetItem,
     QTabWidget,
@@ -46,17 +48,18 @@ class Ui_MainWindowWidget:
         self.tabWidget.setObjectName("tabWidget")
         self.tabOCR = QWidget()
         self.tabOCR.setObjectName("tabOCR")
-        self.horizontalLayout = QHBoxLayout(self.tabOCR)
-        self.horizontalLayout.setSpacing(6)
-        self.horizontalLayout.setObjectName("horizontalLayout")
-        self.horizontalLayout.setContentsMargins(9, 9, 9, 9)
-        self.previewWidget = PreviewWidget(self.tabOCR)
+        self.verticalLayout_ocr = QVBoxLayout(self.tabOCR)
+        self.verticalLayout_ocr.setSpacing(0)
+        self.verticalLayout_ocr.setObjectName("verticalLayout_ocr")
+        self.verticalLayout_ocr.setContentsMargins(9, 9, 9, 9)
+        self.ocrSplitter = QSplitter(self.tabOCR)
+        self.ocrSplitter.setObjectName("ocrSplitter")
+        self.ocrSplitter.setOrientation(Qt.Orientation.Horizontal)
+        self.previewWidget = PreviewWidget(self.ocrSplitter)
         self.previewWidget.setObjectName("previewWidget")
         self.previewWidget.setMinimumSize(QSize(300, 0))
 
-        self.horizontalLayout.addWidget(self.previewWidget)
-
-        self.resultPanel = QWidget(self.tabOCR)
+        self.resultPanel = QWidget(self.ocrSplitter)
         self.resultPanel.setObjectName("resultPanel")
         self.resultPanel.setMinimumSize(QSize(300, 0))
         self.verticalLayout_2 = QVBoxLayout(self.resultPanel)
@@ -306,7 +309,9 @@ class Ui_MainWindowWidget:
 
         self.verticalLayout_2.addLayout(self.copyButtonsLayout)
 
-        self.horizontalLayout.addWidget(self.resultPanel)
+        self.ocrSplitter.addWidget(self.resultPanel)
+
+        self.verticalLayout_ocr.addWidget(self.ocrSplitter)
 
         self.tabWidget.addTab(self.tabOCR, "")
         self.tabSettings = QWidget()

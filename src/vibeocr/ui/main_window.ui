@@ -27,9 +27,9 @@
       <attribute name="title">
        <string>OCR 识别</string>
       </attribute>
-      <layout class="QHBoxLayout" name="horizontalLayout">
+      <layout class="QVBoxLayout" name="verticalLayout_ocr">
        <property name="spacing">
-        <number>6</number>
+        <number>0</number>
        </property>
        <property name="leftMargin">
         <number>9</number>
@@ -44,17 +44,19 @@
         <number>9</number>
        </property>
        <item>
-        <widget class="PreviewWidget" name="previewWidget" native="true">
-         <property name="minimumSize">
-          <size>
-           <width>300</width>
-           <height>0</height>
-          </size>
+        <widget class="QSplitter" name="ocrSplitter">
+         <property name="orientation">
+          <enum>Qt::Horizontal</enum>
          </property>
-        </widget>
-       </item>
-       <item>
-        <widget class="QWidget" name="resultPanel" native="true">
+         <widget class="PreviewWidget" name="previewWidget" native="true">
+          <property name="minimumSize">
+           <size>
+            <width>300</width>
+            <height>0</height>
+           </size>
+          </property>
+         </widget>
+         <widget class="QWidget" name="resultPanel" native="true">
          <property name="minimumSize">
           <size>
            <width>300</width>
@@ -578,6 +580,7 @@
            </layout>
           </item>
          </layout>
+        </widget>
         </widget>
        </item>
       </layout>

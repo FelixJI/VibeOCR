@@ -129,10 +129,13 @@ class BatchRecognitionTab(BaseOcrTab):
     继承自 BaseOcrTab，提供批量文件 OCR 识别功能。
     """
 
+    SPLITTER_ID = "batch_tab"  # 分割器标识
+
     def __init__(self, ocr_service=None, parent=None):
         super().__init__(parent)
         self._ocr_service = ocr_service
         self._worker: BatchRecognitionWorker | None = None
+        self._layout_manager = None  # 由主窗口设置
 
         self._setup_ui()
         self._connect_signals()
@@ -144,7 +147,7 @@ class BatchRecognitionTab(BaseOcrTab):
         layout.setContentsMargins(8, 8, 8, 8)
 
         # 使用 Splitter 分割左右面板
-        splitter = QSplitter()
+        self._splitter = QSplitter()
 
         # 左侧面板
         left_panel = QWidget()
@@ -160,7 +163,7 @@ class BatchRecognitionTab(BaseOcrTab):
         self._preprocess_options = PreprocessOptionsWidget()
         left_layout.addWidget(self._preprocess_options)
 
-        splitter.addWidget(left_panel)
+        self._splitter.addWidget(left_panel)
 
         # 右侧面板 - 结果显示
         right_panel = QWidget()
@@ -177,12 +180,12 @@ class BatchRecognitionTab(BaseOcrTab):
         self._result_widget = ConsoleWidget()
         right_layout.addWidget(self._result_widget)
 
-        splitter.addWidget(right_panel)
+        self._splitter.addWidget(right_panel)
 
         # 设置分割比例
-        splitter.setSizes([300, 500])
+        self._splitter.setSizes([300, 500])
 
-        layout.addWidget(splitter, stretch=1)
+        layout.addWidget(self._splitter, stretch=1)
 
         # 底部进度区域
         progress_layout = QHBoxLayout()
@@ -336,3 +339,18 @@ class BatchRecognitionTab(BaseOcrTab):
     def set_ocr_service(self, service):
         """设置 OCR 服务"""
         self._ocr_service = service
+
+    def set_layout_manager(self, layout_manager) -> None:
+        """设置布局管理器并恢复分割器状态"""
+        self._layout_manager = layout_manager
+        if self._layout_manager and hasattr(self, "_splitter"):
+            state = self._layout_manager.get_splitter_state(self.SPLITTER_ID)
+            if state:
+                self._splitter.restoreState(state)
+
+    def save_layout(self) -> None:
+        """保存分割器状态"""
+        if self._layout_manager and hasattr(self, "_splitter"):
+            self._layout_manager.set_splitter_state(
+                self.SPLITTER_ID, self._splitter.saveState()
+            )

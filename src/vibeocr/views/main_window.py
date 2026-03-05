@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (
 from vibeocr import env_manager
 from vibeocr.core.constants import WindowsColors
 from vibeocr.machine_cache import is_cache_valid
-from vibeocr.managers import DependencyManager, SubprocessManager
+from vibeocr.managers import DependencyManager, LayoutManager, SubprocessManager
 from vibeocr.models.ocr_result import OCRResult
 from vibeocr.services.log_service import setup_logging
 from vibeocr.ui.ui_main_window import Ui_MainWindowWidget
@@ -65,12 +65,18 @@ class MainWindow(QMainWindow):
             self._on_dependency_check_finished
         )
 
+        # 布局管理器
+        self._layout_manager = LayoutManager(self._project_root / "config")
+
         # 子进程管理器
         self._subprocess_manager = SubprocessManager(self._project_root, self)
         self._subprocess_manager.service_ready.connect(self._on_subprocess_worker_ready)
         self._subprocess_manager.progress_update.connect(self._on_subprocess_progress)
 
         self._setup_ui()
+
+        # 恢复布局
+        self._restore_layout()
         self._setup_console()
         self._create_menus()
         self._connect_signals()
@@ -151,6 +157,39 @@ class MainWindow(QMainWindow):
 
         # 添加文档理解标签页
         self._init_doc_understanding_tab()
+
+    def _restore_layout(self) -> None:
+        """恢复窗口和分割器布局"""
+        # 恢复主窗口几何信息
+        geometry = self._layout_manager.get_main_window_geometry()
+        if geometry:
+            self.restoreGeometry(geometry)
+            logging.info("已恢复窗口布局")
+
+        # 恢复 OCR 标签页分割器状态
+        if hasattr(self._ui, "ocrSplitter"):
+            state = self._layout_manager.get_splitter_state("ocr_tab")
+            if state:
+                self._ui.ocrSplitter.restoreState(state)
+                logging.info("已恢复 OCR 分割器状态")
+
+    def _save_layout(self) -> None:
+        """保存窗口和分割器布局"""
+        # 保存主窗口几何信息
+        self._layout_manager.set_main_window_geometry(self.saveGeometry())
+
+        # 保存 OCR 标签页分割器状态
+        if hasattr(self._ui, "ocrSplitter"):
+            self._layout_manager.set_splitter_state(
+                "ocr_tab", self._ui.ocrSplitter.saveState()
+            )
+
+        # 保存批量识别标签页分割器状态
+        if hasattr(self, "_batch_tab") and self._batch_tab:
+            self._batch_tab.save_layout()
+
+        # 保存到文件
+        self._layout_manager.save()
 
     def _init_preset_combo(self) -> None:
         """初始化 OCR 管道和选项按钮"""
@@ -279,6 +318,9 @@ class MainWindow(QMainWindow):
         """初始化批量识别标签页"""
         # 创建批量识别标签页
         self._batch_tab = BatchRecognitionTab()
+
+        # 传递布局管理器
+        self._batch_tab.set_layout_manager(self._layout_manager)
 
         # 添加到标签页控件
         self._ui.tabWidget.addTab(self._batch_tab, "批量识别")
@@ -591,10 +633,9 @@ class MainWindow(QMainWindow):
                 "请查看控制台日志了解详情。",
             )
 
-    @Slot(str, int)
-    def _on_subprocess_progress(self, stage: str, percent: int) -> None:
+    @Slot(str)
+    def _on_subprocess_progress(self, stage: str) -> None:
         """子进程启动进度回调"""
-        # 直接显示阶段信息，不显示百分比
         self._statusbar.showMessage(f"正在启动 OCR 服务: {stage}")
 
     def _start_subprocess_preload(self) -> None:
@@ -996,6 +1037,10 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event) -> None:
         """关闭窗口事件"""
         logging.info("正在关闭应用程序...")
+
+        # 保存布局（在 _closing = True 之前）
+        self._save_layout()
+
         self._closing = True  # 标记正在关闭，防止重复启动 Worker
 
         # 关闭子进程管理器
