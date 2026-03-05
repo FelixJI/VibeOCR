@@ -2,7 +2,7 @@
 
 from vibeocr.models.extraction_options import ExtractionOptions
 from vibeocr.models.extraction_template import DEFAULT_TEMPLATES, ExtractionTemplate
-from vibeocr.models.llm_config import APIType, LLMConfig
+from vibeocr.models.llm_config import APIType, LLMConfig, LLMConfigs
 from vibeocr.models.ocr_result import OCRResult
 
 __all__ = [
@@ -11,5 +11,6 @@ __all__ = [
     "ExtractionOptions",
     "ExtractionTemplate",
     "LLMConfig",
+    "LLMConfigs",
     "OCRResult",
 ]

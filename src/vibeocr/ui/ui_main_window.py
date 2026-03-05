@@ -6,9 +6,8 @@
 ## WARNING! All changes made in this file will be lost when recompiling UI file!
 ################################################################################
 
-from PySide6.QtCore import QCoreApplication, QMetaObject, QRect, QSize
+from PySide6.QtCore import QCoreApplication, QMetaObject, QRect, QSize, Qt
 from PySide6.QtGui import QPalette
-from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -54,11 +53,11 @@ class Ui_MainWindowWidget:
         self.verticalLayout_ocr.setContentsMargins(9, 9, 9, 9)
         self.ocrSplitter = QSplitter(self.tabOCR)
         self.ocrSplitter.setObjectName("ocrSplitter")
-        self.ocrSplitter.setOrientation(Qt.Orientation.Horizontal)
+        self.ocrSplitter.setOrientation(Qt.Horizontal)
         self.previewWidget = PreviewWidget(self.ocrSplitter)
         self.previewWidget.setObjectName("previewWidget")
         self.previewWidget.setMinimumSize(QSize(300, 0))
-
+        self.ocrSplitter.addWidget(self.previewWidget)
         self.resultPanel = QWidget(self.ocrSplitter)
         self.resultPanel.setObjectName("resultPanel")
         self.resultPanel.setMinimumSize(QSize(300, 0))
@@ -533,36 +532,47 @@ class Ui_MainWindowWidget:
 
         self.llmGrid.addWidget(self.editMLLMModel, 1, 1, 1, 1)
 
+        self.labelMLLMApiKey = QLabel(self.groupLLMConfig)
+        self.labelMLLMApiKey.setObjectName("labelMLLMApiKey")
+
+        self.llmGrid.addWidget(self.labelMLLMApiKey, 2, 0, 1, 1)
+
+        self.editMLLMApiKey = QLineEdit(self.groupLLMConfig)
+        self.editMLLMApiKey.setObjectName("editMLLMApiKey")
+        self.editMLLMApiKey.setEchoMode(QLineEdit.Password)
+
+        self.llmGrid.addWidget(self.editMLLMApiKey, 2, 1, 1, 1)
+
         self.labelLLMUrl = QLabel(self.groupLLMConfig)
         self.labelLLMUrl.setObjectName("labelLLMUrl")
 
-        self.llmGrid.addWidget(self.labelLLMUrl, 2, 0, 1, 1)
+        self.llmGrid.addWidget(self.labelLLMUrl, 3, 0, 1, 1)
 
         self.editLLMUrl = QLineEdit(self.groupLLMConfig)
         self.editLLMUrl.setObjectName("editLLMUrl")
 
-        self.llmGrid.addWidget(self.editLLMUrl, 2, 1, 1, 1)
+        self.llmGrid.addWidget(self.editLLMUrl, 3, 1, 1, 1)
 
         self.labelLLMModel = QLabel(self.groupLLMConfig)
         self.labelLLMModel.setObjectName("labelLLMModel")
 
-        self.llmGrid.addWidget(self.labelLLMModel, 3, 0, 1, 1)
+        self.llmGrid.addWidget(self.labelLLMModel, 4, 0, 1, 1)
 
         self.editLLMModel = QLineEdit(self.groupLLMConfig)
         self.editLLMModel.setObjectName("editLLMModel")
 
-        self.llmGrid.addWidget(self.editLLMModel, 3, 1, 1, 1)
+        self.llmGrid.addWidget(self.editLLMModel, 4, 1, 1, 1)
 
-        self.labelApiKey = QLabel(self.groupLLMConfig)
-        self.labelApiKey.setObjectName("labelApiKey")
+        self.labelLLMApiKey = QLabel(self.groupLLMConfig)
+        self.labelLLMApiKey.setObjectName("labelLLMApiKey")
 
-        self.llmGrid.addWidget(self.labelApiKey, 4, 0, 1, 1)
+        self.llmGrid.addWidget(self.labelLLMApiKey, 5, 0, 1, 1)
 
-        self.editApiKey = QLineEdit(self.groupLLMConfig)
-        self.editApiKey.setObjectName("editApiKey")
-        self.editApiKey.setEchoMode(QLineEdit.Password)
+        self.editLLMApiKey = QLineEdit(self.groupLLMConfig)
+        self.editLLMApiKey.setObjectName("editLLMApiKey")
+        self.editLLMApiKey.setEchoMode(QLineEdit.Password)
 
-        self.llmGrid.addWidget(self.editApiKey, 4, 1, 1, 1)
+        self.llmGrid.addWidget(self.editLLMApiKey, 5, 1, 1, 1)
 
         self.llmConfigLayout.addLayout(self.llmGrid)
 
@@ -1148,6 +1158,12 @@ class Ui_MainWindowWidget:
         self.editMLLMModel.setPlaceholderText(
             QCoreApplication.translate("MainWindowWidget", "PP-DocBee2", None)
         )
+        self.labelMLLMApiKey.setText(
+            QCoreApplication.translate("MainWindowWidget", "MLLM API Key:", None)
+        )
+        self.editMLLMApiKey.setPlaceholderText(
+            QCoreApplication.translate("MainWindowWidget", "\u53ef\u9009", None)
+        )
         self.labelLLMUrl.setText(
             QCoreApplication.translate(
                 "MainWindowWidget", "LLM \u670d\u52a1\u5730\u5740:", None
@@ -1166,17 +1182,11 @@ class Ui_MainWindowWidget:
         self.editLLMModel.setPlaceholderText(
             QCoreApplication.translate("MainWindowWidget", "Qwen2.5", None)
         )
-        self.labelApiKey.setText(
-            QCoreApplication.translate(
-                "MainWindowWidget", "API Key (\u53ef\u9009):", None
-            )
+        self.labelLLMApiKey.setText(
+            QCoreApplication.translate("MainWindowWidget", "LLM API Key:", None)
         )
-        self.editApiKey.setPlaceholderText(
-            QCoreApplication.translate(
-                "MainWindowWidget",
-                "\u7559\u7a7a\u8868\u793a\u4e0d\u9700\u8981 API Key",
-                None,
-            )
+        self.editLLMApiKey.setPlaceholderText(
+            QCoreApplication.translate("MainWindowWidget", "\u53ef\u9009", None)
         )
         self.btnSaveLLMConfig.setText(
             QCoreApplication.translate(

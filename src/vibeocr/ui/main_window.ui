@@ -1025,47 +1025,64 @@
              </widget>
             </item>
             <item row="2" column="0">
+             <widget class="QLabel" name="labelMLLMApiKey">
+              <property name="text">
+               <string>MLLM API Key:</string>
+              </property>
+             </widget>
+            </item>
+            <item row="2" column="1">
+             <widget class="QLineEdit" name="editMLLMApiKey">
+              <property name="echoMode">
+               <enum>QLineEdit::Password</enum>
+              </property>
+              <property name="placeholderText">
+               <string>可选</string>
+              </property>
+             </widget>
+            </item>
+            <item row="3" column="0">
              <widget class="QLabel" name="labelLLMUrl">
               <property name="text">
                <string>LLM 服务地址:</string>
               </property>
              </widget>
             </item>
-            <item row="2" column="1">
+            <item row="3" column="1">
              <widget class="QLineEdit" name="editLLMUrl">
               <property name="placeholderText">
                <string>http://127.0.0.1:8080/v1/chat/completions</string>
               </property>
              </widget>
             </item>
-            <item row="3" column="0">
+            <item row="4" column="0">
              <widget class="QLabel" name="labelLLMModel">
               <property name="text">
                <string>LLM 模型名称:</string>
               </property>
              </widget>
             </item>
-            <item row="3" column="1">
+            <item row="4" column="1">
              <widget class="QLineEdit" name="editLLMModel">
               <property name="placeholderText">
                <string>Qwen2.5</string>
               </property>
              </widget>
             </item>
-            <item row="4" column="0">
-             <widget class="QLabel" name="labelApiKey">
+            <item row="5" column="0">
+             <widget class="QLabel" name="labelLLMApiKey">
               <property name="text">
-               <string>API Key (可选):</string>
+               <string>LLM API Key:</string>
               </property>
              </widget>
             </item>
-            <item row="4" column="1">
-             <widget class="QLineEdit" name="editApiKey">
+            <item row="5" column="1">
+             <widget class="QLineEdit" name="editLLMApiKey">
               <property name="echoMode">
                <enum>QLineEdit::Password</enum>
               </property>
               <property name="placeholderText">
-               <string>留空表示不需要 API Key</string>
+               <string>可选</string>
               </property>
              </widget>
             </item>

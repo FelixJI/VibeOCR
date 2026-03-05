@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
 )
 
 if TYPE_CHECKING:
-    from vibeocr.models.llm_config import LLMConfig
+    from vibeocr.models.llm_config import LLMConfigs
     from vibeocr.services.ocr_service import OCRPipeline
 
 logger = logging.getLogger(__name__)
@@ -61,7 +61,7 @@ class SettingsPageController:
         self._subprocess_manager = subprocess_manager
         self._preload_complete_callback = preload_complete_callback
 
-        self._llm_config: LLMConfig | None = None
+        self._llm_configs: LLMConfigs | None = None
         self._manual_preload_total = 0
 
     def connect_signals(self) -> None:
@@ -142,25 +142,25 @@ class SettingsPageController:
     # ============================================================
 
     @property
-    def llm_config(self) -> Optional["LLMConfig"]:
-        """获取 LLM 配置"""
-        return self._llm_config
+    def llm_configs(self) -> Optional["LLMConfigs"]:
+        """获取 LLM 配置容器"""
+        return self._llm_configs
 
     def _load_llm_config(self) -> None:
         """加载 LLM 配置"""
-        from vibeocr.models.llm_config import LLMConfig
+        from vibeocr.models.llm_config import LLMConfigs
 
         config_path = self._project_root / "config" / "llm_config.json"
         if config_path.exists():
             try:
                 with open(config_path, encoding="utf-8") as f:
                     data = json.load(f)
-                self._llm_config = LLMConfig.from_dict(data)
+                self._llm_configs = LLMConfigs.from_dict(data)
             except Exception as e:
                 logger.warning(f"加载 LLM 配置失败: {e}")
-                self._llm_config = LLMConfig()
+                self._llm_configs = LLMConfigs()
         else:
-            self._llm_config = LLMConfig()
+            self._llm_configs = LLMConfigs()
 
         self._update_llm_config_ui()
 
@@ -171,7 +171,7 @@ class SettingsPageController:
 
         try:
             with open(config_path, "w", encoding="utf-8") as f:
-                json.dump(self._llm_config.to_dict(), f, ensure_ascii=False, indent=2)
+                json.dump(self._llm_configs.to_dict(), f, ensure_ascii=False, indent=2)
             logger.info("LLM 配置已保存")
         except Exception as e:
             logger.error(f"保存 LLM 配置失败: {e}")
@@ -187,35 +187,50 @@ class SettingsPageController:
         edit_llm_model = self._ui.findChild(QLineEdit, "editLLMModel")
         edit_llm_api_key = self._ui.findChild(QLineEdit, "editLLMApiKey")
 
-        if self._llm_config:
+        if self._llm_configs:
             # MLLM 配置
-            if edit_mllm_url:
-                edit_mllm_url.setText(self._llm_config.service_url)
-            if edit_mllm_model:
-                edit_mllm_model.setText(self._llm_config.model_name)
-            if edit_mllm_api_key:
-                edit_mllm_api_key.setText(self._llm_config.api_key)
+            if self._llm_configs.mllm:
+                if edit_mllm_url:
+                    edit_mllm_url.setText(self._llm_configs.mllm.service_url)
+                if edit_mllm_model:
+                    edit_mllm_model.setText(self._llm_configs.mllm.model_name)
+                if edit_mllm_api_key:
+                    edit_mllm_api_key.setText(self._llm_configs.mllm.api_key)
 
             # LLM 配置
-            if edit_llm_url:
-                edit_llm_url.setText(self._llm_config.service_url)
-            if edit_llm_model:
-                edit_llm_model.setText(self._llm_config.model_name)
-            if edit_llm_api_key:
-                edit_llm_api_key.setText(self._llm_config.api_key)
+            if self._llm_configs.llm:
+                if edit_llm_url:
+                    edit_llm_url.setText(self._llm_configs.llm.service_url)
+                if edit_llm_model:
+                    edit_llm_model.setText(self._llm_configs.llm.model_name)
+                if edit_llm_api_key:
+                    edit_llm_api_key.setText(self._llm_configs.llm.api_key)
 
     def _on_save_llm_config_clicked(self) -> None:
         """保存 LLM 配置按钮点击"""
-
+        # 保存 MLLM 配置
         edit_mllm_url = self._ui.findChild(QLineEdit, "editMLLMUrl")
         edit_mllm_model = self._ui.findChild(QLineEdit, "editMLLMModel")
         edit_mllm_api_key = self._ui.findChild(QLineEdit, "editMLLMApiKey")
 
-        if edit_mllm_url and edit_mllm_model:
-            self._llm_config.service_url = edit_mllm_url.text()
-            self._llm_config.model_name = edit_mllm_model.text()
-            if edit_mllm_api_key:
-                self._llm_config.api_key = edit_mllm_api_key.text()
+        if edit_mllm_url:
+            self._llm_configs.mllm.service_url = edit_mllm_url.text()
+        if edit_mllm_model:
+            self._llm_configs.mllm.model_name = edit_mllm_model.text()
+        if edit_mllm_api_key:
+            self._llm_configs.mllm.api_key = edit_mllm_api_key.text()
+
+        # 保存 LLM 配置
+        edit_llm_url = self._ui.findChild(QLineEdit, "editLLMUrl")
+        edit_llm_model = self._ui.findChild(QLineEdit, "editLLMModel")
+        edit_llm_api_key = self._ui.findChild(QLineEdit, "editLLMApiKey")
+
+        if edit_llm_url:
+            self._llm_configs.llm.service_url = edit_llm_url.text()
+        if edit_llm_model:
+            self._llm_configs.llm.model_name = edit_llm_model.text()
+        if edit_llm_api_key:
+            self._llm_configs.llm.api_key = edit_llm_api_key.text()
 
         self._save_llm_config()
         self._status_callback("LLM 配置已保存")

@@ -66,3 +66,41 @@ class LLMConfig:
             api_type=data.get("api_type", APIType.OPENAI.value),
             is_mllm=data.get("is_mllm", True),
         )
+
+
+@dataclass
+class LLMConfigs:
+    """MLLM 和 LLM 配置容器"""
+
+    mllm: LLMConfig = field(default_factory=lambda: LLMConfig(is_mllm=True))
+    llm: LLMConfig = field(default_factory=lambda: LLMConfig(is_mllm=False))
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "mllm": self.mllm.to_dict(),
+            "llm": self.llm.to_dict(),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "LLMConfigs":
+        """从字典创建实例，支持旧格式迁移"""
+        # 向后兼容：检测旧格式（单一配置）
+        if "mllm" not in data and "llm" not in data:
+            # 旧格式迁移
+            old_config = LLMConfig.from_dict(data)
+            return cls(
+                mllm=LLMConfig(
+                    enabled=old_config.enabled,
+                    service_url=old_config.service_url,
+                    model_name=old_config.model_name,
+                    api_key=old_config.api_key,
+                    api_type=old_config.api_type,
+                    is_mllm=True,
+                ),
+                llm=LLMConfig(is_mllm=False),
+            )
+        # 新格式
+        return cls(
+            mllm=LLMConfig.from_dict(data.get("mllm", {})),
+            llm=LLMConfig.from_dict(data.get("llm", {})),
+        )

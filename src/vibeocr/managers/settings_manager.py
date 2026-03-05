@@ -12,7 +12,7 @@ from PySide6.QtCore import QObject, Signal
 
 if TYPE_CHECKING:
     from vibeocr.models.extraction_template import ExtractionTemplate
-    from vibeocr.models.llm_config import LLMConfig
+    from vibeocr.models.llm_config import LLMConfigs
 
 logger = logging.getLogger(__name__)
 
@@ -40,29 +40,29 @@ class SettingsManager(QObject):
         super().__init__(parent)
         self._project_root = project_root
         self._config_dir = project_root / "config"
-        self._llm_config: LLMConfig | None = None
+        self._llm_configs: LLMConfigs | None = None
         self._templates: list[ExtractionTemplate] = []
 
         # 确保配置目录存在
         self._config_dir.mkdir(parents=True, exist_ok=True)
 
     @property
-    def llm_config(self) -> Optional["LLMConfig"]:
-        """获取当前 LLM 配置"""
-        return self._llm_config
+    def llm_configs(self) -> Optional["LLMConfigs"]:
+        """获取当前 LLM 配置容器"""
+        return self._llm_configs
 
     @property
     def config_dir(self) -> Path:
         """获取配置目录"""
         return self._config_dir
 
-    def load_llm_config(self) -> "LLMConfig":
+    def load_llm_config(self) -> "LLMConfigs":
         """加载 LLM 配置
 
         Returns:
-            LLMConfig 实例
+            LLMConfigs 实例
         """
-        from vibeocr.models.llm_config import LLMConfig
+        from vibeocr.models.llm_config import LLMConfigs
 
         config_path = self._config_dir / "llm_config.json"
 
@@ -70,19 +70,19 @@ class SettingsManager(QObject):
             if config_path.exists():
                 with open(config_path, encoding="utf-8") as f:
                     data = json.load(f)
-                self._llm_config = LLMConfig.from_dict(data)
+                self._llm_configs = LLMConfigs.from_dict(data)
                 logger.info(f"LLM 配置已加载: {config_path}")
             else:
-                self._llm_config = LLMConfig()
+                self._llm_configs = LLMConfigs()
                 logger.info("使用默认 LLM 配置")
         except Exception as e:
             logger.warning(f"加载 LLM 配置失败: {e}")
-            self._llm_config = LLMConfig()
+            self._llm_configs = LLMConfigs()
 
-        self.llm_config_loaded.emit(self._llm_config)
-        return self._llm_config
+        self.llm_config_loaded.emit(self._llm_configs)
+        return self._llm_configs
 
-    def save_llm_config(self, config: Optional["LLMConfig"] = None) -> bool:
+    def save_llm_config(self, config: Optional["LLMConfigs"] = None) -> bool:
         """保存 LLM 配置
 
         Args:
@@ -92,9 +92,9 @@ class SettingsManager(QObject):
             是否保存成功
         """
         if config is not None:
-            self._llm_config = config
+            self._llm_configs = config
 
-        if self._llm_config is None:
+        if self._llm_configs is None:
             logger.warning("没有 LLM 配置可保存")
             return False
 
@@ -102,7 +102,7 @@ class SettingsManager(QObject):
 
         try:
             with open(config_path, "w", encoding="utf-8") as f:
-                json.dump(self._llm_config.to_dict(), f, ensure_ascii=False, indent=2)
+                json.dump(self._llm_configs.to_dict(), f, ensure_ascii=False, indent=2)
             logger.info(f"LLM 配置已保存: {config_path}")
             self.llm_config_saved.emit()
             return True
@@ -115,6 +115,7 @@ class SettingsManager(QObject):
         service_url: str | None = None,
         model_name: str | None = None,
         api_key: str | None = None,
+        is_mllm: bool = True,
     ) -> None:
         """更新 LLM 配置字段
 
@@ -122,20 +123,22 @@ class SettingsManager(QObject):
             service_url: 服务 URL
             model_name: 模型名称
             api_key: API 密钥
+            is_mllm: 是否更新 MLLM 配置（默认 True），否则更新 LLM 配置
         """
-        if self._llm_config is None:
+        if self._llm_configs is None:
             self.load_llm_config()
 
-        if self._llm_config is None:
+        if self._llm_configs is None:
             logger.warning("无法更新 LLM 配置：加载失败")
             return
 
+        config = self._llm_configs.mllm if is_mllm else self._llm_configs.llm
         if service_url is not None:
-            self._llm_config.service_url = service_url
+            config.service_url = service_url
         if model_name is not None:
-            self._llm_config.model_name = model_name
+            config.model_name = model_name
         if api_key is not None:
-            self._llm_config.api_key = api_key
+            config.api_key = api_key
 
     def load_templates(self) -> list[str]:
         """加载模板列表
