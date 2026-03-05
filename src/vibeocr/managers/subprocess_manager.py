@@ -19,7 +19,7 @@ class SubprocessStartSignals(QObject):
     """子进程启动信号"""
 
     started = Signal(bool)  # 启动是否成功
-    progress = Signal(str, int)  # (stage, percent)
+    progress = Signal(str)  # stage
 
 
 class SubprocessStartTask(QRunnable):
@@ -43,11 +43,15 @@ class SubprocessStartTask(QRunnable):
         """取消启动任务"""
         self._cancelled = True
 
-    def _update_progress(self, stage: str, percent: int) -> None:
-        """更新进度"""
+    def _update_progress(self, stage: str) -> None:
+        """更新进度
+
+        Args:
+            stage: 阶段描述
+        """
         if not self._cancelled:
-            logger.info(f"[OCR 启动] {stage} ({percent}%)")
-            self.signals.progress.emit(stage, percent)
+            logger.info(f"[OCR 启动] {stage}")
+            self.signals.progress.emit(stage)
 
     def run(self) -> None:
         """启动子进程服务"""
@@ -123,12 +127,12 @@ class SubprocessManager(QObject):
 
     Signals:
         service_ready: (bool) 服务是否就绪
-        progress_update: (str, int) (stage, percent) 进度更新
+        progress_update: (str) (stage) 进度更新
         preload_finished: (dict) 预加载结果
     """
 
     service_ready = Signal(bool)
-    progress_update = Signal(str, int)
+    progress_update = Signal(str)
     preload_finished = Signal(dict)
 
     def __init__(

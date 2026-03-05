@@ -174,10 +174,12 @@ class BatchRecognitionTab(BaseOcrTab):
         result_label = QLabel("识别结果")
         right_layout.addWidget(result_label)
 
-        # 使用 ConsoleWidget 显示结果
-        from vibeocr.widgets.console_widget import ConsoleWidget
+        # 使用 QTextEdit 显示结果（纯文本，不需要日志格式）
+        from PySide6.QtWidgets import QTextEdit
 
-        self._result_widget = ConsoleWidget()
+        self._result_widget = QTextEdit()
+        self._result_widget.setReadOnly(True)
+        self._result_widget.setPlaceholderText("识别结果将显示在这里...")
         right_layout.addWidget(self._result_widget)
 
         self._splitter.addWidget(right_panel)
@@ -221,11 +223,11 @@ class BatchRecognitionTab(BaseOcrTab):
         """开始识别"""
         files = self._file_list_widget.get_selected_files()
         if not files:
-            self._result_widget.set_text("请选择要处理的文件。")
+            self._result_widget.setPlainText("请选择要处理的文件。")
             return
 
         if not self._ocr_service:
-            self._result_widget.set_text("OCR 服务未就绪。")
+            self._result_widget.setPlainText("OCR 服务未就绪。")
             return
 
         # 获取预处理选项
@@ -275,21 +277,21 @@ class BatchRecognitionTab(BaseOcrTab):
         file_name = Path(file_path).name
         if status == "completed" and result:
             text = self._extract_text(result)
-            self._result_widget.append_text(f"=== {file_name} ===\n{text}\n\n")
+            self._result_widget.append(f"=== {file_name} ===\n{text}\n\n")
         elif status == "failed":
             error = (
                 result.get("error", "未知错误")
                 if isinstance(result, dict)
                 else "未知错误"
             )
-            self._result_widget.append_text(f"=== {file_name} ===\n[失败] {error}\n\n")
+            self._result_widget.append(f"=== {file_name} ===\n[失败] {error}\n\n")
 
     def _on_finished(self, results: dict):
         """处理完成"""
         completed = len([r for r in results.values() if "result" in r])
         failed = len([r for r in results.values() if "error" in r])
 
-        self._result_widget.append_text(
+        self._result_widget.append(
             f"\n--- 批量处理完成: {completed} 个成功, {failed} 个失败 ---"
         )
 
@@ -298,7 +300,7 @@ class BatchRecognitionTab(BaseOcrTab):
     def _on_error(self, error_msg: str):
         """处理错误"""
         logger.error(f"Batch recognition error: {error_msg}")
-        self._result_widget.append_text(f"[错误] {error_msg}")
+        self._result_widget.append(f"[错误] {error_msg}")
         self._reset_ui()
 
     def _on_file_selected(self, file_path: str):
@@ -309,7 +311,7 @@ class BatchRecognitionTab(BaseOcrTab):
             if f["path"] == file_path and f.get("result"):
                 result = f["result"]
                 text = self._extract_text(result)
-                self._result_widget.set_text(text)
+                self._result_widget.setPlainText(text)
                 break
 
     def _extract_text(self, result) -> str:

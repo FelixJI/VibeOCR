@@ -8,6 +8,7 @@ import logging
 
 from PySide6.QtCore import Signal, Slot
 from PySide6.QtWidgets import (
+    QTextEdit,
     QVBoxLayout,
     QWidget,
 )
@@ -16,7 +17,6 @@ from vibeocr.models.extraction_options import ExtractionOptions
 from vibeocr.models.extraction_template import DEFAULT_TEMPLATES
 from vibeocr.ui.ui_extraction_tab import Ui_ExtractionTab
 from vibeocr.views.tabs.base_tab import BaseOcrTab
-from vibeocr.widgets.console_widget import ConsoleWidget
 
 logger = logging.getLogger(__name__)
 
@@ -52,8 +52,10 @@ class ExtractionTab(BaseOcrTab):
         self._ui = Ui_ExtractionTab()
         self._ui.setupUi(self)
 
-        # 添加 ConsoleWidget 到结果容器
-        self._result_widget = ConsoleWidget()
+        # 使用 QTextEdit 显示结果（纯文本，不需要日志格式）
+        self._result_widget = QTextEdit()
+        self._result_widget.setReadOnly(True)
+        self._result_widget.setPlaceholderText("抽取结果将显示在这里...")
         if hasattr(self._ui, "resultsContainer"):
             container = self._ui.resultsContainer
             container_layout = container.layout()
@@ -193,16 +195,16 @@ class ExtractionTab(BaseOcrTab):
             else []
         )
         if not files:
-            self._result_widget.append_text("请选择要处理的文件。")
+            self._result_widget.append("请选择要处理的文件。")
             return
 
         keys = self.get_extraction_keys()
         if not keys:
-            self._result_widget.append_text("请配置要抽取的字段。")
+            self._result_widget.append("请配置要抽取的字段。")
             return
 
         if not self._ocr_service:
-            self._result_widget.append_text("OCR 服务未就绪。")
+            self._result_widget.append("OCR 服务未就绪。")
             return
 
         # TODO: 实现 Worker 启动逻辑
@@ -219,7 +221,7 @@ class ExtractionTab(BaseOcrTab):
     def _on_export(self):
         """导出结果"""
         if not self._results:
-            self._result_widget.append_text("\n没有可导出的结果。")
+            self._result_widget.append("\n没有可导出的结果。")
             return
 
         # TODO: 实现导出逻辑

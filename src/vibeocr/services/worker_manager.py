@@ -124,31 +124,24 @@ class WorkerManager:
             f"WorkerManager 初始化: max_workers={max_workers}, use_gpu={use_gpu}"
         )
 
-    def start_all(
-        self, progress_callback: Callable[[str, int], None] | None = None
-    ) -> None:
+    def start_all(self, progress_callback: Callable[[str], None] | None = None) -> None:
         """启动所有 Worker
 
         Args:
-            progress_callback: 启动进度回调函数 (stage, percent)
+            progress_callback: 启动进度回调函数 (stage)
         """
 
-        def report_progress(stage: str, percent: int):
+        def report_progress(stage: str):
             """报告进度"""
             if progress_callback:
                 with contextlib.suppress(Exception):
-                    progress_callback(stage, percent)
-
-        total_workers = self.max_workers
+                    progress_callback(stage)
 
         with self._workers_lock:
             # 创建 Worker 实例
             for i in range(self.max_workers):
-                # 计算总体进度 (10% - 90%)
-                base_progress = 10 + int((i / total_workers) * 80)
-
                 if i >= len(self._workers):
-                    report_progress(f"创建 Worker {i}", base_progress)
+                    report_progress(f"创建 Worker {i}")
                     worker_process = OCRWorkerProcess(
                         worker_id=i, use_gpu=self.use_gpu, shm_size=self.shm_size
                     )
@@ -161,16 +154,12 @@ class WorkerManager:
                 if not info.process.is_running:
                     try:
                         info.state = WorkerState.STARTING
-                        report_progress(f"启动 Worker {i}", base_progress + 5)
+                        report_progress(f"启动 Worker {i}")
 
                         # 定义 Worker 启动进度回调
                         def make_worker_progress(worker_id: int):
-                            def worker_progress(
-                                stage: str, percent: int, bp=base_progress
-                            ):
-                                # 将 Worker 内部进度映射到总体进度
-                                overall = bp + int(percent / 100 * 35)
-                                report_progress(f"Worker {worker_id}: {stage}", overall)
+                            def worker_progress(stage: str, percent: int):
+                                report_progress(f"Worker {worker_id}: {stage}")
 
                             return worker_progress
 
@@ -180,7 +169,7 @@ class WorkerManager:
                         )
                         info.state = WorkerState.IDLE
                         info.last_active = time.time()
-                        report_progress(f"Worker {i} 就绪", base_progress + 40)
+                        report_progress(f"Worker {i} 就绪")
                         logger.info(f"Worker {i} 启动成功")
                     except Exception as e:
                         info.state = WorkerState.ERROR
@@ -189,10 +178,10 @@ class WorkerManager:
                         raise
 
         # 启动健康检查线程
-        report_progress("启动健康检查", 95)
+        report_progress("启动健康检查")
         self._start_health_check()
 
-        report_progress("所有 Worker 已启动", 100)
+        report_progress("所有 Worker 已启动")
         logger.info(f"所有 Worker 已启动 ({len(self._workers)}/{self.max_workers})")
 
     def stop_all(self, timeout: float = 10.0) -> None:

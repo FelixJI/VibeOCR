@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from PIL import Image
 
     from vibeocr.models.batch_request import PreprocessOptions
+    from vibeocr.models.ocr_options import OCRPipeline
 
 logger = logging.getLogger(__name__)
 
@@ -128,13 +129,13 @@ class OCRServiceSubprocess:
     def start(
         self,
         timeout: float = 120.0,
-        progress_callback: Callable[[str, int], None] | None = None,
+        progress_callback: Callable[[str], None] | None = None,
     ) -> None:
         """启动所有 Worker
 
         Args:
             timeout: 每个 Worker 的启动超时时间
-            progress_callback: 启动进度回调函数 (stage, percent)
+            progress_callback: 启动进度回调函数 (stage)
         """
         # 检查是否已初始化（防止 shutdown 后重复启动）
         if not self._initialized:
@@ -144,17 +145,17 @@ class OCRServiceSubprocess:
         try:
             logger.info("开始启动 Worker 进程...")
             if progress_callback:
-                progress_callback("初始化 Worker 管理器", 10)
+                progress_callback("初始化 Worker 管理器")
 
             self._worker_manager.start_all(progress_callback=progress_callback)
             logger.info("所有 Worker 已启动")
 
             if progress_callback:
-                progress_callback("Worker 启动完成", 100)
+                progress_callback("Worker 启动完成")
         except Exception as e:
             logger.error(f"启动 Worker 失败: {e}")
             if progress_callback:
-                progress_callback(f"启动失败: {str(e)[:50]}", 0)
+                progress_callback(f"启动失败: {str(e)[:50]}")
             raise
 
     def recognize(
@@ -278,6 +279,20 @@ class OCRServiceSubprocess:
         return self._worker_manager.execute(
             lambda w: w.preload_pipelines(pipelines, timeout)
         )
+
+    def preload_pipeline(self, pipeline: "OCRPipeline", timeout: float = 180.0) -> bool:
+        """预加载单个管道
+
+        Args:
+            pipeline: 要预加载的管道（OCRPipeline 枚举）
+            timeout: 超时时间（秒）
+
+        Returns:
+            是否成功
+        """
+        pipeline_name = pipeline.value if hasattr(pipeline, "value") else str(pipeline)
+        results = self.preload_pipelines([pipeline_name], timeout)
+        return results.get(pipeline_name, False)
 
     def warmup_pipelines(
         self, pipelines: list[str], timeout: float = 180.0

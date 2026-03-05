@@ -17,11 +17,11 @@ class SingletonMeta(type):
     """
 
     _instances: dict[type, Any] = {}
-    _lock = threading.Lock()
+    _meta_lock = threading.Lock()  # 元类级别的锁，避免与子类的 _lock 冲突
 
     def __call__(cls, *args, **kwargs):
         if cls not in cls._instances:
-            with cls._lock:
+            with cls._meta_lock:
                 if cls not in cls._instances:
                     cls._instances[cls] = super().__call__(*args, **kwargs)
         return cls._instances[cls]
@@ -35,7 +35,7 @@ class SingletonMeta(type):
         Args:
             target_class: 要重置的类
         """
-        with cls._lock:
+        with cls._meta_lock:
             if target_class in cls._instances:
                 instance = cls._instances[target_class]
                 if hasattr(instance, "_reset"):
@@ -48,7 +48,7 @@ class SingletonMeta(type):
 
         主要用于测试清理。
         """
-        with cls._lock:
+        with cls._meta_lock:
             for instance in cls._instances.values():
                 if hasattr(instance, "_reset"):
                     instance._reset()

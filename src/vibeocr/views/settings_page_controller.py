@@ -75,6 +75,18 @@ class SettingsPageController:
         if btn_preload_now:
             btn_preload_now.clicked.connect(self._on_preload_now_clicked)
 
+        # 预加载管道选择复选框 - 保存配置
+        for chk_name in [
+            "chkPreloadOCR",
+            "chkPreloadTable",
+            "chkPreloadFormula",
+            "chkPreloadStructure",
+            "chkPreloadPaddleOCRVL",
+        ]:
+            chk = self._ui.findChild(QCheckBox, chk_name)
+            if chk:
+                chk.toggled.connect(self._save_preload_pipelines_config)
+
         # 缓存管理
         btn_refresh_cache = self._ui.findChild(QPushButton, "btnRefreshCache")
         if btn_refresh_cache:
@@ -283,9 +295,24 @@ class SettingsPageController:
 
         return pipelines
 
+    def _save_preload_pipelines_config(self) -> None:
+        """保存预加载管道配置"""
+        from vibeocr.machine_cache import set_preload_pipelines
+
+        pipelines = self._get_selected_preload_pipelines()
+        pipeline_names = [p.value for p in pipelines]
+
+        if set_preload_pipelines(self._project_root, pipeline_names):
+            logger.info(f"[设置] 预加载管道配置已保存: {pipeline_names}")
+        else:
+            logger.error("[设置] 保存预加载管道配置失败")
+
     def _start_manual_preload_with_warmup(self, pipelines: list["OCRPipeline"]) -> None:
         """启动手动预加载和预热"""
         from PySide6.QtCore import QRunnable, QThreadPool
+
+        # 更新状态为"正在预加载"
+        self._update_preload_status("正在预加载...")
 
         class PreloadWithWarmupTask(QRunnable):
             def __init__(self, service, pipelines, controller):
@@ -294,32 +321,42 @@ class SettingsPageController:
                 self._pipelines = pipelines
                 self._controller = controller
 
-            def _update_progress(self, value: int):
-                progress_bar = self._controller._ui.findChild(
-                    QWidget, "progressPreload"
-                )
-                if progress_bar:
-                    progress_bar.setValue(value)
+            def _update_status(self, status: str):
+                """更新预加载状态"""
+                self._controller._update_preload_status(status)
 
             def run(self):
-
                 results = {}
-                progress = 0
 
                 for pipeline in self._pipelines:
                     try:
+                        self._update_status(f"正在预加载 {pipeline.display_name}...")
+                        logger.info(f"[预加载] 正在预加载 {pipeline.display_name}...")
                         self._service.preload_pipeline(pipeline)
                         results[pipeline.name] = True
-                        progress += 1
-                        self._update_progress(progress)
+                        logger.info(f"[预加载] {pipeline.display_name} 预加载成功!")
 
                         # 预热
+                        self._update_status(f"正在预热 {pipeline.display_name}...")
+                        logger.info(f"[预热] 正在预热 {pipeline.display_name}...")
                         self._warmup_pipeline(pipeline)
-                        progress += 1
-                        self._update_progress(progress)
+                        logger.info(f"[预热] {pipeline.display_name} 预热成功!")
                     except Exception as e:
                         logger.error(f"预加载 {pipeline.name} 失败: {e}")
                         results[pipeline.name] = False
+
+                # 更新最终状态
+                success_count = sum(1 for v in results.values() if v)
+                total = len(results)
+                if success_count == total:
+                    self._update_status("预加载成功")
+                    logger.info(f"[预加载] 全部完成! 成功: {success_count}/{total}")
+                elif success_count > 0:
+                    self._update_status(f"预加载部分成功 ({success_count}/{total})")
+                    logger.warning(f"[预加载] 部分完成: {success_count}/{total}")
+                else:
+                    self._update_status("预加载失败")
+                    logger.error("[预加载] 全部失败!")
 
                 # 回调
                 if self._controller._preload_complete_callback:
@@ -333,14 +370,18 @@ class SettingsPageController:
 
                     from PIL import Image
 
+                    from vibeocr.services.ocr_service import OCROptions
+
                     warmup_image = Image.new("RGB", (100, 100), color="white")
                     buffer = io.BytesIO()
                     warmup_image.save(buffer, format="PNG")
                     image_data = buffer.getvalue()
 
-                    self._service.recognize(image_data, pipeline=pipeline)
+                    options = OCROptions(pipeline=pipeline)
+                    self._service.recognize(image_data, options=options)
+                    logger.info(f"[预热] {pipeline.display_name} 预热成功!")
                 except Exception as e:
-                    logger.warning(f"预热 {pipeline.name} 失败: {e}")
+                    logger.warning(f"[预热] {pipeline.display_name} 预热失败: {e}")
 
         task = PreloadWithWarmupTask(self._subprocess_manager.service, pipelines, self)
         QThreadPool.globalInstance().start(task)
@@ -351,18 +392,9 @@ class SettingsPageController:
         if btn_preload_now:
             btn_preload_now.setEnabled(True)
 
-        progress_bar = self._ui.findChild(QWidget, "progressPreload")
-        if progress_bar:
-            progress_bar.setVisible(False)
-
+        # 状态已由任务内部更新，此处仅记录日志
         success_count = sum(1 for v in results.values() if v)
         total = len(results)
-
-        if success_count == total:
-            self._update_preload_status(f"预加载完成 ({success_count}/{total})")
-        else:
-            self._update_preload_status(f"预加载部分完成 ({success_count}/{total})")
-
         logger.info(f"[预加载] 完成: {success_count}/{total}")
 
     def _update_preload_status(self, status: str | None = None) -> None:
