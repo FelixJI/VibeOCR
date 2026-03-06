@@ -112,6 +112,12 @@ def run_worker(shm_name: str, shm_size: int, use_gpu: bool) -> None:
         """
         nonlocal batch_managers, batch_manager_initialized
 
+        # 处理枚举类型
+        from enum import Enum
+
+        if isinstance(pipeline_name, Enum):
+            pipeline_name = pipeline_name.value
+
         # 如果已经初始化过该管道，直接返回
         if pipeline_name in batch_managers:
             return batch_managers[pipeline_name]

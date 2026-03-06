@@ -259,23 +259,27 @@ class OCRServiceSubprocess:
         if options is None:
             return {}
 
-        # 如果是 OCROptions 对象，转换为字典
-        if hasattr(options, "__dict__"):
-            return {k: v for k, v in options.__dict__.items() if not k.startswith("_")}
+        # 优先使用 to_dict() 方法（会正确处理枚举类型）
+        if hasattr(options, "to_dict") and callable(options.to_dict):
+            return options.to_dict()
 
         # 如果已经是字典
         if isinstance(options, dict):
             return options
 
+        # 兜底：直接使用 __dict__
+        if hasattr(options, "__dict__"):
+            return {k: v for k, v in options.__dict__.items() if not k.startswith("_")}
+
         return {}
 
-    def _calculate_recognize_timeout(self, pipeline_name: str) -> float:
+    def _calculate_recognize_timeout(self, pipeline_name: str | object) -> float:
         """根据模型缓存状态计算识别超时时间
 
         首次使用管道时可能需要下载模型，使用更长的超时时间。
 
         Args:
-            pipeline_name: 管道名称
+            pipeline_name: 管道名称（字符串或 OCRPipeline 枚举）
 
         Returns:
             超时时间（秒）
@@ -283,6 +287,12 @@ class OCRServiceSubprocess:
         # 超时配置常量
         TIMEOUT_CACHED = 60.0  # 模型已缓存时的超时（秒）
         TIMEOUT_UNCACHED = 300.0  # 模型未缓存时的超时（秒）- 5分钟
+
+        # 处理枚举类型
+        from enum import Enum
+
+        if isinstance(pipeline_name, Enum):
+            pipeline_name = pipeline_name.value
 
         # 检查模型是否已缓存
         if is_pipeline_cached(pipeline_name):

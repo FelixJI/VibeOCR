@@ -5,6 +5,7 @@
 """
 
 import contextlib
+import locale
 import logging
 import subprocess
 import threading
@@ -117,6 +118,41 @@ class OCRWorkerProcess:
 
         return sys.executable
 
+    def _split_mixed_log_lines(self, text: str) -> list[str]:
+        """分割混合的日志行
+
+        PaddlePaddle 的 warnings.warn() 输出有时没有换行符，
+        导致多个日志行被拼接到一行。此方法尝试识别并分割这些行。
+
+        Args:
+            text: 可能包含多个日志行的文本
+
+        Returns:
+            分割后的日志行列表
+        """
+        import re
+
+        # 日期时间模式：YYYY-MM-DD HH:MM:SS
+        datetime_pattern = r"\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}"
+
+        # 如果文本中包含多个日期时间模式，说明是多行被拼接
+        matches = list(re.finditer(datetime_pattern, text))
+
+        if len(matches) <= 1:
+            # 没有拼接，直接返回
+            return [text] if text else []
+
+        # 按日期时间模式分割
+        lines = []
+        for i, match in enumerate(matches):
+            start = match.start()
+            end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+            line = text[start:end].strip()
+            if line:
+                lines.append(line)
+
+        return lines
+
     def _get_worker_script(self) -> str:
         """获取 Worker 脚本路径"""
         # 使用模块方式运行
@@ -191,14 +227,46 @@ class OCRWorkerProcess:
 
             # 启动一个线程读取子进程的 stdout（统一的日志通道）
             def read_stdout():
+                import platform
+
+                is_windows = platform.system() == "Windows"
+
                 try:
                     while self.process and self.process.poll() is None:
                         line = self.process.stdout.readline()
                         if line:
                             try:
-                                text = line.decode("utf-8", errors="replace").strip()
+                                # Windows 上 PaddlePaddle 可能使用 GBK 编码
+                                # 先尝试 UTF-8，失败则尝试系统默认编码（Windows 为 GBK）
+                                text = None
+                                try:
+                                    text = line.decode("utf-8").strip()
+                                except UnicodeDecodeError:
+                                    # UTF-8 解码失败，尝试系统编码
+                                    try:
+                                        encoding = (
+                                            "gbk"
+                                            if is_windows
+                                            else locale.getpreferredencoding(False)
+                                        )
+                                        text = line.decode(
+                                            encoding, errors="replace"
+                                        ).strip()
+                                    except Exception:
+                                        text = line.decode(
+                                            "utf-8", errors="replace"
+                                        ).strip()
+
                                 if text:
-                                    logger.info(f"[Worker {self.worker_id}] {text}")
+                                    # 处理 PaddlePaddle warnings.warn() 没有换行的问题
+                                    # 如果行末是 warnings.warn( 或类似的未完成语句，
+                                    # 或者行首是日期时间格式但拼接在上一行末尾
+                                    lines_to_log = self._split_mixed_log_lines(text)
+                                    for log_line in lines_to_log:
+                                        if log_line:
+                                            logger.info(
+                                                f"[Worker {self.worker_id}] {log_line}"
+                                            )
                             except Exception:
                                 pass
                 except Exception as e:
@@ -551,8 +619,16 @@ class OCRWorkerProcess:
 
         # 检查是否有任何模型未缓存
         uncached_pipelines = []
+        from enum import Enum
+
         for pipeline_name in pipelines:
-            if not is_pipeline_cached(pipeline_name):
+            # 处理枚举类型
+            name = (
+                pipeline_name.value
+                if isinstance(pipeline_name, Enum)
+                else pipeline_name
+            )
+            if not is_pipeline_cached(name):
                 uncached_pipelines.append(pipeline_name)
 
         if uncached_pipelines:

@@ -277,6 +277,11 @@ class BatchQueueManager:
 
             # 根据管道类型准备参数
             pipeline_name = getattr(preprocess_options, "pipeline", "PP-StructureV3")
+            # 处理枚举类型
+            from enum import Enum
+
+            if isinstance(pipeline_name, Enum):
+                pipeline_name = pipeline_name.value
 
             if pipeline_name == "PaddleOCR-VL":
                 # PaddleOCR-VL 特有参数映射

@@ -102,11 +102,17 @@ def _load_pipeline_config(pipeline_name: str) -> dict | None:
     """加载管道配置文件
 
     Args:
-        pipeline_name: 管道名称
+        pipeline_name: 管道名称（字符串或 OCRPipeline 枚举）
 
     Returns:
         配置字典，如果文件不存在则返回 None
     """
+    # 处理枚举类型
+    from enum import Enum
+
+    if isinstance(pipeline_name, Enum):
+        pipeline_name = pipeline_name.value
+
     config_dir = get_config_dir()
 
     # 尝试不同的文件名格式

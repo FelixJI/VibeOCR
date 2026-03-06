@@ -158,6 +158,21 @@ class MainWindow(QMainWindow):
         # 添加文档理解标签页
         self._init_doc_understanding_tab()
 
+        # 将设置标签页移到最后
+        self._move_settings_tab_to_end()
+
+    def _move_settings_tab_to_end(self) -> None:
+        """将设置标签页移动到最后位置"""
+        tab_widget = self._ui.tabWidget
+        settings_tab = self._ui.tabSettings
+
+        # 获取设置标签页的当前索引
+        settings_index = tab_widget.indexOf(settings_tab)
+        if settings_index >= 0:
+            # 使用 moveTab 将设置标签页移到最后
+            tab_widget.moveTab(settings_index, tab_widget.count() - 1)
+            logging.debug("设置标签页已移到最后")
+
     def _restore_layout(self) -> None:
         """恢复窗口和分割器布局"""
         # 恢复主窗口几何信息
