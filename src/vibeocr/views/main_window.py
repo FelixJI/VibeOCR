@@ -334,6 +334,10 @@ class MainWindow(QMainWindow):
         self._ui.tabWidget.addTab(self._extraction_tab, "信息抽取")
         logging.debug("信息抽取标签页已添加")
 
+    def _on_pipeline_clicked(self, pipeline) -> None:
+        """管道按钮点击时更新 UI"""
+        self._update_button_visibility(pipeline)
+
     def _init_doc_understanding_tab(self) -> None:
         """初始化文档理解标签页"""
         from vibeocr.views.doc_understanding_tab import DocUnderstandingTab

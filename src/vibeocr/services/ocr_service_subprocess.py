@@ -13,6 +13,7 @@ import uuid
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Optional, Union
 
+from vibeocr.model_cache_manager import is_pipeline_cached
 from vibeocr.services.worker_manager import WorkerManager
 
 if TYPE_CHECKING:
@@ -188,9 +189,14 @@ class OCRServiceSubprocess:
         # 准备选项字典
         options_dict = self._prepare_options_dict(options)
 
+        # 根据模型缓存状态计算超时时间
+        pipeline_name = options_dict.get("pipeline", "OCR")
+        timeout = self._calculate_recognize_timeout(pipeline_name)
+
         # 执行识别（通过 WorkerManager 自动处理负载均衡和故障恢复）
         return self._worker_manager.execute(
-            lambda w: w.recognize(image_data, options_dict)
+            lambda w: w.recognize(image_data, options_dict, timeout=timeout),
+            timeout=timeout,
         )
 
     def _prepare_image_data(self, image) -> bytes:
@@ -262,6 +268,33 @@ class OCRServiceSubprocess:
             return options
 
         return {}
+
+    def _calculate_recognize_timeout(self, pipeline_name: str) -> float:
+        """根据模型缓存状态计算识别超时时间
+
+        首次使用管道时可能需要下载模型，使用更长的超时时间。
+
+        Args:
+            pipeline_name: 管道名称
+
+        Returns:
+            超时时间（秒）
+        """
+        # 超时配置常量
+        TIMEOUT_CACHED = 60.0  # 模型已缓存时的超时（秒）
+        TIMEOUT_UNCACHED = 300.0  # 模型未缓存时的超时（秒）- 5分钟
+
+        # 检查模型是否已缓存
+        if is_pipeline_cached(pipeline_name):
+            logger.debug(
+                f"[识别] 管道 {pipeline_name} 模型已缓存，使用标准超时 ({TIMEOUT_CACHED}s)"
+            )
+            return TIMEOUT_CACHED
+        else:
+            logger.info(
+                f"[识别] 管道 {pipeline_name} 模型未缓存，使用延长超时 ({TIMEOUT_UNCACHED}s)"
+            )
+            return TIMEOUT_UNCACHED
 
     def preload_pipelines(
         self, pipelines: list[str], timeout: float = 180.0

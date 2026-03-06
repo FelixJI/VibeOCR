@@ -1,0 +1,39 @@
+# 表格识别管道配置
+
+pipeline_name: table_recognition
+
+description: "识别表格结构，输出 HTML/Excel 格式"
+
+options:
+  use_doc_orientation_classify: true
+  use_doc_unwarping: true
+  use_layout_detection: true
+
+models:
+  required:
+    - name: PP-DocLayout-L
+      module: layout_detection
+      description: "布局检测模型"
+
+    - name: SLANet_plus
+      module: table_structure_recognition
+      description: "表格结构识别模型"
+
+    - name: PP-OCRv5_server_det
+      module: text_detection
+      description: "文本检测模型"
+
+    - name: PP-OCRv5_server_rec
+      module: text_recognition
+      description: "文本识别模型"
+
+  optional:
+    - name: PP-LCNet_x1_0_doc_ori
+      module: doc_text_orientation
+      option: use_doc_orientation_classify
+      description: "文档方向分类"
+
+    - name: UVDoc
+      module: image_unwarping
+      option: use_doc_unwarping
+      description: "文档扭曲矫正"

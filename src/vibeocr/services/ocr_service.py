@@ -757,7 +757,7 @@ class OCRService(metaclass=SingletonMeta):
                 input=img,
                 use_doc_orientation_classify=options.use_doc_orientation_classify,
                 use_doc_unwarping=options.use_doc_unwarping,
-                use_layout_detection=options.use_layout_detection,
+                use_layout_detection=options.vl_use_layout_detection,
             )
 
             # 确保 GPU 操作完成后再处理结果 - 使用安全消费方法
@@ -829,7 +829,7 @@ class OCRService(metaclass=SingletonMeta):
                 input=img,
                 use_doc_orientation_classify=options.use_doc_orientation_classify,
                 use_doc_unwarping=options.use_doc_unwarping,
-                use_layout_detection=options.use_layout_detection,
+                use_layout_detection=options.vl_use_layout_detection,
             )
 
             # 确保 GPU 操作完成后再处理结果 - 使用安全消费方法
