@@ -72,6 +72,7 @@ class MainWindow(QMainWindow):
         self._subprocess_manager = SubprocessManager(self._project_root, self)
         self._subprocess_manager.service_ready.connect(self._on_subprocess_worker_ready)
         self._subprocess_manager.progress_update.connect(self._on_subprocess_progress)
+        self._subprocess_manager.preload_finished.connect(self._on_preload_finished)
 
         self._setup_ui()
 
@@ -169,8 +170,8 @@ class MainWindow(QMainWindow):
         # 获取设置标签页的当前索引
         settings_index = tab_widget.indexOf(settings_tab)
         if settings_index >= 0:
-            # 使用 moveTab 将设置标签页移到最后
-            tab_widget.moveTab(settings_index, tab_widget.count() - 1)
+            # 使用 tabBar().moveTab 将设置标签页移到最后
+            tab_widget.tabBar().moveTab(settings_index, tab_widget.count() - 1)
             logging.debug("设置标签页已移到最后")
 
     def _restore_layout(self) -> None:
@@ -615,7 +616,6 @@ class MainWindow(QMainWindow):
         """子进程 Worker 就绪回调"""
         if success:
             logging.info("[MainWindow] 子进程 Worker 已就绪")
-            self._statusbar.showMessage("OCR 服务已就绪")
 
             # 获取服务实例
             service = self._subprocess_manager.service
@@ -636,7 +636,16 @@ class MainWindow(QMainWindow):
                 logging.info("[MainWindow] 文档理解标签页已连接 OCR 服务")
 
             # 子进程就绪后，触发预加载（如果配置了预加载管道）
-            self._start_subprocess_preload()
+            # 预加载完成后再显示"OCR 服务已就绪"
+            from vibeocr.machine_cache import get_preload_pipelines
+
+            pipelines = get_preload_pipelines(self._project_root)
+            if pipelines:
+                self._statusbar.showMessage("正在预热 OCR 模型...")
+                self._start_subprocess_preload()
+            else:
+                # 没有配置预加载管道，直接显示就绪
+                self._statusbar.showMessage("OCR 服务已就绪")
         else:
             logging.warning("[MainWindow] 子进程 Worker 启动失败")
             self._statusbar.showMessage("OCR 服务启动失败")
@@ -656,6 +665,19 @@ class MainWindow(QMainWindow):
     def _on_subprocess_progress(self, stage: str) -> None:
         """子进程启动进度回调"""
         self._statusbar.showMessage(f"正在启动 OCR 服务: {stage}")
+
+    @Slot(dict)
+    def _on_preload_finished(self, results: dict) -> None:
+        """预加载完成回调"""
+        success_count = sum(1 for v in results.values() if v)
+        total_count = len(results)
+        if success_count > 0:
+            self._statusbar.showMessage(
+                f"OCR 服务已就绪（{success_count}/{total_count} 个模型已预热）"
+            )
+        else:
+            self._statusbar.showMessage("OCR 服务已就绪")
+        logging.info(f"[MainWindow] 预加载完成: {results}")
 
     def _start_subprocess_preload(self) -> None:
         """在子进程中预加载用户配置的管道"""
@@ -983,7 +1005,7 @@ class MainWindow(QMainWindow):
             self._ui.textResult.setPlainText("未识别到文字")
 
         # 构建状态栏消息
-        if result.raw_text:
+        if result.raw_text or result.has_rich_content:
             if result.text_with_scores:
                 base_msg = f"识别完成，{block_count} 个文本块，平均置信度: {result.avg_score:.0%}"
                 if result.low_confidence_items:
@@ -998,6 +1020,14 @@ class MainWindow(QMainWindow):
                 else:
                     self._statusbar.showMessage(base_msg)
             else:
+                # 没有置信度信息，显示字符数
+                char_count = (
+                    len(result.raw_text)
+                    if result.raw_text
+                    else len(result.markdown_text)
+                    if result.markdown_text
+                    else 0
+                )
                 self._statusbar.showMessage(f"识别完成，共 {char_count} 个字符")
         else:
             self._statusbar.showMessage("未识别到文字")

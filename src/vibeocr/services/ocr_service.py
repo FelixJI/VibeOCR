@@ -997,6 +997,17 @@ class OCRService(metaclass=SingletonMeta):
                 "\n".join(t for t, _ in text_with_scores) if text_with_scores else ""
             )
 
+            # 如果 raw_text 为空但有 markdown_text，使用 markdown_text 作为 raw_text
+            # 并从 markdown_text 中提取文本块用于置信度统计
+            if not raw_text and markdown_text:
+                raw_text = markdown_text
+                # 为 markdown 内容创建默认置信度条目
+                # 按段落分割，每个段落作为一个文本块
+                for line in markdown_text.split("\n\n"):
+                    line = line.strip()
+                    if line:
+                        text_with_scores.append((line, 1.0))
+
             return self._build_ocr_result(
                 raw_text=raw_text,
                 markdown_text=markdown_text,
@@ -1113,6 +1124,17 @@ class OCRService(metaclass=SingletonMeta):
             raw_text = (
                 "\n".join(t for t, _ in text_with_scores) if text_with_scores else ""
             )
+
+            # 如果 raw_text 为空但有 markdown_text，使用 markdown_text 作为 raw_text
+            # 并从 markdown_text 中提取文本块用于置信度统计
+            if not raw_text and markdown_text:
+                raw_text = markdown_text
+                # 为 markdown 内容创建默认置信度条目
+                # 按段落分割，每个段落作为一个文本块
+                for line in markdown_text.split("\n\n"):
+                    line = line.strip()
+                    if line:
+                        text_with_scores.append((line, 1.0))
 
             return self._build_ocr_result(
                 raw_text=raw_text,

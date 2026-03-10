@@ -120,6 +120,9 @@ class WorkerManager:
         self._failed_tasks = 0
         self._retried_tasks = 0
 
+        # 关闭标志（用于避免关闭时误判崩溃）
+        self._shutting_down = False
+
         logger.info(
             f"WorkerManager 初始化: max_workers={max_workers}, use_gpu={use_gpu}"
         )
@@ -190,6 +193,9 @@ class WorkerManager:
         Args:
             timeout: 每个 Worker 的停止超时时间（秒）
         """
+        # 设置关闭标志，避免误判崩溃
+        self._shutting_down = True
+
         # 停止健康检查线程
         self._stop_health_check()
 
@@ -258,16 +264,23 @@ class WorkerManager:
 
             # 检查 Worker 是否仍然存活
             if not worker_info.process.is_running:
-                logger.error(f"Worker {worker_info.worker_id} 已崩溃")
-                worker_info.state = WorkerState.ERROR
+                # 如果正在关闭，不要误判为崩溃
+                if self._shutting_down:
+                    logger.debug(
+                        f"Worker {worker_info.worker_id} 已停止（应用程序关闭中）"
+                    )
+                    worker_info.state = WorkerState.STOPPED
+                else:
+                    logger.error(f"Worker {worker_info.worker_id} 已崩溃")
+                    worker_info.state = WorkerState.ERROR
 
-                # 自动重启
-                if self.auto_restart and retry_count < self.max_retries:
-                    logger.info(f"尝试重启 Worker {worker_info.worker_id}...")
-                    if self._restart_worker(worker_info):
-                        self._retried_tasks += 1
-                        # 重试任务
-                        return self.execute(task, timeout, retry_count + 1)
+                    # 自动重启
+                    if self.auto_restart and retry_count < self.max_retries:
+                        logger.info(f"尝试重启 Worker {worker_info.worker_id}...")
+                        if self._restart_worker(worker_info):
+                            self._retried_tasks += 1
+                            # 重试任务
+                            return self.execute(task, timeout, retry_count + 1)
 
             worker_info.state = WorkerState.IDLE
             raise

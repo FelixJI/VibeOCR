@@ -213,7 +213,8 @@ def run_worker(shm_name: str, shm_size: int, use_gpu: bool) -> None:
                         logger.info(
                             f"[Worker] 图像大小: {len(image_data)} 字节, 选项: {options_dict}"
                         )
-                        options = OCROptions(**options_dict)
+                        # 使用 from_dict 正确处理 pipeline 字符串到枚举的转换
+                        options = OCROptions.from_dict(options_dict)
 
                         # 执行识别
                         logger.info("[Worker] 开始执行 OCR 识别...")
