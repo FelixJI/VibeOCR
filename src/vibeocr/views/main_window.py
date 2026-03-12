@@ -8,6 +8,7 @@ import logging
 from PIL import Image
 from PySide6.QtCore import (
     QBuffer,
+    QRect,
     QThreadPool,
     QTimer,
     Signal,
@@ -37,6 +38,7 @@ from vibeocr.views.batch_recognition_tab import BatchRecognitionTab
 from vibeocr.views.clipboard_controller import ClipboardController
 from vibeocr.views.settings_page_controller import SettingsPageController
 from vibeocr.widgets.console_widget import ConsoleWidget
+from vibeocr.widgets.screenshot_edit_window import ScreenshotEditWindow
 from vibeocr.widgets.screenshot_widget import ScreenshotWidget
 
 # 延迟导入: OCR 服务模块导入很慢（~33s），延迟到首次使用时导入
@@ -330,6 +332,9 @@ class MainWindow(QMainWindow):
         # 创建截图组件
         self._screenshot_widget = ScreenshotWidget()
 
+        # 创建截图编辑窗口
+        self._edit_window = ScreenshotEditWindow()
+
     def _init_batch_tab(self) -> None:
         """初始化批量识别标签页"""
         # 创建批量识别标签页
@@ -524,8 +529,12 @@ class MainWindow(QMainWindow):
         self._action_about.triggered.connect(self._on_about)
         self._action_refresh_cache.triggered.connect(self._on_refresh_cache)
 
-        # 截图组件
-        self._screenshot_widget.captured.connect(self._on_screenshot_captured)
+        # 截图组件 - 使用新的 selection_done 信号进入编辑流程
+        self._screenshot_widget.selection_done.connect(self._on_selection_done)
+
+        # 编辑窗口信号
+        self._edit_window.confirmed.connect(self._on_edit_confirmed)
+        self._edit_window.cancelled.connect(self._on_edit_cancelled)
 
         # 预览组件
         self._ui.previewWidget.screenshot_requested.connect(self._on_screenshot)
@@ -799,7 +808,7 @@ class MainWindow(QMainWindow):
 
     @Slot(QPixmap)
     def _on_screenshot_captured(self, pixmap: QPixmap) -> None:
-        """截图完成"""
+        """截图完成（向后兼容，打开图片等直接流程使用）"""
         self.showNormal()
         self.activateWindow()
         if not pixmap.isNull():
@@ -812,36 +821,56 @@ class MainWindow(QMainWindow):
             self._ui.previewWidget.set_pixmap(pixmap)
             self._run_ocr(pixmap)
 
-    def _run_ocr(self, pixmap: QPixmap) -> None:
-        """Execute OCR recognition
+    @Slot(QPixmap, QRect)
+    def _on_selection_done(self, pixmap: QPixmap, screen_rect: QRect) -> None:
+        """框选完成，打开编辑窗口"""
+        if pixmap.isNull():
+            self._screenshot_widget.finish_capture()
+            self.showNormal()
+            self.activateWindow()
+            return
 
-        Supports two modes:
-        1. Async subprocess mode (default): Execute OCR via subprocess with asyncio
-        2. Direct mode: Execute OCR directly in main thread (for debugging)
+        logging.info(
+            f"框选完成: {pixmap.width()}x{pixmap.height()} 像素, "
+            f"选区 ({screen_rect.x()}, {screen_rect.y()}, "
+            f"{screen_rect.width()}x{screen_rect.height()})"
+        )
+        self._screenshot_widget.finish_capture()
+        self._edit_window.open_editor(pixmap, screen_rect)
 
-        Mode switching controlled by environment variable VIBEOCR_USE_SUBPROCESS.
-        """
-        # Lazy import: OCR related types
-        from vibeocr.services import USE_SUBPROCESS
-        from vibeocr.services.ocr_service import OCROptions, OCRPipeline
+    @Slot(QPixmap, object)
+    def _on_edit_confirmed(self, pixmap: QPixmap, options) -> None:
+        """编辑完成，执行 OCR"""
+        self._edit_window.hide()
+        self.showNormal()
+        self.activateWindow()
 
-        logging.info("Starting OCR recognition")
-        self._ui.textResult.clear()
-        self._ui.textResult.setPlaceholderText("Recognizing...")
-        self._statusbar.showMessage("Recognizing...")
+        if not pixmap.isNull():
+            dpr = pixmap.devicePixelRatio()
+            width = pixmap.width()
+            height = pixmap.height()
+            logging.info(f"编辑确认: {width}x{height} 像素, DPR={dpr}")
 
-        # Force UI update to show "Recognizing" message
-        QApplication.processEvents()
+            self._ui.previewWidget.set_pixmap(pixmap)
+            self._run_ocr(pixmap, options)
 
-        # 获取当前选择的管道
+    @Slot()
+    def _on_edit_cancelled(self) -> None:
+        """取消编辑"""
+        self._edit_window.hide()
+        self.showNormal()
+        self.activateWindow()
+
+    def _build_options_from_ui(self):
+        """从主窗口 UI 按钮状态构建 OCROptions"""
+        from vibeocr.services.ocr_service import OCROptions
+
         pipeline = self._get_current_pipeline()
 
-        # 获取预处理选项
         use_orient = self._btn_orient.isChecked() if self._btn_orient else False
         use_unwarp = self._btn_unwarp.isChecked() if self._btn_unwarp else False
         use_textline = self._btn_textline.isChecked() if self._btn_textline else True
 
-        # 获取子产线选项（仅版面解析管道有效）
         use_table = self._btn_sub_table.isChecked() if self._btn_sub_table else True
         use_formula = (
             self._btn_sub_formula.isChecked() if self._btn_sub_formula else True
@@ -849,17 +878,14 @@ class MainWindow(QMainWindow):
         use_seal = self._btn_sub_seal.isChecked() if self._btn_sub_seal else False
         use_chart = self._btn_sub_chart.isChecked() if self._btn_sub_chart else False
 
-        # 获取 PaddleOCR-VL 特有选项
         vl_use_layout = self._btn_vl_layout.isChecked() if self._btn_vl_layout else True
-        self._btn_vl_chart.isChecked() if self._btn_vl_chart else False
         vl_use_seal = self._btn_vl_seal.isChecked() if self._btn_vl_seal else False
         vl_format = self._btn_vl_format.isChecked() if self._btn_vl_format else False
         vl_ocr_image = (
             self._btn_vl_ocr_image.isChecked() if self._btn_vl_ocr_image else False
         )
 
-        # 创建 OCR 选项
-        options = OCROptions(
+        return OCROptions(
             pipeline=pipeline,
             use_doc_orientation_classify=use_orient,
             use_doc_unwarping=use_unwarp,
@@ -874,12 +900,45 @@ class MainWindow(QMainWindow):
             vl_format_block_content=vl_format,
         )
 
+    def _run_ocr(self, pixmap: QPixmap, options=None) -> None:
+        """Execute OCR recognition
+
+        Supports two modes:
+        1. Async subprocess mode (default): Execute OCR via subprocess with asyncio
+        2. Direct mode: Execute OCR directly in main thread (for debugging)
+
+        Args:
+            pixmap: 待识别的图像
+            options: OCR 选项（如果为 None，从主窗口 UI 按钮状态读取）
+        """
+        # Lazy import: OCR related types
+        from vibeocr.services import USE_SUBPROCESS
+        from vibeocr.services.ocr_service import OCROptions, OCRPipeline
+
+        logging.info("Starting OCR recognition")
+        self._ui.textResult.clear()
+        self._ui.textResult.setPlaceholderText("Recognizing...")
+        self._statusbar.showMessage("Recognizing...")
+
+        # Force UI update to show "Recognizing" message
+        QApplication.processEvents()
+
+        if options is None:
+            # 从主窗口 UI 按钮状态读取选项
+            options = self._build_options_from_ui()
+
+        pipeline = options.pipeline
         logging.info(
-            f"OCR 管道: {pipeline.display_name}, 预处理: 方向={use_orient}, 去弯={use_unwarp}"
+            f"OCR 管道: {pipeline.display_name}, "
+            f"预处理: 方向={options.use_doc_orientation_classify}, "
+            f"去弯={options.use_doc_unwarping}"
         )
         if pipeline == OCRPipeline.PP_STRUCTURE_V3:
             logging.info(
-                f"子产线: 表格={use_table}, 公式={use_formula}, 印章={use_seal}, 图表={use_chart}"
+                f"子产线: 表格={options.use_table_recognition}, "
+                f"公式={options.use_formula_recognition}, "
+                f"印章={options.use_seal_recognition}, "
+                f"图表={options.use_chart_recognition}"
             )
 
         # 将 QPixmap 转换为图像数据
