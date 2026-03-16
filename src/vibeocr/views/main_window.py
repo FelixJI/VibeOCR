@@ -17,6 +17,7 @@ from PySide6.QtCore import (
 from PySide6.QtGui import QAction, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
+    QCheckBox,
     QFileDialog,
     QMainWindow,
     QMessageBox,
@@ -40,6 +41,7 @@ from vibeocr.views.settings_page_controller import SettingsPageController
 from vibeocr.widgets.console_widget import ConsoleWidget
 from vibeocr.widgets.screenshot_edit_window import ScreenshotEditWindow
 from vibeocr.widgets.screenshot_widget import ScreenshotWidget
+from vibeocr.widgets.toolbar import EdgeToolbar
 
 # 延迟导入: OCR 服务模块导入很慢（~33s），延迟到首次使用时导入
 
@@ -57,6 +59,9 @@ class MainWindow(QMainWindow):
         self._dependency_check_complete = False  # 依赖检测是否完成
         self._preload_complete = False  # 预加载是否完成
         self._closing = False  # 是否正在关闭（防止关闭时重复启动 Worker）
+        self._force_quit = False  # 是否强制退出（而非最小化到托盘）
+        self._tray_icon = None  # 系统托盘图标
+        self._app_settings = None  # 应用设置
 
         # 当前 OCR 结果（用于复制操作）
         self._current_ocr_result: OCRResult | None = None
@@ -84,6 +89,11 @@ class MainWindow(QMainWindow):
         self._create_menus()
         self._connect_signals()
         self._thread_pool = QThreadPool()
+
+        # 创建边缘工具栏
+        self._edge_toolbar = EdgeToolbar()
+        self._edge_toolbar.screenshot_requested.connect(self._on_screenshot)
+        self._edge_toolbar.show_main_requested.connect(self._show_main_window)
 
         # 设置 OCRService 状态回调（用于显示模型下载进度）
         self._setup_ocr_status_callback()
@@ -1141,8 +1151,31 @@ class MainWindow(QMainWindow):
             logging.warning(f"依赖缓存刷新完成，缺失: {missing_str}")
 
     def closeEvent(self, event) -> None:
-        """关闭窗口事件"""
+        """关闭窗口事件
+
+        如果启用了托盘最小化且不是强制退出，则隐藏到托盘而不关闭。
+        """
+        # 检查是否应最小化到托盘
+        if (
+            not self._force_quit
+            and self._app_settings
+            and self._app_settings.minimize_to_tray
+            and self._tray_icon is not None
+        ):
+            event.ignore()
+            self.hide()
+            logging.info("主窗口已最小化到系统托盘")
+            return
+
         logging.info("正在关闭应用程序...")
+
+        # 关闭边缘工具栏
+        if hasattr(self, "_edge_toolbar") and self._edge_toolbar:
+            self._edge_toolbar.close()
+
+        # 保存应用设置
+        if self._app_settings:
+            self._app_settings.save()
 
         # 保存布局（在 _closing = True 之前）
         self._save_layout()
@@ -1175,3 +1208,112 @@ class MainWindow(QMainWindow):
 
         event.accept()
         logging.info("应用程序已关闭")
+
+    # ============================================================
+    # 系统托盘与边缘工具栏集成
+    # ============================================================
+
+    def set_app_settings(self, app_settings) -> None:
+        """设置应用设置对象（由 main.py 调用）"""
+        from vibeocr.utils.app_settings import AppSettings
+
+        self._app_settings: AppSettings = app_settings
+        self.apply_app_settings()
+        self._init_app_settings_ui()
+
+    def set_tray_icon(self, tray_icon) -> None:
+        """设置系统托盘图标（由 main.py 调用）"""
+        self._tray_icon = tray_icon
+
+    def apply_app_settings(self) -> None:
+        """应用当前设置到工具栏等组件"""
+        if not self._app_settings:
+            return
+        # 边缘工具栏
+        self._edge_toolbar.set_auto_hide(self._app_settings.auto_hide_toolbar)
+        self._edge_toolbar.set_hide_delay(self._app_settings.hide_delay_ms)
+        if self._app_settings.auto_hide_toolbar:
+            self._edge_toolbar.show()
+        # 更新设置页面复选框
+        self._sync_app_settings_ui()
+
+    def _init_app_settings_ui(self) -> None:
+        """初始化设置页面中的应用设置复选框"""
+        chk_auto_hide = self.findChild(QCheckBox, "chkAutoHideToolbar")
+        chk_tray = self.findChild(QCheckBox, "chkMinimizeToTray")
+        chk_autostart = self.findChild(QCheckBox, "chkAutoStart")
+
+        if chk_auto_hide:
+            chk_auto_hide.toggled.connect(self._on_auto_hide_toggled)
+        if chk_tray:
+            chk_tray.toggled.connect(self._on_minimize_to_tray_toggled)
+        if chk_autostart:
+            chk_autostart.toggled.connect(self._on_autostart_toggled)
+
+        self._sync_app_settings_ui()
+
+    def _sync_app_settings_ui(self) -> None:
+        """将当前设置值同步到设置页面 UI"""
+        if not self._app_settings:
+            return
+        chk_auto_hide = self.findChild(QCheckBox, "chkAutoHideToolbar")
+        chk_tray = self.findChild(QCheckBox, "chkMinimizeToTray")
+        chk_autostart = self.findChild(QCheckBox, "chkAutoStart")
+
+        if chk_auto_hide:
+            chk_auto_hide.blockSignals(True)
+            chk_auto_hide.setChecked(self._app_settings.auto_hide_toolbar)
+            chk_auto_hide.blockSignals(False)
+        if chk_tray:
+            chk_tray.blockSignals(True)
+            chk_tray.setChecked(self._app_settings.minimize_to_tray)
+            chk_tray.blockSignals(False)
+        if chk_autostart:
+            chk_autostart.blockSignals(True)
+            chk_autostart.setChecked(self._app_settings.auto_start)
+            chk_autostart.blockSignals(False)
+
+    @Slot(bool)
+    def _on_auto_hide_toggled(self, checked: bool) -> None:
+        """自动隐藏复选框切换"""
+        if self._app_settings:
+            self._app_settings.auto_hide_toolbar = checked
+            self._app_settings.save()
+        self._edge_toolbar.set_auto_hide(checked)
+        if checked:
+            self._edge_toolbar.show()
+        logging.info(f"自动隐藏边缘工具栏: {'启用' if checked else '禁用'}")
+
+    @Slot(bool)
+    def _on_minimize_to_tray_toggled(self, checked: bool) -> None:
+        """最小化到托盘复选框切换"""
+        if self._app_settings:
+            self._app_settings.minimize_to_tray = checked
+            self._app_settings.save()
+        logging.info(f"最小化到系统托盘: {'启用' if checked else '禁用'}")
+
+    @Slot(bool)
+    def _on_autostart_toggled(self, checked: bool) -> None:
+        """开机自启动复选框切换"""
+        from vibeocr.utils.autostart import set_autostart
+
+        success = set_autostart(checked)
+        if success and self._app_settings:
+            self._app_settings.auto_start = checked
+            self._app_settings.save()
+            logging.info(f"开机自启动: {'启用' if checked else '禁用'}")
+        elif not success:
+            logging.warning("设置开机自启动失败")
+            # 恢复复选框状态
+            chk = self.findChild(QCheckBox, "chkAutoStart")
+            if chk:
+                chk.blockSignals(True)
+                chk.setChecked(not checked)
+                chk.blockSignals(False)
+            QMessageBox.warning(self, "设置失败", "设置开机自启动失败，请检查系统权限。")
+
+    def _show_main_window(self) -> None:
+        """显示并激活主窗口（由工具栏触发）"""
+        self.showNormal()
+        self.activateWindow()
+        self.raise_()

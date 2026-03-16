@@ -46,10 +46,109 @@ def check_production_dependencies() -> bool:
     return ready
 
 
+def _create_tray_icon(app, window, app_settings):
+    """创建系统托盘图标
+
+    Args:
+        app: QApplication 实例
+        window: MainWindow 实例
+        app_settings: AppSettings 实例
+
+    Returns:
+        QSystemTrayIcon 实例，如果不支持返回 None
+    """
+    from PySide6.QtGui import QAction, QIcon
+    from PySide6.QtWidgets import QMenu, QSystemTrayIcon
+
+    if not QSystemTrayIcon.isSystemTrayAvailable():
+        print("[VibeOCR] 系统不支持托盘图标")
+        return None
+
+    # 使用应用默认图标，如果没有则创建简单的彩色图标
+    icon = app.windowIcon()
+    if icon.isNull():
+        from PySide6.QtCore import QSize
+        from PySide6.QtGui import QColor, QPixmap
+
+        pixmap = QPixmap(QSize(64, 64))
+        pixmap.fill(QColor("#0078d4"))
+        icon = QIcon(pixmap)
+
+    tray = QSystemTrayIcon(icon, app)
+    tray.setToolTip("VibeOCR")
+
+    # 上下文菜单
+    menu = QMenu()
+
+    action_show = QAction("显示主窗口", menu)
+    action_show.triggered.connect(lambda: _show_main_window(window))
+    menu.addAction(action_show)
+
+    action_settings = QAction("设置", menu)
+    action_settings.triggered.connect(
+        lambda: _show_tray_settings(app_settings, window)
+    )
+    menu.addAction(action_settings)
+
+    menu.addSeparator()
+
+    action_quit = QAction("退出", menu)
+    action_quit.triggered.connect(lambda: _quit_app(app, window))
+    menu.addAction(action_quit)
+
+    tray.setContextMenu(menu)
+
+    # 点击托盘图标切换主窗口显示
+    tray.activated.connect(
+        lambda reason: _on_tray_activated(reason, window)
+    )
+
+    tray.show()
+    return tray
+
+
+def _show_main_window(window):
+    """显示并激活主窗口"""
+    window.showNormal()
+    window.activateWindow()
+    window.raise_()
+
+
+def _show_tray_settings(app_settings, parent):
+    """从托盘菜单打开设置对话框"""
+    from vibeocr.ui.settings_dialog import SettingsDialog
+
+    dialog = SettingsDialog(app_settings, parent)
+    if dialog.exec():
+        # 设置已保存，通知主窗口刷新
+        if hasattr(parent, "apply_app_settings"):
+            parent.apply_app_settings()
+
+
+def _quit_app(app, window):
+    """完全退出应用"""
+    # 标记为真正退出（而非最小化到托盘）
+    window._force_quit = True
+    window.close()
+    app.quit()
+
+
+def _on_tray_activated(reason, window):
+    """托盘图标激活事件"""
+    from PySide6.QtWidgets import QSystemTrayIcon
+
+    if reason == QSystemTrayIcon.ActivationReason.Trigger:
+        if window.isVisible() and not window.isMinimized():
+            window.hide()
+        else:
+            _show_main_window(window)
+
+
 def launch_application() -> int:
     """启动应用程序"""
     from PySide6.QtWidgets import QApplication
 
+    from vibeocr.utils.app_settings import AppSettings
     from vibeocr.utils.qt_async import create_qasync_event_loop
     from vibeocr.views.main_window import MainWindow
 
@@ -57,11 +156,23 @@ def launch_application() -> int:
     app.setApplicationName("VibeOCR")
     app.setApplicationVersion("0.1.0")
 
+    # 加载应用设置
+    project_root = env_manager.get_project_root()
+    app_settings = AppSettings(project_root / "config")
+
     # 创建 qasync 事件循环（整合 Qt 和 asyncio）
     loop = create_qasync_event_loop(app)
 
     window = MainWindow()
+    window.set_app_settings(app_settings)
     window.show()
+
+    # 创建系统托盘图标
+    tray = _create_tray_icon(app, window, app_settings)
+    if tray:
+        window.set_tray_icon(tray)
+        # 托盘模式下关闭窗口不退出程序
+        app.setQuitOnLastWindowClosed(False)
 
     # 使用 qasync 事件循环运行应用
     try:

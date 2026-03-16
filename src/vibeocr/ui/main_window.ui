@@ -1179,6 +1179,48 @@
          </layout>
         </widget>
        </item>
+       <item>
+        <widget class="QGroupBox" name="groupAppSettings">
+         <property name="title">
+          <string>应用设置</string>
+         </property>
+         <layout class="QVBoxLayout" name="appSettingsLayout">
+          <property name="spacing">
+           <number>8</number>
+          </property>
+          <item>
+           <widget class="QCheckBox" name="chkAutoHideToolbar">
+            <property name="text">
+             <string>自动隐藏边缘工具栏</string>
+            </property>
+            <property name="toolTip">
+             <string>工具栏停靠在屏幕边缘时自动隐藏，鼠标靠近边缘时自动弹出</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QCheckBox" name="chkMinimizeToTray">
+            <property name="text">
+             <string>最小化到系统托盘</string>
+            </property>
+            <property name="toolTip">
+             <string>关闭主窗口时最小化到系统托盘而不是退出程序</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QCheckBox" name="chkAutoStart">
+            <property name="text">
+             <string>开机自启动</string>
+            </property>
+            <property name="toolTip">
+             <string>系统启动时自动运行 VibeOCR</string>
+            </property>
+           </widget>
+          </item>
+         </layout>
+        </widget>
+       </item>
            <item>
             <spacer name="verticalSpacer">
              <property name="orientation">

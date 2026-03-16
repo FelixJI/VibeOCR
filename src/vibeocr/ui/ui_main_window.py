@@ -637,6 +637,34 @@ class Ui_MainWindowWidget:
 
         self.scrollContentLayout.addWidget(self.groupTemplate)
 
+        # ---- 应用设置组 ----
+        self.groupAppSettings = QGroupBox(self.scrollAreaSettingsContent)
+        self.groupAppSettings.setObjectName("groupAppSettings")
+        self.appSettingsLayout = QVBoxLayout(self.groupAppSettings)
+        self.appSettingsLayout.setSpacing(8)
+        self.appSettingsLayout.setObjectName("appSettingsLayout")
+
+        self.chkAutoHideToolbar = QCheckBox(self.groupAppSettings)
+        self.chkAutoHideToolbar.setObjectName("chkAutoHideToolbar")
+        self.chkAutoHideToolbar.setToolTip(
+            "工具栏停靠在屏幕边缘时自动隐藏，鼠标靠近边缘时自动弹出"
+        )
+        self.appSettingsLayout.addWidget(self.chkAutoHideToolbar)
+
+        self.chkMinimizeToTray = QCheckBox(self.groupAppSettings)
+        self.chkMinimizeToTray.setObjectName("chkMinimizeToTray")
+        self.chkMinimizeToTray.setToolTip(
+            "关闭主窗口时最小化到系统托盘而不是退出程序"
+        )
+        self.appSettingsLayout.addWidget(self.chkMinimizeToTray)
+
+        self.chkAutoStart = QCheckBox(self.groupAppSettings)
+        self.chkAutoStart.setObjectName("chkAutoStart")
+        self.chkAutoStart.setToolTip("系统启动时自动运行 VibeOCR")
+        self.appSettingsLayout.addWidget(self.chkAutoStart)
+
+        self.scrollContentLayout.addWidget(self.groupAppSettings)
+
         self.verticalSpacer = QSpacerItem(
             20, 40, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Expanding
         )
@@ -1230,6 +1258,32 @@ class Ui_MainWindowWidget:
         self.btnDeleteTemplate.setText(
             QCoreApplication.translate(
                 "MainWindowWidget", "\u5220\u9664\u6a21\u677f", None
+            )
+        )
+        self.groupAppSettings.setTitle(
+            QCoreApplication.translate(
+                "MainWindowWidget", "\u5e94\u7528\u8bbe\u7f6e", None
+            )
+        )
+        self.chkAutoHideToolbar.setText(
+            QCoreApplication.translate(
+                "MainWindowWidget",
+                "\u81ea\u52a8\u9690\u85cf\u8fb9\u7f18\u5de5\u5177\u680f",
+                None,
+            )
+        )
+        self.chkMinimizeToTray.setText(
+            QCoreApplication.translate(
+                "MainWindowWidget",
+                "\u6700\u5c0f\u5316\u5230\u7cfb\u7edf\u6258\u76d8",
+                None,
+            )
+        )
+        self.chkAutoStart.setText(
+            QCoreApplication.translate(
+                "MainWindowWidget",
+                "\u5f00\u673a\u81ea\u542f\u52a8",
+                None,
             )
         )
         self.tabWidget.setTabText(
