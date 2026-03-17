@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QSlider,
     QSpinBox,
     QStackedWidget,
+    QToolButton,
     QWidget,
 )
 
@@ -32,6 +33,8 @@ class ToolPropertiesBar(QWidget):
     fill_enabled_changed = Signal(bool)
     font_changed = Signal(QFont)
     font_size_changed = Signal(int)
+    bold_changed = Signal(bool)
+    italic_changed = Signal(bool)
     mosaic_strength_changed = Signal(int)
     blur_radius_changed = Signal(int)
 
@@ -111,7 +114,7 @@ class ToolPropertiesBar(QWidget):
         return page
 
     def _create_text_page(self) -> QWidget:
-        """创建文字属性页"""
+        """创建文字属性页（增强版：带粗体/斜体按钮）"""
         page = QWidget()
         layout = QHBoxLayout(page)
         layout.setContentsMargins(4, 0, 4, 0)
@@ -134,6 +137,28 @@ class ToolPropertiesBar(QWidget):
         self._font_size_spin.setRange(8, 72)
         self._font_size_spin.setValue(14)
         layout.addWidget(self._font_size_spin)
+
+        # 粗体按钮
+        self._bold_btn = QToolButton()
+        self._bold_btn.setText("B")
+        self._bold_btn.setCheckable(True)
+        self._bold_btn.setToolTip("粗体")
+        self._bold_btn.setStyleSheet(
+            "QToolButton { font-weight: bold; min-width: 24px; min-height: 24px; }"
+            "QToolButton:checked { background-color: #0078d4; color: white; }"
+        )
+        layout.addWidget(self._bold_btn)
+
+        # 斜体按钮
+        self._italic_btn = QToolButton()
+        self._italic_btn.setText("I")
+        self._italic_btn.setCheckable(True)
+        self._italic_btn.setToolTip("斜体")
+        self._italic_btn.setStyleSheet(
+            "QToolButton { font-style: italic; min-width: 24px; min-height: 24px; }"
+            "QToolButton:checked { background-color: #0078d4; color: white; }"
+        )
+        layout.addWidget(self._italic_btn)
 
         return page
 
@@ -180,6 +205,8 @@ class ToolPropertiesBar(QWidget):
         self._fill_cb.toggled.connect(self.fill_enabled_changed.emit)
         self._font_combo.currentFontChanged.connect(self.font_changed.emit)
         self._font_size_spin.valueChanged.connect(self.font_size_changed.emit)
+        self._bold_btn.toggled.connect(self.bold_changed.emit)
+        self._italic_btn.toggled.connect(self.italic_changed.emit)
 
         self._mosaic_slider.valueChanged.connect(self._on_mosaic_changed)
         self._blur_slider.valueChanged.connect(self._on_blur_changed)

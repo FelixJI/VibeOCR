@@ -34,6 +34,7 @@ from vibeocr.widgets.editor.annotation_items import (
 )
 from vibeocr.widgets.editor.command_stack import (
     AddAnnotationCommand,
+    MoveAnnotationCommand,
     create_undo_stack,
 )
 
@@ -49,17 +50,23 @@ class EditCanvas(QGraphicsView):
         self._scene = QGraphicsScene(self)
         self.setScene(self._scene)
 
-        # 渲染设置
+        # 渲染设置（优化性能）
         self.setRenderHints(
             QPainter.RenderHint.Antialiasing
             | QPainter.RenderHint.SmoothPixmapTransform
         )
+        # 使用最小视口更新模式（仅重绘变化的区域）
         self.setViewportUpdateMode(
-            QGraphicsView.ViewportUpdateMode.FullViewportUpdate
+            QGraphicsView.ViewportUpdateMode.MinimalViewportUpdate
         )
+        # 启用背景缓存（减少重绘开销）
+        self.setCacheMode(QGraphicsView.CacheModeFlag.CacheBackground)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.setBackgroundBrush(QBrush(QColor(30, 30, 30)))
+
+        # 启用场景索引优化（加速项目查找）
+        self._scene.setItemIndexMethod(QGraphicsScene.ItemIndexMethod.BspTreeIndex)
 
         # 撤销栈
         self._undo_stack: QUndoStack = create_undo_stack(self)
@@ -85,6 +92,9 @@ class EditCanvas(QGraphicsView):
 
         # 裁剪相关
         self._crop_rect_item: QGraphicsRectItem | None = None
+
+        # 移动跟踪：记录移动开始时各项的位置
+        self._move_start_positions: dict[QGraphicsItem, QPointF] = {}
 
     @property
     def undo_stack(self) -> QUndoStack:
@@ -144,6 +154,14 @@ class EditCanvas(QGraphicsView):
     def set_font_size(self, size: int) -> None:
         self._font.setPointSize(size)
 
+    def set_bold(self, bold: bool) -> None:
+        """设置粗体"""
+        self._font.setBold(bold)
+
+    def set_italic(self, italic: bool) -> None:
+        """设置斜体"""
+        self._font.setItalic(italic)
+
     def set_mosaic_strength(self, strength: int) -> None:
         self._mosaic_strength = strength
 
@@ -181,6 +199,11 @@ class EditCanvas(QGraphicsView):
         tool = self._current_tool
 
         if tool == EditTool.SELECT:
+            # 记录选中项的初始位置（用于移动撤销）
+            self._move_start_positions.clear()
+            for item in self._scene.selectedItems():
+                if item != self._background_item:
+                    self._move_start_positions[item] = QPointF(item.pos())
             super().mousePressEvent(event)
             return
 
@@ -201,17 +224,67 @@ class EditCanvas(QGraphicsView):
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event) -> None:
+        scene_pos = self.mapToScene(event.pos())
+
+        # 绘制模式：更新临时项和显示尺寸提示
         if self._drawing and self._draw_start and self._temp_item:
-            scene_pos = self.mapToScene(event.pos())
             self._update_temp_item(scene_pos)
+            # 显示实时尺寸提示
+            self._show_size_tooltip(event.pos(), scene_pos)
             return
 
+        # SELECT 模式：更新光标以提示可移动
+        if self._current_tool == EditTool.SELECT:
+            item = self._scene.itemAt(scene_pos, self.transform())
+            if (
+                item
+                and item != self._background_item
+                and item.flags() & QGraphicsItem.GraphicsItemFlag.ItemIsMovable
+            ):
+                self.setCursor(Qt.CursorShape.SizeAllCursor)
+            else:
+                self.setCursor(Qt.CursorShape.ArrowCursor)
+
         super().mouseMoveEvent(event)
+
+    def _show_size_tooltip(self, view_pos, scene_pos: QPointF) -> None:
+        """显示绘制时的尺寸提示"""
+        if not self._draw_start:
+            return
+
+        rect = QRectF(self._draw_start, scene_pos).normalized()
+        width = int(rect.width())
+        height = int(rect.height())
+
+        # 使用 QToolTip 显示尺寸
+        from PySide6.QtWidgets import QToolTip
+        QToolTip.showText(
+            self.mapToGlobal(view_pos),
+            f"{width} × {height}",
+            self,
+        )
 
     def mouseReleaseEvent(self, event) -> None:
         if event.button() == Qt.MouseButton.LeftButton and self._drawing:
             scene_pos = self.mapToScene(event.pos())
             self._finish_drawing_at(scene_pos)
+            return
+
+        # SELECT 模式：检查移动并创建撤销命令
+        if (
+            event.button() == Qt.MouseButton.LeftButton
+            and self._current_tool == EditTool.SELECT
+            and self._move_start_positions
+        ):
+            super().mouseReleaseEvent(event)
+            # 检查位置是否有变化
+            for item, old_pos in self._move_start_positions.items():
+                if item.scene() is not None:  # 确保项仍在场景中
+                    new_pos = item.pos()
+                    if old_pos != new_pos:
+                        cmd = MoveAnnotationCommand(item, old_pos, new_pos)
+                        self._undo_stack.push(cmd)
+            self._move_start_positions.clear()
             return
 
         super().mouseReleaseEvent(event)

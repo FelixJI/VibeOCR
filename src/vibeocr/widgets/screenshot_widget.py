@@ -126,9 +126,9 @@ class ScreenshotWidget(QWidget):
         if self._selection_rect:
             mask_region = mask_region.subtracted(QRegion(self._selection_rect))
 
-        # 3. 只在非选区绘制半透明遮罩
+        # 3. 只在非选区绘制半透明遮罩（约67%不透明度，参考主流截图软件）
         painter.setClipRegion(mask_region)
-        painter.fillRect(self.rect(), QColor(0, 0, 0, 100))
+        painter.fillRect(self.rect(), QColor(0, 0, 0, 170))
 
         # 4. 绘制选区边框和尺寸信息（禁用裁剪）
         if self._selection_rect:

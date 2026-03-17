@@ -1,39 +1,56 @@
 # 表格识别管道配置
+# 使用 SLANet_plus 表格结构识别模型
 
 pipeline_name: table_recognition
 
-description: "识别表格结构，输出 HTML/Excel 格式"
+use_doc_preprocessor: True
+use_layout_detection: True
+use_ocr_model: True
 
-options:
-  use_doc_orientation_classify: true
-  use_doc_unwarping: true
-  use_layout_detection: true
+SubModules:
+  LayoutDetection:
+    module_name: layout_detection
+    model_name: PP-DocLayout_plus-L  # 83.2% mAP，更高精度
+    model_dir: null
 
-models:
-  required:
-    - name: PP-DocLayout-L
-      module: layout_detection
-      description: "布局检测模型"
+  TableStructureRecognition:
+    module_name: table_structure_recognition
+    model_name: SLANet_plus
+    model_dir: null
 
-    - name: SLANet_plus
-      module: table_structure_recognition
-      description: "表格结构识别模型"
+SubPipelines:
+  DocPreprocessor:
+    pipeline_name: doc_preprocessor
+    use_doc_orientation_classify: True
+    use_doc_unwarping: True
+    SubModules:
+      DocOrientationClassify:
+        module_name: doc_text_orientation
+        model_name: PP-LCNet_x1_0_doc_ori
+        model_dir: null
+      DocUnwarping:
+        module_name: image_unwarping
+        model_name: UVDoc
+        model_dir: null
 
-    - name: PP-OCRv5_server_det
-      module: text_detection
-      description: "文本检测模型"
-
-    - name: PP-OCRv5_server_rec
-      module: text_recognition
-      description: "文本识别模型"
-
-  optional:
-    - name: PP-LCNet_x1_0_doc_ori
-      module: doc_text_orientation
-      option: use_doc_orientation_classify
-      description: "文档方向分类"
-
-    - name: UVDoc
-      module: image_unwarping
-      option: use_doc_unwarping
-      description: "文档扭曲矫正"
+  GeneralOCR:
+    pipeline_name: OCR
+    text_type: general
+    use_doc_preprocessor: False
+    use_textline_orientation: False
+    SubModules:
+      TextDetection:
+        module_name: text_detection
+        model_name: PP-OCRv5_server_det
+        model_dir: null
+        limit_side_len: 960
+        limit_type: max
+        thresh: 0.3
+        box_thresh: 0.6
+        unclip_ratio: 2.0
+      TextRecognition:
+        module_name: text_recognition
+        model_name: PP-OCRv5_server_rec
+        model_dir: null
+        batch_size: 1
+        score_thresh: 0

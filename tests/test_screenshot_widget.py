@@ -112,7 +112,8 @@ class TestScreenshotWidget:
         widget._selection_rect = QRect(10, 10, 50, 50)
 
         captured = []
-        widget.captured.connect(lambda p: captured.append(p))
+        # 使用 selection_done 信号（新 API）
+        widget.selection_done.connect(lambda p, r: captured.append(p))
 
         # 模拟鼠标释放
         class MockEvent:

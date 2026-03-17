@@ -96,9 +96,20 @@ class EllipseAnnotation(QGraphicsEllipseItem):
 
 
 class ArrowAnnotation(QGraphicsPathItem):
-    """箭头标注"""
+    """箭头标注
 
-    ARROW_HEAD_SIZE = 12
+    改进特性：
+    - 箭头头部大小与线宽成比例
+    - 更清晰的箭头样式（带凹陷的三角形）
+    - 选中时显示端点手柄
+    """
+
+    # 箭头头部比例（头部长度 = 线宽 * 比例）
+    ARROW_HEAD_RATIO = 4.0
+    # 箭头头部最小尺寸
+    ARROW_HEAD_MIN = 12
+    # 箭头头部宽度比例（相对于长度）
+    ARROW_HEAD_WIDTH_RATIO = 0.5
 
     def __init__(
         self,
@@ -123,16 +134,16 @@ class ArrowAnnotation(QGraphicsPathItem):
         self._update_path()
 
     def _update_path(self) -> None:
-        """更新箭头路径"""
+        """更新箭头路径（改进样式）"""
         path = QPainterPath()
-        path.moveTo(self._start)
-        path.lineTo(self._end)
 
-        # 计算箭头头部
+        # 计算箭头方向
         dx = self._end.x() - self._start.x()
         dy = self._end.y() - self._start.y()
         length = math.sqrt(dx * dx + dy * dy)
         if length < 1:
+            path.moveTo(self._start)
+            path.lineTo(self._end)
             self.setPath(path)
             return
 
@@ -140,24 +151,46 @@ class ArrowAnnotation(QGraphicsPathItem):
         ux = dx / length
         uy = dy / length
 
-        # 箭头头部大小
-        head_size = self.ARROW_HEAD_SIZE
-
-        # 箭头头部两个点
-        # 垂直方向
+        # 垂直方向单位向量
         px = -uy
         py = ux
 
+        # 箭头头部大小（与线宽成比例，但有最小值）
+        head_length = max(self.ARROW_HEAD_MIN, self._pen_width * self.ARROW_HEAD_RATIO)
+        head_width = head_length * self.ARROW_HEAD_WIDTH_RATIO
+
+        # 箭头头部的基点（从终点向回退 head_length）
+        base_x = self._end.x() - head_length * ux
+        base_y = self._end.y() - head_length * uy
+
+        # 绘制线条（从起点到箭头头部基点）
+        path.moveTo(self._start)
+        path.lineTo(QPointF(base_x, base_y))
+
+        # 箭头头部两侧点
         arrow_p1 = QPointF(
-            self._end.x() - head_size * ux + head_size * 0.4 * px,
-            self._end.y() - head_size * uy + head_size * 0.4 * py,
+            base_x + head_width * px,
+            base_y + head_width * py,
         )
         arrow_p2 = QPointF(
-            self._end.x() - head_size * ux - head_size * 0.4 * px,
-            self._end.y() - head_size * uy - head_size * 0.4 * py,
+            base_x - head_width * px,
+            base_y - head_width * py,
         )
 
-        arrow_head = QPolygonF([self._end, arrow_p1, arrow_p2])
+        # 箭头凹陷点（使箭头更锐利）
+        indent_depth = head_length * 0.25
+        indent_point = QPointF(
+            base_x + indent_depth * ux,
+            base_y + indent_depth * uy,
+        )
+
+        # 绘制箭头头部（带凹陷的三角形）
+        arrow_head = QPolygonF([
+            self._end,      # 箭头尖端
+            arrow_p1,       # 左侧点
+            indent_point,   # 凹陷点
+            arrow_p2,       # 右侧点
+        ])
         path.addPolygon(arrow_head)
         path.closeSubpath()
         self.setPath(path)
@@ -167,9 +200,36 @@ class ArrowAnnotation(QGraphicsPathItem):
         self._end = end
         self._update_path()
 
+    def set_pen_color(self, color: QColor) -> None:
+        """设置颜色"""
+        self._pen_color = color
+        self.setPen(QPen(color, self._pen_width, Qt.PenStyle.SolidLine,
+                         Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+        self.setBrush(QBrush(color))
+        self.update()
+
+    def set_pen_width(self, width: int) -> None:
+        """设置线宽"""
+        self._pen_width = width
+        self.setPen(QPen(self._pen_color, width, Qt.PenStyle.SolidLine,
+                         Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+        self._update_path()
+        self.update()
+
 
 class TextAnnotation(QGraphicsTextItem):
-    """文字标注"""
+    """文字标注
+
+    增强功能：
+    - 选中时显示边框和调整手柄
+    - 支持字体、字号、颜色的动态修改
+    - 单击选中，双击编辑
+    """
+
+    # 选中边框颜色
+    SELECTION_COLOR = QColor(0, 120, 215)
+    # 手柄大小
+    HANDLE_SIZE = 6
 
     def __init__(
         self,
@@ -180,6 +240,7 @@ class TextAnnotation(QGraphicsTextItem):
     ):
         super().__init__(text)
         self.setPos(pos)
+        self._text_color = color
         self.setDefaultTextColor(color)
         if font:
             self.setFont(font)
@@ -189,9 +250,43 @@ class TextAnnotation(QGraphicsTextItem):
         self.setFlags(
             QGraphicsItem.GraphicsItemFlag.ItemIsSelectable
             | QGraphicsItem.GraphicsItemFlag.ItemIsMovable
+            | QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges
         )
         self.setZValue(10)
         self.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
+
+    def paint(
+        self,
+        painter: QPainter,
+        option: QStyleOptionGraphicsItem,
+        widget: QWidget | None = None,  # type: ignore[override]
+    ) -> None:
+        """绘制文字和选中边框"""
+        # 绘制文字内容
+        super().paint(painter, option, widget)  # type: ignore[arg-type]
+
+        # 选中时绘制边框
+        if self.isSelected():
+            rect = self.boundingRect()
+            painter.setPen(QPen(self.SELECTION_COLOR, 2, Qt.PenStyle.DashLine))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawRect(rect)
+
+            # 绘制四个角的调整手柄
+            handle_size = self.HANDLE_SIZE
+            half_handle = handle_size / 2
+            painter.setPen(QPen(self.SELECTION_COLOR, 1))
+            painter.setBrush(QBrush(QColor(255, 255, 255)))
+
+            # 四个角
+            corners = [
+                QPointF(rect.left() - half_handle, rect.top() - half_handle),
+                QPointF(rect.right() - half_handle, rect.top() - half_handle),
+                QPointF(rect.left() - half_handle, rect.bottom() - half_handle),
+                QPointF(rect.right() - half_handle, rect.bottom() - half_handle),
+            ]
+            for corner in corners:
+                painter.drawRect(QRectF(corner.x(), corner.y(), handle_size, handle_size))
 
     def enable_editing(self) -> None:
         """启用文字编辑模式"""
@@ -206,6 +301,35 @@ class TextAnnotation(QGraphicsTextItem):
         cursor = self.textCursor()
         cursor.clearSelection()
         self.setTextCursor(cursor)
+
+    def set_font_family(self, family: str) -> None:
+        """设置字体族"""
+        font = self.font()
+        font.setFamily(family)
+        self.setFont(font)
+
+    def set_font_size(self, size: int) -> None:
+        """设置字号"""
+        font = self.font()
+        font.setPointSize(size)
+        self.setFont(font)
+
+    def set_text_color(self, color: QColor) -> None:
+        """设置文字颜色"""
+        self._text_color = color
+        self.setDefaultTextColor(color)
+
+    def set_bold(self, bold: bool) -> None:
+        """设置粗体"""
+        font = self.font()
+        font.setBold(bold)
+        self.setFont(font)
+
+    def set_italic(self, italic: bool) -> None:
+        """设置斜体"""
+        font = self.font()
+        font.setItalic(italic)
+        self.setFont(font)
 
     def mouseDoubleClickEvent(self, event) -> None:
         """双击进入编辑模式"""
@@ -222,7 +346,8 @@ class TextAnnotation(QGraphicsTextItem):
 class MosaicItem(QGraphicsRectItem):
     """马赛克标注
 
-    对背景截图的指定区域进行马赛克处理。
+    对背景截图的指定区域进行高质量马赛克处理。
+    使用块平均色算法，直接操作像素以获得更好的效果。
     """
 
     def __init__(
@@ -233,7 +358,7 @@ class MosaicItem(QGraphicsRectItem):
     ):
         super().__init__(rect)
         self._background_pixmap = background_pixmap
-        self._strength = max(2, strength)
+        self._strength = max(4, strength)  # 最小块大小为4像素
         self._cached_mosaic: QPixmap | None = None
         self.setPen(QPen(Qt.PenStyle.NoPen))
         self.setBrush(Qt.BrushStyle.NoBrush)
@@ -244,47 +369,89 @@ class MosaicItem(QGraphicsRectItem):
         self.setZValue(5)  # 在普通标注下面
         self._generate_mosaic()
 
+    def set_strength(self, strength: int) -> None:
+        """动态设置马赛克强度"""
+        self._strength = max(4, strength)
+        self._generate_mosaic()
+        self.update()
+
     def _generate_mosaic(self) -> None:
-        """生成马赛克效果的缓存图像"""
+        """使用块平均色算法生成高质量马赛克效果"""
         rect = self.rect()
         if rect.isEmpty():
             return
 
         # 从背景截图中复制对应区域
         src_rect = rect.toRect()
-        if (
-            src_rect.x() < 0
-            or src_rect.y() < 0
-            or src_rect.right() > self._background_pixmap.width()
-            or src_rect.bottom() > self._background_pixmap.height()
-        ):
-            # 裁剪到有效范围
-            valid = QRectF(
-                0, 0,
-                self._background_pixmap.width(),
-                self._background_pixmap.height(),
-            )
-            src_rect = rect.intersected(valid).toRect()
+        valid = QRectF(
+            0, 0,
+            self._background_pixmap.width(),
+            self._background_pixmap.height(),
+        )
+        src_rect = rect.intersected(valid).toRect()
 
         if src_rect.isEmpty():
             return
 
         region = self._background_pixmap.copy(src_rect)
 
-        # 马赛克效果：缩小到 1/strength 再放大回来（最近邻插值）
-        small_w = max(1, region.width() // self._strength)
-        small_h = max(1, region.height() // self._strength)
+        # 转换为 QImage 进行像素级操作
+        img = region.toImage()
+        if img.isNull():
+            return
 
-        small = region.scaled(
-            small_w, small_h,
-            Qt.AspectRatioMode.IgnoreAspectRatio,
-            Qt.TransformationMode.FastTransformation,
+        block_size = self._strength
+        width = img.width()
+        height = img.height()
+
+        # 遍历每个块，计算平均色并填充
+        for by in range(0, height, block_size):
+            for bx in range(0, width, block_size):
+                # 计算当前块的实际范围
+                block_w = min(block_size, width - bx)
+                block_h = min(block_size, height - by)
+
+                # 计算块内平均颜色
+                avg_color = self._calc_block_average(img, bx, by, block_w, block_h)
+
+                # 用平均色填充整个块
+                self._fill_block(img, bx, by, block_w, block_h, avg_color)
+
+        self._cached_mosaic = QPixmap.fromImage(img)
+
+    def _calc_block_average(
+        self, img, x: int, y: int, w: int, h: int
+    ) -> QColor:
+        """计算图像块内的平均颜色"""
+        total_r, total_g, total_b = 0, 0, 0
+        pixel_count = 0
+
+        for py in range(y, y + h):
+            for px in range(x, x + w):
+                if px < img.width() and py < img.height():
+                    color = img.pixelColor(px, py)
+                    total_r += color.red()
+                    total_g += color.green()
+                    total_b += color.blue()
+                    pixel_count += 1
+
+        if pixel_count == 0:
+            return QColor(0, 0, 0)
+
+        return QColor(
+            total_r // pixel_count,
+            total_g // pixel_count,
+            total_b // pixel_count,
         )
-        self._cached_mosaic = small.scaled(
-            region.width(), region.height(),
-            Qt.AspectRatioMode.IgnoreAspectRatio,
-            Qt.TransformationMode.FastTransformation,
-        )
+
+    def _fill_block(
+        self, img, x: int, y: int, w: int, h: int, color: QColor
+    ) -> None:
+        """用指定颜色填充图像块"""
+        for py in range(y, y + h):
+            for px in range(x, x + w):
+                if px < img.width() and py < img.height():
+                    img.setPixelColor(px, py, color)
 
     def paint(
         self,
@@ -305,7 +472,8 @@ class MosaicItem(QGraphicsRectItem):
 class BlurItem(QGraphicsRectItem):
     """模糊标注
 
-    对背景截图的指定区域进行高斯模糊处理。
+    对背景截图的指定区域进行高质量模糊处理。
+    使用多级缩放算法实现更平滑的模糊效果。
     """
 
     def __init__(
@@ -316,7 +484,7 @@ class BlurItem(QGraphicsRectItem):
     ):
         super().__init__(rect)
         self._background_pixmap = background_pixmap
-        self._radius = max(2, radius)
+        self._radius = max(4, radius)  # 最小模糊半径为4
         self._cached_blur: QPixmap | None = None
         self.setPen(QPen(Qt.PenStyle.NoPen))
         self.setBrush(Qt.BrushStyle.NoBrush)
@@ -327,8 +495,18 @@ class BlurItem(QGraphicsRectItem):
         self.setZValue(5)
         self._generate_blur()
 
+    def set_radius(self, radius: int) -> None:
+        """动态设置模糊半径"""
+        self._radius = max(4, radius)
+        self._generate_blur()
+        self.update()
+
     def _generate_blur(self) -> None:
-        """生成模糊效果的缓存图像"""
+        """使用多级缩放实现高质量模糊效果
+
+        通过多次缩小-放大迭代，产生更自然的模糊效果，
+        避免单次大幅缩放导致的像素化问题。
+        """
         rect = self.rect()
         if rect.isEmpty():
             return
@@ -345,21 +523,49 @@ class BlurItem(QGraphicsRectItem):
             return
 
         region = self._background_pixmap.copy(src_rect)
+        original_w = region.width()
+        original_h = region.height()
 
-        # 模糊效果：缩小再用平滑插值放大
-        small_w = max(1, region.width() // self._radius)
-        small_h = max(1, region.height() // self._radius)
+        if original_w < 2 or original_h < 2:
+            self._cached_blur = region
+            return
 
-        small = region.scaled(
-            small_w, small_h,
-            Qt.AspectRatioMode.IgnoreAspectRatio,
-            Qt.TransformationMode.SmoothTransformation,
-        )
-        self._cached_blur = small.scaled(
-            region.width(), region.height(),
-            Qt.AspectRatioMode.IgnoreAspectRatio,
-            Qt.TransformationMode.SmoothTransformation,
-        )
+        # 多级缩放实现更平滑的模糊
+        # 迭代次数基于模糊半径，每次缩放到50%
+        iterations = max(1, self._radius // 8)
+        scale_factor = 0.5
+
+        temp = region
+        current_w = original_w
+        current_h = original_h
+
+        for _ in range(iterations):
+            # 缩小
+            new_w = max(4, int(current_w * scale_factor))
+            new_h = max(4, int(current_h * scale_factor))
+
+            small = temp.scaled(
+                new_w, new_h,
+                Qt.AspectRatioMode.IgnoreAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+
+            # 放大回当前尺寸
+            temp = small.scaled(
+                current_w, current_h,
+                Qt.AspectRatioMode.IgnoreAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+
+        # 最后确保尺寸正确
+        if temp.width() != original_w or temp.height() != original_h:
+            temp = temp.scaled(
+                original_w, original_h,
+                Qt.AspectRatioMode.IgnoreAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+
+        self._cached_blur = temp
 
     def paint(
         self,

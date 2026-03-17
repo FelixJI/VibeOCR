@@ -101,6 +101,8 @@ class ScreenshotEditWindow(QWidget):
         props.fill_enabled_changed.connect(canvas.set_fill_enabled)
         props.font_changed.connect(canvas.set_font)
         props.font_size_changed.connect(canvas.set_font_size)
+        props.bold_changed.connect(canvas.set_bold)
+        props.italic_changed.connect(canvas.set_italic)
         props.mosaic_strength_changed.connect(canvas.set_mosaic_strength)
         props.blur_radius_changed.connect(canvas.set_blur_radius)
 
