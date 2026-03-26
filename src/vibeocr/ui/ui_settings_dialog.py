@@ -4,10 +4,9 @@
 ## WARNING! All changes made in this file will be lost when recompiling UI file!
 ################################################################################
 
-from PySide6.QtCore import QCoreApplication, QMetaObject, QSize, Qt
+from PySide6.QtCore import QCoreApplication, QMetaObject, QSize
 from PySide6.QtWidgets import (
     QCheckBox,
-    QDialog,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -63,7 +62,9 @@ class Ui_SettingsDialog:
         self.delayLayout.addWidget(self.spinHideDelay)
 
         self.delayLayout.addItem(
-            QSpacerItem(40, 20, QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
+            QSpacerItem(
+                40, 20, QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum
+            )
         )
         self.toolbarLayout.addLayout(self.delayLayout)
         self.mainLayout.addWidget(self.groupToolbar)
@@ -77,9 +78,7 @@ class Ui_SettingsDialog:
 
         self.chkMinimizeToTray = QCheckBox(self.groupSystem)
         self.chkMinimizeToTray.setObjectName("chkMinimizeToTray")
-        self.chkMinimizeToTray.setToolTip(
-            "关闭主窗口时最小化到系统托盘而不是退出程序"
-        )
+        self.chkMinimizeToTray.setToolTip("关闭主窗口时最小化到系统托盘而不是退出程序")
         self.systemLayout.addWidget(self.chkMinimizeToTray)
 
         self.chkAutoStart = QCheckBox(self.groupSystem)
@@ -91,7 +90,9 @@ class Ui_SettingsDialog:
 
         # ---- 弹性空间 ----
         self.mainLayout.addItem(
-            QSpacerItem(20, 20, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Expanding)
+            QSpacerItem(
+                20, 20, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Expanding
+            )
         )
 
         # ---- 按钮行 ----
@@ -99,7 +100,9 @@ class Ui_SettingsDialog:
         self.buttonLayout.setObjectName("buttonLayout")
 
         self.buttonLayout.addItem(
-            QSpacerItem(40, 20, QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
+            QSpacerItem(
+                40, 20, QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum
+            )
         )
 
         self.btnSave = QPushButton(SettingsDialog)
@@ -137,9 +140,7 @@ class Ui_SettingsDialog:
         self.chkAutoStart.setText(
             QCoreApplication.translate("SettingsDialog", "开机自启动", None)
         )
-        self.btnSave.setText(
-            QCoreApplication.translate("SettingsDialog", "保存", None)
-        )
+        self.btnSave.setText(QCoreApplication.translate("SettingsDialog", "保存", None))
         self.btnCancel.setText(
             QCoreApplication.translate("SettingsDialog", "取消", None)
         )

@@ -5,7 +5,7 @@
 
 import logging
 from abc import abstractmethod
-from typing import Any, Generic, TypeVar
+from typing import Any, TypeVar
 
 from PySide6.QtCore import QThread, Signal
 
@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 T = TypeVar("T")
 
 
-class BaseWorker(QThread, Generic[T]):
+class BaseWorker[T](QThread):
     """Worker 基类
 
     提供通用的 Worker 功能：
@@ -121,7 +121,6 @@ class BaseWorker(QThread, Generic[T]):
         Returns:
             项目列表
         """
-        pass
 
     @abstractmethod
     def _get_item_id(self, item: Any, index: int) -> str:
@@ -134,7 +133,6 @@ class BaseWorker(QThread, Generic[T]):
         Returns:
             项目唯一标识
         """
-        pass
 
     @abstractmethod
     def _process_item(self, item: Any, index: int) -> Any:
@@ -147,7 +145,6 @@ class BaseWorker(QThread, Generic[T]):
         Returns:
             处理结果
         """
-        pass
 
 
 class BatchWorker(BaseWorker[T]):

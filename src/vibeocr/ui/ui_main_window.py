@@ -653,9 +653,7 @@ class Ui_MainWindowWidget:
 
         self.chkMinimizeToTray = QCheckBox(self.groupAppSettings)
         self.chkMinimizeToTray.setObjectName("chkMinimizeToTray")
-        self.chkMinimizeToTray.setToolTip(
-            "关闭主窗口时最小化到系统托盘而不是退出程序"
-        )
+        self.chkMinimizeToTray.setToolTip("关闭主窗口时最小化到系统托盘而不是退出程序")
         self.appSettingsLayout.addWidget(self.chkMinimizeToTray)
 
         self.chkAutoStart = QCheckBox(self.groupAppSettings)
@@ -1290,6 +1288,5 @@ class Ui_MainWindowWidget:
             self.tabWidget.indexOf(self.tabSettings),
             QCoreApplication.translate("MainWindowWidget", "\u8bbe\u7f6e", None),
         )
-        pass
 
     # retranslateUi

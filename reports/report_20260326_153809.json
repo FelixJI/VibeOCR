@@ -1,0 +1,13 @@
+{
+  "lint": {
+    "name": "代码检查",
+    "success": true,
+    "returncode": 0,
+    "elapsed": 0.14462852478027344,
+    "output": "============================================================\n������ (Ruff)\n============================================================\n����: ruff check --output-format concise src tests\nAll checks passed!\n\n============================================================\n[OK] ������ͨ��!\n============================================================\nwarning: `TCH001` has been remapped to `TC001`.\nwarning: `TCH002` has been remapped to `TC002`.\nwarning: `TCH003` has been remapped to `TC003`."
+  },
+  "_meta": {
+    "total_elapsed": 0.14462852478027344,
+    "timestamp": "2026-03-26T15:38:09.836604"
+  }
+}

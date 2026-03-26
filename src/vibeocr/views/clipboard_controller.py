@@ -156,7 +156,7 @@ class ClipboardController:
         end_html_byte = header_len + len(full_html.encode("utf-8"))
 
         # 格式化偏移量（10 位数字）
-        cf_html = (
+        return (
             f"Version:0.9\r\n"
             f"StartHTML:{header_len:010d}\r\n"
             f"EndHTML:{end_html_byte:010d}\r\n"
@@ -165,7 +165,6 @@ class ClipboardController:
             f"{full_html}"
         )
 
-        return cf_html
 
     def _show_copy_toast(self) -> None:
         """显示复制成功提示"""

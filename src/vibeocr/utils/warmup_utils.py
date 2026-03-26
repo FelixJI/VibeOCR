@@ -76,10 +76,7 @@ def warmup_with_test_image(ocr_service, pipeline: str | None = None) -> bool:
         test_image = get_warmup_image()
 
         # 创建选项
-        if pipeline:
-            pipeline_enum = OCRPipeline(pipeline)
-        else:
-            pipeline_enum = OCRPipeline.OCR
+        pipeline_enum = OCRPipeline(pipeline) if pipeline else OCRPipeline.OCR
 
         options = OCROptions(pipeline=pipeline_enum)
 

@@ -112,12 +112,16 @@ class MagnifierOverlay:
         pen.setColor(QColor(255, 0, 0, 200))
         painter.setPen(pen)
         painter.drawLine(
-            center_x - crosshair_size, center_y,
-            center_x + crosshair_size, center_y,
+            center_x - crosshair_size,
+            center_y,
+            center_x + crosshair_size,
+            center_y,
         )
         painter.drawLine(
-            center_x, center_y - crosshair_size,
-            center_x, center_y + crosshair_size,
+            center_x,
+            center_y - crosshair_size,
+            center_x,
+            center_y + crosshair_size,
         )
 
         # 绘制倍数标签

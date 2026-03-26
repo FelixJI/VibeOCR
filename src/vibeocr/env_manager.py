@@ -182,13 +182,12 @@ def detect_paddlex_model_source(timeout: int = 3) -> tuple[str, str]:
     if international_time < domestic_time and international_time < float("inf"):
         print("[模型源检测] 检测到国际网络环境，使用 HuggingFace")
         return "HuggingFace", "huggingface"
+    # 国内网络或两者都不可用时，使用 BOS
+    if domestic_time < float("inf"):
+        print("[模型源检测] 检测到国内网络环境，使用 BOS")
     else:
-        # 国内网络或两者都不可用时，使用 BOS
-        if domestic_time < float("inf"):
-            print("[模型源检测] 检测到国内网络环境，使用 BOS")
-        else:
-            print("[模型源检测] 无法确定网络环境，使用默认 BOS")
-        return "BOS", "bos"
+        print("[模型源检测] 无法确定网络环境，使用默认 BOS")
+    return "BOS", "bos"
 
 
 def setup_paddlex_model_source(timeout: int = 5) -> str:
@@ -228,9 +227,8 @@ def detect_network_source() -> Literal["domestic", "international"]:
         if ping_url(TEST_URLS["google"], timeout=3):
             print("[环境检测] 国际网络也可访问，使用官方源")
             return "international"
-        else:
-            print("[环境检测] 使用国内镜像源")
-            return "domestic"
+        print("[环境检测] 使用国内镜像源")
+        return "domestic"
 
     # 如果国内网站都访问不了，尝试国际网站
     if ping_url(TEST_URLS["github"], timeout=5):
@@ -255,9 +253,8 @@ def get_pip_source(
         # 如果都测试失败，默认使用清华源
         print("[环境检测] 使用默认清华镜像源")
         return MIRROR_SOURCES["tsinghua"]
-    else:
-        print("[环境检测] 使用官方PyPI源")
-        return MIRROR_SOURCES["official"]
+    print("[环境检测] 使用官方PyPI源")
+    return MIRROR_SOURCES["official"]
 
 
 def get_environment_mode(project_root: Path) -> Literal["venv", "portable", "none"]:
@@ -339,8 +336,7 @@ def get_embedded_venv_python(project_root: Path | None = None) -> Path:
 
     if os.name == "nt":  # Windows
         return project_root / ".venv" / "Scripts" / "python.exe"
-    else:
-        return project_root / ".venv" / "bin" / "python"
+    return project_root / ".venv" / "bin" / "python"
 
 
 def is_embedded_python_ready(project_root: Path | None = None) -> bool:
@@ -449,8 +445,7 @@ def install_embedded_python(
         venv_python = get_embedded_python_executable(project_root)
         if venv_python.exists():
             return True, f"检测到虚拟环境: {venv_python}"
-        else:
-            return False, "虚拟环境不完整,请重新创建"
+        return False, "虚拟环境不完整,请重新创建"
 
     python_dir = project_root / "python"
 
@@ -1290,22 +1285,21 @@ def ensure_environment(
         if ask_user:
             # 返回信息让调用方处理用户交互
             return False, msg, False
-        else:
-            # 自动安装
-            print(f"[VibeOCR] {msg}")
-            print("[VibeOCR] 正在自动安装依赖...")
+        # 自动安装
+        print(f"[VibeOCR] {msg}")
+        print("[VibeOCR] 正在自动安装依赖...")
 
-            network_type = detect_network_source()
-            has_gpu, cuda_version = detect_gpu()
+        network_type = detect_network_source()
+        has_gpu, cuda_version = detect_gpu()
 
-            success, msg = install_dependencies(
-                project_root, network_type, has_gpu, cuda_version
-            )
-            if not success:
-                return False, f"依赖安装失败: {msg}", False
+        success, msg = install_dependencies(
+            project_root, network_type, has_gpu, cuda_version
+        )
+        if not success:
+            return False, f"依赖安装失败: {msg}", False
 
-            print("[VibeOCR] 依赖安装完成")
-            return True, "依赖安装完成，请使用嵌入式Python运行", True
+        print("[VibeOCR] 依赖安装完成")
+        return True, "依赖安装完成，请使用嵌入式Python运行", True
 
     # 情况3: 首次运行,无嵌入式Python
     print("[VibeOCR] 未检测到嵌入式Python环境")
@@ -1313,13 +1307,12 @@ def ensure_environment(
     if ask_user:
         # 返回信息让调用方处理用户交互
         return False, "首次运行，需要安装嵌入式Python和依赖", False
-    else:
-        # 自动安装
-        success, msg = setup_environment(project_root)
-        if not success:
-            return False, f"环境设置失败: {msg}", False
+    # 自动安装
+    success, msg = setup_environment(project_root)
+    if not success:
+        return False, f"环境设置失败: {msg}", False
 
-        return True, "环境设置完成，请使用嵌入式Python运行", True
+    return True, "环境设置完成，请使用嵌入式Python运行", True
 
 
 def get_project_root() -> Path:

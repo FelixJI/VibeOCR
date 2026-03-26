@@ -139,8 +139,7 @@ def markdown_to_html(
         # 组装完整 HTML
         if include_style:
             return f"{HTML_STYLE}<body>{html_body}</body>"
-        else:
-            return html_body
+        return html_body
 
     except Exception as e:
         _logger.warning(f"Markdown 转换失败: {e}")
@@ -190,13 +189,12 @@ def _process_latex_formulas(text: str) -> str:
     # 再处理行内公式 $...$
     # 使用负向前瞻和后顾，避免匹配表格分隔符 |---|
     # 只匹配不包含换行的简单公式
-    result = re.sub(
+    return re.sub(
         r"(?<![|\\])\$([^\$\n]+?)\$(?![|\\])",
         replace_inline_formula,
         result,
     )
 
-    return result
 
 
 def extract_plain_text(html_text: str) -> str:
@@ -236,6 +234,5 @@ def extract_plain_text(html_text: str) -> str:
 
     # 清理多余空白
     lines = [line.strip() for line in text.split("\n")]
-    text = "\n".join(line for line in lines if line)
+    return "\n".join(line for line in lines if line)
 
-    return text

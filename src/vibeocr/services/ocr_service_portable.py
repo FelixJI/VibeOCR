@@ -291,9 +291,8 @@ def test_portable_ocr():
     if success:
         print("\n✓ 环境配置正确，可以正常使用 OCR 服务")
         return 0
-    else:
-        print(f"\n✗ 环境配置有问题: {message}")
-        return 1
+    print(f"\n✗ 环境配置有问题: {message}")
+    return 1
 
 
 if __name__ == "__main__":

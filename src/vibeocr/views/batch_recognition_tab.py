@@ -19,11 +19,12 @@ from PySide6.QtWidgets import (
 )
 
 from vibeocr.models.ocr_options import OCROptions  # 向后兼容别名
-
-PreprocessOptions = OCROptions
 from vibeocr.views.tabs.base_tab import BaseOcrTab
 from vibeocr.widgets.batch_file_list_widget import BatchFileListWidget
 from vibeocr.widgets.preprocess_options_widget import PreprocessOptionsWidget
+
+# 向后兼容别名
+PreprocessOptions = OCROptions
 
 logger = logging.getLogger(__name__)
 
@@ -323,16 +324,15 @@ class BatchRecognitionTab(BaseOcrTab):
 
         if hasattr(result, "raw_text"):
             return result.raw_text
-        elif hasattr(result, "text"):
+        if hasattr(result, "text"):
             return result.text
-        elif isinstance(result, dict):
+        if isinstance(result, dict):
             if "text" in result:
                 return result["text"]
             if "raw_text" in result:
                 return result["raw_text"]
             return str(result)
-        else:
-            return str(result)
+        return str(result)
 
     def _reset_ui(self):
         """重置 UI 状态"""

@@ -6,10 +6,14 @@
 import asyncio
 import functools
 import logging
+import weakref
 from collections.abc import Callable, Coroutine
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+# 存储异步任务引用，防止垃圾回收
+_async_tasks: weakref.WeakSet[asyncio.Task] = weakref.WeakSet()
 
 
 def create_qasync_event_loop(app) -> asyncio.AbstractEventLoop:
@@ -86,7 +90,10 @@ def async_slot(*types):
         @functools.wraps(async_func)
         def wrapper(*args, **kwargs):
             coro = async_func(*args, **kwargs)
-            asyncio.ensure_future(coro)
+            task = asyncio.ensure_future(coro)
+            # 存储引用以防止垃圾回收
+            _async_tasks.add(task)
+            task.add_done_callback(_async_tasks.discard)
 
         # 添加 Qt 槽信息（用于 PySide6 元对象系统）
         wrapper.__signature__ = getattr(async_func, "__signature__", None)

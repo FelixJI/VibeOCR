@@ -3,7 +3,7 @@
 根据当前工具动态切换显示颜色、线宽、填充、字体等属性控件。
 """
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -18,8 +18,6 @@ from PySide6.QtWidgets import (
     QToolButton,
     QWidget,
 )
-
-from PySide6.QtCore import Qt
 
 from vibeocr.core.editor_styles import EditorStyles
 from vibeocr.widgets.editor.annotation_items import EditTool
@@ -213,9 +211,7 @@ class ToolPropertiesBar(QWidget):
 
     def _on_color_pick(self) -> None:
         """打开颜色选择对话框"""
-        color = QColorDialog.getColor(
-            self._current_color, self, "选择颜色"
-        )
+        color = QColorDialog.getColor(self._current_color, self, "选择颜色")
         if color.isValid():
             self._current_color = color
             self._update_color_buttons()
@@ -227,9 +223,9 @@ class ToolPropertiesBar(QWidget):
             f"QPushButton {{ background-color: {self._current_color.name()}; "
             f"border: 1px solid #666; border-radius: 3px; }}"
         )
-        if hasattr(self, '_shape_color_btn'):
+        if hasattr(self, "_shape_color_btn"):
             self._shape_color_btn.setStyleSheet(style)
-        if hasattr(self, '_text_color_btn'):
+        if hasattr(self, "_text_color_btn"):
             self._text_color_btn.setStyleSheet(style)
 
     def _on_mosaic_changed(self, value: int) -> None:

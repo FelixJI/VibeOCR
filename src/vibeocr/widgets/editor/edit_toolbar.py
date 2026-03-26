@@ -123,9 +123,7 @@ class EditorToolbar(QWidget):
     def _connect_signals(self) -> None:
         # 工具按钮
         for tool, btn in self._tool_buttons.items():
-            btn.clicked.connect(
-                lambda checked, t=tool: self._on_tool_clicked(t)
-            )
+            btn.clicked.connect(lambda checked, t=tool: self._on_tool_clicked(t))
 
         # 操作按钮
         self._btn_undo.clicked.connect(self.undo_requested.emit)

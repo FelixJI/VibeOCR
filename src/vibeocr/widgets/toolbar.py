@@ -36,6 +36,7 @@ _ANIM_DURATION = 200
 
 class EdgeSide(Enum):
     """工具栏停靠的屏幕边"""
+
     NONE = auto()
     TOP = auto()
     LEFT = auto()
@@ -188,8 +189,6 @@ class EdgeToolbar(QWidget):
 
         pos = self.pos()
         geo = self.geometry()
-
-        old_side = self._docked_side
 
         if pos.y() - screen_geo.top() <= _EDGE_THRESHOLD:
             self._docked_side = EdgeSide.TOP

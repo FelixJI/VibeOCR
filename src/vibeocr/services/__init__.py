@@ -72,13 +72,12 @@ def get_ocr_service(skip_auto_start: bool = False):
             f"[get_ocr_service] 创建 OCRServiceSubprocess, auto_start={not skip_auto_start}"
         )
         return OCRServiceSubprocess(auto_start=not skip_auto_start)
+    _logger.info("使用直接 OCR 服务")
+    if _should_use_portable():
+        from .ocr_service_portable import OCRService
     else:
-        _logger.info("使用直接 OCR 服务")
-        if _should_use_portable():
-            from .ocr_service_portable import OCRService
-        else:
-            from .ocr_service import OCRService
-        return OCRService()
+        from .ocr_service import OCRService
+    return OCRService()
 
 
 # 为了向后兼容，保持原有的导入方式

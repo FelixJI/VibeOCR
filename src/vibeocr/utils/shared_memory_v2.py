@@ -58,7 +58,6 @@ HEADER_FORMAT = "<4sI"  # 小端序: 4字节消息类型 + 4字节数据大小
 class SharedMemoryProtocolError(Exception):
     """共享内存协议错误"""
 
-    pass
 
 
 @dataclass
@@ -176,6 +175,7 @@ class SharedMemoryProtocolV2:
         """初始化状态标志区域"""
         if self.shm is None:
             return
+        assert self.shm is not None  # 类型检查器提示
         # 使用共享内存的前几个字节作为状态标志
         # 字节 0-3: 消息类型
         # 字节 4-7: 数据大小

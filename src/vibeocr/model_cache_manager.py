@@ -317,9 +317,8 @@ def is_pipeline_cached(pipeline_name: str, project_root: Path | None = None) -> 
             if is_ready:
                 _logger.debug(f"管道 {pipeline_name} 模型已从缓存确认")
                 return True
-            else:
-                _logger.info(f"管道 {pipeline_name} 缓存过期，模型不存在")
-                return False
+            _logger.info(f"管道 {pipeline_name} 缓存过期，模型不存在")
+            return False
 
     is_ready, missing = _check_pipeline_models_ready(pipeline_name)
 

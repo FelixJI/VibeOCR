@@ -4,8 +4,12 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QObject, Signal
+
+if TYPE_CHECKING:
+    from PySide6.QtCore import SignalInstance
 
 
 @dataclass
@@ -18,15 +22,27 @@ class LogEntry:
     source: str = "主进程"  # 日志来源：主进程 / Worker-0 / Worker-1 等
 
 
-class QtLogHandler(logging.Handler, QObject):
-    """将 Python logging 重定向到 Qt 控件的处理器"""
+class _SignalEmitter(QObject):
+    """Qt 信号发射器，与 logging.Handler 分离以避免 emit 方法冲突"""
 
     log_signal = Signal(object)  # 发射 LogEntry 对象
     status_signal = Signal(str)  # 发射状态栏消息
 
+
+class QtLogHandler(logging.Handler):
+    """将 Python logging 重定向到 Qt 控件的处理器"""
+
     def __init__(self) -> None:
-        logging.Handler.__init__(self)
-        QObject.__init__(self)
+        super().__init__()
+        self._emitter = _SignalEmitter()
+
+    @property
+    def log_signal(self) -> "SignalInstance":
+        return self._emitter.log_signal
+
+    @property
+    def status_signal(self) -> "SignalInstance":
+        return self._emitter.status_signal
 
     def emit(self, record: logging.LogRecord) -> None:
         """处理日志记录"""

@@ -50,7 +50,6 @@ logger = logging.getLogger(__name__)
 class OCRWorkerProcessError(Exception):
     """OCR Worker 进程错误"""
 
-    pass
 
 
 class OCRWorkerProcess:
@@ -446,12 +445,11 @@ class OCRWorkerProcess:
                 logger.debug(f"Worker {self.worker_id} 识别完成")
                 return result
 
-            elif msg_type == MSG_ERROR:
+            if msg_type == MSG_ERROR:
                 error_msg = data.decode("utf-8", errors="replace")
                 raise OCRWorkerProcessError(f"OCR 识别失败: {error_msg}")
 
-            else:
-                raise OCRWorkerProcessError(f"未知响应类型: {msg_type}")
+            raise OCRWorkerProcessError(f"未知响应类型: {msg_type}")
 
         except SharedMemoryProtocolError as e:
             # 检查 Worker 是否崩溃
@@ -580,22 +578,21 @@ class OCRWorkerProcess:
                                 progress_callback(pipeline_name, i, total_pipelines)
                     return results
 
-                elif msg_type == MSG_ERROR:
+                if msg_type == MSG_ERROR:
                     error_msg = data.decode("utf-8", errors="replace")
                     raise OCRWorkerProcessError(f"预加载失败: {error_msg}")
 
-                elif msg_type == MSG_PRELOAD:
+                if msg_type == MSG_PRELOAD:
                     # 读到自己发送的预加载请求，Worker 还未处理，继续等待
                     logger.debug(
                         f"Worker {self.worker_id} 读到自己的预加载请求，继续等待响应..."
                     )
                     continue
 
-                else:
-                    logger.warning(
-                        f"Worker {self.worker_id} 收到意外消息类型: {msg_type}"
-                    )
-                    continue
+                logger.warning(
+                    f"Worker {self.worker_id} 收到意外消息类型: {msg_type}"
+                )
+                continue
 
         except SharedMemoryProtocolError as e:
             raise OCRWorkerProcessError(f"通信错误: {e}") from None
@@ -710,11 +707,10 @@ class OCRWorkerProcess:
             )
             if msg_type == MSG_ACK:
                 return True
-            elif msg_type == MSG_ERROR:
+            if msg_type == MSG_ERROR:
                 error_msg = data.decode("utf-8", errors="replace")
                 raise OCRWorkerProcessError(f"批量添加失败: {error_msg}")
-            else:
-                raise OCRWorkerProcessError(f"意外响应类型: {msg_type}")
+            raise OCRWorkerProcessError(f"意外响应类型: {msg_type}")
 
         except SharedMemoryProtocolError as e:
             raise OCRWorkerProcessError(f"通信错误: {e}") from None
@@ -764,7 +760,7 @@ class OCRWorkerProcess:
                     )
                     return results
 
-                elif msg_type == MSG_BATCH_PROGRESS:
+                if msg_type == MSG_BATCH_PROGRESS:
                     # 进度更新，继续等待
                     from vibeocr.utils.shared_memory_v2 import (
                         deserialize_batch_progress,
@@ -776,15 +772,14 @@ class OCRWorkerProcess:
                     )
                     continue
 
-                elif msg_type == MSG_ERROR:
+                if msg_type == MSG_ERROR:
                     error_msg = data.decode("utf-8", errors="replace")
                     raise OCRWorkerProcessError(f"批量处理失败: {error_msg}")
 
-                else:
-                    logger.warning(
-                        f"Worker {self.worker_id} 收到意外消息类型: {msg_type}"
-                    )
-                    continue
+                logger.warning(
+                    f"Worker {self.worker_id} 收到意外消息类型: {msg_type}"
+                )
+                continue
 
         except SharedMemoryProtocolError as e:
             raise OCRWorkerProcessError(f"通信错误: {e}") from None

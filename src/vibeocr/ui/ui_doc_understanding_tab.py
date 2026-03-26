@@ -186,6 +186,5 @@ class Ui_DocUnderstandingTab:
         self.labelChat.setText(
             QCoreApplication.translate("DocUnderstandingTab", "\u5bf9\u8bdd", None)
         )
-        pass
 
     # retranslateUi

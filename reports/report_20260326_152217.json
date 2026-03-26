@@ -1,0 +1,27 @@
+{
+  "format": {
+    "name": "代码格式化",
+    "success": true,
+    "returncode": 0,
+    "elapsed": 5.770150423049927,
+    "output": ""
+  },
+  "type_check": {
+    "name": "类型检查",
+    "success": true,
+    "returncode": 0,
+    "elapsed": 3.234175205230713,
+    "output": ""
+  },
+  "lint": {
+    "name": "代码检查",
+    "success": false,
+    "returncode": 1,
+    "elapsed": 0.5064542293548584,
+    "output": "warning: `TCH001` has been remapped to `TC001`.\nwarning: `TCH002` has been remapped to `TC002`.\nwarning: `TCH003` has been remapped to `TC003`."
+  },
+  "_meta": {
+    "total_elapsed": 9.510779857635498,
+    "timestamp": "2026-03-26T15:22:17.201533"
+  }
+}

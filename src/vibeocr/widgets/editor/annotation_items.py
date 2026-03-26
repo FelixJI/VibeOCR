@@ -18,13 +18,11 @@ from PySide6.QtGui import (
     QPen,
     QPixmap,
     QPolygonF,
-    QTransform,
 )
 from PySide6.QtWidgets import (
     QGraphicsEllipseItem,
     QGraphicsItem,
     QGraphicsPathItem,
-    QGraphicsPixmapItem,
     QGraphicsRectItem,
     QGraphicsTextItem,
     QStyleOptionGraphicsItem,
@@ -123,8 +121,15 @@ class ArrowAnnotation(QGraphicsPathItem):
         self._end = end
         self._pen_color = pen_color
         self._pen_width = pen_width
-        self.setPen(QPen(pen_color, pen_width, Qt.PenStyle.SolidLine,
-                         Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+        self.setPen(
+            QPen(
+                pen_color,
+                pen_width,
+                Qt.PenStyle.SolidLine,
+                Qt.PenCapStyle.RoundCap,
+                Qt.PenJoinStyle.RoundJoin,
+            )
+        )
         self.setBrush(QBrush(pen_color))
         self.setFlags(
             QGraphicsItem.GraphicsItemFlag.ItemIsSelectable
@@ -185,12 +190,14 @@ class ArrowAnnotation(QGraphicsPathItem):
         )
 
         # 绘制箭头头部（带凹陷的三角形）
-        arrow_head = QPolygonF([
-            self._end,      # 箭头尖端
-            arrow_p1,       # 左侧点
-            indent_point,   # 凹陷点
-            arrow_p2,       # 右侧点
-        ])
+        arrow_head = QPolygonF(
+            [
+                self._end,  # 箭头尖端
+                arrow_p1,  # 左侧点
+                indent_point,  # 凹陷点
+                arrow_p2,  # 右侧点
+            ]
+        )
         path.addPolygon(arrow_head)
         path.closeSubpath()
         self.setPath(path)
@@ -203,16 +210,30 @@ class ArrowAnnotation(QGraphicsPathItem):
     def set_pen_color(self, color: QColor) -> None:
         """设置颜色"""
         self._pen_color = color
-        self.setPen(QPen(color, self._pen_width, Qt.PenStyle.SolidLine,
-                         Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+        self.setPen(
+            QPen(
+                color,
+                self._pen_width,
+                Qt.PenStyle.SolidLine,
+                Qt.PenCapStyle.RoundCap,
+                Qt.PenJoinStyle.RoundJoin,
+            )
+        )
         self.setBrush(QBrush(color))
         self.update()
 
     def set_pen_width(self, width: int) -> None:
         """设置线宽"""
         self._pen_width = width
-        self.setPen(QPen(self._pen_color, width, Qt.PenStyle.SolidLine,
-                         Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+        self.setPen(
+            QPen(
+                self._pen_color,
+                width,
+                Qt.PenStyle.SolidLine,
+                Qt.PenCapStyle.RoundCap,
+                Qt.PenJoinStyle.RoundJoin,
+            )
+        )
         self._update_path()
         self.update()
 
@@ -286,13 +307,13 @@ class TextAnnotation(QGraphicsTextItem):
                 QPointF(rect.right() - half_handle, rect.bottom() - half_handle),
             ]
             for corner in corners:
-                painter.drawRect(QRectF(corner.x(), corner.y(), handle_size, handle_size))
+                painter.drawRect(
+                    QRectF(corner.x(), corner.y(), handle_size, handle_size)
+                )
 
     def enable_editing(self) -> None:
         """启用文字编辑模式"""
-        self.setTextInteractionFlags(
-            Qt.TextInteractionFlag.TextEditorInteraction
-        )
+        self.setTextInteractionFlags(Qt.TextInteractionFlag.TextEditorInteraction)
         self.setFocus()
 
     def disable_editing(self) -> None:
@@ -384,7 +405,8 @@ class MosaicItem(QGraphicsRectItem):
         # 从背景截图中复制对应区域
         src_rect = rect.toRect()
         valid = QRectF(
-            0, 0,
+            0,
+            0,
             self._background_pixmap.width(),
             self._background_pixmap.height(),
         )
@@ -419,9 +441,7 @@ class MosaicItem(QGraphicsRectItem):
 
         self._cached_mosaic = QPixmap.fromImage(img)
 
-    def _calc_block_average(
-        self, img, x: int, y: int, w: int, h: int
-    ) -> QColor:
+    def _calc_block_average(self, img, x: int, y: int, w: int, h: int) -> QColor:
         """计算图像块内的平均颜色"""
         total_r, total_g, total_b = 0, 0, 0
         pixel_count = 0
@@ -444,9 +464,7 @@ class MosaicItem(QGraphicsRectItem):
             total_b // pixel_count,
         )
 
-    def _fill_block(
-        self, img, x: int, y: int, w: int, h: int, color: QColor
-    ) -> None:
+    def _fill_block(self, img, x: int, y: int, w: int, h: int, color: QColor) -> None:
         """用指定颜色填充图像块"""
         for py in range(y, y + h):
             for px in range(x, x + w):
@@ -513,7 +531,8 @@ class BlurItem(QGraphicsRectItem):
 
         src_rect = rect.toRect()
         valid = QRectF(
-            0, 0,
+            0,
+            0,
             self._background_pixmap.width(),
             self._background_pixmap.height(),
         )
@@ -545,14 +564,16 @@ class BlurItem(QGraphicsRectItem):
             new_h = max(4, int(current_h * scale_factor))
 
             small = temp.scaled(
-                new_w, new_h,
+                new_w,
+                new_h,
                 Qt.AspectRatioMode.IgnoreAspectRatio,
                 Qt.TransformationMode.SmoothTransformation,
             )
 
             # 放大回当前尺寸
             temp = small.scaled(
-                current_w, current_h,
+                current_w,
+                current_h,
                 Qt.AspectRatioMode.IgnoreAspectRatio,
                 Qt.TransformationMode.SmoothTransformation,
             )
@@ -560,7 +581,8 @@ class BlurItem(QGraphicsRectItem):
         # 最后确保尺寸正确
         if temp.width() != original_w or temp.height() != original_h:
             temp = temp.scaled(
-                original_w, original_h,
+                original_w,
+                original_h,
                 Qt.AspectRatioMode.IgnoreAspectRatio,
                 Qt.TransformationMode.SmoothTransformation,
             )

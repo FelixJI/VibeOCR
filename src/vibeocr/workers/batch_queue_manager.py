@@ -242,7 +242,7 @@ class BatchQueueManager:
         if self._memory_monitor.is_available():
             # 假设平均图像尺寸约为 1920x1080 (约 2M 像素)
             # 实际应该解码图像获取真实尺寸，这里用简化的估算
-            estimated_pixels = avg_size / 3 * 2  # 粗略估计
+            estimated_pixels = int(avg_size / 3 * 2)  # 粗略估计
             batch_size = self._memory_monitor.estimate_batch_size(estimated_pixels)
         else:
             batch_size = self.max_batch_size

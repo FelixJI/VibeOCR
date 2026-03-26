@@ -1,0 +1,236 @@
+================================================================================
+  代码质量检查报告
+================================================================================
+  时间: 2026-03-26T16:04:39.754233
+  总耗时: 27.25s
+
+--------------------------------------------------------------------------------
+  检查结果汇总
+--------------------------------------------------------------------------------
+  代码格式化: [OK] 通过 (1.01s)
+  代码检查: [FAIL] 失败 (0.55s)
+  类型检查: [OK] 通过 (21.89s)
+  依赖升级: [OK] 通过 (3.80s)
+
+--------------------------------------------------------------------------------
+  统计
+--------------------------------------------------------------------------------
+  通过: 3
+  失败: 1
+  总计: 4
+
+
+================================================================================
+  详细问题
+================================================================================
+
+--------------------------------------------------------------------------------
+  [代码检查]
+--------------------------------------------------------------------------------
+============================================================
+代码检查 (Ruff)
+============================================================
+运行: ruff check --output-format concise src tests
+src\vibeocr\core\__init__.py:49:11: RUF022 `__all__` is not sorted
+src\vibeocr\core\base_worker.py:17:27: UP046 Generic class `BaseWorker` uses `Generic` subclass instead of type parameters
+src\vibeocr\core\base_worker.py:124:9: PIE790 [*] Unnecessary `pass` statement
+src\vibeocr\core\base_worker.py:137:9: PIE790 [*] Unnecessary `pass` statement
+src\vibeocr\core\base_worker.py:150:9: PIE790 [*] Unnecessary `pass` statement
+src\vibeocr\core\constants.py:36:31: RUF012 Mutable default value for class attribute
+src\vibeocr\core\constants.py:45:29: RUF012 Mutable default value for class attribute
+src\vibeocr\core\constants.py:46:29: RUF012 Mutable default value for class attribute
+src\vibeocr\core\singleton_meta.py:19:35: RUF012 Mutable default value for class attribute
+src\vibeocr\env_manager.py:185:5: RET505 [*] Unnecessary `else` after `return` statement
+src\vibeocr\env_manager.py:231:9: RET505 [*] Unnecessary `else` after `return` statement
+src\vibeocr\env_manager.py:251:13: SIM102 Use a single `if` statement instead of nested `if` statements
+src\vibeocr\env_manager.py:258:5: RET505 [*] Unnecessary `else` after `return` statement
+src\vibeocr\env_manager.py:342:5: RET505 [*] Unnecessary `else` after `return` statement
+src\vibeocr\env_manager.py:408:18: PTH123 `open()` should be replaced by `Path.open()`
+src\vibeocr\env_manager.py:452:9: RET505 [*] Unnecessary `else` after `return` statement
+src\vibeocr\env_manager.py:503:14: PTH123 `open()` should be replaced by `Path.open()`
+src\vibeocr\env_manager.py:1293:9: RET505 [*] Unnecessary `else` after `return` statement
+src\vibeocr\env_manager.py:1316:5: RET505 [*] Unnecessary `else` after `return` statement
+src\vibeocr\machine_cache.py:141:14: PTH123 `open()` should be replaced by `Path.open()`
+src\vibeocr\machine_cache.py:165:14: PTH123 `open()` should be replaced by `Path.open()`
+src\vibeocr\machine_cache.py:249:28: DTZ005 `datetime.datetime.now()` called without a `tz` argument
+src\vibeocr\machine_cache.py:302:32: DTZ005 `datetime.datetime.now()` called without a `tz` argument
+src\vibeocr\machine_cache.py:330:32: DTZ005 `datetime.datetime.now()` called without a `tz` argument
+src\vibeocr\main.py:118:5: SIM102 Use a single `if` statement instead of nested `if` statements
+src\vibeocr\managers\layout_manager.py:56:18: PTH123 `open()` should be replaced by `Path.open()`
+src\vibeocr\managers\layout_manager.py:108:18: PTH123 `open()` should be replaced by `Path.open()`
+src\vibeocr\managers\settings_manager.py:71:22: PTH123 `open()` should be replaced by `Path.open()`
+src\vibeocr\managers\settings_manager.py:104:18: PTH123 `open()` should be replaced by `Path.open()`
+src\vibeocr\managers\settings_manager.py:166:22: PTH123 `open()` should be replaced by `Path.open()`
+src\vibeocr\managers\settings_manager.py:194:22: PTH123 `open()` should be replaced by `Path.open()`
+src\vibeocr\managers\settings_manager.py:206:18: PTH123 `open()` should be replaced by `Path.open()`
+src\vibeocr\managers\settings_manager.py:232:18: PTH123 `open()` should be replaced by `Path.open()`
+src\vibeocr\managers\settings_manager.py:243:18: PTH123 `open()` should be replaced by `Path.open()`
+src\vibeocr\model_cache_manager.py:130:22: PTH123 `open()` should be replaced by `Path.open()`
+src\vibeocr\model_cache_manager.py:150:18: PTH123 `open()` should be replaced by `Path.open()`
+src\vibeocr\model_cache_manager.py:262:14: PTH123 `open()` should be replaced by `Path.open()`
+src\vibeocr\model_cache_manager.py:293:28: DTZ005 `datetime.datetime.now()` called without a `tz` argument
+src\vibeocr\model_cache_manager.py:299:14: PTH123 `open()` should be replaced by `Path.open()`
+src\vibeocr\model_cache_manager.py:320:13: RET505 [*] Unnecessary `else` after `return` statement
+src\vibeocr\python_path_manager.py:90:9: RET505 [*] Unnecessary `elif` after `return` statement
+src\vibeocr\python_path_manager.py:152:13: RET505 [*] Unnecessary `else` after `return` statement
+src\vibeocr\python_path_manager.py:180:9: RET505 [*] Unnecessary `elif` after `return` statement
+src\vibeocr\services\__init__.py:75:5: RET505 [*] Unnecessary `else` after `return` statement
+src\vibeocr\services\log_service.py:49:27: DTZ006 `datetime.datetime.fromtimestamp()` called without a `tz` argument
+src\vibeocr\services\ocr_service.py:9:29: TC003 Move standard library import `collections.abc.Callable` into a type-checking block
+src\vibeocr\services\ocr_service.py:21:11: RUF022 [*] `__all__` is not sorted
+src\vibeocr\services\ocr_service.py:77:34: RUF012 Mutable default value for class attribute
+src\vibeocr\services\ocr_service.py:88:38: RUF012 Mutable default value for class attribute
+src\vibeocr\services\ocr_service.py:108:13: SIM105 Use `contextlib.suppress(Exception)` instead of `try`-`except`-`pass`
+src\vibeocr\services\ocr_service.py:427:17: ARG001 Unused function argument: `stage`
+src\vibeocr\services\ocr_service.py:781:52: B905 `zip()` without an explicit `strict=` parameter
+src\vibeocr\services\ocr_service.py:793:44: B905 `zip()` without an explicit `strict=` parameter
+src\vibeocr\services\ocr_service.py:919:40: B905 `zip()` without an explicit `strict=` parameter
+src\vibeocr\services\ocr_service.py:935:52: B905 `zip()` without an explicit `strict=` parameter
+src\vibeocr\services\ocr_service.py:966:40: B905 `zip()` without an explicit `strict=` parameter
+src\vibeocr\services\ocr_service.py:975:44: B905 `zip()` without an explicit `strict=` parameter
+src\vibeocr\services\ocr_service.py:1223:40: B905 `zip()` without an explicit `strict=` parameter
+src\vibeocr\services\ocr_service.py:1237:44: B905 `zip()` without an explicit `strict=` parameter
+src\vibeocr\services\ocr_service.py:1337:40: B905 `zip()` without an explicit `strict=` parameter
+src\vibeocr\services\ocr_service.py:1347:44: B905 `zip()` without an explicit `strict=` parameter
+src\vibeocr\services\ocr_service_base.py:57:13: SIM105 Use `contextlib.suppress(Exception)` instead of `try`-`except`-`pass`
+src\vibeocr\services\ocr_service_base.py:68:9: PIE790 [*] Unnecessary `pass` statement
+src\vibeocr\services\ocr_service_base.py:85:9: PIE790 [*] Unnecessary `pass` statement
+src\vibeocr\services\ocr_service_base.py:94:9: PIE790 [*] Unnecessary `pass` statement
+src\vibeocr\services\ocr_service_base.py:124:9: PIE790 [*] Unnecessary `pass` statement
+src\vibeocr\services\ocr_service_portable.py:294:5: RET505 [*] Unnecessary `else` after `return` statement
+src\vibeocr\services\ocr_service_subprocess.py:50:9: ARG004 Unused static method argument: `max_workers`
+src\vibeocr\services\ocr_service_subprocess.py:51:9: ARG004 Unused static method argument: `use_gpu`
+src\vibeocr\services\ocr_service_subprocess.py:52:9: ARG004 Unused static method argument: `shm_size`
+src\vibeocr\services\ocr_service_subprocess.py:53:9: ARG004 Unused static method argument: `auto_start`
+src\vibeocr\services\ocr_service_subprocess.py:54:9: ARG004 Unused static method argument: `start_timeout`
+src\vibeocr\services\ocr_service_subprocess.py:55:9: ARG004 Unused static method argument: `start_progress_callback`
+src\vibeocr\services\ocr_service_subprocess.py:132:9: ARG002 Unused method argument: `timeout`
+src\vibeocr\services\ocr_service_subprocess.py:216:18: PTH123 `open()` should be replaced by `Path.open()`
+src\vibeocr\services\ocr_service_subprocess.py:303:9: RET505 [*] Unnecessary `else` after `return` statement
+src\vibeocr\services\ocr_worker_process.py:53:5: PIE790 [*] Unnecessary `pass` statement
+src\vibeocr\services\ocr_worker_process.py:362:9: SIM105 Use `contextlib.suppress(Exception)` instead of `try`-`except`-`pass`
+src\vibeocr\services\ocr_worker_process.py:449:13: RET505 [*] Unnecessary `elif` after `return` statement
+src\vibeocr\services\ocr_worker_process.py:583:17: RET505 [*] Unnecessary `elif` after `return` statement
+src\vibeocr\services\ocr_worker_process.py:713:13: RET505 [*] Unnecessary `elif` after `return` statement
+src\vibeocr\services\ocr_worker_process.py:767:17: RET505 [*] Unnecessary `elif` after `return` statement
+src\vibeocr\services\worker_manager.py:164:61: ARG001 Unused function argument: `percent`
+src\vibeocr\ui\ui_doc_understanding_tab.py:144:29: ARG002 Unused method argument: `DocUnderstandingTab`
+src\vibeocr\ui\ui_doc_understanding_tab.py:189:9: PIE790 [*] Unnecessary `pass` statement
+src\vibeocr\ui\ui_extraction_tab.py:235:29: ARG002 Unused method argument: `ExtractionTab`
+src\vibeocr\ui\ui_extraction_tab.py:359:9: PIE790 [*] Unnecessary `pass` statement
+src\vibeocr\ui\ui_main_window.py:695:29: ARG002 Unused method argument: `MainWindowWidget`
+src\vibeocr\ui\ui_main_window.py:1291:9: PIE790 [*] Unnecessary `pass` statement
+src\vibeocr\utils\app_settings.py:45:18: PTH123 `open()` should be replaced by `Path.open()`
+src\vibeocr\utils\app_settings.py:58:18: PTH123 `open()` should be replaced by `Path.open()`
+src\vibeocr\utils\autostart.py:26:5: RET505 [*] Unnecessary `elif` after `return` statement
+src\vibeocr\utils\autostart.py:44:9: RET505 [*] Unnecessary `elif` after `return` statement
+src\vibeocr\utils\markdown_converter.py:142:9: RET505 [*] Unnecessary `else` after `return` statement
+src\vibeocr\utils\markdown_converter.py:199:12: RET504 Unnecessary assignment to `result` before `return` statement
+src\vibeocr\utils\markdown_converter.py:241:12: RET504 Unnecessary assignment to `text` before `return` statement
+src\vibeocr\utils\qt_async.py:69:17: ARG001 Unused function argument: `types`
+src\vibeocr\utils\qt_async.py:89:13: RUF006 Store a reference to the return value of `asyncio.ensure_future`
+src\vibeocr\utils\shared_memory_v2.py:61:5: PIE790 [*] Unnecessary `pass` statement
+src\vibeocr\utils\shared_memory_v2.py:246:9: ARG002 Unused method argument: `sender`
+src\vibeocr\utils\shared_memory_v2.py:328:9: ARG002 Unused method argument: `expected_sender`
+src\vibeocr\utils\warmup_utils.py:79:9: SIM108 Use ternary operator `pipeline_enum = OCRPipeline(pipeline) if pipeline else OCRPipeline.OCR` instead of `if`-`else`-block
+src\vibeocr\views\batch_recognition_tab.py:24:1: E402 Module level import not at top of file
+src\vibeocr\views\batch_recognition_tab.py:25:1: E402 Module level import not at top of file
+src\vibeocr\views\batch_recognition_tab.py:26:1: E402 Module level import not at top of file
+src\vibeocr\views\batch_recognition_tab.py:72:22: PTH123 `open()` should be replaced by `Path.open()`
+src\vibeocr\views\batch_recognition_tab.py:266:56: ARG002 Unused method argument: `current_file`
+src\vibeocr\views\batch_recognition_tab.py:326:9: RET505 [*] Unnecessary `elif` after `return` statement
+src\vibeocr\views\clipboard_controller.py:168:16: RET504 Unnecessary assignment to `cf_html` before `return` statement
+src\vibeocr\views\doc_understanding_tab.py:47:25: RUF012 Mutable default value for class attribute
+src\vibeocr\views\extraction_tab.py:102:9: PIE790 [*] Unnecessary `pass` statement
+src\vibeocr\views\extraction_tab.py:269:9: PIE790 [*] Unnecessary `pass` statement
+src\vibeocr\views\extraction_tab.py:272:56: ARG002 Unused method argument: `current_file`
+src\vibeocr\views\main_window.py:34:39: TC001 Move application import `vibeocr.models.ocr_result.OCRResult` into a type-checking block
+src\vibeocr\views\main_window.py:109:27: ARG001 Unused function argument: `stage`
+src\vibeocr\views\main_window.py:279:28: ARG005 Unused lambda argument: `checked`
+src\vibeocr\views\main_window.py:1218:48: TC001 Move application import `vibeocr.utils.app_settings.AppSettings` into a type-checking block
+src\vibeocr\views\settings_page_controller.py:156:22: PTH123 `open()` should be replaced by `Path.open()`
+src\vibeocr\views\settings_page_controller.py:173:18: PTH123 `open()` should be replaced by `Path.open()`
+src\vibeocr\views\settings_page_controller.py:493:22: PTH123 `open()` should be replaced by `Path.open()`
+src\vibeocr\views\settings_page_controller.py:538:26: PTH123 `open()` should be replaced by `Path.open()`
+src\vibeocr\views\settings_page_controller.py:546:18: PTH123 `open()` should be replaced by `Path.open()`
+src\vibeocr\views\settings_page_controller.py:579:18: PTH123 `open()` should be replaced by `Path.open()`
+src\vibeocr\views\settings_page_controller.py:626:18: PTH123 `open()` should be replaced by `Path.open()`
+src\vibeocr\views\settings_page_controller.py:670:18: PTH123 `open()` should be replaced by `Path.open()`
+src\vibeocr\views\settings_page_controller.py:675:18: PTH123 `open()` should be replaced by `Path.open()`
+src\vibeocr\views\tabs\base_tab.py:71:9: PIE790 [*] Unnecessary `pass` statement
+src\vibeocr\views\tabs\base_tab.py:79:9: PIE790 [*] Unnecessary `pass` statement
+src\vibeocr\views\tabs\base_tab.py:87:9: PIE790 [*] Unnecessary `pass` statement
+src\vibeocr\views\tabs\base_tab.py:95:9: PIE790 [*] Unnecessary `pass` statement
+src\vibeocr\widgets\console_widget.py:31:20: RUF012 Mutable default value for class attribute
+src\vibeocr\widgets\console_widget.py:98:21: RUF012 Mutable default value for class attribute
+src\vibeocr\widgets\console_widget.py:165:36: DTZ005 `datetime.datetime.now()` called without a `tz` argument
+src\vibeocr\widgets\editor\annotation_items.py:477:9: ARG002 Unused method argument: `option`
+src\vibeocr\widgets\editor\annotation_items.py:478:9: ARG002 Unused method argument: `widget`
+src\vibeocr\widgets\editor\annotation_items.py:595:9: ARG002 Unused method argument: `option`
+src\vibeocr\widgets\editor\annotation_items.py:596:9: ARG002 Unused method argument: `widget`
+src\vibeocr\widgets\editor\command_stack.py:13:31: TC002 Move third-party import `PySide6.QtWidgets.QGraphicsItem` into a type-checking block
+src\vibeocr\widgets\editor\command_stack.py:13:46: TC002 Move third-party import `PySide6.QtWidgets.QGraphicsScene` into a type-checking block
+src\vibeocr\widgets\editor\edit_toolbar.py:126:40: ARG005 Unused lambda argument: `checked`
+src\vibeocr\widgets\preview_widget.py:37:31: ARG002 Unused method argument: `event`
+src\vibeocr\widgets\screenshot_widget.py:32:19: RUF012 Mutable default value for class attribute
+src\vibeocr\widgets\toolbar.py:289:13: SIM102 Use a single `if` statement instead of nested `if` statements
+src\vibeocr\workers\doc_understanding_worker.py:24:24: RUF012 Mutable default value for class attribute
+src\vibeocr\workers\extraction_worker.py:52:41: ARG002 Unused method argument: `index`
+src\vibeocr\workers\extraction_worker.py:65:14: PTH123 `open()` should be replaced by `Path.open()`
+src\vibeocr\workers\extraction_worker.py:71:24: ARG002 Unused method argument: `image_data`
+src\vibeocr\workers\extraction_worker.py:71:43: ARG002 Unused method argument: `file_name`
+src\vibeocr\workers\ocr_worker.py:31:5: PIE790 [*] Unnecessary `pass` statement
+src\vibeocr\workers\ocr_worker.py:446:17: RET507 [*] Unnecessary `else` after `continue` statement
+tests\check_paddlex_import.py:21:16: F401 `pip` imported but unused; consider using `importlib.util.find_spec` to test for availability
+tests\check_paddlex_import.py:39:38: PTH110 `os.path.exists()` should be replaced by `Path.exists()`
+tests\check_paddlex_import.py:42:24: PTH110 `os.path.exists()` should be replaced by `Path.exists()`
+tests\check_paddlex_import.py:50:13: E722 Do not use bare `except`
+tests\check_paddlex_import.py:67:16: F401 `paddlex` imported but unused; consider using `importlib.util.find_spec` to test for availability
+tests\check_paddlex_import.py:73:33: F401 `paddlex.create_pipeline` imported but unused; consider using `importlib.util.find_spec` to test for availability
+tests\check_paddlex_import.py:125:16: F401 `nuitka` imported but unused; consider using `importlib.util.find_spec` to test for availability
+tests\core\test_pipelines.py:4:8: F401 [*] `pytest` imported but unused
+tests\core\test_singleton_meta.py:69:20: C401 Unnecessary generator (rewrite as a set comprehension)
+tests\managers\test_settings_manager.py:57:14: PTH123 `open()` should be replaced by `Path.open()`
+tests\managers\test_settings_manager.py:82:14: PTH123 `open()` should be replaced by `Path.open()`
+tests\managers\test_settings_manager.py:101:14: PTH123 `open()` should be replaced by `Path.open()`
+tests\managers\test_settings_manager.py:118:14: PTH123 `open()` should be replaced by `Path.open()`
+tests\managers\test_settings_manager.py:147:14: PTH123 `open()` should be replaced by `Path.open()`
+tests\models\test_ocr_options.py:4:8: F401 [*] `pytest` imported but unused
+tests\services\test_env_config.py:41:13: B007 Loop control variable `name` not used within loop body
+tests\test_batch_queue_manager.py:19:16: B007 Loop control variable `img` not used within loop body
+tests\test_batch_queue_manager.py:129:9: F841 Local variable `results` is assigned to but never used
+tests\test_batch_queue_manager.py:170:17: B007 Loop control variable `i` not used within loop body
+tests\test_batch_recognition.py:9:20: PTH118 `os.path.join()` should be replaced by `Path` with `/` operator
+tests\test_batch_recognition.py:9:33: PTH120 `os.path.dirname()` should be replaced by `Path.parent`
+tests\test_gpu_memory_monitor.py:16:9: SIM117 Use a single `with` statement with multiple contexts instead of nested `with` statements
+tests\test_gpu_memory_monitor.py:23:9: SIM117 Use a single `with` statement with multiple contexts instead of nested `with` statements
+tests\test_gpu_memory_monitor.py:34:9: SIM117 Use a single `with` statement with multiple contexts instead of nested `with` statements
+tests\test_machine_cache.py:160:19: RUF059 Unpacked variable `data` is never used
+tests\test_ocr_service.py:14:25: F401 `paddlex.create_pipeline` imported but unused; consider using `importlib.util.find_spec` to test for availability
+tests\test_ocr_service_subprocess.py:107:20: PTH110 `os.path.exists()` should be replaced by `Path.exists()`
+tests\test_ocr_service_subprocess.py:182:16: PTH110 `os.path.exists()` should be replaced by `Path.exists()`
+tests\test_ocr_worker_process.py:18:9: F401 `vibeocr.services.ocr_worker_process.OCRWorkerProcessError` imported but unused; consider using `importlib.util.find_spec` to test for availability
+tests\test_ocr_worker_process.py:224:9: F841 Local variable `service` is assigned to but never used
+tests\test_shared_memory.py:13:9: F401 `vibeocr.utils.shared_memory_v2.SharedMemoryConfig` imported but unused; consider using `importlib.util.find_spec` to test for availability
+tests\test_shared_memory.py:65:14: B017 Do not assert blind exception: `Exception`
+tests\test_shared_memory.py:151:17: RUF059 Unpacked variable `msg_type` is never used
+tests\test_subprocess_integration.py:22:9: F401 `vibeocr.utils.shared_memory_v2.SharedMemoryConfig` imported but unused; consider using `importlib.util.find_spec` to test for availability
+tests\verify_subprocess_ocr.py:43:9: RET505 [*] Unnecessary `else` after `return` statement
+tests\verify_subprocess_ocr.py:62:18: PTH123 `open()` should be replaced by `Path.open()`
+tests\verify_subprocess_ocr.py:70:17: RET505 [*] Unnecessary `else` after `return` statement
+tests\verify_subprocess_ocr.py:139:17: F401 `vibeocr.services.ocr_service_subprocess.OCRServiceSubprocess` imported but unused; consider using `importlib.util.find_spec` to test for availability
+tests\verify_subprocess_ocr.py:140:17: F401 `vibeocr.services.ocr_service_subprocess._OCRWorker` imported but unused; consider using `importlib.util.find_spec` to test for availability
+tests\verify_subprocess_ocr.py:141:17: F401 `vibeocr.services.ocr_service_subprocess._SharedMemoryProtocol` imported but unused; consider using `importlib.util.find_spec` to test for availability
+tests\verify_subprocess_ocr.py:150:13: RET505 [*] Unnecessary `else` after `return` statement
+tests\verify_subprocess_ocr.py:167:5: RET505 [*] Unnecessary `else` after `return` statement
+tests\verify_subprocess_ocr.py:181:14: PTH123 `open()` should be replaced by `Path.open()`
+tests\verify_subprocess_ocr.py:186:13: RET505 [*] Unnecessary `else` after `return` statement
+tests\verify_subprocess_ocr.py:230:5: RET505 [*] Unnecessary `else` after `return` statement
+Found 195 errors.
+[*] 51 fixable with the `--fix` option (29 hidden fixes can be enabled with the `--unsafe-fixes` option).
+
+============================================================
+[FAIL] 发现代码问题
+============================================================
+
+================================================================================

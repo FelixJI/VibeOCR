@@ -23,10 +23,9 @@ def is_autostart_enabled() -> bool:
     """检查开机自启动是否已启用"""
     if sys.platform == "win32":
         return _win32_is_enabled()
-    elif sys.platform == "darwin":
+    if sys.platform == "darwin":
         return _macos_is_enabled()
-    else:
-        return _linux_is_enabled()
+    return _linux_is_enabled()
 
 
 def set_autostart(enabled: bool) -> bool:
@@ -41,10 +40,9 @@ def set_autostart(enabled: bool) -> bool:
     try:
         if sys.platform == "win32":
             return _win32_set(enabled)
-        elif sys.platform == "darwin":
+        if sys.platform == "darwin":
             return _macos_set(enabled)
-        else:
-            return _linux_set(enabled)
+        return _linux_set(enabled)
     except Exception as e:
         logger.error(f"设置开机自启动失败: {e}")
         return False
@@ -118,9 +116,7 @@ def _macos_set(enabled: bool) -> bool:
         else:
             parts = exe_path.split()
 
-        program_args = "\n".join(
-            f"        <string>{p}</string>" for p in parts
-        )
+        program_args = "\n".join(f"        <string>{p}</string>" for p in parts)
         plist_content = f"""<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
   "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

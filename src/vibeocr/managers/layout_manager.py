@@ -66,16 +66,12 @@ class LayoutManager:
             # 加载主窗口几何信息
             main_window = data.get("main_window", {})
             if geometry_b64 := main_window.get("geometry"):
-                self._main_window_geometry = QByteArray(
-                    base64.b64decode(geometry_b64)
-                )
+                self._main_window_geometry = QByteArray(base64.b64decode(geometry_b64))
 
             # 加载分割器状态
             splitters = data.get("splitters", {})
             for splitter_id, state_b64 in splitters.items():
-                self._splitters[splitter_id] = QByteArray(
-                    base64.b64decode(state_b64)
-                )
+                self._splitters[splitter_id] = QByteArray(base64.b64decode(state_b64))
 
             logger.info(f"布局配置已加载: {self._config_path}")
 
@@ -104,9 +100,9 @@ class LayoutManager:
 
         # 保存分割器状态
         for splitter_id, state in self._splitters.items():
-            data["splitters"][splitter_id] = base64.b64encode(
-                state.data()
-            ).decode("utf-8")
+            data["splitters"][splitter_id] = base64.b64encode(state.data()).decode(
+                "utf-8"
+            )
 
         try:
             with open(self._config_path, "w", encoding="utf-8") as f:

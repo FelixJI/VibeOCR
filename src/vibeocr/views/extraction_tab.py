@@ -99,7 +99,6 @@ class ExtractionTab(BaseOcrTab):
     def _create_ui_programmatically(self):
         """动态创建 UI（备用方案）"""
         # 简化实现，实际使用时应加载 .ui 文件
-        pass
 
     def _connect_signals(self):
         """连接信号"""
@@ -266,7 +265,6 @@ class ExtractionTab(BaseOcrTab):
     def _on_go_to_settings(self):
         """跳转到设置页面"""
         # 发出信号或调用主窗口方法
-        pass
 
     @Slot(int, int, str)
     def _on_progress(self, completed: int, total: int, current_file: str):
@@ -296,7 +294,11 @@ class ExtractionTab(BaseOcrTab):
                 self._result_widget.append(f"  {key}: {value}")
             self._result_widget.append("")
         elif status == "failed":
-            error = result.get("error", "未知错误") if isinstance(result, dict) else "未知错误"
+            error = (
+                result.get("error", "未知错误")
+                if isinstance(result, dict)
+                else "未知错误"
+            )
             self._result_widget.append(f"=== {file_name} ===\n[失败] {error}\n")
 
     @Slot(dict)

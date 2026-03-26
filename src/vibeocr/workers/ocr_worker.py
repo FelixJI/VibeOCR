@@ -28,7 +28,6 @@ logger = logging.getLogger(__name__)
 class OCRWorkerError(Exception):
     """OCR Worker 错误"""
 
-    pass
 
 
 def run_worker(shm_name: str, shm_size: int, use_gpu: bool) -> None:
@@ -356,7 +355,7 @@ def run_worker(shm_name: str, shm_size: int, use_gpu: bool) -> None:
                         )
 
                         # 获取管道名称
-                        pipeline_name = preprocess_options.pipeline
+                        pipeline_name = preprocess_options.pipeline.value
 
                         # 延迟初始化批量管理器
                         mgr = get_batch_manager(pipeline_name)
@@ -443,9 +442,8 @@ def run_worker(shm_name: str, shm_size: int, use_gpu: bool) -> None:
                 if "超时" in str(e):
                     # 读取超时，继续等待
                     continue
-                else:
-                    logger.error(f"通信错误: {e}")
-                    break
+                logger.error(f"通信错误: {e}")
+                break
 
     except KeyboardInterrupt:
         logger.info("收到中断信号，退出")

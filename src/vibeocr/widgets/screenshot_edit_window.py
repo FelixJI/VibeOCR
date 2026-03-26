@@ -17,7 +17,6 @@ from PySide6.QtWidgets import (
 )
 
 from vibeocr.core.editor_styles import EditorStyles
-from vibeocr.models.ocr_options import OCROptions
 from vibeocr.widgets.editor.edit_canvas import EditCanvas
 from vibeocr.widgets.editor.edit_toolbar import EditorToolbar
 from vibeocr.widgets.recognition_panel import RecognitionPanel
@@ -112,17 +111,20 @@ class ScreenshotEditWindow(QWidget):
         QShortcut(QKeySequence(Qt.Key.Key_Escape), self, self._on_cancel)
         # Ctrl+Z 撤销
         QShortcut(
-            QKeySequence.StandardKey.Undo, self,
+            QKeySequence.StandardKey.Undo,
+            self,
             self._canvas.undo_stack.undo,
         )
         # Ctrl+Y 重做
         QShortcut(
-            QKeySequence.StandardKey.Redo, self,
+            QKeySequence.StandardKey.Redo,
+            self,
             self._canvas.undo_stack.redo,
         )
         # Ctrl+Shift+Z 重做（备用）
         QShortcut(
-            QKeySequence("Ctrl+Shift+Z"), self,
+            QKeySequence("Ctrl+Shift+Z"),
+            self,
             self._canvas.undo_stack.redo,
         )
         # Ctrl+S 另存为
@@ -140,8 +142,7 @@ class ScreenshotEditWindow(QWidget):
             screen_rect: 截图时的选区矩形（逻辑坐标，用于确定显示屏幕）
         """
         logging.info(
-            f"打开编辑窗口: 图像 {pixmap.width()}x{pixmap.height()}, "
-            f"选区 {screen_rect}"
+            f"打开编辑窗口: 图像 {pixmap.width()}x{pixmap.height()}, 选区 {screen_rect}"
         )
 
         # 确定应显示在哪个屏幕上

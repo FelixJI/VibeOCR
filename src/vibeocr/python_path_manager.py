@@ -87,9 +87,9 @@ class PythonPathManager:
         env_mode = os.environ.get("VIBEOCR_PYTHON_MODE", "").lower()
         if env_mode in ["development", "dev", ".venv"]:
             return PythonPathMode.DEVELOPMENT
-        elif env_mode in ["portable", "python"]:
+        if env_mode in ["portable", "python"]:
             return PythonPathMode.PORTABLE
-        elif env_mode in ["system", "global"]:
+        if env_mode in ["system", "global"]:
             return PythonPathMode.SYSTEM
 
         # 2. 打包环境强制使用便携式
@@ -149,11 +149,10 @@ class PythonPathManager:
                     _logger.warning(f"便携式 OCR 库路径不存在: {path}")
 
                 return path
-            else:
-                # 开发环境：python/ 在项目根目录
-                path = self.project_root / "python" / "Lib" / "site-packages"
-                if path.exists():
-                    return path
+            # 开发环境：python/ 在项目根目录
+            path = self.project_root / "python" / "Lib" / "site-packages"
+            if path.exists():
+                return path
 
         # SYSTEM 模式或找不到路径：返回 None，使用系统默认
         return None
@@ -177,7 +176,7 @@ class PythonPathManager:
                 path = self.project_root / ".venv" / "bin" / "python"
             return path if path.exists() else None
 
-        elif mode == PythonPathMode.PORTABLE:
+        if mode == PythonPathMode.PORTABLE:
             # 便携式：使用 python/
             if self.is_frozen:
                 app_dir = Path(sys.executable).parent

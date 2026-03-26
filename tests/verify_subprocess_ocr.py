@@ -40,9 +40,8 @@ def check_shared_memory():
         if read_data == test_data:
             print("  [OK] 共享内存功能正常")
             return True
-        else:
-            print("  [FAIL] 共享内存数据不匹配")
-            return False
+        print("  [FAIL] 共享内存数据不匹配")
+        return False
 
     except Exception as e:
         print(f"  [FAIL] 共享内存检查失败: {e}")
@@ -67,9 +66,8 @@ def check_worker_script():
                 ):
                     print("  [OK] Worker 脚本结构正确")
                     return True
-                else:
-                    print("  [WARN] Worker 脚本结构可能不完整")
-                    return True
+                print("  [WARN] Worker 脚本结构可能不完整")
+                return True
         except Exception as e:
             print(f"  [WARN] 无法读取 Worker 脚本: {e}")
             return True
@@ -147,9 +145,8 @@ def check_subprocess_ocr_service():
             if "PIL" in str(e) or "PIL.Pillow" in str(e):
                 print(f"  [WARN] PIL 未安装（这是预期的，需要嵌入式环境）: {e}")
                 return True
-            else:
-                print(f"  [FAIL] 子进程 OCR 服务导入失败: {e}")
-                return False
+            print(f"  [FAIL] 子进程 OCR 服务导入失败: {e}")
+            return False
 
     except Exception as e:
         print(f"  [FAIL] 子进程 OCR 服务检查失败: {e}")
@@ -164,9 +161,8 @@ def check_workers_init():
     if init_path.exists():
         print("  [OK] workers/__init__.py 存在")
         return True
-    else:
-        print("  [FAIL] workers/__init__.py 不存在")
-        return False
+    print("  [FAIL] workers/__init__.py 不存在")
+    return False
 
 
 def check_services_init():
@@ -183,9 +179,8 @@ def check_services_init():
             if "USE_SUBPROCESS_OCR" in content:
                 print("  [OK] services/__init__.py 包含子进程 OCR 切换逻辑")
                 return True
-            else:
-                print("  [WARN] services/__init__.py 可能未更新")
-                return True
+            print("  [WARN] services/__init__.py 可能未更新")
+            return True
     else:
         print("  [FAIL] services/__init__.py 不存在")
         return False
@@ -227,9 +222,8 @@ def main():
     if passed == total:
         print("[SUCCESS] 所有检查通过！")
         return 0
-    else:
-        print(f"[WARNING] {total - passed} 项检查未通过")
-        return 1
+    print(f"[WARNING] {total - passed} 项检查未通过")
+    return 1
 
 
 if __name__ == "__main__":

@@ -68,7 +68,6 @@ class BaseOcrTab(QWidget):
         Args:
             service: 新的 OCR 服务实例
         """
-        pass
 
     @abstractmethod
     def _setup_ui(self) -> None:
@@ -76,7 +75,6 @@ class BaseOcrTab(QWidget):
 
         子类必须实现此方法。
         """
-        pass
 
     @abstractmethod
     def _connect_signals(self) -> None:
@@ -84,7 +82,6 @@ class BaseOcrTab(QWidget):
 
         子类必须实现此方法。
         """
-        pass
 
     @abstractmethod
     def _on_start(self) -> None:
@@ -92,7 +89,6 @@ class BaseOcrTab(QWidget):
 
         子类必须实现此方法。
         """
-        pass
 
     def _on_cancel(self) -> None:
         """取消处理

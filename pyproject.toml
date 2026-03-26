@@ -4,31 +4,23 @@ version = "0.1.0"
 description = "A screenshot OCR application"
 requires-python = ">=3.12,<3.13"
 dependencies = [
-    # 开发环境依赖 (CUDA 12)
-    "pyside6>=6.10.2",
-    "pillow>=11.0.0",
-    "numpy>=1.26.0",
-    "markdown>=3.4",
-    "qasync>=0.27.0",
-    "paddlepaddle-gpu>=3.3.0",
-    "nvidia-cudnn-cu12",
-    "paddlex[ocr]>=3.4.2",
-    "paddlex[ie]>=3.4.2",
-    "paddlex[multimodal]>=3.4.2",
-    "uv>=0.10.7",
-]
-
-[project.optional-dependencies]
-dev = [
-    "pytest>=8.0.0",
-    "pytest-qt>=4.4.0",
-    "pytest-cov>=4.1.0",
-    # 代码质量工具
-    "black>=24.0.0",
-    "isort>=5.13.0",
-    "ruff>=0.4.0",
-    "pyright>=0.1.0",
-    "mypy>=1.9.0",
+    # 运行时依赖
+    "pyside6>=6.11.0",
+    "pillow>=12.1.1",
+    "numpy>=2.4.3",
+    "markdown>=3.10.2",
+    "qasync>=0.28.0",
+    "paddlepaddle-gpu>=3.3.1",
+    "nvidia-cudnn-cu12>=9.9.0.52",
+    "paddlex[ocr,ie,multimodal]>=3.4.2",
+    # 开发依赖
+    "pytest>=9.0.2",
+    "pytest-qt>=4.5.0",
+    "pytest-cov>=7.1.0",
+    "ruff>=0.15.7",
+    "pyright>=1.1.408",
+    "pre-commit>=4.5.1",
+    "uv>=0.11.1",
 ]
 
 [build-system]
@@ -36,56 +28,11 @@ requires = ["hatchling>=1.0.0"]
 build-backend = "hatchling.build"
 
 # =============================================================================
-# Black - 代码格式化
-# =============================================================================
-[tool.black]
-line-length = 88
-target-version = ["py312"]
-include = '\.pyi?$'
-extend-exclude = '''
-/(
-    \.git
-    | \.venv
-    | \.pytest_cache
-    | \.ruff_cache
-    | __pycache__
-    | build
-    | dist
-    | \.eggs
-    | \.mypy_cache
-)/
-'''
-
-# =============================================================================
-# isort - import 排序
-# =============================================================================
-[tool.isort]
-profile = "black"
-line_length = 88
-known_first_party = ["vibeocr"]
-known_third_party = ["PySide6", "PIL", "numpy", "paddle", "paddlex"]
-sections = ["FUTURE", "STDLIB", "THIRDPARTY", "FIRSTPARTY", "LOCALFOLDER"]
-skip = [".venv", ".git", "__pycache__", ".pytest_cache", ".ruff_cache"]
-force_single_line = false
-force_sort_within_sections = true
-order_by_type = true
-
-# =============================================================================
-# Ruff - 快速 Linter (替代 flake8, isort, pydocstyle 等)
+# Ruff - Linter + Formatter
 # =============================================================================
 [tool.ruff]
 target-version = "py312"
 line-length = 88
-exclude = [
-    ".git",
-    ".venv",
-    "__pycache__",
-    ".pytest_cache",
-    ".ruff_cache",
-    "build",
-    "dist",
-    "*.egg-info",
-]
 
 [tool.ruff.lint]
 select = [
@@ -100,74 +47,41 @@ select = [
     "SIM",    # flake8-simplify
     "TCH",    # flake8-type-checking
     "PTH",    # flake8-use-pathlib
-    "ERA",    # eradicate (注释掉的代码)
     "RUF",    # Ruff 特定规则
+    "A",      # flake8-builtins
+    "COM",    # flake8-commas
+    "DTZ",    # flake8-datetimez
+    "PIE",    # flake8-pie
+    "RET",    # flake8-return
+    "YTT",    # flake8-2020
 ]
 ignore = [
-    "E501",   # 行长度由 black 处理
-    "B008",   # 函数调用中的默认参数（PySide6 信号/槽常用）
-    "B905",   # zip without strict
-    "ARG001", # 未使用的函数参数（可能是接口要求）
-    "ARG002", # 未使用的方法参数
-    "PTH123", # 使用 open() 而非 Path.open()
-    "SIM108", # 使用三元运算符
-    "TCH001", # 类型检查相关的导入
-    "TCH002",
-    "TCH003",
-    # 中文注释全角字符（开发者习惯）
-    "RUF001",
+    "E501",     # 行长度由 formatter 处理
+    "COM812",   # 与 formatter 冲突
+    "B008",     # 函数调用作为默认参数（Qt 信号/槽）
+    "RUF001",   # 中文全角字符
     "RUF002",
     "RUF003",
-    # __all__ 排序
-    "RUF022",
-    # Generic 类型参数（保持与 PySide6 兼容）
-    "UP046",
-    # 可变默认值为类属性（常量列表）
-    "RUF012",
-    # 隐式 Optional（风格问题）
-    "RUF013",
-    # 嵌套 if 语句
-    "SIM102",
-    # 注释掉的代码（可能是有用的注释）
-    "ERA001",
-    # 模块级导入不在文件顶部
-    "E402",
-    # try-except-pass
-    "SIM105",
-    # 未使用的 lambda 参数
-    "ARG005",
-    # 未使用的静态方法参数（单例模式保留参数作为API）
-    "ARG004",
-    # 循环变量绑定（闭包问题）
-    "B023",
-    # asyncio.ensure_future 返回值（不需要存储）
-    "RUF006",
+    "RUF012",   # 类属性可变默认值（Qt/PySide 模式）
+    "PTH123",   # open() vs Path.open()（现有代码风格）
+    "DTZ005",   # datetime.now() 时区（本地时间足够）
+    "DTZ006",   # datetime.fromtimestamp() 时区
+    "ARG001",   # 未使用的函数参数（接口兼容性）
+    "ARG002",   # 未使用的方法参数（Qt 覆盖）
+    "ARG004",   # 未使用的静态方法参数
+    "ARG005",   # 未使用的 lambda 参数
+    "SIM102",   # 嵌套 if 语句（可读性）
+    "SIM105",   # contextlib.suppress（可读性）
+    "B905",     # zip() strict 参数（现有代码风格）
+    "UP046",    # Generic 类型参数（兼容性）
 ]
 
 [tool.ruff.lint.isort]
 known-first-party = ["vibeocr"]
-known-third-party = ["PySide6", "PIL", "numpy", "paddle", "paddlex"]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/*" = [
-    "ARG",     # 未使用的函数参数
-    "S101",    # assert 警告
-    "PLR2004", # 魔法数字
-    "F401",    # 未使用的导入
-    "PTH110",  # os.path.exists
-    "PTH118",  # os.path.join
-    "PTH120",  # os.path.dirname
-    "E722",    # 裸 except
-    "C401",    # 不必要的生成器
-    "B007",    # 未使用的循环变量
-    "F841",    # 未使用的局部变量
-    "SIM117",  # 嵌套 with 语句
-    "B017",    # 盲异常断言
-    "RUF059",  # 未使用的解包变量
-]
-"__init__.py" = ["F401"]  # 允许未使用的导入
-"examples/*" = ["F401"]  # 验证脚本中的导入检查
-"scripts/*" = ["F401", "F821", "F841", "RUF059"]  # 脚本中的动态用法
+"tests/*" = ["S101", "ARG", "PLR2004"]
+"__init__.py" = ["F401"]
 
 # =============================================================================
 # Pyright - 静态类型检查
@@ -175,67 +89,21 @@ known-third-party = ["PySide6", "PIL", "numpy", "paddle", "paddlex"]
 [tool.pyright]
 pythonVersion = "3.12"
 pythonPlatform = "Windows"
-typeCheckingMode = "basic"
-include = ["src", "tests"]
-exclude = [".venv", "**/__pycache__", ".pytest_cache", ".ruff_cache"]
+typeCheckingMode = "standard"
+include = ["src"]
+exclude = [".venv", "**/__pycache__"]
 reportMissingImports = true
 reportMissingTypeStubs = false
-reportUnusedImport = "warning"
+reportUnusedImport = "error"
 reportUnusedClass = "warning"
 reportUnusedFunction = "warning"
 reportUnusedVariable = "warning"
-reportDuplicateImport = "warning"
-# PySide6 相关
-reportAttributeAccessIssue = "warning"  # PySide6 动态属性较多
-# PaddlePaddle 相关（类型存根不完整）
-reportPrivateImportUsage = false
+reportDuplicateImport = "error"
+# PySide6 自动生成的 UI 文件使用旧式枚举访问
+reportAttributeAccessIssue = "warning"
 
 # =============================================================================
-# Mypy - 类型检查
-# =============================================================================
-[tool.mypy]
-python_version = "3.12"
-warn_return_any = false
-warn_unused_configs = true
-disallow_untyped_defs = false
-disallow_incomplete_defs = false
-check_untyped_defs = false
-ignore_missing_imports = true
-# 减少噪音警告
-disable_error_code = [
-    "no-any-return",
-    "var-annotated",
-    "union-attr",
-    "index",
-    "str-bytes-safe",
-    "assignment",
-    "arg-type",
-    "attr-defined",
-    "has-type",
-    "override",
-]
-exclude = [
-    "\\.venv",
-    "\\.git",
-    "__pycache__",
-    "\\.pytest_cache",
-    "\\.ruff_cache",
-    "build",
-    "dist",
-]
-
-# PySide6 类型存根不完整
-[[tool.mypy.overrides]]
-module = ["PySide6.*"]
-ignore_errors = true
-
-# PaddlePaddle 类型存根不完整
-[[tool.mypy.overrides]]
-module = ["paddle.*", "paddlex.*"]
-ignore_errors = true
-
-# =============================================================================
-# Pytest - 测试配置
+# Pytest
 # =============================================================================
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -246,38 +114,24 @@ qt_api = "pyside6"
 addopts = "-v --tb=short"
 
 # =============================================================================
-# Coverage - 测试覆盖率
+# Coverage
 # =============================================================================
 [tool.coverage.run]
 source = ["src"]
 branch = true
-omit = [
-    "*/__pycache__/*",
-    "*/tests/*",
-    "*/.venv/*",
-]
 
 [tool.coverage.report]
 exclude_lines = [
     "pragma: no cover",
-    "def __repr__",
-    "raise AssertionError",
-    "raise NotImplementedError",
-    "if __name__ == .__main__.:",
     "if TYPE_CHECKING:",
+    "raise NotImplementedError",
 ]
 
 # =============================================================================
-# uv 包管理器配置 - PaddlePaddle CUDA 12 镜像源
+# uv 配置
 # =============================================================================
 [tool.uv]
 extra-index-url = [
     "https://www.paddlepaddle.org.cn/packages/stable/cu129/",
-    "https://pypi.org/simple",
 ]
 index-strategy = "unsafe-best-match"
-
-[dependency-groups]
-dev = [
-    "pre-commit>=4.5.1",
-]

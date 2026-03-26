@@ -1,0 +1,12 @@
+{
+  "format": {
+    "name": "代码格式化",
+    "success": true,
+    "returncode": 0,
+    "elapsed": 0.7656707763671875
+  },
+  "_meta": {
+    "total_elapsed": 0.7656707763671875,
+    "timestamp": "2026-03-26T14:59:18.323718"
+  }
+}

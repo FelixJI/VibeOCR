@@ -52,8 +52,7 @@ class EditCanvas(QGraphicsView):
 
         # 渲染设置（优化性能）
         self.setRenderHints(
-            QPainter.RenderHint.Antialiasing
-            | QPainter.RenderHint.SmoothPixmapTransform
+            QPainter.RenderHint.Antialiasing | QPainter.RenderHint.SmoothPixmapTransform
         )
         # 使用最小视口更新模式（仅重绘变化的区域）
         self.setViewportUpdateMode(
@@ -213,8 +212,12 @@ class EditCanvas(QGraphicsView):
 
         # 图形绘制工具
         if tool in (
-            EditTool.RECT, EditTool.ELLIPSE, EditTool.ARROW,
-            EditTool.MOSAIC, EditTool.BLUR, EditTool.CROP,
+            EditTool.RECT,
+            EditTool.ELLIPSE,
+            EditTool.ARROW,
+            EditTool.MOSAIC,
+            EditTool.BLUR,
+            EditTool.CROP,
         ):
             self._drawing = True
             self._draw_start = scene_pos
@@ -258,6 +261,7 @@ class EditCanvas(QGraphicsView):
 
         # 使用 QToolTip 显示尺寸
         from PySide6.QtWidgets import QToolTip
+
         QToolTip.showText(
             self.mapToGlobal(view_pos),
             f"{width} × {height}",
@@ -302,12 +306,14 @@ class EditCanvas(QGraphicsView):
             item.setBrush(Qt.BrushStyle.NoBrush)
         elif tool == EditTool.ELLIPSE:
             from PySide6.QtWidgets import QGraphicsEllipseItem
+
             item = QGraphicsEllipseItem(rect)
             item.setPen(QPen(self._pen_color, self._pen_width, Qt.PenStyle.DashLine))
             item.setBrush(Qt.BrushStyle.NoBrush)
         elif tool == EditTool.ARROW:
             item = ArrowAnnotation(
-                start, start,
+                start,
+                start,
                 pen_color=self._pen_color,
                 pen_width=self._pen_width,
             )
@@ -341,9 +347,9 @@ class EditCanvas(QGraphicsView):
         else:
             # 矩形/椭圆/马赛克/模糊/裁剪：更新矩形
             rect = QRectF(start, current).normalized()
-            if isinstance(self._temp_item, QGraphicsRectItem):
-                self._temp_item.setRect(rect)
-            elif hasattr(self._temp_item, 'setRect'):
+            if isinstance(self._temp_item, QGraphicsRectItem) or hasattr(
+                self._temp_item, "setRect"
+            ):
                 self._temp_item.setRect(rect)
 
     def _finish_drawing_at(self, end: QPointF) -> None:
@@ -386,7 +392,8 @@ class EditCanvas(QGraphicsView):
             )
         elif tool == EditTool.ARROW:
             item = ArrowAnnotation(
-                start, end,
+                start,
+                end,
                 pen_color=self._pen_color,
                 pen_width=self._pen_width,
             )

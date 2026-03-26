@@ -65,7 +65,6 @@ class OCRServiceBase(ABC):
 
         子类必须实现此方法来检测和配置 GPU。
         """
-        pass
 
     @abstractmethod
     def recognize(
@@ -82,7 +81,6 @@ class OCRServiceBase(ABC):
         Returns:
             OCRResult 对象
         """
-        pass
 
     @abstractmethod
     def is_ready(self) -> bool:
@@ -91,7 +89,6 @@ class OCRServiceBase(ABC):
         Returns:
             服务是否可以执行 OCR
         """
-        pass
 
     def preload_pipelines(self, pipelines: list[str]) -> dict[str, bool]:
         """预加载管道
@@ -121,7 +118,6 @@ class OCRServiceBase(ABC):
         if pipeline_name in self._pipelines:
             return
         # 子类可以重写此方法来实现实际的预加载逻辑
-        pass
 
     def get_pipeline(self, pipeline_name: str) -> Any | None:
         """获取管道实例

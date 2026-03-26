@@ -52,7 +52,7 @@ class OCRServiceSubprocess:
         shm_size: int = 10 * 1024 * 1024,
         auto_start: bool = True,
         start_timeout: float = 120.0,
-        start_progress_callback: Callable[[str, int], None] | None = None,
+        start_progress_callback: Callable[[str], None] | None = None,
     ) -> "OCRServiceSubprocess":
         """线程安全的单例创建
 
@@ -74,7 +74,7 @@ class OCRServiceSubprocess:
         shm_size: int = 10 * 1024 * 1024,
         auto_start: bool = True,
         start_timeout: float = 120.0,
-        start_progress_callback: Callable[[str, int], None] | None = None,
+        start_progress_callback: Callable[[str], None] | None = None,
     ):
         """初始化子进程 OCR 服务
 
@@ -300,11 +300,10 @@ class OCRServiceSubprocess:
                 f"[识别] 管道 {pipeline_name} 模型已缓存，使用标准超时 ({TIMEOUT_CACHED}s)"
             )
             return TIMEOUT_CACHED
-        else:
-            logger.info(
-                f"[识别] 管道 {pipeline_name} 模型未缓存，使用延长超时 ({TIMEOUT_UNCACHED}s)"
-            )
-            return TIMEOUT_UNCACHED
+        logger.info(
+            f"[识别] 管道 {pipeline_name} 模型未缓存，使用延长超时 ({TIMEOUT_UNCACHED}s)"
+        )
+        return TIMEOUT_UNCACHED
 
     def preload_pipelines(
         self, pipelines: list[str], timeout: float = 180.0

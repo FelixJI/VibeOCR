@@ -356,6 +356,5 @@ class Ui_ExtractionTab:
                 "ExtractionTab", "\u5bfc\u51fa\u7ed3\u679c", None
             )
         )
-        pass
 
     # retranslateUi

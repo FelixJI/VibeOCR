@@ -6,11 +6,13 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from PySide6.QtCore import QPointF, QRectF
 from PySide6.QtGui import QUndoCommand, QUndoStack
-from PySide6.QtWidgets import QGraphicsItem, QGraphicsScene
+
+if TYPE_CHECKING:
+    from PySide6.QtWidgets import QGraphicsItem, QGraphicsScene
 
 
 class AddAnnotationCommand(QUndoCommand):

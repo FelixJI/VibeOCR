@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import logging
+from typing import TYPE_CHECKING
 
 from PIL import Image
 from PySide6.QtCore import (
@@ -31,7 +32,6 @@ from vibeocr import env_manager
 from vibeocr.core.constants import WindowsColors
 from vibeocr.machine_cache import is_cache_valid
 from vibeocr.managers import DependencyManager, LayoutManager, SubprocessManager
-from vibeocr.models.ocr_result import OCRResult
 from vibeocr.services.log_service import setup_logging
 from vibeocr.ui.ui_main_window import Ui_MainWindowWidget
 from vibeocr.utils.qt_async import run_coroutine
@@ -42,6 +42,10 @@ from vibeocr.widgets.console_widget import ConsoleWidget
 from vibeocr.widgets.screenshot_edit_window import ScreenshotEditWindow
 from vibeocr.widgets.screenshot_widget import ScreenshotWidget
 from vibeocr.widgets.toolbar import EdgeToolbar
+
+if TYPE_CHECKING:
+    from vibeocr.models.ocr_result import OCRResult
+    from vibeocr.utils.app_settings import AppSettings
 
 # 延迟导入: OCR 服务模块导入很慢（~33s），延迟到首次使用时导入
 
@@ -923,7 +927,7 @@ class MainWindow(QMainWindow):
         """
         # Lazy import: OCR related types
         from vibeocr.services import USE_SUBPROCESS
-        from vibeocr.services.ocr_service import OCROptions, OCRPipeline
+        from vibeocr.services.ocr_service import OCRPipeline
 
         logging.info("Starting OCR recognition")
         self._ui.textResult.clear()
@@ -1215,7 +1219,6 @@ class MainWindow(QMainWindow):
 
     def set_app_settings(self, app_settings) -> None:
         """设置应用设置对象（由 main.py 调用）"""
-        from vibeocr.utils.app_settings import AppSettings
 
         self._app_settings: AppSettings = app_settings
         self.apply_app_settings()
@@ -1310,7 +1313,9 @@ class MainWindow(QMainWindow):
                 chk.blockSignals(True)
                 chk.setChecked(not checked)
                 chk.blockSignals(False)
-            QMessageBox.warning(self, "设置失败", "设置开机自启动失败，请检查系统权限。")
+            QMessageBox.warning(
+                self, "设置失败", "设置开机自启动失败，请检查系统权限。"
+            )
 
     def _show_main_window(self) -> None:
         """显示并激活主窗口（由工具栏触发）"""

@@ -85,9 +85,7 @@ def _create_tray_icon(app, window, app_settings):
     menu.addAction(action_show)
 
     action_settings = QAction("设置", menu)
-    action_settings.triggered.connect(
-        lambda: _show_tray_settings(app_settings, window)
-    )
+    action_settings.triggered.connect(lambda: _show_tray_settings(app_settings, window))
     menu.addAction(action_settings)
 
     menu.addSeparator()
@@ -99,9 +97,7 @@ def _create_tray_icon(app, window, app_settings):
     tray.setContextMenu(menu)
 
     # 点击托盘图标切换主窗口显示
-    tray.activated.connect(
-        lambda reason: _on_tray_activated(reason, window)
-    )
+    tray.activated.connect(lambda reason: _on_tray_activated(reason, window))
 
     tray.show()
     return tray
@@ -176,8 +172,7 @@ def launch_application() -> int:
 
     # 使用 qasync 事件循环运行应用
     try:
-        with loop:
-            loop.run_forever()
+        loop.run_forever()
     except Exception as e:
         print(f"[VibeOCR] 应用异常退出: {e}")
         return 1

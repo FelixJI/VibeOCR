@@ -6,7 +6,6 @@ import logging
 import os
 import sys
 import threading
-from collections.abc import Callable
 from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -19,11 +18,11 @@ from vibeocr.utils.markdown_converter import markdown_to_html
 
 # 重新导出以保持向后兼容性
 __all__ = [
-    "OCRService",
     "OCROptions",
     "OCRPipeline",
-    "OCRResult",
     "OCRPreset",
+    "OCRResult",
+    "OCRService",
 ]
 
 # 禁用 OneDNN 并强制使用 CPU 模式以兼容性
@@ -51,6 +50,8 @@ _logger = logging.getLogger(__name__)
 
 # 类型检查时导入（不影响运行时）
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     import numpy as np
     from PIL import Image
 
@@ -779,7 +780,7 @@ class OCRService(metaclass=SingletonMeta):
                                 ocr_pred, "rec_scores"
                             ):
                                 for text, score in zip(
-                                    ocr_pred.rec_texts, ocr_pred.rec_scores
+                                    ocr_pred.rec_texts, ocr_pred.rec_scores, strict=False
                                 ):
                                     if text:
                                         text_with_scores.append((text, float(score)))
@@ -790,7 +791,7 @@ class OCRService(metaclass=SingletonMeta):
                         ocr_pred = table_res.get("table_ocr_pred", {})
                         rec_texts = ocr_pred.get("rec_texts", [])
                         rec_scores = ocr_pred.get("rec_scores", [])
-                        for text, score in zip(rec_texts, rec_scores):
+                        for text, score in zip(rec_texts, rec_scores, strict=False):
                             if text:
                                 text_with_scores.append((text, float(score)))
 
@@ -916,7 +917,7 @@ class OCRService(metaclass=SingletonMeta):
 
                 # 提取 OCR 文本和置信度
                 if hasattr(res, "rec_texts") and hasattr(res, "rec_scores"):
-                    for text, score in zip(res.rec_texts, res.rec_scores):
+                    for text, score in zip(res.rec_texts, res.rec_scores, strict=False):
                         if text:
                             text_with_scores.append((text, float(score)))
 
@@ -933,7 +934,7 @@ class OCRService(metaclass=SingletonMeta):
                                 ocr_pred, "rec_scores"
                             ):
                                 for text, score in zip(
-                                    ocr_pred.rec_texts, ocr_pred.rec_scores
+                                    ocr_pred.rec_texts, ocr_pred.rec_scores, strict=False
                                 ):
                                     if text:
                                         text_with_scores.append((text, float(score)))
@@ -963,7 +964,7 @@ class OCRService(metaclass=SingletonMeta):
                     # 提取 OCR 文本
                     rec_texts = res.get("rec_texts", [])
                     rec_scores = res.get("rec_scores", [])
-                    for text, score in zip(rec_texts, rec_scores):
+                    for text, score in zip(rec_texts, rec_scores, strict=False):
                         if text:
                             text_with_scores.append((text, float(score)))
 
@@ -974,7 +975,7 @@ class OCRService(metaclass=SingletonMeta):
                         ocr_pred = table_res.get("table_ocr_pred", {})
                         for text, score in zip(
                             ocr_pred.get("rec_texts", []),
-                            ocr_pred.get("rec_scores", []),
+                            ocr_pred.get("rec_scores", []), strict=False,
                         ):
                             if text:
                                 text_with_scores.append((text, float(score)))
@@ -1220,7 +1221,7 @@ class OCRService(metaclass=SingletonMeta):
                 break
             try:
                 if hasattr(res, "rec_texts") and hasattr(res, "rec_scores"):
-                    for text, score in zip(res.rec_texts, res.rec_scores):
+                    for text, score in zip(res.rec_texts, res.rec_scores, strict=False):
                         if text:  # 跳过空文本
                             text_with_scores.append((text, float(score)))
                 elif hasattr(res, "rec_texts"):
@@ -1234,7 +1235,7 @@ class OCRService(metaclass=SingletonMeta):
                     rec_texts = res.get("rec_texts", [])
                     rec_scores = res.get("rec_scores", [])
                     if rec_scores:
-                        for text, score in zip(rec_texts, rec_scores):
+                        for text, score in zip(rec_texts, rec_scores, strict=False):
                             if text:
                                 text_with_scores.append((text, float(score)))
                     else:
@@ -1334,7 +1335,7 @@ class OCRService(metaclass=SingletonMeta):
             for res in output_list:
                 # 提取识别结果
                 if hasattr(res, "rec_texts") and hasattr(res, "rec_scores"):
-                    for text, score in zip(res.rec_texts, res.rec_scores):
+                    for text, score in zip(res.rec_texts, res.rec_scores, strict=False):
                         if text:
                             text_with_scores.append((text, float(score)))
                 elif hasattr(res, "ocr_text"):
@@ -1344,7 +1345,7 @@ class OCRService(metaclass=SingletonMeta):
                     rec_texts = res.get("rec_texts", [])
                     rec_scores = res.get("rec_scores", [])
                     if rec_scores:
-                        for text, score in zip(rec_texts, rec_scores):
+                        for text, score in zip(rec_texts, rec_scores, strict=False):
                             if text:
                                 text_with_scores.append((text, float(score)))
                     else:
