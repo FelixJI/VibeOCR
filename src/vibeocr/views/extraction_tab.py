@@ -5,6 +5,7 @@
 """
 
 import logging
+from pathlib import Path
 
 from PySide6.QtCore import Signal, Slot
 from PySide6.QtWidgets import (
@@ -17,6 +18,7 @@ from vibeocr.models.extraction_options import ExtractionOptions
 from vibeocr.models.extraction_template import DEFAULT_TEMPLATES
 from vibeocr.ui.ui_extraction_tab import Ui_ExtractionTab
 from vibeocr.views.tabs.base_tab import BaseOcrTab
+from vibeocr.workers.extraction_worker import ExtractionWorker
 
 logger = logging.getLogger(__name__)
 
@@ -207,7 +209,38 @@ class ExtractionTab(BaseOcrTab):
             self._result_widget.append("OCR 服务未就绪。")
             return
 
-        # TODO: 实现 Worker 启动逻辑
+        # 禁用按钮
+        if self._btn_start:
+            self._btn_start.setEnabled(False)
+        if self._btn_cancel:
+            self._btn_cancel.setEnabled(True)
+
+        # 更新进度
+        if self._progress_bar:
+            self._progress_bar.setValue(0)
+        if self._label_progress:
+            self._label_progress.setText(f"0/{len(files)}")
+
+        # 清空之前的结果
+        self._result_widget.clear()
+        self._results = {}
+
+        # 获取抽取选项
+        options = self.get_extraction_options()
+
+        # 创建工作线程
+        self._worker = ExtractionWorker(
+            service=self._ocr_service,
+            files=files,
+            keys=keys,
+            options=options,
+        )
+        self._worker.progress.connect(self._on_progress)
+        self._worker.file_completed.connect(self._on_file_completed)
+        self._worker.finished.connect(self._on_finished)
+        self._worker.error.connect(self._on_error)
+        self._worker.start()
+
         logger.info(f"开始抽取，文件数: {len(files)}，字段数: {len(keys)}")
 
     @Slot()
@@ -234,6 +267,57 @@ class ExtractionTab(BaseOcrTab):
         """跳转到设置页面"""
         # 发出信号或调用主窗口方法
         pass
+
+    @Slot(int, int, str)
+    def _on_progress(self, completed: int, total: int, current_file: str):
+        """进度更新"""
+        if total > 0 and self._progress_bar:
+            self._progress_bar.setMaximum(total)
+            self._progress_bar.setValue(completed)
+        if self._label_progress:
+            self._label_progress.setText(f"{completed}/{total}")
+
+    @Slot(str, str, dict)
+    def _on_file_completed(self, file_path: str, status: str, result: dict):
+        """单个文件完成"""
+        # 存储结果
+        self._results[file_path] = {"status": status, "result": result}
+
+        # 更新文件列表状态
+        if self._file_list_widget:
+            self._file_list_widget.update_file_status(file_path, status, result)
+
+        # 显示结果
+        file_name = Path(file_path).name
+        if status == "completed" and result:
+            values = result.get("values", {})
+            self._result_widget.append(f"=== {file_name} ===")
+            for key, value in values.items():
+                self._result_widget.append(f"  {key}: {value}")
+            self._result_widget.append("")
+        elif status == "failed":
+            error = result.get("error", "未知错误") if isinstance(result, dict) else "未知错误"
+            self._result_widget.append(f"=== {file_name} ===\n[失败] {error}\n")
+
+    @Slot(dict)
+    def _on_finished(self, results: dict):
+        """处理完成"""
+        completed = sum(1 for r in results.values() if r.get("status") == "completed")
+        failed = sum(1 for r in results.values() if r.get("status") == "failed")
+
+        self._result_widget.append(
+            f"\n--- 抽取完成: {completed} 个成功, {failed} 个失败 ---"
+        )
+
+        self._reset_ui()
+        self.extraction_finished.emit(results)
+
+    @Slot(str)
+    def _on_error(self, error_msg: str):
+        """处理错误"""
+        logger.error(f"Extraction error: {error_msg}")
+        self._result_widget.append(f"[错误] {error_msg}")
+        self._reset_ui()
 
     def _reset_ui(self):
         """重置 UI 状态"""
