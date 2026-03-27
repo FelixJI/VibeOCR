@@ -73,7 +73,7 @@ class InstallDialog(QDialog):
         super().__init__(parent)
         self._project_root = project_root
         self._setup_ui()
-        self._worker = None
+        self._worker: InstallWorker | None = None
 
     def _setup_ui(self) -> None:
         """设置UI"""

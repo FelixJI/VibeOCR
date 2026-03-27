@@ -96,7 +96,7 @@ def async_slot(*types):
             task.add_done_callback(_async_tasks.discard)
 
         # 添加 Qt 槽信息（用于 PySide6 元对象系统）
-        wrapper.__signature__ = getattr(async_func, "__signature__", None)
+        wrapper.__signature__ = getattr(async_func, "__signature__", None)  # type: ignore[attr-defined]
         wrapper.__annotations__ = getattr(async_func, "__annotations__", {})
 
         return wrapper

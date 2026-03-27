@@ -3,10 +3,10 @@
 Tests for batch add, commit, cancel functionality.
 """
 
-import os
 import sys
+from pathlib import Path
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
+sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from vibeocr.models.batch_request import (
     BatchRequest,

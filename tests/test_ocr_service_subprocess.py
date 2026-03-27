@@ -104,7 +104,7 @@ class TestOCRWorker:
         assert isinstance(script_path, (str, Path))
         # 检查脚本是否存在
         if not IS_CI:
-            assert os.path.exists(script_path), (
+            assert Path(script_path).exists(), (
                 f"Worker script not found: {script_path}"
             )
 
@@ -179,7 +179,7 @@ class TestOCRServiceIntegration:
     def embedded_python_available(self):
         """检查嵌入式 Python 是否可用。"""
         python_exe = get_embedded_python()
-        if not os.path.exists(python_exe):
+        if not Path(python_exe).exists():
             pytest.skip(f"Embedded Python not found: {python_exe}")
         return python_exe
 

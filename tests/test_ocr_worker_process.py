@@ -15,7 +15,6 @@ try:
     from vibeocr.services.ocr_service_subprocess import OCRServiceSubprocess
     from vibeocr.services.ocr_worker_process import (
         OCRWorkerProcess,
-        OCRWorkerProcessError,
     )
 
     HAS_SUBPROCESS_MODULES = True
@@ -221,7 +220,7 @@ class TestOCRServiceSubprocess:
         """Test reset_instance class method."""
         # Reset and create
         OCRServiceSubprocess._instance = None
-        service = OCRServiceSubprocess(max_workers=1, use_gpu=False, auto_start=False)
+        _service = OCRServiceSubprocess(max_workers=1, use_gpu=False, auto_start=False)
 
         # Reset should clear instance
         OCRServiceSubprocess.reset_instance()

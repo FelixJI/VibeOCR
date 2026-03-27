@@ -196,7 +196,6 @@ def _process_latex_formulas(text: str) -> str:
     )
 
 
-
 def extract_plain_text(html_text: str) -> str:
     """从 HTML 中提取纯文本
 
@@ -235,4 +234,3 @@ def extract_plain_text(html_text: str) -> str:
     # 清理多余空白
     lines = [line.strip() for line in text.split("\n")]
     return "\n".join(line for line in lines if line)
-

@@ -19,7 +19,6 @@ try:
     )
     from vibeocr.utils.shared_memory_v2 import (
         MessageType,
-        SharedMemoryConfig,
         serialize_request,
         serialize_result,
     )

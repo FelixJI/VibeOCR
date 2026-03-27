@@ -39,7 +39,7 @@ class GPUMemoryMonitor:
 
         # 尝试初始化 pynvml
         try:
-            import pynvml
+            import pynvml  # type: ignore[import-untyped]
 
             pynvml.nvmlInit()
             self._pynvml_available = True
@@ -52,7 +52,7 @@ class GPUMemoryMonitor:
         try:
             import paddle
 
-            if paddle.is_compiled_with_cuda():
+            if paddle.is_compiled_with_cuda():  # type: ignore[reportPrivateImportUsage]
                 self._paddle_available = True
                 logger.info("Paddle CUDA 可用，可作为显存监控备选方案")
         except Exception as e:

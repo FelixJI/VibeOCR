@@ -165,7 +165,6 @@ class ClipboardController:
             f"{full_html}"
         )
 
-
     def _show_copy_toast(self) -> None:
         """显示复制成功提示"""
         # 调整提示标签位置（按钮上方居中）

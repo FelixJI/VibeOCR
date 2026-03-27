@@ -51,7 +51,6 @@ class OCRWorkerProcessError(Exception):
     """OCR Worker 进程错误"""
 
 
-
 class OCRWorkerProcess:
     """单个 OCR Worker 进程管理器
 
@@ -231,8 +230,12 @@ class OCRWorkerProcess:
                 is_windows = platform.system() == "Windows"
 
                 try:
-                    while self.process and self.process.poll() is None:
-                        line = self.process.stdout.readline()
+                    process = self.process
+                    while process and process.poll() is None:
+                        stdout = process.stdout
+                        if stdout is None:
+                            break
+                        line = stdout.readline()
                         if line:
                             try:
                                 # Windows 上 PaddlePaddle 可能使用 GBK 编码
@@ -321,7 +324,7 @@ class OCRWorkerProcess:
                     timeout=1.0, expected_sender="worker"
                 )
                 logger.info(
-                    f"[主进程] 收到消息: type={msg_type}, data={data[:50] if data else b''}"
+                    f"[主进程] 收到消息: type={msg_type.decode('ascii', errors='replace')}, data={data[:50] if data else b''}"
                 )
                 if msg_type == MSG_READY:
                     # 收到 Worker 的 READY 信号
@@ -407,6 +410,8 @@ class OCRWorkerProcess:
             else:
                 raise OCRWorkerProcessError(f"Worker {self.worker_id} 未就绪")
 
+        protocol = self.protocol
+        assert protocol is not None  # guarded by is_ready check above
         self.busy = True
         logger.info(
             f"[主进程] Worker {self.worker_id} 开始识别，图像大小: {len(image_data)} 字节"
@@ -418,7 +423,7 @@ class OCRWorkerProcess:
             logger.info(
                 f"[主进程] 发送识别请求到 Worker {self.worker_id}，数据大小: {len(request_data)} 字节"
             )
-            self.protocol.write_message(
+            protocol.write_message(
                 MSG_RECOGNIZE, request_data, timeout=timeout, sender="main"
             )
             logger.info(
@@ -427,17 +432,17 @@ class OCRWorkerProcess:
 
             # 等待 Worker 读取请求（等待 _is_data_ready 变为 False）
             wait_start = time.time()
-            while self.protocol._is_data_ready():
+            while protocol._is_data_ready():
                 if time.time() - wait_start > 5.0:
                     logger.warning(f"Worker {self.worker_id} 未及时读取识别请求")
                     break
                 time.sleep(0.01)
 
             # 等待结果
-            msg_type, data = self.protocol.read_message(
+            msg_type, data = protocol.read_message(
                 timeout=timeout, expected_sender="worker"
             )
-            logger.info(f"[主进程] 收到响应，消息类型: {msg_type}")
+            logger.info(f"[主进程] 收到响应，消息类型: {msg_type.decode('ascii', errors='replace')}")
 
             if msg_type == MSG_RESULT:
                 # 反序列化结果
@@ -449,7 +454,7 @@ class OCRWorkerProcess:
                 error_msg = data.decode("utf-8", errors="replace")
                 raise OCRWorkerProcessError(f"OCR 识别失败: {error_msg}")
 
-            raise OCRWorkerProcessError(f"未知响应类型: {msg_type}")
+            raise OCRWorkerProcessError(f"未知响应类型: {msg_type.decode('ascii', errors='replace')}")
 
         except SharedMemoryProtocolError as e:
             # 检查 Worker 是否崩溃
@@ -518,12 +523,14 @@ class OCRWorkerProcess:
         if timeout is None:
             timeout = self._calculate_preload_timeout(pipelines)
 
+        protocol = self.protocol
+        assert protocol is not None  # guarded by is_ready check above
         self.busy = True
 
         try:
             # 序列化并发送预加载请求
             request_data = serialize_preload_request(pipelines)
-            self.protocol.write_message(
+            protocol.write_message(
                 MSG_PRELOAD, request_data, timeout=timeout, sender="main"
             )
 
@@ -546,7 +553,7 @@ class OCRWorkerProcess:
 
                 try:
                     # 使用较短的单次读取超时，但整体受 remaining_timeout 控制
-                    msg_type, data = self.protocol.read_message(
+                    msg_type, data = protocol.read_message(
                         timeout=min(remaining_timeout, 10.0), expected_sender="worker"
                     )
                 except SharedMemoryProtocolError as e:
@@ -589,9 +596,7 @@ class OCRWorkerProcess:
                     )
                     continue
 
-                logger.warning(
-                    f"Worker {self.worker_id} 收到意外消息类型: {msg_type}"
-                )
+                logger.warning(f"Worker {self.worker_id} 收到意外消息类型: {msg_type.decode('ascii', errors='replace')}")
                 continue
 
         except SharedMemoryProtocolError as e:
@@ -695,14 +700,16 @@ class OCRWorkerProcess:
         if not self.is_ready:
             raise OCRWorkerProcessError(f"Worker {self.worker_id} 未就绪")
 
+        protocol = self.protocol
+        assert protocol is not None  # guarded by is_ready check above
         try:
-            self.protocol.write_message(
+            protocol.write_message(
                 MSG_BATCH_ADD, request_data, timeout=timeout, sender="main"
             )
             logger.debug(f"Worker {self.worker_id} 批量添加请求已发送")
 
             # 等待确认
-            msg_type, data = self.protocol.read_message(
+            msg_type, data = protocol.read_message(
                 timeout=timeout, expected_sender="worker"
             )
             if msg_type == MSG_ACK:
@@ -710,7 +717,7 @@ class OCRWorkerProcess:
             if msg_type == MSG_ERROR:
                 error_msg = data.decode("utf-8", errors="replace")
                 raise OCRWorkerProcessError(f"批量添加失败: {error_msg}")
-            raise OCRWorkerProcessError(f"意外响应类型: {msg_type}")
+            raise OCRWorkerProcessError(f"意外响应类型: {msg_type.decode('ascii', errors='replace')}")
 
         except SharedMemoryProtocolError as e:
             raise OCRWorkerProcessError(f"通信错误: {e}") from None
@@ -728,9 +735,11 @@ class OCRWorkerProcess:
         if not self.is_ready:
             raise OCRWorkerProcessError(f"Worker {self.worker_id} 未就绪")
 
+        protocol = self.protocol
+        assert protocol is not None  # guarded by is_ready check above
         self.busy = True
         try:
-            self.protocol.write_message(
+            protocol.write_message(
                 MSG_BATCH_COMMIT, commit_data, timeout=timeout, sender="main"
             )
             logger.info(f"Worker {self.worker_id} 批量提交请求已发送，等待结果...")
@@ -743,7 +752,7 @@ class OCRWorkerProcess:
                     raise OCRWorkerProcessError(f"批量处理超时 ({timeout}s)")
 
                 try:
-                    msg_type, data = self.protocol.read_message(
+                    msg_type, data = protocol.read_message(
                         timeout=min(remaining_timeout, 60.0), expected_sender="worker"
                     )
                 except SharedMemoryProtocolError as e:
@@ -776,9 +785,7 @@ class OCRWorkerProcess:
                     error_msg = data.decode("utf-8", errors="replace")
                     raise OCRWorkerProcessError(f"批量处理失败: {error_msg}")
 
-                logger.warning(
-                    f"Worker {self.worker_id} 收到意外消息类型: {msg_type}"
-                )
+                logger.warning(f"Worker {self.worker_id} 收到意外消息类型: {msg_type.decode('ascii', errors='replace')}")
                 continue
 
         except SharedMemoryProtocolError as e:
@@ -799,14 +806,16 @@ class OCRWorkerProcess:
         if not self.is_ready:
             return False
 
+        protocol = self.protocol
+        assert protocol is not None  # guarded by is_ready check above
         try:
-            self.protocol.write_message(
+            protocol.write_message(
                 MSG_BATCH_CANCEL, b"", timeout=timeout, sender="main"
             )
             logger.info(f"Worker {self.worker_id} 批量取消请求已发送")
 
             # 等待确认
-            msg_type, _data = self.protocol.read_message(
+            msg_type, _data = protocol.read_message(
                 timeout=timeout, expected_sender="worker"
             )
             return msg_type == MSG_ACK

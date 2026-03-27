@@ -44,6 +44,7 @@ class OCRServiceSubprocess:
 
     _instance: Optional["OCRServiceSubprocess"] = None
     _lock = threading.Lock()
+    _initialized: bool
 
     def __new__(
         cls,
@@ -63,7 +64,7 @@ class OCRServiceSubprocess:
             with cls._lock:
                 if cls._instance is None:
                     instance = super().__new__(cls)
-                    instance._initialized = False
+                    instance._initialized = False  # type: ignore[assignment]
                     cls._instance = instance
         return cls._instance
 
@@ -261,7 +262,10 @@ class OCRServiceSubprocess:
 
         # 优先使用 to_dict() 方法（会正确处理枚举类型）
         if hasattr(options, "to_dict") and callable(options.to_dict):
-            return options.to_dict()
+            result = options.to_dict()
+            if isinstance(result, dict):
+                return result
+            return {}
 
         # 如果已经是字典
         if isinstance(options, dict):
@@ -294,8 +298,11 @@ class OCRServiceSubprocess:
         if isinstance(pipeline_name, Enum):
             pipeline_name = pipeline_name.value
 
+        # 确保 pipeline_name 是字符串
+        pipeline_name_str = str(pipeline_name)
+
         # 检查模型是否已缓存
-        if is_pipeline_cached(pipeline_name):
+        if is_pipeline_cached(pipeline_name_str):
             logger.debug(
                 f"[识别] 管道 {pipeline_name} 模型已缓存，使用标准超时 ({TIMEOUT_CACHED}s)"
             )

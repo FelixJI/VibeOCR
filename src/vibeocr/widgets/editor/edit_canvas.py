@@ -16,6 +16,7 @@ from PySide6.QtGui import (
     QUndoStack,
 )
 from PySide6.QtWidgets import (
+    QGraphicsEllipseItem,
     QGraphicsItem,
     QGraphicsPixmapItem,
     QGraphicsRectItem,
@@ -87,7 +88,7 @@ class EditCanvas(QGraphicsView):
         # 绘制状态
         self._drawing: bool = False
         self._draw_start: QPointF | None = None
-        self._temp_item: QGraphicsItem | None = None
+        self._temp_item: QGraphicsRectItem | QGraphicsEllipseItem | ArrowAnnotation | EllipseAnnotation | MosaicItem | BlurItem | RectAnnotation | None = None
 
         # 裁剪相关
         self._crop_rect_item: QGraphicsRectItem | None = None
@@ -299,14 +300,13 @@ class EditCanvas(QGraphicsView):
         """创建临时预览项"""
         tool = self._current_tool
         rect = QRectF(start, start)
+        item: QGraphicsRectItem | QGraphicsEllipseItem | ArrowAnnotation
 
         if tool == EditTool.RECT:
             item = QGraphicsRectItem(rect)
             item.setPen(QPen(self._pen_color, self._pen_width, Qt.PenStyle.DashLine))
             item.setBrush(Qt.BrushStyle.NoBrush)
         elif tool == EditTool.ELLIPSE:
-            from PySide6.QtWidgets import QGraphicsEllipseItem
-
             item = QGraphicsEllipseItem(rect)
             item.setPen(QPen(self._pen_color, self._pen_width, Qt.PenStyle.DashLine))
             item.setBrush(Qt.BrushStyle.NoBrush)
@@ -372,7 +372,7 @@ class EditCanvas(QGraphicsView):
         # 移除临时项
         self._remove_temp()
 
-        item = None
+        item: RectAnnotation | EllipseAnnotation | ArrowAnnotation | MosaicItem | BlurItem | None = None
 
         if tool == EditTool.RECT:
             item = RectAnnotation(

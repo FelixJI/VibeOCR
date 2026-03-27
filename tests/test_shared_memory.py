@@ -10,7 +10,6 @@ import pytest
 try:
     from vibeocr.utils.shared_memory_v2 import (
         MessageType,
-        SharedMemoryConfig,
         SharedMemoryProtocolError,
         deserialize_request,
         deserialize_result,
@@ -62,7 +61,7 @@ class TestSharedMemoryProtocol:
         """Test connecting to non-existent shared memory raises error."""
         protocol = SharedMemoryProtocol("test_shm_nonexistent", 1024)
 
-        with pytest.raises(Exception):  # FileNotFoundError on most systems
+        with pytest.raises((FileNotFoundError, SharedMemoryProtocolError)):
             protocol.connect()
 
     def test_write_read_message(self):
@@ -96,9 +95,9 @@ class TestSharedMemoryProtocol:
             protocol.write_message(MSG_RESULT, large_data, timeout=5.0)
 
             # Read back
-            msg_type, data = protocol.read_message(timeout=5.0)
+            _msg_type, data = protocol.read_message(timeout=5.0)
 
-            assert msg_type == MSG_RESULT
+            assert _msg_type == MSG_RESULT
             assert len(data) == size
             assert data == large_data
         finally:
@@ -148,7 +147,7 @@ class TestSharedMemoryProtocol:
             for i in range(5):
                 test_data = f"Message {i}".encode()
                 protocol.write_message(MSG_RECOGNIZE, test_data, timeout=5.0)
-                msg_type, data = protocol.read_message(timeout=5.0)
+                _msg_type, data = protocol.read_message(timeout=5.0)
                 assert data == test_data
         finally:
             protocol.close()

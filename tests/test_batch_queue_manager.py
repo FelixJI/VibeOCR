@@ -16,7 +16,7 @@ class MockPipeline:
 
     def predict(self, images, **kwargs):
         """模拟批量预测"""
-        for i, img in enumerate(images):
+        for i, _img in enumerate(images):
             yield {"text": f"Result {i}", "confidence": 0.95}
 
 
@@ -126,7 +126,7 @@ class TestBatchQueueManager:
         manager.cancel()
 
         options = PreprocessOptions()
-        results = manager.commit(options)
+        _results = manager.commit(options)
 
         # 取消后不应该有结果
         # (因为取消标志在 commit 开始时已设置)
@@ -167,7 +167,7 @@ class TestBatchQueueManagerWithGPU:
             manager = BatchQueueManager(pipeline, max_batch_size=8)
 
             # 添加请求
-            for i in range(10):
+            for _ in range(10):
                 manager.add_request(b"x" * 1000, {})
 
             # commit 会调用 _calculate_batch_size

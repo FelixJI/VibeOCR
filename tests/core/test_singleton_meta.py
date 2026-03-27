@@ -66,7 +66,7 @@ class TestSingletonMeta:
             t.join()
 
         # 所有实例应该是同一个
-        assert len(set(id(i) for i in instances)) == 1
+        assert len({id(i) for i in instances}) == 1
 
         # 清理
         SingletonMeta.reset_instance(ThreadSafeClass)

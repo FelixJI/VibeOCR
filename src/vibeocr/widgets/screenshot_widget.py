@@ -5,6 +5,7 @@ from PySide6.QtGui import (
     QColor,
     QGuiApplication,
     QImage,
+    QMouseEvent,
     QPainter,
     QPen,
     QPixmap,
@@ -46,8 +47,8 @@ class ScreenshotWidget(QWidget):
         # 设置窗口背景为透明色
         self.setStyleSheet("background: transparent;")
 
-        self._start_pos = None
-        self._end_pos = None
+        self._start_pos: QPoint | None = None
+        self._end_pos: QPoint | None = None
         self._selection_rect: QRect | None = None
         self._screen_pixmap: QPixmap | None = None
         self._screen_image: QImage | None = None  # 用于像素颜色提取
@@ -168,19 +169,22 @@ class ScreenshotWidget(QWidget):
                 mag_rect,
             )
 
-    def mousePressEvent(self, event) -> None:
+    def mousePressEvent(self, event: QMouseEvent) -> None:
         """鼠标按下开始选择"""
         if event.button() == Qt.MouseButton.LeftButton:
             self._start_pos = event.pos()
-            self._selection_rect = QRect(self._start_pos, self._start_pos)
+            start_pos = self._start_pos
+            self._selection_rect = QRect(start_pos, start_pos)
             self.update()
 
-    def mouseMoveEvent(self, event) -> None:
+    def mouseMoveEvent(self, event: QMouseEvent) -> None:
         """鼠标移动更新选区和放大镜"""
         self._current_mouse_pos = event.pos()
         if self._start_pos:
             self._end_pos = event.pos()
-            self._selection_rect = QRect(self._start_pos, self._end_pos).normalized()
+            start_pos = self._start_pos
+            end_pos = self._end_pos
+            self._selection_rect = QRect(start_pos, end_pos).normalized()
         self.update()
 
     def mouseReleaseEvent(self, event) -> None:

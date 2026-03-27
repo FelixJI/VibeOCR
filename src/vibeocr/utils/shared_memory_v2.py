@@ -59,7 +59,6 @@ class SharedMemoryProtocolError(Exception):
     """共享内存协议错误"""
 
 
-
 @dataclass
 class SharedMemoryConfig:
     """共享内存配置"""
@@ -147,6 +146,12 @@ class SharedMemoryProtocolV2:
         # 用于实现可中断的等待
         self._stop_event = threading.Event()
 
+    @property
+    def _buf(self) -> memoryview:  # type: ignore[override]
+        """获取共享内存缓冲区（pyright 兼容）"""
+        assert self.shm is not None
+        return self.shm.buf  # type: ignore[return-value]
+
     def create(self) -> None:
         """创建共享内存（主进程调用）
 
@@ -175,12 +180,10 @@ class SharedMemoryProtocolV2:
         """初始化状态标志区域"""
         if self.shm is None:
             return
-        assert self.shm is not None  # 类型检查器提示
-        # 使用共享内存的前几个字节作为状态标志
         # 字节 0-3: 消息类型
         # 字节 4-7: 数据大小
         # 字节 8: 数据就绪标志 (0=空, 1=有数据)
-        self.shm.buf[8] = 0  # 初始化为空
+        self._buf[8] = 0  # 初始化为空
 
     def connect(self) -> None:
         """连接共享内存（Worker 调用）
@@ -197,7 +200,7 @@ class SharedMemoryProtocolV2:
             raise SharedMemoryProtocolError("共享内存未初始化")
         # 多次写入确保生效（Windows 共享内存同步问题）
         for _ in range(3):
-            self.shm.buf[8] = 1 if ready else 0
+            self._buf[8] = 1 if ready else 0
             time.sleep(0.001)
         logger.debug(f"[SHM {self.config.name}] 设置 _is_data_ready = {ready}")
 
@@ -206,7 +209,7 @@ class SharedMemoryProtocolV2:
         if self.shm is None:
             raise SharedMemoryProtocolError("共享内存未初始化")
         # 直接读取共享内存字节
-        result = self.shm.buf[8] == 1
+        result = self._buf[8] == 1
         # 只在状态为 True 时打印，避免过多日志
         if result:
             logger.debug(f"[SHM {self.config.name}] 检测到 _is_data_ready = True")
@@ -231,12 +234,15 @@ class SharedMemoryProtocolV2:
 
     def _get_state(self) -> int:
         """获取状态标志（兼容 V1）"""
-        return self.shm.buf[8] if self.shm else 0
+        if self.shm is None:
+            return 0
+        return self._buf[8]
 
     def _set_state(self, state: int) -> None:
         """设置状态标志（兼容 V1）"""
-        if self.shm:
-            self.shm.buf[8] = state
+        if self.shm is None:
+            return
+        self._buf[8] = state
 
     def write_message(
         self,
@@ -285,7 +291,7 @@ class SharedMemoryProtocolV2:
 
         while True:
             # 强制重新读取共享内存
-            ready_flag = self.shm.buf[8]
+            ready_flag = self._buf[8]
             if ready_flag != 1:
                 break
 
@@ -307,17 +313,17 @@ class SharedMemoryProtocolV2:
 
         # 写入头部（字节 0-7）
         header = struct.pack(HEADER_FORMAT, msg_type, len(data))
-        self.shm.buf[0:HEADER_SIZE] = header
+        self._buf[0:HEADER_SIZE] = header
 
         # 写入数据（字节 9 开始）
         data_start = self._data_offset + 1
-        self.shm.buf[data_start : data_start + len(data)] = data
+        self._buf[data_start : data_start + len(data)] = data
 
         # 设置数据就绪标志，通知读方
         self._set_data_ready(True)
 
         logger.debug(
-            f"[SHM {self.config.name}] 写入消息: type={msg_type}, size={len(data)}"
+            f"[SHM {self.config.name}] 写入消息: type={msg_type.decode('ascii', errors='replace')}, size={len(data)}"
         )
         return total_size
 
@@ -351,7 +357,7 @@ class SharedMemoryProtocolV2:
 
         while True:
             # 强制重新读取共享内存，确保看到其他进程的更新
-            ready_flag = self.shm.buf[8]
+            ready_flag = self._buf[8]
             if ready_flag == 1:
                 break
 
@@ -366,18 +372,18 @@ class SharedMemoryProtocolV2:
             wait_time = min(wait_time * 2, max_wait)
 
         # 读取头部
-        header = bytes(self.shm.buf[0:HEADER_SIZE])
+        header = bytes(self._buf[0:HEADER_SIZE])
         msg_type, data_size = struct.unpack(HEADER_FORMAT, header)
 
         # 读取数据
         data_start = self._data_offset + 1
-        data = bytes(self.shm.buf[data_start : data_start + data_size])
+        data = bytes(self._buf[data_start : data_start + data_size])
 
         # 清除数据就绪标志，允许下一次写入
         self._set_data_ready(False)
 
         logger.debug(
-            f"[SHM {self.config.name}] 读取消息: type={msg_type}, size={data_size}"
+            f"[SHM {self.config.name}] 读取消息: type={msg_type.decode('ascii', errors='replace')}, size={data_size}"
         )
         return msg_type, data
 

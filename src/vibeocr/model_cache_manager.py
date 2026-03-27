@@ -138,7 +138,7 @@ def _load_pipeline_config(pipeline_name: str) -> dict | None:
 
 def _load_all_pipeline_configs() -> dict[str, dict]:
     """加载所有管道配置文件"""
-    configs = {}
+    configs: dict[str, dict] = {}
     config_dir = get_config_dir()
 
     if not config_dir.exists():
@@ -175,7 +175,7 @@ def get_pipeline_models(pipeline_name: str) -> dict[str, list[str]]:
 
 def _scan_existing_models() -> dict[str, list[str]]:
     """扫描已存在的模型"""
-    models = {
+    models: dict[str, list[str]] = {
         "official": [],
         "inference": [],
     }

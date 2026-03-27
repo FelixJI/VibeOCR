@@ -485,7 +485,7 @@ class OCRService(metaclass=SingletonMeta):
         import paddle
 
         try:
-            is_compiled_with_cuda = paddle.is_compiled_with_cuda()
+            is_compiled_with_cuda = paddle.is_compiled_with_cuda()  # type: ignore[reportPrivateImportUsage]
             current_device = paddle.device.get_device()
 
             _logger.info(f"Paddle 编译时包含 CUDA: {is_compiled_with_cuda}")
@@ -678,7 +678,7 @@ class OCRService(metaclass=SingletonMeta):
             pil_image = PILImage.open(io.BytesIO(image))
             # 转换为 RGB 模式（确保格式一致）再转为 numpy 数组
             if pil_image.mode != "RGB":
-                pil_image = pil_image.convert("RGB")
+                pil_image = pil_image.convert("RGB")  # type: ignore[assignment]
             image = np.array(pil_image)
             _logger.info(f"[recognize] 转换完成，数组形状: {image.shape}")
 
@@ -780,7 +780,9 @@ class OCRService(metaclass=SingletonMeta):
                                 ocr_pred, "rec_scores"
                             ):
                                 for text, score in zip(
-                                    ocr_pred.rec_texts, ocr_pred.rec_scores, strict=False
+                                    ocr_pred.rec_texts,
+                                    ocr_pred.rec_scores,
+                                    strict=False,
                                 ):
                                     if text:
                                         text_with_scores.append((text, float(score)))
@@ -934,7 +936,9 @@ class OCRService(metaclass=SingletonMeta):
                                 ocr_pred, "rec_scores"
                             ):
                                 for text, score in zip(
-                                    ocr_pred.rec_texts, ocr_pred.rec_scores, strict=False
+                                    ocr_pred.rec_texts,
+                                    ocr_pred.rec_scores,
+                                    strict=False,
                                 ):
                                     if text:
                                         text_with_scores.append((text, float(score)))
@@ -975,7 +979,8 @@ class OCRService(metaclass=SingletonMeta):
                         ocr_pred = table_res.get("table_ocr_pred", {})
                         for text, score in zip(
                             ocr_pred.get("rec_texts", []),
-                            ocr_pred.get("rec_scores", []), strict=False,
+                            ocr_pred.get("rec_scores", []),
+                            strict=False,
                         ):
                             if text:
                                 text_with_scores.append((text, float(score)))

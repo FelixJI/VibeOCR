@@ -76,7 +76,7 @@ def get_ocr_service(skip_auto_start: bool = False):
     if _should_use_portable():
         from .ocr_service_portable import OCRService
     else:
-        from .ocr_service import OCRService
+        from .ocr_service import OCRService  # type: ignore[no-redef,assignment]
     return OCRService()
 
 
@@ -89,13 +89,13 @@ if USE_SUBPROCESS:
     from .ocr_service_subprocess import OCRServiceSubprocess
 
     # 别名，方便使用
-    OCRService = OCRServiceSubprocess
+    OCRService = OCRServiceSubprocess  # type: ignore[assignment,misc]
 else:
     # 直接模式
     if USE_PORTABLE_OCR:
-        from .ocr_service_portable import OCRService
+        from .ocr_service_portable import OCRService  # type: ignore[assignment]
     else:
-        from .ocr_service import OCRService
+        from .ocr_service import OCRService  # type: ignore[assignment]
 
 __all__ = [
     "USE_PORTABLE_OCR",

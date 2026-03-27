@@ -1,7 +1,6 @@
 # tests/models/test_ocr_options.py
 """OCROptions 测试"""
 
-
 from vibeocr.core.pipelines import OCRPipeline
 from vibeocr.models.ocr_options import OCROptions
 

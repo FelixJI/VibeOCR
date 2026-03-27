@@ -1232,17 +1232,19 @@ class Ui_MainWindowWidget:
             )
         )
         ___qtablewidgetitem = self.tableTemplates.horizontalHeaderItem(0)
-        ___qtablewidgetitem.setText(
-            QCoreApplication.translate(
-                "MainWindowWidget", "\u6a21\u677f\u540d\u79f0", None
+        if ___qtablewidgetitem is not None:
+            ___qtablewidgetitem.setText(
+                QCoreApplication.translate(
+                    "MainWindowWidget", "\u6a21\u677f\u540d\u79f0", None
+                )
             )
-        )
         ___qtablewidgetitem1 = self.tableTemplates.horizontalHeaderItem(1)
-        ___qtablewidgetitem1.setText(
-            QCoreApplication.translate(
-                "MainWindowWidget", "\u5b57\u6bb5\u5217\u8868", None
+        if ___qtablewidgetitem1 is not None:
+            ___qtablewidgetitem1.setText(
+                QCoreApplication.translate(
+                    "MainWindowWidget", "\u5b57\u6bb5\u5217\u8868", None
+                )
             )
-        )
         self.btnAddTemplate.setText(
             QCoreApplication.translate(
                 "MainWindowWidget", "\u6dfb\u52a0\u6a21\u677f", None

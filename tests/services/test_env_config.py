@@ -38,7 +38,7 @@ class TestEnvConfigConstants:
 
     def test_pip_mirror_sources_are_urls(self):
         """测试 pip 镜像源是 URL"""
-        for name, url in PIP_MIRROR_SOURCES.items():
+        for _name, url in PIP_MIRROR_SOURCES.items():
             assert url.startswith("http")
 
     def test_paddle_version_format(self):

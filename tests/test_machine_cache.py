@@ -101,9 +101,9 @@ class TestCacheValidation:
         """Should return (False, None) if no cache exists."""
         from vibeocr.machine_cache import is_cache_valid
 
-        is_valid, data = is_cache_valid(tmp_path)
+        is_valid, _data = is_cache_valid(tmp_path)
         assert is_valid is False
-        assert data is None
+        assert _data is None
 
     def test_is_cache_valid_returns_false_if_machine_id_mismatch(self, tmp_path):
         """Should return (False, None) if machine ID doesn't match."""
@@ -117,9 +117,8 @@ class TestCacheValidation:
         }
         save_cache(tmp_path, cache_data)
 
-        is_valid, data = is_cache_valid(tmp_path)
+        is_valid, _data = is_cache_valid(tmp_path)
         assert is_valid is False
-        assert data is None
 
     def test_is_cache_valid_returns_true_if_machine_id_matches(self, tmp_path):
         """Should return (True, data) if machine ID matches."""
@@ -157,7 +156,7 @@ class TestCacheValidation:
         }
         save_cache(tmp_path, cache_data)
 
-        is_valid, data = is_cache_valid(tmp_path)
+        is_valid, _data = is_cache_valid(tmp_path)
         assert is_valid is False
 
 

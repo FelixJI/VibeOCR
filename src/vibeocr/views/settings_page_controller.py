@@ -166,6 +166,7 @@ class SettingsPageController:
 
     def _save_llm_config(self) -> None:
         """保存 LLM 配置"""
+        assert self._llm_configs is not None
         config_path = self._project_root / "config" / "llm_config.json"
         config_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -208,6 +209,7 @@ class SettingsPageController:
 
     def _on_save_llm_config_clicked(self) -> None:
         """保存 LLM 配置按钮点击"""
+        assert self._llm_configs is not None
         # 保存 MLLM 配置
         edit_mllm_url = self._ui.findChild(QLineEdit, "editMLLMUrl")
         edit_mllm_model = self._ui.findChild(QLineEdit, "editMLLMModel")
@@ -417,13 +419,13 @@ class SettingsPageController:
         label = self._ui.findChild(QWidget, "labelPreloadStatus")
         if label:
             if status:
-                label.setText(status)
+                label.setText(status)  # type: ignore[attr-defined]
             else:
                 # 默认状态
                 if self._subprocess_manager.is_ready:
-                    label.setText("就绪")
+                    label.setText("就绪")  # type: ignore[attr-defined]
                 else:
-                    label.setText("服务未就绪")
+                    label.setText("服务未就绪")  # type: ignore[attr-defined]
 
     # ============================================================
     # 缓存管理
@@ -446,11 +448,11 @@ class SettingsPageController:
             None,
             "确认清除",
             "确定要清除所有缓存吗？\n这将删除机器配置缓存，下次启动时需要重新检测。",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No,
+            QMessageBox.Yes | QMessageBox.No,  # type: ignore[attr-defined]
+            QMessageBox.No,  # type: ignore[attr-defined]
         )
 
-        if reply == QMessageBox.Yes:
+        if reply == QMessageBox.Yes:  # type: ignore[attr-defined]
             clear_cache(self._project_root)
             self._update_cache_status("缓存已清除")
             logger.info("[缓存] 已清除")
@@ -462,13 +464,13 @@ class SettingsPageController:
         label = self._ui.findChild(QWidget, "labelCacheStatus")
         if label:
             if status:
-                label.setText(status)
+                label.setText(status)  # type: ignore[attr-defined]
             else:
                 if is_cache_valid(self._project_root):
                     info = get_cache_info(self._project_root)
-                    label.setText(f"缓存有效: {info}")
+                    label.setText(f"缓存有效: {info}")  # type: ignore[attr-defined]
                 else:
-                    label.setText("无有效缓存")
+                    label.setText("无有效缓存")  # type: ignore[attr-defined]
 
     # ============================================================
     # 模板管理
@@ -655,11 +657,11 @@ class SettingsPageController:
             None,
             "确认删除",
             f"确定要删除模板 '{template_name}' 吗？",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No,
+            QMessageBox.Yes | QMessageBox.No,  # type: ignore[attr-defined]
+            QMessageBox.No,  # type: ignore[attr-defined]
         )
 
-        if reply != QMessageBox.Yes:
+        if reply != QMessageBox.Yes:  # type: ignore[attr-defined]
             return
 
         config_path = self._project_root / "config" / "templates.json"

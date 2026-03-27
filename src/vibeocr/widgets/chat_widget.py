@@ -178,8 +178,10 @@ class ChatWidget(QWidget):
         # 移除所有气泡（保留 stretch）
         while self._messages_layout.count() > 1:
             item = self._messages_layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
+            if item is not None:
+                widget = item.widget()
+                if widget is not None:
+                    widget.deleteLater()
 
     def get_history(self) -> list[dict]:
         """获取对话历史"""

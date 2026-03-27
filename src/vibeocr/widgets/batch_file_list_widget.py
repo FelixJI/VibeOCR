@@ -36,7 +36,7 @@ class BatchFileListWidget(QWidget):
     # 选中文件变更信号
     selection_changed = Signal(str)  # file_path
 
-    def __init__(self, parent: QWidget = None):
+    def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
 
         self._files: list[dict] = []

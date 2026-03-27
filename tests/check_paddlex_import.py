@@ -7,7 +7,7 @@
 3. Nuitka 编译测试
 """
 
-import os
+import importlib.util
 from pathlib import Path
 
 
@@ -18,36 +18,35 @@ def check_paddlex_size():
     print("=" * 60)
 
     try:
-        import pip
-        import pkg_resources
+        import importlib.metadata
 
         # 获取 PaddleX 及其依赖
-        distribution = pkg_resources.get_distribution("paddlex")
+        distribution = importlib.metadata.distribution("paddlex")
         print(f"\nPaddleX 版本: {distribution.version}")
 
         # 获取依赖
-        dependencies = distribution.requires()
+        dependencies = distribution.requires
 
         print("\n主要依赖:")
         total_size = 0
 
-        for dep in dependencies[:10]:  # 只显示前10个
+        for dep in (dependencies or [])[:10]:  # 只显示前10个
             try:
-                dist = pkg_resources.get_distribution(
+                dist = importlib.metadata.distribution(
                     str(dep).split(">=")[0].split("==")[0]
                 )
-                if dist.egg_info and os.path.exists(dist.egg_info):
+                if dist._path and Path(dist._path).exists():
                     # 估算大小
-                    location = dist.egg_info
-                    if os.path.exists(location):
+                    location = dist._path
+                    if Path(location).exists():
                         size = sum(
                             f.stat().st_size
                             for f in Path(location).rglob("*")
                             if f.is_file()
                         )
                         total_size += size
-                        print(f"  {dist.project_name}: {size / 1024 / 1024:.1f} MB")
-            except:
+                        print(f"  {dist.metadata['Name']}: {size / 1024 / 1024:.1f} MB")
+            except Exception:
                 pass
 
         print(f"\n估算总大小: {total_size / 1024 / 1024:.1f} MB")
@@ -64,23 +63,25 @@ def check_paddlex_import():
     print("=" * 60)
 
     try:
-        import paddlex
+        spec = importlib.util.find_spec("paddlex")
+        if spec is not None:
+            print("✓ PaddleX 可以导入")
 
-        print("✓ PaddleX 可以导入")
-
-        # 尝试创建流水线
-        try:
-            from paddlex import create_pipeline
-
-            print("✓ create_pipeline 可以导入")
+            # 尝试检查 create_pipeline
+            pipeline_spec = importlib.util.find_spec("paddlex.create_pipeline")
+            if pipeline_spec is not None:
+                print("✓ create_pipeline 可以导入")
+            else:
+                print("✗ create_pipeline 导入失败")
 
             # 注意：不实际创建流水线，因为这需要 GPU/CUDA
             print("  （跳过实际创建流水线，避免资源占用）")
+        else:
+            print("✗ PaddleX 导入失败")
+            print("\n请先安装 PaddleX:")
+            print("  pip install paddlex")
 
-        except ImportError as e:
-            print(f"✗ create_pipeline 导入失败: {e}")
-
-    except ImportError as e:
+    except (ImportError, ModuleNotFoundError) as e:
         print(f"✗ PaddleX 导入失败: {e}")
         print("\n请先安装 PaddleX:")
         print("  pip install paddlex")
@@ -122,18 +123,22 @@ def check_nuitka_available():
     print("=" * 60)
 
     try:
-        import nuitka
+        spec = importlib.util.find_spec("nuitka")
+        if spec is not None:
+            print("✓ Nuitka 已安装")
 
-        print("✓ Nuitka 已安装")
+            # 检查版本
+            import subprocess
 
-        # 检查版本
-        import subprocess
-
-        result = subprocess.run(["nuitka", "--version"], capture_output=True, text=True)
-        if result.returncode == 0:
-            print(f"  版本: {result.stdout.strip()}")
+            result = subprocess.run(["nuitka", "--version"], capture_output=True, text=True)
+            if result.returncode == 0:
+                print(f"  版本: {result.stdout.strip()}")
+            else:
+                print("  版本: 未知")
         else:
-            print("  版本: 未知")
+            print("✗ Nuitka 未安装")
+            print("\n安装命令:")
+            print("  pip install nuitka")
 
     except ImportError:
         print("✗ Nuitka 未安装")

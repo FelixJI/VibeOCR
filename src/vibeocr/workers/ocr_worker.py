@@ -29,7 +29,6 @@ class OCRWorkerError(Exception):
     """OCR Worker 错误"""
 
 
-
 def run_worker(shm_name: str, shm_size: int, use_gpu: bool) -> None:
     """运行 Worker 主循环
 
@@ -99,7 +98,12 @@ def run_worker(shm_name: str, shm_size: int, use_gpu: bool) -> None:
         raise OCRWorkerError(f"OCR 服务初始化失败: {e}") from None
 
     # 批量队列管理器（延迟初始化，仅在首次使用时创建）
-    batch_managers = {}  # 管道名称 -> BatchQueueManager
+    from typing import TYPE_CHECKING
+
+    if TYPE_CHECKING:
+        from vibeocr.workers.batch_queue_manager import BatchQueueManager
+
+    batch_managers: dict[str, BatchQueueManager | None] = {}  # 管道名称 -> BatchQueueManager
     PreprocessOptions = None  # 预先定义，避免未绑定错误
     batch_manager_initialized = False  # 标记是否已尝试初始化
 
@@ -432,11 +436,11 @@ def run_worker(shm_name: str, shm_size: int, use_gpu: bool) -> None:
                 elif msg_type in (MSG_RESULT, MSG_PRELOAD_DONE):
                     # 这些是响应消息，Worker 不应该读取到
                     # 如果读取到，说明是自己刚发送的响应，跳过
-                    logger.debug(f"[Worker] 读取到响应类型消息 {msg_type}，跳过")
+                    logger.debug(f"[Worker] 读取到响应类型消息 {msg_type.decode('ascii', errors='replace')}，跳过")
                     continue
 
                 else:
-                    logger.warning(f"未知消息类型: {msg_type}")
+                    logger.warning(f"未知消息类型: {msg_type.decode('ascii', errors='replace')}")
 
             except SharedMemoryProtocolError as e:
                 if "超时" in str(e):

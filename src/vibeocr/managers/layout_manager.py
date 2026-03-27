@@ -7,6 +7,7 @@ import base64
 import json
 import logging
 from pathlib import Path
+from typing import Any
 
 from PySide6.QtCore import QByteArray
 
@@ -86,7 +87,7 @@ class LayoutManager:
         self._config_dir.mkdir(parents=True, exist_ok=True)
 
         # 构建配置数据
-        data = {
+        data: dict[str, Any] = {
             "version": self.CONFIG_VERSION,
             "main_window": {},
             "splitters": {},

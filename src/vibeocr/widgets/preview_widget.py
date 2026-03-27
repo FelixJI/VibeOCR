@@ -30,7 +30,7 @@ class PreviewWidget(QWidget):
         )
         self._image_label.setText("点击此处或按 Ctrl+S 截图\n\n支持打开图片文件")
         self._image_label.setWordWrap(True)
-        self._image_label.mousePressEvent = self._on_label_click
+        self._image_label.mousePressEvent = self._on_label_click  # type: ignore[method-assign]
 
         layout.addWidget(self._image_label)
 

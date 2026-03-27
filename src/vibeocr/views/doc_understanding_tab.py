@@ -168,6 +168,9 @@ class DocUnderstandingTab(BaseOcrTab):
         if self._file_list:
             self._file_list.currentRowChanged.connect(self._on_file_selected)
 
+    def _on_start(self) -> None:
+        """开始处理（文档理解通过聊天交互触发，无需批量启动）"""
+
     @Slot()
     def _on_add_file(self):
         """添加文件"""

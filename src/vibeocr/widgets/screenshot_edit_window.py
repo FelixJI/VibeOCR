@@ -149,7 +149,7 @@ class ScreenshotEditWindow(QWidget):
         app = QApplication.instance()
         screen = None
         if app:
-            screen = app.screenAt(screen_rect.center())
+            screen = app.screenAt(screen_rect.center())  # type: ignore[attr-defined]
         if not screen:
             screens = QApplication.screens()
             screen = screens[0] if screens else None

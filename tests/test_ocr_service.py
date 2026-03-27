@@ -11,9 +11,9 @@ from vibeocr.services.ocr_service import OCROptions, OCRPipeline, OCRService
 
 # 检查 paddlex 是否可用
 try:
-    from paddlex import create_pipeline
+    import importlib.util
 
-    HAS_PADDLEX = True
+    HAS_PADDLEX = importlib.util.find_spec("paddlex") is not None
 except ImportError:
     HAS_PADDLEX = False
 

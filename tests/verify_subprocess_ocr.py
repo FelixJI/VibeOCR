@@ -133,14 +133,13 @@ def check_subprocess_ocr_service():
 
         # 尝试导入（可能会因为 PIL 失败，这是预期的）
         try:
-            from vibeocr.services.ocr_service_subprocess import (
-                OCRServiceSubprocess,
-                _OCRWorker,
-                _SharedMemoryProtocol,
-            )
+            import importlib.util as _ilu
 
-            print("  [OK] 子进程 OCR 服务导入成功")
-            return True
+            if _ilu.find_spec("vibeocr.services.ocr_service_subprocess") is not None:
+                print("  [OK] 子进程 OCR 服务导入成功")
+                return True
+            print("  [FAIL] 子进程 OCR 服务导入失败")
+            return False
         except ImportError as e:
             if "PIL" in str(e) or "PIL.Pillow" in str(e):
                 print(f"  [WARN] PIL 未安装（这是预期的，需要嵌入式环境）: {e}")

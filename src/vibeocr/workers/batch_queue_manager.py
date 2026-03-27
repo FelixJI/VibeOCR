@@ -134,7 +134,7 @@ class BatchQueueManager:
             {request_id: result} 结果字典
         """
         self._cancelled = False
-        results = {}
+        results: dict[str, object] = {}
 
         # 获取待处理请求
         with self._lock:

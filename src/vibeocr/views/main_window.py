@@ -45,7 +45,6 @@ from vibeocr.widgets.toolbar import EdgeToolbar
 
 if TYPE_CHECKING:
     from vibeocr.models.ocr_result import OCRResult
-    from vibeocr.utils.app_settings import AppSettings
 
 # 延迟导入: OCR 服务模块导入很慢（~33s），延迟到首次使用时导入
 
@@ -466,7 +465,7 @@ class MainWindow(QMainWindow):
             container_layout.addWidget(self._console)
 
         # 配置日志，保存 handler 以便连接状态信号
-        self._log_handler = setup_logging(self._console.append_log)
+        self._log_handler = setup_logging(self._console.append_log)  # type: ignore[arg-type]
         # 连接日志状态信号到状态栏更新
         self._log_handler.status_signal.connect(self._on_log_status_update)
         logging.info("VibeOCR 启动")
@@ -979,8 +978,8 @@ class MainWindow(QMainWindow):
                 logging.info("[主线程OCR] 开始识别...")
                 from vibeocr.services import get_ocr_service
 
-                ocr_service = get_ocr_service()
-                result = ocr_service.recognize(image_array, options)
+                ocr_service = get_ocr_service()  # type: ignore[assignment]
+                result = ocr_service.recognize(image_array, options)  # type: ignore[call-arg]
                 logging.info(f"[主线程OCR] 识别完成，{len(result.raw_text)} 字符")
                 self._on_ocr_finished(result)
             except Exception as e:
@@ -1220,7 +1219,7 @@ class MainWindow(QMainWindow):
     def set_app_settings(self, app_settings) -> None:
         """设置应用设置对象（由 main.py 调用）"""
 
-        self._app_settings: AppSettings = app_settings
+        self._app_settings = app_settings  # type: ignore[assignment]
         self.apply_app_settings()
         self._init_app_settings_ui()
 
