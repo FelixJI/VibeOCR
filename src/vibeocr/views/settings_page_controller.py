@@ -326,10 +326,15 @@ class SettingsPageController:
 
     def _start_manual_preload_with_warmup(self, pipelines: list["OCRPipeline"]) -> None:
         """启动手动预加载和预热"""
-        from PySide6.QtCore import QRunnable, QThreadPool
+        from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal
 
         # 更新状态为"正在预加载"
         self._update_preload_status("正在预加载...")
+
+        class _PreloadSignals(QObject):
+            """预加载信号（用于跨线程安全地通知主线程）"""
+            status_changed = Signal(str)
+            finished = Signal(dict)
 
         class PreloadWithWarmupTask(QRunnable):
             def __init__(self, service, pipelines, controller):
@@ -337,24 +342,25 @@ class SettingsPageController:
                 self._service = service
                 self._pipelines = pipelines
                 self._controller = controller
-
-            def _update_status(self, status: str):
-                """更新预加载状态"""
-                self._controller._update_preload_status(status)
+                self.signals = _PreloadSignals()
 
             def run(self):
                 results = {}
 
                 for pipeline in self._pipelines:
                     try:
-                        self._update_status(f"正在预加载 {pipeline.display_name}...")
+                        self.signals.status_changed.emit(
+                            f"正在预加载 {pipeline.display_name}..."
+                        )
                         logger.info(f"[预加载] 正在预加载 {pipeline.display_name}...")
                         self._service.preload_pipeline(pipeline)
                         results[pipeline.name] = True
                         logger.info(f"[预加载] {pipeline.display_name} 预加载成功!")
 
                         # 预热
-                        self._update_status(f"正在预热 {pipeline.display_name}...")
+                        self.signals.status_changed.emit(
+                            f"正在预热 {pipeline.display_name}..."
+                        )
                         logger.info(f"[预热] 正在预热 {pipeline.display_name}...")
                         self._warmup_pipeline(pipeline)
                         logger.info(f"[预热] {pipeline.display_name} 预热成功!")
@@ -366,23 +372,22 @@ class SettingsPageController:
                 success_count = sum(1 for v in results.values() if v)
                 total = len(results)
                 if success_count == total:
-                    self._update_status("预加载成功")
+                    self.signals.status_changed.emit("预加载成功")
                     logger.info(f"[预加载] 全部完成! 成功: {success_count}/{total}")
                 elif success_count > 0:
-                    self._update_status(f"预加载部分成功 ({success_count}/{total})")
+                    self.signals.status_changed.emit(
+                        f"预加载部分成功 ({success_count}/{total})"
+                    )
                     logger.warning(f"[预加载] 部分完成: {success_count}/{total}")
                 else:
-                    self._update_status("预加载失败")
+                    self.signals.status_changed.emit("预加载失败")
                     logger.error("[预加载] 全部失败!")
 
-                # 回调
-                if self._controller._preload_complete_callback:
-                    self._controller._preload_complete_callback()
+                self.signals.finished.emit(results)
 
             def _warmup_pipeline(self, pipeline):
                 """预热管道"""
                 try:
-                    # 使用小图片预热
                     import io
 
                     from PIL import Image
@@ -401,15 +406,27 @@ class SettingsPageController:
                     logger.warning(f"[预热] {pipeline.display_name} 预热失败: {e}")
 
         task = PreloadWithWarmupTask(self._subprocess_manager.service, pipelines, self)
+        # 信号连接到主线程槽函数（Qt 自动处理跨线程分派）
+        task.signals.status_changed.connect(self._update_preload_status)
+        task.signals.finished.connect(self._on_manual_preload_finished)
         QThreadPool.globalInstance().start(task)
 
     def _on_manual_preload_finished(self, results: dict) -> None:
-        """手动预加载完成回调"""
+        """手动预加载完成回调（主线程槽函数）"""
+        # 重新启用按钮
         btn_preload_now = self._ui.findChild(QWidget, "btnPreloadNow")
         if btn_preload_now:
             btn_preload_now.setEnabled(True)
 
-        # 状态已由任务内部更新，此处仅记录日志
+        # 隐藏进度条
+        progress_bar = self._ui.findChild(QProgressBar, "progressPreload")
+        if progress_bar:
+            progress_bar.setVisible(False)
+
+        # 通知完成
+        if self._preload_complete_callback:
+            self._preload_complete_callback()
+
         success_count = sum(1 for v in results.values() if v)
         total = len(results)
         logger.info(f"[预加载] 完成: {success_count}/{total}")
@@ -434,11 +451,13 @@ class SettingsPageController:
     def _on_refresh_cache_clicked(self) -> None:
         """刷新缓存按钮点击"""
         from vibeocr.machine_cache import refresh_cache
+        from vibeocr.model_cache_manager import update_cache as update_model_cache
 
         self._update_cache_status("正在刷新缓存...")
         refresh_cache(self._project_root)
+        update_model_cache()
         self._update_cache_status("缓存已刷新")
-        logger.info("[缓存] 已刷新")
+        logger.info("[缓存] 已刷新（依赖缓存 + 模型缓存）")
 
     def _on_clear_cache_clicked(self) -> None:
         """清除缓存按钮点击"""

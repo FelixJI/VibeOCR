@@ -14,7 +14,7 @@ _logger = logging.getLogger(__name__)
 _WARMUP_IMAGE_DATA: bytes | None = None
 
 
-def get_warmup_image() -> bytes:
+def get_warmup_image() -> bytes | None:
     """获取预热测试图片数据
 
     返回一个 200x50 像素的白色 PNG 图片，
@@ -50,8 +50,7 @@ def get_warmup_image() -> bytes:
 
     except Exception as e:
         _logger.error(f"创建预热图片失败: {e}")
-        # 返回一个空的白图数据作为后备
-        return b"\x89PNG\r\n\x1a\n"  # PNG 文件头
+        return None  # PIL 不可用时返回 None，调用方需处理
 
 
 def warmup_with_test_image(ocr_service, pipeline: str | None = None) -> bool:
@@ -74,6 +73,9 @@ def warmup_with_test_image(ocr_service, pipeline: str | None = None) -> bool:
 
         # 获取测试图片
         test_image = get_warmup_image()
+        if test_image is None:
+            _logger.error("无法创建预热测试图片，预热中止")
+            return False
 
         # 创建选项
         pipeline_enum = OCRPipeline(pipeline) if pipeline else OCRPipeline.OCR
@@ -92,11 +94,14 @@ def warmup_with_test_image(ocr_service, pipeline: str | None = None) -> bool:
         return False
 
 
-def warmup_worker_process(worker_process, timeout: float = 60.0) -> bool:
+def warmup_worker_process(
+    worker_process, pipeline: str = "OCR", timeout: float = 60.0
+) -> bool:
     """预热 Worker 进程
 
     Args:
         worker_process: OCRWorkerProcess 实例
+        pipeline: 要预热的管道名称
         timeout: 超时时间（秒）
 
     Returns:
@@ -108,9 +113,12 @@ def warmup_worker_process(worker_process, timeout: float = 60.0) -> bool:
 
         # 获取测试图片数据
         test_image = get_warmup_image()
+        if test_image is None:
+            _logger.error("无法创建预热测试图片，预热中止")
+            return False
 
         # 准备选项
-        options_dict = {"pipeline": "OCR"}
+        options_dict = {"pipeline": pipeline}
 
         # 执行识别（这会触发模型加载）
         worker_process.recognize(test_image, options_dict, timeout=timeout)

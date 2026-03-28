@@ -381,6 +381,9 @@ class OCRService(metaclass=SingletonMeta):
 
             # 获取测试图片
             test_image = get_warmup_image()
+            if test_image is None:
+                _logger.error("[预热] 无法创建预热测试图片，预热中止")
+                return False
             _logger.debug(f"[预热] 测试图片大小: {len(test_image)} 字节")
 
             if progress_callback:
@@ -594,6 +597,13 @@ class OCRService(metaclass=SingletonMeta):
             pipeline=pipeline_name,
             device=device,
         )
+
+        # 首次创建管道时，patch PaddlePaddle 的 int()/float() tensor 转换
+        # 修复某些版本对非 0 维 tensor 转换的 bug
+        if not hasattr(OCRService, "_paddle_int_patched"):
+            self._patch_paddle_int_conversion()
+            OCRService._paddle_int_patched = True
+
         _logger.info("管道 %s 初始化于设备: %s", pipeline_name, device)
 
         # 通知初始化完成
@@ -601,6 +611,35 @@ class OCRService(metaclass=SingletonMeta):
             self._notify_status("模型初始化", f"{display_name} 管道初始化完成")
 
         return pipeline
+
+    @staticmethod
+    def _patch_paddle_int_conversion() -> None:
+        """Monkey-patch PaddlePaddle 的 Tensor.__int__，修复非 0 维 tensor 的 int() 转换问题。
+
+        PaddlePaddle 某些版本的 _int_ 通过 int(np.array(var)) 转换，
+        当 var 是 shape 为 (1,) 等非标量维度的 tensor 时会抛出:
+        TypeError: only 0-dimensional arrays can be converted to Python scalars
+
+        修复: 对单元素 tensor 优先使用 .item() 转换。
+        """
+        import paddle.base.dygraph.math_op_patch as _patch_module
+
+        def _fixed_int(var):
+            assert var._is_initialized(), "variable's tensor is not initialized"
+            return int(var.numpy().item())
+
+        _patch_module._int_ = _fixed_int
+
+        # 同步修复 __float__（存在相同问题）
+        def _fixed_float(var):
+            assert var._is_initialized(), "variable's tensor is not initialized"
+            return float(var.numpy().item())
+
+        _patch_module._float_ = _fixed_float
+
+        _logger.info(
+            "[Patch] 已修复 PaddlePaddle Tensor.__int__/__float__ 的非 0 维 tensor 转换问题"
+        )
 
     def _is_gpu_error(self, error: Exception) -> bool:
         """检查错误是否与 GPU 相关"""
@@ -1047,15 +1086,16 @@ class OCRService(metaclass=SingletonMeta):
             pipeline = self.get_pipeline(OCRPipeline.PADDLEOCR_VL)
 
             # 构建 predict 参数
+            # 注意: PaddleOCR-VL 管道默认不初始化 doc_preprocessor，
+            # 因此不支持 use_doc_orientation_classify / use_doc_unwarping
             predict_kwargs = {
                 "input": img,
-                "use_doc_orientation_classify": options.use_doc_orientation_classify,
-                "use_doc_unwarping": options.use_doc_unwarping,
                 "use_layout_detection": options.vl_use_layout_detection,
                 "use_chart_recognition": options.use_chart_recognition,
                 "use_seal_recognition": options.vl_use_seal_recognition,
                 "use_ocr_for_image_block": options.vl_use_ocr_for_image_block,
                 "format_block_content": options.vl_format_block_content,
+                "use_queues": False,  # 禁用并行队列以获取完整的错误堆栈
             }
 
             # 添加 VLM 采样参数（如果设置了非零值）

@@ -1129,9 +1129,11 @@ class MainWindow(QMainWindow):
         """刷新依赖缓存"""
         from vibeocr.machine_cache import clear_cache
         from vibeocr.managers.dependency_manager import DependencyCheckTask
+        from vibeocr.model_cache_manager import update_cache as update_model_cache
 
         logging.info("正在清除依赖缓存...")
         clear_cache(self._project_root)
+        update_model_cache()
         self._statusbar.showMessage("缓存已清除，正在重新检测依赖...")
 
         # 重新检测依赖

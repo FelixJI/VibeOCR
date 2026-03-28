@@ -294,22 +294,40 @@ class PreprocessOptionsWidget(QGroupBox):
         return OCRPipeline(value)
 
     def get_options(self) -> OCROptions:
-        """获取当前选项"""
-        return OCROptions(
-            pipeline=self.get_current_pipeline(),
-            use_doc_orientation_classify=self._doc_orientation_cb.isChecked(),
-            use_doc_unwarping=self._doc_unwarping_cb.isChecked(),
-            use_textline_orientation=self._textline_orientation_cb.isChecked(),
-            use_table_recognition=self._table_recognition_cb.isChecked(),
-            use_formula_recognition=self._formula_recognition_cb.isChecked(),
-            use_seal_recognition=self._seal_recognition_cb.isChecked(),
-            use_chart_recognition=self._chart_recognition_cb.isChecked(),
-            vl_use_layout_detection=self._vl_layout_cb.isChecked(),
-            vl_format_block_content=self._vl_markdown_cb.isChecked(),
-            vl_use_seal_recognition=self._vl_seal_cb.isChecked(),
-            vl_use_ocr_for_image_block=self._vl_ocr_image_cb.isChecked(),
-            doc_understanding_model=self._doc_model_combo.currentText(),
-        )
+        """获取当前选项（仅包含当前管道支持的选项）"""
+        from vibeocr.core.pipelines import is_option_supported
+
+        pipeline = self.get_current_pipeline()
+
+        kwargs: dict = {"pipeline": pipeline}
+
+        # 仅添加当前管道支持的选项，不支持的保持默认值
+        if is_option_supported(pipeline, "use_doc_orientation_classify"):
+            kwargs["use_doc_orientation_classify"] = self._doc_orientation_cb.isChecked()
+        if is_option_supported(pipeline, "use_doc_unwarping"):
+            kwargs["use_doc_unwarping"] = self._doc_unwarping_cb.isChecked()
+        if is_option_supported(pipeline, "use_textline_orientation"):
+            kwargs["use_textline_orientation"] = self._textline_orientation_cb.isChecked()
+        if is_option_supported(pipeline, "use_table_recognition"):
+            kwargs["use_table_recognition"] = self._table_recognition_cb.isChecked()
+        if is_option_supported(pipeline, "use_formula_recognition"):
+            kwargs["use_formula_recognition"] = self._formula_recognition_cb.isChecked()
+        if is_option_supported(pipeline, "use_seal_recognition"):
+            kwargs["use_seal_recognition"] = self._seal_recognition_cb.isChecked()
+        if is_option_supported(pipeline, "use_chart_recognition"):
+            kwargs["use_chart_recognition"] = self._chart_recognition_cb.isChecked()
+        if is_option_supported(pipeline, "vl_use_layout_detection"):
+            kwargs["vl_use_layout_detection"] = self._vl_layout_cb.isChecked()
+        if is_option_supported(pipeline, "vl_format_block_content"):
+            kwargs["vl_format_block_content"] = self._vl_markdown_cb.isChecked()
+        if is_option_supported(pipeline, "vl_use_seal_recognition"):
+            kwargs["vl_use_seal_recognition"] = self._vl_seal_cb.isChecked()
+        if is_option_supported(pipeline, "vl_use_ocr_for_image_block"):
+            kwargs["vl_use_ocr_for_image_block"] = self._vl_ocr_image_cb.isChecked()
+        if is_option_supported(pipeline, "doc_understanding_model"):
+            kwargs["doc_understanding_model"] = self._doc_model_combo.currentText()
+
+        return OCROptions(**kwargs)
 
     def set_options(self, options: OCROptions):
         """设置选项"""

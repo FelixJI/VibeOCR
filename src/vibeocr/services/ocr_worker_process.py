@@ -673,7 +673,9 @@ class OCRWorkerProcess:
         for pipeline_name in pipelines:
             try:
                 logger.info(f"[预热] Worker {self.worker_id} 预热管道: {pipeline_name}")
-                success = warmup_worker_process(self, timeout=timeout)
+                success = warmup_worker_process(
+                    self, pipeline=pipeline_name, timeout=timeout
+                )
                 results[pipeline_name] = success
             except Exception as e:
                 logger.error(
