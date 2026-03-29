@@ -55,7 +55,7 @@ class OCROptions:
             包含所有选项的字典
         """
         return {
-            "pipeline": self.pipeline.value,
+            "pipeline": self.pipeline.value if hasattr(self.pipeline, "value") else self.pipeline,
             "use_doc_orientation_classify": self.use_doc_orientation_classify,
             "use_doc_unwarping": self.use_doc_unwarping,
             "use_textline_orientation": self.use_textline_orientation,

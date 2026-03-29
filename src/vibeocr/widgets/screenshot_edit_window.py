@@ -162,6 +162,12 @@ class ScreenshotEditWindow(QWidget):
         # 设置画布背景
         self._canvas.set_background(pixmap)
 
+        # 从全局选项初始化识别面板
+        from vibeocr.utils.ocr_preferences import OCRPreferences
+
+        prefs = OCRPreferences.instance()
+        self._recognition_panel.set_options(prefs.get_options())
+
         # 清空撤销栈
         self._canvas.undo_stack.clear()
 

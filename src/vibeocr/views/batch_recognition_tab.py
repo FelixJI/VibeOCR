@@ -142,6 +142,7 @@ class BatchRecognitionTab(BaseOcrTab):
 
         self._setup_ui()
         self._connect_signals()
+        self._init_from_preferences()
 
     def _setup_ui(self):
         """设置 UI"""
@@ -343,6 +344,16 @@ class BatchRecognitionTab(BaseOcrTab):
     def set_ocr_service(self, service):
         """设置 OCR 服务"""
         self._ocr_service = service
+
+    def _init_from_preferences(self) -> None:
+        """从 OCRPreferences 初始化选项"""
+        from vibeocr.utils.ocr_preferences import OCRPreferences
+
+        prefs = OCRPreferences.instance()
+        self._preprocess_options.set_options(prefs.get_options())
+
+        # 监听全局选项变化
+        prefs.options_changed.connect(self._preprocess_options.set_options)
 
     def set_layout_manager(self, layout_manager) -> None:
         """设置布局管理器并恢复分割器状态"""

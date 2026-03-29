@@ -728,6 +728,27 @@ def is_production_environment_ready() -> tuple[bool, list[str]]:
     return len(missing) == 0, missing
 
 
+def _quick_verify_deps(python_exe: Path) -> dict[str, bool]:
+    """轻量验证依赖是否实际已安装（用于校验缓存）
+
+    只做简单的 import 检测，不获取 GPU 信息，速度较快。
+    """
+    deps = {}
+    for module, pkg in [("paddle", "paddlepaddle"), ("paddlex", "paddlex")]:
+        try:
+            result = subprocess.run(
+                [str(python_exe), "-c", f"import {module}"],
+                capture_output=True,
+                text=True,
+                timeout=15,
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+            )
+            deps[pkg] = result.returncode == 0
+        except Exception:
+            deps[pkg] = False
+    return deps
+
+
 def is_embedded_environment_ready(project_root: Path) -> tuple[bool, list[str]]:
     """检查嵌入式OCR环境是否就绪
 
@@ -746,6 +767,24 @@ def is_embedded_environment_ready(project_root: Path) -> tuple[bool, list[str]]:
     # 只检查 paddlepaddle 和 paddlex，排除 is_gpu 元数据字段
     required_deps = ["paddlepaddle", "paddlex"]
     missing = [pkg for pkg in required_deps if pkg not in deps or not deps[pkg]]
+
+    # 缓存显示缺失时，做一次轻量验证排除过期缓存
+    if missing:
+        verified = _quick_verify_deps(python_exe)
+        still_missing = [pkg for pkg in missing if not verified.get(pkg, False)]
+        if still_missing != missing:
+            # 缓存已过期，用验证结果更新
+            print("[依赖检查] 缓存已过期，使用实时检测结果")
+            missing = still_missing
+            # 重新写入缓存
+            for pkg, installed in verified.items():
+                deps[pkg] = installed
+            hardware_info = {
+                "has_gpu": deps.get("is_gpu", False),
+                "cuda_version": detect_cuda_version(),
+            }
+            create_cache_entry(project_root, deps, hardware_info)
+
     return len(missing) == 0, missing
 
 

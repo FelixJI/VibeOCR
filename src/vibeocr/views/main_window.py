@@ -143,10 +143,9 @@ class MainWindow(QMainWindow):
         self._ui = Ui_MainWindowWidget()
         self._ui.setupUi(self._central_widget)
 
-        # 设置主布局的 stretch factor
-        # tabWidget 占据所有可用空间 (stretch=1)，consoleContainer 保持固定高度 (stretch=0)
-        self._ui.verticalLayout.setStretch(0, 1)  # tabWidget
-        self._ui.verticalLayout.setStretch(1, 0)  # consoleContainer
+        # 设置主分割器 stretch（tabWidget 占据剩余空间，consoleContainer 保持固定）
+        self._ui.mainSplitter.setStretchFactor(0, 1)  # tabWidget
+        self._ui.mainSplitter.setStretchFactor(1, 0)  # consoleContainer
 
         # 设置 tabSettings 的 sizePolicy，使其可以缩小
         # 这样 TabWidget 不会因为设置页面的内容太多而变得很大
@@ -197,6 +196,13 @@ class MainWindow(QMainWindow):
             self.restoreGeometry(geometry)
             logging.info("已恢复窗口布局")
 
+        # 恢复主分割器状态（tabWidget 与控制台的比例）
+        if hasattr(self._ui, "mainSplitter"):
+            state = self._layout_manager.get_splitter_state("main_splitter")
+            if state:
+                self._ui.mainSplitter.restoreState(state)
+                logging.info("已恢复主分割器状态")
+
         # 恢复 OCR 标签页分割器状态
         if hasattr(self._ui, "ocrSplitter"):
             state = self._layout_manager.get_splitter_state("ocr_tab")
@@ -208,6 +214,12 @@ class MainWindow(QMainWindow):
         """保存窗口和分割器布局"""
         # 保存主窗口几何信息
         self._layout_manager.set_main_window_geometry(self.saveGeometry())
+
+        # 保存主分割器状态（tabWidget 与控制台的比例）
+        if hasattr(self._ui, "mainSplitter"):
+            self._layout_manager.set_splitter_state(
+                "main_splitter", self._ui.mainSplitter.saveState()
+            )
 
         # 保存 OCR 标签页分割器状态
         if hasattr(self._ui, "ocrSplitter"):
@@ -342,6 +354,9 @@ class MainWindow(QMainWindow):
         # 初始化按钮可见性
         self._update_button_visibility(OCRPipeline.OCR)
 
+        # 从持久化选项恢复按钮状态
+        self._restore_options_from_preferences()
+
         # 创建截图组件
         self._screenshot_widget = ScreenshotWidget()
 
@@ -369,8 +384,9 @@ class MainWindow(QMainWindow):
         logging.debug("信息抽取标签页已添加")
 
     def _on_pipeline_clicked(self, pipeline) -> None:
-        """管道按钮点击时更新 UI"""
+        """管道按钮点击时更新 UI 并同步到全局选项"""
         self._update_button_visibility(pipeline)
+        self._sync_options_to_preferences()
 
     def _init_doc_understanding_tab(self) -> None:
         """初始化文档理解标签页"""
@@ -444,6 +460,93 @@ class MainWindow(QMainWindow):
             if btn and btn.isChecked():
                 return pipeline
         return OCRPipeline.OCR
+
+    def _restore_options_from_preferences(self) -> None:
+        """从 OCRPreferences 恢复按钮状态"""
+        from vibeocr.utils.ocr_preferences import OCRPreferences
+
+        prefs = OCRPreferences.instance(self._project_root / "config")
+        options = prefs.get_options()
+        self._sync_buttons_from_options(options)
+
+        # 监听选项变化信号，同步按钮组
+        prefs.options_changed.connect(self._on_preferences_options_changed)
+
+    def _sync_buttons_from_options(self, options) -> None:
+        """从 OCROptions 同步按钮组状态（不触发信号）"""
+        from vibeocr.services.ocr_service import OCRPipeline
+
+        # 同步管道按钮
+        pipeline = options.pipeline
+        if isinstance(pipeline, str):
+            pipeline = OCRPipeline(pipeline)
+        for p, btn in self._pipeline_buttons.items():
+            if btn:
+                btn.blockSignals(True)
+                btn.setChecked(p == pipeline)
+                btn.blockSignals(False)
+        self._update_button_visibility(pipeline)
+
+        # 同步预处理按钮
+        if self._btn_orient:
+            self._btn_orient.blockSignals(True)
+            self._btn_orient.setChecked(options.use_doc_orientation_classify)
+            self._btn_orient.blockSignals(False)
+        if self._btn_unwarp:
+            self._btn_unwarp.blockSignals(True)
+            self._btn_unwarp.setChecked(options.use_doc_unwarping)
+            self._btn_unwarp.blockSignals(False)
+        if self._btn_textline:
+            self._btn_textline.blockSignals(True)
+            self._btn_textline.setChecked(options.use_textline_orientation)
+            self._btn_textline.blockSignals(False)
+
+        # 同步子产线按钮
+        if self._btn_sub_table:
+            self._btn_sub_table.blockSignals(True)
+            self._btn_sub_table.setChecked(options.use_table_recognition)
+            self._btn_sub_table.blockSignals(False)
+        if self._btn_sub_formula:
+            self._btn_sub_formula.blockSignals(True)
+            self._btn_sub_formula.setChecked(options.use_formula_recognition)
+            self._btn_sub_formula.blockSignals(False)
+        if self._btn_sub_seal:
+            self._btn_sub_seal.blockSignals(True)
+            self._btn_sub_seal.setChecked(options.use_seal_recognition)
+            self._btn_sub_seal.blockSignals(False)
+        if self._btn_sub_chart:
+            self._btn_sub_chart.blockSignals(True)
+            self._btn_sub_chart.setChecked(options.use_chart_recognition)
+            self._btn_sub_chart.blockSignals(False)
+
+        # 同步 VL 按钮
+        if self._btn_vl_layout:
+            self._btn_vl_layout.blockSignals(True)
+            self._btn_vl_layout.setChecked(options.vl_use_layout_detection)
+            self._btn_vl_layout.blockSignals(False)
+        if self._btn_vl_seal:
+            self._btn_vl_seal.blockSignals(True)
+            self._btn_vl_seal.setChecked(options.vl_use_seal_recognition)
+            self._btn_vl_seal.blockSignals(False)
+        if self._btn_vl_format:
+            self._btn_vl_format.blockSignals(True)
+            self._btn_vl_format.setChecked(options.vl_format_block_content)
+            self._btn_vl_format.blockSignals(False)
+        if self._btn_vl_ocr_image:
+            self._btn_vl_ocr_image.blockSignals(True)
+            self._btn_vl_ocr_image.setChecked(options.vl_use_ocr_for_image_block)
+            self._btn_vl_ocr_image.blockSignals(False)
+
+    def _sync_options_to_preferences(self) -> None:
+        """将当前按钮组状态同步到 OCRPreferences"""
+        from vibeocr.utils.ocr_preferences import OCRPreferences
+
+        options = self._build_options_from_ui()
+        OCRPreferences.instance().set_options(options)
+
+    def _on_preferences_options_changed(self, options) -> None:
+        """OCRPreferences 选项变化时同步按钮组"""
+        self._sync_buttons_from_options(options)
 
     def _setup_console(self) -> None:
         """初始化控制台"""
@@ -551,6 +654,9 @@ class MainWindow(QMainWindow):
 
         # 预览组件
         self._ui.previewWidget.screenshot_requested.connect(self._on_screenshot)
+        self._ui.previewWidget.file_open_requested.connect(
+            self._on_open_file_from_preview
+        )
 
         # 剪贴板控制器
         self._clipboard_controller = ClipboardController(
@@ -575,6 +681,24 @@ class MainWindow(QMainWindow):
             preload_complete_callback=self._on_preload_complete,
         )
         self._settings_controller.connect_signals()
+
+        # 选项按钮变化时同步到全局选项
+        for btn in [
+            self._btn_orient,
+            self._btn_unwarp,
+            self._btn_textline,
+            self._btn_layout,
+            self._btn_sub_table,
+            self._btn_sub_formula,
+            self._btn_sub_seal,
+            self._btn_sub_chart,
+            self._btn_vl_layout,
+            self._btn_vl_seal,
+            self._btn_vl_format,
+            self._btn_vl_ocr_image,
+        ]:
+            if btn:
+                btn.toggled.connect(self._sync_options_to_preferences)
 
     def _on_preload_complete(self) -> None:
         """预加载完成回调"""
@@ -781,6 +905,102 @@ class MainWindow(QMainWindow):
                 self._ui.previewWidget.set_pixmap(pixmap)
                 self._run_ocr(pixmap)
 
+    @Slot()
+    def _on_open_file_from_preview(self) -> None:
+        """从预览区域打开文件（支持图片和 PDF）"""
+        if not self._check_ocr_ready():
+            return
+        logging.info("打开文件对话框（图片/PDF）")
+
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "选择文件",
+            "",
+            "图片/PDF 文件 (*.png *.jpg *.jpeg *.bmp *.gif *.tiff *.pdf);;所有文件 (*)",
+        )
+        if not file_path:
+            return
+
+        if file_path.lower().endswith(".pdf"):
+            self._load_pdf_as_pixmap(file_path)
+        else:
+            pixmap = QPixmap(file_path)
+            if not pixmap.isNull():
+                self._ui.previewWidget.set_pixmap(pixmap)
+                self._run_ocr(pixmap)
+
+    def _load_pdf_as_pixmap(self, file_path: str) -> None:
+        """将 PDF 第一页转换为 QPixmap 并加载到预览"""
+        try:
+            from PySide6.QtPdf import QPdfDocument
+
+            doc = QPdfDocument(self)
+            error = doc.load(file_path)
+            if error != QPdfDocument.Error.None_:
+                QMessageBox.warning(
+                    self, "打开失败", f"无法加载 PDF 文件:\n{file_path}"
+                )
+                return
+
+            # 等待加载完成
+            if doc.status() != QPdfDocument.Status.Ready:
+                from PySide6.QtCore import QEventLoop
+
+                loop = QEventLoop()
+                doc.statusChanged.connect(
+                    lambda status: (
+                        loop.quit()
+                        if status
+                        in (
+                            QPdfDocument.Status.Ready,
+                            QPdfDocument.Status.Error,
+                        )
+                        else None
+                    )
+                )
+                loop.exec()
+
+            if doc.status() != QPdfDocument.Status.Ready:
+                QMessageBox.warning(
+                    self, "打开失败", f"PDF 加载失败: {doc.error()}"
+                )
+                return
+
+            if doc.pageCount() == 0:
+                QMessageBox.warning(self, "打开失败", "PDF 文件没有页面")
+                return
+
+            page_size = doc.pagePointSize(0)
+            scale = 2.0  # 2x 渲染以获得清晰度
+            render_size = page_size * scale
+
+            qimage = doc.render(0, render_size.toSize())
+            if qimage and not qimage.isNull():
+                pixmap = QPixmap.fromImage(qimage)
+                self._ui.previewWidget.set_pixmap(pixmap)
+                self._run_ocr(pixmap)
+                logging.info(
+                    f"PDF 加载成功: {file_path}, "
+                    f"页面尺寸: {page_size.width():.0f}x{page_size.height():.0f}pt"
+                )
+            else:
+                QMessageBox.warning(self, "渲染失败", "PDF 页面渲染失败")
+
+            doc.close()
+
+        except ImportError:
+            QMessageBox.warning(
+                self,
+                "不支持",
+                "当前版本不支持 PDF 文件。\n请安装 PySide6 QtPdf 模块。",
+            )
+            logging.warning("QtPdf 模块不可用，无法加载 PDF")
+        except Exception as e:
+            QMessageBox.warning(
+                self, "打开失败", f"加载 PDF 文件时出错:\n{e}"
+            )
+            logging.error(f"加载 PDF 失败: {e}", exc_info=True)
+
     def _check_ocr_ready(self) -> bool:
         """检查OCR功能是否可用
 
@@ -853,10 +1073,16 @@ class MainWindow(QMainWindow):
 
     @Slot(QPixmap, object)
     def _on_edit_confirmed(self, pixmap: QPixmap, options) -> None:
-        """编辑完成，执行 OCR"""
+        """编辑完成，同步选项到主界面并执行 OCR"""
         self._edit_window.hide()
         self.showNormal()
         self.activateWindow()
+
+        # 将编辑窗口的选项同步到全局状态（信号会自动同步按钮组）
+        if options:
+            from vibeocr.utils.ocr_preferences import OCRPreferences
+
+            OCRPreferences.instance().set_options(options)
 
         if not pixmap.isNull():
             dpr = pixmap.devicePixelRatio()

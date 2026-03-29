@@ -330,8 +330,27 @@ class PreprocessOptionsWidget(QGroupBox):
         return OCROptions(**kwargs)
 
     def set_options(self, options: OCROptions):
-        """设置选项"""
+        """设置选项（不触发 options_changed 信号）"""
         self._current_options = options
+
+        # 阻止所有控件信号，防止级联触发
+        widgets = [
+            self._pipeline_combo,
+            self._doc_orientation_cb,
+            self._doc_unwarping_cb,
+            self._textline_orientation_cb,
+            self._table_recognition_cb,
+            self._formula_recognition_cb,
+            self._seal_recognition_cb,
+            self._chart_recognition_cb,
+            self._vl_layout_cb,
+            self._vl_markdown_cb,
+            self._vl_seal_cb,
+            self._vl_ocr_image_cb,
+            self._doc_model_combo,
+        ]
+        for w in widgets:
+            w.blockSignals(True)
 
         # 设置管道
         index = self._pipeline_combo.findData(options.pipeline.value)
@@ -359,5 +378,9 @@ class PreprocessOptionsWidget(QGroupBox):
         index = self._doc_model_combo.findText(options.doc_understanding_model)
         if index >= 0:
             self._doc_model_combo.setCurrentIndex(index)
+
+        # 恢复信号
+        for w in widgets:
+            w.blockSignals(False)
 
         self._update_tab_visibility()
