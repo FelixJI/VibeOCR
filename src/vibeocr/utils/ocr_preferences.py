@@ -10,14 +10,19 @@
 import json
 import logging
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QObject, Signal
 
 from vibeocr.models.ocr_options import OCROptions
 
+if TYPE_CHECKING:
+    from vibeocr.managers.config_manager import ConfigManager
+
 logger = logging.getLogger(__name__)
 
 _CONFIG_FILENAME = "ocr_preferences.json"
+_CONFIG_VERSION = 1
 
 _instance: "OCRPreferences | None" = None
 
@@ -28,48 +33,66 @@ class OCRPreferences(QObject):
     所有 OCR 选项的统一数据源，提供跨界面同步和持久化。
 
     Usage:
-        prefs = OCRPreferences.instance(config_dir)
+        prefs = OCRPreferences.instance(config_manager)
         options = prefs.get_options()
         prefs.set_options(new_options)  # 自动持久化并发出信号
     """
 
     options_changed = Signal(object)  # OCROptions
 
-    def __init__(self, config_dir: Path) -> None:
+    def __init__(self, config_manager: "ConfigManager | Path") -> None:
         super().__init__()
-        self._config_dir = config_dir
-        self._config_path = config_dir / _CONFIG_FILENAME
+        if isinstance(config_manager, Path):
+            self._cm = None
+            self._config_dir = config_manager
+            self._config_path = config_manager / _CONFIG_FILENAME
+        else:
+            self._cm = config_manager
+            self._config_dir = config_manager.config_dir
+            self._config_path = self._config_dir / _CONFIG_FILENAME
         self._options = OCROptions()
         self._load()
 
     @staticmethod
-    def instance(config_dir: Path | None = None) -> "OCRPreferences":
+    def instance(config_manager: "ConfigManager | Path | None" = None) -> "OCRPreferences":
         """获取单例实例
 
         Args:
-            config_dir: 首次调用时必须传入配置目录
+            config_manager: 首次调用时必须传入 ConfigManager 或 config_dir 路径
 
         Returns:
             OCRPreferences 实例
         """
         global _instance
         if _instance is None:
-            if config_dir is None:
-                raise RuntimeError("OCRPreferences 首次创建必须传入 config_dir")
-            _instance = OCRPreferences(config_dir)
+            if config_manager is None:
+                raise RuntimeError("OCRPreferences 首次创建必须传入 config_manager")
+            _instance = OCRPreferences(config_manager)
         return _instance
+
+    @staticmethod
+    def reset_instance() -> None:
+        """重置单例（仅供测试使用）。"""
+        global _instance
+        _instance = None
 
     def _load(self) -> None:
         """从 JSON 文件加载选项"""
-        if not self._config_path.exists():
-            return
-        try:
-            with open(self._config_path, encoding="utf-8") as f:
-                data = json.load(f)
+        if self._cm is not None:
+            data = self._cm._load_json(_CONFIG_FILENAME)
+        else:
+            if not self._config_path.exists():
+                return
+            try:
+                with open(self._config_path, encoding="utf-8") as f:
+                    data = json.load(f)
+            except Exception as e:
+                logger.warning(f"加载 OCR 选项失败: {e}")
+                return
+
+        if data:
             self._options = OCROptions.from_dict(data)
-            logger.info(f"OCR 选项已加载: {self._config_path}")
-        except Exception as e:
-            logger.warning(f"加载 OCR 选项失败: {e}")
+            logger.info("OCR 选项已加载")
 
     def get_options(self) -> OCROptions:
         """获取当前选项"""
@@ -92,10 +115,15 @@ class OCRPreferences(QObject):
         Returns:
             是否保存成功
         """
+        save_data = {**self._options.to_dict(), "version": _CONFIG_VERSION}
+        if self._cm is not None:
+            return self._cm._save_json(_CONFIG_FILENAME, save_data)
+
+        # 旧路径兼容
         try:
             self._config_dir.mkdir(parents=True, exist_ok=True)
             with open(self._config_path, "w", encoding="utf-8") as f:
-                json.dump(self._options.to_dict(), f, ensure_ascii=False, indent=2)
+                json.dump(save_data, f, ensure_ascii=False, indent=2)
             return True
         except Exception as e:
             logger.error(f"保存 OCR 选项失败: {e}")

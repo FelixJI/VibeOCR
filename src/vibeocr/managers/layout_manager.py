@@ -4,12 +4,14 @@
 """
 
 import base64
-import json
 import logging
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from PySide6.QtCore import QByteArray
+
+if TYPE_CHECKING:
+    from vibeocr.managers.config_manager import ConfigManager
 
 logger = logging.getLogger(__name__)
 
@@ -28,14 +30,20 @@ class LayoutManager:
     CONFIG_VERSION = 1
     CONFIG_FILENAME = "layout.json"
 
-    def __init__(self, config_dir: Path) -> None:
+    def __init__(self, config_manager: "ConfigManager | Path") -> None:
         """初始化布局管理器
 
         Args:
-            config_dir: 配置文件目录路径
+            config_manager: ConfigManager 实例或配置目录路径（兼容旧接口）
         """
-        self._config_dir = config_dir
-        self._config_path = config_dir / self.CONFIG_FILENAME
+        if isinstance(config_manager, Path):
+            self._cm = None
+            self._config_dir = config_manager
+            self._config_path = config_manager / self.CONFIG_FILENAME
+        else:
+            self._cm = config_manager
+            self._config_dir = config_manager.config_dir
+            self._config_path = self._config_dir / self.CONFIG_FILENAME
 
         # 布局数据
         self._main_window_geometry: QByteArray | None = None
@@ -49,43 +57,46 @@ class LayoutManager:
 
         配置文件不存在、损坏或版本不匹配时使用默认值（不报错）。
         """
-        if not self._config_path.exists():
+        if self._cm is not None:
+            data = self._cm._load_json(self.CONFIG_FILENAME)
+        else:
+            import json
+
+            if not self._config_path.exists():
+                logger.info("布局配置文件不存在，使用默认值")
+                return
+            try:
+                with open(self._config_path, encoding="utf-8") as f:
+                    data = json.load(f)
+            except Exception as e:
+                logger.warning(f"加载布局配置失败: {e}，使用默认值")
+                return
+
+        if not data:
             logger.info("布局配置文件不存在，使用默认值")
             return
 
-        try:
-            with open(self._config_path, encoding="utf-8") as f:
-                data = json.load(f)
+        # 检查版本
+        if data.get("version") != self.CONFIG_VERSION:
+            logger.warning(
+                f"布局配置版本不匹配 (期望 {self.CONFIG_VERSION}, 实际 {data.get('version')})，使用默认值"
+            )
+            return
 
-            # 检查版本
-            if data.get("version") != self.CONFIG_VERSION:
-                logger.warning(
-                    f"布局配置版本不匹配 (期望 {self.CONFIG_VERSION}, 实际 {data.get('version')})，使用默认值"
-                )
-                return
+        # 加载主窗口几何信息
+        main_window = data.get("main_window", {})
+        if geometry_b64 := main_window.get("geometry"):
+            self._main_window_geometry = QByteArray(base64.b64decode(geometry_b64))
 
-            # 加载主窗口几何信息
-            main_window = data.get("main_window", {})
-            if geometry_b64 := main_window.get("geometry"):
-                self._main_window_geometry = QByteArray(base64.b64decode(geometry_b64))
+        # 加载分割器状态
+        splitters = data.get("splitters", {})
+        for splitter_id, state_b64 in splitters.items():
+            self._splitters[splitter_id] = QByteArray(base64.b64decode(state_b64))
 
-            # 加载分割器状态
-            splitters = data.get("splitters", {})
-            for splitter_id, state_b64 in splitters.items():
-                self._splitters[splitter_id] = QByteArray(base64.b64decode(state_b64))
-
-            logger.info(f"布局配置已加载: {self._config_path}")
-
-        except Exception as e:
-            logger.warning(f"加载布局配置失败: {e}，使用默认值")
-            self._main_window_geometry = None
-            self._splitters.clear()
+        logger.info("布局配置已加载")
 
     def save(self) -> None:
         """保存配置文件"""
-        # 确保配置目录存在
-        self._config_dir.mkdir(parents=True, exist_ok=True)
-
         # 构建配置数据
         data: dict[str, Any] = {
             "version": self.CONFIG_VERSION,
@@ -105,12 +116,19 @@ class LayoutManager:
                 "utf-8"
             )
 
-        try:
-            with open(self._config_path, "w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
-            logger.info(f"布局配置已保存: {self._config_path}")
-        except Exception as e:
-            logger.error(f"保存布局配置失败: {e}")
+        if self._cm is not None:
+            self._cm._save_json(self.CONFIG_FILENAME, data)
+            logger.info("布局配置已保存")
+        else:
+            import json
+
+            self._config_dir.mkdir(parents=True, exist_ok=True)
+            try:
+                with open(self._config_path, "w", encoding="utf-8") as f:
+                    json.dump(data, f, ensure_ascii=False, indent=2)
+                logger.info("布局配置已保存")
+            except Exception as e:
+                logger.error(f"保存布局配置失败: {e}")
 
     def get_main_window_geometry(self) -> QByteArray | None:
         """获取主窗口几何信息

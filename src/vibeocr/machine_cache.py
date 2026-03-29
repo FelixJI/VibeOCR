@@ -258,59 +258,6 @@ def create_cache_entry(
     return None
 
 
-# ============================================================
-# 预加载管道配置
-# ============================================================
-
-
-def get_preload_pipelines(project_root: Path) -> list[str]:
-    """
-    获取用户配置的预加载管道列表
-
-    Args:
-        project_root: 项目根目录
-
-    Returns:
-        预加载管道名称列表，如果未配置则返回空列表（不预加载）
-    """
-    cache_data = load_cache(project_root)
-    if cache_data is None:
-        return []  # 默认不预加载
-
-    # 返回用户配置的预加载管道，如果未配置则返回空列表
-    return cache_data.get("preload_pipelines", [])
-
-
-def set_preload_pipelines(project_root: Path, pipelines: list[str]) -> bool:
-    """
-    保存用户配置的预加载管道列表
-
-    Args:
-        project_root: 项目根目录
-        pipelines: 要预加载的管道名称列表
-
-    Returns:
-        是否保存成功
-    """
-    # 加载现有缓存
-    cache_data = load_cache(project_root)
-    if cache_data is None:
-        # 如果没有缓存，创建最小缓存结构
-        cache_data = {
-            "version": CACHE_VERSION,
-            "machine_id": generate_machine_id(),
-            "last_check_time": datetime.now().isoformat(),
-        }
-
-    # 更新预加载管道配置
-    cache_data["preload_pipelines"] = pipelines
-
-    if save_cache(project_root, cache_data):
-        print(f"[缓存] 预加载管道配置已保存: {pipelines}")
-        return True
-    return False
-
-
 def refresh_cache(project_root: Path) -> bool:
     """
     刷新缓存（重新生成缓存文件）

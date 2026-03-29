@@ -3,9 +3,12 @@
 管理工具栏自动隐藏、系统托盘最小化、开机自启动等设置的持久化。
 """
 
-import json
 import logging
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from vibeocr.managers.config_manager import ConfigManager
 
 logger = logging.getLogger(__name__)
 
@@ -19,6 +22,9 @@ _DEFAULTS = {
 
 _CONFIG_FILENAME = "app_settings.json"
 
+# 配置版本号
+_CONFIG_VERSION = 1
+
 
 class AppSettings:
     """应用设置管理器
@@ -26,38 +32,58 @@ class AppSettings:
     负责加载、保存和访问应用级设置。
 
     Usage:
-        settings = AppSettings(project_root / "config")
+        settings = AppSettings(config_manager)
         settings.auto_hide_toolbar = True
         settings.save()
     """
 
-    def __init__(self, config_dir: Path) -> None:
-        self._config_dir = config_dir
-        self._config_path = config_dir / _CONFIG_FILENAME
+    def __init__(self, config_manager: "ConfigManager | Path") -> None:
+        # 兼容旧的 Path 参数（逐步废弃）
+        if isinstance(config_manager, Path):
+            self._cm = None
+            self._config_dir = config_manager
+            self._config_path = config_manager / _CONFIG_FILENAME
+        else:
+            self._cm = config_manager
+            self._config_dir = config_manager.config_dir
+            self._config_path = self._config_dir / _CONFIG_FILENAME
         self._data: dict = dict(_DEFAULTS)
         self._load()
 
     def _load(self) -> None:
         """加载配置文件"""
-        if not self._config_path.exists():
-            return
-        try:
-            with open(self._config_path, encoding="utf-8") as f:
-                stored = json.load(f)
-            for key in _DEFAULTS:
-                if key in stored:
-                    self._data[key] = stored[key]
-            logger.info(f"应用设置已加载: {self._config_path}")
-        except Exception as e:
-            logger.warning(f"加载应用设置失败: {e}")
+        if self._cm is not None:
+            data = self._cm._load_json(_CONFIG_FILENAME, {})
+        else:
+            import json
+
+            if not self._config_path.exists():
+                return
+            try:
+                with open(self._config_path, encoding="utf-8") as f:
+                    data = json.load(f)
+            except Exception as e:
+                logger.warning(f"加载应用设置失败: {e}")
+                return
+
+        for key in _DEFAULTS:
+            if key in data:
+                self._data[key] = data[key]
+        logger.info("应用设置已加载")
 
     def save(self) -> bool:
         """保存配置到文件"""
+        save_data = {**self._data, "version": _CONFIG_VERSION}
+        if self._cm is not None:
+            return self._cm._save_json(_CONFIG_FILENAME, save_data)
+
+        # 旧路径兼容
+        import json
+
         self._config_dir.mkdir(parents=True, exist_ok=True)
         try:
             with open(self._config_path, "w", encoding="utf-8") as f:
-                json.dump(self._data, f, ensure_ascii=False, indent=2)
-            logger.info(f"应用设置已保存: {self._config_path}")
+                json.dump(save_data, f, ensure_ascii=False, indent=2)
             return True
         except Exception as e:
             logger.error(f"保存应用设置失败: {e}")

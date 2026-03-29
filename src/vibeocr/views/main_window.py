@@ -31,7 +31,12 @@ from PySide6.QtWidgets import (
 from vibeocr import env_manager
 from vibeocr.core.constants import WindowsColors
 from vibeocr.machine_cache import is_cache_valid
-from vibeocr.managers import DependencyManager, LayoutManager, SubprocessManager
+from vibeocr.managers import (
+    ConfigManager,
+    DependencyManager,
+    LayoutManager,
+    SubprocessManager,
+)
 from vibeocr.services.log_service import setup_logging
 from vibeocr.ui.ui_main_window import Ui_MainWindowWidget
 from vibeocr.utils.qt_async import run_coroutine
@@ -76,7 +81,7 @@ class MainWindow(QMainWindow):
         )
 
         # 布局管理器
-        self._layout_manager = LayoutManager(self._project_root / "config")
+        self._layout_manager = LayoutManager(ConfigManager.instance())
 
         # 子进程管理器
         self._subprocess_manager = SubprocessManager(self._project_root, self)
@@ -465,7 +470,7 @@ class MainWindow(QMainWindow):
         """从 OCRPreferences 恢复按钮状态"""
         from vibeocr.utils.ocr_preferences import OCRPreferences
 
-        prefs = OCRPreferences.instance(self._project_root / "config")
+        prefs = OCRPreferences.instance(ConfigManager.instance())
         options = prefs.get_options()
         self._sync_buttons_from_options(options)
 
@@ -783,9 +788,9 @@ class MainWindow(QMainWindow):
 
             # 子进程就绪后，触发预加载（如果配置了预加载管道）
             # 预加载完成后再显示"OCR 服务已就绪"
-            from vibeocr.machine_cache import get_preload_pipelines
+            from vibeocr.managers.config_manager import ConfigManager
 
-            pipelines = get_preload_pipelines(self._project_root)
+            pipelines = ConfigManager.instance().get_preload_pipelines()
             if pipelines:
                 self._statusbar.showMessage("正在预热 OCR 模型...")
                 self._start_subprocess_preload()
@@ -831,9 +836,9 @@ class MainWindow(QMainWindow):
             return
 
         # 获取用户配置的预加载管道
-        from vibeocr.machine_cache import get_preload_pipelines
+        from vibeocr.managers.config_manager import ConfigManager
 
-        pipelines = get_preload_pipelines(self._project_root)
+        pipelines = ConfigManager.instance().get_preload_pipelines()
 
         if not pipelines:
             logging.info("[子进程预加载] 未配置预加载管道")

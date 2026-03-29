@@ -144,6 +144,7 @@ def launch_application() -> int:
     """启动应用程序"""
     from PySide6.QtWidgets import QApplication
 
+    from vibeocr.managers.config_manager import ConfigManager
     from vibeocr.utils.app_settings import AppSettings
     from vibeocr.utils.qt_async import create_qasync_event_loop
     from vibeocr.views.main_window import MainWindow
@@ -152,9 +153,12 @@ def launch_application() -> int:
     app.setApplicationName("VibeOCR")
     app.setApplicationVersion("0.1.0")
 
-    # 加载应用设置
+    # 初始化统一配置管理器
     project_root = env_manager.get_project_root()
-    app_settings = AppSettings(project_root / "config")
+    cm = ConfigManager.instance(project_root)
+
+    # 加载应用设置
+    app_settings = AppSettings(cm)
 
     # 创建 qasync 事件循环（整合 Qt 和 asyncio）
     loop = create_qasync_event_loop(app)

@@ -3,7 +3,6 @@
 处理设置页面的逻辑，包括 LLM 配置、模板管理、预加载和缓存管理。
 """
 
-import json
 import logging
 from collections.abc import Callable
 from pathlib import Path
@@ -148,35 +147,20 @@ class SettingsPageController:
 
     def _load_llm_config(self) -> None:
         """加载 LLM 配置"""
-        from vibeocr.models.llm_config import LLMConfigs
+        from vibeocr.managers.config_manager import ConfigManager
 
-        config_path = self._project_root / "config" / "llm_config.json"
-        if config_path.exists():
-            try:
-                with open(config_path, encoding="utf-8") as f:
-                    data = json.load(f)
-                self._llm_configs = LLMConfigs.from_dict(data)
-            except Exception as e:
-                logger.warning(f"加载 LLM 配置失败: {e}")
-                self._llm_configs = LLMConfigs()
-        else:
-            self._llm_configs = LLMConfigs()
-
+        self._llm_configs = ConfigManager.instance().load_llm_configs()
         self._update_llm_config_ui()
 
     def _save_llm_config(self) -> None:
         """保存 LLM 配置"""
-        assert self._llm_configs is not None
-        config_path = self._project_root / "config" / "llm_config.json"
-        config_path.parent.mkdir(parents=True, exist_ok=True)
+        from vibeocr.managers.config_manager import ConfigManager
 
-        try:
-            with open(config_path, "w", encoding="utf-8") as f:
-                json.dump(self._llm_configs.to_dict(), f, ensure_ascii=False, indent=2)
-            logger.info("LLM 配置已保存")
-        except Exception as e:
-            logger.error(f"保存 LLM 配置失败: {e}")
-            raise
+        assert self._llm_configs is not None
+        if not ConfigManager.instance().save_llm_configs(self._llm_configs):
+            logger.error("保存 LLM 配置失败")
+            raise RuntimeError("保存 LLM 配置失败")
+        logger.info("LLM 配置已保存")
 
     def _update_llm_config_ui(self) -> None:
         """更新 LLM 配置 UI"""
@@ -314,12 +298,12 @@ class SettingsPageController:
 
     def _save_preload_pipelines_config(self) -> None:
         """保存预加载管道配置"""
-        from vibeocr.machine_cache import set_preload_pipelines
+        from vibeocr.managers.config_manager import ConfigManager
 
         pipelines = self._get_selected_preload_pipelines()
         pipeline_names = [p.value for p in pipelines]
 
-        if set_preload_pipelines(self._project_root, pipeline_names):
+        if ConfigManager.instance().set_preload_pipelines(pipeline_names):
             logger.info(f"[设置] 预加载管道配置已保存: {pipeline_names}")
         else:
             logger.error("[设置] 保存预加载管道配置失败")
@@ -497,6 +481,7 @@ class SettingsPageController:
 
     def _load_template_list(self) -> None:
         """加载模板列表到 UI"""
+        from vibeocr.managers.config_manager import ConfigManager
         from vibeocr.models.extraction_template import DEFAULT_TEMPLATES
 
         list_template = self._ui.findChild(QListWidget, "listTemplate")
@@ -508,21 +493,15 @@ class SettingsPageController:
         for template in DEFAULT_TEMPLATES:
             list_template.addItem(template.name)
 
-        config_path = self._project_root / "config" / "templates.json"
-        if config_path.exists():
-            try:
-                with open(config_path, encoding="utf-8") as f:
-                    templates_data = json.load(f)
-                from vibeocr.models.extraction_template import ExtractionTemplate
-
-                for template_data in templates_data:
-                    template = ExtractionTemplate.from_dict(template_data)
-                    list_template.addItem(f"[自定义] {template.name}")
-            except Exception as e:
-                logger.warning(f"加载自定义模板失败: {e}")
+        cm = ConfigManager.instance()
+        custom_templates = cm.load_templates()
+        for template in custom_templates:
+            list_template.addItem(f"[自定义] {template.name}")
 
     def _on_add_template_clicked(self) -> None:
         """添加模板按钮点击"""
+        from vibeocr.managers.config_manager import ConfigManager
+        from vibeocr.models.extraction_template import ExtractionTemplate
 
         dialog = QDialog(self._ui)
         dialog.setWindowTitle("添加模板")
@@ -552,30 +531,23 @@ class SettingsPageController:
             if not keys:
                 return
 
-            config_path = self._project_root / "config" / "templates.json"
-            templates = []
-            if config_path.exists():
-                try:
-                    with open(config_path, encoding="utf-8") as f:
-                        templates = json.load(f)
-                except Exception:
-                    pass
-
-            templates.append({"name": name, "keys": keys})
-            config_path.parent.mkdir(parents=True, exist_ok=True)
-
-            with open(config_path, "w", encoding="utf-8") as f:
-                json.dump(templates, f, ensure_ascii=False, indent=2)
-
-            self._load_template_list()
-            dialog.accept()
-            self._status_callback(f"模板 '{name}' 已添加")
+            template = ExtractionTemplate(name=name, keys=keys)
+            cm = ConfigManager.instance()
+            if cm.add_template(template):
+                self._load_template_list()
+                dialog.accept()
+                self._status_callback(f"模板 '{name}' 已添加")
+            else:
+                self._status_callback(f"模板名称已存在: {name}")
 
         btn_add.clicked.connect(on_add)
         dialog.exec()
 
     def _on_edit_template_clicked(self) -> None:
         """编辑模板按钮点击"""
+        from vibeocr.managers.config_manager import ConfigManager
+        from vibeocr.models.extraction_template import ExtractionTemplate
+
         list_template = self._ui.findChild(QListWidget, "listTemplate")
         if not list_template:
             return
@@ -592,19 +564,10 @@ class SettingsPageController:
 
         template_name = template_name.replace("[自定义] ", "")
 
-        config_path = self._project_root / "config" / "templates.json"
-        if not config_path.exists():
-            return
-
-        try:
-            with open(config_path, encoding="utf-8") as f:
-                templates = json.load(f)
-        except Exception:
-            return
-
+        cm = ConfigManager.instance()
         template_data = None
-        for t in templates:
-            if t.get("name") == template_name:
+        for t in cm.custom_templates:
+            if t.name == template_name:
                 template_data = t
                 break
 
@@ -622,7 +585,7 @@ class SettingsPageController:
         layout.addWidget(name_edit)
 
         layout.addWidget(QLabel("抽取字段（每行一个）:"))
-        keys_edit = QLineEdit("\n".join(template_data.get("keys", [])))
+        keys_edit = QLineEdit("\n".join(template_data.keys))
         layout.addWidget(keys_edit)
 
         btn_save = QPushButton("保存")
@@ -638,24 +601,19 @@ class SettingsPageController:
             if not keys:
                 return
 
-            for t in templates:
-                if t.get("name") == template_name:
-                    t["name"] = new_name
-                    t["keys"] = keys
-                    break
-
-            with open(config_path, "w", encoding="utf-8") as f:
-                json.dump(templates, f, ensure_ascii=False, indent=2)
-
-            self._load_template_list()
-            dialog.accept()
-            self._status_callback(f"模板 '{new_name}' 已更新")
+            updated = ExtractionTemplate(name=new_name, keys=keys)
+            if cm.update_template(template_name, updated):
+                self._load_template_list()
+                dialog.accept()
+                self._status_callback(f"模板 '{new_name}' 已更新")
 
         btn_save.clicked.connect(on_save)
         dialog.exec()
 
     def _on_delete_template_clicked(self) -> None:
         """删除模板按钮点击"""
+        from vibeocr.managers.config_manager import ConfigManager
+
         list_template = self._ui.findChild(QListWidget, "listTemplate")
         if not list_template:
             return
@@ -683,20 +641,9 @@ class SettingsPageController:
         if reply != QMessageBox.Yes:  # type: ignore[attr-defined]
             return
 
-        config_path = self._project_root / "config" / "templates.json"
-        if not config_path.exists():
-            return
-
-        try:
-            with open(config_path, encoding="utf-8") as f:
-                templates = json.load(f)
-
-            templates = [t for t in templates if t.get("name") != template_name]
-
-            with open(config_path, "w", encoding="utf-8") as f:
-                json.dump(templates, f, ensure_ascii=False, indent=2)
-
+        cm = ConfigManager.instance()
+        if cm.delete_template(template_name):
             self._load_template_list()
             self._status_callback(f"模板 '{template_name}' 已删除")
-        except Exception as e:
-            logger.error(f"删除模板失败: {e}")
+        else:
+            logger.error(f"删除模板失败: {template_name}")
