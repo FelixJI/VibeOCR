@@ -1043,14 +1043,16 @@ class OCRService(metaclass=SingletonMeta):
                 "\n".join(t for t, _ in text_with_scores) if text_with_scores else ""
             )
 
-            # 如果 raw_text 为空但有 markdown_text，使用 markdown_text 作为 raw_text
+            # 如果 raw_text 为空但有 markdown_text，提取纯文本作为 raw_text
             # 并从 markdown_text 中提取文本块用于置信度统计
             if not raw_text and markdown_text:
-                raw_text = markdown_text
+                raw_text = extract_plain_text(markdown_text)
+                if not raw_text:
+                    raw_text = markdown_text
                 # 为 markdown 内容创建默认置信度条目
-                # 按段落分割，每个段落作为一个文本块
+                # 按段落分割，每个段落作为一个文本块（提取纯文本）
                 for line in markdown_text.split("\n\n"):
-                    line = line.strip()
+                    line = extract_plain_text(line.strip())
                     if line:
                         text_with_scores.append((line, 1.0))
 
@@ -1185,21 +1187,23 @@ class OCRService(metaclass=SingletonMeta):
 
             # 如果 Markdown 转换无结果，但 block_content 含有 HTML，直接使用原始 HTML
             if not html_text and html_parts:
-                html_text = "\n".join(html_parts)
+                html_text = f"{HTML_STYLE}<body>{'<br><br>'.join(html_parts)}</body>"
 
             # 生成纯文本（已确保 text_with_scores 中是纯文本）
             raw_text = (
                 "\n".join(t for t, _ in text_with_scores) if text_with_scores else ""
             )
 
-            # 如果 raw_text 为空但有 markdown_text，使用 markdown_text 作为 raw_text
+            # 如果 raw_text 为空但有 markdown_text，提取纯文本作为 raw_text
             # 并从 markdown_text 中提取文本块用于置信度统计
             if not raw_text and markdown_text:
-                raw_text = markdown_text
+                raw_text = extract_plain_text(markdown_text)
+                if not raw_text:
+                    raw_text = markdown_text
                 # 为 markdown 内容创建默认置信度条目
-                # 按段落分割，每个段落作为一个文本块
+                # 按段落分割，每个段落作为一个文本块（提取纯文本）
                 for line in markdown_text.split("\n\n"):
-                    line = line.strip()
+                    line = extract_plain_text(line.strip())
                     if line:
                         text_with_scores.append((line, 1.0))
 
