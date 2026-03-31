@@ -14,7 +14,11 @@ from vibeocr.core.pipelines import OCRPipeline  # 从统一位置导入
 from vibeocr.core.singleton_meta import SingletonMeta
 from vibeocr.models.ocr_options import OCROptions  # 从统一位置导入
 from vibeocr.models.ocr_result import OCRResult
-from vibeocr.utils.markdown_converter import markdown_to_html
+from vibeocr.utils.markdown_converter import (
+    HTML_STYLE,
+    extract_plain_text,
+    markdown_to_html,
+)
 
 # 重新导出以保持向后兼容性
 __all__ = [
@@ -28,6 +32,33 @@ __all__ = [
 # 禁用 OneDNN 并强制使用 CPU 模式以兼容性
 os.environ.setdefault("FLAGS_enable_onednn_backend", "0")
 os.environ.setdefault("FLAGS_use_mkldnn", "0")
+
+import re as _re
+
+
+def _extract_table_html(html_str: str) -> str:
+    """从 pred_html 中提取 <table> 标签内容，去除外层 html/body 包装"""
+    match = _re.search(
+        r"(<table\b.*</table>)", html_str, _re.DOTALL | _re.IGNORECASE
+    )
+    return match.group(1) if match else html_str
+
+
+def _looks_like_markdown(text: str) -> bool:
+    """检测文本是否包含 Markdown 格式标记"""
+    if not text:
+        return False
+    patterns = [
+        r"^#{1,6}\s",
+        r"\*\*[^*]+\*\*",
+        r"__[^_]+__",
+        r"^- ",
+        r"^\* ",
+        r"\|.+\|",
+        r"\$\$",
+        r"```",
+    ]
+    return any(_re.search(p, text, _re.MULTILINE) for p in patterns)
 
 # 注意：GPU 模式需要确保所有 Paddle 操作在同一线程中执行
 # 工作线程设计已确保这一点
@@ -801,8 +832,11 @@ class OCRService(metaclass=SingletonMeta):
                             if text:
                                 text_with_scores.append((text, float(score)))
 
-            # 组合结果：HTML 表格 + 文本
-            html_text = "\n\n".join(html_tables) if html_tables else ""
+            # 组合结果：HTML 表格 + 文本（包装 CSS 样式以正确渲染）
+            if html_tables:
+                html_text = f"{HTML_STYLE}<body>{'\n\n'.join(html_tables)}</body>"
+            else:
+                html_text = ""
             raw_text = (
                 "\n".join(t for t, _ in text_with_scores) if text_with_scores else ""
             )
@@ -927,11 +961,11 @@ class OCRService(metaclass=SingletonMeta):
                         if text:
                             text_with_scores.append((text, float(score)))
 
-                # 提取表格 HTML（转换为 Markdown 表格）
+                # 提取表格 HTML（剥离外层 html/body 包装，仅保留 table 标签）
                 if hasattr(res, "table_res_list"):
                     for table_res in res.table_res_list:
                         if hasattr(table_res, "pred_html"):
-                            html_table = table_res.pred_html
+                            html_table = _extract_table_html(table_res.pred_html)
                             markdown_parts.append(html_table)
                         # 提取表格 OCR 的置信度
                         if hasattr(table_res, "table_ocr_pred"):
@@ -979,7 +1013,9 @@ class OCRService(metaclass=SingletonMeta):
                     # 提取表格结果
                     for table_res in res.get("table_res_list", []):
                         if "pred_html" in table_res:
-                            markdown_parts.append(table_res["pred_html"])
+                            markdown_parts.append(
+                                _extract_table_html(table_res["pred_html"])
+                            )
                         ocr_pred = table_res.get("table_ocr_pred", {})
                         for text, score in zip(
                             ocr_pred.get("rec_texts", []),
@@ -1081,6 +1117,7 @@ class OCRService(metaclass=SingletonMeta):
             text_with_scores: list[tuple[str, float]] = []
             markdown_parts: list[str] = []
             images: dict[str, Any] = {}
+            html_parts: list[str] = []
 
             for res in output_list:
                 # 提取 Markdown 结果
@@ -1101,7 +1138,12 @@ class OCRService(metaclass=SingletonMeta):
                         if hasattr(block, "block_content"):
                             content = block.block_content
                             if content:
-                                text_with_scores.append((content, 1.0))
+                                # 保留原始 HTML 用于富文本显示
+                                html_parts.append(content)
+                                # 提取纯文本用于 raw_text
+                                plain = extract_plain_text(content)
+                                if plain:
+                                    text_with_scores.append((plain, 1.0))
                         # 提取 block_label 用于调试
                         if hasattr(block, "block_label"):
                             _logger.debug(f"PaddleOCR-VL block: {block.block_label}")
@@ -1128,7 +1170,12 @@ class OCRService(metaclass=SingletonMeta):
                         else:
                             content = ""
                         if content:
-                            text_with_scores.append((content, 1.0))
+                            # 保留原始 HTML 用于富文本显示
+                            html_parts.append(content)
+                            # 提取纯文本用于 raw_text
+                            plain = extract_plain_text(content)
+                            if plain:
+                                text_with_scores.append((plain, 1.0))
 
             # 组合 Markdown 文本
             markdown_text = "\n\n".join(markdown_parts) if markdown_parts else ""
@@ -1136,7 +1183,11 @@ class OCRService(metaclass=SingletonMeta):
             # 转换 Markdown 为 HTML
             html_text = markdown_to_html(markdown_text) if markdown_text else ""
 
-            # 生成纯文本
+            # 如果 Markdown 转换无结果，但 block_content 含有 HTML，直接使用原始 HTML
+            if not html_text and html_parts:
+                html_text = "\n".join(html_parts)
+
+            # 生成纯文本（已确保 text_with_scores 中是纯文本）
             raw_text = (
                 "\n".join(t for t, _ in text_with_scores) if text_with_scores else ""
             )
@@ -1373,8 +1424,18 @@ class OCRService(metaclass=SingletonMeta):
                 "\n".join(t for t, _ in text_with_scores) if text_with_scores else ""
             )
 
+            # VLM 输出可能包含 Markdown 格式，检测并启用富文本渲染
+            if _looks_like_markdown(raw_text):
+                html_text = markdown_to_html(raw_text)
+                markdown_text = raw_text
+            else:
+                html_text = ""
+                markdown_text = ""
+
             return self._build_ocr_result(
                 raw_text=raw_text,
+                markdown_text=markdown_text,
+                html_text=html_text,
                 text_with_scores=text_with_scores,
                 pipeline_type="PP-ChatOCRv4",
             )
@@ -1458,8 +1519,18 @@ class OCRService(metaclass=SingletonMeta):
                 "\n".join(t for t, _ in text_with_scores) if text_with_scores else ""
             )
 
+            # VLM 输出可能包含 Markdown 格式，检测并启用富文本渲染
+            if _looks_like_markdown(raw_text):
+                html_text = markdown_to_html(raw_text)
+                markdown_text = raw_text
+            else:
+                html_text = ""
+                markdown_text = ""
+
             return self._build_ocr_result(
                 raw_text=raw_text,
+                markdown_text=markdown_text,
+                html_text=html_text,
                 text_with_scores=text_with_scores,
                 pipeline_type="DocUnderstanding",
             )
