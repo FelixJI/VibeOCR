@@ -47,6 +47,13 @@ class IndentProcessor:
         if not markdown_text:
             return ""
 
+        # 如果内容包含大量 HTML 块级标签（来自 VLM 管道的输出），跳过处理
+        html_block_count = len(
+            re.findall(r"<(div|table|tr|td|th|p|span)\b", markdown_text, re.IGNORECASE)
+        )
+        if html_block_count >= 3:
+            return markdown_text
+
         # 用于检测特殊元素的正则
         table_line_pattern = re.compile(r"^\|.*\|$")
         list_line_pattern = re.compile(r"^[\*\-\+]\s|^\d+\.\s")

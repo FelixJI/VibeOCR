@@ -260,6 +260,9 @@ class OCRWorkerProcess:
                                         ).strip()
 
                                 if text:
+                                    # 过滤 PaddlePaddle 内部调试输出
+                                    if text.startswith("return tensor("):
+                                        continue
                                     # 处理 PaddlePaddle warnings.warn() 没有换行的问题
                                     # 如果行末是 warnings.warn( 或类似的未完成语句，
                                     # 或者行首是日期时间格式但拼接在上一行末尾
