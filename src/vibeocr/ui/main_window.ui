@@ -29,7 +29,7 @@
      </property>
      <widget class="QWidget" name="tabOCR">
       <attribute name="title">
-       <string>OCR 识别</string>
+       <string>单次识别</string>
       </attribute>
       <layout class="QVBoxLayout" name="verticalLayout_ocr">
        <property name="spacing">

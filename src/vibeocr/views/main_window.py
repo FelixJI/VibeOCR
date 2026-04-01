@@ -214,6 +214,13 @@ class MainWindow(QMainWindow):
             if state:
                 self._ui.ocrSplitter.restoreState(state)
                 logging.info("已恢复 OCR 分割器状态")
+            else:
+                # 无持久化数据时，设置默认尺寸：预览框 400px，结果面板占剩余
+                total_width = self._ui.ocrSplitter.width()
+                if total_width > 0:
+                    self._ui.ocrSplitter.setSizes([400, total_width - 400])
+                else:
+                    self._ui.ocrSplitter.setSizes([400, 500])
 
     def _save_layout(self) -> None:
         """保存窗口和分割器布局"""

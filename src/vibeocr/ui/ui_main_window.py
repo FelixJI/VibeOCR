@@ -770,7 +770,7 @@ class Ui_MainWindowWidget(object):
         self.btnCopyPlain.setToolTip(QCoreApplication.translate("MainWindowWidget", u"\u590d\u5236\u4e3a\u7eaf\u6587\u672c\u683c\u5f0f", None))
 #endif // QT_CONFIG(tooltip)
         self.btnCopyPlain.setText(QCoreApplication.translate("MainWindowWidget", u"\u7eaf\u6587\u672c", None))
-        self.tabWidget.setTabText(self.tabWidget.indexOf(self.tabOCR), QCoreApplication.translate("MainWindowWidget", u"OCR \u8bc6\u522b", None))
+        self.tabWidget.setTabText(self.tabWidget.indexOf(self.tabOCR), QCoreApplication.translate("MainWindowWidget", u"\u5355\u6b21\u8bc6\u522b", None))
         self.groupPreload.setTitle(QCoreApplication.translate("MainWindowWidget", u"\u6a21\u578b\u9884\u52a0\u8f7d", None))
 #if QT_CONFIG(tooltip)
         self.chkEnablePreload.setToolTip(QCoreApplication.translate("MainWindowWidget", u"\u542f\u52a8\u5e94\u7528\u65f6\u81ea\u52a8\u9884\u52a0\u8f7d\u9009\u4e2d\u7684\u7ba1\u9053\uff0c\u9996\u6b21\u8bc6\u522b\u65f6\u65e0\u9700\u7b49\u5f85", None))
