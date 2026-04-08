@@ -1,19 +1,9 @@
 {
-  "pipeline": "PaddleOCR-VL",
+  "pipeline": "MinerU",
   "use_doc_orientation_classify": true,
   "use_doc_unwarping": true,
   "use_textline_orientation": false,
-  "use_table_recognition": true,
-  "use_formula_recognition": true,
-  "use_seal_recognition": false,
-  "use_chart_recognition": false,
-  "vl_use_layout_detection": true,
-  "vl_format_block_content": false,
-  "vl_use_seal_recognition": false,
-  "vl_use_ocr_for_image_block": false,
-  "vl_temperature": 0.0,
-  "vl_top_p": 0.0,
-  "vl_max_pixels": 0,
-  "vl_min_pixels": 0,
-  "doc_understanding_model": "PP-DocBee2-3B"
+  "parse_method": "auto",
+  "enable_formula": true,
+  "enable_table": true
 }
