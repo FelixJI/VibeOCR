@@ -18,73 +18,50 @@ class TestOCROptions:
 
     def test_to_dict(self):
         """测试转换为字典"""
-        options = OCROptions(pipeline=OCRPipeline.PP_STRUCTURE_V3)
+        options = OCROptions(pipeline=OCRPipeline.DOCUMENT_PARSING)
         data = options.to_dict()
-        assert data["pipeline"] == "PP-StructureV3"
+        assert data["pipeline"] == "MinerU"
         assert data["use_doc_orientation_classify"] is True
-        assert "use_table_recognition" in data
+        assert "parse_method" in data
 
     def test_from_dict(self):
         """测试从字典创建"""
         data = {
-            "pipeline": "PP-StructureV3",
+            "pipeline": "MinerU",
             "use_doc_orientation_classify": False,
-            "use_seal_recognition": True,
+            "enable_formula": False,
         }
         options = OCROptions.from_dict(data)
-        assert options.pipeline == OCRPipeline.PP_STRUCTURE_V3
+        assert options.pipeline == OCRPipeline.DOCUMENT_PARSING
         assert options.use_doc_orientation_classify is False
-        assert options.use_seal_recognition is True
+        assert options.enable_formula is False
 
-    def test_pp_structure_v3_options(self):
-        """测试 PP-StructureV3 特有选项"""
+    def test_mineru_options(self):
+        """测试 MineRU 文档解析选项"""
         options = OCROptions(
-            pipeline=OCRPipeline.PP_STRUCTURE_V3,
-            use_table_recognition=True,
-            use_formula_recognition=True,
-            use_seal_recognition=True,
-            use_chart_recognition=False,
+            pipeline=OCRPipeline.DOCUMENT_PARSING,
+            parse_method="ocr",
+            enable_formula=False,
+            enable_table=False,
         )
-        assert options.use_table_recognition is True
-        assert options.use_chart_recognition is False
+        assert options.parse_method == "ocr"
+        assert options.enable_formula is False
+        assert options.enable_table is False
 
-    def test_paddleocr_vl_options(self):
-        """测试 PaddleOCR-VL 特有选项"""
-        options = OCROptions(
-            pipeline=OCRPipeline.PADDLEOCR_VL,
-            vl_use_layout_detection=True,
-            vl_format_block_content=True,
-            vl_temperature=0.5,
-        )
-        assert options.vl_use_layout_detection is True
-        assert options.vl_temperature == 0.5
-
-    def test_doc_understanding_model(self):
-        """测试文档理解模型选择"""
-        options = OCROptions(
-            pipeline=OCRPipeline.DOC_UNDERSTANDING,
-            doc_understanding_model="PP-DocBee-7B",
-        )
-        assert options.doc_understanding_model == "PP-DocBee-7B"
-
-    def test_vlm_sampling_params(self):
-        """测试 VLM 采样参数"""
-        options = OCROptions(
-            vl_temperature=0.7,
-            vl_top_p=0.9,
-            vl_max_pixels=1000000,
-            vl_min_pixels=10000,
-        )
-        assert options.vl_temperature == 0.7
-        assert options.vl_top_p == 0.9
-        assert options.vl_max_pixels == 1000000
+    def test_mineru_default_values(self):
+        """测试 MineRU 选项默认值"""
+        options = OCROptions()
+        assert options.parse_method == "auto"
+        assert options.enable_formula is True
+        assert options.enable_table is True
 
     def test_round_trip_serialization(self):
         """测试序列化往返"""
         original = OCROptions(
-            pipeline=OCRPipeline.CHATOCRV4,
+            pipeline=OCRPipeline.DOCUMENT_PARSING,
             use_doc_orientation_classify=False,
-            use_seal_recognition=True,
+            parse_method="txt",
+            enable_formula=False,
         )
         data = original.to_dict()
         restored = OCROptions.from_dict(data)
@@ -93,4 +70,5 @@ class TestOCROptions:
             restored.use_doc_orientation_classify
             == original.use_doc_orientation_classify
         )
-        assert restored.use_seal_recognition == original.use_seal_recognition
+        assert restored.parse_method == "txt"
+        assert restored.enable_formula is False
