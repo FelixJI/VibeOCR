@@ -172,12 +172,6 @@ class MainWindow(QMainWindow):
         # 添加批量识别标签页
         self._init_batch_tab()
 
-        # 添加信息抽取标签页
-        self._init_extraction_tab()
-
-        # 添加文档理解标签页
-        self._init_doc_understanding_tab()
-
         # 将设置标签页移到最后
         self._move_settings_tab_to_end()
 
@@ -275,8 +269,7 @@ class MainWindow(QMainWindow):
             OCRPipeline.OCR: self._ui.btnPipelineOCR,
             OCRPipeline.TABLE_RECOGNITION: self._ui.btnPipelineTable,
             OCRPipeline.FORMULA_RECOGNITION: self._ui.btnPipelineFormula,
-            OCRPipeline.PP_STRUCTURE_V3: self._ui.btnPipelineStructure,
-            OCRPipeline.PADDLEOCR_VL: self._ui.btnPipelinePaddleOCRVL,
+            OCRPipeline.DOCUMENT_PARSING: self._ui.btnPipelineStructure,
         }
 
         # 预处理按钮
@@ -387,36 +380,20 @@ class MainWindow(QMainWindow):
         self._ui.tabWidget.addTab(self._batch_tab, "批量识别")
         logging.debug("批量识别标签页已添加")
 
-    def _init_extraction_tab(self) -> None:
-        """初始化信息抽取标签页"""
-        from vibeocr.views.extraction_tab import ExtractionTab
-
-        self._extraction_tab = ExtractionTab()
-        self._ui.tabWidget.addTab(self._extraction_tab, "信息抽取")
-        logging.debug("信息抽取标签页已添加")
-
     def _on_pipeline_clicked(self, pipeline) -> None:
         """管道按钮点击时更新 UI 并同步到全局选项"""
         self._update_button_visibility(pipeline)
         self._sync_options_to_preferences()
-
-    def _init_doc_understanding_tab(self) -> None:
-        """初始化文档理解标签页"""
-        from vibeocr.views.doc_understanding_tab import DocUnderstandingTab
-
-        self._doc_understanding_tab = DocUnderstandingTab()
-        self._ui.tabWidget.addTab(self._doc_understanding_tab, "文档理解")
-        logging.debug("文档理解标签页已添加")
 
     def _update_button_visibility(self, pipeline) -> None:
         """根据管道类型更新按钮可见性"""
         # 使用管道的 value 属性进行比较（避免导入 OCRPipeline）
         pipeline_value = pipeline.value if hasattr(pipeline, "value") else pipeline
 
-        # 子产线选项：版面解析和 PaddleOCR-VL 时显示
+        # 子产线选项：文档解析时显示
         if self._sub_pipeline_widget:
             self._sub_pipeline_widget.setVisible(
-                pipeline_value in ["PP-StructureV3", "PaddleOCR-VL"]
+                pipeline_value == "MinerU"
             )
 
         # 文本行方向按钮：仅通用 OCR 时显示
@@ -429,13 +406,18 @@ class MainWindow(QMainWindow):
                 pipeline_value in ["table_recognition", "formula_recognition"]
             )
 
-        # 版面解析子产线按钮：仅版面解析时显示
-        pp_structure_buttons = [
+        # 子产线按钮：仅文档解析时显示
+        sub_pipeline_buttons = [
             self._btn_sub_table,
             self._btn_sub_formula,
             self._btn_sub_seal,
             self._btn_sub_chart,
         ]
+        for btn in sub_pipeline_buttons:
+            if btn:
+                btn.setVisible(pipeline_value == "MinerU")
+
+        # VL 按钮全部隐藏（已移除 PaddleOCR-VL）
         vl_buttons = [
             self._btn_vl_layout,
             self._btn_vl_chart,
@@ -443,23 +425,17 @@ class MainWindow(QMainWindow):
             self._btn_vl_format,
             self._btn_vl_ocr_image,
         ]
-
-        for btn in pp_structure_buttons:
-            if btn:
-                btn.setVisible(pipeline_value == "PP-StructureV3")
-
-        # PaddleOCR-VL 特有选项按钮：仅 PaddleOCR-VL 时显示
         for btn in vl_buttons:
             if btn:
-                btn.setVisible(pipeline_value == "PaddleOCR-VL")
+                btn.setVisible(False)
 
         # 更新子产线标签文字
         label_sub = self._ui.labelSubPipelines
         label_vl = self._ui.labelVlOptions
         if label_sub:
-            label_sub.setVisible(pipeline_value == "PP-StructureV3")
+            label_sub.setVisible(pipeline_value == "MinerU")
         if label_vl:
-            label_vl.setVisible(pipeline_value == "PaddleOCR-VL")
+            label_vl.setVisible(False)
 
         logging.debug(f"管道切换为 {pipeline.display_name}")
 
@@ -782,16 +758,6 @@ class MainWindow(QMainWindow):
             if hasattr(self, "_batch_tab") and self._batch_tab:
                 self._batch_tab.set_ocr_service(service)
                 logging.info("[MainWindow] 批量识别标签页已连接 OCR 服务")
-
-            # 设置 OCR 服务到信息抽取标签页
-            if hasattr(self, "_extraction_tab") and self._extraction_tab:
-                self._extraction_tab.set_ocr_service(service)
-                logging.info("[MainWindow] 信息抽取标签页已连接 OCR 服务")
-
-            # 设置 OCR 服务到文档理解标签页
-            if hasattr(self, "_doc_understanding_tab") and self._doc_understanding_tab:
-                self._doc_understanding_tab.set_ocr_service(service)
-                logging.info("[MainWindow] 文档理解标签页已连接 OCR 服务")
 
             # 子进程就绪后，触发预加载（如果配置了预加载管道）
             # 预加载完成后再显示"OCR 服务已就绪"
@@ -1184,12 +1150,11 @@ class MainWindow(QMainWindow):
             f"预处理: 方向={options.use_doc_orientation_classify}, "
             f"去弯={options.use_doc_unwarping}"
         )
-        if pipeline == OCRPipeline.PP_STRUCTURE_V3:
+        if pipeline == OCRPipeline.DOCUMENT_PARSING:
             logging.info(
-                f"子产线: 表格={options.use_table_recognition}, "
-                f"公式={options.use_formula_recognition}, "
-                f"印章={options.use_seal_recognition}, "
-                f"图表={options.use_chart_recognition}"
+                f"文档解析: 方法={options.parse_method}, "
+                f"公式={options.enable_formula}, "
+                f"表格={options.enable_table}"
             )
 
         # 将 QPixmap 转换为图像数据

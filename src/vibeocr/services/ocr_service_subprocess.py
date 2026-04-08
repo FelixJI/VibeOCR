@@ -49,7 +49,7 @@ class OCRServiceSubprocess:
     def __new__(
         cls,
         max_workers: int = 1,
-        use_gpu: bool = True,
+        use_gpu: bool = False,
         shm_size: int = 10 * 1024 * 1024,
         auto_start: bool = True,
         start_timeout: float = 120.0,
@@ -71,7 +71,7 @@ class OCRServiceSubprocess:
     def __init__(
         self,
         max_workers: int = 1,
-        use_gpu: bool = True,
+        use_gpu: bool = False,
         shm_size: int = 10 * 1024 * 1024,
         auto_start: bool = True,
         start_timeout: float = 120.0,
@@ -81,7 +81,7 @@ class OCRServiceSubprocess:
 
         Args:
             max_workers: Worker 进程数量（默认 1）
-            use_gpu: 是否使用 GPU
+            use_gpu: 是否使用 GPU（默认 False，CPU 模式）
             shm_size: 每个共享内存大小（字节）
             auto_start: 是否自动启动 Worker
             start_timeout: 启动超时时间（秒）

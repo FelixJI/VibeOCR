@@ -51,21 +51,21 @@ class TestOCRPipeline:
         assert OCRPipeline.OCR.value == "OCR"
         assert OCRPipeline.TABLE_RECOGNITION.value == "table_recognition"
         assert OCRPipeline.FORMULA_RECOGNITION.value == "formula_recognition"
-        assert OCRPipeline.PP_STRUCTURE_V3.value == "PP-StructureV3"
+        assert OCRPipeline.DOCUMENT_PARSING.value == "MinerU"
 
     def test_pipeline_display_names(self):
         """管道显示名称正确。"""
         assert OCRPipeline.OCR.display_name == "通用 OCR"
         assert OCRPipeline.TABLE_RECOGNITION.display_name == "表格识别"
         assert OCRPipeline.FORMULA_RECOGNITION.display_name == "公式识别"
-        assert OCRPipeline.PP_STRUCTURE_V3.display_name == "版面解析"
+        assert OCRPipeline.DOCUMENT_PARSING.display_name == "文档解析"
 
     def test_pipeline_descriptions(self):
         """管道描述正确。"""
         assert "文字" in OCRPipeline.OCR.description
         assert "表格" in OCRPipeline.TABLE_RECOGNITION.description
         assert "公式" in OCRPipeline.FORMULA_RECOGNITION.description
-        assert "版面" in OCRPipeline.PP_STRUCTURE_V3.description
+        assert "MineRU" in OCRPipeline.DOCUMENT_PARSING.description
 
 
 class TestOCROptions:
@@ -75,33 +75,25 @@ class TestOCROptions:
         """默认选项值正确。"""
         options = OCROptions()
         assert options.pipeline == OCRPipeline.OCR
-        assert options.use_doc_orientation_classify is False
-        assert options.use_doc_unwarping is False
-        assert options.use_textline_orientation is True
-        assert options.use_layout_detection is False
-        assert options.use_table_recognition is True
-        assert options.use_formula_recognition is True
-        assert options.use_seal_recognition is False
-        assert options.use_chart_recognition is False
+        assert options.use_doc_orientation_classify is True
+        assert options.use_doc_unwarping is True
+        assert options.use_textline_orientation is False
+        assert options.parse_method == "auto"
+        assert options.enable_formula is True
+        assert options.enable_table is True
 
     def test_custom_options(self):
         """自定义选项值正确。"""
         options = OCROptions(
-            pipeline=OCRPipeline.PP_STRUCTURE_V3,
-            use_doc_orientation_classify=True,
-            use_doc_unwarping=True,
-            use_table_recognition=False,
-            use_formula_recognition=True,
-            use_seal_recognition=True,
-            use_chart_recognition=True,
+            pipeline=OCRPipeline.DOCUMENT_PARSING,
+            parse_method="ocr",
+            enable_formula=False,
+            enable_table=False,
         )
-        assert options.pipeline == OCRPipeline.PP_STRUCTURE_V3
-        assert options.use_doc_orientation_classify is True
-        assert options.use_doc_unwarping is True
-        assert options.use_table_recognition is False
-        assert options.use_formula_recognition is True
-        assert options.use_seal_recognition is True
-        assert options.use_chart_recognition is True
+        assert options.pipeline == OCRPipeline.DOCUMENT_PARSING
+        assert options.parse_method == "ocr"
+        assert options.enable_formula is False
+        assert options.enable_table is False
 
 
 @pytest.mark.skipif(not HAS_PADDLEX, reason="paddlex not installed")

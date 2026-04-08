@@ -1,10 +1,11 @@
 {
   "version": 1,
   "main_window": {
-    "geometry": "AdnQywADAAAAAAKHAAABBwAABgoAAAOpAAAChwAAASUAAAYKAAADqQAAAAAAAAAACJIAAAKHAAABJQAABgoAAAOp"
+    "geometry": "AdnQywADAAAAAAGUAAAAtAAABRcAAAMpAAABlAAAANIAAAUXAAADKQAAAAAAAAAABqsAAAGUAAAA0gAABRcAAAMp"
   },
   "splitters": {
     "ocr_tab": "AAAA/wAAAAEAAAACAAABLAAAASwB/////wEAAAABAA==",
-    "batch_tab": "AAAA/wAAAAEAAAACAAABVwAAAhIB/////wEAAAABAA=="
+    "batch_tab": "AAAA/wAAAAEAAAACAAABVwAAAhIB/////wEAAAABAA==",
+    "main_splitter": "AAAA/wAAAAEAAAACAAABlQAAAIkB/////wEAAAACAA=="
   }
 }

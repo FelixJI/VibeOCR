@@ -28,25 +28,6 @@ DEFAULT_PIP_MIRROR = "tsinghua"
 # PaddlePaddle 版本
 PADDLE_VERSION = "3.3.0"
 
-# CUDA 版本映射
-CUDA_VERSION_MAP = {
-    "11.8": "cu118",
-    "12.0": "cu121",
-    "12.1": "cu121",
-    "12.2": "cu123",
-    "12.3": "cu123",
-    "12.4": "cu126",
-    "12.5": "cu126",
-    "12.6": "cu126",
-    "12.7": "cu129",
-    "12.8": "cu129",
-    "12.9": "cu129",
-    # CUDA 13.x 使用 cu129 (最新的兼容版本)
-    "13.0": "cu129",
-    "13.1": "cu129",
-    "13.2": "cu129",
-}
-
 # PaddleX 模型下载源
 PADDLEX_MODEL_SOURCES = {
     "bos": "BOS",  # 百度对象存储（国内快）
@@ -69,7 +50,7 @@ CORE_DEPENDENCIES = [
 OCR_DEPENDENCIES = [
     "paddlepaddle",
     "paddlex",
-    "paddleocr",
+    "mineru",
 ]
 
 
@@ -84,17 +65,6 @@ def get_pip_mirror(name: str = DEFAULT_PIP_MIRROR) -> str:
     """
     return PIP_MIRROR_SOURCES.get(name, PIP_MIRROR_SOURCES[DEFAULT_PIP_MIRROR])
 
-
-def get_paddle_cuda_version(cuda_version: str) -> str | None:
-    """获取 PaddlePaddle 对应的 CUDA 版本标识
-
-    Args:
-        cuda_version: 系统 CUDA 版本
-
-    Returns:
-        PaddlePaddle CUDA 版本标识，如 "cu118"
-    """
-    return CUDA_VERSION_MAP.get(cuda_version)
 
 
 def is_windows() -> bool:

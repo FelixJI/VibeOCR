@@ -14,8 +14,6 @@ from PySide6.QtWidgets import (
 )
 
 from vibeocr.core.pipelines import (
-    DEFAULT_DOC_UNDERSTANDING_MODEL,
-    DOC_UNDERSTANDING_MODELS,
     OCRPipeline,
     get_all_pipelines,
     get_pipeline_display_name,
@@ -63,10 +61,6 @@ class PreprocessOptionsWidget(QGroupBox):
         self._advanced_tab = self._create_advanced_tab()
         self._tab_widget.addTab(self._advanced_tab, "高级")
 
-        # 模型选项卡
-        self._model_tab = self._create_model_tab()
-        self._tab_widget.addTab(self._model_tab, "模型")
-
         # 初始更新可见性
         self._update_tab_visibility()
 
@@ -107,86 +101,29 @@ class PreprocessOptionsWidget(QGroupBox):
         widget = QWidget()
         layout = QVBoxLayout(widget)
 
-        # PP-StructureV3 选项组
-        self._pp_structure_group = self._create_pp_structure_group()
-        layout.addWidget(self._pp_structure_group)
-
-        # PaddleOCR-VL 选项组
-        self._vl_group = self._create_vl_group()
-        layout.addWidget(self._vl_group)
+        # MineRU 文档解析选项组
+        self._mineru_group = self._create_mineru_group()
+        layout.addWidget(self._mineru_group)
 
         layout.addStretch()
         return widget
 
-    def _create_pp_structure_group(self) -> QGroupBox:
-        """创建 PP-StructureV3 选项组"""
-        group = QGroupBox("版面解析子产线")
+    def _create_mineru_group(self) -> QGroupBox:
+        """创建 MineRU 文档解析选项组"""
+        group = QGroupBox("文档解析选项")
         layout = QVBoxLayout(group)
 
-        self._table_recognition_cb = QCheckBox("表格识别")
-        self._table_recognition_cb.setChecked(True)
-        layout.addWidget(self._table_recognition_cb)
+        self._enable_formula_cb = QCheckBox("公式识别")
+        self._enable_formula_cb.setToolTip("启用数学公式识别（LaTeX 输出）")
+        self._enable_formula_cb.setChecked(True)
+        layout.addWidget(self._enable_formula_cb)
 
-        self._formula_recognition_cb = QCheckBox("公式识别")
-        self._formula_recognition_cb.setChecked(True)
-        layout.addWidget(self._formula_recognition_cb)
-
-        self._seal_recognition_cb = QCheckBox("印章识别")
-        self._seal_recognition_cb.setChecked(False)
-        layout.addWidget(self._seal_recognition_cb)
-
-        self._chart_recognition_cb = QCheckBox("图表识别")
-        self._chart_recognition_cb.setChecked(False)
-        layout.addWidget(self._chart_recognition_cb)
+        self._enable_table_cb = QCheckBox("表格识别")
+        self._enable_table_cb.setToolTip("启用表格结构识别（HTML 输出）")
+        self._enable_table_cb.setChecked(True)
+        layout.addWidget(self._enable_table_cb)
 
         return group
-
-    def _create_vl_group(self) -> QGroupBox:
-        """创建 PaddleOCR-VL 选项组"""
-        group = QGroupBox("PaddleOCR-VL 选项")
-        layout = QVBoxLayout(group)
-
-        self._vl_layout_cb = QCheckBox("版面区域检测排序")
-        self._vl_layout_cb.setChecked(True)
-        layout.addWidget(self._vl_layout_cb)
-
-        self._vl_seal_cb = QCheckBox("印章识别")
-        self._vl_seal_cb.setChecked(False)
-        layout.addWidget(self._vl_seal_cb)
-
-        self._vl_ocr_image_cb = QCheckBox("图片文字识别")
-        self._vl_ocr_image_cb.setChecked(False)
-        layout.addWidget(self._vl_ocr_image_cb)
-
-        self._vl_markdown_cb = QCheckBox("Markdown 格式输出")
-        self._vl_markdown_cb.setChecked(False)
-        layout.addWidget(self._vl_markdown_cb)
-
-        return group
-
-    def _create_model_tab(self) -> QWidget:
-        """创建模型选项卡"""
-        widget = QWidget()
-        layout = QVBoxLayout(widget)
-
-        # 文档理解模型选择
-        self._doc_model_group = QGroupBox("文档理解模型")
-        doc_model_layout = QVBoxLayout(self._doc_model_group)
-
-        model_select_layout = QHBoxLayout()
-        model_select_layout.addWidget(QLabel("VLM 模型:"))
-        self._doc_model_combo = QComboBox()
-        for model in DOC_UNDERSTANDING_MODELS:
-            self._doc_model_combo.addItem(model)
-        self._doc_model_combo.setCurrentText(DEFAULT_DOC_UNDERSTANDING_MODEL)
-        model_select_layout.addWidget(self._doc_model_combo)
-        model_select_layout.addStretch()
-        doc_model_layout.addLayout(model_select_layout)
-
-        layout.addWidget(self._doc_model_group)
-
-        layout.addStretch()
-        return widget
 
     def _connect_signals(self):
         """连接信号"""
@@ -197,20 +134,9 @@ class PreprocessOptionsWidget(QGroupBox):
         self._doc_unwarping_cb.toggled.connect(self._on_option_changed)
         self._textline_orientation_cb.toggled.connect(self._on_option_changed)
 
-        # PP-StructureV3 选项
-        self._table_recognition_cb.toggled.connect(self._on_option_changed)
-        self._formula_recognition_cb.toggled.connect(self._on_option_changed)
-        self._seal_recognition_cb.toggled.connect(self._on_option_changed)
-        self._chart_recognition_cb.toggled.connect(self._on_option_changed)
-
-        # VL 选项
-        self._vl_layout_cb.toggled.connect(self._on_option_changed)
-        self._vl_seal_cb.toggled.connect(self._on_option_changed)
-        self._vl_ocr_image_cb.toggled.connect(self._on_option_changed)
-        self._vl_markdown_cb.toggled.connect(self._on_option_changed)
-
-        # 模型选择
-        self._doc_model_combo.currentTextChanged.connect(self._on_option_changed)
+        # MineRU 选项
+        self._enable_formula_cb.toggled.connect(self._on_option_changed)
+        self._enable_table_cb.toggled.connect(self._on_option_changed)
 
     def _on_pipeline_changed(self):
         """管道选择变更"""
@@ -236,39 +162,19 @@ class PreprocessOptionsWidget(QGroupBox):
         has_advanced = any(
             opt in supported
             for opt in [
-                "use_table_recognition",
-                "use_formula_recognition",
-                "use_seal_recognition",
-                "use_chart_recognition",
-                "vl_use_layout_detection",
+                "parse_method",
+                "enable_formula",
+                "enable_table",
             ]
         )
-
-        # 模型选项卡
-        has_model = "doc_understanding_model" in supported
 
         # 设置选项卡可见性
         self._tab_widget.setTabVisible(0, has_preprocess)
         self._tab_widget.setTabVisible(1, has_advanced)
-        self._tab_widget.setTabVisible(2, has_model)
 
-        # 设置 PP-StructureV3 组可见性
-        pp_opts = [
-            "use_table_recognition",
-            "use_formula_recognition",
-            "use_seal_recognition",
-            "use_chart_recognition",
-        ]
-        self._pp_structure_group.setVisible(any(opt in supported for opt in pp_opts))
-
-        # 设置 VL 组可见性
-        vl_opts = [
-            "vl_use_layout_detection",
-            "vl_use_seal_recognition",
-            "vl_use_ocr_for_image_block",
-            "vl_format_block_content",
-        ]
-        self._vl_group.setVisible(any(opt in supported for opt in vl_opts))
+        # 设置 MineRU 组可见性
+        mineru_opts = ["parse_method", "enable_formula", "enable_table"]
+        self._mineru_group.setVisible(any(opt in supported for opt in mineru_opts))
 
         # 如果当前选项卡不可见，切换到第一个可见的
         for i in range(self._tab_widget.count()):
@@ -301,31 +207,16 @@ class PreprocessOptionsWidget(QGroupBox):
 
         kwargs: dict = {"pipeline": pipeline}
 
-        # 仅添加当前管道支持的选项，不支持的保持默认值
         if is_option_supported(pipeline, "use_doc_orientation_classify"):
             kwargs["use_doc_orientation_classify"] = self._doc_orientation_cb.isChecked()
         if is_option_supported(pipeline, "use_doc_unwarping"):
             kwargs["use_doc_unwarping"] = self._doc_unwarping_cb.isChecked()
         if is_option_supported(pipeline, "use_textline_orientation"):
             kwargs["use_textline_orientation"] = self._textline_orientation_cb.isChecked()
-        if is_option_supported(pipeline, "use_table_recognition"):
-            kwargs["use_table_recognition"] = self._table_recognition_cb.isChecked()
-        if is_option_supported(pipeline, "use_formula_recognition"):
-            kwargs["use_formula_recognition"] = self._formula_recognition_cb.isChecked()
-        if is_option_supported(pipeline, "use_seal_recognition"):
-            kwargs["use_seal_recognition"] = self._seal_recognition_cb.isChecked()
-        if is_option_supported(pipeline, "use_chart_recognition"):
-            kwargs["use_chart_recognition"] = self._chart_recognition_cb.isChecked()
-        if is_option_supported(pipeline, "vl_use_layout_detection"):
-            kwargs["vl_use_layout_detection"] = self._vl_layout_cb.isChecked()
-        if is_option_supported(pipeline, "vl_format_block_content"):
-            kwargs["vl_format_block_content"] = self._vl_markdown_cb.isChecked()
-        if is_option_supported(pipeline, "vl_use_seal_recognition"):
-            kwargs["vl_use_seal_recognition"] = self._vl_seal_cb.isChecked()
-        if is_option_supported(pipeline, "vl_use_ocr_for_image_block"):
-            kwargs["vl_use_ocr_for_image_block"] = self._vl_ocr_image_cb.isChecked()
-        if is_option_supported(pipeline, "doc_understanding_model"):
-            kwargs["doc_understanding_model"] = self._doc_model_combo.currentText()
+        if is_option_supported(pipeline, "enable_formula"):
+            kwargs["enable_formula"] = self._enable_formula_cb.isChecked()
+        if is_option_supported(pipeline, "enable_table"):
+            kwargs["enable_table"] = self._enable_table_cb.isChecked()
 
         return OCROptions(**kwargs)
 
@@ -339,15 +230,8 @@ class PreprocessOptionsWidget(QGroupBox):
             self._doc_orientation_cb,
             self._doc_unwarping_cb,
             self._textline_orientation_cb,
-            self._table_recognition_cb,
-            self._formula_recognition_cb,
-            self._seal_recognition_cb,
-            self._chart_recognition_cb,
-            self._vl_layout_cb,
-            self._vl_markdown_cb,
-            self._vl_seal_cb,
-            self._vl_ocr_image_cb,
-            self._doc_model_combo,
+            self._enable_formula_cb,
+            self._enable_table_cb,
         ]
         for w in widgets:
             w.blockSignals(True)
@@ -362,22 +246,9 @@ class PreprocessOptionsWidget(QGroupBox):
         self._doc_unwarping_cb.setChecked(options.use_doc_unwarping)
         self._textline_orientation_cb.setChecked(options.use_textline_orientation)
 
-        # 设置 PP-StructureV3 选项
-        self._table_recognition_cb.setChecked(options.use_table_recognition)
-        self._formula_recognition_cb.setChecked(options.use_formula_recognition)
-        self._seal_recognition_cb.setChecked(options.use_seal_recognition)
-        self._chart_recognition_cb.setChecked(options.use_chart_recognition)
-
-        # 设置 VL 选项
-        self._vl_layout_cb.setChecked(options.vl_use_layout_detection)
-        self._vl_markdown_cb.setChecked(options.vl_format_block_content)
-        self._vl_seal_cb.setChecked(options.vl_use_seal_recognition)
-        self._vl_ocr_image_cb.setChecked(options.vl_use_ocr_for_image_block)
-
-        # 设置模型
-        index = self._doc_model_combo.findText(options.doc_understanding_model)
-        if index >= 0:
-            self._doc_model_combo.setCurrentIndex(index)
+        # 设置 MineRU 选项
+        self._enable_formula_cb.setChecked(options.enable_formula)
+        self._enable_table_cb.setChecked(options.enable_table)
 
         # 恢复信号
         for w in widgets:

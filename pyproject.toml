@@ -2,7 +2,7 @@
 name = "vibeocr"
 version = "0.1.0"
 description = "A screenshot OCR application"
-requires-python = ">=3.12,<3.13"
+requires-python = ">=3.13,<3.14"
 dependencies = [
     # 运行时依赖
     "pyside6>=6.11.0",
@@ -10,9 +10,9 @@ dependencies = [
     "numpy>=2.4.3",
     "markdown>=3.10.2",
     "qasync>=0.28.0",
-    "paddlepaddle-gpu>=3.3.1",
-    "nvidia-cudnn-cu12>=9.9.0.52",
-    "paddlex[ocr,ie,multimodal]>=3.4.3",
+    "paddlepaddle>=3.3.0",
+    "paddlex[ocr]>=3.4.3",
+    "mineru[all]",
     # 开发依赖
     "pytest>=9.0.2",
     "pytest-qt>=4.5.0",
@@ -87,7 +87,7 @@ known-first-party = ["vibeocr"]
 # Pyright - 静态类型检查
 # =============================================================================
 [tool.pyright]
-pythonVersion = "3.12"
+pythonVersion = "3.13"
 pythonPlatform = "Windows"
 typeCheckingMode = "standard"
 include = ["src"]
@@ -132,6 +132,6 @@ exclude_lines = [
 # =============================================================================
 [tool.uv]
 extra-index-url = [
-    "https://www.paddlepaddle.org.cn/packages/stable/cu129/",
+    "https://mirrors.aliyun.com/pypi/simple",
 ]
 index-strategy = "unsafe-best-match"

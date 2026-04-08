@@ -107,11 +107,11 @@ def run_worker(shm_name: str, shm_size: int, use_gpu: bool) -> None:
     PreprocessOptions = None  # 预先定义，避免未绑定错误
     batch_manager_initialized = False  # 标记是否已尝试初始化
 
-    def get_batch_manager(pipeline_name: str = "PP-StructureV3"):
+    def get_batch_manager(pipeline_name: str = "MinerU"):
         """获取批量队列管理器（延迟初始化）
 
         Args:
-            pipeline_name: 管道名称 ("PP-StructureV3" 或 "PaddleOCR-VL")
+            pipeline_name: 管道名称 ("MinerU" 等)
         """
         nonlocal batch_managers, batch_manager_initialized
 
@@ -141,38 +141,14 @@ def run_worker(shm_name: str, shm_size: int, use_gpu: bool) -> None:
         try:
             from vibeocr.workers.batch_queue_manager import BatchQueueManager
 
-            # 根据管道类型创建相应的 pipeline
-            if pipeline_name == "PaddleOCR-VL":
-                logger.info("[Worker] 正在初始化批量队列管理器（PaddleOCR-VL）...")
-                # 使用 OCRService 的 get_pipeline 方法获取 PaddleOCR-VL 管道
-                vl_pipeline = ocr_service.get_pipeline(OCRPipeline.PADDLEOCR_VL)
-                batch_managers[pipeline_name] = BatchQueueManager(
-                    vl_pipeline, max_batch_size=4
-                )
-                logger.info(
-                    "[Worker] BatchQueueManager 初始化完成（使用 PaddleOCR-VL）"
-                )
-            elif pipeline_name == "PP-StructureV3":
-                logger.info("[Worker] 正在初始化批量队列管理器（PP-StructureV3）...")
-                structure_pipeline = ocr_service.get_pipeline(
-                    OCRPipeline.PP_STRUCTURE_V3
-                )
-                batch_managers[pipeline_name] = BatchQueueManager(
-                    structure_pipeline, max_batch_size=8
-                )
-                logger.info(
-                    "[Worker] BatchQueueManager 初始化完成（使用 PP-StructureV3）"
-                )
-            else:
-                logger.warning(
-                    f"[Worker] 未知管道类型: {pipeline_name}，使用默认 PP-StructureV3"
-                )
-                structure_pipeline = ocr_service.get_pipeline(
-                    OCRPipeline.PP_STRUCTURE_V3
-                )
-                batch_managers[pipeline_name] = BatchQueueManager(
-                    structure_pipeline, max_batch_size=8
-                )
+            logger.info(f"[Worker] 正在初始化批量队列管理器（{pipeline_name}）...")
+            pipeline = ocr_service.get_pipeline(OCRPipeline.DOCUMENT_PARSING)
+            batch_managers[pipeline_name] = BatchQueueManager(
+                pipeline, max_batch_size=4
+            )
+            logger.info(
+                f"[Worker] BatchQueueManager 初始化完成（使用 {pipeline_name}）"
+            )
 
         except Exception as e:
             logger.warning(
@@ -313,7 +289,7 @@ def run_worker(shm_name: str, shm_size: int, use_gpu: bool) -> None:
                         logger.info(f"[Worker] 批量添加: {request_id}")
 
                         # 从选项中获取管道名称
-                        pipeline_name = options_dict.get("pipeline", "PP-StructureV3")
+                        pipeline_name = options_dict.get("pipeline", "MinerU")
 
                         # 延迟初始化批量管理器
                         mgr = get_batch_manager(pipeline_name)

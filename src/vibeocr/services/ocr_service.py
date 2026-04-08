@@ -4,15 +4,14 @@ from __future__ import annotations
 
 import logging
 import os
-import sys
 import threading
 from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from vibeocr.core.pipelines import OCRPipeline  # 从统一位置导入
+from vibeocr.core.pipelines import OCRPipeline
 from vibeocr.core.singleton_meta import SingletonMeta
-from vibeocr.models.ocr_options import OCROptions  # 从统一位置导入
+from vibeocr.models.ocr_options import OCROptions
 from vibeocr.models.ocr_result import OCRResult
 from vibeocr.utils.markdown_converter import (
     HTML_STYLE,
@@ -60,22 +59,14 @@ def _looks_like_markdown(text: str) -> bool:
     ]
     return any(_re.search(p, text, _re.MULTILINE) for p in patterns)
 
-# 注意：GPU 模式需要确保所有 Paddle 操作在同一线程中执行
+# 注意：所有操作在同一线程中执行（CPU 模式）
 # 工作线程设计已确保这一点
-
-# 延迟导入: numpy, paddle, PIL 这些模块在首次使用时才导入
-# import numpy as np
-# import paddle
-# from PIL import Image
 
 # 导入模型缓存管理器（轻量级，可以保留）
 from vibeocr.model_cache_manager import (
     is_pipeline_cached,
     quick_check_all_models,
 )
-
-# 延迟导入: PaddleX 和模型源设置（这些是启动慢的主要原因）
-# setup_paddlex_model_source() 和 create_pipeline 会在首次使用时才调用
 
 _logger = logging.getLogger(__name__)
 
@@ -107,7 +98,6 @@ class OCRService(metaclass=SingletonMeta):
     """OCR 识别服务 (使用 SingletonMeta 实现线程安全单例)"""
 
     _pipelines: dict[str, Any] = {}  # 管道缓存：{pipeline_name: pipeline_instance}
-    _device: str | None = None
     _lock = threading.Lock()
     _initialized = False
     _status_callback: Callable | None = None  # 状态回调函数
@@ -159,7 +149,6 @@ class OCRService(metaclass=SingletonMeta):
         if not self._initialized:
             with self._lock:
                 if not self._initialized:
-                    self._init_gpu()
                     self._initialized = True
 
     @classmethod
@@ -170,7 +159,6 @@ class OCRService(metaclass=SingletonMeta):
         """
         with cls._lock:
             cls._pipelines = {}
-            cls._device = None
             cls._initialized = False
             cls._status_callback = None
             cls._source_configured = False
@@ -390,8 +378,7 @@ class OCRService(metaclass=SingletonMeta):
     ) -> bool:
         """使用测试图片预热 OCR 服务
 
-        通过执行一次虚拟识别来触发模型加载和 CUDA 初始化。
-        这是真正让模型进入就绪状态的关键步骤。
+        通过执行一次虚拟识别来触发模型加载。
 
         Args:
             pipeline: 要预热的管道，None 表示使用默认 OCR 管道
@@ -513,88 +500,7 @@ class OCRService(metaclass=SingletonMeta):
         thread.start()
         return thread
 
-    def _init_gpu(self) -> None:
-        """初始化 GPU 环境并检查可用性"""
-        # 延迟导入: paddle（首次使用时才导入）
-        import paddle
-
-        try:
-            is_compiled_with_cuda = paddle.is_compiled_with_cuda()  # type: ignore[reportPrivateImportUsage]
-            current_device = paddle.device.get_device()
-
-            _logger.info(f"Paddle 编译时包含 CUDA: {is_compiled_with_cuda}")
-            _logger.info(f"当前 Paddle 设备: {current_device}")
-
-            if is_compiled_with_cuda:
-                # 如果在 Windows 上，尝试设置 CUDA 路径
-                if os.name == "nt":
-                    self._setup_cuda_paths_windows()
-
-                # 通过 run_check 检查 GPU 是否实际可用
-                try:
-                    # 仅在尚未确认 GPU 工作的情况下运行检查
-                    if "gpu" not in current_device:
-                        paddle.utils.run_check()
-                        _logger.info("Paddle run_check 通过")
-                except Exception as e:
-                    _logger.warning(f"Paddle run_check 失败: {e}")
-
-        except Exception as e:
-            _logger.error(f"初始化 GPU 环境时出错: {e}")
-
-    def _setup_cuda_paths_windows(self) -> None:
-        """尝试在 Windows 上将 CUDA DLL 路径添加到当前进程环境（不影响系统环境）"""
-        # Python 环境中 CUDA DLL 的常见位置
-        possible_paths = []
-
-        # 1. 当前环境的 Library/bin (conda 风格)
-        if sys.prefix:
-            possible_paths.append(Path(sys.prefix) / "Library" / "bin")
-            possible_paths.append(Path(sys.prefix) / "bin")
-
-        # 2. Site-packages/paddle/libs (如果存在)
-        for path in sys.path:
-            p = Path(path)
-            if p.name == "site-packages":
-                possible_paths.append(p / "paddle" / "libs")
-                # 同时也检查通过 pip 安装的 nvidia 包
-                possible_paths.append(p / "nvidia" / "cudnn" / "bin")
-                possible_paths.append(p / "nvidia" / "cublas" / "bin")
-
-        # 3. 如果存在且尚未在 PATH 中，则添加到当前进程的 PATH
-        current_path = os.environ.get("PATH", "")
-        paths_to_add = []
-
-        for p in possible_paths:
-            if p.exists():
-                path_str = str(p)
-                # 使用 os.add_dll_directory (Python 3.8+ Windows)
-                if hasattr(os, "add_dll_directory"):
-                    try:
-                        os.add_dll_directory(path_str)
-                        _logger.info(f"已添加 DLL 目录: {path_str}")
-                    except Exception as e:
-                        _logger.warning(f"添加 DLL 目录失败: {e}")
-
-                # 同时也更新 PATH，以兼容旧版或依赖 PATH 查找的库
-                if path_str not in current_path:
-                    paths_to_add.append(path_str)
-
-        if paths_to_add:
-            _logger.info(f"临时添加 CUDA 路径到当前进程环境: {paths_to_add}")
-            os.environ["PATH"] = os.pathsep.join([*paths_to_add, current_path])
-
-            # 更新路径后重新检查设备（可能需要重启或重新加载库，但值得一试）
-            try:
-                import paddle
-
-                if "gpu" not in paddle.device.get_device():
-                    # 如果可能，强制重新检查？ paddle 通常会缓存设备信息。
-                    pass
-            except Exception:
-                pass
-
-    def _create_pipeline(self, pipeline_name: str, device: str) -> Any:
+    def _create_pipeline(self, pipeline_name: str, device: str = "cpu") -> Any:
         """创建指定管道"""
         # 延迟导入: 确保模型源已配置（首次使用时才执行网络检测）
         self._ensure_source_configured()
@@ -621,8 +527,6 @@ class OCRService(metaclass=SingletonMeta):
         else:
             # 模型已缓存，只显示简洁的加载信息
             _logger.info(f"管道 {display_name} 模型已存在，直接加载...")
-            # 可以选择性地通知，或者完全跳过以减少干扰
-            # self._notify_status("模型加载", f"正在加载 {display_name}...")
 
         pipeline = create_pipeline(
             pipeline=pipeline_name,
@@ -637,49 +541,22 @@ class OCRService(metaclass=SingletonMeta):
 
         return pipeline
 
-    def _is_gpu_error(self, error: Exception) -> bool:
-        """检查错误是否与 GPU 相关"""
-        err_str = str(error).lower()
-        return any(keyword in err_str for keyword in ["cudnn", "cuda", "gpu", "cudart"])
-
     def get_pipeline(self, pipeline: OCRPipeline) -> Any:
-        """延迟加载指定管道 (线程安全，如果 GPU 不可用自动回退到 CPU)"""
+        """延迟加载指定管道 (线程安全，CPU 模式)"""
         pipeline_name = pipeline.value
 
         if pipeline_name not in self._pipelines:
             with self._lock:
                 if pipeline_name not in self._pipelines:  # 双重检查
-                    # 尝试优先使用 GPU，失败则回退到 CPU
-                    for device in ["gpu:0", "cpu"]:
-                        try:
-                            self._pipelines[pipeline_name] = self._create_pipeline(
-                                pipeline_name, device
-                            )
-                            if self._device is None:
-                                self._device = device
-                            break
-                        except RuntimeError as e:
-                            if self._is_gpu_error(e) and "gpu" in device.lower():
-                                _logger.warning("GPU 不可用，回退到 CPU: %s", e)
-                                continue
-                            raise
-                    else:
-                        raise RuntimeError(
-                            f"无法在任何设备上初始化管道 {pipeline_name}"
-                        )
+                    self._pipelines[pipeline_name] = self._create_pipeline(
+                        pipeline_name, "cpu"
+                    )
         return self._pipelines[pipeline_name]
 
     @property
     def pipeline(self) -> Any:
         """延迟加载默认 OCR 流水线 (向后兼容)"""
         return self.get_pipeline(OCRPipeline.OCR)
-
-    def _reset_pipeline_to_cpu(self, pipeline_name: str = "OCR") -> None:
-        """重置指定管道到 CPU 模式"""
-        with self._lock:
-            _logger.warning("由于 GPU 错误，正在重置管道 %s 到 CPU 模式", pipeline_name)
-            self._pipelines[pipeline_name] = self._create_pipeline(pipeline_name, "cpu")
-            self._device = "cpu"
 
     def recognize(
         self,
@@ -725,14 +602,8 @@ class OCRService(metaclass=SingletonMeta):
                 result = self._recognize_table(image, actual_options)
             elif actual_options.pipeline == OCRPipeline.FORMULA_RECOGNITION:
                 result = self._recognize_formula(image, actual_options)
-            elif actual_options.pipeline == OCRPipeline.PP_STRUCTURE_V3:
-                result = self._recognize_structure(image, actual_options)
-            elif actual_options.pipeline == OCRPipeline.PADDLEOCR_VL:
-                result = self._recognize_paddleocr_vl(image, actual_options)
-            elif actual_options.pipeline == OCRPipeline.CHATOCRV4:
-                result = self._recognize_chatocrv4(image, actual_options)
-            elif actual_options.pipeline == OCRPipeline.DOC_UNDERSTANDING:
-                result = self._recognize_doc_understanding(image, actual_options)
+            elif actual_options.pipeline == OCRPipeline.DOCUMENT_PARSING:
+                result = self._recognize_document(image, actual_options)
             else:
                 result = self._recognize_ocr(image, actual_options)
             _logger.info(f"[recognize] 识别完成，返回 {len(result.raw_text)} 字符")
@@ -741,44 +612,71 @@ class OCRService(metaclass=SingletonMeta):
             _logger.error(f"[recognize] 识别过程中发生异常: {e}", exc_info=True)
             raise
 
+    def _recognize_document(
+        self,
+        image: Image.Image | np.ndarray | str | bytes,
+        options: OCROptions,
+    ) -> OCRResult:
+        """文档解析（MinerU）"""
+        from vibeocr.services.mineru_service import MinerUService
+
+        # 准备数据
+        if isinstance(image, bytes):
+            data = image
+            mime_type = "application/pdf"  # 默认，调用方应通过 options 指定
+        elif isinstance(image, str):
+            # 文件路径
+            data = Path(image).read_bytes()
+            suffix = Path(image).suffix.lower()
+            mime_map = {
+                ".pdf": "application/pdf",
+                ".png": "image/png",
+                ".jpg": "image/jpeg",
+                ".jpeg": "image/jpeg",
+                ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            }
+            mime_type = mime_map.get(suffix, "application/pdf")
+        else:
+            # numpy/PIL → PNG
+            import io
+
+            from PIL import Image as PILImage
+
+            if not isinstance(image, PILImage.Image):
+                image = PILImage.fromarray(image)
+            buf = io.BytesIO()
+            image.save(buf, format="PNG")
+            data = buf.getvalue()
+            mime_type = "image/png"
+
+        service = MinerUService()
+        return service.parse(data, mime_type, options)
+
     def _recognize_ocr(
         self,
         image: Image.Image | np.ndarray | str,
         options: OCROptions,
     ) -> OCRResult:
         """通用 OCR 识别"""
-
-        def _do_recognize(img: Image.Image | np.ndarray | str) -> OCRResult:
-            _logger.info("[_recognize_ocr] 获取 OCR 管道...")
-            pipeline = self.get_pipeline(OCRPipeline.OCR)
-            _logger.info("[_recognize_ocr] 执行 predict...")
-            try:
-                # 调用 predict
-                output = pipeline.predict(
-                    input=img,
-                    use_doc_orientation_classify=options.use_doc_orientation_classify,
-                    use_doc_unwarping=options.use_doc_unwarping,
-                    use_textline_orientation=options.use_textline_orientation,
-                )
-                _logger.info(f"[_recognize_ocr] predict 返回，类型: {type(output)}")
-            except Exception as e:
-                _logger.error(f"[_recognize_ocr] predict 调用失败: {e}", exc_info=True)
-                raise
-
-            # 安全地处理输出 - 使用安全消费方法（内部会禁用 GC）
-            _logger.info("[_recognize_ocr] 开始处理输出...")
-            result = self._process_ocr_output_safe(output)
-            _logger.info(f"[_recognize_ocr] 结果处理完成: {len(result.raw_text)} 字符")
-            return result
-
+        _logger.info("[_recognize_ocr] 获取 OCR 管道...")
+        pipeline = self.get_pipeline(OCRPipeline.OCR)
+        _logger.info("[_recognize_ocr] 执行 predict...")
         try:
-            return _do_recognize(image)
-        except RuntimeError as e:
-            if self._is_gpu_error(e) and self._device != "cpu":
-                _logger.warning("预测过程中发生 GPU 错误，回退到 CPU: %s", e)
-                self._reset_pipeline_to_cpu("OCR")
-                return _do_recognize(image)
+            output = pipeline.predict(
+                input=image,
+                use_doc_orientation_classify=options.use_doc_orientation_classify,
+                use_doc_unwarping=options.use_doc_unwarping,
+                use_textline_orientation=options.use_textline_orientation,
+            )
+            _logger.info(f"[_recognize_ocr] predict 返回，类型: {type(output)}")
+        except Exception as e:
+            _logger.error(f"[_recognize_ocr] predict 调用失败: {e}", exc_info=True)
             raise
+
+        _logger.info("[_recognize_ocr] 开始处理输出...")
+        result = self._process_ocr_output_safe(output)
+        _logger.info(f"[_recognize_ocr] 结果处理完成: {len(result.raw_text)} 字符")
+        return result
 
     def _recognize_table(
         self,
@@ -786,76 +684,63 @@ class OCRService(metaclass=SingletonMeta):
         options: OCROptions,
     ) -> OCRResult:
         """表格识别"""
+        pipeline = self.get_pipeline(OCRPipeline.TABLE_RECOGNITION)
+        output = pipeline.predict(
+            input=image,
+            use_doc_orientation_classify=options.use_doc_orientation_classify,
+            use_doc_unwarping=options.use_doc_unwarping,
+        )
 
-        def _do_recognize(img: Image.Image | np.ndarray | str) -> OCRResult:
-            pipeline = self.get_pipeline(OCRPipeline.TABLE_RECOGNITION)
-            output = pipeline.predict(
-                input=img,
-                use_doc_orientation_classify=options.use_doc_orientation_classify,
-                use_doc_unwarping=options.use_doc_unwarping,
-                use_layout_detection=options.vl_use_layout_detection,
-            )
+        output_list = list(output)
 
-            # 确保 GPU 操作完成后再处理结果 - 使用安全消费方法
-            output_list = self._consume_generator_safely(output)
+        text_with_scores: list[tuple[str, float]] = []
+        html_tables: list[str] = []
 
-            text_with_scores: list[tuple[str, float]] = []
-            html_tables: list[str] = []
-
-            for res in output_list:
-                # 提取表格 HTML
-                if hasattr(res, "table_res_list"):
-                    for table_res in res.table_res_list:
-                        if hasattr(table_res, "pred_html"):
-                            html_tables.append(table_res.pred_html)
-                        # 提取表格中的文本
-                        if hasattr(table_res, "table_ocr_pred"):
-                            ocr_pred = table_res.table_ocr_pred
-                            if hasattr(ocr_pred, "rec_texts") and hasattr(
-                                ocr_pred, "rec_scores"
+        for res in output_list:
+            # 提取表格 HTML
+            if hasattr(res, "table_res_list"):
+                for table_res in res.table_res_list:
+                    if hasattr(table_res, "pred_html"):
+                        html_tables.append(table_res.pred_html)
+                    # 提取表格中的文本
+                    if hasattr(table_res, "table_ocr_pred"):
+                        ocr_pred = table_res.table_ocr_pred
+                        if hasattr(ocr_pred, "rec_texts") and hasattr(
+                            ocr_pred, "rec_scores"
+                        ):
+                            for text, score in zip(
+                                ocr_pred.rec_texts,
+                                ocr_pred.rec_scores,
+                                strict=False,
                             ):
-                                for text, score in zip(
-                                    ocr_pred.rec_texts,
-                                    ocr_pred.rec_scores,
-                                    strict=False,
-                                ):
-                                    if text:
-                                        text_with_scores.append((text, float(score)))
-                elif isinstance(res, dict):
-                    table_res_list = res.get("table_res_list", [])
-                    for table_res in table_res_list:
-                        html_tables.append(table_res.get("pred_html", ""))
-                        ocr_pred = table_res.get("table_ocr_pred", {})
-                        rec_texts = ocr_pred.get("rec_texts", [])
-                        rec_scores = ocr_pred.get("rec_scores", [])
-                        for text, score in zip(rec_texts, rec_scores, strict=False):
-                            if text:
-                                text_with_scores.append((text, float(score)))
+                                if text:
+                                    text_with_scores.append((text, float(score)))
+            elif isinstance(res, dict):
+                table_res_list = res.get("table_res_list", [])
+                for table_res in table_res_list:
+                    html_tables.append(table_res.get("pred_html", ""))
+                    ocr_pred = table_res.get("table_ocr_pred", {})
+                    rec_texts = ocr_pred.get("rec_texts", [])
+                    rec_scores = ocr_pred.get("rec_scores", [])
+                    for text, score in zip(rec_texts, rec_scores, strict=False):
+                        if text:
+                            text_with_scores.append((text, float(score)))
 
-            # 组合结果：HTML 表格 + 文本（包装 CSS 样式以正确渲染）
-            if html_tables:
-                html_text = f"{HTML_STYLE}<body>{'\n\n'.join(html_tables)}</body>"
-            else:
-                html_text = ""
-            raw_text = (
-                "\n".join(t for t, _ in text_with_scores) if text_with_scores else ""
-            )
+        # 组合结果：HTML 表格 + 文本（包装 CSS 样式以正确渲染）
+        if html_tables:
+            html_text = f"{HTML_STYLE}<body>{'\n\n'.join(html_tables)}</body>"
+        else:
+            html_text = ""
+        raw_text = (
+            "\n".join(t for t, _ in text_with_scores) if text_with_scores else ""
+        )
 
-            return self._build_ocr_result(
-                raw_text=raw_text,
-                html_text=html_text,
-                text_with_scores=text_with_scores,
-                pipeline_type="table_recognition",
-            )
-
-        try:
-            return _do_recognize(image)
-        except RuntimeError as e:
-            if self._is_gpu_error(e) and self._device != "cpu":
-                _logger.warning("预测过程中发生 GPU 错误，回退到 CPU: %s", e)
-                self._reset_pipeline_to_cpu("table_recognition")
-                return _do_recognize(image)
-            raise
+        return self._build_ocr_result(
+            raw_text=raw_text,
+            html_text=html_text,
+            text_with_scores=text_with_scores,
+            pipeline_type="table_recognition",
+        )
 
     def _recognize_formula(
         self,
@@ -863,426 +748,53 @@ class OCRService(metaclass=SingletonMeta):
         options: OCROptions,
     ) -> OCRResult:
         """公式识别"""
+        pipeline = self.get_pipeline(OCRPipeline.FORMULA_RECOGNITION)
+        output = pipeline.predict(
+            input=image,
+            use_doc_orientation_classify=options.use_doc_orientation_classify,
+            use_doc_unwarping=options.use_doc_unwarping,
+        )
 
-        def _do_recognize(img: Image.Image | np.ndarray | str) -> OCRResult:
-            pipeline = self.get_pipeline(OCRPipeline.FORMULA_RECOGNITION)
-            output = pipeline.predict(
-                input=img,
-                use_doc_orientation_classify=options.use_doc_orientation_classify,
-                use_doc_unwarping=options.use_doc_unwarping,
-                use_layout_detection=options.vl_use_layout_detection,
-            )
+        output_list = list(output)
 
-            # 确保 GPU 操作完成后再处理结果 - 使用安全消费方法
-            output_list = self._consume_generator_safely(output)
+        text_with_scores: list[tuple[str, float]] = []
+        markdown_parts: list[str] = []
 
-            text_with_scores: list[tuple[str, float]] = []
-            markdown_parts: list[str] = []
+        for res in output_list:
+            # 提取公式 LaTeX 代码
+            if hasattr(res, "rec_formula"):
+                formula = res.rec_formula
+                if formula:
+                    markdown_parts.append(f"$$\n{formula}\n$$")
+                    text_with_scores.append((formula, 1.0))
+            elif isinstance(res, dict):
+                formula = res.get("rec_formula", "")
+                if formula:
+                    markdown_parts.append(f"$$\n{formula}\n$$")
+                    text_with_scores.append((formula, 1.0))
 
-            for res in output_list:
-                # 提取公式 LaTeX 代码
-                if hasattr(res, "rec_formula"):
-                    formula = res.rec_formula
-                    if formula:
-                        markdown_parts.append(f"$$\n{formula}\n$$")
-                        text_with_scores.append((formula, 1.0))
-                elif isinstance(res, dict):
-                    formula = res.get("rec_formula", "")
-                    if formula:
-                        markdown_parts.append(f"$$\n{formula}\n$$")
-                        text_with_scores.append((formula, 1.0))
+        markdown_text = "\n\n".join(markdown_parts)
+        raw_text = "\n".join(t for t, _ in text_with_scores)
+        html_text = markdown_to_html(markdown_text)
 
-            markdown_text = "\n\n".join(markdown_parts)
-            raw_text = "\n".join(t for t, _ in text_with_scores)
-            html_text = markdown_to_html(markdown_text)
-
-            return self._build_ocr_result(
-                raw_text=raw_text,
-                markdown_text=markdown_text,
-                html_text=html_text,
-                text_with_scores=text_with_scores,
-                pipeline_type="formula_recognition",
-            )
-
-        try:
-            return _do_recognize(image)
-        except RuntimeError as e:
-            if self._is_gpu_error(e) and self._device != "cpu":
-                _logger.warning("预测过程中发生 GPU 错误，回退到 CPU: %s", e)
-                self._reset_pipeline_to_cpu("formula_recognition")
-                return _do_recognize(image)
-            raise
-
-    def _recognize_structure(
-        self,
-        image: Image.Image | np.ndarray | str,
-        options: OCROptions,
-    ) -> OCRResult:
-        """版面解析（PP-StructureV3）"""
-
-        def _do_recognize(img: Image.Image | np.ndarray | str) -> OCRResult:
-            pipeline = self.get_pipeline(OCRPipeline.PP_STRUCTURE_V3)
-            output = pipeline.predict(
-                input=img,
-                use_doc_orientation_classify=options.use_doc_orientation_classify,
-                use_doc_unwarping=options.use_doc_unwarping,
-                use_table_recognition=options.use_table_recognition,
-                use_formula_recognition=options.use_formula_recognition,
-                use_seal_recognition=options.use_seal_recognition,
-                use_chart_recognition=options.use_chart_recognition,
-            )
-
-            # 确保 GPU 操作完成后再处理结果 - 使用安全消费方法
-            output_list = self._consume_generator_safely(output)
-
-            text_with_scores: list[tuple[str, float]] = []
-            markdown_parts: list[str] = []
-            images: dict[str, Any] = {}
-
-            for res in output_list:
-                # 提取 Markdown 结果（如果有）
-                # 注意：res.markdown 返回的是字典，包含 markdown_texts 等键
-                if hasattr(res, "markdown"):
-                    markdown_data = res.markdown
-                    if isinstance(markdown_data, dict):
-                        # 提取 markdown_texts 字符串
-                        markdown_text = markdown_data.get("markdown_texts", "")
-                        if markdown_text:
-                            markdown_parts.append(markdown_text)
-                        # 提取图像字典
-                        if "markdown_images" in markdown_data:
-                            images.update(markdown_data["markdown_images"])
-                    elif isinstance(markdown_data, str):
-                        markdown_parts.append(markdown_data)
-
-                # 提取 OCR 文本和置信度
-                if hasattr(res, "rec_texts") and hasattr(res, "rec_scores"):
-                    for text, score in zip(res.rec_texts, res.rec_scores, strict=False):
-                        if text:
-                            text_with_scores.append((text, float(score)))
-
-                # 提取表格 HTML（剥离外层 html/body 包装，仅保留 table 标签）
-                if hasattr(res, "table_res_list"):
-                    for table_res in res.table_res_list:
-                        if hasattr(table_res, "pred_html"):
-                            html_table = _extract_table_html(table_res.pred_html)
-                            markdown_parts.append(html_table)
-                        # 提取表格 OCR 的置信度
-                        if hasattr(table_res, "table_ocr_pred"):
-                            ocr_pred = table_res.table_ocr_pred
-                            if hasattr(ocr_pred, "rec_texts") and hasattr(
-                                ocr_pred, "rec_scores"
-                            ):
-                                for text, score in zip(
-                                    ocr_pred.rec_texts,
-                                    ocr_pred.rec_scores,
-                                    strict=False,
-                                ):
-                                    if text:
-                                        text_with_scores.append((text, float(score)))
-
-                # 提取公式 LaTeX
-                if hasattr(res, "formula_res_list"):
-                    for formula_res in res.formula_res_list:
-                        if hasattr(formula_res, "rec_formula"):
-                            latex = formula_res.rec_formula
-                            if latex:
-                                markdown_parts.append(f"$$\n{latex}\n$$")
-                                text_with_scores.append((latex, 1.0))
-
-                # 字典格式处理
-                if isinstance(res, dict):
-                    if "markdown" in res:
-                        markdown_data = res["markdown"]
-                        if isinstance(markdown_data, dict):
-                            markdown_text = markdown_data.get("markdown_texts", "")
-                            if markdown_text:
-                                markdown_parts.append(markdown_text)
-                            if "markdown_images" in markdown_data:
-                                images.update(markdown_data["markdown_images"])
-                        elif isinstance(markdown_data, str):
-                            markdown_parts.append(markdown_data)
-
-                    # 提取 OCR 文本
-                    rec_texts = res.get("rec_texts", [])
-                    rec_scores = res.get("rec_scores", [])
-                    for text, score in zip(rec_texts, rec_scores, strict=False):
-                        if text:
-                            text_with_scores.append((text, float(score)))
-
-                    # 提取表格结果
-                    for table_res in res.get("table_res_list", []):
-                        if "pred_html" in table_res:
-                            markdown_parts.append(
-                                _extract_table_html(table_res["pred_html"])
-                            )
-                        ocr_pred = table_res.get("table_ocr_pred", {})
-                        for text, score in zip(
-                            ocr_pred.get("rec_texts", []),
-                            ocr_pred.get("rec_scores", []),
-                            strict=False,
-                        ):
-                            if text:
-                                text_with_scores.append((text, float(score)))
-
-                    # 提取公式结果
-                    for formula_res in res.get("formula_res_list", []):
-                        latex = formula_res.get("rec_formula", "")
-                        if latex:
-                            markdown_parts.append(f"$$\n{latex}\n$$")
-                            text_with_scores.append((latex, 1.0))
-
-            # 组合 Markdown 文本
-            markdown_text = "\n\n".join(markdown_parts) if markdown_parts else ""
-
-            # 转换 Markdown 为 HTML
-            html_text = markdown_to_html(markdown_text) if markdown_text else ""
-
-            # 生成纯文本
-            raw_text = (
-                "\n".join(t for t, _ in text_with_scores) if text_with_scores else ""
-            )
-
-            # 如果 raw_text 为空但有 markdown_text，提取纯文本作为 raw_text
-            # 并从 markdown_text 中提取文本块用于置信度统计
-            if not raw_text and markdown_text:
-                raw_text = extract_plain_text(markdown_text)
-                if not raw_text:
-                    raw_text = markdown_text
-                # 为 markdown 内容创建默认置信度条目
-                # 按段落分割，每个段落作为一个文本块（提取纯文本）
-                for line in markdown_text.split("\n\n"):
-                    line = extract_plain_text(line.strip())
-                    if line:
-                        text_with_scores.append((line, 1.0))
-
-            return self._build_ocr_result(
-                raw_text=raw_text,
-                markdown_text=markdown_text,
-                html_text=html_text,
-                text_with_scores=text_with_scores,
-                pipeline_type="PP-StructureV3",
-                images=images,
-            )
-
-        try:
-            return _do_recognize(image)
-        except RuntimeError as e:
-            if self._is_gpu_error(e) and self._device != "cpu":
-                _logger.warning("预测过程中发生 GPU 错误，回退到 CPU: %s", e)
-                self._reset_pipeline_to_cpu("PP-StructureV3")
-                return _do_recognize(image)
-            raise
-
-    def _recognize_paddleocr_vl(
-        self,
-        image: Image.Image | np.ndarray | str,
-        options: OCROptions,
-    ) -> OCRResult:
-        """PaddleOCR-VL 多模态文档解析
-
-        PaddleOCR-VL 是一款先进、高效的文档解析模型，专为文档中的元素识别设计。
-        支持 109 种语言，能识别复杂元素（文本、表格、公式、图表、印章等）。
-        """
-
-        def _do_recognize(img) -> OCRResult:
-            pipeline = self.get_pipeline(OCRPipeline.PADDLEOCR_VL)
-
-            # 构建 predict 参数
-            # 注意: PaddleOCR-VL 管道默认不初始化 doc_preprocessor，
-            # 因此不支持 use_doc_orientation_classify / use_doc_unwarping
-            predict_kwargs = {
-                "input": img,
-                "use_layout_detection": options.vl_use_layout_detection,
-                "use_chart_recognition": options.use_chart_recognition,
-                "use_seal_recognition": options.vl_use_seal_recognition,
-                "use_ocr_for_image_block": options.vl_use_ocr_for_image_block,
-                "format_block_content": options.vl_format_block_content,
-                "use_queues": False,  # 禁用并行队列以获取完整的错误堆栈
-            }
-
-            # 添加 VLM 采样参数（如果设置了非零值）
-            if options.vl_temperature > 0:
-                predict_kwargs["temperature"] = options.vl_temperature
-            if options.vl_top_p > 0:
-                predict_kwargs["top_p"] = options.vl_top_p
-            if options.vl_max_pixels > 0:
-                predict_kwargs["max_pixels"] = options.vl_max_pixels
-            if options.vl_min_pixels > 0:
-                predict_kwargs["min_pixels"] = options.vl_min_pixels
-
-            output = pipeline.predict(**predict_kwargs)
-
-            # 确保 GPU 操作完成后再处理结果
-            output_list = self._consume_generator_safely(output)
-
-            text_with_scores: list[tuple[str, float]] = []
-            markdown_parts: list[str] = []
-            images: dict[str, Any] = {}
-            html_parts: list[str] = []
-
-            for res in output_list:
-                # 提取 Markdown 结果
-                if hasattr(res, "markdown"):
-                    markdown_data = res.markdown
-                    if isinstance(markdown_data, dict):
-                        markdown_text = markdown_data.get("markdown_texts", "")
-                        if markdown_text:
-                            markdown_parts.append(markdown_text)
-                        if "markdown_images" in markdown_data:
-                            images.update(markdown_data["markdown_images"])
-                    elif isinstance(markdown_data, str):
-                        markdown_parts.append(markdown_data)
-
-                # 提取解析结果列表中的内容
-                if hasattr(res, "parsing_res_list"):
-                    for block in res.parsing_res_list:
-                        if hasattr(block, "block_content"):
-                            content = block.block_content
-                            if content:
-                                # 保留原始 HTML 用于富文本显示
-                                html_parts.append(content)
-                                # 提取纯文本用于 raw_text
-                                plain = extract_plain_text(content)
-                                if plain:
-                                    text_with_scores.append((plain, 1.0))
-                        # 提取 block_label 用于调试
-                        if hasattr(block, "block_label"):
-                            _logger.debug(f"PaddleOCR-VL block: {block.block_label}")
-
-                # 字典格式处理
-                if isinstance(res, dict):
-                    if "markdown" in res:
-                        markdown_data = res["markdown"]
-                        if isinstance(markdown_data, dict):
-                            markdown_text = markdown_data.get("markdown_texts", "")
-                            if markdown_text:
-                                markdown_parts.append(markdown_text)
-                            if "markdown_images" in markdown_data:
-                                images.update(markdown_data["markdown_images"])
-                        elif isinstance(markdown_data, str):
-                            markdown_parts.append(markdown_data)
-
-                    # 提取 parsing_res_list（元素可能是 PaddleOCRVLBlock 对象或字典）
-                    for block in res.get("parsing_res_list", []):
-                        if isinstance(block, dict):
-                            content = block.get("block_content", "")
-                        elif hasattr(block, "block_content"):
-                            content = block.block_content
-                        else:
-                            content = ""
-                        if content:
-                            # 保留原始 HTML 用于富文本显示
-                            html_parts.append(content)
-                            # 提取纯文本用于 raw_text
-                            plain = extract_plain_text(content)
-                            if plain:
-                                text_with_scores.append((plain, 1.0))
-
-            # 组合 Markdown 文本
-            markdown_text = "\n\n".join(markdown_parts) if markdown_parts else ""
-
-            # 转换 Markdown 为 HTML
-            html_text = markdown_to_html(markdown_text) if markdown_text else ""
-
-            # 如果 Markdown 转换无结果，但 block_content 含有 HTML，直接使用原始 HTML
-            if not html_text and html_parts:
-                html_text = f"{HTML_STYLE}<body>{'<br><br>'.join(html_parts)}</body>"
-
-            # 生成纯文本（已确保 text_with_scores 中是纯文本）
-            raw_text = (
-                "\n".join(t for t, _ in text_with_scores) if text_with_scores else ""
-            )
-
-            # 如果 raw_text 为空但有 markdown_text，提取纯文本作为 raw_text
-            # 并从 markdown_text 中提取文本块用于置信度统计
-            if not raw_text and markdown_text:
-                raw_text = extract_plain_text(markdown_text)
-                if not raw_text:
-                    raw_text = markdown_text
-                # 为 markdown 内容创建默认置信度条目
-                # 按段落分割，每个段落作为一个文本块（提取纯文本）
-                for line in markdown_text.split("\n\n"):
-                    line = extract_plain_text(line.strip())
-                    if line:
-                        text_with_scores.append((line, 1.0))
-
-            return self._build_ocr_result(
-                raw_text=raw_text,
-                markdown_text=markdown_text,
-                html_text=html_text,
-                text_with_scores=text_with_scores,
-                pipeline_type="PaddleOCR-VL",
-                images=images,
-            )
-
-        try:
-            return _do_recognize(image)
-        except RuntimeError as e:
-            if self._is_gpu_error(e) and self._device != "cpu":
-                _logger.warning("预测过程中发生 GPU 错误，回退到 CPU: %s", e)
-                self._reset_pipeline_to_cpu("PaddleOCR-VL")
-                return _do_recognize(image)
-            raise
-
-    def _sync_cuda_if_available(self) -> None:
-        """如果使用 GPU，同步 CUDA 操作以确保完成"""
-        if self._device and "gpu" in self._device:
-            try:
-                import paddle
-
-                # 使用新的 API，避免 deprecation warning
-                paddle.device.synchronize()
-                _logger.debug("[CUDA] 同步完成")
-            except Exception as e:
-                _logger.warning(f"[CUDA] 同步失败（可能在 CPU 模式）: {e}")
-
-    def _consume_generator_safely(self, output) -> list:
-        """安全地消费 generator
-
-        关键：在消费 generator 时禁用 Python GC，
-        避免 GC 与 CUDA 内存管理冲突导致堆损坏。
-        """
-        import gc
-
-        # 同步确保 GPU 操作完成
-        self._sync_cuda_if_available()
-
-        # 禁用 GC 以避免堆损坏
-        gc_was_enabled = gc.isenabled()
-        gc.disable()
-
-        try:
-            _logger.debug("[安全消费] 开始消费 generator...(GC 已禁用)")
-            output_list = list(output)
-            _logger.debug(f"[安全消费] 获取到 {len(output_list)} 个结果项")
-
-            # 再次同步确保数据完全就绪
-            self._sync_cuda_if_available()
-
-            return output_list
-        except Exception as e:
-            _logger.error(f"[安全消费] 消费 generator 时出错: {e}", exc_info=True)
-            return []
-        finally:
-            # 恢复 GC 状态
-            if gc_was_enabled:
-                gc.enable()
-            _logger.debug("[安全消费] GC 已恢复")
+        return self._build_ocr_result(
+            raw_text=raw_text,
+            markdown_text=markdown_text,
+            html_text=html_text,
+            text_with_scores=text_with_scores,
+            pipeline_type="formula_recognition",
+        )
 
     def _process_ocr_output_safe(self, output) -> OCRResult:
-        """从 OCR 输出中提取结果（安全版本）
+        """从 OCR 输出中提取结果
 
-        关键：先将 generator 完全消费为 list，确保所有 GPU 计算在当前线程完成，
-        然后再提取数据。这避免了 generator 跨线程访问 GPU 资源导致的崩溃。
+        先将 generator 完全消费为 list，然后提取数据。
         """
         _logger.info("[_process_ocr_output_safe] 开始提取结果...")
         text_with_scores: list[tuple[str, float]] = []
 
-        # 关键修复：使用安全的 generator 消费方法（禁用 GC）
-        output_list = self._consume_generator_safely(output)
+        output_list = list(output)
 
-        # 处理结果列表（此时数据已在 CPU 内存中，安全访问）
         result_count = 0
         for res in output_list:
             result_count += 1
@@ -1374,176 +886,3 @@ class OCRService(metaclass=SingletonMeta):
             pipeline_type=pipeline_type,
             images=images or {},
         )
-
-    def _recognize_chatocrv4(
-        self,
-        image: Image.Image | np.ndarray | str,
-        options: OCROptions,
-    ) -> OCRResult:
-        """PP-ChatOCRv4 文档场景信息抽取
-
-        PP-ChatOCRv4 是结合 LLM 和 OCR 技术的文档场景信息抽取模型。
-        """
-
-        def _do_recognize(img) -> OCRResult:
-            pipeline = self.get_pipeline(OCRPipeline.CHATOCRV4)
-
-            # 构建 predict 参数
-            predict_kwargs = {
-                "input": img,
-                "use_doc_orientation_classify": options.use_doc_orientation_classify,
-                "use_doc_unwarping": options.use_doc_unwarping,
-            }
-
-            output = pipeline.predict(**predict_kwargs)
-
-            # 确保 GPU 操作完成后再处理结果
-            output_list = self._consume_generator_safely(output)
-
-            text_with_scores: list[tuple[str, float]] = []
-
-            for res in output_list:
-                # 提取识别结果
-                if hasattr(res, "rec_texts") and hasattr(res, "rec_scores"):
-                    for text, score in zip(res.rec_texts, res.rec_scores, strict=False):
-                        if text:
-                            text_with_scores.append((text, float(score)))
-                elif hasattr(res, "ocr_text"):
-                    text_with_scores.append((res.ocr_text, 1.0))
-                # 字典格式处理
-                elif isinstance(res, dict):
-                    rec_texts = res.get("rec_texts", [])
-                    rec_scores = res.get("rec_scores", [])
-                    if rec_scores:
-                        for text, score in zip(rec_texts, rec_scores, strict=False):
-                            if text:
-                                text_with_scores.append((text, float(score)))
-                    else:
-                        for text in rec_texts:
-                            if text:
-                                text_with_scores.append((text, 1.0))
-
-            # 生成文本
-            raw_text = (
-                "\n".join(t for t, _ in text_with_scores) if text_with_scores else ""
-            )
-
-            # VLM 输出可能包含 Markdown 格式，检测并启用富文本渲染
-            if _looks_like_markdown(raw_text):
-                html_text = markdown_to_html(raw_text)
-                markdown_text = raw_text
-            else:
-                html_text = ""
-                markdown_text = ""
-
-            return self._build_ocr_result(
-                raw_text=raw_text,
-                markdown_text=markdown_text,
-                html_text=html_text,
-                text_with_scores=text_with_scores,
-                pipeline_type="PP-ChatOCRv4",
-            )
-
-        try:
-            return _do_recognize(image)
-        except RuntimeError as e:
-            if self._is_gpu_error(e) and self._device != "cpu":
-                _logger.warning("预测过程中发生 GPU 错误，回退到 CPU: %s", e)
-                self._reset_pipeline_to_cpu("PP-ChatOCRv4")
-                return _do_recognize(image)
-            raise
-
-    def _recognize_doc_understanding(
-        self,
-        image: Image.Image | np.ndarray | str,
-        options: OCROptions,
-    ) -> OCRResult:
-        """文档理解管道（VLM）
-
-        基于视觉-语言模型（VLM）的文档问答。
-        支持 PP-DocBee 系列模型。
-        """
-        from vibeocr.core.pipelines import (
-            DEFAULT_DOC_UNDERSTANDING_MODEL,
-            DOC_UNDERSTANDING_MODELS,
-        )
-
-        def _do_recognize(img) -> OCRResult:
-            pipeline = self.get_pipeline(OCRPipeline.DOC_UNDERSTANDING)
-
-            # 验证模型名称
-            model_name = options.doc_understanding_model
-            if model_name not in DOC_UNDERSTANDING_MODELS:
-                _logger.warning(
-                    f"模型 {model_name} 不在支持列表中，使用默认模型: {DEFAULT_DOC_UNDERSTANDING_MODEL}"
-                )
-                model_name = DEFAULT_DOC_UNDERSTANDING_MODEL
-
-            # 构建 predict 参数
-            predict_kwargs = {
-                "input": img,
-                "model": model_name,
-            }
-
-            # 添加 VLM 采样参数（如果设置了非零值）
-            if options.vl_temperature > 0:
-                predict_kwargs["temperature"] = options.vl_temperature
-            if options.vl_top_p > 0:
-                predict_kwargs["top_p"] = options.vl_top_p
-
-            output = pipeline.predict(**predict_kwargs)
-
-            # 确保 GPU 操作完成后再处理结果
-            output_list = self._consume_generator_safely(output)
-
-            text_with_scores: list[tuple[str, float]] = []
-
-            for res in output_list:
-                # 提取结果
-                if hasattr(res, "result"):
-                    result_text = res.result
-                    if result_text:
-                        text_with_scores.append((result_text, 1.0))
-                elif hasattr(res, "answer"):
-                    answer_text = res.answer
-                    if answer_text:
-                        text_with_scores.append((answer_text, 1.0))
-                elif hasattr(res, "text"):
-                    text_with_scores.append((res.text, 1.0))
-                # 字典格式处理
-                elif isinstance(res, dict):
-                    result_text = res.get(
-                        "result", res.get("answer", res.get("text", ""))
-                    )
-                    if result_text:
-                        text_with_scores.append((result_text, 1.0))
-
-            # 生成文本
-            raw_text = (
-                "\n".join(t for t, _ in text_with_scores) if text_with_scores else ""
-            )
-
-            # VLM 输出可能包含 Markdown 格式，检测并启用富文本渲染
-            if _looks_like_markdown(raw_text):
-                html_text = markdown_to_html(raw_text)
-                markdown_text = raw_text
-            else:
-                html_text = ""
-                markdown_text = ""
-
-            return self._build_ocr_result(
-                raw_text=raw_text,
-                markdown_text=markdown_text,
-                html_text=html_text,
-                text_with_scores=text_with_scores,
-                pipeline_type="DocUnderstanding",
-            )
-
-        try:
-            return _do_recognize(image)
-        except RuntimeError as e:
-            if self._is_gpu_error(e) and self._device != "cpu":
-                _logger.warning("预测过程中发生 GPU 错误，回退到 CPU: %s", e)
-                self._reset_pipeline_to_cpu("doc_understanding")
-                return _do_recognize(image)
-            raise
