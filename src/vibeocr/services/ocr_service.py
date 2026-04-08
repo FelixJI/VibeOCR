@@ -6,6 +6,7 @@ import logging
 import os
 import threading
 from enum import Enum
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from vibeocr.core.pipelines import OCRPipeline
@@ -601,6 +602,8 @@ class OCRService(metaclass=SingletonMeta):
                 result = self._recognize_table(image, actual_options)
             elif actual_options.pipeline == OCRPipeline.FORMULA_RECOGNITION:
                 result = self._recognize_formula(image, actual_options)
+            elif actual_options.pipeline == OCRPipeline.DOCUMENT_PARSING:
+                result = self._recognize_document(image, actual_options)
             else:
                 result = self._recognize_ocr(image, actual_options)
             _logger.info(f"[recognize] 识别完成，返回 {len(result.raw_text)} 字符")
@@ -608,6 +611,46 @@ class OCRService(metaclass=SingletonMeta):
         except Exception as e:
             _logger.error(f"[recognize] 识别过程中发生异常: {e}", exc_info=True)
             raise
+
+    def _recognize_document(
+        self,
+        image: Image.Image | np.ndarray | str | bytes,
+        options: OCROptions,
+    ) -> OCRResult:
+        """文档解析（MinerU）"""
+        from vibeocr.services.mineru_service import MinerUService
+
+        # 准备数据
+        if isinstance(image, bytes):
+            data = image
+            mime_type = "application/pdf"  # 默认，调用方应通过 options 指定
+        elif isinstance(image, str):
+            # 文件路径
+            data = Path(image).read_bytes()
+            suffix = Path(image).suffix.lower()
+            mime_map = {
+                ".pdf": "application/pdf",
+                ".png": "image/png",
+                ".jpg": "image/jpeg",
+                ".jpeg": "image/jpeg",
+                ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            }
+            mime_type = mime_map.get(suffix, "application/pdf")
+        else:
+            # numpy/PIL → PNG
+            import io
+
+            from PIL import Image as PILImage
+
+            if not isinstance(image, PILImage.Image):
+                image = PILImage.fromarray(image)
+            buf = io.BytesIO()
+            image.save(buf, format="PNG")
+            data = buf.getvalue()
+            mime_type = "image/png"
+
+        service = MinerUService()
+        return service.parse(data, mime_type, options)
 
     def _recognize_ocr(
         self,
