@@ -100,19 +100,6 @@ class SettingsPageController:
         if btn_save_llm_config:
             btn_save_llm_config.clicked.connect(self._on_save_llm_config_clicked)
 
-        # 模板管理相关信号
-        btn_add_template = self._ui.findChild(QPushButton, "btnAddTemplate")
-        if btn_add_template:
-            btn_add_template.clicked.connect(self._on_add_template_clicked)
-
-        btn_edit_template = self._ui.findChild(QPushButton, "btnEditTemplate")
-        if btn_edit_template:
-            btn_edit_template.clicked.connect(self._on_edit_template_clicked)
-
-        btn_delete_template = self._ui.findChild(QPushButton, "btnDeleteTemplate")
-        if btn_delete_template:
-            btn_delete_template.clicked.connect(self._on_delete_template_clicked)
-
         # 初始化设置页面状态
         self._init_settings_page()
 
@@ -134,7 +121,6 @@ class SettingsPageController:
             parallel_options.setVisible(False)
 
         self._load_llm_config()
-        self._load_template_list()
 
     # ============================================================
     # LLM 配置
@@ -288,11 +274,7 @@ class SettingsPageController:
 
         chk_structure = self._ui.findChild(QCheckBox, "chkPreloadStructure")
         if chk_structure and chk_structure.isChecked():
-            pipelines.append(OCRPipeline.PP_STRUCTURE_V3)
-
-        chk_paddlocr_vl = self._ui.findChild(QCheckBox, "chkPreloadPaddleOCRVL")
-        if chk_paddlocr_vl and chk_paddlocr_vl.isChecked():
-            pipelines.append(OCRPipeline.PADDLEOCR_VL)
+            pipelines.append(OCRPipeline.DOCUMENT_PARSING)
 
         return pipelines
 
@@ -475,175 +457,3 @@ class SettingsPageController:
                 else:
                     label.setText("无有效缓存")  # type: ignore[attr-defined]
 
-    # ============================================================
-    # 模板管理
-    # ============================================================
-
-    def _load_template_list(self) -> None:
-        """加载模板列表到 UI"""
-        from vibeocr.managers.config_manager import ConfigManager
-        from vibeocr.models.extraction_template import DEFAULT_TEMPLATES
-
-        list_template = self._ui.findChild(QListWidget, "listTemplate")
-        if not list_template:
-            return
-
-        list_template.clear()
-
-        for template in DEFAULT_TEMPLATES:
-            list_template.addItem(template.name)
-
-        cm = ConfigManager.instance()
-        custom_templates = cm.load_templates()
-        for template in custom_templates:
-            list_template.addItem(f"[自定义] {template.name}")
-
-    def _on_add_template_clicked(self) -> None:
-        """添加模板按钮点击"""
-        from vibeocr.managers.config_manager import ConfigManager
-        from vibeocr.models.extraction_template import ExtractionTemplate
-
-        dialog = QDialog(self._ui)
-        dialog.setWindowTitle("添加模板")
-        dialog.setMinimumSize(300, 200)
-
-        layout = QVBoxLayout(dialog)
-
-        layout.addWidget(QLabel("模板名称:"))
-        name_edit = QLineEdit()
-        layout.addWidget(name_edit)
-
-        layout.addWidget(QLabel("抽取字段（每行一个）:"))
-        keys_edit = QLineEdit()
-        keys_edit.setPlaceholderText("字段1\n字段2\n字段3")
-        layout.addWidget(keys_edit)
-
-        btn_add = QPushButton("添加")
-        layout.addWidget(btn_add)
-
-        def on_add():
-            name = name_edit.text().strip()
-            keys_text = keys_edit.text().strip()
-            if not name or not keys_text:
-                return
-
-            keys = [k.strip() for k in keys_text.split("\n") if k.strip()]
-            if not keys:
-                return
-
-            template = ExtractionTemplate(name=name, keys=keys)
-            cm = ConfigManager.instance()
-            if cm.add_template(template):
-                self._load_template_list()
-                dialog.accept()
-                self._status_callback(f"模板 '{name}' 已添加")
-            else:
-                self._status_callback(f"模板名称已存在: {name}")
-
-        btn_add.clicked.connect(on_add)
-        dialog.exec()
-
-    def _on_edit_template_clicked(self) -> None:
-        """编辑模板按钮点击"""
-        from vibeocr.managers.config_manager import ConfigManager
-        from vibeocr.models.extraction_template import ExtractionTemplate
-
-        list_template = self._ui.findChild(QListWidget, "listTemplate")
-        if not list_template:
-            return
-
-        current_item = list_template.currentItem()
-        if not current_item:
-            QMessageBox.information(None, "提示", "请先选择一个模板。")
-            return
-
-        template_name = current_item.text()
-        if not template_name.startswith("[自定义]"):
-            QMessageBox.information(None, "提示", "只能编辑自定义模板。")
-            return
-
-        template_name = template_name.replace("[自定义] ", "")
-
-        cm = ConfigManager.instance()
-        template_data = None
-        for t in cm.custom_templates:
-            if t.name == template_name:
-                template_data = t
-                break
-
-        if not template_data:
-            return
-
-        dialog = QDialog(self._ui)
-        dialog.setWindowTitle("编辑模板")
-        dialog.setMinimumSize(300, 200)
-
-        layout = QVBoxLayout(dialog)
-
-        layout.addWidget(QLabel("模板名称:"))
-        name_edit = QLineEdit(template_name)
-        layout.addWidget(name_edit)
-
-        layout.addWidget(QLabel("抽取字段（每行一个）:"))
-        keys_edit = QLineEdit("\n".join(template_data.keys))
-        layout.addWidget(keys_edit)
-
-        btn_save = QPushButton("保存")
-        layout.addWidget(btn_save)
-
-        def on_save():
-            new_name = name_edit.text().strip()
-            keys_text = keys_edit.text().strip()
-            if not new_name or not keys_text:
-                return
-
-            keys = [k.strip() for k in keys_text.split("\n") if k.strip()]
-            if not keys:
-                return
-
-            updated = ExtractionTemplate(name=new_name, keys=keys)
-            if cm.update_template(template_name, updated):
-                self._load_template_list()
-                dialog.accept()
-                self._status_callback(f"模板 '{new_name}' 已更新")
-
-        btn_save.clicked.connect(on_save)
-        dialog.exec()
-
-    def _on_delete_template_clicked(self) -> None:
-        """删除模板按钮点击"""
-        from vibeocr.managers.config_manager import ConfigManager
-
-        list_template = self._ui.findChild(QListWidget, "listTemplate")
-        if not list_template:
-            return
-
-        current_item = list_template.currentItem()
-        if not current_item:
-            QMessageBox.information(None, "提示", "请先选择一个模板。")
-            return
-
-        template_name = current_item.text()
-        if not template_name.startswith("[自定义]"):
-            QMessageBox.information(None, "提示", "只能删除自定义模板。")
-            return
-
-        template_name = template_name.replace("[自定义] ", "")
-
-        reply = QMessageBox.question(
-            None,
-            "确认删除",
-            f"确定要删除模板 '{template_name}' 吗？",
-            QMessageBox.Yes | QMessageBox.No,  # type: ignore[attr-defined]
-            QMessageBox.No,  # type: ignore[attr-defined]
-        )
-
-        if reply != QMessageBox.Yes:  # type: ignore[attr-defined]
-            return
-
-        cm = ConfigManager.instance()
-        if cm.delete_template(template_name):
-            self._load_template_list()
-            self._status_callback(f"模板 '{template_name}' 已删除")
-        else:
-            logger.error(f"删除模板失败: {template_name}")

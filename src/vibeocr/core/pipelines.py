@@ -20,10 +20,7 @@ class OCRPipeline(Enum):
     OCR = "OCR"  # 通用 OCR：纯文本识别
     TABLE_RECOGNITION = "table_recognition"  # 表格识别
     FORMULA_RECOGNITION = "formula_recognition"  # 公式识别
-    PP_STRUCTURE_V3 = "PP-StructureV3"  # 版面解析（含表格/公式子产线）
-    PADDLEOCR_VL = "PaddleOCR-VL"  # 端到端多模态文档解析
-    CHATOCRV4 = "PP-ChatOCRv4"  # 文档场景信息抽取 v4
-    DOC_UNDERSTANDING = "doc_understanding"  # 文档理解 (VLM)
+    DOCUMENT_PARSING = "MinerU"  # MineRU 文档解析（替代 PP-StructureV3 和 PaddleOCR-VL）
 
     @property
     def display_name(self) -> str:
@@ -63,59 +60,16 @@ _PIPELINE_METADATA: dict[OCRPipeline, dict] = {
             "use_doc_unwarping",
         ],
     },
-    OCRPipeline.PP_STRUCTURE_V3: {
-        "display_name": "版面解析",
-        "description": "解析文档版面，支持表格、公式、印章、图表等子产线",
+    OCRPipeline.DOCUMENT_PARSING: {
+        "display_name": "文档解析",
+        "description": "使用 MineRU 解析文档，支持 PDF/图片，提取文本、表格、公式等",
         "supported_options": [
-            "use_doc_orientation_classify",
-            "use_doc_unwarping",
-            "use_table_recognition",
-            "use_formula_recognition",
-            "use_seal_recognition",
-            "use_chart_recognition",
-        ],
-    },
-    OCRPipeline.PADDLEOCR_VL: {
-        "display_name": "PaddleOCR-VL",
-        "description": "端到端多模态文档解析，支持表格、公式、印章、图表等",
-        "supported_options": [
-            "vl_use_layout_detection",
-            "vl_format_block_content",
-            "vl_use_seal_recognition",
-            "vl_use_ocr_for_image_block",
-            "vl_temperature",
-            "vl_top_p",
-            "vl_max_pixels",
-            "vl_min_pixels",
-        ],
-    },
-    OCRPipeline.CHATOCRV4: {
-        "display_name": "PP-ChatOCRv4",
-        "description": "文档场景信息抽取，结合 LLM 和 OCR 技术",
-        "supported_options": [
-            "use_doc_orientation_classify",
-            "use_doc_unwarping",
-        ],
-    },
-    OCRPipeline.DOC_UNDERSTANDING: {
-        "display_name": "文档理解",
-        "description": "基于视觉-语言模型（VLM）的文档问答",
-        "supported_options": [
-            "doc_understanding_model",
-            "vl_temperature",
-            "vl_top_p",
+            "parse_method",
+            "enable_formula",
+            "enable_table",
         ],
     },
 }
-
-# 文档理解支持的模型列表
-DOC_UNDERSTANDING_MODELS = [
-    "PP-DocBee-2B",
-    "PP-DocBee-7B",
-    "PP-DocBee2-3B",
-]
-
-DEFAULT_DOC_UNDERSTANDING_MODEL = "PP-DocBee2-3B"
 
 
 def get_pipeline_display_name(pipeline: OCRPipeline) -> str:
