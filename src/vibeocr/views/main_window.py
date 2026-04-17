@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QSizePolicy,
+    QSpinBox,
     QStatusBar,
     QVBoxLayout,
     QWidget,
@@ -1398,16 +1399,23 @@ class MainWindow(QMainWindow):
 
     def _init_app_settings_ui(self) -> None:
         """初始化设置页面中的应用设置复选框"""
-        chk_auto_hide = self.findChild(QCheckBox, "chkAutoHideToolbar")
-        chk_tray = self.findChild(QCheckBox, "chkMinimizeToTray")
-        chk_autostart = self.findChild(QCheckBox, "chkAutoStart")
+        self._chk_auto_hide = self.findChild(QCheckBox, "chkAutoHideToolbar")
+        self._chk_tray = self.findChild(QCheckBox, "chkMinimizeToTray")
+        self._chk_autostart = self.findChild(QCheckBox, "chkAutoStart")
+        self._spin_hide_delay = self.findChild(QSpinBox, "spinHideDelay")
 
-        if chk_auto_hide:
-            chk_auto_hide.toggled.connect(self._on_auto_hide_toggled)
-        if chk_tray:
-            chk_tray.toggled.connect(self._on_minimize_to_tray_toggled)
-        if chk_autostart:
-            chk_autostart.toggled.connect(self._on_autostart_toggled)
+        if self._chk_auto_hide:
+            self._chk_auto_hide.toggled.connect(self._on_auto_hide_toggled)
+        if self._chk_tray:
+            self._chk_tray.toggled.connect(self._on_minimize_to_tray_toggled)
+        if self._chk_autostart:
+            self._chk_autostart.toggled.connect(self._on_autostart_toggled)
+        if self._spin_hide_delay:
+            self._spin_hide_delay.valueChanged.connect(self._on_hide_delay_changed)
+
+        self._save_delay_timer = QTimer(self)
+        self._save_delay_timer.setSingleShot(True)
+        self._save_delay_timer.timeout.connect(self._do_save_hide_delay)
 
         self._sync_app_settings_ui()
 
@@ -1415,22 +1423,24 @@ class MainWindow(QMainWindow):
         """将当前设置值同步到设置页面 UI"""
         if not self._app_settings:
             return
-        chk_auto_hide = self.findChild(QCheckBox, "chkAutoHideToolbar")
-        chk_tray = self.findChild(QCheckBox, "chkMinimizeToTray")
-        chk_autostart = self.findChild(QCheckBox, "chkAutoStart")
 
-        if chk_auto_hide:
-            chk_auto_hide.blockSignals(True)
-            chk_auto_hide.setChecked(self._app_settings.auto_hide_toolbar)
-            chk_auto_hide.blockSignals(False)
-        if chk_tray:
-            chk_tray.blockSignals(True)
-            chk_tray.setChecked(self._app_settings.minimize_to_tray)
-            chk_tray.blockSignals(False)
-        if chk_autostart:
-            chk_autostart.blockSignals(True)
-            chk_autostart.setChecked(self._app_settings.auto_start)
-            chk_autostart.blockSignals(False)
+        if self._chk_auto_hide:
+            self._chk_auto_hide.blockSignals(True)
+            self._chk_auto_hide.setChecked(self._app_settings.auto_hide_toolbar)
+            self._chk_auto_hide.blockSignals(False)
+        if self._chk_tray:
+            self._chk_tray.blockSignals(True)
+            self._chk_tray.setChecked(self._app_settings.minimize_to_tray)
+            self._chk_tray.blockSignals(False)
+        if self._chk_autostart:
+            self._chk_autostart.blockSignals(True)
+            self._chk_autostart.setChecked(self._app_settings.auto_start)
+            self._chk_autostart.blockSignals(False)
+        if self._spin_hide_delay:
+            self._spin_hide_delay.blockSignals(True)
+            self._spin_hide_delay.setValue(self._app_settings.hide_delay_ms)
+            self._spin_hide_delay.setEnabled(self._app_settings.auto_hide_toolbar)
+            self._spin_hide_delay.blockSignals(False)
 
     @Slot(bool)
     def _on_auto_hide_toggled(self, checked: bool) -> None:
@@ -1441,7 +1451,23 @@ class MainWindow(QMainWindow):
         self._edge_toolbar.set_auto_hide(checked)
         if checked:
             self._edge_toolbar.show()
-        logging.info(f"自动隐藏边缘工具栏: {'启用' if checked else '禁用'}")
+        if self._spin_hide_delay:
+            self._spin_hide_delay.setEnabled(checked)
+        logging.info(f"自动隐藏工具栏: {'启用' if checked else '禁用'}")
+
+    @Slot(int)
+    def _on_hide_delay_changed(self, value: int) -> None:
+        """隐藏延迟值改变（防抖保存）"""
+        if self._app_settings:
+            self._app_settings.hide_delay_ms = value
+        self._edge_toolbar.set_hide_delay(value)
+        self._save_delay_timer.start(300)
+
+    def _do_save_hide_delay(self) -> None:
+        """防抖延迟后实际保存设置"""
+        if self._app_settings:
+            self._app_settings.save()
+            logging.info(f"工具栏隐藏延迟: {self._app_settings.hide_delay_ms}ms")
 
     @Slot(bool)
     def _on_minimize_to_tray_toggled(self, checked: bool) -> None:
@@ -1464,11 +1490,10 @@ class MainWindow(QMainWindow):
         elif not success:
             logging.warning("设置开机自启动失败")
             # 恢复复选框状态
-            chk = self.findChild(QCheckBox, "chkAutoStart")
-            if chk:
-                chk.blockSignals(True)
-                chk.setChecked(not checked)
-                chk.blockSignals(False)
+            if self._chk_autostart:
+                self._chk_autostart.blockSignals(True)
+                self._chk_autostart.setChecked(not checked)
+                self._chk_autostart.blockSignals(False)
             QMessageBox.warning(
                 self, "设置失败", "设置开机自启动失败，请检查系统权限。"
             )

@@ -761,7 +761,7 @@ def _quick_verify_deps(python_exe: Path) -> dict[str, bool]:
     for module, pkg in [
         ("paddle", "paddlepaddle"),
         ("paddlex", "paddlex"),
-        ("magic_pdf", "mineru"),
+        ("mineru", "mineru"),
     ]:
         try:
             result = subprocess.run(

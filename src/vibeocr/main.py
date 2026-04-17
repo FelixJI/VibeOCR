@@ -85,7 +85,7 @@ def _create_tray_icon(app, window, app_settings):
     menu.addAction(action_show)
 
     action_settings = QAction("设置", menu)
-    action_settings.triggered.connect(lambda: _show_tray_settings(app_settings, window))
+    action_settings.triggered.connect(lambda: _show_tray_settings(window))
     menu.addAction(action_settings)
 
     menu.addSeparator()
@@ -110,15 +110,16 @@ def _show_main_window(window):
     window.raise_()
 
 
-def _show_tray_settings(app_settings, parent):
-    """从托盘菜单打开设置对话框"""
-    from vibeocr.ui.settings_dialog import SettingsDialog
-
-    dialog = SettingsDialog(app_settings, parent)
-    if dialog.exec():
-        # 设置已保存，通知主窗口刷新
-        if hasattr(parent, "apply_app_settings"):
-            parent.apply_app_settings()
+def _show_tray_settings(parent):
+    """从托盘菜单打开主窗口设置标签页"""
+    _show_main_window(parent)
+    # 切换到设置标签页
+    if hasattr(parent, "_ui") and hasattr(parent._ui, "tabWidget"):
+        tab_widget = parent._ui.tabWidget
+        for i in range(tab_widget.count()):
+            if tab_widget.tabText(i) == "设置":
+                tab_widget.setCurrentIndex(i)
+                break
 
 
 def _quit_app(app, window):

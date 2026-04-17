@@ -577,6 +577,31 @@ class Ui_MainWindowWidget(object):
 
         self.appSettingsLayout.addWidget(self.chkAutoHideToolbar)
 
+        self.hideDelayLayout = QHBoxLayout()
+        self.hideDelayLayout.setSpacing(8)
+        self.hideDelayLayout.setObjectName(u"hideDelayLayout")
+        self.hideDelayLayout.setContentsMargins(20, -1, -1, -1)
+        self.labelHideDelay = QLabel(self.groupAppSettings)
+        self.labelHideDelay.setObjectName(u"labelHideDelay")
+
+        self.hideDelayLayout.addWidget(self.labelHideDelay)
+
+        self.spinHideDelay = QSpinBox(self.groupAppSettings)
+        self.spinHideDelay.setObjectName(u"spinHideDelay")
+        self.spinHideDelay.setMinimum(100)
+        self.spinHideDelay.setMaximum(5000)
+        self.spinHideDelay.setSingleStep(100)
+        self.spinHideDelay.setValue(500)
+
+        self.hideDelayLayout.addWidget(self.spinHideDelay)
+
+        self.hideDelaySpacer = QSpacerItem(40, 20, QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
+
+        self.hideDelayLayout.addItem(self.hideDelaySpacer)
+
+
+        self.appSettingsLayout.addLayout(self.hideDelayLayout)
+
         self.chkMinimizeToTray = QCheckBox(self.groupAppSettings)
         self.chkMinimizeToTray.setObjectName(u"chkMinimizeToTray")
 
@@ -759,6 +784,8 @@ class Ui_MainWindowWidget(object):
 #if QT_CONFIG(tooltip)
         self.chkAutoHideToolbar.setToolTip(QCoreApplication.translate("MainWindowWidget", u"\u5de5\u5177\u680f\u505c\u9760\u5728\u5c4f\u5e55\u8fb9\u7f18\u65f6\u81ea\u52a8\u9690\u85cf\uff0c\u9f20\u6807\u9760\u8fd1\u8fb9\u7f18\u65f6\u81ea\u52a8\u5f39\u51fa", None))
 #endif // QT_CONFIG(tooltip)
+        self.labelHideDelay.setText(QCoreApplication.translate("MainWindowWidget", u"\u9690\u85cf\u5ef6\u8fdf:", None))
+        self.spinHideDelay.setSuffix(QCoreApplication.translate("MainWindowWidget", u" \u6beb\u79d2", None))
         self.chkMinimizeToTray.setText(QCoreApplication.translate("MainWindowWidget", u"\u6700\u5c0f\u5316\u5230\u7cfb\u7edf\u6258\u76d8", None))
 #if QT_CONFIG(tooltip)
         self.chkMinimizeToTray.setToolTip(QCoreApplication.translate("MainWindowWidget", u"\u5173\u95ed\u4e3b\u7a97\u53e3\u65f6\u6700\u5c0f\u5316\u5230\u7cfb\u7edf\u6258\u76d8\u800c\u4e0d\u662f\u9000\u51fa\u7a0b\u5e8f", None))
