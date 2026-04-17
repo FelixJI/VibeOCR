@@ -38,7 +38,7 @@ class MinerUService(metaclass=SingletonMeta):
 
     _api_process: subprocess.Popen | None = None
     _api_url: str = ""
-    _lock = threading.Lock()
+    _lock = threading.RLock()
     _initialized = False
 
     def __init__(self):
@@ -97,19 +97,16 @@ class MinerUService(metaclass=SingletonMeta):
 
         self.__class__._api_process = subprocess.Popen(
             cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
         )
 
         # 等待 API 就绪
         for _ in range(120):
             if self.__class__._api_process.poll() is not None:
-                stderr = ""
-                if self.__class__._api_process.stderr:
-                    stderr = self._api_process.stderr.read().decode(
-                        "utf-8", errors="replace"
-                    )
-                raise RuntimeError(f"mineru-api 启动失败: {stderr}")
+                raise RuntimeError(
+                    f"mineru-api 启动失败，退出码: {self.__class__._api_process.returncode}"
+                )
             if self._check_api_running(url):
                 self.__class__._api_url = url
                 _logger.info(f"[MinerU] mineru-api 服务已就绪 @ {url}")
@@ -164,7 +161,15 @@ class MinerUService(metaclass=SingletonMeta):
             data=params,
             timeout=300,
         )
-        resp.raise_for_status()
+        if resp.status_code != 200:
+            try:
+                body = resp.json()
+                detail = body.get("message") or body.get("error") or resp.text[:200]
+            except Exception:
+                detail = resp.text[:200]
+            raise RuntimeError(
+                f"mineru-api 错误 ({resp.status_code}): {detail}"
+            )
         return resp.json()
 
     def parse(

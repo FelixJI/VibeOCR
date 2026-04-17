@@ -76,6 +76,10 @@ class MinerUBatchService:
 
         self._cancelled = False
         results = {}
+
+        if progress_callback:
+            progress_callback(0, len(self._queue), "正在启动 MineRU 服务...")
+
         mineru = MinerUService()
         queue = list(self._queue)
         total = len(queue)

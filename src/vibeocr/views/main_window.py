@@ -1352,6 +1352,16 @@ class MainWindow(QMainWindow):
         except Exception as e:
             logging.warning(f"清理 OCR 资源失败: {e}")
 
+        # 清理 MinerU API 进程
+        try:
+            from vibeocr.services.mineru_service import MinerUService
+
+            if MinerUService._api_process is not None:
+                MinerUService().shutdown()
+                logging.info("MinerU API 服务已关闭")
+        except Exception as e:
+            logging.warning(f"关闭 MinerU API 服务失败: {e}")
+
         # 然后等待线程池完成（最多3秒）
         if not self._thread_pool.waitForDone(3000):
             logging.warning("部分任务未能在超时时间内完成，强制退出")
