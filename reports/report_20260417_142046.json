@@ -1,0 +1,13 @@
+{
+  "upgrade_deps": {
+    "name": "依赖升级",
+    "success": true,
+    "returncode": 0,
+    "elapsed": 3.9628260135650635,
+    "output": "============================================================\n  依赖升级工具\n============================================================\n\n[Step 1] 运行 uv lock --upgrade...\n运行: uv lock --upgrade\n\n[Step 2] 读取锁定版本...\n[INFO] 找到 159 个锁定包\n\n[Step 3] 更新 pyproject.toml...\n\n变更列表 (7 项):\n  pillow: pillow>=12.1.1 -> pillow>=12.2.0\n  numpy: numpy>=2.4.3 -> numpy>=2.4.4\n  paddlepaddle: paddlepaddle>=3.3.0 -> paddlepaddle>=3.3.1\n  httpx: httpx>=0.28.0 -> httpx>=0.28.1\n  pytest: pytest>=9.0.2 -> pytest>=9.0.3\n  ruff: ruff>=0.15.7 -> ruff>=0.15.11\n  uv: uv>=0.11.1 -> uv>=0.11.7\n\n[OK] pyproject.toml 已更新\n\n============================================================\n[OK] 依赖升级完成!\n============================================================\nResolved 159 packages in 3.20s\nUpdated aiofiles v24.1.0 -> v25.1.0\nUpdated bce-python-sdk v0.9.67 -> v0.9.70\nUpdated boto3 v1.42.89 -> v1.42.90\nUpdated botocore v1.42.89 -> v1.42.90\nUpdated chardet v7.3.0 -> v7.4.3\nUpdated charset-normalizer v3.4.6 -> v3.4.7\nUpdated click v8.3.1 -> v8.3.2\nUpdated fastapi v0.135.3 -> v0.136.0\nUpdated filelock v3.25.2 -> v3.28.0\nUpdated fsspec v2026.2.0 -> v2026.3.0\nUpdated hf-xet v1.4.2 -> v1.4.3\nUpdated huggingface-hub v0.36.2 -> v1.11.0\nUpdated jiter v0.13.0 -> v0.14.0\nUpdated lxml v6.0.2 -> v6.0.4\nAdded markdown-it-py v4.0.0\nAdded mdurl v0.1.2\nUpdated modelscope v1.35.2 -> v1.35.4\nUpdated more-itertools v10.8.0 -> v11.0.2\nUpdated numpy v2.4.3 -> v2.4.4\nUpdated openai v1.109.1 -> v2.32.0\nUpdated packaging v25.0 -> v26.1\nUpdated pillow v12.1.1 -> v12.2.0\nUpdated platformdirs v4.9.4 -> v4.9.6\nUpdated pydantic v2.12.5 -> v2.13.1\nUpdated pydantic-core v2.41.5 -> v2.46.1\nUpdated pygments v2.19.2 -> v2.20.0\nUpdated pytest v9.0.2 -> v9.0.3\nUpdated python-discovery v1.2.0 -> v1.2.2\nUpdated regex v2026.2.28 -> v2026.4.4\nUpdated requests v2.33.0 -> v2.33.1\nAdded rich v15.0.0\nUpdated ruff v0.15.7 -> v0.15.11\nAdded shellingham v1.5.4\nUpdated starlette v0.52.1 -> v1.0.0\nAdded typer v0.24.1\nUpdated tzdata v2025.3 -> v2026.1\nUpdated uv v0.11.1 -> v0.11.7\nUpdated virtualenv v21.2.0 -> v21.2.4"
+  },
+  "_meta": {
+    "total_elapsed": 3.9628653526306152,
+    "timestamp": "2026-04-17T14:20:46.807127"
+  }
+}

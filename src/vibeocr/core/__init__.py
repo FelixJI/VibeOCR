@@ -34,8 +34,6 @@ from vibeocr.core.constants import (
     WindowsColors,
 )
 from vibeocr.core.pipelines import (
-    DEFAULT_DOC_UNDERSTANDING_MODEL,
-    DOC_UNDERSTANDING_MODELS,
     OCRPipeline,
     get_all_pipelines,
     get_pipeline_description,
@@ -57,13 +55,11 @@ __all__ = [
     "COLOR_TEXT",
     "COLOR_WARNING",
     "DEFAULT_BATCH_SIZE",
-    "DEFAULT_DOC_UNDERSTANDING_MODEL",
     "DEFAULT_MARGIN",
     # 常量（向后兼容）
     "DEFAULT_SHM_SIZE",
     "DEFAULT_SPACING",
     # 管道相关
-    "DOC_UNDERSTANDING_MODELS",
     "LONG_DELAY_MS",
     "MAX_BATCH_SIZE",
     "MEDIUM_DELAY_MS",

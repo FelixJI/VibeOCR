@@ -6,7 +6,7 @@
 
 import logging
 import uuid
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 if TYPE_CHECKING:
     from vibeocr.models.ocr_options import OCROptions
@@ -56,12 +56,18 @@ class MinerUBatchService:
         logger.debug(f"[MinerUBatch] 添加文件: {file_name}, request_id={request_id}")
         return request_id
 
-    def batch_commit(self, preprocess_options=None, timeout: float = 300.0) -> dict:  # noqa: ARG002
+    def batch_commit(
+        self,
+        preprocess_options=None,  # noqa: ARG002
+        timeout: float = 300.0,
+        progress_callback: Callable[[int, int, str], None] | None = None,
+    ) -> dict:
         """执行批量处理
 
         Args:
             preprocess_options: 预处理选项（当前未使用）
             timeout: 超时时间（秒）
+            progress_callback: 进度回调 (completed, total, current_file)
 
         Returns:
             {request_id: OCRResult} 结果字典
@@ -83,6 +89,9 @@ class MinerUBatchService:
             file_name = item["file_name"]
             logger.info(f"[MinerUBatch] 处理 {i + 1}/{total}: {file_name}")
 
+            if progress_callback:
+                progress_callback(i, total, file_name)
+
             try:
                 result = mineru.parse(
                     data=item["data"],
@@ -92,6 +101,9 @@ class MinerUBatchService:
             except Exception as e:
                 logger.error(f"[MinerUBatch] 处理失败 {file_name}: {e}")
                 results[item["request_id"]] = {"error": str(e)}
+
+        if progress_callback and not self._cancelled:
+            progress_callback(total, total, "完成")
 
         self._queue.clear()
         self._request_map.clear()

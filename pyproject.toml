@@ -6,21 +6,22 @@ requires-python = ">=3.13,<3.14"
 dependencies = [
     # 运行时依赖
     "pyside6>=6.11.0",
-    "pillow>=12.1.1",
-    "numpy>=2.4.3",
+    "pillow>=12.2.0",
+    "numpy>=2.4.4",
     "markdown>=3.10.2",
     "qasync>=0.28.0",
-    "paddlepaddle>=3.3.0",
+    "paddlepaddle>=3.3.1",
     "paddlex[ocr]>=3.4.3",
-    "mineru[all]",
+    "httpx>=0.28.1",
+    "mineru>=3.0.9",
     # 开发依赖
-    "pytest>=9.0.2",
+    "pytest>=9.0.3",
     "pytest-qt>=4.5.0",
     "pytest-cov>=7.1.0",
-    "ruff>=0.15.7",
+    "ruff>=0.15.11",
     "pyright>=1.1.408",
     "pre-commit>=4.5.1",
-    "uv>=0.11.1",
+    "uv>=0.11.7",
 ]
 
 [build-system]
@@ -131,6 +132,7 @@ exclude_lines = [
 # uv 配置
 # =============================================================================
 [tool.uv]
+environments = ["sys_platform == 'win32'"]
 extra-index-url = [
     "https://mirrors.aliyun.com/pypi/simple",
 ]

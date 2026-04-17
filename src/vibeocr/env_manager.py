@@ -634,7 +634,7 @@ def check_embedded_environment_dependencies(
     # 检测 MinerU
     try:
         result = subprocess.run(
-            [str(python_exe), "-c", "import magic_pdf"],
+            [str(python_exe), "-c", "import mineru"],
             capture_output=True,
             text=True,
             timeout=15,
@@ -680,6 +680,7 @@ def check_dependencies(project_root: Path) -> dict[str, bool]:
         "PySide6": False,
         "paddlepaddle": False,
         "paddlex": False,
+        "mineru": False,
         "PIL": False,
     }
 
@@ -724,6 +725,19 @@ def check_dependencies(project_root: Path) -> dict[str, bool]:
     except Exception:
         dependencies["paddlex"] = False
 
+    # 检测 MinerU
+    try:
+        result = subprocess.run(
+            [str(python_exe), "-c", "import mineru"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+        )
+        dependencies["mineru"] = result.returncode == 0
+    except Exception:
+        dependencies["mineru"] = False
+
     return dependencies
 
 
@@ -744,7 +758,11 @@ def _quick_verify_deps(python_exe: Path) -> dict[str, bool]:
     只做简单的 import 检测，不获取 GPU 信息，速度较快。
     """
     deps = {}
-    for module, pkg in [("paddle", "paddlepaddle"), ("paddlex", "paddlex")]:
+    for module, pkg in [
+        ("paddle", "paddlepaddle"),
+        ("paddlex", "paddlex"),
+        ("magic_pdf", "mineru"),
+    ]:
         try:
             result = subprocess.run(
                 [str(python_exe), "-c", f"import {module}"],

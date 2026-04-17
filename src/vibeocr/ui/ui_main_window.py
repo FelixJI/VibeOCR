@@ -111,14 +111,6 @@ class Ui_MainWindowWidget(object):
 
         self.pipelineLayout.addWidget(self.btnPipelineStructure)
 
-        self.btnPipelinePaddleOCRVL = QPushButton(self.resultPanel)
-        self.btnPipelinePaddleOCRVL.setObjectName(u"btnPipelinePaddleOCRVL")
-        self.btnPipelinePaddleOCRVL.setCheckable(True)
-        self.btnPipelinePaddleOCRVL.setChecked(False)
-        self.btnPipelinePaddleOCRVL.setAutoExclusive(True)
-
-        self.pipelineLayout.addWidget(self.btnPipelinePaddleOCRVL)
-
         self.horizontalSpacerPipeline = QSpacerItem(40, 20, QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
 
         self.pipelineLayout.addItem(self.horizontalSpacerPipeline)
@@ -217,55 +209,6 @@ class Ui_MainWindowWidget(object):
 
 
         self.subPipelineLayout.addLayout(self.ppStructureLayout)
-
-        self.paddleocrVlLayout = QHBoxLayout()
-        self.paddleocrVlLayout.setObjectName(u"paddleocrVlLayout")
-        self.labelVlOptions = QLabel(self.subPipelineOptions)
-        self.labelVlOptions.setObjectName(u"labelVlOptions")
-
-        self.paddleocrVlLayout.addWidget(self.labelVlOptions)
-
-        self.btnVlLayout = QPushButton(self.subPipelineOptions)
-        self.btnVlLayout.setObjectName(u"btnVlLayout")
-        self.btnVlLayout.setCheckable(True)
-        self.btnVlLayout.setChecked(True)
-
-        self.paddleocrVlLayout.addWidget(self.btnVlLayout)
-
-        self.btnVlChart = QPushButton(self.subPipelineOptions)
-        self.btnVlChart.setObjectName(u"btnVlChart")
-        self.btnVlChart.setCheckable(True)
-        self.btnVlChart.setChecked(False)
-
-        self.paddleocrVlLayout.addWidget(self.btnVlChart)
-
-        self.btnVlSeal = QPushButton(self.subPipelineOptions)
-        self.btnVlSeal.setObjectName(u"btnVlSeal")
-        self.btnVlSeal.setCheckable(True)
-        self.btnVlSeal.setChecked(False)
-
-        self.paddleocrVlLayout.addWidget(self.btnVlSeal)
-
-        self.btnVlFormat = QPushButton(self.subPipelineOptions)
-        self.btnVlFormat.setObjectName(u"btnVlFormat")
-        self.btnVlFormat.setCheckable(True)
-        self.btnVlFormat.setChecked(False)
-
-        self.paddleocrVlLayout.addWidget(self.btnVlFormat)
-
-        self.btnVlOcrImage = QPushButton(self.subPipelineOptions)
-        self.btnVlOcrImage.setObjectName(u"btnVlOcrImage")
-        self.btnVlOcrImage.setCheckable(True)
-        self.btnVlOcrImage.setChecked(False)
-
-        self.paddleocrVlLayout.addWidget(self.btnVlOcrImage)
-
-        self.horizontalSpacerVl = QSpacerItem(40, 20, QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
-
-        self.paddleocrVlLayout.addItem(self.horizontalSpacerVl)
-
-
-        self.subPipelineLayout.addLayout(self.paddleocrVlLayout)
 
 
         self.verticalLayout_2.addWidget(self.subPipelineOptions)
@@ -367,12 +310,6 @@ class Ui_MainWindowWidget(object):
         self.chkPreloadStructure.setChecked(False)
 
         self.preloadPipelinesLayout.addWidget(self.chkPreloadStructure)
-
-        self.chkPreloadPaddleOCRVL = QCheckBox(self.preloadOptions)
-        self.chkPreloadPaddleOCRVL.setObjectName(u"chkPreloadPaddleOCRVL")
-        self.chkPreloadPaddleOCRVL.setChecked(False)
-
-        self.preloadPipelinesLayout.addWidget(self.chkPreloadPaddleOCRVL)
 
         self.horizontalSpacerPreload = QSpacerItem(40, 20, QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
 
@@ -698,10 +635,6 @@ class Ui_MainWindowWidget(object):
         self.btnPipelineStructure.setToolTip(QCoreApplication.translate("MainWindowWidget", u"\u89e3\u6790\u6587\u6863\u7248\u9762\uff0c\u652f\u6301\u8868\u683c\u3001\u516c\u5f0f\u7b49\u5b50\u4ea7\u7ebf", None))
 #endif // QT_CONFIG(tooltip)
         self.btnPipelineStructure.setText(QCoreApplication.translate("MainWindowWidget", u"\u7248\u9762", None))
-#if QT_CONFIG(tooltip)
-        self.btnPipelinePaddleOCRVL.setToolTip(QCoreApplication.translate("MainWindowWidget", u"PaddleOCR-VL\uff1a\u7aef\u5230\u7aef\u6587\u6863\u89e3\u6790\uff0c\u652f\u6301\u8868\u683c\u3001\u516c\u5f0f\u3001\u5370\u7ae0\u3001\u56fe\u8868\u7b49\uff08v1.5 \u652f\u6301\u5f02\u5f62\u6846\u5b9a\u4f4d\uff09", None))
-#endif // QT_CONFIG(tooltip)
-        self.btnPipelinePaddleOCRVL.setText(QCoreApplication.translate("MainWindowWidget", u"PaddleOCR-VL", None))
         self.labelPreprocess.setText(QCoreApplication.translate("MainWindowWidget", u"\u9884\u5904\u7406:", None))
 #if QT_CONFIG(tooltip)
         self.btnOrient.setToolTip(QCoreApplication.translate("MainWindowWidget", u"\u6587\u6863\u65b9\u5411\u5206\u7c7b\uff1a\u81ea\u52a8\u68c0\u6d4b\u5e76\u77eb\u6b63 0\u00b0/90\u00b0/180\u00b0/270\u00b0 \u65cb\u8f6c", None))
@@ -736,27 +669,6 @@ class Ui_MainWindowWidget(object):
         self.btnSubChart.setToolTip(QCoreApplication.translate("MainWindowWidget", u"\u542f\u7528\u56fe\u8868\u8bc6\u522b\u5b50\u4ea7\u7ebf", None))
 #endif // QT_CONFIG(tooltip)
         self.btnSubChart.setText(QCoreApplication.translate("MainWindowWidget", u"\u56fe\u8868", None))
-        self.labelVlOptions.setText(QCoreApplication.translate("MainWindowWidget", u"V-L \u9009\u9879:", None))
-#if QT_CONFIG(tooltip)
-        self.btnVlLayout.setToolTip(QCoreApplication.translate("MainWindowWidget", u"\u542f\u7528\u7248\u9762\u533a\u57df\u68c0\u6d4b\u6392\u5e8f\uff08\u9ed8\u8ba4\u5f00\u542f\uff09", None))
-#endif // QT_CONFIG(tooltip)
-        self.btnVlLayout.setText(QCoreApplication.translate("MainWindowWidget", u"\u7248\u9762\u68c0\u6d4b", None))
-#if QT_CONFIG(tooltip)
-        self.btnVlChart.setToolTip(QCoreApplication.translate("MainWindowWidget", u"\u542f\u7528\u56fe\u8868\u89e3\u6790\u529f\u80fd", None))
-#endif // QT_CONFIG(tooltip)
-        self.btnVlChart.setText(QCoreApplication.translate("MainWindowWidget", u"\u56fe\u8868", None))
-#if QT_CONFIG(tooltip)
-        self.btnVlSeal.setToolTip(QCoreApplication.translate("MainWindowWidget", u"\u542f\u7528\u5370\u7ae0\u8bc6\u522b\u529f\u80fd\uff08v1.5 \u65b0\u589e\uff09", None))
-#endif // QT_CONFIG(tooltip)
-        self.btnVlSeal.setText(QCoreApplication.translate("MainWindowWidget", u"\u5370\u7ae0", None))
-#if QT_CONFIG(tooltip)
-        self.btnVlFormat.setToolTip(QCoreApplication.translate("MainWindowWidget", u"\u5c06\u7ed3\u679c\u683c\u5f0f\u5316\u4e3a Markdown \u683c\u5f0f", None))
-#endif // QT_CONFIG(tooltip)
-        self.btnVlFormat.setText(QCoreApplication.translate("MainWindowWidget", u"\u683c\u5f0f\u5316", None))
-#if QT_CONFIG(tooltip)
-        self.btnVlOcrImage.setToolTip(QCoreApplication.translate("MainWindowWidget", u"\u5bf9\u56fe\u7247\u5757\u4e2d\u7684\u6587\u5b57\u8fdb\u884c OCR \u8bc6\u522b", None))
-#endif // QT_CONFIG(tooltip)
-        self.btnVlOcrImage.setText(QCoreApplication.translate("MainWindowWidget", u"\u56fe\u5185 OCR", None))
         self.textResult.setPlaceholderText(QCoreApplication.translate("MainWindowWidget", u"\u8bc6\u522b\u7ed3\u679c\u5c06\u663e\u793a\u5728\u8fd9\u91cc...", None))
 #if QT_CONFIG(tooltip)
         self.btnCopyRich.setToolTip(QCoreApplication.translate("MainWindowWidget", u"\u590d\u5236\u4e3a\u5bcc\u6587\u672c\u683c\u5f0f\uff0c\u53ef\u7c98\u8d34\u5230 Word/Excel \u4fdd\u7559\u8868\u683c\u683c\u5f0f", None))
@@ -793,10 +705,6 @@ class Ui_MainWindowWidget(object):
         self.chkPreloadStructure.setToolTip(QCoreApplication.translate("MainWindowWidget", u"\u7248\u9762\u89e3\u6790\u7ba1\u9053\uff08\u5305\u542b 15+ \u6a21\u578b\uff0c\u7ea6 2-3GB \u663e\u5b58\uff09", None))
 #endif // QT_CONFIG(tooltip)
         self.chkPreloadStructure.setText(QCoreApplication.translate("MainWindowWidget", u"\u7248\u9762", None))
-#if QT_CONFIG(tooltip)
-        self.chkPreloadPaddleOCRVL.setToolTip(QCoreApplication.translate("MainWindowWidget", u"PaddleOCR-VL \u7aef\u5230\u7aef\u6587\u6863\u89e3\u6790\uff08v1.5 \u652f\u6301\u5f02\u5f62\u6846\u5b9a\u4f4d\uff09", None))
-#endif // QT_CONFIG(tooltip)
-        self.chkPreloadPaddleOCRVL.setText(QCoreApplication.translate("MainWindowWidget", u"PaddleOCR-VL", None))
 #if QT_CONFIG(tooltip)
         self.chkParallelPreload.setToolTip(QCoreApplication.translate("MainWindowWidget", u"\u5e76\u884c\u52a0\u8f7d\u591a\u4e2a\u7ba1\u9053\u53ef\u52a0\u5feb\u901f\u5ea6\uff0c\u4f46\u4f1a\u589e\u52a0\u5cf0\u503c\u663e\u5b58\u5360\u7528", None))
 #endif // QT_CONFIG(tooltip)

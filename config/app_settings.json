@@ -3,8 +3,5 @@
   "minimize_to_tray": false,
   "auto_start": false,
   "hide_delay_ms": 500,
-  "version": 1,
-  "preload_pipelines": [
-    "OCR"
-  ]
+  "version": 1
 }

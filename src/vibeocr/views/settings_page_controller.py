@@ -80,7 +80,6 @@ class SettingsPageController:
             "chkPreloadTable",
             "chkPreloadFormula",
             "chkPreloadStructure",
-            "chkPreloadPaddleOCRVL",
         ]:
             chk = self._ui.findChild(QCheckBox, chk_name)
             if chk:

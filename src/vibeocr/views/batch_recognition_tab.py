@@ -66,7 +66,7 @@ class BatchRecognitionWorker(QThread):
                 break
 
             file_path = file_info["path"]
-            self.progress.emit(i, total, Path(file_path).name)
+            self.progress.emit(i, total, f"准备: {Path(file_path).name}")
 
             try:
                 # 读取文件
@@ -91,8 +91,14 @@ class BatchRecognitionWorker(QThread):
         # 提交批量处理
         if not self._cancelled and request_map:
             try:
-                self.progress.emit(len(request_map), total, "正在处理批量任务...")
-                batch_results = self._service.batch_commit(self._preprocess_options)
+                # 进度回调：每处理一个文件更新进度
+                def on_process_progress(completed: int, total_count: int, name: str):
+                    self.progress.emit(completed, total_count, f"处理: {name}")
+
+                batch_results = self._service.batch_commit(
+                    self._preprocess_options,
+                    progress_callback=on_process_progress,
+                )
 
                 # 分发结果
                 for request_id, result in batch_results.items():
@@ -227,11 +233,15 @@ class BatchRecognitionTab(BaseOcrTab):
         """开始识别"""
         files = self._file_list_widget.get_selected_files()
         if not files:
-            self._result_widget.setPlainText("请选择要处理的文件。")
+            self._result_widget.setPlainText(
+                "请添加文件后再开始识别。\n\n提示：点击「选择文件」按钮添加 PDF/图片文件。"
+            )
             return
 
         if not self._ocr_service:
-            self._result_widget.setPlainText("OCR 服务未就绪。")
+            self._result_widget.setPlainText(
+                "OCR 服务未就绪，请稍后再试。\n\n提示：等待状态栏显示「OCR 服务已就绪」后开始识别。"
+            )
             return
 
         # 获取预处理选项
@@ -270,7 +280,9 @@ class BatchRecognitionTab(BaseOcrTab):
         if total > 0:
             self._progress_bar.setMaximum(total)
             self._progress_bar.setValue(completed)
-        self._progress_label.setText(f"{completed}/{total}")
+        self._progress_label.setText(
+            f"{completed}/{total} {current_file}" if current_file else f"{completed}/{total}"
+        )
 
     def _on_file_completed(self, file_path: str, status: str, result):
         """单个文件完成"""

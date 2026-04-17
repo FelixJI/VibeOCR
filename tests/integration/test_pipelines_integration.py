@@ -4,8 +4,6 @@
 import pytest
 
 from vibeocr.core.pipelines import (
-    DEFAULT_DOC_UNDERSTANDING_MODEL,
-    DOC_UNDERSTANDING_MODELS,
     OCRPipeline,
     get_all_pipelines,
     get_pipeline_description,
@@ -53,13 +51,8 @@ class TestPipelineIntegration:
 
     def test_pipeline_count(self):
         """验证管道数量"""
-        assert len(OCRPipeline) == 7
-        assert len(get_all_pipelines()) == 7
-
-    def test_doc_understanding_models(self):
-        """测试文档理解模型列表"""
-        assert len(DOC_UNDERSTANDING_MODELS) > 0
-        assert DEFAULT_DOC_UNDERSTANDING_MODEL in DOC_UNDERSTANDING_MODELS
+        assert len(OCRPipeline) == 4
+        assert len(get_all_pipelines()) == 4
 
     def test_is_option_supported(self):
         """测试选项支持检查"""
@@ -67,19 +60,10 @@ class TestPipelineIntegration:
         assert is_option_supported(OCRPipeline.OCR, "use_doc_orientation_classify")
         assert is_option_supported(OCRPipeline.OCR, "use_textline_orientation")
 
-        # PP-StructureV3 支持子产线选项
-        assert is_option_supported(OCRPipeline.PP_STRUCTURE_V3, "use_table_recognition")
-        assert is_option_supported(
-            OCRPipeline.PP_STRUCTURE_V3, "use_formula_recognition"
-        )
-
-        # PaddleOCR-VL 支持 VL 特有选项
-        assert is_option_supported(OCRPipeline.PADDLEOCR_VL, "vl_use_layout_detection")
-
-        # 文档理解支持模型选择
-        assert is_option_supported(
-            OCRPipeline.DOC_UNDERSTANDING, "doc_understanding_model"
-        )
+        # 文档解析支持 MinerU 选项
+        assert is_option_supported(OCRPipeline.DOCUMENT_PARSING, "parse_method")
+        assert is_option_supported(OCRPipeline.DOCUMENT_PARSING, "enable_formula")
+        assert is_option_supported(OCRPipeline.DOCUMENT_PARSING, "enable_table")
 
     def test_options_default_values(self):
         """测试选项默认值"""
@@ -91,9 +75,9 @@ class TestPipelineIntegration:
 
     def test_options_copy(self):
         """测试选项复制"""
-        original = OCROptions(pipeline=OCRPipeline.PP_STRUCTURE_V3)
-        copied = original.copy(use_table_recognition=False)
-        assert copied.pipeline == OCRPipeline.PP_STRUCTURE_V3
-        assert copied.use_table_recognition is False
+        original = OCROptions(pipeline=OCRPipeline.DOCUMENT_PARSING)
+        copied = original.copy(enable_table=False)
+        assert copied.pipeline == OCRPipeline.DOCUMENT_PARSING
+        assert copied.enable_table is False
         # 原始不变
-        assert original.use_table_recognition is True
+        assert original.enable_table is True

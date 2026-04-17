@@ -1,4 +1,4 @@
- #!/usr/bin/env python3
+5 #!/usr/bin/env python3
 """
 代码质量控制主脚本
 支持交互式选择检查项并生成报告
