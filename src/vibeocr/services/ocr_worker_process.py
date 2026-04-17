@@ -713,6 +713,9 @@ class OCRWorkerProcess:
             )
             logger.debug(f"Worker {self.worker_id} 批量添加请求已发送")
 
+            # 等待 Worker 消费请求，避免 read-own-write
+            protocol.wait_for_read(timeout=timeout)
+
             # 等待确认
             msg_type, data = protocol.read_message(
                 timeout=timeout, expected_sender="worker"
@@ -748,6 +751,9 @@ class OCRWorkerProcess:
                 MSG_BATCH_COMMIT, commit_data, timeout=timeout, sender="main"
             )
             logger.info(f"Worker {self.worker_id} 批量提交请求已发送，等待结果...")
+
+            # 等待 Worker 消费请求，避免 read-own-write
+            protocol.wait_for_read(timeout=timeout)
 
             # 等待批量结果（可能需要较长时间）
             start_time = time.time()
@@ -818,6 +824,9 @@ class OCRWorkerProcess:
                 MSG_BATCH_CANCEL, b"", timeout=timeout, sender="main"
             )
             logger.info(f"Worker {self.worker_id} 批量取消请求已发送")
+
+            # 等待 Worker 消费请求，避免 read-own-write
+            protocol.wait_for_read(timeout=timeout)
 
             # 等待确认
             msg_type, _data = protocol.read_message(
