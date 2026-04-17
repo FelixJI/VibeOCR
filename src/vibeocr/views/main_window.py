@@ -38,7 +38,6 @@ from vibeocr.managers import (
     SubprocessManager,
 )
 from vibeocr.services.log_service import setup_logging
-from vibeocr.services.mineru_batch_service import MinerUBatchService
 from vibeocr.ui.ui_main_window import Ui_MainWindowWidget
 from vibeocr.utils.qt_async import run_coroutine
 from vibeocr.views.batch_recognition_tab import BatchRecognitionTab
@@ -711,6 +710,8 @@ class MainWindow(QMainWindow):
 
             # 设置 MinerU 直接批量服务到批量识别标签页
             if hasattr(self, "_batch_tab") and self._batch_tab:
+                from vibeocr.services.mineru_batch_service import MinerUBatchService
+
                 mineru_batch = MinerUBatchService()
                 self._batch_tab.set_ocr_service(mineru_batch)
                 logging.info("[MainWindow] 批量识别标签页已连接 MinerU 直接批量服务")

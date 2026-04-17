@@ -97,6 +97,8 @@ else:
     else:
         from .ocr_service import OCRService  # type: ignore[assignment]
 
+from .mineru_batch_service import MinerUBatchService  # noqa: E402
+
 __all__ = [
     "USE_PORTABLE_OCR",
     "USE_SUBPROCESS",

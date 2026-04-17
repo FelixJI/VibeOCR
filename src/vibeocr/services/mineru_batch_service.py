@@ -31,7 +31,7 @@ class MinerUBatchService:
     def batch_add(
         self,
         image: bytes,
-        options: "OCROptions | None" = None,
+        options: "OCROptions | None" = None,  # noqa: ARG002
         file_name: str = "",
     ) -> str:
         """添加文件到批量队列
@@ -56,7 +56,7 @@ class MinerUBatchService:
         logger.debug(f"[MinerUBatch] 添加文件: {file_name}, request_id={request_id}")
         return request_id
 
-    def batch_commit(self, preprocess_options=None, timeout: float = 300.0) -> dict:
+    def batch_commit(self, preprocess_options=None, timeout: float = 300.0) -> dict:  # noqa: ARG002
         """执行批量处理
 
         Args:
