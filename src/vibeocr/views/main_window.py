@@ -38,6 +38,7 @@ from vibeocr.managers import (
     SubprocessManager,
 )
 from vibeocr.services.log_service import setup_logging
+from vibeocr.services.mineru_batch_service import MinerUBatchService
 from vibeocr.ui.ui_main_window import Ui_MainWindowWidget
 from vibeocr.utils.qt_async import run_coroutine
 from vibeocr.views.batch_recognition_tab import BatchRecognitionTab
@@ -284,13 +285,6 @@ class MainWindow(QMainWindow):
         self._btn_sub_seal = self._ui.btnSubSeal
         self._btn_sub_chart = self._ui.btnSubChart
 
-        # PaddleOCR-VL 特有选项按钮
-        self._btn_vl_layout = self._ui.btnVlLayout
-        self._btn_vl_chart = self._ui.btnVlChart
-        self._btn_vl_seal = self._ui.btnVlSeal
-        self._btn_vl_format = self._ui.btnVlFormat
-        self._btn_vl_ocr_image = self._ui.btnVlOcrImage
-
         # 应用样式并连接信号
         for pipeline, btn in self._pipeline_buttons.items():
             if btn:
@@ -417,25 +411,10 @@ class MainWindow(QMainWindow):
             if btn:
                 btn.setVisible(pipeline_value == "MinerU")
 
-        # VL 按钮全部隐藏（已移除 PaddleOCR-VL）
-        vl_buttons = [
-            self._btn_vl_layout,
-            self._btn_vl_chart,
-            self._btn_vl_seal,
-            self._btn_vl_format,
-            self._btn_vl_ocr_image,
-        ]
-        for btn in vl_buttons:
-            if btn:
-                btn.setVisible(False)
-
         # 更新子产线标签文字
         label_sub = self._ui.labelSubPipelines
-        label_vl = self._ui.labelVlOptions
         if label_sub:
             label_sub.setVisible(pipeline_value == "MinerU")
-        if label_vl:
-            label_vl.setVisible(False)
 
         logging.debug(f"管道切换为 {pipeline.display_name}")
 
@@ -492,38 +471,20 @@ class MainWindow(QMainWindow):
         # 同步子产线按钮
         if self._btn_sub_table:
             self._btn_sub_table.blockSignals(True)
-            self._btn_sub_table.setChecked(options.use_table_recognition)
+            self._btn_sub_table.setChecked(getattr(options, "enable_table", True))
             self._btn_sub_table.blockSignals(False)
         if self._btn_sub_formula:
             self._btn_sub_formula.blockSignals(True)
-            self._btn_sub_formula.setChecked(options.use_formula_recognition)
+            self._btn_sub_formula.setChecked(getattr(options, "enable_formula", True))
             self._btn_sub_formula.blockSignals(False)
         if self._btn_sub_seal:
             self._btn_sub_seal.blockSignals(True)
-            self._btn_sub_seal.setChecked(options.use_seal_recognition)
+            self._btn_sub_seal.setChecked(False)
             self._btn_sub_seal.blockSignals(False)
         if self._btn_sub_chart:
             self._btn_sub_chart.blockSignals(True)
-            self._btn_sub_chart.setChecked(options.use_chart_recognition)
+            self._btn_sub_chart.setChecked(False)
             self._btn_sub_chart.blockSignals(False)
-
-        # 同步 VL 按钮
-        if self._btn_vl_layout:
-            self._btn_vl_layout.blockSignals(True)
-            self._btn_vl_layout.setChecked(options.vl_use_layout_detection)
-            self._btn_vl_layout.blockSignals(False)
-        if self._btn_vl_seal:
-            self._btn_vl_seal.blockSignals(True)
-            self._btn_vl_seal.setChecked(options.vl_use_seal_recognition)
-            self._btn_vl_seal.blockSignals(False)
-        if self._btn_vl_format:
-            self._btn_vl_format.blockSignals(True)
-            self._btn_vl_format.setChecked(options.vl_format_block_content)
-            self._btn_vl_format.blockSignals(False)
-        if self._btn_vl_ocr_image:
-            self._btn_vl_ocr_image.blockSignals(True)
-            self._btn_vl_ocr_image.setChecked(options.vl_use_ocr_for_image_block)
-            self._btn_vl_ocr_image.blockSignals(False)
 
     def _sync_options_to_preferences(self) -> None:
         """将当前按钮组状态同步到 OCRPreferences"""
@@ -680,10 +641,6 @@ class MainWindow(QMainWindow):
             self._btn_sub_formula,
             self._btn_sub_seal,
             self._btn_sub_chart,
-            self._btn_vl_layout,
-            self._btn_vl_seal,
-            self._btn_vl_format,
-            self._btn_vl_ocr_image,
         ]:
             if btn:
                 btn.toggled.connect(self._sync_options_to_preferences)
@@ -700,7 +657,8 @@ class MainWindow(QMainWindow):
             # 检查关键依赖
             paddlepaddle_ok = dependencies.get("paddlepaddle", False)
             paddlex_ok = dependencies.get("paddlex", False)
-            if paddlepaddle_ok and paddlex_ok:
+            mineru_ok = dependencies.get("mineru", False)
+            if paddlepaddle_ok and paddlex_ok and mineru_ok:
                 self._ocr_ready = True
                 self._dependency_check_complete = True
                 self._statusbar.showMessage("OCR功能已就绪（缓存）")
@@ -751,13 +709,11 @@ class MainWindow(QMainWindow):
         if success:
             logging.info("[MainWindow] 子进程 Worker 已就绪")
 
-            # 获取服务实例
-            service = self._subprocess_manager.service
-
-            # 设置 OCR 服务到批量识别标签页
+            # 设置 MinerU 直接批量服务到批量识别标签页
             if hasattr(self, "_batch_tab") and self._batch_tab:
-                self._batch_tab.set_ocr_service(service)
-                logging.info("[MainWindow] 批量识别标签页已连接 OCR 服务")
+                mineru_batch = MinerUBatchService()
+                self._batch_tab.set_ocr_service(mineru_batch)
+                logging.info("[MainWindow] 批量识别标签页已连接 MinerU 直接批量服务")
 
             # 子进程就绪后，触发预加载（如果配置了预加载管道）
             # 预加载完成后再显示"OCR 服务已就绪"
@@ -1092,29 +1048,14 @@ class MainWindow(QMainWindow):
         use_formula = (
             self._btn_sub_formula.isChecked() if self._btn_sub_formula else True
         )
-        use_seal = self._btn_sub_seal.isChecked() if self._btn_sub_seal else False
-        use_chart = self._btn_sub_chart.isChecked() if self._btn_sub_chart else False
-
-        vl_use_layout = self._btn_vl_layout.isChecked() if self._btn_vl_layout else True
-        vl_use_seal = self._btn_vl_seal.isChecked() if self._btn_vl_seal else False
-        vl_format = self._btn_vl_format.isChecked() if self._btn_vl_format else False
-        vl_ocr_image = (
-            self._btn_vl_ocr_image.isChecked() if self._btn_vl_ocr_image else False
-        )
 
         return OCROptions(
             pipeline=pipeline,
             use_doc_orientation_classify=use_orient,
             use_doc_unwarping=use_unwarp,
             use_textline_orientation=use_textline,
-            use_table_recognition=use_table,
-            use_formula_recognition=use_formula,
-            use_seal_recognition=use_seal,
-            use_chart_recognition=use_chart,
-            vl_use_layout_detection=vl_use_layout,
-            vl_use_seal_recognition=vl_use_seal,
-            vl_use_ocr_for_image_block=vl_ocr_image,
-            vl_format_block_content=vl_format,
+            enable_table=use_table,
+            enable_formula=use_formula,
         )
 
     def _run_ocr(self, pixmap: QPixmap, options=None) -> None:

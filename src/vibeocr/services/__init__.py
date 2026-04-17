@@ -102,5 +102,6 @@ __all__ = [
     "USE_SUBPROCESS",
     "OCRService",
     "OCRServiceSubprocess",
+    "MinerUBatchService",
     "get_ocr_service",
 ]
