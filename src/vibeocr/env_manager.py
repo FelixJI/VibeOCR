@@ -882,7 +882,7 @@ def install_embedded_dependencies(
         requirements = [
             ("PaddlePaddle CPU", "paddlepaddle>=3.3.0", "https://www.paddlepaddle.org.cn/packages/stable/cpu/"),
             ("PaddleX", '"paddlex[ocr]>=3.4.2"', pip_source),
-            ("MinerU", '"mineru[all]"', pip_source),
+            ("MinerU", '"mineru[pipeline]"', pip_source),
         ]
 
         for name, package_spec, index_url in requirements:
@@ -1113,7 +1113,7 @@ def install_dependencies(
         requirements.append(("PaddleX", '"paddlex[ocr]>=3.4.2"', pip_source))
 
         # 安装 MineRU 文档解析
-        requirements.append(("MinerU", '"mineru[all]"', pip_source))
+        requirements.append(("MinerU", '"mineru[pipeline]"', pip_source))
 
         for name, package_spec, index_url in requirements:
             print(f"[依赖安装] 正在安装 {name}...")
