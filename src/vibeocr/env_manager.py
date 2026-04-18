@@ -595,6 +595,7 @@ def check_embedded_environment_dependencies(
         "paddlepaddle": False,
         "paddlex": False,
         "mineru": False,
+        "torch": False,
     }
 
     # 检测 PaddlePaddle
@@ -644,6 +645,19 @@ def check_embedded_environment_dependencies(
     except Exception:
         dependencies["mineru"] = False
 
+    # 检测 PyTorch（MinerU pipeline 依赖）
+    try:
+        result = subprocess.run(
+            [str(python_exe), "-c", "import torch"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+        )
+        dependencies["torch"] = result.returncode == 0
+    except Exception:
+        dependencies["torch"] = False
+
     # 3. 更新缓存
     hardware_info = {
         "has_gpu": False,
@@ -681,6 +695,7 @@ def check_dependencies(project_root: Path) -> dict[str, bool]:
         "paddlepaddle": False,
         "paddlex": False,
         "mineru": False,
+        "torch": False,
         "PIL": False,
     }
 
@@ -737,6 +752,19 @@ def check_dependencies(project_root: Path) -> dict[str, bool]:
         dependencies["mineru"] = result.returncode == 0
     except Exception:
         dependencies["mineru"] = False
+
+    # 检测 PyTorch（MinerU pipeline 依赖）
+    try:
+        result = subprocess.run(
+            [str(python_exe), "-c", "import torch"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+        )
+        dependencies["torch"] = result.returncode == 0
+    except Exception:
+        dependencies["torch"] = False
 
     return dependencies
 
@@ -1328,3 +1356,38 @@ def get_project_root() -> Path:
         current = current.parent
     # 默认返回main.py的父目录的父目录
     return Path(__file__).parent.parent.parent
+
+
+def ensure_mineru_models(
+    project_root: Path,
+    timeout: int = 600,
+) -> tuple[bool, str]:
+    """下载 MinerU 所需模型（首次运行时调用）
+
+    Args:
+        project_root: 项目根目录
+        timeout: 超时时间（秒）
+
+    Returns:
+        (是否成功, 消息)
+    """
+    python_exe = get_embedded_python_executable(project_root)
+    if not python_exe.exists():
+        return False, "Python 未安装"
+
+    print("[模型下载] 正在下载 MinerU 模型...")
+    try:
+        result = subprocess.run(
+            [str(python_exe), "-m", "mineru.cli.models_download"],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+        )
+        if result.returncode == 0:
+            return True, "MinerU 模型下载完成"
+        return False, f"模型下载失败: {result.stderr[:200]}"
+    except subprocess.TimeoutExpired:
+        return False, "模型下载超时"
+    except Exception as e:
+        return False, f"模型下载异常: {e}"

@@ -1,8 +1,8 @@
 """验证 env_manager 安装依赖的规格"""
-import subprocess
 from unittest.mock import MagicMock, patch
+from pathlib import Path
 
-from vibeocr.env_manager import install_embedded_dependencies, install_dependencies
+from vibeocr.env_manager import install_embedded_dependencies, install_dependencies, ensure_mineru_models
 
 
 class TestInstallSpecs:
@@ -59,3 +59,33 @@ class TestInstallSpecs:
         joined = " ".join(mineru_cmd[0])
         assert "mineru[pipeline]" in joined
         assert "mineru[all]" not in joined
+
+
+class TestEnsureMineruModels:
+    """MinerU 模型下载测试"""
+
+    def test_calls_models_download(self, tmp_path):
+        python_exe = tmp_path / "python.exe"
+        python_exe.touch()
+
+        with (
+            patch(
+                "vibeocr.env_manager.get_embedded_python_executable",
+                return_value=python_exe,
+            ),
+            patch("vibeocr.env_manager.subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = MagicMock(returncode=0, stderr="")
+            ok, msg = ensure_mineru_models(tmp_path)
+
+        assert ok
+        cmd = mock_run.call_args[0][0]
+        assert "mineru.cli.models_download" in " ".join(cmd)
+
+    def test_returns_false_when_no_python(self, tmp_path):
+        with patch(
+            "vibeocr.env_manager.get_embedded_python_executable",
+            return_value=tmp_path / "nonexistent.exe",
+        ):
+            ok, msg = ensure_mineru_models(tmp_path)
+        assert not ok
