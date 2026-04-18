@@ -2,6 +2,7 @@
 
 import base64
 import json
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from vibeocr.models.ocr_result import OCRResult
@@ -122,26 +123,53 @@ class TestMinerUService:
         MinerUService._api_url = ""
         MinerUService._api_process = None
 
-        mock_which = MagicMock(return_value="/usr/bin/mineru-api")
-        mock_popen = MagicMock()
         mock_process = MagicMock()
-        mock_process.poll.return_value = None  # 进程仍在运行
-        mock_popen.return_value = mock_process
+        mock_process.poll.return_value = None
 
         mock_health_resp = MagicMock()
         mock_health_resp.status_code = 200
 
         with (
-            patch("vibeocr.services.mineru_service.shutil.which", mock_which),
-            patch("vibeocr.services.mineru_service.subprocess.Popen", mock_popen),
+            patch.object(MinerUService, "_resolve_python_executable",
+                         return_value=Path("/fake/python.exe")),
+            patch("vibeocr.services.mineru_service.subprocess.Popen") as mock_popen,
             patch("vibeocr.services.mineru_service.httpx") as mock_httpx,
             patch("vibeocr.services.mineru_service.socket"),
         ):
+            mock_popen.return_value = mock_process
             mock_httpx.get.return_value = mock_health_resp
             MinerUService._ensure_api_running(MinerUService())
 
         assert MinerUService._api_url != ""
         mock_popen.assert_called_once()
+
+    def test_start_api_uses_python_module(self):
+        """_start_api 应使用 python -m 方式启动"""
+        MinerUService._api_url = ""
+        MinerUService._api_process = None
+
+        mock_process = MagicMock()
+        mock_process.poll.return_value = None
+
+        mock_health_resp = MagicMock()
+        mock_health_resp.status_code = 200
+
+        with (
+            patch.object(MinerUService, "_resolve_python_executable",
+                         return_value=Path("/fake/python.exe")),
+            patch("vibeocr.services.mineru_service.subprocess.Popen") as mock_popen,
+            patch("vibeocr.services.mineru_service.httpx") as mock_httpx,
+            patch("vibeocr.services.mineru_service.socket"),
+        ):
+            mock_popen.return_value = mock_process
+            mock_httpx.get.return_value = mock_health_resp
+            MinerUService._start_api(MinerUService())
+
+        cmd = mock_popen.call_args[0][0]
+        assert "-m" in cmd
+        assert "mineru.cli.fast_api" in cmd
+        assert "--host" in cmd
+        assert "--port" in cmd
 
     def test_shutdown(self):
         """关闭服务不报错"""

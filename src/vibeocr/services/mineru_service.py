@@ -9,9 +9,9 @@ from __future__ import annotations
 import base64
 import json
 import logging
-import shutil
 import socket
 import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
@@ -76,12 +76,28 @@ class MinerUService(metaclass=SingletonMeta):
             s.bind(("127.0.0.1", 0))
             return s.getsockname()[1]
 
+    def _resolve_python_executable(self) -> Path | None:
+        """查找可用的 Python 解释器
+
+        查找顺序:
+        1. 嵌入式 Python（便携模式）
+        2. 当前 Python 解释器（开发模式）
+        """
+        from vibeocr.env_manager import get_embedded_python, get_project_root
+
+        project_root = get_project_root()
+        embedded = get_embedded_python(project_root)
+        if embedded.exists():
+            return embedded
+
+        return Path(sys.executable)
+
     def _start_api(self) -> None:
         """启动 mineru-api 进程"""
-        mineru_api = shutil.which("mineru-api")
-        if mineru_api is None:
+        python_exe = self._resolve_python_executable()
+        if python_exe is None:
             raise RuntimeError(
-                "mineru-api 未找到。请安装: pip install 'mineru[all]'"
+                "找不到 Python 解释器。请确保已安装 Python 和 mineru[pipeline]"
             )
 
         port = self._find_free_port()
@@ -90,7 +106,8 @@ class MinerUService(metaclass=SingletonMeta):
         _logger.info(f"[MinerU] 启动 mineru-api 服务 @ {url}...")
 
         cmd = [
-            mineru_api,
+            str(python_exe),
+            "-m", "mineru.cli.fast_api",
             "--host", "127.0.0.1",
             "--port", str(port),
         ]
