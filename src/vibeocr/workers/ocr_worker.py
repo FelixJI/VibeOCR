@@ -16,6 +16,9 @@ import sys
 import time
 import traceback
 
+# 跳过模型源网络检测，避免推理时网络超时
+os.environ["PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK"] = "True"
+
 # 配置基本日志（在添加共享内存处理器之前）
 logging.basicConfig(
     level=logging.INFO,

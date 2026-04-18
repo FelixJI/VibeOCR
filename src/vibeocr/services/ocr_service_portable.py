@@ -18,10 +18,10 @@ from typing import Any, Optional
 import numpy as np
 from PIL import Image
 
-# 禁用 OneDNN 以提高兼容性
 import os
-os.environ.setdefault("FLAGS_enable_onednn_backend", "0")
-os.environ.setdefault("FLAGS_use_mkldnn", "0")
+
+# 跳过模型源网络检测
+os.environ.setdefault("PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK", "True")
 
 # 导入路径管理器
 from vibeocr.python_path_manager import (
@@ -88,15 +88,61 @@ class OCRServicePortable:
             _logger.error(error_msg)
             raise ImportError(error_msg) from e
 
+    @staticmethod
+    def _get_optimal_cpu_threads() -> int:
+        """动态检测 CPU 核心数并返回最优线程数"""
+        try:
+            import multiprocessing
+            logical = multiprocessing.cpu_count() or 4
+        except Exception:
+            logical = 4
+        try:
+            import psutil
+            physical = psutil.cpu_count(logical=False)
+            if physical and physical >= 2:
+                return min(max(physical, 4), 16)
+        except ImportError:
+            pass
+        return min(max(logical // 4, 4), 16)
+
     def _create_pipeline(self) -> Any:
         """创建 OCR 流水线（CPU 模式）"""
         create_pipeline = self._import_paddlex()
 
-        pipeline = create_pipeline(
-            pipeline="OCR",
-            device="cpu",
-        )
-        _logger.info("OCR 流水线创建成功，设备: cpu")
+        from paddlex.inference.utils.pp_option import PaddlePredictorOption
+
+        cpu_threads = self._get_optimal_cpu_threads()
+        _logger.info(f"[推理优化] CPU 线程数: {cpu_threads}")
+
+        pp_option = PaddlePredictorOption()
+        pp_option.enable_new_ir = False
+        pp_option.run_mode = "paddle"
+        pp_option.cpu_threads = cpu_threads
+
+        # 尝试 HPIP 加速
+        pipeline = None
+        try:
+            from paddlex.utils.deps import is_hpip_available
+            if is_hpip_available():
+                pipeline = create_pipeline(
+                    pipeline="OCR",
+                    device="cpu",
+                    pp_option=pp_option,
+                    use_hpip=True,
+                    hpi_config={"backend": "onnxruntime"},
+                )
+                _logger.info("[HPIP] 高性能推理管道创建成功")
+        except Exception as e:
+            _logger.info(f"[HPIP] 创建失败，回退到普通推理: {e}")
+
+        if pipeline is None:
+            pipeline = create_pipeline(
+                pipeline="OCR",
+                device="cpu",
+                pp_option=pp_option,
+            )
+
+        _logger.info(f"OCR 流水线创建成功，设备: cpu, 线程: {cpu_threads}")
         return pipeline
 
     @property

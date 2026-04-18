@@ -28,9 +28,8 @@ __all__ = [
     "OCRService",
 ]
 
-# 禁用 OneDNN 并强制使用 CPU 模式以兼容性
-os.environ.setdefault("FLAGS_enable_onednn_backend", "0")
-os.environ.setdefault("FLAGS_use_mkldnn", "0")
+# 跳过模型源网络检测，避免推理时的网络超时开销
+os.environ.setdefault("PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK", "True")
 
 import re as _re
 
@@ -500,6 +499,58 @@ class OCRService(metaclass=SingletonMeta):
         thread.start()
         return thread
 
+    @staticmethod
+    def _get_optimal_cpu_threads() -> int:
+        """动态检测 CPU 核心数并返回最优线程数
+
+        物理核心数优先；若无法检测则取逻辑核心数的 1/4（下限 4，上限 16）。
+        """
+        try:
+            import multiprocessing
+
+            logical = multiprocessing.cpu_count() or 4
+        except Exception:
+            logical = 4
+        try:
+            import psutil
+
+            physical = psutil.cpu_count(logical=False)
+            if physical and physical >= 2:
+                return min(max(physical, 4), 16)
+        except ImportError:
+            pass
+        # 无 psutil，取逻辑核心的 1/4
+        return min(max(logical // 4, 4), 16)
+
+    @staticmethod
+    def _try_create_with_hpip(
+        create_pipeline, pipeline_name: str, device: str, pp_option
+    ):
+        """尝试使用 HPIP（高性能推理插件）创建管道
+
+        HPIP 需要 ultra-infer 包，仅 Linux + Python <= 3.12 可用。
+        失败时静默回退到普通推理。
+        """
+        try:
+            from paddlex.utils.deps import is_hpip_available
+
+            if not is_hpip_available():
+                _logger.info("[HPIP] ultra-infer 不可用，跳过")
+                return None
+
+            pipeline = create_pipeline(
+                pipeline=pipeline_name,
+                device=device,
+                pp_option=pp_option,
+                use_hpip=True,
+                hpi_config={"backend": "onnxruntime"},
+            )
+            _logger.info("[HPIP] 高性能推理管道创建成功")
+            return pipeline
+        except Exception as e:
+            _logger.info(f"[HPIP] 创建失败，回退到普通推理: {e}")
+            return None
+
     def _create_pipeline(self, pipeline_name: str, device: str = "cpu") -> Any:
         """创建指定管道"""
         # 延迟导入: 确保模型源已配置（首次使用时才执行网络检测）
@@ -507,6 +558,7 @@ class OCRService(metaclass=SingletonMeta):
 
         # 延迟导入: PaddleX（这是启动慢的主要原因，~30s）
         from paddlex import create_pipeline
+        from paddlex.inference.utils.pp_option import PaddlePredictorOption
 
         # 获取管道显示名称
         display_name = pipeline_name
@@ -519,23 +571,41 @@ class OCRService(metaclass=SingletonMeta):
         models_cached = is_pipeline_cached(pipeline_name)
 
         if not models_cached:
-            # 模型未缓存，需要下载，显示初始化提示
             self._notify_status(
                 "模型初始化",
                 f"正在初始化 {display_name} 管道（首次使用需要下载模型）...",
             )
         else:
-            # 模型已缓存，只显示简洁的加载信息
             _logger.info(f"管道 {display_name} 模型已存在，直接加载...")
 
+        # 构建 pp_option：动态 CPU 线程数 + 禁用 new IR
+        cpu_threads = self._get_optimal_cpu_threads()
+        _logger.info(f"[推理优化] CPU 线程数: {cpu_threads}")
+
+        pp_option = PaddlePredictorOption()
+        pp_option.enable_new_ir = False
+        pp_option.run_mode = "paddle"
+        pp_option.cpu_threads = cpu_threads
+
+        # 尝试 HPIP 加速（需要 ultra-infer）
+        pipeline = self._try_create_with_hpip(
+            create_pipeline, pipeline_name, device, pp_option
+        )
+        if pipeline is not None:
+            _logger.info("管道 %s (HPIP) 初始化于设备: %s", pipeline_name, device)
+            if not models_cached:
+                self._notify_status("模型初始化", f"{display_name} 管道初始化完成")
+            return pipeline
+
+        # 普通推理路径
         pipeline = create_pipeline(
             pipeline=pipeline_name,
             device=device,
+            pp_option=pp_option,
         )
 
-        _logger.info("管道 %s 初始化于设备: %s", pipeline_name, device)
+        _logger.info("管道 %s 初始化于设备: %s (线程: %d)", pipeline_name, device, cpu_threads)
 
-        # 通知初始化完成
         if not models_cached:
             self._notify_status("模型初始化", f"{display_name} 管道初始化完成")
 

@@ -1378,8 +1378,8 @@ class MainWindow(QMainWindow):
         """设置应用设置对象（由 main.py 调用）"""
 
         self._app_settings = app_settings  # type: ignore[assignment]
-        self.apply_app_settings()
         self._init_app_settings_ui()
+        self.apply_app_settings()
 
     def set_tray_icon(self, tray_icon) -> None:
         """设置系统托盘图标（由 main.py 调用）"""

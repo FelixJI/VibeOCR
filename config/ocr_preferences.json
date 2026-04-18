@@ -1,9 +1,10 @@
 {
-  "pipeline": "MinerU",
-  "use_doc_orientation_classify": true,
-  "use_doc_unwarping": true,
+  "pipeline": "OCR",
+  "use_doc_orientation_classify": false,
+  "use_doc_unwarping": false,
   "use_textline_orientation": false,
   "parse_method": "auto",
   "enable_formula": true,
-  "enable_table": true
+  "enable_table": true,
+  "version": 1
 }

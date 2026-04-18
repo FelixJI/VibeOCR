@@ -95,11 +95,13 @@ class MinerUService(metaclass=SingletonMeta):
             "--port", str(port),
         ]
 
+        log_file = Path(__file__).resolve().parent.parent.parent / "mineru_api.log"
         self.__class__._api_process = subprocess.Popen(
             cmd,
             stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stderr=log_file.open("w", encoding="utf-8"),
         )
+        _logger.info(f"[MinerU] 日志输出到: {log_file}")
 
         # 等待 API 就绪
         for _ in range(120):
