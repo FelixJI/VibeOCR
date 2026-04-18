@@ -46,12 +46,22 @@ CORE_DEPENDENCIES = [
     "paddlex",
 ]
 
-# OCR 相关依赖
-OCR_DEPENDENCIES = [
+# Paddle 依赖
+PADDLE_DEPENDENCIES = [
     "paddlepaddle",
     "paddlex",
+]
+
+# MinerU 依赖
+MINERU_DEPENDENCIES = [
     "mineru",
 ]
+
+# 向后兼容
+OCR_DEPENDENCIES = PADDLE_DEPENDENCIES + MINERU_DEPENDENCIES
+
+# MinerU 安装规格（便携模式用，包含 torch）
+MINERU_PIPELINE_SPEC = "mineru[pipeline]"
 
 
 def get_pip_mirror(name: str = DEFAULT_PIP_MIRROR) -> str:

@@ -90,6 +90,29 @@ class TestEnvConfigFunctions:
             assert config_dir.is_dir()
 
 
+class TestDependencyConstants:
+    """依赖常量测试"""
+
+    def test_paddle_dependencies(self):
+        from vibeocr.services.env_config import PADDLE_DEPENDENCIES
+        assert "paddlepaddle" in PADDLE_DEPENDENCIES
+        assert "paddlex" in PADDLE_DEPENDENCIES
+
+    def test_mineru_dependencies(self):
+        from vibeocr.services.env_config import MINERU_DEPENDENCIES
+        assert "mineru" in MINERU_DEPENDENCIES
+
+    def test_ocr_dependencies_is_union(self):
+        from vibeocr.services.env_config import (
+            OCR_DEPENDENCIES, PADDLE_DEPENDENCIES, MINERU_DEPENDENCIES,
+        )
+        assert OCR_DEPENDENCIES == PADDLE_DEPENDENCIES + MINERU_DEPENDENCIES
+
+    def test_mineru_pipeline_spec(self):
+        from vibeocr.services.env_config import MINERU_PIPELINE_SPEC
+        assert MINERU_PIPELINE_SPEC == "mineru[pipeline]"
+
+
 class TestEnvironmentMode:
     """环境模式类型测试"""
 
