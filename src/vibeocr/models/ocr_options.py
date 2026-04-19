@@ -29,6 +29,7 @@ class OCROptions:
 
     # === MineRU 文档解析选项 ===
     parse_method: str = "auto"  # 解析方法: auto, txt, ocr
+    backend: str = "vlm-auto-engine"  # 解析后端: vlm-auto-engine, hybrid-auto-engine, pipeline
     enable_formula: bool = True  # 启用公式识别
     enable_table: bool = True  # 启用表格识别
 
@@ -44,6 +45,7 @@ class OCROptions:
             "use_doc_unwarping": self.use_doc_unwarping,
             "use_textline_orientation": self.use_textline_orientation,
             "parse_method": self.parse_method,
+            "backend": self.backend,
             "enable_formula": self.enable_formula,
             "enable_table": self.enable_table,
         }
@@ -71,6 +73,7 @@ class OCROptions:
             use_doc_unwarping=data.get("use_doc_unwarping", True),
             use_textline_orientation=data.get("use_textline_orientation", False),
             parse_method=data.get("parse_method", "auto"),
+            backend=data.get("backend", "vlm-auto-engine"),
             enable_formula=data.get("enable_formula", True),
             enable_table=data.get("enable_table", True),
         )

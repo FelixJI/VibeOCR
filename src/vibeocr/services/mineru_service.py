@@ -9,6 +9,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import os
 import socket
 import subprocess
 import sys
@@ -97,7 +98,7 @@ class MinerUService(metaclass=SingletonMeta):
         python_exe = self._resolve_python_executable()
         if python_exe is None:
             raise RuntimeError(
-                "找不到 Python 解释器。请确保已安装 Python 和 mineru[pipeline]"
+                "找不到 Python 解释器。请确保已安装 Python 和 mineru[core]"
             )
 
         port = self._find_free_port()
@@ -113,10 +114,18 @@ class MinerUService(metaclass=SingletonMeta):
         ]
 
         log_file = Path(__file__).resolve().parent.parent.parent / "mineru_api.log"
+
+        env = os.environ.copy()
+        from vibeocr.env_manager import detect_network_source
+        network = detect_network_source()
+        if network == "domestic" and not env.get("MINERU_MODEL_SOURCE"):
+            env["MINERU_MODEL_SOURCE"] = "modelscope"
+
         self.__class__._api_process = subprocess.Popen(
             cmd,
             stdout=subprocess.DEVNULL,
             stderr=log_file.open("w", encoding="utf-8"),
+            env=env,
         )
         _logger.info(f"[MinerU] 日志输出到: {log_file}")
 
@@ -151,45 +160,77 @@ class MinerUService(metaclass=SingletonMeta):
                 self.__class__._api_process = None
             self._start_api()
 
-    def _call_api(self, data: bytes, filename: str) -> dict[str, Any]:
+    def _call_api(self, data: bytes, filename: str, options: OCROptions | None = None) -> dict[str, Any]:
         """调用 mineru-api 的 /file_parse 端点
 
         Args:
             data: 文件数据（bytes）
             filename: 上传文件名（含扩展名）
+            options: OCR 选项（含 backend 和 parse_method）
 
         Returns:
             API 响应字典
         """
         self._ensure_api_running()
 
+        backend = options.backend if options else "vlm-auto-engine"
+        parse_method = options.parse_method if options else "auto"
+
         files = {"files": (filename, data)}
         params = {
             "return_md": "true",
             "return_content_list": "true",
             "return_images": "true",
-            "formula_enable": "true",
-            "table_enable": "true",
-            "backend": "pipeline",
-            "parse_method": "auto",
+            "formula_enable": str(options.enable_formula if options else True).lower(),
+            "table_enable": str(options.enable_table if options else True).lower(),
+            "backend": backend,
+            "parse_method": parse_method,
         }
 
-        resp = httpx.post(
-            f"{self.__class__._api_url}/file_parse",
-            files=files,
-            data=params,
-            timeout=300,
-        )
-        if resp.status_code != 200:
+        # 回退链: vlm-auto-engine → hybrid-auto-engine → pipeline
+        fallback_chain = ["vlm-auto-engine", "hybrid-auto-engine", "pipeline"]
+        # 从当前 backend 开始，构建回退链
+        if backend in fallback_chain:
+            start_idx = fallback_chain.index(backend)
+            backends_to_try = fallback_chain[start_idx:]
+        else:
+            backends_to_try = [backend]
+
+        last_error: Exception | None = None
+        for current_backend in backends_to_try:
+            params["backend"] = current_backend
+            _logger.info(f"[MinerU] 使用后端: {current_backend}")
             try:
-                body = resp.json()
-                detail = body.get("message") or body.get("error") or resp.text[:200]
-            except Exception:
-                detail = resp.text[:200]
-            raise RuntimeError(
-                f"mineru-api 错误 ({resp.status_code}): {detail}"
-            )
-        return resp.json()
+                resp = httpx.post(
+                    f"{self.__class__._api_url}/file_parse",
+                    files=files,
+                    data=params,
+                    timeout=300,
+                )
+                if resp.status_code == 200:
+                    return resp.json()
+
+                # 解析错误信息
+                try:
+                    body = resp.json()
+                    detail = body.get("message") or body.get("error") or resp.text[:200]
+                except Exception:
+                    detail = resp.text[:200]
+
+                last_error = RuntimeError(
+                    f"mineru-api 错误 ({resp.status_code}): {detail}"
+                )
+                _logger.warning(
+                    f"[MinerU] 后端 {current_backend} 失败: {detail}，尝试回退..."
+                )
+            except httpx.TimeoutException as e:
+                last_error = e
+                _logger.warning(f"[MinerU] 后端 {current_backend} 超时，尝试回退...")
+            except httpx.ConnectError as e:
+                last_error = e
+                _logger.warning(f"[MinerU] 后端 {current_backend} 连接失败，尝试回退...")
+
+        raise last_error or RuntimeError("mineru-api 请求失败")
 
     def parse(
         self,
@@ -210,7 +251,7 @@ class MinerUService(metaclass=SingletonMeta):
         ext = self._get_extension(mime_type)
         filename = f"input{ext}"
 
-        api_result = self._call_api(data, filename)
+        api_result = self._call_api(data, filename, options)
         return self._build_ocr_result(api_result, filename)
 
     def _get_extension(self, mime_type: str) -> str:

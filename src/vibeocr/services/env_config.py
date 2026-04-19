@@ -61,7 +61,7 @@ MINERU_DEPENDENCIES = [
 OCR_DEPENDENCIES = PADDLE_DEPENDENCIES + MINERU_DEPENDENCIES
 
 # MinerU 安装规格（便携模式用，包含 torch）
-MINERU_PIPELINE_SPEC = "mineru[pipeline]"
+MINERU_PIPELINE_SPEC = "mineru[core]"
 
 
 def get_pip_mirror(name: str = DEFAULT_PIP_MIRROR) -> str:

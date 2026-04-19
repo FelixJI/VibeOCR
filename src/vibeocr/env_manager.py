@@ -932,7 +932,7 @@ def install_embedded_dependencies(
         requirements = [
             (paddle_name, paddle_package, paddle_index),
             ("PaddleX", '"paddlex[ocr]>=3.4.2"', pip_source),
-            ("MinerU", '"mineru[pipeline]"', pip_source),
+            ("MinerU", '"mineru[core]"', pip_source),
         ]
 
         for name, package_spec, index_url in requirements:
@@ -1184,7 +1184,7 @@ def install_dependencies(
         requirements.append(("PaddleX", '"paddlex[ocr]>=3.4.2"', pip_source))
 
         # 安装 MineRU 文档解析
-        requirements.append(("MinerU", '"mineru[pipeline]"', pip_source))
+        requirements.append(("MinerU", '"mineru[core]"', pip_source))
 
         for name, package_spec, index_url in requirements:
             print(f"[依赖安装] 正在安装 {name}...")
@@ -1420,8 +1420,11 @@ def ensure_mineru_models(
 
     print("[模型下载] 正在下载 MinerU 模型...")
     try:
+        network = detect_network_source()
+        source = "modelscope" if network == "domestic" else "huggingface"
+        print(f"[模型下载] 使用模型源: {source}")
         result = subprocess.run(
-            [str(python_exe), "-m", "mineru.cli.models_download"],
+            [str(python_exe), "-m", "mineru.cli.models_download", "-s", source],
             capture_output=True,
             text=True,
             timeout=timeout,

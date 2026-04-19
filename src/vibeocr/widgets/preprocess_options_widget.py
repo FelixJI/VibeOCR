@@ -113,6 +113,22 @@ class PreprocessOptionsWidget(QGroupBox):
         group = QGroupBox("文档解析选项")
         layout = QVBoxLayout(group)
 
+        # 后端选择
+        backend_layout = QHBoxLayout()
+        backend_layout.addWidget(QLabel("解析后端:"))
+        self._backend_combo = QComboBox()
+        self._backend_combo.addItem("VLM 智能引擎", "vlm-auto-engine")
+        self._backend_combo.addItem("混合引擎", "hybrid-auto-engine")
+        self._backend_combo.addItem("传统流水线", "pipeline")
+        self._backend_combo.setToolTip(
+            "VLM 智能引擎：使用视觉语言模型，效果最佳（失败自动回退混合引擎）\n"
+            "混合引擎：兼顾兼容性和效果\n"
+            "传统流水线：纯 CPU 可用，效果一般"
+        )
+        backend_layout.addWidget(self._backend_combo)
+        backend_layout.addStretch()
+        layout.addLayout(backend_layout)
+
         self._enable_formula_cb = QCheckBox("公式识别")
         self._enable_formula_cb.setToolTip("启用数学公式识别（LaTeX 输出）")
         self._enable_formula_cb.setChecked(True)
@@ -137,6 +153,7 @@ class PreprocessOptionsWidget(QGroupBox):
         # MineRU 选项
         self._enable_formula_cb.toggled.connect(self._on_option_changed)
         self._enable_table_cb.toggled.connect(self._on_option_changed)
+        self._backend_combo.currentIndexChanged.connect(self._on_option_changed)
 
     def _on_pipeline_changed(self):
         """管道选择变更"""
@@ -163,6 +180,7 @@ class PreprocessOptionsWidget(QGroupBox):
             opt in supported
             for opt in [
                 "parse_method",
+                "backend",
                 "enable_formula",
                 "enable_table",
             ]
@@ -173,7 +191,7 @@ class PreprocessOptionsWidget(QGroupBox):
         self._tab_widget.setTabVisible(1, has_advanced)
 
         # 设置 MineRU 组可见性
-        mineru_opts = ["parse_method", "enable_formula", "enable_table"]
+        mineru_opts = ["parse_method", "backend", "enable_formula", "enable_table"]
         self._mineru_group.setVisible(any(opt in supported for opt in mineru_opts))
 
         # 如果当前选项卡不可见，切换到第一个可见的
@@ -217,6 +235,8 @@ class PreprocessOptionsWidget(QGroupBox):
             kwargs["enable_formula"] = self._enable_formula_cb.isChecked()
         if is_option_supported(pipeline, "enable_table"):
             kwargs["enable_table"] = self._enable_table_cb.isChecked()
+        if is_option_supported(pipeline, "backend"):
+            kwargs["backend"] = self._backend_combo.currentData()
 
         return OCROptions(**kwargs)
 
@@ -232,6 +252,7 @@ class PreprocessOptionsWidget(QGroupBox):
             self._textline_orientation_cb,
             self._enable_formula_cb,
             self._enable_table_cb,
+            self._backend_combo,
         ]
         for w in widgets:
             w.blockSignals(True)
@@ -249,6 +270,11 @@ class PreprocessOptionsWidget(QGroupBox):
         # 设置 MineRU 选项
         self._enable_formula_cb.setChecked(options.enable_formula)
         self._enable_table_cb.setChecked(options.enable_table)
+
+        # 设置 backend
+        backend_idx = self._backend_combo.findData(options.backend)
+        if backend_idx >= 0:
+            self._backend_combo.setCurrentIndex(backend_idx)
 
         # 恢复信号
         for w in widgets:

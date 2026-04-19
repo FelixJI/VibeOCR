@@ -65,6 +65,7 @@ _PIPELINE_METADATA: dict[OCRPipeline, dict] = {
         "description": "使用 MineRU 解析文档，支持 PDF/图片，提取文本、表格、公式等",
         "supported_options": [
             "parse_method",
+            "backend",
             "enable_formula",
             "enable_table",
         ],

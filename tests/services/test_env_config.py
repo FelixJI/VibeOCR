@@ -110,7 +110,7 @@ class TestDependencyConstants:
 
     def test_mineru_pipeline_spec(self):
         from vibeocr.services.env_config import MINERU_PIPELINE_SPEC
-        assert MINERU_PIPELINE_SPEC == "mineru[pipeline]"
+        assert MINERU_PIPELINE_SPEC == "mineru[core]"
 
 
 class TestEnvironmentMode:

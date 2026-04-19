@@ -8,8 +8,8 @@ from vibeocr.env_manager import install_embedded_dependencies, install_dependenc
 class TestInstallSpecs:
     """安装规格测试"""
 
-    def test_embedded_deps_uses_pipeline_not_all(self, tmp_path):
-        """便携模式安装应使用 mineru[pipeline] 而非 [all]"""
+    def test_embedded_deps_uses_core_not_all(self, tmp_path):
+        """便携模式安装应使用 mineru[core] 而非 [all]"""
         python_exe = tmp_path / "python.exe"
         python_exe.touch()
 
@@ -31,11 +31,11 @@ class TestInstallSpecs:
         mineru_cmd = [c for c in calls if "mineru" in " ".join(c)]
         assert len(mineru_cmd) > 0, "应包含 mineru 安装命令"
         joined = " ".join(mineru_cmd[0])
-        assert "mineru[pipeline]" in joined, f"应使用 mineru[pipeline]，实际: {joined}"
+        assert "mineru[core]" in joined, f"应使用 mineru[core]，实际: {joined}"
         assert "mineru[all]" not in joined
 
-    def test_install_deps_uses_pipeline_not_all(self, tmp_path):
-        """完整安装应使用 mineru[pipeline] 而非 [all]"""
+    def test_install_deps_uses_core_not_all(self, tmp_path):
+        """完整安装应使用 mineru[core] 而非 [all]"""
         python_exe = tmp_path / "python.exe"
         python_exe.touch()
 
@@ -57,7 +57,7 @@ class TestInstallSpecs:
         mineru_cmd = [c for c in calls if "mineru" in " ".join(c)]
         assert len(mineru_cmd) > 0
         joined = " ".join(mineru_cmd[0])
-        assert "mineru[pipeline]" in joined
+        assert "mineru[core]" in joined
         assert "mineru[all]" not in joined
 
     def test_embedded_deps_gpu_with_cuda_version(self, tmp_path):

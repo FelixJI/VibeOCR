@@ -110,6 +110,7 @@ class SettingsPageController:
         """初始化设置页面状态"""
         self._update_cache_status()
         self._update_preload_status()
+        self._restore_preload_checkbox_state()
 
         # 隐藏并行加载相关选项（当前不可用）
         chk_parallel = self._ui.findChild(QWidget, "chkParallelPreload")
@@ -210,6 +211,33 @@ class SettingsPageController:
     # ============================================================
     # 预加载
     # ============================================================
+
+    def _restore_preload_checkbox_state(self) -> None:
+        """从配置恢复预加载 checkbox 状态（阻塞信号避免触发保存）"""
+        from vibeocr.managers.config_manager import ConfigManager
+        from vibeocr.services.ocr_service import OCRPipeline
+
+        saved = ConfigManager.instance().get_preload_pipelines()
+        mapping = {
+            "chkPreloadOCR": OCRPipeline.OCR,
+            "chkPreloadTable": OCRPipeline.TABLE_RECOGNITION,
+            "chkPreloadFormula": OCRPipeline.FORMULA_RECOGNITION,
+            "chkPreloadStructure": OCRPipeline.DOCUMENT_PARSING,
+        }
+        for chk_name, pipeline in mapping.items():
+            chk = self._ui.findChild(QCheckBox, chk_name)
+            if chk:
+                chk.blockSignals(True)
+                chk.setChecked(pipeline.value in saved)
+                chk.blockSignals(False)
+
+        # 恢复"启用预加载"总开关
+        chk_enable = self._ui.findChild(QCheckBox, "chkEnablePreload")
+        if chk_enable:
+            chk_enable.blockSignals(True)
+            chk_enable.setChecked(len(saved) > 0)
+            chk_enable.blockSignals(False)
+            self._on_enable_preload_toggled(len(saved) > 0)
 
     def _on_enable_preload_toggled(self, checked: bool) -> None:
         """启用/禁用预加载"""

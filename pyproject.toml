@@ -20,7 +20,7 @@ dependencies = [
     "nvidia-cuda-runtime>=13.0.88",
     "paddlex[ocr]>=3.4.3",
     "httpx>=0.28.1",
-    "mineru[pipeline]>=3.1.0",
+    "mineru[core]>=3.1.0",
     # 开发依赖
     "pytest>=9.0.3",
     "pytest-qt>=4.5.0",
@@ -145,3 +145,10 @@ extra-index-url = [
     "https://www.paddlepaddle.org.cn/packages/stable/cu129/",
 ]
 index-strategy = "unsafe-best-match"
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu128" }
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
