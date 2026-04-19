@@ -79,6 +79,16 @@ CUDA_VERSION_MAP = {
     "13.2": "cu129",
 }
 
+# PyTorch CUDA 版本映射（PaddlePaddle CUDA tag → PyTorch CUDA tag）
+# PyTorch 支持的 CUDA 版本比 PaddlePaddle 少，需要映射到最接近的版本
+TORCH_CUDA_MAP = {
+    "cu118": "cu118",
+    "cu121": "cu121",
+    "cu123": "cu124",
+    "cu126": "cu126",
+    "cu129": "cu128",
+}
+
 # cuDNN 版本映射（基于 CUDA 版本）
 # paddlepaddle-gpu 需要系统级 cuDNN 运行时库
 # CUDA 11.x -> cuDNN 8.x, CUDA 12.x -> cuDNN 9.x
@@ -935,6 +945,18 @@ def install_embedded_dependencies(
             ("MinerU", '"mineru[core]"', pip_source),
         ]
 
+        # GPU 环境下安装 torch+CUDA 覆盖 mineru 附带的 CPU 版本
+        if use_gpu:
+            paddle_cuda_tag = None
+            if cuda_version:
+                paddle_cuda_tag = CUDA_VERSION_MAP.get(cuda_version)
+            torch_cuda_tag = TORCH_CUDA_MAP.get(paddle_cuda_tag or "", "cu128")
+            torch_index = f"https://download.pytorch.org/whl/{torch_cuda_tag}"
+            requirements.append(
+                (f"PyTorch CUDA ({torch_cuda_tag})", "torch torchvision", torch_index)
+            )
+            report("依赖安装", f"将安装 PyTorch CUDA ({torch_cuda_tag})")
+
         for name, package_spec, index_url in requirements:
             report("依赖安装", f"正在安装 {name}...")
             report("依赖安装", f"包规格: {package_spec}")
@@ -1185,6 +1207,18 @@ def install_dependencies(
 
         # 安装 MineRU 文档解析
         requirements.append(("MinerU", '"mineru[core]"', pip_source))
+
+        # GPU 环境下安装 torch+CUDA 覆盖 mineru 附带的 CPU 版本
+        if use_gpu:
+            paddle_cuda_tag = None
+            if cuda_version:
+                paddle_cuda_tag = CUDA_VERSION_MAP.get(cuda_version)
+            torch_cuda_tag = TORCH_CUDA_MAP.get(paddle_cuda_tag or "", "cu128")
+            torch_index = f"https://download.pytorch.org/whl/{torch_cuda_tag}"
+            requirements.append(
+                (f"PyTorch CUDA ({torch_cuda_tag})", "torch torchvision", torch_index)
+            )
+            print(f"[依赖安装] 将安装 PyTorch CUDA ({torch_cuda_tag})")
 
         for name, package_spec, index_url in requirements:
             print(f"[依赖安装] 正在安装 {name}...")

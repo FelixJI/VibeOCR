@@ -205,7 +205,7 @@ class MinerUService(metaclass=SingletonMeta):
                     f"{self.__class__._api_url}/file_parse",
                     files=files,
                     data=params,
-                    timeout=300,
+                    timeout=httpx.Timeout(timeout=1800.0, connect=30.0),
                 )
                 if resp.status_code == 200:
                     return resp.json()
