@@ -551,6 +551,51 @@ class OCRService(metaclass=SingletonMeta):
             _logger.info(f"[HPIP] 创建失败，回退到普通推理: {e}")
             return None
 
+    _cuda_dll_registered = False
+
+    @classmethod
+    def _setup_cuda_dll_path(cls) -> None:
+        """将 nvidia cu13 DLL 目录加入 PATH，使 PaddlePaddle 能找到 CUDA 运行时库"""
+        if cls._cuda_dll_registered:
+            return
+        import sys
+        if sys.platform != "win32":
+            cls._cuda_dll_registered = True
+            return
+        site_packages = next(p for p in sys.path if "site-packages" in p)
+        cuda_dirs = [
+            os.path.join(site_packages, "nvidia", "cu13", "bin", "x86_64"),
+            os.path.join(site_packages, "nvidia", "cudnn", "bin"),
+        ]
+        existing = os.environ.get("PATH", "")
+        for d in cuda_dirs:
+            if os.path.isdir(d) and d not in existing:
+                existing = d + ";" + existing
+        os.environ["PATH"] = existing
+        cls._cuda_dll_registered = True
+
+    @staticmethod
+    def _get_device() -> str:
+        """根据环境变量和 GPU 可用性检测推理设备"""
+        if os.environ.get("VIBEOCR_USE_GPU", "").lower() != "true":
+            return "cpu"
+        try:
+            import paddle
+            import paddle.device as paddle_device
+            if paddle_device.cuda.device_count() > 0:
+                # 驱动可检测到 GPU，但 CUDA 运行时库（cuBLAS 等）可能未安装，
+                # 执行一次矩阵乘法验证 cuBLAS 可用性。
+                paddle.device.set_device("gpu")
+                a = paddle.randn([4, 4])
+                _ = paddle.matmul(a, a).numpy()
+                _logger.info("[GPU] CUDA 运行时验证通过，使用 GPU 推理")
+                return "gpu"
+        except Exception as e:
+            _logger.warning("[GPU] GPU 可用性验证失败: %s，回退到 CPU", e)
+            return "cpu"
+        _logger.warning("[GPU] VIBEOCR_USE_GPU=true 但未检测到可用 GPU，回退到 CPU")
+        return "cpu"
+
     def _create_pipeline(self, pipeline_name: str, device: str = "cpu") -> Any:
         """创建指定管道"""
         # 延迟导入: 确保模型源已配置（首次使用时才执行网络检测）
@@ -612,14 +657,19 @@ class OCRService(metaclass=SingletonMeta):
         return pipeline
 
     def get_pipeline(self, pipeline: OCRPipeline) -> Any:
-        """延迟加载指定管道 (线程安全，CPU 模式)"""
+        """延迟加载指定管道 (线程安全)"""
         pipeline_name = pipeline.value
 
         if pipeline_name not in self._pipelines:
             with self._lock:
                 if pipeline_name not in self._pipelines:  # 双重检查
+                    self._setup_cuda_dll_path()
+                    # Windows 上 PaddlePaddle 和 PyTorch 都自带 libiomp5md.dll，
+                    # paddle 先加载会导致 torch 的 shm.dll 加载失败 (WinError 127)，
+                    # 因此必须先导入 torch 确保其版本优先加载。
+                    import torch  # noqa: F401
                     self._pipelines[pipeline_name] = self._create_pipeline(
-                        pipeline_name, "cpu"
+                        pipeline_name, self._get_device()
                     )
         return self._pipelines[pipeline_name]
 
@@ -855,15 +905,32 @@ class OCRService(metaclass=SingletonMeta):
             pipeline_type="formula_recognition",
         )
 
+    @staticmethod
+    def _consume_generator_safely(output) -> list:
+        """安全地消费 generator（禁用 GC 避免 CUDA 内存管理冲突）"""
+        import gc
+
+        gc_was_enabled = gc.isenabled()
+        gc.disable()
+        try:
+            output_list = list(output)
+            return output_list
+        except Exception as e:
+            _logger.error(f"[安全消费] 消费 generator 时出错: {e}", exc_info=True)
+            return []
+        finally:
+            if gc_was_enabled:
+                gc.enable()
+
     def _process_ocr_output_safe(self, output) -> OCRResult:
         """从 OCR 输出中提取结果
 
-        先将 generator 完全消费为 list，然后提取数据。
+        先将 generator 完全消费为 list（禁用 GC），然后提取数据。
         """
         _logger.info("[_process_ocr_output_safe] 开始提取结果...")
         text_with_scores: list[tuple[str, float]] = []
 
-        output_list = list(output)
+        output_list = self._consume_generator_safely(output)
 
         result_count = 0
         for res in output_list:

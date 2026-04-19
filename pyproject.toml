@@ -10,10 +10,17 @@ dependencies = [
     "numpy>=2.4.4",
     "markdown>=3.10.2",
     "qasync>=0.28.0",
-    "paddlepaddle>=3.3.1",
+    "paddlepaddle-gpu>=3.3.1",
+    "nvidia-cudnn-cu13>=9.13.0.50",
+    "nvidia-cublas>=13.0.2.14",
+    "nvidia-cufft>=12.0.0.61",
+    "nvidia-curand>=10.4.0.35",
+    "nvidia-cusolver>=12.0.4.66",
+    "nvidia-cusparse>=12.6.3.3",
+    "nvidia-cuda-runtime>=13.0.88",
     "paddlex[ocr]>=3.4.3",
     "httpx>=0.28.1",
-    "mineru>=3.0.9",
+    "mineru[pipeline]>=3.1.0",
     # 开发依赖
     "pytest>=9.0.3",
     "pytest-qt>=4.5.0",
@@ -135,5 +142,6 @@ exclude_lines = [
 environments = ["sys_platform == 'win32'"]
 extra-index-url = [
     "https://mirrors.aliyun.com/pypi/simple",
+    "https://www.paddlepaddle.org.cn/packages/stable/cu129/",
 ]
 index-strategy = "unsafe-best-match"

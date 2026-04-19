@@ -1,0 +1,13 @@
+{
+  "upgrade_deps": {
+    "name": "依赖升级",
+    "success": true,
+    "returncode": 0,
+    "elapsed": 5.367644786834717,
+    "output": "============================================================\n  依赖升级工具\n============================================================\n\n[Step 1] 运行 uv lock --upgrade...\n运行: uv lock --upgrade\n\n[Step 2] 读取锁定版本...\n[INFO] 找到 165 个锁定包\n\n[Step 3] 更新 pyproject.toml...\n\n变更列表 (1 项):\n  mineru: mineru[pipeline]>=3.0.9 -> mineru[pipeline]>=3.1.0\n\n[OK] pyproject.toml 已更新\n\n============================================================\n[OK] 依赖升级完成!\n============================================================\nResolved 165 packages in 4.43s"
+  },
+  "_meta": {
+    "total_elapsed": 5.367666721343994,
+    "timestamp": "2026-04-18T15:35:18.676039"
+  }
+}

@@ -457,6 +457,9 @@ class OCRWorkerProcess:
                 error_msg = data.decode("utf-8", errors="replace")
                 raise OCRWorkerProcessError(f"OCR 识别失败: {error_msg}")
 
+            if msg_type == MSG_SHUTDOWN:
+                raise OCRWorkerProcessError("Worker 被关闭（可能因超时卡死）")
+
             raise OCRWorkerProcessError(f"未知响应类型: {msg_type.decode('ascii', errors='replace')}")
 
         except SharedMemoryProtocolError as e:

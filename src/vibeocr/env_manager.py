@@ -852,15 +852,15 @@ def install_embedded_dependencies(
     progress_callback=None,
 ) -> tuple[bool, str]:
     """
-    仅安装嵌入式OCR依赖（PaddlePaddle CPU, PaddleX, MinerU）
+    仅安装嵌入式OCR依赖（PaddlePaddle GPU/CPU, PaddleX, MinerU）
 
     不安装生产依赖（PySide6, Pillow）
 
     Args:
         project_root: 项目根目录
         network_type: 网络类型
-        use_gpu: 保留参数（兼容性），始终安装 CPU 版
-        cuda_version: 保留参数（兼容性），不再使用
+        use_gpu: 是否安装 GPU 版本（优先），False 则安装 CPU 版
+        cuda_version: CUDA 版本，如 "12.1"，用于选择对应的 GPU 包
         progress_callback: 进度回调函数，接收 (stage, message) 参数
 
     Returns:
@@ -880,7 +880,30 @@ def install_embedded_dependencies(
 
     report("依赖安装", "开始安装OCR依赖...")
     report("依赖安装", f"pip源: {pip_source}")
-    report("依赖安装", "使用CPU版本")
+
+    # 决定 PaddlePaddle 版本（GPU 优先）
+    if use_gpu and cuda_version:
+        cuda_tag = CUDA_VERSION_MAP.get(cuda_version)
+        if cuda_tag:
+            paddle_package = f"paddlepaddle-gpu>=3.3.0"
+            paddle_index = f"https://www.paddlepaddle.org.cn/packages/stable/{cuda_tag}/"
+            paddle_name = f"PaddlePaddle GPU ({cuda_tag})"
+            report("依赖安装", f"检测到 CUDA {cuda_version}，安装 GPU 版本")
+        else:
+            paddle_package = "paddlepaddle>=3.3.0"
+            paddle_index = "https://www.paddlepaddle.org.cn/packages/stable/cpu/"
+            paddle_name = "PaddlePaddle CPU"
+            report("依赖安装", f"CUDA {cuda_version} 无对应版本，回退 CPU 版本")
+    elif use_gpu:
+        paddle_package = "paddlepaddle-gpu>=3.3.0"
+        paddle_index = "https://www.paddlepaddle.org.cn/packages/stable/cu129/"
+        paddle_name = "PaddlePaddle GPU (cu129)"
+        report("依赖安装", "安装 GPU 版本（默认 cu129）")
+    else:
+        paddle_package = "paddlepaddle>=3.3.0"
+        paddle_index = "https://www.paddlepaddle.org.cn/packages/stable/cpu/"
+        paddle_name = "PaddlePaddle CPU"
+        report("依赖安装", "使用CPU版本")
 
     try:
         # 升级pip
@@ -906,9 +929,8 @@ def install_embedded_dependencies(
                 f"pip升级警告: {result.stderr[-100:] if result.stderr else ''}",
             )
 
-        # PaddlePaddle CPU 版本
         requirements = [
-            ("PaddlePaddle CPU", "paddlepaddle>=3.3.0", "https://www.paddlepaddle.org.cn/packages/stable/cpu/"),
+            (paddle_name, paddle_package, paddle_index),
             ("PaddleX", '"paddlex[ocr]>=3.4.2"', pip_source),
             ("MinerU", '"mineru[pipeline]"', pip_source),
         ]
@@ -1084,8 +1106,8 @@ def install_dependencies(
     Args:
         project_root: 项目根目录
         network_type: 网络类型
-        use_gpu: 保留参数（兼容性），始终安装 CPU 版
-        cuda_version: 保留参数（兼容性），不再使用
+        use_gpu: 是否安装 GPU 版本（优先），False 则安装 CPU 版
+        cuda_version: CUDA 版本，如 "12.1"，用于选择对应的 GPU 包
 
     Returns:
         (是否成功, 消息)
@@ -1101,7 +1123,30 @@ def install_dependencies(
     print("[依赖安装] 安装项目依赖")
     print("=" * 50)
     print(f"[依赖安装] pip源: {pip_source}")
-    print("[依赖安装] 使用CPU版本")
+
+    # 决定 PaddlePaddle 版本（GPU 优先）
+    if use_gpu and cuda_version:
+        cuda_tag = CUDA_VERSION_MAP.get(cuda_version)
+        if cuda_tag:
+            paddle_package = f"paddlepaddle-gpu>=3.3.0"
+            paddle_index = f"https://www.paddlepaddle.org.cn/packages/stable/{cuda_tag}/"
+            paddle_name = f"PaddlePaddle GPU ({cuda_tag})"
+            print(f"[依赖安装] 检测到 CUDA {cuda_version}，安装 GPU 版本")
+        else:
+            paddle_package = "paddlepaddle>=3.3.0"
+            paddle_index = "https://www.paddlepaddle.org.cn/packages/stable/cpu/"
+            paddle_name = "PaddlePaddle CPU"
+            print(f"[依赖安装] CUDA {cuda_version} 无对应版本，回退 CPU 版本")
+    elif use_gpu:
+        paddle_package = "paddlepaddle-gpu>=3.3.0"
+        paddle_index = "https://www.paddlepaddle.org.cn/packages/stable/cu129/"
+        paddle_name = "PaddlePaddle GPU (cu129)"
+        print("[依赖安装] 安装 GPU 版本（默认 cu129）")
+    else:
+        paddle_package = "paddlepaddle>=3.3.0"
+        paddle_index = "https://www.paddlepaddle.org.cn/packages/stable/cpu/"
+        paddle_name = "PaddlePaddle CPU"
+        print("[依赖安装] 使用CPU版本")
 
     try:
         # 升级pip
@@ -1132,10 +1177,8 @@ def install_dependencies(
             ("Pillow", "pillow>=11.0.0", pip_source),
         ]
 
-        # PaddlePaddle CPU 版本
-        paddle_package = "paddlepaddle>=3.3.0"
-        paddle_index = "https://www.paddlepaddle.org.cn/packages/stable/cpu/"
-        requirements.append(("PaddlePaddle CPU", paddle_package, paddle_index))
+        # PaddlePaddle（GPU 优先，CPU 回退）
+        requirements.append((paddle_name, paddle_package, paddle_index))
 
         # 安装PaddleX OCR
         requirements.append(("PaddleX", '"paddlex[ocr]>=3.4.2"', pip_source))

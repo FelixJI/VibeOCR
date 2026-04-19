@@ -1,0 +1,13 @@
+{
+  "upgrade_deps": {
+    "name": "依赖升级",
+    "success": true,
+    "returncode": 0,
+    "elapsed": 7.998254299163818,
+    "output": "============================================================\n  依赖升级工具\n============================================================\n\n[Step 1] 运行 uv lock --upgrade...\n运行: uv lock --upgrade\n\n[Step 2] 读取锁定版本...\n[INFO] 找到 173 个锁定包\n\n[Step 3] 更新 pyproject.toml...\n\n变更列表 (7 项):\n  nvidia-cudnn-cu12: nvidia-cudnn-cu12==9.9.0.52 -> nvidia-cudnn-cu12>=9.9.0.52\n  nvidia-cublas-cu12: nvidia-cublas-cu12==12.9.0.13 -> nvidia-cublas-cu12>=12.9.0.13\n  nvidia-cufft-cu12: nvidia-cufft-cu12==11.4.0.6 -> nvidia-cufft-cu12>=11.4.0.6\n  nvidia-curand-cu12: nvidia-curand-cu12==10.3.10.19 -> nvidia-curand-cu12>=10.3.10.19\n  nvidia-cusolver-cu12: nvidia-cusolver-cu12==11.7.4.40 -> nvidia-cusolver-cu12>=11.7.4.40\n  nvidia-cusparse-cu12: nvidia-cusparse-cu12==12.5.9.5 -> nvidia-cusparse-cu12>=12.5.9.5\n  nvidia-cuda-runtime-cu12: nvidia-cuda-runtime-cu12==12.9.37 -> nvidia-cuda-runtime-cu12>=12.9.37\n\n[OK] pyproject.toml 已更新\n\n============================================================\n[OK] 依赖升级完成!\n============================================================\nResolved 173 packages in 6.94s\nUpdated av v17.0.0 -> v17.0.1"
+  },
+  "_meta": {
+    "total_elapsed": 7.998278617858887,
+    "timestamp": "2026-04-19T10:26:49.859588"
+  }
+}
