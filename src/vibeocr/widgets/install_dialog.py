@@ -69,6 +69,8 @@ class InstallWorker(QThread):
 class InstallDialog(QDialog):
     """安装进度对话框"""
 
+    install_succeeded = Signal()
+
     def __init__(self, project_root: Path, parent=None) -> None:
         super().__init__(parent)
         self._project_root = project_root
@@ -139,6 +141,7 @@ class InstallDialog(QDialog):
             self._log(f"\n安装成功: {message}")
             self._close_button.setVisible(True)
             # 设置结果为成功
+            self.install_succeeded.emit()
             self.done(1)
         else:
             self._title_label.setText("安装失败")

@@ -579,6 +579,10 @@ class MainWindow(QMainWindow):
         self._action_refresh_cache.setStatusTip("清除缓存并重新检测OCR依赖")
         tools_menu.addAction(self._action_refresh_cache)
 
+        self._action_download_models = QAction("下载模型", self)
+        self._action_download_models.setStatusTip("下载或更新 OCR 模型文件")
+        tools_menu.addAction(self._action_download_models)
+
         # 帮助菜单
         help_menu = menubar.addMenu("帮助")
 
@@ -593,6 +597,7 @@ class MainWindow(QMainWindow):
         self._action_exit.triggered.connect(self.close)
         self._action_about.triggered.connect(self._on_about)
         self._action_refresh_cache.triggered.connect(self._on_refresh_cache)
+        self._action_download_models.triggered.connect(self._on_download_models)
 
         # 截图组件 - 使用新的 selection_done 信号进入编辑流程
         self._screenshot_widget.selection_done.connect(self._on_selection_done)
@@ -808,19 +813,27 @@ class MainWindow(QMainWindow):
 
         dialog = InstallDialog(self._project_root, self)
         dialog.finished.connect(self._on_install_finished)
+        dialog.install_succeeded.connect(self._on_install_succeeded)
         dialog.exec()
 
     @Slot(int)
     def _on_install_finished(self, result: int) -> None:
         """安装完成"""
-        if result == 1:  # 安装成功
-            self._ocr_ready = True
+        if result == 1:
             self._statusbar.showMessage("OCR依赖安装成功")
-            QMessageBox.information(
-                self, "安装成功", "OCR依赖安装成功，现在可以使用OCR功能。"
-            )
         else:
             self._statusbar.showMessage("OCR依赖安装失败")
+
+    @Slot()
+    def _on_install_succeeded(self) -> None:
+        """安装成功后弹出模型下载对话框"""
+        from vibeocr.widgets.model_download_dialog import ModelDownloadDialog
+
+        self._ocr_ready = True
+        self._statusbar.showMessage("OCR依赖安装成功，正在下载模型...")
+
+        dialog = ModelDownloadDialog(self._project_root, self)
+        dialog.exec()
 
     @Slot()
     def _on_open_image(self) -> None:
@@ -1269,6 +1282,14 @@ class MainWindow(QMainWindow):
             "一个简单的截图OCR识别工具\n\n"
             "使用 PaddleOCR 进行文字识别",
         )
+
+    @Slot()
+    def _on_download_models(self) -> None:
+        """打开模型下载对话框"""
+        from vibeocr.widgets.model_download_dialog import ModelDownloadDialog
+
+        dialog = ModelDownloadDialog(self._project_root, self)
+        dialog.exec()
 
     @Slot()
     def _on_refresh_cache(self) -> None:
