@@ -58,14 +58,14 @@ class MinerUBatchService:
 
     def batch_commit(
         self,
-        preprocess_options=None,  # noqa: ARG002
+        preprocess_options=None,
         timeout: float = 300.0,
         progress_callback: Callable[[int, int, str], None] | None = None,
     ) -> dict:
         """执行批量处理
 
         Args:
-            preprocess_options: 预处理选项（当前未使用）
+            preprocess_options: OCROptions 预处理选项，传递给 MinerUService.parse()
             timeout: 超时时间（秒）
             progress_callback: 进度回调 (completed, total, current_file)
 
@@ -100,6 +100,7 @@ class MinerUBatchService:
                 result = mineru.parse(
                     data=item["data"],
                     mime_type=item["mime_type"],
+                    options=preprocess_options,
                 )
                 results[item["request_id"]] = result
             except Exception as e:

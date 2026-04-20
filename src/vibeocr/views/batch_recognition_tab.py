@@ -1,6 +1,6 @@
 """批量识别标签页
 
-提供批量文件识别功能。
+提供批量文件识别功能，三栏布局：文件列表 | 文件预览 | 识别结果。
 """
 
 import contextlib
@@ -11,6 +11,7 @@ from PySide6.QtCore import QThread, Signal
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
+    QMessageBox,
     QProgressBar,
     QPushButton,
     QSplitter,
@@ -18,10 +19,14 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from vibeocr.models.ocr_options import OCROptions  # 向后兼容别名
+from vibeocr.models.ocr_options import OCROptions
+from vibeocr.services.export_service import ExportService
 from vibeocr.views.tabs.base_tab import BaseOcrTab
 from vibeocr.widgets.batch_file_list_widget import BatchFileListWidget
+from vibeocr.widgets.export_settings_widget import ExportSettingsWidget
+from vibeocr.widgets.file_preview_widget import FilePreviewWidget
 from vibeocr.widgets.preprocess_options_widget import PreprocessOptionsWidget
+from vibeocr.widgets.result_view_widget import ResultViewWidget
 
 # 向后兼容别名
 PreprocessOptions = OCROptions
@@ -69,11 +74,9 @@ class BatchRecognitionWorker(QThread):
             self.progress.emit(i, total, f"准备: {Path(file_path).name}")
 
             try:
-                # 读取文件
                 with open(file_path, "rb") as f:
                     image_data = f.read()
 
-                # 添加到队列
                 request_id = self._service.batch_add(
                     image_data, file_name=file_info["name"]
                 )
@@ -91,7 +94,6 @@ class BatchRecognitionWorker(QThread):
         # 提交批量处理
         if not self._cancelled and request_map:
             try:
-                # 进度回调：每处理一个文件更新进度
                 def on_process_progress(completed: int, total_count: int, name: str):
                     self.progress.emit(completed, total_count, f"处理: {name}")
 
@@ -135,71 +137,84 @@ class BatchRecognitionWorker(QThread):
 class BatchRecognitionTab(BaseOcrTab):
     """批量识别标签页
 
-    继承自 BaseOcrTab，提供批量文件 OCR 识别功能。
+    三栏布局：文件列表 | 文件预览 | 识别结果
     """
 
-    SPLITTER_ID = "batch_tab"  # 分割器标识
+    SPLITTER_ID = "batch_tab_v2"
 
     def __init__(self, ocr_service=None, parent=None):
         super().__init__(parent)
         self._ocr_service = ocr_service
         self._worker: BatchRecognitionWorker | None = None
-        self._layout_manager = None  # 由主窗口设置
+        self._layout_manager = None
+        self._current_file_path: str = ""
 
         self._setup_ui()
         self._connect_signals()
         self._init_from_preferences()
 
     def _setup_ui(self):
-        """设置 UI"""
+        """设置三栏 UI"""
         layout = QVBoxLayout(self)
         layout.setSpacing(8)
         layout.setContentsMargins(8, 8, 8, 8)
 
-        # 使用 Splitter 分割左右面板
+        # 主分割器（三栏）
         self._splitter = QSplitter()
 
-        # 左侧面板
+        # ── 左侧面板：文件列表 + 识别选项 ──
         left_panel = QWidget()
         left_layout = QVBoxLayout(left_panel)
         left_layout.setSpacing(8)
         left_layout.setContentsMargins(0, 0, 0, 0)
 
-        # 文件列表
         self._file_list_widget = BatchFileListWidget()
-        left_layout.addWidget(self._file_list_widget)
+        left_layout.addWidget(self._file_list_widget, stretch=3)
 
-        # 预处理选项
         self._preprocess_options = PreprocessOptionsWidget()
-        left_layout.addWidget(self._preprocess_options)
+        left_layout.addWidget(self._preprocess_options, stretch=2)
 
         self._splitter.addWidget(left_panel)
 
-        # 右侧面板 - 结果显示
+        # ── 中间面板：文件预览 ──
+        center_panel = QWidget()
+        center_layout = QVBoxLayout(center_panel)
+        center_layout.setSpacing(4)
+        center_layout.setContentsMargins(0, 0, 0, 0)
+
+        preview_label = QLabel("文件预览")
+        preview_label.setStyleSheet("font-weight: bold; color: #555;")
+        center_layout.addWidget(preview_label)
+
+        self._preview_widget = FilePreviewWidget()
+        center_layout.addWidget(self._preview_widget, stretch=1)
+
+        self._splitter.addWidget(center_panel)
+
+        # ── 右侧面板：识别结果 + 导出设置 ──
         right_panel = QWidget()
         right_layout = QVBoxLayout(right_panel)
+        right_layout.setSpacing(4)
         right_layout.setContentsMargins(0, 0, 0, 0)
 
-        # 结果显示标签
         result_label = QLabel("识别结果")
+        result_label.setStyleSheet("font-weight: bold; color: #555;")
         right_layout.addWidget(result_label)
 
-        # 使用 QTextEdit 显示结果（纯文本，不需要日志格式）
-        from PySide6.QtWidgets import QTextEdit
+        self._result_widget = ResultViewWidget()
+        right_layout.addWidget(self._result_widget, stretch=1)
 
-        self._result_widget = QTextEdit()
-        self._result_widget.setReadOnly(True)
-        self._result_widget.setPlaceholderText("识别结果将显示在这里...")
-        right_layout.addWidget(self._result_widget)
+        self._export_widget = ExportSettingsWidget()
+        right_layout.addWidget(self._export_widget)
 
         self._splitter.addWidget(right_panel)
 
-        # 设置分割比例
-        self._splitter.setSizes([300, 500])
+        # 设置分割比例 [250, 45%, 45%]
+        self._splitter.setSizes([250, 450, 450])
 
         layout.addWidget(self._splitter, stretch=1)
 
-        # 底部进度区域
+        # ── 底部进度区域 ──
         progress_layout = QHBoxLayout()
 
         self._start_btn = QPushButton("开始识别")
@@ -224,41 +239,44 @@ class BatchRecognitionTab(BaseOcrTab):
 
     def _connect_signals(self):
         """连接信号"""
+        # 处理按钮
         self._start_btn.clicked.connect(self._on_start)
         self._cancel_btn.clicked.connect(self._on_cancel)
 
+        # 文件选择
         self._file_list_widget.selection_changed.connect(self._on_file_selected)
+
+        # 悬停高亮联动（双向）
+        self._result_widget.block_hovered.connect(self._on_result_block_hovered)
+        self._result_widget.block_unhovered.connect(self._preview_widget.clear_highlight)
+        self._preview_widget.block_hovered.connect(self._on_preview_block_hovered)
+        self._preview_widget.block_unhovered.connect(self._result_widget.clear_highlight)
+
+        # 导出
+        self._export_widget.export_requested.connect(self._on_export_current)
+        self._export_widget.export_all_requested.connect(self._on_export_all)
 
     def _on_start(self):
         """开始识别"""
         files = self._file_list_widget.get_selected_files()
         if not files:
-            self._result_widget.setPlainText(
-                "请添加文件后再开始识别。\n\n提示：点击「选择文件」按钮添加 PDF/图片文件。"
-            )
+            self._result_widget.clear()
             return
 
         if not self._ocr_service:
-            self._result_widget.setPlainText(
-                "OCR 服务未就绪，请稍后再试。\n\n提示：等待状态栏显示「OCR 服务已就绪」后开始识别。"
-            )
+            self._result_widget.clear()
             return
 
-        # 获取预处理选项
         preprocess_options = self._preprocess_options.get_options()
 
-        # 禁用按钮
         self._start_btn.setEnabled(False)
         self._cancel_btn.setEnabled(True)
 
-        # 更新进度
         self._progress_bar.setValue(0)
         self._progress_label.setText(f"0/{len(files)}")
 
-        # 清空之前的结果
         self._result_widget.clear()
 
-        # 创建工作线程
         self._worker = BatchRecognitionWorker(
             self._ocr_service, files, preprocess_options
         )
@@ -272,7 +290,6 @@ class BatchRecognitionTab(BaseOcrTab):
         """取消识别"""
         if self._worker:
             self._worker.cancel()
-
         self._reset_ui()
 
     def _on_progress(self, completed: int, total: int, current_file: str):
@@ -286,66 +303,110 @@ class BatchRecognitionTab(BaseOcrTab):
 
     def _on_file_completed(self, file_path: str, status: str, result):
         """单个文件完成"""
-        # 更新文件列表状态
         self._file_list_widget.update_file_status(file_path, status, result)
 
-        # 显示结果
-        file_name = Path(file_path).name
-        if status == "completed" and result:
-            text = self._extract_text(result)
-            self._result_widget.append(f"=== {file_name} ===\n{text}\n\n")
-        elif status == "failed":
-            error = (
-                result.get("error", "未知错误")
-                if isinstance(result, dict)
-                else "未知错误"
-            )
-            self._result_widget.append(f"=== {file_name} ===\n[失败] {error}\n\n")
+        # 如果是当前选中的文件，刷新显示
+        if file_path == self._current_file_path and status == "completed" and result:
+            self._display_result(result)
 
     def _on_finished(self, results: dict):
         """处理完成"""
         completed = len([r for r in results.values() if "result" in r])
         failed = len([r for r in results.values() if "error" in r])
 
-        self._result_widget.append(
-            f"\n--- 批量处理完成: {completed} 个成功, {failed} 个失败 ---"
-        )
-
+        logger.info(f"批量处理完成: {completed} 成功, {failed} 失败")
         self._reset_ui()
 
     def _on_error(self, error_msg: str):
         """处理错误"""
         logger.error(f"Batch recognition error: {error_msg}")
-        self._result_widget.append(f"[错误] {error_msg}")
         self._reset_ui()
 
     def _on_file_selected(self, file_path: str):
-        """文件选择变更"""
-        # 查找对应的结果并显示
+        """文件选择变更：加载预览和结果"""
+        self._current_file_path = file_path
+
+        # 加载文件预览
+        self._preview_widget.load_file(file_path)
+
+        # 查找并显示结果
         files = self._file_list_widget._files
         for f in files:
-            if f["path"] == file_path and f.get("result"):
-                result = f["result"]
-                text = self._extract_text(result)
-                self._result_widget.setPlainText(text)
+            if f["path"] == file_path:
+                result = f.get("result")
+                if result:
+                    self._display_result(result)
+                else:
+                    self._result_widget.clear()
                 break
 
-    def _extract_text(self, result) -> str:
-        """从结果中提取文本"""
-        if result is None:
-            return ""
+    def _display_result(self, result) -> None:
+        """显示 OCR 结果到结果面板和导出设置"""
+        self._result_widget.display_result(result)
+        self._export_widget.set_current_result(result)
 
-        if hasattr(result, "raw_text"):
-            return result.raw_text
-        if hasattr(result, "text"):
-            return result.text
-        if isinstance(result, dict):
-            if "text" in result:
-                return result["text"]
-            if "raw_text" in result:
-                return result["raw_text"]
-            return str(result)
-        return str(result)
+        # 设置预览的 content_list 用于高亮联动
+        content_list = getattr(result, "content_list", [])
+        self._preview_widget.set_content_list(content_list)
+
+    # ── 悬停高亮联动 ──
+
+    def _on_result_block_hovered(self, index: int) -> None:
+        """结果面板块悬停 → 预览面板高亮"""
+        self._preview_widget.highlight_block(index)
+
+    def _on_preview_block_hovered(self, index: int) -> None:
+        """预览面板块悬停 → 结果面板高亮"""
+        self._result_widget.highlight_block(index)
+
+    # ── 导出功能 ──
+
+    def _on_export_current(self, fmt: str, result) -> None:
+        """导出当前文件"""
+        if not result:
+            return
+
+        export_dir = self._export_widget.get_export_dir(self._current_file_path)
+        output_name = ExportService.get_output_filename(
+            Path(self._current_file_path).name, fmt
+        )
+        output_path = Path(export_dir) / output_name
+
+        success = ExportService.export(result, output_path, fmt)
+        if success:
+            QMessageBox.information(
+                self, "导出成功", f"已导出到:\n{output_path}"
+            )
+        else:
+            QMessageBox.warning(self, "导出失败", f"导出失败:\n{output_path}")
+
+    def _on_export_all(self, fmt: str) -> None:
+        """导出全部已完成的文件"""
+        files = self._file_list_widget._files
+        completed_files = [f for f in files if f["status"] == "completed" and f.get("result")]
+
+        if not completed_files:
+            QMessageBox.information(self, "提示", "没有可导出的结果")
+            return
+
+        success_count = 0
+        fail_count = 0
+
+        for f in completed_files:
+            result = f["result"]
+            export_dir = self._export_widget.get_export_dir(f["path"])
+            output_name = ExportService.get_output_filename(f["name"], fmt)
+            output_path = Path(export_dir) / output_name
+
+            if ExportService.export(result, output_path, fmt):
+                success_count += 1
+            else:
+                fail_count += 1
+
+        msg = f"导出完成: {success_count} 成功"
+        if fail_count:
+            msg += f", {fail_count} 失败"
+        QMessageBox.information(self, "导出结果", msg)
 
     def _reset_ui(self):
         """重置 UI 状态"""
@@ -363,8 +424,6 @@ class BatchRecognitionTab(BaseOcrTab):
 
         prefs = OCRPreferences.instance()
         self._preprocess_options.set_options(prefs.get_options())
-
-        # 监听全局选项变化
         prefs.options_changed.connect(self._preprocess_options.set_options)
 
     def set_layout_manager(self, layout_manager) -> None:

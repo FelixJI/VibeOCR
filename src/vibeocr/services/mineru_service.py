@@ -310,6 +310,7 @@ class MinerUService(metaclass=SingletonMeta):
             low_confidence_items=[],
             pipeline_type="MinerU",
             images=images,
+            content_list=content_list,
         )
 
     def shutdown(self) -> None:

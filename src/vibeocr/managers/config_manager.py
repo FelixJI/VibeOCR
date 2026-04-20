@@ -241,3 +241,20 @@ class ConfigManager(QObject):
         if success:
             self.templates_changed.emit(list(self._custom_templates))
         return success
+
+    # ── 导出设置 ──────────────────────────────────────
+
+    def get_export_settings(self) -> dict:
+        """获取导出设置。"""
+        return self._load_json("export_settings.json", {
+            "version": 1,
+            "format": "markdown",
+            "location_mode": "same_as_source",
+            "custom_directory": "",
+            "last_custom_directory": "",
+        })
+
+    def save_export_settings(self, settings: dict) -> bool:
+        """保存导出设置。"""
+        data = {"version": 1, **settings}
+        return self._save_json("export_settings.json", data)

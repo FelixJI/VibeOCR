@@ -285,6 +285,36 @@ class MainWindow(QMainWindow):
         self._btn_sub_seal = self._ui.btnSubSeal
         self._btn_sub_chart = self._ui.btnSubChart
 
+        # 文档解析后端下拉框（动态添加到子产线布局中）
+        from PySide6.QtWidgets import QComboBox, QHBoxLayout, QLabel
+
+        self._backend_combo = QComboBox()
+        self._backend_combo.addItem("VLM 智能引擎", "vlm-auto-engine")
+        self._backend_combo.addItem("混合引擎", "hybrid-auto-engine")
+        self._backend_combo.addItem("传统流水线", "pipeline")
+        self._backend_combo.setToolTip(
+            "VLM 智能引擎：效果最佳（失败自动回退）\n"
+            "混合引擎：兼顾兼容性和效果\n"
+            "传统流水线：纯 CPU 可用"
+        )
+        self._backend_combo.setStyleSheet(
+            f"QComboBox {{ border: 1px solid {WindowsColors.BORDER}; "
+            f"border-radius: 4px; padding: 3px 8px; "
+            f"background-color: {WindowsColors.BACKGROUND}; }}"
+        )
+
+        backend_layout = QHBoxLayout()
+        backend_layout.addWidget(QLabel("后端:"))
+        backend_layout.addWidget(self._backend_combo)
+        backend_layout.addStretch()
+
+        # 插入到 subPipelineLayout 的开头（在子产线按钮行之前）
+        sub_layout = self._ui.subPipelineOptions.findChild(QVBoxLayout)
+        if sub_layout:
+            sub_layout.insertLayout(0, backend_layout)
+
+        self._backend_combo.setVisible(False)
+
         # 应用样式并连接信号
         for pipeline, btn in self._pipeline_buttons.items():
             if btn:
@@ -411,6 +441,10 @@ class MainWindow(QMainWindow):
             if btn:
                 btn.setVisible(pipeline_value == "MinerU")
 
+        # 后端下拉框：仅文档解析时显示
+        if hasattr(self, "_backend_combo"):
+            self._backend_combo.setVisible(pipeline_value == "MinerU")
+
         # 更新子产线标签文字
         label_sub = self._ui.labelSubPipelines
         if label_sub:
@@ -485,6 +519,15 @@ class MainWindow(QMainWindow):
             self._btn_sub_chart.blockSignals(True)
             self._btn_sub_chart.setChecked(False)
             self._btn_sub_chart.blockSignals(False)
+
+        # 同步后端下拉框
+        if hasattr(self, "_backend_combo"):
+            backend = getattr(options, "backend", "vlm-auto-engine")
+            idx = self._backend_combo.findData(backend)
+            if idx >= 0:
+                self._backend_combo.blockSignals(True)
+                self._backend_combo.setCurrentIndex(idx)
+                self._backend_combo.blockSignals(False)
 
     def _sync_options_to_preferences(self) -> None:
         """将当前按钮组状态同步到 OCRPreferences"""
@@ -1064,6 +1107,12 @@ class MainWindow(QMainWindow):
             self._btn_sub_formula.isChecked() if self._btn_sub_formula else True
         )
 
+        backend = (
+            self._backend_combo.currentData()
+            if hasattr(self, "_backend_combo")
+            else "vlm-auto-engine"
+        )
+
         return OCROptions(
             pipeline=pipeline,
             use_doc_orientation_classify=use_orient,
@@ -1071,6 +1120,7 @@ class MainWindow(QMainWindow):
             use_textline_orientation=use_textline,
             enable_table=use_table,
             enable_formula=use_formula,
+            backend=backend,
         )
 
     def _run_ocr(self, pixmap: QPixmap, options=None) -> None:

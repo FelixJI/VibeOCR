@@ -27,11 +27,17 @@ class OCRResult:
     low_confidence_items: list[tuple[str, float]] = field(default_factory=list)
     pipeline_type: str = "OCR"
     images: dict[str, Any] = field(default_factory=dict)
+    content_list: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def has_rich_content(self) -> bool:
         """是否有富文本内容（表格、公式等）"""
         return bool(self.html_text and self.html_text != self.raw_text)
+
+    @property
+    def has_content_list(self) -> bool:
+        """是否包含结构化内容列表（含布局信息）"""
+        return bool(self.content_list)
 
     @property
     def display_text(self) -> str:
