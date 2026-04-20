@@ -15,6 +15,7 @@ from pathlib import Path
 from vibeocr.env_manager import (
     detect_network_source,
     get_embedded_python_executable,
+    setup_paddlex_model_source,
 )
 from vibeocr.model_cache_manager import update_cache
 
@@ -45,7 +46,6 @@ def _download_paddlex_pipeline(
     """通过调用 create_pipeline() 触发 PaddleX 模型下载"""
     logger.info(f"[模型下载] 开始下载 PaddleX 管道: {pipeline_name}")
     try:
-        from vibeocr.env_manager import setup_paddlex_model_source
         setup_paddlex_model_source()
 
         cmd = [
@@ -212,10 +212,17 @@ class ModelDownloadService:
         timeout: float = DEFAULT_PIPELINE_TIMEOUT,
     ) -> bool:
         """下载单个管道模型（首次使用时调用）"""
+        with self._lock:
+            self._statuses[pipeline_name] = DownloadStatus.DOWNLOADING
+
         if pipeline_name == "MinerU":
             if progress_callback:
                 progress_callback("模型下载", "正在下载 MinerU 模型...")
             success = _download_mineru_models(self._python_exe, timeout=timeout)
+            with self._lock:
+                self._statuses[pipeline_name] = (
+                    DownloadStatus.COMPLETED if success else DownloadStatus.FAILED
+                )
             if success:
                 try:
                     update_cache(self._project_root)
@@ -228,6 +235,10 @@ class ModelDownloadService:
         success = _download_paddlex_pipeline(
             self._python_exe, pipeline_name, timeout=timeout,
         )
+        with self._lock:
+            self._statuses[pipeline_name] = (
+                DownloadStatus.COMPLETED if success else DownloadStatus.FAILED
+            )
         if success:
             try:
                 update_cache(self._project_root)
@@ -241,12 +252,4 @@ class ModelDownloadService:
         timeout: float = DEFAULT_MINERU_TIMEOUT,
     ) -> bool:
         """下载 MinerU 模型"""
-        if progress_callback:
-            progress_callback("模型下载", "正在下载 MinerU 模型...")
-        success = _download_mineru_models(self._python_exe, timeout=timeout)
-        if success:
-            try:
-                update_cache(self._project_root)
-            except Exception:
-                pass
-        return success
+        return self.download_pipeline("MinerU", progress_callback, timeout)
