@@ -290,7 +290,7 @@ class OCRServiceSubprocess:
         """
         # 超时配置常量
         TIMEOUT_CACHED = 60.0  # 模型已缓存时的超时（秒）
-        TIMEOUT_UNCACHED = 300.0  # 模型未缓存时的超时（秒）- 5分钟
+        TIMEOUT_UNCACHED = 600.0  # 模型未缓存时的超时（秒）- 10分钟，给模型下载留足时间
 
         # 处理枚举类型
         from enum import Enum
