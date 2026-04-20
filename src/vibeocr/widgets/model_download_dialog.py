@@ -19,10 +19,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from vibeocr.services.model_download_service import (
-    DownloadStatus,
-    ModelDownloadService,
-)
+from vibeocr.services.model_download_service import ModelDownloadService
 
 
 class ModelDownloadWorker(QThread):
