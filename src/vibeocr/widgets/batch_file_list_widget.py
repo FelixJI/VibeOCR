@@ -44,6 +44,8 @@ class BatchFileListWidget(QWidget):
         self._setup_ui()
         self._connect_signals()
 
+        self.setAcceptDrops(True)
+
     def _setup_ui(self):
         """设置 UI"""
         layout = QVBoxLayout(self)
@@ -91,6 +93,20 @@ class BatchFileListWidget(QWidget):
         layout.addLayout(status_layout)
 
         self.setLayout(layout)
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+
+    def dropEvent(self, event):
+        paths = []
+        for url in event.mimeData().urls():
+            path = url.toLocalFile()
+            if path:
+                paths.append(path)
+        if paths:
+            self.add_files(paths)
+            event.acceptProposedAction()
 
     def _connect_signals(self):
         """连接信号"""

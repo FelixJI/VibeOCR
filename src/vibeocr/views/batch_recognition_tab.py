@@ -12,7 +12,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QMessageBox,
-    QProgressBar,
     QPushButton,
     QSplitter,
     QVBoxLayout,
@@ -156,23 +155,44 @@ class BatchRecognitionTab(BaseOcrTab):
     def _setup_ui(self):
         """设置三栏 UI"""
         layout = QVBoxLayout(self)
-        layout.setSpacing(8)
+        layout.setSpacing(0)
         layout.setContentsMargins(8, 8, 8, 8)
 
         # 主分割器（三栏）
         self._splitter = QSplitter()
 
-        # ── 左侧面板：文件列表 + 识别选项 ──
+        # ── 左侧面板：文件列表 + 识别选项+操作 + 导出设置 ──
         left_panel = QWidget()
         left_layout = QVBoxLayout(left_panel)
-        left_layout.setSpacing(8)
+        left_layout.setSpacing(0)
         left_layout.setContentsMargins(0, 0, 0, 0)
 
         self._file_list_widget = BatchFileListWidget()
         left_layout.addWidget(self._file_list_widget, stretch=3)
 
         self._preprocess_options = PreprocessOptionsWidget()
-        left_layout.addWidget(self._preprocess_options, stretch=2)
+        left_layout.addWidget(self._preprocess_options)
+
+        # 操作区：开始/取消按钮 + 进度
+        action_layout = QHBoxLayout()
+        action_layout.setContentsMargins(8, 4, 8, 4)
+
+        self._start_btn = QPushButton("开始识别")
+        self._cancel_btn = QPushButton("取消")
+        self._cancel_btn.setEnabled(False)
+
+        self._progress_label = QLabel("0/0")
+        self._progress_label.setStyleSheet("color: #3b82f6; font-weight: bold;")
+
+        action_layout.addWidget(self._start_btn)
+        action_layout.addWidget(self._cancel_btn)
+        action_layout.addStretch()
+        action_layout.addWidget(self._progress_label)
+
+        left_layout.addLayout(action_layout)
+
+        self._export_widget = ExportSettingsWidget()
+        left_layout.addWidget(self._export_widget)
 
         self._splitter.addWidget(left_panel)
 
@@ -191,7 +211,7 @@ class BatchRecognitionTab(BaseOcrTab):
 
         self._splitter.addWidget(center_panel)
 
-        # ── 右侧面板：识别结果 + 导出设置 ──
+        # ── 右侧面板：识别结果（独占） ──
         right_panel = QWidget()
         right_layout = QVBoxLayout(right_panel)
         right_layout.setSpacing(4)
@@ -204,36 +224,12 @@ class BatchRecognitionTab(BaseOcrTab):
         self._result_widget = ResultViewWidget()
         right_layout.addWidget(self._result_widget, stretch=1)
 
-        self._export_widget = ExportSettingsWidget()
-        right_layout.addWidget(self._export_widget)
-
         self._splitter.addWidget(right_panel)
 
-        # 设置分割比例 [250, 45%, 45%]
-        self._splitter.setSizes([250, 450, 450])
+        # 设置分割比例 [280, 45%, 45%]
+        self._splitter.setSizes([280, 450, 450])
 
         layout.addWidget(self._splitter, stretch=1)
-
-        # ── 底部进度区域 ──
-        progress_layout = QHBoxLayout()
-
-        self._start_btn = QPushButton("开始识别")
-        self._cancel_btn = QPushButton("取消")
-        self._cancel_btn.setEnabled(False)
-
-        self._progress_bar = QProgressBar()
-        self._progress_bar.setMinimum(0)
-        self._progress_bar.setMaximum(100)
-        self._progress_bar.setValue(0)
-
-        self._progress_label = QLabel("0/0")
-
-        progress_layout.addWidget(self._start_btn)
-        progress_layout.addWidget(self._progress_bar, stretch=1)
-        progress_layout.addWidget(self._progress_label)
-        progress_layout.addWidget(self._cancel_btn)
-
-        layout.addLayout(progress_layout)
 
         self.setLayout(layout)
 
@@ -272,7 +268,6 @@ class BatchRecognitionTab(BaseOcrTab):
         self._start_btn.setEnabled(False)
         self._cancel_btn.setEnabled(True)
 
-        self._progress_bar.setValue(0)
         self._progress_label.setText(f"0/{len(files)}")
 
         self._result_widget.clear()
@@ -294,9 +289,6 @@ class BatchRecognitionTab(BaseOcrTab):
 
     def _on_progress(self, completed: int, total: int, current_file: str):
         """进度更新"""
-        if total > 0:
-            self._progress_bar.setMaximum(total)
-            self._progress_bar.setValue(completed)
         self._progress_label.setText(
             f"{completed}/{total} {current_file}" if current_file else f"{completed}/{total}"
         )
