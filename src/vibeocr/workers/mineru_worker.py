@@ -280,6 +280,12 @@ def main():
         default=10 * 1024 * 1024,
         help="数据共享内存大小（字节），默认 10MB",
     )
+    parser.add_argument(
+        "--use-gpu", action="store_true", default=False, help="兼容参数，MinerU Worker 不使用"
+    )
+    parser.add_argument(
+        "--no-gpu", dest="use_gpu", action="store_false", help="兼容参数，MinerU Worker 不使用"
+    )
     parser.add_argument("--debug", action="store_true", help="启用调试日志")
 
     args = parser.parse_args()
