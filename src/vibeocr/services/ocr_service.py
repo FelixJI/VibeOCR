@@ -555,7 +555,7 @@ class OCRService(metaclass=SingletonMeta):
 
     @classmethod
     def _setup_cuda_dll_path(cls) -> None:
-        """将 nvidia cu13 DLL 目录加入 PATH，使 PaddlePaddle 能找到 CUDA 运行时库"""
+        """将所有 nvidia/* 包的 bin 目录加入 PATH，使 PaddlePaddle 能找到 CUDA 运行时库"""
         if cls._cuda_dll_registered:
             return
         import sys
@@ -563,14 +563,13 @@ class OCRService(metaclass=SingletonMeta):
             cls._cuda_dll_registered = True
             return
         site_packages = next(p for p in sys.path if "site-packages" in p)
-        cuda_dirs = [
-            os.path.join(site_packages, "nvidia", "cu13", "bin", "x86_64"),
-            os.path.join(site_packages, "nvidia", "cudnn", "bin"),
-        ]
+        nvidia_base = os.path.join(site_packages, "nvidia")
         existing = os.environ.get("PATH", "")
-        for d in cuda_dirs:
-            if os.path.isdir(d) and d not in existing:
-                existing = d + ";" + existing
+        if os.path.isdir(nvidia_base):
+            for entry in os.scandir(nvidia_base):
+                bin_dir = os.path.join(entry.path, "bin")
+                if entry.is_dir() and os.path.isdir(bin_dir) and bin_dir not in existing:
+                    existing = bin_dir + ";" + existing
         os.environ["PATH"] = existing
         cls._cuda_dll_registered = True
 
@@ -664,10 +663,6 @@ class OCRService(metaclass=SingletonMeta):
             with self._lock:
                 if pipeline_name not in self._pipelines:  # 双重检查
                     self._setup_cuda_dll_path()
-                    # Windows 上 PaddlePaddle 和 PyTorch 都自带 libiomp5md.dll，
-                    # paddle 先加载会导致 torch 的 shm.dll 加载失败 (WinError 127)，
-                    # 因此必须先导入 torch 确保其版本优先加载。
-                    import torch  # noqa: F401
                     self._pipelines[pipeline_name] = self._create_pipeline(
                         pipeline_name, self._get_device()
                     )
