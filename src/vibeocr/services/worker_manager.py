@@ -246,6 +246,10 @@ class WorkerManager:
                 self._recover_workers()
                 worker_info = self._get_available_worker()
 
+            # 恢复后仍无可用 Worker，尝试抢占被后台任务（如预加载）阻塞的 Worker
+            if worker_info is None:
+                worker_info = self._preempt_busy_worker()
+
             if worker_info is None:
                 raise OCRWorkerProcessError("无可用 Worker")
 
@@ -286,7 +290,9 @@ class WorkerManager:
                             # 重试任务
                             return self.execute(task, timeout, retry_count + 1)
 
-            worker_info.state = WorkerState.IDLE
+            # 避免覆盖其他任务（如抢占重启后的识别任务）设置的状态
+            if worker_info.state not in (WorkerState.BUSY, WorkerState.STARTING):
+                worker_info.state = WorkerState.IDLE
             raise
 
     def _get_available_worker(self, wait_timeout: float = 5.0) -> WorkerInfo | None:
@@ -348,6 +354,36 @@ class WorkerManager:
             worker_info.last_error = str(e)
             logger.error(f"Worker {worker_info.worker_id} 重启失败: {e}")
             return False
+
+    def _preempt_busy_worker(self) -> WorkerInfo | None:
+        """抢占被后台任务（如预加载）阻塞的 Worker
+
+        当识别任务需要 Worker 但所有 Worker 都忙于长时间后台操作时，
+        强制重启一个 Worker 来释放给识别任务使用。
+
+        Returns:
+            被释放的 WorkerInfo，如果没有可抢占的 Worker 则返回 None
+        """
+        target = None
+        with self._workers_lock:
+            for worker_info in self._workers:
+                if worker_info.state == WorkerState.BUSY and worker_info.process.busy:
+                    target = worker_info
+                    target.state = WorkerState.STOPPING
+                    break
+
+        if target is None:
+            return None
+
+        logger.warning(
+            f"Worker {target.worker_id} 正忙于后台操作，"
+            f"强制重启以释放给识别任务"
+        )
+
+        if self._restart_worker(target):
+            return target
+
+        return None
 
     def _recover_workers(self) -> None:
         """恢复所有异常的 Worker"""

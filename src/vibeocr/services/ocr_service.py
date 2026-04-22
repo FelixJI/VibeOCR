@@ -603,9 +603,11 @@ class OCRService(metaclass=SingletonMeta):
     def _create_pipeline(self, pipeline_name: str, device: str = "cpu") -> Any:
         """创建指定管道"""
         # 延迟导入: 确保模型源已配置（首次使用时才执行网络检测）
+        _logger.info("[_create_pipeline] %s: 开始，配置模型源...", pipeline_name)
         self._ensure_source_configured()
 
         # 延迟导入: PaddleX（这是启动慢的主要原因，~30s）
+        _logger.info("[_create_pipeline] %s: 导入 PaddleX...", pipeline_name)
         from paddlex import create_pipeline
         from paddlex.inference.utils.pp_option import PaddlePredictorOption
 
@@ -617,9 +619,14 @@ class OCRService(metaclass=SingletonMeta):
                 break
 
         # 检查模型是否已缓存（快速检查，避免重复提示）
+        _logger.info("[_create_pipeline] %s: 检查模型缓存...", pipeline_name)
         models_cached = is_pipeline_cached(pipeline_name)
 
         if not models_cached:
+            _logger.info(
+                "[_create_pipeline] %s: 模型未缓存，需要下载，设备=%s",
+                pipeline_name, device,
+            )
             self._notify_status(
                 "模型初始化",
                 f"正在初始化 {display_name} 管道（首次使用需要下载模型）...",
@@ -637,6 +644,10 @@ class OCRService(metaclass=SingletonMeta):
         pp_option.cpu_threads = cpu_threads
 
         # 尝试 HPIP 加速（需要 ultra-infer）
+        _logger.info(
+            "[_create_pipeline] %s: 尝试 HPIP 加速，设备=%s...",
+            pipeline_name, device,
+        )
         pipeline = self._try_create_with_hpip(
             create_pipeline, pipeline_name, device, pp_option
         )
@@ -647,6 +658,10 @@ class OCRService(metaclass=SingletonMeta):
             return pipeline
 
         # 普通推理路径
+        _logger.info(
+            "[_create_pipeline] %s: 调用 create_pipeline()，设备=%s ...",
+            pipeline_name, device,
+        )
         pipeline = create_pipeline(
             pipeline=pipeline_name,
             device=device,
@@ -667,10 +682,18 @@ class OCRService(metaclass=SingletonMeta):
         if pipeline_name not in self._pipelines:
             with self._lock:
                 if pipeline_name not in self._pipelines:  # 双重检查
+                    device = self._get_device()
+                    _logger.info(
+                        "[get_pipeline] 创建管道 %s，设备=%s，"
+                        "已加载管道: %s",
+                        pipeline_name, device,
+                        list(self._pipelines.keys()),
+                    )
                     self._setup_cuda_dll_path()
                     self._pipelines[pipeline_name] = self._create_pipeline(
-                        pipeline_name, self._get_device()
+                        pipeline_name, device
                     )
+                    _logger.info("[get_pipeline] 管道 %s 创建完成", pipeline_name)
         return self._pipelines[pipeline_name]
 
     @property

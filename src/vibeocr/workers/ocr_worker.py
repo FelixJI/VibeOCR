@@ -282,6 +282,9 @@ def run_worker(shm_name: str, shm_size: int, use_gpu: bool) -> None:
                                     continue
 
                                 # 预加载管道
+                                logger.info(
+                                    f"开始预加载模型: {pipeline_name} ({pipeline_enum.value})"
+                                )
                                 success = ocr_service.preload_pipeline(pipeline_enum)
                                 results[pipeline_name] = success
                                 logger.info(
