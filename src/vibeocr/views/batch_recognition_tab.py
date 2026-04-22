@@ -411,12 +411,19 @@ class BatchRecognitionTab(BaseOcrTab):
         self._ocr_service = service
 
     def _init_from_preferences(self) -> None:
-        """从 OCRPreferences 初始化选项"""
+        """从 OCRPreferences 初始化选项，并双向同步"""
         from vibeocr.utils.ocr_preferences import OCRPreferences
 
         prefs = OCRPreferences.instance()
         self._preprocess_options.set_options(prefs.get_options())
+
+        # 偏好变化 → 同步到本标签页选项
         prefs.options_changed.connect(self._preprocess_options.set_options)
+
+        # 本标签页选项变化 → 同步回偏好（单次识别标签页也会收到通知）
+        self._preprocess_options.options_changed.connect(
+            lambda opts: OCRPreferences.instance().set_options(opts)
+        )
 
     def set_layout_manager(self, layout_manager) -> None:
         """设置布局管理器并恢复分割器状态"""

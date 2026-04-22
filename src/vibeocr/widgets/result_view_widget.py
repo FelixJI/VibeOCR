@@ -101,18 +101,56 @@ def _build_block_html(block: dict, index: int) -> str:
     )
 
 
+def _build_text_blocks_html(blocks) -> str:
+    """将 PaddleOCR TextBlock 列表渲染为带置信度的 HTML"""
+    parts = []
+    for i, block in enumerate(blocks):
+        escaped = (
+            block.text.replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace("\n", "<br>")
+        )
+        pct = f"{block.score * 100:.1f}%"
+        if block.score < 0.80:
+            conf_html = (
+                f'<span style="font-size:11px; color:#f44336; font-weight:bold; '
+                f'margin-left:4px;">{pct}</span>'
+            )
+        else:
+            conf_html = (
+                f'<span style="font-size:11px; color:#888; '
+                f'margin-left:4px;">{pct}</span>'
+            )
+        border_color = BLOCK_BORDER_CSS.get("text", "#3b82f6")
+        parts.append(
+            f'<div class="ocr-block" data-block-index="{i}" '
+            f'data-block-type="text" id="block-{i}" '
+            f'style="padding:4px 8px; border-left:3px solid {border_color}; '
+            f'margin:2px 0; border-radius:2px; cursor:pointer;" '
+            f"onmouseover=\"this.style.backgroundColor='#f0f9ff'\" "
+            f"onmouseout=\"this.style.backgroundColor=''\">"
+            f"<p>{escaped}</p>{conf_html}"
+            f"</div>"
+        )
+    return "\n".join(parts)
+
+
 def _build_result_html(result) -> str:
     """从 OCRResult 构建完整 HTML"""
     content_list = getattr(result, "content_list", [])
+    text_blocks = getattr(result, "text_blocks", [])
 
     if content_list:
         blocks_html = []
         for i, block in enumerate(content_list):
             blocks_html.append(_build_block_html(block, i))
         body = "\n".join(blocks_html)
+    elif text_blocks:
+        body = _build_text_blocks_html(text_blocks)
     elif result.has_rich_content:
         body = result.html_text
-    else:
+    elif result.raw_text:
         escaped = (
             result.raw_text.replace("&", "&amp;")
             .replace("<", "&lt;")
@@ -120,6 +158,8 @@ def _build_result_html(result) -> str:
             .replace("\n", "<br>")
         )
         body = f"<pre style='white-space:pre-wrap;'>{escaped}</pre>"
+    else:
+        body = "<p style='color:#888;'>未识别到文字</p>"
 
     return (
         f"{HTML_STYLE}"
@@ -141,6 +181,7 @@ class ResultViewWidget(QWidget):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self._content_list: list[dict] = []
+        self._text_blocks: list = []
         self._current_result = None
         self._highlighted_index: int = -1
         self._block_positions: dict[int, tuple[int, int]] = {}  # index -> (start, end) char pos
@@ -196,21 +237,22 @@ class ResultViewWidget(QWidget):
         """显示 OCR 结果"""
         self._current_result = result
         self._content_list = getattr(result, "content_list", [])
+        self._text_blocks = getattr(result, "text_blocks", [])
         self._highlighted_index = -1
         self._block_positions.clear()
 
         html = _build_result_html(result)
         self._browser.setHtml(html)
 
-        # 构建块位置映射
-        if self._content_list:
+        if self._content_list or self._text_blocks:
             self._build_block_positions()
 
     def _build_block_positions(self) -> None:
         """构建块索引到文档字符位置的映射"""
         self._block_positions.clear()
 
-        for i in range(len(self._content_list)):
+        count = len(self._content_list) or len(self._text_blocks)
+        for i in range(count):
             cursor = self._browser.document().find(f'id="block-{i}"')
             if not cursor.isNull():
                 block = cursor.block()
@@ -226,7 +268,8 @@ class ResultViewWidget(QWidget):
         self.clear_highlight()
         self._highlighted_index = index
 
-        if index < 0 or index >= len(self._content_list):
+        max_idx = max(len(self._content_list), len(self._text_blocks))
+        if index < 0 or index >= max_idx:
             return
 
         # 滚动到对应块
@@ -266,6 +309,7 @@ class ResultViewWidget(QWidget):
         """清空内容"""
         self._browser.clear()
         self._content_list = []
+        self._text_blocks = []
         self._current_result = None
         self._highlighted_index = -1
         self._block_positions.clear()

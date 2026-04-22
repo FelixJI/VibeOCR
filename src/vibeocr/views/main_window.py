@@ -9,9 +9,7 @@ from typing import TYPE_CHECKING
 from PIL import Image
 from PySide6.QtCore import (
     QBuffer,
-    QEvent,
     QRect,
-    Qt,
     QThreadPool,
     QTimer,
     Signal,
@@ -27,12 +25,10 @@ from PySide6.QtWidgets import (
     QSizePolicy,
     QSpinBox,
     QStatusBar,
-    QVBoxLayout,
     QWidget,
 )
 
 from vibeocr import env_manager
-from vibeocr.core.constants import WindowsColors
 from vibeocr.machine_cache import is_cache_valid
 from vibeocr.managers import (
     ConfigManager,
@@ -46,6 +42,8 @@ from vibeocr.utils.qt_async import run_coroutine
 from vibeocr.views.batch_recognition_tab import BatchRecognitionTab
 from vibeocr.views.clipboard_controller import ClipboardController
 from vibeocr.views.settings_page_controller import SettingsPageController
+from vibeocr.widgets.preprocess_options_widget import PreprocessOptionsWidget
+from vibeocr.widgets.result_view_widget import ResultViewWidget
 from vibeocr.widgets.screenshot_edit_window import ScreenshotEditWindow
 from vibeocr.widgets.screenshot_widget import ScreenshotWidget
 from vibeocr.widgets.toolbar import EdgeToolbar
@@ -150,6 +148,9 @@ class MainWindow(QMainWindow):
         self._ui = Ui_MainWindowWidget()
         self._ui.setupUi(self._central_widget)
 
+        # 替换内联管道/选项/textResult 为共享组件
+        self._setup_result_panel()
+
         # 设置 tabSettings 的 sizePolicy，使其可以缩小
         # 这样 TabWidget 不会因为设置页面的内容太多而变得很大
         self._ui.tabSettings.setSizePolicy(
@@ -184,6 +185,62 @@ class MainWindow(QMainWindow):
             # 使用 tabBar().moveTab 将设置标签页移到最后
             tab_widget.tabBar().moveTab(settings_index, tab_widget.count() - 1)
             logging.debug("设置标签页已移到最后")
+
+    def _setup_result_panel(self) -> None:
+        """用共享组件替换结果面板中的内联管道/选项/textResult"""
+        from PySide6.QtWidgets import QHBoxLayout, QVBoxLayout
+
+        panel = self._ui.resultPanel
+
+        # 保存要保留的 widget 引用
+        label_title = self._ui.labelResultTitle
+        btn_rich = self._ui.btnCopyRich
+        btn_md = self._ui.btnCopyMarkdown
+        btn_plain = self._ui.btnCopyPlain
+
+        # 转移旧 layout 到临时 widget（清理所有子 widget）
+        old_layout = panel.layout()
+        sink = QWidget()
+        sink.setLayout(old_layout)
+
+        # 保留的 widget 重新挂载到 panel
+        label_title.setParent(panel)
+        btn_rich.setParent(panel)
+        btn_md.setParent(panel)
+        btn_plain.setParent(panel)
+
+        # 销毁旧布局及残留 widget
+        sink.deleteLater()
+
+        # 构建新布局
+        layout = QVBoxLayout(panel)
+        layout.setSpacing(6)
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        # 标题行
+        header = QHBoxLayout()
+        header.addWidget(label_title)
+        header.addStretch()
+        layout.addLayout(header)
+
+        # 管道 & 选项（共享组件）
+        self._preprocess_options = PreprocessOptionsWidget()
+        layout.addWidget(self._preprocess_options)
+
+        # 结果展示（共享组件）
+        self._result_widget = ResultViewWidget()
+        layout.addWidget(self._result_widget, stretch=1)
+
+        # 复制按钮
+        copy_row = QHBoxLayout()
+        copy_row.setSpacing(4)
+        copy_row.addWidget(btn_rich)
+        copy_row.addWidget(btn_md)
+        copy_row.addWidget(btn_plain)
+        layout.addLayout(copy_row)
+
+        # 从 OCRPreferences 恢复选项
+        self._restore_options_from_preferences()
 
     def _restore_layout(self) -> None:
         """恢复窗口和分割器布局"""
@@ -226,154 +283,8 @@ class MainWindow(QMainWindow):
         self._layout_manager.save()
 
     def _init_preset_combo(self) -> None:
-        """初始化 OCR 管道和选项按钮"""
-        # 延迟导入: OCRPipeline 枚举
-        from vibeocr.services.ocr_service import OCRPipeline
-
-        # 按钮样式：选中/未选中状态
-        button_style = f"""
-            QPushButton {{
-                border: 1px solid {WindowsColors.BORDER};
-                border-radius: 4px;
-                padding: 4px 10px;
-                background-color: {WindowsColors.BACKGROUND};
-                color: {WindowsColors.TEXT};
-            }}
-            QPushButton:hover {{
-                background-color: {WindowsColors.BACKGROUND_HOVER};
-            }}
-            QPushButton:checked {{
-                background-color: {WindowsColors.PRIMARY};
-                color: white;
-                border-color: {WindowsColors.PRIMARY};
-            }}
-        """
-
-        # 管道按钮映射
-        self._pipeline_buttons = {
-            OCRPipeline.OCR: self._ui.btnPipelineOCR,
-            OCRPipeline.TABLE_RECOGNITION: self._ui.btnPipelineTable,
-            OCRPipeline.FORMULA_RECOGNITION: self._ui.btnPipelineFormula,
-            OCRPipeline.DOCUMENT_PARSING: self._ui.btnPipelineStructure,
-        }
-
-        # 预处理按钮
-        self._btn_orient = self._ui.btnOrient
-        self._btn_unwarp = self._ui.btnUnwarp
-        self._btn_textline = self._ui.btnTextline
-        self._btn_layout = self._ui.btnLayout
-
-        # 子产线按钮
-        self._btn_sub_table = self._ui.btnSubTable
-        self._btn_sub_formula = self._ui.btnSubFormula
-        self._btn_sub_seal = self._ui.btnSubSeal
-        self._btn_sub_chart = self._ui.btnSubChart
-
-        # 文档解析后端下拉框（动态添加到子产线布局中）
-        from PySide6.QtWidgets import QComboBox, QHBoxLayout, QLabel
-
-        self._backend_combo = QComboBox()
-        self._backend_combo.addItem("VLM 智能引擎", "vlm-auto-engine")
-        self._backend_combo.addItem("混合引擎", "hybrid-auto-engine")
-        self._backend_combo.addItem("传统流水线", "pipeline")
-        self._backend_combo.setToolTip(
-            "VLM 智能引擎：效果最佳（失败自动回退）\n"
-            "混合引擎：兼顾兼容性和效果\n"
-            "传统流水线：纯 CPU 可用"
-        )
-        self._backend_combo.setStyleSheet(
-            f"QComboBox {{ border: 1px solid {WindowsColors.BORDER}; "
-            f"border-radius: 4px; padding: 3px 8px; "
-            f"background-color: {WindowsColors.BACKGROUND}; }}"
-        )
-
-        backend_layout = QHBoxLayout()
-        backend_layout.addWidget(QLabel("后端:"))
-        backend_layout.addWidget(self._backend_combo)
-        backend_layout.addStretch()
-
-        # 插入到 subPipelineLayout 的开头（在子产线按钮行之前）
-        sub_layout = self._ui.subPipelineOptions.findChild(QVBoxLayout)
-        if sub_layout:
-            sub_layout.insertLayout(0, backend_layout)
-
-        self._backend_combo.setVisible(False)
-
-        # 应用样式并连接信号
-        for pipeline, btn in self._pipeline_buttons.items():
-            if btn:
-                btn.setStyleSheet(button_style)
-                btn.clicked.connect(
-                    lambda checked, p=pipeline: self._on_pipeline_clicked(p)
-                )
-
-        # 预处理按钮样式
-        preprocess_style = f"""
-            QPushButton {{
-                border: 1px solid {WindowsColors.BORDER};
-                border-radius: 4px;
-                padding: 4px 10px;
-                background-color: {WindowsColors.BACKGROUND};
-                color: {WindowsColors.TEXT};
-            }}
-            QPushButton:hover {{
-                background-color: {WindowsColors.BACKGROUND_HOVER};
-            }}
-            QPushButton:checked {{
-                background-color: {WindowsColors.ACCENT};
-                color: white;
-                border-color: {WindowsColors.ACCENT};
-            }}
-        """
-        for btn in [
-            self._btn_orient,
-            self._btn_unwarp,
-            self._btn_textline,
-            self._btn_layout,
-        ]:
-            if btn:
-                btn.setStyleSheet(preprocess_style)
-
-        # 子产线按钮样式
-        sub_button_style = f"""
-            QPushButton {{
-                border: 1px solid {WindowsColors.BORDER};
-                border-radius: 4px;
-                padding: 4px 10px;
-                background-color: {WindowsColors.BACKGROUND};
-                color: {WindowsColors.TEXT};
-            }}
-            QPushButton:hover {{
-                background-color: {WindowsColors.BACKGROUND_HOVER};
-            }}
-            QPushButton:checked {{
-                background-color: {WindowsColors.SUCCESS};
-                color: white;
-                border-color: {WindowsColors.SUCCESS};
-            }}
-        """
-        for btn in [
-            self._btn_sub_table,
-            self._btn_sub_formula,
-            self._btn_sub_seal,
-            self._btn_sub_chart,
-        ]:
-            if btn:
-                btn.setStyleSheet(sub_button_style)
-
-        # 初始化子产线选项（默认隐藏，仅版面解析时显示）
-        self._sub_pipeline_widget = self._ui.subPipelineOptions
-
-        # 初始化按钮可见性
-        self._update_button_visibility(OCRPipeline.OCR)
-
-        # 从持久化选项恢复按钮状态
-        self._restore_options_from_preferences()
-
-        # 创建截图组件
+        """初始化截图组件"""
         self._screenshot_widget = ScreenshotWidget()
-
-        # 创建截图编辑窗口
         self._edit_window = ScreenshotEditWindow()
 
     def _init_batch_tab(self) -> None:
@@ -388,141 +299,16 @@ class MainWindow(QMainWindow):
         self._ui.tabWidget.addTab(self._batch_tab, "批量识别")
         logging.debug("批量识别标签页已添加")
 
-    def _on_pipeline_clicked(self, pipeline) -> None:
-        """管道按钮点击时更新 UI 并同步到全局选项"""
-        self._update_button_visibility(pipeline)
-        self._sync_options_to_preferences()
-
-    def _update_button_visibility(self, pipeline) -> None:
-        """根据管道类型更新按钮可见性"""
-        # 使用管道的 value 属性进行比较（避免导入 OCRPipeline）
-        pipeline_value = pipeline.value if hasattr(pipeline, "value") else pipeline
-
-        # 子产线选项：文档解析时显示
-        if self._sub_pipeline_widget:
-            self._sub_pipeline_widget.setVisible(
-                pipeline_value == "MinerU"
-            )
-
-        # 文本行方向按钮：仅通用 OCR 时显示
-        if self._btn_textline:
-            self._btn_textline.setVisible(pipeline_value == "OCR")
-
-        # 版面检测按钮：仅表格和公式管道时显示
-        if self._btn_layout:
-            self._btn_layout.setVisible(
-                pipeline_value in ["table_recognition", "formula_recognition"]
-            )
-
-        # 子产线按钮：仅文档解析时显示
-        sub_pipeline_buttons = [
-            self._btn_sub_table,
-            self._btn_sub_formula,
-            self._btn_sub_seal,
-            self._btn_sub_chart,
-        ]
-        for btn in sub_pipeline_buttons:
-            if btn:
-                btn.setVisible(pipeline_value == "MinerU")
-
-        # 后端下拉框：仅文档解析时显示
-        if hasattr(self, "_backend_combo"):
-            self._backend_combo.setVisible(pipeline_value == "MinerU")
-
-        # 更新子产线标签文字
-        label_sub = self._ui.labelSubPipelines
-        if label_sub:
-            label_sub.setVisible(pipeline_value == "MinerU")
-
-        logging.debug(f"管道切换为 {pipeline.display_name}")
-
-    def _get_current_pipeline(self):
-        """获取当前选中的管道"""
-        # 延迟导入: OCRPipeline 枚举
-        from vibeocr.services.ocr_service import OCRPipeline
-
-        for pipeline, btn in self._pipeline_buttons.items():
-            if btn and btn.isChecked():
-                return pipeline
-        return OCRPipeline.OCR
-
     def _restore_options_from_preferences(self) -> None:
-        """从 OCRPreferences 恢复按钮状态"""
+        """从 OCRPreferences 恢复选项"""
         from vibeocr.utils.ocr_preferences import OCRPreferences
 
         prefs = OCRPreferences.instance(ConfigManager.instance())
-        options = prefs.get_options()
-        self._sync_buttons_from_options(options)
-
-        # 监听选项变化信号，同步按钮组
-        prefs.options_changed.connect(self._on_preferences_options_changed)
-
-    def _sync_buttons_from_options(self, options) -> None:
-        """从 OCROptions 同步按钮组状态（不触发信号）"""
-        from vibeocr.services.ocr_service import OCRPipeline
-
-        # 同步管道按钮
-        pipeline = options.pipeline
-        if isinstance(pipeline, str):
-            pipeline = OCRPipeline(pipeline)
-        for p, btn in self._pipeline_buttons.items():
-            if btn:
-                btn.blockSignals(True)
-                btn.setChecked(p == pipeline)
-                btn.blockSignals(False)
-        self._update_button_visibility(pipeline)
-
-        # 同步预处理按钮
-        if self._btn_orient:
-            self._btn_orient.blockSignals(True)
-            self._btn_orient.setChecked(options.use_doc_orientation_classify)
-            self._btn_orient.blockSignals(False)
-        if self._btn_unwarp:
-            self._btn_unwarp.blockSignals(True)
-            self._btn_unwarp.setChecked(options.use_doc_unwarping)
-            self._btn_unwarp.blockSignals(False)
-        if self._btn_textline:
-            self._btn_textline.blockSignals(True)
-            self._btn_textline.setChecked(options.use_textline_orientation)
-            self._btn_textline.blockSignals(False)
-
-        # 同步子产线按钮
-        if self._btn_sub_table:
-            self._btn_sub_table.blockSignals(True)
-            self._btn_sub_table.setChecked(getattr(options, "enable_table", True))
-            self._btn_sub_table.blockSignals(False)
-        if self._btn_sub_formula:
-            self._btn_sub_formula.blockSignals(True)
-            self._btn_sub_formula.setChecked(getattr(options, "enable_formula", True))
-            self._btn_sub_formula.blockSignals(False)
-        if self._btn_sub_seal:
-            self._btn_sub_seal.blockSignals(True)
-            self._btn_sub_seal.setChecked(False)
-            self._btn_sub_seal.blockSignals(False)
-        if self._btn_sub_chart:
-            self._btn_sub_chart.blockSignals(True)
-            self._btn_sub_chart.setChecked(False)
-            self._btn_sub_chart.blockSignals(False)
-
-        # 同步后端下拉框
-        if hasattr(self, "_backend_combo"):
-            backend = getattr(options, "backend", "vlm-auto-engine")
-            idx = self._backend_combo.findData(backend)
-            if idx >= 0:
-                self._backend_combo.blockSignals(True)
-                self._backend_combo.setCurrentIndex(idx)
-                self._backend_combo.blockSignals(False)
-
-    def _sync_options_to_preferences(self) -> None:
-        """将当前按钮组状态同步到 OCRPreferences"""
-        from vibeocr.utils.ocr_preferences import OCRPreferences
-
-        options = self._build_options_from_ui()
-        OCRPreferences.instance().set_options(options)
-
-    def _on_preferences_options_changed(self, options) -> None:
-        """OCRPreferences 选项变化时同步按钮组"""
-        self._sync_buttons_from_options(options)
+        self._preprocess_options.set_options(prefs.get_options())
+        prefs.options_changed.connect(self._preprocess_options.set_options)
+        self._preprocess_options.options_changed.connect(
+            lambda opts: OCRPreferences.instance().set_options(opts)
+        )
 
     def _setup_console(self) -> None:
         """初始化日志"""
@@ -593,9 +379,11 @@ class MainWindow(QMainWindow):
         )
         self._ui.previewWidget.block_clicked.connect(self._on_preview_block_clicked)
 
-        # textResult 块点击 → 预览高亮
-        self._ui.textResult.setMouseTracking(True)
-        self._ui.textResult.installEventFilter(self)
+        # 结果展示 ↔ 预览联动
+        self._result_widget.block_hovered.connect(self._ui.previewWidget.highlight_block)
+        self._result_widget.block_unhovered.connect(
+            lambda: self._ui.previewWidget.highlight_block(-1)
+        )
 
         # 剪贴板控制器
         self._clipboard_controller = ClipboardController(
@@ -620,20 +408,6 @@ class MainWindow(QMainWindow):
             preload_complete_callback=self._on_preload_complete,
         )
         self._settings_controller.connect_signals()
-
-        # 选项按钮变化时同步到全局选项
-        for btn in [
-            self._btn_orient,
-            self._btn_unwarp,
-            self._btn_textline,
-            self._btn_layout,
-            self._btn_sub_table,
-            self._btn_sub_formula,
-            self._btn_sub_seal,
-            self._btn_sub_chart,
-        ]:
-            if btn:
-                btn.toggled.connect(self._sync_options_to_preferences)
 
     def _on_preload_complete(self) -> None:
         """预加载完成回调"""
@@ -1035,35 +809,8 @@ class MainWindow(QMainWindow):
         self.activateWindow()
 
     def _build_options_from_ui(self):
-        """从主窗口 UI 按钮状态构建 OCROptions"""
-        from vibeocr.services.ocr_service import OCROptions
-
-        pipeline = self._get_current_pipeline()
-
-        use_orient = self._btn_orient.isChecked() if self._btn_orient else False
-        use_unwarp = self._btn_unwarp.isChecked() if self._btn_unwarp else False
-        use_textline = self._btn_textline.isChecked() if self._btn_textline else True
-
-        use_table = self._btn_sub_table.isChecked() if self._btn_sub_table else True
-        use_formula = (
-            self._btn_sub_formula.isChecked() if self._btn_sub_formula else True
-        )
-
-        backend = (
-            self._backend_combo.currentData()
-            if hasattr(self, "_backend_combo")
-            else "vlm-auto-engine"
-        )
-
-        return OCROptions(
-            pipeline=pipeline,
-            use_doc_orientation_classify=use_orient,
-            use_doc_unwarping=use_unwarp,
-            use_textline_orientation=use_textline,
-            enable_table=use_table,
-            enable_formula=use_formula,
-            backend=backend,
-        )
+        """从选项组件获取当前 OCROptions"""
+        return self._preprocess_options.get_options()
 
     def _run_ocr(self, pixmap: QPixmap, options=None) -> None:
         """Execute OCR recognition
@@ -1081,8 +828,7 @@ class MainWindow(QMainWindow):
         from vibeocr.services.ocr_service import OCRPipeline
 
         logging.info("Starting OCR recognition")
-        self._ui.textResult.clear()
-        self._ui.textResult.setPlaceholderText("Recognizing...")
+        self._result_widget.clear()
         self._statusbar.showMessage("Recognizing...")
 
         # Force UI update to show "Recognizing" message
@@ -1219,16 +965,8 @@ class MainWindow(QMainWindow):
         # 设置文本块到预览组件
         self._ui.previewWidget.set_text_blocks(result.text_blocks)
 
-        self._ui.textResult.setPlaceholderText("识别结果将显示在这里...")
-        if result.text_blocks and not result.has_content_list:
-            # PaddleOCR 管道：用带置信度标注的 HTML 渲染
-            self._render_text_blocks_with_confidence(result.text_blocks)
-        elif result.has_rich_content:
-            self._ui.textResult.setHtml(result.html_text)
-        elif result.raw_text:
-            self._ui.textResult.setPlainText(result.raw_text)
-        else:
-            self._ui.textResult.setPlainText("未识别到文字")
+        # 使用共享组件展示结果
+        self._result_widget.display_result(result)
 
         # 构建状态栏消息
         if result.raw_text or result.has_rich_content:
@@ -1257,97 +995,26 @@ class MainWindow(QMainWindow):
         else:
             self._statusbar.showMessage("未识别到文字")
 
-    def _render_text_blocks_with_confidence(self, blocks) -> None:
-        """将文本块以带置信度标注的 HTML 渲染到 textResult"""
-        parts = []
-        for i, block in enumerate(blocks):
-            escaped = (
-                block.text.replace("&", "&amp;")
-                .replace("<", "&lt;")
-                .replace(">", "&gt;")
-                .replace("\n", "<br>")
-            )
-            pct = f"{block.score * 100:.1f}%"
-            if block.score < 0.80:
-                conf_html = (
-                    f'<span style="font-size:11px; color:#f44336; font-weight:bold; '
-                    f'margin-left:4px;">{pct}</span>'
-                )
-            else:
-                conf_html = (
-                    f'<span style="font-size:11px; color:#888; '
-                    f'margin-left:4px;">{pct}</span>'
-                )
-            parts.append(
-                f'<div class="ocr-block" data-block-index="{i}" '
-                f'id="block-{i}" '
-                f'style="padding:2px 4px; margin:1px 0; cursor:pointer;" '
-                f"onmouseover=\"this.style.backgroundColor='#f0f9ff'\" "
-                f"onmouseout=\"this.style.backgroundColor=''\">"
-                f"{escaped}{conf_html}"
-                f"</div>"
-            )
-        html = (
-            "<style>body { font-family: 'Microsoft YaHei', 'Segoe UI', sans-serif; "
-            "font-size: 14px; padding: 4px; }</style>"
-            f"<body>{''.join(parts)}</body>"
-        )
-        self._ui.textResult.setHtml(html)
-
     @Slot(str)
     def _on_ocr_error(self, error_msg: str) -> None:
         """OCR识别失败"""
         logging.error(f"[_on_ocr_error] 收到 OCR 错误信号: {error_msg}")
         self._current_ocr_result = None
-        self._ui.textResult.setPlaceholderText("识别结果将显示在这里...")
-        self._ui.textResult.setPlainText(f"识别失败：{error_msg}")
+        self._result_widget.clear()
+        self._result_widget._browser.setHtml(
+            f"<p style='color:#f44336;'>识别失败：{error_msg}</p>"
+        )
         self._statusbar.showMessage(f"识别失败：{error_msg}")
 
     def eventFilter(self, obj, event) -> bool:
-        """事件过滤器：textResult 的鼠标事件用于块联动"""
-        if obj == self._ui.textResult:
-            if event.type() == QEvent.Type.MouseButtonPress:
-                if event.button() == Qt.MouseButton.LeftButton:
-                    self._on_result_click(event.pos())
-            elif event.type() == QEvent.Type.MouseMove:
-                self._on_result_hover(event.pos())
+        """事件过滤器"""
         return super().eventFilter(obj, event)
 
+    @Slot(int)
     def _on_preview_block_clicked(self, index: int) -> None:
-        """预览图文本块被点击 → 结果区滚动到对应块"""
-        doc = self._ui.textResult.document()
-        cursor = doc.find(f'id="block-{index}"')
-        if not cursor.isNull():
-            self._ui.textResult.setTextCursor(cursor)
-            self._ui.textResult.ensureCursorVisible()
+        """预览图文本块被点击 → 结果区高亮对应块"""
+        self._result_widget.highlight_block(index)
 
-    def _on_result_click(self, pos) -> None:
-        """结果区点击 → 预览图高亮对应区域"""
-        index = self._find_block_at_pos(pos)
-        if index >= 0:
-            self._ui.previewWidget.highlight_block(index)
-
-    def _on_result_hover(self, pos) -> None:
-        """结果区悬停 → 预览图高亮对应区域"""
-        index = self._find_block_at_pos(pos)
-        self._ui.previewWidget.highlight_block(index)
-
-    def _find_block_at_pos(self, pos) -> int:
-        """从鼠标位置查找对应的文本块索引"""
-        import re
-
-        cursor = self._ui.textResult.cursorForPosition(pos)
-        block = cursor.block()
-        source = block.text()
-        match = re.search(r"data-block-index.*?(\d+)", source)
-        if match:
-            return int(match.group(1))
-        match = re.search(r"block-(\d+)", source)
-        if match:
-            return int(match.group(1))
-        return -1
-
-    @Slot()
     def _on_about(self) -> None:
         """显示关于对话框"""
         QMessageBox.about(
