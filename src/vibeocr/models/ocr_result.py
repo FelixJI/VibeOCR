@@ -5,6 +5,15 @@ from typing import Any
 
 
 @dataclass
+class TextBlock:
+    """单个文本块，含文本、置信度和位置信息"""
+
+    text: str
+    score: float
+    bbox: tuple[float, float, float, float] | None  # [x0, y0, x1, y1] 像素坐标
+
+
+@dataclass
 class OCRResult:
     """OCR 识别结果
 
@@ -28,6 +37,7 @@ class OCRResult:
     pipeline_type: str = "OCR"
     images: dict[str, Any] = field(default_factory=dict)
     content_list: list[dict[str, Any]] = field(default_factory=list)
+    text_blocks: list[TextBlock] = field(default_factory=list)
 
     @property
     def has_rich_content(self) -> bool:

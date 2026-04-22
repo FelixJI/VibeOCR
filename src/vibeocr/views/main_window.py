@@ -9,7 +9,9 @@ from typing import TYPE_CHECKING
 from PIL import Image
 from PySide6.QtCore import (
     QBuffer,
+    QEvent,
     QRect,
+    Qt,
     QThreadPool,
     QTimer,
     Signal,
@@ -44,7 +46,6 @@ from vibeocr.utils.qt_async import run_coroutine
 from vibeocr.views.batch_recognition_tab import BatchRecognitionTab
 from vibeocr.views.clipboard_controller import ClipboardController
 from vibeocr.views.settings_page_controller import SettingsPageController
-from vibeocr.widgets.console_widget import ConsoleWidget
 from vibeocr.widgets.screenshot_edit_window import ScreenshotEditWindow
 from vibeocr.widgets.screenshot_widget import ScreenshotWidget
 from vibeocr.widgets.toolbar import EdgeToolbar
@@ -149,10 +150,6 @@ class MainWindow(QMainWindow):
         self._ui = Ui_MainWindowWidget()
         self._ui.setupUi(self._central_widget)
 
-        # 设置主分割器 stretch（tabWidget 占据剩余空间，consoleContainer 保持固定）
-        self._ui.mainSplitter.setStretchFactor(0, 1)  # tabWidget
-        self._ui.mainSplitter.setStretchFactor(1, 0)  # consoleContainer
-
         # 设置 tabSettings 的 sizePolicy，使其可以缩小
         # 这样 TabWidget 不会因为设置页面的内容太多而变得很大
         self._ui.tabSettings.setSizePolicy(
@@ -196,13 +193,6 @@ class MainWindow(QMainWindow):
             self.restoreGeometry(geometry)
             logging.info("已恢复窗口布局")
 
-        # 恢复主分割器状态（tabWidget 与控制台的比例）
-        if hasattr(self._ui, "mainSplitter"):
-            state = self._layout_manager.get_splitter_state("main_splitter")
-            if state:
-                self._ui.mainSplitter.restoreState(state)
-                logging.info("已恢复主分割器状态")
-
         # 恢复 OCR 标签页分割器状态
         if hasattr(self._ui, "ocrSplitter"):
             state = self._layout_manager.get_splitter_state("ocr_tab")
@@ -221,12 +211,6 @@ class MainWindow(QMainWindow):
         """保存窗口和分割器布局"""
         # 保存主窗口几何信息
         self._layout_manager.set_main_window_geometry(self.saveGeometry())
-
-        # 保存主分割器状态（tabWidget 与控制台的比例）
-        if hasattr(self._ui, "mainSplitter"):
-            self._layout_manager.set_splitter_state(
-                "main_splitter", self._ui.mainSplitter.saveState()
-            )
 
         # 保存 OCR 标签页分割器状态
         if hasattr(self._ui, "ocrSplitter"):
@@ -541,57 +525,10 @@ class MainWindow(QMainWindow):
         self._sync_buttons_from_options(options)
 
     def _setup_console(self) -> None:
-        """初始化控制台"""
-        # 创建控制台控件
-        self._console = ConsoleWidget(self)
-
-        # 连接低置信度计数变化信号
-        self._console.low_confidence_count_changed.connect(
-            self._on_low_confidence_changed
-        )
-
-        # 将控制台添加到 UI 中的容器
-        container = self._ui.consoleContainer
-        if container:
-            container_layout = container.layout()
-            if not container_layout:
-                container_layout = QVBoxLayout(container)
-                container_layout.setContentsMargins(0, 0, 0, 0)
-            container_layout.addWidget(self._console)
-
-        # 配置日志，保存 handler 以便连接状态信号
-        self._log_handler = setup_logging(self._console.append_log)  # type: ignore[arg-type]
-        # 连接日志状态信号到状态栏更新
+        """初始化日志"""
+        self._log_handler = setup_logging()
         self._log_handler.status_signal.connect(self._on_log_status_update)
         logging.info("VibeOCR 启动")
-
-    @Slot(int, list)
-    def _on_low_confidence_changed(self, count: int, items: list) -> None:
-        """低置信度文本块数量变化
-
-        Args:
-            count: 低置信度文本块数量
-            items: 低置信度文本块详情列表 [(文本, 置信度), ...]
-        """
-        if count > 0:
-            # 构建低置信度详情信息
-            details = []
-            for text, confidence in items:
-                # 截断长文本
-                display_text = text[:20] + "..." if len(text) > 20 else text
-                details.append(f"'{display_text}' ({confidence:.0%})")
-
-            detail_str = "、".join(details)
-            message = f"{count} 个低置信度文本块: {detail_str}"
-
-            # 在状态栏显示低置信度信息
-            current_msg = self._statusbar.currentMessage()
-            # 如果当前消息是 OCR 识别完成相关的，替换为带详情的消息
-            if "识别完成" in current_msg:
-                # 从原消息中提取文本块数和平均置信度
-                self._statusbar.showMessage(f"{current_msg}，{message}")
-            else:
-                self._statusbar.showMessage(message, 5000)  # 显示5秒
 
     def _create_menus(self) -> None:
         """创建菜单栏"""
@@ -654,6 +591,11 @@ class MainWindow(QMainWindow):
         self._ui.previewWidget.file_open_requested.connect(
             self._on_open_file_from_preview
         )
+        self._ui.previewWidget.block_clicked.connect(self._on_preview_block_clicked)
+
+        # textResult 块点击 → 预览高亮
+        self._ui.textResult.setMouseTracking(True)
+        self._ui.textResult.installEventFilter(self)
 
         # 剪贴板控制器
         self._clipboard_controller = ClipboardController(
@@ -1268,19 +1210,22 @@ class MainWindow(QMainWindow):
         if result.text_with_scores:
             logging.info("=== OCR 置信度详情 ===")
             for i, (text, score) in enumerate(result.text_with_scores, 1):
-                # 截断长文本用于显示
                 display_text = text[:30] + "..." if len(text) > 30 else text
                 display_text = display_text.replace("\n", " ")
                 logging.info(f"  [{i}] 置信度: {score:.2%} | {display_text}")
             logging.info(f"  平均置信度: {result.avg_score:.2%}")
             logging.info("======================")
 
+        # 设置文本块到预览组件
+        self._ui.previewWidget.set_text_blocks(result.text_blocks)
+
         self._ui.textResult.setPlaceholderText("识别结果将显示在这里...")
-        if result.has_rich_content:
-            # 有富文本内容（表格、公式等），使用 HTML 显示
+        if result.text_blocks and not result.has_content_list:
+            # PaddleOCR 管道：用带置信度标注的 HTML 渲染
+            self._render_text_blocks_with_confidence(result.text_blocks)
+        elif result.has_rich_content:
             self._ui.textResult.setHtml(result.html_text)
         elif result.raw_text:
-            # 普通文本
             self._ui.textResult.setPlainText(result.raw_text)
         else:
             self._ui.textResult.setPlainText("未识别到文字")
@@ -1301,7 +1246,6 @@ class MainWindow(QMainWindow):
                 else:
                     self._statusbar.showMessage(base_msg)
             else:
-                # 没有置信度信息，显示字符数
                 char_count = (
                     len(result.raw_text)
                     if result.raw_text
@@ -1313,6 +1257,43 @@ class MainWindow(QMainWindow):
         else:
             self._statusbar.showMessage("未识别到文字")
 
+    def _render_text_blocks_with_confidence(self, blocks) -> None:
+        """将文本块以带置信度标注的 HTML 渲染到 textResult"""
+        parts = []
+        for i, block in enumerate(blocks):
+            escaped = (
+                block.text.replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+                .replace("\n", "<br>")
+            )
+            pct = f"{block.score * 100:.1f}%"
+            if block.score < 0.80:
+                conf_html = (
+                    f'<span style="font-size:11px; color:#f44336; font-weight:bold; '
+                    f'margin-left:4px;">{pct}</span>'
+                )
+            else:
+                conf_html = (
+                    f'<span style="font-size:11px; color:#888; '
+                    f'margin-left:4px;">{pct}</span>'
+                )
+            parts.append(
+                f'<div class="ocr-block" data-block-index="{i}" '
+                f'id="block-{i}" '
+                f'style="padding:2px 4px; margin:1px 0; cursor:pointer;" '
+                f"onmouseover=\"this.style.backgroundColor='#f0f9ff'\" "
+                f"onmouseout=\"this.style.backgroundColor=''\">"
+                f"{escaped}{conf_html}"
+                f"</div>"
+            )
+        html = (
+            "<style>body { font-family: 'Microsoft YaHei', 'Segoe UI', sans-serif; "
+            "font-size: 14px; padding: 4px; }</style>"
+            f"<body>{''.join(parts)}</body>"
+        )
+        self._ui.textResult.setHtml(html)
+
     @Slot(str)
     def _on_ocr_error(self, error_msg: str) -> None:
         """OCR识别失败"""
@@ -1321,6 +1302,50 @@ class MainWindow(QMainWindow):
         self._ui.textResult.setPlaceholderText("识别结果将显示在这里...")
         self._ui.textResult.setPlainText(f"识别失败：{error_msg}")
         self._statusbar.showMessage(f"识别失败：{error_msg}")
+
+    def eventFilter(self, obj, event) -> bool:
+        """事件过滤器：textResult 的鼠标事件用于块联动"""
+        if obj == self._ui.textResult:
+            if event.type() == QEvent.Type.MouseButtonPress:
+                if event.button() == Qt.MouseButton.LeftButton:
+                    self._on_result_click(event.pos())
+            elif event.type() == QEvent.Type.MouseMove:
+                self._on_result_hover(event.pos())
+        return super().eventFilter(obj, event)
+
+    def _on_preview_block_clicked(self, index: int) -> None:
+        """预览图文本块被点击 → 结果区滚动到对应块"""
+        doc = self._ui.textResult.document()
+        cursor = doc.find(f'id="block-{index}"')
+        if not cursor.isNull():
+            self._ui.textResult.setTextCursor(cursor)
+            self._ui.textResult.ensureCursorVisible()
+
+    def _on_result_click(self, pos) -> None:
+        """结果区点击 → 预览图高亮对应区域"""
+        index = self._find_block_at_pos(pos)
+        if index >= 0:
+            self._ui.previewWidget.highlight_block(index)
+
+    def _on_result_hover(self, pos) -> None:
+        """结果区悬停 → 预览图高亮对应区域"""
+        index = self._find_block_at_pos(pos)
+        self._ui.previewWidget.highlight_block(index)
+
+    def _find_block_at_pos(self, pos) -> int:
+        """从鼠标位置查找对应的文本块索引"""
+        import re
+
+        cursor = self._ui.textResult.cursorForPosition(pos)
+        block = cursor.block()
+        source = block.text()
+        match = re.search(r"data-block-index.*?(\d+)", source)
+        if match:
+            return int(match.group(1))
+        match = re.search(r"block-(\d+)", source)
+        if match:
+            return int(match.group(1))
+        return -1
 
     @Slot()
     def _on_about(self) -> None:

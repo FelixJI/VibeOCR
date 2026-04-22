@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, Any
 import httpx
 
 from vibeocr.core.singleton_meta import SingletonMeta
-from vibeocr.models.ocr_result import OCRResult
+from vibeocr.models.ocr_result import OCRResult, TextBlock
 from vibeocr.utils.markdown_converter import markdown_to_html
 
 if TYPE_CHECKING:
@@ -301,6 +301,22 @@ class MinerUService(metaclass=SingletonMeta):
                 images[img_name] = base64.b64decode(b64_part)
 
         raw_text = md_content or ""
+
+        # 从 content_list 构建 text_blocks
+        text_blocks: list[TextBlock] = []
+        for item in content_list:
+            text = item.get("text", "")
+            if not text:
+                continue
+            confidence = item.get("confidence")
+            score = float(confidence) if confidence is not None else 1.0
+            bbox_raw = item.get("bbox")
+            bbox = None
+            if bbox_raw and len(bbox_raw) >= 4:
+                # MinerU bbox 是归一化 0-1000，保留原始值，由 UI 层转换
+                bbox = (float(bbox_raw[0]), float(bbox_raw[1]), float(bbox_raw[2]), float(bbox_raw[3]))
+            text_blocks.append(TextBlock(text=text, score=score, bbox=bbox))
+
         return OCRResult(
             raw_text=raw_text,
             markdown_text=md_content,
@@ -311,6 +327,7 @@ class MinerUService(metaclass=SingletonMeta):
             pipeline_type="MinerU",
             images=images,
             content_list=content_list,
+            text_blocks=text_blocks,
         )
 
     def shutdown(self) -> None:

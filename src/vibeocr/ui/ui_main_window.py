@@ -32,10 +32,7 @@ class Ui_MainWindowWidget(object):
         self.verticalLayout.setSpacing(0)
         self.verticalLayout.setObjectName(u"verticalLayout")
         self.verticalLayout.setContentsMargins(0, 0, 0, 0)
-        self.mainSplitter = QSplitter(MainWindowWidget)
-        self.mainSplitter.setObjectName(u"mainSplitter")
-        self.mainSplitter.setOrientation(Qt.Vertical)
-        self.tabWidget = QTabWidget(self.mainSplitter)
+        self.tabWidget = QTabWidget(MainWindowWidget)
         self.tabWidget.setObjectName(u"tabWidget")
         self.tabOCR = QWidget()
         self.tabOCR.setObjectName(u"tabOCR")
@@ -624,13 +621,8 @@ class Ui_MainWindowWidget(object):
         self.verticalLayout_3.addWidget(self.scrollAreaSettings)
 
         self.tabWidget.addTab(self.tabSettings, "")
-        self.mainSplitter.addWidget(self.tabWidget)
-        self.consoleContainer = QWidget(self.mainSplitter)
-        self.consoleContainer.setObjectName(u"consoleContainer")
-        self.consoleContainer.setMinimumSize(QSize(0, 120))
-        self.mainSplitter.addWidget(self.consoleContainer)
 
-        self.verticalLayout.addWidget(self.mainSplitter)
+        self.verticalLayout.addWidget(self.tabWidget)
 
 
         self.retranslateUi(MainWindowWidget)
