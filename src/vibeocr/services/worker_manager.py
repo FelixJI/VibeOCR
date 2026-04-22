@@ -84,6 +84,7 @@ class WorkerManager:
         health_check_interval: float = 30.0,
         auto_restart: bool = True,
         max_retries: int = 2,
+        worker_module: str = "vibeocr.workers.ocr_worker",
     ):
         """初始化 Worker 管理器
 
@@ -95,6 +96,7 @@ class WorkerManager:
             health_check_interval: 健康检查间隔（秒）
             auto_restart: Worker 崩溃时是否自动重启
             max_retries: 任务失败时的最大重试次数
+            worker_module: Worker 子进程模块路径
         """
         self.max_workers = max_workers
         self.use_gpu = use_gpu
@@ -103,6 +105,7 @@ class WorkerManager:
         self.health_check_interval = health_check_interval
         self.auto_restart = auto_restart
         self.max_retries = max_retries
+        self.worker_module = worker_module
 
         # Worker 列表
         self._workers: list[WorkerInfo] = []
@@ -146,7 +149,8 @@ class WorkerManager:
                 if i >= len(self._workers):
                     report_progress(f"创建 Worker {i}")
                     worker_process = OCRWorkerProcess(
-                        worker_id=i, use_gpu=self.use_gpu, shm_size=self.shm_size
+                        worker_id=i, use_gpu=self.use_gpu, shm_size=self.shm_size,
+                        worker_module=self.worker_module,
                     )
                     info = WorkerInfo(worker_id=i, process=worker_process)
                     self._workers.append(info)
