@@ -126,25 +126,22 @@ def run_worker(shm_name: str, shm_size: int, use_gpu: bool) -> None:
     PreprocessOptions = None  # 预先定义，避免未绑定错误
     batch_manager_initialized = False  # 标记是否已尝试初始化
 
-    def get_batch_manager(pipeline_name: str = "MinerU"):
+    def get_batch_manager(pipeline_name: str = "OCR"):
         """获取批量队列管理器（延迟初始化）
 
         Args:
-            pipeline_name: 管道名称 ("MinerU" 等)
+            pipeline_name: 管道名称
         """
         nonlocal batch_managers, batch_manager_initialized
 
-        # 处理枚举类型
         from enum import Enum
 
         if isinstance(pipeline_name, Enum):
             pipeline_name = pipeline_name.value
 
-        # 如果已经初始化过该管道，直接返回
         if pipeline_name in batch_managers:
             return batch_managers[pipeline_name]
 
-        # 首次调用，设置初始化标志
         if not batch_manager_initialized:
             batch_manager_initialized = True
             try:
@@ -161,7 +158,9 @@ def run_worker(shm_name: str, shm_size: int, use_gpu: bool) -> None:
             from vibeocr.workers.batch_queue_manager import BatchQueueManager
 
             logger.info(f"[Worker] 正在初始化批量队列管理器（{pipeline_name}）...")
-            pipeline = ocr_service.get_pipeline(OCRPipeline.DOCUMENT_PARSING)
+            pipeline = ocr_service.get_pipeline(
+                OCRPipeline(pipeline_name) if any(p.value == pipeline_name for p in OCRPipeline) else OCRPipeline.OCR
+            )
             batch_managers[pipeline_name] = BatchQueueManager(
                 pipeline, max_batch_size=4
             )
