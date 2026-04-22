@@ -554,7 +554,7 @@ class OCRService(metaclass=SingletonMeta):
 
     @classmethod
     def _setup_cuda_dll_path(cls) -> None:
-        """将所有 nvidia/* 包的 bin 目录加入 PATH，使 PaddlePaddle 能找到 CUDA 运行时库"""
+        """将所有 nvidia/* 包的 DLL 目录加入 PATH，使 PaddlePaddle 能找到 CUDA 运行时库"""
         if cls._cuda_dll_registered:
             return
         import sys
@@ -567,8 +567,14 @@ class OCRService(metaclass=SingletonMeta):
         if os.path.isdir(nvidia_base):
             for entry in os.scandir(nvidia_base):
                 bin_dir = os.path.join(entry.path, "bin")
-                if entry.is_dir() and os.path.isdir(bin_dir) and bin_dir not in existing:
-                    existing = bin_dir + ";" + existing
+                if entry.is_dir() and os.path.isdir(bin_dir):
+                    if bin_dir not in existing:
+                        existing = bin_dir + ";" + existing
+                    # 新版 nvidia 包 (cu13 等) 把 DLL 放在 bin/<arch>/ 子目录
+                    for sub in os.scandir(bin_dir):
+                        sub_dir = os.path.join(bin_dir, sub.name)
+                        if sub.is_dir() and sub_dir not in existing:
+                            existing = sub_dir + ";" + existing
         os.environ["PATH"] = existing
         cls._cuda_dll_registered = True
 

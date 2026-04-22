@@ -4,6 +4,7 @@
   "use_doc_unwarping": false,
   "use_textline_orientation": false,
   "parse_method": "auto",
+  "backend": "vlm-auto-engine",
   "enable_formula": true,
   "enable_table": true,
   "version": 1

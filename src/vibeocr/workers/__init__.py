@@ -1,9 +1,8 @@
 """
 Workers 包 - 子进程 Worker 模块
 
-提供独立运行的子进程 worker，用于隔离重型依赖
+提供独立运行的子进程 worker，用于隔离重型依赖。
+不要在此处提前导入子模块，避免 python -m 运行时的双重加载问题。
 """
 
-from .ocr_worker import OCRWorkerError, run_worker
-
-__all__ = ["OCRWorkerError", "run_worker"]
+__all__ = []

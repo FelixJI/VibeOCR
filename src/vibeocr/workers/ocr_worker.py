@@ -20,11 +20,15 @@ import traceback
 os.environ["PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK"] = "True"
 
 # Worker 只使用 PaddlePaddle 推理，不需要 PyTorch。
-# 但 paddlex 的依赖链 (modelscope) 会在导入时加载 torch，
+# 但 paddlex 的依赖链 (modelscope) 会在导入时探测 torch，
 # 而 torch 与 paddle 的 CUDA 运行时 DLL 在 Windows 上互相冲突。
-# 通过 sys.meta_path import hook 阻止 torch 加载，
-# modelscope 走 no-torch 降级路径，避免 DLL 冲突。
+# 双重拦截：
+#   1. sys.meta_path hook 阻止 import torch 加载实际 DLL
+#   2. patch importlib.util.find_spec 让探测调用返回 None，
+#      否则 find_spec 内部触发 hook 的 raise ImportError 会向上传播，
+#      导致 modelscope 的探测代码崩溃（而非走 no-torch 降级路径）
 import importlib.abc
+import importlib.util
 
 
 class _TorchBlocker(importlib.abc.MetaPathFinder):
@@ -34,6 +38,17 @@ class _TorchBlocker(importlib.abc.MetaPathFinder):
 
 
 sys.meta_path.insert(0, _TorchBlocker())
+
+_orig_find_spec = importlib.util.find_spec
+
+
+def _patched_find_spec(name, package=None):
+    if name == "torch" or name.startswith("torch."):
+        return None
+    return _orig_find_spec(name, package)
+
+
+importlib.util.find_spec = _patched_find_spec
 
 # 配置基本日志（在添加共享内存处理器之前）
 logging.basicConfig(
