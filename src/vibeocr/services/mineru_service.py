@@ -252,7 +252,7 @@ class MinerUService(metaclass=SingletonMeta):
         filename = f"input{ext}"
 
         api_result = self._call_api(data, filename, options)
-        return self._build_ocr_result(api_result, filename)
+        return self._build_ocr_result(api_result, filename, data=data)
 
     def _get_extension(self, mime_type: str) -> str:
         """根据 MIME 类型获取文件扩展名"""
@@ -272,9 +272,21 @@ class MinerUService(metaclass=SingletonMeta):
         self,
         api_result: dict[str, Any],
         filename: str,
+        data: bytes | None = None,
     ) -> OCRResult:
         """从 API 响应构建 OCRResult"""
         stem = Path(filename).stem
+
+        # 尝试获取图像尺寸用于 bbox 坐标转换
+        img_w, img_h = 0, 0
+        if data and not filename.endswith(".pdf"):
+            try:
+                from PIL import Image
+                import io
+                with Image.open(io.BytesIO(data)) as img:
+                    img_w, img_h = img.size
+            except Exception:
+                pass
 
         # 从 results 中提取当前文件的结果
         results = api_result.get("results", {})
@@ -313,8 +325,15 @@ class MinerUService(metaclass=SingletonMeta):
             bbox_raw = item.get("bbox")
             bbox = None
             if bbox_raw and len(bbox_raw) >= 4:
-                # MinerU bbox 是归一化 0-1000，保留原始值，由 UI 层转换
-                bbox = (float(bbox_raw[0]), float(bbox_raw[1]), float(bbox_raw[2]), float(bbox_raw[3]))
+                if img_w and img_h:
+                    # 单张图片：将 0-1000 归一化转为像素坐标
+                    bbox = (
+                        float(bbox_raw[0]) / 1000.0 * img_w,
+                        float(bbox_raw[1]) / 1000.0 * img_h,
+                        float(bbox_raw[2]) / 1000.0 * img_w,
+                        float(bbox_raw[3]) / 1000.0 * img_h,
+                    )
+                # PDF 等多页文档不设置 bbox（text_blocks 无法区分页面）
             text_blocks.append(TextBlock(text=text, score=score, bbox=bbox))
 
         return OCRResult(
