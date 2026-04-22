@@ -54,15 +54,15 @@ def _build_block_html(block: dict, index: int) -> str:
         f"[{type_label}]</span>"
     )
 
-    # 置信度标签（如有）
+    # title 属性（悬浮提示）
+    title_parts = []
+    if block.get("type"):
+        title_parts.append(f"类型: {type_label}")
     confidence = block.get("confidence")
-    conf_html = ""
     if confidence is not None:
-        pct = f"{confidence * 100:.1f}%"
-        conf_html = (
-            f'<span style="font-size:11px; color:#888; margin-left:6px;">'
-            f"{pct}</span>"
-        )
+        pct = f"{confidence * 100:.0f}%"
+        title_parts.append(f"置信度: {pct}")
+    title_attr = f' title="{" | ".join(title_parts)}"' if title_parts else ""
 
     content_html = ""
     if block_type == "table" and html:
@@ -93,10 +93,10 @@ def _build_block_html(block: dict, index: int) -> str:
         f'<div class="ocr-block" data-block-index="{index}" '
         f'data-block-type="{block_type}" id="block-{index}" '
         f'style="padding:4px 8px; border-left:3px solid {border_color}; '
-        f"margin:2px 0; border-radius:2px; cursor:pointer;\" "
+        f'margin:2px 0; border-radius:2px; cursor:pointer;" '
         f"onmouseover=\"this.style.backgroundColor='#f0f9ff'\" "
-        f"onmouseout=\"this.style.backgroundColor=''\">"
-        f"{label_html}{content_html}{conf_html}"
+        f"onmouseout=\"this.style.backgroundColor=''\"{title_attr}>"
+        f"{label_html}{content_html}"
         f"</div>"
     )
 
@@ -111,17 +111,7 @@ def _build_text_blocks_html(blocks) -> str:
             .replace(">", "&gt;")
             .replace("\n", "<br>")
         )
-        pct = f"{block.score * 100:.1f}%"
-        if block.score < 0.80:
-            conf_html = (
-                f'<span style="font-size:11px; color:#f44336; font-weight:bold; '
-                f'margin-left:4px;">{pct}</span>'
-            )
-        else:
-            conf_html = (
-                f'<span style="font-size:11px; color:#888; '
-                f'margin-left:4px;">{pct}</span>'
-            )
+        pct = f"{block.score * 100:.0f}%"
         border_color = BLOCK_BORDER_CSS.get("text", "#3b82f6")
         parts.append(
             f'<div class="ocr-block" data-block-index="{i}" '
@@ -129,8 +119,9 @@ def _build_text_blocks_html(blocks) -> str:
             f'style="padding:4px 8px; border-left:3px solid {border_color}; '
             f'margin:2px 0; border-radius:2px; cursor:pointer;" '
             f"onmouseover=\"this.style.backgroundColor='#f0f9ff'\" "
-            f"onmouseout=\"this.style.backgroundColor=''\">"
-            f"<p>{escaped}</p>{conf_html}"
+            f"onmouseout=\"this.style.backgroundColor=''\" "
+            f'title="置信度: {pct}">'
+            f"<p>{escaped}</p>"
             f"</div>"
         )
     return "\n".join(parts)

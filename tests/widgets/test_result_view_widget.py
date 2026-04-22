@@ -1,5 +1,7 @@
 """Tests for result_view_widget HTML generation functions."""
 
+import re
+
 from vibeocr.widgets.result_view_widget import _build_block_html, _build_text_blocks_html
 
 
@@ -34,7 +36,8 @@ class TestBuildBlockHtml:
         """置信度信息不再内嵌显示。"""
         block = {"type": "text", "text": "hello", "confidence": 0.60}
         html = _build_block_html(block, 0)
-        assert "置信度" not in html.replace('title="', "REMOVED")
+        without_title = re.sub(r' title="[^"]*"', '', html)
+        assert "置信度" not in without_title
 
     def test_table_block_title(self):
         """表格块显示类型标签。"""
@@ -76,4 +79,5 @@ class TestBuildTextBlocksHtml:
 
         blocks = [TextBlock(text="low", score=0.50, bbox=None)]
         html = _build_text_blocks_html(blocks)
-        assert "置信度" not in html.replace('title="', "REMOVED")
+        without_title = re.sub(r' title="[^"]*"', '', html)
+        assert "置信度" not in without_title
