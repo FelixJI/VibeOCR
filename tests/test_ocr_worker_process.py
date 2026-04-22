@@ -164,7 +164,9 @@ class TestOCRServiceSubprocess:
 
         assert service.max_workers == 1
         assert service.use_gpu is False
-        assert len(service.workers) == 1
+        # Dual manager: paddlex + mineru
+        assert hasattr(service, "_paddlex_manager")
+        assert hasattr(service, "_mineru_manager")
 
         # Cleanup
         service.shutdown()
@@ -196,8 +198,10 @@ class TestOCRServiceSubprocess:
         assert "use_gpu" in status
         assert "ready" in status
         assert "workers" in status
-        assert status["max_workers"] == 1
-        assert len(status["workers"]) == 1
+        # Dual manager: 1 paddlex + 1 mineru = 2
+        assert status["max_workers"] == 2
+        # Workers not started yet, list should be empty
+        assert len(status["workers"]) == 0
 
         # Cleanup
         service.shutdown()
@@ -213,7 +217,8 @@ class TestOCRServiceSubprocess:
         # Should not raise
         service.shutdown()
 
-        assert len(service.workers) == 0
+        # Verify managers are cleaned up
+        assert not service._initialized
         OCRServiceSubprocess._instance = None
 
     def test_reset_instance(self):
