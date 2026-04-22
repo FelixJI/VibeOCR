@@ -68,7 +68,8 @@ class OCRWorkerProcess:
     """
 
     def __init__(
-        self, worker_id: int, use_gpu: bool = True, shm_size: int = 10 * 1024 * 1024
+        self, worker_id: int, use_gpu: bool = True, shm_size: int = 10 * 1024 * 1024,
+        worker_module: str = "vibeocr.workers.ocr_worker",
     ):
         """初始化 Worker 进程管理器
 
@@ -76,10 +77,12 @@ class OCRWorkerProcess:
             worker_id: Worker 标识符
             use_gpu: 是否使用 GPU
             shm_size: 数据共享内存大小（字节）
+            worker_module: Worker 子进程模块路径
         """
         self.worker_id = worker_id
         self.use_gpu = use_gpu
         self.shm_size = shm_size
+        self.worker_module = worker_module
 
         # 生成唯一的共享内存名称
         unique_id = uuid.uuid4().hex[:16]
@@ -204,7 +207,7 @@ class OCRWorkerProcess:
         cmd = [
             python_exe,
             "-m",
-            "vibeocr.workers.ocr_worker",
+            self.worker_module,
             "--shm-name",
             self.data_shm_name,
             "--shm-size",
