@@ -129,6 +129,22 @@ class PreprocessOptionsWidget(QGroupBox):
         backend_layout.addStretch()
         layout.addLayout(backend_layout)
 
+        # 解析方法
+        parse_method_layout = QHBoxLayout()
+        parse_method_layout.addWidget(QLabel("解析方法:"))
+        self._parse_method_combo = QComboBox()
+        self._parse_method_combo.addItem("自动（提取 + 识别）", "auto")
+        self._parse_method_combo.addItem("纯文本提取", "txt")
+        self._parse_method_combo.addItem("强制 OCR 识别", "ocr")
+        self._parse_method_combo.setToolTip(
+            "自动：智能选择最佳方式\n"
+            "纯文本提取：直接提取 PDF 内嵌文字，速度快\n"
+            "强制 OCR 识别：将每页视为图片进行识别，适用于扫描件"
+        )
+        parse_method_layout.addWidget(self._parse_method_combo)
+        parse_method_layout.addStretch()
+        layout.addLayout(parse_method_layout)
+
         self._enable_formula_cb = QCheckBox("公式识别")
         self._enable_formula_cb.setToolTip("启用数学公式识别（LaTeX 输出）")
         self._enable_formula_cb.setChecked(True)
@@ -154,6 +170,7 @@ class PreprocessOptionsWidget(QGroupBox):
         self._enable_formula_cb.toggled.connect(self._on_option_changed)
         self._enable_table_cb.toggled.connect(self._on_option_changed)
         self._backend_combo.currentIndexChanged.connect(self._on_option_changed)
+        self._parse_method_combo.currentIndexChanged.connect(self._on_option_changed)
 
     def _on_pipeline_changed(self):
         """管道选择变更"""
@@ -237,6 +254,8 @@ class PreprocessOptionsWidget(QGroupBox):
             kwargs["enable_table"] = self._enable_table_cb.isChecked()
         if is_option_supported(pipeline, "backend"):
             kwargs["backend"] = self._backend_combo.currentData()
+        if is_option_supported(pipeline, "parse_method"):
+            kwargs["parse_method"] = self._parse_method_combo.currentData()
 
         return OCROptions(**kwargs)
 
@@ -253,6 +272,7 @@ class PreprocessOptionsWidget(QGroupBox):
             self._enable_formula_cb,
             self._enable_table_cb,
             self._backend_combo,
+            self._parse_method_combo,
         ]
         for w in widgets:
             w.blockSignals(True)
@@ -275,6 +295,10 @@ class PreprocessOptionsWidget(QGroupBox):
         backend_idx = self._backend_combo.findData(options.backend)
         if backend_idx >= 0:
             self._backend_combo.setCurrentIndex(backend_idx)
+
+        parse_method_idx = self._parse_method_combo.findData(options.parse_method)
+        if parse_method_idx >= 0:
+            self._parse_method_combo.setCurrentIndex(parse_method_idx)
 
         # 恢复信号
         for w in widgets:

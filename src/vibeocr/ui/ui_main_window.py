@@ -16,11 +16,10 @@ from PySide6.QtGui import (QBrush, QColor, QConicalGradient, QCursor,
     QImage, QKeySequence, QLinearGradient, QPainter,
     QPalette, QPixmap, QRadialGradient, QTransform)
 from PySide6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QFrame,
-    QGridLayout, QGroupBox, QHBoxLayout, QHeaderView,
-    QLabel, QLineEdit, QProgressBar, QPushButton,
-    QScrollArea, QSizePolicy, QSpacerItem, QSpinBox,
-    QSplitter, QTabWidget, QTableWidget, QTableWidgetItem,
-    QTextEdit, QVBoxLayout, QWidget)
+    QGroupBox, QHBoxLayout, QLabel, QListWidget,
+    QListWidgetItem, QProgressBar, QPushButton, QSizePolicy,
+    QSpacerItem, QSpinBox, QSplitter, QStackedWidget,
+    QTabWidget, QVBoxLayout, QWidget)
 
 from vibeocr.widgets.preview_widget import PreviewWidget
 
@@ -96,22 +95,30 @@ class Ui_MainWindowWidget(object):
         self.tabWidget.addTab(self.tabOCR, "")
         self.tabSettings = QWidget()
         self.tabSettings.setObjectName(u"tabSettings")
-        self.verticalLayout_3 = QVBoxLayout(self.tabSettings)
-        self.verticalLayout_3.setSpacing(0)
-        self.verticalLayout_3.setObjectName(u"verticalLayout_3")
-        self.verticalLayout_3.setContentsMargins(0, 0, 0, 0)
-        self.scrollAreaSettings = QScrollArea(self.tabSettings)
-        self.scrollAreaSettings.setObjectName(u"scrollAreaSettings")
-        self.scrollAreaSettings.setWidgetResizable(True)
-        self.scrollAreaSettings.setFrameShape(QFrame.NoFrame)
-        self.scrollAreaSettingsContent = QWidget()
-        self.scrollAreaSettingsContent.setObjectName(u"scrollAreaSettingsContent")
-        self.scrollAreaSettingsContent.setGeometry(QRect(0, 0, 100, 100))
-        self.scrollContentLayout = QVBoxLayout(self.scrollAreaSettingsContent)
-        self.scrollContentLayout.setSpacing(12)
-        self.scrollContentLayout.setObjectName(u"scrollContentLayout")
-        self.scrollContentLayout.setContentsMargins(16, 16, 16, 16)
-        self.groupPreload = QGroupBox(self.scrollAreaSettingsContent)
+        self.settingsHLayout = QHBoxLayout(self.tabSettings)
+        self.settingsHLayout.setSpacing(0)
+        self.settingsHLayout.setObjectName(u"settingsHLayout")
+        self.settingsHLayout.setContentsMargins(0, 0, 0, 0)
+        self.settingsNavList = QListWidget(self.tabSettings)
+        QListWidgetItem(self.settingsNavList)
+        QListWidgetItem(self.settingsNavList)
+        self.settingsNavList.setObjectName(u"settingsNavList")
+        self.settingsNavList.setMaximumSize(QSize(160, 16777215))
+        self.settingsNavList.setFrameShape(QFrame.NoFrame)
+        self.settingsNavList.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.settingsNavList.setEditTriggers(QAbstractItemView.NoEditTriggers)
+
+        self.settingsHLayout.addWidget(self.settingsNavList)
+
+        self.settingsStackedWidget = QStackedWidget(self.tabSettings)
+        self.settingsStackedWidget.setObjectName(u"settingsStackedWidget")
+        self.pageModelManagement = QWidget()
+        self.pageModelManagement.setObjectName(u"pageModelManagement")
+        self.pageModelLayout = QVBoxLayout(self.pageModelManagement)
+        self.pageModelLayout.setSpacing(12)
+        self.pageModelLayout.setObjectName(u"pageModelLayout")
+        self.pageModelLayout.setContentsMargins(16, 16, 16, 16)
+        self.groupPreload = QGroupBox(self.pageModelManagement)
         self.groupPreload.setObjectName(u"groupPreload")
         self.preloadLayout = QVBoxLayout(self.groupPreload)
         self.preloadLayout.setSpacing(8)
@@ -154,56 +161,12 @@ class Ui_MainWindowWidget(object):
 
         self.preloadPipelinesLayout.addWidget(self.chkPreloadFormula)
 
-        self.chkPreloadStructure = QCheckBox(self.preloadOptions)
-        self.chkPreloadStructure.setObjectName(u"chkPreloadStructure")
-        self.chkPreloadStructure.setChecked(False)
-
-        self.preloadPipelinesLayout.addWidget(self.chkPreloadStructure)
-
         self.horizontalSpacerPreload = QSpacerItem(40, 20, QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
 
         self.preloadPipelinesLayout.addItem(self.horizontalSpacerPreload)
 
 
         self.preloadOptionsLayout.addLayout(self.preloadPipelinesLayout)
-
-        self.chkParallelPreload = QCheckBox(self.preloadOptions)
-        self.chkParallelPreload.setObjectName(u"chkParallelPreload")
-        self.chkParallelPreload.setChecked(False)
-
-        self.preloadOptionsLayout.addWidget(self.chkParallelPreload)
-
-        self.parallelOptions = QWidget(self.preloadOptions)
-        self.parallelOptions.setObjectName(u"parallelOptions")
-        self.parallelOptionsLayout = QHBoxLayout(self.parallelOptions)
-        self.parallelOptionsLayout.setSpacing(8)
-        self.parallelOptionsLayout.setObjectName(u"parallelOptionsLayout")
-        self.parallelOptionsLayout.setContentsMargins(20, 0, 0, 0)
-        self.labelMaxWorkers = QLabel(self.parallelOptions)
-        self.labelMaxWorkers.setObjectName(u"labelMaxWorkers")
-
-        self.parallelOptionsLayout.addWidget(self.labelMaxWorkers)
-
-        self.spinMaxWorkers = QSpinBox(self.parallelOptions)
-        self.spinMaxWorkers.setObjectName(u"spinMaxWorkers")
-        self.spinMaxWorkers.setMinimum(1)
-        self.spinMaxWorkers.setMaximum(4)
-        self.spinMaxWorkers.setValue(2)
-
-        self.parallelOptionsLayout.addWidget(self.spinMaxWorkers)
-
-        self.labelMaxWorkersHint = QLabel(self.parallelOptions)
-        self.labelMaxWorkersHint.setObjectName(u"labelMaxWorkersHint")
-        self.labelMaxWorkersHint.setForegroundRole(QPalette.PlaceholderText)
-
-        self.parallelOptionsLayout.addWidget(self.labelMaxWorkersHint)
-
-        self.horizontalSpacerWorkers = QSpacerItem(40, 20, QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
-
-        self.parallelOptionsLayout.addItem(self.horizontalSpacerWorkers)
-
-
-        self.preloadOptionsLayout.addWidget(self.parallelOptions)
 
 
         self.preloadLayout.addWidget(self.preloadOptions)
@@ -214,10 +177,24 @@ class Ui_MainWindowWidget(object):
 
         self.preloadLayout.addWidget(self.btnPreloadNow)
 
+        self.labelPreloadStatus = QLabel(self.groupPreload)
+        self.labelPreloadStatus.setObjectName(u"labelPreloadStatus")
+        self.labelPreloadStatus.setWordWrap(True)
 
-        self.scrollContentLayout.addWidget(self.groupPreload)
+        self.preloadLayout.addWidget(self.labelPreloadStatus)
 
-        self.groupCache = QGroupBox(self.scrollAreaSettingsContent)
+        self.progressPreload = QProgressBar(self.groupPreload)
+        self.progressPreload.setObjectName(u"progressPreload")
+        self.progressPreload.setValue(0)
+        self.progressPreload.setTextVisible(True)
+        self.progressPreload.setVisible(False)
+
+        self.preloadLayout.addWidget(self.progressPreload)
+
+
+        self.pageModelLayout.addWidget(self.groupPreload)
+
+        self.groupCache = QGroupBox(self.pageModelManagement)
         self.groupCache.setObjectName(u"groupCache")
         self.cacheLayout = QVBoxLayout(self.groupCache)
         self.cacheLayout.setSpacing(8)
@@ -249,174 +226,20 @@ class Ui_MainWindowWidget(object):
         self.cacheLayout.addWidget(self.labelCacheStatus)
 
 
-        self.scrollContentLayout.addWidget(self.groupCache)
+        self.pageModelLayout.addWidget(self.groupCache)
 
-        self.groupStatus = QGroupBox(self.scrollAreaSettingsContent)
-        self.groupStatus.setObjectName(u"groupStatus")
-        self.statusLayout = QVBoxLayout(self.groupStatus)
-        self.statusLayout.setSpacing(8)
-        self.statusLayout.setObjectName(u"statusLayout")
-        self.labelPreloadStatus = QLabel(self.groupStatus)
-        self.labelPreloadStatus.setObjectName(u"labelPreloadStatus")
-        self.labelPreloadStatus.setWordWrap(True)
+        self.spacerModelPage = QSpacerItem(20, 40, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Expanding)
 
-        self.statusLayout.addWidget(self.labelPreloadStatus)
+        self.pageModelLayout.addItem(self.spacerModelPage)
 
-        self.progressPreload = QProgressBar(self.groupStatus)
-        self.progressPreload.setObjectName(u"progressPreload")
-        self.progressPreload.setValue(0)
-        self.progressPreload.setTextVisible(True)
-        self.progressPreload.setVisible(False)
-
-        self.statusLayout.addWidget(self.progressPreload)
-
-
-        self.scrollContentLayout.addWidget(self.groupStatus)
-
-        self.groupLLMConfig = QGroupBox(self.scrollAreaSettingsContent)
-        self.groupLLMConfig.setObjectName(u"groupLLMConfig")
-        self.llmConfigLayout = QVBoxLayout(self.groupLLMConfig)
-        self.llmConfigLayout.setSpacing(8)
-        self.llmConfigLayout.setObjectName(u"llmConfigLayout")
-        self.labelLLMHint = QLabel(self.groupLLMConfig)
-        self.labelLLMHint.setObjectName(u"labelLLMHint")
-        self.labelLLMHint.setForegroundRole(QPalette.PlaceholderText)
-
-        self.llmConfigLayout.addWidget(self.labelLLMHint)
-
-        self.llmGrid = QGridLayout()
-        self.llmGrid.setObjectName(u"llmGrid")
-        self.llmGrid.setHorizontalSpacing(8)
-        self.llmGrid.setVerticalSpacing(6)
-        self.labelMLLMUrl = QLabel(self.groupLLMConfig)
-        self.labelMLLMUrl.setObjectName(u"labelMLLMUrl")
-
-        self.llmGrid.addWidget(self.labelMLLMUrl, 0, 0, 1, 1)
-
-        self.editMLLMUrl = QLineEdit(self.groupLLMConfig)
-        self.editMLLMUrl.setObjectName(u"editMLLMUrl")
-
-        self.llmGrid.addWidget(self.editMLLMUrl, 0, 1, 1, 1)
-
-        self.labelMLLMModel = QLabel(self.groupLLMConfig)
-        self.labelMLLMModel.setObjectName(u"labelMLLMModel")
-
-        self.llmGrid.addWidget(self.labelMLLMModel, 1, 0, 1, 1)
-
-        self.editMLLMModel = QLineEdit(self.groupLLMConfig)
-        self.editMLLMModel.setObjectName(u"editMLLMModel")
-
-        self.llmGrid.addWidget(self.editMLLMModel, 1, 1, 1, 1)
-
-        self.labelMLLMApiKey = QLabel(self.groupLLMConfig)
-        self.labelMLLMApiKey.setObjectName(u"labelMLLMApiKey")
-
-        self.llmGrid.addWidget(self.labelMLLMApiKey, 2, 0, 1, 1)
-
-        self.editMLLMApiKey = QLineEdit(self.groupLLMConfig)
-        self.editMLLMApiKey.setObjectName(u"editMLLMApiKey")
-        self.editMLLMApiKey.setEchoMode(QLineEdit.Password)
-
-        self.llmGrid.addWidget(self.editMLLMApiKey, 2, 1, 1, 1)
-
-        self.labelLLMUrl = QLabel(self.groupLLMConfig)
-        self.labelLLMUrl.setObjectName(u"labelLLMUrl")
-
-        self.llmGrid.addWidget(self.labelLLMUrl, 3, 0, 1, 1)
-
-        self.editLLMUrl = QLineEdit(self.groupLLMConfig)
-        self.editLLMUrl.setObjectName(u"editLLMUrl")
-
-        self.llmGrid.addWidget(self.editLLMUrl, 3, 1, 1, 1)
-
-        self.labelLLMModel = QLabel(self.groupLLMConfig)
-        self.labelLLMModel.setObjectName(u"labelLLMModel")
-
-        self.llmGrid.addWidget(self.labelLLMModel, 4, 0, 1, 1)
-
-        self.editLLMModel = QLineEdit(self.groupLLMConfig)
-        self.editLLMModel.setObjectName(u"editLLMModel")
-
-        self.llmGrid.addWidget(self.editLLMModel, 4, 1, 1, 1)
-
-        self.labelLLMApiKey = QLabel(self.groupLLMConfig)
-        self.labelLLMApiKey.setObjectName(u"labelLLMApiKey")
-
-        self.llmGrid.addWidget(self.labelLLMApiKey, 5, 0, 1, 1)
-
-        self.editLLMApiKey = QLineEdit(self.groupLLMConfig)
-        self.editLLMApiKey.setObjectName(u"editLLMApiKey")
-        self.editLLMApiKey.setEchoMode(QLineEdit.Password)
-
-        self.llmGrid.addWidget(self.editLLMApiKey, 5, 1, 1, 1)
-
-
-        self.llmConfigLayout.addLayout(self.llmGrid)
-
-        self.llmButtonLayout = QHBoxLayout()
-        self.llmButtonLayout.setObjectName(u"llmButtonLayout")
-        self.horizontalSpacerLLM = QSpacerItem(40, 20, QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
-
-        self.llmButtonLayout.addItem(self.horizontalSpacerLLM)
-
-        self.btnSaveLLMConfig = QPushButton(self.groupLLMConfig)
-        self.btnSaveLLMConfig.setObjectName(u"btnSaveLLMConfig")
-
-        self.llmButtonLayout.addWidget(self.btnSaveLLMConfig)
-
-
-        self.llmConfigLayout.addLayout(self.llmButtonLayout)
-
-
-        self.scrollContentLayout.addWidget(self.groupLLMConfig)
-
-        self.groupTemplate = QGroupBox(self.scrollAreaSettingsContent)
-        self.groupTemplate.setObjectName(u"groupTemplate")
-        self.templateLayout = QVBoxLayout(self.groupTemplate)
-        self.templateLayout.setSpacing(8)
-        self.templateLayout.setObjectName(u"templateLayout")
-        self.labelTemplateHint = QLabel(self.groupTemplate)
-        self.labelTemplateHint.setObjectName(u"labelTemplateHint")
-        self.labelTemplateHint.setForegroundRole(QPalette.PlaceholderText)
-
-        self.templateLayout.addWidget(self.labelTemplateHint)
-
-        self.tableTemplates = QTableWidget(self.groupTemplate)
-        if (self.tableTemplates.columnCount() < 2):
-            self.tableTemplates.setColumnCount(2)
-        __qtablewidgetitem = QTableWidgetItem()
-        self.tableTemplates.setHorizontalHeaderItem(0, __qtablewidgetitem)
-        __qtablewidgetitem1 = QTableWidgetItem()
-        self.tableTemplates.setHorizontalHeaderItem(1, __qtablewidgetitem1)
-        self.tableTemplates.setObjectName(u"tableTemplates")
-        self.tableTemplates.setSelectionBehavior(QAbstractItemView.SelectRows)
-
-        self.templateLayout.addWidget(self.tableTemplates)
-
-        self.templateButtons = QHBoxLayout()
-        self.templateButtons.setObjectName(u"templateButtons")
-        self.btnAddTemplate = QPushButton(self.groupTemplate)
-        self.btnAddTemplate.setObjectName(u"btnAddTemplate")
-
-        self.templateButtons.addWidget(self.btnAddTemplate)
-
-        self.btnEditTemplate = QPushButton(self.groupTemplate)
-        self.btnEditTemplate.setObjectName(u"btnEditTemplate")
-
-        self.templateButtons.addWidget(self.btnEditTemplate)
-
-        self.btnDeleteTemplate = QPushButton(self.groupTemplate)
-        self.btnDeleteTemplate.setObjectName(u"btnDeleteTemplate")
-
-        self.templateButtons.addWidget(self.btnDeleteTemplate)
-
-
-        self.templateLayout.addLayout(self.templateButtons)
-
-
-        self.scrollContentLayout.addWidget(self.groupTemplate)
-
-        self.groupAppSettings = QGroupBox(self.scrollAreaSettingsContent)
+        self.settingsStackedWidget.addWidget(self.pageModelManagement)
+        self.pageAppSettings = QWidget()
+        self.pageAppSettings.setObjectName(u"pageAppSettings")
+        self.pageAppLayout = QVBoxLayout(self.pageAppSettings)
+        self.pageAppLayout.setSpacing(12)
+        self.pageAppLayout.setObjectName(u"pageAppLayout")
+        self.pageAppLayout.setContentsMargins(16, 16, 16, 16)
+        self.groupAppSettings = QGroupBox(self.pageAppSettings)
         self.groupAppSettings.setObjectName(u"groupAppSettings")
         self.appSettingsLayout = QVBoxLayout(self.groupAppSettings)
         self.appSettingsLayout.setSpacing(8)
@@ -462,15 +285,15 @@ class Ui_MainWindowWidget(object):
         self.appSettingsLayout.addWidget(self.chkAutoStart)
 
 
-        self.scrollContentLayout.addWidget(self.groupAppSettings)
+        self.pageAppLayout.addWidget(self.groupAppSettings)
 
-        self.verticalSpacer = QSpacerItem(20, 40, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Expanding)
+        self.spacerAppPage = QSpacerItem(20, 40, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Expanding)
 
-        self.scrollContentLayout.addItem(self.verticalSpacer)
+        self.pageAppLayout.addItem(self.spacerAppPage)
 
-        self.scrollAreaSettings.setWidget(self.scrollAreaSettingsContent)
+        self.settingsStackedWidget.addWidget(self.pageAppSettings)
 
-        self.verticalLayout_3.addWidget(self.scrollAreaSettings)
+        self.settingsHLayout.addWidget(self.settingsStackedWidget)
 
         self.tabWidget.addTab(self.tabSettings, "")
 
@@ -480,6 +303,8 @@ class Ui_MainWindowWidget(object):
         self.retranslateUi(MainWindowWidget)
 
         self.tabWidget.setCurrentIndex(0)
+        self.settingsNavList.setCurrentRow(0)
+        self.settingsStackedWidget.setCurrentIndex(0)
 
 
         QMetaObject.connectSlotsByName(MainWindowWidget)
@@ -500,6 +325,15 @@ class Ui_MainWindowWidget(object):
 #endif // QT_CONFIG(tooltip)
         self.btnCopyPlain.setText(QCoreApplication.translate("MainWindowWidget", u"\u7eaf\u6587\u672c", None))
         self.tabWidget.setTabText(self.tabWidget.indexOf(self.tabOCR), QCoreApplication.translate("MainWindowWidget", u"\u5355\u6b21\u8bc6\u522b", None))
+
+        __sortingEnabled = self.settingsNavList.isSortingEnabled()
+        self.settingsNavList.setSortingEnabled(False)
+        ___qlistwidgetitem = self.settingsNavList.item(0)
+        ___qlistwidgetitem.setText(QCoreApplication.translate("MainWindowWidget", u"\u6a21\u578b\u7ba1\u7406", None))
+        ___qlistwidgetitem1 = self.settingsNavList.item(1)
+        ___qlistwidgetitem1.setText(QCoreApplication.translate("MainWindowWidget", u"\u5e94\u7528\u8bbe\u7f6e", None))
+        self.settingsNavList.setSortingEnabled(__sortingEnabled)
+
         self.groupPreload.setTitle(QCoreApplication.translate("MainWindowWidget", u"\u6a21\u578b\u9884\u52a0\u8f7d", None))
 #if QT_CONFIG(tooltip)
         self.chkEnablePreload.setToolTip(QCoreApplication.translate("MainWindowWidget", u"\u542f\u52a8\u5e94\u7528\u65f6\u81ea\u52a8\u9884\u52a0\u8f7d\u9009\u4e2d\u7684\u7ba1\u9053\uff0c\u9996\u6b21\u8bc6\u522b\u65f6\u65e0\u9700\u7b49\u5f85", None))
@@ -519,22 +353,10 @@ class Ui_MainWindowWidget(object):
 #endif // QT_CONFIG(tooltip)
         self.chkPreloadFormula.setText(QCoreApplication.translate("MainWindowWidget", u"\u516c\u5f0f", None))
 #if QT_CONFIG(tooltip)
-        self.chkPreloadStructure.setToolTip(QCoreApplication.translate("MainWindowWidget", u"\u7248\u9762\u89e3\u6790\u7ba1\u9053\uff08\u5305\u542b 15+ \u6a21\u578b\uff0c\u7ea6 2-3GB \u663e\u5b58\uff09", None))
-#endif // QT_CONFIG(tooltip)
-        self.chkPreloadStructure.setText(QCoreApplication.translate("MainWindowWidget", u"\u7248\u9762", None))
-#if QT_CONFIG(tooltip)
-        self.chkParallelPreload.setToolTip(QCoreApplication.translate("MainWindowWidget", u"\u5e76\u884c\u52a0\u8f7d\u591a\u4e2a\u7ba1\u9053\u53ef\u52a0\u5feb\u901f\u5ea6\uff0c\u4f46\u4f1a\u589e\u52a0\u5cf0\u503c\u663e\u5b58\u5360\u7528", None))
-#endif // QT_CONFIG(tooltip)
-        self.chkParallelPreload.setText(QCoreApplication.translate("MainWindowWidget", u"\u5e76\u884c\u52a0\u8f7d\uff08\u52a0\u5feb\u901f\u5ea6\uff0c\u589e\u52a0\u663e\u5b58\uff09", None))
-        self.labelMaxWorkers.setText(QCoreApplication.translate("MainWindowWidget", u"\u5e76\u884c\u6570\u91cf:", None))
-#if QT_CONFIG(tooltip)
-        self.spinMaxWorkers.setToolTip(QCoreApplication.translate("MainWindowWidget", u"\u540c\u65f6\u52a0\u8f7d\u7684\u7ba1\u9053\u6570\u91cf\uff0c\u5efa\u8bae\u4e0d\u8d85\u8fc7 2", None))
-#endif // QT_CONFIG(tooltip)
-        self.labelMaxWorkersHint.setText(QCoreApplication.translate("MainWindowWidget", u"(\u5efa\u8bae\u4e0d\u8d85\u8fc7 2)", None))
-#if QT_CONFIG(tooltip)
         self.btnPreloadNow.setToolTip(QCoreApplication.translate("MainWindowWidget", u"\u7acb\u5373\u9884\u52a0\u8f7d\u9009\u4e2d\u7684\u7ba1\u9053", None))
 #endif // QT_CONFIG(tooltip)
         self.btnPreloadNow.setText(QCoreApplication.translate("MainWindowWidget", u"\u7acb\u5373\u9884\u52a0\u8f7d", None))
+        self.labelPreloadStatus.setText(QCoreApplication.translate("MainWindowWidget", u"\u5c1a\u672a\u9884\u52a0\u8f7d", None))
         self.groupCache.setTitle(QCoreApplication.translate("MainWindowWidget", u"\u7f13\u5b58\u7ba1\u7406", None))
 #if QT_CONFIG(tooltip)
         self.btnRefreshCache.setToolTip(QCoreApplication.translate("MainWindowWidget", u"\u91cd\u65b0\u626b\u63cf\u6a21\u578b\u7f13\u5b58\u72b6\u6001", None))
@@ -545,47 +367,21 @@ class Ui_MainWindowWidget(object):
 #endif // QT_CONFIG(tooltip)
         self.btnClearCache.setText(QCoreApplication.translate("MainWindowWidget", u"\u6e05\u9664\u7f13\u5b58", None))
         self.labelCacheStatus.setText(QCoreApplication.translate("MainWindowWidget", u"\u7f13\u5b58\u72b6\u6001: \u672a\u77e5", None))
-        self.groupStatus.setTitle(QCoreApplication.translate("MainWindowWidget", u"\u9884\u52a0\u8f7d\u72b6\u6001", None))
-        self.labelPreloadStatus.setText(QCoreApplication.translate("MainWindowWidget", u"\u5c1a\u672a\u9884\u52a0\u8f7d", None))
-        self.groupLLMConfig.setTitle(QCoreApplication.translate("MainWindowWidget", u"LLM \u670d\u52a1\u914d\u7f6e", None))
-        self.labelLLMHint.setText(QCoreApplication.translate("MainWindowWidget", u"\u914d\u7f6e LLM \u670d\u52a1\u4ee5\u542f\u7528\u4fe1\u606f\u62bd\u53d6\u529f\u80fd", None))
-        self.labelMLLMUrl.setText(QCoreApplication.translate("MainWindowWidget", u"MLLM \u670d\u52a1\u5730\u5740:", None))
-        self.editMLLMUrl.setPlaceholderText(QCoreApplication.translate("MainWindowWidget", u"http://127.0.0.1:8080/v1/chat/completions", None))
-        self.labelMLLMModel.setText(QCoreApplication.translate("MainWindowWidget", u"MLLM \u6a21\u578b\u540d\u79f0:", None))
-        self.editMLLMModel.setPlaceholderText(QCoreApplication.translate("MainWindowWidget", u"PP-DocBee2", None))
-        self.labelMLLMApiKey.setText(QCoreApplication.translate("MainWindowWidget", u"MLLM API Key:", None))
-        self.editMLLMApiKey.setPlaceholderText(QCoreApplication.translate("MainWindowWidget", u"\u53ef\u9009", None))
-        self.labelLLMUrl.setText(QCoreApplication.translate("MainWindowWidget", u"LLM \u670d\u52a1\u5730\u5740:", None))
-        self.editLLMUrl.setPlaceholderText(QCoreApplication.translate("MainWindowWidget", u"http://127.0.0.1:8080/v1/chat/completions", None))
-        self.labelLLMModel.setText(QCoreApplication.translate("MainWindowWidget", u"LLM \u6a21\u578b\u540d\u79f0:", None))
-        self.editLLMModel.setPlaceholderText(QCoreApplication.translate("MainWindowWidget", u"Qwen2.5", None))
-        self.labelLLMApiKey.setText(QCoreApplication.translate("MainWindowWidget", u"LLM API Key:", None))
-        self.editLLMApiKey.setPlaceholderText(QCoreApplication.translate("MainWindowWidget", u"\u53ef\u9009", None))
-        self.btnSaveLLMConfig.setText(QCoreApplication.translate("MainWindowWidget", u"\u4fdd\u5b58\u914d\u7f6e", None))
-        self.groupTemplate.setTitle(QCoreApplication.translate("MainWindowWidget", u"\u62bd\u53d6\u6a21\u677f\u7ba1\u7406", None))
-        self.labelTemplateHint.setText(QCoreApplication.translate("MainWindowWidget", u"\u7ba1\u7406\u5e38\u7528\u7684\u62bd\u53d6\u5b57\u6bb5\u6a21\u677f", None))
-        ___qtablewidgetitem = self.tableTemplates.horizontalHeaderItem(0)
-        ___qtablewidgetitem.setText(QCoreApplication.translate("MainWindowWidget", u"\u6a21\u677f\u540d\u79f0", None))
-        ___qtablewidgetitem1 = self.tableTemplates.horizontalHeaderItem(1)
-        ___qtablewidgetitem1.setText(QCoreApplication.translate("MainWindowWidget", u"\u5b57\u6bb5\u5217\u8868", None))
-        self.btnAddTemplate.setText(QCoreApplication.translate("MainWindowWidget", u"\u6dfb\u52a0\u6a21\u677f", None))
-        self.btnEditTemplate.setText(QCoreApplication.translate("MainWindowWidget", u"\u7f16\u8f91\u6a21\u677f", None))
-        self.btnDeleteTemplate.setText(QCoreApplication.translate("MainWindowWidget", u"\u5220\u9664\u6a21\u677f", None))
         self.groupAppSettings.setTitle(QCoreApplication.translate("MainWindowWidget", u"\u5e94\u7528\u8bbe\u7f6e", None))
-        self.chkAutoHideToolbar.setText(QCoreApplication.translate("MainWindowWidget", u"\u81ea\u52a8\u9690\u85cf\u8fb9\u7f18\u5de5\u5177\u680f", None))
 #if QT_CONFIG(tooltip)
         self.chkAutoHideToolbar.setToolTip(QCoreApplication.translate("MainWindowWidget", u"\u5de5\u5177\u680f\u505c\u9760\u5728\u5c4f\u5e55\u8fb9\u7f18\u65f6\u81ea\u52a8\u9690\u85cf\uff0c\u9f20\u6807\u9760\u8fd1\u8fb9\u7f18\u65f6\u81ea\u52a8\u5f39\u51fa", None))
 #endif // QT_CONFIG(tooltip)
+        self.chkAutoHideToolbar.setText(QCoreApplication.translate("MainWindowWidget", u"\u81ea\u52a8\u9690\u85cf\u8fb9\u7f18\u5de5\u5177\u680f", None))
         self.labelHideDelay.setText(QCoreApplication.translate("MainWindowWidget", u"\u9690\u85cf\u5ef6\u8fdf:", None))
         self.spinHideDelay.setSuffix(QCoreApplication.translate("MainWindowWidget", u" \u6beb\u79d2", None))
-        self.chkMinimizeToTray.setText(QCoreApplication.translate("MainWindowWidget", u"\u6700\u5c0f\u5316\u5230\u7cfb\u7edf\u6258\u76d8", None))
 #if QT_CONFIG(tooltip)
         self.chkMinimizeToTray.setToolTip(QCoreApplication.translate("MainWindowWidget", u"\u5173\u95ed\u4e3b\u7a97\u53e3\u65f6\u6700\u5c0f\u5316\u5230\u7cfb\u7edf\u6258\u76d8\u800c\u4e0d\u662f\u9000\u51fa\u7a0b\u5e8f", None))
 #endif // QT_CONFIG(tooltip)
-        self.chkAutoStart.setText(QCoreApplication.translate("MainWindowWidget", u"\u5f00\u673a\u81ea\u542f\u52a8", None))
+        self.chkMinimizeToTray.setText(QCoreApplication.translate("MainWindowWidget", u"\u6700\u5c0f\u5316\u5230\u7cfb\u7edf\u6258\u76d8", None))
 #if QT_CONFIG(tooltip)
         self.chkAutoStart.setToolTip(QCoreApplication.translate("MainWindowWidget", u"\u7cfb\u7edf\u542f\u52a8\u65f6\u81ea\u52a8\u8fd0\u884c VibeOCR", None))
 #endif // QT_CONFIG(tooltip)
+        self.chkAutoStart.setText(QCoreApplication.translate("MainWindowWidget", u"\u5f00\u673a\u81ea\u542f\u52a8", None))
         self.tabWidget.setTabText(self.tabWidget.indexOf(self.tabSettings), QCoreApplication.translate("MainWindowWidget", u"\u8bbe\u7f6e", None))
         pass
     # retranslateUi

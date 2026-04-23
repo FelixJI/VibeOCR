@@ -6,8 +6,6 @@
 import json
 import logging
 from pathlib import Path
-from typing import Any
-
 from PySide6.QtCore import QObject, Signal
 
 logger = logging.getLogger(__name__)

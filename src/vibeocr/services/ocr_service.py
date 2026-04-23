@@ -292,81 +292,6 @@ class OCRService(metaclass=SingletonMeta):
 
         return results
 
-    @classmethod
-    def preload_pipelines_parallel(
-        cls,
-        pipelines: list[OCRPipeline],
-        max_workers: int = 2,
-        progress_callback: Callable[[str, int, int], None] | None = None,
-    ) -> dict[str, bool]:
-        """并行预加载多个管道
-
-        Args:
-            pipelines: 要预加载的管道列表
-            max_workers: 最大并行工作线程数
-            progress_callback: 进度回调 (pipeline_name, current, total)
-
-        Returns:
-            各管道加载结果 {pipeline_name: success}
-        """
-        import concurrent.futures
-
-        # 检查是否有预加载任务在进行中
-        with cls._preload_lock:
-            if cls._is_preloading:
-                _logger.warning("[预加载] 已有预加载任务在进行中")
-                return {}
-            cls._is_preloading = True
-
-        results: dict[str, bool] = {}
-        total = len(pipelines)
-        completed = 0
-
-        try:
-            with concurrent.futures.ThreadPoolExecutor(
-                max_workers=max_workers
-            ) as executor:
-                future_to_pipeline = {
-                    executor.submit(cls.preload_pipeline, pipeline): pipeline
-                    for pipeline in pipelines
-                }
-
-                for future in concurrent.futures.as_completed(future_to_pipeline):
-                    pipeline = future_to_pipeline[future]
-                    pipeline_name = pipeline.value
-                    display_name = pipeline.display_name
-
-                    try:
-                        success = future.result()
-                        results[pipeline_name] = success
-                        completed += 1
-
-                        if progress_callback:
-                            progress_callback(pipeline_name, completed, total)
-                        if cls._preload_progress_callback:
-                            cls._preload_progress_callback(
-                                pipeline_name, completed, total
-                            )
-
-                        status = "成功" if success else "失败"
-                        _logger.info(
-                            f"[预加载] ({completed}/{total}) {display_name}: {status}"
-                        )
-                    except Exception as e:
-                        results[pipeline_name] = False
-                        completed += 1
-                        _logger.error(f"[预加载] {display_name} 加载异常: {e}")
-
-            # 汇总结果
-            success_count = sum(1 for v in results.values() if v)
-            _logger.info(f"[预加载] 完成: {success_count}/{total} 个管道加载成功")
-
-        finally:
-            # 确保重置状态
-            with cls._preload_lock:
-                cls._is_preloading = False
-
-        return results
 
     @classmethod
     def warmup_with_test_image(
@@ -462,16 +387,12 @@ class OCRService(metaclass=SingletonMeta):
     def preload_in_background(
         cls,
         pipelines: list[OCRPipeline],
-        parallel: bool = True,
-        max_workers: int = 2,
         on_complete: Callable[[dict[str, bool]], None] | None = None,
     ) -> threading.Thread:
         """在后台线程中预加载管道（非阻塞）
 
         Args:
             pipelines: 要预加载的管道列表
-            parallel: 是否并行加载（默认 True）
-            max_workers: 并行加载的最大工作线程数
             on_complete: 完成回调，接收加载结果字典
 
         Returns:
@@ -480,10 +401,7 @@ class OCRService(metaclass=SingletonMeta):
 
         def _preload_task():
             try:
-                if parallel:
-                    results = cls.preload_pipelines_parallel(pipelines, max_workers)
-                else:
-                    results = cls.preload_pipelines_sequential(pipelines)
+                results = cls.preload_pipelines_sequential(pipelines)
 
                 if on_complete:
                     on_complete(results)

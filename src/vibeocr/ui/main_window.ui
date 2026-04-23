@@ -150,7 +150,7 @@
       <attribute name="title">
        <string>设置</string>
       </attribute>
-      <layout class="QVBoxLayout" name="verticalLayout_3">
+      <layout class="QHBoxLayout" name="settingsHLayout">
        <property name="spacing">
         <number>0</number>
        </property>
@@ -167,23 +167,44 @@
         <number>0</number>
        </property>
        <item>
-        <widget class="QScrollArea" name="scrollAreaSettings">
-         <property name="widgetResizable">
-          <bool>true</bool>
+        <widget class="QListWidget" name="settingsNavList">
+         <property name="maximumSize">
+          <size>
+           <width>160</width>
+           <height>16777215</height>
+          </size>
          </property>
          <property name="frameShape">
           <enum>QFrame::NoFrame</enum>
          </property>
-         <widget class="QWidget" name="scrollAreaSettingsContent">
-          <property name="geometry">
-           <rect>
-            <x>0</x>
-            <y>0</y>
-            <width>100</width>
-            <height>100</height>
-           </rect>
+         <property name="horizontalScrollBarPolicy">
+          <enum>Qt::ScrollBarAlwaysOff</enum>
+         </property>
+         <property name="editTriggers">
+          <set>QAbstractItemView::NoEditTriggers</set>
+         </property>
+         <property name="currentRow">
+          <number>0</number>
+         </property>
+         <item>
+          <property name="text">
+           <string>模型管理</string>
           </property>
-          <layout class="QVBoxLayout" name="scrollContentLayout">
+         </item>
+         <item>
+          <property name="text">
+           <string>应用设置</string>
+          </property>
+         </item>
+        </widget>
+       </item>
+       <item>
+        <widget class="QStackedWidget" name="settingsStackedWidget">
+         <property name="currentIndex">
+          <number>0</number>
+         </property>
+         <widget class="QWidget" name="pageModelManagement">
+          <layout class="QVBoxLayout" name="pageModelLayout">
            <property name="spacing">
             <number>12</number>
            </property>
@@ -201,189 +222,191 @@
            </property>
            <item>
             <widget class="QGroupBox" name="groupPreload">
-         <property name="title">
-          <string>模型预加载</string>
-         </property>
-         <layout class="QVBoxLayout" name="preloadLayout">
-          <property name="spacing">
-           <number>8</number>
-          </property>
-          <item>
-           <widget class="QCheckBox" name="chkEnablePreload">
-            <property name="toolTip">
-             <string>启动应用时自动预加载选中的管道，首次识别时无需等待</string>
-            </property>
-            <property name="text">
-             <string>启动时自动预加载模型</string>
-            </property>
-            <property name="checked">
-             <bool>true</bool>
-            </property>
-           </widget>
-          </item>
-          <item>
-           <widget class="QWidget" name="preloadOptions" native="true">
-            <layout class="QVBoxLayout" name="preloadOptionsLayout">
-             <property name="spacing">
-              <number>6</number>
+             <property name="title">
+              <string>模型预加载</string>
              </property>
-             <property name="leftMargin">
-              <number>20</number>
+             <layout class="QVBoxLayout" name="preloadLayout">
+              <property name="spacing">
+               <number>8</number>
+              </property>
+              <item>
+               <widget class="QCheckBox" name="chkEnablePreload">
+                <property name="toolTip">
+                 <string>启动应用时自动预加载选中的管道，首次识别时无需等待</string>
+                </property>
+                <property name="text">
+                 <string>启动时自动预加载模型</string>
+                </property>
+                <property name="checked">
+                 <bool>true</bool>
+                </property>
+               </widget>
+              </item>
+              <item>
+               <widget class="QWidget" name="preloadOptions" native="true">
+                <layout class="QVBoxLayout" name="preloadOptionsLayout">
+                 <property name="spacing">
+                  <number>6</number>
+                 </property>
+                 <property name="leftMargin">
+                  <number>20</number>
+                 </property>
+                 <property name="topMargin">
+                  <number>0</number>
+                 </property>
+                 <property name="rightMargin">
+                  <number>0</number>
+                 </property>
+                 <property name="bottomMargin">
+                  <number>0</number>
+                 </property>
+                 <item>
+                  <widget class="QLabel" name="labelPreloadPipelines">
+                   <property name="text">
+                    <string>预加载管道:</string>
+                   </property>
+                  </widget>
+                 </item>
+                 <item>
+                  <layout class="QHBoxLayout" name="preloadPipelinesLayout">
+                   <property name="spacing">
+                    <number>4</number>
+                   </property>
+                   <item>
+                    <widget class="QCheckBox" name="chkPreloadOCR">
+                     <property name="toolTip">
+                      <string>通用 OCR 管道（约 600MB 显存）</string>
+                     </property>
+                     <property name="text">
+                      <string>通用 OCR</string>
+                     </property>
+                     <property name="checked">
+                      <bool>true</bool>
+                     </property>
+                    </widget>
+                   </item>
+                   <item>
+                    <widget class="QCheckBox" name="chkPreloadTable">
+                     <property name="toolTip">
+                      <string>表格识别管道</string>
+                     </property>
+                     <property name="text">
+                      <string>表格</string>
+                     </property>
+                     <property name="checked">
+                      <bool>false</bool>
+                     </property>
+                    </widget>
+                   </item>
+                   <item>
+                    <widget class="QCheckBox" name="chkPreloadFormula">
+                     <property name="toolTip">
+                      <string>公式识别管道</string>
+                     </property>
+                     <property name="text">
+                      <string>公式</string>
+                     </property>
+                     <property name="checked">
+                      <bool>false</bool>
+                     </property>
+                    </widget>
+                   </item>
+                   <item>
+                    <spacer name="horizontalSpacerPreload">
+                     <property name="orientation">
+                      <enum>Qt::Horizontal</enum>
+                     </property>
+                     <property name="sizeHint" stdset="0">
+                      <size>
+                       <width>40</width>
+                       <height>20</height>
+                      </size>
+                     </property>
+                    </spacer>
+                   </item>
+                  </layout>
+                 </item>
+                </layout>
+               </widget>
+              </item>
+              <item>
+               <widget class="QPushButton" name="btnPreloadNow">
+                <property name="toolTip">
+                 <string>立即预加载选中的管道</string>
+                </property>
+                <property name="text">
+                 <string>立即预加载</string>
+                </property>
+                <property name="maximumSize">
+                 <size>
+                  <width>150</width>
+                  <height>16777215</height>
+                 </size>
+                </property>
+               </widget>
+              </item>
+              <item>
+               <widget class="QLabel" name="labelPreloadStatus">
+                <property name="text">
+                 <string>尚未预加载</string>
+                </property>
+                <property name="wordWrap">
+                 <bool>true</bool>
+                </property>
+               </widget>
+              </item>
+              <item>
+               <widget class="QProgressBar" name="progressPreload">
+                <property name="value">
+                 <number>0</number>
+                </property>
+                <property name="textVisible">
+                 <bool>true</bool>
+                </property>
+                <property name="visible">
+                 <bool>false</bool>
+                </property>
+               </widget>
+              </item>
+             </layout>
+            </widget>
+           </item>
+           <item>
+            <widget class="QGroupBox" name="groupCache">
+             <property name="title">
+              <string>缓存管理</string>
              </property>
-             <property name="topMargin">
-              <number>0</number>
-             </property>
-             <property name="rightMargin">
-              <number>0</number>
-             </property>
-             <property name="bottomMargin">
-              <number>0</number>
-             </property>
-             <item>
-              <widget class="QLabel" name="labelPreloadPipelines">
-               <property name="text">
-                <string>预加载管道:</string>
-               </property>
-              </widget>
-             </item>
-             <item>
-              <layout class="QHBoxLayout" name="preloadPipelinesLayout">
-               <property name="spacing">
-                <number>4</number>
-               </property>
-               <item>
-                <widget class="QCheckBox" name="chkPreloadOCR">
-                 <property name="toolTip">
-                  <string>通用 OCR 管道（约 600MB 显存）</string>
-                 </property>
-                 <property name="text">
-                  <string>通用 OCR</string>
-                 </property>
-                 <property name="checked">
-                  <bool>true</bool>
-                 </property>
-                </widget>
-               </item>
-               <item>
-                <widget class="QCheckBox" name="chkPreloadTable">
-                 <property name="toolTip">
-                  <string>表格识别管道</string>
-                 </property>
-                 <property name="text">
-                  <string>表格</string>
-                 </property>
-                 <property name="checked">
-                  <bool>false</bool>
-                 </property>
-                </widget>
-               </item>
-               <item>
-                <widget class="QCheckBox" name="chkPreloadFormula">
-                 <property name="toolTip">
-                  <string>公式识别管道</string>
-                 </property>
-                 <property name="text">
-                  <string>公式</string>
-                 </property>
-                 <property name="checked">
-                  <bool>false</bool>
-                 </property>
-                </widget>
-               </item>
-               <item>
-                <widget class="QCheckBox" name="chkPreloadStructure">
-                 <property name="toolTip">
-                  <string>版面解析管道（包含 15+ 模型，约 2-3GB 显存）</string>
-                 </property>
-                 <property name="text">
-                  <string>版面</string>
-                 </property>
-                 <property name="checked">
-                  <bool>false</bool>
-                 </property>
-                </widget>
-               </item>
-               <item>
-                <spacer name="horizontalSpacerPreload">
-                 <property name="orientation">
-                  <enum>Qt::Horizontal</enum>
-                 </property>
-                 <property name="sizeHint" stdset="0">
-                  <size>
-                   <width>40</width>
-                   <height>20</height>
-                  </size>
-                 </property>
-                </spacer>
-               </item>
-              </layout>
-             </item>
-             <item>
-              <widget class="QCheckBox" name="chkParallelPreload">
-               <property name="toolTip">
-                <string>并行加载多个管道可加快速度，但会增加峰值显存占用</string>
-               </property>
-               <property name="text">
-                <string>并行加载（加快速度，增加显存）</string>
-               </property>
-               <property name="checked">
-                <bool>false</bool>
-               </property>
-              </widget>
-             </item>
-             <item>
-              <widget class="QWidget" name="parallelOptions" native="true">
-               <layout class="QHBoxLayout" name="parallelOptionsLayout">
+             <layout class="QVBoxLayout" name="cacheLayout">
+              <property name="spacing">
+               <number>8</number>
+              </property>
+              <item>
+               <layout class="QHBoxLayout" name="cacheButtonsLayout">
                 <property name="spacing">
                  <number>8</number>
                 </property>
-                <property name="leftMargin">
-                 <number>20</number>
-                </property>
-                <property name="topMargin">
-                 <number>0</number>
-                </property>
-                <property name="rightMargin">
-                 <number>0</number>
-                </property>
-                <property name="bottomMargin">
-                 <number>0</number>
-                </property>
                 <item>
-                 <widget class="QLabel" name="labelMaxWorkers">
-                  <property name="text">
-                   <string>并行数量:</string>
-                  </property>
-                 </widget>
-                </item>
-                <item>
-                 <widget class="QSpinBox" name="spinMaxWorkers">
+                 <widget class="QPushButton" name="btnRefreshCache">
                   <property name="toolTip">
-                   <string>同时加载的管道数量，建议不超过 2</string>
+                   <string>重新扫描模型缓存状态</string>
                   </property>
-                  <property name="minimum">
-                   <number>1</number>
-                  </property>
-                  <property name="maximum">
-                   <number>4</number>
-                  </property>
-                  <property name="value">
-                   <number>2</number>
-                  </property>
-                 </widget>
-                </item>
-                <item>
-                 <widget class="QLabel" name="labelMaxWorkersHint">
                   <property name="text">
-                   <string>(建议不超过 2)</string>
-                  </property>
-                  <property name="foregroundRole">
-                   <enum>QPalette::PlaceholderText</enum>
+                   <string>刷新缓存状态</string>
                   </property>
                  </widget>
                 </item>
                 <item>
-                 <spacer name="horizontalSpacerWorkers">
+                 <widget class="QPushButton" name="btnClearCache">
+                  <property name="toolTip">
+                   <string>清除依赖检测缓存（不影响已下载的模型）</string>
+                  </property>
+                  <property name="text">
+                   <string>清除缓存</string>
+                  </property>
+                 </widget>
+                </item>
+                <item>
+                 <spacer name="horizontalSpacerCache">
                   <property name="orientation">
                    <enum>Qt::Horizontal</enum>
                   </property>
@@ -396,430 +419,145 @@
                  </spacer>
                 </item>
                </layout>
-              </widget>
-             </item>
-            </layout>
-           </widget>
-          </item>
-          <item>
-           <widget class="QPushButton" name="btnPreloadNow">
-            <property name="toolTip">
-             <string>立即预加载选中的管道</string>
-            </property>
-            <property name="text">
-             <string>立即预加载</string>
-            </property>
-            <property name="maximumSize">
-             <size>
-              <width>150</width>
-              <height>16777215</height>
-             </size>
-            </property>
-           </widget>
-          </item>
-         </layout>
-        </widget>
-       </item>
-       <item>
-        <widget class="QGroupBox" name="groupCache">
-         <property name="title">
-          <string>缓存管理</string>
-         </property>
-         <layout class="QVBoxLayout" name="cacheLayout">
-          <property name="spacing">
-           <number>8</number>
-          </property>
-          <item>
-           <layout class="QHBoxLayout" name="cacheButtonsLayout">
-            <property name="spacing">
-             <number>8</number>
-            </property>
-            <item>
-             <widget class="QPushButton" name="btnRefreshCache">
-              <property name="toolTip">
-               <string>重新扫描模型缓存状态</string>
-              </property>
-              <property name="text">
-               <string>刷新缓存状态</string>
-              </property>
-             </widget>
-            </item>
-            <item>
-             <widget class="QPushButton" name="btnClearCache">
-              <property name="toolTip">
-               <string>清除依赖检测缓存（不影响已下载的模型）</string>
-              </property>
-              <property name="text">
-               <string>清除缓存</string>
-              </property>
+              </item>
+              <item>
+               <widget class="QLabel" name="labelCacheStatus">
+                <property name="text">
+                 <string>缓存状态: 未知</string>
+                </property>
+                <property name="foregroundRole">
+                 <enum>QPalette::PlaceholderText</enum>
+                </property>
+               </widget>
+              </item>
+             </layout>
             </widget>
            </item>
            <item>
-             <spacer name="horizontalSpacerCache">
-              <property name="orientation">
-               <enum>Qt::Horizontal</enum>
-              </property>
-              <property name="sizeHint" stdset="0">
-               <size>
-                <width>40</width>
-                <height>20</height>
-               </size>
-              </property>
-             </spacer>
-            </item>
-           </layout>
-          </item>
-          <item>
-           <widget class="QLabel" name="labelCacheStatus">
-            <property name="text">
-             <string>缓存状态: 未知</string>
-            </property>
-            <property name="foregroundRole">
-             <enum>QPalette::PlaceholderText</enum>
-            </property>
-           </widget>
-          </item>
-         </layout>
-        </widget>
-       </item>
-       <item>
-        <widget class="QGroupBox" name="groupStatus">
-         <property name="title">
-          <string>预加载状态</string>
-         </property>
-         <layout class="QVBoxLayout" name="statusLayout">
-          <property name="spacing">
-           <number>8</number>
-          </property>
-          <item>
-           <widget class="QLabel" name="labelPreloadStatus">
-            <property name="text">
-             <string>尚未预加载</string>
-            </property>
-            <property name="wordWrap">
-             <bool>true</bool>
-            </property>
-           </widget>
-          </item>
-          <item>
-           <widget class="QProgressBar" name="progressPreload">
-            <property name="value">
-             <number>0</number>
-            </property>
-            <property name="textVisible">
-             <bool>true</bool>
-            </property>
-            <property name="visible">
-             <bool>false</bool>
-            </property>
-           </widget>
-          </item>
-         </layout>
-        </widget>
-       </item>
-       <item>
-        <widget class="QGroupBox" name="groupLLMConfig">
-         <property name="title">
-          <string>LLM 服务配置</string>
-         </property>
-         <layout class="QVBoxLayout" name="llmConfigLayout">
-          <property name="spacing">
-           <number>8</number>
-          </property>
-          <item>
-           <widget class="QLabel" name="labelLLMHint">
-            <property name="text">
-             <string>配置 LLM 服务以启用信息抽取功能</string>
-            </property>
-            <property name="foregroundRole">
-             <enum>QPalette::PlaceholderText</enum>
-            </property>
-           </widget>
-          </item>
-          <item>
-           <layout class="QGridLayout" name="llmGrid">
-            <property name="horizontalSpacing">
-             <number>8</number>
-            </property>
-            <property name="verticalSpacing">
-             <number>6</number>
-            </property>
-            <item row="0" column="0">
-             <widget class="QLabel" name="labelMLLMUrl">
-              <property name="text">
-               <string>MLLM 服务地址:</string>
-              </property>
-             </widget>
-            </item>
-            <item row="0" column="1">
-             <widget class="QLineEdit" name="editMLLMUrl">
-              <property name="placeholderText">
-               <string>http://127.0.0.1:8080/v1/chat/completions</string>
-              </property>
-             </widget>
-            </item>
-            <item row="1" column="0">
-             <widget class="QLabel" name="labelMLLMModel">
-              <property name="text">
-               <string>MLLM 模型名称:</string>
-              </property>
-             </widget>
-            </item>
-            <item row="1" column="1">
-             <widget class="QLineEdit" name="editMLLMModel">
-              <property name="placeholderText">
-               <string>PP-DocBee2</string>
-              </property>
-             </widget>
-            </item>
-            <item row="2" column="0">
-             <widget class="QLabel" name="labelMLLMApiKey">
-              <property name="text">
-               <string>MLLM API Key:</string>
-              </property>
-             </widget>
-            </item>
-            <item row="2" column="1">
-             <widget class="QLineEdit" name="editMLLMApiKey">
-              <property name="echoMode">
-               <enum>QLineEdit::Password</enum>
-              </property>
-              <property name="placeholderText">
-               <string>可选</string>
-              </property>
-             </widget>
-            </item>
-            <item row="3" column="0">
-             <widget class="QLabel" name="labelLLMUrl">
-              <property name="text">
-               <string>LLM 服务地址:</string>
-              </property>
-             </widget>
-            </item>
-            <item row="3" column="1">
-             <widget class="QLineEdit" name="editLLMUrl">
-              <property name="placeholderText">
-               <string>http://127.0.0.1:8080/v1/chat/completions</string>
-              </property>
-             </widget>
-            </item>
-            <item row="4" column="0">
-             <widget class="QLabel" name="labelLLMModel">
-              <property name="text">
-               <string>LLM 模型名称:</string>
-              </property>
-             </widget>
-            </item>
-            <item row="4" column="1">
-             <widget class="QLineEdit" name="editLLMModel">
-              <property name="placeholderText">
-               <string>Qwen2.5</string>
-              </property>
-             </widget>
-            </item>
-            <item row="5" column="0">
-             <widget class="QLabel" name="labelLLMApiKey">
-              <property name="text">
-               <string>LLM API Key:</string>
-              </property>
-             </widget>
-            </item>
-            <item row="5" column="1">
-             <widget class="QLineEdit" name="editLLMApiKey">
-              <property name="echoMode">
-               <enum>QLineEdit::Password</enum>
-              </property>
-              <property name="placeholderText">
-               <string>可选</string>
-              </property>
-             </widget>
-            </item>
-           </layout>
-          </item>
-          <item>
-           <layout class="QHBoxLayout" name="llmButtonLayout">
-            <item>
-             <spacer name="horizontalSpacerLLM">
-              <property name="orientation">
-               <enum>Qt::Horizontal</enum>
-              </property>
-              <property name="sizeHint" stdset="0">
-               <size>
-                <width>40</width>
-                <height>20</height>
-               </size>
-              </property>
-             </spacer>
-            </item>
-            <item>
-             <widget class="QPushButton" name="btnSaveLLMConfig">
-              <property name="text">
-               <string>保存配置</string>
-              </property>
-             </widget>
-            </item>
-           </layout>
-          </item>
-         </layout>
-        </widget>
-       </item>
-       <item>
-        <widget class="QGroupBox" name="groupTemplate">
-         <property name="title">
-          <string>抽取模板管理</string>
-         </property>
-         <layout class="QVBoxLayout" name="templateLayout">
-          <property name="spacing">
-           <number>8</number>
-          </property>
-          <item>
-           <widget class="QLabel" name="labelTemplateHint">
-            <property name="text">
-             <string>管理常用的抽取字段模板</string>
-            </property>
-            <property name="foregroundRole">
-             <enum>QPalette::PlaceholderText</enum>
-            </property>
-           </widget>
-          </item>
-          <item>
-           <widget class="QTableWidget" name="tableTemplates">
-            <property name="selectionBehavior">
-             <enum>QAbstractItemView::SelectRows</enum>
-            </property>
-            <column>
-             <property name="text">
-              <string>模板名称</string>
+            <spacer name="spacerModelPage">
+             <property name="orientation">
+              <enum>Qt::Vertical</enum>
              </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>字段列表</string>
+             <property name="sizeHint" stdset="0">
+              <size>
+               <width>20</width>
+               <height>40</height>
+              </size>
              </property>
-            </column>
-           </widget>
-          </item>
-          <item>
-           <layout class="QHBoxLayout" name="templateButtons">
-            <item>
-             <widget class="QPushButton" name="btnAddTemplate">
-              <property name="text">
-               <string>添加模板</string>
-              </property>
-             </widget>
-            </item>
-            <item>
-             <widget class="QPushButton" name="btnEditTemplate">
-              <property name="text">
-               <string>编辑模板</string>
-              </property>
-             </widget>
-            </item>
-            <item>
-             <widget class="QPushButton" name="btnDeleteTemplate">
-              <property name="text">
-               <string>删除模板</string>
-              </property>
-             </widget>
-            </item>
-           </layout>
-          </item>
-         </layout>
-        </widget>
-       </item>
-       <item>
-        <widget class="QGroupBox" name="groupAppSettings">
-         <property name="title">
-          <string>应用设置</string>
-         </property>
-         <layout class="QVBoxLayout" name="appSettingsLayout">
-          <property name="spacing">
-           <number>8</number>
-          </property>
-          <item>
-           <widget class="QCheckBox" name="chkAutoHideToolbar">
-            <property name="text">
-             <string>自动隐藏边缘工具栏</string>
-            </property>
-            <property name="toolTip">
-             <string>工具栏停靠在屏幕边缘时自动隐藏，鼠标靠近边缘时自动弹出</string>
-            </property>
-           </widget>
-          </item>
-          <item>
-           <layout class="QHBoxLayout" name="hideDelayLayout">
-            <property name="spacing">
-             <number>8</number>
-            </property>
-            <property name="leftMargin">
-             <number>20</number>
-            </property>
-            <item>
-             <widget class="QLabel" name="labelHideDelay">
-              <property name="text">
-               <string>隐藏延迟:</string>
-              </property>
-             </widget>
-            </item>
-            <item>
-             <widget class="QSpinBox" name="spinHideDelay">
-              <property name="suffix">
-               <string> 毫秒</string>
-              </property>
-              <property name="minimum">
-               <number>100</number>
-              </property>
-              <property name="maximum">
-               <number>5000</number>
-              </property>
-              <property name="singleStep">
-               <number>100</number>
-              </property>
-              <property name="value">
-               <number>500</number>
-              </property>
-             </widget>
-            </item>
-            <item>
-             <spacer name="hideDelaySpacer">
-              <property name="orientation">
-               <enum>Qt::Horizontal</enum>
-              </property>
-              <property name="sizeHint" stdset="0">
-               <size>
-                <width>40</width>
-                <height>20</height>
-               </size>
-              </property>
-             </spacer>
-            </item>
-           </layout>
-          </item>
-          <item>
-           <widget class="QCheckBox" name="chkMinimizeToTray">
-            <property name="text">
-             <string>最小化到系统托盘</string>
-            </property>
-            <property name="toolTip">
-             <string>关闭主窗口时最小化到系统托盘而不是退出程序</string>
-            </property>
-           </widget>
-          </item>
-          <item>
-           <widget class="QCheckBox" name="chkAutoStart">
-            <property name="text">
-             <string>开机自启动</string>
-            </property>
-            <property name="toolTip">
-             <string>系统启动时自动运行 VibeOCR</string>
-            </property>
-           </widget>
-          </item>
-         </layout>
-        </widget>
-       </item>
+            </spacer>
+           </item>
+          </layout>
+         </widget>
+         <widget class="QWidget" name="pageAppSettings">
+          <layout class="QVBoxLayout" name="pageAppLayout">
+           <property name="spacing">
+            <number>12</number>
+           </property>
+           <property name="leftMargin">
+            <number>16</number>
+           </property>
+           <property name="topMargin">
+            <number>16</number>
+           </property>
+           <property name="rightMargin">
+            <number>16</number>
+           </property>
+           <property name="bottomMargin">
+            <number>16</number>
+           </property>
            <item>
-            <spacer name="verticalSpacer">
+            <widget class="QGroupBox" name="groupAppSettings">
+             <property name="title">
+              <string>应用设置</string>
+             </property>
+             <layout class="QVBoxLayout" name="appSettingsLayout">
+              <property name="spacing">
+               <number>8</number>
+              </property>
+              <item>
+               <widget class="QCheckBox" name="chkAutoHideToolbar">
+                <property name="toolTip">
+                 <string>工具栏停靠在屏幕边缘时自动隐藏，鼠标靠近边缘时自动弹出</string>
+                </property>
+                <property name="text">
+                 <string>自动隐藏边缘工具栏</string>
+                </property>
+               </widget>
+              </item>
+              <item>
+               <layout class="QHBoxLayout" name="hideDelayLayout">
+                <property name="spacing">
+                 <number>8</number>
+                </property>
+                <property name="leftMargin">
+                 <number>20</number>
+                </property>
+                <item>
+                 <widget class="QLabel" name="labelHideDelay">
+                  <property name="text">
+                   <string>隐藏延迟:</string>
+                  </property>
+                 </widget>
+                </item>
+                <item>
+                 <widget class="QSpinBox" name="spinHideDelay">
+                  <property name="suffix">
+                   <string> 毫秒</string>
+                  </property>
+                  <property name="minimum">
+                   <number>100</number>
+                  </property>
+                  <property name="maximum">
+                   <number>5000</number>
+                  </property>
+                  <property name="singleStep">
+                   <number>100</number>
+                  </property>
+                  <property name="value">
+                   <number>500</number>
+                  </property>
+                 </widget>
+                </item>
+                <item>
+                 <spacer name="hideDelaySpacer">
+                  <property name="orientation">
+                   <enum>Qt::Horizontal</enum>
+                  </property>
+                  <property name="sizeHint" stdset="0">
+                   <size>
+                    <width>40</width>
+                    <height>20</height>
+                   </size>
+                  </property>
+                 </spacer>
+                </item>
+               </layout>
+              </item>
+              <item>
+               <widget class="QCheckBox" name="chkMinimizeToTray">
+                <property name="toolTip">
+                 <string>关闭主窗口时最小化到系统托盘而不是退出程序</string>
+                </property>
+                <property name="text">
+                 <string>最小化到系统托盘</string>
+                </property>
+               </widget>
+              </item>
+              <item>
+               <widget class="QCheckBox" name="chkAutoStart">
+                <property name="toolTip">
+                 <string>系统启动时自动运行 VibeOCR</string>
+                </property>
+                <property name="text">
+                 <string>开机自启动</string>
+                </property>
+               </widget>
+              </item>
+             </layout>
+            </widget>
+           </item>
+           <item>
+            <spacer name="spacerAppPage">
              <property name="orientation">
               <enum>Qt::Vertical</enum>
              </property>

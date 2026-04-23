@@ -1,28 +1,24 @@
 """设置页面控制器
 
-处理设置页面的逻辑，包括 LLM 配置、模板管理、预加载和缓存管理。
+处理设置页面的逻辑，包括预加载和缓存管理。
 """
 
 import logging
 from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from PySide6.QtWidgets import (
     QCheckBox,
-    QDialog,
-    QLabel,
-    QLineEdit,
-    QListWidget,
     QMessageBox,
     QProgressBar,
     QPushButton,
-    QVBoxLayout,
+    QListWidget,
+    QStackedWidget,
     QWidget,
 )
 
 if TYPE_CHECKING:
-    from vibeocr.models.llm_config import LLMConfigs
     from vibeocr.services.ocr_service import OCRPipeline
 
 logger = logging.getLogger(__name__)
@@ -32,16 +28,6 @@ class SettingsPageController:
     """设置页面控制器
 
     处理设置页面的所有逻辑，与 UI 控件通过 findChild 方式交互。
-
-    Usage:
-        controller = SettingsPageController(
-            ui=main_window._ui,
-            project_root=main_window._project_root,
-            status_callback=main_window._statusbar.showMessage,
-            ocr_ready_callback=lambda: main_window._ocr_ready,
-            subprocess_manager=main_window._subprocess_manager,
-        )
-        controller.connect_signals()
     """
 
     def __init__(
@@ -59,13 +45,15 @@ class SettingsPageController:
         self._ocr_ready_callback = ocr_ready_callback
         self._subprocess_manager = subprocess_manager
         self._preload_complete_callback = preload_complete_callback
-
-        self._llm_configs: LLMConfigs | None = None
         self._manual_preload_total = 0
 
     def connect_signals(self) -> None:
         """连接设置页面的信号槽"""
-        # 预加载设置
+        nav_list = self._ui.findChild(QListWidget, "settingsNavList")
+        stacked = self._ui.findChild(QStackedWidget, "settingsStackedWidget")
+        if nav_list and stacked:
+            nav_list.currentRowChanged.connect(stacked.setCurrentIndex)
+
         chk_enable_preload = self._ui.findChild(QCheckBox, "chkEnablePreload")
         if chk_enable_preload:
             chk_enable_preload.toggled.connect(self._on_enable_preload_toggled)
@@ -74,18 +62,15 @@ class SettingsPageController:
         if btn_preload_now:
             btn_preload_now.clicked.connect(self._on_preload_now_clicked)
 
-        # 预加载管道选择复选框 - 保存配置
         for chk_name in [
             "chkPreloadOCR",
             "chkPreloadTable",
             "chkPreloadFormula",
-            "chkPreloadStructure",
         ]:
             chk = self._ui.findChild(QCheckBox, chk_name)
             if chk:
                 chk.toggled.connect(self._save_preload_pipelines_config)
 
-        # 缓存管理
         btn_refresh_cache = self._ui.findChild(QPushButton, "btnRefreshCache")
         if btn_refresh_cache:
             btn_refresh_cache.clicked.connect(self._on_refresh_cache_clicked)
@@ -94,123 +79,13 @@ class SettingsPageController:
         if btn_clear_cache:
             btn_clear_cache.clicked.connect(self._on_clear_cache_clicked)
 
-        # LLM 配置相关信号
-        btn_save_llm_config = self._ui.findChild(QPushButton, "btnSaveLLMConfig")
-        if btn_save_llm_config:
-            btn_save_llm_config.clicked.connect(self._on_save_llm_config_clicked)
-
-        # 初始化设置页面状态
         self._init_settings_page()
-
-    # ============================================================
-    # 初始化
-    # ============================================================
 
     def _init_settings_page(self) -> None:
         """初始化设置页面状态"""
         self._update_cache_status()
         self._update_preload_status()
         self._restore_preload_checkbox_state()
-
-        # 隐藏并行加载相关选项（当前不可用）
-        chk_parallel = self._ui.findChild(QWidget, "chkParallelPreload")
-        if chk_parallel:
-            chk_parallel.setVisible(False)
-        parallel_options = self._ui.findChild(QWidget, "parallelOptions")
-        if parallel_options:
-            parallel_options.setVisible(False)
-
-        self._load_llm_config()
-
-    # ============================================================
-    # LLM 配置
-    # ============================================================
-
-    @property
-    def llm_configs(self) -> Optional["LLMConfigs"]:
-        """获取 LLM 配置容器"""
-        return self._llm_configs
-
-    def _load_llm_config(self) -> None:
-        """加载 LLM 配置"""
-        from vibeocr.managers.config_manager import ConfigManager
-
-        self._llm_configs = ConfigManager.instance().load_llm_configs()
-        self._update_llm_config_ui()
-
-    def _save_llm_config(self) -> None:
-        """保存 LLM 配置"""
-        from vibeocr.managers.config_manager import ConfigManager
-
-        assert self._llm_configs is not None
-        if not ConfigManager.instance().save_llm_configs(self._llm_configs):
-            logger.error("保存 LLM 配置失败")
-            raise RuntimeError("保存 LLM 配置失败")
-        logger.info("LLM 配置已保存")
-
-    def _update_llm_config_ui(self) -> None:
-        """更新 LLM 配置 UI"""
-        edit_mllm_url = self._ui.findChild(QLineEdit, "editMLLMUrl")
-        edit_mllm_model = self._ui.findChild(QLineEdit, "editMLLMModel")
-        edit_mllm_api_key = self._ui.findChild(QLineEdit, "editMLLMApiKey")
-
-        edit_llm_url = self._ui.findChild(QLineEdit, "editLLMUrl")
-        edit_llm_model = self._ui.findChild(QLineEdit, "editLLMModel")
-        edit_llm_api_key = self._ui.findChild(QLineEdit, "editLLMApiKey")
-
-        if self._llm_configs:
-            # MLLM 配置
-            if self._llm_configs.mllm:
-                if edit_mllm_url:
-                    edit_mllm_url.setText(self._llm_configs.mllm.service_url)
-                if edit_mllm_model:
-                    edit_mllm_model.setText(self._llm_configs.mllm.model_name)
-                if edit_mllm_api_key:
-                    edit_mllm_api_key.setText(self._llm_configs.mllm.api_key)
-
-            # LLM 配置
-            if self._llm_configs.llm:
-                if edit_llm_url:
-                    edit_llm_url.setText(self._llm_configs.llm.service_url)
-                if edit_llm_model:
-                    edit_llm_model.setText(self._llm_configs.llm.model_name)
-                if edit_llm_api_key:
-                    edit_llm_api_key.setText(self._llm_configs.llm.api_key)
-
-    def _on_save_llm_config_clicked(self) -> None:
-        """保存 LLM 配置按钮点击"""
-        assert self._llm_configs is not None
-        # 保存 MLLM 配置
-        edit_mllm_url = self._ui.findChild(QLineEdit, "editMLLMUrl")
-        edit_mllm_model = self._ui.findChild(QLineEdit, "editMLLMModel")
-        edit_mllm_api_key = self._ui.findChild(QLineEdit, "editMLLMApiKey")
-
-        if edit_mllm_url:
-            self._llm_configs.mllm.service_url = edit_mllm_url.text()
-        if edit_mllm_model:
-            self._llm_configs.mllm.model_name = edit_mllm_model.text()
-        if edit_mllm_api_key:
-            self._llm_configs.mllm.api_key = edit_mllm_api_key.text()
-
-        # 保存 LLM 配置
-        edit_llm_url = self._ui.findChild(QLineEdit, "editLLMUrl")
-        edit_llm_model = self._ui.findChild(QLineEdit, "editLLMModel")
-        edit_llm_api_key = self._ui.findChild(QLineEdit, "editLLMApiKey")
-
-        if edit_llm_url:
-            self._llm_configs.llm.service_url = edit_llm_url.text()
-        if edit_llm_model:
-            self._llm_configs.llm.model_name = edit_llm_model.text()
-        if edit_llm_api_key:
-            self._llm_configs.llm.api_key = edit_llm_api_key.text()
-
-        self._save_llm_config()
-        self._status_callback("LLM 配置已保存")
-        logger.info("LLM 配置已保存")
-
-    # ============================================================
-    # 预加载
-    # ============================================================
 
     def _restore_preload_checkbox_state(self) -> None:
         """从配置恢复预加载 checkbox 状态（阻塞信号避免触发保存）"""
@@ -222,7 +97,6 @@ class SettingsPageController:
             "chkPreloadOCR": OCRPipeline.OCR,
             "chkPreloadTable": OCRPipeline.TABLE_RECOGNITION,
             "chkPreloadFormula": OCRPipeline.FORMULA_RECOGNITION,
-            "chkPreloadStructure": OCRPipeline.DOCUMENT_PARSING,
         }
         for chk_name, pipeline in mapping.items():
             chk = self._ui.findChild(QCheckBox, chk_name)
@@ -231,7 +105,6 @@ class SettingsPageController:
                 chk.setChecked(pipeline.value in saved)
                 chk.blockSignals(False)
 
-        # 恢复"启用预加载"总开关
         chk_enable = self._ui.findChild(QCheckBox, "chkEnablePreload")
         if chk_enable:
             chk_enable.blockSignals(True)
@@ -299,10 +172,6 @@ class SettingsPageController:
         if chk_formula and chk_formula.isChecked():
             pipelines.append(OCRPipeline.FORMULA_RECOGNITION)
 
-        chk_structure = self._ui.findChild(QCheckBox, "chkPreloadStructure")
-        if chk_structure and chk_structure.isChecked():
-            pipelines.append(OCRPipeline.DOCUMENT_PARSING)
-
         return pipelines
 
     def _save_preload_pipelines_config(self) -> None:
@@ -321,11 +190,9 @@ class SettingsPageController:
         """启动手动预加载和预热"""
         from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal
 
-        # 更新状态为"正在预加载"
         self._update_preload_status("正在预加载...")
 
         class _PreloadSignals(QObject):
-            """预加载信号（用于跨线程安全地通知主线程）"""
             status_changed = Signal(str)
             finished = Signal(dict)
 
@@ -350,7 +217,6 @@ class SettingsPageController:
                         results[pipeline.name] = True
                         logger.info(f"[预加载] {pipeline.display_name} 预加载成功!")
 
-                        # 预热
                         self.signals.status_changed.emit(
                             f"正在预热 {pipeline.display_name}..."
                         )
@@ -361,7 +227,6 @@ class SettingsPageController:
                         logger.error(f"预加载 {pipeline.name} 失败: {e}")
                         results[pipeline.name] = False
 
-                # 更新最终状态
                 success_count = sum(1 for v in results.values() if v)
                 total = len(results)
                 if success_count == total:
@@ -399,24 +264,20 @@ class SettingsPageController:
                     logger.warning(f"[预热] {pipeline.display_name} 预热失败: {e}")
 
         task = PreloadWithWarmupTask(self._subprocess_manager.service, pipelines, self)
-        # 信号连接到主线程槽函数（Qt 自动处理跨线程分派）
         task.signals.status_changed.connect(self._update_preload_status)
         task.signals.finished.connect(self._on_manual_preload_finished)
         QThreadPool.globalInstance().start(task)
 
     def _on_manual_preload_finished(self, results: dict) -> None:
         """手动预加载完成回调（主线程槽函数）"""
-        # 重新启用按钮
         btn_preload_now = self._ui.findChild(QWidget, "btnPreloadNow")
         if btn_preload_now:
             btn_preload_now.setEnabled(True)
 
-        # 隐藏进度条
         progress_bar = self._ui.findChild(QProgressBar, "progressPreload")
         if progress_bar:
             progress_bar.setVisible(False)
 
-        # 通知完成
         if self._preload_complete_callback:
             self._preload_complete_callback()
 
@@ -429,13 +290,12 @@ class SettingsPageController:
         label = self._ui.findChild(QWidget, "labelPreloadStatus")
         if label:
             if status:
-                label.setText(status)  # type: ignore[attr-defined]
+                label.setText(status)
             else:
-                # 默认状态
                 if self._subprocess_manager.is_ready:
-                    label.setText("就绪")  # type: ignore[attr-defined]
+                    label.setText("就绪")
                 else:
-                    label.setText("服务未就绪")  # type: ignore[attr-defined]
+                    label.setText("服务未就绪")
 
     # ============================================================
     # 缓存管理
@@ -460,11 +320,11 @@ class SettingsPageController:
             None,
             "确认清除",
             "确定要清除所有缓存吗？\n这将删除机器配置缓存，下次启动时需要重新检测。",
-            QMessageBox.Yes | QMessageBox.No,  # type: ignore[attr-defined]
-            QMessageBox.No,  # type: ignore[attr-defined]
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
         )
 
-        if reply == QMessageBox.Yes:  # type: ignore[attr-defined]
+        if reply == QMessageBox.Yes:
             clear_cache(self._project_root)
             self._update_cache_status("缓存已清除")
             logger.info("[缓存] 已清除")
@@ -476,11 +336,10 @@ class SettingsPageController:
         label = self._ui.findChild(QWidget, "labelCacheStatus")
         if label:
             if status:
-                label.setText(status)  # type: ignore[attr-defined]
+                label.setText(status)
             else:
                 if is_cache_valid(self._project_root):
                     info = get_cache_info(self._project_root)
-                    label.setText(f"缓存有效: {info}")  # type: ignore[attr-defined]
+                    label.setText(f"缓存有效: {info}")
                 else:
-                    label.setText("无有效缓存")  # type: ignore[attr-defined]
-
+                    label.setText("无有效缓存")
