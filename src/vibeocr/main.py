@@ -148,11 +148,12 @@ def launch_application() -> int:
     from vibeocr.managers.config_manager import ConfigManager
     from vibeocr.utils.app_settings import AppSettings
     from vibeocr.utils.qt_async import create_qasync_event_loop
+    from vibeocr import __version__
     from vibeocr.views.main_window import MainWindow
 
     app = QApplication(sys.argv)
     app.setApplicationName("VibeOCR")
-    app.setApplicationVersion("0.1.0")
+    app.setApplicationVersion(__version__)
 
     # 初始化统一配置管理器
     project_root = env_manager.get_project_root()
