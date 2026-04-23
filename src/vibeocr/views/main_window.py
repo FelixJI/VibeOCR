@@ -10,12 +10,11 @@ from PIL import Image
 from PySide6.QtCore import (
     QBuffer,
     QRect,
-    QThreadPool,
     QTimer,
     Signal,
     Slot,
 )
-from PySide6.QtGui import QAction, QPixmap
+from PySide6.QtGui import QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -94,9 +93,8 @@ class MainWindow(QMainWindow):
         # 恢复布局
         self._restore_layout()
         self._setup_console()
-        self._create_menus()
+        self._init_about_tab()
         self._connect_signals()
-        self._thread_pool = QThreadPool()
 
         # 创建边缘工具栏
         self._edge_toolbar = EdgeToolbar()
@@ -299,6 +297,14 @@ class MainWindow(QMainWindow):
         self._ui.tabWidget.addTab(self._batch_tab, "批量识别")
         logging.debug("批量识别标签页已添加")
 
+    def _init_about_tab(self) -> None:
+        """初始化关于标签页"""
+        from vibeocr.views.tabs.about_tab import AboutTab
+
+        self._about_tab = AboutTab()
+        self._ui.tabWidget.addTab(self._about_tab, "关于")
+        logging.debug("关于标签页已添加")
+
     def _restore_options_from_preferences(self) -> None:
         """从 OCRPreferences 恢复选项"""
         from vibeocr.utils.ocr_preferences import OCRPreferences
@@ -316,54 +322,17 @@ class MainWindow(QMainWindow):
         self._log_handler.status_signal.connect(self._on_log_status_update)
         logging.info("VibeOCR 启动")
 
-    def _create_menus(self) -> None:
-        """创建菜单栏"""
-        menubar = self.menuBar()
-
-        # 文件菜单
-        file_menu = menubar.addMenu("文件")
-
-        self._action_open_image = QAction("打开图片", self)
-        self._action_open_image.setShortcut("Ctrl+O")
-        file_menu.addAction(self._action_open_image)
-
-        self._action_screenshot = QAction("截图", self)
-        self._action_screenshot.setShortcut("Ctrl+S")
-        file_menu.addAction(self._action_screenshot)
-
-        file_menu.addSeparator()
-
-        self._action_exit = QAction("退出", self)
-        self._action_exit.setShortcut("Ctrl+Q")
-        file_menu.addAction(self._action_exit)
-
-        # 工具菜单
-        tools_menu = menubar.addMenu("工具")
-
-        self._action_refresh_cache = QAction("刷新依赖缓存", self)
-        self._action_refresh_cache.setShortcut("Ctrl+Shift+R")
-        self._action_refresh_cache.setStatusTip("清除缓存并重新检测OCR依赖")
-        tools_menu.addAction(self._action_refresh_cache)
-
-        self._action_download_models = QAction("下载模型", self)
-        self._action_download_models.setStatusTip("下载或更新 OCR 模型文件")
-        tools_menu.addAction(self._action_download_models)
-
-        # 帮助菜单
-        help_menu = menubar.addMenu("帮助")
-
-        self._action_about = QAction("关于", self)
-        help_menu.addAction(self._action_about)
-
     def _connect_signals(self) -> None:
         """连接信号槽"""
-        # 菜单动作
-        self._action_open_image.triggered.connect(self._on_open_image)
-        self._action_screenshot.triggered.connect(self._on_screenshot)
-        self._action_exit.triggered.connect(self.close)
-        self._action_about.triggered.connect(self._on_about)
-        self._action_refresh_cache.triggered.connect(self._on_refresh_cache)
-        self._action_download_models.triggered.connect(self._on_download_models)
+        # 快捷键（替代已删除的菜单）
+        self._shortcut_open = QShortcut(QKeySequence("Ctrl+O"), self)
+        self._shortcut_open.activated.connect(self._on_open_image)
+
+        self._shortcut_screenshot = QShortcut(QKeySequence("Ctrl+S"), self)
+        self._shortcut_screenshot.activated.connect(self._on_screenshot)
+
+        self._shortcut_quit = QShortcut(QKeySequence("Ctrl+Q"), self)
+        self._shortcut_quit.activated.connect(self.close)
 
         # 截图组件 - 使用新的 selection_done 信号进入编辑流程
         self._screenshot_widget.selection_done.connect(self._on_selection_done)
@@ -1015,55 +984,6 @@ class MainWindow(QMainWindow):
         """预览图文本块被点击 → 结果区高亮对应块"""
         self._result_widget.highlight_block(index)
 
-    def _on_about(self) -> None:
-        """显示关于对话框"""
-        QMessageBox.about(
-            self,
-            "关于 VibeOCR",
-            "VibeOCR v0.1.0\n\n"
-            "一个简单的截图OCR识别工具\n\n"
-            "使用 PaddleOCR 进行文字识别",
-        )
-
-    @Slot()
-    def _on_download_models(self) -> None:
-        """打开模型下载对话框"""
-        from vibeocr.widgets.model_download_dialog import ModelDownloadDialog
-
-        dialog = ModelDownloadDialog(self._project_root, self)
-        dialog.exec()
-
-    @Slot()
-    def _on_refresh_cache(self) -> None:
-        """刷新依赖缓存"""
-        from vibeocr.machine_cache import clear_cache
-        from vibeocr.managers.dependency_manager import DependencyCheckTask
-        from vibeocr.model_cache_manager import update_cache as update_model_cache
-
-        logging.info("正在清除依赖缓存...")
-        clear_cache(self._project_root)
-        update_model_cache()
-        self._statusbar.showMessage("缓存已清除，正在重新检测依赖...")
-
-        # 重新检测依赖
-        task = DependencyCheckTask(self._project_root)
-        task.signals.finished.connect(self._on_refresh_cache_finished)
-        self._thread_pool.start(task)
-
-    @Slot(bool, list)
-    def _on_refresh_cache_finished(self, ready: bool, missing: list) -> None:
-        """刷新缓存完成"""
-        self._dependency_check_complete = True
-        if ready:
-            self._ocr_ready = True
-            self._statusbar.showMessage("依赖检测完成，OCR功能已就绪")
-            logging.info("依赖缓存刷新完成，OCR功能已就绪")
-        else:
-            self._ocr_ready = False
-            missing_str = ", ".join(missing)
-            self._statusbar.showMessage(f"依赖检测完成，缺失: {missing_str}")
-            logging.warning(f"依赖缓存刷新完成，缺失: {missing_str}")
-
     def closeEvent(self, event) -> None:
         """关闭窗口事件
 
@@ -1125,10 +1045,6 @@ class MainWindow(QMainWindow):
                 logging.info("MinerU API 服务已关闭")
         except Exception as e:
             logging.warning(f"关闭 MinerU API 服务失败: {e}")
-
-        # 然后等待线程池完成（最多3秒）
-        if not self._thread_pool.waitForDone(3000):
-            logging.warning("部分任务未能在超时时间内完成，强制退出")
 
         event.accept()
         logging.info("应用程序已关闭")
