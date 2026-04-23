@@ -79,6 +79,10 @@ class SettingsPageController:
         if btn_clear_cache:
             btn_clear_cache.clicked.connect(self._on_clear_cache_clicked)
 
+        btn_download_models = self._ui.findChild(QPushButton, "btnDownloadModels")
+        if btn_download_models:
+            btn_download_models.clicked.connect(self._on_download_models_clicked)
+
         self._init_settings_page()
 
     def _init_settings_page(self) -> None:
@@ -343,3 +347,10 @@ class SettingsPageController:
                     label.setText(f"缓存有效: {info}")
                 else:
                     label.setText("无有效缓存")
+
+    def _on_download_models_clicked(self) -> None:
+        """下载模型按钮点击"""
+        from vibeocr.widgets.model_download_dialog import ModelDownloadDialog
+
+        dialog = ModelDownloadDialog(self._project_root, None)
+        dialog.exec()

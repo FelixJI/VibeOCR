@@ -103,7 +103,7 @@ def get_commits_since_last_tag() -> list[tuple[str, str]]:
         result = subprocess.run(
             ["git", "describe", "--tags", "--abbrev=0"],
             capture_output=True,
-            text=True,
+            encoding="utf-8",
             check=True,
         )
         last_tag = result.stdout.strip()
@@ -117,13 +117,14 @@ def get_commits_since_last_tag() -> list[tuple[str, str]]:
 
     try:
         result = subprocess.run(
-            cmd, capture_output=True, text=True, check=True
+            cmd, capture_output=True, encoding="utf-8", check=True
         )
     except (subprocess.CalledProcessError, FileNotFoundError):
         return []
 
     commits: list[tuple[str, str]] = []
-    for line in result.stdout.strip().splitlines():
+    stdout = result.stdout or ""
+    for line in stdout.strip().splitlines():
         if not line.strip():
             continue
         parts = line.split(" ", 1)
