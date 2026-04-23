@@ -1,0 +1,13 @@
+{
+  "upgrade_deps": {
+    "name": "依赖升级",
+    "success": true,
+    "returncode": 0,
+    "elapsed": 68.38315939903259,
+    "output": "============================================================\n  依赖升级工具\n============================================================\n\n[Step 1] 运行 uv lock --upgrade...\n运行: uv lock --upgrade\n\n[Step 2] 读取锁定版本...\n[INFO] 找到 193 个锁定包\n\n[Step 3] 更新 pyproject.toml...\n\n变更列表 (9 项):\n  nvidia-cudnn-cu13: nvidia-cudnn-cu13>=9.13.0.50 -> nvidia-cudnn-cu13>=9.21.1.3\n  nvidia-cublas: nvidia-cublas>=13.0.2.14 -> nvidia-cublas>=13.4.0.1\n  nvidia-cufft: nvidia-cufft>=12.0.0.61 -> nvidia-cufft>=12.2.0.46\n  nvidia-curand: nvidia-curand>=10.4.0.35 -> nvidia-curand>=10.4.2.55\n  nvidia-cusolver: nvidia-cusolver>=12.0.4.66 -> nvidia-cusolver>=12.2.0.1\n  nvidia-cusparse: nvidia-cusparse>=12.6.3.3 -> nvidia-cusparse>=12.7.10.1\n  nvidia-cuda-runtime: nvidia-cuda-runtime>=13.0.88 -> nvidia-cuda-runtime>=13.2.75\n  mineru: mineru[core]>=3.1.0 -> mineru[core]>=3.1.1\n  pre-commit: pre-commit>=4.5.1 -> pre-commit>=4.6.0\n\n[OK] pyproject.toml 已更新\n\n============================================================\n[OK] 依赖升级完成!\n============================================================\nResolved 193 packages in 1m 07s\nUpdated boto3 v1.42.91 -> v1.42.93\nUpdated botocore v1.42.91 -> v1.42.93\nUpdated cachetools v7.0.5 -> v7.0.6\nUpdated cssutils v2.11.1 -> v2.14.0\nAdded encutils v1.0.0\nUpdated filelock v3.28.0 -> v3.29.0\nUpdated httpx-retries v0.4.6 -> v0.5.0\nUpdated idna v3.11 -> v3.12\nUpdated mineru v3.1.0 -> v3.1.1\nUpdated modelscope v1.35.4 -> v1.36.1\nUpdated nvidia-cudnn-cu13 v9.21.0.82 -> v9.21.1.3\nUpdated pre-commit v4.5.1 -> v4.6.0\nUpdated pydantic v2.13.2 -> v2.13.3\nUpdated pydantic-core v2.46.2 -> v2.46.3\nUpdated pydantic-settings v2.13.1 -> v2.14.0\nUpdated uvicorn v0.44.0 -> v0.45.0"
+  },
+  "_meta": {
+    "total_elapsed": 68.38319873809814,
+    "timestamp": "2026-04-22T11:06:56.236470"
+  }
+}
