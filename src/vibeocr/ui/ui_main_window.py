@@ -102,6 +102,7 @@ class Ui_MainWindowWidget(object):
         self.settingsNavList = QListWidget(self.tabSettings)
         QListWidgetItem(self.settingsNavList)
         QListWidgetItem(self.settingsNavList)
+        QListWidgetItem(self.settingsNavList)
         self.settingsNavList.setObjectName(u"settingsNavList")
         self.settingsNavList.setMaximumSize(QSize(160, 16777215))
         self.settingsNavList.setFrameShape(QFrame.NoFrame)
@@ -292,6 +293,37 @@ class Ui_MainWindowWidget(object):
         self.pageAppLayout.addItem(self.spacerAppPage)
 
         self.settingsStackedWidget.addWidget(self.pageAppSettings)
+        self.pageTools = QWidget()
+        self.pageTools.setObjectName(u"pageTools")
+        self.pageToolsLayout = QVBoxLayout(self.pageTools)
+        self.pageToolsLayout.setSpacing(12)
+        self.pageToolsLayout.setObjectName(u"pageToolsLayout")
+        self.pageToolsLayout.setContentsMargins(16, 16, 16, 16)
+        self.groupModelDownload = QGroupBox(self.pageTools)
+        self.groupModelDownload.setObjectName(u"groupModelDownload")
+        self.modelDownloadLayout = QVBoxLayout(self.groupModelDownload)
+        self.modelDownloadLayout.setSpacing(8)
+        self.modelDownloadLayout.setObjectName(u"modelDownloadLayout")
+        self.btnDownloadModels = QPushButton(self.groupModelDownload)
+        self.btnDownloadModels.setObjectName(u"btnDownloadModels")
+        self.btnDownloadModels.setMaximumSize(QSize(150, 16777215))
+
+        self.modelDownloadLayout.addWidget(self.btnDownloadModels)
+
+        self.labelModelDownloadHint = QLabel(self.groupModelDownload)
+        self.labelModelDownloadHint.setObjectName(u"labelModelDownloadHint")
+        self.labelModelDownloadHint.setWordWrap(True)
+
+        self.modelDownloadLayout.addWidget(self.labelModelDownloadHint)
+
+
+        self.pageToolsLayout.addWidget(self.groupModelDownload)
+
+        self.spacerToolsPage = QSpacerItem(20, 40, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Expanding)
+
+        self.pageToolsLayout.addItem(self.spacerToolsPage)
+
+        self.settingsStackedWidget.addWidget(self.pageTools)
 
         self.settingsHLayout.addWidget(self.settingsStackedWidget)
 
@@ -332,6 +364,8 @@ class Ui_MainWindowWidget(object):
         ___qlistwidgetitem.setText(QCoreApplication.translate("MainWindowWidget", u"\u6a21\u578b\u7ba1\u7406", None))
         ___qlistwidgetitem1 = self.settingsNavList.item(1)
         ___qlistwidgetitem1.setText(QCoreApplication.translate("MainWindowWidget", u"\u5e94\u7528\u8bbe\u7f6e", None))
+        ___qlistwidgetitem2 = self.settingsNavList.item(2)
+        ___qlistwidgetitem2.setText(QCoreApplication.translate("MainWindowWidget", u"\u5de5\u5177", None))
         self.settingsNavList.setSortingEnabled(__sortingEnabled)
 
         self.groupPreload.setTitle(QCoreApplication.translate("MainWindowWidget", u"\u6a21\u578b\u9884\u52a0\u8f7d", None))
@@ -382,6 +416,12 @@ class Ui_MainWindowWidget(object):
         self.chkAutoStart.setToolTip(QCoreApplication.translate("MainWindowWidget", u"\u7cfb\u7edf\u542f\u52a8\u65f6\u81ea\u52a8\u8fd0\u884c VibeOCR", None))
 #endif // QT_CONFIG(tooltip)
         self.chkAutoStart.setText(QCoreApplication.translate("MainWindowWidget", u"\u5f00\u673a\u81ea\u542f\u52a8", None))
+        self.groupModelDownload.setTitle(QCoreApplication.translate("MainWindowWidget", u"\u6a21\u578b\u4e0b\u8f7d", None))
+#if QT_CONFIG(tooltip)
+        self.btnDownloadModels.setToolTip(QCoreApplication.translate("MainWindowWidget", u"\u4e0b\u8f7d\u6216\u66f4\u65b0 OCR \u6a21\u578b\u6587\u4ef6", None))
+#endif // QT_CONFIG(tooltip)
+        self.btnDownloadModels.setText(QCoreApplication.translate("MainWindowWidget", u"\u4e0b\u8f7d\u6a21\u578b", None))
+        self.labelModelDownloadHint.setText(QCoreApplication.translate("MainWindowWidget", u"\u4e0b\u8f7d\u6216\u66f4\u65b0 OCR \u6a21\u578b\u6587\u4ef6\uff08PaddleOCR\u3001\u8868\u683c\u8bc6\u522b\u3001\u516c\u5f0f\u8bc6\u522b\u7b49\uff09", None))
         self.tabWidget.setTabText(self.tabWidget.indexOf(self.tabSettings), QCoreApplication.translate("MainWindowWidget", u"\u8bbe\u7f6e", None))
         pass
     # retranslateUi
