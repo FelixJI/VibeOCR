@@ -158,7 +158,7 @@ def categorize_commits(
         "Changed": [],
     }
 
-    for _hash, subject in commits:
+    for _, subject in commits:
         # 去掉 scope 部分，如 feat(scope):xxx
         prefix = subject.split(":")[0].split("(")[0].strip().lower()
         msg = subject.strip()

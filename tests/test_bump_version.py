@@ -120,6 +120,7 @@ class TestVersionParsing:
         import importlib.util
 
         spec = importlib.util.spec_from_file_location("bump_version", SCRIPT)
+        assert spec is not None and spec.loader is not None
         mod = importlib.util.module_from_spec(spec)
         os.environ["PYPROJECT_TOML"] = ""
         os.environ["INIT_PY"] = ""
@@ -135,6 +136,7 @@ class TestVersionParsing:
         import importlib.util
 
         spec = importlib.util.spec_from_file_location("bump_version", SCRIPT)
+        assert spec is not None and spec.loader is not None
         mod = importlib.util.module_from_spec(spec)
         os.environ["PYPROJECT_TOML"] = ""
         os.environ["INIT_PY"] = ""
@@ -186,6 +188,7 @@ class TestVersionBumping:
         import importlib.util
 
         spec = importlib.util.spec_from_file_location("bump_version", SCRIPT)
+        assert spec is not None and spec.loader is not None
         mod = importlib.util.module_from_spec(spec)
         os.environ["PYPROJECT_TOML"] = ""
         os.environ["INIT_PY"] = ""
@@ -202,6 +205,7 @@ class TestVersionBumping:
         import importlib.util
 
         spec = importlib.util.spec_from_file_location("bump_version", SCRIPT)
+        assert spec is not None and spec.loader is not None
         mod = importlib.util.module_from_spec(spec)
         os.environ["PYPROJECT_TOML"] = ""
         os.environ["INIT_PY"] = ""
@@ -259,6 +263,7 @@ class TestChangelogGeneration:
         import importlib.util
 
         spec = importlib.util.spec_from_file_location("bump_version", SCRIPT)
+        assert spec is not None and spec.loader is not None
         mod = importlib.util.module_from_spec(spec)
         os.environ["PYPROJECT_TOML"] = ""
         os.environ["INIT_PY"] = ""
