@@ -249,12 +249,10 @@ class PreviewWidget(QWidget):
         if not current_pixmap:
             return
 
-        # 原始图像尺寸
-        orig_w = self._pixmap.width()
-        orig_h = self._pixmap.height()
-        # 显示的 pixmap 尺寸
-        disp_w = current_pixmap.width()
-        disp_h = current_pixmap.height()
+        # 逻辑显示尺寸（考虑 DPR）
+        dpr = current_pixmap.devicePixelRatio() or 1.0
+        disp_w = current_pixmap.width() / dpr
+        disp_h = current_pixmap.height() / dpr
 
         # label 中的居中偏移
         label_w = self._image_label.width()
@@ -262,19 +260,17 @@ class PreviewWidget(QWidget):
         offset_x = (label_w - disp_w) / 2
         offset_y = (label_h - disp_h) / 2
 
-        scale_x = disp_w / orig_w
-        scale_y = disp_h / orig_h
-
         overlay_rects = []
         for block in self._text_blocks:
             if block.bbox is None:
                 self._block_screen_rects.append((0, 0, 0, 0))
                 continue
             x0, y0, x1, y1 = block.bbox
-            sx = x0 * scale_x + offset_x
-            sy = y0 * scale_y + offset_y
-            sw = (x1 - x0) * scale_x
-            sh = (y1 - y0) * scale_y
+            # bbox 归一化 [0-1000] → 逻辑显示坐标
+            sx = x0 / 1000.0 * disp_w + offset_x
+            sy = y0 / 1000.0 * disp_h + offset_y
+            sw = (x1 - x0) / 1000.0 * disp_w
+            sh = (y1 - y0) / 1000.0 * disp_h
             self._block_screen_rects.append((sx, sy, sw, sh))
             overlay_rects.append((sx, sy, sw, sh, block.score, block.text))
 

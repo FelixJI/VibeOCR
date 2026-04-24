@@ -704,6 +704,22 @@ class OCRService(metaclass=SingletonMeta):
                 result = self._recognize_formula(image, actual_options)
             else:
                 result = self._recognize_ocr(image, actual_options)
+            # Normalize bbox from pixel coords to [0-1000]
+            if hasattr(image, 'shape') and len(image.shape) >= 2:
+                img_h, img_w = image.shape[:2]
+            elif hasattr(image, 'size'):
+                img_w, img_h = image.size
+            else:
+                img_w = img_h = 0
+            if img_w > 0 and img_h > 0:
+                for block in result.text_blocks:
+                    if block.bbox:
+                        x0, y0, x1, y1 = block.bbox
+                        block.bbox = (
+                            x0 / img_w * 1000, y0 / img_h * 1000,
+                            x1 / img_w * 1000, y1 / img_h * 1000,
+                        )
+
             _logger.info(f"[recognize] 识别完成，返回 {len(result.raw_text)} 字符")
             return result
         except Exception as e:

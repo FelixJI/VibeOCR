@@ -246,19 +246,21 @@ class FilePreviewWidget(QWidget):
         self._update_image_display()
 
     def _update_image_display(self) -> None:
-        """更新图片显示（适应大小）"""
+        """更新图片显示（适应大小，支持 HiDPI）"""
         if self._original_pixmap is None or self._original_pixmap.isNull():
             return
 
         viewport = self._scroll_area.viewport()
+        dpr = self.devicePixelRatio()
         max_w = max(viewport.width() - 20, 200)
         max_h = max(viewport.height() - 20, 200)
 
         scaled = self._original_pixmap.scaled(
-            max_w, max_h,
+            int(max_w * dpr), int(max_h * dpr),
             Qt.AspectRatioMode.KeepAspectRatio,
             Qt.TransformationMode.SmoothTransformation,
         )
+        scaled.setDevicePixelRatio(dpr)
         self._image_label.setPixmap(scaled)
 
     def _update_nav(self) -> None:
@@ -320,40 +322,28 @@ class FilePreviewWidget(QWidget):
         if self._original_pixmap is None:
             return
 
-        # 获取当前显示的 pixmap 尺寸
         current_pixmap = self._image_label.pixmap()
         if current_pixmap is None:
             return
 
-        # 映射 bbox [0-1000] 到当前 pixmap 显示尺寸
-        disp_w = current_pixmap.width()
-        disp_h = current_pixmap.height()
+        # 逻辑显示尺寸（考虑 DPR）
+        dpr = current_pixmap.devicePixelRatio() or 1.0
+        disp_w = current_pixmap.width() / dpr
+        disp_h = current_pixmap.height() / dpr
 
-        # 原始文档尺寸 vs 归一化 [0-1000]
-        orig_w = self._original_pixmap.width()
-        orig_h = self._original_pixmap.height()
-
-        # bbox 归一化到原始尺寸
-        x0 = bbox[0] / BBOX_NORM * orig_w
-        y0 = bbox[1] / BBOX_NORM * orig_h
-        x1 = bbox[2] / BBOX_NORM * orig_w
-        y1 = bbox[3] / BBOX_NORM * orig_h
-
-        # 缩放到当前显示尺寸
-        scale_x = disp_w / orig_w
-        scale_y = disp_h / orig_h
-
-        screen_rect = QRectF(
-            x0 * scale_x, y0 * scale_y,
-            (x1 - x0) * scale_x, (y1 - y0) * scale_y,
-        )
-
-        # 考虑 label 对齐偏移
+        # label 中的居中偏移
         label_w = self._image_label.width()
         label_h = self._image_label.height()
         offset_x = (label_w - disp_w) / 2
         offset_y = (label_h - disp_h) / 2
-        screen_rect.translate(offset_x, offset_y)
+
+        # bbox [0-1000] → 逻辑显示坐标
+        screen_rect = QRectF(
+            bbox[0] / BBOX_NORM * disp_w + offset_x,
+            bbox[1] / BBOX_NORM * disp_h + offset_y,
+            (bbox[2] - bbox[0]) / BBOX_NORM * disp_w,
+            (bbox[3] - bbox[1]) / BBOX_NORM * disp_h,
+        )
 
         self._overlay.set_highlight(screen_rect, block_type)
 
