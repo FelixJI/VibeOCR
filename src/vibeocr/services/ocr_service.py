@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 import threading
@@ -515,12 +516,46 @@ class OCRService(metaclass=SingletonMeta):
                 a = paddle.randn([4, 4])
                 _ = paddle.matmul(a, a).numpy()
                 _logger.info("[GPU] CUDA 运行时验证通过，使用 GPU 推理")
+                # paddle 导入完成后注册 DLL 目录，供 predict() 内部的 ctypes 使用
+                # （必须在 paddle 导入后调用，否则会触发 paddle/libs/nvidia 路径错误）
+                OCRService._register_dll_directories()
                 return "gpu"
         except Exception as e:
             _logger.warning("[GPU] GPU 可用性验证失败: %s，回退到 CPU", e)
             return "cpu"
         _logger.warning("[GPU] VIBEOCR_USE_GPU=true 但未检测到可用 GPU，回退到 CPU")
         return "cpu"
+
+    @classmethod
+    def _register_dll_directories(cls) -> None:
+        """通过 os.add_dll_directory() 注册 CUDA DLL 目录
+
+        Python 3.8+ Windows 上 ctypes.CDLL 不再搜索 os.environ["PATH"]，
+        必须通过 os.add_dll_directory() 注册。此方法必须在 PaddlePaddle
+        导入完成后调用，否则会触发 PaddlePaddle 内部的路径错误。
+        """
+        if not hasattr(os, "add_dll_directory"):
+            return
+        import sys
+        site_packages = next((p for p in sys.path if "site-packages" in p), None)
+        if not site_packages:
+            return
+        nvidia_base = os.path.join(site_packages, "nvidia")
+        if not os.path.isdir(nvidia_base):
+            return
+        for entry in os.scandir(nvidia_base):
+            if not entry.is_dir():
+                continue
+            for subfolder in ("bin", "lib"):
+                sub_dir = os.path.join(entry.path, subfolder)
+                if os.path.isdir(sub_dir):
+                    with contextlib.suppress(OSError):
+                        os.add_dll_directory(sub_dir)
+                    for sub in os.scandir(sub_dir):
+                        arch_dir = os.path.join(sub_dir, sub.name)
+                        if sub.is_dir():
+                            with contextlib.suppress(OSError):
+                                os.add_dll_directory(arch_dir)
 
     def _create_pipeline(self, pipeline_name: str, device: str = "cpu") -> Any:
         """创建指定管道"""
@@ -604,6 +639,7 @@ class OCRService(metaclass=SingletonMeta):
         if pipeline_name not in self._pipelines:
             with self._lock:
                 if pipeline_name not in self._pipelines:  # 双重检查
+                    self._setup_cuda_dll_path()
                     device = self._get_device()
                     _logger.info(
                         "[get_pipeline] 创建管道 %s，设备=%s，"
@@ -611,7 +647,6 @@ class OCRService(metaclass=SingletonMeta):
                         pipeline_name, device,
                         list(self._pipelines.keys()),
                     )
-                    self._setup_cuda_dll_path()
                     self._pipelines[pipeline_name] = self._create_pipeline(
                         pipeline_name, device
                     )

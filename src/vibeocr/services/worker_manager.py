@@ -330,30 +330,26 @@ class WorkerManager:
     def _restart_worker(self, worker_info: WorkerInfo) -> bool:
         """重启指定 Worker
 
+        委托给 OCRWorkerProcess._try_restart() 执行，
+        内部有锁保护，防止并发重启产生重复子进程。
+
         Args:
             worker_info: 要重启的 Worker
 
         Returns:
             重启是否成功
         """
-        try:
-            worker_info.process.stop(timeout=5.0)
-        except Exception as e:
-            logger.warning(f"Worker {worker_info.worker_id} 停止失败: {e}")
-
-        try:
-            worker_info.state = WorkerState.STARTING
-            worker_info.process.start(timeout=self.start_timeout)
+        worker_info.state = WorkerState.STARTING
+        success = worker_info.process._try_restart(timeout=self.start_timeout)
+        if success:
             worker_info.state = WorkerState.IDLE
             worker_info.last_error = None
             worker_info.last_active = time.time()
             logger.info(f"Worker {worker_info.worker_id} 重启成功")
-            return True
-        except Exception as e:
+        else:
             worker_info.state = WorkerState.ERROR
-            worker_info.last_error = str(e)
-            logger.error(f"Worker {worker_info.worker_id} 重启失败: {e}")
-            return False
+            logger.error(f"Worker {worker_info.worker_id} 重启失败")
+        return success
 
     def _preempt_busy_worker(self) -> WorkerInfo | None:
         """抢占被后台任务（如预加载）阻塞的 Worker
@@ -433,6 +429,7 @@ class WorkerManager:
 
     def _perform_health_check(self) -> None:
         """执行健康检查"""
+        workers_to_restart = []
         with self._workers_lock:
             for worker_info in self._workers:
                 # 检查进程是否存活
@@ -443,7 +440,7 @@ class WorkerManager:
 
                         # 自动重启
                         if self.auto_restart:
-                            self._restart_worker(worker_info)
+                            workers_to_restart.append(worker_info)
                     continue
 
                 # 检查是否卡死（超过 5 分钟无活动）
@@ -453,8 +450,11 @@ class WorkerManager:
                         logger.warning(
                             f"Worker {worker_info.worker_id} 可能卡死（无响应 {idle_time:.0f} 秒）"
                         )
-                        # 强制重启
-                        self._restart_worker(worker_info)
+                        workers_to_restart.append(worker_info)
+
+        # 在锁外执行重启（重启耗时较长，避免阻塞其他操作）
+        for worker_info in workers_to_restart:
+            self._restart_worker(worker_info)
 
     def get_stats(self) -> dict:
         """获取统计信息

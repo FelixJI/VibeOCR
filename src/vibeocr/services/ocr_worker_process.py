@@ -102,6 +102,9 @@ class OCRWorkerProcess:
         self.busy = False
         self._ready = False
 
+        # 防止并发重启的锁（健康检查和识别任务可能同时触发重启）
+        self._restart_lock = threading.Lock()
+
     @property
     def is_running(self) -> bool:
         """检查 Worker 进程是否在运行"""
@@ -484,26 +487,33 @@ class OCRWorkerProcess:
     def _try_restart(self, timeout: float = 60.0) -> bool:
         """尝试重启 Worker
 
+        使用锁确保同一时间只有一个线程执行重启，
+        避免健康检查和识别任务同时重启导致重复子进程。
+
         Args:
             timeout: 启动超时时间（秒）
 
         Returns:
             重启是否成功
         """
-        try:
-            logger.info(f"[主进程] 尝试重启 Worker {self.worker_id}...")
-            self.stop()
-            # 重新生成共享内存名称（避免与旧内存冲突）
-            unique_id = uuid.uuid4().hex[:16]
-            self.data_shm_name = f"vibeocr_data_{unique_id}_{self.worker_id}"
-            self.shm_name = self.data_shm_name
+        with self._restart_lock:
+            # 如果其他线程已经完成重启，直接返回
+            if self.is_ready:
+                return True
+            try:
+                logger.info(f"[主进程] 尝试重启 Worker {self.worker_id}...")
+                self.stop()
+                # 重新生成共享内存名称（避免与旧内存冲突）
+                unique_id = uuid.uuid4().hex[:16]
+                self.data_shm_name = f"vibeocr_data_{unique_id}_{self.worker_id}"
+                self.shm_name = self.data_shm_name
 
-            self.start(timeout=timeout)
-            logger.info(f"[主进程] Worker {self.worker_id} 重启成功")
-            return True
-        except Exception as e:
-            logger.error(f"[主进程] Worker {self.worker_id} 重启失败: {e}")
-            return False
+                self.start(timeout=timeout)
+                logger.info(f"[主进程] Worker {self.worker_id} 重启成功")
+                return True
+            except Exception as e:
+                logger.error(f"[主进程] Worker {self.worker_id} 重启失败: {e}")
+                return False
 
     def preload_pipelines(
         self,
