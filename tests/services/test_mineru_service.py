@@ -277,3 +277,87 @@ class TestBuildOcrResult:
         assert len(result.text_with_scores) == 2
         assert result.text_with_scores[0] == ("A", 1.0)
         assert result.avg_score == 1.0
+
+
+class TestMinerUIntegration:
+    """集成测试 — 验证多页 PDF 数据完整性"""
+
+    def _make_service(self):
+        service = MinerUService.__new__(MinerUService)
+        service._api_url = "http://127.0.0.1:9999"
+        service._api_process = None
+        return service
+
+    def test_multi_page_pdf_result_structure(self):
+        """多页 PDF 应生成含正确 page_idx 的 text_blocks"""
+        service = self._make_service()
+        content_list = [
+            {"type": "text", "text": "Title", "text_level": 1, "bbox": [10, 10, 500, 60], "page_idx": 0},
+            {"type": "text", "text": "Para on page 0", "bbox": [10, 80, 800, 200], "page_idx": 0},
+            {"type": "table", "table_body": "<tr><td>A</td></tr>", "bbox": [10, 220, 800, 400], "page_idx": 0},
+            {"type": "image", "img_path": "images/img_0.png", "image_caption": ["Fig 1"], "bbox": [10, 10, 800, 500], "page_idx": 1},
+            {"type": "equation", "text": "E=mc^2", "bbox": [10, 520, 400, 580], "page_idx": 1},
+            {"type": "text", "text": "Last page", "bbox": [10, 600, 500, 650], "page_idx": 2},
+        ]
+        b64_img = base64.b64encode(b"\x89PNG fake").decode()
+        api_resp = _make_api_response(
+            md_content="# Title\nPara on page 0\n\n| A |\n\n## Page 2",
+            content_list=content_list,
+            images={"images/img_0.png": f"data:image/png;base64,{b64_img}"},
+        )
+        result = service._build_ocr_result(api_resp, "input.pdf", data=None)
+
+        # text_blocks 数量和 page_idx
+        assert len(result.text_blocks) == 6
+        pages = [b.page_idx for b in result.text_blocks]
+        assert pages == [0, 0, 0, 1, 1, 2]
+
+        # content_list 保持原样透传
+        assert len(result.content_list) == 6
+        assert result.content_list[3]["img_path"] == "images/img_0.png"
+
+        # images 解码正确
+        assert "images/img_0.png" in result.images
+
+        # raw_text 包含所有页的纯文本
+        assert "Title" in result.raw_text
+        assert "Para on page 0" in result.raw_text
+        assert "A" in result.raw_text
+        assert "Last page" in result.raw_text
+
+        # markdown_text 保持 Markdown
+        assert "#" in result.markdown_text
+
+    def test_raw_text_excludes_markdown_syntax(self):
+        """raw_text 不应包含 Markdown 语法"""
+        service = self._make_service()
+        content_list = [
+            {"type": "text", "text": "Heading", "text_level": 2, "bbox": [0, 0, 100, 30], "page_idx": 0},
+            {"type": "equation", "text": "x^2", "bbox": [0, 40, 100, 60], "page_idx": 0},
+            {"type": "list", "list_items": ["first", "second"], "bbox": [0, 70, 100, 120], "page_idx": 0},
+        ]
+        api_resp = _make_api_response(
+            md_content="## Heading\n\n$x^2$\n\n- first\n- second",
+            content_list=content_list,
+        )
+        result = service._build_ocr_result(api_resp, "input.pdf", data=None)
+
+        # raw_text has content from all types
+        assert "Heading" in result.raw_text
+        assert "x^2" in result.raw_text
+        assert "first" in result.raw_text
+        assert "second" in result.raw_text
+        # But NOT markdown syntax
+        assert "##" not in result.raw_text
+        assert "$" not in result.raw_text
+
+    def test_bbox_preserves_normalized_coordinates(self):
+        """bbox 应保持 [0,1000] 归一化坐标，不转换为像素"""
+        service = self._make_service()
+        content_list = [
+            {"type": "text", "text": "test", "bbox": [100, 200, 900, 800], "page_idx": 0},
+        ]
+        api_resp = _make_api_response(md_content="test", content_list=content_list)
+        result = service._build_ocr_result(api_resp, "input.png", data=b"fake_png")
+
+        assert result.text_blocks[0].bbox == (100.0, 200.0, 900.0, 800.0)
