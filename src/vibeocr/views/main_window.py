@@ -404,10 +404,13 @@ class MainWindow(QMainWindow):
     @Slot(bool, list)
     def _on_dependency_check_finished(self, ready: bool, missing: list) -> None:
         """依赖检查完成"""
+        already_ready = self._ocr_ready
         self._dependency_check_complete = True
         if ready:
             self._ocr_ready = True
-            self._statusbar.showMessage("OCR功能已就绪")
+            # 仅在未从缓存设置过就绪状态时更新状态栏（避免覆盖缓存提示）
+            if not already_ready:
+                self._statusbar.showMessage("OCR功能已就绪")
             logging.info("OCR功能已就绪")
 
             # 启动子进程 Worker（依赖检测完成后立即启动）
@@ -549,6 +552,8 @@ class MainWindow(QMainWindow):
         """安装完成"""
         if result == 1:
             self._statusbar.showMessage("OCR依赖安装成功")
+            # 安装成功后启动子进程 Worker
+            self._start_subprocess_worker()
         else:
             self._statusbar.showMessage("OCR依赖安装失败")
 
@@ -728,7 +733,7 @@ class MainWindow(QMainWindow):
 
         logging.info(f"Starting OCR for file: {filename}, mime: {mime_type}")
         self._result_widget.clear()
-        self._statusbar.showMessage("Recognizing...")
+        self._statusbar.showMessage("正在识别...")
 
         # Force UI update
         QApplication.processEvents()
@@ -941,7 +946,7 @@ class MainWindow(QMainWindow):
 
         logging.info("Starting OCR recognition")
         self._result_widget.clear()
-        self._statusbar.showMessage("Recognizing...")
+        self._statusbar.showMessage("正在识别...")
 
         # Force UI update to show "Recognizing" message
         QApplication.processEvents()

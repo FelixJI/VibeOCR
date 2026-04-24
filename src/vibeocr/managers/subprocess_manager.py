@@ -166,6 +166,7 @@ class SubprocessManager(QObject):
         self._service: OCRServiceSubprocess | None = None
         self._is_ready = False
         self._start_task: SubprocessStartTask | None = None
+        self._preload_task: PreloadTask | None = None
 
     @property
     def service(self) -> Optional["OCRServiceSubprocess"]:
@@ -238,9 +239,14 @@ class SubprocessManager(QObject):
 
         logger.info(f"[SubprocessManager] 开始预加载管道: {pipelines}")
 
-        task = PreloadTask(self._service, pipelines)
-        task.signals.finished.connect(self.preload_finished.emit)
-        self._thread_pool.start(task)
+        self._preload_task = PreloadTask(self._service, pipelines)
+        self._preload_task.signals.finished.connect(self._on_preload_done)
+        self._thread_pool.start(self._preload_task)
+
+    def _on_preload_done(self, results: dict) -> None:
+        """预加载完成，清理引用并转发信号"""
+        self._preload_task = None
+        self.preload_finished.emit(results)
 
     def shutdown(self, timeout_ms: int = 3000) -> bool:
         """关闭子进程服务
@@ -262,6 +268,13 @@ class SubprocessManager(QObject):
             except RuntimeError:
                 pass  # 信号已断开
 
+        # 取消正在进行的预加载任务
+        if self._preload_task is not None:
+            try:
+                self._preload_task.signals.finished.disconnect(self._on_preload_done)
+            except RuntimeError:
+                pass
+
         # 等待线程池完成
         if not self._thread_pool.waitForDone(timeout_ms):
             logger.warning("[SubprocessManager] 线程池未能在超时时间内完成")
@@ -275,6 +288,7 @@ class SubprocessManager(QObject):
                 logger.error(f"[SubprocessManager] 关闭服务失败: {e}")
 
         self._start_task = None
+        self._preload_task = None
         self._service = None
         self._is_ready = False
         return True

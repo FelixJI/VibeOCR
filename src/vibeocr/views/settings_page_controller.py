@@ -46,6 +46,7 @@ class SettingsPageController:
         self._subprocess_manager = subprocess_manager
         self._preload_complete_callback = preload_complete_callback
         self._manual_preload_total = 0
+        self._manual_preload_task: object | None = None
 
     def connect_signals(self) -> None:
         """连接设置页面的信号槽"""
@@ -271,10 +272,13 @@ class SettingsPageController:
         task = PreloadWithWarmupTask(self._subprocess_manager.service, pipelines, self)
         task.signals.status_changed.connect(self._update_preload_status)
         task.signals.finished.connect(self._on_manual_preload_finished)
+        self._manual_preload_task = task
         QThreadPool.globalInstance().start(task)
 
     def _on_manual_preload_finished(self, results: dict) -> None:
         """手动预加载完成回调（主线程槽函数）"""
+        self._manual_preload_task = None
+
         btn_preload_now = self._ui.findChild(QWidget, "btnPreloadNow")
         if btn_preload_now:
             btn_preload_now.setEnabled(True)
