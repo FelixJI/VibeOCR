@@ -970,7 +970,7 @@ class MainWindow(QMainWindow):
         logging.error(f"[_on_ocr_error] 收到 OCR 错误信号: {error_msg}")
         self._current_ocr_result = None
         self._result_widget.clear()
-        self._result_widget._browser.setHtml(
+        self._result_widget._web_view.setHtml(
             f"<p style='color:#f44336;'>识别失败：{error_msg}</p>"
         )
         self._statusbar.showMessage(f"识别失败：{error_msg}")
