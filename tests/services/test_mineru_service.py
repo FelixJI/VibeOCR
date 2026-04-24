@@ -61,7 +61,7 @@ class TestMinerUService:
             result = service.parse(b"fake_pdf_data", "application/pdf")
 
         assert isinstance(result, OCRResult)
-        assert "Test" in result.raw_text
+        assert "Hello world" in result.raw_text
         assert result.pipeline_type == "MinerU"
 
     def test_parse_with_images(self):
@@ -192,3 +192,88 @@ class TestMinerUService:
         mock_process.terminate.assert_called_once()
         assert MinerUService._api_process is None
         assert MinerUService._api_url == ""
+
+
+class TestBuildOcrResult:
+    """测试 _build_ocr_result 数据层重构"""
+
+    def _make_service(self):
+        service = MinerUService.__new__(MinerUService)
+        service._api_url = "http://127.0.0.1:9999"
+        service._api_process = None
+        return service
+
+    def test_raw_text_is_plain_from_content_list(self):
+        """raw_text 应为从 content_list 提取的纯文本"""
+        service = self._make_service()
+        content_list = [
+            {"type": "text", "text": "Hello ", "bbox": [0, 0, 100, 50], "page_idx": 0},
+            {"type": "text", "text": "world", "text_level": 1, "bbox": [0, 60, 100, 80], "page_idx": 0},
+            {"type": "table", "table_body": "<tr><td>Data</td></tr>", "bbox": [0, 100, 500, 200], "page_idx": 0},
+            {"type": "equation", "text": "E=mc^2", "bbox": [0, 210, 200, 240], "page_idx": 0},
+            {"type": "list", "list_items": ["item1", "item2"], "bbox": [0, 250, 200, 350], "page_idx": 0},
+        ]
+        api_resp = _make_api_response(
+            md_content="# Hello world\n\n| Data |\n",
+            content_list=content_list,
+        )
+        result = service._build_ocr_result(api_resp, "input.pdf", data=b"fake")
+        assert "#" not in result.raw_text
+        assert "Hello" in result.raw_text
+        assert "world" in result.raw_text
+        assert "Data" in result.raw_text
+        assert "item1" in result.raw_text
+        assert "item2" in result.raw_text
+
+    def test_text_blocks_have_page_idx(self):
+        service = self._make_service()
+        content_list = [
+            {"type": "text", "text": "P0", "bbox": [0, 0, 100, 50], "page_idx": 0},
+            {"type": "text", "text": "P1", "bbox": [0, 0, 100, 50], "page_idx": 1},
+        ]
+        api_resp = _make_api_response(md_content="t", content_list=content_list)
+        result = service._build_ocr_result(api_resp, "input.pdf", data=None)
+        assert len(result.text_blocks) == 2
+        assert result.text_blocks[0].page_idx == 0
+        assert result.text_blocks[1].page_idx == 1
+
+    def test_text_blocks_bbox_is_normalized(self):
+        service = self._make_service()
+        content_list = [
+            {"type": "text", "text": "t", "bbox": [10, 20, 990, 500], "page_idx": 0},
+        ]
+        api_resp = _make_api_response(md_content="t", content_list=content_list)
+        result = service._build_ocr_result(api_resp, "input.png", data=b"fake")
+        assert result.text_blocks[0].bbox == (10.0, 20.0, 990.0, 500.0)
+
+    def test_text_blocks_skip_no_bbox(self):
+        service = self._make_service()
+        content_list = [
+            {"type": "text", "text": "with", "bbox": [0, 0, 100, 50], "page_idx": 0},
+            {"type": "text", "text": "without", "page_idx": 0},
+        ]
+        api_resp = _make_api_response(md_content="t", content_list=content_list)
+        result = service._build_ocr_result(api_resp, "input.pdf", data=None)
+        assert len(result.text_blocks) == 1
+        assert result.text_blocks[0].text == "with"
+
+    def test_table_block_text_from_table_body(self):
+        service = self._make_service()
+        content_list = [
+            {"type": "table", "table_body": "<tr><td>A</td><td>B</td></tr>", "bbox": [0, 0, 500, 100], "page_idx": 0},
+        ]
+        api_resp = _make_api_response(md_content="t", content_list=content_list)
+        result = service._build_ocr_result(api_resp, "input.pdf", data=None)
+        assert result.text_blocks[0].text == "A B"
+
+    def test_text_with_scores_from_text_blocks(self):
+        service = self._make_service()
+        content_list = [
+            {"type": "text", "text": "A", "bbox": [0, 0, 50, 20], "page_idx": 0},
+            {"type": "text", "text": "B", "bbox": [0, 30, 50, 50], "page_idx": 0},
+        ]
+        api_resp = _make_api_response(md_content="A B", content_list=content_list)
+        result = service._build_ocr_result(api_resp, "input.pdf", data=None)
+        assert len(result.text_with_scores) == 2
+        assert result.text_with_scores[0] == ("A", 1.0)
+        assert result.avg_score == 1.0

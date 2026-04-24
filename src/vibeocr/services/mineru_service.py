@@ -10,6 +10,7 @@ import base64
 import json
 import logging
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -23,6 +24,7 @@ import httpx
 from vibeocr.core.singleton_meta import SingletonMeta
 from vibeocr.models.ocr_result import OCRResult, TextBlock
 from vibeocr.utils.markdown_converter import markdown_to_html
+from vibeocr.utils.mime_types import mime_to_extension
 
 if TYPE_CHECKING:
     from vibeocr.models.ocr_options import OCROptions
@@ -255,18 +257,7 @@ class MinerUService(metaclass=SingletonMeta):
         return self._build_ocr_result(api_result, filename, data=data)
 
     def _get_extension(self, mime_type: str) -> str:
-        """根据 MIME 类型获取文件扩展名"""
-        ext_map = {
-            "application/pdf": ".pdf",
-            "image/png": ".png",
-            "image/jpeg": ".jpg",
-            "image/jpg": ".jpg",
-            "image/bmp": ".bmp",
-            "image/tiff": ".tiff",
-            "image/webp": ".webp",
-            "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
-        }
-        return ext_map.get(mime_type, ".pdf")
+        return mime_to_extension(mime_type) or ".pdf"
 
     def _build_ocr_result(
         self,
@@ -276,26 +267,11 @@ class MinerUService(metaclass=SingletonMeta):
     ) -> OCRResult:
         """从 API 响应构建 OCRResult"""
         stem = Path(filename).stem
-
-        # 尝试获取图像尺寸用于 bbox 坐标转换
-        img_w, img_h = 0, 0
-        if data and not filename.endswith(".pdf"):
-            try:
-                from PIL import Image
-                import io
-                with Image.open(io.BytesIO(data)) as img:
-                    img_w, img_h = img.size
-            except Exception:
-                pass
-
-        # 从 results 中提取当前文件的结果
         results = api_result.get("results", {})
         file_result = results.get(stem, {})
 
-        # Markdown 内容
         md_content = file_result.get("md_content") or ""
 
-        # Content list（API 返回的是 JSON 字符串）
         content_list_raw = file_result.get("content_list")
         content_list: list[dict[str, Any]] = []
         if content_list_raw:
@@ -304,7 +280,6 @@ class MinerUService(metaclass=SingletonMeta):
             except (json.JSONDecodeError, TypeError):
                 content_list = []
 
-        # 图片（API 返回 base64 data URI）
         images: dict[str, bytes] = {}
         images_dict = file_result.get("images", {})
         for img_name, data_uri in images_dict.items():
@@ -312,42 +287,94 @@ class MinerUService(metaclass=SingletonMeta):
                 b64_part = data_uri.split(",", 1)[-1]
                 images[img_name] = base64.b64decode(b64_part)
 
-        raw_text = md_content or ""
+        # 从 content_list 提取纯文本（非 Markdown）
+        raw_text = self._extract_plain_text(content_list) if content_list else md_content
 
-        # 从 content_list 构建 text_blocks
+        # 从 content_list 构建 text_blocks（归一化 bbox + page_idx）
         text_blocks: list[TextBlock] = []
-        for item in content_list:
-            text = item.get("text", "")
+        for block in content_list:
+            bbox_raw = block.get("bbox")
+            if not bbox_raw or len(bbox_raw) < 4:
+                continue
+            text = self._extract_block_text(block)
             if not text:
                 continue
-            confidence = item.get("confidence")
-            score = float(confidence) if confidence is not None else 1.0
-            bbox_raw = item.get("bbox")
-            bbox = None
-            if bbox_raw and len(bbox_raw) >= 4:
-                if img_w and img_h:
-                    # 单张图片：将 0-1000 归一化转为像素坐标
-                    bbox = (
-                        float(bbox_raw[0]) / 1000.0 * img_w,
-                        float(bbox_raw[1]) / 1000.0 * img_h,
-                        float(bbox_raw[2]) / 1000.0 * img_w,
-                        float(bbox_raw[3]) / 1000.0 * img_h,
-                    )
-                # PDF 等多页文档不设置 bbox（text_blocks 无法区分页面）
-            text_blocks.append(TextBlock(text=text, score=score, bbox=bbox))
+            text_blocks.append(TextBlock(
+                text=text,
+                score=1.0,  # MineRU content_list 不提供 confidence
+                bbox=(float(bbox_raw[0]), float(bbox_raw[1]),
+                      float(bbox_raw[2]), float(bbox_raw[3])),
+                page_idx=block.get("page_idx"),
+            ))
+
+        text_with_scores = [(b.text, b.score) for b in text_blocks]
+        avg_score = sum(s for _, s in text_with_scores) / len(text_with_scores) if text_with_scores else 0.0
 
         return OCRResult(
             raw_text=raw_text,
             markdown_text=md_content,
             html_text=markdown_to_html(md_content),
-            text_with_scores=[(raw_text, 1.0)] if raw_text else [],
-            avg_score=1.0 if raw_text else 0.0,
+            text_with_scores=text_with_scores,
+            avg_score=avg_score,
             low_confidence_items=[],
             pipeline_type="MinerU",
             images=images,
             content_list=content_list,
             text_blocks=text_blocks,
         )
+
+    @staticmethod
+    def _strip_html(html: str) -> str:
+        """从 HTML 中提取纯文本，合并多余空白"""
+        text = re.sub(r"<[^>]+>", " ", html)
+        return re.sub(r"\s+", " ", text).strip()
+
+    @staticmethod
+    def _extract_plain_text(content_list: list[dict]) -> str:
+        """从 content_list 提取纯文本"""
+        parts: list[str] = []
+        for block in content_list:
+            block_type = block.get("type", "")
+            if block_type == "table":
+                html = block.get("table_body", "")
+                parts.append(MinerUService._strip_html(html))
+            elif block_type in ("image", "chart"):
+                captions = block.get("image_caption") or block.get("chart_caption") or []
+                if captions:
+                    parts.append(" ".join(captions))
+            elif block_type == "list":
+                items = block.get("list_items", [])
+                parts.extend(items)
+            elif block_type == "code":
+                body = block.get("code_body", "")
+                parts.append(body)
+            else:
+                text = block.get("text", "")
+                if text:
+                    parts.append(text)
+        return "\n".join(p for p in parts if p)
+
+    @staticmethod
+    def _extract_block_text(block: dict) -> str:
+        """从单个 content_list 块提取用于 TextBlock 的文本"""
+        block_type = block.get("type", "")
+        if block_type == "table":
+            html = block.get("table_body", "")
+            return MinerUService._strip_html(html)
+        elif block_type in ("image", "chart"):
+            captions = block.get("image_caption") or block.get("chart_caption") or []
+            content = block.get("content", "")
+            text = " ".join(captions)
+            if content:
+                text = f"{text} {content}".strip()
+            return text or f"[{block_type}]"
+        elif block_type == "list":
+            items = block.get("list_items", [])
+            return "; ".join(items)
+        elif block_type == "code":
+            return block.get("code_body", "")[:200]
+        else:
+            return block.get("text", "")
 
     def shutdown(self) -> None:
         """停止 mineru-api 进程"""
