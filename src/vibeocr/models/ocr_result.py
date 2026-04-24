@@ -10,7 +10,8 @@ class TextBlock:
 
     text: str
     score: float
-    bbox: tuple[float, float, float, float] | None  # [x0, y0, x1, y1] 像素坐标
+    bbox: tuple[float, float, float, float] | None  # 归一化 [0, 1000] 坐标
+    page_idx: int | None = None  # 页码（0 起始），PDF 多页时使用
 
 
 @dataclass
