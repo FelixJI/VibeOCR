@@ -570,13 +570,25 @@ class MainWindow(QMainWindow):
             return
         logging.info("打开图片文件对话框")
 
+        from vibeocr.utils.mime_types import (
+            FILE_FILTER_DOCUMENTS,
+            FILE_FILTER_IMAGES,
+            is_office_file,
+        )
+
         file_path, _ = QFileDialog.getOpenFileName(
             self,
-            "打开图片",
+            "打开文件",
             "",
-            "图片文件 (*.png *.jpg *.jpeg *.bmp *.gif);;所有文件 (*)",
+            f"{FILE_FILTER_IMAGES};;{FILE_FILTER_DOCUMENTS};;所有文件 (*)",
         )
         if file_path:
+            # Office 文件：清除预览，直接走 OCR
+            if is_office_file(file_path):
+                self._ui.previewWidget.clear()
+                self._run_ocr_for_file(file_path)
+                return
+
             pixmap = QPixmap(file_path)
             if not pixmap.isNull():
                 self._ui.previewWidget.set_pixmap(pixmap)
@@ -589,13 +601,21 @@ class MainWindow(QMainWindow):
             return
         logging.info("打开文件对话框（图片/PDF）")
 
+        from vibeocr.utils.mime_types import FILE_FILTER_ALL, is_office_file
+
         file_path, _ = QFileDialog.getOpenFileName(
             self,
             "选择文件",
             "",
-            "图片/PDF 文件 (*.png *.jpg *.jpeg *.bmp *.gif *.tiff *.pdf);;所有文件 (*)",
+            f"{FILE_FILTER_ALL};;所有文件 (*)",
         )
         if not file_path:
+            return
+
+        # Office 文件：清除预览，直接走 OCR
+        if is_office_file(file_path):
+            self._ui.previewWidget.clear()
+            self._run_ocr_for_file(file_path)
             return
 
         if file_path.lower().endswith(".pdf"):
@@ -677,6 +697,129 @@ class MainWindow(QMainWindow):
                 self, "打开失败", f"加载 PDF 文件时出错:\n{e}"
             )
             logging.error(f"加载 PDF 失败: {e}", exc_info=True)
+
+    def _run_ocr_for_file(self, file_path: str) -> None:
+        """直接读取文件并进行 OCR（用于 PDF/Office 等非图片格式）"""
+        from pathlib import Path
+
+        from vibeocr.utils.mime_types import guess_mime_from_filename
+
+        path = Path(file_path)
+        if not path.exists():
+            return
+        data = path.read_bytes()
+        mime_type = guess_mime_from_filename(file_path)
+        self._statusbar.showMessage(f"正在识别: {path.name}...")
+        # Use the MinerU service directly for non-image files
+        self._run_ocr_with_data(data, mime_type, path.name)
+
+    def _run_ocr_with_data(self, data: bytes, mime_type: str, filename: str) -> None:
+        """使用原始文件数据进行 OCR（跳过 QPixmap 转换）
+
+        对于 Office/PDF 等非图片文件，直接将原始字节传递给 MineRU 管道。
+
+        Args:
+            data: 文件原始字节
+            mime_type: MIME 类型
+            filename: 文件名（用于 worker 端 MIME 推断的备用方案）
+        """
+        from vibeocr.services import USE_SUBPROCESS
+        from vibeocr.services.ocr_service import OCRPipeline
+
+        logging.info(f"Starting OCR for file: {filename}, mime: {mime_type}")
+        self._result_widget.clear()
+        self._statusbar.showMessage("Recognizing...")
+
+        # Force UI update
+        QApplication.processEvents()
+
+        options = self._build_options_from_ui()
+        # 强制使用文档解析管道
+        options.pipeline = OCRPipeline.DOCUMENT_PARSING
+
+        logging.info(
+            f"OCR 管道: {options.pipeline.display_name}, "
+            f"MIME: {mime_type}, 文件: {filename}"
+        )
+
+        if USE_SUBPROCESS:
+            run_coroutine(
+                self._perform_ocr_with_data_async(data, mime_type, filename, options)
+            )
+        else:
+            # 直接模式（用于调试）
+            try:
+                from vibeocr.services import get_ocr_service
+
+                ocr_service = get_ocr_service()
+                result = ocr_service.recognize(data, options)
+                self._on_ocr_finished(result)
+            except Exception as e:
+                logging.error(f"OCR 识别失败: {e}", exc_info=True)
+                self._on_ocr_error(str(e))
+
+    async def _perform_ocr_with_data_async(
+        self, data: bytes, mime_type: str, filename: str, options
+    ) -> None:
+        """异步执行 OCR 识别（原始文件数据版本）
+
+        与 _perform_ocr_async 类似，但通过在调用 recognize 前将 mime_type
+        注入到 options dict 中，使 MinerU Worker 能正确识别文件类型。
+
+        Args:
+            data: 文件原始字节
+            mime_type: MIME 类型
+            filename: 文件名
+            options: OCR 选项
+        """
+        import asyncio
+
+        try:
+            if self._closing:
+                logging.info("[异步OCR] 应用程序正在关闭，取消识别")
+                return
+
+            from vibeocr.services import get_ocr_service
+
+            logging.info("[异步OCR] 开始异步识别（原始数据）...")
+            ocr_service = get_ocr_service()
+
+            if self._closing:
+                return
+
+            if hasattr(ocr_service, "is_ready"):
+                ready = ocr_service.is_ready()
+                if not ready:
+                    raise RuntimeError("OCR 服务未就绪，请稍后再试")
+
+            # 将 mime_type 和 file_path 注入到 options 的 to_dict 输出中，
+            # 以便 Worker 端能正确路由到 MineRU 服务
+            original_to_dict = options.to_dict
+            options.to_dict = lambda: {  # type: ignore[assignment]
+                **original_to_dict(),
+                "mime_type": mime_type,
+                "file_path": filename,
+            }
+
+            try:
+                result = await asyncio.get_event_loop().run_in_executor(
+                    None, lambda: ocr_service.recognize(data, options)
+                )
+            finally:
+                # 恢复原始 to_dict
+                options.to_dict = original_to_dict  # type: ignore[assignment]
+
+            if self._closing:
+                return
+
+            logging.info(f"[异步OCR] 识别完成，{len(result.raw_text)} 字符")
+            self._on_ocr_finished(result)
+
+        except Exception as e:
+            if self._closing:
+                return
+            logging.error(f"[异步OCR] 识别失败: {e}", exc_info=True)
+            self._on_ocr_error(str(e))
 
     def _check_ocr_ready(self) -> bool:
         """检查OCR功能是否可用
