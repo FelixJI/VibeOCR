@@ -51,6 +51,11 @@ CHECKS = {
         "script": "upgrade_deps.py",
         "description": "升级依赖并同步 pyproject.toml",
     },
+    "resources": {
+        "name": "资源文件检查",
+        "script": "check_resources.py",
+        "description": "检查 KaTeX 等离线资源是否存在",
+    },
 }
 
 
