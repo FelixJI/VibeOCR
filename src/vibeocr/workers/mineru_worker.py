@@ -14,6 +14,8 @@ import sys
 import time
 import traceback
 
+from vibeocr.utils.mime_types import guess_mime_from_filename
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -120,17 +122,7 @@ def run_worker(shm_name: str, shm_size: int) -> None:
                         if not mime_type or mime_type == "image/png":
                             file_path = options_dict.get("file_path", "")
                             if file_path:
-                                from pathlib import Path
-
-                                suffix = Path(file_path).suffix.lower()
-                                mime_map = {
-                                    ".pdf": "application/pdf",
-                                    ".png": "image/png",
-                                    ".jpg": "image/jpeg",
-                                    ".jpeg": "image/jpeg",
-                                    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                                }
-                                mime_type = mime_map.get(suffix, "application/pdf")
+                                mime_type = guess_mime_from_filename(file_path)
                             else:
                                 mime_type = "application/pdf"
 

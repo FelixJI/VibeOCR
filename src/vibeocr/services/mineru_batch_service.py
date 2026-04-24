@@ -8,6 +8,8 @@ import logging
 import uuid
 from typing import TYPE_CHECKING, Callable
 
+from vibeocr.utils.mime_types import guess_mime_from_filename
+
 if TYPE_CHECKING:
     from vibeocr.models.ocr_options import OCROptions
 
@@ -49,7 +51,7 @@ class MinerUBatchService:
             "request_id": request_id,
             "data": image,
             "file_name": file_name,
-            "mime_type": self._guess_mime_type(file_name),
+            "mime_type": guess_mime_from_filename(file_name),
         }
         self._queue.append(item)
         self._request_map[request_id] = item
@@ -120,20 +122,3 @@ class MinerUBatchService:
         """取消批量处理"""
         self._cancelled = True
         logger.info("[MinerUBatch] 取消批量处理")
-
-    @staticmethod
-    def _guess_mime_type(file_name: str) -> str:
-        """根据文件名猜测 MIME 类型"""
-        ext = file_name.rsplit(".", 1)[-1].lower() if "." in file_name else ""
-        mime_map = {
-            "pdf": "application/pdf",
-            "png": "image/png",
-            "jpg": "image/jpeg",
-            "jpeg": "image/jpeg",
-            "bmp": "image/bmp",
-            "tiff": "image/tiff",
-            "tif": "image/tiff",
-            "webp": "image/webp",
-            "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        }
-        return mime_map.get(ext, "application/pdf")
