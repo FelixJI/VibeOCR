@@ -225,8 +225,8 @@ class SettingsPageController:
                             f"正在预热 {pipeline.display_name}..."
                         )
                         logger.info(f"[预热] 正在预热 {pipeline.display_name}...")
-                        self._warmup_pipeline(pipeline)
-                        logger.info(f"[预热] {pipeline.display_name} 预热成功!")
+                        if self._warmup_pipeline(pipeline):
+                            logger.info(f"[预热] {pipeline.display_name} 预热成功!")
                     except Exception as e:
                         logger.error(f"预加载 {pipeline.name} 失败: {e}")
                         results[pipeline.name] = False
@@ -247,7 +247,7 @@ class SettingsPageController:
 
                 self.signals.finished.emit(results)
 
-            def _warmup_pipeline(self, pipeline):
+            def _warmup_pipeline(self, pipeline) -> bool:
                 """预热管道"""
                 try:
                     import io
@@ -263,9 +263,10 @@ class SettingsPageController:
 
                     options = OCROptions(pipeline=pipeline)
                     self._service.recognize(image_data, options=options)
-                    logger.info(f"[预热] {pipeline.display_name} 预热成功!")
+                    return True
                 except Exception as e:
                     logger.warning(f"[预热] {pipeline.display_name} 预热失败: {e}")
+                    return False
 
         task = PreloadWithWarmupTask(self._subprocess_manager.service, pipelines, self)
         task.signals.status_changed.connect(self._update_preload_status)

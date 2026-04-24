@@ -484,15 +484,19 @@ class OCRService(metaclass=SingletonMeta):
         existing = os.environ.get("PATH", "")
         if os.path.isdir(nvidia_base):
             for entry in os.scandir(nvidia_base):
-                bin_dir = os.path.join(entry.path, "bin")
-                if entry.is_dir() and os.path.isdir(bin_dir):
-                    if bin_dir not in existing:
-                        existing = bin_dir + ";" + existing
-                    # 新版 nvidia 包 (cu13 等) 把 DLL 放在 bin/<arch>/ 子目录
-                    for sub in os.scandir(bin_dir):
-                        sub_dir = os.path.join(bin_dir, sub.name)
-                        if sub.is_dir() and sub_dir not in existing:
-                            existing = sub_dir + ";" + existing
+                if not entry.is_dir():
+                    continue
+                # 扫描 bin/ 和 lib/ 目录（不同 nvidia 包的 DLL 位置不同）
+                for subfolder in ("bin", "lib"):
+                    sub_dir = os.path.join(entry.path, subfolder)
+                    if os.path.isdir(sub_dir) and sub_dir not in existing:
+                        existing = sub_dir + ";" + existing
+                    # 新版 nvidia 包 (cu13 等) 把 DLL 放在 <subfolder>/<arch>/ 子目录
+                    if os.path.isdir(sub_dir):
+                        for sub in os.scandir(sub_dir):
+                            arch_dir = os.path.join(sub_dir, sub.name)
+                            if sub.is_dir() and arch_dir not in existing:
+                                existing = arch_dir + ";" + existing
         os.environ["PATH"] = existing
         cls._cuda_dll_registered = True
 

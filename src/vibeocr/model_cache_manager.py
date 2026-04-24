@@ -205,8 +205,7 @@ def _check_model_exists(model_name: str, existing_models: dict[str, list[str]]) 
 
     # 模糊匹配（处理模型名称变体）
     for name in all_models:
-        # 处理 _infer 后缀
-        base_name = model_name.replace("_infer", "")
+        base_name = model_name.replace("_infer", "").replace("_plus", "")
         if name.startswith(base_name) or base_name in name:
             return True
 
