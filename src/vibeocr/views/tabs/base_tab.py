@@ -121,6 +121,85 @@ class BaseOcrTab(QWidget):
             content_list = self._build_content_list(result)
             self._preview_widget.set_content_list(content_list)
 
+    def _setup_hover_sync(self) -> None:
+        """设置预览 ↔ 结果的双向悬停联动"""
+        if not self._result_widget or not self._preview_widget:
+            return
+        self._result_widget.block_hovered.connect(self._preview_widget.highlight_block)
+        self._result_widget.block_unhovered.connect(
+            lambda: self._preview_widget.highlight_block(-1)
+        )
+        self._preview_widget.block_hovered.connect(self._result_widget.highlight_block)
+        self._preview_widget.block_unhovered.connect(self._result_widget.clear_highlight)
+
+    def _on_block_text_edited(self, index: int, new_text: str) -> None:
+        """文本块被编辑后同步更新结果和展示"""
+        if not self._current_ocr_result or index < 0:
+            return
+        result = self._current_ocr_result
+        if index >= len(result.text_blocks):
+            return
+
+        old_text = result.text_blocks[index].text
+        if old_text == new_text:
+            return
+
+        result.text_blocks[index].text = new_text
+        result.text_blocks[index].is_manually_edited = True
+
+        if index < len(result.text_with_scores):
+            score = result.text_with_scores[index][1]
+            result.text_with_scores[index] = (new_text, score)
+
+        if result.content_list:
+            cl_idx = getattr(result.text_blocks[index], "content_index", None)
+            if cl_idx is not None and cl_idx < len(result.content_list):
+                cl_block = result.content_list[cl_idx]
+                block_type = cl_block.get("type", "text")
+                if block_type == "table":
+                    import html as html_lib
+                    table_body = cl_block.get("table_body", "")
+                    cl_block["table_body"] = table_body.replace(
+                        html_lib.escape(old_text), html_lib.escape(new_text), 1
+                    )
+                else:
+                    cl_block["text"] = new_text
+
+        result.raw_text = "\n".join(b.text for b in result.text_blocks if b.text)
+
+        if result.markdown_text and result.markdown_text != old_text:
+            result.markdown_text = result.markdown_text.replace(old_text, new_text, 1)
+        else:
+            result.markdown_text = result.raw_text
+
+        if result.html_text and result.html_text != old_text:
+            result.html_text = result.html_text.replace(old_text, new_text, 1)
+        else:
+            result.html_text = result.raw_text
+
+        if self._preview_widget:
+            self._preview_widget.set_text_blocks(result.text_blocks)
+        if self._result_widget:
+            self._result_widget.display_result(result)
+
+    def _init_options_from_preferences(self, *, batch: bool = False) -> None:
+        """从 OCRPreferences 恢复选项"""
+        if not self._preprocess_options:
+            return
+        from vibeocr.utils.ocr_preferences import OCRPreferences
+
+        prefs = OCRPreferences.instance()
+        if batch:
+            self._preprocess_options.set_options(prefs.get_batch_options())
+            self._preprocess_options.options_changed.connect(
+                lambda opts: OCRPreferences.instance().set_batch_options(opts)
+            )
+        else:
+            self._preprocess_options.set_options(prefs.get_options())
+            self._preprocess_options.options_changed.connect(
+                lambda opts: OCRPreferences.instance().set_options(opts)
+            )
+
     @abstractmethod
     def _setup_ui(self) -> None:
         """设置 UI 布局
