@@ -48,6 +48,7 @@ class LayoutManager:
         # 布局数据
         self._main_window_geometry: QByteArray | None = None
         self._splitters: dict[str, QByteArray] = {}
+        self._tab_index: int | None = None
 
         # 加载配置
         self._load()
@@ -88,6 +89,11 @@ class LayoutManager:
         if geometry_b64 := main_window.get("geometry"):
             self._main_window_geometry = QByteArray(base64.b64decode(geometry_b64))
 
+        # 加载标签页索引
+        tab_index = data.get("tab_index")
+        if tab_index is not None:
+            self._tab_index = tab_index
+
         # 加载分割器状态
         splitters = data.get("splitters", {})
         for splitter_id, state_b64 in splitters.items():
@@ -103,6 +109,10 @@ class LayoutManager:
             "main_window": {},
             "splitters": {},
         }
+
+        # 保存标签页索引
+        if self._tab_index is not None:
+            data["tab_index"] = self._tab_index
 
         # 保存主窗口几何信息
         if self._main_window_geometry is not None:
@@ -165,3 +175,11 @@ class LayoutManager:
             state: 分割器状态的 QByteArray
         """
         self._splitters[splitter_id] = state
+
+    def get_tab_index(self) -> int | None:
+        """获取标签页索引"""
+        return self._tab_index
+
+    def set_tab_index(self, index: int) -> None:
+        """保存标签页索引"""
+        self._tab_index = index

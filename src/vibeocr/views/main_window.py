@@ -170,6 +170,9 @@ class MainWindow(QMainWindow):
         # 将设置标签页移到最后
         self._move_settings_tab_to_end()
 
+        # removeTab(当前tab) 后 Qt 自动选中 tabSettings，需要重置回第一个 tab
+        self._ui.tabWidget.setCurrentIndex(0)
+
     def _move_settings_tab_to_end(self) -> None:
         """将设置标签页移动到最后位置"""
         tab_widget = self._ui.tabWidget
@@ -189,6 +192,12 @@ class MainWindow(QMainWindow):
         if geometry:
             self.restoreGeometry(geometry)
             logging.info("已恢复窗口布局")
+
+        # 恢复上次选中的标签页
+        tab_index = self._layout_manager.get_tab_index()
+        if tab_index is not None and 0 <= tab_index < self._ui.tabWidget.count():
+            self._ui.tabWidget.setCurrentIndex(tab_index)
+            logging.info(f"已恢复标签页索引: {tab_index}")
 
         # 恢复单次识别标签页分割器状态
         if hasattr(self, "_single_tab") and hasattr(self._single_tab, "_splitter"):
@@ -217,6 +226,9 @@ class MainWindow(QMainWindow):
         # 保存批量识别标签页分割器状态
         if hasattr(self, "_batch_tab") and self._batch_tab:
             self._batch_tab.save_layout()
+
+        # 保存当前标签页索引
+        self._layout_manager.set_tab_index(self._ui.tabWidget.currentIndex())
 
         # 保存到文件
         self._layout_manager.save()
@@ -596,20 +608,6 @@ class MainWindow(QMainWindow):
         self.showMinimized()
         # 延迟启动截图，让窗口有时间最小化
         QTimer.singleShot(200, self._screenshot_widget.start_capture)
-
-    @Slot(QPixmap)
-    def _on_screenshot_captured(self, pixmap: QPixmap) -> None:
-        """截图完成（向后兼容，打开图片等直接流程使用）"""
-        self.showNormal()
-        self.activateWindow()
-        if not pixmap.isNull():
-            dpr = pixmap.devicePixelRatio()
-            width = pixmap.width()
-            height = pixmap.height()
-            logging.info(f"截图完成: {width}x{height} 像素, DPR={dpr}")
-
-            self._single_tab.set_pixmap(pixmap)
-            self._single_tab.run_ocr(pixmap)
 
     @Slot(QPixmap, QRect)
     def _on_selection_done(self, pixmap: QPixmap, screen_rect: QRect) -> None:

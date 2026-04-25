@@ -218,6 +218,22 @@ class BatchQueueManager:
 
         return results
 
+    @staticmethod
+    def _to_ndarray(image_data):
+        """将图像数据转换为 numpy.ndarray（PaddleX pipeline 只接受 ndarray 和 str）"""
+        if not isinstance(image_data, bytes):
+            return image_data
+
+        import io
+
+        import numpy as np
+        from PIL import Image as PILImage
+
+        pil_image = PILImage.open(io.BytesIO(image_data))
+        if pil_image.mode != "RGB":
+            pil_image = pil_image.convert("RGB")
+        return np.array(pil_image)
+
     def _calculate_batch_size(self, requests: list[BatchRequest]) -> int:
         """计算合适的 batch_size
 
@@ -269,8 +285,8 @@ class BatchQueueManager:
             req.mark_processing()
 
         try:
-            # 准备批量输入
-            images = [req.image_data for req in requests]
+            # 准备批量输入（bytes 需转换为 numpy.ndarray）
+            images = [self._to_ndarray(req.image_data) for req in requests]
 
             # 调用 pipeline.predict 批量推理
             pipeline_options = preprocess_options.to_dict()

@@ -72,18 +72,28 @@ class AppSettings:
         logger.info("应用设置已加载")
 
     def save(self) -> bool:
-        """保存配置到文件"""
-        save_data = {**self._data, "version": _CONFIG_VERSION}
+        """保存配置到文件（合并写入，保留其他模块写入的同文件键）"""
         if self._cm is not None:
-            return self._cm._save_json(_CONFIG_FILENAME, save_data)
+            existing = self._cm._load_json(_CONFIG_FILENAME, {})
+            existing.update(self._data)
+            existing["version"] = _CONFIG_VERSION
+            return self._cm._save_json(_CONFIG_FILENAME, existing)
 
         # 旧路径兼容
         import json
 
         self._config_dir.mkdir(parents=True, exist_ok=True)
         try:
+            existing = {}
+            if self._config_path.exists():
+                with open(self._config_path, "r", encoding="utf-8") as f:
+                    existing = json.load(f)
+                    if not isinstance(existing, dict):
+                        existing = {}
+            existing.update(self._data)
+            existing["version"] = _CONFIG_VERSION
             with open(self._config_path, "w", encoding="utf-8") as f:
-                json.dump(save_data, f, ensure_ascii=False, indent=2)
+                json.dump(existing, f, ensure_ascii=False, indent=2)
             return True
         except Exception as e:
             logger.error(f"保存应用设置失败: {e}")

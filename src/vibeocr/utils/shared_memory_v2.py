@@ -149,7 +149,8 @@ class SharedMemoryProtocolV2:
     @property
     def _buf(self) -> memoryview:  # type: ignore[override]
         """获取共享内存缓冲区（pyright 兼容）"""
-        assert self.shm is not None
+        if self.shm is None:
+            raise SharedMemoryProtocolError("共享内存未初始化或已关闭")
         return self.shm.buf  # type: ignore[return-value]
 
     def create(self) -> None:

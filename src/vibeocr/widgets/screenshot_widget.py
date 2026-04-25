@@ -23,7 +23,6 @@ class ScreenshotWidget(QWidget):
     增强功能：放大镜、像素颜色值、坐标显示
     """
 
-    captured = Signal(QPixmap)  # 截图完成信号（保留向后兼容）
     selection_done = Signal(QPixmap, QRect)  # 框选完成信号（图片, 选区矩形）
 
     # 最小选区尺寸
