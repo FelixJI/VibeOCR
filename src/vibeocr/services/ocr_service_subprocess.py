@@ -580,13 +580,17 @@ class OCRServiceSubprocess:
         return request_id
 
     def batch_commit(
-        self, preprocess_options: "PreprocessOptions", timeout: float = 300.0
+        self,
+        preprocess_options: "PreprocessOptions",
+        timeout: float = 300.0,
+        progress_callback=None,
     ) -> dict:
         """提交批量处理
 
         Args:
             preprocess_options: 预处理选项
             timeout: 超时时间（秒）
+            progress_callback: 进度回调（子进程模式下未使用，保留接口兼容）
 
         Returns:
             {request_id: result} 结果字典

@@ -59,47 +59,71 @@ BLOCK_TYPE_LABELS = {
 
 
 class BBoxOverlay(QWidget):
-    """透明覆盖层，绘制 BBox 高亮矩形"""
+    """透明覆盖层，绘制 BBox 高亮矩形
+
+    支持两层渲染：
+    - 永久层：所有块的半透明 bbox 覆盖
+    - 悬停层：当前悬停块的高亮
+
+    每个矩形携带 content_list 索引，悬停匹配使用该索引。
+    """
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
-        self._rects: list[tuple[QRectF, str, QColor, QColor]] = []
+        # (content_list_index, rect, block_type, fill_color, border_color)
+        self._all_rects: list[tuple[int, QRectF, str, QColor, QColor]] = []
+        self._hover_index: int = -1
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
 
-    def set_highlight(
-        self,
-        rect: QRectF,
-        block_type: str = "text",
+    def set_all_blocks(
+        self, rects: list[tuple[int, QRectF, str, QColor, QColor]]
     ) -> None:
-        fill_color = BLOCK_COLORS.get(block_type, BLOCK_COLORS["text"])
-        border_color = BLOCK_BORDER_COLORS.get(block_type, BLOCK_BORDER_COLORS["text"])
-        self._rects = [(rect, block_type, fill_color, border_color)]
+        """设置所有块的永久 bbox 覆盖"""
+        self._all_rects = rects
         self.update()
 
+    def set_hovered(self, index: int) -> None:
+        """设置悬停高亮块索引（content_list 索引）"""
+        if index != self._hover_index:
+            self._hover_index = index
+            self.update()
+
     def clear(self) -> None:
-        self._rects.clear()
+        self._all_rects.clear()
+        self._hover_index = -1
         self.update()
 
     def paintEvent(self, event) -> None:
-        if not self._rects:
+        if not self._all_rects:
             return
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-        for rect, block_type, fill_color, border_color in self._rects:
-            # 填充
-            painter.fillRect(rect, fill_color)
-            # 边框
-            pen = QPen(border_color, 2)
+        for cl_idx, rect, block_type, fill_color, border_color in self._all_rects:
+            is_hovered = cl_idx == self._hover_index
+
+            if is_hovered:
+                fill = QColor(fill_color)
+                fill.setAlpha(min(fill.alpha() + 100, 220))
+                border = QColor(border_color)
+                border.setAlpha(255)
+            else:
+                fill = fill_color
+                border = border_color
+
+            painter.fillRect(rect, fill)
+            pen = QPen(border, 2 if not is_hovered else 3)
             painter.setPen(pen)
             painter.drawRect(rect)
+
             # 类型标签
-            label = BLOCK_TYPE_LABELS.get(block_type, block_type)
-            label_rect = QRectF(rect.topLeft(), rect.topLeft() + QPointF(60, 20))
-            painter.fillRect(label_rect, border_color)
-            painter.setPen(QPen(QColor(255, 255, 255)))
-            painter.drawText(label_rect, Qt.AlignmentFlag.AlignCenter, label)
+            if is_hovered or len(self._all_rects) <= 20:
+                label = BLOCK_TYPE_LABELS.get(block_type, block_type)
+                label_rect = QRectF(rect.topLeft(), rect.topLeft() + QPointF(60, 20))
+                painter.fillRect(label_rect, border)
+                painter.setPen(QPen(QColor(255, 255, 255)))
+                painter.drawText(label_rect, Qt.AlignmentFlag.AlignCenter, label)
 
         painter.end()
 
@@ -290,20 +314,21 @@ class FilePreviewWidget(QWidget):
             self._reapply_highlight()
 
     def set_content_list(self, content_list: list[dict]) -> None:
-        """设置内容列表（用于高亮映射）"""
+        """设置内容列表（用于高亮映射和全块覆盖）"""
         self._content_list = content_list
+        self._update_all_blocks_overlay()
 
     def highlight_block(self, index: int) -> None:
         """高亮指定块（根据 content_list 索引）"""
         if not self._content_list or index < 0 or index >= len(self._content_list):
-            self._overlay.clear()
+            self._overlay.set_hovered(-1)
             self._highlight_block_index = -1
             return
 
         block = self._content_list[index]
         bbox = block.get("bbox")
         if not bbox or len(bbox) < 4:
-            self._overlay.clear()
+            self._overlay.set_hovered(-1)
             return
 
         # 如果块在不同页，翻页
@@ -313,50 +338,62 @@ class FilePreviewWidget(QWidget):
             if self._is_pdf:
                 self._render_current_page()
             self._update_nav()
+            self._update_all_blocks_overlay()
 
         self._highlight_block_index = index
-        self._apply_highlight(bbox, block.get("type", "text"))
+        self._overlay.set_hovered(index)
 
-    def _apply_highlight(self, bbox: list, block_type: str) -> None:
-        """应用高亮覆盖到当前显示"""
-        if self._original_pixmap is None:
+    def _update_all_blocks_overlay(self) -> None:
+        """绘制所有 content_list 块的 bbox 覆盖层"""
+        if not self._content_list or self._original_pixmap is None:
+            self._overlay.set_all_blocks([])
             return
 
         current_pixmap = self._image_label.pixmap()
-        if current_pixmap is None:
+        if not current_pixmap:
+            self._overlay.set_all_blocks([])
             return
 
-        # 逻辑显示尺寸（考虑 DPR）
         dpr = current_pixmap.devicePixelRatio() or 1.0
         disp_w = current_pixmap.width() / dpr
         disp_h = current_pixmap.height() / dpr
-
-        # label 中的居中偏移
         label_w = self._image_label.width()
         label_h = self._image_label.height()
         offset_x = (label_w - disp_w) / 2
         offset_y = (label_h - disp_h) / 2
 
-        # bbox [0-1000] → 逻辑显示坐标
-        screen_rect = QRectF(
-            bbox[0] / BBOX_NORM * disp_w + offset_x,
-            bbox[1] / BBOX_NORM * disp_h + offset_y,
-            (bbox[2] - bbox[0]) / BBOX_NORM * disp_w,
-            (bbox[3] - bbox[1]) / BBOX_NORM * disp_h,
-        )
+        overlay_rects: list[tuple[int, QRectF, str, QColor, QColor]] = []
+        for i, block in enumerate(self._content_list):
+            # 只绘制当前页的块
+            page_idx = block.get("page_idx", 0)
+            if page_idx != self._current_page:
+                continue
+            bbox = block.get("bbox")
+            if not bbox or len(bbox) < 4:
+                continue
+            block_type = block.get("type", "text")
+            fill_color = BLOCK_COLORS.get(block_type, BLOCK_COLORS["text"])
+            border_color = BLOCK_BORDER_COLORS.get(block_type, BLOCK_BORDER_COLORS["text"])
+            screen_rect = QRectF(
+                bbox[0] / BBOX_NORM * disp_w + offset_x,
+                bbox[1] / BBOX_NORM * disp_h + offset_y,
+                (bbox[2] - bbox[0]) / BBOX_NORM * disp_w,
+                (bbox[3] - bbox[1]) / BBOX_NORM * disp_h,
+            )
+            overlay_rects.append((i, screen_rect, block_type, fill_color, border_color))
 
-        self._overlay.set_highlight(screen_rect, block_type)
+        self._overlay.set_all_blocks(overlay_rects)
+        self._overlay.setGeometry(self._scroll_area.viewport().rect())
 
     def _reapply_highlight(self) -> None:
-        """翻页后重新应用高亮"""
+        """翻页后重新应用高亮和全块覆盖"""
+        self._update_all_blocks_overlay()
         if self._highlight_block_index >= 0:
             self.highlight_block(self._highlight_block_index)
-        else:
-            self._overlay.clear()
 
     def clear_highlight(self) -> None:
-        """清除高亮"""
-        self._overlay.clear()
+        """清除悬停高亮（保留永久覆盖层）"""
+        self._overlay.set_hovered(-1)
         self._highlight_block_index = -1
 
     def current_page(self) -> int:

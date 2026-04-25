@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QObject, Signal
 
+from vibeocr.core.pipelines import OCRPipeline
 from vibeocr.models.ocr_options import OCROptions
 
 if TYPE_CHECKING:
@@ -39,6 +40,7 @@ class OCRPreferences(QObject):
     """
 
     options_changed = Signal(object)  # OCROptions
+    batch_options_changed = Signal(object)  # OCROptions
 
     def __init__(self, config_manager: "ConfigManager | Path") -> None:
         super().__init__()
@@ -51,6 +53,7 @@ class OCRPreferences(QObject):
             self._config_dir = config_manager.config_dir
             self._config_path = self._config_dir / _CONFIG_FILENAME
         self._options = OCROptions()
+        self._batch_options = OCROptions(pipeline=OCRPipeline.DOCUMENT_PARSING)
         self._load()
 
     @staticmethod
@@ -92,6 +95,10 @@ class OCRPreferences(QObject):
 
         if data:
             self._options = OCROptions.from_dict(data)
+            # 加载批量选项（独立于单次选项）
+            batch_data = data.get("batch_options")
+            if batch_data:
+                self._batch_options = OCROptions.from_dict(batch_data)
             logger.info("OCR 选项已加载")
 
     def get_options(self) -> OCROptions:
@@ -109,13 +116,31 @@ class OCRPreferences(QObject):
         self.save()
         self.options_changed.emit(self._options)
 
+    def get_batch_options(self) -> OCROptions:
+        """获取批量识别选项"""
+        return self._batch_options
+
+    def set_batch_options(self, options: OCROptions) -> None:
+        """设置批量识别选项并持久化
+
+        Args:
+            options: 新的批量识别选项
+        """
+        self._batch_options = OCROptions.from_dict(options.to_dict())
+        self.save()
+        self.batch_options_changed.emit(self._batch_options)
+
     def save(self) -> bool:
         """保存选项到 JSON 文件
 
         Returns:
             是否保存成功
         """
-        save_data = {**self._options.to_dict(), "version": _CONFIG_VERSION}
+        save_data = {
+            **self._options.to_dict(),
+            "batch_options": self._batch_options.to_dict(),
+            "version": _CONFIG_VERSION,
+        }
         if self._cm is not None:
             return self._cm._save_json(_CONFIG_FILENAME, save_data)
 

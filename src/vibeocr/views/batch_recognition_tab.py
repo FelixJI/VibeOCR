@@ -77,7 +77,9 @@ class BatchRecognitionWorker(QThread):
                     image_data = f.read()
 
                 request_id = self._service.batch_add(
-                    image_data, file_name=file_info["name"]
+                    image_data,
+                    options=self._preprocess_options,
+                    file_name=file_info["name"],
                 )
 
                 request_map[request_id] = file_info
@@ -143,7 +145,8 @@ class BatchRecognitionTab(BaseOcrTab):
 
     def __init__(self, ocr_service=None, parent=None):
         super().__init__(parent)
-        self._ocr_service = ocr_service
+        self._ocr_service = ocr_service  # MinerUBatchService
+        self._paddlex_service = None  # OCRServiceSubprocess
         self._worker: BatchRecognitionWorker | None = None
         self._layout_manager = None
         self._current_file_path: str = ""
@@ -259,11 +262,19 @@ class BatchRecognitionTab(BaseOcrTab):
             self._result_widget.clear()
             return
 
-        if not self._ocr_service:
+        preprocess_options = self._preprocess_options.get_options()
+
+        # 根据管道选择对应服务
+        from vibeocr.core.pipelines import OCRPipeline
+
+        if preprocess_options.pipeline == OCRPipeline.DOCUMENT_PARSING:
+            service = self._ocr_service
+        else:
+            service = self._paddlex_service
+
+        if not service:
             self._result_widget.clear()
             return
-
-        preprocess_options = self._preprocess_options.get_options()
 
         self._start_btn.setEnabled(False)
         self._cancel_btn.setEnabled(True)
@@ -273,7 +284,7 @@ class BatchRecognitionTab(BaseOcrTab):
         self._result_widget.clear()
 
         self._worker = BatchRecognitionWorker(
-            self._ocr_service, files, preprocess_options
+            service, files, preprocess_options
         )
         self._worker.progress.connect(self._on_progress)
         self._worker.file_completed.connect(self._on_file_completed)
@@ -338,8 +349,37 @@ class BatchRecognitionTab(BaseOcrTab):
         self._export_widget.set_current_result(result)
 
         # 设置预览的 content_list 用于高亮联动
-        content_list = getattr(result, "content_list", [])
+        content_list = self._build_content_list(result)
         self._preview_widget.set_content_list(content_list)
+
+    @staticmethod
+    def _build_content_list(result) -> list[dict]:
+        """从 OCRResult 构建 content_list（含 bbox），确保所有管道都有覆盖数据"""
+        content_list = getattr(result, "content_list", [])
+        text_blocks = getattr(result, "text_blocks", [])
+
+        if content_list:
+            # 合并 text_blocks 的 bbox 到 content_list（TABLE/FORMULA 管道）
+            for tb in text_blocks:
+                cl_idx = getattr(tb, "content_index", None)
+                if cl_idx is not None and cl_idx < len(content_list) and tb.bbox:
+                    if "bbox" not in content_list[cl_idx]:
+                        content_list[cl_idx]["bbox"] = list(tb.bbox)
+            return content_list
+
+        # PaddleX OCR 管道不填充 content_list，从 text_blocks 构建
+        if not text_blocks:
+            return []
+
+        built: list[dict] = []
+        for b in text_blocks:
+            entry: dict = {"type": "text", "text": b.text}
+            if b.bbox:
+                entry["bbox"] = list(b.bbox)
+            if b.page_idx is not None:
+                entry["page_idx"] = b.page_idx
+            built.append(entry)
+        return built
 
     # ── 悬停高亮联动 ──
 
@@ -407,22 +447,23 @@ class BatchRecognitionTab(BaseOcrTab):
         self._worker = None
 
     def set_ocr_service(self, service):
-        """设置 OCR 服务"""
+        """设置 MineRU 批量服务"""
         self._ocr_service = service
 
+    def set_paddlex_service(self, service):
+        """设置 PaddleX 子进程服务（OCR / 表格 / 公式管道）"""
+        self._paddlex_service = service
+
     def _init_from_preferences(self) -> None:
-        """从 OCRPreferences 初始化选项，并双向同步"""
+        """从 OCRPreferences 加载批量识别专属选项（与单次识别解耦）"""
         from vibeocr.utils.ocr_preferences import OCRPreferences
 
         prefs = OCRPreferences.instance()
-        self._preprocess_options.set_options(prefs.get_options())
+        self._preprocess_options.set_options(prefs.get_batch_options())
 
-        # 偏好变化 → 同步到本标签页选项
-        prefs.options_changed.connect(self._preprocess_options.set_options)
-
-        # 本标签页选项变化 → 同步回偏好（单次识别标签页也会收到通知）
+        # 批量选项变化 → 仅保存到批量专属偏好，不影响单次识别
         self._preprocess_options.options_changed.connect(
-            lambda opts: OCRPreferences.instance().set_options(opts)
+            lambda opts: OCRPreferences.instance().set_batch_options(opts)
         )
 
     def set_layout_manager(self, layout_manager) -> None:

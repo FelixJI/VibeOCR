@@ -276,7 +276,7 @@ class BatchQueueManager:
             pipeline_options = preprocess_options.to_dict()
 
             # 根据管道类型准备参数
-            pipeline_name = getattr(preprocess_options, "pipeline", "MinerU")
+            pipeline_name = getattr(preprocess_options, "pipeline", "OCR")
             # 处理枚举类型
             from enum import Enum
 

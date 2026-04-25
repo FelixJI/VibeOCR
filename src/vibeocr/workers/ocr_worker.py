@@ -325,7 +325,7 @@ def run_worker(shm_name: str, shm_size: int, use_gpu: bool) -> None:
                         logger.info(f"[Worker] 批量添加: {request_id}")
 
                         # 从选项中获取管道名称
-                        pipeline_name = options_dict.get("pipeline", "MinerU")
+                        pipeline_name = options_dict.get("pipeline", "OCR")
 
                         # 延迟初始化批量管理器
                         mgr = get_batch_manager(pipeline_name)

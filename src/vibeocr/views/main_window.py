@@ -448,13 +448,18 @@ class MainWindow(QMainWindow):
         if success:
             logging.info("[MainWindow] 子进程 Worker 已就绪")
 
-            # 设置 MinerU 直接批量服务到批量识别标签页
+            # 设置批量识别标签页的服务
             if hasattr(self, "_batch_tab") and self._batch_tab:
                 from vibeocr.services.mineru_batch_service import MinerUBatchService
 
                 mineru_batch = MinerUBatchService()
                 self._batch_tab.set_ocr_service(mineru_batch)
-                logging.info("[MainWindow] 批量识别标签页已连接 MinerU 直接批量服务")
+
+                from vibeocr.services import get_ocr_service
+
+                paddlex_service = get_ocr_service(skip_auto_start=True)
+                self._batch_tab.set_paddlex_service(paddlex_service)
+                logging.info("[MainWindow] 批量识别标签页已连接批量服务")
 
             # 子进程就绪后，触发预加载（如果配置了预加载管道）
             # 预加载完成后再显示"OCR 服务已就绪"
