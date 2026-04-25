@@ -186,9 +186,12 @@ class BaseOcrTab(QWidget):
         """从 OCRPreferences 恢复选项"""
         if not self._preprocess_options:
             return
-        from vibeocr.utils.ocr_preferences import OCRPreferences
+        try:
+            from vibeocr.utils.ocr_preferences import OCRPreferences
 
-        prefs = OCRPreferences.instance()
+            prefs = OCRPreferences.instance()
+        except RuntimeError:
+            return
         if batch:
             self._preprocess_options.set_options(prefs.get_batch_options())
             self._preprocess_options.options_changed.connect(
