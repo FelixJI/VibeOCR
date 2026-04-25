@@ -347,6 +347,9 @@ class MainWindow(QMainWindow):
             self._on_open_file_from_preview
         )
         self._ui.previewWidget.block_clicked.connect(self._on_preview_block_clicked)
+        self._ui.previewWidget.block_text_edited.connect(
+            self._on_preview_block_text_edited
+        )
 
         # 结果展示 ↔ 预览联动
         self._result_widget.block_hovered.connect(self._ui.previewWidget.highlight_block)
@@ -1131,6 +1134,71 @@ class MainWindow(QMainWindow):
     def _on_preview_block_clicked(self, index: int) -> None:
         """预览图文本块被点击 → 结果区高亮对应块"""
         self._result_widget.highlight_block(index)
+
+    @Slot(int, str)
+    def _on_preview_block_text_edited(self, index: int, new_text: str) -> None:
+        """预览图文本块被编辑 → 同步更新结果和展示"""
+        if not self._current_ocr_result or index < 0:
+            return
+        result = self._current_ocr_result
+        if index >= len(result.text_blocks):
+            return
+
+        old_text = result.text_blocks[index].text
+        if old_text == new_text:
+            return
+
+        # 更新文本块
+        result.text_blocks[index].text = new_text
+        result.text_blocks[index].is_manually_edited = True
+
+        # 同步更新 text_with_scores
+        if index < len(result.text_with_scores):
+            score = result.text_with_scores[index][1]
+            result.text_with_scores[index] = (new_text, score)
+
+        # 同步更新 content_list
+        if result.content_list:
+            cl_idx = getattr(result.text_blocks[index], "content_index", None)
+            if cl_idx is not None and cl_idx < len(result.content_list):
+                cl_block = result.content_list[cl_idx]
+                block_type = cl_block.get("type", "text")
+                if block_type == "table":
+                    import html as html_lib
+                    table_body = cl_block.get("table_body", "")
+                    cl_block["table_body"] = table_body.replace(
+                        html_lib.escape(old_text), html_lib.escape(new_text), 1
+                    )
+                else:
+                    cl_block["text"] = new_text
+
+        # 重新构建 raw_text
+        result.raw_text = "\n".join(
+            block.text for block in result.text_blocks if block.text
+        )
+
+        # 同步更新 markdown_text 和 html_text（如果是纯文本场景）
+        if result.markdown_text and result.markdown_text != old_text:
+            # 尝试简单替换，保持原有结构
+            result.markdown_text = result.markdown_text.replace(old_text, new_text, 1)
+        else:
+            result.markdown_text = result.raw_text
+
+        if result.html_text and result.html_text != old_text:
+            result.html_text = result.html_text.replace(old_text, new_text, 1)
+        else:
+            result.html_text = result.raw_text
+
+        # 更新剪贴板控制器中的结果
+        self._clipboard_controller.set_result(result)
+
+        # 刷新预览和结果展示
+        self._ui.previewWidget.set_text_blocks(result.text_blocks)
+        self._result_widget.display_result(result)
+
+        self._statusbar.showMessage(
+            f"已手动修改第 {index + 1} 个文本块"
+        )
 
     def closeEvent(self, event) -> None:
         """关闭窗口事件

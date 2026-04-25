@@ -13,11 +13,6 @@ from vibeocr.core.pipelines import OCRPipeline
 from vibeocr.core.singleton_meta import SingletonMeta
 from vibeocr.models.ocr_options import OCROptions
 from vibeocr.models.ocr_result import OCRResult, TextBlock
-from vibeocr.utils.markdown_converter import (
-    HTML_STYLE,
-    extract_plain_text,
-    markdown_to_html,
-)
 
 # 重新导出以保持向后兼容性
 __all__ = [
@@ -768,14 +763,18 @@ class OCRService(metaclass=SingletonMeta):
         output_list = list(output)
 
         text_with_scores: list[tuple[str, float]] = []
-        html_tables: list[str] = []
         text_blocks: list[TextBlock] = []
+        content_list: list[dict[str, Any]] = []
 
         for res in output_list:
             if hasattr(res, "table_res_list"):
                 for table_res in res.table_res_list:
-                    if hasattr(table_res, "pred_html"):
-                        html_tables.append(table_res.pred_html)
+                    cl_idx = len(content_list)
+                    pred_html = getattr(table_res, "pred_html", "")
+                    content_list.append({
+                        "type": "table",
+                        "table_body": _extract_table_html(pred_html) if pred_html else "",
+                    })
                     if hasattr(table_res, "table_ocr_pred"):
                         ocr_pred = table_res.table_ocr_pred
                         if hasattr(ocr_pred, "rec_texts") and hasattr(
@@ -789,11 +788,16 @@ class OCRService(metaclass=SingletonMeta):
                                     fs = float(score)
                                     text_with_scores.append((text, fs))
                                     bbox = self._extract_bbox(rec_boxes, i) if rec_boxes is not None else None
-                                    text_blocks.append(TextBlock(text=text, score=fs, bbox=bbox))
+                                    text_blocks.append(TextBlock(text=text, score=fs, bbox=bbox, content_index=cl_idx))
             elif isinstance(res, dict):
                 table_res_list = res.get("table_res_list", [])
                 for table_res in table_res_list:
-                    html_tables.append(table_res.get("pred_html", ""))
+                    cl_idx = len(content_list)
+                    pred_html = table_res.get("pred_html", "")
+                    content_list.append({
+                        "type": "table",
+                        "table_body": _extract_table_html(pred_html) if pred_html else "",
+                    })
                     ocr_pred = table_res.get("table_ocr_pred", {})
                     rec_texts = ocr_pred.get("rec_texts", [])
                     rec_scores = ocr_pred.get("rec_scores", [])
@@ -803,22 +807,19 @@ class OCRService(metaclass=SingletonMeta):
                             fs = float(score)
                             text_with_scores.append((text, fs))
                             bbox = self._extract_bbox(rec_boxes, i) if rec_boxes is not None else None
-                            text_blocks.append(TextBlock(text=text, score=fs, bbox=bbox))
+                            text_blocks.append(TextBlock(text=text, score=fs, bbox=bbox, content_index=cl_idx))
 
-        if html_tables:
-            html_text = f"{HTML_STYLE}<body>{'\n\n'.join(html_tables)}</body>"
-        else:
-            html_text = ""
         raw_text = (
             "\n".join(t for t, _ in text_with_scores) if text_with_scores else ""
         )
 
         return self._build_ocr_result(
             raw_text=raw_text,
-            html_text=html_text,
+            html_text="",
             text_with_scores=text_with_scores,
             pipeline_type="table_recognition",
             text_blocks=text_blocks,
+            content_list=content_list,
         )
 
     def _recognize_formula(
@@ -839,6 +840,7 @@ class OCRService(metaclass=SingletonMeta):
         text_with_scores: list[tuple[str, float]] = []
         markdown_parts: list[str] = []
         text_blocks: list[TextBlock] = []
+        content_list: list[dict[str, Any]] = []
 
         for res in output_list:
             rec_boxes = None
@@ -846,30 +848,34 @@ class OCRService(metaclass=SingletonMeta):
                 formula = res.rec_formula
                 rec_boxes = getattr(res, "rec_boxes", None)
                 if formula:
+                    cl_idx = len(content_list)
                     markdown_parts.append(f"$$\n{formula}\n$$")
                     text_with_scores.append((formula, 1.0))
                     bbox = self._extract_bbox(rec_boxes, 0) if rec_boxes is not None else None
-                    text_blocks.append(TextBlock(text=formula, score=1.0, bbox=bbox))
+                    text_blocks.append(TextBlock(text=formula, score=1.0, bbox=bbox, content_index=cl_idx))
+                    content_list.append({"type": "equation", "text": formula})
             elif isinstance(res, dict):
                 formula = res.get("rec_formula", "")
                 rec_boxes = res.get("rec_boxes")
                 if formula:
+                    cl_idx = len(content_list)
                     markdown_parts.append(f"$$\n{formula}\n$$")
                     text_with_scores.append((formula, 1.0))
                     bbox = self._extract_bbox(rec_boxes, 0) if rec_boxes is not None else None
-                    text_blocks.append(TextBlock(text=formula, score=1.0, bbox=bbox))
+                    text_blocks.append(TextBlock(text=formula, score=1.0, bbox=bbox, content_index=cl_idx))
+                    content_list.append({"type": "equation", "text": formula})
 
         markdown_text = "\n\n".join(markdown_parts)
         raw_text = "\n".join(t for t, _ in text_with_scores)
-        html_text = markdown_to_html(markdown_text)
 
         return self._build_ocr_result(
             raw_text=raw_text,
             markdown_text=markdown_text,
-            html_text=html_text,
+            html_text="",
             text_with_scores=text_with_scores,
             pipeline_type="formula_recognition",
             text_blocks=text_blocks,
+            content_list=content_list,
         )
 
     @staticmethod
@@ -988,6 +994,7 @@ class OCRService(metaclass=SingletonMeta):
         pipeline_type: str = "OCR",
         images: dict[str, Any] | None = None,
         text_blocks: list[TextBlock] | None = None,
+        content_list: list[dict[str, Any]] | None = None,
     ) -> OCRResult:
         """构建 OCRResult 对象
 
@@ -999,6 +1006,7 @@ class OCRService(metaclass=SingletonMeta):
             pipeline_type: 管道类型
             images: 图像字典
             text_blocks: 含坐标的文本块列表
+            content_list: 结构化内容列表（含布局信息）
 
         Returns:
             OCRResult 对象
@@ -1016,14 +1024,17 @@ class OCRService(metaclass=SingletonMeta):
             (text, score) for text, score in text_with_scores if score < 0.80
         ]
 
+        final_html = html_text or raw_text
+
         return OCRResult(
             raw_text=raw_text,
             markdown_text=markdown_text or raw_text,
-            html_text=html_text or raw_text,
+            html_text=final_html,
             text_with_scores=text_with_scores,
             avg_score=avg_score,
             low_confidence_items=low_confidence_items,
             pipeline_type=pipeline_type,
             images=images or {},
             text_blocks=text_blocks or [],
+            content_list=content_list or [],
         )

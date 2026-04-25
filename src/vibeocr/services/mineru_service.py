@@ -292,7 +292,7 @@ class MinerUService(metaclass=SingletonMeta):
 
         # 从 content_list 构建 text_blocks（归一化 bbox + page_idx）
         text_blocks: list[TextBlock] = []
-        for block in content_list:
+        for i, block in enumerate(content_list):
             bbox_raw = block.get("bbox")
             if not bbox_raw or len(bbox_raw) < 4:
                 continue
@@ -305,6 +305,7 @@ class MinerUService(metaclass=SingletonMeta):
                 bbox=(float(bbox_raw[0]), float(bbox_raw[1]),
                       float(bbox_raw[2]), float(bbox_raw[3])),
                 page_idx=block.get("page_idx"),
+                content_index=i,
             ))
 
         text_with_scores = [(b.text, b.score) for b in text_blocks]

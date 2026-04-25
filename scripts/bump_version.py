@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""语义化版本管理脚本
+"""语义化版本管理与打包脚本
 
 用法:
     python scripts/bump_version.py              # 交互式菜单
@@ -8,12 +8,16 @@
     python scripts/bump_version.py major        # 升级主版本 X.0.0
     python scripts/bump_version.py 2.0.0        # 指定版本号
     python scripts/bump_version.py ... --no-edit  # 跳过编辑器
+    python scripts/bump_version.py --build      # 打包当前版本
+    python scripts/bump_version.py --rebuild 1.2.3  # 重新打包指定版本
 """
 
 from __future__ import annotations
 
+import argparse
 import os
 import re
+import shutil
 import subprocess
 import sys
 from datetime import date
@@ -30,6 +34,52 @@ CHANGELOG = Path(os.environ.get("CHANGELOG", str(PROJECT_ROOT / "CHANGELOG.md"))
 
 VERSION_RE = re.compile(r'version\s*=\s*"(\d+)\.(\d+)\.(\d+)"')
 SEMVER_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
+
+# ---------------------------------------------------------------------------
+# 打包常量
+# ---------------------------------------------------------------------------
+APP_ICON = PROJECT_ROOT / "resources" / "app_icon.ico"
+DIST_BASE_DIR = PROJECT_ROOT / "dist"
+
+# PyInstaller 排除的大依赖（由嵌入式 Python 独立安装）
+EXCLUDED_PACKAGES = [
+    "paddle",
+    "paddlepaddle",
+    "paddlepaddle_gpu",
+    "paddlex",
+    "mineru",
+    "torch",
+    "torchvision",
+    "torchaudio",
+    "nvidia",
+    "triton",
+]
+
+# 需要打包进 exe 的数据文件 (源目录, 目标目录)
+PACKAGE_DATA = [
+    ("config", "config"),
+    ("resources", "resources"),
+]
+
+# 隐藏导入（PyInstaller 静态分析可能遗漏的模块）
+HIDDEN_IMPORTS = [
+    "vibeocr",
+    "vibeocr.env_manager",
+    "vibeocr.python_path_manager",
+    "vibeocr.services.mineru_service",
+    "vibeocr.services.ocr_service_portable",
+    "vibeocr.managers.config_manager",
+    "vibeocr.utils.app_settings",
+    "vibeocr.utils.qt_async",
+    "vibeocr.views.main_window",
+    "pyside6",
+    "shiboken6",
+    "qasync",
+    "httpx",
+    "PIL",
+    "numpy",
+    "markdown",
+]
 
 
 # ---------------------------------------------------------------------------
@@ -296,18 +346,197 @@ def _open_editor(file_path: Path) -> None:
         print(f"警告: 无法找到编辑器 '{editor}'，跳过编辑步骤")
 
 
+# ---------------------------------------------------------------------------
+# 打包功能
+# ---------------------------------------------------------------------------
+
+def _check_pyinstaller() -> bool:
+    """检查 PyInstaller 是否已安装"""
+    try:
+        result = subprocess.run(
+            [sys.executable, "-m", "PyInstaller", "--version"],
+            capture_output=True,
+            text=True,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+        )
+        return result.returncode == 0
+    except Exception:
+        return False
+
+
+def _get_pyinstaller_cmd(version: str) -> list[str]:
+    """构建 PyInstaller 命令行参数
+
+    Args:
+        version: 版本号字符串
+
+    Returns:
+        PyInstaller 命令列表
+    """
+    separator = ";" if os.name == "nt" else ":"
+    dist_name = f"VibeOCR-v{version}-win64-Windows10_11"
+
+    cmd = [
+        sys.executable,
+        "-m",
+        "PyInstaller",
+        str(MAIN_PY),
+        "--windowed",
+        "--onedir",
+        "--name", "VibeOCR",
+        "--clean",
+        "--noconfirm",
+        "--paths", str(PROJECT_ROOT / "src"),
+    ]
+
+    if APP_ICON.exists():
+        cmd.extend(["--icon", str(APP_ICON)])
+
+    cmd.extend(["--distpath", str(DIST_BASE_DIR / dist_name)])
+    cmd.extend(["--workpath", str(DIST_BASE_DIR / f"build-{version}")])
+    cmd.extend(["--specpath", str(DIST_BASE_DIR)])
+
+    for src, dst in PACKAGE_DATA:
+        src_path = PROJECT_ROOT / src
+        if src_path.exists():
+            cmd.extend(["--add-data", f"{src_path}{separator}{dst}"])
+
+    for pkg in EXCLUDED_PACKAGES:
+        cmd.extend(["--exclude-module", pkg])
+
+    for mod in HIDDEN_IMPORTS:
+        cmd.extend(["--hidden-import", mod])
+
+    return cmd
+
+
+def _run_build(version: str) -> bool:
+    """执行 PyInstaller 打包
+
+    Args:
+        version: 版本号字符串
+
+    Returns:
+        是否成功
+    """
+    if not _check_pyinstaller():
+        print("\n错误: PyInstaller 未安装")
+        print(f"请运行: {sys.executable} -m pip install pyinstaller")
+        return False
+
+    dist_name = f"VibeOCR-v{version}-win64-Windows10_11"
+    dist_path = DIST_BASE_DIR / dist_name / "VibeOCR"
+
+    if dist_path.exists():
+        print(f"\n目标目录已存在: {dist_path}")
+        print("是否删除后重新打包? [Y/n]: ", end="", flush=True)
+        choice = input().strip().lower()
+        if choice not in ("", "y", "yes", "是"):
+            print("已取消打包")
+            return False
+        shutil.rmtree(DIST_BASE_DIR / dist_name, ignore_errors=True)
+
+    cmd = _get_pyinstaller_cmd(version)
+
+    print(f"\n开始打包 VibeOCR v{version}...")
+    print(f"输出目录: {DIST_BASE_DIR / dist_name}")
+    print(f"命令: {' '.join(cmd[:6])} ...")  # 缩写显示
+    print("打包中，请稍候...（这可能需要几分钟）\n")
+
+    try:
+        subprocess.run(cmd, check=True)
+    except subprocess.CalledProcessError as e:
+        print(f"\n打包失败，退出码: {e.returncode}")
+        return False
+    except KeyboardInterrupt:
+        print("\n打包已取消")
+        return False
+
+    print(f"\n{'='*50}")
+    print("打包成功!")
+    print(f"输出路径: {dist_path}")
+    print(f"{'='*50}")
+    return True
+
+
+def _ask_build(version: str) -> bool:
+    """交互式询问是否打包
+
+    Args:
+        version: 版本号字符串
+
+    Returns:
+        用户是否选择打包
+    """
+    print(f"\n{'='*50}")
+    print(f"版本 v{version} 已升级并提交。")
+    print("是否立即执行 PyInstaller 打包? [Y/n]: ", end="", flush=True)
+    choice = input().strip().lower()
+    return choice in ("", "y", "yes", "是")
+
+
 def main() -> int:
     """主入口函数
 
     Returns:
         退出码 (0=成功, 1=失败)
     """
-    # 解析命令行参数
-    args = sys.argv[1:]
-    no_edit = "--no-edit" in args
-    args = [a for a in args if a != "--no-edit"]
+    parser = argparse.ArgumentParser(
+        description="VibeOCR 版本管理与打包工具",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+示例:
+  %(prog)s                  交互式选择版本升级方式
+  %(prog)s patch            升级修订号
+  %(prog)s 2.0.0            指定版本号
+  %(prog)s minor --no-edit  升级次版本，跳过编辑器
+  %(prog)s --build          仅打包当前版本
+  %(prog)s --rebuild 1.2.3  重新打包指定版本
+        """,
+    )
+    parser.add_argument(
+        "version",
+        nargs="?",
+        help='版本升级类型 (patch/minor/major) 或版本号 (x.y.z)',
+    )
+    parser.add_argument(
+        "--no-edit",
+        action="store_true",
+        dest="no_edit",
+        help="跳过编辑器审阅 CHANGELOG",
+    )
+    parser.add_argument(
+        "--build",
+        action="store_true",
+        help="仅打包当前版本，不执行版本升级",
+    )
+    parser.add_argument(
+        "--rebuild",
+        metavar="VERSION",
+        help="重新打包指定版本 (如 1.2.3)",
+    )
 
-    # 读取当前版本
+    args = parser.parse_args()
+
+    # 模式1: 仅打包当前版本
+    if args.build:
+        try:
+            current = read_current_version(PYPROJECT_TOML)
+        except (FileNotFoundError, ValueError) as e:
+            print(f"错误: {e}")
+            return 1
+        current_str = ".".join(map(str, current))
+        return 0 if _run_build(current_str) else 1
+
+    # 模式2: 重新打包指定版本
+    if args.rebuild:
+        rebuild_version = args.rebuild
+        if not SEMVER_RE.match(rebuild_version):
+            print(f"错误: 无效版本号 '{rebuild_version}'")
+            return 1
+        return 0 if _run_build(rebuild_version) else 1
+
+    # 模式3: 版本升级流程
     try:
         current = read_current_version(PYPROJECT_TOML)
     except (FileNotFoundError, ValueError) as e:
@@ -316,22 +545,20 @@ def main() -> int:
 
     current_str = ".".join(map(str, current))
 
-    # 确定新版本
-    if not args:
+    if not args.version:
         # 交互式模式
         new_version = interactive_menu(current)
         if new_version is None:
             print("已取消")
             return 0
-    elif args[0] in ("patch", "minor", "major"):
-        new_version = bump_version(current, args[0])
-    elif SEMVER_RE.match(args[0]):
-        m = SEMVER_RE.match(args[0])
+    elif args.version in ("patch", "minor", "major"):
+        new_version = bump_version(current, args.version)
+    elif SEMVER_RE.match(args.version):
+        m = SEMVER_RE.match(args.version)
         assert m is not None
         new_version = (int(m.group(1)), int(m.group(2)), int(m.group(3)))
     else:
-        print(f"错误: 无效参数 '{args[0]}'")
-        print("用法: bump_version.py [patch|minor|major|x.y.z] [--no-edit]")
+        parser.print_help()
         return 1
 
     new_str = ".".join(map(str, new_version))
@@ -357,7 +584,7 @@ def main() -> int:
     print(f"  已更新 {CHANGELOG}")
 
     # 打开编辑器（CHANGELOG）
-    if not no_edit:
+    if not args.no_edit:
         _open_editor(CHANGELOG)
 
     # Git 操作
@@ -377,7 +604,11 @@ def main() -> int:
         print(f"警告: git 操作失败: {e}")
         return 1
 
-    print(f"完成! 版本已升级到 {new_str}")
+    # 询问是否打包
+    if _ask_build(new_str):
+        _run_build(new_str)
+
+    print(f"\n完成! 版本已升级到 {new_str}")
     return 0
 
 

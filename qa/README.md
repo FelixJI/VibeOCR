@@ -111,20 +111,6 @@ python qa/run.py --all --report
 - `reports/report_YYYYMMDD_HHMMSS.txt` - 文本报告
 - `reports/report_YYYYMMDD_HHMMSS.json` - JSON 报告
 
-## Makefile 命令
-
-项目也提供 Makefile 命令：
-
-```bash
-make all         # 运行所有检查
-make format      # 格式化代码
-make lint        # 运行 linter
-make lint-fix    # 修复 lint 问题
-make type-check  # 类型检查
-make ci          # CI 模式检查
-make clean       # 清理缓存
-```
-
 ## 脚本说明
 
 | 脚本 | 功能 |

@@ -7,6 +7,11 @@
 
 from enum import Enum, auto
 
+try:
+    from vibeocr import __version__ as _APP_VERSION
+except ImportError:
+    _APP_VERSION = "0.1.0"
+
 
 class FileType(Enum):
     """支持的文件类型"""
@@ -23,7 +28,7 @@ class Constants:
 
     # 应用程序信息
     APP_NAME = "VibeOCR"
-    APP_VERSION = "1.0.0"
+    APP_VERSION = _APP_VERSION
     APP_DESCRIPTION = "基于 PaddleOCR 的文档识别工具"
 
     # 窗口尺寸
@@ -105,6 +110,9 @@ COLOR_TEXT = "#212121"
 COLOR_BORDER = "#E0E0E0"
 COLOR_BACKGROUND = "#FFFFFF"
 COLOR_HOVER = "#F5F5F5"
+
+
+del _APP_VERSION
 
 
 class WindowsColors:

@@ -2,7 +2,7 @@
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QAction, QColor, QPainter, QPen, QPixmap
-from PySide6.QtWidgets import QLabel, QMenu, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QLabel, QLineEdit, QMenu, QVBoxLayout, QWidget
 
 from vibeocr.models.ocr_result import TextBlock
 
@@ -14,6 +14,8 @@ HIGH_CONF_FILL = QColor(76, 175, 80, 40)    # 淡绿色填充
 HIGH_CONF_BORDER = QColor(76, 175, 80, 160)  # 淡绿色边框
 LOW_CONF_FILL = QColor(244, 67, 54, 60)     # 红色填充
 LOW_CONF_BORDER = QColor(244, 67, 54, 200)  # 红色边框
+EDIT_FILL = QColor(255, 193, 7, 40)         # 琥珀色填充（手动修改）
+EDIT_BORDER = QColor(255, 152, 0, 200)      # 橙色边框（手动修改）
 
 
 class TextBlockOverlay(QWidget):
@@ -21,15 +23,15 @@ class TextBlockOverlay(QWidget):
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
-        self._rects: list[tuple[float, float, float, float, float, str]] = []
-        # (x, y, w, h, score, text)
+        self._rects: list[tuple[float, float, float, float, float, str, bool]] = []
+        # (x, y, w, h, score, text, is_manually_edited)
         self._hovered_index: int = -1
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
 
     def set_blocks(
         self,
-        rects: list[tuple[float, float, float, float, float, str]],
+        rects: list[tuple[float, float, float, float, float, str, bool]],
     ) -> None:
         self._rects = rects
         self._hovered_index = -1
@@ -51,15 +53,22 @@ class TextBlockOverlay(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-        for i, (x, y, w, h, score, text) in enumerate(self._rects):
+        for i, (x, y, w, h, score, text, is_manually_edited) in enumerate(self._rects):
             from PySide6.QtCore import QRectF
 
             rect = QRectF(x, y, w, h)
             is_low = score < LOW_CONFIDENCE_THRESHOLD
             is_hovered = i == self._hovered_index
 
-            fill = LOW_CONF_FILL if is_low else HIGH_CONF_FILL
-            border = LOW_CONF_BORDER if is_low else HIGH_CONF_BORDER
+            if is_manually_edited:
+                fill = EDIT_FILL
+                border = EDIT_BORDER
+            elif is_low:
+                fill = LOW_CONF_FILL
+                border = LOW_CONF_BORDER
+            else:
+                fill = HIGH_CONF_FILL
+                border = HIGH_CONF_BORDER
 
             if is_hovered:
                 fill = QColor(fill)
@@ -69,18 +78,6 @@ class TextBlockOverlay(QWidget):
             pen = QPen(border, 2)
             painter.setPen(pen)
             painter.drawRect(rect)
-
-            # 悬停时显示文本预览
-            if is_hovered and text:
-                from PySide6.QtCore import QPointF
-
-                label_rect = QRectF(
-                    rect.topLeft() + QPointF(0, -20),
-                    rect.topLeft() + QPointF(min(len(text) * 8 + 20, 300), 0),
-                )
-                painter.fillRect(label_rect, QColor(0, 0, 0, 180))
-                painter.setPen(QPen(QColor(255, 255, 255)))
-                painter.drawText(label_rect, Qt.AlignmentFlag.AlignCenter, text[:30])
 
         painter.end()
 
@@ -92,6 +89,7 @@ class PreviewWidget(QWidget):
     file_open_requested = Signal()  # 请求打开文件信号
     image_changed = Signal()  # 图片改变信号
     block_clicked = Signal(int)  # 文本块被点击（TextBlock 索引）
+    block_text_edited = Signal(int, str)  # 文本块被编辑（索引，新文本）
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -99,6 +97,7 @@ class PreviewWidget(QWidget):
         self._text_blocks: list[TextBlock] = []
         self._block_screen_rects: list[tuple[float, float, float, float]] = []
         self._hovered_block: int = -1
+        self._editing_index: int = -1
         self._setup_ui()
 
     def _setup_ui(self) -> None:
@@ -128,6 +127,18 @@ class PreviewWidget(QWidget):
         # 文本块高亮覆盖层
         self._overlay = TextBlockOverlay(self._image_label)
 
+        # 内联文本编辑器
+        self._inline_editor = QLineEdit(self._image_label)
+        self._inline_editor.setStyleSheet(
+            "QLineEdit { background-color: rgba(255,255,255,0.95); "
+            "border: 2px solid #ff9800; border-radius: 4px; "
+            "padding: 2px 6px; font-size: 13px; }"
+        )
+        self._inline_editor.setFrame(False)
+        self._inline_editor.hide()
+        self._inline_editor.editingFinished.connect(self._on_inline_edit_finished)
+        self._inline_editor.installEventFilter(self)
+
         # 事件过滤器用于悬停和点击检测
         self._image_label.setMouseTracking(True)
         self._image_label.installEventFilter(self)
@@ -139,6 +150,15 @@ class PreviewWidget(QWidget):
             elif event.type() == event.Type.MouseButtonPress:
                 if event.button() == Qt.MouseButton.LeftButton:
                     self._on_block_click(event.pos())
+            elif event.type() == event.Type.MouseButtonDblClick:
+                if event.button() == Qt.MouseButton.LeftButton:
+                    self._on_block_double_click(event.pos())
+        elif obj == self._inline_editor and event.type() == event.Type.KeyPress:
+            from PySide6.QtGui import QKeyEvent
+            key_event: QKeyEvent = event
+            if key_event.key() == Qt.Key.Key_Escape:
+                self._cancel_inline_edit()
+                return True
         return super().eventFilter(obj, event)
 
     def _on_mouse_move(self, pos) -> None:
@@ -149,9 +169,10 @@ class PreviewWidget(QWidget):
             self._overlay.set_hovered(idx)
             if idx >= 0:
                 block = self._text_blocks[idx]
-                self._image_label.setToolTip(
-                    f"{block.text[:50]}\n置信度: {block.score:.1%}"
-                )
+                tooltip = f"{block.text[:50]}\n置信度: {block.score:.1%}"
+                if block.is_manually_edited:
+                    tooltip += "\n[手动修改]"
+                self._image_label.setToolTip(tooltip)
             else:
                 self._image_label.setToolTip("")
 
@@ -160,6 +181,43 @@ class PreviewWidget(QWidget):
         idx = self._hit_test_block(pos.x(), pos.y())
         if idx >= 0:
             self.block_clicked.emit(idx)
+
+    def _on_block_double_click(self, pos) -> None:
+        """双击文本块进入内联编辑"""
+        idx = self._hit_test_block(pos.x(), pos.y())
+        if idx < 0:
+            return
+        self._start_inline_edit(idx)
+
+    def _start_inline_edit(self, index: int) -> None:
+        """在指定文本块位置显示内联编辑器"""
+        if index < 0 or index >= len(self._block_screen_rects):
+            return
+        bx, by, bw, bh = self._block_screen_rects[index]
+        block = self._text_blocks[index]
+        self._editing_index = index
+        self._inline_editor.setText(block.text)
+        self._inline_editor.setGeometry(int(bx), int(by), max(int(bw), 120), max(int(bh) + 4, 28))
+        self._inline_editor.show()
+        self._inline_editor.setFocus()
+        self._inline_editor.selectAll()
+
+    def _on_inline_edit_finished(self) -> None:
+        """内联编辑完成（按回车或失去焦点）"""
+        if self._editing_index < 0:
+            return
+        index = self._editing_index
+        new_text = self._inline_editor.text()
+        old_text = self._text_blocks[index].text
+        self._inline_editor.hide()
+        self._editing_index = -1
+        if new_text != old_text:
+            self.block_text_edited.emit(index, new_text)
+
+    def _cancel_inline_edit(self) -> None:
+        """取消内联编辑（按 Esc）"""
+        self._inline_editor.hide()
+        self._editing_index = -1
 
     def _hit_test_block(self, x: int, y: int) -> int:
         """检测点击位置命中的文本块索引"""
@@ -272,7 +330,7 @@ class PreviewWidget(QWidget):
             sw = (x1 - x0) / 1000.0 * disp_w
             sh = (y1 - y0) / 1000.0 * disp_h
             self._block_screen_rects.append((sx, sy, sw, sh))
-            overlay_rects.append((sx, sy, sw, sh, block.score, block.text))
+            overlay_rects.append((sx, sy, sw, sh, block.score, block.text, block.is_manually_edited))
 
         self._overlay.set_blocks(overlay_rects)
         self._overlay.setGeometry(self._image_label.rect())
