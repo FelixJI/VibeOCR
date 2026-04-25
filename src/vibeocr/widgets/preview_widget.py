@@ -1,6 +1,6 @@
 """Preview widget for image display and screenshot trigger"""
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, QRectF, Signal
 from PySide6.QtGui import QAction, QColor, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import QLabel, QLineEdit, QMenu, QVBoxLayout, QWidget
 
@@ -9,7 +9,7 @@ from vibeocr.models.ocr_result import TextBlock
 # 置信度阈值
 LOW_CONFIDENCE_THRESHOLD = 0.80
 
-# 高亮颜色
+# 置信度着色颜色
 HIGH_CONF_FILL = QColor(76, 175, 80, 40)    # 淡绿色填充
 HIGH_CONF_BORDER = QColor(76, 175, 80, 160)  # 淡绿色边框
 LOW_CONF_FILL = QColor(244, 67, 54, 60)     # 红色填充
@@ -17,23 +17,66 @@ LOW_CONF_BORDER = QColor(244, 67, 54, 200)  # 红色边框
 EDIT_FILL = QColor(255, 193, 7, 40)         # 琥珀色填充（手动修改）
 EDIT_BORDER = QColor(255, 152, 0, 200)      # 橙色边框（手动修改）
 
+# 块类型着色常量（来自 FilePreviewWidget）
+BBOX_NORM = 1000.0
 
-class TextBlockOverlay(QWidget):
-    """透明覆盖层，绘制文本块高亮矩形"""
+BLOCK_COLORS = {
+    "text": QColor(59, 130, 246, 80),
+    "title": QColor(239, 68, 68, 80),
+    "table": QColor(34, 197, 94, 80),
+    "image": QColor(168, 85, 247, 80),
+    "figure": QColor(168, 85, 247, 80),
+    "equation": QColor(249, 115, 22, 80),
+    "interline_equation": QColor(249, 115, 22, 80),
+    "inline_equation": QColor(249, 115, 22, 80),
+}
+
+BLOCK_BORDER_COLORS = {
+    "text": QColor(59, 130, 246, 200),
+    "title": QColor(239, 68, 68, 200),
+    "table": QColor(34, 197, 94, 200),
+    "image": QColor(168, 85, 247, 200),
+    "figure": QColor(168, 85, 247, 200),
+    "equation": QColor(249, 115, 22, 200),
+    "interline_equation": QColor(249, 115, 22, 200),
+    "inline_equation": QColor(249, 115, 22, 200),
+}
+
+BLOCK_TYPE_LABELS = {
+    "text": "文本",
+    "title": "标题",
+    "table": "表格",
+    "image": "图片",
+    "figure": "图片",
+    "equation": "公式",
+    "interline_equation": "公式",
+    "inline_equation": "公式",
+}
+
+
+class UnifiedBBoxOverlay(QWidget):
+    """统一 BBox 覆盖层，支持置信度着色和块类型着色两种模式"""
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
-        self._rects: list[tuple[float, float, float, float, float, str, bool]] = []
-        # (x, y, w, h, score, text, is_manually_edited)
+        # 置信度模式数据: list of (x, y, w, h, score, text, is_manually_edited)
+        self._conf_rects: list[tuple[float, float, float, float, float, str, bool]] = []
+        # 块类型模式数据: list of (content_index, rect, block_type, fill, border)
+        self._type_rects: list[tuple[int, QRectF, str, QColor, QColor]] = []
+        self._mode: str = "confidence"  # "confidence" or "block_type"
         self._hovered_index: int = -1
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
 
-    def set_blocks(
-        self,
-        rects: list[tuple[float, float, float, float, float, str, bool]],
-    ) -> None:
-        self._rects = rects
+    def set_confidence_blocks(self, rects) -> None:
+        self._mode = "confidence"
+        self._conf_rects = rects
+        self._hovered_index = -1
+        self.update()
+
+    def set_type_blocks(self, rects) -> None:
+        self._mode = "block_type"
+        self._type_rects = rects
         self._hovered_index = -1
         self.update()
 
@@ -43,19 +86,24 @@ class TextBlockOverlay(QWidget):
             self.update()
 
     def clear(self) -> None:
-        self._rects.clear()
+        self._conf_rects.clear()
+        self._type_rects.clear()
         self._hovered_index = -1
         self.update()
 
     def paintEvent(self, event) -> None:
-        if not self._rects:
+        if self._mode == "confidence":
+            self._paint_confidence()
+        else:
+            self._paint_block_type()
+
+    def _paint_confidence(self) -> None:
+        if not self._conf_rects:
             return
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-        for i, (x, y, w, h, score, text, is_manually_edited) in enumerate(self._rects):
-            from PySide6.QtCore import QRectF
-
+        for i, (x, y, w, h, score, text, is_manually_edited) in enumerate(self._conf_rects):
             rect = QRectF(x, y, w, h)
             is_low = score < LOW_CONFIDENCE_THRESHOLD
             is_hovered = i == self._hovered_index
@@ -78,6 +126,40 @@ class TextBlockOverlay(QWidget):
             pen = QPen(border, 2)
             painter.setPen(pen)
             painter.drawRect(rect)
+
+        painter.end()
+
+    def _paint_block_type(self) -> None:
+        if not self._type_rects:
+            return
+        from PySide6.QtCore import QPointF
+
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        for cl_idx, rect, block_type, fill_color, border_color in self._type_rects:
+            is_hovered = cl_idx == self._hovered_index
+
+            if is_hovered:
+                fill = QColor(fill_color)
+                fill.setAlpha(min(fill.alpha() + 100, 220))
+                border = QColor(border_color)
+                border.setAlpha(255)
+            else:
+                fill = fill_color
+                border = border_color
+
+            painter.fillRect(rect, fill)
+            pen = QPen(border, 2 if not is_hovered else 3)
+            painter.setPen(pen)
+            painter.drawRect(rect)
+
+            if is_hovered or len(self._type_rects) <= 20:
+                label = BLOCK_TYPE_LABELS.get(block_type, block_type)
+                label_rect = QRectF(rect.topLeft(), rect.topLeft() + QPointF(60, 20))
+                painter.fillRect(label_rect, border)
+                painter.setPen(QPen(QColor(255, 255, 255)))
+                painter.drawText(label_rect, Qt.AlignmentFlag.AlignCenter, label)
 
         painter.end()
 
@@ -125,7 +207,7 @@ class PreviewWidget(QWidget):
         layout.addWidget(self._image_label)
 
         # 文本块高亮覆盖层
-        self._overlay = TextBlockOverlay(self._image_label)
+        self._overlay = UnifiedBBoxOverlay(self._image_label)
 
         # 内联文本编辑器
         self._inline_editor = QLineEdit(self._image_label)
@@ -332,7 +414,7 @@ class PreviewWidget(QWidget):
             self._block_screen_rects.append((sx, sy, sw, sh))
             overlay_rects.append((sx, sy, sw, sh, block.score, block.text, block.is_manually_edited))
 
-        self._overlay.set_blocks(overlay_rects)
+        self._overlay.set_confidence_blocks(overlay_rects)
         self._overlay.setGeometry(self._image_label.rect())
 
     def highlight_block(self, index: int) -> None:
