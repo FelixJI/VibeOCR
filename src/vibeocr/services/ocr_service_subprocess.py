@@ -622,6 +622,10 @@ class OCRServiceSubprocess:
         with contextlib.suppress(Exception):
             self._mineru_manager.execute(lambda w: w._send_batch_cancel())
 
+    def set_task_queued_callback(self, callback: Callable) -> None:
+        """设置任务排队通知回调（透传到 PaddleX WorkerManager）"""
+        self._paddlex_manager.set_task_queued_callback(callback)
+
     def __enter__(self) -> "OCRServiceSubprocess":
         """上下文管理器入口"""
         return self

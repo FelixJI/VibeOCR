@@ -81,6 +81,7 @@ class MainWindow(QMainWindow):
         self._subprocess_manager.service_ready.connect(self._on_subprocess_worker_ready)
         self._subprocess_manager.progress_update.connect(self._on_subprocess_progress)
         self._subprocess_manager.preload_finished.connect(self._on_preload_finished)
+        self._subprocess_manager.recognition_queued.connect(self._on_recognition_queued)
 
         self._setup_ui()
 
@@ -424,6 +425,13 @@ class MainWindow(QMainWindow):
         else:
             self._statusbar.showMessage("OCR 服务已就绪")
         logging.info(f"[MainWindow] 预加载完成: {results}")
+
+    @Slot(str)
+    def _on_recognition_queued(self, message: str) -> None:
+        """识别请求因预加载排队"""
+        self._statusbar.showMessage(message)
+        if hasattr(self, "_single_tab") and self._single_tab:
+            self._single_tab.show_waiting_message(message)
 
     def _start_subprocess_preload(self) -> None:
         """在子进程中预加载用户配置的管道"""

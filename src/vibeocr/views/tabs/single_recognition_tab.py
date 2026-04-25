@@ -285,3 +285,11 @@ class SingleRecognitionTab(BaseOcrTab):
         self._result_widget._web_view.setHtml(
             f"<p style='color:#f44336;'>识别失败：{error_msg}</p>"
         )
+
+    def show_waiting_message(self, message: str) -> None:
+        """在结果面板显示等待提示（预加载排队时调用）"""
+        self._result_widget._web_view.setHtml(
+            f'<div style="display:flex;align-items:center;justify-content:center;'
+            f'height:100%;color:#666;font-size:14px;">'
+            f'<p>{message}</p></div>'
+        )

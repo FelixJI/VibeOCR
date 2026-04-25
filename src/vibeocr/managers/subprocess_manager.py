@@ -154,6 +154,7 @@ class SubprocessManager(QObject):
     service_ready = Signal(bool)
     progress_update = Signal(str)
     preload_finished = Signal(dict)
+    recognition_queued = Signal(str)  # 识别请求因预加载排队，参数为提示消息
 
     def __init__(
         self,
@@ -214,6 +215,12 @@ class SubprocessManager(QObject):
 
         if success and self._start_task is not None:
             self._service = self._start_task.service
+            if self._service:
+                self._service.set_task_queued_callback(
+                    lambda: self.recognition_queued.emit(
+                        "正在预加载模型，识别请求将在预加载完成后自动执行..."
+                    )
+                )
 
         self._start_task = None
         self.service_ready.emit(success)

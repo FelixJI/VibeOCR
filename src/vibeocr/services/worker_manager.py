@@ -126,6 +126,9 @@ class WorkerManager:
         # 关闭标志（用于避免关闭时误判崩溃）
         self._shutting_down = False
 
+        # 任务排队通知回调
+        self._task_queued_callback: Callable | None = None
+
         logger.info(
             f"WorkerManager 初始化: max_workers={max_workers}, use_gpu={use_gpu}"
         )
@@ -237,18 +240,24 @@ class WorkerManager:
         Raises:
             OCRWorkerProcessError: 所有 Worker 都不可用或任务执行失败
         """
-        # 获取可用 Worker
-        worker_info = self._get_available_worker()
+        # 获取可用 Worker（短等待）
+        worker_info = self._get_available_worker(wait_timeout=2.0)
         if worker_info is None:
             # 尝试恢复 Worker
             if self.auto_restart:
                 logger.warning("无可用 Worker，尝试恢复...")
                 self._recover_workers()
-                worker_info = self._get_available_worker()
+                worker_info = self._get_available_worker(wait_timeout=2.0)
 
-            # 恢复后仍无可用 Worker，尝试抢占被后台任务（如预加载）阻塞的 Worker
             if worker_info is None:
-                worker_info = self._preempt_busy_worker()
+                # Worker 仍在忙（可能在预加载），通知 UI 并长等待
+                logger.info("Worker 忙碌，排队等待...")
+                if self._task_queued_callback:
+                    try:
+                        self._task_queued_callback()
+                    except Exception:
+                        pass
+                worker_info = self._get_available_worker(wait_timeout=300.0)
 
             if worker_info is None:
                 raise OCRWorkerProcessError("无可用 Worker")
@@ -350,6 +359,10 @@ class WorkerManager:
             worker_info.state = WorkerState.ERROR
             logger.error(f"Worker {worker_info.worker_id} 重启失败")
         return success
+
+    def set_task_queued_callback(self, callback: Callable) -> None:
+        """设置任务排队通知回调"""
+        self._task_queued_callback = callback
 
     def _preempt_busy_worker(self) -> WorkerInfo | None:
         """抢占被后台任务（如预加载）阻塞的 Worker
