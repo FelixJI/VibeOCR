@@ -31,6 +31,12 @@ if TYPE_CHECKING:
 
 _logger = logging.getLogger(__name__)
 
+# MinerU discarded block types — appended after layout blocks per page,
+# should be excluded from text extraction and rendering.
+DISCARDED_BLOCK_TYPES = frozenset({
+    "header", "footer", "page_number", "page_footnote", "aside_text",
+})
+
 
 class MinerUService(metaclass=SingletonMeta):
     """MinerU 文档解析服务（单例）
@@ -293,6 +299,8 @@ class MinerUService(metaclass=SingletonMeta):
         # 从 content_list 构建 text_blocks（归一化 bbox + page_idx）
         text_blocks: list[TextBlock] = []
         for i, block in enumerate(content_list):
+            if block.get("type", "") in DISCARDED_BLOCK_TYPES:
+                continue
             bbox_raw = block.get("bbox")
             if not bbox_raw or len(bbox_raw) < 4:
                 continue
@@ -336,6 +344,8 @@ class MinerUService(metaclass=SingletonMeta):
         parts: list[str] = []
         for block in content_list:
             block_type = block.get("type", "")
+            if block_type in DISCARDED_BLOCK_TYPES:
+                continue
             if block_type == "table":
                 html = block.get("table_body", "")
                 parts.append(MinerUService._strip_html(html))

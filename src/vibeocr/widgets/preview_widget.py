@@ -35,6 +35,11 @@ EDIT_BORDER = QColor(255, 152, 0, 200)      # 橙色边框（手动修改）
 # 块类型着色常量（来自 FilePreviewWidget）
 BBOX_NORM = 1000.0
 
+# MinerU discarded block types — skip in overlay
+DISCARDED_BLOCK_TYPES = frozenset({
+    "header", "footer", "page_number", "page_footnote", "aside_text",
+})
+
 BLOCK_COLORS = {
     "text": QColor(59, 130, 246, 80),
     "title": QColor(239, 68, 68, 80),
@@ -537,6 +542,8 @@ class PreviewWidget(QWidget):
 
         overlay_rects = []
         for i, block in enumerate(self._content_list):
+            if block.get("type", "") in DISCARDED_BLOCK_TYPES:
+                continue
             page_idx = block.get("page_idx", 0)
             if page_idx != self._current_page:
                 continue

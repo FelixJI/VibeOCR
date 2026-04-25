@@ -14,6 +14,10 @@ from vibeocr.utils.markdown_converter import HTML_STYLE
 
 logger = logging.getLogger(__name__)
 
+DISCARDED_BLOCK_TYPES = frozenset({
+    "header", "footer", "page_number", "page_footnote", "aside_text",
+})
+
 
 class ExportService:
     """OCR 结果导出服务"""
@@ -138,35 +142,52 @@ class ExportService:
                 block_type = block.get("type", "text")
                 text = block.get("text", "")
 
-                if block_type == "title":
+                if block_type in DISCARDED_BLOCK_TYPES:
+                    continue
+                elif block_type == "title":
                     level = min(block.get("level", 1), 6)
                     doc.add_heading(text, level=level)
-                elif block_type in ("text",):
-                    if text:
+                elif block_type == "text":
+                    text_level = block.get("text_level")
+                    if text_level and 1 <= text_level <= 6:
+                        doc.add_heading(text, level=text_level)
+                    elif text:
                         doc.add_paragraph(text)
                 elif block_type == "table":
-                    html = block.get("html", "")
+                    html = block.get("table_body", "") or block.get("html", "")
                     if html:
                         ExportService._add_html_table_to_docx(doc, html)
                 elif block_type in ("image", "figure"):
-                    img_idx = block.get("img_idx")
+                    img_path = block.get("img_path", "")
+                    caption = block.get("image_caption") or block.get("chart_caption") or []
                     images = result.images or {}
-                    if img_idx is not None:
-                        for _name, data in images.items():
-                            if isinstance(data, bytes):
-                                try:
-                                    doc.add_picture(io.BytesIO(data), width=Inches(5))
-                                    break
-                                except Exception:
-                                    pass
-                    elif text:
-                        doc.add_paragraph(f"[图片: {text}]")
+                    img_added = False
+                    if img_path and img_path in images:
+                        data = images[img_path]
+                        if isinstance(data, bytes):
+                            try:
+                                doc.add_picture(io.BytesIO(data), width=Inches(5))
+                                img_added = True
+                            except Exception:
+                                pass
+                    if not img_added:
+                        label = " ".join(caption) if caption else text
+                        if label:
+                            doc.add_paragraph(f"[图片: {label}]")
                 elif block_type in ("equation", "interline_equation", "inline_equation"):
                     if text:
                         p = doc.add_paragraph()
                         run = p.add_run(text)
                         run.font.name = "Consolas"
                         run.font.size = Pt(11)
+                elif block_type == "list":
+                    items = block.get("list_items", [])
+                    for item in items:
+                        doc.add_paragraph(item, style="List Bullet")
+                elif block_type == "code":
+                    body = block.get("code_body", "")
+                    if body:
+                        doc.add_paragraph(body, style="No Spacing")
         else:
             # 回退：使用纯文本
             text = result.raw_text or result.markdown_text
@@ -221,34 +242,74 @@ class ExportService:
             table_count = 0
             has_text = False
 
-            # 收集表格
             for block in content_list:
                 block_type = block.get("type", "text")
                 text = block.get("text", "")
-                html = block.get("html", "")
 
-                if block_type == "table" and html:
-                    table_count += 1
-                    rows_data = ExportService._parse_html_table(html)
-                    if rows_data:
-                        ws = wb.create_sheet(title=f"表格 {table_count}")
-                        for row_idx, row in enumerate(rows_data):
-                            for col_idx, cell_text in enumerate(row):
-                                ws.cell(
-                                    row=row_idx + 1,
-                                    column=col_idx + 1,
-                                    value=cell_text,
-                                )
+                if block_type in DISCARDED_BLOCK_TYPES:
+                    continue
+                elif block_type == "table":
+                    html = block.get("table_body", "") or block.get("html", "")
+                    if html:
+                        table_count += 1
+                        rows_data = ExportService._parse_html_table(html)
+                        if rows_data:
+                            ws = wb.create_sheet(title=f"表格 {table_count}")
+                            for row_idx, row in enumerate(rows_data):
+                                for col_idx, cell_text in enumerate(row):
+                                    ws.cell(
+                                        row=row_idx + 1,
+                                        column=col_idx + 1,
+                                        value=cell_text,
+                                    )
 
-                elif block_type in ("text", "title") and text:
+                elif block_type == "title" and text:
                     if not has_text:
                         has_text = True
                         ws_text.title = "文本汇总"
+                    ws_text.append([f"[标题] {text}"])
 
-                    if block_type == "title":
-                        ws_text.append([f"[标题] {text}"])
+                elif block_type == "text" and text:
+                    if not has_text:
+                        has_text = True
+                        ws_text.title = "文本汇总"
+                    text_level = block.get("text_level")
+                    if text_level:
+                        ws_text.append([f"{'#' * text_level} {text}"])
                     else:
                         ws_text.append([text])
+
+                elif block_type in ("image", "figure"):
+                    if not has_text:
+                        has_text = True
+                        ws_text.title = "文本汇总"
+                    caption = block.get("image_caption") or block.get("chart_caption") or []
+                    label = " ".join(caption) if caption else text
+                    if label:
+                        ws_text.append([f"[图片: {label}]"])
+
+                elif block_type == "equation" and text:
+                    if not has_text:
+                        has_text = True
+                        ws_text.title = "文本汇总"
+                    ws_text.append([f"[公式] {text}"])
+
+                elif block_type == "list":
+                    items = block.get("list_items", [])
+                    if items:
+                        if not has_text:
+                            has_text = True
+                            ws_text.title = "文本汇总"
+                        for item in items:
+                            ws_text.append([f"• {item}"])
+
+                elif block_type == "code":
+                    body = block.get("code_body", "")
+                    if body:
+                        if not has_text:
+                            has_text = True
+                            ws_text.title = "文本汇总"
+                        ws_text.append([f"[代码] {body}"])
 
             if not has_text and table_count > 0:
                 if "Sheet" in wb.sheetnames:

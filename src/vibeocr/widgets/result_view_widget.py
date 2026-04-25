@@ -55,6 +55,11 @@ BLOCK_TYPE_LABELS: dict[str, str] = {
     "seal": "印章",
 }
 
+# MinerU discarded block types — skip in rendering
+DISCARDED_BLOCK_TYPES = frozenset({
+    "header", "footer", "page_number", "page_footnote", "aside_text",
+})
+
 # 存储当前结果的 images 字典，供渲染函数访问
 _current_images: dict[str, bytes] = {}
 
@@ -157,6 +162,15 @@ def _render_code(block: dict, index: int) -> str:
     )
 
 
+def _render_seal(block: dict, index: int) -> str:
+    img_path = block.get("img_path", "")
+    if img_path and img_path in _current_images:
+        img_bytes = _current_images[img_path]
+        b64 = base64.b64encode(img_bytes).decode()
+        return f'<img src="data:image/png;base64,{b64}" style="max-width:60%;border-radius:4px;">'
+    return '<p style="color:#888;font-size:12px;">[印章]</p>'
+
+
 def _render_fallback(block: dict, index: int) -> str:
     text = html_lib.escape(block.get("text", ""))
     return f"<p>{text}</p>" if text else ""
@@ -173,6 +187,7 @@ BLOCK_RENDERERS: dict[str, Callable[[dict, int], str]] = {
     "inline_equation": _render_equation,
     "list": _render_list,
     "code": _render_code,
+    "seal": _render_seal,
 }
 
 
@@ -355,6 +370,8 @@ class ResultViewWidget(QWidget):
         if content_list:
             blocks_html = []
             for i, block in enumerate(content_list):
+                if block.get("type", "") in DISCARDED_BLOCK_TYPES:
+                    continue
                 blocks_html.append(_render_block(block, i))
             body = "\n".join(blocks_html)
         else:

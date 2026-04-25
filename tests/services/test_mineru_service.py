@@ -361,3 +361,62 @@ class TestMinerUIntegration:
         result = service._build_ocr_result(api_resp, "input.png", data=b"fake_png")
 
         assert result.text_blocks[0].bbox == (100.0, 200.0, 900.0, 800.0)
+
+
+class TestDiscardedBlocksFilter:
+    """测试废弃块（header/footer/page_number 等）过滤"""
+
+    def _make_service(self):
+        service = MinerUService.__new__(MinerUService)
+        service._api_url = "http://127.0.0.1:9999"
+        service._api_process = None
+        return service
+
+    def test_raw_text_excludes_discarded_blocks(self):
+        """raw_text 不应包含 header/footer/page_number 等废弃块"""
+        service = self._make_service()
+        content_list = [
+            {"type": "header", "text": "期刊名称", "bbox": [100, 10, 900, 40], "page_idx": 0},
+            {"type": "text", "text": "正文内容", "bbox": [100, 100, 900, 200], "page_idx": 0},
+            {"type": "footer", "text": "页脚文字", "bbox": [100, 950, 900, 990], "page_idx": 0},
+            {"type": "page_number", "text": "1", "bbox": [450, 980, 550, 999], "page_idx": 0},
+            {"type": "page_footnote", "text": "脚注内容", "bbox": [100, 900, 900, 940], "page_idx": 0},
+            {"type": "aside_text", "text": "旁注文字", "bbox": [0, 100, 90, 200], "page_idx": 0},
+        ]
+        api_resp = _make_api_response(md_content="正文内容", content_list=content_list)
+        result = service._build_ocr_result(api_resp, "input.pdf", data=None)
+
+        assert "正文内容" in result.raw_text
+        assert "期刊名称" not in result.raw_text
+        assert "页脚文字" not in result.raw_text
+        assert "1" not in result.raw_text.split("\n")
+        assert "脚注内容" not in result.raw_text
+        assert "旁注文字" not in result.raw_text
+
+    def test_text_blocks_excludes_discarded_blocks(self):
+        """text_blocks 不应包含废弃块的 TextBlock"""
+        service = self._make_service()
+        content_list = [
+            {"type": "header", "text": "Header", "bbox": [10, 10, 990, 40], "page_idx": 0},
+            {"type": "text", "text": "Body", "bbox": [10, 100, 990, 200], "page_idx": 0},
+            {"type": "footer", "text": "Footer", "bbox": [10, 950, 990, 990], "page_idx": 0},
+        ]
+        api_resp = _make_api_response(md_content="Body", content_list=content_list)
+        result = service._build_ocr_result(api_resp, "input.pdf", data=None)
+
+        assert len(result.text_blocks) == 1
+        assert result.text_blocks[0].text == "Body"
+
+    def test_content_list_preserved_unchanged(self):
+        """content_list 应保持原样透传（不过滤）"""
+        service = self._make_service()
+        content_list = [
+            {"type": "header", "text": "H", "bbox": [0, 0, 100, 30], "page_idx": 0},
+            {"type": "text", "text": "T", "bbox": [0, 50, 100, 80], "page_idx": 0},
+        ]
+        api_resp = _make_api_response(md_content="T", content_list=content_list)
+        result = service._build_ocr_result(api_resp, "input.pdf", data=None)
+
+        # content_list 包含所有块（含废弃块）
+        assert len(result.content_list) == 2
+        assert result.content_list[0]["type"] == "header"
