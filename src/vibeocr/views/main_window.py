@@ -2,13 +2,10 @@
 
 from __future__ import annotations
 
-import io
 import logging
 from typing import TYPE_CHECKING
 
-from PIL import Image
 from PySide6.QtCore import (
-    QBuffer,
     QRect,
     QTimer,
     Signal,
@@ -16,7 +13,6 @@ from PySide6.QtCore import (
 )
 from PySide6.QtGui import QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import (
-    QApplication,
     QCheckBox,
     QFileDialog,
     QMainWindow,
@@ -37,12 +33,10 @@ from vibeocr.managers import (
 )
 from vibeocr.services.log_service import setup_logging
 from vibeocr.ui.ui_main_window import Ui_MainWindowWidget
-from vibeocr.utils.qt_async import run_coroutine
 from vibeocr.views.batch_recognition_tab import BatchRecognitionTab
 from vibeocr.views.clipboard_controller import ClipboardController
 from vibeocr.views.settings_page_controller import SettingsPageController
-from vibeocr.widgets.preprocess_options_widget import PreprocessOptionsWidget
-from vibeocr.widgets.result_view_widget import ResultViewWidget
+from vibeocr.views.tabs.single_recognition_tab import SingleRecognitionTab
 from vibeocr.widgets.screenshot_edit_window import ScreenshotEditWindow
 from vibeocr.widgets.screenshot_widget import ScreenshotWidget
 from vibeocr.widgets.toolbar import EdgeToolbar
@@ -146,8 +140,11 @@ class MainWindow(QMainWindow):
         self._ui = Ui_MainWindowWidget()
         self._ui.setupUi(self._central_widget)
 
-        # 替换内联管道/选项/textResult 为共享组件
-        self._setup_result_panel()
+        # 用 SingleRecognitionTab 替换 tabOCR
+        self._single_tab = SingleRecognitionTab()
+        tab_index = self._ui.tabWidget.indexOf(self._ui.tabOCR)
+        self._ui.tabWidget.removeTab(tab_index)
+        self._ui.tabWidget.insertTab(tab_index, self._single_tab, "单次识别")
 
         # 设置 tabSettings 的 sizePolicy，使其可以缩小
         # 这样 TabWidget 不会因为设置页面的内容太多而变得很大
@@ -184,62 +181,6 @@ class MainWindow(QMainWindow):
             tab_widget.tabBar().moveTab(settings_index, tab_widget.count() - 1)
             logging.debug("设置标签页已移到最后")
 
-    def _setup_result_panel(self) -> None:
-        """用共享组件替换结果面板中的内联管道/选项/textResult"""
-        from PySide6.QtWidgets import QHBoxLayout, QVBoxLayout
-
-        panel = self._ui.resultPanel
-
-        # 保存要保留的 widget 引用
-        label_title = self._ui.labelResultTitle
-        btn_rich = self._ui.btnCopyRich
-        btn_md = self._ui.btnCopyMarkdown
-        btn_plain = self._ui.btnCopyPlain
-
-        # 转移旧 layout 到临时 widget（清理所有子 widget）
-        old_layout = panel.layout()
-        sink = QWidget()
-        sink.setLayout(old_layout)
-
-        # 保留的 widget 重新挂载到 panel
-        label_title.setParent(panel)
-        btn_rich.setParent(panel)
-        btn_md.setParent(panel)
-        btn_plain.setParent(panel)
-
-        # 销毁旧布局及残留 widget
-        sink.deleteLater()
-
-        # 构建新布局
-        layout = QVBoxLayout(panel)
-        layout.setSpacing(6)
-        layout.setContentsMargins(0, 0, 0, 0)
-
-        # 标题行
-        header = QHBoxLayout()
-        header.addWidget(label_title)
-        header.addStretch()
-        layout.addLayout(header)
-
-        # 管道 & 选项（共享组件）
-        self._preprocess_options = PreprocessOptionsWidget()
-        layout.addWidget(self._preprocess_options)
-
-        # 结果展示（共享组件）
-        self._result_widget = ResultViewWidget()
-        layout.addWidget(self._result_widget, stretch=1)
-
-        # 复制按钮
-        copy_row = QHBoxLayout()
-        copy_row.setSpacing(4)
-        copy_row.addWidget(btn_rich)
-        copy_row.addWidget(btn_md)
-        copy_row.addWidget(btn_plain)
-        layout.addLayout(copy_row)
-
-        # 从 OCRPreferences 恢复选项
-        self._restore_options_from_preferences()
-
     def _restore_layout(self) -> None:
         """恢复窗口和分割器布局"""
         # 恢复主窗口几何信息
@@ -248,29 +189,28 @@ class MainWindow(QMainWindow):
             self.restoreGeometry(geometry)
             logging.info("已恢复窗口布局")
 
-        # 恢复 OCR 标签页分割器状态
-        if hasattr(self._ui, "ocrSplitter"):
+        # 恢复单次识别标签页分割器状态
+        if hasattr(self, "_single_tab") and hasattr(self._single_tab, "_splitter"):
             state = self._layout_manager.get_splitter_state("ocr_tab")
             if state:
-                self._ui.ocrSplitter.restoreState(state)
+                self._single_tab._splitter.restoreState(state)
                 logging.info("已恢复 OCR 分割器状态")
             else:
-                # 无持久化数据时，设置默认尺寸：预览框 400px，结果面板占剩余
-                total_width = self._ui.ocrSplitter.width()
+                total_width = self._single_tab._splitter.width()
                 if total_width > 0:
-                    self._ui.ocrSplitter.setSizes([400, total_width - 400])
+                    self._single_tab._splitter.setSizes([400, total_width - 400])
                 else:
-                    self._ui.ocrSplitter.setSizes([400, 500])
+                    self._single_tab._splitter.setSizes([400, 500])
 
     def _save_layout(self) -> None:
         """保存窗口和分割器布局"""
         # 保存主窗口几何信息
         self._layout_manager.set_main_window_geometry(self.saveGeometry())
 
-        # 保存 OCR 标签页分割器状态
-        if hasattr(self._ui, "ocrSplitter"):
+        # 保存单次识别标签页分割器状态
+        if hasattr(self, "_single_tab") and hasattr(self._single_tab, "_splitter"):
             self._layout_manager.set_splitter_state(
-                "ocr_tab", self._ui.ocrSplitter.saveState()
+                "ocr_tab", self._single_tab._splitter.saveState()
             )
 
         # 保存批量识别标签页分割器状态
@@ -305,17 +245,6 @@ class MainWindow(QMainWindow):
         self._ui.tabWidget.addTab(self._about_tab, "关于")
         logging.debug("关于标签页已添加")
 
-    def _restore_options_from_preferences(self) -> None:
-        """从 OCRPreferences 恢复选项"""
-        from vibeocr.utils.ocr_preferences import OCRPreferences
-
-        prefs = OCRPreferences.instance(ConfigManager.instance())
-        self._preprocess_options.set_options(prefs.get_options())
-        prefs.options_changed.connect(self._preprocess_options.set_options)
-        self._preprocess_options.options_changed.connect(
-            lambda opts: OCRPreferences.instance().set_options(opts)
-        )
-
     def _setup_console(self) -> None:
         """初始化日志"""
         self._log_handler = setup_logging()
@@ -341,23 +270,11 @@ class MainWindow(QMainWindow):
         self._edit_window.confirmed.connect(self._on_edit_confirmed)
         self._edit_window.cancelled.connect(self._on_edit_cancelled)
 
-        # 预览组件
-        self._ui.previewWidget.screenshot_requested.connect(self._on_screenshot)
-        self._ui.previewWidget.file_open_requested.connect(
-            self._on_open_file_from_preview
-        )
-        self._ui.previewWidget.block_clicked.connect(self._on_preview_block_clicked)
-        self._ui.previewWidget.block_text_edited.connect(
-            self._on_preview_block_text_edited
-        )
+        # 单次识别 Tab 的截图/文件请求由 MainWindow 处理
+        self._single_tab.screenshot_requested.connect(self._on_screenshot)
+        self._single_tab.file_open_requested.connect(self._on_open_file_from_preview)
 
-        # 结果展示 ↔ 预览联动
-        self._result_widget.block_hovered.connect(self._ui.previewWidget.highlight_block)
-        self._result_widget.block_unhovered.connect(
-            lambda: self._ui.previewWidget.highlight_block(-1)
-        )
-
-        # 剪贴板控制器
+        # 剪贴板控制器（连接到 UI 中的复制按钮）
         self._clipboard_controller = ClipboardController(
             status_callback=self._statusbar.showMessage,
             copy_button=self._ui.btnCopyRich,
@@ -369,8 +286,6 @@ class MainWindow(QMainWindow):
         self._ui.btnCopyPlain.clicked.connect(self._clipboard_controller.copy_plain)
 
         # 设置页面控制器
-        # 注意：传入 self (QMainWindow) 而不是 self._ui (Ui_MainWindowWidget)
-        # 因为 findChild 是 QObject 的方法，Ui_MainWindowWidget 没有此方法
         self._settings_controller = SettingsPageController(
             ui=self,
             project_root=self._project_root,
@@ -448,16 +363,21 @@ class MainWindow(QMainWindow):
         if success:
             logging.info("[MainWindow] 子进程 Worker 已就绪")
 
-            # 设置批量识别标签页的服务
+            # 服务注入
+            from vibeocr.services import get_ocr_service
+            from vibeocr.services.mineru_batch_service import MinerUBatchService
+
+            paddlex_service = get_ocr_service(skip_auto_start=True)
+            mineru_batch = MinerUBatchService()
+
+            # 单次识别 Tab 服务注入
+            if hasattr(self, "_single_tab") and self._single_tab:
+                self._single_tab.set_paddlex_service(paddlex_service)
+                self._single_tab.set_ocr_service(mineru_batch)
+
+            # 批量识别 Tab 服务注入
             if hasattr(self, "_batch_tab") and self._batch_tab:
-                from vibeocr.services.mineru_batch_service import MinerUBatchService
-
-                mineru_batch = MinerUBatchService()
                 self._batch_tab.set_ocr_service(mineru_batch)
-
-                from vibeocr.services import get_ocr_service
-
-                paddlex_service = get_ocr_service(skip_auto_start=True)
                 self._batch_tab.set_paddlex_service(paddlex_service)
                 logging.info("[MainWindow] 批量识别标签页已连接批量服务")
 
@@ -596,16 +516,15 @@ class MainWindow(QMainWindow):
             f"{FILE_FILTER_IMAGES};;{FILE_FILTER_DOCUMENTS};;所有文件 (*)",
         )
         if file_path:
-            # Office 文件：清除预览，直接走 OCR
             if is_office_file(file_path):
-                self._ui.previewWidget.clear()
-                self._run_ocr_for_file(file_path)
+                self._single_tab._preview_widget.clear()
+                self._single_tab.process_file(file_path)
                 return
 
             pixmap = QPixmap(file_path)
             if not pixmap.isNull():
-                self._ui.previewWidget.set_pixmap(pixmap)
-                self._run_ocr(pixmap)
+                self._single_tab.set_pixmap(pixmap)
+                self._single_tab.run_ocr(pixmap)
 
     @Slot()
     def _on_open_file_from_preview(self) -> None:
@@ -625,222 +544,21 @@ class MainWindow(QMainWindow):
         if not file_path:
             return
 
-        # Office 文件：清除预览，直接走 OCR
         if is_office_file(file_path):
-            self._ui.previewWidget.clear()
-            self._run_ocr_for_file(file_path)
+            self._single_tab._preview_widget.clear()
+            self._single_tab.process_file(file_path)
             return
 
         if file_path.lower().endswith(".pdf"):
-            self._load_pdf_as_pixmap(file_path)
+            self._single_tab.process_file(file_path)
         else:
             pixmap = QPixmap(file_path)
             if not pixmap.isNull():
-                self._ui.previewWidget.set_pixmap(pixmap)
-                self._run_ocr(pixmap)
-
-    def _load_pdf_as_pixmap(self, file_path: str) -> None:
-        """将 PDF 第一页转换为 QPixmap 并加载到预览"""
-        try:
-            from PySide6.QtPdf import QPdfDocument
-
-            doc = QPdfDocument(self)
-            error = doc.load(file_path)
-            if error != QPdfDocument.Error.None_:
-                QMessageBox.warning(
-                    self, "打开失败", f"无法加载 PDF 文件:\n{file_path}"
-                )
-                return
-
-            # 等待加载完成
-            if doc.status() != QPdfDocument.Status.Ready:
-                from PySide6.QtCore import QEventLoop
-
-                loop = QEventLoop()
-                doc.statusChanged.connect(
-                    lambda status: (
-                        loop.quit()
-                        if status
-                        in (
-                            QPdfDocument.Status.Ready,
-                            QPdfDocument.Status.Error,
-                        )
-                        else None
-                    )
-                )
-                loop.exec()
-
-            if doc.status() != QPdfDocument.Status.Ready:
-                QMessageBox.warning(
-                    self, "打开失败", f"PDF 加载失败: {doc.error()}"
-                )
-                return
-
-            if doc.pageCount() == 0:
-                QMessageBox.warning(self, "打开失败", "PDF 文件没有页面")
-                return
-
-            page_size = doc.pagePointSize(0)
-            scale = 2.0  # 2x 渲染以获得清晰度
-            render_size = page_size * scale
-
-            qimage = doc.render(0, render_size.toSize())
-            if qimage and not qimage.isNull():
-                pixmap = QPixmap.fromImage(qimage)
-                self._ui.previewWidget.set_pixmap(pixmap)
-                self._run_ocr(pixmap)
-                logging.info(
-                    f"PDF 加载成功: {file_path}, "
-                    f"页面尺寸: {page_size.width():.0f}x{page_size.height():.0f}pt"
-                )
-            else:
-                QMessageBox.warning(self, "渲染失败", "PDF 页面渲染失败")
-
-            doc.close()
-
-        except ImportError:
-            QMessageBox.warning(
-                self,
-                "不支持",
-                "当前版本不支持 PDF 文件。\n请安装 PySide6 QtPdf 模块。",
-            )
-            logging.warning("QtPdf 模块不可用，无法加载 PDF")
-        except Exception as e:
-            QMessageBox.warning(
-                self, "打开失败", f"加载 PDF 文件时出错:\n{e}"
-            )
-            logging.error(f"加载 PDF 失败: {e}", exc_info=True)
-
-    def _run_ocr_for_file(self, file_path: str) -> None:
-        """直接读取文件并进行 OCR（用于 PDF/Office 等非图片格式）"""
-        from pathlib import Path
-
-        from vibeocr.utils.mime_types import guess_mime_from_filename
-
-        path = Path(file_path)
-        if not path.exists():
-            return
-        data = path.read_bytes()
-        mime_type = guess_mime_from_filename(file_path)
-        self._statusbar.showMessage(f"正在识别: {path.name}...")
-        # Use the MinerU service directly for non-image files
-        self._run_ocr_with_data(data, mime_type, path.name)
-
-    def _run_ocr_with_data(self, data: bytes, mime_type: str, filename: str) -> None:
-        """使用原始文件数据进行 OCR（跳过 QPixmap 转换）
-
-        对于 Office/PDF 等非图片文件，直接将原始字节传递给 MineRU 管道。
-
-        Args:
-            data: 文件原始字节
-            mime_type: MIME 类型
-            filename: 文件名（用于 worker 端 MIME 推断的备用方案）
-        """
-        from vibeocr.services import USE_SUBPROCESS
-        from vibeocr.services.ocr_service import OCRPipeline
-
-        logging.info(f"Starting OCR for file: {filename}, mime: {mime_type}")
-        self._result_widget.clear()
-        self._statusbar.showMessage("正在识别...")
-
-        # Force UI update
-        QApplication.processEvents()
-
-        options = self._build_options_from_ui()
-        # 强制使用文档解析管道
-        options.pipeline = OCRPipeline.DOCUMENT_PARSING
-
-        logging.info(
-            f"OCR 管道: {options.pipeline.display_name}, "
-            f"MIME: {mime_type}, 文件: {filename}"
-        )
-
-        if USE_SUBPROCESS:
-            run_coroutine(
-                self._perform_ocr_with_data_async(data, mime_type, filename, options)
-            )
-        else:
-            # 直接模式（用于调试）
-            try:
-                from vibeocr.services import get_ocr_service
-
-                ocr_service = get_ocr_service()
-                result = ocr_service.recognize(data, options)
-                self._on_ocr_finished(result)
-            except Exception as e:
-                logging.error(f"OCR 识别失败: {e}", exc_info=True)
-                self._on_ocr_error(str(e))
-
-    async def _perform_ocr_with_data_async(
-        self, data: bytes, mime_type: str, filename: str, options
-    ) -> None:
-        """异步执行 OCR 识别（原始文件数据版本）
-
-        与 _perform_ocr_async 类似，但通过在调用 recognize 前将 mime_type
-        注入到 options dict 中，使 MinerU Worker 能正确识别文件类型。
-
-        Args:
-            data: 文件原始字节
-            mime_type: MIME 类型
-            filename: 文件名
-            options: OCR 选项
-        """
-        import asyncio
-
-        try:
-            if self._closing:
-                logging.info("[异步OCR] 应用程序正在关闭，取消识别")
-                return
-
-            from vibeocr.services import get_ocr_service
-
-            logging.info("[异步OCR] 开始异步识别（原始数据）...")
-            ocr_service = get_ocr_service()
-
-            if self._closing:
-                return
-
-            if hasattr(ocr_service, "is_ready"):
-                ready = ocr_service.is_ready()
-                if not ready:
-                    raise RuntimeError("OCR 服务未就绪，请稍后再试")
-
-            # 将 mime_type 和 file_path 注入到 options 的 to_dict 输出中，
-            # 以便 Worker 端能正确路由到 MineRU 服务
-            original_to_dict = options.to_dict
-            options.to_dict = lambda: {  # type: ignore[assignment]
-                **original_to_dict(),
-                "mime_type": mime_type,
-                "file_path": filename,
-            }
-
-            try:
-                result = await asyncio.get_event_loop().run_in_executor(
-                    None, lambda: ocr_service.recognize(data, options)
-                )
-            finally:
-                # 恢复原始 to_dict
-                options.to_dict = original_to_dict  # type: ignore[assignment]
-
-            if self._closing:
-                return
-
-            logging.info(f"[异步OCR] 识别完成，{len(result.raw_text)} 字符")
-            self._on_ocr_finished(result)
-
-        except Exception as e:
-            if self._closing:
-                return
-            logging.error(f"[异步OCR] 识别失败: {e}", exc_info=True)
-            self._on_ocr_error(str(e))
+                self._single_tab.set_pixmap(pixmap)
+                self._single_tab.run_ocr(pixmap)
 
     def _check_ocr_ready(self) -> bool:
-        """检查OCR功能是否可用
-
-        Returns:
-            True if OCR is ready, False otherwise
-        """
-        # 如果依赖检测还没完成，显示检测中提示
+        """检查OCR功能是否可用"""
         if not self._dependency_check_complete:
             QMessageBox.information(
                 self,
@@ -849,7 +567,6 @@ class MainWindow(QMainWindow):
             )
             return False
 
-        # 如果依赖检测完成但不可用，提示安装
         if not self._ocr_ready:
             reply = QMessageBox.question(
                 self,
@@ -878,14 +595,13 @@ class MainWindow(QMainWindow):
         self.showNormal()
         self.activateWindow()
         if not pixmap.isNull():
-            # 记录截图分辨率信息
             dpr = pixmap.devicePixelRatio()
             width = pixmap.width()
             height = pixmap.height()
             logging.info(f"截图完成: {width}x{height} 像素, DPR={dpr}")
 
-            self._ui.previewWidget.set_pixmap(pixmap)
-            self._run_ocr(pixmap)
+            self._single_tab.set_pixmap(pixmap)
+            self._single_tab.run_ocr(pixmap)
 
     @Slot(QPixmap, QRect)
     def _on_selection_done(self, pixmap: QPixmap, screen_rect: QRect) -> None:
@@ -923,8 +639,8 @@ class MainWindow(QMainWindow):
             height = pixmap.height()
             logging.info(f"编辑确认: {width}x{height} 像素, DPR={dpr}")
 
-            self._ui.previewWidget.set_pixmap(pixmap)
-            self._run_ocr(pixmap, options)
+            self._single_tab.set_pixmap(pixmap)
+            self._single_tab.run_ocr(pixmap, options)
 
     @Slot()
     def _on_edit_cancelled(self) -> None:
@@ -932,278 +648,6 @@ class MainWindow(QMainWindow):
         self._edit_window.hide()
         self.showNormal()
         self.activateWindow()
-
-    def _build_options_from_ui(self):
-        """从选项组件获取当前 OCROptions"""
-        return self._preprocess_options.get_options()
-
-    def _run_ocr(self, pixmap: QPixmap, options=None) -> None:
-        """Execute OCR recognition
-
-        Supports two modes:
-        1. Async subprocess mode (default): Execute OCR via subprocess with asyncio
-        2. Direct mode: Execute OCR directly in main thread (for debugging)
-
-        Args:
-            pixmap: 待识别的图像
-            options: OCR 选项（如果为 None，从主窗口 UI 按钮状态读取）
-        """
-        # Lazy import: OCR related types
-        from vibeocr.services import USE_SUBPROCESS
-        from vibeocr.services.ocr_service import OCRPipeline
-
-        logging.info("Starting OCR recognition")
-        self._result_widget.clear()
-        self._statusbar.showMessage("正在识别...")
-
-        # Force UI update to show "Recognizing" message
-        QApplication.processEvents()
-
-        if options is None:
-            # 从主窗口 UI 按钮状态读取选项
-            options = self._build_options_from_ui()
-
-        pipeline = options.pipeline
-        logging.info(
-            f"OCR 管道: {pipeline.display_name}, "
-            f"预处理: 方向={options.use_doc_orientation_classify}, "
-            f"去弯={options.use_doc_unwarping}"
-        )
-        if pipeline == OCRPipeline.DOCUMENT_PARSING:
-            logging.info(
-                f"文档解析: 方法={options.parse_method}, "
-                f"公式={options.enable_formula}, "
-                f"表格={options.enable_table}"
-            )
-
-        # 将 QPixmap 转换为图像数据
-        buffer = QBuffer()
-        buffer.open(QBuffer.OpenModeFlag.ReadWrite)
-        pixmap.save(buffer, "PNG")
-        image_data = bytes(buffer.data().data())
-        buffer.close()
-
-        # 使用异步方式执行 OCR
-        if USE_SUBPROCESS:
-            # 异步子进程模式：使用 asyncio 协程
-            run_coroutine(self._perform_ocr_async(image_data, options))
-        else:
-            # 直接模式（用于调试）- 保持同步执行
-            try:
-                pil_image = Image.open(io.BytesIO(image_data))
-                import numpy as np
-
-                image_array = np.array(pil_image)
-                logging.info(
-                    f"[主线程OCR] 图像尺寸: {pil_image.size}, 数组形状: {image_array.shape}"
-                )
-                logging.info("[主线程OCR] 开始识别...")
-                from vibeocr.services import get_ocr_service
-
-                ocr_service = get_ocr_service()  # type: ignore[assignment]
-                result = ocr_service.recognize(image_array, options)  # type: ignore[call-arg]
-                logging.info(f"[主线程OCR] 识别完成，{len(result.raw_text)} 字符")
-                self._on_ocr_finished(result)
-            except Exception as e:
-                logging.error(f"OCR 识别失败: {e}", exc_info=True)
-                self._on_ocr_error(str(e))
-
-    async def _perform_ocr_async(self, image_data: bytes, options) -> None:
-        """异步执行 OCR 识别
-
-        使用子进程服务的异步接口执行 OCR，不阻塞 UI 线程。
-
-        Args:
-            image_data: PNG 格式的图像数据
-            options: OCR 选项
-        """
-        try:
-            # 检查是否正在关闭
-            if self._closing:
-                logging.info("[异步OCR] 应用程序正在关闭，取消识别")
-                return
-
-            from vibeocr.services import get_ocr_service
-
-            logging.info("[异步OCR] 开始异步识别...")
-            logging.info("[异步OCR] 调用 get_ocr_service()...")
-            ocr_service = get_ocr_service()
-            logging.info(
-                f"[异步OCR] get_ocr_service() 返回: {type(ocr_service).__name__}"
-            )
-
-            # 再次检查关闭标志
-            if self._closing:
-                logging.info("[异步OCR] 应用程序正在关闭，取消识别")
-                return
-
-            # 检查服务是否就绪
-            logging.info("[异步OCR] 检查服务是否就绪...")
-            if hasattr(ocr_service, "is_ready"):
-                ready = ocr_service.is_ready()
-                logging.info(f"[异步OCR] 服务就绪状态: {ready}")
-                if not ready:
-                    raise RuntimeError("OCR 服务未就绪，请稍后再试")
-
-            # 使用异步接口
-            logging.info("[异步OCR] 调用 recognize_async()...")
-            result = await ocr_service.recognize_async(image_data, options)
-            logging.info("[异步OCR] recognize_async() 返回")
-
-            # 检查关闭标志（识别完成后）
-            if self._closing:
-                logging.info("[异步OCR] 应用程序已关闭，忽略识别结果")
-                return
-
-            logging.info(f"[异步OCR] 识别完成，{len(result.raw_text)} 字符")
-            self._on_ocr_finished(result)
-
-        except Exception as e:
-            if self._closing:
-                logging.info(f"[异步OCR] 识别过程中应用程序关闭，忽略错误: {e}")
-                return
-            logging.error(f"[异步OCR] 识别失败: {e}", exc_info=True)
-            self._on_ocr_error(str(e))
-
-    @Slot(object)
-    def _on_ocr_finished(self, result: OCRResult) -> None:
-        """OCR识别完成"""
-        logging.info("[_on_ocr_finished] 收到 OCR 完成信号")
-        # 保存结果用于复制
-        self._current_ocr_result = result
-        self._clipboard_controller.set_result(result)
-
-        char_count = len(result.raw_text) if result.raw_text else 0
-        block_count = len(result.text_with_scores)
-        logging.info(f"OCR 识别完成，共 {block_count} 个文本块，{char_count} 个字符")
-
-        # 记录置信度详情
-        if result.text_with_scores:
-            logging.info("=== OCR 置信度详情 ===")
-            for i, (text, score) in enumerate(result.text_with_scores, 1):
-                display_text = text[:30] + "..." if len(text) > 30 else text
-                display_text = display_text.replace("\n", " ")
-                logging.info(f"  [{i}] 置信度: {score:.2%} | {display_text}")
-            logging.info(f"  平均置信度: {result.avg_score:.2%}")
-            logging.info("======================")
-
-        # 设置文本块到预览组件
-        self._ui.previewWidget.set_text_blocks(result.text_blocks)
-
-        # 使用共享组件展示结果
-        self._result_widget.display_result(result)
-
-        # 构建状态栏消息
-        if result.raw_text or result.has_rich_content:
-            if result.text_with_scores:
-                base_msg = f"识别完成，{block_count} 个文本块，平均置信度: {result.avg_score:.0%}"
-                if result.low_confidence_items:
-                    details = []
-                    for text, confidence in result.low_confidence_items:
-                        display_text = text[:20] + "..." if len(text) > 20 else text
-                        details.append(f"'{display_text}' ({confidence:.0%})")
-                    detail_str = "、".join(details)
-                    self._statusbar.showMessage(
-                        f"{base_msg}，{len(result.low_confidence_items)} 个低置信度: {detail_str}"
-                    )
-                else:
-                    self._statusbar.showMessage(base_msg)
-            else:
-                char_count = (
-                    len(result.raw_text)
-                    if result.raw_text
-                    else len(result.markdown_text)
-                    if result.markdown_text
-                    else 0
-                )
-                self._statusbar.showMessage(f"识别完成，共 {char_count} 个字符")
-        else:
-            self._statusbar.showMessage("未识别到文字")
-
-    @Slot(str)
-    def _on_ocr_error(self, error_msg: str) -> None:
-        """OCR识别失败"""
-        logging.error(f"[_on_ocr_error] 收到 OCR 错误信号: {error_msg}")
-        self._current_ocr_result = None
-        self._result_widget.clear()
-        self._result_widget._web_view.setHtml(
-            f"<p style='color:#f44336;'>识别失败：{error_msg}</p>"
-        )
-        self._statusbar.showMessage(f"识别失败：{error_msg}")
-
-    def eventFilter(self, obj, event) -> bool:
-        """事件过滤器"""
-        return super().eventFilter(obj, event)
-
-    @Slot(int)
-    def _on_preview_block_clicked(self, index: int) -> None:
-        """预览图文本块被点击 → 结果区高亮对应块"""
-        self._result_widget.highlight_block(index)
-
-    @Slot(int, str)
-    def _on_preview_block_text_edited(self, index: int, new_text: str) -> None:
-        """预览图文本块被编辑 → 同步更新结果和展示"""
-        if not self._current_ocr_result or index < 0:
-            return
-        result = self._current_ocr_result
-        if index >= len(result.text_blocks):
-            return
-
-        old_text = result.text_blocks[index].text
-        if old_text == new_text:
-            return
-
-        # 更新文本块
-        result.text_blocks[index].text = new_text
-        result.text_blocks[index].is_manually_edited = True
-
-        # 同步更新 text_with_scores
-        if index < len(result.text_with_scores):
-            score = result.text_with_scores[index][1]
-            result.text_with_scores[index] = (new_text, score)
-
-        # 同步更新 content_list
-        if result.content_list:
-            cl_idx = getattr(result.text_blocks[index], "content_index", None)
-            if cl_idx is not None and cl_idx < len(result.content_list):
-                cl_block = result.content_list[cl_idx]
-                block_type = cl_block.get("type", "text")
-                if block_type == "table":
-                    import html as html_lib
-                    table_body = cl_block.get("table_body", "")
-                    cl_block["table_body"] = table_body.replace(
-                        html_lib.escape(old_text), html_lib.escape(new_text), 1
-                    )
-                else:
-                    cl_block["text"] = new_text
-
-        # 重新构建 raw_text
-        result.raw_text = "\n".join(
-            block.text for block in result.text_blocks if block.text
-        )
-
-        # 同步更新 markdown_text 和 html_text（如果是纯文本场景）
-        if result.markdown_text and result.markdown_text != old_text:
-            # 尝试简单替换，保持原有结构
-            result.markdown_text = result.markdown_text.replace(old_text, new_text, 1)
-        else:
-            result.markdown_text = result.raw_text
-
-        if result.html_text and result.html_text != old_text:
-            result.html_text = result.html_text.replace(old_text, new_text, 1)
-        else:
-            result.html_text = result.raw_text
-
-        # 更新剪贴板控制器中的结果
-        self._clipboard_controller.set_result(result)
-
-        # 刷新预览和结果展示
-        self._ui.previewWidget.set_text_blocks(result.text_blocks)
-        self._result_widget.display_result(result)
-
-        self._statusbar.showMessage(
-            f"已手动修改第 {index + 1} 个文本块"
-        )
 
     def closeEvent(self, event) -> None:
         """关闭窗口事件
