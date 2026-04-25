@@ -86,6 +86,41 @@ class BaseOcrTab(QWidget):
             return self._ocr_service
         return self._paddlex_service
 
+    def _build_content_list(self, result) -> list[dict]:
+        """从 OCRResult 构建 content_list（含 bbox）"""
+        content_list = getattr(result, "content_list", [])
+        text_blocks = getattr(result, "text_blocks", [])
+
+        if content_list:
+            for tb in text_blocks:
+                cl_idx = getattr(tb, "content_index", None)
+                if cl_idx is not None and cl_idx < len(content_list) and tb.bbox:
+                    if "bbox" not in content_list[cl_idx]:
+                        content_list[cl_idx]["bbox"] = list(tb.bbox)
+            return content_list
+
+        if not text_blocks:
+            return []
+
+        built = []
+        for b in text_blocks:
+            entry: dict = {"type": "text", "text": b.text}
+            if b.bbox:
+                entry["bbox"] = list(b.bbox)
+            if b.page_idx is not None:
+                entry["page_idx"] = b.page_idx
+            built.append(entry)
+        return built
+
+    def _display_result(self, result) -> None:
+        """显示 OCR 结果到结果面板和预览面板"""
+        self._current_ocr_result = result
+        if self._result_widget:
+            self._result_widget.display_result(result)
+        if self._preview_widget:
+            content_list = self._build_content_list(result)
+            self._preview_widget.set_content_list(content_list)
+
     @abstractmethod
     def _setup_ui(self) -> None:
         """设置 UI 布局

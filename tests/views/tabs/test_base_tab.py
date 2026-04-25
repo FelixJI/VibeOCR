@@ -170,3 +170,54 @@ class TestBaseOcrTabServiceRouting:
         assert tab._preview_widget is None
         assert tab._result_widget is None
         assert tab._preprocess_options is None
+
+
+class TestBuildContentList:
+    """_build_content_list 测试"""
+
+    def test_from_content_list_with_bbox_merge(self, qapp):
+        from vibeocr.models.ocr_result import OCRResult, TextBlock
+
+        tab = ConcreteTab()
+        result = OCRResult(
+            content_list=[{"type": "text", "text": "Hello"}, {"type": "table", "text": "data"}],
+            text_blocks=[
+                TextBlock(text="Hello", score=0.9, bbox=(0, 0, 100, 50), content_index=0),
+            ],
+        )
+        cl = tab._build_content_list(result)
+        assert len(cl) == 2
+        assert "bbox" in cl[0]
+
+    def test_from_text_blocks_only(self, qapp):
+        from vibeocr.models.ocr_result import OCRResult, TextBlock
+
+        tab = ConcreteTab()
+        result = OCRResult(
+            text_blocks=[
+                TextBlock(text="Hello", score=0.9, bbox=(0, 0, 100, 50)),
+                TextBlock(text="World", score=0.8, bbox=(0, 60, 100, 110)),
+            ],
+        )
+        cl = tab._build_content_list(result)
+        assert len(cl) == 2
+        assert cl[0]["type"] == "text"
+        assert "bbox" in cl[0]
+
+    def test_empty_result(self, qapp):
+        from vibeocr.models.ocr_result import OCRResult
+
+        tab = ConcreteTab()
+        result = OCRResult()
+        cl = tab._build_content_list(result)
+        assert cl == []
+
+    def test_display_result_updates_state(self, qapp):
+        from vibeocr.models.ocr_result import OCRResult, TextBlock
+
+        tab = ConcreteTab()
+        result = OCRResult(
+            text_blocks=[TextBlock(text="Hello", score=0.9, bbox=(0, 0, 100, 50))],
+        )
+        tab._display_result(result)
+        assert tab._current_ocr_result is result
