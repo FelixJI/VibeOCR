@@ -122,3 +122,51 @@ class TestBaseOcrTabInheritance:
         tab = ConcreteTab()
         # 默认实现应该不抛出异常
         tab._on_cancel()
+
+
+class TestBaseOcrTabServiceRouting:
+    """管道路由测试"""
+
+    def test_get_service_for_pipeline_parsing(self, qapp):
+        from vibeocr.models.ocr_options import OCROptions
+        from vibeocr.core.pipelines import OCRPipeline
+
+        tab = ConcreteTab()
+        mineru_mock = Mock()
+        paddlex_mock = Mock()
+        tab._ocr_service = mineru_mock
+        tab._paddlex_service = paddlex_mock
+        options = OCROptions(pipeline=OCRPipeline.DOCUMENT_PARSING)
+        assert tab._get_service_for_pipeline(options) is mineru_mock
+
+    def test_get_service_for_pipeline_ocr(self, qapp):
+        from vibeocr.models.ocr_options import OCROptions
+        from vibeocr.core.pipelines import OCRPipeline
+
+        tab = ConcreteTab()
+        mineru_mock = Mock()
+        paddlex_mock = Mock()
+        tab._ocr_service = mineru_mock
+        tab._paddlex_service = paddlex_mock
+        options = OCROptions(pipeline=OCRPipeline.OCR)
+        assert tab._get_service_for_pipeline(options) is paddlex_mock
+
+    def test_set_paddlex_service(self, qapp):
+        tab = ConcreteTab()
+        mock = Mock()
+        tab.set_paddlex_service(mock)
+        assert tab._paddlex_service is mock
+
+    def test_set_paddlex_service_none(self, qapp):
+        tab = ConcreteTab()
+        tab.set_paddlex_service(Mock())
+        tab.set_paddlex_service(None)
+        assert tab._paddlex_service is None
+
+    def test_shared_state_initialized(self, qapp):
+        tab = ConcreteTab()
+        assert tab._paddlex_service is None
+        assert tab._current_ocr_result is None
+        assert tab._preview_widget is None
+        assert tab._result_widget is None
+        assert tab._preprocess_options is None

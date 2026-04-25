@@ -30,6 +30,11 @@ class BaseOcrTab(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._ocr_service: OCRServiceSubprocess | None = None
+        self._paddlex_service = None
+        self._current_ocr_result = None
+        self._preview_widget = None
+        self._result_widget = None
+        self._preprocess_options = None
         self._is_processing = False
 
         # 子类在 __init__ 中调用以下方法
@@ -68,6 +73,18 @@ class BaseOcrTab(QWidget):
         Args:
             service: 新的 OCR 服务实例
         """
+
+    def set_paddlex_service(self, service) -> None:
+        """设置 PaddleX 服务"""
+        self._paddlex_service = service
+
+    def _get_service_for_pipeline(self, options):
+        """根据管道类型路由到对应的服务"""
+        from vibeocr.core.pipelines import OCRPipeline
+
+        if options.pipeline == OCRPipeline.DOCUMENT_PARSING:
+            return self._ocr_service
+        return self._paddlex_service
 
     @abstractmethod
     def _setup_ui(self) -> None:
