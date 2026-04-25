@@ -23,8 +23,8 @@ from vibeocr.services.export_service import ExportService
 from vibeocr.views.tabs.base_tab import BaseOcrTab
 from vibeocr.widgets.batch_file_list_widget import BatchFileListWidget
 from vibeocr.widgets.export_settings_widget import ExportSettingsWidget
-from vibeocr.widgets.file_preview_widget import FilePreviewWidget
 from vibeocr.widgets.preprocess_options_widget import PreprocessOptionsWidget
+from vibeocr.widgets.preview_widget import PreviewWidget
 from vibeocr.widgets.result_view_widget import ResultViewWidget
 
 # 向后兼容别名
@@ -153,7 +153,7 @@ class BatchRecognitionTab(BaseOcrTab):
 
         self._setup_ui()
         self._connect_signals()
-        self._init_from_preferences()
+        self._init_options_from_preferences(batch=True)
 
     def _setup_ui(self):
         """设置三栏 UI"""
@@ -209,7 +209,7 @@ class BatchRecognitionTab(BaseOcrTab):
         preview_label.setStyleSheet("font-weight: bold; color: #555;")
         center_layout.addWidget(preview_label)
 
-        self._preview_widget = FilePreviewWidget()
+        self._preview_widget = PreviewWidget(empty_text="选择文件以预览")
         center_layout.addWidget(self._preview_widget, stretch=1)
 
         self._splitter.addWidget(center_panel)
@@ -238,20 +238,11 @@ class BatchRecognitionTab(BaseOcrTab):
 
     def _connect_signals(self):
         """连接信号"""
-        # 处理按钮
+        self._setup_hover_sync()
+
         self._start_btn.clicked.connect(self._on_start)
         self._cancel_btn.clicked.connect(self._on_cancel)
-
-        # 文件选择
         self._file_list_widget.selection_changed.connect(self._on_file_selected)
-
-        # 悬停高亮联动（双向）
-        self._result_widget.block_hovered.connect(self._on_result_block_hovered)
-        self._result_widget.block_unhovered.connect(self._preview_widget.clear_highlight)
-        self._preview_widget.block_hovered.connect(self._on_preview_block_hovered)
-        self._preview_widget.block_unhovered.connect(self._result_widget.clear_highlight)
-
-        # 导出
         self._export_widget.export_requested.connect(self._on_export_current)
         self._export_widget.export_all_requested.connect(self._on_export_all)
 
@@ -263,14 +254,7 @@ class BatchRecognitionTab(BaseOcrTab):
             return
 
         preprocess_options = self._preprocess_options.get_options()
-
-        # 根据管道选择对应服务
-        from vibeocr.core.pipelines import OCRPipeline
-
-        if preprocess_options.pipeline == OCRPipeline.DOCUMENT_PARSING:
-            service = self._ocr_service
-        else:
-            service = self._paddlex_service
+        service = self._get_service_for_pipeline(preprocess_options)
 
         if not service:
             self._result_widget.clear()
@@ -311,6 +295,7 @@ class BatchRecognitionTab(BaseOcrTab):
         # 如果是当前选中的文件，刷新显示
         if file_path == self._current_file_path and status == "completed" and result:
             self._display_result(result)
+            self._export_widget.set_current_result(result)
 
     def _on_finished(self, results: dict):
         """处理完成"""
@@ -339,57 +324,10 @@ class BatchRecognitionTab(BaseOcrTab):
                 result = f.get("result")
                 if result:
                     self._display_result(result)
+                    self._export_widget.set_current_result(result)
                 else:
                     self._result_widget.clear()
                 break
-
-    def _display_result(self, result) -> None:
-        """显示 OCR 结果到结果面板和导出设置"""
-        self._result_widget.display_result(result)
-        self._export_widget.set_current_result(result)
-
-        # 设置预览的 content_list 用于高亮联动
-        content_list = self._build_content_list(result)
-        self._preview_widget.set_content_list(content_list)
-
-    @staticmethod
-    def _build_content_list(result) -> list[dict]:
-        """从 OCRResult 构建 content_list（含 bbox），确保所有管道都有覆盖数据"""
-        content_list = getattr(result, "content_list", [])
-        text_blocks = getattr(result, "text_blocks", [])
-
-        if content_list:
-            # 合并 text_blocks 的 bbox 到 content_list（TABLE/FORMULA 管道）
-            for tb in text_blocks:
-                cl_idx = getattr(tb, "content_index", None)
-                if cl_idx is not None and cl_idx < len(content_list) and tb.bbox:
-                    if "bbox" not in content_list[cl_idx]:
-                        content_list[cl_idx]["bbox"] = list(tb.bbox)
-            return content_list
-
-        # PaddleX OCR 管道不填充 content_list，从 text_blocks 构建
-        if not text_blocks:
-            return []
-
-        built: list[dict] = []
-        for b in text_blocks:
-            entry: dict = {"type": "text", "text": b.text}
-            if b.bbox:
-                entry["bbox"] = list(b.bbox)
-            if b.page_idx is not None:
-                entry["page_idx"] = b.page_idx
-            built.append(entry)
-        return built
-
-    # ── 悬停高亮联动 ──
-
-    def _on_result_block_hovered(self, index: int) -> None:
-        """结果面板块悬停 → 预览面板高亮"""
-        self._preview_widget.highlight_block(index)
-
-    def _on_preview_block_hovered(self, index: int) -> None:
-        """预览面板块悬停 → 结果面板高亮"""
-        self._result_widget.highlight_block(index)
 
     # ── 导出功能 ──
 
@@ -445,26 +383,6 @@ class BatchRecognitionTab(BaseOcrTab):
         self._start_btn.setEnabled(True)
         self._cancel_btn.setEnabled(False)
         self._worker = None
-
-    def set_ocr_service(self, service):
-        """设置 MineRU 批量服务"""
-        self._ocr_service = service
-
-    def set_paddlex_service(self, service):
-        """设置 PaddleX 子进程服务（OCR / 表格 / 公式管道）"""
-        self._paddlex_service = service
-
-    def _init_from_preferences(self) -> None:
-        """从 OCRPreferences 加载批量识别专属选项（与单次识别解耦）"""
-        from vibeocr.utils.ocr_preferences import OCRPreferences
-
-        prefs = OCRPreferences.instance()
-        self._preprocess_options.set_options(prefs.get_batch_options())
-
-        # 批量选项变化 → 仅保存到批量专属偏好，不影响单次识别
-        self._preprocess_options.options_changed.connect(
-            lambda opts: OCRPreferences.instance().set_batch_options(opts)
-        )
 
     def set_layout_manager(self, layout_manager) -> None:
         """设置布局管理器并恢复分割器状态"""
