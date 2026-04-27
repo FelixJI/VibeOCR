@@ -41,14 +41,14 @@ DISCARDED_BLOCK_TYPES = frozenset({
 })
 
 BLOCK_COLORS = {
-    "text": QColor(59, 130, 246, 80),
-    "title": QColor(239, 68, 68, 80),
-    "table": QColor(34, 197, 94, 80),
-    "image": QColor(168, 85, 247, 80),
-    "figure": QColor(168, 85, 247, 80),
-    "equation": QColor(249, 115, 22, 80),
-    "interline_equation": QColor(249, 115, 22, 80),
-    "inline_equation": QColor(249, 115, 22, 80),
+    "text": QColor(59, 130, 246, 30),
+    "title": QColor(239, 68, 68, 30),
+    "table": QColor(34, 197, 94, 30),
+    "image": QColor(168, 85, 247, 30),
+    "figure": QColor(168, 85, 247, 30),
+    "equation": QColor(249, 115, 22, 30),
+    "interline_equation": QColor(249, 115, 22, 30),
+    "inline_equation": QColor(249, 115, 22, 30),
 }
 
 BLOCK_BORDER_COLORS = {
@@ -170,14 +170,17 @@ class UnifiedBBoxOverlay(QWidget):
                 border = border_color
 
             painter.fillRect(rect, fill)
-            pen = QPen(border, 2 if not is_hovered else 3)
+            pen = QPen(border, 1)
             painter.setPen(pen)
             painter.drawRect(rect)
 
             if is_hovered or len(self._type_rects) <= 20:
                 label = BLOCK_TYPE_LABELS.get(block_type, block_type)
-                label_rect = QRectF(rect.topLeft(), rect.topLeft() + QPointF(60, 20))
+                label_rect = QRectF(rect.topLeft(), rect.topLeft() + QPointF(36, 14))
                 painter.fillRect(label_rect, border)
+                font = painter.font()
+                font.setPointSize(7)
+                painter.setFont(font)
                 painter.setPen(QPen(QColor(255, 255, 255)))
                 painter.drawText(label_rect, Qt.AlignmentFlag.AlignCenter, label)
 
