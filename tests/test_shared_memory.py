@@ -39,8 +39,8 @@ class TestSharedMemoryProtocol:
     def test_init(self):
         """Test protocol initialization."""
         protocol = SharedMemoryProtocol("test_shm_init", 1024)
-        assert protocol.name == "test_shm_init"
-        assert protocol.size == 1024
+        assert protocol.config.name == "test_shm_init"
+        assert protocol.config.size == 1024
         assert protocol.shm is None
         assert not protocol._is_creator
 

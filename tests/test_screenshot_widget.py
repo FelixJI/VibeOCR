@@ -51,7 +51,7 @@ class TestScreenshotWidget:
         widget._selection_rect = QRect(0, 0, 3, 3)
 
         captured = []
-        widget.captured.connect(lambda p: captured.append(p))
+        widget.selection_done.connect(lambda p, r: captured.append(p))
 
         # 模拟鼠标释放
         class MockEvent:

@@ -202,7 +202,6 @@ class TestSharedMemoryIntegration:
             msg_type, data = protocol.read_message(timeout=5.0)
             assert msg_type == MSG_RECOGNIZE
 
-            img_out, opt_out = serialize_request.__wrapped__.__code__.co_consts
             # Actually deserialize
             from vibeocr.utils.shared_memory_v2 import deserialize_request
 

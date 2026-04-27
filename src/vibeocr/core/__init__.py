@@ -38,7 +38,9 @@ from vibeocr.core.pipelines import (
     get_pipeline_supported_options,
     is_option_supported,
 )
+from vibeocr.core.base_worker import BaseWorker, BatchWorker
 from vibeocr.core.singleton_meta import SingletonMeta
+from vibeocr.core.styles import AppStyles
 
 __all__ = [
     "COLOR_BACKGROUND",
@@ -64,6 +66,9 @@ __all__ = [
     "FileType",
     "OCRPipeline",
     "SingletonMeta",
+    "AppStyles",
+    "BaseWorker",
+    "BatchWorker",
     "WindowsColors",
     "get_all_pipelines",
     "get_pipeline_description",

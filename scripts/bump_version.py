@@ -515,6 +515,12 @@ def main() -> int:
         metavar="VERSION",
         help="重新打包指定版本 (如 1.2.3)",
     )
+    parser.add_argument(
+        "--no-build",
+        action="store_true",
+        dest="no_build",
+        help="跳过打包提示",
+    )
 
     args = parser.parse_args()
 
@@ -605,7 +611,7 @@ def main() -> int:
         return 1
 
     # 询问是否打包
-    if _ask_build(new_str):
+    if not args.no_build and _ask_build(new_str):
         _run_build(new_str)
 
     print(f"\n完成! 版本已升级到 {new_str}")

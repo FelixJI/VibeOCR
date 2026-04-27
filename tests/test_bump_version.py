@@ -172,7 +172,7 @@ class TestVersionBumping:
     )
     def test_bump_updates_all_files(self, tmp_path, args, expected_version):
         """验证 patch/minor/major/explicit 升级后三个文件都更新"""
-        result = _run_bump(tmp_path, args + ["--no-edit"])
+        result = _run_bump(tmp_path, args + ["--no-edit", "--no-build"])
         assert result.returncode == 0, f"Script failed: {result.stderr}"
 
         pyproject = tmp_path / "pyproject.toml"
@@ -228,7 +228,7 @@ class TestChangelogGeneration:
 
     def test_changelog_created(self, tmp_path):
         """验证 CHANGELOG.md 在 bump 后被创建/更新"""
-        result = _run_bump(tmp_path, ["patch", "--no-edit"])
+        result = _run_bump(tmp_path, ["patch", "--no-edit", "--no-build"])
         assert result.returncode == 0, f"Script failed: {result.stderr}"
 
         changelog = tmp_path / "CHANGELOG.md"
@@ -240,7 +240,7 @@ class TestChangelogGeneration:
         """验证提交信息被正确分类到 CHANGELOG"""
         result = _run_bump_with_extra_commits(
             tmp_path,
-            ["minor", "--no-edit"],
+            ["minor", "--no-edit", "--no-build"],
             [
                 "feat: add new feature",
                 "fix: fix a bug",
@@ -334,7 +334,7 @@ class TestChangelogGeneration:
         env["CHANGELOG"] = str(changelog)
 
         result = subprocess.run(
-            [sys.executable, str(SCRIPT), "minor", "--no-edit"],
+            [sys.executable, str(SCRIPT), "minor", "--no-edit", "--no-build"],
             cwd=tmp_path,
             capture_output=True,
             text=True,
@@ -354,7 +354,7 @@ class TestGitTagging:
 
     def test_git_tag_created(self, tmp_path):
         """验证 git tag vx.y.z 被创建"""
-        result = _run_bump(tmp_path, ["patch", "--no-edit"])
+        result = _run_bump(tmp_path, ["patch", "--no-edit", "--no-build"])
         assert result.returncode == 0, f"Script failed: {result.stderr}"
 
         tag_result = subprocess.run(
@@ -368,7 +368,7 @@ class TestGitTagging:
 
     def test_git_commit_created(self, tmp_path):
         """验证 git commit 被创建"""
-        result = _run_bump(tmp_path, ["minor", "--no-edit"])
+        result = _run_bump(tmp_path, ["minor", "--no-edit", "--no-build"])
         assert result.returncode == 0, f"Script failed: {result.stderr}"
 
         log_result = subprocess.run(
@@ -381,7 +381,7 @@ class TestGitTagging:
 
     def test_major_tag(self, tmp_path):
         """验证 major 版本的 git tag"""
-        result = _run_bump(tmp_path, ["major", "--no-edit"])
+        result = _run_bump(tmp_path, ["major", "--no-edit", "--no-build"])
         assert result.returncode == 0, f"Script failed: {result.stderr}"
 
         tag_result = subprocess.run(

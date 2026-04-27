@@ -1,11 +1,14 @@
 """测试 GPU 显存监控"""
 
+import pytest
 from unittest.mock import patch
 
 from vibeocr.utils.gpu_memory_monitor import (
     GPUMemoryInfo,
     GPUMemoryMonitor,
 )
+
+_pynvml = pytest.importorskip("pynvml", reason="pynvml not installed")
 
 
 class TestGPUMemoryMonitor:

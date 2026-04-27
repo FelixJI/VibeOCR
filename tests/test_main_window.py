@@ -9,13 +9,17 @@ from vibeocr.views.main_window import MainWindow
 
 
 @pytest.fixture
-def main_window(qapp, qtbot):
+def main_window(qapp, qtbot, tmp_path):
     """提供 MainWindow 实例。"""
+    from vibeocr.managers.config_manager import ConfigManager
+    ConfigManager.reset_instance()
+    ConfigManager.instance(tmp_path)
     window = MainWindow()
     window.show()
     qtbot.addWidget(window)
     yield window
     window.close()
+    ConfigManager.reset_instance()
 
 
 class TestMainWindow:
@@ -27,8 +31,9 @@ class TestMainWindow:
 
     def test_copy_result_to_clipboard(self, main_window, qtbot):
         """复制识别结果到剪贴板。"""
-        # 设置测试 OCR 结果
-        main_window._current_ocr_result = OCRResult(raw_text="测试文本")
+        result = OCRResult(raw_text="测试文本")
+        main_window._current_ocr_result = result
+        main_window._clipboard_controller.set_result(result)
 
         # 点击复制纯文本按钮
         qtbot.mouseClick(main_window._ui.btnCopyPlain, Qt.MouseButton.LeftButton)
@@ -39,12 +44,13 @@ class TestMainWindow:
 
     def test_copy_rich_text_to_clipboard(self, main_window, qtbot):
         """复制富文本到剪贴板。"""
-        # 设置测试 OCR 结果（带富文本）
-        main_window._current_ocr_result = OCRResult(
+        result = OCRResult(
             raw_text="测试文本",
             markdown_text="# 标题\n\n测试文本",
             html_text="<h1>标题</h1><p>测试文本</p>",
         )
+        main_window._current_ocr_result = result
+        main_window._clipboard_controller.set_result(result)
 
         # 点击复制富文本按钮
         qtbot.mouseClick(main_window._ui.btnCopyRich, Qt.MouseButton.LeftButton)
@@ -65,11 +71,12 @@ class TestMainWindow:
 
     def test_copy_markdown_to_clipboard(self, main_window, qtbot):
         """复制 Markdown 到剪贴板。"""
-        # 设置测试 OCR 结果
-        main_window._current_ocr_result = OCRResult(
+        result = OCRResult(
             raw_text="测试文本",
             markdown_text="# 标题\n\n测试文本",
         )
+        main_window._current_ocr_result = result
+        main_window._clipboard_controller.set_result(result)
 
         # 点击复制 Markdown 按钮
         qtbot.mouseClick(main_window._ui.btnCopyMarkdown, Qt.MouseButton.LeftButton)
@@ -80,7 +87,9 @@ class TestMainWindow:
 
     def test_status_bar_shows_copied(self, main_window, qtbot):
         """复制后状态栏显示提示。"""
-        main_window._current_ocr_result = OCRResult(raw_text="测试文本")
+        result = OCRResult(raw_text="测试文本")
+        main_window._current_ocr_result = result
+        main_window._clipboard_controller.set_result(result)
         qtbot.mouseClick(main_window._ui.btnCopyPlain, Qt.MouseButton.LeftButton)
 
         assert "复制" in main_window._statusbar.currentMessage()
