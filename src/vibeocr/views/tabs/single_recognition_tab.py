@@ -7,7 +7,7 @@ from pathlib import Path
 from PIL import Image
 from PySide6.QtCore import QBuffer, Signal
 from PySide6.QtGui import QPixmap
-from PySide6.QtWidgets import QApplication, QSplitter, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QApplication, QHBoxLayout, QPushButton, QSplitter, QVBoxLayout, QWidget
 
 from vibeocr.views.tabs.base_tab import BaseOcrTab
 from vibeocr.widgets.preprocess_options_widget import PreprocessOptionsWidget
@@ -43,12 +43,38 @@ class SingleRecognitionTab(BaseOcrTab):
 
         self._splitter = QSplitter()
 
-        # 左侧：统一预览
+        # 左侧：按钮栏 + 统一预览（包裹在容器中）
+        left_panel = QWidget()
+        left_layout = QVBoxLayout(left_panel)
+        left_layout.setSpacing(4)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+
+        # 操作按钮栏
+        action_bar = QWidget()
+        action_layout = QHBoxLayout(action_bar)
+        action_layout.setContentsMargins(4, 2, 4, 2)
+        action_layout.setSpacing(4)
+
+        self._screenshot_btn = QPushButton("截图")
+        self._screenshot_btn.setFixedHeight(28)
+        self._file_btn = QPushButton("选择文件")
+        self._file_btn.setFixedHeight(28)
+        self._paste_btn = QPushButton("粘贴")
+        self._paste_btn.setFixedHeight(28)
+
+        action_layout.addWidget(self._screenshot_btn)
+        action_layout.addWidget(self._file_btn)
+        action_layout.addWidget(self._paste_btn)
+        action_layout.addStretch()
+
+        left_layout.addWidget(action_bar)
+
         self._preview_widget = PreviewWidget(
             empty_text="左键点击截图 · 右键点击选择文件\n\n支持图片、PDF 格式"
         )
-        self._preview_widget.setMinimumWidth(300)
-        self._splitter.addWidget(self._preview_widget)
+        left_layout.addWidget(self._preview_widget, stretch=1)
+
+        self._splitter.addWidget(left_panel)
 
         # 右侧：管道选项 + 结果展示
         right_panel = QWidget()

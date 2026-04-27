@@ -26,3 +26,9 @@ class TestSingleRecognitionTab:
     def test_has_preprocess_options(self, qapp):
         tab = SingleRecognitionTab()
         assert tab._preprocess_options is not None
+
+    def test_has_action_buttons(self, qapp):
+        tab = SingleRecognitionTab()
+        assert tab._screenshot_btn is not None
+        assert tab._file_btn is not None
+        assert tab._paste_btn is not None
