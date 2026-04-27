@@ -104,6 +104,33 @@ class SingleRecognitionTab(BaseOcrTab):
         self._preview_widget.screenshot_requested.connect(self.screenshot_requested.emit)
         self._preview_widget.file_open_requested.connect(self.file_open_requested.emit)
 
+        # 操作按钮
+        self._screenshot_btn.clicked.connect(self.screenshot_requested.emit)
+        self._file_btn.clicked.connect(self._on_file_btn_clicked)
+        self._paste_btn.clicked.connect(self._on_paste)
+
+    def _on_file_btn_clicked(self) -> None:
+        from PySide6.QtWidgets import QFileDialog
+
+        from vibeocr.utils.mime_types import FILE_FILTER_ALL
+
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "选择文件", "",
+            f"{FILE_FILTER_ALL};;所有文件 (*)",
+        )
+        if file_path:
+            self.process_file(file_path)
+
+    def _on_paste(self) -> None:
+        from PySide6.QtGui import QGuiApplication
+
+        clipboard = QGuiApplication.clipboard()
+        pixmap = clipboard.pixmap()
+        if pixmap.isNull():
+            return
+        self._preview_widget.set_pixmap(pixmap)
+        self.run_ocr(pixmap)
+
     def _on_start(self):
         pass
 

@@ -32,3 +32,10 @@ class TestSingleRecognitionTab:
         assert tab._screenshot_btn is not None
         assert tab._file_btn is not None
         assert tab._paste_btn is not None
+
+    def test_screenshot_btn_emits_signal(self, qapp):
+        tab = SingleRecognitionTab()
+        emitted = []
+        tab.screenshot_requested.connect(lambda: emitted.append(True))
+        tab._screenshot_btn.click()
+        assert emitted
