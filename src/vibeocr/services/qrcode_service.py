@@ -108,10 +108,42 @@ class QrcodeService:
         return image.convert("RGB")
 
     def apply_text_label(self, image: Image.Image, text: str, position: str = "bottom", font_size: int = 12) -> Image.Image:
-        raise NotImplementedError("apply_text_label in Task 5")
+        if position == "none" or not text:
+            return image
+
+        from PIL import ImageDraw, ImageFont
+
+        font = ImageFont.load_default(size=font_size)
+        dummy = Image.new("RGB", (1, 1))
+        draw = ImageDraw.Draw(dummy)
+        bbox = draw.textbbox((0, 0), text, font=font)
+        text_w = bbox[2] - bbox[0]
+        text_h = bbox[3] - bbox[1]
+        padding = 8
+
+        img_w, img_h = image.size
+        new_w = int(max(img_w, text_w + padding * 2))
+        label_h = int(text_h + padding * 2)
+
+        if position == "top":
+            canvas = Image.new("RGB", (new_w, img_h + label_h), image.getpixel((0, 0)))
+            draw = ImageDraw.Draw(canvas)
+            text_x = (new_w - text_w) // 2
+            draw.text((text_x, padding), text, fill=(0, 0, 0), font=font)
+            canvas.paste(image, ((new_w - img_w) // 2, label_h))
+        else:
+            canvas = Image.new("RGB", (new_w, img_h + label_h), image.getpixel((0, 0)))
+            canvas.paste(image, ((new_w - img_w) // 2, 0))
+            draw = ImageDraw.Draw(canvas)
+            text_x = (new_w - text_w) // 2
+            draw.text((text_x, img_h + padding), text, fill=(0, 0, 0), font=font)
+
+        return canvas
 
     def invert_colors(self, image: Image.Image) -> Image.Image:
-        raise NotImplementedError("invert_colors in Task 5")
+        from PIL import ImageOps
+
+        return ImageOps.invert(image)
 
     def generate_svg(self, text: str, options: dict) -> str:
         raise NotImplementedError("generate_svg in Task 6")

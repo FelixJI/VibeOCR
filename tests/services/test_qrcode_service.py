@@ -131,3 +131,45 @@ class TestLogoEmbedding:
         img = service.generate("Test with logo", options)
         img = service.apply_logo(img, logo_path, ratio=0.25)
         assert isinstance(img, Image.Image)
+
+
+class TestTextLabelAndInvert:
+    def test_apply_text_label_bottom(self, service):
+        img = Image.new("RGB", (300, 300), color="white")
+        result = service.apply_text_label(img, "Scan me", position="bottom", font_size=14)
+        assert isinstance(result, Image.Image)
+        assert result.height > img.height
+
+    def test_apply_text_label_top(self, service):
+        img = Image.new("RGB", (300, 300), color="white")
+        result = service.apply_text_label(img, "Top label", position="top", font_size=12)
+        assert isinstance(result, Image.Image)
+        assert result.height > img.height
+
+    def test_apply_text_label_none_returns_original(self, service):
+        img = Image.new("RGB", (300, 300), color="white")
+        result = service.apply_text_label(img, "Label", position="none", font_size=12)
+        assert result.size == img.size
+
+    def test_invert_colors(self, service):
+        img = Image.new("RGB", (10, 10), color=(0, 0, 0))
+        result = service.invert_colors(img)
+        pixel = result.getpixel((0, 0))
+        assert pixel == (255, 255, 255)
+
+    def test_invert_colors_white_to_black(self, service):
+        img = Image.new("RGB", (10, 10), color=(255, 255, 255))
+        result = service.invert_colors(img)
+        pixel = result.getpixel((0, 0))
+        assert pixel == (0, 0, 0)
+
+    def test_full_pipeline_with_invert(self, service):
+        options = service.default_options()
+        options["format"] = "qr"
+        options["invert"] = True
+        options["label_text"] = "Inverted QR"
+        options["label_position"] = "bottom"
+        img = service.generate("Test", options)
+        img = service.apply_text_label(img, "Inverted QR", position="bottom", font_size=12)
+        img = service.invert_colors(img)
+        assert isinstance(img, Image.Image)
