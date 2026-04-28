@@ -8,16 +8,16 @@ import logging
 import os
 import subprocess
 import threading
+import time
 from collections.abc import Callable
 from enum import Enum
 from pathlib import Path
 
 from vibeocr.env_manager import (
-    detect_network_source,
     get_embedded_python_executable,
-    setup_paddlex_model_source,
 )
 from vibeocr.model_cache_manager import update_cache
+from vibeocr.network_detector import NetworkDetector
 
 logger = logging.getLogger(__name__)
 
@@ -38,15 +38,65 @@ class DownloadStatus(str, Enum):
     SKIPPED = "skipped"
 
 
+def _run_subprocess_cancellable(
+    cmd: list[str],
+    timeout: float,
+    cancel_event: threading.Event | None = None,
+) -> tuple[int, str, str]:
+    """运行子进程，支持取消和超时
+
+    Returns:
+        (returncode, stdout, stderr)
+        被取消时返回 (-1, "", "")
+    """
+    proc = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+    )
+    try:
+        deadline = time.monotonic() + timeout
+        while True:
+            if cancel_event and cancel_event.is_set():
+                proc.terminate()
+                try:
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait()
+                return -1, "", "cancelled"
+            try:
+                proc.wait(timeout=1.0)
+                stdout, stderr = proc.communicate()
+                return proc.returncode, stdout or "", stderr or ""
+            except subprocess.TimeoutExpired:
+                if time.monotonic() >= deadline:
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                        proc.wait()
+                    return -1, "", "timeout"
+    except Exception as e:
+        proc.kill()
+        proc.wait()
+        return -1, "", str(e)
+
+
 def _download_paddlex_pipeline(
     python_exe: Path,
     pipeline_name: str,
+    project_root: Path,
     timeout: float = DEFAULT_PIPELINE_TIMEOUT,
+    cancel_event: threading.Event | None = None,
 ) -> bool:
     """通过调用 create_pipeline() 触发 PaddleX 模型下载"""
     logger.info(f"[模型下载] 开始下载 PaddleX 管道: {pipeline_name}")
     try:
-        setup_paddlex_model_source()
+        NetworkDetector(project_root).paddlex_source_env
 
         cmd = [
             str(python_exe),
@@ -57,21 +107,20 @@ def _download_paddlex_pipeline(
             ),
         ]
 
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+        returncode, stdout, stderr = _run_subprocess_cancellable(
+            cmd, timeout, cancel_event,
         )
-        if result.returncode == 0:
+        if returncode == -1 and stderr == "cancelled":
+            logger.info(f"[模型下载] PaddleX 管道 {pipeline_name} 已取消")
+            return False
+        if returncode == -1 and stderr == "timeout":
+            logger.error(f"[模型下载] PaddleX 管道 {pipeline_name} 下载超时 ({timeout}s)")
+            return False
+        if returncode == 0:
             logger.info(f"[模型下载] PaddleX 管道 {pipeline_name} 下载完成")
             return True
-        error = result.stderr or result.stdout or "未知错误"
+        error = stderr or stdout or "未知错误"
         logger.error(f"[模型下载] PaddleX 管道 {pipeline_name} 下载失败: {error[:300]}")
-        return False
-    except subprocess.TimeoutExpired:
-        logger.error(f"[模型下载] PaddleX 管道 {pipeline_name} 下载超时 ({timeout}s)")
         return False
     except Exception as e:
         logger.error(f"[模型下载] PaddleX 管道 {pipeline_name} 下载异常: {e}")
@@ -80,30 +129,32 @@ def _download_paddlex_pipeline(
 
 def _download_mineru_models(
     python_exe: Path,
+    project_root: Path,
     timeout: float = DEFAULT_MINERU_TIMEOUT,
+    cancel_event: threading.Event | None = None,
 ) -> bool:
     """下载 MinerU 模型"""
     logger.info("[模型下载] 开始下载 MinerU 模型")
     try:
-        network = detect_network_source()
-        source = "modelscope" if network == "domestic" else "huggingface"
+        source = NetworkDetector(project_root).mineru_source
         logger.info(f"[模型下载] 使用模型源: {source}")
 
-        result = subprocess.run(
+        returncode, stdout, stderr = _run_subprocess_cancellable(
             [str(python_exe), "-m", "mineru.cli.models_download", "-s", source],
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+            timeout,
+            cancel_event,
         )
-        if result.returncode == 0:
+        if returncode == -1 and stderr == "cancelled":
+            logger.info("[模型下载] MinerU 模型下载已取消")
+            return False
+        if returncode == -1 and stderr == "timeout":
+            logger.error(f"[模型下载] MinerU 模型下载超时 ({timeout}s)")
+            return False
+        if returncode == 0:
             logger.info("[模型下载] MinerU 模型下载完成")
             return True
-        error = result.stderr or result.stdout or "未知错误"
+        error = stderr or stdout or "未知错误"
         logger.error(f"[模型下载] MinerU 模型下载失败: {error[:300]}")
-        return False
-    except subprocess.TimeoutExpired:
-        logger.error(f"[模型下载] MinerU 模型下载超时 ({timeout}s)")
         return False
     except Exception as e:
         logger.error(f"[模型下载] MinerU 模型下载异常: {e}")
@@ -164,11 +215,17 @@ class ModelDownloadService:
             with self._lock:
                 self._statuses[pipeline_name] = DownloadStatus.DOWNLOADING
 
-            success = _download_paddlex_pipeline(self._python_exe, pipeline_name)
+            success = _download_paddlex_pipeline(
+                self._python_exe, pipeline_name, self._project_root,
+                cancel_event=cancel_event,
+            )
             with self._lock:
-                self._statuses[pipeline_name] = (
-                    DownloadStatus.COMPLETED if success else DownloadStatus.FAILED
-                )
+                if cancel_event and cancel_event.is_set():
+                    self._statuses[pipeline_name] = DownloadStatus.SKIPPED
+                else:
+                    self._statuses[pipeline_name] = (
+                        DownloadStatus.COMPLETED if success else DownloadStatus.FAILED
+                    )
 
             if success:
                 report("模型下载", f"PaddleX {pipeline_name} 模型下载完成")
@@ -186,11 +243,17 @@ class ModelDownloadService:
         with self._lock:
             self._statuses["MinerU"] = DownloadStatus.DOWNLOADING
 
-        success = _download_mineru_models(self._python_exe)
+        success = _download_mineru_models(
+            self._python_exe, self._project_root,
+            cancel_event=cancel_event,
+        )
         with self._lock:
-            self._statuses["MinerU"] = (
-                DownloadStatus.COMPLETED if success else DownloadStatus.FAILED
-            )
+            if cancel_event and cancel_event.is_set():
+                self._statuses["MinerU"] = DownloadStatus.SKIPPED
+            else:
+                self._statuses["MinerU"] = (
+                    DownloadStatus.COMPLETED if success else DownloadStatus.FAILED
+                )
 
         if success:
             report("模型下载", "MinerU 模型下载完成")
@@ -218,7 +281,7 @@ class ModelDownloadService:
         if pipeline_name == "MinerU":
             if progress_callback:
                 progress_callback("模型下载", "正在下载 MinerU 模型...")
-            success = _download_mineru_models(self._python_exe, timeout=timeout)
+            success = _download_mineru_models(self._python_exe, self._project_root, timeout=timeout)
             with self._lock:
                 self._statuses[pipeline_name] = (
                     DownloadStatus.COMPLETED if success else DownloadStatus.FAILED
@@ -233,7 +296,7 @@ class ModelDownloadService:
         if progress_callback:
             progress_callback("模型下载", f"正在下载 PaddleX {pipeline_name} 模型...")
         success = _download_paddlex_pipeline(
-            self._python_exe, pipeline_name, timeout=timeout,
+            self._python_exe, pipeline_name, self._project_root, timeout=timeout,
         )
         with self._lock:
             self._statuses[pipeline_name] = (
