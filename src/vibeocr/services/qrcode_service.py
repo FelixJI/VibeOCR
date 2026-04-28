@@ -95,7 +95,17 @@ class QrcodeService:
         return img
 
     def apply_logo(self, image: Image.Image, logo_path: str, ratio: float = 0.2) -> Image.Image:
-        raise NotImplementedError("apply_logo in Task 4")
+        logo = Image.open(logo_path).convert("RGBA")
+        qr_w, qr_h = image.size
+        logo_size = int(min(qr_w, qr_h) * ratio)
+        logo = logo.resize((logo_size, logo_size), Image.Resampling.LANCZOS)
+
+        image = image.convert("RGBA")
+        pos_x = (qr_w - logo_size) // 2
+        pos_y = (qr_h - logo_size) // 2
+
+        image.paste(logo, (pos_x, pos_y), logo)
+        return image.convert("RGB")
 
     def apply_text_label(self, image: Image.Image, text: str, position: str = "bottom", font_size: int = 12) -> Image.Image:
         raise NotImplementedError("apply_text_label in Task 5")

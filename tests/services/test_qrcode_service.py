@@ -95,3 +95,39 @@ class TestBarcodeGeneration:
         options["format"] = "nonexistent_format"
         with pytest.raises(barcode.errors.BarcodeNotFoundError):
             service.generate("Hello", options)
+
+
+class TestLogoEmbedding:
+    def test_apply_logo_with_valid_image(self, service, tmp_path):
+        logo = Image.new("RGB", (50, 50), color="red")
+        logo_path = str(tmp_path / "logo.png")
+        logo.save(logo_path)
+
+        qr_img = Image.new("RGB", (300, 300), color="white")
+        result = service.apply_logo(qr_img, logo_path, ratio=0.2)
+        assert isinstance(result, Image.Image)
+        assert result.size == qr_img.size
+
+    def test_apply_logo_ratio_affects_logo_size(self, service, tmp_path):
+        logo = Image.new("RGB", (50, 50), color="blue")
+        logo_path = str(tmp_path / "logo.png")
+        logo.save(logo_path)
+
+        qr_img = Image.new("RGB", (300, 300), color="white")
+        result_small = service.apply_logo(qr_img, logo_path, ratio=0.1)
+        result_large = service.apply_logo(qr_img, logo_path, ratio=0.4)
+        assert isinstance(result_small, Image.Image)
+        assert isinstance(result_large, Image.Image)
+
+    def test_apply_logo_with_qr_pipeline(self, service, tmp_path):
+        logo = Image.new("RGB", (30, 30), color="green")
+        logo_path = str(tmp_path / "logo.png")
+        logo.save(logo_path)
+
+        options = service.default_options()
+        options["format"] = "qr"
+        options["logo_path"] = logo_path
+        options["logo_ratio"] = 0.25
+        img = service.generate("Test with logo", options)
+        img = service.apply_logo(img, logo_path, ratio=0.25)
+        assert isinstance(img, Image.Image)
