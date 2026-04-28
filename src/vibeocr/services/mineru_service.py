@@ -348,6 +348,9 @@ class MinerUService(metaclass=SingletonMeta):
             if block_type in DISCARDED_BLOCK_TYPES:
                 continue
             if block_type == "table":
+                captions = block.get("table_caption") or []
+                if captions:
+                    parts.append(" ".join(captions))
                 html = block.get("table_body", "")
                 parts.append(MinerUService._strip_html(html))
             elif block_type in ("image", "chart"):
@@ -371,8 +374,13 @@ class MinerUService(metaclass=SingletonMeta):
         """从单个 content_list 块提取用于 TextBlock 的文本"""
         block_type = block.get("type", "")
         if block_type == "table":
+            captions = block.get("table_caption") or []
+            cap_text = " ".join(captions)
             html = block.get("table_body", "")
-            return MinerUService._strip_html(html)
+            body_text = MinerUService._strip_html(html)
+            if cap_text and body_text:
+                return f"{cap_text}\n{body_text}"
+            return cap_text or body_text
         elif block_type in ("image", "chart"):
             captions = block.get("image_caption") or block.get("chart_caption") or []
             content = block.get("content", "")

@@ -46,9 +46,13 @@ BLOCK_COLORS = {
     "table": QColor(34, 197, 94, 30),
     "image": QColor(168, 85, 247, 30),
     "figure": QColor(168, 85, 247, 30),
+    "chart": QColor(236, 72, 153, 30),
     "equation": QColor(249, 115, 22, 30),
     "interline_equation": QColor(249, 115, 22, 30),
     "inline_equation": QColor(249, 115, 22, 30),
+    "list": QColor(6, 182, 212, 30),
+    "code": QColor(139, 92, 246, 30),
+    "seal": QColor(107, 114, 128, 30),
 }
 
 BLOCK_BORDER_COLORS = {
@@ -57,9 +61,13 @@ BLOCK_BORDER_COLORS = {
     "table": QColor(34, 197, 94, 200),
     "image": QColor(168, 85, 247, 200),
     "figure": QColor(168, 85, 247, 200),
+    "chart": QColor(236, 72, 153, 200),
     "equation": QColor(249, 115, 22, 200),
     "interline_equation": QColor(249, 115, 22, 200),
     "inline_equation": QColor(249, 115, 22, 200),
+    "list": QColor(6, 182, 212, 200),
+    "code": QColor(139, 92, 246, 200),
+    "seal": QColor(107, 114, 128, 200),
 }
 
 BLOCK_TYPE_LABELS = {
@@ -68,9 +76,13 @@ BLOCK_TYPE_LABELS = {
     "table": "表格",
     "image": "图片",
     "figure": "图片",
+    "chart": "图表",
     "equation": "公式",
     "interline_equation": "公式",
     "inline_equation": "公式",
+    "list": "列表",
+    "code": "代码",
+    "seal": "印章",
 }
 
 
@@ -554,6 +566,9 @@ class PreviewWidget(QWidget):
             if not bbox or len(bbox) < 4:
                 continue
             block_type = block.get("type", "text")
+            # MinerU content_list v1: titles are {"type": "text", "text_level": N}
+            if block_type == "text" and "text_level" in block:
+                block_type = "title"
             fill_color = BLOCK_COLORS.get(block_type, BLOCK_COLORS["text"])
             border_color = BLOCK_BORDER_COLORS.get(block_type, BLOCK_BORDER_COLORS["text"])
             screen_rect = QRectF(

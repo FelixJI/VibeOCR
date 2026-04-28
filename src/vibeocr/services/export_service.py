@@ -154,9 +154,18 @@ class ExportService:
                     elif text:
                         doc.add_paragraph(text)
                 elif block_type == "table":
+                    table_captions = block.get("table_caption") or []
+                    if table_captions:
+                        doc.add_paragraph(" ".join(table_captions), style="Caption")
                     html = block.get("table_body", "") or block.get("html", "")
                     if html:
                         ExportService._add_html_table_to_docx(doc, html)
+                    table_footnotes = block.get("table_footnote") or []
+                    for fn in table_footnotes:
+                        if fn:
+                            p = doc.add_paragraph(fn)
+                            for run in p.runs:
+                                run.font.size = Pt(9)
                 elif block_type in ("image", "figure"):
                     img_path = block.get("img_path", "")
                     caption = block.get("image_caption") or block.get("chart_caption") or []
@@ -249,6 +258,12 @@ class ExportService:
                 if block_type in DISCARDED_BLOCK_TYPES:
                     continue
                 elif block_type == "table":
+                    table_captions = block.get("table_caption") or []
+                    if table_captions:
+                        if not has_text:
+                            has_text = True
+                            ws_text.title = "文本汇总"
+                        ws_text.append([f"[表格标题] {' '.join(table_captions)}"])
                     html = block.get("table_body", "") or block.get("html", "")
                     if html:
                         table_count += 1
