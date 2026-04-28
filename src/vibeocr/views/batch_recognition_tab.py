@@ -340,7 +340,9 @@ class BatchRecognitionTab(BaseOcrTab):
         output_name = ExportService.get_output_filename(
             Path(self._current_file_path).name, fmt
         )
-        output_path = Path(export_dir) / output_name
+        output_path = ExportService.get_unique_output_path(
+            Path(export_dir) / output_name
+        )
 
         success = ExportService.export(result, output_path, fmt)
         if success:
@@ -361,14 +363,19 @@ class BatchRecognitionTab(BaseOcrTab):
 
         success_count = 0
         fail_count = 0
+        renamed: list[str] = []
 
         for f in completed_files:
             result = f["result"]
             export_dir = self._export_widget.get_export_dir(f["path"])
             output_name = ExportService.get_output_filename(f["name"], fmt)
             output_path = Path(export_dir) / output_name
+            actual_path = ExportService.get_unique_output_path(output_path)
 
-            if ExportService.export(result, output_path, fmt):
+            if output_path != actual_path:
+                renamed.append(f"{output_name} → {actual_path.name}")
+
+            if ExportService.export(result, actual_path, fmt):
                 success_count += 1
             else:
                 fail_count += 1
@@ -376,6 +383,8 @@ class BatchRecognitionTab(BaseOcrTab):
         msg = f"导出完成: {success_count} 成功"
         if fail_count:
             msg += f", {fail_count} 失败"
+        if renamed:
+            msg += "\n\n以下文件因同名已自动重命名:\n" + "\n".join(renamed)
         QMessageBox.information(self, "导出结果", msg)
 
     def _reset_ui(self):

@@ -74,6 +74,21 @@ class ExportService:
         return stem + ext_map.get(fmt, ".txt")
 
     @staticmethod
+    def get_unique_output_path(output_path: Path) -> Path:
+        """如果文件已存在，自动追加 _1, _2 ... 后缀避免覆盖"""
+        if not output_path.exists():
+            return output_path
+        stem = output_path.stem
+        suffix = output_path.suffix
+        parent = output_path.parent
+        counter = 1
+        while True:
+            candidate = parent / f"{stem}_{counter}{suffix}"
+            if not candidate.exists():
+                return candidate
+            counter += 1
+
+    @staticmethod
     def _export_markdown(result: OCRResult, output_path: Path) -> bool:
         """导出为 Markdown"""
         content = result.markdown_text or result.raw_text

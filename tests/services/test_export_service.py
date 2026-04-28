@@ -218,3 +218,32 @@ class TestOtherBlockTypes:
         wb = load_workbook(str(out))
         values = [cell.value for row in wb.active.iter_rows() for cell in row if cell.value]
         assert any("E=mc^2" in str(v) for v in values)
+
+
+# --- 同名文件自动重命名 ---
+
+
+class TestUniqueOutputPath:
+    """get_unique_output_path 避免同名覆盖"""
+
+    def test_no_conflict(self, tmp_path):
+        path = tmp_path / "report.md"
+        assert ExportService.get_unique_output_path(path) == path
+
+    def test_one_conflict(self, tmp_path):
+        (tmp_path / "report.md").write_text("old")
+        result = ExportService.get_unique_output_path(tmp_path / "report.md")
+        assert result == tmp_path / "report_1.md"
+
+    def test_multiple_conflicts(self, tmp_path):
+        (tmp_path / "report.md").write_text("a")
+        (tmp_path / "report_1.md").write_text("b")
+        (tmp_path / "report_2.md").write_text("c")
+        result = ExportService.get_unique_output_path(tmp_path / "report.md")
+        assert result == tmp_path / "report_3.md"
+
+    def test_gap_in_sequence(self, tmp_path):
+        (tmp_path / "report.md").write_text("a")
+        (tmp_path / "report_2.md").write_text("b")
+        result = ExportService.get_unique_output_path(tmp_path / "report.md")
+        assert result == tmp_path / "report_1.md"
