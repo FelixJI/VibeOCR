@@ -58,3 +58,68 @@ class TestQrcodeTabStructure:
         combo = qrcode_tab.findChild(QComboBox)
         texts = [combo.itemText(i) for i in range(combo.count())]
         assert "Code 128" in texts
+
+
+class TestQrcodeTabBehavior:
+    def test_qr_code_selected_shows_ec_buttons(self, qrcode_tab):
+        qrcode_tab.show()
+        combo = qrcode_tab.findChild(QComboBox)
+        combo.setCurrentIndex(0)  # QR Code
+        for btn in qrcode_tab._ec_group.buttons():
+            assert not btn.isHidden()
+
+    def test_barcode_selected_hides_ec_buttons(self, qrcode_tab):
+        qrcode_tab.show()
+        combo = qrcode_tab.findChild(QComboBox)
+        combo.setCurrentIndex(1)  # Code 128
+        for btn in qrcode_tab._ec_group.buttons():
+            assert btn.isHidden()
+
+    def test_qr_code_selected_shows_logo_section(self, qrcode_tab):
+        qrcode_tab.show()
+        combo = qrcode_tab.findChild(QComboBox)
+        combo.setCurrentIndex(0)
+        assert not qrcode_tab._logo_check.isHidden()
+
+    def test_barcode_selected_hides_logo_section(self, qrcode_tab):
+        qrcode_tab.show()
+        combo = qrcode_tab.findChild(QComboBox)
+        combo.setCurrentIndex(1)
+        assert qrcode_tab._logo_check.isHidden()
+
+    def test_logo_check_disables_select_when_unchecked(self, qrcode_tab):
+        qrcode_tab._logo_check.setChecked(False)
+        assert not qrcode_tab._logo_select_btn.isEnabled()
+
+    def test_logo_check_enables_select_when_checked(self, qrcode_tab):
+        qrcode_tab._logo_check.setChecked(True)
+        assert qrcode_tab._logo_select_btn.isEnabled()
+
+    def test_text_input_triggers_preview(self, qrcode_tab, qtbot):
+        qrcode_tab._text_input.setPlainText("Hello World")
+        qtbot.wait(400)
+        assert qrcode_tab._current_image is not None
+
+    def test_empty_text_shows_placeholder(self, qrcode_tab, qtbot):
+        qrcode_tab._text_input.setPlainText("Hello")
+        qtbot.wait(400)
+        qrcode_tab._text_input.setPlainText("")
+        qtbot.wait(400)
+        assert qrcode_tab._current_image is None
+
+    def test_paste_from_clipboard(self, qrcode_tab, qtbot):
+        from PySide6.QtGui import QGuiApplication
+
+        QGuiApplication.clipboard().setText("Pasted text")
+        qrcode_tab._btn_paste.click()
+        assert qrcode_tab._text_input.toPlainText() == "Pasted text"
+
+    def test_copy_creates_clipboard_content(self, qrcode_tab, qtbot):
+        from PySide6.QtGui import QGuiApplication
+
+        qrcode_tab._text_input.setPlainText("Copy test")
+        qtbot.wait(400)
+        if qrcode_tab._current_image is not None:
+            qrcode_tab._btn_copy.click()
+            clipboard_pixmap = QGuiApplication.clipboard().pixmap()
+            assert not clipboard_pixmap.isNull()
