@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from vibeocr.core.pipelines import OCRPipeline
 from vibeocr.services.model_download_service import ModelDownloadService
 
 
@@ -37,10 +38,16 @@ class ModelDownloadWorker(QThread):
     def cancel(self) -> None:
         self._cancel_event.set()
 
+    @property
+    def is_cancelled(self) -> bool:
+        return self._cancel_event.is_set()
+
     def run(self) -> None:
         service = ModelDownloadService(self._project_root)
 
         def on_progress(stage: str, message: str) -> None:
+            if self._cancel_event.is_set():
+                return
             self.progress.emit(stage, message)
             for name, status in service.get_status().items():
                 self.status_changed.emit(name, status.value)
@@ -49,7 +56,8 @@ class ModelDownloadWorker(QThread):
             progress_callback=on_progress,
             cancel_event=self._cancel_event,
         )
-        self.finished.emit({k: v.value for k, v in results.items()})
+        if not self._cancel_event.is_set():
+            self.finished.emit({k: v.value for k, v in results.items()})
 
 
 class ModelDownloadDialog(QDialog):
@@ -58,10 +66,18 @@ class ModelDownloadDialog(QDialog):
     显示各管道的下载状态，支持跳过和取消。
     """
 
+    _PIPELINE_DISPLAY_NAMES = {
+        OCRPipeline.OCR.value: "通用 OCR",
+        OCRPipeline.TABLE_RECOGNITION.value: "表格识别",
+        OCRPipeline.FORMULA_RECOGNITION.value: "公式识别",
+        OCRPipeline.DOCUMENT_PARSING.value: "文档解析 (MinerU)",
+    }
+
     def __init__(self, project_root: Path, parent=None) -> None:
         super().__init__(parent)
         self._project_root = project_root
         self._worker: ModelDownloadWorker | None = None
+        self._finished = False
         self._setup_ui()
 
     def _setup_ui(self) -> None:
@@ -86,8 +102,10 @@ class ModelDownloadDialog(QDialog):
         self._status_layout.setContentsMargins(0, 0, 0, 0)
         self._status_labels: dict[str, QLabel] = {}
 
-        for name in ["OCR", "table_recognition", "formula_recognition", "MinerU"]:
-            label = QLabel(f"  {name}: 等待中")
+        for pipeline in OCRPipeline:
+            name = pipeline.value
+            display = self._PIPELINE_DISPLAY_NAMES.get(name, name)
+            label = QLabel(f"  {display}: 等待中")
             self._status_labels[name] = label
             self._status_layout.addWidget(label)
 
@@ -146,10 +164,12 @@ class ModelDownloadDialog(QDialog):
         display_text = status_display.get(status, status)
         label = self._status_labels.get(pipeline_name)
         if label:
-            label.setText(f"  {pipeline_name}: {display_text}")
+            display_name = self._PIPELINE_DISPLAY_NAMES.get(pipeline_name, pipeline_name)
+            label.setText(f"  {display_name}: {display_text}")
 
     @Slot(dict)
     def _on_finished(self, results: dict) -> None:
+        self._finished = True
         self._progress_bar.setVisible(False)
         self._cancel_button.setVisible(False)
 
@@ -168,7 +188,8 @@ class ModelDownloadDialog(QDialog):
         self._skip_button.setVisible(False)
 
     def _on_skip(self) -> None:
-        self._log("用户跳过模型下载，后台继续下载...")
+        self._log("跳过模型下载")
+        self._stop_worker()
         self.accept()
 
     def _on_cancel(self) -> None:
@@ -177,11 +198,19 @@ class ModelDownloadDialog(QDialog):
         self._log("正在取消下载...")
         self._cancel_button.setEnabled(False)
 
+    def _stop_worker(self) -> None:
+        if self._worker and self._worker.isRunning():
+            self._worker.cancel()
+            self._worker.wait(3000)
+
     def _log(self, message: str) -> None:
         self._log_text.append(message)
         scrollbar = self._log_text.verticalScrollBar()
         scrollbar.setValue(scrollbar.maximum())
 
     def closeEvent(self, event) -> None:
-        # 跳过或关闭对话框时不取消后台下载，让 Worker 自然完成
+        if self._finished or not self._worker:
+            event.accept()
+            return
+        self._stop_worker()
         event.accept()
