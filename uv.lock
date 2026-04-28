@@ -298,7 +298,7 @@ name = "colorama"
 version = "0.4.6"
 source = { registry = "https://download.pytorch.org/whl/cu128" }
 wheels = [
-    { url = "https://download.pytorch.org/whl/colorama-0.4.6-py2.py3-none-any.whl", hash = "sha256:4f1d9991f5acc0ca119f9d443620b77f9d6b33703e51011c16baf57afb285fc6" },
+    { url = "https://download.pytorch.org/whl/colorama-0.4.6-py2.py3-none-any.whl", hash = "sha256:4f1d9991f5acc0ca119f9d443620b77f9d6b33703e51011c16baf57afb285fc6", upload-time = "2023-10-05T23:50:34Z" },
 ]
 
 [[package]]
@@ -745,7 +745,7 @@ dependencies = [
     { name = "markupsafe", marker = "sys_platform == 'win32'" },
 ]
 wheels = [
-    { url = "https://download.pytorch.org/whl/jinja2-3.1.6-py3-none-any.whl" },
+    { url = "https://download.pytorch.org/whl/jinja2-3.1.6-py3-none-any.whl", upload-time = "2025-10-14T18:38:59Z" },
 ]
 
 [[package]]
@@ -876,8 +876,8 @@ name = "markupsafe"
 version = "3.0.3"
 source = { registry = "https://download.pytorch.org/whl/cu128" }
 wheels = [
-    { url = "https://download.pytorch.org/whl/markupsafe-3.0.3-cp313-cp313-win_amd64.whl" },
-    { url = "https://download.pytorch.org/whl/markupsafe-3.0.3-cp313-cp313t-win_amd64.whl" },
+    { url = "https://download.pytorch.org/whl/markupsafe-3.0.3-cp313-cp313-win_amd64.whl", upload-time = "2026-03-27T13:54:39Z" },
+    { url = "https://download.pytorch.org/whl/markupsafe-3.0.3-cp313-cp313t-win_amd64.whl", upload-time = "2026-03-27T13:54:41Z" },
 ]
 
 [[package]]
@@ -892,7 +892,7 @@ wheels = [
 [[package]]
 name = "mineru"
 version = "3.1.2"
-source = { registry = "https://pypi.org/simple" }
+source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
 dependencies = [
     { name = "beautifulsoup4", marker = "sys_platform == 'win32'" },
     { name = "boto3", marker = "sys_platform == 'win32'" },
@@ -930,7 +930,7 @@ dependencies = [
     { name = "uvicorn", marker = "sys_platform == 'win32'" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/8d/5b/7dde66c1b1b411806da268c5cb723c0dce2e86877a0e0ba5aa1d48126e68/mineru-3.1.2-py3-none-any.whl", hash = "sha256:8828760db80f9efb4b59fde95e9e4755e39208d7facb09964eae074f99e303cf", size = 1481238, upload-time = "2026-04-22T06:55:16.702Z" },
+    { url = "https://mirrors.aliyun.com/pypi/packages/8d/5b/7dde66c1b1b411806da268c5cb723c0dce2e86877a0e0ba5aa1d48126e68/mineru-3.1.2-py3-none-any.whl", hash = "sha256:8828760db80f9efb4b59fde95e9e4755e39208d7facb09964eae074f99e303cf" },
 ]
 
 [package.optional-dependencies]
@@ -1729,6 +1729,15 @@ wheels = [
 ]
 
 [[package]]
+name = "python-barcode"
+version = "0.16.1"
+source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
+sdist = { url = "https://mirrors.aliyun.com/pypi/packages/0e/f2/4c0b07f100e1e184ba682021322c336bbba6aa7adfabd2616f70eff917d9/python_barcode-0.16.1.tar.gz", hash = "sha256:665ed09516b0088b5593061c5ac8662caa0b08d56bdad328388b1cab39939ac5" }
+wheels = [
+    { url = "https://mirrors.aliyun.com/pypi/packages/b2/34/810885dca784b02e5ad0f71ced9c06ba5e9d33a6493bc886f7470ce82a39/python_barcode-0.16.1-py3-none-any.whl", hash = "sha256:5776567478c9a0dae473374bb86631ba0b5ea99aaf302763b364e367ac51f367" },
+]
+
+[[package]]
 name = "python-bidi"
 version = "0.6.7"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
@@ -1820,6 +1829,23 @@ source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
 sdist = { url = "https://mirrors.aliyun.com/pypi/packages/ec/b2/5be08597dbbf331edb69478eae2f8dd511834cebf56a183b442e7437f8e0/qasync-0.28.0.tar.gz", hash = "sha256:6f7f1f18971f59cb259b107218269ba56e3ad475ec456e54714b426a6e30b71d" }
 wheels = [
     { url = "https://mirrors.aliyun.com/pypi/packages/e5/84/0ce4cd946f6e958428c87d5accac35df70f81607e45ba4919947d0762d63/qasync-0.28.0-py3-none-any.whl", hash = "sha256:21faba8d047c717008378f5ac29ea58c32a8128528629e4afd57c59b768dba0f" },
+]
+
+[[package]]
+name = "qrcode"
+version = "8.2"
+source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
+dependencies = [
+    { name = "colorama", marker = "sys_platform == 'win32'" },
+]
+sdist = { url = "https://mirrors.aliyun.com/pypi/packages/8f/b2/7fc2931bfae0af02d5f53b174e9cf701adbb35f39d69c2af63d4a39f81a9/qrcode-8.2.tar.gz", hash = "sha256:35c3f2a4172b33136ab9f6b3ef1c00260dd2f66f858f24d88418a015f446506c" }
+wheels = [
+    { url = "https://mirrors.aliyun.com/pypi/packages/dd/b8/d2d6d731733f51684bbf76bf34dab3b70a9148e8f2cef2bb544fccec681a/qrcode-8.2-py3-none-any.whl", hash = "sha256:16e64e0716c14960108e85d853062c9e8bba5ca8252c0b4d0231b9df4060ff4f" },
+]
+
+[package.optional-dependencies]
+pil = [
+    { name = "pillow", marker = "sys_platform == 'win32'" },
 ]
 
 [[package]]
@@ -2226,8 +2252,8 @@ dependencies = [
     { name = "typing-extensions", marker = "sys_platform == 'win32'" },
 ]
 wheels = [
-    { url = "https://download-r2.pytorch.org/whl/cu128/torch-2.11.0%2Bcu128-cp313-cp313-win_amd64.whl" },
-    { url = "https://download-r2.pytorch.org/whl/cu128/torch-2.11.0%2Bcu128-cp313-cp313t-win_amd64.whl" },
+    { url = "https://download-r2.pytorch.org/whl/cu128/torch-2.11.0%2Bcu128-cp313-cp313-win_amd64.whl", hash = "sha256:6f367e62fd81b75cdf23ca4b75ced834d2db2cf98d1588ac935bde345de9de23", upload-time = "2026-04-27T17:48:09Z" },
+    { url = "https://download-r2.pytorch.org/whl/cu128/torch-2.11.0%2Bcu128-cp313-cp313t-win_amd64.whl", hash = "sha256:c2a5984deba8e001d166bf9cb83b8351f63a28b009e1a2fa0e4bbf08c90b259b", upload-time = "2026-04-27T17:52:32Z" },
 ]
 
 [[package]]
@@ -2240,8 +2266,8 @@ dependencies = [
     { name = "torch", marker = "sys_platform == 'win32'" },
 ]
 wheels = [
-    { url = "https://download-r2.pytorch.org/whl/cu128/torchvision-0.26.0%2Bcu128-cp313-cp313-win_amd64.whl", hash = "sha256:0232cb219927a52d6c98ff202f32d1cdf4802c2195a85fc1f1a0c1b0b4983a4d" },
-    { url = "https://download-r2.pytorch.org/whl/cu128/torchvision-0.26.0%2Bcu128-cp313-cp313t-win_amd64.whl", hash = "sha256:367d42ea703844ecdb516e9d5eb09929012a58705d2622cf4e9e3c37f278cb85" },
+    { url = "https://download-r2.pytorch.org/whl/cu128/torchvision-0.26.0%2Bcu128-cp313-cp313-win_amd64.whl", hash = "sha256:0232cb219927a52d6c98ff202f32d1cdf4802c2195a85fc1f1a0c1b0b4983a4d", upload-time = "2026-04-09T23:21:38Z" },
+    { url = "https://download-r2.pytorch.org/whl/cu128/torchvision-0.26.0%2Bcu128-cp313-cp313t-win_amd64.whl", hash = "sha256:367d42ea703844ecdb516e9d5eb09929012a58705d2622cf4e9e3c37f278cb85", upload-time = "2026-04-09T23:21:39Z" },
 ]
 
 [[package]]
@@ -2391,7 +2417,9 @@ dependencies = [
     { name = "pytest", marker = "sys_platform == 'win32'" },
     { name = "pytest-cov", marker = "sys_platform == 'win32'" },
     { name = "pytest-qt", marker = "sys_platform == 'win32'" },
+    { name = "python-barcode", marker = "sys_platform == 'win32'" },
     { name = "qasync", marker = "sys_platform == 'win32'" },
+    { name = "qrcode", extra = ["pil"], marker = "sys_platform == 'win32'" },
     { name = "ruff", marker = "sys_platform == 'win32'" },
     { name = "uv", marker = "sys_platform == 'win32'" },
 ]
@@ -2419,7 +2447,9 @@ requires-dist = [
     { name = "pytest", specifier = ">=9.0.3" },
     { name = "pytest-cov", specifier = ">=7.1.0" },
     { name = "pytest-qt", specifier = ">=4.5.0" },
+    { name = "python-barcode", specifier = ">=0.15.1" },
     { name = "qasync", specifier = ">=0.28.0" },
+    { name = "qrcode", extras = ["pil"], specifier = ">=8.0" },
     { name = "ruff", specifier = ">=0.15.11" },
     { name = "uv", specifier = ">=0.11.7" },
 ]
