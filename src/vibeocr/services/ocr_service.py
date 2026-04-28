@@ -130,9 +130,10 @@ class OCRService(metaclass=SingletonMeta):
     def _ensure_source_configured(cls) -> None:
         """确保模型下载源已配置（延迟调用）"""
         if not cls._source_configured:
-            from vibeocr.env_manager import setup_paddlex_model_source
+            from vibeocr.env_manager import get_project_root
+            from vibeocr.network_detector import NetworkDetector
 
-            setup_paddlex_model_source()
+            NetworkDetector(get_project_root()).paddlex_source_env
             cls._source_configured = True
 
     def __init__(self):
