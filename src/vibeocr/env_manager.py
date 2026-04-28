@@ -1,12 +1,9 @@
 """环境管理模块：负责自动部署嵌入式Python和管理项目依赖"""
 
 import os
-import ssl
 import subprocess
 import sys
 import tempfile
-import threading
-import time
 import zipfile
 from pathlib import Path
 from typing import Literal
@@ -122,149 +119,35 @@ def ping_url(url: str, timeout: int = 3) -> bool:
 
 
 def detect_paddlex_model_source(timeout: int = 3) -> tuple[str, str]:
-    """
-    检测并选择最快的 PaddleX 模型下载源
-
-    通过并发测试 baidu.com 和 google.com 的响应速度来判断网络环境，
-    然后选择对应的模型下载源：
-    - 国内网络环境（baidu 更快或 google 不可用）-> 使用 BOS
-    - 国际网络环境（google 更快且可用）-> 使用 HuggingFace
-
-    Args:
-        timeout: 每个源的超时时间（秒），默认3秒
-
-    Returns:
-        (环境变量值, 源名称)
-        - ("BOS", "bos"): 使用百度对象存储
-        - ("HuggingFace", "huggingface"): 使用 HuggingFace
-    """
-    print("[模型源检测] 正在检测网络环境...")
-
-    results = {}
-    results_lock = threading.Lock()
-
-    # 网络环境测试 URL
-    network_test_urls = {
-        "domestic": "https://www.baidu.com",  # 国内网络
-        "international": "https://www.google.com",  # 国际网络
-    }
-
-    def test_network(env_type: str, test_url: str):
-        """测试网络环境"""
-        try:
-            start_time = time.time()
-            ssl_context = ssl.create_default_context()
-            ssl_context.check_hostname = False
-            ssl_context.verify_mode = ssl.CERT_NONE
-
-            req = Request(
-                test_url, method="HEAD", headers={"User-Agent": "Mozilla/5.0"}
-            )
-            with urlopen(req, timeout=timeout, context=ssl_context) as response:
-                if response.status == 200:
-                    elapsed = time.time() - start_time
-                    with results_lock:
-                        results[env_type] = elapsed
-                    print(f"[模型源检测] {env_type} ({test_url}): {elapsed:.2f}秒 [OK]")
-                    return
-        except Exception:
-            pass
-        with results_lock:
-            results[env_type] = float("inf")
-        print(f"[模型源检测] {env_type} ({test_url}): 不可访问 [FAIL]")
-
-    # 并发测试网络环境
-    threads = []
-    for env_type, test_url in network_test_urls.items():
-        t = threading.Thread(target=test_network, args=(env_type, test_url))
-        t.start()
-        threads.append(t)
-
-    # 等待所有线程完成
-    for t in threads:
-        t.join(timeout=timeout + 1)
-
-    # 根据网络环境选择模型源
-    domestic_time = results.get("domestic", float("inf"))
-    international_time = results.get("international", float("inf"))
-
-    # 如果国际网络更快且可用，使用 HuggingFace
-    if international_time < domestic_time and international_time < float("inf"):
-        print("[模型源检测] 检测到国际网络环境，使用 HuggingFace")
-        return "HuggingFace", "huggingface"
-    # 国内网络或两者都不可用时，使用 BOS
-    if domestic_time < float("inf"):
-        print("[模型源检测] 检测到国内网络环境，使用 BOS")
-    else:
-        print("[模型源检测] 无法确定网络环境，使用默认 BOS")
-    return "BOS", "bos"
+    """[Deprecated] 请使用 NetworkDetector。"""
+    from vibeocr.network_detector import NetworkDetector as _ND
+    detector = _ND(get_project_root())
+    env_value = detector.paddlex_source_env
+    source_name = detector.paddlex_source
+    return env_value, source_name
 
 
 def setup_paddlex_model_source(timeout: int = 5) -> str:
-    """
-    设置 PaddleX 模型下载源环境变量
-
-    自动检测最快的源并设置 PADDLE_PDX_MODEL_SOURCE 环境变量。
-    应在导入 paddlex 之前调用。
-
-    Args:
-        timeout: 每个源的超时时间（秒）
-
-    Returns:
-        选择的源名称（"bos" 或 "huggingface"）
-    """
-    # 如果已经设置过，直接返回
-    current_source = os.environ.get("PADDLE_PDX_MODEL_SOURCE")
-    if current_source:
-        print(f"[模型源] 已设置模型源: {current_source}")
-        return current_source.lower()
-
-    env_value, source_name = detect_paddlex_model_source(timeout)
-    os.environ["PADDLE_PDX_MODEL_SOURCE"] = env_value
-    print(f"[模型源] 已设置环境变量 PADDLE_PDX_MODEL_SOURCE={env_value}")
-
-    return source_name
+    """[Deprecated] 请使用 NetworkDetector。"""
+    from vibeocr.network_detector import NetworkDetector as _ND
+    detector = _ND(get_project_root())
+    return detector.paddlex_source
 
 
 def detect_network_source() -> Literal["domestic", "international"]:
-    """检测网络环境，选择合适的下载源"""
-    print("[环境检测] 正在检测网络环境...")
-
-    # 先测试国内网站
-    if ping_url(TEST_URLS["baidu"], timeout=2):
-        print("[环境检测] 国内网络可访问")
-        # 如果能访问Google，说明是国际网络
-        if ping_url(TEST_URLS["google"], timeout=3):
-            print("[环境检测] 国际网络也可访问，使用官方源")
-            return "international"
-        print("[环境检测] 使用国内镜像源")
-        return "domestic"
-
-    # 如果国内网站都访问不了，尝试国际网站
-    if ping_url(TEST_URLS["github"], timeout=5):
-        print("[环境检测] 国际网络可访问，使用官方源")
-        return "international"
-
-    print("[环境检测] 网络环境未知，默认使用国内镜像源")
-    return "domestic"
+    """[Deprecated] 请使用 NetworkDetector。"""
+    from vibeocr.network_detector import NetworkDetector as _ND
+    detector = _ND(get_project_root())
+    return detector.network_type
 
 
 def get_pip_source(
     network_type: Literal["domestic", "international"] = "domestic",
 ) -> str:
-    """根据网络类型获取pip下载源"""
-    if network_type == "domestic":
-        # 按优先级返回国内源
-        for source_name, source_url in MIRROR_SOURCES.items():
-            if source_name != "official":
-                if ping_url(source_url.replace("/simple", ""), timeout=3):
-                    print(f"[环境检测] 选择镜像源: {source_name}")
-                    return source_url
-        # 如果都测试失败，默认使用清华源
-        print("[环境检测] 使用默认清华镜像源")
-        return MIRROR_SOURCES["tsinghua"]
-    print("[环境检测] 使用官方PyPI源")
-    return MIRROR_SOURCES["official"]
+    """[Deprecated] 请使用 NetworkDetector。"""
+    from vibeocr.network_detector import NetworkDetector as _ND
+    detector = _ND(get_project_root())
+    return detector.pip_mirror_url
 
 
 def get_environment_mode(project_root: Path) -> Literal["venv", "portable", "none"]:
