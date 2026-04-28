@@ -173,3 +173,18 @@ class TestTextLabelAndInvert:
         img = service.apply_text_label(img, "Inverted QR", position="bottom", font_size=12)
         img = service.invert_colors(img)
         assert isinstance(img, Image.Image)
+
+
+class TestSvgExport:
+    def test_generate_svg_returns_string(self, service):
+        options = service.default_options()
+        options["format"] = "qr"
+        svg = service.generate_svg("Hello", options)
+        assert isinstance(svg, str)
+        assert "<svg" in svg
+
+    def test_generate_svg_contains_content(self, service):
+        options = service.default_options()
+        options["format"] = "qr"
+        svg = service.generate_svg("Test SVG", options)
+        assert len(svg) > 100

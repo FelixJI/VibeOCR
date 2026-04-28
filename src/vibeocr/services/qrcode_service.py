@@ -146,4 +146,29 @@ class QrcodeService:
         return ImageOps.invert(image)
 
     def generate_svg(self, text: str, options: dict) -> str:
-        raise NotImplementedError("generate_svg in Task 6")
+        import qrcode
+        from qrcode.image.svg import SvgImage
+
+        ec_level = QR_ERROR_CORRECTION_MAP.get(
+            options.get("error_correction", "M"), 0
+        )
+        qr = qrcode.QRCode(
+            version=None,
+            error_correction=ec_level,
+            box_size=10,
+            border=4,
+        )
+        qr.add_data(text)
+        qr.make(fit=True)
+
+        fg_color = options.get("fg_color", "#000000")
+        bg_color = options.get("bg_color", "#FFFFFF")
+
+        img = qr.make_image(
+            image_factory=SvgImage,
+            fill_color=fg_color,
+            back_color=bg_color,
+        )
+        buffer = io.BytesIO()
+        img.save(buffer)
+        return buffer.getvalue().decode("utf-8")
