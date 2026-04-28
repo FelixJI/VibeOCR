@@ -110,3 +110,24 @@ class TestMainWindow:
     def test_screenshot_widget_exists(self, main_window):
         """截图组件已创建。"""
         assert main_window._screenshot_widget is not None
+
+
+class TestQrcodeTabIntegration:
+    def test_main_window_has_qrcode_tab(self, main_window):
+        tab_widget = main_window._ui.tabWidget
+        tab_names = [tab_widget.tabText(i) for i in range(tab_widget.count())]
+        assert "二维码生成" in tab_names
+
+    def test_qrcode_tab_position_before_settings(self, main_window):
+        tab_widget = main_window._ui.tabWidget
+        qrcode_idx = None
+        settings_idx = None
+        for i in range(tab_widget.count()):
+            text = tab_widget.tabText(i)
+            if text == "二维码生成":
+                qrcode_idx = i
+            elif "设置" in text:
+                settings_idx = i
+        assert qrcode_idx is not None
+        assert settings_idx is not None
+        assert qrcode_idx < settings_idx

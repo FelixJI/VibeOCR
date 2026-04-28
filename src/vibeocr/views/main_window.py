@@ -167,6 +167,9 @@ class MainWindow(QMainWindow):
         # 添加批量识别标签页
         self._init_batch_tab()
 
+        # 添加二维码生成标签页
+        self._init_qrcode_tab()
+
         # 将设置标签页移到最后
         self._move_settings_tab_to_end()
 
@@ -212,6 +215,13 @@ class MainWindow(QMainWindow):
                 else:
                     self._single_tab._splitter.setSizes([400, 500])
 
+        # 恢复二维码生成标签页分割器状态
+        if hasattr(self, "_qrcode_tab") and self._qrcode_tab:
+            state = self._layout_manager.get_splitter_state("qrcode_tab")
+            if state:
+                self._qrcode_tab._splitter.restoreState(state)
+                logging.info("已恢复二维码分割器状态")
+
     def _save_layout(self) -> None:
         """保存窗口和分割器布局"""
         # 保存主窗口几何信息
@@ -226,6 +236,12 @@ class MainWindow(QMainWindow):
         # 保存批量识别标签页分割器状态
         if hasattr(self, "_batch_tab") and self._batch_tab:
             self._batch_tab.save_layout()
+
+        # 保存二维码生成标签页分割器状态
+        if hasattr(self, "_qrcode_tab") and self._qrcode_tab:
+            self._layout_manager.set_splitter_state(
+                "qrcode_tab", self._qrcode_tab._splitter.saveState()
+            )
 
         # 保存当前标签页索引
         self._layout_manager.set_tab_index(self._ui.tabWidget.currentIndex())
@@ -249,6 +265,18 @@ class MainWindow(QMainWindow):
         # 添加到标签页控件
         self._ui.tabWidget.addTab(self._batch_tab, "批量识别")
         logging.debug("批量识别标签页已添加")
+
+    def _init_qrcode_tab(self) -> None:
+        """初始化二维码生成标签页"""
+        from vibeocr.views.tabs.qrcode_tab import QrcodeTab
+
+        self._qrcode_tab = QrcodeTab()
+        self._ui.tabWidget.insertTab(
+            self._ui.tabWidget.indexOf(self._ui.tabSettings),
+            self._qrcode_tab,
+            "二维码生成",
+        )
+        logging.debug("二维码生成标签页已添加")
 
     def _init_about_tab(self) -> None:
         """初始化关于标签页"""
