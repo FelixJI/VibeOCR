@@ -58,3 +58,40 @@ class TestQrCodeGeneration:
         assert opts["fg_color"] == "#000000"
         assert opts["bg_color"] == "#FFFFFF"
         assert opts["invert"] is False
+
+
+class TestBarcodeGeneration:
+    def test_generate_code128_returns_pil_image(self, service):
+        options = service.default_options()
+        options["format"] = "code128"
+        img = service.generate("Hello123", options)
+        assert isinstance(img, Image.Image)
+        assert img.width > 0
+        assert img.height > 0
+
+    def test_generate_code39_returns_pil_image(self, service):
+        options = service.default_options()
+        options["format"] = "code39"
+        img = service.generate("HELLO123", options)
+        assert isinstance(img, Image.Image)
+
+    def test_generate_ean13_returns_pil_image(self, service):
+        options = service.default_options()
+        options["format"] = "ean13"
+        img = service.generate("5901234123457", options)
+        assert isinstance(img, Image.Image)
+
+    def test_generate_barcode_respects_size(self, service):
+        options = service.default_options()
+        options["format"] = "code128"
+        options["size"] = 400
+        img = service.generate("Hello123", options)
+        assert img.height == 400
+
+    def test_unsupported_barcode_raises(self, service):
+        import barcode.errors
+
+        options = service.default_options()
+        options["format"] = "nonexistent_format"
+        with pytest.raises(barcode.errors.BarcodeNotFoundError):
+            service.generate("Hello", options)

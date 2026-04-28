@@ -1,5 +1,6 @@
 """二维码/条形码生成服务"""
 
+import io
 import logging
 
 from PIL import Image
@@ -64,7 +65,34 @@ class QrcodeService:
         return img.convert("RGB")
 
     def _generate_barcode(self, text: str, options: dict) -> Image.Image:
-        raise NotImplementedError("barcode generation in Task 3")
+        import barcode
+        from barcode.writer import ImageWriter
+
+        fmt = options.get("format", "code128").upper()
+        fg_color = options.get("fg_color", "#000000")
+        bg_color = options.get("bg_color", "#FFFFFF")
+
+        writer = ImageWriter()
+        writer.set_options({
+            "foreground": fg_color,
+            "background": bg_color,
+        })
+
+        barcode_class = barcode.get_barcode_class(fmt)
+        bc = barcode_class(text, writer=writer)
+
+        buffer = io.BytesIO()
+        bc.write(buffer)
+        buffer.seek(0)
+        img = Image.open(buffer)
+        img = img.convert("RGB")
+
+        target_size = options.get("size", 300)
+        w, h = img.size
+        new_h = target_size
+        new_w = int(w * new_h / h) if h > 0 else target_size
+        img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+        return img
 
     def apply_logo(self, image: Image.Image, logo_path: str, ratio: float = 0.2) -> Image.Image:
         raise NotImplementedError("apply_logo in Task 4")
