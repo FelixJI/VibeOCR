@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
 )
 
 from vibeocr import env_manager
+from vibeocr.network_detector import NetworkDetector
 
 
 class InstallWorker(QThread):
@@ -30,7 +31,8 @@ class InstallWorker(QThread):
         try:
             # 1. 检测网络环境
             self.progress.emit("网络检测", "正在检测网络环境...")
-            network_type = env_manager.detect_network_source()
+            detector = NetworkDetector(self._project_root)
+            network_type = detector.network_type
 
             # 2. 检测GPU
             self.progress.emit("硬件检测", "正在检测GPU...")
