@@ -124,9 +124,10 @@ class MinerUService(metaclass=SingletonMeta):
         log_file = Path(__file__).resolve().parent.parent.parent / "mineru_api.log"
 
         env = os.environ.copy()
-        from vibeocr.env_manager import detect_network_source
-        network = detect_network_source()
-        if network == "domestic" and not env.get("MINERU_MODEL_SOURCE"):
+        from vibeocr.env_manager import get_project_root
+        from vibeocr.network_detector import NetworkDetector
+        detector = NetworkDetector(get_project_root())
+        if detector.mineru_source == "modelscope" and not env.get("MINERU_MODEL_SOURCE"):
             env["MINERU_MODEL_SOURCE"] = "modelscope"
 
         self.__class__._api_process = subprocess.Popen(
