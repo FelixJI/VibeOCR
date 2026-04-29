@@ -21,6 +21,7 @@ from PySide6.QtCore import (
 from PySide6.QtGui import QCursor, QMouseEvent
 from PySide6.QtWidgets import (
     QApplication,
+    QFrame,
     QHBoxLayout,
     QPushButton,
     QWidget,
@@ -152,37 +153,56 @@ class EdgeToolbar(QWidget):
                 color: #ddd;
                 background-color: transparent;
                 border: none;
-                padding: 6px 10px;
-                font-size: 13px;
+                padding: 6px 8px;
+                font-size: 15px;
             }
             QPushButton:hover {
                 background-color: #444;
                 border-radius: 4px;
             }
+            QPushButton#gripBtn {
+                color: #888;
+                font-size: 13px;
+                padding: 6px 4px;
+            }
+            QPushButton#gripBtn:hover {
+                color: #bbb;
+                background-color: transparent;
+            }
         """)
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(4, 2, 4, 2)
-        layout.setSpacing(2)
+        layout.setContentsMargins(2, 2, 4, 2)
+        layout.setSpacing(0)
+
+        # 拖拽把手
+        btn_grip = QPushButton("⠿")
+        btn_grip.setObjectName("gripBtn")
+        btn_grip.setToolTip("拖拽移动")
+        btn_grip.setCursor(Qt.CursorShape.OpenHandCursor)
+        layout.addWidget(btn_grip)
+
+        # 分隔线
+        sep = QFrame(self)
+        sep.setFrameShape(QFrame.Shape.VLine)
+        sep.setStyleSheet("color: #555; max-width: 1px; margin: 4px 4px;")
+        layout.addWidget(sep)
 
         # 截图按钮
-        btn_screenshot = QPushButton("截图")
+        btn_screenshot = QPushButton("✂")
         btn_screenshot.setToolTip("截图识别 (Ctrl+S)")
         btn_screenshot.clicked.connect(self.screenshot_requested.emit)
         layout.addWidget(btn_screenshot)
 
         # 显示主窗口按钮
-        btn_main = QPushButton("主窗口")
+        btn_main = QPushButton("⌂")
         btn_main.setToolTip("显示主窗口")
         btn_main.clicked.connect(self.show_main_requested.emit)
         layout.addWidget(btn_main)
 
-        # 安装拖拽过滤器：按钮上也可拖拽工具栏
+        # 仅在把手按钮上安装拖拽过滤器
         self._btn_drag_filter = _ButtonDragFilter(self)
-        btn_screenshot.installEventFilter(self._btn_drag_filter)
-        btn_main.installEventFilter(self._btn_drag_filter)
-
-        self.setCursor(Qt.CursorShape.OpenHandCursor)
+        btn_grip.installEventFilter(self._btn_drag_filter)
 
         self.setFixedHeight(36)
         self.setMinimumWidth(120)
