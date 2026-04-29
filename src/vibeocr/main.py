@@ -173,8 +173,8 @@ def launch_application() -> int:
     tray = _create_tray_icon(app, window, app_settings)
     if tray:
         window.set_tray_icon(tray)
-        # 托盘模式下关闭窗口不退出程序
-        app.setQuitOnLastWindowClosed(False)
+        # 仅在启用最小化到托盘时阻止关闭窗口退出程序
+        app.setQuitOnLastWindowClosed(not app_settings.minimize_to_tray)
 
     # 使用 qasync 事件循环运行应用
     try:
