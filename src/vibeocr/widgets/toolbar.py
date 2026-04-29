@@ -191,18 +191,23 @@ class EdgeToolbar(QWidget):
         # 截图按钮
         btn_screenshot = QPushButton("✂")
         btn_screenshot.setToolTip("截图识别 (Ctrl+S)")
+        btn_screenshot.setCursor(Qt.CursorShape.PointingHandCursor)
         btn_screenshot.clicked.connect(self.screenshot_requested.emit)
         layout.addWidget(btn_screenshot)
 
         # 显示主窗口按钮
         btn_main = QPushButton("⌂")
         btn_main.setToolTip("显示主窗口")
+        btn_main.setCursor(Qt.CursorShape.PointingHandCursor)
         btn_main.clicked.connect(self.show_main_requested.emit)
         layout.addWidget(btn_main)
 
         # 仅在把手按钮上安装拖拽过滤器
         self._btn_drag_filter = _ButtonDragFilter(self)
         btn_grip.installEventFilter(self._btn_drag_filter)
+
+        # 工具栏背景可拖拽（OpenHand），按钮已单独设置 PointingHand
+        self.setCursor(Qt.CursorShape.OpenHandCursor)
 
         self.setFixedHeight(36)
         self.setMinimumWidth(120)
