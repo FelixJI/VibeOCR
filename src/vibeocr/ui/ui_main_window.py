@@ -245,21 +245,31 @@ class Ui_MainWindowWidget(object):
         self.appSettingsLayout = QVBoxLayout(self.groupAppSettings)
         self.appSettingsLayout.setSpacing(8)
         self.appSettingsLayout.setObjectName(u"appSettingsLayout")
-        self.chkAutoHideToolbar = QCheckBox(self.groupAppSettings)
+        self.chkShowToolbar = QCheckBox(self.groupAppSettings)
+        self.chkShowToolbar.setObjectName(u"chkShowToolbar")
+
+        self.appSettingsLayout.addWidget(self.chkShowToolbar)
+
+        self.toolbarSubOptions = QWidget(self.groupAppSettings)
+        self.toolbarSubOptions.setObjectName(u"toolbarSubOptions")
+        self.toolbarSubLayout = QVBoxLayout(self.toolbarSubOptions)
+        self.toolbarSubLayout.setSpacing(8)
+        self.toolbarSubLayout.setObjectName(u"toolbarSubLayout")
+        self.toolbarSubLayout.setContentsMargins(20, 0, 0, 0)
+        self.chkAutoHideToolbar = QCheckBox(self.toolbarSubOptions)
         self.chkAutoHideToolbar.setObjectName(u"chkAutoHideToolbar")
 
-        self.appSettingsLayout.addWidget(self.chkAutoHideToolbar)
+        self.toolbarSubLayout.addWidget(self.chkAutoHideToolbar)
 
         self.hideDelayLayout = QHBoxLayout()
         self.hideDelayLayout.setSpacing(8)
         self.hideDelayLayout.setObjectName(u"hideDelayLayout")
-        self.hideDelayLayout.setContentsMargins(20, -1, -1, -1)
-        self.labelHideDelay = QLabel(self.groupAppSettings)
+        self.labelHideDelay = QLabel(self.toolbarSubOptions)
         self.labelHideDelay.setObjectName(u"labelHideDelay")
 
         self.hideDelayLayout.addWidget(self.labelHideDelay)
 
-        self.spinHideDelay = QSpinBox(self.groupAppSettings)
+        self.spinHideDelay = QSpinBox(self.toolbarSubOptions)
         self.spinHideDelay.setObjectName(u"spinHideDelay")
         self.spinHideDelay.setMinimum(100)
         self.spinHideDelay.setMaximum(5000)
@@ -273,7 +283,10 @@ class Ui_MainWindowWidget(object):
         self.hideDelayLayout.addItem(self.hideDelaySpacer)
 
 
-        self.appSettingsLayout.addLayout(self.hideDelayLayout)
+        self.toolbarSubLayout.addLayout(self.hideDelayLayout)
+
+
+        self.appSettingsLayout.addWidget(self.toolbarSubOptions)
 
         self.chkMinimizeToTray = QCheckBox(self.groupAppSettings)
         self.chkMinimizeToTray.setObjectName(u"chkMinimizeToTray")
@@ -403,9 +416,13 @@ class Ui_MainWindowWidget(object):
         self.labelCacheStatus.setText(QCoreApplication.translate("MainWindowWidget", u"\u7f13\u5b58\u72b6\u6001: \u672a\u77e5", None))
         self.groupAppSettings.setTitle(QCoreApplication.translate("MainWindowWidget", u"\u5e94\u7528\u8bbe\u7f6e", None))
 #if QT_CONFIG(tooltip)
+        self.chkShowToolbar.setToolTip(QCoreApplication.translate("MainWindowWidget", u"\u663e\u793a\u684c\u9762\u8fb9\u7f18\u6d6e\u52a8\u5de5\u5177\u680f\uff0c\u63d0\u4f9b\u5feb\u901f\u622a\u56fe\u548c\u4e3b\u7a97\u53e3\u5165\u53e3", None))
+#endif // QT_CONFIG(tooltip)
+        self.chkShowToolbar.setText(QCoreApplication.translate("MainWindowWidget", u"\u663e\u793a\u8fb9\u7f18\u5de5\u5177\u680f", None))
+#if QT_CONFIG(tooltip)
         self.chkAutoHideToolbar.setToolTip(QCoreApplication.translate("MainWindowWidget", u"\u5de5\u5177\u680f\u505c\u9760\u5728\u5c4f\u5e55\u8fb9\u7f18\u65f6\u81ea\u52a8\u9690\u85cf\uff0c\u9f20\u6807\u9760\u8fd1\u8fb9\u7f18\u65f6\u81ea\u52a8\u5f39\u51fa", None))
 #endif // QT_CONFIG(tooltip)
-        self.chkAutoHideToolbar.setText(QCoreApplication.translate("MainWindowWidget", u"\u81ea\u52a8\u9690\u85cf\u8fb9\u7f18\u5de5\u5177\u680f", None))
+        self.chkAutoHideToolbar.setText(QCoreApplication.translate("MainWindowWidget", u"\u81ea\u52a8\u9690\u85cf", None))
         self.labelHideDelay.setText(QCoreApplication.translate("MainWindowWidget", u"\u9690\u85cf\u5ef6\u8fdf:", None))
         self.spinHideDelay.setSuffix(QCoreApplication.translate("MainWindowWidget", u" \u6beb\u79d2", None))
 #if QT_CONFIG(tooltip)
