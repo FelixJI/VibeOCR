@@ -59,10 +59,12 @@ class EdgeToolbar(QWidget):
 
     screenshot_requested = Signal()
     show_main_requested = Signal()
+    position_changed = Signal(QPoint)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._drag_pos: QPoint | None = None
+        self._dragging = False
         self._docked_side: EdgeSide = EdgeSide.NONE
         self._is_hidden = False
         self._auto_hide_enabled = False
@@ -153,6 +155,15 @@ class EdgeToolbar(QWidget):
         """设置隐藏延迟（毫秒）"""
         self._hide_delay_ms = max(100, min(5000, delay_ms))
 
+    def set_initial_position(self) -> None:
+        """将工具栏定位到主屏幕顶部居中"""
+        screen = QApplication.primaryScreen()
+        if not screen:
+            return
+        screen_geo = screen.availableGeometry()
+        x = screen_geo.center().x() - self.width() // 2
+        self.move(x, screen_geo.top())
+
     # ============================================================
     # 拖拽逻辑
     # ============================================================
@@ -160,7 +171,7 @@ class EdgeToolbar(QWidget):
     def mousePressEvent(self, event: QMouseEvent) -> None:
         if event.button() == Qt.MouseButton.LeftButton:
             self._drag_pos = event.globalPosition().toPoint() - self.pos()
-            # 拖拽开始：如果正隐藏中就先显示出来
+            self._dragging = True
             if self._is_hidden:
                 self._slide_show()
         super().mousePressEvent(event)
@@ -172,8 +183,10 @@ class EdgeToolbar(QWidget):
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
         if event.button() == Qt.MouseButton.LeftButton:
-            self._drag_pos = None
-            self._detect_edge()
+            if self._dragging:
+                self._dragging = False
+                self._detect_edge()
+                self.position_changed.emit(self.pos())
         super().mouseReleaseEvent(event)
 
     # ============================================================
