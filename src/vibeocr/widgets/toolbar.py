@@ -9,6 +9,8 @@ import logging
 from enum import Enum, auto
 
 from PySide6.QtCore import (
+    QEvent,
+    QObject,
     QPoint,
     QPropertyAnimation,
     QRect,
@@ -41,6 +43,51 @@ class EdgeSide(Enum):
     TOP = auto()
     LEFT = auto()
     RIGHT = auto()
+
+
+# 拖拽阈值（像素），超过此距离视为拖拽而非点击
+_DRAG_THRESHOLD = 5
+
+
+class _ButtonDragFilter(QObject):
+    """事件过滤器：在按钮上按下并拖拽时移动工具栏，短按仍触发按钮点击"""
+
+    def __init__(self, toolbar: EdgeToolbar) -> None:
+        super().__init__(toolbar)
+        self._toolbar = toolbar
+        self._press_pos: QPoint | None = None
+        self._is_dragging = False
+
+    def eventFilter(self, obj: QObject, event: QEvent) -> bool:
+        if event.type() == QEvent.Type.MouseButtonPress:
+            if event.button() == Qt.MouseButton.LeftButton:
+                self._press_pos = event.globalPosition().toPoint()
+                self._is_dragging = False
+        elif event.type() == QEvent.Type.MouseMove:
+            if self._press_pos is not None and event.buttons() & Qt.MouseButton.LeftButton:
+                if not self._is_dragging:
+                    delta = event.globalPosition().toPoint() - self._press_pos
+                    if delta.manhattanLength() > _DRAG_THRESHOLD:
+                        self._is_dragging = True
+                        self._toolbar._drag_pos = self._press_pos - self._toolbar.pos()
+                        self._toolbar._dragging = True
+                        self._toolbar.setCursor(Qt.CursorShape.ClosedHandCursor)
+                if self._is_dragging:
+                    self._toolbar.move(
+                        event.globalPosition().toPoint() - self._toolbar._drag_pos
+                    )
+                    return True
+        elif event.type() == QEvent.Type.MouseButtonRelease:
+            if self._is_dragging:
+                self._is_dragging = False
+                self._press_pos = None
+                self._toolbar._dragging = False
+                self._toolbar.setCursor(Qt.CursorShape.OpenHandCursor)
+                self._toolbar._detect_edge()
+                self._toolbar.position_changed.emit(self._toolbar.pos())
+                return True
+            self._press_pos = None
+        return False
 
 
 class EdgeToolbar(QWidget):
@@ -130,6 +177,13 @@ class EdgeToolbar(QWidget):
         btn_main.clicked.connect(self.show_main_requested.emit)
         layout.addWidget(btn_main)
 
+        # 安装拖拽过滤器：按钮上也可拖拽工具栏
+        self._btn_drag_filter = _ButtonDragFilter(self)
+        btn_screenshot.installEventFilter(self._btn_drag_filter)
+        btn_main.installEventFilter(self._btn_drag_filter)
+
+        self.setCursor(Qt.CursorShape.OpenHandCursor)
+
         self.setFixedHeight(36)
         self.setMinimumWidth(120)
         self.adjustSize()
@@ -172,6 +226,7 @@ class EdgeToolbar(QWidget):
         if event.button() == Qt.MouseButton.LeftButton:
             self._drag_pos = event.globalPosition().toPoint() - self.pos()
             self._dragging = True
+            self.setCursor(Qt.CursorShape.ClosedHandCursor)
             if self._is_hidden:
                 self._slide_show()
         super().mousePressEvent(event)
@@ -185,6 +240,7 @@ class EdgeToolbar(QWidget):
         if event.button() == Qt.MouseButton.LeftButton:
             if self._dragging:
                 self._dragging = False
+                self.setCursor(Qt.CursorShape.OpenHandCursor)
                 self._detect_edge()
                 self.position_changed.emit(self.pos())
         super().mouseReleaseEvent(event)
