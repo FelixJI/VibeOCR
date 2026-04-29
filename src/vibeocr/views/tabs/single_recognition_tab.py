@@ -32,6 +32,8 @@ class SingleRecognitionTab(BaseOcrTab):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._closing = False
+        self._pending_pixmap: QPixmap | None = None
+        self._pending_file_path: str | None = None
         self._setup_ui()
         self._connect_signals()
         self._init_options_from_preferences(batch=False)
@@ -61,11 +63,15 @@ class SingleRecognitionTab(BaseOcrTab):
         self._file_btn.setFixedHeight(28)
         self._paste_btn = QPushButton("粘贴")
         self._paste_btn.setFixedHeight(28)
+        self._start_btn = QPushButton("开始识别")
+        self._start_btn.setFixedHeight(28)
+        self._start_btn.setEnabled(False)
 
         action_layout.addWidget(self._screenshot_btn)
         action_layout.addWidget(self._file_btn)
         action_layout.addWidget(self._paste_btn)
         action_layout.addStretch()
+        action_layout.addWidget(self._start_btn)
 
         left_layout.addWidget(action_bar)
 
@@ -108,6 +114,7 @@ class SingleRecognitionTab(BaseOcrTab):
         self._screenshot_btn.clicked.connect(self.screenshot_requested.emit)
         self._file_btn.clicked.connect(self._on_file_btn_clicked)
         self._paste_btn.clicked.connect(self._on_paste)
+        self._start_btn.clicked.connect(self._start_recognition)
 
     def _on_file_btn_clicked(self) -> None:
         from PySide6.QtWidgets import QFileDialog
@@ -118,8 +125,24 @@ class SingleRecognitionTab(BaseOcrTab):
             self, "选择文件", "",
             f"{FILE_FILTER_ALL};;所有文件 (*)",
         )
-        if file_path:
-            self.process_file(file_path)
+        if not file_path:
+            return
+
+        path = Path(file_path)
+        is_image = path.suffix.lower() not in {".pdf"}
+
+        self._pending_file_path = file_path
+        self._pending_pixmap = None
+
+        if is_image:
+            pixmap = QPixmap(file_path)
+            if not pixmap.isNull():
+                self._preview_widget.set_pixmap(pixmap)
+                self._pending_pixmap = pixmap
+        else:
+            self._preview_widget.load_file(file_path)
+
+        self._start_btn.setEnabled(True)
 
     def _on_paste(self) -> None:
         from PySide6.QtGui import QGuiApplication
@@ -128,11 +151,25 @@ class SingleRecognitionTab(BaseOcrTab):
         pixmap = clipboard.pixmap()
         if pixmap.isNull():
             return
+
+        if pixmap.devicePixelRatio() != 1.0:
+            pixmap = QPixmap(pixmap)
+            pixmap.setDevicePixelRatio(1.0)
+
         self._preview_widget.set_pixmap(pixmap)
-        self.run_ocr(pixmap)
+        self._pending_pixmap = pixmap
+        self._pending_file_path = None
+        self._start_btn.setEnabled(True)
 
     def _on_start(self):
-        pass
+        self._start_recognition()
+
+    def _start_recognition(self) -> None:
+        """开始识别：根据待处理的来源执行 OCR"""
+        if self._pending_pixmap:
+            self.run_ocr(self._pending_pixmap)
+        elif self._pending_file_path:
+            self.process_file(self._pending_file_path)
 
     def set_closing(self, closing: bool) -> None:
         self._closing = closing
@@ -159,6 +196,10 @@ class SingleRecognitionTab(BaseOcrTab):
     def run_ocr(self, pixmap: QPixmap, options=None) -> None:
         """执行 OCR 识别（入口方法，由 MainWindow 调用）"""
         from vibeocr.services import USE_SUBPROCESS
+
+        if pixmap.devicePixelRatio() != 1.0:
+            pixmap = QPixmap(pixmap)
+            pixmap.setDevicePixelRatio(1.0)
 
         self._result_widget.clear()
         QApplication.processEvents()

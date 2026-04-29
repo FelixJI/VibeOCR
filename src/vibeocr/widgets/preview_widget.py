@@ -420,6 +420,9 @@ class PreviewWidget(QWidget):
 
     def set_pixmap(self, pixmap: QPixmap) -> None:
         """设置预览图片（截图或打开图片）"""
+        if pixmap.devicePixelRatio() != 1.0:
+            pixmap = QPixmap(pixmap)
+            pixmap.setDevicePixelRatio(1.0)
         self._pixmap = pixmap
         self._original_pixmap = pixmap
         self._total_pages = 1
@@ -706,7 +709,7 @@ class PreviewWidget(QWidget):
             overlay_rects.append((sx, sy, sw, sh, block.score, block.text, block.is_manually_edited))
 
         self._overlay.set_confidence_blocks(overlay_rects)
-        self._overlay.setGeometry(self._image_label.rect())
+        self._overlay.setGeometry(self._scroll_area.viewport().rect())
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
