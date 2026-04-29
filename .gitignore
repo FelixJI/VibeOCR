@@ -213,3 +213,4 @@ config/app_settings.json
 # UI 文件需要保留，但忽略编译后的 user 文件
 !src/vibeocr/ui/*.ui
 
+.superpowers/
