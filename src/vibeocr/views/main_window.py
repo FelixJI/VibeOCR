@@ -6,6 +6,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import (
+    QPoint,
     QRect,
     QTimer,
     Signal,
@@ -95,6 +96,7 @@ class MainWindow(QMainWindow):
         self._edge_toolbar = EdgeToolbar()
         self._edge_toolbar.screenshot_requested.connect(self._on_screenshot)
         self._edge_toolbar.show_main_requested.connect(self._show_main_window)
+        self._edge_toolbar.position_changed.connect(self._on_toolbar_position_changed)
 
         # 设置 OCRService 状态回调（用于显示模型下载进度）
         self._setup_ocr_status_callback()
@@ -767,21 +769,32 @@ class MainWindow(QMainWindow):
         """应用当前设置到工具栏等组件"""
         if not self._app_settings:
             return
-        # 边缘工具栏
+        # 工具栏显示/隐藏
+        if self._app_settings.show_toolbar:
+            pos = self._app_settings.toolbar_pos
+            if pos and "x" in pos and "y" in pos:
+                self._edge_toolbar.move(pos["x"], pos["y"])
+            else:
+                self._edge_toolbar.set_initial_position()
+            self._edge_toolbar.show()
+        else:
+            self._edge_toolbar.hide()
+        # 自动隐藏和延迟
         self._edge_toolbar.set_auto_hide(self._app_settings.auto_hide_toolbar)
         self._edge_toolbar.set_hide_delay(self._app_settings.hide_delay_ms)
-        if self._app_settings.auto_hide_toolbar:
-            self._edge_toolbar.show()
         # 更新设置页面复选框
         self._sync_app_settings_ui()
 
     def _init_app_settings_ui(self) -> None:
         """初始化设置页面中的应用设置复选框"""
+        self._chk_show_toolbar = self.findChild(QCheckBox, "chkShowToolbar")
         self._chk_auto_hide = self.findChild(QCheckBox, "chkAutoHideToolbar")
         self._chk_tray = self.findChild(QCheckBox, "chkMinimizeToTray")
         self._chk_autostart = self.findChild(QCheckBox, "chkAutoStart")
         self._spin_hide_delay = self.findChild(QSpinBox, "spinHideDelay")
 
+        if self._chk_show_toolbar:
+            self._chk_show_toolbar.toggled.connect(self._on_show_toolbar_toggled)
         if self._chk_auto_hide:
             self._chk_auto_hide.toggled.connect(self._on_auto_hide_toggled)
         if self._chk_tray:
@@ -795,6 +808,10 @@ class MainWindow(QMainWindow):
         self._save_delay_timer.setSingleShot(True)
         self._save_delay_timer.timeout.connect(self._do_save_hide_delay)
 
+        self._save_pos_timer = QTimer(self)
+        self._save_pos_timer.setSingleShot(True)
+        self._save_pos_timer.timeout.connect(self._do_save_toolbar_pos)
+
         self._sync_app_settings_ui()
 
     def _sync_app_settings_ui(self) -> None:
@@ -802,10 +819,23 @@ class MainWindow(QMainWindow):
         if not self._app_settings:
             return
 
+        show = self._app_settings.show_toolbar
+        auto_hide = self._app_settings.auto_hide_toolbar
+
+        if self._chk_show_toolbar:
+            self._chk_show_toolbar.blockSignals(True)
+            self._chk_show_toolbar.setChecked(show)
+            self._chk_show_toolbar.blockSignals(False)
         if self._chk_auto_hide:
             self._chk_auto_hide.blockSignals(True)
-            self._chk_auto_hide.setChecked(self._app_settings.auto_hide_toolbar)
+            self._chk_auto_hide.setChecked(auto_hide)
+            self._chk_auto_hide.setEnabled(show)
             self._chk_auto_hide.blockSignals(False)
+        if self._spin_hide_delay:
+            self._spin_hide_delay.blockSignals(True)
+            self._spin_hide_delay.setValue(self._app_settings.hide_delay_ms)
+            self._spin_hide_delay.setEnabled(show and auto_hide)
+            self._spin_hide_delay.blockSignals(False)
         if self._chk_tray:
             self._chk_tray.blockSignals(True)
             self._chk_tray.setChecked(self._app_settings.minimize_to_tray)
@@ -814,11 +844,6 @@ class MainWindow(QMainWindow):
             self._chk_autostart.blockSignals(True)
             self._chk_autostart.setChecked(self._app_settings.auto_start)
             self._chk_autostart.blockSignals(False)
-        if self._spin_hide_delay:
-            self._spin_hide_delay.blockSignals(True)
-            self._spin_hide_delay.setValue(self._app_settings.hide_delay_ms)
-            self._spin_hide_delay.setEnabled(self._app_settings.auto_hide_toolbar)
-            self._spin_hide_delay.blockSignals(False)
 
     @Slot(bool)
     def _on_auto_hide_toggled(self, checked: bool) -> None:
@@ -827,8 +852,6 @@ class MainWindow(QMainWindow):
             self._app_settings.auto_hide_toolbar = checked
             self._app_settings.save()
         self._edge_toolbar.set_auto_hide(checked)
-        if checked:
-            self._edge_toolbar.show()
         if self._spin_hide_delay:
             self._spin_hide_delay.setEnabled(checked)
         logging.info(f"自动隐藏工具栏: {'启用' if checked else '禁用'}")
@@ -846,6 +869,40 @@ class MainWindow(QMainWindow):
         if self._app_settings:
             self._app_settings.save()
             logging.info(f"工具栏隐藏延迟: {self._app_settings.hide_delay_ms}ms")
+
+    @Slot(bool)
+    def _on_show_toolbar_toggled(self, checked: bool) -> None:
+        """显示工具栏复选框切换"""
+        if self._app_settings:
+            self._app_settings.show_toolbar = checked
+            self._app_settings.save()
+        if checked:
+            pos = self._app_settings.toolbar_pos if self._app_settings else None
+            if pos and "x" in pos and "y" in pos:
+                self._edge_toolbar.move(pos["x"], pos["y"])
+            else:
+                self._edge_toolbar.set_initial_position()
+            self._edge_toolbar.show()
+        else:
+            self._edge_toolbar.hide()
+        if self._chk_auto_hide:
+            self._chk_auto_hide.setEnabled(checked)
+        if self._spin_hide_delay and self._app_settings:
+            self._spin_hide_delay.setEnabled(checked and self._app_settings.auto_hide_toolbar)
+        logging.info(f"显示边缘工具栏: {'启用' if checked else '禁用'}")
+
+    @Slot(QPoint)
+    def _on_toolbar_position_changed(self, pos: QPoint) -> None:
+        """工具栏拖拽位置变更（防抖保存）"""
+        if self._app_settings:
+            self._app_settings.toolbar_pos = {"x": pos.x(), "y": pos.y()}
+            self._save_pos_timer.start(500)
+
+    def _do_save_toolbar_pos(self) -> None:
+        """防抖延迟后实际保存工具栏位置"""
+        if self._app_settings:
+            self._app_settings.save()
+            logging.info(f"工具栏位置已保存: {self._app_settings.toolbar_pos}")
 
     @Slot(bool)
     def _on_minimize_to_tray_toggled(self, checked: bool) -> None:
