@@ -107,9 +107,9 @@ class TestMainWindow:
         # 验证图片已加载
         assert main_window._ui.previewWidget.pixmap() is not None
 
-    def test_screenshot_widget_exists(self, main_window):
-        """截图组件已创建。"""
-        assert main_window._screenshot_widget is not None
+    def test_overlay_exists(self, main_window):
+        """截图遮罩组件已创建。"""
+        assert main_window._overlay is not None
 
 
 class TestQrcodeTabIntegration:

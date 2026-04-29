@@ -38,8 +38,7 @@ from vibeocr.views.batch_recognition_tab import BatchRecognitionTab
 from vibeocr.views.clipboard_controller import ClipboardController
 from vibeocr.views.settings_page_controller import SettingsPageController
 from vibeocr.views.tabs.single_recognition_tab import SingleRecognitionTab
-from vibeocr.widgets.screenshot_edit_window import ScreenshotEditWindow
-from vibeocr.widgets.screenshot_widget import ScreenshotWidget
+from vibeocr.widgets.screen_capture_overlay import ScreenCaptureOverlay
 from vibeocr.widgets.toolbar import EdgeToolbar
 
 if TYPE_CHECKING:
@@ -253,8 +252,7 @@ class MainWindow(QMainWindow):
 
     def _init_preset_combo(self) -> None:
         """初始化截图组件"""
-        self._screenshot_widget = ScreenshotWidget()
-        self._edit_window = ScreenshotEditWindow()
+        self._overlay = ScreenCaptureOverlay()
 
     def _init_batch_tab(self) -> None:
         """初始化批量识别标签页"""
@@ -306,12 +304,11 @@ class MainWindow(QMainWindow):
         self._shortcut_quit = QShortcut(QKeySequence("Ctrl+Q"), self)
         self._shortcut_quit.activated.connect(self.close)
 
-        # 截图组件 - 使用新的 selection_done 信号进入编辑流程
-        self._screenshot_widget.selection_done.connect(self._on_selection_done)
-
-        # 编辑窗口信号
-        self._edit_window.confirmed.connect(self._on_edit_confirmed)
-        self._edit_window.cancelled.connect(self._on_edit_cancelled)
+        # 截图组件
+        self._overlay.confirmed.connect(self._on_overlay_confirmed)
+        self._overlay.copied.connect(self._on_overlay_copied)
+        self._overlay.saved.connect(self._on_overlay_saved)
+        self._overlay.cancelled.connect(self._on_overlay_cancelled)
 
         # 单次识别 Tab 的截图/文件请求由 MainWindow 处理
         self._single_tab.screenshot_requested.connect(self._on_screenshot)
@@ -637,51 +634,34 @@ class MainWindow(QMainWindow):
 
         self.showMinimized()
         # 延迟启动截图，让窗口有时间最小化
-        QTimer.singleShot(200, self._screenshot_widget.start_capture)
-
-    @Slot(QPixmap, QRect)
-    def _on_selection_done(self, pixmap: QPixmap, screen_rect: QRect) -> None:
-        """框选完成，打开编辑窗口"""
-        if pixmap.isNull():
-            self._screenshot_widget.finish_capture()
-            self.showNormal()
-            self.activateWindow()
-            return
-
-        logging.info(
-            f"框选完成: {pixmap.width()}x{pixmap.height()} 像素, "
-            f"选区 ({screen_rect.x()}, {screen_rect.y()}, "
-            f"{screen_rect.width()}x{screen_rect.height()})"
-        )
-        self._screenshot_widget.finish_capture()
-        self._edit_window.open_editor(pixmap, screen_rect)
+        QTimer.singleShot(200, self._overlay.start_capture)
 
     @Slot(QPixmap, object)
-    def _on_edit_confirmed(self, pixmap: QPixmap, options) -> None:
-        """编辑完成，同步选项到主界面并执行 OCR"""
-        self._edit_window.hide()
+    def _on_overlay_confirmed(self, pixmap: QPixmap, options) -> None:
+        """截图确认，执行 OCR"""
         self.showNormal()
         self.activateWindow()
-
-        # 将编辑窗口的选项同步到全局状态（信号会自动同步按钮组）
-        if options:
-            from vibeocr.utils.ocr_preferences import OCRPreferences
-
-            OCRPreferences.instance().set_options(options)
-
         if not pixmap.isNull():
-            dpr = pixmap.devicePixelRatio()
-            width = pixmap.width()
-            height = pixmap.height()
-            logging.info(f"编辑确认: {width}x{height} 像素, DPR={dpr}")
-
             self._single_tab.set_pixmap(pixmap)
             self._single_tab.run_ocr(pixmap, options)
 
+    @Slot(QPixmap)
+    def _on_overlay_copied(self, pixmap: QPixmap) -> None:
+        """截图复制完成"""
+        self.showNormal()
+        self.activateWindow()
+        self._statusbar.showMessage("图片已复制到剪贴板")
+
+    @Slot(str)
+    def _on_overlay_saved(self, file_path: str) -> None:
+        """截图保存完成"""
+        self.showNormal()
+        self.activateWindow()
+        self._statusbar.showMessage(f"图片已保存: {file_path}")
+
     @Slot()
-    def _on_edit_cancelled(self) -> None:
-        """取消编辑"""
-        self._edit_window.hide()
+    def _on_overlay_cancelled(self) -> None:
+        """截图取消"""
         self.showNormal()
         self.activateWindow()
 
