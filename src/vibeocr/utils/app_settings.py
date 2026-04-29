@@ -14,10 +14,12 @@ logger = logging.getLogger(__name__)
 
 # 默认设置
 _DEFAULTS = {
-    "auto_hide_toolbar": False,
+    "show_toolbar": True,
+    "auto_hide_toolbar": True,
     "minimize_to_tray": False,
     "auto_start": False,
     "hide_delay_ms": 500,
+    "toolbar_pos": None,
 }
 
 _CONFIG_FILENAME = "app_settings.json"
@@ -66,9 +68,19 @@ class AppSettings:
                 logger.warning(f"加载应用设置失败: {e}")
                 return
 
+        if not isinstance(data, dict):
+            data = {}
+
         for key in _DEFAULTS:
             if key in data:
                 self._data[key] = data[key]
+
+        # 向后兼容：旧配置没有 show_toolbar，从旧的 auto_hide_toolbar 推断
+        if "show_toolbar" not in data:
+            old_auto_hide = self._data.get("auto_hide_toolbar", True)
+            self._data["show_toolbar"] = old_auto_hide
+            self._data["auto_hide_toolbar"] = True
+
         logger.info("应用设置已加载")
 
     def save(self) -> bool:
@@ -102,12 +114,29 @@ class AppSettings:
     # ---- 属性 ----
 
     @property
+    def show_toolbar(self) -> bool:
+        return bool(self._data.get("show_toolbar", True))
+
+    @show_toolbar.setter
+    def show_toolbar(self, value: bool) -> None:
+        self._data["show_toolbar"] = value
+
+    @property
     def auto_hide_toolbar(self) -> bool:
-        return bool(self._data.get("auto_hide_toolbar", False))
+        return bool(self._data.get("auto_hide_toolbar", True))
 
     @auto_hide_toolbar.setter
     def auto_hide_toolbar(self, value: bool) -> None:
         self._data["auto_hide_toolbar"] = value
+
+    @property
+    def toolbar_pos(self) -> dict | None:
+        pos = self._data.get("toolbar_pos")
+        return pos if pos is not None else None
+
+    @toolbar_pos.setter
+    def toolbar_pos(self, value: dict | None) -> None:
+        self._data["toolbar_pos"] = value
 
     @property
     def minimize_to_tray(self) -> bool:
