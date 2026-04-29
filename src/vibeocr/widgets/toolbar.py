@@ -145,28 +145,28 @@ class EdgeToolbar(QWidget):
 
         self.setStyleSheet("""
             EdgeToolbar {
-                background-color: #2b2b2b;
-                border: 1px solid #555;
+                background-color: #fff;
+                border: 1px solid #ddd;
                 border-radius: 6px;
             }
             QPushButton {
-                color: #ddd;
+                color: #333;
                 background-color: transparent;
                 border: none;
                 padding: 6px 8px;
                 font-size: 15px;
             }
             QPushButton:hover {
-                background-color: #444;
+                background-color: #eee;
                 border-radius: 4px;
             }
             QPushButton#gripBtn {
-                color: #888;
+                color: #aaa;
                 font-size: 13px;
                 padding: 6px 4px;
             }
             QPushButton#gripBtn:hover {
-                color: #bbb;
+                color: #777;
                 background-color: transparent;
             }
         """)
@@ -185,7 +185,7 @@ class EdgeToolbar(QWidget):
         # 分隔线
         sep = QFrame(self)
         sep.setFrameShape(QFrame.Shape.VLine)
-        sep.setStyleSheet("color: #555; max-width: 1px; margin: 4px 4px;")
+        sep.setStyleSheet("color: #ddd; max-width: 1px; margin: 4px 4px;")
         layout.addWidget(sep)
 
         # 截图按钮
