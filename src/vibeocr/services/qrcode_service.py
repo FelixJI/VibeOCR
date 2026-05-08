@@ -45,10 +45,23 @@ class QrcodeService:
         ec_level = QR_ERROR_CORRECTION_MAP.get(
             options.get("error_correction", "M"), 0
         )
+        target_size = options.get("size", 300)
+
+        # 先用 box_size=1 生成，确定模块数量
+        qr_temp = qrcode.QRCode(
+            version=None, error_correction=ec_level, box_size=1, border=4
+        )
+        qr_temp.add_data(text)
+        qr_temp.make(fit=True)
+        total_modules = qr_temp.modules_count + 8  # modules + 4 border * 2
+
+        # 根据 target_size 计算 box_size，使模块像素尽量匹配目标尺寸
+        box_size = max(1, target_size // total_modules)
+
         qr = qrcode.QRCode(
             version=None,
             error_correction=ec_level,
-            box_size=10,
+            box_size=box_size,
             border=4,
         )
         qr.add_data(text)
@@ -60,8 +73,8 @@ class QrcodeService:
         if not isinstance(img, Image.Image):
             img = img.get_image()
 
-        target_size = options.get("size", 300)
-        img = img.resize((target_size, target_size), Image.Resampling.LANCZOS)
+        # NEAREST 保持黑白方块锐利，不做抗锯齿
+        img = img.resize((target_size, target_size), Image.Resampling.NEAREST)
         return img.convert("RGB")
 
     def _generate_barcode(self, text: str, options: dict) -> Image.Image:
@@ -91,7 +104,7 @@ class QrcodeService:
         w, h = img.size
         new_h = target_size
         new_w = int(w * new_h / h) if h > 0 else target_size
-        img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+        img = img.resize((new_w, new_h), Image.Resampling.NEAREST)
         return img
 
     def apply_logo(self, image: Image.Image, logo_path: str, ratio: float = 0.2) -> Image.Image:

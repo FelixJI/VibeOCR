@@ -369,7 +369,7 @@ class QrcodeTab(QWidget):
                 pixmap.scaled(
                     self._preview_label.size(),
                     Qt.AspectRatioMode.KeepAspectRatio,
-                    Qt.TransformationMode.SmoothTransformation,
+                    Qt.TransformationMode.FastTransformation,
                 )
             )
         except Exception as e:
