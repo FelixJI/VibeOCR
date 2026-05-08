@@ -110,15 +110,20 @@ class MainWindow(QMainWindow):
 
         def on_ocr_status(stage: str, message: str) -> None:
             """OCR 状态回调（可能从后台线程调用）"""
-            # 使用信号确保在主线程中更新 UI
             self._status_update_signal.emit(message)
 
-        # 连接信号到状态栏更新槽
         self._status_update_signal.connect(self._on_status_update)
-        # 延迟导入: OCR 服务模块
-        from vibeocr.services.ocr_service import OCRService
+        # 延迟到首次使用时才 import OCRService（避免启动时 ~0.1s 的 import 开销）
+        self._ocr_status_callback_fn = on_ocr_status
 
-        OCRService.set_status_callback(on_ocr_status)
+    def _ensure_ocr_status_callback(self) -> None:
+        """确保 OCR 状态回调已设置（首次 import OCRService 时调用）"""
+        if not hasattr(self, "_ocr_status_callback_fn"):
+            return
+        if self._ocr_status_callback_fn is not None:
+            from vibeocr.services.ocr_service import OCRService
+            OCRService.set_status_callback(self._ocr_status_callback_fn)
+            self._ocr_status_callback_fn = None
 
     @Slot(str)
     def _on_status_update(self, message: str) -> None:
@@ -402,6 +407,7 @@ class MainWindow(QMainWindow):
         """子进程 Worker 就绪回调"""
         if success:
             logging.info("[MainWindow] 子进程 Worker 已就绪")
+            self._ensure_ocr_status_callback()
 
             # 服务注入
             from vibeocr.services import get_ocr_service

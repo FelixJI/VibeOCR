@@ -345,9 +345,16 @@ class ResultViewWidget(QWidget):
     def _setup_ui(self) -> None:
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
+        self._web_view: QWebEngineView | None = None
+        self._channel: QWebChannel | None = None
+        self._bridge: _Bridge | None = None
+
+    def _ensure_web_view(self) -> QWebEngineView:
+        if self._web_view is not None:
+            return self._web_view
 
         self._web_view = QWebEngineView(self)
-        self._channel = QWebChannel(self)
+        self._channel = QWebChannel(self._web_view)
         self._bridge = _Bridge(self)
         self._channel.registerObject("bridge", self._bridge)
         self._web_view.page().setWebChannel(self._channel)
@@ -356,9 +363,13 @@ class ResultViewWidget(QWidget):
         self._bridge.blockUnhovered.connect(self.block_unhovered.emit)
         self._bridge.blockClicked.connect(self.block_clicked.emit)
 
+        layout = self.layout()
         layout.addWidget(self._web_view)
+        return self._web_view
 
     def display_result(self, result: Any) -> None:
+        """显示 OCR 识别结果"""
+        self._ensure_web_view()
         """显示 OCR 识别结果"""
         global _current_images
         self._current_result = result
@@ -384,15 +395,16 @@ class ResultViewWidget(QWidget):
         katex_dir = _RESOURCES_DIR / "katex"
         full_html = _build_full_html(body, katex_dir)
         base_url = QUrl.fromLocalFile(str(_RESOURCES_DIR) + "/")
-        self._web_view.setHtml(full_html, base_url)
+        self._ensure_web_view().setHtml(full_html, base_url)
 
     def highlight_block(self, index: int) -> None:
         """高亮指定块（-1 取消高亮）"""
         if index == self._highlighted_index:
             return
         self._highlighted_index = index
-        js = f"highlightBlock({index})" if index >= 0 else "highlightBlock(-1)"
-        self._web_view.page().runJavaScript(js)
+        if self._web_view:
+            js = f"highlightBlock({index})" if index >= 0 else "highlightBlock(-1)"
+            self._web_view.page().runJavaScript(js)
 
     def clear_highlight(self) -> None:
         self.highlight_block(-1)
@@ -400,7 +412,8 @@ class ResultViewWidget(QWidget):
     def clear(self) -> None:
         self._current_result = None
         self._highlighted_index = -1
-        self._web_view.setHtml("")
+        if self._web_view:
+            self._web_view.setHtml("")
 
     def get_result(self) -> Any:
         return self._current_result

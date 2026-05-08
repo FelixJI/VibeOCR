@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import subprocess
+import uuid
 from datetime import datetime
 from pathlib import Path
 
@@ -53,23 +54,9 @@ def _get_baseboard_serial() -> str:
 
 def _get_mac_address() -> str:
     """获取第一个有效网卡 MAC 地址"""
-    try:
-        if os.name == "nt":
-            result = subprocess.run(
-                ["wmic", "nic", "get", "macaddress"],
-                capture_output=True,
-                text=True,
-                timeout=5,
-                creationflags=subprocess.CREATE_NO_WINDOW,
-            )
-            if result.returncode == 0:
-                lines = result.stdout.strip().split("\n")
-                for line in lines[1:]:
-                    mac = line.strip()
-                    if mac and mac != "MACAddress":
-                        return mac
-    except Exception:
-        pass
+    mac = uuid.getnode()
+    if mac == uuid.getnode():
+        return f"{mac:012X}"
     return ""
 
 
