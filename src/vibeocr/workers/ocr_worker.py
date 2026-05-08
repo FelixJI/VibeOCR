@@ -172,14 +172,14 @@ def run_worker(shm_name: str, shm_size: int, use_gpu: bool) -> None:
         try:
             from vibeocr.workers.batch_queue_manager import BatchQueueManager
 
-            logger.info(f"[Worker] 正在初始化批量队列管理器（{pipeline_name}）...")
+            logger.debug(f"[Worker] 正在初始化批量队列管理器（{pipeline_name}）...")
             pipeline = ocr_service.get_pipeline(
                 OCRPipeline(pipeline_name) if any(p.value == pipeline_name for p in OCRPipeline) else OCRPipeline.OCR
             )
             batch_managers[pipeline_name] = BatchQueueManager(
                 pipeline, max_batch_size=4
             )
-            logger.info(
+            logger.debug(
                 f"[Worker] BatchQueueManager 初始化完成（使用 {pipeline_name}）"
             )
 
@@ -218,20 +218,20 @@ def run_worker(shm_name: str, shm_size: int, use_gpu: bool) -> None:
 
                 if msg_type == MSG_RECOGNIZE:
                     # 处理识别请求
-                    logger.info("[Worker] 收到识别请求")
+                    logger.debug("[Worker] 收到识别请求")
                     try:
                         # 反序列化请求
                         image_data, options_dict = deserialize_request(data)
-                        logger.info(
+                        logger.debug(
                             f"[Worker] 图像大小: {len(image_data)} 字节, 选项: {options_dict}"
                         )
                         # 使用 from_dict 正确处理 pipeline 字符串到枚举的转换
                         options = OCROptions.from_dict(options_dict)
 
                         # 执行识别
-                        logger.info("[Worker] 开始执行 OCR 识别...")
+                        logger.debug("[Worker] 开始执行 OCR 识别...")
                         result = ocr_service.recognize(image_data, options)
-                        logger.info(
+                        logger.debug(
                             f"[Worker] OCR 识别完成，结果字符数: {len(result.raw_text) if hasattr(result, 'raw_text') else 'N/A'}"
                         )
 
@@ -240,7 +240,7 @@ def run_worker(shm_name: str, shm_size: int, use_gpu: bool) -> None:
                         protocol.write_message(
                             MSG_RESULT, result_bytes, sender="worker"
                         )
-                        logger.info("[Worker] 识别结果已发送")
+                        logger.debug("[Worker] 识别结果已发送")
                         # 等待主进程读取响应
                         protocol.wait_for_read(timeout=5.0)
 
@@ -259,11 +259,11 @@ def run_worker(shm_name: str, shm_size: int, use_gpu: bool) -> None:
 
                 elif msg_type == MSG_PRELOAD:
                     # 处理预加载请求
-                    logger.info("收到预加载请求")
+                    logger.debug("收到预加载请求")
                     try:
                         # 反序列化请求
                         pipeline_names = deserialize_preload_request(data)
-                        logger.info(f"预加载管道: {pipeline_names}")
+                        logger.debug(f"预加载管道: {pipeline_names}")
 
                         results = {}
                         for pipeline_name in pipeline_names:
@@ -282,12 +282,12 @@ def run_worker(shm_name: str, shm_size: int, use_gpu: bool) -> None:
                                     continue
 
                                 # 预加载管道
-                                logger.info(
+                                logger.debug(
                                     f"开始预加载模型: {pipeline_name} ({pipeline_enum.value})"
                                 )
                                 success = ocr_service.preload_pipeline(pipeline_enum)
                                 results[pipeline_name] = success
-                                logger.info(
+                                logger.debug(
                                     f"预加载 {pipeline_name}: {'成功' if success else '失败'}"
                                 )
                             except Exception as e:
@@ -295,15 +295,15 @@ def run_worker(shm_name: str, shm_size: int, use_gpu: bool) -> None:
                                 logger.error(f"预加载 {pipeline_name} 失败: {e}")
 
                         # 发送预加载结果
-                        logger.info(f"[Worker] 准备发送预加载结果: {results}")
+                        logger.debug(f"[Worker] 准备发送预加载结果: {results}")
                         result_bytes = serialize_preload_result(results)
-                        logger.info(
+                        logger.debug(
                             f"[Worker] 序列化完成，大小: {len(result_bytes)} 字节"
                         )
                         protocol.write_message(
                             MSG_PRELOAD_DONE, result_bytes, sender="worker"
                         )
-                        logger.info(f"[Worker] 预加载结果已发送: {results}")
+                        logger.debug(f"[Worker] 预加载结果已发送: {results}")
                         # 等待主进程读取响应，避免自己读取到刚发送的消息
                         protocol.wait_for_read(timeout=5.0)
 
@@ -317,12 +317,12 @@ def run_worker(shm_name: str, shm_size: int, use_gpu: bool) -> None:
 
                 elif msg_type == MSG_BATCH_ADD:
                     # 处理批量添加请求
-                    logger.info("[Worker] 收到批量添加请求")
+                    logger.debug("[Worker] 收到批量添加请求")
                     try:
                         request_id, image_data, options_dict = (
                             deserialize_batch_request(data)
                         )
-                        logger.info(f"[Worker] 批量添加: {request_id}")
+                        logger.debug(f"[Worker] 批量添加: {request_id}")
 
                         # 从选项中获取管道名称
                         pipeline_name = options_dict.get("pipeline", "OCR")
@@ -355,7 +355,7 @@ def run_worker(shm_name: str, shm_size: int, use_gpu: bool) -> None:
 
                 elif msg_type == MSG_BATCH_COMMIT:
                     # 处理批量提交
-                    logger.info("[Worker] 收到批量提交请求")
+                    logger.debug("[Worker] 收到批量提交请求")
                     try:
                         preprocess_dict = deserialize_batch_commit(data)
                         # 确保 PreprocessOptions 已加载
@@ -402,7 +402,7 @@ def run_worker(shm_name: str, shm_size: int, use_gpu: bool) -> None:
                             protocol.write_message(
                                 MSG_BATCH_RESULT, results_data, sender="worker"
                             )
-                            logger.info(
+                            logger.debug(
                                 f"[Worker] 批量处理完成，返回 {len(results)} 个结果"
                             )
                         else:
@@ -420,13 +420,13 @@ def run_worker(shm_name: str, shm_size: int, use_gpu: bool) -> None:
 
                 elif msg_type == MSG_BATCH_CANCEL:
                     # 取消批量处理
-                    logger.info("[Worker] 收到取消请求")
+                    logger.debug("[Worker] 收到取消请求")
                     # 取消所有批量管理器
                     for pipeline_name, mgr in batch_managers.items():
                         if mgr:
                             try:
                                 mgr.cancel()
-                                logger.info(
+                                logger.debug(
                                     f"[Worker] 已取消 {pipeline_name} 的批量处理"
                                 )
                             except Exception as e:
@@ -470,7 +470,7 @@ def run_worker(shm_name: str, shm_size: int, use_gpu: bool) -> None:
             if mgr:
                 try:
                     mgr.close()
-                    logger.info(f"[Worker] BatchQueueManager ({pipeline_name}) 已关闭")
+                    logger.debug(f"[Worker] BatchQueueManager ({pipeline_name}) 已关闭")
                 except Exception as e:
                     logger.warning(
                         f"[Worker] 关闭 BatchQueueManager ({pipeline_name}) 失败: {e}"

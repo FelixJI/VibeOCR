@@ -110,10 +110,10 @@ def run_worker(shm_name: str, shm_size: int) -> None:
                 )
 
                 if msg_type == MSG_RECOGNIZE:
-                    logger.info("[MinerU Worker] 收到识别请求")
+                    logger.debug("[MinerU Worker] 收到识别请求")
                     try:
                         image_data, options_dict = deserialize_request(data)
-                        logger.info(
+                        logger.debug(
                             f"[MinerU Worker] 数据大小: {len(image_data)} 字节, 选项: {options_dict}"
                         )
                         options = OCROptions.from_dict(options_dict)
@@ -127,7 +127,7 @@ def run_worker(shm_name: str, shm_size: int) -> None:
                                 mime_type = "application/pdf"
 
                         result = mineru_service.parse(image_data, mime_type, options)
-                        logger.info(
+                        logger.debug(
                             f"[MinerU Worker] 解析完成，结果字符数: {len(result.raw_text) if hasattr(result, 'raw_text') else 'N/A'}"
                         )
 
@@ -135,7 +135,7 @@ def run_worker(shm_name: str, shm_size: int) -> None:
                         protocol.write_message(
                             MSG_RESULT, result_bytes, sender="worker"
                         )
-                        logger.info("[MinerU Worker] 结果已发送")
+                        logger.debug("[MinerU Worker] 结果已发送")
                         protocol.wait_for_read(timeout=5.0)
 
                     except Exception as e:
@@ -146,12 +146,12 @@ def run_worker(shm_name: str, shm_size: int) -> None:
                         )
 
                 elif msg_type == MSG_BATCH_ADD:
-                    logger.info("[MinerU Worker] 收到批量添加请求")
+                    logger.debug("[MinerU Worker] 收到批量添加请求")
                     try:
                         request_id, image_data, options_dict = (
                             deserialize_batch_request(data)
                         )
-                        logger.info(f"[MinerU Worker] 批量添加: {request_id}")
+                        logger.debug(f"[MinerU Worker] 批量添加: {request_id}")
 
                         svc = get_batch_service()
                         file_name = options_dict.get("file_name", "unknown")
@@ -167,7 +167,7 @@ def run_worker(shm_name: str, shm_size: int) -> None:
                         )
 
                 elif msg_type == MSG_BATCH_COMMIT:
-                    logger.info("[MinerU Worker] 收到批量提交请求")
+                    logger.debug("[MinerU Worker] 收到批量提交请求")
                     try:
                         preprocess_dict = deserialize_batch_commit(data)
                         from vibeocr.models.batch_request import PreprocessOptions
@@ -210,7 +210,7 @@ def run_worker(shm_name: str, shm_size: int) -> None:
                         protocol.write_message(
                             MSG_BATCH_RESULT, results_data, sender="worker"
                         )
-                        logger.info(
+                        logger.debug(
                             f"[MinerU Worker] 批量处理完成，返回 {len(results)} 个结果"
                         )
                     except Exception as e:
@@ -221,7 +221,7 @@ def run_worker(shm_name: str, shm_size: int) -> None:
                         )
 
                 elif msg_type == MSG_BATCH_CANCEL:
-                    logger.info("[MinerU Worker] 收到取消请求")
+                    logger.debug("[MinerU Worker] 收到取消请求")
                     if batch_service:
                         batch_service.batch_cancel()
                     protocol.write_message(MSG_ACK, b"cancelled", sender="worker")
