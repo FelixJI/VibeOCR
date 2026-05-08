@@ -449,7 +449,7 @@ class OCRService(metaclass=SingletonMeta):
             from paddlex.utils.deps import is_hpip_available
 
             if not is_hpip_available():
-                _logger.info("[HPIP] ultra-infer 不可用，跳过")
+                _logger.debug("[HPIP] ultra-infer 不可用，跳过")
                 return None
 
             pipeline = create_pipeline(
@@ -459,10 +459,10 @@ class OCRService(metaclass=SingletonMeta):
                 use_hpip=True,
                 hpi_config={"backend": "onnxruntime"},
             )
-            _logger.info("[HPIP] 高性能推理管道创建成功")
+            _logger.debug("[HPIP] 高性能推理管道创建成功")
             return pipeline
         except Exception as e:
-            _logger.info(f"[HPIP] 创建失败，回退到普通推理: {e}")
+            _logger.debug(f"[HPIP] 创建失败，回退到普通推理: {e}")
             return None
 
     _cuda_dll_registered = False
@@ -511,7 +511,7 @@ class OCRService(metaclass=SingletonMeta):
                 paddle.device.set_device("gpu")
                 a = paddle.randn([4, 4])
                 _ = paddle.matmul(a, a).numpy()
-                _logger.info("[GPU] CUDA 运行时验证通过，使用 GPU 推理")
+                _logger.debug("[GPU] CUDA 运行时验证通过，使用 GPU 推理")
                 # paddle 导入完成后注册 DLL 目录，供 predict() 内部的 ctypes 使用
                 # （必须在 paddle 导入后调用，否则会触发 paddle/libs/nvidia 路径错误）
                 OCRService._register_dll_directories()
@@ -556,11 +556,11 @@ class OCRService(metaclass=SingletonMeta):
     def _create_pipeline(self, pipeline_name: str, device: str = "cpu") -> Any:
         """创建指定管道"""
         # 延迟导入: 确保模型源已配置（首次使用时才执行网络检测）
-        _logger.info("[_create_pipeline] %s: 开始，配置模型源...", pipeline_name)
+        _logger.debug("[_create_pipeline] %s: 开始，配置模型源...", pipeline_name)
         self._ensure_source_configured()
 
         # 延迟导入: PaddleX（这是启动慢的主要原因，~30s）
-        _logger.info("[_create_pipeline] %s: 导入 PaddleX...", pipeline_name)
+        _logger.debug("[_create_pipeline] %s: 导入 PaddleX...", pipeline_name)
         from paddlex import create_pipeline
         from paddlex.inference.utils.pp_option import PaddlePredictorOption
 
@@ -572,11 +572,11 @@ class OCRService(metaclass=SingletonMeta):
                 break
 
         # 检查模型是否已缓存（快速检查，避免重复提示）
-        _logger.info("[_create_pipeline] %s: 检查模型缓存...", pipeline_name)
+        _logger.debug("[_create_pipeline] %s: 检查模型缓存...", pipeline_name)
         models_cached = is_pipeline_cached(pipeline_name)
 
         if not models_cached:
-            _logger.info(
+            _logger.debug(
                 "[_create_pipeline] %s: 模型未缓存，需要下载，设备=%s",
                 pipeline_name, device,
             )
@@ -585,11 +585,11 @@ class OCRService(metaclass=SingletonMeta):
                 f"正在初始化 {display_name} 管道（首次使用需要下载模型）...",
             )
         else:
-            _logger.info(f"管道 {display_name} 模型已存在，直接加载...")
+            _logger.debug(f"管道 {display_name} 模型已存在，直接加载...")
 
         # 构建 pp_option：动态 CPU 线程数 + 禁用 new IR
         cpu_threads = self._get_optimal_cpu_threads()
-        _logger.info(f"[推理优化] CPU 线程数: {cpu_threads}")
+        _logger.debug(f"[推理优化] CPU 线程数: {cpu_threads}")
 
         pp_option = PaddlePredictorOption()
         pp_option.enable_new_ir = False
@@ -597,7 +597,7 @@ class OCRService(metaclass=SingletonMeta):
         pp_option.cpu_threads = cpu_threads
 
         # 尝试 HPIP 加速（需要 ultra-infer）
-        _logger.info(
+        _logger.debug(
             "[_create_pipeline] %s: 尝试 HPIP 加速，设备=%s...",
             pipeline_name, device,
         )
@@ -605,13 +605,13 @@ class OCRService(metaclass=SingletonMeta):
             create_pipeline, pipeline_name, device, pp_option
         )
         if pipeline is not None:
-            _logger.info("管道 %s (HPIP) 初始化于设备: %s", pipeline_name, device)
+            _logger.debug("管道 %s (HPIP) 初始化于设备: %s", pipeline_name, device)
             if not models_cached:
                 self._notify_status("模型初始化", f"{display_name} 管道初始化完成")
             return pipeline
 
         # 普通推理路径
-        _logger.info(
+        _logger.debug(
             "[_create_pipeline] %s: 调用 create_pipeline()，设备=%s ...",
             pipeline_name, device,
         )
@@ -621,7 +621,7 @@ class OCRService(metaclass=SingletonMeta):
             pp_option=pp_option,
         )
 
-        _logger.info("管道 %s 初始化于设备: %s (线程: %d)", pipeline_name, device, cpu_threads)
+        _logger.debug("管道 %s 初始化于设备: %s (线程: %d)", pipeline_name, device, cpu_threads)
 
         if not models_cached:
             self._notify_status("模型初始化", f"{display_name} 管道初始化完成")
@@ -637,7 +637,7 @@ class OCRService(metaclass=SingletonMeta):
                 if pipeline_name not in self._pipelines:  # 双重检查
                     self._setup_cuda_dll_path()
                     device = self._get_device()
-                    _logger.info(
+                    _logger.debug(
                         "[get_pipeline] 创建管道 %s，设备=%s，"
                         "已加载管道: %s",
                         pipeline_name, device,
@@ -646,7 +646,7 @@ class OCRService(metaclass=SingletonMeta):
                     self._pipelines[pipeline_name] = self._create_pipeline(
                         pipeline_name, device
                     )
-                    _logger.info("[get_pipeline] 管道 %s 创建完成", pipeline_name)
+                    _logger.debug("[get_pipeline] 管道 %s 创建完成", pipeline_name)
         return self._pipelines[pipeline_name]
 
     @property
@@ -671,7 +671,7 @@ class OCRService(metaclass=SingletonMeta):
         """
 
         actual_options = options if options is not None else OCROptions()
-        _logger.info(f"[recognize] 开始识别，管道: {actual_options.pipeline.value}")
+        _logger.debug(f"[recognize] 开始识别，管道: {actual_options.pipeline.value}")
 
         # 如果输入是 bytes，转换为 numpy.ndarray（PaddleX 只支持 ndarray 和 str）
         if isinstance(image, bytes):
@@ -680,7 +680,7 @@ class OCRService(metaclass=SingletonMeta):
             import numpy as np
             from PIL import Image as PILImage
 
-            _logger.info(
+            _logger.debug(
                 f"[recognize] 输入是 bytes ({len(image)} 字节)，转换为 numpy.ndarray"
             )
             pil_image = PILImage.open(io.BytesIO(image))
@@ -688,7 +688,7 @@ class OCRService(metaclass=SingletonMeta):
             if pil_image.mode != "RGB":
                 pil_image = pil_image.convert("RGB")  # type: ignore[assignment]
             image = np.array(pil_image)
-            _logger.info(f"[recognize] 转换完成，数组形状: {image.shape}")
+            _logger.debug(f"[recognize] 转换完成，数组形状: {image.shape}")
 
         # 根据管道类型分发
         try:
@@ -716,7 +716,7 @@ class OCRService(metaclass=SingletonMeta):
                             x1 / img_w * 1000, y1 / img_h * 1000,
                         )
 
-            _logger.info(f"[recognize] 识别完成，返回 {len(result.raw_text)} 字符")
+            _logger.debug(f"[recognize] 识别完成，返回 {len(result.raw_text)} 字符")
             return result
         except Exception as e:
             _logger.error(f"[recognize] 识别过程中发生异常: {e}", exc_info=True)
@@ -728,9 +728,9 @@ class OCRService(metaclass=SingletonMeta):
         options: OCROptions,
     ) -> OCRResult:
         """通用 OCR 识别"""
-        _logger.info("[_recognize_ocr] 获取 OCR 管道...")
+        _logger.debug("[_recognize_ocr] 获取 OCR 管道...")
         pipeline = self.get_pipeline(OCRPipeline.OCR)
-        _logger.info("[_recognize_ocr] 执行 predict...")
+        _logger.debug("[_recognize_ocr] 执行 predict...")
         try:
             output = pipeline.predict(
                 input=image,
@@ -738,14 +738,14 @@ class OCRService(metaclass=SingletonMeta):
                 use_doc_unwarping=options.use_doc_unwarping,
                 use_textline_orientation=options.use_textline_orientation,
             )
-            _logger.info(f"[_recognize_ocr] predict 返回，类型: {type(output)}")
+            _logger.debug(f"[_recognize_ocr] predict 返回，类型: {type(output)}")
         except Exception as e:
             _logger.error(f"[_recognize_ocr] predict 调用失败: {e}", exc_info=True)
             raise
 
-        _logger.info("[_recognize_ocr] 开始处理输出...")
+        _logger.debug("[_recognize_ocr] 开始处理输出...")
         result = self._process_ocr_output_safe(output)
-        _logger.info(f"[_recognize_ocr] 结果处理完成: {len(result.raw_text)} 字符")
+        _logger.debug(f"[_recognize_ocr] 结果处理完成: {len(result.raw_text)} 字符")
         return result
 
     def _recognize_table(
@@ -916,7 +916,7 @@ class OCRService(metaclass=SingletonMeta):
 
         先将 generator 完全消费为 list（禁用 GC），然后提取数据。
         """
-        _logger.info("[_process_ocr_output_safe] 开始提取结果...")
+        _logger.debug("[_process_ocr_output_safe] 开始提取结果...")
         text_with_scores: list[tuple[str, float]] = []
         text_blocks: list[TextBlock] = []
 

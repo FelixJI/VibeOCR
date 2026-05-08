@@ -129,7 +129,7 @@ class WorkerManager:
         # 任务排队通知回调
         self._task_queued_callback: Callable | None = None
 
-        logger.info(
+        logger.debug(
             f"WorkerManager 初始化: max_workers={max_workers}, use_gpu={use_gpu}"
         )
 
@@ -213,13 +213,13 @@ class WorkerManager:
                         info.state = WorkerState.STOPPING
                         info.process.stop(timeout=timeout)
                         info.state = WorkerState.STOPPED
-                        logger.info(f"Worker {info.worker_id} 已停止")
+                        logger.debug(f"Worker {info.worker_id} 已停止")
                     except Exception as e:
                         info.state = WorkerState.ERROR
                         info.last_error = str(e)
                         logger.warning(f"Worker {info.worker_id} 停止时出错: {e}")
 
-        logger.info("所有 Worker 已停止")
+        logger.debug("所有 Worker 已停止")
 
     def execute(
         self,
@@ -251,7 +251,7 @@ class WorkerManager:
 
             if worker_info is None:
                 # Worker 仍在忙（可能在预加载），通知 UI 并长等待
-                logger.info("Worker 忙碌，排队等待...")
+                logger.debug("Worker 忙碌，排队等待...")
                 if self._task_queued_callback:
                     try:
                         self._task_queued_callback()
@@ -293,7 +293,7 @@ class WorkerManager:
 
                     # 自动重启
                     if self.auto_restart and retry_count < self.max_retries:
-                        logger.info(f"尝试重启 Worker {worker_info.worker_id}...")
+                        logger.debug(f"尝试重启 Worker {worker_info.worker_id}...")
                         if self._restart_worker(worker_info):
                             self._retried_tasks += 1
                             # 重试任务
@@ -354,7 +354,7 @@ class WorkerManager:
             worker_info.state = WorkerState.IDLE
             worker_info.last_error = None
             worker_info.last_active = time.time()
-            logger.info(f"Worker {worker_info.worker_id} 重启成功")
+            logger.debug(f"Worker {worker_info.worker_id} 重启成功")
         else:
             worker_info.state = WorkerState.ERROR
             logger.error(f"Worker {worker_info.worker_id} 重启失败")

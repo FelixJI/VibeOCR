@@ -93,7 +93,7 @@ class MinerUBatchService:
                 break
 
             file_name = item["file_name"]
-            logger.info(f"[MinerUBatch] 处理 {i + 1}/{total}: {file_name}")
+            logger.debug(f"[MinerUBatch] 处理 {i + 1}/{total}: {file_name}")
 
             if progress_callback:
                 progress_callback(i, total, file_name)
@@ -121,4 +121,4 @@ class MinerUBatchService:
     def batch_cancel(self):
         """取消批量处理"""
         self._cancelled = True
-        logger.info("[MinerUBatch] 取消批量处理")
+        logger.debug("[MinerUBatch] 取消批量处理")

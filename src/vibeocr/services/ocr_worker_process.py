@@ -451,7 +451,7 @@ class OCRWorkerProcess:
             msg_type, data = protocol.read_message(
                 timeout=timeout, expected_sender="worker"
             )
-            logger.info(f"[主进程] 收到响应，消息类型: {msg_type.decode('ascii', errors='replace')}")
+            logger.debug(f"[主进程] 收到响应，消息类型: {msg_type.decode('ascii', errors='replace')}")
 
             if msg_type == MSG_RESULT:
                 # 反序列化结果
@@ -501,7 +501,7 @@ class OCRWorkerProcess:
             if self.is_ready:
                 return True
             try:
-                logger.info(f"[主进程] 尝试重启 Worker {self.worker_id}...")
+                logger.debug(f"[主进程] 尝试重启 Worker {self.worker_id}...")
                 self.stop()
                 # 重新生成共享内存名称（避免与旧内存冲突）
                 unique_id = uuid.uuid4().hex[:16]
@@ -662,7 +662,7 @@ class OCRWorkerProcess:
             timeout = TIMEOUT_UNCACHED + len(pipelines) * TIMEOUT_PER_PIPELINE
         else:
             # 所有模型已缓存，使用较短超时
-            logger.info(f"[预加载] 所有模型已缓存，使用标准超时 ({TIMEOUT_CACHED}s)")
+            logger.debug(f"[预加载] 所有模型已缓存，使用标准超时 ({TIMEOUT_CACHED}s)")
             timeout = TIMEOUT_CACHED + len(pipelines) * (TIMEOUT_PER_PIPELINE / 2)
 
         logger.debug(f"[预加载] 计算的超时时间: {timeout}s")
@@ -691,7 +691,7 @@ class OCRWorkerProcess:
         results = {}
         for pipeline_name in pipelines:
             try:
-                logger.info(f"[预热] Worker {self.worker_id} 预热管道: {pipeline_name}")
+                logger.debug(f"[预热] Worker {self.worker_id} 预热管道: {pipeline_name}")
                 success = warmup_worker_process(
                     self, pipeline=pipeline_name, timeout=timeout
                 )

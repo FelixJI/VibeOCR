@@ -454,7 +454,7 @@ class OCRServiceSubprocess:
             OCRWorkerProcessError: 识别失败
             RuntimeError: 服务未就绪
         """
-        logger.info("[recognize_async] 开始异步识别...")
+        logger.debug("[recognize_async] 开始异步识别...")
 
         # 检查服务是否就绪
         if not self._initialized:
@@ -462,14 +462,14 @@ class OCRServiceSubprocess:
             raise RuntimeError("OCR 服务未初始化")
 
         ready = self.is_ready()
-        logger.info(f"[recognize_async] 服务就绪状态: {ready}")
+        logger.debug(f"[recognize_async] 服务就绪状态: {ready}")
         if not ready:
             raise RuntimeError("OCR 服务未就绪，Worker 可能未启动")
 
-        logger.info("[recognize_async] 调用 run_in_executor...")
+        logger.debug("[recognize_async] 调用 run_in_executor...")
         loop = asyncio.get_event_loop()
         result = await loop.run_in_executor(None, self.recognize, image, options)
-        logger.info("[recognize_async] run_in_executor 完成")
+        logger.debug("[recognize_async] run_in_executor 完成")
         return result
 
     async def preload_pipelines_async(

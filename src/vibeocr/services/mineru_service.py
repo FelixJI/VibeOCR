@@ -136,7 +136,7 @@ class MinerUService(metaclass=SingletonMeta):
             stderr=log_file.open("w", encoding="utf-8"),
             env=env,
         )
-        _logger.info(f"[MinerU] 日志输出到: {log_file}")
+        _logger.debug(f"[MinerU] 日志输出到: {log_file}")
 
         # 等待 API 就绪
         for _ in range(120):
@@ -208,7 +208,7 @@ class MinerUService(metaclass=SingletonMeta):
         last_error: Exception | None = None
         for current_backend in backends_to_try:
             params["backend"] = current_backend
-            _logger.info(f"[MinerU] 使用后端: {current_backend}")
+            _logger.debug(f"[MinerU] 使用后端: {current_backend}")
             try:
                 resp = httpx.post(
                     f"{self.__class__._api_url}/file_parse",

@@ -137,7 +137,7 @@ def _download_mineru_models(
     logger.info("[模型下载] 开始下载 MinerU 模型")
     try:
         source = NetworkDetector(project_root).mineru_source
-        logger.info(f"[模型下载] 使用模型源: {source}")
+        logger.debug(f"[模型下载] 使用模型源: {source}")
 
         returncode, stdout, stderr = _run_subprocess_cancellable(
             [str(python_exe), "-m", "mineru.cli.models_download", "-s", source],

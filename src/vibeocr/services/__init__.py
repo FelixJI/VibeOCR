@@ -64,10 +64,10 @@ def get_ocr_service(skip_auto_start: bool = False):
                 f"[get_ocr_service] 单例已存在, _initialized={OCRServiceSubprocess._instance._initialized}"
             )
             if OCRServiceSubprocess._instance._initialized:
-                _logger.info("[get_ocr_service] 返回现有实例")
+                _logger.debug("[get_ocr_service] 返回现有实例")
                 return OCRServiceSubprocess._instance
         else:
-            _logger.info("[get_ocr_service] 单例不存在，将创建新实例")
+            _logger.debug("[get_ocr_service] 单例不存在，将创建新实例")
         _logger.info(
             f"[get_ocr_service] 创建 OCRServiceSubprocess, auto_start={not skip_auto_start}"
         )

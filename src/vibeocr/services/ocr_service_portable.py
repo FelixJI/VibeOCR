@@ -112,7 +112,7 @@ class OCRServicePortable:
         from paddlex.inference.utils.pp_option import PaddlePredictorOption
 
         cpu_threads = self._get_optimal_cpu_threads()
-        _logger.info(f"[推理优化] CPU 线程数: {cpu_threads}")
+        _logger.debug(f"[推理优化] CPU 线程数: {cpu_threads}")
 
         pp_option = PaddlePredictorOption()
         pp_option.enable_new_ir = False
@@ -131,9 +131,9 @@ class OCRServicePortable:
                     use_hpip=True,
                     hpi_config={"backend": "onnxruntime"},
                 )
-                _logger.info("[HPIP] 高性能推理管道创建成功")
+                _logger.debug("[HPIP] 高性能推理管道创建成功")
         except Exception as e:
-            _logger.info(f"[HPIP] 创建失败，回退到普通推理: {e}")
+            _logger.debug(f"[HPIP] 创建失败，回退到普通推理: {e}")
 
         if pipeline is None:
             pipeline = create_pipeline(

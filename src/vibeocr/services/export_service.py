@@ -102,7 +102,7 @@ class ExportService:
                 if isinstance(data, bytes):
                     (img_dir / name).write_bytes(data)
 
-        logger.info("导出 Markdown: %s", output_path)
+        logger.debug("导出 Markdown: %s", output_path)
         return True
 
     @staticmethod
@@ -132,7 +132,7 @@ class ExportService:
         )
 
         output_path.write_text(full_html, encoding="utf-8")
-        logger.info("导出 HTML: %s", output_path)
+        logger.debug("导出 HTML: %s", output_path)
         return True
 
     @staticmethod
@@ -140,7 +140,7 @@ class ExportService:
         """导出为纯文本"""
         content = result.raw_text or result.markdown_text
         output_path.write_text(content, encoding="utf-8")
-        logger.info("导出纯文本: %s", output_path)
+        logger.debug("导出纯文本: %s", output_path)
         return True
 
     @staticmethod
@@ -219,7 +219,7 @@ class ExportService:
                 doc.add_paragraph(line)
 
         doc.save(str(output_path))
-        logger.info("导出 Word: %s", output_path)
+        logger.debug("导出 Word: %s", output_path)
         return True
 
     @staticmethod
@@ -351,7 +351,7 @@ class ExportService:
                 ws_text.append([line])
 
         wb.save(str(output_path))
-        logger.info("导出 Excel: %s", output_path)
+        logger.debug("导出 Excel: %s", output_path)
         return True
 
     @staticmethod
