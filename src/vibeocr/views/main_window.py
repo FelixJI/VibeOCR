@@ -195,20 +195,20 @@ class MainWindow(QMainWindow):
         geometry = self._layout_manager.get_main_window_geometry()
         if geometry:
             self.restoreGeometry(geometry)
-            logging.info("已恢复窗口布局")
+            logging.debug("已恢复窗口布局")
 
         # 恢复上次选中的标签页
         tab_index = self._layout_manager.get_tab_index()
         if tab_index is not None and 0 <= tab_index < self._ui.tabWidget.count():
             self._ui.tabWidget.setCurrentIndex(tab_index)
-            logging.info(f"已恢复标签页索引: {tab_index}")
+            logging.debug(f"已恢复标签页索引: {tab_index}")
 
         # 恢复单次识别标签页分割器状态
         if hasattr(self, "_single_tab") and hasattr(self._single_tab, "_splitter"):
             state = self._layout_manager.get_splitter_state("ocr_tab")
             if state:
                 self._single_tab._splitter.restoreState(state)
-                logging.info("已恢复 OCR 分割器状态")
+                logging.debug("已恢复 OCR 分割器状态")
             else:
                 total_width = self._single_tab._splitter.width()
                 if total_width > 0:
@@ -221,7 +221,7 @@ class MainWindow(QMainWindow):
             state = self._layout_manager.get_splitter_state("qrcode_tab")
             if state:
                 self._qrcode_tab._splitter.restoreState(state)
-                logging.info("已恢复二维码分割器状态")
+                logging.debug("已恢复二维码分割器状态")
 
     def _save_layout(self) -> None:
         """保存窗口和分割器布局"""
@@ -384,11 +384,11 @@ class MainWindow(QMainWindow):
         使用 SubprocessManager 管理子进程生命周期。
         """
         if self._closing:
-            logging.info("[MainWindow] 应用程序正在关闭，跳过启动子进程 Worker")
+            logging.debug("[MainWindow] 应用程序正在关闭，跳过启动子进程 Worker")
             return
 
         if self._subprocess_manager.is_ready:
-            logging.info("[MainWindow] 子进程 Worker 已就绪，跳过启动")
+            logging.debug("[MainWindow] 子进程 Worker 已就绪，跳过启动")
             return
 
         logging.info("[MainWindow] 正在启动子进程 Worker...")
@@ -419,7 +419,7 @@ class MainWindow(QMainWindow):
             if hasattr(self, "_batch_tab") and self._batch_tab:
                 self._batch_tab.set_ocr_service(mineru_batch)
                 self._batch_tab.set_paddlex_service(paddlex_service)
-                logging.info("[MainWindow] 批量识别标签页已连接批量服务")
+                logging.debug("[MainWindow] 批量识别标签页已连接批量服务")
 
             # 子进程就绪后，触发预加载（如果配置了预加载管道）
             # 预加载完成后再显示"OCR 服务已就绪"
@@ -463,7 +463,7 @@ class MainWindow(QMainWindow):
             )
         else:
             self._statusbar.showMessage("OCR 服务已就绪")
-        logging.info(f"[MainWindow] 预加载完成: {results}")
+        logging.debug(f"[MainWindow] 预加载完成: {results}")
 
     @Slot(str)
     def _on_recognition_queued(self, message: str) -> None:
@@ -483,10 +483,10 @@ class MainWindow(QMainWindow):
         pipelines = ConfigManager.instance().get_preload_pipelines()
 
         if not pipelines:
-            logging.info("[子进程预加载] 未配置预加载管道")
+            logging.debug("[子进程预加载] 未配置预加载管道")
             return
 
-        logging.info(f"[子进程预加载] 开始预加载管道: {pipelines}")
+        logging.debug(f"[子进程预加载] 开始预加载管道: {pipelines}")
 
         # 使用 SubprocessManager 预加载
         self._subprocess_manager.preload_pipelines(pipelines)
@@ -548,7 +548,7 @@ class MainWindow(QMainWindow):
         """打开图片文件"""
         if not self._check_ocr_ready():
             return
-        logging.info("打开图片文件对话框")
+        logging.debug("打开图片文件对话框")
 
         from vibeocr.utils.mime_types import (
             FILE_FILTER_DOCUMENTS,
@@ -578,7 +578,7 @@ class MainWindow(QMainWindow):
         """从预览区域打开文件（支持图片和 PDF）"""
         if not self._check_ocr_ready():
             return
-        logging.info("打开文件对话框（图片/PDF）")
+        logging.debug("打开文件对话框（图片/PDF）")
 
         from vibeocr.utils.mime_types import FILE_FILTER_ALL, is_office_file
 
@@ -679,7 +679,7 @@ class MainWindow(QMainWindow):
         ):
             event.ignore()
             self.hide()
-            logging.info("主窗口已最小化到系统托盘")
+            logging.debug("主窗口已最小化到系统托盘")
             return
 
         logging.info("正在关闭应用程序...")
@@ -700,7 +700,7 @@ class MainWindow(QMainWindow):
         # 关闭子进程管理器
         try:
             self._subprocess_manager.shutdown(timeout_ms=3000)
-            logging.info("子进程管理器已关闭")
+            logging.debug("子进程管理器已关闭")
         except Exception as e:
             logging.warning(f"关闭子进程管理器失败: {e}")
 
@@ -713,7 +713,7 @@ class MainWindow(QMainWindow):
                 from vibeocr.services.ocr_service import OCRService
 
                 OCRService._pipelines.clear()
-                logging.info("OCR 管道缓存已清理")
+                logging.debug("OCR 管道缓存已清理")
         except Exception as e:
             logging.warning(f"清理 OCR 资源失败: {e}")
 
@@ -723,7 +723,7 @@ class MainWindow(QMainWindow):
 
             if MinerUService._api_process is not None:
                 MinerUService().shutdown()
-                logging.info("MinerU API 服务已关闭")
+                logging.debug("MinerU API 服务已关闭")
         except Exception as e:
             logging.warning(f"关闭 MinerU API 服务失败: {e}")
 
@@ -834,7 +834,7 @@ class MainWindow(QMainWindow):
         self._edge_toolbar.set_auto_hide(checked)
         if self._spin_hide_delay:
             self._spin_hide_delay.setEnabled(checked)
-        logging.info(f"自动隐藏工具栏: {'启用' if checked else '禁用'}")
+        logging.debug(f"自动隐藏工具栏: {'启用' if checked else '禁用'}")
 
     @Slot(int)
     def _on_hide_delay_changed(self, value: int) -> None:
@@ -848,7 +848,7 @@ class MainWindow(QMainWindow):
         """防抖延迟后实际保存设置"""
         if self._app_settings:
             self._app_settings.save()
-            logging.info(f"工具栏隐藏延迟: {self._app_settings.hide_delay_ms}ms")
+            logging.debug(f"工具栏隐藏延迟: {self._app_settings.hide_delay_ms}ms")
 
     @Slot(bool)
     def _on_show_toolbar_toggled(self, checked: bool) -> None:
@@ -869,7 +869,7 @@ class MainWindow(QMainWindow):
             self._chk_auto_hide.setEnabled(checked)
         if self._spin_hide_delay and self._app_settings:
             self._spin_hide_delay.setEnabled(checked and self._app_settings.auto_hide_toolbar)
-        logging.info(f"显示边缘工具栏: {'启用' if checked else '禁用'}")
+        logging.debug(f"显示边缘工具栏: {'启用' if checked else '禁用'}")
 
     @Slot(QPoint)
     def _on_toolbar_position_changed(self, pos: QPoint) -> None:
@@ -882,7 +882,7 @@ class MainWindow(QMainWindow):
         """防抖延迟后实际保存工具栏位置"""
         if self._app_settings:
             self._app_settings.save()
-            logging.info(f"工具栏位置已保存: {self._app_settings.toolbar_pos}")
+            logging.debug(f"工具栏位置已保存: {self._app_settings.toolbar_pos}")
 
     @Slot(bool)
     def _on_minimize_to_tray_toggled(self, checked: bool) -> None:
@@ -896,7 +896,7 @@ class MainWindow(QMainWindow):
         app = QApplication.instance()
         if app:
             app.setQuitOnLastWindowClosed(not checked)
-        logging.info(f"最小化到系统托盘: {'启用' if checked else '禁用'}")
+        logging.debug(f"最小化到系统托盘: {'启用' if checked else '禁用'}")
 
     @Slot(bool)
     def _on_autostart_toggled(self, checked: bool) -> None:
@@ -907,7 +907,7 @@ class MainWindow(QMainWindow):
         if success and self._app_settings:
             self._app_settings.auto_start = checked
             self._app_settings.save()
-            logging.info(f"开机自启动: {'启用' if checked else '禁用'}")
+            logging.debug(f"开机自启动: {'启用' if checked else '禁用'}")
         elif not success:
             logging.warning("设置开机自启动失败")
             # 恢复复选框状态
