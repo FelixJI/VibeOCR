@@ -47,11 +47,12 @@ class QtLogHandler(logging.Handler):
     def _should_show_in_status(self, msg: str) -> bool:
         """判断日志消息是否应该显示在状态栏"""
         keywords = [
-            "[Worker",
-            "[主进程]",
-            "OCR 服务初始化",
-            "连接数据共享内存",
+            "[OCR 启动]",
             "READY",
+            "OCR 服务已就绪",
+            "OCR功能已就绪",
+            "OCR 服务启动失败",
+            "正在启动 OCR 服务",
         ]
         return any(kw in msg for kw in keywords)
 
