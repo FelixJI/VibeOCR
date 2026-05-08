@@ -1,6 +1,8 @@
 """日志服务模块"""
 
 import logging
+import time
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -57,6 +59,14 @@ class QtLogHandler(logging.Handler):
         return any(kw in msg for kw in keywords)
 
 
+def _cleanup_old_logs(log_dir: Path, max_age_days: int = 7) -> None:
+    """删除超过指定天数的旧日志文件"""
+    cutoff = time.time() - max_age_days * 86400
+    for f in log_dir.iterdir():
+        if f.is_file() and f.name != "vibeocr.log" and f.stat().st_mtime < cutoff:
+            f.unlink(missing_ok=True)
+
+
 def setup_logging() -> QtLogHandler:
     """配置全局日志处理器
 
@@ -66,17 +76,26 @@ def setup_logging() -> QtLogHandler:
     handler = QtLogHandler()
     handler.setFormatter(logging.Formatter("%(message)s"))
 
-    # 配置根日志器
+    # 根日志器设为 DEBUG，由各 handler 自行过滤
     root_logger = logging.getLogger()
+    root_logger.setLevel(logging.DEBUG)
     root_logger.addHandler(handler)
-    root_logger.setLevel(logging.INFO)
 
-    # 添加文件日志
+    # 控制台 handler：仅 WARNING 及以上（不刷屏，只显示需要关注的问题）
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.WARNING)
+    console_handler.setFormatter(
+        logging.Formatter("[%(levelname)s] %(name)s: %(message)s")
+    )
+    root_logger.addHandler(console_handler)
+
+    # 文件 handler：DEBUG 及以上（全量记录，便于排查）
     log_dir = Path(__file__).resolve().parent.parent.parent.parent / "logs"
     log_dir.mkdir(exist_ok=True)
     file_handler = logging.FileHandler(
         log_dir / "vibeocr.log", encoding="utf-8", delay=True
     )
+    file_handler.setLevel(logging.DEBUG)
     file_handler.setFormatter(
         logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
     )
