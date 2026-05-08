@@ -71,6 +71,41 @@ class MinerUService(metaclass=SingletonMeta):
             cls._api_url = ""
             cls._initialized = False
 
+    @staticmethod
+    def _parse_api_log_level(text: str) -> int:
+        """从 mineru-api 日志行中提取日志级别"""
+        import re
+        match = re.search(
+            r"\b(DEBUG|INFO|WARNING|ERROR|CRITICAL)\b", text, re.IGNORECASE
+        )
+        if match:
+            return getattr(logging, match.group(1).upper(), logging.DEBUG)
+        return logging.DEBUG
+
+    def _start_log_reader(self, process: subprocess.Popen) -> None:
+        """启动守护线程读取 mineru-api 子进程的 stderr 并转发到项目日志系统"""
+        mineru_logger = logging.getLogger("vibeocr.mineru_api")
+        stderr = process.stderr
+        if stderr is None:
+            return
+
+        def _read():
+            try:
+                while process.poll() is None:
+                    line = stderr.readline()
+                    if not line:
+                        continue
+                    text = line.decode("utf-8", errors="replace").strip()
+                    if not text:
+                        continue
+                    level = self._parse_api_log_level(text)
+                    mineru_logger.log(level, text)
+            except Exception:
+                pass
+
+        t = threading.Thread(target=_read, daemon=True, name="MinerUApiLogReader")
+        t.start()
+
     def _check_api_running(self, url: str) -> bool:
         """检查 mineru-api 是否运行"""
         try:
@@ -121,8 +156,6 @@ class MinerUService(metaclass=SingletonMeta):
             "--port", str(port),
         ]
 
-        log_file = Path(__file__).resolve().parent.parent.parent / "mineru_api.log"
-
         env = os.environ.copy()
         from vibeocr.env_manager import get_project_root
         from vibeocr.network_detector import NetworkDetector
@@ -132,11 +165,15 @@ class MinerUService(metaclass=SingletonMeta):
 
         self.__class__._api_process = subprocess.Popen(
             cmd,
-            stdout=subprocess.DEVNULL,
-            stderr=log_file.open("w", encoding="utf-8"),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             env=env,
         )
-        _logger.debug(f"[MinerU] 日志输出到: {log_file}")
+
+        # 读取 mineru-api 子进程的 stderr 并转发到项目日志系统
+        self._start_log_reader(self.__class__._api_process)
+
+        _logger.debug(f"[MinerU] 日志输出到项目日志系统")
 
         # 等待 API 就绪
         for _ in range(120):
@@ -399,7 +436,7 @@ class MinerUService(metaclass=SingletonMeta):
     def shutdown(self) -> None:
         """停止 mineru-api 进程"""
         if self.__class__._api_process is not None:
-            _logger.info("[MinerU] 停止 mineru-api 服务...")
+            _logger.debug("[MinerU] 停止 mineru-api 服务...")
             self.__class__._api_process.terminate()
             try:
                 self.__class__._api_process.wait(timeout=10)
@@ -407,4 +444,4 @@ class MinerUService(metaclass=SingletonMeta):
                 self.__class__._api_process.kill()
             self.__class__._api_process = None
             self.__class__._api_url = ""
-            _logger.info("[MinerU] mineru-api 服务已停止")
+            _logger.debug("[MinerU] mineru-api 服务已停止")

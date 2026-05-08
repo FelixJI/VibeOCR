@@ -122,6 +122,28 @@ class OCRWorkerProcess:
 
         return sys.executable
 
+    def _parse_and_forward_log(self, text: str) -> None:
+        """解析子进程日志行并按原始级别转发
+
+        子进程日志格式: "YYYY-MM-DD HH:MM:SS [LEVEL] name: message"
+        如果无法解析格式，按级别降级策略处理。
+        """
+        import re
+
+        # 匹配日志格式: 2024-01-15 10:30:45 [INFO] module: message
+        match = re.match(
+            r"\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\s+\[(DEBUG|INFO|WARNING|ERROR|CRITICAL)\]\s+(.*)",
+            text,
+        )
+        prefix = f"[Worker {self.worker_id}]"
+        if match:
+            level_name = match.group(1)
+            message = match.group(2)
+            level = getattr(logging, level_name, logging.DEBUG)
+            logger.log(level, f"{prefix} {message}")
+        else:
+            logger.debug(f"{prefix} {text}")
+
     def _split_mixed_log_lines(self, text: str) -> list[str]:
         """分割混合的日志行
 
@@ -182,7 +204,7 @@ class OCRWorkerProcess:
             logger.warning(f"Worker {self.worker_id} 已在运行")
             return
 
-        logger.info(f"启动 Worker {self.worker_id}...")
+        logger.debug(f"启动 Worker {self.worker_id}...")
         start_time = time.time()
 
         def report_progress(stage: str):
@@ -191,7 +213,7 @@ class OCRWorkerProcess:
                 with contextlib.suppress(Exception):
                     progress_callback(stage, 0)  # 保留接口兼容，但不传递百分比
             else:
-                logger.info(f"[Worker {self.worker_id}] {stage}")
+                logger.debug(f"[Worker {self.worker_id}] {stage}")
 
         # 阶段1: 创建共享内存
         report_progress("创建共享内存")
@@ -269,15 +291,10 @@ class OCRWorkerProcess:
                                     # 过滤 PaddlePaddle 内部调试输出
                                     if text.startswith("return tensor("):
                                         continue
-                                    # 处理 PaddlePaddle warnings.warn() 没有换行的问题
-                                    # 如果行末是 warnings.warn( 或类似的未完成语句，
-                                    # 或者行首是日期时间格式但拼接在上一行末尾
                                     lines_to_log = self._split_mixed_log_lines(text)
                                     for log_line in lines_to_log:
                                         if log_line:
-                                            logger.info(
-                                                f"[Worker {self.worker_id}] {log_line}"
-                                            )
+                                            self._parse_and_forward_log(log_line)
                             except Exception:
                                 pass
                 except Exception as e:
@@ -294,7 +311,7 @@ class OCRWorkerProcess:
 
         # 阶段3: 等待 Worker 就绪
         report_progress("等待 Worker 初始化...")
-        logger.info(f"[主进程] 等待 Worker {self.worker_id} 就绪信号...")
+        logger.debug(f"[主进程] 等待 Worker {self.worker_id} 就绪信号...")
         wait_start_time = time.time()
         check_count = 0
         last_progress_time = wait_start_time
@@ -332,12 +349,12 @@ class OCRWorkerProcess:
                 msg_type, data = self.protocol.read_message(
                     timeout=1.0, expected_sender="worker"
                 )
-                logger.info(
+                logger.debug(
                     f"[主进程] 收到消息: type={msg_type.decode('ascii', errors='replace')}, data={data[:50] if data else b''}"
                 )
                 if msg_type == MSG_READY:
                     # 收到 Worker 的 READY 信号
-                    logger.info(f"[主进程] 收到 Worker {self.worker_id} READY 信号")
+                    logger.debug(f"[主进程] 收到 Worker {self.worker_id} READY 信号")
                     report_progress("Worker 就绪")
 
                     self._ready = True
@@ -415,27 +432,27 @@ class OCRWorkerProcess:
         # 检查 Worker 状态，必要时自动重启
         if not self.is_ready:
             if auto_restart and self._try_restart():
-                logger.info(f"[主进程] Worker {self.worker_id} 已自动重启")
+                logger.debug(f"[主进程] Worker {self.worker_id} 已自动重启")
             else:
                 raise OCRWorkerProcessError(f"Worker {self.worker_id} 未就绪")
 
         protocol = self.protocol
         assert protocol is not None  # guarded by is_ready check above
         self.busy = True
-        logger.info(
+        logger.debug(
             f"[主进程] Worker {self.worker_id} 开始识别，图像大小: {len(image_data)} 字节"
         )
 
         try:
             # 序列化并发送请求
             request_data = serialize_request(image_data, options_dict)
-            logger.info(
+            logger.debug(
                 f"[主进程] 发送识别请求到 Worker {self.worker_id}，数据大小: {len(request_data)} 字节"
             )
             protocol.write_message(
                 MSG_RECOGNIZE, request_data, timeout=timeout, sender="main"
             )
-            logger.info(
+            logger.debug(
                 f"[主进程] 请求已发送，等待 Worker {self.worker_id} 返回结果..."
             )
 
@@ -509,7 +526,7 @@ class OCRWorkerProcess:
                 self.shm_name = self.data_shm_name
 
                 self.start(timeout=timeout)
-                logger.info(f"[主进程] Worker {self.worker_id} 重启成功")
+                logger.debug(f"[主进程] Worker {self.worker_id} 重启成功")
                 return True
             except Exception as e:
                 logger.error(f"[主进程] Worker {self.worker_id} 重启失败: {e}")
@@ -580,7 +597,7 @@ class OCRWorkerProcess:
                     if "读取超时" in str(e):
                         # 每 5 秒报告一次进度
                         if time.time() - last_progress_time >= 5.0:
-                            logger.info(f"Worker {self.worker_id} 等待预加载响应中...")
+                            logger.debug(f"Worker {self.worker_id} 等待预加载响应中...")
                             if progress_callback:
                                 # 报告正在加载中
                                 with contextlib.suppress(Exception):
@@ -596,7 +613,7 @@ class OCRWorkerProcess:
                 if msg_type == MSG_PRELOAD_DONE:
                     # 反序列化结果
                     results = deserialize_preload_result(data)
-                    logger.info(f"Worker {self.worker_id} 预加载完成: {results}")
+                    logger.debug(f"Worker {self.worker_id} 预加载完成: {results}")
                     # 报告完成进度
                     if progress_callback:
                         with contextlib.suppress(Exception):
@@ -654,7 +671,7 @@ class OCRWorkerProcess:
 
         if uncached_pipelines:
             # 有模型未缓存，使用较长超时
-            logger.info(
+            logger.warning(
                 f"[预加载] 检测到未缓存模型: {uncached_pipelines}，"
                 f"使用延长超时（首次使用可能需要下载模型）"
             )
@@ -766,7 +783,7 @@ class OCRWorkerProcess:
             protocol.write_message(
                 MSG_BATCH_COMMIT, commit_data, timeout=timeout, sender="main"
             )
-            logger.info(f"Worker {self.worker_id} 批量提交请求已发送，等待结果...")
+            logger.debug(f"Worker {self.worker_id} 批量提交请求已发送，等待结果...")
 
             # 等待 Worker 消费请求，避免 read-own-write
             protocol.wait_for_read(timeout=timeout)
@@ -791,7 +808,7 @@ class OCRWorkerProcess:
                 if msg_type == MSG_BATCH_RESULT:
                     # 反序列化结果
                     results = deserialize_batch_result(data)
-                    logger.info(
+                    logger.debug(
                         f"Worker {self.worker_id} 批量处理完成，返回 {len(results)} 个结果"
                     )
                     return results
@@ -839,7 +856,7 @@ class OCRWorkerProcess:
             protocol.write_message(
                 MSG_BATCH_CANCEL, b"", timeout=timeout, sender="main"
             )
-            logger.info(f"Worker {self.worker_id} 批量取消请求已发送")
+            logger.debug(f"Worker {self.worker_id} 批量取消请求已发送")
 
             # 等待 Worker 消费请求，避免 read-own-write
             protocol.wait_for_read(timeout=timeout)
@@ -863,7 +880,7 @@ class OCRWorkerProcess:
         if self.process is None:
             return
 
-        logger.info(f"停止 Worker {self.worker_id}...")
+        logger.debug(f"停止 Worker {self.worker_id}...")
 
         # 尝试发送关闭信号
         if self.protocol and self.is_running:
@@ -889,7 +906,7 @@ class OCRWorkerProcess:
         self._ready = False
         self.busy = False
 
-        logger.info(f"Worker {self.worker_id} 已停止")
+        logger.debug(f"Worker {self.worker_id} 已停止")
 
     def restart(self, timeout: float = 60.0) -> None:
         """重启 Worker 进程
@@ -897,7 +914,7 @@ class OCRWorkerProcess:
         Args:
             timeout: 等待就绪的超时时间（秒）
         """
-        logger.info(f"重启 Worker {self.worker_id}...")
+        logger.debug(f"重启 Worker {self.worker_id}...")
         self.stop()
         self.start(timeout)
 
