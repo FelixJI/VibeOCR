@@ -355,8 +355,8 @@ class ScreenCaptureOverlay(QWidget):
         # 属性变更
         props = self._toolbar.properties_bar
         props.color_changed.connect(self._canvas.set_pen_color)
-        props.width_changed.connect(self._canvas.set_pen_width)
-        props.fill_changed.connect(self._canvas.set_fill_enabled)
+        props.line_width_changed.connect(self._canvas.set_pen_width)
+        props.fill_enabled_changed.connect(self._canvas.set_fill_enabled)
         props.font_changed.connect(self._canvas.set_font)
         props.font_size_changed.connect(self._canvas.set_font_size)
         props.bold_changed.connect(self._canvas.set_bold)
