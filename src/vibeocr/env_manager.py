@@ -552,9 +552,10 @@ def check_embedded_environment_dependencies(
         dependencies["torch"] = False
 
     # 3. 更新缓存
+    has_gpu, cuda_version = detect_gpu()
     hardware_info = {
-        "has_gpu": False,
-        "cuda_version": detect_cuda_version(),
+        "has_gpu": has_gpu,
+        "cuda_version": cuda_version,
     }
     create_cache_entry(project_root, dependencies, hardware_info)
 
@@ -728,9 +729,10 @@ def is_embedded_environment_ready(project_root: Path) -> tuple[bool, list[str]]:
             # 重新写入缓存
             for pkg, installed in verified.items():
                 deps[pkg] = installed
+            has_gpu, cuda_version = detect_gpu()
             hardware_info = {
-                "has_gpu": deps.get("is_gpu", False),
-                "cuda_version": detect_cuda_version(),
+                "has_gpu": has_gpu,
+                "cuda_version": cuda_version,
             }
             create_cache_entry(project_root, deps, hardware_info)
 
