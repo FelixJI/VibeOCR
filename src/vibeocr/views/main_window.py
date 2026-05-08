@@ -396,7 +396,7 @@ class MainWindow(QMainWindow):
             logging.debug("[MainWindow] 子进程 Worker 已就绪，跳过启动")
             return
 
-        logging.info("[MainWindow] 正在启动子进程 Worker...")
+        logging.debug("[MainWindow] 正在启动子进程 Worker...")
         self._statusbar.showMessage("正在启动 OCR 服务...")
 
         # 使用 SubprocessManager 启动
@@ -406,7 +406,7 @@ class MainWindow(QMainWindow):
     def _on_subprocess_worker_ready(self, success: bool) -> None:
         """子进程 Worker 就绪回调"""
         if success:
-            logging.info("[MainWindow] 子进程 Worker 已就绪")
+            logging.debug("[MainWindow] 子进程 Worker 已就绪")
             self._ensure_ocr_status_callback()
 
             # 服务注入
@@ -688,7 +688,12 @@ class MainWindow(QMainWindow):
             logging.debug("主窗口已最小化到系统托盘")
             return
 
-        logging.info("正在关闭应用程序...")
+        logging.debug("正在关闭应用程序...")
+
+        # 显式清理 QWebEngineView（避免退出时 QtWebEngine 渲染进程崩溃 0xC0000409）
+        for tab in (getattr(self, "_single_tab", None), getattr(self, "_batch_tab", None)):
+            if tab and hasattr(tab, "_result_widget") and tab._result_widget:
+                tab._result_widget.cleanup()
 
         # 关闭边缘工具栏
         if hasattr(self, "_edge_toolbar") and self._edge_toolbar:
@@ -734,7 +739,7 @@ class MainWindow(QMainWindow):
             logging.warning(f"关闭 MinerU API 服务失败: {e}")
 
         event.accept()
-        logging.info("应用程序已关闭")
+        logging.debug("应用程序已关闭")
 
     # ============================================================
     # 系统托盘与边缘工具栏集成

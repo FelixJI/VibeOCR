@@ -409,6 +409,21 @@ class ResultViewWidget(QWidget):
     def clear_highlight(self) -> None:
         self.highlight_block(-1)
 
+    def cleanup(self) -> None:
+        """显式销毁 QWebEngineView，避免进程退出时 QtWebEngine 崩溃。
+
+        QWebEngineView 的原生渲染进程在 Python 解释器关闭阶段析构会触发
+        STATUS_STACK_BUFFER_OVERRUN (0xC0000409)，必须在 Qt 事件循环
+        仍在运行时主动销毁。
+        """
+        if self._web_view is not None:
+            self._web_view.setHtml("")
+            self._web_view.page().deleteLater()
+            self._web_view.deleteLater()
+            self._web_view = None
+            self._channel = None
+            self._bridge = None
+
     def clear(self) -> None:
         self._current_result = None
         self._highlighted_index = -1
