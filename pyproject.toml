@@ -21,7 +21,7 @@ dependencies = [
     "nvidia-cuda-runtime>=13.2.75",
     "paddlex[ocr]>=3.4.3",
     "httpx>=0.28.1",
-    "mineru[core]>=3.1.5",
+    "mineru[core]>=3.1.7",
     "qrcode[pil]>=8.2",
     "python-barcode>=0.16.1",
     # 开发依赖
@@ -31,7 +31,7 @@ dependencies = [
     "ruff>=0.15.12",
     "pyright>=1.1.409",
     "pre-commit>=4.6.0",
-    "uv>=0.11.8",
+    "uv>=0.11.11",
 ]
 
 [build-system]
