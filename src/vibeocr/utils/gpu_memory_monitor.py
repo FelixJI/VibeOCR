@@ -42,7 +42,7 @@ class GPUMemoryMonitor:
             pynvml.nvmlInit()
             self._pynvml_available = True
             self._pynvml = pynvml
-            logger.info("pynvml 初始化成功，将使用 NVML 监控显存")
+            logger.debug("pynvml 初始化成功，将使用 NVML 监控显存")
         except Exception as e:
             logger.debug(f"pynvml 不可用: {e}")
 

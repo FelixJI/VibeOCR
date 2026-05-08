@@ -99,7 +99,7 @@ class OCRPreferences(QObject):
             batch_data = data.get("batch_options")
             if batch_data:
                 self._batch_options = OCROptions.from_dict(batch_data)
-            logger.info("OCR 选项已加载")
+            logger.debug("OCR 选项已加载")
 
     def get_options(self) -> OCROptions:
         """获取当前选项"""

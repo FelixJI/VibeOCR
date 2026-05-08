@@ -120,7 +120,7 @@ class OCRServiceSubprocess:
         )
 
         self._initialized = True
-        logger.info(
+        logger.debug(
             f"OCRServiceSubprocess 初始化: max_workers={max_workers}, use_gpu={use_gpu}"
         )
 
@@ -346,7 +346,7 @@ class OCRServiceSubprocess:
                 f"[识别] 管道 {pipeline_name} 模型已缓存，使用标准超时 ({TIMEOUT_CACHED}s)"
             )
             return TIMEOUT_CACHED
-        logger.info(
+        logger.warning(
             f"[识别] 管道 {pipeline_name} 模型未缓存，使用延长超时 ({TIMEOUT_UNCACHED}s)"
         )
         return TIMEOUT_UNCACHED
@@ -491,7 +491,7 @@ class OCRServiceSubprocess:
 
     def shutdown(self) -> None:
         """关闭所有 Worker"""
-        logger.info("关闭 OCRServiceSubprocess...")
+        logger.debug("关闭 OCRServiceSubprocess...")
 
         # 标记为已关闭，防止自动重启
         self._initialized = False

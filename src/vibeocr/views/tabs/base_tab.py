@@ -58,7 +58,7 @@ class BaseOcrTab(QWidget):
             service: OCR 服务实例
         """
         self._ocr_service = service
-        logger.info(
+        logger.debug(
             f"[{self.__class__.__name__}] OCR 服务已设置: {service is not None}"
         )
 

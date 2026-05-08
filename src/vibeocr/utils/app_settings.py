@@ -81,7 +81,7 @@ class AppSettings:
             self._data["show_toolbar"] = old_auto_hide
             self._data["auto_hide_toolbar"] = True
 
-        logger.info("应用设置已加载")
+        logger.debug("应用设置已加载")
 
     def save(self) -> bool:
         """保存配置到文件（合并写入，保留其他模块写入的同文件键）"""

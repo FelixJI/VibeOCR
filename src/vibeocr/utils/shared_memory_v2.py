@@ -170,7 +170,7 @@ class SharedMemoryProtocolV2:
             # 所以我们使用简单的状态标志在共享内存中
             self._init_state_flags()
 
-            logger.info(
+            logger.debug(
                 f"创建共享内存: {self.config.name}, 大小: {self.config.size} 字节"
             )
         except FileExistsError:
@@ -193,7 +193,7 @@ class SharedMemoryProtocolV2:
         """
         self.shm = shared_memory.SharedMemory(name=self.config.name)
         self._is_creator = False
-        logger.info(f"连接共享内存: {self.config.name}")
+        logger.debug(f"连接共享内存: {self.config.name}")
 
     def _set_data_ready(self, ready: bool) -> None:
         """设置数据就绪标志"""
@@ -414,7 +414,7 @@ class SharedMemoryProtocolV2:
         if self._is_creator and self.shm is not None:
             try:
                 self.shm.unlink()
-                logger.info(f"删除共享内存: {self.config.name}")
+                logger.debug(f"删除共享内存: {self.config.name}")
             except Exception as e:
                 logger.warning(f"删除共享内存失败: {e}")
         self._is_creator = False

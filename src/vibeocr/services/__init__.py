@@ -55,24 +55,17 @@ def get_ocr_service(skip_auto_start: bool = False):
         OCRService 或 OCRServiceSubprocess 实例
     """
     if _should_use_subprocess():
-        _logger.info("使用子进程 OCR 服务")
         from .ocr_service_subprocess import OCRServiceSubprocess
 
-        # 检查单例状态
         if OCRServiceSubprocess._instance is not None:
-            _logger.info(
-                f"[get_ocr_service] 单例已存在, _initialized={OCRServiceSubprocess._instance._initialized}"
-            )
             if OCRServiceSubprocess._instance._initialized:
-                _logger.debug("[get_ocr_service] 返回现有实例")
+                _logger.debug("[get_ocr_service] 返回现有子进程实例")
                 return OCRServiceSubprocess._instance
-        else:
-            _logger.debug("[get_ocr_service] 单例不存在，将创建新实例")
         _logger.info(
-            f"[get_ocr_service] 创建 OCRServiceSubprocess, auto_start={not skip_auto_start}"
+            f"创建子进程 OCR 服务, auto_start={not skip_auto_start}"
         )
         return OCRServiceSubprocess(auto_start=not skip_auto_start)
-    _logger.info("使用直接 OCR 服务")
+    _logger.debug("使用直接 OCR 服务")
     if _should_use_portable():
         from .ocr_service_portable import OCRService
     else:

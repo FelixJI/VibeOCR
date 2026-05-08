@@ -45,7 +45,7 @@ class DependencyCheckTask(QRunnable):
         ready, missing = env_manager.is_embedded_environment_ready(self._project_root)
 
         if ready:
-            logging.info("[依赖检查] OCR依赖已就绪")
+            logging.debug("[依赖检查] OCR依赖已就绪")
         else:
             logging.warning(f"[依赖检查] OCR依赖缺失: {missing}")
 

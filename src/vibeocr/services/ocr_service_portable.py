@@ -57,9 +57,9 @@ class OCRServicePortable:
         self.path_manager.setup_sys_path()
 
         # 记录环境信息
-        _logger.info(f"OCR 服务初始化，Python 模式: {self.path_manager.mode}")
+        _logger.debug(f"OCR 服务初始化，Python 模式: {self.path_manager.mode}")
         if self.path_manager.ocr_lib_path:
-            _logger.info(f"OCR 库路径: {self.path_manager.ocr_lib_path}")
+            _logger.debug(f"OCR 库路径: {self.path_manager.ocr_lib_path}")
 
     def _import_paddlex(self):
         """导入 PaddleX（延迟导入）"""
@@ -142,7 +142,7 @@ class OCRServicePortable:
                 pp_option=pp_option,
             )
 
-        _logger.info(f"OCR 流水线创建成功，设备: cpu, 线程: {cpu_threads}")
+        _logger.debug(f"OCR 流水线创建成功，设备: cpu, 线程: {cpu_threads}")
         return pipeline
 
     @property

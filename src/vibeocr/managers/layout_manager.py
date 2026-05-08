@@ -64,7 +64,7 @@ class LayoutManager:
             import json
 
             if not self._config_path.exists():
-                logger.info("布局配置文件不存在，使用默认值")
+                logger.debug("布局配置文件不存在，使用默认值")
                 return
             try:
                 with open(self._config_path, encoding="utf-8") as f:
@@ -74,7 +74,7 @@ class LayoutManager:
                 return
 
         if not data:
-            logger.info("布局配置文件不存在，使用默认值")
+            logger.debug("布局配置文件不存在，使用默认值")
             return
 
         # 检查版本
@@ -99,7 +99,7 @@ class LayoutManager:
         for splitter_id, state_b64 in splitters.items():
             self._splitters[splitter_id] = QByteArray(base64.b64decode(state_b64))
 
-        logger.info("布局配置已加载")
+        logger.debug("布局配置已加载")
 
     def save(self) -> None:
         """保存配置文件"""
@@ -128,7 +128,7 @@ class LayoutManager:
 
         if self._cm is not None:
             self._cm._save_json(self.CONFIG_FILENAME, data)
-            logger.info("布局配置已保存")
+            logger.debug("布局配置已保存")
         else:
             import json
 
@@ -136,7 +136,7 @@ class LayoutManager:
             try:
                 with open(self._config_path, "w", encoding="utf-8") as f:
                     json.dump(data, f, ensure_ascii=False, indent=2)
-                logger.info("布局配置已保存")
+                logger.debug("布局配置已保存")
             except Exception as e:
                 logger.error(f"保存布局配置失败: {e}")
 

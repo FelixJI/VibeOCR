@@ -112,7 +112,7 @@ class BatchQueueManager:
         """清空队列"""
         with self._lock:
             self._queue.clear()
-        logger.info("批量队列已清空")
+        logger.debug("批量队列已清空")
 
     def get_queue_size(self) -> int:
         """获取队列大小"""
@@ -122,7 +122,7 @@ class BatchQueueManager:
     def cancel(self):
         """取消当前处理"""
         self._cancelled = True
-        logger.info("批量处理已取消")
+        logger.debug("批量处理已取消")
 
     def commit(self, preprocess_options: PreprocessOptions) -> dict[str, object]:
         """提交并执行批量处理
@@ -145,7 +145,7 @@ class BatchQueueManager:
             ]
 
         if not pending_requests:
-            logger.info("没有待处理的请求")
+            logger.debug("没有待处理的请求")
             return results
 
         total = len(pending_requests)
@@ -168,7 +168,7 @@ class BatchQueueManager:
             batch_end = min(batch_start + batch_size, total)
             batch_requests = pending_requests[batch_start:batch_end]
 
-            logger.info(
+            logger.debug(
                 f"处理批次: {batch_start + 1}-{batch_end}/{total}, batch_size={len(batch_requests)}"
             )
 

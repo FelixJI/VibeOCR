@@ -187,7 +187,7 @@ class SingleRecognitionTab(BaseOcrTab):
 
     def _check_ocr_ready(self) -> bool:
         if self._ocr_service is None and self._paddlex_service is None:
-            logger.warning("OCR 服务未就绪")
+            logger.debug("OCR 服务未就绪")
             return False
         return True
 

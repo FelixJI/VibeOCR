@@ -30,7 +30,7 @@ def create_qasync_event_loop(app) -> asyncio.AbstractEventLoop:
 
         loop = qasync.QEventLoop(app)
         asyncio.set_event_loop(loop)
-        logger.info("qasync 事件循环已创建")
+        logger.debug("qasync 事件循环已创建")
         return loop
     except ImportError:
         logger.warning("qasync 未安装，使用标准 asyncio 事件循环")

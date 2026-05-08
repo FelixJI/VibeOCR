@@ -225,7 +225,7 @@ class OCRService(metaclass=SingletonMeta):
                 return True
 
         try:
-            _logger.info(f"[预加载] 开始加载管道: {pipeline.display_name}")
+            _logger.debug(f"[预加载] 开始加载管道: {pipeline.display_name}")
             instance = cls()
             instance.get_pipeline(pipeline)
 
@@ -233,7 +233,7 @@ class OCRService(metaclass=SingletonMeta):
             with cls._preload_lock:
                 cls._preloaded_pipelines.add(pipeline_name)
 
-            _logger.info(f"[预加载] 管道加载完成: {pipeline.display_name}")
+            _logger.debug(f"[预加载] 管道加载完成: {pipeline.display_name}")
             return True
         except Exception as e:
             _logger.error(f"[预加载] 管道加载失败 {pipeline.display_name}: {e}")
@@ -275,7 +275,7 @@ class OCRService(metaclass=SingletonMeta):
                 if cls._preload_progress_callback:
                     cls._preload_progress_callback(pipeline_name, i, total)
 
-                _logger.info(f"[预加载] ({i}/{total}) 加载 {display_name}...")
+                _logger.debug(f"[预加载] ({i}/{total}) 加载 {display_name}...")
                 results[pipeline_name] = cls.preload_pipeline(pipeline)
 
             # 汇总结果
@@ -313,7 +313,7 @@ class OCRService(metaclass=SingletonMeta):
         pipeline_name = pipeline.value
 
         try:
-            _logger.info(f"[预热] 开始使用测试图片预热管道: {pipeline_name}")
+            _logger.debug(f"[预热] 开始使用测试图片预热管道: {pipeline_name}")
             if progress_callback:
                 progress_callback("准备测试图片", 10)
 
@@ -335,7 +335,7 @@ class OCRService(metaclass=SingletonMeta):
             if progress_callback:
                 progress_callback("预热完成", 100)
 
-            _logger.info(f"[预热] 管道 {pipeline_name} 预热成功")
+            _logger.debug(f"[预热] 管道 {pipeline_name} 预热成功")
             return True
 
         except Exception as e:
@@ -360,7 +360,7 @@ class OCRService(metaclass=SingletonMeta):
         results = {}
         total = len(pipelines)
 
-        _logger.info(f"[预热] 开始批量预热 {total} 个管道")
+        _logger.debug(f"[预热] 开始批量预热 {total} 个管道")
 
         for i, pipeline in enumerate(pipelines, 1):
             pipeline_name = pipeline.value
@@ -372,7 +372,7 @@ class OCRService(metaclass=SingletonMeta):
                     overall_percent = int(((idx - 1) * 100 + percent) / total_count)
                     progress_callback(name, idx, overall_percent)
 
-            _logger.info(f"[预热] ({i}/{total}) 预热 {pipeline.display_name}...")
+            _logger.debug(f"[预热] ({i}/{total}) 预热 {pipeline.display_name}...")
             results[pipeline_name] = cls.warmup_with_test_image(pipeline, make_progress)
 
         success_count = sum(1 for v in results.values() if v)
@@ -975,7 +975,7 @@ class OCRService(metaclass=SingletonMeta):
                 continue
 
         raw_text = "\n".join(t for t, _ in text_with_scores)
-        _logger.info(
+        _logger.debug(
             f"[_process_ocr_output_safe] 处理完成: 共 {result_count} 个结果项, {len(text_with_scores)} 个文本块"
         )
 

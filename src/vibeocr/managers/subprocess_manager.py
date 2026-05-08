@@ -73,7 +73,7 @@ class SubprocessStartTask(QRunnable):
 
             if not self._cancelled:
                 self.signals.started.emit(True)
-                logger.info("[SubprocessManager] 子进程启动成功")
+                logger.debug("[SubprocessManager] 子进程启动成功")
             else:
                 # 取消后关闭服务
                 if self.service:
@@ -111,7 +111,7 @@ class PreloadTask(QRunnable):
         try:
             results = self._service.preload_pipelines(self._pipelines)
             success_count = sum(1 for v in results.values() if v)
-            logger.info(
+            logger.debug(
                 f"[SubprocessManager] 预加载完成: {success_count}/{len(results)} 个管道"
             )
 
@@ -125,7 +125,7 @@ class PreloadTask(QRunnable):
                         succeeded_pipelines
                     )
                     warmup_ok = sum(1 for v in warmup_results.values() if v)
-                    logger.info(
+                    logger.debug(
                         f"[SubprocessManager] 预热完成: {warmup_ok}/{len(succeeded_pipelines)} 个管道"
                     )
                     # 预热失败的管道仍标记预加载成功（管道已加载，仅 CUDA 初始化未完成）
@@ -198,7 +198,7 @@ class SubprocessManager(QObject):
             logger.debug("[SubprocessManager] 正在启动中，跳过重复启动")
             return
 
-        logger.info("[SubprocessManager] 正在启动子进程服务...")
+        logger.debug("[SubprocessManager] 正在启动子进程服务...")
 
         self._start_task = SubprocessStartTask(
             self._project_root,
@@ -244,7 +244,7 @@ class SubprocessManager(QObject):
             logger.debug("[SubprocessManager] 未配置预加载管道")
             return
 
-        logger.info(f"[SubprocessManager] 开始预加载管道: {pipelines}")
+        logger.debug(f"[SubprocessManager] 开始预加载管道: {pipelines}")
 
         self._preload_task = PreloadTask(self._service, pipelines)
         self._preload_task.signals.finished.connect(self._on_preload_done)

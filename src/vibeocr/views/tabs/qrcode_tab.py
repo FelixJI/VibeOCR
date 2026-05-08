@@ -416,7 +416,7 @@ class QrcodeTab(QWidget):
 
         pixmap = _pil_to_qpixmap(self._current_image)
         QGuiApplication.clipboard().setPixmap(pixmap)
-        logger.info("二维码已复制到剪贴板")
+        logger.debug("二维码已复制到剪贴板")
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)

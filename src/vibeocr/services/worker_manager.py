@@ -180,7 +180,7 @@ class WorkerManager:
                         info.state = WorkerState.IDLE
                         info.last_active = time.time()
                         report_progress(f"Worker {i} 就绪")
-                        logger.info(f"Worker {i} 启动成功")
+                        logger.debug(f"Worker {i} 启动成功")
                     except Exception as e:
                         info.state = WorkerState.ERROR
                         info.last_error = str(e)

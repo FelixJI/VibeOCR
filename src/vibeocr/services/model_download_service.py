@@ -111,7 +111,7 @@ def _download_paddlex_pipeline(
             cmd, timeout, cancel_event,
         )
         if returncode == -1 and stderr == "cancelled":
-            logger.info(f"[模型下载] PaddleX 管道 {pipeline_name} 已取消")
+            logger.debug(f"[模型下载] PaddleX 管道 {pipeline_name} 已取消")
             return False
         if returncode == -1 and stderr == "timeout":
             logger.error(f"[模型下载] PaddleX 管道 {pipeline_name} 下载超时 ({timeout}s)")
@@ -145,7 +145,7 @@ def _download_mineru_models(
             cancel_event,
         )
         if returncode == -1 and stderr == "cancelled":
-            logger.info("[模型下载] MinerU 模型下载已取消")
+            logger.debug("[模型下载] MinerU 模型下载已取消")
             return False
         if returncode == -1 and stderr == "timeout":
             logger.error(f"[模型下载] MinerU 模型下载超时 ({timeout}s)")
