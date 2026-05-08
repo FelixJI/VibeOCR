@@ -41,6 +41,7 @@ class QrcodeService:
 
     def _generate_qr(self, text: str, options: dict) -> Image.Image:
         import qrcode
+        from PIL import ImageColor
 
         ec_level = QR_ERROR_CORRECTION_MAP.get(
             options.get("error_correction", "M"), 0
@@ -55,8 +56,9 @@ class QrcodeService:
         qr_temp.make(fit=True)
         total_modules = qr_temp.modules_count + 8  # modules + 4 border * 2
 
-        # 根据 target_size 计算 box_size，使模块像素尽量匹配目标尺寸
+        # box_size 取整确保每个模块像素对齐，actual_size <= target_size
         box_size = max(1, target_size // total_modules)
+        actual_size = box_size * total_modules
 
         qr = qrcode.QRCode(
             version=None,
@@ -73,9 +75,16 @@ class QrcodeService:
         if not isinstance(img, Image.Image):
             img = img.get_image()
 
-        # NEAREST 保持黑白方块锐利，不做抗锯齿
-        img = img.resize((target_size, target_size), Image.Resampling.NEAREST)
-        return img.convert("RGB")
+        img = img.convert("RGB")
+
+        # 居中粘贴到 target_size 画布，避免非整数缩放导致模块错位倾斜
+        if actual_size < target_size:
+            bg_rgb = ImageColor.getrgb(bg_color)
+            canvas = Image.new("RGB", (target_size, target_size), bg_rgb)
+            offset = (target_size - actual_size) // 2
+            canvas.paste(img, (offset, offset))
+            return canvas
+        return img
 
     def _generate_barcode(self, text: str, options: dict) -> Image.Image:
         import barcode
@@ -120,13 +129,45 @@ class QrcodeService:
         image.paste(logo, (pos_x, pos_y), logo)
         return image.convert("RGB")
 
+    @staticmethod
+    def _load_font(size: int):
+        import os
+        import sys
+
+        from PIL import ImageFont
+
+        if sys.platform == "win32":
+            candidates = [
+                "C:/Windows/Fonts/msyh.ttc",
+                "C:/Windows/Fonts/segoeui.ttf",
+                "C:/Windows/Fonts/arial.ttf",
+            ]
+        elif sys.platform == "darwin":
+            candidates = [
+                "/System/Library/Fonts/PingFang.ttc",
+                "/System/Library/Fonts/Helvetica.ttc",
+            ]
+        else:
+            candidates = [
+                "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            ]
+
+        for path in candidates:
+            if os.path.isfile(path):
+                try:
+                    return ImageFont.truetype(path, size)
+                except Exception:
+                    continue
+        return ImageFont.load_default(size=size)
+
     def apply_text_label(self, image: Image.Image, text: str, position: str = "bottom", font_size: int = 12) -> Image.Image:
         if position == "none" or not text:
             return image
 
-        from PIL import ImageDraw, ImageFont
+        from PIL import ImageDraw
 
-        font = ImageFont.load_default(size=font_size)
+        font = self._load_font(font_size)
         dummy = Image.new("RGB", (1, 1))
         draw = ImageDraw.Draw(dummy)
         bbox = draw.textbbox((0, 0), text, font=font)
