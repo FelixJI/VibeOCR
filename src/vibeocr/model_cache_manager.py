@@ -262,7 +262,7 @@ def load_model_cache(project_root: Path | None = None) -> dict | None:
             cache = json.load(f)
 
         if cache.get("version") != CACHE_VERSION:
-            _logger.info("模型缓存版本不匹配，将重新扫描")
+            _logger.debug("模型缓存版本不匹配，将重新扫描")
             return None
 
         return cache
@@ -298,7 +298,7 @@ def save_model_cache(
         with open(cache_file, "w", encoding="utf-8") as f:
             json.dump(cache, f, ensure_ascii=False, indent=2)
 
-        _logger.info(f"模型缓存已保存到: {cache_file}")
+        _logger.debug(f"模型缓存已保存到: {cache_file}")
         return True
     except Exception as e:
         _logger.error(f"保存模型缓存失败: {e}")
@@ -316,7 +316,7 @@ def is_pipeline_cached(pipeline_name: str, project_root: Path | None = None) -> 
             if is_ready:
                 _logger.debug(f"管道 {pipeline_name} 模型已从缓存确认")
                 return True
-            _logger.info(f"管道 {pipeline_name} 缓存过期，模型不存在")
+            _logger.debug(f"管道 {pipeline_name} 缓存过期，模型不存在")
             return False
 
     is_ready, missing = _check_pipeline_models_ready(pipeline_name)
@@ -324,9 +324,9 @@ def is_pipeline_cached(pipeline_name: str, project_root: Path | None = None) -> 
     if is_ready:
         current_status = check_models_cached()
         save_model_cache(project_root, current_status)
-        _logger.info(f"管道 {pipeline_name} 模型已就绪并缓存")
+        _logger.debug(f"管道 {pipeline_name} 模型已就绪并缓存")
     else:
-        _logger.info(f"管道 {pipeline_name} 模型未就绪，缺失: {missing}")
+        _logger.debug(f"管道 {pipeline_name} 模型未就绪，缺失: {missing}")
 
     return is_ready
 
@@ -356,7 +356,7 @@ def invalidate_cache(project_root: Path | None = None) -> bool:
         cache_file = get_model_cache_path(project_root)
         if cache_file.exists():
             cache_file.unlink()
-            _logger.info("模型缓存已清除")
+            _logger.debug("模型缓存已清除")
         return True
     except Exception as e:
         _logger.error(f"清除模型缓存失败: {e}")

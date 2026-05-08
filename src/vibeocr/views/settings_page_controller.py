@@ -122,7 +122,7 @@ class SettingsPageController:
         preload_options = self._ui.findChild(QWidget, "preloadOptions")
         if preload_options:
             preload_options.setEnabled(checked)
-        logger.info(f"[设置] 预加载功能: {'启用' if checked else '禁用'}")
+        logger.debug(f"[设置] 预加载功能: {'启用' if checked else '禁用'}")
 
     def _on_preload_now_clicked(self) -> None:
         """立即预加载按钮点击"""
@@ -153,7 +153,7 @@ class SettingsPageController:
             progress_bar.setMaximum(len(pipelines_to_preload) * 2)
 
         pipeline_names = [p.display_name for p in pipelines_to_preload]
-        logger.info(f"[预加载] 开始预加载和预热管道: {pipeline_names}")
+        logger.debug(f"[预加载] 开始预加载和预热管道: {pipeline_names}")
 
         self._update_preload_status("正在预加载和预热模型...")
         self._manual_preload_total = len(pipelines_to_preload)
@@ -187,7 +187,7 @@ class SettingsPageController:
         pipeline_names = [p.value for p in pipelines]
 
         if ConfigManager.instance().set_preload_pipelines(pipeline_names):
-            logger.info(f"[设置] 预加载管道配置已保存: {pipeline_names}")
+            logger.debug(f"[设置] 预加载管道配置已保存: {pipeline_names}")
         else:
             logger.error("[设置] 保存预加载管道配置失败")
 
@@ -217,17 +217,17 @@ class SettingsPageController:
                         self.signals.status_changed.emit(
                             f"正在预加载 {pipeline.display_name}..."
                         )
-                        logger.info(f"[预加载] 正在预加载 {pipeline.display_name}...")
+                        logger.debug(f"[预加载] 正在预加载 {pipeline.display_name}...")
                         self._service.preload_pipeline(pipeline)
                         results[pipeline.name] = True
-                        logger.info(f"[预加载] {pipeline.display_name} 预加载成功!")
+                        logger.debug(f"[预加载] {pipeline.display_name} 预加载成功!")
 
                         self.signals.status_changed.emit(
                             f"正在预热 {pipeline.display_name}..."
                         )
-                        logger.info(f"[预热] 正在预热 {pipeline.display_name}...")
+                        logger.debug(f"[预热] 正在预热 {pipeline.display_name}...")
                         if self._warmup_pipeline(pipeline):
-                            logger.info(f"[预热] {pipeline.display_name} 预热成功!")
+                            logger.debug(f"[预热] {pipeline.display_name} 预热成功!")
                     except Exception as e:
                         logger.error(f"预加载 {pipeline.name} 失败: {e}")
                         results[pipeline.name] = False
@@ -236,7 +236,7 @@ class SettingsPageController:
                 total = len(results)
                 if success_count == total:
                     self.signals.status_changed.emit("预加载成功")
-                    logger.info(f"[预加载] 全部完成! 成功: {success_count}/{total}")
+                    logger.debug(f"[预加载] 全部完成! 成功: {success_count}/{total}")
                 elif success_count > 0:
                     self.signals.status_changed.emit(
                         f"预加载部分成功 ({success_count}/{total})"
@@ -292,7 +292,7 @@ class SettingsPageController:
 
         success_count = sum(1 for v in results.values() if v)
         total = len(results)
-        logger.info(f"[预加载] 完成: {success_count}/{total}")
+        logger.debug(f"[预加载] 完成: {success_count}/{total}")
 
     def _update_preload_status(self, status: str | None = None) -> None:
         """更新预加载状态"""
@@ -319,7 +319,7 @@ class SettingsPageController:
         refresh_cache(self._project_root)
         update_model_cache()
         self._update_cache_status("缓存已刷新")
-        logger.info("[缓存] 已刷新（依赖缓存 + 模型缓存）")
+        logger.debug("[缓存] 已刷新（依赖缓存 + 模型缓存）")
 
     def _on_clear_cache_clicked(self) -> None:
         """清除缓存按钮点击"""
@@ -336,7 +336,7 @@ class SettingsPageController:
         if reply == QMessageBox.Yes:
             clear_cache(self._project_root)
             self._update_cache_status("缓存已清除")
-            logger.info("[缓存] 已清除")
+            logger.debug("[缓存] 已清除")
 
     def _update_cache_status(self, status: str | None = None) -> None:
         """更新缓存状态"""

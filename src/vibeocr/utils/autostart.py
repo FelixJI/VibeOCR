@@ -78,14 +78,14 @@ def _win32_set(enabled: bool) -> bool:
             winreg.HKEY_CURRENT_USER, _WIN_REG_KEY, 0, winreg.KEY_SET_VALUE
         ) as key:
             winreg.SetValueEx(key, _WIN_APP_NAME, 0, winreg.REG_SZ, exe_path)
-        logger.info(f"已添加开机自启注册表项: {exe_path}")
+        logger.debug(f"已添加开机自启注册表项: {exe_path}")
     else:
         try:
             with winreg.OpenKey(
                 winreg.HKEY_CURRENT_USER, _WIN_REG_KEY, 0, winreg.KEY_SET_VALUE
             ) as key:
                 winreg.DeleteValue(key, _WIN_APP_NAME)
-            logger.info("已移除开机自启注册表项")
+            logger.debug("已移除开机自启注册表项")
         except FileNotFoundError:
             pass  # 本来就没有，忽略
     return True
@@ -135,11 +135,11 @@ def _macos_set(enabled: bool) -> bool:
 """
         plist_path.parent.mkdir(parents=True, exist_ok=True)
         plist_path.write_text(plist_content, encoding="utf-8")
-        logger.info(f"已创建 macOS LaunchAgent: {plist_path}")
+        logger.debug(f"已创建 macOS LaunchAgent: {plist_path}")
     else:
         if plist_path.exists():
             plist_path.unlink()
-            logger.info(f"已移除 macOS LaunchAgent: {plist_path}")
+            logger.debug(f"已移除 macOS LaunchAgent: {plist_path}")
     return True
 
 
@@ -173,9 +173,9 @@ Comment=VibeOCR OCR Tool
 """
         desktop_path.parent.mkdir(parents=True, exist_ok=True)
         desktop_path.write_text(desktop_content, encoding="utf-8")
-        logger.info(f"已创建 Linux autostart: {desktop_path}")
+        logger.debug(f"已创建 Linux autostart: {desktop_path}")
     else:
         if desktop_path.exists():
             desktop_path.unlink()
-            logger.info(f"已移除 Linux autostart: {desktop_path}")
+            logger.debug(f"已移除 Linux autostart: {desktop_path}")
     return True

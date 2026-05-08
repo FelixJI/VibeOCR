@@ -56,7 +56,7 @@ class SubprocessStartTask(QRunnable):
     def run(self) -> None:
         """启动子进程服务"""
         if self._cancelled:
-            logger.info("[SubprocessManager] 任务已取消")
+            logger.debug("[SubprocessManager] 任务已取消")
             return
 
         try:
@@ -78,7 +78,7 @@ class SubprocessStartTask(QRunnable):
                 # 取消后关闭服务
                 if self.service:
                     self.service.shutdown()
-                logger.info("[SubprocessManager] 启动成功但任务已取消，服务已关闭")
+                logger.debug("[SubprocessManager] 启动成功但任务已取消，服务已关闭")
 
         except Exception as e:
             error_msg = str(e)
@@ -191,11 +191,11 @@ class SubprocessManager(QObject):
             start_timeout: 启动超时时间（秒）
         """
         if self._is_ready:
-            logger.info("[SubprocessManager] 服务已就绪，跳过启动")
+            logger.debug("[SubprocessManager] 服务已就绪，跳过启动")
             return
 
         if self._start_task is not None:
-            logger.info("[SubprocessManager] 正在启动中，跳过重复启动")
+            logger.debug("[SubprocessManager] 正在启动中，跳过重复启动")
             return
 
         logger.info("[SubprocessManager] 正在启动子进程服务...")
@@ -241,7 +241,7 @@ class SubprocessManager(QObject):
             return
 
         if not pipelines:
-            logger.info("[SubprocessManager] 未配置预加载管道")
+            logger.debug("[SubprocessManager] 未配置预加载管道")
             return
 
         logger.info(f"[SubprocessManager] 开始预加载管道: {pipelines}")
@@ -264,7 +264,7 @@ class SubprocessManager(QObject):
         Returns:
             是否成功关闭
         """
-        logger.info("[SubprocessManager] 正在关闭子进程服务...")
+        logger.debug("[SubprocessManager] 正在关闭子进程服务...")
 
         # 取消正在进行的启动任务并断开信号
         if self._start_task is not None:
@@ -290,7 +290,7 @@ class SubprocessManager(QObject):
         if self._service:
             try:
                 self._service.shutdown()
-                logger.info("[SubprocessManager] 子进程服务已关闭")
+                logger.debug("[SubprocessManager] 子进程服务已关闭")
             except Exception as e:
                 logger.error(f"[SubprocessManager] 关闭服务失败: {e}")
 

@@ -68,7 +68,7 @@ def warmup_with_test_image(ocr_service, pipeline: str | None = None) -> bool:
     try:
         from vibeocr.services.ocr_service import OCROptions, OCRPipeline
 
-        _logger.info("开始预热 OCR 服务...")
+        _logger.debug("开始预热 OCR 服务...")
         start_time = time.time()
 
         # 获取测试图片
@@ -86,7 +86,7 @@ def warmup_with_test_image(ocr_service, pipeline: str | None = None) -> bool:
         ocr_service.recognize(test_image, options)
 
         elapsed = time.time() - start_time
-        _logger.info(f"预热完成，耗时: {elapsed:.2f}秒")
+        _logger.debug(f"预热完成，耗时: {elapsed:.2f}秒")
         return True
 
     except Exception as e:
@@ -108,7 +108,7 @@ def warmup_worker_process(
         预热是否成功
     """
     try:
-        _logger.info(f"开始预热 Worker {worker_process.worker_id}...")
+        _logger.debug(f"开始预热 Worker {worker_process.worker_id}...")
         start_time = time.time()
 
         # 获取测试图片数据
@@ -124,7 +124,7 @@ def warmup_worker_process(
         worker_process.recognize(test_image, options_dict, timeout=timeout)
 
         elapsed = time.time() - start_time
-        _logger.info(
+        _logger.debug(
             f"Worker {worker_process.worker_id} 预热完成，耗时: {elapsed:.2f}秒"
         )
         return True

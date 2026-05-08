@@ -202,7 +202,7 @@ class PythonPathManager:
         ocr_path = self.ocr_lib_path
 
         if ocr_path is None:
-            _logger.info("使用系统 Python 路径，无需修改 sys.path")
+            _logger.debug("使用系统 Python 路径，无需修改 sys.path")
             return True
 
         # 检查是否已在路径中
@@ -213,7 +213,7 @@ class PythonPathManager:
 
         # 添加到 sys.path 的最前面
         sys.path.insert(0, ocr_path_str)
-        _logger.info(f"已添加 OCR 库路径到 sys.path: {ocr_path}")
+        _logger.debug(f"已添加 OCR 库路径到 sys.path: {ocr_path}")
         _logger.debug(f"sys.path 前 3 项: {sys.path[:3]}")
 
         return True
@@ -347,9 +347,9 @@ def _auto_init():
     manager.setup_sys_path()
 
     # 记录日志
-    _logger.info(f"Python 路径管理器初始化完成，模式: {manager.mode}")
+    _logger.debug(f"Python 路径管理器初始化完成，模式: {manager.mode}")
     if manager.ocr_lib_path:
-        _logger.info(f"OCR 库路径: {manager.ocr_lib_path}")
+        _logger.debug(f"OCR 库路径: {manager.ocr_lib_path}")
 
 
 # 延迟初始化，避免在某些情况下（如文档生成）执行

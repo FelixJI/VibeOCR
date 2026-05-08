@@ -35,11 +35,11 @@ class DependencyCheckTask(QRunnable):
         """
         # 记录环境模式
         mode = env_manager.get_environment_mode(self._project_root)
-        logging.info(f"[依赖检查] 环境模式: {mode}")
+        logging.debug(f"[依赖检查] 环境模式: {mode}")
 
         # 获取目标Python路径
         python_exe = env_manager.get_embedded_python_executable(self._project_root)
-        logging.info(f"[依赖检查] 目标Python: {python_exe}")
+        logging.debug(f"[依赖检查] 目标Python: {python_exe}")
 
         # 使用统一的依赖检查接口
         ready, missing = env_manager.is_embedded_environment_ready(self._project_root)
