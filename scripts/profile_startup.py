@@ -1,255 +1,189 @@
-"""启动时间分析脚本
+"""VibeOCR 启动耗时分析脚本
 
-用法: python scripts/profile_startup.py
+运行方式: python -m scripts.profile_startup
+输出: 控制台表格 + logs/startup_profile.log
+
+采集三层耗时:
+1. Import 层 — 重量级模块导入时间
+2. 初始化层 — MainWindow 各阶段
+3. 渲染层 — window.show() 到实际可见
 """
 
 import os
 import sys
 import time
-from contextlib import contextmanager
 from pathlib import Path
 
-# 添加项目路径
-project_root = Path(__file__).parent.parent
-src_path = project_root / "src"
-sys.path.insert(0, str(src_path))
-
-# 设置环境变量
+# 环境变量（与 main.py 一致）
+os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
+os.environ.setdefault("FLAGS_enable_onednn_backend", "0")
+os.environ.setdefault("FLAGS_use_mkldnn", "0")
 os.environ.setdefault("PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK", "True")
 
-# 全局计时器
-_timings: list[tuple[str, float, float]] = []
-_start_time = time.perf_counter()
+# 确保 src 目录在路径中
+src_path = Path(__file__).resolve().parent.parent / "src"
+if str(src_path) not in sys.path:
+    sys.path.insert(0, str(src_path))
+
+# 日志输出目录
+LOG_DIR = Path(__file__).resolve().parent.parent / "logs"
+LOG_DIR.mkdir(exist_ok=True)
 
 
-def mark(stage: str) -> None:
-    """记录一个时间点"""
-    elapsed = time.perf_counter() - _start_time
-    _timings.append((stage, elapsed, 0))
-    print(f"[启动分析] {stage}: {elapsed:.3f}s")
+class ImportProfiler:
+    """采集模块导入耗时"""
+
+    def __init__(self):
+        self._import_times: dict[str, float] = {}
+        self._original_import = None
+
+    def start(self):
+        self._original_import = __builtins__.__import__
+        __builtins__.__import__ = self._timing_import
+
+    def stop(self):
+        if self._original_import:
+            __builtins__.__import__ = self._original_import
+
+    def _timing_import(self, name, *args, **kwargs):
+        if not name.startswith("_"):
+            start = time.perf_counter()
+        result = self._original_import(name, *args, **kwargs)
+        if not name.startswith("_"):
+            elapsed = time.perf_counter() - start
+            top_level = name.split(".")[0]
+            self._import_times[top_level] = (
+                self._import_times.get(top_level, 0) + elapsed
+            )
+        return result
+
+    def get_results(self) -> dict[str, float]:
+        return dict(
+            sorted(self._import_times.items(), key=lambda x: x[1], reverse=True)
+        )
 
 
-@contextmanager
-def measure(name: str):
-    """测量一个代码块的执行时间"""
-    start = time.perf_counter()
-    print(f"[启动分析] 开始: {name}")
-    yield
-    elapsed = time.perf_counter() - start
-    print(f"[启动分析] 完成: {name} - {elapsed:.3f}s")
-    _timings.append((name, time.perf_counter() - _start_time, elapsed))
+class StartupProfiler:
+    """启动流程分段计时"""
 
+    def __init__(self):
+        self._stamps: list[tuple[str, float]] = []
 
-def print_report():
-    """打印分析报告"""
-    print("\n" + "=" * 60)
-    print("启动时间分析报告")
-    print("=" * 60)
+    def mark(self, label: str):
+        self._stamps.append((label, time.perf_counter()))
 
-    total = time.perf_counter() - _start_time
-    print(f"\n总启动时间: {total:.3f}s\n")
+    def report(self) -> str:
+        lines = []
+        lines.append("=" * 70)
+        lines.append("VibeOCR 启动耗时分析报告")
+        lines.append("=" * 70)
 
-    print(f"{'阶段':<40} {'累计时间':>10} {'阶段耗时':>10}")
-    print("-" * 60)
+        if len(self._stamps) < 2:
+            lines.append("数据不足，至少需要 2 个时间戳")
+            return "\n".join(lines)
 
-    prev_time = 0
-    for stage, cumulative, duration in _timings:
-        if duration > 0:
-            # 这是一个测量块
-            print(f"{stage:<40} {cumulative:>9.3f}s {duration:>9.3f}s")
-        else:
-            # 这是一个标记点
-            stage_duration = cumulative - prev_time
-            print(f"{stage:<40} {cumulative:>9.3f}s {stage_duration:>9.3f}s")
-        prev_time = cumulative
+        total = self._stamps[-1][1] - self._stamps[0][1]
+        lines.append(f"\n总耗时: {total:.3f}s\n")
+        lines.append(f"{'阶段':<45} {'耗时':>8} {'占比':>8}")
+        lines.append("-" * 70)
 
-    print("-" * 60)
-    print(f"{'总计':<40} {total:>9.3f}s")
-    print("=" * 60)
+        for i in range(len(self._stamps) - 1):
+            label_start, t_start = self._stamps[i]
+            _, t_end = self._stamps[i + 1]
+            elapsed = t_end - t_start
+            pct = (elapsed / total * 100) if total > 0 else 0
+            lines.append(f"{label_start:<45} {elapsed:>7.3f}s {pct:>6.1f}%")
+
+        lines.append("-" * 70)
+        lines.append(f"{'总计':<45} {total:>7.3f}s {'100.0%':>8}")
+        return "\n".join(lines)
 
 
 def profile_imports():
-    """分析各模块的导入时间"""
-    print("\n" + "=" * 60)
-    print("模块导入时间分析")
-    print("=" * 60)
+    """采集 import 耗时"""
+    profiler = ImportProfiler()
+    profiler.start()
 
-    modules_to_test = [
-        ("os, sys, pathlib", lambda: None),  # 基础模块已导入
-        ("PySide6.QtWidgets", lambda: __import__("PySide6.QtWidgets")),
-        ("PySide6.QtCore", lambda: __import__("PySide6.QtCore")),
-        ("PySide6.QtGui", lambda: __import__("PySide6.QtGui")),
-        ("PySide6.QtUiTools", lambda: __import__("PySide6.QtUiTools")),
-        ("PIL.Image", lambda: __import__("PIL.Image")),
-        (
-            "vibeocr.env_manager",
-            lambda: __import__("vibeocr.env_manager", fromlist=["env_manager"]),
-        ),
-        (
-            "vibeocr.machine_cache",
-            lambda: __import__("vibeocr.machine_cache", fromlist=["machine_cache"]),
-        ),
-        (
-            "vibeocr.model_cache_manager",
-            lambda: __import__(
-                "vibeocr.model_cache_manager", fromlist=["model_cache_manager"]
-            ),
-        ),
-    ]
+    t0 = time.perf_counter()
+    from vibeocr import env_manager
+    import_time = time.perf_counter() - t0
 
-    # 需要重新测试的模块（需要清除缓存）
-    results = []
-
-    for name, import_func in modules_to_test:
-        # 跳过已导入的模块
-        if name in ["os, sys, pathlib"]:
-            results.append((name, 0, "已导入"))
-            continue
-
-        try:
-            start = time.perf_counter()
-            import_func()
-            elapsed = time.perf_counter() - start
-            status = "OK"
-            results.append((name, elapsed, status))
-        except ImportError as e:
-            results.append((name, 0, f"导入失败: {e}"))
-
-    print(f"\n{'模块':<35} {'导入时间':>12} {'状态':>10}")
-    print("-" * 60)
-    for name, elapsed, status in results:
-        print(f"{name:<35} {elapsed:>11.3f}s {status:>10}")
-    print("=" * 60)
+    profiler.stop()
+    return profiler.get_results(), import_time
 
 
-def profile_startup():
-    """分析完整启动流程"""
-    global _start_time
-    _start_time = time.perf_counter()
-    _timings.clear()
+def profile_gui_startup():
+    """采集 GUI 启动各阶段耗时"""
+    sp = StartupProfiler()
 
-    # 1. 导入环境管理模块
-    with measure("导入 env_manager"):
-        from vibeocr import env_manager
+    sp.mark("import PySide6 + env_manager")
+    from PySide6.QtWidgets import QApplication
+    from vibeocr import env_manager
+    sp.mark("创建 QApplication")
 
-    # 2. 检查生产依赖
-    with measure("检查生产依赖"):
-        ready, missing = env_manager.is_production_environment_ready()
+    app = QApplication(sys.argv)
+    sp.mark("初始化 ConfigManager")
 
-    if not ready:
-        print(f"[启动分析] 缺少生产依赖: {missing}")
-        return
+    from vibeocr.managers.config_manager import ConfigManager
+    project_root = env_manager.get_project_root()
+    cm = ConfigManager.instance(project_root)
+    sp.mark("加载 AppSettings")
 
-    # 3. 导入 Qt 模块
-    with measure("导入 PySide6.QtWidgets"):
-        from PySide6.QtWidgets import QApplication
+    from vibeocr.utils.app_settings import AppSettings
+    app_settings = AppSettings(cm)
+    sp.mark("创建 qasync 事件循环")
 
-    with measure("导入 PySide6.QtCore"):
-        pass
+    from vibeocr.utils.qt_async import create_qasync_event_loop
+    loop = create_qasync_event_loop(app)
+    sp.mark("创建 MainWindow")
 
-    # 4. 创建 QApplication
-    with measure("创建 QApplication"):
-        app = QApplication(sys.argv)
-        app.setApplicationName("VibeOCR")
-        app.setApplicationVersion("0.1.0")
+    from vibeocr.views.main_window import MainWindow
+    window = MainWindow()
+    sp.mark("set_app_settings")
 
-    # 5. 导入主窗口模块
-    with measure("导入 MainWindow 模块"):
-        from vibeocr.views.main_window import MainWindow
+    window.set_app_settings(app_settings)
+    sp.mark("window.show()")
 
-    # 6. 创建主窗口
-    with measure("创建 MainWindow"):
-        window = MainWindow()
+    window.show()
+    sp.mark("事件循环首次 idle")
 
-    # 7. 显示窗口
-    with measure("显示窗口"):
-        window.show()
+    # 处理一次事件循环让 UI 真正渲染
+    app.processEvents()
+    sp.mark("完成")
 
-    mark("窗口已显示")
+    # 清理
+    window.close()
+    app.quit()
 
-    # 打印报告
-    print_report()
-
-    # 返回 app 以便继续运行（可选）
-    return app, window
+    return sp
 
 
-def profile_startup_full():
-    """完整启动分析（包括模块导入）"""
-    global _start_time
-    _start_time = time.perf_counter()
-    _timings.clear()
+def run_profile():
+    """运行完整分析"""
+    print("正在分析启动耗时...\n")
 
-    mark("脚本开始")
+    # Import 分析
+    print("阶段 1: Import 耗时分析")
+    print("-" * 50)
+    import_times, total_import = profile_imports()
+    for mod, t in list(import_times.items())[:20]:
+        if t > 0.01:
+            print(f"  {mod:<35} {t:.3f}s")
+    print(f"  {'env_manager 总计':<35} {total_import:.3f}s\n")
 
-    # 模拟完整启动
-    with measure("导入 env_manager"):
-        from vibeocr import env_manager
+    # GUI 启动分析
+    print("阶段 2: GUI 启动流程分析")
+    print("-" * 50)
+    sp = profile_gui_startup()
+    report = sp.report()
+    print(report)
 
-    mark("env_manager 导入完成")
-
-    with measure("检查生产依赖"):
-        ready, missing = env_manager.is_production_environment_ready()
-
-    if not ready:
-        print(f"缺少生产依赖: {missing}")
-        return None, None
-
-    with measure("导入 PySide6 模块"):
-        from PySide6.QtWidgets import QApplication
-
-    mark("Qt 模块导入完成")
-
-    with measure("创建 QApplication"):
-        app = QApplication(sys.argv)
-
-    mark("QApplication 创建完成")
-
-    with measure("导入 MainWindow"):
-        from vibeocr.views.main_window import MainWindow
-
-    mark("MainWindow 模块导入完成")
-
-    with measure("创建 MainWindow 实例"):
-        window = MainWindow()
-
-    mark("MainWindow 实例创建完成")
-
-    with measure("显示窗口"):
-        window.show()
-
-    mark("窗口显示完成")
-
-    # 等待依赖检查完成
-    print("\n[启动分析] 等待依赖检查完成...")
-    time.sleep(2)  # 等待异步依赖检查
-
-    mark("依赖检查完成（预估）")
-
-    print_report()
-
-    return app, window
-
-
-def main():
-    """主函数"""
-    print("=" * 60)
-    print("VibeOCR 启动时间分析")
-    print("=" * 60)
-
-    # 1. 先分析模块导入时间
-    print("\n[阶段 1] 分析模块导入时间...")
-    profile_imports()
-
-    # 2. 分析完整启动流程
-    print("\n[阶段 2] 分析完整启动流程...")
-    app, window = profile_startup_full()
-
-    if app:
-        print("\n[启动分析] 分析完成，3秒后退出...")
-        QTimer.singleShot(3000, app.quit)
-        app.exec()
+    # 写入文件
+    log_file = LOG_DIR / "startup_profile.log"
+    with open(log_file, "w", encoding="utf-8") as f:
+        f.write(report)
+    print(f"\n报告已保存到: {log_file}")
 
 
 if __name__ == "__main__":
-    main()
+    run_profile()
