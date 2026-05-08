@@ -92,8 +92,14 @@ def setup_logging() -> QtLogHandler:
     # 文件 handler：DEBUG 及以上（全量记录，便于排查）
     log_dir = Path(__file__).resolve().parent.parent.parent.parent / "logs"
     log_dir.mkdir(exist_ok=True)
-    file_handler = logging.FileHandler(
-        log_dir / "vibeocr.log", encoding="utf-8", delay=True
+    _cleanup_old_logs(log_dir)
+
+    file_handler = RotatingFileHandler(
+        log_dir / "vibeocr.log",
+        maxBytes=10 * 1024 * 1024,
+        backupCount=3,
+        encoding="utf-8",
+        delay=True,
     )
     file_handler.setLevel(logging.DEBUG)
     file_handler.setFormatter(

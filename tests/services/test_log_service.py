@@ -1,5 +1,5 @@
+import logging
 import time
-from pathlib import Path
 
 
 def test_cleanup_old_logs_deletes_old_files(tmp_path):
@@ -48,3 +48,25 @@ def test_cleanup_old_logs_empty_dir(tmp_path):
     _cleanup_old_logs(tmp_path, max_age_days=7)
 
     assert list(tmp_path.iterdir()) == []
+
+
+def test_setup_logging_creates_rotating_handler():
+    from logging.handlers import RotatingFileHandler
+
+    from vibeocr.services.log_service import setup_logging
+
+    handler = setup_logging()
+
+    root_logger = logging.getLogger()
+    rotating_handlers = [
+        h for h in root_logger.handlers if isinstance(h, RotatingFileHandler)
+    ]
+    assert len(rotating_handlers) == 1
+    assert rotating_handlers[0].maxBytes == 10 * 1024 * 1024
+    assert rotating_handlers[0].backupCount == 3
+
+    # 清理：移除刚添加的 handlers 避免影响其他测试
+    root_logger.removeHandler(handler)
+    for h in rotating_handlers:
+        h.close()
+        root_logger.removeHandler(h)
