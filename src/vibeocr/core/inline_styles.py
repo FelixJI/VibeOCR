@@ -142,7 +142,7 @@ class InlineStyles:
                 color: {cls.TEXT_COLOR};
                 border: none;
                 border-radius: 4px;
-                padding: 8px;
+                padding: 6px;
                 font-size: 13px;
                 text-align: left;
             }}

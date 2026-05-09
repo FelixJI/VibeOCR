@@ -288,8 +288,7 @@ class ScreenCaptureOverlay(QWidget):
         # 创建识别面板
         self._recognition_panel = InlineRecognitionPanel(self)
 
-        # 添加阴影效果（仅识别面板）
-        self._add_shadow(self._recognition_panel)
+        # 定位子组件
 
         # 定位子组件
         self._position_editing_widgets()

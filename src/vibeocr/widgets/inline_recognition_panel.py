@@ -27,6 +27,7 @@ class InlineRecognitionPanel(QWidget):
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
 
         self._settings_expanded: bool = False
         self._pipeline_buttons: dict[OCRPipeline, QPushButton] = {}
@@ -38,8 +39,8 @@ class InlineRecognitionPanel(QWidget):
     def _setup_ui(self):
         """构建 UI 布局"""
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(8, 8, 8, 8)
-        layout.setSpacing(4)
+        layout.setContentsMargins(6, 6, 6, 6)
+        layout.setSpacing(2)
 
         # 管道按钮
         for pipeline, icon, label in _PIPELINE_BUTTON_CONFIG:

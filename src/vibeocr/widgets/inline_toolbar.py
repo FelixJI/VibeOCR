@@ -55,6 +55,7 @@ class InlineToolbar(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("inlineToolbar")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setFixedHeight(InlineStyles.TOOLBAR_HEIGHT)
         self.setStyleSheet(InlineStyles.panel_style())
 
@@ -83,7 +84,6 @@ class InlineToolbar(QWidget):
             btn.setStyleSheet(tool_style)
             btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            btn.setAutoRaise(True)
             self._tool_group.addButton(btn)
             self._tool_buttons[tool] = btn
             layout.addWidget(btn)
@@ -147,7 +147,6 @@ class InlineToolbar(QWidget):
         btn.setStyleSheet(style)
         btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
         btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn.setAutoRaise(True)
         return btn
 
     def _create_separator(self) -> QFrame:
