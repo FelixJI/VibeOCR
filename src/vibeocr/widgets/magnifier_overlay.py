@@ -60,10 +60,9 @@ class MagnifierOverlay:
         mag_rect = QRect(mag_x, mag_y, mag_size, mag_size)
 
         # 计算从截图中取样的源矩形
-        # 鼠标逻辑坐标 -> 物理坐标
-        vg_offset = virtual_geometry.topLeft()
-        phys_x = int((mouse_pos.x() + vg_offset.x()) * dpr)
-        phys_y = int((mouse_pos.y() + vg_offset.y()) * dpr)
+        # widget 逻辑坐标直接对应 pixmap 逻辑坐标（widget(0,0) = pixmap 逻辑(0,0)）
+        phys_x = int(mouse_pos.x() * dpr)
+        phys_y = int(mouse_pos.y() * dpr)
 
         # 取样区域大小（物理像素）
         sample_size = int(mag_size * dpr / zoom_level)
@@ -170,9 +169,8 @@ class MagnifierOverlay:
         info_rect = QRect(info_x, info_y, info_w, info_h)
 
         # 获取鼠标位置对应的物理像素颜色
-        vg_offset = virtual_geometry.topLeft()
-        phys_x = int((mouse_pos.x() + vg_offset.x()) * dpr)
-        phys_y = int((mouse_pos.y() + vg_offset.y()) * dpr)
+        phys_x = int(mouse_pos.x() * dpr)
+        phys_y = int(mouse_pos.y() * dpr)
 
         # 检查是否在图像范围内
         pixel_color = QColor(0, 0, 0)
@@ -183,6 +181,7 @@ class MagnifierOverlay:
         hex_color = f"#{r:02X}{g:02X}{b:02X}"
 
         # 绝对坐标（逻辑像素，相对于虚拟桌面原点）
+        vg_offset = virtual_geometry.topLeft()
         abs_x = mouse_pos.x() + vg_offset.x()
         abs_y = mouse_pos.y() + vg_offset.y()
 

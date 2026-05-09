@@ -151,9 +151,9 @@ class ScreenCaptureOverlay(QWidget):
         painter = QPainter(self)
 
         # 1. 绘制截图背景
+        # widget 几何 = virtual_geometry，widget (0,0) 即 pixmap 逻辑原点
         if self._screen_pixmap:
-            offset = self._virtual_geometry.topLeft()
-            painter.drawPixmap(offset, self._screen_pixmap)
+            painter.drawPixmap(QPoint(0, 0), self._screen_pixmap)
 
         # 2. 创建遮罩（减去选区，镂空效果）
         mask_region = QRegion(self.rect())
@@ -234,12 +234,18 @@ class ScreenCaptureOverlay(QWidget):
                 and self._selection_rect.width() > self.MIN_SELECTION_SIZE
                 and self._selection_rect.height() > self.MIN_SELECTION_SIZE
             ):
-                # 提取选区截图
-                # _selection_rect 在 widget 逻辑坐标系中，与 _screen_pixmap
-                # 的逻辑坐标系一致（widget(0,0) = pixmap 逻辑(0,0)），
-                # 因此直接用逻辑坐标调用 copy()，由 Qt 内部处理 DPR 缩放
-                captured = self._screen_pixmap.copy(self._selection_rect)
-                # 保留 DPR，使 pixmap.rect() 返回逻辑尺寸以匹配画布控件
+                # QPixmap.copy() 操作物理像素，需将逻辑坐标转换为物理坐标
+                # QGraphicsPixmapItem.boundingRect() 会自动除以 DPR，
+                # 所以 captured pixmap 的逻辑尺寸等于 sel 尺寸
+                sel = self._selection_rect
+                dpr = self._device_pixel_ratio
+                physical_rect = QRect(
+                    int(sel.x() * dpr),
+                    int(sel.y() * dpr),
+                    int(sel.width() * dpr),
+                    int(sel.height() * dpr),
+                )
+                captured = self._screen_pixmap.copy(physical_rect)
                 self._captured_pixmap = captured
 
                 # 进入 EDITING 模式

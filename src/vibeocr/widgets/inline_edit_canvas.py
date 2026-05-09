@@ -132,7 +132,12 @@ class InlineEditCanvas(QGraphicsView):
             QGraphicsItem.GraphicsItemFlag.ItemIsMovable, False
         )
         self._scene.addItem(self._background_item)
-        self._scene.setSceneRect(QRectF(pixmap.rect()))
+        # pixmap.rect() 返回物理尺寸，QGraphicsPixmapItem.boundingRect() 会除以 DPR
+        # 返回逻辑尺寸，场景矩形也应使用逻辑尺寸以匹配画布控件
+        dpr = pixmap.devicePixelRatio()
+        self._scene.setSceneRect(
+            QRectF(0, 0, pixmap.width() / dpr, pixmap.height() / dpr)
+        )
 
     def set_tool(self, tool: EditTool) -> None:
         """切换工具"""
@@ -201,13 +206,11 @@ class InlineEditCanvas(QGraphicsView):
         # 以背景图的 DPR 渲染，保持物理像素分辨率
         dpr = self._background_pixmap.devicePixelRatio()
         export_pixmap = QPixmap(int(rect.width() * dpr), int(rect.height() * dpr))
-        export_pixmap.setDevicePixelRatio(dpr)
         export_pixmap.fill(Qt.GlobalColor.transparent)
         painter = QPainter(export_pixmap)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        self._scene.render(
-            painter, QRectF(export_pixmap.rect()), rect
-        )
+        painter.scale(dpr, dpr)
+        self._scene.render(painter, rect, rect)
         painter.end()
         return export_pixmap
 
