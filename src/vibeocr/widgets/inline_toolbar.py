@@ -5,11 +5,14 @@
 所有按钮使用 Lucide SVG 图标 + tooltip 显示。
 """
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QEvent, QObject, QPoint, QTimer, Qt, Signal
+from PySide6.QtGui import QCursor
 from PySide6.QtWidgets import (
+    QApplication,
     QButtonGroup,
     QFrame,
     QHBoxLayout,
+    QLabel,
     QToolButton,
     QWidget,
 )
@@ -18,6 +21,87 @@ from vibeocr.core.inline_styles import InlineStyles
 from vibeocr.core.toolbar_icons import toolbar_icon
 from vibeocr.widgets.editor.annotation_items import EditTool
 from vibeocr.widgets.editor.tool_properties_bar import ToolPropertiesBar
+
+
+class _TooltipManager(QObject):
+    """自定义 tooltip 显示，绕过 WA_TranslucentBackground 继承问题。
+
+    父窗口设置了 WA_TranslucentBackground 后，Qt 默认创建的 tooltip
+    窗口会继承该属性，在 Windows 上渲染为黑色背景。此管理器拦截按钮的
+    tooltip 事件，创建独立的 QLabel 窗口并显式关闭 WA_TranslucentBackground。
+    """
+
+    _TOOLTIP_STYLE = (
+        "QLabel { background: #ffffe0; color: #000; border: 1px solid #aaa; "
+        "padding: 4px 6px; font-size: 12px; border-radius: 2px; }"
+    )
+
+    def __init__(self, parent: QWidget) -> None:
+        super().__init__(parent)
+        self._label: QLabel | None = None
+        self._pending_text = ""
+        self._pending_btn: QWidget | None = None
+        self._timer = QTimer(self)
+        self._timer.setSingleShot(True)
+        self._timer.setInterval(400)
+        self._timer.timeout.connect(self._show_pending)
+
+    def register(self, btn: QWidget) -> None:
+        btn.installEventFilter(self)
+
+    def eventFilter(self, obj: QObject, event: QEvent) -> bool:
+        if event.type() == QEvent.Type.ToolTip:
+            return True
+        if event.type() == QEvent.Type.Enter:
+            text = obj.toolTip()
+            if text:
+                self._pending_text = text
+                self._pending_btn = obj
+                self._timer.start()
+        elif event.type() == QEvent.Type.Leave:
+            self._timer.stop()
+            self._hide()
+        elif event.type() == QEvent.Type.MouseButtonPress:
+            self._hide()
+        return False
+
+    def _show_pending(self) -> None:
+        if not self._pending_text:
+            return
+        self._hide()
+        label = QLabel(self._pending_text)
+        label.setWindowFlags(
+            Qt.WindowType.ToolTip
+            | Qt.WindowType.FramelessWindowHint
+            | Qt.WindowType.WindowStaysOnTopHint
+            | Qt.WindowType.WindowDoesNotAcceptFocus
+        )
+        label.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
+        label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        label.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
+        label.setStyleSheet(self._TOOLTIP_STYLE)
+        label.adjustSize()
+
+        # 定位在按钮下方
+        pos = QCursor.pos()
+        if self._pending_btn:
+            btn = self._pending_btn
+            pos = btn.mapToGlobal(QPoint(0, btn.height() + 4))
+        screen = QApplication.screenAt(pos)
+        if screen:
+            sg = screen.availableGeometry()
+            if pos.x() + label.width() > sg.right():
+                pos.setX(sg.right() - label.width())
+            if pos.y() + label.height() > sg.bottom():
+                pos.setY(pos.y() - label.height())
+        label.move(pos)
+        label.show()
+        self._label = label
+
+    def _hide(self) -> None:
+        if self._label:
+            self._label.deleteLater()
+            self._label = None
 
 # 工具按钮定义：(icon_name, tooltip, EditTool)
 _TOOL_DEFS: list[tuple[str, str, EditTool]] = [
@@ -60,6 +144,7 @@ class InlineToolbar(QWidget):
         self.setStyleSheet(InlineStyles.panel_style())
 
         self._current_tool: EditTool | None = None
+        self._tooltip_mgr = _TooltipManager(self)
 
         self._setup_ui()
         self._connect_signals()
@@ -86,6 +171,7 @@ class InlineToolbar(QWidget):
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
             self._tool_group.addButton(btn)
             self._tool_buttons[tool] = btn
+            self._tooltip_mgr.register(btn)
             layout.addWidget(btn)
 
         # 属性区分隔线（初始隐藏）
@@ -150,6 +236,7 @@ class InlineToolbar(QWidget):
         btn.setStyleSheet(style)
         btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
         btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._tooltip_mgr.register(btn)
         return btn
 
     def _create_separator(self) -> QFrame:
