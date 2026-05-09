@@ -8,7 +8,7 @@ class InlineStyles:
     """内联编辑器样式常量（毛玻璃浅色主题）"""
 
     # 面板
-    PANEL_BG = "rgba(255, 255, 255, 224)"
+    PANEL_BG = "#ffffff"
     PANEL_BORDER = "rgba(255, 255, 255, 77)"
     PANEL_RADIUS = 8
 
@@ -138,16 +138,19 @@ class InlineStyles:
     def recognition_button_style(cls) -> str:
         return f"""
             QPushButton {{
-                background-color: {cls.BUTTON_HOVER};
+                background: transparent;
                 color: {cls.TEXT_COLOR};
                 border: none;
-                border-radius: 6px;
-                padding: 10px;
+                border-radius: 4px;
+                padding: 8px;
                 font-size: 13px;
                 text-align: left;
             }}
             QPushButton:hover {{
-                background-color: rgba(255, 255, 255, 230);
+                background-color: {cls.BUTTON_HOVER};
+            }}
+            QPushButton:pressed {{
+                background-color: {cls.BUTTON_PRESSED};
             }}
             QPushButton:checked {{
                 background-color: {cls.BUTTON_CHECKED};
