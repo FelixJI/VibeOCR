@@ -8,8 +8,8 @@ class InlineStyles:
     """内联编辑器样式常量（毛玻璃浅色主题）"""
 
     # 面板
-    PANEL_BG = "#ffffff"
-    PANEL_BORDER = "rgba(255, 255, 255, 77)"
+    PANEL_BG = "#f5f5f5"
+    PANEL_BORDER = "#d0d0d0"
     PANEL_RADIUS = 8
 
     # 按钮

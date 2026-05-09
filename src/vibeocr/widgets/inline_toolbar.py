@@ -88,13 +88,16 @@ class InlineToolbar(QWidget):
             self._tool_buttons[tool] = btn
             layout.addWidget(btn)
 
-        # 分隔线
+        # 属性区分隔线（初始隐藏）
+        self._props_separator = self._create_separator()
+        self._props_separator.hide()
         layout.addSpacing(6)
-        layout.addWidget(self._create_separator())
+        layout.addWidget(self._props_separator)
         layout.addSpacing(6)
 
-        # 工具属性条
+        # 工具属性条（初始隐藏）
         self._properties_bar = ToolPropertiesBar()
+        self._properties_bar.hide()
         layout.addWidget(self._properties_bar)
 
         # 弹性空间
@@ -168,7 +171,11 @@ class InlineToolbar(QWidget):
 
     def _on_tool_clicked(self, tool: EditTool) -> None:
         self._current_tool = tool
-        self._properties_bar.update_for_tool(tool)
+        has_props = tool not in (EditTool.SELECT, EditTool.CROP)
+        self._props_separator.setVisible(has_props)
+        self._properties_bar.setVisible(has_props)
+        if has_props:
+            self._properties_bar.update_for_tool(tool)
         self.tool_changed.emit(tool)
 
     @property
