@@ -235,25 +235,11 @@ class ScreenCaptureOverlay(QWidget):
                 and self._selection_rect.height() > self.MIN_SELECTION_SIZE
             ):
                 # 提取选区截图
-                vg_offset = self._virtual_geometry.topLeft()
-                src_x = int(
-                    (self._selection_rect.x() + vg_offset.x())
-                    * self._device_pixel_ratio
-                )
-                src_y = int(
-                    (self._selection_rect.y() + vg_offset.y())
-                    * self._device_pixel_ratio
-                )
-                src_w = int(
-                    self._selection_rect.width() * self._device_pixel_ratio
-                )
-                src_h = int(
-                    self._selection_rect.height() * self._device_pixel_ratio
-                )
-                src_rect = QRect(src_x, src_y, src_w, src_h)
-
-                captured = self._screen_pixmap.copy(src_rect)
-                captured.setDevicePixelRatio(1.0)
+                # _selection_rect 在 widget 逻辑坐标系中，与 _screen_pixmap
+                # 的逻辑坐标系一致（widget(0,0) = pixmap 逻辑(0,0)），
+                # 因此直接用逻辑坐标调用 copy()，由 Qt 内部处理 DPR 缩放
+                captured = self._screen_pixmap.copy(self._selection_rect)
+                # 保留 DPR，使 pixmap.rect() 返回逻辑尺寸以匹配画布控件
                 self._captured_pixmap = captured
 
                 # 进入 EDITING 模式

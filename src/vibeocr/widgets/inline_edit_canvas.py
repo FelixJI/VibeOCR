@@ -181,7 +181,7 @@ class InlineEditCanvas(QGraphicsView):
         self._blur_radius = radius
 
     def export_image(self) -> QPixmap:
-        """导出当前画布内容为 QPixmap"""
+        """导出当前画布内容为 QPixmap（全物理分辨率）"""
         # 隐藏裁剪框
         if self._crop_rect_item:
             self._scene.removeItem(self._crop_rect_item)
@@ -198,13 +198,18 @@ class InlineEditCanvas(QGraphicsView):
         if rect.isEmpty():
             return QPixmap()
 
-        pixmap = QPixmap(int(rect.width()), int(rect.height()))
-        pixmap.fill(Qt.GlobalColor.transparent)
-        painter = QPainter(pixmap)
+        # 以背景图的 DPR 渲染，保持物理像素分辨率
+        dpr = self._background_pixmap.devicePixelRatio()
+        export_pixmap = QPixmap(int(rect.width() * dpr), int(rect.height() * dpr))
+        export_pixmap.setDevicePixelRatio(dpr)
+        export_pixmap.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(export_pixmap)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        self._scene.render(painter, QRectF(pixmap.rect()), rect)
+        self._scene.render(
+            painter, QRectF(export_pixmap.rect()), rect
+        )
         painter.end()
-        return pixmap
+        return export_pixmap
 
     # ==================== 鼠标事件处理 ====================
 
