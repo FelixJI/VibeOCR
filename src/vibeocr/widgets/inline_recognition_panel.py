@@ -73,7 +73,7 @@ class InlineRecognitionPanel(QWidget):
         for btn in self._pipeline_buttons.values():
             btn.setStyleSheet(InlineStyles.recognition_button_style())
 
-        self._btn_more.setStyleSheet(InlineStyles.action_button_style())
+        self._btn_more.setStyleSheet(InlineStyles.recognition_button_style())
 
     def _on_pipeline_clicked(self, pipeline: OCRPipeline):
         """管道按钮点击处理"""
