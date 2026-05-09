@@ -209,12 +209,7 @@ class SharedMemoryProtocolV2:
         """检查数据是否就绪"""
         if self.shm is None:
             raise SharedMemoryProtocolError("共享内存未初始化")
-        # 直接读取共享内存字节
-        result = self._buf[8] == 1
-        # 只在状态为 True 时打印，避免过多日志
-        if result:
-            logger.debug(f"[SHM {self.config.name}] 检测到 _is_data_ready = True")
-        return result
+        return self._buf[8] == 1
 
     def wait_for_read(self, timeout: float = 5.0) -> None:
         """等待消息被读取（等待 _is_data_ready 变为 False）
