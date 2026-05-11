@@ -319,8 +319,9 @@ class ScreenCaptureOverlay(QWidget):
         self._toolbar.show()
         self._recognition_panel.show()
         self._resize_frame.set_initial_selection(self._selection_rect)
-        self._resize_frame.raise_()
         self._resize_frame.show()
+        self._toolbar.raise_()
+        self._recognition_panel.raise_()
 
         # 重绘覆盖层（EDITING 模式下 paintEvent 不绘制）
         self.update()
@@ -502,21 +503,23 @@ class ScreenCaptureOverlay(QWidget):
         return {"panel_side": panel_side, "toolbar_side": toolbar_side}
 
     def _calc_toolbar_geometry(self, selection: QRect) -> QRect:
-        """计算工具栏的几何位置"""
-        positions = self._calc_panel_positions(selection)
-        side = positions["toolbar_side"]
-
+        """计算工具栏的几何位置——靠选区右下角"""
         toolbar_height = InlineStyles.TOOLBAR_HEIGHT
-        # 工具栏宽度等于选区宽度
-        x = selection.left()
-        w = selection.width()
+        toolbar_w = (
+            self._toolbar.sizeHint().width() if self._toolbar else 400
+        )
+        vg = self._virtual_geometry
 
-        if side == "bottom":
-            y = selection.bottom() + 4
-        else:
+        # 右对齐选区，下方 4px
+        x = selection.right() - toolbar_w
+        y = selection.bottom() + 4
+
+        # 边界约束
+        x = max(vg.left(), min(x, vg.right() - toolbar_w))
+        if y + toolbar_height > vg.bottom():
             y = selection.top() - toolbar_height - 4
 
-        return QRect(x, y, w, toolbar_height)
+        return QRect(x, y, toolbar_w, toolbar_height)
 
     def _calc_recognition_panel_geometry(
         self, selection: QRect, toolbar_geo: QRect

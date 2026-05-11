@@ -2,7 +2,7 @@
 """内联编辑工具栏
 
 毛玻璃浅色主题的浮动工具栏，包含工具按钮、属性条和操作按钮。
-所有按钮使用 Lucide SVG 图标 + tooltip 显示。
+所有按钮使用纯文字标签 + tooltip 显示。
 """
 
 from PySide6.QtCore import QEvent, QObject, QPoint, QTimer, Qt, Signal
@@ -18,7 +18,6 @@ from PySide6.QtWidgets import (
 )
 
 from vibeocr.core.inline_styles import InlineStyles
-from vibeocr.core.toolbar_icons import toolbar_icon
 from vibeocr.widgets.editor.annotation_items import EditTool
 from vibeocr.widgets.editor.tool_properties_bar import ToolPropertiesBar
 
@@ -103,15 +102,15 @@ class _TooltipManager(QObject):
             self._label.deleteLater()
             self._label = None
 
-# 工具按钮定义：(icon_name, tooltip, EditTool)
+# 工具按钮定义：(label, tooltip, EditTool)
 _TOOL_DEFS: list[tuple[str, str, EditTool]] = [
-    ("mosaic", "马赛克", EditTool.MOSAIC),
-    ("blur", "模糊", EditTool.BLUR),
-    ("crop", "裁剪", EditTool.CROP),
-    ("rect", "矩形", EditTool.RECT),
-    ("ellipse", "椭圆", EditTool.ELLIPSE),
-    ("arrow", "箭头", EditTool.ARROW),
-    ("text", "文字", EditTool.TEXT),
+    ("打码", "马赛克", EditTool.MOSAIC),
+    ("模糊", "模糊", EditTool.BLUR),
+    ("裁剪", "裁剪", EditTool.CROP),
+    ("矩形", "矩形", EditTool.RECT),
+    ("椭圆", "椭圆", EditTool.ELLIPSE),
+    ("箭头", "箭头", EditTool.ARROW),
+    ("文字", "文字", EditTool.TEXT),
 ]
 
 
@@ -152,7 +151,7 @@ class InlineToolbar(QWidget):
     def _setup_ui(self) -> None:
         layout = QHBoxLayout(self)
         layout.setContentsMargins(8, 4, 8, 4)
-        layout.setSpacing(2)
+        layout.setSpacing(4)
 
         # 工具按钮组（exclusive）
         self._tool_group = QButtonGroup(self)
@@ -161,13 +160,13 @@ class InlineToolbar(QWidget):
         tool_style = InlineStyles.tool_button_style()
 
         self._tool_buttons: dict[EditTool, QToolButton] = {}
-        for icon_name, tooltip, tool in _TOOL_DEFS:
+        for label, tooltip, tool in _TOOL_DEFS:
             btn = QToolButton()
-            btn.setIcon(toolbar_icon(icon_name))
+            btn.setText(label)
             btn.setToolTip(tooltip)
             btn.setCheckable(True)
             btn.setStyleSheet(tool_style)
-            btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+            btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
             self._tool_group.addButton(btn)
             self._tool_buttons[tool] = btn
@@ -177,9 +176,7 @@ class InlineToolbar(QWidget):
         # 属性区分隔线（初始隐藏）
         self._props_separator = self._create_separator()
         self._props_separator.hide()
-        layout.addSpacing(6)
         layout.addWidget(self._props_separator)
-        layout.addSpacing(6)
 
         # 工具属性条（初始隐藏）
         self._properties_bar = ToolPropertiesBar()
@@ -192,49 +189,40 @@ class InlineToolbar(QWidget):
         # 操作按钮
         action_style = InlineStyles.action_button_style()
 
-        # 撤销
-        self._btn_undo = self._make_action_btn("undo", "撤销", action_style)
+        self._btn_undo = self._make_action_btn("撤销", "撤销", action_style)
         self._btn_undo.setEnabled(False)
         layout.addWidget(self._btn_undo)
 
-        # 重做
-        self._btn_redo = self._make_action_btn("redo", "重做", action_style)
+        self._btn_redo = self._make_action_btn("重做", "重做", action_style)
         self._btn_redo.setEnabled(False)
         layout.addWidget(self._btn_redo)
 
-        # 分隔线
-        layout.addSpacing(6)
         layout.addWidget(self._create_separator())
-        layout.addSpacing(6)
 
-        # 另存为
-        self._btn_save = self._make_action_btn("save", "另存为", action_style)
+        self._btn_save = self._make_action_btn("保存", "另存为", action_style)
         layout.addWidget(self._btn_save)
 
-        # 复制
-        self._btn_copy = self._make_action_btn("copy", "复制", action_style)
+        self._btn_copy = self._make_action_btn("复制", "复制", action_style)
         layout.addWidget(self._btn_copy)
 
-        # 确认识别
         self._btn_confirm = self._make_action_btn(
-            "confirm", "确认识别", InlineStyles.confirm_button_style()
+            "识别", "确认识别", InlineStyles.confirm_button_style()
         )
         layout.addWidget(self._btn_confirm)
 
-        # 取消
         self._btn_cancel = self._make_action_btn(
-            "cancel", "取消", InlineStyles.cancel_button_style()
+            "取消", "取消", InlineStyles.cancel_button_style()
         )
         layout.addWidget(self._btn_cancel)
 
     def _make_action_btn(
-        self, icon_name: str, tooltip: str, style: str
+        self, text: str, tooltip: str, style: str
     ) -> QToolButton:
         btn = QToolButton()
-        btn.setIcon(toolbar_icon(icon_name))
+        btn.setText(text)
         btn.setToolTip(tooltip)
         btn.setStyleSheet(style)
-        btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+        btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
         btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._tooltip_mgr.register(btn)
         return btn

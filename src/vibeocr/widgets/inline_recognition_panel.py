@@ -9,12 +9,11 @@ from vibeocr.core.pipelines import OCRPipeline
 from vibeocr.models.ocr_options import OCROptions
 from vibeocr.widgets.preprocess_options_widget import PreprocessOptionsWidget
 
-# 管道按钮配置: (枚举值, 图标, 显示文本)
-_PIPELINE_BUTTON_CONFIG: list[tuple[OCRPipeline, str, str]] = [
-    (OCRPipeline.OCR, "\U0001f4dd", "文字识别"),
-    (OCRPipeline.TABLE_RECOGNITION, "\U0001f4ca", "表格识别"),
-    (OCRPipeline.FORMULA_RECOGNITION, "\U0001f4d0", "公式识别"),
-    (OCRPipeline.DOCUMENT_PARSING, "\U0001f4c4", "文档解析"),
+_PIPELINE_BUTTON_CONFIG: list[tuple[OCRPipeline, str]] = [
+    (OCRPipeline.OCR, "文字"),
+    (OCRPipeline.TABLE_RECOGNITION, "表格"),
+    (OCRPipeline.FORMULA_RECOGNITION, "公式"),
+    (OCRPipeline.DOCUMENT_PARSING, "文档"),
 ]
 
 
@@ -43,8 +42,8 @@ class InlineRecognitionPanel(QWidget):
         layout.setSpacing(2)
 
         # 管道按钮
-        for pipeline, icon, label in _PIPELINE_BUTTON_CONFIG:
-            btn = QPushButton(f"{icon} {label}")
+        for pipeline, label in _PIPELINE_BUTTON_CONFIG:
+            btn = QPushButton(label)
             btn.setCheckable(True)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
             btn.setProperty("pipeline", pipeline)
@@ -53,7 +52,7 @@ class InlineRecognitionPanel(QWidget):
             self._pipeline_buttons[pipeline] = btn
 
         # 更多设置按钮
-        self._btn_more = QPushButton("⚙ 更多设置 ▸")
+        self._btn_more = QPushButton("更多 ▸")
         self._btn_more.setCursor(Qt.CursorShape.PointingHandCursor)
         self._btn_more.clicked.connect(self._toggle_settings)
         layout.addWidget(self._btn_more)
@@ -93,11 +92,10 @@ class InlineRecognitionPanel(QWidget):
         self._settings_expanded = not self._settings_expanded
         self._settings_widget.setVisible(self._settings_expanded)
 
-        # 更新按钮文本
         if self._settings_expanded:
-            self._btn_more.setText("⚙ 更多设置 ▾")
+            self._btn_more.setText("更多 ▾")
         else:
-            self._btn_more.setText("⚙ 更多设置 ▸")
+            self._btn_more.setText("更多 ▸")
 
     def _on_settings_changed(self, options: OCROptions):
         """设置面板选项变更时的处理"""
