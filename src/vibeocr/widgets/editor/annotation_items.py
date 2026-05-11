@@ -471,6 +471,11 @@ class MosaicItem(QGraphicsRectItem):
                 if px < img.width() and py < img.height():
                     img.setPixelColor(px, py, color)
 
+    def update_background(self, pixmap: QPixmap) -> None:
+        self._background_pixmap = pixmap
+        self._generate_mosaic()
+        self.update()
+
     def paint(
         self,
         painter: QPainter,
@@ -588,6 +593,11 @@ class BlurItem(QGraphicsRectItem):
             )
 
         self._cached_blur = temp
+
+    def update_background(self, pixmap: QPixmap) -> None:
+        self._background_pixmap = pixmap
+        self._generate_blur()
+        self.update()
 
     def paint(
         self,
