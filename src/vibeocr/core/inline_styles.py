@@ -134,6 +134,81 @@ class InlineStyles:
             }}
         """
 
+    # 属性条控件颜色
+    PROPS_INPUT_BG = "#ffffff"
+    PROPS_INPUT_BORDER = "#c0c0c0"
+    PROPS_SLIDER_GROOVE = "#c0c0c0"
+    PROPS_SLIDER_HANDLE = "#0078d4"
+
+    @classmethod
+    def properties_panel_style(cls) -> str:
+        """属性面板样式：面板背景 + 内部控件浅色主题"""
+        return f"""
+            QWidget#propsPanel {{
+                background-color: {cls.PANEL_BG};
+                border: 1px solid {cls.PANEL_BORDER};
+                border-radius: {cls.PANEL_RADIUS}px;
+            }}
+            #propsPanel QWidget {{
+                background-color: transparent;
+            }}
+            #propsPanel QLabel {{
+                color: {cls.TEXT_COLOR};
+                font-size: 11px;
+            }}
+            #propsPanel QSpinBox {{
+                background-color: {cls.PROPS_INPUT_BG};
+                color: {cls.TEXT_COLOR};
+                border: 1px solid {cls.PROPS_INPUT_BORDER};
+                border-radius: 3px;
+                padding: 1px 4px;
+                min-width: 42px;
+                max-height: 26px;
+            }}
+            #propsPanel QSlider::groove:horizontal {{
+                background: {cls.PROPS_SLIDER_GROOVE};
+                height: 4px;
+                border-radius: 2px;
+            }}
+            #propsPanel QSlider::handle:horizontal {{
+                background: {cls.PROPS_SLIDER_HANDLE};
+                width: 14px;
+                height: 14px;
+                margin: -5px 0;
+                border-radius: 7px;
+            }}
+            #propsPanel QCheckBox {{
+                color: {cls.TEXT_COLOR};
+                font-size: 11px;
+                spacing: 4px;
+            }}
+            #propsPanel QCheckBox::indicator {{
+                width: 14px;
+                height: 14px;
+                border: 1px solid {cls.PROPS_INPUT_BORDER};
+                border-radius: 3px;
+                background: {cls.PROPS_INPUT_BG};
+            }}
+            #propsPanel QCheckBox::indicator:checked {{
+                background: {cls.PROPS_SLIDER_HANDLE};
+                border-color: {cls.PROPS_SLIDER_HANDLE};
+            }}
+            #propsPanel QFontComboBox {{
+                background-color: {cls.PROPS_INPUT_BG};
+                color: {cls.TEXT_COLOR};
+                border: 1px solid {cls.PROPS_INPUT_BORDER};
+                border-radius: 3px;
+                padding: 1px 4px;
+                max-width: 120px;
+                max-height: 26px;
+            }}
+            #propsPanel QPushButton {{
+                background-color: {cls.PROPS_INPUT_BG};
+                border: 1px solid {cls.PROPS_INPUT_BORDER};
+                border-radius: 3px;
+            }}
+        """
+
     @classmethod
     def recognition_button_style(cls) -> str:
         return f"""

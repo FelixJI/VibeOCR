@@ -360,6 +360,7 @@ class ScreenCaptureOverlay(QWidget):
 
         # 工具切换
         self._toolbar.tool_changed.connect(self._canvas.set_tool)
+        self._toolbar.tool_changed.connect(lambda _: self._reposition_toolbar())
 
         # 属性变更
         props = self._toolbar.properties_bar
@@ -512,10 +513,12 @@ class ScreenCaptureOverlay(QWidget):
 
     def _calc_toolbar_geometry(self, selection: QRect) -> QRect:
         """计算工具栏的几何位置——靠选区右下角"""
-        toolbar_height = InlineStyles.TOOLBAR_HEIGHT
-        toolbar_w = (
-            self._toolbar.sizeHint().width() if self._toolbar else 400
-        )
+        if self._toolbar:
+            toolbar_h = self._toolbar.sizeHint().height()
+            toolbar_w = self._toolbar.sizeHint().width()
+        else:
+            toolbar_h = InlineStyles.TOOLBAR_HEIGHT
+            toolbar_w = 400
         vg = self._virtual_geometry
 
         # 右对齐选区，下方 4px
@@ -524,10 +527,16 @@ class ScreenCaptureOverlay(QWidget):
 
         # 边界约束
         x = max(vg.left(), min(x, vg.right() - toolbar_w))
-        if y + toolbar_height > vg.bottom():
-            y = selection.top() - toolbar_height - 4
+        if y + toolbar_h > vg.bottom():
+            y = selection.top() - toolbar_h - 4
 
-        return QRect(x, y, toolbar_w, toolbar_height)
+        return QRect(x, y, toolbar_w, toolbar_h)
+
+    def _reposition_toolbar(self) -> None:
+        """工具切换后重新定位工具栏（属性条显隐改变高度）"""
+        if self._toolbar and self._selection_rect:
+            geo = self._calc_toolbar_geometry(self._selection_rect)
+            self._toolbar.setGeometry(geo)
 
     def _calc_recognition_panel_geometry(
         self, selection: QRect

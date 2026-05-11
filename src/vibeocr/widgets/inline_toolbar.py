@@ -3,6 +3,7 @@
 
 毛玻璃浅色主题的浮动工具栏，包含工具按钮、属性条和操作按钮。
 所有按钮使用纯文字标签。
+属性条作为独立工具栏显示在主工具栏下方。
 """
 
 from PySide6.QtCore import Qt, Signal
@@ -11,6 +12,7 @@ from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QToolButton,
+    QVBoxLayout,
     QWidget,
 )
 
@@ -33,6 +35,8 @@ _TOOL_DEFS: list[tuple[str, EditTool]] = [
 class InlineToolbar(QWidget):
     """内联编辑工具栏（毛玻璃浅色主题）
 
+    上方为主工具栏（工具按钮 + 操作按钮），下方为独立的属性条工具栏。
+
     Signals:
         tool_changed(EditTool): 当前工具切换
         undo_requested(): 撤销请求
@@ -53,9 +57,6 @@ class InlineToolbar(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("inlineToolbar")
-        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self.setFixedHeight(InlineStyles.TOOLBAR_HEIGHT)
-        self.setStyleSheet(InlineStyles.panel_style())
 
         self._current_tool: EditTool | None = None
 
@@ -63,9 +64,20 @@ class InlineToolbar(QWidget):
         self._connect_signals()
 
     def _setup_ui(self) -> None:
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(8, 4, 8, 4)
-        layout.setSpacing(4)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(4)
+
+        # --- 上方：主工具栏 ---
+        self._top_bar = QWidget()
+        self._top_bar.setObjectName("topBar")
+        self._top_bar.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self._top_bar.setFixedHeight(InlineStyles.TOOLBAR_HEIGHT)
+        self._top_bar.setStyleSheet(InlineStyles.panel_style())
+
+        top_layout = QHBoxLayout(self._top_bar)
+        top_layout.setContentsMargins(8, 4, 8, 4)
+        top_layout.setSpacing(4)
 
         # 工具按钮组（exclusive）
         self._tool_group = QButtonGroup(self)
@@ -83,44 +95,53 @@ class InlineToolbar(QWidget):
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
             self._tool_group.addButton(btn)
             self._tool_buttons[tool] = btn
-            layout.addWidget(btn)
-
-        # 属性区分隔线（初始隐藏）
-        self._props_separator = self._create_separator()
-        self._props_separator.hide()
-        layout.addWidget(self._props_separator)
-
-        # 工具属性条（初始隐藏）
-        self._properties_bar = ToolPropertiesBar()
-        self._properties_bar.hide()
-        layout.addWidget(self._properties_bar)
+            top_layout.addWidget(btn)
 
         # 弹性空间
-        layout.addStretch()
+        top_layout.addStretch()
 
         # 操作按钮
         action_style = InlineStyles.action_button_style()
 
         self._btn_undo = self._make_action_btn("撤销", action_style)
         self._btn_undo.setEnabled(False)
-        layout.addWidget(self._btn_undo)
+        top_layout.addWidget(self._btn_undo)
 
         self._btn_redo = self._make_action_btn("重做", action_style)
         self._btn_redo.setEnabled(False)
-        layout.addWidget(self._btn_redo)
+        top_layout.addWidget(self._btn_redo)
 
-        layout.addWidget(self._create_separator())
+        top_layout.addWidget(self._create_separator())
 
         self._btn_save = self._make_action_btn("保存", action_style)
-        layout.addWidget(self._btn_save)
+        top_layout.addWidget(self._btn_save)
 
         self._btn_copy = self._make_action_btn("复制", action_style)
-        layout.addWidget(self._btn_copy)
+        top_layout.addWidget(self._btn_copy)
 
         self._btn_cancel = self._make_action_btn(
             "取消", InlineStyles.cancel_button_style()
         )
-        layout.addWidget(self._btn_cancel)
+        top_layout.addWidget(self._btn_cancel)
+
+        outer.addWidget(self._top_bar)
+
+        # --- 下方：属性条工具栏（初始隐藏） ---
+        self._props_panel = QWidget()
+        self._props_panel.setObjectName("propsPanel")
+        self._props_panel.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self._props_panel.setStyleSheet(InlineStyles.properties_panel_style())
+        self._props_panel.hide()
+
+        props_layout = QHBoxLayout(self._props_panel)
+        props_layout.setContentsMargins(8, 4, 8, 4)
+        props_layout.setSpacing(6)
+
+        self._properties_bar = ToolPropertiesBar()
+        self._properties_bar.setStyleSheet("")  # 清空暗色主题样式，使用面板的浅色样式
+        props_layout.addWidget(self._properties_bar)
+
+        outer.addWidget(self._props_panel)
 
     def _make_action_btn(self, text: str, style: str) -> QToolButton:
         btn = QToolButton()
@@ -149,8 +170,7 @@ class InlineToolbar(QWidget):
     def _on_tool_clicked(self, tool: EditTool) -> None:
         self._current_tool = tool
         has_props = tool not in (EditTool.SELECT, EditTool.CROP)
-        self._props_separator.setVisible(has_props)
-        self._properties_bar.setVisible(has_props)
+        self._props_panel.setVisible(has_props)
         if has_props:
             self._properties_bar.update_for_tool(tool)
         self.tool_changed.emit(tool)
