@@ -48,7 +48,6 @@ class InlineToolbar(QWidget):
     redo_requested = Signal()
     save_requested = Signal()
     copy_requested = Signal()
-    confirm_requested = Signal()
     cancel_requested = Signal()
 
     def __init__(self, parent=None):
@@ -118,11 +117,6 @@ class InlineToolbar(QWidget):
         self._btn_copy = self._make_action_btn("复制", action_style)
         layout.addWidget(self._btn_copy)
 
-        self._btn_confirm = self._make_action_btn(
-            "识别", InlineStyles.confirm_button_style()
-        )
-        layout.addWidget(self._btn_confirm)
-
         self._btn_cancel = self._make_action_btn(
             "取消", InlineStyles.cancel_button_style()
         )
@@ -150,7 +144,6 @@ class InlineToolbar(QWidget):
         self._btn_redo.clicked.connect(self.redo_requested.emit)
         self._btn_save.clicked.connect(self.save_requested.emit)
         self._btn_copy.clicked.connect(self.copy_requested.emit)
-        self._btn_confirm.clicked.connect(self.confirm_requested.emit)
         self._btn_cancel.clicked.connect(self.cancel_requested.emit)
 
     def _on_tool_clicked(self, tool: EditTool) -> None:

@@ -1,7 +1,7 @@
 # src/vibeocr/widgets/inline_recognition_panel.py
 """内联识别面板 - 快速选择识别类型并展开高级设置"""
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QPushButton, QVBoxLayout, QWidget
 
 from vibeocr.core.inline_styles import InlineStyles
@@ -21,8 +21,10 @@ class InlineRecognitionPanel(QWidget):
     """内联识别面板
 
     提供快速识别类型选择按钮，并可展开显示更多预处理选项。
-    默认选中 OCR 管道。
+    点击管道按钮直接触发识别。
     """
+
+    recognize_requested = Signal()
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
@@ -47,7 +49,7 @@ class InlineRecognitionPanel(QWidget):
             btn.setCheckable(True)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
             btn.setProperty("pipeline", pipeline)
-            btn.clicked.connect(lambda checked, p=pipeline: self._on_pipeline_clicked(p))
+            btn.clicked.connect(lambda _checked, p=pipeline: self._on_pipeline_clicked(p))
             layout.addWidget(btn)
             self._pipeline_buttons[pipeline] = btn
 
@@ -63,9 +65,6 @@ class InlineRecognitionPanel(QWidget):
         self._settings_widget.options_changed.connect(self._on_settings_changed)
         layout.addWidget(self._settings_widget)
 
-        # 设置默认选中 OCR
-        self._pipeline_buttons[OCRPipeline.OCR].setChecked(True)
-
     def _apply_styles(self):
         """应用样式"""
         self.setStyleSheet(InlineStyles.panel_style())
@@ -76,7 +75,7 @@ class InlineRecognitionPanel(QWidget):
         self._btn_more.setStyleSheet(InlineStyles.recognition_button_style())
 
     def _on_pipeline_clicked(self, pipeline: OCRPipeline):
-        """管道按钮点击处理"""
+        """管道按钮点击处理——选中并直接触发识别"""
         self._current_pipeline = pipeline
 
         # 更新按钮选中状态
@@ -86,6 +85,8 @@ class InlineRecognitionPanel(QWidget):
         # 同步到设置面板
         if self._settings_expanded:
             self._settings_widget.set_options(self.get_options())
+
+        self.recognize_requested.emit()
 
     def _toggle_settings(self):
         """切换设置面板的展开/折叠"""

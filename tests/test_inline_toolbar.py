@@ -32,7 +32,6 @@ class TestInlineToolbar:
         assert isinstance(toolbar._btn_redo, QToolButton)
         assert isinstance(toolbar._btn_save, QToolButton)
         assert isinstance(toolbar._btn_copy, QToolButton)
-        assert isinstance(toolbar._btn_confirm, QToolButton)
         assert isinstance(toolbar._btn_cancel, QToolButton)
 
     def test_action_buttons_have_icons(self, qapp):
@@ -41,7 +40,6 @@ class TestInlineToolbar:
         assert not toolbar._btn_redo.icon().isNull()
         assert not toolbar._btn_save.icon().isNull()
         assert not toolbar._btn_copy.icon().isNull()
-        assert not toolbar._btn_confirm.icon().isNull()
         assert not toolbar._btn_cancel.icon().isNull()
 
     def test_tool_changed_signal(self, qapp):
@@ -68,13 +66,6 @@ class TestInlineToolbar:
         toolbar = InlineToolbar()
         toolbar.set_redo_enabled(True)
         assert toolbar._btn_redo.isEnabled()
-
-    def test_confirm_requested_signal(self, qapp):
-        toolbar = InlineToolbar()
-        received = []
-        toolbar.confirm_requested.connect(lambda: received.append(True))
-        toolbar._btn_confirm.clicked.emit()
-        assert len(received) == 1
 
     def test_cancel_requested_signal(self, qapp):
         toolbar = InlineToolbar()

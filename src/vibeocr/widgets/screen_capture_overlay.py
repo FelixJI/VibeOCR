@@ -384,10 +384,13 @@ class ScreenCaptureOverlay(QWidget):
         )
 
         # 操作按钮
-        self._toolbar.confirm_requested.connect(self._on_confirm)
         self._toolbar.copy_requested.connect(self._on_copy)
         self._toolbar.save_requested.connect(self._on_save)
         self._toolbar.cancel_requested.connect(self._do_cancel)
+
+        # 识别面板
+        if self._recognition_panel:
+            self._recognition_panel.recognize_requested.connect(self._on_confirm)
 
     def _on_selection_changed(self, new_rect: QRect) -> None:
         """选区 resize/move 过程中持续更新"""
