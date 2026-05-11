@@ -271,7 +271,6 @@ class InlineEditCanvas(QGraphicsView):
 
         scene_pos = self.mapToScene(event.pos())
         tool = self._current_tool
-
         if tool == EditTool.SELECT:
             self._move_start_positions.clear()
             for item in self._scene.selectedItems():

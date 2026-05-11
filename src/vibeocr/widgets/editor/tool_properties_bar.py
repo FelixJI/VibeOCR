@@ -78,11 +78,9 @@ class ToolPropertiesBar(QWidget):
     def _create_color_button(self) -> QPushButton:
         """创建颜色选择按钮"""
         btn = QPushButton()
+        btn.setObjectName("colorPickButton")
         btn.setFixedSize(24, 24)
-        btn.setStyleSheet(
-            f"QPushButton {{ background-color: {self._current_color.name()}; "
-            f"border: 1px solid #666; border-radius: 3px; }}"
-        )
+        self._apply_color_style(btn)
         btn.clicked.connect(self._on_color_pick)
         return btn
 
@@ -217,16 +215,19 @@ class ToolPropertiesBar(QWidget):
             self._update_color_buttons()
             self.color_changed.emit(color)
 
-    def _update_color_buttons(self) -> None:
-        """更新所有颜色按钮的背景色"""
-        style = (
-            f"QPushButton {{ background-color: {self._current_color.name()}; "
+    def _apply_color_style(self, btn: QPushButton) -> None:
+        """设置颜色按钮样式（使用 objectName 选择器避免被父级样式覆盖）"""
+        btn.setStyleSheet(
+            f"QPushButton#colorPickButton {{ background-color: {self._current_color.name()}; "
             f"border: 1px solid #666; border-radius: 3px; }}"
         )
+
+    def _update_color_buttons(self) -> None:
+        """更新所有颜色按钮的背景色"""
         if hasattr(self, "_shape_color_btn"):
-            self._shape_color_btn.setStyleSheet(style)
+            self._apply_color_style(self._shape_color_btn)
         if hasattr(self, "_text_color_btn"):
-            self._text_color_btn.setStyleSheet(style)
+            self._apply_color_style(self._text_color_btn)
 
     def _on_mosaic_changed(self, value: int) -> None:
         self._mosaic_label.setText(str(value))

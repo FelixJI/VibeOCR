@@ -199,7 +199,13 @@ class SelectionResizeFrame(QWidget):
             event.buttons(),
             event.modifiers(),
         )
-        QApplication.sendEvent(self._forward_target, new_event)
+        # 发送到 viewport 而非 QGraphicsView 本身，因为 QAbstractScrollArea
+        # 的事件路由要求鼠标事件经过 viewport 才能到达 mousePressEvent
+        target = self._forward_target
+        from PySide6.QtWidgets import QAbstractScrollArea
+        if isinstance(target, QAbstractScrollArea):
+            target = target.viewport()
+        QApplication.sendEvent(target, new_event)
 
     def paintEvent(self, _event: QPaintEvent) -> None:
         if self._selection_rect.isEmpty():
@@ -252,7 +258,10 @@ class SelectionResizeFrame(QWidget):
             handle = _hit_test(event.pos(), self._selection_rect)
             if handle == HandlePosition.NONE and _is_in_border_zone(event.pos(), self._selection_rect):
                 handle = HandlePosition.MOVE
-            self.setCursor(_cursor_for_handle(handle))
+            if handle == HandlePosition.NONE and self._forward_target:
+                self.setCursor(self._forward_target.cursor())
+            else:
+                self.setCursor(_cursor_for_handle(handle))
             self._forward_event(event)
             return
 
