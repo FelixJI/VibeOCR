@@ -60,7 +60,7 @@ class ToolPropertiesBar(QWidget):
         self._stack = QStackedWidget()
         layout.addWidget(self._stack)
 
-        # 页面 0：空白（SELECT/CROP 等无属性工具）
+        # 页面 0：空白（SELECT 等无属性工具）
         self._stack.addWidget(QWidget())
 
         # 页面 1：图形属性（矩形/圆/箭头）

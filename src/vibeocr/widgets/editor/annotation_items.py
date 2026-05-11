@@ -36,7 +36,6 @@ class EditTool(Enum):
     SELECT = "select"
     MOSAIC = "mosaic"
     BLUR = "blur"
-    CROP = "crop"
     RECT = "rect"
     ELLIPSE = "ellipse"
     ARROW = "arrow"

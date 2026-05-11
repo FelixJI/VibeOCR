@@ -103,8 +103,6 @@ class InlineEditCanvas(QGraphicsView):
             | None
         ) = None
 
-        # 裁剪相关
-        self._crop_rect_item: QGraphicsRectItem | None = None
         self._crop_origin: QPointF = QPointF()
 
         # 移动跟踪
@@ -198,9 +196,6 @@ class InlineEditCanvas(QGraphicsView):
         elif tool == EditTool.TEXT:
             self.setDragMode(QGraphicsView.DragMode.NoDrag)
             self.setCursor(Qt.CursorShape.IBeamCursor)
-        elif tool == EditTool.CROP:
-            self.setDragMode(QGraphicsView.DragMode.NoDrag)
-            self.setCursor(Qt.CursorShape.CrossCursor)
         else:
             self.setDragMode(QGraphicsView.DragMode.NoDrag)
             self.setCursor(Qt.CursorShape.CrossCursor)
@@ -235,11 +230,6 @@ class InlineEditCanvas(QGraphicsView):
 
     def export_image(self) -> QPixmap:
         """导出当前画布内容为 QPixmap（全物理分辨率）"""
-        # 隐藏裁剪框
-        if self._crop_rect_item:
-            self._scene.removeItem(self._crop_rect_item)
-            self._crop_rect_item = None
-
         # 取消所有选中
         self._scene.clearSelection()
 
@@ -289,7 +279,6 @@ class InlineEditCanvas(QGraphicsView):
             EditTool.ARROW,
             EditTool.MOSAIC,
             EditTool.BLUR,
-            EditTool.CROP,
         ):
             self._drawing = True
             self._draw_start = scene_pos
@@ -366,12 +355,9 @@ class InlineEditCanvas(QGraphicsView):
                 pen_width=self._pen_width,
             )
             item.setPen(QPen(self._pen_color, self._pen_width, Qt.PenStyle.DashLine))
-        elif tool in (EditTool.MOSAIC, EditTool.BLUR, EditTool.CROP):
+        elif tool in (EditTool.MOSAIC, EditTool.BLUR):
             item = QGraphicsRectItem(rect)
-            if tool == EditTool.CROP:
-                item.setPen(QPen(QColor(255, 255, 255), 2, Qt.PenStyle.DashLine))
-            else:
-                item.setPen(QPen(QColor(0, 120, 215), 1, Qt.PenStyle.DashLine))
+            item.setPen(QPen(QColor(0, 120, 215), 1, Qt.PenStyle.DashLine))
             item.setBrush(QBrush(QColor(0, 120, 215, 30)))
         else:
             return
@@ -455,19 +441,6 @@ class InlineEditCanvas(QGraphicsView):
                     self._background_pixmap,
                     radius=self._blur_radius,
                 )
-        elif tool == EditTool.CROP:
-            if self._crop_rect_item:
-                self._scene.removeItem(self._crop_rect_item)
-            self._crop_rect_item = QGraphicsRectItem(rect)
-            self._crop_rect_item.setPen(
-                QPen(QColor(255, 255, 255), 2, Qt.PenStyle.DashLine)
-            )
-            self._crop_rect_item.setBrush(Qt.BrushStyle.NoBrush)
-            self._crop_rect_item.setZValue(998)
-            self._scene.addItem(self._crop_rect_item)
-            self._draw_start = None
-            return
-
         if item:
             cmd = AddAnnotationCommand(self._scene, item)
             self._undo_stack.push(cmd)

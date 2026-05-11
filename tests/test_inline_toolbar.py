@@ -14,7 +14,7 @@ class TestInlineToolbar:
 
     def test_tool_buttons_exist(self, qapp):
         toolbar = InlineToolbar()
-        assert len(toolbar._tool_buttons) == 7
+        assert len(toolbar._tool_buttons) == 6
 
     def test_tool_buttons_are_qtoolbutton(self, qapp):
         toolbar = InlineToolbar()

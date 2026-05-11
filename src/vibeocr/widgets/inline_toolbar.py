@@ -24,7 +24,6 @@ from vibeocr.widgets.editor.tool_properties_bar import ToolPropertiesBar
 _TOOL_DEFS: list[tuple[str, EditTool]] = [
     ("打码", EditTool.MOSAIC),
     ("模糊", EditTool.BLUR),
-    ("裁剪", EditTool.CROP),
     ("矩形", EditTool.RECT),
     ("椭圆", EditTool.ELLIPSE),
     ("箭头", EditTool.ARROW),
@@ -169,7 +168,7 @@ class InlineToolbar(QWidget):
 
     def _on_tool_clicked(self, tool: EditTool) -> None:
         self._current_tool = tool
-        has_props = tool not in (EditTool.SELECT, EditTool.CROP)
+        has_props = tool != EditTool.SELECT
         self._props_panel.setVisible(has_props)
         if has_props:
             self._properties_bar.update_for_tool(tool)

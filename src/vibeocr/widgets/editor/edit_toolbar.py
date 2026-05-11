@@ -52,7 +52,6 @@ class EditorToolbar(QWidget):
         tools = [
             ("马赛克", EditTool.MOSAIC),
             ("模糊", EditTool.BLUR),
-            ("框选", EditTool.CROP),
             ("矩形", EditTool.RECT),
             ("圆形", EditTool.ELLIPSE),
             ("箭头", EditTool.ARROW),
