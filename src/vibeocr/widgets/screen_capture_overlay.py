@@ -146,16 +146,14 @@ class ScreenCaptureOverlay(QWidget):
         self.repaint()
 
     def paintEvent(self, _event) -> None:
-        """CAPTURING 模式下绘制遮罩、选区和放大镜"""
-        if self._state != "CAPTURING":
+        """绘制冻结截图背景、遮罩（CAPTURING/EDITING 共用）和放大镜"""
+        if not self._screen_pixmap:
             return
 
         painter = QPainter(self)
 
-        # 1. 绘制截图背景
-        # widget 几何 = virtual_geometry，widget (0,0) 即 pixmap 逻辑原点
-        if self._screen_pixmap:
-            painter.drawPixmap(QPoint(0, 0), self._screen_pixmap)
+        # 1. 绘制冻结截图背景
+        painter.drawPixmap(QPoint(0, 0), self._screen_pixmap)
 
         # 2. 创建遮罩（减去选区，镂空效果）
         mask_region = QRegion(self.rect())
@@ -165,10 +163,15 @@ class ScreenCaptureOverlay(QWidget):
         # 3. 非选区绘制半透明遮罩
         painter.setClipRegion(mask_region)
         painter.fillRect(self.rect(), QColor(0, 0, 0, 170))
+        painter.setClipping(False)
+
+        if self._state != "CAPTURING":
+            return
+
+        # --- 以下仅 CAPTURING 模式 ---
 
         # 4. 绘制选区边框和尺寸
         if self._selection_rect:
-            painter.setClipping(False)
             pen = QPen(QColor(0, 120, 215), 2)
             painter.setPen(pen)
             painter.drawRect(self._selection_rect)
@@ -179,11 +182,9 @@ class ScreenCaptureOverlay(QWidget):
             painter.drawText(
                 self._selection_rect.topLeft() + QPoint(5, -5), size_text
             )
-        else:
-            painter.setClipping(False)
 
         # 5. 放大镜和像素信息
-        if self._screen_pixmap and self._current_mouse_pos is not None:
+        if self._current_mouse_pos is not None:
             mag_rect = MagnifierOverlay.draw_magnifier(
                 painter,
                 self._current_mouse_pos,
@@ -390,6 +391,9 @@ class ScreenCaptureOverlay(QWidget):
             return
 
         self._selection_rect = new_rect
+
+        # 重绘 overlay（冻结截图 + 遮罩需要跟随选区更新）
+        self.update()
 
         # 更新画布背景和标注
         self._canvas.update_crop_region(
