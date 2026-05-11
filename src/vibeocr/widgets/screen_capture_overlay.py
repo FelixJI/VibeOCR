@@ -33,6 +33,7 @@ from vibeocr.widgets.inline_edit_canvas import InlineEditCanvas
 from vibeocr.widgets.inline_recognition_panel import InlineRecognitionPanel
 from vibeocr.widgets.inline_toolbar import InlineToolbar
 from vibeocr.widgets.magnifier_overlay import MagnifierOverlay
+from vibeocr.widgets.selection_resize_frame import SelectionResizeFrame
 
 
 class ScreenCaptureOverlay(QWidget):
@@ -95,6 +96,7 @@ class ScreenCaptureOverlay(QWidget):
         self._toolbar: InlineToolbar | None = None
         self._recognition_panel: InlineRecognitionPanel | None = None
         self._captured_pixmap: QPixmap | None = None
+        self._resize_frame: SelectionResizeFrame | None = None
 
     # ==================== CAPTURING 模式 ====================
 
@@ -294,6 +296,15 @@ class ScreenCaptureOverlay(QWidget):
         # 创建识别面板
         self._recognition_panel = InlineRecognitionPanel(self)
 
+        # 创建 resize 框架
+        self._resize_frame = SelectionResizeFrame(
+            self,
+            virtual_geometry=self._virtual_geometry,
+            min_size=self.MIN_SELECTION_SIZE,
+        )
+        self._resize_frame.selection_changed.connect(self._on_selection_changed)
+        self._resize_frame.selection_finalized.connect(self._on_selection_finalized)
+
         # 定位子组件
 
         # 定位子组件
@@ -306,6 +317,9 @@ class ScreenCaptureOverlay(QWidget):
         self._canvas.show()
         self._toolbar.show()
         self._recognition_panel.show()
+        self._resize_frame.setGeometry(self._selection_rect)
+        self._resize_frame.raise_()
+        self._resize_frame.show()
 
         # 重绘覆盖层（EDITING 模式下 paintEvent 不绘制）
         self.update()
@@ -370,6 +384,36 @@ class ScreenCaptureOverlay(QWidget):
         self._toolbar.save_requested.connect(self._on_save)
         self._toolbar.cancel_requested.connect(self._do_cancel)
 
+    def _on_selection_changed(self, new_rect: QRect) -> None:
+        """选区 resize/move 过程中持续更新"""
+        if not self._canvas or not self._screen_pixmap:
+            return
+
+        self._selection_rect = new_rect
+
+        # 更新画布背景和标注
+        self._canvas.update_crop_region(
+            self._screen_pixmap, new_rect, self._device_pixel_ratio
+        )
+
+        # 更新子控件几何
+        self._canvas.setGeometry(new_rect)
+        if self._resize_frame:
+            self._resize_frame.sync_geometry(new_rect)
+
+        toolbar_geo = self._calc_toolbar_geometry(new_rect)
+        if self._toolbar:
+            self._toolbar.setGeometry(toolbar_geo)
+
+        panel_geo = self._calc_recognition_panel_geometry(new_rect, toolbar_geo)
+        if self._recognition_panel:
+            self._recognition_panel.setGeometry(panel_geo)
+            self._recognition_panel.setFixedWidth(panel_geo.width())
+
+    def _on_selection_finalized(self) -> None:
+        """选区拖拽结束"""
+        pass
+
     def _on_confirm(self) -> None:
         """确认识别"""
         if not self._canvas:
@@ -423,6 +467,9 @@ class ScreenCaptureOverlay(QWidget):
         if self._recognition_panel:
             self._recognition_panel.deleteLater()
             self._recognition_panel = None
+        if self._resize_frame:
+            self._resize_frame.deleteLater()
+            self._resize_frame = None
 
         self._captured_pixmap = None
         self._reset_capturing()
