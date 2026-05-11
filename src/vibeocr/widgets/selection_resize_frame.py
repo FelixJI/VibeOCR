@@ -11,9 +11,9 @@ from __future__ import annotations
 
 from enum import Enum
 
-from PySide6.QtCore import QPoint, QRect, Qt, Signal
+from PySide6.QtCore import QPoint, QPointF, QRect, Qt, Signal
 from PySide6.QtGui import QColor, QMouseEvent, QPaintEvent, QPainter, QPen
-from PySide6.QtWidgets import QWidget
+from PySide6.QtWidgets import QApplication, QWidget
 
 
 class HandlePosition(Enum):
@@ -32,6 +32,9 @@ class HandlePosition(Enum):
 # 手柄尺寸（半边长，即检测半径）
 _HANDLE_HALF = 5
 
+# 边框区域宽度：鼠标在此范围内才触发 MOVE
+_BORDER_WIDTH = 8
+
 
 def _handle_positions(rect: QRect) -> dict[HandlePosition, QPoint]:
     """返回 8 个手柄的中心坐标"""
@@ -45,6 +48,16 @@ def _handle_positions(rect: QRect) -> dict[HandlePosition, QPoint]:
         HandlePosition.LEFT: QPoint(rect.left(), rect.y() + rect.height() // 2),
         HandlePosition.RIGHT: QPoint(rect.right(), rect.y() + rect.height() // 2),
     }
+
+
+def _is_in_border_zone(pos: QPoint, rect: QRect, border: int = _BORDER_WIDTH) -> bool:
+    """判断 pos 是否在 rect 的边框环形区域内（非内部深层区域）"""
+    if not rect.contains(pos):
+        return False
+    inner = rect.adjusted(border, border, -border, -border)
+    if inner.width() <= 0 or inner.height() <= 0:
+        return True  # 选区太小，整个区域都算边框
+    return not inner.contains(pos)
 
 
 def _hit_test(pos: QPoint, rect: QRect) -> HandlePosition:
@@ -143,10 +156,12 @@ class SelectionResizeFrame(QWidget):
         parent: QWidget | None = None,
         virtual_geometry: QRect | None = None,
         min_size: int = 50,
+        forward_target: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self._virtual_geometry = virtual_geometry or QRect()
         self._min_size = min_size
+        self._forward_target = forward_target
         self._selection_rect = QRect()
         self._active_handle = HandlePosition.NONE
         self._drag_start_pos: QPoint | None = None
@@ -167,6 +182,24 @@ class SelectionResizeFrame(QWidget):
         """外部调用：将选区同步到新位置（不改变控件几何）"""
         self._selection_rect = QRect(rect)
         self.update()
+
+    def _forward_event(self, event: QMouseEvent) -> None:
+        """将鼠标事件转发到下层画布，坐标映射到目标控件的局部坐标系"""
+        if not self._forward_target:
+            event.ignore()
+            return
+
+        # 将事件坐标从本控件映射到目标控件
+        local_pos = self._forward_target.mapFrom(self, event.pos())
+        new_event = QMouseEvent(
+            event.type(),
+            QPointF(local_pos),
+            event.globalPosition(),
+            event.button(),
+            event.buttons(),
+            event.modifiers(),
+        )
+        QApplication.sendEvent(self._forward_target, new_event)
 
     def paintEvent(self, _event: QPaintEvent) -> None:
         if self._selection_rect.isEmpty():
@@ -197,18 +230,17 @@ class SelectionResizeFrame(QWidget):
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
         if event.button() != Qt.MouseButton.LeftButton:
-            super().mousePressEvent(event)
+            self._forward_event(event)
             return
 
         pos = event.pos()
         handle = _hit_test(pos, self._selection_rect)
         if handle != HandlePosition.NONE:
             self._active_handle = handle
-        elif self._selection_rect.contains(pos):
+        elif _is_in_border_zone(pos, self._selection_rect):
             self._active_handle = HandlePosition.MOVE
         else:
-            self._active_handle = HandlePosition.NONE
-            super().mousePressEvent(event)
+            self._forward_event(event)
             return
 
         self._drag_start_pos = pos
@@ -218,10 +250,10 @@ class SelectionResizeFrame(QWidget):
     def mouseMoveEvent(self, event: QMouseEvent) -> None:
         if self._active_handle == HandlePosition.NONE:
             handle = _hit_test(event.pos(), self._selection_rect)
-            if handle == HandlePosition.NONE and self._selection_rect.contains(event.pos()):
+            if handle == HandlePosition.NONE and _is_in_border_zone(event.pos(), self._selection_rect):
                 handle = HandlePosition.MOVE
             self.setCursor(_cursor_for_handle(handle))
-            super().mouseMoveEvent(event)
+            self._forward_event(event)
             return
 
         if not self._drag_start_pos or not self._drag_start_rect:
@@ -239,4 +271,4 @@ class SelectionResizeFrame(QWidget):
             self._drag_start_rect = None
             self.selection_finalized.emit()
             return
-        super().mouseReleaseEvent(event)
+        self._forward_event(event)

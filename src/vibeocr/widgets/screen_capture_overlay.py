@@ -305,6 +305,7 @@ class ScreenCaptureOverlay(QWidget):
             self,
             virtual_geometry=self._virtual_geometry,
             min_size=self.MIN_SELECTION_SIZE,
+            forward_target=self._canvas,
         )
         self._resize_frame.selection_changed.connect(self._on_selection_changed)
         self._resize_frame.selection_finalized.connect(self._on_selection_finalized)
