@@ -2,6 +2,9 @@
 
 在 EDITING 阶段覆盖在画布周围的控件，提供 8 个拖拽手柄
 用于调整选区大小和位置。
+
+控件始终覆盖整个虚拟桌面，内部用 _selection_rect 记录选区位置，
+避免拖拽时改变控件几何导致的闪烁。
 """
 
 from __future__ import annotations
@@ -126,7 +129,11 @@ def _constrain_rect(rect: QRect, bounds: QRect, min_size: int) -> QRect:
 
 
 class SelectionResizeFrame(QWidget):
-    """选区边界拖拽手柄框架"""
+    """选区边界拖拽手柄框架
+
+    控件始终覆盖整个虚拟桌面，通过 _selection_rect 记录当前选区位置。
+    拖拽时只更新 _selection_rect 并重绘，不改变控件几何，避免闪烁。
+    """
 
     selection_changed = Signal(QRect)
     selection_finalized = Signal()
@@ -140,24 +147,42 @@ class SelectionResizeFrame(QWidget):
         super().__init__(parent)
         self._virtual_geometry = virtual_geometry or QRect()
         self._min_size = min_size
+        self._selection_rect = QRect()
         self._active_handle = HandlePosition.NONE
         self._drag_start_pos: QPoint | None = None
         self._drag_start_rect: QRect | None = None
         self.setMouseTracking(True)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
 
+        # 覆盖整个虚拟桌面
+        if virtual_geometry:
+            self.setGeometry(virtual_geometry)
+
+    def set_initial_selection(self, rect: QRect) -> None:
+        """设置初始选区并显示控件"""
+        self._selection_rect = QRect(rect)
+        self.update()
+
+    def sync_selection(self, rect: QRect) -> None:
+        """外部调用：将选区同步到新位置（不改变控件几何）"""
+        self._selection_rect = QRect(rect)
+        self.update()
+
     def paintEvent(self, _event: QPaintEvent) -> None:
+        if self._selection_rect.isEmpty():
+            return
+
         painter = QPainter(self)
-        rect = self.rect()
+        sr = self._selection_rect
 
         # 边框：白色半透明虚线
         pen = QPen(QColor(255, 255, 255, 180), 1, Qt.PenStyle.DashLine)
         painter.setPen(pen)
         painter.setBrush(Qt.BrushStyle.NoBrush)
-        painter.drawRect(rect.adjusted(0, 0, -1, -1))
+        painter.drawRect(sr.adjusted(0, 0, -1, -1))
 
         # 8 个手柄
-        handles = _handle_positions(rect)
+        handles = _handle_positions(sr)
         handle_pen = QPen(QColor(255, 255, 255), 1)
         handle_brush = QColor(0, 120, 215)
         for pos in handles.values():
@@ -176,10 +201,10 @@ class SelectionResizeFrame(QWidget):
             return
 
         pos = event.pos()
-        handle = _hit_test(pos, self.rect())
+        handle = _hit_test(pos, self._selection_rect)
         if handle != HandlePosition.NONE:
             self._active_handle = handle
-        elif self.rect().contains(pos):
+        elif self._selection_rect.contains(pos):
             self._active_handle = HandlePosition.MOVE
         else:
             self._active_handle = HandlePosition.NONE
@@ -187,14 +212,13 @@ class SelectionResizeFrame(QWidget):
             return
 
         self._drag_start_pos = pos
-        self._drag_start_rect = QRect(self.geometry())
+        self._drag_start_rect = QRect(self._selection_rect)
         self.setCursor(_cursor_for_handle(self._active_handle))
 
     def mouseMoveEvent(self, event: QMouseEvent) -> None:
         if self._active_handle == HandlePosition.NONE:
-            # 悬浮时更新光标
-            handle = _hit_test(event.pos(), self.rect())
-            if handle == HandlePosition.NONE and self.rect().contains(event.pos()):
+            handle = _hit_test(event.pos(), self._selection_rect)
+            if handle == HandlePosition.NONE and self._selection_rect.contains(event.pos()):
                 handle = HandlePosition.MOVE
             self.setCursor(_cursor_for_handle(handle))
             super().mouseMoveEvent(event)
@@ -216,8 +240,3 @@ class SelectionResizeFrame(QWidget):
             self.selection_finalized.emit()
             return
         super().mouseReleaseEvent(event)
-
-    def sync_geometry(self, rect: QRect) -> None:
-        """外部调用：将 frame 的几何同步到新选区"""
-        self.setGeometry(rect)
-        self.update()

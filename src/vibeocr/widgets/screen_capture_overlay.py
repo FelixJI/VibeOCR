@@ -317,7 +317,7 @@ class ScreenCaptureOverlay(QWidget):
         self._canvas.show()
         self._toolbar.show()
         self._recognition_panel.show()
-        self._resize_frame.setGeometry(self._selection_rect)
+        self._resize_frame.set_initial_selection(self._selection_rect)
         self._resize_frame.raise_()
         self._resize_frame.show()
 
@@ -399,7 +399,7 @@ class ScreenCaptureOverlay(QWidget):
         # 更新子控件几何
         self._canvas.setGeometry(new_rect)
         if self._resize_frame:
-            self._resize_frame.sync_geometry(new_rect)
+            self._resize_frame.sync_selection(new_rect)
 
         toolbar_geo = self._calc_toolbar_geometry(new_rect)
         if self._toolbar:
