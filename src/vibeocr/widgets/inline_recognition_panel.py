@@ -39,7 +39,10 @@ class InlineRecognitionPanel(QWidget):
         """构建 UI 布局"""
         layout = QVBoxLayout(self)
         layout.setContentsMargins(6, 6, 6, 6)
-        layout.setSpacing(2)
+        layout.setSpacing(4)
+
+        # 弹性空间：将按钮推到面板底部
+        layout.addStretch()
 
         # 管道按钮
         for pipeline, label in _PIPELINE_BUTTON_CONFIG:

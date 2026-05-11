@@ -13,8 +13,8 @@ class InlineStyles:
     PANEL_RADIUS = 8
 
     # 按钮
-    BUTTON_HOVER = "rgba(255, 255, 255, 153)"
-    BUTTON_PRESSED = "rgba(240, 240, 240, 204)"
+    BUTTON_HOVER = "#e8e8e8"
+    BUTTON_PRESSED = "#dcdcdc"
     BUTTON_CHECKED = WindowsColors.PRIMARY
     BUTTON_CHECKED_HOVER = WindowsColors.PRIMARY_HOVER
 
