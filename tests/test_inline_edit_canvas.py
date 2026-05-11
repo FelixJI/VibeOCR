@@ -1,7 +1,20 @@
 """Tests for InlineEditCanvas."""
 
-from PySide6.QtGui import QPixmap
+from PySide6.QtCore import QPointF, QRect, QRectF
+from PySide6.QtGui import QColor, QPixmap
+from PySide6.QtWidgets import QGraphicsRectItem
+
 from vibeocr.widgets.inline_edit_canvas import InlineEditCanvas
+
+
+def _make_pixmap(w: int, h: int, color: QColor = None, dpr: float = 1.0) -> QPixmap:
+    px = QPixmap(int(w * dpr), int(h * dpr))
+    if color:
+        px.fill(color)
+    else:
+        px.fill(QColor(128, 128, 128))
+    px.setDevicePixelRatio(dpr)
+    return px
 
 
 class TestInlineEditCanvas:
@@ -33,3 +46,47 @@ class TestInlineEditCanvas:
     def test_undo_stack_exists(self, qapp):
         canvas = InlineEditCanvas()
         assert canvas.undo_stack is not None
+
+
+class TestUpdateCropRegion:
+    def test_background_updates_to_new_region(self, qapp):
+        canvas = InlineEditCanvas()
+
+        # 原始屏幕 1000x800
+        screen_pxm = _make_pixmap(1000, 800, QColor(100, 100, 100), dpr=1.0)
+
+        # 初始裁剪区域 (100, 100, 300x200)
+        initial_sel = QRect(100, 100, 300, 200)
+        cropped = screen_pxm.copy(initial_sel)
+        canvas.set_background(cropped)
+
+        old_scene_rect = canvas._scene.sceneRect()
+        assert old_scene_rect == QRectF(0, 0, 300, 200)
+
+        # 更新到新裁剪区域 (50, 50, 400x300)
+        new_sel = QRect(50, 50, 400, 300)
+        canvas.update_crop_region(screen_pxm, new_sel, dpr=1.0)
+
+        new_scene_rect = canvas._scene.sceneRect()
+        assert new_scene_rect == QRectF(0, 0, 400, 300)
+
+    def test_annotations_translated_by_delta(self, qapp):
+        canvas = InlineEditCanvas()
+        screen_pxm = _make_pixmap(1000, 800, dpr=1.0)
+
+        initial_sel = QRect(100, 100, 300, 200)
+        cropped = screen_pxm.copy(initial_sel)
+        canvas.set_background(cropped, crop_origin=QPointF(100, 100))
+
+        # 在场景坐标 (50, 30) 添加一个矩形标注
+        annotation = QGraphicsRectItem(QRectF(50, 30, 60, 40))
+        canvas._scene.addItem(annotation)
+
+        # 裁剪区域移动了 (20, 10)，即 new_sel 左上角从 (100,100) 变为 (120,110)
+        # 标注应该平移 -(20, 10) = (-20, -10) 以保持屏幕绝对位置
+        new_sel = QRect(120, 110, 300, 200)
+        canvas.update_crop_region(screen_pxm, new_sel, dpr=1.0)
+
+        # 原场景坐标 (50, 30) → 新场景坐标 (30, 20)
+        assert annotation.pos().x() == -20.0
+        assert annotation.pos().y() == -10.0

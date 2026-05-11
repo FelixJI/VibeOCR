@@ -9,7 +9,7 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import QPointF, QRectF, Qt
+from PySide6.QtCore import QPointF, QRect, QRectF, Qt
 from PySide6.QtGui import (
     QBrush,
     QColor,
@@ -105,6 +105,7 @@ class InlineEditCanvas(QGraphicsView):
 
         # 裁剪相关
         self._crop_rect_item: QGraphicsRectItem | None = None
+        self._crop_origin: QPointF = QPointF()
 
         # 移动跟踪
         self._move_start_positions: dict[QGraphicsItem, QPointF] = {}
@@ -117,7 +118,7 @@ class InlineEditCanvas(QGraphicsView):
 
     # ==================== 公开方法 ====================
 
-    def set_background(self, pixmap: QPixmap) -> None:
+    def set_background(self, pixmap: QPixmap, crop_origin: QPointF | None = None) -> None:
         """设置背景截图"""
         self._background_pixmap = pixmap
         if self._background_item:
@@ -138,6 +139,43 @@ class InlineEditCanvas(QGraphicsView):
         self._scene.setSceneRect(
             QRectF(0, 0, pixmap.width() / dpr, pixmap.height() / dpr)
         )
+        if crop_origin is not None:
+            self._crop_origin = crop_origin
+
+    def update_crop_region(
+        self, screen_pixmap: QPixmap, new_selection: QRect, dpr: float
+    ) -> None:
+        """更新裁剪区域：重新裁剪背景并平移标注"""
+        # 计算选区原点的偏移量
+        old_origin = self._crop_origin
+        new_origin = QPointF(new_selection.x(), new_selection.y())
+        delta = old_origin - new_origin
+
+        # 记录新的裁剪原点
+        self._crop_origin = new_origin
+
+        # 重新裁剪背景（物理坐标）
+        physical_rect = QRect(
+            int(new_selection.x() * dpr),
+            int(new_selection.y() * dpr),
+            int(new_selection.width() * dpr),
+            int(new_selection.height() * dpr),
+        )
+        new_cropped = screen_pixmap.copy(physical_rect)
+        self.set_background(new_cropped)
+
+        # 平移所有非背景标注
+        if delta.x() != 0 or delta.y() != 0:
+            for item in self._scene.items():
+                if item != self._background_item:
+                    item.moveBy(delta.x(), delta.y())
+
+            # 更新 MosaicItem / BlurItem 的背景引用
+            new_bg = self._background_pixmap
+            for item in self._scene.items():
+                if isinstance(item, (MosaicItem, BlurItem)):
+                    item.update_background(new_bg)
+
 
     def set_tool(self, tool: EditTool) -> None:
         """切换工具"""
