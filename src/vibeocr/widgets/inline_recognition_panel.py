@@ -41,9 +41,6 @@ class InlineRecognitionPanel(QWidget):
         layout.setContentsMargins(6, 6, 6, 6)
         layout.setSpacing(4)
 
-        # 弹性空间：将按钮推到面板底部
-        layout.addStretch()
-
         # 管道按钮
         for pipeline, label in _PIPELINE_BUTTON_CONFIG:
             btn = QPushButton(label)

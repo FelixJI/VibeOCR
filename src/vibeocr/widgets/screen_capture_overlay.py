@@ -349,7 +349,7 @@ class ScreenCaptureOverlay(QWidget):
         self._toolbar.setGeometry(toolbar_geo)
 
         # 识别面板几何
-        panel_geo = self._calc_recognition_panel_geometry(sel, toolbar_geo)
+        panel_geo = self._calc_recognition_panel_geometry(sel)
         self._recognition_panel.setGeometry(panel_geo)
         self._recognition_panel.setFixedWidth(panel_geo.width())
 
@@ -411,7 +411,7 @@ class ScreenCaptureOverlay(QWidget):
             if self._toolbar:
                 self._toolbar.setGeometry(toolbar_geo)
 
-            panel_geo = self._calc_recognition_panel_geometry(new_rect, toolbar_geo)
+            panel_geo = self._calc_recognition_panel_geometry(new_rect)
             if self._recognition_panel:
                 self._recognition_panel.setGeometry(panel_geo)
                 self._recognition_panel.setFixedWidth(panel_geo.width())
@@ -527,33 +527,32 @@ class ScreenCaptureOverlay(QWidget):
         return QRect(x, y, toolbar_w, toolbar_height)
 
     def _calc_recognition_panel_geometry(
-        self, selection: QRect, toolbar_geo: QRect
+        self, selection: QRect
     ) -> QRect:
-        """计算识别面板的几何位置"""
+        """计算识别面板的几何位置
+
+        面板底部对齐选区下沿，高度仅容纳按钮。
+        """
         positions = self._calc_panel_positions(selection)
         side = positions["panel_side"]
 
         panel_width = 200
-        min_height = 200
 
-        # 面板高度：从工具栏底到选区底部（或从选区顶部到工具栏顶）
-        if positions["toolbar_side"] == "bottom":
-            top_y = selection.top()
-            bottom_y = toolbar_geo.bottom()
+        # 紧凑高度：仅够容纳按钮
+        if self._recognition_panel:
+            panel_height = max(self._recognition_panel.sizeHint().height(), 100)
         else:
-            top_y = toolbar_geo.top()
-            bottom_y = selection.bottom()
-
-        h = max(min_height, bottom_y - top_y)
+            panel_height = 200
 
         if side == "right":
             x = selection.right() + 4
         else:
             x = selection.left() - panel_width - 4
 
-        y = selection.top()
+        # 底部对齐选区下沿
+        y = selection.bottom() - panel_height
 
-        return QRect(x, y, panel_width, h)
+        return QRect(x, y, panel_width, panel_height)
 
     # ==================== 阴影效果 ====================
 
