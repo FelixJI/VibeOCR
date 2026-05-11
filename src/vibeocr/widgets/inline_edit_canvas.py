@@ -145,36 +145,46 @@ class InlineEditCanvas(QGraphicsView):
     def update_crop_region(
         self, screen_pixmap: QPixmap, new_selection: QRect, dpr: float
     ) -> None:
-        """更新裁剪区域：重新裁剪背景并平移标注"""
-        # 计算选区原点的偏移量
+        """更新裁剪区域：用全屏截图 + setPos 偏移显示，消除 DPR 舍入晃动"""
         old_origin = self._crop_origin
         new_origin = QPointF(new_selection.x(), new_selection.y())
         delta = old_origin - new_origin
 
-        # 记录新的裁剪原点
         self._crop_origin = new_origin
 
-        # 重新裁剪背景（物理坐标）
+        # 用全屏截图 + 逻辑坐标 setPos 偏移，完全规避 int() 截断 DPR 的问题
+        if self._background_item:
+            if self._background_item.pixmap().cacheKey() != screen_pixmap.cacheKey():
+                self._background_item.setPixmap(screen_pixmap)
+            self._background_item.setPos(-new_selection.x(), -new_selection.y())
+
+            new_scene_rect = QRectF(
+                0, 0, new_selection.width(), new_selection.height()
+            )
+            if self._scene.sceneRect() != new_scene_rect:
+                self._scene.setSceneRect(new_scene_rect)
+        else:
+            self.set_background(screen_pixmap)
+            if self._background_item:
+                self._background_item.setPos(-new_selection.x(), -new_selection.y())
+
+        if delta.x() != 0 or delta.y() != 0:
+            for item in self._scene.items():
+                if item != self._background_item:
+                    item.moveBy(delta.x(), delta.y())
+
+        # 为 Mosaic/Blur 保留裁剪后的背景（场景坐标系，供像素采样）
         physical_rect = QRect(
             int(new_selection.x() * dpr),
             int(new_selection.y() * dpr),
             int(new_selection.width() * dpr),
             int(new_selection.height() * dpr),
         )
-        new_cropped = screen_pixmap.copy(physical_rect)
-        self.set_background(new_cropped)
+        self._background_pixmap = screen_pixmap.copy(physical_rect)
 
-        # 平移所有非背景标注
-        if delta.x() != 0 or delta.y() != 0:
-            for item in self._scene.items():
-                if item != self._background_item:
-                    item.moveBy(delta.x(), delta.y())
-
-            # 更新 MosaicItem / BlurItem 的背景引用
-            new_bg = self._background_pixmap
-            for item in self._scene.items():
-                if isinstance(item, (MosaicItem, BlurItem)):
-                    item.update_background(new_bg)
+        for item in self._scene.items():
+            if isinstance(item, (MosaicItem, BlurItem)):
+                item.update_background(self._background_pixmap)
 
 
     def set_tool(self, tool: EditTool) -> None:

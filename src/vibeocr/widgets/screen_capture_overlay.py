@@ -10,7 +10,7 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import QPoint, QRect, Qt, Signal
+from PySide6.QtCore import QPoint, QPointF, QRect, Qt, Signal
 from PySide6.QtGui import (
     QColor,
     QGuiApplication,
@@ -289,7 +289,10 @@ class ScreenCaptureOverlay(QWidget):
 
         # 创建画布
         self._canvas = InlineEditCanvas(self)
-        self._canvas.set_background(self._captured_pixmap)
+        self._canvas.set_background(
+            self._captured_pixmap,
+            QPointF(self._selection_rect.x(), self._selection_rect.y()),
+        )
 
         # 创建工具栏
         self._toolbar = InlineToolbar(self)
@@ -391,29 +394,31 @@ class ScreenCaptureOverlay(QWidget):
         if not self._canvas or not self._screen_pixmap:
             return
 
-        self._selection_rect = new_rect
+        # 批量更新：禁止中间状态重绘，避免波纹
+        self.setUpdatesEnabled(False)
+        try:
+            self._selection_rect = new_rect
 
-        # 重绘 overlay（冻结截图 + 遮罩需要跟随选区更新）
-        self.update()
+            self._canvas.update_crop_region(
+                self._screen_pixmap, new_rect, self._device_pixel_ratio
+            )
 
-        # 更新画布背景和标注
-        self._canvas.update_crop_region(
-            self._screen_pixmap, new_rect, self._device_pixel_ratio
-        )
+            self._canvas.setGeometry(new_rect)
+            if self._resize_frame:
+                self._resize_frame.sync_selection(new_rect)
 
-        # 更新子控件几何
-        self._canvas.setGeometry(new_rect)
-        if self._resize_frame:
-            self._resize_frame.sync_selection(new_rect)
+            toolbar_geo = self._calc_toolbar_geometry(new_rect)
+            if self._toolbar:
+                self._toolbar.setGeometry(toolbar_geo)
 
-        toolbar_geo = self._calc_toolbar_geometry(new_rect)
-        if self._toolbar:
-            self._toolbar.setGeometry(toolbar_geo)
+            panel_geo = self._calc_recognition_panel_geometry(new_rect, toolbar_geo)
+            if self._recognition_panel:
+                self._recognition_panel.setGeometry(panel_geo)
+                self._recognition_panel.setFixedWidth(panel_geo.width())
 
-        panel_geo = self._calc_recognition_panel_geometry(new_rect, toolbar_geo)
-        if self._recognition_panel:
-            self._recognition_panel.setGeometry(panel_geo)
-            self._recognition_panel.setFixedWidth(panel_geo.width())
+            self.update()
+        finally:
+            self.setUpdatesEnabled(True)
 
     def _on_selection_finalized(self) -> None:
         """选区拖拽结束"""
