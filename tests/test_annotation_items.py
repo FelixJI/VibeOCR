@@ -82,3 +82,36 @@ class TestEllipseAnnotationSetters:
         item = EllipseAnnotation(QRectF(0, 0, 100, 80))
         item.set_fill_enabled(True, QColor(255, 0, 0, 50))
         assert item.brush().color() == QColor(255, 0, 0, 50)
+
+
+class TestMosaicItemResize:
+    def test_resizing_flag_hides_effect(self, qapp):
+        bg = _make_pixmap()
+        item = MosaicItem(QRectF(10, 10, 80, 80), bg, strength=8)
+        assert item._cached_mosaic is not None
+        item.set_resizing(True)
+        assert item._resizing is True
+        item.set_resizing(False)
+        assert item._cached_mosaic is not None
+
+    def test_regenerate_after_resize(self, qapp):
+        bg = _make_pixmap()
+        item = MosaicItem(QRectF(10, 10, 80, 80), bg, strength=8)
+        item.setRect(QRectF(10, 10, 120, 120))
+        item.regenerate()
+        assert item._cached_mosaic is not None
+
+
+class TestBlurItemResize:
+    def test_resizing_flag(self, qapp):
+        bg = _make_pixmap()
+        item = BlurItem(QRectF(10, 10, 80, 80), bg, radius=10)
+        item.set_resizing(True)
+        assert item._resizing is True
+
+    def test_regenerate_after_resize(self, qapp):
+        bg = _make_pixmap()
+        item = BlurItem(QRectF(10, 10, 80, 80), bg, radius=10)
+        item.setRect(QRectF(10, 10, 120, 120))
+        item.regenerate()
+        assert item._cached_blur is not None

@@ -421,6 +421,7 @@ class MosaicItem(QGraphicsRectItem):
         self._background_pixmap = background_pixmap
         self._strength = max(4, strength)  # 最小块大小为4像素
         self._cached_mosaic: QPixmap | None = None
+        self._resizing = False
         self.setPen(QPen(Qt.PenStyle.NoPen))
         self.setBrush(Qt.BrushStyle.NoBrush)
         self.setFlags(
@@ -430,6 +431,21 @@ class MosaicItem(QGraphicsRectItem):
         )
         self.setZValue(5)  # 在普通标注下面
         self._generate_mosaic()
+
+    def set_resizing(self, resizing: bool) -> None:
+        """设置正在调整大小状态。
+
+        调整大小时显示占位矩形，结束后重新生成马赛克效果。
+        """
+        self._resizing = resizing
+        if not resizing:
+            self._generate_mosaic()
+        self.update()
+
+    def regenerate(self) -> None:
+        """重新生成马赛克效果（调整大小结束后调用）。"""
+        self._generate_mosaic()
+        self.update()
 
     def set_strength(self, strength: int) -> None:
         """动态设置马赛克强度"""
@@ -523,9 +539,10 @@ class MosaicItem(QGraphicsRectItem):
         option: QStyleOptionGraphicsItem,
         widget: QWidget | None = None,
     ) -> None:
-        if self._cached_mosaic:
+        if self._resizing:
+            painter.fillRect(self.rect(), QColor(100, 100, 100, 80))
+        elif self._cached_mosaic:
             painter.drawPixmap(self.rect().toRect(), self._cached_mosaic)
-        # 选中时绘制边框
         if self.isSelected():
             pen = QPen(QColor(0, 120, 215), 1, Qt.PenStyle.DashLine)
             painter.setPen(pen)
@@ -550,6 +567,7 @@ class BlurItem(QGraphicsRectItem):
         self._background_pixmap = background_pixmap
         self._radius = max(4, radius)  # 最小模糊半径为4
         self._cached_blur: QPixmap | None = None
+        self._resizing = False
         self.setPen(QPen(Qt.PenStyle.NoPen))
         self.setBrush(Qt.BrushStyle.NoBrush)
         self.setFlags(
@@ -559,6 +577,21 @@ class BlurItem(QGraphicsRectItem):
         )
         self.setZValue(5)
         self._generate_blur()
+
+    def set_resizing(self, resizing: bool) -> None:
+        """设置正在调整大小状态。
+
+        调整大小时显示占位矩形，结束后重新生成模糊效果。
+        """
+        self._resizing = resizing
+        if not resizing:
+            self._generate_blur()
+        self.update()
+
+    def regenerate(self) -> None:
+        """重新生成模糊效果（调整大小结束后调用）。"""
+        self._generate_blur()
+        self.update()
 
     def set_radius(self, radius: int) -> None:
         """动态设置模糊半径"""
@@ -647,7 +680,9 @@ class BlurItem(QGraphicsRectItem):
         option: QStyleOptionGraphicsItem,
         widget: QWidget | None = None,
     ) -> None:
-        if self._cached_blur:
+        if self._resizing:
+            painter.fillRect(self.rect(), QColor(100, 100, 100, 80))
+        elif self._cached_blur:
             painter.drawPixmap(self.rect().toRect(), self._cached_blur)
         if self.isSelected():
             pen = QPen(QColor(0, 120, 215), 1, Qt.PenStyle.DashLine)
