@@ -54,8 +54,11 @@ class RectAnnotation(QGraphicsRectItem):
         fill_color: QColor | None = None,
     ):
         super().__init__(rect)
-        pen = QPen(pen_color, pen_width)
-        self.setPen(pen)
+        self._pen_color = pen_color
+        self._pen_width = pen_width
+        self._fill_enabled = fill_enabled
+        self._fill_color = fill_color
+        self.setPen(QPen(pen_color, pen_width))
         if fill_enabled and fill_color:
             self.setBrush(QBrush(fill_color))
         else:
@@ -63,8 +66,25 @@ class RectAnnotation(QGraphicsRectItem):
         self.setFlags(
             QGraphicsItem.GraphicsItemFlag.ItemIsSelectable
             | QGraphicsItem.GraphicsItemFlag.ItemIsMovable
+            | QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges
         )
         self.setZValue(10)
+
+    def set_pen_color(self, color: QColor) -> None:
+        self._pen_color = color
+        self.setPen(QPen(color, self._pen_width))
+
+    def set_pen_width(self, width: int) -> None:
+        self._pen_width = width
+        self.setPen(QPen(self._pen_color, width))
+
+    def set_fill_enabled(self, enabled: bool, color: QColor | None = None) -> None:
+        self._fill_enabled = enabled
+        if enabled and color:
+            self._fill_color = color
+            self.setBrush(QBrush(color))
+        else:
+            self.setBrush(Qt.BrushStyle.NoBrush)
 
 
 class EllipseAnnotation(QGraphicsEllipseItem):
@@ -79,8 +99,11 @@ class EllipseAnnotation(QGraphicsEllipseItem):
         fill_color: QColor | None = None,
     ):
         super().__init__(rect)
-        pen = QPen(pen_color, pen_width)
-        self.setPen(pen)
+        self._pen_color = pen_color
+        self._pen_width = pen_width
+        self._fill_enabled = fill_enabled
+        self._fill_color = fill_color
+        self.setPen(QPen(pen_color, pen_width))
         if fill_enabled and fill_color:
             self.setBrush(QBrush(fill_color))
         else:
@@ -88,8 +111,25 @@ class EllipseAnnotation(QGraphicsEllipseItem):
         self.setFlags(
             QGraphicsItem.GraphicsItemFlag.ItemIsSelectable
             | QGraphicsItem.GraphicsItemFlag.ItemIsMovable
+            | QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges
         )
         self.setZValue(10)
+
+    def set_pen_color(self, color: QColor) -> None:
+        self._pen_color = color
+        self.setPen(QPen(color, self._pen_width))
+
+    def set_pen_width(self, width: int) -> None:
+        self._pen_width = width
+        self.setPen(QPen(self._pen_color, width))
+
+    def set_fill_enabled(self, enabled: bool, color: QColor | None = None) -> None:
+        self._fill_enabled = enabled
+        if enabled and color:
+            self._fill_color = color
+            self.setBrush(QBrush(color))
+        else:
+            self.setBrush(Qt.BrushStyle.NoBrush)
 
 
 class ArrowAnnotation(QGraphicsPathItem):
@@ -133,6 +173,7 @@ class ArrowAnnotation(QGraphicsPathItem):
         self.setFlags(
             QGraphicsItem.GraphicsItemFlag.ItemIsSelectable
             | QGraphicsItem.GraphicsItemFlag.ItemIsMovable
+            | QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges
         )
         self.setZValue(10)
         self._update_path()
@@ -385,6 +426,7 @@ class MosaicItem(QGraphicsRectItem):
         self.setFlags(
             QGraphicsItem.GraphicsItemFlag.ItemIsSelectable
             | QGraphicsItem.GraphicsItemFlag.ItemIsMovable
+            | QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges
         )
         self.setZValue(5)  # 在普通标注下面
         self._generate_mosaic()
@@ -513,6 +555,7 @@ class BlurItem(QGraphicsRectItem):
         self.setFlags(
             QGraphicsItem.GraphicsItemFlag.ItemIsSelectable
             | QGraphicsItem.GraphicsItemFlag.ItemIsMovable
+            | QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges
         )
         self.setZValue(5)
         self._generate_blur()
