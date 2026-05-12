@@ -42,6 +42,7 @@ class ToolPropertiesBar(QWidget):
     _TEXT_PAGE = 2
     _MOSAIC_PAGE = 3
     _BLUR_PAGE = 4
+    _COMMON_PAGE = 5
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -51,6 +52,7 @@ class ToolPropertiesBar(QWidget):
         self._current_color = QColor(255, 0, 0)
         self._setup_ui()
         self._connect_signals()
+        self._last_tool: EditTool = EditTool.SELECT
 
     def _setup_ui(self) -> None:
         layout = QHBoxLayout(self)
@@ -74,6 +76,9 @@ class ToolPropertiesBar(QWidget):
 
         # 页面 4：模糊属性
         self._stack.addWidget(self._create_blur_page())
+
+        # 页面 5：通用属性（选中矩形/椭圆/箭头时）
+        self._stack.addWidget(self._create_common_page())
 
     def _create_color_button(self) -> QPushButton:
         """创建颜色选择按钮"""
@@ -196,6 +201,28 @@ class ToolPropertiesBar(QWidget):
 
         return page
 
+    def _create_common_page(self) -> QWidget:
+        """创建通用属性页（颜色+线宽+填充）"""
+        page = QWidget()
+        layout = QHBoxLayout(page)
+        layout.setContentsMargins(4, 0, 4, 0)
+        layout.setSpacing(8)
+
+        layout.addWidget(QLabel("颜色"))
+        self._common_color_btn = self._create_color_button()
+        layout.addWidget(self._common_color_btn)
+
+        layout.addWidget(QLabel("线宽"))
+        self._common_line_width_spin = QSpinBox()
+        self._common_line_width_spin.setRange(1, 10)
+        self._common_line_width_spin.setValue(2)
+        layout.addWidget(self._common_line_width_spin)
+
+        self._common_fill_cb = QCheckBox("填充")
+        layout.addWidget(self._common_fill_cb)
+
+        return page
+
     def _connect_signals(self) -> None:
         self._line_width_spin.valueChanged.connect(self.line_width_changed.emit)
         self._fill_cb.toggled.connect(self.fill_enabled_changed.emit)
@@ -228,6 +255,8 @@ class ToolPropertiesBar(QWidget):
             self._apply_color_style(self._shape_color_btn)
         if hasattr(self, "_text_color_btn"):
             self._apply_color_style(self._text_color_btn)
+        if hasattr(self, "_common_color_btn"):
+            self._apply_color_style(self._common_color_btn)
 
     def _on_mosaic_changed(self, value: int) -> None:
         self._mosaic_label.setText(str(value))
@@ -239,6 +268,7 @@ class ToolPropertiesBar(QWidget):
 
     def update_for_tool(self, tool: EditTool) -> None:
         """根据工具切换属性面板"""
+        self._last_tool = tool
         if tool in (EditTool.RECT, EditTool.ELLIPSE, EditTool.ARROW):
             self._stack.setCurrentIndex(self._SHAPE_PAGE)
         elif tool == EditTool.TEXT:
@@ -249,3 +279,59 @@ class ToolPropertiesBar(QWidget):
             self._stack.setCurrentIndex(self._BLUR_PAGE)
         else:
             self._stack.setCurrentIndex(self._EMPTY_PAGE)
+
+    def update_for_selection(self, item) -> None:
+        """根据选中标注项切换属性面板，并同步控件值"""
+        from vibeocr.widgets.editor.annotation_items import (
+            ArrowAnnotation,
+            BlurItem,
+            EllipseAnnotation,
+            MosaicItem,
+            RectAnnotation,
+            TextAnnotation,
+        )
+
+        if isinstance(item, (RectAnnotation, EllipseAnnotation)):
+            self._sync_common_page(item)
+            self._common_fill_cb.show()
+            self._stack.setCurrentIndex(self._COMMON_PAGE)
+        elif isinstance(item, ArrowAnnotation):
+            self._sync_common_page(item)
+            self._common_fill_cb.hide()
+            self._stack.setCurrentIndex(self._COMMON_PAGE)
+        elif isinstance(item, TextAnnotation):
+            self._sync_text_page(item)
+            self._stack.setCurrentIndex(self._TEXT_PAGE)
+        elif isinstance(item, MosaicItem):
+            self._mosaic_slider.setValue(item._strength)
+            self._stack.setCurrentIndex(self._MOSAIC_PAGE)
+        elif isinstance(item, BlurItem):
+            self._blur_slider.setValue(item._radius)
+            self._stack.setCurrentIndex(self._BLUR_PAGE)
+        else:
+            self.clear_selection()
+
+    def clear_selection(self) -> None:
+        """清除选中态，恢复当前工具的属性页"""
+        if hasattr(self, "_common_fill_cb"):
+            self._common_fill_cb.show()
+        self.update_for_tool(self._last_tool)
+
+    def _sync_common_page(self, item) -> None:
+        """同步通用属性页控件值"""
+        self._common_line_width_spin.blockSignals(True)
+        self._common_line_width_spin.setValue(item._pen_width)
+        self._common_line_width_spin.blockSignals(False)
+        self._current_color = item._pen_color
+        self._update_color_buttons()
+
+    def _sync_text_page(self, item) -> None:
+        """同步文字属性页控件值"""
+        self._font_size_spin.blockSignals(True)
+        self._font_size_spin.setValue(item.font().pointSize())
+        self._font_size_spin.blockSignals(False)
+        self._font_combo.blockSignals(True)
+        self._font_combo.setCurrentFont(item.font())
+        self._font_combo.blockSignals(False)
+        self._current_color = item._text_color
+        self._update_color_buttons()
