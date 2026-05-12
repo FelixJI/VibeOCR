@@ -8,11 +8,14 @@ from __future__ import annotations
 import math
 from enum import Enum
 
+import numpy as np
+from PIL import Image, ImageFilter
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import (
     QBrush,
     QColor,
     QFont,
+    QImage,
     QPainter,
     QPainterPath,
     QPen,
@@ -28,6 +31,27 @@ from PySide6.QtWidgets import (
     QStyleOptionGraphicsItem,
     QWidget,
 )
+
+
+def _qimage_to_pil(qimage: QImage) -> Image.Image:
+    """将 QImage 转换为 PIL Image"""
+    img = qimage.convertToFormat(QImage.Format.Format_RGBA8888)
+    width = img.width()
+    height = img.height()
+    buf = bytes(img.constBits())
+    arr = np.frombuffer(buf, dtype=np.uint8).reshape((height, width, 4))
+    return Image.fromarray(arr, "RGBA")
+
+
+def _pil_to_qimage(pil_image: Image.Image) -> QImage:
+    """将 PIL Image 转换为 QImage"""
+    if pil_image.mode != "RGBA":
+        pil_image = pil_image.convert("RGBA")
+    arr = np.array(pil_image)
+    height, width = arr.shape[:2]
+    return QImage(
+        arr.tobytes(), width, height, width * 4, QImage.Format.Format_RGBA8888
+    )
 
 
 class EditTool(Enum):
@@ -454,79 +478,40 @@ class MosaicItem(QGraphicsRectItem):
         self.update()
 
     def _generate_mosaic(self) -> None:
-        """使用块平均色算法生成高质量马赛克效果"""
+        """使用缩放算法生成马赛克效果（比逐像素循环快数十倍）"""
         rect = self.rect()
         if rect.isEmpty():
             return
 
-        # 从背景截图中复制对应区域
-        src_rect = rect.toRect()
+        scene_rect = self.sceneBoundingRect()
         valid = QRectF(
             0,
             0,
             self._background_pixmap.width(),
             self._background_pixmap.height(),
         )
-        src_rect = rect.intersected(valid).toRect()
+        src_rect = scene_rect.intersected(valid).toRect()
 
         if src_rect.isEmpty():
             return
 
         region = self._background_pixmap.copy(src_rect)
-
-        # 转换为 QImage 进行像素级操作
-        img = region.toImage()
-        if img.isNull():
+        qimg = region.toImage()
+        if qimg.isNull():
             return
 
+        pil_img = _qimage_to_pil(qimg)
+        width, height = pil_img.size
+
         block_size = self._strength
-        width = img.width()
-        height = img.height()
+        small_w = max(1, width // block_size)
+        small_h = max(1, height // block_size)
 
-        # 遍历每个块，计算平均色并填充
-        for by in range(0, height, block_size):
-            for bx in range(0, width, block_size):
-                # 计算当前块的实际范围
-                block_w = min(block_size, width - bx)
-                block_h = min(block_size, height - by)
+        # 缩小用双线性插值（平滑），放大用最近邻（产生锐利方块）
+        small = pil_img.resize((small_w, small_h), Image.Resampling.BILINEAR)
+        result = small.resize((width, height), Image.Resampling.NEAREST)
 
-                # 计算块内平均颜色
-                avg_color = self._calc_block_average(img, bx, by, block_w, block_h)
-
-                # 用平均色填充整个块
-                self._fill_block(img, bx, by, block_w, block_h, avg_color)
-
-        self._cached_mosaic = QPixmap.fromImage(img)
-
-    def _calc_block_average(self, img, x: int, y: int, w: int, h: int) -> QColor:
-        """计算图像块内的平均颜色"""
-        total_r, total_g, total_b = 0, 0, 0
-        pixel_count = 0
-
-        for py in range(y, y + h):
-            for px in range(x, x + w):
-                if px < img.width() and py < img.height():
-                    color = img.pixelColor(px, py)
-                    total_r += color.red()
-                    total_g += color.green()
-                    total_b += color.blue()
-                    pixel_count += 1
-
-        if pixel_count == 0:
-            return QColor(0, 0, 0)
-
-        return QColor(
-            total_r // pixel_count,
-            total_g // pixel_count,
-            total_b // pixel_count,
-        )
-
-    def _fill_block(self, img, x: int, y: int, w: int, h: int, color: QColor) -> None:
-        """用指定颜色填充图像块"""
-        for py in range(y, y + h):
-            for px in range(x, x + w):
-                if px < img.width() and py < img.height():
-                    img.setPixelColor(px, py, color)
+        self._cached_mosaic = QPixmap.fromImage(_pil_to_qimage(result))
 
     def update_background(self, pixmap: QPixmap) -> None:
         self._background_pixmap = pixmap
@@ -600,74 +585,35 @@ class BlurItem(QGraphicsRectItem):
         self.update()
 
     def _generate_blur(self) -> None:
-        """使用多级缩放实现高质量模糊效果
-
-        通过多次缩小-放大迭代，产生更自然的模糊效果，
-        避免单次大幅缩放导致的像素化问题。
-        """
+        """使用缩放算法实现模糊效果，模糊半径直接控制缩放比例"""
         rect = self.rect()
         if rect.isEmpty():
             return
 
-        src_rect = rect.toRect()
+        scene_rect = self.sceneBoundingRect()
         valid = QRectF(
             0,
             0,
             self._background_pixmap.width(),
             self._background_pixmap.height(),
         )
-        src_rect = rect.intersected(valid).toRect()
+        src_rect = scene_rect.intersected(valid).toRect()
 
         if src_rect.isEmpty():
             return
 
         region = self._background_pixmap.copy(src_rect)
-        original_w = region.width()
-        original_h = region.height()
+        qimg = region.toImage()
+        if qimg.isNull():
+            return
 
-        if original_w < 2 or original_h < 2:
+        if qimg.width() < 2 or qimg.height() < 2:
             self._cached_blur = region
             return
 
-        # 多级缩放实现更平滑的模糊
-        # 迭代次数基于模糊半径，每次缩放到50%
-        iterations = max(1, self._radius // 8)
-        scale_factor = 0.5
-
-        temp = region
-        current_w = original_w
-        current_h = original_h
-
-        for _ in range(iterations):
-            # 缩小
-            new_w = max(4, int(current_w * scale_factor))
-            new_h = max(4, int(current_h * scale_factor))
-
-            small = temp.scaled(
-                new_w,
-                new_h,
-                Qt.AspectRatioMode.IgnoreAspectRatio,
-                Qt.TransformationMode.SmoothTransformation,
-            )
-
-            # 放大回当前尺寸
-            temp = small.scaled(
-                current_w,
-                current_h,
-                Qt.AspectRatioMode.IgnoreAspectRatio,
-                Qt.TransformationMode.SmoothTransformation,
-            )
-
-        # 最后确保尺寸正确
-        if temp.width() != original_w or temp.height() != original_h:
-            temp = temp.scaled(
-                original_w,
-                original_h,
-                Qt.AspectRatioMode.IgnoreAspectRatio,
-                Qt.TransformationMode.SmoothTransformation,
-            )
-
-        self._cached_blur = temp
+        pil_img = _qimage_to_pil(qimg)
+        blurred = pil_img.filter(ImageFilter.GaussianBlur(radius=self._radius))
+        self._cached_blur = QPixmap.fromImage(_pil_to_qimage(blurred))
 
     def update_background(self, pixmap: QPixmap) -> None:
         self._background_pixmap = pixmap
