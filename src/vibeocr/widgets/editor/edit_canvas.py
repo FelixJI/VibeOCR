@@ -38,6 +38,7 @@ from vibeocr.widgets.editor.command_stack import (
     MoveAnnotationCommand,
     create_undo_stack,
 )
+from vibeocr.widgets.editor.selection_decorator import SelectionDecorator
 
 
 class EditCanvas(QGraphicsView):
@@ -93,9 +94,48 @@ class EditCanvas(QGraphicsView):
         # 移动跟踪：记录移动开始时各项的位置
         self._move_start_positions: dict[QGraphicsItem, QPointF] = {}
 
+        # 选中装饰器
+        self._decorators: dict[int, SelectionDecorator] = {}
+        self._scene.selectionChanged.connect(self._on_selection_changed)
+
     @property
     def undo_stack(self) -> QUndoStack:
         return self._undo_stack
+
+    def _on_selection_changed(self) -> None:
+        """选中变化时管理装饰器"""
+        selected = {
+            id(item)
+            for item in self._scene.selectedItems()
+            if item != self._background_item
+            and not isinstance(item, SelectionDecorator)
+        }
+
+        # 移除不再选中的装饰器
+        to_remove = [iid for iid in self._decorators if iid not in selected]
+        for iid in to_remove:
+            dec = self._decorators.pop(iid)
+            dec.cleanup()
+            self._scene.removeItem(dec)
+
+        # 为新选中的项创建装饰器
+        to_add = selected - set(self._decorators.keys())
+        for item in self._scene.selectedItems():
+            if id(item) in to_add:
+                dec = SelectionDecorator(item)
+                self._scene.addItem(dec)
+                self._decorators[id(item)] = dec
+
+        # 通知外部选中变化
+        self.tool_changed.emit(self._current_tool)
+
+    @property
+    def selected_annotation(self):
+        """获取当前选中的标注项"""
+        for item in self._scene.selectedItems():
+            if item != self._background_item and not isinstance(item, SelectionDecorator):
+                return item
+        return None
 
     def set_background(self, pixmap: QPixmap) -> None:
         """设置背景截图"""
@@ -356,6 +396,7 @@ class EditCanvas(QGraphicsView):
 
         # 移除临时项
         self._remove_temp()
+        self._scene.clearSelection()
 
         item: RectAnnotation | EllipseAnnotation | ArrowAnnotation | MosaicItem | BlurItem | None = None
 
