@@ -50,6 +50,7 @@ class EditorToolbar(QWidget):
         tool_style = EditorStyles.tool_button_style()
 
         tools = [
+            ("选择", EditTool.SELECT),
             ("马赛克", EditTool.MOSAIC),
             ("模糊", EditTool.BLUR),
             ("矩形", EditTool.RECT),
@@ -68,6 +69,9 @@ class EditorToolbar(QWidget):
             self._tool_group.addButton(btn)
             self._tool_buttons[tool] = btn
             layout.addWidget(btn)
+
+        # 默认选中"选择"工具
+        self._tool_buttons[EditTool.SELECT].setChecked(True)
 
         # 分隔线
         layout.addWidget(self._create_separator())
