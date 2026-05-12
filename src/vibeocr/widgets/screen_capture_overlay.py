@@ -29,6 +29,11 @@ from PySide6.QtWidgets import (
 )
 
 from vibeocr.core.inline_styles import InlineStyles
+from vibeocr.widgets.editor.annotation_items import (
+    BlurItem,
+    MosaicItem,
+    TextAnnotation,
+)
 from vibeocr.widgets.inline_edit_canvas import InlineEditCanvas
 from vibeocr.widgets.inline_recognition_panel import InlineRecognitionPanel
 from vibeocr.widgets.inline_toolbar import InlineToolbar
@@ -363,17 +368,17 @@ class ScreenCaptureOverlay(QWidget):
         self._toolbar.tool_changed.connect(self._canvas.set_tool)
         self._toolbar.tool_changed.connect(lambda _: self._reposition_toolbar())
 
-        # 属性变更
+        # 属性变更（画布全局属性 + 选中项属性）
         props = self._toolbar.properties_bar
-        props.color_changed.connect(self._canvas.set_pen_color)
-        props.line_width_changed.connect(self._canvas.set_pen_width)
-        props.fill_enabled_changed.connect(self._canvas.set_fill_enabled)
+        props.color_changed.connect(self._on_color_changed)
+        props.line_width_changed.connect(self._on_line_width_changed)
+        props.fill_enabled_changed.connect(self._on_fill_enabled_changed)
+        props.mosaic_strength_changed.connect(self._on_mosaic_strength_changed)
+        props.blur_radius_changed.connect(self._on_blur_radius_changed)
         props.font_changed.connect(self._canvas.set_font)
         props.font_size_changed.connect(self._canvas.set_font_size)
         props.bold_changed.connect(self._canvas.set_bold)
         props.italic_changed.connect(self._canvas.set_italic)
-        props.mosaic_strength_changed.connect(self._canvas.set_mosaic_strength)
-        props.blur_radius_changed.connect(self._canvas.set_blur_radius)
 
         # 撤销/重做
         self._toolbar.undo_requested.connect(self._canvas.undo_stack.undo)
@@ -383,6 +388,11 @@ class ScreenCaptureOverlay(QWidget):
         )
         self._canvas.undo_stack.canRedoChanged.connect(
             self._toolbar.set_redo_enabled
+        )
+
+        # 选中变化 → 属性条更新
+        self._canvas._scene.selectionChanged.connect(
+            self._on_annotation_selection_changed
         )
 
         # 操作按钮
@@ -428,6 +438,57 @@ class ScreenCaptureOverlay(QWidget):
     def _on_selection_finalized(self) -> None:
         """选区拖拽结束"""
         pass
+
+    def _on_annotation_selection_changed(self) -> None:
+        """选中标注项时更新属性条"""
+        if not self._toolbar or not self._canvas:
+            return
+
+        item = self._canvas.selected_annotation
+        props = self._toolbar.properties_bar
+
+        if item:
+            props.update_for_selection(item)
+        else:
+            props.clear_selection()
+
+    def _on_color_changed(self, color) -> None:
+        self._canvas.set_pen_color(color)
+        item = self._canvas.selected_annotation
+        if item and hasattr(item, "set_pen_color"):
+            item.set_pen_color(color)
+        elif isinstance(item, TextAnnotation):
+            item.set_text_color(color)
+
+    def _on_line_width_changed(self, width) -> None:
+        self._canvas.set_pen_width(width)
+        item = self._canvas.selected_annotation
+        if item and hasattr(item, "set_pen_width"):
+            item.set_pen_width(width)
+
+    def _on_fill_enabled_changed(self, enabled) -> None:
+        self._canvas.set_fill_enabled(enabled)
+        item = self._canvas.selected_annotation
+        if item and hasattr(item, "set_fill_enabled"):
+            color = QColor(
+                self._canvas._pen_color.red(),
+                self._canvas._pen_color.green(),
+                self._canvas._pen_color.blue(),
+                50,
+            )
+            item.set_fill_enabled(enabled, color)
+
+    def _on_mosaic_strength_changed(self, value) -> None:
+        self._canvas.set_mosaic_strength(value)
+        item = self._canvas.selected_annotation
+        if isinstance(item, MosaicItem):
+            item.set_strength(value)
+
+    def _on_blur_radius_changed(self, value) -> None:
+        self._canvas.set_blur_radius(value)
+        item = self._canvas.selected_annotation
+        if isinstance(item, BlurItem):
+            item.set_radius(value)
 
     def _on_confirm(self) -> None:
         """确认识别"""
