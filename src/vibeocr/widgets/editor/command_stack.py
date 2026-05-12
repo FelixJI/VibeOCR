@@ -93,13 +93,23 @@ class ResizeAnnotationCommand(QUndoCommand):
         self._new_rect = QRectF(new_rect)
 
     def redo(self) -> None:
-        if hasattr(self._item, "setRect"):
-            self._item.setRect(self._new_rect)
-        self._item.update()
+        self._apply_rect(self._new_rect)
 
     def undo(self) -> None:
+        self._apply_rect(self._old_rect)
+
+    def _apply_rect(self, rect: QRectF) -> None:
         if hasattr(self._item, "setRect"):
-            self._item.setRect(self._old_rect)
+            local_rect = rect.translated(-self._item.pos())
+            self._item.setRect(local_rect)
+
+        # 延迟 import 避免循环引用
+        from vibeocr.widgets.editor.annotation_items import BlurItem, MosaicItem
+
+        if isinstance(self._item, MosaicItem):
+            self._item.regenerate()
+        elif isinstance(self._item, BlurItem):
+            self._item.regenerate()
         self._item.update()
 
 
