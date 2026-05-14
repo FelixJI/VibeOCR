@@ -550,6 +550,127 @@ def _run_build(version: str) -> bool:
     return True
 
 
+def _create_release(version: str) -> bool:
+    """创建 Gitee/GitHub Release 并上传产物"""
+    import httpx
+
+    zip_name = f"VibeOCR-v{version}-win64"
+    zip_path = DIST_BASE_DIR / f"{zip_name}.zip"
+    sha256_path = DIST_BASE_DIR / f"{zip_name}.zip.sha256"
+
+    if not zip_path.exists():
+        print(f"错误: 分发包不存在: {zip_path}")
+        print("请先运行 --build 构建分发包")
+        return False
+
+    # 读取 CHANGELOG
+    changelog_body = ""
+    if CHANGELOG.exists():
+        content = CHANGELOG.read_text(encoding="utf-8")
+        pattern = rf"##\s+\[{re.escape(version)}\].*?(?=\n##\s|$)"
+        m = re.search(pattern, content, re.DOTALL)
+        if m:
+            changelog_body = m.group(0).strip()
+
+    print(f"\n发布 v{version} 到:")
+    print(f"  zip: {zip_path} ({zip_path.stat().st_size / (1024*1024):.1f} MB)")
+
+    gitee_token = os.environ.get("GITEE_TOKEN", "")
+    if gitee_token:
+        print("\n上传到 Gitee...")
+        try:
+            _upload_to_gitee(version, zip_path, sha256_path, changelog_body, gitee_token)
+            print("  Gitee 上传成功")
+        except Exception as e:
+            print(f"  Gitee 上传失败: {e}")
+    else:
+        print("\n跳过 Gitee（未设置 GITEE_TOKEN 环境变量）")
+
+    github_token = os.environ.get("GITHUB_TOKEN", "")
+    if github_token:
+        print("\n上传到 GitHub...")
+        try:
+            _upload_to_github(version, zip_path, sha256_path, changelog_body, github_token)
+            print("  GitHub 上传成功")
+        except Exception as e:
+            print(f"  GitHub 上传失败: {e}")
+    else:
+        print("\n跳过 GitHub（未设置 GITHUB_TOKEN 环境变量）")
+
+    return True
+
+
+def _upload_to_gitee(version: str, zip_path: Path, sha256_path: Path, body: str, token: str) -> None:
+    import httpx
+
+    owner = "felixji"
+    repo = "vibeocr"
+    api = f"https://gitee.com/api/v5/repos/{owner}/{repo}/releases"
+
+    resp = httpx.post(api, json={
+        "access_token": token,
+        "tag_name": f"v{version}",
+        "name": f"v{version}",
+        "body": body or f"VibeOCR v{version}",
+        "target_commitish": "mineru-integration",
+    })
+    if resp.status_code not in (200, 201):
+        raise RuntimeError(f"Gitee Release 创建失败: {resp.status_code} {resp.text}")
+
+    release_id = resp.json()["id"]
+    upload_url = f"https://gitee.com/api/v5/repos/{owner}/{repo}/releases/{release_id}/attach_files"
+
+    for file_path in [zip_path, sha256_path]:
+        if not file_path.exists():
+            continue
+        with open(file_path, "rb") as f:
+            resp = httpx.post(
+                upload_url,
+                params={"access_token": token},
+                files={"file": (file_path.name, f)},
+            )
+        if resp.status_code not in (200, 201):
+            raise RuntimeError(f"Gitee asset 上传失败: {resp.status_code} {resp.text}")
+
+
+def _upload_to_github(version: str, zip_path: Path, sha256_path: Path, body: str, token: str) -> None:
+    import httpx
+
+    owner = "felixji"
+    repo = "vibeocr"
+    api = f"https://api.github.com/repos/{owner}/{repo}/releases"
+
+    resp = httpx.post(api, headers={
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+    }, json={
+        "tag_name": f"v{version}",
+        "name": f"v{version}",
+        "body": body or f"VibeOCR v{version}",
+        "target_commitish": "mineru-integration",
+    })
+    if resp.status_code not in (200, 201):
+        raise RuntimeError(f"GitHub Release 创建失败: {resp.status_code} {resp.text}")
+
+    upload_url_template = resp.json()["upload_url"].split("{")[0]
+
+    for file_path in [zip_path, sha256_path]:
+        if not file_path.exists():
+            continue
+        with open(file_path, "rb") as f:
+            resp = httpx.post(
+                upload_url_template,
+                params={"name": file_path.name},
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/zip",
+                },
+                content=f.read(),
+            )
+        if resp.status_code not in (200, 201):
+            raise RuntimeError(f"GitHub asset 上传失败: {resp.status_code} {resp.text}")
+
+
 def _ask_build(version: str) -> bool:
     """交互式询问是否打包
 
@@ -612,8 +733,25 @@ def main() -> int:
         dest="no_build",
         help="跳过打包提示",
     )
+    parser.add_argument(
+        "--release",
+        action="store_true",
+        help="构建并发布到 Gitee/GitHub（需要 GITEE_TOKEN / GITHUB_TOKEN）",
+    )
 
     args = parser.parse_args()
+
+    # 模式0: 构建并发布
+    if args.release:
+        try:
+            current = read_current_version(PYPROJECT_TOML)
+        except (FileNotFoundError, ValueError) as e:
+            print(f"错误: {e}")
+            return 1
+        current_str = ".".join(map(str, current))
+        if not _run_build(current_str):
+            return 1
+        return 0 if _create_release(current_str) else 1
 
     # 模式1: 仅打包当前版本
     if args.build:
