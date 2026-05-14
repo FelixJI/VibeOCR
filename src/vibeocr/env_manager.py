@@ -12,8 +12,8 @@ from urllib.request import Request, urlopen
 from vibeocr.machine_cache import create_cache_entry, is_cache_valid
 
 # 嵌入式Python版本
-PYTHON_VERSION = "3.12.8"
-PYTHON_VERSION_SHORT = "3.12"
+PYTHON_VERSION = "3.13.0"
+PYTHON_VERSION_SHORT = "3.13"
 
 # 定义pip下载源
 MIRROR_SOURCES = {

@@ -11,8 +11,8 @@ from typing import Literal
 EnvironmentMode = Literal["virtualenv", "portable", "unknown"]
 
 # Python 版本
-PYTHON_VERSION = "3.12.8"
-PYTHON_VERSION_SHORT = "3.12"
+PYTHON_VERSION = "3.13.0"
+PYTHON_VERSION_SHORT = "3.13"
 
 # pip 下载源
 PIP_MIRROR_SOURCES = {
