@@ -169,6 +169,17 @@ def launch_application() -> int:
     window.set_app_settings(app_settings)
     window.show()
 
+    # 打包环境下延迟检查更新
+    if getattr(sys, "frozen", False):
+        import asyncio
+
+        async def _check_update():
+            from vibeocr.services.update_service import UpdateService
+            service = UpdateService(project_root)
+            await service.check_and_prompt(window)
+
+        loop.call_later(5, lambda: asyncio.ensure_future(_check_update()))
+
     # 创建系统托盘图标
     tray = _create_tray_icon(app, window, app_settings)
     if tray:

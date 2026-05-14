@@ -10,6 +10,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QGroupBox,
     QLabel,
+    QPushButton,
     QScrollArea,
     QTextBrowser,
     QVBoxLayout,
@@ -120,6 +121,12 @@ class AboutTab(QWidget):
 
         layout.addWidget(self._create_section("更新日志", self._changelog_browser))
 
+        # --- check update button ---
+        update_btn = QPushButton("检查更新")
+        update_btn.setMaximumWidth(120)
+        update_btn.clicked.connect(self._on_check_update)
+        layout.addWidget(update_btn, alignment=Qt.AlignmentFlag.AlignCenter)
+
         # --- bottom stretch ---
         layout.addStretch()
 
@@ -140,3 +147,16 @@ class AboutTab(QWidget):
         vbox = QVBoxLayout(group)
         vbox.addWidget(widget)
         return group
+
+    def _on_check_update(self) -> None:
+        """手动检查更新"""
+        import asyncio
+
+        try:
+            from vibeocr.services.update_service import UpdateService
+
+            app_dir = env_manager.get_project_root()
+            service = UpdateService(app_dir)
+            asyncio.ensure_future(service.check_and_prompt(self))
+        except Exception as e:
+            logger.exception(f"检查更新失败: {e}")
