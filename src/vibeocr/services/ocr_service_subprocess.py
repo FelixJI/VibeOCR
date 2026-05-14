@@ -317,9 +317,10 @@ class OCRServiceSubprocess:
         return {}
 
     def _calculate_recognize_timeout(self, pipeline_name: str | object) -> float:
-        """根据模型缓存状态计算识别超时时间
+        """根据管道类型和模型缓存状态计算识别超时时间
 
         首次使用管道时可能需要下载模型，使用更长的超时时间。
+        MinerU 文档解析通过外部 API 调用，处理时间远超本地推理。
 
         Args:
             pipeline_name: 管道名称（字符串或 OCRPipeline 枚举）
@@ -327,20 +328,25 @@ class OCRServiceSubprocess:
         Returns:
             超时时间（秒）
         """
+        from vibeocr.core.pipelines import OCRPipeline
+        from enum import Enum
+
         # 超时配置常量
         TIMEOUT_CACHED = 60.0  # 模型已缓存时的超时（秒）
         TIMEOUT_UNCACHED = 600.0  # 模型未缓存时的超时（秒）- 10分钟，给模型下载留足时间
-
-        # 处理枚举类型
-        from enum import Enum
+        TIMEOUT_DOCUMENT_PARSING = 600.0  # MinerU 文档解析超时（秒）- 10分钟，匹配 httpx 远程调用的耗时
 
         if isinstance(pipeline_name, Enum):
             pipeline_name = pipeline_name.value
-
-        # 确保 pipeline_name 是字符串
         pipeline_name_str = str(pipeline_name)
 
-        # 检查模型是否已缓存
+        # MinerU 文档解析通过 httpx 调用外部 API，耗时远超本地推理，使用独立超时
+        if pipeline_name_str == OCRPipeline.DOCUMENT_PARSING.value:
+            logger.debug(
+                f"[识别] 管道 {pipeline_name} 为文档解析，使用延长超时 ({TIMEOUT_DOCUMENT_PARSING}s)"
+            )
+            return TIMEOUT_DOCUMENT_PARSING
+
         if is_pipeline_cached(pipeline_name_str):
             logger.debug(
                 f"[识别] 管道 {pipeline_name} 模型已缓存，使用标准超时 ({TIMEOUT_CACHED}s)"
