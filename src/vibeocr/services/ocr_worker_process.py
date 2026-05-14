@@ -105,6 +105,9 @@ class OCRWorkerProcess:
         # 防止并发重启的锁（健康检查和识别任务可能同时触发重启）
         self._restart_lock = threading.Lock()
 
+        # 防止并发操作共享内存的锁（预热和用户请求可能同时调用 recognize）
+        self._operation_lock = threading.RLock()
+
     @property
     def is_running(self) -> bool:
         """检查 Worker 进程是否在运行"""
@@ -429,77 +432,78 @@ class OCRWorkerProcess:
         Raises:
             OCRWorkerProcessError: 识别失败
         """
-        # 检查 Worker 状态，必要时自动重启
-        if not self.is_ready:
-            if auto_restart and self._try_restart():
-                logger.debug(f"[主进程] Worker {self.worker_id} 已自动重启")
-            else:
-                raise OCRWorkerProcessError(f"Worker {self.worker_id} 未就绪")
+        with self._operation_lock:
+            # 检查 Worker 状态，必要时自动重启
+            if not self.is_ready:
+                if auto_restart and self._try_restart():
+                    logger.debug(f"[主进程] Worker {self.worker_id} 已自动重启")
+                else:
+                    raise OCRWorkerProcessError(f"Worker {self.worker_id} 未就绪")
 
-        protocol = self.protocol
-        assert protocol is not None  # guarded by is_ready check above
-        self.busy = True
-        logger.debug(
-            f"[主进程] Worker {self.worker_id} 开始识别，图像大小: {len(image_data)} 字节"
-        )
-
-        try:
-            # 序列化并发送请求
-            request_data = serialize_request(image_data, options_dict)
+            protocol = self.protocol
+            assert protocol is not None  # guarded by is_ready check above
+            self.busy = True
             logger.debug(
-                f"[主进程] 发送识别请求到 Worker {self.worker_id}，数据大小: {len(request_data)} 字节"
-            )
-            protocol.write_message(
-                MSG_RECOGNIZE, request_data, timeout=timeout, sender="main"
-            )
-            logger.debug(
-                f"[主进程] 请求已发送，等待 Worker {self.worker_id} 返回结果..."
+                f"[主进程] Worker {self.worker_id} 开始识别，图像大小: {len(image_data)} 字节"
             )
 
-            # 等待 Worker 读取请求（等待 _is_data_ready 变为 False）
-            wait_start = time.time()
-            while protocol._is_data_ready():
-                if time.time() - wait_start > 5.0:
-                    logger.warning(f"Worker {self.worker_id} 未及时读取识别请求")
-                    break
-                time.sleep(0.01)
-
-            # 等待结果
-            msg_type, data = protocol.read_message(
-                timeout=timeout, expected_sender="worker"
-            )
-            logger.debug(f"[主进程] 收到响应，消息类型: {msg_type.decode('ascii', errors='replace')}")
-
-            if msg_type == MSG_RESULT:
-                # 反序列化结果
-                result = deserialize_result(data)
-                logger.debug(f"Worker {self.worker_id} 识别完成")
-                return result
-
-            if msg_type == MSG_ERROR:
-                error_msg = data.decode("utf-8", errors="replace")
-                raise OCRWorkerProcessError(f"OCR 识别失败: {error_msg}")
-
-            if msg_type == MSG_SHUTDOWN:
-                raise OCRWorkerProcessError("Worker 被关闭（可能因超时卡死）")
-
-            raise OCRWorkerProcessError(f"未知响应类型: {msg_type.decode('ascii', errors='replace')}")
-
-        except SharedMemoryProtocolError as e:
-            # 检查 Worker 是否崩溃
-            if not self.is_running and auto_restart:
-                logger.warning(
-                    f"[主进程] Worker {self.worker_id} 似乎已崩溃，尝试重启..."
+            try:
+                # 序列化并发送请求
+                request_data = serialize_request(image_data, options_dict)
+                logger.debug(
+                    f"[主进程] 发送识别请求到 Worker {self.worker_id}，数据大小: {len(request_data)} 字节"
                 )
-                if self._try_restart():
-                    # 重新尝试识别
-                    return self.recognize(
-                        image_data, options_dict, timeout, auto_restart=False
-                    )
-            raise OCRWorkerProcessError(f"通信错误: {e}") from None
+                protocol.write_message(
+                    MSG_RECOGNIZE, request_data, timeout=timeout, sender="main"
+                )
+                logger.debug(
+                    f"[主进程] 请求已发送，等待 Worker {self.worker_id} 返回结果..."
+                )
 
-        finally:
-            self.busy = False
+                # 等待 Worker 读取请求（等待 _is_data_ready 变为 False）
+                wait_start = time.time()
+                while protocol._is_data_ready():
+                    if time.time() - wait_start > 5.0:
+                        logger.warning(f"Worker {self.worker_id} 未及时读取识别请求")
+                        break
+                    time.sleep(0.01)
+
+                # 等待结果
+                msg_type, data = protocol.read_message(
+                    timeout=timeout, expected_sender="worker"
+                )
+                logger.debug(f"[主进程] 收到响应，消息类型: {msg_type.decode('ascii', errors='replace')}")
+
+                if msg_type == MSG_RESULT:
+                    # 反序列化结果
+                    result = deserialize_result(data)
+                    logger.debug(f"Worker {self.worker_id} 识别完成")
+                    return result
+
+                if msg_type == MSG_ERROR:
+                    error_msg = data.decode("utf-8", errors="replace")
+                    raise OCRWorkerProcessError(f"OCR 识别失败: {error_msg}")
+
+                if msg_type == MSG_SHUTDOWN:
+                    raise OCRWorkerProcessError("Worker 被关闭（可能因超时卡死）")
+
+                raise OCRWorkerProcessError(f"未知响应类型: {msg_type.decode('ascii', errors='replace')}")
+
+            except SharedMemoryProtocolError as e:
+                # 检查 Worker 是否崩溃
+                if not self.is_running and auto_restart:
+                    logger.warning(
+                        f"[主进程] Worker {self.worker_id} 似乎已崩溃，尝试重启..."
+                    )
+                    if self._try_restart():
+                        # 重新尝试识别
+                        return self.recognize(
+                            image_data, options_dict, timeout, auto_restart=False
+                        )
+                raise OCRWorkerProcessError(f"通信错误: {e}") from None
+
+            finally:
+                self.busy = False
 
     def _try_restart(self, timeout: float = 60.0) -> bool:
         """尝试重启 Worker
