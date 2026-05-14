@@ -228,3 +228,4 @@ config/app_settings.json
 !src/vibeocr/ui/*.ui
 
 .superpowers/
+docs/
