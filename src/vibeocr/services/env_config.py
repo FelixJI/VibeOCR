@@ -118,3 +118,26 @@ def ensure_config_dir() -> Path:
     config_dir = get_config_dir()
     config_dir.mkdir(parents=True, exist_ok=True)
     return config_dir
+
+
+# data 目录名
+DATA_DIR = "data"
+
+
+def get_data_dir() -> Path:
+    """获取用户数据目录"""
+    return get_project_root() / DATA_DIR
+
+
+def get_update_cache_dir() -> Path:
+    """获取更新下载缓存目录"""
+    d = get_data_dir() / "cache" / "update"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def get_update_settings_path() -> Path:
+    """获取更新设置文件路径（skip_version 等）"""
+    d = get_data_dir() / "settings"
+    d.mkdir(parents=True, exist_ok=True)
+    return d / "update_settings.json"
