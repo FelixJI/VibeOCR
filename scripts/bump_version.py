@@ -15,11 +15,14 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import os
 import re
 import shutil
 import subprocess
 import sys
+import zipfile
 from datetime import date
 from pathlib import Path
 
@@ -350,6 +353,92 @@ def _open_editor(file_path: Path) -> None:
 # 打包功能
 # ---------------------------------------------------------------------------
 
+def _generate_version_json(version: str, dist_dir: Path) -> None:
+    """生成 version.json 到输出目录"""
+    import tomllib
+
+    tomldata = tomllib.loads(PYPROJECT_TOML.read_text(encoding="utf-8"))
+    deps = tomldata.get("project", {}).get("dependencies", [])
+
+    dep_versions: dict[str, str] = {}
+    for dep in deps:
+        dep = dep.strip()
+        if dep.startswith("#"):
+            continue
+        for op in [">=", "==", "<=", "~="]:
+            if op in dep:
+                pkg, ver = dep.split(op, 1)
+                pkg = pkg.strip().lower()
+                if pkg in ("paddlepaddle-gpu", "paddlex", "mineru", "nvidia-cudnn-cu13"):
+                    key = pkg.replace("paddlepaddle-gpu", "paddlepaddle")
+                    dep_versions[key] = ver.strip()
+                break
+
+    data = {
+        "version": version,
+        "channel": "stable",
+        "python_version": "3.13",
+        "dep_versions": dep_versions,
+    }
+    version_path = dist_dir / "version.json"
+    version_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"  已生成 {version_path}")
+
+
+def _build_updater(dist_dir: Path) -> bool:
+    """打包 updater.exe"""
+    updater_script = PROJECT_ROOT / "scripts" / "updater_main.py"
+    if not updater_script.exists():
+        print(f"错误: updater 脚本不存在: {updater_script}")
+        return False
+
+    cmd = [
+        sys.executable,
+        "-m", "PyInstaller",
+        str(updater_script),
+        "--onefile",
+        "--name", "updater",
+        "--clean",
+        "--noconfirm",
+        "--distpath", str(dist_dir),
+        "--workpath", str(DIST_BASE_DIR / "build-updater"),
+        "--specpath", str(DIST_BASE_DIR),
+    ]
+
+    if os.name == "nt":
+        cmd.append("--windowed")
+
+    print("打包 updater.exe...")
+    try:
+        subprocess.run(cmd, check=True)
+        return True
+    except subprocess.CalledProcessError as e:
+        print(f"updater 打包失败: {e.returncode}")
+        return False
+
+
+def _package_zip(dist_dir: Path, version: str) -> Path | None:
+    """将 dist_dir 打包为 zip 并计算 SHA256"""
+    zip_name = f"VibeOCR-v{version}-win64"
+    zip_path = DIST_BASE_DIR / f"{zip_name}.zip"
+
+    print(f"打包 {zip_path}...")
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
+        for file_path in dist_dir.rglob("*"):
+            if file_path.is_file():
+                arcname = f"{zip_name}/{file_path.relative_to(dist_dir)}"
+                zf.write(file_path, arcname)
+
+    sha256 = hashlib.sha256(zip_path.read_bytes()).hexdigest()
+    sha256_path = DIST_BASE_DIR / f"{zip_name}.zip.sha256"
+    sha256_path.write_text(f"{sha256}  {zip_name}.zip\n", encoding="utf-8")
+
+    size_mb = zip_path.stat().st_size / (1024 * 1024)
+    print(f"  zip 大小: {size_mb:.1f} MB")
+    print(f"  SHA256: {sha256}")
+    return zip_path
+
+
 def _check_pyinstaller() -> bool:
     """检查 PyInstaller 是否已安装"""
     try:
@@ -411,14 +500,7 @@ def _get_pyinstaller_cmd(version: str) -> list[str]:
 
 
 def _run_build(version: str) -> bool:
-    """执行 PyInstaller 打包
-
-    Args:
-        version: 版本号字符串
-
-    Returns:
-        是否成功
-    """
+    """执行完整构建流程"""
     if not _check_pyinstaller():
         print("\n错误: PyInstaller 未安装")
         print(f"请运行: {sys.executable} -m pip install pyinstaller")
@@ -436,25 +518,34 @@ def _run_build(version: str) -> bool:
             return False
         shutil.rmtree(DIST_BASE_DIR / dist_name, ignore_errors=True)
 
+    # 1. 打包主程序
     cmd = _get_pyinstaller_cmd(version)
-
-    print(f"\n开始打包 VibeOCR v{version}...")
-    print(f"输出目录: {DIST_BASE_DIR / dist_name}")
-    print(f"命令: {' '.join(cmd[:6])} ...")  # 缩写显示
-    print("打包中，请稍候...（这可能需要几分钟）\n")
-
+    print(f"\n[1/4] 打包主程序 VibeOCR v{version}...")
     try:
         subprocess.run(cmd, check=True)
     except subprocess.CalledProcessError as e:
-        print(f"\n打包失败，退出码: {e.returncode}")
+        print(f"\n主程序打包失败，退出码: {e.returncode}")
         return False
-    except KeyboardInterrupt:
-        print("\n打包已取消")
+
+    # 2. 打包 updater.exe
+    print(f"\n[2/4] 打包 updater.exe...")
+    if not _build_updater(dist_path):
+        return False
+
+    # 3. 生成 version.json
+    print(f"\n[3/4] 生成 version.json...")
+    _generate_version_json(version, dist_path)
+
+    # 4. 打 zip + SHA256
+    print(f"\n[4/4] 打包 zip...")
+    zip_path = _package_zip(dist_path, version)
+    if zip_path is None:
         return False
 
     print(f"\n{'='*50}")
-    print("打包成功!")
-    print(f"输出路径: {dist_path}")
+    print("构建完成!")
+    print(f"  应用目录: {dist_path}")
+    print(f"  分发包:   {zip_path}")
     print(f"{'='*50}")
     return True
 
