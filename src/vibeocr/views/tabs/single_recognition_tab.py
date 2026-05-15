@@ -105,6 +105,7 @@ class SingleRecognitionTab(BaseOcrTab):
         self._setup_hover_sync()
         self._preview_widget.block_text_edited.connect(self._on_block_text_edited)
         self._preview_widget.block_clicked.connect(self._result_widget.highlight_block)
+        self._result_widget.block_edited.connect(self._on_result_block_edited)
 
         # 转发预览组件的截图/文件请求信号
         self._preview_widget.screenshot_requested.connect(self.screenshot_requested.emit)
@@ -357,6 +358,43 @@ class SingleRecognitionTab(BaseOcrTab):
                 return
             logger.error(f"[异步OCR] 识别失败: {e}", exc_info=True)
             self._on_ocr_error(str(e))
+
+    def _on_result_block_edited(self, index: int, new_text: str) -> None:
+        """右侧结果块被编辑后同步更新数据模型"""
+        if not self._current_ocr_result or index < 0:
+            return
+        result = self._current_ocr_result
+
+        if not result.content_list or index >= len(result.content_list):
+            return
+
+        cl_block = result.content_list[index]
+        old_text = cl_block.get("text", "")
+        if old_text == new_text:
+            return
+
+        # 更新 content_list
+        cl_block["text"] = new_text
+
+        # 查找并更新对应的 text_block
+        for tb in result.text_blocks:
+            if getattr(tb, "content_index", None) == index:
+                tb.text = new_text
+                tb.is_manually_edited = True
+                break
+
+        # 同步更新 raw_text / markdown_text / html_text
+        if old_text:
+            if old_text in result.raw_text:
+                result.raw_text = result.raw_text.replace(old_text, new_text, 1)
+            if result.markdown_text and old_text in result.markdown_text:
+                result.markdown_text = result.markdown_text.replace(old_text, new_text, 1)
+            if result.html_text and old_text in result.html_text:
+                result.html_text = result.html_text.replace(old_text, new_text, 1)
+
+        # 刷新左侧 overlay（显示手动修改标记）
+        if self._preview_widget:
+            self._preview_widget.set_text_blocks(result.text_blocks)
 
     def _on_ocr_finished(self, result) -> None:
         """OCR 完成回调"""
