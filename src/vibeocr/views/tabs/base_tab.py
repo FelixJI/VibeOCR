@@ -151,6 +151,7 @@ class BaseOcrTab(QWidget):
             score = result.text_with_scores[index][1]
             result.text_with_scores[index] = (new_text, score)
 
+        cl_idx = None
         if result.content_list:
             cl_idx = getattr(result.text_blocks[index], "content_index", None)
             if cl_idx is not None and cl_idx < len(result.content_list):
