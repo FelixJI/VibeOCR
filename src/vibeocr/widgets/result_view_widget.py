@@ -315,6 +315,7 @@ class _Bridge(QObject):
     blockHovered = Signal(int)
     blockUnhovered = Signal()
     blockClicked = Signal(int)
+    blockEdited = Signal(int, str)  # (block_index, new_text)
 
     @Slot(int)
     def onBlockHover(self, index: int):
@@ -328,6 +329,10 @@ class _Bridge(QObject):
     def onBlockClick(self, index: int):
         self.blockClicked.emit(index)
 
+    @Slot(int, str)
+    def onBlockEdited(self, index: int, text: str):
+        self.blockEdited.emit(index, text)
+
 
 class ResultViewWidget(QWidget):
     """OCR 结果显示组件（QWebEngineView 版本）"""
@@ -335,6 +340,7 @@ class ResultViewWidget(QWidget):
     block_hovered = Signal(int)
     block_unhovered = Signal()
     block_clicked = Signal(int)
+    block_edited = Signal(int, str)  # 新增：(block_index, new_text)
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
@@ -362,6 +368,7 @@ class ResultViewWidget(QWidget):
         self._bridge.blockHovered.connect(self.block_hovered.emit)
         self._bridge.blockUnhovered.connect(self.block_unhovered.emit)
         self._bridge.blockClicked.connect(self.block_clicked.emit)
+        self._bridge.blockEdited.connect(self.block_edited.emit)
 
         layout = self.layout()
         layout.addWidget(self._web_view)
