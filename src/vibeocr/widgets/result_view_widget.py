@@ -257,6 +257,8 @@ body {{ margin:0; padding:8px; font-family:"Microsoft YaHei","Segoe UI",sans-ser
 .ocr-table td, .ocr-table th {{ border: 1px solid #d1d5db; padding: 6px 8px; }}
 .ocr-table th {{ background: #f3f4f6; font-weight: 600; }}
 .ocr-table tr:nth-child(even) {{ background: #f9fafb; }}
+.manually-edited {{ border-left-color: #ff9800 !important; border-left-width: 4px !important; }}
+[contenteditable="true"] {{ outline: 2px solid #1976d2; background-color: rgba(255,255,255,0.95); cursor: text; }}
 </style>
 </head>
 <body>
@@ -279,20 +281,158 @@ if (typeof katex !== 'undefined') {{
     }});
 }}
 
+// 编辑状态
+var _bridge = null;
+var _editOriginals = {{}};
+var _NON_EDITABLE = ['image', 'figure', 'chart', 'seal'];
+
+function _finishTextEdit(block) {{
+    var index = parseInt(block.getAttribute('data-block-index'));
+    var newText = block.innerText.trim();
+    block.removeAttribute('contenteditable');
+    if (newText !== _editOriginals[index]) {{
+        block.classList.add('manually-edited');
+        if (_bridge) _bridge.onBlockEdited(index, newText);
+    }}
+    delete _editOriginals[index];
+}}
+
+function _finishTableEdit(block) {{
+    var index = parseInt(block.getAttribute('data-block-index'));
+    var tableEl = block.querySelector('.ocr-table');
+    var newText = tableEl ? tableEl.innerText.trim() : '';
+    block.querySelectorAll('.ocr-table td, .ocr-table th').forEach(function(cell) {{
+        cell.removeAttribute('contenteditable');
+    }});
+    if (newText !== _editOriginals[index]) {{
+        block.classList.add('manually-edited');
+        if (_bridge) _bridge.onBlockEdited(index, newText);
+    }}
+    delete _editOriginals[index];
+}}
+
+function _startEquationEdit(block, index) {{
+    var mathBlock = block.querySelector('.math-block');
+    if (!mathBlock) return;
+    var latex = mathBlock.getAttribute('data-latex') || '';
+    _editOriginals[index] = latex;
+
+    var existing = document.getElementById('eq-editor');
+    if (existing) existing.remove();
+
+    var textarea = document.createElement('textarea');
+    textarea.id = 'eq-editor';
+    textarea.value = latex;
+    textarea.style.cssText = 'width:100%;min-height:60px;padding:8px;font-family:Consolas,Monaco,monospace;font-size:13px;border:2px solid #1976d2;border-radius:4px;background:white;resize:vertical;';
+
+    mathBlock.innerHTML = '';
+    mathBlock.appendChild(textarea);
+    textarea.focus();
+    textarea.select();
+
+    textarea.addEventListener('blur', function() {{
+        var newLatex = this.value.trim();
+        mathBlock.setAttribute('data-latex', newLatex);
+        if (typeof katex !== 'undefined') {{
+            try {{ katex.render(newLatex, mathBlock, {{ displayMode: true, throwOnError: false }}); }}
+            catch(e) {{ mathBlock.innerText = newLatex; }}
+        }} else {{
+            mathBlock.innerText = newLatex;
+        }}
+        if (newLatex !== _editOriginals[index]) {{
+            block.classList.add('manually-edited');
+            if (_bridge) _bridge.onBlockEdited(index, newLatex);
+        }}
+        delete _editOriginals[index];
+    }});
+}}
+
 // 高亮通信
 new QWebChannel(qt.webChannelTransport, function(channel) {{
-    var bridge = channel.objects.bridge;
+    _bridge = channel.objects.bridge;
     document.querySelectorAll('.ocr-block').forEach(function(el) {{
         el.addEventListener('mouseenter', function() {{
-            bridge.onBlockHover(parseInt(this.getAttribute('data-block-index')));
+            _bridge.onBlockHover(parseInt(this.getAttribute('data-block-index')));
         }});
         el.addEventListener('mouseleave', function() {{
-            bridge.onBlockLeave();
+            _bridge.onBlockLeave();
         }});
         el.addEventListener('click', function() {{
-            bridge.onBlockClick(parseInt(this.getAttribute('data-block-index')));
+            _bridge.onBlockClick(parseInt(this.getAttribute('data-block-index')));
+        }});
+        el.addEventListener('dblclick', function(e) {{
+            var blockType = this.getAttribute('data-block-type');
+            if (_NON_EDITABLE.indexOf(blockType) >= 0) return;
+            e.preventDefault();
+            e.stopPropagation();
+            var index = parseInt(this.getAttribute('data-block-index'));
+
+            if (blockType === 'table') {{
+                _editOriginals[index] = this.querySelector('.ocr-table').innerHTML;
+                this.querySelectorAll('.ocr-table td, .ocr-table th').forEach(function(cell) {{
+                    cell.setAttribute('contenteditable', 'true');
+                }});
+                var firstCell = this.querySelector('.ocr-table td, .ocr-table th');
+                if (firstCell) firstCell.focus();
+            }} else if (['equation', 'interline_equation', 'inline_equation'].indexOf(blockType) >= 0) {{
+                _startEquationEdit(this, index);
+            }} else {{
+                _editOriginals[index] = this.innerText;
+                this.setAttribute('contenteditable', 'true');
+                this.focus();
+            }}
         }});
     }});
+}});
+
+// 全局 blur 处理
+document.addEventListener('focusout', function(e) {{
+    if (e.target.matches && e.target.matches('.ocr-table td[contenteditable], .ocr-table th[contenteditable]')) {{
+        var block = e.target.closest('.ocr-block');
+        if (block) {{
+            var table = e.target.closest('.ocr-table');
+            setTimeout(function() {{
+                if (!table.contains(document.activeElement)) {{
+                    _finishTableEdit(block);
+                }}
+            }}, 50);
+        }}
+        return;
+    }}
+    var block = e.target.closest ? e.target.closest('.ocr-block[contenteditable="true"]') : null;
+    if (block) _finishTextEdit(block);
+}});
+
+// Escape 取消编辑
+document.addEventListener('keydown', function(e) {{
+    if (e.key !== 'Escape') return;
+
+    var block = document.querySelector('.ocr-block[contenteditable="true"]');
+    if (block) {{
+        var index = parseInt(block.getAttribute('data-block-index'));
+        block.innerText = _editOriginals[index] || block.innerText;
+        block.removeAttribute('contenteditable');
+        delete _editOriginals[index];
+        e.preventDefault();
+        return;
+    }}
+
+    var eqEditor = document.getElementById('eq-editor');
+    if (eqEditor) {{
+        var eqBlock = eqEditor.closest('.ocr-block');
+        var mathBlock = eqEditor.closest('.math-block');
+        var eqIndex = eqBlock ? parseInt(eqBlock.getAttribute('data-block-index')) : -1;
+        var origLatex = _editOriginals[eqIndex] || '';
+        mathBlock.setAttribute('data-latex', origLatex);
+        if (typeof katex !== 'undefined') {{
+            try {{ katex.render(origLatex, mathBlock, {{ displayMode: true, throwOnError: false }}); }}
+            catch(e2) {{ mathBlock.innerText = origLatex; }}
+        }} else {{
+            mathBlock.innerText = origLatex;
+        }}
+        delete _editOriginals[eqIndex];
+        e.preventDefault();
+    }}
 }});
 
 function highlightBlock(index) {{
