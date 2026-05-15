@@ -518,7 +518,6 @@ class ResultViewWidget(QWidget):
     def display_result(self, result: Any) -> None:
         """显示 OCR 识别结果"""
         self._ensure_web_view()
-        """显示 OCR 识别结果"""
         global _current_images
         self._current_result = result
         self._highlighted_index = -1

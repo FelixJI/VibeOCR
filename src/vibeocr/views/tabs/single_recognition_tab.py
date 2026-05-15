@@ -375,18 +375,27 @@ class SingleRecognitionTab(BaseOcrTab):
 
         # 更新 content_list
         cl_block["text"] = new_text
+        block_type = cl_block.get("type", "text")
+        if block_type == "list" and "list_items" in cl_block:
+            cl_block["list_items"] = new_text.split("\n")
+        elif block_type == "code":
+            cl_block["code_body"] = new_text
 
         # 查找并更新对应的 text_block
         for tb in result.text_blocks:
             if getattr(tb, "content_index", None) == index:
                 tb.text = new_text
                 tb.is_manually_edited = True
+                if tb.content_index is not None and tb.content_index < len(result.text_with_scores):
+                    score = result.text_with_scores[tb.content_index][1]
+                    result.text_with_scores[tb.content_index] = (new_text, score)
                 break
 
-        # 同步更新 raw_text / markdown_text / html_text
+        # 全量重建 raw_text，避免 str.replace 子串误匹配
+        result.raw_text = "\n".join(b.text for b in result.text_blocks if b.text)
+
+        # 同步更新 markdown_text / html_text
         if old_text:
-            if old_text in result.raw_text:
-                result.raw_text = result.raw_text.replace(old_text, new_text, 1)
             if result.markdown_text and old_text in result.markdown_text:
                 result.markdown_text = result.markdown_text.replace(old_text, new_text, 1)
             if result.html_text and old_text in result.html_text:
