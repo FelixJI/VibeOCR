@@ -1,7 +1,36 @@
 """OCR 识别结果数据类"""
 
+from __future__ import annotations
+
+import logging
 from dataclasses import dataclass, field
 from typing import Any
+
+_log = logging.getLogger(__name__)
+
+# MinerU 丢弃的块类型——应排除在文本提取和渲染之外
+DISCARDED_BLOCK_TYPES = frozenset({
+    "header", "footer", "page_number", "page_footnote", "aside_text",
+})
+
+
+def normalize_bbox(bbox_raw: list | tuple) -> tuple[float, float, float, float]:
+    """将任意范围的 bbox 统一为 [0, 1000] 归一化坐标。
+
+    支持输入: [0, 1] 归一化、[0, 1000] 归一化、像素坐标。
+    像素坐标（max >= 1100）无法准确归一化（缺少图像尺寸），保留原值并警告。
+    """
+    vals = (float(bbox_raw[0]), float(bbox_raw[1]),
+            float(bbox_raw[2]), float(bbox_raw[3]))
+    max_val = max(vals)
+    if max_val < 1.1:
+        result = tuple(v * 1000 for v in vals)
+        _log.debug("[bbox] [0,1] → [0,1000]: %s", result)
+        return result  # type: ignore[return-value]
+    if max_val >= 1100:
+        _log.warning("[bbox] unexpected pixel coords (max=%s): %s", max_val, vals)
+    return vals
+
 
 
 @dataclass

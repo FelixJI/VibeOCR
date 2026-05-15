@@ -16,6 +16,8 @@ import logging
 from pathlib import Path
 from typing import Any, Callable
 
+from vibeocr.models.ocr_result import DISCARDED_BLOCK_TYPES
+
 from PySide6.QtCore import QObject, QUrl, Signal, Slot
 from PySide6.QtWebChannel import QWebChannel
 from PySide6.QtWebEngineWidgets import QWebEngineView
@@ -55,11 +57,6 @@ BLOCK_TYPE_LABELS: dict[str, str] = {
     "code": "代码",
     "seal": "印章",
 }
-
-# MinerU discarded block types — skip in rendering
-DISCARDED_BLOCK_TYPES = frozenset({
-    "header", "footer", "page_number", "page_footnote", "aside_text",
-})
 
 # 存储当前结果的 images 字典，供渲染函数访问
 _current_images: dict[str, bytes] = {}

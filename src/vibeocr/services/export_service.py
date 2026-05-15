@@ -9,14 +9,10 @@ import logging
 import re
 from pathlib import Path
 
-from vibeocr.models.ocr_result import OCRResult
+from vibeocr.models.ocr_result import DISCARDED_BLOCK_TYPES, OCRResult
 from vibeocr.utils.markdown_converter import HTML_STYLE
 
 logger = logging.getLogger(__name__)
-
-DISCARDED_BLOCK_TYPES = frozenset({
-    "header", "footer", "page_number", "page_footnote", "aside_text",
-})
 
 
 class ExportService:

@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Any
 import httpx
 
 from vibeocr.core.singleton_meta import SingletonMeta
-from vibeocr.models.ocr_result import OCRResult, TextBlock
+from vibeocr.models.ocr_result import DISCARDED_BLOCK_TYPES, OCRResult, TextBlock, normalize_bbox
 from vibeocr.utils.markdown_converter import markdown_to_html
 from vibeocr.utils.mime_types import mime_to_extension
 
@@ -30,12 +30,6 @@ if TYPE_CHECKING:
     from vibeocr.models.ocr_options import OCROptions
 
 _logger = logging.getLogger(__name__)
-
-# MinerU discarded block types — appended after layout blocks per page,
-# should be excluded from text extraction and rendering.
-DISCARDED_BLOCK_TYPES = frozenset({
-    "header", "footer", "page_number", "page_footnote", "aside_text",
-})
 
 
 class MinerUService(metaclass=SingletonMeta):
@@ -345,11 +339,11 @@ class MinerUService(metaclass=SingletonMeta):
             text = self._extract_block_text(block)
             if not text:
                 continue
+
             text_blocks.append(TextBlock(
                 text=text,
                 score=1.0,  # MineRU content_list 不提供 confidence
-                bbox=(float(bbox_raw[0]), float(bbox_raw[1]),
-                      float(bbox_raw[2]), float(bbox_raw[3])),
+                bbox=normalize_bbox(bbox_raw[:4]),
                 page_idx=block.get("page_idx"),
                 content_index=i,
             ))

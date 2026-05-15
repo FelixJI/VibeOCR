@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any
 from vibeocr.core.pipelines import OCRPipeline
 from vibeocr.core.singleton_meta import SingletonMeta
 from vibeocr.models.ocr_options import OCROptions
-from vibeocr.models.ocr_result import OCRResult, TextBlock
+from vibeocr.models.ocr_result import OCRResult, TextBlock, normalize_bbox
 
 # 重新导出以保持向后兼容性
 __all__ = [
@@ -700,7 +700,7 @@ class OCRService(metaclass=SingletonMeta):
                 result = self._recognize_formula(image, actual_options)
             else:
                 result = self._recognize_ocr(image, actual_options)
-            # Normalize bbox from pixel coords to [0-1000]
+            # Normalize bbox to [0-1000] if needed
             if hasattr(image, 'shape') and len(image.shape) >= 2:
                 img_h, img_w = image.shape[:2]
             elif hasattr(image, 'size'):
@@ -711,10 +711,14 @@ class OCRService(metaclass=SingletonMeta):
                 for block in result.text_blocks:
                     if block.bbox:
                         x0, y0, x1, y1 = block.bbox
-                        block.bbox = (
-                            x0 / img_w * 1000, y0 / img_h * 1000,
-                            x1 / img_w * 1000, y1 / img_h * 1000,
-                        )
+                        max_val = max(x0, y0, x1, y1)
+                        if max_val >= 1100:
+                            block.bbox = (
+                                x0 / img_w * 1000, y0 / img_h * 1000,
+                                x1 / img_w * 1000, y1 / img_h * 1000,
+                            )
+                        else:
+                            block.bbox = normalize_bbox(block.bbox)
 
             _logger.debug(f"[recognize] 识别完成，返回 {len(result.raw_text)} 字符")
             return result
@@ -881,13 +885,25 @@ class OCRService(metaclass=SingletonMeta):
 
     @staticmethod
     def _extract_bbox(rec_boxes, index: int) -> tuple[float, float, float, float] | None:
-        """从 rec_boxes 提取第 index 个文本框的 bbox [x0, y0, x1, y1]"""
+        """从 rec_boxes 提取第 index 个文本框的 bbox [x0, y0, x1, y1]
+
+        支持格式:
+        - (N, 4): [x0, y0, x1, y1] 轴对齐矩形
+        - (N, 4, 2): [[x0,y0], [x1,y1], [x2,y2], [x3,y3]] 四点多边形
+        - (N, 2, 2): [[x0,y0], [x1,y1]] 两点矩形
+        """
         try:
             box = rec_boxes[index]
             if hasattr(box, "tolist"):
                 box = box.tolist()
             if len(box) == 4:
-                return (float(box[0]), float(box[1]), float(box[2]), float(box[3]))
+                # (N, 4) 或 (N, 4, 2)
+                if isinstance(box[0], (int, float)):
+                    return (float(box[0]), float(box[1]), float(box[2]), float(box[3]))
+                # (N, 4, 2) 多边形格式: 取外接矩形
+                xs = [p[0] for p in box]
+                ys = [p[1] for p in box]
+                return (min(xs), min(ys), max(xs), max(ys))
             if len(box) == 2 and len(box[0]) == 2 and len(box[1]) == 2:
                 return (float(box[0][0]), float(box[0][1]), float(box[1][0]), float(box[1][1]))
         except (IndexError, TypeError, ValueError):
