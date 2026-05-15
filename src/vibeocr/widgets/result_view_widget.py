@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import base64
 import html as html_lib
+import json
 import logging
 from pathlib import Path
 from typing import Any, Callable
@@ -543,6 +544,28 @@ class ResultViewWidget(QWidget):
         full_html = _build_full_html(body, katex_dir)
         base_url = QUrl.fromLocalFile(str(_RESOURCES_DIR) + "/")
         self._ensure_web_view().setHtml(full_html, base_url)
+
+    def update_block_text(self, index: int, text: str) -> None:
+        """从外部更新指定块的显示文本（如左侧编辑同步时调用）"""
+        if not self._web_view:
+            return
+        escaped = json.dumps(text)
+        js = f"""
+    (function() {{
+        var block = document.getElementById('block-{index}');
+        if (!block) return;
+        var blockType = block.getAttribute('data-block-type');
+        if (blockType === 'table') return;
+        var contentEl = block.querySelector('p, h1, h2, h3, h4, h5, h6, pre code, ul');
+        if (contentEl) {{
+            contentEl.innerText = {escaped};
+        }} else {{
+            block.innerText = {escaped};
+        }}
+        block.classList.add('manually-edited');
+    }})();
+    """
+        self._web_view.page().runJavaScript(js)
 
     def highlight_block(self, index: int) -> None:
         """高亮指定块（-1 取消高亮）"""
