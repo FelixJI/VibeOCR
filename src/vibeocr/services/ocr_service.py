@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any
 from vibeocr.core.pipelines import OCRPipeline
 from vibeocr.core.singleton_meta import SingletonMeta
 from vibeocr.models.ocr_options import OCROptions
-from vibeocr.models.ocr_result import OCRResult, TextBlock, normalize_bbox
+from vibeocr.models.ocr_result import OCRResult, TextBlock
 
 # 重新导出以保持向后兼容性
 __all__ = [
@@ -700,7 +700,7 @@ class OCRService(metaclass=SingletonMeta):
                 result = self._recognize_formula(image, actual_options)
             else:
                 result = self._recognize_ocr(image, actual_options)
-            # Normalize bbox to [0-1000] if needed
+            # Normalize bbox from pixel coords to [0-1000]
             if hasattr(image, 'shape') and len(image.shape) >= 2:
                 img_h, img_w = image.shape[:2]
             elif hasattr(image, 'size'):
@@ -711,14 +711,10 @@ class OCRService(metaclass=SingletonMeta):
                 for block in result.text_blocks:
                     if block.bbox:
                         x0, y0, x1, y1 = block.bbox
-                        max_val = max(x0, y0, x1, y1)
-                        if max_val >= 1100:
-                            block.bbox = (
-                                x0 / img_w * 1000, y0 / img_h * 1000,
-                                x1 / img_w * 1000, y1 / img_h * 1000,
-                            )
-                        else:
-                            block.bbox = normalize_bbox(block.bbox)
+                        block.bbox = (
+                            x0 / img_w * 1000, y0 / img_h * 1000,
+                            x1 / img_w * 1000, y1 / img_h * 1000,
+                        )
 
             _logger.debug(f"[recognize] 识别完成，返回 {len(result.raw_text)} 字符")
             return result

@@ -1,6 +1,5 @@
 """Preview widget for image display, file loading and screenshot trigger"""
 
-import logging
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QRectF, Signal
@@ -18,8 +17,6 @@ from PySide6.QtWidgets import (
 )
 
 from vibeocr.models.ocr_result import DISCARDED_BLOCK_TYPES, TextBlock
-
-logger = logging.getLogger(__name__)
 
 # 置信度阈值
 LOW_CONFIDENCE_THRESHOLD = 0.80
@@ -287,8 +284,8 @@ class PreviewWidget(QWidget):
 
         layout.addWidget(self._scroll_area, stretch=1)
 
-        # 覆盖层（作为 image_label 的子组件，坐标系统直接对齐）
-        self._overlay = UnifiedBBoxOverlay(self._image_label)
+        # 覆盖层
+        self._overlay = UnifiedBBoxOverlay(self._scroll_area.viewport())
 
         # 内联文本编辑器
         self._inline_editor = QLineEdit(self._image_label)
@@ -534,58 +531,24 @@ class PreviewWidget(QWidget):
         self._content_list = content_list
         self._update_type_overlay()
 
-    def _pixmap_display_params(self):
-        """计算当前 pixmap 的显示参数，返回 (disp_w, disp_h, offset_x, offset_y)。
-
-        使用 contentsRect() 匹配 QLabel 内部绘制位置，确保覆盖层与 pixmap 精确对齐。
-        """
-        current_pixmap = self._image_label.pixmap()
-        if not current_pixmap:
-            return None
-        dpr = current_pixmap.devicePixelRatio() or 1.0
-        disp_w = current_pixmap.width() / dpr
-        disp_h = current_pixmap.height() / dpr
-        cr = self._image_label.contentsRect()
-        align = self._image_label.alignment()
-        # 水平位置（匹配 QLabel 内部 QStyle::alignedRect 逻辑）
-        if align & Qt.AlignmentFlag.AlignLeft:
-            offset_x = cr.x()
-        elif align & Qt.AlignmentFlag.AlignRight:
-            offset_x = cr.x() + cr.width() - disp_w
-        else:
-            offset_x = cr.x() + (cr.width() - disp_w) / 2
-        # 垂直位置
-        if align & Qt.AlignmentFlag.AlignTop:
-            offset_y = cr.y()
-        elif align & Qt.AlignmentFlag.AlignBottom:
-            offset_y = cr.y() + cr.height() - disp_h
-        else:
-            offset_y = cr.y() + (cr.height() - disp_h) / 2
-        return disp_w, disp_h, offset_x, offset_y
-
     def _update_type_overlay(self) -> None:
         """绘制所有 content_list 块的 bbox 覆盖层"""
         if not self._content_list or self._original_pixmap is None:
             self._overlay.set_type_blocks([])
             return
 
-        params = self._pixmap_display_params()
-        if params is None:
+        current_pixmap = self._image_label.pixmap()
+        if not current_pixmap:
             self._overlay.set_type_blocks([])
             return
-        disp_w, disp_h, offset_x, offset_y = params
 
-        # 诊断日志：帮助定位 bbox 偏移
-        orig_w = self._pixmap.width() if self._pixmap else 0
-        orig_h = self._pixmap.height() if self._pixmap else 0
-        cr = self._image_label.contentsRect()
-        logger.debug(
-            f"[type-overlay] orig={orig_w}x{orig_h} disp={disp_w:.1f}x{disp_h:.1f} "
-            f"label={self._image_label.width()}x{self._image_label.height()} "
-            f"cr=({cr.x()},{cr.y()},{cr.width()},{cr.height()}) "
-            f"offset=({offset_x:.1f},{offset_y:.1f}) "
-            f"dpr={self._image_label.pixmap().devicePixelRatio() if self._image_label.pixmap() else 0}"
-        )
+        dpr = current_pixmap.devicePixelRatio() or 1.0
+        disp_w = current_pixmap.width() / dpr
+        disp_h = current_pixmap.height() / dpr
+        label_w = self._image_label.width()
+        label_h = self._image_label.height()
+        offset_x = (label_w - disp_w) / 2
+        offset_y = (label_h - disp_h) / 2
 
         overlay_rects = []
         for i, block in enumerate(self._content_list):
@@ -612,7 +575,7 @@ class PreviewWidget(QWidget):
             overlay_rects.append((i, screen_rect, block_type, fill_color, border_color))
 
         self._overlay.set_type_blocks(overlay_rects)
-        self._overlay.setGeometry(self._image_label.rect())
+        self._overlay.setGeometry(self._scroll_area.viewport().rect())
 
     # ── 高亮 ──
 
@@ -711,24 +674,18 @@ class PreviewWidget(QWidget):
         if not self._pixmap or not self._text_blocks:
             return
 
-        params = self._pixmap_display_params()
-        if params is None:
+        current_pixmap = self._image_label.pixmap()
+        if not current_pixmap:
             return
-        disp_w, disp_h, offset_x, offset_y = params
 
-        # 诊断日志
-        first_bbox = self._text_blocks[0].bbox if self._text_blocks else None
-        if first_bbox is not None:
-            orig_w = self._pixmap.width() if self._pixmap else 0
-            orig_h = self._pixmap.height() if self._pixmap else 0
-            cr = self._image_label.contentsRect()
-            logger.debug(
-                f"[conf-overlay] orig={orig_w}x{orig_h} disp={disp_w:.1f}x{disp_h:.1f} "
-                f"label={self._image_label.width()}x{self._image_label.height()} "
-                f"cr=({cr.x()},{cr.y()},{cr.width()},{cr.height()}) "
-                f"offset=({offset_x:.1f},{offset_y:.1f}) "
-                f"first_bbox_norm=({first_bbox[0]:.1f},{first_bbox[1]:.1f},{first_bbox[2]:.1f},{first_bbox[3]:.1f})"
-            )
+        dpr = current_pixmap.devicePixelRatio() or 1.0
+        disp_w = current_pixmap.width() / dpr
+        disp_h = current_pixmap.height() / dpr
+
+        label_w = self._image_label.width()
+        label_h = self._image_label.height()
+        offset_x = (label_w - disp_w) / 2
+        offset_y = (label_h - disp_h) / 2
 
         overlay_rects = []
         for block in self._text_blocks:
@@ -744,11 +701,11 @@ class PreviewWidget(QWidget):
             overlay_rects.append((sx, sy, sw, sh, block.score, block.text, block.is_manually_edited))
 
         self._overlay.set_confidence_blocks(overlay_rects)
-        self._overlay.setGeometry(self._image_label.rect())
+        self._overlay.setGeometry(self._scroll_area.viewport().rect())
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         if self._original_pixmap and not self._original_pixmap.isNull():
             self._update_display()
             self._reapply_highlight()
-        self._overlay.setGeometry(self._image_label.rect())
+        self._overlay.setGeometry(self._scroll_area.viewport().rect())
