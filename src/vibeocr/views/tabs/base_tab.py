@@ -180,7 +180,10 @@ class BaseOcrTab(QWidget):
         if self._preview_widget:
             self._preview_widget.set_text_blocks(result.text_blocks)
         if self._result_widget:
-            self._result_widget.display_result(result)
+            if cl_idx is not None:
+                self._result_widget.update_block_text(cl_idx, new_text)
+            else:
+                self._result_widget.display_result(result)
 
     def _init_options_from_preferences(self, *, batch: bool = False) -> None:
         """从 OCRPreferences 恢复选项，并建立双向同步"""
