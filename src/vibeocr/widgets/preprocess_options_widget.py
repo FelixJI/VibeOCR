@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QLabel,
+    QSpinBox,
     QTabWidget,
     QVBoxLayout,
     QWidget,
@@ -117,8 +118,8 @@ class PreprocessOptionsWidget(QGroupBox):
         backend_layout = QHBoxLayout()
         backend_layout.addWidget(QLabel("解析后端:"))
         self._backend_combo = QComboBox()
+        self._backend_combo.addItem("混合引擎（推荐）", "hybrid-auto-engine")
         self._backend_combo.addItem("VLM 智能引擎", "vlm-auto-engine")
-        self._backend_combo.addItem("混合引擎", "hybrid-auto-engine")
         self._backend_combo.addItem("传统流水线", "pipeline")
         self._backend_combo.setToolTip(
             "VLM 智能引擎：使用视觉语言模型，效果最佳（失败自动回退混合引擎）\n"
@@ -155,6 +156,41 @@ class PreprocessOptionsWidget(QGroupBox):
         self._enable_table_cb.setChecked(True)
         layout.addWidget(self._enable_table_cb)
 
+        # 语言选择
+        lang_layout = QHBoxLayout()
+        lang_layout.addWidget(QLabel("文档语言:"))
+        self._lang_combo = QComboBox()
+        self._lang_combo.addItem("自动检测", "")
+        self._lang_combo.addItem("中文", "zh")
+        self._lang_combo.addItem("英文", "en")
+        self._lang_combo.addItem("中英混合", "zh,en")
+        self._lang_combo.addItem("日文", "ja")
+        self._lang_combo.addItem("韩文", "ko")
+        self._lang_combo.setToolTip("文档主要语言，自动检测适用于混合语言")
+        lang_layout.addWidget(self._lang_combo)
+        lang_layout.addStretch()
+        layout.addLayout(lang_layout)
+
+        # 页码范围
+        page_layout = QHBoxLayout()
+        page_layout.addWidget(QLabel("起始页:"))
+        self._start_page_spin = QSpinBox()
+        self._start_page_spin.setRange(0, 99999)
+        self._start_page_spin.setValue(0)
+        self._start_page_spin.setToolTip("起始页（从 0 开始）")
+        page_layout.addWidget(self._start_page_spin)
+        page_layout.addWidget(QLabel("结束页:"))
+        self._end_page_check = QCheckBox("限制")
+        self._end_page_spin = QSpinBox()
+        self._end_page_spin.setRange(0, 99999)
+        self._end_page_spin.setValue(99999)
+        self._end_page_spin.setEnabled(False)
+        self._end_page_check.toggled.connect(self._end_page_spin.setEnabled)
+        page_layout.addWidget(self._end_page_check)
+        page_layout.addWidget(self._end_page_spin)
+        page_layout.addStretch()
+        layout.addLayout(page_layout)
+
         return group
 
     def _connect_signals(self):
@@ -171,6 +207,10 @@ class PreprocessOptionsWidget(QGroupBox):
         self._enable_table_cb.toggled.connect(self._on_option_changed)
         self._backend_combo.currentIndexChanged.connect(self._on_option_changed)
         self._parse_method_combo.currentIndexChanged.connect(self._on_option_changed)
+        self._lang_combo.currentIndexChanged.connect(self._on_option_changed)
+        self._start_page_spin.valueChanged.connect(self._on_option_changed)
+        self._end_page_check.toggled.connect(self._on_option_changed)
+        self._end_page_spin.valueChanged.connect(self._on_option_changed)
 
     def _on_pipeline_changed(self):
         """管道选择变更"""
@@ -200,6 +240,9 @@ class PreprocessOptionsWidget(QGroupBox):
                 "backend",
                 "enable_formula",
                 "enable_table",
+                "lang_list",
+                "start_page_id",
+                "end_page_id",
             ]
         )
 
@@ -208,7 +251,8 @@ class PreprocessOptionsWidget(QGroupBox):
         self._tab_widget.setTabVisible(1, has_advanced)
 
         # 设置 MineRU 组可见性
-        mineru_opts = ["parse_method", "backend", "enable_formula", "enable_table"]
+        mineru_opts = ["parse_method", "backend", "enable_formula", "enable_table",
+                       "lang_list", "start_page_id", "end_page_id"]
         self._mineru_group.setVisible(any(opt in supported for opt in mineru_opts))
 
         # 如果当前选项卡不可见，切换到第一个可见的
@@ -256,6 +300,19 @@ class PreprocessOptionsWidget(QGroupBox):
             kwargs["backend"] = self._backend_combo.currentData()
         if is_option_supported(pipeline, "parse_method"):
             kwargs["parse_method"] = self._parse_method_combo.currentData()
+        if is_option_supported(pipeline, "lang_list"):
+            lang_data = self._lang_combo.currentData()
+            if lang_data:
+                kwargs["lang_list"] = lang_data.split(",")
+            else:
+                kwargs["lang_list"] = []
+        if is_option_supported(pipeline, "start_page_id"):
+            kwargs["start_page_id"] = self._start_page_spin.value()
+        if is_option_supported(pipeline, "end_page_id"):
+            if self._end_page_check.isChecked():
+                kwargs["end_page_id"] = self._end_page_spin.value()
+            else:
+                kwargs["end_page_id"] = None
 
         return OCROptions(**kwargs)
 
@@ -273,6 +330,10 @@ class PreprocessOptionsWidget(QGroupBox):
             self._enable_table_cb,
             self._backend_combo,
             self._parse_method_combo,
+            self._lang_combo,
+            self._start_page_spin,
+            self._end_page_check,
+            self._end_page_spin,
         ]
         for w in widgets:
             w.blockSignals(True)
@@ -299,6 +360,23 @@ class PreprocessOptionsWidget(QGroupBox):
         parse_method_idx = self._parse_method_combo.findData(options.parse_method)
         if parse_method_idx >= 0:
             self._parse_method_combo.setCurrentIndex(parse_method_idx)
+
+        # 设置语言
+        if options.lang_list:
+            lang_str = ",".join(options.lang_list)
+            lang_idx = self._lang_combo.findData(lang_str)
+            if lang_idx >= 0:
+                self._lang_combo.setCurrentIndex(lang_idx)
+        else:
+            self._lang_combo.setCurrentIndex(0)
+
+        # 设置页码范围
+        self._start_page_spin.setValue(options.start_page_id)
+        if options.end_page_id is not None:
+            self._end_page_check.setChecked(True)
+            self._end_page_spin.setValue(options.end_page_id)
+        else:
+            self._end_page_check.setChecked(False)
 
         # 恢复信号
         for w in widgets:
