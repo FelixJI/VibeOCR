@@ -72,3 +72,41 @@ class TestOCROptions:
         )
         assert restored.parse_method == "txt"
         assert restored.enable_formula is False
+
+    def test_new_fields_default_values(self):
+        """测试新增字段默认值"""
+        options = OCROptions()
+        assert options.lang_list == []
+        assert options.start_page_id == 0
+        assert options.end_page_id is None
+
+    def test_new_fields_mineru_options(self):
+        """测试 MineRU 选项的新字段"""
+        options = OCROptions(
+            pipeline=OCRPipeline.DOCUMENT_PARSING,
+            lang_list=["zh", "en"],
+            start_page_id=2,
+            end_page_id=10,
+        )
+        assert options.lang_list == ["zh", "en"]
+        assert options.start_page_id == 2
+        assert options.end_page_id == 10
+
+    def test_new_fields_round_trip(self):
+        """测试新字段序列化往返"""
+        original = OCROptions(
+            pipeline=OCRPipeline.DOCUMENT_PARSING,
+            lang_list=["ja"],
+            start_page_id=1,
+            end_page_id=5,
+        )
+        data = original.to_dict()
+        restored = OCROptions.from_dict(data)
+        assert restored.lang_list == ["ja"]
+        assert restored.start_page_id == 1
+        assert restored.end_page_id == 5
+
+    def test_default_backend_is_hybrid(self):
+        """测试默认后端改为 hybrid-auto-engine"""
+        options = OCROptions()
+        assert options.backend == "hybrid-auto-engine"

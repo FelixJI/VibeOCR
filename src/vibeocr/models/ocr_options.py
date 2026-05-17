@@ -5,7 +5,7 @@
 替代原先分散在多个模块中的选项定义。
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from vibeocr.core.pipelines import OCRPipeline
@@ -29,9 +29,14 @@ class OCROptions:
 
     # === MineRU 文档解析选项 ===
     parse_method: str = "auto"  # 解析方法: auto, txt, ocr
-    backend: str = "vlm-auto-engine"  # 解析后端: vlm-auto-engine, hybrid-auto-engine, pipeline
+    backend: str = "hybrid-auto-engine"  # 解析后端: vlm-auto-engine, hybrid-auto-engine, pipeline
     enable_formula: bool = True  # 启用公式识别
     enable_table: bool = True  # 启用表格识别
+
+    # === MineRU 语言和页面范围 ===
+    lang_list: list[str] = field(default_factory=lambda: [])  # 空列表=自动检测
+    start_page_id: int = 0
+    end_page_id: int | None = None  # None 表示不限制
 
     def to_dict(self) -> dict[str, Any]:
         """转换为字典
@@ -48,6 +53,9 @@ class OCROptions:
             "backend": self.backend,
             "enable_formula": self.enable_formula,
             "enable_table": self.enable_table,
+            "lang_list": self.lang_list,
+            "start_page_id": self.start_page_id,
+            "end_page_id": self.end_page_id,
         }
 
     @classmethod
@@ -73,9 +81,12 @@ class OCROptions:
             use_doc_unwarping=data.get("use_doc_unwarping", True),
             use_textline_orientation=data.get("use_textline_orientation", False),
             parse_method=data.get("parse_method", "auto"),
-            backend=data.get("backend", "vlm-auto-engine"),
+            backend=data.get("backend", "hybrid-auto-engine"),
             enable_formula=data.get("enable_formula", True),
             enable_table=data.get("enable_table", True),
+            lang_list=data.get("lang_list", []),
+            start_page_id=data.get("start_page_id", 0),
+            end_page_id=data.get("end_page_id", None),
         )
 
     def copy(self, **updates) -> "OCROptions":
