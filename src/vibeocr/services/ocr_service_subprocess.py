@@ -3,9 +3,9 @@
 通过子进程隔离执行 OCR 识别，解决 PaddlePaddle GPU 与 QThread 的兼容性问题。
 提供与 OCRService 兼容的接口。
 
-此版本使用双 WorkerManager 架构：
-- PaddleX Worker: 处理 OCR / TABLE / FORMULA 管道
-- MinerU Worker: 处理 DOCUMENT_PARSING 管道
+此版本使用 PaddleX WorkerManager + MinerUService 直调架构：
+- PaddleX Worker: 处理 OCR / TABLE / FORMULA 管道（共享内存 IPC）
+- MinerUService: 处理 DOCUMENT_PARSING 管道（直调单例，httpx 请求）
 """
 
 import asyncio
@@ -109,15 +109,8 @@ class OCRServiceSubprocess:
             max_retries=2,
             worker_module="vibeocr.workers.ocr_worker",
         )
-        self._mineru_manager = WorkerManager(
-            max_workers=1,
-            use_gpu=False,
-            shm_size=shm_size,
-            start_timeout=start_timeout,
-            auto_restart=True,
-            max_retries=2,
-            worker_module="vibeocr.workers.mineru_worker",
-        )
+        from vibeocr.services.mineru_batch_service import MinerUBatchService
+        self._mineru_batch = MinerUBatchService()
 
         self._initialized = True
         logger.debug(
@@ -163,11 +156,6 @@ class OCRServiceSubprocess:
                 progress_callback("初始化 PaddleX Worker")
 
             self._paddlex_manager.start_all(progress_callback=progress_callback)
-
-            if progress_callback:
-                progress_callback("初始化 MinerU Worker")
-
-            self._mineru_manager.start_all(progress_callback=progress_callback)
 
             logger.info("所有 Worker 已启动")
             if progress_callback:
@@ -232,9 +220,22 @@ class OCRServiceSubprocess:
         pipeline_name = options_dict.get("pipeline", "OCR")
         timeout = self._calculate_recognize_timeout(pipeline_name)
 
-        # 根据管道类型路由到对应 Worker
-        manager = self._mineru_manager if self._is_document_parsing(options) else self._paddlex_manager
-        return manager.execute(
+        # 根据管道类型路由到对应处理
+        if self._is_document_parsing(options):
+            from vibeocr.services.mineru_service import MinerUService
+            mime_type = options_dict.get("mime_type", "application/pdf")
+            if not mime_type or mime_type == "image/png":
+                file_path = options_dict.get("file_path", "")
+                if file_path:
+                    from vibeocr.utils.mime_types import guess_mime_from_filename
+                    mime_type = guess_mime_from_filename(file_path)
+                else:
+                    mime_type = "application/pdf"
+            from vibeocr.models.ocr_options import OCROptions
+            ocr_opts = OCROptions.from_dict(options_dict) if options_dict else None
+            return MinerUService().parse(image_data, mime_type, ocr_opts)
+
+        return self._paddlex_manager.execute(
             lambda w: w.recognize(image_data, options_dict, timeout=timeout),
             timeout=timeout,
         )
@@ -369,24 +370,12 @@ class OCRServiceSubprocess:
         Returns:
             {pipeline_name: success} 结果字典
         """
-        # 按管道类型分组路由
-        from vibeocr.core.pipelines import OCRPipeline
-
-        doc_parsing_value = OCRPipeline.DOCUMENT_PARSING.value.lower()
-        paddlex_pipelines = [p for p in pipelines if p.lower() != doc_parsing_value]
-        mineru_pipelines = [p for p in pipelines if p.lower() == doc_parsing_value]
-
+        # 仅处理 PaddleX 管道
         results = {}
-        if paddlex_pipelines:
+        if pipelines:
             results.update(
                 self._paddlex_manager.execute(
-                    lambda w: w.preload_pipelines(paddlex_pipelines, timeout)
-                )
-            )
-        if mineru_pipelines:
-            results.update(
-                self._mineru_manager.execute(
-                    lambda w: w.preload_pipelines(mineru_pipelines, timeout)
+                    lambda w: w.preload_pipelines(pipelines, timeout)
                 )
             )
         return results
@@ -420,24 +409,12 @@ class OCRServiceSubprocess:
         Returns:
             {pipeline_name: success} 结果字典
         """
-        # 按管道类型分组路由
-        from vibeocr.core.pipelines import OCRPipeline
-
-        doc_parsing_value = OCRPipeline.DOCUMENT_PARSING.value.lower()
-        paddlex_pipelines = [p for p in pipelines if p.lower() != doc_parsing_value]
-        mineru_pipelines = [p for p in pipelines if p.lower() == doc_parsing_value]
-
+        # 仅处理 PaddleX 管道
         results = {}
-        if paddlex_pipelines:
+        if pipelines:
             results.update(
                 self._paddlex_manager.execute(
-                    lambda w: w.warmup_pipelines(paddlex_pipelines, timeout)
-                )
-            )
-        if mineru_pipelines:
-            results.update(
-                self._mineru_manager.execute(
-                    lambda w: w.warmup_pipelines(mineru_pipelines, timeout)
+                    lambda w: w.warmup_pipelines(pipelines, timeout)
                 )
             )
         return results
@@ -502,11 +479,9 @@ class OCRServiceSubprocess:
         # 标记为已关闭，防止自动重启
         self._initialized = False
 
-        # 停止两个 WorkerManager
+        # 停止 PaddleX WorkerManager
         if hasattr(self, "_paddlex_manager"):
             self._paddlex_manager.stop_all()
-        if hasattr(self, "_mineru_manager"):
-            self._mineru_manager.stop_all()
 
         logger.info("OCRServiceSubprocess 已关闭")
 
@@ -514,30 +489,23 @@ class OCRServiceSubprocess:
         """检查服务是否就绪"""
         if not self._initialized:
             return False
-        paddlex_ready = False
-        mineru_ready = False
         if hasattr(self, "_paddlex_manager"):
-            paddlex_ready = self._paddlex_manager.get_status().get("healthy", False)
-        if hasattr(self, "_mineru_manager"):
-            mineru_ready = self._mineru_manager.get_status().get("healthy", False)
-        return paddlex_ready or mineru_ready
+            return self._paddlex_manager.get_status().get("healthy", False)
+        return False
 
     def get_status(self) -> dict:
         """获取服务状态"""
         paddlex_stats = self._paddlex_manager.get_stats() if hasattr(self, "_paddlex_manager") else {"workers": [], "max_workers": 0, "ready_workers": 0}
-        mineru_stats = self._mineru_manager.get_stats() if hasattr(self, "_mineru_manager") else {"workers": [], "max_workers": 0, "ready_workers": 0}
         return {
-            "max_workers": paddlex_stats["max_workers"] + mineru_stats["max_workers"],
+            "max_workers": paddlex_stats["max_workers"],
             "use_gpu": self.use_gpu,
-            "ready": paddlex_stats["ready_workers"] > 0 or mineru_stats["ready_workers"] > 0,
-            "workers": paddlex_stats["workers"] + mineru_stats["workers"],
+            "ready": paddlex_stats["ready_workers"] > 0,
+            "workers": paddlex_stats["workers"],
         }
 
     def get_stats(self) -> dict:
         """获取详细统计信息"""
-        paddlex_stats = self._paddlex_manager.get_stats() if hasattr(self, "_paddlex_manager") else {}
-        mineru_stats = self._mineru_manager.get_stats() if hasattr(self, "_mineru_manager") else {}
-        return {"paddlex": paddlex_stats, "mineru": mineru_stats}
+        return {"paddlex": self._paddlex_manager.get_stats() if hasattr(self, "_paddlex_manager") else {}}
 
     # =========================================================================
     # 批量处理接口
@@ -579,9 +547,12 @@ class OCRServiceSubprocess:
 
         request_data = serialize_batch_request(request_id, image_data, options_dict)
 
-        # 根据管道类型路由到对应 Worker
-        manager = self._mineru_manager if self._is_document_parsing(options) else self._paddlex_manager
-        manager.execute(lambda w: w._send_batch_add(request_data))
+        # 根据管道类型路由到对应处理
+        if self._is_document_parsing(options):
+            # MinerU 文档解析不走 WorkerManager，后续由 batch_commit 处理
+            pass
+        else:
+            self._paddlex_manager.execute(lambda w: w._send_batch_add(request_data))
 
         return request_id
 
@@ -611,9 +582,11 @@ class OCRServiceSubprocess:
         # 序列化并发送
         commit_data = serialize_batch_commit(preprocess_options.to_dict())
 
-        # 根据管道类型路由到对应 Worker
-        manager = self._mineru_manager if self._is_document_parsing(preprocess_options) else self._paddlex_manager
-        return manager.execute(
+        # 根据管道类型路由到对应处理
+        if self._is_document_parsing(preprocess_options):
+            # MinerU 文档解析通过 MinerUBatchService 处理
+            return self._mineru_batch.commit(preprocess_options, timeout=timeout, progress_callback=progress_callback)
+        return self._paddlex_manager.execute(
             lambda w: w._send_batch_commit(commit_data, timeout)
         )
 
@@ -622,11 +595,9 @@ class OCRServiceSubprocess:
         if not self._initialized:
             return
 
-        # 两个 Worker 都发取消
+        # 仅取消 PaddleX Worker（MinerU 不走 WorkerManager）
         with contextlib.suppress(Exception):
             self._paddlex_manager.execute(lambda w: w._send_batch_cancel())
-        with contextlib.suppress(Exception):
-            self._mineru_manager.execute(lambda w: w._send_batch_cancel())
 
     def set_task_queued_callback(self, callback: Callable) -> None:
         """设置任务排队通知回调（透传到 PaddleX WorkerManager）"""
