@@ -32,6 +32,101 @@ def normalize_bbox(bbox_raw: list | tuple) -> tuple[float, float, float, float]:
     return vals
 
 
+# V2 类型 → 内部统一类型名映射
+_V2_TYPE_MAP: dict[str, str] = {
+    "title": "title",
+    "paragraph": "text",
+    "equation_interline": "equation",
+    "equation_inline": "equation",
+    "page_header": "header",
+    "page_footer": "footer",
+    "page_aside_text": "aside_text",
+    "page_footnote": "page_footnote",
+    "page_number": "page_number",
+    "image": "image",
+    "table": "table",
+    "chart": "chart",
+    "code": "code",
+    "algorithm": "code",
+    "list": "list",
+    "index": "list",
+    "seal": "image",
+    "phonetic": "text",
+    "ref_text": "text",
+}
+
+
+def _extract_v2_text(block: dict) -> str:
+    """从 V2 块的 content 字段提取文本"""
+    content = block.get("content", {})
+
+    text_parts: list[str] = []
+    for key, val in content.items():
+        if key.endswith("_content") and isinstance(val, list):
+            for item in val:
+                if isinstance(item, dict):
+                    text_parts.append(item.get("content", ""))
+        elif key == "math_content" and isinstance(val, str):
+            text_parts.append(val)
+        elif key in ("list_items",) and isinstance(val, list):
+            text_parts.extend(str(v) for v in val)
+        elif key == "code_body" and isinstance(val, str):
+            text_parts.append(val)
+
+    if not text_parts:
+        text_parts.append(block.get("text", ""))
+
+    return " ".join(p for p in text_parts if p).replace("  ", " ")
+
+
+def _normalize_v2(raw: list[list[dict]]) -> list[dict]:
+    """将 V2 格式（按页分组的嵌套数组）转为扁平的内部格式"""
+    result: list[dict] = []
+    for page_idx, page_blocks in enumerate(raw):
+        for block in page_blocks:
+            v2_type = block.get("type", "")
+            mapped_type = _V2_TYPE_MAP.get(v2_type, v2_type)
+            text = _extract_v2_text(block)
+            result.append({
+                "type": mapped_type,
+                "text": text,
+                "bbox": tuple(block["bbox"]) if "bbox" in block else None,
+                "page_idx": page_idx,
+                "raw": block,
+            })
+    return result
+
+
+def _normalize_legacy(raw: list[dict]) -> list[dict]:
+    """Legacy 格式直接透传，附加 raw 字段"""
+    return [
+        {
+            "type": block.get("type", ""),
+            "text": block.get("text", ""),
+            "bbox": tuple(block["bbox"]) if "bbox" in block else None,
+            "page_idx": block.get("page_idx"),
+            "raw": block,
+        }
+        for block in raw
+    ]
+
+
+def normalize_content_list(raw: list | None) -> list[dict]:
+    """将 legacy 或 V2 content_list 统一为内部格式
+
+    返回扁平的 list[dict]，每项包含:
+    - type: str（统一类型名）
+    - text: str（提取的文本）
+    - bbox: tuple | None
+    - page_idx: int | None
+    - raw: dict（原始块数据）
+    """
+    if not raw:
+        return []
+    if isinstance(raw[0], list):
+        return _normalize_v2(raw)
+    return _normalize_legacy(raw)
+
 
 @dataclass
 class TextBlock:
