@@ -543,3 +543,89 @@ class TestDiscardedBlocksFilter:
         # content_list 包含所有块（含废弃块）
         assert len(result.content_list) == 2
         assert result.content_list[0]["type"] == "header"
+
+
+class TestBuildOcrResultV2:
+    """测试 V2 格式 content_list 的处理"""
+
+    def _make_service(self):
+        service = MinerUService.__new__(MinerUService)
+        service._api_url = "http://127.0.0.1:9999"
+        service._api_process = None
+        return service
+
+    def test_v2_content_list_produces_text_blocks(self):
+        """V2 格式的 content_list 应正确生成 text_blocks"""
+        service = self._make_service()
+        v2_content_list = [
+            [
+                {
+                    "type": "title",
+                    "content": {"title_content": [{"type": "text", "content": "Introduction"}], "level": 1},
+                    "bbox": [83, 121, 917, 156],
+                },
+                {
+                    "type": "paragraph",
+                    "content": {"paragraph_content": [{"type": "text", "content": "Body text here"}]},
+                    "bbox": [83, 200, 917, 300],
+                },
+            ],
+        ]
+        api_resp = _make_api_response(
+            md_content="# Introduction\nBody text here",
+            content_list=v2_content_list,
+        )
+        result = service._build_ocr_result(api_resp, "input.pdf", data=None)
+        assert len(result.text_blocks) == 2
+        assert "Introduction" in result.raw_text
+        assert "Body text here" in result.raw_text
+        # page_idx 应从 V2 按页分组推断
+        assert result.text_blocks[0].page_idx == 0
+        assert result.text_blocks[1].page_idx == 0
+
+    def test_v2_multi_page_content_list(self):
+        """V2 多页格式应正确分配 page_idx"""
+        service = self._make_service()
+        v2_content_list = [
+            [
+                {"type": "title", "content": {"title_content": [{"type": "text", "content": "P0 Title"}], "level": 1}, "bbox": [0, 0, 100, 30]},
+            ],
+            [
+                {"type": "paragraph", "content": {"paragraph_content": [{"type": "text", "content": "P1 Body"}]}, "bbox": [0, 50, 100, 80]},
+            ],
+        ]
+        api_resp = _make_api_response(
+            md_content="# P0 Title\nP1 Body",
+            content_list=v2_content_list,
+        )
+        result = service._build_ocr_result(api_resp, "input.pdf", data=None)
+        assert len(result.text_blocks) == 2
+        assert result.text_blocks[0].page_idx == 0
+        assert result.text_blocks[1].page_idx == 1
+
+    def test_v2_discarded_blocks_filtered(self):
+        """V2 格式的 page_header 等应在 text_blocks 中过滤"""
+        service = self._make_service()
+        v2_content_list = [
+            [
+                {"type": "page_header", "content": {"page_header_content": [{"type": "text", "content": "Header"}]}, "bbox": [0, 0, 100, 30]},
+                {"type": "paragraph", "content": {"paragraph_content": [{"type": "text", "content": "Body"}]}, "bbox": [0, 50, 100, 80]},
+            ],
+        ]
+        api_resp = _make_api_response(md_content="Body", content_list=v2_content_list)
+        result = service._build_ocr_result(api_resp, "input.pdf", data=None)
+        assert len(result.text_blocks) == 1
+        assert result.text_blocks[0].text == "Body"
+        # raw_text 也不应包含 header
+        assert "Header" not in result.raw_text
+
+    def test_legacy_format_still_works(self):
+        """修改后 legacy 格式仍应正确工作"""
+        service = self._make_service()
+        content_list = [
+            {"type": "text", "text": "Hello world", "bbox": [10, 20, 100, 50], "page_idx": 0},
+        ]
+        api_resp = _make_api_response(md_content="Hello world", content_list=content_list)
+        result = service._build_ocr_result(api_resp, "input.pdf", data=None)
+        assert len(result.text_blocks) == 1
+        assert result.text_blocks[0].text == "Hello world"

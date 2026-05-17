@@ -97,18 +97,50 @@ def _normalize_v2(raw: list[list[dict]]) -> list[dict]:
     return result
 
 
+def _extract_legacy_text(block: dict, block_type: str) -> str:
+    """从 legacy 格式的单个块提取文本（处理 table/list/image 等特殊类型）"""
+    import re
+
+    if block_type == "table":
+        captions = block.get("table_caption") or []
+        cap_text = " ".join(captions)
+        html = block.get("table_body", "")
+        # 从 HTML 提取纯文本
+        text = re.sub(r"<[^>]+>", " ", html)
+        text = re.sub(r"\s+", " ", text).strip()
+        if cap_text and text:
+            return f"{cap_text}\n{text}"
+        return cap_text or text
+    elif block_type in ("image", "chart"):
+        captions = block.get("image_caption") or block.get("chart_caption") or []
+        content = block.get("content", "")
+        text = " ".join(captions)
+        if content:
+            text = f"{text} {content}".strip()
+        return text or f"[{block_type}]"
+    elif block_type == "list":
+        items = block.get("list_items", [])
+        return "; ".join(items)
+    elif block_type == "code":
+        return block.get("code_body", "")[:200]
+    else:
+        return block.get("text", "")
+
+
 def _normalize_legacy(raw: list[dict]) -> list[dict]:
     """Legacy 格式直接透传，附加 raw 字段"""
-    return [
-        {
-            "type": block.get("type", ""),
-            "text": block.get("text", ""),
+    result: list[dict] = []
+    for block in raw:
+        block_type = block.get("type", "")
+        text = _extract_legacy_text(block, block_type)
+        result.append({
+            "type": block_type,
+            "text": text,
             "bbox": tuple(block["bbox"]) if "bbox" in block else None,
             "page_idx": block.get("page_idx"),
             "raw": block,
-        }
-        for block in raw
-    ]
+        })
+    return result
 
 
 def normalize_content_list(raw: list | None) -> list[dict]:

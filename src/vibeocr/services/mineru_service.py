@@ -22,7 +22,13 @@ from typing import TYPE_CHECKING, Any
 import httpx
 
 from vibeocr.core.singleton_meta import SingletonMeta
-from vibeocr.models.ocr_result import DISCARDED_BLOCK_TYPES, OCRResult, TextBlock, normalize_bbox
+from vibeocr.models.ocr_result import (
+    DISCARDED_BLOCK_TYPES,
+    OCRResult,
+    TextBlock,
+    normalize_bbox,
+    normalize_content_list,
+)
 from vibeocr.utils.markdown_converter import markdown_to_html
 from vibeocr.utils.mime_types import mime_to_extension
 
@@ -322,12 +328,15 @@ class MinerUService(metaclass=SingletonMeta):
         md_content = file_result.get("md_content") or ""
 
         content_list_raw = file_result.get("content_list")
-        content_list: list[dict[str, Any]] = []
+        content_list_parsed: list = []
         if content_list_raw:
             try:
-                content_list = json.loads(content_list_raw)
+                content_list_parsed = json.loads(content_list_raw)
             except (json.JSONDecodeError, TypeError):
-                content_list = []
+                content_list_parsed = []
+
+        # 通过正常化层统一格式
+        normalized = normalize_content_list(content_list_parsed)
 
         images: dict[str, bytes] = {}
         images_dict = file_result.get("images", {})
@@ -336,25 +345,26 @@ class MinerUService(metaclass=SingletonMeta):
                 b64_part = data_uri.split(",", 1)[-1]
                 images[img_name] = base64.b64decode(b64_part)
 
-        # 从 content_list 提取纯文本（非 Markdown）
-        raw_text = self._extract_plain_text(content_list) if content_list else md_content
+        # 从 normalized 提取纯文本
+        raw_text = self._extract_plain_text_normalized(normalized) if normalized else md_content
 
-        # 从 content_list 构建 text_blocks（归一化 bbox + page_idx）
+        # 从 normalized 构建 text_blocks
         text_blocks: list[TextBlock] = []
-        for i, block in enumerate(content_list):
-            if block.get("type", "") in DISCARDED_BLOCK_TYPES:
+        for i, block in enumerate(normalized):
+            block_type = block.get("type", "")
+            if block_type in DISCARDED_BLOCK_TYPES:
                 continue
-            bbox_raw = block.get("bbox")
-            if not bbox_raw or len(bbox_raw) < 4:
+            bbox = block.get("bbox")
+            if not bbox or len(bbox) < 4:
                 continue
-            text = self._extract_block_text(block)
+            text = block.get("text", "")
             if not text:
                 continue
 
             text_blocks.append(TextBlock(
                 text=text,
                 score=1.0,  # MineRU content_list 不提供 confidence
-                bbox=normalize_bbox(bbox_raw[:4]),
+                bbox=normalize_bbox(bbox[:4]),
                 page_idx=block.get("page_idx"),
                 content_index=i,
             ))
@@ -371,7 +381,7 @@ class MinerUService(metaclass=SingletonMeta):
             low_confidence_items=[],
             pipeline_type="MinerU",
             images=images,
-            content_list=content_list,
+            content_list=content_list_parsed,  # 原始数据，未 normalize
             text_blocks=text_blocks,
         )
 
@@ -380,6 +390,19 @@ class MinerUService(metaclass=SingletonMeta):
         """从 HTML 中提取纯文本，合并多余空白"""
         text = re.sub(r"<[^>]+>", " ", html)
         return re.sub(r"\s+", " ", text).strip()
+
+    @staticmethod
+    def _extract_plain_text_normalized(normalized: list[dict]) -> str:
+        """从 normalize_content_list 的输出提取纯文本"""
+        parts: list[str] = []
+        for block in normalized:
+            block_type = block.get("type", "")
+            if block_type in DISCARDED_BLOCK_TYPES:
+                continue
+            text = block.get("text", "")
+            if text:
+                parts.append(text)
+        return "\n".join(parts)
 
     @staticmethod
     def _extract_plain_text(content_list: list[dict]) -> str:
