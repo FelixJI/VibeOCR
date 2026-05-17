@@ -164,9 +164,9 @@ class TestOCRServiceSubprocess:
 
         assert service.max_workers == 1
         assert service.use_gpu is False
-        # Dual manager: paddlex + mineru
+        # PaddleX WorkerManager + MinerUBatchService
         assert hasattr(service, "_paddlex_manager")
-        assert hasattr(service, "_mineru_manager")
+        assert hasattr(service, "_mineru_batch")
 
         # Cleanup
         service.shutdown()
@@ -198,8 +198,8 @@ class TestOCRServiceSubprocess:
         assert "use_gpu" in status
         assert "ready" in status
         assert "workers" in status
-        # Dual manager: 1 paddlex + 1 mineru = 2
-        assert status["max_workers"] == 2
+        # Single PaddleX WorkerManager (MinerU uses MinerUBatchService, not a WorkerManager)
+        assert status["max_workers"] == 1
         # Workers not started yet, list should be empty
         assert len(status["workers"]) == 0
 
