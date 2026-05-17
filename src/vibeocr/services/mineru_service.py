@@ -213,8 +213,9 @@ class MinerUService(metaclass=SingletonMeta):
         """
         self._ensure_api_running()
 
-        backend = options.backend if options else "vlm-auto-engine"
+        backend = options.backend if options else "hybrid-auto-engine"
         parse_method = options.parse_method if options else "auto"
+        lang_list_str = ",".join(options.lang_list) if options and options.lang_list else ""
 
         files = {"files": (filename, data)}
         params = {
@@ -225,10 +226,13 @@ class MinerUService(metaclass=SingletonMeta):
             "table_enable": str(options.enable_table if options else True).lower(),
             "backend": backend,
             "parse_method": parse_method,
+            "lang_list": lang_list_str,
+            "start_page_id": str(options.start_page_id if options else 0),
+            "end_page_id": str(options.end_page_id if options and options.end_page_id is not None else "99999"),
         }
 
-        # 回退链: vlm-auto-engine → hybrid-auto-engine → pipeline
-        fallback_chain = ["vlm-auto-engine", "hybrid-auto-engine", "pipeline"]
+        # 回退链: hybrid-auto-engine → vlm-auto-engine → pipeline
+        fallback_chain = ["hybrid-auto-engine", "vlm-auto-engine", "pipeline"]
         # 从当前 backend 开始，构建回退链
         if backend in fallback_chain:
             start_idx = fallback_chain.index(backend)
@@ -238,37 +242,44 @@ class MinerUService(metaclass=SingletonMeta):
 
         last_error: Exception | None = None
         for current_backend in backends_to_try:
-            params["backend"] = current_backend
+            request_params = {**params, "backend": current_backend}
             _logger.debug(f"[MinerU] 使用后端: {current_backend}")
             try:
                 resp = httpx.post(
                     f"{self.__class__._api_url}/file_parse",
                     files=files,
-                    data=params,
+                    data=request_params,
                     timeout=httpx.Timeout(timeout=1800.0, connect=30.0),
-                )
-                if resp.status_code == 200:
-                    return resp.json()
-
-                # 解析错误信息
-                try:
-                    body = resp.json()
-                    detail = body.get("message") or body.get("error") or resp.text[:200]
-                except Exception:
-                    detail = resp.text[:200]
-
-                last_error = RuntimeError(
-                    f"mineru-api 错误 ({resp.status_code}): {detail}"
-                )
-                _logger.warning(
-                    f"[MinerU] 后端 {current_backend} 失败: {detail}，尝试回退..."
                 )
             except httpx.TimeoutException as e:
                 last_error = e
                 _logger.warning(f"[MinerU] 后端 {current_backend} 超时，尝试回退...")
+                continue
             except httpx.ConnectError as e:
                 last_error = e
                 _logger.warning(f"[MinerU] 后端 {current_backend} 连接失败，尝试回退...")
+                continue
+
+            if resp.status_code == 200:
+                result = resp.json()
+                status = result.get("status")
+                if status and status != "completed":
+                    raise RuntimeError(f"mineru-api 任务状态异常: {status}")
+                return result
+
+            # 解析错误信息
+            try:
+                body = resp.json()
+                detail = body.get("message") or body.get("error") or resp.text[:200]
+            except Exception:
+                detail = resp.text[:200]
+
+            last_error = RuntimeError(
+                f"mineru-api 错误 ({resp.status_code}): {detail}"
+            )
+            _logger.warning(
+                f"[MinerU] 后端 {current_backend} 失败: {detail}，尝试回退..."
+            )
 
         raise last_error or RuntimeError("mineru-api 请求失败")
 
