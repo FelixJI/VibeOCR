@@ -68,6 +68,9 @@ _PIPELINE_METADATA: dict[OCRPipeline, dict] = {
             "backend",
             "enable_formula",
             "enable_table",
+            "lang_list",
+            "start_page_id",
+            "end_page_id",
         ],
     },
 }

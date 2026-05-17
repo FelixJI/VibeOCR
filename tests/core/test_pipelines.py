@@ -47,3 +47,10 @@ class TestOCRPipeline:
         assert "parse_method" in options
         assert "enable_formula" in options
         assert "enable_table" in options
+
+    def test_document_parsing_supports_lang_and_page_range(self):
+        """文档解析应支持语言和页码范围选项"""
+        options = get_pipeline_supported_options(OCRPipeline.DOCUMENT_PARSING)
+        assert "lang_list" in options
+        assert "start_page_id" in options
+        assert "end_page_id" in options
