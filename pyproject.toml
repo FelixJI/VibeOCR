@@ -7,7 +7,7 @@ dependencies = [
     # 运行时依赖
     "pyside6>=6.11.1",
     "pillow>=12.2.0",
-    "numpy>=2.4.4",
+    "numpy>=2.4.5",
     "markdown>=3.10.2",
     "qasync>=0.28.0",
     "paddlepaddle-gpu>=3.3.1",
@@ -21,7 +21,7 @@ dependencies = [
     "nvidia-cuda-runtime>=13.2.75",
     "paddlex[ocr]>=3.4.3",
     "httpx>=0.28.1",
-    "mineru[core]>=3.1.13",
+    "mineru[core]>=3.1.14",
     "qrcode[pil]>=8.2",
     "python-barcode>=0.16.1",
     # 开发依赖
@@ -150,9 +150,9 @@ extra-index-url = [
 index-strategy = "unsafe-best-match"
 
 [tool.uv.sources]
-torch = { index = "pytorch-cu128" }
-torchvision = { index = "pytorch-cu128" }
+torch = { index = "pytorch-cu126" }
+torchvision = { index = "pytorch-cu126" }
 
 [[tool.uv.index]]
-name = "pytorch-cu128"
-url = "https://download.pytorch.org/whl/cu128"
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"

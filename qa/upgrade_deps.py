@@ -7,6 +7,7 @@
     python qa/upgrade_deps.py           # 升级依赖
     python qa/upgrade_deps.py --dry-run # 预览变更
     python qa/upgrade_deps.py --sync    # 升级后同步环境
+    python qa/upgrade_deps.py --stable  # 仅升级到正式版本（排除预发布版本）
 """
 
 import argparse
@@ -18,6 +19,9 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).parent.parent
 PYPROJECT_PATH = PROJECT_ROOT / "pyproject.toml"
 UV_LOCK_PATH = PROJECT_ROOT / "uv.lock"
+
+# 必须来自 CUDA 索引的包，升级后需要验证
+CUDA_PACKAGES = {"torch", "torchvision"}
 
 
 def run_command(cmd: list[str], *, check: bool = True) -> subprocess.CompletedProcess:
@@ -132,7 +136,7 @@ def update_pyproject_versions(locked_versions: dict[str, str], *, dry_run: bool 
 
                 # 查找锁定版本
                 locked_version = locked_versions.get(pkg_name)
-                if locked_version:
+                if locked_version and pkg_name not in CUDA_PACKAGES:
                     # 生成新的版本约束
                     new_dep_line = f"{pkg_name}{extras}>={locked_version}"
 
@@ -151,14 +155,88 @@ def update_pyproject_versions(locked_versions: dict[str, str], *, dry_run: bool 
     return changes
 
 
-def run_uv_lock_upgrade(*, dry_run: bool = False) -> int:
+def run_uv_lock_upgrade(*, dry_run: bool = False, stable: bool = False) -> int:
     """运行 uv lock --upgrade"""
     if dry_run:
-        print("[DRY-RUN] 将运行: uv lock --upgrade")
+        extra = " --no-prerelease" if stable else ""
+        print(f"[DRY-RUN] 将运行: uv lock --upgrade{extra}")
         return 0
 
-    result = run_command(["uv", "lock", "--upgrade"], check=False)
+    cmd = ["uv", "lock", "--upgrade"]
+    if stable:
+        cmd.append("--no-prerelease")
+    result = run_command(cmd, check=False)
     return result.returncode
+
+
+def verify_cuda_packages_in_lock() -> list[str]:
+    """验证 uv.lock 中 CUDA 包的来源是否正确
+
+    检查 torch/torchvision 的 source 字段不是来自通用镜像（CPU 版本）。
+    返回有问题的包名列表（空列表表示全部正常）。
+    """
+    if not UV_LOCK_PATH.exists():
+        return list(CUDA_PACKAGES)
+
+    content = UV_LOCK_PATH.read_text(encoding="utf-8")
+    bad_packages: list[str] = []
+
+    current_name: str | None = None
+    current_source: str | None = None
+
+    for line in content.splitlines():
+        stripped = line.strip()
+        if stripped == "[[package]]":
+            # 检查上一个包
+            if current_name in CUDA_PACKAGES and current_source:
+                if "pytorch" not in current_source.lower():
+                    bad_packages.append(current_name)
+            current_name = None
+            current_source = None
+        elif stripped.startswith("name = ") and current_name is None:
+            current_name = stripped.split('"')[1]
+        elif stripped.startswith("source = ") and current_name in CUDA_PACKAGES:
+            current_source = stripped
+
+    # 检查最后一个包
+    if current_name in CUDA_PACKAGES and current_source:
+        if "pytorch" not in current_source.lower():
+            bad_packages.append(current_name)
+
+    return bad_packages
+
+
+def verify_cuda_runtime() -> bool:
+    """验证已安装的 torch 是否支持 CUDA
+
+    在 uv sync 之后调用，确认 torch 是 CUDA 版本而非 CPU 版本。
+    """
+    import os
+
+    venv_python = PROJECT_ROOT / ".venv" / "Scripts" / "python.exe"
+    if not venv_python.exists():
+        venv_python = PROJECT_ROOT / ".venv" / "bin" / "python"
+    if not venv_python.exists():
+        print("[ERROR] 找不到 venv Python，无法验证 CUDA")
+        return False
+
+    script = (
+        "import torch; "
+        "v=torch.__version__; "
+        "cuda=torch.cuda.is_available(); "
+        "print(f'torch={v} cuda={cuda}'); "
+        "raise SystemExit(0 if cuda else 1)"
+    )
+    result = subprocess.run(
+        [str(venv_python), "-c", script],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        creation_flags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+    )
+    if result.stdout:
+        print(f"  {result.stdout.strip()}")
+    return result.returncode == 0
 
 
 def run_uv_sync(*, dry_run: bool = False) -> int:
@@ -197,6 +275,11 @@ def main() -> int:
         action="store_true",
         help="跳过 uv lock --upgrade（仅更新 pyproject.toml）",
     )
+    parser.add_argument(
+        "--stable",
+        action="store_true",
+        help="仅升级到正式版本（排除预发布版本，等价于 uv lock --no-prerelease）",
+    )
     args = parser.parse_args()
 
     print("=" * 60)
@@ -206,10 +289,23 @@ def main() -> int:
     # Step 1: 运行 uv lock --upgrade
     if not args.skip_lock:
         print("\n[Step 1] 运行 uv lock --upgrade...")
-        result = run_uv_lock_upgrade(dry_run=args.dry_run)
+        if args.stable:
+            print("[INFO] 已启用 --stable，排除预发布版本")
+        result = run_uv_lock_upgrade(dry_run=args.dry_run, stable=args.stable)
         if result != 0:
             print(f"[FAIL] uv lock --upgrade 失败 (code: {result})")
             return result
+
+        # Step 1.5: 验证 CUDA 包来源
+        if not args.dry_run:
+            print("\n[Step 1.5] 验证 CUDA 包来源...")
+            bad = verify_cuda_packages_in_lock()
+            if bad:
+                print(f"[FAIL] 以下包未来自 PyTorch CUDA 索引（可能是 CPU 版本）: {', '.join(bad)}")
+                print("[HINT] 检查 pyproject.toml 中 [tool.uv.sources] 和 [[tool.uv.index]] 配置")
+                print("[HINT] 可能是 PyTorch CUDA 索引尚无对应版本，需要等待或降级版本")
+                return 1
+            print("[OK] CUDA 包来源验证通过")
 
     # Step 2: 读取锁定版本
     print("\n[Step 2] 读取锁定版本...")
@@ -244,6 +340,16 @@ def main() -> int:
             print(f"[FAIL] uv sync 失败 (code: {result})")
             return result
         print("[OK] 环境已同步")
+
+        # Step 4.5: 验证 CUDA 运行时可用性
+        if not args.dry_run:
+            print("\n[Step 4.5] 验证 CUDA 运行时...")
+            if verify_cuda_runtime():
+                print("[OK] torch CUDA 可用")
+            else:
+                print("[FAIL] torch CUDA 不可用，当前为 CPU 版本！")
+                print("[HINT] 运行 'uv lock --upgrade' 重新解析，或检查 pyproject.toml 索引配置")
+                return 1
 
     print("\n" + "=" * 60)
     print("[OK] 依赖升级完成!")
