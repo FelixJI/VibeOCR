@@ -92,11 +92,7 @@ def _looks_like_markdown(text: str) -> bool:
 # 注意：所有操作在同一线程中执行（CPU 模式）
 # 工作线程设计已确保这一点
 
-# 导入模型缓存管理器（轻量级，可以保留）
-from vibeocr.model_cache_manager import (
-    is_pipeline_cached,
-    quick_check_all_models,
-)
+from vibeocr.pipeline_status import is_pipeline_ever_succeeded, mark_pipeline_success
 
 _logger = logging.getLogger(__name__)
 
@@ -199,16 +195,7 @@ class OCRService(metaclass=SingletonMeta):
 
     @classmethod
     def preload_model_cache(cls) -> dict[str, bool]:
-        """预加载模型缓存信息，加速后续初始化
-
-        Returns:
-            各管道模型就绪状态
-        """
-        try:
-            return quick_check_all_models()
-        except Exception as e:
-            _logger.warning(f"预加载模型缓存失败: {e}")
-            return {}
+        return {}
 
     @classmethod
     def set_preload_progress_callback(
@@ -589,6 +576,12 @@ class OCRService(metaclass=SingletonMeta):
                             with contextlib.suppress(OSError):
                                 os.add_dll_directory(arch_dir)
 
+    @staticmethod
+    def _get_project_root():
+        from vibeocr.env_manager import get_project_root
+        from pathlib import Path
+        return get_project_root()
+
     def _create_pipeline(self, pipeline_name: str, device: str = "cpu") -> Any:
         """创建指定管道"""
         # 延迟导入: 确保模型源已配置（首次使用时才执行网络检测）
@@ -609,7 +602,7 @@ class OCRService(metaclass=SingletonMeta):
 
         # 检查模型是否已缓存（快速检查，避免重复提示）
         _logger.debug("[_create_pipeline] %s: 检查模型缓存...", pipeline_name)
-        models_cached = is_pipeline_cached(pipeline_name)
+        models_cached = is_pipeline_ever_succeeded(pipeline_name, self._get_project_root())
 
         if not models_cached:
             _logger.debug(
@@ -751,6 +744,14 @@ class OCRService(metaclass=SingletonMeta):
                             x0 / img_w * 1000, y0 / img_h * 1000,
                             x1 / img_w * 1000, y1 / img_h * 1000,
                         )
+
+            # 标记管道识别成功
+            pipeline_val = actual_options.pipeline.value
+            if pipeline_val in ("OCR", "table_recognition", "formula_recognition"):
+                try:
+                    mark_pipeline_success(pipeline_val, self._get_project_root())
+                except Exception:
+                    pass
 
             _logger.debug(f"[recognize] 识别完成，返回 {len(result.raw_text)} 字符")
             return result
