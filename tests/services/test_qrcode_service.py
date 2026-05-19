@@ -53,7 +53,7 @@ class TestQrCodeGeneration:
         opts = service.default_options()
         assert isinstance(opts, dict)
         assert opts["format"] == "qr"
-        assert opts["size"] == 300
+        assert opts["size"] == 600
         assert opts["error_correction"] == "M"
         assert opts["fg_color"] == "#000000"
         assert opts["bg_color"] == "#FFFFFF"

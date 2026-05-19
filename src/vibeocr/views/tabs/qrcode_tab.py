@@ -143,7 +143,7 @@ class QrcodeTab(QWidget):
 
         size_row = QHBoxLayout()
         size_row.addWidget(QLabel("尺寸:"))
-        self._size_spin = self._create_spin_box(100, 2000, 300)
+        self._size_spin = self._create_spin_box(100, 2000, 600)
         size_row.addWidget(self._size_spin)
         size_row.addStretch()
         params_layout.addLayout(size_row)
@@ -369,7 +369,7 @@ class QrcodeTab(QWidget):
                 pixmap.scaled(
                     self._preview_label.size(),
                     Qt.AspectRatioMode.KeepAspectRatio,
-                    Qt.TransformationMode.SmoothTransformation,
+                    Qt.TransformationMode.FastTransformation,
                 )
             )
         except Exception as e:

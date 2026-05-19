@@ -21,7 +21,7 @@ class QrcodeService:
     def default_options(self) -> dict:
         return {
             "format": "qr",
-            "size": 300,
+            "size": 600,
             "error_correction": "M",
             "fg_color": "#000000",
             "bg_color": "#FFFFFF",
@@ -167,7 +167,9 @@ class QrcodeService:
 
         from PIL import ImageDraw
 
-        font = self._load_font(font_size)
+        # 字体随图片尺寸等比缩放，基准 300px
+        scaled_size = max(8, int(font_size * min(image.size) / 300))
+        font = self._load_font(scaled_size)
         dummy = Image.new("RGB", (1, 1))
         draw = ImageDraw.Draw(dummy)
         bbox = draw.textbbox((0, 0), text, font=font)
