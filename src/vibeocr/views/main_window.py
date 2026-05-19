@@ -695,6 +695,11 @@ class MainWindow(QMainWindow):
             if tab and hasattr(tab, "_result_widget") and tab._result_widget:
                 tab._result_widget.cleanup()
 
+        # 处理挂起事件，确保 WebEngine 渲染进程完全终止
+        from PySide6.QtCore import QCoreApplication
+
+        QCoreApplication.processEvents()
+
         # 关闭边缘工具栏
         if hasattr(self, "_edge_toolbar") and self._edge_toolbar:
             self._edge_toolbar.close()

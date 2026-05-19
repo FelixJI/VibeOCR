@@ -583,9 +583,15 @@ class ResultViewWidget(QWidget):
         仍在运行时主动销毁。
         """
         if self._web_view is not None:
+            self._web_view.stop()
             self._web_view.setHtml("")
-            self._web_view.page().deleteLater()
-            self._web_view.deleteLater()
+            self._web_view.setParent(None)
+
+            import shiboken6
+
+            if shiboken6.isValid(self._web_view):
+                shiboken6.delete(self._web_view)
+
             self._web_view = None
             self._channel = None
             self._bridge = None

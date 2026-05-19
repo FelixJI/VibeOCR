@@ -926,10 +926,10 @@ class OCRWorkerProcess:
             self.process.kill()
             self.process.wait(timeout=1.0)
 
-        # 关闭数据共享内存
+        # 关闭数据共享内存（先 unlink 再 close，因为 close 会置 shm=None）
         if self.protocol:
-            self.protocol.close()
             self.protocol.unlink()
+            self.protocol.close()
             self.protocol = None
 
         self.process = None
