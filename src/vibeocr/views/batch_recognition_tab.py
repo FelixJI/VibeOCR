@@ -261,8 +261,21 @@ class BatchRecognitionTab(BaseOcrTab):
         self._start_btn.clicked.connect(self._on_start)
         self._cancel_btn.clicked.connect(self._on_cancel)
         self._file_list_widget.selection_changed.connect(self._on_file_selected)
+        self._file_list_widget.files_changed.connect(self._on_files_changed)
         self._export_widget.export_requested.connect(self._on_export_current)
         self._export_widget.export_all_requested.connect(self._on_export_all)
+
+    def _on_files_changed(self, files: list[dict]) -> None:
+        """文件列表变化时，根据是否包含文档文件锁定管道"""
+        from vibeocr.utils.mime_types import is_document_file
+
+        has_document = any(is_document_file(f["path"]) for f in files)
+        if has_document:
+            self._preprocess_options.lock_to_document_parsing(
+                "队列含文档文件，仅支持文档解析"
+            )
+        else:
+            self._preprocess_options.unlock_pipeline()
 
     def _on_start(self):
         """开始识别"""

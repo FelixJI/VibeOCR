@@ -33,6 +33,7 @@ class PreprocessOptionsWidget(QGroupBox):
     def __init__(self, parent: QWidget | None = None):
         super().__init__("识别选项", parent)
         self._current_options = OCROptions()
+        self._pipeline_locked = False
         self._setup_ui()
         self._connect_signals()
 
@@ -47,6 +48,12 @@ class PreprocessOptionsWidget(QGroupBox):
         self._pipeline_combo = QComboBox()
         self._populate_pipeline_combo()
         pipeline_layout.addWidget(self._pipeline_combo)
+
+        self._pipeline_lock_label = QLabel()
+        self._pipeline_lock_label.setStyleSheet("color: #888; font-size: 11px;")
+        self._pipeline_lock_label.setVisible(False)
+        pipeline_layout.addWidget(self._pipeline_lock_label)
+
         pipeline_layout.addStretch()
         layout.addLayout(pipeline_layout)
 
@@ -383,3 +390,44 @@ class PreprocessOptionsWidget(QGroupBox):
             w.blockSignals(False)
 
         self._update_tab_visibility()
+
+    # ── 管道锁定 ──
+
+    def lock_to_document_parsing(self, reason: str = "") -> None:
+        """锁定管道为「文档解析」，禁用切换。
+
+        Args:
+            reason: 锁定原因，显示在管道旁边（如 "当前文件仅支持文档解析"）
+        """
+        if self._pipeline_locked:
+            return
+        self._pipeline_locked = True
+
+        # 切换到文档解析
+        idx = self._pipeline_combo.findData(OCRPipeline.DOCUMENT_PARSING.value)
+        if idx >= 0:
+            self._pipeline_combo.blockSignals(True)
+            self._pipeline_combo.setCurrentIndex(idx)
+            self._pipeline_combo.blockSignals(False)
+
+        self._pipeline_combo.setEnabled(False)
+
+        if reason:
+            self._pipeline_lock_label.setText(f"({reason})")
+        else:
+            self._pipeline_lock_label.setText("(仅文档解析)")
+        self._pipeline_lock_label.setVisible(True)
+
+        self._update_tab_visibility()
+
+    def unlock_pipeline(self) -> None:
+        """解除管道锁定，恢复自由选择。"""
+        if not self._pipeline_locked:
+            return
+        self._pipeline_locked = False
+        self._pipeline_combo.setEnabled(True)
+        self._pipeline_lock_label.setVisible(False)
+
+    @property
+    def is_pipeline_locked(self) -> bool:
+        return self._pipeline_locked

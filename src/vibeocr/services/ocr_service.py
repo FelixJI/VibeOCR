@@ -37,6 +37,42 @@ def _extract_table_html(html_str: str) -> str:
     return match.group(1) if match else html_str
 
 
+def _html_table_to_markdown(html: str) -> str:
+    """将 HTML <table> 转换为 Markdown 表格格式"""
+    rows: list[list[str]] = []
+    tr_pat = _re.compile(r"<tr[^>]*>(.*?)</tr>", _re.DOTALL | _re.IGNORECASE)
+    td_pat = _re.compile(r"<t[dh][^>]*>(.*?)</t[dh]>", _re.DOTALL | _re.IGNORECASE)
+
+    for tr_match in tr_pat.finditer(html):
+        cells = []
+        for td_match in td_pat.finditer(tr_match.group(1)):
+            cell_text = _re.sub(r"<[^>]+>", "", td_match.group(1)).strip()
+            cell_text = cell_text.replace("|", "\\|")
+            cells.append(cell_text)
+        if cells:
+            rows.append(cells)
+
+    if not rows:
+        return ""
+
+    # 对齐列数
+    max_cols = max(len(r) for r in rows)
+    for r in rows:
+        while len(r) < max_cols:
+            r.append("")
+
+    # 构建 Markdown 表格
+    lines = []
+    header = "| " + " | ".join(rows[0]) + " |"
+    sep = "| " + " | ".join("---" for _ in range(max_cols)) + " |"
+    lines.append(header)
+    lines.append(sep)
+    for row in rows[1:]:
+        lines.append("| " + " | ".join(row) + " |")
+
+    return "\n".join(lines)
+
+
 def _looks_like_markdown(text: str) -> bool:
     """检测文本是否包含 Markdown 格式标记"""
     if not text:
@@ -814,8 +850,17 @@ class OCRService(metaclass=SingletonMeta):
             "\n".join(t for t, _ in text_with_scores) if text_with_scores else ""
         )
 
+        # 从 content_list 中收集 HTML 表格并转为 Markdown
+        md_parts: list[str] = []
+        for cl in content_list:
+            table_html = cl.get("table_body", "")
+            if table_html:
+                md_parts.append(_html_table_to_markdown(table_html))
+        markdown_text = "\n\n".join(md_parts)
+
         return self._build_ocr_result(
             raw_text=raw_text,
+            markdown_text=markdown_text,
             html_text="",
             text_with_scores=text_with_scores,
             pipeline_type="table_recognition",

@@ -559,7 +559,7 @@ class MainWindow(QMainWindow):
         from vibeocr.utils.mime_types import (
             FILE_FILTER_DOCUMENTS,
             FILE_FILTER_IMAGES,
-            is_office_file,
+            is_document_file,
         )
 
         file_path, _ = QFileDialog.getOpenFileName(
@@ -569,7 +569,7 @@ class MainWindow(QMainWindow):
             f"{FILE_FILTER_IMAGES};;{FILE_FILTER_DOCUMENTS};;所有文件 (*)",
         )
         if file_path:
-            if is_office_file(file_path):
+            if is_document_file(file_path):
                 self._single_tab._preview_widget.clear()
                 self._single_tab.process_file(file_path)
                 return
@@ -586,7 +586,7 @@ class MainWindow(QMainWindow):
             return
         logging.debug("打开文件对话框（图片/PDF）")
 
-        from vibeocr.utils.mime_types import FILE_FILTER_ALL, is_office_file
+        from vibeocr.utils.mime_types import FILE_FILTER_ALL, is_document_file
 
         file_path, _ = QFileDialog.getOpenFileName(
             self,
@@ -597,18 +597,15 @@ class MainWindow(QMainWindow):
         if not file_path:
             return
 
-        if is_office_file(file_path):
+        if is_document_file(file_path):
             self._single_tab._preview_widget.clear()
             self._single_tab.process_file(file_path)
             return
 
-        if file_path.lower().endswith(".pdf"):
-            self._single_tab.process_file(file_path)
-        else:
-            pixmap = QPixmap(file_path)
-            if not pixmap.isNull():
-                self._single_tab.set_pixmap(pixmap)
-                self._single_tab.run_ocr(pixmap)
+        pixmap = QPixmap(file_path)
+        if not pixmap.isNull():
+            self._single_tab.set_pixmap(pixmap)
+            self._single_tab.run_ocr(pixmap)
 
     def _check_ocr_ready(self) -> bool:
         """检查OCR功能是否可用"""

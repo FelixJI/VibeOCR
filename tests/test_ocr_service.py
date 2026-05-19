@@ -243,3 +243,44 @@ class TestMinerURouting:
             result = svc.recognize(b"img_data", options)
 
             svc._paddlex_manager.execute.assert_called_once()
+
+
+class TestHtmlTableToMarkdown:
+    """测试 _html_table_to_markdown 辅助函数"""
+
+    def test_simple_table(self):
+        from vibeocr.services.ocr_service import _html_table_to_markdown
+
+        html = "<table><tr><td>Name</td><td>Age</td></tr><tr><td>Alice</td><td>30</td></tr></table>"
+        md = _html_table_to_markdown(html)
+        assert "| Name | Age |" in md
+        assert "| --- | --- |" in md
+        assert "| Alice | 30 |" in md
+
+    def test_th_header(self):
+        from vibeocr.services.ocr_service import _html_table_to_markdown
+
+        html = "<table><tr><th>Col1</th><th>Col2</th></tr><tr><td>A</td><td>B</td></tr></table>"
+        md = _html_table_to_markdown(html)
+        assert "| Col1 | Col2 |" in md
+        assert "| A | B |" in md
+
+    def test_pipe_escaping(self):
+        from vibeocr.services.ocr_service import _html_table_to_markdown
+
+        html = "<table><tr><td>A|B</td></tr></table>"
+        md = _html_table_to_markdown(html)
+        assert "| A\\|B |" in md
+
+    def test_empty_html(self):
+        from vibeocr.services.ocr_service import _html_table_to_markdown
+
+        assert _html_table_to_markdown("<table></table>") == ""
+        assert _html_table_to_markdown("") == ""
+
+    def test_uneven_columns_padded(self):
+        from vibeocr.services.ocr_service import _html_table_to_markdown
+
+        html = "<table><tr><td>A</td><td>B</td><td>C</td></tr><tr><td>D</td></tr></table>"
+        md = _html_table_to_markdown(html)
+        assert "| D |  |  |" in md

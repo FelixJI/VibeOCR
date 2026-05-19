@@ -120,7 +120,7 @@ class SingleRecognitionTab(BaseOcrTab):
     def _on_file_btn_clicked(self) -> None:
         from PySide6.QtWidgets import QFileDialog
 
-        from vibeocr.utils.mime_types import FILE_FILTER_ALL
+        from vibeocr.utils.mime_types import FILE_FILTER_ALL, is_document_file
 
         file_path, _ = QFileDialog.getOpenFileName(
             self, "选择文件", "",
@@ -129,19 +129,18 @@ class SingleRecognitionTab(BaseOcrTab):
         if not file_path:
             return
 
-        path = Path(file_path)
-        is_image = path.suffix.lower() not in {".pdf"}
-
         self._pending_file_path = file_path
         self._pending_pixmap = None
 
-        if is_image:
+        if is_document_file(file_path):
+            self._preprocess_options.lock_to_document_parsing("当前文件仅支持文档解析")
+            self._preview_widget.load_file(file_path)
+        else:
+            self._preprocess_options.unlock_pipeline()
             pixmap = QPixmap(file_path)
             if not pixmap.isNull():
                 self._preview_widget.set_pixmap(pixmap)
                 self._pending_pixmap = pixmap
-        else:
-            self._preview_widget.load_file(file_path)
 
         self._start_btn.setEnabled(True)
 
@@ -157,6 +156,7 @@ class SingleRecognitionTab(BaseOcrTab):
             pixmap = QPixmap(pixmap)
             pixmap.setDevicePixelRatio(1.0)
 
+        self._preprocess_options.unlock_pipeline()
         self._preview_widget.set_pixmap(pixmap)
         self._pending_pixmap = pixmap
         self._pending_file_path = None
@@ -198,6 +198,8 @@ class SingleRecognitionTab(BaseOcrTab):
         """执行 OCR 识别（入口方法，由 MainWindow 调用）"""
         from vibeocr.services import USE_SUBPROCESS
 
+        self._preprocess_options.unlock_pipeline()
+
         if pixmap.devicePixelRatio() != 1.0:
             pixmap = QPixmap(pixmap)
             pixmap.setDevicePixelRatio(1.0)
@@ -235,17 +237,13 @@ class SingleRecognitionTab(BaseOcrTab):
 
     def process_file(self, file_path: str) -> None:
         """处理文件（由 MainWindow 调用，支持 PDF/Office/图片）"""
-        from vibeocr.core.pipelines import OCRPipeline
-        from vibeocr.utils.mime_types import guess_mime_from_filename
+        from vibeocr.utils.mime_types import guess_mime_from_filename, is_document_file
 
         path = Path(file_path)
         if not path.exists():
             return
 
-        options = self._build_options_from_ui()
-        is_image = path.suffix.lower() not in {".pdf"}
-
-        if options.pipeline == OCRPipeline.DOCUMENT_PARSING or not is_image:
+        if is_document_file(file_path):
             data = path.read_bytes()
             mime_type = guess_mime_from_filename(file_path)
             self._run_ocr_with_data(data, mime_type, path.name)

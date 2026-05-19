@@ -7,6 +7,7 @@ from vibeocr.utils.mime_types import (
     FILE_FILTER_IMAGES,
     extension_to_mime,
     guess_mime_from_filename,
+    is_document_file,
     is_office_file,
     mime_to_extension,
 )
@@ -79,3 +80,12 @@ class TestMimeMap:
         assert is_office_file("data.xlsx") is True
         assert is_office_file("photo.png") is False
         assert is_office_file("doc.pdf") is False
+
+    def test_is_document_file(self):
+        assert is_document_file("doc.pdf") is True
+        assert is_document_file("report.docx") is True
+        assert is_document_file("slides.pptx") is True
+        assert is_document_file("data.xlsx") is True
+        assert is_document_file("photo.png") is False
+        assert is_document_file("image.jpg") is False
+        assert is_document_file("screenshot.BMP") is False

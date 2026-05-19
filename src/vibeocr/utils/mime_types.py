@@ -57,3 +57,15 @@ def is_office_file(path_or_name: str) -> bool:
     """判断文件是否为 Office 文档（docx/pptx/xlsx）。"""
     suffix = Path(path_or_name).suffix.lower()
     return suffix in {".docx", ".pptx", ".xlsx"}
+
+
+# 非图片文档扩展名（需要 MinerU 文档解析管道处理）
+DOCUMENT_EXTENSIONS = frozenset({".pdf", ".docx", ".pptx", ".xlsx"})
+
+
+def is_document_file(path_or_name: str) -> bool:
+    """判断文件是否为文档类型（PDF / Office），即必须使用 MinerU 管道的文件。
+
+    图片文件返回 False，表示可以走 PaddleX 管道。
+    """
+    return Path(path_or_name).suffix.lower() in DOCUMENT_EXTENSIONS
