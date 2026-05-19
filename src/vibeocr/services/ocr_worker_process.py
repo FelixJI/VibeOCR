@@ -43,6 +43,7 @@ MSG_BATCH_COMMIT = MessageType.BATCH_COMMIT
 MSG_BATCH_RESULT = MessageType.BATCH_RESULT
 MSG_BATCH_CANCEL = MessageType.BATCH_CANCEL
 MSG_BATCH_PROGRESS = MessageType.BATCH_PROGRESS
+MSG_BATCH_FILE_DONE = MessageType.BATCH_FILE_DONE
 
 logger = logging.getLogger(__name__)
 
@@ -767,12 +768,18 @@ class OCRWorkerProcess:
         except SharedMemoryProtocolError as e:
             raise OCRWorkerProcessError(f"通信错误: {e}") from None
 
-    def _send_batch_commit(self, commit_data: bytes, timeout: float = 300.0) -> dict:
+    def _send_batch_commit(
+        self,
+        commit_data: bytes,
+        timeout: float = 300.0,
+        file_completed_callback=None,
+    ) -> dict:
         """发送批量提交请求并等待结果
 
         Args:
             commit_data: 序列化的批量提交数据
             timeout: 超时时间（秒）
+            file_completed_callback: 单文件完成回调 (request_id, result)
 
         Returns:
             {request_id: result} 结果字典
@@ -793,6 +800,8 @@ class OCRWorkerProcess:
             protocol.wait_for_read(timeout=timeout)
 
             # 等待批量结果（可能需要较长时间）
+            all_results: dict = {}
+            reported_ids: set[str] = set()
             start_time = time.time()
             while True:
                 remaining_timeout = timeout - (time.time() - start_time)
@@ -809,13 +818,30 @@ class OCRWorkerProcess:
                         continue
                     raise
 
+                if msg_type == MSG_BATCH_FILE_DONE:
+                    # 单文件流式结果
+                    file_results = deserialize_batch_result(data)
+                    all_results.update(file_results)
+                    if file_completed_callback:
+                        for req_id, result in file_results.items():
+                            if req_id not in reported_ids:
+                                reported_ids.add(req_id)
+                                file_completed_callback(req_id, result)
+                    continue
+
                 if msg_type == MSG_BATCH_RESULT:
-                    # 反序列化结果
-                    results = deserialize_batch_result(data)
+                    # 最终汇总结果
+                    final_results = deserialize_batch_result(data)
+                    all_results.update(final_results)
+                    if file_completed_callback:
+                        for req_id, result in final_results.items():
+                            if req_id not in reported_ids:
+                                reported_ids.add(req_id)
+                                file_completed_callback(req_id, result)
                     logger.debug(
-                        f"Worker {self.worker_id} 批量处理完成，返回 {len(results)} 个结果"
+                        f"Worker {self.worker_id} 批量处理完成，返回 {len(all_results)} 个结果"
                     )
-                    return results
+                    return all_results
 
                 if msg_type == MSG_BATCH_PROGRESS:
                     # 进度更新，继续等待

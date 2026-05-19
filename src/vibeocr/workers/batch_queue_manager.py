@@ -124,11 +124,16 @@ class BatchQueueManager:
         self._cancelled = True
         logger.debug("批量处理已取消")
 
-    def commit(self, preprocess_options: PreprocessOptions) -> dict[str, object]:
+    def commit(
+        self,
+        preprocess_options: PreprocessOptions,
+        file_completed_callback: Callable[[str, object], None] | None = None,
+    ) -> dict[str, object]:
         """提交并执行批量处理
 
         Args:
             preprocess_options: 预处理选项
+            file_completed_callback: 单文件完成回调 (request_id, result)
 
         Returns:
             {request_id: result} 结果字典
@@ -190,6 +195,13 @@ class BatchQueueManager:
                         completed += 1
                     elif request.status == BatchRequestStatus.FAILED:
                         failed += 1
+
+                # 单文件完成回调（流式返回结果）
+                if file_completed_callback:
+                    try:
+                        file_completed_callback(request_id, result)
+                    except Exception as e:
+                        logger.warning(f"单文件完成回调失败: {e}")
 
             # 更新进度
             progress.completed = completed

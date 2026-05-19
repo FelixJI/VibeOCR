@@ -63,6 +63,7 @@ class MinerUBatchService:
         preprocess_options=None,
         timeout: float = 300.0,
         progress_callback: Callable[[int, int, str], None] | None = None,
+        file_completed_callback: Callable[[str, object], None] | None = None,
     ) -> dict:
         """执行批量处理
 
@@ -70,6 +71,7 @@ class MinerUBatchService:
             preprocess_options: OCROptions 预处理选项，传递给 MinerUService.parse()
             timeout: 超时时间（秒）
             progress_callback: 进度回调 (completed, total, current_file)
+            file_completed_callback: 单文件完成回调 (request_id, result)
 
         Returns:
             {request_id: OCRResult} 结果字典
@@ -105,9 +107,13 @@ class MinerUBatchService:
                     options=preprocess_options,
                 )
                 results[item["request_id"]] = result
+                if file_completed_callback:
+                    file_completed_callback(item["request_id"], result)
             except Exception as e:
                 logger.error(f"[MinerUBatch] 处理失败 {file_name}: {e}")
                 results[item["request_id"]] = {"error": str(e)}
+                if file_completed_callback:
+                    file_completed_callback(item["request_id"], {"error": str(e)})
 
         if progress_callback and not self._cancelled:
             progress_callback(total, total, "完成")

@@ -108,6 +108,7 @@ def run_worker(shm_name: str, shm_size: int, use_gpu: bool) -> None:
     MSG_BATCH_RESULT = MessageType.BATCH_RESULT
     MSG_BATCH_CANCEL = MessageType.BATCH_CANCEL
     MSG_BATCH_PROGRESS = MessageType.BATCH_PROGRESS
+    MSG_BATCH_FILE_DONE = MessageType.BATCH_FILE_DONE
 
     # 连接数据共享内存
     logger.info(f"Worker 正在连接数据共享内存: {shm_name}")
@@ -392,12 +393,30 @@ def run_worker(shm_name: str, shm_size: int, use_gpu: bool) -> None:
                                 except Exception as e:
                                     logger.warning(f"发送进度失败: {e}")
 
+                            # 定义单文件完成回调（流式返回结果）
+                            def on_file_done(request_id, result):
+                                try:
+                                    file_data = serialize_batch_result(
+                                        {request_id: result}
+                                    )
+                                    protocol.write_message(
+                                        MSG_BATCH_FILE_DONE,
+                                        file_data,
+                                        sender="worker",
+                                        timeout=30.0,
+                                    )
+                                except Exception as e:
+                                    logger.warning(f"发送单文件结果失败: {e}")
+
                             mgr.progress_callback = progress_callback
 
-                            # 执行批量处理
-                            results = mgr.commit(preprocess_options)
+                            # 执行批量处理（带流式回调）
+                            results = mgr.commit(
+                                preprocess_options,
+                                file_completed_callback=on_file_done,
+                            )
 
-                            # 发送结果
+                            # 发送最终汇总结果
                             results_data = serialize_batch_result(results)
                             protocol.write_message(
                                 MSG_BATCH_RESULT, results_data, sender="worker"

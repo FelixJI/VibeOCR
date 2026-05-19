@@ -55,7 +55,7 @@ class BatchRecognitionWorker(QThread):
         self._cancelled = False
 
     def run(self):
-        """执行批量识别"""
+        """执行批量识别（全部入队后流式返回结果）"""
         results = {}
         total = len(self._files)
 
@@ -83,49 +83,67 @@ class BatchRecognitionWorker(QThread):
                 )
 
                 request_map[request_id] = file_info
-                logger.debug(
-                    f"添加文件到批量队列: {file_path}, request_id={request_id}"
-                )
 
             except Exception as e:
                 logger.error(f"处理文件失败 {file_path}: {e}")
                 self.file_completed.emit(file_path, "failed", {"error": str(e)})
                 results[file_path] = {"file_path": file_path, "error": str(e)}
 
-        # 提交批量处理
+        # 提交批量处理，流式获取每个完成的结果
         if not self._cancelled and request_map:
-            try:
-                def on_process_progress(completed: int, total_count: int, name: str):
-                    self.progress.emit(completed, total_count, f"处理: {name}")
 
+            def on_file_completed(request_id: str, result):
+                if request_id not in request_map:
+                    return
+                file_path = request_map[request_id]["path"]
+                if file_path in results:
+                    return  # 已报告（去重）
+                if isinstance(result, dict) and "error" in result:
+                    self.file_completed.emit(file_path, "failed", result)
+                    results[file_path] = {
+                        "file_path": file_path,
+                        "error": result["error"],
+                    }
+                else:
+                    self.file_completed.emit(file_path, "completed", result)
+                    results[file_path] = {
+                        "file_path": file_path,
+                        "result": result,
+                    }
+
+            try:
                 batch_results = self._service.batch_commit(
                     self._preprocess_options,
-                    progress_callback=on_process_progress,
+                    file_completed_callback=on_file_completed,
                 )
 
-                # 分发结果
+                # 兜底：处理回调未覆盖的结果
                 for request_id, result in batch_results.items():
                     if request_id in request_map:
-                        file_info = request_map[request_id]
-                        file_path = file_info["path"]
-
-                        if isinstance(result, dict) and "error" in result:
-                            self.file_completed.emit(file_path, "failed", result)
-                            results[file_path] = {
-                                "file_path": file_path,
-                                "error": result["error"],
-                            }
-                        else:
-                            self.file_completed.emit(file_path, "completed", result)
-                            results[file_path] = {
-                                "file_path": file_path,
-                                "result": result,
-                            }
+                        file_path = request_map[request_id]["path"]
+                        if file_path not in results:
+                            if isinstance(result, dict) and "error" in result:
+                                self.file_completed.emit(
+                                    file_path, "failed", result
+                                )
+                                results[file_path] = {
+                                    "file_path": file_path,
+                                    "error": result["error"],
+                                }
+                            else:
+                                self.file_completed.emit(
+                                    file_path, "completed", result
+                                )
+                                results[file_path] = {
+                                    "file_path": file_path,
+                                    "result": result,
+                                }
 
             except Exception as e:
                 self.error.emit(str(e))
                 return
 
+        self.progress.emit(total, total, "完成")
         self.finished.emit(results)
 
     def cancel(self):

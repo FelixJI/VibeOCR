@@ -561,6 +561,7 @@ class OCRServiceSubprocess:
         preprocess_options: "PreprocessOptions",
         timeout: float = 300.0,
         progress_callback=None,
+        file_completed_callback=None,
     ) -> dict:
         """提交批量处理
 
@@ -568,6 +569,7 @@ class OCRServiceSubprocess:
             preprocess_options: 预处理选项
             timeout: 超时时间（秒）
             progress_callback: 进度回调（子进程模式下未使用，保留接口兼容）
+            file_completed_callback: 单文件完成回调 (request_id, result)
 
         Returns:
             {request_id: result} 结果字典
@@ -585,9 +587,16 @@ class OCRServiceSubprocess:
         # 根据管道类型路由到对应处理
         if self._is_document_parsing(preprocess_options):
             # MinerU 文档解析通过 MinerUBatchService 处理
-            return self._mineru_batch.commit(preprocess_options, timeout=timeout, progress_callback=progress_callback)
+            return self._mineru_batch.commit(
+                preprocess_options,
+                timeout=timeout,
+                progress_callback=progress_callback,
+                file_completed_callback=file_completed_callback,
+            )
         return self._paddlex_manager.execute(
-            lambda w: w._send_batch_commit(commit_data, timeout)
+            lambda w: w._send_batch_commit(
+                commit_data, timeout, file_completed_callback
+            )
         )
 
     def batch_cancel(self):
