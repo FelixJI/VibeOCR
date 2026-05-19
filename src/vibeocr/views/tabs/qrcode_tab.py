@@ -53,6 +53,20 @@ def _pil_to_qpixmap(pil_image: Image.Image) -> QPixmap:
     return QPixmap.fromImage(qimage.copy())
 
 
+def _scale_pixmap_for_label(pixmap: QPixmap, label: QLabel) -> QPixmap:
+    """缩放 pixmap 使其完整显示在 label 内，适配高分屏。"""
+    dpr = label.devicePixelRatio()
+    target_w = int(label.width() * dpr)
+    target_h = int(label.height() * dpr)
+    scaled = pixmap.scaled(
+        target_w, target_h,
+        Qt.AspectRatioMode.KeepAspectRatio,
+        Qt.TransformationMode.SmoothTransformation,
+    )
+    scaled.setDevicePixelRatio(dpr)
+    return scaled
+
+
 class QrcodeTab(QWidget):
     """二维码生成标签页"""
 
@@ -366,11 +380,7 @@ class QrcodeTab(QWidget):
             self._current_image = img
             pixmap = _pil_to_qpixmap(img)
             self._preview_label.setPixmap(
-                pixmap.scaled(
-                    self._preview_label.size(),
-                    Qt.AspectRatioMode.KeepAspectRatio,
-                    Qt.TransformationMode.FastTransformation,
-                )
+                _scale_pixmap_for_label(pixmap, self._preview_label)
             )
         except Exception as e:
             logger.error(f"生成预览失败: {e}", exc_info=True)

@@ -167,15 +167,18 @@ class QrcodeService:
 
         from PIL import ImageDraw
 
-        # 字体随图片尺寸等比缩放，基准 300px
-        scaled_size = max(8, int(font_size * min(image.size) / 300))
+        # 字体和间距随图片尺寸等比缩放，基准 300px
+        scale = min(image.size) / 300
+        scaled_size = max(8, int(font_size * scale))
+        padding = max(4, int(8 * scale))
         font = self._load_font(scaled_size)
+
         dummy = Image.new("RGB", (1, 1))
         draw = ImageDraw.Draw(dummy)
         bbox = draw.textbbox((0, 0), text, font=font)
         text_w = bbox[2] - bbox[0]
         text_h = bbox[3] - bbox[1]
-        padding = 8
+        text_offset_y = -bbox[1]  # 修正 baseline 偏移
 
         img_w, img_h = image.size
         new_w = int(max(img_w, text_w + padding * 2))
@@ -185,14 +188,14 @@ class QrcodeService:
             canvas = Image.new("RGB", (new_w, img_h + label_h), image.getpixel((0, 0)))
             draw = ImageDraw.Draw(canvas)
             text_x = (new_w - text_w) // 2
-            draw.text((text_x, padding), text, fill=(0, 0, 0), font=font)
+            draw.text((text_x, padding + text_offset_y), text, fill=(0, 0, 0), font=font)
             canvas.paste(image, ((new_w - img_w) // 2, label_h))
         else:
             canvas = Image.new("RGB", (new_w, img_h + label_h), image.getpixel((0, 0)))
             canvas.paste(image, ((new_w - img_w) // 2, 0))
             draw = ImageDraw.Draw(canvas)
             text_x = (new_w - text_w) // 2
-            draw.text((text_x, img_h + padding), text, fill=(0, 0, 0), font=font)
+            draw.text((text_x, img_h + padding + text_offset_y), text, fill=(0, 0, 0), font=font)
 
         return canvas
 
