@@ -540,14 +540,9 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def _on_install_succeeded(self) -> None:
-        """安装成功后弹出模型下载对话框"""
-        from vibeocr.widgets.model_download_dialog import ModelDownloadDialog
-
+        """安装成功后标记就绪"""
         self._ocr_ready = True
-        self._statusbar.showMessage("OCR依赖安装成功，正在下载模型...")
-
-        dialog = ModelDownloadDialog(self._project_root, self)
-        dialog.exec()
+        self._statusbar.showMessage("OCR依赖安装成功，首次识别将自动下载模型")
 
     @Slot()
     def _on_open_image(self) -> None:
