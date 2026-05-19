@@ -246,7 +246,7 @@ class SingleRecognitionTab(BaseOcrTab):
                 self._on_ocr_finished(result)
             except Exception as e:
                 logger.error(f"OCR 识别失败: {e}", exc_info=True)
-                self._on_ocr_error(str(e))
+                self._on_ocr_error(str(e) + self._first_use_suffix(options.pipeline.value))
 
     def process_file(self, file_path: str) -> None:
         """处理文件（由 MainWindow 调用，支持 PDF/Office/图片）"""
@@ -290,7 +290,7 @@ class SingleRecognitionTab(BaseOcrTab):
                 self._on_ocr_finished(result)
             except Exception as e:
                 logger.error(f"OCR 识别失败: {e}", exc_info=True)
-                self._on_ocr_error(str(e))
+                self._on_ocr_error(str(e) + self._first_use_suffix(options.pipeline.value))
 
     async def _perform_ocr_async(self, image_data: bytes, options) -> None:
         try:
@@ -323,7 +323,7 @@ class SingleRecognitionTab(BaseOcrTab):
             if self._closing:
                 return
             logger.error(f"[异步OCR] 识别失败: {e}", exc_info=True)
-            self._on_ocr_error(str(e))
+            self._on_ocr_error(str(e) + self._first_use_suffix(options.pipeline.value))
 
     async def _perform_ocr_with_data_async(
         self, data: bytes, mime_type: str, filename: str, options
@@ -368,7 +368,7 @@ class SingleRecognitionTab(BaseOcrTab):
             if self._closing:
                 return
             logger.error(f"[异步OCR] 识别失败: {e}", exc_info=True)
-            self._on_ocr_error(str(e))
+            self._on_ocr_error(str(e) + self._first_use_suffix(options.pipeline.value))
 
     def _on_result_block_edited(self, index: int, new_text: str) -> None:
         """右侧结果块被编辑后同步更新数据模型"""
@@ -429,6 +429,15 @@ class SingleRecognitionTab(BaseOcrTab):
 
         # 显示结果（包括 content_list 块类型模式）
         self._display_result(result)
+
+    def _first_use_suffix(self, pipeline_val: str) -> str:
+        """首次使用失败时返回追加提示"""
+        if pipeline_val in ("OCR", "table_recognition", "formula_recognition"):
+            from vibeocr.pipeline_status import is_pipeline_ever_succeeded
+            from vibeocr.env_manager import get_project_root
+            if not is_pipeline_ever_succeeded(pipeline_val, get_project_root()):
+                return "\n\n提示：首次使用需要下载模型，请保持网络畅通后重试。"
+        return ""
 
     def _on_ocr_error(self, error_msg: str) -> None:
         """OCR 失败回调"""
