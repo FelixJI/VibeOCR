@@ -205,10 +205,23 @@ class SingleRecognitionTab(BaseOcrTab):
             pixmap.setDevicePixelRatio(1.0)
 
         self._result_widget.clear()
-        QApplication.processEvents()
 
         if options is None:
             options = self._build_options_from_ui()
+
+        # 首次使用提示
+        pipeline_val = options.pipeline.value
+        if pipeline_val in ("OCR", "table_recognition", "formula_recognition"):
+            from vibeocr.pipeline_status import is_pipeline_ever_succeeded
+            from vibeocr.env_manager import get_project_root
+            if not is_pipeline_ever_succeeded(pipeline_val, get_project_root()):
+                self._result_widget._ensure_web_view().setHtml(
+                    '<div style="display:flex;align-items:center;justify-content:center;'
+                    'height:100%;color:#666;font-size:14px;">'
+                    '<p>正在识别，首次使用可能需要下载模型，请耐心等待…</p></div>'
+                )
+
+        QApplication.processEvents()
 
         buffer = QBuffer()
         buffer.open(QBuffer.OpenModeFlag.ReadWrite)
