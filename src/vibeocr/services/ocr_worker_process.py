@@ -13,7 +13,7 @@ import time
 import uuid
 from collections.abc import Callable
 
-from vibeocr.model_cache_manager import is_pipeline_cached
+from vibeocr.pipeline_status import is_pipeline_ever_succeeded
 from vibeocr.utils.shared_memory_v2 import (
     MessageType,
     SharedMemoryConfig,
@@ -646,6 +646,13 @@ class OCRWorkerProcess:
         finally:
             self.busy = False
 
+    @staticmethod
+    def _get_project_root():
+        from pathlib import Path
+
+        from vibeocr.env_manager import get_project_root
+        return get_project_root()
+
     def _calculate_preload_timeout(self, pipelines: list[str]) -> float:
         """根据模型缓存状态计算预加载超时时间
 
@@ -671,7 +678,7 @@ class OCRWorkerProcess:
                 if isinstance(pipeline_name, Enum)
                 else pipeline_name
             )
-            if not is_pipeline_cached(name):
+            if not is_pipeline_ever_succeeded(name, self._get_project_root()):
                 uncached_pipelines.append(pipeline_name)
 
         if uncached_pipelines:

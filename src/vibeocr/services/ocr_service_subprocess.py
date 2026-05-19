@@ -16,7 +16,9 @@ import uuid
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Optional, Union
 
-from vibeocr.model_cache_manager import is_pipeline_cached
+from pathlib import Path
+
+from vibeocr.pipeline_status import is_pipeline_ever_succeeded, mark_pipeline_success
 from vibeocr.services.worker_manager import WorkerManager
 
 if TYPE_CHECKING:
@@ -235,10 +237,18 @@ class OCRServiceSubprocess:
             ocr_opts = OCROptions.from_dict(options_dict) if options_dict else None
             return MinerUService().parse(image_data, mime_type, ocr_opts)
 
-        return self._paddlex_manager.execute(
+        result = self._paddlex_manager.execute(
             lambda w: w.recognize(image_data, options_dict, timeout=timeout),
             timeout=timeout,
         )
+        # 标记管道识别成功
+        pipeline_name_for_mark = options_dict.get("pipeline", "OCR")
+        if pipeline_name_for_mark in ("OCR", "table_recognition", "formula_recognition"):
+            try:
+                mark_pipeline_success(pipeline_name_for_mark, self._get_project_root())
+            except Exception:
+                pass
+        return result
 
     def _prepare_image_data(self, image) -> bytes:
         """准备图像数据
@@ -317,6 +327,11 @@ class OCRServiceSubprocess:
 
         return {}
 
+    @staticmethod
+    def _get_project_root() -> Path:
+        from vibeocr.env_manager import get_project_root
+        return get_project_root()
+
     def _calculate_recognize_timeout(self, pipeline_name: str | object) -> float:
         """根据管道类型和模型缓存状态计算识别超时时间
 
@@ -348,7 +363,7 @@ class OCRServiceSubprocess:
             )
             return TIMEOUT_DOCUMENT_PARSING
 
-        if is_pipeline_cached(pipeline_name_str):
+        if is_pipeline_ever_succeeded(pipeline_name_str, self._get_project_root()):
             logger.debug(
                 f"[识别] 管道 {pipeline_name} 模型已缓存，使用标准超时 ({TIMEOUT_CACHED}s)"
             )
