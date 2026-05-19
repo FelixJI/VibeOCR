@@ -622,44 +622,6 @@
             <number>16</number>
            </property>
            <item>
-            <widget class="QGroupBox" name="groupModelDownload">
-             <property name="title">
-              <string>模型下载</string>
-             </property>
-             <layout class="QVBoxLayout" name="modelDownloadLayout">
-              <property name="spacing">
-               <number>8</number>
-              </property>
-              <item>
-               <widget class="QPushButton" name="btnDownloadModels">
-                <property name="toolTip">
-                 <string>下载或更新 OCR 模型文件</string>
-                </property>
-                <property name="text">
-                 <string>下载模型</string>
-                </property>
-                <property name="maximumSize">
-                 <size>
-                  <width>150</width>
-                  <height>16777215</height>
-                 </size>
-                </property>
-               </widget>
-              </item>
-              <item>
-               <widget class="QLabel" name="labelModelDownloadHint">
-                <property name="text">
-                 <string>下载或更新 OCR 模型文件（PaddleOCR、表格识别、公式识别等）</string>
-                </property>
-                <property name="wordWrap">
-                 <bool>true</bool>
-                </property>
-               </widget>
-              </item>
-             </layout>
-            </widget>
-           </item>
-           <item>
             <spacer name="spacerToolsPage">
              <property name="orientation">
               <enum>Qt::Vertical</enum>
