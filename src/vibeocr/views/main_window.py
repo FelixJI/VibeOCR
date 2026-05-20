@@ -764,6 +764,7 @@ class MainWindow(QMainWindow):
                 self._edge_toolbar.move(pos["x"], pos["y"])
             else:
                 self._edge_toolbar.set_initial_position()
+            self._edge_toolbar._detect_edge()
             self._edge_toolbar.show()
         else:
             self._edge_toolbar.hide()
