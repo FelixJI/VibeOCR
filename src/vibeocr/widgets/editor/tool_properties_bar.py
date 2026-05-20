@@ -235,12 +235,20 @@ class ToolPropertiesBar(QWidget):
         self._blur_slider.valueChanged.connect(self._on_blur_changed)
 
     def _on_color_pick(self) -> None:
-        """打开颜色选择对话框"""
-        color = QColorDialog.getColor(self._current_color, self, "选择颜色")
-        if color.isValid():
-            self._current_color = color
-            self._update_color_buttons()
-            self.color_changed.emit(color)
+        """打开颜色选择对话框
+
+        显式关闭 WA_TranslucentBackground，防止继承自父窗口（截图覆盖层）
+        的透明属性导致 Windows 上渲染为黑色背景。
+        """
+        dialog = QColorDialog(self._current_color, self)
+        dialog.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
+        dialog.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, False)
+        if dialog.exec() == QColorDialog.DialogCode.Accepted:
+            color = dialog.selectedColor()
+            if color.isValid():
+                self._current_color = color
+                self._update_color_buttons()
+                self.color_changed.emit(color)
 
     def _apply_color_style(self, btn: QPushButton) -> None:
         """设置颜色按钮样式（使用 objectName 选择器避免被父级样式覆盖）"""
