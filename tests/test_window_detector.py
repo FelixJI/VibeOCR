@@ -74,6 +74,25 @@ class TestHitTest:
         assert result == 888
 
 
+class TestGetControlRect:
+    def test_returns_accessible_result(self, detector):
+        detector._try_accessible = lambda pos: QRect(110, 210, 180, 120)
+        result = detector._get_control_rect(888, (200, 250))
+        assert result == QRect(110, 210, 180, 120)
+
+    def test_falls_back_to_enum_children(self, detector):
+        detector._try_accessible = lambda pos: None
+        detector._try_enum_children = lambda hwnd, pos: QRect(160, 230, 120, 110)
+        result = detector._get_control_rect(888, (200, 250))
+        assert result == QRect(160, 230, 120, 110)
+
+    def test_returns_none_when_both_fail(self, detector):
+        detector._try_accessible = lambda pos: None
+        detector._try_enum_children = lambda hwnd, pos: None
+        result = detector._get_control_rect(888, (200, 250))
+        assert result is None
+
+
 class TestGetWindowRect:
     def test_returns_rect_for_valid_hwnd(self, detector, monkeypatch):
         monkeypatch.setattr(

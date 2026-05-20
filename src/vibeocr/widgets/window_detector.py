@@ -98,7 +98,65 @@ class WindowDetector:
     def _get_control_rect(
         self, hwnd: int, physical_pos: tuple[int, int]
     ) -> QRect | None:
-        raise NotImplementedError
+        rect = self._try_accessible(physical_pos)
+        if rect is not None:
+            return rect
+        return self._try_enum_children(hwnd, physical_pos)
+
+    def _try_accessible(self, physical_pos: tuple[int, int]) -> QRect | None:
+        try:
+            import oleacc
+
+            hr, accessible, child_id = oleacc.AccessibleObjectFromPoint(
+                physical_pos[0], physical_pos[1]
+            )
+            if hr != 0 or accessible is None:
+                return None
+            location = accessible.accLocation(0)
+            if location is None:
+                return None
+            left, top, width, height = location
+            if width <= 0 or height <= 0:
+                return None
+            return QRect(int(left), int(top), int(width), int(height))
+        except Exception:
+            return None
+
+    def _try_enum_children(
+        self, hwnd: int, physical_pos: tuple[int, int]
+    ) -> QRect | None:
+        children_rects: list[QRect] = []
+
+        @ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.wintypes.HWND, ctypes.wintypes.LPARAM)
+        def enum_callback(child_hwnd: int, _lparam: int) -> bool:
+            rect = ctypes.wintypes.RECT()
+            if user32.GetWindowRect(child_hwnd, ctypes.byref(rect)):
+                children_rects.append(
+                    QRect(
+                        rect.left,
+                        rect.top,
+                        rect.right - rect.left,
+                        rect.bottom - rect.top,
+                    )
+                )
+            return True
+
+        user32.EnumChildWindows(hwnd, enum_callback, 0)
+
+        if not children_rects:
+            return None
+
+        px, py = physical_pos
+        smallest: QRect | None = None
+        for qrect in children_rects:
+            if qrect.contains(QPoint(px, py)):
+                if smallest is None or (
+                    qrect.width() * qrect.height()
+                ) < (
+                    smallest.width() * smallest.height()
+                ):
+                    smallest = qrect
+        return smallest
 
     def _get_window_rect(self, hwnd: int) -> QRect | None:
         rect = ctypes.wintypes.RECT()
