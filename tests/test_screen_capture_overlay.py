@@ -227,3 +227,39 @@ class TestMousePressSubState:
 
         assert overlay._sub_state == "HOVER"
         assert overlay._start_pos is None
+
+
+class TestPaintDetectionHighlight:
+    def test_detected_rect_drawn_in_capturing_hover(self, qapp):
+        overlay = ScreenCaptureOverlay()
+        overlay._state = "CAPTURING"
+        overlay._sub_state = "HOVER"
+        overlay._screen_pixmap = QPixmap(1920, 1080)
+        overlay._detected_rect = QRect(100, 100, 400, 300)
+        overlay._virtual_geometry = QRect(0, 0, 1920, 1080)
+        overlay._device_pixel_ratio = 1.0
+        overlay.resize(1920, 1080)
+        # paintEvent should not crash
+        overlay.repaint()
+
+    def test_no_highlight_in_drag_substate(self, qapp):
+        overlay = ScreenCaptureOverlay()
+        overlay._state = "CAPTURING"
+        overlay._sub_state = "DRAG"
+        overlay._screen_pixmap = QPixmap(1920, 1080)
+        overlay._detected_rect = QRect(100, 100, 400, 300)
+        overlay._virtual_geometry = QRect(0, 0, 1920, 1080)
+        overlay._device_pixel_ratio = 1.0
+        overlay.resize(1920, 1080)
+        overlay.repaint()
+
+    def test_no_highlight_without_detected_rect(self, qapp):
+        overlay = ScreenCaptureOverlay()
+        overlay._state = "CAPTURING"
+        overlay._sub_state = "HOVER"
+        overlay._screen_pixmap = QPixmap(1920, 1080)
+        overlay._detected_rect = None
+        overlay._virtual_geometry = QRect(0, 0, 1920, 1080)
+        overlay._device_pixel_ratio = 1.0
+        overlay.resize(1920, 1080)
+        overlay.repaint()

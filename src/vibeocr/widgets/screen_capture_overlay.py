@@ -191,6 +191,14 @@ class ScreenCaptureOverlay(QWidget):
 
         # --- 以下仅 CAPTURING 模式 ---
 
+        # HOVER 模式绘制检测高亮
+        if self._sub_state == "HOVER" and self._detected_rect:
+            painter.fillRect(self._detected_rect, QColor(0, 120, 215, 40))
+            pen = QPen(QColor(0, 120, 215), 2)
+            painter.setPen(pen)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawRect(self._detected_rect)
+
         # 4. 绘制选区边框和尺寸
         if self._selection_rect:
             pen = QPen(QColor(0, 120, 215), 2)
