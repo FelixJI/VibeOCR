@@ -70,3 +70,21 @@ class TestPositionCalculation:
         selection = QRect(100, 1050, 400, 10)
         positions = overlay._calc_panel_positions(selection)
         assert positions["toolbar_side"] == "top"
+
+
+class TestSubState:
+    def test_initial_sub_state_is_hover(self, qapp):
+        overlay = ScreenCaptureOverlay()
+        assert overlay._sub_state == "HOVER"
+
+    def test_initial_detected_rect_is_none(self, qapp):
+        overlay = ScreenCaptureOverlay()
+        assert overlay._detected_rect is None
+
+    def test_reset_capturing_resets_sub_state(self, qapp):
+        overlay = ScreenCaptureOverlay()
+        overlay._sub_state = "DRAG"
+        overlay._detected_rect = QRect(10, 10, 100, 100)
+        overlay._reset_capturing()
+        assert overlay._sub_state == "HOVER"
+        assert overlay._detected_rect is None

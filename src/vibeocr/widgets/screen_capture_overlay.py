@@ -40,6 +40,11 @@ from vibeocr.widgets.inline_toolbar import InlineToolbar
 from vibeocr.widgets.magnifier_overlay import MagnifierOverlay
 from vibeocr.widgets.selection_resize_frame import SelectionResizeFrame
 
+try:
+    from vibeocr.widgets.window_detector import WindowDetector
+except ImportError:
+    WindowDetector = None
+
 
 class ScreenCaptureOverlay(QWidget):
     """统一的截图+编辑覆盖层
@@ -90,6 +95,12 @@ class ScreenCaptureOverlay(QWidget):
         self._screen_image: QImage | None = None
         self._virtual_geometry = QRect()
         self._device_pixel_ratio: float = 1.0
+
+        # HOVER/DRAG 子状态
+        self._sub_state: str = "HOVER"
+        self._detected_rect: QRect | None = None
+        self._window_detector = None
+        self._last_detect_pos: QPoint = QPoint()
 
         # 放大镜相关
         self._current_mouse_pos: QPoint | None = None
@@ -651,6 +662,9 @@ class ScreenCaptureOverlay(QWidget):
         self._virtual_geometry = QRect()
         self._device_pixel_ratio = 1.0
         self._current_mouse_pos = None
+        self._sub_state = "HOVER"
+        self._detected_rect = None
+        self._last_detect_pos = QPoint()
         self._state = "CAPTURING"
         self.update()
 
