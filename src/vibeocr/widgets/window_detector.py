@@ -34,6 +34,9 @@ class _Win32Bindings:
     def IsWindowVisible(self, hwnd: int) -> bool:
         return bool(user32.IsWindowVisible(hwnd))
 
+    def GetWindowRect(self, hwnd: int, rect: ctypes.wintypes.RECT) -> bool:
+        return bool(user32.GetWindowRect(hwnd, ctypes.byref(rect)))
+
 
 _win = _Win32Bindings()
 
@@ -98,4 +101,8 @@ class WindowDetector:
         raise NotImplementedError
 
     def _get_window_rect(self, hwnd: int) -> QRect | None:
-        raise NotImplementedError
+        rect = ctypes.wintypes.RECT()
+        result = _win.GetWindowRect(hwnd, rect)
+        if not result:
+            return None
+        return QRect(rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top)

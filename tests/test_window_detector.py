@@ -1,6 +1,10 @@
 """Tests for WindowDetector."""
 
+import ctypes.wintypes
+
 import pytest
+
+from PySide6.QtCore import QRect
 
 from vibeocr.widgets.window_detector import WindowDetector
 
@@ -23,6 +27,16 @@ class _MockWin32:
 
     def IsWindowVisible(self, hwnd):
         return self._kwargs.get("is_visible", False)
+
+    def GetWindowRect(self, hwnd, rect):
+        result = self._kwargs.get("get_window_rect_result")
+        if result is None:
+            return False
+        rect.left = result.left
+        rect.top = result.top
+        rect.right = result.right
+        rect.bottom = result.bottom
+        return True
 
 
 class TestWindowDetectorInit:
@@ -58,3 +72,21 @@ class TestHitTest:
         )
         result = detector._hit_test((100, 200))
         assert result == 888
+
+
+class TestGetWindowRect:
+    def test_returns_rect_for_valid_hwnd(self, detector, monkeypatch):
+        monkeypatch.setattr(
+            "vibeocr.widgets.window_detector._win",
+            _MockWin32(get_window_rect_result=ctypes.wintypes.RECT(100, 200, 500, 400)),
+        )
+        result = detector._get_window_rect(888)
+        assert result == QRect(100, 200, 400, 200)
+
+    def test_returns_none_for_invalid_hwnd(self, detector, monkeypatch):
+        monkeypatch.setattr(
+            "vibeocr.widgets.window_detector._win",
+            _MockWin32(get_window_rect_result=None),
+        )
+        result = detector._get_window_rect(0)
+        assert result is None
