@@ -4,7 +4,7 @@ import ctypes.wintypes
 
 import pytest
 
-from PySide6.QtCore import QRect
+from PySide6.QtCore import QPoint, QRect
 
 from vibeocr.widgets.window_detector import WindowDetector
 
@@ -109,3 +109,39 @@ class TestGetWindowRect:
         )
         result = detector._get_window_rect(0)
         assert result is None
+
+
+class TestDetectAt:
+    def test_returns_logical_rect_with_dpr_and_offset(self, detector, monkeypatch):
+        detector._try_accessible = lambda pos: QRect(200, 400, 400, 400)
+        detector._hit_test = lambda pos: 888
+        pos = QPoint(50, 100)
+        result = detector.detect_at(pos, dpr=2.0, virtual_offset=QPoint(0, 0))
+        assert result is not None
+        assert result.x() == 100
+        assert result.y() == 200
+        assert result.width() == 200
+        assert result.height() == 200
+
+    def test_returns_none_when_no_window(self, detector, monkeypatch):
+        detector._hit_test = lambda pos: None
+        result = detector.detect_at(QPoint(50, 50), dpr=1.0, virtual_offset=QPoint(0, 0))
+        assert result is None
+
+
+class TestDetectAtCache:
+    def test_caches_result(self, detector, monkeypatch):
+        detector._try_accessible = lambda pos: QRect(100, 200, 400, 200)
+        detector._hit_test = lambda pos: 888
+        pos = QPoint(50, 50)
+        r1 = detector.detect_at(pos, 1.0, QPoint(0, 0))
+        assert detector._cached_hwnd == 888
+        assert detector._cached_rect == r1
+
+    def test_cache_cleared_on_miss(self, detector):
+        detector._cached_hwnd = 999
+        detector._cached_rect = QRect(10, 10, 100, 100)
+        detector._hit_test = lambda pos: None
+        detector.detect_at(QPoint(50, 50), 1.0, QPoint(0, 0))
+        assert detector._cached_hwnd is None
+        assert detector._cached_rect is None
