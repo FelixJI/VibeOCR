@@ -63,7 +63,7 @@ class ScreenCaptureOverlay(QWidget):
     ZOOM_LEVELS = [2, 4, 8]
 
     # 面板定位阈值
-    _PANEL_MIN_WIDTH = 200
+    _PANEL_MIN_WIDTH = 120
     _TOOLBAR_MIN_HEIGHT = 48
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -610,7 +610,7 @@ class ScreenCaptureOverlay(QWidget):
         positions = self._calc_panel_positions(selection)
         side = positions["panel_side"]
 
-        panel_width = 200
+        panel_width = 120
 
         # 紧凑高度：仅够容纳按钮
         if self._recognition_panel:
