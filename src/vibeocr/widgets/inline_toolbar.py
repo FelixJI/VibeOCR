@@ -22,6 +22,7 @@ from vibeocr.widgets.editor.tool_properties_bar import ToolPropertiesBar
 
 # 工具按钮定义：(label, EditTool)
 _TOOL_DEFS: list[tuple[str, EditTool]] = [
+    ("选择", EditTool.SELECT),
     ("打码", EditTool.MOSAIC),
     ("模糊", EditTool.BLUR),
     ("矩形", EditTool.RECT),
