@@ -226,13 +226,34 @@ class ScreenCaptureOverlay(QWidget):
             )
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
-        """CAPTURING: 鼠标按下开始选区"""
+        """CAPTURING: HOVER 点击选中窗口 / DRAG 开始拖拽"""
         if self._state != "CAPTURING":
             return
-        if event.button() == Qt.MouseButton.LeftButton:
-            self._start_pos = event.pos()
-            self._selection_rect = QRect(self._start_pos, self._start_pos)
-            self.update()
+        if event.button() != Qt.MouseButton.LeftButton:
+            return
+
+        if self._sub_state == "HOVER" and self._detected_rect is not None:
+            # 检测到窗口，直接选中
+            self._selection_rect = self._detected_rect
+            self.releaseMouse()
+            dpr = self._device_pixel_ratio
+            sel = self._selection_rect
+            physical_rect = QRect(
+                int(sel.x() * dpr),
+                int(sel.y() * dpr),
+                int(sel.width() * dpr),
+                int(sel.height() * dpr),
+            )
+            captured = self._screen_pixmap.copy(physical_rect)
+            self._captured_pixmap = captured
+            self._enter_editing()
+            return
+
+        # 无检测窗口或 DRAG 模式：切换到 DRAG
+        self._sub_state = "DRAG"
+        self._start_pos = event.pos()
+        self._selection_rect = QRect(self._start_pos, self._start_pos)
+        self.update()
 
     def mouseMoveEvent(self, event: QMouseEvent) -> None:
         """CAPTURING: 鼠标移动 — HOVER 检测或 DRAG 更新选区"""

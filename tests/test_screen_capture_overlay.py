@@ -1,6 +1,6 @@
 """Tests for ScreenCaptureOverlay."""
 
-from PySide6.QtCore import QPoint, QRect
+from PySide6.QtCore import QPoint, QRect, Qt
 from PySide6.QtGui import QPixmap
 
 from vibeocr.widgets.screen_capture_overlay import ScreenCaptureOverlay
@@ -180,3 +180,50 @@ def _make_mouse_event(pos: QPoint) -> MagicMock:
     event = MagicMock()
     event.pos.return_value = pos
     return event
+
+
+def _make_mouse_press_event(pos: QPoint, button) -> MagicMock:
+    event = MagicMock()
+    event.pos.return_value = pos
+    event.button.return_value = button
+    return event
+
+
+class TestMousePressSubState:
+    def test_hover_with_detected_rect_selects_and_enters_editing(self, qapp):
+        overlay = ScreenCaptureOverlay()
+        overlay._state = "CAPTURING"
+        overlay._sub_state = "HOVER"
+        overlay._screen_pixmap = QPixmap(1920, 1080)
+        overlay._virtual_geometry = QRect(0, 0, 1920, 1080)
+        overlay._device_pixel_ratio = 1.0
+        overlay._detected_rect = QRect(100, 100, 400, 300)
+
+        event = _make_mouse_press_event(QPoint(200, 200), Qt.MouseButton.LeftButton)
+        overlay.mousePressEvent(event)
+
+        assert overlay._selection_rect == QRect(100, 100, 400, 300)
+        assert overlay._state == "EDITING"
+
+    def test_hover_without_detected_rect_switches_to_drag(self, qapp):
+        overlay = ScreenCaptureOverlay()
+        overlay._state = "CAPTURING"
+        overlay._sub_state = "HOVER"
+        overlay._detected_rect = None
+
+        event = _make_mouse_press_event(QPoint(200, 200), Qt.MouseButton.LeftButton)
+        overlay.mousePressEvent(event)
+
+        assert overlay._sub_state == "DRAG"
+        assert overlay._start_pos == QPoint(200, 200)
+
+    def test_right_button_ignored(self, qapp):
+        overlay = ScreenCaptureOverlay()
+        overlay._state = "CAPTURING"
+        overlay._sub_state = "HOVER"
+
+        event = _make_mouse_press_event(QPoint(200, 200), Qt.MouseButton.RightButton)
+        overlay.mousePressEvent(event)
+
+        assert overlay._sub_state == "HOVER"
+        assert overlay._start_pos is None
