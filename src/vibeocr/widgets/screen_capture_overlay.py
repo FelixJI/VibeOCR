@@ -156,6 +156,11 @@ class ScreenCaptureOverlay(QWidget):
         self.setGeometry(self._virtual_geometry)
         self.setMouseTracking(True)
 
+        # 初始化窗口检测器
+        hwnd = int(self.winId())
+        if WindowDetector is not None:
+            self._window_detector = WindowDetector(hwnd)
+
         self.show()
         self.activateWindow()
         self.grabMouse()

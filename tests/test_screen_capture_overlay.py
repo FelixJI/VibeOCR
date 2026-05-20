@@ -88,3 +88,16 @@ class TestSubState:
         overlay._reset_capturing()
         assert overlay._sub_state == "HOVER"
         assert overlay._detected_rect is None
+
+
+class TestStartCaptureInit:
+    def test_creates_window_detector_with_overlay_hwnd(self, qapp):
+        overlay = ScreenCaptureOverlay()
+        overlay._virtual_geometry = QRect(0, 0, 100, 100)
+        overlay._device_pixel_ratio = 1.0
+        overlay.show()
+        hwnd = int(overlay.winId())
+        overlay.start_capture()
+        assert overlay._window_detector is not None
+        assert overlay._window_detector._overlay_hwnd == hwnd
+        overlay.hide()
