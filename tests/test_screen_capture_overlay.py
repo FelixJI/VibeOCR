@@ -101,3 +101,82 @@ class TestStartCaptureInit:
         assert overlay._window_detector is not None
         assert overlay._window_detector._overlay_hwnd == hwnd
         overlay.hide()
+
+
+from unittest.mock import MagicMock
+
+
+class TestMouseMoveHoverDetect:
+    def test_hover_calls_detector_and_sets_detected_rect(self, qapp):
+        overlay = ScreenCaptureOverlay()
+        overlay._state = "CAPTURING"
+        overlay._sub_state = "HOVER"
+        overlay._virtual_geometry = QRect(0, 0, 1920, 1080)
+        overlay._device_pixel_ratio = 1.0
+
+        detector = MagicMock()
+        detector.detect_at.return_value = QRect(100, 100, 400, 300)
+        overlay._window_detector = detector
+
+        event = _make_mouse_event(QPoint(200, 200))
+        overlay.mouseMoveEvent(event)
+
+        detector.detect_at.assert_called_once_with(
+            QPoint(200, 200), 1.0, overlay._virtual_geometry.topLeft()
+        )
+        assert overlay._detected_rect == QRect(100, 100, 400, 300)
+
+    def test_hover_sets_detected_rect_none_when_no_detection(self, qapp):
+        overlay = ScreenCaptureOverlay()
+        overlay._state = "CAPTURING"
+        overlay._sub_state = "HOVER"
+        overlay._virtual_geometry = QRect(0, 0, 1920, 1080)
+        overlay._device_pixel_ratio = 1.0
+
+        detector = MagicMock()
+        detector.detect_at.return_value = None
+        overlay._window_detector = detector
+
+        event = _make_mouse_event(QPoint(200, 200))
+        overlay.mouseMoveEvent(event)
+
+        assert overlay._detected_rect is None
+
+    def test_drag_substate_uses_existing_logic(self, qapp):
+        overlay = ScreenCaptureOverlay()
+        overlay._state = "CAPTURING"
+        overlay._sub_state = "DRAG"
+        overlay._start_pos = QPoint(10, 10)
+        overlay._virtual_geometry = QRect(0, 0, 1920, 1080)
+        overlay._device_pixel_ratio = 1.0
+
+        detector = MagicMock()
+        overlay._window_detector = detector
+
+        event = _make_mouse_event(QPoint(200, 200))
+        overlay.mouseMoveEvent(event)
+
+        assert overlay._selection_rect == QRect(10, 10, 191, 191)
+        detector.detect_at.assert_not_called()
+
+    def test_hover_skips_detect_when_distance_too_small(self, qapp):
+        overlay = ScreenCaptureOverlay()
+        overlay._state = "CAPTURING"
+        overlay._sub_state = "HOVER"
+        overlay._virtual_geometry = QRect(0, 0, 1920, 1080)
+        overlay._device_pixel_ratio = 1.0
+        overlay._last_detect_pos = QPoint(200, 200)
+
+        detector = MagicMock()
+        overlay._window_detector = detector
+
+        event = _make_mouse_event(QPoint(201, 201))
+        overlay.mouseMoveEvent(event)
+
+        detector.detect_at.assert_not_called()
+
+
+def _make_mouse_event(pos: QPoint) -> MagicMock:
+    event = MagicMock()
+    event.pos.return_value = pos
+    return event

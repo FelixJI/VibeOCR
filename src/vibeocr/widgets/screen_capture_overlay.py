@@ -235,13 +235,28 @@ class ScreenCaptureOverlay(QWidget):
             self.update()
 
     def mouseMoveEvent(self, event: QMouseEvent) -> None:
-        """CAPTURING: 鼠标移动更新选区和放大镜"""
+        """CAPTURING: 鼠标移动 — HOVER 检测或 DRAG 更新选区"""
         if self._state != "CAPTURING":
             return
         self._current_mouse_pos = event.pos()
-        if self._start_pos:
-            self._end_pos = event.pos()
-            self._selection_rect = QRect(self._start_pos, self._end_pos).normalized()
+
+        if self._sub_state == "DRAG":
+            if self._start_pos:
+                self._end_pos = event.pos()
+                self._selection_rect = QRect(self._start_pos, self._end_pos).normalized()
+            self.update()
+            return
+
+        # HOVER: 窗口检测
+        if self._window_detector:
+            delta = event.pos() - self._last_detect_pos
+            if delta.x() * delta.x() + delta.y() * delta.y() >= 9:
+                self._detected_rect = self._window_detector.detect_at(
+                    event.pos(),
+                    self._device_pixel_ratio,
+                    self._virtual_geometry.topLeft(),
+                )
+                self._last_detect_pos = event.pos()
         self.update()
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
