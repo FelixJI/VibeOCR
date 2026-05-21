@@ -173,3 +173,76 @@ class PdfService:
             ))
             layer_index += 1
         return layers
+
+    def rotate_pages(self, page_indices: list[int], angle: int) -> None:
+        """旋转指定页面。"""
+        if self._doc is None or self._pdf_document is None:
+            return
+        for idx in page_indices:
+            if 0 <= idx < self._doc.page_count:
+                page = self._doc[idx]
+                page.set_rotation((page.rotation + angle) % 360)
+                self._pdf_document.pages[idx].rotation = page.rotation
+        self._pdf_document.is_modified = True
+        self._invalidate_thumbnails(page_indices)
+
+    def rotate_all_pages(self, angle: int) -> None:
+        if self._doc is None or self._pdf_document is None:
+            return
+        self.rotate_pages(list(range(self._doc.page_count)), angle)
+
+    def delete_pages(self, page_indices: list[int]) -> None:
+        """删除指定页面（按索引降序删除）。"""
+        if self._doc is None or self._pdf_document is None:
+            return
+        # 先从模型中移除对应页面（保留原始 page_index）
+        remaining = [p for i, p in enumerate(self._pdf_document.pages) if i not in page_indices]
+        for idx in sorted(page_indices, reverse=True):
+            if 0 <= idx < self._doc.page_count:
+                self._doc.delete_page(idx)
+        self._pdf_document.pages = remaining
+        self._pdf_document.is_modified = True
+
+    def insert_blank_page(self, after_index: int, width: float = 612, height: float = 792) -> None:
+        """在指定页面后插入空白页。"""
+        if self._doc is None or self._pdf_document is None:
+            return
+        insert_at = after_index + 1
+        self._doc.new_page(pno=insert_at, width=width, height=height)
+        self._pdf_document.is_modified = True
+        self._build_page_infos()
+
+    def insert_pages_from(self, source_path: str, after_index: int) -> None:
+        """从另一个 PDF 插入所有页面到指定位置之后。"""
+        if self._doc is None or self._pdf_document is None:
+            return
+        src = fitz.open(source_path)
+        insert_at = after_index + 1
+        self._doc.insert_pdf(src, start_at=insert_at)
+        src.close()
+        self._pdf_document.is_modified = True
+        self._build_page_infos()
+
+    def move_page(self, from_index: int, to_index: int) -> None:
+        """移动页面位置。"""
+        if self._doc is None or self._pdf_document is None:
+            return
+        if from_index == to_index:
+            return
+        # 先保存要移动的页面信息（保留原始 page_index）
+        page_info = self._pdf_document.pages[from_index]
+        self._doc.move_page(from_index, to_index)
+        # 手动调整模型中的页面列表
+        pages = list(self._pdf_document.pages)
+        pages.pop(from_index)
+        pages.insert(to_index, page_info)
+        self._pdf_document.pages = pages
+        self._pdf_document.is_modified = True
+
+    def _invalidate_thumbnails(self, page_indices: list[int]) -> None:
+        """清除指定页面的缩略图缓存。"""
+        if self._pdf_document is None:
+            return
+        for idx in page_indices:
+            if 0 <= idx < len(self._pdf_document.pages):
+                self._pdf_document.pages[idx].thumbnail = None

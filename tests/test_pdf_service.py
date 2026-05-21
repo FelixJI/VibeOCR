@@ -52,7 +52,6 @@ class TestPdfServiceOpen:
 
 
 class TestPdfServiceSave:
-    @pytest.mark.skip(reason="rotate_pages added in Task 4")
     def test_save(self, pdf_service, test_pdf, tmp_path):
         pdf_service.open(str(test_pdf))
         pdf_service.rotate_pages([0], 90)
@@ -64,7 +63,6 @@ class TestPdfServiceSave:
         assert verify[0].rotation == 90
         verify.close()
 
-    @pytest.mark.skip(reason="rotate_pages added in Task 4")
     def test_save_creates_backup(self, pdf_service, test_pdf):
         pdf_service.open(str(test_pdf))
         pdf_service.rotate_pages([0], 90)
@@ -91,4 +89,55 @@ class TestPdfServiceRender:
         assert img_array is not None
         assert img_array.shape[0] > 0
         assert img_array.shape[2] == 3  # RGB
+        pdf_service.close()
+
+
+class TestPdfServiceRotate:
+    def test_rotate_single_page(self, pdf_service, test_pdf):
+        pdf_service.open(str(test_pdf))
+        pdf_service.rotate_pages([0], 90)
+        assert pdf_service.document.pages[0].rotation == 90
+        assert pdf_service.document.is_modified is True
+        pdf_service.close()
+
+    def test_rotate_all_pages(self, pdf_service, test_pdf):
+        pdf_service.open(str(test_pdf))
+        pdf_service.rotate_all_pages(90)
+        for page in pdf_service.document.pages:
+            assert page.rotation == 90
+        pdf_service.close()
+
+
+class TestPdfServiceDelete:
+    def test_delete_page(self, pdf_service, test_pdf):
+        pdf_service.open(str(test_pdf))
+        assert pdf_service.document.page_count == 3
+        pdf_service.delete_pages([1])
+        assert pdf_service.document.page_count == 2
+        assert pdf_service.document.pages[0].page_index == 0
+        assert pdf_service.document.pages[1].page_index == 2
+        pdf_service.close()
+
+
+class TestPdfServiceInsert:
+    def test_insert_blank_page(self, pdf_service, test_pdf):
+        pdf_service.open(str(test_pdf))
+        pdf_service.insert_blank_page(after_index=0)
+        assert pdf_service.document.page_count == 4
+        assert pdf_service.document.pages[1].rotation == 0
+        pdf_service.close()
+
+    def test_insert_from_another_pdf(self, pdf_service, test_pdf, tmp_path):
+        other_pdf = _create_test_pdf(tmp_path / "other.pdf", num_pages=2)
+        pdf_service.open(str(test_pdf))
+        pdf_service.insert_pages_from(str(other_pdf), after_index=0)
+        assert pdf_service.document.page_count == 5
+        pdf_service.close()
+
+
+class TestPdfServiceMove:
+    def test_move_page(self, pdf_service, test_pdf):
+        pdf_service.open(str(test_pdf))
+        pdf_service.move_page(0, 2)
+        assert pdf_service.document.pages[2].page_index == 0
         pdf_service.close()
