@@ -190,7 +190,7 @@ class PdfTab(QWidget):
         if self._service.is_open():
             self._confirm_close()
         try:
-            doc = self._service.open(path)
+            self._service.open(path)
         except (FileNotFoundError, RuntimeError) as e:
             QMessageBox.warning(self, "打开失败", str(e))
             return
@@ -391,6 +391,7 @@ class PdfTab(QWidget):
         pixmap = self._service.render_page(page_index, dpi=150)
         if self._preview_window is None:
             self._preview_window = PdfPreviewWindow()
+        assert self._preview_window is not None
         self._preview_window.set_page_pixmap(pixmap)
         self._preview_window.show()
         self._preview_window.raise_()
@@ -446,7 +447,8 @@ class PdfTab(QWidget):
                 continue
             try:
                 from vibeocr.models.ocr_options import OCROptions
-                result = self._ocr_service.recognize(img_array, OCROptions())
+                ocr = self._ocr_service
+                result = ocr.recognize(img_array, OCROptions())
                 self._service.add_text_layer(page_idx, result)
             except Exception as e:
                 logger.error("OCR 失败 (页 %d): %s", page_idx, e)
@@ -488,6 +490,7 @@ class PdfTab(QWidget):
         pixmap = self._service.render_page(page_idx, dpi=150)
         if self._preview_window is None:
             self._preview_window = PdfPreviewWindow()
+        assert self._preview_window is not None
         self._preview_window.set_page_pixmap(pixmap)
         self._preview_window._canvas.set_highlight_layers(page_info.text_layers)
         self._preview_window.show()
