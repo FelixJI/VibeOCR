@@ -7,7 +7,7 @@ dependencies = [
     # 运行时依赖
     "pyside6>=6.11.1",
     "pillow>=12.2.0",
-    "numpy>=2.4.5",
+    "numpy>=1.24,<2.4",
     "markdown>=3.10.2",
     "qasync>=0.28.0",
     "paddlepaddle-gpu>=3.3.1",
@@ -19,7 +19,7 @@ dependencies = [
     "nvidia-cusolver>=12.2.0.1",
     "nvidia-cusparse>=12.7.10.1",
     "nvidia-cuda-runtime>=13.2.75",
-    "paddlex[ocr]>=3.4.3",
+    "paddleocr>=3.5.0",
     "httpx>=0.28.1",
     "mineru[core]>=3.1.14",
     "pymupdf>=1.25.0",

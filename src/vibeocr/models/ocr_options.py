@@ -22,10 +22,22 @@ class OCROptions:
     # 管道类型
     pipeline: OCRPipeline = OCRPipeline.OCR
 
-    # === 通用预处理选项 ===
+    # === 通用预处理选项（OCR + PP-StructureV3 共享）===
     use_doc_orientation_classify: bool = True  # 文档方向分类（0/90/180/270度）
     use_doc_unwarping: bool = True  # 文档扭曲矫正
     use_textline_orientation: bool = False  # 文本行方向分类（0/180度）
+
+    # === PP-StructureV3 专用 ===
+    use_table_recognition: bool = True  # 表格识别
+    use_formula_recognition: bool = True  # 公式识别
+    use_seal_recognition: bool = False  # 印章识别
+    use_chart_recognition: bool = False  # 图表识别
+
+    # === PaddleOCR-VL 专用 ===
+    vl_use_layout_detection: bool = True  # 版面检测
+    vl_use_chart_recognition: bool = False  # 图表识别
+    vl_use_seal_recognition: bool = False  # 印章识别
+    use_ocr_for_image_block: bool = False  # 图片文字识别
 
     # === MineRU 文档解析选项 ===
     parse_method: str = "auto"  # 解析方法: auto, txt, ocr
@@ -38,11 +50,6 @@ class OCROptions:
     start_page_id: int = 0
     end_page_id: int | None = None  # None 表示不限制
 
-    # === PaddleOCR-VL 文档解析选项 ===
-    vl_use_layout_detection: bool | None = None  # 版面检测（None=使用默认）
-    vl_use_chart_recognition: bool | None = None  # 图表识别
-    vl_use_seal_recognition: bool | None = None  # 印章识别
-
     def to_dict(self) -> dict[str, Any]:
         """转换为字典
 
@@ -54,6 +61,14 @@ class OCROptions:
             "use_doc_orientation_classify": self.use_doc_orientation_classify,
             "use_doc_unwarping": self.use_doc_unwarping,
             "use_textline_orientation": self.use_textline_orientation,
+            "use_table_recognition": self.use_table_recognition,
+            "use_formula_recognition": self.use_formula_recognition,
+            "use_seal_recognition": self.use_seal_recognition,
+            "use_chart_recognition": self.use_chart_recognition,
+            "vl_use_layout_detection": self.vl_use_layout_detection,
+            "vl_use_chart_recognition": self.vl_use_chart_recognition,
+            "vl_use_seal_recognition": self.vl_use_seal_recognition,
+            "use_ocr_for_image_block": self.use_ocr_for_image_block,
             "parse_method": self.parse_method,
             "backend": self.backend,
             "enable_formula": self.enable_formula,
@@ -61,9 +76,6 @@ class OCROptions:
             "lang_list": self.lang_list,
             "start_page_id": self.start_page_id,
             "end_page_id": self.end_page_id,
-            "vl_use_layout_detection": self.vl_use_layout_detection,
-            "vl_use_chart_recognition": self.vl_use_chart_recognition,
-            "vl_use_seal_recognition": self.vl_use_seal_recognition,
         }
 
     @classmethod
@@ -88,6 +100,14 @@ class OCROptions:
             use_doc_orientation_classify=data.get("use_doc_orientation_classify", True),
             use_doc_unwarping=data.get("use_doc_unwarping", True),
             use_textline_orientation=data.get("use_textline_orientation", False),
+            use_table_recognition=data.get("use_table_recognition", True),
+            use_formula_recognition=data.get("use_formula_recognition", True),
+            use_seal_recognition=data.get("use_seal_recognition", False),
+            use_chart_recognition=data.get("use_chart_recognition", False),
+            vl_use_layout_detection=data.get("vl_use_layout_detection", True),
+            vl_use_chart_recognition=data.get("vl_use_chart_recognition", False),
+            vl_use_seal_recognition=data.get("vl_use_seal_recognition", False),
+            use_ocr_for_image_block=data.get("use_ocr_for_image_block", False),
             parse_method=data.get("parse_method", "auto"),
             backend=data.get("backend", "hybrid-auto-engine"),
             enable_formula=data.get("enable_formula", True),
@@ -95,9 +115,6 @@ class OCROptions:
             lang_list=data.get("lang_list", []),
             start_page_id=data.get("start_page_id", 0),
             end_page_id=data.get("end_page_id", None),
-            vl_use_layout_detection=data.get("vl_use_layout_detection", None),
-            vl_use_chart_recognition=data.get("vl_use_chart_recognition", None),
-            vl_use_seal_recognition=data.get("vl_use_seal_recognition", None),
         )
 
     def copy(self, **updates) -> "OCROptions":

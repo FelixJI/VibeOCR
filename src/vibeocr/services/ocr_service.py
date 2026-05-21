@@ -127,7 +127,6 @@ class OCRService(metaclass=SingletonMeta):
     _lock = threading.Lock()
     _initialized = False
     _status_callback: Callable | None = None  # 状态回调函数
-    _source_configured = False  # 模型源是否已配置
 
     # 预加载相关状态
     _preload_progress_callback: Callable[[str, int, int], None] | None = (
@@ -158,16 +157,6 @@ class OCRService(metaclass=SingletonMeta):
             except Exception:
                 pass  # 忽略回调错误
 
-    @classmethod
-    def _ensure_source_configured(cls) -> None:
-        """确保模型下载源已配置（延迟调用）"""
-        if not cls._source_configured:
-            from vibeocr.env_manager import get_project_root
-            from vibeocr.network_detector import NetworkDetector
-
-            NetworkDetector(get_project_root()).paddlex_source_env
-            cls._source_configured = True
-
     def __init__(self):
         """初始化 OCR 服务
 
@@ -188,7 +177,6 @@ class OCRService(metaclass=SingletonMeta):
             cls._pipelines = {}
             cls._initialized = False
             cls._status_callback = None
-            cls._source_configured = False
             cls._preload_progress_callback = None
             cls._preloaded_pipelines = set()
             cls._is_preloading = False
@@ -436,58 +424,6 @@ class OCRService(metaclass=SingletonMeta):
         thread.start()
         return thread
 
-    @staticmethod
-    def _get_optimal_cpu_threads() -> int:
-        """动态检测 CPU 核心数并返回最优线程数
-
-        物理核心数优先；若无法检测则取逻辑核心数的 1/4（下限 4，上限 16）。
-        """
-        try:
-            import multiprocessing
-
-            logical = multiprocessing.cpu_count() or 4
-        except Exception:
-            logical = 4
-        try:
-            import psutil
-
-            physical = psutil.cpu_count(logical=False)
-            if physical and physical >= 2:
-                return min(max(physical, 4), 16)
-        except ImportError:
-            pass
-        # 无 psutil，取逻辑核心的 1/4
-        return min(max(logical // 4, 4), 16)
-
-    @staticmethod
-    def _try_create_with_hpip(
-        create_pipeline, pipeline_name: str, device: str, pp_option
-    ):
-        """尝试使用 HPIP（高性能推理插件）创建管道
-
-        HPIP 需要 ultra-infer 包，仅 Linux + Python <= 3.12 可用。
-        失败时静默回退到普通推理。
-        """
-        try:
-            from paddlex.utils.deps import is_hpip_available
-
-            if not is_hpip_available():
-                _logger.debug("[HPIP] ultra-infer 不可用，跳过")
-                return None
-
-            pipeline = create_pipeline(
-                pipeline=pipeline_name,
-                device=device,
-                pp_option=pp_option,
-                use_hpip=True,
-                hpi_config={"backend": "onnxruntime"},
-            )
-            _logger.debug("[HPIP] 高性能推理管道创建成功")
-            return pipeline
-        except Exception as e:
-            _logger.debug(f"[HPIP] 创建失败，回退到普通推理: {e}")
-            return None
-
     _cuda_dll_registered = False
 
     @classmethod
@@ -582,84 +518,38 @@ class OCRService(metaclass=SingletonMeta):
         from pathlib import Path
         return get_project_root()
 
-    def _create_pipeline(self, pipeline_name: str, device: str = "cpu") -> Any:
-        """创建指定管道"""
-        # 延迟导入: 确保模型源已配置（首次使用时才执行网络检测）
-        _logger.debug("[_create_pipeline] %s: 开始，配置模型源...", pipeline_name)
-        self._ensure_source_configured()
+    def _create_pipeline(self, pipeline: OCRPipeline) -> Any:
+        """创建指定管道（使用 PaddleOCR 3.x API）"""
+        _logger.debug("[_create_pipeline] %s: 开始...", pipeline.value)
+        device = self._get_device()
+        display_name = pipeline.display_name
 
-        # PaddleOCR-VL 枚举值映射到 PaddleX 的 PaddleOCR-VL-1.5 管道名
-        _VL_PIPELINE_MAP = {"PaddleOCR-VL": "PaddleOCR-VL-1.5"}
-        actual_pipeline_name = _VL_PIPELINE_MAP.get(pipeline_name, pipeline_name)
-
-        # 延迟导入: PaddleX（这是启动慢的主要原因，~30s）
-        _logger.debug("[_create_pipeline] %s: 导入 PaddleX...", pipeline_name)
-        from paddlex import create_pipeline
-        from paddlex.inference.utils.pp_option import PaddlePredictorOption
-
-        # 获取管道显示名称
-        display_name = pipeline_name
-        for p in OCRPipeline:
-            if p.value == pipeline_name:
-                display_name = p.display_name
-                break
-
-        # 检查模型是否已缓存（快速检查，避免重复提示）
-        _logger.debug("[_create_pipeline] %s: 检查模型缓存...", pipeline_name)
-        models_cached = is_pipeline_ever_succeeded(pipeline_name, self._get_project_root())
-
+        models_cached = is_pipeline_ever_succeeded(pipeline.value, self._get_project_root())
         if not models_cached:
-            _logger.debug(
-                "[_create_pipeline] %s: 模型未缓存，需要下载，设备=%s",
-                pipeline_name, device,
-            )
             self._notify_status(
                 "模型初始化",
                 f"正在初始化 {display_name} 管道（首次使用需要下载模型）...",
             )
+
+        if pipeline == OCRPipeline.OCR:
+            from paddleocr import PaddleOCR
+            instance = PaddleOCR(device=device)
+        elif pipeline == OCRPipeline.PP_STRUCTURE_V3:
+            from paddleocr import PPStructureV3
+            instance = PPStructureV3(device=device)
+        elif pipeline == OCRPipeline.PADDLEOCR_VL:
+            from paddleocr import PaddleOCRVL
+            instance = PaddleOCRVL(device=device)
         else:
-            _logger.debug(f"管道 {display_name} 模型已存在，直接加载...")
+            msg = f"不支持的管道类型: {pipeline}"
+            raise ValueError(msg)
 
-        # 构建 pp_option：动态 CPU 线程数 + 禁用 new IR
-        cpu_threads = self._get_optimal_cpu_threads()
-        _logger.debug(f"[推理优化] CPU 线程数: {cpu_threads}")
-
-        pp_option = PaddlePredictorOption()
-        pp_option.enable_new_ir = False
-        pp_option.run_mode = "paddle"
-        pp_option.cpu_threads = cpu_threads
-
-        # 尝试 HPIP 加速（需要 ultra-infer）
-        _logger.debug(
-            "[_create_pipeline] %s: 尝试 HPIP 加速，设备=%s...",
-            pipeline_name, device,
-        )
-        pipeline = self._try_create_with_hpip(
-            create_pipeline, actual_pipeline_name, device, pp_option
-        )
-        if pipeline is not None:
-            _logger.debug("管道 %s (HPIP) 初始化于设备: %s", pipeline_name, device)
-            if not models_cached:
-                self._notify_status("模型初始化", f"{display_name} 管道初始化完成")
-            return pipeline
-
-        # 普通推理路径
-        _logger.debug(
-            "[_create_pipeline] %s: 调用 create_pipeline()，设备=%s ...",
-            pipeline_name, device,
-        )
-        pipeline = create_pipeline(
-            pipeline=actual_pipeline_name,
-            device=device,
-            pp_option=pp_option,
-        )
-
-        _logger.debug("管道 %s 初始化于设备: %s (线程: %d)", pipeline_name, device, cpu_threads)
+        _logger.debug("管道 %s 初始化于设备: %s", pipeline.value, device)
 
         if not models_cached:
             self._notify_status("模型初始化", f"{display_name} 管道初始化完成")
 
-        return pipeline
+        return instance
 
     def get_pipeline(self, pipeline: OCRPipeline) -> Any:
         """延迟加载指定管道 (线程安全)"""
@@ -669,16 +559,11 @@ class OCRService(metaclass=SingletonMeta):
             with self._lock:
                 if pipeline_name not in self._pipelines:  # 双重检查
                     self._setup_cuda_dll_path()
-                    device = self._get_device()
                     _logger.debug(
-                        "[get_pipeline] 创建管道 %s，设备=%s，"
-                        "已加载管道: %s",
-                        pipeline_name, device,
-                        list(self._pipelines.keys()),
+                        "[get_pipeline] 创建管道 %s，已加载管道: %s",
+                        pipeline_name, list(self._pipelines.keys()),
                     )
-                    self._pipelines[pipeline_name] = self._create_pipeline(
-                        pipeline_name, device
-                    )
+                    self._pipelines[pipeline_name] = self._create_pipeline(pipeline)
                     _logger.debug("[get_pipeline] 管道 %s 创建完成", pipeline_name)
         return self._pipelines[pipeline_name]
 
@@ -727,10 +612,8 @@ class OCRService(metaclass=SingletonMeta):
         try:
             if actual_options.pipeline == OCRPipeline.OCR:
                 result = self._recognize_ocr(image, actual_options)
-            elif actual_options.pipeline == OCRPipeline.TABLE_RECOGNITION:
-                result = self._recognize_table(image, actual_options)
-            elif actual_options.pipeline == OCRPipeline.FORMULA_RECOGNITION:
-                result = self._recognize_formula(image, actual_options)
+            elif actual_options.pipeline == OCRPipeline.PP_STRUCTURE_V3:
+                result = self._recognize_structure(image, actual_options)
             elif actual_options.pipeline == OCRPipeline.PADDLEOCR_VL:
                 result = self._recognize_paddlocr_vl(image, actual_options)
             else:
@@ -753,7 +636,7 @@ class OCRService(metaclass=SingletonMeta):
 
             # 标记管道识别成功
             pipeline_val = actual_options.pipeline.value
-            if pipeline_val in ("OCR", "table_recognition", "formula_recognition", "PaddleOCR-VL"):
+            if pipeline_val in ("OCR", "PP-StructureV3", "PaddleOCR-VL"):
                 try:
                     mark_pipeline_success(pipeline_val, self._get_project_root())
                 except Exception:
@@ -791,145 +674,24 @@ class OCRService(metaclass=SingletonMeta):
         _logger.debug(f"[_recognize_ocr] 结果处理完成: {len(result.raw_text)} 字符")
         return result
 
-    def _recognize_table(
+    def _recognize_structure(
         self,
         image: Image.Image | np.ndarray | str,
         options: OCROptions,
     ) -> OCRResult:
-        """表格识别"""
-        pipeline = self.get_pipeline(OCRPipeline.TABLE_RECOGNITION)
+        """PP-StructureV3 文档结构分析"""
+        pipeline = self.get_pipeline(OCRPipeline.PP_STRUCTURE_V3)
         output = pipeline.predict(
             input=image,
             use_doc_orientation_classify=options.use_doc_orientation_classify,
             use_doc_unwarping=options.use_doc_unwarping,
+            use_textline_orientation=options.use_textline_orientation,
+            use_table_recognition=options.use_table_recognition,
+            use_formula_recognition=options.use_formula_recognition,
+            use_seal_recognition=options.use_seal_recognition,
+            use_chart_recognition=options.use_chart_recognition,
         )
-
-        output_list = list(output)
-
-        text_with_scores: list[tuple[str, float]] = []
-        text_blocks: list[TextBlock] = []
-        content_list: list[dict[str, Any]] = []
-
-        for res in output_list:
-            if hasattr(res, "table_res_list"):
-                for table_res in res.table_res_list:
-                    cl_idx = len(content_list)
-                    pred_html = getattr(table_res, "pred_html", "")
-                    content_list.append({
-                        "type": "table",
-                        "table_body": _extract_table_html(pred_html) if pred_html else "",
-                    })
-                    if hasattr(table_res, "table_ocr_pred"):
-                        ocr_pred = table_res.table_ocr_pred
-                        if hasattr(ocr_pred, "rec_texts") and hasattr(
-                            ocr_pred, "rec_scores"
-                        ):
-                            rec_boxes = getattr(ocr_pred, "rec_boxes", None)
-                            for i, (text, score) in enumerate(
-                                zip(ocr_pred.rec_texts, ocr_pred.rec_scores, strict=False),
-                            ):
-                                if text:
-                                    fs = float(score)
-                                    text_with_scores.append((text, fs))
-                                    bbox = self._extract_bbox(rec_boxes, i) if rec_boxes is not None else None
-                                    text_blocks.append(TextBlock(text=text, score=fs, bbox=bbox, content_index=cl_idx))
-            elif isinstance(res, dict):
-                table_res_list = res.get("table_res_list", [])
-                for table_res in table_res_list:
-                    cl_idx = len(content_list)
-                    pred_html = table_res.get("pred_html", "")
-                    content_list.append({
-                        "type": "table",
-                        "table_body": _extract_table_html(pred_html) if pred_html else "",
-                    })
-                    ocr_pred = table_res.get("table_ocr_pred", {})
-                    rec_texts = ocr_pred.get("rec_texts", [])
-                    rec_scores = ocr_pred.get("rec_scores", [])
-                    rec_boxes = ocr_pred.get("rec_boxes")
-                    for i, (text, score) in enumerate(zip(rec_texts, rec_scores, strict=False)):
-                        if text:
-                            fs = float(score)
-                            text_with_scores.append((text, fs))
-                            bbox = self._extract_bbox(rec_boxes, i) if rec_boxes is not None else None
-                            text_blocks.append(TextBlock(text=text, score=fs, bbox=bbox, content_index=cl_idx))
-
-        raw_text = (
-            "\n".join(t for t, _ in text_with_scores) if text_with_scores else ""
-        )
-
-        # 从 content_list 中收集 HTML 表格并转为 Markdown
-        md_parts: list[str] = []
-        for cl in content_list:
-            table_html = cl.get("table_body", "")
-            if table_html:
-                md_parts.append(_html_table_to_markdown(table_html))
-        markdown_text = "\n\n".join(md_parts)
-
-        return self._build_ocr_result(
-            raw_text=raw_text,
-            markdown_text=markdown_text,
-            html_text="",
-            text_with_scores=text_with_scores,
-            pipeline_type="table_recognition",
-            text_blocks=text_blocks,
-            content_list=content_list,
-        )
-
-    def _recognize_formula(
-        self,
-        image: Image.Image | np.ndarray | str,
-        options: OCROptions,
-    ) -> OCRResult:
-        """公式识别"""
-        pipeline = self.get_pipeline(OCRPipeline.FORMULA_RECOGNITION)
-        output = pipeline.predict(
-            input=image,
-            use_doc_orientation_classify=options.use_doc_orientation_classify,
-            use_doc_unwarping=options.use_doc_unwarping,
-        )
-
-        output_list = list(output)
-
-        text_with_scores: list[tuple[str, float]] = []
-        markdown_parts: list[str] = []
-        text_blocks: list[TextBlock] = []
-        content_list: list[dict[str, Any]] = []
-
-        for res in output_list:
-            rec_boxes = None
-            if hasattr(res, "rec_formula"):
-                formula = res.rec_formula
-                rec_boxes = getattr(res, "rec_boxes", None)
-                if formula:
-                    cl_idx = len(content_list)
-                    markdown_parts.append(f"$$\n{formula}\n$$")
-                    text_with_scores.append((formula, 1.0))
-                    bbox = self._extract_bbox(rec_boxes, 0) if rec_boxes is not None else None
-                    text_blocks.append(TextBlock(text=formula, score=1.0, bbox=bbox, content_index=cl_idx))
-                    content_list.append({"type": "equation", "text": formula})
-            elif isinstance(res, dict):
-                formula = res.get("rec_formula", "")
-                rec_boxes = res.get("rec_boxes")
-                if formula:
-                    cl_idx = len(content_list)
-                    markdown_parts.append(f"$$\n{formula}\n$$")
-                    text_with_scores.append((formula, 1.0))
-                    bbox = self._extract_bbox(rec_boxes, 0) if rec_boxes is not None else None
-                    text_blocks.append(TextBlock(text=formula, score=1.0, bbox=bbox, content_index=cl_idx))
-                    content_list.append({"type": "equation", "text": formula})
-
-        markdown_text = "\n\n".join(markdown_parts)
-        raw_text = "\n".join(t for t, _ in text_with_scores)
-
-        return self._build_ocr_result(
-            raw_text=raw_text,
-            markdown_text=markdown_text,
-            html_text="",
-            text_with_scores=text_with_scores,
-            pipeline_type="formula_recognition",
-            text_blocks=text_blocks,
-            content_list=content_list,
-        )
+        return self._process_ocr_output_safe(output)
 
     def _recognize_paddlocr_vl(
         self,
@@ -940,18 +702,15 @@ class OCRService(metaclass=SingletonMeta):
         pipeline = self.get_pipeline(OCRPipeline.PADDLEOCR_VL)
 
         predict_kwargs: dict[str, Any] = {}
-        if hasattr(options, "vl_use_layout_detection") and options.vl_use_layout_detection is not None:
-            predict_kwargs["use_layout_detection"] = options.vl_use_layout_detection
-        if hasattr(options, "vl_use_chart_recognition") and options.vl_use_chart_recognition is not None:
-            predict_kwargs["use_chart_recognition"] = options.vl_use_chart_recognition
-        if hasattr(options, "vl_use_seal_recognition") and options.vl_use_seal_recognition is not None:
-            predict_kwargs["use_seal_recognition"] = options.vl_use_seal_recognition
+        predict_kwargs["use_layout_detection"] = options.vl_use_layout_detection
+        predict_kwargs["use_chart_recognition"] = options.vl_use_chart_recognition
+        predict_kwargs["use_seal_recognition"] = options.vl_use_seal_recognition
+        predict_kwargs["use_ocr_for_image_block"] = options.use_ocr_for_image_block
 
         output = pipeline.predict(input=image, **predict_kwargs)
         output_list = list(output)
 
         markdown_text = ""
-        raw_text = ""
         text_blocks: list[TextBlock] = []
         text_with_scores: list[tuple[str, float]] = []
         content_list: list[dict[str, Any]] = []
@@ -960,16 +719,37 @@ class OCRService(metaclass=SingletonMeta):
         for res in output_list:
             if hasattr(res, "markdown"):
                 markdown_text = getattr(res, "markdown", "") or markdown_text
+
             if hasattr(res, "content_list"):
                 cl = getattr(res, "content_list", None)
                 if cl:
                     content_list = list(cl) if not isinstance(cl, list) else cl
+
             if hasattr(res, "images"):
                 imgs = getattr(res, "images", None)
                 if imgs and isinstance(imgs, dict):
                     images.update(imgs)
 
-            if hasattr(res, "rec_texts") and hasattr(res, "rec_scores"):
+            # PaddleOCR-VL 3.x: parsing_res_list with block-level localization
+            if hasattr(res, "parsing_res_list"):
+                for block in res.parsing_res_list:
+                    bbox = self._extract_block_bbox(block.get("block_bbox"))
+                    text = block.get("block_content", "")
+                    label = block.get("block_label", "text")
+                    order = block.get("block_order", -1)
+                    score = self._get_block_score(res, block)
+
+                    if text:
+                        text_blocks.append(TextBlock(
+                            text=text, score=score, bbox=bbox,
+                            label=label, order=order,
+                        ))
+                        text_with_scores.append((text, score))
+                        content_list.append({
+                            "type": label, "text": text, "bbox": bbox,
+                        })
+            elif hasattr(res, "rec_texts") and hasattr(res, "rec_scores"):
+                # Fallback: legacy output format
                 rec_boxes = getattr(res, "rec_boxes", None)
                 for i, (text, score) in enumerate(
                     zip(res.rec_texts, res.rec_scores, strict=False)
@@ -980,8 +760,7 @@ class OCRService(metaclass=SingletonMeta):
                         bbox = self._extract_bbox(rec_boxes, i) if rec_boxes is not None else None
                         text_blocks.append(TextBlock(text=text, score=fs, bbox=bbox))
 
-        if not raw_text and text_with_scores:
-            raw_text = "\n".join(t for t, _ in text_with_scores)
+        raw_text = "\n".join(b.text for b in text_blocks)
         if not raw_text and markdown_text:
             raw_text = markdown_text
 
@@ -997,6 +776,33 @@ class OCRService(metaclass=SingletonMeta):
             text_blocks=text_blocks,
             content_list=content_list,
         )
+
+    @staticmethod
+    def _extract_block_bbox(block_bbox: list | tuple | None) -> tuple[float, float, float, float] | None:
+        """从 parsing_res_list 的 block_bbox 提取坐标"""
+        if not block_bbox:
+            return None
+        try:
+            if len(block_bbox) == 4 and all(isinstance(v, (int, float)) for v in block_bbox):
+                return (float(block_bbox[0]), float(block_bbox[1]),
+                        float(block_bbox[2]), float(block_bbox[3]))
+            if len(block_bbox) >= 2:
+                xs = [p[0] for p in block_bbox]
+                ys = [p[1] for p in block_bbox]
+                return (min(xs), min(ys), max(xs), max(ys))
+        except (TypeError, IndexError, ValueError):
+            pass
+        return None
+
+    @staticmethod
+    def _get_block_score(res, block: dict) -> float:
+        """从 parsing_res_list 结果中获取 block 的置信度"""
+        if hasattr(res, "layout_det_res") and hasattr(res.layout_det_res, "boxes"):
+            boxes = res.layout_det_res.boxes
+            order = block.get("block_order", -1)
+            if 0 <= order < len(boxes):
+                return float(boxes[order].get("score", 0.9))
+        return 0.9
 
     @staticmethod
     def _extract_bbox(rec_boxes, index: int) -> tuple[float, float, float, float] | None:

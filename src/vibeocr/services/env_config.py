@@ -43,13 +43,13 @@ CONFIG_DIR = "config"
 # 依赖包列表
 CORE_DEPENDENCIES = [
     "paddlepaddle",
-    "paddlex",
+    "paddleocr",
 ]
 
 # Paddle 依赖
 PADDLE_DEPENDENCIES = [
     "paddlepaddle",
-    "paddlex",
+    "paddleocr",
 ]
 
 # MinerU 依赖

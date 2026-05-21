@@ -113,12 +113,43 @@ class PreprocessOptionsWidget(QGroupBox):
         self._mineru_group = self._create_mineru_group()
         layout.addWidget(self._mineru_group)
 
+        # PP-StructureV3 选项组
+        self._pp_structure_group = self._create_pp_structure_group()
+        layout.addWidget(self._pp_structure_group)
+
         # PaddleOCR-VL 文档解析选项组
         self._paddlocr_vl_group = self._create_paddlocr_vl_group()
         layout.addWidget(self._paddlocr_vl_group)
 
         layout.addStretch()
         return widget
+
+    def _create_pp_structure_group(self) -> QGroupBox:
+        """创建 PP-StructureV3 选项组"""
+        group = QGroupBox("PP-StructureV3 选项")
+        layout = QVBoxLayout(group)
+
+        self._use_table_cb = QCheckBox("表格识别")
+        self._use_table_cb.setToolTip("启用表格结构识别（HTML 输出）")
+        self._use_table_cb.setChecked(True)
+        layout.addWidget(self._use_table_cb)
+
+        self._use_formula_cb = QCheckBox("公式识别")
+        self._use_formula_cb.setToolTip("启用数学公式识别（LaTeX 输出）")
+        self._use_formula_cb.setChecked(True)
+        layout.addWidget(self._use_formula_cb)
+
+        self._use_seal_cb = QCheckBox("印章识别")
+        self._use_seal_cb.setToolTip("启用印章文字识别")
+        self._use_seal_cb.setChecked(False)
+        layout.addWidget(self._use_seal_cb)
+
+        self._use_chart_cb = QCheckBox("图表识别")
+        self._use_chart_cb.setToolTip("启用图表内容识别")
+        self._use_chart_cb.setChecked(False)
+        layout.addWidget(self._use_chart_cb)
+
+        return group
 
     def _create_mineru_group(self) -> QGroupBox:
         """创建 MineRU 文档解析选项组"""
@@ -224,6 +255,11 @@ class PreprocessOptionsWidget(QGroupBox):
         self._vl_use_seal_cb.setChecked(False)
         layout.addWidget(self._vl_use_seal_cb)
 
+        self._vl_use_ocr_for_image_cb = QCheckBox("图片文字识别")
+        self._vl_use_ocr_for_image_cb.setToolTip("对检测到的图片区域进行 OCR 文字识别")
+        self._vl_use_ocr_for_image_cb.setChecked(False)
+        layout.addWidget(self._vl_use_ocr_for_image_cb)
+
         return group
 
     def _connect_signals(self):
@@ -249,6 +285,13 @@ class PreprocessOptionsWidget(QGroupBox):
         self._vl_use_layout_cb.toggled.connect(self._on_option_changed)
         self._vl_use_chart_cb.toggled.connect(self._on_option_changed)
         self._vl_use_seal_cb.toggled.connect(self._on_option_changed)
+        self._vl_use_ocr_for_image_cb.toggled.connect(self._on_option_changed)
+
+        # PP-StructureV3 选项
+        self._use_table_cb.toggled.connect(self._on_option_changed)
+        self._use_formula_cb.toggled.connect(self._on_option_changed)
+        self._use_seal_cb.toggled.connect(self._on_option_changed)
+        self._use_chart_cb.toggled.connect(self._on_option_changed)
 
     def _on_pipeline_changed(self):
         """管道选择变更"""
@@ -281,9 +324,14 @@ class PreprocessOptionsWidget(QGroupBox):
                 "lang_list",
                 "start_page_id",
                 "end_page_id",
+                "use_table_recognition",
+                "use_formula_recognition",
+                "use_seal_recognition",
+                "use_chart_recognition",
                 "vl_use_layout_detection",
                 "vl_use_chart_recognition",
                 "vl_use_seal_recognition",
+                "use_ocr_for_image_block",
             ]
         )
 
@@ -297,8 +345,12 @@ class PreprocessOptionsWidget(QGroupBox):
         self._mineru_group.setVisible(any(opt in supported for opt in mineru_opts))
 
         # PaddleOCR-VL 选项组可见性
-        vl_opts = ["vl_use_layout_detection", "vl_use_chart_recognition", "vl_use_seal_recognition"]
+        vl_opts = ["vl_use_layout_detection", "vl_use_chart_recognition", "vl_use_seal_recognition", "use_ocr_for_image_block"]
         self._paddlocr_vl_group.setVisible(any(opt in supported for opt in vl_opts))
+
+        # PP-StructureV3 选项组可见性
+        pp_struct_opts = ["use_table_recognition", "use_formula_recognition", "use_seal_recognition", "use_chart_recognition"]
+        self._pp_structure_group.setVisible(any(opt in supported for opt in pp_struct_opts))
 
         # 如果当前选项卡不可见，切换到第一个可见的
         for i in range(self._tab_widget.count()):
@@ -357,6 +409,16 @@ class PreprocessOptionsWidget(QGroupBox):
             kwargs["vl_use_chart_recognition"] = self._vl_use_chart_cb.isChecked()
         if is_option_supported(pipeline, "vl_use_seal_recognition"):
             kwargs["vl_use_seal_recognition"] = self._vl_use_seal_cb.isChecked()
+        if is_option_supported(pipeline, "use_ocr_for_image_block"):
+            kwargs["use_ocr_for_image_block"] = self._vl_use_ocr_for_image_cb.isChecked()
+        if is_option_supported(pipeline, "use_table_recognition"):
+            kwargs["use_table_recognition"] = self._use_table_cb.isChecked()
+        if is_option_supported(pipeline, "use_formula_recognition"):
+            kwargs["use_formula_recognition"] = self._use_formula_cb.isChecked()
+        if is_option_supported(pipeline, "use_seal_recognition"):
+            kwargs["use_seal_recognition"] = self._use_seal_cb.isChecked()
+        if is_option_supported(pipeline, "use_chart_recognition"):
+            kwargs["use_chart_recognition"] = self._use_chart_cb.isChecked()
         if is_option_supported(pipeline, "start_page_id"):
             kwargs["start_page_id"] = self._start_page_spin.value()
         if is_option_supported(pipeline, "end_page_id"):
@@ -388,6 +450,11 @@ class PreprocessOptionsWidget(QGroupBox):
             self._vl_use_layout_cb,
             self._vl_use_chart_cb,
             self._vl_use_seal_cb,
+            self._vl_use_ocr_for_image_cb,
+            self._use_table_cb,
+            self._use_formula_cb,
+            self._use_seal_cb,
+            self._use_chart_cb,
         ]
         for w in widgets:
             w.blockSignals(True)
@@ -433,15 +500,16 @@ class PreprocessOptionsWidget(QGroupBox):
             self._end_page_check.setChecked(False)
 
         # 设置 PaddleOCR-VL 选项
-        self._vl_use_layout_cb.setChecked(
-            options.vl_use_layout_detection if options.vl_use_layout_detection is not None else True
-        )
-        self._vl_use_chart_cb.setChecked(
-            options.vl_use_chart_recognition if options.vl_use_chart_recognition is not None else False
-        )
-        self._vl_use_seal_cb.setChecked(
-            options.vl_use_seal_recognition if options.vl_use_seal_recognition is not None else False
-        )
+        self._vl_use_layout_cb.setChecked(options.vl_use_layout_detection)
+        self._vl_use_chart_cb.setChecked(options.vl_use_chart_recognition)
+        self._vl_use_seal_cb.setChecked(options.vl_use_seal_recognition)
+        self._vl_use_ocr_for_image_cb.setChecked(options.use_ocr_for_image_block)
+
+        # 设置 PP-StructureV3 选项
+        self._use_table_cb.setChecked(options.use_table_recognition)
+        self._use_formula_cb.setChecked(options.use_formula_recognition)
+        self._use_seal_cb.setChecked(options.use_seal_recognition)
+        self._use_chart_cb.setChecked(options.use_chart_recognition)
 
         # 恢复信号
         for w in widgets:

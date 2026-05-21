@@ -515,13 +515,13 @@ def check_embedded_environment_dependencies(
     # 注意：PaddleX 导入也可能需要较长时间，因为它会加载相关依赖
     try:
         result = subprocess.run(
-            [str(python_exe), "-c", "import paddlex"],
+            [str(python_exe), "-c", "import paddleocr"],
             capture_output=True,
             text=True,
             timeout=30,  # PaddleX 导入也可能需要时间
             creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
         )
-        dependencies["paddlex"] = result.returncode == 0
+        dependencies["paddlex"] = result.returncode == 0  # paddleocr check
     except Exception:
         dependencies["paddlex"] = False
 
@@ -624,13 +624,13 @@ def check_dependencies(project_root: Path) -> dict[str, bool]:
     # 检测 PaddleX
     try:
         result = subprocess.run(
-            [str(python_exe), "-c", "import paddlex"],
+            [str(python_exe), "-c", "import paddleocr"],
             capture_output=True,
             text=True,
             timeout=30,  # PaddleX 导入也可能需要时间
             creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
         )
-        dependencies["paddlex"] = result.returncode == 0
+        dependencies["paddlex"] = result.returncode == 0  # paddleocr check
     except Exception:
         dependencies["paddlex"] = False
 
@@ -682,7 +682,7 @@ def _quick_verify_deps(python_exe: Path) -> dict[str, bool]:
     deps = {}
     for module, pkg in [
         ("paddle", "paddlepaddle"),
-        ("paddlex", "paddlex"),
+        ("paddleocr", "paddleocr"),
         ("mineru", "mineru"),
     ]:
         try:
@@ -715,7 +715,7 @@ def is_embedded_environment_ready(project_root: Path) -> tuple[bool, list[str]]:
 
     deps = check_embedded_environment_dependencies(project_root)
     # 只检查 paddlepaddle 和 paddlex，排除 is_gpu 等元数据字段
-    required_deps = ["paddlepaddle", "paddlex", "mineru"]
+    required_deps = ["paddlepaddle", "paddleocr", "mineru"]
     missing = [pkg for pkg in required_deps if pkg not in deps or not deps[pkg]]
 
     # 缓存显示缺失时，做一次轻量验证排除过期缓存
@@ -826,7 +826,7 @@ def install_embedded_dependencies(
 
         requirements = [
             (paddle_name, paddle_package, paddle_index),
-            ("PaddleX", '"paddlex[ocr]>=3.4.2"', pip_source),
+            ("PaddleOCR", '"paddleocr>=3.5.0"', pip_source),
             ("MinerU", '"mineru[core]"', pip_source),
         ]
 

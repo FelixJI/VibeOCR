@@ -243,7 +243,7 @@ class OCRServiceSubprocess:
         )
         # 标记管道识别成功
         pipeline_name_for_mark = options_dict.get("pipeline", "OCR")
-        if pipeline_name_for_mark in ("OCR", "table_recognition", "formula_recognition"):
+        if pipeline_name_for_mark in ("OCR", "PP-StructureV3"):
             try:
                 mark_pipeline_success(pipeline_name_for_mark, self._get_project_root())
             except Exception:
@@ -356,8 +356,12 @@ class OCRServiceSubprocess:
             pipeline_name = pipeline_name.value
         pipeline_name_str = str(pipeline_name)
 
-        # MinerU 文档解析和 PaddleOCR-VL 使用延长超时
-        if pipeline_name_str in (OCRPipeline.DOCUMENT_PARSING.value, OCRPipeline.PADDLEOCR_VL.value):
+        # MinerU 文档解析、PaddleOCR-VL 和 PP-StructureV3 使用延长超时
+        if pipeline_name_str in (
+            OCRPipeline.DOCUMENT_PARSING.value,
+            OCRPipeline.PADDLEOCR_VL.value,
+            OCRPipeline.PP_STRUCTURE_V3.value,
+        ):
             logger.debug(
                 f"[识别] 管道 {pipeline_name} 为文档解析类，使用延长超时 ({TIMEOUT_DOCUMENT_PARSING}s)"
             )
@@ -379,7 +383,7 @@ class OCRServiceSubprocess:
         """预加载指定管道
 
         Args:
-            pipelines: 管道名称列表 ["ocr", "table_recognition", ...]
+            pipelines: 管道名称列表 ["ocr", "PP-StructureV3", ...]
             timeout: 超时时间（秒）
 
         Returns:

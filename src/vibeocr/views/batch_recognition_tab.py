@@ -300,7 +300,7 @@ class BatchRecognitionTab(BaseOcrTab):
 
         # 首次使用提示
         pipeline_val = preprocess_options.pipeline.value
-        if pipeline_val in ("OCR", "table_recognition", "formula_recognition"):
+        if pipeline_val in ("OCR", "PP-StructureV3"):
             from vibeocr.pipeline_status import is_pipeline_ever_succeeded
             from vibeocr.env_manager import get_project_root
             if not is_pipeline_ever_succeeded(pipeline_val, get_project_root()):

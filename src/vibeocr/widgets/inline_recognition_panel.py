@@ -11,8 +11,8 @@ from vibeocr.widgets.preprocess_options_widget import PreprocessOptionsWidget
 
 _PIPELINE_BUTTON_CONFIG: list[tuple[OCRPipeline, str]] = [
     (OCRPipeline.OCR, "文字"),
-    (OCRPipeline.TABLE_RECOGNITION, "表格"),
-    (OCRPipeline.FORMULA_RECOGNITION, "公式"),
+    (OCRPipeline.PP_STRUCTURE_V3, "结构"),
+    (OCRPipeline.PADDLEOCR_VL, "VL"),
     (OCRPipeline.DOCUMENT_PARSING, "文档"),
 ]
 

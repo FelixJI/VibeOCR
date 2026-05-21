@@ -18,8 +18,7 @@ class OCRPipeline(Enum):
     """
 
     OCR = "OCR"
-    TABLE_RECOGNITION = "table_recognition"
-    FORMULA_RECOGNITION = "formula_recognition"
+    PP_STRUCTURE_V3 = "PP-StructureV3"
     DOCUMENT_PARSING = "MinerU"
     PADDLEOCR_VL = "PaddleOCR-VL"
 
@@ -45,20 +44,17 @@ _PIPELINE_METADATA: dict[OCRPipeline, dict] = {
             "use_textline_orientation",
         ],
     },
-    OCRPipeline.TABLE_RECOGNITION: {
-        "display_name": "表格识别",
-        "description": "识别表格结构，输出 HTML/Excel 格式",
+    OCRPipeline.PP_STRUCTURE_V3: {
+        "display_name": "PP-StructureV3",
+        "description": "文档结构分析，支持表格、公式、印章、图表识别",
         "supported_options": [
             "use_doc_orientation_classify",
             "use_doc_unwarping",
-        ],
-    },
-    OCRPipeline.FORMULA_RECOGNITION: {
-        "display_name": "公式识别",
-        "description": "识别数学公式，输出 LaTeX 格式",
-        "supported_options": [
-            "use_doc_orientation_classify",
-            "use_doc_unwarping",
+            "use_textline_orientation",
+            "use_table_recognition",
+            "use_formula_recognition",
+            "use_seal_recognition",
+            "use_chart_recognition",
         ],
     },
     OCRPipeline.DOCUMENT_PARSING: {
@@ -78,9 +74,12 @@ _PIPELINE_METADATA: dict[OCRPipeline, dict] = {
         "display_name": "PaddleOCR-VL（文档）",
         "description": "使用 PaddleOCR-VL-1.5 解析文档，支持图片/PDF，提取文本、表格、公式、图表等",
         "supported_options": [
+            "use_doc_orientation_classify",
+            "use_doc_unwarping",
             "vl_use_layout_detection",
             "vl_use_chart_recognition",
             "vl_use_seal_recognition",
+            "use_ocr_for_image_block",
         ],
     },
 }

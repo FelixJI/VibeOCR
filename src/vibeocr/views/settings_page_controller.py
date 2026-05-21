@@ -96,8 +96,7 @@ class SettingsPageController:
         saved = ConfigManager.instance().get_preload_pipelines()
         mapping = {
             "chkPreloadOCR": OCRPipeline.OCR,
-            "chkPreloadTable": OCRPipeline.TABLE_RECOGNITION,
-            "chkPreloadFormula": OCRPipeline.FORMULA_RECOGNITION,
+            "chkPreloadTable": OCRPipeline.PP_STRUCTURE_V3,
         }
         for chk_name, pipeline in mapping.items():
             chk = self._ui.findChild(QCheckBox, chk_name)
@@ -167,11 +166,7 @@ class SettingsPageController:
 
         chk_table = self._ui.findChild(QCheckBox, "chkPreloadTable")
         if chk_table and chk_table.isChecked():
-            pipelines.append(OCRPipeline.TABLE_RECOGNITION)
-
-        chk_formula = self._ui.findChild(QCheckBox, "chkPreloadFormula")
-        if chk_formula and chk_formula.isChecked():
-            pipelines.append(OCRPipeline.FORMULA_RECOGNITION)
+            pipelines.append(OCRPipeline.PP_STRUCTURE_V3)
 
         return pipelines
 

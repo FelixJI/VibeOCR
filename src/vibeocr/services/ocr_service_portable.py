@@ -1,14 +1,14 @@
 """
 OCR Service 使用便携式 Python
 
-这个模块通过在主进程中修改 sys.path 来导入 PaddleX，
+这个模块通过在主进程中修改 sys.path 来导入 PaddleOCR，
 而不是使用子进程。支持：
 - 开发环境：使用 .venv 虚拟环境
 - 生产环境：使用便携式 python/ 目录
 
 与子进程方案的对比：
 - 优点：无进程间通信开销，调试方便，代码更简单
-- 缺点：失去进程隔离，PaddleX 崩溃会影响主程序
+- 缺点：失去进程隔离，PaddleOCR 崩溃会影响主程序
 """
 
 import logging
@@ -36,7 +36,7 @@ class OCRServicePortable:
     """
     OCR Service 使用便携式 Python
 
-    通过路径管理器在主进程中导入 PaddleX，支持开发和生产环境。
+    通过路径管理器在主进程中导入 PaddleOCR，支持开发和生产环境。
     """
 
     _instance: Optional["OCRServicePortable"] = None
@@ -52,29 +52,25 @@ class OCRServicePortable:
 
     def __init__(self):
         """初始化 OCR 服务"""
-        # 确保路径已设置
         self.path_manager = get_python_path_manager()
         self.path_manager.setup_sys_path()
 
-        # 记录环境信息
         _logger.debug(f"OCR 服务初始化，Python 模式: {self.path_manager.mode}")
         if self.path_manager.ocr_lib_path:
             _logger.debug(f"OCR 库路径: {self.path_manager.ocr_lib_path}")
 
-    def _import_paddlex(self):
-        """导入 PaddleX（延迟导入）"""
+    def _import_paddleocr(self):
+        """导入 PaddleOCR（延迟导入）"""
         try:
-            from paddlex import create_pipeline
-
-            return create_pipeline
+            from paddleocr import PaddleOCR
+            return PaddleOCR
         except ImportError as e:
-            # 提供详细的错误信息
-            error_msg = f"无法导入 PaddleX: {e}\n"
+            error_msg = f"无法导入 PaddleOCR: {e}\n"
 
             if self.path_manager.mode == PythonPathMode.DEVELOPMENT:
                 error_msg += "\n开发环境解决方案：\n"
                 error_msg += "1. 激活虚拟环境: source .venv/bin/activate (Linux/Mac) 或 .venv\\Scripts\\activate (Windows)\n"
-                error_msg += "2. 安装 PaddleX: pip install paddlex paddlepaddle\n"
+                error_msg += "2. 安装 PaddleOCR: pip install paddleocr paddlepaddle\n"
 
             elif self.path_manager.mode == PythonPathMode.PORTABLE:
                 error_msg += "\n便携式环境解决方案：\n"
@@ -83,66 +79,16 @@ class OCRServicePortable:
 
             else:
                 error_msg += "\n系统环境解决方案：\n"
-                error_msg += "1. 安装 PaddleX: pip install paddlex paddlepaddle\n"
+                error_msg += "1. 安装 PaddleOCR: pip install paddleocr paddlepaddle\n"
 
             _logger.error(error_msg)
             raise ImportError(error_msg) from e
 
-    @staticmethod
-    def _get_optimal_cpu_threads() -> int:
-        """动态检测 CPU 核心数并返回最优线程数"""
-        try:
-            import multiprocessing
-            logical = multiprocessing.cpu_count() or 4
-        except Exception:
-            logical = 4
-        try:
-            import psutil
-            physical = psutil.cpu_count(logical=False)
-            if physical and physical >= 2:
-                return min(max(physical, 4), 16)
-        except ImportError:
-            pass
-        return min(max(logical // 4, 4), 16)
-
     def _create_pipeline(self) -> Any:
         """创建 OCR 流水线（CPU 模式）"""
-        create_pipeline = self._import_paddlex()
-
-        from paddlex.inference.utils.pp_option import PaddlePredictorOption
-
-        cpu_threads = self._get_optimal_cpu_threads()
-        _logger.debug(f"[推理优化] CPU 线程数: {cpu_threads}")
-
-        pp_option = PaddlePredictorOption()
-        pp_option.enable_new_ir = False
-        pp_option.run_mode = "paddle"
-        pp_option.cpu_threads = cpu_threads
-
-        # 尝试 HPIP 加速
-        pipeline = None
-        try:
-            from paddlex.utils.deps import is_hpip_available
-            if is_hpip_available():
-                pipeline = create_pipeline(
-                    pipeline="OCR",
-                    device="cpu",
-                    pp_option=pp_option,
-                    use_hpip=True,
-                    hpi_config={"backend": "onnxruntime"},
-                )
-                _logger.debug("[HPIP] 高性能推理管道创建成功")
-        except Exception as e:
-            _logger.debug(f"[HPIP] 创建失败，回退到普通推理: {e}")
-
-        if pipeline is None:
-            pipeline = create_pipeline(
-                pipeline="OCR",
-                device="cpu",
-                pp_option=pp_option,
-            )
-
-        _logger.debug(f"OCR 流水线创建成功，设备: cpu, 线程: {cpu_threads}")
+        PaddleOCR = self._import_paddleocr()
+        pipeline = PaddleOCR(device="cpu")
+        _logger.debug("OCR 流水线创建成功，设备: cpu")
         return pipeline
 
     @property
@@ -223,7 +169,7 @@ def test_portable_ocr():
     print(f"  是否打包: {info['is_frozen']}")
     print(f"  Python: {info['python_executable']}")
     print(f"  OCR 库路径: {info['ocr_lib_path']}")
-    print(f"  可导入 PaddleX: {info['can_import_paddlex']}")
+    print(f"  可导入 PaddleOCR: {info['can_import_paddlex']}")
 
     # 验证环境
     success, message = service.verify_environment()
