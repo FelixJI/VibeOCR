@@ -59,7 +59,7 @@ class TestOCRPipeline:
         assert OCRPipeline.OCR.display_name == "通用 OCR"
         assert OCRPipeline.TABLE_RECOGNITION.display_name == "表格识别"
         assert OCRPipeline.FORMULA_RECOGNITION.display_name == "公式识别"
-        assert OCRPipeline.DOCUMENT_PARSING.display_name == "文档解析"
+        assert OCRPipeline.DOCUMENT_PARSING.display_name == "MineRU（文档）"
 
     def test_pipeline_descriptions(self):
         """管道描述正确。"""

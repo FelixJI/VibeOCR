@@ -86,7 +86,7 @@ class TestPreprocessOptionsWidget:
     def test_all_pipelines_available(self, widget):
         """测试所有管道都可用"""
         combo_count = widget._pipeline_combo.count()
-        assert combo_count == 4  # 4 个管道
+        assert combo_count == 5  # 5 个管道
 
 
 class TestLangCombo:
