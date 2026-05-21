@@ -443,7 +443,7 @@ class MainWindow(QMainWindow):
 
             # PDF 处理 Tab 服务注入
             if hasattr(self, "_pdf_tab") and self._pdf_tab:
-                self._pdf_tab.set_ocr_service(mineru_batch)
+                self._pdf_tab.set_ocr_service(paddlex_service)
                 logging.debug("[MainWindow] PDF 处理标签页已连接服务")
 
             # 子进程就绪后，触发预加载（如果配置了预加载管道）
