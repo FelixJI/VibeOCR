@@ -90,3 +90,50 @@ class TestUpdateCropRegion:
         # 原场景坐标 (50, 30) → 新场景坐标 (30, 20)
         assert annotation.pos().x() == -20.0
         assert annotation.pos().y() == -10.0
+
+
+class TestFillProperties:
+    def test_default_fill_linked(self, qapp):
+        canvas = InlineEditCanvas()
+        assert canvas._fill_linked is True
+
+    def test_default_fill_opacity(self, qapp):
+        canvas = InlineEditCanvas()
+        assert canvas._fill_opacity == 20
+
+    def test_default_fill_color_follows_pen(self, qapp):
+        canvas = InlineEditCanvas()
+        assert canvas._fill_color.red() == canvas._pen_color.red()
+        assert canvas._fill_color.green() == canvas._pen_color.green()
+        assert canvas._fill_color.blue() == canvas._pen_color.blue()
+
+    def test_set_pen_color_syncs_fill_when_linked(self, qapp):
+        canvas = InlineEditCanvas()
+        canvas.set_pen_color(QColor(0, 255, 0))
+        assert canvas._fill_color.red() == 0
+        assert canvas._fill_color.green() == 255
+        assert canvas._fill_color.blue() == 0
+
+    def test_set_pen_color_no_sync_when_unlinked(self, qapp):
+        canvas = InlineEditCanvas()
+        canvas.set_fill_linked(False)
+        canvas.set_fill_color(QColor(0, 0, 255))
+        canvas.set_pen_color(QColor(0, 255, 0))
+        assert canvas._fill_color.red() == 0
+        assert canvas._fill_color.green() == 0
+        assert canvas._fill_color.blue() == 255
+
+    def test_set_fill_linked_syncs_to_pen_color(self, qapp):
+        canvas = InlineEditCanvas()
+        canvas.set_fill_linked(False)
+        canvas.set_fill_color(QColor(0, 0, 255))
+        canvas.set_pen_color(QColor(0, 255, 0))
+        canvas.set_fill_linked(True)
+        assert canvas._fill_color.red() == 0
+        assert canvas._fill_color.green() == 255
+        assert canvas._fill_color.blue() == 0
+
+    def test_set_fill_opacity(self, qapp):
+        canvas = InlineEditCanvas()
+        canvas.set_fill_opacity(80)
+        assert canvas._fill_opacity == 80

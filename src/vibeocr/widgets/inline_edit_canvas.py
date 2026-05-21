@@ -84,7 +84,9 @@ class InlineEditCanvas(QGraphicsView):
         self._pen_color: QColor = QColor(255, 0, 0)
         self._pen_width: int = 2
         self._fill_enabled: bool = False
-        self._fill_color: QColor = QColor(255, 0, 0, 50)
+        self._fill_color: QColor = QColor(255, 0, 0)
+        self._fill_opacity: int = 20
+        self._fill_linked: bool = True
         self._font: QFont = QFont("Microsoft YaHei", 14)
         self._mosaic_strength: int = 10
         self._blur_radius: int = 10
@@ -202,13 +204,25 @@ class InlineEditCanvas(QGraphicsView):
 
     def set_pen_color(self, color: QColor) -> None:
         self._pen_color = color
-        self._fill_color = QColor(color.red(), color.green(), color.blue(), 50)
+        if self._fill_linked:
+            self._fill_color = QColor(color.red(), color.green(), color.blue())
 
     def set_pen_width(self, width: int) -> None:
         self._pen_width = width
 
     def set_fill_enabled(self, enabled: bool) -> None:
         self._fill_enabled = enabled
+
+    def set_fill_color(self, color: QColor) -> None:
+        self._fill_color = QColor(color.red(), color.green(), color.blue())
+
+    def set_fill_opacity(self, opacity: int) -> None:
+        self._fill_opacity = opacity
+
+    def set_fill_linked(self, linked: bool) -> None:
+        self._fill_linked = linked
+        if linked:
+            self._fill_color = QColor(self._pen_color.red(), self._pen_color.green(), self._pen_color.blue())
 
     def set_font(self, font: QFont) -> None:
         self._font = font
@@ -411,6 +425,7 @@ class InlineEditCanvas(QGraphicsView):
                 pen_width=self._pen_width,
                 fill_enabled=self._fill_enabled,
                 fill_color=self._fill_color,
+                fill_opacity=self._fill_opacity,
             )
         elif tool == EditTool.ELLIPSE:
             item = EllipseAnnotation(
@@ -419,6 +434,7 @@ class InlineEditCanvas(QGraphicsView):
                 pen_width=self._pen_width,
                 fill_enabled=self._fill_enabled,
                 fill_color=self._fill_color,
+                fill_opacity=self._fill_opacity,
             )
         elif tool == EditTool.ARROW:
             item = ArrowAnnotation(
