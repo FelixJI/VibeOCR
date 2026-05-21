@@ -78,9 +78,9 @@ _PIPELINE_METADATA: dict[OCRPipeline, dict] = {
         "display_name": "PaddleOCR-VL（文档）",
         "description": "使用 PaddleOCR-VL-1.5 解析文档，支持图片/PDF，提取文本、表格、公式、图表等",
         "supported_options": [
-            "vl_task",
-            "start_page_id",
-            "end_page_id",
+            "vl_use_layout_detection",
+            "vl_use_chart_recognition",
+            "vl_use_seal_recognition",
         ],
     },
 }

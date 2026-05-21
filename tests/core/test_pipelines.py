@@ -59,8 +59,8 @@ class TestOCRPipeline:
         assert "end_page_id" in options
 
     def test_paddlocr_vl_options(self):
-        """PaddleOCR-VL 应支持 vl_task 和页码范围选项"""
+        """PaddleOCR-VL 应支持布局、图表、印章选项"""
         options = get_pipeline_supported_options(OCRPipeline.PADDLEOCR_VL)
-        assert "vl_task" in options
-        assert "start_page_id" in options
-        assert "end_page_id" in options
+        assert "vl_use_layout_detection" in options
+        assert "vl_use_chart_recognition" in options
+        assert "vl_use_seal_recognition" in options

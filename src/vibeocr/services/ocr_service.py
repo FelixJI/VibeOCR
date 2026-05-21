@@ -588,8 +588,8 @@ class OCRService(metaclass=SingletonMeta):
         _logger.debug("[_create_pipeline] %s: 开始，配置模型源...", pipeline_name)
         self._ensure_source_configured()
 
-        # PaddleOCR-VL 枚举值映射到 PaddleX 的 doc_parser 管道名
-        _VL_PIPELINE_MAP = {"PaddleOCR-VL": "doc_parser"}
+        # PaddleOCR-VL 枚举值映射到 PaddleX 的 PaddleOCR-VL-1.5 管道名
+        _VL_PIPELINE_MAP = {"PaddleOCR-VL": "PaddleOCR-VL-1.5"}
         actual_pipeline_name = _VL_PIPELINE_MAP.get(pipeline_name, pipeline_name)
 
         # 延迟导入: PaddleX（这是启动慢的主要原因，~30s）
@@ -940,10 +940,12 @@ class OCRService(metaclass=SingletonMeta):
         pipeline = self.get_pipeline(OCRPipeline.PADDLEOCR_VL)
 
         predict_kwargs: dict[str, Any] = {}
-        if options.start_page_id > 0:
-            predict_kwargs["start_page_id"] = options.start_page_id
-        if options.end_page_id is not None:
-            predict_kwargs["end_page_id"] = options.end_page_id
+        if hasattr(options, "vl_use_layout_detection") and options.vl_use_layout_detection is not None:
+            predict_kwargs["use_layout_detection"] = options.vl_use_layout_detection
+        if hasattr(options, "vl_use_chart_recognition") and options.vl_use_chart_recognition is not None:
+            predict_kwargs["use_chart_recognition"] = options.vl_use_chart_recognition
+        if hasattr(options, "vl_use_seal_recognition") and options.vl_use_seal_recognition is not None:
+            predict_kwargs["use_seal_recognition"] = options.vl_use_seal_recognition
 
         output = pipeline.predict(input=image, **predict_kwargs)
         output_list = list(output)

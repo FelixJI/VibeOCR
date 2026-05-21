@@ -209,47 +209,20 @@ class PreprocessOptionsWidget(QGroupBox):
         group = QGroupBox("PaddleOCR-VL 选项")
         layout = QVBoxLayout(group)
 
-        # 任务类型
-        task_layout = QHBoxLayout()
-        task_layout.addWidget(QLabel("任务类型:"))
-        self._vl_task_combo = QComboBox()
-        self._vl_task_combo.addItem("通用 OCR", "ocr")
-        self._vl_task_combo.addItem("表格识别", "table")
-        self._vl_task_combo.addItem("公式识别", "formula")
-        self._vl_task_combo.addItem("图表识别", "chart")
-        self._vl_task_combo.addItem("文本定位", "spotting")
-        self._vl_task_combo.addItem("印章识别", "seal")
-        self._vl_task_combo.setToolTip(
-            "通用 OCR：提取文档全部文本内容\n"
-            "表格识别：识别表格结构\n"
-            "公式识别：识别数学公式（LaTeX）\n"
-            "图表识别：识别图表内容\n"
-            "文本定位：定位并识别文本行位置\n"
-            "印章识别：识别印章文字"
-        )
-        task_layout.addWidget(self._vl_task_combo)
-        task_layout.addStretch()
-        layout.addLayout(task_layout)
+        self._vl_use_layout_cb = QCheckBox("版面检测")
+        self._vl_use_layout_cb.setToolTip("启用版面布局检测，识别文档中的文本、表格、图片等区域")
+        self._vl_use_layout_cb.setChecked(True)
+        layout.addWidget(self._vl_use_layout_cb)
 
-        # 页码范围
-        page_layout = QHBoxLayout()
-        page_layout.addWidget(QLabel("起始页:"))
-        self._vl_start_page_spin = QSpinBox()
-        self._vl_start_page_spin.setRange(0, 99999)
-        self._vl_start_page_spin.setValue(0)
-        self._vl_start_page_spin.setToolTip("起始页（从 0 开始）")
-        page_layout.addWidget(self._vl_start_page_spin)
-        page_layout.addWidget(QLabel("结束页:"))
-        self._vl_end_page_check = QCheckBox("限制")
-        self._vl_end_page_spin = QSpinBox()
-        self._vl_end_page_spin.setRange(0, 99999)
-        self._vl_end_page_spin.setValue(99999)
-        self._vl_end_page_spin.setEnabled(False)
-        self._vl_end_page_check.toggled.connect(self._vl_end_page_spin.setEnabled)
-        page_layout.addWidget(self._vl_end_page_check)
-        page_layout.addWidget(self._vl_end_page_spin)
-        page_layout.addStretch()
-        layout.addLayout(page_layout)
+        self._vl_use_chart_cb = QCheckBox("图表识别")
+        self._vl_use_chart_cb.setToolTip("启用图表内容识别（需版面检测）")
+        self._vl_use_chart_cb.setChecked(False)
+        layout.addWidget(self._vl_use_chart_cb)
+
+        self._vl_use_seal_cb = QCheckBox("印章识别")
+        self._vl_use_seal_cb.setToolTip("启用印章文字识别（需版面检测）")
+        self._vl_use_seal_cb.setChecked(False)
+        layout.addWidget(self._vl_use_seal_cb)
 
         return group
 
@@ -273,10 +246,9 @@ class PreprocessOptionsWidget(QGroupBox):
         self._end_page_spin.valueChanged.connect(self._on_option_changed)
 
         # PaddleOCR-VL 选项
-        self._vl_task_combo.currentIndexChanged.connect(self._on_option_changed)
-        self._vl_start_page_spin.valueChanged.connect(self._on_option_changed)
-        self._vl_end_page_check.toggled.connect(self._on_option_changed)
-        self._vl_end_page_spin.valueChanged.connect(self._on_option_changed)
+        self._vl_use_layout_cb.toggled.connect(self._on_option_changed)
+        self._vl_use_chart_cb.toggled.connect(self._on_option_changed)
+        self._vl_use_seal_cb.toggled.connect(self._on_option_changed)
 
     def _on_pipeline_changed(self):
         """管道选择变更"""
@@ -309,7 +281,9 @@ class PreprocessOptionsWidget(QGroupBox):
                 "lang_list",
                 "start_page_id",
                 "end_page_id",
-                "vl_task",
+                "vl_use_layout_detection",
+                "vl_use_chart_recognition",
+                "vl_use_seal_recognition",
             ]
         )
 
@@ -323,7 +297,7 @@ class PreprocessOptionsWidget(QGroupBox):
         self._mineru_group.setVisible(any(opt in supported for opt in mineru_opts))
 
         # PaddleOCR-VL 选项组可见性
-        vl_opts = ["vl_task"]
+        vl_opts = ["vl_use_layout_detection", "vl_use_chart_recognition", "vl_use_seal_recognition"]
         self._paddlocr_vl_group.setVisible(any(opt in supported for opt in vl_opts))
 
         # 如果当前选项卡不可见，切换到第一个可见的
@@ -377,21 +351,19 @@ class PreprocessOptionsWidget(QGroupBox):
                 kwargs["lang_list"] = lang_data.split(",")
             else:
                 kwargs["lang_list"] = []
-        if is_option_supported(pipeline, "vl_task"):
-            kwargs["vl_task"] = self._vl_task_combo.currentData()
+        if is_option_supported(pipeline, "vl_use_layout_detection"):
+            kwargs["vl_use_layout_detection"] = self._vl_use_layout_cb.isChecked()
+        if is_option_supported(pipeline, "vl_use_chart_recognition"):
+            kwargs["vl_use_chart_recognition"] = self._vl_use_chart_cb.isChecked()
+        if is_option_supported(pipeline, "vl_use_seal_recognition"):
+            kwargs["vl_use_seal_recognition"] = self._vl_use_seal_cb.isChecked()
         if is_option_supported(pipeline, "start_page_id"):
-            if pipeline == OCRPipeline.PADDLEOCR_VL:
-                kwargs["start_page_id"] = self._vl_start_page_spin.value()
-            else:
-                kwargs["start_page_id"] = self._start_page_spin.value()
+            kwargs["start_page_id"] = self._start_page_spin.value()
         if is_option_supported(pipeline, "end_page_id"):
-            if pipeline == OCRPipeline.PADDLEOCR_VL:
-                end_check = self._vl_end_page_check.isChecked()
-                end_spin = self._vl_end_page_spin.value()
+            if self._end_page_check.isChecked():
+                kwargs["end_page_id"] = self._end_page_spin.value()
             else:
-                end_check = self._end_page_check.isChecked()
-                end_spin = self._end_page_spin.value()
-            kwargs["end_page_id"] = end_spin if end_check else None
+                kwargs["end_page_id"] = None
 
         return OCROptions(**kwargs)
 
@@ -413,10 +385,9 @@ class PreprocessOptionsWidget(QGroupBox):
             self._start_page_spin,
             self._end_page_check,
             self._end_page_spin,
-            self._vl_task_combo,
-            self._vl_start_page_spin,
-            self._vl_end_page_check,
-            self._vl_end_page_spin,
+            self._vl_use_layout_cb,
+            self._vl_use_chart_cb,
+            self._vl_use_seal_cb,
         ]
         for w in widgets:
             w.blockSignals(True)
@@ -462,16 +433,15 @@ class PreprocessOptionsWidget(QGroupBox):
             self._end_page_check.setChecked(False)
 
         # 设置 PaddleOCR-VL 选项
-        vl_task_idx = self._vl_task_combo.findData(options.vl_task)
-        if vl_task_idx >= 0:
-            self._vl_task_combo.setCurrentIndex(vl_task_idx)
-
-        self._vl_start_page_spin.setValue(options.start_page_id)
-        if options.end_page_id is not None:
-            self._vl_end_page_check.setChecked(True)
-            self._vl_end_page_spin.setValue(options.end_page_id)
-        else:
-            self._vl_end_page_check.setChecked(False)
+        self._vl_use_layout_cb.setChecked(
+            options.vl_use_layout_detection if options.vl_use_layout_detection is not None else True
+        )
+        self._vl_use_chart_cb.setChecked(
+            options.vl_use_chart_recognition if options.vl_use_chart_recognition is not None else False
+        )
+        self._vl_use_seal_cb.setChecked(
+            options.vl_use_seal_recognition if options.vl_use_seal_recognition is not None else False
+        )
 
         # 恢复信号
         for w in widgets:

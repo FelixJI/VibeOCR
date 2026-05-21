@@ -39,7 +39,9 @@ class OCROptions:
     end_page_id: int | None = None  # None 表示不限制
 
     # === PaddleOCR-VL 文档解析选项 ===
-    vl_task: str = "ocr"  # 任务类型: ocr, table, formula, chart, spotting, seal
+    vl_use_layout_detection: bool | None = None  # 版面检测（None=使用默认）
+    vl_use_chart_recognition: bool | None = None  # 图表识别
+    vl_use_seal_recognition: bool | None = None  # 印章识别
 
     def to_dict(self) -> dict[str, Any]:
         """转换为字典
@@ -59,7 +61,9 @@ class OCROptions:
             "lang_list": self.lang_list,
             "start_page_id": self.start_page_id,
             "end_page_id": self.end_page_id,
-            "vl_task": self.vl_task,
+            "vl_use_layout_detection": self.vl_use_layout_detection,
+            "vl_use_chart_recognition": self.vl_use_chart_recognition,
+            "vl_use_seal_recognition": self.vl_use_seal_recognition,
         }
 
     @classmethod
@@ -91,7 +95,9 @@ class OCROptions:
             lang_list=data.get("lang_list", []),
             start_page_id=data.get("start_page_id", 0),
             end_page_id=data.get("end_page_id", None),
-            vl_task=data.get("vl_task", "ocr"),
+            vl_use_layout_detection=data.get("vl_use_layout_detection", None),
+            vl_use_chart_recognition=data.get("vl_use_chart_recognition", None),
+            vl_use_seal_recognition=data.get("vl_use_seal_recognition", None),
         )
 
     def copy(self, **updates) -> "OCROptions":
