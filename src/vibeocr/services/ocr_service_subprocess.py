@@ -168,7 +168,7 @@ class OCRServiceSubprocess:
                 progress_callback(f"启动失败: {str(e)[:50]}")
             raise
 
-    def _is_document_parsing(self, options) -> bool:
+    def _is_mineru_pipeline(self, options) -> bool:
         """判断请求是否为文档解析（MinerU）管道"""
         from vibeocr.core.pipelines import OCRPipeline
         from enum import Enum
@@ -223,7 +223,7 @@ class OCRServiceSubprocess:
         timeout = self._calculate_recognize_timeout(pipeline_name)
 
         # 根据管道类型路由到对应处理
-        if self._is_document_parsing(options):
+        if self._is_mineru_pipeline(options):
             from vibeocr.services.mineru_service import MinerUService
             mime_type = options_dict.get("mime_type", "application/pdf")
             if not mime_type or mime_type == "image/png":
@@ -356,10 +356,10 @@ class OCRServiceSubprocess:
             pipeline_name = pipeline_name.value
         pipeline_name_str = str(pipeline_name)
 
-        # MinerU 文档解析通过 httpx 调用外部 API，耗时远超本地推理，使用独立超时
-        if pipeline_name_str == OCRPipeline.DOCUMENT_PARSING.value:
+        # MinerU 文档解析和 PaddleOCR-VL 使用延长超时
+        if pipeline_name_str in (OCRPipeline.DOCUMENT_PARSING.value, OCRPipeline.PADDLEOCR_VL.value):
             logger.debug(
-                f"[识别] 管道 {pipeline_name} 为文档解析，使用延长超时 ({TIMEOUT_DOCUMENT_PARSING}s)"
+                f"[识别] 管道 {pipeline_name} 为文档解析类，使用延长超时 ({TIMEOUT_DOCUMENT_PARSING}s)"
             )
             return TIMEOUT_DOCUMENT_PARSING
 
@@ -563,7 +563,7 @@ class OCRServiceSubprocess:
         request_data = serialize_batch_request(request_id, image_data, options_dict)
 
         # 根据管道类型路由到对应处理
-        if self._is_document_parsing(options):
+        if self._is_mineru_pipeline(options):
             # MinerU 文档解析不走 WorkerManager，后续由 batch_commit 处理
             pass
         else:
@@ -600,7 +600,7 @@ class OCRServiceSubprocess:
         commit_data = serialize_batch_commit(preprocess_options.to_dict())
 
         # 根据管道类型路由到对应处理
-        if self._is_document_parsing(preprocess_options):
+        if self._is_mineru_pipeline(preprocess_options):
             # MinerU 文档解析通过 MinerUBatchService 处理
             return self._mineru_batch.commit(
                 preprocess_options,
