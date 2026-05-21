@@ -481,24 +481,36 @@ class PreprocessOptionsWidget(QGroupBox):
 
     # ── 管道锁定 ──
 
+    _DOCUMENT_PIPELINES = {OCRPipeline.DOCUMENT_PARSING, OCRPipeline.PADDLEOCR_VL}
+
     def lock_to_document_parsing(self, reason: str = "") -> None:
-        """锁定管道为「文档解析」，禁用切换。
+        """锁定管道为文档类管道（MineRU / PaddleOCR-VL 可选），禁用其他管道。
 
         Args:
-            reason: 锁定原因，显示在管道旁边（如 "当前文件仅支持文档解析"）
+            reason: 锁定原因，显示在管道旁边
         """
         if self._pipeline_locked:
             return
         self._pipeline_locked = True
 
-        # 切换到文档解析
-        idx = self._pipeline_combo.findData(OCRPipeline.DOCUMENT_PARSING.value)
-        if idx >= 0:
-            self._pipeline_combo.blockSignals(True)
-            self._pipeline_combo.setCurrentIndex(idx)
-            self._pipeline_combo.blockSignals(False)
+        # 禁用非文档类管道的下拉项
+        for i in range(self._pipeline_combo.count()):
+            data = self._pipeline_combo.itemData(i)
+            try:
+                pipeline = OCRPipeline(data)
+            except ValueError:
+                continue
+            is_doc = pipeline in self._DOCUMENT_PIPELINES
+            self._pipeline_combo.model().item(i).setEnabled(is_doc)
 
-        self._pipeline_combo.setEnabled(False)
+        # 如果当前选中的不是文档类管道，切换到 DOCUMENT_PARSING
+        current = self.get_current_pipeline()
+        if current not in self._DOCUMENT_PIPELINES:
+            idx = self._pipeline_combo.findData(OCRPipeline.DOCUMENT_PARSING.value)
+            if idx >= 0:
+                self._pipeline_combo.blockSignals(True)
+                self._pipeline_combo.setCurrentIndex(idx)
+                self._pipeline_combo.blockSignals(False)
 
         if reason:
             self._pipeline_lock_label.setText(f"({reason})")
@@ -513,7 +525,11 @@ class PreprocessOptionsWidget(QGroupBox):
         if not self._pipeline_locked:
             return
         self._pipeline_locked = False
-        self._pipeline_combo.setEnabled(True)
+
+        # 恢复所有下拉项
+        for i in range(self._pipeline_combo.count()):
+            self._pipeline_combo.model().item(i).setEnabled(True)
+
         self._pipeline_lock_label.setVisible(False)
 
     @property
