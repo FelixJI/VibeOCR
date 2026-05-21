@@ -7,7 +7,7 @@ from vibeocr.machine_cache import generate_machine_id
 
 _logger = logging.getLogger(__name__)
 
-PIPELINE_NAMES = {"OCR", "table_recognition", "formula_recognition"}
+PIPELINE_NAMES = {"OCR", "table_recognition", "formula_recognition", "PaddleOCR-VL"}
 
 
 def _cache_path(project_root: Path) -> Path:
