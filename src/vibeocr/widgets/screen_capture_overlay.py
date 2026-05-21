@@ -433,6 +433,9 @@ class ScreenCaptureOverlay(QWidget):
         props.color_changed.connect(self._on_color_changed)
         props.line_width_changed.connect(self._on_line_width_changed)
         props.fill_enabled_changed.connect(self._on_fill_enabled_changed)
+        props.fill_color_changed.connect(self._on_fill_color_changed)
+        props.fill_opacity_changed.connect(self._on_fill_opacity_changed)
+        props.fill_linked_changed.connect(self._on_fill_linked_changed)
         props.mosaic_strength_changed.connect(self._on_mosaic_strength_changed)
         props.blur_radius_changed.connect(self._on_blur_radius_changed)
         props.font_changed.connect(self._canvas.set_font)
@@ -519,6 +522,9 @@ class ScreenCaptureOverlay(QWidget):
             item.set_pen_color(color)
         elif isinstance(item, TextAnnotation):
             item.set_text_color(color)
+        if self._canvas._fill_linked:
+            if item and hasattr(item, "set_fill_color"):
+                item.set_fill_color(color)
 
     def _on_line_width_changed(self, width) -> None:
         self._canvas.set_pen_width(width)
@@ -530,13 +536,26 @@ class ScreenCaptureOverlay(QWidget):
         self._canvas.set_fill_enabled(enabled)
         item = self._canvas.selected_annotation
         if item and hasattr(item, "set_fill_enabled"):
-            color = QColor(
-                self._canvas._pen_color.red(),
-                self._canvas._pen_color.green(),
-                self._canvas._pen_color.blue(),
-                50,
-            )
-            item.set_fill_enabled(enabled, color)
+            item.set_fill_enabled(enabled, self._canvas._fill_color, self._canvas._fill_opacity)
+
+    def _on_fill_color_changed(self, color) -> None:
+        self._canvas.set_fill_color(color)
+        item = self._canvas.selected_annotation
+        if item and hasattr(item, "set_fill_color"):
+            item.set_fill_color(color)
+
+    def _on_fill_opacity_changed(self, opacity) -> None:
+        self._canvas.set_fill_opacity(opacity)
+        item = self._canvas.selected_annotation
+        if item and hasattr(item, "set_fill_opacity"):
+            item.set_fill_opacity(opacity)
+
+    def _on_fill_linked_changed(self, linked) -> None:
+        self._canvas.set_fill_linked(linked)
+        if linked:
+            item = self._canvas.selected_annotation
+            if item and hasattr(item, "set_fill_color"):
+                item.set_fill_color(self._canvas._pen_color)
 
     def _on_mosaic_strength_changed(self, value) -> None:
         self._canvas.set_mosaic_strength(value)
