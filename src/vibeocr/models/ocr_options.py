@@ -38,6 +38,9 @@ class OCROptions:
     start_page_id: int = 0
     end_page_id: int | None = None  # None 表示不限制
 
+    # === PaddleOCR-VL 文档解析选项 ===
+    vl_task: str = "ocr"  # 任务类型: ocr, table, formula, chart, spotting, seal
+
     def to_dict(self) -> dict[str, Any]:
         """转换为字典
 
@@ -56,6 +59,7 @@ class OCROptions:
             "lang_list": self.lang_list,
             "start_page_id": self.start_page_id,
             "end_page_id": self.end_page_id,
+            "vl_task": self.vl_task,
         }
 
     @classmethod
@@ -87,6 +91,7 @@ class OCROptions:
             lang_list=data.get("lang_list", []),
             start_page_id=data.get("start_page_id", 0),
             end_page_id=data.get("end_page_id", None),
+            vl_task=data.get("vl_task", "ocr"),
         )
 
     def copy(self, **updates) -> "OCROptions":

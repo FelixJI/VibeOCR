@@ -110,3 +110,46 @@ class TestOCROptions:
         """测试默认后端改为 hybrid-auto-engine"""
         options = OCROptions()
         assert options.backend == "hybrid-auto-engine"
+
+    def test_paddlocr_vl_default_values(self):
+        """测试 PaddleOCR-VL 选项默认值"""
+        options = OCROptions(pipeline=OCRPipeline.PADDLEOCR_VL)
+        assert options.vl_task == "ocr"
+        assert options.start_page_id == 0
+        assert options.end_page_id is None
+
+    def test_paddlocr_vl_options(self):
+        """测试 PaddleOCR-VL 选项设置"""
+        options = OCROptions(
+            pipeline=OCRPipeline.PADDLEOCR_VL,
+            vl_task="table",
+            start_page_id=1,
+            end_page_id=5,
+        )
+        assert options.vl_task == "table"
+        assert options.start_page_id == 1
+        assert options.end_page_id == 5
+
+    def test_paddlocr_vl_round_trip(self):
+        """测试 PaddleOCR-VL 选项序列化往返"""
+        original = OCROptions(
+            pipeline=OCRPipeline.PADDLEOCR_VL,
+            vl_task="formula",
+            start_page_id=2,
+            end_page_id=10,
+        )
+        data = original.to_dict()
+        assert data["vl_task"] == "formula"
+        assert data["pipeline"] == "PaddleOCR-VL"
+        restored = OCROptions.from_dict(data)
+        assert restored.pipeline == OCRPipeline.PADDLEOCR_VL
+        assert restored.vl_task == "formula"
+        assert restored.start_page_id == 2
+        assert restored.end_page_id == 10
+
+    def test_paddlocr_vl_task_values_in_dict(self):
+        """测试 vl_task 在 to_dict 中正确输出"""
+        for task in ("ocr", "table", "formula", "chart", "spotting", "seal"):
+            options = OCROptions(pipeline=OCRPipeline.PADDLEOCR_VL, vl_task=task)
+            data = options.to_dict()
+            assert data["vl_task"] == task
