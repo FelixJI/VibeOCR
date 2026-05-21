@@ -588,6 +588,10 @@ class OCRService(metaclass=SingletonMeta):
         _logger.debug("[_create_pipeline] %s: 开始，配置模型源...", pipeline_name)
         self._ensure_source_configured()
 
+        # PaddleOCR-VL 枚举值映射到 PaddleX 的 doc_parser 管道名
+        _VL_PIPELINE_MAP = {"PaddleOCR-VL": "doc_parser"}
+        actual_pipeline_name = _VL_PIPELINE_MAP.get(pipeline_name, pipeline_name)
+
         # 延迟导入: PaddleX（这是启动慢的主要原因，~30s）
         _logger.debug("[_create_pipeline] %s: 导入 PaddleX...", pipeline_name)
         from paddlex import create_pipeline
@@ -631,7 +635,7 @@ class OCRService(metaclass=SingletonMeta):
             pipeline_name, device,
         )
         pipeline = self._try_create_with_hpip(
-            create_pipeline, pipeline_name, device, pp_option
+            create_pipeline, actual_pipeline_name, device, pp_option
         )
         if pipeline is not None:
             _logger.debug("管道 %s (HPIP) 初始化于设备: %s", pipeline_name, device)
@@ -645,7 +649,7 @@ class OCRService(metaclass=SingletonMeta):
             pipeline_name, device,
         )
         pipeline = create_pipeline(
-            pipeline=pipeline_name,
+            pipeline=actual_pipeline_name,
             device=device,
             pp_option=pp_option,
         )
@@ -727,6 +731,8 @@ class OCRService(metaclass=SingletonMeta):
                 result = self._recognize_table(image, actual_options)
             elif actual_options.pipeline == OCRPipeline.FORMULA_RECOGNITION:
                 result = self._recognize_formula(image, actual_options)
+            elif actual_options.pipeline == OCRPipeline.PADDLEOCR_VL:
+                result = self._recognize_paddlocr_vl(image, actual_options)
             else:
                 result = self._recognize_ocr(image, actual_options)
             # Normalize bbox from pixel coords to [0-1000]
@@ -747,7 +753,7 @@ class OCRService(metaclass=SingletonMeta):
 
             # 标记管道识别成功
             pipeline_val = actual_options.pipeline.value
-            if pipeline_val in ("OCR", "table_recognition", "formula_recognition"):
+            if pipeline_val in ("OCR", "table_recognition", "formula_recognition", "PaddleOCR-VL"):
                 try:
                     mark_pipeline_success(pipeline_val, self._get_project_root())
                 except Exception:
@@ -921,6 +927,71 @@ class OCRService(metaclass=SingletonMeta):
             html_text="",
             text_with_scores=text_with_scores,
             pipeline_type="formula_recognition",
+            text_blocks=text_blocks,
+            content_list=content_list,
+        )
+
+    def _recognize_paddlocr_vl(
+        self,
+        image: "Image.Image | numpy.ndarray | str",
+        options: "OCROptions",
+    ) -> "OCRResult":
+        """PaddleOCR-VL 文档解析"""
+        pipeline = self.get_pipeline(OCRPipeline.PADDLEOCR_VL)
+
+        predict_kwargs: dict[str, Any] = {}
+        if options.start_page_id > 0:
+            predict_kwargs["start_page_id"] = options.start_page_id
+        if options.end_page_id is not None:
+            predict_kwargs["end_page_id"] = options.end_page_id
+
+        output = pipeline.predict(input=image, **predict_kwargs)
+        output_list = list(output)
+
+        markdown_text = ""
+        raw_text = ""
+        text_blocks: list[TextBlock] = []
+        text_with_scores: list[tuple[str, float]] = []
+        content_list: list[dict[str, Any]] = []
+        images: dict[str, Any] = {}
+
+        for res in output_list:
+            if hasattr(res, "markdown"):
+                markdown_text = getattr(res, "markdown", "") or markdown_text
+            if hasattr(res, "content_list"):
+                cl = getattr(res, "content_list", None)
+                if cl:
+                    content_list = list(cl) if not isinstance(cl, list) else cl
+            if hasattr(res, "images"):
+                imgs = getattr(res, "images", None)
+                if imgs and isinstance(imgs, dict):
+                    images.update(imgs)
+
+            if hasattr(res, "rec_texts") and hasattr(res, "rec_scores"):
+                rec_boxes = getattr(res, "rec_boxes", None)
+                for i, (text, score) in enumerate(
+                    zip(res.rec_texts, res.rec_scores, strict=False)
+                ):
+                    if text:
+                        fs = float(score)
+                        text_with_scores.append((text, fs))
+                        bbox = self._extract_bbox(rec_boxes, i) if rec_boxes is not None else None
+                        text_blocks.append(TextBlock(text=text, score=fs, bbox=bbox))
+
+        if not raw_text and text_with_scores:
+            raw_text = "\n".join(t for t, _ in text_with_scores)
+        if not raw_text and markdown_text:
+            raw_text = markdown_text
+
+        from vibeocr.utils.markdown_converter import markdown_to_html
+
+        return self._build_ocr_result(
+            raw_text=raw_text,
+            markdown_text=markdown_text or raw_text,
+            html_text=markdown_to_html(markdown_text) if markdown_text else raw_text,
+            text_with_scores=text_with_scores,
+            pipeline_type="PaddleOCR-VL",
+            images=images if images else None,
             text_blocks=text_blocks,
             content_list=content_list,
         )
