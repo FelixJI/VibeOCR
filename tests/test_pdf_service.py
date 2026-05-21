@@ -183,3 +183,39 @@ class TestPdfServiceAddTextLayer:
         assert pdf_service.document.pages[0].has_text_layer is True
         assert pdf_service.document.is_modified is True
         pdf_service.close()
+
+
+class TestPdfServiceDeleteTextLayer:
+    def test_delete_text_layer(self, pdf_service, test_pdf):
+        pdf_service.open(str(test_pdf))
+        assert pdf_service.document.pages[0].has_text_layer is True
+        pdf_service.delete_text_layers(0)
+        assert pdf_service.document.pages[0].has_text_layer is False
+        assert pdf_service.document.is_modified is True
+        pdf_service.close()
+
+    def test_delete_text_layer_preserves_images(self, pdf_service, tmp_path):
+        import numpy as np
+        import fitz as fitz_mod
+
+        path = tmp_path / "mixed.pdf"
+        doc = fitz_mod.open()
+        page = doc.new_page(width=612, height=792)
+        # 添加文字
+        page.insert_text((72, 72), "Some text", fontsize=12)
+        # 添加图片
+        cs = fitz_mod.Colorspace(fitz_mod.CS_RGB)
+        img = np.ones((100, 100, 3), dtype=np.uint8) * 128
+        page.insert_image(fitz_mod.Rect(72, 200, 172, 300), pixmap=fitz_mod.Pixmap(cs, 100, 100, img.tobytes(), 0))
+        doc.save(str(path))
+        doc.close()
+
+        pdf_service.open(str(path))
+        assert pdf_service.document.pages[0].has_text_layer is True
+        pdf_service.delete_text_layers(0)
+        assert pdf_service.document.pages[0].has_text_layer is False
+
+        # 验证图片仍在
+        page = pdf_service._doc[0]
+        assert len(page.get_images(full=True)) == 1
+        pdf_service.close()

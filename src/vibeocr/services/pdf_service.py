@@ -286,6 +286,27 @@ class PdfService:
         self._pdf_document.is_modified = True
         self._update_page_info(page_index)
 
+    def delete_text_layers(self, page_index: int) -> None:
+        """删除指定页面的所有文字层。"""
+        if self._doc is None or self._pdf_document is None:
+            return
+        page = self._doc[page_index]
+        blocks = page.get_text("dict")["blocks"]
+
+        has_text = any(block["type"] == 0 for block in blocks)
+        if not has_text:
+            return
+
+        for block in blocks:
+            if block["type"] != 0:
+                continue
+            rect = fitz.Rect(block["bbox"])
+            page.add_redact_annot(rect, fill=None)
+
+        page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_NONE)
+        self._pdf_document.is_modified = True
+        self._update_page_info(page_index)
+
     def _update_page_info(self, page_index: int) -> None:
         """更新指定页面的状态信息。"""
         if self._doc is None or self._pdf_document is None:
