@@ -57,7 +57,12 @@ class TestRectAnnotationSetters:
     def test_set_fill_enabled(self, qapp):
         item = RectAnnotation(QRectF(0, 0, 100, 80), fill_enabled=False)
         item.set_fill_enabled(True, QColor(0, 0, 255, 50))
-        assert item.brush().color() == QColor(0, 0, 255, 50)
+        # alpha=50 → opacity=round(50*100/255)=20 → alpha=int(20*255/100)=51
+        brush_color = item.brush().color()
+        assert brush_color.red() == 0
+        assert brush_color.green() == 0
+        assert brush_color.blue() == 255
+        assert brush_color.alpha() == int(round(50 * 100 / 255) * 255 / 100)
 
     def test_set_fill_disabled(self, qapp):
         item = RectAnnotation(
@@ -65,6 +70,40 @@ class TestRectAnnotationSetters:
         )
         item.set_fill_enabled(False)
         assert item.brush().style() == Qt.BrushStyle.NoBrush
+
+    def test_fill_opacity_default(self, qapp):
+        item = RectAnnotation(QRectF(0, 0, 100, 80), fill_enabled=True, fill_color=QColor(0, 0, 255, 50))
+        assert item._fill_opacity == 20  # 50/255 ≈ 20%
+
+    def test_set_fill_color(self, qapp):
+        item = RectAnnotation(QRectF(0, 0, 100, 80), fill_enabled=True, fill_color=QColor(255, 0, 0, 50))
+        item.set_fill_color(QColor(0, 128, 255))
+        brush_color = item.brush().color()
+        assert brush_color.red() == 0
+        assert brush_color.green() == 128
+        assert brush_color.blue() == 255
+        # 透明度不变
+        assert brush_color.alpha() == item._computed_fill_color().alpha()
+
+    def test_set_fill_opacity(self, qapp):
+        item = RectAnnotation(QRectF(0, 0, 100, 80), fill_enabled=True, fill_color=QColor(255, 0, 0, 50))
+        item.set_fill_opacity(80)
+        assert item._fill_opacity == 80
+        brush_color = item.brush().color()
+        assert brush_color.alpha() == int(80 * 255 / 100)
+
+    def test_fill_opacity_constructor(self, qapp):
+        item = RectAnnotation(QRectF(0, 0, 100, 80), fill_enabled=True,
+                              fill_color=QColor(0, 128, 0), fill_opacity=60)
+        assert item._fill_opacity == 60
+        assert item.brush().color().alpha() == int(60 * 255 / 100)
+
+    def test_fill_disabled_preserves_state(self, qapp):
+        item = RectAnnotation(QRectF(0, 0, 100, 80), fill_enabled=True,
+                              fill_color=QColor(0, 128, 0), fill_opacity=60)
+        item.set_fill_enabled(False)
+        assert item._fill_opacity == 60
+        assert item._fill_color == QColor(0, 128, 0)
 
 
 class TestEllipseAnnotationSetters:
@@ -81,7 +120,27 @@ class TestEllipseAnnotationSetters:
     def test_set_fill_enabled(self, qapp):
         item = EllipseAnnotation(QRectF(0, 0, 100, 80))
         item.set_fill_enabled(True, QColor(255, 0, 0, 50))
-        assert item.brush().color() == QColor(255, 0, 0, 50)
+        # alpha=50 → opacity=round(50*100/255)=20 → alpha=int(20*255/100)=51
+        brush_color = item.brush().color()
+        assert brush_color.red() == 255
+        assert brush_color.green() == 0
+        assert brush_color.blue() == 0
+        assert brush_color.alpha() == int(round(50 * 100 / 255) * 255 / 100)
+
+    def test_set_fill_color(self, qapp):
+        item = EllipseAnnotation(QRectF(0, 0, 100, 80), fill_enabled=True, fill_color=QColor(255, 0, 0, 50))
+        item.set_fill_color(QColor(0, 128, 255))
+        brush_color = item.brush().color()
+        assert brush_color.red() == 0
+        assert brush_color.green() == 128
+        assert brush_color.blue() == 255
+
+    def test_set_fill_opacity(self, qapp):
+        item = EllipseAnnotation(QRectF(0, 0, 100, 80), fill_enabled=True, fill_color=QColor(255, 0, 0, 50))
+        item.set_fill_opacity(80)
+        assert item._fill_opacity == 80
+        brush_color = item.brush().color()
+        assert brush_color.alpha() == int(80 * 255 / 100)
 
 
 class TestMosaicItemResize:

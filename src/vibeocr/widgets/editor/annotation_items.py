@@ -76,15 +76,19 @@ class RectAnnotation(QGraphicsRectItem):
         pen_width: int = 2,
         fill_enabled: bool = False,
         fill_color: QColor | None = None,
+        fill_opacity: int | None = None,
     ):
         super().__init__(rect)
         self._pen_color = pen_color
         self._pen_width = pen_width
         self._fill_enabled = fill_enabled
-        self._fill_color = fill_color
+        self._fill_color = QColor(fill_color.red(), fill_color.green(), fill_color.blue()) if fill_color else QColor(pen_color.red(), pen_color.green(), pen_color.blue())
+        self._fill_opacity = fill_opacity if fill_opacity is not None else (
+            round(fill_color.alpha() * 100 / 255) if fill_color else 20
+        )
         self.setPen(QPen(pen_color, pen_width))
-        if fill_enabled and fill_color:
-            self.setBrush(QBrush(fill_color))
+        if fill_enabled:
+            self.setBrush(QBrush(self._computed_fill_color()))
         else:
             self.setBrush(Qt.BrushStyle.NoBrush)
         self.setFlags(
@@ -94,6 +98,14 @@ class RectAnnotation(QGraphicsRectItem):
         )
         self.setZValue(10)
 
+    def _computed_fill_color(self) -> QColor:
+        return QColor(
+            self._fill_color.red(),
+            self._fill_color.green(),
+            self._fill_color.blue(),
+            int(self._fill_opacity * 255 / 100),
+        )
+
     def set_pen_color(self, color: QColor) -> None:
         self._pen_color = color
         self.setPen(QPen(color, self._pen_width))
@@ -102,13 +114,26 @@ class RectAnnotation(QGraphicsRectItem):
         self._pen_width = width
         self.setPen(QPen(self._pen_color, width))
 
-    def set_fill_enabled(self, enabled: bool, color: QColor | None = None) -> None:
+    def set_fill_enabled(self, enabled: bool, color: QColor | None = None, opacity: int | None = None) -> None:
         self._fill_enabled = enabled
-        if enabled and color:
-            self._fill_color = color
-            self.setBrush(QBrush(color))
+        if color:
+            self._fill_color = QColor(color.red(), color.green(), color.blue())
+        if opacity is not None:
+            self._fill_opacity = opacity
+        if enabled:
+            self.setBrush(QBrush(self._computed_fill_color()))
         else:
             self.setBrush(Qt.BrushStyle.NoBrush)
+
+    def set_fill_color(self, color: QColor) -> None:
+        self._fill_color = QColor(color.red(), color.green(), color.blue())
+        if self._fill_enabled:
+            self.setBrush(QBrush(self._computed_fill_color()))
+
+    def set_fill_opacity(self, opacity: int) -> None:
+        self._fill_opacity = opacity
+        if self._fill_enabled:
+            self.setBrush(QBrush(self._computed_fill_color()))
 
 
 class EllipseAnnotation(QGraphicsEllipseItem):
@@ -121,15 +146,19 @@ class EllipseAnnotation(QGraphicsEllipseItem):
         pen_width: int = 2,
         fill_enabled: bool = False,
         fill_color: QColor | None = None,
+        fill_opacity: int | None = None,
     ):
         super().__init__(rect)
         self._pen_color = pen_color
         self._pen_width = pen_width
         self._fill_enabled = fill_enabled
-        self._fill_color = fill_color
+        self._fill_color = QColor(fill_color.red(), fill_color.green(), fill_color.blue()) if fill_color else QColor(pen_color.red(), pen_color.green(), pen_color.blue())
+        self._fill_opacity = fill_opacity if fill_opacity is not None else (
+            round(fill_color.alpha() * 100 / 255) if fill_color else 20
+        )
         self.setPen(QPen(pen_color, pen_width))
-        if fill_enabled and fill_color:
-            self.setBrush(QBrush(fill_color))
+        if fill_enabled:
+            self.setBrush(QBrush(self._computed_fill_color()))
         else:
             self.setBrush(Qt.BrushStyle.NoBrush)
         self.setFlags(
@@ -139,6 +168,14 @@ class EllipseAnnotation(QGraphicsEllipseItem):
         )
         self.setZValue(10)
 
+    def _computed_fill_color(self) -> QColor:
+        return QColor(
+            self._fill_color.red(),
+            self._fill_color.green(),
+            self._fill_color.blue(),
+            int(self._fill_opacity * 255 / 100),
+        )
+
     def set_pen_color(self, color: QColor) -> None:
         self._pen_color = color
         self.setPen(QPen(color, self._pen_width))
@@ -147,13 +184,26 @@ class EllipseAnnotation(QGraphicsEllipseItem):
         self._pen_width = width
         self.setPen(QPen(self._pen_color, width))
 
-    def set_fill_enabled(self, enabled: bool, color: QColor | None = None) -> None:
+    def set_fill_enabled(self, enabled: bool, color: QColor | None = None, opacity: int | None = None) -> None:
         self._fill_enabled = enabled
-        if enabled and color:
-            self._fill_color = color
-            self.setBrush(QBrush(color))
+        if color:
+            self._fill_color = QColor(color.red(), color.green(), color.blue())
+        if opacity is not None:
+            self._fill_opacity = opacity
+        if enabled:
+            self.setBrush(QBrush(self._computed_fill_color()))
         else:
             self.setBrush(Qt.BrushStyle.NoBrush)
+
+    def set_fill_color(self, color: QColor) -> None:
+        self._fill_color = QColor(color.red(), color.green(), color.blue())
+        if self._fill_enabled:
+            self.setBrush(QBrush(self._computed_fill_color()))
+
+    def set_fill_opacity(self, opacity: int) -> None:
+        self._fill_opacity = opacity
+        if self._fill_enabled:
+            self.setBrush(QBrush(self._computed_fill_color()))
 
 
 class ArrowAnnotation(QGraphicsPathItem):
