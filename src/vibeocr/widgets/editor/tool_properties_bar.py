@@ -29,6 +29,9 @@ class ToolPropertiesBar(QWidget):
     color_changed = Signal(QColor)
     line_width_changed = Signal(int)
     fill_enabled_changed = Signal(bool)
+    fill_color_changed = Signal(QColor)
+    fill_opacity_changed = Signal(int)
+    fill_linked_changed = Signal(bool)
     font_changed = Signal(QFont)
     font_size_changed = Signal(int)
     bold_changed = Signal(bool)
@@ -50,6 +53,7 @@ class ToolPropertiesBar(QWidget):
         self.setStyleSheet(EditorStyles.properties_bar_style())
 
         self._current_color = QColor(255, 0, 0)
+        self._fill_color = QColor(255, 0, 0)
         self._setup_ui()
         self._connect_signals()
         self._last_tool: EditTool = EditTool.SELECT
@@ -89,6 +93,54 @@ class ToolPropertiesBar(QWidget):
         btn.clicked.connect(self._on_color_pick)
         return btn
 
+    # ==================== 填充色辅助方法 ====================
+
+    def _create_fill_color_button(self) -> QPushButton:
+        btn = QPushButton()
+        btn.setObjectName("fillColorPickButton")
+        btn.setFixedSize(24, 24)
+        self._apply_fill_color_style(btn)
+        btn.clicked.connect(self._on_fill_color_pick)
+        return btn
+
+    def _apply_fill_color_style(self, btn: QPushButton) -> None:
+        btn.setStyleSheet(
+            f"QPushButton#fillColorPickButton {{ background-color: {self._fill_color.name()}; "
+            f"border: 1px solid #666; border-radius: 3px; }}"
+        )
+
+    def _update_fill_color_buttons(self) -> None:
+        if hasattr(self, "_fill_color_btn"):
+            self._apply_fill_color_style(self._fill_color_btn)
+        if hasattr(self, "_common_fill_color_btn"):
+            self._apply_fill_color_style(self._common_fill_color_btn)
+
+    def _on_fill_color_pick(self) -> None:
+        dialog = QColorDialog(self._fill_color, self)
+        dialog.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
+        dialog.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, False)
+        if dialog.exec() == QColorDialog.DialogCode.Accepted:
+            color = dialog.selectedColor()
+            if color.isValid():
+                self._fill_color = QColor(color.red(), color.green(), color.blue())
+                self._update_fill_color_buttons()
+                self.fill_color_changed.emit(self._fill_color)
+
+    def _set_fill_sub_controls_visible(self, is_shape_page: bool, visible: bool) -> None:
+        if is_shape_page:
+            for w in (self._fill_color_btn, self._fill_link_btn,
+                      self._fill_opacity_title, self._fill_opacity_slider, self._fill_opacity_label):
+                w.setVisible(visible)
+        else:
+            for w in (self._common_fill_color_btn, self._common_fill_link_btn,
+                      self._common_fill_opacity_title, self._common_fill_opacity_slider, self._common_fill_opacity_label):
+                w.setVisible(visible)
+
+    def _update_fill_color_btn_state(self, link_btn: QToolButton, color_btn: QPushButton) -> None:
+        color_btn.setEnabled(not link_btn.isChecked())
+
+    # ==================== 页面创建 ====================
+
     def _create_shape_page(self) -> QWidget:
         """创建图形属性页"""
         page = QWidget()
@@ -111,6 +163,38 @@ class ToolPropertiesBar(QWidget):
         # 填充
         self._fill_cb = QCheckBox("填充")
         layout.addWidget(self._fill_cb)
+
+        # 填充色按钮
+        self._fill_color_btn = self._create_fill_color_button()
+        layout.addWidget(self._fill_color_btn)
+
+        # 链接按钮
+        self._fill_link_btn = QToolButton()
+        self._fill_link_btn.setText("🔗")
+        self._fill_link_btn.setCheckable(True)
+        self._fill_link_btn.setChecked(True)
+        self._fill_link_btn.setFixedSize(24, 24)
+        self._fill_link_btn.setToolTip("链接：填充色跟随描边色 / 独立填充色")
+        self._fill_link_btn.setStyleSheet(
+            "QToolButton { font-size: 14px; }"
+            "QToolButton:checked { background-color: #0078d4; color: white; }"
+        )
+        layout.addWidget(self._fill_link_btn)
+
+        # 透明度
+        self._fill_opacity_title = QLabel("透明度")
+        layout.addWidget(self._fill_opacity_title)
+        self._fill_opacity_slider = QSlider(Qt.Orientation.Horizontal)
+        self._fill_opacity_slider.setRange(0, 100)
+        self._fill_opacity_slider.setValue(20)
+        self._fill_opacity_slider.setFixedWidth(80)
+        layout.addWidget(self._fill_opacity_slider)
+        self._fill_opacity_label = QLabel("20%")
+        self._fill_opacity_label.setFixedWidth(30)
+        layout.addWidget(self._fill_opacity_label)
+
+        # 初始隐藏填充子控件
+        self._set_fill_sub_controls_visible(is_shape_page=True, visible=False)
 
         return page
 
@@ -221,25 +305,93 @@ class ToolPropertiesBar(QWidget):
         self._common_fill_cb = QCheckBox("填充")
         layout.addWidget(self._common_fill_cb)
 
+        # 填充色按钮
+        self._common_fill_color_btn = self._create_fill_color_button()
+        layout.addWidget(self._common_fill_color_btn)
+
+        # 链接按钮
+        self._common_fill_link_btn = QToolButton()
+        self._common_fill_link_btn.setText("🔗")
+        self._common_fill_link_btn.setCheckable(True)
+        self._common_fill_link_btn.setChecked(True)
+        self._common_fill_link_btn.setFixedSize(24, 24)
+        self._common_fill_link_btn.setToolTip("链接：填充色跟随描边色 / 独立填充色")
+        self._common_fill_link_btn.setStyleSheet(
+            "QToolButton { font-size: 14px; }"
+            "QToolButton:checked { background-color: #0078d4; color: white; }"
+        )
+        layout.addWidget(self._common_fill_link_btn)
+
+        # 透明度
+        self._common_fill_opacity_title = QLabel("透明度")
+        layout.addWidget(self._common_fill_opacity_title)
+        self._common_fill_opacity_slider = QSlider(Qt.Orientation.Horizontal)
+        self._common_fill_opacity_slider.setRange(0, 100)
+        self._common_fill_opacity_slider.setValue(20)
+        self._common_fill_opacity_slider.setFixedWidth(80)
+        layout.addWidget(self._common_fill_opacity_slider)
+        self._common_fill_opacity_label = QLabel("20%")
+        self._common_fill_opacity_label.setFixedWidth(30)
+        layout.addWidget(self._common_fill_opacity_label)
+
+        # 初始隐藏
+        self._set_fill_sub_controls_visible(is_shape_page=False, visible=False)
+
         return page
+
+    # ==================== 信号连接 ====================
 
     def _connect_signals(self) -> None:
         self._line_width_spin.valueChanged.connect(self.line_width_changed.emit)
-        self._fill_cb.toggled.connect(self.fill_enabled_changed.emit)
+        self._fill_cb.toggled.connect(self._on_fill_toggled_shape)
+        self._common_fill_cb.toggled.connect(self._on_fill_toggled_common)
+        self._fill_link_btn.toggled.connect(self._on_fill_link_toggled_shape)
+        self._common_fill_link_btn.toggled.connect(self._on_fill_link_toggled_common)
+        self._fill_opacity_slider.valueChanged.connect(self._on_fill_opacity_changed_shape)
+        self._common_fill_opacity_slider.valueChanged.connect(self._on_fill_opacity_changed_common)
         self._font_combo.currentFontChanged.connect(self.font_changed.emit)
         self._font_size_spin.valueChanged.connect(self.font_size_changed.emit)
         self._bold_btn.toggled.connect(self.bold_changed.emit)
         self._italic_btn.toggled.connect(self.italic_changed.emit)
-
         self._mosaic_slider.valueChanged.connect(self._on_mosaic_changed)
         self._blur_slider.valueChanged.connect(self._on_blur_changed)
 
-    def _on_color_pick(self) -> None:
-        """打开颜色选择对话框
+    def _on_fill_toggled_shape(self, checked: bool) -> None:
+        self._set_fill_sub_controls_visible(is_shape_page=True, visible=checked)
+        self._update_fill_color_btn_state(self._fill_link_btn, self._fill_color_btn)
+        self.fill_enabled_changed.emit(checked)
 
-        显式关闭 WA_TranslucentBackground，防止继承自父窗口（截图覆盖层）
-        的透明属性导致 Windows 上渲染为黑色背景。
-        """
+    def _on_fill_toggled_common(self, checked: bool) -> None:
+        self._set_fill_sub_controls_visible(is_shape_page=False, visible=checked)
+        self._update_fill_color_btn_state(self._common_fill_link_btn, self._common_fill_color_btn)
+        self.fill_enabled_changed.emit(checked)
+
+    def _on_fill_link_toggled_shape(self, checked: bool) -> None:
+        if checked:
+            self._fill_color = QColor(self._current_color.red(), self._current_color.green(), self._current_color.blue())
+            self._update_fill_color_buttons()
+        self._update_fill_color_btn_state(self._fill_link_btn, self._fill_color_btn)
+        self.fill_linked_changed.emit(checked)
+
+    def _on_fill_link_toggled_common(self, checked: bool) -> None:
+        if checked:
+            self._fill_color = QColor(self._current_color.red(), self._current_color.green(), self._current_color.blue())
+            self._update_fill_color_buttons()
+        self._update_fill_color_btn_state(self._common_fill_link_btn, self._common_fill_color_btn)
+        self.fill_linked_changed.emit(checked)
+
+    def _on_fill_opacity_changed_shape(self, value: int) -> None:
+        self._fill_opacity_label.setText(f"{value}%")
+        self.fill_opacity_changed.emit(value)
+
+    def _on_fill_opacity_changed_common(self, value: int) -> None:
+        self._common_fill_opacity_label.setText(f"{value}%")
+        self.fill_opacity_changed.emit(value)
+
+    # ==================== 颜色处理 ====================
+
+    def _on_color_pick(self) -> None:
+        """打开颜色选择对话框"""
         dialog = QColorDialog(self._current_color, self)
         dialog.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
         dialog.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, False)
@@ -249,6 +401,9 @@ class ToolPropertiesBar(QWidget):
                 self._current_color = color
                 self._update_color_buttons()
                 self.color_changed.emit(color)
+                if self._fill_link_btn.isChecked() or self._common_fill_link_btn.isChecked():
+                    self._fill_color = QColor(color.red(), color.green(), color.blue())
+                    self._update_fill_color_buttons()
 
     def _apply_color_style(self, btn: QPushButton) -> None:
         """设置颜色按钮样式（使用 objectName 选择器避免被父级样式覆盖）"""
@@ -273,6 +428,8 @@ class ToolPropertiesBar(QWidget):
     def _on_blur_changed(self, value: int) -> None:
         self._blur_label.setText(str(value))
         self.blur_radius_changed.emit(value)
+
+    # ==================== 工具/选中切换 ====================
 
     def update_for_tool(self, tool: EditTool) -> None:
         """根据工具切换属性面板"""
@@ -302,10 +459,11 @@ class ToolPropertiesBar(QWidget):
         if isinstance(item, (RectAnnotation, EllipseAnnotation)):
             self._sync_common_page(item)
             self._common_fill_cb.show()
+            self._set_fill_sub_controls_visible(is_shape_page=False, visible=getattr(item, "_fill_enabled", False))
             self._stack.setCurrentIndex(self._COMMON_PAGE)
         elif isinstance(item, ArrowAnnotation):
             self._sync_common_page(item)
-            self._common_fill_cb.hide()
+            self._hide_common_fill_controls()
             self._stack.setCurrentIndex(self._COMMON_PAGE)
         elif isinstance(item, TextAnnotation):
             self._sync_text_page(item)
@@ -332,6 +490,37 @@ class ToolPropertiesBar(QWidget):
         self._common_line_width_spin.blockSignals(False)
         self._current_color = item._pen_color
         self._update_color_buttons()
+
+        # 同步填充属性
+        fill_enabled = getattr(item, "_fill_enabled", False)
+        fill_color = getattr(item, "_fill_color", QColor(item._pen_color.red(), item._pen_color.green(), item._pen_color.blue()))
+        fill_opacity = getattr(item, "_fill_opacity", 20)
+
+        is_linked = (fill_color.red() == item._pen_color.red()
+                     and fill_color.green() == item._pen_color.green()
+                     and fill_color.blue() == item._pen_color.blue())
+
+        self._common_fill_cb.blockSignals(True)
+        self._common_fill_cb.setChecked(fill_enabled)
+        self._common_fill_cb.blockSignals(False)
+
+        self._common_fill_link_btn.blockSignals(True)
+        self._common_fill_link_btn.setChecked(is_linked)
+        self._common_fill_link_btn.blockSignals(False)
+
+        self._fill_color = QColor(fill_color.red(), fill_color.green(), fill_color.blue())
+        self._update_fill_color_buttons()
+
+        self._common_fill_opacity_slider.blockSignals(True)
+        self._common_fill_opacity_slider.setValue(fill_opacity)
+        self._common_fill_opacity_slider.blockSignals(False)
+        self._common_fill_opacity_label.setText(f"{fill_opacity}%")
+
+        self._update_fill_color_btn_state(self._common_fill_link_btn, self._common_fill_color_btn)
+
+    def _hide_common_fill_controls(self) -> None:
+        self._common_fill_cb.hide()
+        self._set_fill_sub_controls_visible(is_shape_page=False, visible=False)
 
     def _sync_text_page(self, item) -> None:
         """同步文字属性页控件值"""
