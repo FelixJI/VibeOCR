@@ -141,3 +141,45 @@ class TestPdfServiceMove:
         pdf_service.move_page(0, 2)
         assert pdf_service.document.pages[2].page_index == 0
         pdf_service.close()
+
+
+class TestPdfServiceAddTextLayer:
+    def test_add_text_layer_from_ocr_result(self, pdf_service, tmp_path):
+        """测试从 OCR 结果添加文字层到扫描页。"""
+        import numpy as np
+        import fitz as fitz_mod
+        from vibeocr.models.ocr_result import OCRResult, TextBlock
+
+        # 创建一个无文字的 PDF（模拟扫描件）
+        path = tmp_path / "scan.pdf"
+        doc = fitz_mod.open()
+        page = doc.new_page(width=612, height=792)
+        # 插入一个大图覆盖页面（模拟扫描件）
+        img = np.ones((792, 612, 3), dtype=np.uint8) * 240
+        cs = fitz_mod.Colorspace(fitz_mod.CS_RGB)
+        pixmap = fitz_mod.Pixmap(cs, 612, 792, img.tobytes(), 0)
+        rect = fitz_mod.Rect(0, 0, 612, 792)
+        page.insert_image(rect, pixmap=pixmap)
+        doc.save(str(path))
+        doc.close()
+
+        pdf_service.open(str(path))
+        assert pdf_service.document.pages[0].has_text_layer is False
+
+        # 构造 OCR 结果 (bbox 归一化 [0,1000])
+        result = OCRResult(
+            raw_text="Hello World",
+            text_blocks=[
+                TextBlock(
+                    text="Hello World",
+                    score=0.99,
+                    bbox=(50.0, 50.0, 300.0, 100.0),
+                    page_idx=0,
+                ),
+            ],
+        )
+
+        pdf_service.add_text_layer(0, result)
+        assert pdf_service.document.pages[0].has_text_layer is True
+        assert pdf_service.document.is_modified is True
+        pdf_service.close()

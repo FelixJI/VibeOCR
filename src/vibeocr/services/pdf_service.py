@@ -239,6 +239,68 @@ class PdfService:
         self._pdf_document.pages = pages
         self._pdf_document.is_modified = True
 
+    def add_text_layer(self, page_index: int, ocr_result: object) -> None:
+        """将 OCR 结果作为隐形文字层写入页面。"""
+        if self._doc is None or self._pdf_document is None:
+            return
+
+        page = self._doc[page_index]
+        page_rect = page.rect
+
+        text_blocks = getattr(ocr_result, "text_blocks", [])
+        for block in text_blocks:
+            if block.text is None or not block.text.strip():
+                continue
+            bbox = block.bbox
+            if bbox is None:
+                continue
+            # bbox 归一化 [0,1000] → PDF 坐标
+            x0 = bbox[0] / 1000.0 * page_rect.width
+            y0 = bbox[1] / 1000.0 * page_rect.height
+            x1 = bbox[2] / 1000.0 * page_rect.width
+            y1 = bbox[3] / 1000.0 * page_rect.height
+
+            rect = fitz.Rect(x0, y0, x1, y1)
+            if rect.is_empty or rect.width < 1 or rect.height < 1:
+                continue
+
+            fontsize = rect.height * 0.8
+            if fontsize < 1:
+                continue
+
+            # 自适应字体大小：若文本溢出则逐步缩小
+            for _ in range(5):
+                rc = page.insert_textbox(
+                    rect,
+                    block.text,
+                    fontsize=fontsize,
+                    color=(0, 0, 0),
+                    render_mode=3,  # 不可见但可选中/搜索
+                )
+                if rc >= 0:
+                    break
+                fontsize *= 0.75
+                if fontsize < 1:
+                    break
+
+        self._pdf_document.is_modified = True
+        self._update_page_info(page_index)
+
+    def _update_page_info(self, page_index: int) -> None:
+        """更新指定页面的状态信息。"""
+        if self._doc is None or self._pdf_document is None:
+            return
+        if page_index >= len(self._pdf_document.pages):
+            return
+        text_layers = self._detect_text_layers(page_index)
+        page = self._doc[page_index]
+        info = self._pdf_document.pages[page_index]
+        info.rotation = page.rotation
+        info.has_text_layer = len(text_layers) > 0
+        info.text_layers = text_layers
+        info.is_scanned = not text_layers and self._is_page_scanned(page_index)
+        info.thumbnail = None
+
     def _invalidate_thumbnails(self, page_indices: list[int]) -> None:
         """清除指定页面的缩略图缓存。"""
         if self._pdf_document is None:
