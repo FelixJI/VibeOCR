@@ -37,6 +37,7 @@ from vibeocr.ui.ui_main_window import Ui_MainWindowWidget
 from vibeocr.views.batch_recognition_tab import BatchRecognitionTab
 from vibeocr.views.clipboard_controller import ClipboardController
 from vibeocr.views.settings_page_controller import SettingsPageController
+from vibeocr.views.tabs.pdf_tab import PdfTab
 from vibeocr.views.tabs.single_recognition_tab import SingleRecognitionTab
 from vibeocr.widgets.screen_capture_overlay import ScreenCaptureOverlay
 from vibeocr.widgets.toolbar import EdgeToolbar
@@ -176,6 +177,9 @@ class MainWindow(QMainWindow):
         # 添加二维码生成标签页
         self._init_qrcode_tab()
 
+        # 添加 PDF 处理标签页
+        self._init_pdf_tab()
+
         # 将设置标签页移到最后
         self._move_settings_tab_to_end()
 
@@ -282,6 +286,16 @@ class MainWindow(QMainWindow):
             "二维码生成",
         )
         logging.debug("二维码生成标签页已添加")
+
+    def _init_pdf_tab(self) -> None:
+        """初始化 PDF 处理标签页"""
+        self._pdf_tab = PdfTab()
+        self._ui.tabWidget.insertTab(
+            self._ui.tabWidget.indexOf(self._ui.tabSettings),
+            self._pdf_tab,
+            "PDF 处理",
+        )
+        logging.debug("PDF 处理标签页已添加")
 
     def _init_about_tab(self) -> None:
         """初始化关于标签页"""
@@ -426,6 +440,11 @@ class MainWindow(QMainWindow):
                 self._batch_tab.set_ocr_service(mineru_batch)
                 self._batch_tab.set_paddlex_service(paddlex_service)
                 logging.debug("[MainWindow] 批量识别标签页已连接批量服务")
+
+            # PDF 处理 Tab 服务注入
+            if hasattr(self, "_pdf_tab") and self._pdf_tab:
+                self._pdf_tab.set_ocr_service(mineru_batch)
+                logging.debug("[MainWindow] PDF 处理标签页已连接服务")
 
             # 子进程就绪后，触发预加载（如果配置了预加载管道）
             # 预加载完成后再显示"OCR 服务已就绪"
