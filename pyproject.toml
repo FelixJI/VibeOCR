@@ -22,6 +22,7 @@ dependencies = [
     "paddlex[ocr]>=3.4.3",
     "httpx>=0.28.1",
     "mineru[core]>=3.1.14",
+    "pymupdf>=1.25.0",
     "qrcode[pil]>=8.2",
     "python-barcode>=0.16.1",
     # 开发依赖
