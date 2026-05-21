@@ -17,10 +17,11 @@ class OCRPipeline(Enum):
     定义所有支持的 OCR 管道类型。
     """
 
-    OCR = "OCR"  # 通用 OCR：纯文本识别
-    TABLE_RECOGNITION = "table_recognition"  # 表格识别
-    FORMULA_RECOGNITION = "formula_recognition"  # 公式识别
-    DOCUMENT_PARSING = "MinerU"  # MineRU 文档解析（替代 PP-StructureV3 和 PaddleOCR-VL）
+    OCR = "OCR"
+    TABLE_RECOGNITION = "table_recognition"
+    FORMULA_RECOGNITION = "formula_recognition"
+    DOCUMENT_PARSING = "MinerU"
+    PADDLEOCR_VL = "PaddleOCR-VL"
 
     @property
     def display_name(self) -> str:
@@ -61,7 +62,7 @@ _PIPELINE_METADATA: dict[OCRPipeline, dict] = {
         ],
     },
     OCRPipeline.DOCUMENT_PARSING: {
-        "display_name": "文档解析",
+        "display_name": "MineRU（文档）",
         "description": "使用 MineRU 解析文档，支持 PDF/图片，提取文本、表格、公式等",
         "supported_options": [
             "parse_method",
@@ -69,6 +70,15 @@ _PIPELINE_METADATA: dict[OCRPipeline, dict] = {
             "enable_formula",
             "enable_table",
             "lang_list",
+            "start_page_id",
+            "end_page_id",
+        ],
+    },
+    OCRPipeline.PADDLEOCR_VL: {
+        "display_name": "PaddleOCR-VL（文档）",
+        "description": "使用 PaddleOCR-VL-1.5 解析文档，支持图片/PDF，提取文本、表格、公式、图表等",
+        "supported_options": [
+            "vl_task",
             "start_page_id",
             "end_page_id",
         ],

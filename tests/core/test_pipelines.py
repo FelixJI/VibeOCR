@@ -10,11 +10,10 @@ from vibeocr.core.pipelines import (
 
 
 class TestOCRPipeline:
-    """管道枚举测试"""
 
     def test_pipeline_count(self):
-        """验证管道数量为 4"""
-        assert len(OCRPipeline) == 4
+        """验证管道数量为 5"""
+        assert len(OCRPipeline) == 5
 
     def test_pipeline_values(self):
         """验证管道值"""
@@ -22,17 +21,21 @@ class TestOCRPipeline:
         assert OCRPipeline.TABLE_RECOGNITION.value == "table_recognition"
         assert OCRPipeline.FORMULA_RECOGNITION.value == "formula_recognition"
         assert OCRPipeline.DOCUMENT_PARSING.value == "MinerU"
+        assert OCRPipeline.PADDLEOCR_VL.value == "PaddleOCR-VL"
 
     def test_get_display_name(self):
         """验证显示名称获取"""
         assert get_pipeline_display_name(OCRPipeline.OCR) == "通用 OCR"
         assert get_pipeline_display_name(OCRPipeline.TABLE_RECOGNITION) == "表格识别"
-        assert get_pipeline_display_name(OCRPipeline.DOCUMENT_PARSING) == "文档解析"
+        assert get_pipeline_display_name(OCRPipeline.DOCUMENT_PARSING) == "MineRU（文档）"
+        assert get_pipeline_display_name(OCRPipeline.PADDLEOCR_VL) == "PaddleOCR-VL（文档）"
 
     def test_get_description(self):
         """验证描述获取"""
         desc = get_pipeline_description(OCRPipeline.OCR)
         assert "文字" in desc or "文本" in desc
+        desc_vl = get_pipeline_description(OCRPipeline.PADDLEOCR_VL)
+        assert "PaddleOCR-VL" in desc_vl
 
     def test_get_supported_options(self):
         """验证支持的选项"""
@@ -52,5 +55,12 @@ class TestOCRPipeline:
         """文档解析应支持语言和页码范围选项"""
         options = get_pipeline_supported_options(OCRPipeline.DOCUMENT_PARSING)
         assert "lang_list" in options
+        assert "start_page_id" in options
+        assert "end_page_id" in options
+
+    def test_paddlocr_vl_options(self):
+        """PaddleOCR-VL 应支持 vl_task 和页码范围选项"""
+        options = get_pipeline_supported_options(OCRPipeline.PADDLEOCR_VL)
+        assert "vl_task" in options
         assert "start_page_id" in options
         assert "end_page_id" in options
