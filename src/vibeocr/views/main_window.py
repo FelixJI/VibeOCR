@@ -505,8 +505,17 @@ class MainWindow(QMainWindow):
 
         # 获取用户配置的预加载管道
         from vibeocr.managers.config_manager import ConfigManager
+        from vibeocr.core.pipelines import OCRPipeline
 
-        pipelines = ConfigManager.instance().get_preload_pipelines()
+        raw_pipelines = ConfigManager.instance().get_preload_pipelines()
+
+        # 过滤无效的管道名称
+        valid_values = {p.value for p in OCRPipeline}
+        pipelines = [p for p in raw_pipelines if p in valid_values]
+
+        if set(raw_pipelines) != set(pipelines):
+            invalid = set(raw_pipelines) - set(pipelines)
+            logging.warning(f"[子进程预加载] 忽略无效管道: {invalid}")
 
         if not pipelines:
             logging.debug("[子进程预加载] 未配置预加载管道")

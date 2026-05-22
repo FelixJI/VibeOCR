@@ -209,7 +209,11 @@ class SettingsPageController:
                             f"正在预加载 {pipeline.display_name}..."
                         )
                         logger.debug(f"[预加载] 正在预加载 {pipeline.display_name}...")
-                        self._service.preload_pipeline(pipeline)
+                        success = self._service.preload_pipeline(pipeline)
+                        if not success:
+                            logger.warning(f"[预加载] {pipeline.display_name} 预加载失败")
+                            results[pipeline.name] = False
+                            continue
                         results[pipeline.name] = True
                         logger.debug(f"[预加载] {pipeline.display_name} 预加载成功!")
 

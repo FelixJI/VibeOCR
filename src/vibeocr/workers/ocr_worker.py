@@ -256,6 +256,8 @@ def run_worker(shm_name: str, shm_size: int, use_gpu: bool) -> None:
                         protocol.write_message(
                             MSG_ERROR, error_msg.encode("utf-8"), sender="worker"
                         )
+                        # 等待主进程读取错误响应，避免读回自己的消息
+                        protocol.wait_for_read(timeout=5.0)
 
                 elif msg_type == MSG_SHUTDOWN:
                     # 收到关闭信号
