@@ -180,9 +180,14 @@ class TestBuildContentList:
 
         tab = ConcreteTab()
         result = OCRResult(
-            content_list=[{"type": "text", "text": "Hello"}, {"type": "table", "text": "data"}],
+            content_list=[
+                {"type": "text", "text": "Hello"},
+                {"type": "table", "text": "data"},
+            ],
             text_blocks=[
-                TextBlock(text="Hello", score=0.9, bbox=(0, 0, 100, 50), content_index=0),
+                TextBlock(
+                    text="Hello", score=0.9, bbox=(0, 0, 100, 50), content_index=0
+                ),
             ],
         )
         cl = tab._build_content_list(result)

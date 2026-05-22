@@ -130,7 +130,9 @@ class BaseOcrTab(QWidget):
             lambda: self._preview_widget.highlight_block(-1)
         )
         self._preview_widget.block_hovered.connect(self._result_widget.highlight_block)
-        self._preview_widget.block_unhovered.connect(self._result_widget.clear_highlight)
+        self._preview_widget.block_unhovered.connect(
+            self._result_widget.clear_highlight
+        )
 
     def _on_block_text_edited(self, index: int, new_text: str) -> None:
         """文本块被编辑后同步更新结果和展示"""
@@ -159,6 +161,7 @@ class BaseOcrTab(QWidget):
                 block_type = cl_block.get("type", "text")
                 if block_type == "table":
                     import html as html_lib
+
                     table_body = cl_block.get("table_body", "")
                     cl_block["table_body"] = table_body.replace(
                         html_lib.escape(old_text), html_lib.escape(new_text), 1
@@ -201,17 +204,13 @@ class BaseOcrTab(QWidget):
             self._preprocess_options.options_changed.connect(
                 lambda opts: OCRPreferences.instance().set_batch_options(opts)
             )
-            prefs.batch_options_changed.connect(
-                self._preprocess_options.set_options
-            )
+            prefs.batch_options_changed.connect(self._preprocess_options.set_options)
         else:
             self._preprocess_options.set_options(prefs.get_options())
             self._preprocess_options.options_changed.connect(
                 lambda opts: OCRPreferences.instance().set_options(opts)
             )
-            prefs.options_changed.connect(
-                self._preprocess_options.set_options
-            )
+            prefs.options_changed.connect(self._preprocess_options.set_options)
 
     @abstractmethod
     def _setup_ui(self) -> None:

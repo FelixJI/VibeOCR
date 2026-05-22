@@ -341,4 +341,3 @@ class SettingsPageController:
                     label.setText(f"缓存有效: {info}")
                 else:
                     label.setText("无有效缓存")
-

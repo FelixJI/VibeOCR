@@ -70,7 +70,9 @@ class TestAppSettingsBackwardCompat:
     def test_old_auto_hide_true(self, config_dir):
         """旧配置 auto_hide_toolbar=True → show_toolbar=True"""
         config_file = config_dir / "app_settings.json"
-        config_file.write_text(json.dumps({"auto_hide_toolbar": True}), encoding="utf-8")
+        config_file.write_text(
+            json.dumps({"auto_hide_toolbar": True}), encoding="utf-8"
+        )
         s = AppSettings(config_dir)
         assert s.show_toolbar is True
         assert s.auto_hide_toolbar is True
@@ -78,7 +80,9 @@ class TestAppSettingsBackwardCompat:
     def test_old_auto_hide_false(self, config_dir):
         """旧配置 auto_hide_toolbar=False → show_toolbar=False"""
         config_file = config_dir / "app_settings.json"
-        config_file.write_text(json.dumps({"auto_hide_toolbar": False}), encoding="utf-8")
+        config_file.write_text(
+            json.dumps({"auto_hide_toolbar": False}), encoding="utf-8"
+        )
         s = AppSettings(config_dir)
         assert s.show_toolbar is False
         assert s.auto_hide_toolbar is True

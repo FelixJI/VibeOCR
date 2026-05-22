@@ -175,6 +175,7 @@ def launch_application() -> int:
 
         async def _check_update():
             from vibeocr.services.update_service import UpdateService
+
             service = UpdateService(project_root)
             await service.check_and_prompt(window)
 

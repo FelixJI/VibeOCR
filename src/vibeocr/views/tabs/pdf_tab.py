@@ -66,13 +66,13 @@ class PdfTab(QWidget):
 
         self._thumbnail_list = QListWidget()
         self._thumbnail_list.setFixedWidth(200)
-        self._thumbnail_list.setIconSize(QPixmap(_THUMBNAIL_SIZE, _THUMBNAIL_SIZE).size())
+        self._thumbnail_list.setIconSize(
+            QPixmap(_THUMBNAIL_SIZE, _THUMBNAIL_SIZE).size()
+        )
         self._thumbnail_list.setSelectionMode(
             QListWidget.SelectionMode.ExtendedSelection
         )
-        self._thumbnail_list.setDragDropMode(
-            QListWidget.DragDropMode.InternalMove
-        )
+        self._thumbnail_list.setDragDropMode(QListWidget.DragDropMode.InternalMove)
         self._thumbnail_list.setContextMenuPolicy(
             Qt.ContextMenuPolicy.CustomContextMenu
         )
@@ -82,9 +82,7 @@ class PdfTab(QWidget):
         self._thumbnail_list.itemDoubleClicked.connect(
             self._on_thumbnail_double_clicked
         )
-        self._thumbnail_list.model().rowsMoved.connect(
-            self._on_pages_reordered
-        )
+        self._thumbnail_list.model().rowsMoved.connect(self._on_pages_reordered)
 
         layout.addWidget(self._thumbnail_list)
         return panel
@@ -171,11 +169,16 @@ class PdfTab(QWidget):
 
     def _set_file_buttons_enabled(self, enabled: bool) -> None:
         for btn in (
-            self._btn_save, self._btn_save_as,
-            self._btn_rotate_cw, self._btn_rotate_ccw,
-            self._btn_rotate_all, self._btn_delete,
-            self._btn_insert, self._btn_add_text_layer,
-            self._btn_del_text_layer, self._btn_preview_text_layer,
+            self._btn_save,
+            self._btn_save_as,
+            self._btn_rotate_cw,
+            self._btn_rotate_ccw,
+            self._btn_rotate_all,
+            self._btn_delete,
+            self._btn_insert,
+            self._btn_add_text_layer,
+            self._btn_del_text_layer,
+            self._btn_preview_text_layer,
         ):
             btn.setEnabled(enabled)
 
@@ -210,13 +213,12 @@ class PdfTab(QWidget):
                 page_info.page_index, dpi=doc.thumbnail_dpi
             )
             scaled = pixmap.scaled(
-                _THUMBNAIL_SIZE, _THUMBNAIL_SIZE,
+                _THUMBNAIL_SIZE,
+                _THUMBNAIL_SIZE,
                 Qt.AspectRatioMode.KeepAspectRatio,
                 Qt.TransformationMode.SmoothTransformation,
             )
-            item = QListWidgetItem(
-                QIcon(scaled), f"第 {page_info.page_index + 1} 页"
-            )
+            item = QListWidgetItem(QIcon(scaled), f"第 {page_info.page_index + 1} 页")
             item.setData(Qt.ItemDataRole.UserRole, page_info.page_index)
             self._thumbnail_list.addItem(item)
 
@@ -227,9 +229,7 @@ class PdfTab(QWidget):
             return
         name = Path(doc.file_path).name if doc.file_path else ""
         modified = " (未保存)" if doc.is_modified else ""
-        self._status_label.setText(
-            f"{name} | {doc.page_count} 页{modified}"
-        )
+        self._status_label.setText(f"{name} | {doc.page_count} 页{modified}")
         self._btn_save.setEnabled(doc.is_modified)
 
     def _update_layer_status(self) -> None:
@@ -258,7 +258,8 @@ class PdfTab(QWidget):
         doc = self._service.document
         if doc and doc.is_modified:
             reply = QMessageBox.question(
-                self, "未保存的修改",
+                self,
+                "未保存的修改",
                 "当前文件有未保存的修改，是否保存？",
                 QMessageBox.StandardButton.Save
                 | QMessageBox.StandardButton.Discard
@@ -280,9 +281,7 @@ class PdfTab(QWidget):
         self._update_status()
 
     def _on_save_as(self) -> None:
-        path, _ = QFileDialog.getSaveFileName(
-            self, "另存为", "", "PDF 文件 (*.pdf)"
-        )
+        path, _ = QFileDialog.getSaveFileName(self, "另存为", "", "PDF 文件 (*.pdf)")
         if not path:
             return
         try:
@@ -332,7 +331,8 @@ class PdfTab(QWidget):
 
     def _on_rotate_all(self) -> None:
         reply = QMessageBox.question(
-            self, "旋转全部页面",
+            self,
+            "旋转全部页面",
             "确定旋转全部页面 90°？",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
@@ -347,7 +347,8 @@ class PdfTab(QWidget):
         if not indices:
             return
         reply = QMessageBox.question(
-            self, "删除页面",
+            self,
+            "删除页面",
             f"确定删除选中的 {len(indices)} 页？",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
@@ -409,13 +410,15 @@ class PdfTab(QWidget):
 
         if not hasattr(self, "_ocr_service") or self._ocr_service is None:
             QMessageBox.warning(
-                self, "OCR 服务未就绪",
+                self,
+                "OCR 服务未就绪",
                 "OCR 服务尚未初始化，请等待服务启动完成。",
             )
             return
 
         reply = QMessageBox.question(
-            self, "添加文字层",
+            self,
+            "添加文字层",
             f"将对 {len(indices)} 页执行 OCR 并添加隐形文字层。\n"
             "建议先另存为备份。是否继续？",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
@@ -447,6 +450,7 @@ class PdfTab(QWidget):
                 continue
             try:
                 from vibeocr.models.ocr_options import OCROptions
+
                 ocr = self._ocr_service
                 result = ocr.recognize(img_array, OCROptions())
                 self._service.add_text_layer(page_idx, result)
@@ -503,9 +507,9 @@ class PdfTab(QWidget):
             return
 
         reply = QMessageBox.question(
-            self, "删除文字层",
-            f"将删除选中 {len(indices)} 页的文字层。\n"
-            "建议先另存为备份。是否继续？",
+            self,
+            "删除文字层",
+            f"将删除选中 {len(indices)} 页的文字层。\n建议先另存为备份。是否继续？",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if reply != QMessageBox.StandardButton.Yes:

@@ -150,9 +150,7 @@ class WindowDetector:
         smallest: QRect | None = None
         for qrect in children_rects:
             if qrect.contains(QPoint(px, py)):
-                if smallest is None or (
-                    qrect.width() * qrect.height()
-                ) < (
+                if smallest is None or (qrect.width() * qrect.height()) < (
                     smallest.width() * smallest.height()
                 ):
                     smallest = qrect
@@ -163,4 +161,6 @@ class WindowDetector:
         result = _win.GetWindowRect(hwnd, rect)
         if not result:
             return None
-        return QRect(rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top)
+        return QRect(
+            rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top
+        )

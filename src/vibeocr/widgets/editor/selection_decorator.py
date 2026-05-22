@@ -67,14 +67,14 @@ class SelectionDecorator(QGraphicsItem):
         cx = rect.left() + rect.width() / 2
         cy = rect.top() + rect.height() / 2
         return [
-            QPointF(rect.left(), rect.top()),        # 0: top-left
-            QPointF(cx, rect.top()),                  # 1: top-center
-            QPointF(rect.right(), rect.top()),        # 2: top-right
-            QPointF(rect.left(), cy),                  # 3: middle-left
-            QPointF(rect.right(), cy),                 # 4: middle-right
-            QPointF(rect.left(), rect.bottom()),       # 5: bottom-left
-            QPointF(cx, rect.bottom()),                # 6: bottom-center
-            QPointF(rect.right(), rect.bottom()),      # 7: bottom-right
+            QPointF(rect.left(), rect.top()),  # 0: top-left
+            QPointF(cx, rect.top()),  # 1: top-center
+            QPointF(rect.right(), rect.top()),  # 2: top-right
+            QPointF(rect.left(), cy),  # 3: middle-left
+            QPointF(rect.right(), cy),  # 4: middle-right
+            QPointF(rect.left(), rect.bottom()),  # 5: bottom-left
+            QPointF(cx, rect.bottom()),  # 6: bottom-center
+            QPointF(rect.right(), rect.bottom()),  # 7: bottom-right
         ]
 
     def hit_test(self, pos: QPointF, handles: list[QPointF]) -> int:
@@ -136,7 +136,9 @@ class SelectionDecorator(QGraphicsItem):
         painter.setPen(QPen(SELECTION_COLOR, 1))
         painter.setBrush(QBrush(QColor(255, 255, 255)))
         for hp in handles:
-            painter.drawRect(QRectF(hp.x() - half, hp.y() - half, HANDLE_SIZE, HANDLE_SIZE))
+            painter.drawRect(
+                QRectF(hp.x() - half, hp.y() - half, HANDLE_SIZE, HANDLE_SIZE)
+            )
 
     def sceneEventFilter(self, watched, event):
         if event.type() == QEvent.Type.GraphicsSceneMouseMove:
@@ -170,7 +172,9 @@ class SelectionDecorator(QGraphicsItem):
             return
 
         scene_pos = event.scenePos()
-        new_rect = self.calculate_resize(self._active_handle, scene_pos, self._initial_rect)
+        new_rect = self.calculate_resize(
+            self._active_handle, scene_pos, self._initial_rect
+        )
         self._apply_resize(new_rect)
         event.accept()
 
@@ -257,11 +261,13 @@ class SelectionDecorator(QGraphicsItem):
         elif isinstance(item, BlurItem):
             item.set_resizing(False)
         from vibeocr.widgets.editor.command_stack import ResizeAnnotationCommand
+
         cmd = ResizeAnnotationCommand(item, old_rect, new_rect)
         canvas.undo_stack.push(cmd)
 
     def _find_canvas(self):
         from vibeocr.widgets.editor.edit_canvas import EditCanvas
+
         scene = self.scene()
         if scene:
             for view in scene.views():

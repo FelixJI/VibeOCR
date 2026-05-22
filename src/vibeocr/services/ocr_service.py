@@ -41,8 +41,10 @@ def _extract_table_html(html_str: str) -> str:
 def _html_table_to_markdown(html: str) -> str:
     rows: list[list[str]] = []
     for tr_match in _RE_TR.finditer(html):
-        cells = [_re.sub(r"<[^>]+>", "", td.group(1)).strip().replace("|", "\\|")
-                 for td in _RE_TD.finditer(tr_match.group(1))]
+        cells = [
+            _re.sub(r"<[^>]+>", "", td.group(1)).strip().replace("|", "\\|")
+            for td in _RE_TD.finditer(tr_match.group(1))
+        ]
         if cells:
             rows.append(cells)
     if not rows:
@@ -54,7 +56,6 @@ def _html_table_to_markdown(html: str) -> str:
     sep = "| " + " | ".join("---" for _ in range(max_cols)) + " |"
     body = "\n".join("| " + " | ".join(row) + " |" for row in rows[1:])
     return "\n".join(part for part in (header, sep, body) if part)
-
 
 
 def _looks_like_markdown(text: str) -> bool:
@@ -72,6 +73,7 @@ def _looks_like_markdown(text: str) -> bool:
         r"```",
     ]
     return any(_re.search(p, text, _re.MULTILINE) for p in patterns)
+
 
 # 注意：所有操作在同一线程中执行（CPU 模式）
 # 工作线程设计已确保这一点
@@ -284,7 +286,6 @@ class OCRService(metaclass=SingletonMeta):
 
         return results
 
-
     @classmethod
     def warmup_with_test_image(
         cls,
@@ -416,6 +417,7 @@ class OCRService(metaclass=SingletonMeta):
         if cls._cuda_dll_registered:
             return
         import sys
+
         if sys.platform != "win32":
             cls._cuda_dll_registered = True
             return
@@ -448,6 +450,7 @@ class OCRService(metaclass=SingletonMeta):
         try:
             import paddle
             import paddle.device as paddle_device
+
             if paddle_device.cuda.device_count() > 0:
                 # 驱动可检测到 GPU，但 CUDA 运行时库（cuBLAS 等）可能未安装，
                 # 执行一次矩阵乘法验证 cuBLAS 可用性。
@@ -476,6 +479,7 @@ class OCRService(metaclass=SingletonMeta):
         if not hasattr(os, "add_dll_directory"):
             return
         import sys
+
         site_packages = next((p for p in sys.path if "site-packages" in p), None)
         if not site_packages:
             return
@@ -500,6 +504,7 @@ class OCRService(metaclass=SingletonMeta):
     def _get_project_root():
         from vibeocr.env_manager import get_project_root
         from pathlib import Path
+
         return get_project_root()
 
     def _create_pipeline(self, pipeline: OCRPipeline) -> Any:
@@ -508,7 +513,9 @@ class OCRService(metaclass=SingletonMeta):
         device = self._get_device()
         display_name = pipeline.display_name
 
-        models_cached = is_pipeline_ever_succeeded(pipeline.value, self._get_project_root())
+        models_cached = is_pipeline_ever_succeeded(
+            pipeline.value, self._get_project_root()
+        )
         if not models_cached:
             self._notify_status(
                 "模型初始化",
@@ -517,12 +524,15 @@ class OCRService(metaclass=SingletonMeta):
 
         if pipeline == OCRPipeline.OCR:
             from paddleocr import PaddleOCR
+
             instance = PaddleOCR(device=device)
         elif pipeline == OCRPipeline.PP_STRUCTURE_V3:
             from paddleocr import PPStructureV3
+
             instance = PPStructureV3(device=device)
         elif pipeline == OCRPipeline.PADDLEOCR_VL:
             from paddleocr import PaddleOCRVL
+
             instance = PaddleOCRVL(device=device)
         else:
             msg = f"不支持的管道类型: {pipeline}"
@@ -545,7 +555,8 @@ class OCRService(metaclass=SingletonMeta):
                     self._setup_cuda_dll_path()
                     _logger.debug(
                         "[get_pipeline] 创建管道 %s，已加载管道: %s",
-                        pipeline_name, list(self._pipelines.keys()),
+                        pipeline_name,
+                        list(self._pipelines.keys()),
                     )
                     self._pipelines[pipeline_name] = self._create_pipeline(pipeline)
                     _logger.debug("[get_pipeline] 管道 %s 创建完成", pipeline_name)
@@ -603,9 +614,9 @@ class OCRService(metaclass=SingletonMeta):
             else:
                 result = self._recognize_ocr(image, actual_options)
             # Normalize bbox from pixel coords to [0-1000]
-            if hasattr(image, 'shape') and len(image.shape) >= 2:
+            if hasattr(image, "shape") and len(image.shape) >= 2:
                 img_h, img_w = image.shape[:2]
-            elif hasattr(image, 'size'):
+            elif hasattr(image, "size"):
                 img_w, img_h = image.size
             else:
                 img_w = img_h = 0
@@ -614,8 +625,10 @@ class OCRService(metaclass=SingletonMeta):
                     if block.bbox:
                         x0, y0, x1, y1 = block.bbox
                         block.bbox = (
-                            x0 / img_w * 1000, y0 / img_h * 1000,
-                            x1 / img_w * 1000, y1 / img_h * 1000,
+                            x0 / img_w * 1000,
+                            y0 / img_h * 1000,
+                            x1 / img_w * 1000,
+                            y1 / img_h * 1000,
                         )
 
             # 标记管道识别成功
@@ -698,7 +711,12 @@ class OCRService(metaclass=SingletonMeta):
             # 从 parsing_res_list 提取结构化结果
             parsing_res_list = []
             if hasattr(res, "__getitem__"):
-                parsing_res_list = res["parsing_res_list"] if "parsing_res_list" in (res.keys() if hasattr(res, "keys") else []) else []
+                parsing_res_list = (
+                    res["parsing_res_list"]
+                    if "parsing_res_list"
+                    in (res.keys() if hasattr(res, "keys") else [])
+                    else []
+                )
             if not parsing_res_list and hasattr(res, "parsing_res_list"):
                 parsing_res_list = res.parsing_res_list
 
@@ -720,31 +738,57 @@ class OCRService(metaclass=SingletonMeta):
                     table_md = _html_table_to_markdown(table_html)
                     if table_md:
                         markdown_parts.append(table_md)
-                    text_blocks.append(TextBlock(
-                        text=content, score=0.9, bbox=bbox_tuple,
-                        label=label, order=order_index or -1, content_index=cl_idx,
-                    ))
+                    text_blocks.append(
+                        TextBlock(
+                            text=content,
+                            score=0.9,
+                            bbox=bbox_tuple,
+                            label=label,
+                            order=order_index or -1,
+                            content_index=cl_idx,
+                        )
+                    )
                     text_with_scores.append((content, 0.9))
-                    content_list.append({"type": "table", "table_body": table_html, "bbox": bbox_tuple})
+                    content_list.append(
+                        {"type": "table", "table_body": table_html, "bbox": bbox_tuple}
+                    )
 
                 elif label == "formula":
                     formula_md = f"$${content}$$"
                     markdown_parts.append(formula_md)
-                    text_blocks.append(TextBlock(
-                        text=content, score=1.0, bbox=bbox_tuple,
-                        label=label, order=order_index or -1, content_index=cl_idx,
-                    ))
+                    text_blocks.append(
+                        TextBlock(
+                            text=content,
+                            score=1.0,
+                            bbox=bbox_tuple,
+                            label=label,
+                            order=order_index or -1,
+                            content_index=cl_idx,
+                        )
+                    )
                     text_with_scores.append((content, 1.0))
-                    content_list.append({"type": "formula", "text": content, "bbox": bbox_tuple})
+                    content_list.append(
+                        {"type": "formula", "text": content, "bbox": bbox_tuple}
+                    )
 
                 else:
                     # text, doc_title, seal, chart, image, etc.
-                    text_blocks.append(TextBlock(
-                        text=content, score=0.9, bbox=bbox_tuple,
-                        label=label, order=order_index or -1, content_index=cl_idx,
-                    ))
+                    text_blocks.append(
+                        TextBlock(
+                            text=content,
+                            score=0.9,
+                            bbox=bbox_tuple,
+                            label=label,
+                            order=order_index or -1,
+                            content_index=cl_idx,
+                        )
+                    )
                     text_with_scores.append((content, 0.9))
-                    content_entry: dict[str, Any] = {"type": label, "text": content, "bbox": bbox_tuple}
+                    content_entry: dict[str, Any] = {
+                        "type": label,
+                        "text": content,
+                        "bbox": bbox_tuple,
+                    }
                     if block_image and isinstance(block_image, dict):
                         img_path = block_image.get("path", "")
                         if img_path:
@@ -814,14 +858,23 @@ class OCRService(metaclass=SingletonMeta):
                     score = self._get_block_score(res, block)
 
                     if text:
-                        text_blocks.append(TextBlock(
-                            text=text, score=score, bbox=bbox,
-                            label=label, order=order,
-                        ))
+                        text_blocks.append(
+                            TextBlock(
+                                text=text,
+                                score=score,
+                                bbox=bbox,
+                                label=label,
+                                order=order,
+                            )
+                        )
                         text_with_scores.append((text, score))
-                        content_list.append({
-                            "type": label, "text": text, "bbox": bbox,
-                        })
+                        content_list.append(
+                            {
+                                "type": label,
+                                "text": text,
+                                "bbox": bbox,
+                            }
+                        )
             elif hasattr(res, "rec_texts") and hasattr(res, "rec_scores"):
                 # Fallback: legacy output format
                 rec_boxes = getattr(res, "rec_boxes", None)
@@ -831,7 +884,11 @@ class OCRService(metaclass=SingletonMeta):
                     if text:
                         fs = float(score)
                         text_with_scores.append((text, fs))
-                        bbox = self._extract_bbox(rec_boxes, i) if rec_boxes is not None else None
+                        bbox = (
+                            self._extract_bbox(rec_boxes, i)
+                            if rec_boxes is not None
+                            else None
+                        )
                         text_blocks.append(TextBlock(text=text, score=fs, bbox=bbox))
 
         raw_text = "\n".join(b.text for b in text_blocks)
@@ -852,14 +909,22 @@ class OCRService(metaclass=SingletonMeta):
         )
 
     @staticmethod
-    def _extract_block_bbox(block_bbox: list | tuple | None) -> tuple[float, float, float, float] | None:
+    def _extract_block_bbox(
+        block_bbox: list | tuple | None,
+    ) -> tuple[float, float, float, float] | None:
         """从 parsing_res_list 的 block_bbox 提取坐标"""
         if not block_bbox:
             return None
         try:
-            if len(block_bbox) == 4 and all(isinstance(v, (int, float)) for v in block_bbox):
-                return (float(block_bbox[0]), float(block_bbox[1]),
-                        float(block_bbox[2]), float(block_bbox[3]))
+            if len(block_bbox) == 4 and all(
+                isinstance(v, (int, float)) for v in block_bbox
+            ):
+                return (
+                    float(block_bbox[0]),
+                    float(block_bbox[1]),
+                    float(block_bbox[2]),
+                    float(block_bbox[3]),
+                )
             if len(block_bbox) >= 2:
                 xs = [p[0] for p in block_bbox]
                 ys = [p[1] for p in block_bbox]
@@ -880,7 +945,9 @@ class OCRService(metaclass=SingletonMeta):
         return 0.9
 
     @staticmethod
-    def _extract_bbox(rec_boxes, index: int) -> tuple[float, float, float, float] | None:
+    def _extract_bbox(
+        rec_boxes, index: int
+    ) -> tuple[float, float, float, float] | None:
         """从 rec_boxes 提取第 index 个文本框的 bbox [x0, y0, x1, y1]
 
         支持格式:
@@ -901,7 +968,12 @@ class OCRService(metaclass=SingletonMeta):
                 ys = [p[1] for p in box]
                 return (min(xs), min(ys), max(xs), max(ys))
             if len(box) == 2 and len(box[0]) == 2 and len(box[1]) == 2:
-                return (float(box[0][0]), float(box[0][1]), float(box[1][0]), float(box[1][1]))
+                return (
+                    float(box[0][0]),
+                    float(box[0][1]),
+                    float(box[1][0]),
+                    float(box[1][1]),
+                )
         except (IndexError, TypeError, ValueError):
             pass
         return None
@@ -949,18 +1021,32 @@ class OCRService(metaclass=SingletonMeta):
                         if text:
                             fs = float(score)
                             text_with_scores.append((text, fs))
-                            bbox = self._extract_bbox(rec_boxes, i) if rec_boxes is not None else None
-                            text_blocks.append(TextBlock(text=text, score=fs, bbox=bbox))
+                            bbox = (
+                                self._extract_bbox(rec_boxes, i)
+                                if rec_boxes is not None
+                                else None
+                            )
+                            text_blocks.append(
+                                TextBlock(text=text, score=fs, bbox=bbox)
+                            )
                 elif hasattr(res, "rec_texts"):
                     rec_boxes = getattr(res, "rec_boxes", None)
                     for i, text in enumerate(res.rec_texts):
                         if text:
                             text_with_scores.append((text, 1.0))
-                            bbox = self._extract_bbox(rec_boxes, i) if rec_boxes is not None else None
-                            text_blocks.append(TextBlock(text=text, score=1.0, bbox=bbox))
+                            bbox = (
+                                self._extract_bbox(rec_boxes, i)
+                                if rec_boxes is not None
+                                else None
+                            )
+                            text_blocks.append(
+                                TextBlock(text=text, score=1.0, bbox=bbox)
+                            )
                 elif hasattr(res, "ocr_text"):
                     text_with_scores.append((res.ocr_text, 1.0))
-                    text_blocks.append(TextBlock(text=res.ocr_text, score=1.0, bbox=None))
+                    text_blocks.append(
+                        TextBlock(text=res.ocr_text, score=1.0, bbox=None)
+                    )
                 elif isinstance(res, dict):
                     rec_texts = res.get("rec_texts", [])
                     rec_scores = res.get("rec_scores", [])
@@ -972,14 +1058,26 @@ class OCRService(metaclass=SingletonMeta):
                             if text:
                                 fs = float(score)
                                 text_with_scores.append((text, fs))
-                                bbox = self._extract_bbox(rec_boxes, i) if rec_boxes is not None else None
-                                text_blocks.append(TextBlock(text=text, score=fs, bbox=bbox))
+                                bbox = (
+                                    self._extract_bbox(rec_boxes, i)
+                                    if rec_boxes is not None
+                                    else None
+                                )
+                                text_blocks.append(
+                                    TextBlock(text=text, score=fs, bbox=bbox)
+                                )
                     else:
                         for i, text in enumerate(rec_texts):
                             if text:
                                 text_with_scores.append((text, 1.0))
-                                bbox = self._extract_bbox(rec_boxes, i) if rec_boxes is not None else None
-                                text_blocks.append(TextBlock(text=text, score=1.0, bbox=bbox))
+                                bbox = (
+                                    self._extract_bbox(rec_boxes, i)
+                                    if rec_boxes is not None
+                                    else None
+                                )
+                                text_blocks.append(
+                                    TextBlock(text=text, score=1.0, bbox=bbox)
+                                )
             except Exception as e:
                 _logger.error(
                     f"[_process_ocr_output_safe] 处理结果项 #{result_count} 时出错: {e}"

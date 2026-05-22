@@ -138,7 +138,9 @@ def run_worker(shm_name: str, shm_size: int, use_gpu: bool) -> None:
     if TYPE_CHECKING:
         from vibeocr.workers.batch_queue_manager import BatchQueueManager
 
-    batch_managers: dict[str, BatchQueueManager | None] = {}  # 管道名称 -> BatchQueueManager
+    batch_managers: dict[
+        str, BatchQueueManager | None
+    ] = {}  # 管道名称 -> BatchQueueManager
     PreprocessOptions = None  # 预先定义，避免未绑定错误
     batch_manager_initialized = False  # 标记是否已尝试初始化
 
@@ -175,7 +177,9 @@ def run_worker(shm_name: str, shm_size: int, use_gpu: bool) -> None:
 
             logger.debug(f"[Worker] 正在初始化批量队列管理器（{pipeline_name}）...")
             pipeline = ocr_service.get_pipeline(
-                OCRPipeline(pipeline_name) if any(p.value == pipeline_name for p in OCRPipeline) else OCRPipeline.OCR
+                OCRPipeline(pipeline_name)
+                if any(p.value == pipeline_name for p in OCRPipeline)
+                else OCRPipeline.OCR
             )
             batch_managers[pipeline_name] = BatchQueueManager(
                 pipeline, max_batch_size=4
@@ -467,11 +471,15 @@ def run_worker(shm_name: str, shm_size: int, use_gpu: bool) -> None:
                 elif msg_type in (MSG_RESULT, MSG_PRELOAD_DONE):
                     # 这些是响应消息，Worker 不应该读取到
                     # 如果读取到，说明是自己刚发送的响应，跳过
-                    logger.debug(f"[Worker] 读取到响应类型消息 {msg_type.decode('ascii', errors='replace')}，跳过")
+                    logger.debug(
+                        f"[Worker] 读取到响应类型消息 {msg_type.decode('ascii', errors='replace')}，跳过"
+                    )
                     continue
 
                 else:
-                    logger.warning(f"未知消息类型: {msg_type.decode('ascii', errors='replace')}")
+                    logger.warning(
+                        f"未知消息类型: {msg_type.decode('ascii', errors='replace')}"
+                    )
 
             except SharedMemoryProtocolError as e:
                 if "超时" in str(e):

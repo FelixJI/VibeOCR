@@ -47,7 +47,7 @@ class TestRenderBlockTitleAttribute:
         """置信度信息只出现在 title 属性中，不内嵌显示。"""
         block = {"type": "text", "text": "hello", "confidence": 0.60}
         html = _render_block(block, 0)
-        without_title = re.sub(r' title="[^"]*"', '', html)
+        without_title = re.sub(r' title="[^"]*"', "", html)
         assert "置信度" not in without_title
 
     def test_table_block_title(self):
@@ -172,10 +172,10 @@ class TestRenderEquation:
         block = {"text": "E=mc^2"}
         html = _render_equation(block, 0)
         assert 'class="math-block"' in html
-        assert 'data-latex=' in html
+        assert "data-latex=" in html
 
     def test_latex_escaped_in_attribute(self):
-        block = {"text": 'a < b'}
+        block = {"text": "a < b"}
         html = _render_equation(block, 0)
         assert 'data-latex="a &lt; b"' in html
 
@@ -226,13 +226,35 @@ class TestBorderColorLookup:
     """测试边框颜色和类型标签查找。"""
 
     def test_all_known_types_have_colors(self):
-        for t in ["text", "title", "table", "image", "figure", "chart",
-                   "equation", "interline_equation", "inline_equation",
-                   "list", "code", "seal"]:
+        for t in [
+            "text",
+            "title",
+            "table",
+            "image",
+            "figure",
+            "chart",
+            "equation",
+            "interline_equation",
+            "inline_equation",
+            "list",
+            "code",
+            "seal",
+        ]:
             assert t in BLOCK_BORDER_COLORS
 
     def test_all_known_types_have_labels(self):
-        for t in ["text", "title", "table", "image", "figure", "chart",
-                   "equation", "interline_equation", "inline_equation",
-                   "list", "code", "seal"]:
+        for t in [
+            "text",
+            "title",
+            "table",
+            "image",
+            "figure",
+            "chart",
+            "equation",
+            "interline_equation",
+            "inline_equation",
+            "list",
+            "code",
+            "seal",
+        ]:
             assert t in BLOCK_TYPE_LABELS

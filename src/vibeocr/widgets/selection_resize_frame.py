@@ -64,7 +64,10 @@ def _hit_test(pos: QPoint, rect: QRect) -> HandlePosition:
     """检测 pos 命中了哪个手柄"""
     handles = _handle_positions(rect)
     for hp, center in handles.items():
-        if abs(pos.x() - center.x()) <= _HANDLE_HALF and abs(pos.y() - center.y()) <= _HANDLE_HALF:
+        if (
+            abs(pos.x() - center.x()) <= _HANDLE_HALF
+            and abs(pos.y() - center.y()) <= _HANDLE_HALF
+        ):
             return hp
     return HandlePosition.NONE
 
@@ -86,9 +89,7 @@ def _cursor_for_handle(handle: HandlePosition) -> Qt.CursorShape:
     return mapping.get(handle, Qt.CursorShape.ArrowCursor)
 
 
-def _apply_resize(
-    original: QRect, handle: HandlePosition, delta: QPoint
-) -> QRect:
+def _apply_resize(original: QRect, handle: HandlePosition, delta: QPoint) -> QRect:
     """根据手柄位置和鼠标 delta 计算新矩形"""
     r = QRect(original)
     if handle == HandlePosition.MOVE:
@@ -203,6 +204,7 @@ class SelectionResizeFrame(QWidget):
         # 的事件路由要求鼠标事件经过 viewport 才能到达 mousePressEvent
         target = self._forward_target
         from PySide6.QtWidgets import QAbstractScrollArea
+
         if isinstance(target, QAbstractScrollArea):
             target = target.viewport()
         QApplication.sendEvent(target, new_event)
@@ -256,7 +258,9 @@ class SelectionResizeFrame(QWidget):
     def mouseMoveEvent(self, event: QMouseEvent) -> None:
         if self._active_handle == HandlePosition.NONE:
             handle = _hit_test(event.pos(), self._selection_rect)
-            if handle == HandlePosition.NONE and _is_in_border_zone(event.pos(), self._selection_rect):
+            if handle == HandlePosition.NONE and _is_in_border_zone(
+                event.pos(), self._selection_rect
+            ):
                 handle = HandlePosition.MOVE
             if handle == HandlePosition.NONE and self._forward_target:
                 self.setCursor(self._forward_target.cursor())
@@ -274,7 +278,10 @@ class SelectionResizeFrame(QWidget):
         self.selection_changed.emit(new_rect)
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
-        if event.button() == Qt.MouseButton.LeftButton and self._active_handle != HandlePosition.NONE:
+        if (
+            event.button() == Qt.MouseButton.LeftButton
+            and self._active_handle != HandlePosition.NONE
+        ):
             self._active_handle = HandlePosition.NONE
             self._drag_start_pos = None
             self._drag_start_rect = None

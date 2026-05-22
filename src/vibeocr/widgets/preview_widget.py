@@ -22,12 +22,12 @@ from vibeocr.models.ocr_result import DISCARDED_BLOCK_TYPES, TextBlock
 LOW_CONFIDENCE_THRESHOLD = 0.80
 
 # 置信度着色颜色
-HIGH_CONF_FILL = QColor(76, 175, 80, 40)    # 淡绿色填充
+HIGH_CONF_FILL = QColor(76, 175, 80, 40)  # 淡绿色填充
 HIGH_CONF_BORDER = QColor(76, 175, 80, 160)  # 淡绿色边框
-LOW_CONF_FILL = QColor(244, 67, 54, 60)     # 红色填充
+LOW_CONF_FILL = QColor(244, 67, 54, 60)  # 红色填充
 LOW_CONF_BORDER = QColor(244, 67, 54, 200)  # 红色边框
-EDIT_FILL = QColor(255, 193, 7, 40)         # 琥珀色填充（手动修改）
-EDIT_BORDER = QColor(255, 152, 0, 200)      # 橙色边框（手动修改）
+EDIT_FILL = QColor(255, 193, 7, 40)  # 琥珀色填充（手动修改）
+EDIT_BORDER = QColor(255, 152, 0, 200)  # 橙色边框（手动修改）
 
 # 块类型着色常量（来自 FilePreviewWidget）
 BBOX_NORM = 1000.0
@@ -127,7 +127,9 @@ class UnifiedBBoxOverlay(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-        for i, (x, y, w, h, score, text, is_manually_edited) in enumerate(self._conf_rects):
+        for i, (x, y, w, h, score, text, is_manually_edited) in enumerate(
+            self._conf_rects
+        ):
             rect = QRectF(x, y, w, h)
             is_low = score < LOW_CONFIDENCE_THRESHOLD
             is_hovered = i == self._hovered_index
@@ -209,7 +211,10 @@ class PreviewWidget(QWidget):
     block_unhovered = Signal()
 
     def __init__(
-        self, parent: QWidget | None = None, *, empty_text: str = "左键点击截图 · 右键点击选择文件\n\n支持图片、PDF 格式"
+        self,
+        parent: QWidget | None = None,
+        *,
+        empty_text: str = "左键点击截图 · 右键点击选择文件\n\n支持图片、PDF 格式",
     ) -> None:
         super().__init__(parent)
         self._empty_text = empty_text
@@ -274,12 +279,8 @@ class PreviewWidget(QWidget):
         self._image_label.setText(self._empty_text)
         self._image_label.setWordWrap(True)
         self._image_label.mousePressEvent = self._on_label_click  # type: ignore[method-assign]
-        self._image_label.setContextMenuPolicy(
-            Qt.ContextMenuPolicy.CustomContextMenu
-        )
-        self._image_label.customContextMenuRequested.connect(
-            self._on_context_menu
-        )
+        self._image_label.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._image_label.customContextMenuRequested.connect(self._on_context_menu)
         self._scroll_area.setWidget(self._image_label)
 
         layout.addWidget(self._scroll_area, stretch=1)
@@ -321,6 +322,7 @@ class PreviewWidget(QWidget):
                     self._on_block_double_click(event.pos())
         elif obj == self._inline_editor and event.type() == event.Type.KeyPress:
             from PySide6.QtGui import QKeyEvent
+
             key_event: QKeyEvent = event
             if key_event.key() == Qt.Key.Key_Escape:
                 self._cancel_inline_edit()
@@ -361,7 +363,9 @@ class PreviewWidget(QWidget):
         block = self._text_blocks[index]
         self._editing_index = index
         self._inline_editor.setText(block.text)
-        self._inline_editor.setGeometry(int(bx), int(by), max(int(bw), 120), max(int(bh) + 4, 28))
+        self._inline_editor.setGeometry(
+            int(bx), int(by), max(int(bw), 120), max(int(bh) + 4, 28)
+        )
         self._inline_editor.show()
         self._inline_editor.setFocus()
         self._inline_editor.selectAll()
@@ -565,7 +569,9 @@ class PreviewWidget(QWidget):
             if block_type == "text" and "text_level" in block:
                 block_type = "title"
             fill_color = BLOCK_COLORS.get(block_type, BLOCK_COLORS["text"])
-            border_color = BLOCK_BORDER_COLORS.get(block_type, BLOCK_BORDER_COLORS["text"])
+            border_color = BLOCK_BORDER_COLORS.get(
+                block_type, BLOCK_BORDER_COLORS["text"]
+            )
             screen_rect = QRectF(
                 bbox[0] / BBOX_NORM * disp_w + offset_x,
                 bbox[1] / BBOX_NORM * disp_h + offset_y,
@@ -652,7 +658,8 @@ class PreviewWidget(QWidget):
             max_h = max(viewport.height() - 20, 200)
 
             scaled = self._pixmap.scaled(
-                int(max_w * dpr), int(max_h * dpr),
+                int(max_w * dpr),
+                int(max_h * dpr),
                 Qt.AspectRatioMode.KeepAspectRatio,
                 Qt.TransformationMode.SmoothTransformation,
             )
@@ -698,7 +705,9 @@ class PreviewWidget(QWidget):
             sw = (x1 - x0) / 1000.0 * disp_w
             sh = (y1 - y0) / 1000.0 * disp_h
             self._block_screen_rects.append((sx, sy, sw, sh))
-            overlay_rects.append((sx, sy, sw, sh, block.score, block.text, block.is_manually_edited))
+            overlay_rects.append(
+                (sx, sy, sw, sh, block.score, block.text, block.is_manually_edited)
+            )
 
         self._overlay.set_confidence_blocks(overlay_rects)
         self._overlay.setGeometry(self._scroll_area.viewport().rect())

@@ -2,6 +2,7 @@
 
 并行探测模型源端点，结果持久化到 cache.json，7 天有效期。
 """
+
 import os
 import ssl
 import threading
@@ -90,7 +91,9 @@ class NetworkDetector:
     def _apply_cache(self, network: dict) -> None:
         self._paddlex_source = network["paddlex_source"]
         self._mineru_source = network["mineru_source"]
-        self._network_type = "domestic" if self._paddlex_source == "bos" else "international"
+        self._network_type = (
+            "domestic" if self._paddlex_source == "bos" else "international"
+        )
 
     def _detect(self) -> None:
         results: dict[str, float] = {}
@@ -115,7 +118,9 @@ class NetworkDetector:
 
         threads = [
             threading.Thread(target=test_endpoint, args=("china", CHINA_ENDPOINT)),
-            threading.Thread(target=test_endpoint, args=("international", INTERNATIONAL_ENDPOINT)),
+            threading.Thread(
+                target=test_endpoint, args=("international", INTERNATIONAL_ENDPOINT)
+            ),
         ]
         for t in threads:
             t.start()

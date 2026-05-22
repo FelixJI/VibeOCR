@@ -64,6 +64,7 @@ _current_images: dict[str, bytes] = {}
 
 # ── 块类型渲染函数 ──────────────────────────────────────────
 
+
 def _render_text(block: dict, index: int) -> str:
     text = html_lib.escape(block.get("text", ""))
     return f"<p>{text}</p>"
@@ -79,7 +80,9 @@ def _render_table(block: dict, index: int) -> str:
     parts: list[str] = []
     captions = block.get("table_caption") or []
     if captions:
-        parts.append(f'<p style="color:#888;font-size:12px;">{html_lib.escape(captions[0])}</p>')
+        parts.append(
+            f'<p style="color:#888;font-size:12px;">{html_lib.escape(captions[0])}</p>'
+        )
     table_body = block.get("table_body", "")
     html_content = block.get("html", "")
     if table_body:
@@ -91,7 +94,9 @@ def _render_table(block: dict, index: int) -> str:
         parts.append(f"<p>{text}</p>")
     footnotes = block.get("table_footnote") or []
     if footnotes:
-        parts.append(f'<p style="color:#888;font-size:11px;">{html_lib.escape(footnotes[0])}</p>')
+        parts.append(
+            f'<p style="color:#888;font-size:11px;">{html_lib.escape(footnotes[0])}</p>'
+        )
     return "\n".join(parts)
 
 
@@ -102,18 +107,26 @@ def _render_image(block: dict, index: int) -> str:
         img_bytes = _current_images[img_path]
         b64 = base64.b64encode(img_bytes).decode()
         ext = img_path.rsplit(".", 1)[-1].lower()
-        mime = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg"}.get(ext, "image/png")
-        parts.append(f'<img src="data:{mime};base64,{b64}" style="max-width:100%;border-radius:4px;">')
+        mime = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg"}.get(
+            ext, "image/png"
+        )
+        parts.append(
+            f'<img src="data:{mime};base64,{b64}" style="max-width:100%;border-radius:4px;">'
+        )
     else:
         img_idx = block.get("img_idx")
         if img_idx is not None:
             parts.append(f'<p style="color:#888;">[图片 #{img_idx}]</p>')
         else:
             text = html_lib.escape(block.get("text", ""))
-            parts.append(f"<p>[图片] {text}</p>" if text else '<p style="color:#888;">[图片]</p>')
+            parts.append(
+                f"<p>[图片] {text}</p>" if text else '<p style="color:#888;">[图片]</p>'
+            )
     captions = block.get("image_caption") or []
     if captions:
-        parts.append(f'<p style="color:#888;font-size:12px;">{html_lib.escape(captions[0])}</p>')
+        parts.append(
+            f'<p style="color:#888;font-size:12px;">{html_lib.escape(captions[0])}</p>'
+        )
     return "\n".join(parts)
 
 
@@ -123,10 +136,14 @@ def _render_chart(block: dict, index: int) -> str:
     if img_path and img_path in _current_images:
         img_bytes = _current_images[img_path]
         b64 = base64.b64encode(img_bytes).decode()
-        parts.append(f'<img src="data:image/png;base64,{b64}" style="max-width:100%;border-radius:4px;">')
+        parts.append(
+            f'<img src="data:image/png;base64,{b64}" style="max-width:100%;border-radius:4px;">'
+        )
     content = block.get("content", "")
     if content:
-        parts.append(f'<p style="color:#555;font-size:13px;">{html_lib.escape(content)}</p>')
+        parts.append(
+            f'<p style="color:#555;font-size:13px;">{html_lib.escape(content)}</p>'
+        )
     if not parts:
         parts.append('<p style="color:#888;">[图表]</p>')
     return "\n".join(parts)
@@ -137,7 +154,7 @@ def _render_equation(block: dict, index: int) -> str:
     return (
         f'<div class="math-block" data-latex="{latex}" '
         f'style="background:#f8f9fa;padding:8px 12px;border-radius:4px;'
-        f'font-family:Consolas,Monaco,monospace;font-size:13px;'
+        f"font-family:Consolas,Monaco,monospace;font-size:13px;"
         f'border-left:3px solid #0078d4;">'
         f"{latex}</div>"
     )
@@ -152,7 +169,11 @@ def _render_list(block: dict, index: int) -> str:
 def _render_code(block: dict, index: int) -> str:
     body = html_lib.escape(block.get("code_body", ""))
     sub = block.get("sub_type", "")
-    lang_label = f'<span style="color:#888;font-size:11px;">[{html_lib.escape(sub)}]</span>' if sub else ""
+    lang_label = (
+        f'<span style="color:#888;font-size:11px;">[{html_lib.escape(sub)}]</span>'
+        if sub
+        else ""
+    )
     return (
         f"{lang_label}"
         f'<pre style="background:#1e1e1e;color:#d4d4d4;padding:12px;border-radius:4px;'
@@ -450,6 +471,7 @@ function highlightBlock(index) {{
 
 class _Bridge(QObject):
     """QWebChannel 通信桥"""
+
     blockHovered = Signal(int)
     blockUnhovered = Signal()
     blockClicked = Signal(int)
@@ -532,7 +554,9 @@ class ResultViewWidget(QWidget):
         else:
             text = getattr(result, "raw_text", "")
             if text:
-                body = f'<pre style="white-space:pre-wrap;">{html_lib.escape(text)}</pre>'
+                body = (
+                    f'<pre style="white-space:pre-wrap;">{html_lib.escape(text)}</pre>'
+                )
             else:
                 body = '<p style="color:#888;">未识别到文字</p>'
 

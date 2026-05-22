@@ -12,6 +12,7 @@ from vibeocr.views.main_window import MainWindow
 def main_window(qapp, qtbot, tmp_path):
     """提供 MainWindow 实例。"""
     from vibeocr.managers.config_manager import ConfigManager
+
     ConfigManager.reset_instance()
     ConfigManager.instance(tmp_path)
     window = MainWindow()

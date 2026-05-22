@@ -46,10 +46,14 @@ LABEL_POS_MAP = {0: "bottom", 1: "top", 2: "none"}
 def _pil_to_qpixmap(pil_image: Image.Image) -> QPixmap:
     if pil_image.mode == "RGBA":
         data = pil_image.tobytes("raw", "RGBA")
-        qimage = QImage(data, pil_image.width, pil_image.height, QImage.Format.Format_RGBA8888)
+        qimage = QImage(
+            data, pil_image.width, pil_image.height, QImage.Format.Format_RGBA8888
+        )
     else:
         data = pil_image.tobytes("raw", "RGB")
-        qimage = QImage(data, pil_image.width, pil_image.height, QImage.Format.Format_RGB888)
+        qimage = QImage(
+            data, pil_image.width, pil_image.height, QImage.Format.Format_RGB888
+        )
     return QPixmap.fromImage(qimage.copy())
 
 
@@ -59,7 +63,8 @@ def _scale_pixmap_for_label(pixmap: QPixmap, label: QLabel) -> QPixmap:
     target_w = int(label.width() * dpr)
     target_h = int(label.height() * dpr)
     scaled = pixmap.scaled(
-        target_w, target_h,
+        target_w,
+        target_h,
         Qt.AspectRatioMode.KeepAspectRatio,
         Qt.TransformationMode.SmoothTransformation,
     )
@@ -300,7 +305,9 @@ class QrcodeTab(QWidget):
         from PySide6.QtWidgets import QFileDialog
 
         path, _ = QFileDialog.getOpenFileName(
-            self, "选择 Logo 图片", "",
+            self,
+            "选择 Logo 图片",
+            "",
             "图片文件 (*.png *.jpg *.jpeg *.bmp *.gif);;所有文件 (*)",
         )
         if path:
@@ -351,7 +358,9 @@ class QrcodeTab(QWidget):
         options["logo_path"] = self._logo_path if self._logo_check.isChecked() else None
         options["logo_ratio"] = self._logo_ratio_spin.value() / 100.0
         options["label_text"] = self._label_text_input.text()
-        options["label_position"] = LABEL_POS_MAP.get(self._label_pos_combo.currentIndex(), "bottom")
+        options["label_position"] = LABEL_POS_MAP.get(
+            self._label_pos_combo.currentIndex(), "bottom"
+        )
         options["label_font_size"] = self._label_font_spin.value()
         return options
 
@@ -367,7 +376,9 @@ class QrcodeTab(QWidget):
             img = self._service.generate(text, options)
 
             if options.get("logo_path"):
-                img = self._service.apply_logo(img, options["logo_path"], options["logo_ratio"])
+                img = self._service.apply_logo(
+                    img, options["logo_path"], options["logo_ratio"]
+                )
 
             label_text = options.get("label_text") or text
             img = self._service.apply_text_label(
@@ -384,7 +395,9 @@ class QrcodeTab(QWidget):
             )
         except Exception as e:
             logger.error(f"生成预览失败: {e}", exc_info=True)
-            self._preview_label.setText(f"<span style='color:#f44336;'>生成失败：{e}</span>")
+            self._preview_label.setText(
+                f"<span style='color:#f44336;'>生成失败：{e}</span>"
+            )
             self._current_image = None
 
     def _on_save(self) -> None:

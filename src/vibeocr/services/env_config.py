@@ -76,7 +76,6 @@ def get_pip_mirror(name: str = DEFAULT_PIP_MIRROR) -> str:
     return PIP_MIRROR_SOURCES.get(name, PIP_MIRROR_SOURCES[DEFAULT_PIP_MIRROR])
 
 
-
 def is_windows() -> bool:
     """检查是否在 Windows 系统上运行"""
     return sys.platform == "win32"

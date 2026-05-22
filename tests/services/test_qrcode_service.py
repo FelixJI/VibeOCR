@@ -136,13 +136,17 @@ class TestLogoEmbedding:
 class TestTextLabelAndInvert:
     def test_apply_text_label_bottom(self, service):
         img = Image.new("RGB", (300, 300), color="white")
-        result = service.apply_text_label(img, "Scan me", position="bottom", font_size=14)
+        result = service.apply_text_label(
+            img, "Scan me", position="bottom", font_size=14
+        )
         assert isinstance(result, Image.Image)
         assert result.height > img.height
 
     def test_apply_text_label_top(self, service):
         img = Image.new("RGB", (300, 300), color="white")
-        result = service.apply_text_label(img, "Top label", position="top", font_size=12)
+        result = service.apply_text_label(
+            img, "Top label", position="top", font_size=12
+        )
         assert isinstance(result, Image.Image)
         assert result.height > img.height
 
@@ -170,7 +174,9 @@ class TestTextLabelAndInvert:
         options["label_text"] = "Inverted QR"
         options["label_position"] = "bottom"
         img = service.generate("Test", options)
-        img = service.apply_text_label(img, "Inverted QR", position="bottom", font_size=12)
+        img = service.apply_text_label(
+            img, "Inverted QR", position="bottom", font_size=12
+        )
         img = service.invert_colors(img)
         assert isinstance(img, Image.Image)
 

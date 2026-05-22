@@ -152,7 +152,9 @@ class WorkerManager:
                 if i >= len(self._workers):
                     report_progress(f"创建 Worker {i}")
                     worker_process = OCRWorkerProcess(
-                        worker_id=i, use_gpu=self.use_gpu, shm_size=self.shm_size,
+                        worker_id=i,
+                        use_gpu=self.use_gpu,
+                        shm_size=self.shm_size,
                         worker_module=self.worker_module,
                     )
                     info = WorkerInfo(worker_id=i, process=worker_process)
@@ -385,8 +387,7 @@ class WorkerManager:
             return None
 
         logger.warning(
-            f"Worker {target.worker_id} 正忙于后台操作，"
-            f"强制重启以释放给识别任务"
+            f"Worker {target.worker_id} 正忙于后台操作，强制重启以释放给识别任务"
         )
 
         if self._restart_worker(target):

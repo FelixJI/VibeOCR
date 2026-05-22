@@ -89,7 +89,16 @@ class EditCanvas(QGraphicsView):
         # 绘制状态
         self._drawing: bool = False
         self._draw_start: QPointF | None = None
-        self._temp_item: QGraphicsRectItem | QGraphicsEllipseItem | ArrowAnnotation | EllipseAnnotation | MosaicItem | BlurItem | RectAnnotation | None = None
+        self._temp_item: (
+            QGraphicsRectItem
+            | QGraphicsEllipseItem
+            | ArrowAnnotation
+            | EllipseAnnotation
+            | MosaicItem
+            | BlurItem
+            | RectAnnotation
+            | None
+        ) = None
 
         # 移动跟踪：记录移动开始时各项的位置
         self._move_start_positions: dict[QGraphicsItem, QPointF] = {}
@@ -133,7 +142,9 @@ class EditCanvas(QGraphicsView):
     def selected_annotation(self):
         """获取当前选中的标注项"""
         for item in self._scene.selectedItems():
-            if item != self._background_item and not isinstance(item, SelectionDecorator):
+            if item != self._background_item and not isinstance(
+                item, SelectionDecorator
+            ):
                 return item
         return None
 
@@ -398,7 +409,14 @@ class EditCanvas(QGraphicsView):
         self._remove_temp()
         self._scene.clearSelection()
 
-        item: RectAnnotation | EllipseAnnotation | ArrowAnnotation | MosaicItem | BlurItem | None = None
+        item: (
+            RectAnnotation
+            | EllipseAnnotation
+            | ArrowAnnotation
+            | MosaicItem
+            | BlurItem
+            | None
+        ) = None
 
         if tool == EditTool.RECT:
             item = RectAnnotation(

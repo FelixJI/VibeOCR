@@ -29,8 +29,8 @@ class ExportSettingsWidget(QWidget):
     支持 5 种导出格式、两种位置模式和自定义路径记忆。
     """
 
-    export_requested = Signal(str, object)      # format, OCRResult
-    export_all_requested = Signal(str)          # format
+    export_requested = Signal(str, object)  # format, OCRResult
+    export_all_requested = Signal(str)  # format
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
@@ -99,6 +99,7 @@ class ExportSettingsWidget(QWidget):
         """从 ConfigManager 加载导出设置"""
         try:
             from vibeocr.managers.config_manager import ConfigManager
+
             config = ConfigManager.instance()
             data = config.get_export_settings()
 
@@ -126,13 +127,16 @@ class ExportSettingsWidget(QWidget):
         """保存导出设置到 ConfigManager"""
         try:
             from vibeocr.managers.config_manager import ConfigManager
+
             config = ConfigManager.instance()
-            config.save_export_settings({
-                "format": self._settings.format,
-                "location_mode": self._settings.location_mode,
-                "custom_directory": self._settings.custom_directory,
-                "last_custom_directory": self._settings.last_custom_directory,
-            })
+            config.save_export_settings(
+                {
+                    "format": self._settings.format,
+                    "location_mode": self._settings.location_mode,
+                    "custom_directory": self._settings.custom_directory,
+                    "last_custom_directory": self._settings.last_custom_directory,
+                }
+            )
         except Exception as e:
             logger.warning("保存导出设置失败: %s", e)
 
@@ -150,10 +154,10 @@ class ExportSettingsWidget(QWidget):
 
     def _on_browse(self) -> None:
         """选择自定义导出目录"""
-        start_dir = self._settings.custom_directory or self._settings.last_custom_directory
-        dir_path = QFileDialog.getExistingDirectory(
-            self, "选择导出目录", start_dir
+        start_dir = (
+            self._settings.custom_directory or self._settings.last_custom_directory
         )
+        dir_path = QFileDialog.getExistingDirectory(self, "选择导出目录", start_dir)
         if dir_path:
             self._path_edit.setText(dir_path)
             self._settings.custom_directory = dir_path
@@ -185,6 +189,7 @@ class ExportSettingsWidget(QWidget):
             return self._settings.custom_directory
         if source_path:
             from pathlib import Path
+
             return str(Path(source_path).parent)
         return self._settings.last_custom_directory or ""
 

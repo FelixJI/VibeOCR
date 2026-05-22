@@ -33,19 +33,19 @@ class TestScreenCaptureOverlayState:
 class TestScreenCaptureOverlaySignals:
     def test_confirmed_signal_defined(self, qapp):
         overlay = ScreenCaptureOverlay()
-        assert hasattr(overlay, 'confirmed')
+        assert hasattr(overlay, "confirmed")
 
     def test_copied_signal_defined(self, qapp):
         overlay = ScreenCaptureOverlay()
-        assert hasattr(overlay, 'copied')
+        assert hasattr(overlay, "copied")
 
     def test_saved_signal_defined(self, qapp):
         overlay = ScreenCaptureOverlay()
-        assert hasattr(overlay, 'saved')
+        assert hasattr(overlay, "saved")
 
     def test_cancelled_signal_defined(self, qapp):
         overlay = ScreenCaptureOverlay()
-        assert hasattr(overlay, 'cancelled')
+        assert hasattr(overlay, "cancelled")
 
 
 class TestPositionCalculation:

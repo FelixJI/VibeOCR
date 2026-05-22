@@ -1,4 +1,5 @@
 """src/vibeocr/pipeline_status.py"""
+
 import json
 import logging
 from pathlib import Path

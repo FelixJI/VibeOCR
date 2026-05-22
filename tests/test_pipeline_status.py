@@ -1,4 +1,5 @@
 """tests/test_pipeline_status.py"""
+
 import json
 from pathlib import Path
 
@@ -63,11 +64,16 @@ def test_mark_success_preserves_existing(tmp_path):
 def test_machine_id_mismatch_returns_false(tmp_path):
     cache_file = tmp_path / ".vibeocr" / "cache.json"
     cache_file.parent.mkdir(parents=True, exist_ok=True)
-    cache_file.write_text(json.dumps({
-        "version": 1,
-        "machine_id": "wrong_id",
-        "pipeline_success": {"OCR": True},
-    }), encoding="utf-8")
+    cache_file.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "machine_id": "wrong_id",
+                "pipeline_success": {"OCR": True},
+            }
+        ),
+        encoding="utf-8",
+    )
     assert is_pipeline_ever_succeeded("OCR", tmp_path) is False
 
 

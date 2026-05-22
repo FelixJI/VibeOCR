@@ -34,13 +34,17 @@ class TestTableExport:
     def test_docx_table_from_table_body(self, tmp_path):
         content_list = [
             {"type": "text", "text": "标题文本"},
-            {"type": "table", "table_body": "<tr><td>A</td><td>B</td></tr><tr><td>1</td><td>2</td></tr>"},
+            {
+                "type": "table",
+                "table_body": "<tr><td>A</td><td>B</td></tr><tr><td>1</td><td>2</td></tr>",
+            },
         ]
         result = _make_ocr_result(content_list=content_list)
         out = tmp_path / "test.docx"
         assert ExportService.export(result, out, "docx")
 
         from docx import Document
+
         doc = Document(str(out))
         assert len(doc.tables) == 1
         assert doc.tables[0].rows[0].cells[0].text == "A"
@@ -55,6 +59,7 @@ class TestTableExport:
         assert ExportService.export(result, out, "xlsx")
 
         from openpyxl import load_workbook
+
         wb = load_workbook(str(out))
         assert "表格 1" in wb.sheetnames
         ws = wb["表格 1"]
@@ -71,19 +76,25 @@ class TestTableExport:
         assert ExportService.export(result, out, "docx")
 
         from docx import Document
+
         doc = Document(str(out))
         assert len(doc.tables) == 1
         assert doc.tables[0].rows[0].cells[0].text == "H"
 
     def test_docx_table_prefers_table_body_over_html(self, tmp_path):
         content_list = [
-            {"type": "table", "table_body": "<tr><td>body</td></tr>", "html": "<tr><td>fallback</td></tr>"},
+            {
+                "type": "table",
+                "table_body": "<tr><td>body</td></tr>",
+                "html": "<tr><td>fallback</td></tr>",
+            },
         ]
         result = _make_ocr_result(content_list=content_list)
         out = tmp_path / "test.docx"
         assert ExportService.export(result, out, "docx")
 
         from docx import Document
+
         doc = Document(str(out))
         assert doc.tables[0].rows[0].cells[0].text == "body"
 
@@ -117,6 +128,7 @@ class TestImageExport:
         assert ExportService.export(result, out, "docx")
 
         from docx import Document
+
         doc = Document(str(out))
         assert len(doc.inline_shapes) == 1
 
@@ -130,6 +142,7 @@ class TestImageExport:
         assert ExportService.export(result, out, "docx")
 
         from docx import Document
+
         doc = Document(str(out))
         assert any("Figure 1" in p.text for p in doc.paragraphs)
 
@@ -142,9 +155,12 @@ class TestImageExport:
         assert ExportService.export(result, out, "xlsx")
 
         from openpyxl import load_workbook
+
         wb = load_workbook(str(out))
         ws = wb["文本汇总"]
-        assert any("Fig A" in str(cell.value or "") for row in ws.iter_rows() for cell in row)
+        assert any(
+            "Fig A" in str(cell.value or "") for row in ws.iter_rows() for cell in row
+        )
 
 
 # --- 标题/文本级别 ---
@@ -164,6 +180,7 @@ class TestTextLevelExport:
         assert ExportService.export(result, out, "docx")
 
         from docx import Document
+
         doc = Document(str(out))
         headings = [p for p in doc.paragraphs if p.style.name.startswith("Heading")]
         assert len(headings) == 2
@@ -180,6 +197,7 @@ class TestTextLevelExport:
         assert ExportService.export(result, out, "xlsx")
 
         from openpyxl import load_workbook
+
         wb = load_workbook(str(out))
         ws = wb.active
         values = [cell.value for row in ws.iter_rows() for cell in row if cell.value]
@@ -202,8 +220,11 @@ class TestOtherBlockTypes:
         assert ExportService.export(result, out, "docx")
 
         from docx import Document
+
         doc = Document(str(out))
-        list_items = [p.text for p in doc.paragraphs if "苹果" in p.text or "香蕉" in p.text]
+        list_items = [
+            p.text for p in doc.paragraphs if "苹果" in p.text or "香蕉" in p.text
+        ]
         assert len(list_items) == 2
 
     def test_xlsx_equation(self, tmp_path):
@@ -215,8 +236,11 @@ class TestOtherBlockTypes:
         assert ExportService.export(result, out, "xlsx")
 
         from openpyxl import load_workbook
+
         wb = load_workbook(str(out))
-        values = [cell.value for row in wb.active.iter_rows() for cell in row if cell.value]
+        values = [
+            cell.value for row in wb.active.iter_rows() for cell in row if cell.value
+        ]
         assert any("E=mc^2" in str(v) for v in values)
 
 

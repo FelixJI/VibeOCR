@@ -126,17 +126,31 @@ class ToolPropertiesBar(QWidget):
                 self._update_fill_color_buttons()
                 self.fill_color_changed.emit(self._fill_color)
 
-    def _set_fill_sub_controls_visible(self, is_shape_page: bool, visible: bool) -> None:
+    def _set_fill_sub_controls_visible(
+        self, is_shape_page: bool, visible: bool
+    ) -> None:
         if is_shape_page:
-            for w in (self._fill_color_btn, self._fill_link_btn,
-                      self._fill_opacity_title, self._fill_opacity_slider, self._fill_opacity_label):
+            for w in (
+                self._fill_color_btn,
+                self._fill_link_btn,
+                self._fill_opacity_title,
+                self._fill_opacity_slider,
+                self._fill_opacity_label,
+            ):
                 w.setVisible(visible)
         else:
-            for w in (self._common_fill_color_btn, self._common_fill_link_btn,
-                      self._common_fill_opacity_title, self._common_fill_opacity_slider, self._common_fill_opacity_label):
+            for w in (
+                self._common_fill_color_btn,
+                self._common_fill_link_btn,
+                self._common_fill_opacity_title,
+                self._common_fill_opacity_slider,
+                self._common_fill_opacity_label,
+            ):
                 w.setVisible(visible)
 
-    def _update_fill_color_btn_state(self, link_btn: QToolButton, color_btn: QPushButton) -> None:
+    def _update_fill_color_btn_state(
+        self, link_btn: QToolButton, color_btn: QPushButton
+    ) -> None:
         color_btn.setEnabled(not link_btn.isChecked())
 
     # ==================== 页面创建 ====================
@@ -347,8 +361,12 @@ class ToolPropertiesBar(QWidget):
         self._common_fill_cb.toggled.connect(self._on_fill_toggled_common)
         self._fill_link_btn.toggled.connect(self._on_fill_link_toggled_shape)
         self._common_fill_link_btn.toggled.connect(self._on_fill_link_toggled_common)
-        self._fill_opacity_slider.valueChanged.connect(self._on_fill_opacity_changed_shape)
-        self._common_fill_opacity_slider.valueChanged.connect(self._on_fill_opacity_changed_common)
+        self._fill_opacity_slider.valueChanged.connect(
+            self._on_fill_opacity_changed_shape
+        )
+        self._common_fill_opacity_slider.valueChanged.connect(
+            self._on_fill_opacity_changed_common
+        )
         self._font_combo.currentFontChanged.connect(self.font_changed.emit)
         self._font_size_spin.valueChanged.connect(self.font_size_changed.emit)
         self._bold_btn.toggled.connect(self.bold_changed.emit)
@@ -363,21 +381,33 @@ class ToolPropertiesBar(QWidget):
 
     def _on_fill_toggled_common(self, checked: bool) -> None:
         self._set_fill_sub_controls_visible(is_shape_page=False, visible=checked)
-        self._update_fill_color_btn_state(self._common_fill_link_btn, self._common_fill_color_btn)
+        self._update_fill_color_btn_state(
+            self._common_fill_link_btn, self._common_fill_color_btn
+        )
         self.fill_enabled_changed.emit(checked)
 
     def _on_fill_link_toggled_shape(self, checked: bool) -> None:
         if checked:
-            self._fill_color = QColor(self._current_color.red(), self._current_color.green(), self._current_color.blue())
+            self._fill_color = QColor(
+                self._current_color.red(),
+                self._current_color.green(),
+                self._current_color.blue(),
+            )
             self._update_fill_color_buttons()
         self._update_fill_color_btn_state(self._fill_link_btn, self._fill_color_btn)
         self.fill_linked_changed.emit(checked)
 
     def _on_fill_link_toggled_common(self, checked: bool) -> None:
         if checked:
-            self._fill_color = QColor(self._current_color.red(), self._current_color.green(), self._current_color.blue())
+            self._fill_color = QColor(
+                self._current_color.red(),
+                self._current_color.green(),
+                self._current_color.blue(),
+            )
             self._update_fill_color_buttons()
-        self._update_fill_color_btn_state(self._common_fill_link_btn, self._common_fill_color_btn)
+        self._update_fill_color_btn_state(
+            self._common_fill_link_btn, self._common_fill_color_btn
+        )
         self.fill_linked_changed.emit(checked)
 
     def _on_fill_opacity_changed_shape(self, value: int) -> None:
@@ -401,7 +431,10 @@ class ToolPropertiesBar(QWidget):
                 self._current_color = color
                 self._update_color_buttons()
                 self.color_changed.emit(color)
-                if self._fill_link_btn.isChecked() or self._common_fill_link_btn.isChecked():
+                if (
+                    self._fill_link_btn.isChecked()
+                    or self._common_fill_link_btn.isChecked()
+                ):
                     self._fill_color = QColor(color.red(), color.green(), color.blue())
                     self._update_fill_color_buttons()
 
@@ -459,7 +492,9 @@ class ToolPropertiesBar(QWidget):
         if isinstance(item, (RectAnnotation, EllipseAnnotation)):
             self._sync_common_page(item)
             self._common_fill_cb.show()
-            self._set_fill_sub_controls_visible(is_shape_page=False, visible=getattr(item, "_fill_enabled", False))
+            self._set_fill_sub_controls_visible(
+                is_shape_page=False, visible=getattr(item, "_fill_enabled", False)
+            )
             self._stack.setCurrentIndex(self._COMMON_PAGE)
         elif isinstance(item, ArrowAnnotation):
             self._sync_common_page(item)
@@ -493,12 +528,20 @@ class ToolPropertiesBar(QWidget):
 
         # 同步填充属性
         fill_enabled = getattr(item, "_fill_enabled", False)
-        fill_color = getattr(item, "_fill_color", QColor(item._pen_color.red(), item._pen_color.green(), item._pen_color.blue()))
+        fill_color = getattr(
+            item,
+            "_fill_color",
+            QColor(
+                item._pen_color.red(), item._pen_color.green(), item._pen_color.blue()
+            ),
+        )
         fill_opacity = getattr(item, "_fill_opacity", 20)
 
-        is_linked = (fill_color.red() == item._pen_color.red()
-                     and fill_color.green() == item._pen_color.green()
-                     and fill_color.blue() == item._pen_color.blue())
+        is_linked = (
+            fill_color.red() == item._pen_color.red()
+            and fill_color.green() == item._pen_color.green()
+            and fill_color.blue() == item._pen_color.blue()
+        )
 
         self._common_fill_cb.blockSignals(True)
         self._common_fill_cb.setChecked(fill_enabled)
@@ -508,7 +551,9 @@ class ToolPropertiesBar(QWidget):
         self._common_fill_link_btn.setChecked(is_linked)
         self._common_fill_link_btn.blockSignals(False)
 
-        self._fill_color = QColor(fill_color.red(), fill_color.green(), fill_color.blue())
+        self._fill_color = QColor(
+            fill_color.red(), fill_color.green(), fill_color.blue()
+        )
         self._update_fill_color_buttons()
 
         self._common_fill_opacity_slider.blockSignals(True)
@@ -516,7 +561,9 @@ class ToolPropertiesBar(QWidget):
         self._common_fill_opacity_slider.blockSignals(False)
         self._common_fill_opacity_label.setText(f"{fill_opacity}%")
 
-        self._update_fill_color_btn_state(self._common_fill_link_btn, self._common_fill_color_btn)
+        self._update_fill_color_btn_state(
+            self._common_fill_link_btn, self._common_fill_color_btn
+        )
 
     def _hide_common_fill_controls(self) -> None:
         self._common_fill_cb.hide()

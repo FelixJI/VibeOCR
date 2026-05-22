@@ -74,9 +74,7 @@ class TestPreprocessOptionsWidget:
 
     def test_tab_visibility_document_parsing(self, widget, qtbot):
         """测试文档解析的选项卡可见性"""
-        index = widget._pipeline_combo.findData(
-            OCRPipeline.DOCUMENT_PARSING.value
-        )
+        index = widget._pipeline_combo.findData(OCRPipeline.DOCUMENT_PARSING.value)
         widget._pipeline_combo.setCurrentIndex(index)
         qtbot.wait(50)
 
@@ -102,12 +100,12 @@ class TestLangCombo:
         langs = []
         for i in range(widget._lang_combo.count()):
             langs.append(widget._lang_combo.itemData(i))
-        assert "" in langs       # 自动检测
-        assert "zh" in langs     # 中文
-        assert "en" in langs     # 英文
+        assert "" in langs  # 自动检测
+        assert "zh" in langs  # 中文
+        assert "en" in langs  # 英文
         assert "zh,en" in langs  # 中英混合
-        assert "ja" in langs     # 日文
-        assert "ko" in langs     # 韩文
+        assert "ja" in langs  # 日文
+        assert "ko" in langs  # 韩文
 
     def test_lang_combo_default(self, widget):
         """测试语言下拉框默认值为自动检测"""

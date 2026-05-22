@@ -57,7 +57,9 @@ class OCRPreferences(QObject):
         self._load()
 
     @staticmethod
-    def instance(config_manager: "ConfigManager | Path | None" = None) -> "OCRPreferences":
+    def instance(
+        config_manager: "ConfigManager | Path | None" = None,
+    ) -> "OCRPreferences":
         """获取单例实例
 
         Args:

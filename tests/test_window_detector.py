@@ -68,7 +68,9 @@ class TestHitTest:
     def test_returns_root_hwnd(self, detector, monkeypatch):
         monkeypatch.setattr(
             "vibeocr.widgets.window_detector._win",
-            _MockWin32(window_from_point_result=999, ancestor_result=888, is_visible=True),
+            _MockWin32(
+                window_from_point_result=999, ancestor_result=888, is_visible=True
+            ),
         )
         result = detector._hit_test((100, 200))
         assert result == 888
@@ -125,7 +127,9 @@ class TestDetectAt:
 
     def test_returns_none_when_no_window(self, detector, monkeypatch):
         detector._hit_test = lambda pos: None
-        result = detector.detect_at(QPoint(50, 50), dpr=1.0, virtual_offset=QPoint(0, 0))
+        result = detector.detect_at(
+            QPoint(50, 50), dpr=1.0, virtual_offset=QPoint(0, 0)
+        )
         assert result is None
 
 

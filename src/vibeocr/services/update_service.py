@@ -30,13 +30,18 @@ _GITEE_REPO = "vibeocr"
 _GITHUB_OWNER = "felixji"
 _GITHUB_REPO = "vibeocr"
 
-_GITEE_API_URL = f"https://gitee.com/api/v5/repos/{_GITEE_OWNER}/{_GITEE_REPO}/releases/latest"
-_GITHUB_API_URL = f"https://api.github.com/repos/{_GITHUB_OWNER}/{_GITHUB_REPO}/releases/latest"
+_GITEE_API_URL = (
+    f"https://gitee.com/api/v5/repos/{_GITEE_OWNER}/{_GITEE_REPO}/releases/latest"
+)
+_GITHUB_API_URL = (
+    f"https://api.github.com/repos/{_GITHUB_OWNER}/{_GITHUB_REPO}/releases/latest"
+)
 
 
 # ---------------------------------------------------------------------------
 # 版本比较与数据模型
 # ---------------------------------------------------------------------------
+
 
 def compare_versions(v1: str, v2: str) -> int:
     """比较两个语义化版本号
@@ -116,6 +121,7 @@ def read_local_version(version_json_path: Path) -> str:
 # 远程版本检查
 # ---------------------------------------------------------------------------
 
+
 async def _fetch_gitee_release() -> dict | None:
     try:
         async with httpx.AsyncClient(timeout=3.0) as client:
@@ -177,6 +183,7 @@ async def check_for_updates(
 # ---------------------------------------------------------------------------
 # 下载与校验
 # ---------------------------------------------------------------------------
+
 
 def verify_sha256(file_path: Path, sha256_file: Path) -> bool:
     if not sha256_file.exists():
@@ -258,6 +265,7 @@ async def download_update(
 # 跳过版本管理
 # ---------------------------------------------------------------------------
 
+
 def load_skip_version(settings_path: Path) -> str:
     if not settings_path.exists():
         return ""
@@ -277,7 +285,9 @@ def save_skip_version(version: str, settings_path: Path) -> None:
         except (json.JSONDecodeError, OSError):
             data = {}
     data["skip_version"] = version
-    settings_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    settings_path.write_text(
+        json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
 
 
 def should_skip_version(version: str, settings_path: Path) -> bool:
@@ -303,7 +313,12 @@ from PySide6.QtWidgets import (
 class UpdateDialog(QDialog):
     """更新提示对话框"""
 
-    def __init__(self, update_info: UpdateInfo, current_version: str, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        update_info: UpdateInfo,
+        current_version: str,
+        parent: QWidget | None = None,
+    ) -> None:
         super().__init__(parent)
         self.setWindowTitle("发现新版本")
         self.setMinimumWidth(420)
@@ -314,7 +329,9 @@ class UpdateDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.setSpacing(12)
 
-        version_label = QLabel(f"当前版本: v{current_version}\n最新版本: v{info.version}")
+        version_label = QLabel(
+            f"当前版本: v{current_version}\n最新版本: v{info.version}"
+        )
         version_label.setStyleSheet("font-size: 14px;")
         layout.addWidget(version_label)
 
@@ -399,7 +416,9 @@ class DownloadProgressDialog(QDialog):
             self._progress_bar.setValue(pct)
             dl_mb = downloaded / (1024 * 1024)
             total_mb = total / (1024 * 1024)
-            self._status_label.setText(f"正在下载... {dl_mb:.1f} / {total_mb:.1f} MB ({pct}%)")
+            self._status_label.setText(
+                f"正在下载... {dl_mb:.1f} / {total_mb:.1f} MB ({pct}%)"
+            )
         else:
             dl_mb = downloaded / (1024 * 1024)
             self._status_label.setText(f"正在下载... {dl_mb:.1f} MB")
@@ -410,14 +429,21 @@ class DownloadProgressDialog(QDialog):
 # UpdateService 编排器
 # ---------------------------------------------------------------------------
 
+
 class UpdateService:
     """应用更新服务编排器"""
 
     def __init__(self, app_dir: Path) -> None:
         self._app_dir = app_dir
         self._version_json_path = app_dir / "version.json"
-        self._updater_path = app_dir / "updater.exe" if os.name == "nt" else app_dir / "updater"
-        from vibeocr.services.env_config import get_update_cache_dir, get_update_settings_path
+        self._updater_path = (
+            app_dir / "updater.exe" if os.name == "nt" else app_dir / "updater"
+        )
+        from vibeocr.services.env_config import (
+            get_update_cache_dir,
+            get_update_settings_path,
+        )
+
         self._cache_dir = get_update_cache_dir()
         self._settings_path = get_update_settings_path()
 
@@ -430,6 +456,7 @@ class UpdateService:
 
         try:
             from vibeocr.network_detector import NetworkDetector
+
             nd = NetworkDetector(self._app_dir)
             prefer_gitee = nd.network_type == "domestic"
         except Exception:
@@ -453,19 +480,25 @@ class UpdateService:
         if dialog.user_action == "update":
             await self._do_download_and_update(update_info, parent)
 
-    async def _do_download_and_update(self, info: UpdateInfo, parent: QWidget | None) -> None:
+    async def _do_download_and_update(
+        self, info: UpdateInfo, parent: QWidget | None
+    ) -> None:
         progress_dialog = DownloadProgressDialog(parent)
         progress_dialog.show()
 
         def progress_cb(downloaded: int, total: int) -> None:
             progress_dialog.update_progress(downloaded, total)
 
-        zip_path = await download_update(info, self._cache_dir, progress_callback=progress_cb)
+        zip_path = await download_update(
+            info, self._cache_dir, progress_callback=progress_cb
+        )
 
         progress_dialog.close()
 
         if zip_path is None:
-            QMessageBox.warning(parent, "更新失败", "下载更新包失败，请检查网络连接后重试。")
+            QMessageBox.warning(
+                parent, "更新失败", "下载更新包失败，请检查网络连接后重试。"
+            )
             return
 
         reply = QMessageBox.information(
@@ -486,8 +519,10 @@ class UpdateService:
 
         cmd = [
             str(self._updater_path),
-            "--update", str(zip_path),
-            "--app-dir", str(self._app_dir),
+            "--update",
+            str(zip_path),
+            "--app-dir",
+            str(self._app_dir),
         ]
         detached = 0x8 if os.name == "nt" else 0
         subprocess.Popen(cmd, creationflags=detached)

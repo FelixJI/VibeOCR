@@ -182,10 +182,12 @@ class TestMinerURouting:
 
     def setup_method(self):
         from vibeocr.services.ocr_service_subprocess import OCRServiceSubprocess
+
         OCRServiceSubprocess._instance = None
 
     def teardown_method(self):
         from vibeocr.services.ocr_service_subprocess import OCRServiceSubprocess
+
         if OCRServiceSubprocess._instance is not None:
             OCRServiceSubprocess._instance.shutdown()
             OCRServiceSubprocess._instance = None
@@ -193,6 +195,7 @@ class TestMinerURouting:
     def test_recognize_mineru_calls_service_directly(self):
         with patch("vibeocr.services.ocr_service_subprocess.WorkerManager"):
             from vibeocr.services.ocr_service_subprocess import OCRServiceSubprocess
+
             svc = OCRServiceSubprocess.__new__(OCRServiceSubprocess)
             svc._initialized = True
             svc.max_workers = 1
@@ -202,6 +205,7 @@ class TestMinerURouting:
             svc._start_progress_callback = None
             svc._paddlex_manager = MagicMock()
             from vibeocr.services.mineru_batch_service import MinerUBatchService
+
             svc._mineru_batch = MinerUBatchService()
 
             mock_mineru_result = MagicMock()
@@ -211,6 +215,7 @@ class TestMinerURouting:
                 MockMinerU.return_value.parse.return_value = mock_mineru_result
                 from vibeocr.models.ocr_options import OCROptions
                 from vibeocr.core.pipelines import OCRPipeline
+
                 options = OCROptions(pipeline=OCRPipeline.DOCUMENT_PARSING)
                 result = svc.recognize(b"pdf_data", options)
 
@@ -220,6 +225,7 @@ class TestMinerURouting:
     def test_recognize_paddlex_uses_worker_manager(self):
         with patch("vibeocr.services.ocr_service_subprocess.WorkerManager"):
             from vibeocr.services.ocr_service_subprocess import OCRServiceSubprocess
+
             svc = OCRServiceSubprocess.__new__(OCRServiceSubprocess)
             svc._initialized = True
             svc.max_workers = 1
@@ -229,6 +235,7 @@ class TestMinerURouting:
             svc._start_progress_callback = None
             svc._paddlex_manager = MagicMock()
             from vibeocr.services.mineru_batch_service import MinerUBatchService
+
             svc._mineru_batch = MinerUBatchService()
 
             mock_result = MagicMock()
@@ -236,6 +243,7 @@ class TestMinerURouting:
 
             from vibeocr.models.ocr_options import OCROptions
             from vibeocr.core.pipelines import OCRPipeline
+
             options = OCROptions(pipeline=OCRPipeline.OCR)
             result = svc.recognize(b"img_data", options)
 
@@ -278,6 +286,8 @@ class TestHtmlTableToMarkdown:
     def test_uneven_columns_padded(self):
         from vibeocr.services.ocr_service import _html_table_to_markdown
 
-        html = "<table><tr><td>A</td><td>B</td><td>C</td></tr><tr><td>D</td></tr></table>"
+        html = (
+            "<table><tr><td>A</td><td>B</td><td>C</td></tr><tr><td>D</td></tr></table>"
+        )
         md = _html_table_to_markdown(html)
         assert "| D |  |  |" in md

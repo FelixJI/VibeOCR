@@ -128,9 +128,7 @@ class ScreenCaptureOverlay(QWidget):
             self._virtual_geometry = self._virtual_geometry.united(screen.geometry())
 
         # 获取最高的设备像素比
-        self._device_pixel_ratio = max(
-            screen.devicePixelRatio() for screen in screens
-        )
+        self._device_pixel_ratio = max(screen.devicePixelRatio() for screen in screens)
 
         # 创建合并所有屏幕的截图
         physical_size = self._virtual_geometry.size() * self._device_pixel_ratio
@@ -208,9 +206,7 @@ class ScreenCaptureOverlay(QWidget):
             size_text = (
                 f"{self._selection_rect.width()} x {self._selection_rect.height()}"
             )
-            painter.drawText(
-                self._selection_rect.topLeft() + QPoint(5, -5), size_text
-            )
+            painter.drawText(self._selection_rect.topLeft() + QPoint(5, -5), size_text)
 
         # 5. 放大镜和像素信息
         if self._current_mouse_pos is not None:
@@ -272,7 +268,9 @@ class ScreenCaptureOverlay(QWidget):
         if self._sub_state == "DRAG":
             if self._start_pos:
                 self._end_pos = event.pos()
-                self._selection_rect = QRect(self._start_pos, self._end_pos).normalized()
+                self._selection_rect = QRect(
+                    self._start_pos, self._end_pos
+                ).normalized()
             self.update()
             return
 
@@ -292,10 +290,7 @@ class ScreenCaptureOverlay(QWidget):
         """CAPTURING: 鼠标释放完成选区，进入 EDITING 模式"""
         if self._state != "CAPTURING":
             return
-        if (
-            event.button() == Qt.MouseButton.LeftButton
-            and self._selection_rect
-        ):
+        if event.button() == Qt.MouseButton.LeftButton and self._selection_rect:
             self.releaseMouse()
             if (
                 self._screen_pixmap
@@ -446,12 +441,8 @@ class ScreenCaptureOverlay(QWidget):
         # 撤销/重做
         self._toolbar.undo_requested.connect(self._canvas.undo_stack.undo)
         self._toolbar.redo_requested.connect(self._canvas.undo_stack.redo)
-        self._canvas.undo_stack.canUndoChanged.connect(
-            self._toolbar.set_undo_enabled
-        )
-        self._canvas.undo_stack.canRedoChanged.connect(
-            self._toolbar.set_redo_enabled
-        )
+        self._canvas.undo_stack.canUndoChanged.connect(self._toolbar.set_undo_enabled)
+        self._canvas.undo_stack.canRedoChanged.connect(self._toolbar.set_redo_enabled)
 
         # 选中变化 → 属性条更新
         self._canvas._scene.selectionChanged.connect(
@@ -536,7 +527,9 @@ class ScreenCaptureOverlay(QWidget):
         self._canvas.set_fill_enabled(enabled)
         item = self._canvas.selected_annotation
         if item and hasattr(item, "set_fill_enabled"):
-            item.set_fill_enabled(enabled, self._canvas._fill_color, self._canvas._fill_opacity)
+            item.set_fill_enabled(
+                enabled, self._canvas._fill_color, self._canvas._fill_opacity
+            )
 
     def _on_fill_color_changed(self, color) -> None:
         self._canvas.set_fill_color(color)
@@ -646,9 +639,7 @@ class ScreenCaptureOverlay(QWidget):
 
         # 工具栏：默认底部，底部空间不足则翻到顶部
         bottom_space = vg.bottom() - selection.bottom()
-        toolbar_side = (
-            "bottom" if bottom_space >= self._TOOLBAR_MIN_HEIGHT else "top"
-        )
+        toolbar_side = "bottom" if bottom_space >= self._TOOLBAR_MIN_HEIGHT else "top"
 
         return {"panel_side": panel_side, "toolbar_side": toolbar_side}
 
@@ -679,9 +670,7 @@ class ScreenCaptureOverlay(QWidget):
             geo = self._calc_toolbar_geometry(self._selection_rect)
             self._toolbar.setGeometry(geo)
 
-    def _calc_recognition_panel_geometry(
-        self, selection: QRect
-    ) -> QRect:
+    def _calc_recognition_panel_geometry(self, selection: QRect) -> QRect:
         """计算识别面板的几何位置
 
         面板底部对齐选区下沿，高度仅容纳按钮。

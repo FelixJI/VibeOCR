@@ -116,23 +116,17 @@ class PreloadTask(QRunnable):
             )
 
             # 预热：对预加载成功的管道执行一次虚拟识别，触发 CUDA 上下文初始化
-            succeeded_pipelines = [
-                name for name, ok in results.items() if ok
-            ]
+            succeeded_pipelines = [name for name, ok in results.items() if ok]
             if succeeded_pipelines:
                 try:
-                    warmup_results = self._service.warmup_pipelines(
-                        succeeded_pipelines
-                    )
+                    warmup_results = self._service.warmup_pipelines(succeeded_pipelines)
                     warmup_ok = sum(1 for v in warmup_results.values() if v)
                     logger.debug(
                         f"[SubprocessManager] 预热完成: {warmup_ok}/{len(succeeded_pipelines)} 个管道"
                     )
                     # 预热失败的管道仍标记预加载成功（管道已加载，仅 CUDA 初始化未完成）
                 except Exception as e:
-                    logger.warning(
-                        f"[SubprocessManager] 预热失败（预加载仍有效）: {e}"
-                    )
+                    logger.warning(f"[SubprocessManager] 预热失败（预加载仍有效）: {e}")
 
             self.signals.finished.emit(results)
         except Exception as e:

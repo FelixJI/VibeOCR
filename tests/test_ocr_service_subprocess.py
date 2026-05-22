@@ -104,9 +104,7 @@ class TestOCRWorker:
         assert isinstance(script_path, (str, Path))
         # 检查脚本是否存在
         if not IS_CI:
-            assert Path(script_path).exists(), (
-                f"Worker script not found: {script_path}"
-            )
+            assert Path(script_path).exists(), f"Worker script not found: {script_path}"
 
     def test_worker_image_to_bytes(self):
         """测试图像转换为字节。"""

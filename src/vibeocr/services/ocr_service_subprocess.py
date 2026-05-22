@@ -112,6 +112,7 @@ class OCRServiceSubprocess:
             worker_module="vibeocr.workers.ocr_worker",
         )
         from vibeocr.services.mineru_batch_service import MinerUBatchService
+
         self._mineru_batch = MinerUBatchService()
 
         self._initialized = True
@@ -225,15 +226,18 @@ class OCRServiceSubprocess:
         # 根据管道类型路由到对应处理
         if self._is_mineru_pipeline(options):
             from vibeocr.services.mineru_service import MinerUService
+
             mime_type = options_dict.get("mime_type", "application/pdf")
             if not mime_type or mime_type == "image/png":
                 file_path = options_dict.get("file_path", "")
                 if file_path:
                     from vibeocr.utils.mime_types import guess_mime_from_filename
+
                     mime_type = guess_mime_from_filename(file_path)
                 else:
                     mime_type = "application/pdf"
             from vibeocr.models.ocr_options import OCROptions
+
             ocr_opts = OCROptions.from_dict(options_dict) if options_dict else None
             return MinerUService().parse(image_data, mime_type, ocr_opts)
 
@@ -330,6 +334,7 @@ class OCRServiceSubprocess:
     @staticmethod
     def _get_project_root() -> Path:
         from vibeocr.env_manager import get_project_root
+
         return get_project_root()
 
     def _calculate_recognize_timeout(self, pipeline_name: str | object) -> float:
@@ -350,7 +355,9 @@ class OCRServiceSubprocess:
         # 超时配置常量
         TIMEOUT_CACHED = 60.0  # 模型已缓存时的超时（秒）
         TIMEOUT_UNCACHED = 600.0  # 模型未缓存时的超时（秒）- 10分钟，给模型下载留足时间
-        TIMEOUT_DOCUMENT_PARSING = 600.0  # MinerU 文档解析超时（秒）- 10分钟，匹配 httpx 远程调用的耗时
+        TIMEOUT_DOCUMENT_PARSING = (
+            600.0  # MinerU 文档解析超时（秒）- 10分钟，匹配 httpx 远程调用的耗时
+        )
 
         if isinstance(pipeline_name, Enum):
             pipeline_name = pipeline_name.value
@@ -514,7 +521,11 @@ class OCRServiceSubprocess:
 
     def get_status(self) -> dict:
         """获取服务状态"""
-        paddlex_stats = self._paddlex_manager.get_stats() if hasattr(self, "_paddlex_manager") else {"workers": [], "max_workers": 0, "ready_workers": 0}
+        paddlex_stats = (
+            self._paddlex_manager.get_stats()
+            if hasattr(self, "_paddlex_manager")
+            else {"workers": [], "max_workers": 0, "ready_workers": 0}
+        )
         return {
             "max_workers": paddlex_stats["max_workers"],
             "use_gpu": self.use_gpu,
@@ -524,7 +535,11 @@ class OCRServiceSubprocess:
 
     def get_stats(self) -> dict:
         """获取详细统计信息"""
-        return {"paddlex": self._paddlex_manager.get_stats() if hasattr(self, "_paddlex_manager") else {}}
+        return {
+            "paddlex": self._paddlex_manager.get_stats()
+            if hasattr(self, "_paddlex_manager")
+            else {}
+        }
 
     # =========================================================================
     # 批量处理接口

@@ -70,6 +70,7 @@ def check_paddleocr_import():
             # 尝试检查 PaddleOCR
             try:
                 from paddleocr import PaddleOCR
+
                 print("✓ PaddleOCR 类可以导入")
             except ImportError:
                 print("✗ PaddleOCR 类导入失败")
@@ -130,7 +131,9 @@ def check_nuitka_available():
             # 检查版本
             import subprocess
 
-            result = subprocess.run(["nuitka", "--version"], capture_output=True, text=True)
+            result = subprocess.run(
+                ["nuitka", "--version"], capture_output=True, text=True
+            )
             if result.returncode == 0:
                 print(f"  版本: {result.stdout.strip()}")
             else:

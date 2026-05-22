@@ -241,7 +241,9 @@ class PreprocessOptionsWidget(QGroupBox):
         layout = QVBoxLayout(group)
 
         self._vl_use_layout_cb = QCheckBox("版面检测")
-        self._vl_use_layout_cb.setToolTip("启用版面布局检测，识别文档中的文本、表格、图片等区域")
+        self._vl_use_layout_cb.setToolTip(
+            "启用版面布局检测，识别文档中的文本、表格、图片等区域"
+        )
         self._vl_use_layout_cb.setChecked(True)
         layout.addWidget(self._vl_use_layout_cb)
 
@@ -340,17 +342,36 @@ class PreprocessOptionsWidget(QGroupBox):
         self._tab_widget.setTabVisible(1, has_advanced)
 
         # 设置 MineRU 组可见性
-        mineru_opts = ["parse_method", "backend", "enable_formula", "enable_table",
-                       "lang_list", "start_page_id", "end_page_id"]
+        mineru_opts = [
+            "parse_method",
+            "backend",
+            "enable_formula",
+            "enable_table",
+            "lang_list",
+            "start_page_id",
+            "end_page_id",
+        ]
         self._mineru_group.setVisible(any(opt in supported for opt in mineru_opts))
 
         # PaddleOCR-VL 选项组可见性
-        vl_opts = ["vl_use_layout_detection", "vl_use_chart_recognition", "vl_use_seal_recognition", "use_ocr_for_image_block"]
+        vl_opts = [
+            "vl_use_layout_detection",
+            "vl_use_chart_recognition",
+            "vl_use_seal_recognition",
+            "use_ocr_for_image_block",
+        ]
         self._paddlocr_vl_group.setVisible(any(opt in supported for opt in vl_opts))
 
         # PP-StructureV3 选项组可见性
-        pp_struct_opts = ["use_table_recognition", "use_formula_recognition", "use_seal_recognition", "use_chart_recognition"]
-        self._pp_structure_group.setVisible(any(opt in supported for opt in pp_struct_opts))
+        pp_struct_opts = [
+            "use_table_recognition",
+            "use_formula_recognition",
+            "use_seal_recognition",
+            "use_chart_recognition",
+        ]
+        self._pp_structure_group.setVisible(
+            any(opt in supported for opt in pp_struct_opts)
+        )
 
         # 如果当前选项卡不可见，切换到第一个可见的
         for i in range(self._tab_widget.count()):
@@ -384,11 +405,15 @@ class PreprocessOptionsWidget(QGroupBox):
         kwargs: dict = {"pipeline": pipeline}
 
         if is_option_supported(pipeline, "use_doc_orientation_classify"):
-            kwargs["use_doc_orientation_classify"] = self._doc_orientation_cb.isChecked()
+            kwargs["use_doc_orientation_classify"] = (
+                self._doc_orientation_cb.isChecked()
+            )
         if is_option_supported(pipeline, "use_doc_unwarping"):
             kwargs["use_doc_unwarping"] = self._doc_unwarping_cb.isChecked()
         if is_option_supported(pipeline, "use_textline_orientation"):
-            kwargs["use_textline_orientation"] = self._textline_orientation_cb.isChecked()
+            kwargs["use_textline_orientation"] = (
+                self._textline_orientation_cb.isChecked()
+            )
         if is_option_supported(pipeline, "enable_formula"):
             kwargs["enable_formula"] = self._enable_formula_cb.isChecked()
         if is_option_supported(pipeline, "enable_table"):
@@ -410,7 +435,9 @@ class PreprocessOptionsWidget(QGroupBox):
         if is_option_supported(pipeline, "vl_use_seal_recognition"):
             kwargs["vl_use_seal_recognition"] = self._vl_use_seal_cb.isChecked()
         if is_option_supported(pipeline, "use_ocr_for_image_block"):
-            kwargs["use_ocr_for_image_block"] = self._vl_use_ocr_for_image_cb.isChecked()
+            kwargs["use_ocr_for_image_block"] = (
+                self._vl_use_ocr_for_image_cb.isChecked()
+            )
         if is_option_supported(pipeline, "use_table_recognition"):
             kwargs["use_table_recognition"] = self._use_table_cb.isChecked()
         if is_option_supported(pipeline, "use_formula_recognition"):

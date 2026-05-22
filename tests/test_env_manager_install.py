@@ -1,8 +1,13 @@
 """验证 env_manager 安装依赖的规格"""
+
 from unittest.mock import MagicMock, patch
 from pathlib import Path
 
-from vibeocr.env_manager import install_embedded_dependencies, install_dependencies, ensure_mineru_models
+from vibeocr.env_manager import (
+    install_embedded_dependencies,
+    install_dependencies,
+    ensure_mineru_models,
+)
 
 
 class TestInstallSpecs:
@@ -14,6 +19,7 @@ class TestInstallSpecs:
         python_exe.touch()
 
         calls = []
+
         def mock_run(cmd, **kwargs):
             calls.append(cmd)
             r = MagicMock()
@@ -22,8 +28,14 @@ class TestInstallSpecs:
             return r
 
         with (
-            patch("vibeocr.env_manager.get_pip_source", return_value="https://pypi.org/simple"),
-            patch("vibeocr.env_manager.get_embedded_python_executable", return_value=python_exe),
+            patch(
+                "vibeocr.env_manager.get_pip_source",
+                return_value="https://pypi.org/simple",
+            ),
+            patch(
+                "vibeocr.env_manager.get_embedded_python_executable",
+                return_value=python_exe,
+            ),
             patch("vibeocr.env_manager.subprocess.run", side_effect=mock_run),
         ):
             install_embedded_dependencies(tmp_path, progress_callback=lambda s, m: None)
@@ -40,6 +52,7 @@ class TestInstallSpecs:
         python_exe.touch()
 
         calls = []
+
         def mock_run(cmd, **kwargs):
             calls.append(cmd)
             r = MagicMock()
@@ -48,8 +61,14 @@ class TestInstallSpecs:
             return r
 
         with (
-            patch("vibeocr.env_manager.get_pip_source", return_value="https://pypi.org/simple"),
-            patch("vibeocr.env_manager.get_embedded_python_executable", return_value=python_exe),
+            patch(
+                "vibeocr.env_manager.get_pip_source",
+                return_value="https://pypi.org/simple",
+            ),
+            patch(
+                "vibeocr.env_manager.get_embedded_python_executable",
+                return_value=python_exe,
+            ),
             patch("vibeocr.env_manager.subprocess.run", side_effect=mock_run),
         ):
             install_dependencies(tmp_path)
@@ -66,6 +85,7 @@ class TestInstallSpecs:
         python_exe.touch()
 
         calls = []
+
         def mock_run(cmd, **kwargs):
             calls.append(cmd)
             r = MagicMock()
@@ -74,11 +94,22 @@ class TestInstallSpecs:
             return r
 
         with (
-            patch("vibeocr.env_manager.get_pip_source", return_value="https://pypi.org/simple"),
-            patch("vibeocr.env_manager.get_embedded_python_executable", return_value=python_exe),
+            patch(
+                "vibeocr.env_manager.get_pip_source",
+                return_value="https://pypi.org/simple",
+            ),
+            patch(
+                "vibeocr.env_manager.get_embedded_python_executable",
+                return_value=python_exe,
+            ),
             patch("vibeocr.env_manager.subprocess.run", side_effect=mock_run),
         ):
-            install_embedded_dependencies(tmp_path, use_gpu=True, cuda_version="12.1", progress_callback=lambda s, m: None)
+            install_embedded_dependencies(
+                tmp_path,
+                use_gpu=True,
+                cuda_version="12.1",
+                progress_callback=lambda s, m: None,
+            )
 
         paddle_cmd = [c for c in calls if "paddlepaddle" in " ".join(c)]
         assert len(paddle_cmd) > 0
@@ -92,6 +123,7 @@ class TestInstallSpecs:
         python_exe.touch()
 
         calls = []
+
         def mock_run(cmd, **kwargs):
             calls.append(cmd)
             r = MagicMock()
@@ -100,11 +132,19 @@ class TestInstallSpecs:
             return r
 
         with (
-            patch("vibeocr.env_manager.get_pip_source", return_value="https://pypi.org/simple"),
-            patch("vibeocr.env_manager.get_embedded_python_executable", return_value=python_exe),
+            patch(
+                "vibeocr.env_manager.get_pip_source",
+                return_value="https://pypi.org/simple",
+            ),
+            patch(
+                "vibeocr.env_manager.get_embedded_python_executable",
+                return_value=python_exe,
+            ),
             patch("vibeocr.env_manager.subprocess.run", side_effect=mock_run),
         ):
-            install_embedded_dependencies(tmp_path, use_gpu=True, progress_callback=lambda s, m: None)
+            install_embedded_dependencies(
+                tmp_path, use_gpu=True, progress_callback=lambda s, m: None
+            )
 
         paddle_cmd = [c for c in calls if "paddlepaddle" in " ".join(c)]
         assert len(paddle_cmd) > 0
@@ -118,6 +158,7 @@ class TestInstallSpecs:
         python_exe.touch()
 
         calls = []
+
         def mock_run(cmd, **kwargs):
             calls.append(cmd)
             r = MagicMock()
@@ -126,8 +167,14 @@ class TestInstallSpecs:
             return r
 
         with (
-            patch("vibeocr.env_manager.get_pip_source", return_value="https://pypi.org/simple"),
-            patch("vibeocr.env_manager.get_embedded_python_executable", return_value=python_exe),
+            patch(
+                "vibeocr.env_manager.get_pip_source",
+                return_value="https://pypi.org/simple",
+            ),
+            patch(
+                "vibeocr.env_manager.get_embedded_python_executable",
+                return_value=python_exe,
+            ),
             patch("vibeocr.env_manager.subprocess.run", side_effect=mock_run),
         ):
             install_dependencies(tmp_path, use_gpu=True, cuda_version="12.6")

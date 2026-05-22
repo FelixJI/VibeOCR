@@ -17,6 +17,7 @@ def test_cleanup_old_logs_deletes_old_files(tmp_path):
     # 将旧文件的 mtime 设为 8 天前
     eight_days_ago = time.time() - 8 * 86400
     import os
+
     os.utime(old_file, (eight_days_ago, eight_days_ago))
 
     _cleanup_old_logs(tmp_path, max_age_days=7)
@@ -35,6 +36,7 @@ def test_cleanup_old_logs_skips_current_log(tmp_path):
     # 即使 vibeocr.log 很老也不删除
     eight_days_ago = time.time() - 8 * 86400
     import os
+
     os.utime(current_file, (eight_days_ago, eight_days_ago))
 
     _cleanup_old_logs(tmp_path, max_age_days=7)

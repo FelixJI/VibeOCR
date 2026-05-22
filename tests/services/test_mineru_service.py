@@ -133,6 +133,7 @@ class TestMinerUService:
 
         from vibeocr.models.ocr_options import OCROptions
         from vibeocr.core.pipelines import OCRPipeline
+
         options = OCROptions(
             pipeline=OCRPipeline.DOCUMENT_PARSING,
             lang_list=["zh", "en"],
@@ -164,6 +165,7 @@ class TestMinerUService:
         mock_resp.json.return_value = api_response
 
         from vibeocr.models.ocr_options import OCROptions
+
         options = OCROptions(lang_list=[])
 
         with (
@@ -253,8 +255,11 @@ class TestMinerUService:
         mock_health_resp.status_code = 200
 
         with (
-            patch.object(MinerUService, "_resolve_python_executable",
-                         return_value=Path("/fake/python.exe")),
+            patch.object(
+                MinerUService,
+                "_resolve_python_executable",
+                return_value=Path("/fake/python.exe"),
+            ),
             patch("vibeocr.services.mineru_service.subprocess.Popen") as mock_popen,
             patch("vibeocr.services.mineru_service.httpx") as mock_httpx,
             patch("vibeocr.services.mineru_service.socket"),
@@ -278,8 +283,11 @@ class TestMinerUService:
         mock_health_resp.status_code = 200
 
         with (
-            patch.object(MinerUService, "_resolve_python_executable",
-                         return_value=Path("/fake/python.exe")),
+            patch.object(
+                MinerUService,
+                "_resolve_python_executable",
+                return_value=Path("/fake/python.exe"),
+            ),
             patch("vibeocr.services.mineru_service.subprocess.Popen") as mock_popen,
             patch("vibeocr.services.mineru_service.httpx") as mock_httpx,
             patch("vibeocr.services.mineru_service.socket"),
@@ -331,10 +339,31 @@ class TestBuildOcrResult:
         service = self._make_service()
         content_list = [
             {"type": "text", "text": "Hello ", "bbox": [0, 0, 100, 50], "page_idx": 0},
-            {"type": "text", "text": "world", "text_level": 1, "bbox": [0, 60, 100, 80], "page_idx": 0},
-            {"type": "table", "table_body": "<tr><td>Data</td></tr>", "bbox": [0, 100, 500, 200], "page_idx": 0},
-            {"type": "equation", "text": "E=mc^2", "bbox": [0, 210, 200, 240], "page_idx": 0},
-            {"type": "list", "list_items": ["item1", "item2"], "bbox": [0, 250, 200, 350], "page_idx": 0},
+            {
+                "type": "text",
+                "text": "world",
+                "text_level": 1,
+                "bbox": [0, 60, 100, 80],
+                "page_idx": 0,
+            },
+            {
+                "type": "table",
+                "table_body": "<tr><td>Data</td></tr>",
+                "bbox": [0, 100, 500, 200],
+                "page_idx": 0,
+            },
+            {
+                "type": "equation",
+                "text": "E=mc^2",
+                "bbox": [0, 210, 200, 240],
+                "page_idx": 0,
+            },
+            {
+                "type": "list",
+                "list_items": ["item1", "item2"],
+                "bbox": [0, 250, 200, 350],
+                "page_idx": 0,
+            },
         ]
         api_resp = _make_api_response(
             md_content="# Hello world\n\n| Data |\n",
@@ -383,7 +412,12 @@ class TestBuildOcrResult:
     def test_table_block_text_from_table_body(self):
         service = self._make_service()
         content_list = [
-            {"type": "table", "table_body": "<tr><td>A</td><td>B</td></tr>", "bbox": [0, 0, 500, 100], "page_idx": 0},
+            {
+                "type": "table",
+                "table_body": "<tr><td>A</td><td>B</td></tr>",
+                "bbox": [0, 0, 500, 100],
+                "page_idx": 0,
+            },
         ]
         api_resp = _make_api_response(md_content="t", content_list=content_list)
         result = service._build_ocr_result(api_resp, "input.pdf", data=None)
@@ -415,12 +449,44 @@ class TestMinerUIntegration:
         """多页 PDF 应生成含正确 page_idx 的 text_blocks"""
         service = self._make_service()
         content_list = [
-            {"type": "text", "text": "Title", "text_level": 1, "bbox": [10, 10, 500, 60], "page_idx": 0},
-            {"type": "text", "text": "Para on page 0", "bbox": [10, 80, 800, 200], "page_idx": 0},
-            {"type": "table", "table_body": "<tr><td>A</td></tr>", "bbox": [10, 220, 800, 400], "page_idx": 0},
-            {"type": "image", "img_path": "images/img_0.png", "image_caption": ["Fig 1"], "bbox": [10, 10, 800, 500], "page_idx": 1},
-            {"type": "equation", "text": "E=mc^2", "bbox": [10, 520, 400, 580], "page_idx": 1},
-            {"type": "text", "text": "Last page", "bbox": [10, 600, 500, 650], "page_idx": 2},
+            {
+                "type": "text",
+                "text": "Title",
+                "text_level": 1,
+                "bbox": [10, 10, 500, 60],
+                "page_idx": 0,
+            },
+            {
+                "type": "text",
+                "text": "Para on page 0",
+                "bbox": [10, 80, 800, 200],
+                "page_idx": 0,
+            },
+            {
+                "type": "table",
+                "table_body": "<tr><td>A</td></tr>",
+                "bbox": [10, 220, 800, 400],
+                "page_idx": 0,
+            },
+            {
+                "type": "image",
+                "img_path": "images/img_0.png",
+                "image_caption": ["Fig 1"],
+                "bbox": [10, 10, 800, 500],
+                "page_idx": 1,
+            },
+            {
+                "type": "equation",
+                "text": "E=mc^2",
+                "bbox": [10, 520, 400, 580],
+                "page_idx": 1,
+            },
+            {
+                "type": "text",
+                "text": "Last page",
+                "bbox": [10, 600, 500, 650],
+                "page_idx": 2,
+            },
         ]
         b64_img = base64.b64encode(b"\x89PNG fake").decode()
         api_resp = _make_api_response(
@@ -455,9 +521,25 @@ class TestMinerUIntegration:
         """raw_text 不应包含 Markdown 语法"""
         service = self._make_service()
         content_list = [
-            {"type": "text", "text": "Heading", "text_level": 2, "bbox": [0, 0, 100, 30], "page_idx": 0},
-            {"type": "equation", "text": "x^2", "bbox": [0, 40, 100, 60], "page_idx": 0},
-            {"type": "list", "list_items": ["first", "second"], "bbox": [0, 70, 100, 120], "page_idx": 0},
+            {
+                "type": "text",
+                "text": "Heading",
+                "text_level": 2,
+                "bbox": [0, 0, 100, 30],
+                "page_idx": 0,
+            },
+            {
+                "type": "equation",
+                "text": "x^2",
+                "bbox": [0, 40, 100, 60],
+                "page_idx": 0,
+            },
+            {
+                "type": "list",
+                "list_items": ["first", "second"],
+                "bbox": [0, 70, 100, 120],
+                "page_idx": 0,
+            },
         ]
         api_resp = _make_api_response(
             md_content="## Heading\n\n$x^2$\n\n- first\n- second",
@@ -478,7 +560,12 @@ class TestMinerUIntegration:
         """bbox 应保持 [0,1000] 归一化坐标，不转换为像素"""
         service = self._make_service()
         content_list = [
-            {"type": "text", "text": "test", "bbox": [100, 200, 900, 800], "page_idx": 0},
+            {
+                "type": "text",
+                "text": "test",
+                "bbox": [100, 200, 900, 800],
+                "page_idx": 0,
+            },
         ]
         api_resp = _make_api_response(md_content="test", content_list=content_list)
         result = service._build_ocr_result(api_resp, "input.png", data=b"fake_png")
@@ -499,12 +586,42 @@ class TestDiscardedBlocksFilter:
         """raw_text 不应包含 header/footer/page_number 等废弃块"""
         service = self._make_service()
         content_list = [
-            {"type": "header", "text": "期刊名称", "bbox": [100, 10, 900, 40], "page_idx": 0},
-            {"type": "text", "text": "正文内容", "bbox": [100, 100, 900, 200], "page_idx": 0},
-            {"type": "footer", "text": "页脚文字", "bbox": [100, 950, 900, 990], "page_idx": 0},
-            {"type": "page_number", "text": "1", "bbox": [450, 980, 550, 999], "page_idx": 0},
-            {"type": "page_footnote", "text": "脚注内容", "bbox": [100, 900, 900, 940], "page_idx": 0},
-            {"type": "aside_text", "text": "旁注文字", "bbox": [0, 100, 90, 200], "page_idx": 0},
+            {
+                "type": "header",
+                "text": "期刊名称",
+                "bbox": [100, 10, 900, 40],
+                "page_idx": 0,
+            },
+            {
+                "type": "text",
+                "text": "正文内容",
+                "bbox": [100, 100, 900, 200],
+                "page_idx": 0,
+            },
+            {
+                "type": "footer",
+                "text": "页脚文字",
+                "bbox": [100, 950, 900, 990],
+                "page_idx": 0,
+            },
+            {
+                "type": "page_number",
+                "text": "1",
+                "bbox": [450, 980, 550, 999],
+                "page_idx": 0,
+            },
+            {
+                "type": "page_footnote",
+                "text": "脚注内容",
+                "bbox": [100, 900, 900, 940],
+                "page_idx": 0,
+            },
+            {
+                "type": "aside_text",
+                "text": "旁注文字",
+                "bbox": [0, 100, 90, 200],
+                "page_idx": 0,
+            },
         ]
         api_resp = _make_api_response(md_content="正文内容", content_list=content_list)
         result = service._build_ocr_result(api_resp, "input.pdf", data=None)
@@ -520,9 +637,24 @@ class TestDiscardedBlocksFilter:
         """text_blocks 不应包含废弃块的 TextBlock"""
         service = self._make_service()
         content_list = [
-            {"type": "header", "text": "Header", "bbox": [10, 10, 990, 40], "page_idx": 0},
-            {"type": "text", "text": "Body", "bbox": [10, 100, 990, 200], "page_idx": 0},
-            {"type": "footer", "text": "Footer", "bbox": [10, 950, 990, 990], "page_idx": 0},
+            {
+                "type": "header",
+                "text": "Header",
+                "bbox": [10, 10, 990, 40],
+                "page_idx": 0,
+            },
+            {
+                "type": "text",
+                "text": "Body",
+                "bbox": [10, 100, 990, 200],
+                "page_idx": 0,
+            },
+            {
+                "type": "footer",
+                "text": "Footer",
+                "bbox": [10, 950, 990, 990],
+                "page_idx": 0,
+            },
         ]
         api_resp = _make_api_response(md_content="Body", content_list=content_list)
         result = service._build_ocr_result(api_resp, "input.pdf", data=None)
@@ -561,12 +693,19 @@ class TestBuildOcrResultV2:
             [
                 {
                     "type": "title",
-                    "content": {"title_content": [{"type": "text", "content": "Introduction"}], "level": 1},
+                    "content": {
+                        "title_content": [{"type": "text", "content": "Introduction"}],
+                        "level": 1,
+                    },
                     "bbox": [83, 121, 917, 156],
                 },
                 {
                     "type": "paragraph",
-                    "content": {"paragraph_content": [{"type": "text", "content": "Body text here"}]},
+                    "content": {
+                        "paragraph_content": [
+                            {"type": "text", "content": "Body text here"}
+                        ]
+                    },
                     "bbox": [83, 200, 917, 300],
                 },
             ],
@@ -588,10 +727,23 @@ class TestBuildOcrResultV2:
         service = self._make_service()
         v2_content_list = [
             [
-                {"type": "title", "content": {"title_content": [{"type": "text", "content": "P0 Title"}], "level": 1}, "bbox": [0, 0, 100, 30]},
+                {
+                    "type": "title",
+                    "content": {
+                        "title_content": [{"type": "text", "content": "P0 Title"}],
+                        "level": 1,
+                    },
+                    "bbox": [0, 0, 100, 30],
+                },
             ],
             [
-                {"type": "paragraph", "content": {"paragraph_content": [{"type": "text", "content": "P1 Body"}]}, "bbox": [0, 50, 100, 80]},
+                {
+                    "type": "paragraph",
+                    "content": {
+                        "paragraph_content": [{"type": "text", "content": "P1 Body"}]
+                    },
+                    "bbox": [0, 50, 100, 80],
+                },
             ],
         ]
         api_resp = _make_api_response(
@@ -608,8 +760,20 @@ class TestBuildOcrResultV2:
         service = self._make_service()
         v2_content_list = [
             [
-                {"type": "page_header", "content": {"page_header_content": [{"type": "text", "content": "Header"}]}, "bbox": [0, 0, 100, 30]},
-                {"type": "paragraph", "content": {"paragraph_content": [{"type": "text", "content": "Body"}]}, "bbox": [0, 50, 100, 80]},
+                {
+                    "type": "page_header",
+                    "content": {
+                        "page_header_content": [{"type": "text", "content": "Header"}]
+                    },
+                    "bbox": [0, 0, 100, 30],
+                },
+                {
+                    "type": "paragraph",
+                    "content": {
+                        "paragraph_content": [{"type": "text", "content": "Body"}]
+                    },
+                    "bbox": [0, 50, 100, 80],
+                },
             ],
         ]
         api_resp = _make_api_response(md_content="Body", content_list=v2_content_list)
@@ -623,9 +787,16 @@ class TestBuildOcrResultV2:
         """修改后 legacy 格式仍应正确工作"""
         service = self._make_service()
         content_list = [
-            {"type": "text", "text": "Hello world", "bbox": [10, 20, 100, 50], "page_idx": 0},
+            {
+                "type": "text",
+                "text": "Hello world",
+                "bbox": [10, 20, 100, 50],
+                "page_idx": 0,
+            },
         ]
-        api_resp = _make_api_response(md_content="Hello world", content_list=content_list)
+        api_resp = _make_api_response(
+            md_content="Hello world", content_list=content_list
+        )
         result = service._build_ocr_result(api_resp, "input.pdf", data=None)
         assert len(result.text_blocks) == 1
         assert result.text_blocks[0].text == "Hello world"

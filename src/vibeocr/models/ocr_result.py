@@ -9,9 +9,15 @@ from typing import Any
 _log = logging.getLogger(__name__)
 
 # MinerU 丢弃的块类型——应排除在文本提取和渲染之外
-DISCARDED_BLOCK_TYPES = frozenset({
-    "header", "footer", "page_number", "page_footnote", "aside_text",
-})
+DISCARDED_BLOCK_TYPES = frozenset(
+    {
+        "header",
+        "footer",
+        "page_number",
+        "page_footnote",
+        "aside_text",
+    }
+)
 
 
 def normalize_bbox(bbox_raw: list | tuple) -> tuple[float, float, float, float]:
@@ -20,8 +26,12 @@ def normalize_bbox(bbox_raw: list | tuple) -> tuple[float, float, float, float]:
     支持输入: [0, 1] 归一化、[0, 1000] 归一化、像素坐标。
     像素坐标（max >= 1100）无法准确归一化（缺少图像尺寸），保留原值并警告。
     """
-    vals = (float(bbox_raw[0]), float(bbox_raw[1]),
-            float(bbox_raw[2]), float(bbox_raw[3]))
+    vals = (
+        float(bbox_raw[0]),
+        float(bbox_raw[1]),
+        float(bbox_raw[2]),
+        float(bbox_raw[3]),
+    )
     max_val = max(vals)
     if max_val < 1.1:
         result = tuple(v * 1000 for v in vals)
@@ -87,13 +97,15 @@ def _normalize_v2(raw: list[list[dict]]) -> list[dict]:
             v2_type = block.get("type", "")
             mapped_type = _V2_TYPE_MAP.get(v2_type, v2_type)
             text = _extract_v2_text(block)
-            result.append({
-                "type": mapped_type,
-                "text": text,
-                "bbox": tuple(block["bbox"]) if "bbox" in block else None,
-                "page_idx": page_idx,
-                "raw": block,
-            })
+            result.append(
+                {
+                    "type": mapped_type,
+                    "text": text,
+                    "bbox": tuple(block["bbox"]) if "bbox" in block else None,
+                    "page_idx": page_idx,
+                    "raw": block,
+                }
+            )
     return result
 
 
@@ -133,13 +145,15 @@ def _normalize_legacy(raw: list[dict]) -> list[dict]:
     for block in raw:
         block_type = block.get("type", "")
         text = _extract_legacy_text(block, block_type)
-        result.append({
-            "type": block_type,
-            "text": text,
-            "bbox": tuple(block["bbox"]) if "bbox" in block else None,
-            "page_idx": block.get("page_idx"),
-            "raw": block,
-        })
+        result.append(
+            {
+                "type": block_type,
+                "text": text,
+                "bbox": tuple(block["bbox"]) if "bbox" in block else None,
+                "page_idx": block.get("page_idx"),
+                "raw": block,
+            }
+        )
     return result
 
 

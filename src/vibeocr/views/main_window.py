@@ -123,6 +123,7 @@ class MainWindow(QMainWindow):
             return
         if self._ocr_status_callback_fn is not None:
             from vibeocr.services.ocr_service import OCRService
+
             OCRService.set_status_callback(self._ocr_status_callback_fn)
             self._ocr_status_callback_fn = None
 
@@ -702,7 +703,10 @@ class MainWindow(QMainWindow):
         logging.debug("正在关闭应用程序...")
 
         # 显式清理 QWebEngineView（避免退出时 QtWebEngine 渲染进程崩溃 0xC0000409）
-        for tab in (getattr(self, "_single_tab", None), getattr(self, "_batch_tab", None)):
+        for tab in (
+            getattr(self, "_single_tab", None),
+            getattr(self, "_batch_tab", None),
+        ):
             if tab and hasattr(tab, "_result_widget") and tab._result_widget:
                 tab._result_widget.cleanup()
 
@@ -896,7 +900,9 @@ class MainWindow(QMainWindow):
         if self._chk_auto_hide:
             self._chk_auto_hide.setEnabled(checked)
         if self._spin_hide_delay and self._app_settings:
-            self._spin_hide_delay.setEnabled(checked and self._app_settings.auto_hide_toolbar)
+            self._spin_hide_delay.setEnabled(
+                checked and self._app_settings.auto_hide_toolbar
+            )
         logging.debug(f"显示边缘工具栏: {'启用' if checked else '禁用'}")
 
     @Slot(QPoint)

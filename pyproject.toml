@@ -4,15 +4,13 @@ version = "0.1.0"
 description = "A screenshot OCR application"
 requires-python = ">=3.13,<3.14"
 dependencies = [
-    # 运行时依赖
     "pyside6>=6.11.1",
     "pillow>=12.2.0",
-    "numpy>=1.24,<2.4",
+    "numpy>=2.3.5",
     "markdown>=3.10.2",
     "qasync>=0.28.0",
     "paddlepaddle-gpu>=3.3.1",
     "nvidia-cudnn-cu13>=9.22.0.52",
-    "nvidia-cublas-cu12>=12.9.2.10",
     "nvidia-cublas>=13.4.0.1",
     "nvidia-cufft>=12.2.0.46",
     "nvidia-curand>=10.4.2.55",
@@ -21,11 +19,14 @@ dependencies = [
     "nvidia-cuda-runtime>=13.2.75",
     "paddleocr>=3.5.0",
     "httpx>=0.28.1",
-    "mineru[core]>=3.1.14",
-    "pymupdf>=1.25.0",
+    "mineru[core]>=3.1.15",
+    "pymupdf>=1.27.2.3",
     "qrcode[pil]>=8.2",
     "python-barcode>=0.16.1",
-    # 开发依赖
+]
+
+[dependency-groups]
+dev = [
     "pytest>=9.0.3",
     "pytest-qt>=4.5.0",
     "pytest-cov>=7.1.0",

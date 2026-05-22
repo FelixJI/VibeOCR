@@ -123,17 +123,13 @@ class BatchRecognitionWorker(QThread):
                         file_path = request_map[request_id]["path"]
                         if file_path not in results:
                             if isinstance(result, dict) and "error" in result:
-                                self.file_completed.emit(
-                                    file_path, "failed", result
-                                )
+                                self.file_completed.emit(file_path, "failed", result)
                                 results[file_path] = {
                                     "file_path": file_path,
                                     "error": result["error"],
                                 }
                             else:
-                                self.file_completed.emit(
-                                    file_path, "completed", result
-                                )
+                                self.file_completed.emit(file_path, "completed", result)
                                 results[file_path] = {
                                     "file_path": file_path,
                                     "result": result,
@@ -303,16 +299,15 @@ class BatchRecognitionTab(BaseOcrTab):
         if pipeline_val in ("OCR", "PP-StructureV3"):
             from vibeocr.pipeline_status import is_pipeline_ever_succeeded
             from vibeocr.env_manager import get_project_root
+
             if not is_pipeline_ever_succeeded(pipeline_val, get_project_root()):
                 self._result_widget._ensure_web_view().setHtml(
                     '<div style="display:flex;align-items:center;justify-content:center;'
                     'height:100%;color:#666;font-size:14px;">'
-                    '<p>正在识别，首次使用可能需要下载模型，请耐心等待…</p></div>'
+                    "<p>正在识别，首次使用可能需要下载模型，请耐心等待…</p></div>"
                 )
 
-        self._worker = BatchRecognitionWorker(
-            service, files, preprocess_options
-        )
+        self._worker = BatchRecognitionWorker(service, files, preprocess_options)
         self._worker.progress.connect(self._on_progress)
         self._worker.file_completed.connect(self._on_file_completed)
         self._worker.finished.connect(self._on_finished)
@@ -328,7 +323,9 @@ class BatchRecognitionTab(BaseOcrTab):
     def _on_progress(self, completed: int, total: int, current_file: str):
         """进度更新"""
         self._progress_label.setText(
-            f"{completed}/{total} {current_file}" if current_file else f"{completed}/{total}"
+            f"{completed}/{total} {current_file}"
+            if current_file
+            else f"{completed}/{total}"
         )
 
     def _on_file_completed(self, file_path: str, status: str, result):
@@ -389,16 +386,16 @@ class BatchRecognitionTab(BaseOcrTab):
 
         success = ExportService.export(result, output_path, fmt)
         if success:
-            QMessageBox.information(
-                self, "导出成功", f"已导出到:\n{output_path}"
-            )
+            QMessageBox.information(self, "导出成功", f"已导出到:\n{output_path}")
         else:
             QMessageBox.warning(self, "导出失败", f"导出失败:\n{output_path}")
 
     def _on_export_all(self, fmt: str) -> None:
         """导出全部已完成的文件"""
         files = self._file_list_widget._files
-        completed_files = [f for f in files if f["status"] == "completed" and f.get("result")]
+        completed_files = [
+            f for f in files if f["status"] == "completed" and f.get("result")
+        ]
 
         if not completed_files:
             QMessageBox.information(self, "提示", "没有可导出的结果")

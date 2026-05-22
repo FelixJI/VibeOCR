@@ -75,6 +75,7 @@ class MinerUService(metaclass=SingletonMeta):
     def _parse_api_log_level(text: str) -> int:
         """从 mineru-api 日志行中提取日志级别"""
         import re
+
         match = re.search(
             r"\b(DEBUG|INFO|WARNING|ERROR|CRITICAL)\b", text, re.IGNORECASE
         )
@@ -151,16 +152,22 @@ class MinerUService(metaclass=SingletonMeta):
 
         cmd = [
             str(python_exe),
-            "-m", "mineru.cli.fast_api",
-            "--host", "127.0.0.1",
-            "--port", str(port),
+            "-m",
+            "mineru.cli.fast_api",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(port),
         ]
 
         env = os.environ.copy()
         from vibeocr.env_manager import get_project_root
         from vibeocr.network_detector import NetworkDetector
+
         detector = NetworkDetector(get_project_root())
-        if detector.mineru_source == "modelscope" and not env.get("MINERU_MODEL_SOURCE"):
+        if detector.mineru_source == "modelscope" and not env.get(
+            "MINERU_MODEL_SOURCE"
+        ):
             env["MINERU_MODEL_SOURCE"] = "modelscope"
 
         self.__class__._api_process = subprocess.Popen(
@@ -194,7 +201,9 @@ class MinerUService(metaclass=SingletonMeta):
         if self.__class__._api_url and self._check_api_running(self.__class__._api_url):
             return
         with self._lock:
-            if self.__class__._api_url and self._check_api_running(self.__class__._api_url):
+            if self.__class__._api_url and self._check_api_running(
+                self.__class__._api_url
+            ):
                 return
             # 清理旧进程
             if self.__class__._api_process is not None:
@@ -206,7 +215,9 @@ class MinerUService(metaclass=SingletonMeta):
                 self.__class__._api_process = None
             self._start_api()
 
-    def _call_api(self, data: bytes, filename: str, options: OCROptions | None = None) -> dict[str, Any]:
+    def _call_api(
+        self, data: bytes, filename: str, options: OCROptions | None = None
+    ) -> dict[str, Any]:
         """调用 mineru-api 的 /file_parse 端点
 
         Args:
@@ -221,7 +232,9 @@ class MinerUService(metaclass=SingletonMeta):
 
         backend = options.backend if options else "hybrid-auto-engine"
         parse_method = options.parse_method if options else "auto"
-        lang_list_str = ",".join(options.lang_list) if options and options.lang_list else ""
+        lang_list_str = (
+            ",".join(options.lang_list) if options and options.lang_list else ""
+        )
 
         files = {"files": (filename, data)}
         params = {
@@ -234,7 +247,11 @@ class MinerUService(metaclass=SingletonMeta):
             "parse_method": parse_method,
             "lang_list": lang_list_str,
             "start_page_id": str(options.start_page_id if options else 0),
-            "end_page_id": str(options.end_page_id if options and options.end_page_id is not None else "99999"),
+            "end_page_id": str(
+                options.end_page_id
+                if options and options.end_page_id is not None
+                else "99999"
+            ),
         }
 
         # 回退链: hybrid-auto-engine → vlm-auto-engine → pipeline
@@ -263,7 +280,9 @@ class MinerUService(metaclass=SingletonMeta):
                 continue
             except httpx.ConnectError as e:
                 last_error = e
-                _logger.warning(f"[MinerU] 后端 {current_backend} 连接失败，尝试回退...")
+                _logger.warning(
+                    f"[MinerU] 后端 {current_backend} 连接失败，尝试回退..."
+                )
                 continue
 
             if resp.status_code == 200:
@@ -280,9 +299,7 @@ class MinerUService(metaclass=SingletonMeta):
             except Exception:
                 detail = resp.text[:200]
 
-            last_error = RuntimeError(
-                f"mineru-api 错误 ({resp.status_code}): {detail}"
-            )
+            last_error = RuntimeError(f"mineru-api 错误 ({resp.status_code}): {detail}")
             _logger.warning(
                 f"[MinerU] 后端 {current_backend} 失败: {detail}，尝试回退..."
             )
@@ -346,7 +363,11 @@ class MinerUService(metaclass=SingletonMeta):
                 images[img_name] = base64.b64decode(b64_part)
 
         # 从 normalized 提取纯文本
-        raw_text = self._extract_plain_text_normalized(normalized) if normalized else md_content
+        raw_text = (
+            self._extract_plain_text_normalized(normalized)
+            if normalized
+            else md_content
+        )
 
         # 从 normalized 构建 text_blocks
         text_blocks: list[TextBlock] = []
@@ -361,16 +382,22 @@ class MinerUService(metaclass=SingletonMeta):
             if not text:
                 continue
 
-            text_blocks.append(TextBlock(
-                text=text,
-                score=1.0,  # MineRU content_list 不提供 confidence
-                bbox=normalize_bbox(bbox[:4]),
-                page_idx=block.get("page_idx"),
-                content_index=i,
-            ))
+            text_blocks.append(
+                TextBlock(
+                    text=text,
+                    score=1.0,  # MineRU content_list 不提供 confidence
+                    bbox=normalize_bbox(bbox[:4]),
+                    page_idx=block.get("page_idx"),
+                    content_index=i,
+                )
+            )
 
         text_with_scores = [(b.text, b.score) for b in text_blocks]
-        avg_score = sum(s for _, s in text_with_scores) / len(text_with_scores) if text_with_scores else 0.0
+        avg_score = (
+            sum(s for _, s in text_with_scores) / len(text_with_scores)
+            if text_with_scores
+            else 0.0
+        )
 
         return OCRResult(
             raw_text=raw_text,
@@ -419,7 +446,9 @@ class MinerUService(metaclass=SingletonMeta):
                 html = block.get("table_body", "")
                 parts.append(MinerUService._strip_html(html))
             elif block_type in ("image", "chart"):
-                captions = block.get("image_caption") or block.get("chart_caption") or []
+                captions = (
+                    block.get("image_caption") or block.get("chart_caption") or []
+                )
                 if captions:
                     parts.append(" ".join(captions))
             elif block_type == "list":

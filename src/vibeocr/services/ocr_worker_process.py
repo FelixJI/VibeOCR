@@ -69,7 +69,10 @@ class OCRWorkerProcess:
     """
 
     def __init__(
-        self, worker_id: int, use_gpu: bool = True, shm_size: int = 10 * 1024 * 1024,
+        self,
+        worker_id: int,
+        use_gpu: bool = True,
+        shm_size: int = 10 * 1024 * 1024,
         worker_module: str = "vibeocr.workers.ocr_worker",
     ):
         """初始化 Worker 进程管理器
@@ -473,7 +476,9 @@ class OCRWorkerProcess:
                 msg_type, data = protocol.read_message(
                     timeout=timeout, expected_sender="worker"
                 )
-                logger.debug(f"[主进程] 收到响应，消息类型: {msg_type.decode('ascii', errors='replace')}")
+                logger.debug(
+                    f"[主进程] 收到响应，消息类型: {msg_type.decode('ascii', errors='replace')}"
+                )
 
                 if msg_type == MSG_RESULT:
                     # 反序列化结果
@@ -488,7 +493,9 @@ class OCRWorkerProcess:
                 if msg_type == MSG_SHUTDOWN:
                     raise OCRWorkerProcessError("Worker 被关闭（可能因超时卡死）")
 
-                raise OCRWorkerProcessError(f"未知响应类型: {msg_type.decode('ascii', errors='replace')}")
+                raise OCRWorkerProcessError(
+                    f"未知响应类型: {msg_type.decode('ascii', errors='replace')}"
+                )
 
             except SharedMemoryProtocolError as e:
                 # 检查 Worker 是否崩溃
@@ -637,7 +644,9 @@ class OCRWorkerProcess:
                     )
                     continue
 
-                logger.warning(f"Worker {self.worker_id} 收到意外消息类型: {msg_type.decode('ascii', errors='replace')}")
+                logger.warning(
+                    f"Worker {self.worker_id} 收到意外消息类型: {msg_type.decode('ascii', errors='replace')}"
+                )
                 continue
 
         except SharedMemoryProtocolError as e:
@@ -651,6 +660,7 @@ class OCRWorkerProcess:
         from pathlib import Path
 
         from vibeocr.env_manager import get_project_root
+
         return get_project_root()
 
     def _calculate_preload_timeout(self, pipelines: list[str]) -> float:
@@ -720,7 +730,9 @@ class OCRWorkerProcess:
         results = {}
         for pipeline_name in pipelines:
             try:
-                logger.debug(f"[预热] Worker {self.worker_id} 预热管道: {pipeline_name}")
+                logger.debug(
+                    f"[预热] Worker {self.worker_id} 预热管道: {pipeline_name}"
+                )
                 success = warmup_worker_process(
                     self, pipeline=pipeline_name, timeout=timeout
                 )
@@ -770,7 +782,9 @@ class OCRWorkerProcess:
             if msg_type == MSG_ERROR:
                 error_msg = data.decode("utf-8", errors="replace")
                 raise OCRWorkerProcessError(f"批量添加失败: {error_msg}")
-            raise OCRWorkerProcessError(f"意外响应类型: {msg_type.decode('ascii', errors='replace')}")
+            raise OCRWorkerProcessError(
+                f"意外响应类型: {msg_type.decode('ascii', errors='replace')}"
+            )
 
         except SharedMemoryProtocolError as e:
             raise OCRWorkerProcessError(f"通信错误: {e}") from None
@@ -866,7 +880,9 @@ class OCRWorkerProcess:
                     error_msg = data.decode("utf-8", errors="replace")
                     raise OCRWorkerProcessError(f"批量处理失败: {error_msg}")
 
-                logger.warning(f"Worker {self.worker_id} 收到意外消息类型: {msg_type.decode('ascii', errors='replace')}")
+                logger.warning(
+                    f"Worker {self.worker_id} 收到意外消息类型: {msg_type.decode('ascii', errors='replace')}"
+                )
                 continue
 
         except SharedMemoryProtocolError as e:

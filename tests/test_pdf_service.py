@@ -24,6 +24,7 @@ def test_pdf(tmp_path):
 @pytest.fixture
 def pdf_service():
     from vibeocr.services.pdf_service import PdfService
+
     return PdfService()
 
 
@@ -41,10 +42,13 @@ class TestPdfServiceOpen:
 
     def test_open_encrypt_raises(self, pdf_service, tmp_path):
         import fitz
+
         src = fitz.open()
         src.new_page(width=612, height=792)
         path = str(tmp_path / "encrypted.pdf")
-        src.save(path, encryption=fitz.PDF_ENCRYPT_AES_256, owner_pw="owner", user_pw="user")
+        src.save(
+            path, encryption=fitz.PDF_ENCRYPT_AES_256, owner_pw="owner", user_pw="user"
+        )
         src.close()
         with pytest.raises(RuntimeError, match="加密"):
             pdf_service.open(path)
@@ -206,7 +210,10 @@ class TestPdfServiceDeleteTextLayer:
         # 添加图片
         cs = fitz_mod.Colorspace(fitz_mod.CS_RGB)
         img = np.ones((100, 100, 3), dtype=np.uint8) * 128
-        page.insert_image(fitz_mod.Rect(72, 200, 172, 300), pixmap=fitz_mod.Pixmap(cs, 100, 100, img.tobytes(), 0))
+        page.insert_image(
+            fitz_mod.Rect(72, 200, 172, 300),
+            pixmap=fitz_mod.Pixmap(cs, 100, 100, img.tobytes(), 0),
+        )
         doc.save(str(path))
         doc.close()
 

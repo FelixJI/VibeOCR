@@ -1,4 +1,5 @@
 """Tests for NetworkDetector."""
+
 import os
 import time
 from datetime import datetime, timedelta
@@ -10,6 +11,7 @@ from vibeocr.machine_cache import generate_machine_id, save_cache
 class TestNetworkDetectorConstants:
     def test_endpoints_defined(self):
         from vibeocr.network_detector import CHINA_ENDPOINT, INTERNATIONAL_ENDPOINT
+
         assert "bcebos.com" in CHINA_ENDPOINT
         assert "huggingface.co" in INTERNATIONAL_ENDPOINT
 
@@ -42,7 +44,9 @@ class TestNetworkDetectorDetection:
         assert "tsinghua" in detector.pip_mirror_url
 
     @patch("vibeocr.network_detector.urlopen")
-    def test_international_endpoint_faster_returns_international(self, mock_urlopen, tmp_path):
+    def test_international_endpoint_faster_returns_international(
+        self, mock_urlopen, tmp_path
+    ):
         """HuggingFace 更快 → international 源。"""
         from vibeocr.network_detector import NetworkDetector
 
@@ -89,11 +93,14 @@ class TestNetworkDetectorCache:
             "paddlex_source": "huggingface",
             "mineru_source": "huggingface",
         }
-        save_cache(tmp_path, {
-            "version": 1,
-            "machine_id": generate_machine_id(),
-            "network": network,
-        })
+        save_cache(
+            tmp_path,
+            {
+                "version": 1,
+                "machine_id": generate_machine_id(),
+                "network": network,
+            },
+        )
         detector = NetworkDetector(tmp_path)
         assert detector.paddlex_source == "huggingface"
         assert detector.mineru_source == "huggingface"
@@ -108,11 +115,14 @@ class TestNetworkDetectorCache:
             "paddlex_source": "huggingface",
             "mineru_source": "huggingface",
         }
-        save_cache(tmp_path, {
-            "version": 1,
-            "machine_id": generate_machine_id(),
-            "network": network,
-        })
+        save_cache(
+            tmp_path,
+            {
+                "version": 1,
+                "machine_id": generate_machine_id(),
+                "network": network,
+            },
+        )
         with patch("vibeocr.network_detector.urlopen") as mock_urlopen:
             mock_urlopen.side_effect = Exception("Connection failed")
             detector = NetworkDetector(tmp_path)
@@ -127,11 +137,14 @@ class TestNetworkDetectorCache:
             "paddlex_source": "huggingface",
             "mineru_source": "huggingface",
         }
-        save_cache(tmp_path, {
-            "version": 1,
-            "machine_id": "wrong_machine_id",
-            "network": network,
-        })
+        save_cache(
+            tmp_path,
+            {
+                "version": 1,
+                "machine_id": "wrong_machine_id",
+                "network": network,
+            },
+        )
         with patch("vibeocr.network_detector.urlopen") as mock_urlopen:
             mock_urlopen.side_effect = Exception("Connection failed")
             detector = NetworkDetector(tmp_path)
@@ -152,11 +165,14 @@ class TestNetworkDetectorEnvVar:
             "paddlex_source": "bos",
             "mineru_source": "modelscope",
         }
-        save_cache(tmp_path, {
-            "version": 1,
-            "machine_id": generate_machine_id(),
-            "network": network,
-        })
+        save_cache(
+            tmp_path,
+            {
+                "version": 1,
+                "machine_id": generate_machine_id(),
+                "network": network,
+            },
+        )
         detector = NetworkDetector(tmp_path)
         assert detector.paddlex_source_env == "BOS"
         assert os.environ.get("PADDLE_PDX_MODEL_SOURCE") == "BOS"

@@ -41,7 +41,9 @@ class OCROptions:
 
     # === MineRU 文档解析选项 ===
     parse_method: str = "auto"  # 解析方法: auto, txt, ocr
-    backend: str = "hybrid-auto-engine"  # 解析后端: vlm-auto-engine, hybrid-auto-engine, pipeline
+    backend: str = (
+        "hybrid-auto-engine"  # 解析后端: vlm-auto-engine, hybrid-auto-engine, pipeline
+    )
     enable_formula: bool = True  # 启用公式识别
     enable_table: bool = True  # 启用表格识别
 
@@ -57,7 +59,9 @@ class OCROptions:
             包含所有选项的字典
         """
         return {
-            "pipeline": self.pipeline.value if hasattr(self.pipeline, "value") else self.pipeline,
+            "pipeline": self.pipeline.value
+            if hasattr(self.pipeline, "value")
+            else self.pipeline,
             "use_doc_orientation_classify": self.use_doc_orientation_classify,
             "use_doc_unwarping": self.use_doc_unwarping,
             "use_textline_orientation": self.use_textline_orientation,

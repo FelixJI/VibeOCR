@@ -31,8 +31,11 @@ class TestPdfPageInfo:
 
     def test_with_text_layers(self):
         layer = TextLayerInfo(
-            index=0, text_preview="abc", char_count=3,
-            bbox=(0, 0, 100, 20), color_id=0,
+            index=0,
+            text_preview="abc",
+            char_count=3,
+            bbox=(0, 0, 100, 20),
+            color_id=0,
         )
         info = PdfPageInfo(page_index=1, has_text_layer=True, text_layers=[layer])
         assert info.has_text_layer is True

@@ -61,7 +61,11 @@ class ConfigManager(QObject):
         try:
             with open(filepath, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            return data if isinstance(data, dict) else (default if default is not None else {})
+            return (
+                data
+                if isinstance(data, dict)
+                else (default if default is not None else {})
+            )
         except (json.JSONDecodeError, OSError) as e:
             logger.warning("加载配置文件 %s 失败: %s", filename, e)
             return default if default is not None else {}
@@ -84,7 +88,11 @@ class ConfigManager(QObject):
         try:
             with open(filepath, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            return data if isinstance(data, dict) else (default if default is not None else {})
+            return (
+                data
+                if isinstance(data, dict)
+                else (default if default is not None else {})
+            )
         except (json.JSONDecodeError, OSError) as e:
             logger.warning("加载缓存文件 %s 失败: %s", filename, e)
             return default if default is not None else {}
@@ -125,13 +133,16 @@ class ConfigManager(QObject):
         return getattr(self, "_preload_pipelines", [])
 
     def get_export_settings(self) -> dict:
-        return self._load_json("export_settings.json", {
-            "version": 1,
-            "format": "markdown",
-            "location_mode": "same_as_source",
-            "custom_directory": "",
-            "last_custom_directory": "",
-        })
+        return self._load_json(
+            "export_settings.json",
+            {
+                "version": 1,
+                "format": "markdown",
+                "location_mode": "same_as_source",
+                "custom_directory": "",
+                "last_custom_directory": "",
+            },
+        )
 
     def save_export_settings(self, settings: dict) -> bool:
         data = {"version": 1, **settings}

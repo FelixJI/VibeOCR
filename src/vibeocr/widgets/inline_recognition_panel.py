@@ -49,7 +49,9 @@ class InlineRecognitionPanel(QWidget):
             btn.setCheckable(True)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
             btn.setProperty("pipeline", pipeline)
-            btn.clicked.connect(lambda _checked, p=pipeline: self._on_pipeline_clicked(p))
+            btn.clicked.connect(
+                lambda _checked, p=pipeline: self._on_pipeline_clicked(p)
+            )
             layout.addWidget(btn)
             self._pipeline_buttons[pipeline] = btn
 

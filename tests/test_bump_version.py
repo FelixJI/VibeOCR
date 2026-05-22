@@ -17,29 +17,38 @@ def _run_bump(tmp_path, args, env=None):
     init_py = tmp_path / "__init__.py"
     main_py = tmp_path / "main.py"
 
-    pyproject.write_text(textwrap.dedent("""\
+    pyproject.write_text(
+        textwrap.dedent("""\
         [project]
         name = "vibeocr"
         version = "0.1.0"
-    """), encoding="utf-8")
+    """),
+        encoding="utf-8",
+    )
     init_py.write_text('__version__ = "0.1.0"', encoding="utf-8")
     main_py.write_text('    app.setApplicationVersion("0.1.0")', encoding="utf-8")
 
     subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True)
     subprocess.run(
         ["git", "config", "user.email", "test@test.com"],
-        cwd=tmp_path, capture_output=True,
+        cwd=tmp_path,
+        capture_output=True,
     )
     subprocess.run(
         ["git", "config", "user.name", "Test"],
-        cwd=tmp_path, capture_output=True,
+        cwd=tmp_path,
+        capture_output=True,
     )
     subprocess.run(["git", "add", "."], cwd=tmp_path, capture_output=True)
     subprocess.run(
-        ["git", "commit", "-m", "init"], cwd=tmp_path, capture_output=True,
+        ["git", "commit", "-m", "init"],
+        cwd=tmp_path,
+        capture_output=True,
     )
     subprocess.run(
-        ["git", "tag", "v0.1.0"], cwd=tmp_path, capture_output=True,
+        ["git", "tag", "v0.1.0"],
+        cwd=tmp_path,
+        capture_output=True,
     )
 
     env = env or os.environ.copy()
@@ -64,36 +73,46 @@ def _run_bump_with_extra_commits(tmp_path, args, commits_to_add):
     init_py = tmp_path / "__init__.py"
     main_py = tmp_path / "main.py"
 
-    pyproject.write_text(textwrap.dedent("""\
+    pyproject.write_text(
+        textwrap.dedent("""\
         [project]
         name = "vibeocr"
         version = "0.1.0"
-    """), encoding="utf-8")
+    """),
+        encoding="utf-8",
+    )
     init_py.write_text('__version__ = "0.1.0"', encoding="utf-8")
     main_py.write_text('    app.setApplicationVersion("0.1.0")', encoding="utf-8")
 
     subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True)
     subprocess.run(
         ["git", "config", "user.email", "test@test.com"],
-        cwd=tmp_path, capture_output=True,
+        cwd=tmp_path,
+        capture_output=True,
     )
     subprocess.run(
         ["git", "config", "user.name", "Test"],
-        cwd=tmp_path, capture_output=True,
+        cwd=tmp_path,
+        capture_output=True,
     )
     subprocess.run(["git", "add", "."], cwd=tmp_path, capture_output=True)
     subprocess.run(
-        ["git", "commit", "-m", "init"], cwd=tmp_path, capture_output=True,
+        ["git", "commit", "-m", "init"],
+        cwd=tmp_path,
+        capture_output=True,
     )
     subprocess.run(
-        ["git", "tag", "v0.1.0"], cwd=tmp_path, capture_output=True,
+        ["git", "tag", "v0.1.0"],
+        cwd=tmp_path,
+        capture_output=True,
     )
 
     # 添加额外的空提交
     for msg in commits_to_add:
         subprocess.run(
             ["git", "commit", "--allow-empty", "-m", msg],
-            cwd=tmp_path, capture_output=True,
+            cwd=tmp_path,
+            capture_output=True,
         )
 
     env = os.environ.copy()
@@ -128,7 +147,9 @@ class TestVersionParsing:
         os.environ["CHANGELOG"] = ""
         spec.loader.exec_module(mod)
 
-        result = mod.read_current_version(Path(__file__).parent.parent / "pyproject.toml")
+        result = mod.read_current_version(
+            Path(__file__).parent.parent / "pyproject.toml"
+        )
         assert result == (0, 1, 0)
 
     def test_read_current_version_various(self, tmp_path):
@@ -155,7 +176,9 @@ class TestVersionParsing:
                 encoding="utf-8",
             )
             result = mod.read_current_version(pyproject)
-            assert result == expected, f"Expected {expected} for {version_str}, got {result}"
+            assert result == expected, (
+                f"Expected {expected} for {version_str}, got {result}"
+            )
 
 
 class TestVersionBumping:
@@ -179,9 +202,15 @@ class TestVersionBumping:
         init_py = tmp_path / "__init__.py"
         main_py = tmp_path / "main.py"
 
-        assert f'version = "{expected_version}"' in pyproject.read_text(encoding="utf-8")
-        assert f'__version__ = "{expected_version}"' in init_py.read_text(encoding="utf-8")
-        assert f'app.setApplicationVersion("{expected_version}")' in main_py.read_text(encoding="utf-8")
+        assert f'version = "{expected_version}"' in pyproject.read_text(
+            encoding="utf-8"
+        )
+        assert f'__version__ = "{expected_version}"' in init_py.read_text(
+            encoding="utf-8"
+        )
+        assert f'app.setApplicationVersion("{expected_version}")' in main_py.read_text(
+            encoding="utf-8"
+        )
 
     def test_bump_version_function(self):
         """测试 bump_version 函数逻辑"""
@@ -256,7 +285,9 @@ class TestChangelogGeneration:
         assert "fix: fix a bug" in content
         assert "refactor: clean up code" in content
         # 检查分类标题
-        assert "### Added" in content or "### Fixed" in content or "### Changed" in content
+        assert (
+            "### Added" in content or "### Fixed" in content or "### Changed" in content
+        )
 
     def test_categorize_commits(self):
         """测试 commit 分类函数"""
@@ -297,11 +328,14 @@ class TestChangelogGeneration:
         main_py = tmp_path / "main.py"
         changelog = tmp_path / "CHANGELOG.md"
 
-        pyproject.write_text(textwrap.dedent("""\
+        pyproject.write_text(
+            textwrap.dedent("""\
             [project]
             name = "vibeocr"
             version = "0.1.0"
-        """), encoding="utf-8")
+        """),
+            encoding="utf-8",
+        )
         init_py.write_text('__version__ = "0.1.0"', encoding="utf-8")
         main_py.write_text('    app.setApplicationVersion("0.1.0")', encoding="utf-8")
         # 用纯 ASCII 内容避免编码问题
@@ -313,18 +347,24 @@ class TestChangelogGeneration:
         subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True)
         subprocess.run(
             ["git", "config", "user.email", "test@test.com"],
-            cwd=tmp_path, capture_output=True,
+            cwd=tmp_path,
+            capture_output=True,
         )
         subprocess.run(
             ["git", "config", "user.name", "Test"],
-            cwd=tmp_path, capture_output=True,
+            cwd=tmp_path,
+            capture_output=True,
         )
         subprocess.run(["git", "add", "."], cwd=tmp_path, capture_output=True)
         subprocess.run(
-            ["git", "commit", "-m", "init"], cwd=tmp_path, capture_output=True,
+            ["git", "commit", "-m", "init"],
+            cwd=tmp_path,
+            capture_output=True,
         )
         subprocess.run(
-            ["git", "tag", "v0.1.0"], cwd=tmp_path, capture_output=True,
+            ["git", "tag", "v0.1.0"],
+            cwd=tmp_path,
+            capture_output=True,
         )
 
         env = os.environ.copy()

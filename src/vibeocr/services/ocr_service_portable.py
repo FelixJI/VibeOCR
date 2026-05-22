@@ -63,6 +63,7 @@ class OCRServicePortable:
         """导入 PaddleOCR（延迟导入）"""
         try:
             from paddleocr import PaddleOCR
+
             return PaddleOCR
         except ImportError as e:
             error_msg = f"无法导入 PaddleOCR: {e}\n"

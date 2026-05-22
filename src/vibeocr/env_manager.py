@@ -121,6 +121,7 @@ def ping_url(url: str, timeout: int = 3) -> bool:
 def detect_paddlex_model_source(timeout: int = 3) -> tuple[str, str]:
     """[Deprecated] 请使用 NetworkDetector。"""
     from vibeocr.network_detector import NetworkDetector as _ND
+
     detector = _ND(get_project_root())
     env_value = detector.paddlex_source_env
     source_name = detector.paddlex_source
@@ -130,6 +131,7 @@ def detect_paddlex_model_source(timeout: int = 3) -> tuple[str, str]:
 def setup_paddlex_model_source(timeout: int = 5) -> str:
     """[Deprecated] 请使用 NetworkDetector。"""
     from vibeocr.network_detector import NetworkDetector as _ND
+
     detector = _ND(get_project_root())
     return detector.paddlex_source
 
@@ -137,6 +139,7 @@ def setup_paddlex_model_source(timeout: int = 5) -> str:
 def detect_network_source() -> Literal["domestic", "international"]:
     """[Deprecated] 请使用 NetworkDetector。"""
     from vibeocr.network_detector import NetworkDetector as _ND
+
     detector = _ND(get_project_root())
     return detector.network_type
 
@@ -146,6 +149,7 @@ def get_pip_source(
 ) -> str:
     """[Deprecated] 请使用 NetworkDetector。"""
     from vibeocr.network_detector import NetworkDetector as _ND
+
     detector = _ND(get_project_root())
     return detector.pip_mirror_url
 
@@ -780,7 +784,9 @@ def install_embedded_dependencies(
         cuda_tag = CUDA_VERSION_MAP.get(cuda_version)
         if cuda_tag:
             paddle_package = f"paddlepaddle-gpu>=3.3.0"
-            paddle_index = f"https://www.paddlepaddle.org.cn/packages/stable/{cuda_tag}/"
+            paddle_index = (
+                f"https://www.paddlepaddle.org.cn/packages/stable/{cuda_tag}/"
+            )
             paddle_name = f"PaddlePaddle GPU ({cuda_tag})"
             report("依赖安装", f"检测到 CUDA {cuda_version}，安装 GPU 版本")
         else:
@@ -1035,7 +1041,9 @@ def install_dependencies(
         cuda_tag = CUDA_VERSION_MAP.get(cuda_version)
         if cuda_tag:
             paddle_package = f"paddlepaddle-gpu>=3.3.0"
-            paddle_index = f"https://www.paddlepaddle.org.cn/packages/stable/{cuda_tag}/"
+            paddle_index = (
+                f"https://www.paddlepaddle.org.cn/packages/stable/{cuda_tag}/"
+            )
             paddle_name = f"PaddlePaddle GPU ({cuda_tag})"
             print(f"[依赖安装] 检测到 CUDA {cuda_version}，安装 GPU 版本")
         else:

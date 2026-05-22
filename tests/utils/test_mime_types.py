@@ -46,9 +46,12 @@ class TestMimeMap:
         assert mime_to_extension("image/png") == ".png"
         assert mime_to_extension("application/pdf") == ".pdf"
         assert mime_to_extension("image/jpeg") == ".jpg"
-        assert mime_to_extension(
-            "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-        ) == ".docx"
+        assert (
+            mime_to_extension(
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            )
+            == ".docx"
+        )
 
     def test_mime_to_extension_unknown(self):
         assert mime_to_extension("text/plain") is None

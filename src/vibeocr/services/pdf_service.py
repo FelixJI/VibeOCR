@@ -61,13 +61,15 @@ class PdfService:
         for i in range(self._doc.page_count):
             page = self._doc[i]
             text_layers = self._detect_text_layers(i)
-            pages.append(PdfPageInfo(
-                page_index=i,
-                rotation=page.rotation,
-                has_text_layer=len(text_layers) > 0,
-                text_layers=text_layers,
-                is_scanned=len(text_layers) == 0 and self._is_page_scanned(i),
-            ))
+            pages.append(
+                PdfPageInfo(
+                    page_index=i,
+                    rotation=page.rotation,
+                    has_text_layer=len(text_layers) > 0,
+                    text_layers=text_layers,
+                    is_scanned=len(text_layers) == 0 and self._is_page_scanned(i),
+                )
+            )
         self._pdf_document.pages = pages
 
     def _is_page_scanned(self, page_index: int) -> bool:
@@ -83,7 +85,9 @@ class PdfService:
             xref = img_info[0]
             rects = page.get_image_rects(xref)
             for rect in rects:
-                coverage = (rect.width * rect.height) / (page_rect.width * page_rect.height)
+                coverage = (rect.width * rect.height) / (
+                    page_rect.width * page_rect.height
+                )
                 if coverage > 0.5:
                     return True
         return False
@@ -164,13 +168,15 @@ class PdfService:
             if not full_text:
                 continue
             bbox = block["bbox"]
-            layers.append(TextLayerInfo(
-                index=layer_index,
-                text_preview=full_text[:30],
-                char_count=len(full_text),
-                bbox=(bbox[0], bbox[1], bbox[2], bbox[3]),
-                color_id=layer_index % 8,
-            ))
+            layers.append(
+                TextLayerInfo(
+                    index=layer_index,
+                    text_preview=full_text[:30],
+                    char_count=len(full_text),
+                    bbox=(bbox[0], bbox[1], bbox[2], bbox[3]),
+                    color_id=layer_index % 8,
+                )
+            )
             layer_index += 1
         return layers
 
@@ -196,14 +202,18 @@ class PdfService:
         if self._doc is None or self._pdf_document is None:
             return
         # 先从模型中移除对应页面（保留原始 page_index）
-        remaining = [p for i, p in enumerate(self._pdf_document.pages) if i not in page_indices]
+        remaining = [
+            p for i, p in enumerate(self._pdf_document.pages) if i not in page_indices
+        ]
         for idx in sorted(page_indices, reverse=True):
             if 0 <= idx < self._doc.page_count:
                 self._doc.delete_page(idx)
         self._pdf_document.pages = remaining
         self._pdf_document.is_modified = True
 
-    def insert_blank_page(self, after_index: int, width: float = 612, height: float = 792) -> None:
+    def insert_blank_page(
+        self, after_index: int, width: float = 612, height: float = 792
+    ) -> None:
         """在指定页面后插入空白页。"""
         if self._doc is None or self._pdf_document is None:
             return

@@ -116,7 +116,9 @@ class ExportService:
                     data_uri = f"data:{mime};base64,{b64}"
                     # 替换 markdown 图片语法
                     html_body = html_body.replace(f"({img_name})", f"({data_uri})")
-                    html_body = html_body.replace(f'src="{img_name}"', f'src="{data_uri}"')
+                    html_body = html_body.replace(
+                        f'src="{img_name}"', f'src="{data_uri}"'
+                    )
 
         full_html = (
             "<!DOCTYPE html>\n<html lang='zh-CN'>\n<head>\n"
@@ -179,7 +181,9 @@ class ExportService:
                                 run.font.size = Pt(9)
                 elif block_type in ("image", "figure"):
                     img_path = block.get("img_path", "")
-                    caption = block.get("image_caption") or block.get("chart_caption") or []
+                    caption = (
+                        block.get("image_caption") or block.get("chart_caption") or []
+                    )
                     images = result.images or {}
                     img_added = False
                     if img_path and img_path in images:
@@ -194,7 +198,11 @@ class ExportService:
                         label = " ".join(caption) if caption else text
                         if label:
                             doc.add_paragraph(f"[图片: {label}]")
-                elif block_type in ("equation", "interline_equation", "inline_equation"):
+                elif block_type in (
+                    "equation",
+                    "interline_equation",
+                    "inline_equation",
+                ):
                     if text:
                         p = doc.add_paragraph()
                         run = p.add_run(text)
@@ -309,7 +317,9 @@ class ExportService:
                     if not has_text:
                         has_text = True
                         ws_text.title = "文本汇总"
-                    caption = block.get("image_caption") or block.get("chart_caption") or []
+                    caption = (
+                        block.get("image_caption") or block.get("chart_caption") or []
+                    )
                     label = " ".join(caption) if caption else text
                     if label:
                         ws_text.append([f"[图片: {label}]"])

@@ -22,7 +22,9 @@ from vibeocr import __version__, env_manager
 logger = logging.getLogger(__name__)
 
 _APP_NAME = "VibeOCR"
-_DESCRIPTION = "一款基于 PaddleOCR 的截图文字识别工具，支持表格识别、公式识别、文档解析等功能。"
+_DESCRIPTION = (
+    "一款基于 PaddleOCR 的截图文字识别工具，支持表格识别、公式识别、文档解析等功能。"
+)
 _AUTHOR = "Felix Ji"
 _COPYRIGHT = "© 2025 Felix Ji. All rights reserved."
 _GITHUB_URL = "https://github.com/felixji/vibeocr"
@@ -96,9 +98,7 @@ class AboutTab(QWidget):
         layout.addWidget(self._create_section("版权", copyright_label))
 
         # 项目链接
-        link_label = QLabel(
-            f'<a href="{_GITHUB_URL}">{_GITHUB_URL}</a>'
-        )
+        link_label = QLabel(f'<a href="{_GITHUB_URL}">{_GITHUB_URL}</a>')
         link_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         link_label.setOpenExternalLinks(True)
         layout.addWidget(self._create_section("项目链接", link_label))

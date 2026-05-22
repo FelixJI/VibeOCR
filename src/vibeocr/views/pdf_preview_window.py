@@ -61,6 +61,7 @@ class _PreviewCanvas(QWidget):
             color_idx = layer.color_id % len(colors)
             r, g, b, a = colors[color_idx]
             from PySide6.QtGui import QColor, QPen
+
             painter.setBrush(QColor(r, g, b, a))
             painter.setPen(QPen(QColor(r, g, b, 180), 1))
             painter.drawRect(

@@ -10,7 +10,6 @@ from vibeocr.core.pipelines import (
 
 
 class TestOCRPipeline:
-
     def test_pipeline_count(self):
         """验证管道数量为 4"""
         assert len(OCRPipeline) == 4
@@ -25,9 +24,16 @@ class TestOCRPipeline:
     def test_get_display_name(self):
         """验证显示名称获取"""
         assert get_pipeline_display_name(OCRPipeline.OCR) == "通用 OCR"
-        assert get_pipeline_display_name(OCRPipeline.PP_STRUCTURE_V3) == "PP-StructureV3"
-        assert get_pipeline_display_name(OCRPipeline.DOCUMENT_PARSING) == "MineRU（文档）"
-        assert get_pipeline_display_name(OCRPipeline.PADDLEOCR_VL) == "PaddleOCR-VL（文档）"
+        assert (
+            get_pipeline_display_name(OCRPipeline.PP_STRUCTURE_V3) == "PP-StructureV3"
+        )
+        assert (
+            get_pipeline_display_name(OCRPipeline.DOCUMENT_PARSING) == "MineRU（文档）"
+        )
+        assert (
+            get_pipeline_display_name(OCRPipeline.PADDLEOCR_VL)
+            == "PaddleOCR-VL（文档）"
+        )
 
     def test_get_description(self):
         """验证描述获取"""

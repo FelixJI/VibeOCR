@@ -82,9 +82,15 @@ class RectAnnotation(QGraphicsRectItem):
         self._pen_color = pen_color
         self._pen_width = pen_width
         self._fill_enabled = fill_enabled
-        self._fill_color = QColor(fill_color.red(), fill_color.green(), fill_color.blue()) if fill_color else QColor(pen_color.red(), pen_color.green(), pen_color.blue())
-        self._fill_opacity = fill_opacity if fill_opacity is not None else (
-            round(fill_color.alpha() * 100 / 255) if fill_color else 20
+        self._fill_color = (
+            QColor(fill_color.red(), fill_color.green(), fill_color.blue())
+            if fill_color
+            else QColor(pen_color.red(), pen_color.green(), pen_color.blue())
+        )
+        self._fill_opacity = (
+            fill_opacity
+            if fill_opacity is not None
+            else (round(fill_color.alpha() * 100 / 255) if fill_color else 20)
         )
         self.setPen(QPen(pen_color, pen_width))
         if fill_enabled:
@@ -114,7 +120,9 @@ class RectAnnotation(QGraphicsRectItem):
         self._pen_width = width
         self.setPen(QPen(self._pen_color, width))
 
-    def set_fill_enabled(self, enabled: bool, color: QColor | None = None, opacity: int | None = None) -> None:
+    def set_fill_enabled(
+        self, enabled: bool, color: QColor | None = None, opacity: int | None = None
+    ) -> None:
         self._fill_enabled = enabled
         if color:
             self._fill_color = QColor(color.red(), color.green(), color.blue())
@@ -152,9 +160,15 @@ class EllipseAnnotation(QGraphicsEllipseItem):
         self._pen_color = pen_color
         self._pen_width = pen_width
         self._fill_enabled = fill_enabled
-        self._fill_color = QColor(fill_color.red(), fill_color.green(), fill_color.blue()) if fill_color else QColor(pen_color.red(), pen_color.green(), pen_color.blue())
-        self._fill_opacity = fill_opacity if fill_opacity is not None else (
-            round(fill_color.alpha() * 100 / 255) if fill_color else 20
+        self._fill_color = (
+            QColor(fill_color.red(), fill_color.green(), fill_color.blue())
+            if fill_color
+            else QColor(pen_color.red(), pen_color.green(), pen_color.blue())
+        )
+        self._fill_opacity = (
+            fill_opacity
+            if fill_opacity is not None
+            else (round(fill_color.alpha() * 100 / 255) if fill_color else 20)
         )
         self.setPen(QPen(pen_color, pen_width))
         if fill_enabled:
@@ -184,7 +198,9 @@ class EllipseAnnotation(QGraphicsEllipseItem):
         self._pen_width = width
         self.setPen(QPen(self._pen_color, width))
 
-    def set_fill_enabled(self, enabled: bool, color: QColor | None = None, opacity: int | None = None) -> None:
+    def set_fill_enabled(
+        self, enabled: bool, color: QColor | None = None, opacity: int | None = None
+    ) -> None:
         self._fill_enabled = enabled
         if color:
             self._fill_color = QColor(color.red(), color.green(), color.blue())

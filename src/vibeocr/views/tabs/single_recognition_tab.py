@@ -7,7 +7,14 @@ from pathlib import Path
 from PIL import Image
 from PySide6.QtCore import QBuffer, Signal
 from PySide6.QtGui import QPixmap
-from PySide6.QtWidgets import QApplication, QHBoxLayout, QPushButton, QSplitter, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QApplication,
+    QHBoxLayout,
+    QPushButton,
+    QSplitter,
+    QVBoxLayout,
+    QWidget,
+)
 
 from vibeocr.views.tabs.base_tab import BaseOcrTab
 from vibeocr.widgets.preprocess_options_widget import PreprocessOptionsWidget
@@ -108,7 +115,9 @@ class SingleRecognitionTab(BaseOcrTab):
         self._result_widget.block_edited.connect(self._on_result_block_edited)
 
         # 转发预览组件的截图/文件请求信号
-        self._preview_widget.screenshot_requested.connect(self.screenshot_requested.emit)
+        self._preview_widget.screenshot_requested.connect(
+            self.screenshot_requested.emit
+        )
         self._preview_widget.file_open_requested.connect(self.file_open_requested.emit)
 
         # 操作按钮
@@ -123,7 +132,9 @@ class SingleRecognitionTab(BaseOcrTab):
         from vibeocr.utils.mime_types import FILE_FILTER_ALL, is_document_file
 
         file_path, _ = QFileDialog.getOpenFileName(
-            self, "选择文件", "",
+            self,
+            "选择文件",
+            "",
             f"{FILE_FILTER_ALL};;所有文件 (*)",
         )
         if not file_path:
@@ -214,11 +225,12 @@ class SingleRecognitionTab(BaseOcrTab):
         if pipeline_val in ("OCR", "PP-StructureV3"):
             from vibeocr.pipeline_status import is_pipeline_ever_succeeded
             from vibeocr.env_manager import get_project_root
+
             if not is_pipeline_ever_succeeded(pipeline_val, get_project_root()):
                 self._result_widget._ensure_web_view().setHtml(
                     '<div style="display:flex;align-items:center;justify-content:center;'
                     'height:100%;color:#666;font-size:14px;">'
-                    '<p>正在识别，首次使用可能需要下载模型，请耐心等待…</p></div>'
+                    "<p>正在识别，首次使用可能需要下载模型，请耐心等待…</p></div>"
                 )
 
         QApplication.processEvents()
@@ -246,7 +258,9 @@ class SingleRecognitionTab(BaseOcrTab):
                 self._on_ocr_finished(result)
             except Exception as e:
                 logger.error(f"OCR 识别失败: {e}", exc_info=True)
-                self._on_ocr_error(str(e) + self._first_use_suffix(options.pipeline.value))
+                self._on_ocr_error(
+                    str(e) + self._first_use_suffix(options.pipeline.value)
+                )
 
     def process_file(self, file_path: str) -> None:
         """处理文件（由 MainWindow 调用，支持 PDF/Office/图片）"""
@@ -280,7 +294,9 @@ class SingleRecognitionTab(BaseOcrTab):
         if USE_SUBPROCESS:
             from vibeocr.utils.qt_async import run_coroutine
 
-            run_coroutine(self._perform_ocr_with_data_async(data, mime_type, filename, options))
+            run_coroutine(
+                self._perform_ocr_with_data_async(data, mime_type, filename, options)
+            )
         else:
             try:
                 from vibeocr.services import get_ocr_service
@@ -290,7 +306,9 @@ class SingleRecognitionTab(BaseOcrTab):
                 self._on_ocr_finished(result)
             except Exception as e:
                 logger.error(f"OCR 识别失败: {e}", exc_info=True)
-                self._on_ocr_error(str(e) + self._first_use_suffix(options.pipeline.value))
+                self._on_ocr_error(
+                    str(e) + self._first_use_suffix(options.pipeline.value)
+                )
 
     async def _perform_ocr_async(self, image_data: bytes, options) -> None:
         try:
@@ -397,7 +415,9 @@ class SingleRecognitionTab(BaseOcrTab):
             if getattr(tb, "content_index", None) == index:
                 tb.text = new_text
                 tb.is_manually_edited = True
-                if tb.content_index is not None and tb.content_index < len(result.text_with_scores):
+                if tb.content_index is not None and tb.content_index < len(
+                    result.text_with_scores
+                ):
                     score = result.text_with_scores[tb.content_index][1]
                     result.text_with_scores[tb.content_index] = (new_text, score)
                 break
@@ -408,7 +428,9 @@ class SingleRecognitionTab(BaseOcrTab):
         # 同步更新 markdown_text / html_text
         if old_text:
             if result.markdown_text and old_text in result.markdown_text:
-                result.markdown_text = result.markdown_text.replace(old_text, new_text, 1)
+                result.markdown_text = result.markdown_text.replace(
+                    old_text, new_text, 1
+                )
             if result.html_text and old_text in result.html_text:
                 result.html_text = result.html_text.replace(old_text, new_text, 1)
 
@@ -435,6 +457,7 @@ class SingleRecognitionTab(BaseOcrTab):
         if pipeline_val in ("OCR", "PP-StructureV3"):
             from vibeocr.pipeline_status import is_pipeline_ever_succeeded
             from vibeocr.env_manager import get_project_root
+
             if not is_pipeline_ever_succeeded(pipeline_val, get_project_root()):
                 return "\n\n提示：首次使用需要下载模型，请保持网络畅通后重试。"
         return ""
@@ -452,5 +475,5 @@ class SingleRecognitionTab(BaseOcrTab):
         self._result_widget._ensure_web_view().setHtml(
             f'<div style="display:flex;align-items:center;justify-content:center;'
             f'height:100%;color:#666;font-size:14px;">'
-            f'<p>{message}</p></div>'
+            f"<p>{message}</p></div>"
         )

@@ -43,9 +43,7 @@ class QrcodeService:
         import qrcode
         from PIL import ImageColor
 
-        ec_level = QR_ERROR_CORRECTION_MAP.get(
-            options.get("error_correction", "M"), 0
-        )
+        ec_level = QR_ERROR_CORRECTION_MAP.get(options.get("error_correction", "M"), 0)
         target_size = options.get("size", 300)
 
         # 先用 box_size=1 生成，确定模块数量
@@ -95,10 +93,12 @@ class QrcodeService:
         bg_color = options.get("bg_color", "#FFFFFF")
 
         writer = ImageWriter()
-        writer.set_options({
-            "foreground": fg_color,
-            "background": bg_color,
-        })
+        writer.set_options(
+            {
+                "foreground": fg_color,
+                "background": bg_color,
+            }
+        )
 
         barcode_class = barcode.get_barcode_class(fmt)
         bc = barcode_class(text, writer=writer)
@@ -116,7 +116,9 @@ class QrcodeService:
         img = img.resize((new_w, new_h), Image.Resampling.NEAREST)
         return img
 
-    def apply_logo(self, image: Image.Image, logo_path: str, ratio: float = 0.2) -> Image.Image:
+    def apply_logo(
+        self, image: Image.Image, logo_path: str, ratio: float = 0.2
+    ) -> Image.Image:
         logo = Image.open(logo_path).convert("RGBA")
         qr_w, qr_h = image.size
         logo_size = int(min(qr_w, qr_h) * ratio)
@@ -161,7 +163,13 @@ class QrcodeService:
                     continue
         return ImageFont.load_default(size=size)
 
-    def apply_text_label(self, image: Image.Image, text: str, position: str = "bottom", font_size: int = 12) -> Image.Image:
+    def apply_text_label(
+        self,
+        image: Image.Image,
+        text: str,
+        position: str = "bottom",
+        font_size: int = 12,
+    ) -> Image.Image:
         if position == "none" or not text:
             return image
 
@@ -188,14 +196,21 @@ class QrcodeService:
             canvas = Image.new("RGB", (new_w, img_h + label_h), image.getpixel((0, 0)))
             draw = ImageDraw.Draw(canvas)
             text_x = (new_w - text_w) // 2
-            draw.text((text_x, padding + text_offset_y), text, fill=(0, 0, 0), font=font)
+            draw.text(
+                (text_x, padding + text_offset_y), text, fill=(0, 0, 0), font=font
+            )
             canvas.paste(image, ((new_w - img_w) // 2, label_h))
         else:
             canvas = Image.new("RGB", (new_w, img_h + label_h), image.getpixel((0, 0)))
             canvas.paste(image, ((new_w - img_w) // 2, 0))
             draw = ImageDraw.Draw(canvas)
             text_x = (new_w - text_w) // 2
-            draw.text((text_x, img_h + padding + text_offset_y), text, fill=(0, 0, 0), font=font)
+            draw.text(
+                (text_x, img_h + padding + text_offset_y),
+                text,
+                fill=(0, 0, 0),
+                font=font,
+            )
 
         return canvas
 
@@ -208,9 +223,7 @@ class QrcodeService:
         import qrcode
         from qrcode.image.svg import SvgImage
 
-        ec_level = QR_ERROR_CORRECTION_MAP.get(
-            options.get("error_correction", "M"), 0
-        )
+        ec_level = QR_ERROR_CORRECTION_MAP.get(options.get("error_correction", "M"), 0)
         qr = qrcode.QRCode(
             version=None,
             error_correction=ec_level,

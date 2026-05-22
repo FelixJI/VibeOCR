@@ -61,9 +61,7 @@ def get_ocr_service(skip_auto_start: bool = False):
             if OCRServiceSubprocess._instance._initialized:
                 _logger.debug("[get_ocr_service] 返回现有子进程实例")
                 return OCRServiceSubprocess._instance
-        _logger.info(
-            f"创建子进程 OCR 服务, auto_start={not skip_auto_start}"
-        )
+        _logger.info(f"创建子进程 OCR 服务, auto_start={not skip_auto_start}")
         return OCRServiceSubprocess(auto_start=not skip_auto_start)
     _logger.debug("使用直接 OCR 服务")
     if _should_use_portable():

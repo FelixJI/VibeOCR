@@ -55,8 +55,7 @@ class InlineEditCanvas(QGraphicsView):
 
         # 渲染设置
         self.setRenderHints(
-            QPainter.RenderHint.Antialiasing
-            | QPainter.RenderHint.SmoothPixmapTransform
+            QPainter.RenderHint.Antialiasing | QPainter.RenderHint.SmoothPixmapTransform
         )
         self.setViewportUpdateMode(
             QGraphicsView.ViewportUpdateMode.MinimalViewportUpdate
@@ -118,7 +117,9 @@ class InlineEditCanvas(QGraphicsView):
 
     # ==================== 公开方法 ====================
 
-    def set_background(self, pixmap: QPixmap, crop_origin: QPointF | None = None) -> None:
+    def set_background(
+        self, pixmap: QPixmap, crop_origin: QPointF | None = None
+    ) -> None:
         """设置背景截图"""
         self._background_pixmap = pixmap
         if self._background_item:
@@ -158,9 +159,7 @@ class InlineEditCanvas(QGraphicsView):
                 self._background_item.setPixmap(screen_pixmap)
             self._background_item.setPos(-new_selection.x(), -new_selection.y())
 
-            new_scene_rect = QRectF(
-                0, 0, new_selection.width(), new_selection.height()
-            )
+            new_scene_rect = QRectF(0, 0, new_selection.width(), new_selection.height())
             if self._scene.sceneRect() != new_scene_rect:
                 self._scene.setSceneRect(new_scene_rect)
         else:
@@ -185,7 +184,6 @@ class InlineEditCanvas(QGraphicsView):
         for item in self._scene.items():
             if isinstance(item, (MosaicItem, BlurItem)):
                 item.update_background(self._background_pixmap)
-
 
     def set_tool(self, tool: EditTool) -> None:
         """切换工具"""
@@ -222,7 +220,9 @@ class InlineEditCanvas(QGraphicsView):
     def set_fill_linked(self, linked: bool) -> None:
         self._fill_linked = linked
         if linked:
-            self._fill_color = QColor(self._pen_color.red(), self._pen_color.green(), self._pen_color.blue())
+            self._fill_color = QColor(
+                self._pen_color.red(), self._pen_color.green(), self._pen_color.blue()
+            )
 
     def set_font(self, font: QFont) -> None:
         self._font = font
@@ -416,7 +416,14 @@ class InlineEditCanvas(QGraphicsView):
         tool = self._current_tool
         self._remove_temp()
 
-        item: RectAnnotation | EllipseAnnotation | ArrowAnnotation | MosaicItem | BlurItem | None = None
+        item: (
+            RectAnnotation
+            | EllipseAnnotation
+            | ArrowAnnotation
+            | MosaicItem
+            | BlurItem
+            | None
+        ) = None
 
         if tool == EditTool.RECT:
             item = RectAnnotation(
