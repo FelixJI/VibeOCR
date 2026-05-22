@@ -137,8 +137,15 @@ def update_pyproject_versions(locked_versions: dict[str, str], *, dry_run: bool 
                 # 查找锁定版本
                 locked_version = locked_versions.get(pkg_name)
                 if locked_version and pkg_name not in CUDA_PACKAGES:
-                    # 生成新的版本约束
-                    new_dep_line = f"{pkg_name}{extras}>={locked_version}"
+                    # 保留上界约束（如 <2.4），只更新下界
+                    upper_bounds = [
+                        p.strip() for p in version_spec.split(",")
+                        if p.strip().startswith(("<",))
+                    ] if version_spec else []
+                    new_version = ">=" + locked_version
+                    if upper_bounds:
+                        new_version += "," + ",".join(upper_bounds)
+                    new_dep_line = f"{pkg_name}{extras}{new_version}"
 
                     if new_dep_line != dep_line:
                         # 保留原有的逗号和引号格式
