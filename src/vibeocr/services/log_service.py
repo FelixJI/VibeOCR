@@ -79,6 +79,12 @@ def setup_logging() -> QtLogHandler:
     # 根日志器设为 DEBUG，由各 handler 自行过滤
     root_logger = logging.getLogger()
     root_logger.setLevel(logging.DEBUG)
+
+    # 清除已有的 handler（某些库 import 时会调用 basicConfig 添加默认 handler，
+    # 导致同一消息被输出两次，格式分别为 LEVEL:name:msg 和 [LEVEL] name: msg）
+    for h in root_logger.handlers[:]:
+        root_logger.removeHandler(h)
+
     root_logger.addHandler(handler)
 
     # 控制台 handler：仅 WARNING 及以上（不刷屏，只显示需要关注的问题）

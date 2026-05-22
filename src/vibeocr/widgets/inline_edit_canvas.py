@@ -115,6 +115,14 @@ class InlineEditCanvas(QGraphicsView):
     def undo_stack(self) -> QUndoStack:
         return self._undo_stack
 
+    @property
+    def selected_annotation(self):
+        """获取当前选中的标注项"""
+        for item in self._scene.selectedItems():
+            if item != self._background_item:
+                return item
+        return None
+
     # ==================== 公开方法 ====================
 
     def set_background(

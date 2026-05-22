@@ -177,7 +177,7 @@ def launch_application() -> int:
             from vibeocr.services.update_service import UpdateService
 
             service = UpdateService(project_root)
-            await service.check_and_prompt(window)
+            await service.check_and_prompt(window)  # noqa: F821
 
         loop.call_later(5, lambda: asyncio.ensure_future(_check_update()))
 
@@ -195,7 +195,19 @@ def launch_application() -> int:
         print(f"[VibeOCR] 应用异常退出: {e}")
         return 1
 
-    return 0
+    # 事件循环退出后，显式清理原生资源，避免解释器关闭阶段 DLL 卸载崩溃 (0xC0000409)
+    try:
+        app.processEvents()
+        import gc
+
+        gc.collect()
+        del window
+        del app
+        gc.collect()
+    except Exception:
+        pass
+
+    os._exit(0)
 
 
 def main() -> int:

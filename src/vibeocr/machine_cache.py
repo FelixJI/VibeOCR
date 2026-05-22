@@ -60,6 +60,9 @@ def _get_mac_address() -> str:
     return ""
 
 
+_cached_machine_id: str | None = None
+
+
 def generate_machine_id() -> str:
     """
     生成机器唯一标识码
@@ -72,6 +75,10 @@ def generate_machine_id() -> str:
     Returns:
         64字符的十六进制机器码
     """
+    global _cached_machine_id
+    if _cached_machine_id is not None:
+        return _cached_machine_id
+
     # 收集硬件信息
     hardware_info = []
     hardware_info.append(_get_cpu_id())
@@ -80,7 +87,8 @@ def generate_machine_id() -> str:
 
     # 生成哈希
     combined = "|".join(hardware_info)
-    return hashlib.sha256(combined.encode()).hexdigest()
+    _cached_machine_id = hashlib.sha256(combined.encode()).hexdigest()
+    return _cached_machine_id
 
 
 def get_cache_dir(project_root: Path) -> Path:
@@ -187,7 +195,6 @@ def is_cache_valid(project_root: Path) -> tuple[bool, dict | None]:
     current_machine_id = generate_machine_id()
     cached_machine_id = cache_data.get("machine_id", "")
     if current_machine_id != cached_machine_id:
-        print("[缓存] 机器码不匹配，可能是不同机器或硬件已变更")
         return False, None
 
     return True, cache_data
