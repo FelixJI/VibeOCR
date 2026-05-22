@@ -1,8 +1,8 @@
 """
-检查 PaddleX 直接导入打包的可行性
+检查 PaddleOCR 直接导入打包的可行性
 
 测试：
-1. PaddleX 依赖大小
+1. PaddleOCR 依赖大小
 2. PyInstaller 打包测试
 3. Nuitka 编译测试
 """
@@ -11,18 +11,18 @@ import importlib.util
 from pathlib import Path
 
 
-def check_paddlex_size():
-    """检查 PaddleX 及其依赖的大小"""
+def check_paddleocr_size():
+    """检查 PaddleOCR 及其依赖的大小"""
     print("=" * 60)
-    print("1. 检查 PaddleX 依赖大小")
+    print("1. 检查 PaddleOCR 依赖大小")
     print("=" * 60)
 
     try:
         import importlib.metadata
 
-        # 获取 PaddleX 及其依赖
-        distribution = importlib.metadata.distribution("paddlex")
-        print(f"\nPaddleX 版本: {distribution.version}")
+        # 获取 PaddleOCR 及其依赖
+        distribution = importlib.metadata.distribution("paddleocr")
+        print(f"\nPaddleOCR 版本: {distribution.version}")
 
         # 获取依赖
         dependencies = distribution.requires
@@ -56,35 +56,35 @@ def check_paddlex_size():
         print(f"无法检查: {e}")
 
 
-def check_paddlex_import():
-    """检查 PaddleX 导入"""
+def check_paddleocr_import():
+    """检查 PaddleOCR 导入"""
     print("\n" + "=" * 60)
-    print("2. 检查 PaddleX 导入")
+    print("2. 检查 PaddleOCR 导入")
     print("=" * 60)
 
     try:
-        spec = importlib.util.find_spec("paddlex")
+        spec = importlib.util.find_spec("paddleocr")
         if spec is not None:
-            print("✓ PaddleX 可以导入")
+            print("✓ PaddleOCR 可以导入")
 
-            # 尝试检查 create_pipeline
-            pipeline_spec = importlib.util.find_spec("paddlex.create_pipeline")
-            if pipeline_spec is not None:
-                print("✓ create_pipeline 可以导入")
-            else:
-                print("✗ create_pipeline 导入失败")
+            # 尝试检查 PaddleOCR
+            try:
+                from paddleocr import PaddleOCR
+                print("✓ PaddleOCR 类可以导入")
+            except ImportError:
+                print("✗ PaddleOCR 类导入失败")
 
             # 注意：不实际创建流水线，因为这需要 GPU/CUDA
             print("  （跳过实际创建流水线，避免资源占用）")
         else:
-            print("✗ PaddleX 导入失败")
-            print("\n请先安装 PaddleX:")
-            print("  pip install paddlex")
+            print("✗ PaddleOCR 导入失败")
+            print("\n请先安装 PaddleOCR:")
+            print("  pip install paddleocr")
 
     except (ImportError, ModuleNotFoundError) as e:
-        print(f"✗ PaddleX 导入失败: {e}")
-        print("\n请先安装 PaddleX:")
-        print("  pip install paddlex")
+        print(f"✗ PaddleOCR 导入失败: {e}")
+        print("\n请先安装 PaddleOCR:")
+        print("  pip install paddleocr")
 
 
 def check_pyinstaller_available():
@@ -165,15 +165,15 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
 
 def test_direct_import():
     """测试直接导入模式"""
-    print("测试直接导入 PaddleX...")
+    print("测试直接导入 PaddleOCR...")
 
     try:
-        from paddlex import create_pipeline
-        print("✓ PaddleX 导入成功")
+        from paddleocr import PaddleOCR
+        print("✓ PaddleOCR 导入成功")
 
         # 尝试创建流水线（CPU 模式）
         try:
-            pipeline = create_pipeline("OCR", device="cpu")
+            pipeline = PaddleOCR(device="cpu")
             print("✓ OCR 流水线创建成功")
             return True
         except Exception as e:
@@ -181,7 +181,7 @@ def test_direct_import():
             return False
 
     except ImportError as e:
-        print(f"✗ PaddleX 导入失败: {e}")
+        print(f"✗ PaddleOCR 导入失败: {e}")
         return False
 
 
@@ -232,8 +232,8 @@ def main():
     print("=" * 60)
 
     # 检查各项
-    check_paddlex_size()
-    check_paddlex_import()
+    check_paddleocr_size()
+    check_paddleocr_import()
     check_pyinstaller_available()
     check_nuitka_available()
     create_test_script()
@@ -242,7 +242,7 @@ def main():
     print("检查完成")
     print("=" * 60)
     print("\n建议:")
-    print("1. 如果 PaddleX 已安装，可以测试直接导入打包")
+    print("1. 如果 PaddleOCR 已安装，可以测试直接导入打包")
     print("2. 考虑使用 PyInstaller 或 Nuitka 进行测试打包")
     print("3. 对比打包后的体积和启动速度")
     print("4. 如果体积太大，建议使用子进程方案")

@@ -67,8 +67,7 @@ class TestOCRPipeline:
     def test_enum_values(self):
         """测试枚举值"""
         assert OCRPipeline.OCR.value == "OCR"
-        assert OCRPipeline.TABLE_RECOGNITION.value == "table_recognition"
-        assert OCRPipeline.FORMULA_RECOGNITION.value == "formula_recognition"
+        assert OCRPipeline.PP_STRUCTURE_V3.value == "PP-StructureV3"
         assert OCRPipeline.DOCUMENT_PARSING.value == "MinerU"
 
 

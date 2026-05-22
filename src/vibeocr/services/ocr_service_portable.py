@@ -169,7 +169,7 @@ def test_portable_ocr():
     print(f"  是否打包: {info['is_frozen']}")
     print(f"  Python: {info['python_executable']}")
     print(f"  OCR 库路径: {info['ocr_lib_path']}")
-    print(f"  可导入 PaddleOCR: {info['can_import_paddlex']}")
+    print(f"  可导入 PaddleOCR: {info['can_import_paddleocr']}")
 
     # 验证环境
     success, message = service.verify_environment()

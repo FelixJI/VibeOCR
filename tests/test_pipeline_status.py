@@ -44,7 +44,7 @@ def test_succeeded_when_true(tmp_path):
 
 def test_other_pipeline_unaffected(tmp_path):
     _make_cache(tmp_path, {"OCR": True})
-    assert is_pipeline_ever_succeeded("table_recognition", tmp_path) is False
+    assert is_pipeline_ever_succeeded("PP-StructureV3", tmp_path) is False
 
 
 def test_mark_success_creates_field(tmp_path):
@@ -55,9 +55,9 @@ def test_mark_success_creates_field(tmp_path):
 
 def test_mark_success_preserves_existing(tmp_path):
     _make_cache(tmp_path, {"OCR": True})
-    mark_pipeline_success("table_recognition", tmp_path)
+    mark_pipeline_success("PP-StructureV3", tmp_path)
     assert is_pipeline_ever_succeeded("OCR", tmp_path) is True
-    assert is_pipeline_ever_succeeded("table_recognition", tmp_path) is True
+    assert is_pipeline_ever_succeeded("PP-StructureV3", tmp_path) is True
 
 
 def test_machine_id_mismatch_returns_false(tmp_path):
@@ -73,6 +73,6 @@ def test_machine_id_mismatch_returns_false(tmp_path):
 
 def test_pipeline_names_constant():
     assert "OCR" in PIPELINE_NAMES
-    assert "table_recognition" in PIPELINE_NAMES
-    assert "formula_recognition" in PIPELINE_NAMES
+    assert "PP-StructureV3" in PIPELINE_NAMES
+    assert "PaddleOCR-VL" in PIPELINE_NAMES
     assert "MinerU" not in PIPELINE_NAMES

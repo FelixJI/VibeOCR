@@ -10,11 +10,11 @@ from PIL import Image
 from vibeocr.models.ocr_result import OCRResult
 from vibeocr.services.ocr_service import OCROptions, OCRPipeline, OCRService
 
-# 检查 paddlex 是否安装（运行时是否可用取决于环境配置）
+# 检查 paddleocr 是否安装（运行时是否可用取决于环境配置）
 try:
     import importlib.util
 
-    HAS_PADDLEX = importlib.util.find_spec("paddlex") is not None
+    HAS_PADDLEX = importlib.util.find_spec("paddleocr") is not None
 except ImportError:
     HAS_PADDLEX = False
 
@@ -50,22 +50,19 @@ class TestOCRPipeline:
     def test_pipeline_values(self):
         """管道枚举值正确。"""
         assert OCRPipeline.OCR.value == "OCR"
-        assert OCRPipeline.TABLE_RECOGNITION.value == "table_recognition"
-        assert OCRPipeline.FORMULA_RECOGNITION.value == "formula_recognition"
+        assert OCRPipeline.PP_STRUCTURE_V3.value == "PP-StructureV3"
         assert OCRPipeline.DOCUMENT_PARSING.value == "MinerU"
 
     def test_pipeline_display_names(self):
         """管道显示名称正确。"""
         assert OCRPipeline.OCR.display_name == "通用 OCR"
-        assert OCRPipeline.TABLE_RECOGNITION.display_name == "表格识别"
-        assert OCRPipeline.FORMULA_RECOGNITION.display_name == "公式识别"
+        assert OCRPipeline.PP_STRUCTURE_V3.display_name == "PP-StructureV3"
         assert OCRPipeline.DOCUMENT_PARSING.display_name == "MineRU（文档）"
 
     def test_pipeline_descriptions(self):
         """管道描述正确。"""
         assert "文字" in OCRPipeline.OCR.description
-        assert "表格" in OCRPipeline.TABLE_RECOGNITION.description
-        assert "公式" in OCRPipeline.FORMULA_RECOGNITION.description
+        assert "文档结构" in OCRPipeline.PP_STRUCTURE_V3.description
         assert "MineRU" in OCRPipeline.DOCUMENT_PARSING.description
 
 
@@ -97,7 +94,7 @@ class TestOCROptions:
         assert options.enable_table is False
 
 
-@pytest.mark.skipif(not HAS_PADDLEX, reason="paddlex not installed")
+@pytest.mark.skipif(not HAS_PADDLEX, reason="paddleocr not installed")
 class TestOCRServicePipeline:
     """测试 OCR 产线懒加载。"""
 
@@ -108,14 +105,14 @@ class TestOCRServicePipeline:
         try:
             pipeline = service.pipeline
         except (OSError, RuntimeError, AttributeError) as e:
-            pytest.skip(f"paddlex runtime unavailable: {e}")
+            pytest.skip(f"paddleocr runtime unavailable: {e}")
 
         assert pipeline is not None
         assert service.pipeline is pipeline
         OCRService._pipelines = {}
 
 
-@pytest.mark.skipif(not HAS_PADDLEX, reason="paddlex not installed")
+@pytest.mark.skipif(not HAS_PADDLEX, reason="paddleocr not installed")
 class TestOCRServiceRecognize:
     """测试 OCR 识别功能。"""
 
@@ -128,7 +125,7 @@ class TestOCRServiceRecognize:
         try:
             result = service.recognize(img)
         except (OSError, RuntimeError, AttributeError) as e:
-            pytest.skip(f"paddlex runtime unavailable: {e}")
+            pytest.skip(f"paddleocr runtime unavailable: {e}")
         assert isinstance(result, OCRResult)
         assert isinstance(result.raw_text, str)
         assert isinstance(result.text_with_scores, list)
@@ -143,7 +140,7 @@ class TestOCRServiceRecognize:
         try:
             result = service.recognize(arr)
         except (OSError, RuntimeError, AttributeError) as e:
-            pytest.skip(f"paddlex runtime unavailable: {e}")
+            pytest.skip(f"paddleocr runtime unavailable: {e}")
         assert isinstance(result, OCRResult)
         assert isinstance(result.raw_text, str)
         assert isinstance(result.text_with_scores, list)
@@ -155,7 +152,7 @@ class TestOCRServiceRecognize:
         try:
             result = service.recognize(img)
         except (OSError, RuntimeError, AttributeError) as e:
-            pytest.skip(f"paddlex runtime unavailable: {e}")
+            pytest.skip(f"paddleocr runtime unavailable: {e}")
         assert isinstance(result, OCRResult)
         assert isinstance(result.raw_text, str)
         assert isinstance(result.text_with_scores, list)
@@ -174,7 +171,7 @@ class TestOCRServiceRecognize:
         try:
             result = service.recognize(img, options)
         except (OSError, RuntimeError, AttributeError) as e:
-            pytest.skip(f"paddlex runtime unavailable: {e}")
+            pytest.skip(f"paddleocr runtime unavailable: {e}")
         assert isinstance(result, OCRResult)
         assert isinstance(result.raw_text, str)
         assert isinstance(result.text_with_scores, list)

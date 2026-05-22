@@ -238,7 +238,7 @@ class PythonPathManager:
         }
 
         # 检查关键包是否可导入
-        info["can_import_paddlex"] = self._can_import("paddlex")
+        info["can_import_paddleocr"] = self._can_import("paddleocr")
         info["can_import_paddle"] = self._can_import("paddle")
 
         return info
@@ -267,7 +267,7 @@ class PythonPathManager:
                 return False, f"Python 可执行文件不存在: {self.python_executable}"
 
         # 检查 PaddleX 是否可导入
-        if not self._can_import("paddlex"):
+        if not self._can_import("paddleocr"):
             return False, "无法导入 PaddleX，请确保已正确安装"
 
         return True, "环境验证通过"
@@ -285,7 +285,7 @@ class PythonPathManager:
         print(f"Python 可执行文件: {info['python_executable']}")
         print(f"OCR 库路径: {info['ocr_lib_path']}")
         print(f"sys.executable: {info['sys_executable']}")
-        print(f"可导入 PaddleX: {info['can_import_paddlex']}")
+        print(f"可导入 PaddleOCR: {info['can_import_paddleocr']}")
         print(f"可导入 Paddle: {info['can_import_paddle']}")
         print("=" * 60 + "\n")
 

@@ -56,8 +56,8 @@ class TestPreloadTask:
     def test_task_creation(self):
         """测试任务创建"""
         mock_service = Mock()
-        task = PreloadTask(mock_service, ["OCR", "TABLE_RECOGNITION"])
-        assert task._pipelines == ["OCR", "TABLE_RECOGNITION"]
+        task = PreloadTask(mock_service, ["OCR", "PP-StructureV3"])
+        assert task._pipelines == ["OCR", "PP-StructureV3"]
         assert task.signals is not None
 
 

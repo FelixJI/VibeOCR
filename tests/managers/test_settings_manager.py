@@ -38,10 +38,10 @@ class TestSettingsManager:
 
     def test_get_preload_config_with_pipelines(self, manager):
         """测试有管道时的预加载配置"""
-        manager._cm.set_preload_pipelines(["OCR", "table_recognition"])
+        manager._cm.set_preload_pipelines(["OCR", "PP-StructureV3"])
 
         config = manager.get_preload_config()
 
         assert config["enabled"] is True
         assert "OCR" in config["pipelines"]
-        assert "table_recognition" in config["pipelines"]
+        assert "PP-StructureV3" in config["pipelines"]

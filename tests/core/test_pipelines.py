@@ -12,21 +12,20 @@ from vibeocr.core.pipelines import (
 class TestOCRPipeline:
 
     def test_pipeline_count(self):
-        """验证管道数量为 5"""
-        assert len(OCRPipeline) == 5
+        """验证管道数量为 4"""
+        assert len(OCRPipeline) == 4
 
     def test_pipeline_values(self):
         """验证管道值"""
         assert OCRPipeline.OCR.value == "OCR"
-        assert OCRPipeline.TABLE_RECOGNITION.value == "table_recognition"
-        assert OCRPipeline.FORMULA_RECOGNITION.value == "formula_recognition"
+        assert OCRPipeline.PP_STRUCTURE_V3.value == "PP-StructureV3"
         assert OCRPipeline.DOCUMENT_PARSING.value == "MinerU"
         assert OCRPipeline.PADDLEOCR_VL.value == "PaddleOCR-VL"
 
     def test_get_display_name(self):
         """验证显示名称获取"""
         assert get_pipeline_display_name(OCRPipeline.OCR) == "通用 OCR"
-        assert get_pipeline_display_name(OCRPipeline.TABLE_RECOGNITION) == "表格识别"
+        assert get_pipeline_display_name(OCRPipeline.PP_STRUCTURE_V3) == "PP-StructureV3"
         assert get_pipeline_display_name(OCRPipeline.DOCUMENT_PARSING) == "MineRU（文档）"
         assert get_pipeline_display_name(OCRPipeline.PADDLEOCR_VL) == "PaddleOCR-VL（文档）"
 
@@ -44,6 +43,15 @@ class TestOCRPipeline:
         assert "use_doc_unwarping" in options
         assert "use_textline_orientation" in options
 
+    def test_pp_structure_v3_options(self):
+        """PP-StructureV3 应支持预处理 + 结构分析选项"""
+        options = get_pipeline_supported_options(OCRPipeline.PP_STRUCTURE_V3)
+        assert "use_doc_orientation_classify" in options
+        assert "use_table_recognition" in options
+        assert "use_formula_recognition" in options
+        assert "use_seal_recognition" in options
+        assert "use_chart_recognition" in options
+
     def test_document_parsing_options(self):
         """文档解析应支持 MinerU 选项"""
         options = get_pipeline_supported_options(OCRPipeline.DOCUMENT_PARSING)
@@ -59,8 +67,9 @@ class TestOCRPipeline:
         assert "end_page_id" in options
 
     def test_paddlocr_vl_options(self):
-        """PaddleOCR-VL 应支持布局、图表、印章选项"""
+        """PaddleOCR-VL 应支持布局、图表、印章、图片OCR选项"""
         options = get_pipeline_supported_options(OCRPipeline.PADDLEOCR_VL)
         assert "vl_use_layout_detection" in options
         assert "vl_use_chart_recognition" in options
         assert "vl_use_seal_recognition" in options
+        assert "use_ocr_for_image_block" in options

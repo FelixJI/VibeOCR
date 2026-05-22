@@ -28,49 +28,33 @@ os.environ.setdefault("PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK", "True")
 
 import re as _re
 
+_RE_TABLE = _re.compile(r"(<table\b.*?</table>)", _re.DOTALL | _re.IGNORECASE)
+_RE_TR = _re.compile(r"<tr[^>]*>(.*?)</tr>", _re.DOTALL | _re.IGNORECASE)
+_RE_TD = _re.compile(r"<t[dh][^>]*>(.*?)</t[dh]>", _re.DOTALL | _re.IGNORECASE)
+
 
 def _extract_table_html(html_str: str) -> str:
-    """从 pred_html 中提取 <table> 标签内容，去除外层 html/body 包装"""
-    match = _re.search(
-        r"(<table\b.*</table>)", html_str, _re.DOTALL | _re.IGNORECASE
-    )
+    match = _RE_TABLE.search(html_str)
     return match.group(1) if match else html_str
 
 
 def _html_table_to_markdown(html: str) -> str:
-    """将 HTML <table> 转换为 Markdown 表格格式"""
     rows: list[list[str]] = []
-    tr_pat = _re.compile(r"<tr[^>]*>(.*?)</tr>", _re.DOTALL | _re.IGNORECASE)
-    td_pat = _re.compile(r"<t[dh][^>]*>(.*?)</t[dh]>", _re.DOTALL | _re.IGNORECASE)
-
-    for tr_match in tr_pat.finditer(html):
-        cells = []
-        for td_match in td_pat.finditer(tr_match.group(1)):
-            cell_text = _re.sub(r"<[^>]+>", "", td_match.group(1)).strip()
-            cell_text = cell_text.replace("|", "\\|")
-            cells.append(cell_text)
+    for tr_match in _RE_TR.finditer(html):
+        cells = [_re.sub(r"<[^>]+>", "", td.group(1)).strip().replace("|", "\\|")
+                 for td in _RE_TD.finditer(tr_match.group(1))]
         if cells:
             rows.append(cells)
-
     if not rows:
         return ""
-
-    # 对齐列数
     max_cols = max(len(r) for r in rows)
     for r in rows:
-        while len(r) < max_cols:
-            r.append("")
-
-    # 构建 Markdown 表格
-    lines = []
+        r.extend("" for _ in range(max_cols - len(r)))
     header = "| " + " | ".join(rows[0]) + " |"
     sep = "| " + " | ".join("---" for _ in range(max_cols)) + " |"
-    lines.append(header)
-    lines.append(sep)
-    for row in rows[1:]:
-        lines.append("| " + " | ".join(row) + " |")
+    body = "\n".join("| " + " | ".join(row) + " |" for row in rows[1:])
+    return "\n".join(part for part in (header, sep, body) if part)
 
-    return "\n".join(lines)
 
 
 def _looks_like_markdown(text: str) -> bool:
@@ -691,7 +675,97 @@ class OCRService(metaclass=SingletonMeta):
             use_seal_recognition=options.use_seal_recognition,
             use_chart_recognition=options.use_chart_recognition,
         )
-        return self._process_ocr_output_safe(output)
+        output_list = self._consume_generator_safely(output)
+
+        text_blocks: list[TextBlock] = []
+        text_with_scores: list[tuple[str, float]] = []
+        content_list: list[dict[str, Any]] = []
+        markdown_parts: list[str] = []
+        images: dict[str, Any] = {}
+
+        for res in output_list:
+            # 提取内建 markdown 作为参考
+            if hasattr(res, "markdown"):
+                md_info = getattr(res, "markdown", None)
+                if isinstance(md_info, dict):
+                    md_text = md_info.get("markdown_texts", "")
+                    if md_text:
+                        markdown_parts.append(md_text)
+                    md_imgs = md_info.get("markdown_images", {})
+                    if md_imgs:
+                        images.update(md_imgs)
+
+            # 从 parsing_res_list 提取结构化结果
+            parsing_res_list = []
+            if hasattr(res, "__getitem__"):
+                parsing_res_list = res["parsing_res_list"] if "parsing_res_list" in (res.keys() if hasattr(res, "keys") else []) else []
+            if not parsing_res_list and hasattr(res, "parsing_res_list"):
+                parsing_res_list = res.parsing_res_list
+
+            for block in parsing_res_list:
+                label = getattr(block, "label", "text")
+                bbox = getattr(block, "bbox", None)
+                content = getattr(block, "content", "")
+                order_index = getattr(block, "order_index", -1)
+                block_image = getattr(block, "image", None)
+
+                if not content and label not in ("image", "chart"):
+                    continue
+
+                cl_idx = len(content_list)
+                bbox_tuple = tuple(float(v) for v in bbox) if bbox else None
+
+                if label == "table":
+                    table_html = _extract_table_html(content)
+                    table_md = _html_table_to_markdown(table_html)
+                    if table_md:
+                        markdown_parts.append(table_md)
+                    text_blocks.append(TextBlock(
+                        text=content, score=0.9, bbox=bbox_tuple,
+                        label=label, order=order_index or -1, content_index=cl_idx,
+                    ))
+                    text_with_scores.append((content, 0.9))
+                    content_list.append({"type": "table", "table_body": table_html, "bbox": bbox_tuple})
+
+                elif label == "formula":
+                    formula_md = f"$${content}$$"
+                    markdown_parts.append(formula_md)
+                    text_blocks.append(TextBlock(
+                        text=content, score=1.0, bbox=bbox_tuple,
+                        label=label, order=order_index or -1, content_index=cl_idx,
+                    ))
+                    text_with_scores.append((content, 1.0))
+                    content_list.append({"type": "formula", "text": content, "bbox": bbox_tuple})
+
+                else:
+                    # text, doc_title, seal, chart, image, etc.
+                    text_blocks.append(TextBlock(
+                        text=content, score=0.9, bbox=bbox_tuple,
+                        label=label, order=order_index or -1, content_index=cl_idx,
+                    ))
+                    text_with_scores.append((content, 0.9))
+                    content_entry: dict[str, Any] = {"type": label, "text": content, "bbox": bbox_tuple}
+                    if block_image and isinstance(block_image, dict):
+                        img_path = block_image.get("path", "")
+                        if img_path:
+                            content_entry["img_path"] = img_path
+                    content_list.append(content_entry)
+
+        raw_text = "\n".join(b.text for b in text_blocks if b.label not in ("table",))
+        markdown_text = "\n\n".join(markdown_parts) if markdown_parts else raw_text
+
+        from vibeocr.utils.markdown_converter import markdown_to_html
+
+        return self._build_ocr_result(
+            raw_text=raw_text,
+            markdown_text=markdown_text,
+            html_text=markdown_to_html(markdown_text) if markdown_text else "",
+            text_with_scores=text_with_scores,
+            pipeline_type="PP-StructureV3",
+            images=images if images else None,
+            text_blocks=text_blocks,
+            content_list=content_list,
+        )
 
     def _recognize_paddlocr_vl(
         self,
@@ -802,6 +876,7 @@ class OCRService(metaclass=SingletonMeta):
             order = block.get("block_order", -1)
             if 0 <= order < len(boxes):
                 return float(boxes[order].get("score", 0.9))
+        # layout_det_res 不可用或索引越界时，PaddleOCR-VL 不提供单块置信度，给一个保守估值
         return 0.9
 
     @staticmethod

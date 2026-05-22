@@ -468,7 +468,7 @@ def check_embedded_environment_dependencies(
     Returns:
         依赖状态字典，包含:
         - paddlepaddle: 是否安装了PaddlePaddle（GPU或CPU版本）
-        - paddlex: 是否安装了PaddleX
+        - paddleocr: 是否安装了PaddleOCR
         - is_gpu: 是否是GPU版本（可选字段）
     """
     # 1. 尝试使用缓存
@@ -486,7 +486,7 @@ def check_embedded_environment_dependencies(
 
     dependencies = {
         "paddlepaddle": False,
-        "paddlex": False,
+        "paddleocr": False,
         "mineru": False,
         "torch": False,
     }
@@ -511,19 +511,18 @@ def check_embedded_environment_dependencies(
         print(f"[依赖检测] PaddlePaddle检测失败: {e}")
         dependencies["paddlepaddle"] = False
 
-    # 检测 PaddleX
-    # 注意：PaddleX 导入也可能需要较长时间，因为它会加载相关依赖
+    # 检测 PaddleOCR
     try:
         result = subprocess.run(
             [str(python_exe), "-c", "import paddleocr"],
             capture_output=True,
             text=True,
-            timeout=30,  # PaddleX 导入也可能需要时间
+            timeout=30,
             creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
         )
-        dependencies["paddlex"] = result.returncode == 0  # paddleocr check
+        dependencies["paddleocr"] = result.returncode == 0
     except Exception:
-        dependencies["paddlex"] = False
+        dependencies["paddleocr"] = False
 
     # 检测 MinerU
     try:
@@ -587,7 +586,7 @@ def check_dependencies(project_root: Path) -> dict[str, bool]:
     dependencies = {
         "PySide6": False,
         "paddlepaddle": False,
-        "paddlex": False,
+        "paddleocr": False,
         "mineru": False,
         "torch": False,
         "PIL": False,
@@ -621,18 +620,18 @@ def check_dependencies(project_root: Path) -> dict[str, bool]:
     except Exception:
         dependencies["paddlepaddle"] = False
 
-    # 检测 PaddleX
+    # 检测 PaddleOCR
     try:
         result = subprocess.run(
             [str(python_exe), "-c", "import paddleocr"],
             capture_output=True,
             text=True,
-            timeout=30,  # PaddleX 导入也可能需要时间
+            timeout=30,
             creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
         )
-        dependencies["paddlex"] = result.returncode == 0  # paddleocr check
+        dependencies["paddleocr"] = result.returncode == 0
     except Exception:
-        dependencies["paddlex"] = False
+        dependencies["paddleocr"] = False
 
     # 检测 MinerU
     try:
@@ -714,7 +713,7 @@ def is_embedded_environment_ready(project_root: Path) -> tuple[bool, list[str]]:
         return False, ["嵌入式Python未安装"]
 
     deps = check_embedded_environment_dependencies(project_root)
-    # 只检查 paddlepaddle 和 paddlex，排除 is_gpu 等元数据字段
+    # 只检查 paddlepaddle 和 paddleocr，排除 is_gpu 等元数据字段
     required_deps = ["paddlepaddle", "paddleocr", "mineru"]
     missing = [pkg for pkg in required_deps if pkg not in deps or not deps[pkg]]
 
@@ -1087,8 +1086,8 @@ def install_dependencies(
         # PaddlePaddle（GPU 优先，CPU 回退）
         requirements.append((paddle_name, paddle_package, paddle_index))
 
-        # 安装PaddleX OCR
-        requirements.append(("PaddleX", '"paddlex[ocr]>=3.4.2"', pip_source))
+        # 安装 PaddleOCR
+        requirements.append(("PaddleOCR", '"paddleocr>=3.5.0"', pip_source))
 
         # 安装 MineRU 文档解析
         requirements.append(("MinerU", '"mineru[core]"', pip_source))

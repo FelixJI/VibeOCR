@@ -114,9 +114,18 @@ class TestOCROptions:
     def test_paddlocr_vl_default_values(self):
         """测试 PaddleOCR-VL 选项默认值"""
         options = OCROptions(pipeline=OCRPipeline.PADDLEOCR_VL)
-        assert options.vl_use_layout_detection is None
-        assert options.vl_use_chart_recognition is None
-        assert options.vl_use_seal_recognition is None
+        assert options.vl_use_layout_detection is True
+        assert options.vl_use_chart_recognition is False
+        assert options.vl_use_seal_recognition is False
+        assert options.use_ocr_for_image_block is False
+
+    def test_pp_structure_v3_default_values(self):
+        """测试 PP-StructureV3 选项默认值"""
+        options = OCROptions()
+        assert options.use_table_recognition is True
+        assert options.use_formula_recognition is True
+        assert options.use_seal_recognition is False
+        assert options.use_chart_recognition is False
 
     def test_paddlocr_vl_options(self):
         """测试 PaddleOCR-VL 选项设置"""

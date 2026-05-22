@@ -366,7 +366,7 @@ class MainWindow(QMainWindow):
             dependencies = cached_data.get("dependencies", {})
             # 检查关键依赖
             paddlepaddle_ok = dependencies.get("paddlepaddle", False)
-            paddlex_ok = dependencies.get("paddlex", False)
+            paddlex_ok = dependencies.get("paddleocr", False)
             mineru_ok = dependencies.get("mineru", False)
             if paddlepaddle_ok and paddlex_ok and mineru_ok:
                 self._ocr_ready = True

@@ -96,7 +96,7 @@ class TestDependencyConstants:
     def test_paddle_dependencies(self):
         from vibeocr.services.env_config import PADDLE_DEPENDENCIES
         assert "paddlepaddle" in PADDLE_DEPENDENCIES
-        assert "paddlex" in PADDLE_DEPENDENCIES
+        assert "paddleocr" in PADDLE_DEPENDENCIES
 
     def test_mineru_dependencies(self):
         from vibeocr.services.env_config import MINERU_DEPENDENCIES
