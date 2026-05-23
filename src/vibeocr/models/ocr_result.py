@@ -230,6 +230,7 @@ class OCRResult:
     text_blocks: list[TextBlock] = field(default_factory=list)
     image_width: int = 0
     image_height: int = 0
+    preproc_angle: int = 0
 
     @property
     def has_rich_content(self) -> bool:
