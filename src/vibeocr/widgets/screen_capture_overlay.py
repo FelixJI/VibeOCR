@@ -118,7 +118,7 @@ class ScreenCaptureOverlay(QWidget):
     def _logical_rect_to_physical(self, rect: QRect) -> QRect:
         """将逻辑坐标矩形转换为物理坐标矩形，优先使用 mapper，否则回退标量 DPR"""
         if self._mapper is not None:
-            return self._mapper.logical_rect_to_physical(rect)
+            return self._mapper.logical_to_screenshot_physical(rect)
         dpr = 1.0
         return QRect(
             int(rect.x() * dpr),
