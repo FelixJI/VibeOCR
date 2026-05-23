@@ -115,13 +115,6 @@ class ScreenCaptureOverlay(QWidget):
 
     # ==================== CAPTURING 模式 ====================
 
-    @property
-    def _device_pixel_ratio(self) -> float:
-        """向后兼容属性：从 mapper 获取 max_dpr，供 magnifier/canvas/detector 逐步迁移"""
-        if self._mapper is not None:
-            return self._mapper.max_dpr
-        return 1.0
-
     def _logical_rect_to_physical(self, rect: QRect) -> QRect:
         """将逻辑坐标矩形转换为物理坐标矩形，优先使用 mapper，否则回退标量 DPR"""
         if self._mapper is not None:
