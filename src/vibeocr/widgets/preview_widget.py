@@ -220,6 +220,8 @@ class PreviewWidget(QWidget):
         self._empty_text = empty_text
         self._pixmap: QPixmap | None = None
         self._original_pixmap: QPixmap | None = None
+        self._img_w: int = 0
+        self._img_h: int = 0
         self._text_blocks: list[TextBlock] = []
         self._block_screen_rects: list[tuple[float, float, float, float]] = []
         self._hovered_block: int = -1
@@ -421,6 +423,8 @@ class PreviewWidget(QWidget):
             pixmap.setDevicePixelRatio(1.0)
         self._pixmap = pixmap
         self._original_pixmap = pixmap
+        self._img_w = pixmap.width()
+        self._img_h = pixmap.height()
         self._total_pages = 1
         self._current_page = 0
         self._update_display()
@@ -541,18 +545,10 @@ class PreviewWidget(QWidget):
             self._overlay.set_type_blocks([])
             return
 
-        current_pixmap = self._image_label.pixmap()
-        if not current_pixmap:
+        disp_w, disp_h, offset_x, offset_y = self._compute_display_rect()
+        if disp_w <= 0 or disp_h <= 0:
             self._overlay.set_type_blocks([])
             return
-
-        dpr = current_pixmap.devicePixelRatio() or 1.0
-        disp_w = current_pixmap.width() / dpr
-        disp_h = current_pixmap.height() / dpr
-        label_w = self._image_label.width()
-        label_h = self._image_label.height()
-        offset_x = (label_w - disp_w) / 2
-        offset_y = (label_h - disp_h) / 2
 
         overlay_rects = []
         for i, block in enumerate(self._content_list):
@@ -650,6 +646,25 @@ class PreviewWidget(QWidget):
 
     # ── 显示更新 ──
 
+    def _compute_display_rect(self) -> tuple[float, float, float, float]:
+        """计算图像在 label 中的显示位置和尺寸（逻辑像素）
+
+        Returns: (disp_w, disp_h, offset_x, offset_y)
+        """
+        if not self._pixmap or self._img_w <= 0 or self._img_h <= 0:
+            return 0, 0, 0, 0
+        viewport = self._scroll_area.viewport()
+        max_w = max(viewport.width() - 20, 200)
+        max_h = max(viewport.height() - 20, 200)
+        scale = min(max_w / self._img_w, max_h / self._img_h)
+        disp_w = self._img_w * scale
+        disp_h = self._img_h * scale
+        label_w = self._image_label.width()
+        label_h = self._image_label.height()
+        offset_x = (label_w - disp_w) / 2
+        offset_y = (label_h - disp_h) / 2
+        return disp_w, disp_h, offset_x, offset_y
+
     def _update_display(self) -> None:
         if self._pixmap:
             viewport = self._scroll_area.viewport()
@@ -681,18 +696,9 @@ class PreviewWidget(QWidget):
         if not self._pixmap or not self._text_blocks:
             return
 
-        current_pixmap = self._image_label.pixmap()
-        if not current_pixmap:
+        disp_w, disp_h, offset_x, offset_y = self._compute_display_rect()
+        if disp_w <= 0 or disp_h <= 0:
             return
-
-        dpr = current_pixmap.devicePixelRatio() or 1.0
-        disp_w = current_pixmap.width() / dpr
-        disp_h = current_pixmap.height() / dpr
-
-        label_w = self._image_label.width()
-        label_h = self._image_label.height()
-        offset_x = (label_w - disp_w) / 2
-        offset_y = (label_h - disp_h) / 2
 
         overlay_rects = []
         for block in self._text_blocks:

@@ -630,6 +630,17 @@ class OCRService(metaclass=SingletonMeta):
                             x1 / img_w * 1000,
                             y1 / img_h * 1000,
                         )
+                for cl_block in result.content_list:
+                    bbox = cl_block.get("bbox")
+                    if bbox and len(bbox) >= 4:
+                        cl_block["bbox"] = [
+                            bbox[0] / img_w * 1000,
+                            bbox[1] / img_h * 1000,
+                            bbox[2] / img_w * 1000,
+                            bbox[3] / img_h * 1000,
+                        ]
+                result.image_width = img_w
+                result.image_height = img_h
 
             # 标记管道识别成功
             pipeline_val = actual_options.pipeline.value

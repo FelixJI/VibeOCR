@@ -213,6 +213,8 @@ class OCRResult:
     images: dict[str, Any] = field(default_factory=dict)
     content_list: list[dict[str, Any]] = field(default_factory=list)
     text_blocks: list[TextBlock] = field(default_factory=list)
+    image_width: int = 0
+    image_height: int = 0
 
     @property
     def has_rich_content(self) -> bool:
