@@ -690,10 +690,15 @@ class PreviewWidget(QWidget):
             self._image_label.setStyleSheet(
                 "QLabel { background-color: #fff; border: 1px solid #ddd; }"
             )
-            if self._content_list:
-                self._update_type_overlay()
-            else:
-                self._update_block_overlay()
+            QTimer.singleShot(0, self._update_overlay_deferred)
+
+    def _update_overlay_deferred(self) -> None:
+        """延迟一帧更新 overlay，确保布局已完成"""
+        if self._content_list:
+            self._update_type_overlay()
+        elif self._text_blocks:
+            self._update_block_overlay()
+        self._overlay.setGeometry(self._scroll_area.viewport().rect())
 
     def _update_block_overlay(self) -> None:
         """根据当前文本块和图片显示计算置信度模式覆盖矩形"""
@@ -730,4 +735,4 @@ class PreviewWidget(QWidget):
         if self._original_pixmap and not self._original_pixmap.isNull():
             self._update_display()
             self._reapply_highlight()
-        self._overlay.setGeometry(self._scroll_area.viewport().rect())
+        QTimer.singleShot(0, lambda: self._overlay.setGeometry(self._scroll_area.viewport().rect()))
