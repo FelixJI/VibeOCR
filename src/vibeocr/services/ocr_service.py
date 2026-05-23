@@ -620,6 +620,9 @@ class OCRService(metaclass=SingletonMeta):
                 img_w, img_h = image.size
             else:
                 img_w = img_h = 0
+            # 预处理旋转 90°/270° 时宽高互换
+            if result.preproc_angle in (90, 270):
+                img_w, img_h = img_h, img_w
             if img_w > 0 and img_h > 0:
                 for block in result.text_blocks:
                     if block.bbox:
@@ -700,6 +703,16 @@ class OCRService(metaclass=SingletonMeta):
             use_chart_recognition=options.use_chart_recognition,
         )
         output_list = self._consume_generator_safely(output)
+
+        preproc_angle = 0
+        if output_list:
+            res = output_list[0]
+            dp_res = getattr(res, "doc_preprocessor_res", None)
+            if dp_res is not None:
+                if isinstance(dp_res, dict):
+                    preproc_angle = dp_res.get("angle", 0)
+                else:
+                    preproc_angle = getattr(dp_res, "angle", 0)
 
         text_blocks: list[TextBlock] = []
         text_with_scores: list[tuple[str, float]] = []
@@ -811,7 +824,7 @@ class OCRService(metaclass=SingletonMeta):
 
         from vibeocr.utils.markdown_converter import markdown_to_html
 
-        return self._build_ocr_result(
+        result = self._build_ocr_result(
             raw_text=raw_text,
             markdown_text=markdown_text,
             html_text=markdown_to_html(markdown_text) if markdown_text else "",
@@ -821,6 +834,8 @@ class OCRService(metaclass=SingletonMeta):
             text_blocks=text_blocks,
             content_list=content_list,
         )
+        result.preproc_angle = preproc_angle
+        return result
 
     def _recognize_paddlocr_vl(
         self,
@@ -1017,6 +1032,17 @@ class OCRService(metaclass=SingletonMeta):
 
         output_list = self._consume_generator_safely(output)
 
+        # 提取预处理旋转角度（用于 bbox 归一化）
+        preproc_angle = 0
+        if output_list:
+            res = output_list[0]
+            dp_res = getattr(res, "doc_preprocessor_res", None)
+            if dp_res is not None:
+                if isinstance(dp_res, dict):
+                    preproc_angle = dp_res.get("angle", 0)
+                else:
+                    preproc_angle = getattr(dp_res, "angle", 0)
+
         result_count = 0
         for res in output_list:
             result_count += 1
@@ -1100,12 +1126,14 @@ class OCRService(metaclass=SingletonMeta):
             f"[_process_ocr_output_safe] 处理完成: 共 {result_count} 个结果项, {len(text_with_scores)} 个文本块"
         )
 
-        return self._build_ocr_result(
+        result = self._build_ocr_result(
             raw_text=raw_text,
             text_with_scores=text_with_scores,
             pipeline_type="OCR",
             text_blocks=text_blocks,
         )
+        result.preproc_angle = preproc_angle
+        return result
 
     def _build_ocr_result(
         self,

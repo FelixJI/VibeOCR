@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QRectF, Signal
+from PySide6.QtCore import Qt, QRectF, QTimer, Signal
 from PySide6.QtGui import QAction, QColor, QPainter, QPen, QPixmap
 from PySide6.QtPdf import QPdfDocument
 from PySide6.QtWidgets import (
@@ -545,7 +545,7 @@ class PreviewWidget(QWidget):
             self._overlay.set_type_blocks([])
             return
 
-        disp_w, disp_h, offset_x, offset_y = self._compute_display_rect()
+        disp_w, disp_h, offset_x, offset_y = self._compute_scale_factor()
         if disp_w <= 0 or disp_h <= 0:
             self._overlay.set_type_blocks([])
             return
@@ -646,22 +646,28 @@ class PreviewWidget(QWidget):
 
     # ── 显示更新 ──
 
-    def _compute_display_rect(self) -> tuple[float, float, float, float]:
-        """计算图像在 label 中的显示位置和尺寸（逻辑像素）
+    def _compute_scale_factor(self) -> tuple[float, float, float, float]:
+        """基于 _original_pixmap 和 label 尺寸计算显示区域和偏移
 
-        直接读取 label 上实际显示的 pixmap 尺寸，避免与 _update_display 的
-        缩放计算不一致（视口 resize 时序差异会导致 bbox 偏移）。
+        不依赖已设置的 scaled pixmap，消除时序问题。
 
         Returns: (disp_w, disp_h, offset_x, offset_y)
         """
-        current_pixmap = self._image_label.pixmap()
-        if not current_pixmap:
+        if not self._original_pixmap or self._original_pixmap.isNull():
             return 0, 0, 0, 0
-        dpr = current_pixmap.devicePixelRatio() or 1.0
-        disp_w = current_pixmap.width() / dpr
-        disp_h = current_pixmap.height() / dpr
+        img_w = self._original_pixmap.width()
+        img_h = self._original_pixmap.height()
         label_w = self._image_label.width()
         label_h = self._image_label.height()
+        if label_w <= 0 or label_h <= 0 or img_w <= 0 or img_h <= 0:
+            return 0, 0, 0, 0
+        max_w = label_w - 20
+        max_h = label_h - 20
+        if max_w <= 0 or max_h <= 0:
+            return 0, 0, 0, 0
+        scale = min(max_w / img_w, max_h / img_h)
+        disp_w = img_w * scale
+        disp_h = img_h * scale
         offset_x = (label_w - disp_w) / 2
         offset_y = (label_h - disp_h) / 2
         return disp_w, disp_h, offset_x, offset_y
@@ -684,10 +690,15 @@ class PreviewWidget(QWidget):
             self._image_label.setStyleSheet(
                 "QLabel { background-color: #fff; border: 1px solid #ddd; }"
             )
-            if self._content_list:
-                self._update_type_overlay()
-            else:
-                self._update_block_overlay()
+            QTimer.singleShot(0, self._update_overlay_deferred)
+
+    def _update_overlay_deferred(self) -> None:
+        """延迟一帧更新 overlay，确保布局已完成"""
+        if self._content_list:
+            self._update_type_overlay()
+        elif self._text_blocks:
+            self._update_block_overlay()
+        self._overlay.setGeometry(self._scroll_area.viewport().rect())
 
     def _update_block_overlay(self) -> None:
         """根据当前文本块和图片显示计算置信度模式覆盖矩形"""
@@ -697,7 +708,7 @@ class PreviewWidget(QWidget):
         if not self._pixmap or not self._text_blocks:
             return
 
-        disp_w, disp_h, offset_x, offset_y = self._compute_display_rect()
+        disp_w, disp_h, offset_x, offset_y = self._compute_scale_factor()
         if disp_w <= 0 or disp_h <= 0:
             return
 
@@ -724,4 +735,4 @@ class PreviewWidget(QWidget):
         if self._original_pixmap and not self._original_pixmap.isNull():
             self._update_display()
             self._reapply_highlight()
-        self._overlay.setGeometry(self._scroll_area.viewport().rect())
+        QTimer.singleShot(0, lambda: self._overlay.setGeometry(self._scroll_area.viewport().rect()))
