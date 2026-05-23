@@ -649,16 +649,17 @@ class PreviewWidget(QWidget):
     def _compute_display_rect(self) -> tuple[float, float, float, float]:
         """计算图像在 label 中的显示位置和尺寸（逻辑像素）
 
+        直接读取 label 上实际显示的 pixmap 尺寸，避免与 _update_display 的
+        缩放计算不一致（视口 resize 时序差异会导致 bbox 偏移）。
+
         Returns: (disp_w, disp_h, offset_x, offset_y)
         """
-        if not self._pixmap or self._img_w <= 0 or self._img_h <= 0:
+        current_pixmap = self._image_label.pixmap()
+        if not current_pixmap:
             return 0, 0, 0, 0
-        viewport = self._scroll_area.viewport()
-        max_w = max(viewport.width() - 20, 200)
-        max_h = max(viewport.height() - 20, 200)
-        scale = min(max_w / self._img_w, max_h / self._img_h)
-        disp_w = self._img_w * scale
-        disp_h = self._img_h * scale
+        dpr = current_pixmap.devicePixelRatio() or 1.0
+        disp_w = current_pixmap.width() / dpr
+        disp_h = current_pixmap.height() / dpr
         label_w = self._image_label.width()
         label_h = self._image_label.height()
         offset_x = (label_w - disp_w) / 2

@@ -20,11 +20,15 @@ DISCARDED_BLOCK_TYPES = frozenset(
 )
 
 
-def normalize_bbox(bbox_raw: list | tuple) -> tuple[float, float, float, float]:
+def normalize_bbox(
+    bbox_raw: list | tuple,
+    img_w: int = 0,
+    img_h: int = 0,
+) -> tuple[float, float, float, float]:
     """将任意范围的 bbox 统一为 [0, 1000] 归一化坐标。
 
     支持输入: [0, 1] 归一化、[0, 1000] 归一化、像素坐标。
-    像素坐标（max >= 1100）无法准确归一化（缺少图像尺寸），保留原值并警告。
+    像素坐标需传入 img_w/img_h 才能归一化，否则保留原值并警告。
     """
     vals = (
         float(bbox_raw[0]),
@@ -34,9 +38,20 @@ def normalize_bbox(bbox_raw: list | tuple) -> tuple[float, float, float, float]:
     )
     max_val = max(vals)
     if max_val < 1.1:
+        # [0, 1] 归一化 → 放大到 [0, 1000]
         result = tuple(v * 1000 for v in vals)
         _log.debug("[bbox] [0,1] → [0,1000]: %s", result)
         return result  # type: ignore[return-value]
+    if max_val > 1001 and img_w > 0 and img_h > 0:
+        # 像素坐标（max > 1001，超出 [0,1000] 归一化范围）→ 归一化
+        result = (
+            vals[0] / img_w * 1000,
+            vals[1] / img_h * 1000,
+            vals[2] / img_w * 1000,
+            vals[3] / img_h * 1000,
+        )
+        _log.debug("[bbox] pixel → [0,1000] (%dx%d): %s", img_w, img_h, result)
+        return result
     if max_val >= 1100:
         _log.warning("[bbox] unexpected pixel coords (max=%s): %s", max_val, vals)
     return vals

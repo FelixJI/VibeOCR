@@ -87,16 +87,26 @@ class BaseOcrTab(QWidget):
         return self._paddlex_service
 
     def _build_content_list(self, result) -> list[dict]:
-        """从 OCRResult 构建 content_list（含 bbox）"""
+        """从 OCRResult 构建 content_list（含归一化 bbox）"""
+        from vibeocr.models.ocr_result import normalize_bbox
+
         content_list = getattr(result, "content_list", [])
         text_blocks = getattr(result, "text_blocks", [])
+        img_w = getattr(result, "image_width", 0)
+        img_h = getattr(result, "image_height", 0)
 
         if content_list:
+            for cl_block in content_list:
+                bbox = cl_block.get("bbox")
+                if bbox and len(bbox) >= 4:
+                    cl_block["bbox"] = list(normalize_bbox(bbox[:4], img_w, img_h))
             for tb in text_blocks:
                 cl_idx = getattr(tb, "content_index", None)
                 if cl_idx is not None and cl_idx < len(content_list) and tb.bbox:
                     if "bbox" not in content_list[cl_idx]:
-                        content_list[cl_idx]["bbox"] = list(tb.bbox)
+                        content_list[cl_idx]["bbox"] = list(
+                            normalize_bbox(tb.bbox, img_w, img_h)
+                        )
             return content_list
 
         if not text_blocks:
@@ -106,7 +116,7 @@ class BaseOcrTab(QWidget):
         for b in text_blocks:
             entry: dict = {"type": "text", "text": b.text}
             if b.bbox:
-                entry["bbox"] = list(b.bbox)
+                entry["bbox"] = list(normalize_bbox(b.bbox, img_w, img_h))
             if b.page_idx is not None:
                 entry["page_idx"] = b.page_idx
             built.append(entry)
