@@ -370,6 +370,7 @@ class ScreenCaptureOverlay(QWidget):
         self._canvas.set_background(
             self._captured_pixmap,
             QPointF(self._selection_rect.x(), self._selection_rect.y()),
+            self._mapper,
         )
 
         # 创建工具栏
@@ -478,7 +479,7 @@ class ScreenCaptureOverlay(QWidget):
 
     def _on_selection_changed(self, new_rect: QRect) -> None:
         """选区 resize/move 过程中持续更新"""
-        if not self._canvas or not self._screen_pixmap:
+        if not self._canvas or not self._screen_pixmap or not self._mapper:
             return
 
         # 批量更新：禁止中间状态重绘，避免波纹
@@ -487,7 +488,7 @@ class ScreenCaptureOverlay(QWidget):
             self._selection_rect = new_rect
 
             self._canvas.update_crop_region(
-                self._screen_pixmap, new_rect, self._device_pixel_ratio
+                self._screen_pixmap, new_rect, self._mapper
             )
 
             self._canvas.setGeometry(new_rect)

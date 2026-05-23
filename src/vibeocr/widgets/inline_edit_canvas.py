@@ -9,7 +9,7 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import QPointF, QRect, QRectF, Qt
+from PySide6.QtCore import QPoint, QPointF, QRect, QRectF, Qt
 from PySide6.QtGui import (
     QBrush,
     QColor,
@@ -42,6 +42,7 @@ from vibeocr.widgets.editor.command_stack import (
     MoveAnnotationCommand,
     create_undo_stack,
 )
+from vibeocr.widgets.screen_coordinate_mapper import ScreenCoordinateMapper
 
 
 class InlineEditCanvas(QGraphicsView):
@@ -77,6 +78,9 @@ class InlineEditCanvas(QGraphicsView):
         # 背景图
         self._background_item: QGraphicsPixmapItem | None = None
         self._background_pixmap: QPixmap | None = None
+
+        # 坐标映射器
+        self._mapper: ScreenCoordinateMapper | None = None
 
         # 当前工具和属性
         self._current_tool: EditTool = EditTool.SELECT
@@ -126,9 +130,13 @@ class InlineEditCanvas(QGraphicsView):
     # ==================== 公开方法 ====================
 
     def set_background(
-        self, pixmap: QPixmap, crop_origin: QPointF | None = None
+        self,
+        pixmap: QPixmap,
+        crop_origin: QPointF | None = None,
+        mapper: ScreenCoordinateMapper | None = None,
     ) -> None:
         """设置背景截图"""
+        self._mapper = mapper
         self._background_pixmap = pixmap
         if self._background_item:
             self._scene.removeItem(self._background_item)
@@ -152,7 +160,10 @@ class InlineEditCanvas(QGraphicsView):
             self._crop_origin = crop_origin
 
     def update_crop_region(
-        self, screen_pixmap: QPixmap, new_selection: QRect, dpr: float
+        self,
+        screen_pixmap: QPixmap,
+        new_selection: QRect,
+        mapper: ScreenCoordinateMapper,
     ) -> None:
         """更新裁剪区域：用全屏截图 + setPos 偏移显示，消除 DPR 舍入晃动"""
         old_origin = self._crop_origin
@@ -181,11 +192,12 @@ class InlineEditCanvas(QGraphicsView):
                     item.moveBy(delta.x(), delta.y())
 
         # 为 Mosaic/Blur 保留裁剪后的背景（场景坐标系，供像素采样）
+        dpr = mapper.dpr_at(QPoint(new_selection.center()))
         physical_rect = QRect(
-            int(new_selection.x() * dpr),
-            int(new_selection.y() * dpr),
-            int(new_selection.width() * dpr),
-            int(new_selection.height() * dpr),
+            round(new_selection.x() * dpr),
+            round(new_selection.y() * dpr),
+            round(new_selection.width() * dpr),
+            round(new_selection.height() * dpr),
         )
         self._background_pixmap = screen_pixmap.copy(physical_rect)
 
