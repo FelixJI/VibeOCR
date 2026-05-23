@@ -35,6 +35,7 @@ from vibeocr.widgets.editor.annotation_items import (
     TextAnnotation,
 )
 from vibeocr.widgets.inline_edit_canvas import InlineEditCanvas
+from vibeocr.widgets.screen_coordinate_mapper import ScreenCoordinateMapper, ScreenInfo
 from vibeocr.widgets.inline_recognition_panel import InlineRecognitionPanel
 from vibeocr.widgets.inline_toolbar import InlineToolbar
 from vibeocr.widgets.magnifier_overlay import MagnifierOverlay
@@ -94,7 +95,7 @@ class ScreenCaptureOverlay(QWidget):
         self._screen_pixmap: QPixmap | None = None
         self._screen_image: QImage | None = None
         self._virtual_geometry = QRect()
-        self._device_pixel_ratio: float = 1.0
+        self._mapper: ScreenCoordinateMapper | None = None
 
         # HOVER/DRAG 子状态
         self._sub_state: str = "HOVER"
@@ -116,6 +117,25 @@ class ScreenCaptureOverlay(QWidget):
 
     # ==================== CAPTURING 模式 ====================
 
+    @property
+    def _device_pixel_ratio(self) -> float:
+        """向后兼容属性：从 mapper 获取 max_dpr，供 magnifier/canvas/detector 逐步迁移"""
+        if self._mapper is not None:
+            return self._mapper.max_dpr
+        return 1.0
+
+    def _logical_rect_to_physical(self, rect: QRect) -> QRect:
+        """将逻辑坐标矩形转换为物理坐标矩形，优先使用 mapper，否则回退标量 DPR"""
+        if self._mapper is not None:
+            return self._mapper.logical_rect_to_physical(rect)
+        dpr = 1.0
+        return QRect(
+            int(rect.x() * dpr),
+            int(rect.y() * dpr),
+            int(rect.width() * dpr),
+            int(rect.height() * dpr),
+        )
+
     def start_capture(self) -> None:
         """开始截图（支持多屏幕和高DPI）"""
         screens = QGuiApplication.screens()
@@ -123,26 +143,44 @@ class ScreenCaptureOverlay(QWidget):
             return
 
         # 计算虚拟桌面几何
-        self._virtual_geometry = screens[0].geometry()
+        virtual_geometry = screens[0].geometry()
         for screen in screens[1:]:
-            self._virtual_geometry = self._virtual_geometry.united(screen.geometry())
+            virtual_geometry = virtual_geometry.united(screen.geometry())
 
-        # 获取最高的设备像素比
-        self._device_pixel_ratio = max(screen.devicePixelRatio() for screen in screens)
+        max_dpr = max(screen.devicePixelRatio() for screen in screens)
 
-        # 创建合并所有屏幕的截图
-        physical_size = self._virtual_geometry.size() * self._device_pixel_ratio
+        # 构建 per-screen info for mapper
+        screen_infos = []
+        for screen in screens:
+            sg = screen.geometry()
+            offset = sg.topLeft() - virtual_geometry.topLeft()
+            grab = screen.grabWindow(0)
+            screen_infos.append(ScreenInfo(
+                geometry=QRect(
+                    offset.x(), offset.y(),
+                    sg.width(), sg.height(),
+                ),
+                dpr=screen.devicePixelRatio(),
+                grab=grab,
+                offset=offset,
+            ))
+
+        self._mapper = ScreenCoordinateMapper(screen_infos)
+        self._virtual_geometry = virtual_geometry
+
+        # 创建合并所有屏幕的截图（用 max_dpr 保证分辨率）
+        physical_size = virtual_geometry.size() * max_dpr
         pixmap = QPixmap(physical_size)
         if pixmap.isNull():
             return
 
         pixmap.fill(Qt.GlobalColor.black)
-        pixmap.setDevicePixelRatio(self._device_pixel_ratio)
+        pixmap.setDevicePixelRatio(max_dpr)
 
         painter = QPainter(pixmap)
         for screen in screens:
             screen_geometry = screen.geometry()
-            offset = screen_geometry.topLeft() - self._virtual_geometry.topLeft()
+            offset = screen_geometry.topLeft() - virtual_geometry.topLeft()
             screen_grab = screen.grabWindow(0)
             painter.drawPixmap(offset, screen_grab)
         painter.end()
@@ -151,7 +189,7 @@ class ScreenCaptureOverlay(QWidget):
         self._screen_image = pixmap.toImage()
 
         # 设置窗口大小为虚拟桌面大小
-        self.setGeometry(self._virtual_geometry)
+        self.setGeometry(virtual_geometry)
         self.setMouseTracking(True)
 
         # 初始化窗口检测器
@@ -240,14 +278,7 @@ class ScreenCaptureOverlay(QWidget):
             # 检测到窗口，直接选中
             self._selection_rect = self._detected_rect
             self.releaseMouse()
-            dpr = self._device_pixel_ratio
-            sel = self._selection_rect
-            physical_rect = QRect(
-                int(sel.x() * dpr),
-                int(sel.y() * dpr),
-                int(sel.width() * dpr),
-                int(sel.height() * dpr),
-            )
+            physical_rect = self._logical_rect_to_physical(self._selection_rect)
             captured = self._screen_pixmap.copy(physical_rect)
             self._captured_pixmap = captured
             self._enter_editing()
@@ -298,16 +329,8 @@ class ScreenCaptureOverlay(QWidget):
                 and self._selection_rect.height() > self.MIN_SELECTION_SIZE
             ):
                 # QPixmap.copy() 操作物理像素，需将逻辑坐标转换为物理坐标
-                # QGraphicsPixmapItem.boundingRect() 会自动除以 DPR，
-                # 所以 captured pixmap 的逻辑尺寸等于 sel 尺寸
-                sel = self._selection_rect
-                dpr = self._device_pixel_ratio
-                physical_rect = QRect(
-                    int(sel.x() * dpr),
-                    int(sel.y() * dpr),
-                    int(sel.width() * dpr),
-                    int(sel.height() * dpr),
-                )
+                # 通过 mapper 自动处理多屏 DPR 差异
+                physical_rect = self._logical_rect_to_physical(self._selection_rect)
                 captured = self._screen_pixmap.copy(physical_rect)
                 self._captured_pixmap = captured
 
@@ -717,7 +740,7 @@ class ScreenCaptureOverlay(QWidget):
         self._screen_pixmap = None
         self._screen_image = None
         self._virtual_geometry = QRect()
-        self._device_pixel_ratio = 1.0
+        self._mapper = None
         self._current_mouse_pos = None
         self._sub_state = "HOVER"
         self._detected_rect = None

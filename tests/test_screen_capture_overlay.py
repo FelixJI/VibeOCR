@@ -21,13 +21,13 @@ class TestScreenCaptureOverlayState:
         overlay._end_pos = QPoint(100, 100)
         overlay._selection_rect = QRect(10, 10, 90, 90)
         overlay._screen_pixmap = QPixmap(100, 100)
-        overlay._device_pixel_ratio = 2.0
+        overlay._mapper = None  # will be reset to None
         overlay._reset_capturing()
         assert overlay._start_pos is None
         assert overlay._end_pos is None
         assert overlay._selection_rect is None
         assert overlay._screen_pixmap is None
-        assert overlay._device_pixel_ratio == 1.0
+        assert overlay._mapper is None
 
 
 class TestScreenCaptureOverlaySignals:
@@ -94,7 +94,6 @@ class TestStartCaptureInit:
     def test_creates_window_detector_with_overlay_hwnd(self, qapp):
         overlay = ScreenCaptureOverlay()
         overlay._virtual_geometry = QRect(0, 0, 100, 100)
-        overlay._device_pixel_ratio = 1.0
         overlay.show()
         hwnd = int(overlay.winId())
         overlay.start_capture()
@@ -112,7 +111,6 @@ class TestMouseMoveHoverDetect:
         overlay._state = "CAPTURING"
         overlay._sub_state = "HOVER"
         overlay._virtual_geometry = QRect(0, 0, 1920, 1080)
-        overlay._device_pixel_ratio = 1.0
 
         detector = MagicMock()
         detector.detect_at.return_value = QRect(100, 100, 400, 300)
@@ -131,7 +129,6 @@ class TestMouseMoveHoverDetect:
         overlay._state = "CAPTURING"
         overlay._sub_state = "HOVER"
         overlay._virtual_geometry = QRect(0, 0, 1920, 1080)
-        overlay._device_pixel_ratio = 1.0
 
         detector = MagicMock()
         detector.detect_at.return_value = None
@@ -148,7 +145,6 @@ class TestMouseMoveHoverDetect:
         overlay._sub_state = "DRAG"
         overlay._start_pos = QPoint(10, 10)
         overlay._virtual_geometry = QRect(0, 0, 1920, 1080)
-        overlay._device_pixel_ratio = 1.0
 
         detector = MagicMock()
         overlay._window_detector = detector
@@ -164,7 +160,6 @@ class TestMouseMoveHoverDetect:
         overlay._state = "CAPTURING"
         overlay._sub_state = "HOVER"
         overlay._virtual_geometry = QRect(0, 0, 1920, 1080)
-        overlay._device_pixel_ratio = 1.0
         overlay._last_detect_pos = QPoint(200, 200)
 
         detector = MagicMock()
@@ -196,7 +191,6 @@ class TestMousePressSubState:
         overlay._sub_state = "HOVER"
         overlay._screen_pixmap = QPixmap(1920, 1080)
         overlay._virtual_geometry = QRect(0, 0, 1920, 1080)
-        overlay._device_pixel_ratio = 1.0
         overlay._detected_rect = QRect(100, 100, 400, 300)
 
         event = _make_mouse_press_event(QPoint(200, 200), Qt.MouseButton.LeftButton)
@@ -237,7 +231,6 @@ class TestPaintDetectionHighlight:
         overlay._screen_pixmap = QPixmap(1920, 1080)
         overlay._detected_rect = QRect(100, 100, 400, 300)
         overlay._virtual_geometry = QRect(0, 0, 1920, 1080)
-        overlay._device_pixel_ratio = 1.0
         overlay.resize(1920, 1080)
         # paintEvent should not crash
         overlay.repaint()
@@ -249,7 +242,6 @@ class TestPaintDetectionHighlight:
         overlay._screen_pixmap = QPixmap(1920, 1080)
         overlay._detected_rect = QRect(100, 100, 400, 300)
         overlay._virtual_geometry = QRect(0, 0, 1920, 1080)
-        overlay._device_pixel_ratio = 1.0
         overlay.resize(1920, 1080)
         overlay.repaint()
 
@@ -260,6 +252,5 @@ class TestPaintDetectionHighlight:
         overlay._screen_pixmap = QPixmap(1920, 1080)
         overlay._detected_rect = None
         overlay._virtual_geometry = QRect(0, 0, 1920, 1080)
-        overlay._device_pixel_ratio = 1.0
         overlay.resize(1920, 1080)
         overlay.repaint()
