@@ -192,7 +192,7 @@ class InlineEditCanvas(QGraphicsView):
                     item.moveBy(delta.x(), delta.y())
 
         # 为 Mosaic/Blur 保留裁剪后的背景（场景坐标系，供像素采样）
-        dpr = mapper.dpr_at(QPoint(new_selection.center()))
+        dpr = mapper.screenshot_dpr
         physical_rect = QRect(
             round(new_selection.x() * dpr),
             round(new_selection.y() * dpr),
