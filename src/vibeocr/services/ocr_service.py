@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import io
 import logging
 import os
 import threading
@@ -614,14 +615,17 @@ class OCRService(metaclass=SingletonMeta):
             else:
                 result = self._recognize_ocr(image, actual_options)
             # Normalize bbox from pixel coords to [0-1000]
-            if hasattr(image, "shape") and len(image.shape) >= 2:
+            if result.preproc_img_w > 0 and result.preproc_img_h > 0:
+                img_w = result.preproc_img_w
+                img_h = result.preproc_img_h
+            elif hasattr(image, "shape") and len(image.shape) >= 2:
                 img_h, img_w = image.shape[:2]
             elif hasattr(image, "size"):
                 img_w, img_h = image.size
             else:
                 img_w = img_h = 0
-            # 预处理旋转 90°/270° 时宽高互换
-            if result.preproc_angle in (90, 270):
+            # 预处理旋转 90°/270° 时宽高互换（仅当无预处理图像时需要）
+            if result.preproc_img_w == 0 and result.preproc_angle in (90, 270):
                 img_w, img_h = img_h, img_w
             if img_w > 0 and img_h > 0:
                 for block in result.text_blocks:
@@ -705,6 +709,8 @@ class OCRService(metaclass=SingletonMeta):
         output_list = self._consume_generator_safely(output)
 
         preproc_angle = 0
+        preprocessed_png: bytes | None = None
+        preproc_w = preproc_h = 0
         if output_list:
             res = output_list[0]
             dp_res = getattr(res, "doc_preprocessor_res", None)
@@ -713,6 +719,14 @@ class OCRService(metaclass=SingletonMeta):
                     preproc_angle = dp_res.get("angle", 0)
                 else:
                     preproc_angle = getattr(dp_res, "angle", 0)
+            img_dict = getattr(res, "img", None)
+            if isinstance(img_dict, dict):
+                pp_img = img_dict.get("preprocessed_img")
+                if pp_img is not None:
+                    preproc_w, preproc_h = pp_img.size
+                    buf = io.BytesIO()
+                    pp_img.save(buf, format="PNG")
+                    preprocessed_png = buf.getvalue()
 
         text_blocks: list[TextBlock] = []
         text_with_scores: list[tuple[str, float]] = []
@@ -835,6 +849,9 @@ class OCRService(metaclass=SingletonMeta):
             content_list=content_list,
         )
         result.preproc_angle = preproc_angle
+        result.preprocessed_image = preprocessed_png
+        result.preproc_img_w = preproc_w
+        result.preproc_img_h = preproc_h
         return result
 
     def _recognize_paddlocr_vl(
@@ -1032,8 +1049,10 @@ class OCRService(metaclass=SingletonMeta):
 
         output_list = self._consume_generator_safely(output)
 
-        # 提取预处理旋转角度（用于 bbox 归一化）
+        # 提取预处理旋转角度和预处理后图像（用于 bbox 归一化和显示）
         preproc_angle = 0
+        preprocessed_png: bytes | None = None
+        preproc_w = preproc_h = 0
         if output_list:
             res = output_list[0]
             dp_res = getattr(res, "doc_preprocessor_res", None)
@@ -1042,6 +1061,15 @@ class OCRService(metaclass=SingletonMeta):
                     preproc_angle = dp_res.get("angle", 0)
                 else:
                     preproc_angle = getattr(dp_res, "angle", 0)
+            # 提取预处理后图像（PaddleOCR: res.img['preprocessed_img']）
+            img_dict = getattr(res, "img", None)
+            if isinstance(img_dict, dict):
+                pp_img = img_dict.get("preprocessed_img")
+                if pp_img is not None:
+                    preproc_w, preproc_h = pp_img.size
+                    buf = io.BytesIO()
+                    pp_img.save(buf, format="PNG")
+                    preprocessed_png = buf.getvalue()
 
         result_count = 0
         for res in output_list:
@@ -1133,6 +1161,9 @@ class OCRService(metaclass=SingletonMeta):
             text_blocks=text_blocks,
         )
         result.preproc_angle = preproc_angle
+        result.preprocessed_image = preprocessed_png
+        result.preproc_img_w = preproc_w
+        result.preproc_img_h = preproc_h
         return result
 
     def _build_ocr_result(

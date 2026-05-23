@@ -446,6 +446,13 @@ class SingleRecognitionTab(BaseOcrTab):
         block_count = len(result.text_with_scores)
         logger.info(f"OCR 完成: {block_count} 个文本块, {char_count} 个字符")
 
+        # 预处理改变了图像时，用预处理后的图像更新预览
+        if result.preprocessed_image:
+            pixmap = QPixmap()
+            pixmap.loadFromData(result.preprocessed_image)
+            if not pixmap.isNull():
+                self._preview_widget.set_pixmap(pixmap)
+
         # 设置文本块到预览（置信度模式）
         self._preview_widget.set_text_blocks(result.text_blocks)
 

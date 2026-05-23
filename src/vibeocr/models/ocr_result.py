@@ -231,6 +231,9 @@ class OCRResult:
     image_width: int = 0
     image_height: int = 0
     preproc_angle: int = 0
+    preprocessed_image: bytes | None = None
+    preproc_img_w: int = 0
+    preproc_img_h: int = 0
 
     @property
     def has_rich_content(self) -> bool:
