@@ -114,22 +114,10 @@ def _apply_resize(original: QRect, handle: HandlePosition, delta: QPoint) -> QRe
 
 
 def _constrain_rect(rect: QRect, bounds: QRect, min_size: int) -> QRect:
-    """约束矩形在边界内并保证最小尺寸"""
+    """约束矩形在边界内并保证最小尺寸（边界优先）"""
     r = QRect(rect)
 
-    # 确保最小尺寸
-    if r.width() < min_size:
-        if r.left() == rect.left():
-            r.setWidth(min_size)
-        else:
-            r.setLeft(r.right() - min_size)
-    if r.height() < min_size:
-        if r.top() == rect.top():
-            r.setHeight(min_size)
-        else:
-            r.setTop(r.bottom() - min_size)
-
-    # 约束到边界
+    # 1. 先约束到边界
     if r.left() < bounds.left():
         r.setLeft(bounds.left())
     if r.top() < bounds.top():
@@ -138,6 +126,21 @@ def _constrain_rect(rect: QRect, bounds: QRect, min_size: int) -> QRect:
         r.setRight(bounds.right())
     if r.bottom() > bounds.bottom():
         r.setBottom(bounds.bottom())
+
+    # 2. 再尝试保证最小尺寸（不超出边界）
+    if r.width() < min_size:
+        available_right = bounds.right() - r.left()
+        if available_right >= min_size:
+            r.setWidth(min_size)
+        else:
+            r.setRight(bounds.right())
+
+    if r.height() < min_size:
+        available_bottom = bounds.bottom() - r.top()
+        if available_bottom >= min_size:
+            r.setHeight(min_size)
+        else:
+            r.setBottom(bounds.bottom())
 
     return r.normalized()
 
