@@ -112,6 +112,9 @@ class TestMouseMoveHoverDetect:
         overlay._sub_state = "HOVER"
         overlay._virtual_geometry = QRect(0, 0, 1920, 1080)
 
+        mapper = MagicMock()
+        overlay._mapper = mapper
+
         detector = MagicMock()
         detector.detect_at.return_value = QRect(100, 100, 400, 300)
         overlay._window_detector = detector
@@ -120,7 +123,7 @@ class TestMouseMoveHoverDetect:
         overlay.mouseMoveEvent(event)
 
         detector.detect_at.assert_called_once_with(
-            QPoint(200, 200), 1.0, overlay._virtual_geometry.topLeft()
+            QPoint(200, 200), mapper
         )
         assert overlay._detected_rect == QRect(100, 100, 400, 300)
 
@@ -129,6 +132,8 @@ class TestMouseMoveHoverDetect:
         overlay._state = "CAPTURING"
         overlay._sub_state = "HOVER"
         overlay._virtual_geometry = QRect(0, 0, 1920, 1080)
+
+        overlay._mapper = MagicMock()
 
         detector = MagicMock()
         detector.detect_at.return_value = None
@@ -161,6 +166,8 @@ class TestMouseMoveHoverDetect:
         overlay._sub_state = "HOVER"
         overlay._virtual_geometry = QRect(0, 0, 1920, 1080)
         overlay._last_detect_pos = QPoint(200, 200)
+
+        overlay._mapper = MagicMock()
 
         detector = MagicMock()
         overlay._window_detector = detector

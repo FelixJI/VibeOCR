@@ -11,6 +11,8 @@ import sys
 
 from PySide6.QtCore import QPoint, QRect
 
+from vibeocr.widgets.screen_coordinate_mapper import ScreenCoordinateMapper
+
 if sys.platform != "win32":
     raise ImportError("WindowDetector is only available on Windows")
 
@@ -50,11 +52,12 @@ class WindowDetector:
     def detect_at(
         self,
         pos: QPoint,
-        dpr: float,
-        virtual_offset: QPoint,
+        mapper: ScreenCoordinateMapper,
     ) -> QRect | None:
-        physical_x = int(pos.x() * dpr) + int(virtual_offset.x() * dpr)
-        physical_y = int(pos.y() * dpr) + int(virtual_offset.y() * dpr)
+        dpr = mapper.dpr_at(pos)
+        vg = mapper.virtual_geometry
+        physical_x = round(pos.x() * dpr) + round(vg.x() * dpr)
+        physical_y = round(pos.y() * dpr) + round(vg.y() * dpr)
         hwnd = self._hit_test((physical_x, physical_y))
         if hwnd is None:
             self._cached_hwnd = None
@@ -68,11 +71,16 @@ class WindowDetector:
             return None
 
         logical = QRect(
-            int((rect.x() - virtual_offset.x()) / dpr),
-            int((rect.y() - virtual_offset.y()) / dpr),
-            int(rect.width() / dpr),
-            int(rect.height() / dpr),
+            round((rect.x() - vg.x()) / dpr),
+            round((rect.y() - vg.y()) / dpr),
+            round(rect.width() / dpr),
+            round(rect.height() / dpr),
         )
+        # 裁剪到虚拟桌面范围
+        logical = mapper.clip_to_virtual(logical)
+        if logical.isEmpty():
+            return None
+
         self._cached_hwnd = hwnd
         self._cached_rect = logical
         return logical

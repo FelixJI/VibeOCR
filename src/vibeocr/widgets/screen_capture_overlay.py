@@ -307,8 +307,7 @@ class ScreenCaptureOverlay(QWidget):
             if delta.x() * delta.x() + delta.y() * delta.y() >= 9:
                 self._detected_rect = self._window_detector.detect_at(
                     event.pos(),
-                    self._device_pixel_ratio,
-                    self._virtual_geometry.topLeft(),
+                    self._mapper,
                 )
                 self._last_detect_pos = event.pos()
         self.update()
