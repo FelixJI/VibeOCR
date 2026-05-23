@@ -16,8 +16,9 @@ class ScreenInfo:
 
 
 class ScreenCoordinateMapper:
-    def __init__(self, screens: list[ScreenInfo]) -> None:
+    def __init__(self, screens: list[ScreenInfo], screenshot_dpr: float | None = None) -> None:
         self._screens = screens
+        self._screenshot_dpr = screenshot_dpr if screenshot_dpr is not None else self.max_dpr
         if screens:
             vg = screens[0].geometry
             for s in screens[1:]:
@@ -67,6 +68,20 @@ class ScreenCoordinateMapper:
         pw = round(rect.width() * dpr)
         ph = round(rect.height() * dpr)
         return QRect(px, py, pw, ph)
+
+    @property
+    def screenshot_dpr(self) -> float:
+        return self._screenshot_dpr
+
+    def logical_to_screenshot_physical(self, rect: QRect) -> QRect:
+        """逻辑坐标 → 合并截图的物理像素坐标（统一使用 screenshot_dpr）"""
+        dpr = self._screenshot_dpr
+        return QRect(
+            round(rect.x() * dpr),
+            round(rect.y() * dpr),
+            round(rect.width() * dpr),
+            round(rect.height() * dpr),
+        )
 
     def sample_pixel(self, logical_pos: QPoint) -> QColor:
         info = self.screen_at(logical_pos)
