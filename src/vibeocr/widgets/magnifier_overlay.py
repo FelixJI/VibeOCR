@@ -4,14 +4,16 @@
 """
 
 from PySide6.QtCore import QPoint, QRect, QRectF, Qt
-from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPen, QPixmap
+from PySide6.QtGui import QColor, QFont, QPainter, QPen, QPixmap
+
+from vibeocr.widgets.screen_coordinate_mapper import ScreenCoordinateMapper
 
 
 class MagnifierOverlay:
     """放大镜和像素信息绘制辅助"""
 
-    # 放大镜尺寸（逻辑像素）
-    MAGNIFIER_SIZE = 120
+    # 放大镜尺寸（逻辑像素，奇数保证中心像素对齐）
+    MAGNIFIER_SIZE = 121
     # 放大镜距离鼠标的偏移
     OFFSET = 20
     # 像素信息面板宽度
@@ -26,7 +28,7 @@ class MagnifierOverlay:
         screen_pixmap: QPixmap,
         virtual_geometry: QRect,
         zoom_level: int,
-        dpr: float,
+        mapper: ScreenCoordinateMapper,
         widget_rect: QRect,
     ) -> QRect:
         """绘制放大镜视图
@@ -37,7 +39,7 @@ class MagnifierOverlay:
             screen_pixmap: 全屏截图（物理像素，已设置 dpr）
             virtual_geometry: 虚拟桌面几何（逻辑像素）
             zoom_level: 放大倍数（2/4/8）
-            dpr: 设备像素比
+            mapper: 屏幕坐标映射器
             widget_rect: widget 的矩形区域
 
         Returns:
@@ -60,9 +62,10 @@ class MagnifierOverlay:
         mag_rect = QRect(mag_x, mag_y, mag_size, mag_size)
 
         # 计算从截图中取样的源矩形
-        # widget 逻辑坐标直接对应 pixmap 逻辑坐标（widget(0,0) = pixmap 逻辑(0,0)）
-        phys_x = int(mouse_pos.x() * dpr)
-        phys_y = int(mouse_pos.y() * dpr)
+        # 通过 mapper 将逻辑坐标转换为物理坐标
+        phys = mapper.logical_to_physical(mouse_pos)
+        phys_x, phys_y = phys.x(), phys.y()
+        dpr = mapper.dpr_at(mouse_pos)
 
         # 取样区域大小（物理像素）
         sample_size = int(mag_size * dpr / zoom_level)
@@ -139,10 +142,9 @@ class MagnifierOverlay:
     def draw_pixel_info(
         painter: QPainter,
         mouse_pos: QPoint,
-        screen_image: QImage | None,
         selection_rect: QRect | None,
         virtual_geometry: QRect,
-        dpr: float,
+        mapper: ScreenCoordinateMapper,
         magnifier_rect: QRect,
     ) -> None:
         """绘制像素信息面板
@@ -150,15 +152,11 @@ class MagnifierOverlay:
         Args:
             painter: 当前 QPainter
             mouse_pos: 鼠标在 widget 中的逻辑坐标
-            screen_image: 全屏截图的 QImage（物理像素）
             selection_rect: 当前选区矩形（逻辑像素），可为 None
             virtual_geometry: 虚拟桌面几何（逻辑像素）
-            dpr: 设备像素比
+            mapper: 屏幕坐标映射器
             magnifier_rect: 放大镜矩形区域（用于定位）
         """
-        if screen_image is None:
-            return
-
         info_w = MagnifierOverlay.INFO_WIDTH
         info_h = MagnifierOverlay.INFO_HEIGHT
 
@@ -168,14 +166,8 @@ class MagnifierOverlay:
 
         info_rect = QRect(info_x, info_y, info_w, info_h)
 
-        # 获取鼠标位置对应的物理像素颜色
-        phys_x = int(mouse_pos.x() * dpr)
-        phys_y = int(mouse_pos.y() * dpr)
-
-        # 检查是否在图像范围内
-        pixel_color = QColor(0, 0, 0)
-        if 0 <= phys_x < screen_image.width() and 0 <= phys_y < screen_image.height():
-            pixel_color = screen_image.pixelColor(phys_x, phys_y)
+        # 通过 mapper 采样鼠标位置对应的像素颜色
+        pixel_color = mapper.sample_pixel(mouse_pos)
 
         r, g, b = pixel_color.red(), pixel_color.green(), pixel_color.blue()
         hex_color = f"#{r:02X}{g:02X}{b:02X}"

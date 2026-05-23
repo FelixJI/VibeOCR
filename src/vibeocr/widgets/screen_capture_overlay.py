@@ -14,7 +14,6 @@ from PySide6.QtCore import QPoint, QPointF, QRect, Qt, Signal
 from PySide6.QtGui import (
     QColor,
     QGuiApplication,
-    QImage,
     QMouseEvent,
     QPainter,
     QPen,
@@ -93,7 +92,6 @@ class ScreenCaptureOverlay(QWidget):
         self._end_pos: QPoint | None = None
         self._selection_rect: QRect | None = None
         self._screen_pixmap: QPixmap | None = None
-        self._screen_image: QImage | None = None
         self._virtual_geometry = QRect()
         self._mapper: ScreenCoordinateMapper | None = None
 
@@ -186,7 +184,6 @@ class ScreenCaptureOverlay(QWidget):
         painter.end()
 
         self._screen_pixmap = pixmap
-        self._screen_image = pixmap.toImage()
 
         # 设置窗口大小为虚拟桌面大小
         self.setGeometry(virtual_geometry)
@@ -254,16 +251,15 @@ class ScreenCaptureOverlay(QWidget):
                 self._screen_pixmap,
                 self._virtual_geometry,
                 self._magnifier_zoom,
-                self._device_pixel_ratio,
+                self._mapper,
                 self.rect(),
             )
             MagnifierOverlay.draw_pixel_info(
                 painter,
                 self._current_mouse_pos,
-                self._screen_image,
                 self._selection_rect,
                 self._virtual_geometry,
-                self._device_pixel_ratio,
+                self._mapper,
                 mag_rect,
             )
 
@@ -738,7 +734,6 @@ class ScreenCaptureOverlay(QWidget):
         self._end_pos = None
         self._selection_rect = None
         self._screen_pixmap = None
-        self._screen_image = None
         self._virtual_geometry = QRect()
         self._mapper = None
         self._current_mouse_pos = None
