@@ -547,20 +547,53 @@ class OCRService(metaclass=SingletonMeta):
         return instance
 
     def get_pipeline(self, pipeline: OCRPipeline) -> Any:
-        """延迟加载指定管道 (线程安全)"""
-        pipeline_name = pipeline.value
+        """延迟加载指定管道 (线程安全)
 
+        向后兼容方法，内部委托给 get_or_create_pipeline。
+        """
+        return self.get_or_create_pipeline(pipeline.value)
+
+    def get_or_create_pipeline(self, pipeline_name: str) -> Any:
+        """根据管道名获取或创建管道实例
+
+        先尝试从注册表获取 PipelineSpec 并使用其 create_pipeline 工厂，
+        回退到旧式 _create_pipeline 以保持向后兼容。
+
+        Args:
+            pipeline_name: 管道名称字符串 (e.g. "OCR", "PP-StructureV3")
+
+        Returns:
+            管道实例
+        """
         if pipeline_name not in self._pipelines:
             with self._lock:
                 if pipeline_name not in self._pipelines:  # 双重检查
                     self._setup_cuda_dll_path()
                     _logger.debug(
-                        "[get_pipeline] 创建管道 %s，已加载管道: %s",
+                        "[get_or_create_pipeline] 创建管道 %s，已加载管道: %s",
                         pipeline_name,
                         list(self._pipelines.keys()),
                     )
-                    self._pipelines[pipeline_name] = self._create_pipeline(pipeline)
-                    _logger.debug("[get_pipeline] 管道 %s 创建完成", pipeline_name)
+                    from vibeocr.core.pipelines import get_registry
+
+                    registry = get_registry()
+                    if registry.has(pipeline_name):
+                        spec = registry.get(pipeline_name)
+                        device = self._get_device()
+                        self._pipelines[pipeline_name] = spec.create_pipeline(device)
+                    else:
+                        # 回退到旧式创建（通过 OCRPipeline 枚举）
+                        try:
+                            pipeline_enum = OCRPipeline(pipeline_name)
+                        except ValueError:
+                            msg = f"不支持的管道类型: {pipeline_name}"
+                            raise ValueError(msg)
+                        self._pipelines[pipeline_name] = self._create_pipeline(
+                            pipeline_enum
+                        )
+                    _logger.debug(
+                        "[get_or_create_pipeline] 管道 %s 创建完成", pipeline_name
+                    )
         return self._pipelines[pipeline_name]
 
     @property
@@ -585,7 +618,12 @@ class OCRService(metaclass=SingletonMeta):
         """
 
         actual_options = options if options is not None else OCROptions()
-        _logger.debug(f"[recognize] 开始识别，管道: {actual_options.pipeline.value}")
+
+        # 统一获取管道名称（处理枚举和字符串两种类型）
+        pipeline_name = actual_options.pipeline
+        if isinstance(pipeline_name, OCRPipeline):
+            pipeline_name = pipeline_name.value
+        _logger.debug(f"[recognize] 开始识别，管道: {pipeline_name}")
 
         # 如果输入是 bytes，转换为 numpy.ndarray（PaddleX 只支持 ndarray 和 str）
         if isinstance(image, bytes):
@@ -606,14 +644,23 @@ class OCRService(metaclass=SingletonMeta):
 
         # 根据管道类型分发
         try:
-            if actual_options.pipeline == OCRPipeline.OCR:
-                result = self._recognize_ocr(image, actual_options)
-            elif actual_options.pipeline == OCRPipeline.PP_STRUCTURE_V3:
-                result = self._recognize_structure(image, actual_options)
-            elif actual_options.pipeline == OCRPipeline.PADDLEOCR_VL:
-                result = self._recognize_paddlocr_vl(image, actual_options)
+            # 尝试通过注册表分发
+            from vibeocr.core.pipelines import get_registry
+
+            registry = get_registry()
+            if registry.has(pipeline_name):
+                spec = registry.get(pipeline_name)
+                result = spec.recognize(self, image, actual_options)
             else:
-                result = self._recognize_ocr(image, actual_options)
+                # 回退到旧式分发（用于未注册的管道）
+                if actual_options.pipeline == OCRPipeline.OCR:
+                    result = self._recognize_ocr(image, actual_options)
+                elif actual_options.pipeline == OCRPipeline.PP_STRUCTURE_V3:
+                    result = self._recognize_structure(image, actual_options)
+                elif actual_options.pipeline == OCRPipeline.PADDLEOCR_VL:
+                    result = self._recognize_paddlocr_vl(image, actual_options)
+                else:
+                    result = self._recognize_ocr(image, actual_options)
             # Normalize bbox from pixel coords to [0-1000]
             if result.preproc_img_w > 0 and result.preproc_img_h > 0:
                 img_w = result.preproc_img_w
@@ -650,7 +697,7 @@ class OCRService(metaclass=SingletonMeta):
                 result.image_height = img_h
 
             # 标记管道识别成功
-            pipeline_val = actual_options.pipeline.value
+            pipeline_val = pipeline_name
             if pipeline_val in ("OCR", "PP-StructureV3", "PaddleOCR-VL"):
                 try:
                     mark_pipeline_success(pipeline_val, self._get_project_root())
