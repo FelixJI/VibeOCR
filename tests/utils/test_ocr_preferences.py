@@ -146,3 +146,41 @@ class TestOCRPreferencesNewFields:
         assert loaded.use_table_orientation_classify is True
         assert loaded.use_ocr_results_with_table_cells is True
         assert loaded.formula_recognition_batch_size == 1
+
+    def test_table_new_fields_round_trip(self, tmp_config_dir):
+        """表格识别新增字段持久化往返"""
+        prefs = OCRPreferences(tmp_config_dir)
+
+        options = OCROptions(
+            pipeline=OCRPipeline.TABLE_RECOGNITION,
+            use_e2e_wired_table_rec_model=True,
+            text_det_limit_side_len=960,
+            text_det_thresh=0.3,
+        )
+        prefs.set_options(options)
+
+        OCRPreferences.reset_instance()
+        prefs2 = OCRPreferences(tmp_config_dir)
+        loaded = prefs2.get_options()
+
+        assert loaded.use_e2e_wired_table_rec_model is True
+        assert loaded.text_det_limit_side_len == 960
+        assert loaded.text_det_thresh == 0.3
+
+    def test_formula_new_fields_round_trip(self, tmp_config_dir):
+        """公式识别新增字段持久化往返"""
+        prefs = OCRPreferences(tmp_config_dir)
+
+        options = OCROptions(
+            pipeline=OCRPipeline.FORMULA_RECOGNITION,
+            formula_recognition_model_name="LaTeX-OCR",
+            formula_recognition_model_dir="/models/formula",
+        )
+        prefs.set_options(options)
+
+        OCRPreferences.reset_instance()
+        prefs2 = OCRPreferences(tmp_config_dir)
+        loaded = prefs2.get_options()
+
+        assert loaded.formula_recognition_model_name == "LaTeX-OCR"
+        assert loaded.formula_recognition_model_dir == "/models/formula"

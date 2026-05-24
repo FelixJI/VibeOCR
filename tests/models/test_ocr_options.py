@@ -157,3 +157,74 @@ class TestOCROptions:
         assert restored.vl_use_layout_detection is True
         assert restored.vl_use_chart_recognition is True
         assert restored.vl_use_seal_recognition is False
+
+    def test_table_recognition_new_fields_defaults(self):
+        """测试表格识别新增字段默认值"""
+        options = OCROptions()
+        assert options.use_e2e_wired_table_rec_model is False
+        assert options.use_e2e_wireless_table_rec_model is True
+        assert options.wireless_table_model_name == "SLANeXt_wireless"
+        assert options.wired_table_model_name == "SLANeXt_wired"
+        assert options.use_wired_table_cells_trans_to_html is False
+        assert options.use_wireless_table_cells_trans_to_html is False
+        assert options.text_det_limit_side_len is None
+        assert options.text_det_thresh is None
+        assert options.text_det_box_thresh is None
+        assert options.text_det_unclip_ratio is None
+        assert options.text_rec_score_thresh is None
+
+    def test_formula_recognition_new_fields_defaults(self):
+        """测试公式识别新增字段默认值"""
+        options = OCROptions()
+        assert options.formula_recognition_model_name is None
+        assert options.formula_recognition_model_dir is None
+
+    def test_table_new_fields_round_trip(self):
+        """测试表格识别新字段序列化往返"""
+        original = OCROptions(
+            pipeline=OCRPipeline.TABLE_RECOGNITION,
+            use_e2e_wired_table_rec_model=True,
+            use_e2e_wireless_table_rec_model=False,
+            use_wired_table_cells_trans_to_html=True,
+            use_wireless_table_cells_trans_to_html=True,
+            text_det_limit_side_len=960,
+            text_det_thresh=0.3,
+            text_det_box_thresh=0.5,
+            text_det_unclip_ratio=2.0,
+            text_rec_score_thresh=0.5,
+        )
+        data = original.to_dict()
+        restored = OCROptions.from_dict(data)
+        assert restored.use_e2e_wired_table_rec_model is True
+        assert restored.use_e2e_wireless_table_rec_model is False
+        assert restored.use_wired_table_cells_trans_to_html is True
+        assert restored.use_wireless_table_cells_trans_to_html is True
+        assert restored.text_det_limit_side_len == 960
+        assert restored.text_det_thresh == 0.3
+        assert restored.text_det_box_thresh == 0.5
+        assert restored.text_det_unclip_ratio == 2.0
+        assert restored.text_rec_score_thresh == 0.5
+
+    def test_formula_new_fields_round_trip(self):
+        """测试公式识别新字段序列化往返"""
+        original = OCROptions(
+            pipeline=OCRPipeline.FORMULA_RECOGNITION,
+            formula_recognition_model_name="LaTeX-OCR",
+            formula_recognition_model_dir="/models/formula",
+        )
+        data = original.to_dict()
+        restored = OCROptions.from_dict(data)
+        assert restored.formula_recognition_model_name == "LaTeX-OCR"
+        assert restored.formula_recognition_model_dir == "/models/formula"
+
+    def test_old_json_new_fields_get_defaults(self):
+        """旧格式 JSON（缺少新字段）加载时应使用默认值"""
+        data = {
+            "pipeline": "OCR",
+            "use_doc_orientation_classify": True,
+        }
+        options = OCROptions.from_dict(data)
+        assert options.use_e2e_wired_table_rec_model is False
+        assert options.use_e2e_wireless_table_rec_model is True
+        assert options.text_det_limit_side_len is None
+        assert options.formula_recognition_model_name is None
