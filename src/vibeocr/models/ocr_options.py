@@ -59,6 +59,19 @@ class OCROptions:
 
     # === 公式识别专用（FORMULA_RECOGNITION）===
     formula_recognition_batch_size: int = 1  # 公式批量大小
+    use_e2e_wired_table_rec_model: bool = False
+    use_e2e_wireless_table_rec_model: bool = True
+    wireless_table_model_name: str = "SLANeXt_wireless"
+    wired_table_model_name: str = "SLANeXt_wired"
+    use_wired_table_cells_trans_to_html: bool = False
+    use_wireless_table_cells_trans_to_html: bool = False
+    text_det_limit_side_len: int | None = None
+    text_det_thresh: float | None = None
+    text_det_box_thresh: float | None = None
+    text_det_unclip_ratio: float | None = None
+    text_rec_score_thresh: float | None = None
+    formula_recognition_model_name: str | None = None
+    formula_recognition_model_dir: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """转换为字典
@@ -92,6 +105,19 @@ class OCROptions:
             "use_table_orientation_classify": self.use_table_orientation_classify,
             "use_ocr_results_with_table_cells": self.use_ocr_results_with_table_cells,
             "formula_recognition_batch_size": self.formula_recognition_batch_size,
+            "use_e2e_wired_table_rec_model": self.use_e2e_wired_table_rec_model,
+            "use_e2e_wireless_table_rec_model": self.use_e2e_wireless_table_rec_model,
+            "wireless_table_model_name": self.wireless_table_model_name,
+            "wired_table_model_name": self.wired_table_model_name,
+            "use_wired_table_cells_trans_to_html": self.use_wired_table_cells_trans_to_html,
+            "use_wireless_table_cells_trans_to_html": self.use_wireless_table_cells_trans_to_html,
+            "text_det_limit_side_len": self.text_det_limit_side_len,
+            "text_det_thresh": self.text_det_thresh,
+            "text_det_box_thresh": self.text_det_box_thresh,
+            "text_det_unclip_ratio": self.text_det_unclip_ratio,
+            "text_rec_score_thresh": self.text_rec_score_thresh,
+            "formula_recognition_model_name": self.formula_recognition_model_name,
+            "formula_recognition_model_dir": self.formula_recognition_model_dir,
         }
 
     @classmethod
@@ -135,6 +161,19 @@ class OCROptions:
             use_table_orientation_classify=data.get("use_table_orientation_classify", True),
             use_ocr_results_with_table_cells=data.get("use_ocr_results_with_table_cells", True),
             formula_recognition_batch_size=data.get("formula_recognition_batch_size", 1),
+            use_e2e_wired_table_rec_model=data.get("use_e2e_wired_table_rec_model", False),
+            use_e2e_wireless_table_rec_model=data.get("use_e2e_wireless_table_rec_model", True),
+            wireless_table_model_name=data.get("wireless_table_model_name", "SLANeXt_wireless"),
+            wired_table_model_name=data.get("wired_table_model_name", "SLANeXt_wired"),
+            use_wired_table_cells_trans_to_html=data.get("use_wired_table_cells_trans_to_html", False),
+            use_wireless_table_cells_trans_to_html=data.get("use_wireless_table_cells_trans_to_html", False),
+            text_det_limit_side_len=data.get("text_det_limit_side_len", None),
+            text_det_thresh=data.get("text_det_thresh", None),
+            text_det_box_thresh=data.get("text_det_box_thresh", None),
+            text_det_unclip_ratio=data.get("text_det_unclip_ratio", None),
+            text_rec_score_thresh=data.get("text_rec_score_thresh", None),
+            formula_recognition_model_name=data.get("formula_recognition_model_name", None),
+            formula_recognition_model_dir=data.get("formula_recognition_model_dir", None),
         )
 
     def copy(self, **updates) -> "OCROptions":
