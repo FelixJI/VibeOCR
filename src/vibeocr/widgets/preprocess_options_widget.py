@@ -5,9 +5,11 @@ from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
+    QDoubleSpinBox,
     QGroupBox,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QSpinBox,
     QTabWidget,
     QVBoxLayout,
@@ -290,6 +292,83 @@ class PreprocessOptionsWidget(QGroupBox):
         self._use_ocr_with_table_cells_cb.setChecked(True)
         layout.addWidget(self._use_ocr_with_table_cells_cb)
 
+        # 端到端模型
+        e2e_layout = QHBoxLayout()
+        self._use_e2e_wired_table_cb = QCheckBox("端到端有线表格模型")
+        self._use_e2e_wired_table_cb.setToolTip("使用端到端有线表格识别模型")
+        self._use_e2e_wired_table_cb.setChecked(False)
+        e2e_layout.addWidget(self._use_e2e_wired_table_cb)
+        self._use_e2e_wireless_table_cb = QCheckBox("端到端无线表格模型")
+        self._use_e2e_wireless_table_cb.setToolTip("使用端到端无线表格识别模型")
+        self._use_e2e_wireless_table_cb.setChecked(True)
+        e2e_layout.addWidget(self._use_e2e_wireless_table_cb)
+        e2e_layout.addStretch()
+        layout.addLayout(e2e_layout)
+
+        # HTML 转换
+        html_layout = QHBoxLayout()
+        self._use_wired_html_cb = QCheckBox("有线表格 HTML 转换")
+        self._use_wired_html_cb.setToolTip("将有线表格单元格内容转换为 HTML")
+        self._use_wired_html_cb.setChecked(False)
+        html_layout.addWidget(self._use_wired_html_cb)
+        self._use_wireless_html_cb = QCheckBox("无线表格 HTML 转换")
+        self._use_wireless_html_cb.setToolTip("将无线表格单元格内容转换为 HTML")
+        self._use_wireless_html_cb.setChecked(False)
+        html_layout.addWidget(self._use_wireless_html_cb)
+        html_layout.addStretch()
+        layout.addLayout(html_layout)
+
+        # 文本检测参数
+        det_label = QLabel("文本检测参数:")
+        layout.addWidget(det_label)
+
+        det_grid = QHBoxLayout()
+        det_grid.addWidget(QLabel("边长限制:"))
+        self._text_det_limit_side_spin = QSpinBox()
+        self._text_det_limit_side_spin.setRange(0, 9999)
+        self._text_det_limit_side_spin.setValue(0)
+        self._text_det_limit_side_spin.setToolTip("文本检测边长限制，0 表示使用默认值")
+        det_grid.addWidget(self._text_det_limit_side_spin)
+
+        det_grid.addWidget(QLabel("检测阈值:"))
+        self._text_det_thresh_spin = QDoubleSpinBox()
+        self._text_det_thresh_spin.setRange(0.0, 1.0)
+        self._text_det_thresh_spin.setSingleStep(0.05)
+        self._text_det_thresh_spin.setSpecialValueText("默认")
+        self._text_det_thresh_spin.setValue(0.0)
+        det_grid.addWidget(self._text_det_thresh_spin)
+
+        det_grid.addWidget(QLabel("框阈值:"))
+        self._text_det_box_thresh_spin = QDoubleSpinBox()
+        self._text_det_box_thresh_spin.setRange(0.0, 1.0)
+        self._text_det_box_thresh_spin.setSingleStep(0.05)
+        self._text_det_box_thresh_spin.setSpecialValueText("默认")
+        self._text_det_box_thresh_spin.setValue(0.0)
+        det_grid.addWidget(self._text_det_box_thresh_spin)
+
+        det_grid.addStretch()
+        layout.addLayout(det_grid)
+
+        det_grid2 = QHBoxLayout()
+        det_grid2.addWidget(QLabel("反裁剪比率:"))
+        self._text_det_unclip_ratio_spin = QDoubleSpinBox()
+        self._text_det_unclip_ratio_spin.setRange(0.0, 10.0)
+        self._text_det_unclip_ratio_spin.setSingleStep(0.5)
+        self._text_det_unclip_ratio_spin.setSpecialValueText("默认")
+        self._text_det_unclip_ratio_spin.setValue(0.0)
+        det_grid2.addWidget(self._text_det_unclip_ratio_spin)
+
+        det_grid2.addWidget(QLabel("识别阈值:"))
+        self._text_rec_score_thresh_spin = QDoubleSpinBox()
+        self._text_rec_score_thresh_spin.setRange(0.0, 1.0)
+        self._text_rec_score_thresh_spin.setSingleStep(0.05)
+        self._text_rec_score_thresh_spin.setSpecialValueText("默认")
+        self._text_rec_score_thresh_spin.setValue(0.0)
+        det_grid2.addWidget(self._text_rec_score_thresh_spin)
+
+        det_grid2.addStretch()
+        layout.addLayout(det_grid2)
+
         return group
 
     def _create_formula_recognition_group(self) -> QGroupBox:
@@ -306,6 +385,22 @@ class PreprocessOptionsWidget(QGroupBox):
         batch_layout.addWidget(self._formula_batch_size_spin)
         batch_layout.addStretch()
         layout.addLayout(batch_layout)
+
+        model_layout = QHBoxLayout()
+        model_layout.addWidget(QLabel("模型名称:"))
+        self._formula_model_name_edit = QLineEdit()
+        self._formula_model_name_edit.setPlaceholderText("留空使用默认")
+        model_layout.addWidget(self._formula_model_name_edit)
+        model_layout.addStretch()
+        layout.addLayout(model_layout)
+
+        dir_layout = QHBoxLayout()
+        dir_layout.addWidget(QLabel("模型路径:"))
+        self._formula_model_dir_edit = QLineEdit()
+        self._formula_model_dir_edit.setPlaceholderText("留空使用默认")
+        dir_layout.addWidget(self._formula_model_dir_edit)
+        dir_layout.addStretch()
+        layout.addLayout(dir_layout)
 
         return group
 
@@ -347,6 +442,21 @@ class PreprocessOptionsWidget(QGroupBox):
 
         # 公式识别选项
         self._formula_batch_size_spin.valueChanged.connect(self._on_option_changed)
+
+        # 表格识别新增选项
+        self._use_e2e_wired_table_cb.toggled.connect(self._on_option_changed)
+        self._use_e2e_wireless_table_cb.toggled.connect(self._on_option_changed)
+        self._use_wired_html_cb.toggled.connect(self._on_option_changed)
+        self._use_wireless_html_cb.toggled.connect(self._on_option_changed)
+        self._text_det_limit_side_spin.valueChanged.connect(self._on_option_changed)
+        self._text_det_thresh_spin.valueChanged.connect(self._on_option_changed)
+        self._text_det_box_thresh_spin.valueChanged.connect(self._on_option_changed)
+        self._text_det_unclip_ratio_spin.valueChanged.connect(self._on_option_changed)
+        self._text_rec_score_thresh_spin.valueChanged.connect(self._on_option_changed)
+
+        # 公式识别新增选项
+        self._formula_model_name_edit.textChanged.connect(self._on_option_changed)
+        self._formula_model_dir_edit.textChanged.connect(self._on_option_changed)
 
     def _on_pipeline_changed(self):
         """管道选择变更"""
@@ -391,7 +501,17 @@ class PreprocessOptionsWidget(QGroupBox):
                 "use_table_orientation_classify",
                 "use_ocr_results_with_table_cells",
                 "use_e2e_wireless_table_rec_model",
+                "use_e2e_wired_table_rec_model",
+                "use_wired_table_cells_trans_to_html",
+                "use_wireless_table_cells_trans_to_html",
+                "text_det_limit_side_len",
+                "text_det_thresh",
+                "text_det_box_thresh",
+                "text_det_unclip_ratio",
+                "text_rec_score_thresh",
                 "formula_recognition_batch_size",
+                "formula_recognition_model_name",
+                "formula_recognition_model_dir",
             ]
         )
 
@@ -437,6 +557,14 @@ class PreprocessOptionsWidget(QGroupBox):
             "use_table_orientation_classify",
             "use_ocr_results_with_table_cells",
             "use_e2e_wireless_table_rec_model",
+            "use_e2e_wired_table_rec_model",
+            "use_wired_table_cells_trans_to_html",
+            "use_wireless_table_cells_trans_to_html",
+            "text_det_limit_side_len",
+            "text_det_thresh",
+            "text_det_box_thresh",
+            "text_det_unclip_ratio",
+            "text_rec_score_thresh",
         ]
         self._table_recognition_group.setVisible(
             any(opt in supported for opt in table_opts)
@@ -445,6 +573,8 @@ class PreprocessOptionsWidget(QGroupBox):
         # 公式识别选项组可见性
         formula_opts = [
             "formula_recognition_batch_size",
+            "formula_recognition_model_name",
+            "formula_recognition_model_dir",
         ]
         self._formula_recognition_group.setVisible(
             any(opt in supported for opt in formula_opts)
@@ -537,6 +667,43 @@ class PreprocessOptionsWidget(QGroupBox):
             kwargs["formula_recognition_batch_size"] = (
                 self._formula_batch_size_spin.value()
             )
+        if is_option_supported(pipeline, "use_e2e_wired_table_rec_model"):
+            kwargs["use_e2e_wired_table_rec_model"] = (
+                self._use_e2e_wired_table_cb.isChecked()
+            )
+        if is_option_supported(pipeline, "use_e2e_wireless_table_rec_model"):
+            kwargs["use_e2e_wireless_table_rec_model"] = (
+                self._use_e2e_wireless_table_cb.isChecked()
+            )
+        if is_option_supported(pipeline, "use_wired_table_cells_trans_to_html"):
+            kwargs["use_wired_table_cells_trans_to_html"] = (
+                self._use_wired_html_cb.isChecked()
+            )
+        if is_option_supported(pipeline, "use_wireless_table_cells_trans_to_html"):
+            kwargs["use_wireless_table_cells_trans_to_html"] = (
+                self._use_wireless_html_cb.isChecked()
+            )
+        if is_option_supported(pipeline, "text_det_limit_side_len"):
+            val = self._text_det_limit_side_spin.value()
+            kwargs["text_det_limit_side_len"] = val if val > 0 else None
+        if is_option_supported(pipeline, "text_det_thresh"):
+            val = self._text_det_thresh_spin.value()
+            kwargs["text_det_thresh"] = val if val > 0.0 else None
+        if is_option_supported(pipeline, "text_det_box_thresh"):
+            val = self._text_det_box_thresh_spin.value()
+            kwargs["text_det_box_thresh"] = val if val > 0.0 else None
+        if is_option_supported(pipeline, "text_det_unclip_ratio"):
+            val = self._text_det_unclip_ratio_spin.value()
+            kwargs["text_det_unclip_ratio"] = val if val > 0.0 else None
+        if is_option_supported(pipeline, "text_rec_score_thresh"):
+            val = self._text_rec_score_thresh_spin.value()
+            kwargs["text_rec_score_thresh"] = val if val > 0.0 else None
+        if is_option_supported(pipeline, "formula_recognition_model_name"):
+            text = self._formula_model_name_edit.text().strip()
+            kwargs["formula_recognition_model_name"] = text or None
+        if is_option_supported(pipeline, "formula_recognition_model_dir"):
+            text = self._formula_model_dir_edit.text().strip()
+            kwargs["formula_recognition_model_dir"] = text or None
         if is_option_supported(pipeline, "start_page_id"):
             kwargs["start_page_id"] = self._start_page_spin.value()
         if is_option_supported(pipeline, "end_page_id"):
@@ -577,6 +744,17 @@ class PreprocessOptionsWidget(QGroupBox):
             self._use_table_orientation_classify_cb,
             self._use_ocr_with_table_cells_cb,
             self._formula_batch_size_spin,
+            self._use_e2e_wired_table_cb,
+            self._use_e2e_wireless_table_cb,
+            self._use_wired_html_cb,
+            self._use_wireless_html_cb,
+            self._text_det_limit_side_spin,
+            self._text_det_thresh_spin,
+            self._text_det_box_thresh_spin,
+            self._text_det_unclip_ratio_spin,
+            self._text_rec_score_thresh_spin,
+            self._formula_model_name_edit,
+            self._formula_model_dir_edit,
         ]
         for w in widgets:
             w.blockSignals(True)
@@ -634,22 +812,51 @@ class PreprocessOptionsWidget(QGroupBox):
         self._use_chart_cb.setChecked(options.use_chart_recognition)
 
         # 设置表格识别选项
-        if hasattr(options, "use_wireless_table"):
-            self._use_wireless_table_cb.setChecked(options.use_wireless_table)
-        if hasattr(options, "use_table_orientation_classify"):
-            self._use_table_orientation_classify_cb.setChecked(
-                options.use_table_orientation_classify
-            )
-        if hasattr(options, "use_ocr_results_with_table_cells"):
-            self._use_ocr_with_table_cells_cb.setChecked(
-                options.use_ocr_results_with_table_cells
-            )
+        self._use_wireless_table_cb.setChecked(options.use_wireless_table)
+        self._use_table_orientation_classify_cb.setChecked(
+            options.use_table_orientation_classify
+        )
+        self._use_ocr_with_table_cells_cb.setChecked(
+            options.use_ocr_results_with_table_cells
+        )
+        self._use_e2e_wired_table_cb.setChecked(
+            options.use_e2e_wired_table_rec_model
+        )
+        self._use_e2e_wireless_table_cb.setChecked(
+            options.use_e2e_wireless_table_rec_model
+        )
+        self._use_wired_html_cb.setChecked(
+            options.use_wired_table_cells_trans_to_html
+        )
+        self._use_wireless_html_cb.setChecked(
+            options.use_wireless_table_cells_trans_to_html
+        )
+        self._text_det_limit_side_spin.setValue(
+            options.text_det_limit_side_len or 0
+        )
+        self._text_det_thresh_spin.setValue(
+            options.text_det_thresh or 0.0
+        )
+        self._text_det_box_thresh_spin.setValue(
+            options.text_det_box_thresh or 0.0
+        )
+        self._text_det_unclip_ratio_spin.setValue(
+            options.text_det_unclip_ratio or 0.0
+        )
+        self._text_rec_score_thresh_spin.setValue(
+            options.text_rec_score_thresh or 0.0
+        )
 
         # 设置公式识别选项
-        if hasattr(options, "formula_recognition_batch_size"):
-            self._formula_batch_size_spin.setValue(
-                options.formula_recognition_batch_size
-            )
+        self._formula_batch_size_spin.setValue(
+            options.formula_recognition_batch_size
+        )
+        self._formula_model_name_edit.setText(
+            options.formula_recognition_model_name or ""
+        )
+        self._formula_model_dir_edit.setText(
+            options.formula_recognition_model_dir or ""
+        )
 
         # 恢复信号
         for w in widgets:
