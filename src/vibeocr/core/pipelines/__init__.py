@@ -21,6 +21,8 @@ class OCRPipeline(Enum):
     PP_STRUCTURE_V3 = "PP-StructureV3"
     DOCUMENT_PARSING = "MinerU"
     PADDLEOCR_VL = "PaddleOCR-VL"
+    TABLE_RECOGNITION = "TABLE_RECOGNITION"
+    FORMULA_RECOGNITION = "FORMULA_RECOGNITION"
 
     @property
     def display_name(self) -> str:
@@ -80,6 +82,28 @@ _PIPELINE_METADATA: dict[OCRPipeline, dict] = {
             "vl_use_chart_recognition",
             "vl_use_seal_recognition",
             "use_ocr_for_image_block",
+        ],
+    },
+    OCRPipeline.TABLE_RECOGNITION: {
+        "display_name": "表格识别",
+        "description": "独立表格结构识别，支持有线和无线表格",
+        "supported_options": [
+            "use_doc_orientation_classify",
+            "use_doc_unwarping",
+            "use_wireless_table",
+            "use_table_orientation_classify",
+            "use_ocr_results_with_table_cells",
+            "use_e2e_wired_table_rec_model",
+            "use_e2e_wireless_table_rec_model",
+        ],
+    },
+    OCRPipeline.FORMULA_RECOGNITION: {
+        "display_name": "公式识别",
+        "description": "独立数学公式识别（LaTeX 输出）",
+        "supported_options": [
+            "use_doc_orientation_classify",
+            "use_doc_unwarping",
+            "formula_recognition_batch_size",
         ],
     },
 }

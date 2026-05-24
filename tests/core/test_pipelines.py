@@ -11,8 +11,8 @@ from vibeocr.core.pipelines import (
 
 class TestOCRPipeline:
     def test_pipeline_count(self):
-        """验证管道数量为 4"""
-        assert len(OCRPipeline) == 4
+        """验证管道数量为 6"""
+        assert len(OCRPipeline) == 6
 
     def test_pipeline_values(self):
         """验证管道值"""
@@ -20,6 +20,8 @@ class TestOCRPipeline:
         assert OCRPipeline.PP_STRUCTURE_V3.value == "PP-StructureV3"
         assert OCRPipeline.DOCUMENT_PARSING.value == "MinerU"
         assert OCRPipeline.PADDLEOCR_VL.value == "PaddleOCR-VL"
+        assert OCRPipeline.TABLE_RECOGNITION.value == "TABLE_RECOGNITION"
+        assert OCRPipeline.FORMULA_RECOGNITION.value == "FORMULA_RECOGNITION"
 
     def test_get_display_name(self):
         """验证显示名称获取"""
@@ -79,3 +81,20 @@ class TestOCRPipeline:
         assert "vl_use_chart_recognition" in options
         assert "vl_use_seal_recognition" in options
         assert "use_ocr_for_image_block" in options
+
+    def test_table_recognition_options(self):
+        """表格识别应支持有线/无线表格选项"""
+        options = get_pipeline_supported_options(OCRPipeline.TABLE_RECOGNITION)
+        assert "use_doc_orientation_classify" in options
+        assert "use_wireless_table" in options
+        assert "use_table_orientation_classify" in options
+        assert "use_ocr_results_with_table_cells" in options
+        assert "use_e2e_wired_table_rec_model" in options
+        assert "use_e2e_wireless_table_rec_model" in options
+
+    def test_formula_recognition_options(self):
+        """公式识别应支持公式相关选项"""
+        options = get_pipeline_supported_options(OCRPipeline.FORMULA_RECOGNITION)
+        assert "use_doc_orientation_classify" in options
+        assert "use_doc_unwarping" in options
+        assert "formula_recognition_batch_size" in options

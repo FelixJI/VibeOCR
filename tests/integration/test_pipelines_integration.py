@@ -51,8 +51,8 @@ class TestPipelineIntegration:
 
     def test_pipeline_count(self):
         """验证管道数量"""
-        assert len(OCRPipeline) == 5
-        assert len(get_all_pipelines()) == 5
+        assert len(OCRPipeline) == 6
+        assert len(get_all_pipelines()) == 6
 
     def test_is_option_supported(self):
         """测试选项支持检查"""
