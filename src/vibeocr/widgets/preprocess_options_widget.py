@@ -121,6 +121,14 @@ class PreprocessOptionsWidget(QGroupBox):
         self._paddlocr_vl_group = self._create_paddlocr_vl_group()
         layout.addWidget(self._paddlocr_vl_group)
 
+        # 表格识别选项组
+        self._table_recognition_group = self._create_table_recognition_group()
+        layout.addWidget(self._table_recognition_group)
+
+        # 公式识别选项组
+        self._formula_recognition_group = self._create_formula_recognition_group()
+        layout.addWidget(self._formula_recognition_group)
+
         layout.addStretch()
         return widget
 
@@ -264,6 +272,43 @@ class PreprocessOptionsWidget(QGroupBox):
 
         return group
 
+    def _create_table_recognition_group(self) -> QGroupBox:
+        """创建表格识别选项组"""
+        group = QGroupBox("表格识别选项")
+        layout = QVBoxLayout(group)
+
+        self._use_wireless_table_cb = QCheckBox("无线表格模式")
+        self._use_wireless_table_cb.setToolTip("使用无线表格识别模型（SLANeXt_wireless）")
+        self._use_wireless_table_cb.setChecked(True)
+        layout.addWidget(self._use_wireless_table_cb)
+
+        self._use_table_orientation_classify_cb = QCheckBox("表格方向分类")
+        self._use_table_orientation_classify_cb.setChecked(True)
+        layout.addWidget(self._use_table_orientation_classify_cb)
+
+        self._use_ocr_with_table_cells_cb = QCheckBox("单元格文字识别")
+        self._use_ocr_with_table_cells_cb.setChecked(True)
+        layout.addWidget(self._use_ocr_with_table_cells_cb)
+
+        return group
+
+    def _create_formula_recognition_group(self) -> QGroupBox:
+        """创建公式识别选项组"""
+        group = QGroupBox("公式识别选项")
+        layout = QVBoxLayout(group)
+
+        # 公式批量大小
+        batch_layout = QHBoxLayout()
+        batch_layout.addWidget(QLabel("批量大小:"))
+        self._formula_batch_size_spin = QSpinBox()
+        self._formula_batch_size_spin.setRange(1, 32)
+        self._formula_batch_size_spin.setValue(1)
+        batch_layout.addWidget(self._formula_batch_size_spin)
+        batch_layout.addStretch()
+        layout.addLayout(batch_layout)
+
+        return group
+
     def _connect_signals(self):
         """连接信号"""
         self._pipeline_combo.currentIndexChanged.connect(self._on_pipeline_changed)
@@ -294,6 +339,14 @@ class PreprocessOptionsWidget(QGroupBox):
         self._use_formula_cb.toggled.connect(self._on_option_changed)
         self._use_seal_cb.toggled.connect(self._on_option_changed)
         self._use_chart_cb.toggled.connect(self._on_option_changed)
+
+        # 表格识别选项
+        self._use_wireless_table_cb.toggled.connect(self._on_option_changed)
+        self._use_table_orientation_classify_cb.toggled.connect(self._on_option_changed)
+        self._use_ocr_with_table_cells_cb.toggled.connect(self._on_option_changed)
+
+        # 公式识别选项
+        self._formula_batch_size_spin.valueChanged.connect(self._on_option_changed)
 
     def _on_pipeline_changed(self):
         """管道选择变更"""
@@ -334,6 +387,11 @@ class PreprocessOptionsWidget(QGroupBox):
                 "vl_use_chart_recognition",
                 "vl_use_seal_recognition",
                 "use_ocr_for_image_block",
+                "use_wireless_table",
+                "use_table_orientation_classify",
+                "use_ocr_results_with_table_cells",
+                "use_e2e_wireless_table_rec_model",
+                "formula_recognition_batch_size",
             ]
         )
 
@@ -371,6 +429,25 @@ class PreprocessOptionsWidget(QGroupBox):
         ]
         self._pp_structure_group.setVisible(
             any(opt in supported for opt in pp_struct_opts)
+        )
+
+        # 表格识别选项组可见性
+        table_opts = [
+            "use_wireless_table",
+            "use_table_orientation_classify",
+            "use_ocr_results_with_table_cells",
+            "use_e2e_wireless_table_rec_model",
+        ]
+        self._table_recognition_group.setVisible(
+            any(opt in supported for opt in table_opts)
+        )
+
+        # 公式识别选项组可见性
+        formula_opts = [
+            "formula_recognition_batch_size",
+        ]
+        self._formula_recognition_group.setVisible(
+            any(opt in supported for opt in formula_opts)
         )
 
         # 如果当前选项卡不可见，切换到第一个可见的
@@ -446,6 +523,20 @@ class PreprocessOptionsWidget(QGroupBox):
             kwargs["use_seal_recognition"] = self._use_seal_cb.isChecked()
         if is_option_supported(pipeline, "use_chart_recognition"):
             kwargs["use_chart_recognition"] = self._use_chart_cb.isChecked()
+        if is_option_supported(pipeline, "use_wireless_table"):
+            kwargs["use_wireless_table"] = self._use_wireless_table_cb.isChecked()
+        if is_option_supported(pipeline, "use_table_orientation_classify"):
+            kwargs["use_table_orientation_classify"] = (
+                self._use_table_orientation_classify_cb.isChecked()
+            )
+        if is_option_supported(pipeline, "use_ocr_results_with_table_cells"):
+            kwargs["use_ocr_results_with_table_cells"] = (
+                self._use_ocr_with_table_cells_cb.isChecked()
+            )
+        if is_option_supported(pipeline, "formula_recognition_batch_size"):
+            kwargs["formula_recognition_batch_size"] = (
+                self._formula_batch_size_spin.value()
+            )
         if is_option_supported(pipeline, "start_page_id"):
             kwargs["start_page_id"] = self._start_page_spin.value()
         if is_option_supported(pipeline, "end_page_id"):
@@ -482,6 +573,10 @@ class PreprocessOptionsWidget(QGroupBox):
             self._use_formula_cb,
             self._use_seal_cb,
             self._use_chart_cb,
+            self._use_wireless_table_cb,
+            self._use_table_orientation_classify_cb,
+            self._use_ocr_with_table_cells_cb,
+            self._formula_batch_size_spin,
         ]
         for w in widgets:
             w.blockSignals(True)
@@ -537,6 +632,24 @@ class PreprocessOptionsWidget(QGroupBox):
         self._use_formula_cb.setChecked(options.use_formula_recognition)
         self._use_seal_cb.setChecked(options.use_seal_recognition)
         self._use_chart_cb.setChecked(options.use_chart_recognition)
+
+        # 设置表格识别选项
+        if hasattr(options, "use_wireless_table"):
+            self._use_wireless_table_cb.setChecked(options.use_wireless_table)
+        if hasattr(options, "use_table_orientation_classify"):
+            self._use_table_orientation_classify_cb.setChecked(
+                options.use_table_orientation_classify
+            )
+        if hasattr(options, "use_ocr_results_with_table_cells"):
+            self._use_ocr_with_table_cells_cb.setChecked(
+                options.use_ocr_results_with_table_cells
+            )
+
+        # 设置公式识别选项
+        if hasattr(options, "formula_recognition_batch_size"):
+            self._formula_batch_size_spin.setValue(
+                options.formula_recognition_batch_size
+            )
 
         # 恢复信号
         for w in widgets:

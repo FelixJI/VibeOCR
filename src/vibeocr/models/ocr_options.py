@@ -52,6 +52,14 @@ class OCROptions:
     start_page_id: int = 0
     end_page_id: int | None = None  # None 表示不限制
 
+    # === 表格识别专用（TABLE_RECOGNITION）===
+    use_wireless_table: bool = True  # 无线表格模式
+    use_table_orientation_classify: bool = True  # 表格方向分类
+    use_ocr_results_with_table_cells: bool = True  # 单元格文字识别
+
+    # === 公式识别专用（FORMULA_RECOGNITION）===
+    formula_recognition_batch_size: int = 1  # 公式批量大小
+
     def to_dict(self) -> dict[str, Any]:
         """转换为字典
 
@@ -80,6 +88,10 @@ class OCROptions:
             "lang_list": self.lang_list,
             "start_page_id": self.start_page_id,
             "end_page_id": self.end_page_id,
+            "use_wireless_table": self.use_wireless_table,
+            "use_table_orientation_classify": self.use_table_orientation_classify,
+            "use_ocr_results_with_table_cells": self.use_ocr_results_with_table_cells,
+            "formula_recognition_batch_size": self.formula_recognition_batch_size,
         }
 
     @classmethod
@@ -119,6 +131,10 @@ class OCROptions:
             lang_list=data.get("lang_list", []),
             start_page_id=data.get("start_page_id", 0),
             end_page_id=data.get("end_page_id", None),
+            use_wireless_table=data.get("use_wireless_table", True),
+            use_table_orientation_classify=data.get("use_table_orientation_classify", True),
+            use_ocr_results_with_table_cells=data.get("use_ocr_results_with_table_cells", True),
+            formula_recognition_batch_size=data.get("formula_recognition_batch_size", 1),
         )
 
     def copy(self, **updates) -> "OCROptions":
