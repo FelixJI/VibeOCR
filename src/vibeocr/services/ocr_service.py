@@ -910,6 +910,8 @@ class OCRService(metaclass=SingletonMeta):
         pipeline = self.get_pipeline(OCRPipeline.PADDLEOCR_VL)
 
         predict_kwargs: dict[str, Any] = {}
+        predict_kwargs["use_doc_orientation_classify"] = options.use_doc_orientation_classify
+        predict_kwargs["use_doc_unwarping"] = options.use_doc_unwarping
         predict_kwargs["use_layout_detection"] = options.vl_use_layout_detection
         predict_kwargs["use_chart_recognition"] = options.vl_use_chart_recognition
         predict_kwargs["use_seal_recognition"] = options.vl_use_seal_recognition
