@@ -1,4 +1,4 @@
-# src/vibeocr/core/pipelines.py
+# src/vibeocr/core/pipelines/__init__.py
 """OCR 管道定义模块
 
 此模块是管道定义的单一来源（Single Source of Truth）。
