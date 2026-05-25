@@ -1,6 +1,8 @@
 """Tests for InlineEditCanvas."""
 
-from PySide6.QtCore import QPointF, QRect, QRectF
+from unittest.mock import MagicMock
+
+from PySide6.QtCore import QPoint, QPointF, QRect, QRectF
 from PySide6.QtGui import QColor, QPixmap
 from PySide6.QtWidgets import QGraphicsRectItem
 
@@ -15,6 +17,14 @@ def _make_pixmap(w: int, h: int, color: QColor = None, dpr: float = 1.0) -> QPix
         px.fill(QColor(128, 128, 128))
     px.setDevicePixelRatio(dpr)
     return px
+
+
+def _make_mapper(dpr: float = 1.0, virtual_geometry: QRect | None = None) -> MagicMock:
+    mapper = MagicMock()
+    mapper.dpr_at.return_value = dpr
+    mapper.virtual_geometry = virtual_geometry or QRect(0, 0, 9999, 9999)
+    mapper.clip_to_virtual.side_effect = lambda r: r
+    return mapper
 
 
 class TestInlineEditCanvas:
@@ -65,7 +75,7 @@ class TestUpdateCropRegion:
 
         # 更新到新裁剪区域 (50, 50, 400x300)
         new_sel = QRect(50, 50, 400, 300)
-        canvas.update_crop_region(screen_pxm, new_sel, dpr=1.0)
+        canvas.update_crop_region(screen_pxm, new_sel, _make_mapper())
 
         new_scene_rect = canvas._scene.sceneRect()
         assert new_scene_rect == QRectF(0, 0, 400, 300)
@@ -85,7 +95,7 @@ class TestUpdateCropRegion:
         # 裁剪区域移动了 (20, 10)，即 new_sel 左上角从 (100,100) 变为 (120,110)
         # 标注应该平移 -(20, 10) = (-20, -10) 以保持屏幕绝对位置
         new_sel = QRect(120, 110, 300, 200)
-        canvas.update_crop_region(screen_pxm, new_sel, dpr=1.0)
+        canvas.update_crop_region(screen_pxm, new_sel, _make_mapper())
 
         # 原场景坐标 (50, 30) → 新场景坐标 (30, 20)
         assert annotation.pos().x() == -20.0

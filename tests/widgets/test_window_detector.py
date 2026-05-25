@@ -1,12 +1,21 @@
 """Tests for WindowDetector."""
 
 import ctypes.wintypes
+from unittest.mock import MagicMock
 
 import pytest
 
 from PySide6.QtCore import QPoint, QRect
 
 from vibeocr.widgets.window_detector import WindowDetector
+
+
+def _make_mapper(dpr: float = 1.0, virtual_offset: QPoint = None) -> MagicMock:
+    mapper = MagicMock()
+    mapper.dpr_at.return_value = dpr
+    mapper.virtual_geometry = QRect(virtual_offset or QPoint(0, 0), QPoint(9999, 9999))
+    mapper.clip_to_virtual.side_effect = lambda r: r
+    return mapper
 
 
 @pytest.fixture
@@ -118,7 +127,7 @@ class TestDetectAt:
         detector._try_accessible = lambda pos: QRect(200, 400, 400, 400)
         detector._hit_test = lambda pos: 888
         pos = QPoint(50, 100)
-        result = detector.detect_at(pos, dpr=2.0, virtual_offset=QPoint(0, 0))
+        result = detector.detect_at(pos, _make_mapper(dpr=2.0))
         assert result is not None
         assert result.x() == 100
         assert result.y() == 200
@@ -128,7 +137,7 @@ class TestDetectAt:
     def test_returns_none_when_no_window(self, detector, monkeypatch):
         detector._hit_test = lambda pos: None
         result = detector.detect_at(
-            QPoint(50, 50), dpr=1.0, virtual_offset=QPoint(0, 0)
+            QPoint(50, 50), _make_mapper()
         )
         assert result is None
 
@@ -138,7 +147,7 @@ class TestDetectAtCache:
         detector._try_accessible = lambda pos: QRect(100, 200, 400, 200)
         detector._hit_test = lambda pos: 888
         pos = QPoint(50, 50)
-        r1 = detector.detect_at(pos, 1.0, QPoint(0, 0))
+        r1 = detector.detect_at(pos, _make_mapper())
         assert detector._cached_hwnd == 888
         assert detector._cached_rect == r1
 
@@ -146,6 +155,6 @@ class TestDetectAtCache:
         detector._cached_hwnd = 999
         detector._cached_rect = QRect(10, 10, 100, 100)
         detector._hit_test = lambda pos: None
-        detector.detect_at(QPoint(50, 50), 1.0, QPoint(0, 0))
+        detector.detect_at(QPoint(50, 50), _make_mapper())
         assert detector._cached_hwnd is None
         assert detector._cached_rect is None

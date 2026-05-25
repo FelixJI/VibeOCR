@@ -57,7 +57,7 @@ class TestOCRPipeline:
         """管道显示名称正确。"""
         assert OCRPipeline.OCR.display_name == "通用 OCR"
         assert OCRPipeline.PP_STRUCTURE_V3.display_name == "PP-StructureV3"
-        assert OCRPipeline.DOCUMENT_PARSING.display_name == "MineRU（文档）"
+        assert OCRPipeline.DOCUMENT_PARSING.display_name == "文档M（MineRU）"
 
     def test_pipeline_descriptions(self):
         """管道描述正确。"""
