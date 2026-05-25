@@ -1,14 +1,24 @@
 """测试批量队列管理器"""
 
+import io
 from unittest.mock import MagicMock, patch
 
 import pytest
+from PIL import Image
 
 from vibeocr.models.batch_request import (
     BatchProgress,
     PreprocessOptions,
 )
 from vibeocr.workers.batch_queue_manager import BatchQueueManager
+
+
+def _make_png_bytes(w=10, h=10):
+    """生成最小有效 PNG 字节数据"""
+    img = Image.new("RGB", (w, h), "white")
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
 
 
 class MockPipeline:
@@ -36,7 +46,7 @@ class TestBatchQueueManager:
     def test_add_request(self, manager):
         """测试添加请求"""
         request_id = manager.add_request(
-            image_data=b"fake_image", options={"lang": "ch"}, file_name="test.png"
+            image_data=_make_png_bytes(), options={"lang": "ch"}, file_name="test.png"
         )
 
         assert request_id != ""
@@ -46,15 +56,15 @@ class TestBatchQueueManager:
         """测试添加多个请求"""
         for i in range(5):
             manager.add_request(
-                image_data=b"fake_image", options={}, file_name=f"test_{i}.png"
+                image_data=_make_png_bytes(), options={}, file_name=f"test_{i}.png"
             )
 
         assert manager.get_queue_size() == 5
 
     def test_clear_queue(self, manager):
         """测试清空队列"""
-        manager.add_request(b"image", {})
-        manager.add_request(b"image", {})
+        manager.add_request(_make_png_bytes(), {})
+        manager.add_request(_make_png_bytes(), {})
 
         assert manager.get_queue_size() == 2
 
@@ -71,7 +81,7 @@ class TestBatchQueueManager:
 
     def test_commit_single_request(self, manager):
         """测试提交单个请求"""
-        request_id = manager.add_request(b"image", {}, file_name="test.png")
+        request_id = manager.add_request(_make_png_bytes(), {}, file_name="test.png")
 
         options = PreprocessOptions()
         results = manager.commit(options)
@@ -83,7 +93,7 @@ class TestBatchQueueManager:
         """测试提交多个请求"""
         request_ids = []
         for i in range(3):
-            rid = manager.add_request(b"image", {}, file_name=f"test_{i}.png")
+            rid = manager.add_request(_make_png_bytes(), {}, file_name=f"test_{i}.png")
             request_ids.append(rid)
 
         options = PreprocessOptions()
@@ -105,7 +115,7 @@ class TestBatchQueueManager:
         )
 
         for i in range(4):
-            manager.add_request(b"image", {}, file_name=f"test_{i}.png")
+            manager.add_request(_make_png_bytes(), {}, file_name=f"test_{i}.png")
 
         options = PreprocessOptions()
         manager.commit(options)
@@ -120,7 +130,7 @@ class TestBatchQueueManager:
     def test_cancel(self, manager):
         """测试取消处理"""
         for i in range(10):
-            manager.add_request(b"image", {}, file_name=f"test_{i}.png")
+            manager.add_request(_make_png_bytes(), {}, file_name=f"test_{i}.png")
 
         # 在处理前取消
         manager.cancel()
@@ -134,8 +144,8 @@ class TestBatchQueueManager:
 
     def test_get_stats(self, manager):
         """测试获取统计信息"""
-        manager.add_request(b"image", {})
-        manager.add_request(b"image", {})
+        manager.add_request(_make_png_bytes(), {})
+        manager.add_request(_make_png_bytes(), {})
 
         options = PreprocessOptions()
         manager.commit(options)
@@ -168,7 +178,7 @@ class TestBatchQueueManagerWithGPU:
 
             # 添加请求
             for _ in range(10):
-                manager.add_request(b"x" * 1000, {})
+                manager.add_request(_make_png_bytes(), {})
 
             # commit 会调用 _calculate_batch_size
             # 但这里我们只测试创建是否成功
