@@ -471,11 +471,13 @@ class OCRService(metaclass=SingletonMeta):
 
     @classmethod
     def _register_dll_directories(cls) -> None:
-        """通过 os.add_dll_directory() 注册 CUDA DLL 目录
+        """通过 os.add_dll_directory() 和 PATH 注册 CUDA DLL 目录
 
         Python 3.8+ Windows 上 ctypes.CDLL 不再搜索 os.environ["PATH"]，
-        必须通过 os.add_dll_directory() 注册。此方法必须在 PaddlePaddle
-        导入完成后调用，否则会触发 PaddlePaddle 内部的路径错误。
+        必须通过 os.add_dll_directory() 注册。同时更新 PATH 环境变量，
+        确保推理引擎（Paddle Inference）也能找到 CUDA DLL。
+        此方法必须在 PaddlePaddle 导入完成后调用，否则会触发 PaddlePaddle
+        内部的路径错误。
         """
         if not hasattr(os, "add_dll_directory"):
             return
@@ -495,11 +497,13 @@ class OCRService(metaclass=SingletonMeta):
                 if os.path.isdir(sub_dir):
                     with contextlib.suppress(OSError):
                         os.add_dll_directory(sub_dir)
+                    os.environ["PATH"] = sub_dir + ";" + os.environ.get("PATH", "")
                     for sub in os.scandir(sub_dir):
                         arch_dir = os.path.join(sub_dir, sub.name)
                         if sub.is_dir():
                             with contextlib.suppress(OSError):
                                 os.add_dll_directory(arch_dir)
+                            os.environ["PATH"] = arch_dir + ";" + os.environ.get("PATH", "")
 
     @staticmethod
     def _get_project_root():
