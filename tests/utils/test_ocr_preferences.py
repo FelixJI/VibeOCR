@@ -118,10 +118,12 @@ class TestOCRPreferencesNewFields:
         with open(config_path, encoding="utf-8") as f:
             data = json.load(f)
 
-        assert data["use_wireless_table"] is True
-        assert data["use_table_orientation_classify"] is False
-        assert data["use_ocr_results_with_table_cells"] is True
-        assert data["formula_recognition_batch_size"] == 1  # default
+        assert data["version"] == 2
+        main_data = data["main"]["TABLE_RECOGNITION"]
+        assert main_data["use_wireless_table"] is True
+        assert main_data["use_table_orientation_classify"] is False
+        assert main_data["use_ocr_results_with_table_cells"] is True
+        assert main_data["formula_recognition_batch_size"] == 1  # default
 
     def test_missing_new_fields_get_defaults(self, tmp_config_dir):
         """旧格式 JSON（缺少新字段）加载时应使用默认值"""
@@ -184,3 +186,152 @@ class TestOCRPreferencesNewFields:
 
         assert loaded.formula_recognition_model_name == "LaTeX-OCR"
         assert loaded.formula_recognition_model_dir == "/models/formula"
+
+
+class TestPerPipelineStorage:
+    """Per-pipeline options storage tests"""
+
+    def test_set_and_get_pipeline_options(self, tmp_config_dir):
+        prefs = OCRPreferences(tmp_config_dir)
+
+        options = OCROptions(
+            pipeline=OCRPipeline.OCR,
+            use_doc_orientation_classify=False,
+            use_doc_unwarping=False,
+        )
+        prefs.set_pipeline_options("main", OCRPipeline.OCR, options)
+
+        loaded = prefs.get_pipeline_options("main", OCRPipeline.OCR)
+        assert loaded.use_doc_orientation_classify is False
+        assert loaded.use_doc_unwarping is False
+
+    def test_different_sources_independent(self, tmp_config_dir):
+        prefs = OCRPreferences(tmp_config_dir)
+
+        main_opts = OCROptions(pipeline=OCRPipeline.OCR, use_doc_unwarping=False)
+        screenshot_opts = OCROptions(pipeline=OCRPipeline.OCR, use_doc_unwarping=True)
+
+        prefs.set_pipeline_options("main", OCRPipeline.OCR, main_opts)
+        prefs.set_pipeline_options("screenshot", OCRPipeline.OCR, screenshot_opts)
+
+        assert prefs.get_pipeline_options("main", OCRPipeline.OCR).use_doc_unwarping is False
+        assert prefs.get_pipeline_options("screenshot", OCRPipeline.OCR).use_doc_unwarping is True
+
+    def test_different_pipelines_independent(self, tmp_config_dir):
+        prefs = OCRPreferences(tmp_config_dir)
+
+        ocr_opts = OCROptions(pipeline=OCRPipeline.OCR, use_doc_unwarping=False)
+        struct_opts = OCROptions(pipeline=OCRPipeline.PP_STRUCTURE_V3, use_doc_unwarping=True)
+
+        prefs.set_pipeline_options("main", OCRPipeline.OCR, ocr_opts)
+        prefs.set_pipeline_options("main", OCRPipeline.PP_STRUCTURE_V3, struct_opts)
+
+        assert prefs.get_pipeline_options("main", OCRPipeline.OCR).use_doc_unwarping is False
+        assert prefs.get_pipeline_options("main", OCRPipeline.PP_STRUCTURE_V3).use_doc_unwarping is True
+
+    def test_get_unsaved_pipeline_returns_default(self, tmp_config_dir):
+        prefs = OCRPreferences(tmp_config_dir)
+
+        loaded = prefs.get_pipeline_options("main", OCRPipeline.TABLE_RECOGNITION)
+        assert loaded.pipeline == OCRPipeline.TABLE_RECOGNITION
+        assert loaded.use_wireless_table is True  # default
+
+    def test_persist_and_reload(self, tmp_config_dir):
+        prefs = OCRPreferences(tmp_config_dir)
+
+        prefs.set_pipeline_options("screenshot", OCRPipeline.OCR, OCROptions(
+            pipeline=OCRPipeline.OCR,
+            use_doc_unwarping=False,
+        ))
+        prefs.set_pipeline_options("screenshot", OCRPipeline.TABLE_RECOGNITION, OCROptions(
+            pipeline=OCRPipeline.TABLE_RECOGNITION,
+            use_wireless_table=False,
+        ))
+
+        OCRPreferences.reset_instance()
+        prefs2 = OCRPreferences(tmp_config_dir)
+
+        assert prefs2.get_pipeline_options("screenshot", OCRPipeline.OCR).use_doc_unwarping is False
+        assert prefs2.get_pipeline_options("screenshot", OCRPipeline.TABLE_RECOGNITION).use_wireless_table is False
+
+    def test_pipeline_options_changed_signal(self, tmp_config_dir):
+        prefs = OCRPreferences(tmp_config_dir)
+        received = []
+        prefs.pipeline_options_changed.connect(lambda s, o: received.append((s, o.pipeline)))
+
+        prefs.set_pipeline_options("main", OCRPipeline.OCR, OCROptions(pipeline=OCRPipeline.OCR))
+
+        assert len(received) == 1
+        assert received[0] == ("main", OCRPipeline.OCR)
+
+
+class TestVersionMigration:
+    """v1 → v2 migration tests"""
+
+    def test_v1_migrates_to_v2(self, tmp_config_dir):
+        config_path = tmp_config_dir / "ocr_preferences.json"
+        old_data = {
+            "pipeline": "PP-StructureV3",
+            "use_doc_orientation_classify": False,
+            "use_doc_unwarping": True,
+            "batch_options": {"pipeline": "OCR"},
+            "version": 1,
+        }
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(config_path, "w", encoding="utf-8") as f:
+            json.dump(old_data, f)
+
+        prefs = OCRPreferences(tmp_config_dir)
+
+        # Old options migrated to "main" under PP-StructureV3
+        loaded = prefs.get_pipeline_options("main", OCRPipeline.PP_STRUCTURE_V3)
+        assert loaded.pipeline == OCRPipeline.PP_STRUCTURE_V3
+        assert loaded.use_doc_orientation_classify is False
+        assert loaded.use_doc_unwarping is True
+
+        # legacy get_options returns the migrated pipeline
+        assert prefs.get_options().pipeline == OCRPipeline.PP_STRUCTURE_V3
+
+    def test_v1_migration_preserves_batch_options(self, tmp_config_dir):
+        config_path = tmp_config_dir / "ocr_preferences.json"
+        old_data = {
+            "pipeline": "OCR",
+            "batch_options": {"pipeline": "MinerU", "enable_formula": False},
+            "version": 1,
+        }
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(config_path, "w", encoding="utf-8") as f:
+            json.dump(old_data, f)
+
+        prefs = OCRPreferences(tmp_config_dir)
+        assert prefs.get_batch_options().enable_formula is False
+
+    def test_v2_loads_correctly(self, tmp_config_dir):
+        config_path = tmp_config_dir / "ocr_preferences.json"
+        v2_data = {
+            "version": 2,
+            "last_main_pipeline": "TABLE_RECOGNITION",
+            "main": {
+                "TABLE_RECOGNITION": {
+                    "pipeline": "TABLE_RECOGNITION",
+                    "use_wireless_table": False,
+                },
+            },
+            "screenshot": {
+                "OCR": {
+                    "pipeline": "OCR",
+                    "use_doc_unwarping": False,
+                },
+            },
+            "batch_options": {"pipeline": "OCR"},
+        }
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(config_path, "w", encoding="utf-8") as f:
+            json.dump(v2_data, f)
+
+        prefs = OCRPreferences(tmp_config_dir)
+
+        assert prefs.get_pipeline_options("main", OCRPipeline.TABLE_RECOGNITION).use_wireless_table is False
+        assert prefs.get_pipeline_options("screenshot", OCRPipeline.OCR).use_doc_unwarping is False
+        # legacy get_options uses last_main_pipeline
+        assert prefs.get_options().pipeline == OCRPipeline.TABLE_RECOGNITION
