@@ -79,15 +79,18 @@ def _recognize_formula(service: Any, image: Any, options: FormulaRecognitionOpti
         if dp_res is not None:
             if isinstance(dp_res, dict):
                 preproc_angle = dp_res.get("angle", 0)
+                out_arr = dp_res.get("output_img")
             else:
                 preproc_angle = getattr(dp_res, "angle", 0)
-        img_dict = getattr(res, "img", None)
-        if isinstance(img_dict, dict):
-            pp_img = img_dict.get("preprocessed_img")
-            if pp_img is not None:
-                preproc_w, preproc_h = pp_img.size
+                out_arr = dp_res["output_img"] if "output_img" in dp_res else None
+            if out_arr is not None:
+                from PIL import Image as _PILImage
+
+                rgb = out_arr[:, :, ::-1] if out_arr.ndim == 3 else out_arr
+                pil_img = _PILImage.fromarray(rgb)
+                preproc_w, preproc_h = pil_img.size
                 buf = io.BytesIO()
-                pp_img.save(buf, format="PNG")
+                pil_img.save(buf, format="PNG")
                 preprocessed_png = buf.getvalue()
 
     for res in output_list:

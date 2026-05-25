@@ -768,15 +768,18 @@ class OCRService(metaclass=SingletonMeta):
             if dp_res is not None:
                 if isinstance(dp_res, dict):
                     preproc_angle = dp_res.get("angle", 0)
+                    out_arr = dp_res.get("output_img")
                 else:
                     preproc_angle = getattr(dp_res, "angle", 0)
-            img_dict = getattr(res, "img", None)
-            if isinstance(img_dict, dict):
-                pp_img = img_dict.get("preprocessed_img")
-                if pp_img is not None:
-                    preproc_w, preproc_h = pp_img.size
+                    out_arr = dp_res["output_img"] if "output_img" in dp_res else None
+                if out_arr is not None:
+                    from PIL import Image as _PILImage
+
+                    rgb = out_arr[:, :, ::-1] if out_arr.ndim == 3 else out_arr
+                    pil_img = _PILImage.fromarray(rgb)
+                    preproc_w, preproc_h = pil_img.size
                     buf = io.BytesIO()
-                    pp_img.save(buf, format="PNG")
+                    pil_img.save(buf, format="PNG")
                     preprocessed_png = buf.getvalue()
 
         text_blocks: list[TextBlock] = []
@@ -1102,7 +1105,9 @@ class OCRService(metaclass=SingletonMeta):
 
         output_list = self._consume_generator_safely(output)
 
-        # 提取预处理旋转角度和预处理后图像（用于 bbox 归一化和显示）
+        # 提取预处理信息：旋转角度和实际预处理后图像
+        # res.img['preprocessed_img'] 是拼接可视化，不用；
+        # 实际预处理图在 doc_preprocessor_res['output_img']（numpy BGR）
         preproc_angle = 0
         preprocessed_png: bytes | None = None
         preproc_w = preproc_h = 0
@@ -1112,16 +1117,18 @@ class OCRService(metaclass=SingletonMeta):
             if dp_res is not None:
                 if isinstance(dp_res, dict):
                     preproc_angle = dp_res.get("angle", 0)
+                    out_arr = dp_res.get("output_img")
                 else:
                     preproc_angle = getattr(dp_res, "angle", 0)
-            # 提取预处理后图像（PaddleOCR: res.img['preprocessed_img']）
-            img_dict = getattr(res, "img", None)
-            if isinstance(img_dict, dict):
-                pp_img = img_dict.get("preprocessed_img")
-                if pp_img is not None:
-                    preproc_w, preproc_h = pp_img.size
+                    out_arr = dp_res["output_img"] if "output_img" in dp_res else None
+                if out_arr is not None:
+                    from PIL import Image as _PILImage
+
+                    rgb = out_arr[:, :, ::-1] if out_arr.ndim == 3 else out_arr
+                    pil_img = _PILImage.fromarray(rgb)
+                    preproc_w, preproc_h = pil_img.size
                     buf = io.BytesIO()
-                    pp_img.save(buf, format="PNG")
+                    pil_img.save(buf, format="PNG")
                     preprocessed_png = buf.getvalue()
 
         result_count = 0
