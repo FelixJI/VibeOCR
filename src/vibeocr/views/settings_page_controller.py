@@ -63,12 +63,8 @@ class SettingsPageController:
         if btn_preload_now:
             btn_preload_now.clicked.connect(self._on_preload_now_clicked)
 
-        for chk_name in [
-            "chkPreloadOCR",
-            "chkPreloadTable",
-            "chkPreloadFormula",
-        ]:
-            chk = self._ui.findChild(QCheckBox, chk_name)
+        for pipeline in self._get_preloadable_pipelines():
+            chk = self._ui.findChild(QCheckBox, f"chkPreload_{pipeline.name}")
             if chk:
                 chk.toggled.connect(self._save_preload_pipelines_config)
 
@@ -88,18 +84,20 @@ class SettingsPageController:
         self._update_preload_status()
         self._restore_preload_checkbox_state()
 
+    @staticmethod
+    def _get_preloadable_pipelines():
+        """获取可预加载的管道列表"""
+        from vibeocr.core.pipelines import get_preloadable_pipelines
+
+        return get_preloadable_pipelines()
+
     def _restore_preload_checkbox_state(self) -> None:
         """从配置恢复预加载 checkbox 状态（阻塞信号避免触发保存）"""
         from vibeocr.managers.config_manager import ConfigManager
-        from vibeocr.services.ocr_service import OCRPipeline
 
         saved = ConfigManager.instance().get_preload_pipelines()
-        mapping = {
-            "chkPreloadOCR": OCRPipeline.OCR,
-            "chkPreloadTable": OCRPipeline.PP_STRUCTURE_V3,
-        }
-        for chk_name, pipeline in mapping.items():
-            chk = self._ui.findChild(QCheckBox, chk_name)
+        for pipeline in self._get_preloadable_pipelines():
+            chk = self._ui.findChild(QCheckBox, f"chkPreload_{pipeline.name}")
             if chk:
                 chk.blockSignals(True)
                 chk.setChecked(pipeline.value in saved)
@@ -156,18 +154,11 @@ class SettingsPageController:
 
     def _get_selected_preload_pipelines(self) -> list["OCRPipeline"]:
         """获取选中的预加载管道"""
-        from vibeocr.services.ocr_service import OCRPipeline
-
         pipelines = []
-
-        chk_ocr = self._ui.findChild(QCheckBox, "chkPreloadOCR")
-        if chk_ocr and chk_ocr.isChecked():
-            pipelines.append(OCRPipeline.OCR)
-
-        chk_table = self._ui.findChild(QCheckBox, "chkPreloadTable")
-        if chk_table and chk_table.isChecked():
-            pipelines.append(OCRPipeline.PP_STRUCTURE_V3)
-
+        for pipeline in self._get_preloadable_pipelines():
+            chk = self._ui.findChild(QCheckBox, f"chkPreload_{pipeline.name}")
+            if chk and chk.isChecked():
+                pipelines.append(pipeline)
         return pipelines
 
     def _save_preload_pipelines_config(self) -> None:
