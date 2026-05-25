@@ -31,6 +31,8 @@ class PreprocessOptionsWidget(QGroupBox):
     """
 
     options_changed = Signal(object)  # OCROptions
+    pipeline_switching = Signal(object, object)  # (old_pipeline: OCRPipeline, OCROptions)
+    pipeline_switched = Signal(object)  # (new_pipeline: OCRPipeline)
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__("识别选项", parent)
@@ -459,9 +461,15 @@ class PreprocessOptionsWidget(QGroupBox):
         self._formula_model_dir_edit.textChanged.connect(self._on_option_changed)
 
     def _on_pipeline_changed(self):
-        """管道选择变更"""
+        """管道选择变更 — 通知调用方保存旧管道、加载新管道"""
+        old_pipeline = self._current_options.pipeline
+        self.pipeline_switching.emit(old_pipeline, self._current_options)
+
         self._update_tab_visibility()
-        self._on_option_changed()
+        self._current_options = self.get_options()
+
+        new_pipeline = self.get_current_pipeline()
+        self.pipeline_switched.emit(new_pipeline)
 
     def _update_tab_visibility(self):
         """根据管道更新选项卡可见性"""
