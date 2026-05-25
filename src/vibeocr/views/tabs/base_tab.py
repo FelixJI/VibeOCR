@@ -200,7 +200,7 @@ class BaseOcrTab(QWidget):
                 self._result_widget.display_result(result)
 
     def _init_options_from_preferences(self, *, batch: bool = False) -> None:
-        """从 OCRPreferences 恢复选项，并建立双向同步"""
+        """从 OCRPreferences 恢复选项，建立管道切换同步"""
         if not self._preprocess_options:
             return
         try:
@@ -216,11 +216,21 @@ class BaseOcrTab(QWidget):
             )
             prefs.batch_options_changed.connect(self._preprocess_options.set_options)
         else:
-            self._preprocess_options.set_options(prefs.get_options())
-            self._preprocess_options.options_changed.connect(
-                lambda opts: OCRPreferences.instance().set_options(opts)
+            source = "main"
+            default_pipeline = self._preprocess_options.get_current_pipeline()
+            self._preprocess_options.set_options(
+                prefs.get_pipeline_options(source, default_pipeline)
             )
-            prefs.options_changed.connect(self._preprocess_options.set_options)
+            self._preprocess_options.pipeline_switching.connect(
+                lambda old_pipeline, opts: OCRPreferences.instance().set_pipeline_options(
+                    source, old_pipeline, opts
+                )
+            )
+            self._preprocess_options.pipeline_switched.connect(
+                lambda new_pipeline: self._preprocess_options.set_options(
+                    OCRPreferences.instance().get_pipeline_options(source, new_pipeline)
+                )
+            )
 
     @abstractmethod
     def _setup_ui(self) -> None:
