@@ -52,7 +52,10 @@ def _recognize_table(service: Any, image: Any, options: TableRecognitionOptions)
     """执行表格识别并返回 OCRResult"""
     from vibeocr.models.ocr_result import OCRResult, TextBlock
 
-    pipeline = service.get_or_create_pipeline(options.pipeline)
+    from enum import Enum
+
+    pipeline_name = options.pipeline.value if isinstance(options.pipeline, Enum) else options.pipeline
+    pipeline = service.get_or_create_pipeline(pipeline_name)
 
     predict_kwargs: dict[str, Any] = {}
     predict_kwargs["use_doc_orientation_classify"] = options.use_doc_orientation_classify

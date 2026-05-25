@@ -49,7 +49,10 @@ def _recognize_formula(service: Any, image: Any, options: FormulaRecognitionOpti
     """
     from vibeocr.models.ocr_result import OCRResult, TextBlock
 
-    pipeline = service.get_or_create_pipeline(options.pipeline)
+    from enum import Enum
+
+    pipeline_name = options.pipeline.value if isinstance(options.pipeline, Enum) else options.pipeline
+    pipeline = service.get_or_create_pipeline(pipeline_name)
 
     predict_kwargs: dict[str, Any] = {
         "use_doc_orientation_classify": options.use_doc_orientation_classify,
