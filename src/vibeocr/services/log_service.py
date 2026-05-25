@@ -1,6 +1,7 @@
 """日志服务模块"""
 
 import logging
+import sys
 import time
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -87,9 +88,9 @@ def setup_logging() -> QtLogHandler:
 
     root_logger.addHandler(handler)
 
-    # 控制台 handler：仅 WARNING 及以上（不刷屏，只显示需要关注的问题）
+    # 控制台 handler：开发环境 DEBUG，打包环境 WARNING
     console_handler = logging.StreamHandler()
-    console_handler.setLevel(logging.WARNING)
+    console_handler.setLevel(logging.DEBUG if not getattr(sys, "frozen", False) else logging.WARNING)
     console_handler.setFormatter(
         logging.Formatter("[%(levelname)s] %(name)s: %(message)s")
     )
