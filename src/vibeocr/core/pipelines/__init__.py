@@ -39,6 +39,7 @@ class OCRPipeline(Enum):
 _PIPELINE_METADATA: dict[OCRPipeline, dict] = {
     OCRPipeline.OCR: {
         "display_name": "通用 OCR",
+        "short_name": "文字",
         "description": "识别图片中的文字内容，适用于纯文本场景",
         "supported_options": [
             "use_doc_orientation_classify",
@@ -48,6 +49,7 @@ _PIPELINE_METADATA: dict[OCRPipeline, dict] = {
     },
     OCRPipeline.PP_STRUCTURE_V3: {
         "display_name": "PP-StructureV3",
+        "short_name": "结构",
         "description": "文档结构分析，支持表格、公式、印章、图表识别",
         "supported_options": [
             "use_doc_orientation_classify",
@@ -60,7 +62,8 @@ _PIPELINE_METADATA: dict[OCRPipeline, dict] = {
         ],
     },
     OCRPipeline.DOCUMENT_PARSING: {
-        "display_name": "MineRU（文档）",
+        "display_name": "文档M（MineRU）",
+        "short_name": "文档M",
         "description": "使用 MineRU 解析文档，支持 PDF/图片，提取文本、表格、公式等",
         "supported_options": [
             "parse_method",
@@ -73,7 +76,8 @@ _PIPELINE_METADATA: dict[OCRPipeline, dict] = {
         ],
     },
     OCRPipeline.PADDLEOCR_VL: {
-        "display_name": "PaddleOCR-VL（文档）",
+        "display_name": "文档P（PaddleOCR-VL）",
+        "short_name": "文档P",
         "description": "使用 PaddleOCR-VL-1.5 解析文档，支持图片/PDF，提取文本、表格、公式、图表等",
         "supported_options": [
             "use_doc_orientation_classify",
@@ -86,6 +90,7 @@ _PIPELINE_METADATA: dict[OCRPipeline, dict] = {
     },
     OCRPipeline.TABLE_RECOGNITION: {
         "display_name": "表格识别",
+        "short_name": "表格",
         "description": "独立表格结构识别，支持有线和无线表格",
         "supported_options": [
             "use_doc_orientation_classify",
@@ -106,6 +111,7 @@ _PIPELINE_METADATA: dict[OCRPipeline, dict] = {
     },
     OCRPipeline.FORMULA_RECOGNITION: {
         "display_name": "公式识别",
+        "short_name": "公式",
         "description": "独立数学公式识别（LaTeX 输出）",
         "supported_options": [
             "use_doc_orientation_classify",
@@ -129,6 +135,19 @@ def get_pipeline_display_name(pipeline: OCRPipeline) -> str:
     """
     metadata = _PIPELINE_METADATA.get(pipeline, {})
     return metadata.get("display_name", pipeline.value)
+
+
+def get_pipeline_short_name(pipeline: OCRPipeline) -> str:
+    """获取管道短名称（用于紧凑 UI 按钮）
+
+    Args:
+        pipeline: 管道类型
+
+    Returns:
+        管道的短名称
+    """
+    metadata = _PIPELINE_METADATA.get(pipeline, {})
+    return metadata.get("short_name", pipeline.value)
 
 
 def get_pipeline_description(pipeline: OCRPipeline) -> str:

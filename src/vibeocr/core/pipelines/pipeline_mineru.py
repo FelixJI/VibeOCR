@@ -43,7 +43,7 @@ def _recognize_mineru(service: Any, image: Any, options: MinerUOptions) -> Any:
 
 MINERU_SPEC = PipelineSpec(
     name="MinerU",
-    display_name="MineRU（文档）",
+    display_name="文档M（MineRU）",
     description="使用 MineRU 解析文档，支持 PDF/图片，提取文本、表格、公式等",
     options_class=MinerUOptions,
     create_pipeline=_create_mineru_pipeline,
