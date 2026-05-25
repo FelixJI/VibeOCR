@@ -181,7 +181,8 @@ class SettingsPageController:
         """从配置恢复预加载 checkbox 状态（阻塞信号避免触发保存）"""
         from vibeocr.managers.config_manager import ConfigManager
 
-        saved = ConfigManager.instance().get_preload_pipelines()
+        cm = ConfigManager.instance()
+        saved = cm.get_preload_pipelines()
         for pipeline in self._get_preloadable_pipelines():
             chk = self._ui.findChild(QCheckBox, f"chkPreload_{pipeline.name}")
             if chk:
@@ -192,15 +193,18 @@ class SettingsPageController:
         chk_enable = self._ui.findChild(QCheckBox, "chkEnablePreload")
         if chk_enable:
             chk_enable.blockSignals(True)
-            chk_enable.setChecked(len(saved) > 0)
+            chk_enable.setChecked(cm.get_preload_enabled())
             chk_enable.blockSignals(False)
-            self._on_enable_preload_toggled(len(saved) > 0)
+            self._on_enable_preload_toggled(cm.get_preload_enabled())
 
     def _on_enable_preload_toggled(self, checked: bool) -> None:
         """启用/禁用预加载"""
         preload_options = self._ui.findChild(QWidget, "preloadOptions")
         if preload_options:
             preload_options.setEnabled(checked)
+        from vibeocr.managers.config_manager import ConfigManager
+
+        ConfigManager.instance().set_preload_enabled(checked)
         logger.debug(f"[设置] 预加载功能: {'启用' if checked else '禁用'}")
 
     def _on_preload_now_clicked(self) -> None:

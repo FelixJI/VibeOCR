@@ -451,8 +451,9 @@ class MainWindow(QMainWindow):
             # 预加载完成后再显示"OCR 服务已就绪"
             from vibeocr.managers.config_manager import ConfigManager
 
-            pipelines = ConfigManager.instance().get_preload_pipelines()
-            if pipelines:
+            cm = ConfigManager.instance()
+            pipelines = cm.get_preload_pipelines()
+            if pipelines and cm.get_preload_enabled():
                 self._statusbar.showMessage("正在预热 OCR 模型...")
                 self._start_subprocess_preload()
             else:
@@ -507,7 +508,12 @@ class MainWindow(QMainWindow):
         from vibeocr.managers.config_manager import ConfigManager
         from vibeocr.core.pipelines import OCRPipeline
 
-        raw_pipelines = ConfigManager.instance().get_preload_pipelines()
+        cm = ConfigManager.instance()
+        if not cm.get_preload_enabled():
+            logging.debug("[子进程预加载] 预加载已禁用")
+            return
+
+        raw_pipelines = cm.get_preload_pipelines()
 
         # 过滤无效的管道名称
         valid_values = {p.value for p in OCRPipeline}

@@ -231,6 +231,11 @@ class BaseOcrTab(QWidget):
                     OCRPreferences.instance().get_pipeline_options(source, new_pipeline)
                 )
             )
+            self._preprocess_options.options_changed.connect(
+                lambda opts: OCRPreferences.instance().set_pipeline_options(
+                    source, opts.pipeline, opts
+                )
+            )
 
     @abstractmethod
     def _setup_ui(self) -> None:

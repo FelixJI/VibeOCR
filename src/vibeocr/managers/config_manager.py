@@ -119,6 +119,17 @@ class ConfigManager(QObject):
         self._preload_pipelines = pipelines
         return pipelines
 
+    def get_preload_enabled(self) -> bool:
+        data = self._load_json("app_settings.json", {})
+        if "preload_enabled" not in data:
+            return len(data.get("preload_pipelines", [])) > 0
+        return bool(data["preload_enabled"])
+
+    def set_preload_enabled(self, enabled: bool) -> bool:
+        data = self._load_json("app_settings.json", {})
+        data["preload_enabled"] = enabled
+        return self._save_json("app_settings.json", data)
+
     def set_preload_pipelines(self, pipelines: list[str]) -> bool:
         data = self._load_json("app_settings.json", {})
         data["preload_pipelines"] = pipelines
