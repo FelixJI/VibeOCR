@@ -85,8 +85,8 @@ class UnifiedBBoxOverlay(QWidget):
         super().__init__(parent)
         # 置信度模式数据: list of (x, y, w, h, score, text, is_manually_edited)
         self._conf_rects: list[tuple[float, float, float, float, float, str, bool]] = []
-        # 块类型模式数据: list of (content_index, rect, block_type, fill, border)
-        self._type_rects: list[tuple[int, QRectF, str, QColor, QColor]] = []
+        # 块类型模式数据: list of (content_index, rect, block_type, fill, border, confidence)
+        self._type_rects: list[tuple[int, QRectF, str, QColor, QColor, float | None]] = []
         self._mode: str = "confidence"  # "confidence" or "block_type"
         self._hovered_index: int = -1
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
@@ -163,10 +163,14 @@ class UnifiedBBoxOverlay(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-        for cl_idx, rect, block_type, fill_color, border_color in self._type_rects:
+        for cl_idx, rect, block_type, fill_color, border_color, confidence in self._type_rects:
             is_hovered = cl_idx == self._hovered_index
+            is_low_conf = confidence is not None and confidence < LOW_CONFIDENCE_THRESHOLD
 
-            if is_hovered:
+            if is_low_conf:
+                fill = QColor(LOW_CONF_FILL)
+                border = QColor(LOW_CONF_BORDER)
+            elif is_hovered:
                 fill = QColor(fill_color)
                 fill.setAlpha(min(fill.alpha() + 100, 220))
                 border = QColor(border_color)
@@ -176,13 +180,17 @@ class UnifiedBBoxOverlay(QWidget):
                 border = border_color
 
             painter.fillRect(rect, fill)
-            pen = QPen(border, 1)
+            pen = QPen(border, 2 if is_low_conf else 1)
             painter.setPen(pen)
             painter.drawRect(rect)
 
             if is_hovered or len(self._type_rects) <= 20:
                 label = BLOCK_TYPE_LABELS.get(block_type, block_type)
-                label_rect = QRectF(rect.topLeft(), rect.topLeft() + QPointF(36, 14))
+                label_w = 36
+                if is_low_conf:
+                    label = f"{label} {confidence:.0%}"
+                    label_w = 62
+                label_rect = QRectF(rect.topLeft(), rect.topLeft() + QPointF(label_w, 14))
                 painter.fillRect(label_rect, border)
                 font = painter.font()
                 font.setPointSize(7)
@@ -574,7 +582,9 @@ class PreviewWidget(QWidget):
                 (bbox[2] - bbox[0]) / BBOX_NORM * disp_w,
                 (bbox[3] - bbox[1]) / BBOX_NORM * disp_h,
             )
-            overlay_rects.append((i, screen_rect, block_type, fill_color, border_color))
+            overlay_rects.append(
+                (i, screen_rect, block_type, fill_color, border_color, block.get("confidence"))
+            )
 
         self._overlay.set_type_blocks(overlay_rects)
         self._overlay.setGeometry(self._scroll_area.viewport().rect())

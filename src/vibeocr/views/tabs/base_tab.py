@@ -102,11 +102,12 @@ class BaseOcrTab(QWidget):
                     cl_block["bbox"] = list(normalize_bbox(bbox[:4], img_w, img_h))
             for tb in text_blocks:
                 cl_idx = getattr(tb, "content_index", None)
-                if cl_idx is not None and cl_idx < len(content_list) and tb.bbox:
-                    if "bbox" not in content_list[cl_idx]:
+                if cl_idx is not None and cl_idx < len(content_list):
+                    if tb.bbox and "bbox" not in content_list[cl_idx]:
                         content_list[cl_idx]["bbox"] = list(
                             normalize_bbox(tb.bbox, img_w, img_h)
                         )
+                    content_list[cl_idx]["confidence"] = tb.score
             return content_list
 
         if not text_blocks:
@@ -114,7 +115,7 @@ class BaseOcrTab(QWidget):
 
         built = []
         for b in text_blocks:
-            entry: dict = {"type": "text", "text": b.text}
+            entry: dict = {"type": "text", "text": b.text, "confidence": b.score}
             if b.bbox:
                 entry["bbox"] = list(normalize_bbox(b.bbox, img_w, img_h))
             if b.page_idx is not None:
