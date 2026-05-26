@@ -239,7 +239,7 @@ def verify_cuda_runtime() -> bool:
         capture_output=True,
         text=True,
         timeout=60,
-        creation_flags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+        creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
     )
     if result.stdout:
         print(f"  {result.stdout.strip()}")
