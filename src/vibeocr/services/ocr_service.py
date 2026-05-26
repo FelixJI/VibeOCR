@@ -471,11 +471,13 @@ class OCRService(metaclass=SingletonMeta):
 
     @classmethod
     def _register_dll_directories(cls) -> None:
-        """通过 os.add_dll_directory() 注册 CUDA DLL 目录
+        """通过 os.add_dll_directory() 和 PATH 注册 CUDA DLL 目录
 
         Python 3.8+ Windows 上 ctypes.CDLL 不再搜索 os.environ["PATH"]，
-        必须通过 os.add_dll_directory() 注册。此方法必须在 PaddlePaddle
-        导入完成后调用，否则会触发 PaddlePaddle 内部的路径错误。
+        必须通过 os.add_dll_directory() 注册。同时更新 PATH 环境变量，
+        确保推理引擎（Paddle Inference）也能找到 CUDA DLL。
+        此方法必须在 PaddlePaddle 导入完成后调用，否则会触发 PaddlePaddle
+        内部的路径错误。
         """
         if not hasattr(os, "add_dll_directory"):
             return
@@ -495,11 +497,13 @@ class OCRService(metaclass=SingletonMeta):
                 if os.path.isdir(sub_dir):
                     with contextlib.suppress(OSError):
                         os.add_dll_directory(sub_dir)
+                    os.environ["PATH"] = sub_dir + ";" + os.environ.get("PATH", "")
                     for sub in os.scandir(sub_dir):
                         arch_dir = os.path.join(sub_dir, sub.name)
                         if sub.is_dir():
                             with contextlib.suppress(OSError):
                                 os.add_dll_directory(arch_dir)
+                            os.environ["PATH"] = arch_dir + ";" + os.environ.get("PATH", "")
 
     @staticmethod
     def _get_project_root():
@@ -760,19 +764,18 @@ class OCRService(metaclass=SingletonMeta):
         preproc_w = preproc_h = 0
         if output_list:
             res = output_list[0]
-            dp_res = getattr(res, "doc_preprocessor_res", None)
+            dp_res = res.get("doc_preprocessor_res")
             if dp_res is not None:
-                if isinstance(dp_res, dict):
-                    preproc_angle = dp_res.get("angle", 0)
-                else:
-                    preproc_angle = getattr(dp_res, "angle", 0)
-            img_dict = getattr(res, "img", None)
-            if isinstance(img_dict, dict):
-                pp_img = img_dict.get("preprocessed_img")
-                if pp_img is not None:
-                    preproc_w, preproc_h = pp_img.size
+                preproc_angle = dp_res.get("angle", 0)
+                out_arr = dp_res.get("output_img")
+                if out_arr is not None:
+                    from PIL import Image as _PILImage
+
+                    rgb = out_arr[:, :, ::-1] if out_arr.ndim == 3 else out_arr
+                    pil_img = _PILImage.fromarray(rgb)
+                    preproc_w, preproc_h = pil_img.size
                     buf = io.BytesIO()
-                    pp_img.save(buf, format="PNG")
+                    pil_img.save(buf, format="PNG")
                     preprocessed_png = buf.getvalue()
 
         text_blocks: list[TextBlock] = []
@@ -1098,26 +1101,26 @@ class OCRService(metaclass=SingletonMeta):
 
         output_list = self._consume_generator_safely(output)
 
-        # 提取预处理旋转角度和预处理后图像（用于 bbox 归一化和显示）
+        # 提取预处理信息：旋转角度和实际预处理后图像
+        # res.img['preprocessed_img'] 是拼接可视化，不用；
+        # 实际预处理图在 doc_preprocessor_res['output_img']（numpy BGR）
         preproc_angle = 0
         preprocessed_png: bytes | None = None
         preproc_w = preproc_h = 0
         if output_list:
             res = output_list[0]
-            dp_res = getattr(res, "doc_preprocessor_res", None)
+            dp_res = res.get("doc_preprocessor_res")
             if dp_res is not None:
-                if isinstance(dp_res, dict):
-                    preproc_angle = dp_res.get("angle", 0)
-                else:
-                    preproc_angle = getattr(dp_res, "angle", 0)
-            # 提取预处理后图像（PaddleOCR: res.img['preprocessed_img']）
-            img_dict = getattr(res, "img", None)
-            if isinstance(img_dict, dict):
-                pp_img = img_dict.get("preprocessed_img")
-                if pp_img is not None:
-                    preproc_w, preproc_h = pp_img.size
+                preproc_angle = dp_res.get("angle", 0)
+                out_arr = dp_res.get("output_img")
+                if out_arr is not None:
+                    from PIL import Image as _PILImage
+
+                    rgb = out_arr[:, :, ::-1] if out_arr.ndim == 3 else out_arr
+                    pil_img = _PILImage.fromarray(rgb)
+                    preproc_w, preproc_h = pil_img.size
                     buf = io.BytesIO()
-                    pp_img.save(buf, format="PNG")
+                    pil_img.save(buf, format="PNG")
                     preprocessed_png = buf.getvalue()
 
         result_count = 0

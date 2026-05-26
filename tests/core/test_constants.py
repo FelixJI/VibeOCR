@@ -15,7 +15,7 @@ class TestConstants:
     def test_app_info(self):
         """测试应用信息"""
         assert Constants.APP_NAME == "VibeOCR"
-        assert Constants.APP_VERSION == "1.0.0"
+        assert Constants.APP_VERSION == "0.1.0"
         assert "PaddleOCR" in Constants.APP_DESCRIPTION
 
     def test_window_sizes(self):

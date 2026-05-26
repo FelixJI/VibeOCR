@@ -280,3 +280,46 @@ class TestBackendDefault:
         widget.set_options(new_options)
 
         assert widget._backend_combo.currentData() == "pipeline"
+
+
+class TestPipelineSwitchSignals:
+    """管道切换信号测试"""
+
+    def test_pipeline_switching_emits_old_pipeline(self, widget, qtbot):
+        """切换管道时 pipeline_switching 信号携带旧管道和旧选项"""
+        received = []
+        widget.pipeline_switching.connect(
+            lambda old_p, opts: received.append((old_p, opts))
+        )
+        index = widget._pipeline_combo.findData(OCRPipeline.PP_STRUCTURE_V3.value)
+        widget._pipeline_combo.setCurrentIndex(index)
+        qtbot.wait(50)
+
+        assert len(received) == 1
+        assert received[0][0] == OCRPipeline.OCR  # old pipeline
+
+    def test_pipeline_switched_emits_new_pipeline(self, widget, qtbot):
+        """切换管道时 pipeline_switched 信号携带新管道"""
+        received = []
+        widget.pipeline_switched.connect(lambda p: received.append(p))
+        index = widget._pipeline_combo.findData(OCRPipeline.PP_STRUCTURE_V3.value)
+        widget._pipeline_combo.setCurrentIndex(index)
+        qtbot.wait(50)
+
+        assert len(received) == 1
+        assert received[0] == OCRPipeline.PP_STRUCTURE_V3
+
+    def test_options_changed_not_emitted_during_switch(self, widget, qtbot):
+        """管道切换时不发射 options_changed（避免保存中间状态）"""
+        received = []
+        widget.options_changed.connect(lambda opts: received.append(opts))
+        index = widget._pipeline_combo.findData(OCRPipeline.PP_STRUCTURE_V3.value)
+        widget._pipeline_combo.setCurrentIndex(index)
+        qtbot.wait(50)
+
+        assert len(received) == 0
+
+    def test_options_changed_emitted_on_checkbox_toggle(self, widget, qtbot):
+        """勾选框变更仍发射 options_changed"""
+        with qtbot.waitSignal(widget.options_changed, timeout=1000):
+            widget._doc_orientation_cb.setChecked(False)

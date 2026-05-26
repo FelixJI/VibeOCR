@@ -246,7 +246,7 @@ def _recognize_paddlocr_vl(
 
 PADDLEOCR_VL_SPEC = PipelineSpec(
     name="PaddleOCR-VL",
-    display_name="PaddleOCR-VL（文档）",
+    display_name="文档P（PaddleOCR-VL）",
     description="使用 PaddleOCR-VL-1.5 解析文档，支持图片/PDF，提取文本、表格、公式、图表等",
     options_class=PaddleOCRVLOptions,
     create_pipeline=_create_paddlocr_vl_pipeline,

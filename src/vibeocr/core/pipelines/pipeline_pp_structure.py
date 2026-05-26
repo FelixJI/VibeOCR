@@ -157,19 +157,18 @@ def _recognize_pp_structure(
     preproc_w = preproc_h = 0
     if output_list:
         res = output_list[0]
-        dp_res = getattr(res, "doc_preprocessor_res", None)
+        dp_res = res.get("doc_preprocessor_res")
         if dp_res is not None:
-            if isinstance(dp_res, dict):
-                preproc_angle = dp_res.get("angle", 0)
-            else:
-                preproc_angle = getattr(dp_res, "angle", 0)
-        img_dict = getattr(res, "img", None)
-        if isinstance(img_dict, dict):
-            pp_img = img_dict.get("preprocessed_img")
-            if pp_img is not None:
-                preproc_w, preproc_h = pp_img.size
+            preproc_angle = dp_res.get("angle", 0)
+            out_arr = dp_res.get("output_img")
+            if out_arr is not None:
+                from PIL import Image as _PILImage
+
+                rgb = out_arr[:, :, ::-1] if out_arr.ndim == 3 else out_arr
+                pil_img = _PILImage.fromarray(rgb)
+                preproc_w, preproc_h = pil_img.size
                 buf = io.BytesIO()
-                pp_img.save(buf, format="PNG")
+                pil_img.save(buf, format="PNG")
                 preprocessed_png = buf.getvalue()
 
     text_blocks: list[TextBlock] = []

@@ -57,6 +57,7 @@ class InlineToolbar(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("inlineToolbar")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
 
         self._current_tool: EditTool | None = None
 
@@ -64,6 +65,12 @@ class InlineToolbar(QWidget):
         self._connect_signals()
 
     def _setup_ui(self) -> None:
+        self.setStyleSheet(f"""
+            #inlineToolbar {{
+                background-color: {InlineStyles.PANEL_BG};
+            }}
+        """)
+
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(4)

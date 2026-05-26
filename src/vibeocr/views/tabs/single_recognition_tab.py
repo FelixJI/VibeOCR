@@ -179,11 +179,26 @@ class SingleRecognitionTab(BaseOcrTab):
         self._start_recognition()
 
     def _start_recognition(self) -> None:
-        """开始识别：根据待处理的来源执行 OCR"""
+        """开始识别：保存当前管道选项后执行 OCR"""
+        self._save_current_pipeline_options()
         if self._pending_pixmap:
             self.run_ocr(self._pending_pixmap)
         elif self._pending_file_path:
             self.process_file(self._pending_file_path)
+
+    def _save_current_pipeline_options(self) -> None:
+        """保存当前管道选项到持久化"""
+        if not self._preprocess_options:
+            return
+        try:
+            from vibeocr.utils.ocr_preferences import OCRPreferences
+
+            prefs = OCRPreferences.instance()
+            pipeline = self._preprocess_options.get_current_pipeline()
+            options = self._preprocess_options.get_options()
+            prefs.set_pipeline_options("main", pipeline, options)
+        except RuntimeError:
+            pass
 
     def set_closing(self, closing: bool) -> None:
         self._closing = closing

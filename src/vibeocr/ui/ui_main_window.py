@@ -186,23 +186,20 @@ class Ui_MainWindowWidget(object):
         self.preloadPipelinesLayout = QHBoxLayout()
         self.preloadPipelinesLayout.setSpacing(4)
         self.preloadPipelinesLayout.setObjectName("preloadPipelinesLayout")
-        self.chkPreloadOCR = QCheckBox(self.preloadOptions)
-        self.chkPreloadOCR.setObjectName("chkPreloadOCR")
-        self.chkPreloadOCR.setChecked(True)
 
-        self.preloadPipelinesLayout.addWidget(self.chkPreloadOCR)
+        from vibeocr.core.pipelines import (
+            get_preloadable_pipelines,
+            get_pipeline_display_name,
+        )
 
-        self.chkPreloadTable = QCheckBox(self.preloadOptions)
-        self.chkPreloadTable.setObjectName("chkPreloadTable")
-        self.chkPreloadTable.setChecked(False)
-
-        self.preloadPipelinesLayout.addWidget(self.chkPreloadTable)
-
-        self.chkPreloadFormula = QCheckBox(self.preloadOptions)
-        self.chkPreloadFormula.setObjectName("chkPreloadFormula")
-        self.chkPreloadFormula.setChecked(False)
-
-        self.preloadPipelinesLayout.addWidget(self.chkPreloadFormula)
+        self._preload_checkboxes: dict[str, QCheckBox] = {}
+        for pipeline in get_preloadable_pipelines():
+            chk = QCheckBox(self.preloadOptions)
+            chk.setObjectName(f"chkPreload_{pipeline.name}")
+            chk.setText(get_pipeline_display_name(pipeline))
+            chk.setChecked(pipeline.name == "OCR")
+            self.preloadPipelinesLayout.addWidget(chk)
+            self._preload_checkboxes[pipeline.name] = chk
 
         self.horizontalSpacerPreload = QSpacerItem(
             40, 20, QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum
@@ -493,38 +490,6 @@ class Ui_MainWindowWidget(object):
             QCoreApplication.translate(
                 "MainWindowWidget", "\u9884\u52a0\u8f7d\u7ba1\u9053:", None
             )
-        )
-        # if QT_CONFIG(tooltip)
-        self.chkPreloadOCR.setToolTip(
-            QCoreApplication.translate(
-                "MainWindowWidget",
-                "\u901a\u7528 OCR \u7ba1\u9053\uff08\u7ea6 600MB \u663e\u5b58\uff09",
-                None,
-            )
-        )
-        # endif // QT_CONFIG(tooltip)
-        self.chkPreloadOCR.setText(
-            QCoreApplication.translate("MainWindowWidget", "\u901a\u7528 OCR", None)
-        )
-        # if QT_CONFIG(tooltip)
-        self.chkPreloadTable.setToolTip(
-            QCoreApplication.translate(
-                "MainWindowWidget", "\u8868\u683c\u8bc6\u522b\u7ba1\u9053", None
-            )
-        )
-        # endif // QT_CONFIG(tooltip)
-        self.chkPreloadTable.setText(
-            QCoreApplication.translate("MainWindowWidget", "\u8868\u683c", None)
-        )
-        # if QT_CONFIG(tooltip)
-        self.chkPreloadFormula.setToolTip(
-            QCoreApplication.translate(
-                "MainWindowWidget", "\u516c\u5f0f\u8bc6\u522b\u7ba1\u9053", None
-            )
-        )
-        # endif // QT_CONFIG(tooltip)
-        self.chkPreloadFormula.setText(
-            QCoreApplication.translate("MainWindowWidget", "\u516c\u5f0f", None)
         )
         # if QT_CONFIG(tooltip)
         self.btnPreloadNow.setToolTip(

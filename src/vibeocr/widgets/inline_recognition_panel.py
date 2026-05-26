@@ -1,27 +1,44 @@
-# src/vibeocr/widgets/inline_recognition_panel.py
-"""内联识别面板 - 快速选择识别类型并展开高级设置"""
+"""内联识别面板 - 快速选择识别类型"""
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QPushButton, QVBoxLayout, QWidget
 
 from vibeocr.core.inline_styles import InlineStyles
-from vibeocr.core.pipelines import OCRPipeline
+from vibeocr.core.pipelines import (
+    OCRPipeline,
+    get_all_pipelines,
+    get_pipeline_short_name,
+    get_pipeline_supported_options,
+)
 from vibeocr.models.ocr_options import OCROptions
-from vibeocr.widgets.preprocess_options_widget import PreprocessOptionsWidget
 
-_PIPELINE_BUTTON_CONFIG: list[tuple[OCRPipeline, str]] = [
-    (OCRPipeline.OCR, "文字"),
-    (OCRPipeline.PP_STRUCTURE_V3, "结构"),
-    (OCRPipeline.PADDLEOCR_VL, "VL"),
-    (OCRPipeline.DOCUMENT_PARSING, "文档"),
-]
+_OPTION_DISPLAY_NAMES = {
+    "use_doc_orientation_classify": "方向分类",
+    "use_doc_unwarping": "扭曲矫正",
+    "use_textline_orientation": "文本行方向",
+    "use_table_recognition": "表格识别",
+    "use_formula_recognition": "公式识别",
+    "use_seal_recognition": "印章识别",
+    "use_chart_recognition": "图表识别",
+    "vl_use_layout_detection": "版面检测",
+    "vl_use_chart_recognition": "图表识别",
+    "vl_use_seal_recognition": "印章识别",
+    "use_ocr_for_image_block": "图片文字识别",
+    "use_wireless_table": "无线表格",
+    "use_table_orientation_classify": "表格方向分类",
+    "use_ocr_results_with_table_cells": "单元格文字",
+    "use_e2e_wired_table_rec_model": "端到端有线表格",
+    "use_e2e_wireless_table_rec_model": "端到端无线表格",
+    "enable_formula": "公式识别",
+    "enable_table": "表格识别",
+}
 
 
 class InlineRecognitionPanel(QWidget):
     """内联识别面板
 
-    提供快速识别类型选择按钮，并可展开显示更多预处理选项。
-    点击管道按钮直接触发识别。
+    从管道注册表动态生成按钮，点击直接触发识别。
+    按钮选项从 OCRPreferences 的 "screenshot" 源读取。
     """
 
     recognize_requested = Signal()
@@ -30,21 +47,22 @@ class InlineRecognitionPanel(QWidget):
         super().__init__(parent)
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
 
-        self._settings_expanded: bool = False
         self._pipeline_buttons: dict[OCRPipeline, QPushButton] = {}
         self._current_pipeline: OCRPipeline = OCRPipeline.OCR
+        self._current_options: OCROptions = OCROptions(pipeline=OCRPipeline.OCR)
 
         self._setup_ui()
         self._apply_styles()
+        self._load_pipeline_options(self._current_pipeline)
+        self._update_tooltips()
 
     def _setup_ui(self):
-        """构建 UI 布局"""
         layout = QVBoxLayout(self)
         layout.setContentsMargins(6, 6, 6, 6)
         layout.setSpacing(4)
 
-        # 管道按钮
-        for pipeline, label in _PIPELINE_BUTTON_CONFIG:
+        for pipeline in get_all_pipelines():
+            label = get_pipeline_short_name(pipeline)
             btn = QPushButton(label)
             btn.setCheckable(True)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -55,82 +73,54 @@ class InlineRecognitionPanel(QWidget):
             layout.addWidget(btn)
             self._pipeline_buttons[pipeline] = btn
 
-        # 更多设置按钮
-        self._btn_more = QPushButton("更多 ▸")
-        self._btn_more.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._btn_more.clicked.connect(self._toggle_settings)
-        layout.addWidget(self._btn_more)
-
-        # 预处理选项组件（初始隐藏）
-        self._settings_widget = PreprocessOptionsWidget()
-        self._settings_widget.setVisible(False)
-        self._settings_widget.options_changed.connect(self._on_settings_changed)
-        layout.addWidget(self._settings_widget)
-
     def _apply_styles(self):
-        """应用样式"""
         self.setStyleSheet(InlineStyles.panel_style())
-
         for btn in self._pipeline_buttons.values():
             btn.setStyleSheet(InlineStyles.recognition_button_style())
 
-        self._btn_more.setStyleSheet(InlineStyles.recognition_button_style())
+    def _load_pipeline_options(self, pipeline: OCRPipeline) -> None:
+        """从 OCRPreferences 的 screenshot 源加载指定管道的选项"""
+        try:
+            from vibeocr.utils.ocr_preferences import OCRPreferences
+            prefs = OCRPreferences.instance()
+            self._current_options = prefs.get_pipeline_options("screenshot", pipeline)
+        except RuntimeError:
+            self._current_options = OCROptions(pipeline=pipeline)
 
     def _on_pipeline_clicked(self, pipeline: OCRPipeline):
-        """管道按钮点击处理——选中并直接触发识别"""
         self._current_pipeline = pipeline
-
-        # 更新按钮选中状态
+        self._load_pipeline_options(pipeline)
         for p, btn in self._pipeline_buttons.items():
             btn.setChecked(p == pipeline)
-
-        # 同步到设置面板
-        if self._settings_expanded:
-            self._settings_widget.set_options(self.get_options())
-
         self.recognize_requested.emit()
 
-    def _toggle_settings(self):
-        """切换设置面板的展开/折叠"""
-        self._settings_expanded = not self._settings_expanded
-        self._settings_widget.setVisible(self._settings_expanded)
-
-        if self._settings_expanded:
-            self._btn_more.setText("更多 ▾")
-        else:
-            self._btn_more.setText("更多 ▸")
-
-    def _on_settings_changed(self, options: OCROptions):
-        """设置面板选项变更时的处理"""
-        # 当设置面板更改了管道时，同步管道按钮
-        self._current_pipeline = options.pipeline
-        for p, btn in self._pipeline_buttons.items():
-            btn.setChecked(p == options.pipeline)
-
     def get_options(self) -> OCROptions:
-        """获取当前识别选项
-
-        Returns:
-            包含当前管道和预处理选项的 OCROptions 实例
-        """
-        if self._settings_expanded:
-            options = self._settings_widget.get_options()
-            options.pipeline = self._current_pipeline
-            return options
-
-        return OCROptions(pipeline=self._current_pipeline)
+        return OCROptions.from_dict(self._current_options.to_dict())
 
     def set_options(self, options: OCROptions):
-        """设置识别选项
-
-        Args:
-            options: 要设置的 OCROptions 实例
-        """
+        self._current_options = OCROptions.from_dict(options.to_dict())
         self._current_pipeline = options.pipeline
-
-        # 更新按钮选中状态
         for p, btn in self._pipeline_buttons.items():
             btn.setChecked(p == options.pipeline)
 
-        # 同步到设置面板
-        self._settings_widget.set_options(options)
+    def _update_tooltips(self) -> None:
+        """为所有管道按钮生成 tooltip"""
+        for pipeline, btn in self._pipeline_buttons.items():
+            btn.setToolTip(self._build_pipeline_tooltip(pipeline))
+
+    def _build_pipeline_tooltip(self, pipeline: OCRPipeline) -> str:
+        """构建管道选项的 tooltip 文本"""
+        try:
+            from vibeocr.utils.ocr_preferences import OCRPreferences
+            options = OCRPreferences.instance().get_pipeline_options("screenshot", pipeline)
+        except RuntimeError:
+            options = OCROptions(pipeline=pipeline)
+
+        supported = get_pipeline_supported_options(pipeline)
+        parts = []
+        for opt_name in supported:
+            value = getattr(options, opt_name, None)
+            if isinstance(value, bool):
+                display = _OPTION_DISPLAY_NAMES.get(opt_name, opt_name)
+                parts.append(f"{display}: {'开' if value else '关'}")
+        return " | ".join(parts) if parts else ""

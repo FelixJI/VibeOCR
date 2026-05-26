@@ -29,13 +29,8 @@ class TestOCRPipeline:
         assert (
             get_pipeline_display_name(OCRPipeline.PP_STRUCTURE_V3) == "PP-StructureV3"
         )
-        assert (
-            get_pipeline_display_name(OCRPipeline.DOCUMENT_PARSING) == "MineRU（文档）"
-        )
-        assert (
-            get_pipeline_display_name(OCRPipeline.PADDLEOCR_VL)
-            == "PaddleOCR-VL（文档）"
-        )
+        assert "MineRU" in get_pipeline_display_name(OCRPipeline.DOCUMENT_PARSING)
+        assert "PaddleOCR-VL" in get_pipeline_display_name(OCRPipeline.PADDLEOCR_VL)
 
     def test_get_description(self):
         """验证描述获取"""

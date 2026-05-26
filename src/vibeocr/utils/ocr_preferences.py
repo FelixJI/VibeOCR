@@ -1,10 +1,7 @@
 """OCR 选项持久化管理器
 
 模块级单例，作为所有界面的 OCR 选项统一数据源。
-自动从 config/ocr_preferences.json 加载/保存选项。
-
-注意：不使用 SingletonMeta，因为 QObject 子类与 SingletonMeta 元类不兼容。
-改用模块级实例实现单例。
+支持按管道独立存储，区分 main 和 screenshot 两个数据源。
 """
 
 import json
@@ -23,7 +20,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _CONFIG_FILENAME = "ocr_preferences.json"
-_CONFIG_VERSION = 1
+_CONFIG_VERSION = 2
 
 _instance: "OCRPreferences | None" = None
 
@@ -32,15 +29,17 @@ class OCRPreferences(QObject):
     """OCR 选项持久化管理器
 
     所有 OCR 选项的统一数据源，提供跨界面同步和持久化。
+    支持按管道独立存储，区分 "main"（主界面）和 "screenshot"（截图面板）。
 
     Usage:
         prefs = OCRPreferences.instance(config_manager)
-        options = prefs.get_options()
-        prefs.set_options(new_options)  # 自动持久化并发出信号
+        options = prefs.get_pipeline_options("main", OCRPipeline.OCR)
+        prefs.set_pipeline_options("main", OCRPipeline.OCR, new_options)
     """
 
-    options_changed = Signal(object)  # OCROptions
+    options_changed = Signal(object)  # OCROptions (legacy)
     batch_options_changed = Signal(object)  # OCROptions
+    pipeline_options_changed = Signal(str, object)  # (source, OCROptions)
 
     def __init__(self, config_manager: "ConfigManager | Path") -> None:
         super().__init__()
@@ -52,22 +51,19 @@ class OCRPreferences(QObject):
             self._cm = config_manager
             self._config_dir = config_manager.config_dir
             self._config_path = self._config_dir / _CONFIG_FILENAME
-        self._options = OCROptions()
+
+        self._per_pipeline: dict[str, dict[str, OCROptions]] = {
+            "main": {},
+            "screenshot": {},
+        }
         self._batch_options = OCROptions(pipeline=OCRPipeline.DOCUMENT_PARSING)
+        self._last_main_pipeline: OCRPipeline = OCRPipeline.OCR
         self._load()
 
     @staticmethod
     def instance(
         config_manager: "ConfigManager | Path | None" = None,
     ) -> "OCRPreferences":
-        """获取单例实例
-
-        Args:
-            config_manager: 首次调用时必须传入 ConfigManager 或 config_dir 路径
-
-        Returns:
-            OCRPreferences 实例
-        """
         global _instance
         if _instance is None:
             if config_manager is None:
@@ -77,12 +73,10 @@ class OCRPreferences(QObject):
 
     @staticmethod
     def reset_instance() -> None:
-        """重置单例（仅供测试使用）。"""
         global _instance
         _instance = None
 
     def _load(self) -> None:
-        """从 JSON 文件加载选项"""
         if self._cm is not None:
             data = self._cm._load_json(_CONFIG_FILENAME)
         else:
@@ -95,58 +89,92 @@ class OCRPreferences(QObject):
                 logger.warning(f"加载 OCR 选项失败: {e}")
                 return
 
-        if data:
-            self._options = OCROptions.from_dict(data)
-            # 加载批量选项（独立于单次选项）
-            batch_data = data.get("batch_options")
-            if batch_data:
-                self._batch_options = OCROptions.from_dict(batch_data)
-            logger.debug("OCR 选项已加载")
+        if not data:
+            return
+
+        version = data.get("version", 1)
+
+        if version < 2:
+            pipeline_name = data.get("pipeline", "OCR")
+            self._per_pipeline["main"][pipeline_name] = OCROptions.from_dict(data)
+            self._last_main_pipeline = OCRPipeline(pipeline_name)
+        else:
+            for source in ("main", "screenshot"):
+                source_data = data.get(source, {})
+                for pipeline_name, opts_dict in source_data.items():
+                    self._per_pipeline.setdefault(source, {})[pipeline_name] = (
+                        OCROptions.from_dict(opts_dict)
+                    )
+            last = data.get("last_main_pipeline", "OCR")
+            try:
+                self._last_main_pipeline = OCRPipeline(last)
+            except ValueError:
+                self._last_main_pipeline = OCRPipeline.OCR
+
+        batch_data = data.get("batch_options")
+        if batch_data:
+            self._batch_options = OCROptions.from_dict(batch_data)
+
+        logger.debug("OCR 选项已加载")
+
+    def get_pipeline_options(self, source: str, pipeline: OCRPipeline) -> OCROptions:
+        """读取指定区域指定管道的选项，不存在则返回默认"""
+        opts = self._per_pipeline.get(source, {}).get(pipeline.value)
+        if opts:
+            return OCROptions.from_dict(opts.to_dict())
+        return OCROptions(pipeline=pipeline)
+
+    def set_pipeline_options(
+        self, source: str, pipeline: OCRPipeline, options: OCROptions
+    ) -> None:
+        """保存到指定区域并持久化"""
+        if source not in self._per_pipeline:
+            self._per_pipeline[source] = {}
+        self._per_pipeline[source][pipeline.value] = OCROptions.from_dict(
+            options.to_dict()
+        )
+        if source == "main":
+            self._last_main_pipeline = pipeline
+        self.save()
+        self.pipeline_options_changed.emit(source, options)
 
     def get_options(self) -> OCROptions:
-        """获取当前选项"""
-        return self._options
+        """获取主界面最后使用的管道选项（向后兼容）"""
+        return self.get_pipeline_options("main", self._last_main_pipeline)
 
     def set_options(self, options: OCROptions) -> None:
-        """设置选项并持久化
-
-        Args:
-            options: 新的 OCR 选项
-        """
-        # 通过 to_dict → from_dict 规范化，确保枚举类型一致
-        self._options = OCROptions.from_dict(options.to_dict())
+        """设置主界面选项（向后兼容）"""
+        self._last_main_pipeline = options.pipeline
+        self._per_pipeline.setdefault("main", {})[options.pipeline.value] = (
+            OCROptions.from_dict(options.to_dict())
+        )
         self.save()
-        self.options_changed.emit(self._options)
+        self.options_changed.emit(options)
 
     def get_batch_options(self) -> OCROptions:
-        """获取批量识别选项"""
         return self._batch_options
 
     def set_batch_options(self, options: OCROptions) -> None:
-        """设置批量识别选项并持久化
-
-        Args:
-            options: 新的批量识别选项
-        """
         self._batch_options = OCROptions.from_dict(options.to_dict())
         self.save()
         self.batch_options_changed.emit(self._batch_options)
 
     def save(self) -> bool:
-        """保存选项到 JSON 文件
-
-        Returns:
-            是否保存成功
-        """
         save_data = {
-            **self._options.to_dict(),
-            "batch_options": self._batch_options.to_dict(),
             "version": _CONFIG_VERSION,
+            "last_main_pipeline": self._last_main_pipeline.value,
+            "main": {
+                k: v.to_dict()
+                for k, v in self._per_pipeline.get("main", {}).items()
+            },
+            "screenshot": {
+                k: v.to_dict()
+                for k, v in self._per_pipeline.get("screenshot", {}).items()
+            },
+            "batch_options": self._batch_options.to_dict(),
         }
         if self._cm is not None:
             return self._cm._save_json(_CONFIG_FILENAME, save_data)
-
-        # 旧路径兼容
         try:
             self._config_dir.mkdir(parents=True, exist_ok=True)
             with open(self._config_path, "w", encoding="utf-8") as f:

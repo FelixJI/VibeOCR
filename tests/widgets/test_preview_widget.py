@@ -1,6 +1,7 @@
 """PreviewWidget 统一预览组件测试"""
 
 import pytest
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import QScrollArea
 
@@ -87,3 +88,53 @@ class TestPreviewWidgetHighlights:
         widget.set_content_list(content)
         widget.highlight_block(0)
         assert widget._highlight_block_index == 0
+
+
+class TestPreviewWidgetSignals:
+    """信号相关测试（原 tests/test_preview_widget.py）"""
+
+    def test_click_without_pixmap_emits_signal(self, qapp, qtbot):
+        """无图片时点击触发 screenshot_requested 信号。"""
+        widget = PreviewWidget()
+        widget.show()
+        qtbot.addWidget(widget)
+
+        with qtbot.waitSignal(widget.screenshot_requested, timeout=1000):
+
+            class MockEvent:
+                def button(self):
+                    return Qt.MouseButton.LeftButton
+
+            widget._on_label_click(MockEvent())
+
+    def test_click_with_pixmap_no_signal(self, qapp, sample_pixmap, qtbot):
+        """有图片时点击不触发信号。"""
+        widget = PreviewWidget()
+        widget.set_pixmap(sample_pixmap)
+        widget.show()
+        qtbot.addWidget(widget)
+
+        with qtbot.assertNotEmitted(widget.screenshot_requested, wait=100):
+
+            class MockEvent:
+                def button(self):
+                    return Qt.MouseButton.LeftButton
+
+            widget._on_label_click(MockEvent())
+
+    def test_image_changed_signal_on_set(self, qapp, sample_pixmap, qtbot):
+        """设置图片时发送 image_changed 信号。"""
+        widget = PreviewWidget()
+        qtbot.addWidget(widget)
+
+        with qtbot.waitSignal(widget.image_changed, timeout=1000):
+            widget.set_pixmap(sample_pixmap)
+
+    def test_image_changed_signal_on_clear(self, qapp, sample_pixmap, qtbot):
+        """清除图片时发送 image_changed 信号。"""
+        widget = PreviewWidget()
+        widget.set_pixmap(sample_pixmap)
+        qtbot.addWidget(widget)
+
+        with qtbot.waitSignal(widget.image_changed, timeout=1000):
+            widget.clear()

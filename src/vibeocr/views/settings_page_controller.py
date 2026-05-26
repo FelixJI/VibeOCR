@@ -13,8 +13,11 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QProgressBar,
     QPushButton,
+    QSizePolicy,
+    QSpacerItem,
     QListWidget,
     QStackedWidget,
+    QVBoxLayout,
     QWidget,
 )
 
@@ -63,12 +66,8 @@ class SettingsPageController:
         if btn_preload_now:
             btn_preload_now.clicked.connect(self._on_preload_now_clicked)
 
-        for chk_name in [
-            "chkPreloadOCR",
-            "chkPreloadTable",
-            "chkPreloadFormula",
-        ]:
-            chk = self._ui.findChild(QCheckBox, chk_name)
+        for pipeline in self._get_preloadable_pipelines():
+            chk = self._ui.findChild(QCheckBox, f"chkPreload_{pipeline.name}")
             if chk:
                 chk.toggled.connect(self._save_preload_pipelines_config)
 
@@ -80,7 +79,90 @@ class SettingsPageController:
         if btn_clear_cache:
             btn_clear_cache.clicked.connect(self._on_clear_cache_clicked)
 
+        self._init_screenshot_options(nav_list, stacked)
         self._init_settings_page()
+
+    def _init_screenshot_options(
+        self, nav_list: QListWidget | None, stacked: QStackedWidget | None
+    ) -> None:
+        """初始化截图面板选项页面"""
+        if not nav_list or not stacked:
+            return
+
+        from vibeocr.utils.ocr_preferences import OCRPreferences
+        from vibeocr.widgets.preprocess_options_widget import PreprocessOptionsWidget
+
+        # 添加导航项和页面
+        nav_list.addItem("截图选项")
+
+        page = QWidget()
+        page_layout = QVBoxLayout(page)
+        page_layout.setContentsMargins(16, 16, 16, 16)
+        page_layout.setSpacing(12)
+
+        self._screenshot_options = PreprocessOptionsWidget()
+        page_layout.addWidget(self._screenshot_options)
+
+        spacer = QSpacerItem(
+            20, 40, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Expanding
+        )
+        page_layout.addItem(spacer)
+
+        stacked.addWidget(page)
+
+        # 初始化选项
+        try:
+            prefs = OCRPreferences.instance()
+            default_pipeline = self._screenshot_options.get_current_pipeline()
+            self._screenshot_options.set_options(
+                prefs.get_pipeline_options("screenshot", default_pipeline)
+            )
+        except RuntimeError:
+            pass
+
+        # 连接信号
+        self._screenshot_switching = False
+        self._screenshot_options.pipeline_switching.connect(
+            self._on_screenshot_pipeline_switching
+        )
+        self._screenshot_options.pipeline_switched.connect(
+            self._on_screenshot_pipeline_switched
+        )
+        self._screenshot_options.options_changed.connect(
+            self._on_screenshot_option_changed
+        )
+
+    def _on_screenshot_pipeline_switching(self, old_pipeline, options) -> None:
+        self._screenshot_switching = True
+        try:
+            from vibeocr.utils.ocr_preferences import OCRPreferences
+            OCRPreferences.instance().set_pipeline_options(
+                "screenshot", old_pipeline, options
+            )
+        except RuntimeError:
+            pass
+
+    def _on_screenshot_pipeline_switched(self, new_pipeline) -> None:
+        try:
+            from vibeocr.utils.ocr_preferences import OCRPreferences
+            loaded = OCRPreferences.instance().get_pipeline_options(
+                "screenshot", new_pipeline
+            )
+            self._screenshot_options.set_options(loaded)
+        except RuntimeError:
+            pass
+        self._screenshot_switching = False
+
+    def _on_screenshot_option_changed(self, options) -> None:
+        if self._screenshot_switching:
+            return
+        try:
+            from vibeocr.utils.ocr_preferences import OCRPreferences
+            OCRPreferences.instance().set_pipeline_options(
+                "screenshot", options.pipeline, options
+            )
+        except RuntimeError:
+            pass
 
     def _init_settings_page(self) -> None:
         """初始化设置页面状态"""
@@ -88,18 +170,21 @@ class SettingsPageController:
         self._update_preload_status()
         self._restore_preload_checkbox_state()
 
+    @staticmethod
+    def _get_preloadable_pipelines():
+        """获取可预加载的管道列表"""
+        from vibeocr.core.pipelines import get_preloadable_pipelines
+
+        return get_preloadable_pipelines()
+
     def _restore_preload_checkbox_state(self) -> None:
         """从配置恢复预加载 checkbox 状态（阻塞信号避免触发保存）"""
         from vibeocr.managers.config_manager import ConfigManager
-        from vibeocr.services.ocr_service import OCRPipeline
 
-        saved = ConfigManager.instance().get_preload_pipelines()
-        mapping = {
-            "chkPreloadOCR": OCRPipeline.OCR,
-            "chkPreloadTable": OCRPipeline.PP_STRUCTURE_V3,
-        }
-        for chk_name, pipeline in mapping.items():
-            chk = self._ui.findChild(QCheckBox, chk_name)
+        cm = ConfigManager.instance()
+        saved = cm.get_preload_pipelines()
+        for pipeline in self._get_preloadable_pipelines():
+            chk = self._ui.findChild(QCheckBox, f"chkPreload_{pipeline.name}")
             if chk:
                 chk.blockSignals(True)
                 chk.setChecked(pipeline.value in saved)
@@ -108,15 +193,18 @@ class SettingsPageController:
         chk_enable = self._ui.findChild(QCheckBox, "chkEnablePreload")
         if chk_enable:
             chk_enable.blockSignals(True)
-            chk_enable.setChecked(len(saved) > 0)
+            chk_enable.setChecked(cm.get_preload_enabled())
             chk_enable.blockSignals(False)
-            self._on_enable_preload_toggled(len(saved) > 0)
+            self._on_enable_preload_toggled(cm.get_preload_enabled())
 
     def _on_enable_preload_toggled(self, checked: bool) -> None:
         """启用/禁用预加载"""
         preload_options = self._ui.findChild(QWidget, "preloadOptions")
         if preload_options:
             preload_options.setEnabled(checked)
+        from vibeocr.managers.config_manager import ConfigManager
+
+        ConfigManager.instance().set_preload_enabled(checked)
         logger.debug(f"[设置] 预加载功能: {'启用' if checked else '禁用'}")
 
     def _on_preload_now_clicked(self) -> None:
@@ -156,18 +244,11 @@ class SettingsPageController:
 
     def _get_selected_preload_pipelines(self) -> list["OCRPipeline"]:
         """获取选中的预加载管道"""
-        from vibeocr.services.ocr_service import OCRPipeline
-
         pipelines = []
-
-        chk_ocr = self._ui.findChild(QCheckBox, "chkPreloadOCR")
-        if chk_ocr and chk_ocr.isChecked():
-            pipelines.append(OCRPipeline.OCR)
-
-        chk_table = self._ui.findChild(QCheckBox, "chkPreloadTable")
-        if chk_table and chk_table.isChecked():
-            pipelines.append(OCRPipeline.PP_STRUCTURE_V3)
-
+        for pipeline in self._get_preloadable_pipelines():
+            chk = self._ui.findChild(QCheckBox, f"chkPreload_{pipeline.name}")
+            if chk and chk.isChecked():
+                pipelines.append(pipeline)
         return pipelines
 
     def _save_preload_pipelines_config(self) -> None:

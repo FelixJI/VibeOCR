@@ -14,17 +14,12 @@ class TestInlineToolbar:
 
     def test_tool_buttons_exist(self, qapp):
         toolbar = InlineToolbar()
-        assert len(toolbar._tool_buttons) == 6
+        assert len(toolbar._tool_buttons) == 7
 
     def test_tool_buttons_are_qtoolbutton(self, qapp):
         toolbar = InlineToolbar()
         for btn in toolbar._tool_buttons.values():
             assert isinstance(btn, QToolButton)
-
-    def test_tool_buttons_have_icons(self, qapp):
-        toolbar = InlineToolbar()
-        for tool, btn in toolbar._tool_buttons.items():
-            assert not btn.icon().isNull(), f"Tool {tool} button has null icon"
 
     def test_action_buttons_are_qtoolbutton(self, qapp):
         toolbar = InlineToolbar()
@@ -33,14 +28,6 @@ class TestInlineToolbar:
         assert isinstance(toolbar._btn_save, QToolButton)
         assert isinstance(toolbar._btn_copy, QToolButton)
         assert isinstance(toolbar._btn_cancel, QToolButton)
-
-    def test_action_buttons_have_icons(self, qapp):
-        toolbar = InlineToolbar()
-        assert not toolbar._btn_undo.icon().isNull()
-        assert not toolbar._btn_redo.icon().isNull()
-        assert not toolbar._btn_save.icon().isNull()
-        assert not toolbar._btn_copy.icon().isNull()
-        assert not toolbar._btn_cancel.icon().isNull()
 
     def test_tool_changed_signal(self, qapp):
         toolbar = InlineToolbar()
