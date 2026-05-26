@@ -64,24 +64,19 @@ PACKAGE_DATA = [
     ("resources", "resources"),
 ]
 
-# 隐藏导入（PyInstaller 静态分析可能遗漏的模块）
+# vibeocr 子模块通过 --collect-submodules 自动收集，此处只列出第三方包
 HIDDEN_IMPORTS = [
-    "vibeocr",
-    "vibeocr.env_manager",
-    "vibeocr.python_path_manager",
-    "vibeocr.services.mineru_service",
-    "vibeocr.services.ocr_service_portable",
-    "vibeocr.managers.config_manager",
-    "vibeocr.utils.app_settings",
-    "vibeocr.utils.qt_async",
-    "vibeocr.views.main_window",
-    "pyside6",
     "shiboken6",
     "qasync",
     "httpx",
     "PIL",
     "numpy",
     "markdown",
+    "qrcode",
+    "qrcode.image.pil",
+    "barcode",
+    "barcode.writer",
+    "fitz",
 ]
 
 
@@ -360,6 +355,10 @@ def _generate_version_json(version: str, dist_dir: Path) -> None:
     tomldata = tomllib.loads(PYPROJECT_TOML.read_text(encoding="utf-8"))
     deps = tomldata.get("project", {}).get("dependencies", [])
 
+    # 需要追踪版本的包前缀（对应 EXCLUDED_PACKAGES 中排除的大依赖）
+    _TRACKED_PREFIXES = ("paddle", "paddleocr", "mineru", "torch", "nvidia")
+    _KEY_ALIASES = {"paddlepaddle-gpu": "paddlepaddle"}
+
     dep_versions: dict[str, str] = {}
     for dep in deps:
         dep = dep.strip()
@@ -369,8 +368,8 @@ def _generate_version_json(version: str, dist_dir: Path) -> None:
             if op in dep:
                 pkg, ver = dep.split(op, 1)
                 pkg = pkg.strip().lower()
-                if pkg in ("paddlepaddle-gpu", "paddlex", "mineru", "nvidia-cudnn-cu13"):
-                    key = pkg.replace("paddlepaddle-gpu", "paddlepaddle")
+                if any(pkg.startswith(p) for p in _TRACKED_PREFIXES):
+                    key = _KEY_ALIASES.get(pkg, pkg)
                     dep_versions[key] = ver.strip()
                 break
 
@@ -493,6 +492,8 @@ def _get_pyinstaller_cmd(version: str) -> list[str]:
     for pkg in EXCLUDED_PACKAGES:
         cmd.extend(["--exclude-module", pkg])
 
+    cmd.extend(["--collect-submodules", "vibeocr"])
+
     for mod in HIDDEN_IMPORTS:
         cmd.extend(["--hidden-import", mod])
 
@@ -612,7 +613,7 @@ def _upload_to_gitee(version: str, zip_path: Path, sha256_path: Path, body: str,
         "tag_name": f"v{version}",
         "name": f"v{version}",
         "body": body or f"VibeOCR v{version}",
-        "target_commitish": "mineru-integration",
+        "target_commitish": "main",
     })
     if resp.status_code not in (200, 201):
         raise RuntimeError(f"Gitee Release 创建失败: {resp.status_code} {resp.text}")
@@ -647,7 +648,7 @@ def _upload_to_github(version: str, zip_path: Path, sha256_path: Path, body: str
         "tag_name": f"v{version}",
         "name": f"v{version}",
         "body": body or f"VibeOCR v{version}",
-        "target_commitish": "mineru-integration",
+        "target_commitish": "main",
     })
     if resp.status_code not in (200, 201):
         raise RuntimeError(f"GitHub Release 创建失败: {resp.status_code} {resp.text}")
