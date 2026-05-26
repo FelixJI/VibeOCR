@@ -3,10 +3,7 @@
 import asyncio
 import hashlib
 import json
-from pathlib import Path
 from unittest.mock import patch
-
-import pytest
 
 
 def _run(coro):
@@ -287,7 +284,7 @@ class TestSkipVersion:
         assert should_skip_version("0.3.0", settings_path) is False
 
     def test_overwrite_skip(self, tmp_path):
-        from vibeocr.services.update_service import save_skip_version, load_skip_version
+        from vibeocr.services.update_service import load_skip_version, save_skip_version
 
         settings_path = tmp_path / "update_settings.json"
         save_skip_version("0.2.0", settings_path)

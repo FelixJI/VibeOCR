@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import logging
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
@@ -18,6 +18,9 @@ from PySide6.QtWidgets import (
 )
 
 from vibeocr import __version__, env_manager
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -157,6 +160,6 @@ class AboutTab(QWidget):
 
             app_dir = env_manager.get_project_root()
             service = UpdateService(app_dir)
-            asyncio.ensure_future(service.check_and_prompt(self))
+            _update_task = asyncio.ensure_future(service.check_and_prompt(self))  # noqa: RUF006
         except Exception as e:
             logger.exception(f"检查更新失败: {e}")

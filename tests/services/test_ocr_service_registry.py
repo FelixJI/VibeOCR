@@ -14,11 +14,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from vibeocr.core.pipelines import OCRPipeline
-from vibeocr.core.pipelines.registry import PipelineSpec
 from vibeocr.models.ocr_options import OCROptions
 from vibeocr.models.ocr_result import OCRResult
 from vibeocr.services.ocr_service import OCRService
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -27,24 +25,24 @@ from vibeocr.services.ocr_service import OCRService
 
 def _make_ocr_result(**overrides) -> OCRResult:
     """Create a minimal OCRResult suitable for tests."""
-    defaults = dict(
-        raw_text="hello",
-        markdown_text="hello",
-        html_text="hello",
-        text_with_scores=[("hello", 0.95)],
-        avg_score=0.95,
-        low_confidence_items=[],
-        pipeline_type="OCR",
-        images={},
-        text_blocks=[],
-        content_list=[],
-        image_width=100,
-        image_height=50,
-        preproc_angle=0,
-        preprocessed_image=None,
-        preproc_img_w=0,
-        preproc_img_h=0,
-    )
+    defaults = {
+        "raw_text": "hello",
+        "markdown_text": "hello",
+        "html_text": "hello",
+        "text_with_scores": [("hello", 0.95)],
+        "avg_score": 0.95,
+        "low_confidence_items": [],
+        "pipeline_type": "OCR",
+        "images": {},
+        "text_blocks": [],
+        "content_list": [],
+        "image_width": 100,
+        "image_height": 50,
+        "preproc_angle": 0,
+        "preprocessed_image": None,
+        "preproc_img_w": 0,
+        "preproc_img_h": 0,
+    }
     defaults.update(overrides)
     return OCRResult(**defaults)
 
@@ -146,10 +144,9 @@ class TestGetOrCreatePipeline:
             patch(
                 "vibeocr.core.pipelines.get_registry",
                 return_value=mock_registry,
-            ),
+            ),pytest.raises(ValueError, match="不支持的管道类型")
         ):
-            with pytest.raises(ValueError, match="不支持的管道类型"):
-                service.get_or_create_pipeline("NONEXISTENT_PIPELINE")
+            service.get_or_create_pipeline("NONEXISTENT_PIPELINE")
 
     def test_thread_safety_double_check(self):
         """Double-checked locking: only creates once even under contention."""
@@ -306,7 +303,7 @@ class TestRecognizeRegistryDispatch:
 
             img = np.zeros((50, 100, 3), dtype=np.uint8)
             opts = OCROptions(pipeline=OCRPipeline.PP_STRUCTURE_V3)
-            result = service.recognize(img, opts)
+            service.recognize(img, opts)
 
         mock_rec.assert_called_once()
 
@@ -331,7 +328,7 @@ class TestRecognizeRegistryDispatch:
 
             img = np.zeros((50, 100, 3), dtype=np.uint8)
             opts = OCROptions(pipeline=OCRPipeline.PADDLEOCR_VL)
-            result = service.recognize(img, opts)
+            service.recognize(img, opts)
 
         mock_rec.assert_called_once()
 
@@ -362,7 +359,7 @@ class TestRecognizeRegistryDispatch:
             png_bytes = buf.getvalue()
 
             opts = OCROptions(pipeline=OCRPipeline.OCR)
-            result = service.recognize(png_bytes, opts)
+            service.recognize(png_bytes, opts)
 
         # The dispatched image should be numpy array, not bytes
         call_args = mock_spec.recognize.call_args

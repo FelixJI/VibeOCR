@@ -2,7 +2,7 @@
 
 from unittest.mock import MagicMock
 
-from PySide6.QtCore import QPoint, QPointF, QRect, QRectF
+from PySide6.QtCore import QPointF, QRect, QRectF
 from PySide6.QtGui import QColor, QPixmap
 from PySide6.QtWidgets import QGraphicsRectItem
 

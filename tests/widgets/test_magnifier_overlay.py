@@ -1,4 +1,3 @@
-import pytest
 from PySide6.QtCore import QPoint, QRect
 from PySide6.QtGui import QColor, QPainter, QPixmap
 

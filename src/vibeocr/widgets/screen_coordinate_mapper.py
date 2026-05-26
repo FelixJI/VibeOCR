@@ -3,15 +3,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from PySide6.QtCore import QPoint, QRect, QPointF
-from PySide6.QtGui import QColor, QImage
+from PySide6.QtCore import QPoint, QPointF, QRect
+from PySide6.QtGui import QColor, QImage, QPixmap
 
 
 @dataclass
 class ScreenInfo:
     geometry: QRect
     dpr: float
-    grab: "PySide6.QtGui.QPixmap"
+    grab: QPixmap
     offset: QPoint
 
 

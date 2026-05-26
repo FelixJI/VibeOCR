@@ -223,13 +223,17 @@ def is_option_supported(pipeline: OCRPipeline, option_name: str) -> bool:
 # 注册所有已定义的 PipelineSpec，提供统一的 get_registry() 接口。
 # ---------------------------------------------------------------------------
 
-from vibeocr.core.pipelines.registry import PipelineRegistry, PipelineSpec
-from vibeocr.core.pipelines.pipeline_ocr import OCR_SPEC
-from vibeocr.core.pipelines.pipeline_pp_structure import PP_STRUCTURE_V3_SPEC
-from vibeocr.core.pipelines.pipeline_table import TABLE_RECOGNITION_SPEC
-from vibeocr.core.pipelines.pipeline_formula import FORMULA_RECOGNITION_SPEC
-from vibeocr.core.pipelines.pipeline_mineru import MINERU_SPEC
-from vibeocr.core.pipelines.pipeline_paddlocr_vl import PADDLEOCR_VL_SPEC
+from vibeocr.core.pipelines.pipeline_formula import (  # noqa: E402
+    FORMULA_RECOGNITION_SPEC,
+)
+from vibeocr.core.pipelines.pipeline_mineru import MINERU_SPEC  # noqa: E402
+from vibeocr.core.pipelines.pipeline_ocr import OCR_SPEC  # noqa: E402
+from vibeocr.core.pipelines.pipeline_paddlocr_vl import PADDLEOCR_VL_SPEC  # noqa: E402
+from vibeocr.core.pipelines.pipeline_pp_structure import (  # noqa: E402
+    PP_STRUCTURE_V3_SPEC,
+)
+from vibeocr.core.pipelines.pipeline_table import TABLE_RECOGNITION_SPEC  # noqa: E402
+from vibeocr.core.pipelines.registry import PipelineRegistry, PipelineSpec  # noqa: E402
 
 _registry = PipelineRegistry()
 _registry.register(OCR_SPEC)

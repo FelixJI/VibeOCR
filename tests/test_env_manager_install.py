@@ -1,12 +1,11 @@
 """验证 env_manager 安装依赖的规格"""
 
 from unittest.mock import MagicMock, patch
-from pathlib import Path
 
 from vibeocr.env_manager import (
-    install_embedded_dependencies,
-    install_dependencies,
     ensure_mineru_models,
+    install_dependencies,
+    install_embedded_dependencies,
 )
 
 
@@ -201,7 +200,7 @@ class TestEnsureMineruModels:
             patch("vibeocr.env_manager.subprocess.run") as mock_run,
         ):
             mock_run.return_value = MagicMock(returncode=0, stderr="")
-            ok, msg = ensure_mineru_models(tmp_path)
+            ok, _msg = ensure_mineru_models(tmp_path)
 
         assert ok
         cmd = mock_run.call_args[0][0]
@@ -212,5 +211,5 @@ class TestEnsureMineruModels:
             "vibeocr.env_manager.get_embedded_python_executable",
             return_value=tmp_path / "nonexistent.exe",
         ):
-            ok, msg = ensure_mineru_models(tmp_path)
+            ok, _msg = ensure_mineru_models(tmp_path)
         assert not ok

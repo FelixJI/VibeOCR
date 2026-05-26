@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 
 ################################################################################
 ## Form generated from reading UI file 'main_window.ui'
@@ -10,39 +9,15 @@
 
 from PySide6.QtCore import (
     QCoreApplication,
-    QDate,
-    QDateTime,
-    QLocale,
     QMetaObject,
-    QObject,
-    QPoint,
-    QRect,
     QSize,
-    QTime,
-    QUrl,
     Qt,
 )
 from PySide6.QtGui import (
-    QBrush,
-    QColor,
-    QConicalGradient,
-    QCursor,
-    QFont,
-    QFontDatabase,
-    QGradient,
-    QIcon,
-    QImage,
-    QKeySequence,
-    QLinearGradient,
-    QPainter,
     QPalette,
-    QPixmap,
-    QRadialGradient,
-    QTransform,
 )
 from PySide6.QtWidgets import (
     QAbstractItemView,
-    QApplication,
     QCheckBox,
     QFrame,
     QGroupBox,
@@ -65,7 +40,7 @@ from PySide6.QtWidgets import (
 from vibeocr.widgets.preview_widget import PreviewWidget
 
 
-class Ui_MainWindowWidget(object):
+class Ui_MainWindowWidget:
     def setupUi(self, MainWindowWidget):
         if not MainWindowWidget.objectName():
             MainWindowWidget.setObjectName("MainWindowWidget")
@@ -188,8 +163,8 @@ class Ui_MainWindowWidget(object):
         self.preloadPipelinesLayout.setObjectName("preloadPipelinesLayout")
 
         from vibeocr.core.pipelines import (
-            get_preloadable_pipelines,
             get_pipeline_display_name,
+            get_preloadable_pipelines,
         )
 
         self._preload_checkboxes: dict[str, QCheckBox] = {}
@@ -649,6 +624,5 @@ class Ui_MainWindowWidget(object):
             self.tabWidget.indexOf(self.tabSettings),
             QCoreApplication.translate("MainWindowWidget", "\u8bbe\u7f6e", None),
         )
-        pass
 
     # retranslateUi

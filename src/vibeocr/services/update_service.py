@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import json
 import logging
@@ -13,13 +12,13 @@ import os
 import subprocess
 import sys
 from dataclasses import dataclass
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 import httpx
 
 if TYPE_CHECKING:
-    from PySide6.QtCore import SignalInstance
+    from pathlib import Path
+
     from PySide6.QtWidgets import QWidget
 
 logger = logging.getLogger(__name__)
@@ -298,14 +297,14 @@ def should_skip_version(version: str, settings_path: Path) -> bool:
 # 更新对话框 UI
 # ---------------------------------------------------------------------------
 
-from PySide6.QtCore import Qt
-from PySide6.QtWidgets import (
+from PySide6.QtCore import Qt  # noqa: E402
+from PySide6.QtWidgets import (  # noqa: E402
     QDialog,
     QHBoxLayout,
     QLabel,
     QMessageBox,
-    QPushButton,
     QProgressBar,
+    QPushButton,
     QVBoxLayout,
 )
 

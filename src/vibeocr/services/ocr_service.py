@@ -8,6 +8,7 @@ import logging
 import os
 import threading
 from enum import Enum
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from vibeocr.core.pipelines import OCRPipeline
@@ -79,7 +80,10 @@ def _looks_like_markdown(text: str) -> bool:
 # 注意：所有操作在同一线程中执行（CPU 模式）
 # 工作线程设计已确保这一点
 
-from vibeocr.pipeline_status import is_pipeline_ever_succeeded, mark_pipeline_success
+from vibeocr.pipeline_status import (  # noqa: E402
+    is_pipeline_ever_succeeded,
+    mark_pipeline_success,
+)
 
 _logger = logging.getLogger(__name__)
 
@@ -423,23 +427,23 @@ class OCRService(metaclass=SingletonMeta):
             cls._cuda_dll_registered = True
             return
         site_packages = next(p for p in sys.path if "site-packages" in p)
-        nvidia_base = os.path.join(site_packages, "nvidia")
+        nvidia_base = Path(site_packages) / "nvidia"
         existing = os.environ.get("PATH", "")
-        if os.path.isdir(nvidia_base):
+        if nvidia_base.is_dir():
             for entry in os.scandir(nvidia_base):
                 if not entry.is_dir():
                     continue
                 # 扫描 bin/ 和 lib/ 目录（不同 nvidia 包的 DLL 位置不同）
                 for subfolder in ("bin", "lib"):
-                    sub_dir = os.path.join(entry.path, subfolder)
-                    if os.path.isdir(sub_dir) and sub_dir not in existing:
-                        existing = sub_dir + ";" + existing
+                    sub_dir = Path(entry.path) / subfolder
+                    if sub_dir.is_dir() and str(sub_dir) not in existing:
+                        existing = str(sub_dir) + ";" + existing
                     # 新版 nvidia 包 (cu13 等) 把 DLL 放在 <subfolder>/<arch>/ 子目录
-                    if os.path.isdir(sub_dir):
+                    if sub_dir.is_dir():
                         for sub in os.scandir(sub_dir):
-                            arch_dir = os.path.join(sub_dir, sub.name)
-                            if sub.is_dir() and arch_dir not in existing:
-                                existing = arch_dir + ";" + existing
+                            arch_dir = Path(sub_dir) / sub.name
+                            if sub.is_dir() and str(arch_dir) not in existing:
+                                existing = str(arch_dir) + ";" + existing
         os.environ["PATH"] = existing
         cls._cuda_dll_registered = True
 
@@ -486,31 +490,31 @@ class OCRService(metaclass=SingletonMeta):
         site_packages = next((p for p in sys.path if "site-packages" in p), None)
         if not site_packages:
             return
-        nvidia_base = os.path.join(site_packages, "nvidia")
-        if not os.path.isdir(nvidia_base):
+        nvidia_base = Path(site_packages) / "nvidia"
+        if not nvidia_base.is_dir():
             return
         for entry in os.scandir(nvidia_base):
             if not entry.is_dir():
                 continue
             for subfolder in ("bin", "lib"):
-                sub_dir = os.path.join(entry.path, subfolder)
-                if os.path.isdir(sub_dir):
+                sub_dir = Path(entry.path) / subfolder
+                if sub_dir.is_dir():
                     with contextlib.suppress(OSError):
-                        os.add_dll_directory(sub_dir)
-                    os.environ["PATH"] = sub_dir + ";" + os.environ.get("PATH", "")
+                        os.add_dll_directory(str(sub_dir))
+                    os.environ["PATH"] = str(sub_dir) + ";" + os.environ.get("PATH", "")
                     for sub in os.scandir(sub_dir):
-                        arch_dir = os.path.join(sub_dir, sub.name)
+                        arch_dir = Path(sub_dir) / sub.name
                         if sub.is_dir():
                             with contextlib.suppress(OSError):
-                                os.add_dll_directory(arch_dir)
+                                os.add_dll_directory(str(arch_dir))
                             os.environ["PATH"] = (
-                                arch_dir + ";" + os.environ.get("PATH", "")
+                                str(arch_dir) + ";" + os.environ.get("PATH", "")
                             )
 
     @staticmethod
     def _get_project_root():
+
         from vibeocr.env_manager import get_project_root
-        from pathlib import Path
 
         return get_project_root()
 
@@ -593,7 +597,7 @@ class OCRService(metaclass=SingletonMeta):
                             pipeline_enum = OCRPipeline(pipeline_name)
                         except ValueError:
                             msg = f"不支持的管道类型: {pipeline_name}"
-                            raise ValueError(msg)
+                            raise ValueError(msg) from None
                         self._pipelines[pipeline_name] = self._create_pipeline(
                             pipeline_enum
                         )
@@ -908,9 +912,9 @@ class OCRService(metaclass=SingletonMeta):
 
     def _recognize_paddlocr_vl(
         self,
-        image: "Image.Image | numpy.ndarray | str",
-        options: "OCROptions",
-    ) -> "OCRResult":
+        image: Image.Image | np.ndarray | str,
+        options: OCROptions,
+    ) -> OCRResult:
         """PaddleOCR-VL 文档解析"""
         pipeline = self.get_pipeline(OCRPipeline.PADDLEOCR_VL)
 
@@ -1085,8 +1089,7 @@ class OCRService(metaclass=SingletonMeta):
         gc_was_enabled = gc.isenabled()
         gc.disable()
         try:
-            output_list = list(output)
-            return output_list
+            return list(output)
         except Exception as e:
             _logger.error(f"[安全消费] 消费 generator 时出错: {e}", exc_info=True)
             return []

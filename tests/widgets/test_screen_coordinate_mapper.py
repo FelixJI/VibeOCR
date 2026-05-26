@@ -1,6 +1,5 @@
 # tests/widgets/test_screen_coordinate_mapper.py
-import pytest
-from PySide6.QtCore import QPoint, QRect, QPointF
+from PySide6.QtCore import QPoint, QPointF, QRect
 from PySide6.QtGui import QColor, QPixmap
 
 from vibeocr.widgets.screen_coordinate_mapper import ScreenCoordinateMapper, ScreenInfo

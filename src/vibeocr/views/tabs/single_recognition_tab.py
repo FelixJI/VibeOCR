@@ -245,8 +245,8 @@ class SingleRecognitionTab(BaseOcrTab):
             "TABLE_RECOGNITION",
             "FORMULA_RECOGNITION",
         ):
-            from vibeocr.pipeline_status import is_pipeline_ever_succeeded
             from vibeocr.env_manager import get_project_root
+            from vibeocr.pipeline_status import is_pipeline_ever_succeeded
 
             if not is_pipeline_ever_succeeded(pipeline_val, get_project_root()):
                 self._result_widget._ensure_web_view().setHtml(
@@ -490,8 +490,8 @@ class SingleRecognitionTab(BaseOcrTab):
             "TABLE_RECOGNITION",
             "FORMULA_RECOGNITION",
         ):
-            from vibeocr.pipeline_status import is_pipeline_ever_succeeded
             from vibeocr.env_manager import get_project_root
+            from vibeocr.pipeline_status import is_pipeline_ever_succeeded
 
             if not is_pipeline_ever_succeeded(pipeline_val, get_project_root()):
                 return "\n\n提示：首次使用需要下载模型，请保持网络畅通后重试。"

@@ -419,7 +419,7 @@ def main() -> int:
             selected = args.checks
     elif args.no_interactive or args.ci:
         selected = list(CHECKS.keys())
-    else:
+    else:2
         # 交互式选择
         selected = select_checks_interactively()
 

@@ -50,9 +50,9 @@ def _create_table_pipeline(device: str) -> Any:
 
 def _recognize_table(service: Any, image: Any, options: TableRecognitionOptions) -> Any:
     """执行表格识别并返回 OCRResult"""
-    from vibeocr.models.ocr_result import OCRResult, TextBlock
-
     from enum import Enum
+
+    from vibeocr.models.ocr_result import OCRResult, TextBlock
 
     pipeline_name = (
         options.pipeline.value
@@ -182,7 +182,7 @@ def _recognize_table(service: Any, image: Any, options: TableRecognitionOptions)
 
     from vibeocr.utils.markdown_converter import markdown_to_html
 
-    result = OCRResult(
+    return OCRResult(
         raw_text=raw_text,
         markdown_text=markdown_text,
         html_text=markdown_to_html(markdown_text) if markdown_text else "",
@@ -191,7 +191,6 @@ def _recognize_table(service: Any, image: Any, options: TableRecognitionOptions)
         text_blocks=text_blocks,
         content_list=content_list,
     )
-    return result
 
 
 TABLE_RECOGNITION_SPEC = PipelineSpec(

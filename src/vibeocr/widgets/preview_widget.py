@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QRectF, QTimer, Signal
+from PySide6.QtCore import QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QColor, QPainter, QPen, QPixmap
 from PySide6.QtPdf import QPdfDocument
 from PySide6.QtWidgets import (
@@ -129,7 +129,7 @@ class UnifiedBBoxOverlay(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-        for i, (x, y, w, h, score, text, is_manually_edited) in enumerate(
+        for i, (x, y, w, h, score, _text, is_manually_edited) in enumerate(
             self._conf_rects
         ):
             rect = QRectF(x, y, w, h)

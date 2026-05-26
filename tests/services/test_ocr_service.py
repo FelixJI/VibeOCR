@@ -213,8 +213,8 @@ class TestMinerURouting:
 
             with patch("vibeocr.services.mineru_service.MinerUService") as MockMinerU:
                 MockMinerU.return_value.parse.return_value = mock_mineru_result
-                from vibeocr.models.ocr_options import OCROptions
                 from vibeocr.core.pipelines import OCRPipeline
+                from vibeocr.models.ocr_options import OCROptions
 
                 options = OCROptions(pipeline=OCRPipeline.DOCUMENT_PARSING)
                 result = svc.recognize(b"pdf_data", options)
@@ -241,11 +241,11 @@ class TestMinerURouting:
             mock_result = MagicMock()
             svc._paddlex_manager.execute.return_value = mock_result
 
-            from vibeocr.models.ocr_options import OCROptions
             from vibeocr.core.pipelines import OCRPipeline
+            from vibeocr.models.ocr_options import OCROptions
 
             options = OCROptions(pipeline=OCRPipeline.OCR)
-            result = svc.recognize(b"img_data", options)
+            svc.recognize(b"img_data", options)
 
             svc._paddlex_manager.execute.assert_called_once()
 

@@ -34,10 +34,10 @@ from vibeocr.widgets.editor.annotation_items import (
     TextAnnotation,
 )
 from vibeocr.widgets.inline_edit_canvas import InlineEditCanvas
-from vibeocr.widgets.screen_coordinate_mapper import ScreenCoordinateMapper, ScreenInfo
 from vibeocr.widgets.inline_recognition_panel import InlineRecognitionPanel
 from vibeocr.widgets.inline_toolbar import InlineToolbar
 from vibeocr.widgets.magnifier_overlay import MagnifierOverlay
+from vibeocr.widgets.screen_coordinate_mapper import ScreenCoordinateMapper, ScreenInfo
 from vibeocr.widgets.selection_resize_frame import SelectionResizeFrame
 
 try:
@@ -505,7 +505,6 @@ class ScreenCaptureOverlay(QWidget):
 
     def _on_selection_finalized(self) -> None:
         """选区拖拽结束"""
-        pass
 
     def _on_annotation_selection_changed(self) -> None:
         """选中标注项时更新属性条"""

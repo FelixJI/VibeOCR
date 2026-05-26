@@ -180,7 +180,7 @@ class MinerUService(metaclass=SingletonMeta):
         # 读取 mineru-api 子进程的 stderr 并转发到项目日志系统
         self._start_log_reader(self.__class__._api_process)
 
-        _logger.debug(f"[MinerU] 日志输出到项目日志系统")
+        _logger.debug("[MinerU] 日志输出到项目日志系统")
 
         # 等待 API 就绪
         for _ in range(120):
@@ -475,20 +475,19 @@ class MinerUService(metaclass=SingletonMeta):
             if cap_text and body_text:
                 return f"{cap_text}\n{body_text}"
             return cap_text or body_text
-        elif block_type in ("image", "chart"):
+        if block_type in ("image", "chart"):
             captions = block.get("image_caption") or block.get("chart_caption") or []
             content = block.get("content", "")
             text = " ".join(captions)
             if content:
                 text = f"{text} {content}".strip()
             return text or f"[{block_type}]"
-        elif block_type == "list":
+        if block_type == "list":
             items = block.get("list_items", [])
             return "; ".join(items)
-        elif block_type == "code":
+        if block_type == "code":
             return block.get("code_body", "")[:200]
-        else:
-            return block.get("text", "")
+        return block.get("text", "")
 
     def shutdown(self) -> None:
         """停止 mineru-api 进程"""

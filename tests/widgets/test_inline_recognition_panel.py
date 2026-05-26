@@ -1,8 +1,8 @@
 """InlineRecognitionPanel tests"""
 
-from vibeocr.widgets.inline_recognition_panel import InlineRecognitionPanel
 from vibeocr.core.pipelines import OCRPipeline
 from vibeocr.models.ocr_options import OCROptions
+from vibeocr.widgets.inline_recognition_panel import InlineRecognitionPanel
 
 
 class TestInlineRecognitionPanel:

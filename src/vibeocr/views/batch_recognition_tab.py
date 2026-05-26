@@ -302,8 +302,8 @@ class BatchRecognitionTab(BaseOcrTab):
             "TABLE_RECOGNITION",
             "FORMULA_RECOGNITION",
         ):
-            from vibeocr.pipeline_status import is_pipeline_ever_succeeded
             from vibeocr.env_manager import get_project_root
+            from vibeocr.pipeline_status import is_pipeline_ever_succeeded
 
             if not is_pipeline_ever_succeeded(pipeline_val, get_project_root()):
                 self._result_widget._ensure_web_view().setHtml(

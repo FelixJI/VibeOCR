@@ -5,9 +5,9 @@ from pathlib import Path
 
 from vibeocr.machine_cache import generate_machine_id
 from vibeocr.pipeline_status import (
-    mark_pipeline_success,
-    is_pipeline_ever_succeeded,
     PIPELINE_NAMES,
+    is_pipeline_ever_succeeded,
+    mark_pipeline_success,
 )
 
 

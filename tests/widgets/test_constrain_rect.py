@@ -1,4 +1,4 @@
-from PySide6.QtCore import QPoint, QRect
+from PySide6.QtCore import QRect
 
 from vibeocr.widgets.selection_resize_frame import _constrain_rect
 

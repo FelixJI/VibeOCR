@@ -1,7 +1,6 @@
 """导出服务测试"""
 
 import io
-from pathlib import Path
 
 import pytest
 

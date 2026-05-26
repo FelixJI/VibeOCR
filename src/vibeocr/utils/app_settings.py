@@ -98,7 +98,7 @@ class AppSettings:
         try:
             existing = {}
             if self._config_path.exists():
-                with open(self._config_path, "r", encoding="utf-8") as f:
+                with open(self._config_path, encoding="utf-8") as f:
                     existing = json.load(f)
                     if not isinstance(existing, dict):
                         existing = {}

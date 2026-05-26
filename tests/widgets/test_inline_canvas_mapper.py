@@ -1,4 +1,3 @@
-import pytest
 from PySide6.QtCore import QPoint, QPointF, QRect
 from PySide6.QtGui import QPixmap
 
@@ -39,7 +38,7 @@ class TestCanvasAcceptsMapper:
     def test_update_crop_region_with_mapper(self, qapp):
         canvas = InlineEditCanvas()
         mapper = _make_mapper(dpr=2.0)
-        screen_pixmap = QPixmap(int(200 * 2), int(100 * 2))
+        screen_pixmap = QPixmap((200 * 2), (100 * 2))
         screen_pixmap.setDevicePixelRatio(2.0)
         canvas.set_background(screen_pixmap, QPointF(0, 0), mapper)
         # Should not crash

@@ -4,7 +4,6 @@ import ctypes.wintypes
 from unittest.mock import MagicMock
 
 import pytest
-
 from PySide6.QtCore import QPoint, QRect
 
 from vibeocr.widgets.window_detector import WindowDetector

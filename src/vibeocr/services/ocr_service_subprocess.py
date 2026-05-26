@@ -14,9 +14,8 @@ import logging
 import threading
 import uuid
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Optional, Union
-
 from pathlib import Path
+from typing import TYPE_CHECKING, Optional, Union
 
 from vibeocr.pipeline_status import is_pipeline_ever_succeeded, mark_pipeline_success
 from vibeocr.services.worker_manager import WorkerManager
@@ -171,8 +170,9 @@ class OCRServiceSubprocess:
 
     def _is_mineru_pipeline(self, options) -> bool:
         """判断请求是否为文档解析（MinerU）管道"""
-        from vibeocr.core.pipelines import OCRPipeline
         from enum import Enum
+
+        from vibeocr.core.pipelines import OCRPipeline
 
         if options is None:
             return False
@@ -349,8 +349,9 @@ class OCRServiceSubprocess:
         Returns:
             超时时间（秒）
         """
-        from vibeocr.core.pipelines import OCRPipeline
         from enum import Enum
+
+        from vibeocr.core.pipelines import OCRPipeline
 
         # 超时配置常量
         TIMEOUT_CACHED = 60.0  # 模型已缓存时的超时（秒）

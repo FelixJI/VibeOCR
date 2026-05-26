@@ -14,14 +14,17 @@ import html as html_lib
 import json
 import logging
 from pathlib import Path
-from typing import Any, Callable
-
-from vibeocr.models.ocr_result import DISCARDED_BLOCK_TYPES
+from typing import TYPE_CHECKING, Any
 
 from PySide6.QtCore import QObject, QUrl, Signal, Slot
 from PySide6.QtWebChannel import QWebChannel
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWidgets import QVBoxLayout, QWidget
+
+from vibeocr.models.ocr_result import DISCARDED_BLOCK_TYPES
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
 

@@ -106,9 +106,9 @@ class TestDependencyConstants:
 
     def test_ocr_dependencies_is_union(self):
         from vibeocr.services.env_config import (
+            MINERU_DEPENDENCIES,
             OCR_DEPENDENCIES,
             PADDLE_DEPENDENCIES,
-            MINERU_DEPENDENCIES,
         )
 
         assert OCR_DEPENDENCIES == PADDLE_DEPENDENCIES + MINERU_DEPENDENCIES

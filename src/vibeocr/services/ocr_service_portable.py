@@ -12,13 +12,12 @@ OCR Service 使用便携式 Python
 """
 
 import logging
+import os
 import threading
 from typing import Any, Optional
 
 import numpy as np
 from PIL import Image
-
-import os
 
 # 跳过模型源网络检测
 os.environ.setdefault("PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK", "True")

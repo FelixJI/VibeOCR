@@ -10,12 +10,12 @@ from typing import TYPE_CHECKING
 
 from PySide6.QtWidgets import (
     QCheckBox,
+    QListWidget,
     QMessageBox,
     QProgressBar,
     QPushButton,
     QSizePolicy,
     QSpacerItem,
-    QListWidget,
     QStackedWidget,
     QVBoxLayout,
     QWidget,

@@ -1,7 +1,7 @@
 # tests/core/test_pipeline_table.py
 from vibeocr.core.pipelines.pipeline_table import (
-    TableRecognitionOptions,
     TABLE_RECOGNITION_SPEC,
+    TableRecognitionOptions,
 )
 
 

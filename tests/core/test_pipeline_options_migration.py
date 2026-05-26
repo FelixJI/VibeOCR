@@ -1,10 +1,10 @@
 # tests/core/test_pipeline_options_migration.py
 """Task 2 测试：验证各管道 Options 类继承 BasePipelineOptions 且字段拆分正确。"""
 
-from vibeocr.core.pipelines.pipeline_ocr import OCROptions
-from vibeocr.core.pipelines.pipeline_pp_structure import PPStructureV3Options
 from vibeocr.core.pipelines.pipeline_mineru import MinerUOptions
+from vibeocr.core.pipelines.pipeline_ocr import OCROptions
 from vibeocr.core.pipelines.pipeline_paddlocr_vl import PaddleOCRVLOptions
+from vibeocr.core.pipelines.pipeline_pp_structure import PPStructureV3Options
 
 
 def test_ocr_options_roundtrip():

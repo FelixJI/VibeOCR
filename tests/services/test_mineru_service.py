@@ -131,8 +131,8 @@ class TestMinerUService:
         mock_resp.status_code = 200
         mock_resp.json.return_value = api_response
 
-        from vibeocr.models.ocr_options import OCROptions
         from vibeocr.core.pipelines import OCRPipeline
+        from vibeocr.models.ocr_options import OCROptions
 
         options = OCROptions(
             pipeline=OCRPipeline.DOCUMENT_PARSING,
@@ -237,7 +237,7 @@ class TestMinerUService:
             patch("vibeocr.services.mineru_service.httpx") as mock_httpx,
         ):
             mock_httpx.post.side_effect = [error_resp, ok_resp]
-            result = service.parse(b"data", "application/pdf")
+            service.parse(b"data", "application/pdf")
 
         calls = mock_httpx.post.call_args_list
         assert calls[0].kwargs["data"]["backend"] == "hybrid-auto-engine"

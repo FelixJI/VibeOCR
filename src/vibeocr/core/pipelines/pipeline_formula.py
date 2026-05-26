@@ -49,9 +49,9 @@ def _recognize_formula(
     通过 PPStructureV3 进行识别，但仅提取 label=="formula" 的区块，
     内容以 LaTeX 格式输出，包裹在 $$...$$ 中用于 Markdown 显示。
     """
-    from vibeocr.models.ocr_result import OCRResult, TextBlock
-
     from enum import Enum
+
+    from vibeocr.models.ocr_result import OCRResult, TextBlock
 
     pipeline_name = (
         options.pipeline.value

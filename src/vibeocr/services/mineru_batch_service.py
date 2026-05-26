@@ -6,7 +6,8 @@
 
 import logging
 import uuid
-from typing import TYPE_CHECKING, Callable
+from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 from vibeocr.utils.mime_types import guess_mime_from_filename
 
@@ -33,7 +34,7 @@ class MinerUBatchService:
     def batch_add(
         self,
         image: bytes,
-        options: "OCROptions | None" = None,  # noqa: ARG002
+        options: "OCROptions | None" = None,
         file_name: str = "",
     ) -> str:
         """添加文件到批量队列

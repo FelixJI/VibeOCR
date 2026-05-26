@@ -106,9 +106,7 @@ class ResizeAnnotationCommand(QUndoCommand):
         # 延迟 import 避免循环引用
         from vibeocr.widgets.editor.annotation_items import BlurItem, MosaicItem
 
-        if isinstance(self._item, MosaicItem):
-            self._item.regenerate()
-        elif isinstance(self._item, BlurItem):
+        if isinstance(self._item, (MosaicItem, BlurItem)):
             self._item.regenerate()
         self._item.update()
 

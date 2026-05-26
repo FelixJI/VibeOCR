@@ -57,14 +57,13 @@ def _run_bump(tmp_path, args, env=None):
     env["MAIN_PY"] = str(main_py)
     env["CHANGELOG"] = str(tmp_path / "CHANGELOG.md")
 
-    result = subprocess.run(
-        [sys.executable, str(SCRIPT)] + args,
+    return subprocess.run(
+        [sys.executable, str(SCRIPT), *args],
         cwd=tmp_path,
         capture_output=True,
         text=True,
         env=env,
     )
-    return result
 
 
 def _run_bump_with_extra_commits(tmp_path, args, commits_to_add):
@@ -121,14 +120,13 @@ def _run_bump_with_extra_commits(tmp_path, args, commits_to_add):
     env["MAIN_PY"] = str(main_py)
     env["CHANGELOG"] = str(tmp_path / "CHANGELOG.md")
 
-    result = subprocess.run(
-        [sys.executable, str(SCRIPT)] + args,
+    return subprocess.run(
+        [sys.executable, str(SCRIPT), *args],
         cwd=tmp_path,
         capture_output=True,
         text=True,
         env=env,
     )
-    return result
 
 
 class TestVersionParsing:
@@ -195,7 +193,7 @@ class TestVersionBumping:
     )
     def test_bump_updates_all_files(self, tmp_path, args, expected_version):
         """验证 patch/minor/major/explicit 升级后三个文件都更新"""
-        result = _run_bump(tmp_path, args + ["--no-edit", "--no-build"])
+        result = _run_bump(tmp_path, [*args, "--no-edit", "--no-build"])
         assert result.returncode == 0, f"Script failed: {result.stderr}"
 
         pyproject = tmp_path / "pyproject.toml"

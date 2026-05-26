@@ -9,7 +9,9 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import QPoint, QPointF, QRect, QRectF, Qt
+from typing import TYPE_CHECKING
+
+from PySide6.QtCore import QPointF, QRect, QRectF, Qt
 from PySide6.QtGui import (
     QBrush,
     QColor,
@@ -42,7 +44,9 @@ from vibeocr.widgets.editor.command_stack import (
     MoveAnnotationCommand,
     create_undo_stack,
 )
-from vibeocr.widgets.screen_coordinate_mapper import ScreenCoordinateMapper
+
+if TYPE_CHECKING:
+    from vibeocr.widgets.screen_coordinate_mapper import ScreenCoordinateMapper
 
 
 class InlineEditCanvas(QGraphicsView):

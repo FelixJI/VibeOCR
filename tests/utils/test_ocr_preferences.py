@@ -2,7 +2,6 @@
 """OCRPreferences 持久化测试"""
 
 import json
-from pathlib import Path
 
 import pytest
 

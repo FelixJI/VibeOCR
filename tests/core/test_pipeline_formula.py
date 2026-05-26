@@ -1,7 +1,7 @@
 # tests/core/test_pipeline_formula.py
 from vibeocr.core.pipelines.pipeline_formula import (
-    FormulaRecognitionOptions,
     FORMULA_RECOGNITION_SPEC,
+    FormulaRecognitionOptions,
 )
 
 

@@ -3,16 +3,16 @@
 import re
 
 from vibeocr.widgets.result_view_widget import (
-    _render_block,
-    _render_text,
-    _render_title,
-    _render_table,
-    _render_equation,
-    _render_list,
-    _render_code,
-    _render_fallback,
     BLOCK_BORDER_COLORS,
     BLOCK_TYPE_LABELS,
+    _render_block,
+    _render_code,
+    _render_equation,
+    _render_fallback,
+    _render_list,
+    _render_table,
+    _render_text,
+    _render_title,
 )
 
 
@@ -109,7 +109,7 @@ class TestRenderTextBlock:
     def test_plain_text(self):
         block = {"text": "hello world"}
         html = _render_text(block, 0)
-        assert "<p>hello world</p>" == html
+        assert html == "<p>hello world</p>"
 
     def test_html_escaped(self):
         block = {"text": "<script>alert('xss')</script>"}

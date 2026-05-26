@@ -4,7 +4,7 @@ import logging
 from pathlib import Path
 
 from PIL import Image
-from PySide6.QtCore import QTimer, Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QColor, QImage, QPixmap
 from PySide6.QtWidgets import (
     QCheckBox,

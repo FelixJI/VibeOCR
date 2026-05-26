@@ -6,6 +6,7 @@
 import json
 import logging
 from pathlib import Path
+
 from PySide6.QtCore import QObject, Signal
 
 logger = logging.getLogger(__name__)
@@ -59,7 +60,7 @@ class ConfigManager(QObject):
         if not filepath.exists():
             return default if default is not None else {}
         try:
-            with open(filepath, "r", encoding="utf-8") as f:
+            with open(filepath, encoding="utf-8") as f:
                 data = json.load(f)
             return (
                 data
@@ -86,7 +87,7 @@ class ConfigManager(QObject):
         if not filepath.exists():
             return default if default is not None else {}
         try:
-            with open(filepath, "r", encoding="utf-8") as f:
+            with open(filepath, encoding="utf-8") as f:
                 data = json.load(f)
             return (
                 data

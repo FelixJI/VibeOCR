@@ -157,7 +157,7 @@ class ExportService:
 
                 if block_type in DISCARDED_BLOCK_TYPES:
                     continue
-                elif block_type == "title":
+                if block_type == "title":
                     level = min(block.get("level", 1), 6)
                     doc.add_heading(text, level=level)
                 elif block_type == "text":
@@ -276,7 +276,7 @@ class ExportService:
 
                 if block_type in DISCARDED_BLOCK_TYPES:
                     continue
-                elif block_type == "table":
+                if block_type == "table":
                     table_captions = block.get("table_caption") or []
                     if table_captions:
                         if not has_text:

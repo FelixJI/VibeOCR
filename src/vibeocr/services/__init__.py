@@ -93,8 +93,8 @@ from .mineru_batch_service import MinerUBatchService  # noqa: E402
 __all__ = [
     "USE_PORTABLE_OCR",
     "USE_SUBPROCESS",
+    "MinerUBatchService",
     "OCRService",
     "OCRServiceSubprocess",
-    "MinerUBatchService",
     "get_ocr_service",
 ]

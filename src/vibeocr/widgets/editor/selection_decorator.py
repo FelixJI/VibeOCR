@@ -246,19 +246,15 @@ class SelectionDecorator(QGraphicsItem):
 
     def _get_current_rect(self) -> QRectF | None:
         item = self._decorated
-        if isinstance(item, ArrowAnnotation):
+        if isinstance(item, (ArrowAnnotation, TextAnnotation)):
             return item.boundingRect().translated(item.pos())
-        elif isinstance(item, TextAnnotation):
-            return item.boundingRect().translated(item.pos())
-        elif hasattr(item, "rect"):
+        if hasattr(item, "rect"):
             return item.rect().translated(item.pos())
         return None
 
     def _finalize_resize(self, canvas, old_rect: QRectF, new_rect: QRectF) -> None:
         item = self._decorated
-        if isinstance(item, MosaicItem):
-            item.set_resizing(False)
-        elif isinstance(item, BlurItem):
+        if isinstance(item, (MosaicItem, BlurItem)):
             item.set_resizing(False)
         from vibeocr.widgets.editor.command_stack import ResizeAnnotationCommand
 

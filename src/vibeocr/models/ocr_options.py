@@ -48,7 +48,7 @@ class OCROptions:
     enable_table: bool = True  # 启用表格识别
 
     # === MineRU 语言和页面范围 ===
-    lang_list: list[str] = field(default_factory=lambda: [])  # 空列表=自动检测
+    lang_list: list[str] = field(default_factory=list)  # 空列表=自动检测
     start_page_id: int = 0
     end_page_id: int | None = None  # None 表示不限制
 
@@ -156,7 +156,7 @@ class OCROptions:
             enable_table=data.get("enable_table", True),
             lang_list=data.get("lang_list", []),
             start_page_id=data.get("start_page_id", 0),
-            end_page_id=data.get("end_page_id", None),
+            end_page_id=data.get("end_page_id"),
             use_wireless_table=data.get("use_wireless_table", True),
             use_table_orientation_classify=data.get(
                 "use_table_orientation_classify", True
@@ -183,17 +183,13 @@ class OCROptions:
             use_wireless_table_cells_trans_to_html=data.get(
                 "use_wireless_table_cells_trans_to_html", False
             ),
-            text_det_limit_side_len=data.get("text_det_limit_side_len", None),
-            text_det_thresh=data.get("text_det_thresh", None),
-            text_det_box_thresh=data.get("text_det_box_thresh", None),
-            text_det_unclip_ratio=data.get("text_det_unclip_ratio", None),
-            text_rec_score_thresh=data.get("text_rec_score_thresh", None),
-            formula_recognition_model_name=data.get(
-                "formula_recognition_model_name", None
-            ),
-            formula_recognition_model_dir=data.get(
-                "formula_recognition_model_dir", None
-            ),
+            text_det_limit_side_len=data.get("text_det_limit_side_len"),
+            text_det_thresh=data.get("text_det_thresh"),
+            text_det_box_thresh=data.get("text_det_box_thresh"),
+            text_det_unclip_ratio=data.get("text_det_unclip_ratio"),
+            text_rec_score_thresh=data.get("text_rec_score_thresh"),
+            formula_recognition_model_name=data.get("formula_recognition_model_name"),
+            formula_recognition_model_dir=data.get("formula_recognition_model_dir"),
         )
 
     def copy(self, **updates) -> "OCROptions":

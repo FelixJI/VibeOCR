@@ -6,6 +6,7 @@
 - OCRPipeline: OCR 管道枚举（来自 pipelines.py）
 """
 
+from vibeocr.core.base_worker import BaseWorker, BatchWorker
 from vibeocr.core.constants import (
     COLOR_BACKGROUND,
     COLOR_BORDER,
@@ -38,7 +39,6 @@ from vibeocr.core.pipelines import (
     get_pipeline_supported_options,
     is_option_supported,
 )
-from vibeocr.core.base_worker import BaseWorker, BatchWorker
 from vibeocr.core.singleton_meta import SingletonMeta
 from vibeocr.core.styles import AppStyles
 
@@ -62,13 +62,13 @@ __all__ = [
     "SHM_TIMEOUT",
     "SHORT_DELAY_MS",
     "TOAST_DELAY_MS",
+    "AppStyles",
+    "BaseWorker",
+    "BatchWorker",
     "Constants",
     "FileType",
     "OCRPipeline",
     "SingletonMeta",
-    "AppStyles",
-    "BaseWorker",
-    "BatchWorker",
     "WindowsColors",
     "get_all_pipelines",
     "get_pipeline_description",

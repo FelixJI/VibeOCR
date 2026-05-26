@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING
 
 from PySide6.QtCore import (
     QPoint,
-    QRect,
     QTimer,
     Signal,
     Slot,
@@ -505,8 +504,8 @@ class MainWindow(QMainWindow):
             return
 
         # 获取用户配置的预加载管道
-        from vibeocr.managers.config_manager import ConfigManager
         from vibeocr.core.pipelines import OCRPipeline
+        from vibeocr.managers.config_manager import ConfigManager
 
         cm = ConfigManager.instance()
         if not cm.get_preload_enabled():

@@ -138,20 +138,19 @@ def _extract_legacy_text(block: dict, block_type: str) -> str:
         if cap_text and text:
             return f"{cap_text}\n{text}"
         return cap_text or text
-    elif block_type in ("image", "chart"):
+    if block_type in ("image", "chart"):
         captions = block.get("image_caption") or block.get("chart_caption") or []
         content = block.get("content", "")
         text = " ".join(captions)
         if content:
             text = f"{text} {content}".strip()
         return text or f"[{block_type}]"
-    elif block_type == "list":
+    if block_type == "list":
         items = block.get("list_items", [])
         return "; ".join(items)
-    elif block_type == "code":
+    if block_type == "code":
         return block.get("code_body", "")[:200]
-    else:
-        return block.get("text", "")
+    return block.get("text", "")
 
 
 def _normalize_legacy(raw: list[dict]) -> list[dict]:

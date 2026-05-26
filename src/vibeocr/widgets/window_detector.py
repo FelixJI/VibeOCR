@@ -8,10 +8,12 @@ from __future__ import annotations
 import ctypes
 import ctypes.wintypes
 import sys
+from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QPoint, QRect
 
-from vibeocr.widgets.screen_coordinate_mapper import ScreenCoordinateMapper
+if TYPE_CHECKING:
+    from vibeocr.widgets.screen_coordinate_mapper import ScreenCoordinateMapper
 
 if sys.platform != "win32":
     raise ImportError("WindowDetector is only available on Windows")
@@ -115,7 +117,7 @@ class WindowDetector:
         try:
             import oleacc
 
-            hr, accessible, child_id = oleacc.AccessibleObjectFromPoint(
+            hr, accessible, _child_id = oleacc.AccessibleObjectFromPoint(
                 physical_pos[0], physical_pos[1]
             )
             if hr != 0 or accessible is None:

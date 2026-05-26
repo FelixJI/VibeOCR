@@ -102,7 +102,7 @@ class TestStartCaptureInit:
         overlay.hide()
 
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock  # noqa: E402
 
 
 class TestMouseMoveHoverDetect:

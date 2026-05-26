@@ -113,8 +113,7 @@ class QrcodeService:
         w, h = img.size
         new_h = target_size
         new_w = int(w * new_h / h) if h > 0 else target_size
-        img = img.resize((new_w, new_h), Image.Resampling.NEAREST)
-        return img
+        return img.resize((new_w, new_h), Image.Resampling.NEAREST)
 
     def apply_logo(
         self, image: Image.Image, logo_path: str, ratio: float = 0.2
@@ -133,8 +132,8 @@ class QrcodeService:
 
     @staticmethod
     def _load_font(size: int):
-        import os
         import sys
+        from pathlib import Path
 
         from PIL import ImageFont
 
@@ -156,7 +155,7 @@ class QrcodeService:
             ]
 
         for path in candidates:
-            if os.path.isfile(path):
+            if Path(path).is_file():
                 try:
                     return ImageFont.truetype(path, size)
                 except Exception:

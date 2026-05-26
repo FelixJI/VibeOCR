@@ -145,10 +145,10 @@ def launch_application() -> int:
     """启动应用程序"""
     from PySide6.QtWidgets import QApplication
 
+    from vibeocr import __version__
     from vibeocr.managers.config_manager import ConfigManager
     from vibeocr.utils.app_settings import AppSettings
     from vibeocr.utils.qt_async import create_qasync_event_loop
-    from vibeocr import __version__
     from vibeocr.views.main_window import MainWindow
 
     app = QApplication(sys.argv)

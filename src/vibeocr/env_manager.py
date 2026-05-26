@@ -783,7 +783,7 @@ def install_embedded_dependencies(
     if use_gpu and cuda_version:
         cuda_tag = CUDA_VERSION_MAP.get(cuda_version)
         if cuda_tag:
-            paddle_package = f"paddlepaddle-gpu>=3.3.0"
+            paddle_package = "paddlepaddle-gpu>=3.3.0"
             paddle_index = (
                 f"https://www.paddlepaddle.org.cn/packages/stable/{cuda_tag}/"
             )
@@ -1040,7 +1040,7 @@ def install_dependencies(
     if use_gpu and cuda_version:
         cuda_tag = CUDA_VERSION_MAP.get(cuda_version)
         if cuda_tag:
-            paddle_package = f"paddlepaddle-gpu>=3.3.0"
+            paddle_package = "paddlepaddle-gpu>=3.3.0"
             paddle_index = (
                 f"https://www.paddlepaddle.org.cn/packages/stable/{cuda_tag}/"
             )

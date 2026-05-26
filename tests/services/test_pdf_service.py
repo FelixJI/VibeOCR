@@ -1,8 +1,9 @@
 """Tests for PDF service."""
 
+from pathlib import Path
+
 import fitz
 import pytest
-from pathlib import Path
 
 
 def _create_test_pdf(path: Path, num_pages: int = 3) -> Path:
@@ -150,8 +151,9 @@ class TestPdfServiceMove:
 class TestPdfServiceAddTextLayer:
     def test_add_text_layer_from_ocr_result(self, pdf_service, tmp_path):
         """测试从 OCR 结果添加文字层到扫描页。"""
-        import numpy as np
         import fitz as fitz_mod
+        import numpy as np
+
         from vibeocr.models.ocr_result import OCRResult, TextBlock
 
         # 创建一个无文字的 PDF（模拟扫描件）
@@ -199,8 +201,8 @@ class TestPdfServiceDeleteTextLayer:
         pdf_service.close()
 
     def test_delete_text_layer_preserves_images(self, pdf_service, tmp_path):
-        import numpy as np
         import fitz as fitz_mod
+        import numpy as np
 
         path = tmp_path / "mixed.pdf"
         doc = fitz_mod.open()

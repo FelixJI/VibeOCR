@@ -5,7 +5,6 @@
 UI 管道下拉与注册表同步，旧导入路径仍可用。
 """
 
-from dataclasses import fields as dc_fields
 
 from vibeocr.core.pipelines import OCRPipeline, get_all_pipelines, get_registry
 
@@ -40,8 +39,6 @@ def test_pipeline_combo_has_all_registered():
 def test_old_imports_still_work():
     """验证旧导入路径仍然可用"""
     from vibeocr.models.ocr_options import OCROptions
-
-    from vibeocr.core.pipelines import get_pipeline_display_name
 
     opts = OCROptions()
     assert opts.pipeline == OCRPipeline.OCR

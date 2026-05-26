@@ -4,7 +4,7 @@
 使用 Lucide 图标的 SVG 内容，通过 QSvgRenderer 渲染为 QIcon。
 """
 
-from PySide6.QtCore import Qt, QSize
+from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QIcon, QPainter, QPixmap
 from PySide6.QtSvg import QSvgRenderer
 
