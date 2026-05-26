@@ -426,6 +426,13 @@ class PreviewWidget(QWidget):
 
     def set_pixmap(self, pixmap: QPixmap) -> None:
         """设置预览图片（截图或打开图片）"""
+        self._text_blocks = []
+        self._block_screen_rects = []
+        self._content_list = []
+        self._hovered_block = -1
+        self._highlight_block_index = -1
+        self._overlay.clear()
+
         if pixmap.devicePixelRatio() != 1.0:
             pixmap = QPixmap(pixmap)
             pixmap.setDevicePixelRatio(1.0)
@@ -455,8 +462,12 @@ class PreviewWidget(QWidget):
         ext = Path(file_path).suffix.lower()
         self._is_pdf = ext == ".pdf"
 
-        self._overlay.clear()
+        self._text_blocks = []
+        self._block_screen_rects = []
+        self._content_list = []
+        self._hovered_block = -1
         self._highlight_block_index = -1
+        self._overlay.clear()
 
         if self._is_pdf:
             self._load_pdf(file_path)

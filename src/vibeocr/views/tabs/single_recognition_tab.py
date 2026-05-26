@@ -154,6 +154,7 @@ class SingleRecognitionTab(BaseOcrTab):
                 self._pending_pixmap = pixmap
 
         self._start_btn.setEnabled(True)
+        self._start_btn.setText("开始识别")
 
     def _on_paste(self) -> None:
         from PySide6.QtGui import QGuiApplication
@@ -172,6 +173,7 @@ class SingleRecognitionTab(BaseOcrTab):
         self._pending_pixmap = pixmap
         self._pending_file_path = None
         self._start_btn.setEnabled(True)
+        self._start_btn.setText("开始识别")
 
     def _on_start(self):
         self._start_recognition()
@@ -441,6 +443,7 @@ class SingleRecognitionTab(BaseOcrTab):
     def _on_ocr_finished(self, result) -> None:
         """OCR 完成回调"""
         self._current_ocr_result = result
+        self._start_btn.setText("重新识别")
 
         char_count = len(result.raw_text) if result.raw_text else 0
         block_count = len(result.text_with_scores)
@@ -472,6 +475,7 @@ class SingleRecognitionTab(BaseOcrTab):
     def _on_ocr_error(self, error_msg: str) -> None:
         """OCR 失败回调"""
         self._current_ocr_result = None
+        self._start_btn.setText("开始识别")
         self._result_widget.clear()
         self._result_widget._ensure_web_view().setHtml(
             f"<p style='color:#f44336;'>识别失败：{error_msg}</p>"
