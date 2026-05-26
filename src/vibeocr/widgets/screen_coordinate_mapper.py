@@ -16,9 +16,13 @@ class ScreenInfo:
 
 
 class ScreenCoordinateMapper:
-    def __init__(self, screens: list[ScreenInfo], screenshot_dpr: float | None = None) -> None:
+    def __init__(
+        self, screens: list[ScreenInfo], screenshot_dpr: float | None = None
+    ) -> None:
         self._screens = screens
-        self._screenshot_dpr = screenshot_dpr if screenshot_dpr is not None else self.max_dpr
+        self._screenshot_dpr = (
+            screenshot_dpr if screenshot_dpr is not None else self.max_dpr
+        )
         if screens:
             vg = screens[0].geometry
             for s in screens[1:]:

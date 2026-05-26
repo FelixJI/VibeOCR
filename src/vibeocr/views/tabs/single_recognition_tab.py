@@ -239,7 +239,12 @@ class SingleRecognitionTab(BaseOcrTab):
 
         # 首次使用提示
         pipeline_val = options.pipeline.value
-        if pipeline_val in ("OCR", "PP-StructureV3", "TABLE_RECOGNITION", "FORMULA_RECOGNITION"):
+        if pipeline_val in (
+            "OCR",
+            "PP-StructureV3",
+            "TABLE_RECOGNITION",
+            "FORMULA_RECOGNITION",
+        ):
             from vibeocr.pipeline_status import is_pipeline_ever_succeeded
             from vibeocr.env_manager import get_project_root
 
@@ -479,7 +484,12 @@ class SingleRecognitionTab(BaseOcrTab):
 
     def _first_use_suffix(self, pipeline_val: str) -> str:
         """首次使用失败时返回追加提示"""
-        if pipeline_val in ("OCR", "PP-StructureV3", "TABLE_RECOGNITION", "FORMULA_RECOGNITION"):
+        if pipeline_val in (
+            "OCR",
+            "PP-StructureV3",
+            "TABLE_RECOGNITION",
+            "FORMULA_RECOGNITION",
+        ):
             from vibeocr.pipeline_status import is_pipeline_ever_succeeded
             from vibeocr.env_manager import get_project_root
 

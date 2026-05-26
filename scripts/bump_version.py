@@ -101,7 +101,7 @@ def read_current_version(pyproject_path: Path) -> tuple[int, int, int]:
     m = VERSION_RE.search(text)
     if not m:
         raise ValueError(f"无法在 {pyproject_path} 中找到版本号")
-    return (int(m.group(1)), int(m.group(2)), int(m.group(3)))
+    return (int(m[1]), int(m[2]), int(m[3]))
 
 
 def bump_version(
@@ -323,7 +323,7 @@ def interactive_menu(current: tuple[int, int, int]) -> tuple[int, int, int] | No
         if not m:
             print(f"错误: 无效版本号 '{custom}'")
             return None
-        return (int(m.group(1)), int(m.group(2)), int(m.group(3)))
+        return (int(m[1]), int(m[2]), int(m[3]))
     else:
         return None
 
@@ -792,7 +792,7 @@ def main() -> int:
     elif SEMVER_RE.match(args.version):
         m = SEMVER_RE.match(args.version)
         assert m is not None
-        new_version = (int(m.group(1)), int(m.group(2)), int(m.group(3)))
+        new_version = (int(m[1]), int(m[2]), int(m[3]))
     else:
         parser.print_help()
         return 1

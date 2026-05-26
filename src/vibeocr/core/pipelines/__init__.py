@@ -198,7 +198,8 @@ def get_preloadable_pipelines() -> list[OCRPipeline]:
         可预加载的管道枚举值列表
     """
     return [
-        p for p in OCRPipeline
+        p
+        for p in OCRPipeline
         if _PIPELINE_METADATA.get(p, {}).get("preloadable", False)
     ]
 

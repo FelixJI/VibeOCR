@@ -90,7 +90,9 @@ def setup_logging() -> QtLogHandler:
 
     # 控制台 handler：开发环境 DEBUG，打包环境 WARNING
     console_handler = logging.StreamHandler()
-    console_handler.setLevel(logging.DEBUG if not getattr(sys, "frozen", False) else logging.WARNING)
+    console_handler.setLevel(
+        logging.DEBUG if not getattr(sys, "frozen", False) else logging.WARNING
+    )
     console_handler.setFormatter(
         logging.Formatter("[%(levelname)s] %(name)s: %(message)s")
     )

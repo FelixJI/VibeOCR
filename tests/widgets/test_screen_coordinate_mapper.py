@@ -6,9 +6,7 @@ from PySide6.QtGui import QColor, QPixmap
 from vibeocr.widgets.screen_coordinate_mapper import ScreenCoordinateMapper, ScreenInfo
 
 
-def _make_screen_info(
-    x=0, y=0, w=1920, h=1080, dpr=1.0, color=None
-) -> ScreenInfo:
+def _make_screen_info(x=0, y=0, w=1920, h=1080, dpr=1.0, color=None) -> ScreenInfo:
     geometry = QRect(x, y, w, h)
     grab = QPixmap(int(w * dpr), int(h * dpr))
     grab.setDevicePixelRatio(dpr)

@@ -161,6 +161,7 @@ def launch_application() -> int:
 
     # 初始化 OCR 偏好设置单例（必须在 UI 创建之前，否则所有选项读写均静默失败）
     from vibeocr.utils.ocr_preferences import OCRPreferences
+
     OCRPreferences.instance(cm)
 
     # 加载应用设置

@@ -164,8 +164,7 @@ class OCRPreferences(QObject):
             "version": _CONFIG_VERSION,
             "last_main_pipeline": self._last_main_pipeline.value,
             "main": {
-                k: v.to_dict()
-                for k, v in self._per_pipeline.get("main", {}).items()
+                k: v.to_dict() for k, v in self._per_pipeline.get("main", {}).items()
             },
             "screenshot": {
                 k: v.to_dict()

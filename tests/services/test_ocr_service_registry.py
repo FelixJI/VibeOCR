@@ -24,6 +24,7 @@ from vibeocr.services.ocr_service import OCRService
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_ocr_result(**overrides) -> OCRResult:
     """Create a minimal OCRResult suitable for tests."""
     defaults = dict(
@@ -51,6 +52,7 @@ def _make_ocr_result(**overrides) -> OCRResult:
 # ---------------------------------------------------------------------------
 # get_or_create_pipeline
 # ---------------------------------------------------------------------------
+
 
 class TestGetOrCreatePipeline:
     """Tests for OCRService.get_or_create_pipeline()."""
@@ -85,17 +87,20 @@ class TestGetOrCreatePipeline:
         mock_registry.has.return_value = True
         mock_registry.get.return_value = mock_spec
 
-        with patch(
-            "vibeocr.services.ocr_service.OCRService._setup_cuda_dll_path"
-        ), patch(
-            "vibeocr.services.ocr_service.OCRService._get_device",
-            return_value="cpu",
-        ), patch(
-            "vibeocr.core.pipelines.get_registry",
-            return_value=mock_registry,
-        ), patch(
-            "vibeocr.services.ocr_service.OCRService._create_pipeline"
-        ) as mock_old_create:
+        with (
+            patch("vibeocr.services.ocr_service.OCRService._setup_cuda_dll_path"),
+            patch(
+                "vibeocr.services.ocr_service.OCRService._get_device",
+                return_value="cpu",
+            ),
+            patch(
+                "vibeocr.core.pipelines.get_registry",
+                return_value=mock_registry,
+            ),
+            patch(
+                "vibeocr.services.ocr_service.OCRService._create_pipeline"
+            ) as mock_old_create,
+        ):
             result = service.get_or_create_pipeline("OCR")
 
         # Should use registry, not old _create_pipeline
@@ -113,14 +118,16 @@ class TestGetOrCreatePipeline:
         mock_registry = MagicMock()
         mock_registry.has.return_value = False
 
-        with patch(
-            "vibeocr.services.ocr_service.OCRService._setup_cuda_dll_path"
-        ), patch(
-            "vibeocr.core.pipelines.get_registry",
-            return_value=mock_registry,
-        ), patch.object(
-            service, "_create_pipeline", return_value=mock_pipeline
-        ) as mock_create:
+        with (
+            patch("vibeocr.services.ocr_service.OCRService._setup_cuda_dll_path"),
+            patch(
+                "vibeocr.core.pipelines.get_registry",
+                return_value=mock_registry,
+            ),
+            patch.object(
+                service, "_create_pipeline", return_value=mock_pipeline
+            ) as mock_create,
+        ):
             result = service.get_or_create_pipeline("OCR")
 
         mock_create.assert_called_once_with(OCRPipeline.OCR)
@@ -134,11 +141,12 @@ class TestGetOrCreatePipeline:
         mock_registry = MagicMock()
         mock_registry.has.return_value = False
 
-        with patch(
-            "vibeocr.services.ocr_service.OCRService._setup_cuda_dll_path"
-        ), patch(
-            "vibeocr.core.pipelines.get_registry",
-            return_value=mock_registry,
+        with (
+            patch("vibeocr.services.ocr_service.OCRService._setup_cuda_dll_path"),
+            patch(
+                "vibeocr.core.pipelines.get_registry",
+                return_value=mock_registry,
+            ),
         ):
             with pytest.raises(ValueError, match="不支持的管道类型"):
                 service.get_or_create_pipeline("NONEXISTENT_PIPELINE")
@@ -156,14 +164,16 @@ class TestGetOrCreatePipeline:
         mock_registry.has.return_value = True
         mock_registry.get.return_value = mock_spec
 
-        with patch(
-            "vibeocr.services.ocr_service.OCRService._setup_cuda_dll_path"
-        ), patch(
-            "vibeocr.services.ocr_service.OCRService._get_device",
-            return_value="cpu",
-        ), patch(
-            "vibeocr.core.pipelines.get_registry",
-            return_value=mock_registry,
+        with (
+            patch("vibeocr.services.ocr_service.OCRService._setup_cuda_dll_path"),
+            patch(
+                "vibeocr.services.ocr_service.OCRService._get_device",
+                return_value="cpu",
+            ),
+            patch(
+                "vibeocr.core.pipelines.get_registry",
+                return_value=mock_registry,
+            ),
         ):
             # Call twice — second should return cached instance
             result1 = service.get_or_create_pipeline("OCR")
@@ -176,6 +186,7 @@ class TestGetOrCreatePipeline:
 # ---------------------------------------------------------------------------
 # get_pipeline backward compat
 # ---------------------------------------------------------------------------
+
 
 class TestGetPipelineBackwardCompat:
     """Tests that get_pipeline(OCRPipeline) still works."""
@@ -208,6 +219,7 @@ class TestGetPipelineBackwardCompat:
 # ---------------------------------------------------------------------------
 # recognize() registry dispatch
 # ---------------------------------------------------------------------------
+
 
 class TestRecognizeRegistryDispatch:
     """Tests for recognize() dispatching via registry."""
@@ -255,12 +267,15 @@ class TestRecognizeRegistryDispatch:
         mock_registry = MagicMock()
         mock_registry.has.return_value = False
 
-        with patch(
-            "vibeocr.core.pipelines.get_registry",
-            return_value=mock_registry,
-        ), patch.object(
-            service, "_recognize_ocr", return_value=mock_result
-        ) as mock_rec:
+        with (
+            patch(
+                "vibeocr.core.pipelines.get_registry",
+                return_value=mock_registry,
+            ),
+            patch.object(
+                service, "_recognize_ocr", return_value=mock_result
+            ) as mock_rec,
+        ):
             import numpy as np
 
             img = np.zeros((50, 100, 3), dtype=np.uint8)
@@ -278,12 +293,15 @@ class TestRecognizeRegistryDispatch:
         mock_registry = MagicMock()
         mock_registry.has.return_value = False
 
-        with patch(
-            "vibeocr.core.pipelines.get_registry",
-            return_value=mock_registry,
-        ), patch.object(
-            service, "_recognize_structure", return_value=mock_result
-        ) as mock_rec:
+        with (
+            patch(
+                "vibeocr.core.pipelines.get_registry",
+                return_value=mock_registry,
+            ),
+            patch.object(
+                service, "_recognize_structure", return_value=mock_result
+            ) as mock_rec,
+        ):
             import numpy as np
 
             img = np.zeros((50, 100, 3), dtype=np.uint8)
@@ -300,12 +318,15 @@ class TestRecognizeRegistryDispatch:
         mock_registry = MagicMock()
         mock_registry.has.return_value = False
 
-        with patch(
-            "vibeocr.core.pipelines.get_registry",
-            return_value=mock_registry,
-        ), patch.object(
-            service, "_recognize_paddlocr_vl", return_value=mock_result
-        ) as mock_rec:
+        with (
+            patch(
+                "vibeocr.core.pipelines.get_registry",
+                return_value=mock_registry,
+            ),
+            patch.object(
+                service, "_recognize_paddlocr_vl", return_value=mock_result
+            ) as mock_rec,
+        ):
             import numpy as np
 
             img = np.zeros((50, 100, 3), dtype=np.uint8)

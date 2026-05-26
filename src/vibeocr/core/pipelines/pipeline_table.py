@@ -54,23 +54,45 @@ def _recognize_table(service: Any, image: Any, options: TableRecognitionOptions)
 
     from enum import Enum
 
-    pipeline_name = options.pipeline.value if isinstance(options.pipeline, Enum) else options.pipeline
+    pipeline_name = (
+        options.pipeline.value
+        if isinstance(options.pipeline, Enum)
+        else options.pipeline
+    )
     pipeline = service.get_or_create_pipeline(pipeline_name)
 
     predict_kwargs: dict[str, Any] = {}
-    predict_kwargs["use_doc_orientation_classify"] = options.use_doc_orientation_classify
+    predict_kwargs["use_doc_orientation_classify"] = (
+        options.use_doc_orientation_classify
+    )
     predict_kwargs["use_doc_unwarping"] = options.use_doc_unwarping
-    predict_kwargs["use_table_orientation_classify"] = options.use_table_orientation_classify
-    predict_kwargs["use_ocr_results_with_table_cells"] = options.use_ocr_results_with_table_cells
-    predict_kwargs["use_wired_table_cells_trans_to_html"] = options.use_wired_table_cells_trans_to_html
-    predict_kwargs["use_wireless_table_cells_trans_to_html"] = options.use_wireless_table_cells_trans_to_html
-    predict_kwargs["use_e2e_wired_table_rec_model"] = options.use_e2e_wired_table_rec_model
-    predict_kwargs["use_e2e_wireless_table_rec_model"] = options.use_e2e_wireless_table_rec_model
+    predict_kwargs["use_table_orientation_classify"] = (
+        options.use_table_orientation_classify
+    )
+    predict_kwargs["use_ocr_results_with_table_cells"] = (
+        options.use_ocr_results_with_table_cells
+    )
+    predict_kwargs["use_wired_table_cells_trans_to_html"] = (
+        options.use_wired_table_cells_trans_to_html
+    )
+    predict_kwargs["use_wireless_table_cells_trans_to_html"] = (
+        options.use_wireless_table_cells_trans_to_html
+    )
+    predict_kwargs["use_e2e_wired_table_rec_model"] = (
+        options.use_e2e_wired_table_rec_model
+    )
+    predict_kwargs["use_e2e_wireless_table_rec_model"] = (
+        options.use_e2e_wireless_table_rec_model
+    )
 
     if options.use_wireless_table:
-        predict_kwargs["wireless_table_structure_recognition_model_name"] = options.wireless_table_model_name
+        predict_kwargs["wireless_table_structure_recognition_model_name"] = (
+            options.wireless_table_model_name
+        )
     else:
-        predict_kwargs["wireless_table_structure_recognition_model_name"] = options.wired_table_model_name
+        predict_kwargs["wireless_table_structure_recognition_model_name"] = (
+            options.wired_table_model_name
+        )
 
     if options.text_det_limit_side_len is not None:
         predict_kwargs["text_det_limit_side_len"] = options.text_det_limit_side_len
@@ -116,7 +138,10 @@ def _recognize_table(service: Any, image: Any, options: TableRecognitionOptions)
             bbox_tuple = tuple(float(v) for v in bbox) if bbox else None
 
             if label == "table":
-                from vibeocr.services.ocr_service import _extract_table_html, _html_table_to_markdown
+                from vibeocr.services.ocr_service import (
+                    _extract_table_html,
+                    _html_table_to_markdown,
+                )
 
                 table_html = _extract_table_html(content)
                 table_md = _html_table_to_markdown(table_html)
@@ -133,7 +158,9 @@ def _recognize_table(service: Any, image: Any, options: TableRecognitionOptions)
                     )
                 )
                 text_with_scores.append((content, 0.9))
-                content_list.append({"type": "table", "table_body": table_html, "bbox": bbox_tuple})
+                content_list.append(
+                    {"type": "table", "table_body": table_html, "bbox": bbox_tuple}
+                )
             else:
                 text_blocks.append(
                     TextBlock(
@@ -146,7 +173,9 @@ def _recognize_table(service: Any, image: Any, options: TableRecognitionOptions)
                     )
                 )
                 text_with_scores.append((content, 0.9))
-                content_list.append({"type": label, "text": content, "bbox": bbox_tuple})
+                content_list.append(
+                    {"type": label, "text": content, "bbox": bbox_tuple}
+                )
 
     raw_text = "\n".join(b.text for b in text_blocks)
     markdown_text = "\n\n".join(markdown_parts) if markdown_parts else raw_text

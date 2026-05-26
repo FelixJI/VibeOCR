@@ -82,6 +82,7 @@ class InlineRecognitionPanel(QWidget):
         """从 OCRPreferences 的 screenshot 源加载指定管道的选项"""
         try:
             from vibeocr.utils.ocr_preferences import OCRPreferences
+
             prefs = OCRPreferences.instance()
             self._current_options = prefs.get_pipeline_options("screenshot", pipeline)
         except RuntimeError:
@@ -112,7 +113,10 @@ class InlineRecognitionPanel(QWidget):
         """构建管道选项的 tooltip 文本"""
         try:
             from vibeocr.utils.ocr_preferences import OCRPreferences
-            options = OCRPreferences.instance().get_pipeline_options("screenshot", pipeline)
+
+            options = OCRPreferences.instance().get_pipeline_options(
+                "screenshot", pipeline
+            )
         except RuntimeError:
             options = OCROptions(pipeline=pipeline)
 

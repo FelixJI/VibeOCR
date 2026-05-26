@@ -194,8 +194,7 @@ def _recognize_pp_structure(
         if hasattr(res, "__getitem__"):
             parsing_res_list = (
                 res["parsing_res_list"]
-                if "parsing_res_list"
-                in (res.keys() if hasattr(res, "keys") else [])
+                if "parsing_res_list" in (res.keys() if hasattr(res, "keys") else [])
                 else []
             )
         if not parsing_res_list and hasattr(res, "parsing_res_list"):

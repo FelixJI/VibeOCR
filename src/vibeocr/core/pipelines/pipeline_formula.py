@@ -41,7 +41,9 @@ def _create_formula_pipeline(device: str) -> Any:
     return PPStructureV3(device=device)
 
 
-def _recognize_formula(service: Any, image: Any, options: FormulaRecognitionOptions) -> Any:
+def _recognize_formula(
+    service: Any, image: Any, options: FormulaRecognitionOptions
+) -> Any:
     """执行公式识别并返回 OCRResult
 
     通过 PPStructureV3 进行识别，但仅提取 label=="formula" 的区块，
@@ -51,7 +53,11 @@ def _recognize_formula(service: Any, image: Any, options: FormulaRecognitionOpti
 
     from enum import Enum
 
-    pipeline_name = options.pipeline.value if isinstance(options.pipeline, Enum) else options.pipeline
+    pipeline_name = (
+        options.pipeline.value
+        if isinstance(options.pipeline, Enum)
+        else options.pipeline
+    )
     pipeline = service.get_or_create_pipeline(pipeline_name)
 
     predict_kwargs: dict[str, Any] = {
@@ -63,7 +69,9 @@ def _recognize_formula(service: Any, image: Any, options: FormulaRecognitionOpti
         "use_chart_recognition": False,
     }
     if options.formula_recognition_batch_size != 1:
-        predict_kwargs["formula_recognition_batch_size"] = options.formula_recognition_batch_size
+        predict_kwargs["formula_recognition_batch_size"] = (
+            options.formula_recognition_batch_size
+        )
 
     output = pipeline.predict(input=image, **predict_kwargs)
     output_list = list(output)
@@ -119,7 +127,9 @@ def _recognize_formula(service: Any, image: Any, options: FormulaRecognitionOpti
                 )
             )
             text_with_scores.append((content, 1.0))
-            content_list.append({"type": "formula", "text": content, "bbox": bbox_tuple})
+            content_list.append(
+                {"type": "formula", "text": content, "bbox": bbox_tuple}
+            )
 
     raw_text = "\n".join(b.text for b in text_blocks)
     markdown_text = "\n\n".join(markdown_parts) if markdown_parts else raw_text

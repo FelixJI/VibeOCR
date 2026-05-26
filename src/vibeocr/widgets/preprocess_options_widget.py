@@ -31,7 +31,9 @@ class PreprocessOptionsWidget(QGroupBox):
     """
 
     options_changed = Signal(object)  # OCROptions
-    pipeline_switching = Signal(object, object)  # (old_pipeline: OCRPipeline, OCROptions)
+    pipeline_switching = Signal(
+        object, object
+    )  # (old_pipeline: OCRPipeline, OCROptions)
     pipeline_switched = Signal(object)  # (new_pipeline: OCRPipeline)
 
     def __init__(self, parent: QWidget | None = None):
@@ -282,7 +284,9 @@ class PreprocessOptionsWidget(QGroupBox):
         layout = QVBoxLayout(group)
 
         self._use_wireless_table_cb = QCheckBox("无线表格模式")
-        self._use_wireless_table_cb.setToolTip("使用无线表格识别模型（SLANeXt_wireless）")
+        self._use_wireless_table_cb.setToolTip(
+            "使用无线表格识别模型（SLANeXt_wireless）"
+        )
         self._use_wireless_table_cb.setChecked(True)
         layout.addWidget(self._use_wireless_table_cb)
 
@@ -827,38 +831,22 @@ class PreprocessOptionsWidget(QGroupBox):
         self._use_ocr_with_table_cells_cb.setChecked(
             options.use_ocr_results_with_table_cells
         )
-        self._use_e2e_wired_table_cb.setChecked(
-            options.use_e2e_wired_table_rec_model
-        )
+        self._use_e2e_wired_table_cb.setChecked(options.use_e2e_wired_table_rec_model)
         self._use_e2e_wireless_table_cb.setChecked(
             options.use_e2e_wireless_table_rec_model
         )
-        self._use_wired_html_cb.setChecked(
-            options.use_wired_table_cells_trans_to_html
-        )
+        self._use_wired_html_cb.setChecked(options.use_wired_table_cells_trans_to_html)
         self._use_wireless_html_cb.setChecked(
             options.use_wireless_table_cells_trans_to_html
         )
-        self._text_det_limit_side_spin.setValue(
-            options.text_det_limit_side_len or 0
-        )
-        self._text_det_thresh_spin.setValue(
-            options.text_det_thresh or 0.0
-        )
-        self._text_det_box_thresh_spin.setValue(
-            options.text_det_box_thresh or 0.0
-        )
-        self._text_det_unclip_ratio_spin.setValue(
-            options.text_det_unclip_ratio or 0.0
-        )
-        self._text_rec_score_thresh_spin.setValue(
-            options.text_rec_score_thresh or 0.0
-        )
+        self._text_det_limit_side_spin.setValue(options.text_det_limit_side_len or 0)
+        self._text_det_thresh_spin.setValue(options.text_det_thresh or 0.0)
+        self._text_det_box_thresh_spin.setValue(options.text_det_box_thresh or 0.0)
+        self._text_det_unclip_ratio_spin.setValue(options.text_det_unclip_ratio or 0.0)
+        self._text_rec_score_thresh_spin.setValue(options.text_rec_score_thresh or 0.0)
 
         # 设置公式识别选项
-        self._formula_batch_size_spin.setValue(
-            options.formula_recognition_batch_size
-        )
+        self._formula_batch_size_spin.setValue(options.formula_recognition_batch_size)
         self._formula_model_name_edit.setText(
             options.formula_recognition_model_name or ""
         )

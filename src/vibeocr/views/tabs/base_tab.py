@@ -223,8 +223,10 @@ class BaseOcrTab(QWidget):
                 prefs.get_pipeline_options(source, default_pipeline)
             )
             self._preprocess_options.pipeline_switching.connect(
-                lambda old_pipeline, opts: OCRPreferences.instance().set_pipeline_options(
-                    source, old_pipeline, opts
+                lambda old_pipeline, opts: (
+                    OCRPreferences.instance().set_pipeline_options(
+                        source, old_pipeline, opts
+                    )
                 )
             )
             self._preprocess_options.pipeline_switched.connect(

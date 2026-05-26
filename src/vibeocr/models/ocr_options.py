@@ -158,22 +158,42 @@ class OCROptions:
             start_page_id=data.get("start_page_id", 0),
             end_page_id=data.get("end_page_id", None),
             use_wireless_table=data.get("use_wireless_table", True),
-            use_table_orientation_classify=data.get("use_table_orientation_classify", True),
-            use_ocr_results_with_table_cells=data.get("use_ocr_results_with_table_cells", True),
-            formula_recognition_batch_size=data.get("formula_recognition_batch_size", 1),
-            use_e2e_wired_table_rec_model=data.get("use_e2e_wired_table_rec_model", False),
-            use_e2e_wireless_table_rec_model=data.get("use_e2e_wireless_table_rec_model", True),
-            wireless_table_model_name=data.get("wireless_table_model_name", "SLANeXt_wireless"),
+            use_table_orientation_classify=data.get(
+                "use_table_orientation_classify", True
+            ),
+            use_ocr_results_with_table_cells=data.get(
+                "use_ocr_results_with_table_cells", True
+            ),
+            formula_recognition_batch_size=data.get(
+                "formula_recognition_batch_size", 1
+            ),
+            use_e2e_wired_table_rec_model=data.get(
+                "use_e2e_wired_table_rec_model", False
+            ),
+            use_e2e_wireless_table_rec_model=data.get(
+                "use_e2e_wireless_table_rec_model", True
+            ),
+            wireless_table_model_name=data.get(
+                "wireless_table_model_name", "SLANeXt_wireless"
+            ),
             wired_table_model_name=data.get("wired_table_model_name", "SLANeXt_wired"),
-            use_wired_table_cells_trans_to_html=data.get("use_wired_table_cells_trans_to_html", False),
-            use_wireless_table_cells_trans_to_html=data.get("use_wireless_table_cells_trans_to_html", False),
+            use_wired_table_cells_trans_to_html=data.get(
+                "use_wired_table_cells_trans_to_html", False
+            ),
+            use_wireless_table_cells_trans_to_html=data.get(
+                "use_wireless_table_cells_trans_to_html", False
+            ),
             text_det_limit_side_len=data.get("text_det_limit_side_len", None),
             text_det_thresh=data.get("text_det_thresh", None),
             text_det_box_thresh=data.get("text_det_box_thresh", None),
             text_det_unclip_ratio=data.get("text_det_unclip_ratio", None),
             text_rec_score_thresh=data.get("text_rec_score_thresh", None),
-            formula_recognition_model_name=data.get("formula_recognition_model_name", None),
-            formula_recognition_model_dir=data.get("formula_recognition_model_dir", None),
+            formula_recognition_model_name=data.get(
+                "formula_recognition_model_name", None
+            ),
+            formula_recognition_model_dir=data.get(
+                "formula_recognition_model_dir", None
+            ),
         )
 
     def copy(self, **updates) -> "OCROptions":

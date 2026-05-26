@@ -136,6 +136,7 @@ class SettingsPageController:
         self._screenshot_switching = True
         try:
             from vibeocr.utils.ocr_preferences import OCRPreferences
+
             OCRPreferences.instance().set_pipeline_options(
                 "screenshot", old_pipeline, options
             )
@@ -145,6 +146,7 @@ class SettingsPageController:
     def _on_screenshot_pipeline_switched(self, new_pipeline) -> None:
         try:
             from vibeocr.utils.ocr_preferences import OCRPreferences
+
             loaded = OCRPreferences.instance().get_pipeline_options(
                 "screenshot", new_pipeline
             )
@@ -158,6 +160,7 @@ class SettingsPageController:
             return
         try:
             from vibeocr.utils.ocr_preferences import OCRPreferences
+
             OCRPreferences.instance().set_pipeline_options(
                 "screenshot", options.pipeline, options
             )
@@ -292,7 +295,9 @@ class SettingsPageController:
                         logger.debug(f"[预加载] 正在预加载 {pipeline.display_name}...")
                         success = self._service.preload_pipeline(pipeline)
                         if not success:
-                            logger.warning(f"[预加载] {pipeline.display_name} 预加载失败")
+                            logger.warning(
+                                f"[预加载] {pipeline.display_name} 预加载失败"
+                            )
                             results[pipeline.name] = False
                             continue
                         results[pipeline.name] = True

@@ -146,15 +146,19 @@ class ScreenCaptureOverlay(QWidget):
             sg = screen.geometry()
             offset = sg.topLeft() - virtual_geometry.topLeft()
             grab = screen.grabWindow(0)
-            screen_infos.append(ScreenInfo(
-                geometry=QRect(
-                    offset.x(), offset.y(),
-                    sg.width(), sg.height(),
-                ),
-                dpr=screen.devicePixelRatio(),
-                grab=grab,
-                offset=offset,
-            ))
+            screen_infos.append(
+                ScreenInfo(
+                    geometry=QRect(
+                        offset.x(),
+                        offset.y(),
+                        sg.width(),
+                        sg.height(),
+                    ),
+                    dpr=screen.devicePixelRatio(),
+                    grab=grab,
+                    offset=offset,
+                )
+            )
 
         self._mapper = ScreenCoordinateMapper(screen_infos)
         self._virtual_geometry = virtual_geometry
@@ -480,9 +484,7 @@ class ScreenCaptureOverlay(QWidget):
         try:
             self._selection_rect = new_rect
 
-            self._canvas.update_crop_region(
-                self._screen_pixmap, new_rect, self._mapper
-            )
+            self._canvas.update_crop_region(self._screen_pixmap, new_rect, self._mapper)
 
             self._canvas.setGeometry(new_rect)
             if self._resize_frame:

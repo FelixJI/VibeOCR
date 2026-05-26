@@ -136,9 +136,7 @@ class TestDetectAt:
 
     def test_returns_none_when_no_window(self, detector, monkeypatch):
         detector._hit_test = lambda pos: None
-        result = detector.detect_at(
-            QPoint(50, 50), _make_mapper()
-        )
+        result = detector.detect_at(QPoint(50, 50), _make_mapper())
         assert result is None
 
 

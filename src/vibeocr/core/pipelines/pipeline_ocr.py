@@ -53,9 +53,7 @@ def _consume_generator_safely(output) -> list:
             gc.enable()
 
 
-def _extract_bbox(
-    rec_boxes, index: int
-) -> tuple[float, float, float, float] | None:
+def _extract_bbox(rec_boxes, index: int) -> tuple[float, float, float, float] | None:
     """从 rec_boxes 提取第 index 个文本框的 bbox [x0, y0, x1, y1]
 
     支持格式:
@@ -232,7 +230,9 @@ def _recognize_ocr(service: Any, image: Any, options: OCROptions) -> Any:
                                 if rec_boxes is not None
                                 else None
                             )
-                            text_blocks.append(TextBlock(text=text, score=fs, bbox=bbox))
+                            text_blocks.append(
+                                TextBlock(text=text, score=fs, bbox=bbox)
+                            )
                 else:
                     for i, text in enumerate(rec_texts):
                         if text:
@@ -242,7 +242,9 @@ def _recognize_ocr(service: Any, image: Any, options: OCROptions) -> Any:
                                 if rec_boxes is not None
                                 else None
                             )
-                            text_blocks.append(TextBlock(text=text, score=1.0, bbox=bbox))
+                            text_blocks.append(
+                                TextBlock(text=text, score=1.0, bbox=bbox)
+                            )
         except Exception as e:
             _logger.error("[_recognize_ocr] 处理结果项 #%d 时出错: %s", result_count, e)
             continue

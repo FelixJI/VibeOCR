@@ -122,9 +122,7 @@ class TestMouseMoveHoverDetect:
         event = _make_mouse_event(QPoint(200, 200))
         overlay.mouseMoveEvent(event)
 
-        detector.detect_at.assert_called_once_with(
-            QPoint(200, 200), mapper
-        )
+        detector.detect_at.assert_called_once_with(QPoint(200, 200), mapper)
         assert overlay._detected_rect == QRect(100, 100, 400, 300)
 
     def test_hover_sets_detected_rect_none_when_no_detection(self, qapp):

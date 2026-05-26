@@ -17,7 +17,14 @@ def test_registry_has_all_pipelines():
 
 def test_registry_get_each():
     reg = get_registry()
-    for name in ["OCR", "PP-StructureV3", "TABLE_RECOGNITION", "FORMULA_RECOGNITION", "MinerU", "PaddleOCR-VL"]:
+    for name in [
+        "OCR",
+        "PP-StructureV3",
+        "TABLE_RECOGNITION",
+        "FORMULA_RECOGNITION",
+        "MinerU",
+        "PaddleOCR-VL",
+    ]:
         spec = reg.get(name)
         assert spec.name == name
         assert spec.options_class is not None
@@ -40,7 +47,9 @@ def test_each_spec_has_callable_create_and_recognize():
     """每个 spec 的 create_pipeline 和 recognize 应可调用"""
     reg = get_registry()
     for spec in reg.list_all():
-        assert callable(spec.create_pipeline), f"{spec.name} create_pipeline not callable"
+        assert callable(spec.create_pipeline), (
+            f"{spec.name} create_pipeline not callable"
+        )
         assert callable(spec.recognize), f"{spec.name} recognize not callable"
 
 
@@ -49,6 +58,7 @@ def test_mineru_spec_raises_not_implemented():
     reg = get_registry()
     mineru = reg.get("MinerU")
     import pytest
+
     with pytest.raises(NotImplementedError):
         mineru.create_pipeline("cpu")
     with pytest.raises(NotImplementedError):
@@ -58,4 +68,5 @@ def test_mineru_spec_raises_not_implemented():
 def test_get_registry_returns_same_instance():
     """get_registry() 应返回同一个注册表实例"""
     from vibeocr.core.pipelines import get_registry as gr2
+
     assert get_registry() is gr2()

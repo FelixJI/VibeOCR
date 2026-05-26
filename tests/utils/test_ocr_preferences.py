@@ -214,20 +214,36 @@ class TestPerPipelineStorage:
         prefs.set_pipeline_options("main", OCRPipeline.OCR, main_opts)
         prefs.set_pipeline_options("screenshot", OCRPipeline.OCR, screenshot_opts)
 
-        assert prefs.get_pipeline_options("main", OCRPipeline.OCR).use_doc_unwarping is False
-        assert prefs.get_pipeline_options("screenshot", OCRPipeline.OCR).use_doc_unwarping is True
+        assert (
+            prefs.get_pipeline_options("main", OCRPipeline.OCR).use_doc_unwarping
+            is False
+        )
+        assert (
+            prefs.get_pipeline_options("screenshot", OCRPipeline.OCR).use_doc_unwarping
+            is True
+        )
 
     def test_different_pipelines_independent(self, tmp_config_dir):
         prefs = OCRPreferences(tmp_config_dir)
 
         ocr_opts = OCROptions(pipeline=OCRPipeline.OCR, use_doc_unwarping=False)
-        struct_opts = OCROptions(pipeline=OCRPipeline.PP_STRUCTURE_V3, use_doc_unwarping=True)
+        struct_opts = OCROptions(
+            pipeline=OCRPipeline.PP_STRUCTURE_V3, use_doc_unwarping=True
+        )
 
         prefs.set_pipeline_options("main", OCRPipeline.OCR, ocr_opts)
         prefs.set_pipeline_options("main", OCRPipeline.PP_STRUCTURE_V3, struct_opts)
 
-        assert prefs.get_pipeline_options("main", OCRPipeline.OCR).use_doc_unwarping is False
-        assert prefs.get_pipeline_options("main", OCRPipeline.PP_STRUCTURE_V3).use_doc_unwarping is True
+        assert (
+            prefs.get_pipeline_options("main", OCRPipeline.OCR).use_doc_unwarping
+            is False
+        )
+        assert (
+            prefs.get_pipeline_options(
+                "main", OCRPipeline.PP_STRUCTURE_V3
+            ).use_doc_unwarping
+            is True
+        )
 
     def test_get_unsaved_pipeline_returns_default(self, tmp_config_dir):
         prefs = OCRPreferences(tmp_config_dir)
@@ -239,27 +255,47 @@ class TestPerPipelineStorage:
     def test_persist_and_reload(self, tmp_config_dir):
         prefs = OCRPreferences(tmp_config_dir)
 
-        prefs.set_pipeline_options("screenshot", OCRPipeline.OCR, OCROptions(
-            pipeline=OCRPipeline.OCR,
-            use_doc_unwarping=False,
-        ))
-        prefs.set_pipeline_options("screenshot", OCRPipeline.TABLE_RECOGNITION, OCROptions(
-            pipeline=OCRPipeline.TABLE_RECOGNITION,
-            use_wireless_table=False,
-        ))
+        prefs.set_pipeline_options(
+            "screenshot",
+            OCRPipeline.OCR,
+            OCROptions(
+                pipeline=OCRPipeline.OCR,
+                use_doc_unwarping=False,
+            ),
+        )
+        prefs.set_pipeline_options(
+            "screenshot",
+            OCRPipeline.TABLE_RECOGNITION,
+            OCROptions(
+                pipeline=OCRPipeline.TABLE_RECOGNITION,
+                use_wireless_table=False,
+            ),
+        )
 
         OCRPreferences.reset_instance()
         prefs2 = OCRPreferences(tmp_config_dir)
 
-        assert prefs2.get_pipeline_options("screenshot", OCRPipeline.OCR).use_doc_unwarping is False
-        assert prefs2.get_pipeline_options("screenshot", OCRPipeline.TABLE_RECOGNITION).use_wireless_table is False
+        assert (
+            prefs2.get_pipeline_options("screenshot", OCRPipeline.OCR).use_doc_unwarping
+            is False
+        )
+        assert (
+            prefs2.get_pipeline_options(
+                "screenshot", OCRPipeline.TABLE_RECOGNITION
+            ).use_wireless_table
+            is False
+        )
 
     def test_pipeline_options_changed_signal(self, tmp_config_dir):
         prefs = OCRPreferences(tmp_config_dir)
         received = []
-        prefs.pipeline_options_changed.connect(lambda s, o: received.append((s, o.pipeline)))
+        prefs.pipeline_options_changed.connect(
+            lambda s, o: received.append((s, o.pipeline))
+        )
 
-        prefs.set_pipeline_options("main", OCRPipeline.OCR, OCROptions(pipeline=OCRPipeline.OCR))
+        prefs.set_pipeline_options(
+            "main", OCRPipeline.OCR, OCROptions(pipeline=OCRPipeline.OCR)
+        )
 
         assert len(received) == 1
         assert received[0] == ("main", OCRPipeline.OCR)
@@ -331,7 +367,15 @@ class TestVersionMigration:
 
         prefs = OCRPreferences(tmp_config_dir)
 
-        assert prefs.get_pipeline_options("main", OCRPipeline.TABLE_RECOGNITION).use_wireless_table is False
-        assert prefs.get_pipeline_options("screenshot", OCRPipeline.OCR).use_doc_unwarping is False
+        assert (
+            prefs.get_pipeline_options(
+                "main", OCRPipeline.TABLE_RECOGNITION
+            ).use_wireless_table
+            is False
+        )
+        assert (
+            prefs.get_pipeline_options("screenshot", OCRPipeline.OCR).use_doc_unwarping
+            is False
+        )
         # legacy get_options uses last_main_pipeline
         assert prefs.get_options().pipeline == OCRPipeline.TABLE_RECOGNITION
