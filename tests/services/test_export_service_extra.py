@@ -23,7 +23,9 @@ class TestExportUnsupportedFormat:
 
 class TestGetOutputFilename:
     def test_markdown(self):
-        assert ExportService.get_output_filename("report.pdf", "markdown") == "report.md"
+        assert (
+            ExportService.get_output_filename("report.pdf", "markdown") == "report.md"
+        )
 
     def test_html(self):
         assert ExportService.get_output_filename("doc.txt", "html") == "doc.html"

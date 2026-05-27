@@ -93,7 +93,9 @@ class TestBatchCommit:
 
     @patch("vibeocr.services.mineru_service.MinerUService")
     def test_commit_handles_error(self, MockMinerU):
-        MockMinerU.return_value = MagicMock(parse=MagicMock(side_effect=RuntimeError("boom")))
+        MockMinerU.return_value = MagicMock(
+            parse=MagicMock(side_effect=RuntimeError("boom"))
+        )
 
         svc = MinerUBatchService()
         rid = svc.batch_add(b"d", file_name="f.pdf")
