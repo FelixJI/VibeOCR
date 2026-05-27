@@ -12,11 +12,12 @@ import os
 import subprocess
 import sys
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING
 
 import httpx
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
     from PySide6.QtWidgets import QWidget
@@ -212,10 +213,10 @@ async def download_update(
     cache_dir.mkdir(parents=True, exist_ok=True)
 
     # 清理残留文件
-    for f in cache_dir.iterdir():
-        if f.is_file():
+    for old_file in cache_dir.iterdir():
+        if old_file.is_file():
             try:
-                f.unlink()
+                old_file.unlink()
             except OSError:
                 pass
 

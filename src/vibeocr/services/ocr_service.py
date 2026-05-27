@@ -809,7 +809,11 @@ class OCRService(metaclass=SingletonMeta):
                     continue
 
                 cl_idx = len(content_list)
-                bbox_tuple = (float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3])) if bbox else None
+                bbox_tuple = (
+                    (float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3]))
+                    if bbox
+                    else None
+                )
 
                 if label == "table":
                     table_html = _extract_table_html(content)

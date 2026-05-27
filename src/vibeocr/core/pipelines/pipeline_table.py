@@ -135,7 +135,11 @@ def _recognize_table(service: Any, image: Any, options: TableRecognitionOptions)
                 continue
 
             cl_idx = len(content_list)
-            bbox_tuple = (float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3])) if bbox else None
+            bbox_tuple = (
+                (float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3]))
+                if bbox
+                else None
+            )
 
             if label == "table":
                 from vibeocr.services.ocr_service import (

@@ -61,24 +61,26 @@ class _ButtonDragFilter(QObject):
 
     def eventFilter(self, obj: QObject, event: QEvent) -> bool:
         if event.type() == QEvent.Type.MouseButtonPress:
-            if event.button() == Qt.MouseButton.LeftButton:
-                self._press_pos = event.globalPosition().toPoint()
+            me = event if isinstance(event, QMouseEvent) else None
+            if me and me.button() == Qt.MouseButton.LeftButton:
+                self._press_pos = me.globalPosition().toPoint()
                 self._is_dragging = False
         elif event.type() == QEvent.Type.MouseMove:
+            me = event if isinstance(event, QMouseEvent) else None
             if (
                 self._press_pos is not None
-                and event.buttons() & Qt.MouseButton.LeftButton
+                and me and me.buttons() & Qt.MouseButton.LeftButton
             ):
                 if not self._is_dragging:
-                    delta = event.globalPosition().toPoint() - self._press_pos
+                    delta = me.globalPosition().toPoint() - self._press_pos
                     if delta.manhattanLength() > _DRAG_THRESHOLD:
                         self._is_dragging = True
                         self._toolbar._drag_pos = self._press_pos - self._toolbar.pos()
                         self._toolbar._dragging = True
                         self._toolbar.setCursor(Qt.CursorShape.ClosedHandCursor)
-                if self._is_dragging:
+                if self._is_dragging and self._toolbar._drag_pos is not None:
                     self._toolbar.move(
-                        event.globalPosition().toPoint() - self._toolbar._drag_pos
+                        me.globalPosition().toPoint() - self._toolbar._drag_pos
                     )
                     return True
         elif event.type() == QEvent.Type.MouseButtonRelease:

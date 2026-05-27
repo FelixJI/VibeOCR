@@ -12,15 +12,15 @@ dependencies = [
     "paddlepaddle-gpu>=3.3.1",
     "nvidia-cudnn-cu13>=9.22.0.52",
     "nvidia-cublas-cu12>=12.9.2.10",
-    "nvidia-cublas>=13.4.0.1",
-    "nvidia-cufft>=12.2.0.46",
-    "nvidia-curand>=10.4.2.55",
-    "nvidia-cusolver>=12.2.0.1",
-    "nvidia-cusparse>=12.7.10.1",
-    "nvidia-cuda-runtime>=13.2.75",
+    "nvidia-cublas>=13.5.1.27",
+    "nvidia-cufft>=12.3.0.29",
+    "nvidia-curand>=10.4.3.29",
+    "nvidia-cusolver>=12.2.2.18",
+    "nvidia-cusparse>=12.8.1.7",
+    "nvidia-cuda-runtime>=13.3.29",
     "paddleocr[doc-parser]>=3.5.0",
     "httpx>=0.28.1",
-    "mineru[core]>=3.1.15",
+    "mineru[core]>=3.2.0",
     "pymupdf>=1.27.2.3",
     "qrcode[pil]>=8.2",
     "python-barcode>=0.16.1",
@@ -115,6 +115,33 @@ reportUnusedVariable = "warning"
 reportDuplicateImport = "error"
 # PySide6 自动生成的 UI 文件使用旧式枚举访问
 reportAttributeAccessIssue = "warning"
+
+# =============================================================================
+# Mypy - 静态类型检查
+# =============================================================================
+[tool.mypy]
+python_version = "3.13"
+warn_unused_configs = true
+disallow_untyped_defs = false
+
+[[tool.mypy.overrides]]
+module = [
+    "paddleocr",
+    "fitz",
+    "docx",
+    "docx.shared",
+    "openpyxl",
+    "markdown",
+    "markdown.extensions.*",
+    "qrcode",
+    "qrcode.image.svg",
+    "barcode",
+    "barcode.writer",
+    "pynvml",
+    "qasync",
+    "oleacc",
+]
+ignore_missing_imports = true
 
 # =============================================================================
 # Pytest

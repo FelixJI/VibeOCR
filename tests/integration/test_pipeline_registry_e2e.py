@@ -5,7 +5,6 @@
 UI 管道下拉与注册表同步，旧导入路径仍可用。
 """
 
-
 from vibeocr.core.pipelines import OCRPipeline, get_all_pipelines, get_registry
 
 

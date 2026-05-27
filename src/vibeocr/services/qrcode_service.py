@@ -106,7 +106,7 @@ class QrcodeService:
         buffer = io.BytesIO()
         bc.write(buffer)
         buffer.seek(0)
-        img = Image.open(buffer)
+        img: Image.Image = Image.open(buffer)
         img = img.convert("RGB")
 
         target_size = options.get("size", 300)

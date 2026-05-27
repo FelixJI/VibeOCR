@@ -942,9 +942,7 @@ class MainWindow(QMainWindow):
         # 动态更新关闭窗口时是否退出程序
         from PySide6.QtWidgets import QApplication
 
-        app = QApplication.instance()
-        if app:
-            app.setQuitOnLastWindowClosed(not checked)
+        QApplication.setQuitOnLastWindowClosed(not checked)
         logging.debug(f"最小化到系统托盘: {'启用' if checked else '禁用'}")
 
     @Slot(bool)

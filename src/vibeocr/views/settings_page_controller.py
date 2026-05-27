@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 
 from PySide6.QtWidgets import (
     QCheckBox,
+    QLabel,
     QListWidget,
     QMessageBox,
     QProgressBar,
@@ -377,7 +378,7 @@ class SettingsPageController:
 
     def _update_preload_status(self, status: str | None = None) -> None:
         """更新预加载状态"""
-        label = self._ui.findChild(QWidget, "labelPreloadStatus")
+        label = self._ui.findChild(QLabel, "labelPreloadStatus")
         if label:
             if status:
                 label.setText(status)
@@ -408,11 +409,11 @@ class SettingsPageController:
             None,
             "确认清除",
             "确定要清除所有缓存吗？\n这将删除机器配置缓存，下次启动时需要重新检测。",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
         )
 
-        if reply == QMessageBox.Yes:
+        if reply == QMessageBox.StandardButton.Yes:
             clear_cache(self._project_root)
             self._update_cache_status("缓存已清除")
             logger.debug("[缓存] 已清除")
@@ -421,7 +422,7 @@ class SettingsPageController:
         """更新缓存状态"""
         from vibeocr.machine_cache import get_cache_info, is_cache_valid
 
-        label = self._ui.findChild(QWidget, "labelCacheStatus")
+        label = self._ui.findChild(QLabel, "labelCacheStatus")
         if label:
             if status:
                 label.setText(status)

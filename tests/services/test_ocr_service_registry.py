@@ -144,7 +144,8 @@ class TestGetOrCreatePipeline:
             patch(
                 "vibeocr.core.pipelines.get_registry",
                 return_value=mock_registry,
-            ),pytest.raises(ValueError, match="不支持的管道类型")
+            ),
+            pytest.raises(ValueError, match="不支持的管道类型"),
         ):
             service.get_or_create_pipeline("NONEXISTENT_PIPELINE")
 

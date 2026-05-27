@@ -699,17 +699,17 @@ class PreprocessOptionsWidget(QGroupBox):
             val = self._text_det_limit_side_spin.value()
             kwargs["text_det_limit_side_len"] = int(val) if val > 0 else None
         if is_option_supported(pipeline, "text_det_thresh"):
-            val = self._text_det_thresh_spin.value()
-            kwargs["text_det_thresh"] = float(val) if val > 0.0 else None
+            thresh_val = self._text_det_thresh_spin.value()
+            kwargs["text_det_thresh"] = float(thresh_val) if thresh_val > 0.0 else None
         if is_option_supported(pipeline, "text_det_box_thresh"):
-            val = self._text_det_box_thresh_spin.value()
-            kwargs["text_det_box_thresh"] = float(val) if val > 0.0 else None
+            box_thresh_val = self._text_det_box_thresh_spin.value()
+            kwargs["text_det_box_thresh"] = float(box_thresh_val) if box_thresh_val > 0.0 else None
         if is_option_supported(pipeline, "text_det_unclip_ratio"):
-            val = self._text_det_unclip_ratio_spin.value()
-            kwargs["text_det_unclip_ratio"] = float(val) if val > 0.0 else None
+            unclip_val = self._text_det_unclip_ratio_spin.value()
+            kwargs["text_det_unclip_ratio"] = float(unclip_val) if unclip_val > 0.0 else None
         if is_option_supported(pipeline, "text_rec_score_thresh"):
-            val = self._text_rec_score_thresh_spin.value()
-            kwargs["text_rec_score_thresh"] = float(val) if val > 0.0 else None
+            score_val = self._text_rec_score_thresh_spin.value()
+            kwargs["text_rec_score_thresh"] = float(score_val) if score_val > 0.0 else None
         if is_option_supported(pipeline, "formula_recognition_model_name"):
             text = self._formula_model_name_edit.text().strip()
             kwargs["formula_recognition_model_name"] = text or None

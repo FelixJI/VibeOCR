@@ -190,7 +190,7 @@ def _recognize_pp_structure(
                     images.update(md_imgs)
 
         # 从 parsing_res_list 提取结构化结果
-        parsing_res_list = []
+        parsing_res_list: list[Any] = []
         if hasattr(res, "__getitem__"):
             parsing_res_list = (
                 res["parsing_res_list"]
@@ -211,7 +211,11 @@ def _recognize_pp_structure(
                 continue
 
             cl_idx = len(content_list)
-            bbox_tuple = (float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3])) if bbox else None
+            bbox_tuple = (
+                (float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3]))
+                if bbox
+                else None
+            )
 
             if label == "table":
                 table_html = _extract_table_html(content)

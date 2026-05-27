@@ -175,7 +175,12 @@ class PdfService:
                     index=layer_index,
                     text_preview=full_text[:30],
                     char_count=len(full_text),
-                    bbox=(float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3])),
+                    bbox=(
+                        float(bbox[0]),
+                        float(bbox[1]),
+                        float(bbox[2]),
+                        float(bbox[3]),
+                    ),
                     color_id=layer_index % 8,
                 )
             )

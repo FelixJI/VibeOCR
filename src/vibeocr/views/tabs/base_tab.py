@@ -30,11 +30,11 @@ class BaseOcrTab(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._ocr_service: OCRServiceSubprocess | None = None
-        self._paddlex_service = None
-        self._current_ocr_result = None
-        self._preview_widget = None
-        self._result_widget = None
-        self._preprocess_options = None
+        self._paddlex_service: Any = None
+        self._current_ocr_result: Any = None
+        self._preview_widget: Any = None
+        self._result_widget: Any = None
+        self._preprocess_options: Any = None
         self._is_processing = False
 
         # 子类在 __init__ 中调用以下方法

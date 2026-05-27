@@ -559,9 +559,7 @@ class ScreenCaptureOverlay(QWidget):
         canvas.set_fill_enabled(enabled)
         item = canvas.selected_annotation
         if item and hasattr(item, "set_fill_enabled"):
-            item.set_fill_enabled(
-                enabled, canvas._fill_color, canvas._fill_opacity
-            )
+            item.set_fill_enabled(enabled, canvas._fill_color, canvas._fill_opacity)
 
     def _on_fill_color_changed(self, color) -> None:
         canvas = self._canvas
