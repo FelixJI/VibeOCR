@@ -452,6 +452,8 @@ class PdfTab(QWidget):
                 from vibeocr.models.ocr_options import OCROptions
 
                 ocr = self._ocr_service
+                if ocr is None:
+                    continue
                 result = ocr.recognize(img_array, OCROptions())
                 self._service.add_text_layer(page_idx, result)
             except Exception as e:

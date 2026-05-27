@@ -113,7 +113,7 @@ def _recognize_formula(
                 continue
 
             cl_idx = len(content_list)
-            bbox_tuple = tuple(float(v) for v in bbox) if bbox else None
+            bbox_tuple = (float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3])) if bbox else None
             formula_md = f"$${content}$$"
             markdown_parts.append(formula_md)
             text_blocks.append(

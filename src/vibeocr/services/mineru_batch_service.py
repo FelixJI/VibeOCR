@@ -7,7 +7,7 @@
 import logging
 import uuid
 from collections.abc import Callable
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from vibeocr.utils.mime_types import guess_mime_from_filename
 
@@ -80,7 +80,7 @@ class MinerUBatchService:
         from vibeocr.services.mineru_service import MinerUService
 
         self._cancelled = False
-        results = {}
+        results: dict[str, Any] = {}
 
         if progress_callback:
             progress_callback(0, len(self._queue), "正在启动 MineRU 服务...")

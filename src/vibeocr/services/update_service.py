@@ -12,7 +12,7 @@ import os
 import subprocess
 import sys
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 import httpx
 
@@ -202,7 +202,7 @@ def verify_sha256(file_path: Path, sha256_file: Path) -> bool:
 async def download_update(
     update_info: UpdateInfo,
     cache_dir: Path,
-    progress_callback: object | None = None,
+    progress_callback: Callable[[int, int], None] | None = None,
 ) -> Path | None:
     """下载更新包"""
     if not update_info.download_url:
@@ -232,7 +232,7 @@ async def download_update(
                 total = int(resp.headers.get("content-length", 0))
                 with open(zip_path, "wb") as f:
                     downloaded = 0
-                    async for chunk in resp.iter_bytes(chunk_size=65536):
+                    async for chunk in resp.aiter_bytes(chunk_size=65536):
                         f.write(chunk)
                         downloaded += len(chunk)
                         if progress_callback:

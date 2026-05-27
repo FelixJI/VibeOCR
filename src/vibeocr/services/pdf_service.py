@@ -8,6 +8,7 @@ from __future__ import annotations
 import logging
 import shutil
 from pathlib import Path
+from typing import Any
 
 import fitz
 import numpy as np
@@ -150,7 +151,8 @@ class PdfService:
         if self._doc is None:
             return []
         page = self._doc[page_index]
-        blocks = page.get_text("dict")["blocks"]
+        page_dict: dict[str, Any] = page.get_text("dict")  # type: ignore[assignment]
+        blocks: list[dict[str, Any]] = page_dict["blocks"]
 
         layers: list[TextLayerInfo] = []
         layer_index = 0
@@ -173,7 +175,7 @@ class PdfService:
                     index=layer_index,
                     text_preview=full_text[:30],
                     char_count=len(full_text),
-                    bbox=(bbox[0], bbox[1], bbox[2], bbox[3]),
+                    bbox=(float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3])),
                     color_id=layer_index % 8,
                 )
             )
@@ -301,7 +303,8 @@ class PdfService:
         if self._doc is None or self._pdf_document is None:
             return
         page = self._doc[page_index]
-        blocks = page.get_text("dict")["blocks"]
+        page_dict: dict[str, Any] = page.get_text("dict")  # type: ignore[assignment]
+        blocks: list[dict[str, Any]] = page_dict["blocks"]
 
         has_text = any(block["type"] == 0 for block in blocks)
         if not has_text:
@@ -313,7 +316,7 @@ class PdfService:
             rect = fitz.Rect(block["bbox"])
             page.add_redact_annot(rect, fill=None)
 
-        page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_NONE)
+        page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_NONE)  # type: ignore[attr-defined]
         self._pdf_document.is_modified = True
         self._update_page_info(page_index)
 

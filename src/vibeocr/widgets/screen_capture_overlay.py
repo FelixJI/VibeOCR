@@ -10,6 +10,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from PySide6.QtCore import QPoint, QPointF, QRect, Qt, Signal
 from PySide6.QtGui import (
     QColor,
@@ -43,7 +45,7 @@ from vibeocr.widgets.selection_resize_frame import SelectionResizeFrame
 try:
     from vibeocr.widgets.window_detector import WindowDetector
 except ImportError:
-    WindowDetector = None
+    WindowDetector = None  # type: ignore[assignment,misc]
 
 
 class ScreenCaptureOverlay(QWidget):
@@ -98,7 +100,7 @@ class ScreenCaptureOverlay(QWidget):
         # HOVER/DRAG 子状态
         self._sub_state: str = "HOVER"
         self._detected_rect: QRect | None = None
-        self._window_detector = None
+        self._window_detector: Any = None
         self._last_detect_pos: QPoint = QPoint()
 
         # 放大镜相关
@@ -241,7 +243,7 @@ class ScreenCaptureOverlay(QWidget):
             painter.drawText(self._selection_rect.topLeft() + QPoint(5, -5), size_text)
 
         # 5. 放大镜和像素信息
-        if self._current_mouse_pos is not None:
+        if self._current_mouse_pos is not None and self._mapper is not None:
             mag_rect = MagnifierOverlay.draw_magnifier(
                 painter,
                 self._current_mouse_pos,
@@ -272,6 +274,8 @@ class ScreenCaptureOverlay(QWidget):
             self._selection_rect = self._detected_rect
             self.releaseMouse()
             physical_rect = self._logical_rect_to_physical(self._selection_rect)
+            if self._screen_pixmap is None:
+                return
             captured = self._screen_pixmap.copy(physical_rect)
             self._captured_pixmap = captured
             self._enter_editing()
@@ -302,10 +306,12 @@ class ScreenCaptureOverlay(QWidget):
         if self._window_detector:
             delta = event.pos() - self._last_detect_pos
             if delta.x() * delta.x() + delta.y() * delta.y() >= 9:
-                self._detected_rect = self._window_detector.detect_at(
-                    event.pos(),
-                    self._mapper,
-                )
+                mapper = self._mapper
+                if mapper is not None:
+                    self._detected_rect = self._window_detector.detect_at(
+                        event.pos(),
+                        mapper,
+                    )
                 self._last_detect_pos = event.pos()
         self.update()
 
@@ -362,11 +368,15 @@ class ScreenCaptureOverlay(QWidget):
         if not self._captured_pixmap:
             return
 
+        sel_rect = self._selection_rect
+        if sel_rect is None:
+            return
+
         # 创建画布
         self._canvas = InlineEditCanvas(self)
         self._canvas.set_background(
             self._captured_pixmap,
-            QPointF(self._selection_rect.x(), self._selection_rect.y()),
+            QPointF(sel_rect.x(), sel_rect.y()),
             self._mapper,
         )
 
@@ -398,7 +408,7 @@ class ScreenCaptureOverlay(QWidget):
         self._canvas.show()
         self._toolbar.show()
         self._recognition_panel.show()
-        self._resize_frame.set_initial_selection(self._selection_rect)
+        self._resize_frame.set_initial_selection(sel_rect)
         self._resize_frame.show()
         self._toolbar.raise_()
         self._recognition_panel.raise_()
@@ -520,58 +530,82 @@ class ScreenCaptureOverlay(QWidget):
             props.clear_selection()
 
     def _on_color_changed(self, color) -> None:
-        self._canvas.set_pen_color(color)
-        item = self._canvas.selected_annotation
+        canvas = self._canvas
+        if canvas is None:
+            return
+        canvas.set_pen_color(color)
+        item = canvas.selected_annotation
         if item and hasattr(item, "set_pen_color"):
             item.set_pen_color(color)
         elif isinstance(item, TextAnnotation):
             item.set_text_color(color)
-        if self._canvas._fill_linked:
+        if canvas._fill_linked:
             if item and hasattr(item, "set_fill_color"):
                 item.set_fill_color(color)
 
     def _on_line_width_changed(self, width) -> None:
-        self._canvas.set_pen_width(width)
-        item = self._canvas.selected_annotation
+        canvas = self._canvas
+        if canvas is None:
+            return
+        canvas.set_pen_width(width)
+        item = canvas.selected_annotation
         if item and hasattr(item, "set_pen_width"):
             item.set_pen_width(width)
 
     def _on_fill_enabled_changed(self, enabled) -> None:
-        self._canvas.set_fill_enabled(enabled)
-        item = self._canvas.selected_annotation
+        canvas = self._canvas
+        if canvas is None:
+            return
+        canvas.set_fill_enabled(enabled)
+        item = canvas.selected_annotation
         if item and hasattr(item, "set_fill_enabled"):
             item.set_fill_enabled(
-                enabled, self._canvas._fill_color, self._canvas._fill_opacity
+                enabled, canvas._fill_color, canvas._fill_opacity
             )
 
     def _on_fill_color_changed(self, color) -> None:
-        self._canvas.set_fill_color(color)
-        item = self._canvas.selected_annotation
+        canvas = self._canvas
+        if canvas is None:
+            return
+        canvas.set_fill_color(color)
+        item = canvas.selected_annotation
         if item and hasattr(item, "set_fill_color"):
             item.set_fill_color(color)
 
     def _on_fill_opacity_changed(self, opacity) -> None:
-        self._canvas.set_fill_opacity(opacity)
-        item = self._canvas.selected_annotation
+        canvas = self._canvas
+        if canvas is None:
+            return
+        canvas.set_fill_opacity(opacity)
+        item = canvas.selected_annotation
         if item and hasattr(item, "set_fill_opacity"):
             item.set_fill_opacity(opacity)
 
     def _on_fill_linked_changed(self, linked) -> None:
-        self._canvas.set_fill_linked(linked)
+        canvas = self._canvas
+        if canvas is None:
+            return
+        canvas.set_fill_linked(linked)
         if linked:
-            item = self._canvas.selected_annotation
+            item = canvas.selected_annotation
             if item and hasattr(item, "set_fill_color"):
-                item.set_fill_color(self._canvas._pen_color)
+                item.set_fill_color(canvas._pen_color)
 
     def _on_mosaic_strength_changed(self, value) -> None:
-        self._canvas.set_mosaic_strength(value)
-        item = self._canvas.selected_annotation
+        canvas = self._canvas
+        if canvas is None:
+            return
+        canvas.set_mosaic_strength(value)
+        item = canvas.selected_annotation
         if isinstance(item, MosaicItem):
             item.set_strength(value)
 
     def _on_blur_radius_changed(self, value) -> None:
-        self._canvas.set_blur_radius(value)
-        item = self._canvas.selected_annotation
+        canvas = self._canvas
+        if canvas is None:
+            return
+        canvas.set_blur_radius(value)
+        item = canvas.selected_annotation
         if isinstance(item, BlurItem):
             item.set_radius(value)
 

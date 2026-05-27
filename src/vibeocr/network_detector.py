@@ -48,7 +48,7 @@ class NetworkDetector:
             self._load_or_detect()
 
     @property
-    def network_type(self) -> str:
+    def network_type(self) -> Literal["domestic", "international"]:
         return self._network_type
 
     @property

@@ -622,7 +622,7 @@ class OCRServiceSubprocess:
         # 根据管道类型路由到对应处理
         if self._is_mineru_pipeline(preprocess_options):
             # MinerU 文档解析通过 MinerUBatchService 处理
-            return self._mineru_batch.commit(
+            return self._mineru_batch.batch_commit(
                 preprocess_options,
                 timeout=timeout,
                 progress_callback=progress_callback,

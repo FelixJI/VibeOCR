@@ -219,6 +219,7 @@ def _render_block(block: dict, index: int) -> str:
     border_color = BLOCK_BORDER_COLORS.get(block_type, "#3b82f6")
     type_label = BLOCK_TYPE_LABELS.get(block_type, block_type)
 
+    renderer: Callable[[dict, int], str] = _render_fallback
     if block_type == "text" and "text_level" in block:
         renderer = _render_title
         type_label = "标题"
@@ -227,8 +228,6 @@ def _render_block(block: dict, index: int) -> str:
         renderer = _render_title
     elif block_type in BLOCK_RENDERERS:
         renderer = BLOCK_RENDERERS[block_type]
-    else:
-        renderer = _render_fallback
 
     content_html = renderer(block, index)
     if not content_html:
@@ -534,6 +533,7 @@ class ResultViewWidget(QWidget):
         self._bridge.blockEdited.connect(self.block_edited.emit)
 
         layout = self.layout()
+        assert layout is not None
         layout.addWidget(self._web_view)
         return self._web_view
 

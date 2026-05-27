@@ -5,7 +5,7 @@
 
 import logging
 from abc import abstractmethod
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from PySide6.QtWidgets import QWidget
 
@@ -51,7 +51,7 @@ class BaseOcrTab(QWidget):
         """检查是否正在处理"""
         return self._is_processing
 
-    def set_ocr_service(self, service: Optional["OCRServiceSubprocess"]) -> None:
+    def set_ocr_service(self, service: Optional["OCRServiceSubprocess"] | Any) -> None:
         """设置 OCR 服务
 
         Args:

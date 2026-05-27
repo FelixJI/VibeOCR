@@ -233,7 +233,7 @@ from vibeocr.core.pipelines.pipeline_pp_structure import (  # noqa: E402
     PP_STRUCTURE_V3_SPEC,
 )
 from vibeocr.core.pipelines.pipeline_table import TABLE_RECOGNITION_SPEC  # noqa: E402
-from vibeocr.core.pipelines.registry import PipelineRegistry, PipelineSpec  # noqa: E402
+from vibeocr.core.pipelines.registry import PipelineRegistry  # noqa: E402
 
 _registry = PipelineRegistry()
 _registry.register(OCR_SPEC)

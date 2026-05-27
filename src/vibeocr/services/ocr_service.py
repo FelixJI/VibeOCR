@@ -60,23 +60,6 @@ def _html_table_to_markdown(html: str) -> str:
     return "\n".join(part for part in (header, sep, body) if part)
 
 
-def _looks_like_markdown(text: str) -> bool:
-    """检测文本是否包含 Markdown 格式标记"""
-    if not text:
-        return False
-    patterns = [
-        r"^#{1,6}\s",
-        r"\*\*[^*]+\*\*",
-        r"__[^_]+__",
-        r"^- ",
-        r"^\* ",
-        r"\|.+\|",
-        r"\$\$",
-        r"```",
-    ]
-    return any(_re.search(p, text, _re.MULTILINE) for p in patterns)
-
-
 # 注意：所有操作在同一线程中执行（CPU 模式）
 # 工作线程设计已确保这一点
 
@@ -630,9 +613,7 @@ class OCRService(metaclass=SingletonMeta):
         actual_options = options if options is not None else OCROptions()
 
         # 统一获取管道名称（处理枚举和字符串两种类型）
-        pipeline_name = actual_options.pipeline
-        if isinstance(pipeline_name, OCRPipeline):
-            pipeline_name = pipeline_name.value
+        pipeline_name = actual_options.pipeline.value
         _logger.debug(f"[recognize] 开始识别，管道: {pipeline_name}")
 
         # 如果输入是 bytes，转换为 numpy.ndarray（PaddleX 只支持 ndarray 和 str）
@@ -672,15 +653,18 @@ class OCRService(metaclass=SingletonMeta):
                 else:
                     result = self._recognize_ocr(image, actual_options)
             # Normalize bbox from pixel coords to [0-1000]
+            img_w = img_h = 0
             if result.preproc_img_w > 0 and result.preproc_img_h > 0:
                 img_w = result.preproc_img_w
                 img_h = result.preproc_img_h
-            elif hasattr(image, "shape") and len(image.shape) >= 2:
-                img_h, img_w = image.shape[:2]
+            elif hasattr(image, "shape"):
+                _shape = image.shape  # type: ignore[union-attr]
+                if isinstance(_shape, tuple) and len(_shape) >= 2:
+                    img_h, img_w = _shape[:2]
             elif hasattr(image, "size"):
-                img_w, img_h = image.size
-            else:
-                img_w = img_h = 0
+                _sz = image.size  # type: ignore[union-attr]
+                if isinstance(_sz, tuple):
+                    img_w, img_h = _sz
             # 预处理旋转 90°/270° 时宽高互换（仅当无预处理图像时需要）
             if result.preproc_img_w == 0 and result.preproc_angle in (90, 270):
                 img_w, img_h = img_h, img_w
@@ -803,7 +787,7 @@ class OCRService(metaclass=SingletonMeta):
                         images.update(md_imgs)
 
             # 从 parsing_res_list 提取结构化结果
-            parsing_res_list = []
+            parsing_res_list: list[Any] = []
             if hasattr(res, "__getitem__"):
                 parsing_res_list = (
                     res["parsing_res_list"]
@@ -825,7 +809,7 @@ class OCRService(metaclass=SingletonMeta):
                     continue
 
                 cl_idx = len(content_list)
-                bbox_tuple = tuple(float(v) for v in bbox) if bbox else None
+                bbox_tuple = (float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3])) if bbox else None
 
                 if label == "table":
                     table_html = _extract_table_html(content)

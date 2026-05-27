@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from PySide6.QtCore import (
     QPoint,
@@ -62,6 +62,7 @@ class MainWindow(QMainWindow):
         self._closing = False  # 是否正在关闭（防止关闭时重复启动 Worker）
         self._force_quit = False  # 是否强制退出（而非最小化到托盘）
         self._tray_icon = None  # 系统托盘图标
+        self._ocr_status_callback_fn: Any = None  # OCR 状态回调
         self._app_settings = None  # 应用设置
 
         # 当前 OCR 结果（用于复制操作）

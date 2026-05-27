@@ -115,7 +115,7 @@ class WindowDetector:
 
     def _try_accessible(self, physical_pos: tuple[int, int]) -> QRect | None:
         try:
-            import oleacc
+            import oleacc  # type: ignore[import-untyped]
 
             hr, accessible, _child_id = oleacc.AccessibleObjectFromPoint(
                 physical_pos[0], physical_pos[1]

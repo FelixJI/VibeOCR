@@ -103,7 +103,8 @@ class OCRServicePortable:
 
     def recognize(
         self,
-        image: Image.Image | np.ndarray | str,
+        image: Image.Image | np.ndarray | str | bytes,
+        options: Any = None,
     ) -> str:
         """
         对图像执行 OCR 识别
