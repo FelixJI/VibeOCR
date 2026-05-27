@@ -61,7 +61,8 @@ def _run_bump(tmp_path, args, env=None):
         [sys.executable, str(SCRIPT), *args],
         cwd=tmp_path,
         capture_output=True,
-        text=True,
+        encoding="utf-8",
+        errors="replace",
         env=env,
     )
 
@@ -124,7 +125,8 @@ def _run_bump_with_extra_commits(tmp_path, args, commits_to_add):
         [sys.executable, str(SCRIPT), *args],
         cwd=tmp_path,
         capture_output=True,
-        text=True,
+        encoding="utf-8",
+        errors="replace",
         env=env,
     )
 
@@ -375,7 +377,8 @@ class TestChangelogGeneration:
             [sys.executable, str(SCRIPT), "minor", "--no-edit", "--no-build"],
             cwd=tmp_path,
             capture_output=True,
-            text=True,
+            encoding="utf-8",
+            errors="replace",
             env=env,
         )
         assert result.returncode == 0, f"Script failed: {result.stderr}"
@@ -399,7 +402,8 @@ class TestGitTagging:
             ["git", "tag", "-l"],
             cwd=tmp_path,
             capture_output=True,
-            text=True,
+            encoding="utf-8",
+            errors="replace",
         )
         tags = tag_result.stdout.strip().split("\n")
         assert "v0.1.1" in tags
@@ -413,7 +417,8 @@ class TestGitTagging:
             ["git", "log", "--oneline", "-1"],
             cwd=tmp_path,
             capture_output=True,
-            text=True,
+            encoding="utf-8",
+            errors="replace",
         )
         assert "release: v0.2.0" in log_result.stdout
 
@@ -426,7 +431,8 @@ class TestGitTagging:
             ["git", "tag", "-l"],
             cwd=tmp_path,
             capture_output=True,
-            text=True,
+            encoding="utf-8",
+            errors="replace",
         )
         tags = tag_result.stdout.strip().split("\n")
         assert "v1.0.0" in tags

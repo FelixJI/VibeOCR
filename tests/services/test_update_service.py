@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 def _run(coro):
     """在同步测试中运行协程"""
-    return asyncio.get_event_loop().run_until_complete(coro)
+    return asyncio.run(coro)
 
 
 class TestVersionComparison:

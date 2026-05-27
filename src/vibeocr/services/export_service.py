@@ -96,7 +96,9 @@ class ExportService:
             img_dir.mkdir(parents=True, exist_ok=True)
             for name, data in result.images.items():
                 if isinstance(data, bytes):
-                    (img_dir / name).write_bytes(data)
+                    dest = img_dir / name
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    dest.write_bytes(data)
 
         logger.debug("导出 Markdown: %s", output_path)
         return True
@@ -126,7 +128,7 @@ class ExportService:
             "<meta name='viewport' content='width=device-width, initial-scale=1'>\n"
             f"<title>{output_path.stem}</title>\n"
             f"{HTML_STYLE}\n"
-            "</head>\n<body>\n{html_body}\n</body>\n</html>"
+            f"</head>\n<body>\n{html_body}\n</body>\n</html>"
         )
 
         output_path.write_text(full_html, encoding="utf-8")
