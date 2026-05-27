@@ -13,6 +13,16 @@ OCR 服务实现方案：
 
 import logging
 import os
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from vibeocr.services.ocr_service import OCRService as _DirectOCRService
+    from vibeocr.services.ocr_service_portable import (
+        OCRServicePortable as _PortableOCRService,
+    )
+    from vibeocr.services.ocr_service_subprocess import (
+        OCRServiceSubprocess as _SubprocessOCRService,
+    )
 
 _logger = logging.getLogger(__name__)
 
@@ -40,7 +50,9 @@ def _should_use_portable() -> bool:
     return env_value != "direct"
 
 
-def get_ocr_service(skip_auto_start: bool = False):
+def get_ocr_service(
+    skip_auto_start: bool = False,
+) -> "_SubprocessOCRService | _DirectOCRService | _PortableOCRService":
     """
     获取 OCR 服务实例（工厂函数）
 

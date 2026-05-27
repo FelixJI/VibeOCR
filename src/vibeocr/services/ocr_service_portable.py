@@ -42,6 +42,10 @@ class OCRServicePortable:
     _pipeline: Any = None
     _lock = threading.Lock()
 
+    def is_ready(self) -> bool:
+        """便携式模式始终就绪"""
+        return self._pipeline is not None
+
     def __new__(cls) -> "OCRServicePortable":
         if cls._instance is None:
             with cls._lock:

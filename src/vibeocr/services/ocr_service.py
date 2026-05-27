@@ -102,6 +102,10 @@ class OCRService(metaclass=SingletonMeta):
     _initialized = False
     _status_callback: Callable | None = None  # 状态回调函数
 
+    def is_ready(self) -> bool:
+        """直接模式始终就绪"""
+        return self._initialized
+
     # 预加载相关状态
     _preload_progress_callback: Callable[[str, int, int], None] | None = (
         None  # (pipeline_name, current, total)
