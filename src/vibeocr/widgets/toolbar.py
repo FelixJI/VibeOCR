@@ -69,7 +69,8 @@ class _ButtonDragFilter(QObject):
             me = event if isinstance(event, QMouseEvent) else None
             if (
                 self._press_pos is not None
-                and me and me.buttons() & Qt.MouseButton.LeftButton
+                and me
+                and me.buttons() & Qt.MouseButton.LeftButton
             ):
                 if not self._is_dragging:
                     delta = me.globalPosition().toPoint() - self._press_pos
