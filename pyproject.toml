@@ -18,12 +18,16 @@ dependencies = [
     "nvidia-cusolver>=12.2.2.18",
     "nvidia-cusparse>=12.8.1.7",
     "nvidia-cuda-runtime>=13.3.29",
-    "paddleocr[doc-parser]>=3.5.0",
+    "paddleocr[doc-parser]>=3.6.0",
     "httpx>=0.28.1",
     "mineru[core]>=3.2.0",
     "pymupdf>=1.27.2.3",
     "qrcode[pil]>=8.2",
     "python-barcode>=0.16.1",
+    # opencv 冲突: mineru 要求 opencv-python, paddlex 要求 opencv-contrib-python
+    # 两者互斥（都写入 cv2/ 目录），同时安装会丢失 __init__.py 导致 cv2 不可用
+    # 手动管理: uv sync 后若 cv2 异常, 运行: uv pip uninstall opencv-python
+    "opencv-contrib-python>=4.10.0",
 ]
 
 [dependency-groups]

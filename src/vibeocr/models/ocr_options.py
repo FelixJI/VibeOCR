@@ -133,7 +133,14 @@ class OCROptions:
         # 处理 pipeline 字段
         pipeline_value = data.get("pipeline", "OCR")
         if isinstance(pipeline_value, str):
-            pipeline = OCRPipeline(pipeline_value)
+            try:
+                pipeline = OCRPipeline(pipeline_value)
+            except ValueError:
+                pipeline = OCRPipeline.OCR
+                for p in OCRPipeline:
+                    if p.value.lower() == pipeline_value.lower():
+                        pipeline = p
+                        break
         else:
             pipeline = pipeline_value
 

@@ -97,7 +97,10 @@ class OCRPreferences(QObject):
         if version < 2:
             pipeline_name = data.get("pipeline", "OCR")
             self._per_pipeline["main"][pipeline_name] = OCROptions.from_dict(data)
-            self._last_main_pipeline = OCRPipeline(pipeline_name)
+            try:
+                self._last_main_pipeline = OCRPipeline(pipeline_name)
+            except ValueError:
+                self._last_main_pipeline = OCRPipeline.OCR
         else:
             for source in ("main", "screenshot"):
                 source_data = data.get(source, {})
