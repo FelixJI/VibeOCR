@@ -10,30 +10,16 @@ from typing import Literal
 from urllib.request import Request, urlopen
 
 from vibeocr.machine_cache import create_cache_entry, is_cache_valid
-
-# 嵌入式Python版本
-PYTHON_VERSION = "3.13.0"
-PYTHON_VERSION_SHORT = "3.13"
-
-# 定义pip下载源
-MIRROR_SOURCES = {
-    "tsinghua": "https://pypi.tuna.tsinghua.edu.cn/simple",
-    "aliyun": "https://mirrors.aliyun.com/pypi/simple/",
-    "ustc": "https://mirrors.ustc.edu.cn/pypi/web/simple",
-    "official": "https://pypi.org/simple",
-}
+from vibeocr.services.env_config import (
+    PYTHON_VERSION,
+    PYTHON_VERSION_SHORT,
+)
 
 # 测试用的URL
 TEST_URLS = {
     "google": "https://www.google.com",
     "github": "https://www.github.com",
     "baidu": "https://www.baidu.com",
-}
-
-# PaddleX 模型下载源
-PADDLEX_MODEL_SOURCES = {
-    "bos": "BOS",  # 百度对象存储（国内快）
-    "huggingface": "HuggingFace",  # HuggingFace（国际）
 }
 
 # PaddleX 模型源测试 URL
@@ -51,9 +37,6 @@ PYTHON_MIRROR_URLS = [
     "https://mirrors.huaweicloud.com/python/",
     "https://repo.huaweicloud.com/python/",
 ]
-
-# PaddlePaddle 版本
-PADDLE_VERSION = "3.3.0"
 
 # CUDA 版本映射到 PaddlePaddle 支持的版本
 # PaddlePaddle GPU 版本支持: cu118, cu121, cu123, cu126, cu129 等
@@ -106,6 +89,52 @@ CUDNN_PACKAGE_MAP = {
 # - nvidia-curand-cu11/nvidia-curand-cu12: 随机数库
 # - nvidia-cusolver-cu11/nvidia-cusolver-cu12: 求解器库
 # - nvidia-cusparse-cu11/nvidia-cusparse-cu12: 稀疏矩阵库
+
+_dep_specs_cache: dict[str, str] | None = None
+
+
+def _load_dep_specs() -> dict[str, str]:
+    """从 pyproject.toml 或 version.json 加载依赖版本规格
+
+    Returns:
+        {base_name: full_spec}，如 {"paddleocr": "paddleocr[doc-parser]>=3.6.0"}
+    """
+    global _dep_specs_cache
+    if _dep_specs_cache is not None:
+        return _dep_specs_cache
+
+    import re
+
+    project_root = get_project_root()
+
+    pyproject = project_root / "pyproject.toml"
+    if pyproject.exists():
+        import tomllib
+
+        data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+        deps = data.get("project", {}).get("dependencies", [])
+        specs: dict[str, str] = {}
+        for dep in deps:
+            dep = dep.strip()
+            if dep.startswith("#"):
+                continue
+            m = re.match(r"^([a-zA-Z0-9_.-]+)", dep)
+            if m:
+                specs[m.group(1).lower()] = dep
+        _dep_specs_cache = specs
+        return specs
+
+    version_json = project_root / "version.json"
+    if version_json.exists():
+        import json
+
+        data = json.loads(version_json.read_text(encoding="utf-8"))
+        specs = {k: f"{k}>={v}" for k, v in data.get("dep_versions", {}).items()}
+        _dep_specs_cache = specs
+        return specs
+
+    _dep_specs_cache = {}
+    return {}
 
 
 def ping_url(url: str, timeout: int = 3) -> bool:
@@ -779,28 +808,32 @@ def install_embedded_dependencies(
     report("依赖安装", "开始安装OCR依赖...")
     report("依赖安装", f"pip源: {pip_source}")
 
+    specs = _load_dep_specs()
+    paddle_gpu_spec = specs.get("paddlepaddle-gpu", "paddlepaddle-gpu>=3.3.1")
+    paddle_cpu_spec = paddle_gpu_spec.replace("paddlepaddle-gpu", "paddlepaddle")
+
     # 决定 PaddlePaddle 版本（GPU 优先）
     if use_gpu and cuda_version:
         cuda_tag = CUDA_VERSION_MAP.get(cuda_version)
         if cuda_tag:
-            paddle_package = "paddlepaddle-gpu>=3.3.0"
+            paddle_package = paddle_gpu_spec
             paddle_index = (
                 f"https://www.paddlepaddle.org.cn/packages/stable/{cuda_tag}/"
             )
             paddle_name = f"PaddlePaddle GPU ({cuda_tag})"
             report("依赖安装", f"检测到 CUDA {cuda_version}，安装 GPU 版本")
         else:
-            paddle_package = "paddlepaddle>=3.3.0"
+            paddle_package = paddle_cpu_spec
             paddle_index = "https://www.paddlepaddle.org.cn/packages/stable/cpu/"
             paddle_name = "PaddlePaddle CPU"
             report("依赖安装", f"CUDA {cuda_version} 无对应版本，回退 CPU 版本")
     elif use_gpu:
-        paddle_package = "paddlepaddle-gpu>=3.3.0"
+        paddle_package = paddle_gpu_spec
         paddle_index = "https://www.paddlepaddle.org.cn/packages/stable/cu129/"
         paddle_name = "PaddlePaddle GPU (cu129)"
         report("依赖安装", "安装 GPU 版本（默认 cu129）")
     else:
-        paddle_package = "paddlepaddle>=3.3.0"
+        paddle_package = paddle_cpu_spec
         paddle_index = "https://www.paddlepaddle.org.cn/packages/stable/cpu/"
         paddle_name = "PaddlePaddle CPU"
         report("依赖安装", "使用CPU版本")
@@ -831,8 +864,8 @@ def install_embedded_dependencies(
 
         requirements = [
             (paddle_name, paddle_package, paddle_index),
-            ("PaddleOCR", '"paddleocr>=3.5.0"', pip_source),
-            ("MinerU", '"mineru[core]"', pip_source),
+            ("PaddleOCR", f'"{specs.get("paddleocr", "paddleocr[doc-parser]>=3.6.0")}"', pip_source),
+            ("MinerU", f'"{specs.get("mineru", "mineru[core]>=3.2.0")}"', pip_source),
         ]
 
         # GPU 环境下安装 torch+CUDA 覆盖 mineru 附带的 CPU 版本
@@ -1036,28 +1069,32 @@ def install_dependencies(
     print("=" * 50)
     print(f"[依赖安装] pip源: {pip_source}")
 
+    specs = _load_dep_specs()
+    paddle_gpu_spec = specs.get("paddlepaddle-gpu", "paddlepaddle-gpu>=3.3.1")
+    paddle_cpu_spec = paddle_gpu_spec.replace("paddlepaddle-gpu", "paddlepaddle")
+
     # 决定 PaddlePaddle 版本（GPU 优先）
     if use_gpu and cuda_version:
         cuda_tag = CUDA_VERSION_MAP.get(cuda_version)
         if cuda_tag:
-            paddle_package = "paddlepaddle-gpu>=3.3.0"
+            paddle_package = paddle_gpu_spec
             paddle_index = (
                 f"https://www.paddlepaddle.org.cn/packages/stable/{cuda_tag}/"
             )
             paddle_name = f"PaddlePaddle GPU ({cuda_tag})"
             print(f"[依赖安装] 检测到 CUDA {cuda_version}，安装 GPU 版本")
         else:
-            paddle_package = "paddlepaddle>=3.3.0"
+            paddle_package = paddle_cpu_spec
             paddle_index = "https://www.paddlepaddle.org.cn/packages/stable/cpu/"
             paddle_name = "PaddlePaddle CPU"
             print(f"[依赖安装] CUDA {cuda_version} 无对应版本，回退 CPU 版本")
     elif use_gpu:
-        paddle_package = "paddlepaddle-gpu>=3.3.0"
+        paddle_package = paddle_gpu_spec
         paddle_index = "https://www.paddlepaddle.org.cn/packages/stable/cu129/"
         paddle_name = "PaddlePaddle GPU (cu129)"
         print("[依赖安装] 安装 GPU 版本（默认 cu129）")
     else:
-        paddle_package = "paddlepaddle>=3.3.0"
+        paddle_package = paddle_cpu_spec
         paddle_index = "https://www.paddlepaddle.org.cn/packages/stable/cpu/"
         paddle_name = "PaddlePaddle CPU"
         print("[依赖安装] 使用CPU版本")
@@ -1087,18 +1124,18 @@ def install_dependencies(
 
         # 安装基础依赖
         requirements = [
-            ("PySide6", "pyside6>=6.8.0", pip_source),
-            ("Pillow", "pillow>=11.0.0", pip_source),
+            ("PySide6", specs.get("pyside6", "pyside6>=6.11.1"), pip_source),
+            ("Pillow", specs.get("pillow", "pillow>=12.2.0"), pip_source),
         ]
 
         # PaddlePaddle（GPU 优先，CPU 回退）
         requirements.append((paddle_name, paddle_package, paddle_index))
 
         # 安装 PaddleOCR
-        requirements.append(("PaddleOCR", '"paddleocr>=3.5.0"', pip_source))
+        requirements.append(("PaddleOCR", f'"{specs.get("paddleocr", "paddleocr[doc-parser]>=3.6.0")}"', pip_source))
 
         # 安装 MineRU 文档解析
-        requirements.append(("MinerU", '"mineru[core]"', pip_source))
+        requirements.append(("MinerU", f'"{specs.get("mineru", "mineru[core]>=3.2.0")}"', pip_source))
 
         # GPU 环境下安装 torch+CUDA 覆盖 mineru 附带的 CPU 版本
         if use_gpu:
@@ -1187,7 +1224,7 @@ def setup_environment(project_root: Path) -> tuple[bool, str]:
     else:
         print("[环境设置] 使用便携式部署模式")
         print("\n这将自动完成以下步骤:")
-        print("1. 下载并安装嵌入式Python 3.12")
+        print(f"1. 下载并安装嵌入式Python {PYTHON_VERSION}")
         print("2. 检测GPU并选择合适的PaddlePaddle版本")
         print("3. 安装所有项目依赖")
 
