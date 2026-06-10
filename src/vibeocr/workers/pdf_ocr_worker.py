@@ -48,6 +48,8 @@ class PdfOcrWorker(QThread):
         self._cancelled = True
 
     def run(self) -> None:
+        from vibeocr.models.ocr_options import OCROptions
+
         success = 0
         fail = 0
         total = len(self._pages)
@@ -57,8 +59,6 @@ class PdfOcrWorker(QThread):
                 break
             self.progress.emit(i + 1, total)
             try:
-                from vibeocr.models.ocr_options import OCROptions
-
                 result = self._ocr_service.recognize(image, OCROptions())
                 self.page_done.emit(page_index, result)
                 success += 1

@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     import fitz
 
-from vibeocr.models.pdf_document import PdfDocument
+from vibeocr.models.pdf_document import PdfDocument  # noqa: TC001
 
 
 @dataclass
@@ -18,8 +18,11 @@ class PdfSession:
     file_path: str
     doc: fitz.Document
     pdf_document: PdfDocument
-    is_modified: bool = False
     loaded_pages: set[int] = field(default_factory=set)
+
+    @property
+    def is_modified(self) -> bool:
+        return self.pdf_document.is_modified
 
     @property
     def load_progress(self) -> float:

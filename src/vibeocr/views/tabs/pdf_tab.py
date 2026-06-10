@@ -216,15 +216,28 @@ class PdfTab(QWidget):
         if session is None or session.file_path != file_path:
             return
         if page_index < self._thumbnail_list.count():
-            pixmap = PdfService.render_page(
-                session.doc, page_index, dpi=session.pdf_document.thumbnail_dpi
+            page_info = (
+                session.pdf_document.pages[page_index]
+                if page_index < len(session.pdf_document.pages)
+                else None
             )
-            scaled = pixmap.scaled(
-                _THUMBNAIL_SIZE,
-                _THUMBNAIL_SIZE,
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation,
-            )
+            if page_info and page_info.thumbnail:
+                scaled = page_info.thumbnail.scaled(
+                    _THUMBNAIL_SIZE,
+                    _THUMBNAIL_SIZE,
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation,
+                )
+            else:
+                pixmap = PdfService.render_page(
+                    session.doc, page_index, dpi=session.pdf_document.thumbnail_dpi
+                )
+                scaled = pixmap.scaled(
+                    _THUMBNAIL_SIZE,
+                    _THUMBNAIL_SIZE,
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation,
+                )
             item = self._thumbnail_list.item(page_index)
             if item:
                 item.setIcon(QIcon(scaled))
@@ -348,8 +361,28 @@ class PdfTab(QWidget):
 
     def _on_file_selected(self, index: int) -> None:
         file_path = self._file_selector.itemData(index)
-        if file_path:
-            self._session_mgr.switch_session(file_path)
+        if not file_path:
+            return
+        session = self._session_mgr.active_session
+        if session and session.is_modified and session.file_path != file_path:
+            reply = QMessageBox.question(
+                self,
+                "未保存的修改",
+                f"{Path(session.file_path).name} 有未保存的修改，是否保存？",
+                QMessageBox.StandardButton.Save
+                | QMessageBox.StandardButton.Discard
+                | QMessageBox.StandardButton.Cancel,
+            )
+            if reply == QMessageBox.StandardButton.Save:
+                self._on_save()
+            elif reply == QMessageBox.StandardButton.Cancel:
+                # Revert combo box to current session
+                for i in range(self._file_selector.count()):
+                    if self._file_selector.itemData(i) == session.file_path:
+                        self._file_selector.setCurrentIndex(i)
+                        break
+                return
+        self._session_mgr.switch_session(file_path)
 
     def _on_open_file(self) -> None:
         paths, _ = QFileDialog.getOpenFileNames(
@@ -423,7 +456,7 @@ class PdfTab(QWidget):
         menu.exec(self._thumbnail_list.mapToGlobal(pos))
 
     def _on_thumbnail_double_clicked(self, item: QListWidgetItem) -> None:
-        idx = item.data(Qt.ItemDataRole.UserRole)
+        idx = item.getData(Qt.ItemDataRole.UserRole)
         if idx is not None:
             self._open_preview(idx)
 

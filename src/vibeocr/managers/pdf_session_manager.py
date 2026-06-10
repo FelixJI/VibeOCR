@@ -100,6 +100,7 @@ class PdfSessionManager(QObject):
             return
 
         self._cancel_load_worker()
+        self._cancel_ocr_worker()
         self._active_path = file_path
         self.active_changed.emit(file_path)
 
@@ -152,6 +153,7 @@ class PdfSessionManager(QObject):
         session = self.active_session
         if session is None:
             return
+        page_info.thumbnail = pixmap
         if page_index < len(session.pdf_document.pages):
             session.pdf_document.pages[page_index] = page_info
         session.loaded_pages.add(page_index)
@@ -206,7 +208,9 @@ class PdfSessionManager(QObject):
         if session is None:
             return
         if result is not None:
-            PdfService.add_text_layer(session.doc, session.pdf_document, page_index, result)
+            PdfService.add_text_layer(
+                session.doc, session.pdf_document, page_index, result
+            )
         self.ocr_page_done.emit(session.file_path, page_index, result)
 
     def _on_ocr_progress(self, current: int, total: int) -> None:
