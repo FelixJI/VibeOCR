@@ -1,7 +1,10 @@
 """PDF 处理标签页"""
 
+from __future__ import annotations
+
 import logging
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QIcon, QPixmap
@@ -24,6 +27,11 @@ from PySide6.QtWidgets import (
 from vibeocr.services.pdf_service import PdfService
 from vibeocr.views.pdf_preview_window import PdfPreviewWindow
 
+if TYPE_CHECKING:
+    import fitz
+
+    from vibeocr.models.pdf_document import PdfDocument
+
 logger = logging.getLogger(__name__)
 
 _THUMBNAIL_SIZE = 160
@@ -36,7 +44,8 @@ class PdfTab(QWidget):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self._service = PdfService()
+        self._doc: fitz.Document | None = None
+        self._pdf_document: PdfDocument | None = None
         self._preview_window: PdfPreviewWindow | None = None
         self._ocr_service = None
         self._canceled = False
@@ -190,10 +199,10 @@ class PdfTab(QWidget):
         )
         if not path:
             return
-        if self._service.is_open():
+        if self._doc is not None:
             self._confirm_close()
         try:
-            self._service.open(path)
+            self._doc, self._pdf_document = PdfService.open_doc(path)
         except (FileNotFoundError, RuntimeError) as e:
             QMessageBox.warning(self, "打开失败", str(e))
             return
@@ -204,13 +213,13 @@ class PdfTab(QWidget):
 
     def _refresh_thumbnails(self) -> None:
         """刷新缩略图列表。"""
-        doc = self._service.document
-        if doc is None:
+        if self._doc is None or self._pdf_document is None:
             return
+        doc = self._pdf_document
         self._thumbnail_list.clear()
         for page_info in doc.pages:
-            pixmap = self._service.render_page(
-                page_info.page_index, dpi=doc.thumbnail_dpi
+            pixmap = PdfService.render_page(
+                self._doc, page_info.page_index, dpi=doc.thumbnail_dpi
             )
             scaled = pixmap.scaled(
                 _THUMBNAIL_SIZE,
@@ -223,20 +232,20 @@ class PdfTab(QWidget):
             self._thumbnail_list.addItem(item)
 
     def _update_status(self) -> None:
-        doc = self._service.document
-        if doc is None:
+        if self._pdf_document is None:
             self._status_label.setText("")
             return
+        doc = self._pdf_document
         name = Path(doc.file_path).name if doc.file_path else ""
         modified = " (未保存)" if doc.is_modified else ""
         self._status_label.setText(f"{name} | {doc.page_count} 页{modified}")
         self._btn_save.setEnabled(doc.is_modified)
 
     def _update_layer_status(self) -> None:
-        doc = self._service.document
-        if doc is None:
+        if self._pdf_document is None:
             self._layer_status_label.setText("未打开文件")
             return
+        doc = self._pdf_document
         lines = []
         for p in doc.pages:
             if p.has_text_layer:
@@ -255,8 +264,7 @@ class PdfTab(QWidget):
         return sorted(set(indices))
 
     def _confirm_close(self) -> bool:
-        doc = self._service.document
-        if doc and doc.is_modified:
+        if self._pdf_document and self._pdf_document.is_modified:
             reply = QMessageBox.question(
                 self,
                 "未保存的修改",
@@ -269,23 +277,30 @@ class PdfTab(QWidget):
                 self._on_save()
             elif reply == QMessageBox.StandardButton.Cancel:
                 return False
-        self._service.close()
+        if self._doc is not None:
+            self._doc.close()
+        self._doc = None
+        self._pdf_document = None
         return True
 
     def _on_save(self) -> None:
+        if self._doc is None or self._pdf_document is None:
+            return
         try:
-            self._service.save()
+            PdfService.save(self._doc, self._pdf_document)
         except Exception as e:
             QMessageBox.warning(self, "保存失败", str(e))
             return
         self._update_status()
 
     def _on_save_as(self) -> None:
+        if self._doc is None or self._pdf_document is None:
+            return
         path, _ = QFileDialog.getSaveFileName(self, "另存为", "", "PDF 文件 (*.pdf)")
         if not path:
             return
         try:
-            self._service.save(path)
+            PdfService.save(self._doc, self._pdf_document, path=path)
         except Exception as e:
             QMessageBox.warning(self, "保存失败", str(e))
             return
@@ -313,23 +328,29 @@ class PdfTab(QWidget):
 
     def _on_pages_reordered(self) -> None:
         """拖拽排序后同步 PdfService。"""
+        if self._doc is None or self._pdf_document is None:
+            return
         for new_row in range(self._thumbnail_list.count()):
             item = self._thumbnail_list.item(new_row)
             old_idx = item.data(Qt.ItemDataRole.UserRole)
             if old_idx is not None and old_idx != new_row:
-                self._service.move_page(old_idx, new_row)
+                PdfService.move_page(self._doc, self._pdf_document, old_idx, new_row)
                 break
         self._refresh_thumbnails()
 
     def _on_rotate(self, angle: int) -> None:
+        if self._doc is None or self._pdf_document is None:
+            return
         indices = self._get_selected_page_indices()
         if not indices:
             return
-        self._service.rotate_pages(indices, angle)
+        PdfService.rotate_pages(self._doc, self._pdf_document, indices, angle)
         self._refresh_thumbnails()
         self._update_status()
 
     def _on_rotate_all(self) -> None:
+        if self._doc is None or self._pdf_document is None:
+            return
         reply = QMessageBox.question(
             self,
             "旋转全部页面",
@@ -338,11 +359,16 @@ class PdfTab(QWidget):
         )
         if reply != QMessageBox.StandardButton.Yes:
             return
-        self._service.rotate_all_pages(90)
+        PdfService.rotate_pages(
+            self._doc, self._pdf_document,
+            list(range(self._pdf_document.page_count)), 90,
+        )
         self._refresh_thumbnails()
         self._update_status()
 
     def _on_delete_pages(self) -> None:
+        if self._doc is None or self._pdf_document is None:
+            return
         indices = self._get_selected_page_indices()
         if not indices:
             return
@@ -354,12 +380,14 @@ class PdfTab(QWidget):
         )
         if reply != QMessageBox.StandardButton.Yes:
             return
-        self._service.delete_pages(indices)
+        PdfService.delete_pages(self._doc, self._pdf_document, indices)
         self._refresh_thumbnails()
         self._update_status()
         self._update_layer_status()
 
     def _on_insert_page(self) -> None:
+        if self._doc is None or self._pdf_document is None:
+            return
         indices = self._get_selected_page_indices()
         after_index = indices[0] if indices else 0
 
@@ -368,12 +396,14 @@ class PdfTab(QWidget):
         )
         if path:
             try:
-                self._service.insert_pages_from(path, after_index)
+                PdfService.insert_pages_from(
+                    self._doc, self._pdf_document, path, after_index,
+                )
             except Exception as e:
                 QMessageBox.warning(self, "插入失败", str(e))
                 return
         else:
-            self._service.insert_blank_page(after_index)
+            PdfService.insert_blank_page(self._doc, self._pdf_document, after_index)
         self._refresh_thumbnails()
         self._update_status()
         self._update_layer_status()
@@ -386,10 +416,9 @@ class PdfTab(QWidget):
             self._open_preview(indices[0])
 
     def _open_preview(self, page_index: int) -> None:
-        doc = self._service.document
-        if doc is None:
+        if self._doc is None:
             return
-        pixmap = self._service.render_page(page_index, dpi=150)
+        pixmap = PdfService.render_page(self._doc, page_index, dpi=150)
         if self._preview_window is None:
             self._preview_window = PdfPreviewWindow()
         assert self._preview_window is not None
@@ -400,13 +429,12 @@ class PdfTab(QWidget):
     # --- Text layer operations ---
 
     def _on_add_text_layer(self) -> None:
-        doc = self._service.document
-        if doc is None:
+        if self._pdf_document is None:
             return
 
         indices = self._get_selected_page_indices()
         if not indices:
-            indices = list(range(doc.page_count))
+            indices = list(range(self._pdf_document.page_count))
 
         if not hasattr(self, "_ocr_service") or self._ocr_service is None:
             QMessageBox.warning(
@@ -445,7 +473,7 @@ class PdfTab(QWidget):
             self._progress_bar.setValue(i)
             self._status_label.setText(f"正在识别第 {i + 1}/{total} 页...")
 
-            img_array = self._service.render_page_as_array(page_idx)
+            img_array = PdfService.render_page_as_array(self._doc, page_idx)
             if img_array.size == 0:
                 continue
             try:
@@ -455,7 +483,7 @@ class PdfTab(QWidget):
                 if ocr is None:
                     continue
                 result = ocr.recognize(img_array, OCROptions())
-                self._service.add_text_layer(page_idx, result)
+                PdfService.add_text_layer(self._doc, self._pdf_document, page_idx, result)
             except Exception as e:
                 logger.error("OCR 失败 (页 %d): %s", page_idx, e)
                 continue
@@ -480,20 +508,19 @@ class PdfTab(QWidget):
         self._ocr_service = service
 
     def _on_preview_text_layer(self) -> None:
+        if self._pdf_document is None:
+            return
         indices = self._get_selected_page_indices()
         if not indices:
             QMessageBox.information(self, "预览文字层", "请先选择页面。")
             return
         page_idx = indices[0]
-        doc = self._service.document
-        if doc is None:
-            return
-        page_info = doc.get_page(page_idx)
+        page_info = self._pdf_document.get_page(page_idx)
         if page_info is None or not page_info.text_layers:
             QMessageBox.information(self, "预览文字层", "选中页面无文字层。")
             return
 
-        pixmap = self._service.render_page(page_idx, dpi=150)
+        pixmap = PdfService.render_page(self._doc, page_idx, dpi=150)
         if self._preview_window is None:
             self._preview_window = PdfPreviewWindow()
         assert self._preview_window is not None
@@ -503,6 +530,8 @@ class PdfTab(QWidget):
         self._preview_window.raise_()
 
     def _on_delete_text_layer(self) -> None:
+        if self._doc is None or self._pdf_document is None:
+            return
         indices = self._get_selected_page_indices()
         if not indices:
             QMessageBox.information(self, "删除文字层", "请先选择页面。")
@@ -518,7 +547,7 @@ class PdfTab(QWidget):
             return
 
         for idx in indices:
-            self._service.delete_text_layers(idx)
+            PdfService.delete_text_layers(self._doc, self._pdf_document, idx)
         self._refresh_thumbnails()
         self._update_status()
         self._update_layer_status()
