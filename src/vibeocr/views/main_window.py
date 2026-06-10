@@ -730,6 +730,10 @@ class MainWindow(QMainWindow):
 
         QCoreApplication.processEvents()
 
+        # 清理 PDF 会话（关闭所有 fitz.Document）
+        if hasattr(self, "_pdf_tab") and self._pdf_tab:
+            self._pdf_tab.shutdown()
+
         # 关闭边缘工具栏
         if hasattr(self, "_edge_toolbar") and self._edge_toolbar:
             self._edge_toolbar.close()
