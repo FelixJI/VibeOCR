@@ -24,7 +24,7 @@ class PdfSession:
     doc: fitz.Document
     pdf_document: PdfDocument
     loaded_pages: set[int] = field(default_factory=set)
-    doc_lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+    doc_lock: threading.RLock = field(default_factory=threading.RLock, repr=False)
 
     @property
     def is_modified(self) -> bool:

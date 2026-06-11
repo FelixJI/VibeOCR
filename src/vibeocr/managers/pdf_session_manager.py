@@ -82,7 +82,7 @@ class PdfSessionManager(QObject):
     @property
     def load_worker_session_id(self) -> str | None:
         if self._load_worker is not None:
-            return self._load_worker._session_id
+            return self._load_worker.session_id
         return None
 
     # ---- session lifecycle ------------------------------------------
@@ -167,7 +167,7 @@ class PdfSessionManager(QObject):
         worker = self._load_worker
         if worker is None:
             return
-        session = self._sessions.get(worker._session_id)
+        session = self._sessions.get(worker.session_id)
         if session is None:
             return
         page_info.thumbnail = pixmap
@@ -228,7 +228,7 @@ class PdfSessionManager(QObject):
         worker = self._ocr_worker
         if worker is None:
             return
-        session = self._sessions.get(worker._session_id)
+        session = self._sessions.get(worker.session_id)
         if session is None:
             return
         if result is not None:
@@ -242,7 +242,7 @@ class PdfSessionManager(QObject):
         worker = self._ocr_worker
         if worker is None:
             return
-        session = self._sessions.get(worker._session_id)
+        session = self._sessions.get(worker.session_id)
         if session is None:
             return
         self.ocr_progress.emit(session.file_path, current, total)
@@ -270,7 +270,8 @@ class PdfSessionManager(QObject):
                     counter += 1
                 dest = out / f"{stem}_{counter}{dest.suffix}"
             try:
-                PdfService.save(session.doc, session.pdf_document, path=str(dest))
+                with session.doc_lock:
+                    PdfService.save(session.doc, session.pdf_document, path=str(dest))
                 exported.append(str(dest))
             except Exception as e:
                 logger.error("导出失败 %s: %s", file_path, e)
@@ -294,6 +295,7 @@ def _wait_thread(worker: QThread, timeout: int = 3000) -> None:
     """等待 QThread 结束，期间处理事件循环以避免跨线程信号死锁。
 
     超时后强制终止线程并记录错误日志。
+    注意：terminate() 不安全，仅在超时无法恢复时作为最后手段使用。
     """
     start = time.monotonic()
     while not worker.isFinished():
@@ -301,9 +303,11 @@ def _wait_thread(worker: QThread, timeout: int = 3000) -> None:
         worker.wait(50)
         if time.monotonic() - start > timeout / 1000:
             logger.error(
-                "Worker %s 未在 %dms 内结束，强制终止", worker.objectName(), timeout
+                "Worker %s 未在 %dms 内结束，强制终止",
+                worker.objectName(),
+                timeout,
             )
             worker.terminate()
-            worker.wait(200)
+            worker.wait(500)
             break
     QCoreApplication.processEvents()

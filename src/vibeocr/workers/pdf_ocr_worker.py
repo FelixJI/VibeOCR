@@ -49,6 +49,10 @@ class PdfOcrWorker(QThread):
     def cancel(self) -> None:
         self._cancelled = True
 
+    @property
+    def session_id(self) -> str:
+        return self._session_id
+
     def run(self) -> None:
         from vibeocr.models.ocr_options import OCROptions
 

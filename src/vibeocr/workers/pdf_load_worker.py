@@ -51,6 +51,10 @@ class PdfLoadWorker(QThread):
     def cancel(self) -> None:
         self._cancelled = True
 
+    @property
+    def session_id(self) -> str:
+        return self._session_id
+
     def run(self) -> None:
         for i in range(self._pdf_document.page_count):
             if self._cancelled:

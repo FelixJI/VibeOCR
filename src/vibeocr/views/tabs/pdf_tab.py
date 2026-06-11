@@ -449,7 +449,7 @@ class PdfTab(QWidget):
         menu.exec(self._thumbnail_list.mapToGlobal(pos))
 
     def _on_thumbnail_double_clicked(self, item: QListWidgetItem) -> None:
-        idx = item.getData(Qt.ItemDataRole.UserRole)
+        idx = item.data(Qt.ItemDataRole.UserRole)
         if idx is not None:
             self._open_preview(idx)
 
