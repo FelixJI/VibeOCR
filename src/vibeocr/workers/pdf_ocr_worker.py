@@ -36,12 +36,14 @@ class PdfOcrWorker(QThread):
         session_id: str,
         pages: list[tuple[int, np.ndarray]],
         ocr_service: OCRServiceBase,
+        ocr_options: object | None = None,
         parent=None,
     ) -> None:
         super().__init__(parent)
         self._session_id = session_id
         self._pages = pages
         self._ocr_service = ocr_service
+        self._ocr_options = ocr_options
         self._cancelled = False
 
     def cancel(self) -> None:
@@ -53,13 +55,14 @@ class PdfOcrWorker(QThread):
         success = 0
         fail = 0
         total = len(self._pages)
+        options = self._ocr_options if self._ocr_options is not None else OCROptions()
 
         for i, (page_index, image) in enumerate(self._pages):
             if self._cancelled:
                 break
             self.progress.emit(i + 1, total)
             try:
-                result = self._ocr_service.recognize(image, OCROptions())
+                result = self._ocr_service.recognize(image, options)
                 self.page_done.emit(page_index, result)
                 success += 1
             except Exception as e:

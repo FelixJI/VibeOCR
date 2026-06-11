@@ -62,3 +62,22 @@ def temp_image_file(tmp_path, sample_image_with_text_bytes):
     img_path = tmp_path / "test_image.png"
     img_path.write_bytes(sample_image_with_text_bytes)
     return img_path
+
+
+@pytest.fixture
+def wait_worker():
+    """返回一个等待 QThread worker 完成的辅助函数。"""
+    import time
+
+    from PySide6.QtCore import QCoreApplication
+
+    def _wait(worker, timeout=10000):
+        start = time.monotonic()
+        while not worker.isFinished():
+            QCoreApplication.processEvents()
+            worker.wait(50)
+            if time.monotonic() - start > timeout / 1000:
+                break
+        QCoreApplication.processEvents()
+
+    return _wait

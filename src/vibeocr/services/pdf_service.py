@@ -88,7 +88,7 @@ class PdfService:
         pixmap = page.get_pixmap(matrix=mat)
         return np.frombuffer(pixmap.samples, dtype=np.uint8).reshape(
             pixmap.height, pixmap.width, 3
-        )
+        ).copy()
 
     # ---- text layer detection ---------------------------------------
 
@@ -256,6 +256,26 @@ class PdfService:
         pages.pop(from_index)
         pages.insert(to_index, page_info)
         pdf_document.pages = pages
+        pdf_document.is_modified = True
+
+    @staticmethod
+    def reorder_pages(
+        doc: fitz.Document,
+        pdf_document: PdfDocument,
+        new_order: list[int],
+    ) -> None:
+        """按 new_order 指定的顺序重排页面。
+
+        new_order[i] = j 表示新位置 i 应放原索引 j 的页面。
+        """
+        n = len(new_order)
+        if n != doc.page_count or n != len(pdf_document.pages):
+            return
+        if new_order == list(range(n)):
+            return
+
+        doc.select(new_order)
+        pdf_document.pages = [pdf_document.pages[i] for i in new_order]
         pdf_document.is_modified = True
 
     # ---- text layer mutations ---------------------------------------

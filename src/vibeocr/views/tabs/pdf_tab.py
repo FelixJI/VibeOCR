@@ -29,6 +29,9 @@ from vibeocr.managers.pdf_session_manager import PdfSessionManager
 from vibeocr.services.pdf_service import PdfService
 from vibeocr.views.pdf_preview_window import PdfPreviewWindow
 
+if TYPE_CHECKING:
+    from vibeocr.services.ocr_service_base import OCRServiceBase
+
 logger = logging.getLogger(__name__)
 
 _THUMBNAIL_SIZE = 160
@@ -222,22 +225,9 @@ class PdfTab(QWidget):
                 else None
             )
             if page_info and page_info.thumbnail:
-                scaled = page_info.thumbnail.scaled(
-                    _THUMBNAIL_SIZE,
-                    _THUMBNAIL_SIZE,
-                    Qt.AspectRatioMode.KeepAspectRatio,
-                    Qt.TransformationMode.SmoothTransformation,
-                )
+                scaled = self._scale_thumbnail(page_info.thumbnail)
             else:
-                pixmap = PdfService.render_page(
-                    session.doc, page_index, dpi=session.pdf_document.thumbnail_dpi
-                )
-                scaled = pixmap.scaled(
-                    _THUMBNAIL_SIZE,
-                    _THUMBNAIL_SIZE,
-                    Qt.AspectRatioMode.KeepAspectRatio,
-                    Qt.TransformationMode.SmoothTransformation,
-                )
+                scaled = self._placeholder_pixmap()
             item = self._thumbnail_list.item(page_index)
             if item:
                 item.setIcon(QIcon(scaled))
@@ -255,15 +245,11 @@ class PdfTab(QWidget):
         if session is None or session.file_path != file_path:
             return
         if page_index < self._thumbnail_list.count():
-            pixmap = PdfService.render_page(
-                session.doc, page_index, dpi=session.pdf_document.thumbnail_dpi
-            )
-            scaled = pixmap.scaled(
-                _THUMBNAIL_SIZE,
-                _THUMBNAIL_SIZE,
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation,
-            )
+            with session.doc_lock:
+                pixmap = PdfService.render_page(
+                    session.doc, page_index, dpi=session.pdf_document.thumbnail_dpi
+                )
+            scaled = self._scale_thumbnail(pixmap)
             item = self._thumbnail_list.item(page_index)
             if item:
                 item.setIcon(QIcon(scaled))
@@ -300,6 +286,21 @@ class PdfTab(QWidget):
         ):
             btn.setEnabled(enabled)
 
+    @staticmethod
+    def _scale_thumbnail(pixmap: QPixmap) -> QPixmap:
+        return pixmap.scaled(
+            _THUMBNAIL_SIZE,
+            _THUMBNAIL_SIZE,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+
+    @staticmethod
+    def _placeholder_pixmap() -> QPixmap:
+        pm = QPixmap(_THUMBNAIL_SIZE, _THUMBNAIL_SIZE)
+        pm.fill(Qt.GlobalColor.lightGray)
+        return pm
+
     def _refresh_thumbnails(self) -> None:
         session = self._session_mgr.active_session
         if session is None:
@@ -308,17 +309,7 @@ class PdfTab(QWidget):
         doc = session.pdf_document
         self._thumbnail_list.clear()
         for page_info in doc.pages:
-            if page_info.thumbnail:
-                scaled = page_info.thumbnail.scaled(
-                    _THUMBNAIL_SIZE,
-                    _THUMBNAIL_SIZE,
-                    Qt.AspectRatioMode.KeepAspectRatio,
-                    Qt.TransformationMode.SmoothTransformation,
-                )
-            else:
-                placeholder = QPixmap(_THUMBNAIL_SIZE, _THUMBNAIL_SIZE)
-                placeholder.fill()
-                scaled = placeholder
+            scaled = self._scale_thumbnail(page_info.thumbnail) if page_info.thumbnail else self._placeholder_pixmap()
             item = QListWidgetItem(QIcon(scaled), f"第 {page_info.page_index + 1} 页")
             item.setData(Qt.ItemDataRole.UserRole, page_info.page_index)
             self._thumbnail_list.addItem(item)
@@ -404,7 +395,8 @@ class PdfTab(QWidget):
         if session is None:
             return
         try:
-            PdfService.save(session.doc, session.pdf_document)
+            with session.doc_lock:
+                PdfService.save(session.doc, session.pdf_document)
         except Exception as e:
             QMessageBox.warning(self, "保存失败", str(e))
             return
@@ -418,7 +410,8 @@ class PdfTab(QWidget):
         if not path:
             return
         try:
-            PdfService.save(session.doc, session.pdf_document, path)
+            with session.doc_lock:
+                PdfService.save(session.doc, session.pdf_document, path)
         except Exception as e:
             QMessageBox.warning(self, "保存失败", str(e))
             return
@@ -426,7 +419,7 @@ class PdfTab(QWidget):
 
     def _on_export_all(self) -> None:
         mgr = self._session_mgr
-        modified_paths = [p for p, s in mgr._sessions.items() if s.is_modified]
+        modified_paths = [p for p, _ in mgr.get_modified_sessions()]
         if not modified_paths:
             QMessageBox.information(self, "批量导出", "没有需要导出的修改文件。")
             return
@@ -464,14 +457,20 @@ class PdfTab(QWidget):
         session = self._session_mgr.active_session
         if session is None:
             return
-        for new_row in range(self._thumbnail_list.count()):
-            item = self._thumbnail_list.item(new_row)
+
+        new_order: list[int] = []
+        for row in range(self._thumbnail_list.count()):
+            item = self._thumbnail_list.item(row)
             old_idx = item.data(Qt.ItemDataRole.UserRole)
-            if old_idx is not None and old_idx != new_row:
-                PdfService.move_page(
-                    session.doc, session.pdf_document, old_idx, new_row
-                )
-                break
+            if old_idx is not None:
+                new_order.append(old_idx)
+
+        if not new_order:
+            return
+
+        with session.doc_lock:
+            PdfService.reorder_pages(session.doc, session.pdf_document, new_order)
+
         self._refresh_thumbnails()
 
     def _on_rotate(self, angle: int) -> None:
@@ -481,7 +480,8 @@ class PdfTab(QWidget):
         indices = self._get_selected_page_indices()
         if not indices:
             return
-        PdfService.rotate_pages(session.doc, session.pdf_document, indices, angle)
+        with session.doc_lock:
+            PdfService.rotate_pages(session.doc, session.pdf_document, indices, angle)
         self._refresh_thumbnails()
         self._update_status()
 
@@ -498,7 +498,8 @@ class PdfTab(QWidget):
         if reply != QMessageBox.StandardButton.Yes:
             return
         indices = list(range(session.pdf_document.page_count))
-        PdfService.rotate_pages(session.doc, session.pdf_document, indices, 90)
+        with session.doc_lock:
+            PdfService.rotate_pages(session.doc, session.pdf_document, indices, 90)
         self._refresh_thumbnails()
         self._update_status()
 
@@ -517,7 +518,8 @@ class PdfTab(QWidget):
         )
         if reply != QMessageBox.StandardButton.Yes:
             return
-        PdfService.delete_pages(session.doc, session.pdf_document, indices)
+        with session.doc_lock:
+            PdfService.delete_pages(session.doc, session.pdf_document, indices)
         session.loaded_pages -= set(indices)
         self._refresh_thumbnails()
         self._update_status()
@@ -535,14 +537,16 @@ class PdfTab(QWidget):
         )
         if path:
             try:
-                PdfService.insert_pages_from(
-                    session.doc, session.pdf_document, path, after_index
-                )
+                with session.doc_lock:
+                    PdfService.insert_pages_from(
+                        session.doc, session.pdf_document, path, after_index
+                    )
             except Exception as e:
                 QMessageBox.warning(self, "插入失败", str(e))
                 return
         else:
-            PdfService.insert_blank_page(session.doc, session.pdf_document, after_index)
+            with session.doc_lock:
+                PdfService.insert_blank_page(session.doc, session.pdf_document, after_index)
         session.loaded_pages.clear()
         self._refresh_thumbnails()
         self._update_status()
@@ -559,7 +563,8 @@ class PdfTab(QWidget):
         session = self._session_mgr.active_session
         if session is None:
             return
-        pixmap = PdfService.render_page(session.doc, page_index, dpi=150)
+        with session.doc_lock:
+            pixmap = PdfService.render_page(session.doc, page_index, dpi=150)
         if self._preview_window is None:
             self._preview_window = PdfPreviewWindow()
         assert self._preview_window is not None
@@ -578,7 +583,7 @@ class PdfTab(QWidget):
         if not indices:
             indices = list(range(session.pdf_document.page_count))
 
-        if self._session_mgr._ocr_service is None:
+        if not self._session_mgr.is_ocr_ready:
             QMessageBox.warning(
                 self,
                 "OCR 服务未就绪",
@@ -625,7 +630,8 @@ class PdfTab(QWidget):
             return
 
         for idx in indices:
-            PdfService.delete_text_layers(session.doc, session.pdf_document, idx)
+            with session.doc_lock:
+                PdfService.delete_text_layers(session.doc, session.pdf_document, idx)
         self._refresh_thumbnails()
         self._update_status()
         self._update_layer_status()
@@ -644,7 +650,8 @@ class PdfTab(QWidget):
             QMessageBox.information(self, "预览文字层", "选中页面无文字层。")
             return
 
-        pixmap = PdfService.render_page(session.doc, page_idx, dpi=150)
+        with session.doc_lock:
+            pixmap = PdfService.render_page(session.doc, page_idx, dpi=150)
         if self._preview_window is None:
             self._preview_window = PdfPreviewWindow()
         assert self._preview_window is not None
@@ -660,7 +667,7 @@ class PdfTab(QWidget):
 
     # ---- public API for MainWindow ----------------------------------
 
-    def set_ocr_service(self, service) -> None:
+    def set_ocr_service(self, service: OCRServiceBase) -> None:
         """设置 OCR 服务实例（由 MainWindow 调用）。"""
         self._session_mgr.set_ocr_service(service)
 

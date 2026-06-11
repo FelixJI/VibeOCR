@@ -1,30 +1,17 @@
 """Tests for PdfOcrWorker."""
 
-import time
 from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
-from PySide6.QtCore import QCoreApplication, Qt
+from PySide6.QtCore import Qt
 
 from vibeocr.models.ocr_result import OCRResult, TextBlock
 from vibeocr.workers.pdf_ocr_worker import PdfOcrWorker
 
 
-def _wait_worker(worker, timeout=10000):
-    """等待 worker 完成，期间处理事件循环以接收跨线程信号。"""
-    start = time.monotonic()
-    while not worker.isFinished():
-        QCoreApplication.processEvents()
-        worker.wait(50)
-        if time.monotonic() - start > timeout / 1000:
-            break
-    # 处理完剩余排队信号
-    QCoreApplication.processEvents()
-
-
 class TestPdfOcrWorker:
-    def test_emits_page_done_for_each_page(self, qapp):
+    def test_emits_page_done_for_each_page(self, qapp, wait_worker):
         pages = [
             (0, np.ones((100, 100, 3), dtype=np.uint8)),
             (1, np.ones((100, 100, 3), dtype=np.uint8)),
@@ -50,7 +37,7 @@ class TestPdfOcrWorker:
         )
 
         worker.start()
-        _wait_worker(worker)
+        wait_worker(worker)
 
         assert worker.isFinished()
         assert len(done_pages) == 2
@@ -58,7 +45,7 @@ class TestPdfOcrWorker:
         assert done_pages[1][0] == 1
         assert done_summary == [("test.pdf", 2, 0)]
 
-    def test_handles_ocr_failure_gracefully(self, qapp):
+    def test_handles_ocr_failure_gracefully(self, qapp, wait_worker):
         pages = [(0, np.ones((100, 100, 3), dtype=np.uint8))]
         mock_service = MagicMock()
         mock_service.recognize.side_effect = RuntimeError("OCR engine error")
@@ -81,13 +68,13 @@ class TestPdfOcrWorker:
         )
 
         worker.start()
-        _wait_worker(worker)
+        wait_worker(worker)
 
         assert worker.isFinished()
         assert done_pages[0] == (0, None)
         assert done_summary == [("fail.pdf", 0, 1)]
 
-    def test_cancel_stops_early(self, qapp):
+    def test_cancel_stops_early(self, qapp, wait_worker):
         pages = [
             (i, np.ones((100, 100, 3), dtype=np.uint8)) for i in range(10)
         ]
@@ -114,12 +101,12 @@ class TestPdfOcrWorker:
             Qt.ConnectionType.DirectConnection,
         )
         worker.start()
-        _wait_worker(worker)
+        wait_worker(worker)
 
         assert worker.isFinished()
         assert len(done_pages) <= 3
 
-    def test_emits_progress(self, qapp):
+    def test_emits_progress(self, qapp, wait_worker):
         pages = [(0, np.ones((100, 100, 3), dtype=np.uint8))]
         mock_service = MagicMock()
         mock_service.recognize.return_value = OCRResult(raw_text="ok", text_blocks=[])
@@ -135,7 +122,7 @@ class TestPdfOcrWorker:
             Qt.ConnectionType.DirectConnection,
         )
         worker.start()
-        _wait_worker(worker)
+        wait_worker(worker)
 
         assert worker.isFinished()
         assert (1, 1) in progress_calls

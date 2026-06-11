@@ -72,6 +72,19 @@ class PdfSessionManager(QObject):
     def set_ocr_service(self, service: OCRServiceBase) -> None:
         self._ocr_service = service
 
+    @property
+    def is_ocr_ready(self) -> bool:
+        return self._ocr_service is not None
+
+    def get_modified_sessions(self) -> list[tuple[str, PdfSession]]:
+        return [(p, s) for p, s in self._sessions.items() if s.is_modified]
+
+    @property
+    def load_worker_session_id(self) -> str | None:
+        if self._load_worker is not None:
+            return self._load_worker._session_id
+        return None
+
     # ---- session lifecycle ------------------------------------------
 
     def open_session(self, file_path: str) -> PdfSession:
@@ -112,7 +125,7 @@ class PdfSessionManager(QObject):
         if file_path not in self._sessions:
             return
 
-        if self._load_worker and self._load_worker._session_id == file_path:
+        if self.load_worker_session_id == file_path:
             self._cancel_load_worker()
 
         session = self._sessions.pop(file_path)
@@ -137,6 +150,7 @@ class PdfSessionManager(QObject):
             doc=session.doc,
             pdf_document=session.pdf_document,
             loaded_pages=session.loaded_pages,
+            doc_lock=session.doc_lock,
             thumbnail_dpi=session.pdf_document.thumbnail_dpi,
         )
         self._load_worker.page_ready.connect(self._on_page_ready)
@@ -150,7 +164,10 @@ class PdfSessionManager(QObject):
             self._load_worker = None
 
     def _on_page_ready(self, page_index: int, page_info, pixmap) -> None:
-        session = self.active_session
+        worker = self._load_worker
+        if worker is None:
+            return
+        session = self._sessions.get(worker._session_id)
         if session is None:
             return
         page_info.thumbnail = pixmap
@@ -168,7 +185,9 @@ class PdfSessionManager(QObject):
 
     # ---- OCR --------------------------------------------------------
 
-    def start_ocr(self, page_indices: list[int]) -> None:
+    def start_ocr(
+        self, page_indices: list[int], ocr_options: object | None = None
+    ) -> None:
         session = self.active_session
         if session is None or self._ocr_service is None:
             return
@@ -177,7 +196,8 @@ class PdfSessionManager(QObject):
 
         pages: list[tuple[int, object]] = []
         for page_idx in page_indices:
-            img_array = PdfService.render_page_as_array(session.doc, page_idx)
+            with session.doc_lock:
+                img_array = PdfService.render_page_as_array(session.doc, page_idx)
             if img_array.size > 0:
                 pages.append((page_idx, img_array))
 
@@ -188,6 +208,7 @@ class PdfSessionManager(QObject):
             session_id=session.file_path,
             pages=pages,
             ocr_service=self._ocr_service,
+            ocr_options=ocr_options,
         )
         self._ocr_worker.page_done.connect(self._on_ocr_page_done)
         self._ocr_worker.progress.connect(self._on_ocr_progress)
@@ -204,17 +225,24 @@ class PdfSessionManager(QObject):
             self._ocr_worker = None
 
     def _on_ocr_page_done(self, page_index: int, result) -> None:
-        session = self.active_session
+        worker = self._ocr_worker
+        if worker is None:
+            return
+        session = self._sessions.get(worker._session_id)
         if session is None:
             return
         if result is not None:
-            PdfService.add_text_layer(
-                session.doc, session.pdf_document, page_index, result
-            )
+            with session.doc_lock:
+                PdfService.add_text_layer(
+                    session.doc, session.pdf_document, page_index, result
+                )
         self.ocr_page_done.emit(session.file_path, page_index, result)
 
     def _on_ocr_progress(self, current: int, total: int) -> None:
-        session = self.active_session
+        worker = self._ocr_worker
+        if worker is None:
+            return
+        session = self._sessions.get(worker._session_id)
         if session is None:
             return
         self.ocr_progress.emit(session.file_path, current, total)
@@ -263,11 +291,19 @@ class PdfSessionManager(QObject):
 
 
 def _wait_thread(worker: QThread, timeout: int = 3000) -> None:
-    """等待 QThread 结束，期间处理事件循环以避免跨线程信号死锁。"""
+    """等待 QThread 结束，期间处理事件循环以避免跨线程信号死锁。
+
+    超时后强制终止线程并记录错误日志。
+    """
     start = time.monotonic()
     while not worker.isFinished():
         QCoreApplication.processEvents()
         worker.wait(50)
         if time.monotonic() - start > timeout / 1000:
+            logger.error(
+                "Worker %s 未在 %dms 内结束，强制终止", worker.objectName(), timeout
+            )
+            worker.terminate()
+            worker.wait(200)
             break
     QCoreApplication.processEvents()

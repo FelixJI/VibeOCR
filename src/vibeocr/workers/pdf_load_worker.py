@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QThread, Signal
@@ -34,6 +35,7 @@ class PdfLoadWorker(QThread):
         doc: fitz.Document,
         pdf_document: PdfDocument,
         loaded_pages: set[int],
+        doc_lock: threading.Lock,
         thumbnail_dpi: int = 96,
         parent=None,
     ) -> None:
@@ -42,6 +44,7 @@ class PdfLoadWorker(QThread):
         self._doc = doc
         self._pdf_document = pdf_document
         self._loaded_pages = loaded_pages
+        self._doc_lock = doc_lock
         self._thumbnail_dpi = thumbnail_dpi
         self._cancelled = False
 
@@ -55,20 +58,21 @@ class PdfLoadWorker(QThread):
             if i in self._loaded_pages:
                 continue
             try:
-                text_layers = PdfService.detect_text_layers(self._doc, i)
-                is_scanned = (
-                    not text_layers
-                    and PdfService.is_page_scanned(self._doc, i)
-                )
-                page = self._doc[i]
-                page_info = PdfPageInfo(
-                    page_index=i,
-                    rotation=page.rotation,
-                    has_text_layer=len(text_layers) > 0,
-                    text_layers=text_layers,
-                    is_scanned=is_scanned,
-                )
-                pixmap = PdfService.render_page(self._doc, i, dpi=self._thumbnail_dpi)
+                with self._doc_lock:
+                    text_layers = PdfService.detect_text_layers(self._doc, i)
+                    is_scanned = (
+                        not text_layers
+                        and PdfService.is_page_scanned(self._doc, i)
+                    )
+                    page = self._doc[i]
+                    page_info = PdfPageInfo(
+                        page_index=i,
+                        rotation=page.rotation,
+                        has_text_layer=len(text_layers) > 0,
+                        text_layers=text_layers,
+                        is_scanned=is_scanned,
+                    )
+                    pixmap = PdfService.render_page(self._doc, i, dpi=self._thumbnail_dpi)
                 self.page_ready.emit(i, page_info, pixmap)
             except Exception as e:
                 logger.error("PdfLoadWorker page %d failed: %s", i, e)
