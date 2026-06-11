@@ -13,6 +13,7 @@ from vibeocr.machine_cache import create_cache_entry, is_cache_valid
 from vibeocr.services.env_config import (
     PYTHON_VERSION,
     PYTHON_VERSION_SHORT,
+    get_pytorch_mirror,
 )
 
 # 测试用的URL
@@ -878,7 +879,8 @@ def install_embedded_dependencies(
             if cuda_version:
                 paddle_cuda_tag = CUDA_VERSION_MAP.get(cuda_version)
             torch_cuda_tag = TORCH_CUDA_MAP.get(paddle_cuda_tag or "", "cu128")
-            torch_index = f"https://download.pytorch.org/whl/{torch_cuda_tag}"
+            pytorch_mirror_name = "nju" if network_type == "domestic" else "official"
+            torch_index = get_pytorch_mirror(pytorch_mirror_name, torch_cuda_tag)
             requirements.append(
                 (f"PyTorch CUDA ({torch_cuda_tag})", "torch torchvision", torch_index)
             )
@@ -1155,7 +1157,8 @@ def install_dependencies(
             if cuda_version:
                 paddle_cuda_tag = CUDA_VERSION_MAP.get(cuda_version)
             torch_cuda_tag = TORCH_CUDA_MAP.get(paddle_cuda_tag or "", "cu128")
-            torch_index = f"https://download.pytorch.org/whl/{torch_cuda_tag}"
+            pytorch_mirror_name = "nju" if network_type == "domestic" else "official"
+            torch_index = get_pytorch_mirror(pytorch_mirror_name, torch_cuda_tag)
             requirements.append(
                 (f"PyTorch CUDA ({torch_cuda_tag})", "torch torchvision", torch_index)
             )

@@ -22,8 +22,18 @@ PIP_MIRROR_SOURCES = {
     "official": "https://pypi.org/simple",
 }
 
+# PyTorch CUDA 镜像源
+PYTORCH_MIRROR_SOURCES = {
+    "nju": "https://mirrors.nju.edu.cn/pytorch/whl",
+    "sjtu": "https://mirror.sjtu.edu.cn/pytorch-wheels",
+    "official": "https://download.pytorch.org/whl",
+}
+
 # 默认 pip 源
 DEFAULT_PIP_MIRROR = "tsinghua"
+
+# 默认 PyTorch 镜像源（国内）
+DEFAULT_PYTORCH_MIRROR = "nju"
 
 # PaddlePaddle 版本
 PADDLE_VERSION = "3.3.0"
@@ -74,6 +84,25 @@ def get_pip_mirror(name: str = DEFAULT_PIP_MIRROR) -> str:
         镜像源 URL
     """
     return PIP_MIRROR_SOURCES.get(name, PIP_MIRROR_SOURCES[DEFAULT_PIP_MIRROR])
+
+
+def get_pytorch_mirror(
+    name: str = DEFAULT_PYTORCH_MIRROR,
+    cuda_tag: str = "",
+) -> str:
+    """获取 PyTorch CUDA 镜像源 URL
+
+    Args:
+        name: 镜像源名称
+        cuda_tag: CUDA 版本标签，如 "cu126"
+
+    Returns:
+        镜像源完整 URL，如 "https://mirrors.nju.edu.cn/pytorch/whl/cu126"
+    """
+    base = PYTORCH_MIRROR_SOURCES.get(name, PYTORCH_MIRROR_SOURCES[DEFAULT_PYTORCH_MIRROR])
+    if cuda_tag:
+        return f"{base}/{cuda_tag}"
+    return base
 
 
 def is_windows() -> bool:

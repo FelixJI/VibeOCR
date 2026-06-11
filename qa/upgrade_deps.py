@@ -11,6 +11,7 @@
 """
 
 import argparse
+import os
 import re
 import subprocess
 import sys
@@ -44,6 +45,35 @@ def run_command(cmd: list[str], *, check: bool = True) -> subprocess.CompletedPr
         print(f"[ERROR] 命令失败: {' '.join(cmd)}")
         sys.exit(result.returncode)
     return result
+
+
+def _uv_env() -> dict[str, str]:
+    """构建 uv 运行环境变量，提高并发数加速下载"""
+    env = dict(os.environ)
+    env.setdefault("UV_CONCURRENT_DOWNLOADS", "10")
+    env.setdefault("UV_CONCURRENT_BUILDS", "4")
+    return env
+
+
+def run_command_streaming(cmd: list[str]) -> int:
+    """运行命令并实时输出 stdout/stderr，返回退出码"""
+    print(f"运行: {' '.join(cmd)}")
+    print("-" * 40)
+    proc = subprocess.Popen(
+        cmd,
+        cwd=PROJECT_ROOT,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=_uv_env(),
+    )
+    if proc.stdout:
+        for line in proc.stdout:
+            print(line, end="")
+    print("-" * 40)
+    return proc.wait()
 
 
 def get_locked_versions() -> dict[str, str]:
@@ -162,8 +192,10 @@ def update_pyproject_versions(locked_versions: dict[str, str], *, dry_run: bool 
     return changes
 
 
-def run_uv_lock_upgrade(*, dry_run: bool = False, stable: bool = False) -> int:
-    """运行 uv lock --upgrade"""
+def run_uv_lock_upgrade(
+    *, dry_run: bool = False, stable: bool = False
+) -> int:
+    """运行 uv lock --upgrade，实时输出进度"""
     if dry_run:
         extra = " --no-prerelease" if stable else ""
         print(f"[DRY-RUN] 将运行: uv lock --upgrade{extra}")
@@ -172,8 +204,7 @@ def run_uv_lock_upgrade(*, dry_run: bool = False, stable: bool = False) -> int:
     cmd = ["uv", "lock", "--upgrade"]
     if stable:
         cmd.append("--no-prerelease")
-    result = run_command(cmd, check=False)
-    return result.returncode
+    return run_command_streaming(cmd)
 
 
 def verify_cuda_packages_in_lock() -> list[str]:
@@ -247,13 +278,12 @@ def verify_cuda_runtime() -> bool:
 
 
 def run_uv_sync(*, dry_run: bool = False) -> int:
-    """运行 uv sync"""
+    """运行 uv sync，实时输出进度"""
     if dry_run:
         print("[DRY-RUN] 将运行: uv sync")
         return 0
 
-    result = run_command(["uv", "sync"], check=False)
-    return result.returncode
+    return run_command_streaming(["uv", "sync"])
 
 
 def main() -> int:
@@ -298,7 +328,9 @@ def main() -> int:
         print("\n[Step 1] 运行 uv lock --upgrade...")
         if args.stable:
             print("[INFO] 已启用 --stable，排除预发布版本")
-        result = run_uv_lock_upgrade(dry_run=args.dry_run, stable=args.stable)
+        result = run_uv_lock_upgrade(
+            dry_run=args.dry_run, stable=args.stable
+        )
         if result != 0:
             print(f"[FAIL] uv lock --upgrade 失败 (code: {result})")
             return result

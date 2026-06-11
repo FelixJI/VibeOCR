@@ -12,6 +12,7 @@
     python qa/run.py --report     # 生成报告文件
 """
 
+
 import argparse
 import json
 import os
