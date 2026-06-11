@@ -657,7 +657,6 @@ class OCRWorkerProcess:
 
     @staticmethod
     def _get_project_root():
-
         from vibeocr.env_manager import get_project_root
 
         return get_project_root()

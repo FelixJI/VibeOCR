@@ -864,7 +864,11 @@ def install_embedded_dependencies(
 
         requirements = [
             (paddle_name, paddle_package, paddle_index),
-            ("PaddleOCR", f'"{specs.get("paddleocr", "paddleocr[doc-parser]>=3.6.0")}"', pip_source),
+            (
+                "PaddleOCR",
+                f'"{specs.get("paddleocr", "paddleocr[doc-parser]>=3.6.0")}"',
+                pip_source,
+            ),
             ("MinerU", f'"{specs.get("mineru", "mineru[core]>=3.2.0")}"', pip_source),
         ]
 
@@ -1132,10 +1136,18 @@ def install_dependencies(
         requirements.append((paddle_name, paddle_package, paddle_index))
 
         # 安装 PaddleOCR
-        requirements.append(("PaddleOCR", f'"{specs.get("paddleocr", "paddleocr[doc-parser]>=3.6.0")}"', pip_source))
+        requirements.append(
+            (
+                "PaddleOCR",
+                f'"{specs.get("paddleocr", "paddleocr[doc-parser]>=3.6.0")}"',
+                pip_source,
+            )
+        )
 
         # 安装 MineRU 文档解析
-        requirements.append(("MinerU", f'"{specs.get("mineru", "mineru[core]>=3.2.0")}"', pip_source))
+        requirements.append(
+            ("MinerU", f'"{specs.get("mineru", "mineru[core]>=3.2.0")}"', pip_source)
+        )
 
         # GPU 环境下安装 torch+CUDA 覆盖 mineru 附带的 CPU 版本
         if use_gpu:

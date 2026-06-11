@@ -26,7 +26,7 @@ def create_qasync_event_loop(app) -> asyncio.AbstractEventLoop:
         QEventLoop 事件循环
     """
     try:
-        import qasync
+        import qasync  # type: ignore[import-untyped]
 
         loop = qasync.QEventLoop(app)
         asyncio.set_event_loop(loop)

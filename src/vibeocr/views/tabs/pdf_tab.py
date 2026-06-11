@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QIcon, QPixmap
@@ -309,7 +310,11 @@ class PdfTab(QWidget):
         doc = session.pdf_document
         self._thumbnail_list.clear()
         for page_info in doc.pages:
-            scaled = self._scale_thumbnail(page_info.thumbnail) if page_info.thumbnail else self._placeholder_pixmap()
+            scaled = (
+                self._scale_thumbnail(page_info.thumbnail)
+                if page_info.thumbnail
+                else self._placeholder_pixmap()
+            )
             item = QListWidgetItem(QIcon(scaled), f"第 {page_info.page_index + 1} 页")
             item.setData(Qt.ItemDataRole.UserRole, page_info.page_index)
             self._thumbnail_list.addItem(item)
@@ -546,7 +551,9 @@ class PdfTab(QWidget):
                 return
         else:
             with session.doc_lock:
-                PdfService.insert_blank_page(session.doc, session.pdf_document, after_index)
+                PdfService.insert_blank_page(
+                    session.doc, session.pdf_document, after_index
+                )
         session.loaded_pages.clear()
         self._refresh_thumbnails()
         self._update_status()

@@ -6,7 +6,6 @@ from pathlib import Path
 import fitz
 import pytest
 
-from vibeocr.models.pdf_document import PdfDocument
 from vibeocr.services.pdf_service import PdfService
 
 
@@ -50,7 +49,9 @@ class TestPdfServiceOpen:
         src = fitz.open()
         src.new_page(width=612, height=792)
         path = str(tmp_path / "encrypted.pdf")
-        src.save(path, encryption=fitz.PDF_ENCRYPT_AES_256, owner_pw="owner", user_pw="user")
+        src.save(
+            path, encryption=fitz.PDF_ENCRYPT_AES_256, owner_pw="owner", user_pw="user"
+        )
         src.close()
         with pytest.raises(RuntimeError, match="加密"):
             PdfService.open_doc(path)
@@ -81,13 +82,13 @@ class TestPdfServiceSave:
 
 class TestPdfServiceRender:
     def test_render_thumbnail(self, opened_doc, qapp):
-        doc, pdf_doc = opened_doc
+        doc, _ = opened_doc
         pixmap = PdfService.render_page(doc, 0, dpi=96)
         assert pixmap is not None
         assert not pixmap.isNull()
 
     def test_render_page_for_ocr(self, opened_doc):
-        doc, pdf_doc = opened_doc
+        doc, _ = opened_doc
         img_array = PdfService.render_page_as_array(doc, 0, dpi=300)
         assert img_array is not None
         assert img_array.shape[0] > 0
@@ -142,7 +143,7 @@ class TestPdfServiceMove:
 
 class TestPdfServiceTextLayer:
     def test_detect_text_layers(self, opened_doc):
-        doc, pdf_doc = opened_doc
+        doc, _ = opened_doc
         layers = PdfService.detect_text_layers(doc, 0)
         assert len(layers) > 0
         assert layers[0].text_preview.startswith("Page")
@@ -168,7 +169,12 @@ class TestPdfServiceTextLayer:
         result = OCRResult(
             raw_text="Hello World",
             text_blocks=[
-                TextBlock(text="Hello World", score=0.99, bbox=(50.0, 50.0, 300.0, 100.0), page_idx=0),
+                TextBlock(
+                    text="Hello World",
+                    score=0.99,
+                    bbox=(50.0, 50.0, 300.0, 100.0),
+                    page_idx=0,
+                ),
             ],
         )
         PdfService.add_text_layer(doc, pdf_doc, 0, result)
@@ -192,7 +198,10 @@ class TestPdfServiceTextLayer:
         page.insert_text((72, 72), "Some text", fontsize=12)
         cs = fitz.Colorspace(fitz.CS_RGB)
         img = np.ones((100, 100, 3), dtype=np.uint8) * 128
-        page.insert_image(fitz.Rect(72, 200, 172, 300), pixmap=fitz.Pixmap(cs, 100, 100, img.tobytes(), 0))
+        page.insert_image(
+            fitz.Rect(72, 200, 172, 300),
+            pixmap=fitz.Pixmap(cs, 100, 100, img.tobytes(), 0),
+        )
         doc.save(str(path))
         doc.close()
 

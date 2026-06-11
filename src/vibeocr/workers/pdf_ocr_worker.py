@@ -13,6 +13,7 @@ from PySide6.QtCore import QThread, Signal
 if TYPE_CHECKING:
     import numpy as np
 
+    from vibeocr.models.ocr_options import OCROptions
     from vibeocr.services.ocr_service_base import OCRServiceBase
 
 logger = logging.getLogger(__name__)
@@ -36,7 +37,7 @@ class PdfOcrWorker(QThread):
         session_id: str,
         pages: list[tuple[int, np.ndarray]],
         ocr_service: OCRServiceBase,
-        ocr_options: object | None = None,
+        ocr_options: OCROptions | None = None,
         parent=None,
     ) -> None:
         super().__init__(parent)

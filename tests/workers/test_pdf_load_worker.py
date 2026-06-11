@@ -4,7 +4,6 @@ import fitz
 import pytest
 from PySide6.QtCore import Qt
 
-from vibeocr.models.pdf_document import PdfDocument, PdfPageInfo
 from vibeocr.models.pdf_session import PdfSession
 from vibeocr.services.pdf_service import PdfService
 from vibeocr.workers.pdf_load_worker import PdfLoadWorker
@@ -25,7 +24,9 @@ def three_page_pdf(tmp_path):
 class TestPdfLoadWorker:
     def test_emits_page_ready_for_each_page(self, three_page_pdf, qapp, wait_worker):
         doc, pdf_doc = PdfService.open_doc(str(three_page_pdf))
-        session = PdfSession(file_path=str(three_page_pdf), doc=doc, pdf_document=pdf_doc)
+        session = PdfSession(
+            file_path=str(three_page_pdf), doc=doc, pdf_document=pdf_doc
+        )
 
         loaded_pages: list[int] = []
 
@@ -52,7 +53,9 @@ class TestPdfLoadWorker:
 
     def test_skips_already_loaded_pages(self, three_page_pdf, qapp, wait_worker):
         doc, pdf_doc = PdfService.open_doc(str(three_page_pdf))
-        session = PdfSession(file_path=str(three_page_pdf), doc=doc, pdf_document=pdf_doc)
+        session = PdfSession(
+            file_path=str(three_page_pdf), doc=doc, pdf_document=pdf_doc
+        )
         session.loaded_pages.add(1)  # page 1 already loaded
 
         loaded_pages: list[int] = []
@@ -78,7 +81,9 @@ class TestPdfLoadWorker:
 
     def test_cancel_stops_early(self, three_page_pdf, qapp, wait_worker):
         doc, pdf_doc = PdfService.open_doc(str(three_page_pdf))
-        session = PdfSession(file_path=str(three_page_pdf), doc=doc, pdf_document=pdf_doc)
+        session = PdfSession(
+            file_path=str(three_page_pdf), doc=doc, pdf_document=pdf_doc
+        )
 
         loaded_pages: list[int] = []
 
@@ -105,9 +110,13 @@ class TestPdfLoadWorker:
         assert len(loaded_pages) <= 1
         doc.close()
 
-    def test_page_ready_contains_text_layer_info(self, three_page_pdf, qapp, wait_worker):
+    def test_page_ready_contains_text_layer_info(
+        self, three_page_pdf, qapp, wait_worker
+    ):
         doc, pdf_doc = PdfService.open_doc(str(three_page_pdf))
-        session = PdfSession(file_path=str(three_page_pdf), doc=doc, pdf_document=pdf_doc)
+        session = PdfSession(
+            file_path=str(three_page_pdf), doc=doc, pdf_document=pdf_doc
+        )
 
         page_infos: list = []
 

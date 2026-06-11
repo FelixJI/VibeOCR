@@ -20,7 +20,6 @@ logger = logging.getLogger(__name__)
 
 
 class PdfService:
-
     # ---- open / save ------------------------------------------------
 
     @staticmethod
@@ -86,9 +85,11 @@ class PdfService:
         zoom = dpi / 72.0
         mat = fitz.Matrix(zoom, zoom)
         pixmap = page.get_pixmap(matrix=mat)
-        return np.frombuffer(pixmap.samples, dtype=np.uint8).reshape(
-            pixmap.height, pixmap.width, 3
-        ).copy()
+        return (
+            np.frombuffer(pixmap.samples, dtype=np.uint8)
+            .reshape(pixmap.height, pixmap.width, 3)
+            .copy()
+        )
 
     # ---- text layer detection ---------------------------------------
 
@@ -162,7 +163,8 @@ class PdfService:
                     rotation=page.rotation,
                     has_text_layer=len(text_layers) > 0,
                     text_layers=text_layers,
-                    is_scanned=len(text_layers) == 0 and PdfService.is_page_scanned(doc, i),
+                    is_scanned=len(text_layers) == 0
+                    and PdfService.is_page_scanned(doc, i),
                 )
             )
         pdf_document.pages = pages
@@ -179,7 +181,9 @@ class PdfService:
         info.rotation = page.rotation
         info.has_text_layer = len(text_layers) > 0
         info.text_layers = text_layers
-        info.is_scanned = not text_layers and PdfService.is_page_scanned(doc, page_index)
+        info.is_scanned = not text_layers and PdfService.is_page_scanned(
+            doc, page_index
+        )
         info.thumbnail = None
 
     # ---- page mutations ---------------------------------------------

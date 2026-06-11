@@ -3,10 +3,9 @@
 from unittest.mock import MagicMock
 
 import numpy as np
-import pytest
 from PySide6.QtCore import Qt
 
-from vibeocr.models.ocr_result import OCRResult, TextBlock
+from vibeocr.models.ocr_result import OCRResult
 from vibeocr.workers.pdf_ocr_worker import PdfOcrWorker
 
 
@@ -75,9 +74,7 @@ class TestPdfOcrWorker:
         assert done_summary == [("fail.pdf", 0, 1)]
 
     def test_cancel_stops_early(self, qapp, wait_worker):
-        pages = [
-            (i, np.ones((100, 100, 3), dtype=np.uint8)) for i in range(10)
-        ]
+        pages = [(i, np.ones((100, 100, 3), dtype=np.uint8)) for i in range(10)]
         mock_service = MagicMock()
         call_count = 0
 

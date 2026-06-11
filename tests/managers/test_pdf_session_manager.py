@@ -2,10 +2,8 @@
 
 import fitz
 import pytest
-from unittest.mock import MagicMock, patch
 
 from vibeocr.managers.pdf_session_manager import PdfSessionManager
-from vibeocr.services.pdf_service import PdfService
 
 
 def _create_test_pdf(path, num_pages=2):
@@ -87,8 +85,8 @@ class TestPdfSessionManagerSessions:
 
 class TestPdfSessionManagerShutdown:
     def test_shutdown_closes_all_docs(self, manager, test_pdf_a, test_pdf_b):
-        s1 = manager.open_session(str(test_pdf_a))
-        s2 = manager.open_session(str(test_pdf_b))
+        manager.open_session(str(test_pdf_a))
+        manager.open_session(str(test_pdf_b))
         manager.shutdown()
         assert manager.active_session is None
         assert len(manager.session_paths) == 0

@@ -14,11 +14,15 @@
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import time
 from datetime import datetime
 from pathlib import Path
+
+# 强制子进程使用 UTF-8 输出，避免 Windows 终端编码问题
+os.environ.setdefault("PYTHONUTF8", "1")
 
 PROJECT_ROOT = Path(__file__).parent.parent
 QA_DIR = PROJECT_ROOT / "qa"
@@ -70,6 +74,9 @@ def run_script(script_name: str, args: list[str] | None = None) -> tuple[int, st
     if args:
         cmd.extend(args)
 
+    env = os.environ.copy()
+    env["PYTHONUTF8"] = "1"
+
     result = subprocess.run(
         cmd,
         cwd=PROJECT_ROOT,
@@ -78,6 +85,7 @@ def run_script(script_name: str, args: list[str] | None = None) -> tuple[int, st
         text=True,
         encoding="utf-8",
         errors="replace",
+        env=env,
     )
     return result.returncode, result.stdout, result.stderr
 
@@ -354,6 +362,12 @@ def save_report(results: dict, format_type: str = "all") -> None:
 
 
 def main() -> int:
+    # 确保 stdout/stderr 使用 UTF-8，避免 Windows 终端乱码
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
     parser = argparse.ArgumentParser(
         description="代码质量控制工具",
         formatter_class=argparse.RawDescriptionHelpFormatter,

@@ -146,8 +146,8 @@ class ExportService:
     @staticmethod
     def _export_docx(result: OCRResult, output_path: Path) -> bool:
         """导出为 Word 文档"""
-        from docx import Document
-        from docx.shared import Inches, Pt
+        from docx import Document  # type: ignore[import-untyped]
+        from docx.shared import Inches, Pt  # type: ignore[import-untyped]
 
         doc = Document()
         content_list = getattr(result, "content_list", [])

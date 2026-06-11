@@ -10,10 +10,13 @@
 """
 
 import argparse
+import os
 import shutil
 import subprocess
 import sys
 from pathlib import Path
+
+os.environ.setdefault("PYTHONUTF8", "1")
 
 PROJECT_ROOT = Path(__file__).parent.parent
 TARGET_DIRS = ["src"]

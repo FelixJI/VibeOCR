@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import threading
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QThread, Signal
@@ -13,6 +12,8 @@ from vibeocr.models.pdf_document import PdfDocument, PdfPageInfo
 from vibeocr.services.pdf_service import PdfService
 
 if TYPE_CHECKING:
+    import threading
+
     import fitz
 
 logger = logging.getLogger(__name__)
@@ -35,7 +36,7 @@ class PdfLoadWorker(QThread):
         doc: fitz.Document,
         pdf_document: PdfDocument,
         loaded_pages: set[int],
-        doc_lock: threading.Lock,
+        doc_lock: threading.RLock,
         thumbnail_dpi: int = 96,
         parent=None,
     ) -> None:
@@ -64,9 +65,8 @@ class PdfLoadWorker(QThread):
             try:
                 with self._doc_lock:
                     text_layers = PdfService.detect_text_layers(self._doc, i)
-                    is_scanned = (
-                        not text_layers
-                        and PdfService.is_page_scanned(self._doc, i)
+                    is_scanned = not text_layers and PdfService.is_page_scanned(
+                        self._doc, i
                     )
                     page = self._doc[i]
                     page_info = PdfPageInfo(
@@ -76,7 +76,9 @@ class PdfLoadWorker(QThread):
                         text_layers=text_layers,
                         is_scanned=is_scanned,
                     )
-                    pixmap = PdfService.render_page(self._doc, i, dpi=self._thumbnail_dpi)
+                    pixmap = PdfService.render_page(
+                        self._doc, i, dpi=self._thumbnail_dpi
+                    )
                 self.page_ready.emit(i, page_info, pixmap)
             except Exception as e:
                 logger.error("PdfLoadWorker page %d failed: %s", i, e)

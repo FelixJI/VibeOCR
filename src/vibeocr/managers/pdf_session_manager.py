@@ -18,6 +18,9 @@ from vibeocr.workers.pdf_load_worker import PdfLoadWorker
 from vibeocr.workers.pdf_ocr_worker import PdfOcrWorker
 
 if TYPE_CHECKING:
+    import numpy as np
+
+    from vibeocr.models.ocr_options import OCROptions
     from vibeocr.services.ocr_service_base import OCRServiceBase
 
 logger = logging.getLogger(__name__)
@@ -186,7 +189,7 @@ class PdfSessionManager(QObject):
     # ---- OCR --------------------------------------------------------
 
     def start_ocr(
-        self, page_indices: list[int], ocr_options: object | None = None
+        self, page_indices: list[int], ocr_options: OCROptions | None = None
     ) -> None:
         session = self.active_session
         if session is None or self._ocr_service is None:
@@ -194,7 +197,7 @@ class PdfSessionManager(QObject):
 
         self._cancel_ocr_worker()
 
-        pages: list[tuple[int, object]] = []
+        pages: list[tuple[int, np.ndarray]] = []
         for page_idx in page_indices:
             with session.doc_lock:
                 img_array = PdfService.render_page_as_array(session.doc, page_idx)

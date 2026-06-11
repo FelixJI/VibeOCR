@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from PySide6.QtCore import (
     QPoint,
@@ -43,6 +43,7 @@ from vibeocr.widgets.toolbar import EdgeToolbar
 
 if TYPE_CHECKING:
     from vibeocr.models.ocr_result import OCRResult
+    from vibeocr.services.ocr_service_base import OCRServiceBase
 
 # 延迟导入: OCR 服务模块导入很慢（~33s），延迟到首次使用时导入
 
@@ -444,7 +445,7 @@ class MainWindow(QMainWindow):
 
             # PDF 处理 Tab 服务注入
             if hasattr(self, "_pdf_tab") and self._pdf_tab:
-                self._pdf_tab.set_ocr_service(paddlex_service)
+                self._pdf_tab.set_ocr_service(cast("OCRServiceBase", paddlex_service))
                 logging.debug("[MainWindow] PDF 处理标签页已连接服务")
 
             # 子进程就绪后，触发预加载（如果配置了预加载管道）
