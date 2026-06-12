@@ -34,7 +34,12 @@ class PdfService:
             raise RuntimeError("不支持加密 PDF 文件")
 
         pdf_document = PdfDocument(file_path=file_path)
-        PdfService.build_page_infos(doc, pdf_document)
+        # 创建轻量占位页面，避免在主线程上对每页执行 detect_text_layers /
+        # is_page_scanned 等耗时操作。详细的页面信息由 PdfLoadWorker 在后台逐页填充。
+        pdf_document.pages = [
+            PdfPageInfo(page_index=i, rotation=doc[i].rotation)
+            for i in range(doc.page_count)
+        ]
         return doc, pdf_document
 
     @staticmethod

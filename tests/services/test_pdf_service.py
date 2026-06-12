@@ -26,8 +26,12 @@ def test_pdf(tmp_path):
 
 @pytest.fixture
 def opened_doc(test_pdf):
-    """返回 (doc, pdf_document) 元组，测试后自动关闭。"""
+    """返回 (doc, pdf_document) 元组，测试后自动关闭。
+
+    显式调用 build_page_infos 以模拟 PdfLoadWorker 的后台分析结果。
+    """
     doc, pdf_doc = PdfService.open_doc(str(test_pdf))
+    PdfService.build_page_infos(doc, pdf_doc)
     yield doc, pdf_doc
     doc.close()
 
@@ -206,6 +210,7 @@ class TestPdfServiceTextLayer:
         doc.close()
 
         doc, pdf_doc = PdfService.open_doc(str(path))
+        PdfService.build_page_infos(doc, pdf_doc)
         assert pdf_doc.pages[0].has_text_layer is True
         PdfService.delete_text_layers(doc, pdf_doc, 0)
         assert pdf_doc.pages[0].has_text_layer is False
