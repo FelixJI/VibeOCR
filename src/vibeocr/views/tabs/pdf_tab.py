@@ -674,11 +674,21 @@ class PdfTab(QWidget):
 
         with session.doc_lock:
             pixmap = PdfService.render_page(session.doc, page_idx, dpi=150)
+            page_rect = session.doc[page_idx].rect
         if self._preview_window is None:
             self._preview_window = PdfPreviewWindow()
         assert self._preview_window is not None
-        self._preview_window.set_page_pixmap(pixmap)
-        self._preview_window._canvas.set_highlight_layers(page_info.text_layers)
+        self._preview_window.setWindowTitle(
+            f"文字层预览 — 第{page_idx + 1}页 ({len(page_info.text_layers)}个文字块)"
+        )
+        # 使用公共 API，不再直接访问 _canvas
+        self._preview_window.set_highlight(
+            pixmap,
+            page_info.text_layers,
+            render_dpi=150,
+            page_rect=page_rect,
+            source="pdf",
+        )
         self._preview_window.show()
         self._preview_window.raise_()
 
