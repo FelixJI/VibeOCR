@@ -266,6 +266,48 @@ class TestPdfServiceTextLayer:
         assert pdf_doc.pages[0].has_text_layer is True
         doc.close()
 
+    def test_add_text_layer_default_angle_in_page_bounds(self, tmp_path):
+        """preproc_angle=0（当前生产路径）时，文字层完全落在页面内。"""
+        import numpy as np
+
+        from vibeocr.models.ocr_result import OCRResult, TextBlock
+
+        path = tmp_path / "scan_default.pdf"
+        doc = fitz.open()
+        page = doc.new_page(width=612, height=792)
+        img = np.ones((792, 612, 3), dtype=np.uint8) * 240
+        cs = fitz.Colorspace(fitz.CS_RGB)
+        pixmap = fitz.Pixmap(cs, 612, 792, img.tobytes(), 0)
+        page.insert_image(fitz.Rect(0, 0, 612, 792), pixmap=pixmap)
+        doc.save(str(path))
+        doc.close()
+
+        doc, pdf_doc = PdfService.open_doc(str(path))
+        # 不传 preproc_angle → 默认 0（模拟当前 MineRU/VL 管道的真实输出）
+        result = OCRResult(
+            raw_text="Hello",
+            text_blocks=[
+                TextBlock(
+                    text="Hello",
+                    score=0.99,
+                    bbox=(100.0, 100.0, 500.0, 200.0),  # [0, 1000] 归一化
+                    page_idx=0,
+                ),
+            ],
+        )
+        PdfService.add_text_layer(doc, pdf_doc, 0, result)
+
+        layers = PdfService.detect_text_layers(doc, 0)
+        assert len(layers) > 0
+        page_rect = doc[0].rect
+        for layer in layers:
+            lr = fitz.Rect(layer.bbox)
+            assert lr.x0 >= -1
+            assert lr.y0 >= -1
+            assert lr.x1 <= page_rect.width + 1
+            assert lr.y1 <= page_rect.height + 1
+        doc.close()
+
     def test_delete_text_layer(self, opened_doc):
         doc, pdf_doc = opened_doc
         assert pdf_doc.pages[0].has_text_layer is True
