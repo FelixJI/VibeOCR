@@ -323,3 +323,60 @@ class TestPipelineSwitchSignals:
         """勾选框变更仍发射 options_changed"""
         with qtbot.waitSignal(widget.options_changed, timeout=1000):
             widget._doc_orientation_cb.setChecked(False)
+
+
+class TestPreprocessOptionsWidgetPipelineLockGeneric:
+    """测试 lock_to_pipelines / lock_to_document_parsing 通用锁定。"""
+
+    def test_lock_to_pipelines_disables_others(self, widget):
+        """lock_to_pipelines 后，不在允许集的管道应被禁用。"""
+        widget.lock_to_pipelines(
+            {OCRPipeline.OCR, OCRPipeline.TABLE_RECOGNITION},
+            reason="测试",
+        )
+        assert widget.is_pipeline_locked is True
+        allowed = {OCRPipeline.OCR, OCRPipeline.TABLE_RECOGNITION}
+        for i in range(widget._pipeline_combo.count()):
+            p = OCRPipeline(widget._pipeline_combo.itemData(i))
+            assert widget._pipeline_combo.model().item(i).isEnabled() is (p in allowed)
+
+    def test_lock_to_pipelines_switches_current_into_allowed(self, widget):
+        """当前管道不在允许集时，应自动切到允许集内（default 指定）。"""
+        # widget 默认选中 OCR，先切到 PP_STRUCTURE_V3（不在新允许集内）
+        idx = widget._pipeline_combo.findData(OCRPipeline.PP_STRUCTURE_V3.value)
+        widget._pipeline_combo.setCurrentIndex(idx)
+        assert widget.get_current_pipeline() == OCRPipeline.PP_STRUCTURE_V3
+
+        widget.lock_to_pipelines(
+            {OCRPipeline.FORMULA_RECOGNITION},
+            reason="测试",
+            default=OCRPipeline.FORMULA_RECOGNITION,
+        )
+        assert widget.get_current_pipeline() == OCRPipeline.FORMULA_RECOGNITION
+
+    def test_lock_to_pipelines_idempotent(self, widget):
+        """重复锁定应被忽略（_pipeline_locked 已为 True）。"""
+        widget.lock_to_pipelines({OCRPipeline.OCR})
+        widget.lock_to_pipelines({OCRPipeline.TABLE_RECOGNITION})  # 第二次应被忽略
+        assert widget.is_pipeline_locked is True
+        # 第二次未生效：OCR 仍启用（若第二次生效则只剩 TABLE）
+        idx = widget._pipeline_combo.findData(OCRPipeline.OCR.value)
+        assert widget._pipeline_combo.model().item(idx).isEnabled() is True
+
+    def test_unlock_restores_all(self, widget):
+        """unlock 后所有项恢复可选。"""
+        widget.lock_to_pipelines({OCRPipeline.OCR})
+        widget.unlock_pipeline()
+        assert widget.is_pipeline_locked is False
+        for i in range(widget._pipeline_combo.count()):
+            assert widget._pipeline_combo.model().item(i).isEnabled() is True
+
+    def test_lock_to_document_parsing_still_works(self, widget):
+        """重构后 lock_to_document_parsing 行为不变。"""
+        widget.lock_to_document_parsing("文档")
+        allowed = {OCRPipeline.DOCUMENT_PARSING, OCRPipeline.PADDLEOCR_VL}
+        for i in range(widget._pipeline_combo.count()):
+            p = OCRPipeline(widget._pipeline_combo.itemData(i))
+            assert widget._pipeline_combo.model().item(i).isEnabled() is (p in allowed)
+        # 默认切到 DOCUMENT_PARSING
+        assert widget.get_current_pipeline() == OCRPipeline.DOCUMENT_PARSING

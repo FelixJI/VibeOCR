@@ -870,42 +870,72 @@ class PreprocessOptionsWidget(QGroupBox):
 
     _DOCUMENT_PIPELINES = {OCRPipeline.DOCUMENT_PARSING, OCRPipeline.PADDLEOCR_VL}
 
-    def lock_to_document_parsing(self, reason: str = "") -> None:
-        """锁定管道为文档类管道（MineRU / PaddleOCR-VL 可选），禁用其他管道。
+    def lock_to_pipelines(
+        self,
+        allowed: set[OCRPipeline],
+        reason: str = "",
+        default: OCRPipeline | None = None,
+    ) -> None:
+        """锁定管道下拉项，仅保留 allowed 集合内的管道可选。
 
         Args:
-            reason: 锁定原因，显示在管道旁边
+            allowed: 允许的管道集合。
+            reason: 锁定原因，显示在管道旁边的提示标签。
+            default: 若当前管道不在 allowed 内，切到此管道；
+                     为 None 时切到 allowed 内下拉框第一个出现的管道。
         """
         if self._pipeline_locked:
             return
         self._pipeline_locked = True
 
-        # 禁用非文档类管道的下拉项
+        # 禁用不在 allowed 集合内的下拉项
         for i in range(self._pipeline_combo.count()):
             data = self._pipeline_combo.itemData(i)
             try:
                 pipeline = OCRPipeline(data)
             except ValueError:
                 continue
-            is_doc = pipeline in self._DOCUMENT_PIPELINES
-            self._pipeline_combo.model().item(i).setEnabled(is_doc)
+            self._pipeline_combo.model().item(i).setEnabled(pipeline in allowed)
 
-        # 如果当前选中的不是文档类管道，切换到 DOCUMENT_PARSING
+        # 若当前管道不在 allowed 内，切到指定默认（或 allowed 内第一个）
         current = self.get_current_pipeline()
-        if current not in self._DOCUMENT_PIPELINES:
-            idx = self._pipeline_combo.findData(OCRPipeline.DOCUMENT_PARSING.value)
+        if current not in allowed:
+            fallback = default
+            if fallback is None or fallback not in allowed:
+                # 找 allowed 内下拉框中第一个出现的管道
+                fallback = next(
+                    (
+                        OCRPipeline(self._pipeline_combo.itemData(i))
+                        for i in range(self._pipeline_combo.count())
+                        if OCRPipeline(self._pipeline_combo.itemData(i)) in allowed
+                    ),
+                    current,
+                )
+            idx = self._pipeline_combo.findData(fallback.value)
             if idx >= 0:
                 self._pipeline_combo.blockSignals(True)
                 self._pipeline_combo.setCurrentIndex(idx)
                 self._pipeline_combo.blockSignals(False)
 
-        if reason:
-            self._pipeline_lock_label.setText(f"({reason})")
-        else:
-            self._pipeline_lock_label.setText("(仅文档解析)")
+        self._pipeline_lock_label.setText(f"({reason})" if reason else "(已锁定)")
         self._pipeline_lock_label.setVisible(True)
 
         self._update_tab_visibility()
+
+    def lock_to_document_parsing(self, reason: str = "") -> None:
+        """锁定管道为文档类管道（MineRU / PaddleOCR-VL 可选），禁用其他管道。
+
+        向后兼容包装：等价于
+        ``lock_to_pipelines({DOCUMENT_PARSING, PADDLEOCR_VL}, reason, DOCUMENT_PARSING)``。
+
+        Args:
+            reason: 锁定原因，显示在管道旁边
+        """
+        self.lock_to_pipelines(
+            self._DOCUMENT_PIPELINES,
+            reason=reason or "仅文档解析",
+            default=OCRPipeline.DOCUMENT_PARSING,
+        )
 
     def unlock_pipeline(self) -> None:
         """解除管道锁定，恢复自由选择。"""
