@@ -186,6 +186,86 @@ class TestPdfServiceTextLayer:
         assert pdf_doc.is_modified is True
         doc.close()
 
+    def test_add_text_layer_with_90_rotation(self, tmp_path):
+        """90° 预处理旋转后 bbox 仍然映射到正确位置。"""
+        import numpy as np
+
+        from vibeocr.models.ocr_result import OCRResult, TextBlock
+
+        path = tmp_path / "scan_rotated.pdf"
+        doc = fitz.open()
+        page = doc.new_page(width=612, height=792)
+        img = np.ones((792, 612, 3), dtype=np.uint8) * 240
+        cs = fitz.Colorspace(fitz.CS_RGB)
+        pixmap = fitz.Pixmap(cs, 612, 792, img.tobytes(), 0)
+        page.insert_image(fitz.Rect(0, 0, 612, 792), pixmap=pixmap)
+        doc.save(str(path))
+        doc.close()
+
+        doc, pdf_doc = PdfService.open_doc(str(path))
+        # 模拟 OCR 检测到图像旋转 90°，返回旋转后空间中的 bbox
+        result = OCRResult(
+            raw_text="Hello",
+            text_blocks=[
+                TextBlock(
+                    text="Hello",
+                    score=0.99,
+                    bbox=(400.0, 100.0, 600.0, 200.0),  # [0, 1000] 归一化
+                    page_idx=0,
+                ),
+            ],
+            preproc_angle=90,
+        )
+        PdfService.add_text_layer(doc, pdf_doc, 0, result)
+        assert pdf_doc.pages[0].has_text_layer is True
+
+        # 验证文字层出现在页面上（而非页面外）
+        layers = PdfService.detect_text_layers(doc, 0)
+        assert len(layers) > 0
+        # 文字层应该完全在页面内
+        page_rect = doc[0].rect
+        for layer in layers:
+            layer_rect = fitz.Rect(layer.bbox)
+            assert layer_rect.x0 >= -1  # 允许 1pt 误差
+            assert layer_rect.y0 >= -1
+            assert layer_rect.x1 <= page_rect.width + 1
+            assert layer_rect.y1 <= page_rect.height + 1
+        doc.close()
+
+    def test_add_text_layer_uses_global_settings(self, tmp_path):
+        """PdfGlobalSettings 控制字号和重试参数。"""
+        import numpy as np
+
+        from vibeocr.models.ocr_result import OCRResult, TextBlock
+        from vibeocr.models.pdf_ocr_options import PdfGlobalSettings
+
+        path = tmp_path / "scan_settings.pdf"
+        doc = fitz.open()
+        page = doc.new_page(width=612, height=792)
+        img = np.ones((792, 612, 3), dtype=np.uint8) * 240
+        cs = fitz.Colorspace(fitz.CS_RGB)
+        pixmap = fitz.Pixmap(cs, 612, 792, img.tobytes(), 0)
+        page.insert_image(fitz.Rect(0, 0, 612, 792), pixmap=pixmap)
+        doc.save(str(path))
+        doc.close()
+
+        doc, pdf_doc = PdfService.open_doc(str(path))
+        settings = PdfGlobalSettings(font_size_ratio=0.5, font_size_retry_count=2)
+        result = OCRResult(
+            raw_text="Test",
+            text_blocks=[
+                TextBlock(
+                    text="Test",
+                    score=0.99,
+                    bbox=(100.0, 100.0, 500.0, 200.0),
+                    page_idx=0,
+                ),
+            ],
+        )
+        PdfService.add_text_layer(doc, pdf_doc, 0, result, pdf_settings=settings)
+        assert pdf_doc.pages[0].has_text_layer is True
+        doc.close()
+
     def test_delete_text_layer(self, opened_doc):
         doc, pdf_doc = opened_doc
         assert pdf_doc.pages[0].has_text_layer is True

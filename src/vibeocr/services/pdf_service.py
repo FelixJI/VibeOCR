@@ -295,9 +295,24 @@ class PdfService:
         pdf_document: PdfDocument,
         page_index: int,
         ocr_result: object,
+        pdf_settings: object | None = None,
     ) -> None:
+        """将 OCR 结果作为隐形文字层写入 PDF 页面。
+
+        Args:
+            doc: fitz.Document 实例。
+            pdf_document: PdfDocument 状态对象。
+            page_index: 页码索引。
+            ocr_result: OCRResult 实例。
+            pdf_settings: PdfGlobalSettings 实例（None 则使用默认值）。
+        """
+        from vibeocr.models.pdf_ocr_options import PdfGlobalSettings
+
+        settings = pdf_settings if pdf_settings is not None else PdfGlobalSettings()
+
         page = doc[page_index]
         page_rect = page.rect
+        preproc_angle = getattr(ocr_result, "preproc_angle", 0)
 
         text_blocks = getattr(ocr_result, "text_blocks", [])
         for block in text_blocks:
@@ -306,30 +321,31 @@ class PdfService:
             bbox = block.bbox
             if bbox is None:
                 continue
-            x0 = bbox[0] / 1000.0 * page_rect.width
-            y0 = bbox[1] / 1000.0 * page_rect.height
-            x1 = bbox[2] / 1000.0 * page_rect.width
-            y1 = bbox[3] / 1000.0 * page_rect.height
 
-            rect = fitz.Rect(x0, y0, x1, y1)
+            # 逆旋转 + 归一化到 PDF 页面坐标
+            rect = PdfService._denormalize_and_unrotate_bbox(
+                bbox, preproc_angle, page_rect
+            )
             if rect.is_empty or rect.width < 1 or rect.height < 1:
                 continue
 
-            fontsize = rect.height * 0.8
+            fontsize = rect.height * settings.font_size_ratio
             if fontsize < 1:
                 continue
 
-            for _ in range(5):
+            render_mode = 0 if settings.text_layer_visible else 3
+
+            for _ in range(settings.font_size_retry_count):
                 rc = page.insert_textbox(
                     rect,
                     block.text,
                     fontsize=fontsize,
                     color=(0, 0, 0),
-                    render_mode=3,
+                    render_mode=render_mode,
                 )
                 if rc >= 0:
                     break
-                fontsize *= 0.75
+                fontsize *= settings.font_size_shrink_factor
                 if fontsize < 1:
                     break
 
