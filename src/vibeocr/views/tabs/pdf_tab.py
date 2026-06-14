@@ -598,6 +598,19 @@ class PdfTab(QWidget):
             )
             return
 
+        # 从偏好读取 PDF 配置（使用 OCRPreferences 公共 API）
+        from vibeocr.utils.ocr_preferences import OCRPreferences
+
+        try:
+            prefs = OCRPreferences.instance()
+            pdf_settings = prefs.get_pdf_settings()
+            ocr_options = prefs.get_pdf_pipeline_options()
+        except RuntimeError:
+            from vibeocr.models.pdf_ocr_options import PdfGlobalSettings
+
+            pdf_settings = PdfGlobalSettings()
+            ocr_options = None
+
         reply = QMessageBox.question(
             self,
             "添加文字层",
@@ -616,7 +629,9 @@ class PdfTab(QWidget):
         self._btn_open.setEnabled(False)
         self._btn_add_file.setEnabled(False)
 
-        self._session_mgr.start_ocr(indices)
+        self._session_mgr.start_ocr(
+            indices, ocr_options=ocr_options, pdf_settings=pdf_settings
+        )
 
     def _on_delete_text_layer(self) -> None:
         session = self._session_mgr.active_session
