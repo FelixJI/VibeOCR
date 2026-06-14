@@ -81,6 +81,7 @@ class SettingsPageController:
             btn_clear_cache.clicked.connect(self._on_clear_cache_clicked)
 
         self._init_screenshot_options(nav_list, stacked)
+        self._init_pdf_options(nav_list, stacked)
         self._init_settings_page()
 
     def _init_screenshot_options(
@@ -165,6 +166,99 @@ class SettingsPageController:
             OCRPreferences.instance().set_pipeline_options(
                 "screenshot", options.pipeline, options
             )
+        except RuntimeError:
+            pass
+
+    def _init_pdf_options(
+        self, nav_list: QListWidget | None, stacked: QStackedWidget | None
+    ) -> None:
+        """初始化 PDF 选项页面。"""
+        if not nav_list or not stacked:
+            return
+
+        from vibeocr.utils.ocr_preferences import OCRPreferences
+        from vibeocr.widgets.pdf_options_widget import PdfOptionsWidget
+
+        nav_list.addItem("PDF 选项")
+
+        page = QWidget()
+        page_layout = QVBoxLayout(page)
+        page_layout.setContentsMargins(16, 16, 16, 16)
+        page_layout.setSpacing(12)
+
+        self._pdf_options = PdfOptionsWidget()
+        page_layout.addWidget(self._pdf_options)
+
+        spacer = QSpacerItem(
+            20, 40, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Expanding
+        )
+        page_layout.addItem(spacer)
+        stacked.addWidget(page)
+
+        # 恢复保存的设置
+        try:
+            prefs = OCRPreferences.instance()
+            # 管道选项
+            default_pipeline = self._pdf_options.pipeline_options.get_current_pipeline()
+            self._pdf_options.pipeline_options.set_options(
+                prefs.get_pipeline_options("pdf", default_pipeline)
+            )
+            # 全局设置
+            self._pdf_options.set_settings(prefs.get_pdf_settings())
+        except RuntimeError:
+            pass
+
+        # 连接管道选项信号
+        self._pdf_switching = False
+        self._pdf_options.pipeline_options.pipeline_switching.connect(
+            self._on_pdf_pipeline_switching
+        )
+        self._pdf_options.pipeline_options.pipeline_switched.connect(
+            self._on_pdf_pipeline_switched
+        )
+        self._pdf_options.pipeline_options.options_changed.connect(
+            self._on_pdf_option_changed
+        )
+
+        # 连接全局设置信号
+        self._pdf_options.settings_changed.connect(self._on_pdf_settings_changed)
+
+    def _on_pdf_pipeline_switching(self, old_pipeline, options) -> None:
+        self._pdf_switching = True
+        try:
+            from vibeocr.utils.ocr_preferences import OCRPreferences
+
+            OCRPreferences.instance().set_pdf_pipeline_options(options)
+        except RuntimeError:
+            pass
+
+    def _on_pdf_pipeline_switched(self, new_pipeline) -> None:
+        try:
+            from vibeocr.utils.ocr_preferences import OCRPreferences
+
+            loaded = OCRPreferences.instance().get_pipeline_options(
+                "pdf", new_pipeline
+            )
+            self._pdf_options.pipeline_options.set_options(loaded)
+        except RuntimeError:
+            pass
+        self._pdf_switching = False
+
+    def _on_pdf_option_changed(self, options) -> None:
+        if self._pdf_switching:
+            return
+        try:
+            from vibeocr.utils.ocr_preferences import OCRPreferences
+
+            OCRPreferences.instance().set_pdf_pipeline_options(options)
+        except RuntimeError:
+            pass
+
+    def _on_pdf_settings_changed(self, settings) -> None:
+        try:
+            from vibeocr.utils.ocr_preferences import OCRPreferences
+
+            OCRPreferences.instance().set_pdf_settings(settings)
         except RuntimeError:
             pass
 
