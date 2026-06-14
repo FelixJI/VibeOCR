@@ -2,11 +2,21 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 为 PDF 处理添加独立的 OCR 设置页面，修复 bbox 坐标逆变换，修复文字层预览高亮。
+**Goal:** 为 PDF 处理添加独立的 OCR 设置页面，修复文字层预览高亮，并为旋转文档的 bbox 逆变换预留正确接口。
 
-**Architecture:** 新增 `PdfGlobalSettings` 数据模型存储 PDF 专用参数（DPI/内存/字号），复用 `OCRPreferences` 的 `"pdf"` 数据源持久化管道选项。在 `PdfService` 中新增逆旋转映射函数修复坐标错乱。预览窗口增加正确的坐标转换。
+**Architecture:** 新增 `PdfGlobalSettings` 数据模型存储 PDF 专用参数（DPI/内存/字号），复用 `OCRPreferences` 的 `"pdf"` 数据源持久化管道选项。在 `PdfService` 中新增逆旋转映射函数。预览窗口增加正确的坐标转换。
 
 **Tech Stack:** PySide6, PyMuPDF (fitz), dataclasses, pytest
+
+> ### ✅ 已解决：`preproc_angle`（通过限制 PDF 管道集合）
+>
+> Task 2/3 的 bbox 逆变换依赖 `OCRResult.preproc_angle`。经核实，仅 `OCR` / `PP_STRUCTURE_V3` / `TABLE_RECOGNITION` / `FORMULA_RECOGNITION` 管道（均走 PaddleX 引擎，从 `doc_preprocessor_res["angle"]` 读取）能正确填充该字段；`MinerU`（HTTP API 不返回角度）与 `PaddleOCR-VL`（引擎能产出但代码丢弃了）无法填充。
+>
+> **解决方式（2026-06-15 增订）：** 把 PDF「添加文字层」管道限制为 **OCR / TABLE_RECOGNITION / FORMULA_RECOGNITION**（三者原生填充 `preproc_angle`），使 Task 2/3 的 bbox 逆变换在生产路径上自动生效。MinerU / PaddleOCR-VL / PP-StructureV3 作为文档理解模型，**从 PDF 文字层移除**，但在主识别 Tab、批量 Tab、截图面板中**保持完全可用**。
+>
+> - 实现见 `PreprocessOptionsWidget.lock_to_pipelines()`（通用锁定）+ `PdfOptionsWidget` 构造时调用 `lock_to_pipelines({OCR, TABLE, FORMULA}, default=OCR)`。
+> - `OCRPreferences._last_pdf_pipeline` 默认值同步改为 `OCR`。
+> - 旋转文档 bbox 错位问题已通过此管道限制解决，不再属于「已知限制」。
 
 ---
 
@@ -18,13 +28,23 @@
 | `src/vibeocr/services/pdf_service.py` | **Modify** | 新增 `_denormalize_and_unrotate_bbox()`、`bbox_to_pixel()`；修改 `add_text_layer()` |
 | `src/vibeocr/utils/ocr_preferences.py` | **Modify** | 新增 `"pdf"` 数据源、`_pdf_settings` 字段、配置版本升至 3 |
 | `src/vibeocr/managers/pdf_session_manager.py` | **Modify** | `start_ocr()` 接收 `PdfGlobalSettings`，传递到 worker 和 `add_text_layer()` |
-| `src/vibeocr/workers/pdf_ocr_worker.py` | **Modify** | 接收 `OCROptions`（从偏好读取） |
 | `src/vibeocr/widgets/pdf_options_widget.py` | **Create** | PDF 设置页组件（管道选项 + 全局设置） |
 | `src/vibeocr/views/settings_page_controller.py` | **Modify** | 新增 `_init_pdf_options()` |
 | `src/vibeocr/views/tabs/pdf_tab.py` | **Modify** | 从 `OCRPreferences` 读取 PDF 配置 |
 | `src/vibeocr/views/pdf_preview_window.py` | **Modify** | 修复坐标转换，添加 tooltip |
 | `tests/services/test_pdf_service_bbox.py` | **Create** | 逆变换坐标测试 |
 | `tests/models/test_pdf_ocr_options.py` | **Create** | PdfGlobalSettings 序列化测试 |
+
+---
+
+> ### 关于 `render_dpi` 字段的关系
+>
+> `PdfDocument` 已有 `render_dpi: int = 300` 和 `thumbnail_dpi: int = 96`（见 `src/vibeocr/models/pdf_document.py`）。本计划新增的 `PdfGlobalSettings.render_dpi` 与之**职责不同**：
+>
+> - **`PdfGlobalSettings.render_dpi`**：用户可配置的 OCR 渲染 DPI **上限**（由 `adjust_dpi()` 根据像素上限动态下调），是本次新增的、用于"添加文字层"OCR 渲染的参数。
+> - **`PdfDocument.render_dpi` / `thumbnail_dpi`**：现有字段，服务于缩略图渲染与预览，**保持不变**。
+>
+> 本计划**不修改** `PdfDocument.render_dpi`。如未来需要统一，另起计划讨论。Task 4 中 `start_ocr` 显式使用 `pdf_settings.adjust_dpi(...)` 的返回值，与 `PdfDocument.render_dpi` 互不干扰。
 
 ---
 
@@ -96,6 +116,17 @@ class TestPdfGlobalSettingsSerialization:
         w = int(612 / 72 * adjusted)
         h = int(792 / 72 * adjusted)
         assert w * h <= 4_000_000
+
+    def test_adjust_dpi_floors_at_72(self):
+        """极端小像素上限时，DPI 不低于 72。"""
+        s = PdfGlobalSettings(render_dpi=600, max_pixels=10_000)
+        assert s.adjust_dpi(612, 792) == 72
+
+    def test_adjust_dpi_at_limit_boundary(self):
+        """像素恰好等于上限时，DPI 保持不变。"""
+        # A4 @ 300dpi ≈ 8.7M，把上限设为略高于该值
+        s = PdfGlobalSettings(render_dpi=300, max_pixels=9_000_000)
+        assert s.adjust_dpi(612, 792) == 300
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -207,6 +238,8 @@ git commit -m "feat: add PdfGlobalSettings data model with DPI adjustment"
 **Files:**
 - Create: `tests/services/test_pdf_service_bbox.py`
 - Modify: `src/vibeocr/services/pdf_service.py` (新增 `_denormalize_and_unrotate_bbox`)
+
+> **依赖说明（preproc_angle）：** 本 Task 与 Task 3 的逆变换逻辑依赖 `OCRResult.preproc_angle`。PDF 管道已限制为 OCR / TABLE / FORMULA（见顶部"已解决"段），这三者原生填充 `preproc_angle`，故本 Task 的逆变换在生产路径上会真实生效。测试同时使用**手动构造** `OCRResult(preproc_angle=90, ...)` 验证数学正确性，并以 `preproc_angle=0` 的回归测试确认直接映射分支不报错。
 
 - [ ] **Step 1: Write failing tests for inverse bbox transform**
 
@@ -607,57 +640,14 @@ git commit -m "feat: add_text_layer uses inverse rotation and PdfGlobalSettings"
 
 ---
 
-### Task 4: PdfOcrWorker + PdfSessionManager 传递配置
+### Task 4: PdfSessionManager 传递配置
 
 **Files:**
-- Modify: `src/vibeocr/workers/pdf_ocr_worker.py`
 - Modify: `src/vibeocr/managers/pdf_session_manager.py`
 
-- [ ] **Step 1: Modify PdfOcrWorker to use adjusted DPI**
+> **说明：** `PdfOcrWorker` 已正确接收并使用 `ocr_options`（见 `src/vibeocr/workers/pdf_ocr_worker.py`），本 Task **无需修改 worker**。DPI 调整在 `start_ocr` 渲染阶段完成，渲染后的 numpy 数组传给 worker，worker 不感知 DPI。
 
-修改 `src/vibeocr/workers/pdf_ocr_worker.py` 的 `run` 方法：
-
-在文件顶部 TYPE_CHECKING 块中添加导入：
-```python
-if TYPE_CHECKING:
-    import numpy as np
-
-    from vibeocr.models.ocr_options import OCROptions
-    from vibeocr.models.pdf_ocr_options import PdfGlobalSettings
-    from vibeocr.services.ocr_service_base import OCRServiceBase
-```
-
-`__init__` 方法签名不变（已接收 `ocr_options`）。
-
-`run` 方法中修改 `options` 使用逻辑：
-```python
-    def run(self) -> None:
-        from vibeocr.models.ocr_options import OCROptions
-
-        success = 0
-        fail = 0
-        total = len(self._pages)
-        options = self._ocr_options if self._ocr_options is not None else OCROptions()
-
-        for i, (page_index, image) in enumerate(self._pages):
-            if self._cancelled:
-                break
-            self.progress.emit(i + 1, total)
-            try:
-                result = self._ocr_service.recognize(image, options)
-                self.page_done.emit(page_index, result)
-                success += 1
-            except Exception as e:
-                logger.error("PdfOcrWorker OCR failed (page %d): %s", page_index, e)
-                self.page_done.emit(page_index, None)
-                fail += 1
-
-        self.all_done.emit(self._session_id, success, fail)
-```
-
-（此步骤代码实际上不变，Worker 已经正确接收和使用 `ocr_options`。）
-
-- [ ] **Step 2: Modify PdfSessionManager to pass settings through**
+- [ ] **Step 1: Modify PdfSessionManager to pass settings through**
 
 修改 `src/vibeocr/managers/pdf_session_manager.py`:
 
@@ -733,10 +723,10 @@ if TYPE_CHECKING:
         self.ocr_page_done.emit(session.file_path, page_index, result)
 ```
 
-- [ ] **Step 3: Commit**
+- [ ] **Step 2: Commit**
 
 ```bash
-git add src/vibeocr/workers/pdf_ocr_worker.py src/vibeocr/managers/pdf_session_manager.py
+git add src/vibeocr/managers/pdf_session_manager.py
 git commit -m "feat: PdfSessionManager passes PdfGlobalSettings to add_text_layer"
 ```
 
@@ -752,10 +742,14 @@ git commit -m "feat: PdfSessionManager passes PdfGlobalSettings to add_text_laye
 在 `src/vibeocr/utils/ocr_preferences.py` 中：
 
 1. 将 `_CONFIG_VERSION` 改为 `3`
-2. 在 `__init__` 中初始化 `"pdf"` 数据源和 `_pdf_settings`
-3. 在 `_load` 中处理 version 3 的 pdf 字段
-4. 在 `save` 中保存 pdf 字段
-5. 新增 `get_pdf_settings` / `set_pdf_settings` 方法
+2. 在 `__init__` 中初始化 `"pdf"` 数据源、`_pdf_settings` 和 `_last_pdf_pipeline`
+3. 在 `_load` 中处理 version 3 的 pdf 字段（含 `last_pdf_pipeline`）
+4. 在 `save` 中保存 pdf 字段（含 `last_pdf_pipeline`）
+5. 在 `set_pipeline_options` 中维护 `_last_pdf_pipeline`（与现有 `_last_main_pipeline` 对称）
+6. 新增 `get_pdf_settings` / `set_pdf_settings` 方法
+7. 新增 `get_pdf_pipeline_options` / `set_pdf_pipeline_options` 方法（封装 source="pdf" + 末次管道，供 Task 8 使用）
+
+> **设计动机：** Task 8（PdfTab）原来直接访问私有字段 `prefs._per_pipeline.get("pdf", {})` 并用 `list(...keys())[-1]` 推断"最近使用管道"，既破坏封装又依赖 dict 插入顺序。改为在 `OCRPreferences` 上对称地维护 `_last_pdf_pipeline`（类比已有的 `_last_main_pipeline`），并提供公共读写 API。
 
 ```python
 _CONFIG_VERSION = 3
@@ -769,6 +763,7 @@ _CONFIG_VERSION = 3
             "pdf": {},
         }
         self._pdf_settings: dict = {}  # PdfGlobalSettings raw dict
+        self._last_pdf_pipeline: OCRPipeline = OCRPipeline.DOCUMENT_PARSING
 ```
 
 在 `_load` 的 version 2+ 分支中，添加加载 `"pdf"`：
@@ -781,11 +776,16 @@ _CONFIG_VERSION = 3
                     )
 ```
 
-在 `_load` 末尾添加：
+在 `_load` 末尾添加（注意同时恢复 `last_pdf_pipeline`）：
 ```python
         pdf_settings_data = data.get("pdf_settings")
         if pdf_settings_data and isinstance(pdf_settings_data, dict):
             self._pdf_settings = pdf_settings_data
+        last_pdf = data.get("last_pdf_pipeline", "DOCUMENT_PARSING")
+        try:
+            self._last_pdf_pipeline = OCRPipeline(last_pdf)
+        except ValueError:
+            self._last_pdf_pipeline = OCRPipeline.DOCUMENT_PARSING
 ```
 
 在 `save` 中添加：
@@ -793,6 +793,7 @@ _CONFIG_VERSION = 3
         save_data = {
             "version": _CONFIG_VERSION,
             "last_main_pipeline": self._last_main_pipeline.value,
+            "last_pdf_pipeline": self._last_pdf_pipeline.value,
             "main": {
                 k: v.to_dict() for k, v in self._per_pipeline.get("main", {}).items()
             },
@@ -809,6 +810,14 @@ _CONFIG_VERSION = 3
         }
 ```
 
+在现有 `set_pipeline_options` 方法中，增加对 `"pdf"` 的对称处理（在现有 `if source == "main":` 分支之后）：
+```python
+        if source == "main":
+            self._last_main_pipeline = pipeline
+        elif source == "pdf":
+            self._last_pdf_pipeline = pipeline
+```
+
 新增方法：
 ```python
     def get_pdf_settings(self) -> "PdfGlobalSettings":
@@ -821,6 +830,18 @@ _CONFIG_VERSION = 3
         """保存 PDF 全局设置。"""
         self._pdf_settings = settings.to_dict()
         self.save()
+
+    def get_pdf_pipeline_options(self) -> OCROptions:
+        """读取 PDF 末次使用管道的选项，不存在则返回默认。
+
+        封装 `get_pipeline_options("pdf", self._last_pdf_pipeline)`，
+        供 PdfTab 调用，避免外部访问私有字段。
+        """
+        return self.get_pipeline_options("pdf", self._last_pdf_pipeline)
+
+    def set_pdf_pipeline_options(self, options: OCROptions) -> None:
+        """保存 PDF 管道选项（更新末次管道并持久化）。"""
+        self.set_pipeline_options("pdf", options.pipeline, options)
 ```
 
 - [ ] **Step 2: Commit**
@@ -1096,48 +1117,10 @@ git commit -m "feat: add PdfOptionsWidget with pipeline options and global setti
         try:
             from vibeocr.utils.ocr_preferences import OCRPreferences
 
-            OCRPreferences.instance().set_pipeline_options(
-                "pdf", old_pipeline, options
-            )
+            OCRPreferences.instance().set_pdf_pipeline_options(options)
         except RuntimeError:
             pass
 
-    def _on_pdf_pipeline_switched(self, new_pipeline) -> None:
-        try:
-            from vibeocr.utils.ocr_preference import OCRPreferences
-
-            loaded = OCRPreferences.instance().get_pipeline_options(
-                "pdf", new_pipeline
-            )
-            self._pdf_options.pipeline_options.set_options(loaded)
-        except RuntimeError:
-            pass
-        self._pdf_switching = False
-
-    def _on_pdf_option_changed(self, options) -> None:
-        if self._pdf_switching:
-            return
-        try:
-            from vibeocr.utils.ocr_preference import OCRPreferences
-
-            OCRPreferences.instance().set_pipeline_options(
-                "pdf", options.pipeline, options
-            )
-        except RuntimeError:
-            pass
-
-    def _on_pdf_settings_changed(self, settings) -> None:
-        try:
-            from vibeocr.utils.ocr_preference import OCRPreferences
-
-            OCRPreferences.instance().set_pdf_settings(settings)
-        except RuntimeError:
-            pass
-```
-
-**注意：** 上面的 `_on_pdf_pipeline_switched` 和 `_on_pdf_option_changed` 中用了 `ocr_preference`（无 s），需要修正为 `ocr_preferences`：
-
-```python
     def _on_pdf_pipeline_switched(self, new_pipeline) -> None:
         try:
             from vibeocr.utils.ocr_preferences import OCRPreferences
@@ -1156,9 +1139,7 @@ git commit -m "feat: add PdfOptionsWidget with pipeline options and global setti
         try:
             from vibeocr.utils.ocr_preferences import OCRPreferences
 
-            OCRPreferences.instance().set_pipeline_options(
-                "pdf", options.pipeline, options
-            )
+            OCRPreferences.instance().set_pdf_pipeline_options(options)
         except RuntimeError:
             pass
 
@@ -1170,6 +1151,8 @@ git commit -m "feat: add PdfOptionsWidget with pipeline options and global setti
         except RuntimeError:
             pass
 ```
+
+> **Implementation Note：** 所有 import 路径必须是 `vibeocr.utils.ocr_preferences`（带 s）。上面已统一使用 `set_pdf_pipeline_options()`（Task 5 新增的封装方法），它在内部更新 `_last_pdf_pipeline` 并持久化，比直接调 `set_pipeline_options("pdf", ...)` 更简洁。
 
 - [ ] **Step 2: Commit**
 
@@ -1207,17 +1190,13 @@ git commit -m "feat: add PDF options page to settings"
             )
             return
 
-        # 从偏好读取 PDF 配置
+        # 从偏好读取 PDF 配置（使用 Task 5 的公共 API）
         from vibeocr.utils.ocr_preferences import OCRPreferences
 
         try:
             prefs = OCRPreferences.instance()
             pdf_settings = prefs.get_pdf_settings()
-            ocr_options = prefs.get_pipeline_options(
-                "pdf", self._session_mgr.active_session.pdf_document.pages[0].page_index
-                if session.pdf_document.pages
-                else None
-            )
+            ocr_options = prefs.get_pdf_pipeline_options()
         except RuntimeError:
             from vibeocr.models.pdf_ocr_options import PdfGlobalSettings
 
@@ -1242,24 +1221,15 @@ git commit -m "feat: add PDF options page to settings"
         self._btn_open.setEnabled(False)
         self._btn_add_file.setEnabled(False)
 
-        # 读取当前 PDF 管道的选项
-        try:
-            prefs = OCRPreferences.instance()
-            # 获取最后一次使用的 pdf 管道
-            pdf_per_pipeline = prefs._per_pipeline.get("pdf", {})
-            if pdf_per_pipeline:
-                last_pipeline_name = list(pdf_per_pipeline.keys())[-1]
-                from vibeocr.core.pipelines import OCRPipeline
-
-                last_pipeline = OCRPipeline(last_pipeline_name)
-                ocr_options = prefs.get_pipeline_options("pdf", last_pipeline)
-            else:
-                ocr_options = None
-        except Exception:
-            ocr_options = None
-
         self._session_mgr.start_ocr(indices, ocr_options=ocr_options, pdf_settings=pdf_settings)
 ```
+
+> **修正说明：** 原计划的读取逻辑有两处致命问题，已全部移除：
+>
+> 1. **类型错误（P0）：** 第一段曾用 `prefs.get_pipeline_options("pdf", <page_index:int>...)` —— 第二个参数必须是 `OCRPipeline` 枚举而非页码，运行时抛 `ValueError` 且被 `try/except RuntimeError` 静默吞掉，导致 `ocr_options` 永远为 `None`。
+> 2. **破坏封装：** 第二段曾直接访问 `prefs._per_pipeline.get("pdf", {})` 并用 `list(...keys())[-1]` 推断"最近使用管道"，依赖 dict 插入顺序，极其脆弱。
+>
+> 现统一改用 Task 5 新增的 `prefs.get_pdf_pipeline_options()`，它内部基于 `_last_pdf_pipeline` 返回正确的末次管道选项，封装良好。
 
 - [ ] **Step 2: Commit**
 
@@ -1401,6 +1371,29 @@ class _PreviewCanvas(QWidget):
             self.update()
 ```
 
+**同时**在 `PdfPreviewWindow` 上新增公共方法 `set_highlight()`，避免外部直接访问 `_canvas`：
+
+```python
+class PdfPreviewWindow(QWidget):
+    # ... 现有代码不变 ...
+
+    def set_highlight(
+        self,
+        pixmap: QPixmap,
+        layers: list,
+        render_dpi: int = 150,
+        page_rect: "fitz.Rect | None" = None,
+        source: str = "pdf",
+    ) -> None:
+        """设置预览页面与高亮层（公共 API，替代直接访问 _canvas）。"""
+        self._canvas.set_pixmap(pixmap)
+        self._canvas.set_highlight_layers(
+            layers, render_dpi=render_dpi, page_rect=page_rect, source=source
+        )
+```
+
+> **设计动机：** 原计划让 `PdfTab` 直接访问 `self._preview_window._canvas.set_pixmap(...)` / `._canvas.set_highlight_layers(...)`，绕过封装。新增公共方法后，`_canvas` 的实现细节对调用方不可见，未来 canvas 重构不会牵连 `pdf_tab.py`。
+
 - [ ] **Step 2: Fix PdfTab._on_preview_text_layer to pass page_rect and render_dpi**
 
 修改 `src/vibeocr/views/tabs/pdf_tab.py` 中的 `_on_preview_text_layer`：
@@ -1430,8 +1423,9 @@ class _PreviewCanvas(QWidget):
         self._preview_window.setWindowTitle(
             f"文字层预览 — 第{page_idx + 1}页 ({len(page_info.text_layers)}个文字块)"
         )
-        self._preview_window._canvas.set_pixmap(pixmap)
-        self._preview_window._canvas.set_highlight_layers(
+        # 使用公共 API，不再直接访问 _canvas
+        self._preview_window.set_highlight(
+            pixmap,
             page_info.text_layers,
             render_dpi=render_dpi,
             page_rect=page_rect,
@@ -1460,16 +1454,71 @@ git commit -m "fix: correct text layer preview coordinates and add hover tooltip
 Run: `python -m pytest tests/services/test_pdf_service.py tests/services/test_pdf_service_bbox.py tests/models/test_pdf_ocr_options.py -v`
 Expected: all PASS
 
-- [ ] **Step 2: Manual smoke test checklist**
+- [ ] **Step 2: Verify preproc_angle=0 production path does not break**
+
+确认 `_denormalize_and_unrotate_bbox` 的 0° 分支正确工作、文字层落入页面内（preproc_angle 默认为 0，覆盖任何未显式设置角度的边界情形）。在 `tests/services/test_pdf_service.py` 中补充：
+
+```python
+    def test_add_text_layer_default_angle_in_page_bounds(self, tmp_path):
+        """preproc_angle=0（未显式设置时）文字层完全落在页面内。"""
+        import numpy as np
+
+        from vibeocr.models.ocr_result import OCRResult, TextBlock
+
+        path = tmp_path / "scan_default.pdf"
+        doc = fitz.open()
+        page = doc.new_page(width=612, height=792)
+        img = np.ones((792, 612, 3), dtype=np.uint8) * 240
+        cs = fitz.Colorspace(fitz.CS_RGB)
+        pixmap = fitz.Pixmap(cs, 612, 792, img.tobytes(), 0)
+        page.insert_image(fitz.Rect(0, 0, 612, 792), pixmap=pixmap)
+        doc.save(str(path))
+        doc.close()
+
+        doc, pdf_doc = PdfService.open_doc(str(path))
+        # 不传 preproc_angle → 默认 0
+        result = OCRResult(
+            raw_text="Hello",
+            text_blocks=[
+                TextBlock(
+                    text="Hello",
+                    score=0.99,
+                    bbox=(100.0, 100.0, 500.0, 200.0),  # [0, 1000] 归一化
+                    page_idx=0,
+                ),
+            ],
+        )
+        PdfService.add_text_layer(doc, pdf_doc, 0, result)
+
+        layers = PdfService.detect_text_layers(doc, 0)
+        assert len(layers) > 0
+        page_rect = doc[0].rect
+        for layer in layers:
+            lr = fitz.Rect(layer.bbox)
+            assert lr.x0 >= -1
+            assert lr.y0 >= -1
+            assert lr.x1 <= page_rect.width + 1
+            assert lr.y1 <= page_rect.height + 1
+        doc.close()
+```
+
+Run: `python -m pytest tests/services/test_pdf_service.py::TestPdfServiceTextLayer::test_add_text_layer_default_angle_in_page_bounds -v`
+Expected: PASS
+
+- [ ] **Step 3: Manual smoke test checklist**
 
 1. 启动应用 → 设置页面 → 确认出现"PDF 选项"导航项
-2. PDF 选项页中确认管道锁定为文档类（MineRU / PaddleOCR-VL）
+2. PDF 选项页中确认管道下拉**仅** OCR / 表格 / 公式可选（MinerU / VL / PP-StructureV3 灰显），默认 OCR
 3. 修改 DPI、字号比例等参数 → 关闭应用 → 重新打开 → 确认设置已恢复
 4. 打开一个扫描 PDF → 选择页面 → 点击"添加文字层" → 确认 OCR 执行
 5. 添加完成后点击"预览文字层" → 确认高亮矩形与页面内容对齐
 6. 鼠标悬停高亮区域 → 确认显示文字内容 tooltip
+7. **旋转回归：** 打开一个旋转 90° 的扫描 PDF → 添加文字层（OCR 管道）→ 预览。**预期**：OCR 管道原生填充 `preproc_angle`，文字层高亮应与旋转后的文字位置正确对齐（bbox 逆变换生效）。
+8. **入口隔离：** 主识别 Tab / 批量 Tab / 截图面板的管道下拉仍含全部 6 个管道（不受 PDF 限制影响）。
 
-- [ ] **Step 3: Commit any fixes**
+> **状态更新（2026-06-15）：** 旋转文档 bbox 错位问题已通过将 PDF 文字层管道限制为 OCR / 表格 / 公式解决（这三者原生填充 `preproc_angle`）。MinerU / PaddleOCR-VL 因不适合嵌入隐形文字层，已从 PDF 入口移除，但在其它入口仍完全可用。
+
+- [ ] **Step 4: Commit any fixes**
 
 ```bash
 git add -A
