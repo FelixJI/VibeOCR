@@ -117,7 +117,7 @@ class TestOCRPreferencesNewFields:
         with open(config_path, encoding="utf-8") as f:
             data = json.load(f)
 
-        assert data["version"] == 2
+        assert data["version"] == 3
         main_data = data["main"]["TABLE_RECOGNITION"]
         assert main_data["use_wireless_table"] is True
         assert main_data["use_table_orientation_classify"] is False
@@ -378,3 +378,76 @@ class TestVersionMigration:
         )
         # legacy get_options uses last_main_pipeline
         assert prefs.get_options().pipeline == OCRPipeline.TABLE_RECOGNITION
+
+
+class TestPdfSettings:
+    """PDF 全局设置（PdfGlobalSettings）持久化与公共 API 测试"""
+
+    def test_pdf_settings_round_trip(self, tmp_config_dir):
+        """PdfGlobalSettings 保存后重新加载应保持一致"""
+        from vibeocr.models.pdf_ocr_options import PdfGlobalSettings
+
+        prefs = OCRPreferences(tmp_config_dir)
+        settings = PdfGlobalSettings(
+            render_dpi=200, font_size_ratio=0.6, text_layer_visible=True
+        )
+        prefs.set_pdf_settings(settings)
+
+        OCRPreferences.reset_instance()
+        prefs2 = OCRPreferences(tmp_config_dir)
+        loaded = prefs2.get_pdf_settings()
+        assert loaded.render_dpi == 200
+        assert loaded.font_size_ratio == 0.6
+        assert loaded.text_layer_visible is True
+
+    def test_pdf_settings_default_when_absent(self, tmp_config_dir):
+        """未保存过 pdf_settings 时返回默认值"""
+        prefs = OCRPreferences(tmp_config_dir)
+        loaded = prefs.get_pdf_settings()
+        assert loaded.render_dpi == 300
+        assert loaded.font_size_ratio == 0.8
+
+    def test_pdf_pipeline_options_round_trip(self, tmp_config_dir):
+        """set/get_pdf_pipeline_options 应往返并更新 _last_pdf_pipeline"""
+        prefs = OCRPreferences(tmp_config_dir)
+        options = OCROptions(
+            pipeline=OCRPipeline.DOCUMENT_PARSING, enable_formula=False
+        )
+        prefs.set_pdf_pipeline_options(options)
+
+        loaded = prefs.get_pdf_pipeline_options()
+        assert loaded.pipeline == OCRPipeline.DOCUMENT_PARSING
+        assert loaded.enable_formula is False
+
+    def test_last_pdf_pipeline_persists(self, tmp_config_dir):
+        """_last_pdf_pipeline 应跨实例持久化"""
+        prefs = OCRPreferences(tmp_config_dir)
+        prefs.set_pdf_pipeline_options(
+            OCROptions(pipeline=OCRPipeline.DOCUMENT_PARSING)
+        )
+
+        OCRPreferences.reset_instance()
+        prefs2 = OCRPreferences(tmp_config_dir)
+        # get_pdf_pipeline_options 默认走 _last_pdf_pipeline（恢复后应仍是 DOCUMENT_PARSING）
+        loaded = prefs2.get_pdf_pipeline_options()
+        assert loaded.pipeline == OCRPipeline.DOCUMENT_PARSING
+
+    def test_v2_loads_without_pdf_fields(self, tmp_config_dir):
+        """v2 配置（无 pdf / pdf_settings / last_pdf_pipeline）加载后应使用默认"""
+        config_path = tmp_config_dir / "ocr_preferences.json"
+        v2_data = {
+            "version": 2,
+            "last_main_pipeline": "OCR",
+            "main": {"OCR": {"pipeline": "OCR"}},
+            "screenshot": {},
+            "batch_options": {"pipeline": "OCR"},
+        }
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(config_path, "w", encoding="utf-8") as f:
+            json.dump(v2_data, f)
+
+        prefs = OCRPreferences(tmp_config_dir)
+        # PDF 设置走默认
+        assert prefs.get_pdf_settings().render_dpi == 300
+        # _last_pdf_pipeline 默认 DOCUMENT_PARSING
+        assert prefs.get_pdf_pipeline_options().pipeline == OCRPipeline.DOCUMENT_PARSING

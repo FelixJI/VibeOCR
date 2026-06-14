@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _CONFIG_FILENAME = "ocr_preferences.json"
-_CONFIG_VERSION = 2
+_CONFIG_VERSION = 3
 
 _instance: "OCRPreferences | None" = None
 
@@ -29,7 +29,8 @@ class OCRPreferences(QObject):
     """OCR 选项持久化管理器
 
     所有 OCR 选项的统一数据源，提供跨界面同步和持久化。
-    支持按管道独立存储，区分 "main"（主界面）和 "screenshot"（截图面板）。
+    支持按管道独立存储，区分 "main"（主界面）、"screenshot"（截图面板）、
+    "pdf"（PDF 处理）三个数据源。
 
     Usage:
         prefs = OCRPreferences.instance(config_manager)
@@ -55,9 +56,12 @@ class OCRPreferences(QObject):
         self._per_pipeline: dict[str, dict[str, OCROptions]] = {
             "main": {},
             "screenshot": {},
+            "pdf": {},
         }
         self._batch_options = OCROptions(pipeline=OCRPipeline.DOCUMENT_PARSING)
         self._last_main_pipeline: OCRPipeline = OCRPipeline.OCR
+        self._pdf_settings: dict = {}  # PdfGlobalSettings raw dict
+        self._last_pdf_pipeline: OCRPipeline = OCRPipeline.DOCUMENT_PARSING
         self._load()
 
     @staticmethod
@@ -102,7 +106,7 @@ class OCRPreferences(QObject):
             except ValueError:
                 self._last_main_pipeline = OCRPipeline.OCR
         else:
-            for source in ("main", "screenshot"):
+            for source in ("main", "screenshot", "pdf"):
                 source_data = data.get(source, {})
                 for pipeline_name, opts_dict in source_data.items():
                     self._per_pipeline.setdefault(source, {})[pipeline_name] = (
@@ -113,10 +117,19 @@ class OCRPreferences(QObject):
                 self._last_main_pipeline = OCRPipeline(last)
             except ValueError:
                 self._last_main_pipeline = OCRPipeline.OCR
+            last_pdf = data.get("last_pdf_pipeline", "DOCUMENT_PARSING")
+            try:
+                self._last_pdf_pipeline = OCRPipeline(last_pdf)
+            except ValueError:
+                self._last_pdf_pipeline = OCRPipeline.DOCUMENT_PARSING
 
         batch_data = data.get("batch_options")
         if batch_data:
             self._batch_options = OCROptions.from_dict(batch_data)
+
+        pdf_settings_data = data.get("pdf_settings")
+        if pdf_settings_data and isinstance(pdf_settings_data, dict):
+            self._pdf_settings = pdf_settings_data
 
         logger.debug("OCR 选项已加载")
 
@@ -138,6 +151,8 @@ class OCRPreferences(QObject):
         )
         if source == "main":
             self._last_main_pipeline = pipeline
+        elif source == "pdf":
+            self._last_pdf_pipeline = pipeline
         self.save()
         self.pipeline_options_changed.emit(source, options)
 
@@ -166,6 +181,7 @@ class OCRPreferences(QObject):
         save_data = {
             "version": _CONFIG_VERSION,
             "last_main_pipeline": self._last_main_pipeline.value,
+            "last_pdf_pipeline": self._last_pdf_pipeline.value,
             "main": {
                 k: v.to_dict() for k, v in self._per_pipeline.get("main", {}).items()
             },
@@ -173,6 +189,11 @@ class OCRPreferences(QObject):
                 k: v.to_dict()
                 for k, v in self._per_pipeline.get("screenshot", {}).items()
             },
+            "pdf": {
+                k: v.to_dict()
+                for k, v in self._per_pipeline.get("pdf", {}).items()
+            },
+            "pdf_settings": self._pdf_settings,
             "batch_options": self._batch_options.to_dict(),
         }
         if self._cm is not None:
@@ -185,3 +206,28 @@ class OCRPreferences(QObject):
         except Exception as e:
             logger.error(f"保存 OCR 选项失败: {e}")
             return False
+
+    # ---- PDF 全局设置 ----
+
+    def get_pdf_settings(self) -> "PdfGlobalSettings":
+        """获取 PDF 全局设置。"""
+        from vibeocr.models.pdf_ocr_options import PdfGlobalSettings
+
+        return PdfGlobalSettings.from_dict(self._pdf_settings)
+
+    def set_pdf_settings(self, settings: "PdfGlobalSettings") -> None:
+        """保存 PDF 全局设置。"""
+        self._pdf_settings = settings.to_dict()
+        self.save()
+
+    def get_pdf_pipeline_options(self) -> OCROptions:
+        """读取 PDF 末次使用管道的选项，不存在则返回默认。
+
+        封装 `get_pipeline_options("pdf", self._last_pdf_pipeline)`，
+        供 PdfTab 调用，避免外部访问私有字段。
+        """
+        return self.get_pipeline_options("pdf", self._last_pdf_pipeline)
+
+    def set_pdf_pipeline_options(self, options: OCROptions) -> None:
+        """保存 PDF 管道选项（更新末次管道并持久化）。"""
+        self.set_pipeline_options("pdf", options.pipeline, options)
