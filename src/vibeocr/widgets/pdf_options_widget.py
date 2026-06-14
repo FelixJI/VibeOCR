@@ -41,7 +41,19 @@ class PdfOptionsWidget(QWidget):
 
         # 管道选项（复用 PreprocessOptionsWidget，初始化后锁定管道）
         self._pipeline_options = PreprocessOptionsWidget()
-        self._pipeline_options.lock_to_document_parsing("PDF 处理")
+        # PDF 文字层仅支持能正确返回 preproc_angle 的文本类管道
+        # （MinerU/VL 文档理解模型不适合用于嵌入隐形文字层）
+        from vibeocr.core.pipelines import OCRPipeline
+
+        self._pipeline_options.lock_to_pipelines(
+            {
+                OCRPipeline.OCR,
+                OCRPipeline.TABLE_RECOGNITION,
+                OCRPipeline.FORMULA_RECOGNITION,
+            },
+            reason="PDF 文字层",
+            default=OCRPipeline.OCR,
+        )
         layout.addWidget(self._pipeline_options)
 
         # PDF 全局设置

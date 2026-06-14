@@ -19,12 +19,26 @@ def widget(qtbot):
 class TestPdfOptionsWidget:
     """PdfOptionsWidget 组件测试"""
 
-    def test_pipeline_locked_to_document(self, widget):
-        """初始化后管道应锁定为文档类。"""
+    def test_pipeline_locked_to_text_pipelines(self, widget):
+        """PDF 文字层仅允许通用 OCR / 表格 / 公式管道。"""
         assert widget.pipeline_options.is_pipeline_locked is True
-        assert widget.pipeline_options.get_current_pipeline() in (
-            OCRPipeline.DOCUMENT_PARSING,
-            OCRPipeline.PADDLEOCR_VL,
+        current = widget.pipeline_options.get_current_pipeline()
+        allowed = {
+            OCRPipeline.OCR,
+            OCRPipeline.TABLE_RECOGNITION,
+            OCRPipeline.FORMULA_RECOGNITION,
+        }
+        assert current in allowed
+        # 下拉项中只有这 3 个启用，其余禁用
+        combo = widget.pipeline_options._pipeline_combo
+        for i in range(combo.count()):
+            p = OCRPipeline(combo.itemData(i))
+            assert combo.model().item(i).isEnabled() is (p in allowed)
+
+    def test_pipeline_default_is_ocr(self, widget):
+        """首次构造默认选中通用 OCR 管道。"""
+        assert (
+            widget.pipeline_options.get_current_pipeline() == OCRPipeline.OCR
         )
 
     def test_default_settings(self, widget):
