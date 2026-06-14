@@ -360,6 +360,89 @@ class PdfService:
         pdf_document.is_modified = True
         PdfService.update_page_info(doc, pdf_document, page_index)
 
+    # ---- bbox coordinate transforms --------------------------------
+
+    @staticmethod
+    def _denormalize_and_unrotate_bbox(
+        bbox: tuple[float, float, float, float],
+        preproc_angle: int,
+        page_rect: fitz.Rect,
+    ) -> fitz.Rect:
+        """将 [0, 1000] 归一化 bbox 逆旋转后映射到 PDF 页面坐标。
+
+        当 OCR 预处理旋转了图像（preproc_angle），bbox 坐标在旋转后的空间中。
+        此方法执行逆变换，将坐标映射回原始页面坐标。
+
+        Args:
+            bbox: 归一化坐标 (x0, y0, x1, y1)，范围 [0, 1000]。
+            preproc_angle: 预处理旋转角度 (0, 90, 180, 270)。
+            page_rect: PDF 页面矩形 (points)。
+
+        Returns:
+            映射后的 fitz.Rect。
+        """
+        nx0, ny0, nx1, ny1 = bbox[0] / 1000, bbox[1] / 1000, bbox[2] / 1000, bbox[3] / 1000
+        pw, ph = page_rect.width, page_rect.height
+
+        if preproc_angle == 90:
+            # 逆时针 90°: y→x, (1-x)→y
+            x0 = ny0 * pw
+            y0 = (1 - nx1) * ph
+            x1 = ny1 * pw
+            y1 = (1 - nx0) * ph
+        elif preproc_angle == 180:
+            # 中心对称
+            x0 = (1 - nx1) * pw
+            y0 = (1 - ny1) * ph
+            x1 = (1 - nx0) * pw
+            y1 = (1 - ny0) * ph
+        elif preproc_angle == 270:
+            # 顺时针 90° (= 逆时针 270°): (1-y)→x, x→y
+            x0 = (1 - ny1) * pw
+            y0 = nx0 * ph
+            x1 = (1 - ny0) * pw
+            y1 = nx1 * ph
+        else:
+            # 0° 或未知角度：直接映射
+            x0 = nx0 * pw
+            y0 = ny0 * ph
+            x1 = nx1 * pw
+            y1 = ny1 * ph
+
+        return fitz.Rect(x0, y0, x1, y1)
+
+    @staticmethod
+    def bbox_to_pixel(
+        bbox: tuple[float, float, float, float],
+        page_rect: fitz.Rect,
+        render_dpi: int,
+        source: str = "pdf",
+    ) -> tuple[float, float, float, float]:
+        """将 bbox 转换为渲染图像的像素坐标。
+
+        Args:
+            bbox: 输入 bbox。
+            page_rect: PDF 页面矩形 (points)。
+            render_dpi: 渲染 DPI。
+            source: "pdf" 表示 bbox 是 PDF points 坐标，
+                    "normalized" 表示 [0, 1000] 归一化坐标。
+
+        Returns:
+            像素坐标 (x0, y0, x1, y1)。
+        """
+        if source == "normalized":
+            # 先转为 PDF points
+            x0 = bbox[0] / 1000 * page_rect.width
+            y0 = bbox[1] / 1000 * page_rect.height
+            x1 = bbox[2] / 1000 * page_rect.width
+            y1 = bbox[3] / 1000 * page_rect.height
+        else:
+            x0, y0, x1, y1 = bbox
+
+        # PDF points → pixels: coord / 72 * dpi
+        scale = render_dpi / 72.0
+        return (x0 * scale, y0 * scale, x1 * scale, y1 * scale)
+
     # ---- helpers ----------------------------------------------------
 
     @staticmethod
