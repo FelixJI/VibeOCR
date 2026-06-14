@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     import numpy as np
 
     from vibeocr.models.ocr_options import OCROptions
+    from vibeocr.models.pdf_ocr_options import PdfGlobalSettings
     from vibeocr.services.ocr_service_base import OCRServiceBase
 
 logger = logging.getLogger(__name__)
@@ -58,6 +59,7 @@ class PdfSessionManager(QObject):
         self._load_worker: PdfLoadWorker | None = None
         self._ocr_worker: PdfOcrWorker | None = None
         self._ocr_service: OCRServiceBase | None = None
+        self._pdf_settings: PdfGlobalSettings | None = None
 
     @property
     def active_session(self) -> PdfSession | None:
@@ -189,8 +191,16 @@ class PdfSessionManager(QObject):
     # ---- OCR --------------------------------------------------------
 
     def start_ocr(
-        self, page_indices: list[int], ocr_options: OCROptions | None = None
+        self,
+        page_indices: list[int],
+        ocr_options: OCROptions | None = None,
+        pdf_settings: PdfGlobalSettings | None = None,
     ) -> None:
+        from vibeocr.models.pdf_ocr_options import PdfGlobalSettings
+
+        if pdf_settings is None:
+            pdf_settings = PdfGlobalSettings()
+
         session = self.active_session
         if session is None or self._ocr_service is None:
             return
@@ -200,12 +210,18 @@ class PdfSessionManager(QObject):
         pages: list[tuple[int, np.ndarray]] = []
         for page_idx in page_indices:
             with session.doc_lock:
-                img_array = PdfService.render_page_as_array(session.doc, page_idx)
+                page = session.doc[page_idx]
+                adjusted_dpi = pdf_settings.adjust_dpi(page.rect.width, page.rect.height)
+                img_array = PdfService.render_page_as_array(
+                    session.doc, page_idx, dpi=adjusted_dpi
+                )
             if img_array.size > 0:
                 pages.append((page_idx, img_array))
 
         if not pages:
             return
+
+        self._pdf_settings = pdf_settings
 
         self._ocr_worker = PdfOcrWorker(
             session_id=session.file_path,
@@ -237,7 +253,11 @@ class PdfSessionManager(QObject):
         if result is not None:
             with session.doc_lock:
                 PdfService.add_text_layer(
-                    session.doc, session.pdf_document, page_index, result
+                    session.doc,
+                    session.pdf_document,
+                    page_index,
+                    result,
+                    pdf_settings=self._pdf_settings,
                 )
         self.ocr_page_done.emit(session.file_path, page_index, result)
 
