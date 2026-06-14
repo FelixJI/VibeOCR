@@ -61,7 +61,7 @@ class OCRPreferences(QObject):
         self._batch_options = OCROptions(pipeline=OCRPipeline.DOCUMENT_PARSING)
         self._last_main_pipeline: OCRPipeline = OCRPipeline.OCR
         self._pdf_settings: dict = {}  # PdfGlobalSettings raw dict
-        self._last_pdf_pipeline: OCRPipeline = OCRPipeline.DOCUMENT_PARSING
+        self._last_pdf_pipeline: OCRPipeline = OCRPipeline.OCR
         self._load()
 
     @staticmethod
@@ -117,11 +117,11 @@ class OCRPreferences(QObject):
                 self._last_main_pipeline = OCRPipeline(last)
             except ValueError:
                 self._last_main_pipeline = OCRPipeline.OCR
-            last_pdf = data.get("last_pdf_pipeline", "DOCUMENT_PARSING")
+            last_pdf = data.get("last_pdf_pipeline", "OCR")
             try:
                 self._last_pdf_pipeline = OCRPipeline(last_pdf)
             except ValueError:
-                self._last_pdf_pipeline = OCRPipeline.DOCUMENT_PARSING
+                self._last_pdf_pipeline = OCRPipeline.OCR
 
         batch_data = data.get("batch_options")
         if batch_data:

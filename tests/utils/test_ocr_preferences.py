@@ -422,15 +422,18 @@ class TestPdfSettings:
     def test_last_pdf_pipeline_persists(self, tmp_config_dir):
         """_last_pdf_pipeline 应跨实例持久化"""
         prefs = OCRPreferences(tmp_config_dir)
-        prefs.set_pdf_pipeline_options(
-            OCROptions(pipeline=OCRPipeline.DOCUMENT_PARSING)
-        )
+        prefs.set_pdf_pipeline_options(OCROptions(pipeline=OCRPipeline.OCR))
 
         OCRPreferences.reset_instance()
         prefs2 = OCRPreferences(tmp_config_dir)
-        # get_pdf_pipeline_options 默认走 _last_pdf_pipeline（恢复后应仍是 DOCUMENT_PARSING）
+        # get_pdf_pipeline_options 默认走 _last_pdf_pipeline（恢复后应仍是 OCR）
         loaded = prefs2.get_pdf_pipeline_options()
-        assert loaded.pipeline == OCRPipeline.DOCUMENT_PARSING
+        assert loaded.pipeline == OCRPipeline.OCR
+
+    def test_default_last_pdf_pipeline_is_ocr(self, tmp_config_dir):
+        """空配置时 _last_pdf_pipeline 默认为 OCR（匹配 PDF 允许管道集）。"""
+        prefs = OCRPreferences(tmp_config_dir)
+        assert prefs.get_pdf_pipeline_options().pipeline == OCRPipeline.OCR
 
     def test_v2_loads_without_pdf_fields(self, tmp_config_dir):
         """v2 配置（无 pdf / pdf_settings / last_pdf_pipeline）加载后应使用默认"""
@@ -449,5 +452,5 @@ class TestPdfSettings:
         prefs = OCRPreferences(tmp_config_dir)
         # PDF 设置走默认
         assert prefs.get_pdf_settings().render_dpi == 300
-        # _last_pdf_pipeline 默认 DOCUMENT_PARSING
-        assert prefs.get_pdf_pipeline_options().pipeline == OCRPipeline.DOCUMENT_PARSING
+        # _last_pdf_pipeline 默认 OCR
+        assert prefs.get_pdf_pipeline_options().pipeline == OCRPipeline.OCR
