@@ -4,13 +4,13 @@ import pytest
 
 pytest.importorskip("pyzbar")  # pyzbar 缺失时整个文件跳过
 
-from PIL import Image  # noqa: E402
+from PIL import Image
 
-from vibeocr.services.qrcode_decode_service import (  # noqa: E402
+from vibeocr.services.qrcode_decode_service import (
     DecodedItem,
     QrcodeDecodeService,
 )
-from vibeocr.services.qrcode_service import QrcodeService  # noqa: E402
+from vibeocr.services.qrcode_service import QrcodeService
 
 
 @pytest.fixture
@@ -143,3 +143,8 @@ class TestUrlDetection:
         from vibeocr.services.qrcode_decode_service import _is_http_url
 
         assert _is_http_url("just some text") is False
+
+    def test_uppercase_scheme_is_url(self):
+        from vibeocr.services.qrcode_decode_service import _is_http_url
+
+        assert _is_http_url("HTTPS://example.com/path") is True

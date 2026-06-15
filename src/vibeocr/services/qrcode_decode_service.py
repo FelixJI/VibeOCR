@@ -23,8 +23,12 @@ class DecodedItem:
 
 
 def _is_http_url(value: str) -> bool:
-    """严格判定 http/https URL，拒绝 javascript:/file: 等其他 scheme。"""
-    if not value.startswith(("http://", "https://")):
+    """严格判定 http/https URL，拒绝 javascript:/file: 等其他 scheme。
+
+    scheme 大小写不敏感（部分二维码生成器会大写化 scheme），但前缀
+    快速检查已覆盖绝大多数情况；urlparse 会归一化 scheme 到小写。
+    """
+    if not value.lower().startswith(("http://", "https://")):
         return False
     try:
         parsed = urlparse(value)

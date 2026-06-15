@@ -199,8 +199,10 @@ class DecodeResultWidget(QWidget):
         copy_btn.clicked.connect(lambda: self.copy_requested.emit(self._data))
         row.addWidget(copy_btn)
 
-    def _on_link(self, url: str) -> None:
-        self.open_url_requested.emit(url)
+    def _on_link(self, _href: str) -> None:
+        # 忽略富文本回传的 href（可能被 _escape_for_richtext 转义），
+        # 始终用原始 data，保证含 & 等字符的 URL 正确打开。
+        self.open_url_requested.emit(self._data)
 
 
 class QrcodeTab(QWidget):
