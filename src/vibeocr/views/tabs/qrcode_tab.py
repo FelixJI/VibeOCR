@@ -96,6 +96,71 @@ class DropLabel(QLabel):
             event.ignore()
 
 
+class DecodeResultWidget(QWidget):
+    """单条识别结果展示：序号 + 类型标签 + 内容/链接 + 操作按钮。"""
+
+    open_url_requested = Signal(str)
+    copy_requested = Signal(str)
+
+    def __init__(
+        self,
+        index: int,
+        data: str,
+        type_label: str,
+        is_url: bool,
+        safe_data: str | None = None,
+        parent=None,
+    ):
+        super().__init__(parent)
+        self._data = data
+        href_value = safe_data if safe_data is not None else data
+
+        row = QHBoxLayout(self)
+        row.setContentsMargins(4, 2, 4, 2)
+        row.setSpacing(8)
+
+        idx_label = QLabel(f"{index}.")
+        idx_label.setFixedWidth(20)
+        row.addWidget(idx_label)
+
+        type_tag = QLabel(type_label)
+        type_tag.setStyleSheet(
+            "QLabel { background-color: #e0e0e0; color: #444;"
+            " border-radius: 6px; padding: 1px 6px; font-size: 11px; }"
+        )
+        row.addWidget(type_tag)
+
+        content_label = QLabel()
+        content_label.setWordWrap(True)
+        display = data if len(data) <= 80 else data[:77] + "..."
+        if is_url:
+            content_label.setText(
+                f"<a href='{href_value}' style='color:#1976D2; text-decoration: underline;'>"
+                f"{display}</a>"
+            )
+            content_label.setOpenExternalLinks(False)
+            content_label.linkActivated.connect(self._on_link)
+
+            open_btn = QPushButton("🔗打开")
+            open_btn.setFixedHeight(22)
+            open_btn.clicked.connect(lambda: self.open_url_requested.emit(self._data))
+            row.addWidget(open_btn)
+        else:
+            content_label.setText(display)
+            content_label.setTextInteractionFlags(
+                Qt.TextInteractionFlag.TextSelectableByMouse
+            )
+        row.addWidget(content_label, stretch=1)
+
+        copy_btn = QPushButton("📋复制")
+        copy_btn.setFixedHeight(22)
+        copy_btn.clicked.connect(lambda: self.copy_requested.emit(self._data))
+        row.addWidget(copy_btn)
+
+    def _on_link(self, url: str) -> None:
+        self.open_url_requested.emit(url)
+
+
 class QrcodeTab(QWidget):
     """二维码生成与识别标签页（左侧共享预览 + 右侧生成/识别子标签页）。"""
 
@@ -323,13 +388,37 @@ class QrcodeTab(QWidget):
         return scroll
 
     def _build_decode_panel(self) -> QWidget:
-        """构建「识别」子页。Task 5 填充真实内容。"""
+        """构建「识别」子页。"""
         panel = QWidget()
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(8, 4, 8, 4)
         layout.setSpacing(8)
-        layout.addWidget(QLabel("（识别面板占位 — 待实现）"))
-        layout.addStretch()
+
+        hint = QLabel(
+            "支持粘贴图片 (Ctrl+V)、拖入图片到左侧预览区、\n或点击下方选择文件"
+        )
+        hint.setStyleSheet("color: #888; font-size: 11px;")
+        layout.addWidget(hint)
+
+        # 识别结果区
+        layout.addWidget(self._create_section_label("识别结果"))
+
+        self._decode_result_list = QListWidget()
+        self._decode_result_list.setObjectName("decodeResultList")
+        layout.addWidget(self._decode_result_list, stretch=1)
+
+        # 底部操作
+        bottom_row = QHBoxLayout()
+        self._btn_copy_all = QPushButton("复制全部")
+        self._btn_copy_all.setObjectName("btnCopyAll")
+        self._btn_copy_all.setFixedHeight(26)
+        bottom_row.addWidget(self._btn_copy_all)
+        bottom_row.addStretch()
+        self._result_count_label = QLabel("识别到 0 条结果")
+        self._result_count_label.setStyleSheet("color: #888;")
+        bottom_row.addWidget(self._result_count_label)
+        layout.addLayout(bottom_row)
+
         return panel
 
     def _connect_signals(self) -> None:
