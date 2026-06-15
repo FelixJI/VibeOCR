@@ -25,6 +25,7 @@ dependencies = [
     "qrcode[pil]>=8.2",
     "python-barcode>=0.16.1",
     "opencv-contrib-python>=4.10.0.84",
+    "pyzbar>=0.1.9",
 ]
 
 [dependency-groups]
@@ -135,6 +136,9 @@ module = [
     "markdown",
     "markdown.extensions.*",
     "qrcode",
+    "pyzbar",
+    "pyzbar.pyzbar",
+    "pyzbar.symbols",
     "qrcode.image.svg",
     "barcode",
     "barcode.writer",
