@@ -152,7 +152,7 @@ def _sync_dependencies(old_deps: dict, new_deps: dict, app_dir: Path) -> None:
 
     python_exe = app_dir / "python" / "python.exe"
     if not python_exe.exists():
-        print("[updater] 警告: 未找到嵌入式 Python，跳过依赖更新")
+        print("[updater] 警告: 未找到 Python 运行时，跳过依赖更新")
         return
 
     for pkg, version in changed.items():

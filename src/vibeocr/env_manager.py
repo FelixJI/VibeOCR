@@ -1,18 +1,21 @@
-"""环境管理模块：负责自动部署嵌入式Python和管理项目依赖"""
+"""环境管理模块：负责自动部署 Python 运行时（python-build-standalone）和管理项目依赖"""
 
 import os
 import subprocess
 import sys
+import tarfile
 import tempfile
-import zipfile
 from pathlib import Path
 from typing import Literal
 from urllib.request import Request, urlopen
 
 from vibeocr.machine_cache import create_cache_entry, is_cache_valid
 from vibeocr.services.env_config import (
+    PYTHON_BUILD_STANDALONE_ASSET,
+    PYTHON_BUILD_STANDALONE_BASE,
+    PYTHON_BUILD_STANDALONE_MIRRORS,
+    PYTHON_BUILD_STANDALONE_TAG,
     PYTHON_VERSION,
-    PYTHON_VERSION_SHORT,
     get_pytorch_mirror,
 )
 
@@ -29,15 +32,9 @@ PADDLEX_SOURCE_TEST_URLS = {
     "huggingface": "https://huggingface.co/PaddlePaddle/PP-OCRv4/resolve/main/ch_PP-OCRv4_det_infer.tar",
 }
 
-# 嵌入式Python下载URL
-PYTHON_EMBED_URL = f"https://www.python.org/ftp/python/{PYTHON_VERSION}/python-{PYTHON_VERSION}-embed-amd64.zip"
-GET_PIP_URL = "https://bootstrap.pypa.io/get-pip.py"
-
-# 国内镜像源（如果官方源无法访问）
-PYTHON_MIRROR_URLS = [
-    "https://mirrors.huaweicloud.com/python/",
-    "https://repo.huaweicloud.com/python/",
-]
+# Python 运行时下载地址（python-build-standalone）
+# GitHub 直链 + 国内镜像（NJU/ghproxy）已在 env_config.PYTHON_BUILD_STANDALONE_MIRRORS 定义
+PYTHON_STANDALONE_URLS = [PYTHON_BUILD_STANDALONE_BASE, *PYTHON_BUILD_STANDALONE_MIRRORS]
 
 # CUDA 版本映射到 PaddlePaddle 支持的版本
 # PaddlePaddle GPU 版本支持: cu118, cu121, cu123, cu126, cu129 等
@@ -355,11 +352,16 @@ def install_embedded_python(
     project_root: Path, network_type: Literal["domestic", "international"] = "domestic"
 ) -> tuple[bool, str]:
     """
-    下载并安装嵌入式Python
+    下载并安装 Python 运行时（python-build-standalone）
+
+    相比旧 embeddable 方案的改进：
+    - 完整标准库 + 自带 pip，无需 get-pip.py / 手写 ._pth / 手建 site-packages
+    - 标准 site 机制，paddle/torch 的 .pth、entry_points、DLL 查找按设计行为工作
+    - 上游仅发布 .tar.gz，用标准库 tarfile 解压
 
     Args:
         project_root: 项目根目录
-        network_type: 网络类型
+        network_type: 网络类型（domestic 时优先国内镜像，international 时优先 GitHub 直链）
 
     Returns:
         (是否成功, 消息)
@@ -377,90 +379,113 @@ def install_embedded_python(
     python_dir = project_root / "python"
 
     if python_dir.exists():
-        return True, f"嵌入式Python已安装: {python_dir}"
+        return True, f"Python 运行时已安装: {python_dir}"
 
     print("\n" + "=" * 50)
-    print("[环境安装] 安装嵌入式Python")
+    print("[环境安装] 安装 Python 运行时（python-build-standalone）")
     print("=" * 50)
 
-    # 创建临时目录
+    # 根据网络类型排序下载源：international 优先 GitHub 直链，domestic 优先国内镜像
+    urls = list(PYTHON_STANDALONE_URLS)
+    if network_type == "domestic":
+        # 国内镜像在前
+        mirrors = PYTHON_BUILD_STANDALONE_MIRRORS
+        urls = [*mirrors, PYTHON_BUILD_STANDALONE_BASE]
+    else:
+        urls = [PYTHON_BUILD_STANDALONE_BASE, *PYTHON_BUILD_STANDALONE_MIRRORS]
+
+    # 去重保序
+    seen: set[str] = set()
+    urls = [u for u in urls if not (u in seen or seen.add(u))]
+
     with tempfile.TemporaryDirectory() as temp_dir:
         temp_path = Path(temp_dir)
-        zip_path = temp_path / "python_embed.zip"
+        tar_path = temp_path / PYTHON_BUILD_STANDALONE_ASSET.replace(".tar.gz", ".tgz")
 
-        # 尝试下载嵌入式Python
-        python_url = PYTHON_EMBED_URL
-        download_ok = download_file_with_progress(python_url, zip_path, "Python")
-
-        # 如果官方源下载失败，尝试国内镜像
-        if not download_ok and network_type == "domestic":
-            print("[环境安装] 官方源下载失败，尝试国内镜像...")
-            for mirror_url in PYTHON_MIRROR_URLS:
-                mirror_python_url = f"{mirror_url}{PYTHON_VERSION}/python-{PYTHON_VERSION}-embed-amd64.zip"
-                if download_file_with_progress(
-                    mirror_python_url, zip_path, "Python(镜像)"
-                ):
-                    download_ok = True
-                    break
+        download_ok = False
+        used_url = ""
+        for i, url in enumerate(urls, 1):
+            label = "Python(GitHub)" if "github.com" in url else "Python(镜像)"
+            print(f"[环境安装] 尝试下载源 {i}/{len(urls)}: {label}")
+            if download_file_with_progress(url, tar_path, label):
+                download_ok = True
+                used_url = url
+                break
 
         if not download_ok:
             return (
                 False,
-                f"无法下载嵌入式Python，请手动下载:\n{python_url}\n并解压到: {python_dir}",
+                f"无法下载 Python 运行时，请手动下载:\n"
+                f"{PYTHON_BUILD_STANDALONE_BASE}\n"
+                f"（国内镜像可访问 https://mirror.nju.edu.cn/github-release/"
+                f"astral-sh/python-build-standalone/{PYTHON_BUILD_STANDALONE_TAG}/ ）\n"
+                f"解压 {PYTHON_BUILD_STANDALONE_ASSET} 内的 python/ 到: {python_dir}",
             )
 
-        # 解压文件
-        print("[环境安装] 正在解压Python文件...")
+        print(f"[环境安装] 下载完成，正在解压 {PYTHON_BUILD_STANDALONE_ASSET}...")
         try:
-            with zipfile.ZipFile(zip_path, "r") as zip_ref:
-                zip_ref.extractall(python_dir)
+            python_dir.mkdir(parents=True, exist_ok=True)
+            # tar.gz 内顶层为 install_only/python/，需 flatten 到 project_root/python/
+            # （python_dir 本身即 python/，故去掉 install_only/ 和内层 python/ 两层前缀）
+            with tarfile.open(tar_path, "r:gz") as tar:
+                members = tar.getmembers()
+                for member in members:
+                    rel = member.name
+                    # 去掉 install_only/ 首层前缀（若存在）
+                    if rel.startswith("install_only/"):
+                        rel = rel[len("install_only/") :]
+                    # 去掉 python/ 首层前缀（python_dir 本身即 python/，避免 python/python/ 嵌套）
+                    if rel.startswith("python/"):
+                        rel = rel[len("python/") :]
+                    if not rel:
+                        continue
+                    # 防御 path traversal
+                    if rel.startswith(("/", "\\")) or ".." in rel.replace("\\", "/").split("/"):
+                        continue
+                    target = python_dir / rel
+                    if member.isdir():
+                        target.mkdir(parents=True, exist_ok=True)
+                    elif member.isfile():
+                        target.parent.mkdir(parents=True, exist_ok=True)
+                        src = tar.extractfile(member)
+                        if src is not None:
+                            with src, open(target, "wb") as dst:
+                                dst.write(src.read())
+                    elif member.issym() or member.islnk():
+                        # standalone 偶尔含符号链接（如 python3 → python3.13），跳过以保 Windows 兼容
+                        continue
             print("[环境安装] 解压完成")
         except Exception as e:
+            # 解压失败时清理半成品目录，避免误判为已安装
+            import shutil
+
+            shutil.rmtree(python_dir, ignore_errors=True)
             return False, f"解压失败: {e}"
 
-    # 配置嵌入式Python
-    pth_file = python_dir / f"python{PYTHON_VERSION_SHORT.replace('.', '')}._pth"
-    if pth_file.exists():
-        print("[环境安装] 配置Python路径...")
-        with open(pth_file, "w", encoding="utf-8") as f:
-            f.write(f"python{PYTHON_VERSION_SHORT}.zip\n")
-            f.write(".\n")
-            f.write("Lib\n")
-            f.write("Lib\\site-packages\n")
-            f.write("import site\n")
-        print("[环境安装] 路径配置完成")
+    python_exe = get_embedded_python_executable(project_root)
+    if not python_exe.exists():
+        return False, (
+            f"解压后未找到 {python_exe}，下载源可能损坏: {used_url}\n"
+            f"请手动下载并解压: {PYTHON_BUILD_STANDALONE_BASE}"
+        )
 
-    # 创建Lib目录
-    lib_dir = python_dir / "Lib" / "site-packages"
-    lib_dir.mkdir(parents=True, exist_ok=True)
+    # build-standalone 自带 pip，做一次健康检查（失败不阻断，pip install 阶段会再报错）
+    try:
+        result = subprocess.run(
+            [str(python_exe), "-m", "pip", "--version"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+        )
+        if result.returncode == 0:
+            print(f"[环境安装] pip 可用: {result.stdout.strip()}")
+        else:
+            print(f"[环境安装] 警告: pip 自检失败: {result.stderr[-200:] if result.stderr else ''}")
+    except Exception as e:
+        print(f"[环境安装] 警告: pip 自检异常: {e}")
 
-    # 下载并安装pip
-    print("[环境安装] 正在安装pip...")
-    get_pip_path = temp_path / "get-pip.py"
-
-    if download_file_with_progress(GET_PIP_URL, get_pip_path, "get-pip.py"):
-        python_exe = get_embedded_python_executable(project_root)
-        try:
-            result = subprocess.run(
-                [str(python_exe), str(get_pip_path)],
-                capture_output=True,
-                text=True,
-                timeout=120,
-            )
-            if result.returncode == 0:
-                print("[环境安装] pip安装成功")
-            else:
-                print(
-                    f"[环境安装] pip安装警告: {result.stderr[-200:] if result.stderr else ''}"
-                )
-        except subprocess.TimeoutExpired:
-            return False, "pip安装超时"
-        except Exception as e:
-            return False, f"pip安装失败: {e}"
-    else:
-        return False, "无法下载get-pip.py"
-
-    return True, f"嵌入式Python安装成功: {python_exe}"
+    return True, f"Python 运行时安装成功: {python_exe}"
 
 
 def check_current_environment_dependencies() -> dict[str, bool]:
@@ -741,10 +766,10 @@ def is_embedded_environment_ready(project_root: Path) -> tuple[bool, list[str]]:
     Returns:
         (是否就绪, 缺失的依赖列表)
     """
-    # 首先检查嵌入式Python是否存在
+    # 首先检查 Python 运行时是否存在
     python_exe = get_embedded_python_executable(project_root)
     if not python_exe.exists():
-        return False, ["嵌入式Python未安装"]
+        return False, ["Python 运行时未安装"]
 
     deps = check_embedded_environment_dependencies(project_root)
     # 只检查 paddlepaddle 和 paddleocr，排除 is_gpu 等元数据字段
@@ -797,7 +822,7 @@ def install_embedded_dependencies(
     python_exe = get_embedded_python_executable(project_root)
 
     if not python_exe.exists():
-        return False, "嵌入式Python未安装"
+        return False, "Python 运行时未安装"
 
     pip_source = get_pip_source(network_type)
 
@@ -1052,7 +1077,7 @@ def install_dependencies(
     cuda_version: str | None = None,
 ) -> tuple[bool, str]:
     """
-    安装项目依赖到嵌入式Python
+    安装项目依赖到 Python 运行时
 
     Args:
         project_root: 项目根目录
@@ -1066,7 +1091,7 @@ def install_dependencies(
     python_exe = get_embedded_python_executable(project_root)
 
     if not python_exe.exists():
-        return False, "嵌入式Python未安装"
+        return False, "Python 运行时未安装"
 
     pip_source = get_pip_source(network_type)
 
@@ -1239,7 +1264,7 @@ def setup_environment(project_root: Path) -> tuple[bool, str]:
     else:
         print("[环境设置] 使用便携式部署模式")
         print("\n这将自动完成以下步骤:")
-        print(f"1. 下载并安装嵌入式Python {PYTHON_VERSION}")
+        print(f"1. 下载并安装 Python {PYTHON_VERSION}（python-build-standalone）")
         print("2. 检测GPU并选择合适的PaddlePaddle版本")
         print("3. 安装所有项目依赖")
 
@@ -1248,10 +1273,10 @@ def setup_environment(project_root: Path) -> tuple[bool, str]:
     # 1. 检测网络环境
     network_type = detect_network_source()
 
-    # 2. 安装/检查嵌入式Python
+    # 2. 安装/检查 Python 运行时
     success, msg = install_embedded_python(project_root, network_type)
     if not success:
-        return False, f"安装嵌入式Python失败:\n{msg}"
+        return False, f"安装 Python 运行时失败:\n{msg}"
 
     # 3. 检测GPU和CUDA版本
     has_gpu, cuda_version = detect_gpu()
@@ -1283,7 +1308,7 @@ def ensure_environment(
 
     Returns:
         (是否就绪, 消息, 是否需要重启)
-        - 如果需要重启,调用方应使用嵌入式Python重启
+        - 如果需要重启,调用方应使用 Python 运行时重启
     """
     embedded_python = get_embedded_python_executable(project_root)
 
@@ -1294,7 +1319,7 @@ def ensure_environment(
     )
 
     if is_embedded:
-        print("[VibeOCR] 使用嵌入式Python环境")
+        print("[VibeOCR] 使用 Python 运行时环境")
 
         # 检查依赖
         deps_status = check_dependencies(project_root)
@@ -1319,20 +1344,20 @@ def ensure_environment(
         print("[VibeOCR] 依赖安装完成")
         return True, "依赖安装完成，可以启动应用", False
 
-    # 情况2: 嵌入式Python存在但使用其他Python运行(开发模式)
+    # 情况2: Python 运行时存在但使用其他Python运行(开发模式)
     if embedded_python.exists():
-        print("[VibeOCR] 检测到嵌入式Python环境")
+        print("[VibeOCR] 检测到 Python 运行时环境")
 
         # 检查依赖
         deps_status = check_dependencies(project_root)
         missing_deps = [pkg for pkg, installed in deps_status.items() if not installed]
 
         if not missing_deps:
-            print("[VibeOCR] 依赖完整，建议使用嵌入式Python运行")
-            return True, "依赖完整，但建议使用嵌入式Python运行", True
+            print("[VibeOCR] 依赖完整，建议使用 Python 运行时运行")
+            return True, "依赖完整，但建议使用 Python 运行时运行", True
 
         # 依赖缺失
-        msg = f"嵌入式Python缺少依赖: {', '.join(missing_deps)}"
+        msg = f"Python 运行时缺少依赖: {', '.join(missing_deps)}"
 
         if ask_user:
             # 返回信息让调用方处理用户交互
@@ -1351,14 +1376,14 @@ def ensure_environment(
             return False, f"依赖安装失败: {msg}", False
 
         print("[VibeOCR] 依赖安装完成")
-        return True, "依赖安装完成，请使用嵌入式Python运行", True
+        return True, "依赖安装完成，请使用 Python 运行时运行", True
 
-    # 情况3: 首次运行,无嵌入式Python
-    print("[VibeOCR] 未检测到嵌入式Python环境")
+    # 情况3: 首次运行,无 Python 运行时
+    print("[VibeOCR] 未检测到 Python 运行时环境")
 
     if ask_user:
         # 返回信息让调用方处理用户交互
-        return False, "首次运行，需要安装嵌入式Python和依赖", False
+        return False, "首次运行，需要安装 Python 运行时和依赖", False
     # 自动安装
     success, msg = setup_environment(project_root)
     if not success:

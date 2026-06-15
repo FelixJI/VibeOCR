@@ -8,6 +8,10 @@ from vibeocr.services.env_config import (
     PADDLE_VERSION,
     PIP_MIRROR_SOURCES,
     PORTABLE_PYTHON_DIR,
+    PYTHON_BUILD_STANDALONE_ASSET,
+    PYTHON_BUILD_STANDALONE_BASE,
+    PYTHON_BUILD_STANDALONE_MIRRORS,
+    PYTHON_BUILD_STANDALONE_TAG,
     PYTHON_VERSION,
     PYTHON_VERSION_SHORT,
     ensure_config_dir,
@@ -52,6 +56,41 @@ class TestEnvConfigConstants:
     def test_portable_python_dir_name(self):
         """测试便携式 Python 目录名称"""
         assert PORTABLE_PYTHON_DIR == "python_portable"
+
+
+class TestBuildStandaloneConstants:
+    """python-build-standalone 运行时常量测试"""
+
+    def test_tag_nonempty(self):
+        assert PYTHON_BUILD_STANDALONE_TAG
+        assert PYTHON_BUILD_STANDALONE_TAG.isdigit(), "tag 应为纯数字日期"
+
+    def test_asset_is_windows_msvc_install_only_targz(self):
+        """资产名应为 Windows install_only tar.gz（上游无 .zip）"""
+        assert PYTHON_BUILD_STANDALONE_ASSET.startswith("cpython-")
+        assert "x86_64-pc-windows-msvc" in PYTHON_BUILD_STANDALONE_ASSET
+        assert PYTHON_BUILD_STANDALONE_ASSET.endswith("install_only.tar.gz")
+        # 版本对齐
+        assert PYTHON_VERSION_SHORT in PYTHON_BUILD_STANDALONE_ASSET
+        assert PYTHON_BUILD_STANDALONE_TAG in PYTHON_BUILD_STANDALONE_ASSET
+
+    def test_base_url_points_to_astral_release(self):
+        assert PYTHON_BUILD_STANDALONE_BASE.startswith(
+            "https://github.com/astral-sh/python-build-standalone/releases/download/"
+        )
+        assert PYTHON_BUILD_STANDALONE_ASSET in PYTHON_BUILD_STANDALONE_BASE
+        assert PYTHON_BUILD_STANDALONE_TAG in PYTHON_BUILD_STANDALONE_BASE
+
+    def test_mirrors_nonempty_and_include_nju(self):
+        """国内镜像列表非空，且包含南大镜像（最稳）"""
+        assert len(PYTHON_BUILD_STANDALONE_MIRRORS) >= 1
+        nju = [m for m in PYTHON_BUILD_STANDALONE_MIRRORS if "nju.edu.cn" in m]
+        assert nju, "应包含南大镜像"
+
+    def test_mirrors_include_ghproxy_fallback(self):
+        """镜像列表应包含 ghproxy 公共加速前缀作为回退"""
+        joined = " ".join(PYTHON_BUILD_STANDALONE_MIRRORS)
+        assert "ghproxy" in joined or "gh-proxy" in joined, "应包含 ghproxy 回退"
 
 
 class TestEnvConfigFunctions:

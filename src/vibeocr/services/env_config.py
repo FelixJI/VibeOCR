@@ -14,6 +14,34 @@ EnvironmentMode = Literal["virtualenv", "portable", "unknown"]
 PYTHON_VERSION = "3.13.0"
 PYTHON_VERSION_SHORT = "3.13"
 
+# ---------------------------------------------------------------------------
+# python-build-standalone 运行时（替代 embeddable 发行版）
+# ---------------------------------------------------------------------------
+# 上游：https://github.com/astral-sh/python-build-standalone
+# 升级时仅改这两个常量：BUILD_TAG（astral release tag）与 PATCH（对应 cpython 补丁号）
+PYTHON_BUILD_STANDALONE_TAG = "20260325"  # astral release tag
+PYTHON_BUILD_STANDALONE_PATCH = "12"  # cpython 3.13 补丁号 → 3.13.12
+# Windows install_only 资产（上游仅发布 .tar.gz，无 .zip）
+PYTHON_BUILD_STANDALONE_ASSET = (
+    f"cpython-{PYTHON_VERSION_SHORT}.{PYTHON_BUILD_STANDALONE_PATCH}"
+    f"+{PYTHON_BUILD_STANDALONE_TAG}"
+    "-x86_64-pc-windows-msvc-install_only.tar.gz"
+)
+# GitHub 直链
+PYTHON_BUILD_STANDALONE_BASE = (
+    "https://github.com/astral-sh/python-build-standalone/releases/download"
+    f"/{PYTHON_BUILD_STANDALONE_TAG}/{PYTHON_BUILD_STANDALONE_ASSET}"
+)
+# 国内镜像与加速前缀（按优先级顺序尝试）
+PYTHON_BUILD_STANDALONE_MIRRORS = [
+    # 南大镜像：与上游 release 同步，最稳
+    f"https://mirror.nju.edu.cn/github-release/astral-sh/python-build-standalone/"
+    f"{PYTHON_BUILD_STANDALONE_TAG}/{PYTHON_BUILD_STANDALONE_ASSET}",
+    # ghproxy 公共加速前缀（拼接 GitHub 直链）
+    "https://gh-proxy.com/" + PYTHON_BUILD_STANDALONE_BASE,
+    "https://ghproxy.com/" + PYTHON_BUILD_STANDALONE_BASE,
+]
+
 # pip 下载源
 PIP_MIRROR_SOURCES = {
     "tsinghua": "https://pypi.tuna.tsinghua.edu.cn/simple",
