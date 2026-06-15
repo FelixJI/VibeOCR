@@ -226,3 +226,23 @@ class TestQrcodeDecodeBehavior:
         assert qrcode_tab._decode_results == []
         assert qrcode_tab._decode_result_list.count() == 1  # 提示项
         assert "0" in qrcode_tab._result_count_label.text()
+
+    def test_drop_label_emits_image_dropped(self, qrcode_tab, qtbot):
+        """验证 DropLabel 信号能触发 _on_image_input。"""
+        from PySide6.QtGui import QPixmap
+
+        qrcode_tab.show()
+        qrcode_tab._sub_tabs.setCurrentIndex(1)
+
+        pm = QPixmap(20, 20)
+        pm.fill()
+
+        # 信号连接应触发 _on_image_input（通过 btnDecode 启用间接验证）
+        qrcode_tab._preview_label.imageDropped.emit(pm)
+        assert qrcode_tab._btn_decode.isEnabled()
+
+    def test_generate_subtab_ignores_drops(self, qrcode_tab):
+        """生成子页激活时，预览区不接受拖入。"""
+        qrcode_tab.show()
+        qrcode_tab._sub_tabs.setCurrentIndex(0)
+        assert qrcode_tab._preview_label.acceptDrops() is False
