@@ -142,3 +142,87 @@ class TestQrcodeTabBehavior:
             qrcode_tab._btn_copy.click()
             clipboard_pixmap = QGuiApplication.clipboard().pixmap()
             assert not clipboard_pixmap.isNull()
+
+
+class TestQrcodeDecodeBehavior:
+    def test_switch_to_decode_enables_drops(self, qrcode_tab):
+        qrcode_tab.show()
+        qrcode_tab._sub_tabs.setCurrentIndex(1)
+        assert qrcode_tab._preview_label.acceptDrops() is True
+
+    def test_switch_to_generate_disables_drops(self, qrcode_tab):
+        qrcode_tab.show()
+        qrcode_tab._sub_tabs.setCurrentIndex(1)
+        qrcode_tab._sub_tabs.setCurrentIndex(0)
+        assert qrcode_tab._preview_label.acceptDrops() is False
+
+    def test_image_input_enables_decode_btn(self, qrcode_tab):
+        from PySide6.QtGui import QPixmap
+
+        pm = QPixmap(10, 10)
+        pm.fill()
+        qrcode_tab._on_image_input(pm)
+        assert qrcode_tab._btn_decode.isEnabled()
+
+    def test_clear_disables_decode_btn(self, qrcode_tab):
+        from PySide6.QtGui import QPixmap
+
+        pm = QPixmap(10, 10)
+        pm.fill()
+        qrcode_tab._on_image_input(pm)
+        qrcode_tab._on_clear_decode()
+        assert not qrcode_tab._btn_decode.isEnabled()
+
+    def test_decode_qr_shows_result(self, qrcode_tab, qtbot):
+        from vibeocr.services.qrcode_service import QrcodeService
+
+        gen = QrcodeService()
+        opts = gen.default_options()
+        opts["format"] = "qr"
+        pil_img = gen.generate("https://decode-test.example", opts)
+
+        from vibeocr.views.tabs.qrcode_tab import _pil_to_qpixmap
+
+        pm = _pil_to_qpixmap(pil_img)
+        qrcode_tab._on_image_input(pm)
+        qtbot.waitUntil(lambda: qrcode_tab._btn_decode.isEnabled())
+        qrcode_tab._btn_decode.click()
+        # 同步解码，结果立即可用
+        assert qrcode_tab._decode_result_list.count() == 1
+        assert "1" in qrcode_tab._result_count_label.text()
+
+    def test_open_url_calls_desktop_services(self, qrcode_tab, monkeypatch):
+        recorded = []
+        monkeypatch.setattr(
+            "vibeocr.views.tabs.qrcode_tab.QDesktopServices.openUrl",
+            lambda url: recorded.append(url.toString()),
+        )
+        qrcode_tab._on_open_url("https://example.com/x")
+        assert recorded == ["https://example.com/x"]
+
+    def test_copy_all_joins_results(self, qrcode_tab, qtbot):
+        from PySide6.QtGui import QGuiApplication
+
+        # 手动塞两条结果到 _decode_results 以测复制逻辑
+        from vibeocr.services.qrcode_decode_service import DecodedItem
+
+        qrcode_tab._decode_results = [
+            DecodedItem("a", "QRCODE", False),
+            DecodedItem("b", "QRCODE", False),
+        ]
+        qrcode_tab._on_copy_all()
+        assert QGuiApplication.clipboard().text() == "a\nb"
+
+    def test_blank_image_shows_zero_hint(self, qrcode_tab, qtbot):
+        from PIL import Image
+
+        from vibeocr.views.tabs.qrcode_tab import _pil_to_qpixmap
+
+        blank = Image.new("RGB", (100, 100), "white")
+        pm = _pil_to_qpixmap(blank)
+        qrcode_tab._on_image_input(pm)
+        qrcode_tab._btn_decode.click()
+        # 空结果时 _decode_results 为空，但列表显示一条提示项
+        assert qrcode_tab._decode_results == []
+        assert qrcode_tab._decode_result_list.count() == 1  # 提示项
+        assert "0" in qrcode_tab._result_count_label.text()

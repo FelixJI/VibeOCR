@@ -54,10 +54,7 @@ class QrcodeDecodeService:
             working = image
 
         # pyzbar 优先用灰度
-        if working.mode != "L":
-            gray = working.convert("L")
-        else:
-            gray = working
+        gray = working.convert("L") if working.mode != "L" else working
 
         raw_results = _zbar_decode(gray)
         items: list[DecodedItem] = []

@@ -4,8 +4,16 @@ import logging
 from pathlib import Path
 
 from PIL import Image
-from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QImage, QPixmap
+from PySide6.QtCore import Qt, QTimer, QUrl, Signal
+from PySide6.QtGui import (
+    QColor,
+    QDesktopServices,
+    QGuiApplication,
+    QImage,
+    QKeySequence,
+    QPixmap,
+    QShortcut,
+)
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -74,6 +82,40 @@ def _scale_pixmap_for_label(pixmap: QPixmap, label: QLabel) -> QPixmap:
     )
     scaled.setDevicePixelRatio(dpr)
     return scaled
+
+
+def _qpixmap_to_pil(pixmap: QPixmap) -> Image.Image:
+    """QPixmap → PIL.Image（RGB）。用 PNG 中转，不引入新依赖。"""
+    from io import BytesIO
+
+    from PySide6.QtCore import QBuffer
+
+    buffer = QBuffer()
+    buffer.open(QBuffer.OpenModeFlag.ReadWrite)
+    pixmap.save(buffer, "PNG")
+    buffer.seek(0)
+    img = Image.open(BytesIO(bytes(buffer.data())))
+    buffer.close()
+    return img.convert("RGB")
+
+
+def _decode_type_label(type_str: str) -> str:
+    """把 pyzbar 的 type 字符串转成更友好的中文标签。"""
+    t = type_str.upper()
+    if "QR" in t:
+        return "二维码"
+    return f"条形码·{type_str}"
+
+
+def _escape_for_richtext(text: str) -> str:
+    """转义用于富文本属性值的字符（防止单引号/HTML 破坏）。"""
+    return (
+        text.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace("'", "&#39;")
+        .replace('"', "&quot;")
+    )
 
 
 class DropLabel(QLabel):
@@ -183,6 +225,12 @@ class QrcodeTab(QWidget):
 
         self._setup_ui()
         self._connect_signals()
+
+        # Ctrl+V 粘贴图片快捷键：仅在识别子页激活时启用
+        self._decode_paste_shortcut = QShortcut(QKeySequence.Paste, self)
+        self._decode_paste_shortcut.setEnabled(False)
+        self._decode_paste_shortcut.activated.connect(self._on_paste_image)
+
         self._on_sub_tab_changed(0)  # 初始：生成子页
 
     def _setup_ui(self) -> None:
@@ -439,6 +487,12 @@ class QrcodeTab(QWidget):
         self._btn_save.clicked.connect(self._on_save)
         self._btn_copy.clicked.connect(self._on_copy)
         self._sub_tabs.currentChanged.connect(self._on_sub_tab_changed)
+        # 识别子页按钮
+        self._btn_paste_img.clicked.connect(self._on_paste_image)
+        self._btn_select_img.clicked.connect(self._on_select_image)
+        self._btn_decode.clicked.connect(self._on_decode)
+        self._btn_clear.clicked.connect(self._on_clear_decode)
+        self._btn_copy_all.clicked.connect(self._on_copy_all)
 
     def _on_sub_tab_changed(self, index: int) -> None:
         """切换生成/识别子页时，保存/恢复预览状态并切换操作栏与拖入支持。"""
@@ -472,6 +526,8 @@ class QrcodeTab(QWidget):
         self._gen_action_bar_widget.setVisible(not is_decode)
         self._decode_action_bar_widget.setVisible(is_decode)
         self._preview_label.setAcceptDrops(is_decode)
+        if hasattr(self, "_decode_paste_shortcut"):
+            self._decode_paste_shortcut.setEnabled(is_decode)
 
     # ── helpers ──
 
@@ -649,12 +705,121 @@ class QrcodeTab(QWidget):
         QGuiApplication.clipboard().setPixmap(pixmap)
         logger.debug("二维码已复制到剪贴板")
 
-    # ── 识别子页 slots（Task 6 完整实现，此处先占位以承接 DropLabel 信号）──
+    # ── 识别子页 slots ──
 
     def _on_image_input(self, pixmap: QPixmap) -> None:
-        """统一的图片输入入口（粘贴/拖入/选择文件）。Task 6 完整实现。"""
-        # 占位：实际逻辑在 Task 6 实现
-        pass
+        """统一的图片输入入口（粘贴/拖入/选择文件）。"""
+        if pixmap.isNull():
+            return
+        # 归一化 devicePixelRatio
+        if pixmap.devicePixelRatio() != 1.0:
+            pixmap = QPixmap(pixmap)
+            pixmap.setDevicePixelRatio(1.0)
+        self._decode_pending_pixmap = pixmap
+        self._preview_label.setPixmap(
+            _scale_pixmap_for_label(pixmap, self._preview_label)
+        )
+        self._btn_decode.setEnabled(True)
+        # 清空上次结果
+        self._decode_result_list.clear()
+        self._decode_results = []
+        self._result_count_label.setText("识别到 0 条结果")
+
+    def _on_paste_image(self) -> None:
+        clipboard = QGuiApplication.clipboard()
+        pm = clipboard.pixmap()
+        if not pm.isNull():
+            self._on_image_input(pm)
+
+    def _on_select_image(self) -> None:
+        from PySide6.QtWidgets import QFileDialog
+
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "选择图片",
+            "",
+            "图片文件 (*.png *.jpg *.jpeg *.bmp *.gif *.tiff *.tif *.webp *.jp2)"
+            ";;所有文件 (*)",
+        )
+        if path:
+            pm = QPixmap(path)
+            if not pm.isNull():
+                self._on_image_input(pm)
+
+    def _on_clear_decode(self) -> None:
+        self._decode_pending_pixmap = None
+        self._decode_results = []
+        self._decode_result_list.clear()
+        self._btn_decode.setEnabled(False)
+        self._result_count_label.setText("识别到 0 条结果")
+        self._preview_label.clear()
+        self._preview_label.setText("粘贴、拖入或选择图片以识别")
+
+    def _on_decode(self) -> None:
+        if self._decode_pending_pixmap is None:
+            return
+        self._btn_decode.setEnabled(False)
+        self._btn_decode.setText("识别中...")
+        from PySide6.QtWidgets import QApplication
+
+        QApplication.processEvents()
+        try:
+            pil_img = _qpixmap_to_pil(self._decode_pending_pixmap)
+            results = self._decode_service.decode(pil_img)
+        except Exception as e:
+            logger.error(f"识别失败: {e}", exc_info=True)
+            self._decode_result_list.clear()
+            item = QListWidgetItem()
+            err_label = QLabel(f"<span style='color:#f44336;'>识别失败：{e}</span>")
+            self._decode_result_list.addItem(item)
+            self._decode_result_list.setItemWidget(item, err_label)
+            item.setSizeHint(err_label.sizeHint())
+            self._decode_results = []
+            self._result_count_label.setText("识别到 0 条结果")
+            self._btn_decode.setText("🔍 识别")
+            self._btn_decode.setEnabled(True)
+            return
+
+        self._decode_results = results
+        self._decode_result_list.clear()
+        if not results:
+            hint = QLabel(
+                "<span style='color:#888;'>未识别到二维码/条形码，请尝试更清晰的图片</span>"
+            )
+            item = QListWidgetItem()
+            self._decode_result_list.addItem(item)
+            self._decode_result_list.setItemWidget(item, hint)
+            item.setSizeHint(hint.sizeHint())
+        else:
+            for idx, r in enumerate(results, start=1):
+                safe_data = _escape_for_richtext(r.data)
+                widget = DecodeResultWidget(
+                    index=idx,
+                    data=r.data,
+                    type_label=_decode_type_label(r.type),
+                    is_url=r.is_url,
+                    safe_data=safe_data,
+                )
+                widget.open_url_requested.connect(self._on_open_url)
+                widget.copy_requested.connect(self._on_copy_single)
+                item = QListWidgetItem()
+                self._decode_result_list.addItem(item)
+                self._decode_result_list.setItemWidget(item, widget)
+                item.setSizeHint(widget.sizeHint())
+
+        self._result_count_label.setText(f"识别到 {len(results)} 条结果")
+        self._btn_decode.setText("🔍 识别")
+        self._btn_decode.setEnabled(True)
+
+    def _on_open_url(self, url: str) -> None:
+        QDesktopServices.openUrl(QUrl(url))
+
+    def _on_copy_single(self, text: str) -> None:
+        QGuiApplication.clipboard().setText(text)
+
+    def _on_copy_all(self) -> None:
+        texts = [item.data for item in self._decode_results]
+        QGuiApplication.clipboard().setText("\n".join(texts))
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
