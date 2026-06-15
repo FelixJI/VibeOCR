@@ -278,16 +278,16 @@ class MainWindow(QMainWindow):
         logging.debug("批量识别标签页已添加")
 
     def _init_qrcode_tab(self) -> None:
-        """初始化二维码生成标签页"""
+        """初始化二维码标签页"""
         from vibeocr.views.tabs.qrcode_tab import QrcodeTab
 
         self._qrcode_tab = QrcodeTab()
         self._ui.tabWidget.insertTab(
             self._ui.tabWidget.indexOf(self._ui.tabSettings),
             self._qrcode_tab,
-            "二维码生成",
+            "二维码",
         )
-        logging.debug("二维码生成标签页已添加")
+        logging.debug("二维码标签页已添加")
 
     def _init_pdf_tab(self) -> None:
         """初始化 PDF 处理标签页"""

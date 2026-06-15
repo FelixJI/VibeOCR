@@ -117,7 +117,7 @@ class TestQrcodeTabIntegration:
     def test_main_window_has_qrcode_tab(self, main_window):
         tab_widget = main_window._ui.tabWidget
         tab_names = [tab_widget.tabText(i) for i in range(tab_widget.count())]
-        assert "二维码生成" in tab_names
+        assert "二维码" in tab_names
 
     def test_qrcode_tab_position_before_settings(self, main_window):
         tab_widget = main_window._ui.tabWidget
@@ -125,7 +125,7 @@ class TestQrcodeTabIntegration:
         settings_idx = None
         for i in range(tab_widget.count()):
             text = tab_widget.tabText(i)
-            if text == "二维码生成":
+            if text == "二维码":
                 qrcode_idx = i
             elif "设置" in text:
                 settings_idx = i
