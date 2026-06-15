@@ -59,6 +59,25 @@ class TestQrcodeTabStructure:
         texts = [combo.itemText(i) for i in range(combo.count())]
         assert "Code 128" in texts
 
+    def test_tab_has_sub_tabs(self, qrcode_tab):
+        from PySide6.QtWidgets import QTabWidget
+
+        sub = qrcode_tab.findChild(QTabWidget, "subTabs")
+        assert sub is not None
+        assert sub.count() == 2
+        assert sub.tabText(0) == "生成"
+        assert sub.tabText(1) == "识别"
+
+    def test_tab_has_decode_button(self, qrcode_tab):
+        btn = qrcode_tab.findChild(QPushButton, "btnDecode")
+        assert btn is not None
+        assert not btn.isEnabled()  # 无图时禁用
+
+    def test_tab_has_decode_service(self, qrcode_tab):
+        from vibeocr.services.qrcode_decode_service import QrcodeDecodeService
+
+        assert isinstance(qrcode_tab._decode_service, QrcodeDecodeService)
+
 
 class TestQrcodeTabBehavior:
     def test_qr_code_selected_shows_ec_buttons(self, qrcode_tab):

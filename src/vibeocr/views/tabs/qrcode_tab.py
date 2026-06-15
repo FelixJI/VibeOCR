@@ -1,10 +1,10 @@
-"""二维码生成标签页"""
+"""二维码生成与识别标签页"""
 
 import logging
 from pathlib import Path
 
 from PIL import Image
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QImage, QPixmap
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -12,16 +12,20 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QPlainTextEdit,
     QPushButton,
     QRadioButton,
     QScrollArea,
     QSpinBox,
     QSplitter,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
 
+from vibeocr.services.qrcode_decode_service import QrcodeDecodeService
 from vibeocr.services.qrcode_service import QrcodeService
 
 logger = logging.getLogger(__name__)
@@ -72,14 +76,40 @@ def _scale_pixmap_for_label(pixmap: QPixmap, label: QLabel) -> QPixmap:
     return scaled
 
 
+class DropLabel(QLabel):
+    """支持拖入图片数据的 QLabel。"""
+
+    imageDropped = Signal(QPixmap)
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasImage():
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dropEvent(self, event):
+        pm = QPixmap(event.mimeData().imageData())
+        if not pm.isNull():
+            self.imageDropped.emit(pm)
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+
 class QrcodeTab(QWidget):
-    """二维码生成标签页"""
+    """二维码生成与识别标签页（左侧共享预览 + 右侧生成/识别子标签页）。"""
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._service = QrcodeService()
+        self._decode_service = QrcodeDecodeService()
         self._current_image: Image.Image | None = None
         self._logo_path: str | None = None
+
+        # 子页预览状态（切换时保存/恢复）
+        self._gen_preview_pixmap: QPixmap | None = None
+        self._decode_pending_pixmap: QPixmap | None = None
+        self._decode_results: list = []  # list[DecodedItem]，由 _on_decode 填充
 
         self._debounce_timer = QTimer(self)
         self._debounce_timer.setSingleShot(True)
@@ -88,6 +118,7 @@ class QrcodeTab(QWidget):
 
         self._setup_ui()
         self._connect_signals()
+        self._on_sub_tab_changed(0)  # 初始：生成子页
 
     def _setup_ui(self) -> None:
         layout = QVBoxLayout(self)
@@ -96,23 +127,28 @@ class QrcodeTab(QWidget):
 
         self._splitter = QSplitter()
 
-        # ── 左侧：预览区 ──
+        # ── 左侧：预览区（生成与识别共享） ──
         left_panel = QWidget()
         left_layout = QVBoxLayout(left_panel)
         left_layout.setContentsMargins(0, 0, 0, 0)
         left_layout.setSpacing(4)
 
-        self._preview_label = QLabel("输入内容后自动生成预览")
+        self._preview_label = DropLabel("输入内容后自动生成预览")
         self._preview_label.setObjectName("previewLabel")
         self._preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._preview_label.setMinimumSize(200, 200)
         self._preview_label.setStyleSheet(
             "QLabel { background-color: #f5f5f5; border: 1px solid #ddd; border-radius: 4px; }"
         )
+        self._preview_label.setAcceptDrops(False)  # 仅识别子页激活时开启
+        self._preview_label.imageDropped.connect(self._on_image_input)
         left_layout.addWidget(self._preview_label, stretch=1)
 
-        action_bar = QHBoxLayout()
-        action_bar.setSpacing(6)
+        # 生成操作栏（保存/复制）—— 子页切换时显隐
+        self._gen_action_bar_widget = QWidget()
+        gen_action_bar = QHBoxLayout(self._gen_action_bar_widget)
+        gen_action_bar.setContentsMargins(0, 0, 0, 0)
+        gen_action_bar.setSpacing(6)
 
         self._btn_save = QPushButton("保存")
         self._btn_save.setObjectName("btnSave")
@@ -121,14 +157,56 @@ class QrcodeTab(QWidget):
         self._btn_copy.setObjectName("btnCopy")
         self._btn_copy.setFixedHeight(28)
 
-        action_bar.addWidget(self._btn_save)
-        action_bar.addWidget(self._btn_copy)
-        action_bar.addStretch()
-        left_layout.addLayout(action_bar)
+        gen_action_bar.addWidget(self._btn_save)
+        gen_action_bar.addWidget(self._btn_copy)
+        gen_action_bar.addStretch()
+        left_layout.addWidget(self._gen_action_bar_widget)
+
+        # 识别操作栏（粘贴/选择/识别/清空）—— 子页切换时显隐，初始隐藏
+        self._decode_action_bar_widget = QWidget()
+        dec_action_bar = QHBoxLayout(self._decode_action_bar_widget)
+        dec_action_bar.setContentsMargins(0, 0, 0, 0)
+        dec_action_bar.setSpacing(6)
+
+        self._btn_paste_img = QPushButton("粘贴图片")
+        self._btn_paste_img.setObjectName("btnPasteImg")
+        self._btn_paste_img.setFixedHeight(28)
+        self._btn_select_img = QPushButton("选择图片...")
+        self._btn_select_img.setObjectName("btnSelectImg")
+        self._btn_select_img.setFixedHeight(28)
+        dec_action_bar.addWidget(self._btn_paste_img)
+        dec_action_bar.addWidget(self._btn_select_img)
+        dec_action_bar.addStretch()
+        self._btn_decode = QPushButton("🔍 识别")
+        self._btn_decode.setObjectName("btnDecode")
+        self._btn_decode.setFixedHeight(28)
+        self._btn_decode.setEnabled(False)  # 无图时禁用
+        dec_action_bar.addWidget(self._btn_decode)
+        self._btn_clear = QPushButton("清空")
+        self._btn_clear.setObjectName("btnClear")
+        self._btn_clear.setFixedHeight(28)
+        dec_action_bar.addWidget(self._btn_clear)
+        self._decode_action_bar_widget.setVisible(False)
+        left_layout.addWidget(self._decode_action_bar_widget)
 
         self._splitter.addWidget(left_panel)
 
-        # ── 右侧：参数面板（QScrollArea 包裹）──
+        # ── 右侧：嵌套子标签页 ──
+        self._sub_tabs = QTabWidget()
+        self._sub_tabs.setObjectName("subTabs")
+
+        # 「生成」子页 = 原 QScrollArea 包裹的参数面板
+        self._sub_tabs.addTab(self._build_generate_panel(), "生成")
+
+        # 「识别」子页（Task 5 填充真实内容，先占位）
+        self._sub_tabs.addTab(self._build_decode_panel(), "识别")
+
+        self._splitter.addWidget(self._sub_tabs)
+        self._splitter.setSizes([500, 300])
+
+        layout.addWidget(self._splitter, stretch=1)
+
+    def _build_generate_panel(self) -> QScrollArea:
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QScrollArea.Shape.NoFrame)
@@ -242,10 +320,17 @@ class QrcodeTab(QWidget):
         params_layout.addStretch()
 
         scroll.setWidget(params_widget)
-        self._splitter.addWidget(scroll)
-        self._splitter.setSizes([500, 300])
+        return scroll
 
-        layout.addWidget(self._splitter, stretch=1)
+    def _build_decode_panel(self) -> QWidget:
+        """构建「识别」子页。Task 5 填充真实内容。"""
+        panel = QWidget()
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(8, 4, 8, 4)
+        layout.setSpacing(8)
+        layout.addWidget(QLabel("（识别面板占位 — 待实现）"))
+        layout.addStretch()
+        return panel
 
     def _connect_signals(self) -> None:
         self._format_combo.currentIndexChanged.connect(self._on_format_changed)
@@ -264,6 +349,40 @@ class QrcodeTab(QWidget):
         self._btn_paste.clicked.connect(self._on_paste_from_clipboard)
         self._btn_save.clicked.connect(self._on_save)
         self._btn_copy.clicked.connect(self._on_copy)
+        self._sub_tabs.currentChanged.connect(self._on_sub_tab_changed)
+
+    def _on_sub_tab_changed(self, index: int) -> None:
+        """切换生成/识别子页时，保存/恢复预览状态并切换操作栏与拖入支持。"""
+        is_decode = index == 1
+
+        if is_decode:
+            # 离开生成页：保存当前预览
+            pm = self._preview_label.pixmap()
+            self._gen_preview_pixmap = pm if (pm and not pm.isNull()) else None
+            # 恢复识别页预览
+            if self._decode_pending_pixmap is not None:
+                self._preview_label.setPixmap(
+                    _scale_pixmap_for_label(
+                        self._decode_pending_pixmap, self._preview_label
+                    )
+                )
+            else:
+                self._preview_label.clear()
+                self._preview_label.setText("粘贴、拖入或选择图片以识别")
+        else:
+            # 恢复生成页预览
+            if self._current_image is not None:
+                pixmap = _pil_to_qpixmap(self._current_image)
+                self._preview_label.setPixmap(
+                    _scale_pixmap_for_label(pixmap, self._preview_label)
+                )
+            else:
+                self._preview_label.clear()
+                self._preview_label.setText("输入内容后自动生成预览")
+
+        self._gen_action_bar_widget.setVisible(not is_decode)
+        self._decode_action_bar_widget.setVisible(is_decode)
+        self._preview_label.setAcceptDrops(is_decode)
 
     # ── helpers ──
 
@@ -285,7 +404,7 @@ class QrcodeTab(QWidget):
     def _color_btn_style(color: str) -> str:
         return f"QPushButton {{ background-color: {color}; border: 1px solid #999; padding: 4px; }}"
 
-    # ── slots ──
+    # ── 生成子页 slots ──
 
     def _on_format_changed(self, index: int) -> None:
         is_qr = FORMAT_ITEMS[index][1] == "qr"
@@ -440,6 +559,13 @@ class QrcodeTab(QWidget):
         pixmap = _pil_to_qpixmap(self._current_image)
         QGuiApplication.clipboard().setPixmap(pixmap)
         logger.debug("二维码已复制到剪贴板")
+
+    # ── 识别子页 slots（Task 6 完整实现，此处先占位以承接 DropLabel 信号）──
+
+    def _on_image_input(self, pixmap: QPixmap) -> None:
+        """统一的图片输入入口（粘贴/拖入/选择文件）。Task 6 完整实现。"""
+        # 占位：实际逻辑在 Task 6 实现
+        pass
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
