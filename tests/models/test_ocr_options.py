@@ -107,9 +107,14 @@ class TestOCROptions:
         assert restored.end_page_id == 5
 
     def test_default_backend_is_hybrid(self):
-        """测试默认后端改为 hybrid-auto-engine"""
+        """测试默认后端为 hybrid-engine"""
         options = OCROptions()
-        assert options.backend == "hybrid-auto-engine"
+        assert options.backend == "hybrid-engine"
+
+    def test_default_effort_is_medium(self):
+        """测试默认解析强度为 medium"""
+        options = OCROptions()
+        assert options.effort == "medium"
 
     def test_paddlocr_vl_default_values(self):
         """测试 PaddleOCR-VL 选项默认值"""

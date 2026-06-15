@@ -9,6 +9,10 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from vibeocr.core.pipelines import OCRPipeline
+from vibeocr.core.pipelines.pipeline_mineru import (
+    MINERU_BACKEND_DEFAULT,
+    MINERU_EFFORT_DEFAULT,
+)
 
 
 @dataclass
@@ -41,9 +45,8 @@ class OCROptions:
 
     # === MineRU 文档解析选项 ===
     parse_method: str = "auto"  # 解析方法: auto, txt, ocr
-    backend: str = (
-        "hybrid-auto-engine"  # 解析后端: vlm-auto-engine, hybrid-auto-engine, pipeline
-    )
+    backend: str = MINERU_BACKEND_DEFAULT  # 解析后端: hybrid-engine, vlm-engine, pipeline
+    effort: str = MINERU_EFFORT_DEFAULT  # 解析强度(仅 hybrid-engine): medium, high
     enable_formula: bool = True  # 启用公式识别
     enable_table: bool = True  # 启用表格识别
 
@@ -96,6 +99,7 @@ class OCROptions:
             "use_ocr_for_image_block": self.use_ocr_for_image_block,
             "parse_method": self.parse_method,
             "backend": self.backend,
+            "effort": self.effort,
             "enable_formula": self.enable_formula,
             "enable_table": self.enable_table,
             "lang_list": self.lang_list,
@@ -158,7 +162,8 @@ class OCROptions:
             vl_use_seal_recognition=data.get("vl_use_seal_recognition", False),
             use_ocr_for_image_block=data.get("use_ocr_for_image_block", False),
             parse_method=data.get("parse_method", "auto"),
-            backend=data.get("backend", "hybrid-auto-engine"),
+            backend=data.get("backend", MINERU_BACKEND_DEFAULT),
+            effort=data.get("effort", MINERU_EFFORT_DEFAULT),
             enable_formula=data.get("enable_formula", True),
             enable_table=data.get("enable_table", True),
             lang_list=data.get("lang_list", []),

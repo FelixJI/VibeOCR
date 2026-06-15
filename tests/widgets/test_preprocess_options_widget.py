@@ -260,16 +260,22 @@ class TestBackendDefault:
     def test_backend_default_hybrid(self, widget):
         """测试后端默认值为混合引擎（推荐）"""
         # 混合引擎应在第一个位置
-        assert widget._backend_combo.currentData() == "hybrid-auto-engine"
+        assert widget._backend_combo.currentData() == "hybrid-engine"
         assert widget._backend_combo.currentIndex() == 0
         # 确认第一项显示文字含 "推荐"
         assert "推荐" in widget._backend_combo.currentText()
 
     def test_backend_items_order(self, widget):
         """测试后端选项顺序"""
-        assert widget._backend_combo.itemData(0) == "hybrid-auto-engine"
-        assert widget._backend_combo.itemData(1) == "vlm-auto-engine"
+        assert widget._backend_combo.itemData(0) == "hybrid-engine"
+        assert widget._backend_combo.itemData(1) == "vlm-engine"
         assert widget._backend_combo.itemData(2) == "pipeline"
+
+    def test_effort_combo_items(self, widget):
+        """测试解析强度下拉项含 medium/high 且默认 medium"""
+        assert widget._effort_combo.itemData(0) == "medium"
+        assert widget._effort_combo.itemData(1) == "high"
+        assert widget._effort_combo.currentData() == "medium"
 
     def test_set_options_backend(self, widget, qtbot):
         """测试 set_options 能正确设置后端"""

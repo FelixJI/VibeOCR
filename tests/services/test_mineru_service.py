@@ -197,7 +197,7 @@ class TestMinerUService:
                 service.parse(b"data", "application/pdf")
 
     def test_default_backend_is_hybrid(self):
-        """默认后端应为 hybrid-auto-engine"""
+        """默认后端应为 hybrid-engine"""
         service = MinerUService.__new__(MinerUService)
         service._api_url = "http://127.0.0.1:9999"
         service._api_process = None
@@ -215,10 +215,11 @@ class TestMinerUService:
             service.parse(b"data", "application/pdf")
 
         data = mock_httpx.post.call_args.kwargs["data"]
-        assert data["backend"] == "hybrid-auto-engine"
+        assert data["backend"] == "hybrid-engine"
+        assert data["effort"] == "medium"
 
     def test_fallback_chain_starts_from_hybrid(self):
-        """回退链应从 hybrid-auto-engine 开始"""
+        """回退链应从 hybrid-engine 开始"""
         service = MinerUService.__new__(MinerUService)
         service._api_url = "http://127.0.0.1:9999"
         service._api_process = None
@@ -240,8 +241,8 @@ class TestMinerUService:
             service.parse(b"data", "application/pdf")
 
         calls = mock_httpx.post.call_args_list
-        assert calls[0].kwargs["data"]["backend"] == "hybrid-auto-engine"
-        assert calls[1].kwargs["data"]["backend"] == "vlm-auto-engine"
+        assert calls[0].kwargs["data"]["backend"] == "hybrid-engine"
+        assert calls[1].kwargs["data"]["backend"] == "vlm-engine"
 
     def test_ensure_api_running_starts_process(self):
         """_ensure_api_running 应在 API 未运行时启动进程"""

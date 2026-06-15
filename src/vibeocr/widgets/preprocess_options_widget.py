@@ -21,6 +21,10 @@ from vibeocr.core.pipelines import (
     get_all_pipelines,
     get_pipeline_display_name,
 )
+from vibeocr.core.pipelines.pipeline_mineru import (
+    MINERU_BACKEND_LABELS,
+    MINERU_EFFORT_LABELS,
+)
 from vibeocr.models.ocr_options import OCROptions
 
 
@@ -174,9 +178,8 @@ class PreprocessOptionsWidget(QGroupBox):
         backend_layout = QHBoxLayout()
         backend_layout.addWidget(QLabel("解析后端:"))
         self._backend_combo = QComboBox()
-        self._backend_combo.addItem("混合引擎（推荐）", "hybrid-auto-engine")
-        self._backend_combo.addItem("VLM 智能引擎", "vlm-auto-engine")
-        self._backend_combo.addItem("传统流水线", "pipeline")
+        for value, label in MINERU_BACKEND_LABELS.items():
+            self._backend_combo.addItem(label, value)
         self._backend_combo.setToolTip(
             "VLM 智能引擎：使用视觉语言模型，效果最佳（失败自动回退混合引擎）\n"
             "混合引擎：兼顾兼容性和效果\n"
@@ -185,6 +188,21 @@ class PreprocessOptionsWidget(QGroupBox):
         backend_layout.addWidget(self._backend_combo)
         backend_layout.addStretch()
         layout.addLayout(backend_layout)
+
+        # 解析强度（仅对混合引擎 hybrid-engine 生效）
+        effort_layout = QHBoxLayout()
+        effort_layout.addWidget(QLabel("解析强度:"))
+        self._effort_combo = QComboBox()
+        for value, label in MINERU_EFFORT_LABELS.items():
+            self._effort_combo.addItem(label, value)
+        self._effort_combo.setToolTip(
+            "仅对混合引擎（hybrid-engine）生效\n"
+            "标准：更快，但关闭图片/图表分析\n"
+            "高精度：启用图片/图表分析，更慢"
+        )
+        effort_layout.addWidget(self._effort_combo)
+        effort_layout.addStretch()
+        layout.addLayout(effort_layout)
 
         # 解析方法
         parse_method_layout = QHBoxLayout()
@@ -423,6 +441,7 @@ class PreprocessOptionsWidget(QGroupBox):
         self._enable_formula_cb.toggled.connect(self._on_option_changed)
         self._enable_table_cb.toggled.connect(self._on_option_changed)
         self._backend_combo.currentIndexChanged.connect(self._on_option_changed)
+        self._effort_combo.currentIndexChanged.connect(self._on_option_changed)
         self._parse_method_combo.currentIndexChanged.connect(self._on_option_changed)
         self._lang_combo.currentIndexChanged.connect(self._on_option_changed)
         self._start_page_spin.valueChanged.connect(self._on_option_changed)
@@ -496,6 +515,7 @@ class PreprocessOptionsWidget(QGroupBox):
             for opt in [
                 "parse_method",
                 "backend",
+                "effort",
                 "enable_formula",
                 "enable_table",
                 "lang_list",
@@ -535,6 +555,7 @@ class PreprocessOptionsWidget(QGroupBox):
         mineru_opts = [
             "parse_method",
             "backend",
+            "effort",
             "enable_formula",
             "enable_table",
             "lang_list",
@@ -639,6 +660,8 @@ class PreprocessOptionsWidget(QGroupBox):
             kwargs["enable_table"] = self._enable_table_cb.isChecked()
         if is_option_supported(pipeline, "backend"):
             kwargs["backend"] = self._backend_combo.currentData()
+        if is_option_supported(pipeline, "effort"):
+            kwargs["effort"] = self._effort_combo.currentData()
         if is_option_supported(pipeline, "parse_method"):
             kwargs["parse_method"] = self._parse_method_combo.currentData()
         if is_option_supported(pipeline, "lang_list"):
@@ -745,6 +768,7 @@ class PreprocessOptionsWidget(QGroupBox):
             self._enable_formula_cb,
             self._enable_table_cb,
             self._backend_combo,
+            self._effort_combo,
             self._parse_method_combo,
             self._lang_combo,
             self._start_page_spin,
@@ -795,6 +819,11 @@ class PreprocessOptionsWidget(QGroupBox):
         backend_idx = self._backend_combo.findData(options.backend)
         if backend_idx >= 0:
             self._backend_combo.setCurrentIndex(backend_idx)
+
+        # 设置 effort
+        effort_idx = self._effort_combo.findData(getattr(options, "effort", "medium"))
+        if effort_idx >= 0:
+            self._effort_combo.setCurrentIndex(effort_idx)
 
         parse_method_idx = self._parse_method_combo.findData(options.parse_method)
         if parse_method_idx >= 0:

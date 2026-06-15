@@ -71,6 +71,7 @@ _PIPELINE_METADATA: dict[OCRPipeline, dict] = {
         "supported_options": [
             "parse_method",
             "backend",
+            "effort",
             "enable_formula",
             "enable_table",
             "lang_list",

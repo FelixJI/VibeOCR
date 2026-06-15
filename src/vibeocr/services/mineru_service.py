@@ -21,6 +21,11 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 
+from vibeocr.core.pipelines.pipeline_mineru import (
+    MINERU_BACKEND_CHAIN,
+    MINERU_BACKEND_DEFAULT,
+    MINERU_EFFORT_DEFAULT,
+)
 from vibeocr.core.singleton_meta import SingletonMeta
 from vibeocr.models.ocr_result import (
     DISCARDED_BLOCK_TYPES,
@@ -230,8 +235,9 @@ class MinerUService(metaclass=SingletonMeta):
         """
         self._ensure_api_running()
 
-        backend = options.backend if options else "hybrid-auto-engine"
+        backend = options.backend if options else MINERU_BACKEND_DEFAULT
         parse_method = options.parse_method if options else "auto"
+        effort = options.effort if options else MINERU_EFFORT_DEFAULT
         lang_list_str = (
             ",".join(options.lang_list) if options and options.lang_list else ""
         )
@@ -244,6 +250,7 @@ class MinerUService(metaclass=SingletonMeta):
             "formula_enable": str(options.enable_formula if options else True).lower(),
             "table_enable": str(options.enable_table if options else True).lower(),
             "backend": backend,
+            "effort": effort,
             "parse_method": parse_method,
             "lang_list": lang_list_str,
             "start_page_id": str(options.start_page_id if options else 0),
@@ -254,8 +261,8 @@ class MinerUService(metaclass=SingletonMeta):
             ),
         }
 
-        # 回退链: hybrid-auto-engine → vlm-auto-engine → pipeline
-        fallback_chain = ["hybrid-auto-engine", "vlm-auto-engine", "pipeline"]
+        # 回退链: hybrid-engine → vlm-engine → pipeline
+        fallback_chain = list(MINERU_BACKEND_CHAIN)
         # 从当前 backend 开始，构建回退链
         if backend in fallback_chain:
             start_idx = fallback_chain.index(backend)
