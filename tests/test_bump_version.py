@@ -436,3 +436,93 @@ class TestGitTagging:
         )
         tags = tag_result.stdout.strip().split("\n")
         assert "v1.0.0" in tags
+
+
+class TestGenerateVersionJson:
+    """测试 _generate_version_json 的 dep_versions 键名归一"""
+
+    def _load_script(self):
+        """加载 bump_version 脚本模块（独立 importlib）"""
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location("bump_version", SCRIPT)
+        assert spec is not None and spec.loader is not None
+        mod = importlib.util.module_from_spec(spec)
+        for k in ("PYPROJECT_TOML", "INIT_PY", "MAIN_PY", "CHANGELOG"):
+            os.environ[k] = ""
+        spec.loader.exec_module(mod)
+        return mod
+
+    def test_paddlepaddle_gpu_normalized_to_paddlepaddle(self, tmp_path):
+        """version.json 的 dep_versions 应把 paddlepaddle-gpu 归一为 paddlepaddle
+
+        这与 env_config.OCR_CHECK_MODULES["paddle"] == "paddlepaddle" 保持一致，
+        使打包环境的 _load_dep_specs（从 version.json 读）能正确匹配包名。
+        """
+        import json
+
+        mod = self._load_script()
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            textwrap.dedent("""\
+                [project]
+                name = "vibeocr"
+                version = "0.1.0"
+                dependencies = [
+                    "pyside6>=6.11.1",
+                    "paddlepaddle-gpu>=3.3.1",
+                    "paddleocr[doc-parser]>=3.7.0",
+                    "mineru[core]>=3.3.1",
+                    "torch>=2.5.0",
+                    "nvidia-cudnn-cu13>=9.23.1.3",
+                ]
+            """),
+            encoding="utf-8",
+        )
+        mod.PYPROJECT_TOML = pyproject
+
+        mod._generate_version_json("1.2.3", tmp_path)
+
+        data = json.loads((tmp_path / "version.json").read_text(encoding="utf-8"))
+        dep_versions = data["dep_versions"]
+
+        # paddlepaddle-gpu 应归一为 paddlepaddle（与 OCR_CHECK_MODULES 一致）
+        assert "paddlepaddle" in dep_versions, (
+            f"应归一为 paddlepaddle，实际 keys: {list(dep_versions)}"
+        )
+        assert "paddlepaddle-gpu" not in dep_versions
+        # paddleocr/mineru/torch 也应记录
+        assert "paddleocr" in dep_versions
+        assert "mineru" in dep_versions
+        assert "torch" in dep_versions
+        # nvidia 包也应记录（更新器需要）
+        assert any(k.startswith("nvidia") for k in dep_versions)
+
+    def test_python_version_read_from_dot_python_version(self, tmp_path):
+        """version.json 的 python_version 应从 .python-version 文件读取，而非硬编码"""
+        import json
+
+        mod = self._load_script()
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            textwrap.dedent("""\
+                [project]
+                name = "vibeocr"
+                version = "0.1.0"
+                dependencies = []
+            """),
+            encoding="utf-8",
+        )
+        mod.PYPROJECT_TOML = pyproject
+        # 用自定义 PROJECT_ROOT + .python-version（值故意不同于 3.13）
+        fake_root = tmp_path / "fake_root"
+        fake_root.mkdir()
+        (fake_root / ".python-version").write_text("3.99", encoding="utf-8")
+        mod.PROJECT_ROOT = fake_root
+
+        mod._generate_version_json("1.2.3", tmp_path)
+
+        data = json.loads((tmp_path / "version.json").read_text(encoding="utf-8"))
+        assert data["python_version"] == "3.99", (
+            f"python_version 应读自 .python-version（3.99），实际: {data['python_version']}"
+        )

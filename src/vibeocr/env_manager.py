@@ -5,6 +5,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
 from typing import Literal
 from urllib.request import Request, urlopen
@@ -15,22 +16,9 @@ from vibeocr.services.env_config import (
     PYTHON_BUILD_STANDALONE_BASE,
     PYTHON_BUILD_STANDALONE_MIRRORS,
     PYTHON_BUILD_STANDALONE_TAG,
-    PYTHON_VERSION,
+    PYTHON_VERSION_SHORT,
     get_pytorch_mirror,
 )
-
-# 测试用的URL
-TEST_URLS = {
-    "google": "https://www.google.com",
-    "github": "https://www.github.com",
-    "baidu": "https://www.baidu.com",
-}
-
-# PaddleX 模型源测试 URL
-PADDLEX_SOURCE_TEST_URLS = {
-    "bos": "https://paddleocr.bj.bcebos.com/PP-OCRv4/chinese/ch_PP-OCRv4_det_infer.tar",
-    "huggingface": "https://huggingface.co/PaddlePaddle/PP-OCRv4/resolve/main/ch_PP-OCRv4_det_infer.tar",
-}
 
 # Python 运行时下载地址（python-build-standalone）
 # GitHub 直链 + 国内镜像（NJU/ghproxy）已在 env_config.PYTHON_BUILD_STANDALONE_MIRRORS 定义
@@ -39,6 +27,8 @@ PYTHON_STANDALONE_URLS = [PYTHON_BUILD_STANDALONE_BASE, *PYTHON_BUILD_STANDALONE
 # CUDA 版本映射到 PaddlePaddle 支持的版本
 # PaddlePaddle GPU 版本支持: cu118, cu121, cu123, cu126, cu129 等
 # 注意: CUDA 13.x 及以上版本使用最新的 cu129
+# 对应 pyproject.toml: paddlepaddle-gpu 3.3.1 的 nvidia 依赖均为 cu12 系列
+# (nvidia-cuda-runtime-cu12==12.9.37 等)，故 CUDA 12.x 映射到 cu129 是合理的。
 CUDA_VERSION_MAP = {
     "11.8": "cu118",
     "12.0": "cu121",
@@ -58,7 +48,11 @@ CUDA_VERSION_MAP = {
 }
 
 # PyTorch CUDA 版本映射（PaddlePaddle CUDA tag → PyTorch CUDA tag）
-# PyTorch 支持的 CUDA 版本比 PaddlePaddle 少，需要映射到最接近的版本
+# PyTorch 官方 wheel 的 CUDA tag 粒度比 PaddlePaddle 粗：
+# - cu129 → cu128: PyTorch 无 cu129 wheel，cu128 是向下兼容的最近版本
+# - cu123 → cu124: 同理，PyTorch 跳过 cu123
+# 开发环境 (uv) 的 torch 来源见 pyproject.toml [tool.uv.sources]，恒定 cu126；
+# 便携环境 (pip) 的 torch 来源由此映射 + get_pytorch_mirror 决定。
 TORCH_CUDA_MAP = {
     "cu118": "cu118",
     "cu121": "cu121",
@@ -67,35 +61,21 @@ TORCH_CUDA_MAP = {
     "cu129": "cu128",
 }
 
-# cuDNN 版本映射（基于 CUDA 版本）
-# paddlepaddle-gpu 需要系统级 cuDNN 运行时库
-# CUDA 11.x -> cuDNN 8.x, CUDA 12.x -> cuDNN 9.x
-# nvidia-cudnn-cu11 是 CUDA 11.x 的元包
-# nvidia-cudnn-cu12 是 CUDA 12.x 的元包
-CUDNN_PACKAGE_MAP = {
-    "cu118": "nvidia-cudnn-cu11",  # CUDA 11.8 -> cuDNN 8.x (元包会安装最新兼容版本)
-    "cu121": "nvidia-cudnn-cu12",  # CUDA 12.1 -> cuDNN 9.x (元包会安装最新兼容版本)
-    "cu123": "nvidia-cudnn-cu12",  # CUDA 12.3 -> cuDNN 9.x
-    "cu126": "nvidia-cudnn-cu12",  # CUDA 12.6 -> cuDNN 9.x
-    "cu129": "nvidia-cudnn-cu12",  # CUDA 12.9 -> cuDNN 9.x
-}
-
-# nvidia-cudnn-cu11 和 nvidia-cudnn-cu12 会自动安装以下依赖：
-# - nvidia-cudnn-cu11/nvidia-cudnn-cu12: 主包
-# - nvidia-cufft-cu11/nvidia-cufft-cu12: FFT 库
-# - nvidia-cublas-cu11/nvidia-cublas-cu12: BLAS 库
-# - nvidia-curand-cu11/nvidia-curand-cu12: 随机数库
-# - nvidia-cusolver-cu11/nvidia-cusolver-cu12: 求解器库
-# - nvidia-cusparse-cu11/nvidia-cusparse-cu12: 稀疏矩阵库
-
 _dep_specs_cache: dict[str, str] | None = None
 
 
 def _load_dep_specs() -> dict[str, str]:
     """从 pyproject.toml 或 version.json 加载依赖版本规格
 
+    开发环境读 pyproject.toml（权威源）；打包环境读 version.json（由 bump_version 生成）。
+    两者皆缺失时抛 RuntimeError，不再悄悄回退到陈旧 fallback ——
+    陈旧 fallback 会装到旧版本（paddleocr 3.6.0 / mineru 3.2.0 已落后于 pyproject）。
+
     Returns:
-        {base_name: full_spec}，如 {"paddleocr": "paddleocr[doc-parser]>=3.6.0"}
+        {base_name: full_spec}，如 {"paddleocr": "paddleocr[doc-parser]>=3.7.0"}
+
+    Raises:
+        RuntimeError: pyproject.toml 与 version.json 均不存在
     """
     global _dep_specs_cache
     if _dep_specs_cache is not None:
@@ -131,40 +111,18 @@ def _load_dep_specs() -> dict[str, str]:
         _dep_specs_cache = specs
         return specs
 
-    _dep_specs_cache = {}
-    return {}
-
-
-def ping_url(url: str, timeout: int = 3) -> bool:
-    """测试URL是否可访问"""
-    try:
-        req = Request(url, headers={"User-Agent": "Mozilla/5.0"})
-        with urlopen(req, timeout=timeout) as response:
-            return response.status == 200
-    except Exception:
-        return False
-
-
-def detect_paddlex_model_source(timeout: int = 3) -> tuple[str, str]:
-    """[Deprecated] 请使用 NetworkDetector。"""
-    from vibeocr.network_detector import NetworkDetector as _ND
-
-    detector = _ND(get_project_root())
-    env_value = detector.paddlex_source_env
-    source_name = detector.paddlex_source
-    return env_value, source_name
-
-
-def setup_paddlex_model_source(timeout: int = 5) -> str:
-    """[Deprecated] 请使用 NetworkDetector。"""
-    from vibeocr.network_detector import NetworkDetector as _ND
-
-    detector = _ND(get_project_root())
-    return detector.paddlex_source
+    raise RuntimeError(
+        "无法加载依赖规格：pyproject.toml 与 version.json 均不存在。\n"
+        "开发环境请确认在项目根目录运行，或执行 `uv sync` 生成环境；\n"
+        "打包环境请确认 version.json 已由 bump_version.py 生成。"
+    )
 
 
 def detect_network_source() -> Literal["domestic", "international"]:
-    """[Deprecated] 请使用 NetworkDetector。"""
+    """检测网络类型（委托 NetworkDetector）
+
+    注意：返回值用于选择 pip 镜像、PaddleX/MinerU 模型源。
+    """
     from vibeocr.network_detector import NetworkDetector as _ND
 
     detector = _ND(get_project_root())
@@ -174,7 +132,10 @@ def detect_network_source() -> Literal["domestic", "international"]:
 def get_pip_source(
     network_type: Literal["domestic", "international"] = "domestic",
 ) -> str:
-    """[Deprecated] 请使用 NetworkDetector。"""
+    """获取 pip 镜像源 URL（委托 NetworkDetector）
+
+    注意：参数 network_type 目前未直接使用 —— NetworkDetector 基于自身检测结果返回。
+    """
     from vibeocr.network_detector import NetworkDetector as _ND
 
     detector = _ND(get_project_root())
@@ -537,77 +498,15 @@ def check_embedded_environment_dependencies(
             print("[依赖检测] 使用缓存结果")
             return cached_data.get("dependencies", {})
 
-    # 2. 执行实际检测（原有逻辑）
+    # 2. 执行实际检测（委托给 _check_imports 原语，模块清单由 OCR_CHECK_MODULES 统一）
     python_exe = get_embedded_python_executable(project_root)
 
     if not python_exe.exists():
         return {}
 
-    dependencies = {
-        "paddlepaddle": False,
-        "paddleocr": False,
-        "mineru": False,
-        "torch": False,
-    }
-
-    # 检测 PaddlePaddle
-    try:
-        result = subprocess.run(
-            [
-                str(python_exe),
-                "-c",
-                "import paddle",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=60,
-            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
-        )
-        if result.returncode == 0:
-            dependencies["paddlepaddle"] = True
-            print("[依赖检测] PaddlePaddle已安装")
-    except Exception as e:
-        print(f"[依赖检测] PaddlePaddle检测失败: {e}")
-        dependencies["paddlepaddle"] = False
-
-    # 检测 PaddleOCR
-    try:
-        result = subprocess.run(
-            [str(python_exe), "-c", "import paddleocr"],
-            capture_output=True,
-            text=True,
-            timeout=30,
-            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
-        )
-        dependencies["paddleocr"] = result.returncode == 0
-    except Exception:
-        dependencies["paddleocr"] = False
-
-    # 检测 MinerU
-    try:
-        result = subprocess.run(
-            [str(python_exe), "-c", "import mineru"],
-            capture_output=True,
-            text=True,
-            timeout=15,
-            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
-        )
-        dependencies["mineru"] = result.returncode == 0
-    except Exception:
-        dependencies["mineru"] = False
-
-    # 检测 PyTorch（MinerU pipeline 依赖）
-    try:
-        result = subprocess.run(
-            [str(python_exe), "-c", "import torch"],
-            capture_output=True,
-            text=True,
-            timeout=15,
-            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
-        )
-        dependencies["torch"] = result.returncode == 0
-    except Exception:
-        dependencies["torch"] = False
+    dependencies = _check_imports(python_exe)
+    if dependencies.get("paddlepaddle"):
+        print("[依赖检测] PaddlePaddle已安装")
 
     # 3. 更新缓存
     has_gpu, cuda_version = detect_gpu()
@@ -642,16 +541,10 @@ def check_dependencies(project_root: Path) -> dict[str, bool]:
     if not python_exe.exists():
         return {}
 
-    dependencies = {
-        "PySide6": False,
-        "paddlepaddle": False,
-        "paddleocr": False,
-        "mineru": False,
-        "torch": False,
-        "PIL": False,
-    }
+    # OCR 依赖委托给 _check_imports 原语
+    dependencies: dict[str, bool] = _check_imports(python_exe)
 
-    # 检测基础依赖
+    # 生产依赖（PySide6/PIL）单独检测，timeout 较短
     for pkg in ["PySide6", "PIL"]:
         try:
             result = subprocess.run(
@@ -664,59 +557,6 @@ def check_dependencies(project_root: Path) -> dict[str, bool]:
             dependencies[pkg] = result.returncode == 0
         except Exception:
             dependencies[pkg] = False
-
-    # 检测 PaddlePaddle（使用 paddle 模块名）
-    # 注意：首次导入 PaddlePaddle 时可能需要初始化 CUDA 环境，耗时较长
-    try:
-        result = subprocess.run(
-            [str(python_exe), "-c", "import paddle"],
-            capture_output=True,
-            text=True,
-            timeout=60,  # 首次导入可能需要初始化CUDA，增加超时时间
-            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
-        )
-        dependencies["paddlepaddle"] = result.returncode == 0
-    except Exception:
-        dependencies["paddlepaddle"] = False
-
-    # 检测 PaddleOCR
-    try:
-        result = subprocess.run(
-            [str(python_exe), "-c", "import paddleocr"],
-            capture_output=True,
-            text=True,
-            timeout=30,
-            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
-        )
-        dependencies["paddleocr"] = result.returncode == 0
-    except Exception:
-        dependencies["paddleocr"] = False
-
-    # 检测 MinerU
-    try:
-        result = subprocess.run(
-            [str(python_exe), "-c", "import mineru"],
-            capture_output=True,
-            text=True,
-            timeout=15,
-            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
-        )
-        dependencies["mineru"] = result.returncode == 0
-    except Exception:
-        dependencies["mineru"] = False
-
-    # 检测 PyTorch（MinerU pipeline 依赖）
-    try:
-        result = subprocess.run(
-            [str(python_exe), "-c", "import torch"],
-            capture_output=True,
-            text=True,
-            timeout=15,
-            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
-        )
-        dependencies["torch"] = result.returncode == 0
-    except Exception:
-        dependencies["torch"] = False
 
     return dependencies
 
@@ -732,29 +572,43 @@ def is_production_environment_ready() -> tuple[bool, list[str]]:
     return len(missing) == 0, missing
 
 
-def _quick_verify_deps(python_exe: Path) -> dict[str, bool]:
-    """轻量验证依赖是否实际已安装（用于校验缓存）
+def _check_imports(python_exe: Path) -> dict[str, bool]:
+    """检测嵌入式 Python 可导入哪些 OCR 模块（单一实现，消除重复）
 
-    只做简单的 import 检测，不获取 GPU 信息，速度较快。
+    遍历 env_config.OCR_CHECK_MODULES，对每个 import 模块名执行
+    `python -c "import <module>"`，结果以包名为 key 返回。
+
+    Args:
+        python_exe: 目标 Python 可执行文件
+
+    Returns:
+        {包名: 是否可导入}，如 {"paddlepaddle": True, "torch": False}
     """
-    deps = {}
-    for module, pkg in [
-        ("paddle", "paddlepaddle"),
-        ("paddleocr", "paddleocr"),
-        ("mineru", "mineru"),
-    ]:
+    from vibeocr.services.env_config import OCR_CHECK_MODULES, OCR_CHECK_TIMEOUTS
+
+    deps: dict[str, bool] = {}
+    for module, pkg in OCR_CHECK_MODULES.items():
         try:
             result = subprocess.run(
                 [str(python_exe), "-c", f"import {module}"],
                 capture_output=True,
                 text=True,
-                timeout=15,
+                timeout=OCR_CHECK_TIMEOUTS.get(module, 15),
                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
             )
             deps[pkg] = result.returncode == 0
         except Exception:
             deps[pkg] = False
     return deps
+
+
+def _quick_verify_deps(python_exe: Path) -> dict[str, bool]:
+    """轻量验证依赖是否实际已安装（用于校验缓存）
+
+    只做简单的 import 检测，不获取 GPU 信息，速度较快。
+    委托给 _check_imports 原语，模块清单由 OCR_CHECK_MODULES 统一管理。
+    """
+    return _check_imports(python_exe)
 
 
 def is_embedded_environment_ready(project_root: Path) -> tuple[bool, list[str]]:
@@ -797,6 +651,136 @@ def is_embedded_environment_ready(project_root: Path) -> tuple[bool, list[str]]:
     return len(missing) == 0, missing
 
 
+def _install_paddle_stack(
+    python_exe: Path,
+    specs: dict[str, str],
+    pip_source: str,
+    network_type: Literal["domestic", "international"],
+    use_gpu: bool,
+    cuda_version: str | None,
+    report_fn: Callable[[str, str], None],
+    extra_requirements: list[tuple[str, str, str]],
+    success_msg: str,
+) -> tuple[bool, str]:
+    """安装 PaddlePaddle + PaddleOCR + MinerU (+可选 torch) 依赖栈
+
+    install_dependencies 与 install_embedded_dependencies 的共享实现，
+    消除 pip 升级、GPU/CPU 分支、torch index 计算、PyPI 回退等重复逻辑。
+
+    Args:
+        python_exe: 目标 Python 可执行文件
+        specs: _load_dep_specs() 返回的依赖规格
+        pip_source: pip 镜像源 URL
+        network_type: 网络类型（决定 torch 镜像）
+        use_gpu: 是否安装 GPU 版本
+        cuda_version: CUDA 版本字符串
+        report_fn: 日志回调 (stage, msg)
+        extra_requirements: 前置额外包 [(name, spec, index), ...]（如 PySide6/Pillow）
+        success_msg: 全部成功时的返回消息
+
+    Returns:
+        (是否成功, 消息)
+    """
+    paddle_gpu_spec = specs["paddlepaddle-gpu"]
+    paddle_cpu_spec = paddle_gpu_spec.replace("paddlepaddle-gpu", "paddlepaddle")
+
+    # 决定 PaddlePaddle 版本（GPU 优先）
+    if use_gpu and cuda_version:
+        cuda_tag = CUDA_VERSION_MAP.get(cuda_version)
+        if cuda_tag:
+            paddle_package = paddle_gpu_spec
+            paddle_index = f"https://www.paddlepaddle.org.cn/packages/stable/{cuda_tag}/"
+            paddle_name = f"PaddlePaddle GPU ({cuda_tag})"
+            report_fn("依赖安装", f"检测到 CUDA {cuda_version}，安装 GPU 版本")
+        else:
+            paddle_package = paddle_cpu_spec
+            paddle_index = "https://www.paddlepaddle.org.cn/packages/stable/cpu/"
+            paddle_name = "PaddlePaddle CPU"
+            report_fn("依赖安装", f"CUDA {cuda_version} 无对应版本，回退 CPU 版本")
+    elif use_gpu:
+        paddle_package = paddle_gpu_spec
+        paddle_index = "https://www.paddlepaddle.org.cn/packages/stable/cu129/"
+        paddle_name = "PaddlePaddle GPU (cu129)"
+        report_fn("依赖安装", "安装 GPU 版本（默认 cu129）")
+    else:
+        paddle_package = paddle_cpu_spec
+        paddle_index = "https://www.paddlepaddle.org.cn/packages/stable/cpu/"
+        paddle_name = "PaddlePaddle CPU"
+        report_fn("依赖安装", "使用CPU版本")
+
+    try:
+        # 升级pip
+        report_fn("依赖安装", "正在升级pip...")
+        result = subprocess.run(
+            [str(python_exe), "-m", "pip", "install", "--upgrade", "pip", "-i", pip_source],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        if result.returncode != 0:
+            report_fn(
+                "依赖安装",
+                f"pip升级警告: {result.stderr[-100:] if result.stderr else ''}",
+            )
+
+        requirements = list(extra_requirements)
+        requirements.extend([
+            (paddle_name, paddle_package, paddle_index),
+            ("PaddleOCR", f'"{specs["paddleocr"]}"', pip_source),
+            ("MinerU", f'"{specs["mineru"]}"', pip_source),
+        ])
+
+        # GPU 环境下安装 torch+CUDA 覆盖 mineru 附带的 CPU 版本
+        if use_gpu:
+            paddle_cuda_tag = CUDA_VERSION_MAP.get(cuda_version) if cuda_version else None
+            torch_cuda_tag = TORCH_CUDA_MAP.get(paddle_cuda_tag or "", "cu128")
+            pytorch_mirror_name = "nju" if network_type == "domestic" else "official"
+            torch_index = get_pytorch_mirror(pytorch_mirror_name, torch_cuda_tag)
+            requirements.append(
+                (f"PyTorch CUDA ({torch_cuda_tag})", "torch torchvision", torch_index)
+            )
+            report_fn("依赖安装", f"将安装 PyTorch CUDA ({torch_cuda_tag})")
+
+        for name, package_spec, index_url in requirements:
+            report_fn("依赖安装", f"正在安装 {name}...")
+            report_fn("依赖安装", f"包规格: {package_spec}")
+            report_fn("依赖安装", f"使用源: {index_url}")
+
+            result = subprocess.run(
+                [str(python_exe), "-m", "pip", "install", package_spec, "-i", index_url],
+                capture_output=True,
+                text=True,
+                timeout=600,
+            )
+
+            if result.returncode != 0:
+                error_msg = result.stderr or result.stdout or "未知错误"
+                if "Could not find a version" in str(
+                    error_msg
+                ) or "No matching distribution" in str(error_msg):
+                    report_fn("依赖安装", f"{name} 安装失败，尝试使用官方PyPI源...")
+                    result = subprocess.run(
+                        [str(python_exe), "-m", "pip", "install", package_spec],
+                        capture_output=True,
+                        text=True,
+                        timeout=600,
+                    )
+
+                if result.returncode != 0:
+                    error_msg = result.stderr or result.stdout or "未知错误"
+                    return False, f"{name} 安装失败:\n{error_msg[:500]}"
+
+            report_fn("依赖安装", f"{name} 安装成功")
+
+        report_fn("依赖安装", "所有OCR依赖安装完成")
+        return True, success_msg
+
+    except subprocess.TimeoutExpired:
+        return False, "依赖安装超时（10分钟）"
+    except Exception as e:
+        return False, f"依赖安装异常: {e}"
+
+
 def install_embedded_dependencies(
     project_root: Path,
     network_type: Literal["domestic", "international"] = "domestic",
@@ -835,128 +819,18 @@ def install_embedded_dependencies(
     report("依赖安装", f"pip源: {pip_source}")
 
     specs = _load_dep_specs()
-    paddle_gpu_spec = specs.get("paddlepaddle-gpu", "paddlepaddle-gpu>=3.3.1")
-    paddle_cpu_spec = paddle_gpu_spec.replace("paddlepaddle-gpu", "paddlepaddle")
-
-    # 决定 PaddlePaddle 版本（GPU 优先）
-    if use_gpu and cuda_version:
-        cuda_tag = CUDA_VERSION_MAP.get(cuda_version)
-        if cuda_tag:
-            paddle_package = paddle_gpu_spec
-            paddle_index = (
-                f"https://www.paddlepaddle.org.cn/packages/stable/{cuda_tag}/"
-            )
-            paddle_name = f"PaddlePaddle GPU ({cuda_tag})"
-            report("依赖安装", f"检测到 CUDA {cuda_version}，安装 GPU 版本")
-        else:
-            paddle_package = paddle_cpu_spec
-            paddle_index = "https://www.paddlepaddle.org.cn/packages/stable/cpu/"
-            paddle_name = "PaddlePaddle CPU"
-            report("依赖安装", f"CUDA {cuda_version} 无对应版本，回退 CPU 版本")
-    elif use_gpu:
-        paddle_package = paddle_gpu_spec
-        paddle_index = "https://www.paddlepaddle.org.cn/packages/stable/cu129/"
-        paddle_name = "PaddlePaddle GPU (cu129)"
-        report("依赖安装", "安装 GPU 版本（默认 cu129）")
-    else:
-        paddle_package = paddle_cpu_spec
-        paddle_index = "https://www.paddlepaddle.org.cn/packages/stable/cpu/"
-        paddle_name = "PaddlePaddle CPU"
-        report("依赖安装", "使用CPU版本")
-
-    try:
-        # 升级pip
-        report("依赖安装", "正在升级pip...")
-        result = subprocess.run(
-            [
-                str(python_exe),
-                "-m",
-                "pip",
-                "install",
-                "--upgrade",
-                "pip",
-                "-i",
-                pip_source,
-            ],
-            capture_output=True,
-            text=True,
-            timeout=120,
-        )
-        if result.returncode != 0:
-            report(
-                "依赖安装",
-                f"pip升级警告: {result.stderr[-100:] if result.stderr else ''}",
-            )
-
-        requirements = [
-            (paddle_name, paddle_package, paddle_index),
-            (
-                "PaddleOCR",
-                f'"{specs.get("paddleocr", "paddleocr[doc-parser]>=3.6.0")}"',
-                pip_source,
-            ),
-            ("MinerU", f'"{specs.get("mineru", "mineru[core]>=3.2.0")}"', pip_source),
-        ]
-
-        # GPU 环境下安装 torch+CUDA 覆盖 mineru 附带的 CPU 版本
-        if use_gpu:
-            paddle_cuda_tag = None
-            if cuda_version:
-                paddle_cuda_tag = CUDA_VERSION_MAP.get(cuda_version)
-            torch_cuda_tag = TORCH_CUDA_MAP.get(paddle_cuda_tag or "", "cu128")
-            pytorch_mirror_name = "nju" if network_type == "domestic" else "official"
-            torch_index = get_pytorch_mirror(pytorch_mirror_name, torch_cuda_tag)
-            requirements.append(
-                (f"PyTorch CUDA ({torch_cuda_tag})", "torch torchvision", torch_index)
-            )
-            report("依赖安装", f"将安装 PyTorch CUDA ({torch_cuda_tag})")
-
-        for name, package_spec, index_url in requirements:
-            report("依赖安装", f"正在安装 {name}...")
-            report("依赖安装", f"包规格: {package_spec}")
-            report("依赖安装", f"使用源: {index_url}")
-
-            result = subprocess.run(
-                [
-                    str(python_exe),
-                    "-m",
-                    "pip",
-                    "install",
-                    package_spec,
-                    "-i",
-                    index_url,
-                ],
-                capture_output=True,
-                text=True,
-                timeout=600,
-            )
-
-            if result.returncode != 0:
-                error_msg = result.stderr or result.stdout or "未知错误"
-                if "Could not find a version" in str(
-                    error_msg
-                ) or "No matching distribution" in str(error_msg):
-                    report("依赖安装", f"{name} 安装失败，尝试使用官方PyPI源...")
-                    result = subprocess.run(
-                        [str(python_exe), "-m", "pip", "install", package_spec],
-                        capture_output=True,
-                        text=True,
-                        timeout=600,
-                    )
-
-                if result.returncode != 0:
-                    error_msg = result.stderr or result.stdout or "未知错误"
-                    return False, f"{name} 安装失败:\n{error_msg[:500]}"
-
-            report("依赖安装", f"{name} 安装成功")
-
-        report("依赖安装", "所有OCR依赖安装完成")
-        return True, "OCR依赖安装成功"
-
-    except subprocess.TimeoutExpired:
-        return False, "依赖安装超时（10分钟）"
-    except Exception as e:
-        return False, f"依赖安装异常: {e}"
+    # 嵌入式模式不装 PySide6/Pillow，extra_requirements 为空
+    return _install_paddle_stack(
+        python_exe=python_exe,
+        specs=specs,
+        pip_source=pip_source,
+        network_type=network_type,
+        use_gpu=use_gpu,
+        cuda_version=cuda_version,
+        report_fn=report,
+        extra_requirements=[],
+        success_msg="OCR依赖安装成功",
+    )
 
 
 def detect_cuda_version() -> str | None:
@@ -1101,140 +975,26 @@ def install_dependencies(
     print(f"[依赖安装] pip源: {pip_source}")
 
     specs = _load_dep_specs()
-    paddle_gpu_spec = specs.get("paddlepaddle-gpu", "paddlepaddle-gpu>=3.3.1")
-    paddle_cpu_spec = paddle_gpu_spec.replace("paddlepaddle-gpu", "paddlepaddle")
 
-    # 决定 PaddlePaddle 版本（GPU 优先）
-    if use_gpu and cuda_version:
-        cuda_tag = CUDA_VERSION_MAP.get(cuda_version)
-        if cuda_tag:
-            paddle_package = paddle_gpu_spec
-            paddle_index = (
-                f"https://www.paddlepaddle.org.cn/packages/stable/{cuda_tag}/"
-            )
-            paddle_name = f"PaddlePaddle GPU ({cuda_tag})"
-            print(f"[依赖安装] 检测到 CUDA {cuda_version}，安装 GPU 版本")
-        else:
-            paddle_package = paddle_cpu_spec
-            paddle_index = "https://www.paddlepaddle.org.cn/packages/stable/cpu/"
-            paddle_name = "PaddlePaddle CPU"
-            print(f"[依赖安装] CUDA {cuda_version} 无对应版本，回退 CPU 版本")
-    elif use_gpu:
-        paddle_package = paddle_gpu_spec
-        paddle_index = "https://www.paddlepaddle.org.cn/packages/stable/cu129/"
-        paddle_name = "PaddlePaddle GPU (cu129)"
-        print("[依赖安装] 安装 GPU 版本（默认 cu129）")
-    else:
-        paddle_package = paddle_cpu_spec
-        paddle_index = "https://www.paddlepaddle.org.cn/packages/stable/cpu/"
-        paddle_name = "PaddlePaddle CPU"
-        print("[依赖安装] 使用CPU版本")
+    def report(stage: str, msg: str):
+        print(f"[{stage}] {msg}")
 
-    try:
-        # 升级pip
-        print("[依赖安装] 正在升级pip...")
-        result = subprocess.run(
-            [
-                str(python_exe),
-                "-m",
-                "pip",
-                "install",
-                "--upgrade",
-                "pip",
-                "-i",
-                pip_source,
-            ],
-            capture_output=True,
-            text=True,
-            timeout=120,
-        )
-        if result.returncode != 0:
-            print(
-                f"[依赖安装] pip升级警告: {result.stderr[-100:] if result.stderr else ''}"
-            )
-
-        # 安装基础依赖
-        requirements = [
-            ("PySide6", specs.get("pyside6", "pyside6>=6.11.1"), pip_source),
-            ("Pillow", specs.get("pillow", "pillow>=12.2.0"), pip_source),
-        ]
-
-        # PaddlePaddle（GPU 优先，CPU 回退）
-        requirements.append((paddle_name, paddle_package, paddle_index))
-
-        # 安装 PaddleOCR
-        requirements.append(
-            (
-                "PaddleOCR",
-                f'"{specs.get("paddleocr", "paddleocr[doc-parser]>=3.6.0")}"',
-                pip_source,
-            )
-        )
-
-        # 安装 MineRU 文档解析
-        requirements.append(
-            ("MinerU", f'"{specs.get("mineru", "mineru[core]>=3.2.0")}"', pip_source)
-        )
-
-        # GPU 环境下安装 torch+CUDA 覆盖 mineru 附带的 CPU 版本
-        if use_gpu:
-            paddle_cuda_tag = None
-            if cuda_version:
-                paddle_cuda_tag = CUDA_VERSION_MAP.get(cuda_version)
-            torch_cuda_tag = TORCH_CUDA_MAP.get(paddle_cuda_tag or "", "cu128")
-            pytorch_mirror_name = "nju" if network_type == "domestic" else "official"
-            torch_index = get_pytorch_mirror(pytorch_mirror_name, torch_cuda_tag)
-            requirements.append(
-                (f"PyTorch CUDA ({torch_cuda_tag})", "torch torchvision", torch_index)
-            )
-            print(f"[依赖安装] 将安装 PyTorch CUDA ({torch_cuda_tag})")
-
-        for name, package_spec, index_url in requirements:
-            print(f"[依赖安装] 正在安装 {name}...")
-            print(f"[依赖安装] 包规格: {package_spec}")
-            print(f"[依赖安装] 使用源: {index_url}")
-
-            result = subprocess.run(
-                [
-                    str(python_exe),
-                    "-m",
-                    "pip",
-                    "install",
-                    package_spec,
-                    "-i",
-                    index_url,
-                ],
-                capture_output=True,
-                text=True,
-                timeout=600,
-            )
-
-            if result.returncode != 0:
-                error_msg = result.stderr or result.stdout or "未知错误"
-                if "Could not find a version" in str(
-                    error_msg
-                ) or "No matching distribution" in str(error_msg):
-                    print(f"[依赖安装] {name} 安装失败，尝试使用官方PyPI源...")
-                    result = subprocess.run(
-                        [str(python_exe), "-m", "pip", "install", package_spec],
-                        capture_output=True,
-                        text=True,
-                        timeout=600,
-                    )
-
-                if result.returncode != 0:
-                    error_msg = result.stderr or result.stdout or "未知错误"
-                    return False, f"{name} 安装失败:\n{error_msg[:500]}"
-
-            print(f"[依赖安装] {name} 安装成功")
-
-        print("[依赖安装] 所有依赖安装完成")
-        return True, "依赖安装成功"
-
-    except subprocess.TimeoutExpired:
-        return False, "依赖安装超时（10分钟）"
-    except Exception as e:
-        return False, f"依赖安装异常: {e}"
+    # 完整安装含生产依赖 PySide6/Pillow
+    extra_requirements = [
+        ("PySide6", specs["pyside6"], pip_source),
+        ("Pillow", specs["pillow"], pip_source),
+    ]
+    return _install_paddle_stack(
+        python_exe=python_exe,
+        specs=specs,
+        pip_source=pip_source,
+        network_type=network_type,
+        use_gpu=use_gpu,
+        cuda_version=cuda_version,
+        report_fn=report,
+        extra_requirements=extra_requirements,
+        success_msg="依赖安装成功",
+    )
 
 
 def setup_environment(project_root: Path) -> tuple[bool, str]:
@@ -1264,7 +1024,7 @@ def setup_environment(project_root: Path) -> tuple[bool, str]:
     else:
         print("[环境设置] 使用便携式部署模式")
         print("\n这将自动完成以下步骤:")
-        print(f"1. 下载并安装 Python {PYTHON_VERSION}（python-build-standalone）")
+        print(f"1. 下载并安装 Python {PYTHON_VERSION_SHORT}（python-build-standalone）")
         print("2. 检测GPU并选择合适的PaddlePaddle版本")
         print("3. 安装所有项目依赖")
 

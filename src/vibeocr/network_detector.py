@@ -21,7 +21,7 @@ INTERNATIONAL_ENDPOINT = "https://huggingface.co"
 # 缓存有效期
 CACHE_TTL_DAYS = 7
 
-# pip 镜像源
+# pip 镜像源（pip 源 SSOT：全仓唯一定义，按 network_type 派生）
 _PIP_MIRRORS = {
     "domestic": "https://pypi.tuna.tsinghua.edu.cn/simple",
     "international": "https://pypi.org/simple",

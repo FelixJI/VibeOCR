@@ -5,14 +5,12 @@ from unittest.mock import patch
 
 from vibeocr.services.env_config import (
     CONFIG_DIR,
-    PADDLE_VERSION,
-    PIP_MIRROR_SOURCES,
+    OCR_CHECK_MODULES,
     PORTABLE_PYTHON_DIR,
     PYTHON_BUILD_STANDALONE_ASSET,
     PYTHON_BUILD_STANDALONE_BASE,
     PYTHON_BUILD_STANDALONE_MIRRORS,
     PYTHON_BUILD_STANDALONE_TAG,
-    PYTHON_VERSION,
     PYTHON_VERSION_SHORT,
     ensure_config_dir,
     get_config_dir,
@@ -24,38 +22,19 @@ from vibeocr.services.env_config import (
 class TestEnvConfigConstants:
     """环境配置常量测试"""
 
-    def test_python_version_format(self):
-        """测试 Python 版本格式"""
-        assert "." in PYTHON_VERSION
-        parts = PYTHON_VERSION.split(".")
-        assert len(parts) >= 2
-
     def test_python_version_short_format(self):
         """测试短版本格式"""
         assert "." in PYTHON_VERSION_SHORT
         parts = PYTHON_VERSION_SHORT.split(".")
         assert len(parts) == 2
 
-    def test_pip_mirror_sources_not_empty(self):
-        """测试 pip 镜像源不为空"""
-        assert len(PIP_MIRROR_SOURCES) > 0
-
-    def test_pip_mirror_sources_are_urls(self):
-        """测试 pip 镜像源是 URL"""
-        for _name, url in PIP_MIRROR_SOURCES.items():
-            assert url.startswith("http")
-
-    def test_paddle_version_format(self):
-        """测试 Paddle 版本格式"""
-        assert "." in PADDLE_VERSION
-
     def test_config_dir_name(self):
         """测试配置目录名称"""
         assert CONFIG_DIR == "config"
 
     def test_portable_python_dir_name(self):
-        """测试便携式 Python 目录名称"""
-        assert PORTABLE_PYTHON_DIR == "python_portable"
+        """便携式 Python 目录名应与运行时实际使用的 python/ 一致"""
+        assert PORTABLE_PYTHON_DIR == "python"
 
 
 class TestBuildStandaloneConstants:
@@ -101,11 +80,10 @@ class TestEnvConfigFunctions:
         root = get_project_root()
         assert isinstance(root, Path)
 
-    def test_get_project_root_contains_pyproject(self):
-        """测试项目根目录包含 pyproject.toml"""
+    def test_get_project_root_contains_src_vibeocr(self):
+        """项目根目录应含 src/vibeocr（判断条件与 env_manager.get_project_root 一致）"""
         root = get_project_root()
-        pyproject = root / "pyproject.toml"
-        assert pyproject.exists()
+        assert (root / "src" / "vibeocr").exists()
 
     def test_get_config_dir_returns_path(self):
         """测试获取配置目录返回 Path"""
@@ -129,41 +107,32 @@ class TestEnvConfigFunctions:
             assert config_dir.is_dir()
 
 
-class TestDependencyConstants:
-    """依赖常量测试"""
+class TestOcrCheckModules:
+    """OCR_CHECK_MODULES 单一依赖检测清单源测试"""
 
-    def test_paddle_dependencies(self):
-        from vibeocr.services.env_config import PADDLE_DEPENDENCIES
+    def test_is_mapping_of_module_to_package(self):
+        """OCR_CHECK_MODULES 应是 {import 模块名: 包名} 映射"""
+        assert isinstance(OCR_CHECK_MODULES, dict)
+        assert len(OCR_CHECK_MODULES) > 0
+        for module, package in OCR_CHECK_MODULES.items():
+            assert isinstance(module, str) and module
+            assert isinstance(package, str) and package
 
-        assert "paddlepaddle" in PADDLE_DEPENDENCIES
-        assert "paddleocr" in PADDLE_DEPENDENCIES
+    def test_covers_all_required_ocr_modules(self):
+        """应覆盖全部 OCR 核心模块：paddle/paddleocr/mineru/torch"""
+        keys = OCR_CHECK_MODULES.keys()
+        assert "paddle" in keys, "应检测 paddle（GPU/CPU 均导入为 paddle）"
+        assert "paddleocr" in keys
+        assert "mineru" in keys
+        assert "torch" in keys, "应检测 torch（MinerU pipeline 依赖）"
 
-    def test_mineru_dependencies(self):
-        from vibeocr.services.env_config import MINERU_DEPENDENCIES
+    def test_paddle_maps_to_paddlepaddle_package(self):
+        """paddle 模块应对应 paddlepaddle 包（GPU/CPU 二选一）"""
+        assert OCR_CHECK_MODULES["paddle"] == "paddlepaddle"
 
-        assert "mineru" in MINERU_DEPENDENCIES
-
-    def test_ocr_dependencies_is_union(self):
-        from vibeocr.services.env_config import (
-            MINERU_DEPENDENCIES,
-            OCR_DEPENDENCIES,
-            PADDLE_DEPENDENCIES,
-        )
-
-        assert OCR_DEPENDENCIES == PADDLE_DEPENDENCIES + MINERU_DEPENDENCIES
-
-    def test_mineru_pipeline_spec(self):
-        from vibeocr.services.env_config import MINERU_PIPELINE_SPEC
-
-        assert MINERU_PIPELINE_SPEC == "mineru[core]"
-
-
-class TestEnvironmentMode:
-    """环境模式类型测试"""
-
-    def test_environment_mode_values(self):
-        """测试环境模式有效值"""
-        valid_modes = ["virtualenv", "portable", "unknown"]
-        for mode in valid_modes:
-            # 类型检查
-            assert isinstance(mode, str)
+    def test_all_package_names_are_install_names(self):
+        """每个 value 应是可识别的 pip 包名（小写、无版本约束）"""
+        for package in OCR_CHECK_MODULES.values():
+            # 包名不应包含版本操作符（清单只表达"检测哪些"，版本来自 pyproject）
+            for op in (">", "=", "<", "~"):
+                assert op not in package, f"{package} 不应含版本约束"

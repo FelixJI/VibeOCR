@@ -368,15 +368,25 @@ def _generate_version_json(version: str, dist_dir: Path) -> None:
             if op in dep:
                 pkg, ver = dep.split(op, 1)
                 pkg = pkg.strip().lower()
+                # 剥掉 extras 后缀：paddleocr[doc-parser] → paddleocr
+                # 使 key 与 env_config.OCR_CHECK_MODULES 包名一致
+                pkg = pkg.split("[", 1)[0]
                 if any(pkg.startswith(p) for p in _TRACKED_PREFIXES):
                     key = _KEY_ALIASES.get(pkg, pkg)
                     dep_versions[key] = ver.strip()
                 break
 
+    # python_version 读自 .python-version（单一源，避免与 pyproject requires-python 漂移）
+    dot_python_version_path = PROJECT_ROOT / ".python-version"
+    if dot_python_version_path.exists():
+        python_version = dot_python_version_path.read_text(encoding="utf-8").strip()
+    else:
+        python_version = "3.13"  # fallback：与 .python-version 默认值一致
+
     data = {
         "version": version,
         "channel": "stable",
-        "python_version": "3.13",
+        "python_version": python_version,
         "dep_versions": dep_versions,
     }
     version_path = dist_dir / "version.json"

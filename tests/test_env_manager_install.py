@@ -4,7 +4,11 @@ import io
 import tarfile
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from vibeocr.env_manager import (
+    _check_imports,
+    _load_dep_specs,
     ensure_mineru_models,
     install_dependencies,
     install_embedded_dependencies,
@@ -318,3 +322,156 @@ class TestEnsureMineruModels:
         ):
             ok, _msg = ensure_mineru_models(tmp_path)
         assert not ok
+
+
+class TestLoadDepSpecs:
+    """_load_dep_specs 依赖规格加载测试"""
+
+    def test_loads_from_real_pyproject_returns_actual_versions(self):
+        """从真实 pyproject.toml 加载时，应返回实际版本（非陈旧 fallback）"""
+        # 重置模块级缓存，强制重新加载
+        import vibeocr.env_manager as em
+
+        em._dep_specs_cache = None
+
+        specs = _load_dep_specs()
+
+        # 关键：paddleocr 实际 >=3.7.0，旧 fallback 是 3.6.0
+        assert "paddleocr" in specs
+        assert "3.7.0" in specs["paddleocr"], (
+            f"应反映 pyproject 实际版本，got: {specs['paddleocr']}"
+        )
+        # mineru 实际 >=3.3.1，旧 fallback 是 3.2.0
+        assert "mineru" in specs
+        assert "3.3.1" in specs["mineru"], (
+            f"应反映 pyproject 实际版本，got: {specs['mineru']}"
+        )
+        # paddlepaddle-gpu
+        assert "paddlepaddle-gpu" in specs
+
+    def test_raises_when_pyproject_missing_and_no_version_json(self, tmp_path):
+        """pyproject.toml 和 version.json 都不存在时，应 raise 而非返回空 dict"""
+        # 重置缓存
+        import vibeocr.env_manager as em
+
+        em._dep_specs_cache = None
+
+        with (
+            patch("vibeocr.env_manager.get_project_root", return_value=tmp_path),
+            pytest.raises(RuntimeError, match=r"pyproject\.toml"),
+        ):
+            _load_dep_specs()
+
+    def test_raises_with_repair_hint(self, tmp_path):
+        """raise 时应包含修复提示（告知用户如何修复）"""
+        import vibeocr.env_manager as em
+
+        em._dep_specs_cache = None
+
+        with (
+            patch("vibeocr.env_manager.get_project_root", return_value=tmp_path),
+            pytest.raises(RuntimeError) as exc_info,
+        ):
+            _load_dep_specs()
+        # 提示应指向 pyproject.toml 或 uv sync
+        msg = str(exc_info.value)
+        assert "pyproject.toml" in msg
+
+    def test_uses_cache_on_second_call(self):
+        """第二次调用应命中缓存，不重新解析"""
+        import vibeocr.env_manager as em
+
+        em._dep_specs_cache = None
+        _load_dep_specs()
+        assert em._dep_specs_cache is not None
+        # 篡改缓存证明第二次返回的是缓存
+        em._dep_specs_cache["__sentinel__"] = "from_cache"
+        second = _load_dep_specs()
+        assert second.get("__sentinel__") == "from_cache"
+        # 清理：恢复真实缓存
+        em._dep_specs_cache = None
+        _load_dep_specs()
+
+
+class TestCheckImportsPrimitive:
+    """_check_imports 原语测试（消除 4 处 subprocess 重复）"""
+
+    def test_returns_mapping_of_package_to_bool(self, tmp_path):
+        """应返回 {包名: 是否可导入} 映射，key 用包名而非模块名"""
+        python_exe = tmp_path / "python.exe"
+        python_exe.touch()
+
+        # 模拟所有 import 都成功
+        def mock_run(cmd, **kwargs):
+            r = MagicMock()
+            r.returncode = 0
+            r.stderr = ""
+            return r
+
+        with patch("vibeocr.env_manager.subprocess.run", side_effect=mock_run):
+            result = _check_imports(python_exe)
+
+        # key 应是包名（paddlepaddle），不是模块名（paddle）
+        assert "paddlepaddle" in result
+        assert "paddleocr" in result
+        assert "mineru" in result
+        assert "torch" in result
+        assert all(isinstance(v, bool) for v in result.values())
+
+    def test_marks_missing_module_as_false(self, tmp_path):
+        """import 失败的模块应标记为 False"""
+        python_exe = tmp_path / "python.exe"
+        python_exe.touch()
+
+        def mock_run(cmd, **kwargs):
+            r = MagicMock()
+            # cmd 形如 [python, "-c", "import paddle"]；paddle 失败，其余成功
+            import_code = cmd[cmd.index("-c") + 1] if "-c" in cmd else ""
+            r.returncode = 1 if import_code == "import paddle" else 0
+            r.stderr = ""
+            return r
+
+        with patch("vibeocr.env_manager.subprocess.run", side_effect=mock_run):
+            result = _check_imports(python_exe)
+
+        assert result["paddlepaddle"] is False
+
+    def test_covers_same_modules_as_ocr_check_modules(self, tmp_path):
+        """检测的模块集应与 env_config.OCR_CHECK_MODULES 一致（单一源）"""
+        python_exe = tmp_path / "python.exe"
+        python_exe.touch()
+
+        with patch("vibeocr.env_manager.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0, stderr="")
+            result = _check_imports(python_exe)
+
+        from vibeocr.services.env_config import OCR_CHECK_MODULES
+
+        # 返回的 key 集合应等于 OCR_CHECK_MODULES 的 value（包名）集合
+        assert set(result.keys()) == set(OCR_CHECK_MODULES.values())
+
+    def test_uses_extended_timeout_for_paddle(self, tmp_path):
+        """paddle 首次导入需初始化 CUDA，应使用延长 timeout（而非默认 15s）"""
+        python_exe = tmp_path / "python.exe"
+        python_exe.touch()
+
+        captured = []
+
+        def mock_run(cmd, **kwargs):
+            captured.append(kwargs.get("timeout"))
+            r = MagicMock()
+            r.returncode = 0
+            r.stderr = ""
+            return r
+
+        with patch("vibeocr.env_manager.subprocess.run", side_effect=mock_run):
+            _check_imports(python_exe)
+
+        # 从 cmd 取出 import 的模块名，对应其 timeout
+        from vibeocr.services.env_config import OCR_CHECK_TIMEOUTS
+
+        # OCR_CHECK_TIMEOUTS 应存在且 paddle 的 timeout 显著大于默认
+        assert "paddle" in OCR_CHECK_TIMEOUTS
+        assert OCR_CHECK_TIMEOUTS["paddle"] >= 60, (
+            "paddle 首次导入需初始化 CUDA，timeout 应 >= 60s"
+        )

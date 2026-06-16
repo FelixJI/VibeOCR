@@ -5,13 +5,8 @@
 
 import sys
 from pathlib import Path
-from typing import Literal
 
-# 环境模式类型
-EnvironmentMode = Literal["virtualenv", "portable", "unknown"]
-
-# Python 版本
-PYTHON_VERSION = "3.13.0"
+# Python 版本（仅保留短版本；完整版本由 PYTHON_VERSION_SHORT + PATCH 拼出）
 PYTHON_VERSION_SHORT = "3.13"
 
 # ---------------------------------------------------------------------------
@@ -42,14 +37,6 @@ PYTHON_BUILD_STANDALONE_MIRRORS = [
     "https://ghproxy.com/" + PYTHON_BUILD_STANDALONE_BASE,
 ]
 
-# pip 下载源
-PIP_MIRROR_SOURCES = {
-    "tsinghua": "https://pypi.tuna.tsinghua.edu.cn/simple",
-    "aliyun": "https://mirrors.aliyun.com/pypi/simple/",
-    "ustc": "https://mirrors.ustc.edu.cn/pypi/web/simple",
-    "official": "https://pypi.org/simple",
-}
-
 # PyTorch CUDA 镜像源
 PYTORCH_MIRROR_SOURCES = {
     "nju": "https://mirrors.nju.edu.cn/pytorch/whl",
@@ -57,61 +44,36 @@ PYTORCH_MIRROR_SOURCES = {
     "official": "https://download.pytorch.org/whl",
 }
 
-# 默认 pip 源
-DEFAULT_PIP_MIRROR = "tsinghua"
-
 # 默认 PyTorch 镜像源（国内）
 DEFAULT_PYTORCH_MIRROR = "nju"
 
-# PaddlePaddle 版本
-PADDLE_VERSION = "3.3.0"
-
-# PaddleX 模型下载源
-PADDLEX_MODEL_SOURCES = {
-    "bos": "BOS",  # 百度对象存储（国内快）
-    "huggingface": "HuggingFace",  # HuggingFace（国际）
-}
-
-# 便携式 Python 目录名
-PORTABLE_PYTHON_DIR = "python_portable"
+# 便携式 Python 目录名（与运行时实际使用的 project_root/python/ 一致）
+PORTABLE_PYTHON_DIR = "python"
 
 # 配置目录名
 CONFIG_DIR = "config"
 
-# 依赖包列表
-CORE_DEPENDENCIES = [
-    "paddlepaddle",
-    "paddleocr",
-]
+# ---------------------------------------------------------------------------
+# OCR 依赖检测单一清单源（SSOT）
+# ---------------------------------------------------------------------------
+# {import 模块名: pip 包名} —— 检测环境时 import 模块名，结果/缓存用包名做 key。
+# - paddle 模块：paddlepaddle-gpu 与 paddlepaddle(CPU) 均导入为 paddle，故只检 paddle
+# - 版本约束不在此处，安装版本来自 pyproject.toml（env_manager._load_dep_specs）
+OCR_CHECK_MODULES: dict[str, str] = {
+    "paddle": "paddlepaddle",
+    "paddleocr": "paddleocr",
+    "mineru": "mineru",
+    "torch": "torch",
+}
 
-# Paddle 依赖
-PADDLE_DEPENDENCIES = [
-    "paddlepaddle",
-    "paddleocr",
-]
-
-# MinerU 依赖
-MINERU_DEPENDENCIES = [
-    "mineru",
-]
-
-# 向后兼容
-OCR_DEPENDENCIES = PADDLE_DEPENDENCIES + MINERU_DEPENDENCIES
-
-# MinerU 安装规格（便携模式用，包含 torch）
-MINERU_PIPELINE_SPEC = "mineru[core]"
-
-
-def get_pip_mirror(name: str = DEFAULT_PIP_MIRROR) -> str:
-    """获取 pip 镜像源 URL
-
-    Args:
-        name: 镜像源名称
-
-    Returns:
-        镜像源 URL
-    """
-    return PIP_MIRROR_SOURCES.get(name, PIP_MIRROR_SOURCES[DEFAULT_PIP_MIRROR])
+# 各模块 import 检测的 timeout（秒）。
+# paddle 首次导入需初始化 CUDA 上下文，显著慢于其他模块。
+OCR_CHECK_TIMEOUTS: dict[str, int] = {
+    "paddle": 60,
+    "paddleocr": 30,
+    "mineru": 15,
+    "torch": 15,
+}
 
 
 def get_pytorch_mirror(
@@ -149,13 +111,16 @@ def is_macos() -> bool:
 
 
 def get_project_root() -> Path:
-    """获取项目根目录"""
-    # 从当前文件向上查找包含 pyproject.toml 的目录
+    """获取项目根目录
+
+    判断条件与 env_manager.get_project_root 一致：向上查找含 src/vibeocr 的目录。
+    统一条件避免两份实现在非标准布局下返回不同结果。
+    """
     current = Path(__file__).resolve()
-    for parent in current.parents:
-        if (parent / "pyproject.toml").exists():
-            return parent
-    # 如果找不到，返回 src 的父目录
+    while current.parent != current:
+        if (current / "src" / "vibeocr").exists():
+            return current
+        current = current.parent
     return Path(__file__).parent.parent.parent.parent
 
 
