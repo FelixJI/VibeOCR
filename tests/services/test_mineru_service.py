@@ -264,6 +264,10 @@ class TestMinerUService:
             patch("vibeocr.services.mineru_service.subprocess.Popen") as mock_popen,
             patch("vibeocr.services.mineru_service.httpx") as mock_httpx,
             patch("vibeocr.services.mineru_service.socket"),
+            # NetworkDetector.__init__ 会触发 generate_machine_id() 调 wmic
+            # （subprocess.Popen），与被 mock 的 Popen 冲突导致 assert_called_once 失败。
+            # mock 掉 NetworkDetector 消除该副作用。
+            patch("vibeocr.network_detector.NetworkDetector"),
         ):
             mock_popen.return_value = mock_process
             mock_httpx.get.return_value = mock_health_resp
@@ -292,6 +296,8 @@ class TestMinerUService:
             patch("vibeocr.services.mineru_service.subprocess.Popen") as mock_popen,
             patch("vibeocr.services.mineru_service.httpx") as mock_httpx,
             patch("vibeocr.services.mineru_service.socket"),
+            # 同上：避免 generate_machine_id 的 wmic Popen 干扰断言。
+            patch("vibeocr.network_detector.NetworkDetector"),
         ):
             mock_popen.return_value = mock_process
             mock_httpx.get.return_value = mock_health_resp
