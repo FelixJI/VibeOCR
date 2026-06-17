@@ -51,42 +51,47 @@
 不同用户硬件,需按实际 GPU 动态选 tag。两条路径的 torch 版本可能不同,但都通过
 各自的 index 安装,功能上 MinerU 对 torch 小版本差异不敏感。
 
-## 3. ⚠️ nvidia 库依赖声明问题(待决策)
+## 3. ✅ nvidia 库依赖问题已解决(方案 A,2026-06-17 验证)
 
-### 现状(2026-06-16 核实)
+### 历史问题(2026-06-16 发现)
 
-`pyproject.toml` 的 nvidia 依赖声明**与 paddlepaddle-gpu 3.3.1 的实际要求不一致**:
+`pyproject.toml` 曾显式声明 8 个 nvidia-* 依赖,包名后缀混乱(cu12 / cu13 / 无后缀混用),
+与 `paddlepaddle-gpu 3.3.1` 通过 `Requires-Dist` 要求的 cu12 系列包不匹配。导致 `.venv`
+里同时装了两套 nvidia 库(cu12 + cu13),体积膨胀且存在潜在 DLL 冲突风险。
 
-| pyproject 声明 | paddlepaddle-gpu 3.3.1 实际 Requires-Dist |
-|---------------|-------------------------------------------|
-| `nvidia-cudnn-cu13>=9.23.1.3` | `nvidia-cudnn-cu12==9.9.0.52` |
-| `nvidia-cublas-cu12>=12.9.2.10` | `nvidia-cublas-cu12==12.9.0.13` |
-| `nvidia-cublas>=13.5.1.27` | (无对应;无后缀名指向 CUDA 13 系列包) |
-| `nvidia-cufft>=12.3.0.29` | `nvidia-cufft-cu12==11.4.0.6` |
-| `nvidia-curand>=10.4.3.29` | `nvidia-curand-cu12==10.3.10.19` |
-| `nvidia-cusolver>=12.2.2.18` | `nvidia-cusolver-cu12==11.7.4.40` |
-| `nvidia-cusparse>=12.8.1.7` | `nvidia-cusparse-cu12==12.5.9.5` |
-| `nvidia-cuda-runtime>=13.3.29` | `nvidia-cuda-runtime-cu12==12.9.37` |
+### 根因(方案 A 验证时发现)
 
-### 影响
+删除全部 8 个 nvidia-* 显式依赖并 `uv sync` 后,发现:
+- paddlepaddle-gpu 声明的 `nvidia-*-cu12==x.y` 传递依赖**被 uv 解析但未锁定安装**
+  (uv 在 Windows 上不强制安装这些 optional 依赖)。
+- **paddle GPU 推理实际不依赖 pip 包带的 CUDA 运行时库**,而是直接使用
+  **系统级 NVIDIA 驱动**提供的 CUDA 运行时。
 
-- pyproject 同时拉入了 **cu12** (paddle 需要的) 和 **cu13/无后缀** (CUDA 13 系列新命名)
-  两套 nvidia 库,`.venv` 中实际并存:
-  - `nvidia-cublas 13.5.1.27` + `nvidia-cublas-cu12 12.9.2.10`
-  - `nvidia-cudnn-cu13 9.23.1.3` + (paddle 自带的 cudnn-cu12)
-  - `nvidia-cuda-runtime 13.3.29` + (paddle 自带的 cuda-runtime-cu12)
-- 当前 GPU 推理能跑,说明 paddle 实际加载的是其自带 cu12 库;cu13 系列库处于"装了但
-  可能没被使用"的状态,存在潜在的 DLL 冲突/体积膨胀风险。
+### 最终方案:删除全部 nvidia-* 显式依赖
 
-### 待决策(改 pyproject 前必须验证 GPU 推理)
+验证环境:NVIDIA 驱动 610.47 / CUDA UMD 13.3,GPU Compute Capability 8.9。
 
-1. **方案 A(推荐)**:删除 pyproject 中所有 nvidia-* 显式依赖,完全依赖
-   paddlepaddle-gpu 自带的 cu12 传递依赖。理由:paddle 已声明精确的 cu12 依赖,
-   显式重复声明只会引入版本冲突。
-2. **方案 B**:如果某些组件确实需要 cu13 库(需证据),则保留 cu13 声明,但应把
-   包名统一为 cu13 系列(`nvidia-cudnn-cu13`, `nvidia-cublas-cu13`...),而非混用
-   cu12/cu13/无后缀。
-3. **验证方法**:改后在真实 GPU 机器上跑一次 OCR + PDF 文档解析,确认无 DLL 加载失败。
+```
+# uv sync 后 nvidia 包数量
+installed nvidia packages: 0
+
+# paddle GPU 初始化(无任何 nvidia pip 包)
+paddle import OK
+CUDAPlace(0) OK
+
+# PaddleOCR 完整推理(PP-OCRv6_medium,GPU)
+PaddleOCR init OK          # 加载 PP-OCRv6_medium_det / PP-OCRv6_medium_rec
+OCR predict OK             # GPU 推理成功
+GPU Compute Capability: 8.9, Driver API Version: 13.3, Runtime API Version: 12.9
+```
+
+### 结论与前提
+
+- **本机(开发环境)无需任何 nvidia-* pip 包**,系统 NVIDIA 驱动足够。
+- **便携部署环境**:`env_manager.install_dependencies` 不再安装 nvidia 包;
+  若目标机器无 NVIDIA 驱动,会回退 CPU 模式(原有逻辑不变)。
+- **风险**:若某机器驱动过旧(< paddle 编译时的 CUDA 版本),可能需要手动装
+  cu12 运行时库。届时按需在便携环境补充,不在 pyproject 全局声明。
 
 ## 4. 依赖版本单一源 (SSOT)
 
