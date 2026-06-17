@@ -127,15 +127,33 @@ nvidia 包)现在正确拆成独立 argv 元素(此前整个字符串被当成�
 ### GPU/CPU 后端切换(第一批底层,UI 待第二批)
 
 - `install_embedded_dependencies` / `install_dependencies` 新增 `force_backend` 参数
-  (`"gpu"`/`"cpu"`/`None`),用于首启让用户选择(第二批 UI)。
+  (`"gpu"`/`"cpu"`/`None`),用于首启让用户选择或设置页切换。
 - `switch_paddle_backend(project_root, target)`:卸载当前 paddle(两包名都卸防冲突,
   GPU→CPU 时额外卸 7 个 nvidia 包回收 ~1GB)→ 安装目标后端 → 写 `pending_backend`
   到缓存。
 - `machine_cache` 新增 `pending_backend` 字段(可选,向后兼容)+ `update_cache_field`
   辅助函数原地更新单字段。
 - `resolve_use_gpu` 优先读 `pending_backend`(用户已选且待生效),其次 `hardware_info.has_gpu`。
-- 切换采用"标记待切换,下次重启生效"语义:设置页调用 `switch_paddle_backend` 完成安装
-  后写 `pending_backend`,下次启动 worker 时 `resolve_use_gpu` 读到它即按新后端启动。
+
+### GPU/CPU 后端选择 UI(第二批,已交付)
+
+三处 UI 触点,复用第一批底层原语:
+
+1. **首启合并对话框**(`widgets/backend_choice_dialog.py` `BackendChoiceDialog`):
+   依赖缺失时弹出,GPU/CPU 单选 + 体积/速度提示(GPU 约 1.5GB / CPU 约 150MB),
+   无 NVIDIA GPU 时 GPU 选项禁用。点"开始安装"后用 `InstallWorker(force_backend=选择)`
+   跑安装,进度区实时显示。
+2. **设置页"推理后端"**(`widgets/backend_options_widget.py` `BackendOptionsWidget` +
+   `settings_page_controller._init_backend_options`):显示当前后端 + 待切换状态,
+   单选切换后点"应用"只写 `pending_backend` 标记(不跑 pip),提示"下次重启自动下载并切换"。
+3. **重启消费**(`main_window._check_pending_backend` + `widgets/switch_dialog.py`
+   `SwitchDialog`):启动时检测 `pending_backend`,若与当前后端不一致则弹 `SwitchDialog`
+   跑 `switch_paddle_backend`(进度对话框),成功后清除标记并启动 worker;失败则保留标记、
+   不启动 worker、状态栏提示重试。pending 与当前一致时静默清除标记。
+
+`InstallWorker`(`widgets/install_dialog.py`)加 `force_backend` 参数:`None` 时保持
+自动检测(向后兼容),指定时跳过检测直接透传到 `install_embedded_dependencies`。
+
 
 
 ## 4. 依赖版本单一源 (SSOT)
