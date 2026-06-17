@@ -82,6 +82,7 @@ class SettingsPageController:
 
         self._init_screenshot_options(nav_list, stacked)
         self._init_pdf_options(nav_list, stacked)
+        self._init_backend_options(nav_list, stacked)
         self._init_settings_page()
 
     def _init_screenshot_options(
@@ -222,6 +223,31 @@ class SettingsPageController:
 
         # 连接全局设置信号
         self._pdf_options.settings_changed.connect(self._on_pdf_settings_changed)
+
+    def _init_backend_options(
+        self, nav_list: QListWidget | None, stacked: QStackedWidget | None
+    ) -> None:
+        """初始化推理后端选项页面"""
+        if not nav_list or not stacked:
+            return
+
+        from vibeocr.widgets.backend_options_widget import BackendOptionsWidget
+
+        nav_list.addItem("推理后端")
+
+        page = QWidget()
+        page_layout = QVBoxLayout(page)
+        page_layout.setContentsMargins(16, 16, 16, 16)
+        page_layout.setSpacing(12)
+
+        self._backend_options = BackendOptionsWidget(self._project_root)
+        page_layout.addWidget(self._backend_options)
+
+        spacer = QSpacerItem(
+            20, 40, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Expanding
+        )
+        page_layout.addItem(spacer)
+        stacked.addWidget(page)
 
     def _on_pdf_pipeline_switching(self, old_pipeline, options) -> None:
         self._pdf_switching = True
