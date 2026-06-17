@@ -592,35 +592,17 @@ class MainWindow(QMainWindow):
         self._subprocess_manager.preload_pipelines(pipelines)
 
     def _show_install_dialog(self, missing: list) -> None:
-        """显示安装提示对话框"""
-        missing_str = ", ".join(missing)
-        reply = QMessageBox.question(
-            self,
-            "OCR功能需要安装依赖",
-            f"OCR功能需要安装以下依赖:\n{missing_str}\n\n"
-            "这将下载并安装PaddlePaddle和PaddleX。\n"
-            "系统会自动检测GPU，优先安装GPU版本（如有CUDA环境），\n"
-            "否则安装CPU版本。GPU版本需要cuDNN运行时库。\n"
-            "可能需要几分钟时间。\n\n"
-            "是否现在安装？",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        )
+        """显示后端选择 + 安装对话框（首启合并对话框）"""
+        from vibeocr.widgets.backend_choice_dialog import BackendChoiceDialog
 
-        if reply == QMessageBox.StandardButton.Yes:
-            self._start_install()
-        else:
-            QMessageBox.information(
-                self, "提示", "OCR功能将不可用。\n您可以稍后通过菜单重新安装。"
-            )
-
-    def _start_install(self) -> None:
-        """开始安装依赖"""
-        from vibeocr.widgets.install_dialog import InstallDialog
-
-        dialog = InstallDialog(self._project_root, self)
+        dialog = BackendChoiceDialog(self._project_root, self)
         dialog.finished.connect(self._on_install_finished)
         dialog.install_succeeded.connect(self._on_install_succeeded)
         dialog.exec()
+
+    def _start_install(self) -> None:
+        """开始安装依赖（保留入口，直接走首启合并对话框）"""
+        self._show_install_dialog([])
 
     @Slot(int)
     def _on_install_finished(self, result: int) -> None:
