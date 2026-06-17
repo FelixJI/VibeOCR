@@ -24,7 +24,7 @@ from PySide6.QtWidgets import (
 )
 
 from vibeocr import env_manager
-from vibeocr.machine_cache import is_cache_valid
+from vibeocr.machine_cache import is_cache_valid, update_cache_field
 from vibeocr.managers import (
     ConfigManager,
     DependencyManager,
@@ -392,12 +392,68 @@ class MainWindow(QMainWindow):
                 self._statusbar.showMessage("OCR功能已就绪")
             logging.info("OCR功能已就绪")
 
+            # 检测是否有待生效的后端切换（重启消费 pending_backend）
+            needs_switch, target = self._check_pending_backend()
+            if needs_switch and target:
+                self._show_switch_dialog(target)
+                return  # 切换完成后再启动 worker
+
             # 启动子进程 Worker（依赖检测完成后立即启动）
             self._start_subprocess_worker()
         else:
             self._ocr_ready = False
             missing_str = ", ".join(missing)
             self._statusbar.showMessage(f"OCR功能未就绪: {missing_str}")
+
+    def _check_pending_backend(self) -> tuple[bool, str | None]:
+        """检测是否有待生效的后端切换（重启消费 pending_backend）
+
+        Returns:
+            (是否需要切换, 目标后端 "gpu"/"cpu"/None)
+        """
+        is_valid, cached_data = is_cache_valid(self._project_root)
+        if not (is_valid and cached_data):
+            return False, None
+
+        pending = cached_data.get("pending_backend")
+        if not pending:
+            return False, None
+
+        # 当前实际后端：读 hardware_info.has_gpu（switch_paddle_backend 会更新它）
+        hardware_info = cached_data.get("hardware_info") or {}
+        current = "gpu" if hardware_info.get("has_gpu") else "cpu"
+
+        if pending == current:
+            # 一致，清除标记，无需切换
+            update_cache_field(self._project_root, "pending_backend", None)
+            logging.info("[后端切换] pending_backend 与当前一致，已清除标记")
+            return False, None
+
+        logging.info(
+            "[后端切换] 检测到 pending_backend=%s（当前 %s），将切换", pending, current
+        )
+        return True, pending
+
+    def _show_switch_dialog(self, target: str) -> None:
+        """显示后端切换对话框（重启消费 pending_backend）"""
+        from vibeocr.widgets.switch_dialog import SwitchDialog
+
+        name = "GPU" if target == "gpu" else "CPU"
+        self._statusbar.showMessage(f"正在切换到 {name} 后端...")
+
+        def _on_switch_finished(result: int) -> None:
+            if result == 1:
+                # 切换成功，清除 pending 标记
+                update_cache_field(self._project_root, "pending_backend", None)
+                self._statusbar.showMessage("后端切换完成，正在启动 OCR 服务")
+                self._start_subprocess_worker()
+            else:
+                self._statusbar.showMessage("后端切换失败，请在设置页重试")
+                self._ocr_ready = False
+
+        dialog = SwitchDialog(self._project_root, target, self)
+        dialog.finished.connect(_on_switch_finished)
+        dialog.exec()
 
     def _start_subprocess_worker(self) -> None:
         """依赖检测完成后启动子进程 Worker
