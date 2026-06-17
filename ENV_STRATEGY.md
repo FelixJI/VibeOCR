@@ -103,6 +103,41 @@ OCR predict OK(GPU 推理成功)
 paddle 3.3 的 PIR+oneDNN bug(见第 5 节),导致 OCR 完全不可用。当时文档里"OCR predict OK"
 的验证记录不成立(很可能只验证了 paddle import,没跑完整 PaddleOCR predict)。
 
+### 便携版安装逻辑修复(2026-06-17,第一批)
+
+调研发现便携版 GPU 安装**从未真正可用过**,存在三个叠加 bug,现已全部修复:
+
+1. **CUDA 13 误映射 cu129** → 改为 `cu130`。cu129 的 paddlepaddle-gpu wheel 不声明
+   nvidia 依赖、也不内嵌 DLL;cu130 wheel 的 METADATA 声明 7 个 cu13 nvidia 依赖
+   (nvidia-cublas==13.0.2.14 等),与开发环境一致。
+
+2. **cu-tag 二次查表 bug**:`detect_gpu()` 返回的 `cuda_version` 已是 cu-tag
+   (如 "cu130"),但 `_install_paddle_stack` 曾再用 `CUDA_VERSION_MAP.get(cuda_version)`
+   把 cu-tag 当原始版本查表 → 返回 None → 有 GPU 也回退装 CPU。现已直接用 cu-tag
+   构造 index URL。
+
+3. **7 个 cu13 nvidia 包从不安装**:便携安装路径(`_install_paddle_stack`)此前只装
+   paddlepaddle-gpu + paddleocr + mineru (+torch),从不装 nvidia 包。paddle GPU wheel
+   又不内嵌 DLL,导致 `cublas64_13.dll` 缺失 → 运行时回退 CPU。现已从 specs 读取 7 个
+   cu13 包并显式安装(单条 pip 命令,从 PyPI)。
+
+附带修复:`subprocess.run` 的 argv 传参——多包规格(如 "torch torchvision" 或 7 个
+nvidia 包)现在正确拆成独立 argv 元素(此前整个字符串被当成单个非法 requirement)。
+
+### GPU/CPU 后端切换(第一批底层,UI 待第二批)
+
+- `install_embedded_dependencies` / `install_dependencies` 新增 `force_backend` 参数
+  (`"gpu"`/`"cpu"`/`None`),用于首启让用户选择(第二批 UI)。
+- `switch_paddle_backend(project_root, target)`:卸载当前 paddle(两包名都卸防冲突,
+  GPU→CPU 时额外卸 7 个 nvidia 包回收 ~1GB)→ 安装目标后端 → 写 `pending_backend`
+  到缓存。
+- `machine_cache` 新增 `pending_backend` 字段(可选,向后兼容)+ `update_cache_field`
+  辅助函数原地更新单字段。
+- `resolve_use_gpu` 优先读 `pending_backend`(用户已选且待生效),其次 `hardware_info.has_gpu`。
+- 切换采用"标记待切换,下次重启生效"语义:设置页调用 `switch_paddle_backend` 完成安装
+  后写 `pending_backend`,下次启动 worker 时 `resolve_use_gpu` 读到它即按新后端启动。
+
+
 ## 4. 依赖版本单一源 (SSOT)
 
 经过 B1 整改,依赖规格的加载链如下:

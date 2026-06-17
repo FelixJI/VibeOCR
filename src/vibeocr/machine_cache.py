@@ -252,6 +252,27 @@ def create_cache_entry(
     return None
 
 
+def update_cache_field(project_root: Path, key: str, value: object) -> bool:
+    """原地更新缓存中的单个顶层字段（保留其余字段）
+
+    用于 switch_paddle_backend 写入 pending_backend、设置页标记待切换等场景，
+    避免重建整个缓存条目。
+
+    Args:
+        project_root: 项目根目录
+        key: 顶层字段名（如 "pending_backend"）
+        value: 字段值
+
+    Returns:
+        是否更新成功（缓存不存在/无效时返回 False）
+    """
+    is_valid, cached_data = is_cache_valid(project_root)
+    if not (is_valid and cached_data):
+        return False
+    cached_data[key] = value
+    return save_cache(project_root, cached_data)
+
+
 def refresh_cache(project_root: Path) -> bool:
     """
     刷新缓存（重新生成缓存文件）

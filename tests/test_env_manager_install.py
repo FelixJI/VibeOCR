@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from vibeocr.env_manager import (
+    _NVIDIA_CU13_PACKAGES,
     _check_imports,
     _load_dep_specs,
     ensure_mineru_models,
@@ -14,6 +15,7 @@ from vibeocr.env_manager import (
     install_embedded_dependencies,
     install_embedded_python,
     resolve_use_gpu,
+    switch_paddle_backend,
 )
 
 
@@ -189,7 +191,10 @@ class TestInstallSpecs:
         assert "mineru[all]" not in joined
 
     def test_embedded_deps_gpu_with_cuda_version(self, tmp_path):
-        """便携模式 GPU 安装应使用 paddlepaddle-gpu"""
+        """便携模式 GPU 安装应使用 paddlepaddle-gpu + cu-tag index
+
+        cuda_version 是 detect_gpu() 返回的 cu-tag（如 "cu121"），直接用作 index URL。
+        """
         python_exe = tmp_path / "python.exe"
         python_exe.touch()
 
@@ -216,7 +221,7 @@ class TestInstallSpecs:
             install_embedded_dependencies(
                 tmp_path,
                 use_gpu=True,
-                cuda_version="12.1",
+                cuda_version="cu121",
                 progress_callback=lambda s, m: None,
             )
 
@@ -227,7 +232,7 @@ class TestInstallSpecs:
         assert "cu121" in joined
 
     def test_embedded_deps_gpu_without_cuda_falls_back_to_default(self, tmp_path):
-        """便携模式 GPU 无 CUDA 版本时应使用默认 cu129"""
+        """便携模式 GPU 无 CUDA 版本时应使用默认 cu130"""
         python_exe = tmp_path / "python.exe"
         python_exe.touch()
 
@@ -259,10 +264,10 @@ class TestInstallSpecs:
         assert len(paddle_cmd) > 0
         joined = " ".join(paddle_cmd[0])
         assert "paddlepaddle-gpu" in joined
-        assert "cu129" in joined
+        assert "cu130" in joined
 
     def test_install_deps_gpu_with_cuda_version(self, tmp_path):
-        """完整安装 GPU 应使用 paddlepaddle-gpu"""
+        """完整安装 GPU 应使用 paddlepaddle-gpu + cu-tag index"""
         python_exe = tmp_path / "python.exe"
         python_exe.touch()
 
@@ -286,7 +291,7 @@ class TestInstallSpecs:
             ),
             patch("vibeocr.env_manager.subprocess.run", side_effect=mock_run),
         ):
-            install_dependencies(tmp_path, use_gpu=True, cuda_version="12.6")
+            install_dependencies(tmp_path, use_gpu=True, cuda_version="cu126")
 
         paddle_cmd = [c for c in calls if "paddlepaddle" in " ".join(c)]
         assert len(paddle_cmd) > 0
@@ -349,6 +354,11 @@ class TestLoadDepSpecs:
         )
         # paddlepaddle-gpu
         assert "paddlepaddle-gpu" in specs
+        # nvidia cu13 运行时依赖（paddle GPU wheel 不内嵌 DLL，需显式声明）
+        assert "nvidia-cublas" in specs
+        assert specs["nvidia-cublas"] == "nvidia-cublas==13.0.2.14", (
+            f"nvidia-cublas 版本应与 paddle Requires-Dist 精确匹配，got: {specs['nvidia-cublas']}"
+        )
 
     def test_raises_when_pyproject_missing_and_no_version_json(self, tmp_path):
         """pyproject.toml 和 version.json 都不存在时，应 raise 而非返回空 dict"""
@@ -540,3 +550,217 @@ class TestResolveUseGpu:
 
         assert result is True
         mock_detect.assert_called_once()
+
+    def test_pending_backend_gpu_overrides_hardware_info(self, tmp_path):
+        """pending_backend=gpu 优先于 hardware_info.has_gpu=False"""
+        cached = {
+            "version": 1,
+            "machine_id": "any",
+            "pending_backend": "gpu",
+            "hardware_info": {"has_gpu": False, "cuda_version": None},
+        }
+        with (
+            patch("vibeocr.env_manager.is_cache_valid", return_value=(True, cached)),
+            patch("vibeocr.env_manager.detect_gpu") as mock_detect,
+        ):
+            result = resolve_use_gpu(tmp_path)
+
+        assert result is True
+        mock_detect.assert_not_called()
+
+    def test_pending_backend_cpu_overrides_hardware_info(self, tmp_path):
+        """pending_backend=cpu 优先于 hardware_info.has_gpu=True"""
+        cached = {
+            "version": 1,
+            "machine_id": "any",
+            "pending_backend": "cpu",
+            "hardware_info": {"has_gpu": True, "cuda_version": "cu130"},
+        }
+        with (
+            patch("vibeocr.env_manager.is_cache_valid", return_value=(True, cached)),
+            patch("vibeocr.env_manager.detect_gpu") as mock_detect,
+        ):
+            result = resolve_use_gpu(tmp_path)
+
+        assert result is False
+        mock_detect.assert_not_called()
+
+
+class TestNvidiaCu13Install:
+    """便携版 GPU 安装应显式安装 7 个 cu13 nvidia 运行时库"""
+
+    @staticmethod
+    def _run_install(tmp_path, **kwargs):
+        """共享的 mock 安装执行器，返回捕获的 subprocess.run 命令列表"""
+        python_exe = tmp_path / "python.exe"
+        python_exe.touch()
+        calls = []
+
+        def mock_run(cmd, **kw):
+            calls.append(cmd)
+            r = MagicMock()
+            r.returncode = 0
+            r.stderr = ""
+            return r
+
+        with (
+            patch(
+                "vibeocr.env_manager.get_pip_source",
+                return_value="https://pypi.org/simple",
+            ),
+            patch(
+                "vibeocr.env_manager.get_embedded_python_executable",
+                return_value=python_exe,
+            ),
+            patch("vibeocr.env_manager.subprocess.run", side_effect=mock_run),
+        ):
+            install_embedded_dependencies(
+                tmp_path, progress_callback=lambda s, m: None, **kwargs
+            )
+        return calls
+
+    def test_gpu_install_includes_all_7_nvidia_cu13_deps(self, tmp_path):
+        """GPU 安装应有一条 pip 命令包含全部 7 个 nvidia cu13 包"""
+        calls = self._run_install(tmp_path, use_gpu=True, cuda_version="cu130")
+
+        # 找包含 nvidia 的安装命令
+        nvidia_cmds = [c for c in calls if any("nvidia-" in str(a) for a in c)]
+        assert len(nvidia_cmds) >= 1, "应有 nvidia 安装命令"
+        # 全部 7 个包名应出现在同一条命令中（单条 pip install）
+        joined = " ".join(nvidia_cmds[0])
+        for pkg in _NVIDIA_CU13_PACKAGES:
+            assert pkg in joined, f"nvidia 安装命令应包含 {pkg}，实际: {joined}"
+
+    def test_gpu_install_nvidia_uses_pypi_source(self, tmp_path):
+        """nvidia 包应从 PyPI 镜像源安装（非 paddle index）"""
+        calls = self._run_install(tmp_path, use_gpu=True, cuda_version="cu130")
+        nvidia_cmds = [c for c in calls if any("nvidia-" in str(a) for a in c)]
+        assert len(nvidia_cmds) >= 1
+        joined = " ".join(nvidia_cmds[0])
+        assert "pypi.org/simple" in joined, "nvidia 包应从 PyPI 安装"
+
+    def test_cpu_install_does_not_install_nvidia(self, tmp_path):
+        """CPU 安装不应安装任何 nvidia 包"""
+        calls = self._run_install(tmp_path, use_gpu=False)
+        nvidia_cmds = [c for c in calls if any("nvidia-" in str(a) for a in c)]
+        assert len(nvidia_cmds) == 0, f"CPU 安装不应装 nvidia，实际出现: {nvidia_cmds}"
+
+    def test_gpu_install_uses_cu130_index_for_cuda13(self, tmp_path):
+        """CUDA 13 (cu130) 应使用 cu130 paddle index"""
+        calls = self._run_install(tmp_path, use_gpu=True, cuda_version="cu130")
+        paddle_cmd = [c for c in calls if "paddlepaddle" in " ".join(c)]
+        assert len(paddle_cmd) > 0
+        joined = " ".join(paddle_cmd[0])
+        assert "cu130" in joined, f"应使用 cu130 index，实际: {joined}"
+
+    def test_gpu_install_argv_split_for_multi_packages(self, tmp_path):
+        """多包安装命令（nvidia）应拆成独立 argv 元素，而非单个带空格字符串"""
+        calls = self._run_install(tmp_path, use_gpu=True, cuda_version="cu130")
+        nvidia_cmds = [c for c in calls if any("nvidia-" in str(a) for a in c)]
+        assert len(nvidia_cmds) >= 1
+        # 每个包应是 argv list 中独立的元素（不以空格合并）
+        cmd = nvidia_cmds[0]
+        # 找出所有 nvidia- 开头的参数
+        nv_args = [a for a in cmd if isinstance(a, str) and a.startswith("nvidia-")]
+        assert len(nv_args) == 7, (
+            f"应有 7 个独立 nvidia argv 元素，实际 {len(nv_args)}: {nv_args}"
+        )
+
+
+class TestSwitchPaddleBackend:
+    """switch_paddle_backend 测试：GPU ↔ CPU 切换"""
+
+    @staticmethod
+    def _run_switch(tmp_path, target, install_ok=True):
+        """共享的 mock 切换执行器，返回捕获的 subprocess.run 命令列表"""
+        python_exe = tmp_path / "python.exe"
+        python_exe.touch()
+        calls = []
+
+        def mock_run(cmd, **kw):
+            calls.append(cmd)
+            r = MagicMock()
+            r.returncode = 0 if install_ok else 1
+            r.stderr = "" if install_ok else "fail"
+            r.stdout = ""
+            return r
+
+        with (
+            patch(
+                "vibeocr.env_manager.get_pip_source",
+                return_value="https://pypi.org/simple",
+            ),
+            patch(
+                "vibeocr.env_manager.get_embedded_python_executable",
+                return_value=python_exe,
+            ),
+            patch("vibeocr.env_manager.subprocess.run", side_effect=mock_run),
+            patch("vibeocr.env_manager.detect_gpu", return_value=(True, "cu130")),
+            patch("vibeocr.env_manager.update_cache_field", return_value=True) as mock_update,
+        ):
+            ok, msg = switch_paddle_backend(
+                tmp_path, target, progress_callback=lambda s, m: None
+            )
+        return ok, msg, calls, mock_update
+
+    def test_switch_to_cpu_uninstalls_both_paddle_names(self, tmp_path):
+        """切到 CPU 应卸载 paddlepaddle 和 paddlepaddle-gpu 两个包名"""
+        ok, _msg, calls, _ = self._run_switch(tmp_path, "cpu")
+        assert ok
+        uninstall_cmds = [c for c in calls if "uninstall" in c]
+        assert len(uninstall_cmds) >= 1
+        joined = " ".join(uninstall_cmds[0])
+        assert "paddlepaddle" in joined
+        assert "paddlepaddle-gpu" in joined
+
+    def test_switch_to_cpu_uninstalls_nvidia_packages(self, tmp_path):
+        """切到 CPU 应额外卸载 7 个 nvidia cu13 包"""
+        ok, _msg, calls, _ = self._run_switch(tmp_path, "cpu")
+        assert ok
+        uninstall_cmds = [c for c in calls if "uninstall" in c]
+        # 至少有一条卸载命令含 nvidia 包
+        nv_uninstall = [
+            c for c in uninstall_cmds if any("nvidia-" in str(a) for a in c)
+        ]
+        assert len(nv_uninstall) >= 1, "应有卸载 nvidia 的命令"
+
+    def test_switch_to_gpu_installs_gpu_paddle_and_nvidia(self, tmp_path):
+        """切到 GPU 应安装 paddlepaddle-gpu (cu130) + 7 个 nvidia 包"""
+        ok, _msg, calls, _ = self._run_switch(tmp_path, "gpu")
+        assert ok
+        install_cmds = [c for c in calls if "install" in " ".join(c)]
+        all_joined = " ".join(" ".join(c) for c in install_cmds)
+        assert "paddlepaddle-gpu" in all_joined
+        assert "cu130" in all_joined
+        assert "nvidia-cublas" in all_joined
+
+    def test_switch_does_not_uninstall_nvidia_when_target_gpu(self, tmp_path):
+        """切到 GPU 不应卸载 nvidia 包"""
+        ok, _msg, calls, _ = self._run_switch(tmp_path, "gpu")
+        assert ok
+        uninstall_cmds = [c for c in calls if "uninstall" in c]
+        nv_uninstall = [
+            c for c in uninstall_cmds if any("nvidia-" in str(a) for a in c)
+        ]
+        assert len(nv_uninstall) == 0
+
+    def test_switch_writes_pending_backend_to_cache(self, tmp_path):
+        """切换成功后应写 pending_backend 到缓存"""
+        ok, _msg, _calls, mock_update = self._run_switch(tmp_path, "cpu")
+        assert ok
+        mock_update.assert_called_once()
+        args = mock_update.call_args[0]
+        assert args[1] == "pending_backend"
+        assert args[2] == "cpu"
+
+    def test_switch_rejects_invalid_target(self, tmp_path):
+        """无效 target 应立即失败"""
+        python_exe = tmp_path / "python.exe"
+        python_exe.touch()
+        with patch(
+            "vibeocr.env_manager.get_embedded_python_executable",
+            return_value=python_exe,
+        ):
+            ok, msg = switch_paddle_backend(tmp_path, "tpu")
+        assert not ok
+        assert "无效" in msg or "tpu" in msg
