@@ -944,6 +944,34 @@ def detect_gpu() -> tuple[bool, str | None]:
     return False, None
 
 
+def resolve_use_gpu(project_root: Path) -> bool:
+    """决定运行时是否使用 GPU（缓存优先 + 探测回退）
+
+    避免在无 GPU 的机器上硬编码 use_gpu=True，让 OCR worker 以 CPU 模式启动。
+
+    策略：
+    1. 读 machine_cache 的 hardware_info.has_gpu（依赖检测时由
+       check_embedded_environment_dependencies 写入）
+    2. 缓存有效且含 has_gpu → 直接返回
+    3. 缓存缺失/失效/无 hardware_info → 回退 detect_gpu() 实时探测
+
+    Args:
+        project_root: 项目根目录
+
+    Returns:
+        是否使用 GPU
+    """
+    is_valid, cached_data = is_cache_valid(project_root)
+    if is_valid and cached_data:
+        hardware_info = cached_data.get("hardware_info") or {}
+        if "has_gpu" in hardware_info:
+            return bool(hardware_info["has_gpu"])
+
+    # 缓存不可用，实时探测
+    has_gpu, _cuda_version = detect_gpu()
+    return has_gpu
+
+
 def install_dependencies(
     project_root: Path,
     network_type: Literal["domestic", "international"] = "domestic",

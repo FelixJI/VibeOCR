@@ -13,6 +13,7 @@ from vibeocr.env_manager import (
     install_dependencies,
     install_embedded_dependencies,
     install_embedded_python,
+    resolve_use_gpu,
 )
 
 
@@ -475,3 +476,67 @@ class TestCheckImportsPrimitive:
         assert OCR_CHECK_TIMEOUTS["paddle"] >= 60, (
             "paddle 首次导入需初始化 CUDA，timeout 应 >= 60s"
         )
+
+
+class TestResolveUseGpu:
+    """resolve_use_gpu 测试：缓存优先 + 探测回退"""
+
+    def test_returns_false_when_cache_says_no_gpu(self, tmp_path):
+        """缓存 hardware_info.has_gpu=False 时应返回 False（CPU 模式）"""
+        cached = {
+            "version": 1,
+            "machine_id": "any",
+            "hardware_info": {"has_gpu": False, "cuda_version": None},
+        }
+        with (
+            patch("vibeocr.env_manager.is_cache_valid", return_value=(True, cached)),
+            patch("vibeocr.env_manager.detect_gpu") as mock_detect,
+        ):
+            result = resolve_use_gpu(tmp_path)
+
+        assert result is False
+        # 缓存命中时不应触发实时探测
+        mock_detect.assert_not_called()
+
+    def test_returns_true_when_cache_says_has_gpu(self, tmp_path):
+        """缓存 hardware_info.has_gpu=True 时应返回 True（GPU 模式）"""
+        cached = {
+            "version": 1,
+            "machine_id": "any",
+            "hardware_info": {"has_gpu": True, "cuda_version": "cu129"},
+        }
+        with (
+            patch("vibeocr.env_manager.is_cache_valid", return_value=(True, cached)),
+            patch("vibeocr.env_manager.detect_gpu") as mock_detect,
+        ):
+            result = resolve_use_gpu(tmp_path)
+
+        assert result is True
+        mock_detect.assert_not_called()
+
+    def test_falls_back_to_detect_gpu_when_cache_invalid(self, tmp_path):
+        """缓存失效时应回退到 detect_gpu() 实时探测"""
+        with (
+            patch("vibeocr.env_manager.is_cache_valid", return_value=(False, None)),
+            patch(
+                "vibeocr.env_manager.detect_gpu", return_value=(False, None)
+            ) as mock_detect,
+        ):
+            result = resolve_use_gpu(tmp_path)
+
+        assert result is False
+        mock_detect.assert_called_once()
+
+    def test_falls_back_to_detect_gpu_when_no_hardware_info(self, tmp_path):
+        """缓存有效但缺 hardware_info 字段时也应回退探测"""
+        cached = {"version": 1, "machine_id": "any"}  # 无 hardware_info
+        with (
+            patch("vibeocr.env_manager.is_cache_valid", return_value=(True, cached)),
+            patch(
+                "vibeocr.env_manager.detect_gpu", return_value=(True, "cu129")
+            ) as mock_detect,
+        ):
+            result = resolve_use_gpu(tmp_path)
+
+        assert result is True
+        mock_detect.assert_called_once()

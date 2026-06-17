@@ -413,10 +413,12 @@ class MainWindow(QMainWindow):
             return
 
         logging.debug("[MainWindow] 正在启动子进程 Worker...")
-        self._statusbar.showMessage("正在启动 OCR 服务...")
+        use_gpu = env_manager.resolve_use_gpu(self._project_root)
+        device = "GPU" if use_gpu else "CPU"
+        self._statusbar.showMessage(f"正在启动 OCR 服务({device})...")
 
         # 使用 SubprocessManager 启动
-        self._subprocess_manager.start(use_gpu=True, start_timeout=120.0)
+        self._subprocess_manager.start(use_gpu=use_gpu, start_timeout=120.0)
 
     @Slot(bool)
     def _on_subprocess_worker_ready(self, success: bool) -> None:
