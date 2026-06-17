@@ -22,9 +22,10 @@ class InstallWorker(QThread):
     progress = Signal(str, str)  # (stage, message)
     finished = Signal(bool, str)  # (success, message)
 
-    def __init__(self, project_root: Path) -> None:
+    def __init__(self, project_root: Path, force_backend: str | None = None) -> None:
         super().__init__()
         self._project_root = project_root
+        self._force_backend = force_backend
 
     def run(self) -> None:
         """执行安装"""
@@ -34,9 +35,17 @@ class InstallWorker(QThread):
             detector = NetworkDetector(self._project_root)
             network_type = detector.network_type
 
-            # 2. 检测GPU
-            self.progress.emit("硬件检测", "正在检测GPU...")
-            has_gpu, cuda_version = env_manager.detect_gpu()
+            # 2. 决定后端：force_backend 指定时跳过自动检测
+            if self._force_backend:
+                has_gpu = self._force_backend == "gpu"
+                cuda_version = None
+                if has_gpu:
+                    # GPU 需要 cuda_version（cu-tag）选 paddle index
+                    self.progress.emit("硬件检测", "正在检测 GPU CUDA 版本...")
+                    _detected, cuda_version = env_manager.detect_gpu()
+            else:
+                self.progress.emit("硬件检测", "正在检测GPU...")
+                has_gpu, cuda_version = env_manager.detect_gpu()
 
             # 3. 检查嵌入式Python是否存在
             python_exe = env_manager.get_embedded_python_executable(self._project_root)
@@ -60,6 +69,7 @@ class InstallWorker(QThread):
                 progress_callback=lambda stage, message: self.progress.emit(
                     stage, message
                 ),
+                force_backend=self._force_backend,
             )
 
             self.finished.emit(success, msg)
