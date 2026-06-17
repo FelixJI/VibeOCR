@@ -51,47 +51,57 @@
 不同用户硬件,需按实际 GPU 动态选 tag。两条路径的 torch 版本可能不同,但都通过
 各自的 index 安装,功能上 MinerU 对 torch 小版本差异不敏感。
 
-## 3. ✅ nvidia 库依赖问题已解决(方案 A,2026-06-17 验证)
+## 3. ✅ nvidia cu13 运行时依赖(2026-06-17 重新核实并修正)
 
-### 历史问题(2026-06-16 发现)
+### 关键事实
 
-`pyproject.toml` 曾显式声明 8 个 nvidia-* 依赖,包名后缀混乱(cu12 / cu13 / 无后缀混用),
-与 `paddlepaddle-gpu 3.3.1` 通过 `Requires-Dist` 要求的 cu12 系列包不匹配。导致 `.venv`
-里同时装了两套 nvidia 库(cu12 + cu13),体积膨胀且存在潜在 DLL 冲突风险。
+- `paddlepaddle-gpu 3.3.1` 是用 **CUDA 13.0** 编译的(`paddle.version.cuda() == "13.0"`,
+  `paddle.version.cudnn() == "9.13.0"`),运行时需要 **cu13 系列** DLL:
+  `cublas64_13.dll`、`cudnn64_9.dll` 等。
+- paddle 的 wheel **不含**这些 CUDA 运行时库(`paddle/libs/` 下只有 `common.dll`、
+  `phi.dll`、`mkldnn.dll` 等,无 cublas/cudnn)。
+- 系统 NVIDIA 驱动**只提供 driver API**,不提供 cuBLAS/cuDNN 这类 user-mode
+  运行时 DLL。GPU 推理必须额外获得这些库。
+- paddle 通过 `Requires-Dist` 声明了精确的 cu13 传递依赖(见下表),但 **uv 不会
+  自动安装它们**(`uv.lock` 不收录、`uv sync` 不下载),必须在 `pyproject.toml`
+  显式声明。
 
-### 根因(方案 A 验证时发现)
+paddlepaddle-gpu 3.3.1 的真实 `Requires-Dist`(权威来源):
 
-删除全部 8 个 nvidia-* 显式依赖并 `uv sync` 后,发现:
-- paddlepaddle-gpu 声明的 `nvidia-*-cu12==x.y` 传递依赖**被 uv 解析但未锁定安装**
-  (uv 在 Windows 上不强制安装这些 optional 依赖)。
-- **paddle GPU 推理实际不依赖 pip 包带的 CUDA 运行时库**,而是直接使用
-  **系统级 NVIDIA 驱动**提供的 CUDA 运行时。
+| 包名 | 版本 | 提供 DLL |
+|------|------|----------|
+| `nvidia-cuda-runtime` | `==13.0.88` | `cudart64_13.dll` |
+| `nvidia-cudnn-cu13` | `==9.13.0.50` | `cudnn64_9.dll` 等 |
+| `nvidia-cublas` | `==13.0.2.14` | `cublas64_13.dll` |
+| `nvidia-cufft` | `==12.0.0.61` | `cufft64_11.dll` |
+| `nvidia-curand` | `==10.4.0.35` | `curand64_10.dll` |
+| `nvidia-cusolver` | `==12.0.4.66` | `cusolver64_11.dll` |
+| `nvidia-cusparse` | `==12.6.3.3` | `cusparse64_12.dll` |
 
-### 最终方案:删除全部 nvidia-* 显式依赖
+(`nvidia-cublas` 还会传递拉入 `nvidia-nvjitlink`。)
 
-验证环境:NVIDIA 驱动 610.47 / CUDA UMD 13.3,GPU Compute Capability 8.9。
+### 最终方案:pyproject 显式声明 cu13 依赖(精确版本)
+
+`pyproject.toml` 必须以 `==` 精确版本声明上述 7 个包,与 paddle 的 Requires-Dist
+完全一致。**不能用 `>=`**:paddle 对这些是精确 `==` 要求,放宽版本会让 uv 装到不匹配
+的版本导致 DLL 加载失败(error 126)。
+
+### 2026-06-17 命令行验证(本机,RTX 4090 / 驱动 610.47)
 
 ```
-# uv sync 后 nvidia 包数量
-installed nvidia packages: 0
-
-# paddle GPU 初始化(无任何 nvidia pip 包)
-paddle import OK
-CUDAPlace(0) OK
-
-# PaddleOCR 完整推理(PP-OCRv6_medium,GPU)
-PaddleOCR init OK          # 加载 PP-OCRv6_medium_det / PP-OCRv6_medium_rec
-OCR predict OK             # GPU 推理成功
-GPU Compute Capability: 8.9, Driver API Version: 13.3, Runtime API Version: 12.9
+paddle.version.cuda() = 13.0
+cuda.device_count() = 1
+GPU 验证通过(matmul 成功,说明 cublas64_13.dll 已正确加载)
+PaddleOCR(PP-OCRv6_medium) init OK
+OCR predict OK(GPU 推理成功)
 ```
 
-### 结论与前提
+### 历史教训(避免重蹈覆辙)
 
-- **本机(开发环境)无需任何 nvidia-* pip 包**,系统 NVIDIA 驱动足够。
-- **便携部署环境**:`env_manager.install_dependencies` 不再安装 nvidia 包;
-  若目标机器无 NVIDIA 驱动,会回退 CPU 模式(原有逻辑不变)。
-- **风险**:若某机器驱动过旧(< paddle 编译时的 CUDA 版本),可能需要手动装
-  cu12 运行时库。届时按需在便携环境补充,不在 pyproject 全局声明。
+之前一次"删除全部 nvidia-* 依赖"的改动(曾基于"paddle 自带 cu12 库 / 系统驱动足够"
+的假设)是**错误**的:删除后 GPU 因 `cublas64_13.dll` 缺失回退 CPU,而 CPU 路径又命中
+paddle 3.3 的 PIR+oneDNN bug(见第 5 节),导致 OCR 完全不可用。当时文档里"OCR predict OK"
+的验证记录不成立(很可能只验证了 paddle import,没跑完整 PaddleOCR predict)。
 
 ## 4. 依赖版本单一源 (SSOT)
 
@@ -113,6 +123,39 @@ GPU Compute Capability: 8.9, Driver API Version: 13.3, Runtime API Version: 12.9
   是"检测哪些依赖"的唯一来源,`env_manager._check_imports` 遍历它。
 - **无陈旧 fallback**:`_load_dep_specs` 读不到源时 raise(含修复提示),不再悄悄
   回退到硬编码旧版本。
+
+## 4.1 CPU 推理禁用 mkldnn(paddle 3.3 PIR+oneDNN bug 绕过)
+
+### 现象
+
+CPU 推理(predict)抛出:
+```
+NotImplementedError: (Unimplemented) ConvertPirAttribute2RuntimeAttribute
+not support [pir::ArrayAttribute<pir::DoubleAttribute>]
+  (at ..\paddle\fluid\framework\new_executor\instruction\onednn\onednn_instruction.cc:118)
+```
+
+### 根因
+
+paddle 3.3 默认启用 PIR(新中间表示)executor + oneDNN(MKL-DNN),但 PIR 到 oneDNN
+instruction 的属性转换器对 `ArrayAttribute<pir::DoubleAttribute>` **未实现**,
+PP-OCRv6 模型推理触发该路径即崩溃。上游已知问题:
+- https://github.com/PaddlePaddle/PaddleOCR/issues/17539
+- https://github.com/PaddlePaddle/Paddle/issues/77340
+
+### 绕过
+
+`OCRService._create_pipeline` 在 `device == "cpu"` 时向 `PaddleOCR` / `PPStructureV3` /
+`PaddleOCRVL` 传 `enable_mkldnn=False`,避开有 bug 的 oneDNN PIR 转换路径。
+代价:CPU 推理略慢(GPU 不受影响)。上游修复后可移除。
+
+### 命令行验证(2026-06-17)
+
+```
+PaddleOCR(device="cpu", enable_mkldnn=False)
+  -> init OK
+  -> predict OK(结果数: 1)   # NotImplementedError 消失
+```
 
 ## 5. pip / PyTorch 镜像源
 

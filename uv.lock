@@ -982,6 +982,84 @@ wheels = [
 ]
 
 [[package]]
+name = "nvidia-cublas"
+version = "13.0.2.14"
+source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
+wheels = [
+    { url = "https://mirrors.aliyun.com/pypi/packages/f3/91/bda39230b7a4c102bb724c21b50823efc63544490a885fea0b604911c0ab/nvidia_cublas-13.0.2.14-py3-none-win_amd64.whl", hash = "sha256:5f7a90456b1392db60e28719547ba6e00696bfa81304b6887cf287f9edf2c1d7" },
+]
+
+[[package]]
+name = "nvidia-cuda-runtime"
+version = "13.0.88"
+source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
+wheels = [
+    { url = "https://mirrors.aliyun.com/pypi/packages/b3/76/d71097672718defe63af4702b9b0d9c32f9f8df4582ce1a1b891bc65b93b/nvidia_cuda_runtime-13.0.88-py3-none-win_amd64.whl", hash = "sha256:0156cf8f3453025938aab80bcca909506f4e82f1584a17736df7edeba882cc02" },
+]
+
+[[package]]
+name = "nvidia-cudnn-cu13"
+version = "9.13.0.50"
+source = { registry = "https://download.pytorch.org/whl/cu126" }
+dependencies = [
+    { name = "nvidia-cublas", marker = "sys_platform == 'win32'" },
+]
+wheels = [
+    { url = "https://download.pytorch.org/whl/nvidia_cudnn_cu13-9.13.0.50-py3-none-win_amd64.whl" },
+]
+
+[[package]]
+name = "nvidia-cufft"
+version = "12.0.0.61"
+source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
+dependencies = [
+    { name = "nvidia-nvjitlink", marker = "sys_platform == 'win32'" },
+]
+wheels = [
+    { url = "https://mirrors.aliyun.com/pypi/packages/85/b2/f8af21a2ed1beed337a6a02c5a28aeb85441f4d578ec3d529543c775ea4b/nvidia_cufft-12.0.0.61-py3-none-win_amd64.whl", hash = "sha256:2abce5b39d2f5ae12730fb7e5db6696533e36c26e2d3e8fd1750bdd2853364eb" },
+]
+
+[[package]]
+name = "nvidia-curand"
+version = "10.4.0.35"
+source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
+wheels = [
+    { url = "https://mirrors.aliyun.com/pypi/packages/99/27/72103153b1ffc00e09fdc40ac970235343dcd1ea8bd762e84d2d73219ffa/nvidia_curand-10.4.0.35-py3-none-win_amd64.whl", hash = "sha256:65b1710aa6961d326b411e314b374290904c5ddf41dc3f766ebc3f1d7d4ca69f" },
+]
+
+[[package]]
+name = "nvidia-cusolver"
+version = "12.0.4.66"
+source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
+dependencies = [
+    { name = "nvidia-cublas", marker = "sys_platform == 'win32'" },
+    { name = "nvidia-cusparse", marker = "sys_platform == 'win32'" },
+    { name = "nvidia-nvjitlink", marker = "sys_platform == 'win32'" },
+]
+wheels = [
+    { url = "https://mirrors.aliyun.com/pypi/packages/99/ef/332a0101260ca78a1daef046bf0b06199e8ed4dac1d2aa698289c358169c/nvidia_cusolver-12.0.4.66-py3-none-win_amd64.whl", hash = "sha256:16515bd33a8e76bb54d024cfa068fa68d30e80fc34b9e1090813ea9362e0cb65" },
+]
+
+[[package]]
+name = "nvidia-cusparse"
+version = "12.6.3.3"
+source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
+dependencies = [
+    { name = "nvidia-nvjitlink", marker = "sys_platform == 'win32'" },
+]
+wheels = [
+    { url = "https://mirrors.aliyun.com/pypi/packages/02/b0/b043d6f3480f102f885cf87fc3ffd3edcb5e23b855025a50e2ef4d059185/nvidia_cusparse-12.6.3.3-py3-none-win_amd64.whl", hash = "sha256:cbcf42feb737bd7ec15b4c0a63e62351886bd3f975027b8815d7f720a2b5ea79" },
+]
+
+[[package]]
+name = "nvidia-nvjitlink"
+version = "13.3.33"
+source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
+wheels = [
+    { url = "https://mirrors.aliyun.com/pypi/packages/67/f2/ec9c05a108095828dfc58840978c627b3c313fdf2a567c6de9ffbbb46901/nvidia_nvjitlink-13.3.33-py3-none-win_amd64.whl", hash = "sha256:4297ee49639b4f2e07255a1d69b3acc7ab2d011bb892b403e91ac98368962e3b" },
+]
+
+[[package]]
 name = "onnxruntime"
 version = "1.26.0"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
@@ -2166,6 +2244,13 @@ dependencies = [
     { name = "markdown", marker = "sys_platform == 'win32'" },
     { name = "mineru", extra = ["core"], marker = "sys_platform == 'win32'" },
     { name = "numpy", marker = "sys_platform == 'win32'" },
+    { name = "nvidia-cublas", marker = "sys_platform == 'win32'" },
+    { name = "nvidia-cuda-runtime", marker = "sys_platform == 'win32'" },
+    { name = "nvidia-cudnn-cu13", marker = "sys_platform == 'win32'" },
+    { name = "nvidia-cufft", marker = "sys_platform == 'win32'" },
+    { name = "nvidia-curand", marker = "sys_platform == 'win32'" },
+    { name = "nvidia-cusolver", marker = "sys_platform == 'win32'" },
+    { name = "nvidia-cusparse", marker = "sys_platform == 'win32'" },
     { name = "opencv-contrib-python", marker = "sys_platform == 'win32'" },
     { name = "paddleocr", extra = ["doc-parser"], marker = "sys_platform == 'win32'" },
     { name = "paddlepaddle-gpu", marker = "sys_platform == 'win32'" },
@@ -2195,6 +2280,13 @@ requires-dist = [
     { name = "markdown", specifier = ">=3.10.2" },
     { name = "mineru", extras = ["core"], specifier = ">=3.3.1" },
     { name = "numpy", specifier = ">=2.3.5" },
+    { name = "nvidia-cublas", specifier = "==13.0.2.14" },
+    { name = "nvidia-cuda-runtime", specifier = "==13.0.88" },
+    { name = "nvidia-cudnn-cu13", specifier = "==9.13.0.50" },
+    { name = "nvidia-cufft", specifier = "==12.0.0.61" },
+    { name = "nvidia-curand", specifier = "==10.4.0.35" },
+    { name = "nvidia-cusolver", specifier = "==12.0.4.66" },
+    { name = "nvidia-cusparse", specifier = "==12.6.3.3" },
     { name = "opencv-contrib-python", specifier = ">=4.10.0.84" },
     { name = "paddleocr", extras = ["doc-parser"], specifier = ">=3.7.0" },
     { name = "paddlepaddle-gpu", specifier = ">=3.3.1" },

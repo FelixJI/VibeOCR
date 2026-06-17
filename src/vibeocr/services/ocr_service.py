@@ -519,18 +519,24 @@ class OCRService(metaclass=SingletonMeta):
                 f"正在初始化 {display_name} 管道（首次使用需要下载模型）...",
             )
 
+        # CPU 设备禁用 mkldnn：paddle 3.3 的 PIR new executor 与 oneDNN 存在已知
+        # 不兼容（ConvertPirAttribute2RuntimeAttribute 对 ArrayAttribute<DoubleAttribute>
+        # 未实现，predict 抛 NotImplementedError），CPU 推理时关闭 mkldnn 绕过。
+        # 参考 PaddleOCR #17539、Paddle #77340。
+        kwargs = {"enable_mkldnn": False} if device == "cpu" else {}
+
         if pipeline == OCRPipeline.OCR:
             from paddleocr import PaddleOCR
 
-            instance = PaddleOCR(device=device)
+            instance = PaddleOCR(device=device, **kwargs)
         elif pipeline == OCRPipeline.PP_STRUCTURE_V3:
             from paddleocr import PPStructureV3
 
-            instance = PPStructureV3(device=device)
+            instance = PPStructureV3(device=device, **kwargs)
         elif pipeline == OCRPipeline.PADDLEOCR_VL:
             from paddleocr import PaddleOCRVL
 
-            instance = PaddleOCRVL(device=device)
+            instance = PaddleOCRVL(device=device, **kwargs)
         else:
             msg = f"不支持的管道类型: {pipeline}"
             raise ValueError(msg)
