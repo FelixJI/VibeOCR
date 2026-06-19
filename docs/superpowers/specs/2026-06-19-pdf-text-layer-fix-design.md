@@ -1,8 +1,8 @@
 # PDF 添加文字层功能修复设计
 
 - 日期:2026-06-19
-- 分支:develop
-- 状态:已批准,待实现规划
+- 分支:develop (实现于 feat/cjk-font-text-layer)
+- 状态:已交付(自动化测试全绿;GUI 手动验证待用户执行)
 
 ## 1. 背景与问题
 
@@ -52,7 +52,7 @@ PDF 处理标签页的"添加文字层"功能存在四个问题,经代码审查�
 
 `add_text_layer` 改动:
 
-1. **CJK 字体**:`page.insert_textbox(...)` 增加 `fontname="china-s"`(PyMuPDF 对 Adobe CID 中日韩字体的封装,自动嵌入子集)。失败回退:`china-ss`(简体备选)。
+1. **CJK 字体**:`page.insert_textbox(...)` 增加 `fontname="china-s"`(PyMuPDF 对 Adobe CID 中日韩字体的封装,自动嵌入子集)。(实现备注:`china-s` 已验证可用,故 §7.1 的 `china-ss` 回退未实现 —— 见 §7.1。)
 2. **返回值**:签名改为返回 `tuple[int, int]` `(written_count, skipped_count)`:
    - bbox 为空/过小被 `continue` → `skipped`
    - 字号重试耗尽仍 `rc < 0` → `skipped` + `logger.warning("page %d block skipped: rect=%s text=%r", page_index, rect, block.text[:30])`
@@ -97,11 +97,11 @@ QSplitter(Horizontal)  [main_splitter]          ← 真正可拖
 
 1. 把 `pdf_preview_window.py` 中的 `_PreviewCanvas` 抽为模块级公开类 `PreviewCanvas`(支持缩放/hover/高亮),供内嵌与弹窗共用。
 2. `PdfPreviewWindow`(弹窗)保留,双击缩略图路径不变。
-3. `PdfTab.PreviewPanel` 内嵌一个 `PreviewCanvas`,完成后由 `_on_ocr_done` 触发自动预览(见 5.6)。
+3. `PdfTab.PreviewPanel` 内嵌一个 `PreviewCanvas`,完成后由 `_on_ocr_stats_ready` 触发自动预览(见 5.6)。
 
 ### 5.6 自动预览 + 失败汇总(`views/tabs/pdf_tab.py`)
 
-`_on_ocr_done` 完成后的流程:
+`_on_ocr_stats_ready` 完成后的流程:
 1. `_update_layer_status()`(文案刷新);
 2. `_refresh_thumbnails()`;
 3. 接 `ocr_stats_ready` 信号:若 `skipped > 0`,弹 `QMessageBox.information("文字层已添加:成功 M 块,跳过 K 块(详见日志)")`;否则状态栏轻量提示"文字层已添加(M 块)";
@@ -118,7 +118,7 @@ QSplitter(Horizontal)  [main_splitter]          ← 真正可拖
 
 ## 7. 风险与缓解
 
-1. **china-s 字体兼容性**:实现时先跑冒烟测试(fitz 创建空页 → insert_textbox 中文 + `fontname="china-s"` → `page.get_text()` 回读确认含中文)。失败回退 `china-ss` 或系统字体探测。
+1. **china-s 字体兼容性**:实现时已跑冒烟测试(`test_add_text_layer_writes_chinese_text` 回读确认中文可提取),`china-s` 在 `pymupdf>=1.27.2.3` 上工作正常。原计划的 `china-ss` 回退未实现(YAGNI —— 主路径已验证可用,死代码回退无价值);若未来某环境缺少 `china-s`,可再加。
 2. **嵌套 Splitter 布局回归**:现有按钮点击、缩略图、文件选择行为需测试覆盖。
 3. **`PreviewCanvas` 抽取**:确保弹窗式 `PdfPreviewWindow` 仍工作。
 

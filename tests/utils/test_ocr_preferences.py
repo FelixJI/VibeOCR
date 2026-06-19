@@ -454,3 +454,72 @@ class TestPdfSettings:
         assert prefs.get_pdf_settings().render_dpi == 300
         # _last_pdf_pipeline 默认 OCR
         assert prefs.get_pdf_pipeline_options().pipeline == OCRPipeline.OCR
+
+
+class TestPdfSplitterState:
+    """PDF splitter 布局状态的持久化（base64 入 JSON）"""
+
+    def test_round_trip(self, tmp_config_dir):
+        prefs = OCRPreferences(tmp_config_dir)
+        # 模拟 QSplitter.saveState().data() 返回的 bytes
+        state = b"\x00\x00\x00\xc8\x00\xff\x01\x02"
+        prefs.set_pdf_splitter_state(state)
+        prefs.save()
+
+        OCRPreferences.reset_instance()
+        prefs2 = OCRPreferences(tmp_config_dir)
+        assert prefs2.get_pdf_splitter_state() == state
+
+    def test_default_is_none(self, tmp_config_dir):
+        prefs = OCRPreferences(tmp_config_dir)
+        assert prefs.get_pdf_splitter_state() is None
+
+    def test_none_round_trips_as_none(self, tmp_config_dir):
+        prefs = OCRPreferences(tmp_config_dir)
+        prefs.set_pdf_splitter_state(b"abc")
+        prefs.set_pdf_splitter_state(None)
+        prefs.save()
+
+        OCRPreferences.reset_instance()
+        prefs2 = OCRPreferences(tmp_config_dir)
+        assert prefs2.get_pdf_splitter_state() is None
+
+
+class TestPdfRightSplitterState:
+    """PDF 右侧（纵向）splitter 布局状态的持久化"""
+
+    def test_round_trip(self, tmp_config_dir):
+        prefs = OCRPreferences(tmp_config_dir)
+        state = b"\x01\x02\x03\x04\x05"
+        prefs.set_pdf_right_splitter_state(state)
+        prefs.save()
+
+        OCRPreferences.reset_instance()
+        prefs2 = OCRPreferences(tmp_config_dir)
+        assert prefs2.get_pdf_right_splitter_state() == state
+
+    def test_default_is_none(self, tmp_config_dir):
+        prefs = OCRPreferences(tmp_config_dir)
+        assert prefs.get_pdf_right_splitter_state() is None
+
+    def test_none_round_trips_as_none(self, tmp_config_dir):
+        prefs = OCRPreferences(tmp_config_dir)
+        prefs.set_pdf_right_splitter_state(b"abc")
+        prefs.set_pdf_right_splitter_state(None)
+        prefs.save()
+
+        OCRPreferences.reset_instance()
+        prefs2 = OCRPreferences(tmp_config_dir)
+        assert prefs2.get_pdf_right_splitter_state() is None
+
+    def test_set_both_states_single_save(self, tmp_config_dir):
+        """set_pdf_splitter_states 一次性写入两个状态，均能回读。"""
+        prefs = OCRPreferences(tmp_config_dir)
+        main = b"\xaa\xbb"
+        right = b"\xcc\xdd\xee"
+        prefs.set_pdf_splitter_states(main, right)
+
+        OCRPreferences.reset_instance()
+        prefs2 = OCRPreferences(tmp_config_dir)
+        assert prefs2.get_pdf_splitter_state() == main
+        assert prefs2.get_pdf_right_splitter_state() == right

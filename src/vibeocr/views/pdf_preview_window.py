@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class _PreviewCanvas(QWidget):
+class PreviewCanvas(QWidget):
     """可缩放/平移的画布。"""
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -136,6 +136,10 @@ class _PreviewCanvas(QWidget):
             self.update()
 
 
+# 向后兼容别名：旧代码仍可导入 _PreviewCanvas。
+_PreviewCanvas = PreviewCanvas
+
+
 class PdfPreviewWindow(QWidget):
     """PDF 页面预览窗口。"""
 
@@ -144,7 +148,7 @@ class PdfPreviewWindow(QWidget):
         self.setWindowTitle("PDF 页面预览")
         self.resize(800, 1000)
 
-        self._canvas = _PreviewCanvas()
+        self._canvas = PreviewCanvas()
 
         scroll = QScrollArea()
         scroll.setWidget(self._canvas)

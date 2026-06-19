@@ -25,6 +25,9 @@ class PdfSession:
     pdf_document: PdfDocument
     loaded_pages: set[int] = field(default_factory=set)
     doc_lock: threading.RLock = field(default_factory=threading.RLock, repr=False)
+    _ocr_stats: dict[str, int] = field(
+        default_factory=lambda: {"written": 0, "skipped": 0}, repr=False
+    )
 
     @property
     def is_modified(self) -> bool:
@@ -36,6 +39,17 @@ class PdfSession:
         if total == 0:
             return 1.0
         return len(self.loaded_pages) / total
+
+    @property
+    def ocr_stats(self) -> dict[str, int]:
+        return self._ocr_stats
+
+    def reset_ocr_stats(self) -> None:
+        self._ocr_stats = {"written": 0, "skipped": 0}
+
+    def add_ocr_stats(self, written: int, skipped: int) -> None:
+        self._ocr_stats["written"] += written
+        self._ocr_stats["skipped"] += skipped
 
     def __enter__(self) -> PdfSession:
         return self

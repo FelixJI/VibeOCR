@@ -186,6 +186,71 @@ class TestPdfServiceTextLayer:
         assert pdf_doc.is_modified is True
         doc.close()
 
+    def test_add_text_layer_writes_chinese_text(self, tmp_path):
+        import numpy as np
+
+        from vibeocr.models.ocr_result import OCRResult, TextBlock
+
+        path = tmp_path / "scan_cn.pdf"
+        doc = fitz.open()
+        page = doc.new_page(width=612, height=792)
+        img = np.ones((792, 612, 3), dtype=np.uint8) * 240
+        cs = fitz.Colorspace(fitz.CS_RGB)
+        pixmap = fitz.Pixmap(cs, 612, 792, img.tobytes(), 0)
+        page.insert_image(fitz.Rect(0, 0, 612, 792), pixmap=pixmap)
+        doc.save(str(path))
+        doc.close()
+
+        doc, pdf_doc = PdfService.open_doc(str(path))
+        chinese = "你好世界，这是一段测试文字。"
+        result = OCRResult(
+            raw_text=chinese,
+            text_blocks=[
+                TextBlock(text=chinese, score=0.99,
+                          bbox=(50.0, 50.0, 500.0, 120.0), page_idx=0),
+            ],
+        )
+        written, skipped = PdfService.add_text_layer(doc, pdf_doc, 0, result)
+        assert written == 1
+        assert skipped == 0
+        # 中文必须能被回读（验证 china-s 字体生效）
+        extracted = doc[0].get_text()
+        assert "你好世界" in extracted
+        doc.close()
+
+    def test_add_text_layer_skips_tiny_bbox_with_warning(self, tmp_path, caplog):
+        import logging
+
+        import numpy as np
+
+        from vibeocr.models.ocr_result import OCRResult, TextBlock
+
+        path = tmp_path / "scan_tiny.pdf"
+        doc = fitz.open()
+        page = doc.new_page(width=612, height=792)
+        img = np.ones((792, 612, 3), dtype=np.uint8) * 240
+        cs = fitz.Colorspace(fitz.CS_RGB)
+        pixmap = fitz.Pixmap(cs, 612, 792, img.tobytes(), 0)
+        page.insert_image(fitz.Rect(0, 0, 612, 792), pixmap=pixmap)
+        doc.save(str(path))
+        doc.close()
+
+        doc, pdf_doc = PdfService.open_doc(str(path))
+        good = TextBlock(text="正常文字", score=0.9,
+                         bbox=(50.0, 50.0, 400.0, 100.0), page_idx=0)
+        # 宽高均 < 1 point → 会被跳过
+        tiny = TextBlock(text="小", score=0.9,
+                         bbox=(10.0, 10.0, 10.5, 10.5), page_idx=0)
+        result = OCRResult(raw_text="x", text_blocks=[good, tiny])
+
+        with caplog.at_level(logging.WARNING, logger="vibeocr.services.pdf_service"):
+            written, skipped = PdfService.add_text_layer(doc, pdf_doc, 0, result)
+
+        assert written == 1
+        assert skipped == 1
+        assert any("skipped" in rec.message for rec in caplog.records)
+        doc.close()
+
     def test_add_text_layer_with_90_rotation(self, tmp_path):
         """90° 预处理旋转后 bbox 仍然映射到正确位置。"""
         import numpy as np
@@ -210,7 +275,7 @@ class TestPdfServiceTextLayer:
                 TextBlock(
                     text="Hello",
                     score=0.99,
-                    bbox=(400.0, 100.0, 600.0, 200.0),  # [0, 1000] 归一化
+                    bbox=(400.0, 100.0, 600.0, 350.0),  # [0, 1000] 归一化（足够宽以容纳 CJK 字体下的拉丁字形）
                     page_idx=0,
                 ),
             ],

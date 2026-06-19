@@ -7,7 +7,7 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (
     QComboBox,
@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QProgressBar,
     QPushButton,
+    QScrollArea,
     QSplitter,
     QVBoxLayout,
     QWidget,
@@ -28,7 +29,7 @@ from PySide6.QtWidgets import (
 
 from vibeocr.managers.pdf_session_manager import PdfSessionManager
 from vibeocr.services.pdf_service import PdfService
-from vibeocr.views.pdf_preview_window import PdfPreviewWindow
+from vibeocr.views.pdf_preview_window import PdfPreviewWindow, PreviewCanvas
 
 if TYPE_CHECKING:
     from vibeocr.services.ocr_service_base import OCRServiceBase
@@ -47,6 +48,11 @@ class PdfTab(QWidget):
         super().__init__(parent)
         self._session_mgr = PdfSessionManager(self)
         self._preview_window: PdfPreviewWindow | None = None
+        # splitter 拖动期间 splitterMoved 连续触发，用单次定时器防抖，
+        # 停止拖动 300ms 后才落盘，避免每个鼠标移动 tick 都写文件。
+        self._splitter_save_timer = QTimer(self)
+        self._splitter_save_timer.setSingleShot(True)
+        self._splitter_save_timer.timeout.connect(self._persist_splitter_state)
         self._setup_ui()
         self._connect_manager_signals()
 
@@ -55,19 +61,42 @@ class PdfTab(QWidget):
         return self._session_mgr
 
     def _setup_ui(self) -> None:
-        main_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self._main_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self._main_splitter.setChildrenCollapsible(False)
+        self._main_splitter.setObjectName("mainSplitter")
 
         left_panel = self._create_thumbnail_panel()
-        main_splitter.addWidget(left_panel)
+        self._main_splitter.addWidget(left_panel)
+
+        self._right_splitter = QSplitter(Qt.Orientation.Vertical)
+        self._right_splitter.setChildrenCollapsible(False)
+        self._right_splitter.setObjectName("rightSplitter")
 
         right_panel = self._create_operation_panel()
-        main_splitter.addWidget(right_panel)
+        self._right_splitter.addWidget(right_panel)
 
-        main_splitter.setSizes([200, 600])
+        # 内嵌预览区（默认折叠为小尺寸，按需拖动展开）
+        self._preview_canvas = PreviewCanvas()
+        preview_container = QScrollArea()
+        preview_container.setWidget(self._preview_canvas)
+        preview_container.setWidgetResizable(False)
+        self._right_splitter.addWidget(preview_container)
+
+        self._main_splitter.addWidget(self._right_splitter)
+        self._main_splitter.setSizes([200, 600])
+        # 操作区占大部分、预览区默认折叠
+        self._right_splitter.setSizes([500, 40])
+
+        # 拖动结束后保存布局
+        self._main_splitter.splitterMoved.connect(self._save_splitter_state)
+        self._right_splitter.splitterMoved.connect(self._save_splitter_state)
+
+        # 恢复持久化的布局
+        self._restore_splitter_state()
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(4, 4, 4, 4)
-        layout.addWidget(main_splitter)
+        layout.addWidget(self._main_splitter)
 
     def _create_thumbnail_panel(self) -> QWidget:
         panel = QWidget()
@@ -79,7 +108,7 @@ class PdfTab(QWidget):
         layout.addWidget(self._file_selector)
 
         self._thumbnail_list = QListWidget()
-        self._thumbnail_list.setFixedWidth(200)
+        self._thumbnail_list.setMinimumWidth(120)
         self._thumbnail_list.setIconSize(
             QPixmap(_THUMBNAIL_SIZE, _THUMBNAIL_SIZE).size()
         )
@@ -161,7 +190,13 @@ class PdfTab(QWidget):
         text_layout.addLayout(text_btn_layout)
 
         self._layer_status_label = QLabel("未打开文件")
-        text_layout.addWidget(self._layer_status_label)
+        self._layer_status_label.setWordWrap(True)
+        self._layer_status_label.setAlignment(Qt.AlignmentFlag.AlignTop)
+        status_scroll = QScrollArea()
+        status_scroll.setWidgetResizable(True)
+        status_scroll.setWidget(self._layer_status_label)
+        status_scroll.setMinimumHeight(120)
+        text_layout.addWidget(status_scroll)
         layout.addWidget(text_group)
 
         self._progress_bar = QProgressBar()
@@ -193,6 +228,41 @@ class PdfTab(QWidget):
         mgr.ocr_page_done.connect(self._on_ocr_page_result)
         mgr.ocr_progress.connect(self._on_ocr_progress_update)
         mgr.ocr_done.connect(self._on_ocr_finished)
+        mgr.ocr_stats_ready.connect(self._on_ocr_stats_ready)
+
+    # ---- splitter layout persistence --------------------------------
+
+    def _restore_splitter_state(self) -> None:
+        """从偏好恢复 splitter 布局。"""
+        try:
+            from vibeocr.utils.ocr_preferences import OCRPreferences
+
+            prefs = OCRPreferences.instance()
+        except RuntimeError:
+            return
+        main_state = prefs.get_pdf_splitter_state()
+        if main_state:
+            self._main_splitter.restoreState(main_state)
+        right_state = prefs.get_pdf_right_splitter_state()
+        if right_state:
+            self._right_splitter.restoreState(right_state)
+
+    def _save_splitter_state(self) -> None:
+        """拖动时触发：重启防抖定时器，停止拖动 300ms 后才落盘。"""
+        self._splitter_save_timer.start(300)
+
+    def _persist_splitter_state(self) -> None:
+        """防抖到期后实际落盘（一次写盘同时保存主+右 splitter）。"""
+        try:
+            from vibeocr.utils.ocr_preferences import OCRPreferences
+
+            prefs = OCRPreferences.instance()
+        except RuntimeError:
+            return
+        prefs.set_pdf_splitter_states(
+            self._main_splitter.saveState().data(),
+            self._right_splitter.saveState().data(),
+        )
 
     def _on_session_added(self, file_path: str) -> None:
         name = Path(file_path).name
@@ -270,6 +340,50 @@ class PdfTab(QWidget):
         msg = f"OCR 完成：成功 {success} 页" + (f"，失败 {fail} 页" if fail else "")
         self._status_label.setText(msg)
 
+    def _on_ocr_stats_ready(
+        self, session_id: str, written: int, skipped: int
+    ) -> None:
+        """文字层 OCR 完成后：汇总写入结果并自动预览。
+
+        与 _on_ocr_finished（ocr_done 信号）配合：后者负责通用 UI 复位，
+        本方法负责文字层特有的“成功/跳过”汇总与内嵌预览。
+        """
+        if written == 0 and skipped == 0:
+            # 没有任何文字块产出（例如全部页面 OCR 失败），不误报“已添加”。
+            self._status_label.setText("文字层未添加：未识别到任何文字块")
+        elif skipped > 0:
+            QMessageBox.information(
+                self,
+                "文字层已添加",
+                f"成功写入 {written} 块，跳过 {skipped} 块（详见日志）。",
+            )
+        else:
+            self._status_label.setText(f"文字层已添加（{written} 块）")
+        self._update_layer_status()
+        self._refresh_thumbnails()
+        self._show_embedded_preview()
+
+    def _show_embedded_preview(self) -> None:
+        """在内嵌预览画布显示当前页文字层高亮（render_mode=3 隐形的可视化）。"""
+        session = self._session_mgr.active_session
+        if session is None:
+            return
+        indices = self._get_selected_page_indices()
+        page_idx = indices[0] if indices else 0
+        page_info = session.pdf_document.get_page(page_idx)
+        if page_info is None or not page_info.text_layers:
+            return
+        with session.doc_lock:
+            pixmap = PdfService.render_page(session.doc, page_idx, dpi=150)
+            page_rect = session.doc[page_idx].rect
+        self._preview_canvas.set_pixmap(pixmap)
+        self._preview_canvas.set_highlight_layers(
+            page_info.text_layers,
+            render_dpi=150,
+            page_rect=page_rect,
+            source="pdf",
+        )
+
     # ---- UI helpers -------------------------------------------------
 
     def _set_file_buttons_enabled(self, enabled: bool) -> None:
@@ -339,7 +453,10 @@ class PdfTab(QWidget):
         lines = []
         for p in session.pdf_document.pages:
             if p.has_text_layer:
-                lines.append(f"第{p.page_index + 1}页: {len(p.text_layers)}层文字层")
+                lines.append(
+                    f"第{p.page_index + 1}页: 已添加文字层"
+                    f"({len(p.text_layers)} 个文本块)"
+                )
             else:
                 status = "扫描件" if p.is_scanned else "无文字层"
                 lines.append(f"第{p.page_index + 1}页: {status}")

@@ -51,6 +51,7 @@ class PdfSessionManager(QObject):
     ocr_page_done = Signal(str, int, object)
     ocr_progress = Signal(str, int, int)
     ocr_done = Signal(str, int, int)
+    ocr_stats_ready = Signal(str, int, int)  # (file_path, written, skipped)
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -222,6 +223,7 @@ class PdfSessionManager(QObject):
             return
 
         self._pdf_settings = pdf_settings
+        session.reset_ocr_stats()
 
         self._ocr_worker = PdfOcrWorker(
             session_id=session.file_path,
@@ -252,13 +254,14 @@ class PdfSessionManager(QObject):
             return
         if result is not None:
             with session.doc_lock:
-                PdfService.add_text_layer(
+                written, skipped = PdfService.add_text_layer(
                     session.doc,
                     session.pdf_document,
                     page_index,
                     result,
                     pdf_settings=self._pdf_settings,
                 )
+            session.add_ocr_stats(written, skipped)
         self.ocr_page_done.emit(session.file_path, page_index, result)
 
     def _on_ocr_progress(self, current: int, total: int) -> None:
@@ -272,6 +275,12 @@ class PdfSessionManager(QObject):
 
     def _on_ocr_all_done(self, session_id: str, success: int, fail: int) -> None:
         self.ocr_done.emit(session_id, success, fail)
+        session = self._sessions.get(session_id)
+        if session is not None:
+            stats = session.ocr_stats
+            self.ocr_stats_ready.emit(
+                session_id, stats["written"], stats["skipped"]
+            )
         self._ocr_worker = None
 
     # ---- batch export -----------------------------------------------

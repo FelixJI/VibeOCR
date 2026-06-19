@@ -67,3 +67,34 @@ class TestPdfSession:
 
         assert session.load_progress == 1.0
         single_page_doc.close()
+
+
+class TestPdfSessionOcrStats:
+    def test_default_ocr_stats_are_zero(self, single_page_doc):
+        pdf_doc = PdfDocument(file_path="test.pdf", pages=[PdfPageInfo(page_index=0)])
+        session = PdfSession(
+            file_path="test.pdf", doc=single_page_doc, pdf_document=pdf_doc
+        )
+        assert session.ocr_stats == {"written": 0, "skipped": 0}
+        single_page_doc.close()
+
+    def test_reset_ocr_stats(self, single_page_doc):
+        pdf_doc = PdfDocument(file_path="test.pdf", pages=[PdfPageInfo(page_index=0)])
+        session = PdfSession(
+            file_path="test.pdf", doc=single_page_doc, pdf_document=pdf_doc
+        )
+        session.add_ocr_stats(3, 1)
+        assert session.ocr_stats == {"written": 3, "skipped": 1}
+        session.reset_ocr_stats()
+        assert session.ocr_stats == {"written": 0, "skipped": 0}
+        single_page_doc.close()
+
+    def test_add_ocr_stats_accumulates(self, single_page_doc):
+        pdf_doc = PdfDocument(file_path="test.pdf", pages=[PdfPageInfo(page_index=0)])
+        session = PdfSession(
+            file_path="test.pdf", doc=single_page_doc, pdf_document=pdf_doc
+        )
+        session.add_ocr_stats(2, 1)
+        session.add_ocr_stats(5, 0)
+        assert session.ocr_stats == {"written": 7, "skipped": 1}
+        single_page_doc.close()

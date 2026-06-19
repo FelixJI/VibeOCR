@@ -83,3 +83,28 @@ class TestPdfPreviewWindowPublicApi:
         assert window._canvas._render_dpi == 200
         assert window._canvas._page_rect == page_rect
         assert window._canvas._highlight_layers is layers
+
+
+class TestPreviewCanvasPublicName:
+    def test_public_preview_canvas_class_exists(self, qtbot):
+        """PreviewCanvas 作为公开类可被实例化。"""
+        from vibeocr.views.pdf_preview_window import PreviewCanvas
+
+        canvas = PreviewCanvas()
+        qtbot.addWidget(canvas)
+        assert canvas is not None
+
+    def test_pdf_preview_window_uses_preview_canvas(self, window):
+        """PdfPreviewWindow 内部应使用公开的 PreviewCanvas。"""
+        from vibeocr.views.pdf_preview_window import PreviewCanvas
+
+        assert isinstance(window._canvas, PreviewCanvas)
+
+    def test_underscore_alias_still_works(self):
+        """向后兼容别名 _PreviewCanvas 仍可导入（旧代码不破坏）。"""
+        from vibeocr.views.pdf_preview_window import (
+            PreviewCanvas,
+            _PreviewCanvas,
+        )
+
+        assert _PreviewCanvas is PreviewCanvas
