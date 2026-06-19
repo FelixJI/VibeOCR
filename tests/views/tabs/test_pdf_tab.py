@@ -60,3 +60,18 @@ class TestPdfTabStructure:
         from vibeocr.views.pdf_preview_window import PreviewCanvas
 
         assert isinstance(pdf_tab._preview_canvas, PreviewCanvas)
+
+    def test_splitter_save_is_debounced(self, pdf_tab, monkeypatch):
+        """splitterMoved 不应立即落盘，而是重启防抖定时器。"""
+        calls = []
+        monkeypatch.setattr(
+            pdf_tab, "_persist_splitter_state", lambda: calls.append(1)
+        )
+        # 连续触发多次 splitterMoved（模拟拖动）
+        for _ in range(5):
+            pdf_tab._save_splitter_state()
+        # 定时器未到期前不落盘
+        assert calls == []
+        # 触发定时器到期 → 仅落盘一次
+        pdf_tab._splitter_save_timer.timeout.emit()
+        assert calls == [1]

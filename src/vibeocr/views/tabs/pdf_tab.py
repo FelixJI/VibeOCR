@@ -7,7 +7,7 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (
     QComboBox,
@@ -48,6 +48,11 @@ class PdfTab(QWidget):
         super().__init__(parent)
         self._session_mgr = PdfSessionManager(self)
         self._preview_window: PdfPreviewWindow | None = None
+        # splitter 拖动期间 splitterMoved 连续触发，用单次定时器防抖，
+        # 停止拖动 300ms 后才落盘，避免每个鼠标移动 tick 都写文件。
+        self._splitter_save_timer = QTimer(self)
+        self._splitter_save_timer.setSingleShot(True)
+        self._splitter_save_timer.timeout.connect(self._persist_splitter_state)
         self._setup_ui()
         self._connect_manager_signals()
 
@@ -242,16 +247,20 @@ class PdfTab(QWidget):
             self._right_splitter.restoreState(right_state)
 
     def _save_splitter_state(self) -> None:
-        """保存 splitter 布局到偏好（拖动结束触发）。"""
+        """拖动时触发：重启防抖定时器，停止拖动 300ms 后才落盘。"""
+        self._splitter_save_timer.start(300)
+
+    def _persist_splitter_state(self) -> None:
+        """防抖到期后实际落盘（一次写盘同时保存主+右 splitter）。"""
         try:
             from vibeocr.utils.ocr_preferences import OCRPreferences
 
             prefs = OCRPreferences.instance()
         except RuntimeError:
             return
-        prefs.set_pdf_splitter_state(self._main_splitter.saveState().data())
-        prefs.set_pdf_right_splitter_state(
-            self._right_splitter.saveState().data()
+        prefs.set_pdf_splitter_states(
+            self._main_splitter.saveState().data(),
+            self._right_splitter.saveState().data(),
         )
 
     def _on_session_added(self, file_path: str) -> None:

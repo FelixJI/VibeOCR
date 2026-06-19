@@ -263,6 +263,14 @@ class OCRPreferences(QObject):
         self._pdf_right_splitter_state = state
         self.save()
 
+    def set_pdf_splitter_states(
+        self, main: bytes | None, right: bytes | None
+    ) -> None:
+        """一次性保存两个 splitter 布局状态并持久化（避免连续两次落盘）。"""
+        self._pdf_splitter_state = main
+        self._pdf_right_splitter_state = right
+        self.save()
+
     def get_pdf_pipeline_options(self) -> OCROptions:
         """读取 PDF 末次使用管道的选项，不存在则返回默认。
 
