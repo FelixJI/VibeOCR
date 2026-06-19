@@ -327,6 +327,10 @@ class PdfService:
                 continue
             bbox = block.bbox
             if bbox is None:
+                logger.warning(
+                    "page %d block skipped (bbox is None): text=%r",
+                    page_index, block.text[:30],
+                )
                 skipped += 1
                 continue
 
