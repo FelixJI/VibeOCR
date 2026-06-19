@@ -4,6 +4,7 @@
 支持按管道独立存储，区分 main 和 screenshot 两个数据源。
 """
 
+import base64
 import json
 import logging
 from pathlib import Path
@@ -61,6 +62,7 @@ class OCRPreferences(QObject):
         self._batch_options = OCROptions(pipeline=OCRPipeline.DOCUMENT_PARSING)
         self._last_main_pipeline: OCRPipeline = OCRPipeline.OCR
         self._pdf_settings: dict = {}  # PdfGlobalSettings raw dict
+        self._pdf_splitter_state: bytes | None = None
         self._last_pdf_pipeline: OCRPipeline = OCRPipeline.OCR
         self._load()
 
@@ -131,6 +133,12 @@ class OCRPreferences(QObject):
         if pdf_settings_data and isinstance(pdf_settings_data, dict):
             self._pdf_settings = pdf_settings_data
 
+        splitter_b64 = data.get("pdf_splitter_state")
+        if splitter_b64 and isinstance(splitter_b64, str):
+            self._pdf_splitter_state = base64.b64decode(splitter_b64)
+        else:
+            self._pdf_splitter_state = None
+
         logger.debug("OCR 选项已加载")
 
     def get_pipeline_options(self, source: str, pipeline: OCRPipeline) -> OCROptions:
@@ -194,6 +202,11 @@ class OCRPreferences(QObject):
                 for k, v in self._per_pipeline.get("pdf", {}).items()
             },
             "pdf_settings": self._pdf_settings,
+            "pdf_splitter_state": (
+                base64.b64encode(self._pdf_splitter_state).decode("ascii")
+                if self._pdf_splitter_state is not None
+                else None
+            ),
             "batch_options": self._batch_options.to_dict(),
         }
         if self._cm is not None:
@@ -218,6 +231,15 @@ class OCRPreferences(QObject):
     def set_pdf_settings(self, settings: "PdfGlobalSettings") -> None:
         """保存 PDF 全局设置。"""
         self._pdf_settings = settings.to_dict()
+        self.save()
+
+    def get_pdf_splitter_state(self) -> bytes | None:
+        """获取 PDF splitter 布局状态（QSplitter.saveState().data() 的 bytes）。"""
+        return self._pdf_splitter_state
+
+    def set_pdf_splitter_state(self, state: bytes | None) -> None:
+        """保存 PDF splitter 布局状态并持久化（None 表示清除）。"""
+        self._pdf_splitter_state = state
         self.save()
 
     def get_pdf_pipeline_options(self) -> OCROptions:

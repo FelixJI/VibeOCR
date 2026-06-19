@@ -454,3 +454,32 @@ class TestPdfSettings:
         assert prefs.get_pdf_settings().render_dpi == 300
         # _last_pdf_pipeline 默认 OCR
         assert prefs.get_pdf_pipeline_options().pipeline == OCRPipeline.OCR
+
+
+class TestPdfSplitterState:
+    """PDF splitter 布局状态的持久化（base64 入 JSON）"""
+
+    def test_round_trip(self, tmp_config_dir):
+        prefs = OCRPreferences(tmp_config_dir)
+        # 模拟 QSplitter.saveState().data() 返回的 bytes
+        state = b"\x00\x00\x00\xc8\x00\xff\x01\x02"
+        prefs.set_pdf_splitter_state(state)
+        prefs.save()
+
+        OCRPreferences.reset_instance()
+        prefs2 = OCRPreferences(tmp_config_dir)
+        assert prefs2.get_pdf_splitter_state() == state
+
+    def test_default_is_none(self, tmp_config_dir):
+        prefs = OCRPreferences(tmp_config_dir)
+        assert prefs.get_pdf_splitter_state() is None
+
+    def test_none_round_trips_as_none(self, tmp_config_dir):
+        prefs = OCRPreferences(tmp_config_dir)
+        prefs.set_pdf_splitter_state(b"abc")
+        prefs.set_pdf_splitter_state(None)
+        prefs.save()
+
+        OCRPreferences.reset_instance()
+        prefs2 = OCRPreferences(tmp_config_dir)
+        assert prefs2.get_pdf_splitter_state() is None
