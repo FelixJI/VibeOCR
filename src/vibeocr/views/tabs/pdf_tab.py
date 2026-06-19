@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QProgressBar,
     QPushButton,
+    QScrollArea,
     QSplitter,
     QVBoxLayout,
     QWidget,
@@ -28,7 +29,7 @@ from PySide6.QtWidgets import (
 
 from vibeocr.managers.pdf_session_manager import PdfSessionManager
 from vibeocr.services.pdf_service import PdfService
-from vibeocr.views.pdf_preview_window import PdfPreviewWindow
+from vibeocr.views.pdf_preview_window import PdfPreviewWindow, PreviewCanvas
 
 if TYPE_CHECKING:
     from vibeocr.services.ocr_service_base import OCRServiceBase
@@ -55,19 +56,42 @@ class PdfTab(QWidget):
         return self._session_mgr
 
     def _setup_ui(self) -> None:
-        main_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self._main_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self._main_splitter.setChildrenCollapsible(False)
+        self._main_splitter.setObjectName("mainSplitter")
 
         left_panel = self._create_thumbnail_panel()
-        main_splitter.addWidget(left_panel)
+        self._main_splitter.addWidget(left_panel)
+
+        self._right_splitter = QSplitter(Qt.Orientation.Vertical)
+        self._right_splitter.setChildrenCollapsible(False)
+        self._right_splitter.setObjectName("rightSplitter")
 
         right_panel = self._create_operation_panel()
-        main_splitter.addWidget(right_panel)
+        self._right_splitter.addWidget(right_panel)
 
-        main_splitter.setSizes([200, 600])
+        # 内嵌预览区（默认折叠为小尺寸，按需拖动展开）
+        self._preview_canvas = PreviewCanvas()
+        preview_container = QScrollArea()
+        preview_container.setWidget(self._preview_canvas)
+        preview_container.setWidgetResizable(False)
+        self._right_splitter.addWidget(preview_container)
+
+        self._main_splitter.addWidget(self._right_splitter)
+        self._main_splitter.setSizes([200, 600])
+        # 操作区占大部分、预览区默认折叠
+        self._right_splitter.setSizes([500, 40])
+
+        # 拖动结束后保存布局
+        self._main_splitter.splitterMoved.connect(self._save_splitter_state)
+        self._right_splitter.splitterMoved.connect(self._save_splitter_state)
+
+        # 恢复持久化的布局
+        self._restore_splitter_state()
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(4, 4, 4, 4)
-        layout.addWidget(main_splitter)
+        layout.addWidget(self._main_splitter)
 
     def _create_thumbnail_panel(self) -> QWidget:
         panel = QWidget()
@@ -79,7 +103,7 @@ class PdfTab(QWidget):
         layout.addWidget(self._file_selector)
 
         self._thumbnail_list = QListWidget()
-        self._thumbnail_list.setFixedWidth(200)
+        self._thumbnail_list.setMinimumWidth(120)
         self._thumbnail_list.setIconSize(
             QPixmap(_THUMBNAIL_SIZE, _THUMBNAIL_SIZE).size()
         )
@@ -161,7 +185,13 @@ class PdfTab(QWidget):
         text_layout.addLayout(text_btn_layout)
 
         self._layer_status_label = QLabel("未打开文件")
-        text_layout.addWidget(self._layer_status_label)
+        self._layer_status_label.setWordWrap(True)
+        self._layer_status_label.setAlignment(Qt.AlignmentFlag.AlignTop)
+        status_scroll = QScrollArea()
+        status_scroll.setWidgetResizable(True)
+        status_scroll.setWidget(self._layer_status_label)
+        status_scroll.setMinimumHeight(120)
+        text_layout.addWidget(status_scroll)
         layout.addWidget(text_group)
 
         self._progress_bar = QProgressBar()
@@ -193,6 +223,36 @@ class PdfTab(QWidget):
         mgr.ocr_page_done.connect(self._on_ocr_page_result)
         mgr.ocr_progress.connect(self._on_ocr_progress_update)
         mgr.ocr_done.connect(self._on_ocr_finished)
+
+    # ---- splitter layout persistence --------------------------------
+
+    def _restore_splitter_state(self) -> None:
+        """从偏好恢复 splitter 布局。"""
+        try:
+            from vibeocr.utils.ocr_preferences import OCRPreferences
+
+            prefs = OCRPreferences.instance()
+        except RuntimeError:
+            return
+        main_state = prefs.get_pdf_splitter_state()
+        if main_state:
+            self._main_splitter.restoreState(main_state)
+        right_state = prefs.get_pdf_right_splitter_state()
+        if right_state:
+            self._right_splitter.restoreState(right_state)
+
+    def _save_splitter_state(self) -> None:
+        """保存 splitter 布局到偏好（拖动结束触发）。"""
+        try:
+            from vibeocr.utils.ocr_preferences import OCRPreferences
+
+            prefs = OCRPreferences.instance()
+        except RuntimeError:
+            return
+        prefs.set_pdf_splitter_state(self._main_splitter.saveState().data())
+        prefs.set_pdf_right_splitter_state(
+            self._right_splitter.saveState().data()
+        )
 
     def _on_session_added(self, file_path: str) -> None:
         name = Path(file_path).name
