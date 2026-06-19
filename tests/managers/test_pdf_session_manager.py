@@ -90,3 +90,52 @@ class TestPdfSessionManagerShutdown:
         manager.shutdown()
         assert manager.active_session is None
         assert len(manager.session_paths) == 0
+
+
+class TestPdfSessionManagerOcrStats:
+    def test_ocr_stats_accumulate_and_signal(self, manager, test_pdf_a):
+        """模拟 OCR worker 回调，验证 stats 累加与 ocr_stats_ready 信号。
+
+        _on_ocr_page_done/_on_ocr_all_done 从 self._ocr_worker.session_id 取会话，
+        因此注入一个 mock worker 指向活动会话。
+        """
+        from unittest.mock import MagicMock
+
+        from vibeocr.models.ocr_result import OCRResult, TextBlock
+
+        session = manager.open_session(str(test_pdf_a))
+
+        mock_worker = MagicMock()
+        mock_worker.session_id = session.file_path
+        manager._ocr_worker = mock_worker
+
+        emitted = []
+        manager.ocr_stats_ready.connect(
+            lambda sid, w, s: emitted.append((sid, w, s))
+        )
+
+        # 第一页写入 1 块
+        result = OCRResult(
+            raw_text="Hello",
+            text_blocks=[
+                TextBlock(
+                    text="Hello",
+                    score=0.9,
+                    bbox=(50.0, 50.0, 300.0, 100.0),
+                    page_idx=0,
+                ),
+            ],
+        )
+        manager._on_ocr_page_done(0, result)
+        # 第二页 result=None（模拟失败页）
+        manager._on_ocr_page_done(1, None)
+
+        assert session.ocr_stats["written"] == 1
+        assert session.ocr_stats["skipped"] == 0
+
+        manager._on_ocr_all_done(session.file_path, 1, 1)
+        assert len(emitted) == 1
+        sid, w, s = emitted[0]
+        assert sid == session.file_path
+        assert w == 1
+        assert s == 0
