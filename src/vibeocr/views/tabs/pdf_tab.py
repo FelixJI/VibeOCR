@@ -348,7 +348,10 @@ class PdfTab(QWidget):
         与 _on_ocr_finished（ocr_done 信号）配合：后者负责通用 UI 复位，
         本方法负责文字层特有的“成功/跳过”汇总与内嵌预览。
         """
-        if skipped > 0:
+        if written == 0 and skipped == 0:
+            # 没有任何文字块产出（例如全部页面 OCR 失败），不误报“已添加”。
+            self._status_label.setText("文字层未添加：未识别到任何文字块")
+        elif skipped > 0:
             QMessageBox.information(
                 self,
                 "文字层已添加",

@@ -154,3 +154,66 @@ class TestPdfTabOcrCompletion:
         assert called == []
         assert "文字层已添加" in pdf_tab._status_label.text()
         assert "3 块" in pdf_tab._status_label.text()
+
+    def test_completion_nothing_written_does_not_claim_added(
+        self, pdf_tab, monkeypatch
+    ):
+        """written==0 且 skipped==0 时不应误报“已添加”。"""
+        import vibeocr.views.tabs.pdf_tab as mod
+
+        called = []
+        monkeypatch.setattr(
+            mod.QMessageBox, "information", lambda *a, **k: called.append(a)
+        )
+        monkeypatch.setattr(
+            pdf_tab, "_show_embedded_preview", lambda: None
+        )
+        pdf_tab._session_mgr.ocr_stats_ready.emit("sid", 0, 0)
+        assert called == []
+        text = pdf_tab._status_label.text()
+        assert "已添加" not in text
+        assert "未添加" in text
+
+    def test_show_embedded_preview_populates_canvas(
+        self, pdf_tab, monkeypatch, tmp_path
+    ):
+        """_show_embedded_preview 应把页面渲染进内嵌画布（E2E：problem #3）。"""
+        import fitz
+
+        from vibeocr.models.pdf_document import (
+            PdfDocument,
+            PdfPageInfo,
+            TextLayerInfo,
+        )
+        from vibeocr.models.pdf_session import PdfSession
+
+        # 构造带文字层（1 个文本块）的真实 PDF + session
+        page_info = PdfPageInfo(
+            page_index=0,
+            has_text_layer=True,
+            text_layers=[
+                TextLayerInfo(
+                    index=0,
+                    text_preview="测试",
+                    char_count=2,
+                    bbox=(50.0, 50.0, 300.0, 100.0),
+                    color_id=0,
+                )
+            ],
+        )
+        doc = fitz.open()
+        doc.new_page()
+        pdf_doc = PdfDocument(file_path="x.pdf", pages=[page_info])
+        session = PdfSession(file_path="x.pdf", doc=doc, pdf_document=pdf_doc)
+        pdf_tab._session_mgr._sessions["x.pdf"] = session
+        pdf_tab._session_mgr._active_path = "x.pdf"
+
+        pdf_tab._show_embedded_preview()
+
+        # 画布应已接收 pixmap 且高亮层已设置
+        assert pdf_tab._preview_canvas._pixmap is not None
+        assert pdf_tab._preview_canvas._pixmap.width() > 0
+        assert pdf_tab._preview_canvas._highlight_layers == page_info.text_layers
+        assert pdf_tab._preview_canvas._render_dpi == 150
+        assert pdf_tab._preview_canvas._source == "pdf"
+        doc.close()
