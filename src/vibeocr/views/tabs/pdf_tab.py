@@ -228,6 +228,7 @@ class PdfTab(QWidget):
         mgr.ocr_page_done.connect(self._on_ocr_page_result)
         mgr.ocr_progress.connect(self._on_ocr_progress_update)
         mgr.ocr_done.connect(self._on_ocr_finished)
+        mgr.ocr_stats_ready.connect(self._on_ocr_stats_ready)
 
     # ---- splitter layout persistence --------------------------------
 
@@ -338,6 +339,47 @@ class PdfTab(QWidget):
         self._update_layer_status()
         msg = f"OCR 完成：成功 {success} 页" + (f"，失败 {fail} 页" if fail else "")
         self._status_label.setText(msg)
+
+    def _on_ocr_stats_ready(
+        self, session_id: str, written: int, skipped: int
+    ) -> None:
+        """文字层 OCR 完成后：汇总写入结果并自动预览。
+
+        与 _on_ocr_finished（ocr_done 信号）配合：后者负责通用 UI 复位，
+        本方法负责文字层特有的“成功/跳过”汇总与内嵌预览。
+        """
+        if skipped > 0:
+            QMessageBox.information(
+                self,
+                "文字层已添加",
+                f"成功写入 {written} 块，跳过 {skipped} 块（详见日志）。",
+            )
+        else:
+            self._status_label.setText(f"文字层已添加（{written} 块）")
+        self._update_layer_status()
+        self._refresh_thumbnails()
+        self._show_embedded_preview()
+
+    def _show_embedded_preview(self) -> None:
+        """在内嵌预览画布显示当前页文字层高亮（render_mode=3 隐形的可视化）。"""
+        session = self._session_mgr.active_session
+        if session is None:
+            return
+        indices = self._get_selected_page_indices()
+        page_idx = indices[0] if indices else 0
+        page_info = session.pdf_document.get_page(page_idx)
+        if page_info is None or not page_info.text_layers:
+            return
+        with session.doc_lock:
+            pixmap = PdfService.render_page(session.doc, page_idx, dpi=150)
+            page_rect = session.doc[page_idx].rect
+        self._preview_canvas.set_pixmap(pixmap)
+        self._preview_canvas.set_highlight_layers(
+            page_info.text_layers,
+            render_dpi=150,
+            page_rect=page_rect,
+            source="pdf",
+        )
 
     # ---- UI helpers -------------------------------------------------
 

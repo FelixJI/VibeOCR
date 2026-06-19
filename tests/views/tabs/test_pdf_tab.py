@@ -119,3 +119,38 @@ class TestPdfTabLayerStatus:
         # 旧的误导措辞不应再出现
         assert "层文字层" not in text
         doc.close()
+
+
+class TestPdfTabOcrCompletion:
+    def test_completion_summary_with_skips(self, pdf_tab, monkeypatch):
+        """skipped>0 时应弹出 information 提示含“成功 N 块 / 跳过 K 块”。"""
+        import vibeocr.views.tabs.pdf_tab as mod
+
+        called = []
+        monkeypatch.setattr(
+            mod.QMessageBox, "information", lambda *a, **k: called.append(a)
+        )
+        monkeypatch.setattr(
+            pdf_tab, "_show_embedded_preview", lambda: None
+        )
+        pdf_tab._session_mgr.ocr_stats_ready.emit("sid", 5, 2)
+        assert len(called) == 1
+        msg = called[0][2]
+        assert "成功写入 5 块" in msg
+        assert "跳过 2 块" in msg
+
+    def test_completion_no_skip_sets_status_label(self, pdf_tab, monkeypatch):
+        """skipped==0 时不弹框，只在状态栏轻量提示。"""
+        import vibeocr.views.tabs.pdf_tab as mod
+
+        called = []
+        monkeypatch.setattr(
+            mod.QMessageBox, "information", lambda *a, **k: called.append(a)
+        )
+        monkeypatch.setattr(
+            pdf_tab, "_show_embedded_preview", lambda: None
+        )
+        pdf_tab._session_mgr.ocr_stats_ready.emit("sid", 3, 0)
+        assert called == []
+        assert "文字层已添加" in pdf_tab._status_label.text()
+        assert "3 块" in pdf_tab._status_label.text()
