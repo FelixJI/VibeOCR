@@ -75,3 +75,47 @@ class TestPdfTabStructure:
         # 触发定时器到期 → 仅落盘一次
         pdf_tab._splitter_save_timer.timeout.emit()
         assert calls == [1]
+
+
+class TestPdfTabLayerStatus:
+    def test_status_wording_for_text_layer(self, pdf_tab, tmp_path, monkeypatch):
+        """_update_layer_status 对有文字层的页应输出“已添加文字层(N 个文本块)”。"""
+        import fitz
+
+        from vibeocr.models.pdf_document import (
+            PdfDocument,
+            PdfPageInfo,
+            TextLayerInfo,
+        )
+        from vibeocr.models.pdf_session import PdfSession
+
+        page_info = PdfPageInfo(
+            page_index=0,
+            has_text_layer=True,
+            text_layers=[
+                TextLayerInfo(
+                    index=i,
+                    text_preview="t",
+                    char_count=1,
+                    bbox=(0.0, 0.0, 1.0, 1.0),
+                    color_id=i,
+                )
+                for i in range(12)
+            ],
+        )
+        doc = fitz.open()
+        doc.new_page()
+        pdf_doc = PdfDocument(file_path="x.pdf", pages=[page_info])
+        session = PdfSession(file_path="x.pdf", doc=doc, pdf_document=pdf_doc)
+        # active_session 是只读 property（读 _active_path + _sessions），直接注入底层字段
+        pdf_tab._session_mgr._sessions["x.pdf"] = session
+        pdf_tab._session_mgr._active_path = "x.pdf"
+
+        pdf_tab._update_layer_status()
+        text = pdf_tab._layer_status_label.text()
+        assert "第1页" in text
+        assert "已添加文字层" in text
+        assert "12 个文本块" in text
+        # 旧的误导措辞不应再出现
+        assert "层文字层" not in text
+        doc.close()

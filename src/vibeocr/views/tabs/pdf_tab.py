@@ -408,7 +408,10 @@ class PdfTab(QWidget):
         lines = []
         for p in session.pdf_document.pages:
             if p.has_text_layer:
-                lines.append(f"第{p.page_index + 1}页: {len(p.text_layers)}层文字层")
+                lines.append(
+                    f"第{p.page_index + 1}页: 已添加文字层"
+                    f"({len(p.text_layers)} 个文本块)"
+                )
             else:
                 status = "扫描件" if p.is_scanned else "无文字层"
                 lines.append(f"第{p.page_index + 1}页: {status}")
