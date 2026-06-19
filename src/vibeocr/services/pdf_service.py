@@ -296,8 +296,10 @@ class PdfService:
         page_index: int,
         ocr_result: object,
         pdf_settings: object | None = None,
-    ) -> None:
+    ) -> tuple[int, int]:
         """将 OCR 结果作为隐形文字层写入 PDF 页面。
+
+        使用内置 china-s CJK CID 字体，确保中文等字符可被写入并被阅读器提取。
 
         Args:
             doc: fitz.Document 实例。
@@ -305,6 +307,9 @@ class PdfService:
             page_index: 页码索引。
             ocr_result: OCRResult 实例。
             pdf_settings: PdfGlobalSettings 实例（None 则使用默认值）。
+
+        Returns:
+            (written, skipped) 成功写入与被跳过的文本块数量。
         """
         from vibeocr.models.pdf_ocr_options import PdfGlobalSettings
 
@@ -314,12 +319,15 @@ class PdfService:
         page_rect = page.rect
         preproc_angle = getattr(ocr_result, "preproc_angle", 0)
 
+        written = 0
+        skipped = 0
         text_blocks = getattr(ocr_result, "text_blocks", [])
         for block in text_blocks:
             if block.text is None or not block.text.strip():
                 continue
             bbox = block.bbox
             if bbox is None:
+                skipped += 1
                 continue
 
             # 逆旋转 + 归一化到 PDF 页面坐标
@@ -327,30 +335,52 @@ class PdfService:
                 bbox, preproc_angle, page_rect
             )
             if rect.is_empty or rect.width < 1 or rect.height < 1:
+                logger.warning(
+                    "page %d block skipped (rect too small): rect=%s text=%r",
+                    page_index, rect, block.text[:30],
+                )
+                skipped += 1
                 continue
 
             fontsize = rect.height * settings.font_size_ratio
             if fontsize < 1:
+                logger.warning(
+                    "page %d block skipped (fontsize < 1): rect=%s text=%r",
+                    page_index, rect, block.text[:30],
+                )
+                skipped += 1
                 continue
 
             render_mode = 0 if settings.text_layer_visible else 3
-
+            inserted = False
             for _ in range(settings.font_size_retry_count):
                 rc = page.insert_textbox(
                     rect,
                     block.text,
                     fontsize=fontsize,
+                    fontname="china-s",
                     color=(0, 0, 0),
                     render_mode=render_mode,
                 )
                 if rc >= 0:
+                    inserted = True
                     break
                 fontsize *= settings.font_size_shrink_factor
                 if fontsize < 1:
                     break
 
+            if inserted:
+                written += 1
+            else:
+                logger.warning(
+                    "page %d block skipped (font retry exhausted): rect=%s text=%r",
+                    page_index, rect, block.text[:30],
+                )
+                skipped += 1
+
         pdf_document.is_modified = True
         PdfService.update_page_info(doc, pdf_document, page_index)
+        return written, skipped
 
     @staticmethod
     def delete_text_layers(
