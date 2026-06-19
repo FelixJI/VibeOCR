@@ -1,5 +1,6 @@
 """机器码生成和依赖检测缓存管理模块"""
 
+import contextlib
 import hashlib
 import json
 import os
@@ -14,8 +15,9 @@ CACHE_VERSION = 1
 
 def _get_cpu_id() -> str:
     """获取 CPU ID"""
-    try:
-        if os.name == "nt":
+    if os.name == "nt":
+        # wmic 缺失(旧系统)或超时均属正常，失败返回空字符串
+        with contextlib.suppress(OSError, subprocess.SubprocessError):
             result = subprocess.run(
                 ["wmic", "cpu", "get", "processorid"],
                 capture_output=True,
@@ -27,15 +29,14 @@ def _get_cpu_id() -> str:
                 lines = result.stdout.strip().split("\n")
                 if len(lines) > 1:
                     return lines[1].strip()
-    except Exception:
-        pass
     return ""
 
 
 def _get_baseboard_serial() -> str:
     """获取主板序列号"""
-    try:
-        if os.name == "nt":
+    if os.name == "nt":
+        # wmic 缺失(旧系统)或超时均属正常，失败返回空字符串
+        with contextlib.suppress(OSError, subprocess.SubprocessError):
             result = subprocess.run(
                 ["wmic", "baseboard", "get", "serialnumber"],
                 capture_output=True,
@@ -47,8 +48,6 @@ def _get_baseboard_serial() -> str:
                 lines = result.stdout.strip().split("\n")
                 if len(lines) > 1:
                     return lines[1].strip()
-    except Exception:
-        pass
     return ""
 
 

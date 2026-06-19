@@ -191,6 +191,9 @@ class ExportService:
                     if img_path and img_path in images:
                         data = images[img_path]
                         if isinstance(data, bytes):
+                            # python-docx 对损坏/不支持的图片抛多种异常
+                            # (UnrecognizedImageError/ValueError/KeyError 等)，
+                            # 失败时降级为下方占位段落，故静默忽略
                             try:
                                 doc.add_picture(io.BytesIO(data), width=Inches(5))
                                 img_added = True

@@ -55,6 +55,8 @@ class PdfSession:
         return self
 
     def __exit__(self, *args) -> None:
+        # fitz doc.close() 在文档已关闭/底层资源损坏时抛各类异常，
+        # 退出路径不应再向外抛，静默忽略
         try:
             self.doc.close()
         except Exception:

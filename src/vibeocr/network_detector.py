@@ -3,6 +3,7 @@
 并行探测模型源端点，结果持久化到 cache.json，7 天有效期。
 """
 
+import contextlib
 import os
 import ssl
 import threading
@@ -10,6 +11,7 @@ import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Literal
+from urllib.error import URLError
 from urllib.request import Request, urlopen
 
 from vibeocr.machine_cache import generate_machine_id, load_cache, save_cache
@@ -100,7 +102,8 @@ class NetworkDetector:
         lock = threading.Lock()
 
         def test_endpoint(name: str, url: str) -> None:
-            try:
+            # 网络探测：DNS/连接/SSL/超时失败均视为端点不可达，记录 inf
+            with contextlib.suppress(URLError, OSError, ssl.SSLError):
                 start = time.time()
                 ctx = ssl.create_default_context()
                 ctx.check_hostname = False
@@ -111,8 +114,6 @@ class NetworkDetector:
                         with lock:
                             results[name] = time.time() - start
                         return
-            except Exception:
-                pass
             with lock:
                 results.setdefault(name, float("inf"))
 

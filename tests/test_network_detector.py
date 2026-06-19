@@ -4,6 +4,7 @@ import os
 import time
 from datetime import datetime, timedelta
 from unittest.mock import MagicMock, patch
+from urllib.error import URLError
 
 from vibeocr.machine_cache import generate_machine_id, save_cache
 
@@ -32,7 +33,7 @@ class TestNetworkDetectorDetection:
             response.__exit__ = MagicMock(return_value=False)
             if "huggingface.co" in url:
                 time.sleep(0.2)
-                raise Exception("timeout")
+                raise URLError(TimeoutError("timeout"))
             return response
 
         mock_urlopen.side_effect = mock_response
@@ -58,7 +59,7 @@ class TestNetworkDetectorDetection:
             response.__exit__ = MagicMock(return_value=False)
             if "bcebos.com" in url:
                 time.sleep(0.2)
-                raise Exception("timeout")
+                raise URLError(TimeoutError("timeout"))
             return response
 
         mock_urlopen.side_effect = mock_response
@@ -74,7 +75,7 @@ class TestNetworkDetectorDetection:
         """两个端点都不可达 → 默认 domestic。"""
         from vibeocr.network_detector import NetworkDetector
 
-        mock_urlopen.side_effect = Exception("Connection failed")
+        mock_urlopen.side_effect = URLError(OSError("Connection failed"))
         detector = NetworkDetector(tmp_path, force_detect=True)
         assert detector.paddlex_source == "bos"
         assert detector.mineru_source == "modelscope"
@@ -124,7 +125,7 @@ class TestNetworkDetectorCache:
             },
         )
         with patch("vibeocr.network_detector.urlopen") as mock_urlopen:
-            mock_urlopen.side_effect = Exception("Connection failed")
+            mock_urlopen.side_effect = URLError(OSError("Connection failed"))
             detector = NetworkDetector(tmp_path)
         assert detector.paddlex_source == "bos"
 
@@ -146,7 +147,7 @@ class TestNetworkDetectorCache:
             },
         )
         with patch("vibeocr.network_detector.urlopen") as mock_urlopen:
-            mock_urlopen.side_effect = Exception("Connection failed")
+            mock_urlopen.side_effect = URLError(OSError("Connection failed"))
             detector = NetworkDetector(tmp_path)
         assert detector.paddlex_source == "bos"
 

@@ -315,6 +315,7 @@ class PdfSessionManager(QObject):
         self._cancel_load_worker()
         self._cancel_ocr_worker()
         for session in self._sessions.values():
+            # fitz doc.close() 在文档已关闭/损坏时抛各类异常，关闭路径静默忽略
             try:
                 session.doc.close()
             except Exception:

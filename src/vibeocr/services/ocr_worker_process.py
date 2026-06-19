@@ -394,10 +394,7 @@ class OCRWorkerProcess:
             diagnostics.append("共享内存: 未创建")
 
         # 尝试获取最后的日志输出
-        try:
-            time.sleep(0.5)  # 等待日志刷新
-        except Exception:
-            pass
+        time.sleep(0.5)  # 等待日志刷新
 
         self.stop()
 
@@ -445,7 +442,8 @@ class OCRWorkerProcess:
                     raise OCRWorkerProcessError(f"Worker {self.worker_id} 未就绪")
 
             protocol = self.protocol
-            assert protocol is not None  # guarded by is_ready check above
+            if protocol is None:  # guarded by is_ready check above
+                raise OCRWorkerProcessError(f"Worker {self.worker_id} 通信协议未初始化")
             self.busy = True
             logger.debug(
                 f"[主进程] Worker {self.worker_id} 开始识别，图像大小: {len(image_data)} 字节"
@@ -572,7 +570,8 @@ class OCRWorkerProcess:
             timeout = self._calculate_preload_timeout(pipelines)
 
         protocol = self.protocol
-        assert protocol is not None  # guarded by is_ready check above
+        if protocol is None:  # guarded by is_ready check above
+            raise OCRWorkerProcessError(f"Worker {self.worker_id} 通信协议未初始化")
         self.busy = True
 
         try:
@@ -761,7 +760,8 @@ class OCRWorkerProcess:
             raise OCRWorkerProcessError(f"Worker {self.worker_id} 未就绪")
 
         protocol = self.protocol
-        assert protocol is not None  # guarded by is_ready check above
+        if protocol is None:  # guarded by is_ready check above
+            raise OCRWorkerProcessError(f"Worker {self.worker_id} 通信协议未初始化")
         try:
             protocol.write_message(
                 MSG_BATCH_ADD, request_data, timeout=timeout, sender="main"
@@ -807,7 +807,8 @@ class OCRWorkerProcess:
             raise OCRWorkerProcessError(f"Worker {self.worker_id} 未就绪")
 
         protocol = self.protocol
-        assert protocol is not None  # guarded by is_ready check above
+        if protocol is None:  # guarded by is_ready check above
+            raise OCRWorkerProcessError(f"Worker {self.worker_id} 通信协议未初始化")
         self.busy = True
         try:
             protocol.write_message(
@@ -902,7 +903,8 @@ class OCRWorkerProcess:
             return False
 
         protocol = self.protocol
-        assert protocol is not None  # guarded by is_ready check above
+        if protocol is None:  # guarded by is_ready check above
+            raise OCRWorkerProcessError(f"Worker {self.worker_id} 通信协议未初始化")
         try:
             protocol.write_message(
                 MSG_BATCH_CANCEL, b"", timeout=timeout, sender="main"

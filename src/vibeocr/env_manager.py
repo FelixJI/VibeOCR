@@ -926,7 +926,7 @@ def detect_cuda_version() -> str | None:
                     print(f"[硬件检测] 对应PaddlePaddle CUDA版本: {paddle_cuda}")
                     return paddle_cuda
 
-    except (FileNotFoundError, subprocess.TimeoutExpired, Exception) as e:
+    except Exception as e:
         print(f"[硬件检测] nvidia-smi检测失败: {e}")
 
     try:
@@ -952,7 +952,7 @@ def detect_cuda_version() -> str | None:
                     print(f"[硬件检测] 对应PaddlePaddle CUDA版本: {paddle_cuda}")
                     return paddle_cuda
 
-    except (FileNotFoundError, subprocess.TimeoutExpired, Exception):
+    except Exception:
         pass
 
     print("[硬件检测] 无法检测CUDA版本")
@@ -978,7 +978,7 @@ def detect_gpu() -> tuple[bool, str | None]:
             print(f"[硬件检测] 检测到GPU: {result.stdout.strip()}")
             cuda_version = detect_cuda_version()
             return True, cuda_version
-    except (FileNotFoundError, subprocess.TimeoutExpired, Exception):
+    except Exception:
         pass
 
     print("[硬件检测] 未检测到NVIDIA GPU，将使用CPU版本")
