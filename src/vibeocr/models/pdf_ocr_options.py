@@ -25,6 +25,8 @@ class PdfGlobalSettings:
         text_layer_visible: True → render_mode=0（可见），False → render_mode=3（隐形）。
         font_size_retry_count: 文字溢出时字号缩放重试次数。
         font_size_shrink_factor: 每次重试的字号缩放因子。
+        min_font_size: 字号下限（pt）。矮行/窄框导致字号过小时夹紧到此值，
+            确保隐形文字层仍可被阅读器提取，避免因“塞不进”整块丢弃。
     """
 
     render_dpi: int = 300
@@ -33,6 +35,7 @@ class PdfGlobalSettings:
     text_layer_visible: bool = False
     font_size_retry_count: int = 5
     font_size_shrink_factor: float = 0.75
+    min_font_size: float = 4.0
 
     def to_dict(self) -> dict:
         return {
@@ -42,6 +45,7 @@ class PdfGlobalSettings:
             "text_layer_visible": self.text_layer_visible,
             "font_size_retry_count": self.font_size_retry_count,
             "font_size_shrink_factor": self.font_size_shrink_factor,
+            "min_font_size": self.min_font_size,
         }
 
     @classmethod
@@ -55,6 +59,7 @@ class PdfGlobalSettings:
             text_layer_visible=data.get("text_layer_visible", False),
             font_size_retry_count=data.get("font_size_retry_count", 5),
             font_size_shrink_factor=data.get("font_size_shrink_factor", 0.75),
+            min_font_size=data.get("min_font_size", 4.0),
         )
 
     def adjust_dpi(self, page_width: float, page_height: float) -> int:

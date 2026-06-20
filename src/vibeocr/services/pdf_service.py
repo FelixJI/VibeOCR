@@ -329,7 +329,8 @@ class PdfService:
             if bbox is None:
                 logger.warning(
                     "page %d block skipped (bbox is None): text=%r",
-                    page_index, block.text[:30],
+                    page_index,
+                    block.text[:30],
                 )
                 skipped += 1
                 continue
@@ -338,47 +339,60 @@ class PdfService:
             rect = PdfService._denormalize_and_unrotate_bbox(
                 bbox, preproc_angle, page_rect
             )
-            if rect.is_empty or rect.width < 1 or rect.height < 1:
+            # 仅当矩形退化（宽或高 ≤ 0）才整体跳过；
+            # 矮行/窄框由最小字号兜底继续写入，避免整块丢弃。
+            if rect.is_empty or rect.width <= 0 or rect.height <= 0:
                 logger.warning(
-                    "page %d block skipped (rect too small): rect=%s text=%r",
-                    page_index, rect, block.text[:30],
+                    "page %d block skipped (rect empty): rect=%s text=%r",
+                    page_index,
+                    rect,
+                    block.text[:30],
                 )
                 skipped += 1
                 continue
 
-            fontsize = rect.height * settings.font_size_ratio
-            if fontsize < 1:
-                logger.warning(
-                    "page %d block skipped (fontsize < 1): rect=%s text=%r",
-                    page_index, rect, block.text[:30],
+            # 字号策略：
+            # - 基线 = 行高 × 比例；
+            # - 同时按 bbox 宽度收缩（get_text_length 估算文本宽度），
+            #   避免 insert_text 从插入点线性外溢超出页面/框；
+            # - 夹紧到最小字号，保证隐形文字仍可被阅读器提取；
+            # - 使用 insert_text（按 bbox 左下角原位写入单行），不再用
+            #   insert_textbox——后者要求“文本塞进矩形”会拒绝并整块丢弃。
+            text = block.text
+            fontsize_by_height = rect.height * settings.font_size_ratio
+            fontsize = fontsize_by_height
+            try:
+                text_width = fitz.get_text_length(
+                    text, fontname="china-s", fontsize=fontsize
                 )
-                skipped += 1
-                continue
+                if text_width > rect.width > 0:
+                    fontsize_by_width = fontsize * rect.width / text_width
+                    fontsize = min(fontsize, fontsize_by_width)
+            except Exception:
+                pass
+            fontsize = max(fontsize, settings.min_font_size)
 
             render_mode = 0 if settings.text_layer_visible else 3
-            inserted = False
-            for _ in range(settings.font_size_retry_count):
-                rc = page.insert_textbox(
-                    rect,
-                    block.text,
+            # bbox 左下角作为基线插入点（fitz 的 insert_text 接收基线左端点）
+            point = fitz.Point(rect.x0, rect.y1)
+            try:
+                page.insert_text(
+                    point,
+                    text,
                     fontsize=fontsize,
                     fontname="china-s",
                     color=(0, 0, 0),
                     render_mode=render_mode,
                 )
-                if rc >= 0:
-                    inserted = True
-                    break
-                fontsize *= settings.font_size_shrink_factor
-                if fontsize < 1:
-                    break
-
-            if inserted:
                 written += 1
-            else:
+            except Exception as e:
                 logger.warning(
-                    "page %d block skipped (font retry exhausted): rect=%s text=%r",
-                    page_index, rect, block.text[:30],
+                    "page %d block skipped (insert_text failed): rect=%s "
+                    "err=%s text=%r",
+                    page_index,
+                    rect,
+                    e,
+                    block.text[:30],
                 )
                 skipped += 1
 
@@ -431,7 +445,12 @@ class PdfService:
         Returns:
             映射后的 fitz.Rect。
         """
-        nx0, ny0, nx1, ny1 = bbox[0] / 1000, bbox[1] / 1000, bbox[2] / 1000, bbox[3] / 1000
+        nx0, ny0, nx1, ny1 = (
+            bbox[0] / 1000,
+            bbox[1] / 1000,
+            bbox[2] / 1000,
+            bbox[3] / 1000,
+        )
         pw, ph = page_rect.width, page_rect.height
 
         if preproc_angle == 90:

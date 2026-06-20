@@ -20,23 +20,31 @@ class TestPdfGlobalSettingsDefaults:
         assert s.max_pixels == 8_000_000
         assert s.font_size_ratio == 0.6
 
+    def test_min_font_size_default(self):
+        s = PdfGlobalSettings()
+        assert s.min_font_size == 4.0
+
 
 class TestPdfGlobalSettingsSerialization:
     def test_to_dict_roundtrip(self):
-        s = PdfGlobalSettings(render_dpi=200, font_size_ratio=0.7)
+        s = PdfGlobalSettings(render_dpi=200, font_size_ratio=0.7, min_font_size=6.0)
         d = s.to_dict()
         assert d["render_dpi"] == 200
         assert d["font_size_ratio"] == 0.7
+        assert d["min_font_size"] == 6.0
 
         s2 = PdfGlobalSettings.from_dict(d)
         assert s2.render_dpi == 200
         assert s2.font_size_ratio == 0.7
+        assert s2.min_font_size == 6.0
 
     def test_from_dict_missing_fields_use_defaults(self):
         s = PdfGlobalSettings.from_dict({"render_dpi": 150})
         assert s.render_dpi == 150
         assert s.max_pixels == 16_000_000
         assert s.font_size_retry_count == 5
+        # min_font_size 缺失时回退默认值（向后兼容旧偏好）
+        assert s.min_font_size == 4.0
 
     def test_from_dict_empty(self):
         s = PdfGlobalSettings.from_dict({})

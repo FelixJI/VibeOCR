@@ -46,14 +46,14 @@ class TestPdfTabStructure:
         assert lst.maximumWidth() > 300
 
     def test_layer_status_in_scroll_area(self, pdf_tab):
-        """状态标签应包在 QScrollArea 中，多页文字不被截断。"""
+        """状态列表应包在 QScrollArea 中，多页文字不被截断。"""
         scrolls = pdf_tab.findChildren(QScrollArea)
         assert len(scrolls) >= 1
-        # 其中至少一个 ScrollArea 的内容是 _layer_status_label
-        owns_label = any(
-            s.widget() is pdf_tab._layer_status_label for s in scrolls
+        # 其中至少一个 ScrollArea 的内容是 _layer_status_list
+        owns_list = any(
+            s.widget() is pdf_tab._layer_status_list for s in scrolls
         )
-        assert owns_label
+        assert owns_list
 
     def test_embedded_preview_canvas_exists(self, pdf_tab):
         """PdfTab 应内嵌一个 PreviewCanvas 供完成后自动预览。"""
@@ -112,13 +112,136 @@ class TestPdfTabLayerStatus:
         pdf_tab._session_mgr._active_path = "x.pdf"
 
         pdf_tab._update_layer_status()
-        text = pdf_tab._layer_status_label.text()
-        assert "第1页" in text
-        assert "已添加文字层" in text
-        assert "12 个文本块" in text
+        row_text = pdf_tab._layer_status_list.item(0).text()
+        assert "第1页" in row_text
+        assert "已添加文字层" in row_text
+        assert "12 个文本块" in row_text
         # 旧的误导措辞不应再出现
-        assert "层文字层" not in text
+        assert "层文字层" not in row_text
         doc.close()
+
+    def test_status_list_row_count_matches_pages(self, pdf_tab):
+        """状态列表行数应等于页数，每行携带 page_index。"""
+        import fitz
+
+        from PySide6.QtCore import Qt
+
+        from vibeocr.models.pdf_document import PdfDocument, PdfPageInfo
+        from vibeocr.models.pdf_session import PdfSession
+
+        pages = [PdfPageInfo(page_index=i) for i in range(4)]
+        doc = fitz.open()
+        for _ in range(4):
+            doc.new_page()
+        pdf_doc = PdfDocument(file_path="x.pdf", pages=pages)
+        session = PdfSession(file_path="x.pdf", doc=doc, pdf_document=pdf_doc)
+        pdf_tab._session_mgr._sessions["x.pdf"] = session
+        pdf_tab._session_mgr._active_path = "x.pdf"
+
+        pdf_tab._update_layer_status()
+        assert pdf_tab._layer_status_list.count() == 4
+        for i in range(4):
+            item = pdf_tab._layer_status_list.item(i)
+            assert item.data(Qt.ItemDataRole.UserRole) == i
+        doc.close()
+
+
+class TestPdfTabLayerStatusLinkage:
+    """点击状态行应联动左侧缩略图与内嵌预览。"""
+
+    def _setup_session(self, pdf_tab):
+        import fitz
+
+        from vibeocr.models.pdf_document import (
+            PdfDocument,
+            PdfPageInfo,
+            TextLayerInfo,
+        )
+        from vibeocr.models.pdf_session import PdfSession
+
+        pages = [
+            PdfPageInfo(
+                page_index=2,
+                has_text_layer=True,
+                text_layers=[
+                    TextLayerInfo(
+                        index=0,
+                        text_preview="t",
+                        char_count=1,
+                        bbox=(50.0, 50.0, 300.0, 100.0),
+                        color_id=0,
+                    )
+                ],
+            ),
+            PdfPageInfo(page_index=0),
+            PdfPageInfo(page_index=1),
+        ]
+        doc = fitz.open()
+        for _ in range(3):
+            doc.new_page()
+        pdf_doc = PdfDocument(file_path="x.pdf", pages=pages)
+        session = PdfSession(file_path="x.pdf", doc=doc, pdf_document=pdf_doc)
+        pdf_tab._session_mgr._sessions["x.pdf"] = session
+        pdf_tab._session_mgr._active_path = "x.pdf"
+        pdf_tab._refresh_thumbnails()
+        pdf_tab._update_layer_status()
+        return doc
+
+    def test_click_status_row_selects_thumbnail(self, pdf_tab):
+        """点击状态列表第 K 行 → 缩略图列表选中对应 page_index 的行。"""
+        doc = self._setup_session(pdf_tab)
+        try:
+            # 状态列表第 0 行的 page_index=2 → 缩略图中 page_index=2 的行
+            from PySide6.QtCore import Qt
+
+            status_item = pdf_tab._layer_status_list.item(0)
+            page_idx = status_item.data(Qt.ItemDataRole.UserRole)
+            assert page_idx == 2
+
+            pdf_tab._on_layer_status_clicked(status_item)
+            selected = pdf_tab._get_selected_page_indices()
+            assert selected == [2]
+        finally:
+            doc.close()
+
+    def test_click_status_row_refreshes_preview(self, pdf_tab, monkeypatch):
+        """点击状态行 → 调用 _show_embedded_preview_for_page 刷新内嵌预览。"""
+        doc = self._setup_session(pdf_tab)
+        try:
+            called = []
+            monkeypatch.setattr(
+                pdf_tab,
+                "_show_embedded_preview_for_page",
+                lambda idx: called.append(idx),
+            )
+            status_item = pdf_tab._layer_status_list.item(0)
+            pdf_tab._on_layer_status_clicked(status_item)
+            assert called == [2]
+        finally:
+            doc.close()
+
+    def test_thumbnail_selection_syncs_status_list(self, pdf_tab):
+        """缩略图选中变化 → 状态列表当前行同步（反向联动）。"""
+        doc = self._setup_session(pdf_tab)
+        try:
+            from PySide6.QtCore import Qt
+
+            # 在缩略图列表里找到 page_index=1 的行并选中
+            target_row = None
+            for row in range(pdf_tab._thumbnail_list.count()):
+                item = pdf_tab._thumbnail_list.item(row)
+                if item.data(Qt.ItemDataRole.UserRole) == 1:
+                    target_row = row
+                    break
+            assert target_row is not None
+            pdf_tab._thumbnail_list.setCurrentRow(target_row)
+
+            # 状态列表中应选中 page_index=1 对应的行
+            cur = pdf_tab._layer_status_list.currentItem()
+            assert cur is not None
+            assert cur.data(Qt.ItemDataRole.UserRole) == 1
+        finally:
+            doc.close()
 
 
 class TestPdfTabOcrCompletion:

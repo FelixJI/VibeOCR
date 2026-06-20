@@ -218,7 +218,7 @@ class TestPdfServiceTextLayer:
         assert "你好世界" in extracted
         doc.close()
 
-    def test_add_text_layer_skips_tiny_bbox_with_warning(self, tmp_path, caplog):
+    def test_add_text_layer_skips_none_bbox_with_warning(self, tmp_path, caplog):
         import logging
 
         import numpy as np
@@ -238,10 +238,9 @@ class TestPdfServiceTextLayer:
         doc, pdf_doc = PdfService.open_doc(str(path))
         good = TextBlock(text="正常文字", score=0.9,
                          bbox=(50.0, 50.0, 400.0, 100.0), page_idx=0)
-        # 宽高均 < 1 point → 会被跳过
-        tiny = TextBlock(text="小", score=0.9,
-                         bbox=(10.0, 10.0, 10.5, 10.5), page_idx=0)
-        result = OCRResult(raw_text="x", text_blocks=[good, tiny])
+        # bbox=None 的块（OCR 未给出坐标）会被跳过并记录警告
+        no_bbox = TextBlock(text="无坐标", score=0.9, bbox=None, page_idx=0)
+        result = OCRResult(raw_text="x", text_blocks=[good, no_bbox])
 
         with caplog.at_level(logging.WARNING, logger="vibeocr.services.pdf_service"):
             written, skipped = PdfService.add_text_layer(doc, pdf_doc, 0, result)
@@ -371,6 +370,118 @@ class TestPdfServiceTextLayer:
             assert lr.y0 >= -1
             assert lr.x1 <= page_rect.width + 1
             assert lr.y1 <= page_rect.height + 1
+        doc.close()
+
+    def test_add_text_layer_writes_short_height_bbox(self, tmp_path):
+        """矮行框（OCR 偶发返回的薄行）不应被整体丢弃。
+
+        归一化高度 1（=0.79pt）的框，字号经最小字号兜底后仍应写入文字。
+        回归 issue: 文字层识别遗漏。
+        """
+        import numpy as np
+
+        from vibeocr.models.ocr_result import OCRResult, TextBlock
+
+        path = tmp_path / "scan_short.pdf"
+        doc = fitz.open()
+        page = doc.new_page(width=612, height=792)
+        img = np.ones((792, 612, 3), dtype=np.uint8) * 240
+        cs = fitz.Colorspace(fitz.CS_RGB)
+        pixmap = fitz.Pixmap(cs, 612, 792, img.tobytes(), 0)
+        page.insert_image(fitz.Rect(0, 0, 612, 792), pixmap=pixmap)
+        doc.save(str(path))
+        doc.close()
+
+        doc, pdf_doc = PdfService.open_doc(str(path))
+        result = OCRResult(
+            raw_text="矮行文字",
+            text_blocks=[
+                TextBlock(
+                    text="矮行文字",
+                    score=0.99,
+                    bbox=(100.0, 100.0, 500.0, 101.0),  # 归一化高度 1
+                    page_idx=0,
+                ),
+            ],
+        )
+        written, skipped = PdfService.add_text_layer(doc, pdf_doc, 0, result)
+        assert written == 1
+        assert skipped == 0
+        extracted = doc[0].get_text()
+        assert "矮行文字" in extracted
+        doc.close()
+
+    def test_add_text_layer_writes_narrow_bbox(self, tmp_path):
+        """窄框（宽度小于字号）也不应被丢弃——文字按行原位写入。"""
+        import numpy as np
+
+        from vibeocr.models.ocr_result import OCRResult, TextBlock
+
+        path = tmp_path / "scan_narrow.pdf"
+        doc = fitz.open()
+        page = doc.new_page(width=612, height=792)
+        img = np.ones((792, 612, 3), dtype=np.uint8) * 240
+        cs = fitz.Colorspace(fitz.CS_RGB)
+        pixmap = fitz.Pixmap(cs, 612, 792, img.tobytes(), 0)
+        page.insert_image(fitz.Rect(0, 0, 612, 792), pixmap=pixmap)
+        doc.save(str(path))
+        doc.close()
+
+        doc, pdf_doc = PdfService.open_doc(str(path))
+        result = OCRResult(
+            raw_text="这是一行较长的中文识别结果文本",
+            text_blocks=[
+                TextBlock(
+                    text="这是一行较长的中文识别结果文本",
+                    score=0.99,
+                    # 归一化宽 10（=6.12pt），高 30（=23.76pt）→ 窄框
+                    bbox=(100.0, 100.0, 110.0, 130.0),
+                    page_idx=0,
+                ),
+            ],
+        )
+        written, skipped = PdfService.add_text_layer(doc, pdf_doc, 0, result)
+        assert written == 1
+        assert skipped == 0
+        extracted = doc[0].get_text()
+        assert "这是一行较长的中文识别结果文本" in extracted
+        doc.close()
+
+    def test_add_text_layer_respects_min_font_size_setting(self, tmp_path):
+        """PdfGlobalSettings.min_font_size 控制最小字号兜底。"""
+        import numpy as np
+
+        from vibeocr.models.ocr_result import OCRResult, TextBlock
+        from vibeocr.models.pdf_ocr_options import PdfGlobalSettings
+
+        path = tmp_path / "scan_minfont.pdf"
+        doc = fitz.open()
+        page = doc.new_page(width=612, height=792)
+        img = np.ones((792, 612, 3), dtype=np.uint8) * 240
+        cs = fitz.Colorspace(fitz.CS_RGB)
+        pixmap = fitz.Pixmap(cs, 612, 792, img.tobytes(), 0)
+        page.insert_image(fitz.Rect(0, 0, 612, 792), pixmap=pixmap)
+        doc.save(str(path))
+        doc.close()
+
+        doc, pdf_doc = PdfService.open_doc(str(path))
+        settings = PdfGlobalSettings(min_font_size=6.0)
+        result = OCRResult(
+            raw_text="x",
+            text_blocks=[
+                TextBlock(
+                    text="兜底字号",
+                    score=0.99,
+                    bbox=(100.0, 100.0, 500.0, 101.0),  # 矮框
+                    page_idx=0,
+                ),
+            ],
+        )
+        written, skipped = PdfService.add_text_layer(
+            doc, pdf_doc, 0, result, pdf_settings=settings
+        )
+        assert written == 1
+        assert "兜底字号" in doc[0].get_text()
         doc.close()
 
     def test_delete_text_layer(self, opened_doc):

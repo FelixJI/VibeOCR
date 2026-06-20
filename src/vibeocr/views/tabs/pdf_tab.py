@@ -8,8 +8,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtGui import QIcon, QPixmap
+from PySide6.QtGui import QBrush, QColor, QFont, QIcon, QPixmap
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QComboBox,
     QFileDialog,
     QGroupBox,
@@ -126,6 +127,10 @@ class PdfTab(QWidget):
             self._on_thumbnail_double_clicked
         )
         self._thumbnail_list.model().rowsMoved.connect(self._on_pages_reordered)
+        # 反向联动：缩略图选中变化 → 状态列表同步当前行
+        self._thumbnail_list.itemSelectionChanged.connect(
+            self._on_thumbnail_selection_changed
+        )
 
         layout.addWidget(self._thumbnail_list)
         return panel
@@ -189,12 +194,19 @@ class PdfTab(QWidget):
         text_btn_layout.addWidget(self._btn_preview_text_layer)
         text_layout.addLayout(text_btn_layout)
 
-        self._layer_status_label = QLabel("未打开文件")
-        self._layer_status_label.setWordWrap(True)
-        self._layer_status_label.setAlignment(Qt.AlignmentFlag.AlignTop)
+        self._layer_status_list = QListWidget()
+        # 仅作信息展示与点击联动，不允许编辑/拖拽
+        self._layer_status_list.setSelectionMode(
+            QAbstractItemView.SelectionMode.SingleSelection
+        )
+        self._layer_status_list.setEditTriggers(
+            QAbstractItemView.EditTrigger.NoEditTriggers
+        )
+        self._layer_status_list.setDragDropMode(QListWidget.DragDropMode.NoDragDrop)
+        self._layer_status_list.itemClicked.connect(self._on_layer_status_clicked)
         status_scroll = QScrollArea()
         status_scroll.setWidgetResizable(True)
-        status_scroll.setWidget(self._layer_status_label)
+        status_scroll.setWidget(self._layer_status_list)
         status_scroll.setMinimumHeight(120)
         text_layout.addWidget(status_scroll)
         layout.addWidget(text_group)
@@ -340,9 +352,7 @@ class PdfTab(QWidget):
         msg = f"OCR 完成：成功 {success} 页" + (f"，失败 {fail} 页" if fail else "")
         self._status_label.setText(msg)
 
-    def _on_ocr_stats_ready(
-        self, session_id: str, written: int, skipped: int
-    ) -> None:
+    def _on_ocr_stats_ready(self, session_id: str, written: int, skipped: int) -> None:
         """文字层 OCR 完成后：汇总写入结果并自动预览。
 
         与 _on_ocr_finished（ocr_done 信号）配合：后者负责通用 UI 复位，
@@ -364,12 +374,16 @@ class PdfTab(QWidget):
         self._show_embedded_preview()
 
     def _show_embedded_preview(self) -> None:
-        """在内嵌预览画布显示当前页文字层高亮（render_mode=3 隐形的可视化）。"""
+        """在内嵌预览画布显示当前选中页文字层高亮（render_mode=3 隐形的可视化）。"""
+        indices = self._get_selected_page_indices()
+        page_idx = indices[0] if indices else 0
+        self._show_embedded_preview_for_page(page_idx)
+
+    def _show_embedded_preview_for_page(self, page_idx: int) -> None:
+        """在内嵌预览画布显示指定页文字层高亮。"""
         session = self._session_mgr.active_session
         if session is None:
             return
-        indices = self._get_selected_page_indices()
-        page_idx = indices[0] if indices else 0
         page_info = session.pdf_document.get_page(page_idx)
         if page_info is None or not page_info.text_layers:
             return
@@ -447,20 +461,59 @@ class PdfTab(QWidget):
 
     def _update_layer_status(self) -> None:
         session = self._session_mgr.active_session
+        self._layer_status_list.clear()
         if session is None:
-            self._layer_status_label.setText("未打开文件")
+            item = QListWidgetItem("未打开文件")
+            self._layer_status_list.addItem(item)
             return
-        lines = []
+        green = QColor("#2e7d32")
+        gray = QColor("#9e9e9e")
         for p in session.pdf_document.pages:
             if p.has_text_layer:
-                lines.append(
+                text = (
                     f"第{p.page_index + 1}页: 已添加文字层"
                     f"({len(p.text_layers)} 个文本块)"
                 )
             else:
                 status = "扫描件" if p.is_scanned else "无文字层"
-                lines.append(f"第{p.page_index + 1}页: {status}")
-        self._layer_status_label.setText("\n".join(lines))
+                text = f"第{p.page_index + 1}页: {status}"
+            item = QListWidgetItem(text)
+            item.setData(Qt.ItemDataRole.UserRole, p.page_index)
+            # 有文字层的行加粗绿色，便于辨识可预览的页
+            font = QFont(item.font())
+            if p.has_text_layer:
+                font.setBold(True)
+                item.setForeground(QBrush(green))
+            else:
+                item.setForeground(QBrush(gray))
+            item.setFont(font)
+            self._layer_status_list.addItem(item)
+
+    def _on_layer_status_clicked(self, item: QListWidgetItem) -> None:
+        """点击状态行 → 选中左侧缩略图对应页并刷新内嵌预览（联动）。"""
+        page_idx = item.data(Qt.ItemDataRole.UserRole)
+        if not isinstance(page_idx, int):
+            return
+        # 在缩略图列表中定位对应行并选中
+        for row in range(self._thumbnail_list.count()):
+            t_item = self._thumbnail_list.item(row)
+            if t_item.data(Qt.ItemDataRole.UserRole) == page_idx:
+                self._thumbnail_list.setCurrentRow(row)
+                break
+        self._show_embedded_preview_for_page(page_idx)
+
+    def _on_thumbnail_selection_changed(self) -> None:
+        """缩略图选中变化 → 状态列表同步当前行（反向联动，不触发预览）。"""
+        indices = self._get_selected_page_indices()
+        if not indices:
+            return
+        page_idx = indices[0]
+        for row in range(self._layer_status_list.count()):
+            item = self._layer_status_list.item(row)
+            if item.data(Qt.ItemDataRole.UserRole) == page_idx:
+                # setCurrentRow 仅改变选中，不触发 itemClicked
+                self._layer_status_list.setCurrentRow(row)
+                return
 
     def _get_selected_page_indices(self) -> list[int]:
         indices = []
