@@ -61,6 +61,7 @@ class PdfSessionManager(QObject):
         self._ocr_worker: PdfOcrWorker | None = None
         self._ocr_service: OCRServiceBase | None = None
         self._pdf_settings: PdfGlobalSettings | None = None
+        self._overwrite_text_layer: bool = False
 
     @property
     def active_session(self) -> PdfSession | None:
@@ -191,11 +192,21 @@ class PdfSessionManager(QObject):
 
     # ---- OCR --------------------------------------------------------
 
+    def get_pages_without_text_layer(self, session_id: str) -> list[int]:
+        """返回该 session 中所有无文字层的页索引列表。"""
+        session = self._sessions.get(session_id)
+        if session is None:
+            return []
+        return [
+            p.page_index for p in session.pdf_document.pages if not p.has_text_layer
+        ]
+
     def start_ocr(
         self,
         page_indices: list[int],
         ocr_options: OCROptions | None = None,
         pdf_settings: PdfGlobalSettings | None = None,
+        overwrite: bool = False,
     ) -> None:
         from vibeocr.models.pdf_ocr_options import PdfGlobalSettings
 
@@ -223,6 +234,7 @@ class PdfSessionManager(QObject):
             return
 
         self._pdf_settings = pdf_settings
+        self._overwrite_text_layer = overwrite
         session.reset_ocr_stats()
 
         self._ocr_worker = PdfOcrWorker(
@@ -260,6 +272,7 @@ class PdfSessionManager(QObject):
                     page_index,
                     result,
                     pdf_settings=self._pdf_settings,
+                    overwrite=self._overwrite_text_layer,
                 )
             session.add_ocr_stats(written, skipped)
         self.ocr_page_done.emit(session.file_path, page_index, result)
