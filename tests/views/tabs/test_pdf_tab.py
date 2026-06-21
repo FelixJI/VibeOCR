@@ -340,3 +340,60 @@ class TestPdfTabOcrCompletion:
         assert pdf_tab._preview_canvas._render_dpi == 150
         assert pdf_tab._preview_canvas._source == "pdf"
         doc.close()
+
+
+class TestAddTextLayerForPagesWithoutLayer:
+    """新按钮：一键为当前文件所有无文字层页添加文字层。"""
+
+    def _inject_session(self, pdf_tab, doc, pdf_doc):
+        from vibeocr.models.pdf_session import PdfSession
+
+        session = PdfSession(file_path="x.pdf", doc=doc, pdf_document=pdf_doc)
+        pdf_tab._session_mgr._sessions["x.pdf"] = session
+        pdf_tab._session_mgr._active_path = "x.pdf"
+        return session
+
+    def test_button_exists(self, pdf_tab):
+        btn = getattr(pdf_tab, "_btn_add_text_layer_no_layer", None)
+        assert btn is not None
+        assert "无文字层" in btn.text()
+
+    def test_all_have_layer_shows_info(self, pdf_tab, monkeypatch):
+        """所有页都有文字层时点击按钮应弹 information 提示，不启动 OCR。"""
+        import fitz
+
+        from vibeocr.models.pdf_document import PdfDocument, PdfPageInfo
+
+        page_info = PdfPageInfo(page_index=0, has_text_layer=True)
+        doc = fitz.open()
+        doc.new_page()
+        pdf_doc = PdfDocument(file_path="x.pdf", pages=[page_info])
+        self._inject_session(pdf_tab, doc, pdf_doc)
+
+        called = {"info": False, "start": False}
+        import vibeocr.views.tabs.pdf_tab as mod
+
+        monkeypatch.setattr(
+            mod.QMessageBox, "information", lambda *a, **k: called.__setitem__("info", True)
+        )
+        monkeypatch.setattr(
+            pdf_tab._session_mgr, "start_ocr",
+            lambda *a, **k: called.__setitem__("start", True),
+        )
+
+        pdf_tab._on_add_text_layer_for_pages_without_layer()
+
+        assert called["info"] is True
+        assert called["start"] is False
+        doc.close()
+
+    def test_no_active_session_returns_silently(self, pdf_tab, monkeypatch):
+        """未打开文件时点击按钮应静默返回（不报错、不弹框）。"""
+        called = {"info": False}
+        import vibeocr.views.tabs.pdf_tab as mod
+
+        monkeypatch.setattr(
+            mod.QMessageBox, "information", lambda *a, **k: called.__setitem__("info", True)
+        )
+        pdf_tab._on_add_text_layer_for_pages_without_layer()
+        assert called["info"] is False

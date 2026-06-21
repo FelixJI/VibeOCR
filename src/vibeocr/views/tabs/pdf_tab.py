@@ -185,11 +185,16 @@ class PdfTab(QWidget):
         text_btn_layout = QHBoxLayout()
         self._btn_add_text_layer = QPushButton("添加文字层")
         self._btn_add_text_layer.clicked.connect(self._on_add_text_layer)
+        self._btn_add_text_layer_no_layer = QPushButton("为无文字层页添加文字层")
+        self._btn_add_text_layer_no_layer.clicked.connect(
+            self._on_add_text_layer_for_pages_without_layer
+        )
         self._btn_del_text_layer = QPushButton("删除文字层")
         self._btn_del_text_layer.clicked.connect(self._on_delete_text_layer)
         self._btn_preview_text_layer = QPushButton("预览文字层")
         self._btn_preview_text_layer.clicked.connect(self._on_preview_text_layer)
         text_btn_layout.addWidget(self._btn_add_text_layer)
+        text_btn_layout.addWidget(self._btn_add_text_layer_no_layer)
         text_btn_layout.addWidget(self._btn_del_text_layer)
         text_btn_layout.addWidget(self._btn_preview_text_layer)
         text_layout.addLayout(text_btn_layout)
@@ -410,6 +415,7 @@ class PdfTab(QWidget):
             self._btn_delete,
             self._btn_insert,
             self._btn_add_text_layer,
+            self._btn_add_text_layer_no_layer,
             self._btn_del_text_layer,
             self._btn_preview_text_layer,
         ):
@@ -750,6 +756,65 @@ class PdfTab(QWidget):
         self._preview_window.raise_()
 
     # ---- text layer operations --------------------------------------
+
+    def _on_add_text_layer_for_pages_without_layer(self) -> None:
+        """一键为当前文件所有无文字层页面添加 OCR 文字层（不弹防重复框）。"""
+        session = self._session_mgr.active_session
+        if session is None:
+            return
+
+        indices = self._session_mgr.get_pages_without_text_layer(session.file_path)
+        if not indices:
+            QMessageBox.information(
+                self, "添加文字层", "当前文件所有页面均已有文字层。"
+            )
+            return
+
+        if not self._session_mgr.is_ocr_ready:
+            QMessageBox.warning(
+                self,
+                "OCR 服务未就绪",
+                "OCR 服务尚未初始化，请等待服务启动完成。",
+            )
+            return
+
+        from vibeocr.utils.ocr_preferences import OCRPreferences
+
+        try:
+            prefs = OCRPreferences.instance()
+            pdf_settings = prefs.get_pdf_settings()
+            ocr_options = prefs.get_pdf_pipeline_options()
+        except RuntimeError:
+            from vibeocr.models.pdf_ocr_options import PdfGlobalSettings
+
+            pdf_settings = PdfGlobalSettings()
+            ocr_options = None
+
+        reply = QMessageBox.question(
+            self,
+            "添加文字层",
+            f"将对 {len(indices)} 个无文字层页面执行 OCR 并添加隐形文字层。\n"
+            "建议先另存为备份。是否继续？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        self._progress_bar.setRange(0, len(indices))
+        self._progress_bar.setValue(0)
+        self._progress_bar.setVisible(True)
+        self._btn_cancel.setVisible(True)
+        self._set_file_buttons_enabled(False)
+        self._btn_open.setEnabled(False)
+        self._btn_add_file.setEnabled(False)
+
+        # 这些页本就无文字层，overwrite=False（安全默认）
+        self._session_mgr.start_ocr(
+            indices,
+            ocr_options=ocr_options,
+            pdf_settings=pdf_settings,
+            overwrite=False,
+        )
 
     def _on_add_text_layer(self) -> None:
         session = self._session_mgr.active_session
