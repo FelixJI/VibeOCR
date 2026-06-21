@@ -241,3 +241,50 @@ class TestOcrOverwritePassThrough:
         manager._on_ocr_page_done(0, result)
         assert session.ocr_stats["written"] == 1
         assert session.ocr_stats["skipped"] == 0
+
+    def test_start_ocr_propagates_overwrite_to_page_done(
+        self, manager, test_pdf_a, monkeypatch
+    ):
+        """start_ocr(overwrite=True) 应设置 _overwrite_text_layer，
+        使随后的 _on_ocr_page_done 对已有文字层页执行先删后写。
+
+        回归锁定 start_ocr → _overwrite_text_layer → add_text_layer 的端到端契约。
+        """
+        from unittest.mock import MagicMock
+
+        from vibeocr.models.ocr_result import OCRResult, TextBlock
+        from vibeocr.services.pdf_service import PdfService
+
+        session = manager.open_session(str(test_pdf_a))
+        with session.doc_lock:
+            PdfService.build_page_infos(session.doc, session.pdf_document)
+        # 每页都有文字层，overwrite=False 会全跳过，True 才会先删后写
+
+        # stub 掉 worker 构造与 ocr_service，避免真实 OCR 运行
+        fake_worker = MagicMock()
+        fake_worker.session_id = session.file_path
+        monkeypatch.setattr(
+            "vibeocr.managers.pdf_session_manager.PdfOcrWorker",
+            lambda *a, **k: fake_worker,
+        )
+        manager._ocr_service = MagicMock()
+
+        manager.start_ocr([0], overwrite=True)
+        # start_ocr 应已把 overwrite 透传到 _overwrite_text_layer
+        assert manager._overwrite_text_layer is True
+        # 模拟 worker 回调一页
+        manager._ocr_worker = fake_worker
+        result = OCRResult(
+            raw_text="替换文字",
+            text_blocks=[
+                TextBlock(
+                    text="替换文字",
+                    score=0.9,
+                    bbox=(50.0, 50.0, 300.0, 100.0),
+                    page_idx=0,
+                ),
+            ],
+        )
+        manager._on_ocr_page_done(0, result)
+        assert session.ocr_stats["written"] == 1
+        assert session.ocr_stats["skipped"] == 0

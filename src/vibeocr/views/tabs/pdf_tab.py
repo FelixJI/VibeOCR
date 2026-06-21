@@ -558,18 +558,6 @@ class PdfTab(QWidget):
             )
             return
 
-        from vibeocr.utils.ocr_preferences import OCRPreferences
-
-        try:
-            prefs = OCRPreferences.instance()
-            pdf_settings = prefs.get_pdf_settings()
-            ocr_options = prefs.get_pdf_pipeline_options()
-        except RuntimeError:
-            from vibeocr.models.pdf_ocr_options import PdfGlobalSettings
-
-            pdf_settings = PdfGlobalSettings()
-            ocr_options = None
-
         reply = QMessageBox.question(
             self,
             "添加文字层",
@@ -580,13 +568,8 @@ class PdfTab(QWidget):
         if reply != QMessageBox.StandardButton.Yes:
             return
 
-        self._progress_bar.setRange(0, len(indices))
-        self._progress_bar.setValue(0)
-        self._progress_bar.setVisible(True)
-        self._btn_cancel.setVisible(True)
-        self._set_file_buttons_enabled(False)
-        self._btn_open.setEnabled(False)
-        self._btn_add_file.setEnabled(False)
+        pdf_settings, ocr_options = self._load_ocr_prefs()
+        self._begin_ocr_ui(indices)
 
         self._session_mgr.start_ocr(
             indices,
@@ -844,6 +827,28 @@ class PdfTab(QWidget):
 
     # ---- text layer operations --------------------------------------
 
+    def _load_ocr_prefs(self) -> tuple[object, object | None]:
+        """读取 OCR 偏好；失败时回退默认值。供各添加文字层入口复用。"""
+        from vibeocr.utils.ocr_preferences import OCRPreferences
+
+        try:
+            prefs = OCRPreferences.instance()
+            return prefs.get_pdf_settings(), prefs.get_pdf_pipeline_options()
+        except RuntimeError:
+            from vibeocr.models.pdf_ocr_options import PdfGlobalSettings
+
+            return PdfGlobalSettings(), None
+
+    def _begin_ocr_ui(self, indices: list[int]) -> None:
+        """启动 OCR 前的 UI 复位：进度条 + 禁用文件/操作按钮。"""
+        self._progress_bar.setRange(0, len(indices))
+        self._progress_bar.setValue(0)
+        self._progress_bar.setVisible(True)
+        self._btn_cancel.setVisible(True)
+        self._set_file_buttons_enabled(False)
+        self._btn_open.setEnabled(False)
+        self._btn_add_file.setEnabled(False)
+
     def _on_add_text_layer_for_pages_without_layer(self) -> None:
         """一键为当前文件所有无文字层页面添加 OCR 文字层（不弹防重复框）。"""
         session = self._session_mgr.active_session
@@ -865,18 +870,6 @@ class PdfTab(QWidget):
             )
             return
 
-        from vibeocr.utils.ocr_preferences import OCRPreferences
-
-        try:
-            prefs = OCRPreferences.instance()
-            pdf_settings = prefs.get_pdf_settings()
-            ocr_options = prefs.get_pdf_pipeline_options()
-        except RuntimeError:
-            from vibeocr.models.pdf_ocr_options import PdfGlobalSettings
-
-            pdf_settings = PdfGlobalSettings()
-            ocr_options = None
-
         reply = QMessageBox.question(
             self,
             "添加文字层",
@@ -887,13 +880,8 @@ class PdfTab(QWidget):
         if reply != QMessageBox.StandardButton.Yes:
             return
 
-        self._progress_bar.setRange(0, len(indices))
-        self._progress_bar.setValue(0)
-        self._progress_bar.setVisible(True)
-        self._btn_cancel.setVisible(True)
-        self._set_file_buttons_enabled(False)
-        self._btn_open.setEnabled(False)
-        self._btn_add_file.setEnabled(False)
+        pdf_settings, ocr_options = self._load_ocr_prefs()
+        self._begin_ocr_ui(indices)
 
         # 这些页本就无文字层，overwrite=False（安全默认）
         self._session_mgr.start_ocr(
@@ -985,13 +973,8 @@ class PdfTab(QWidget):
         if reply != QMessageBox.StandardButton.Yes:
             return
 
-        self._progress_bar.setRange(0, len(indices))
-        self._progress_bar.setValue(0)
-        self._progress_bar.setVisible(True)
-        self._btn_cancel.setVisible(True)
-        self._set_file_buttons_enabled(False)
-        self._btn_open.setEnabled(False)
-        self._btn_add_file.setEnabled(False)
+        pdf_settings, ocr_options = self._load_ocr_prefs()
+        self._begin_ocr_ui(indices)
 
         self._session_mgr.start_ocr(
             indices,
