@@ -397,3 +397,172 @@ class TestAddTextLayerForPagesWithoutLayer:
         )
         pdf_tab._on_add_text_layer_for_pages_without_layer()
         assert called["info"] is False
+
+
+class TestAddTextLayerSoftGuard:
+    """现有"添加文字层"按钮：选中页含已有文字层时弹三选一框。"""
+
+    def _inject(self, pdf_tab, pages):
+        import fitz
+
+        from vibeocr.models.pdf_document import PdfDocument
+        from vibeocr.models.pdf_session import PdfSession
+
+        doc = fitz.open()
+        for _ in pages:
+            doc.new_page()
+        pdf_doc = PdfDocument(file_path="x.pdf", pages=pages)
+        session = PdfSession(file_path="x.pdf", doc=doc, pdf_document=pdf_doc)
+        pdf_tab._session_mgr._sessions["x.pdf"] = session
+        pdf_tab._session_mgr._active_path = "x.pdf"
+        return session
+
+    def _patch_confirm_yes(self, monkeypatch):
+        """让确认 QMessageBox.question 自动返回 Yes，避免模态阻塞。"""
+        import vibeocr.views.tabs.pdf_tab as mod
+        from PySide6.QtWidgets import QMessageBox
+
+        monkeypatch.setattr(
+            mod.QMessageBox, "question",
+            lambda *a, **k: QMessageBox.StandardButton.Yes,
+        )
+
+    def test_partial_layer_prompts_and_overwrite_false_skips(
+        self, pdf_tab, monkeypatch
+    ):
+        """选中页中部分已有文字层：弹框（has=1,total=2），选"跳过"→ overwrite=False。"""
+        from vibeocr.models.pdf_document import PdfPageInfo
+
+        pages = [
+            PdfPageInfo(page_index=0, has_text_layer=True),
+            PdfPageInfo(page_index=1, has_text_layer=False),
+        ]
+        self._inject(pdf_tab, pages)
+        # 选中两页
+        from PySide6.QtCore import QItemSelectionModel
+
+        sm = pdf_tab._thumbnail_list.selectionModel()
+        for r in range(2):
+            sm.select(
+                pdf_tab._thumbnail_list.model().index(r, 0),
+                QItemSelectionModel.Select,
+            )
+
+        captured = {}
+        monkeypatch.setattr(
+            pdf_tab,
+            "_prompt_overwrite_choice",
+            lambda has, total: captured.setdefault("args", (has, total)) or 0,  # 0=跳过
+        )
+        monkeypatch.setattr(
+            type(pdf_tab._session_mgr), "is_ocr_ready",
+            property(lambda self: True),
+        )
+        started = {}
+        monkeypatch.setattr(
+            pdf_tab._session_mgr, "start_ocr",
+            lambda indices, **kw: started.update(kw),
+        )
+        self._patch_confirm_yes(monkeypatch)
+
+        pdf_tab._on_add_text_layer()
+
+        assert captured["args"] == (1, 2)
+        assert started.get("overwrite") is False
+
+    def test_partial_layer_choose_replace_uses_overwrite_true(
+        self, pdf_tab, monkeypatch
+    ):
+        from vibeocr.models.pdf_document import PdfPageInfo
+        from PySide6.QtCore import QItemSelectionModel
+
+        pages = [
+            PdfPageInfo(page_index=0, has_text_layer=True),
+            PdfPageInfo(page_index=1, has_text_layer=False),
+        ]
+        self._inject(pdf_tab, pages)
+        sm = pdf_tab._thumbnail_list.selectionModel()
+        for r in range(2):
+            sm.select(
+                pdf_tab._thumbnail_list.model().index(r, 0),
+                QItemSelectionModel.Select,
+            )
+
+        monkeypatch.setattr(pdf_tab, "_prompt_overwrite_choice", lambda has, total: 1)  # 先删后加
+        monkeypatch.setattr(
+            type(pdf_tab._session_mgr), "is_ocr_ready",
+            property(lambda self: True),
+        )
+        started = {}
+        monkeypatch.setattr(
+            pdf_tab._session_mgr, "start_ocr",
+            lambda indices, **kw: started.update(kw),
+        )
+        self._patch_confirm_yes(monkeypatch)
+
+        pdf_tab._on_add_text_layer()
+        assert started.get("overwrite") is True
+
+    def test_all_without_layer_no_prompt(self, pdf_tab, monkeypatch):
+        """选中页全部无文字层：不弹防重复框，直接 overwrite=False。"""
+        from vibeocr.models.pdf_document import PdfPageInfo
+        from PySide6.QtCore import QItemSelectionModel
+
+        pages = [
+            PdfPageInfo(page_index=0, has_text_layer=False),
+            PdfPageInfo(page_index=1, has_text_layer=False),
+        ]
+        self._inject(pdf_tab, pages)
+        sm = pdf_tab._thumbnail_list.selectionModel()
+        for r in range(2):
+            sm.select(
+                pdf_tab._thumbnail_list.model().index(r, 0),
+                QItemSelectionModel.Select,
+            )
+
+        prompted = {"n": 0}
+        monkeypatch.setattr(
+            pdf_tab, "_prompt_overwrite_choice",
+            lambda has, total: prompted.__setitem__("n", prompted["n"] + 1) or 0,
+        )
+        monkeypatch.setattr(
+            type(pdf_tab._session_mgr), "is_ocr_ready",
+            property(lambda self: True),
+        )
+        monkeypatch.setattr(
+            pdf_tab._session_mgr, "start_ocr", lambda indices, **kw: None
+        )
+        self._patch_confirm_yes(monkeypatch)
+
+        pdf_tab._on_add_text_layer()
+        assert prompted["n"] == 0
+
+    def test_prompt_choice_cancel_aborts(self, pdf_tab, monkeypatch):
+        from vibeocr.models.pdf_document import PdfPageInfo
+        from PySide6.QtCore import QItemSelectionModel
+
+        pages = [
+            PdfPageInfo(page_index=0, has_text_layer=True),
+            PdfPageInfo(page_index=1, has_text_layer=False),
+        ]
+        self._inject(pdf_tab, pages)
+        sm = pdf_tab._thumbnail_list.selectionModel()
+        for r in range(2):
+            sm.select(
+                pdf_tab._thumbnail_list.model().index(r, 0),
+                QItemSelectionModel.Select,
+            )
+
+        monkeypatch.setattr(pdf_tab, "_prompt_overwrite_choice", lambda has, total: 2)  # 取消
+        monkeypatch.setattr(
+            type(pdf_tab._session_mgr), "is_ocr_ready",
+            property(lambda self: True),
+        )
+        started = {"n": 0}
+        monkeypatch.setattr(
+            pdf_tab._session_mgr, "start_ocr",
+            lambda indices, **kw: started.__setitem__("n", started["n"] + 1),
+        )
+
+        pdf_tab._on_add_text_layer()
+        assert started["n"] == 0

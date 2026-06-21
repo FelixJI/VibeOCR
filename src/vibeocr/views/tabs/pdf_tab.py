@@ -816,6 +816,37 @@ class PdfTab(QWidget):
             overwrite=False,
         )
 
+    def _prompt_overwrite_choice(self, has_layer_count: int, total: int) -> int:
+        """选中页中部分已有文字层时，询问用户如何处理。
+
+        Returns:
+            0 = 跳过已有文字层的页（默认推荐）
+            1 = 删除已有文字层后重新添加
+            2 = 取消
+        """
+        msg = QMessageBox(self)
+        msg.setIcon(QMessageBox.Icon.Question)
+        msg.setWindowTitle("添加文字层")
+        msg.setText(
+            f"选中的 {total} 页中有 {has_layer_count} 页已有文字层。\n"
+            f"如何处理这些已有文字层的页面？"
+        )
+        skip_btn = msg.addButton(
+            "跳过已有文字层的页（推荐）", QMessageBox.ButtonRole.AcceptRole
+        )
+        replace_btn = msg.addButton(
+            "删除后重新添加", QMessageBox.ButtonRole.AcceptRole
+        )
+        cancel_btn = msg.addButton("取消", QMessageBox.ButtonRole.RejectRole)
+        msg.setDefaultButton(skip_btn)
+        msg.exec()
+        clicked = msg.clickedButton()
+        if clicked is replace_btn:
+            return 1
+        if clicked is cancel_btn:
+            return 2
+        return 0
+
     def _on_add_text_layer(self) -> None:
         session = self._session_mgr.active_session
         if session is None:
@@ -833,6 +864,16 @@ class PdfTab(QWidget):
             )
             return
 
+        # 软防护：统计选中页中已有文字层的数量，决定是否弹防重复框
+        pages = session.pdf_document.pages
+        has_layer_count = sum(1 for i in indices if pages[i].has_text_layer)
+        overwrite = False
+        if has_layer_count > 0:
+            choice = self._prompt_overwrite_choice(has_layer_count, len(indices))
+            if choice == 2:
+                return
+            overwrite = choice == 1
+
         # 从偏好读取 PDF 配置（使用 OCRPreferences 公共 API）
         from vibeocr.utils.ocr_preferences import OCRPreferences
 
@@ -846,10 +887,11 @@ class PdfTab(QWidget):
             pdf_settings = PdfGlobalSettings()
             ocr_options = None
 
+        verb = "删除后重新添加" if overwrite else "跳过已有文字层页"
         reply = QMessageBox.question(
             self,
             "添加文字层",
-            f"将对 {len(indices)} 页执行 OCR 并添加隐形文字层。\n"
+            f"将对 {len(indices)} 页执行 OCR 并添加隐形文字层（{verb}）。\n"
             "建议先另存为备份。是否继续？",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
@@ -865,7 +907,10 @@ class PdfTab(QWidget):
         self._btn_add_file.setEnabled(False)
 
         self._session_mgr.start_ocr(
-            indices, ocr_options=ocr_options, pdf_settings=pdf_settings
+            indices,
+            ocr_options=ocr_options,
+            pdf_settings=pdf_settings,
+            overwrite=overwrite,
         )
 
     def _on_delete_text_layer(self) -> None:
