@@ -296,6 +296,7 @@ class PdfService:
         page_index: int,
         ocr_result: object,
         pdf_settings: object | None = None,
+        overwrite: bool = False,
     ) -> tuple[int, int]:
         """将 OCR 结果作为隐形文字层写入 PDF 页面。
 
@@ -307,6 +308,8 @@ class PdfService:
             page_index: 页码索引。
             ocr_result: OCRResult 实例。
             pdf_settings: PdfGlobalSettings 实例（None 则使用默认值）。
+            overwrite: 若为 True 且该页已有文字层，先删除再写入；若为 False 且
+                该页已有文字层，直接跳过返回 (0, 1)，绝不叠加。
 
         Returns:
             (written, skipped) 成功写入与被跳过的文本块数量。
@@ -314,6 +317,17 @@ class PdfService:
         from vibeocr.models.pdf_ocr_options import PdfGlobalSettings
 
         settings = pdf_settings if pdf_settings is not None else PdfGlobalSettings()
+
+        # 防重复守卫：已有文字层时按 overwrite 决定跳过或先删后写
+        page_info = pdf_document.pages[page_index]
+        if page_info.has_text_layer:
+            if not overwrite:
+                logger.info(
+                    "page %d 已有文字层，跳过（overwrite=False）", page_index
+                )
+                return 0, 1
+            logger.info("page %d 已有文字层，overwrite=True，先删除再写入", page_index)
+            PdfService.delete_text_layers(doc, pdf_document, page_index)
 
         page = doc[page_index]
         page_rect = page.rect

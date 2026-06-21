@@ -484,6 +484,79 @@ class TestPdfServiceTextLayer:
         assert "兜底字号" in doc[0].get_text()
         doc.close()
 
+    def test_add_text_layer_skips_page_with_existing_layer(self, tmp_path):
+        """已有文字层的页面，默认 overwrite=False 应跳过，不产生重复文本。"""
+        path = tmp_path / "has_layer.pdf"
+        doc = fitz.open()
+        page = doc.new_page(width=612, height=792)
+        page.insert_text((72, 72), "原始文字", fontsize=12)
+        doc.save(str(path))
+        doc.close()
+
+        from vibeocr.models.ocr_result import OCRResult, TextBlock
+
+        doc, pdf_doc = PdfService.open_doc(str(path))
+        PdfService.build_page_infos(doc, pdf_doc)
+        assert pdf_doc.pages[0].has_text_layer is True
+        before = doc[0].get_text()
+
+        result = OCRResult(
+            raw_text="新OCR文字",
+            text_blocks=[
+                TextBlock(
+                    text="新OCR文字",
+                    score=0.99,
+                    bbox=(50.0, 50.0, 300.0, 100.0),
+                    page_idx=0,
+                ),
+            ],
+        )
+        written, skipped = PdfService.add_text_layer(doc, pdf_doc, 0, result)
+
+        assert written == 0
+        assert skipped == 1
+        # 文本未变（未叠加）
+        assert doc[0].get_text() == before
+        doc.close()
+
+    def test_add_text_layer_overwrite_deletes_then_writes(self, tmp_path):
+        """overwrite=True 时先删除旧文字层再写入，文本不重复。"""
+        path = tmp_path / "overwrite.pdf"
+        doc = fitz.open()
+        page = doc.new_page(width=612, height=792)
+        page.insert_text((72, 72), "原始文字", fontsize=12)
+        doc.save(str(path))
+        doc.close()
+
+        from vibeocr.models.ocr_result import OCRResult, TextBlock
+
+        doc, pdf_doc = PdfService.open_doc(str(path))
+        PdfService.build_page_infos(doc, pdf_doc)
+        assert pdf_doc.pages[0].has_text_layer is True
+
+        result = OCRResult(
+            raw_text="新OCR文字",
+            text_blocks=[
+                TextBlock(
+                    text="新OCR文字",
+                    score=0.99,
+                    bbox=(50.0, 50.0, 300.0, 100.0),
+                    page_idx=0,
+                ),
+            ],
+        )
+        written, skipped = PdfService.add_text_layer(
+            doc, pdf_doc, 0, result, overwrite=True
+        )
+
+        assert written == 1
+        assert skipped == 0
+        text = doc[0].get_text()
+        # 旧文字被删除，只剩新 OCR 文字
+        assert "新OCR文字" in text
+        assert "原始文字" not in text
+        doc.close()
+
     def test_delete_text_layer(self, opened_doc):
         doc, pdf_doc = opened_doc
         assert pdf_doc.pages[0].has_text_layer is True
