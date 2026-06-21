@@ -209,6 +209,12 @@ class PdfTab(QWidget):
         )
         self._layer_status_list.setDragDropMode(QListWidget.DragDropMode.NoDragDrop)
         self._layer_status_list.itemClicked.connect(self._on_layer_status_clicked)
+        self._layer_status_list.setContextMenuPolicy(
+            Qt.ContextMenuPolicy.CustomContextMenu
+        )
+        self._layer_status_list.customContextMenuRequested.connect(
+            self._on_layer_status_context_menu
+        )
         status_scroll = QScrollArea()
         status_scroll.setWidgetResizable(True)
         status_scroll.setWidget(self._layer_status_list)
@@ -507,6 +513,87 @@ class PdfTab(QWidget):
                 self._thumbnail_list.setCurrentRow(row)
                 break
         self._show_embedded_preview_for_page(page_idx)
+
+    def _on_layer_status_context_menu(self, pos) -> None:
+        """状态列表右键菜单：为选中的无文字层页添加文字层。"""
+        session = self._session_mgr.active_session
+        if session is None:
+            return
+
+        # 收集选中行；无选中则取右键位置所在行
+        rows = [i.row() for i in self._layer_status_list.selectedIndexes()]
+        if not rows:
+            item = self._layer_status_list.itemAt(pos)
+            if item is None:
+                return
+            rows = [self._layer_status_list.row(item)]
+
+        pages = session.pdf_document.pages
+        indices = [
+            pages[r].page_index
+            for r in rows
+            if r < len(pages) and not pages[r].has_text_layer
+        ]
+
+        menu = QMenu(self)
+        if indices:
+            act = menu.addAction(f"为 {len(indices)} 个无文字层页添加文字层")
+            act.triggered.connect(
+                lambda checked=False, idx=indices: self._add_text_layer_for_indices(idx)
+            )
+        else:
+            menu.addAction("选中页面均已有文字层")
+        menu.exec(self._layer_status_list.mapToGlobal(pos))
+
+    def _add_text_layer_for_indices(self, indices: list[int]) -> None:
+        """供右键菜单复用：对指定页索引执行添加文字层（overwrite=False）。"""
+        session = self._session_mgr.active_session
+        if session is None or not indices:
+            return
+        if not self._session_mgr.is_ocr_ready:
+            QMessageBox.warning(
+                self,
+                "OCR 服务未就绪",
+                "OCR 服务尚未初始化，请等待服务启动完成。",
+            )
+            return
+
+        from vibeocr.utils.ocr_preferences import OCRPreferences
+
+        try:
+            prefs = OCRPreferences.instance()
+            pdf_settings = prefs.get_pdf_settings()
+            ocr_options = prefs.get_pdf_pipeline_options()
+        except RuntimeError:
+            from vibeocr.models.pdf_ocr_options import PdfGlobalSettings
+
+            pdf_settings = PdfGlobalSettings()
+            ocr_options = None
+
+        reply = QMessageBox.question(
+            self,
+            "添加文字层",
+            f"将对 {len(indices)} 个无文字层页面执行 OCR 并添加隐形文字层。\n"
+            "建议先另存为备份。是否继续？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        self._progress_bar.setRange(0, len(indices))
+        self._progress_bar.setValue(0)
+        self._progress_bar.setVisible(True)
+        self._btn_cancel.setVisible(True)
+        self._set_file_buttons_enabled(False)
+        self._btn_open.setEnabled(False)
+        self._btn_add_file.setEnabled(False)
+
+        self._session_mgr.start_ocr(
+            indices,
+            ocr_options=ocr_options,
+            pdf_settings=pdf_settings,
+            overwrite=False,
+        )
 
     def _on_thumbnail_selection_changed(self) -> None:
         """缩略图选中变化 → 状态列表同步当前行（反向联动，不触发预览）。"""

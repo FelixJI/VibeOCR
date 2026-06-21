@@ -566,3 +566,122 @@ class TestAddTextLayerSoftGuard:
 
         pdf_tab._on_add_text_layer()
         assert started["n"] == 0
+
+
+class TestLayerStatusContextMenu:
+    """状态列表右键菜单：为选中的无文字层页添加文字层。"""
+
+    def _inject(self, pdf_tab, pages):
+        import fitz
+
+        from vibeocr.models.pdf_document import PdfDocument
+        from vibeocr.models.pdf_session import PdfSession
+
+        doc = fitz.open()
+        for _ in pages:
+            doc.new_page()
+        pdf_doc = PdfDocument(file_path="x.pdf", pages=pages)
+        session = PdfSession(file_path="x.pdf", doc=doc, pdf_document=pdf_doc)
+        pdf_tab._session_mgr._sessions["x.pdf"] = session
+        pdf_tab._session_mgr._active_path = "x.pdf"
+        return session
+
+    def test_context_menu_offers_action_for_pages_without_layer(
+        self, pdf_tab, monkeypatch
+    ):
+        """无文字层页选中时，菜单应含"为 N 个无文字层页添加文字层"项。"""
+        from PySide6.QtCore import QItemSelectionModel
+
+        from vibeocr.models.pdf_document import PdfPageInfo
+
+        pages = [PdfPageInfo(page_index=0, has_text_layer=False)]
+        self._inject(pdf_tab, pages)
+        pdf_tab._update_layer_status()
+        # 用 selectionModel 显式选中第 0 行（setCurrentRow 不保证 selectedItems）
+        sm = pdf_tab._layer_status_list.selectionModel()
+        sm.select(
+            pdf_tab._layer_status_list.model().index(0, 0),
+            QItemSelectionModel.Select,
+        )
+
+        # 用 FakeMenu 捕获菜单项文本，避免 exec 阻塞
+        actions_text = []
+
+        class _FakeSignal:
+            def connect(self, *a, **k):
+                pass
+
+        class _FakeAction:
+            @property
+            def triggered(self):
+                return _FakeSignal()
+
+        class FakeMenu:
+            def __init__(self, *a, **k):
+                pass
+
+            def addAction(self, text, *args):
+                actions_text.append(text if isinstance(text, str) else str(text))
+                return _FakeAction()
+
+            def addSeparator(self):
+                actions_text.append("sep")
+
+            def exec(self, *a, **k):
+                return None
+
+        import vibeocr.views.tabs.pdf_tab as mod
+
+        monkeypatch.setattr(mod, "QMenu", FakeMenu)
+
+        pdf_tab._on_layer_status_context_menu(
+            pdf_tab._layer_status_list.rect().center()
+        )
+
+        assert any("无文字层" in t for t in actions_text)
+
+    def test_context_menu_no_action_when_all_have_layer(self, pdf_tab, monkeypatch):
+        """选中页均有文字层时，菜单应提示而非提供添加项。"""
+        from PySide6.QtCore import QItemSelectionModel
+
+        from vibeocr.models.pdf_document import PdfPageInfo
+
+        pages = [PdfPageInfo(page_index=0, has_text_layer=True)]
+        self._inject(pdf_tab, pages)
+        pdf_tab._update_layer_status()
+        sm = pdf_tab._layer_status_list.selectionModel()
+        sm.select(
+            pdf_tab._layer_status_list.model().index(0, 0),
+            QItemSelectionModel.Select,
+        )
+
+        actions_text = []
+
+        class FakeMenu:
+            def __init__(self, *a, **k):
+                pass
+
+            def addAction(self, text, *args):
+                actions_text.append(text if isinstance(text, str) else str(text))
+
+                class _A:
+                    def triggered(self, *a, **k):
+                        pass
+                return _A()
+
+            def addSeparator(self):
+                pass
+
+            def exec(self, *a, **k):
+                return None
+
+        import vibeocr.views.tabs.pdf_tab as mod
+
+        monkeypatch.setattr(mod, "QMenu", FakeMenu)
+
+        pdf_tab._on_layer_status_context_menu(
+            pdf_tab._layer_status_list.rect().center()
+        )
+
+        # 不应出现"添加文字层"的可执行项
+        assert not any("无文字层页添加文字层" in t for t in actions_text)
