@@ -123,11 +123,14 @@ class PPStructureV3Options(BasePipelineOptions):
     use_chart_recognition: bool = False
 
 
-def _create_pp_structure_pipeline(device: str) -> Any:
-    """创建 PP-StructureV3 管道实例"""
+def _create_pp_structure_pipeline(device: str, **kwargs: Any) -> Any:
+    """创建 PP-StructureV3 管道实例
+
+    额外 kwargs 透传给 PPStructureV3（例如 enable_mkldnn）。
+    """
     from paddleocr import PPStructureV3
 
-    return PPStructureV3(device=device)
+    return PPStructureV3(device=device, **kwargs)
 
 
 def _recognize_pp_structure(

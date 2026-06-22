@@ -73,7 +73,12 @@ class TestGetOrCreatePipeline:
         assert result is mock_pipeline
 
     def test_creates_pipeline_via_registry(self):
-        """Uses spec.create_pipeline from registry when pipeline is registered."""
+        """Uses spec.create_pipeline from registry when pipeline is registered.
+
+        On CPU, enable_mkldnn=False must be forwarded to the factory to work
+        around paddle 3.3's PIR/oneDNN incompatibility
+        (ConvertPirAttribute2RuntimeAttribute NotImplementedError).
+        """
         service = OCRService()
         service._pipelines = {}
 
@@ -101,11 +106,42 @@ class TestGetOrCreatePipeline:
         ):
             result = service.get_or_create_pipeline("OCR")
 
-        # Should use registry, not old _create_pipeline
-        mock_spec.create_pipeline.assert_called_once_with("cpu")
+        # Should use registry, not old _create_pipeline.
+        # On CPU the factory must receive enable_mkldnn=False.
+        mock_spec.create_pipeline.assert_called_once_with(
+            "cpu", enable_mkldnn=False
+        )
         mock_old_create.assert_not_called()
         assert result is mock_pipeline
         assert "OCR" in service._pipelines
+
+    def test_gpu_device_omits_enable_mkldnn(self):
+        """On GPU the factory is called with device only — no enable_mkldnn kwarg."""
+        service = OCRService()
+        service._pipelines = {}
+
+        mock_pipeline = MagicMock(name="gpu_pipeline")
+        mock_spec = MagicMock()
+        mock_spec.create_pipeline.return_value = mock_pipeline
+
+        mock_registry = MagicMock()
+        mock_registry.has.return_value = True
+        mock_registry.get.return_value = mock_spec
+
+        with (
+            patch("vibeocr.services.ocr_service.OCRService._setup_cuda_dll_path"),
+            patch(
+                "vibeocr.services.ocr_service.OCRService._get_device",
+                return_value="gpu",
+            ),
+            patch(
+                "vibeocr.core.pipelines.get_registry",
+                return_value=mock_registry,
+            ),
+        ):
+            service.get_or_create_pipeline("OCR")
+
+        mock_spec.create_pipeline.assert_called_once_with("gpu")
 
     def test_falls_back_to_old_create_pipeline(self):
         """Falls back to _create_pipeline for unregistered pipeline names."""

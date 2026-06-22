@@ -47,7 +47,7 @@ class MinerUOptions(BasePipelineOptions):
     end_page_id: int | None = None
 
 
-def _create_mineru_pipeline(device: str) -> Any:
+def _create_mineru_pipeline(device: str, **kwargs: Any) -> Any:
     """MinerU 使用独立服务，不通过此工厂创建管道"""
     raise NotImplementedError("MinerU uses its own service")
 

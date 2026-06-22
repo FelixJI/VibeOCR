@@ -32,11 +32,14 @@ class OCROptions(BasePipelineOptions):
     use_textline_orientation: bool = False
 
 
-def _create_ocr_pipeline(device: str) -> Any:
-    """创建通用 OCR 管道实例"""
+def _create_ocr_pipeline(device: str, **kwargs: Any) -> Any:
+    """创建通用 OCR 管道实例
+
+    额外 kwargs 透传给 PaddleOCR（例如 enable_mkldnn）。
+    """
     from paddleocr import PaddleOCR
 
-    return PaddleOCR(device=device)
+    return PaddleOCR(device=device, **kwargs)
 
 
 def _consume_generator_safely(output) -> list:

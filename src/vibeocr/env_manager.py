@@ -30,9 +30,10 @@ PYTHON_STANDALONE_URLS = [PYTHON_BUILD_STANDALONE_BASE, *PYTHON_BUILD_STANDALONE
 
 # CUDA 版本映射到 PaddlePaddle 支持的版本
 # PaddlePaddle GPU 版本支持: cu118, cu121, cu123, cu126, cu129, cu130 等
-# CUDA 13.x → cu130：cu130 wheel 的 METADATA 声明 7 个 cu13 nvidia 运行时依赖
-# (nvidia-cublas==13.0.2.14 等)，与本机开发环境一致（已验证 GPU 推理可跑）。
-# cu129 wheel 不声明 nvidia 依赖、也不内嵌 DLL，无法提供 cublas64_13.dll。
+# 本项目统一使用 cu126 wheel（CUDA 12.6 构建），与 torch cu126 同源：
+# paddle 所需的 cublas64_12.dll 等 CUDA 12 运行时由 torch wheel 的 torch/lib
+# 目录提供（见 _install_paddle_stack 与 OCRService._setup_cuda_dll_path）。
+# 不用 cu129（torch 无对应 win wheel）/ cu130（要 cublas64_13.dll，ABI 不匹配）。
 # 注意：_install_paddle_stack 接收的 cuda_version 已是 cu-tag（detect_cuda_version 输出），
 # 此映射仅用于 detect_cuda_version 把原始版本（nvidia-smi 输出）转成 cu-tag。
 CUDA_VERSION_MAP = {
@@ -44,19 +45,20 @@ CUDA_VERSION_MAP = {
     "12.4": "cu126",
     "12.5": "cu126",
     "12.6": "cu126",
-    "12.7": "cu129",
-    "12.8": "cu129",
-    "12.9": "cu129",
-    # CUDA 13.x → cu130 (wheel 声明 cu13 nvidia 依赖)
-    "13.0": "cu130",
-    "13.1": "cu130",
-    "13.2": "cu130",
+    "12.7": "cu126",
+    "12.8": "cu126",
+    "12.9": "cu126",
+    # CUDA 13.x 驱动仍兼容 CUDA 12.x 运行时，故映射到 cu126
+    "13.0": "cu126",
+    "13.1": "cu126",
+    "13.2": "cu126",
 }
 
 # PyTorch CUDA 版本映射（PaddlePaddle CUDA tag → PyTorch CUDA tag）
 # PyTorch 官方 wheel 的 CUDA tag 粒度比 PaddlePaddle 粗：
-# - cu129 → cu128: PyTorch 无 cu129 wheel，cu128 是向下兼容的最近版本
-# - cu123 → cu124: 同理，PyTorch 跳过 cu123
+# - cu123 → cu124: PyTorch 跳过 cu123
+# 项目 paddle 统一用 cu126，torch 也用 cu126（同源），无需映射。
+# 此表保留供 detect_cuda_version 返回其他 tag 时回退使用。
 # 开发环境 (uv) 的 torch 来源见 pyproject.toml [tool.uv.sources]，恒定 cu126；
 # 便携环境 (pip) 的 torch 来源由此映射 + get_pytorch_mirror 决定。
 TORCH_CUDA_MAP = {
@@ -64,7 +66,6 @@ TORCH_CUDA_MAP = {
     "cu121": "cu121",
     "cu123": "cu124",
     "cu126": "cu126",
-    "cu129": "cu128",
 }
 
 _dep_specs_cache: dict[str, str] | None = None
@@ -691,9 +692,9 @@ def _install_paddle_stack(
     paddle_cpu_spec = paddle_gpu_spec.replace("paddlepaddle-gpu", "paddlepaddle")
 
     # 决定 PaddlePaddle 版本（GPU 优先）
-    # 注意：cuda_version 已是 cu-tag（detect_cuda_version 输出，如 "cu130"），
+    # 注意：cuda_version 已是 cu-tag（detect_cuda_version 输出，如 "cu126"），
     # 直接用于构造 paddle index URL，不要再查 CUDA_VERSION_MAP（那是原始版本→cu-tag 的映射）。
-    default_gpu_tag = "cu130"
+    default_gpu_tag = "cu126"
     if use_gpu and cuda_version:
         paddle_package = paddle_gpu_spec
         paddle_index = f"https://www.paddlepaddle.org.cn/packages/stable/{cuda_version}/"
@@ -742,27 +743,10 @@ def _install_paddle_stack(
                 (f"PyTorch CUDA ({torch_cuda_tag})", "torch torchvision", torch_index)
             )
             report_fn("依赖安装", f"将安装 PyTorch CUDA ({torch_cuda_tag})")
-
-            # cu13 nvidia 运行时库：paddle GPU wheel 不内嵌 CUDA DLL（cublas/cudnn 等），
-            # 全靠外部 nvidia 包提供；而 pip/uv 无法从 paddle wheel 的依赖声明自动解析出
-            # cu13 系列（总匹配到 -cu12 后缀包）。必须显式安装，版本与 pyproject 声明一致。
-            # 从 specs 字典读取（_load_dep_specs 已解析自 pyproject），避免硬编码版本。
-            nvidia_keys = [
-                "nvidia-cuda-runtime",
-                "nvidia-cudnn-cu13",
-                "nvidia-cublas",
-                "nvidia-cufft",
-                "nvidia-curand",
-                "nvidia-cusolver",
-                "nvidia-cusparse",
-            ]
-            nvidia_specs = [specs[k] for k in nvidia_keys if k in specs]
-            if nvidia_specs:
-                nvidia_pkg = " ".join(nvidia_specs)
-                requirements.append(
-                    ("NVIDIA cu13 运行时库", nvidia_pkg, pip_source)
-                )
-                report_fn("依赖安装", f"将安装 {len(nvidia_specs)} 个 NVIDIA cu13 运行时库")
+            # torch wheel 自带完整的 CUDA 12.x + cuDNN 9 运行时（torch/lib 目录），
+            # paddlepaddle-gpu (cu126, CUDA 12 构建) 所需的 cublas64_12.dll 等全部
+            # 由 torch/lib 提供，OCRService._setup_cuda_dll_path 会注册该目录。
+            # 因此无需额外安装 nvidia-*-cu12 / cu13 系列包。
 
         for name, package_spec, index_url in requirements:
             report_fn("依赖安装", f"正在安装 {name}...")
@@ -827,7 +811,7 @@ def install_embedded_dependencies(
         project_root: 项目根目录
         network_type: 网络类型
         use_gpu: 是否安装 GPU 版本（优先），False 则安装 CPU 版
-        cuda_version: CUDA 版本 cu-tag（如 "cu130"），用于选择对应的 GPU 包
+        cuda_version: CUDA 版本 cu-tag（如 "cu126"），用于选择对应的 GPU 包
         progress_callback: 进度回调函数，接收 (stage, message) 参数
         force_backend: 强制后端 "gpu" / "cpu" / None。指定时覆盖 use_gpu/cuda_version，
             用于首启让用户选择或设置页切换。None 时走自动检测逻辑。
@@ -879,7 +863,7 @@ def detect_cuda_version() -> str | None:
     检测系统CUDA版本
 
     Returns:
-        CUDA版本字符串（如 "cu129"），如果未检测到则返回 None
+        CUDA版本字符串（如 "cu126"），如果未检测到则返回 None
     """
     # CUDA版本映射到PaddlePaddle支持的版本
     # PaddlePaddle GPU版本支持: cu118, cu121, cu123, cu126, cu129 等
@@ -964,7 +948,7 @@ def detect_gpu() -> tuple[bool, str | None]:
     检测系统是否有可用的NVIDIA GPU及CUDA版本
 
     Returns:
-        (是否有GPU, CUDA版本标识如"cu129"或None)
+        (是否有GPU, CUDA版本标识如"cu126"或None)
     """
     try:
         result = subprocess.run(
@@ -1020,18 +1004,6 @@ def resolve_use_gpu(project_root: Path) -> bool:
     return has_gpu
 
 
-# NVIDIA cu13 运行时包名（与 _install_paddle_stack 的 nvidia_keys 一致）
-_NVIDIA_CU13_PACKAGES = [
-    "nvidia-cuda-runtime",
-    "nvidia-cudnn-cu13",
-    "nvidia-cublas",
-    "nvidia-cufft",
-    "nvidia-curand",
-    "nvidia-cusolver",
-    "nvidia-cusparse",
-]
-
-
 def switch_paddle_backend(
     project_root: Path,
     target: str,
@@ -1044,7 +1016,8 @@ def switch_paddle_backend(
     写入 pending_backend 到缓存（下次启动 worker 时生效）。
 
     paddlepaddle 和 paddlepaddle-gpu 不能共存（都装 paddle 模块），必须先卸两者。
-    GPU→CPU 时额外卸 7 个 nvidia cu13 包（回收 ~1GB）。
+    CUDA 运行时由 torch wheel 的 torch/lib 提供（见 _install_paddle_stack），
+    切换后端时无需单独装卸 nvidia 包。
 
     Args:
         project_root: 项目根目录
@@ -1090,26 +1063,7 @@ def switch_paddle_backend(
         )
         # uninstall 即使包不存在也返回 0，无需检查 returncode
 
-        # 2. GPU→CPU 时额外卸载 nvidia cu13 包
-        if target == "cpu":
-            report("后端切换", "卸载 NVIDIA cu13 运行时库...")
-            nv_uninstall_cmd = [
-                str(python_exe),
-                "-m",
-                "pip",
-                "uninstall",
-                "-y",
-                *_NVIDIA_CU13_PACKAGES,
-            ]
-            subprocess.run(
-                nv_uninstall_cmd,
-                capture_output=True,
-                text=True,
-                timeout=300,
-                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
-            )
-
-        # 3. 安装目标后端（复用 install_embedded_dependencies 的 force_backend）
+        # 2. 安装目标后端（复用 install_embedded_dependencies 的 force_backend）
         report("后端切换", f"安装 {target.upper()} 版 PaddlePaddle...")
         success, msg = install_embedded_dependencies(
             project_root,
@@ -1120,7 +1074,7 @@ def switch_paddle_backend(
         if not success:
             return False, f"{target.upper()} 安装失败: {msg}"
 
-        # 4. 写入 pending_backend（下次启动 worker 时 resolve_use_gpu 读取）
+        # 3. 写入 pending_backend（下次启动 worker 时 resolve_use_gpu 读取）
         if not update_cache_field(project_root, "pending_backend", target):
             report("后端切换", "警告: 缓存更新失败，切换可能不会在重启后生效")
 
@@ -1147,7 +1101,7 @@ def install_dependencies(
         project_root: 项目根目录
         network_type: 网络类型
         use_gpu: 是否安装 GPU 版本（优先），False 则安装 CPU 版
-        cuda_version: CUDA 版本 cu-tag（如 "cu130"），用于选择对应的 GPU 包
+        cuda_version: CUDA 版本 cu-tag（如 "cu126"），用于选择对应的 GPU 包
         force_backend: 强制后端 "gpu" / "cpu" / None。指定时覆盖 use_gpu/cuda_version。
 
     Returns:

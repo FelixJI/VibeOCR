@@ -25,7 +25,8 @@ class PipelineSpec:
         display_name: UI 友好名称 (e.g., "通用 OCR", "表格识别")
         description: 管道描述
         options_class: 该管道对应的 Options dataclass 类
-        create_pipeline: 工厂函数，接收 device 字符串，返回管道实例
+        create_pipeline: 工厂函数，签名 (device: str, **kwargs) -> 管道实例。
+            额外 kwargs 透传给底层 PaddleX 管道构造器（例如 enable_mkldnn）。
         recognize: 执行识别的函数，签名 (service, image, options) -> result
     """
 
@@ -33,7 +34,7 @@ class PipelineSpec:
     display_name: str
     description: str
     options_class: type
-    create_pipeline: Callable[[str], Any]
+    create_pipeline: Callable[..., Any]
     recognize: Callable[..., Any]
 
 

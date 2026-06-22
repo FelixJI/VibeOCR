@@ -19,7 +19,7 @@ def test_force_backend_gpu_skips_detect_and_passes_force(qtbot, tmp_path):
         (tmp_path / "python.exe").touch()
         mock_em.install_embedded_dependencies.return_value = (True, "ok")
         # GPU 分支会调一次 detect_gpu 取 cuda_version
-        mock_em.detect_gpu.return_value = (True, "cu130")
+        mock_em.detect_gpu.return_value = (True, "cu126")
 
         with qtbot.waitSignal(worker.finished, timeout=5000):
             worker.start()
@@ -61,7 +61,7 @@ def test_force_backend_none_keeps_auto_detect(qtbot, tmp_path):
         mock_nd.return_value.network_type = "domestic"
         mock_em.get_embedded_python_executable.return_value = tmp_path / "python.exe"
         (tmp_path / "python.exe").touch()
-        mock_em.detect_gpu.return_value = (True, "cu130")
+        mock_em.detect_gpu.return_value = (True, "cu126")
         mock_em.install_embedded_dependencies.return_value = (True, "ok")
 
         with qtbot.waitSignal(worker.finished, timeout=5000):

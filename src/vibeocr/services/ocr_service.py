@@ -405,7 +405,15 @@ class OCRService(metaclass=SingletonMeta):
 
     @classmethod
     def _setup_cuda_dll_path(cls) -> None:
-        """将所有 nvidia/* 包的 DLL 目录加入 PATH，使 PaddlePaddle 能找到 CUDA 运行时库"""
+        """将 CUDA 运行时 DLL 目录加入 PATH，使 PaddlePaddle 能找到 cuBLAS/cuDNN 等
+
+        扫描两类来源：
+        1. ``nvidia/*`` 包（cu13/cudnn 等，DLL 多在 bin/ 或 bin/<arch>/、lib/<arch>/）
+        2. ``torch/lib`` —— PyTorch wheel 自带完整的 CUDA 12 + cuDNN 9 运行时，
+           是 paddlepaddle-gpu（CUDA 12 构建）所需 ``cublas64_12.dll`` 等的
+           可靠来源。在未安装系统级 CUDA Toolkit 的机器上，这是让 paddle GPU
+           可用的关键（否则 ``cublas64_12.dll`` 找不到，error 126 回退 CPU）。
+        """
         if cls._cuda_dll_registered:
             return
         import sys
@@ -414,8 +422,11 @@ class OCRService(metaclass=SingletonMeta):
             cls._cuda_dll_registered = True
             return
         site_packages = next(p for p in sys.path if "site-packages" in p)
-        nvidia_base = Path(site_packages) / "nvidia"
         existing = os.environ.get("PATH", "")
+        candidate_dirs: list[Path] = []
+
+        # 1) nvidia/* 包
+        nvidia_base = Path(site_packages) / "nvidia"
         if nvidia_base.is_dir():
             for entry in os.scandir(nvidia_base):
                 if not entry.is_dir():
@@ -423,14 +434,23 @@ class OCRService(metaclass=SingletonMeta):
                 # 扫描 bin/ 和 lib/ 目录（不同 nvidia 包的 DLL 位置不同）
                 for subfolder in ("bin", "lib"):
                     sub_dir = Path(entry.path) / subfolder
-                    if sub_dir.is_dir() and str(sub_dir) not in existing:
-                        existing = str(sub_dir) + ";" + existing
-                    # 新版 nvidia 包 (cu13 等) 把 DLL 放在 <subfolder>/<arch>/ 子目录
                     if sub_dir.is_dir():
+                        candidate_dirs.append(sub_dir)
+                        # 新版 nvidia 包 (cu13 等) 把 DLL 放在 <subfolder>/<arch>/ 子目录
                         for sub in os.scandir(sub_dir):
                             arch_dir = Path(sub_dir) / sub.name
-                            if sub.is_dir() and str(arch_dir) not in existing:
-                                existing = str(arch_dir) + ";" + existing
+                            if sub.is_dir():
+                                candidate_dirs.append(arch_dir)
+
+        # 2) torch/lib（CUDA 12 + cuDNN 9 全套）
+        torch_lib = Path(site_packages) / "torch" / "lib"
+        if torch_lib.is_dir():
+            candidate_dirs.append(torch_lib)
+
+        for d in candidate_dirs:
+            s = str(d)
+            if s not in existing:
+                existing = s + ";" + existing
         os.environ["PATH"] = existing
         cls._cuda_dll_registered = True
 
@@ -467,6 +487,10 @@ class OCRService(metaclass=SingletonMeta):
         Python 3.8+ Windows 上 ctypes.CDLL 不再搜索 os.environ["PATH"]，
         必须通过 os.add_dll_directory() 注册。同时更新 PATH 环境变量，
         确保推理引擎（Paddle Inference）也能找到 CUDA DLL。
+
+        覆盖来源与 :meth:`_setup_cuda_dll_path` 一致：``nvidia/*`` 包 +
+        ``torch/lib``（后者提供 paddle 所需的 CUDA 12 运行时，见该方法说明）。
+
         此方法必须在 PaddlePaddle 导入完成后调用，否则会触发 PaddlePaddle
         内部的路径错误。
         """
@@ -477,26 +501,31 @@ class OCRService(metaclass=SingletonMeta):
         site_packages = next((p for p in sys.path if "site-packages" in p), None)
         if not site_packages:
             return
+
+        def _register(d: Path) -> None:
+            with contextlib.suppress(OSError):
+                os.add_dll_directory(str(d))
+            os.environ["PATH"] = str(d) + ";" + os.environ.get("PATH", "")
+
+        # 1) nvidia/* 包（bin/, bin/<arch>/, lib/<arch>/）
         nvidia_base = Path(site_packages) / "nvidia"
-        if not nvidia_base.is_dir():
-            return
-        for entry in os.scandir(nvidia_base):
-            if not entry.is_dir():
-                continue
-            for subfolder in ("bin", "lib"):
-                sub_dir = Path(entry.path) / subfolder
-                if sub_dir.is_dir():
-                    with contextlib.suppress(OSError):
-                        os.add_dll_directory(str(sub_dir))
-                    os.environ["PATH"] = str(sub_dir) + ";" + os.environ.get("PATH", "")
-                    for sub in os.scandir(sub_dir):
-                        arch_dir = Path(sub_dir) / sub.name
-                        if sub.is_dir():
-                            with contextlib.suppress(OSError):
-                                os.add_dll_directory(str(arch_dir))
-                            os.environ["PATH"] = (
-                                str(arch_dir) + ";" + os.environ.get("PATH", "")
-                            )
+        if nvidia_base.is_dir():
+            for entry in os.scandir(nvidia_base):
+                if not entry.is_dir():
+                    continue
+                for subfolder in ("bin", "lib"):
+                    sub_dir = Path(entry.path) / subfolder
+                    if sub_dir.is_dir():
+                        _register(sub_dir)
+                        for sub in os.scandir(sub_dir):
+                            arch_dir = Path(sub_dir) / sub.name
+                            if sub.is_dir():
+                                _register(arch_dir)
+
+        # 2) torch/lib（CUDA 12 + cuDNN 9 全套，paddle GPU 运行时来源）
+        torch_lib = Path(site_packages) / "torch" / "lib"
+        if torch_lib.is_dir():
+            _register(torch_lib)
 
     @staticmethod
     def _get_project_root():
@@ -582,7 +611,15 @@ class OCRService(metaclass=SingletonMeta):
                     if registry.has(pipeline_name):
                         spec = registry.get(pipeline_name)
                         device = self._get_device()
-                        self._pipelines[pipeline_name] = spec.create_pipeline(device)
+                        # CPU 设备禁用 mkldnn：paddle 3.3 的 PIR new executor 与
+                        # oneDNN 存在已知不兼容（ConvertPirAttribute2RuntimeAttribute
+                        # 对 ArrayAttribute<DoubleAttribute> 未实现，predict 抛
+                        # NotImplementedError），CPU 推理时关闭 mkldnn 绕过。
+                        # 参考 PaddleOCR #17539、Paddle #77340。
+                        kwargs = {"enable_mkldnn": False} if device == "cpu" else {}
+                        self._pipelines[pipeline_name] = spec.create_pipeline(
+                            device, **kwargs
+                        )
                     else:
                         # 回退到旧式创建（通过 OCRPipeline 枚举）
                         try:
