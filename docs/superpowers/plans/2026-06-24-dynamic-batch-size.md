@@ -194,9 +194,9 @@ def test_estimate_gpu_batch_size_large_vram_caps_at_10():
 
 
 def test_estimate_gpu_batch_size_small_vram_scales_down():
-    """2G 显存（free 1.5G）、A4@300 → 1536*0.5/(8.7M*3*5/1M)=768/130≈5。"""
+    """2G 显存（free 1.5G）、A4@300 → 1536*0.5/124.45=6.17 → 6。"""
     batch = estimate_gpu_batch_size(free_mb=1536, avg_pixels=8_700_000)
-    assert batch == 5
+    assert batch == 6
 
 
 def test_estimate_gpu_batch_size_minimum_is_1():
@@ -287,13 +287,13 @@ from vibeocr.utils.system_memory import estimate_cpu_batch_size
 
 
 def test_estimate_cpu_batch_size_8g_ram():
-    """8G RAM（free 4G）、A4@300 → 4096*0.3/(8.7M*3*8/1M)=1228/210≈5。"""
-    assert estimate_cpu_batch_size(free_mb=4096, avg_pixels=8_700_000) == 5
+    """8G RAM（free 4G）、A4@300 → 4096*0.3/199.13=6.17 → 6。"""
+    assert estimate_cpu_batch_size(free_mb=4096, avg_pixels=8_700_000) == 6
 
 
 def test_estimate_cpu_batch_size_4g_ram():
-    """4G RAM（free 2G）→ 2048*0.3/210≈2。"""
-    assert estimate_cpu_batch_size(free_mb=2048, avg_pixels=8_700_000) == 2
+    """4G RAM（free 2G）→ 2048*0.3/199.13=3.08 → 3。"""
+    assert estimate_cpu_batch_size(free_mb=2048, avg_pixels=8_700_000) == 3
 
 
 def test_estimate_cpu_batch_size_16g_ram_caps_at_6():

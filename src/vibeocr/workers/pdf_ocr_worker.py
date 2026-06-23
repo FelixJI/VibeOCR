@@ -6,9 +6,13 @@
 from __future__ import annotations
 
 import logging
+import os
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QThread, Signal
+
+from vibeocr.utils.gpu_memory_monitor import estimate_gpu_batch_size
+from vibeocr.utils.system_memory import estimate_cpu_batch_size, get_available_ram_mb
 
 if TYPE_CHECKING:
     import numpy as np
@@ -54,10 +58,38 @@ class PdfOcrWorker(QThread):
     def session_id(self) -> str:
         return self._session_id
 
-    # 每批识别的页数。拆批避免单次 predict(list) 运行过久（>300s）被
-    # 健康检查误判为卡死而强制重启（见 worker_manager.STALE_THRESHOLD）。
+    # 每批识别的页数上限。实际批量由 _compute_batch_size 按可用资源动态计算
+    # （GPU 按显存、CPU 按 RAM），避免小内存设备 OOM。拆批的另一个目的是避免
+    # 单次 predict(list) 运行过久被健康检查误判为卡死（见 worker_manager.STALE_THRESHOLD）。
     # 批间检查 _cancelled 实现可中断的取消。
-    BATCH_SIZE = 10
+    DEFAULT_BATCH_SIZE = 10
+
+    def _compute_batch_size(self, pages: list, use_gpu: bool) -> int:
+        """根据可用资源和页像素均值动态计算批量大小。
+
+        GPU 模式按可用显存，CPU 模式按可用 RAM。
+
+        Args:
+            pages: 已渲染页列表，每个为 tuple(int, np.ndarray)（页索引 + 数组）。
+            use_gpu: 是否 GPU 模式。
+
+        Returns:
+            批量大小，至少为 1。
+        """
+        if not pages:
+            return 1
+        try:
+            arrays = [p[1] if isinstance(p, tuple) else p for p in pages]
+            avg_pixels = (
+                sum(int(a.shape[0]) * int(a.shape[1]) for a in arrays) // len(arrays)
+            )
+        except (AttributeError, IndexError, TypeError):
+            return self.DEFAULT_BATCH_SIZE
+        if use_gpu:
+            free_mb = _read_free_vram_mb()
+            return estimate_gpu_batch_size(free_mb, avg_pixels)
+        free_mb = get_available_ram_mb()
+        return estimate_cpu_batch_size(free_mb, avg_pixels)
 
     def run(self) -> None:
         from vibeocr.models.ocr_options import OCROptions
@@ -69,17 +101,26 @@ class PdfOcrWorker(QThread):
             self.all_done.emit(self._session_id, 0, 0)
             return
 
+        use_gpu = os.environ.get("VIBEOCR_USE_GPU", "").lower() == "true"
+        batch_size = self._compute_batch_size(self._pages, use_gpu=use_gpu)
+        logger.info(
+            "[PdfOcrWorker] 批量大小=%d (模式=%s, 页数=%d)",
+            batch_size,
+            "GPU" if use_gpu else "CPU",
+            total,
+        )
+
         success = 0
         fail = 0
         processed = 0
 
-        # 按 BATCH_SIZE 拆批识别，每批处理完立即 emit page_done，
+        # 按动态 batch_size 拆批识别，每批处理完立即 emit page_done，
         # 并在下一批开始前检查 _cancelled。
-        for batch_start in range(0, total, self.BATCH_SIZE):
+        for batch_start in range(0, total, batch_size):
             if self._cancelled:
                 break
 
-            batch_end = min(batch_start + self.BATCH_SIZE, total)
+            batch_end = min(batch_start + batch_size, total)
             batch_pages = self._pages[batch_start:batch_end]
             batch_indices = [idx for idx, _ in batch_pages]
             batch_images = [img for _, img in batch_pages]
@@ -127,3 +168,18 @@ class PdfOcrWorker(QThread):
                     logger.error("PdfOcrWorker 单页 OCR 失败: %s", e2)
                     results.append(None)
             return results
+
+
+def _read_free_vram_mb() -> int:
+    """读取 GPU 可用显存（MB）。
+
+    失败时返回 0（estimate_gpu_batch_size 会兜底返回 batch=1）。
+    作为模块级函数以便测试 mock。
+    """
+    try:
+        from vibeocr.utils.gpu_memory_monitor import GPUMemoryMonitor
+
+        info = GPUMemoryMonitor().get_status()
+        return info.free if info.available else 0
+    except Exception:
+        return 0

@@ -230,8 +230,12 @@ class TestPdfOcrWorkerBatching:
     且批间可检查 _cancelled 实现取消。
     """
 
-    def test_25_pages_split_into_batches_of_10(self, qapp, wait_worker):
+    def test_25_pages_split_into_batches_of_10(self, qapp, wait_worker, monkeypatch):
         """25 页应拆成 3 批（10+10+5），每批一次 recognize_batch 调用。"""
+        # 固定 batch=10 以验证拆批逻辑（batch 大小计算由 TestComputeBatchSize 覆盖）
+        monkeypatch.setattr(
+            PdfOcrWorker, "_compute_batch_size", lambda self, pages, use_gpu: 10
+        )
         pages = [
             (i, np.ones((10, 10, 3), dtype=np.uint8)) for i in range(25)
         ]
@@ -268,11 +272,14 @@ class TestPdfOcrWorkerBatching:
         assert len(done_pages) == 25
         assert done_summary == [("batch25.pdf", 25, 0)]
 
-    def test_cancel_between_batches(self, qapp, wait_worker):
+    def test_cancel_between_batches(self, qapp, wait_worker, monkeypatch):
         """取消应在批与批之间生效（不再等全部完成）。
 
         25 页拆 3 批，第 1 批完成后取消 → 不应调用第 2、3 批。
         """
+        monkeypatch.setattr(
+            PdfOcrWorker, "_compute_batch_size", lambda self, pages, use_gpu: 10
+        )
         pages = [
             (i, np.ones((10, 10, 3), dtype=np.uint8)) for i in range(25)
         ]
@@ -311,12 +318,15 @@ class TestPdfOcrWorkerBatching:
         # 只调了第 1 批，第 2、3 批被取消跳过
         assert batch_calls == [10]
 
-    def test_batch_exception_does_not_block_ui(self, qapp, wait_worker):
+    def test_batch_exception_does_not_block_ui(self, qapp, wait_worker, monkeypatch):
         """某批异常时，该批页返回 None，其余批继续，all_done 正常发出。
 
         根因：旧版 25 页一次性调用，异常时整个 results 为空，all_done
         要等超时后才发（UI 卡死）。拆批后单批异常只影响该批。
         """
+        monkeypatch.setattr(
+            PdfOcrWorker, "_compute_batch_size", lambda self, pages, use_gpu: 10
+        )
         pages = [
             (i, np.ones((10, 10, 3), dtype=np.uint8)) for i in range(15)
         ]
@@ -358,3 +368,51 @@ class TestPdfOcrWorkerBatching:
         # 第 1 批 10 页成功，第 2 批 5 页失败
         assert success == 10
         assert fail == 5
+
+
+class TestComputeBatchSize:
+    """_compute_batch_size 单元测试：根据资源和页像素动态计算批量。"""
+
+    def test_gpu_mode_uses_vram(self, monkeypatch):
+        """GPU 模式走 estimate_gpu_batch_size。"""
+        import vibeocr.workers.pdf_ocr_worker as mod
+
+        monkeypatch.setattr(mod, "estimate_gpu_batch_size", lambda free_mb, avg_pixels: 7)
+        worker = PdfOcrWorker.__new__(PdfOcrWorker)
+        pages = [(0, np.zeros((1000, 800, 3), dtype=np.uint8))]
+        assert worker._compute_batch_size(pages, use_gpu=True) == 7
+
+    def test_cpu_mode_uses_ram(self, monkeypatch):
+        """CPU 模式走 estimate_cpu_batch_size。"""
+        import vibeocr.workers.pdf_ocr_worker as mod
+
+        monkeypatch.setattr(mod, "estimate_cpu_batch_size", lambda free_mb, avg_pixels: 3)
+        worker = PdfOcrWorker.__new__(PdfOcrWorker)
+        pages = [(0, np.zeros((1000, 800, 3), dtype=np.uint8))]
+        assert worker._compute_batch_size(pages, use_gpu=False) == 3
+
+    def test_empty_pages_returns_1(self):
+        """空页列表返回 1（兜底）。"""
+        worker = PdfOcrWorker.__new__(PdfOcrWorker)
+        assert worker._compute_batch_size([], use_gpu=True) == 1
+
+    def test_avg_pixels_computed_from_pages(self, monkeypatch):
+        """_compute_batch_size 应从 pages 的 shape 算 avg_pixels 并传给 estimator。"""
+        import vibeocr.workers.pdf_ocr_worker as mod
+
+        captured = {}
+
+        def fake_gpu(free_mb, avg_pixels):
+            captured["avg_pixels"] = avg_pixels
+            return 5
+
+        monkeypatch.setattr(mod, "estimate_gpu_batch_size", fake_gpu)
+        monkeypatch.setattr(mod, "_read_free_vram_mb", lambda: 4096)
+        worker = PdfOcrWorker.__new__(PdfOcrWorker)
+        # 两张图：1000x800=800K, 2000x1600=3.2M → avg=2M
+        pages = [
+            (0, np.zeros((1000, 800, 3), dtype=np.uint8)),
+            (1, np.zeros((2000, 1600, 3), dtype=np.uint8)),
+        ]
+        worker._compute_batch_size(pages, use_gpu=True)
+        assert captured["avg_pixels"] == 2_000_000
