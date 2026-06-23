@@ -8,6 +8,7 @@
 import logging
 import threading
 import time
+import uuid
 from collections import OrderedDict
 from collections.abc import Callable
 
@@ -49,17 +50,25 @@ class BatchQueueManager:
         pipeline,
         max_batch_size: int = 8,
         progress_callback: Callable[[BatchProgress], None] | None = None,
+        service=None,
     ):
         """初始化队列管理器
 
         Args:
-            pipeline: PaddleX pipeline 对象
+            pipeline: PaddleX pipeline 对象（保留用于回退/兼容）
             max_batch_size: 最大 batch_size
             progress_callback: 进度回调函数
+            service: OCRService 实例。提供时，批量推理会委派给各管道
+                注册的 recognize_batch / recognize 函数，复用单图路径的
+                选项映射逻辑（如 VL 的 vl_use_layout_detection→
+                use_layout_detection 重命名、公式管道强制
+                use_formula_recognition=True、表格管道的特殊模型名参数等），
+                并返回与单图一致的 OCRResult 对象。
         """
         self.pipeline = pipeline
         self.max_batch_size = max_batch_size
         self.progress_callback = progress_callback
+        self.service = service
 
         # 请求队列 (OrderedDict 保持顺序)
         self._queue: OrderedDict[str, BatchRequest] = OrderedDict()
@@ -79,7 +88,12 @@ class BatchQueueManager:
         }
 
     def add_request(
-        self, image_data: bytes, options: dict, file_path: str = "", file_name: str = ""
+        self,
+        image_data: bytes,
+        options: dict,
+        file_path: str = "",
+        file_name: str = "",
+        request_id: str = "",
     ) -> str:
         """添加请求到队列
 
@@ -88,11 +102,16 @@ class BatchQueueManager:
             options: OCR 选项
             file_path: 文件路径
             file_name: 文件名
+            request_id: 主进程生成的请求标识符。批量场景下主进程已为
+                每个文件分配了 id 并建立 id -> file_path 映射，必须复用
+                该 id，否则结果返回时无法匹配到文件，导致 UI 显示
+                "0 成功, 0 失败"。为空时自动生成（兼容单进程用法）。
 
         Returns:
-            request_id: 请求标识符
+            request_id: 请求标识符（与传入一致；未传则返回自动生成的）
         """
         request = BatchRequest(
+            request_id=request_id or uuid.uuid4().hex[:12],
             file_path=file_path,
             file_name=file_name,
             image_data=image_data,
@@ -300,24 +319,20 @@ class BatchQueueManager:
             # 准备批量输入（bytes 需转换为 numpy.ndarray）
             images = [self._to_ndarray(req.image_data) for req in requests]
 
-            # 调用 pipeline.predict 批量推理
-            pipeline_options = preprocess_options.to_dict()
-
-            # 根据管道类型准备参数
+            # 解析管道名称
             pipeline_name = getattr(preprocess_options, "pipeline", "OCR")
-            # 处理枚举类型
             from enum import Enum
 
             if isinstance(pipeline_name, Enum):
                 pipeline_name = pipeline_name.value
 
-            # 通用参数
-            predict_options = {
-                k: v
-                for k, v in pipeline_options.items()
-                if not k.startswith("vl_") and k != "pipeline"
-            }
-            batch_results = list(self.pipeline.predict(images, **predict_options))
+            # 优先走注册表分发：复用各管道单图路径的选项映射逻辑，
+            # 保证选项名称转换、强制标志（如公式 use_formula_recognition=True）、
+            # 结果格式（OCRResult）与单图完全一致。这是参数正确性的
+            # 单一来源，避免批量路径与单图路径出现两套映射逻辑。
+            batch_results = self._run_via_registry(
+                pipeline_name, images, preprocess_options
+            )
 
             # 分发结果
             for i, req in enumerate(requests):
@@ -340,6 +355,58 @@ class BatchQueueManager:
                 results[req.request_id] = {"error": error_msg}
 
         return results
+
+    def _run_via_registry(
+        self,
+        pipeline_name: str,
+        images: list,
+        options: PreprocessOptions,
+    ) -> list:
+        """通过管道注册表执行批量推理。
+
+        优先使用 spec.recognize_batch（真批量，单次 predict(list)）；
+        若该管道未注册批量接口，则回退逐张 spec.recognize。
+        两者都复用单图路径的选项映射逻辑，保证参数正确性。
+
+        无 service 时回退到原始 pipeline.predict()（仅用于不依赖
+        服务的测试/兼容场景），此时按管道 supported_options 过滤选项。
+        """
+        # 有 service：走注册表分发（生产路径）
+        if self.service is not None:
+            from vibeocr.core.pipelines import get_registry
+
+            registry = get_registry()
+            if registry.has(pipeline_name):
+                spec = registry.get(pipeline_name)
+                if spec.recognize_batch is not None:
+                    logger.debug(
+                        f"[批量] 管道 {pipeline_name} 走 recognize_batch"
+                    )
+                    return list(
+                        spec.recognize_batch(self.service, images, options)
+                    )
+                logger.debug(
+                    f"[批量] 管道 {pipeline_name} 无批量接口，回退逐张 recognize"
+                )
+                return [spec.recognize(self.service, img, options) for img in images]
+
+        # 无 service：原始 predict() 回退路径，按 supported_options 过滤
+        from vibeocr.core.pipelines import (
+            OCRPipeline,
+            get_pipeline_supported_options,
+        )
+
+        try:
+            pipeline_enum = OCRPipeline(pipeline_name)
+        except ValueError:
+            pipeline_enum = OCRPipeline.OCR
+
+        supported_options = set(get_pipeline_supported_options(pipeline_enum))
+        pipeline_options = options.to_dict()
+        predict_options = {
+            k: v for k, v in pipeline_options.items() if k in supported_options
+        }
+        return list(self.pipeline.predict(images, **predict_options))
 
     def _report_progress(self, progress: BatchProgress):
         """报告进度"""

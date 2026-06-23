@@ -185,7 +185,7 @@ def run_worker(shm_name: str, shm_size: int, use_gpu: bool) -> None:
                 else OCRPipeline.OCR
             )
             batch_managers[pipeline_name] = BatchQueueManager(
-                pipeline, max_batch_size=4
+                pipeline, max_batch_size=4, service=ocr_service
             )
             logger.debug(
                 f"[Worker] BatchQueueManager 初始化完成（使用 {pipeline_name}）"
@@ -379,10 +379,13 @@ def run_worker(shm_name: str, shm_size: int, use_gpu: bool) -> None:
                         mgr = get_batch_manager(pipeline_name)
                         if mgr:
                             # 添加到队列
+                            # 复用主进程生成的 request_id，确保结果返回时
+                            # 主进程能据此匹配到文件（见 BatchQueueManager.add_request）
                             mgr.add_request(
                                 image_data=image_data,
                                 options=options_dict,
                                 file_name=options_dict.get("file_name", "unknown"),
+                                request_id=request_id,
                             )
                             # 发送确认
                             protocol.write_message(
