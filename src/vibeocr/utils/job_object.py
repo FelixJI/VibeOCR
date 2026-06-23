@@ -6,13 +6,67 @@
 非 Windows 平台为 no-op 兼容实现。
 """
 
+import ctypes
 import logging
 import subprocess
 import sys
+from ctypes import wintypes
 
 logger = logging.getLogger(__name__)
 
 _IS_WINDOWS = sys.platform == "win32"
+
+# ---- Windows 常量（不导出，仅模块内使用）----
+JOB_OBJECT_LIMIT_BREAKAWAY_OK = 0x00000080
+JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000
+JobObjectExtendedLimitInformation = 9
+PROCESS_SET_QUOTA = 0x0100
+PROCESS_TERMINATE = 0x0001
+
+
+class _IO_COUNTERS(ctypes.Structure):
+    _fields_ = [
+        ("ReadOperationCount", ctypes.c_ulonglong),
+        ("WriteOperationCount", ctypes.c_ulonglong),
+        ("OtherOperationCount", ctypes.c_ulonglong),
+        ("ReadTransferCount", ctypes.c_ulonglong),
+        ("WriteTransferCount", ctypes.c_ulonglong),
+        ("OtherTransferCount", ctypes.c_ulonglong),
+    ]
+
+
+class _JOBOBJECT_BASIC_LIMIT_INFORMATION(ctypes.Structure):
+    _fields_ = [
+        ("PerProcessUserTimeLimit", wintypes.LARGE_INTEGER),
+        ("PerJobUserTimeLimit", wintypes.LARGE_INTEGER),
+        ("LimitFlags", wintypes.DWORD),
+        ("MinimumWorkingSetSize", ctypes.c_size_t),
+        ("MaximumWorkingSetSize", ctypes.c_size_t),
+        ("ActiveProcessLimit", wintypes.DWORD),
+        ("Affinity", ctypes.POINTER(wintypes.ULONG)),
+        ("PriorityClass", wintypes.DWORD),
+        ("SchedulingClass", wintypes.DWORD),
+    ]
+
+
+class _JOBOBJECT_BASIC_UI_RESTRICTIONS(ctypes.Structure):
+    _fields_ = [("UIRestrictionsClass", wintypes.DWORD)]
+
+
+class JOBOBJECT_EXTENDED_LIMIT_INFORMATION(ctypes.Structure):
+    _fields_ = [
+        ("BasicLimitInformation", _JOBOBJECT_BASIC_LIMIT_INFORMATION),
+        ("IoInfo", _IO_COUNTERS),
+        ("ProcessMemoryLimit", ctypes.c_size_t),
+        ("JobMemoryLimit", ctypes.c_size_t),
+        ("PeakProcessMemoryUsed", ctypes.c_size_t),
+        ("PeakJobMemoryUsed", ctypes.c_size_t),
+    ]
+
+
+def _get_kernel32():
+    """获取 kernel32 句柄（仅 Windows 可调用）。"""
+    return ctypes.windll.kernel32  # type: ignore[attr-defined]
 
 
 class JobObjectGuard:
@@ -31,12 +85,47 @@ class JobObjectGuard:
         if not _IS_WINDOWS:
             return
 
-        # Windows 实现在 Task 2 补充
         self._create_job()
 
     def _create_job(self) -> None:
-        """创建并配置 Job Object（Windows）。Task 2 实现。"""
-        # 占位：Task 2 填充真实 ctypes 调用
+        """创建并配置 Job Object（Windows）。"""
+        try:
+            kernel32 = _get_kernel32()
+            # lpName：可选命名；NULL 表示匿名 Job
+            if self._name:
+                name_c = ctypes.c_wchar_p(self._name)
+            else:
+                name_c = None
+
+            handle = kernel32.CreateJobObjectW(None, name_c)
+            if not handle:
+                logger.warning(
+                    "[JobObject] CreateJobObjectW 失败，子进程孤儿防护降级"
+                )
+                return
+
+            # 配置 KILL_ON_JOB_CLOSE + BREAKAWAY_OK
+            info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
+            info.BasicLimitInformation.LimitFlags = (
+                JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_BREAKAWAY_OK
+            )
+            ok = kernel32.SetInformationJobObject(
+                handle,
+                JobObjectExtendedLimitInformation,
+                ctypes.byref(info),
+                ctypes.sizeof(info),
+            )
+            if not ok:
+                logger.warning(
+                    "[JobObject] SetInformationJobObject 失败，子进程孤儿防护降级"
+                )
+                kernel32.CloseHandle(handle)
+                return
+
+            self._handle = handle
+            logger.debug(f"[JobObject] 已创建 Job Object (name={self._name})")
+        except Exception as e:
+            logger.warning(f"[JobObject] 创建 Job Object 异常: {e}，降级")
 
     def assign_from_popen(self, popen: subprocess.Popen) -> bool:
         """把 popen 启动的子进程加入本 Job。
@@ -46,7 +135,6 @@ class JobObjectGuard:
         """
         if not _IS_WINDOWS or self._handle is None:
             return False
-        # Windows 实现在 Task 3 补充
         return self._assign_pid(popen.pid)
 
     def _assign_pid(self, pid: int) -> bool:
