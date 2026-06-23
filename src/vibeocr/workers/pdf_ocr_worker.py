@@ -54,6 +54,11 @@ class PdfOcrWorker(QThread):
     def session_id(self) -> str:
         return self._session_id
 
+    # 每批识别的页数。拆批避免单次 predict(list) 运行过久（>300s）被
+    # 健康检查误判为卡死而强制重启（见 worker_manager.STALE_THRESHOLD）。
+    # 批间检查 _cancelled 实现可中断的取消。
+    BATCH_SIZE = 10
+
     def run(self) -> None:
         from vibeocr.models.ocr_options import OCROptions
 
@@ -64,31 +69,43 @@ class PdfOcrWorker(QThread):
             self.all_done.emit(self._session_id, 0, 0)
             return
 
-        # 批量识别：单次 predict(list) 调用，利用 PaddleOCR 内部分批处理，
-        # 避免逐页重复管道开销。回退路径（服务不支持批量）在 _recognize_batch
-        # 内部逐张处理。
-        ordered_indices = [idx for idx, _ in self._pages]
-        ordered_images = [img for _, img in self._pages]
-
-        results = self._recognize_batch(ordered_images, options)
-
         success = 0
         fail = 0
-        for i, (page_index, result) in enumerate(zip(ordered_indices, results)):
+        processed = 0
+
+        # 按 BATCH_SIZE 拆批识别，每批处理完立即 emit page_done，
+        # 并在下一批开始前检查 _cancelled。
+        for batch_start in range(0, total, self.BATCH_SIZE):
             if self._cancelled:
                 break
-            self.progress.emit(i + 1, total)
-            if result is not None:
-                self.page_done.emit(page_index, result)
-                success += 1
-            else:
-                self.page_done.emit(page_index, None)
-                fail += 1
+
+            batch_end = min(batch_start + self.BATCH_SIZE, total)
+            batch_pages = self._pages[batch_start:batch_end]
+            batch_indices = [idx for idx, _ in batch_pages]
+            batch_images = [img for _, img in batch_pages]
+
+            # 识别当前批（内部已容错：批量失败回退逐张）
+            results = self._recognize_batch(batch_images, options)
+
+            # emit 该批结果
+            for i, (page_index, result) in enumerate(
+                zip(batch_indices, results, strict=False)
+            ):
+                if self._cancelled:
+                    break
+                processed += 1
+                self.progress.emit(processed, total)
+                if result is not None:
+                    self.page_done.emit(page_index, result)
+                    success += 1
+                else:
+                    self.page_done.emit(page_index, None)
+                    fail += 1
 
         self.all_done.emit(self._session_id, success, fail)
 
     def _recognize_batch(self, images, options):
-        """批量识别所有图像，逐张容错。
+        """批量识别一批图像，逐张容错。
 
         优先调用服务的 recognize_batch（单次 predict(list)）；失败时回退逐张，
         确保单张图错误不会拖垮整批。返回结果列表，与 images 顺序一致，失败项为 None。

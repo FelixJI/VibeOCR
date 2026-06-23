@@ -220,3 +220,141 @@ class TestPdfOcrWorker:
 
         assert worker.isFinished()
         assert (1, 1) in progress_calls
+
+
+class TestPdfOcrWorkerBatching:
+    """拆批识别：每批 BATCH_SIZE（10）页，避免单批超时过长被健康检查误杀。
+
+    根因：25 页一次性 predict(list) 可能运行 >300s，被健康检查强制重启，
+    导致任务在已 unlink 的 shm 上空轮询、UI 卡死。拆批后单批短，
+    且批间可检查 _cancelled 实现取消。
+    """
+
+    def test_25_pages_split_into_batches_of_10(self, qapp, wait_worker):
+        """25 页应拆成 3 批（10+10+5），每批一次 recognize_batch 调用。"""
+        pages = [
+            (i, np.ones((10, 10, 3), dtype=np.uint8)) for i in range(25)
+        ]
+        mock_service = MagicMock()
+        batch_calls: list = []
+
+        def track_batch(imgs, opts):
+            batch_calls.append(len(imgs))
+            return [_mk_result() for _ in imgs]
+
+        mock_service.recognize_batch.side_effect = track_batch
+
+        done_pages: list = []
+        done_summary: list = []
+        worker = PdfOcrWorker(
+            session_id="batch25.pdf",
+            pages=pages,
+            ocr_service=mock_service,
+        )
+        worker.page_done.connect(
+            lambda i, r: done_pages.append(i), Qt.ConnectionType.DirectConnection
+        )
+        worker.all_done.connect(
+            lambda sid, s, f: done_summary.append((sid, s, f)),
+            Qt.ConnectionType.DirectConnection,
+        )
+        worker.start()
+        wait_worker(worker)
+
+        assert worker.isFinished()
+        # 3 批：10, 10, 5
+        assert batch_calls == [10, 10, 5]
+        # 全部 25 页成功
+        assert len(done_pages) == 25
+        assert done_summary == [("batch25.pdf", 25, 0)]
+
+    def test_cancel_between_batches(self, qapp, wait_worker):
+        """取消应在批与批之间生效（不再等全部完成）。
+
+        25 页拆 3 批，第 1 批完成后取消 → 不应调用第 2、3 批。
+        """
+        pages = [
+            (i, np.ones((10, 10, 3), dtype=np.uint8)) for i in range(25)
+        ]
+        mock_service = MagicMock()
+        batch_calls: list = []
+
+        def track_batch(imgs, opts):
+            batch_calls.append(len(imgs))
+            return [_mk_result() for _ in imgs]
+
+        mock_service.recognize_batch.side_effect = track_batch
+
+        done_pages: list = []
+        done_summary: list = []
+        worker = PdfOcrWorker(
+            session_id="cancel_batch.pdf",
+            pages=pages,
+            ocr_service=mock_service,
+        )
+
+        def on_page_done(i, r):
+            done_pages.append(i)
+            # 第 1 批（10 页）全部 emit 后取消
+            if len(done_pages) == 10:
+                worker.cancel()
+
+        worker.page_done.connect(on_page_done, Qt.ConnectionType.DirectConnection)
+        worker.all_done.connect(
+            lambda sid, s, f: done_summary.append((sid, s, f)),
+            Qt.ConnectionType.DirectConnection,
+        )
+        worker.start()
+        wait_worker(worker)
+
+        assert worker.isFinished()
+        # 只调了第 1 批，第 2、3 批被取消跳过
+        assert batch_calls == [10]
+
+    def test_batch_exception_does_not_block_ui(self, qapp, wait_worker):
+        """某批异常时，该批页返回 None，其余批继续，all_done 正常发出。
+
+        根因：旧版 25 页一次性调用，异常时整个 results 为空，all_done
+        要等超时后才发（UI 卡死）。拆批后单批异常只影响该批。
+        """
+        pages = [
+            (i, np.ones((10, 10, 3), dtype=np.uint8)) for i in range(15)
+        ]
+        mock_service = MagicMock()
+        call_count = [0]
+
+        def fail_middle_batch(imgs, opts):
+            call_count[0] += 1
+            if call_count[0] == 2:  # 第 2 批（页 10-14... 实际是 10-14）抛异常
+                raise RuntimeError("batch boom")
+            return [_mk_result() for _ in imgs]
+
+        mock_service.recognize_batch.side_effect = fail_middle_batch
+        # 逐张回退也失败（模拟彻底失败）
+        mock_service.recognize.side_effect = RuntimeError("single fail")
+
+        done_pages: list = []
+        done_summary: list = []
+        worker = PdfOcrWorker(
+            session_id="partial_fail.pdf",
+            pages=pages,
+            ocr_service=mock_service,
+        )
+        worker.page_done.connect(
+            lambda i, r: done_pages.append((i, r)), Qt.ConnectionType.DirectConnection
+        )
+        worker.all_done.connect(
+            lambda sid, s, f: done_summary.append((sid, s, f)),
+            Qt.ConnectionType.DirectConnection,
+        )
+        worker.start()
+        wait_worker(worker)
+
+        assert worker.isFinished()
+        # all_done 必须发出（不卡死）
+        assert len(done_summary) == 1
+        sid, success, fail = done_summary[0]
+        assert sid == "partial_fail.pdf"
+        # 第 1 批 10 页成功，第 2 批 5 页失败
+        assert success == 10
+        assert fail == 5
