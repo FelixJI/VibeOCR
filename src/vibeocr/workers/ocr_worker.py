@@ -83,10 +83,12 @@ def run_worker(shm_name: str, shm_size: int, use_gpu: bool) -> None:
         deserialize_batch_commit,
         deserialize_batch_request,
         deserialize_preload_request,
+        deserialize_recognize_batch_request,
         deserialize_request,
         serialize_batch_progress,
         serialize_batch_result,
         serialize_preload_result,
+        serialize_recognize_batch_result,
         serialize_result,
     )
     from vibeocr.utils.shared_memory_v2 import (
@@ -95,6 +97,7 @@ def run_worker(shm_name: str, shm_size: int, use_gpu: bool) -> None:
 
     # 消息类型别名（保持兼容）
     MSG_RECOGNIZE = MessageType.RECOGNIZE
+    MSG_RECOGNIZE_BATCH = MessageType.RECOGNIZE_BATCH
     MSG_RESULT = MessageType.RESULT
     MSG_ERROR = MessageType.ERROR
     MSG_SHUTDOWN = MessageType.SHUTDOWN
@@ -257,6 +260,44 @@ def run_worker(shm_name: str, shm_size: int, use_gpu: bool) -> None:
                             MSG_ERROR, error_msg.encode("utf-8"), sender="worker"
                         )
                         # 等待主进程读取错误响应，避免读回自己的消息
+                        protocol.wait_for_read(timeout=5.0)
+
+                elif msg_type == MSG_RECOGNIZE_BATCH:
+                    # 多图批量识别请求（单次 predict(list)）
+                    logger.debug("[Worker] 收到批量识别请求")
+                    try:
+                        images, options_dict = deserialize_recognize_batch_request(data)
+                        logger.debug(
+                            f"[Worker] 批量识别 {len(images)} 张，"
+                            f"选项: {options_dict}"
+                        )
+                        options = OCROptions.from_dict(options_dict)
+
+                        # PNG bytes → ndarray，OCRService.recognize_batch 接收 ndarray 列表
+                        ndimages = [
+                            ocr_service._to_ndarray(img) for img in images
+                        ]
+                        logger.debug(
+                            f"[Worker] 解码完成 {len(ndimages)} 张，开始批量 OCR..."
+                        )
+                        results = ocr_service.recognize_batch(ndimages, options)
+                        logger.debug(
+                            f"[Worker] 批量 OCR 完成，返回 {len(results)} 个结果"
+                        )
+
+                        result_bytes = serialize_recognize_batch_result(results)
+                        protocol.write_message(
+                            MSG_RESULT, result_bytes, sender="worker"
+                        )
+                        logger.debug("[Worker] 批量识别结果已发送")
+                        protocol.wait_for_read(timeout=5.0)
+
+                    except Exception as e:
+                        error_msg = f"{type(e).__name__}: {e!s}"
+                        logger.error(f"批量识别失败: {error_msg}", exc_info=True)
+                        protocol.write_message(
+                            MSG_ERROR, error_msg.encode("utf-8"), sender="worker"
+                        )
                         protocol.wait_for_read(timeout=5.0)
 
                 elif msg_type == MSG_SHUTDOWN:

@@ -57,22 +57,56 @@ class PdfOcrWorker(QThread):
     def run(self) -> None:
         from vibeocr.models.ocr_options import OCROptions
 
-        success = 0
-        fail = 0
         total = len(self._pages)
         options = self._ocr_options if self._ocr_options is not None else OCROptions()
 
-        for i, (page_index, image) in enumerate(self._pages):
+        if total == 0:
+            self.all_done.emit(self._session_id, 0, 0)
+            return
+
+        # 批量识别：单次 predict(list) 调用，利用 PaddleOCR 内部分批处理，
+        # 避免逐页重复管道开销。回退路径（服务不支持批量）在 _recognize_batch
+        # 内部逐张处理。
+        ordered_indices = [idx for idx, _ in self._pages]
+        ordered_images = [img for _, img in self._pages]
+
+        results = self._recognize_batch(ordered_images, options)
+
+        success = 0
+        fail = 0
+        for i, (page_index, result) in enumerate(zip(ordered_indices, results)):
             if self._cancelled:
                 break
             self.progress.emit(i + 1, total)
-            try:
-                result = self._ocr_service.recognize(image, options)
+            if result is not None:
                 self.page_done.emit(page_index, result)
                 success += 1
-            except Exception as e:
-                logger.error("PdfOcrWorker OCR failed (page %d): %s", page_index, e)
+            else:
                 self.page_done.emit(page_index, None)
                 fail += 1
 
         self.all_done.emit(self._session_id, success, fail)
+
+    def _recognize_batch(self, images, options):
+        """批量识别所有图像，逐张容错。
+
+        优先调用服务的 recognize_batch（单次 predict(list)）；失败时回退逐张，
+        确保单张图错误不会拖垮整批。返回结果列表，与 images 顺序一致，失败项为 None。
+        """
+        try:
+            return list(self._ocr_service.recognize_batch(images, options))
+        except Exception as e:
+            logger.warning(
+                "PdfOcrWorker 批量识别失败，回退逐张识别: %s", e, exc_info=True
+            )
+            results: list = []
+            for img in images:
+                if self._cancelled:
+                    results.append(None)
+                    continue
+                try:
+                    results.append(self._ocr_service.recognize(img, options))
+                except Exception as e2:
+                    logger.error("PdfOcrWorker 单页 OCR 失败: %s", e2)
+                    results.append(None)
+            return results

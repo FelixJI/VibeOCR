@@ -36,6 +36,12 @@ class OCRServicePortable:
     OCR Service 使用便携式 Python
 
     通过路径管理器在主进程中导入 PaddleOCR，支持开发和生产环境。
+
+    ⚠️ 非默认路径（仅调试逃生口）：仅当 ``VIBEOCR_USE_SUBPROCESS=false`` 且
+    ``VIBEOCR_OCR_MODE != direct``（即默认的直连分支）时由工厂选中。
+    与 OCRService 一样在主进程内加载模型，会阻塞 UI、占用 GPU 上下文，
+    **生产环境应走子进程模式（OCRServiceSubprocess，默认）**。
+    仅用于便携式打包环境下的调试/排查。
     """
 
     _instance: Optional["OCRServicePortable"] = None
@@ -43,7 +49,7 @@ class OCRServicePortable:
     _lock = threading.Lock()
 
     def is_ready(self) -> bool:
-        """便携式模式始终就绪"""
+        """服务就绪（便携式模式：pipeline 已加载即就绪）"""
         return self._pipeline is not None
 
     def __new__(cls) -> "OCRServicePortable":
@@ -137,6 +143,18 @@ class OCRServicePortable:
                 texts.extend(rec_texts)
 
         return "\\n".join(texts) if texts else ""
+
+    def recognize_batch(self, images, options=None):
+        """批量识别多张图像（便携式模式：逐张调用 recognize）。
+
+        Args:
+            images: 输入图像列表。
+            options: OCR 识别选项（便携式模式忽略，固定开启预处理）。
+
+        Returns:
+            文本结果列表，顺序与 images 一致。
+        """
+        return [self.recognize(img, options) for img in images]
 
     def get_environment_info(self) -> dict:
         """获取环境信息"""

@@ -715,6 +715,24 @@ class PdfTab(QWidget):
             )
             return
 
+        # 未保存编辑检查：OCR 应基于已落盘的状态，避免渲染内存态与
+        # 后续保存的文件不一致。遵循同类软件惯例：识别前要求先保存。
+        if session.is_modified:
+            reply = QMessageBox.question(
+                self,
+                "未保存的修改",
+                f"{Path(session.file_path).name} 有未保存的修改（旋转/删除页面等）。\n"
+                "OCR 需基于已保存的状态执行，是否先保存？",
+                QMessageBox.StandardButton.Save
+                | QMessageBox.StandardButton.Cancel,
+            )
+            if reply != QMessageBox.StandardButton.Save:
+                return
+            self._on_save()
+            # 保存失败或被取消时，is_modified 仍为 True → 中止
+            if session.is_modified:
+                return
+
         # 从偏好读取 PDF 配置（使用 OCRPreferences 公共 API）
         from vibeocr.utils.ocr_preferences import OCRPreferences
 

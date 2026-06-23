@@ -54,7 +54,7 @@ class OCRServiceSubprocess:
         cls,
         max_workers: int = 1,
         use_gpu: bool = False,
-        shm_size: int = 10 * 1024 * 1024,
+        shm_size: int = 128 * 1024 * 1024,
         auto_start: bool = True,
         start_timeout: float = 120.0,
         start_progress_callback: Callable[[str], None] | None = None,
@@ -76,7 +76,7 @@ class OCRServiceSubprocess:
         self,
         max_workers: int = 1,
         use_gpu: bool = False,
-        shm_size: int = 10 * 1024 * 1024,
+        shm_size: int = 128 * 1024 * 1024,
         auto_start: bool = True,
         start_timeout: float = 120.0,
         start_progress_callback: Callable[[str], None] | None = None,
@@ -253,6 +253,104 @@ class OCRServiceSubprocess:
             except Exception:
                 pass
         return result
+
+    def recognize_batch(self, images, options=None):
+        """批量识别多张图像（子进程真批量）。
+
+        将所有图像按预估序列化大小切成多个子批，每个子批通过新的 RCBG 协议
+        一次性发给 Worker，Worker 内部调用 OCRService.recognize_batch（单次
+        predict(list)），避免逐页 N 次往返。子批间串行，单张失败不影响其他页。
+
+        MinerU 管道是远程 HTTP 单文件 API，不支持本地批量，仍走逐张。
+
+        Args:
+            images: 输入图像列表（ndarray/PIL/bytes/path 均可）。
+            options: OCR 识别选项。
+
+        Returns:
+            结果列表，顺序与 images 一致，单张失败为 None。
+        """
+        if not images:
+            return []
+
+        # MinerU 远程 API 单文件，逐张走
+        if self._is_mineru_pipeline(options):
+            return [self._recognize_one_mineru(img, options) for img in images]
+
+        # 每张图像转 PNG bytes
+        png_images: list[bytes] = []
+        for img in images:
+            try:
+                png_images.append(self._prepare_image_data(img))
+            except Exception as e:
+                logger.error("recognize_batch 准备图像数据失败: %s", e)
+                png_images.append(b"")  # 占位，对应位置后续返回 None
+
+        options_dict = self._prepare_options_dict(options)
+        pipeline_name = options_dict.get("pipeline", "OCR")
+        base_timeout = self._calculate_recognize_timeout(pipeline_name)
+        # 子批超时按页数线性放大：每页 30s 额外，封顶 1800s（30 分钟）
+        per_page_extra = 30.0
+
+        # 单条 SHM 消息上限 = shm_size - 9；预留 30% 给 options pickle + 协议开销
+        budget = max(1024, int(0.7 * (self.shm_size - 9)))
+
+        results: list = [None] * len(images)
+        # 按预算贪心切子批（索引连续）。i 是下一未处理索引。
+        i = 0
+        while i < len(images):
+            sub_imgs: list[bytes] = []
+            sub_idx: list[int] = []
+            running = 0
+            while i < len(images):
+                img_bytes = png_images[i]
+                seg = len(img_bytes) if img_bytes else 0
+                # 加入本图会超预算、且当前子批非空 → 收尾本批
+                if sub_imgs and running + seg + 4 > budget:
+                    break
+                sub_imgs.append(img_bytes)
+                sub_idx.append(i)
+                running += seg + 4  # 含 4 字节长度前缀
+                i += 1
+                # 单张即超预算：单独成批发送，避免无限循环
+                if seg + 4 > budget:
+                    break
+
+            timeout = min(1800.0, base_timeout + per_page_extra * len(sub_imgs))
+            try:
+                sub_results = self._paddlex_manager.execute(
+                    lambda w: w.recognize_batch(sub_imgs, options_dict, timeout=timeout),
+                    timeout=timeout,
+                )
+            except Exception as e:
+                logger.error(
+                    "recognize_batch 子批（页 %s）失败: %s", sub_idx, e, exc_info=True
+                )
+                sub_results = [None] * len(sub_imgs)
+
+            for k, idx in enumerate(sub_idx):
+                results[idx] = sub_results[k] if k < len(sub_results) else None
+
+        # 标记管道成功（整批至少一张成功）
+        pipeline_name_for_mark = str(pipeline_name)
+        if pipeline_name_for_mark in ("OCR", "PP-StructureV3") and any(
+            r is not None for r in results
+        ):
+            try:
+                mark_pipeline_success(
+                    pipeline_name_for_mark, self._get_project_root()
+                )
+            except Exception:
+                pass
+        return results
+
+    def _recognize_one_mineru(self, image, options):
+        """MinerU 单图识别（远程 HTTP API，复用 recognize 的分流逻辑）。"""
+        try:
+            return self.recognize(image, options)
+        except Exception as e:
+            logger.error("MinerU 单张识别失败: %s", e)
+            return None
 
     def _prepare_image_data(self, image) -> bytes:
         """准备图像数据

@@ -82,6 +82,25 @@ class OCRServiceBase(ABC):
             OCRResult 对象
         """
 
+    def recognize_batch(
+        self,
+        images: list,
+        options: Optional["OCROptions"] = None,
+    ) -> list:
+        """批量识别多张图像（默认实现：逐张调用 recognize）。
+
+        子类可重写以利用 PaddleOCR 的 predict(list) 批处理，提升多页吞吐。
+        结果顺序与 images 一致。
+
+        Args:
+            images: 输入图像列表。
+            options: OCR 识别选项。
+
+        Returns:
+            OCRResult 列表，顺序与 images 一致。
+        """
+        return [self.recognize(img, options) for img in images]
+
     @abstractmethod
     def is_ready(self) -> bool:
         """检查服务是否就绪

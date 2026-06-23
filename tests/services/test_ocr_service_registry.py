@@ -265,13 +265,13 @@ class TestRecognizeRegistryDispatch:
         OCRService._reset()
 
     def test_dispatches_to_registered_spec(self):
-        """recognize() dispatches to spec.recognize for registered pipelines."""
+        """recognize() dispatches to spec.recognize_batch for registered pipelines."""
         service = OCRService()
 
         mock_result = _make_ocr_result()
 
         mock_spec = MagicMock()
-        mock_spec.recognize.return_value = mock_result
+        mock_spec.recognize_batch.return_value = [mock_result]
 
         mock_registry = MagicMock()
         mock_registry.has.return_value = True
@@ -287,10 +287,11 @@ class TestRecognizeRegistryDispatch:
             opts = OCROptions(pipeline=OCRPipeline.OCR)
             result = service.recognize(img, opts)
 
-        mock_spec.recognize.assert_called_once()
-        # First arg is service, second is image, third is options
-        call_args = mock_spec.recognize.call_args
+        mock_spec.recognize_batch.assert_called_once()
+        # First arg is service, second is images list, third is options
+        call_args = mock_spec.recognize_batch.call_args
         assert call_args[0][0] is service
+        assert len(call_args[0][1]) == 1
         assert result.raw_text == "hello"
 
     def test_falls_back_to_old_recognize(self):
@@ -375,7 +376,7 @@ class TestRecognizeRegistryDispatch:
 
         mock_result = _make_ocr_result()
         mock_spec = MagicMock()
-        mock_spec.recognize.return_value = mock_result
+        mock_spec.recognize_batch.return_value = [mock_result]
 
         mock_registry = MagicMock()
         mock_registry.has.return_value = True
@@ -399,9 +400,10 @@ class TestRecognizeRegistryDispatch:
             service.recognize(png_bytes, opts)
 
         # The dispatched image should be numpy array, not bytes
-        call_args = mock_spec.recognize.call_args
-        dispatched_image = call_args[0][1]
-        assert hasattr(dispatched_image, "shape")  # numpy array
+        call_args = mock_spec.recognize_batch.call_args
+        dispatched_images = call_args[0][1]
+        assert len(dispatched_images) == 1
+        assert hasattr(dispatched_images[0], "shape")  # numpy array
 
     def test_bbox_normalization_preserved_with_registry(self):
         """Bbox normalization in recognize() still works with registry dispatch."""
@@ -418,7 +420,7 @@ class TestRecognizeRegistryDispatch:
         )
 
         mock_spec = MagicMock()
-        mock_spec.recognize.return_value = mock_result
+        mock_spec.recognize_batch.return_value = [mock_result]
 
         mock_registry = MagicMock()
         mock_registry.has.return_value = True
@@ -441,3 +443,173 @@ class TestRecognizeRegistryDispatch:
         assert 0 <= y0 <= 1000
         assert 0 <= x1 <= 1000
         assert 0 <= y1 <= 1000
+
+
+# ---------------------------------------------------------------------------
+# recognize_batch()
+# ---------------------------------------------------------------------------
+
+
+class TestRecognizeBatch:
+    """Tests for OCRService.recognize_batch() — batched predict(list) path."""
+
+    def setup_method(self):
+        OCRService._reset()
+
+    def teardown_method(self):
+        OCRService._reset()
+
+    def test_dispatches_to_spec_recognize_batch(self):
+        """recognize_batch() dispatches to spec.recognize_batch for OCR pipeline."""
+        service = OCRService()
+
+        results = [_make_ocr_result(raw_text=f"img{i}") for i in range(3)]
+        mock_spec = MagicMock()
+        mock_spec.recognize_batch.return_value = results
+
+        mock_registry = MagicMock()
+        mock_registry.has.return_value = True
+        mock_registry.get.return_value = mock_spec
+
+        with patch(
+            "vibeocr.core.pipelines.get_registry",
+            return_value=mock_registry,
+        ):
+            import numpy as np
+
+            images = [np.zeros((50, 100, 3), dtype=np.uint8) for _ in range(3)]
+            opts = OCROptions(pipeline=OCRPipeline.OCR)
+            got = service.recognize_batch(images, opts)
+
+        # 单次批量调用，传入整个列表
+        mock_spec.recognize_batch.assert_called_once()
+        call_args = mock_spec.recognize_batch.call_args[0]
+        assert call_args[0] is service
+        assert len(call_args[1]) == 3  # images list
+        assert [r.raw_text for r in got] == ["img0", "img1", "img2"]
+
+    def test_returns_empty_for_empty_input(self):
+        """空输入返回空列表，不调用管道。"""
+        service = OCRService()
+        mock_spec = MagicMock()
+        mock_registry = MagicMock()
+        mock_registry.has.return_value = True
+        mock_registry.get.return_value = mock_spec
+
+        with patch(
+            "vibeocr.core.pipelines.get_registry",
+            return_value=mock_registry,
+        ):
+            got = service.recognize_batch([], OCROptions(pipeline=OCRPipeline.OCR))
+
+        assert got == []
+        mock_spec.recognize_batch.assert_not_called()
+
+    def test_falls_back_to_per_image_when_no_batch_spec(self):
+        """管道未注册 recognize_batch 时，逐张识别并保持顺序与数量。"""
+        service = OCRService()
+        mock_spec = MagicMock()
+        mock_spec.recognize_batch = None  # 该管道无批量接口
+
+        mock_registry = MagicMock()
+        mock_registry.has.return_value = True
+        mock_registry.get.return_value = mock_spec
+
+        with (
+            patch(
+                "vibeocr.core.pipelines.get_registry",
+                return_value=mock_registry,
+            ),
+            patch.object(
+                service,
+                "_recognize_ocr",
+                side_effect=[
+                    _make_ocr_result(raw_text="a"),
+                    _make_ocr_result(raw_text="b"),
+                ],
+            ) as mock_rec,
+        ):
+            import numpy as np
+
+            images = [np.zeros((50, 100, 3), dtype=np.uint8) for _ in range(2)]
+            got = service.recognize_batch(images, OCROptions(pipeline=OCRPipeline.OCR))
+
+        assert [r.raw_text for r in got] == ["a", "b"]
+        assert mock_rec.call_count == 2
+
+    def test_bbox_normalization_per_image_in_batch(self):
+        """批量结果中每张图的 bbox 按各自预处理图尺寸独立归一化到 [0,1000]。
+
+        模拟两张图：图 A 预处理尺寸 100x50（bbox 像素 50,25）；图 B 200x100
+        （bbox 像素 100,50）。归一化后两者都应落在 [0,1000] 中点附近。
+        """
+        from vibeocr.models.ocr_result import TextBlock
+
+        service = OCRService()
+
+        tb_a = TextBlock(text="A", score=1.0, bbox=(50.0, 25.0, 50.0, 25.0))
+        tb_b = TextBlock(text="B", score=1.0, bbox=(100.0, 50.0, 100.0, 50.0))
+        res_a = _make_ocr_result(
+            raw_text="A",
+            text_blocks=[tb_a],
+            preproc_img_w=100,
+            preproc_img_h=50,
+        )
+        res_b = _make_ocr_result(
+            raw_text="B",
+            text_blocks=[tb_b],
+            preproc_img_w=200,
+            preproc_img_h=100,
+        )
+
+        mock_spec = MagicMock()
+        mock_spec.recognize_batch.return_value = [res_a, res_b]
+        mock_registry = MagicMock()
+        mock_registry.has.return_value = True
+        mock_registry.get.return_value = mock_spec
+
+        with patch(
+            "vibeocr.core.pipelines.get_registry",
+            return_value=mock_registry,
+        ):
+            import numpy as np
+
+            images = [
+                np.zeros((50, 100, 3), dtype=np.uint8),
+                np.zeros((100, 200, 3), dtype=np.uint8),
+            ]
+            got = service.recognize_batch(
+                images, OCROptions(pipeline=OCRPipeline.OCR)
+            )
+
+        # 两张图各自归一化：50/100*1000=500, 25/50*1000=500
+        bbox_a = got[0].text_blocks[0].bbox
+        bbox_b = got[1].text_blocks[0].bbox
+        assert abs(bbox_a[0] - 500) < 1 and abs(bbox_a[1] - 500) < 1
+        assert abs(bbox_b[0] - 500) < 1 and abs(bbox_b[1] - 500) < 1
+        # 归一化后记录的图像尺寸为预处理尺寸
+        assert got[0].image_width == 100 and got[0].image_height == 50
+        assert got[1].image_width == 200 and got[1].image_height == 100
+
+    def test_single_recognize_routes_through_batch(self):
+        """单图 recognize() 内部走 recognize_batch([img])，行为等价。"""
+        service = OCRService()
+        res = _make_ocr_result(raw_text="single")
+        mock_spec = MagicMock()
+        mock_spec.recognize_batch.return_value = [res]
+        mock_registry = MagicMock()
+        mock_registry.has.return_value = True
+        mock_registry.get.return_value = mock_spec
+
+        with patch(
+            "vibeocr.core.pipelines.get_registry",
+            return_value=mock_registry,
+        ):
+            import numpy as np
+
+            img = np.zeros((50, 100, 3), dtype=np.uint8)
+            got = service.recognize(img, OCROptions(pipeline=OCRPipeline.OCR))
+
+        assert got.raw_text == "single"
+        mock_spec.recognize_batch.assert_called_once()
+        assert len(mock_spec.recognize_batch.call_args[0][1]) == 1

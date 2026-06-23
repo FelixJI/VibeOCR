@@ -42,6 +42,7 @@ class MessageType(bytes, Enum):
     PRELOAD_DONE = b"PRED"  # 预加载完成
     LOG = b"LOG "  # 日志消息
     HEARTBEAT = b"BEAT"  # 心跳
+    RECOGNIZE_BATCH = b"RCBG"  # 批量识别请求（多图一次 predict）
     # 批量消息类型（新增）
     BATCH_ADD = b"BADD"  # 批量添加请求
     BATCH_COMMIT = b"BCOM"  # 批量提交（触发推理）
@@ -80,6 +81,7 @@ MSG_PRELOAD = MessageType.PRELOAD
 MSG_PRELOAD_DONE = MessageType.PRELOAD_DONE
 MSG_LOG = MessageType.LOG
 MSG_HEARTBEAT = MessageType.HEARTBEAT
+MSG_RECOGNIZE_BATCH = MessageType.RECOGNIZE_BATCH
 # 批量消息类型别名
 MSG_BATCH_ADD = MessageType.BATCH_ADD
 MSG_BATCH_COMMIT = MessageType.BATCH_COMMIT
@@ -463,6 +465,77 @@ def serialize_result(result) -> bytes:
 
 def deserialize_result(data: bytes):
     """反序列化 OCR 结果"""
+    import pickle
+
+    return pickle.loads(data)
+
+
+def serialize_recognize_batch_request(
+    images: list[bytes], options_dict: dict
+) -> bytes:
+    """序列化多图批量 OCR 请求（RCBG 协议）
+
+    格式: [图片数 N 4B | u4 len1 | img1 | ... | u4 lenN | imgN | pickle(options_dict)]
+    每张图像为 PNG bytes。与 serialize_request 的长度前缀模式一致，外层加计数。
+
+    注意：与 BADD 队列协议的 serialize_batch_request 同名但语义不同（队列版
+    带 request_id 单图），故此处用 _recognize_batch_ 前缀避免覆盖。
+
+    Args:
+        images: 各页图像的 PNG bytes 列表。
+        options_dict: OCR 选项字典（所有图像共享）。
+
+    Returns:
+        序列化后的 bytes。
+    """
+    import pickle
+    import struct
+
+    parts = [struct.pack("<I", len(images))]
+    for img in images:
+        parts.append(struct.pack("<I", len(img)))
+        parts.append(img)
+    parts.append(pickle.dumps(options_dict))
+    return b"".join(parts)
+
+
+def deserialize_recognize_batch_request(data: bytes) -> tuple[list[bytes], dict]:
+    """反序列化多图批量 OCR 请求（RCBG 协议）
+
+    Returns:
+        (images: list[bytes], options_dict: dict)
+    """
+    import pickle
+    import struct
+
+    count = struct.unpack("<I", data[:4])[0]
+    offset = 4
+    images: list[bytes] = []
+    for _ in range(count):
+        img_len = struct.unpack("<I", data[offset : offset + 4])[0]
+        offset += 4
+        images.append(data[offset : offset + img_len])
+        offset += img_len
+    options_dict = pickle.loads(data[offset:])
+    return images, options_dict
+
+
+def serialize_recognize_batch_result(results: list) -> bytes:
+    """序列化多图批量 OCR 结果列表（RCBG 协议）
+
+    Args:
+        results: OCRResult 对象列表（顺序与请求 images 一致）。
+
+    Returns:
+        pickle 序列化后的 bytes。
+    """
+    import pickle
+
+    return pickle.dumps(results)
+
+
+def deserialize_recognize_batch_result(data: bytes) -> list:
+    """反序列化多图批量 OCR 结果列表（RCBG 协议）"""
     import pickle
 
     return pickle.loads(data)

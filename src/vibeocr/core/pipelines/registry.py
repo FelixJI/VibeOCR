@@ -21,13 +21,16 @@ class PipelineSpec:
     描述一个 OCR 管道的完整元数据，包括名称、描述、选项类和工厂函数。
 
     Attributes:
-        name: 唯一标识符 (e.g., "OCR", "TABLE_RECOGNITION")
-        display_name: UI 友好名称 (e.g., "通用 OCR", "表格识别")
+        name: 唯一标识符 (e.g. "OCR", "TABLE_RECOGNITION")
+        display_name: UI 友好名称 (e.g. "通用 OCR", "表格")
         description: 管道描述
         options_class: 该管道对应的 Options dataclass 类
         create_pipeline: 工厂函数，签名 (device: str, **kwargs) -> 管道实例。
             额外 kwargs 透传给底层 PaddleX 管道构造器（例如 enable_mkldnn）。
         recognize: 执行识别的函数，签名 (service, image, options) -> result
+        recognize_batch: 批量识别的函数，签名
+            (service, images: list, options) -> list[result]。
+            None 表示该管道不支持批量识别（调用方需回退逐张）。
     """
 
     name: str
@@ -36,6 +39,7 @@ class PipelineSpec:
     options_class: type
     create_pipeline: Callable[..., Any]
     recognize: Callable[..., Any]
+    recognize_batch: Callable[..., Any] | None = None
 
 
 class PipelineRegistry:
