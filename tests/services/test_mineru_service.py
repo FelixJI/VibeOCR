@@ -7,6 +7,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+# mineru_service 依赖 httpx；缺该依赖时整文件跳过而非 collection error
+pytest.importorskip("httpx", reason="httpx not installed")
+
 from vibeocr.models.ocr_result import OCRResult
 from vibeocr.services.mineru_service import MinerUService
 
@@ -32,12 +35,26 @@ class TestMinerUService:
         MinerUService._initialized = False
         MinerUService._api_process = None
         MinerUService._api_url = ""
+        MinerUService._job_guard = None
 
     def test_singleton(self):
         with patch.object(MinerUService, "_ensure_api_running"):
             s1 = MinerUService()
             s2 = MinerUService()
         assert s1 is s2
+
+    def test_shutdown_closes_job_guard_if_present(self):
+        """shutdown 时若 _job_guard 存在则关闭并置 None。"""
+        service = MinerUService.__new__(MinerUService)
+        service._api_url = ""
+        MinerUService._api_process = None
+        mock_guard = MagicMock()
+        MinerUService._job_guard = mock_guard
+
+        service.shutdown()
+
+        mock_guard.close.assert_called_once()
+        assert MinerUService._job_guard is None
 
     def test_parse_returns_ocr_result(self):
         """调用 parse 应返回 OCRResult"""

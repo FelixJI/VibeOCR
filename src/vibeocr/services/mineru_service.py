@@ -34,6 +34,7 @@ from vibeocr.models.ocr_result import (
     normalize_bbox,
     normalize_content_list,
 )
+from vibeocr.utils.job_object import JobObjectGuard
 from vibeocr.utils.markdown_converter import markdown_to_html
 from vibeocr.utils.mime_types import mime_to_extension
 
@@ -54,6 +55,7 @@ class MinerUService(metaclass=SingletonMeta):
     _api_url: str = ""
     _lock = threading.RLock()
     _initialized = False
+    _job_guard: JobObjectGuard | None = None
 
     def __init__(self):
         if not self._initialized:
@@ -181,6 +183,10 @@ class MinerUService(metaclass=SingletonMeta):
             stderr=subprocess.PIPE,
             env=env,
         )
+
+        # 绑定 Windows Job Object：主进程崩溃时内核连带终止 mineru-api
+        cls._job_guard = JobObjectGuard(name="vibeocr_mineru_api")
+        cls._job_guard.assign_from_popen(cls._api_process)
 
         # 读取 mineru-api 子进程的 stderr 并转发到项目日志系统
         self._start_log_reader(self.__class__._api_process)
@@ -498,6 +504,10 @@ class MinerUService(metaclass=SingletonMeta):
 
     def shutdown(self) -> None:
         """停止 mineru-api 进程"""
+        # 先关闭 Job 守卫：触发内核 kill mineru-api，使后续 terminate 对已死进程为 no-op
+        if self.__class__._job_guard is not None:
+            self.__class__._job_guard.close()
+            self.__class__._job_guard = None
         if self.__class__._api_process is not None:
             _logger.debug("[MinerU] 停止 mineru-api 服务...")
             self.__class__._api_process.terminate()
