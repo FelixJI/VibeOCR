@@ -114,6 +114,7 @@ class OCRService(metaclass=SingletonMeta):
     _lock = threading.Lock()
     _initialized = False
     _status_callback: Callable | None = None  # 状态回调函数
+    _cache_manager: Any = None  # PipelineCacheManager 实例（懒加载）
 
     def is_ready(self) -> bool:
         """服务就绪（直连/worker 内：模型已加载即就绪）"""
@@ -158,6 +159,15 @@ class OCRService(metaclass=SingletonMeta):
                 if not self._initialized:
                     self._initialized = True
 
+    @property
+    def cache_manager(self) -> Any:
+        """PipelineCacheManager 实例（懒加载，避免循环导入）。"""
+        if self._cache_manager is None:
+            from vibeocr.services.pipeline_cache_manager import PipelineCacheManager
+
+            self._cache_manager = PipelineCacheManager(self)
+        return self._cache_manager
+
     @classmethod
     def _reset(cls) -> None:
         """重置服务状态
@@ -169,6 +179,13 @@ class OCRService(metaclass=SingletonMeta):
             cls._initialized = False
             cls._status_callback = None
             cls._preload_progress_callback = None
+            cls._cache_manager = None  # 重置 cache_manager（类属性）
+            # 同步清理实例属性（property 懒加载会设实例属性，遮蔽类属性）
+            from vibeocr.core.singleton_meta import SingletonMeta
+
+            instance = SingletonMeta._instances.get(cls)
+            if instance is not None:
+                instance.__dict__.pop("_cache_manager", None)
             cls._preloaded_pipelines = set()
             cls._is_preloading = False
 
@@ -646,7 +663,41 @@ class OCRService(metaclass=SingletonMeta):
                     _logger.debug(
                         "[get_or_create_pipeline] 管道 %s 创建完成", pipeline_name
                     )
+        # 记录使用时间 + 容量管理（重管道 FIFO 淘汰）
+        try:
+            self.cache_manager.touch(pipeline_name)
+            from vibeocr.core.pipelines import get_heavy_pipelines
+
+            if pipeline_name in {p.value for p in get_heavy_pipelines()}:
+                self.cache_manager.enforce_capacity(pipeline_name)
+        except Exception as e:
+            _logger.debug("[get_or_create_pipeline] cache_manager 操作失败: %s", e)
         return self._pipelines[pipeline_name]
+
+    @classmethod
+    def release_pipelines(cls, heavy_only: bool = True) -> list[str]:
+        """释放管道缓存（直连模式：直接调 cache_manager.release）。
+
+        Args:
+            heavy_only: True 只释放重管道，False 释放全部（含 OCR）。
+
+        Returns:
+            被释放的管道名列表。
+        """
+        return cls().cache_manager.release(heavy_only=heavy_only)
+
+    @classmethod
+    def set_pipeline_ttl(cls, ttl_seconds: int) -> bool:
+        """设置重管道 TTL 闲置回收时间（直连模式）。
+
+        Args:
+            ttl_seconds: TTL 秒数，0=禁用。
+
+        Returns:
+            是否设置成功。
+        """
+        cls().cache_manager.ttl_seconds = ttl_seconds
+        return True
 
     @property
     def pipeline(self) -> Any:

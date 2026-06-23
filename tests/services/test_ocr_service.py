@@ -291,3 +291,42 @@ class TestHtmlTableToMarkdown:
         )
         md = _html_table_to_markdown(html)
         assert "| D |  |  |" in md
+
+
+class TestCacheManagerIntegration:
+    """OCRService 与 PipelineCacheManager 集成测试。"""
+
+    def test_ocr_service_has_cache_manager(self):
+        """OCRService 实例持有 PipelineCacheManager。"""
+        from vibeocr.services.pipeline_cache_manager import PipelineCacheManager
+
+        OCRService._reset()
+        svc = OCRService()
+        assert isinstance(svc.cache_manager, PipelineCacheManager)
+
+    def test_reset_clears_cache_manager(self):
+        """_reset 后 cache_manager 重新创建（last_used 清空）。"""
+        OCRService._reset()
+        svc = OCRService()
+        svc.cache_manager.touch("PP-StructureV3", now=100.0)
+        assert svc.cache_manager.get_last_used("PP-StructureV3") == 100.0
+        OCRService._reset()
+        svc2 = OCRService()
+        assert svc2.cache_manager.get_last_used("PP-StructureV3") is None
+
+    def test_release_pipelines_classmethod(self):
+        """release_pipelines 类方法可调用（直连模式）。"""
+        OCRService._reset()
+        svc = OCRService()
+        svc._pipelines = {"OCR": object()}
+        svc.cache_manager.touch("OCR")
+        released = OCRService.release_pipelines(heavy_only=False)
+        assert "OCR" in released
+        assert len(svc._pipelines) == 0
+
+    def test_set_pipeline_ttl_classmethod(self):
+        """set_pipeline_ttl 类方法可调用（直连模式）。"""
+        OCRService._reset()
+        svc = OCRService()
+        assert OCRService.set_pipeline_ttl(600) is True
+        assert svc.cache_manager.ttl_seconds == 600
