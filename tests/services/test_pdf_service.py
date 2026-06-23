@@ -251,6 +251,78 @@ class TestPdfServiceTextLayer:
         assert any("skipped" in rec.message for rec in caplog.records)
         doc.close()
 
+    def test_add_text_layer_fallback_insert_text_on_narrow_bbox(self, tmp_path):
+        """窄/瘦高矩形装不下横向文字时，insert_text 兜底写入（不再跳过）。
+
+        复现真实报错场景：bbox 宽 ~20pt、高 ~50pt，文字是 3 个汉字，
+        insert_textbox 横向排不开、缩 5 次仍失败。兜底用 insert_text
+        单点定位写入，保证该词进入文字层（可搜索/可选中）。
+        """
+        import numpy as np
+
+        from vibeocr.models.ocr_result import OCRResult, TextBlock
+
+        path = tmp_path / "scan_narrow.pdf"
+        doc = fitz.open()
+        page = doc.new_page(width=612, height=792)
+        img = np.ones((792, 612, 3), dtype=np.uint8) * 240
+        cs = fitz.Colorspace(fitz.CS_RGB)
+        pixmap = fitz.Pixmap(cs, 612, 792, img.tobytes(), 0)
+        page.insert_image(fitz.Rect(0, 0, 612, 792), pixmap=pixmap)
+        doc.save(str(path))
+        doc.close()
+
+        doc, pdf_doc = PdfService.open_doc(str(path))
+        # 瘦高矩形（宽 20pt、高 50pt）+ 3 个汉字 → insert_textbox 必然失败
+        narrow = TextBlock(
+            text="签回联", score=0.95,
+            bbox=(50.0, 50.0, 70.0, 100.0), page_idx=0,
+        )
+        result = OCRResult(raw_text="签回联", text_blocks=[narrow])
+
+        written, skipped = PdfService.add_text_layer(doc, pdf_doc, 0, result)
+
+        # 兜底成功写入，不计 skip
+        assert written == 1
+        assert skipped == 0
+        # 文字层确实包含该词（可搜索）
+        assert "签回联" in doc[0].get_text()
+        doc.close()
+
+    def test_add_text_layer_fallback_logs_debug(self, tmp_path, caplog):
+        """兜底写入走 DEBUG 日志（便于排查），不污染 WARNING 流。"""
+        import logging
+
+        import numpy as np
+
+        from vibeocr.models.ocr_result import OCRResult, TextBlock
+
+        path = tmp_path / "scan_fb.pdf"
+        doc = fitz.open()
+        page = doc.new_page(width=612, height=792)
+        img = np.ones((792, 612, 3), dtype=np.uint8) * 240
+        cs = fitz.Colorspace(fitz.CS_RGB)
+        pixmap = fitz.Pixmap(cs, 612, 792, img.tobytes(), 0)
+        page.insert_image(fitz.Rect(0, 0, 612, 792), pixmap=pixmap)
+        doc.save(str(path))
+        doc.close()
+
+        doc, pdf_doc = PdfService.open_doc(str(path))
+        narrow = TextBlock(
+            text="43778", score=0.9,
+            bbox=(50.0, 50.0, 70.0, 80.0), page_idx=0,  # 窄矩形
+        )
+        result = OCRResult(raw_text="43778", text_blocks=[narrow])
+
+        with caplog.at_level(logging.DEBUG, logger="vibeocr.services.pdf_service"):
+            PdfService.add_text_layer(doc, pdf_doc, 0, result)
+
+        # 兜底写入应有 DEBUG 日志
+        assert any(
+            "insert_text 兜底" in rec.message for rec in caplog.records
+        )
+        doc.close()
+
     def test_add_text_layer_with_90_rotation(self, tmp_path):
         """90° 预处理旋转后 bbox 仍然映射到正确位置。"""
         import numpy as np

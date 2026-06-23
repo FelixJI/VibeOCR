@@ -357,6 +357,7 @@ class PdfService:
 
             render_mode = 0 if settings.text_layer_visible else 3
             inserted = False
+            last_fontsize = fontsize
             for _ in range(settings.font_size_retry_count):
                 rc = page.insert_textbox(
                     rect,
@@ -369,6 +370,7 @@ class PdfService:
                 if rc >= 0:
                     inserted = True
                     break
+                last_fontsize = fontsize
                 fontsize *= settings.font_size_shrink_factor
                 if fontsize < 1:
                     break
@@ -376,11 +378,32 @@ class PdfService:
             if inserted:
                 written += 1
             else:
-                logger.warning(
-                    "page %d block skipped (font retry exhausted): rect=%s text=%r",
-                    page_index, rect, block.text[:30],
-                )
-                skipped += 1
+                # 兜底：insert_textbox 在窄/瘦高矩形里装不下时
+                # （如竖排文字被聚成瘦高块），降级为 insert_text 单点定位：
+                # 文字从矩形左下角（基线）起写，溢出也写入，保证该词进入文字层。
+                try:
+                    baseline = fitz.Point(rect.x0, rect.y1 - last_fontsize * 0.2)
+                    page.insert_text(
+                        baseline,
+                        block.text,
+                        fontsize=last_fontsize,
+                        fontname="china-s",
+                        color=(0, 0, 0),
+                        render_mode=render_mode,
+                    )
+                    written += 1
+                    logger.debug(
+                        "page %d block 写入文字层（insert_text 兜底）: "
+                        "rect=%s text=%r",
+                        page_index, rect, block.text[:30],
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "page %d block skipped (font retry exhausted + "
+                        "fallback failed): rect=%s text=%r err=%s",
+                        page_index, rect, block.text[:30], e,
+                    )
+                    skipped += 1
 
         pdf_document.is_modified = True
         PdfService.update_page_info(doc, pdf_document, page_index)
