@@ -192,7 +192,8 @@ class TestInstallSpecs:
     def test_embedded_deps_gpu_with_cuda_version(self, tmp_path):
         """便携模式 GPU 安装应使用 paddlepaddle-gpu + cu-tag index
 
-        cuda_version 是 detect_gpu() 返回的 cu-tag（如 "cu121"），直接用作 index URL。
+        cuda_version 是 detect_gpu() 返回的 cu-tag（如 "cu126"），直接用作 index URL。
+        注意：detect_cuda_version 现仅产出 cu118/cu126（CUDA 12.x 全部归并到 cu126）。
         """
         python_exe = tmp_path / "python.exe"
         python_exe.touch()
@@ -220,7 +221,7 @@ class TestInstallSpecs:
             install_embedded_dependencies(
                 tmp_path,
                 use_gpu=True,
-                cuda_version="cu121",
+                cuda_version="cu126",
                 progress_callback=lambda s, m: None,
             )
 
@@ -228,7 +229,7 @@ class TestInstallSpecs:
         assert len(paddle_cmd) > 0
         joined = " ".join(paddle_cmd[0])
         assert "paddlepaddle-gpu" in joined, f"应使用 paddlepaddle-gpu，实际: {joined}"
-        assert "cu121" in joined
+        assert "cu126" in joined
 
     def test_embedded_deps_gpu_without_cuda_falls_back_to_default(self, tmp_path):
         """便携模式 GPU 无 CUDA 版本时应使用默认 cu126"""

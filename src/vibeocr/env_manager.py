@@ -28,43 +28,50 @@ from vibeocr.services.env_config import (
 # GitHub 直链 + 国内镜像（NJU/ghproxy）已在 env_config.PYTHON_BUILD_STANDALONE_MIRRORS 定义
 PYTHON_STANDALONE_URLS = [PYTHON_BUILD_STANDALONE_BASE, *PYTHON_BUILD_STANDALONE_MIRRORS]
 
-# CUDA 版本映射到 PaddlePaddle 支持的版本
-# PaddlePaddle GPU 版本支持: cu118, cu121, cu123, cu126, cu129, cu130 等
-# 本项目统一使用 cu126 wheel（CUDA 12.6 构建），与 torch cu126 同源：
-# paddle 所需的 cublas64_12.dll 等 CUDA 12 运行时由 torch wheel 的 torch/lib
-# 目录提供（见 _install_paddle_stack 与 OCRService._setup_cuda_dll_path）。
-# 不用 cu129（torch 无对应 win wheel）/ cu130（要 cublas64_13.dll，ABI 不匹配）。
+# CUDA 版本映射到 PaddlePaddle 支持的版本。
+# paddlepaddle-gpu 3.3.1 实际只发布三个 win cp313 wheel：cu118 / cu126 / cu129
+# （直接从 paddlepaddle.org.cn/packages/stable/{tag}/ 核实）。
+# 之前曾映射到 cu121/cu123，但 paddle 从未发布这些 win wheel，会导致安装 404。
+#
+# 本项目统一用 cu126（CUDA 12.6 构建），与 torch cu126 同源：paddle 所需的
+# cublas64_12.dll 等 CUDA 12 运行时由 torch wheel 的 torch/lib 目录提供
+# （见 _install_paddle_stack 与 OCRService._setup_cuda_dll_path）。
+# CUDA 12.x 同大版本共享 cublas64_12.dll，故任何 12.x 驱动都能跑 cu126 runtime。
+# CUDA 13.x 驱动向下兼容 CUDA 12.x 运行时，同样映射到 cu126。
+# 不启用 cu129：虽然它对 RTX 50 系有专门适配，但 torch 无对应 win wheel，
+# 改用 cu129 paddle 会让 torch/lib 的 CUDA 12 DLL 与之不匹配（见 TORCH_CUDA_MAP）。
+# 不用 cu130：需 cublas64_13.dll，与 torch/lib 的 _12 系列 ABI 不匹配。
+#
 # 注意：_install_paddle_stack 接收的 cuda_version 已是 cu-tag（detect_cuda_version 输出），
 # 此映射仅用于 detect_cuda_version 把原始版本（nvidia-smi 输出）转成 cu-tag。
 CUDA_VERSION_MAP = {
     "11.8": "cu118",
-    "12.0": "cu121",
-    "12.1": "cu121",
-    "12.2": "cu123",
-    "12.3": "cu123",
+    # CUDA 12.x 全部归并到 cu126（cu121/cu123 的 paddle wheel 不存在）。
+    # CUDA 12 同大版本共享 cublas64_12.dll，cu126 runtime 向下兼容 12.0+。
+    "12.0": "cu126",
+    "12.1": "cu126",
+    "12.2": "cu126",
+    "12.3": "cu126",
     "12.4": "cu126",
     "12.5": "cu126",
     "12.6": "cu126",
     "12.7": "cu126",
     "12.8": "cu126",
     "12.9": "cu126",
-    # CUDA 13.x 驱动仍兼容 CUDA 12.x 运行时，故映射到 cu126
+    # CUDA 13.x 驱动仍兼容 CUDA 12.x 运行时，故映射到 cu126。
     "13.0": "cu126",
     "13.1": "cu126",
     "13.2": "cu126",
 }
 
-# PyTorch CUDA 版本映射（PaddlePaddle CUDA tag → PyTorch CUDA tag）
-# PyTorch 官方 wheel 的 CUDA tag 粒度比 PaddlePaddle 粗：
-# - cu123 → cu124: PyTorch 跳过 cu123
-# 项目 paddle 统一用 cu126，torch 也用 cu126（同源），无需映射。
-# 此表保留供 detect_cuda_version 返回其他 tag 时回退使用。
+# PyTorch CUDA 版本映射（PaddlePaddle CUDA tag → PyTorch CUDA tag）。
 # 开发环境 (uv) 的 torch 来源见 pyproject.toml [tool.uv.sources]，恒定 cu126；
 # 便携环境 (pip) 的 torch 来源由此映射 + get_pytorch_mirror 决定。
+# 只有 paddle tag 在此表中时 torch 才选对应 tag；不在表里时回退到 cu126
+# （torch 无 cu129/cu130 的 win cp313 wheel，cu126 的 torch/lib 正好提供
+# cu129 paddle 所需的 cublas64_12.dll，但本项目不启用 cu129，故仅作兜底）。
 TORCH_CUDA_MAP = {
     "cu118": "cu118",
-    "cu121": "cu121",
-    "cu123": "cu124",
     "cu126": "cu126",
 }
 
@@ -736,7 +743,7 @@ def _install_paddle_stack(
         # GPU 环境下安装 torch+CUDA 覆盖 mineru 附带的 CPU 版本
         if use_gpu:
             paddle_cuda_tag = cuda_version or default_gpu_tag
-            torch_cuda_tag = TORCH_CUDA_MAP.get(paddle_cuda_tag, "cu128")
+            torch_cuda_tag = TORCH_CUDA_MAP.get(paddle_cuda_tag, "cu126")
             pytorch_mirror_name = "nju" if network_type == "domestic" else "official"
             torch_index = get_pytorch_mirror(pytorch_mirror_name, torch_cuda_tag)
             requirements.append(
@@ -753,7 +760,7 @@ def _install_paddle_stack(
             report_fn("依赖安装", f"包规格: {package_spec}")
             report_fn("依赖安装", f"使用源: {index_url}")
 
-            # package_spec 可能含多个包（空格分隔，如 "torch torchvision" 或 7 个 nvidia 包），
+            # package_spec 可能含多个包（空格分隔，如 "torch torchvision"），
             # 必须拆成独立的 argv 元素传给 pip，否则 pip 把整个字符串当成一个非法 requirement。
             # 同时剥离冗余的引号（subprocess 传 list 不经过 shell，引号会变成参数的一部分）。
             raw_args = package_spec.split() if isinstance(package_spec, str) else list(package_spec)
@@ -866,7 +873,7 @@ def detect_cuda_version() -> str | None:
         CUDA版本字符串（如 "cu126"），如果未检测到则返回 None
     """
     # CUDA版本映射到PaddlePaddle支持的版本
-    # PaddlePaddle GPU版本支持: cu118, cu121, cu123, cu126, cu129 等
+    # paddlepaddle-gpu 3.3.1 win wheel 仅提供 cu118 / cu126 / cu129；本项目统一用 cu126。
     cuda_version_map = CUDA_VERSION_MAP
 
     def find_best_match(major_minor: str) -> str | None:
