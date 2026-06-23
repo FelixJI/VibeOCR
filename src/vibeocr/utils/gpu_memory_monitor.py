@@ -114,3 +114,38 @@ class GPUMemoryMonitor:
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.close()
+
+
+# --- 模块级分批计算工具（供 PDF 动态 BATCH_SIZE 复用）---
+
+#: GPU 模式每页峰值放大系数（含 PaddleOCR 内部多份副本）。
+GPU_AMP_FACTOR = 5
+#: GPU 模式安全系数（只用一半 free 显存）。
+GPU_SAFETY_FACTOR = 0.5
+#: GPU 模式 batch 上限（避免超时风险）。
+GPU_BATCH_CAP = 10
+#: 每像素字节数（RGB）。
+BYTES_PER_PIXEL = 3
+
+
+def estimate_gpu_batch_size(free_mb: int, avg_pixels: int) -> int:
+    """按可用显存和平均像素数估算 GPU 批量大小。
+
+    单页峰值（MB）= avg_pixels * 3 字节 * 5× 放大 / 1MB。
+    batch = free * 0.5 / 单页峰值，夹到 [1, 10]。
+
+    Args:
+        free_mb: 可用显存（MB）。
+        avg_pixels: 单页平均像素数（width * height）。
+
+    Returns:
+        批量大小，范围 [1, 10]。
+    """
+    if free_mb <= 0 or avg_pixels <= 0:
+        return 1
+    per_page_peak_mb = (avg_pixels * BYTES_PER_PIXEL * GPU_AMP_FACTOR) / (1024 * 1024)
+    if per_page_peak_mb <= 0:
+        return 1
+    usable_mb = free_mb * GPU_SAFETY_FACTOR
+    batch = int(usable_mb / per_page_peak_mb)
+    return max(1, min(batch, GPU_BATCH_CAP))
