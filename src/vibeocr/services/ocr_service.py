@@ -165,7 +165,15 @@ class OCRService(metaclass=SingletonMeta):
         if self._cache_manager is None:
             from vibeocr.services.pipeline_cache_manager import PipelineCacheManager
 
-            self._cache_manager = PipelineCacheManager(self)
+            # 读取用户手动覆盖的并存上限（None=按显存自动分档）
+            max_heavy_override = None
+            try:
+                from vibeocr.managers.config_manager import ConfigManager
+
+                max_heavy_override = ConfigManager.instance().get_max_heavy_pipelines()
+            except Exception:
+                pass  # ConfigManager 未初始化时用默认自动检测
+            self._cache_manager = PipelineCacheManager(self, max_heavy=max_heavy_override)
         return self._cache_manager
 
     @classmethod

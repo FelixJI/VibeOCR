@@ -60,6 +60,36 @@ def _make_manager(max_heavy: int = 2, ttl: int = 300) -> PipelineCacheManager:
     return PipelineCacheManager(service, ttl_seconds=ttl, max_heavy=max_heavy)
 
 
+# --- _detect_max_heavy (CPU/GPU 分档) ---
+
+
+def test_detect_max_heavy_cpu_mode_returns_1(monkeypatch):
+    """CPU 模式（VIBEOCR_USE_GPU != true）固定返回 1。"""
+    monkeypatch.setenv("VIBEOCR_USE_GPU", "false")
+    service = MagicMock()
+    service._pipelines = {}
+    mgr = PipelineCacheManager(service)  # max_heavy=None → 自动检测
+    assert mgr.max_heavy == 1
+
+
+def test_detect_max_heavy_no_env_returns_1(monkeypatch):
+    """无 VIBEOCR_USE_GPU 环境变量时（默认 CPU）返回 1。"""
+    monkeypatch.delenv("VIBEOCR_USE_GPU", raising=False)
+    service = MagicMock()
+    service._pipelines = {}
+    mgr = PipelineCacheManager(service)
+    assert mgr.max_heavy == 1
+
+
+def test_detect_max_heavy_manual_override(monkeypatch):
+    """max_heavy 手动指定时优先于自动检测。"""
+    monkeypatch.setenv("VIBEOCR_USE_GPU", "false")
+    service = MagicMock()
+    service._pipelines = {}
+    mgr = PipelineCacheManager(service, max_heavy=3)
+    assert mgr.max_heavy == 3
+
+
 # --- enforce_capacity (FIFO) ---
 
 

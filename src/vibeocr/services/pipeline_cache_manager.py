@@ -64,7 +64,14 @@ class PipelineCacheManager:
         self._max_heavy = max_heavy if max_heavy is not None else self._detect_max_heavy()
 
     def _detect_max_heavy(self) -> int:
-        """读 GPU 显存总量算并存上限，失败回退。"""
+        """读 GPU 显存总量算并存上限，失败回退。
+
+        CPU 模式（VIBEOCR_USE_GPU != true）固定返回 1（串行更稳）。
+        """
+        import os
+
+        if os.environ.get("VIBEOCR_USE_GPU", "").lower() != "true":
+            return 1
         try:
             from vibeocr.utils.gpu_memory_monitor import GPUMemoryMonitor
 
