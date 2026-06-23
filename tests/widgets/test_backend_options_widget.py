@@ -21,7 +21,7 @@ def _make_widget(tmp_path, has_gpu=True, cached_hardware_gpu=False, pending=None
     mock_cache = patch.object(bow, "is_cache_valid").start()
     mock_update = patch.object(bow, "update_cache_field").start()
 
-    mock_em.detect_gpu.return_value = (has_gpu, "cu130") if has_gpu else (False, None)
+    mock_em.detect_gpu.return_value = (has_gpu, "cu126") if has_gpu else (False, None)
     mock_cache.return_value = (
         True,
         {

@@ -212,3 +212,122 @@ class TestSerialization:
 
         assert len(img_out) == 1024 * 1024
         assert opt_out["use_angle_cls"] is True
+
+
+class TestRecognizeBatchSerialization:
+    """Tests for the RCBG (multi-image batch) request/result serialization."""
+
+    def test_rcbg_message_type_value(self):
+        """RCBG must be a unique 4-byte tag distinct from existing tags."""
+        # The new tag
+        assert MessageType.RECOGNIZE_BATCH.value == b"RCBG"
+        # Must not collide with any existing 4-byte tag
+        existing = {
+            MessageType.RECOGNIZE.value,
+            MessageType.RESULT.value,
+            MessageType.BATCH_ADD.value,
+            MessageType.BATCH_COMMIT.value,
+            MessageType.BATCH_RESULT.value,
+        }
+        assert MessageType.RECOGNIZE_BATCH.value not in existing
+
+    def test_serialize_deserialize_batch_request_multi_images(self):
+        """Round-trip a multi-image batch request preserving order & options."""
+        from vibeocr.utils.shared_memory_v2 import (
+            deserialize_recognize_batch_request,
+            serialize_recognize_batch_request,
+        )
+
+        images = [b"PNG_PAGE_1", b"PNG_PAGE_2_LONGER", b""]
+        options = {
+            "pipeline": "OCR",
+            "use_doc_orientation_classify": True,
+            "lang": "ch",
+        }
+
+        serialized = serialize_recognize_batch_request(images, options)
+        assert isinstance(serialized, bytes)
+
+        out_images, out_options = deserialize_recognize_batch_request(serialized)
+        assert out_images == images  # order + values preserved
+        assert out_options == options
+
+    def test_serialize_deserialize_batch_request_single_image(self):
+        """A single-image batch must still round-trip correctly."""
+        from vibeocr.utils.shared_memory_v2 import (
+            deserialize_recognize_batch_request,
+            serialize_recognize_batch_request,
+        )
+
+        images = [b"only_page"]
+        options = {"pipeline": "OCR"}
+
+        serialized = serialize_recognize_batch_request(images, options)
+        out_images, out_options = deserialize_recognize_batch_request(serialized)
+
+        assert out_images == images
+        assert out_options == options
+
+    def test_serialize_deserialize_batch_request_empty_options(self):
+        """Empty options dict round-trips."""
+        from vibeocr.utils.shared_memory_v2 import (
+            deserialize_recognize_batch_request,
+            serialize_recognize_batch_request,
+        )
+
+        images = [b"a", b"b"]
+        serialized = serialize_recognize_batch_request(images, {})
+        out_images, out_options = deserialize_recognize_batch_request(serialized)
+        assert out_images == images
+        assert out_options == {}
+
+    def test_serialize_deserialize_batch_request_large_images(self):
+        """Multiple large images (1MB each) round-trip without truncation."""
+        from vibeocr.utils.shared_memory_v2 import (
+            deserialize_recognize_batch_request,
+            serialize_recognize_batch_request,
+        )
+
+        images = [b"x" * (1024 * 1024) for _ in range(3)]
+        serialized = serialize_recognize_batch_request(images, {"pipeline": "OCR"})
+        out_images, _ = deserialize_recognize_batch_request(serialized)
+        assert [len(img) for img in out_images] == [1024 * 1024] * 3
+
+    def test_serialize_deserialize_batch_result(self):
+        """Batch result list round-trips preserving order."""
+        from vibeocr.models.ocr_result import OCRResult
+        from vibeocr.utils.shared_memory_v2 import (
+            deserialize_recognize_batch_result,
+            serialize_recognize_batch_result,
+        )
+
+        results = [
+            OCRResult(raw_text="page1", text_blocks=[]),
+            OCRResult(raw_text="page2", text_blocks=[]),
+            OCRResult(raw_text="", text_blocks=[]),
+        ]
+        serialized = serialize_recognize_batch_result(results)
+        out = deserialize_recognize_batch_result(serialized)
+        assert len(out) == 3
+        assert [r.raw_text for r in out] == ["page1", "page2", ""]
+
+    def test_serialize_deserialize_batch_result_empty(self):
+        """Empty result list round-trips."""
+        from vibeocr.utils.shared_memory_v2 import (
+            deserialize_recognize_batch_result,
+            serialize_recognize_batch_result,
+        )
+
+        serialized = serialize_recognize_batch_result([])
+        out = deserialize_recognize_batch_result(serialized)
+        assert out == []
+
+    def test_no_name_collision_with_badd_funcs(self):
+        """RCBG serializers must not shadow the BADD queue serializers."""
+        from vibeocr.utils import shared_memory_v2 as sm
+
+        # Both families must coexist as distinct callables
+        assert sm.serialize_recognize_batch_request is not sm.serialize_batch_request
+        assert (
+            sm.deserialize_recognize_batch_request is not sm.deserialize_batch_request
+        )

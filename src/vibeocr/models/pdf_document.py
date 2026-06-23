@@ -30,6 +30,10 @@ class PdfPageInfo:
     text_layers: list[TextLayerInfo] = field(default_factory=list)
     is_scanned: bool = False
     thumbnail: QPixmap | None = None
+    # OCR 原始块（归一化 [0,1000] bbox），预览/编辑/重写 PDF 文字层的唯一信源。
+    # detect_text_layers 重读会被 PyMuPDF 合并块，不能作为预览信源，故单独缓存。
+    ocr_text_blocks: list = field(default_factory=list)
+    ocr_preproc_angle: int = 0
 
 
 @dataclass

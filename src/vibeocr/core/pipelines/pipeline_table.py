@@ -41,11 +41,14 @@ class TableRecognitionOptions(BasePipelineOptions):
     formula_recognition_batch_size: int = 1
 
 
-def _create_table_pipeline(device: str) -> Any:
-    """创建表格识别管道实例"""
+def _create_table_pipeline(device: str, **kwargs: Any) -> Any:
+    """创建表格识别管道实例
+
+    额外 kwargs 透传给 TableRecognitionPipelineV2（例如 enable_mkldnn）。
+    """
     from paddleocr import TableRecognitionPipelineV2
 
-    return TableRecognitionPipelineV2(device=device)
+    return TableRecognitionPipelineV2(device=device, **kwargs)
 
 
 def _recognize_table(service: Any, image: Any, options: TableRecognitionOptions) -> Any:

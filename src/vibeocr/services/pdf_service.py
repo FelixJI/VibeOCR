@@ -302,6 +302,10 @@ class PdfService:
 
         使用内置 china-s CJK CID 字体，确保中文等字符可被写入并被阅读器提取。
 
+        写入完成后，OCR 原始块（归一化 bbox）缓存到 PdfPageInfo.ocr_text_blocks，
+        作为预览/编辑/重写的唯一信源。不再用 detect_text_layers 重读（PyMuPDF 会
+        把细粒度块合并成粗块，导致预览显示合并后的错误块）。
+
         Args:
             doc: fitz.Document 实例。
             pdf_document: PdfDocument 状态对象。
@@ -317,6 +321,8 @@ class PdfService:
         from vibeocr.models.pdf_ocr_options import PdfGlobalSettings
 
         settings = pdf_settings if pdf_settings is not None else PdfGlobalSettings()
+        preproc_angle = getattr(ocr_result, "preproc_angle", 0)
+        text_blocks = list(getattr(ocr_result, "text_blocks", []))
 
         # 防重复守卫：已有文字层时按 overwrite 决定跳过或先删后写
         page_info = pdf_document.pages[page_index]
@@ -329,13 +335,47 @@ class PdfService:
             logger.info("page %d 已有文字层，overwrite=True，先删除再写入", page_index)
             PdfService.delete_text_layers(doc, pdf_document, page_index)
 
+        written, skipped = PdfService._write_blocks_to_page(
+            doc, page_index, text_blocks, preproc_angle, settings
+        )
+
+        # 缓存 OCR 原始块（预览/编辑/重写的唯一信源），替代旧的 detect_text_layers 重读
+        pdf_document.is_modified = True
+        info = pdf_document.pages[page_index]
+        info.ocr_text_blocks = text_blocks
+        info.ocr_preproc_angle = preproc_angle
+        info.has_text_layer = written > 0
+        info.thumbnail = None
+        return written, skipped
+
+    @staticmethod
+    def _write_blocks_to_page(
+        doc: fitz.Document,
+        page_index: int,
+        text_blocks: list,
+        preproc_angle: int,
+        settings: object,
+    ) -> tuple[int, int]:
+        """将文本块逐个写入指定页面（纯写入，不修改 PdfPageInfo 元信息）。
+
+        add_text_layer（首次写入）与 rewrite_text_layer（编辑后重写）共用此方法，
+        保证两条路径的字号策略、字体、兜底逻辑完全一致。
+
+        Args:
+            doc: fitz.Document 实例。
+            page_index: 页码索引。
+            text_blocks: TextBlock 列表（归一化 [0,1000] bbox）。
+            preproc_angle: OCR 预处理旋转角度（用于坐标逆旋转）。
+            settings: PdfGlobalSettings 实例。
+
+        Returns:
+            (written, skipped) 成功写入与被跳过的文本块数量。
+        """
         page = doc[page_index]
         page_rect = page.rect
-        preproc_angle = getattr(ocr_result, "preproc_angle", 0)
 
         written = 0
         skipped = 0
-        text_blocks = getattr(ocr_result, "text_blocks", [])
         for block in text_blocks:
             if block.text is None or not block.text.strip():
                 continue
@@ -354,64 +394,119 @@ class PdfService:
                 bbox, preproc_angle, page_rect
             )
             # 仅当矩形退化（宽或高 ≤ 0）才整体跳过；
-            # 矮行/窄框由最小字号兜底继续写入，避免整块丢弃。
+            # 矮行/窄框不丢弃：字号由 min_font_size 兜底，再交给下方
+            # insert_textbox 重试 + insert_text 兜底，保证文字进入文字层。
             if rect.is_empty or rect.width <= 0 or rect.height <= 0:
                 logger.warning(
                     "page %d block skipped (rect empty): rect=%s text=%r",
-                    page_index,
-                    rect,
-                    block.text[:30],
+                    page_index, rect, block.text[:30],
                 )
                 skipped += 1
                 continue
 
-            # 字号策略：
-            # - 基线 = 行高 × 比例；
-            # - 同时按 bbox 宽度收缩（get_text_length 估算文本宽度），
-            #   避免 insert_text 从插入点线性外溢超出页面/框；
-            # - 夹紧到最小字号，保证隐形文字仍可被阅读器提取；
-            # - 使用 insert_text（按 bbox 左下角原位写入单行），不再用
-            #   insert_textbox——后者要求“文本塞进矩形”会拒绝并整块丢弃。
-            text = block.text
-            fontsize_by_height = rect.height * settings.font_size_ratio
-            fontsize = fontsize_by_height
-            try:
-                text_width = fitz.get_text_length(
-                    text, fontname="china-s", fontsize=fontsize
-                )
-                if text_width > rect.width > 0:
-                    fontsize_by_width = fontsize * rect.width / text_width
-                    fontsize = min(fontsize, fontsize_by_width)
-            except Exception:
-                pass
-            fontsize = max(fontsize, settings.min_font_size)
+            # 字号：行高 × 比例；矮行算出的字号过小时夹紧到 min_font_size，
+            # 保证隐形文字仍可被阅读器提取（不丢块）。
+            fontsize = max(
+                rect.height * settings.font_size_ratio, settings.min_font_size
+            )
 
             render_mode = 0 if settings.text_layer_visible else 3
-            # bbox 左下角作为基线插入点（fitz 的 insert_text 接收基线左端点）
-            point = fitz.Point(rect.x0, rect.y1)
-            try:
-                page.insert_text(
-                    point,
-                    text,
+            inserted = False
+            last_fontsize = fontsize
+            for _ in range(settings.font_size_retry_count):
+                rc = page.insert_textbox(
+                    rect,
+                    block.text,
                     fontsize=fontsize,
                     fontname="china-s",
                     color=(0, 0, 0),
                     render_mode=render_mode,
                 )
-                written += 1
-            except Exception as e:
-                logger.warning(
-                    "page %d block skipped (insert_text failed): rect=%s "
-                    "err=%s text=%r",
-                    page_index,
-                    rect,
-                    e,
-                    block.text[:30],
-                )
-                skipped += 1
+                if rc >= 0:
+                    inserted = True
+                    break
+                last_fontsize = fontsize
+                fontsize *= settings.font_size_shrink_factor
+                if fontsize < 1:
+                    break
 
+            if inserted:
+                written += 1
+            else:
+                # 兜底：insert_textbox 在窄/瘦高矩形里装不下时
+                # （如竖排文字被聚成瘦高块），降级为 insert_text 单点定位：
+                # 文字从矩形左下角（基线）起写，溢出也写入，保证该词进入文字层。
+                try:
+                    baseline = fitz.Point(rect.x0, rect.y1 - last_fontsize * 0.2)
+                    page.insert_text(
+                        baseline,
+                        block.text,
+                        fontsize=last_fontsize,
+                        fontname="china-s",
+                        color=(0, 0, 0),
+                        render_mode=render_mode,
+                    )
+                    written += 1
+                    logger.debug(
+                        "page %d block 写入文字层（insert_text 兜底）: "
+                        "rect=%s text=%r",
+                        page_index, rect, block.text[:30],
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "page %d block skipped (font retry exhausted + "
+                        "fallback failed): rect=%s text=%r err=%s",
+                        page_index, rect, block.text[:30], e,
+                    )
+                    skipped += 1
+
+        return written, skipped
+
+    @staticmethod
+    def rewrite_text_layer(
+        doc: fitz.Document,
+        pdf_document: PdfDocument,
+        page_index: int,
+        text_blocks: list,
+        preproc_angle: int,
+        pdf_settings: object | None = None,
+    ) -> tuple[int, int]:
+        """删除整页文字层后，按 text_blocks 全量重写。
+
+        供"保存"时把用户编辑后的块写回 PDF。先 redact 清空旧文字层，
+        再逐块写入（复用 _write_blocks_to_page，与首次写入逻辑一致）。
+
+        Args:
+            doc: fitz.Document 实例。
+            pdf_document: PdfDocument 状态对象。
+            page_index: 页码索引。
+            text_blocks: 编辑后的 TextBlock 列表（归一化 [0,1000] bbox）。
+            preproc_angle: OCR 预处理旋转角度。
+            pdf_settings: PdfGlobalSettings 实例（None 则使用默认值）。
+
+        Returns:
+            (written, skipped) 成功写入与被跳过的文本块数量。
+        """
+        from vibeocr.models.pdf_ocr_options import PdfGlobalSettings
+
+        settings = pdf_settings if pdf_settings is not None else PdfGlobalSettings()
+
+        # 先删除旧文字层（redact 全页文字，保留图片）
+        # 注意：delete_text_layers 会 update_page_info 并清空 ocr_text_blocks，
+        # 所以必须在删除后重新设置 ocr_text_blocks。
+        PdfService.delete_text_layers(doc, pdf_document, page_index)
+
+        written, skipped = PdfService._write_blocks_to_page(
+            doc, page_index, text_blocks, preproc_angle, settings
+        )
+
+        # 重设缓存（delete 清空了）
         pdf_document.is_modified = True
-        PdfService.update_page_info(doc, pdf_document, page_index)
+        info = pdf_document.pages[page_index]
+        info.ocr_text_blocks = list(text_blocks)
+        info.ocr_preproc_angle = preproc_angle
+        info.has_text_layer = written > 0
+        info.thumbnail = None
         return written, skipped
 
     @staticmethod
@@ -437,6 +532,10 @@ class PdfService:
         page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_NONE)  # type: ignore[attr-defined]
         pdf_document.is_modified = True
         PdfService.update_page_info(doc, pdf_document, page_index)
+        # 清空 OCR 原始块缓存（文字层已删，缓存的块不再对应任何 PDF 内容）
+        info = pdf_document.pages[page_index]
+        info.ocr_text_blocks = []
+        info.ocr_preproc_angle = 0
 
     # ---- bbox coordinate transforms --------------------------------
 

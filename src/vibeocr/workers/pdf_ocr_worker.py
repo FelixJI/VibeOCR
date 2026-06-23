@@ -54,25 +54,76 @@ class PdfOcrWorker(QThread):
     def session_id(self) -> str:
         return self._session_id
 
+    # 每批识别的页数。拆批避免单次 predict(list) 运行过久（>300s）被
+    # 健康检查误判为卡死而强制重启（见 worker_manager.STALE_THRESHOLD）。
+    # 批间检查 _cancelled 实现可中断的取消。
+    BATCH_SIZE = 10
+
     def run(self) -> None:
         from vibeocr.models.ocr_options import OCROptions
 
-        success = 0
-        fail = 0
         total = len(self._pages)
         options = self._ocr_options if self._ocr_options is not None else OCROptions()
 
-        for i, (page_index, image) in enumerate(self._pages):
+        if total == 0:
+            self.all_done.emit(self._session_id, 0, 0)
+            return
+
+        success = 0
+        fail = 0
+        processed = 0
+
+        # 按 BATCH_SIZE 拆批识别，每批处理完立即 emit page_done，
+        # 并在下一批开始前检查 _cancelled。
+        for batch_start in range(0, total, self.BATCH_SIZE):
             if self._cancelled:
                 break
-            self.progress.emit(i + 1, total)
-            try:
-                result = self._ocr_service.recognize(image, options)
-                self.page_done.emit(page_index, result)
-                success += 1
-            except Exception as e:
-                logger.error("PdfOcrWorker OCR failed (page %d): %s", page_index, e)
-                self.page_done.emit(page_index, None)
-                fail += 1
+
+            batch_end = min(batch_start + self.BATCH_SIZE, total)
+            batch_pages = self._pages[batch_start:batch_end]
+            batch_indices = [idx for idx, _ in batch_pages]
+            batch_images = [img for _, img in batch_pages]
+
+            # 识别当前批（内部已容错：批量失败回退逐张）
+            results = self._recognize_batch(batch_images, options)
+
+            # emit 该批结果
+            for i, (page_index, result) in enumerate(
+                zip(batch_indices, results, strict=False)
+            ):
+                if self._cancelled:
+                    break
+                processed += 1
+                self.progress.emit(processed, total)
+                if result is not None:
+                    self.page_done.emit(page_index, result)
+                    success += 1
+                else:
+                    self.page_done.emit(page_index, None)
+                    fail += 1
 
         self.all_done.emit(self._session_id, success, fail)
+
+    def _recognize_batch(self, images, options):
+        """批量识别一批图像，逐张容错。
+
+        优先调用服务的 recognize_batch（单次 predict(list)）；失败时回退逐张，
+        确保单张图错误不会拖垮整批。返回结果列表，与 images 顺序一致，失败项为 None。
+        """
+        try:
+            return list(self._ocr_service.recognize_batch(images, options))
+        except Exception as e:
+            logger.warning(
+                "PdfOcrWorker 批量识别失败，回退逐张识别: %s", e, exc_info=True
+            )
+            results: list = []
+            for img in images:
+                if self._cancelled:
+                    results.append(None)
+                    continue
+                try:
+                    results.append(self._ocr_service.recognize(img, options))
+                except Exception as e2:
+                    logger.error("PdfOcrWorker 单页 OCR 失败: %s", e2)
+                    results.append(None)
+            return results

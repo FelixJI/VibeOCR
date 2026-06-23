@@ -296,6 +296,82 @@ class PdfSessionManager(QObject):
             )
         self._ocr_worker = None
 
+    # ---- block text editing (双击改字 → 内存模型更新) ----------------
+
+    def update_page_block_text(
+        self, page_index: int, block_index: int, new_text: str
+    ) -> bool:
+        """更新某页某块的文字（仅内存模型，不落盘 PDF）。
+
+        修改 PdfPageInfo.ocr_text_blocks[block_index].text，标记
+        is_manually_edited=True，置 session.is_modified=True。供 PreviewCanvas
+        双击编辑后调用。实际写入 PDF 由 rewrite_modified_pages 在保存时执行。
+
+        Args:
+            page_index: 页码索引。
+            block_index: 该页 ocr_text_blocks 中的块索引。
+            new_text: 编辑后的文字。
+
+        Returns:
+            是否有实际变化（文字确实改变）。
+        """
+        session = self.active_session
+        if session is None:
+            return False
+        if page_index < 0 or page_index >= len(session.pdf_document.pages):
+            return False
+        info = session.pdf_document.pages[page_index]
+        if block_index < 0 or block_index >= len(info.ocr_text_blocks):
+            return False
+        block = info.ocr_text_blocks[block_index]
+        if block.text == new_text:
+            return False
+        block.text = new_text
+        block.is_manually_edited = True
+        session.pdf_document.is_modified = True
+        return True
+
+    # ---- save-time rewrite (保存前按编辑后的块重写 PDF 文字层) ------
+
+    def rewrite_modified_pages(self, file_path: str | None = None) -> None:
+        """对所有有 OCR 块缓存且被编辑过的页，重写 PDF 文字层。
+
+        供保存（PdfService.save）前调用：遍历活动会话的页面，对
+        has_text_layer 且 ocr_text_blocks 非空的页执行 rewrite_text_layer
+        （先删旧文字层再用内存中的块全量重写），确保 PDF 文字层与预览/编辑
+        后的块一致。未被编辑的页（ocr_text_blocks 为空）跳过。
+
+        Args:
+            file_path: 指定会话文件路径，None 用活动会话。
+        """
+        session = (
+            self._sessions.get(file_path)
+            if file_path is not None
+            else self.active_session
+        )
+        if session is None:
+            return
+        with session.doc_lock:
+            for info in session.pdf_document.pages:
+                if not info.ocr_text_blocks:
+                    continue
+                PdfService.rewrite_text_layer(
+                    session.doc,
+                    session.pdf_document,
+                    info.page_index,
+                    info.ocr_text_blocks,
+                    info.ocr_preproc_angle,
+                    pdf_settings=self._pdf_settings,
+                )
+
+    def _save_active_to_disk_for_test(self) -> None:
+        """测试辅助：把活动会话的 fitz.Document 落盘（复刻 PdfService.save）。"""
+        session = self.active_session
+        if session is None:
+            return
+        with session.doc_lock:
+            PdfService.save(session.doc, session.pdf_document)
+
     # ---- batch export -----------------------------------------------
 
     def export_all_modified(self, output_dir: str) -> list[str]:

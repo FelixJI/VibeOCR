@@ -134,11 +134,14 @@ class PaddleOCRVLOptions(BasePipelineOptions):
     use_ocr_for_image_block: bool = False
 
 
-def _create_paddlocr_vl_pipeline(device: str) -> Any:
-    """创建 PaddleOCR-VL 管道实例"""
+def _create_paddlocr_vl_pipeline(device: str, **kwargs: Any) -> Any:
+    """创建 PaddleOCR-VL 管道实例
+
+    额外 kwargs 透传给 PaddleOCRVL（例如 enable_mkldnn）。
+    """
     from paddleocr import PaddleOCRVL
 
-    return PaddleOCRVL(device=device)
+    return PaddleOCRVL(device=device, **kwargs)
 
 
 def _recognize_paddlocr_vl(

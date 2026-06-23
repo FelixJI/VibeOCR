@@ -314,3 +314,142 @@ class TestOCRServiceSubprocessImagePreparation:
         # Cleanup
         service.shutdown()
         OCRServiceSubprocess._instance = None
+
+
+@pytest.mark.skipif(
+    not HAS_SUBPROCESS_MODULES, reason="subprocess modules not available"
+)
+class TestRecognizeBatchSubprocess:
+    """Tests for OCRServiceSubprocess.recognize_batch (sub-batching + RCBG)."""
+
+    def _make_service(self, shm_size=None):
+        """Create a non-started service with a mocked manager."""
+        OCRServiceSubprocess._instance = None
+        service = OCRServiceSubprocess(
+            max_workers=1, use_gpu=False, auto_start=False
+        )
+        if shm_size is not None:
+            service.shm_size = shm_size
+        service._paddlex_manager = RecordingManager()
+        return service
+
+    def teardown_method(self):
+        OCRServiceSubprocess._instance = None
+
+    def _noise_image(self, n: int = 4096):
+        """An effectively incompressible image (~n*n*3 raw bytes → large PNG)."""
+        rng = np.random.default_rng(seed=42)
+        return rng.integers(0, 256, size=(n, n, 3), dtype=np.uint8)
+
+    def test_empty_input_returns_empty(self):
+        """Empty images list returns [] without calling the worker."""
+        service = self._make_service()
+        assert service.recognize_batch([]) == []
+        assert service._paddlex_manager.subbatches == []
+
+    def test_single_subbatch_routes_to_worker_recognize_batch(self):
+        """All images fit one subbatch → single w.recognize_batch call."""
+        service = self._make_service()
+        imgs = [self._noise_image(4) for _ in range(2)]
+        got = service.recognize_batch(imgs, {"pipeline": "OCR"})
+
+        assert [r.raw_text for r in got] == ["r0", "r1"]
+        # exactly one sub-batch dispatched
+        assert len(service._paddlex_manager.subbatches) == 1
+        assert len(service._paddlex_manager.subbatches[0]) == 2
+
+    def test_subbatch_split_when_over_budget(self):
+        """Images exceeding SHM budget are split into multiple sub-batches."""
+        # tiny shm so each noise page (large PNG) becomes its own sub-batch
+        service = self._make_service(shm_size=4096)
+        imgs = [self._noise_image(32) for _ in range(3)]  # each PNG >> 4KB
+        got = service.recognize_batch(imgs, {"pipeline": "OCR"})
+
+        # results in original order, one per page
+        assert len(got) == 3
+        assert all(r is not None for r in got)
+        # 3 sub-batches (each page alone, since each over budget)
+        assert len(service._paddlex_manager.subbatches) == 3
+
+    def test_results_order_preserved_across_subbatches(self):
+        """Result order matches input order even when split into sub-batches."""
+        # small budget + large noise pages → forced multi-batch
+        service = self._make_service(shm_size=8192)
+        imgs = [self._noise_image(32) for _ in range(4)]
+        got = service.recognize_batch(imgs, {"pipeline": "OCR"})
+
+        assert len(got) == 4
+        # no None holes (all pages produced a result)
+        assert all(r is not None for r in got)
+        # multiple sub-batches
+        assert len(service._paddlex_manager.subbatches) >= 2
+
+    def test_subbatch_failure_keeps_going(self):
+        """A failing sub-batch yields None for its pages, others succeed."""
+        # each noise page alone (over budget) → 3 sub-batches, fail the 2nd
+        service = self._make_service(shm_size=4096)
+        service._paddlex_manager.fail_on = {1: RuntimeError("worker boom")}
+        imgs = [self._noise_image(32) for _ in range(3)]
+        got = service.recognize_batch(imgs, {"pipeline": "OCR"})
+
+        assert len(got) == 3
+        assert got[0] is not None
+        assert got[1] is None  # the failed sub-batch page
+        assert got[2] is not None
+
+    def test_single_page_does_not_deadlock(self):
+        """A single page that alone exceeds budget still sends (no infinite loop)."""
+        service = self._make_service(shm_size=512)
+        imgs = [self._noise_image(32)]  # PNG >> 512 bytes
+        got = service.recognize_batch(imgs, {"pipeline": "OCR"})
+        assert len(got) == 1
+        assert got[0] is not None
+        assert len(service._paddlex_manager.subbatches) == 1
+
+
+# --- helpers for the subprocess recognize_batch tests ---
+
+
+class RecordingManager:
+    """Mock WorkerManager.
+
+    Records each dispatched sub-batch (list of PNG bytes) and returns one
+    OCRResult per image (tagged r0, r1, ...). Optionally raises on a given
+    sub-batch index to simulate worker failure.
+    """
+
+    def __init__(self):
+        self.subbatches: list[list[bytes]] = []
+        self.fail_on: dict[int, Exception] = {}
+
+    def execute(self, task, timeout=60.0, retry_count=0):
+        idx = len(self.subbatches)
+        # discover sub-batch size by invoking task against a recording worker
+        worker = RecordingWorker()
+        result = task(worker)
+        sub_imgs = worker.last_subbatch or []
+        self.subbatches.append(list(sub_imgs))
+        if idx in self.fail_on:
+            raise self.fail_on[idx]
+        return result
+
+
+class RecordingWorker:
+    """Mock worker proxy: records the sub-batch it received."""
+
+    def __init__(self):
+        self.last_subbatch: list[bytes] | None = None
+
+    def recognize_batch(self, images, options_dict, timeout=60.0):
+        self.last_subbatch = list(images)
+        # return one tagged result per input image
+        return [_mk_result(f"r{i}") for i in range(len(images))]
+
+    def recognize(self, image_data, options_dict, timeout=60.0):
+        return _mk_result("r")
+
+
+def _mk_result(text: str = "ok"):
+    from vibeocr.models.ocr_result import OCRResult
+
+    return OCRResult(raw_text=text, text_blocks=[])

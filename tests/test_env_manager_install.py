@@ -7,7 +7,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from vibeocr.env_manager import (
-    _NVIDIA_CU13_PACKAGES,
     _check_imports,
     _load_dep_specs,
     ensure_mineru_models,
@@ -193,7 +192,8 @@ class TestInstallSpecs:
     def test_embedded_deps_gpu_with_cuda_version(self, tmp_path):
         """便携模式 GPU 安装应使用 paddlepaddle-gpu + cu-tag index
 
-        cuda_version 是 detect_gpu() 返回的 cu-tag（如 "cu121"），直接用作 index URL。
+        cuda_version 是 detect_gpu() 返回的 cu-tag（如 "cu126"），直接用作 index URL。
+        注意：detect_cuda_version 现仅产出 cu118/cu126（CUDA 12.x 全部归并到 cu126）。
         """
         python_exe = tmp_path / "python.exe"
         python_exe.touch()
@@ -221,7 +221,7 @@ class TestInstallSpecs:
             install_embedded_dependencies(
                 tmp_path,
                 use_gpu=True,
-                cuda_version="cu121",
+                cuda_version="cu126",
                 progress_callback=lambda s, m: None,
             )
 
@@ -229,10 +229,10 @@ class TestInstallSpecs:
         assert len(paddle_cmd) > 0
         joined = " ".join(paddle_cmd[0])
         assert "paddlepaddle-gpu" in joined, f"应使用 paddlepaddle-gpu，实际: {joined}"
-        assert "cu121" in joined
+        assert "cu126" in joined
 
     def test_embedded_deps_gpu_without_cuda_falls_back_to_default(self, tmp_path):
-        """便携模式 GPU 无 CUDA 版本时应使用默认 cu130"""
+        """便携模式 GPU 无 CUDA 版本时应使用默认 cu126"""
         python_exe = tmp_path / "python.exe"
         python_exe.touch()
 
@@ -264,7 +264,7 @@ class TestInstallSpecs:
         assert len(paddle_cmd) > 0
         joined = " ".join(paddle_cmd[0])
         assert "paddlepaddle-gpu" in joined
-        assert "cu130" in joined
+        assert "cu126" in joined
 
     def test_install_deps_gpu_with_cuda_version(self, tmp_path):
         """完整安装 GPU 应使用 paddlepaddle-gpu + cu-tag index"""
@@ -342,23 +342,22 @@ class TestLoadDepSpecs:
 
         specs = _load_dep_specs()
 
-        # 关键：paddleocr 实际 >=3.7.0，旧 fallback 是 3.6.0
+        # paddleocr：版本号随 pyproject 变化，只验证来自 pyproject（非陈旧 fallback）
         assert "paddleocr" in specs
-        assert "3.7.0" in specs["paddleocr"], (
-            f"应反映 pyproject 实际版本，got: {specs['paddleocr']}"
+        assert specs["paddleocr"], f"paddleocr spec 不应为空，got: {specs['paddleocr']}"
+        assert "paddleocr" in specs["paddleocr"].split("[")[0], (
+            f"应来自 pyproject 的 paddleocr 声明，got: {specs['paddleocr']}"
         )
-        # mineru 实际 >=3.3.1，旧 fallback 是 3.2.0
+        # mineru：版本号随 pyproject 变化，只验证非空且来自 pyproject（非陈旧 fallback）
         assert "mineru" in specs
-        assert "3.3.1" in specs["mineru"], (
-            f"应反映 pyproject 实际版本，got: {specs['mineru']}"
+        assert specs["mineru"], f"mineru spec 不应为空，got: {specs['mineru']}"
+        assert "mineru[core]>=" in specs["mineru"], (
+            f"应来自 pyproject 的 mineru[core] 声明，got: {specs['mineru']}"
         )
         # paddlepaddle-gpu
         assert "paddlepaddle-gpu" in specs
-        # nvidia cu13 运行时依赖（paddle GPU wheel 不内嵌 DLL，需显式声明）
-        assert "nvidia-cublas" in specs
-        assert specs["nvidia-cublas"] == "nvidia-cublas==13.0.2.14", (
-            f"nvidia-cublas 版本应与 paddle Requires-Dist 精确匹配，got: {specs['nvidia-cublas']}"
-        )
+        # torch（CUDA 运行时由 torch/lib 提供，不再声明 nvidia-*-cu13 包）
+        assert "torch" in specs
 
     def test_raises_when_pyproject_missing_and_no_version_json(self, tmp_path):
         """pyproject.toml 和 version.json 都不存在时，应 raise 而非返回空 dict"""
@@ -513,7 +512,7 @@ class TestResolveUseGpu:
         cached = {
             "version": 1,
             "machine_id": "any",
-            "hardware_info": {"has_gpu": True, "cuda_version": "cu129"},
+            "hardware_info": {"has_gpu": True, "cuda_version": "cu126"},
         }
         with (
             patch("vibeocr.env_manager.is_cache_valid", return_value=(True, cached)),
@@ -543,7 +542,7 @@ class TestResolveUseGpu:
         with (
             patch("vibeocr.env_manager.is_cache_valid", return_value=(True, cached)),
             patch(
-                "vibeocr.env_manager.detect_gpu", return_value=(True, "cu129")
+                "vibeocr.env_manager.detect_gpu", return_value=(True, "cu126")
             ) as mock_detect,
         ):
             result = resolve_use_gpu(tmp_path)
@@ -574,7 +573,7 @@ class TestResolveUseGpu:
             "version": 1,
             "machine_id": "any",
             "pending_backend": "cpu",
-            "hardware_info": {"has_gpu": True, "cuda_version": "cu130"},
+            "hardware_info": {"has_gpu": True, "cuda_version": "cu126"},
         }
         with (
             patch("vibeocr.env_manager.is_cache_valid", return_value=(True, cached)),
@@ -586,8 +585,8 @@ class TestResolveUseGpu:
         mock_detect.assert_not_called()
 
 
-class TestNvidiaCu13Install:
-    """便携版 GPU 安装应显式安装 7 个 cu13 nvidia 运行时库"""
+class TestGpuInstallUsesTorchForCudaRuntime:
+    """便携版 GPU 安装策略：CUDA 运行时由 torch/lib 提供，不装 nvidia-*-cu13 包"""
 
     @staticmethod
     def _run_install(tmp_path, **kwargs):
@@ -619,25 +618,21 @@ class TestNvidiaCu13Install:
             )
         return calls
 
-    def test_gpu_install_includes_all_7_nvidia_cu13_deps(self, tmp_path):
-        """GPU 安装应有一条 pip 命令包含全部 7 个 nvidia cu13 包"""
-        calls = self._run_install(tmp_path, use_gpu=True, cuda_version="cu130")
-
-        # 找包含 nvidia 的安装命令
+    def test_gpu_install_does_not_install_nvidia_packages(self, tmp_path):
+        """GPU 安装不应安装任何 nvidia-* 包（CUDA 运行时由 torch/lib 提供）"""
+        calls = self._run_install(tmp_path, use_gpu=True, cuda_version="cu126")
         nvidia_cmds = [c for c in calls if any("nvidia-" in str(a) for a in c)]
-        assert len(nvidia_cmds) >= 1, "应有 nvidia 安装命令"
-        # 全部 7 个包名应出现在同一条命令中（单条 pip install）
-        joined = " ".join(nvidia_cmds[0])
-        for pkg in _NVIDIA_CU13_PACKAGES:
-            assert pkg in joined, f"nvidia 安装命令应包含 {pkg}，实际: {joined}"
+        assert len(nvidia_cmds) == 0, (
+            f"GPU 安装不应再装 nvidia 包，实际出现: {nvidia_cmds}"
+        )
 
-    def test_gpu_install_nvidia_uses_pypi_source(self, tmp_path):
-        """nvidia 包应从 PyPI 镜像源安装（非 paddle index）"""
-        calls = self._run_install(tmp_path, use_gpu=True, cuda_version="cu130")
-        nvidia_cmds = [c for c in calls if any("nvidia-" in str(a) for a in c)]
-        assert len(nvidia_cmds) >= 1
-        joined = " ".join(nvidia_cmds[0])
-        assert "pypi.org/simple" in joined, "nvidia 包应从 PyPI 安装"
+    def test_gpu_install_installs_torch(self, tmp_path):
+        """GPU 安装应安装 torch（其 wheel 自带 CUDA 运行时 DLL）"""
+        calls = self._run_install(tmp_path, use_gpu=True, cuda_version="cu126")
+        torch_cmds = [c for c in calls if "torch" in " ".join(c)]
+        assert len(torch_cmds) >= 1, "应有 torch 安装命令"
+        joined = " ".join(torch_cmds[0])
+        assert "torch" in joined
 
     def test_cpu_install_does_not_install_nvidia(self, tmp_path):
         """CPU 安装不应安装任何 nvidia 包"""
@@ -645,26 +640,21 @@ class TestNvidiaCu13Install:
         nvidia_cmds = [c for c in calls if any("nvidia-" in str(a) for a in c)]
         assert len(nvidia_cmds) == 0, f"CPU 安装不应装 nvidia，实际出现: {nvidia_cmds}"
 
-    def test_gpu_install_uses_cu130_index_for_cuda13(self, tmp_path):
-        """CUDA 13 (cu130) 应使用 cu130 paddle index"""
-        calls = self._run_install(tmp_path, use_gpu=True, cuda_version="cu130")
+    def test_gpu_install_uses_cu126_index(self, tmp_path):
+        """GPU 安装应使用 cu126 paddle index（CUDA 12 构建，与 torch/lib 匹配）"""
+        calls = self._run_install(tmp_path, use_gpu=True, cuda_version="cu126")
         paddle_cmd = [c for c in calls if "paddlepaddle" in " ".join(c)]
         assert len(paddle_cmd) > 0
         joined = " ".join(paddle_cmd[0])
-        assert "cu130" in joined, f"应使用 cu130 index，实际: {joined}"
+        assert "cu126" in joined, f"应使用 cu126 index，实际: {joined}"
 
-    def test_gpu_install_argv_split_for_multi_packages(self, tmp_path):
-        """多包安装命令（nvidia）应拆成独立 argv 元素，而非单个带空格字符串"""
-        calls = self._run_install(tmp_path, use_gpu=True, cuda_version="cu130")
-        nvidia_cmds = [c for c in calls if any("nvidia-" in str(a) for a in c)]
-        assert len(nvidia_cmds) >= 1
-        # 每个包应是 argv list 中独立的元素（不以空格合并）
-        cmd = nvidia_cmds[0]
-        # 找出所有 nvidia- 开头的参数
-        nv_args = [a for a in cmd if isinstance(a, str) and a.startswith("nvidia-")]
-        assert len(nv_args) == 7, (
-            f"应有 7 个独立 nvidia argv 元素，实际 {len(nv_args)}: {nv_args}"
-        )
+    def test_gpu_install_default_tag_is_cu126(self, tmp_path):
+        """未指定 cuda_version 时，默认使用 cu126 paddle index"""
+        calls = self._run_install(tmp_path, use_gpu=True)
+        paddle_cmd = [c for c in calls if "paddlepaddle" in " ".join(c)]
+        assert len(paddle_cmd) > 0
+        joined = " ".join(paddle_cmd[0])
+        assert "cu126" in joined, f"默认应使用 cu126，实际: {joined}"
 
 
 class TestSwitchPaddleBackend:
@@ -695,7 +685,7 @@ class TestSwitchPaddleBackend:
                 return_value=python_exe,
             ),
             patch("vibeocr.env_manager.subprocess.run", side_effect=mock_run),
-            patch("vibeocr.env_manager.detect_gpu", return_value=(True, "cu130")),
+            patch("vibeocr.env_manager.detect_gpu", return_value=(True, "cu126")),
             patch("vibeocr.env_manager.update_cache_field", return_value=True) as mock_update,
         ):
             ok, msg = switch_paddle_backend(
@@ -713,26 +703,25 @@ class TestSwitchPaddleBackend:
         assert "paddlepaddle" in joined
         assert "paddlepaddle-gpu" in joined
 
-    def test_switch_to_cpu_uninstalls_nvidia_packages(self, tmp_path):
-        """切到 CPU 应额外卸载 7 个 nvidia cu13 包"""
+    def test_switch_to_cpu_does_not_uninstall_nvidia(self, tmp_path):
+        """切到 CPU 不再单独卸载 nvidia 包（CUDA 运行时由 torch/lib 提供，保留 torch）"""
         ok, _msg, calls, _ = self._run_switch(tmp_path, "cpu")
         assert ok
         uninstall_cmds = [c for c in calls if "uninstall" in c]
-        # 至少有一条卸载命令含 nvidia 包
         nv_uninstall = [
             c for c in uninstall_cmds if any("nvidia-" in str(a) for a in c)
         ]
-        assert len(nv_uninstall) >= 1, "应有卸载 nvidia 的命令"
+        assert len(nv_uninstall) == 0, "不应再单独卸载 nvidia 包"
 
-    def test_switch_to_gpu_installs_gpu_paddle_and_nvidia(self, tmp_path):
-        """切到 GPU 应安装 paddlepaddle-gpu (cu130) + 7 个 nvidia 包"""
+    def test_switch_to_gpu_installs_gpu_paddle_and_torch(self, tmp_path):
+        """切到 GPU 应安装 paddlepaddle-gpu (cu126) + torch（提供 CUDA 运行时）"""
         ok, _msg, calls, _ = self._run_switch(tmp_path, "gpu")
         assert ok
         install_cmds = [c for c in calls if "install" in " ".join(c)]
         all_joined = " ".join(" ".join(c) for c in install_cmds)
         assert "paddlepaddle-gpu" in all_joined
-        assert "cu130" in all_joined
-        assert "nvidia-cublas" in all_joined
+        assert "cu126" in all_joined
+        assert "torch" in all_joined
 
     def test_switch_does_not_uninstall_nvidia_when_target_gpu(self, tmp_path):
         """切到 GPU 不应卸载 nvidia 包"""

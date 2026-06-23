@@ -16,7 +16,7 @@ def _cleanup():
 def _make_dialog(tmp_path, has_gpu=True):
     """构造 BackendChoiceDialog，mock env_manager.detect_gpu"""
     mock_em = patch.object(bcd_module, "env_manager").start()
-    mock_em.detect_gpu.return_value = (has_gpu, "cu130") if has_gpu else (False, None)
+    mock_em.detect_gpu.return_value = (has_gpu, "cu126") if has_gpu else (False, None)
     return bcd_module.BackendChoiceDialog(tmp_path)
 
 

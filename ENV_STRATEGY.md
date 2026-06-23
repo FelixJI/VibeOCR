@@ -3,7 +3,7 @@
 > 记录开发环境 (uv) 与便携部署环境 (pip) 在 Python 运行时、CUDA、torch、nvidia 库上的
 > 策略差异与决策理由。供维护者升级依赖或排查 GPU 问题时参考。
 >
-> 最后核实日期: 2026-06-16 ｜ paddlepaddle-gpu 3.3.1
+> 最后核实日期: 2026-06-23 ｜ paddlepaddle-gpu 3.3.1（cu126）
 
 ---
 
@@ -19,140 +19,132 @@
 - **升级方法**:改 `.python-version` + `env_config.PYTHON_BUILD_STANDALONE_TAG`/`PATCH` +
   `pyproject.toml` 的 `requires-python`/`pyright.pythonVersion`/`mypy.python_version`。
 
-## 2. CUDA 版本选择
+## 2. CUDA 版本选择（cu126 同源策略）
+
+### 2.0 实际可用的 wheel（已从官方 index 核实，2026-06-23）
+
+直接拉取 `paddlepaddle.org.cn/packages/stable/{tag}/` 与 `download.pytorch.org/whl/{tag}/torch/`
+确认 cp313 / win_amd64 下**实际存在**的 wheel：
+
+- **paddlepaddle-gpu 3.3.1**：仅 `cu118` / `cu126` / `cu129` 三个变体。
+  ❌ cu121 / cu123 / cu130 **从未发布** win wheel。
+- **torch (cp313/win)**：`cu118`(2.6.0–2.7.1) / `cu124`(仅 2.6.0) / `cu126`(2.6.0–2.12.1)。
+  ❌ cu121 / cu128 / cu129 / cu130 **无** win cp313 wheel。
+
+由此推导出唯一自洽的组合：CUDA 12.x 一律走 **cu126（paddle + torch 同源）**，
+CUDA 11.8 走 **cu118**。`cu129` 虽为 RTX 50 系适配，但 torch 无对应 win wheel，
+启用它会让 torch/lib 的 CUDA 12 DLL 与 cu129 paddle 不匹配，**本项目不启用 cu129**。
 
 ### 2.1 PaddlePaddle (主 GPU 后端)
 
-`env_manager.CUDA_VERSION_MAP` 将检测到的驱动 CUDA 版本映射到 PaddlePaddle 支持的 tag
-(cu118/cu121/cu123/cu126/cu129)。CUDA 13.x 映射到 cu129(Paddle 最新兼容)。
+`env_manager.CUDA_VERSION_MAP` 把 `nvidia-smi` 检测到的驱动 CUDA 版本映射到 paddle tag。
+**所有 CUDA 12.x 与 13.x 都归并到 cu126**（CUDA 12 同大版本共享 `cublas64_12.dll`，
+cu126 runtime 向下兼容 12.0+；CUDA 13.x 驱动向下兼容 CUDA 12 运行时）：
 
-- **包来源**:`https://www.paddlepaddle.org.cn/packages/stable/{cuda_tag}/`
-- **关键事实**:paddlepaddle-gpu 3.3.1 的 nvidia 依赖**全部是 cu12 系列**
-  (nvidia-cuda-runtime-cu12==12.9.37, nvidia-cudnn-cu12==9.9.0.52 等)。
+| 驱动 CUDA | paddle tag |
+|----------|-----------|
+| 11.8 | cu118 |
+| 12.0 – 13.x | cu126 |
+
+- **包来源**：`https://www.paddlepaddle.org.cn/packages/stable/{cuda_tag}/`
+- **关键事实**：cu126 paddle wheel **不内嵌** cublas/cudnn（`paddle/libs/` 只有
+  `common.dll` / `phi.dll` / `mkldnn.dll` 等），其 `Requires-Dist` 也不声明 nvidia
+  传递依赖（`uv.lock` 不收录任何 `nvidia-*` 包）。运行时所需的 `cublas64_12.dll` /
+  `cudnn64_9.dll` 等由 **torch wheel 的 `torch/lib`** 提供。
 
 ### 2.2 PyTorch (MinerU 后端)
 
-`env_manager.TORCH_CUDA_MAP` 将 Paddle 的 CUDA tag 映射到 PyTorch 的 CUDA tag
-(PyTorch wheel 的 tag 粒度更粗):
+`env_manager.TORCH_CUDA_MAP` 把 paddle tag 映射到 torch tag：
 
-| Paddle tag | PyTorch tag | 原因 |
-|-----------|-------------|------|
-| cu129 | cu128 | PyTorch 无 cu129 wheel,cu128 向下兼容 |
-| cu123 | cu124 | PyTorch 跳过 cu123 |
+| Paddle tag | torch tag | 原因 |
+|-----------|-----------|------|
+| cu118 | cu118 | 同大族（CUDA 11） |
+| cu126 | cu126 | 同大族（CUDA 12），同源 DLL |
 
-### 2.3 ⚠️ 开发 vs 便携的 torch 版本策略不一致(已知,有意保留)
+不在表里的 paddle tag（理论上不可达）回落到 `cu126`（torch/lib 提供 CUDA 12 DLL，
+兼容同为 CUDA 12 族的 cu129 paddle，但本项目不启用 cu129，仅作兜底）。
 
-| 环境 | torch 来源 | CUDA tag |
-|------|-----------|----------|
-| 开发 (uv) | `pyproject.toml [tool.uv.sources]` → `pytorch-cu126` index | **恒定 cu126** |
-| 便携 (pip) | `TORCH_CUDA_MAP` + `get_pytorch_mirror` | **按 GPU 动态** (cu118/cu121/cu124/cu126/cu128) |
+### 2.3 开发 vs 便携（已统一到 cu126）
 
-**理由**:开发机 CUDA 驱动版本相对固定,uv 锁定 cu126 保证可复现;便携部署面向
-不同用户硬件,需按实际 GPU 动态选 tag。两条路径的 torch 版本可能不同,但都通过
-各自的 index 安装,功能上 MinerU 对 torch 小版本差异不敏感。
+| 环境 | paddle | torch | CUDA 运行时来源 |
+|------|--------|-------|----------------|
+| 开发 (uv) | cu126 (paddlepaddle.org.cn) | `torch 2.12.0+cu126` (pytorch-cu126 index) | `torch/lib` |
+| 便携 (pip) | cu126 (CUDA 11.8 驱动例外走 cu118) | cu126 或 cu118（`TORCH_CUDA_MAP`） | `torch/lib` |
 
-## 3. ✅ nvidia cu13 运行时依赖(2026-06-17 重新核实并修正)
+两条路径的 paddle/torch CUDA tag 现已对齐，避免历史上"开发用 cu126、便携动态选 cu124/cu128"
+导致 DLL 不一致的问题。
+
+## 3. ✅ CUDA 运行时来源：torch/lib（cu126 同源，2026-06-23 重新核实）
 
 ### 关键事实
 
-- `paddlepaddle-gpu 3.3.1` 是用 **CUDA 13.0** 编译的(`paddle.version.cuda() == "13.0"`,
-  `paddle.version.cudnn() == "9.13.0"`),运行时需要 **cu13 系列** DLL:
-  `cublas64_13.dll`、`cudnn64_9.dll` 等。
-- paddle 的 wheel **不含**这些 CUDA 运行时库(`paddle/libs/` 下只有 `common.dll`、
-  `phi.dll`、`mkldnn.dll` 等,无 cublas/cudnn)。
-- 系统 NVIDIA 驱动**只提供 driver API**,不提供 cuBLAS/cuDNN 这类 user-mode
-  运行时 DLL。GPU 推理必须额外获得这些库。
-- paddle 通过 `Requires-Dist` 声明了精确的 cu13 传递依赖(见下表),但 **uv 不会
-  自动安装它们**(`uv.lock` 不收录、`uv sync` 不下载),必须在 `pyproject.toml`
-  显式声明。
+- `paddlepaddle-gpu 3.3.1`（cu126 wheel）运行时报告 `paddle.version.cuda() == "12.9"`、
+  `paddle.version.cudnn() == "9.9.0"`，需要 **CUDA 12 族** 运行时 DLL：
+  `cublas64_12.dll`、`cudnn64_9.dll`、`cufft64_11.dll`、`curand64_10.dll`、
+  `cusolver64_11.dll`、`cusparse64_12.dll`、`cudart64_12.dll` 等。
+- paddle 的 wheel **不含**这些库（见 §2.1）。系统 NVIDIA 驱动**只提供 driver API**，
+  不提供 cuBLAS/cuDNN 这类 user-mode 运行时 DLL。
+- **torch cu126 wheel 自带完整的 CUDA 12.6 + cuDNN 9 运行时**（`torch/lib` 目录），
+  恰好提供 paddle 所需的全部 `_12` 系列 DLL。因此**无需额外声明/安装任何
+  `nvidia-*-cu12` / `nvidia-*-cu13` 包**——`pyproject.toml` 不含 nvidia 依赖，
+  `uv.lock` 也不收录。
 
-paddlepaddle-gpu 3.3.1 的真实 `Requires-Dist`(权威来源):
+### 实现
 
-| 包名 | 版本 | 提供 DLL |
-|------|------|----------|
-| `nvidia-cuda-runtime` | `==13.0.88` | `cudart64_13.dll` |
-| `nvidia-cudnn-cu13` | `==9.13.0.50` | `cudnn64_9.dll` 等 |
-| `nvidia-cublas` | `==13.0.2.14` | `cublas64_13.dll` |
-| `nvidia-cufft` | `==12.0.0.61` | `cufft64_11.dll` |
-| `nvidia-curand` | `==10.4.0.35` | `curand64_10.dll` |
-| `nvidia-cusolver` | `==12.0.4.66` | `cusolver64_11.dll` |
-| `nvidia-cusparse` | `==12.6.3.3` | `cusparse64_12.dll` |
+`OCRService._setup_cuda_dll_path` / `_register_dll_directories`（`services/ocr_service.py`）
+扫描 `nvidia/*` 包目录与 `torch/lib`，用 `os.add_dll_directory()` + PATH 注册，
+使 paddle 能找到 cuBLAS/cuDNN。`_install_paddle_stack`（`env_manager.py`）在 GPU
+安装时额外装 `torch torchvision`（从对应 index），即把 torch/lib 作为运行时来源安装到位。
 
-(`nvidia-cublas` 还会传递拉入 `nvidia-nvjitlink`。)
-
-### 最终方案:pyproject 显式声明 cu13 依赖(精确版本)
-
-`pyproject.toml` 必须以 `==` 精确版本声明上述 7 个包,与 paddle 的 Requires-Dist
-完全一致。**不能用 `>=`**:paddle 对这些是精确 `==` 要求,放宽版本会让 uv 装到不匹配
-的版本导致 DLL 加载失败(error 126)。
-
-### 2026-06-17 命令行验证(本机,RTX 4090 / 驱动 610.47)
+### 2026-06-23 命令行验证（本机 RTX 4090 / 驱动 610.47，cu126 环境）
 
 ```
-paddle.version.cuda() = 13.0
-cuda.device_count() = 1
-GPU 验证通过(matmul 成功,说明 cublas64_13.dll 已正确加载)
-PaddleOCR(PP-OCRv6_medium) init OK
-OCR predict OK(GPU 推理成功)
+torch 2.12.0+cu126  cuda 12.6  cudnn 9.10.02
+paddle 3.3.1        cuda 12.9  cudnn 9.9.0
+torch/lib 含: cublas64_12.dll, cublasLt64_12.dll, cudnn64_9.dll(+7 子库),
+              cufft64_11.dll, curand64_10.dll, cusolver64_11.dll,
+              cusparse64_12.dll, cudart64_12.dll, nvrtc64_120_0.dll 等（共 37 DLL）
+paddle.device.cuda.device_count() = 1
+paddle.matmul OK（cublas64_12.dll 正确加载）→ GPU 推理可用，未回退 CPU
 ```
 
-### 历史教训(避免重蹈覆辙)
+### 历史教训（避免重蹈覆辙）
 
-之前一次"删除全部 nvidia-* 依赖"的改动(曾基于"paddle 自带 cu12 库 / 系统驱动足够"
-的假设)是**错误**的:删除后 GPU 因 `cublas64_13.dll` 缺失回退 CPU,而 CPU 路径又命中
-paddle 3.3 的 PIR+oneDNN bug(见第 5 节),导致 OCR 完全不可用。当时文档里"OCR predict OK"
-的验证记录不成立(很可能只验证了 paddle import,没跑完整 PaddleOCR predict)。
+早期文档（§3 旧版）曾误称"paddle 3.3.1 是 CUDA 13.0 编译、需 cu13 DLL、必须显式声明
+7 个 nvidia-*-cu13 包"。这是基于 cu130 wheel 的旧策略，已被 `dc82935` 推翻：
+项目实际用 **cu126 wheel**（CUDA 12 族），运行时由 torch/lib 提供，**无需任何
+nvidia 包**。旧文档里的 `cublas64_13.dll` / `nvidia-cublas==13.0.2.14` 等记录
+仅适用于已废弃的 cu130 路径，**不再适用**。
 
-### 便携版安装逻辑修复(2026-06-17,第一批)
+### GPU/CPU 后端切换
 
-调研发现便携版 GPU 安装**从未真正可用过**,存在三个叠加 bug,现已全部修复:
-
-1. **CUDA 13 误映射 cu129** → 改为 `cu130`。cu129 的 paddlepaddle-gpu wheel 不声明
-   nvidia 依赖、也不内嵌 DLL;cu130 wheel 的 METADATA 声明 7 个 cu13 nvidia 依赖
-   (nvidia-cublas==13.0.2.14 等),与开发环境一致。
-
-2. **cu-tag 二次查表 bug**:`detect_gpu()` 返回的 `cuda_version` 已是 cu-tag
-   (如 "cu130"),但 `_install_paddle_stack` 曾再用 `CUDA_VERSION_MAP.get(cuda_version)`
-   把 cu-tag 当原始版本查表 → 返回 None → 有 GPU 也回退装 CPU。现已直接用 cu-tag
-   构造 index URL。
-
-3. **7 个 cu13 nvidia 包从不安装**:便携安装路径(`_install_paddle_stack`)此前只装
-   paddlepaddle-gpu + paddleocr + mineru (+torch),从不装 nvidia 包。paddle GPU wheel
-   又不内嵌 DLL,导致 `cublas64_13.dll` 缺失 → 运行时回退 CPU。现已从 specs 读取 7 个
-   cu13 包并显式安装(单条 pip 命令,从 PyPI)。
-
-附带修复:`subprocess.run` 的 argv 传参——多包规格(如 "torch torchvision" 或 7 个
-nvidia 包)现在正确拆成独立 argv 元素(此前整个字符串被当成单个非法 requirement)。
-
-### GPU/CPU 后端切换(第一批底层,UI 待第二批)
-
-- `install_embedded_dependencies` / `install_dependencies` 新增 `force_backend` 参数
-  (`"gpu"`/`"cpu"`/`None`),用于首启让用户选择或设置页切换。
-- `switch_paddle_backend(project_root, target)`:卸载当前 paddle(两包名都卸防冲突,
-  GPU→CPU 时额外卸 7 个 nvidia 包回收 ~1GB)→ 安装目标后端 → 写 `pending_backend`
-  到缓存。
-- `machine_cache` 新增 `pending_backend` 字段(可选,向后兼容)+ `update_cache_field`
+- `install_embedded_dependencies` / `install_dependencies` 有 `force_backend` 参数
+  （`"gpu"`/`"cpu"`/`None`），用于首启让用户选择或设置页切换。
+- `switch_paddle_backend(project_root, target)`：卸载当前 paddle（两包名都卸防冲突）
+  → 安装目标后端 → 写 `pending_backend` 到缓存。CUDA 运行时由 torch wheel 的
+  torch/lib 提供，切换后端**无需单独装卸 nvidia 包**。
+- `machine_cache` 有 `pending_backend` 字段（可选，向后兼容）+ `update_cache_field`
   辅助函数原地更新单字段。
-- `resolve_use_gpu` 优先读 `pending_backend`(用户已选且待生效),其次 `hardware_info.has_gpu`。
+- `resolve_use_gpu` 优先读 `pending_backend`（用户已选且待生效），其次 `hardware_info.has_gpu`。
 
-### GPU/CPU 后端选择 UI(第二批,已交付)
+### GPU/CPU 后端选择 UI
 
-三处 UI 触点,复用第一批底层原语:
+三处 UI 触点，复用底层原语：
 
-1. **首启合并对话框**(`widgets/backend_choice_dialog.py` `BackendChoiceDialog`):
-   依赖缺失时弹出,GPU/CPU 单选 + 体积/速度提示(GPU 约 1.5GB / CPU 约 150MB),
+1. **首启合并对话框**（`widgets/backend_choice_dialog.py` `BackendChoiceDialog`）：
+   依赖缺失时弹出，GPU/CPU 单选 + 体积/速度提示（GPU 约 1.5GB / CPU 约 150MB），
    无 NVIDIA GPU 时 GPU 选项禁用。点"开始安装"后用 `InstallWorker(force_backend=选择)`
-   跑安装,进度区实时显示。
-2. **设置页"推理后端"**(`widgets/backend_options_widget.py` `BackendOptionsWidget` +
-   `settings_page_controller._init_backend_options`):显示当前后端 + 待切换状态,
-   单选切换后点"应用"只写 `pending_backend` 标记(不跑 pip),提示"下次重启自动下载并切换"。
-3. **重启消费**(`main_window._check_pending_backend` + `widgets/switch_dialog.py`
-   `SwitchDialog`):启动时检测 `pending_backend`,若与当前后端不一致则弹 `SwitchDialog`
-   跑 `switch_paddle_backend`(进度对话框),成功后清除标记并启动 worker;失败则保留标记、
+   跑安装，进度区实时显示。
+2. **设置页"推理后端"**（`widgets/backend_options_widget.py` `BackendOptionsWidget` +
+   `settings_page_controller._init_backend_options`）：显示当前后端 + 待切换状态，
+   单选切换后点"应用"只写 `pending_backend` 标记（不跑 pip），提示"下次重启自动下载并切换"。
+3. **重启消费**（`main_window._check_pending_backend` + `widgets/switch_dialog.py`
+   `SwitchDialog`）：启动时检测 `pending_backend`，若与当前后端不一致则弹 `SwitchDialog`
+   跑 `switch_paddle_backend`（进度对话框），成功后清除标记并启动 worker；失败则保留标记、
    不启动 worker、状态栏提示重试。pending 与当前一致时静默清除标记。
 
-`InstallWorker`(`widgets/install_dialog.py`)加 `force_backend` 参数:`None` 时保持
-自动检测(向后兼容),指定时跳过检测直接透传到 `install_embedded_dependencies`。
+`InstallWorker`（`widgets/install_dialog.py`）有 `force_backend` 参数：`None` 时保持
+自动检测（向后兼容），指定时跳过检测直接透传到 `install_embedded_dependencies`。
 
 
 

@@ -10,20 +10,18 @@ dependencies = [
     "markdown>=3.10.2",
     "qasync>=0.28.0",
     "paddlepaddle-gpu>=3.3.1",
-    # paddlepaddle-gpu 3.3.1 用 CUDA 13.0 编译，需要 cu13 运行时库（cublas64_13.dll 等）。
-    # paddle wheel 本身不含这些 DLL，系统驱动只提供 driver API；
-    # 而 uv 不会自动安装 paddle 声明的这些传递依赖（uv.lock 不收录），
-    # 必须在此显式声明。版本必须与 paddle 的 Requires-Dist 精确匹配。
-    "nvidia-cuda-runtime==13.0.88",
-    "nvidia-cudnn-cu13==9.13.0.50",
-    "nvidia-cublas==13.0.2.14",
-    "nvidia-cufft==12.0.0.61",
-    "nvidia-curand==10.4.0.35",
-    "nvidia-cusolver==12.0.4.66",
-    "nvidia-cusparse==12.6.3.3",
+    # paddlepaddle-gpu 3.3.1 是 CUDA 12 构建，运行时需要 cublas64_12.dll /
+    # cudnn64_9.dll / cufft64_*.dll 等 CUDA 12 + cuDNN 9 全套 DLL。
+    # paddle wheel 本身不含这些 DLL，且 uv 不会自动安装 paddle 声明的
+    # nvidia-*-cu12 传递依赖（uv.lock 不收录）。
+    # 这些 DLL 由 torch wheel 自带（torch/lib 目录提供完整的 CUDA 12.6 +
+    # cuDNN 9 运行时），OCRService._setup_cuda_dll_path 会把 torch/lib
+    # 注册到 DLL 搜索路径供 paddle 使用。因此这里显式声明 torch 依赖，
+    # 确保它的 wheel 被安装；无需再声明 nvidia-*-cu12 系列。
+    "torch>=2.6.0",
     "paddleocr[doc-parser]>=3.7.0",
     "httpx>=0.28.1",
-    "mineru[core]>=3.3.1",
+    "mineru[core]>=3.4.0",
     "pymupdf>=1.27.2.3",
     "qrcode[pil]>=8.2",
     "python-barcode>=0.16.1",
@@ -186,11 +184,15 @@ override-dependencies = [
 environments = ["sys_platform == 'win32'"]
 extra-index-url = [
     "https://mirrors.aliyun.com/pypi/simple",
-    "https://www.paddlepaddle.org.cn/packages/stable/cu129/",
+    "https://www.paddlepaddle.org.cn/packages/stable/cu126/",
 ]
 index-strategy = "unsafe-best-match"
 
 [tool.uv.sources]
+# paddlepaddle-gpu 和 torch 都用 CUDA 12.6 构建（cu126），保持同源：
+# - paddle cu126 找 cublas64_12.dll，torch cu126 的 torch/lib 正好提供
+# - 不用 cu129/cu130：cu129 paddle 要 cu12 DLL 但 torch 无 cu129 win wheel；
+#   cu130 paddle 要 cublas64_13.dll，与 torch/lib 的 _12 系列 ABI 不匹配
 torch = { index = "pytorch-cu126" }
 torchvision = { index = "pytorch-cu126" }
 

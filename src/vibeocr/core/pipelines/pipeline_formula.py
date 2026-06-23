@@ -30,15 +30,16 @@ class FormulaRecognitionOptions(BasePipelineOptions):
     formula_recognition_batch_size: int = 1
 
 
-def _create_formula_pipeline(device: str) -> Any:
+def _create_formula_pipeline(device: str, **kwargs: Any) -> Any:
     """创建公式识别管道实例
 
     PaddleOCR 3.x 没有独立的公式识别管道类，
     因此使用 PPStructureV3 作为底层引擎。
+    额外 kwargs 透传给 PPStructureV3（例如 enable_mkldnn）。
     """
     from paddleocr import PPStructureV3
 
-    return PPStructureV3(device=device)
+    return PPStructureV3(device=device, **kwargs)
 
 
 def _recognize_formula(

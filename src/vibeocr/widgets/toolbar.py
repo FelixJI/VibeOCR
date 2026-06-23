@@ -148,6 +148,9 @@ class EdgeToolbar(QWidget):
             | Qt.WindowType.Tool
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        # 启用样式表背景绘制：否则 WA_TranslucentBackground 会使窗口整体透明，
+        # 样式表中的 background-color（浅色背景）无法绘制出来
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
 
         self.setStyleSheet("""
             EdgeToolbar {

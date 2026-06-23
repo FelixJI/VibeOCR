@@ -95,7 +95,20 @@ class OCRPreset(Enum):
 
 
 class OCRService(metaclass=SingletonMeta):
-    """OCR 识别服务 (使用 SingletonMeta 实现线程安全单例)"""
+    """OCR 识别服务 (使用 SingletonMeta 实现线程安全单例)
+
+    双重角色（请勿误删或拆分）：
+    1. **子进程模式（默认运行路径）**：本类在 worker 子进程内实例化
+       （见 ``workers/ocr_worker.py``），持有真正的 PaddleOCR pipeline，
+       由主进程经共享内存（RCBG 协议）调用其 recognize/recognize_batch。
+    2. **主进程直连（仅调试逃生口）**：仅当 ``VIBEOCR_USE_SUBPROCESS=false``
+       且 ``VIBEOCR_OCR_MODE=direct`` 时，本类才在主进程内直接加载模型运行，
+       用于排查子进程开销/通信问题时定位。**生产环境不应走此路径**——
+       主进程内加载 PaddleOCR 会阻塞 UI、占用 GPU 上下文。
+
+    因此本类的所有 OCR 逻辑（含 recognize_batch 真批量）都是必需的，
+    既是子进程的内核，也是调试路径的实现，二者共享同一份代码。
+    """
 
     _pipelines: dict[str, Any] = {}  # 管道缓存：{pipeline_name: pipeline_instance}
     _lock = threading.Lock()
@@ -103,7 +116,7 @@ class OCRService(metaclass=SingletonMeta):
     _status_callback: Callable | None = None  # 状态回调函数
 
     def is_ready(self) -> bool:
-        """直接模式始终就绪"""
+        """服务就绪（直连/worker 内：模型已加载即就绪）"""
         return self._initialized
 
     # 预加载相关状态
@@ -405,7 +418,15 @@ class OCRService(metaclass=SingletonMeta):
 
     @classmethod
     def _setup_cuda_dll_path(cls) -> None:
-        """将所有 nvidia/* 包的 DLL 目录加入 PATH，使 PaddlePaddle 能找到 CUDA 运行时库"""
+        """将 CUDA 运行时 DLL 目录加入 PATH，使 PaddlePaddle 能找到 cuBLAS/cuDNN 等
+
+        扫描两类来源：
+        1. ``nvidia/*`` 包（cu13/cudnn 等，DLL 多在 bin/ 或 bin/<arch>/、lib/<arch>/）
+        2. ``torch/lib`` —— PyTorch wheel 自带完整的 CUDA 12 + cuDNN 9 运行时，
+           是 paddlepaddle-gpu（CUDA 12 构建）所需 ``cublas64_12.dll`` 等的
+           可靠来源。在未安装系统级 CUDA Toolkit 的机器上，这是让 paddle GPU
+           可用的关键（否则 ``cublas64_12.dll`` 找不到，error 126 回退 CPU）。
+        """
         if cls._cuda_dll_registered:
             return
         import sys
@@ -414,8 +435,11 @@ class OCRService(metaclass=SingletonMeta):
             cls._cuda_dll_registered = True
             return
         site_packages = next(p for p in sys.path if "site-packages" in p)
-        nvidia_base = Path(site_packages) / "nvidia"
         existing = os.environ.get("PATH", "")
+        candidate_dirs: list[Path] = []
+
+        # 1) nvidia/* 包
+        nvidia_base = Path(site_packages) / "nvidia"
         if nvidia_base.is_dir():
             for entry in os.scandir(nvidia_base):
                 if not entry.is_dir():
@@ -423,14 +447,23 @@ class OCRService(metaclass=SingletonMeta):
                 # 扫描 bin/ 和 lib/ 目录（不同 nvidia 包的 DLL 位置不同）
                 for subfolder in ("bin", "lib"):
                     sub_dir = Path(entry.path) / subfolder
-                    if sub_dir.is_dir() and str(sub_dir) not in existing:
-                        existing = str(sub_dir) + ";" + existing
-                    # 新版 nvidia 包 (cu13 等) 把 DLL 放在 <subfolder>/<arch>/ 子目录
                     if sub_dir.is_dir():
+                        candidate_dirs.append(sub_dir)
+                        # 新版 nvidia 包 (cu13 等) 把 DLL 放在 <subfolder>/<arch>/ 子目录
                         for sub in os.scandir(sub_dir):
                             arch_dir = Path(sub_dir) / sub.name
-                            if sub.is_dir() and str(arch_dir) not in existing:
-                                existing = str(arch_dir) + ";" + existing
+                            if sub.is_dir():
+                                candidate_dirs.append(arch_dir)
+
+        # 2) torch/lib（CUDA 12 + cuDNN 9 全套）
+        torch_lib = Path(site_packages) / "torch" / "lib"
+        if torch_lib.is_dir():
+            candidate_dirs.append(torch_lib)
+
+        for d in candidate_dirs:
+            s = str(d)
+            if s not in existing:
+                existing = s + ";" + existing
         os.environ["PATH"] = existing
         cls._cuda_dll_registered = True
 
@@ -467,6 +500,10 @@ class OCRService(metaclass=SingletonMeta):
         Python 3.8+ Windows 上 ctypes.CDLL 不再搜索 os.environ["PATH"]，
         必须通过 os.add_dll_directory() 注册。同时更新 PATH 环境变量，
         确保推理引擎（Paddle Inference）也能找到 CUDA DLL。
+
+        覆盖来源与 :meth:`_setup_cuda_dll_path` 一致：``nvidia/*`` 包 +
+        ``torch/lib``（后者提供 paddle 所需的 CUDA 12 运行时，见该方法说明）。
+
         此方法必须在 PaddlePaddle 导入完成后调用，否则会触发 PaddlePaddle
         内部的路径错误。
         """
@@ -477,26 +514,31 @@ class OCRService(metaclass=SingletonMeta):
         site_packages = next((p for p in sys.path if "site-packages" in p), None)
         if not site_packages:
             return
+
+        def _register(d: Path) -> None:
+            with contextlib.suppress(OSError):
+                os.add_dll_directory(str(d))
+            os.environ["PATH"] = str(d) + ";" + os.environ.get("PATH", "")
+
+        # 1) nvidia/* 包（bin/, bin/<arch>/, lib/<arch>/）
         nvidia_base = Path(site_packages) / "nvidia"
-        if not nvidia_base.is_dir():
-            return
-        for entry in os.scandir(nvidia_base):
-            if not entry.is_dir():
-                continue
-            for subfolder in ("bin", "lib"):
-                sub_dir = Path(entry.path) / subfolder
-                if sub_dir.is_dir():
-                    with contextlib.suppress(OSError):
-                        os.add_dll_directory(str(sub_dir))
-                    os.environ["PATH"] = str(sub_dir) + ";" + os.environ.get("PATH", "")
-                    for sub in os.scandir(sub_dir):
-                        arch_dir = Path(sub_dir) / sub.name
-                        if sub.is_dir():
-                            with contextlib.suppress(OSError):
-                                os.add_dll_directory(str(arch_dir))
-                            os.environ["PATH"] = (
-                                str(arch_dir) + ";" + os.environ.get("PATH", "")
-                            )
+        if nvidia_base.is_dir():
+            for entry in os.scandir(nvidia_base):
+                if not entry.is_dir():
+                    continue
+                for subfolder in ("bin", "lib"):
+                    sub_dir = Path(entry.path) / subfolder
+                    if sub_dir.is_dir():
+                        _register(sub_dir)
+                        for sub in os.scandir(sub_dir):
+                            arch_dir = Path(sub_dir) / sub.name
+                            if sub.is_dir():
+                                _register(arch_dir)
+
+        # 2) torch/lib（CUDA 12 + cuDNN 9 全套，paddle GPU 运行时来源）
+        torch_lib = Path(site_packages) / "torch" / "lib"
+        if torch_lib.is_dir():
+            _register(torch_lib)
 
     @staticmethod
     def _get_project_root():
@@ -582,7 +624,15 @@ class OCRService(metaclass=SingletonMeta):
                     if registry.has(pipeline_name):
                         spec = registry.get(pipeline_name)
                         device = self._get_device()
-                        self._pipelines[pipeline_name] = spec.create_pipeline(device)
+                        # CPU 设备禁用 mkldnn：paddle 3.3 的 PIR new executor 与
+                        # oneDNN 存在已知不兼容（ConvertPirAttribute2RuntimeAttribute
+                        # 对 ArrayAttribute<DoubleAttribute> 未实现，predict 抛
+                        # NotImplementedError），CPU 推理时关闭 mkldnn 绕过。
+                        # 参考 PaddleOCR #17539、Paddle #77340。
+                        kwargs = {"enable_mkldnn": False} if device == "cpu" else {}
+                        self._pipelines[pipeline_name] = spec.create_pipeline(
+                            device, **kwargs
+                        )
                     else:
                         # 回退到旧式创建（通过 OCRPipeline 枚举）
                         try:
@@ -618,14 +668,23 @@ class OCRService(metaclass=SingletonMeta):
         Returns:
             OCRResult 对象，包含识别结果和置信度信息
         """
+        image = self._to_ndarray(image)
+        return self.recognize_batch([image], options)[0]
 
-        actual_options = options if options is not None else OCROptions()
+    @staticmethod
+    def _to_ndarray(
+        image: Image.Image | np.ndarray | str | bytes,
+    ) -> np.ndarray | str:
+        """统一输入为 PaddleX 可接受的形态（numpy 数组或路径字符串）。
 
-        # 统一获取管道名称（处理枚举和字符串两种类型）
-        pipeline_name = actual_options.pipeline.value
-        _logger.debug(f"[recognize] 开始识别，管道: {pipeline_name}")
+        bytes/PIL 输入转换为 RGB numpy 数组；ndarray/str 原样返回。
 
-        # 如果输入是 bytes，转换为 numpy.ndarray（PaddleX 只支持 ndarray 和 str）
+        Args:
+            image: PIL Image, numpy 数组, 图像路径, 或图像字节数据。
+
+        Returns:
+            numpy 数组（bytes/PIL 输入）或原始字符串路径。
+        """
         if isinstance(image, bytes):
             import io
 
@@ -636,68 +695,85 @@ class OCRService(metaclass=SingletonMeta):
                 f"[recognize] 输入是 bytes ({len(image)} 字节)，转换为 numpy.ndarray"
             )
             pil_image = PILImage.open(io.BytesIO(image))
-            # 转换为 RGB 模式（确保格式一致）再转为 numpy 数组
             if pil_image.mode != "RGB":
                 pil_image = pil_image.convert("RGB")  # type: ignore[assignment]
-            image = np.array(pil_image)
-            _logger.debug(f"[recognize] 转换完成，数组形状: {image.shape}")
+            return np.array(pil_image)
+        if hasattr(image, "convert"):
+            # PIL Image（非 ndarray）
+            import numpy as np
+
+            if image.mode != "RGB":
+                image = image.convert("RGB")  # type: ignore[assignment]
+            return np.array(image)
+        return image
+
+    def recognize_batch(
+        self,
+        images: list[np.ndarray],
+        options: OCROptions | None = None,
+    ) -> list[OCRResult]:
+        """对一组图像批量执行 OCR 识别（单次 predict 调用，利用 PaddleOCR 批处理）。
+
+        相比逐张调用 recognize()，本方法将所有图像一次性送入 PaddleOCR 的
+        predict(list)，由其内部的 ImageBatchSampler 按 batch_size 分批，
+        避免每张图重复的管道开销，显著提升 PDF 等多页场景的吞吐。
+
+        输入图像需为 numpy 数组（RGB，与单次识别路径一致）。结果顺序与输入一致。
+
+        Args:
+            images: 输入图像列表（numpy 数组）。
+            options: OCR 识别选项（所有图像共享同一组选项）。
+
+        Returns:
+            OCRResult 列表，顺序与 images 一致。
+        """
+        actual_options = options if options is not None else OCROptions()
+
+        # 统一获取管道名称（处理枚举和字符串两种类型）
+        pipeline_name = actual_options.pipeline.value
+        _logger.debug(
+            f"[recognize_batch] 开始批量识别 {len(images)} 张，管道: {pipeline_name}"
+        )
+
+        if not images:
+            return []
 
         # 根据管道类型分发
         try:
+            results: list[OCRResult]
             # 尝试通过注册表分发
             from vibeocr.core.pipelines import get_registry
 
             registry = get_registry()
-            if registry.has(pipeline_name):
+            if registry.has(pipeline_name) and (
+                registry.get(pipeline_name).recognize_batch is not None
+            ):
                 spec = registry.get(pipeline_name)
-                result = spec.recognize(self, image, actual_options)
+                # OCR 批量路径：单次 predict(list)，bbox 尚未归一化
+                results = spec.recognize_batch(  # type: ignore[misc]
+                    self, images, actual_options
+                )
             else:
-                # 回退到旧式分发（用于未注册的管道）
-                if actual_options.pipeline == OCRPipeline.OCR:
-                    result = self._recognize_ocr(image, actual_options)
-                elif actual_options.pipeline == OCRPipeline.PP_STRUCTURE_V3:
-                    result = self._recognize_structure(image, actual_options)
-                elif actual_options.pipeline == OCRPipeline.PADDLEOCR_VL:
-                    result = self._recognize_paddlocr_vl(image, actual_options)
-                else:
-                    result = self._recognize_ocr(image, actual_options)
-            # Normalize bbox from pixel coords to [0-1000]
-            img_w = img_h = 0
-            if result.preproc_img_w > 0 and result.preproc_img_h > 0:
-                img_w = result.preproc_img_w
-                img_h = result.preproc_img_h
-            elif hasattr(image, "shape"):
-                _shape = image.shape  # type: ignore[union-attr]
-                if isinstance(_shape, tuple) and len(_shape) >= 2:
-                    img_h, img_w = _shape[:2]
-            elif hasattr(image, "size"):
-                _sz = image.size  # type: ignore[union-attr]
-                if isinstance(_sz, tuple):
-                    img_w, img_h = _sz
-            # 预处理旋转 90°/270° 时宽高互换（仅当无预处理图像时需要）
-            if result.preproc_img_w == 0 and result.preproc_angle in (90, 270):
-                img_w, img_h = img_h, img_w
-            if img_w > 0 and img_h > 0:
-                for block in result.text_blocks:
-                    if block.bbox:
-                        x0, y0, x1, y1 = block.bbox
-                        block.bbox = (
-                            x0 / img_w * 1000,
-                            y0 / img_h * 1000,
-                            x1 / img_w * 1000,
-                            y1 / img_h * 1000,
-                        )
-                for cl_block in result.content_list:
-                    bbox = cl_block.get("bbox")
-                    if bbox and len(bbox) >= 4:
-                        cl_block["bbox"] = [
-                            bbox[0] / img_w * 1000,
-                            bbox[1] / img_h * 1000,
-                            bbox[2] / img_w * 1000,
-                            bbox[3] / img_h * 1000,
-                        ]
-                result.image_width = img_w
-                result.image_height = img_h
+                # 回退：管道未提供批量接口时，逐张识别以保持兼容
+                _logger.debug(
+                    "[recognize_batch] 管道 %s 未注册批量接口，回退逐张识别",
+                    pipeline_name,
+                )
+                results = []
+                for img in images:
+                    if actual_options.pipeline == OCRPipeline.OCR:
+                        r = self._recognize_ocr(img, actual_options)
+                    elif actual_options.pipeline == OCRPipeline.PP_STRUCTURE_V3:
+                        r = self._recognize_structure(img, actual_options)
+                    elif actual_options.pipeline == OCRPipeline.PADDLEOCR_VL:
+                        r = self._recognize_paddlocr_vl(img, actual_options)
+                    else:
+                        r = self._recognize_ocr(img, actual_options)
+                    results.append(r)
+
+            # Normalize each result's bbox from pixel coords to [0-1000]
+            for img, result in zip(images, results, strict=False):
+                self._normalize_result_bbox(result, img)
 
             # 标记管道识别成功
             pipeline_val = pipeline_name
@@ -707,11 +783,61 @@ class OCRService(metaclass=SingletonMeta):
                 except Exception:
                     pass
 
-            _logger.debug(f"[recognize] 识别完成，返回 {len(result.raw_text)} 字符")
-            return result
+            _logger.debug(f"[recognize_batch] 完成，返回 {len(results)} 个结果")
+            return results
         except Exception as e:
-            _logger.error(f"[recognize] 识别过程中发生异常: {e}", exc_info=True)
+            _logger.error(f"[recognize_batch] 识别过程中发生异常: {e}", exc_info=True)
             raise
+
+    @staticmethod
+    def _normalize_result_bbox(result: OCRResult, image: Any) -> None:
+        """将 OCRResult 中像素坐标 bbox 归一化到 [0, 1000]（原地修改）。
+
+        bbox 坐标在预处理后图像空间中。优先使用 result.preproc_img_w/h；
+        若预处理未提供尺寸，则回退到输入图像 shape，并在 90°/270° 旋转时
+        互换宽高（旋转后图像宽高与原图互换）。
+
+        Args:
+            result: OCRResult，其 text_blocks/content_list 的 bbox 会被原地归一化。
+            image: 对应的输入图像（用于回退取尺寸）。
+        """
+        img_w = img_h = 0
+        if result.preproc_img_w > 0 and result.preproc_img_h > 0:
+            img_w = result.preproc_img_w
+            img_h = result.preproc_img_h
+        elif hasattr(image, "shape"):
+            _shape = image.shape
+            if isinstance(_shape, tuple) and len(_shape) >= 2:
+                img_h, img_w = _shape[:2]
+        elif hasattr(image, "size"):
+            _sz = image.size
+            if isinstance(_sz, tuple):
+                img_w, img_h = _sz
+        # 预处理旋转 90°/270° 时宽高互换（仅当无预处理图像时需要）
+        if result.preproc_img_w == 0 and result.preproc_angle in (90, 270):
+            img_w, img_h = img_h, img_w
+        if img_w <= 0 or img_h <= 0:
+            return
+        for block in result.text_blocks:
+            if block.bbox:
+                x0, y0, x1, y1 = block.bbox
+                block.bbox = (
+                    x0 / img_w * 1000,
+                    y0 / img_h * 1000,
+                    x1 / img_w * 1000,
+                    y1 / img_h * 1000,
+                )
+        for cl_block in result.content_list:
+            bbox = cl_block.get("bbox")
+            if bbox and len(bbox) >= 4:
+                cl_block["bbox"] = [
+                    bbox[0] / img_w * 1000,
+                    bbox[1] / img_h * 1000,
+                    bbox[2] / img_w * 1000,
+                    bbox[3] / img_h * 1000,
+                ]
+        result.image_width = img_w
+        result.image_height = img_h
 
     def _recognize_ocr(
         self,

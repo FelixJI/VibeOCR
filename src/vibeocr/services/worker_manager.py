@@ -75,6 +75,11 @@ class WorkerManager:
         manager.stop_all()
     """
 
+    # 健康检查卡死阈值（秒）。必须大于最大批量任务超时（recognize_batch
+    # 封顶 1800s），否则会把正常的 25 页批量识别误判为卡死并强制重启，
+    # 导致任务在已 unlink 的 shm 上空轮询、UI 卡死、取消无效。
+    STALE_THRESHOLD: float = 2000.0
+
     def __init__(
         self,
         max_workers: int = 1,
@@ -457,10 +462,11 @@ class WorkerManager:
                             workers_to_restart.append(worker_info)
                     continue
 
-                # 检查是否卡死（超过 5 分钟无活动）
+                # 检查是否卡死（超过 STALE_THRESHOLD 无活动）
+                # 阈值必须 > 最大批量超时(1800s)，否则误杀正常批量任务
                 if worker_info.state == WorkerState.BUSY:
                     idle_time = time.time() - worker_info.last_active
-                    if idle_time > 300:  # 5 分钟
+                    if idle_time > self.STALE_THRESHOLD:
                         logger.warning(
                             f"Worker {worker_info.worker_id} 可能卡死（无响应 {idle_time:.0f} 秒）"
                         )

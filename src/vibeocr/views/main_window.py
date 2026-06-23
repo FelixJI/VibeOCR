@@ -800,7 +800,9 @@ class MainWindow(QMainWindow):
             from vibeocr.services import USE_SUBPROCESS
 
             if not USE_SUBPROCESS:
-                # 直接模式：清理管道缓存
+                # 直连/便携模式（仅调试逃生口）：清理主进程内持有的管道缓存。
+                # 子进程模式（默认）无需此清理——管道在独立 worker 进程中，
+                # 随 worker 生命周期管理。
                 from vibeocr.services.ocr_service import OCRService
 
                 OCRService._pipelines.clear()

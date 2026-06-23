@@ -20,8 +20,11 @@ from vibeocr.utils.shared_memory_v2 import (
     SharedMemoryProtocolError,
     deserialize_batch_result,
     deserialize_preload_result,
+    deserialize_recognize_batch_result,
     deserialize_result,
+    serialize_batch_request,
     serialize_preload_request,
+    serialize_recognize_batch_request,
     serialize_request,
 )
 from vibeocr.utils.shared_memory_v2 import (
@@ -30,6 +33,7 @@ from vibeocr.utils.shared_memory_v2 import (
 
 # 消息类型别名（保持兼容）
 MSG_RECOGNIZE = MessageType.RECOGNIZE
+MSG_RECOGNIZE_BATCH = MessageType.RECOGNIZE_BATCH
 MSG_RESULT = MessageType.RESULT
 MSG_ERROR = MessageType.ERROR
 MSG_ACK = MessageType.ACK
@@ -505,6 +509,116 @@ class OCRWorkerProcess:
                         # 重新尝试识别
                         return self.recognize(
                             image_data, options_dict, timeout, auto_restart=False
+                        )
+                raise OCRWorkerProcessError(f"通信错误: {e}") from None
+
+            finally:
+                self.busy = False
+
+    def recognize_batch(
+        self,
+        images: list[bytes],
+        options_dict: dict,
+        timeout: float = 60.0,
+        auto_restart: bool = True,
+    ) -> list:
+        """批量 OCR 识别（多图一次 predict）
+
+        镜像 recognize() 的协议往返，但请求为图像列表。Worker 侧收到后调用
+        OCRService.recognize_batch(list)（内部一次 predict(list)），返回结果列表，
+        顺序与 images 一致。
+
+        Args:
+            images: 各页 PNG bytes 列表。
+            options_dict: OCR 选项字典（所有图像共享）。
+            timeout: 超时时间（秒）。
+            auto_restart: Worker 崩溃时是否自动重启。
+
+        Returns:
+            OCRResult 对象列表，顺序与 images 一致。
+
+        Raises:
+            OCRWorkerProcessError: 识别失败。
+        """
+        with self._operation_lock:
+            # 检查 Worker 状态，必要时自动重启
+            if not self.is_ready:
+                if auto_restart and self._try_restart():
+                    logger.debug(f"[主进程] Worker {self.worker_id} 已自动重启")
+                else:
+                    raise OCRWorkerProcessError(f"Worker {self.worker_id} 未就绪")
+
+            protocol = self.protocol
+            if protocol is None:  # guarded by is_ready check above
+                raise OCRWorkerProcessError(f"Worker {self.worker_id} 通信协议未初始化")
+            self.busy = True
+            total_bytes = sum(len(img) for img in images)
+            logger.debug(
+                f"[主进程] Worker {self.worker_id} 开始批量识别，{len(images)} 张，"
+                f"共 {total_bytes} 字节"
+            )
+
+            try:
+                # 序列化并发送批量请求
+                request_data = serialize_recognize_batch_request(images, options_dict)
+                logger.debug(
+                    f"[主进程] 发送批量识别请求到 Worker {self.worker_id}，"
+                    f"数据大小: {len(request_data)} 字节"
+                )
+                protocol.write_message(
+                    MSG_RECOGNIZE_BATCH, request_data, timeout=timeout, sender="main"
+                )
+                logger.debug(
+                    f"[主进程] 批量请求已发送，等待 Worker {self.worker_id} 返回结果..."
+                )
+
+                # 等待 Worker 读取请求（等待 _is_data_ready 变为 False）
+                wait_start = time.time()
+                while protocol._is_data_ready():
+                    if time.time() - wait_start > 5.0:
+                        logger.warning(
+                            f"Worker {self.worker_id} 未及时读取批量识别请求"
+                        )
+                        break
+                    time.sleep(0.01)
+
+                # 等待结果
+                msg_type, data = protocol.read_message(
+                    timeout=timeout, expected_sender="worker"
+                )
+                logger.debug(
+                    f"[主进程] 收到响应，消息类型: {msg_type.decode('ascii', errors='replace')}"
+                )
+
+                if msg_type == MSG_RESULT:
+                    # 反序列化批量结果列表
+                    results = deserialize_recognize_batch_result(data)
+                    logger.debug(
+                        f"Worker {self.worker_id} 批量识别完成，返回 {len(results)} 个结果"
+                    )
+                    return results
+
+                if msg_type == MSG_ERROR:
+                    error_msg = data.decode("utf-8", errors="replace")
+                    raise OCRWorkerProcessError(f"OCR 批量识别失败: {error_msg}")
+
+                if msg_type == MSG_SHUTDOWN:
+                    raise OCRWorkerProcessError("Worker 被关闭（可能因超时卡死）")
+
+                raise OCRWorkerProcessError(
+                    f"未知响应类型: {msg_type.decode('ascii', errors='replace')}"
+                )
+
+            except SharedMemoryProtocolError as e:
+                # 检查 Worker 是否崩溃
+                if not self.is_running and auto_restart:
+                    logger.warning(
+                        f"[主进程] Worker {self.worker_id} 似乎已崩溃，尝试重启..."
+                    )
+                    if self._try_restart():
+                        # 重新尝试批量识别
+                        return self.recognize_batch(
+                            images, options_dict, timeout, auto_restart=False
                         )
                 raise OCRWorkerProcessError(f"通信错误: {e}") from None
 

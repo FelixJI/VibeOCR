@@ -1,5 +1,6 @@
 """Tests for PDF document data models."""
 
+from vibeocr.models.ocr_result import TextBlock
 from vibeocr.models.pdf_document import PdfDocument, PdfPageInfo, TextLayerInfo
 
 
@@ -40,6 +41,23 @@ class TestPdfPageInfo:
         info = PdfPageInfo(page_index=1, has_text_layer=True, text_layers=[layer])
         assert info.has_text_layer is True
         assert len(info.text_layers) == 1
+
+    def test_defaults_ocr_text_blocks_empty(self):
+        """新增字段：OCR 原始块缓存默认为空。"""
+        info = PdfPageInfo(page_index=0)
+        assert info.ocr_text_blocks == []
+        assert info.ocr_preproc_angle == 0
+
+    def test_can_hold_ocr_text_blocks(self):
+        """PdfPageInfo 能保存 OCR 原始 TextBlock 列表（预览/编辑/重写唯一信源）。"""
+        blocks = [
+            TextBlock(text="Hello", score=0.99, bbox=(10.0, 20.0, 300.0, 100.0)),
+            TextBlock(text="World", score=0.95, bbox=(10.0, 120.0, 300.0, 200.0)),
+        ]
+        info = PdfPageInfo(page_index=0, ocr_text_blocks=blocks, ocr_preproc_angle=90)
+        assert len(info.ocr_text_blocks) == 2
+        assert info.ocr_text_blocks[0].text == "Hello"
+        assert info.ocr_preproc_angle == 90
 
 
 class TestPdfDocument:
