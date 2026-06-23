@@ -14,6 +14,7 @@ import uuid
 from collections.abc import Callable
 
 from vibeocr.pipeline_status import is_pipeline_ever_succeeded
+from vibeocr.utils.job_object import JobObjectGuard
 from vibeocr.utils.shared_memory_v2 import (
     MessageType,
     SharedMemoryConfig,
@@ -115,6 +116,9 @@ class OCRWorkerProcess:
 
         # 防止并发操作共享内存的锁（预热和用户请求可能同时调用 recognize）
         self._operation_lock = threading.RLock()
+
+        # Windows Job Object 守卫：主进程崩溃时内核连带终止 worker 子进程
+        self._job_guard: JobObjectGuard | None = None
 
     @property
     def is_running(self) -> bool:
@@ -261,6 +265,10 @@ class OCRWorkerProcess:
                 stderr=subprocess.STDOUT,  # 合并 stderr 到 stdout
                 text=False,
             )
+
+            # 绑定 Windows Job Object：主进程崩溃时内核连带终止 worker
+            self._job_guard = JobObjectGuard(name=f"vibeocr_worker_{self.worker_id}")
+            self._job_guard.assign_from_popen(self.process)
 
             # 启动一个线程读取子进程的 stdout（统一的日志通道）
             def read_stdout():
@@ -1044,6 +1052,11 @@ class OCRWorkerProcess:
         Args:
             timeout: 等待进程退出的超时时间（秒）
         """
+        # 先关闭 Job 守卫：触发内核 kill 子进程，使后续 wait 立即返回
+        if self._job_guard is not None:
+            self._job_guard.close()
+            self._job_guard = None
+
         if self.process is None:
             return
 

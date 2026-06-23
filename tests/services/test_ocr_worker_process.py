@@ -77,6 +77,22 @@ class TestOCRWorkerProcess:
 
         assert python_exe == sys.executable
 
+    def test_init_has_no_job_guard(self):
+        """初始化后 _job_guard 为 None。"""
+        worker = OCRWorkerProcess(worker_id=0, use_gpu=False)
+        assert worker._job_guard is None
+
+    def test_stop_closes_job_guard_if_present(self):
+        """stop 时若 _job_guard 存在则关闭并置 None（即使 process 为 None）。"""
+        worker = OCRWorkerProcess(worker_id=0, use_gpu=False)
+        from unittest.mock import MagicMock
+
+        mock_guard = MagicMock()
+        worker._job_guard = mock_guard
+        worker.stop()
+        mock_guard.close.assert_called_once()
+        assert worker._job_guard is None
+
 
 @pytest.mark.skipif(
     not HAS_SUBPROCESS_MODULES, reason="subprocess modules not available"
