@@ -49,6 +49,8 @@ MSG_BATCH_RESULT = MessageType.BATCH_RESULT
 MSG_BATCH_CANCEL = MessageType.BATCH_CANCEL
 MSG_BATCH_PROGRESS = MessageType.BATCH_PROGRESS
 MSG_BATCH_FILE_DONE = MessageType.BATCH_FILE_DONE
+MSG_RELEASE_PIPELINES = MessageType.RELEASE_PIPELINES
+MSG_SET_TTL = MessageType.SET_TTL
 
 logger = logging.getLogger(__name__)
 
@@ -1044,6 +1046,86 @@ class OCRWorkerProcess:
 
         except SharedMemoryProtocolError as e:
             logger.warning(f"发送批量取消请求失败: {e}")
+            return False
+
+    def release_pipelines(self, heavy_only: bool = True, timeout: float = 60.0) -> list[str]:
+        """向 worker 发送 RELEASE_PIPELINES 命令，返回被释放的管道名列表。
+
+        Args:
+            heavy_only: True 只释放重管道，False 释放全部。
+            timeout: 超时时间（秒）。
+
+        Returns:
+            被释放的管道名列表，失败时返回空列表。
+        """
+        import json
+
+        if not self.is_ready:
+            return []
+
+        protocol = self.protocol
+        if protocol is None:
+            raise OCRWorkerProcessError(
+                f"Worker {self.worker_id} 通信协议未初始化"
+            )
+        try:
+            payload = json.dumps({"heavy_only": heavy_only}).encode("utf-8")
+            protocol.write_message(
+                MSG_RELEASE_PIPELINES, payload, timeout=timeout, sender="main"
+            )
+            logger.debug(f"Worker {self.worker_id} 释放管道请求已发送")
+
+            protocol.wait_for_read(timeout=timeout)
+
+            msg_type, data = protocol.read_message(
+                timeout=timeout, expected_sender="worker"
+            )
+            if msg_type == MSG_ACK:
+                result = json.loads(data.decode("utf-8")) if data else {}
+                return result.get("released", [])
+            logger.warning(f"Worker {self.worker_id} 释放管道未收到 ACK: {msg_type}")
+            return []
+
+        except SharedMemoryProtocolError as e:
+            logger.warning(f"发送释放管道请求失败: {e}")
+            return []
+
+    def set_ttl(self, ttl_seconds: int, timeout: float = 30.0) -> bool:
+        """向 worker 发送 SET_TTL 命令。
+
+        Args:
+            ttl_seconds: TTL 秒数，0=禁用。
+            timeout: 超时时间（秒）。
+
+        Returns:
+            是否成功。
+        """
+        import json
+
+        if not self.is_ready:
+            return False
+
+        protocol = self.protocol
+        if protocol is None:
+            raise OCRWorkerProcessError(
+                f"Worker {self.worker_id} 通信协议未初始化"
+            )
+        try:
+            payload = json.dumps({"ttl_seconds": int(ttl_seconds)}).encode("utf-8")
+            protocol.write_message(
+                MSG_SET_TTL, payload, timeout=timeout, sender="main"
+            )
+            logger.debug(f"Worker {self.worker_id} SET_TTL 请求已发送")
+
+            protocol.wait_for_read(timeout=timeout)
+
+            msg_type, _data = protocol.read_message(
+                timeout=timeout, expected_sender="worker"
+            )
+            return msg_type == MSG_ACK
+
+        except SharedMemoryProtocolError as e:
+            logger.warning(f"发送 SET_TTL 请求失败: {e}")
             return False
 
     def stop(self, timeout: float = 5.0) -> None:

@@ -153,6 +153,29 @@ class OCRServiceBase(ABC):
         """清除所有管道缓存"""
         self._pipelines.clear()
 
+    def release_pipelines(self, heavy_only: bool = True) -> list[str]:
+        """释放管道缓存。heavy_only=True 只释放重管道。
+
+        子类（OCRService 直连 / OCRServiceSubprocess 经 RPC）应重写此方法。
+        基类默认实现仅清空全部缓存。
+
+        Returns:
+            被释放的管道名列表。
+        """
+        names = list(self._pipelines.keys())
+        self.clear_pipelines()
+        return names
+
+    def set_pipeline_ttl(self, ttl_seconds: int) -> bool:
+        """设置重管道 TTL 闲置回收时间。
+
+        子类应重写此方法。基类默认空实现。
+
+        Returns:
+            是否设置成功。
+        """
+        return False
+
     def shutdown(self) -> None:
         """关闭服务，释放资源
 

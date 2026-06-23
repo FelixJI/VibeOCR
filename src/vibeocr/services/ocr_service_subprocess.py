@@ -344,6 +344,45 @@ class OCRServiceSubprocess:
                 pass
         return results
 
+    def release_pipelines(self, heavy_only: bool = True) -> list[str]:
+        """释放管道缓存（经 RPC 下发给 worker）。
+
+        Args:
+            heavy_only: True 只释放重管道，False 释放全部（含 OCR）。
+
+        Returns:
+            被释放的管道名列表。
+        """
+        if not self._initialized:
+            return []
+        try:
+            return self._paddlex_manager.execute(
+                lambda w: w.release_pipelines(heavy_only=heavy_only),
+                timeout=60.0,
+            )
+        except Exception as e:
+            logger.error("release_pipelines 失败: %s", e)
+            return []
+
+    def set_pipeline_ttl(self, ttl_seconds: int) -> bool:
+        """设置重管道 TTL 闲置回收时间（经 RPC 下发给 worker）。
+
+        Args:
+            ttl_seconds: TTL 秒数，0=禁用。
+
+        Returns:
+            是否成功。
+        """
+        if not self._initialized:
+            return False
+        try:
+            return self._paddlex_manager.execute(
+                lambda w: w.set_ttl(ttl_seconds), timeout=30.0
+            )
+        except Exception as e:
+            logger.error("set_pipeline_ttl 失败: %s", e)
+            return False
+
     def _recognize_one_mineru(self, image, options):
         """MinerU 单图识别（远程 HTTP API，复用 recognize 的分流逻辑）。"""
         try:

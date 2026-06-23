@@ -112,6 +112,8 @@ def run_worker(shm_name: str, shm_size: int, use_gpu: bool) -> None:
     MSG_BATCH_CANCEL = MessageType.BATCH_CANCEL
     MSG_BATCH_PROGRESS = MessageType.BATCH_PROGRESS
     MSG_BATCH_FILE_DONE = MessageType.BATCH_FILE_DONE
+    MSG_RELEASE_PIPELINES = MessageType.RELEASE_PIPELINES
+    MSG_SET_TTL = MessageType.SET_TTL
 
     # 连接数据共享内存
     logger.info(f"Worker 正在连接数据共享内存: {shm_name}")
@@ -504,6 +506,44 @@ def run_worker(shm_name: str, shm_size: int, use_gpu: bool) -> None:
                                 )
                     protocol.write_message(MSG_ACK, b"cancelled", sender="worker")
 
+                elif msg_type == MSG_RELEASE_PIPELINES:
+                    # 释放管道缓存
+                    import json
+
+                    try:
+                        payload = json.loads(data.decode("utf-8")) if data else {}
+                        heavy_only = payload.get("heavy_only", True)
+                        released = ocr_service.cache_manager.release(
+                            heavy_only=heavy_only
+                        )
+                        logger.info("[Worker] 释放管道: %s", released)
+                        protocol.write_message(
+                            MSG_ACK,
+                            json.dumps({"released": released}).encode("utf-8"),
+                            sender="worker",
+                        )
+                    except Exception as e:
+                        logger.error("[Worker] 释放管道失败: %s", e)
+                        protocol.write_message(
+                            MSG_ERROR, str(e).encode("utf-8"), sender="worker"
+                        )
+
+                elif msg_type == MSG_SET_TTL:
+                    # 更新 TTL
+                    import json
+
+                    try:
+                        payload = json.loads(data.decode("utf-8")) if data else {}
+                        ttl = int(payload.get("ttl_seconds", 300))
+                        ocr_service.cache_manager.ttl_seconds = ttl
+                        logger.info("[Worker] TTL 更新为 %d 秒", ttl)
+                        protocol.write_message(MSG_ACK, b"ok", sender="worker")
+                    except Exception as e:
+                        logger.error("[Worker] 设置 TTL 失败: %s", e)
+                        protocol.write_message(
+                            MSG_ERROR, str(e).encode("utf-8"), sender="worker"
+                        )
+
                 elif msg_type == MSG_READY:
                     # Worker 不应该读取到自己的 READY 消息
                     # 如果读取到，说明是之前残留的消息，跳过
@@ -527,9 +567,19 @@ def run_worker(shm_name: str, shm_size: int, use_gpu: bool) -> None:
                         f"未知消息类型: {msg_type.decode('ascii', errors='replace')}"
                     )
 
+                # 每次处理完消息后检查闲置管道回收
+                try:
+                    ocr_service.cache_manager.evict_idle()
+                except Exception as ev_err:
+                    logger.debug("[Worker] evict_idle 失败: %s", ev_err)
+
             except SharedMemoryProtocolError as e:
                 if "超时" in str(e):
-                    # 读取超时，继续等待
+                    # 读取超时，顺便检查闲置管道回收
+                    try:
+                        ocr_service.cache_manager.evict_idle()
+                    except Exception as ev_err:
+                        logger.debug("[Worker] evict_idle 失败: %s", ev_err)
                     continue
                 logger.error(f"通信错误: {e}")
                 break
