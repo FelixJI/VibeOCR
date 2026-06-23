@@ -79,3 +79,34 @@ def _read_linux() -> int | None:
     except (OSError, ValueError, IndexError):
         return None
     return None
+
+
+#: CPU 模式每页峰值放大系数（oneDNN 工作区 + 多线程缓冲，比 GPU 大）。
+CPU_AMP_FACTOR = 8
+#: CPU 模式安全系数（RAM 与系统/UI 共享，留更多余量）。
+CPU_SAFETY_FACTOR = 0.3
+#: CPU 模式 batch 上限（低于 GPU，RAM 更紧张）。
+CPU_BATCH_CAP = 6
+
+
+def estimate_cpu_batch_size(free_mb: int, avg_pixels: int) -> int:
+    """按可用 RAM 和平均像素数估算 CPU 批量大小。
+
+    单页峰值（MB）= avg_pixels * 3 字节 * 8× 放大 / 1MB。
+    batch = free * 0.3 / 单页峰值，夹到 [1, 6]。
+
+    Args:
+        free_mb: 可用 RAM（MB）。
+        avg_pixels: 单页平均像素数（width * height）。
+
+    Returns:
+        批量大小，范围 [1, 6]。
+    """
+    if free_mb <= 0 or avg_pixels <= 0:
+        return 1
+    per_page_peak_mb = (avg_pixels * 3 * CPU_AMP_FACTOR) / (1024 * 1024)
+    if per_page_peak_mb <= 0:
+        return 1
+    usable_mb = free_mb * CPU_SAFETY_FACTOR
+    batch = int(usable_mb / per_page_peak_mb)
+    return max(1, min(batch, CPU_BATCH_CAP))
