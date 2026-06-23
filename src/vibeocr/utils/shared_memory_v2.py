@@ -50,6 +50,8 @@ class MessageType(bytes, Enum):
     BATCH_CANCEL = b"BCAN"  # 取消批量处理
     BATCH_PROGRESS = b"BPRG"  # 批量处理进度
     BATCH_FILE_DONE = b"BFDN"  # 批量处理单文件完成（流式）
+    RELEASE_PIPELINES = b"RELZ"  # 释放管道缓存（heavy_only 标志在 payload）
+    SET_TTL = b"STTL"  # 设置 TTL（秒数在 payload）
 
 
 # 头部大小: 消息类型(4) + 数据大小(4)
@@ -89,6 +91,8 @@ MSG_BATCH_RESULT = MessageType.BATCH_RESULT
 MSG_BATCH_CANCEL = MessageType.BATCH_CANCEL
 MSG_BATCH_PROGRESS = MessageType.BATCH_PROGRESS
 MSG_BATCH_FILE_DONE = MessageType.BATCH_FILE_DONE
+MSG_RELEASE_PIPELINES = MessageType.RELEASE_PIPELINES
+MSG_SET_TTL = MessageType.SET_TTL
 
 # 状态常量
 STATE_EMPTY = 0

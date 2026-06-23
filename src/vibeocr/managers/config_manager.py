@@ -144,6 +144,27 @@ class ConfigManager(QObject):
     def preload_pipelines(self) -> list[str]:
         return getattr(self, "_preload_pipelines", [])
 
+    def get_pipeline_ttl_seconds(self) -> int:
+        """重管道 TTL 闲置回收时间（秒），默认 300，0=禁用。"""
+        data = self._load_json("app_settings.json", {})
+        return int(data.get("pipeline_ttl_seconds", 300))
+
+    def set_pipeline_ttl_seconds(self, ttl: int) -> bool:
+        data = self._load_json("app_settings.json", {})
+        data["pipeline_ttl_seconds"] = max(0, int(ttl))
+        return self._save_json("app_settings.json", data)
+
+    def get_max_heavy_pipelines(self) -> int | None:
+        """手动覆盖的重管道并存上限，None=按显存自动分档。"""
+        data = self._load_json("app_settings.json", {})
+        val = data.get("max_heavy_pipelines")
+        return int(val) if val is not None else None
+
+    def set_max_heavy_pipelines(self, value: int | None) -> bool:
+        data = self._load_json("app_settings.json", {})
+        data["max_heavy_pipelines"] = value
+        return self._save_json("app_settings.json", data)
+
     def get_export_settings(self) -> dict:
         return self._load_json(
             "export_settings.json",
