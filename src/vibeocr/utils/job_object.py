@@ -138,8 +138,38 @@ class JobObjectGuard:
         return self._assign_pid(popen.pid)
 
     def _assign_pid(self, pid: int) -> bool:
-        """通过 pid 绑定进程（Windows）。Task 3 实现。"""
-        return False
+        """通过 pid 绑定进程（Windows）。
+
+        OpenProcess → AssignProcessToJobObject → CloseHandle(子进程句柄)。
+        赋值后 Job 已持有引用，子进程句柄即可关闭。
+        """
+        try:
+            kernel32 = _get_kernel32()
+            # PROCESS_SET_QUOTA | PROCESS_TERMINATE
+            proc_handle = kernel32.OpenProcess(
+                PROCESS_SET_QUOTA | PROCESS_TERMINATE, False, pid
+            )
+            if not proc_handle:
+                logger.warning(
+                    f"[JobObject] OpenProcess(pid={pid}) 失败，子进程未绑定"
+                )
+                return False
+
+            try:
+                ok = kernel32.AssignProcessToJobObject(self._handle, proc_handle)
+                if not ok:
+                    logger.warning(
+                        f"[JobObject] AssignProcessToJobObject(pid={pid}) 失败"
+                    )
+                    return False
+                logger.debug(f"[JobObject] 已绑定进程 pid={pid}")
+                return True
+            finally:
+                # 子进程句柄用完即关；Job 已持有引用
+                kernel32.CloseHandle(proc_handle)
+        except Exception as e:
+            logger.warning(f"[JobObject] 绑定进程异常: {e}，降级")
+            return False
 
     def close(self) -> None:
         """关闭 Job 句柄。幂等。"""

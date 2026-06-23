@@ -118,3 +118,87 @@ class TestJobObjectGuardWindowsCreate:
             guard = JobObjectGuard()
 
         assert guard._handle is None
+
+
+class TestJobObjectGuardWindowsAssign:
+    """Windows 平台：进程绑定路径。"""
+
+    def _make_guard_with_handle(self, handle=777):
+        """构造一个已成功创建（_handle 非 None）的 guard，跳过 _create_job。"""
+        with (
+            patch("vibeocr.utils.job_object._IS_WINDOWS", True),
+            patch("vibeocr.utils.job_object.sys.platform", "win32"),
+            patch.object(
+                JobObjectGuard,
+                "_create_job",
+                lambda self: setattr(self, "_handle", handle),
+            ),
+        ):
+            return JobObjectGuard()
+
+    @patch("vibeocr.utils.job_object._IS_WINDOWS", True)
+    @patch("vibeocr.utils.job_object.sys.platform", "win32")
+    def test_assign_success_calls_open_assign_closehandle(self):
+        """绑定成功：OpenProcess + AssignProcessToJobObject + CloseHandle(子进程句柄)。"""
+        guard = self._make_guard_with_handle(handle=777)
+
+        fake_kernel = MagicMock()
+        fake_kernel.OpenProcess.return_value = 555  # 子进程句柄
+        fake_kernel.AssignProcessToJobObject.return_value = 1  # 成功
+
+        popen = MagicMock(spec=subprocess.Popen)
+        popen.pid = 1234
+
+        with patch(
+            "vibeocr.utils.job_object.ctypes.windll",
+            MagicMock(kernel32=fake_kernel),
+        ):
+            result = guard.assign_from_popen(popen)
+
+        assert result is True
+        fake_kernel.OpenProcess.assert_called_once()
+        fake_kernel.AssignProcessToJobObject.assert_called_once_with(777, 555)
+        fake_kernel.CloseHandle.assert_called_once_with(555)  # 关子进程句柄，非 Job 句柄
+
+    @patch("vibeocr.utils.job_object._IS_WINDOWS", True)
+    @patch("vibeocr.utils.job_object.sys.platform", "win32")
+    def test_assign_openprocess_failure_returns_false(self):
+        """OpenProcess 返回 0：返回 False，记 warning，不抛异常。"""
+        guard = self._make_guard_with_handle(handle=777)
+
+        fake_kernel = MagicMock()
+        fake_kernel.OpenProcess.return_value = 0  # 失败
+
+        popen = MagicMock(spec=subprocess.Popen)
+        popen.pid = 1234
+
+        with patch(
+            "vibeocr.utils.job_object.ctypes.windll",
+            MagicMock(kernel32=fake_kernel),
+        ):
+            result = guard.assign_from_popen(popen)
+
+        assert result is False
+        fake_kernel.AssignProcessToJobObject.assert_not_called()
+
+    @patch("vibeocr.utils.job_object._IS_WINDOWS", True)
+    @patch("vibeocr.utils.job_object.sys.platform", "win32")
+    def test_assign_assignprocess_failure_returns_false(self):
+        """AssignProcessToJobObject 返回 0：关子进程句柄，返回 False，不抛异常。"""
+        guard = self._make_guard_with_handle(handle=777)
+
+        fake_kernel = MagicMock()
+        fake_kernel.OpenProcess.return_value = 555
+        fake_kernel.AssignProcessToJobObject.return_value = 0  # 失败
+
+        popen = MagicMock(spec=subprocess.Popen)
+        popen.pid = 1234
+
+        with patch(
+            "vibeocr.utils.job_object.ctypes.windll",
+            MagicMock(kernel32=fake_kernel),
+        ):
+            result = guard.assign_from_popen(popen)
+
+        assert result is False
+        fake_kernel.CloseHandle.assert_called_once_with(555)  # 仍清理子进程句柄
