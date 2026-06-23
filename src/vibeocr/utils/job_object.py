@@ -172,10 +172,20 @@ class JobObjectGuard:
             return False
 
     def close(self) -> None:
-        """关闭 Job 句柄。幂等。"""
+        """关闭 Job 句柄。最后一个句柄关闭时内核终止 Job 内所有进程。
+
+        幂等：多次调用安全。
+        """
         if not _IS_WINDOWS or self._handle is None:
             return
-        # Windows 实现在 Task 4 补充
+        try:
+            kernel32 = _get_kernel32()
+            kernel32.CloseHandle(self._handle)
+            logger.debug(f"[JobObject] 已关闭 Job 句柄 (name={self._name})")
+        except Exception as e:
+            logger.warning(f"[JobObject] 关闭 Job 句柄异常: {e}")
+        finally:
+            self._handle = None
 
     def __enter__(self) -> "JobObjectGuard":
         return self

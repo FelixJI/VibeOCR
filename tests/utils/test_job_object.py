@@ -202,3 +202,69 @@ class TestJobObjectGuardWindowsAssign:
 
         assert result is False
         fake_kernel.CloseHandle.assert_called_once_with(555)  # 仍清理子进程句柄
+
+
+class TestJobObjectGuardWindowsClose:
+    """Windows 平台：句柄关闭与幂等。"""
+
+    def _make_guard_with_handle(self, handle=666):
+        with (
+            patch("vibeocr.utils.job_object._IS_WINDOWS", True),
+            patch("vibeocr.utils.job_object.sys.platform", "win32"),
+            patch.object(
+                JobObjectGuard,
+                "_create_job",
+                lambda self: setattr(self, "_handle", handle),
+            ),
+        ):
+            return JobObjectGuard()
+
+    @patch("vibeocr.utils.job_object._IS_WINDOWS", True)
+    @patch("vibeocr.utils.job_object.sys.platform", "win32")
+    def test_close_calls_closehandle_and_clears(self):
+        """close 调用 CloseHandle 并置 _handle=None。"""
+        guard = self._make_guard_with_handle(handle=666)
+        fake_kernel = MagicMock()
+        with patch(
+            "vibeocr.utils.job_object.ctypes.windll",
+            MagicMock(kernel32=fake_kernel),
+        ):
+            guard.close()
+        fake_kernel.CloseHandle.assert_called_once_with(666)
+        assert guard._handle is None
+
+    @patch("vibeocr.utils.job_object._IS_WINDOWS", True)
+    @patch("vibeocr.utils.job_object.sys.platform", "win32")
+    def test_close_idempotent(self):
+        """close 幂等：二次调用不重复 CloseHandle。"""
+        guard = self._make_guard_with_handle(handle=666)
+        fake_kernel = MagicMock()
+        with patch(
+            "vibeocr.utils.job_object.ctypes.windll",
+            MagicMock(kernel32=fake_kernel),
+        ):
+            guard.close()
+            guard.close()  # 幂等
+        fake_kernel.CloseHandle.assert_called_once_with(666)
+        assert guard._handle is None
+
+    @patch("vibeocr.utils.job_object._IS_WINDOWS", True)
+    @patch("vibeocr.utils.job_object.sys.platform", "win32")
+    def test_context_manager_closes_on_exit(self):
+        """with 语句退出时触发 close。"""
+        fake_kernel = MagicMock()
+        with (
+            patch(
+                "vibeocr.utils.job_object.ctypes.windll",
+                MagicMock(kernel32=fake_kernel),
+            ),
+            patch.object(
+                JobObjectGuard,
+                "_create_job",
+                lambda self: setattr(self, "_handle", 333),
+            ),
+        ):
+            with JobObjectGuard() as guard:
+                assert guard._handle == 333
+            fake_kernel.CloseHandle.assert_called_once_with(333)
+        assert guard._handle is None
