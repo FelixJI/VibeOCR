@@ -19,6 +19,35 @@ def _create_test_pdf(path: Path, num_pages: int = 3) -> Path:
     return path
 
 
+def _create_scanned_pdf(path: Path, width: int = 612, height: int = 792) -> Path:
+    """创建单页扫描件 PDF（整页是灰底图，无内嵌文字层）。"""
+    import numpy as np
+
+    doc = fitz.open()
+    page = doc.new_page(width=width, height=height)
+    img = np.ones((height, width, 3), dtype=np.uint8) * 240
+    cs = fitz.Colorspace(fitz.CS_RGB)
+    pixmap = fitz.Pixmap(cs, width, height, img.tobytes(), 0)
+    page.insert_image(fitz.Rect(0, 0, width, height), pixmap=pixmap)
+    doc.save(str(path))
+    doc.close()
+    return path
+
+
+def _make_ocr_result(*blocks_texts, angle=0):
+    """便捷构造 OCRResult（多个 (text, bbox) 对，归一化 [0,1000] bbox）。"""
+    from vibeocr.models.ocr_result import OCRResult, TextBlock
+
+    text_blocks = []
+    for text, bbox in blocks_texts:
+        text_blocks.append(TextBlock(text=text, score=0.95, bbox=bbox))
+    return OCRResult(
+        raw_text="\n".join(t for t, _ in blocks_texts),
+        text_blocks=text_blocks,
+        preproc_angle=angle,
+    )
+
+
 @pytest.fixture
 def test_pdf(tmp_path):
     return _create_test_pdf(tmp_path / "test.pdf", num_pages=3)
@@ -476,4 +505,166 @@ class TestPdfServiceTextLayer:
 
         page = doc[0]
         assert len(page.get_images(full=True)) == 1
+        doc.close()
+
+
+class TestPdfServiceOcrBlocksCache:
+    """OCR 原始块缓存（ocr_text_blocks）—— 预览/编辑/重写的唯一信源。
+
+    核心问题：add_text_layer 写入后曾用 detect_text_layers 重读，
+    导致 PyMuPDF 把 OCR 的细粒度块合并成粗块。现改为缓存 OCR 原始块。
+    """
+
+    def test_add_text_layer_preserves_ocr_blocks(self, tmp_path):
+        """写入后 PdfPageInfo.ocr_text_blocks 等于 OCR 原始块（不被合并）。"""
+        path = _create_scanned_pdf(tmp_path / "scan.pdf")
+        doc, pdf_doc = PdfService.open_doc(str(path))
+
+        ocr_blocks = [
+            ("供应商：徐州中车", (50.0, 50.0, 300.0, 100.0)),
+            ("客户：苏州中车", (50.0, 150.0, 300.0, 200.0)),
+        ]
+        result = _make_ocr_result(*ocr_blocks)
+        written, skipped = PdfService.add_text_layer(doc, pdf_doc, 0, result)
+
+        assert written == 2
+        info = pdf_doc.pages[0]
+        assert info.has_text_layer is True
+        # 关键：缓存的块数 == OCR 原始块数（2），不是 PyMuPDF 重读后可能的合并数
+        assert len(info.ocr_text_blocks) == 2
+        assert info.ocr_text_blocks[0].text == "供应商：徐州中车"
+        assert info.ocr_text_blocks[1].text == "客户：苏州中车"
+        doc.close()
+
+    def test_add_text_layer_preserves_preproc_angle(self, tmp_path):
+        """OCR 预处理旋转角度随块缓存，重写时坐标逆旋转才不会错位。"""
+        path = _create_scanned_pdf(tmp_path / "scan.pdf")
+        doc, pdf_doc = PdfService.open_doc(str(path))
+
+        result = _make_ocr_result(("Hello", (400.0, 100.0, 600.0, 350.0)), angle=90)
+        PdfService.add_text_layer(doc, pdf_doc, 0, result)
+
+        assert pdf_doc.pages[0].ocr_preproc_angle == 90
+        doc.close()
+
+    def test_add_text_layer_ocr_blocks_survive_pymupdf_merge(self, tmp_path):
+        """即使 PyMuPDF get_text 把多块合并，ocr_text_blocks 仍是细粒度。
+
+        这是用户报告问题的根因：detect_text_layers 重读会合并块，
+        导致预览显示合并后的粗块。ocr_text_blocks 必须保持原始细粒度。
+        """
+        path = _create_scanned_pdf(tmp_path / "scan.pdf")
+        doc, pdf_doc = PdfService.open_doc(str(path))
+
+        # 两行紧挨的文字（PyMuPDF 可能合并为一个 block）
+        result = _make_ocr_result(
+            ("第一行", (100.0, 100.0, 500.0, 130.0)),
+            ("第二行", (100.0, 135.0, 500.0, 165.0)),
+        )
+        PdfService.add_text_layer(doc, pdf_doc, 0, result)
+
+        info = pdf_doc.pages[0]
+        # OCR 原始块仍是 2 个（细粒度）
+        assert len(info.ocr_text_blocks) == 2
+        # detect_text_layers 重读可能合并成 1 个（粗粒度）—— 这正是问题
+        # 但 ocr_text_blocks 不受影响
+        doc.close()
+
+
+class TestPdfServiceRewriteTextLayer:
+    """rewrite_text_layer —— 保存时按编辑后的块全量重写整页文字层。"""
+
+    def test_rewrite_after_edit_updates_text(self, tmp_path):
+        """写入 → 编辑某块 → rewrite → PDF 文字层包含编辑后文字。"""
+        path = _create_scanned_pdf(tmp_path / "scan.pdf")
+        doc, pdf_doc = PdfService.open_doc(str(path))
+
+        result = _make_ocr_result(
+            ("签回联", (50.0, 50.0, 200.0, 120.0)),
+            ("505710786", (50.0, 150.0, 700.0, 220.0)),  # 宽框容纳长数字
+        )
+        PdfService.add_text_layer(doc, pdf_doc, 0, result)
+        assert "签回联" in doc[0].get_text()
+
+        # 模拟双击改字：把 "签回联" 改成 "签收联"
+        info = pdf_doc.pages[0]
+        info.ocr_text_blocks[0].text = "签收联"
+        info.ocr_text_blocks[0].is_manually_edited = True
+
+        # rewrite：删除旧文字层，用编辑后的块重写
+        written, skipped = PdfService.rewrite_text_layer(
+            doc, pdf_doc, 0,
+            info.ocr_text_blocks, info.ocr_preproc_angle,
+        )
+        assert written == 2
+        # 旧文字消失，新文字出现
+        assert "签回联" not in doc[0].get_text()
+        assert "签收联" in doc[0].get_text()
+        assert "505710786" in doc[0].get_text()
+        doc.close()
+
+    def test_rewrite_preserves_block_count(self, tmp_path):
+        """rewrite 后 ocr_text_blocks 不变（仍是细粒度）。"""
+        path = _create_scanned_pdf(tmp_path / "scan.pdf")
+        doc, pdf_doc = PdfService.open_doc(str(path))
+
+        result = _make_ocr_result(
+            ("A", (100.0, 100.0, 200.0, 150.0)),
+            ("B", (100.0, 200.0, 200.0, 250.0)),
+            ("C", (100.0, 300.0, 200.0, 350.0)),
+        )
+        PdfService.add_text_layer(doc, pdf_doc, 0, result)
+        info = pdf_doc.pages[0]
+        blocks_before = list(info.ocr_text_blocks)
+
+        PdfService.rewrite_text_layer(
+            doc, pdf_doc, 0, info.ocr_text_blocks, info.ocr_preproc_angle,
+        )
+        # rewrite 后块缓存仍完整
+        assert len(info.ocr_text_blocks) == len(blocks_before)
+        doc.close()
+
+    def test_rewrite_with_rotation_angle(self, tmp_path):
+        """带 preproc_angle 的 rewrite 坐标正确（不超出页面边界）。"""
+        path = _create_scanned_pdf(tmp_path / "scan.pdf")
+        doc, pdf_doc = PdfService.open_doc(str(path))
+
+        result = _make_ocr_result(
+            ("Rotated", (400.0, 100.0, 600.0, 350.0)), angle=90,
+        )
+        PdfService.add_text_layer(doc, pdf_doc, 0, result)
+        info = pdf_doc.pages[0]
+
+        info.ocr_text_blocks[0].text = "Rotated!"
+        PdfService.rewrite_text_layer(
+            doc, pdf_doc, 0, info.ocr_text_blocks, info.ocr_preproc_angle,
+        )
+
+        # 重写后文字仍在页面内
+        page_rect = doc[0].rect
+        for layer in PdfService.detect_text_layers(doc, 0):
+            lr = fitz.Rect(layer.bbox)
+            assert lr.x0 >= -1
+            assert lr.y0 >= -1
+            assert lr.x1 <= page_rect.width + 1
+            assert lr.y1 <= page_rect.height + 1
+        doc.close()
+
+
+class TestPdfServiceDeleteClearsOcrBlocks:
+    """删除文字层后必须清空 ocr_text_blocks 缓存。"""
+
+    def test_delete_clears_ocr_blocks(self, tmp_path):
+        path = _create_scanned_pdf(tmp_path / "scan.pdf")
+        doc, pdf_doc = PdfService.open_doc(str(path))
+
+        result = _make_ocr_result(("Hello", (100.0, 100.0, 300.0, 150.0)))
+        PdfService.add_text_layer(doc, pdf_doc, 0, result)
+        assert len(pdf_doc.pages[0].ocr_text_blocks) == 1
+
+        PdfService.delete_text_layers(doc, pdf_doc, 0)
+        info = pdf_doc.pages[0]
+        assert info.has_text_layer is False
+        assert info.ocr_text_blocks == []
+        assert info.ocr_preproc_angle == 0
         doc.close()

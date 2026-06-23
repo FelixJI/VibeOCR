@@ -77,6 +77,7 @@ class PdfTab(QWidget):
 
         # 内嵌预览区（默认折叠为小尺寸，按需拖动展开）
         self._preview_canvas = PreviewCanvas()
+        self._preview_canvas.block_text_edited.connect(self._on_block_text_edited)
         preview_container = QScrollArea()
         preview_container.setWidget(self._preview_canvas)
         preview_container.setWidgetResizable(False)
@@ -364,17 +365,32 @@ class PdfTab(QWidget):
         self._show_embedded_preview()
 
     def _show_embedded_preview(self) -> None:
-        """在内嵌预览画布显示当前页文字层高亮（render_mode=3 隐形的可视化）。"""
+        """在内嵌预览画布显示当前页文字层高亮。
+
+        优先用 OCR 原始块（细粒度，可双击编辑），无 OCR 块时回退到
+        text_layers（PyMuPDF 合并后的粗块，仅可视化）。
+        """
         session = self._session_mgr.active_session
         if session is None:
             return
         indices = self._get_selected_page_indices()
         page_idx = indices[0] if indices else 0
         page_info = session.pdf_document.get_page(page_idx)
-        if page_info is None or not page_info.text_layers:
+        if page_info is None:
             return
         with session.doc_lock:
             pixmap = PdfService.render_page(session.doc, page_idx, dpi=150)
+
+        # 优先：OCR 原始块（细粒度 + 双击改字）
+        if page_info.ocr_text_blocks:
+            self._preview_canvas.set_ocr_blocks(
+                page_idx, page_info.ocr_text_blocks, pixmap
+            )
+            return
+        # 回退：text_layers（扫描件检测或旧版无 OCR 块缓存时）
+        if not page_info.text_layers:
+            return
+        with session.doc_lock:
             page_rect = session.doc[page_idx].rect
         self._preview_canvas.set_pixmap(pixmap)
         self._preview_canvas.set_highlight_layers(
@@ -383,6 +399,20 @@ class PdfTab(QWidget):
             page_rect=page_rect,
             source="pdf",
         )
+
+    def _on_block_text_edited(
+        self, page_index: int, block_index: int, new_text: str
+    ) -> None:
+        """预览画布双击改字回调：更新内存模型并刷新预览。
+
+        实际写回 PDF 文字层在用户点'保存'时由 rewrite_modified_pages 执行。
+        """
+        if self._session_mgr.update_page_block_text(
+            page_index, block_index, new_text
+        ):
+            # 刷新预览（块文字/颜色变了，重画 overlay）
+            self._show_embedded_preview()
+            self._update_layer_status()
 
     # ---- UI helpers -------------------------------------------------
 
@@ -453,9 +483,13 @@ class PdfTab(QWidget):
         lines = []
         for p in session.pdf_document.pages:
             if p.has_text_layer:
+                # 优先显示 OCR 原始块数（细粒度），无则用 text_layers 数
+                block_count = (
+                    len(p.ocr_text_blocks) if p.ocr_text_blocks else len(p.text_layers)
+                )
                 lines.append(
                     f"第{p.page_index + 1}页: 已添加文字层"
-                    f"({len(p.text_layers)} 个文本块)"
+                    f"({block_count} 个文本块)"
                 )
             else:
                 status = "扫描件" if p.is_scanned else "无文字层"
@@ -517,6 +551,8 @@ class PdfTab(QWidget):
         if session is None:
             return
         try:
+            # 保存前：把编辑过的 OCR 块重写回 PDF 文字层（单一信源 → 文件）
+            self._session_mgr.rewrite_modified_pages()
             with session.doc_lock:
                 PdfService.save(session.doc, session.pdf_document)
         except Exception as e:
@@ -532,6 +568,8 @@ class PdfTab(QWidget):
         if not path:
             return
         try:
+            # 另存为同样先重写编辑过的块
+            self._session_mgr.rewrite_modified_pages()
             with session.doc_lock:
                 PdfService.save(session.doc, session.pdf_document, path)
         except Exception as e:
@@ -803,27 +841,38 @@ class PdfTab(QWidget):
             return
         page_idx = indices[0]
         page_info = session.pdf_document.get_page(page_idx)
-        if page_info is None or not page_info.text_layers:
+        if page_info is None or not page_info.has_text_layer:
             QMessageBox.information(self, "预览文字层", "选中页面无文字层。")
             return
 
         with session.doc_lock:
             pixmap = PdfService.render_page(session.doc, page_idx, dpi=150)
-            page_rect = session.doc[page_idx].rect
         if self._preview_window is None:
             self._preview_window = PdfPreviewWindow()
+            # 连接编辑信号（只连一次）
+            self._preview_window.block_text_edited.connect(self._on_block_text_edited)
         assert self._preview_window is not None
+        # 块数：优先 OCR 原始块（细粒度）
+        block_count = (
+            len(page_info.ocr_text_blocks) if page_info.ocr_text_blocks
+            else len(page_info.text_layers)
+        )
         self._preview_window.setWindowTitle(
-            f"文字层预览 — 第{page_idx + 1}页 ({len(page_info.text_layers)}个文字块)"
+            f"文字层预览 — 第{page_idx + 1}页 ({block_count}个文字块)"
         )
-        # 使用公共 API，不再直接访问 _canvas
-        self._preview_window.set_highlight(
-            pixmap,
-            page_info.text_layers,
-            render_dpi=150,
-            page_rect=page_rect,
-            source="pdf",
-        )
+        # 优先 OCR 原始块（细粒度 + 双击改字），回退 text_layers
+        if page_info.ocr_text_blocks:
+            self._preview_window.set_ocr_blocks(page_idx, page_info.ocr_text_blocks, pixmap)
+        else:
+            with session.doc_lock:
+                page_rect = session.doc[page_idx].rect
+            self._preview_window.set_highlight(
+                pixmap,
+                page_info.text_layers,
+                render_dpi=150,
+                page_rect=page_rect,
+                source="pdf",
+            )
         self._preview_window.show()
         self._preview_window.raise_()
 
