@@ -207,6 +207,51 @@ class Ui_MainWindowWidget:
 
         self.pageModelLayout.addWidget(self.groupPreload)
 
+        # --- 重管道生命周期管理（TTL + 释放按钮）---
+        self.groupPipelineCache = QGroupBox(self.pageModelManagement)
+        self.groupPipelineCache.setObjectName("groupPipelineCache")
+        self.pipelineCacheLayout = QVBoxLayout(self.groupPipelineCache)
+        self.pipelineCacheLayout.setSpacing(8)
+        self.pipelineCacheLayout.setObjectName("pipelineCacheLayout")
+
+        # TTL 设置行
+        self.ttlLayout = QHBoxLayout()
+        self.ttlLayout.setSpacing(8)
+        self.ttlLayout.setObjectName("ttlLayout")
+        self.labelPipelineTtl = QLabel(self.groupPipelineCache)
+        self.labelPipelineTtl.setObjectName("labelPipelineTtl")
+        self.ttlLayout.addWidget(self.labelPipelineTtl)
+        self.spinPipelineTtl = QSpinBox(self.groupPipelineCache)
+        self.spinPipelineTtl.setObjectName("spinPipelineTtl")
+        self.spinPipelineTtl.setMinimum(1)
+        self.spinPipelineTtl.setMaximum(60)
+        self.spinPipelineTtl.setValue(5)
+        self.spinPipelineTtl.setSuffix(" 分钟")
+        self.ttlLayout.addWidget(self.spinPipelineTtl)
+        self.ttlLayout.addStretch()
+        self.pipelineCacheLayout.addLayout(self.ttlLayout)
+
+        # 释放按钮行
+        self.releaseButtonsLayout = QHBoxLayout()
+        self.releaseButtonsLayout.setSpacing(8)
+        self.releaseButtonsLayout.setObjectName("releaseButtonsLayout")
+        self.btnReleaseHeavy = QPushButton(self.groupPipelineCache)
+        self.btnReleaseHeavy.setObjectName("btnReleaseHeavy")
+        self.releaseButtonsLayout.addWidget(self.btnReleaseHeavy)
+        self.btnReleaseAll = QPushButton(self.groupPipelineCache)
+        self.btnReleaseAll.setObjectName("btnReleaseAll")
+        self.releaseButtonsLayout.addWidget(self.btnReleaseAll)
+        self.releaseButtonsLayout.addStretch()
+        self.pipelineCacheLayout.addLayout(self.releaseButtonsLayout)
+
+        # 状态标签
+        self.labelReleaseStatus = QLabel(self.groupPipelineCache)
+        self.labelReleaseStatus.setObjectName("labelReleaseStatus")
+        self.labelReleaseStatus.setWordWrap(True)
+        self.pipelineCacheLayout.addWidget(self.labelReleaseStatus)
+
+        self.pageModelLayout.addWidget(self.groupPipelineCache)
+
         self.groupCache = QGroupBox(self.pageModelManagement)
         self.groupCache.setObjectName("groupCache")
         self.cacheLayout = QVBoxLayout(self.groupCache)
@@ -482,6 +527,31 @@ class Ui_MainWindowWidget:
         self.labelPreloadStatus.setText(
             QCoreApplication.translate(
                 "MainWindowWidget", "\u5c1a\u672a\u9884\u52a0\u8f7d", None
+            )
+        )
+        self.groupPipelineCache.setTitle(
+            QCoreApplication.translate(
+                "MainWindowWidget", "\u663e\u5b58/\u5185\u5b58\u7ba1\u7406", None
+            )
+        )
+        self.labelPipelineTtl.setText(
+            QCoreApplication.translate(
+                "MainWindowWidget", "\u91cd\u7ba1\u9053\u95f2\u7f6e\u56de\u6536", None
+            )
+        )
+        self.btnReleaseHeavy.setText(
+            QCoreApplication.translate(
+                "MainWindowWidget", "\u91ca\u653e\u91cd\u7ba1\u9053", None
+            )
+        )
+        self.btnReleaseAll.setText(
+            QCoreApplication.translate(
+                "MainWindowWidget", "\u5168\u90e8\u91ca\u653e", None
+            )
+        )
+        self.labelReleaseStatus.setText(
+            QCoreApplication.translate(
+                "MainWindowWidget", "\u5c31\u7eea", None
             )
         )
         self.groupCache.setTitle(

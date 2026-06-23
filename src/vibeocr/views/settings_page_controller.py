@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSizePolicy,
     QSpacerItem,
+    QSpinBox,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
@@ -79,6 +80,21 @@ class SettingsPageController:
         btn_clear_cache = self._ui.findChild(QPushButton, "btnClearCache")
         if btn_clear_cache:
             btn_clear_cache.clicked.connect(self._on_clear_cache_clicked)
+
+        # --- 管道缓存生命周期管理 ---
+        spin_ttl = self._ui.findChild(QSpinBox, "spinPipelineTtl")
+        if spin_ttl:
+            spin_ttl.valueChanged.connect(self._on_pipeline_ttl_changed)
+
+        btn_release_heavy = self._ui.findChild(QPushButton, "btnReleaseHeavy")
+        if btn_release_heavy:
+            btn_release_heavy.clicked.connect(self._on_release_heavy_clicked)
+
+        btn_release_all = self._ui.findChild(QPushButton, "btnReleaseAll")
+        if btn_release_all:
+            btn_release_all.clicked.connect(self._on_release_all_clicked)
+
+        self._restore_pipeline_ttl_state()
 
         self._init_screenshot_options(nav_list, stacked)
         self._init_pdf_options(nav_list, stacked)
@@ -552,3 +568,127 @@ class SettingsPageController:
                     label.setText(f"缓存有效: {info}")
                 else:
                     label.setText("无有效缓存")
+
+    # --- 管道缓存生命周期管理 ---
+
+    def _restore_pipeline_ttl_state(self) -> None:
+        """从配置恢复 TTL spin 值。"""
+        from vibeocr.managers.config_manager import ConfigManager
+
+        spin = self._ui.findChild(QSpinBox, "spinPipelineTtl")
+        if spin:
+            ttl_sec = ConfigManager.instance().get_pipeline_ttl_seconds()
+            spin.blockSignals(True)
+            spin.setValue(max(1, ttl_sec // 60))  # 秒转分钟
+            spin.blockSignals(False)
+
+    def _on_pipeline_ttl_changed(self, minutes: int) -> None:
+        """TTL spin 变化 → 保存配置 + 通知 worker。"""
+        from vibeocr.managers.config_manager import ConfigManager
+
+        ttl_sec = minutes * 60
+        ConfigManager.instance().set_pipeline_ttl_seconds(ttl_sec)
+        if self._subprocess_manager and self._subprocess_manager.is_ready:
+            try:
+                self._subprocess_manager.service.set_pipeline_ttl(ttl_sec)
+            except Exception as e:
+                logger.warning("[设置] 通知 worker TTL 更新失败: %s", e)
+
+    def _on_release_heavy_clicked(self) -> None:
+        """释放重管道按钮。"""
+        self._release_pipelines(heavy_only=True)
+
+    def _on_release_all_clicked(self) -> None:
+        """全部释放按钮。"""
+        self._release_pipelines(heavy_only=False)
+
+    def _release_pipelines(self, heavy_only: bool) -> None:
+        """执行释放（后台线程，照搬 preload 模式）。"""
+        if not self._subprocess_manager or not getattr(
+            self._subprocess_manager, "is_ready", False
+        ):
+            QMessageBox.warning(None, "无法释放", "OCR 服务尚未就绪。")
+            return
+
+        label = "重管道" if heavy_only else "全部管道"
+        reply = QMessageBox.question(
+            None,
+            "确认释放",
+            f"确定要释放{label}吗？正在进行的任务将在当前批次完成后受影响。",
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        for name in ("btnReleaseHeavy", "btnReleaseAll"):
+            btn = self._ui.findChild(QPushButton, name)
+            if btn:
+                btn.setEnabled(False)
+        self._update_release_status(f"正在释放{label}...")
+
+        from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal
+
+        class _ReleaseSignals(QObject):
+            finished = Signal(list)
+            error = Signal(str)
+
+        class ReleaseTask(QRunnable):
+            def __init__(self, service, heavy_only, signals):
+                super().__init__()
+                self._service = service
+                self._heavy_only = heavy_only
+                self._signals = signals
+
+            def run(self):
+                try:
+                    released = self._service.release_pipelines(
+                        heavy_only=self._heavy_only
+                    )
+                    # MinerU 在主进程独立管理，单独释放
+                    try:
+                        from vibeocr.services.mineru_service import MinerUService
+
+                        if MinerUService._api_process is not None:
+                            MinerUService().shutdown()
+                            released = [*released, "MinerU"]
+                    except Exception:
+                        pass
+                    self._signals.finished.emit(released)
+                except Exception as e:
+                    self._signals.error.emit(str(e))
+
+        signals = _ReleaseSignals()
+        signals.finished.connect(lambda r: self._on_release_finished(r, heavy_only))
+        signals.error.connect(self._on_release_error)
+
+        task = ReleaseTask(
+            self._subprocess_manager.service, heavy_only, signals
+        )
+        QThreadPool.globalInstance().start(task)
+
+    def _on_release_finished(self, released: list, heavy_only: bool) -> None:
+        """释放完成回调（主线程）。"""
+        for name in ("btnReleaseHeavy", "btnReleaseAll"):
+            btn = self._ui.findChild(QPushButton, name)
+            if btn:
+                btn.setEnabled(True)
+        label = "重管道" if heavy_only else "全部"
+        if released:
+            self._update_release_status(
+                f"已释放{label}管道: {', '.join(released)}"
+            )
+        else:
+            self._update_release_status(f"没有需要释放的{label}管道")
+
+    def _on_release_error(self, error: str) -> None:
+        """释放失败回调。"""
+        for name in ("btnReleaseHeavy", "btnReleaseAll"):
+            btn = self._ui.findChild(QPushButton, name)
+            if btn:
+                btn.setEnabled(True)
+        self._update_release_status(f"释放失败: {error}")
+
+    def _update_release_status(self, status: str) -> None:
+        """更新释放状态标签。"""
+        label = self._ui.findChild(QLabel, "labelReleaseStatus")
+        if label:
+            label.setText(status)

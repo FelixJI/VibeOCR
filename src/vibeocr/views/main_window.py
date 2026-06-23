@@ -563,9 +563,18 @@ class MainWindow(QMainWindow):
         if not self._subprocess_manager.is_ready:
             return
 
+        # 下发用户配置的 TTL 到 worker（无论是否预加载）
+        from vibeocr.managers.config_manager import ConfigManager
+
+        try:
+            ttl = ConfigManager.instance().get_pipeline_ttl_seconds()
+            self._subprocess_manager.service.set_pipeline_ttl(ttl)
+            logging.debug("[子进程预加载] 已下发 TTL=%d 到 worker", ttl)
+        except Exception as e:
+            logging.warning("[子进程预加载] 下发 TTL 失败: %s", e)
+
         # 获取用户配置的预加载管道
         from vibeocr.core.pipelines import OCRPipeline
-        from vibeocr.managers.config_manager import ConfigManager
 
         cm = ConfigManager.instance()
         if not cm.get_preload_enabled():
