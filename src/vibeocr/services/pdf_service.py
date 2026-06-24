@@ -15,6 +15,7 @@ import numpy as np
 from PySide6.QtGui import QImage, QPixmap
 
 from vibeocr.models.pdf_document import PdfDocument, PdfPageInfo, TextLayerInfo
+from vibeocr.utils.cjk_font_resolver import _CJK_RESOLVER
 
 logger = logging.getLogger(__name__)
 
@@ -374,6 +375,23 @@ class PdfService:
         page = doc[page_index]
         page_rect = page.rect
 
+        # 收集本页所有字符，解析子集字体（探测失败则 None，回退 china-s）。
+        # 子集字体嵌入后 PyMuPDF 自动生成 ToUnicode CMap，使文字层在所有
+        # 主流阅读器可搜索/复制（china-s 依赖阅读器自带 Adobe GB1 CMap，脆弱）。
+        #
+        # fontname 必须随子集字体变化：PyMuPDF 按名字缓存字体资源，同一页用
+        # 相同名字插入不同 fontfile 时会复用第一个（缺字写入 \x00）。用路径
+        # 的 md5 前 4 字节派生名字，保证不同字符集的子集不冲突（add→rewrite
+        # 同页场景），且跨进程稳定。
+        import hashlib
+
+        all_chars = "".join(b.text for b in text_blocks if b.text)
+        font_path = _CJK_RESOLVER.resolve(all_chars)
+        if font_path is not None:
+            fontname = "F" + hashlib.md5(font_path.encode()).hexdigest()[:4]
+        else:
+            fontname = "china-s"
+
         written = 0
         skipped = 0
         for block in text_blocks:
@@ -418,7 +436,8 @@ class PdfService:
                     rect,
                     block.text,
                     fontsize=fontsize,
-                    fontname="china-s",
+                    fontname=fontname,
+                    fontfile=font_path,
                     color=(0, 0, 0),
                     render_mode=render_mode,
                 )
@@ -442,7 +461,8 @@ class PdfService:
                         baseline,
                         block.text,
                         fontsize=last_fontsize,
-                        fontname="china-s",
+                        fontname=fontname,
+                        fontfile=font_path,
                         color=(0, 0, 0),
                         render_mode=render_mode,
                     )

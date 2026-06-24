@@ -337,10 +337,14 @@ class TestPdfServiceTextLayer:
 
         doc, pdf_doc = PdfService.open_doc(str(path))
         narrow = TextBlock(
-            text="43778", score=0.9,
-            bbox=(50.0, 50.0, 70.0, 80.0), page_idx=0,  # 窄矩形
+            text="中文测试文字很长装不下窄框", score=0.9,
+            # 极小矩形：长文本在重试字号缩到 <1 仍溢出，强制走 insert_text 兜底。
+            # （依赖具体字体的字号策略，用长文本+小框确保任何字体都触发兜底）
+            bbox=(50.0, 50.0, 60.0, 53.0), page_idx=0,
         )
-        result = OCRResult(raw_text="43778", text_blocks=[narrow])
+        result = OCRResult(
+            raw_text="中文测试文字很长装不下窄框", text_blocks=[narrow]
+        )
 
         with caplog.at_level(logging.DEBUG, logger="vibeocr.services.pdf_service"):
             PdfService.add_text_layer(doc, pdf_doc, 0, result)
