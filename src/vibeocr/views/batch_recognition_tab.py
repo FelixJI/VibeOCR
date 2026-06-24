@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 
 from vibeocr.models.ocr_options import OCROptions
 from vibeocr.services.export_service import ExportService
+from vibeocr.ui import theme
 from vibeocr.views.tabs.base_tab import BaseOcrTab
 from vibeocr.widgets.batch_file_list_widget import BatchFileListWidget
 from vibeocr.widgets.export_settings_widget import ExportSettingsWidget
@@ -199,7 +200,9 @@ class BatchRecognitionTab(BaseOcrTab):
         self._cancel_btn.setEnabled(False)
 
         self._progress_label = QLabel("0/0")
-        self._progress_label.setStyleSheet("color: #3b82f6; font-weight: bold;")
+        self._progress_label.setStyleSheet(
+            f"color: {theme.Colors.accent}; font-weight: bold;"
+        )
 
         action_layout.addWidget(self._start_btn)
         action_layout.addWidget(self._cancel_btn)
@@ -220,7 +223,9 @@ class BatchRecognitionTab(BaseOcrTab):
         center_layout.setContentsMargins(0, 0, 0, 0)
 
         preview_label = QLabel("文件预览")
-        preview_label.setStyleSheet("font-weight: bold; color: #555;")
+        preview_label.setStyleSheet(
+            f"font-weight: bold; color: {theme.Colors.text_muted};"
+        )
         center_layout.addWidget(preview_label)
 
         self._preview_widget = PreviewWidget(empty_text="选择文件以预览")
@@ -235,7 +240,9 @@ class BatchRecognitionTab(BaseOcrTab):
         right_layout.setContentsMargins(0, 0, 0, 0)
 
         result_label = QLabel("识别结果")
-        result_label.setStyleSheet("font-weight: bold; color: #555;")
+        result_label.setStyleSheet(
+            f"font-weight: bold; color: {theme.Colors.text_muted};"
+        )
         right_layout.addWidget(result_label)
 
         self._result_widget = ResultViewWidget()

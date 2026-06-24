@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 
 from vibeocr import env_manager
 from vibeocr.machine_cache import is_cache_valid, update_cache_field
+from vibeocr.ui import theme
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -75,7 +76,7 @@ class BackendOptionsWidget(QWidget):
 
         self._status_label = QLabel("")
         self._status_label.setWordWrap(True)
-        self._status_label.setStyleSheet("color: #666;")
+        self._status_label.setStyleSheet(f"color: {theme.Colors.text_muted};")
         group_layout.addWidget(self._status_label)
 
         self._apply_button = QPushButton("应用（下次重启生效）")

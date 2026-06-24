@@ -26,6 +26,7 @@ from vibeocr.core.pipelines.pipeline_mineru import (
     MINERU_EFFORT_LABELS,
 )
 from vibeocr.models.ocr_options import OCROptions
+from vibeocr.ui import theme
 
 
 class PreprocessOptionsWidget(QGroupBox):
@@ -60,7 +61,9 @@ class PreprocessOptionsWidget(QGroupBox):
         pipeline_layout.addWidget(self._pipeline_combo)
 
         self._pipeline_lock_label = QLabel()
-        self._pipeline_lock_label.setStyleSheet("color: #888; font-size: 11px;")
+        self._pipeline_lock_label.setStyleSheet(
+            f"color: {theme.Colors.text_muted}; font-size: {theme.Typography.caption}px;"
+        )
         self._pipeline_lock_label.setVisible(False)
         pipeline_layout.addWidget(self._pipeline_lock_label)
 
@@ -85,7 +88,9 @@ class PreprocessOptionsWidget(QGroupBox):
             "截图预处理请在「设置 → 截图选项」中配置。"
         )
         self._source_hint_label.setWordWrap(True)
-        self._source_hint_label.setStyleSheet("color: #888; font-size: 11px;")
+        self._source_hint_label.setStyleSheet(
+            f"color: {theme.Colors.text_muted}; font-size: {theme.Typography.caption}px;"
+        )
         layout.addWidget(self._source_hint_label)
 
         # 初始更新可见性

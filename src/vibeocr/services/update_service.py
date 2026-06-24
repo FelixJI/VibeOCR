@@ -309,6 +309,8 @@ from PySide6.QtWidgets import (  # noqa: E402
     QVBoxLayout,
 )
 
+from vibeocr.ui import theme  # noqa: E402
+
 
 class UpdateDialog(QDialog):
     """更新提示对话框"""
@@ -353,7 +355,7 @@ class UpdateDialog(QDialog):
         if info.file_size > 0:
             size_mb = info.file_size / (1024 * 1024)
             size_label = QLabel(f"更新包大小: {size_mb:.1f} MB")
-            size_label.setStyleSheet("color: gray;")
+            size_label.setStyleSheet(f"color: {theme.Colors.text_muted};")
             layout.addWidget(size_label)
 
         layout.addSpacing(8)
