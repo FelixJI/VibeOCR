@@ -460,3 +460,34 @@ class TestPdfPreviewWindowPaging:
         assert not window._btn_prev.isEnabled()
         assert not window._btn_next.isEnabled()
         assert window._page_label.text() == "—"
+
+    def test_keyboard_right_triggers_next(self, window, qtbot):
+        """→ 键应触发下一页并 emit page_change_requested。"""
+        from PySide6.QtCore import Qt as QtConst
+
+        window._page_indices = [0, 5, 10]
+        window._current_pos = 0
+        with qtbot.waitSignal(window.page_change_requested, timeout=1000) as blocker:
+            qtbot.keyClick(window, QtConst.Key.Key_Right)
+        assert blocker.args == [5]
+        assert window._current_pos == 1
+
+    def test_keyboard_left_triggers_prev(self, window, qtbot):
+        """← 键应触发上一页并 emit page_change_requested。"""
+        from PySide6.QtCore import Qt as QtConst
+
+        window._page_indices = [0, 5, 10]
+        window._current_pos = 1
+        with qtbot.waitSignal(window.page_change_requested, timeout=1000) as blocker:
+            qtbot.keyClick(window, QtConst.Key.Key_Left)
+        assert blocker.args == [0]
+        assert window._current_pos == 0
+
+    def test_keyboard_escape_closes_window(self, window, qtbot):
+        """Esc 应关闭窗口。"""
+        from PySide6.QtCore import Qt as QtConst
+
+        window.show()
+        qtbot.waitExposed(window)
+        qtbot.keyClick(window, QtConst.Key.Key_Escape)
+        assert not window.isVisible()

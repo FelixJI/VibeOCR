@@ -363,6 +363,8 @@ class PdfTab(QWidget):
             self._btn_export_all.setEnabled(False)
 
     def _on_active_changed(self, file_path: str) -> None:
+        # 切换文件：预览窗口的 _page_indices 指向旧文档，关闭它避免翻页到失效索引。
+        self._close_preview_window_if_open()
         # 全量重建期间抑制双向选中同步：clear() 会触发 itemSelectionChanged，
         # 此时两侧控件尚处于不一致的中间态，让同步逻辑静默直到重建完成。
         self._syncing_selection = True
@@ -938,6 +940,8 @@ class PdfTab(QWidget):
         with session.doc_lock:
             PdfService.delete_pages(session.doc, session.pdf_document, indices)
         session.loaded_pages -= set(indices)
+        # 删页改变了 page_index 与位置映射，预览窗口的 _page_indices 会错位 → 关闭。
+        self._close_preview_window_if_open()
         self._refresh_thumbnails()
         self._update_status()
         self._update_layer_status()
@@ -1029,6 +1033,15 @@ class PdfTab(QWidget):
         else:
             win.set_page_pixmap(pixmap)
             win.setWindowTitle(f"文字层预览 — 第{page_idx + 1}页 (无文字层)")
+
+    def _close_preview_window_if_open(self) -> None:
+        """关闭预览窗口（若有）。在切换文件/删除页时调用，避免 _page_indices 失效。
+
+        窗口的 _page_indices 存的是打开时的页索引；文档结构变化（换文件/删页）后
+        这些索引会失效或错位，翻页会渲染到错误的页。简单稳妥的做法是关闭重开。
+        """
+        if self._preview_window is not None and self._preview_window.isVisible():
+            self._preview_window.close()
 
     # ---- text layer operations --------------------------------------
 
