@@ -1,12 +1,12 @@
 """测试 Constants 常量类"""
 
 from vibeocr.core import (
-    COLOR_PRIMARY,
     DEFAULT_SHM_SIZE,
     Constants,
     FileType,
     OCRPipeline,
 )
+from vibeocr.ui import theme
 
 
 class TestConstants:
@@ -91,10 +91,9 @@ class TestBackwardCompatibility:
         assert DEFAULT_SHM_SIZE == Constants.DEFAULT_SHM_SIZE
 
     def test_color_constants(self):
-        """测试颜色常量向后兼容"""
-        assert COLOR_PRIMARY == Constants.Style.BORDER_RADIUS or isinstance(
-            COLOR_PRIMARY, str
-        )
+        """颜色常量已迁移至 theme 模块"""
+        assert theme.Colors.accent.startswith("#")
+        assert theme.Colors.bg.startswith("#")
 
     def test_batch_constants(self):
         """测试批处理常量向后兼容"""
