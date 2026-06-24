@@ -120,9 +120,7 @@ class ToolPropertiesBar(QWidget):
             self._apply_fill_color_style(self._common_fill_color_btn)
 
     def _on_fill_color_pick(self) -> None:
-        dialog = QColorDialog(self._fill_color, self)
-        dialog.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
-        dialog.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, False)
+        dialog = self._make_color_dialog(self._fill_color)
         if dialog.exec() == QColorDialog.DialogCode.Accepted:
             color = dialog.selectedColor()
             if color.isValid():
@@ -424,11 +422,20 @@ class ToolPropertiesBar(QWidget):
 
     # ==================== 颜色处理 ====================
 
+    def _make_color_dialog(self, color: QColor) -> QColorDialog:
+        """创建颜色选择对话框（Qt 自绘，非原生）。
+
+        父窗口是截图覆盖层（WA_TranslucentBackground），原生颜色对话框会继承
+        透明属性导致整窗黑底；强制使用 Qt 自绘对话框可彻底规避此问题，
+        且不受系统背景/透明属性影响。
+        """
+        dialog = QColorDialog(color, self)
+        dialog.setOption(QColorDialog.ColorDialogOption.DontUseNativeDialog, True)
+        return dialog
+
     def _on_color_pick(self) -> None:
         """打开颜色选择对话框"""
-        dialog = QColorDialog(self._current_color, self)
-        dialog.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
-        dialog.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, False)
+        dialog = self._make_color_dialog(self._current_color)
         if dialog.exec() == QColorDialog.DialogCode.Accepted:
             color = dialog.selectedColor()
             if color.isValid():
