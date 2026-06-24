@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtGui import QBrush, QColor, QFont, QIcon, QPixmap
+from PySide6.QtGui import QColor, QIcon, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -24,12 +24,14 @@ from PySide6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSplitter,
+    QStyledItemDelegate,
     QVBoxLayout,
     QWidget,
 )
 
 from vibeocr.managers.pdf_session_manager import PdfSessionManager
 from vibeocr.services.pdf_service import PdfService
+from vibeocr.ui.theme import Colors
 from vibeocr.views.pdf_preview_window import PdfPreviewWindow
 
 if TYPE_CHECKING:
@@ -38,6 +40,61 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _THUMBNAIL_SIZE = 160
+_GRID_CELL_SIZE = 40  # 文字层状态网格单格尺寸（正方形）
+
+# 文字层网格 item 数据角色：_LAYER_ROLE 存 page_index，_HAS_LAYER_ROLE 存 has_text_layer
+_LAYER_ROLE = Qt.ItemDataRole.UserRole
+_HAS_LAYER_ROLE = Qt.ItemDataRole.UserRole + 1
+
+
+class LayerStatusDelegate(QStyledItemDelegate):
+    """文字层网格格子绘制：40×40 圆角方块，居中页码，背景按状态着色。
+
+    有文字层 → 绿（Colors.success）；无文字层 → 灰（Colors.text_subtle）；
+    选中态 → 蓝（Colors.accent）覆盖原色。
+    """
+
+    def sizeHint(self, option, index):
+        from PySide6.QtCore import QSize
+
+        return QSize(_GRID_CELL_SIZE, _GRID_CELL_SIZE)
+
+    def paint(self, painter, option, index):
+        from PySide6.QtCore import QRectF
+        from PySide6.QtGui import QPen
+        from PySide6.QtWidgets import QStyle
+
+        painter.save()
+        page_idx = index.data(_LAYER_ROLE)
+        page_num = str(page_idx + 1) if page_idx is not None else ""
+        has_layer = index.data(_HAS_LAYER_ROLE)
+
+        if option.state & QStyle.StateFlag.State_Selected:
+            bg = QColor(Colors.accent)
+        elif has_layer:
+            bg = QColor(Colors.success)
+        else:
+            bg = QColor(Colors.text_subtle)
+
+        rect = QRectF(option.rect)
+        margin = 2
+        cell = QRectF(
+            rect.x() + margin,
+            rect.y() + margin,
+            rect.width() - 2 * margin,
+            rect.height() - 2 * margin,
+        )
+        painter.setBrush(bg)
+        painter.setPen(QPen(QColor(Colors.border), 1))
+        painter.drawRoundedRect(cell, 6, 6)
+
+        painter.setPen(QPen(QColor("#ffffff")))
+        font = painter.font()
+        font.setBold(True)
+        font.setPointSize(10)
+        painter.setFont(font)
+        painter.drawText(option.rect, Qt.AlignmentFlag.AlignCenter, page_num)
+        painter.restore()
 
 
 class PdfTab(QWidget):
@@ -183,27 +240,46 @@ class PdfTab(QWidget):
         text_btn_layout.addWidget(self._btn_preview_text_layer)
         text_layout.addLayout(text_btn_layout)
 
-        self._layer_status_list = QListWidget()
-        # 仅作信息展示与点击联动，不允许编辑/拖拽
-        self._layer_status_list.setSelectionMode(
-            QAbstractItemView.SelectionMode.SingleSelection
+        self._layer_summary_label = QLabel("")
+        self._layer_summary_label.setWordWrap(False)
+        text_layout.addWidget(self._layer_summary_label)
+
+        self._layer_status_grid = QListWidget()
+        self._layer_status_grid.setViewMode(QListWidget.ViewMode.IconMode)
+        self._layer_status_grid.setFlow(QListWidget.Flow.LeftToRight)
+        self._layer_status_grid.setResizeMode(QListWidget.ResizeMode.Adjust)
+        self._layer_status_grid.setMovement(QListWidget.Movement.Static)
+        self._layer_status_grid.setWrapping(True)
+        self._layer_status_grid.setIconSize(
+            QPixmap(_GRID_CELL_SIZE, _GRID_CELL_SIZE).size()
         )
-        self._layer_status_list.setEditTriggers(
+        self._layer_status_grid.setGridSize(
+            QPixmap(_GRID_CELL_SIZE + 6, _GRID_CELL_SIZE + 6).size()
+        )
+        self._layer_status_grid.setItemDelegate(
+            LayerStatusDelegate(self._layer_status_grid)
+        )
+        self._layer_status_grid.setSelectionMode(
+            QAbstractItemView.SelectionMode.ExtendedSelection
+        )
+        self._layer_status_grid.setEditTriggers(
             QAbstractItemView.EditTrigger.NoEditTriggers
         )
-        self._layer_status_list.setDragDropMode(QListWidget.DragDropMode.NoDragDrop)
-        self._layer_status_list.itemClicked.connect(self._on_layer_status_clicked)
-        self._layer_status_list.setContextMenuPolicy(
+        self._layer_status_grid.setDragDropMode(QListWidget.DragDropMode.NoDragDrop)
+        self._layer_status_grid.setContextMenuPolicy(
             Qt.ContextMenuPolicy.CustomContextMenu
         )
-        self._layer_status_list.customContextMenuRequested.connect(
+        self._layer_status_grid.customContextMenuRequested.connect(
             self._on_layer_status_context_menu
         )
-        status_scroll = QScrollArea()
-        status_scroll.setWidgetResizable(True)
-        status_scroll.setWidget(self._layer_status_list)
-        status_scroll.setMinimumHeight(120)
-        text_layout.addWidget(status_scroll)
+        self._layer_status_grid.itemDoubleClicked.connect(
+            self._on_grid_item_double_clicked
+        )
+        grid_scroll = QScrollArea()
+        grid_scroll.setWidgetResizable(True)
+        grid_scroll.setWidget(self._layer_status_grid)
+        grid_scroll.setMinimumHeight(120)
+        text_layout.addWidget(grid_scroll)
         layout.addWidget(text_group)
 
         self._progress_bar = QProgressBar()
@@ -441,52 +517,44 @@ class PdfTab(QWidget):
 
     def _update_layer_status(self) -> None:
         session = self._session_mgr.active_session
-        self._layer_status_list.clear()
+        grid = self._layer_status_grid
+        grid.clear()
         if session is None:
-            item = QListWidgetItem("未打开文件")
-            self._layer_status_list.addItem(item)
+            self._update_layer_summary([])
             return
-        green = QColor("#2e7d32")
-        gray = QColor("#9e9e9e")
-        for p in session.pdf_document.pages:
+        pages = session.pdf_document.pages
+        for p in pages:
+            block_count = (
+                len(p.ocr_text_blocks) if p.ocr_text_blocks else len(p.text_layers)
+            )
+            item = QListWidgetItem()
+            item.setData(_LAYER_ROLE, p.page_index)
+            item.setData(_HAS_LAYER_ROLE, p.has_text_layer)
             if p.has_text_layer:
-                # 优先显示 OCR 原始块数（细粒度），无则用 text_layers 数
-                block_count = (
-                    len(p.ocr_text_blocks) if p.ocr_text_blocks else len(p.text_layers)
-                )
-                text = (
-                    f"第{p.page_index + 1}页: 已添加文字层"
-                    f"({block_count} 个文本块)"
+                item.setToolTip(
+                    f"第{p.page_index + 1}页 · 已添加文字层（{block_count}个文本块）"
                 )
             else:
-                status = "扫描件" if p.is_scanned else "无文字层"
-                text = f"第{p.page_index + 1}页: {status}"
-            item = QListWidgetItem(text)
-            item.setData(Qt.ItemDataRole.UserRole, p.page_index)
-            # 有文字层的行加粗绿色，便于辨识可预览的页
-            font = QFont(item.font())
-            if p.has_text_layer:
-                font.setBold(True)
-                item.setForeground(QBrush(green))
-            else:
-                item.setForeground(QBrush(gray))
-            item.setFont(font)
-            self._layer_status_list.addItem(item)
+                item.setToolTip(f"第{p.page_index + 1}页 · 无文字层")
+            grid.addItem(item)
+        self._update_layer_summary(pages)
 
-    def _on_layer_status_clicked(self, item: QListWidgetItem) -> None:
-        """点击状态行 → 选中左侧缩略图对应页（联动）。
+    def _update_layer_summary(self, pages) -> None:
+        """更新网格上方汇总 Label（共 N 页 / 有文字层 X / 无文字层 Y）。"""
+        total = len(pages)
+        with_layer = sum(1 for p in pages if p.has_text_layer)
+        without = total - with_layer
+        self._layer_summary_label.setText(
+            f"共 {total} 页 ｜ "
+            f"<span style='color:{Colors.success}'>●</span> 有文字层 {with_layer} 页  "
+            f"<span style='color:{Colors.text_subtle}'>●</span> 无文字层 {without} 页"
+        )
 
-        注：内嵌预览已移除；该方法整体在 Task 2 删除（被网格双向同步取代）。
-        """
-        page_idx = item.data(Qt.ItemDataRole.UserRole)
-        if not isinstance(page_idx, int):
-            return
-        # 在缩略图列表中定位对应行并选中
-        for row in range(self._thumbnail_list.count()):
-            t_item = self._thumbnail_list.item(row)
-            if t_item.data(Qt.ItemDataRole.UserRole) == page_idx:
-                self._thumbnail_list.setCurrentRow(row)
-                break
+    def _on_grid_item_double_clicked(self, item: QListWidgetItem) -> None:
+        """双击网格格子 → 打开预览窗口到该页。"""
+        page_idx = item.data(_LAYER_ROLE)
+        if isinstance(page_idx, int):
+            self._open_preview(page_idx)
 
     def _on_layer_status_context_menu(self, pos) -> None:
         """状态列表右键菜单：为选中的无文字层页添加文字层。"""
@@ -495,12 +563,12 @@ class PdfTab(QWidget):
             return
 
         # 收集选中行；无选中则取右键位置所在行
-        rows = [i.row() for i in self._layer_status_list.selectedIndexes()]
+        rows = [i.row() for i in self._layer_status_grid.selectedIndexes()]
         if not rows:
-            item = self._layer_status_list.itemAt(pos)
+            item = self._layer_status_grid.itemAt(pos)
             if item is None:
                 return
-            rows = [self._layer_status_list.row(item)]
+            rows = [self._layer_status_grid.row(item)]
 
         pages = session.pdf_document.pages
         indices = [
@@ -517,7 +585,7 @@ class PdfTab(QWidget):
             )
         else:
             menu.addAction("选中页面均已有文字层")
-        menu.exec(self._layer_status_list.mapToGlobal(pos))
+        menu.exec(self._layer_status_grid.mapToGlobal(pos))
 
     def _add_text_layer_for_indices(self, indices: list[int]) -> None:
         """供右键菜单复用：对指定页索引执行添加文字层（overwrite=False）。"""
@@ -553,16 +621,18 @@ class PdfTab(QWidget):
         )
 
     def _on_thumbnail_selection_changed(self) -> None:
-        """缩略图选中变化 → 状态列表同步当前行（反向联动，不触发预览）。"""
+        """缩略图选中变化 → 网格同步当前页格子（联动）。
+
+        注：完整双向同步（重入保护 + 多选）在 Task 4 实现。
+        """
         indices = self._get_selected_page_indices()
         if not indices:
             return
         page_idx = indices[0]
-        for row in range(self._layer_status_list.count()):
-            item = self._layer_status_list.item(row)
-            if item.data(Qt.ItemDataRole.UserRole) == page_idx:
-                # setCurrentRow 仅改变选中，不触发 itemClicked
-                self._layer_status_list.setCurrentRow(row)
+        for row in range(self._layer_status_grid.count()):
+            item = self._layer_status_grid.item(row)
+            if item.data(_LAYER_ROLE) == page_idx:
+                self._layer_status_grid.setCurrentRow(row)
                 return
 
     def _get_selected_page_indices(self) -> list[int]:

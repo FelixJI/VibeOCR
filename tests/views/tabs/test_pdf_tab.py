@@ -47,12 +47,12 @@ class TestPdfTabStructure:
         assert lst.maximumWidth() > 300
 
     def test_layer_status_in_scroll_area(self, pdf_tab):
-        """状态列表应包在 QScrollArea 中，多页文字不被截断。"""
+        """状态网格应包在 QScrollArea 中，多页不被截断。"""
         scrolls = pdf_tab.findChildren(QScrollArea)
         assert len(scrolls) >= 1
-        # 其中至少一个 ScrollArea 的内容是 _layer_status_list
+        # 其中至少一个 ScrollArea 的内容是 _layer_status_grid
         owns_list = any(
-            s.widget() is pdf_tab._layer_status_list for s in scrolls
+            s.widget() is pdf_tab._layer_status_grid for s in scrolls
         )
         assert owns_list
 
@@ -112,16 +112,14 @@ class TestPdfTabLayerStatus:
         pdf_tab._session_mgr._active_path = "x.pdf"
 
         pdf_tab._update_layer_status()
-        row_text = pdf_tab._layer_status_list.item(0).text()
-        assert "第1页" in row_text
-        assert "已添加文字层" in row_text
-        assert "12 个文本块" in row_text
-        # 旧的误导措辞不应再出现
-        assert "层文字层" not in row_text
+        tip = pdf_tab._layer_status_grid.item(0).toolTip()
+        assert "第1页" in tip
+        assert "已添加文字层" in tip
+        assert "12个文本块" in tip
         doc.close()
 
     def test_status_list_row_count_matches_pages(self, pdf_tab):
-        """状态列表行数应等于页数，每行携带 page_index。"""
+        """状态网格格子数应等于页数，每个携带 page_index。"""
         import fitz
 
         from PySide6.QtCore import Qt
@@ -139,110 +137,23 @@ class TestPdfTabLayerStatus:
         pdf_tab._session_mgr._active_path = "x.pdf"
 
         pdf_tab._update_layer_status()
-        assert pdf_tab._layer_status_list.count() == 4
+        assert pdf_tab._layer_status_grid.count() == 4
         for i in range(4):
-            item = pdf_tab._layer_status_list.item(i)
+            item = pdf_tab._layer_status_grid.item(i)
             assert item.data(Qt.ItemDataRole.UserRole) == i
         doc.close()
 
 
 class TestPdfTabLayerStatusLinkage:
-    """点击状态行应联动左侧缩略图与内嵌预览。"""
+    """网格 ↔ 缩略图双向选中同步。
 
-    def _setup_session(self, pdf_tab):
-        import fitz
+    注：旧的单向 _on_layer_status_clicked 联动已被删除，替换为网格双向同步
+    （Task 4 实现）。该类的双向同步测试在 Task 4 重写，此处整体跳过。
+    """
 
-        from vibeocr.models.pdf_document import (
-            PdfDocument,
-            PdfPageInfo,
-            TextLayerInfo,
-        )
-        from vibeocr.models.pdf_session import PdfSession
-
-        pages = [
-            PdfPageInfo(
-                page_index=2,
-                has_text_layer=True,
-                text_layers=[
-                    TextLayerInfo(
-                        index=0,
-                        text_preview="t",
-                        char_count=1,
-                        bbox=(50.0, 50.0, 300.0, 100.0),
-                        color_id=0,
-                    )
-                ],
-            ),
-            PdfPageInfo(page_index=0),
-            PdfPageInfo(page_index=1),
-        ]
-        doc = fitz.open()
-        for _ in range(3):
-            doc.new_page()
-        pdf_doc = PdfDocument(file_path="x.pdf", pages=pages)
-        session = PdfSession(file_path="x.pdf", doc=doc, pdf_document=pdf_doc)
-        pdf_tab._session_mgr._sessions["x.pdf"] = session
-        pdf_tab._session_mgr._active_path = "x.pdf"
-        pdf_tab._refresh_thumbnails()
-        pdf_tab._update_layer_status()
-        return doc
-
-    def test_click_status_row_selects_thumbnail(self, pdf_tab):
-        """点击状态列表第 K 行 → 缩略图列表选中对应 page_index 的行。"""
-        doc = self._setup_session(pdf_tab)
-        try:
-            # 状态列表第 0 行的 page_index=2 → 缩略图中 page_index=2 的行
-            from PySide6.QtCore import Qt
-
-            status_item = pdf_tab._layer_status_list.item(0)
-            page_idx = status_item.data(Qt.ItemDataRole.UserRole)
-            assert page_idx == 2
-
-            pdf_tab._on_layer_status_clicked(status_item)
-            selected = pdf_tab._get_selected_page_indices()
-            assert selected == [2]
-        finally:
-            doc.close()
-
-    def test_click_status_row_refreshes_preview(self, pdf_tab, monkeypatch):
-        """点击状态行 → 仅同步缩略图选中（内嵌预览已移除）。
-
-        注：该方法的预览刷新职责已删除（内嵌预览移除）；选中联动在 Task 2/4
-        改为网格双向同步后重写。这里仅验证不残留旧的预览调用。
-        """
-        doc = self._setup_session(pdf_tab)
-        try:
-            # 不再有任何 _show_embedded_preview* 方法可调用（已删除）
-            assert not hasattr(pdf_tab, "_show_embedded_preview")
-            assert not hasattr(pdf_tab, "_show_embedded_preview_for_page")
-            status_item = pdf_tab._layer_status_list.item(0)
-            # 调用不应抛错
-            pdf_tab._on_layer_status_clicked(status_item)
-        finally:
-            doc.close()
-
-    def test_thumbnail_selection_syncs_status_list(self, pdf_tab):
-        """缩略图选中变化 → 状态列表当前行同步（反向联动）。"""
-        doc = self._setup_session(pdf_tab)
-        try:
-            from PySide6.QtCore import Qt
-
-            # 在缩略图列表里找到 page_index=1 的行并选中
-            target_row = None
-            for row in range(pdf_tab._thumbnail_list.count()):
-                item = pdf_tab._thumbnail_list.item(row)
-                if item.data(Qt.ItemDataRole.UserRole) == 1:
-                    target_row = row
-                    break
-            assert target_row is not None
-            pdf_tab._thumbnail_list.setCurrentRow(target_row)
-
-            # 状态列表中应选中 page_index=1 对应的行
-            cur = pdf_tab._layer_status_list.currentItem()
-            assert cur is not None
-            assert cur.data(Qt.ItemDataRole.UserRole) == 1
-        finally:
-            doc.close()
+    @pytest.mark.skip("Task 4 实现双向同步后重写")
+    def test_placeholder(self, pdf_tab):
+        pass
 
 
 class TestPdfTabOcrCompletion:
@@ -546,9 +457,9 @@ class TestLayerStatusContextMenu:
         self._inject(pdf_tab, pages)
         pdf_tab._update_layer_status()
         # 用 selectionModel 显式选中第 0 行（setCurrentRow 不保证 selectedItems）
-        sm = pdf_tab._layer_status_list.selectionModel()
+        sm = pdf_tab._layer_status_grid.selectionModel()
         sm.select(
-            pdf_tab._layer_status_list.model().index(0, 0),
+            pdf_tab._layer_status_grid.model().index(0, 0),
             QItemSelectionModel.Select,
         )
 
@@ -583,7 +494,7 @@ class TestLayerStatusContextMenu:
         monkeypatch.setattr(mod, "QMenu", FakeMenu)
 
         pdf_tab._on_layer_status_context_menu(
-            pdf_tab._layer_status_list.rect().center()
+            pdf_tab._layer_status_grid.rect().center()
         )
 
         assert any("无文字层" in t for t in actions_text)
@@ -597,9 +508,9 @@ class TestLayerStatusContextMenu:
         pages = [PdfPageInfo(page_index=0, has_text_layer=True)]
         self._inject(pdf_tab, pages)
         pdf_tab._update_layer_status()
-        sm = pdf_tab._layer_status_list.selectionModel()
+        sm = pdf_tab._layer_status_grid.selectionModel()
         sm.select(
-            pdf_tab._layer_status_list.model().index(0, 0),
+            pdf_tab._layer_status_grid.model().index(0, 0),
             QItemSelectionModel.Select,
         )
 
@@ -628,8 +539,96 @@ class TestLayerStatusContextMenu:
         monkeypatch.setattr(mod, "QMenu", FakeMenu)
 
         pdf_tab._on_layer_status_context_menu(
-            pdf_tab._layer_status_list.rect().center()
+            pdf_tab._layer_status_grid.rect().center()
         )
 
         # 不应出现"添加文字层"的可执行项
         assert not any("无文字层页添加文字层" in t for t in actions_text)
+
+
+class TestLayerStatusGrid:
+    """文字层状态网格化（QListWidget IconMode + delegate）。"""
+
+    def _inject(self, pdf_tab, pages):
+        import fitz
+
+        from vibeocr.models.pdf_document import PdfDocument
+        from vibeocr.models.pdf_session import PdfSession
+
+        doc = fitz.open()
+        for _ in pages:
+            doc.new_page()
+        pdf_doc = PdfDocument(file_path="x.pdf", pages=pages)
+        session = PdfSession(file_path="x.pdf", doc=doc, pdf_document=pdf_doc)
+        pdf_tab._session_mgr._sessions["x.pdf"] = session
+        pdf_tab._session_mgr._active_path = "x.pdf"
+        return session
+
+    def test_grid_exists_and_is_icon_mode(self, pdf_tab):
+        """应有 _layer_status_grid（QListWidget IconMode）替代旧的列表。"""
+        grid = getattr(pdf_tab, "_layer_status_grid", None)
+        assert grid is not None, "应有 _layer_status_grid"
+        assert isinstance(grid, QListWidget)
+        assert grid.viewMode() == QListWidget.ViewMode.IconMode
+
+    def test_grid_cell_count_equals_pages(self, pdf_tab):
+        """网格格子数应等于页数，每个携带 page_index。"""
+        from vibeocr.models.pdf_document import PdfPageInfo
+
+        pages = [PdfPageInfo(page_index=i) for i in range(5)]
+        self._inject(pdf_tab, pages)
+        pdf_tab._update_layer_status()
+        grid = pdf_tab._layer_status_grid
+        assert grid.count() == 5
+        for i in range(5):
+            item = grid.item(i)
+            assert item.data(Qt.ItemDataRole.UserRole) == i
+
+    def test_grid_has_summary_label(self, pdf_tab):
+        """网格上方应有汇总 Label（共 N 页 / 有文字层 X / 无文字层 Y）。"""
+        from vibeocr.models.pdf_document import PdfPageInfo
+
+        pages = [
+            PdfPageInfo(page_index=0, has_text_layer=True),
+            PdfPageInfo(page_index=1, has_text_layer=False),
+            PdfPageInfo(page_index=2, has_text_layer=True),
+        ]
+        self._inject(pdf_tab, pages)
+        pdf_tab._update_layer_status()
+        text = pdf_tab._layer_summary_label.text()
+        assert "共 3 页" in text
+        assert "有文字层 2 页" in text
+        assert "无文字层 1 页" in text
+
+    def test_grid_tooltip_shows_block_count(self, pdf_tab):
+        """有文字层格子的 tooltip 含块数。"""
+        from vibeocr.models.pdf_document import PdfPageInfo, TextLayerInfo
+
+        pages = [
+            PdfPageInfo(
+                page_index=0,
+                has_text_layer=True,
+                text_layers=[
+                    TextLayerInfo(
+                        index=i, text_preview="t", char_count=1,
+                        bbox=(0.0, 0.0, 1.0, 1.0), color_id=i,
+                    )
+                    for i in range(7)
+                ],
+            ),
+        ]
+        self._inject(pdf_tab, pages)
+        pdf_tab._update_layer_status()
+        tip = pdf_tab._layer_status_grid.item(0).toolTip()
+        assert "7" in tip
+        assert "文字层" in tip
+
+    def test_grid_no_layer_cell_tooltip(self, pdf_tab):
+        """无文字层格子的 tooltip 应提示"无文字层"。"""
+        from vibeocr.models.pdf_document import PdfPageInfo
+
+        pages = [PdfPageInfo(page_index=0, has_text_layer=False)]
+        self._inject(pdf_tab, pages)
+        pdf_tab._update_layer_status()
+        tip = pdf_tab._layer_status_grid.item(0).toolTip()
+        assert "无文字层" in tip
