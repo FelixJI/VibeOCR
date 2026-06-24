@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from vibeocr.core.inline_styles import InlineStyles
+from vibeocr.ui import theme
 from vibeocr.widgets.editor.annotation_items import EditTool
 from vibeocr.widgets.editor.tool_properties_bar import ToolPropertiesBar
 
@@ -67,7 +67,7 @@ class InlineToolbar(QWidget):
     def _setup_ui(self) -> None:
         self.setStyleSheet(f"""
             #inlineToolbar {{
-                background-color: {InlineStyles.PANEL_BG};
+                background-color: {theme.Colors.surface};
             }}
         """)
 
@@ -79,8 +79,12 @@ class InlineToolbar(QWidget):
         self._top_bar = QWidget()
         self._top_bar.setObjectName("topBar")
         self._top_bar.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self._top_bar.setFixedHeight(InlineStyles.TOOLBAR_HEIGHT)
-        self._top_bar.setStyleSheet(InlineStyles.panel_style())
+        self._top_bar.setFixedHeight(theme.Layout.toolbar_height)
+        self._top_bar.setStyleSheet(
+            f"QWidget {{ background: {theme.Colors.surface};"
+            f" border: 1px solid {theme.Colors.border};"
+            f" border-radius: {theme.Radius.lg}px; }}"
+        )
 
         top_layout = QHBoxLayout(self._top_bar)
         top_layout.setContentsMargins(8, 4, 8, 4)
@@ -90,7 +94,7 @@ class InlineToolbar(QWidget):
         self._tool_group = QButtonGroup(self)
         self._tool_group.setExclusive(True)
 
-        tool_style = InlineStyles.tool_button_style()
+        tool_style = theme.toolbar_button_qss()
 
         self._tool_buttons: dict[EditTool, QToolButton] = {}
         for label, tool in _TOOL_DEFS:
@@ -108,7 +112,7 @@ class InlineToolbar(QWidget):
         top_layout.addStretch()
 
         # 操作按钮
-        action_style = InlineStyles.action_button_style()
+        action_style = theme.toolbar_button_qss()
 
         self._btn_undo = self._make_action_btn("撤销", action_style)
         self._btn_undo.setEnabled(False)
@@ -127,7 +131,11 @@ class InlineToolbar(QWidget):
         top_layout.addWidget(self._btn_copy)
 
         self._btn_cancel = self._make_action_btn(
-            "取消", InlineStyles.cancel_button_style()
+            "取消",
+            f"QToolButton {{ background: transparent; color: {theme.Colors.text};"
+            f" border: none; border-radius: {theme.Radius.sm}px; padding: 4px 6px; }}"
+            f" QToolButton:hover {{ background: {theme.Colors.danger_hover};"
+            f" color: {theme.Colors.danger}; }}",
         )
         top_layout.addWidget(self._btn_cancel)
 
@@ -137,7 +145,33 @@ class InlineToolbar(QWidget):
         self._props_panel = QWidget()
         self._props_panel.setObjectName("propsPanel")
         self._props_panel.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self._props_panel.setStyleSheet(InlineStyles.properties_panel_style())
+        self._props_panel.setStyleSheet(
+            f"QWidget#propsPanel {{ background: {theme.Colors.surface};"
+            f" border: 1px solid {theme.Colors.border};"
+            f" border-radius: {theme.Radius.lg}px; }}"
+            f" #propsPanel QWidget {{ background: transparent; }}"
+            f" #propsPanel QLabel {{ color: {theme.Colors.text};"
+            f" font-size: {theme.Typography.caption}px; }}"
+            f" #propsPanel QSpinBox, #propsPanel QFontComboBox, #propsPanel QPushButton {{"
+            f" background: {theme.Colors.surface}; color: {theme.Colors.text};"
+            f" border: 1px solid {theme.Colors.border_strong};"
+            f" border-radius: {theme.Radius.sm}px; padding: 1px 4px;"
+            f" max-height: 26px; }}"
+            f" #propsPanel QSlider::groove:horizontal {{"
+            f" background: {theme.Colors.border_strong}; height: 4px;"
+            f" border-radius: 2px; }}"
+            f" #propsPanel QSlider::handle:horizontal {{"
+            f" background: {theme.Colors.accent}; width: 14px; height: 14px;"
+            f" margin: -5px 0; border-radius: 7px; }}"
+            f" #propsPanel QCheckBox {{ color: {theme.Colors.text};"
+            f" font-size: {theme.Typography.caption}px; spacing: 4px; }}"
+            f" #propsPanel QCheckBox::indicator {{ width: 14px; height: 14px;"
+            f" border: 1px solid {theme.Colors.border_strong};"
+            f" border-radius: 3px; background: {theme.Colors.surface}; }}"
+            f" #propsPanel QCheckBox::indicator:checked {{"
+            f" background: {theme.Colors.accent};"
+            f" border-color: {theme.Colors.accent}; }}"
+        )
         self._props_panel.hide()
 
         props_layout = QHBoxLayout(self._props_panel)
@@ -161,7 +195,7 @@ class InlineToolbar(QWidget):
     def _create_separator(self) -> QFrame:
         sep = QFrame()
         sep.setFrameShape(QFrame.Shape.VLine)
-        sep.setStyleSheet(f"color: {InlineStyles.SEPARATOR_COLOR};")
+        sep.setStyleSheet(f"color: {theme.Colors.overlay};")
         return sep
 
     def _connect_signals(self) -> None:

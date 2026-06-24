@@ -3,7 +3,6 @@
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QPushButton, QVBoxLayout, QWidget
 
-from vibeocr.core.inline_styles import InlineStyles
 from vibeocr.core.pipelines import (
     OCRPipeline,
     get_all_pipelines,
@@ -11,6 +10,7 @@ from vibeocr.core.pipelines import (
     get_pipeline_supported_options,
 )
 from vibeocr.models.ocr_options import OCROptions
+from vibeocr.ui import theme
 
 _OPTION_DISPLAY_NAMES = {
     "use_doc_orientation_classify": "方向分类",
@@ -74,9 +74,20 @@ class InlineRecognitionPanel(QWidget):
             self._pipeline_buttons[pipeline] = btn
 
     def _apply_styles(self):
-        self.setStyleSheet(InlineStyles.panel_style())
+        self.setStyleSheet(
+            f"QWidget {{ background: {theme.Colors.surface};"
+            f" border: 1px solid {theme.Colors.border};"
+            f" border-radius: {theme.Radius.lg}px; }}"
+        )
         for btn in self._pipeline_buttons.values():
-            btn.setStyleSheet(InlineStyles.recognition_button_style())
+            btn.setStyleSheet(
+                f"QPushButton {{ background: transparent; color: {theme.Colors.text};"
+                f" border: none; border-radius: {theme.Radius.sm}px; padding: 6px;"
+                f" text-align: left; }}"
+                f" QPushButton:hover {{ background: {theme.Colors.hover_bg}; }}"
+                f" QPushButton:checked {{ background: {theme.Colors.accent};"
+                f" color: white; }}"
+            )
 
     def _load_pipeline_options(self, pipeline: OCRPipeline) -> None:
         """从 OCRPreferences 的 screenshot 源加载指定管道的选项"""
