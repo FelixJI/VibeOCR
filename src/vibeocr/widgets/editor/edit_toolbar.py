@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from vibeocr.core.editor_styles import EditorStyles
+from vibeocr.ui import theme
 from vibeocr.widgets.editor.annotation_items import EditTool
 from vibeocr.widgets.editor.tool_properties_bar import ToolPropertiesBar
 
@@ -32,8 +32,11 @@ class EditorToolbar(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("editorToolbar")
-        self.setFixedHeight(EditorStyles.TOOLBAR_HEIGHT)
-        self.setStyleSheet(EditorStyles.toolbar_style())
+        self.setFixedHeight(theme.Layout.toolbar_height)
+        self.setStyleSheet(
+            f"QWidget#editorToolbar {{ background: {theme.Colors.surface};"
+            f" border-top: 1px solid {theme.Colors.border}; }}"
+        )
 
         self._setup_ui()
         self._connect_signals()
@@ -47,7 +50,7 @@ class EditorToolbar(QWidget):
         self._tool_group = QButtonGroup(self)
         self._tool_group.setExclusive(True)
 
-        tool_style = EditorStyles.tool_button_style()
+        tool_style = theme.toolbar_button_qss()
 
         tools = [
             ("选择", EditTool.SELECT),
@@ -84,7 +87,7 @@ class EditorToolbar(QWidget):
         layout.addStretch()
 
         # 撤销/重做
-        action_style = EditorStyles.action_button_style()
+        action_style = theme.toolbar_button_qss()
 
         self._btn_undo = QPushButton("撤销")
         self._btn_undo.setStyleSheet(action_style)
@@ -109,18 +112,18 @@ class EditorToolbar(QWidget):
         layout.addWidget(self._btn_copy)
 
         self._btn_confirm = QPushButton("确认识别")
-        self._btn_confirm.setStyleSheet(EditorStyles.confirm_button_style())
+        self._btn_confirm.setStyleSheet(theme.button_qss("primary"))
         layout.addWidget(self._btn_confirm)
 
         self._btn_cancel = QPushButton("取消")
-        self._btn_cancel.setStyleSheet(EditorStyles.cancel_button_style())
+        self._btn_cancel.setStyleSheet(theme.button_qss("danger"))
         layout.addWidget(self._btn_cancel)
 
     def _create_separator(self) -> QFrame:
         """创建垂直分隔线"""
         sep = QFrame()
         sep.setFrameShape(QFrame.Shape.VLine)
-        sep.setStyleSheet(f"color: {EditorStyles.SEPARATOR_COLOR};")
+        sep.setStyleSheet(f"color: {theme.Colors.border};")
         return sep
 
     def _connect_signals(self) -> None:
