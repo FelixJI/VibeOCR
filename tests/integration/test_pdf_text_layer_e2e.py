@@ -7,6 +7,8 @@
   3. 双击改字 → rewrite → PDF 文字层包含正确文字
 """
 
+from pathlib import Path
+
 import fitz
 import pytest
 
@@ -175,3 +177,106 @@ class TestEditFlowE2E:
         assert "B改" in text
         assert "C" in text
         verify.close()
+
+
+class TestCrossReaderSearchability:
+    """跨阅读器可搜索性：文字层必须含嵌入字体 + ToUnicode CMap。
+
+    fitz.get_text() 能读自己的输出（掩盖问题），但外部阅读器（浏览器/
+    macOS Preview/pdftotext）依赖 ToUnicode 反向映射。本类用原始字节断言。
+    """
+
+    def test_saved_pdf_has_tounicode_cmap(self, tmp_path):
+        """保存后的 PDF 必须含 ToUnicode CMap（外部搜索的前提）。"""
+        path = _make_scanned_pdf(tmp_path / "scan.pdf")
+        doc, pdf_doc = PdfService.open_doc(str(path))
+        result = OCRResult(
+            raw_text="签收联测试",
+            text_blocks=[
+                TextBlock(text="签收联测试", score=0.95, bbox=(50, 50, 400, 120)),
+            ],
+        )
+        PdfService.add_text_layer(doc, pdf_doc, 0, result)
+        PdfService.save(doc, pdf_doc)
+        doc.close()
+
+        raw = Path(path).read_bytes()
+        assert b"ToUnicode" in raw, "PDF 缺少 ToUnicode CMap，外部阅读器无法搜索"
+
+    def test_saved_pdf_has_embedded_font(self, tmp_path):
+        """保存后的 PDF 必须含嵌入字体（FontFile），字形数据随文件走。"""
+        path = _make_scanned_pdf(tmp_path / "scan.pdf")
+        doc, pdf_doc = PdfService.open_doc(str(path))
+        result = OCRResult(
+            raw_text="签收联测试",
+            text_blocks=[
+                TextBlock(text="签收联测试", score=0.95, bbox=(50, 50, 400, 120)),
+            ],
+        )
+        PdfService.add_text_layer(doc, pdf_doc, 0, result)
+        PdfService.save(doc, pdf_doc)
+        doc.close()
+
+        raw = Path(path).read_bytes()
+        assert b"FontFile" in raw, "PDF 缺少嵌入字体，字形未随文件保存"
+
+    def test_volume_increase_acceptable(self, tmp_path):
+        """子集化字体嵌入后体积增量可忽略（< 100KB）。"""
+        base_path = tmp_path / "base.pdf"
+        _make_scanned_pdf(base_path)
+        base_size = base_path.stat().st_size
+
+        path = tmp_path / "scan.pdf"
+        _make_scanned_pdf(path)
+        doc, pdf_doc = PdfService.open_doc(str(path))
+        result = OCRResult(
+            raw_text="签收联测试中文文字层发货单",
+            text_blocks=[
+                TextBlock(
+                    text="签收联测试中文文字层发货单",
+                    score=0.95,
+                    bbox=(50, 50, 500, 120),
+                ),
+            ],
+        )
+        PdfService.add_text_layer(doc, pdf_doc, 0, result)
+        PdfService.save(doc, pdf_doc)
+        doc.close()
+
+        increase = path.stat().st_size - base_size
+        # 子集字体增量应远小于整字体（整字体 3.5MB+）；放宽到 100KB 容错
+        assert increase < 100_000, (
+            f"体积增量过大: {increase} bytes（疑似嵌整字体）"
+        )
+
+    def test_fallback_when_no_system_font(self, tmp_path, monkeypatch):
+        """无系统字体时回退 china-s，文字层仍可被 fitz 提取（不阻断流程）。"""
+        from vibeocr.services.pdf_service import _CJK_RESOLVER
+
+        # 强制 resolver 探测失败
+        monkeypatch.setattr(
+            _CJK_RESOLVER, "_get_candidates", lambda: ["/nonexistent.ttf"]
+        )
+        _CJK_RESOLVER._probed = False  # 重置缓存
+        _CJK_RESOLVER._system_font = None
+
+        try:
+            path = _make_scanned_pdf(tmp_path / "scan.pdf")
+            doc, pdf_doc = PdfService.open_doc(str(path))
+            result = OCRResult(
+                raw_text="签收联",
+                text_blocks=[
+                    TextBlock(text="签收联", score=0.95, bbox=(50, 50, 200, 120)),
+                ],
+            )
+            PdfService.add_text_layer(doc, pdf_doc, 0, result)
+            PdfService.save(doc, pdf_doc)
+            doc.close()
+
+            verify = fitz.open(str(path))
+            assert "签收联" in verify[0].get_text()
+            verify.close()
+        finally:
+            # 恢复 resolver 状态，避免污染后续测试
+            _CJK_RESOLVER._probed = False
+            _CJK_RESOLVER._system_font = None
