@@ -194,7 +194,10 @@ class TestVersionBumping:
         ],
     )
     def test_bump_updates_all_files(self, tmp_path, args, expected_version):
-        """验证 patch/minor/major/explicit 升级后三个文件都更新"""
+        """验证 patch/minor/major/explicit 升级后 pyproject 与 __init__ 更新
+
+        注意：main.py 通过 __version__ 引用版本号（无字面量），bump 不再改它。
+        """
         result = _run_bump(tmp_path, [*args, "--no-edit", "--no-build"])
         assert result.returncode == 0, f"Script failed: {result.stderr}"
 
@@ -208,7 +211,8 @@ class TestVersionBumping:
         assert f'__version__ = "{expected_version}"' in init_py.read_text(
             encoding="utf-8"
         )
-        assert f'app.setApplicationVersion("{expected_version}")' in main_py.read_text(
+        # main.py 不再被 bump 处理，其字面量版本应保持原样
+        assert 'app.setApplicationVersion("0.1.0")' in main_py.read_text(
             encoding="utf-8"
         )
 

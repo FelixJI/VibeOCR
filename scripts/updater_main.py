@@ -86,9 +86,14 @@ def extract_zip(zip_path: Path, app_dir: Path) -> Path:
 
 
 def replace_app_files(new_files_dir: Path, app_dir: Path) -> bool:
+    """用新文件替换 app_dir 中的非保留内容。
+
+    采用「先备份 → 删除旧 → 复制新 → 失败回滚」策略，确保 app_dir 永远不会
+    处于半残状态（旧文件已删、新文件未拷全），否则用户机器上的应用将无法启动。
+    """
     print("[updater] 替换应用文件...")
 
-    # 记录旧 version.json 的 dep_versions
+    # 记录旧 version.json 的 dep_versions（用于依赖同步）
     old_version_json = app_dir / "version.json"
     old_deps: dict = {}
     if old_version_json.exists():
@@ -98,10 +103,32 @@ def replace_app_files(new_files_dir: Path, app_dir: Path) -> bool:
         except Exception:
             pass
 
-    # 删除旧文件（保留目录）
-    for item in app_dir.iterdir():
-        if item.name in _PRESERVE_DIRS:
-            continue
+    # 待替换的旧条目（保留目录除外）
+    old_items = [
+        item for item in app_dir.iterdir() if item.name not in _PRESERVE_DIRS
+    ]
+
+    # 1) 备份将要删除/覆盖的旧条目，以便复制失败时回滚
+    backup_dir = app_dir / "data" / "cache" / "update" / "_backup"
+    if backup_dir.exists():
+        shutil.rmtree(backup_dir, ignore_errors=True)
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    backed_up: list[tuple[Path, Path]] = []  # (原位置, 备份位置)
+    try:
+        for item in old_items:
+            bak = backup_dir / item.name
+            if item.is_dir():
+                shutil.copytree(item, bak, dirs_exist_ok=True)
+            else:
+                shutil.copy2(item, bak)
+            backed_up.append((item, bak))
+    except Exception as e:
+        print(f"[updater] 错误: 备份旧文件失败，中止更新: {e}")
+        shutil.rmtree(backup_dir, ignore_errors=True)
+        return False
+
+    # 2) 删除旧条目
+    for item in old_items:
         try:
             if item.is_dir():
                 shutil.rmtree(item, ignore_errors=True)
@@ -110,21 +137,26 @@ def replace_app_files(new_files_dir: Path, app_dir: Path) -> bool:
         except Exception as e:
             print(f"[updater] 警告: 删除 {item} 失败: {e}")
 
-    # 复制新文件
-    for item in new_files_dir.iterdir():
-        if item.name in _PRESERVE_DIRS:
-            continue
-        try:
+    # 3) 复制新文件；任一失败则回滚
+    try:
+        for item in new_files_dir.iterdir():
+            if item.name in _PRESERVE_DIRS:
+                continue
             dest = app_dir / item.name
             if item.is_dir():
                 shutil.copytree(item, dest, dirs_exist_ok=True)
             else:
                 shutil.copy2(item, dest)
-        except Exception as e:
-            print(f"[updater] 错误: 复制 {item} 失败: {e}")
-            return False
+    except Exception as e:
+        print(f"[updater] 错误: 复制 {item} 失败: {e}")
+        print("[updater] 正在回滚到更新前状态...")
+        _restore_backup(app_dir, backed_up, backup_dir)
+        return False
 
-    # 检查 AI 依赖版本变化
+    # 4) 复制成功，清理备份
+    shutil.rmtree(backup_dir, ignore_errors=True)
+
+    # 5) 检查 AI 依赖版本变化
     new_version_json = app_dir / "version.json"
     if new_version_json.exists():
         try:
@@ -135,6 +167,37 @@ def replace_app_files(new_files_dir: Path, app_dir: Path) -> bool:
             print(f"[updater] 警告: 检查依赖版本失败: {e}")
 
     return True
+
+
+def _restore_backup(
+    app_dir: Path, backed_up: list[tuple[Path, Path]], backup_dir: Path
+) -> None:
+    """从备份恢复 app_dir 中被删除/覆盖的条目。"""
+    # 先清掉复制阶段可能已写入的残缺文件（非保留、非备份目录）
+    for item in app_dir.iterdir():
+        if item.name in _PRESERVE_DIRS:
+            continue
+        # 跳过备份目录自身（在 data/ 下，属于保留目录，这里保险起见再判一次）
+        try:
+            if backup_dir in item.parents or item == backup_dir:
+                continue
+            if item.is_dir():
+                shutil.rmtree(item, ignore_errors=True)
+            else:
+                item.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+    for original, bak in backed_up:
+        try:
+            if bak.is_dir():
+                shutil.copytree(bak, original, dirs_exist_ok=True)
+            else:
+                shutil.copy2(bak, original)
+        except Exception as e:
+            print(f"[updater] 警告: 回滚 {original} 失败: {e}")
+
+    shutil.rmtree(backup_dir, ignore_errors=True)
 
 
 def _sync_dependencies(old_deps: dict, new_deps: dict, app_dir: Path) -> None:

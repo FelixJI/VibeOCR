@@ -821,9 +821,7 @@ def main() -> int:
         update_file_version(INIT_PY, current_str, new_str)
         print(f"  已更新 {INIT_PY}")
 
-    if MAIN_PY.exists():
-        update_file_version(MAIN_PY, current_str, new_str)
-        print(f"  已更新 {MAIN_PY}")
+    # 注意：main.py 通过 __version__ 引用版本号（无字面量），无需在此更新。
 
     # 更新 CHANGELOG
     update_changelog(new_str, commits)
@@ -838,8 +836,6 @@ def main() -> int:
         subprocess.run(["git", "add", str(PYPROJECT_TOML)], check=True)
         if INIT_PY.exists():
             subprocess.run(["git", "add", str(INIT_PY)], check=True)
-        if MAIN_PY.exists():
-            subprocess.run(["git", "add", str(MAIN_PY)], check=True)
         subprocess.run(["git", "add", str(CHANGELOG)], check=True)
         subprocess.run(
             ["git", "commit", "-m", f"release: v{new_str}"], check=True

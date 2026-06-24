@@ -252,11 +252,25 @@ class AboutTab(QWidget):
         """手动检查更新"""
         import asyncio
 
-        try:
+        from PySide6.QtWidgets import QMessageBox
+
+        async def _run():
             from vibeocr.services.update_service import UpdateService
 
             app_dir = env_manager.get_project_root()
             service = UpdateService(app_dir)
-            _update_task = asyncio.ensure_future(service.check_and_prompt(self))  # noqa: RUF006
-        except Exception as e:
-            logger.exception(f"检查更新失败: {e}")
+            await service.check_and_prompt(self)
+
+        async def _safe():
+            try:
+                await _run()
+            except Exception:
+                # ensure_future 会静默吞掉协程异常，必须显式捕获并提示用户，
+                # 否则点"检查更新"按钮出错时毫无反馈。
+                logger.exception("检查更新失败")
+                QMessageBox.warning(self, "检查更新", "检查更新失败，请查看日志。")
+
+        try:
+            _update_task = asyncio.ensure_future(_safe())  # noqa: RUF006
+        except Exception:
+            logger.exception("启动检查更新失败")

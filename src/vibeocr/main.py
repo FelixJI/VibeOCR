@@ -228,10 +228,18 @@ def launch_application() -> int:
         import asyncio
 
         async def _check_update():
+            import logging
+
             from vibeocr.services.update_service import UpdateService
 
-            service = UpdateService(project_root)
-            await service.check_and_prompt(window)  # noqa: F821
+            log = logging.getLogger(__name__)
+            try:
+                service = UpdateService(project_root)
+                await service.check_and_prompt(window)  # noqa: F821
+            except Exception:
+                # ensure_future 会静默吞掉协程异常，这里必须显式捕获，
+                # 否则"检查更新失败"对用户和开发者都不可见。
+                log.exception("启动检查更新失败")
 
         loop.call_later(5, lambda: asyncio.ensure_future(_check_update()))
 
