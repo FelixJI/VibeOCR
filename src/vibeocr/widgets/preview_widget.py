@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
 )
 
 from vibeocr.models.ocr_result import DISCARDED_BLOCK_TYPES, TextBlock
+from vibeocr.ui import theme
 
 # 置信度阈值
 LOW_CONFIDENCE_THRESHOLD = 0.80
@@ -297,7 +298,8 @@ class PreviewWidget(QWidget):
         self._image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._image_label.setMinimumSize(200, 200)
         self._image_label.setStyleSheet(
-            "QLabel { background-color: #f0f0f0; border: 2px dashed #ccc; }"
+            f"QLabel {{ background-color: {theme.Colors.surface_alt};"
+            f" border: 2px dashed {theme.Colors.border}; }}"
         )
         self._image_label.setText(self._empty_text)
         self._image_label.setWordWrap(True)
@@ -314,9 +316,9 @@ class PreviewWidget(QWidget):
         # 内联文本编辑器
         self._inline_editor = QLineEdit(self._image_label)
         self._inline_editor.setStyleSheet(
-            "QLineEdit { background-color: rgba(255,255,255,0.95); "
-            "border: 2px solid #ff9800; border-radius: 4px; "
-            "padding: 2px 6px; font-size: 13px; }"
+            f"QLineEdit {{ background-color: rgba(255,255,255,0.95);"
+            f" border: 2px solid {theme.Colors.warning}; border-radius: 4px;"
+            f" padding: 2px 6px; font-size: 13px; }}"
         )
         self._inline_editor.setFrame(False)
         self._inline_editor.hide()
@@ -674,7 +676,8 @@ class PreviewWidget(QWidget):
         self._image_label.clear()
         self._image_label.setText(self._empty_text)
         self._image_label.setStyleSheet(
-            "QLabel { background-color: #f0f0f0; border: 2px dashed #ccc; }"
+            f"QLabel {{ background-color: {theme.Colors.surface_alt};"
+            f" border: 2px dashed {theme.Colors.border}; }}"
         )
         if self._pdf_doc is not None:
             self._pdf_doc.close()
@@ -729,7 +732,8 @@ class PreviewWidget(QWidget):
             scaled.setDevicePixelRatio(dpr)
             self._image_label.setPixmap(scaled)
             self._image_label.setStyleSheet(
-                "QLabel { background-color: #fff; border: 1px solid #ddd; }"
+                f"QLabel {{ background-color: {theme.Colors.surface};"
+                f" border: 1px solid {theme.Colors.border}; }}"
             )
             QTimer.singleShot(0, self._update_overlay_deferred)
 

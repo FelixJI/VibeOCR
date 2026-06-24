@@ -18,6 +18,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from vibeocr.ui import theme
+
 logger = logging.getLogger(__name__)
 
 
@@ -35,7 +37,9 @@ class MessageBubble(QFrame):
 
         # 角色标签
         role_label = QLabel("用户" if is_user else "AI")
-        role_label.setStyleSheet("font-size: 11px; color: #666;")
+        role_label.setStyleSheet(
+            f"font-size: {theme.Typography.caption}px; color: {theme.Colors.text_muted};"
+        )
         layout.addWidget(role_label)
 
         # 消息内容
@@ -51,20 +55,20 @@ class MessageBubble(QFrame):
 
         # 设置气泡样式
         if is_user:
-            self.setStyleSheet("""
-                MessageBubble {
-                    background-color: #E3F2FD;
-                    border-radius: 8px;
+            self.setStyleSheet(f"""
+                MessageBubble {{
+                    background-color: {theme.Colors.accent_soft};
+                    border-radius: {theme.Radius.lg}px;
                     margin-left: 40px;
-                }
+                }}
             """)
         else:
-            self.setStyleSheet("""
-                MessageBubble {
-                    background-color: #F5F5F5;
-                    border-radius: 8px;
+            self.setStyleSheet(f"""
+                MessageBubble {{
+                    background-color: {theme.Colors.surface_alt};
+                    border-radius: {theme.Radius.lg}px;
                     margin-right: 40px;
-                }
+                }}
             """)
 
 
@@ -98,7 +102,7 @@ class ChatWidget(QWidget):
             Qt.ScrollBarPolicy.ScrollBarAlwaysOff
         )
         self._scroll_area.setStyleSheet(
-            "QScrollArea { border: none; background: white; }"
+            f"QScrollArea {{ border: none; background: {theme.Colors.surface}; }}"
         )
 
         # 消息容器

@@ -9,6 +9,8 @@ from typing import TYPE_CHECKING, Optional
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication, QLabel, QWidget
 
+from vibeocr.ui import theme
+
 if TYPE_CHECKING:
     from vibeocr.models.ocr_result import OCRResult
 
@@ -39,14 +41,14 @@ class ClipboardController:
 
         # 创建复制成功提示标签
         self._copy_toast = QLabel("已复制到剪贴板", copy_button)
-        self._copy_toast.setStyleSheet("""
-            QLabel {
-                background-color: #333333;
-                color: white;
+        self._copy_toast.setStyleSheet(f"""
+            QLabel {{
+                background-color: {theme.Colors.text};
+                color: {theme.Colors.surface};
                 padding: 6px 12px;
-                border-radius: 4px;
-                font-size: 12px;
-            }
+                border-radius: {theme.Radius.sm}px;
+                font-size: {theme.Typography.small}px;
+            }}
         """)
         self._copy_toast.hide()
 

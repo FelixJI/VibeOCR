@@ -35,6 +35,7 @@ from PySide6.QtWidgets import (
 
 from vibeocr.services.qrcode_decode_service import QrcodeDecodeService
 from vibeocr.services.qrcode_service import QrcodeService
+from vibeocr.ui import theme
 
 logger = logging.getLogger(__name__)
 
@@ -167,8 +168,10 @@ class DecodeResultWidget(QWidget):
 
         type_tag = QLabel(type_label)
         type_tag.setStyleSheet(
-            "QLabel { background-color: #e0e0e0; color: #444;"
-            " border-radius: 6px; padding: 1px 6px; font-size: 11px; }"
+            f"QLabel {{ background-color: {theme.Colors.hover_bg};"
+            f" color: {theme.Colors.text};"
+            f" border-radius: 6px; padding: 1px 6px;"
+            f" font-size: {theme.Typography.caption}px; }}"
         )
         row.addWidget(type_tag)
 
@@ -177,7 +180,7 @@ class DecodeResultWidget(QWidget):
         display = data if len(data) <= 80 else data[:77] + "..."
         if is_url:
             content_label.setText(
-                f"<a href='{href_value}' style='color:#1976D2; text-decoration: underline;'>"
+                f"<a href='{href_value}' style='color:{theme.Colors.accent}; text-decoration: underline;'>"
                 f"{display}</a>"
             )
             content_label.setOpenExternalLinks(False)
@@ -253,7 +256,9 @@ class QrcodeTab(QWidget):
         self._preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._preview_label.setMinimumSize(200, 200)
         self._preview_label.setStyleSheet(
-            "QLabel { background-color: #f5f5f5; border: 1px solid #ddd; border-radius: 4px; }"
+            f"QLabel {{ background-color: {theme.Colors.surface_alt};"
+            f" border: 1px solid {theme.Colors.border};"
+            f" border-radius: {theme.Radius.sm}px; }}"
         )
         self._preview_label.setAcceptDrops(False)  # 仅识别子页激活时开启
         self._preview_label.imageDropped.connect(self._on_image_input)
@@ -447,7 +452,9 @@ class QrcodeTab(QWidget):
         hint = QLabel(
             "支持粘贴图片 (Ctrl+V)、拖入图片到左侧预览区、\n或点击下方选择文件"
         )
-        hint.setStyleSheet("color: #888; font-size: 11px;")
+        hint.setStyleSheet(
+            f"color: {theme.Colors.text_muted}; font-size: {theme.Typography.caption}px;"
+        )
         layout.addWidget(hint)
 
         # 识别结果区
@@ -465,7 +472,7 @@ class QrcodeTab(QWidget):
         bottom_row.addWidget(self._btn_copy_all)
         bottom_row.addStretch()
         self._result_count_label = QLabel("识别到 0 条结果")
-        self._result_count_label.setStyleSheet("color: #888;")
+        self._result_count_label.setStyleSheet(f"color: {theme.Colors.text_muted};")
         bottom_row.addWidget(self._result_count_label)
         layout.addLayout(bottom_row)
 
@@ -549,7 +556,7 @@ class QrcodeTab(QWidget):
 
     @staticmethod
     def _color_btn_style(color: str) -> str:
-        return f"QPushButton {{ background-color: {color}; border: 1px solid #999; padding: 4px; }}"
+        return f"QPushButton {{ background-color: {color}; border: 1px solid {theme.Colors.border_strong}; padding: 4px; }}"
 
     # ── 生成子页 slots ──
 
@@ -662,7 +669,7 @@ class QrcodeTab(QWidget):
         except Exception as e:
             logger.error(f"生成预览失败: {e}", exc_info=True)
             self._preview_label.setText(
-                f"<span style='color:#f44336;'>生成失败：{e}</span>"
+                f"<span style='color:{theme.Colors.danger};'>生成失败：{e}</span>"
             )
             self._current_image = None
 
@@ -772,7 +779,7 @@ class QrcodeTab(QWidget):
             logger.error(f"识别失败: {e}", exc_info=True)
             self._decode_result_list.clear()
             item = QListWidgetItem()
-            err_label = QLabel(f"<span style='color:#f44336;'>识别失败：{e}</span>")
+            err_label = QLabel(f"<span style='color:{theme.Colors.danger};'>识别失败：{e}</span>")
             self._decode_result_list.addItem(item)
             self._decode_result_list.setItemWidget(item, err_label)
             item.setSizeHint(err_label.sizeHint())
@@ -786,7 +793,7 @@ class QrcodeTab(QWidget):
         self._decode_result_list.clear()
         if not results:
             hint = QLabel(
-                "<span style='color:#888;'>未识别到二维码/条形码，请尝试更清晰的图片</span>"
+                f"<span style='color:{theme.Colors.text_muted};'>未识别到二维码/条形码，请尝试更清晰的图片</span>"
             )
             item = QListWidgetItem()
             self._decode_result_list.addItem(item)
