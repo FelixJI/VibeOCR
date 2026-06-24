@@ -375,6 +375,38 @@ class PdfService:
         page = doc[page_index]
         page_rect = page.rect
 
+        # 页面 /Rotate 处理：OCR 渲染图（get_pixmap 自动应用 /Rotate）与归一化
+        # bbox 都在『显示空间』，但 insert_textbox 写入的是『mediabox（未旋转）
+        # 空间』。当 page.rotation != 0 时，必须把『显示空间』的 rect 经
+        # derotation_matrix 映射到 mediabox 空间，否则会出现『上面的字写到了
+        # 右面』（90° 旋转时宽高互换 + 旋转未补偿）。
+        # _denormalize_and_unrotate_bbox 用 page_rect（显示尺寸）归一化，产出
+        # 仍在『显示空间』；下面 derotate_to_mediabox 把它转到 mediabox 空间。
+        page_rotation = int(page.rotation or 0) % 360
+        if page_rotation != 0:
+            dm = page.derotation_matrix  # 显示空间 → mediabox 空间
+
+            def _derotate_to_mediabox(rect: fitz.Rect) -> fitz.Rect:
+                a, b, c, d, e, f = (
+                    dm.a, dm.b, dm.c, dm.d, dm.e, dm.f,
+                )
+
+                def _tr(x, y):
+                    return a * x + c * y + e, b * x + d * y + f
+
+                pts = [
+                    _tr(rect.x0, rect.y0),
+                    _tr(rect.x1, rect.y0),
+                    _tr(rect.x0, rect.y1),
+                    _tr(rect.x1, rect.y1),
+                ]
+                xs = [p[0] for p in pts]
+                ys = [p[1] for p in pts]
+                return fitz.Rect(min(xs), min(ys), max(xs), max(ys))
+        else:
+            def _derotate_to_mediabox(rect: fitz.Rect) -> fitz.Rect:
+                return rect
+
         # 收集本页所有字符，解析子集字体（探测失败则 None，回退 china-s）。
         # 子集字体嵌入后 PyMuPDF 自动生成 ToUnicode CMap，使文字层在所有
         # 主流阅读器可搜索/复制（china-s 依赖阅读器自带 Adobe GB1 CMap，脆弱）。
@@ -408,10 +440,12 @@ class PdfService:
                 skipped += 1
                 continue
 
-            # 逆旋转 + 归一化到 PDF 页面坐标
+            # 逆旋转(OCR 预处理) + 归一化到『显示空间』坐标，
+            # 再补偿页面 /Rotate 转到 mediabox（写入）空间。
             rect = PdfService._denormalize_and_unrotate_bbox(
                 bbox, preproc_angle, page_rect
             )
+            rect = _derotate_to_mediabox(rect)
             # 仅当矩形退化（宽或高 ≤ 0）才整体跳过；
             # 矮行/窄框不丢弃：字号由 min_font_size 兜底，再交给下方
             # insert_textbox 重试 + insert_text 兜底，保证文字进入文字层。
