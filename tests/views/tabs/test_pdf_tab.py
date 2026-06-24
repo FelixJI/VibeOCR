@@ -58,8 +58,8 @@ class TestPdfTabStructure:
 
     def test_no_embedded_preview_canvas(self, pdf_tab):
         """内嵌预览画布应已移除。"""
-        assert not hasattr(pdf_tab, "_preview_canvas") or pdf_tab._preview_canvas is None
-        assert not hasattr(pdf_tab, "_right_splitter") or pdf_tab._right_splitter is None
+        assert not hasattr(pdf_tab, "_preview_canvas")
+        assert not hasattr(pdf_tab, "_right_splitter")
 
     def test_splitter_save_is_debounced(self, pdf_tab, monkeypatch):
         """splitterMoved 不应立即落盘，而是重启防抖定时器。"""
@@ -205,18 +205,19 @@ class TestPdfTabLayerStatusLinkage:
             doc.close()
 
     def test_click_status_row_refreshes_preview(self, pdf_tab, monkeypatch):
-        """点击状态行 → 调用 _show_embedded_preview_for_page 刷新内嵌预览。"""
+        """点击状态行 → 仅同步缩略图选中（内嵌预览已移除）。
+
+        注：该方法的预览刷新职责已删除（内嵌预览移除）；选中联动在 Task 2/4
+        改为网格双向同步后重写。这里仅验证不残留旧的预览调用。
+        """
         doc = self._setup_session(pdf_tab)
         try:
-            called = []
-            monkeypatch.setattr(
-                pdf_tab,
-                "_show_embedded_preview_for_page",
-                lambda idx: called.append(idx),
-            )
+            # 不再有任何 _show_embedded_preview* 方法可调用（已删除）
+            assert not hasattr(pdf_tab, "_show_embedded_preview")
+            assert not hasattr(pdf_tab, "_show_embedded_preview_for_page")
             status_item = pdf_tab._layer_status_list.item(0)
+            # 调用不应抛错
             pdf_tab._on_layer_status_clicked(status_item)
-            assert called == [2]
         finally:
             doc.close()
 
@@ -253,9 +254,6 @@ class TestPdfTabOcrCompletion:
         monkeypatch.setattr(
             mod.QMessageBox, "information", lambda *a, **k: called.append(a)
         )
-        monkeypatch.setattr(
-            pdf_tab, "_show_embedded_preview", lambda: None
-        )
         pdf_tab._session_mgr.ocr_stats_ready.emit("sid", 5, 2)
         assert len(called) == 1
         msg = called[0][2]
@@ -269,9 +267,6 @@ class TestPdfTabOcrCompletion:
         called = []
         monkeypatch.setattr(
             mod.QMessageBox, "information", lambda *a, **k: called.append(a)
-        )
-        monkeypatch.setattr(
-            pdf_tab, "_show_embedded_preview", lambda: None
         )
         pdf_tab._session_mgr.ocr_stats_ready.emit("sid", 3, 0)
         assert called == []
@@ -288,58 +283,11 @@ class TestPdfTabOcrCompletion:
         monkeypatch.setattr(
             mod.QMessageBox, "information", lambda *a, **k: called.append(a)
         )
-        monkeypatch.setattr(
-            pdf_tab, "_show_embedded_preview", lambda: None
-        )
         pdf_tab._session_mgr.ocr_stats_ready.emit("sid", 0, 0)
         assert called == []
         text = pdf_tab._status_label.text()
         assert "已添加" not in text
         assert "未添加" in text
-
-    def test_show_embedded_preview_populates_canvas(
-        self, pdf_tab, monkeypatch, tmp_path
-    ):
-        """_show_embedded_preview 应把页面渲染进内嵌画布（E2E：problem #3）。"""
-        import fitz
-
-        from vibeocr.models.pdf_document import (
-            PdfDocument,
-            PdfPageInfo,
-            TextLayerInfo,
-        )
-        from vibeocr.models.pdf_session import PdfSession
-
-        # 构造带文字层（1 个文本块）的真实 PDF + session
-        page_info = PdfPageInfo(
-            page_index=0,
-            has_text_layer=True,
-            text_layers=[
-                TextLayerInfo(
-                    index=0,
-                    text_preview="测试",
-                    char_count=2,
-                    bbox=(50.0, 50.0, 300.0, 100.0),
-                    color_id=0,
-                )
-            ],
-        )
-        doc = fitz.open()
-        doc.new_page()
-        pdf_doc = PdfDocument(file_path="x.pdf", pages=[page_info])
-        session = PdfSession(file_path="x.pdf", doc=doc, pdf_document=pdf_doc)
-        pdf_tab._session_mgr._sessions["x.pdf"] = session
-        pdf_tab._session_mgr._active_path = "x.pdf"
-
-        pdf_tab._show_embedded_preview()
-
-        # 画布应已接收 pixmap 且高亮层已设置
-        assert pdf_tab._preview_canvas._pixmap is not None
-        assert pdf_tab._preview_canvas._pixmap.width() > 0
-        assert pdf_tab._preview_canvas._highlight_layers == page_info.text_layers
-        assert pdf_tab._preview_canvas._render_dpi == 150
-        assert pdf_tab._preview_canvas._source == "pdf"
-        doc.close()
 
 
 class TestAddTextLayerForPagesWithoutLayer:

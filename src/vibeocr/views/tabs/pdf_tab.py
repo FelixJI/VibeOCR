@@ -345,10 +345,10 @@ class PdfTab(QWidget):
         self._status_label.setText(msg)
 
     def _on_ocr_stats_ready(self, session_id: str, written: int, skipped: int) -> None:
-        """文字层 OCR 完成后：汇总写入结果并自动预览。
+        """文字层 OCR 完成后：汇总写入结果（成功/跳过）。
 
         与 _on_ocr_finished（ocr_done 信号）配合：后者负责通用 UI 复位，
-        本方法负责文字层特有的“成功/跳过”汇总与内嵌预览。
+        本方法负责文字层特有的"成功/跳过"汇总。
         """
         if written == 0 and skipped == 0:
             # 没有任何文字块产出（例如全部页面 OCR 失败），不误报“已添加”。
