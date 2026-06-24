@@ -11,8 +11,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from vibeocr.core.editor_styles import EditorStyles
 from vibeocr.models.ocr_options import OCROptions
+from vibeocr.ui import theme
 from vibeocr.widgets.preprocess_options_widget import PreprocessOptionsWidget
 
 
@@ -22,8 +22,8 @@ class RecognitionPanel(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("recognitionPanel")
-        self.setFixedWidth(EditorStyles.PANEL_WIDTH)
-        self.setStyleSheet(EditorStyles.panel_style())
+        self.setFixedWidth(theme.Layout.panel_width)
+        self.setStyleSheet(theme.panel_qss())
         self._setup_ui()
 
     def _setup_ui(self) -> None:
