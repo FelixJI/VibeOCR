@@ -411,6 +411,11 @@ class PdfSessionManager(QObject):
                 pass
         self._sessions.clear()
         self._active_path = None
+        # 释放文字层子集字体临时文件（atexit 兜底，session 关闭时尽早清理，
+        # 避免长运行 GUI 进程在 %TEMP% 累积 vibeocr_subset_*.ttf）。
+        from vibeocr.utils.cjk_font_resolver import _CJK_RESOLVER
+
+        _CJK_RESOLVER.cleanup()
 
 
 def _wait_thread(worker: QThread, timeout: int = 3000) -> None:

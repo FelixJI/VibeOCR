@@ -46,22 +46,17 @@ class CjkFontResolver:
         self._probed: bool = False  # 是否已探测过
         self._subset_cache: dict[frozenset[str], str] = {}  # 字符集 → 子集路径
 
-    @property
-    def _candidates(self) -> list[str]:
-        """按平台返回候选字体路径列表。"""
+    def _get_candidates(self) -> list[str]:
+        """按平台返回候选字体路径列表（可被测试 monkeypatch 覆盖）。
+
+        用方法而非 property：property 无 setter 无法被 monkeypatch.setattr
+        覆盖，_find_system_font 调用此方法。
+        """
         if sys.platform == "win32":
             return self._WIN_CANDIDATES
         if sys.platform == "darwin":
             return self._MAC_CANDIDATES
         return self._LINUX_CANDIDATES
-
-    def _get_candidates(self) -> list[str]:
-        """按平台返回候选字体路径列表（可被测试 monkeypatch 覆盖）。
-
-        注意：用方法而非 property，因为 property 无 setter 无法被
-        monkeypatch.setattr 覆盖。_find_system_font 调用此方法。
-        """
-        return self._candidates
 
     def _find_system_font(self) -> str | None:
         """探测首个存在的系统 CJK 字体（结果缓存）。"""
@@ -122,7 +117,12 @@ class CjkFontResolver:
         sub.subset(font)
         fd, path = tempfile.mkstemp(suffix=".ttf", prefix="vibeocr_subset_")
         os.close(fd)
-        font.save(path)
+        try:
+            font.save(path)
+        except Exception:
+            # font.save 失败时删除已创建的临时文件，避免泄漏（缓存不会收录此 key）
+            Path(path).unlink(missing_ok=True)
+            raise
         return path
 
     def cleanup(self) -> None:

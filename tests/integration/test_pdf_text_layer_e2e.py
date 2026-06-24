@@ -280,3 +280,48 @@ class TestCrossReaderSearchability:
             # 恢复 resolver 状态，避免污染后续测试
             _CJK_RESOLVER._probed = False
             _CJK_RESOLVER._system_font = None
+
+
+class TestAddRewriteFontCollision:
+    """add_text_layer → rewrite_text_layer 同页写两个不同字符集的子集字体。
+
+    回归防护：PyMuPDF 按字体名缓存资源，若两次写入用相同 fontname 却不同
+    fontfile，会复用第一个字体的 cmap，导致第二个子集里新增的字写成 \x00
+    （缺字）。fontname 随子集字体路径派生（md5）保证不冲突。
+    """
+
+    def test_rewrite_with_new_char_no_glyph_loss(self, tmp_path):
+        """add 写'签回联'→rewrite 改成'签收联'，'收'不应丢成 \x00。"""
+        path = _make_scanned_pdf(tmp_path / "scan.pdf")
+        doc, pdf_doc = PdfService.open_doc(str(path))
+
+        # 第一次：写入 '签回联'
+        result = OCRResult(
+            raw_text="签回联",
+            text_blocks=[
+                TextBlock(text="签回联", score=0.9, bbox=(50.0, 50.0, 300.0, 120.0)),
+            ],
+        )
+        PdfService.add_text_layer(doc, pdf_doc, 0, result)
+        assert "签回联" in doc[0].get_text()
+
+        # 改成含新字 '收' 的文本（'收' 不在第一子集里）
+        info = pdf_doc.pages[0]
+        info.ocr_text_blocks[0].text = "签收联"
+        info.ocr_text_blocks[0].is_manually_edited = True
+
+        # rewrite：删旧文字层后用新子集重写
+        PdfService.rewrite_text_layer(
+            doc, pdf_doc, 0, info.ocr_text_blocks, info.ocr_preproc_angle
+        )
+
+        # 落盘后重开验证（用 fitz 读已保存文件，模拟外部读取路径）
+        PdfService.save(doc, pdf_doc)
+        doc.close()
+
+        verify = fitz.open(str(path))
+        text = verify[0].get_text()
+        verify.close()
+        # 关键断言：新字 '收' 不能丢成 \x00
+        assert "签收联" in text, f"'收' 字丢失或写成 \x00，实际: {text!r}"
+        assert "签回联" not in text, f"旧文字应被 rewrite 清除，实际: {text!r}"

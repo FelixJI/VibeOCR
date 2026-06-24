@@ -381,8 +381,9 @@ class PdfService:
         #
         # fontname 必须随子集字体变化：PyMuPDF 按名字缓存字体资源，同一页用
         # 相同名字插入不同 fontfile 时会复用第一个（缺字写入 \x00）。用路径
-        # 的 md5 前 4 字节派生名字，保证不同字符集的子集不冲突（add→rewrite
-        # 同页场景），且跨进程稳定。
+        # 的 md5 前 4 字节派生名字，保证同页两次写入（add→rewrite）不同字符集
+        # 的子集不冲突。子集路径是 tempfile 随机名，fontname 随之每进程不同，
+        # 但本进程内同子集（同路径）名字稳定即可。
         import hashlib
 
         all_chars = "".join(b.text for b in text_blocks if b.text)
