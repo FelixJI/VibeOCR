@@ -79,6 +79,15 @@ class PreprocessOptionsWidget(QGroupBox):
         self._advanced_tab = self._create_advanced_tab()
         self._tab_widget.addTab(self._advanced_tab, "高级")
 
+        # 常驻提示：说明各来源选项归属
+        self._source_hint_label = QLabel(
+            "面板选项用于：粘贴 / 导入文件 / 重新识别；"
+            "截图预处理请在「设置 → 截图选项」中配置。"
+        )
+        self._source_hint_label.setWordWrap(True)
+        self._source_hint_label.setStyleSheet("color: #888; font-size: 11px;")
+        layout.addWidget(self._source_hint_label)
+
         # 初始更新可见性
         self._update_tab_visibility()
 

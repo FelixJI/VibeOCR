@@ -656,6 +656,7 @@ class MainWindow(QMainWindow):
 
             pixmap = QPixmap(file_path)
             if not pixmap.isNull():
+                self._single_tab.set_image_for_recognition(pixmap)
                 self._single_tab.set_pixmap(pixmap)
                 self._single_tab.run_ocr(pixmap)
 
@@ -684,6 +685,7 @@ class MainWindow(QMainWindow):
 
         pixmap = QPixmap(file_path)
         if not pixmap.isNull():
+            self._single_tab.set_image_for_recognition(pixmap)
             self._single_tab.set_pixmap(pixmap)
             self._single_tab.run_ocr(pixmap)
 
@@ -721,10 +723,16 @@ class MainWindow(QMainWindow):
 
     @Slot(QPixmap, object)
     def _on_overlay_confirmed(self, pixmap: QPixmap, options) -> None:
-        """截图确认，执行 OCR"""
+        """截图确认，执行 OCR
+
+        options 来自截图面板（screenshot 源），首次识别保持用截图源选项；
+        同时经 set_image_for_recognition 启用「重新识别」按钮——
+        之后点「重新识别」会改用界面面板选项（main 源）。
+        """
         self.showNormal()
         self.activateWindow()
         if not pixmap.isNull():
+            self._single_tab.set_image_for_recognition(pixmap)
             self._single_tab.set_pixmap(pixmap)
             self._single_tab.run_ocr(pixmap, options)
 

@@ -170,9 +170,7 @@ class SingleRecognitionTab(BaseOcrTab):
 
         self._preprocess_options.unlock_pipeline()
         self._preview_widget.set_pixmap(pixmap)
-        self._pending_pixmap = pixmap
-        self._pending_file_path = None
-        self._start_btn.setEnabled(True)
+        self.set_image_for_recognition(pixmap)
         self._start_btn.setText("开始识别")
 
     def _on_start(self):
@@ -207,6 +205,21 @@ class SingleRecognitionTab(BaseOcrTab):
 
     def set_pixmap(self, pixmap) -> None:
         self._preview_widget.set_pixmap(pixmap)
+
+    def set_image_for_recognition(self, pixmap: QPixmap) -> None:
+        """记录待识别图（用于粘贴 / 截图后启用「重新识别」）。
+
+        - 存入 _pending_pixmap，清空 _pending_file_path
+        - 启用 _start_btn
+
+        截图入口与粘贴入口都应经过此方法，确保识别完成后按钮可用、
+        能用界面面板选项（main 源）反复重识别。
+        注意：截图首次识别的 options 仍由调用方按截图源传入，本方法
+        只负责让「重新识别」可用，不改变首次识别的选项来源。
+        """
+        self._pending_pixmap = pixmap
+        self._pending_file_path = None
+        self._start_btn.setEnabled(True)
 
     def pixmap(self):
         return self._preview_widget.pixmap()
