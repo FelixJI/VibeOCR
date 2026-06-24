@@ -6,7 +6,8 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QSize, Qt
+from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QGroupBox,
     QLabel,
@@ -57,7 +58,10 @@ class AboutTab(QWidget):
         layout.setSpacing(16)
         layout.setAlignment(Qt.AlignmentFlag.AlignHCenter)
 
-        # --- header: app name + version ---
+        # --- header: app logo + name + version ---
+        logo_label = self._create_logo_label()
+        if logo_label is not None:
+            layout.addWidget(logo_label, alignment=Qt.AlignmentFlag.AlignCenter)
         self._name_label = QLabel(_APP_NAME)
         self._name_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         font = self._name_label.font()
@@ -142,6 +146,32 @@ class AboutTab(QWidget):
     # ------------------------------------------------------------------
     # helpers
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _create_logo_label(size: int = 128) -> QLabel | None:
+        """创建关于页 Logo 标签。
+
+        优先读取多分辨率 app_icon.ico；缺失时返回 None（不破坏布局）。
+        """
+        icon_path = env_manager.get_project_root() / "resources" / "app_icon.ico"
+        if not icon_path.exists():
+            logger.warning(f"应用图标不存在: {icon_path}")
+            return None
+
+        pixmap = QPixmap(str(icon_path))
+        if pixmap.isNull():
+            logger.warning(f"应用图标加载失败: {icon_path}")
+            return None
+
+        label = QLabel()
+        label.setPixmap(
+            pixmap.scaled(
+                QSize(size, size),
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+        )
+        return label
 
     @staticmethod
     def _create_section(title: str, widget: QWidget) -> QGroupBox:

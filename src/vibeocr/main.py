@@ -141,6 +141,47 @@ def _on_tray_activated(reason, window):
             _show_main_window(window)
 
 
+def _resolve_app_icon_path() -> Path | None:
+    """解析应用图标路径，兼容开发态与 PyInstaller 打包态。
+
+    开发态图标位于 `<project_root>/resources/app_icon.ico`；
+    打包态（PyInstaller --onedir）resources 目录随 exe 同级拷贝，
+    图标位于 `<exe_dir>/resources/app_icon.ico`。
+
+    Returns:
+        图标文件路径；找不到时返回 None。
+    """
+    if getattr(sys, "frozen", False):
+        # 打包态：与可执行文件同级的 resources 目录
+        base = Path(sys.executable).resolve().parent
+    else:
+        base = env_manager.get_project_root()
+
+    icon = base / "resources" / "app_icon.ico"
+    return icon if icon.exists() else None
+
+
+def _setup_app_icon(app) -> None:
+    """为 QApplication 设置应用图标（窗口标题栏、任务栏、托盘共用）。
+
+    图标必须在主窗口创建之前设置，窗口才会继承；缺失时不抛错，仅记录警告。
+    """
+    from PySide6.QtGui import QIcon
+
+    icon_path = _resolve_app_icon_path()
+    if icon_path is None:
+        print("[VibeOCR] 未找到应用图标 resources/app_icon.ico，跳过设置")
+        return
+
+    icon = QIcon(str(icon_path))
+    if icon.isNull():
+        print(f"[VibeOCR] 图标加载失败: {icon_path}")
+        return
+
+    app.setWindowIcon(icon)
+    app.setApplicationName("VibeOCR")
+
+
 def launch_application() -> int:
     """启动应用程序"""
     from PySide6.QtWidgets import QApplication
@@ -154,6 +195,9 @@ def launch_application() -> int:
     app = QApplication(sys.argv)
     app.setApplicationName("VibeOCR")
     app.setApplicationVersion(__version__)
+
+    # 设置应用图标（必须在主窗口创建之前，窗口才能继承图标）
+    _setup_app_icon(app)
 
     # 初始化统一配置管理器
     project_root = env_manager.get_project_root()
