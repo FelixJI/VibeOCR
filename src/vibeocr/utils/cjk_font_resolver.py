@@ -77,3 +77,59 @@ class CjkFontResolver:
                 "[CjkFontResolver] 未找到系统 CJK 字体，文字层将回退 china-s"
             )
         return self._system_font
+
+    def resolve(self, chars: str) -> str | None:
+        """返回覆盖 chars 的子集字体路径；探测失败或空字符返回 None。
+
+        Args:
+            chars: 本页文字层需要的所有字符。
+        Returns:
+            子集字体临时文件路径，或 None（调用方回退 china-s）。
+        """
+        if not chars:
+            return None
+        sys_font = self._find_system_font()
+        if sys_font is None:
+            return None
+        key = frozenset(chars)
+        if key not in self._subset_cache:
+            try:
+                self._subset_cache[key] = self._subset(sys_font, chars)
+            except Exception as e:
+                logger.warning(
+                    "[CjkFontResolver] 子集化失败，回退内置字体: %s", e
+                )
+                return None
+        return self._subset_cache[key]
+
+    @staticmethod
+    def _subset(orig_path: str, chars: str) -> str:
+        """fontTools 子集化到临时文件，返回路径。
+
+        .ttc（字体集合）需 fontNumber=0 取第一个 face；.ttf 直接打开。
+        populate(text=...) 自动闭包 notdef 等必需字形。
+        """
+        import os
+        import tempfile
+
+        from fontTools import subset
+        from fontTools.ttLib import TTFont
+
+        is_ttc = orig_path.lower().endswith(".ttc")
+        font = TTFont(orig_path, fontNumber=0) if is_ttc else TTFont(orig_path)
+        sub = subset.Subsetter()
+        sub.populate(text=chars)
+        sub.subset(font)
+        fd, path = tempfile.mkstemp(suffix=".ttf", prefix="vibeocr_subset_")
+        os.close(fd)
+        font.save(path)
+        return path
+
+    def cleanup(self) -> None:
+        """删除所有缓存的子集临时文件（进程退出或 session 关闭时调用）。"""
+        for path in self._subset_cache.values():
+            try:
+                Path(path).unlink(missing_ok=True)
+            except OSError:
+                pass
+        self._subset_cache.clear()

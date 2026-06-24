@@ -53,3 +53,88 @@ class TestFindSystemFont:
         fake_font.unlink()
         second = resolver._find_system_font()
         assert first == second == str(fake_font)
+
+
+class TestSubsetAndResolve:
+    """子集化与 resolve 主流程。"""
+
+    @pytest.fixture
+    def real_font(self):
+        """获取真实系统 CJK 字体路径（Windows 测试环境）。"""
+        import glob
+        import os
+
+        win = os.environ.get("WINDIR", r"C:\Windows")
+        for pat in [f"{win}\Fonts\simhei.ttf", f"{win}\Fonts\msyh.ttc"]:
+            for f in glob.glob(pat):
+                return f
+        pytest.skip("无系统 CJK 字体，跳过子集化测试")
+
+    def test_resolve_returns_subset_path(self, monkeypatch, real_font):
+        """resolve 返回子集字体文件路径（文件存在且非空）。"""
+        resolver = CjkFontResolver()
+        monkeypatch.setattr(resolver, "_get_candidates", lambda: [real_font])
+        path = resolver.resolve("签收联测试中文")
+        assert path is not None
+        from pathlib import Path
+
+        assert Path(path).is_file()
+        assert Path(path).stat().st_size > 0
+        resolver.cleanup()
+
+    def test_subset_much_smaller_than_original(self, monkeypatch, real_font):
+        """子集字体远小于原字体（验证 fontTools 真做了子集化）。"""
+        import os
+
+        resolver = CjkFontResolver()
+        monkeypatch.setattr(resolver, "_get_candidates", lambda: [real_font])
+        path = resolver.resolve("签收联测试")
+        assert path is not None
+        orig_size = os.path.getsize(real_font)
+        sub_size = os.path.getsize(path)
+        # 子集应比原字体小至少 10 倍（实测通常小 1000+ 倍）
+        assert sub_size < orig_size / 10, f"子集未缩小: orig={orig_size} sub={sub_size}"
+        resolver.cleanup()
+
+    def test_subset_cache_reuses_same_charset(self, monkeypatch, real_font):
+        """相同字符集返回相同子集路径（缓存复用）。"""
+        resolver = CjkFontResolver()
+        monkeypatch.setattr(resolver, "_get_candidates", lambda: [real_font])
+        p1 = resolver.resolve("签收联")
+        p2 = resolver.resolve("签收联")
+        assert p1 == p2
+        resolver.cleanup()
+
+    def test_subset_different_chars_different_path(self, monkeypatch, real_font):
+        """不同字符集返回不同子集路径。"""
+        resolver = CjkFontResolver()
+        monkeypatch.setattr(resolver, "_get_candidates", lambda: [real_font])
+        p1 = resolver.resolve("签收联")
+        p2 = resolver.resolve("发货单")
+        assert p1 != p2
+        resolver.cleanup()
+
+    def test_resolve_none_for_empty_chars(self, monkeypatch, real_font):
+        """空字符集返回 None。"""
+        resolver = CjkFontResolver()
+        monkeypatch.setattr(resolver, "_get_candidates", lambda: [real_font])
+        assert resolver.resolve("") is None
+
+    def test_resolve_none_when_no_system_font(self, monkeypatch):
+        """无系统字体时返回 None。"""
+        resolver = CjkFontResolver()
+        monkeypatch.setattr(
+            resolver, "_get_candidates", lambda: ["/nonexistent.ttf"]
+        )
+        assert resolver.resolve("签收联") is None
+
+    def test_cleanup_removes_temp_files(self, monkeypatch, real_font):
+        """cleanup 删除临时子集文件。"""
+        from pathlib import Path
+
+        resolver = CjkFontResolver()
+        monkeypatch.setattr(resolver, "_get_candidates", lambda: [real_font])
+        path = resolver.resolve("签收联")
+        assert path is not None and Path(path).is_file()
+        resolver.cleanup()
+        assert not Path(path).is_file()
