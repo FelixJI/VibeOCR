@@ -222,3 +222,171 @@ class TestPreviewCanvasBlockEdit:
         )
         canvas._apply_block_edit(0, "Hello")
         assert len(emitted) == 0
+
+
+def _make_mouse_event(position, button=None):
+    """构造带 .position()/.button() stub 的伪鼠标事件（直调 handler 用）。
+
+    本文件画布用 event.position()（返回 QPointF）、event.button()。
+    """
+    from unittest.mock import MagicMock
+
+    ev = MagicMock()
+    ev.position.return_value = position
+    if button is not None:
+        ev.button.return_value = button
+    return ev
+
+
+class TestPreviewCanvasScaleBehavior:
+    """缩放后 bbox 坐标空间一致性（防双重缩放回归）。"""
+
+    def test_ocr_block_rects_unscaled_after_zoom(self, canvas, qapp):
+        """放大后 _ocr_block_rects 应是未缩放的 pixmap 像素坐标（不含 scale）。
+
+        旧 bug：rects 预乘 scale，paintEvent 又 painter.scale → 缩放两次（scale²）。
+        """
+        from PySide6.QtGui import QPixmap
+
+        from vibeocr.models.ocr_result import TextBlock
+
+        pm = QPixmap(1000, 800)
+        pm.fill()
+        block = TextBlock(text="Hi", score=0.9, bbox=(50.0, 50.0, 300.0, 100.0))
+        canvas.set_ocr_blocks(0, [block], pm)
+        # 模拟滚轮放大到 2x
+        canvas._scale = 2.0
+        canvas._compute_ocr_block_rects()
+
+        sx, sy, sw, sh = canvas._ocr_block_rects[0]
+        # 期望：bbox/BBOX_NORM * pixmap_size（无 scale）
+        assert sx == 50.0 / 1000.0 * 1000
+        assert sy == 50.0 / 1000.0 * 800
+        assert sw == (300.0 - 50.0) / 1000.0 * 1000
+        assert sh == (100.0 - 50.0) / 1000.0 * 800
+
+    def test_inline_edit_geometry_uses_scaled_coords(self, canvas, qapp):
+        """缩放后 editor.setGeometry 应 × scale（child widget 走 widget 像素空间）。"""
+        from PySide6.QtGui import QPixmap
+
+        from vibeocr.models.ocr_result import TextBlock
+
+        pm = QPixmap(1000, 800)
+        pm.fill()
+        block = TextBlock(text="Hi", score=0.9, bbox=(50.0, 50.0, 300.0, 100.0))
+        canvas.set_ocr_blocks(0, [block], pm)
+        canvas._scale = 2.0
+        canvas._compute_ocr_block_rects()
+
+        canvas._start_inline_edit(0)
+        editor = canvas._inline_editor
+        assert editor is not None
+        geo = editor.geometry()
+        bx, by, _bw, _bh = canvas._ocr_block_rects[0]
+        assert geo.x() == int(bx * 2.0)
+        assert geo.y() == int(by * 2.0)
+
+    def test_hover_after_scale_sets_tooltip(self, canvas, qapp):
+        """缩放后 hover hit-test 应 / scale（防命中回归）。"""
+        from PySide6.QtCore import QPointF
+        from PySide6.QtGui import QPixmap
+
+        from vibeocr.models.ocr_result import TextBlock
+
+        pm = QPixmap(1000, 800)
+        pm.fill()
+        block = TextBlock(text="Hi", score=0.9, bbox=(50.0, 50.0, 300.0, 100.0))
+        canvas.set_ocr_blocks(0, [block], pm)
+        canvas._scale = 2.0
+        canvas._compute_ocr_block_rects()
+        canvas._drag_last = None  # 确保非拖拽态走 hover
+
+        # rect 中心（未缩放）= (175, 60)；widget 像素 = × scale = (350, 120)
+        ev = _make_mouse_event(QPointF(350.0, 120.0))
+        canvas.mouseMoveEvent(ev)
+        assert canvas.toolTip() != ""
+
+        # 移出块外
+        ev2 = _make_mouse_event(QPointF(900.0, 900.0))
+        canvas.mouseMoveEvent(ev2)
+        assert canvas.toolTip() == ""
+
+    def test_double_click_hit_uses_scaled_mouse(self, canvas, qapp):
+        """双击命中需 / scale 后再 hit-test。"""
+        from PySide6.QtCore import QPointF
+        from PySide6.QtCore import Qt as QtConst
+        from PySide6.QtGui import QPixmap
+
+        from vibeocr.models.ocr_result import TextBlock
+
+        pm = QPixmap(1000, 800)
+        pm.fill()
+        block = TextBlock(text="Hi", score=0.9, bbox=(50.0, 50.0, 300.0, 100.0))
+        canvas.set_ocr_blocks(0, [block], pm)
+        canvas._scale = 2.0
+        canvas._compute_ocr_block_rects()
+
+        # rect 中心（未缩放）= (175, 60)；widget 像素 × scale = (350, 120)
+        ev = _make_mouse_event(
+            QPointF(350.0, 120.0), button=QtConst.MouseButton.LeftButton
+        )
+        canvas.mouseDoubleClickEvent(ev)
+        assert canvas._editing_index == 0
+
+
+class TestPreviewCanvasDragPan:
+    """左键拖拽平移：驱动外层 QScrollArea 的滚动条。"""
+
+    def test_drag_pan_moves_scrollbars(self, window, qapp):
+        """拖拽应平移滚动条（hbar/vbar value 改变）。"""
+        from PySide6.QtCore import QPointF
+        from PySide6.QtCore import Qt as QtConst
+
+        canvas = window._canvas
+        assert hasattr(window, "_scroll"), "PdfPreviewWindow 应暴露 _scroll 引用"
+
+        # 不调 window.show()（会触发 Windows 下销毁期崩溃）；
+        # 直接给滚动条设范围，让拖拽平移逻辑有可移动空间。
+        hbar = window._scroll.horizontalScrollBar()
+        vbar = window._scroll.verticalScrollBar()
+        hbar.setRange(0, 1000)
+        vbar.setRange(0, 1000)
+        hbar.setValue(500)
+        vbar.setValue(500)
+        h_before, v_before = hbar.value(), vbar.value()
+
+        # 按下 → 移动（向右下拖 50px，视口应向左上滚 → value 减小）
+        canvas.mousePressEvent(
+            _make_mouse_event(
+                QPointF(100.0, 100.0), button=QtConst.MouseButton.LeftButton
+            )
+        )
+        canvas.mouseMoveEvent(_make_mouse_event(QPointF(150.0, 150.0)))
+        assert hbar.value() == h_before - 50
+        assert vbar.value() == v_before - 50
+
+        # 释放：拖拽状态清除
+        canvas.mouseReleaseEvent(
+            _make_mouse_event(
+                QPointF(150.0, 150.0), button=QtConst.MouseButton.LeftButton
+            )
+        )
+        assert canvas._drag_last is None
+
+    def test_drag_default_hand_cursor(self, canvas, qapp):
+        """默认应为 OpenHandCursor（提示可拖）。"""
+        from PySide6.QtCore import Qt as QtConst
+
+        assert canvas.cursor().shape() == QtConst.CursorShape.OpenHandCursor
+
+    def test_drag_sets_closed_hand_cursor(self, canvas, qapp):
+        """按下左键应切到 ClosedHandCursor。"""
+        from PySide6.QtCore import QPointF
+        from PySide6.QtCore import Qt as QtConst
+
+        canvas.mousePressEvent(
+            _make_mouse_event(
+                QPointF(10.0, 10.0), button=QtConst.MouseButton.LeftButton
+            )
+        )
+        assert canvas.cursor().shape() == QtConst.CursorShape.ClosedHandCursor

@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QRectF, Qt, Signal
+from PySide6.QtCore import QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QMouseEvent, QPainter, QPen, QPixmap, QWheelEvent
 from PySide6.QtWidgets import (
     QLineEdit,
@@ -65,7 +65,13 @@ class PreviewCanvas(QWidget):
         self._inline_editor: QLineEdit | None = None
         self._editing_index: int = -1
 
+        # 拖拽平移状态（左键按住拖动外层 QScrollArea 的滚动条）
+        self._drag_last: QPointF | None = None
+        self._scroll_area: QScrollArea | None = None
+
         self.setMouseTracking(True)
+        # 内容可拖：默认抓手光标提示可拖拽
+        self.setCursor(Qt.CursorShape.OpenHandCursor)
 
     # ---- pixmap / scale ----
 
@@ -112,7 +118,13 @@ class PreviewCanvas(QWidget):
         self.update()
 
     def _compute_ocr_block_rects(self) -> None:
-        """将 OCR 块归一化 bbox 映射到 pixmap 像素坐标（× scale）。"""
+        """将 OCR 块归一化 bbox 映射到 pixmap 像素坐标（不含 scale）。
+
+        rects 存的是「未缩放的 pixmap 像素坐标」：
+        - paintEvent 里 painter.scale(self._scale) 会把它渲染到正确位置；
+        - 因此 hover/hit-test 需把鼠标坐标 / scale 再比较；
+        - editor.setGeometry 需 × scale（child widget 走 widget 像素空间）。
+        """
         self._ocr_block_rects.clear()
         if self._pixmap is None or not self._ocr_blocks:
             return
@@ -123,10 +135,10 @@ class PreviewCanvas(QWidget):
                 self._ocr_block_rects.append((0.0, 0.0, 0.0, 0.0))
                 continue
             x0, y0, x1, y1 = block.bbox
-            sx = x0 / BBOX_NORM * pw * self._scale
-            sy = y0 / BBOX_NORM * ph * self._scale
-            sw = (x1 - x0) / BBOX_NORM * pw * self._scale
-            sh = (y1 - y0) / BBOX_NORM * ph * self._scale
+            sx = x0 / BBOX_NORM * pw
+            sy = y0 / BBOX_NORM * ph
+            sw = (x1 - x0) / BBOX_NORM * pw
+            sh = (y1 - y0) / BBOX_NORM * ph
             self._ocr_block_rects.append((sx, sy, sw, sh))
 
     def _clear_ocr_blocks(self) -> None:
@@ -196,9 +208,14 @@ class PreviewCanvas(QWidget):
             bbox = layer.bbox
             color_idx = layer.color_id % 8
             palette = [
-                (0, 120, 215, 80), (0, 180, 80, 80), (230, 140, 0, 80),
-                (180, 0, 180, 80), (0, 180, 180, 80), (215, 80, 80, 80),
-                (140, 100, 0, 80), (80, 80, 215, 80),
+                (0, 120, 215, 80),
+                (0, 180, 80, 80),
+                (230, 140, 0, 80),
+                (180, 0, 180, 80),
+                (0, 180, 180, 80),
+                (215, 80, 80, 80),
+                (140, 100, 0, 80),
+                (80, 80, 215, 80),
             ]
             r, g, b, a = palette[color_idx]
             pixel_bbox = PdfService.bbox_to_pixel(
@@ -211,15 +228,40 @@ class PreviewCanvas(QWidget):
 
     # ---- 鼠标交互 ----
 
+    def mousePressEvent(self, event: QMouseEvent) -> None:
+        """左键按下：开始拖拽平移（双击编辑由 mouseDoubleClickEvent 单独处理）。"""
+        if event.button() != Qt.MouseButton.LeftButton:
+            return
+        self._drag_last = event.position()
+        self.setCursor(Qt.CursorShape.ClosedHandCursor)
+
     def mouseMoveEvent(self, event: QMouseEvent) -> None:
+        # 拖拽平移优先：按住左键移动时驱动外层 QScrollArea 的滚动条
+        if self._drag_last is not None and self._scroll_area is not None:
+            delta = event.position() - self._drag_last
+            self._drag_last = event.position()
+            h = self._scroll_area.horizontalScrollBar()
+            v = self._scroll_area.verticalScrollBar()
+            h.setValue(int(h.value() - delta.x()))
+            v.setValue(int(v.value() - delta.y()))
+            return
+
+        # 否则走 hover tooltip
         if self._ocr_blocks is not None and self._pixmap is not None:
             self._handle_ocr_hover(event)
         elif self._highlight_layers and self._page_rect is not None:
             self._handle_layer_hover(event)
 
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:
+        """左键释放：结束拖拽平移。"""
+        if event.button() == Qt.MouseButton.LeftButton and self._drag_last is not None:
+            self._drag_last = None
+            self.setCursor(Qt.CursorShape.OpenHandCursor)
+
     def _handle_ocr_hover(self, event: QMouseEvent) -> None:
-        mx = event.position().x()
-        my = event.position().y()
+        # rects 是未缩放 pixmap 坐标，鼠标是 widget 像素（含 scale），需 / scale
+        mx = event.position().x() / self._scale
+        my = event.position().y() / self._scale
         for i, (bx, by, bw, bh) in enumerate(self._ocr_block_rects):
             if bw <= 0 or bh <= 0:
                 continue
@@ -253,7 +295,10 @@ class PreviewCanvas(QWidget):
             return
         if event.button() != Qt.MouseButton.LeftButton:
             return
-        idx = self._hit_test_ocr_block(event.position().x(), event.position().y())
+        # rects 未缩放，鼠标 widget 像素含 scale，需 / scale
+        idx = self._hit_test_ocr_block(
+            event.position().x() / self._scale, event.position().y() / self._scale
+        )
         if idx >= 0:
             self._start_inline_edit(idx)
 
@@ -282,7 +327,12 @@ class PreviewCanvas(QWidget):
         block = self._ocr_blocks[index]
         self._editing_index = index
         editor.setText(block.text)
-        editor.setGeometry(int(bx), int(by), max(int(bw), 120), max(int(bh) + 4, 28))
+        # rects 未缩放，child widget 走 widget 像素空间，需 × scale
+        gx = int(bx * self._scale)
+        gy = int(by * self._scale)
+        gw = max(int(bw * self._scale), 120)
+        gh = max(int(bh * self._scale) + 4, 28)
+        editor.setGeometry(gx, gy, gw, gh)
         editor.show()
         editor.setFocus()
         editor.selectAll()
@@ -353,6 +403,9 @@ class PdfPreviewWindow(QWidget):
         scroll.setWidget(self._canvas)
         scroll.setWidgetResizable(False)
         scroll.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._scroll = scroll
+        # 画布需要访问滚动条来实现拖拽平移
+        self._canvas._scroll_area = scroll
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -375,8 +428,6 @@ class PdfPreviewWindow(QWidget):
             layers, render_dpi=render_dpi, page_rect=page_rect, source=source
         )
 
-    def set_ocr_blocks(
-        self, page_index: int, blocks: list, pixmap: QPixmap
-    ) -> None:
+    def set_ocr_blocks(self, page_index: int, blocks: list, pixmap: QPixmap) -> None:
         """设置 OCR 原始块预览（公共 API）。"""
         self._canvas.set_ocr_blocks(page_index, blocks, pixmap)
