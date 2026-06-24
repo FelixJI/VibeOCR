@@ -363,9 +363,15 @@ class PdfTab(QWidget):
             self._btn_export_all.setEnabled(False)
 
     def _on_active_changed(self, file_path: str) -> None:
-        self._refresh_thumbnails()
-        self._update_status()
-        self._update_layer_status()
+        # 全量重建期间抑制双向选中同步：clear() 会触发 itemSelectionChanged，
+        # 此时两侧控件尚处于不一致的中间态，让同步逻辑静默直到重建完成。
+        self._syncing_selection = True
+        try:
+            self._refresh_thumbnails()
+            self._update_status()
+            self._update_layer_status()
+        finally:
+            self._syncing_selection = False
         has_doc = self._session_mgr.active_session is not None
         self._set_file_buttons_enabled(has_doc)
 
@@ -649,9 +655,7 @@ class PdfTab(QWidget):
         indices = self._get_selected_page_indices()
         self._syncing_selection = True
         try:
-            self._sync_selection_to(
-                self._layer_status_grid, indices, _LAYER_ROLE
-            )
+            self._sync_selection_to(self._layer_status_grid, indices)
         finally:
             self._syncing_selection = False
 
@@ -668,19 +672,22 @@ class PdfTab(QWidget):
         self._syncing_selection = True
         try:
             self._sync_selection_to(
-                self._thumbnail_list, sorted(set(indices)), Qt.ItemDataRole.UserRole
+                self._thumbnail_list, sorted(set(indices))
             )
         finally:
             self._syncing_selection = False
 
     def _sync_selection_to(
-        self, target: QListWidget, page_indices: list[int], role
+        self, target: QListWidget, page_indices: list[int]
     ) -> None:
-        """把给定 page_index 集合同步选中到 target 列表（按 role 匹配，清旧选新）。"""
+        """把给定 page_index 集合同步选中到 target 列表（按 page_index 匹配，清旧选新）。
+
+        两个列表都用 _LAYER_ROLE（== Qt.ItemDataRole.UserRole）存 page_index。
+        """
         want = set(page_indices)
         for row in range(target.count()):
             item = target.item(row)
-            item.setSelected(item.data(role) in want)
+            item.setSelected(item.data(_LAYER_ROLE) in want)
 
     def _get_selected_page_indices(self) -> list[int]:
         indices = []

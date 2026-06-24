@@ -183,7 +183,7 @@ class TestPdfTabLayerStatusLinkage:
         return doc
 
     def test_grid_selection_syncs_to_thumbnail(self, pdf_tab):
-        """网格选中 → 缩略图选中相同 page_index。"""
+        """网格选中 → 缩略图选中相同 page_index（双向断言）。"""
         from PySide6.QtCore import QItemSelectionModel
 
         doc = self._setup_session(pdf_tab)
@@ -195,8 +195,10 @@ class TestPdfTabLayerStatusLinkage:
                         grid.model().index(row, 0), QItemSelectionModel.ClearAndSelect
                     )
                     break
-            selected = pdf_tab._get_selected_page_indices()
-            assert selected == [1]
+            # 缩略图应同步选中 page_index=1
+            assert pdf_tab._get_selected_page_indices() == [1]
+            # 网格本身仍保持该选中（未因同步被清除）
+            assert [i.data(Qt.ItemDataRole.UserRole) for i in grid.selectedItems()] == [1]
         finally:
             doc.close()
 
@@ -221,7 +223,7 @@ class TestPdfTabLayerStatusLinkage:
             doc.close()
 
     def test_no_infinite_recursion_on_sync(self, pdf_tab):
-        """双向同步不应触发递归（_syncing_selection 保护）。"""
+        """双向同步不应触发递归（_syncing_selection 保护 + finally 复位）。"""
         from PySide6.QtCore import QItemSelectionModel
 
         doc = self._setup_session(pdf_tab)
@@ -236,7 +238,8 @@ class TestPdfTabLayerStatusLinkage:
                 lst.selectionModel().select(
                     lst.model().index(0, 0), QItemSelectionModel.ClearAndSelect
                 )
-            # 无 RecursionError 即通过
+            # 同步完成后 guard 必须复位为 False（证明 finally 跑过，未卡死）
+            assert pdf_tab._syncing_selection is False
         finally:
             doc.close()
 
