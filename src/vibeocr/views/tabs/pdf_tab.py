@@ -446,15 +446,23 @@ class PdfTab(QWidget):
     def _on_block_text_edited(
         self, page_index: int, block_index: int, new_text: str
     ) -> None:
-        """预览画布双击改字回调：更新内存模型。
+        """预览画布双击改字回调：更新内存模型 + 刷新网格 tooltip + 刷新预览弹窗。
 
         实际写回 PDF 文字层在用户点'保存'时由 rewrite_modified_pages 执行。
-        预览弹窗刷新在 Task 6 实现（_refresh_preview_window_if_current）。
         """
         if self._session_mgr.update_page_block_text(
             page_index, block_index, new_text
         ):
-            self._update_layer_status()
+            self._update_layer_grid_page(page_index)
+            self._refresh_preview_window_if_current(page_index)
+
+    def _refresh_preview_window_if_current(self, page_index: int) -> None:
+        """若预览弹窗正打开且显示该页，重新渲染填充（编辑块文字后刷新）。"""
+        win = self._preview_window
+        if win is None or not win.isVisible():
+            return
+        if win.current_page_index() == page_index:
+            self._render_preview_page(page_index)
 
     # ---- UI helpers -------------------------------------------------
 
@@ -971,17 +979,56 @@ class PdfTab(QWidget):
             self._open_preview(indices[0])
 
     def _open_preview(self, page_index: int) -> None:
+        """打开预览窗口，可翻页浏览整个文档（_page_indices = 全部页）。"""
         session = self._session_mgr.active_session
         if session is None:
             return
-        with session.doc_lock:
-            pixmap = PdfService.render_page(session.doc, page_index, dpi=150)
+        all_indices = [p.page_index for p in session.pdf_document.pages]
         if self._preview_window is None:
             self._preview_window = PdfPreviewWindow()
+            self._preview_window.block_text_edited.connect(self._on_block_text_edited)
+            self._preview_window.page_change_requested.connect(self._render_preview_page)
         assert self._preview_window is not None
-        self._preview_window.set_page_pixmap(pixmap)
+        current = all_indices.index(page_index) if page_index in all_indices else 0
+        self._preview_window.set_page_indices(all_indices, current)
+        self._render_preview_page(page_index)
         self._preview_window.show()
         self._preview_window.raise_()
+
+    def _render_preview_page(self, page_idx: int) -> None:
+        """渲染指定页填充预览窗口（翻页信号回调 / 初始打开共用）。
+
+        优先 OCR 原始块（细粒度，可双击编辑），无则回退 text_layers（粗块仅可视化），
+        都没有则显示纯页面图（无高亮）。
+        """
+        session = self._session_mgr.active_session
+        if session is None or self._preview_window is None:
+            return
+        page_info = session.pdf_document.get_page(page_idx)
+        if page_info is None:
+            return
+        with session.doc_lock:
+            pixmap = PdfService.render_page(session.doc, page_idx, dpi=150)
+        win = self._preview_window
+        assert win is not None
+        if page_info.ocr_text_blocks:
+            win.set_ocr_blocks(page_idx, page_info.ocr_text_blocks, pixmap)
+            win.setWindowTitle(
+                f"文字层预览 — 第{page_idx + 1}页 ({len(page_info.ocr_text_blocks)}个文字块)"
+            )
+        elif page_info.text_layers:
+            with session.doc_lock:
+                page_rect = session.doc[page_idx].rect
+            win.set_highlight(
+                pixmap, page_info.text_layers,
+                render_dpi=150, page_rect=page_rect, source="pdf",
+            )
+            win.setWindowTitle(
+                f"文字层预览 — 第{page_idx + 1}页 ({len(page_info.text_layers)}个文字块)"
+            )
+        else:
+            win.set_page_pixmap(pixmap)
+            win.setWindowTitle(f"文字层预览 — 第{page_idx + 1}页 (无文字层)")
 
     # ---- text layer operations --------------------------------------
 
@@ -1186,6 +1233,7 @@ class PdfTab(QWidget):
         self._update_status()
 
     def _on_preview_text_layer(self) -> None:
+        """打开预览窗口浏览文字层（可翻页，无文字层页显示纯页面图）。"""
         session = self._session_mgr.active_session
         if session is None:
             return
@@ -1193,42 +1241,7 @@ class PdfTab(QWidget):
         if not indices:
             QMessageBox.information(self, "预览文字层", "请先选择页面。")
             return
-        page_idx = indices[0]
-        page_info = session.pdf_document.get_page(page_idx)
-        if page_info is None or not page_info.has_text_layer:
-            QMessageBox.information(self, "预览文字层", "选中页面无文字层。")
-            return
-
-        with session.doc_lock:
-            pixmap = PdfService.render_page(session.doc, page_idx, dpi=150)
-        if self._preview_window is None:
-            self._preview_window = PdfPreviewWindow()
-            # 连接编辑信号（只连一次）
-            self._preview_window.block_text_edited.connect(self._on_block_text_edited)
-        assert self._preview_window is not None
-        # 块数：优先 OCR 原始块（细粒度）
-        block_count = (
-            len(page_info.ocr_text_blocks) if page_info.ocr_text_blocks
-            else len(page_info.text_layers)
-        )
-        self._preview_window.setWindowTitle(
-            f"文字层预览 — 第{page_idx + 1}页 ({block_count}个文字块)"
-        )
-        # 优先 OCR 原始块（细粒度 + 双击改字），回退 text_layers
-        if page_info.ocr_text_blocks:
-            self._preview_window.set_ocr_blocks(page_idx, page_info.ocr_text_blocks, pixmap)
-        else:
-            with session.doc_lock:
-                page_rect = session.doc[page_idx].rect
-            self._preview_window.set_highlight(
-                pixmap,
-                page_info.text_layers,
-                render_dpi=150,
-                page_rect=page_rect,
-                source="pdf",
-            )
-        self._preview_window.show()
-        self._preview_window.raise_()
+        self._open_preview(indices[0])
 
     # ---- cancel -----------------------------------------------------
 

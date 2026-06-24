@@ -16,7 +16,10 @@ from typing import TYPE_CHECKING
 from PySide6.QtCore import QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QMouseEvent, QPainter, QPen, QPixmap, QWheelEvent
 from PySide6.QtWidgets import (
+    QHBoxLayout,
+    QLabel,
     QLineEdit,
+    QPushButton,
     QScrollArea,
     QVBoxLayout,
     QWidget,
@@ -386,15 +389,20 @@ _PreviewCanvas = PreviewCanvas
 
 
 class PdfPreviewWindow(QWidget):
-    """PDF 页面预览窗口。"""
+    """PDF 页面预览窗口（支持翻页浏览整个文档的文字层）。"""
 
     # 转发画布的编辑信号
     block_text_edited = Signal(int, int, str)
+    # 翻页时请求 PdfTab 渲染目标页并填充窗口：(page_index,)
+    page_change_requested = Signal(int)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("PDF 页面预览")
         self.resize(800, 1000)
+
+        self._page_indices: list[int] = []
+        self._current_pos: int = 0
 
         self._canvas = PreviewCanvas()
         self._canvas.block_text_edited.connect(self.block_text_edited)
@@ -407,9 +415,76 @@ class PdfPreviewWindow(QWidget):
         # 画布需要访问滚动条来实现拖拽平移
         self._canvas._scroll_area = scroll
 
+        # 翻页工具栏
+        paging = QHBoxLayout()
+        self._btn_prev = QPushButton("◀ 上一页")
+        self._btn_prev.clicked.connect(self._go_prev)
+        self._btn_next = QPushButton("下一页 ▶")
+        self._btn_next.clicked.connect(self._go_next)
+        self._page_label = QLabel("—")
+        paging.addWidget(self._btn_prev)
+        paging.addStretch()
+        paging.addWidget(self._page_label)
+        paging.addStretch()
+        paging.addWidget(self._btn_next)
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
+        layout.addLayout(paging)
         layout.addWidget(scroll)
+        self._update_paging_buttons()
+
+    # ---- 翻页 ----
+
+    def set_page_indices(self, indices: list[int], current: int) -> None:
+        """初始化可浏览的 page_index 列表与当前位置（current 钳制到合法范围）。"""
+        self._page_indices = list(indices)
+        if self._page_indices:
+            self._current_pos = max(0, min(current, len(self._page_indices) - 1))
+        else:
+            self._current_pos = 0
+        self._update_paging_buttons()
+
+    def current_page_index(self) -> int | None:
+        """当前显示页的 page_index（无可浏览页时 None）。"""
+        if not self._page_indices or self._current_pos >= len(self._page_indices):
+            return None
+        return self._page_indices[self._current_pos]
+
+    def _update_paging_buttons(self) -> None:
+        total = len(self._page_indices)
+        if total == 0:
+            self._btn_prev.setEnabled(False)
+            self._btn_next.setEnabled(False)
+            self._page_label.setText("—")
+            return
+        self._btn_prev.setEnabled(self._current_pos > 0)
+        self._btn_next.setEnabled(self._current_pos < total - 1)
+        self._page_label.setText(f"第 {self._current_pos + 1} / {total} 页")
+
+    def _go_prev(self) -> None:
+        if self._current_pos > 0:
+            self._current_pos -= 1
+            self._update_paging_buttons()
+            self.page_change_requested.emit(self._page_indices[self._current_pos])
+
+    def _go_next(self) -> None:
+        if self._current_pos < len(self._page_indices) - 1:
+            self._current_pos += 1
+            self._update_paging_buttons()
+            self.page_change_requested.emit(self._page_indices[self._current_pos])
+
+    def keyPressEvent(self, event) -> None:
+        """←/↑ 上一页，→/↓ 下一页，Esc 关闭。"""
+        key = event.key()
+        if key in (Qt.Key.Key_Left, Qt.Key.Key_Up):
+            self._go_prev()
+        elif key in (Qt.Key.Key_Right, Qt.Key.Key_Down):
+            self._go_next()
+        elif key == Qt.Key.Key_Escape:
+            self.close()
+        else:
+            super().keyPressEvent(event)
 
     def set_page_pixmap(self, pixmap: QPixmap) -> None:
         self._canvas.set_pixmap(pixmap)

@@ -390,3 +390,73 @@ class TestPreviewCanvasDragPan:
             )
         )
         assert canvas.cursor().shape() == QtConst.CursorShape.ClosedHandCursor
+
+
+class TestPdfPreviewWindowPaging:
+    """翻页工具栏 + 键盘 + page_change_requested 信号。"""
+
+    def test_window_has_paging_controls(self, window):
+        """窗口应有上一页/下一页按钮 + 页码 Label。"""
+        assert hasattr(window, "_btn_prev")
+        assert hasattr(window, "_btn_next")
+        assert hasattr(window, "_page_label")
+
+    def test_page_change_requested_signal_exists(self, window):
+        assert hasattr(window, "page_change_requested")
+
+    def test_prev_button_emits_signal(self, window, qtbot):
+        """按上一页应 emit page_change_requested(目标页)。"""
+        window._page_indices = [0, 5, 10]
+        window._current_pos = 1  # 当前 page_index=5
+        with qtbot.waitSignal(window.page_change_requested, timeout=1000) as blocker:
+            window._go_prev()
+        # pos 1→0，page_indices[0]=0
+        assert blocker.args == [0]
+        assert window._current_pos == 0
+
+    def test_next_button_emits_signal(self, window, qtbot):
+        """按下一页应 emit page_change_requested(目标页)。"""
+        window._page_indices = [0, 5, 10]
+        window._current_pos = 0  # 当前 page_index=0
+        with qtbot.waitSignal(window.page_change_requested, timeout=1000) as blocker:
+            window._go_next()
+        # pos 0→1，page_indices[1]=5
+        assert blocker.args == [5]
+        assert window._current_pos == 1
+
+    def test_prev_disabled_at_first(self, window):
+        """在首页时上一页按钮应 disabled。"""
+        window._page_indices = [0, 5, 10]
+        window._current_pos = 0
+        window._update_paging_buttons()
+        assert not window._btn_prev.isEnabled()
+        assert window._btn_next.isEnabled()
+
+    def test_next_disabled_at_last(self, window):
+        """在末页时下一页按钮应 disabled。"""
+        window._page_indices = [0, 5, 10]
+        window._current_pos = 2
+        window._update_paging_buttons()
+        assert window._btn_prev.isEnabled()
+        assert not window._btn_next.isEnabled()
+
+    def test_page_label_shows_position(self, window):
+        """页码 Label 应显示"第 X / Y 页"。"""
+        window._page_indices = [0, 5, 10]
+        window._current_pos = 1
+        window._update_paging_buttons()
+        assert "2 / 3" in window._page_label.text()
+
+    def test_set_page_indices_clamps_current(self, window):
+        """set_page_indices 应把 current 钳制到合法范围。"""
+        window.set_page_indices([0, 5, 10], current=99)
+        assert window._current_pos == 2  # 钳到最后
+
+    def test_empty_page_indices_disables_both(self, window):
+        """无可浏览页时两个翻页按钮都应 disabled。"""
+        window._page_indices = []
+        window._current_pos = 0
+        window._update_paging_buttons()
+        assert not window._btn_prev.isEnabled()
+        assert not window._btn_next.isEnabled()
+        assert window._page_label.text() == "—"
