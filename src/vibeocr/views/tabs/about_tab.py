@@ -7,7 +7,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QSize, Qt
-from PySide6.QtGui import QPixmap
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QFormLayout,
     QFrame,
@@ -54,39 +54,53 @@ class AboutTab(QWidget):
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QScrollArea.Shape.NoFrame)
 
+        # 居中容器：把 stretch 放进 scroll 的视口里，而非 scroll 外层。
+        # 原实现把 scroll 包在 HBox(addStretch + scroll + addStretch) 中，
+        # 但 setWidgetResizable=True 时 scroll 会吞掉全部宽度，外层 stretch
+        # 失效，导致 720px 的 container 左对齐、右侧留下一大片空白。
+        # 这里让 scroll 全宽透明，container 包一层 HBox 左右各 addStretch，
+        # 宽屏下 container 才真正水平居中。
+        scroll.setStyleSheet("QScrollArea { background: transparent; }")
+
         container = QWidget()
         container.setMaximumWidth(720)
-        layout = QVBoxLayout(container)
-        layout.setContentsMargins(
+        container_layout = QVBoxLayout(container)
+        container_layout.setContentsMargins(
             theme.Spacing.xxl, theme.Spacing.xl,
             theme.Spacing.xxl, theme.Spacing.xl,
         )
-        layout.setSpacing(theme.Spacing.lg)
+        container_layout.setSpacing(theme.Spacing.lg)
 
         # 品牌卡片
-        layout.addWidget(self._create_brand_card())
+        container_layout.addWidget(self._create_brand_card())
         # 详细信息卡片
-        layout.addWidget(self._create_info_card())
+        container_layout.addWidget(self._create_info_card())
         # 更新日志卡片
-        layout.addWidget(self._create_changelog_card())
+        container_layout.addWidget(self._create_changelog_card())
 
         # 检查更新按钮
         update_btn = QPushButton("检查更新")
         update_btn.setFixedWidth(160)
         update_btn.setStyleSheet(theme.button_qss("primary"))
         update_btn.clicked.connect(self._on_check_update)
-        layout.addWidget(update_btn, alignment=Qt.AlignmentFlag.AlignCenter)
+        container_layout.addWidget(update_btn, alignment=Qt.AlignmentFlag.AlignCenter)
 
-        layout.addStretch()
+        container_layout.addStretch()
 
-        scroll.setWidget(container)
+        # 视口内居中：HBox(左 stretch + container + 右 stretch)
+        viewport = QWidget()
+        viewport_layout = QHBoxLayout(viewport)
+        viewport_layout.setContentsMargins(0, 0, 0, 0)
+        viewport_layout.addStretch()
+        viewport_layout.addWidget(container)
+        viewport_layout.addStretch()
+        viewport.setStyleSheet("background: transparent;")
 
-        # 居中 container（宽屏下左右留白）
-        outer = QHBoxLayout(self)
+        scroll.setWidget(viewport)
+
+        outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
-        outer.addStretch()
-        outer.addWidget(scroll, stretch=1)
-        outer.addStretch()
+        outer.addWidget(scroll)
 
     def _create_card(self) -> tuple[QFrame, QVBoxLayout]:
         """创建一张卡片容器（QFrame + card_qss）。
@@ -212,26 +226,26 @@ class AboutTab(QWidget):
     def _create_logo_label(size: int = 128) -> QLabel | None:
         """创建关于页 Logo 标签。
 
-        优先读取多分辨率 app_icon.ico；缺失时返回 None（不破坏布局）。
+        通过 QIcon 读取多分辨率 app_icon.ico，由其按目标尺寸自动挑选最
+        合适的子图并处理 HiDPI；缺失/加载失败时返回 None（不破坏布局）。
+
+        注：不能用 ``QPixmap(str(ico))`` 直接加载——它只读取 .ico 的第一帧
+        （16×16），再放大到 ``size`` 会模糊。QIcon 才会按需挑选高分辨率
+        子图（见实测：请求 96 时取 144 这一档）。
         """
         icon_path = env_manager.get_project_root() / "resources" / "app_icon.ico"
         if not icon_path.exists():
             logger.warning(f"应用图标不存在: {icon_path}")
             return None
 
-        pixmap = QPixmap(str(icon_path))
+        icon = QIcon(str(icon_path))
+        pixmap = icon.pixmap(QSize(size, size))
         if pixmap.isNull():
             logger.warning(f"应用图标加载失败: {icon_path}")
             return None
 
         label = QLabel()
-        label.setPixmap(
-            pixmap.scaled(
-                QSize(size, size),
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation,
-            )
-        )
+        label.setPixmap(pixmap)
         return label
 
     def _on_check_update(self) -> None:
