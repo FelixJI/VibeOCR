@@ -23,6 +23,9 @@ dependencies = [
     "httpx>=0.28.1",
     "mineru[core]>=3.4.0",
     "pymupdf>=1.27.2.3",
+    # PDF 文字层字体内嵌：fontTools 按字符集子集化系统 CJK 字体，
+    # 嵌入后 PyMuPDF 自动生成 ToUnicode CMap，使文字层在所有阅读器可搜索。
+    "fonttools>=4.61.1",
     "qrcode[pil]>=8.2",
     "python-barcode>=0.16.1",
     "opencv-contrib-python>=4.10.0.84",
