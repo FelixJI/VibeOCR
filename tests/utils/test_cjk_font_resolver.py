@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from vibeocr.utils.cjk_font_resolver import CjkFontResolver
@@ -61,13 +63,14 @@ class TestSubsetAndResolve:
     @pytest.fixture
     def real_font(self):
         """获取真实系统 CJK 字体路径（Windows 测试环境）。"""
-        import glob
         import os
 
         win = os.environ.get("WINDIR", r"C:\Windows")
-        for pat in [f"{win}\Fonts\simhei.ttf", f"{win}\Fonts\msyh.ttc"]:
-            for f in glob.glob(pat):
-                return f
+        fonts_dir = Path(win) / "Fonts"
+        for name in ("simhei.ttf", "msyh.ttc"):
+            candidate = fonts_dir / name
+            if candidate.is_file():
+                return str(candidate)
         pytest.skip("无系统 CJK 字体，跳过子集化测试")
 
     def test_resolve_returns_subset_path(self, monkeypatch, real_font):
@@ -76,24 +79,22 @@ class TestSubsetAndResolve:
         monkeypatch.setattr(resolver, "_get_candidates", lambda: [real_font])
         path = resolver.resolve("签收联测试中文")
         assert path is not None
-        from pathlib import Path
-
         assert Path(path).is_file()
         assert Path(path).stat().st_size > 0
         resolver.cleanup()
 
     def test_subset_much_smaller_than_original(self, monkeypatch, real_font):
         """子集字体远小于原字体（验证 fontTools 真做了子集化）。"""
-        import os
-
         resolver = CjkFontResolver()
         monkeypatch.setattr(resolver, "_get_candidates", lambda: [real_font])
         path = resolver.resolve("签收联测试")
         assert path is not None
-        orig_size = os.path.getsize(real_font)
-        sub_size = os.path.getsize(path)
+        orig_size = Path(real_font).stat().st_size
+        sub_size = Path(path).stat().st_size
         # 子集应比原字体小至少 10 倍（实测通常小 1000+ 倍）
-        assert sub_size < orig_size / 10, f"子集未缩小: orig={orig_size} sub={sub_size}"
+        assert sub_size < orig_size / 10, (
+            f"子集未缩小: orig={orig_size} sub={sub_size}"
+        )
         resolver.cleanup()
 
     def test_subset_cache_reuses_same_charset(self, monkeypatch, real_font):
@@ -138,3 +139,21 @@ class TestSubsetAndResolve:
         assert path is not None and Path(path).is_file()
         resolver.cleanup()
         assert not Path(path).is_file()
+
+
+class TestModuleSingleton:
+    """模块级单例与清理钩子。"""
+
+    def test_module_singleton_exists(self):
+        """模块导出 _CJK_RESOLVER 单例。"""
+        from vibeocr.utils import cjk_font_resolver
+
+        assert cjk_font_resolver._CJK_RESOLVER is not None
+        assert isinstance(cjk_font_resolver._CJK_RESOLVER, CjkFontResolver)
+
+    def test_singleton_is_same_instance(self):
+        """多次导入拿到同一实例。"""
+        from vibeocr.utils.cjk_font_resolver import _CJK_RESOLVER as r1
+        from vibeocr.utils.cjk_font_resolver import _CJK_RESOLVER as r2
+
+        assert r1 is r2

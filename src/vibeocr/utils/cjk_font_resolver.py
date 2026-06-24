@@ -133,3 +133,17 @@ class CjkFontResolver:
             except OSError:
                 pass
         self._subset_cache.clear()
+
+
+# 模块级单例：pdf_service.py 通过此实例访问，避免重复探测与子集化。
+import atexit  # noqa: E402
+
+_CJK_RESOLVER = CjkFontResolver()
+
+
+def _cleanup_on_exit() -> None:
+    """进程退出时清理临时子集字体文件。"""
+    _CJK_RESOLVER.cleanup()
+
+
+atexit.register(_cleanup_on_exit)
