@@ -953,3 +953,25 @@ class TestThumbnailIncrementalUpdate:
             assert len(called) == 1
         finally:
             doc.close()
+
+    def test_reorder_preserves_selection(self, pdf_tab):
+        """拖拽重排应保留选中状态（takeItem 会丢选中，需手动恢复）。"""
+        from PySide6.QtCore import QItemSelectionModel
+
+        doc, session = self._setup(pdf_tab)
+        try:
+            lst = pdf_tab._thumbnail_list
+            # 选中 page_index=1 和 2
+            for row in range(lst.count()):
+                if lst.item(row).data(Qt.ItemDataRole.UserRole) in (1, 2):
+                    lst.selectionModel().select(
+                        lst.model().index(row, 0), QItemSelectionModel.Select
+                    )
+            assert pdf_tab._get_selected_page_indices() == [1, 2]
+
+            pdf_tab._on_pages_reordered_with_order([2, 1, 0])
+
+            # 重排后选中应保留（page_index 不变）
+            assert pdf_tab._get_selected_page_indices() == [1, 2]
+        finally:
+            doc.close()

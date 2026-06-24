@@ -522,7 +522,10 @@ class PdfTab(QWidget):
         """拖拽排序后：按 new_order 重排缩略图 item，复用原有 icon（不重新渲染）。
 
         takeItem 摘出 item（保留 icon/role），再按新顺序重新插入。
+        takeItem 会清除选中态，故重排前记录选中的 page_index，重排后恢复。
         """
+        # 记录重排前选中的 page_index（takeItem 会丢掉选中态）
+        selected_pages = self._get_selected_page_indices()
         old_items: list[QListWidgetItem] = []
         for _ in range(self._thumbnail_list.count()):
             old_items.append(self._thumbnail_list.takeItem(0))
@@ -531,6 +534,11 @@ class PdfTab(QWidget):
             item = by_page.get(page_idx)
             if item is not None:
                 self._thumbnail_list.addItem(item)
+        # 恢复选中（page_index 未变，只是行序变了）
+        want = set(selected_pages)
+        for row in range(self._thumbnail_list.count()):
+            item = self._thumbnail_list.item(row)
+            item.setSelected(item.data(Qt.ItemDataRole.UserRole) in want)
 
     def _refresh_thumbnails(self) -> None:
         session = self._session_mgr.active_session
