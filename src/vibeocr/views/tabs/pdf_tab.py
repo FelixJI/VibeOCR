@@ -394,15 +394,9 @@ class PdfTab(QWidget):
         session = self._session_mgr.active_session
         if session is None or session.file_path != file_path:
             return
-        if page_index < self._thumbnail_list.count():
-            with session.doc_lock:
-                pixmap = PdfService.render_page(
-                    session.doc, page_index, dpi=session.pdf_document.thumbnail_dpi
-                )
-            scaled = self._scale_thumbnail(pixmap)
-            item = self._thumbnail_list.item(page_index)
-            if item:
-                item.setIcon(QIcon(scaled))
+        # OCR 注入的是隐形文字层，缩略图无视觉变化 → 不重新渲染。
+        # 仅逐页更新文字层网格格子（即时变绿）+ 汇总统计。
+        self._update_layer_grid_page(page_index)
 
     def _on_ocr_progress_update(self, file_path: str, current: int, total: int) -> None:
         self._progress_bar.setValue(current)
@@ -437,7 +431,6 @@ class PdfTab(QWidget):
         else:
             self._status_label.setText(f"文字层已添加（{written} 块）")
         self._update_layer_status()
-        self._refresh_thumbnails()
 
     def _on_block_text_edited(
         self, page_index: int, block_index: int, new_text: str
@@ -537,6 +530,37 @@ class PdfTab(QWidget):
                 item.setToolTip(f"第{p.page_index + 1}页 · 无文字层")
             grid.addItem(item)
         self._update_layer_summary(pages)
+
+    def _update_layer_grid_page(self, page_index: int) -> None:
+        """增量更新单页网格格子（不全量重建），用于 OCR/删除文字层即时反馈。
+
+        保留用户当前选中状态（只改单格的颜色/tooltip，不清空网格）。
+        """
+        session = self._session_mgr.active_session
+        if session is None:
+            return
+        page_info = session.pdf_document.get_page(page_index)
+        if page_info is None:
+            return
+        grid = self._layer_status_grid
+        for row in range(grid.count()):
+            item = grid.item(row)
+            if item.data(_LAYER_ROLE) == page_index:
+                item.setData(_HAS_LAYER_ROLE, page_info.has_text_layer)
+                block_count = (
+                    len(page_info.ocr_text_blocks)
+                    if page_info.ocr_text_blocks
+                    else len(page_info.text_layers)
+                )
+                if page_info.has_text_layer:
+                    item.setToolTip(
+                        f"第{page_index + 1}页 · 已添加文字层（{block_count}个文本块）"
+                    )
+                else:
+                    item.setToolTip(f"第{page_index + 1}页 · 无文字层")
+                break
+        # 汇总统计实时刷新
+        self._update_layer_summary(session.pdf_document.pages)
 
     def _update_layer_summary(self, pages) -> None:
         """更新网格上方汇总 Label（共 N 页 / 有文字层 X / 无文字层 Y）。"""
@@ -1069,9 +1093,10 @@ class PdfTab(QWidget):
         for idx in indices:
             with session.doc_lock:
                 PdfService.delete_text_layers(session.doc, session.pdf_document, idx)
-        self._refresh_thumbnails()
+            # 文字层是隐形层，删除不影响缩略图视觉 → 不重建缩略图。
+            # 逐页把网格格子变灰（增量，保留用户选中）。
+            self._update_layer_grid_page(idx)
         self._update_status()
-        self._update_layer_status()
 
     def _on_preview_text_layer(self) -> None:
         session = self._session_mgr.active_session

@@ -681,3 +681,75 @@ class _StubIndex:
 
     def data(self, role):
         return self._data.get(role)
+
+
+class TestOcrPerPageFeedback:
+    """OCR 逐页完成即时反馈：格子逐页变绿，缩略图不重渲染。"""
+
+    def _inject(self, pdf_tab, pages):
+        import fitz
+
+        from vibeocr.models.pdf_document import PdfDocument
+        from vibeocr.models.pdf_session import PdfSession
+
+        doc = fitz.open()
+        for _ in pages:
+            doc.new_page()
+        pdf_doc = PdfDocument(file_path="x.pdf", pages=pages)
+        session = PdfSession(file_path="x.pdf", doc=doc, pdf_document=pdf_doc)
+        pdf_tab._session_mgr._sessions["x.pdf"] = session
+        pdf_tab._session_mgr._active_path = "x.pdf"
+        pdf_tab._update_layer_status()
+        return session
+
+    def test_ocr_page_result_updates_grid_cell_to_green(self, pdf_tab):
+        """ocr_page_done 后该格子 has_layer 应为 True（变绿）。"""
+        from vibeocr.models.pdf_document import PdfPageInfo
+
+        pages = [PdfPageInfo(page_index=0, has_text_layer=False)]
+        session = self._inject(pdf_tab, pages)
+        # 模拟 OCR 完成第 0 页：has_text_layer 被置 True
+        session.pdf_document.pages[0].has_text_layer = True
+
+        pdf_tab._session_mgr.ocr_page_done.emit("x.pdf", 0, object())
+
+        item = pdf_tab._layer_status_grid.item(0)
+        # _HAS_LAYER_ROLE = UserRole + 1
+        assert item.data(Qt.ItemDataRole.UserRole + 1) is True
+
+    def test_ocr_page_result_does_not_render_thumbnail(self, pdf_tab, monkeypatch):
+        """OCR 完成一页不应重新渲染缩略图（隐形层无视觉变化）。"""
+        from PySide6.QtGui import QPixmap
+
+        from vibeocr.models.pdf_document import PdfPageInfo
+
+        pages = [PdfPageInfo(page_index=0, has_text_layer=False)]
+        session = self._inject(pdf_tab, pages)
+        session.pdf_document.pages[0].has_text_layer = True
+
+        import vibeocr.views.tabs.pdf_tab as mod
+
+        called = []
+        monkeypatch.setattr(
+            mod.PdfService,
+            "render_page",
+            lambda *a, **k: called.append(1) or QPixmap(10, 10),
+        )
+        pdf_tab._session_mgr.ocr_page_done.emit("x.pdf", 0, object())
+        assert called == []
+
+    def test_ocr_page_result_updates_summary_label(self, pdf_tab):
+        """ocr_page_done 后汇总 Label 应反映新的计数。"""
+        from vibeocr.models.pdf_document import PdfPageInfo
+
+        pages = [
+            PdfPageInfo(page_index=0, has_text_layer=False),
+            PdfPageInfo(page_index=1, has_text_layer=False),
+        ]
+        session = self._inject(pdf_tab, pages)
+        # 第 0 页 OCR 完成
+        session.pdf_document.pages[0].has_text_layer = True
+        pdf_tab._session_mgr.ocr_page_done.emit("x.pdf", 0, object())
+        text = pdf_tab._layer_summary_label.text()
+        assert "有文字层 1 页" in text
+        assert "无文字层 1 页" in text
