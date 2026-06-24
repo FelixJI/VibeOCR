@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import date
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QSize, Qt
@@ -33,7 +34,15 @@ _DESCRIPTION = (
     "一款基于 PaddleOCR 的截图文字识别工具，支持表格识别、公式识别、文档解析等功能。"
 )
 _AUTHOR = "Felix Ji"
-_COPYRIGHT = "© 2025 Felix Ji. All rights reserved."
+# 首版年份固定为 2025，当前年份运行时取系统日期，二者不同时显示为区间。
+_FIRST_YEAR = 2025
+_current_year = date.today().year
+_year_range = (
+    str(_FIRST_YEAR)
+    if _current_year <= _FIRST_YEAR
+    else f"{_FIRST_YEAR}–{_current_year}"
+)
+_COPYRIGHT = f"© {_year_range} Felix Ji. All rights reserved."
 _GITHUB_URL = "https://github.com/felixji/vibeocr"
 _TECH_STACK = [
     ("PaddlePaddle / PaddleX", "OCR 引擎"),
