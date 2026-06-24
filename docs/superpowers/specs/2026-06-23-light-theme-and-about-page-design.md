@@ -1,15 +1,15 @@
 # 浅色主题统一 + 关于页卡片化设计
 
-> 日期: 2026-06-23
+> 日期: 2026-06-23（2026-06-24 更新：适配近期提交）
 > 状态: 设计中
 
 ## 1. 问题
 
-应用当前没有任何全局主题/QSS。`main.py:launch_application()` 只调用
-`QApplication(sys.argv)`，跑的是 Qt 默认 Windows 原生控件风格——这是界面
-"显丑"的根本来源。样式零散硬编码在 17 个文件、共 57 处 `setStyleSheet`
-调用里，颜色随手写（`#3b82f6`、`#555`、`#888`、`#0078d4`、`#e0e0e0`、
-`#f5f5f5`……），没有统一的设计 token。
+应用当前没有任何全局主题/QSS。`main.py:launch_application()` 在创建
+`QApplication` 后只设置图标，未应用任何样式表，跑的是 Qt 默认 Windows
+原生控件风格——这是界面"显丑"的根本来源。样式零散硬编码在 17 个文件、
+共 57 处 `setStyleSheet` 调用里，颜色随手写（`#3b82f6`、`#555`、`#888`、
+`#0078d4`、`#e0e0e0`、`#f5f5f5`……），没有统一的设计 token。
 
 现状存在**两套并行主题**：
 
@@ -24,7 +24,10 @@
 
 **关于页**（`about_tab.py`）是本次重点交付的"可见效果"入口。现状为 6 个
 `QGroupBox` 竖排（简介/技术栈/作者/版权/项目链接/更新日志），每个框都有
-原生粗边框和标题，又丑又割裂；纯文字堆叠，没有用上 `resources/app_icon.ico`。
+原生粗边框和标题，又丑又割裂；版本号仍为灰字，更新日志嵌在 GroupBox 双层
+边框里。**注**：近期提交 `448c456` 已在关于页顶部加了 128×128 Logo
+（`_create_logo_label()`），并在 `main.py` 设了 app 图标，但卡片化容器、
+token 化配色尚未做——这些仍是本 spec 的目标。
 
 ## 2. 目标
 
@@ -60,10 +63,13 @@
 **改动**
 - `src/vibeocr/core/constants.py` — 删除 `COLOR_*` 旧 Material 色、
   `WindowsColors` 类；`Constants.Style` 的 spacing token 改为引用 theme
-- `src/vibeocr/main.py` — `QApplication` 创建后
-  `app.setStyleSheet(theme.global_qss())`，加载 `resources/app_icon.ico`
-  为 app/窗口图标
-- `src/vibeocr/views/tabs/about_tab.py` — 卡片化重写（本次重点交付）
+- `src/vibeocr/main.py` — `QApplication` 创建后（图标设置之后）
+  `app.setStyleSheet(theme.global_qss())`。
+  **注**：app 图标加载（`_setup_app_icon` + `_resolve_app_icon_path`）
+  已由 `448c456` 实现，无需再做。
+- `src/vibeocr/views/tabs/about_tab.py` — 卡片化重写（本次重点交付）。
+  **注**：`_create_logo_label()` 图标加载逻辑已由 `448c456` 实现，卡片化
+  重写时直接复用该 helper，无需重建图标加载。
 - 其余 15 个文件的 `setStyleSheet` 迁移到 theme token
 
 **纯 Python theme.py（不引入 .qss 文件）的决策依据**：二维码 tab 的前景/
@@ -170,7 +176,7 @@ def panel_qss() -> str:                # 编辑器右侧识别面板（现为浅
 ┌───────────── 关于（QScrollArea，无边框，居中，最大宽 720px）──────────────┐
 │                                                                       │
 │   ┌─ 品牌卡片 ─────────────────────────────────────────────┐         │
-│   │              [图标 80×80]   ← resources/app_icon.ico    │         │
+│   │              [图标 128×128]  ← 复用 _create_logo_label  │         │
 │   │                                                        │         │
 │   │                 VibeOCR           (24pt bold, text)     │         │
 │   │                  v1.2.3          (accent 色药丸徽标)    │         │
@@ -203,7 +209,7 @@ def panel_qss() -> str:                # 编辑器右侧识别面板（现为浅
 
 | 现状丑点 | 重写方案 |
 |---|---|
-| 无图标，纯文字堆叠 | 品牌卡顶部居中 `app_icon.ico` 缩放 80×80 |
+| Logo 已有但裸挂在顶部（`448c456` 加的 `_create_logo_label`） | 品牌卡内复用该 helper，Logo 收进卡片容器；尺寸维持 128 或缩至 96 以适应卡片 |
 | 6 个 `QGroupBox` 竖排，双层粗边框 | 3 张卡片，`card_qss()`：`surface` 底、`border` 1px、`radius.lg`、`Spacing.lg` 内边距 |
 | 版本号灰字 `color: gray` | 改成 `accent` 色药丸徽标（圆角小药丸 `accent_soft` 底 + `accent` 字） |
 | 作者/版权/技术栈/链接拆成 4 个框 | 合并成 1 张"详细信息"卡，`QFormLayout` 键值对，label 用 `text_muted` |
@@ -214,9 +220,11 @@ def panel_qss() -> str:                # 编辑器右侧识别面板（现为浅
 `addStretch()`，`container.setMaximumWidth(720)`，保证宽屏下卡片不拉满、
 视觉居中。
 
-**图标加载**：`resources/app_icon.ico` 经 `env_manager.get_project_root()`
-定位；打包环境（`sys.frozen`）走 `sys._MEIPASS` 兜底，复用 env_manager
-已有资源定位逻辑，不新造轮子。
+**图标加载**：复用 `448c456` 已实现的 `_create_logo_label(size)`——它内部
+经 `env_manager.get_project_root() / "resources" / "app_icon.ico"` 定位并
+处理缺失/加载失败（返回 None，不破坏布局），打包态路径也已由
+`main.py:_resolve_app_icon_path()` 验证过同一机制。卡片化重写时直接调用该
+helper，**不重建图标加载逻辑**。
 
 **数据不变**：`_APP_NAME`/`_DESCRIPTION`/`_AUTHOR`/`_COPYRIGHT`/
 `_GITHUB_URL`/`_TECH_STACK`/`__version__`/CHANGELOG 读取逻辑全部保留，
@@ -304,8 +312,8 @@ def global_qss() -> str:
 1. **建地基**：新建 `ui/theme.py`（token + `global_qss` +
    `card_qss`/`button_qss`/`toolbar_button_qss`/`panel_qss`）+
    `ui/__init__.py`
-2. **加载全局**：`main.py` 接入 `app.setStyleSheet(theme.global_qss())` +
-   设置 `app_icon.ico`
+2. **加载全局**：`main.py` 接入 `app.setStyleSheet(theme.global_qss())`
+   （app 图标已由 `448c456` 设置，无需再做）
 3. **关于页重写**：`about_tab.py` 卡片化（核心交付，先让"可见效果"落地）
 4. **清旧色源**：`constants.py` 删 `COLOR_*`/`WindowsColors`；删
    `editor_styles.py`/`inline_styles.py`
@@ -320,7 +328,7 @@ def global_qss() -> str:
 | 删 `WindowsColors`/`COLOR_*`/`EditorStyles`/`InlineStyles` 后漏改 import 导致 ImportError | 每删一个符号前先全局 grep 其引用，确认全部迁移完毕再删；用 `ruff`/`mypy` 兜底 |
 | 编辑器暗→浅色后，某些暗底设计的细节（选区描边、阴影）在浅底下不好看 | 实现后实际跑一次截图编辑器人工验证；选区边框保留 `accent` 实色 |
 | 全局 QSS 影响所有控件，可能与个别内联样式冲突（QSS 叠加优先级） | 遵循"内联仅在必要时覆盖全局"；迁移完成后 grep 确认剩余 `setStyleSheet` 都是有意为之的局部覆盖 |
-| `app_icon.ico` 在打包/开发环境路径差异 | 复用 `env_manager` 现有资源定位，不新造 |
+| **悬浮工具栏 QSS 背景失效**：`EdgeToolbar`/`InlineToolbar` 设了 `WA_TranslucentBackground`，若不同时设 `WA_StyledBackground`，QSS 的 `background-color` 不绘制、窗口整体透明（见 `0f6e93d`） | 迁移这两个 widget 的样式时，**必须保留 `setAttribute(WA_StyledBackground, True)`**；现有测试 `tests/widgets/test_edge_toolbar.py` 覆盖此行为 |
 
 ## 6. 验证
 
