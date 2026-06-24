@@ -18,7 +18,7 @@ from PySide6.QtCore import (
     QTimer,
     Signal,
 )
-from PySide6.QtGui import QCursor, QMouseEvent
+from PySide6.QtGui import QColor, QCursor, QMouseEvent, QPainter, QPaintEvent, QPen
 from PySide6.QtWidgets import (
     QApplication,
     QFrame,
@@ -26,6 +26,8 @@ from PySide6.QtWidgets import (
     QPushButton,
     QWidget,
 )
+
+from vibeocr.ui import theme
 
 logger = logging.getLogger(__name__)
 
@@ -147,37 +149,32 @@ class EdgeToolbar(QWidget):
             | Qt.WindowType.WindowStaysOnTopHint
             | Qt.WindowType.Tool
         )
+        # 透明背景以支持圆角；浅色实体背景改由 paintEvent 绘制
+        # （WA_TranslucentBackground 下，QSS 的 background-color 在 Windows 上不可靠）
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-        # 启用样式表背景绘制：否则 WA_TranslucentBackground 会使窗口整体透明，
-        # 样式表中的 background-color（浅色背景）无法绘制出来
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
 
-        self.setStyleSheet("""
-            EdgeToolbar {
-                background-color: #fff;
-                border: 1px solid #ddd;
-                border-radius: 6px;
-            }
-            QPushButton {
-                color: #333;
+        self.setStyleSheet(f"""
+            QPushButton {{
+                color: {theme.Colors.text};
                 background-color: transparent;
                 border: none;
                 padding: 6px 8px;
                 font-size: 15px;
-            }
-            QPushButton:hover {
-                background-color: #eee;
-                border-radius: 4px;
-            }
-            QPushButton#gripBtn {
-                color: #aaa;
+            }}
+            QPushButton:hover {{
+                background-color: {theme.Colors.hover_bg};
+                border-radius: {theme.Radius.sm}px;
+            }}
+            QPushButton#gripBtn {{
+                color: {theme.Colors.text_subtle};
                 font-size: 13px;
                 padding: 6px 4px;
-            }
-            QPushButton#gripBtn:hover {
-                color: #777;
+            }}
+            QPushButton#gripBtn:hover {{
+                color: {theme.Colors.text_muted};
                 background-color: transparent;
-            }
+            }}
         """)
 
         layout = QHBoxLayout(self)
@@ -194,7 +191,9 @@ class EdgeToolbar(QWidget):
         # 分隔线
         sep = QFrame(self)
         sep.setFrameShape(QFrame.Shape.VLine)
-        sep.setStyleSheet("color: #ddd; max-width: 1px; margin: 4px 4px;")
+        sep.setStyleSheet(
+            f"color: {theme.Colors.border}; max-width: 1px; margin: 4px 4px;"
+        )
         layout.addWidget(sep)
 
         # 截图按钮
@@ -221,6 +220,21 @@ class EdgeToolbar(QWidget):
         self.setFixedHeight(36)
         self.setMinimumWidth(120)
         self.adjustSize()
+
+    def paintEvent(self, event: QPaintEvent) -> None:  # noqa: N802
+        """绘制浅色圆角背景 + 边框。
+
+        顶层透明窗口下 QSS 背景绘制不可靠，这里手动绘制实体背景，
+        确保工具栏在任意桌面壁纸上都清晰可读。
+        """
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(theme.Colors.surface))
+        painter.drawRoundedRect(self.rect(), theme.Radius.md, theme.Radius.md)
+        painter.setBrush(Qt.GlobalColor.transparent)
+        painter.setPen(QPen(QColor(theme.Colors.border), 1))
+        painter.drawRoundedRect(self.rect(), theme.Radius.md, theme.Radius.md)
 
     # ============================================================
     # 公共接口
