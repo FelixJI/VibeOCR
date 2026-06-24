@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from vibeocr.core.editor_styles import EditorStyles
+from vibeocr.ui import theme
 from vibeocr.widgets.editor.annotation_items import EditTool
 
 
@@ -50,7 +50,11 @@ class ToolPropertiesBar(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("propertiesBar")
-        self.setStyleSheet(EditorStyles.properties_bar_style())
+        self.setStyleSheet(
+            f"QWidget#propertiesBar {{ background: transparent; }}"
+            f" QLabel {{ color: {theme.Colors.text};"
+            f" font-size: {theme.Typography.caption}px; }}"
+        )
 
         self._current_color = QColor(255, 0, 0)
         self._fill_color = QColor(255, 0, 0)
@@ -106,7 +110,7 @@ class ToolPropertiesBar(QWidget):
     def _apply_fill_color_style(self, btn: QPushButton) -> None:
         btn.setStyleSheet(
             f"QPushButton#fillColorPickButton {{ background-color: {self._fill_color.name()}; "
-            f"border: 1px solid #666; border-radius: 3px; }}"
+            f"border: 1px solid {theme.Colors.text_muted}; border-radius: 3px; }}"
         )
 
     def _update_fill_color_buttons(self) -> None:
@@ -191,7 +195,7 @@ class ToolPropertiesBar(QWidget):
         self._fill_link_btn.setToolTip("链接：填充色跟随描边色 / 独立填充色")
         self._fill_link_btn.setStyleSheet(
             "QToolButton { font-size: 14px; }"
-            "QToolButton:checked { background-color: #0078d4; color: white; }"
+            f"QToolButton:checked {{ background-color: {theme.Colors.accent}; color: white; }}"
         )
         layout.addWidget(self._fill_link_btn)
 
@@ -244,7 +248,7 @@ class ToolPropertiesBar(QWidget):
         self._bold_btn.setToolTip("粗体")
         self._bold_btn.setStyleSheet(
             "QToolButton { font-weight: bold; min-width: 24px; min-height: 24px; }"
-            "QToolButton:checked { background-color: #0078d4; color: white; }"
+            f"QToolButton:checked {{ background-color: {theme.Colors.accent}; color: white; }}"
         )
         layout.addWidget(self._bold_btn)
 
@@ -255,7 +259,7 @@ class ToolPropertiesBar(QWidget):
         self._italic_btn.setToolTip("斜体")
         self._italic_btn.setStyleSheet(
             "QToolButton { font-style: italic; min-width: 24px; min-height: 24px; }"
-            "QToolButton:checked { background-color: #0078d4; color: white; }"
+            f"QToolButton:checked {{ background-color: {theme.Colors.accent}; color: white; }}"
         )
         layout.addWidget(self._italic_btn)
 
@@ -332,7 +336,7 @@ class ToolPropertiesBar(QWidget):
         self._common_fill_link_btn.setToolTip("链接：填充色跟随描边色 / 独立填充色")
         self._common_fill_link_btn.setStyleSheet(
             "QToolButton { font-size: 14px; }"
-            "QToolButton:checked { background-color: #0078d4; color: white; }"
+            f"QToolButton:checked {{ background-color: {theme.Colors.accent}; color: white; }}"
         )
         layout.addWidget(self._common_fill_link_btn)
 
@@ -442,7 +446,7 @@ class ToolPropertiesBar(QWidget):
         """设置颜色按钮样式（使用 objectName 选择器避免被父级样式覆盖）"""
         btn.setStyleSheet(
             f"QPushButton#colorPickButton {{ background-color: {self._current_color.name()}; "
-            f"border: 1px solid #666; border-radius: 3px; }}"
+            f"border: 1px solid {theme.Colors.text_muted}; border-radius: 3px; }}"
         )
 
     def _update_color_buttons(self) -> None:
