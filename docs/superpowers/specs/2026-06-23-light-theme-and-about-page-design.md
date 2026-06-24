@@ -11,16 +11,17 @@
 共 57 处 `setStyleSheet` 调用里，颜色随手写（`#3b82f6`、`#555`、`#888`、
 `#0078d4`、`#e0e0e0`、`#f5f5f5`……），没有统一的设计 token。
 
-现状存在**两套并行主题**：
+现状存在**三套并行样式模块 + 一套散落字面色值**：
 
 | 模块 | 风格 | 用途 |
 |------|------|------|
-| `core/editor_styles.py` | **暗色**（`#1a1a1a`/`#2d2d2d`/`#404040`） | 截图编辑器工具栏 / 右侧识别面板 |
-| `core/inline_styles.py` | **浅色毛玻璃**（`#f5f5f5`/`#d0d0d0`） | 内联识别浮窗工具栏 |
+| `core/editor_styles.py` | **暗色**（`#1a1a1a`/`#2d2d2d`/`#404040`），含布局尺寸常量（`TOOLBAR_HEIGHT`/`PANEL_WIDTH`） | 截图编辑器工具栏 / 右侧识别面板 |
+| `core/inline_styles.py` | **浅色毛玻璃**（`#f5f5f5`/`#d0d0d0`），含布局尺寸常量（`TOOLBAR_HEIGHT`/`PANEL_MIN_WIDTH`/`SHADOW_*`） | 内联识别浮窗工具栏 |
+| `core/styles.py`（`AppStyles`，Material 蓝 `#2196F3`） | 完整但**零消费者**（仅被 `core/__init__.py` re-export，无任何 .py 调用其方法） | 死代码 |
 | 其余 15 个文件 | 零散字面色值 | 各写各的 |
 
 `core/constants.py` 底部还残留一套 Material 色 `COLOR_*` 和 `WindowsColors`
-类，与上述两套并存，实际无人系统化引用。
+类（经 `core/__init__.py` re-export），与上述两套并存。
 
 **关于页**（`about_tab.py`）是本次重点交付的"可见效果"入口。现状为 6 个
 `QGroupBox` 竖排（简介/技术栈/作者/版权/项目链接/更新日志），每个框都有
@@ -35,8 +36,11 @@ token 化配色尚未做——这些仍是本 spec 的目标。
 2. 全局 QSS 由 `main.py` 加载一次，统一所有控件的默认外观。
 3. **关于页**卡片化重写，作为本次核心交付。
 4. 其余 16 个文件的内联 `setStyleSheet` 迁移到 theme token。
-5. 删除旧色源：`editor_styles.py`、`inline_styles.py`、`constants.py` 的
-   `COLOR_*`/`WindowsColors`。连 import 一次清干净，**不留别名**。
+5. 删除旧样式源：`editor_styles.py`、`inline_styles.py`、`styles.py`、
+   `constants.py` 的 `COLOR_*`/`WindowsColors`。连 import 一次清干净，
+   **不留别名**。`EditorStyles`/`InlineStyles` 里的**布局尺寸常量**
+   （`TOOLBAR_HEIGHT`/`PANEL_WIDTH`/`PANEL_MIN_WIDTH`/`SHADOW_*`）并入
+   theme 的 `Layout` token。
 6. 编辑器从暗色统一改为浅色。
 
 **不做（YAGNI，明确排除）：**
@@ -59,6 +63,8 @@ token 化配色尚未做——这些仍是本 spec 的目标。
 **删除**
 - `src/vibeocr/core/editor_styles.py`
 - `src/vibeocr/core/inline_styles.py`
+- `src/vibeocr/core/styles.py`（`AppStyles`，零消费者，直接删）
+- `tests/core/test_styles.py`、`tests/core/test_inline_styles.py`（随源文件失效）
 
 **改动**
 - `src/vibeocr/core/constants.py` — 删除 `COLOR_*` 旧 Material 色、
@@ -141,6 +147,17 @@ class Typography:
 
 class Shadow:
     blur, offset_y, color = 12, 2, "rgba(0,0,0,0.08)"
+
+
+class Layout:
+    """布局尺寸 token（承接原 EditorStyles/InlineStyles 的尺寸常量）"""
+    toolbar_height = 48          # 原 EditorStyles/InlineStyles.TOOLBAR_HEIGHT
+    panel_width = 280            # 原 EditorStyles.PANEL_WIDTH（编辑器右侧面板）
+    panel_min_width = 180        # 原 InlineStyles.PANEL_MIN_WIDTH
+    # 阴影（原 InlineStyles.SHADOW_*）
+    shadow_blur = 12             # 原 SHADOW_BLUR
+    shadow_offset_y = 2          # 原 SHADOW_OFFSET
+    shadow_color = "rgba(0,0,0,0.15)"  # 原 SHADOW_COLOR，浅底下稍深以可见
 
 
 def global_qss() -> str:               # 全局基础样式（控件级），见 3.4
@@ -315,8 +332,9 @@ def global_qss() -> str:
 2. **加载全局**：`main.py` 接入 `app.setStyleSheet(theme.global_qss())`
    （app 图标已由 `448c456` 设置，无需再做）
 3. **关于页重写**：`about_tab.py` 卡片化（核心交付，先让"可见效果"落地）
-4. **清旧色源**：`constants.py` 删 `COLOR_*`/`WindowsColors`；删
-   `editor_styles.py`/`inline_styles.py`
+4. **清旧色源**：`constants.py` 删 `COLOR_*`/`WindowsColors` 并清理
+   `core/__init__.py` 对应 re-export；删 `styles.py`/`editor_styles.py`/
+   `inline_styles.py` 及其测试 `test_styles.py`/`test_inline_styles.py`
 5. **A 类**（删即可）：6 个文件删零星 `setStyleSheet`
 6. **B 类**（改引用）：4 个文件改用 token
 7. **C 类**（编辑器迁移）：5 个文件换工厂方法，暗→浅
