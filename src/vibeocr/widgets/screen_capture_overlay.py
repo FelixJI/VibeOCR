@@ -29,7 +29,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from vibeocr.core.inline_styles import InlineStyles
+from vibeocr.ui import theme
 from vibeocr.widgets.editor.annotation_items import (
     BlurItem,
     MosaicItem,
@@ -694,7 +694,7 @@ class ScreenCaptureOverlay(QWidget):
             toolbar_h = self._toolbar.sizeHint().height()
             toolbar_w = self._toolbar.sizeHint().width()
         else:
-            toolbar_h = InlineStyles.TOOLBAR_HEIGHT
+            toolbar_h = theme.Layout.toolbar_height
             toolbar_w = 400
         vg = self._virtual_geometry
 
@@ -747,9 +747,9 @@ class ScreenCaptureOverlay(QWidget):
     def _add_shadow(widget: QWidget) -> None:
         """为控件添加阴影效果"""
         effect = QGraphicsDropShadowEffect(widget)
-        effect.setBlurRadius(InlineStyles.SHADOW_BLUR)
-        effect.setOffset(InlineStyles.SHADOW_OFFSET)
-        effect.setColor(QColor(InlineStyles.SHADOW_COLOR))
+        effect.setBlurRadius(theme.Layout.shadow_blur)
+        effect.setOffset(theme.Layout.shadow_offset_y)
+        effect.setColor(QColor(theme.Layout.shadow_color))
         widget.setGraphicsEffect(effect)
 
     # ==================== 状态重置 ====================
