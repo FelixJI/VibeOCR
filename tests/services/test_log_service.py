@@ -72,3 +72,23 @@ def test_setup_logging_creates_rotating_handler():
     for h in rotating_handlers:
         h.close()
         root_logger.removeHandler(h)
+
+
+def test_setup_logging_silences_noisy_third_party_loggers():
+    """setup_logging 应将 fontTools/paddle 等噪声库降到 WARNING，避免刷屏。"""
+    from vibeocr.services.log_service import setup_logging
+
+    handler = setup_logging()
+    try:
+        # vibeocr 自身仍可保持 DEBUG
+        assert logging.getLogger("vibeocr").getEffectiveLevel() <= logging.DEBUG
+        # 已知的噪声库降到 WARNING
+        for name in ("fontTools", "paddle", "paddlex", "urllib3"):
+            assert logging.getLogger(name).getEffectiveLevel() == logging.WARNING
+    finally:
+        root_logger = logging.getLogger()
+        root_logger.removeHandler(handler)
+        for h in [
+            h for h in root_logger.handlers if not isinstance(h, logging.RootLogger)
+        ]:
+            root_logger.removeHandler(h)

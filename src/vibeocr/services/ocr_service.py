@@ -496,6 +496,7 @@ class OCRService(metaclass=SingletonMeta):
     def _get_device() -> str:
         """根据环境变量和 GPU 可用性检测推理设备"""
         if os.environ.get("VIBEOCR_USE_GPU", "").lower() != "true":
+            _logger.info("[推理设备] CPU（未启用 GPU，VIBEOCR_USE_GPU != true）")
             return "cpu"
         try:
             import paddle
@@ -507,16 +508,54 @@ class OCRService(metaclass=SingletonMeta):
                 paddle.device.set_device("gpu")
                 a = paddle.randn([4, 4])
                 _ = paddle.matmul(a, a).numpy()
-                _logger.debug("[GPU] CUDA 运行时验证通过，使用 GPU 推理")
                 # paddle 导入完成后注册 DLL 目录，供 predict() 内部的 ctypes 使用
                 # （必须在 paddle 导入后调用，否则会触发 paddle/libs/nvidia 路径错误）
                 OCRService._register_dll_directories()
+                OCRService._log_gpu_summary()
                 return "gpu"
         except Exception as e:
             _logger.warning("[GPU] GPU 可用性验证失败: %s，回退到 CPU", e)
+            _logger.info("[推理设备] CPU（GPU 验证失败，已回退）")
             return "cpu"
         _logger.warning("[GPU] VIBEOCR_USE_GPU=true 但未检测到可用 GPU，回退到 CPU")
+        _logger.info("[推理设备] CPU（未检测到可用 GPU，已回退）")
         return "cpu"
+
+    @staticmethod
+    def _log_gpu_summary() -> None:
+        """在确定使用 GPU 推理后，输出一条设备摘要 INFO 日志。
+
+        包含 GPU 名称、显存（总/空闲）和 PDF 批量上限，便于排查“日志写 CPU
+        实际跑 GPU”这类不一致问题，也直观反映 4090 等大显存卡的批量能力。
+        """
+        gpu_name = "未知"
+        try:
+            import paddle.device as paddle_device
+
+            gpu_name = paddle_device.cuda.get_device_name(0)
+        except Exception:
+            pass
+
+        total_mb = free_mb = 0
+        try:
+            from vibeocr.utils.gpu_memory_monitor import GPUMemoryMonitor
+
+            info = GPUMemoryMonitor().get_status()
+            if info.available:
+                total_mb, free_mb = info.total, info.free
+        except Exception:
+            pass
+
+        from vibeocr.utils.gpu_memory_monitor import GPU_BATCH_CAP
+
+        _logger.info(
+            "[推理设备] GPU=%s, 显存=%dMB (空闲 %dMB), PDF 批量上限=%d",
+            gpu_name,
+            total_mb,
+            free_mb,
+            GPU_BATCH_CAP,
+        )
+
 
     @classmethod
     def _register_dll_directories(cls) -> None:

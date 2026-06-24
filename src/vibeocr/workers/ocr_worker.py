@@ -56,6 +56,23 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     handlers=[logging.StreamHandler(sys.stdout)],
 )
+
+# 第三方库降噪：paddle/fontTools 等的 INFO/DEBUG 噪声会经日志通道转发到主进程，
+# 与主进程 log_service.setup_logging 的降噪保持一致。
+for _name in (
+    "fontTools",
+    "PIL",
+    "paddle",
+    "paddlex",
+    "paddleocr",
+    "urllib3",
+    "matplotlib",
+    "huggingface_hub",
+    "filelock",
+    "asyncio",
+):
+    logging.getLogger(_name).setLevel(logging.WARNING)
+
 logger = logging.getLogger(__name__)
 
 

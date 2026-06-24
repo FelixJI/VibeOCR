@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from typing import TYPE_CHECKING, Any, cast
 
 from PySide6.QtCore import (
@@ -472,6 +473,11 @@ class MainWindow(QMainWindow):
         use_gpu = env_manager.resolve_use_gpu(self._project_root)
         device = "GPU" if use_gpu else "CPU"
         self._statusbar.showMessage(f"正在启动 OCR 服务({device})...")
+
+        # 将决策同步到主进程环境变量。OCR 子进程会由 ocr_worker.run_worker
+        # 自行设置该变量，但主进程此前从未设置，导致跑在主进程 QThread 里的
+        # PdfOcrWorker 读到空值、误判为 CPU（日志误报 + batch 走 RAM 公式）。
+        os.environ["VIBEOCR_USE_GPU"] = "true" if use_gpu else "false"
 
         # 使用 SubprocessManager 启动
         self._subprocess_manager.start(use_gpu=use_gpu, start_timeout=120.0)

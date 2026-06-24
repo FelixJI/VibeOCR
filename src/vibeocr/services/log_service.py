@@ -116,4 +116,22 @@ def setup_logging() -> QtLogHandler:
     )
     root_logger.addHandler(file_handler)
 
+    # 第三方库降噪：根日志器是 DEBUG，若不显式降级，fontTools/paddle/urllib3 等
+    # 库的 INFO/DEBUG 会大量混入（如 PDF 渲染时 fontTools.subset 的逐字形日志）。
+    # 仅 vibeocr.* 保持 DEBUG 全量记录；以下库降到 WARNING。
+    _noisy_loggers = (
+        "fontTools",
+        "PIL",
+        "paddle",
+        "paddlex",
+        "paddleocr",
+        "urllib3",
+        "matplotlib",
+        "huggingface_hub",
+        "filelock",
+        "asyncio",
+    )
+    for name in _noisy_loggers:
+        logging.getLogger(name).setLevel(logging.WARNING)
+
     return handler

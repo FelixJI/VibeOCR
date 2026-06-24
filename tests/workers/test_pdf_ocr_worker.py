@@ -3,6 +3,7 @@
 from unittest.mock import MagicMock
 
 import numpy as np
+import pytest
 from PySide6.QtCore import Qt
 
 from vibeocr.models.ocr_result import OCRResult
@@ -14,6 +15,16 @@ def _mk_result(text: str = "ok") -> OCRResult:
 
 
 class TestPdfOcrWorker:
+    @pytest.fixture(autouse=True)
+    def _force_cpu_env(self, monkeypatch):
+        """固定 CPU 模式，避免被其它测试（如实例化 MainWindow 的用例，会真实
+        写入 os.environ["VIBEOCR_USE_GPU"]）遗留的状态污染。
+
+        本类多数用例假设 CPU 批量公式（页面很小、RAM 充足 → 单批完成）。
+        显式测试 GPU/CPU 分支的用例 (TestComputeBatchSize) 自行管理环境变量。
+        """
+        monkeypatch.delenv("VIBEOCR_USE_GPU", raising=False)
+
     def test_emits_page_done_for_each_page(self, qapp, wait_worker):
         pages = [
             (0, np.ones((100, 100, 3), dtype=np.uint8)),
@@ -416,3 +427,63 @@ class TestComputeBatchSize:
         ]
         worker._compute_batch_size(pages, use_gpu=True)
         assert captured["avg_pixels"] == 2_000_000
+
+    def test_run_uses_gpu_when_env_set(self, qapp, wait_worker, monkeypatch):
+        """VIBEOCR_USE_GPU=true 时 run() 应走 GPU 批量公式（回归：日志/批量模式
+        曾因主进程未设该环境变量而误判为 CPU）。"""
+        import vibeocr.workers.pdf_ocr_worker as mod
+
+        monkeypatch.setenv("VIBEOCR_USE_GPU", "true")
+        monkeypatch.setattr(mod, "_read_free_vram_mb", lambda: 4096)
+
+        gpu_called = {"n": 0}
+
+        def fake_gpu(free_mb, avg_pixels):
+            gpu_called["n"] += 1
+            return 4
+
+        monkeypatch.setattr(mod, "estimate_gpu_batch_size", fake_gpu)
+
+        pages = [(0, np.ones((100, 100, 3), dtype=np.uint8))]
+        mock_service = MagicMock()
+        mock_service.recognize_batch.return_value = [_mk_result("x")]
+
+        worker = PdfOcrWorker(
+            session_id="gpu.pdf",
+            pages=pages,
+            ocr_service=mock_service,
+        )
+        worker.start()
+        wait_worker(worker)
+
+        assert worker.isFinished()
+        assert gpu_called["n"] == 1, "GPU 批量公式应被调用"
+
+    def test_run_uses_cpu_when_env_unset(self, qapp, wait_worker, monkeypatch):
+        """无 VIBEOCR_USE_GPU 时 run() 走 CPU 批量公式。"""
+        import vibeocr.workers.pdf_ocr_worker as mod
+
+        monkeypatch.delenv("VIBEOCR_USE_GPU", raising=False)
+
+        cpu_called = {"n": 0}
+
+        def fake_cpu(free_mb, avg_pixels):
+            cpu_called["n"] += 1
+            return 3
+
+        monkeypatch.setattr(mod, "estimate_cpu_batch_size", fake_cpu)
+
+        pages = [(0, np.ones((100, 100, 3), dtype=np.uint8))]
+        mock_service = MagicMock()
+        mock_service.recognize_batch.return_value = [_mk_result("x")]
+
+        worker = PdfOcrWorker(
+            session_id="cpu.pdf",
+            pages=pages,
+            ocr_service=mock_service,
+        )
+        worker.start()
+        wait_worker(worker)
+
+        assert worker.isFinished()
+        assert cpu_called["n"] == 1, "CPU 批量公式应被调用"
