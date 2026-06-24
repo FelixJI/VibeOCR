@@ -30,7 +30,7 @@ from PySide6.QtWidgets import (
 
 from vibeocr.managers.pdf_session_manager import PdfSessionManager
 from vibeocr.services.pdf_service import PdfService
-from vibeocr.views.pdf_preview_window import PdfPreviewWindow, PreviewCanvas
+from vibeocr.views.pdf_preview_window import PdfPreviewWindow
 
 if TYPE_CHECKING:
     from vibeocr.services.ocr_service_base import OCRServiceBase
@@ -69,29 +69,12 @@ class PdfTab(QWidget):
         left_panel = self._create_thumbnail_panel()
         self._main_splitter.addWidget(left_panel)
 
-        self._right_splitter = QSplitter(Qt.Orientation.Vertical)
-        self._right_splitter.setChildrenCollapsible(False)
-        self._right_splitter.setObjectName("rightSplitter")
-
         right_panel = self._create_operation_panel()
-        self._right_splitter.addWidget(right_panel)
-
-        # 内嵌预览区（默认折叠为小尺寸，按需拖动展开）
-        self._preview_canvas = PreviewCanvas()
-        self._preview_canvas.block_text_edited.connect(self._on_block_text_edited)
-        preview_container = QScrollArea()
-        preview_container.setWidget(self._preview_canvas)
-        preview_container.setWidgetResizable(False)
-        self._right_splitter.addWidget(preview_container)
-
-        self._main_splitter.addWidget(self._right_splitter)
+        self._main_splitter.addWidget(right_panel)
         self._main_splitter.setSizes([200, 600])
-        # 操作区占大部分、预览区默认折叠
-        self._right_splitter.setSizes([500, 40])
 
-        # 拖动结束后保存布局
+        # 拖动结束后保存布局（仅主 splitter）
         self._main_splitter.splitterMoved.connect(self._save_splitter_state)
-        self._right_splitter.splitterMoved.connect(self._save_splitter_state)
 
         # 恢复持久化的布局
         self._restore_splitter_state()
@@ -257,7 +240,7 @@ class PdfTab(QWidget):
     # ---- splitter layout persistence --------------------------------
 
     def _restore_splitter_state(self) -> None:
-        """从偏好恢复 splitter 布局。"""
+        """从偏好恢复 splitter 布局（仅主 splitter）。"""
         try:
             from vibeocr.utils.ocr_preferences import OCRPreferences
 
@@ -267,16 +250,13 @@ class PdfTab(QWidget):
         main_state = prefs.get_pdf_splitter_state()
         if main_state:
             self._main_splitter.restoreState(main_state)
-        right_state = prefs.get_pdf_right_splitter_state()
-        if right_state:
-            self._right_splitter.restoreState(right_state)
 
     def _save_splitter_state(self) -> None:
         """拖动时触发：重启防抖定时器，停止拖动 300ms 后才落盘。"""
         self._splitter_save_timer.start(300)
 
     def _persist_splitter_state(self) -> None:
-        """防抖到期后实际落盘（一次写盘同时保存主+右 splitter）。"""
+        """防抖到期后实际落盘（一次写盘只保存主 splitter）。"""
         try:
             from vibeocr.utils.ocr_preferences import OCRPreferences
 
@@ -285,7 +265,7 @@ class PdfTab(QWidget):
             return
         prefs.set_pdf_splitter_states(
             self._main_splitter.saveState().data(),
-            self._right_splitter.saveState().data(),
+            None,
         )
 
     def _on_session_added(self, file_path: str) -> None:
@@ -383,60 +363,18 @@ class PdfTab(QWidget):
             self._status_label.setText(f"文字层已添加（{written} 块）")
         self._update_layer_status()
         self._refresh_thumbnails()
-        self._show_embedded_preview()
-
-    def _show_embedded_preview(self) -> None:
-        """在内嵌预览画布显示当前选中页文字层高亮（render_mode=3 隐形的可视化）。"""
-        indices = self._get_selected_page_indices()
-        page_idx = indices[0] if indices else 0
-        self._show_embedded_preview_for_page(page_idx)
-
-    def _show_embedded_preview_for_page(self, page_idx: int) -> None:
-        """在内嵌预览画布显示指定页文字层高亮。
-
-        优先用 OCR 原始块（细粒度，可双击编辑），无 OCR 块时回退到
-        text_layers（PyMuPDF 合并后的粗块，仅可视化）。
-        """
-        session = self._session_mgr.active_session
-        if session is None:
-            return
-        page_info = session.pdf_document.get_page(page_idx)
-        if page_info is None:
-            return
-        with session.doc_lock:
-            pixmap = PdfService.render_page(session.doc, page_idx, dpi=150)
-
-        # 优先：OCR 原始块（细粒度 + 双击改字）
-        if page_info.ocr_text_blocks:
-            self._preview_canvas.set_ocr_blocks(
-                page_idx, page_info.ocr_text_blocks, pixmap
-            )
-            return
-        # 回退：text_layers（扫描件检测或旧版无 OCR 块缓存时）
-        if not page_info.text_layers:
-            return
-        with session.doc_lock:
-            page_rect = session.doc[page_idx].rect
-        self._preview_canvas.set_pixmap(pixmap)
-        self._preview_canvas.set_highlight_layers(
-            page_info.text_layers,
-            render_dpi=150,
-            page_rect=page_rect,
-            source="pdf",
-        )
 
     def _on_block_text_edited(
         self, page_index: int, block_index: int, new_text: str
     ) -> None:
-        """预览画布双击改字回调：更新内存模型并刷新预览。
+        """预览画布双击改字回调：更新内存模型。
 
         实际写回 PDF 文字层在用户点'保存'时由 rewrite_modified_pages 执行。
+        预览弹窗刷新在 Task 6 实现（_refresh_preview_window_if_current）。
         """
         if self._session_mgr.update_page_block_text(
             page_index, block_index, new_text
         ):
-            # 刷新预览（块文字/颜色变了，重画 overlay）
-            self._show_embedded_preview()
             self._update_layer_status()
 
     # ---- UI helpers -------------------------------------------------
@@ -536,7 +474,10 @@ class PdfTab(QWidget):
             self._layer_status_list.addItem(item)
 
     def _on_layer_status_clicked(self, item: QListWidgetItem) -> None:
-        """点击状态行 → 选中左侧缩略图对应页并刷新内嵌预览（联动）。"""
+        """点击状态行 → 选中左侧缩略图对应页（联动）。
+
+        注：内嵌预览已移除；该方法整体在 Task 2 删除（被网格双向同步取代）。
+        """
         page_idx = item.data(Qt.ItemDataRole.UserRole)
         if not isinstance(page_idx, int):
             return
@@ -546,7 +487,6 @@ class PdfTab(QWidget):
             if t_item.data(Qt.ItemDataRole.UserRole) == page_idx:
                 self._thumbnail_list.setCurrentRow(row)
                 break
-        self._show_embedded_preview_for_page(page_idx)
 
     def _on_layer_status_context_menu(self, pos) -> None:
         """状态列表右键菜单：为选中的无文字层页添加文字层。"""

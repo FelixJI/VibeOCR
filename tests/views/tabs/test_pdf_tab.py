@@ -15,7 +15,8 @@ def pdf_tab(qtbot):
 
 
 class TestPdfTabStructure:
-    def test_has_two_nested_splitters(self, pdf_tab):
+    def test_has_only_main_horizontal_splitter(self, pdf_tab):
+        """改造后只有主水平 splitter，不再有右侧垂直 splitter。"""
         splitters = pdf_tab.findChildren(QSplitter)
         horiz = [
             s for s in splitters
@@ -26,7 +27,7 @@ class TestPdfTabStructure:
             if s.orientation() == Qt.Orientation.Vertical
         ]
         assert len(horiz) >= 1, "应有横向主 splitter"
-        assert len(vert) >= 1, "应有纵向右侧 splitter"
+        assert len(vert) == 0, "不应再有右侧垂直 splitter"
 
     def test_splitters_are_not_collapsible(self, pdf_tab):
         """setChildrenCollapsible(False) 应阻止用户把子部件拖没。"""
@@ -55,11 +56,10 @@ class TestPdfTabStructure:
         )
         assert owns_list
 
-    def test_embedded_preview_canvas_exists(self, pdf_tab):
-        """PdfTab 应内嵌一个 PreviewCanvas 供完成后自动预览。"""
-        from vibeocr.views.pdf_preview_window import PreviewCanvas
-
-        assert isinstance(pdf_tab._preview_canvas, PreviewCanvas)
+    def test_no_embedded_preview_canvas(self, pdf_tab):
+        """内嵌预览画布应已移除。"""
+        assert not hasattr(pdf_tab, "_preview_canvas") or pdf_tab._preview_canvas is None
+        assert not hasattr(pdf_tab, "_right_splitter") or pdf_tab._right_splitter is None
 
     def test_splitter_save_is_debounced(self, pdf_tab, monkeypatch):
         """splitterMoved 不应立即落盘，而是重启防抖定时器。"""
