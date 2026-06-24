@@ -145,15 +145,100 @@ class TestPdfTabLayerStatus:
 
 
 class TestPdfTabLayerStatusLinkage:
-    """网格 ↔ 缩略图双向选中同步。
+    """网格 ↔ 缩略图双向选中同步（按 page_index 匹配，重入保护防递归）。"""
 
-    注：旧的单向 _on_layer_status_clicked 联动已被删除，替换为网格双向同步
-    （Task 4 实现）。该类的双向同步测试在 Task 4 重写，此处整体跳过。
-    """
+    def _setup_session(self, pdf_tab):
+        import fitz
 
-    @pytest.mark.skip("Task 4 实现双向同步后重写")
-    def test_placeholder(self, pdf_tab):
-        pass
+        from vibeocr.models.pdf_document import (
+            PdfDocument,
+            PdfPageInfo,
+            TextLayerInfo,
+        )
+        from vibeocr.models.pdf_session import PdfSession
+
+        pages = [
+            PdfPageInfo(
+                page_index=2,
+                has_text_layer=True,
+                text_layers=[
+                    TextLayerInfo(
+                        index=0, text_preview="t", char_count=1,
+                        bbox=(50.0, 50.0, 300.0, 100.0), color_id=0,
+                    )
+                ],
+            ),
+            PdfPageInfo(page_index=0),
+            PdfPageInfo(page_index=1),
+        ]
+        doc = fitz.open()
+        for _ in range(3):
+            doc.new_page()
+        pdf_doc = PdfDocument(file_path="x.pdf", pages=pages)
+        session = PdfSession(file_path="x.pdf", doc=doc, pdf_document=pdf_doc)
+        pdf_tab._session_mgr._sessions["x.pdf"] = session
+        pdf_tab._session_mgr._active_path = "x.pdf"
+        pdf_tab._refresh_thumbnails()
+        pdf_tab._update_layer_status()
+        return doc
+
+    def test_grid_selection_syncs_to_thumbnail(self, pdf_tab):
+        """网格选中 → 缩略图选中相同 page_index。"""
+        from PySide6.QtCore import QItemSelectionModel
+
+        doc = self._setup_session(pdf_tab)
+        try:
+            grid = pdf_tab._layer_status_grid
+            for row in range(grid.count()):
+                if grid.item(row).data(Qt.ItemDataRole.UserRole) == 1:
+                    grid.selectionModel().select(
+                        grid.model().index(row, 0), QItemSelectionModel.ClearAndSelect
+                    )
+                    break
+            selected = pdf_tab._get_selected_page_indices()
+            assert selected == [1]
+        finally:
+            doc.close()
+
+    def test_thumbnail_selection_syncs_to_grid(self, pdf_tab):
+        """缩略图选中 → 网格选中相同 page_index。"""
+        from PySide6.QtCore import QItemSelectionModel
+
+        doc = self._setup_session(pdf_tab)
+        try:
+            lst = pdf_tab._thumbnail_list
+            for row in range(lst.count()):
+                if lst.item(row).data(Qt.ItemDataRole.UserRole) == 2:
+                    lst.selectionModel().select(
+                        lst.model().index(row, 0), QItemSelectionModel.ClearAndSelect
+                    )
+                    break
+            grid = pdf_tab._layer_status_grid
+            cur = grid.selectedItems()
+            assert len(cur) == 1
+            assert cur[0].data(Qt.ItemDataRole.UserRole) == 2
+        finally:
+            doc.close()
+
+    def test_no_infinite_recursion_on_sync(self, pdf_tab):
+        """双向同步不应触发递归（_syncing_selection 保护）。"""
+        from PySide6.QtCore import QItemSelectionModel
+
+        doc = self._setup_session(pdf_tab)
+        try:
+            grid = pdf_tab._layer_status_grid
+            lst = pdf_tab._thumbnail_list
+            # 反复交替触发，不应崩溃/栈溢出
+            for _ in range(5):
+                grid.selectionModel().select(
+                    grid.model().index(0, 0), QItemSelectionModel.ClearAndSelect
+                )
+                lst.selectionModel().select(
+                    lst.model().index(0, 0), QItemSelectionModel.ClearAndSelect
+                )
+            # 无 RecursionError 即通过
+        finally:
+            doc.close()
 
 
 class TestPdfTabOcrCompletion:

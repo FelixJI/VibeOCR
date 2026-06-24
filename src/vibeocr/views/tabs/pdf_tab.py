@@ -106,6 +106,8 @@ class PdfTab(QWidget):
         super().__init__(parent)
         self._session_mgr = PdfSessionManager(self)
         self._preview_window: PdfPreviewWindow | None = None
+        # 网格 ↔ 缩略图双向同步的重入保护，避免 itemSelectionChanged 递归
+        self._syncing_selection = False
         # splitter 拖动期间 splitterMoved 连续触发，用单次定时器防抖，
         # 停止拖动 300ms 后才落盘，避免每个鼠标移动 tick 都写文件。
         self._splitter_save_timer = QTimer(self)
@@ -273,6 +275,9 @@ class PdfTab(QWidget):
         )
         self._layer_status_grid.itemDoubleClicked.connect(
             self._on_grid_item_double_clicked
+        )
+        self._layer_status_grid.itemSelectionChanged.connect(
+            self._on_layer_status_selection_changed
         )
         grid_scroll = QScrollArea()
         grid_scroll.setWidgetResizable(True)
@@ -638,19 +643,44 @@ class PdfTab(QWidget):
         )
 
     def _on_thumbnail_selection_changed(self) -> None:
-        """缩略图选中变化 → 网格同步当前页格子（联动）。
-
-        注：完整双向同步（重入保护 + 多选）在 Task 4 实现。
-        """
-        indices = self._get_selected_page_indices()
-        if not indices:
+        """缩略图选中变化 → 网格同步选中相同 page_index（重入保护防递归）。"""
+        if self._syncing_selection:
             return
-        page_idx = indices[0]
-        for row in range(self._layer_status_grid.count()):
-            item = self._layer_status_grid.item(row)
-            if item.data(_LAYER_ROLE) == page_idx:
-                self._layer_status_grid.setCurrentRow(row)
-                return
+        indices = self._get_selected_page_indices()
+        self._syncing_selection = True
+        try:
+            self._sync_selection_to(
+                self._layer_status_grid, indices, _LAYER_ROLE
+            )
+        finally:
+            self._syncing_selection = False
+
+    def _on_layer_status_selection_changed(self) -> None:
+        """网格选中变化 → 缩略图同步选中相同 page_index（重入保护防递归）。"""
+        if self._syncing_selection:
+            return
+        grid = self._layer_status_grid
+        indices = [
+            item.data(_LAYER_ROLE)
+            for item in grid.selectedItems()
+            if item.data(_LAYER_ROLE) is not None
+        ]
+        self._syncing_selection = True
+        try:
+            self._sync_selection_to(
+                self._thumbnail_list, sorted(set(indices)), Qt.ItemDataRole.UserRole
+            )
+        finally:
+            self._syncing_selection = False
+
+    def _sync_selection_to(
+        self, target: QListWidget, page_indices: list[int], role
+    ) -> None:
+        """把给定 page_index 集合同步选中到 target 列表（按 role 匹配，清旧选新）。"""
+        want = set(page_indices)
+        for row in range(target.count()):
+            item = target.item(row)
+            item.setSelected(item.data(role) in want)
 
     def _get_selected_page_indices(self) -> list[int]:
         indices = []
