@@ -516,20 +516,24 @@ class PdfTab(QWidget):
             return
         pages = session.pdf_document.pages
         for p in pages:
-            block_count = (
-                len(p.ocr_text_blocks) if p.ocr_text_blocks else len(p.text_layers)
-            )
             item = QListWidgetItem()
             item.setData(_LAYER_ROLE, p.page_index)
             item.setData(_HAS_LAYER_ROLE, p.has_text_layer)
-            if p.has_text_layer:
-                item.setToolTip(
-                    f"第{p.page_index + 1}页 · 已添加文字层（{block_count}个文本块）"
-                )
-            else:
-                item.setToolTip(f"第{p.page_index + 1}页 · 无文字层")
+            item.setToolTip(self._layer_cell_tooltip(p))
             grid.addItem(item)
         self._update_layer_summary(pages)
+
+    @staticmethod
+    def _layer_cell_tooltip(page_info) -> str:
+        """生成文字层网格格子的 tooltip（block_count 优先用 OCR 原始块）。"""
+        if page_info.has_text_layer:
+            block_count = (
+                len(page_info.ocr_text_blocks)
+                if page_info.ocr_text_blocks
+                else len(page_info.text_layers)
+            )
+            return f"第{page_info.page_index + 1}页 · 已添加文字层（{block_count}个文本块）"
+        return f"第{page_info.page_index + 1}页 · 无文字层"
 
     def _update_layer_grid_page(self, page_index: int) -> None:
         """增量更新单页网格格子（不全量重建），用于 OCR/删除文字层即时反馈。
@@ -547,17 +551,7 @@ class PdfTab(QWidget):
             item = grid.item(row)
             if item.data(_LAYER_ROLE) == page_index:
                 item.setData(_HAS_LAYER_ROLE, page_info.has_text_layer)
-                block_count = (
-                    len(page_info.ocr_text_blocks)
-                    if page_info.ocr_text_blocks
-                    else len(page_info.text_layers)
-                )
-                if page_info.has_text_layer:
-                    item.setToolTip(
-                        f"第{page_index + 1}页 · 已添加文字层（{block_count}个文本块）"
-                    )
-                else:
-                    item.setToolTip(f"第{page_index + 1}页 · 无文字层")
+                item.setToolTip(self._layer_cell_tooltip(page_info))
                 break
         # 汇总统计实时刷新
         self._update_layer_summary(session.pdf_document.pages)
