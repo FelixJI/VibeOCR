@@ -842,6 +842,36 @@ class TestOcrPerPageFeedback:
         assert "有文字层 1 页" in text
         assert "无文字层 1 页" in text
 
+    def test_ocr_completion_preserves_selection(self, pdf_tab):
+        """OCR 全部完成（ocr_done/ocr_stats_ready）不应清空用户选中（spec 第 6 节）。"""
+        from PySide6.QtCore import QItemSelectionModel
+
+        from vibeocr.models.pdf_document import PdfPageInfo
+
+        pages = [
+            PdfPageInfo(page_index=0, has_text_layer=False),
+            PdfPageInfo(page_index=1, has_text_layer=False),
+        ]
+        self._inject(pdf_tab, pages)
+        # 用户选中 page_index=1
+        lst = pdf_tab._thumbnail_list
+        # 需先重建缩略图，列表才有 item
+        pdf_tab._refresh_thumbnails()
+        for row in range(lst.count()):
+            if lst.item(row).data(Qt.ItemDataRole.UserRole) == 1:
+                lst.selectionModel().select(
+                    lst.model().index(row, 0), QItemSelectionModel.ClearAndSelect
+                )
+                break
+        assert pdf_tab._get_selected_page_indices() == [1]
+
+        # OCR 完成：两个完成信号都不应清空选中
+        pdf_tab._session_mgr.ocr_done.emit("x.pdf", 2, 0)
+        assert pdf_tab._get_selected_page_indices() == [1]
+        pdf_tab._session_mgr.ocr_stats_ready.emit("x.pdf", 5, 0)
+        assert pdf_tab._get_selected_page_indices() == [1]
+
+
 
 class TestThumbnailIncrementalUpdate:
     """缩略图增量更新：拖拽只移 item 不渲染、旋转增量渲染受影响页。"""

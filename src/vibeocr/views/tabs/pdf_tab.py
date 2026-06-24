@@ -422,7 +422,9 @@ class PdfTab(QWidget):
         self._btn_open.setEnabled(True)
         self._btn_add_file.setEnabled(True)
         self._update_status()
-        self._update_layer_status()
+        # 不全量重建网格：逐页 _update_layer_grid_page 已把完成的页变绿，
+        # 全量 clear()+重建会抹掉用户在 OCR 期间的选中状态（spec 第 6 节）。
+        self._refresh_layer_summary()
         msg = f"OCR 完成：成功 {success} 页" + (f"，失败 {fail} 页" if fail else "")
         self._status_label.setText(msg)
 
@@ -430,7 +432,8 @@ class PdfTab(QWidget):
         """文字层 OCR 完成后：汇总写入结果（成功/跳过）。
 
         与 _on_ocr_finished（ocr_done 信号）配合：后者负责通用 UI 复位，
-        本方法负责文字层特有的"成功/跳过"汇总。
+        本方法负责文字层特有的"成功/跳过"汇总。网格格子已由逐页
+        _update_layer_grid_page 即时更新，此处仅刷新汇总计数。
         """
         if written == 0 and skipped == 0:
             # 没有任何文字块产出（例如全部页面 OCR 失败），不误报“已添加”。
@@ -443,7 +446,7 @@ class PdfTab(QWidget):
             )
         else:
             self._status_label.setText(f"文字层已添加（{written} 块）")
-        self._update_layer_status()
+        self._refresh_layer_summary()
 
     def _on_block_text_edited(
         self, page_index: int, block_index: int, new_text: str
@@ -638,6 +641,15 @@ class PdfTab(QWidget):
             f"<span style='color:{Colors.success}'>●</span> 有文字层 {with_layer} 页  "
             f"<span style='color:{Colors.text_subtle}'>●</span> 无文字层 {without} 页"
         )
+
+    def _refresh_layer_summary(self) -> None:
+        """从活动会话重算汇总 Label 计数（不清空网格，保留选中）。
+
+        用于 OCR/删除文字层完成后：网格格子已逐页更新，仅汇总计数需刷新。
+        """
+        session = self._session_mgr.active_session
+        pages = session.pdf_document.pages if session is not None else []
+        self._update_layer_summary(pages)
 
     def _on_grid_item_double_clicked(self, item: QListWidgetItem) -> None:
         """双击网格格子 → 打开预览窗口到该页。"""
