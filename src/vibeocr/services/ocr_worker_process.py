@@ -122,6 +122,12 @@ class OCRWorkerProcess:
         # Windows Job Object 守卫：主进程崩溃时内核连带终止 worker 子进程
         self._job_guard: JobObjectGuard | None = None
 
+        # 子进程裸 print（无标准日志格式的 stdout 行）缓冲。
+        # PaddleX/transformers 等库会直接 print 识别结果/文本内容，
+        # 这些行不能原样转发（会泄漏用户文档内容），只按行数概括输出。
+        self._raw_log_count = 0
+        self._raw_log_lock = threading.Lock()
+
     @property
     def is_running(self) -> bool:
         """检查 Worker 进程是否在运行"""
@@ -143,23 +149,58 @@ class OCRWorkerProcess:
         """解析子进程日志行并按原始级别转发
 
         子进程日志格式: "YYYY-MM-DD HH:MM:SS [LEVEL] name: message"
-        如果无法解析格式，按级别降级策略处理。
+        匹配该格式的结构化行按原级别转发。
+
+        无法匹配的裸 print（PaddleX/transformers 等库直接 print 的内容，
+        可能包含用户文档的文本片段）不原样转发，只累加计数，
+        在遇到结构化行、显式 flush 或达到阈值时以概括形式输出行数，
+        避免泄漏用户文档内容。
         """
         import re
+
+        prefix = f"[Worker {self.worker_id}]"
 
         # 匹配日志格式: 2024-01-15 10:30:45 [INFO] module: message
         match = re.match(
             r"\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\s+\[(DEBUG|INFO|WARNING|ERROR|CRITICAL)\]\s+(.*)",
             text,
         )
-        prefix = f"[Worker {self.worker_id}]"
         if match:
+            # 结构化行到来前，先把累积的裸 print 概括输出
+            self.flush_raw_log_buffer()
             level_name = match.group(1)
             message = match.group(2)
             level = getattr(logging, level_name, logging.DEBUG)
             logger.log(level, f"{prefix} {message}")
         else:
-            logger.debug(f"{prefix} {text}")
+            # 纯空白行忽略，不计数、不转发
+            if not text.strip():
+                return
+            with self._raw_log_lock:
+                self._raw_log_count += 1
+                # 累积超过阈值则立即 flush，避免长时间不输出
+                if self._raw_log_count >= 50:
+                    count = self._raw_log_count
+                    self._raw_log_count = 0
+                else:
+                    return
+            logger.debug(
+                f"{prefix} 子进程原始输出 {count} 行（已折叠，含库调试信息）"
+            )
+
+    def flush_raw_log_buffer(self) -> None:
+        """输出并清空已累积的裸 print 概括计数。
+
+        在结构化日志行到来、或读取循环结束时调用，确保折叠的概括被输出。
+        """
+        with self._raw_log_lock:
+            count = self._raw_log_count
+            self._raw_log_count = 0
+        if count > 0:
+            prefix = f"[Worker {self.worker_id}]"
+            logger.debug(
+                f"{prefix} 子进程原始输出 {count} 行（已折叠，含库调试信息）"
+            )
 
     def _split_mixed_log_lines(self, text: str) -> list[str]:
         """分割混合的日志行
@@ -318,6 +359,8 @@ class OCRWorkerProcess:
                                             self._parse_and_forward_log(log_line)
                             except Exception:
                                 pass
+                    # 进程退出后，flush 累积的裸 print 概括
+                    self.flush_raw_log_buffer()
                 except Exception as e:
                     logger.debug(f"stdout reader 错误: {e}")
 

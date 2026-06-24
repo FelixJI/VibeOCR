@@ -97,6 +97,111 @@ class TestOCRWorkerProcess:
 @pytest.mark.skipif(
     not HAS_SUBPROCESS_MODULES, reason="subprocess modules not available"
 )
+class TestParseAndForwardLog:
+    """子进程 stdout 转发为日志的行为。
+
+    背景：PaddleX/transformers 等库会向 stdout 直接 print 识别结果/文本内容
+    （如 "/x86" 这类用户文档片段），这些裸 print 不带标准日志格式，
+    此前会被原样转发到日志，导致用户文档内容泄漏。
+    期望：结构化日志行仍按级别转发；裸 print 只输出概括（行数），
+    不输出具体内容。
+    """
+
+    def test_structured_line_forwarded_at_its_level(self, caplog):
+        """标准日志格式（带时间戳+级别）按原级别转发，内容保留。"""
+        worker = OCRWorkerProcess(worker_id=0, use_gpu=False)
+        line = "2024-01-15 10:30:45 [INFO] vibeocr.workers.ocr_worker: OCR 服务初始化完成"
+
+        with caplog.at_level("DEBUG", logger="vibeocr.services.ocr_worker_process"):
+            worker._parse_and_forward_log(line)
+
+        assert any(
+            "OCR 服务初始化完成" in r.message and r.levelname == "INFO"
+            for r in caplog.records
+        )
+
+    def test_structured_warning_line_forwarded_at_warning_level(self, caplog):
+        """WARNING 级别的标准行按 WARNING 转发。"""
+        worker = OCRWorkerProcess(worker_id=0, use_gpu=False)
+        line = "2024-01-15 10:30:45 [WARNING] foo: 模型加载较慢"
+
+        with caplog.at_level("DEBUG", logger="vibeocr.services.ocr_worker_process"):
+            worker._parse_and_forward_log(line)
+
+        assert any(
+            "模型加载较慢" in r.message and r.levelname == "WARNING"
+            for r in caplog.records
+        )
+
+    def test_raw_print_does_not_leak_content(self, caplog):
+        """裸 print（无标准日志格式）不得把原始内容写进日志。
+
+        模拟库 print 出识别到的文本片段 "/x86"。这些内容绝不能出现在日志里。
+        """
+        worker = OCRWorkerProcess(worker_id=0, use_gpu=False)
+        line = "/x86  这是用户文档里的敏感文本片段"
+
+        with caplog.at_level("DEBUG", logger="vibeocr.services.ocr_worker_process"):
+            worker._parse_and_forward_log(line)
+
+        leaked = [r.message for r in caplog.records if "/x86" in r.message]
+        assert leaked == [], f"裸 print 内容泄漏到日志: {leaked}"
+
+    def test_raw_print_summarized_as_count(self, caplog):
+        """连续多条裸 print 只输出一条概括（行数），不逐条 dump。"""
+        worker = OCRWorkerProcess(worker_id=0, use_gpu=False)
+        raw_lines = [
+            "/x86  内容1",
+            "some raw paddle debug 一二三",
+            "另一行裸输出",
+        ]
+
+        with caplog.at_level("DEBUG", logger="vibeocr.services.ocr_worker_process"):
+            for line in raw_lines:
+                worker._parse_and_forward_log(line)
+            # 触发 flush（例如来了一个结构化行，或显式 flush）
+            worker.flush_raw_log_buffer()
+
+        # 内容绝不出现在任何日志记录里
+        assert all("内容1" not in r.message for r in caplog.records)
+        assert all("一二三" not in r.message for r in caplog.records)
+        # 至少有一条概括记录，且提到行数 3
+        summary = [r.message for r in caplog.records if "3" in r.message]
+        assert summary, "应有概括记录（行数）"
+
+    def test_structured_line_after_raw_flushes_summary(self, caplog):
+        """结构化行到来时，先 flush 之前的裸 print 概括，再转发结构化行。"""
+        worker = OCRWorkerProcess(worker_id=0, use_gpu=False)
+        structured = "2024-01-15 10:30:45 [INFO] mod: 完成"
+
+        with caplog.at_level("DEBUG", logger="vibeocr.services.ocr_worker_process"):
+            worker._parse_and_forward_log("裸输出A")
+            worker._parse_and_forward_log("裸输出B")
+            worker._parse_and_forward_log(structured)
+
+        msgs = [r.message for r in caplog.records]
+        levels = [r.levelname for r in caplog.records]
+        # 第一条是概括（不含裸内容），最后一条是结构化 INFO
+        assert "裸输出A" not in msgs[0]
+        assert "完成" in msgs[-1]
+        assert levels[-1] == "INFO"
+        # 概括记录提到了 2 行
+        assert "2" in msgs[0]
+
+    def test_newline_only_raw_print_is_ignored(self, caplog):
+        """空行/纯空白的裸 print 不计入概括。"""
+        worker = OCRWorkerProcess(worker_id=0, use_gpu=False)
+
+        with caplog.at_level("DEBUG", logger="vibeocr.services.ocr_worker_process"):
+            worker._parse_and_forward_log("   ")
+            worker.flush_raw_log_buffer()
+
+        assert caplog.records == []
+
+
+@pytest.mark.skipif(
+    not HAS_SUBPROCESS_MODULES, reason="subprocess modules not available"
+)
 class TestOCRWorkerProcessLifeCycle:
     """Tests for worker process lifecycle (require actual subprocess)."""
 
