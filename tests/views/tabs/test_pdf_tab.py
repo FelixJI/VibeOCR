@@ -4,7 +4,7 @@ import pytest
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QListWidget, QScrollArea, QSplitter
 
-from vibeocr.views.tabs.pdf_tab import PdfTab
+from vibeocr.views.tabs.pdf_tab import PdfTab, _THUMBNAIL_SIZE
 
 
 @pytest.fixture
@@ -841,3 +841,115 @@ class TestOcrPerPageFeedback:
         text = pdf_tab._layer_summary_label.text()
         assert "有文字层 1 页" in text
         assert "无文字层 1 页" in text
+
+
+class TestThumbnailIncrementalUpdate:
+    """缩略图增量更新：拖拽只移 item 不渲染、旋转增量渲染受影响页。"""
+
+    def _setup(self, pdf_tab, n_pages=3):
+        import fitz
+
+        from PySide6.QtGui import QPixmap
+
+        from vibeocr.models.pdf_document import PdfDocument, PdfPageInfo
+        from vibeocr.models.pdf_session import PdfSession
+
+        doc = fitz.open()
+        for _ in range(n_pages):
+            doc.new_page()
+        pages = []
+        for i in range(n_pages):
+            info = PdfPageInfo(page_index=i)
+            # 预填缓存缩略图，避免依赖 worker
+            info.thumbnail = QPixmap(_THUMBNAIL_SIZE, _THUMBNAIL_SIZE)
+            info.thumbnail.fill()
+            pages.append(info)
+        pdf_doc = PdfDocument(file_path="x.pdf", pages=pages)
+        session = PdfSession(file_path="x.pdf", doc=doc, pdf_document=pdf_doc)
+        pdf_tab._session_mgr._sessions["x.pdf"] = session
+        pdf_tab._session_mgr._active_path = "x.pdf"
+        pdf_tab._refresh_thumbnails()
+        return doc, session
+
+    def test_reorder_does_not_render(self, pdf_tab, monkeypatch):
+        """拖拽排序后不应调用 render_page（缩略图 pixmap 复用）。"""
+        from PySide6.QtGui import QPixmap
+
+        import vibeocr.views.tabs.pdf_tab as mod
+
+        doc, session = self._setup(pdf_tab)
+        try:
+            called = []
+            monkeypatch.setattr(
+                mod.PdfService,
+                "render_page",
+                lambda *a, **k: called.append(1) or QPixmap(10, 10),
+            )
+            # new_order: 反转页序 [2,1,0]
+            pdf_tab._on_pages_reordered_with_order([2, 1, 0])
+            assert called == []
+        finally:
+            doc.close()
+
+    def test_reorder_preserves_pixmap_per_page(self, pdf_tab, monkeypatch):
+        """拖拽后缩略图 pixmap 内容应保留（不重渲染），仅顺序改变。"""
+        from PySide6.QtGui import QPixmap
+
+        import vibeocr.views.tabs.pdf_tab as mod
+
+        doc, session = self._setup(pdf_tab)
+        try:
+            called = []
+            monkeypatch.setattr(
+                mod.PdfService,
+                "render_page",
+                lambda *a, **k: called.append(1) or QPixmap(10, 10),
+            )
+            # 记录重排前各 page_index 顺序
+            lst = pdf_tab._thumbnail_list
+            before_order = [
+                lst.item(row).data(Qt.ItemDataRole.UserRole)
+                for row in range(lst.count())
+            ]
+
+            pdf_tab._on_pages_reordered_with_order([2, 1, 0])
+
+            # 重排后顺序应反转，且未触发任何渲染
+            after_order = [
+                lst.item(row).data(Qt.ItemDataRole.UserRole)
+                for row in range(lst.count())
+            ]
+            assert after_order == [2, 1, 0]
+            assert before_order == [0, 1, 2]
+            assert called == []
+        finally:
+            doc.close()
+
+    def test_rotate_renders_affected_pages(self, pdf_tab, monkeypatch):
+        """旋转后应渲染受影响页的缩略图（仅选中页）。"""
+        from PySide6.QtCore import QItemSelectionModel
+        from PySide6.QtGui import QPixmap
+
+        import vibeocr.views.tabs.pdf_tab as mod
+
+        doc, session = self._setup(pdf_tab)
+        try:
+            # 选中 page_index=1
+            lst = pdf_tab._thumbnail_list
+            for row in range(lst.count()):
+                if lst.item(row).data(Qt.ItemDataRole.UserRole) == 1:
+                    lst.selectionModel().select(
+                        lst.model().index(row, 0), QItemSelectionModel.ClearAndSelect
+                    )
+                    break
+            called = []
+            monkeypatch.setattr(
+                mod.PdfService,
+                "render_page",
+                lambda *a, **k: called.append(a) or QPixmap(10, 10),
+            )
+            pdf_tab._on_rotate(90)
+            # 仅渲染选中的 1 页
+            assert len(called) == 1
+        finally:
+            doc.close()

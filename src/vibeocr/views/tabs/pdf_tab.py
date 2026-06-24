@@ -489,6 +489,49 @@ class PdfTab(QWidget):
         pm.fill(Qt.GlobalColor.lightGray)
         return pm
 
+    def _render_single_thumbnail(self, page_index: int) -> QPixmap:
+        """主线程渲染单页缩略图（thumbnail_dpi）并写回缓存。用于旋转后增量更新。"""
+        session = self._session_mgr.active_session
+        if session is None:
+            return self._placeholder_pixmap()
+        with session.doc_lock:
+            pixmap = PdfService.render_page(
+                session.doc, page_index, dpi=session.pdf_document.thumbnail_dpi
+            )
+        scaled = self._scale_thumbnail(pixmap)
+        page_info = session.pdf_document.get_page(page_index)
+        if page_info is not None:
+            page_info.thumbnail = scaled
+        return scaled
+
+    def _update_thumbnail_icon(self, page_index: int) -> None:
+        """渲染单页并更新对应缩略图 item 的 icon（旋转后调用）。"""
+        scaled = self._render_single_thumbnail(page_index)
+        item = self._find_thumbnail_item(page_index)
+        if item is not None:
+            item.setIcon(QIcon(scaled))
+
+    def _find_thumbnail_item(self, page_index: int) -> QListWidgetItem | None:
+        for row in range(self._thumbnail_list.count()):
+            item = self._thumbnail_list.item(row)
+            if item.data(Qt.ItemDataRole.UserRole) == page_index:
+                return item
+        return None
+
+    def _reorder_thumbnail_items(self, new_order: list[int]) -> None:
+        """拖拽排序后：按 new_order 重排缩略图 item，复用原有 icon（不重新渲染）。
+
+        takeItem 摘出 item（保留 icon/role），再按新顺序重新插入。
+        """
+        old_items: list[QListWidgetItem] = []
+        for _ in range(self._thumbnail_list.count()):
+            old_items.append(self._thumbnail_list.takeItem(0))
+        by_page = {it.data(Qt.ItemDataRole.UserRole): it for it in old_items}
+        for page_idx in new_order:
+            item = by_page.get(page_idx)
+            if item is not None:
+                self._thumbnail_list.addItem(item)
+
     def _refresh_thumbnails(self) -> None:
         session = self._session_mgr.active_session
         if session is None:
@@ -807,24 +850,26 @@ class PdfTab(QWidget):
             self._open_preview(idx)
 
     def _on_pages_reordered(self) -> None:
-        session = self._session_mgr.active_session
-        if session is None:
-            return
-
         new_order: list[int] = []
         for row in range(self._thumbnail_list.count()):
             item = self._thumbnail_list.item(row)
             old_idx = item.data(Qt.ItemDataRole.UserRole)
             if old_idx is not None:
                 new_order.append(old_idx)
+        self._on_pages_reordered_with_order(new_order)
 
-        if not new_order:
+    def _on_pages_reordered_with_order(self, new_order: list[int]) -> None:
+        """用显式 new_order 应用重排：PdfService 重排文档 + 增量移动缩略图 item。
+
+        缩略图 pixmap 内容不变（只是顺序变了），故只移动 item 不重新渲染。
+        """
+        session = self._session_mgr.active_session
+        if session is None or not new_order:
             return
-
         with session.doc_lock:
             PdfService.reorder_pages(session.doc, session.pdf_document, new_order)
-
-        self._refresh_thumbnails()
+        self._reorder_thumbnail_items(new_order)
+        self._update_status()
 
     def _on_rotate(self, angle: int) -> None:
         session = self._session_mgr.active_session
@@ -835,7 +880,9 @@ class PdfTab(QWidget):
             return
         with session.doc_lock:
             PdfService.rotate_pages(session.doc, session.pdf_document, indices, angle)
-        self._refresh_thumbnails()
+        # 旋转改变了页面视觉 → 仅增量渲染受影响页（不全量重建）
+        for idx in indices:
+            self._update_thumbnail_icon(idx)
         self._update_status()
 
     def _on_rotate_all(self) -> None:
@@ -853,7 +900,8 @@ class PdfTab(QWidget):
         indices = list(range(session.pdf_document.page_count))
         with session.doc_lock:
             PdfService.rotate_pages(session.doc, session.pdf_document, indices, 90)
-        self._refresh_thumbnails()
+        for idx in indices:
+            self._update_thumbnail_icon(idx)
         self._update_status()
 
     def _on_delete_pages(self) -> None:
