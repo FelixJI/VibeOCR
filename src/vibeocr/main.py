@@ -199,6 +199,11 @@ def launch_application() -> int:
     # 设置应用图标（必须在主窗口创建之前，窗口才能继承图标）
     _setup_app_icon(app)
 
+    # 应用全局浅色主题 QSS（必须在窗口创建前，控件才能继承样式）
+    from vibeocr.ui import theme
+
+    app.setStyleSheet(theme.global_qss())
+
     # 初始化统一配置管理器
     project_root = env_manager.get_project_root()
     cm = ConfigManager.instance(project_root)
