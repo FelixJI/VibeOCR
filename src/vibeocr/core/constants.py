@@ -101,45 +101,5 @@ MIN_BATCH_SIZE = 1
 DEFAULT_SPACING = Constants.Style.SPACING_MEDIUM
 DEFAULT_MARGIN = Constants.Style.PADDING_MEDIUM
 
-# 颜色常量（向后兼容 - Material Design）
-COLOR_PRIMARY = "#2196F3"
-COLOR_SUCCESS = "#4CAF50"
-COLOR_WARNING = "#FF9800"
-COLOR_ERROR = "#F44336"
-COLOR_TEXT = "#212121"
-COLOR_BORDER = "#E0E0E0"
-COLOR_BACKGROUND = "#FFFFFF"
-COLOR_HOVER = "#F5F5F5"
-
 
 del _APP_VERSION
-
-
-class WindowsColors:
-    """Windows/Office 风格配色方案
-
-    用于 main_window.py 中的按钮样式。
-    """
-
-    # 主色调（Windows 蓝）
-    PRIMARY = "#0078d4"
-    PRIMARY_HOVER = "#106ebe"
-
-    # 成功色（绿色）
-    SUCCESS = "#107c10"
-    SUCCESS_HOVER = "#0b6a0b"
-
-    # 预处理色（橙色）
-    ACCENT = "#f7630c"
-    ACCENT_HOVER = "#d6550a"
-
-    # 背景色
-    BACKGROUND = "#f0f0f0"
-    BACKGROUND_HOVER = "#e0e0e0"
-
-    # 边框色
-    BORDER = "#c0c0c0"
-
-    # 文本色
-    TEXT = "#333333"
-    TEXT_LIGHT = "#ffffff"

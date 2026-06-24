@@ -153,7 +153,8 @@ class TestButtonQss:
 
     def test_default_button(self):
         qss = theme.button_qss("default")
-        assert "QPushButton" in qss
+        # default 返回空串（由全局 QSS 接管），仅校验类型
+        assert isinstance(qss, str)
 
     def test_invalid_variant_raises(self):
         import pytest

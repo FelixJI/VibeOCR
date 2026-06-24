@@ -8,14 +8,6 @@
 
 from vibeocr.core.base_worker import BaseWorker, BatchWorker
 from vibeocr.core.constants import (
-    COLOR_BACKGROUND,
-    COLOR_BORDER,
-    COLOR_ERROR,
-    COLOR_HOVER,
-    COLOR_PRIMARY,
-    COLOR_SUCCESS,
-    COLOR_TEXT,
-    COLOR_WARNING,
     DEFAULT_BATCH_SIZE,
     DEFAULT_MARGIN,
     DEFAULT_SHM_SIZE,
@@ -29,7 +21,6 @@ from vibeocr.core.constants import (
     TOAST_DELAY_MS,
     Constants,
     FileType,
-    WindowsColors,
 )
 from vibeocr.core.pipelines import (
     OCRPipeline,
@@ -40,17 +31,8 @@ from vibeocr.core.pipelines import (
     is_option_supported,
 )
 from vibeocr.core.singleton_meta import SingletonMeta
-from vibeocr.core.styles import AppStyles
 
 __all__ = [
-    "COLOR_BACKGROUND",
-    "COLOR_BORDER",
-    "COLOR_ERROR",
-    "COLOR_HOVER",
-    "COLOR_PRIMARY",
-    "COLOR_SUCCESS",
-    "COLOR_TEXT",
-    "COLOR_WARNING",
     "DEFAULT_BATCH_SIZE",
     "DEFAULT_MARGIN",
     "DEFAULT_SHM_SIZE",
@@ -62,14 +44,12 @@ __all__ = [
     "SHM_TIMEOUT",
     "SHORT_DELAY_MS",
     "TOAST_DELAY_MS",
-    "AppStyles",
     "BaseWorker",
     "BatchWorker",
     "Constants",
     "FileType",
     "OCRPipeline",
     "SingletonMeta",
-    "WindowsColors",
     "get_all_pipelines",
     "get_pipeline_description",
     "get_pipeline_display_name",
