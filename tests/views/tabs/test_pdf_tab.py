@@ -632,3 +632,52 @@ class TestLayerStatusGrid:
         pdf_tab._update_layer_status()
         tip = pdf_tab._layer_status_grid.item(0).toolTip()
         assert "无文字层" in tip
+
+    def test_delegate_uses_theme_colors_for_states(self, pdf_tab):
+        """delegate 应按状态选色：选中=accent、有层=success、无层=text_subtle。"""
+        from PySide6.QtCore import QRect
+        from PySide6.QtGui import QColor, QPainter, QPixmap
+        from PySide6.QtWidgets import QStyle, QStyleOptionViewItem
+
+        from vibeocr.ui.theme import Colors
+        from vibeocr.views.tabs.pdf_tab import (
+            _HAS_LAYER_ROLE,
+            _LAYER_ROLE,
+            LayerStatusDelegate,
+        )
+
+        delegate = LayerStatusDelegate()
+
+        def _bg_for(state_flags: QStyle.StateFlag, has_layer: bool) -> QColor:
+            """用像素采样法读出格子的填充色（左上角偏内一点）。"""
+            opt = QStyleOptionViewItem()
+            opt.rect = QRect(0, 0, 40, 40)
+            opt.state = state_flags
+            idx = _StubIndex({(_LAYER_ROLE, 0), (_HAS_LAYER_ROLE, has_layer)})
+            pm = QPixmap(40, 40)
+            pm.fill(QColor(0, 0, 0))
+            painter = QPainter(pm)
+            try:
+                delegate.paint(painter, opt, idx)
+            finally:
+                painter.end()
+            return QColor(pm.toImage().pixel(8, 8))
+
+        sel = _bg_for(
+            QStyle.StateFlag.State_Enabled | QStyle.StateFlag.State_Selected, True
+        )
+        has = _bg_for(QStyle.StateFlag.State_Enabled, True)
+        none_bg = _bg_for(QStyle.StateFlag.State_Enabled, False)
+        assert sel.name() == QColor(Colors.accent).name()
+        assert has.name() == QColor(Colors.success).name()
+        assert none_bg.name() == QColor(Colors.text_subtle).name()
+
+
+class _StubIndex:
+    """QModelIndex 替身：按 (role) 返回预设 data。"""
+
+    def __init__(self, pairs):
+        self._data = {role: val for role, val in pairs}
+
+    def data(self, role):
+        return self._data.get(role)

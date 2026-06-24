@@ -7,8 +7,8 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QIcon, QPixmap
+from PySide6.QtCore import QRectF, QSize, Qt, QTimer, Signal
+from PySide6.QtGui import QColor, QIcon, QPen, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSplitter,
+    QStyle,
     QStyledItemDelegate,
     QVBoxLayout,
     QWidget,
@@ -55,15 +56,9 @@ class LayerStatusDelegate(QStyledItemDelegate):
     """
 
     def sizeHint(self, option, index):
-        from PySide6.QtCore import QSize
-
         return QSize(_GRID_CELL_SIZE, _GRID_CELL_SIZE)
 
     def paint(self, painter, option, index):
-        from PySide6.QtCore import QRectF
-        from PySide6.QtGui import QPen
-        from PySide6.QtWidgets import QStyle
-
         painter.save()
         page_idx = index.data(_LAYER_ROLE)
         page_num = str(page_idx + 1) if page_idx is not None else ""
@@ -76,6 +71,11 @@ class LayerStatusDelegate(QStyledItemDelegate):
         else:
             bg = QColor(Colors.text_subtle)
 
+        # 悬停态用 accent 描边，默认用 border 描边
+        is_hover = bool(option.state & QStyle.StateFlag.State_MouseOver)
+        border_color = QColor(Colors.accent) if is_hover else QColor(Colors.border)
+        border_width = 2 if is_hover else 1
+
         rect = QRectF(option.rect)
         margin = 2
         cell = QRectF(
@@ -85,7 +85,7 @@ class LayerStatusDelegate(QStyledItemDelegate):
             rect.height() - 2 * margin,
         )
         painter.setBrush(bg)
-        painter.setPen(QPen(QColor(Colors.border), 1))
+        painter.setPen(QPen(border_color, border_width))
         painter.drawRoundedRect(cell, 6, 6)
 
         painter.setPen(QPen(QColor("#ffffff")))
@@ -250,11 +250,10 @@ class PdfTab(QWidget):
         self._layer_status_grid.setResizeMode(QListWidget.ResizeMode.Adjust)
         self._layer_status_grid.setMovement(QListWidget.Movement.Static)
         self._layer_status_grid.setWrapping(True)
-        self._layer_status_grid.setIconSize(
-            QPixmap(_GRID_CELL_SIZE, _GRID_CELL_SIZE).size()
-        )
+        self._layer_status_grid.setIconSize(QSize(_GRID_CELL_SIZE, _GRID_CELL_SIZE))
+        # gridSize 略大于 iconSize，给格子间留 3px 间距
         self._layer_status_grid.setGridSize(
-            QPixmap(_GRID_CELL_SIZE + 6, _GRID_CELL_SIZE + 6).size()
+            QSize(_GRID_CELL_SIZE + 6, _GRID_CELL_SIZE + 6)
         )
         self._layer_status_grid.setItemDelegate(
             LayerStatusDelegate(self._layer_status_grid)
@@ -557,7 +556,7 @@ class PdfTab(QWidget):
             self._open_preview(page_idx)
 
     def _on_layer_status_context_menu(self, pos) -> None:
-        """状态列表右键菜单：为选中的无文字层页添加文字层。"""
+        """状态网格右键菜单：为选中的无文字层页添加文字层。"""
         session = self._session_mgr.active_session
         if session is None:
             return
