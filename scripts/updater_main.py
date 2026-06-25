@@ -144,12 +144,20 @@ def replace_app_files(new_files_dir: Path, app_dir: Path) -> bool:
             if item.name in _PRESERVE_DIRS:
                 continue
             dest = app_dir / item.name
-            if item.is_dir():
-                shutil.copytree(item, dest, dirs_exist_ok=True)
-            else:
-                shutil.copy2(item, dest)
+            try:
+                if item.is_dir():
+                    shutil.copytree(item, dest, dirs_exist_ok=True)
+                else:
+                    shutil.copy2(item, dest)
+            except Exception as e:
+                # 此处 item 必然已绑定（来自上面的 for）
+                print(f"[updater] 错误: 复制 {item} 失败: {e}")
+                print("[updater] 正在回滚到更新前状态...")
+                _restore_backup(app_dir, backed_up, backup_dir)
+                return False
     except Exception as e:
-        print(f"[updater] 错误: 复制 {item} 失败: {e}")
+        # iterdir() 自身失败（目录不存在/无权限等），item 此时未绑定
+        print(f"[updater] 错误: 读取更新包内容失败: {e}")
         print("[updater] 正在回滚到更新前状态...")
         _restore_backup(app_dir, backed_up, backup_dir)
         return False
