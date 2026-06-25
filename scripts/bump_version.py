@@ -449,6 +449,62 @@ def _open_editor(file_path: Path) -> None:
         print(f"警告: 无法找到编辑器 '{editor}'，跳过编辑步骤")
 
 
+def _sync_uv_lock(version: str) -> bool:
+    """同步 uv.lock 中的 vibeocr 自身版本号
+
+    pyproject.toml 的 project.version 升级后，uv.lock 里 editable 包
+    （name = "vibeocr"）记录的 version 不会自动更新，需手动跑 ``uv lock``
+    刷新。历史发版（v0.1.1/v0.1.2）均漏了这一步，导致 lock 滞后于实际版本。
+
+    本函数在版本号文件更新后、git 提交前调用，确保 uv.lock 与版本号同源、
+    同提交。uv 不可用时降级为警告（不阻断发版，但会提示手动处理）。
+
+    Args:
+        version: 新版本号字符串（仅用于日志）
+
+    Returns:
+        uv.lock 是否已更新（False 表示 uv 不可用或无变化）
+    """
+    lock_path = PROJECT_ROOT / "uv.lock"
+    if not lock_path.exists():
+        return False
+
+    try:
+        result = subprocess.run(
+            ["uv", "lock"],
+            cwd=str(PROJECT_ROOT),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=300,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+        )
+    except FileNotFoundError:
+        print("  警告: 未找到 uv 命令，uv.lock 未同步（请手动运行 `uv lock`）")
+        return False
+    except subprocess.TimeoutExpired:
+        print("  警告: uv lock 超时，uv.lock 未同步")
+        return False
+
+    if result.returncode != 0:
+        print(f"  警告: uv lock 失败（退出码 {result.returncode}）")
+        if result.stderr:
+            print(f"    {result.stderr.strip()[:200]}")
+        return False
+
+    # 检查 git 是否检测到变化（uv lock 也可能因依赖变动产生其它改动）
+    diff = subprocess.run(
+        ["git", "diff", "--quiet", str(lock_path)],
+        capture_output=True,
+        text=True,
+    )
+    if diff.returncode != 0:
+        print(f"  已同步 {lock_path.name}（vibeocr → {version}）")
+        return True
+    return False
+
+
 # ---------------------------------------------------------------------------
 # 打包功能
 # ---------------------------------------------------------------------------
@@ -1025,6 +1081,9 @@ def main() -> int:
     update_changelog(new_str, commits)
     print(f"  已更新 {CHANGELOG}")
 
+    # 同步 uv.lock（pyproject 版本号已变，锁文件需刷新避免滞后漂移）
+    _sync_uv_lock(new_str)
+
     # 打开编辑器（CHANGELOG）
     if not args.no_edit:
         _open_editor(CHANGELOG)
@@ -1035,6 +1094,10 @@ def main() -> int:
         if INIT_PY.exists():
             subprocess.run(["git", "add", str(INIT_PY)], check=True)
         subprocess.run(["git", "add", str(CHANGELOG)], check=True)
+        # uv.lock 与版本号同源，纳入同一 release 提交
+        uv_lock = PROJECT_ROOT / "uv.lock"
+        if uv_lock.exists():
+            subprocess.run(["git", "add", str(uv_lock)], check=True)
         subprocess.run(["git", "commit", "-m", f"release: v{new_str}"], check=True)
         subprocess.run(["git", "tag", f"v{new_str}"], check=True)
         print(f"  已创建 git commit 和 tag v{new_str}")
