@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.4] - 2026-06-25
+
+### Fixed
+- fix(打包): 修正方案A误删 Qt6Qml*/Qt6Quick 导致 QtWebChannel 加载失败
+
+### Changed
+- chore(换行符): 新增 .gitattributes 统一 LF，消除 autocrlf 警告
+
 ## [0.1.3] - 2026-06-25
 
 ### Fixed
