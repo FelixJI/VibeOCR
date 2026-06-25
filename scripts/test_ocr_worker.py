@@ -116,7 +116,7 @@ def test_ocr_service():
     logger.info("测试 2: OCR 服务基本功能")
     logger.info("=" * 50)
 
-    app = QCoreApplication.instance() or QCoreApplication(sys.argv)
+    app = QCoreApplication.instance() or QCoreApplication(sys.argv)  # noqa: F841 (持有 QCoreApplication 引用)
 
     try:
         logger.info("[主线程] 导入 OCR 服务...")

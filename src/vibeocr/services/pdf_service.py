@@ -329,9 +329,7 @@ class PdfService:
         page_info = pdf_document.pages[page_index]
         if page_info.has_text_layer:
             if not overwrite:
-                logger.info(
-                    "page %d 已有文字层，跳过（overwrite=False）", page_index
-                )
+                logger.info("page %d 已有文字层，跳过（overwrite=False）", page_index)
                 return 0, 1
             logger.info("page %d 已有文字层，overwrite=True，先删除再写入", page_index)
             PdfService.delete_text_layers(doc, pdf_document, page_index)
@@ -388,7 +386,12 @@ class PdfService:
 
             def _derotate_to_mediabox(rect: fitz.Rect) -> fitz.Rect:
                 a, b, c, d, e, f = (
-                    dm.a, dm.b, dm.c, dm.d, dm.e, dm.f,
+                    dm.a,
+                    dm.b,
+                    dm.c,
+                    dm.d,
+                    dm.e,
+                    dm.f,
                 )
 
                 def _tr(x, y):
@@ -404,6 +407,7 @@ class PdfService:
                 ys = [p[1] for p in pts]
                 return fitz.Rect(min(xs), min(ys), max(xs), max(ys))
         else:
+
             def _derotate_to_mediabox(rect: fitz.Rect) -> fitz.Rect:
                 return rect
 
@@ -452,7 +456,9 @@ class PdfService:
             if rect.is_empty or rect.width <= 0 or rect.height <= 0:
                 logger.warning(
                     "page %d block skipped (rect empty): rect=%s text=%r",
-                    page_index, rect, block.text[:30],
+                    page_index,
+                    rect,
+                    block.text[:30],
                 )
                 skipped += 1
                 continue
@@ -503,15 +509,19 @@ class PdfService:
                     )
                     written += 1
                     logger.debug(
-                        "page %d block 写入文字层（insert_text 兜底）: "
-                        "rect=%s text=%r",
-                        page_index, rect, block.text[:30],
+                        "page %d block 写入文字层（insert_text 兜底）: rect=%s text=%r",
+                        page_index,
+                        rect,
+                        block.text[:30],
                     )
                 except Exception as e:
                     logger.warning(
                         "page %d block skipped (font retry exhausted + "
                         "fallback failed): rect=%s text=%r err=%s",
-                        page_index, rect, block.text[:30], e,
+                        page_index,
+                        rect,
+                        block.text[:30],
+                        e,
                     )
                     skipped += 1
 

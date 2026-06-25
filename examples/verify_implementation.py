@@ -26,7 +26,7 @@ def check_imports():
 
     # 检查 workers 模块
     try:
-        from vibeocr.workers import OCRWorkerError
+        from vibeocr.workers import OCRWorkerError  # noqa: F401
 
         print("[OK] vibeocr.workers 模块可导入")
     except ImportError as e:
@@ -35,7 +35,7 @@ def check_imports():
 
     # 检查 env_manager 新增函数
     try:
-        from vibeocr.env_manager import (
+        from vibeocr.env_manager import (  # noqa: F401
             get_embedded_python,
             get_embedded_python_info,
             get_embedded_venv_python,
@@ -295,9 +295,8 @@ def main():
     if passed == total:
         print("\n[SUCCESS] 所有检查通过！子进程 OCR 实现已完成。")
         return 0
-    else:
-        print(f"\n[WARNING] {total - passed} 项检查未通过")
-        return 1
+    print(f"\n[WARNING] {total - passed} 项检查未通过")
+    return 1
 
 
 if __name__ == "__main__":

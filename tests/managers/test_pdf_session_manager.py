@@ -110,9 +110,7 @@ class TestPdfSessionManagerOcrStats:
         manager._ocr_worker = mock_worker
 
         emitted = []
-        manager.ocr_stats_ready.connect(
-            lambda sid, w, s: emitted.append((sid, w, s))
-        )
+        manager.ocr_stats_ready.connect(lambda sid, w, s: emitted.append((sid, w, s)))
 
         # 第一页写入 1 块
         result = OCRResult(
@@ -308,8 +306,10 @@ class TestPdfSessionManagerBlockEdit:
             raw_text="签回联",
             text_blocks=[
                 TextBlock(
-                    text="签回联", score=0.9,
-                    bbox=(50.0, 50.0, 200.0, 120.0), page_idx=0,
+                    text="签回联",
+                    score=0.9,
+                    bbox=(50.0, 50.0, 200.0, 120.0),
+                    page_idx=0,
                 ),
             ],
         )
@@ -337,8 +337,10 @@ class TestPdfSessionManagerBlockEdit:
             raw_text="Hello",
             text_blocks=[
                 TextBlock(
-                    text="Hello", score=0.9,
-                    bbox=(50.0, 50.0, 300.0, 100.0), page_idx=0,
+                    text="Hello",
+                    score=0.9,
+                    bbox=(50.0, 50.0, 300.0, 100.0),
+                    page_idx=0,
                 ),
             ],
         )
@@ -363,10 +365,10 @@ class TestPdfSessionManagerRewritePages:
         """改字后 rewrite_modified_pages 把编辑写回 PDF 文字层。"""
         from unittest.mock import MagicMock
 
-        from vibeocr.models.ocr_result import OCRResult, TextBlock
-
         # 扫描件单页 PDF
         import numpy as np
+
+        from vibeocr.models.ocr_result import OCRResult, TextBlock
 
         path = tmp_path / "scan.pdf"
         doc = fitz.open()
@@ -387,8 +389,10 @@ class TestPdfSessionManagerRewritePages:
             raw_text="签回联",
             text_blocks=[
                 TextBlock(
-                    text="签回联", score=0.9,
-                    bbox=(50.0, 50.0, 200.0, 120.0), page_idx=0,
+                    text="签回联",
+                    score=0.9,
+                    bbox=(50.0, 50.0, 200.0, 120.0),
+                    page_idx=0,
                 ),
             ],
         )

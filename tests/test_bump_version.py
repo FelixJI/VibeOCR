@@ -135,7 +135,12 @@ class TestVersionParsing:
     """测试 read_current_version 正确解析 pyproject.toml"""
 
     def test_read_current_version(self):
-        """验证从 pyproject.toml 中读取版本号"""
+        """验证从真实 pyproject.toml 中读取版本号
+
+        不硬编码具体版本值（会随 bump 变化），只验证：
+        - 返回三元组（major, minor, patch），均为非负整数；
+        - 与 pyproject.toml 里 [project].version 字面量一致。
+        """
         import importlib.util
 
         spec = importlib.util.spec_from_file_location("bump_version", SCRIPT)
@@ -147,10 +152,15 @@ class TestVersionParsing:
         os.environ["CHANGELOG"] = ""
         spec.loader.exec_module(mod)
 
-        result = mod.read_current_version(
-            Path(__file__).parent.parent / "pyproject.toml"
+        pyproject = Path(__file__).parent.parent / "pyproject.toml"
+        result = mod.read_current_version(pyproject)
+        # 三元组 + 非负整数
+        assert isinstance(result, tuple) and len(result) == 3
+        assert all(isinstance(n, int) and n >= 0 for n in result)
+        # 与 pyproject.toml 字面量一致
+        assert f'version = "{".".join(map(str, result))}"' in pyproject.read_text(
+            encoding="utf-8"
         )
-        assert result == (0, 1, 0)
 
     def test_read_current_version_various(self, tmp_path):
         """测试各种版本号格式"""

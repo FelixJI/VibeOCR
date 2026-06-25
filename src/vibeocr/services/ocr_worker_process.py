@@ -23,7 +23,6 @@ from vibeocr.utils.shared_memory_v2 import (
     deserialize_preload_result,
     deserialize_recognize_batch_result,
     deserialize_result,
-    serialize_batch_request,
     serialize_preload_request,
     serialize_recognize_batch_request,
     serialize_request,
@@ -184,9 +183,7 @@ class OCRWorkerProcess:
                     self._raw_log_count = 0
                 else:
                     return
-            logger.debug(
-                f"{prefix} 子进程原始输出 {count} 行（已折叠，含库调试信息）"
-            )
+            logger.debug(f"{prefix} 子进程原始输出 {count} 行（已折叠，含库调试信息）")
 
     def flush_raw_log_buffer(self) -> None:
         """输出并清空已累积的裸 print 概括计数。
@@ -198,9 +195,7 @@ class OCRWorkerProcess:
             self._raw_log_count = 0
         if count > 0:
             prefix = f"[Worker {self.worker_id}]"
-            logger.debug(
-                f"{prefix} 子进程原始输出 {count} 行（已折叠，含库调试信息）"
-            )
+            logger.debug(f"{prefix} 子进程原始输出 {count} 行（已折叠，含库调试信息）")
 
     def _split_mixed_log_lines(self, text: str) -> list[str]:
         """分割混合的日志行
@@ -1091,7 +1086,9 @@ class OCRWorkerProcess:
             logger.warning(f"发送批量取消请求失败: {e}")
             return False
 
-    def release_pipelines(self, heavy_only: bool = True, timeout: float = 60.0) -> list[str]:
+    def release_pipelines(
+        self, heavy_only: bool = True, timeout: float = 60.0
+    ) -> list[str]:
         """向 worker 发送 RELEASE_PIPELINES 命令，返回被释放的管道名列表。
 
         Args:
@@ -1108,9 +1105,7 @@ class OCRWorkerProcess:
 
         protocol = self.protocol
         if protocol is None:
-            raise OCRWorkerProcessError(
-                f"Worker {self.worker_id} 通信协议未初始化"
-            )
+            raise OCRWorkerProcessError(f"Worker {self.worker_id} 通信协议未初始化")
         try:
             payload = json.dumps({"heavy_only": heavy_only}).encode("utf-8")
             protocol.write_message(
@@ -1150,14 +1145,10 @@ class OCRWorkerProcess:
 
         protocol = self.protocol
         if protocol is None:
-            raise OCRWorkerProcessError(
-                f"Worker {self.worker_id} 通信协议未初始化"
-            )
+            raise OCRWorkerProcessError(f"Worker {self.worker_id} 通信协议未初始化")
         try:
             payload = json.dumps({"ttl_seconds": int(ttl_seconds)}).encode("utf-8")
-            protocol.write_message(
-                MSG_SET_TTL, payload, timeout=timeout, sender="main"
-            )
+            protocol.write_message(MSG_SET_TTL, payload, timeout=timeout, sender="main")
             logger.debug(f"Worker {self.worker_id} SET_TTL 请求已发送")
 
             protocol.wait_for_read(timeout=timeout)

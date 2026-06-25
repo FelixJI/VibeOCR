@@ -319,7 +319,9 @@ class OCRServiceSubprocess:
             timeout = min(1800.0, base_timeout + per_page_extra * len(sub_imgs))
             try:
                 sub_results = self._paddlex_manager.execute(
-                    lambda w: w.recognize_batch(sub_imgs, options_dict, timeout=timeout),
+                    lambda w, imgs=sub_imgs, to=timeout: w.recognize_batch(
+                        imgs, options_dict, timeout=to
+                    ),
                     timeout=timeout,
                 )
             except Exception as e:
@@ -337,9 +339,7 @@ class OCRServiceSubprocess:
             r is not None for r in results
         ):
             try:
-                mark_pipeline_success(
-                    pipeline_name_for_mark, self._get_project_root()
-                )
+                mark_pipeline_success(pipeline_name_for_mark, self._get_project_root())
             except Exception:
                 pass
         return results

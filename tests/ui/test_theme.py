@@ -6,9 +6,21 @@ from vibeocr.ui import theme
 
 class TestColors:
     def test_all_colors_are_hex_or_rgba(self):
-        for name in ("bg", "surface", "surface_alt", "text", "text_muted",
-                     "text_subtle", "border", "border_strong", "accent",
-                     "accent_hover", "accent_soft", "success", "danger"):
+        for name in (
+            "bg",
+            "surface",
+            "surface_alt",
+            "text",
+            "text_muted",
+            "text_subtle",
+            "border",
+            "border_strong",
+            "accent",
+            "accent_hover",
+            "accent_soft",
+            "success",
+            "danger",
+        ):
             val = getattr(theme.Colors, name)
             assert val.startswith("#"), f"{name}={val} 应为十六进制"
 
@@ -47,8 +59,14 @@ class TestGlobalQss:
 
     def test_global_qss_covers_core_widgets(self):
         qss = theme.global_qss()
-        for selector in ("QWidget", "QPushButton", "QLineEdit", "QGroupBox",
-                         "QTabBar::tab", "QProgressBar"):
+        for selector in (
+            "QWidget",
+            "QPushButton",
+            "QLineEdit",
+            "QGroupBox",
+            "QTabBar::tab",
+            "QProgressBar",
+        ):
             assert selector in qss, f"全局 QSS 缺少 {selector}"
 
     def test_global_qss_uses_token_colors(self):
@@ -77,6 +95,7 @@ class TestButtonQss:
 
     def test_invalid_variant_raises(self):
         import pytest
+
         with pytest.raises(ValueError):
             theme.button_qss("nonexistent")
 

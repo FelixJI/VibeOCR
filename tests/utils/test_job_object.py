@@ -8,8 +8,6 @@ import ctypes
 import subprocess
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from vibeocr.utils.job_object import JobObjectGuard
 
 
@@ -52,10 +50,6 @@ class TestJobObjectGuardWindowsCreate:
     @patch("vibeocr.utils.job_object.sys.platform", "win32")
     def test_create_calls_createjobobject_and_setinfo(self):
         """创建时调用 CreateJobObjectW + SetInformationJobObject。"""
-        from vibeocr.utils.job_object import (
-            JOB_OBJECT_LIMIT_BREAKAWAY_OK,
-            JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-        )
 
         fake_kernel = MagicMock()
         fake_kernel.CreateJobObjectW.return_value = 999  # 非 0 = 成功 HANDLE
@@ -87,16 +81,18 @@ class TestJobObjectGuardWindowsCreate:
         fake_kernel.SetInformationJobObject.side_effect = capture_setinfo
 
         from vibeocr.utils.job_object import (
-            JOBOBJECT_EXTENDED_LIMIT_INFORMATION as ExtInfo,
             JOB_OBJECT_LIMIT_BREAKAWAY_OK,
             JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+        )
+        from vibeocr.utils.job_object import (
+            JOBOBJECT_EXTENDED_LIMIT_INFORMATION as ExtInfo,
         )
 
         with patch(
             "vibeocr.utils.job_object.ctypes.windll",
             MagicMock(kernel32=fake_kernel),
         ):
-            guard = JobObjectGuard()
+            guard = JobObjectGuard()  # noqa: F841 (绑定以持有上下文管理器生命周期)
 
         # 从 ctypes 指针还原结构体读 LimitFlags
         ext = ctypes.cast(captured["info_ptr"], ctypes.POINTER(ExtInfo)).contents
@@ -158,7 +154,9 @@ class TestJobObjectGuardWindowsAssign:
         assert result is True
         fake_kernel.OpenProcess.assert_called_once()
         fake_kernel.AssignProcessToJobObject.assert_called_once_with(777, 555)
-        fake_kernel.CloseHandle.assert_called_once_with(555)  # 关子进程句柄，非 Job 句柄
+        fake_kernel.CloseHandle.assert_called_once_with(
+            555
+        )  # 关子进程句柄，非 Job 句柄
 
     @patch("vibeocr.utils.job_object._IS_WINDOWS", True)
     @patch("vibeocr.utils.job_object.sys.platform", "win32")

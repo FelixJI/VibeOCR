@@ -24,7 +24,10 @@ from vibeocr.services.env_config import (
 
 # Python 运行时下载地址（python-build-standalone）
 # GitHub 直链 + 国内镜像（NJU/ghproxy）已在 env_config.PYTHON_BUILD_STANDALONE_MIRRORS 定义
-PYTHON_STANDALONE_URLS = [PYTHON_BUILD_STANDALONE_BASE, *PYTHON_BUILD_STANDALONE_MIRRORS]
+PYTHON_STANDALONE_URLS = [
+    PYTHON_BUILD_STANDALONE_BASE,
+    *PYTHON_BUILD_STANDALONE_MIRRORS,
+]
 
 # CUDA 版本映射到 PaddlePaddle 支持的版本。
 # paddlepaddle-gpu 3.3.1 实际只发布三个 win cp313 wheel：cu118 / cu126 / cu129
@@ -413,7 +416,9 @@ def install_embedded_python(
                     if not rel:
                         continue
                     # 防御 path traversal
-                    if rel.startswith(("/", "\\")) or ".." in rel.replace("\\", "/").split("/"):
+                    if rel.startswith(("/", "\\")) or ".." in rel.replace(
+                        "\\", "/"
+                    ).split("/"):
                         continue
                     target = python_dir / rel
                     if member.isdir():
@@ -454,7 +459,9 @@ def install_embedded_python(
         if result.returncode == 0:
             print(f"[环境安装] pip 可用: {result.stdout.strip()}")
         else:
-            print(f"[环境安装] 警告: pip 自检失败: {result.stderr[-200:] if result.stderr else ''}")
+            print(
+                f"[环境安装] 警告: pip 自检失败: {result.stderr[-200:] if result.stderr else ''}"
+            )
     except Exception as e:
         print(f"[环境安装] 警告: pip 自检异常: {e}")
 
@@ -700,12 +707,16 @@ def _install_paddle_stack(
     default_gpu_tag = "cu126"
     if use_gpu and cuda_version:
         paddle_package = paddle_gpu_spec
-        paddle_index = f"https://www.paddlepaddle.org.cn/packages/stable/{cuda_version}/"
+        paddle_index = (
+            f"https://www.paddlepaddle.org.cn/packages/stable/{cuda_version}/"
+        )
         paddle_name = f"PaddlePaddle GPU ({cuda_version})"
         report_fn("依赖安装", f"检测到 CUDA {cuda_version}，安装 GPU 版本")
     elif use_gpu:
         paddle_package = paddle_gpu_spec
-        paddle_index = f"https://www.paddlepaddle.org.cn/packages/stable/{default_gpu_tag}/"
+        paddle_index = (
+            f"https://www.paddlepaddle.org.cn/packages/stable/{default_gpu_tag}/"
+        )
         paddle_name = f"PaddlePaddle GPU ({default_gpu_tag})"
         report_fn("依赖安装", f"安装 GPU 版本（默认 {default_gpu_tag}）")
     else:
@@ -718,7 +729,16 @@ def _install_paddle_stack(
         # 升级pip
         report_fn("依赖安装", "正在升级pip...")
         result = subprocess.run(
-            [str(python_exe), "-m", "pip", "install", "--upgrade", "pip", "-i", pip_source],
+            [
+                str(python_exe),
+                "-m",
+                "pip",
+                "install",
+                "--upgrade",
+                "pip",
+                "-i",
+                pip_source,
+            ],
             capture_output=True,
             text=True,
             timeout=120,
@@ -758,7 +778,11 @@ def _install_paddle_stack(
             # package_spec 可能含多个包（空格分隔，如 "torch torchvision"），
             # 必须拆成独立的 argv 元素传给 pip，否则 pip 把整个字符串当成一个非法 requirement。
             # 同时剥离冗余的引号（subprocess 传 list 不经过 shell，引号会变成参数的一部分）。
-            raw_args = package_spec.split() if isinstance(package_spec, str) else list(package_spec)
+            raw_args = (
+                package_spec.split()
+                if isinstance(package_spec, str)
+                else list(package_spec)
+            )
             pkg_args = [a.strip('"').strip("'") for a in raw_args]
 
             result = subprocess.run(

@@ -7,8 +7,8 @@
     python qa/update_katex.py
 """
 
-import urllib.request
 import sys
+import urllib.request
 from pathlib import Path
 
 KATEX_VERSION = "0.16.11"

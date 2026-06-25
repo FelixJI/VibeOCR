@@ -550,9 +550,7 @@ class Ui_MainWindowWidget:
             )
         )
         self.labelReleaseStatus.setText(
-            QCoreApplication.translate(
-                "MainWindowWidget", "\u5c31\u7eea", None
-            )
+            QCoreApplication.translate("MainWindowWidget", "\u5c31\u7eea", None)
         )
         self.groupCache.setTitle(
             QCoreApplication.translate(

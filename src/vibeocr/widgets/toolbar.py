@@ -221,7 +221,7 @@ class EdgeToolbar(QWidget):
         self.setMinimumWidth(120)
         self.adjustSize()
 
-    def paintEvent(self, event: QPaintEvent) -> None:  # noqa: N802
+    def paintEvent(self, event: QPaintEvent) -> None:
         """绘制浅色圆角背景 + 边框。
 
         顶层透明窗口下 QSS 背景绘制不可靠，这里手动绘制实体背景，

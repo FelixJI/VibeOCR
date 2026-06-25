@@ -28,9 +28,12 @@ class TestInstallStandalonePython:
         buf = io.BytesIO()
         with tarfile.open(fileobj=buf, mode="w:gz") as tar:
             # 目录
-            for d in ("install_only/python", "install_only/python/Lib",
-                      "install_only/python/Lib/site-packages",
-                      "install_only/python/Lib/site-packages/pip"):
+            for d in (
+                "install_only/python",
+                "install_only/python/Lib",
+                "install_only/python/Lib/site-packages",
+                "install_only/python/Lib/site-packages/pip",
+            ):
                 info = tarfile.TarInfo(name=d)
                 info.type = tarfile.DIRTYPE
                 info.mode = 0o755
@@ -59,14 +62,17 @@ class TestInstallStandalonePython:
                 return_value=True,
             ) as mock_dl,
             patch("tarfile.open", wraps=tarfile.open) as _mock_tar,
-            patch("vibeocr.env_manager.get_embedded_python_executable",
-                  return_value=tmp_path / "python" / "python.exe"),
+            patch(
+                "vibeocr.env_manager.get_embedded_python_executable",
+                return_value=tmp_path / "python" / "python.exe",
+            ),
             patch("vibeocr.env_manager.subprocess.run"),
         ):
             # 让下载函数把 tar 写到期望路径
             def _fake_dl(url, dest, *a, **kw):
                 dest.write_bytes(self._make_standalone_tar_bytes())
                 return True
+
             mock_dl.side_effect = _fake_dl
 
             ok, msg = install_embedded_python(tmp_path)
@@ -79,7 +85,9 @@ class TestInstallStandalonePython:
         assert first_url.endswith(".tar.gz")
         # 关键文件落盘（证明 tarfile 解压 + flatten 首层目录）
         assert (tmp_path / "python" / "python.exe").exists()
-        assert (tmp_path / "python" / "Lib" / "site-packages" / "pip" / "__init__.py").exists()
+        assert (
+            tmp_path / "python" / "Lib" / "site-packages" / "pip" / "__init__.py"
+        ).exists()
         # 不应再写 ._pth 文件
         assert not any((tmp_path / "python").glob("._pth"))
         assert not any((tmp_path / "python").glob("*._pth"))
@@ -92,13 +100,17 @@ class TestInstallStandalonePython:
                 "vibeocr.env_manager.download_file_with_progress",
                 return_value=True,
             ) as mock_dl,
-            patch("vibeocr.env_manager.get_embedded_python_executable",
-                  return_value=tmp_path / "python" / "python.exe"),
+            patch(
+                "vibeocr.env_manager.get_embedded_python_executable",
+                return_value=tmp_path / "python" / "python.exe",
+            ),
             patch("vibeocr.env_manager.subprocess.run"),
         ):
+
             def _fake_dl(url, dest, *a, **kw):
                 dest.write_bytes(self._make_standalone_tar_bytes())
                 return True
+
             mock_dl.side_effect = _fake_dl
             install_embedded_python(tmp_path)
 
@@ -111,9 +123,13 @@ class TestInstallStandalonePython:
         """所有下载源都失败时应返回 False"""
         with (
             patch("vibeocr.env_manager.get_environment_mode", return_value="none"),
-            patch("vibeocr.env_manager.download_file_with_progress", return_value=False),
-            patch("vibeocr.env_manager.get_embedded_python_executable",
-                  return_value=tmp_path / "python" / "python.exe"),
+            patch(
+                "vibeocr.env_manager.download_file_with_progress", return_value=False
+            ),
+            patch(
+                "vibeocr.env_manager.get_embedded_python_executable",
+                return_value=tmp_path / "python" / "python.exe",
+            ),
         ):
             ok, _msg = install_embedded_python(tmp_path)
         assert not ok
@@ -619,7 +635,9 @@ class TestSwitchPaddleBackend:
             ),
             patch("vibeocr.env_manager.subprocess.run", side_effect=mock_run),
             patch("vibeocr.env_manager.detect_gpu", return_value=(True, "cu126")),
-            patch("vibeocr.env_manager.update_cache_field", return_value=True) as mock_update,
+            patch(
+                "vibeocr.env_manager.update_cache_field", return_value=True
+            ) as mock_update,
         ):
             ok, msg = switch_paddle_backend(
                 tmp_path, target, progress_callback=lambda s, m: None

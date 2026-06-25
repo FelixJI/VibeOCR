@@ -68,9 +68,10 @@ class TestDecodeRoundtrip:
     def test_decode_type_is_qrcode(self, decode_service, gen_service):
         img = _make_qr_image("test", gen_service)
         results = decode_service.decode(img)
-        assert results[0].type.upper() == "qrcode".upper() or "QR" in results[
-            0
-        ].type.upper()
+        assert (
+            results[0].type.upper() == "qrcode".upper()
+            or "QR" in results[0].type.upper()
+        )
 
 
 class TestDecodeEdgeCases:

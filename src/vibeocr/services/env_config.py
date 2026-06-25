@@ -89,7 +89,9 @@ def get_pytorch_mirror(
     Returns:
         镜像源完整 URL，如 "https://mirrors.nju.edu.cn/pytorch/whl/cu126"
     """
-    base = PYTORCH_MIRROR_SOURCES.get(name, PYTORCH_MIRROR_SOURCES[DEFAULT_PYTORCH_MIRROR])
+    base = PYTORCH_MIRROR_SOURCES.get(
+        name, PYTORCH_MIRROR_SOURCES[DEFAULT_PYTORCH_MIRROR]
+    )
     if cuda_tag:
         return f"{base}/{cuda_tag}"
     return base

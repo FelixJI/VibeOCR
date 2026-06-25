@@ -9,7 +9,7 @@ import os
 import threading
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from vibeocr.core.pipelines import OCRPipeline
 from vibeocr.core.singleton_meta import SingletonMeta
@@ -173,7 +173,9 @@ class OCRService(metaclass=SingletonMeta):
                 max_heavy_override = ConfigManager.instance().get_max_heavy_pipelines()
             except Exception:
                 pass  # ConfigManager 未初始化时用默认自动检测
-            self._cache_manager = PipelineCacheManager(self, max_heavy=max_heavy_override)
+            self._cache_manager = PipelineCacheManager(
+                self, max_heavy=max_heavy_override
+            )
         return self._cache_manager
 
     @classmethod
@@ -556,7 +558,6 @@ class OCRService(metaclass=SingletonMeta):
             GPU_BATCH_CAP,
         )
 
-
     @classmethod
     def _register_dll_directories(cls) -> None:
         """通过 os.add_dll_directory() 和 PATH 注册 CUDA DLL 目录
@@ -767,7 +768,10 @@ class OCRService(metaclass=SingletonMeta):
             OCRResult 对象，包含识别结果和置信度信息
         """
         image = self._to_ndarray(image)
-        return self.recognize_batch([image], options)[0]
+        # _to_ndarray 对 str 路径输入返回 str，但 recognize_batch 只收 ndarray。
+        # 实际调用方均传 bytes/PIL/ndarray（str 路径走 paddlex 内部加载），
+        # 此处 cast 与 recognize_batch 的 ndarray 契约对齐。
+        return self.recognize_batch([cast("np.ndarray", image)], options)[0]
 
     @staticmethod
     def _to_ndarray(
@@ -803,7 +807,8 @@ class OCRService(metaclass=SingletonMeta):
             if image.mode != "RGB":
                 image = image.convert("RGB")  # type: ignore[assignment]
             return np.array(image)
-        return image
+        # 到此 bytes/PIL 分支已 return，image 只剩 ndarray|str（hasattr 无法静态收窄）
+        return image  # type: ignore[return-value]  # ndarray|str，符合签名
 
     def recognize_batch(
         self,

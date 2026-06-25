@@ -184,6 +184,8 @@ class PreviewCanvas(QWidget):
 
     def _paint_ocr_blocks(self, painter: QPainter) -> None:
         """渲染 OCR 块：置信度着色（与 PreviewWidget 统一）。"""
+        if self._ocr_blocks is None:
+            return
         for i, block in enumerate(self._ocr_blocks):
             if i >= len(self._ocr_block_rects):
                 break
@@ -207,6 +209,8 @@ class PreviewCanvas(QWidget):
         """渲染旧 text_layers（PDF points 坐标）。"""
         from vibeocr.services.pdf_service import PdfService
 
+        if self._page_rect is None:
+            return
         for layer in self._highlight_layers:
             bbox = layer.bbox
             color_idx = layer.color_id % 8
@@ -263,6 +267,8 @@ class PreviewCanvas(QWidget):
 
     def _handle_ocr_hover(self, event: QMouseEvent) -> None:
         # rects 是未缩放 pixmap 坐标，鼠标是 widget 像素（含 scale），需 / scale
+        if self._ocr_blocks is None:
+            return
         mx = event.position().x() / self._scale
         my = event.position().y() / self._scale
         for i, (bx, by, bw, bh) in enumerate(self._ocr_block_rects):
@@ -280,6 +286,8 @@ class PreviewCanvas(QWidget):
     def _handle_layer_hover(self, event: QMouseEvent) -> None:
         from vibeocr.services.pdf_service import PdfService
 
+        if self._page_rect is None:
+            return
         mx = event.position().x() / self._scale
         my = event.position().y() / self._scale
         for layer in self._highlight_layers:
@@ -323,7 +331,7 @@ class PreviewCanvas(QWidget):
         return self._inline_editor
 
     def _start_inline_edit(self, index: int) -> None:
-        if index < 0 or index >= len(self._ocr_block_rects):
+        if self._ocr_blocks is None or index < 0 or index >= len(self._ocr_block_rects):
             return
         editor = self._ensure_inline_editor()
         bx, by, bw, bh = self._ocr_block_rects[index]
@@ -348,7 +356,7 @@ class PreviewCanvas(QWidget):
         return super().eventFilter(obj, event)
 
     def _on_inline_edit_finished(self) -> None:
-        if self._editing_index < 0:
+        if self._editing_index < 0 or self._inline_editor is None:
             return
         index = self._editing_index
         new_text = self._inline_editor.text()

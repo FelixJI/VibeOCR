@@ -10,40 +10,42 @@ from __future__ import annotations
 
 class Colors:
     """语义色 token（浅色单一套）"""
+
     # 背景层
-    bg          = "#f3f4f6"
-    surface     = "#ffffff"
+    bg = "#f3f4f6"
+    surface = "#ffffff"
     surface_alt = "#f9fafb"
 
     # 文字
-    text        = "#1f2937"
-    text_muted  = "#6b7280"
+    text = "#1f2937"
+    text_muted = "#6b7280"
     text_subtle = "#9ca3af"
 
     # 边框
-    border        = "#e5e7eb"
+    border = "#e5e7eb"
     border_strong = "#d1d5db"
 
     # 强调
-    accent        = "#0078d4"
-    accent_hover  = "#106ebe"
-    accent_soft   = "#e3f2fd"
+    accent = "#0078d4"
+    accent_hover = "#106ebe"
+    accent_soft = "#e3f2fd"
 
     # 语义
-    success       = "#107c10"
+    success = "#107c10"
     success_hover = "#0b6a0b"
-    warning       = "#f7630c"
-    danger        = "#c83232"
-    danger_hover  = "#d6550a"
+    warning = "#f7630c"
+    danger = "#c83232"
+    danger_hover = "#d6550a"
 
     # 透明叠加
-    overlay    = "rgba(0,0,0,0.30)"
-    hover_bg   = "#e8e8e8"
+    overlay = "rgba(0,0,0,0.30)"
+    hover_bg = "#e8e8e8"
     pressed_bg = "#dcdcdc"
 
 
 class Spacing:
     """间距 scale（4 的倍数）"""
+
     xs, sm, md, lg, xl, xxl = 4, 8, 12, 16, 24, 32
 
 
@@ -52,12 +54,12 @@ class Radius:
 
 
 class Typography:
-    title   = 24
-    h1      = 16
-    body    = 14
-    small   = 12
+    title = 24
+    h1 = 16
+    body = 14
+    small = 12
     caption = 11
-    weight_bold   = 700
+    weight_bold = 700
     weight_medium = 500
 
 
@@ -67,6 +69,7 @@ class Shadow:
 
 class Layout:
     """布局尺寸 token（承接原 EditorStyles/InlineStyles 的尺寸常量）"""
+
     toolbar_height = 48
     panel_width = 280
     panel_min_width = 180

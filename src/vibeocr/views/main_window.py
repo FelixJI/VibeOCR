@@ -447,9 +447,7 @@ class MainWindow(QMainWindow):
 
         version = data.get("version", "")
         pkgs = ", ".join(changed.keys())
-        logging.info(
-            f"[依赖同步] 检测到待同步标记（目标版本 {version}）：{changed}"
-        )
+        logging.info(f"[依赖同步] 检测到待同步标记（目标版本 {version}）：{changed}")
         self._statusbar.showMessage(f"正在同步 OCR 依赖更新：{pkgs}")
 
         from vibeocr.widgets.install_dialog import InstallDialog
@@ -483,7 +481,6 @@ class MainWindow(QMainWindow):
             self._statusbar.showMessage("OCR 依赖同步失败，将在下次启动重试")
             logging.warning("[依赖同步] 同步失败，保留 pending_sync.json 供重试")
 
-    @staticmethod
     def _delete_pending_sync(self) -> None:
         """删除 pending_sync.json 标记文件（同步成功或标记无效时调用）"""
         from vibeocr.services.env_config import get_pending_sync_path
@@ -662,7 +659,11 @@ class MainWindow(QMainWindow):
 
         try:
             ttl = ConfigManager.instance().get_pipeline_ttl_seconds()
-            self._subprocess_manager.service.set_pipeline_ttl(ttl)
+            service = self._subprocess_manager.service
+            if service is None:
+                logging.warning("[子进程预加载] service 未就绪，跳过 TTL 下发")
+                return
+            service.set_pipeline_ttl(ttl)
             logging.debug("[子进程预加载] 已下发 TTL=%d 到 worker", ttl)
         except Exception as e:
             logging.warning("[子进程预加载] 下发 TTL 失败: %s", e)

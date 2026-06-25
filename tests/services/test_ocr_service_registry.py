@@ -108,9 +108,7 @@ class TestGetOrCreatePipeline:
 
         # Should use registry, not old _create_pipeline.
         # On CPU the factory must receive enable_mkldnn=False.
-        mock_spec.create_pipeline.assert_called_once_with(
-            "cpu", enable_mkldnn=False
-        )
+        mock_spec.create_pipeline.assert_called_once_with("cpu", enable_mkldnn=False)
         mock_old_create.assert_not_called()
         assert result is mock_pipeline
         assert "OCR" in service._pipelines
@@ -578,9 +576,7 @@ class TestRecognizeBatch:
                 np.zeros((50, 100, 3), dtype=np.uint8),
                 np.zeros((100, 200, 3), dtype=np.uint8),
             ]
-            got = service.recognize_batch(
-                images, OCROptions(pipeline=OCRPipeline.OCR)
-            )
+            got = service.recognize_batch(images, OCROptions(pipeline=OCRPipeline.OCR))
 
         # 两张图各自归一化：50/100*1000=500, 25/50*1000=500
         bbox_a = got[0].text_blocks[0].bbox

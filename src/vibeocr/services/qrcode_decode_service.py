@@ -46,7 +46,9 @@ class QrcodeDecodeService:
         }
 
     def decode(self, image: Image.Image) -> list[DecodedItem]:
-        from pyzbar.pyzbar import decode as _zbar_decode
+        from pyzbar.pyzbar import (  # type: ignore[import-not-found]
+            decode as _zbar_decode,
+        )
 
         # 大图保护：任一边超过上限先等比缩放（在副本上操作，不改原图）
         max_dim = max(image.size)
@@ -69,9 +71,7 @@ class QrcodeDecodeService:
                 continue
             if not data.strip():
                 continue
-            items.append(
-                DecodedItem(data=data, type=r.type, is_url=_is_http_url(data))
-            )
+            items.append(DecodedItem(data=data, type=r.type, is_url=_is_http_url(data)))
         return items
 
     def decode_bytes(self, data: bytes) -> list[DecodedItem]:

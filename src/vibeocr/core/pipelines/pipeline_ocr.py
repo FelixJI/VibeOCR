@@ -11,10 +11,13 @@ import gc
 import io
 import logging
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from vibeocr.core.pipelines.base_options import BasePipelineOptions
 from vibeocr.core.pipelines.registry import PipelineSpec
+
+if TYPE_CHECKING:
+    from vibeocr.models.ocr_result import TextBlock
 
 _logger = logging.getLogger(__name__)
 
@@ -227,8 +230,6 @@ def _recognize_ocr(service: Any, image: Any, options: OCROptions) -> Any:
     从 OCRService._recognize_ocr 和 _process_ocr_output_safe 迁移而来。
     使用 service.get_or_create_pipeline("OCR") 获取管道实例。
     """
-    from vibeocr.models.ocr_result import TextBlock
-
     _logger.debug("[_recognize_ocr] 获取 OCR 管道...")
     pipeline = service.get_or_create_pipeline("OCR")
     _logger.debug("[_recognize_ocr] 执行 predict...")
@@ -255,8 +256,8 @@ def _recognize_ocr(service: Any, image: Any, options: OCROptions) -> Any:
     #       实际预处理图在 doc_preprocessor_res['output_img']（numpy BGR）
     preproc_angle, preprocessed_png, preproc_w, preproc_h = (0, None, 0, 0)
     if output_list:
-        preproc_angle, preprocessed_png, preproc_w, preproc_h = (
-            _extract_preproc_info(output_list[0])
+        preproc_angle, preprocessed_png, preproc_w, preproc_h = _extract_preproc_info(
+            output_list[0]
         )
 
     result_count = 0
@@ -290,9 +291,7 @@ def _recognize_ocr(service: Any, image: Any, options: OCROptions) -> Any:
     return result
 
 
-def _recognize_ocr_batch(
-    service: Any, images: list, options: OCROptions
-) -> list:
+def _recognize_ocr_batch(service: Any, images: list, options: OCROptions) -> list:
     """通用 OCR 批量识别
 
     将多张图像一次性送入单次 pipeline.predict(list) 调用，由 PaddleOCR 内部

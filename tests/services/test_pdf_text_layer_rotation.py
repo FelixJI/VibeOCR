@@ -40,10 +40,12 @@ def _derotate_rect(page, rect_displayed):
     def de(x, y):
         return (a * x + c * y + e, b * x + d * y + f)
 
-    corners = [de(rect_displayed.x0, rect_displayed.y0),
-               de(rect_displayed.x1, rect_displayed.y0),
-               de(rect_displayed.x0, rect_displayed.y1),
-               de(rect_displayed.x1, rect_displayed.y1)]
+    corners = [
+        de(rect_displayed.x0, rect_displayed.y0),
+        de(rect_displayed.x1, rect_displayed.y0),
+        de(rect_displayed.x0, rect_displayed.y1),
+        de(rect_displayed.x1, rect_displayed.y1),
+    ]
     xs = [pt[0] for pt in corners]
     ys = [pt[1] for pt in corners]
     return fitz.Rect(min(xs), min(ys), max(xs), max(ys))
@@ -72,9 +74,7 @@ class TestRotatedPageTextLayer:
         disp_w, disp_h = disp_rect.width, disp_rect.height
 
         # 显示空间『顶部中央』窄条：x 40%~60%，y 5%~10%
-        disp_box = fitz.Rect(
-            disp_w * 0.4, disp_h * 0.05, disp_w * 0.6, disp_h * 0.10
-        )
+        disp_box = fitz.Rect(disp_w * 0.4, disp_h * 0.05, disp_w * 0.6, disp_h * 0.10)
         nbbox = (
             disp_box.x0 / disp_w * 1000,
             disp_box.y0 / disp_h * 1000,
@@ -96,8 +96,8 @@ class TestRotatedPageTextLayer:
         layer_rects = []
         for b in p2.get_text("dict")["blocks"]:
             if "lines" in b:
-                for l in b["lines"]:
-                    layer_rects.append(fitz.Rect(*l["bbox"]))
+                for line in b["lines"]:
+                    layer_rects.append(fitz.Rect(*line["bbox"]))
         d2.close()
         assert layer_rects, f"rotate={rotate}: 文字层未找到"
         mb_rect = layer_rects[0]
@@ -112,15 +112,18 @@ class TestRotatedPageTextLayer:
         def rot(x, y):
             return (a * x + c * y + e, b * x + d * y + f)
 
-        corners = [rot(mb_rect.x0, mb_rect.y0), rot(mb_rect.x1, mb_rect.y0),
-                   rot(mb_rect.x0, mb_rect.y1), rot(mb_rect.x1, mb_rect.y1)]
-        xs = [pt[0] for pt in corners]
+        corners = [
+            rot(mb_rect.x0, mb_rect.y0),
+            rot(mb_rect.x1, mb_rect.y0),
+            rot(mb_rect.x0, mb_rect.y1),
+            rot(mb_rect.x1, mb_rect.y1),
+        ]
         ys = [pt[1] for pt in corners]
         disp_y_mid = (min(ys) + max(ys)) / 2
         d3.close()
 
         assert disp_y_mid < disp_h * 0.5, (
-            f"rotate={rotate}: 文字应在显示页面顶部(y<{disp_h*0.5:.0f})，"
+            f"rotate={rotate}: 文字应在显示页面顶部(y<{disp_h * 0.5:.0f})，"
             f"实际显示空间 y 中点={disp_y_mid:.1f}（『上面的字写到了右面/下面』症状）"
         )
 
@@ -131,7 +134,7 @@ class TestRotatedPageTextLayer:
         )
         doc, pdf_doc = PdfService.open_doc(str(path))
         page = doc[0]
-        disp_w, disp_h = page.rect.width, page.rect.height
+        _disp_w, disp_h = page.rect.width, page.rect.height
         nbbox = (400.0, 50.0, 600.0, 100.0)  # 顶部
         block = TextBlock(text="TOP", score=0.95, bbox=nbbox)
         result = OCRResult(raw_text="TOP", text_blocks=[block], preproc_angle=0)
@@ -143,7 +146,7 @@ class TestRotatedPageTextLayer:
         d2 = fitz.open(str(tmp_path / "out0.pdf"))
         for b in d2[0].get_text("dict")["blocks"]:
             if "lines" in b:
-                for l in b["lines"]:
-                    r = fitz.Rect(*l["bbox"])
+                for line in b["lines"]:
+                    r = fitz.Rect(*line["bbox"])
                     assert (r.y0 + r.y1) / 2 < disp_h * 0.5
         d2.close()

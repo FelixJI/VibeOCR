@@ -223,7 +223,9 @@ class PdfSessionManager(QObject):
         for page_idx in page_indices:
             with session.doc_lock:
                 page = session.doc[page_idx]
-                adjusted_dpi = pdf_settings.adjust_dpi(page.rect.width, page.rect.height)
+                adjusted_dpi = pdf_settings.adjust_dpi(
+                    page.rect.width, page.rect.height
+                )
                 img_array = PdfService.render_page_as_array(
                     session.doc, page_idx, dpi=adjusted_dpi
                 )
@@ -291,9 +293,7 @@ class PdfSessionManager(QObject):
         session = self._sessions.get(session_id)
         if session is not None:
             stats = session.ocr_stats
-            self.ocr_stats_ready.emit(
-                session_id, stats["written"], stats["skipped"]
-            )
+            self.ocr_stats_ready.emit(session_id, stats["written"], stats["skipped"])
         self._ocr_worker = None
 
     # ---- block text editing (双击改字 → 内存模型更新) ----------------

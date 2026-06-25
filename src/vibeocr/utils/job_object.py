@@ -92,16 +92,11 @@ class JobObjectGuard:
         try:
             kernel32 = _get_kernel32()
             # lpName：可选命名；NULL 表示匿名 Job
-            if self._name:
-                name_c = ctypes.c_wchar_p(self._name)
-            else:
-                name_c = None
+            name_c = ctypes.c_wchar_p(self._name) if self._name else None
 
             handle = kernel32.CreateJobObjectW(None, name_c)
             if not handle:
-                logger.warning(
-                    "[JobObject] CreateJobObjectW 失败，子进程孤儿防护降级"
-                )
+                logger.warning("[JobObject] CreateJobObjectW 失败，子进程孤儿防护降级")
                 return
 
             # 配置 KILL_ON_JOB_CLOSE + BREAKAWAY_OK
@@ -150,9 +145,7 @@ class JobObjectGuard:
                 PROCESS_SET_QUOTA | PROCESS_TERMINATE, False, pid
             )
             if not proc_handle:
-                logger.warning(
-                    f"[JobObject] OpenProcess(pid={pid}) 失败，子进程未绑定"
-                )
+                logger.warning(f"[JobObject] OpenProcess(pid={pid}) 失败，子进程未绑定")
                 return False
 
             try:

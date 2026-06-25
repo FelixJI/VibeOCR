@@ -80,8 +80,8 @@ class PdfOcrWorker(QThread):
             return 1
         try:
             arrays = [p[1] if isinstance(p, tuple) else p for p in pages]
-            avg_pixels = (
-                sum(int(a.shape[0]) * int(a.shape[1]) for a in arrays) // len(arrays)
+            avg_pixels = sum(int(a.shape[0]) * int(a.shape[1]) for a in arrays) // len(
+                arrays
             )
         except (AttributeError, IndexError, TypeError):
             return self.DEFAULT_BATCH_SIZE
@@ -129,7 +129,7 @@ class PdfOcrWorker(QThread):
             results = self._recognize_batch(batch_images, options)
 
             # emit 该批结果
-            for i, (page_index, result) in enumerate(
+            for _i, (page_index, result) in enumerate(
                 zip(batch_indices, results, strict=False)
             ):
                 if self._cancelled:

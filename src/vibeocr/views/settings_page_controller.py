@@ -278,9 +278,7 @@ class SettingsPageController:
         try:
             from vibeocr.utils.ocr_preferences import OCRPreferences
 
-            loaded = OCRPreferences.instance().get_pipeline_options(
-                "pdf", new_pipeline
-            )
+            loaded = OCRPreferences.instance().get_pipeline_options("pdf", new_pipeline)
             self._pdf_options.pipeline_options.set_options(loaded)
         except RuntimeError:
             pass
@@ -660,9 +658,7 @@ class SettingsPageController:
         signals.finished.connect(lambda r: self._on_release_finished(r, heavy_only))
         signals.error.connect(self._on_release_error)
 
-        task = ReleaseTask(
-            self._subprocess_manager.service, heavy_only, signals
-        )
+        task = ReleaseTask(self._subprocess_manager.service, heavy_only, signals)
         QThreadPool.globalInstance().start(task)
 
     def _on_release_finished(self, released: list, heavy_only: bool) -> None:
@@ -673,9 +669,7 @@ class SettingsPageController:
                 btn.setEnabled(True)
         label = "重管道" if heavy_only else "全部"
         if released:
-            self._update_release_status(
-                f"已释放{label}管道: {', '.join(released)}"
-            )
+            self._update_release_status(f"已释放{label}管道: {', '.join(released)}")
         else:
             self._update_release_status(f"没有需要释放的{label}管道")
 

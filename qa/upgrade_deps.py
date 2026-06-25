@@ -133,7 +133,9 @@ def parse_pyproject_dependencies() -> list[tuple[str, str, int, int]]:
     return dependencies
 
 
-def update_pyproject_versions(locked_versions: dict[str, str], *, dry_run: bool = False) -> list[str]:
+def update_pyproject_versions(
+    locked_versions: dict[str, str], *, dry_run: bool = False
+) -> list[str]:
     """更新 pyproject.toml 中的依赖版本到锁定版本
 
     返回: 变更列表
@@ -158,7 +160,7 @@ def update_pyproject_versions(locked_versions: dict[str, str], *, dry_run: bool 
 
             # 解析包名和版本约束
             # 支持格式: package, package>=x.x.x, package[x,y]>=x.x.x
-            match = re.match(r'^([a-zA-Z0-9_-]+)(\[[^\]]+\])?([<>=!]+.+)?$', dep_line)
+            match = re.match(r"^([a-zA-Z0-9_-]+)(\[[^\]]+\])?([<>=!]+.+)?$", dep_line)
             if match:
                 pkg_name = match.group(1)
                 extras = match.group(2) or ""
@@ -168,10 +170,15 @@ def update_pyproject_versions(locked_versions: dict[str, str], *, dry_run: bool 
                 locked_version = locked_versions.get(pkg_name)
                 if locked_version and pkg_name not in CUDA_PACKAGES:
                     # 保留上界约束（如 <2.4），只更新下界
-                    upper_bounds = [
-                        p.strip() for p in version_spec.split(",")
-                        if p.strip().startswith(("<",))
-                    ] if version_spec else []
+                    upper_bounds = (
+                        [
+                            p.strip()
+                            for p in version_spec.split(",")
+                            if p.strip().startswith(("<",))
+                        ]
+                        if version_spec
+                        else []
+                    )
                     new_version = ">=" + locked_version
                     if upper_bounds:
                         new_version += "," + ",".join(upper_bounds)
@@ -180,7 +187,7 @@ def update_pyproject_versions(locked_versions: dict[str, str], *, dry_run: bool 
                     if new_dep_line != dep_line:
                         # 保留原有的逗号和引号格式
                         has_comma = line.strip().endswith(",")
-                        new_line = ' ' * indent + f'"{new_dep_line}"'
+                        new_line = " " * indent + f'"{new_dep_line}"'
                         if has_comma:
                             new_line += ","
                         lines[i] = new_line
@@ -192,9 +199,7 @@ def update_pyproject_versions(locked_versions: dict[str, str], *, dry_run: bool 
     return changes
 
 
-def run_uv_lock_upgrade(
-    *, dry_run: bool = False, stable: bool = False
-) -> int:
+def run_uv_lock_upgrade(*, dry_run: bool = False, stable: bool = False) -> int:
     """运行 uv lock --upgrade，实时输出进度"""
     if dry_run:
         extra = " --no-prerelease" if stable else ""
@@ -328,9 +333,7 @@ def main() -> int:
         print("\n[Step 1] 运行 uv lock --upgrade...")
         if args.stable:
             print("[INFO] 已启用 --stable，排除预发布版本")
-        result = run_uv_lock_upgrade(
-            dry_run=args.dry_run, stable=args.stable
-        )
+        result = run_uv_lock_upgrade(dry_run=args.dry_run, stable=args.stable)
         if result != 0:
             print(f"[FAIL] uv lock --upgrade 失败 (code: {result})")
             return result
@@ -340,8 +343,12 @@ def main() -> int:
             print("\n[Step 1.5] 验证 CUDA 包来源...")
             bad = verify_cuda_packages_in_lock()
             if bad:
-                print(f"[FAIL] 以下包未来自 PyTorch CUDA 索引（可能是 CPU 版本）: {', '.join(bad)}")
-                print("[HINT] 检查 pyproject.toml 中 [tool.uv.sources] 和 [[tool.uv.index]] 配置")
+                print(
+                    f"[FAIL] 以下包未来自 PyTorch CUDA 索引（可能是 CPU 版本）: {', '.join(bad)}"
+                )
+                print(
+                    "[HINT] 检查 pyproject.toml 中 [tool.uv.sources] 和 [[tool.uv.index]] 配置"
+                )
                 print("[HINT] 可能是 PyTorch CUDA 索引尚无对应版本，需要等待或降级版本")
                 return 1
             print("[OK] CUDA 包来源验证通过")
@@ -387,7 +394,9 @@ def main() -> int:
                 print("[OK] torch CUDA 可用")
             else:
                 print("[FAIL] torch CUDA 不可用，当前为 CPU 版本！")
-                print("[HINT] 运行 'uv lock --upgrade' 重新解析，或检查 pyproject.toml 索引配置")
+                print(
+                    "[HINT] 运行 'uv lock --upgrade' 重新解析，或检查 pyproject.toml 索引配置"
+                )
                 return 1
 
     print("\n" + "=" * 60)

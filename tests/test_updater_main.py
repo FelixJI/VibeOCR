@@ -75,9 +75,7 @@ class TestVerifySha256:
     def test_mismatched_hash(self, updater, tmp_path):
         zp = tmp_path / "pkg.zip"
         zp.write_bytes(b"package content")
-        (tmp_path / "pkg.zip.sha256").write_text(
-            "0" * 64, encoding="utf-8"
-        )
+        (tmp_path / "pkg.zip.sha256").write_text("0" * 64, encoding="utf-8")
         assert updater.verify_sha256(zp) is False
 
 
@@ -169,9 +167,7 @@ class TestReplaceAppFiles:
         _make_new_files(new_dir)
 
         original_exe = (app_dir / "VibeOCR.exe").read_bytes()
-        original_version = (app_dir / "version.json").read_text(
-            encoding="utf-8"
-        )
+        original_version = (app_dir / "version.json").read_text(encoding="utf-8")
 
         # 让复制阶段抛错（在第一次 copytree/copy2 时失败）
         import shutil as _shutil
@@ -189,7 +185,9 @@ class TestReplaceAppFiles:
         # app_dir 必须回滚：旧 exe 和 version.json 都还在、内容不变
         assert (app_dir / "VibeOCR.exe").exists()
         assert (app_dir / "VibeOCR.exe").read_bytes() == original_exe
-        assert (app_dir / "version.json").read_text(encoding="utf-8") == original_version
+        assert (app_dir / "version.json").read_text(
+            encoding="utf-8"
+        ) == original_version
         # 保留目录仍在
         assert (app_dir / "config" / "settings.json").exists()
 
@@ -304,4 +302,3 @@ class TestSyncDependencies:
         updater._sync_dependencies(old_deps, new_data, tmp_path)
 
         assert (tmp_path / "data" / "settings" / "pending_sync.json").exists()
-

@@ -62,7 +62,7 @@ def verify_sha256(zip_path: Path) -> bool:
     actual = hashlib.sha256(zip_path.read_bytes()).hexdigest().lower()
 
     if actual != expected:
-        print(f"[updater] 错误: SHA256 校验失败")
+        print("[updater] 错误: SHA256 校验失败")
         print(f"  expected: {expected}")
         print(f"  actual:   {actual}")
         return False
@@ -75,7 +75,7 @@ def extract_zip(zip_path: Path, app_dir: Path) -> Path:
         shutil.rmtree(tmp_dir, ignore_errors=True)
     tmp_dir.mkdir(parents=True, exist_ok=True)
 
-    print(f"[updater] 解压更新包...")
+    print("[updater] 解压更新包...")
     with zipfile.ZipFile(zip_path, "r") as zf:
         zf.extractall(tmp_dir)
 
@@ -105,9 +105,7 @@ def replace_app_files(new_files_dir: Path, app_dir: Path) -> bool:
             pass
 
     # 待替换的旧条目（保留目录除外）
-    old_items = [
-        item for item in app_dir.iterdir() if item.name not in _PRESERVE_DIRS
-    ]
+    old_items = [item for item in app_dir.iterdir() if item.name not in _PRESERVE_DIRS]
 
     # 1) 备份将要删除/覆盖的旧条目，以便复制失败时回滚
     backup_dir = app_dir / "data" / "cache" / "update" / "_backup"
@@ -219,7 +217,8 @@ def _sync_dependencies(old_deps: dict, new_data: dict, app_dir: Path) -> None:
     """
     new_deps = new_data.get("dep_versions", {})
     changed = {
-        pkg: version for pkg, version in new_deps.items()
+        pkg: version
+        for pkg, version in new_deps.items()
         if old_deps.get(pkg) != version
     }
 
@@ -294,7 +293,9 @@ def main() -> int:
         print("[updater] 更新失败，请手动下载最新版本")
         return 1
 
-    cleanup(zip_path, new_files_dir.parent if new_files_dir.name != "tmp" else new_files_dir)
+    cleanup(
+        zip_path, new_files_dir.parent if new_files_dir.name != "tmp" else new_files_dir
+    )
     launch_app(app_dir)
 
     print("[updater] 更新完成!")

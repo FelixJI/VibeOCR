@@ -95,7 +95,7 @@ def _qpixmap_to_pil(pixmap: QPixmap) -> Image.Image:
     buffer.open(QBuffer.OpenModeFlag.ReadWrite)
     pixmap.save(buffer, "PNG")
     buffer.seek(0)
-    img = Image.open(BytesIO(bytes(buffer.data())))
+    img = Image.open(BytesIO(buffer.data().data()))
     buffer.close()
     return img.convert("RGB")
 
@@ -779,7 +779,9 @@ class QrcodeTab(QWidget):
             logger.error(f"识别失败: {e}", exc_info=True)
             self._decode_result_list.clear()
             item = QListWidgetItem()
-            err_label = QLabel(f"<span style='color:{theme.Colors.danger};'>识别失败：{e}</span>")
+            err_label = QLabel(
+                f"<span style='color:{theme.Colors.danger};'>识别失败：{e}</span>"
+            )
             self._decode_result_list.addItem(item)
             self._decode_result_list.setItemWidget(item, err_label)
             item.setSizeHint(err_label.sizeHint())

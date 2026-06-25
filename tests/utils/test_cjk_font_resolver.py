@@ -17,9 +17,7 @@ class TestFindSystemFont:
         fake_font = tmp_path / "fake.ttf"
         fake_font.write_bytes(b"fake")  # 存在即可
         resolver = CjkFontResolver()
-        monkeypatch.setattr(
-            resolver, "_get_candidates", lambda: [str(fake_font)]
-        )
+        monkeypatch.setattr(resolver, "_get_candidates", lambda: [str(fake_font)])
         assert resolver._find_system_font() == str(fake_font)
 
     def test_returns_none_when_no_font(self, monkeypatch):
@@ -47,9 +45,7 @@ class TestFindSystemFont:
         fake_font = tmp_path / "cached.ttf"
         fake_font.write_bytes(b"x")
         resolver = CjkFontResolver()
-        monkeypatch.setattr(
-            resolver, "_get_candidates", lambda: [str(fake_font)]
-        )
+        monkeypatch.setattr(resolver, "_get_candidates", lambda: [str(fake_font)])
         first = resolver._find_system_font()
         # 删除文件后再次调用，仍应返回缓存路径（证明不重复扫描）
         fake_font.unlink()
@@ -92,9 +88,7 @@ class TestSubsetAndResolve:
         orig_size = Path(real_font).stat().st_size
         sub_size = Path(path).stat().st_size
         # 子集应比原字体小至少 10 倍（实测通常小 1000+ 倍）
-        assert sub_size < orig_size / 10, (
-            f"子集未缩小: orig={orig_size} sub={sub_size}"
-        )
+        assert sub_size < orig_size / 10, f"子集未缩小: orig={orig_size} sub={sub_size}"
         resolver.cleanup()
 
     def test_subset_cache_reuses_same_charset(self, monkeypatch, real_font):
@@ -124,9 +118,7 @@ class TestSubsetAndResolve:
     def test_resolve_none_when_no_system_font(self, monkeypatch):
         """无系统字体时返回 None。"""
         resolver = CjkFontResolver()
-        monkeypatch.setattr(
-            resolver, "_get_candidates", lambda: ["/nonexistent.ttf"]
-        )
+        monkeypatch.setattr(resolver, "_get_candidates", lambda: ["/nonexistent.ttf"])
         assert resolver.resolve("签收联") is None
 
     def test_cleanup_removes_temp_files(self, monkeypatch, real_font):

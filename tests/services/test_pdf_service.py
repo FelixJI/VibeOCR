@@ -235,8 +235,12 @@ class TestPdfServiceTextLayer:
         result = OCRResult(
             raw_text=chinese,
             text_blocks=[
-                TextBlock(text=chinese, score=0.99,
-                          bbox=(50.0, 50.0, 500.0, 120.0), page_idx=0),
+                TextBlock(
+                    text=chinese,
+                    score=0.99,
+                    bbox=(50.0, 50.0, 500.0, 120.0),
+                    page_idx=0,
+                ),
             ],
         )
         written, skipped = PdfService.add_text_layer(doc, pdf_doc, 0, result)
@@ -265,8 +269,9 @@ class TestPdfServiceTextLayer:
         doc.close()
 
         doc, pdf_doc = PdfService.open_doc(str(path))
-        good = TextBlock(text="正常文字", score=0.9,
-                         bbox=(50.0, 50.0, 400.0, 100.0), page_idx=0)
+        good = TextBlock(
+            text="正常文字", score=0.9, bbox=(50.0, 50.0, 400.0, 100.0), page_idx=0
+        )
         # bbox=None 的块（OCR 未给出坐标）会被跳过并记录警告
         no_bbox = TextBlock(text="无坐标", score=0.9, bbox=None, page_idx=0)
         result = OCRResult(raw_text="x", text_blocks=[good, no_bbox])
@@ -303,8 +308,10 @@ class TestPdfServiceTextLayer:
         doc, pdf_doc = PdfService.open_doc(str(path))
         # 瘦高矩形（宽 20pt、高 50pt）+ 3 个汉字 → insert_textbox 必然失败
         narrow = TextBlock(
-            text="签回联", score=0.95,
-            bbox=(50.0, 50.0, 70.0, 100.0), page_idx=0,
+            text="签回联",
+            score=0.95,
+            bbox=(50.0, 50.0, 70.0, 100.0),
+            page_idx=0,
         )
         result = OCRResult(raw_text="签回联", text_blocks=[narrow])
 
@@ -337,22 +344,20 @@ class TestPdfServiceTextLayer:
 
         doc, pdf_doc = PdfService.open_doc(str(path))
         narrow = TextBlock(
-            text="中文测试文字很长装不下窄框", score=0.9,
+            text="中文测试文字很长装不下窄框",
+            score=0.9,
             # 极小矩形：长文本在重试字号缩到 <1 仍溢出，强制走 insert_text 兜底。
             # （依赖具体字体的字号策略，用长文本+小框确保任何字体都触发兜底）
-            bbox=(50.0, 50.0, 60.0, 53.0), page_idx=0,
+            bbox=(50.0, 50.0, 60.0, 53.0),
+            page_idx=0,
         )
-        result = OCRResult(
-            raw_text="中文测试文字很长装不下窄框", text_blocks=[narrow]
-        )
+        result = OCRResult(raw_text="中文测试文字很长装不下窄框", text_blocks=[narrow])
 
         with caplog.at_level(logging.DEBUG, logger="vibeocr.services.pdf_service"):
             PdfService.add_text_layer(doc, pdf_doc, 0, result)
 
         # 兜底写入应有 DEBUG 日志
-        assert any(
-            "insert_text 兜底" in rec.message for rec in caplog.records
-        )
+        assert any("insert_text 兜底" in rec.message for rec in caplog.records)
         doc.close()
 
     def test_add_text_layer_with_90_rotation(self, tmp_path):
@@ -379,7 +384,12 @@ class TestPdfServiceTextLayer:
                 TextBlock(
                     text="Hello",
                     score=0.99,
-                    bbox=(400.0, 100.0, 600.0, 350.0),  # [0, 1000] 归一化（足够宽以容纳 CJK 字体下的拉丁字形）
+                    bbox=(
+                        400.0,
+                        100.0,
+                        600.0,
+                        350.0,
+                    ),  # [0, 1000] 归一化（足够宽以容纳 CJK 字体下的拉丁字形）
                     page_idx=0,
                 ),
             ],
@@ -582,7 +592,7 @@ class TestPdfServiceTextLayer:
                 ),
             ],
         )
-        written, skipped = PdfService.add_text_layer(
+        written, _ = PdfService.add_text_layer(
             doc, pdf_doc, 0, result, pdf_settings=settings
         )
         assert written == 1
@@ -713,7 +723,7 @@ class TestPdfServiceOcrBlocksCache:
             ("客户：苏州中车", (50.0, 150.0, 300.0, 200.0)),
         ]
         result = _make_ocr_result(*ocr_blocks)
-        written, skipped = PdfService.add_text_layer(doc, pdf_doc, 0, result)
+        written, _ = PdfService.add_text_layer(doc, pdf_doc, 0, result)
 
         assert written == 2
         info = pdf_doc.pages[0]
@@ -780,9 +790,12 @@ class TestPdfServiceRewriteTextLayer:
         info.ocr_text_blocks[0].is_manually_edited = True
 
         # rewrite：删除旧文字层，用编辑后的块重写
-        written, skipped = PdfService.rewrite_text_layer(
-            doc, pdf_doc, 0,
-            info.ocr_text_blocks, info.ocr_preproc_angle,
+        written, _ = PdfService.rewrite_text_layer(
+            doc,
+            pdf_doc,
+            0,
+            info.ocr_text_blocks,
+            info.ocr_preproc_angle,
         )
         assert written == 2
         # 旧文字消失，新文字出现
@@ -806,7 +819,11 @@ class TestPdfServiceRewriteTextLayer:
         blocks_before = list(info.ocr_text_blocks)
 
         PdfService.rewrite_text_layer(
-            doc, pdf_doc, 0, info.ocr_text_blocks, info.ocr_preproc_angle,
+            doc,
+            pdf_doc,
+            0,
+            info.ocr_text_blocks,
+            info.ocr_preproc_angle,
         )
         # rewrite 后块缓存仍完整
         assert len(info.ocr_text_blocks) == len(blocks_before)
@@ -818,14 +835,19 @@ class TestPdfServiceRewriteTextLayer:
         doc, pdf_doc = PdfService.open_doc(str(path))
 
         result = _make_ocr_result(
-            ("Rotated", (400.0, 100.0, 600.0, 350.0)), angle=90,
+            ("Rotated", (400.0, 100.0, 600.0, 350.0)),
+            angle=90,
         )
         PdfService.add_text_layer(doc, pdf_doc, 0, result)
         info = pdf_doc.pages[0]
 
         info.ocr_text_blocks[0].text = "Rotated!"
         PdfService.rewrite_text_layer(
-            doc, pdf_doc, 0, info.ocr_text_blocks, info.ocr_preproc_angle,
+            doc,
+            pdf_doc,
+            0,
+            info.ocr_text_blocks,
+            info.ocr_preproc_angle,
         )
 
         # 重写后文字仍在页面内

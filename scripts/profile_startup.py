@@ -105,7 +105,6 @@ def profile_imports():
     profiler.start()
 
     t0 = time.perf_counter()
-    from vibeocr import env_manager
     import_time = time.perf_counter() - t0
 
     profiler.stop()
@@ -118,26 +117,32 @@ def profile_gui_startup():
 
     sp.mark("import PySide6 + env_manager")
     from PySide6.QtWidgets import QApplication
+
     from vibeocr import env_manager
+
     sp.mark("创建 QApplication")
 
     app = QApplication(sys.argv)
     sp.mark("初始化 ConfigManager")
 
     from vibeocr.managers.config_manager import ConfigManager
+
     project_root = env_manager.get_project_root()
     cm = ConfigManager.instance(project_root)
     sp.mark("加载 AppSettings")
 
     from vibeocr.utils.app_settings import AppSettings
+
     app_settings = AppSettings(cm)
     sp.mark("创建 qasync 事件循环")
 
     from vibeocr.utils.qt_async import create_qasync_event_loop
-    loop = create_qasync_event_loop(app)
+
+    loop = create_qasync_event_loop(app)  # noqa: F841 (持有引用，防止事件循环被回收)
     sp.mark("创建 MainWindow")
 
     from vibeocr.views.main_window import MainWindow
+
     window = MainWindow()
     sp.mark("set_app_settings")
 

@@ -163,7 +163,6 @@ class TestPdfOcrWorker:
     def test_cancel_stops_early(self, qapp, wait_worker):
         pages = [(i, np.ones((100, 100, 3), dtype=np.uint8)) for i in range(10)]
         mock_service = MagicMock()
-        call_count = 0
 
         def slow_batch(imgs, opts):
             # 批量是一次性调用，cancel 在批量返回后才生效；
@@ -178,6 +177,7 @@ class TestPdfOcrWorker:
             pages=pages,
             ocr_service=mock_service,
         )
+
         # 在首个 page_done 后立即取消
         def on_page_done(i, r):
             done_pages.append(i)
@@ -247,9 +247,7 @@ class TestPdfOcrWorkerBatching:
         monkeypatch.setattr(
             PdfOcrWorker, "_compute_batch_size", lambda self, pages, use_gpu: 10
         )
-        pages = [
-            (i, np.ones((10, 10, 3), dtype=np.uint8)) for i in range(25)
-        ]
+        pages = [(i, np.ones((10, 10, 3), dtype=np.uint8)) for i in range(25)]
         mock_service = MagicMock()
         batch_calls: list = []
 
@@ -291,9 +289,7 @@ class TestPdfOcrWorkerBatching:
         monkeypatch.setattr(
             PdfOcrWorker, "_compute_batch_size", lambda self, pages, use_gpu: 10
         )
-        pages = [
-            (i, np.ones((10, 10, 3), dtype=np.uint8)) for i in range(25)
-        ]
+        pages = [(i, np.ones((10, 10, 3), dtype=np.uint8)) for i in range(25)]
         mock_service = MagicMock()
         batch_calls: list = []
 
@@ -338,9 +334,7 @@ class TestPdfOcrWorkerBatching:
         monkeypatch.setattr(
             PdfOcrWorker, "_compute_batch_size", lambda self, pages, use_gpu: 10
         )
-        pages = [
-            (i, np.ones((10, 10, 3), dtype=np.uint8)) for i in range(15)
-        ]
+        pages = [(i, np.ones((10, 10, 3), dtype=np.uint8)) for i in range(15)]
         mock_service = MagicMock()
         call_count = [0]
 
@@ -388,7 +382,9 @@ class TestComputeBatchSize:
         """GPU 模式走 estimate_gpu_batch_size。"""
         import vibeocr.workers.pdf_ocr_worker as mod
 
-        monkeypatch.setattr(mod, "estimate_gpu_batch_size", lambda free_mb, avg_pixels: 7)
+        monkeypatch.setattr(
+            mod, "estimate_gpu_batch_size", lambda free_mb, avg_pixels: 7
+        )
         worker = PdfOcrWorker.__new__(PdfOcrWorker)
         pages = [(0, np.zeros((1000, 800, 3), dtype=np.uint8))]
         assert worker._compute_batch_size(pages, use_gpu=True) == 7
@@ -397,7 +393,9 @@ class TestComputeBatchSize:
         """CPU 模式走 estimate_cpu_batch_size。"""
         import vibeocr.workers.pdf_ocr_worker as mod
 
-        monkeypatch.setattr(mod, "estimate_cpu_batch_size", lambda free_mb, avg_pixels: 3)
+        monkeypatch.setattr(
+            mod, "estimate_cpu_batch_size", lambda free_mb, avg_pixels: 3
+        )
         worker = PdfOcrWorker.__new__(PdfOcrWorker)
         pages = [(0, np.zeros((1000, 800, 3), dtype=np.uint8))]
         assert worker._compute_batch_size(pages, use_gpu=False) == 3

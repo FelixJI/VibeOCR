@@ -15,6 +15,10 @@ import os
 import sys
 import time
 import traceback
+from typing import TYPE_CHECKING, cast
+
+if TYPE_CHECKING:
+    import numpy as np
 
 # 跳过模型源网络检测，避免推理时网络超时
 os.environ["PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK"] = "True"
@@ -155,8 +159,6 @@ def run_worker(shm_name: str, shm_size: int, use_gpu: bool) -> None:
         raise OCRWorkerError(f"OCR 服务初始化失败: {e}") from None
 
     # 批量队列管理器（延迟初始化，仅在首次使用时创建）
-    from typing import TYPE_CHECKING
-
     if TYPE_CHECKING:
         from vibeocr.workers.batch_queue_manager import BatchQueueManager
 
@@ -287,15 +289,15 @@ def run_worker(shm_name: str, shm_size: int, use_gpu: bool) -> None:
                     try:
                         images, options_dict = deserialize_recognize_batch_request(data)
                         logger.debug(
-                            f"[Worker] 批量识别 {len(images)} 张，"
-                            f"选项: {options_dict}"
+                            f"[Worker] 批量识别 {len(images)} 张，选项: {options_dict}"
                         )
                         options = OCROptions.from_dict(options_dict)
 
-                        # PNG bytes → ndarray，OCRService.recognize_batch 接收 ndarray 列表
-                        ndimages = [
-                            ocr_service._to_ndarray(img) for img in images
-                        ]
+                        # PNG bytes → ndarray，OCRService.recognize_batch 接收 ndarray 列表。
+                        # images 为 list[bytes]（来自 deserialize），_to_ndarray(bytes)
+                        # 运行时恒返回 ndarray，但静态签名是 ndarray|str，故 cast 收窄。
+                        ndimages_raw = [ocr_service._to_ndarray(img) for img in images]
+                        ndimages = cast("list[np.ndarray]", ndimages_raw)
                         logger.debug(
                             f"[Worker] 解码完成 {len(ndimages)} 张，开始批量 OCR..."
                         )

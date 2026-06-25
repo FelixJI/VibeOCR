@@ -37,9 +37,7 @@ class TestPdfOptionsWidget:
 
     def test_pipeline_default_is_ocr(self, widget):
         """首次构造默认选中通用 OCR 管道。"""
-        assert (
-            widget.pipeline_options.get_current_pipeline() == OCRPipeline.OCR
-        )
+        assert widget.pipeline_options.get_current_pipeline() == OCRPipeline.OCR
 
     def test_default_settings(self, widget):
         """get_settings 默认值应与 PdfGlobalSettings 默认一致。"""

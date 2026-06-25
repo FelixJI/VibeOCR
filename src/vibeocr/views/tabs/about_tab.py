@@ -75,8 +75,10 @@ class AboutTab(QWidget):
         container.setMaximumWidth(720)
         container_layout = QVBoxLayout(container)
         container_layout.setContentsMargins(
-            theme.Spacing.xxl, theme.Spacing.xl,
-            theme.Spacing.xxl, theme.Spacing.xl,
+            theme.Spacing.xxl,
+            theme.Spacing.xl,
+            theme.Spacing.xxl,
+            theme.Spacing.xl,
         )
         container_layout.setSpacing(theme.Spacing.lg)
 
@@ -122,8 +124,10 @@ class AboutTab(QWidget):
         card.setStyleSheet(theme.card_qss())
         card_layout = QVBoxLayout(card)
         card_layout.setContentsMargins(
-            theme.Spacing.lg, theme.Spacing.lg,
-            theme.Spacing.lg, theme.Spacing.lg,
+            theme.Spacing.lg,
+            theme.Spacing.lg,
+            theme.Spacing.lg,
+            theme.Spacing.lg,
         )
         card_layout.setSpacing(theme.Spacing.sm)
         return card, card_layout

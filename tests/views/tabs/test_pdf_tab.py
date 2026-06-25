@@ -4,7 +4,7 @@ import pytest
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QListWidget, QScrollArea, QSplitter
 
-from vibeocr.views.tabs.pdf_tab import PdfTab, _THUMBNAIL_SIZE
+from vibeocr.views.tabs.pdf_tab import _THUMBNAIL_SIZE, PdfTab
 
 
 @pytest.fixture
@@ -18,14 +18,8 @@ class TestPdfTabStructure:
     def test_has_only_main_horizontal_splitter(self, pdf_tab):
         """改造后只有主水平 splitter，不再有右侧垂直 splitter。"""
         splitters = pdf_tab.findChildren(QSplitter)
-        horiz = [
-            s for s in splitters
-            if s.orientation() == Qt.Orientation.Horizontal
-        ]
-        vert = [
-            s for s in splitters
-            if s.orientation() == Qt.Orientation.Vertical
-        ]
+        horiz = [s for s in splitters if s.orientation() == Qt.Orientation.Horizontal]
+        vert = [s for s in splitters if s.orientation() == Qt.Orientation.Vertical]
         assert len(horiz) >= 1, "应有横向主 splitter"
         assert len(vert) == 0, "不应再有右侧垂直 splitter"
 
@@ -51,9 +45,7 @@ class TestPdfTabStructure:
         scrolls = pdf_tab.findChildren(QScrollArea)
         assert len(scrolls) >= 1
         # 其中至少一个 ScrollArea 的内容是 _layer_status_grid
-        owns_list = any(
-            s.widget() is pdf_tab._layer_status_grid for s in scrolls
-        )
+        owns_list = any(s.widget() is pdf_tab._layer_status_grid for s in scrolls)
         assert owns_list
 
     def test_no_embedded_preview_canvas(self, pdf_tab):
@@ -64,9 +56,7 @@ class TestPdfTabStructure:
     def test_splitter_save_is_debounced(self, pdf_tab, monkeypatch):
         """splitterMoved 不应立即落盘，而是重启防抖定时器。"""
         calls = []
-        monkeypatch.setattr(
-            pdf_tab, "_persist_splitter_state", lambda: calls.append(1)
-        )
+        monkeypatch.setattr(pdf_tab, "_persist_splitter_state", lambda: calls.append(1))
         # 连续触发多次 splitterMoved（模拟拖动）
         for _ in range(5):
             pdf_tab._save_splitter_state()
@@ -121,7 +111,6 @@ class TestPdfTabLayerStatus:
     def test_status_list_row_count_matches_pages(self, pdf_tab):
         """状态网格格子数应等于页数，每个携带 page_index。"""
         import fitz
-
         from PySide6.QtCore import Qt
 
         from vibeocr.models.pdf_document import PdfDocument, PdfPageInfo
@@ -163,8 +152,11 @@ class TestPdfTabLayerStatusLinkage:
                 has_text_layer=True,
                 text_layers=[
                     TextLayerInfo(
-                        index=0, text_preview="t", char_count=1,
-                        bbox=(50.0, 50.0, 300.0, 100.0), color_id=0,
+                        index=0,
+                        text_preview="t",
+                        char_count=1,
+                        bbox=(50.0, 50.0, 300.0, 100.0),
+                        color_id=0,
                     )
                 ],
             ),
@@ -198,7 +190,9 @@ class TestPdfTabLayerStatusLinkage:
             # 缩略图应同步选中 page_index=1
             assert pdf_tab._get_selected_page_indices() == [1]
             # 网格本身仍保持该选中（未因同步被清除）
-            assert [i.data(Qt.ItemDataRole.UserRole) for i in grid.selectedItems()] == [1]
+            assert [i.data(Qt.ItemDataRole.UserRole) for i in grid.selectedItems()] == [
+                1
+            ]
         finally:
             doc.close()
 
@@ -321,10 +315,13 @@ class TestAddTextLayerForPagesWithoutLayer:
         import vibeocr.views.tabs.pdf_tab as mod
 
         monkeypatch.setattr(
-            mod.QMessageBox, "information", lambda *a, **k: called.__setitem__("info", True)
+            mod.QMessageBox,
+            "information",
+            lambda *a, **k: called.__setitem__("info", True),
         )
         monkeypatch.setattr(
-            pdf_tab._session_mgr, "start_ocr",
+            pdf_tab._session_mgr,
+            "start_ocr",
             lambda *a, **k: called.__setitem__("start", True),
         )
 
@@ -340,7 +337,9 @@ class TestAddTextLayerForPagesWithoutLayer:
         import vibeocr.views.tabs.pdf_tab as mod
 
         monkeypatch.setattr(
-            mod.QMessageBox, "information", lambda *a, **k: called.__setitem__("info", True)
+            mod.QMessageBox,
+            "information",
+            lambda *a, **k: called.__setitem__("info", True),
         )
         pdf_tab._on_add_text_layer_for_pages_without_layer()
         assert called["info"] is False
@@ -366,11 +365,13 @@ class TestAddTextLayerSoftGuard:
 
     def _patch_confirm_yes(self, monkeypatch):
         """让确认 QMessageBox.question 自动返回 Yes，避免模态阻塞。"""
-        import vibeocr.views.tabs.pdf_tab as mod
         from PySide6.QtWidgets import QMessageBox
 
+        import vibeocr.views.tabs.pdf_tab as mod
+
         monkeypatch.setattr(
-            mod.QMessageBox, "question",
+            mod.QMessageBox,
+            "question",
             lambda *a, **k: QMessageBox.StandardButton.Yes,
         )
 
@@ -402,12 +403,14 @@ class TestAddTextLayerSoftGuard:
             lambda has, total: captured.setdefault("args", (has, total)) or 0,  # 0=跳过
         )
         monkeypatch.setattr(
-            type(pdf_tab._session_mgr), "is_ocr_ready",
+            type(pdf_tab._session_mgr),
+            "is_ocr_ready",
             property(lambda self: True),
         )
         started = {}
         monkeypatch.setattr(
-            pdf_tab._session_mgr, "start_ocr",
+            pdf_tab._session_mgr,
+            "start_ocr",
             lambda indices, **kw: started.update(kw),
         )
         self._patch_confirm_yes(monkeypatch)
@@ -420,8 +423,9 @@ class TestAddTextLayerSoftGuard:
     def test_partial_layer_choose_replace_uses_overwrite_true(
         self, pdf_tab, monkeypatch
     ):
-        from vibeocr.models.pdf_document import PdfPageInfo
         from PySide6.QtCore import QItemSelectionModel
+
+        from vibeocr.models.pdf_document import PdfPageInfo
 
         pages = [
             PdfPageInfo(page_index=0, has_text_layer=True),
@@ -435,14 +439,18 @@ class TestAddTextLayerSoftGuard:
                 QItemSelectionModel.Select,
             )
 
-        monkeypatch.setattr(pdf_tab, "_prompt_overwrite_choice", lambda has, total: 1)  # 先删后加
         monkeypatch.setattr(
-            type(pdf_tab._session_mgr), "is_ocr_ready",
+            pdf_tab, "_prompt_overwrite_choice", lambda has, total: 1
+        )  # 先删后加
+        monkeypatch.setattr(
+            type(pdf_tab._session_mgr),
+            "is_ocr_ready",
             property(lambda self: True),
         )
         started = {}
         monkeypatch.setattr(
-            pdf_tab._session_mgr, "start_ocr",
+            pdf_tab._session_mgr,
+            "start_ocr",
             lambda indices, **kw: started.update(kw),
         )
         self._patch_confirm_yes(monkeypatch)
@@ -452,8 +460,9 @@ class TestAddTextLayerSoftGuard:
 
     def test_all_without_layer_no_prompt(self, pdf_tab, monkeypatch):
         """选中页全部无文字层：不弹防重复框，直接 overwrite=False。"""
-        from vibeocr.models.pdf_document import PdfPageInfo
         from PySide6.QtCore import QItemSelectionModel
+
+        from vibeocr.models.pdf_document import PdfPageInfo
 
         pages = [
             PdfPageInfo(page_index=0, has_text_layer=False),
@@ -469,11 +478,13 @@ class TestAddTextLayerSoftGuard:
 
         prompted = {"n": 0}
         monkeypatch.setattr(
-            pdf_tab, "_prompt_overwrite_choice",
+            pdf_tab,
+            "_prompt_overwrite_choice",
             lambda has, total: prompted.__setitem__("n", prompted["n"] + 1) or 0,
         )
         monkeypatch.setattr(
-            type(pdf_tab._session_mgr), "is_ocr_ready",
+            type(pdf_tab._session_mgr),
+            "is_ocr_ready",
             property(lambda self: True),
         )
         monkeypatch.setattr(
@@ -485,8 +496,9 @@ class TestAddTextLayerSoftGuard:
         assert prompted["n"] == 0
 
     def test_prompt_choice_cancel_aborts(self, pdf_tab, monkeypatch):
-        from vibeocr.models.pdf_document import PdfPageInfo
         from PySide6.QtCore import QItemSelectionModel
+
+        from vibeocr.models.pdf_document import PdfPageInfo
 
         pages = [
             PdfPageInfo(page_index=0, has_text_layer=True),
@@ -500,14 +512,18 @@ class TestAddTextLayerSoftGuard:
                 QItemSelectionModel.Select,
             )
 
-        monkeypatch.setattr(pdf_tab, "_prompt_overwrite_choice", lambda has, total: 2)  # 取消
         monkeypatch.setattr(
-            type(pdf_tab._session_mgr), "is_ocr_ready",
+            pdf_tab, "_prompt_overwrite_choice", lambda has, total: 2
+        )  # 取消
+        monkeypatch.setattr(
+            type(pdf_tab._session_mgr),
+            "is_ocr_ready",
             property(lambda self: True),
         )
         started = {"n": 0}
         monkeypatch.setattr(
-            pdf_tab._session_mgr, "start_ocr",
+            pdf_tab._session_mgr,
+            "start_ocr",
             lambda indices, **kw: started.__setitem__("n", started["n"] + 1),
         )
 
@@ -614,6 +630,7 @@ class TestLayerStatusContextMenu:
                 class _A:
                     def triggered(self, *a, **k):
                         pass
+
                 return _A()
 
             def addSeparator(self):
@@ -698,8 +715,11 @@ class TestLayerStatusGrid:
                 has_text_layer=True,
                 text_layers=[
                     TextLayerInfo(
-                        index=i, text_preview="t", char_count=1,
-                        bbox=(0.0, 0.0, 1.0, 1.0), color_id=i,
+                        index=i,
+                        text_preview="t",
+                        char_count=1,
+                        bbox=(0.0, 0.0, 1.0, 1.0),
+                        color_id=i,
                     )
                     for i in range(7)
                 ],
@@ -765,7 +785,7 @@ class _StubIndex:
     """QModelIndex 替身：按 (role) 返回预设 data。"""
 
     def __init__(self, pairs):
-        self._data = {role: val for role, val in pairs}
+        self._data = dict(pairs)
 
     def data(self, role):
         return self._data.get(role)
@@ -872,13 +892,11 @@ class TestOcrPerPageFeedback:
         assert pdf_tab._get_selected_page_indices() == [1]
 
 
-
 class TestThumbnailIncrementalUpdate:
     """缩略图增量更新：拖拽只移 item 不渲染、旋转增量渲染受影响页。"""
 
     def _setup(self, pdf_tab, n_pages=3):
         import fitz
-
         from PySide6.QtGui import QPixmap
 
         from vibeocr.models.pdf_document import PdfDocument, PdfPageInfo
@@ -907,7 +925,7 @@ class TestThumbnailIncrementalUpdate:
 
         import vibeocr.views.tabs.pdf_tab as mod
 
-        doc, session = self._setup(pdf_tab)
+        doc, _ = self._setup(pdf_tab)
         try:
             called = []
             monkeypatch.setattr(
@@ -927,7 +945,7 @@ class TestThumbnailIncrementalUpdate:
 
         import vibeocr.views.tabs.pdf_tab as mod
 
-        doc, session = self._setup(pdf_tab)
+        doc, _ = self._setup(pdf_tab)
         try:
             called = []
             monkeypatch.setattr(
@@ -962,7 +980,7 @@ class TestThumbnailIncrementalUpdate:
 
         import vibeocr.views.tabs.pdf_tab as mod
 
-        doc, session = self._setup(pdf_tab)
+        doc, _ = self._setup(pdf_tab)
         try:
             # 选中 page_index=1
             lst = pdf_tab._thumbnail_list
@@ -988,7 +1006,7 @@ class TestThumbnailIncrementalUpdate:
         """拖拽重排应保留选中状态（takeItem 会丢选中，需手动恢复）。"""
         from PySide6.QtCore import QItemSelectionModel
 
-        doc, session = self._setup(pdf_tab)
+        doc, _ = self._setup(pdf_tab)
         try:
             lst = pdf_tab._thumbnail_list
             # 选中 page_index=1 和 2

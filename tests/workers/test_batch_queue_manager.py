@@ -43,14 +43,14 @@ class StrictPipeline:
         # 真实 PaddleOCR.predict 接受 input 作为第一个参数
         self.supported = set(get_pipeline_supported_options(pipeline))
 
-    def predict(self, input, **kwargs):
+    def predict(self, image, **kwargs):
         bad = set(kwargs) - self.supported
         if bad:
             raise TypeError(
                 "PaddleOCR.predict() got an unexpected keyword argument "
                 f"'{sorted(bad)[0]}'"
             )
-        images = input if isinstance(input, list) else [input]
+        images = image if isinstance(image, list) else [image]
         for i, _img in enumerate(images):
             yield {"text": f"Result {i}", "confidence": 0.95}
 
@@ -280,9 +280,9 @@ class TestBatchRequestIdPreservation:
     def test_file_completed_callback_uses_provided_request_id(self):
         """流式回调收到的 request_id 应与 add_request 传入的一致"""
         pipeline = MockPipeline()
-        callback_ids: list[str] = []
         manager = BatchQueueManager(
-            pipeline, max_batch_size=4,
+            pipeline,
+            max_batch_size=4,
             progress_callback=lambda _p: None,
         )
 
@@ -302,8 +302,7 @@ class TestBatchRequestIdPreservation:
         )
 
         assert provided_id in received_ids, (
-            f"流式回调未收到主进程 request_id {provided_id}，"
-            f"实际收到: {received_ids}"
+            f"流式回调未收到主进程 request_id {provided_id}，实际收到: {received_ids}"
         )
 
 
@@ -324,9 +323,7 @@ class TestBatchRegistryDelegation:
         record = {"batch_calls": [], "single_calls": []}
 
         def recognize_batch(service, images, options):
-            record["batch_calls"].append(
-                {"images": list(images), "options": options}
-            )
+            record["batch_calls"].append({"images": list(images), "options": options})
             return [MagicMock(raw_text=f"batch_{i}") for i in range(len(images))]
 
         def recognize(service, image, options):
@@ -354,17 +351,13 @@ class TestBatchRegistryDelegation:
 
         registry.has.side_effect = _has
         registry.get.side_effect = _get
-        return patch(
-            "vibeocr.core.pipelines.get_registry", return_value=registry
-        )
+        return patch("vibeocr.core.pipelines.get_registry", return_value=registry)
 
     def test_uses_recognize_batch_when_available(self):
         """有 recognize_batch 的管道应走真批量"""
         spec, record = self._make_recording_spec("OCR")
         service = MagicMock()
-        manager = BatchQueueManager(
-            MockPipeline(), max_batch_size=4, service=service
-        )
+        manager = BatchQueueManager(MockPipeline(), max_batch_size=4, service=service)
         manager.add_request(_make_png_bytes(), {}, file_name="a.png")
 
         with self._patch_registry([spec]):
@@ -380,9 +373,7 @@ class TestBatchRegistryDelegation:
             OCRPipeline.TABLE_RECOGNITION.value, has_batch=False
         )
         service = MagicMock()
-        manager = BatchQueueManager(
-            MockPipeline(), max_batch_size=4, service=service
-        )
+        manager = BatchQueueManager(MockPipeline(), max_batch_size=4, service=service)
         for i in range(3):
             manager.add_request(_make_png_bytes(), {}, file_name=f"{i}.png")
 
@@ -397,9 +388,7 @@ class TestBatchRegistryDelegation:
         而非由 BatchQueueManager 自行过滤。"""
         spec, record = self._make_recording_spec(OCRPipeline.PP_STRUCTURE_V3.value)
         service = MagicMock()
-        manager = BatchQueueManager(
-            MockPipeline(), max_batch_size=4, service=service
-        )
+        manager = BatchQueueManager(MockPipeline(), max_batch_size=4, service=service)
         manager.add_request(_make_png_bytes(), {}, file_name="a.png")
 
         # 含 VL/表格/公式专用选项，但这些不应被批量层剥离——
@@ -422,9 +411,7 @@ class TestBatchRegistryDelegation:
         而非 raw predict() 字典，保证 UI 能正确展示。"""
         spec, _ = self._make_recording_spec("OCR")
         service = MagicMock()
-        manager = BatchQueueManager(
-            MockPipeline(), max_batch_size=4, service=service
-        )
+        manager = BatchQueueManager(MockPipeline(), max_batch_size=4, service=service)
         manager.add_request(_make_png_bytes(), {}, file_name="a.png")
 
         with self._patch_registry([spec]):

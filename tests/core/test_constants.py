@@ -1,5 +1,8 @@
 """测试 Constants 常量类"""
 
+import re
+
+from vibeocr import __version__
 from vibeocr.core import (
     DEFAULT_SHM_SIZE,
     Constants,
@@ -8,14 +11,26 @@ from vibeocr.core import (
 )
 from vibeocr.ui import theme
 
+# Semver 主版本号（major.minor.patch），不带预发布后缀。
+# 用于校验 APP_VERSION 是合法版本号，而非断言某个具体值（会随 bump 变化）。
+_SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+$")
+
 
 class TestConstants:
     """测试常量定义"""
 
     def test_app_info(self):
-        """测试应用信息"""
+        """测试应用信息
+
+        APP_VERSION 不硬编码断言具体值（会随 bump 变化），只验证：
+        - 符合 major.minor.patch 格式；
+        - 与 vibeocr.__version__ 一致（Constants 从该常量加载版本）。
+        """
         assert Constants.APP_NAME == "VibeOCR"
-        assert Constants.APP_VERSION == "0.1.0"
+        assert _SEMVER_RE.match(Constants.APP_VERSION), (
+            f"APP_VERSION 非法版本号: {Constants.APP_VERSION!r}"
+        )
+        assert __version__ == Constants.APP_VERSION
         assert "PaddleOCR" in Constants.APP_DESCRIPTION
 
     def test_window_sizes(self):

@@ -91,9 +91,7 @@ class CjkFontResolver:
             try:
                 self._subset_cache[key] = self._subset(sys_font, chars)
             except Exception as e:
-                logger.warning(
-                    "[CjkFontResolver] 子集化失败，回退内置字体: %s", e
-                )
+                logger.warning("[CjkFontResolver] 子集化失败，回退内置字体: %s", e)
                 return None
         return self._subset_cache[key]
 

@@ -61,7 +61,9 @@ class PipelineCacheManager:
         self._ttl = ttl_seconds
         self._last_used: dict[str, float] = {}
         # max_heavy=None 时按显存自动计算
-        self._max_heavy = max_heavy if max_heavy is not None else self._detect_max_heavy()
+        self._max_heavy = (
+            max_heavy if max_heavy is not None else self._detect_max_heavy()
+        )
 
     def _detect_max_heavy(self) -> int:
         """读 GPU 显存总量算并存上限，失败回退。
@@ -103,7 +105,9 @@ class PipelineCacheManager:
     def get_last_used(self, pipeline_name: str) -> float | None:
         return self._last_used.get(pipeline_name)
 
-    def enforce_capacity(self, new_pipeline: str, now: float | None = None) -> list[str]:
+    def enforce_capacity(
+        self, new_pipeline: str, now: float | None = None
+    ) -> list[str]:
         """加载新重管道前，FIFO 淘汰至不超并存上限。
 
         只淘汰重管道，不动 OCR 等轻管道。不淘汰 new_pipeline 本身。

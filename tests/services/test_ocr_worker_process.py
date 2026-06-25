@@ -110,7 +110,9 @@ class TestParseAndForwardLog:
     def test_structured_line_forwarded_at_its_level(self, caplog):
         """标准日志格式（带时间戳+级别）按原级别转发，内容保留。"""
         worker = OCRWorkerProcess(worker_id=0, use_gpu=False)
-        line = "2024-01-15 10:30:45 [INFO] vibeocr.workers.ocr_worker: OCR 服务初始化完成"
+        line = (
+            "2024-01-15 10:30:45 [INFO] vibeocr.workers.ocr_worker: OCR 服务初始化完成"
+        )
 
         with caplog.at_level("DEBUG", logger="vibeocr.services.ocr_worker_process"):
             worker._parse_and_forward_log(line)
@@ -446,9 +448,7 @@ class TestRecognizeBatchSubprocess:
     def _make_service(self, shm_size=None):
         """Create a non-started service with a mocked manager."""
         OCRServiceSubprocess._instance = None
-        service = OCRServiceSubprocess(
-            max_workers=1, use_gpu=False, auto_start=False
-        )
+        service = OCRServiceSubprocess(max_workers=1, use_gpu=False, auto_start=False)
         if shm_size is not None:
             service.shm_size = shm_size
         service._paddlex_manager = RecordingManager()

@@ -7,8 +7,6 @@
 
 import time
 
-import pytest
-
 from vibeocr.services.worker_manager import WorkerManager, WorkerState
 
 

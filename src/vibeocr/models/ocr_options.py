@@ -45,7 +45,9 @@ class OCROptions:
 
     # === MineRU 文档解析选项 ===
     parse_method: str = "auto"  # 解析方法: auto, txt, ocr
-    backend: str = MINERU_BACKEND_DEFAULT  # 解析后端: hybrid-engine, vlm-engine, pipeline
+    backend: str = (
+        MINERU_BACKEND_DEFAULT  # 解析后端: hybrid-engine, vlm-engine, pipeline
+    )
     effort: str = MINERU_EFFORT_DEFAULT  # 解析强度(仅 hybrid-engine): medium, high
     enable_formula: bool = True  # 启用公式识别
     enable_table: bool = True  # 启用表格识别

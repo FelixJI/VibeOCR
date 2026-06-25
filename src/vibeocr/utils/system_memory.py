@@ -30,7 +30,9 @@ def get_available_ram_mb() -> int:
         if mb and mb > 0:
             return int(mb)
     except Exception as e:  # 读取系统信息，任何失败都回退到 FALLBACK_RAM_MB
-        logger.warning("[system_memory] 读取可用内存失败，回退到 %dMB: %s", FALLBACK_RAM_MB, e)
+        logger.warning(
+            "[system_memory] 读取可用内存失败，回退到 %dMB: %s", FALLBACK_RAM_MB, e
+        )
     return FALLBACK_RAM_MB
 
 

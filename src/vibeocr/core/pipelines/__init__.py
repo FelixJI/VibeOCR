@@ -220,9 +220,7 @@ def get_heavy_pipelines() -> list[OCRPipeline]:
     Returns:
         重管道枚举值列表。
     """
-    return [
-        p for p in OCRPipeline if _PIPELINE_METADATA.get(p, {}).get("heavy", False)
-    ]
+    return [p for p in OCRPipeline if _PIPELINE_METADATA.get(p, {}).get("heavy", False)]
 
 
 def is_option_supported(pipeline: OCRPipeline, option_name: str) -> bool:

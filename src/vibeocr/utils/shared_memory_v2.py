@@ -474,9 +474,7 @@ def deserialize_result(data: bytes):
     return pickle.loads(data)
 
 
-def serialize_recognize_batch_request(
-    images: list[bytes], options_dict: dict
-) -> bytes:
+def serialize_recognize_batch_request(images: list[bytes], options_dict: dict) -> bytes:
     """序列化多图批量 OCR 请求（RCBG 协议）
 
     格式: [图片数 N 4B | u4 len1 | img1 | ... | u4 lenN | imgN | pickle(options_dict)]

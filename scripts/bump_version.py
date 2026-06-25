@@ -30,9 +30,15 @@ from pathlib import Path
 # 常量 — 支持通过环境变量覆盖（便于测试）
 # ---------------------------------------------------------------------------
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-PYPROJECT_TOML = Path(os.environ.get("PYPROJECT_TOML", str(PROJECT_ROOT / "pyproject.toml")))
-INIT_PY = Path(os.environ.get("INIT_PY", str(PROJECT_ROOT / "src" / "vibeocr" / "__init__.py")))
-MAIN_PY = Path(os.environ.get("MAIN_PY", str(PROJECT_ROOT / "src" / "vibeocr" / "main.py")))
+PYPROJECT_TOML = Path(
+    os.environ.get("PYPROJECT_TOML", str(PROJECT_ROOT / "pyproject.toml"))
+)
+INIT_PY = Path(
+    os.environ.get("INIT_PY", str(PROJECT_ROOT / "src" / "vibeocr" / "__init__.py"))
+)
+MAIN_PY = Path(
+    os.environ.get("MAIN_PY", str(PROJECT_ROOT / "src" / "vibeocr" / "main.py"))
+)
 CHANGELOG = Path(os.environ.get("CHANGELOG", str(PROJECT_ROOT / "CHANGELOG.md")))
 
 VERSION_RE = re.compile(r'version\s*=\s*"(\d+)\.(\d+)\.(\d+)"')
@@ -84,6 +90,7 @@ HIDDEN_IMPORTS = [
 # 核心函数
 # ---------------------------------------------------------------------------
 
+
 def read_current_version(pyproject_path: Path) -> tuple[int, int, int]:
     """从 pyproject.toml 中读取当前版本号
 
@@ -104,9 +111,7 @@ def read_current_version(pyproject_path: Path) -> tuple[int, int, int]:
     return (int(m[1]), int(m[2]), int(m[3]))
 
 
-def bump_version(
-    current: tuple[int, int, int], bump_type: str
-) -> tuple[int, int, int]:
+def bump_version(current: tuple[int, int, int], bump_type: str) -> tuple[int, int, int]:
     """根据升级类型计算新版本号
 
     Args:
@@ -119,12 +124,11 @@ def bump_version(
     major, minor, patch = current
     if bump_type == "patch":
         return (major, minor, patch + 1)
-    elif bump_type == "minor":
+    if bump_type == "minor":
         return (major, minor + 1, 0)
-    elif bump_type == "major":
+    if bump_type == "major":
         return (major + 1, 0, 0)
-    else:
-        raise ValueError(f"未知升级类型: {bump_type}")
+    raise ValueError(f"未知升级类型: {bump_type}")
 
 
 def update_file_version(file_path: Path, old_version: str, new_version: str) -> None:
@@ -164,9 +168,7 @@ def get_commits_since_last_tag() -> list[tuple[str, str]]:
         cmd.insert(3, f"{last_tag}..HEAD")
 
     try:
-        result = subprocess.run(
-            cmd, capture_output=True, encoding="utf-8", check=True
-        )
+        result = subprocess.run(cmd, capture_output=True, encoding="utf-8", check=True)
     except (subprocess.CalledProcessError, FileNotFoundError):
         return []
 
@@ -224,9 +226,7 @@ def categorize_commits(
     return categories
 
 
-def generate_changelog_entry(
-    version: str, commits: list[tuple[str, str]]
-) -> str:
+def generate_changelog_entry(version: str, commits: list[tuple[str, str]]) -> str:
     """生成 CHANGELOG 条目文本
 
     Args:
@@ -312,11 +312,11 @@ def interactive_menu(current: tuple[int, int, int]) -> tuple[int, int, int] | No
 
     if choice == "1":
         return patch_new
-    elif choice == "2":
+    if choice == "2":
         return minor_new
-    elif choice == "3":
+    if choice == "3":
         return major_new
-    elif choice == "4":
+    if choice == "4":
         print("请输入版本号 (x.y.z): ", end="", flush=True)
         custom = input().strip()
         m = SEMVER_RE.match(custom)
@@ -324,8 +324,7 @@ def interactive_menu(current: tuple[int, int, int]) -> tuple[int, int, int] | No
             print(f"错误: 无效版本号 '{custom}'")
             return None
         return (int(m[1]), int(m[2]), int(m[3]))
-    else:
-        return None
+    return None
 
 
 def _open_editor(file_path: Path) -> None:
@@ -347,6 +346,7 @@ def _open_editor(file_path: Path) -> None:
 # ---------------------------------------------------------------------------
 # 打包功能
 # ---------------------------------------------------------------------------
+
 
 def _generate_version_json(version: str, dist_dir: Path) -> None:
     """生成 version.json 到输出目录"""
@@ -390,7 +390,9 @@ def _generate_version_json(version: str, dist_dir: Path) -> None:
         "dep_versions": dep_versions,
     }
     version_path = dist_dir / "version.json"
-    version_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    version_path.write_text(
+        json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
     print(f"  已生成 {version_path}")
 
 
@@ -403,15 +405,20 @@ def _build_updater(dist_dir: Path) -> bool:
 
     cmd = [
         sys.executable,
-        "-m", "PyInstaller",
+        "-m",
+        "PyInstaller",
         str(updater_script),
         "--onefile",
-        "--name", "updater",
+        "--name",
+        "updater",
         "--clean",
         "--noconfirm",
-        "--distpath", str(dist_dir),
-        "--workpath", str(DIST_BASE_DIR / "build-updater"),
-        "--specpath", str(DIST_BASE_DIR),
+        "--distpath",
+        str(dist_dir),
+        "--workpath",
+        str(DIST_BASE_DIR / "build-updater"),
+        "--specpath",
+        str(DIST_BASE_DIR),
     ]
 
     if os.name == "nt":
@@ -481,10 +488,12 @@ def _get_pyinstaller_cmd(version: str) -> list[str]:
         str(MAIN_PY),
         "--windowed",
         "--onedir",
-        "--name", "VibeOCR",
+        "--name",
+        "VibeOCR",
         "--clean",
         "--noconfirm",
-        "--paths", str(PROJECT_ROOT / "src"),
+        "--paths",
+        str(PROJECT_ROOT / "src"),
     ]
 
     if APP_ICON.exists():
@@ -539,31 +548,30 @@ def _run_build(version: str) -> bool:
         return False
 
     # 2. 打包 updater.exe
-    print(f"\n[2/4] 打包 updater.exe...")
+    print("\n[2/4] 打包 updater.exe...")
     if not _build_updater(dist_path):
         return False
 
     # 3. 生成 version.json
-    print(f"\n[3/4] 生成 version.json...")
+    print("\n[3/4] 生成 version.json...")
     _generate_version_json(version, dist_path)
 
     # 4. 打 zip + SHA256
-    print(f"\n[4/4] 打包 zip...")
+    print("\n[4/4] 打包 zip...")
     zip_path = _package_zip(dist_path, version)
     if zip_path is None:
         return False
 
-    print(f"\n{'='*50}")
+    print(f"\n{'=' * 50}")
     print("构建完成!")
     print(f"  应用目录: {dist_path}")
     print(f"  分发包:   {zip_path}")
-    print(f"{'='*50}")
+    print(f"{'=' * 50}")
     return True
 
 
 def _create_release(version: str) -> bool:
     """创建 Gitee/GitHub Release 并上传产物"""
-    import httpx
 
     zip_name = f"VibeOCR-v{version}-win64"
     zip_path = DIST_BASE_DIR / f"{zip_name}.zip"
@@ -584,13 +592,15 @@ def _create_release(version: str) -> bool:
             changelog_body = m.group(0).strip()
 
     print(f"\n发布 v{version} 到:")
-    print(f"  zip: {zip_path} ({zip_path.stat().st_size / (1024*1024):.1f} MB)")
+    print(f"  zip: {zip_path} ({zip_path.stat().st_size / (1024 * 1024):.1f} MB)")
 
     gitee_token = os.environ.get("GITEE_TOKEN", "")
     if gitee_token:
         print("\n上传到 Gitee...")
         try:
-            _upload_to_gitee(version, zip_path, sha256_path, changelog_body, gitee_token)
+            _upload_to_gitee(
+                version, zip_path, sha256_path, changelog_body, gitee_token
+            )
             print("  Gitee 上传成功")
         except Exception as e:
             print(f"  Gitee 上传失败: {e}")
@@ -601,7 +611,9 @@ def _create_release(version: str) -> bool:
     if github_token:
         print("\n上传到 GitHub...")
         try:
-            _upload_to_github(version, zip_path, sha256_path, changelog_body, github_token)
+            _upload_to_github(
+                version, zip_path, sha256_path, changelog_body, github_token
+            )
             print("  GitHub 上传成功")
         except Exception as e:
             print(f"  GitHub 上传失败: {e}")
@@ -611,20 +623,25 @@ def _create_release(version: str) -> bool:
     return True
 
 
-def _upload_to_gitee(version: str, zip_path: Path, sha256_path: Path, body: str, token: str) -> None:
+def _upload_to_gitee(
+    version: str, zip_path: Path, sha256_path: Path, body: str, token: str
+) -> None:
     import httpx
 
     owner = "felixji"
     repo = "vibeocr"
     api = f"https://gitee.com/api/v5/repos/{owner}/{repo}/releases"
 
-    resp = httpx.post(api, json={
-        "access_token": token,
-        "tag_name": f"v{version}",
-        "name": f"v{version}",
-        "body": body or f"VibeOCR v{version}",
-        "target_commitish": "main",
-    })
+    resp = httpx.post(
+        api,
+        json={
+            "access_token": token,
+            "tag_name": f"v{version}",
+            "name": f"v{version}",
+            "body": body or f"VibeOCR v{version}",
+            "target_commitish": "main",
+        },
+    )
     if resp.status_code not in (200, 201):
         raise RuntimeError(f"Gitee Release 创建失败: {resp.status_code} {resp.text}")
 
@@ -644,22 +661,28 @@ def _upload_to_gitee(version: str, zip_path: Path, sha256_path: Path, body: str,
             raise RuntimeError(f"Gitee asset 上传失败: {resp.status_code} {resp.text}")
 
 
-def _upload_to_github(version: str, zip_path: Path, sha256_path: Path, body: str, token: str) -> None:
+def _upload_to_github(
+    version: str, zip_path: Path, sha256_path: Path, body: str, token: str
+) -> None:
     import httpx
 
     owner = "felixji"
     repo = "vibeocr"
     api = f"https://api.github.com/repos/{owner}/{repo}/releases"
 
-    resp = httpx.post(api, headers={
-        "Authorization": f"Bearer {token}",
-        "Accept": "application/vnd.github+json",
-    }, json={
-        "tag_name": f"v{version}",
-        "name": f"v{version}",
-        "body": body or f"VibeOCR v{version}",
-        "target_commitish": "main",
-    })
+    resp = httpx.post(
+        api,
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/vnd.github+json",
+        },
+        json={
+            "tag_name": f"v{version}",
+            "name": f"v{version}",
+            "body": body or f"VibeOCR v{version}",
+            "target_commitish": "main",
+        },
+    )
     if resp.status_code not in (200, 201):
         raise RuntimeError(f"GitHub Release 创建失败: {resp.status_code} {resp.text}")
 
@@ -691,7 +714,7 @@ def _ask_build(version: str) -> bool:
     Returns:
         用户是否选择打包
     """
-    print(f"\n{'='*50}")
+    print(f"\n{'=' * 50}")
     print(f"版本 v{version} 已升级并提交。")
     print("是否立即执行 PyInstaller 打包? [Y/n]: ", end="", flush=True)
     choice = input().strip().lower()
@@ -720,7 +743,7 @@ def main() -> int:
     parser.add_argument(
         "version",
         nargs="?",
-        help='版本升级类型 (patch/minor/major) 或版本号 (x.y.z)',
+        help="版本升级类型 (patch/minor/major) 或版本号 (x.y.z)",
     )
     parser.add_argument(
         "--no-edit",
@@ -837,9 +860,7 @@ def main() -> int:
         if INIT_PY.exists():
             subprocess.run(["git", "add", str(INIT_PY)], check=True)
         subprocess.run(["git", "add", str(CHANGELOG)], check=True)
-        subprocess.run(
-            ["git", "commit", "-m", f"release: v{new_str}"], check=True
-        )
+        subprocess.run(["git", "commit", "-m", f"release: v{new_str}"], check=True)
         subprocess.run(["git", "tag", f"v{new_str}"], check=True)
         print(f"  已创建 git commit 和 tag v{new_str}")
     except (subprocess.CalledProcessError, FileNotFoundError) as e:

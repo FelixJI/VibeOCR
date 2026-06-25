@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from PySide6.QtCore import QRectF, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QIcon, QPen, QPixmap
@@ -36,6 +36,8 @@ from vibeocr.ui.theme import Colors
 from vibeocr.views.pdf_preview_window import PdfPreviewWindow
 
 if TYPE_CHECKING:
+    from vibeocr.models.ocr_options import OCROptions
+    from vibeocr.models.pdf_ocr_options import PdfGlobalSettings
     from vibeocr.services.ocr_service_base import OCRServiceBase
 
 logger = logging.getLogger(__name__)
@@ -343,10 +345,9 @@ class PdfTab(QWidget):
             prefs = OCRPreferences.instance()
         except RuntimeError:
             return
-        prefs.set_pdf_splitter_states(
-            self._main_splitter.saveState().data(),
-            None,
-        )
+        # saveState().data() 静态类型含 bytearray|memoryview，但 PySide6 运行时恒为 bytes。
+        main_state = cast("bytes", self._main_splitter.saveState().data())
+        prefs.set_pdf_splitter_states(main_state, None)
 
     def _on_session_added(self, file_path: str) -> None:
         name = Path(file_path).name
@@ -455,9 +456,7 @@ class PdfTab(QWidget):
 
         实际写回 PDF 文字层在用户点'保存'时由 rewrite_modified_pages 执行。
         """
-        if self._session_mgr.update_page_block_text(
-            page_index, block_index, new_text
-        ):
+        if self._session_mgr.update_page_block_text(page_index, block_index, new_text):
             self._update_layer_grid_page(page_index)
             self._refresh_preview_window_if_current(page_index)
 
@@ -744,15 +743,11 @@ class PdfTab(QWidget):
         ]
         self._syncing_selection = True
         try:
-            self._sync_selection_to(
-                self._thumbnail_list, sorted(set(indices))
-            )
+            self._sync_selection_to(self._thumbnail_list, sorted(set(indices)))
         finally:
             self._syncing_selection = False
 
-    def _sync_selection_to(
-        self, target: QListWidget, page_indices: list[int]
-    ) -> None:
+    def _sync_selection_to(self, target: QListWidget, page_indices: list[int]) -> None:
         """把给定 page_index 集合同步选中到 target 列表（按 page_index 匹配，清旧选新）。
 
         两个列表都用 _LAYER_ROLE（== Qt.ItemDataRole.UserRole）存 page_index。
@@ -1003,7 +998,9 @@ class PdfTab(QWidget):
         if self._preview_window is None:
             self._preview_window = PdfPreviewWindow()
             self._preview_window.block_text_edited.connect(self._on_block_text_edited)
-            self._preview_window.page_change_requested.connect(self._render_preview_page)
+            self._preview_window.page_change_requested.connect(
+                self._render_preview_page
+            )
         assert self._preview_window is not None
         current = all_indices.index(page_index) if page_index in all_indices else 0
         self._preview_window.set_page_indices(all_indices, current)
@@ -1036,8 +1033,11 @@ class PdfTab(QWidget):
             with session.doc_lock:
                 page_rect = session.doc[page_idx].rect
             win.set_highlight(
-                pixmap, page_info.text_layers,
-                render_dpi=150, page_rect=page_rect, source="pdf",
+                pixmap,
+                page_info.text_layers,
+                render_dpi=150,
+                page_rect=page_rect,
+                source="pdf",
             )
             win.setWindowTitle(
                 f"文字层预览 — 第{page_idx + 1}页 ({len(page_info.text_layers)}个文字块)"
@@ -1057,7 +1057,7 @@ class PdfTab(QWidget):
 
     # ---- text layer operations --------------------------------------
 
-    def _load_ocr_prefs(self) -> tuple[object, object | None]:
+    def _load_ocr_prefs(self) -> tuple[PdfGlobalSettings, OCROptions | None]:
         """读取 OCR 偏好；失败时回退默认值。供各添加文字层入口复用。"""
         from vibeocr.utils.ocr_preferences import OCRPreferences
 
@@ -1139,9 +1139,7 @@ class PdfTab(QWidget):
         skip_btn = msg.addButton(
             "跳过已有文字层的页（推荐）", QMessageBox.ButtonRole.AcceptRole
         )
-        replace_btn = msg.addButton(
-            "删除后重新添加", QMessageBox.ButtonRole.AcceptRole
-        )
+        replace_btn = msg.addButton("删除后重新添加", QMessageBox.ButtonRole.AcceptRole)
         cancel_btn = msg.addButton("取消", QMessageBox.ButtonRole.RejectRole)
         msg.setDefaultButton(skip_btn)
         msg.exec()
@@ -1177,8 +1175,7 @@ class PdfTab(QWidget):
                 "未保存的修改",
                 f"{Path(session.file_path).name} 有未保存的修改（旋转/删除页面等）。\n"
                 "OCR 需基于已保存的状态执行，是否先保存？",
-                QMessageBox.StandardButton.Save
-                | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Cancel,
             )
             if reply != QMessageBox.StandardButton.Save:
                 return

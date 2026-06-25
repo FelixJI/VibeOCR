@@ -1,4 +1,4 @@
- #!/usr/bin/env python3
+#!/usr/bin/env python3
 """
 代码质量控制主脚本
 支持交互式选择检查项并生成报告
@@ -11,7 +11,6 @@
     python qa/run.py --ci         # CI 模式（严格检查）
     python qa/run.py --report     # 生成报告文件
 """
-
 
 import argparse
 import json
@@ -112,12 +111,14 @@ def select_checks_interactively() -> list[str]:
 
     # 显示默认选择
     default_selection = set(check_list)
-    print(f"  默认: 全部选中")
+    print("  默认: 全部选中")
     print()
 
     while True:
         try:
-            user_input = input("请选择检查项 (输入数字/字母，用空格分隔，回车确认): ").strip()
+            user_input = input(
+                "请选择检查项 (输入数字/字母，用空格分隔，回车确认): "
+            ).strip()
         except (EOFError, KeyboardInterrupt):
             print("\n已取消")
             sys.exit(0)
@@ -154,7 +155,9 @@ def select_checks_interactively() -> list[str]:
                         print(f"  无效输入: {part}")
 
         if selected:
-            print(f"\n已选择: {', '.join(CHECKS[k]['name'] for k in selected if k in CHECKS)}")
+            print(
+                f"\n已选择: {', '.join(CHECKS[k]['name'] for k in selected if k in CHECKS)}"
+            )
             confirm = input("确认执行? [Y/n]: ").strip().lower()
             if confirm in ("", "y", "yes"):
                 return list(selected)
@@ -214,12 +217,20 @@ def run_selected_checks(
                 print(stdout)
             except UnicodeEncodeError:
                 # Windows 控制台可能无法编码某些 Unicode 字符
-                print(stdout.encode(sys.stdout.encoding, errors="replace").decode(sys.stdout.encoding))
+                print(
+                    stdout.encode(sys.stdout.encoding, errors="replace").decode(
+                        sys.stdout.encoding
+                    )
+                )
         if stderr:
             try:
                 print(stderr)
             except UnicodeEncodeError:
-                print(stderr.encode(sys.stderr.encoding, errors="replace").decode(sys.stderr.encoding))
+                print(
+                    stderr.encode(sys.stderr.encoding, errors="replace").decode(
+                        sys.stderr.encoding
+                    )
+                )
 
         # 合并 stdout 和 stderr 作为详细输出
         output = (stdout or "") + (stderr or "")
@@ -265,9 +276,8 @@ def print_summary(results: dict) -> int:
     if total_errors == 0:
         print("\n[OK] 所有检查通过!\n")
         return 0
-    else:
-        print(f"\n[FAIL] 发现 {total_errors} 项检查未通过\n")
-        return 1
+    print(f"\n[FAIL] 发现 {total_errors} 项检查未通过\n")
+    return 1
 
 
 def generate_report(results: dict, output_format: str = "text") -> str:
@@ -305,36 +315,42 @@ def generate_report(results: dict, output_format: str = "text") -> str:
         else:
             failed += 1
 
-    lines.extend([
-        "",
-        "-" * 80,
-        "  统计",
-        "-" * 80,
-        f"  通过: {passed}",
-        f"  失败: {failed}",
-        f"  总计: {passed + failed}",
-    ])
+    lines.extend(
+        [
+            "",
+            "-" * 80,
+            "  统计",
+            "-" * 80,
+            f"  通过: {passed}",
+            f"  失败: {failed}",
+            f"  总计: {passed + failed}",
+        ]
+    )
 
     # 添加详细问题
     if failed > 0:
-        lines.extend([
-            "",
-            "",
-            "=" * 80,
-            "  详细问题",
-            "=" * 80,
-        ])
+        lines.extend(
+            [
+                "",
+                "",
+                "=" * 80,
+                "  详细问题",
+                "=" * 80,
+            ]
+        )
 
         for key, data in results.items():
             if key == "_meta":
                 continue
             if not data["success"] and data.get("output"):
-                lines.extend([
-                    "",
-                    "-" * 80,
-                    f"  [{data['name']}]",
-                    "-" * 80,
-                ])
+                lines.extend(
+                    [
+                        "",
+                        "-" * 80,
+                        f"  [{data['name']}]",
+                        "-" * 80,
+                    ]
+                )
                 # 添加原始输出
                 lines.append(data["output"])
 
@@ -384,7 +400,7 @@ def main() -> int:
     parser.add_argument(
         "checks",
         nargs="*",
-        choices=list(CHECKS.keys()) + ["all"],
+        choices=[*list(CHECKS.keys()), "all"],
         help="要运行的检查项",
     )
     parser.add_argument(
@@ -428,10 +444,7 @@ def main() -> int:
 
     # 确定要运行的检查项
     if args.checks:
-        if "all" in args.checks:
-            selected = list(CHECKS.keys())
-        else:
-            selected = args.checks
+        selected = list(CHECKS.keys()) if "all" in args.checks else args.checks
     elif args.no_interactive or args.ci:
         selected = list(CHECKS.keys())
     else:
@@ -454,7 +467,7 @@ def main() -> int:
     exit_code = print_summary(results)
 
     # 默认保存报告（除非明确指定 --no-report）
-    if not hasattr(args, 'no_report') or not args.no_report:
+    if not hasattr(args, "no_report") or not args.no_report:
         save_report(results, args.report_format)
 
     return exit_code

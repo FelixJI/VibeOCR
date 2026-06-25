@@ -379,12 +379,8 @@ class BatchQueueManager:
             if registry.has(pipeline_name):
                 spec = registry.get(pipeline_name)
                 if spec.recognize_batch is not None:
-                    logger.debug(
-                        f"[批量] 管道 {pipeline_name} 走 recognize_batch"
-                    )
-                    return list(
-                        spec.recognize_batch(self.service, images, options)
-                    )
+                    logger.debug(f"[批量] 管道 {pipeline_name} 走 recognize_batch")
+                    return list(spec.recognize_batch(self.service, images, options))
                 logger.debug(
                     f"[批量] 管道 {pipeline_name} 无批量接口，回退逐张 recognize"
                 )

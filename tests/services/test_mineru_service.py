@@ -287,9 +287,7 @@ class TestMinerUService:
             patch("vibeocr.services.mineru_service.socket"),
             # JobObjectGuard.assign_from_popen 调真实 OpenProcess(pid=12345) 会因
             # 无效句柄失败并记 warning；mock 掉守卫避免噪声并隔离被测逻辑。
-            patch(
-                "vibeocr.services.mineru_service.JobObjectGuard"
-            ) as mock_guard_cls,
+            patch("vibeocr.services.mineru_service.JobObjectGuard") as mock_guard_cls,
             # NetworkDetector.__init__ 会触发 generate_machine_id() 调 wmic
             # （subprocess.Popen），与被 mock 的 Popen 冲突导致 assert_called_once 失败。
             # mock 掉 NetworkDetector 消除该副作用。

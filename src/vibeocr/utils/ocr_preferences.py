@@ -4,6 +4,8 @@
 支持按管道独立存储，区分 main 和 screenshot 两个数据源。
 """
 
+from __future__ import annotations
+
 import base64
 import json
 import logging
@@ -17,13 +19,14 @@ from vibeocr.models.ocr_options import OCROptions
 
 if TYPE_CHECKING:
     from vibeocr.managers.config_manager import ConfigManager
+    from vibeocr.models.pdf_ocr_options import PdfGlobalSettings
 
 logger = logging.getLogger(__name__)
 
 _CONFIG_FILENAME = "ocr_preferences.json"
 _CONFIG_VERSION = 3
 
-_instance: "OCRPreferences | None" = None
+_instance: OCRPreferences | None = None
 
 
 class OCRPreferences(QObject):
@@ -43,7 +46,7 @@ class OCRPreferences(QObject):
     batch_options_changed = Signal(object)  # OCROptions
     pipeline_options_changed = Signal(str, object)  # (source, OCROptions)
 
-    def __init__(self, config_manager: "ConfigManager | Path") -> None:
+    def __init__(self, config_manager: ConfigManager | Path) -> None:
         super().__init__()
         if isinstance(config_manager, Path):
             self._cm = None
@@ -69,8 +72,8 @@ class OCRPreferences(QObject):
 
     @staticmethod
     def instance(
-        config_manager: "ConfigManager | Path | None" = None,
-    ) -> "OCRPreferences":
+        config_manager: ConfigManager | Path | None = None,
+    ) -> OCRPreferences:
         global _instance
         if _instance is None:
             if config_manager is None:
@@ -205,8 +208,7 @@ class OCRPreferences(QObject):
                 for k, v in self._per_pipeline.get("screenshot", {}).items()
             },
             "pdf": {
-                k: v.to_dict()
-                for k, v in self._per_pipeline.get("pdf", {}).items()
+                k: v.to_dict() for k, v in self._per_pipeline.get("pdf", {}).items()
             },
             "pdf_settings": self._pdf_settings,
             "pdf_splitter_state": (
@@ -234,13 +236,13 @@ class OCRPreferences(QObject):
 
     # ---- PDF 全局设置 ----
 
-    def get_pdf_settings(self) -> "PdfGlobalSettings":
+    def get_pdf_settings(self) -> PdfGlobalSettings:
         """获取 PDF 全局设置。"""
         from vibeocr.models.pdf_ocr_options import PdfGlobalSettings
 
         return PdfGlobalSettings.from_dict(self._pdf_settings)
 
-    def set_pdf_settings(self, settings: "PdfGlobalSettings") -> None:
+    def set_pdf_settings(self, settings: PdfGlobalSettings) -> None:
         """保存 PDF 全局设置。"""
         self._pdf_settings = settings.to_dict()
         self.save()
@@ -263,9 +265,7 @@ class OCRPreferences(QObject):
         self._pdf_right_splitter_state = state
         self.save()
 
-    def set_pdf_splitter_states(
-        self, main: bytes | None, right: bytes | None
-    ) -> None:
+    def set_pdf_splitter_states(self, main: bytes | None, right: bytes | None) -> None:
         """一次性保存两个 splitter 布局状态并持久化（避免连续两次落盘）。"""
         self._pdf_splitter_state = main
         self._pdf_right_splitter_state = right

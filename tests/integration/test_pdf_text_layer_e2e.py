@@ -88,7 +88,7 @@ class TestSingleSourceOfTruth:
         PdfService.add_text_layer(doc, pdf_doc, 0, result)
 
         # detect_text_layers 重读
-        detected = PdfService.detect_text_layers(doc, 0)
+        PdfService.detect_text_layers(doc, 0)
         info = pdf_doc.pages[0]
 
         # ocr_text_blocks 是 2 个（细粒度）
@@ -122,8 +122,10 @@ class TestEditFlowE2E:
             raw_text="签回联",
             text_blocks=[
                 TextBlock(
-                    text="签回联", score=0.9,
-                    bbox=(50.0, 50.0, 200.0, 120.0), page_idx=0,
+                    text="签回联",
+                    score=0.9,
+                    bbox=(50.0, 50.0, 200.0, 120.0),
+                    page_idx=0,
                 ),
             ],
         )
@@ -245,9 +247,7 @@ class TestCrossReaderSearchability:
 
         increase = path.stat().st_size - base_size
         # 子集字体增量应远小于整字体（整字体 3.5MB+）；放宽到 100KB 容错
-        assert increase < 100_000, (
-            f"体积增量过大: {increase} bytes（疑似嵌整字体）"
-        )
+        assert increase < 100_000, f"体积增量过大: {increase} bytes（疑似嵌整字体）"
 
     def test_fallback_when_no_system_font(self, tmp_path, monkeypatch):
         """无系统字体时回退 china-s，文字层仍可被 fitz 提取（不阻断流程）。"""
