@@ -182,6 +182,7 @@ class MinerUService(metaclass=SingletonMeta):
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             env=env,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
         )
 
         # 绑定 Windows Job Object：主进程崩溃时内核连带终止 mineru-api

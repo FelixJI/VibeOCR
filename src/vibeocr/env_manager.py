@@ -801,6 +801,7 @@ def _install_paddle_stack(
             capture_output=True,
             text=True,
             timeout=120,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
         )
         if result.returncode != 0:
             report_fn(
@@ -849,6 +850,7 @@ def _install_paddle_stack(
                 capture_output=True,
                 text=True,
                 timeout=600,
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
             )
 
             if result.returncode != 0:
@@ -862,6 +864,7 @@ def _install_paddle_stack(
                         capture_output=True,
                         text=True,
                         timeout=600,
+                        creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
                     )
 
                 if result.returncode != 0:
