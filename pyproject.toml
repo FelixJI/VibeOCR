@@ -1,6 +1,6 @@
 [project]
 name = "vibeocr"
-version = "0.1.0"
+version = "0.1.1"
 description = "A screenshot OCR application"
 requires-python = ">=3.13,<3.14"
 dependencies = [
@@ -88,6 +88,7 @@ ignore = [
     "PTH123",   # open() vs Path.open()（现有代码风格）
     "DTZ005",   # datetime.now() 时区（本地时间足够）
     "DTZ006",   # datetime.fromtimestamp() 时区
+    "DTZ011",   # date.today() 时区（版权年份/changelog 用本地日期即可）
     "ARG001",   # 未使用的函数参数（接口兼容性）
     "ARG002",   # 未使用的方法参数（Qt 覆盖）
     "ARG004",   # 未使用的静态方法参数
@@ -185,6 +186,13 @@ exclude_lines = [
 [tool.uv]
 override-dependencies = [
     "opencv-python ; sys_platform == 'nonexistent'",
+    # torchvision 是 torch 的传递依赖。unsafe-best-match + index-strategy 下，
+    # PyPI 的 CPU 版 torchvision==0.27.1（无后缀）在 PEP 440 排序中高于
+    # 南大镜像的 0.27.1+cu126（local version 排序靠后），uv 会误选 CPU 版。
+    # 而 torch 是 CUDA 版，torchvision 必须同为 cu126 才能配套 CUDA ops。
+    # PEP 440 禁止在 >= 等「范围」操作符上使用 local version（+cu126），
+    # 故只能用 == 精确锁定；升级 torch 时需同步手动更新这里的版本号。
+    "torchvision==0.27.1+cu126",
 ]
 environments = ["sys_platform == 'win32'"]
 extra-index-url = [
@@ -200,25 +208,14 @@ index-strategy = "unsafe-best-match"
 #   cu130 paddle 要 cublas64_13.dll，与 torch/lib 的 _12 系列 ABI 不匹配
 #
 # torch/torchvision 的 +cu126 变体不在 PyPI（PyPI 默认版是 CPU 版），必须走
-# PyTorch 官方 whl index 或其镜像。这里优先用南大镜像（与便携环境 env_config
-# 的 PYTORCH_MIRROR_SOURCES["nju"] 对齐，国内加速），官方 index 作 fallback：
-# 两者均列为 source（无 marker，恒匹配），index-strategy=unsafe-best-match
-# 时 uv 会从命中的 index 择优（南大可用则走南大，超时/缺包回退官方）。
-torch = [
-  { index = "pytorch-cu126-nju" },
-  { index = "pytorch-cu126-official" },
-]
-torchvision = [
-  { index = "pytorch-cu126-nju" },
-  { index = "pytorch-cu126-official" },
-]
+# PyTorch 官方 whl index 或其镜像。开发环境在国内，统一走南大镜像
+# （与便携环境 env_config 的 PYTORCH_MIRROR_SOURCES["nju"] 对齐，国内加速）。
+# 单一 source，uv 不要求 platform marker；index 保持 explicit=true，
+# 仅对显式声明的 torch/torchvision 生效，不污染其它包的解析。
+torch = { index = "pytorch-cu126-nju" }
+torchvision = { index = "pytorch-cu126-nju" }
 
 [[tool.uv.index]]
 name = "pytorch-cu126-nju"
 url = "https://mirrors.nju.edu.cn/pytorch/whl/cu126"
-explicit = true
-
-[[tool.uv.index]]
-name = "pytorch-cu126-official"
-url = "https://download.pytorch.org/whl/cu126"
 explicit = true
