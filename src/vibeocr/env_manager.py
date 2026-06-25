@@ -480,6 +480,42 @@ def install_embedded_python(
     return True, f"Python 运行时安装成功: {python_exe}"
 
 
+def reinstall_embedded_python(
+    project_root: Path,
+    network_type: Literal["domestic", "international"] = "domestic",
+    progress_callback: Callable[[str, str], None] | None = None,
+) -> tuple[bool, str]:
+    """强制删除现有 python/ 目录后重新安装 Python 运行时。
+
+    删除范围：仅 project_root/python/ 整个目录。
+    不删除：.venv、config/、resources/、logs/、模型缓存、机器检测缓存。
+    删除 python/ 后 OCR 依赖随之消失，调用方应在成功后继续装依赖。
+
+    Args:
+        project_root: 项目根目录
+        network_type: 网络类型
+        progress_callback: 进度回调 (stage, message)
+
+    Returns:
+        (是否成功, 消息)
+    """
+    python_dir = project_root / "python"
+
+    def report(stage: str, msg: str):
+        logger.info("[%s] %s", stage, msg)
+        if progress_callback:
+            progress_callback(stage, msg)
+
+    report(
+        "环境安装",
+        f"正在清理旧目录: {python_dir}（仅删除 python/，不影响配置/缓存/日志）",
+    )
+    shutil.rmtree(python_dir, ignore_errors=True)
+
+    report("环境安装", "清理完成，开始重新安装 Python 运行时...")
+    return install_embedded_python(project_root, network_type)
+
+
 def check_current_environment_dependencies() -> dict[str, bool]:
     """检查当前运行Python环境的生产依赖是否已安装
 

@@ -877,3 +877,92 @@ class TestInstallLogging:
         assert ok
         info_msgs = " ".join(r.message for r in caplog.records)
         assert "开始切换到 CPU" in info_msgs, "应记录切换开始"
+
+
+class TestReinstallPython:
+    """reinstall_embedded_python：强制删除 python/ 后重装"""
+
+    def test_deletes_python_dir_then_installs(self, tmp_path):
+        """应先 rmtree(python/) 再调 install_embedded_python"""
+        from vibeocr.env_manager import reinstall_embedded_python
+
+        python_dir = tmp_path / "python"
+        python_dir.mkdir()
+        (python_dir / "python.exe").write_bytes(b"old")
+
+        call_order = []
+
+        def fake_rmtree(path, *a, **kw):
+            call_order.append(("rmtree", str(path)))
+
+        def fake_install(project_root, network_type="domestic", progress_callback=None):
+            call_order.append(("install", str(project_root)))
+            return True, "ok"
+
+        with (
+            patch("vibeocr.env_manager.shutil.rmtree", side_effect=fake_rmtree),
+            patch(
+                "vibeocr.env_manager.install_embedded_python", side_effect=fake_install
+            ),
+        ):
+            ok, msg = reinstall_embedded_python(tmp_path)
+
+        assert ok
+        # 先删后装
+        assert call_order[0][0] == "rmtree", "应先删除 python/"
+        assert "python" in call_order[0][1], "应删除 python/ 目录"
+        assert call_order[1][0] == "install", "删除后应调用安装"
+
+    def test_rmtree_ignores_errors_when_dir_missing(self, tmp_path):
+        """python/ 不存在时 rmtree(ignore_errors=True) 不报错，继续安装"""
+        from vibeocr.env_manager import reinstall_embedded_python
+
+        with (
+            patch("vibeocr.env_manager.shutil.rmtree") as mock_rmtree,
+            patch(
+                "vibeocr.env_manager.install_embedded_python",
+                return_value=(True, "ok"),
+            ),
+        ):
+            ok, _msg = reinstall_embedded_python(tmp_path)
+
+        assert ok
+        mock_rmtree.assert_called_once()
+        # 应以 ignore_errors=True 调用
+        assert mock_rmtree.call_args.kwargs.get("ignore_errors") is True
+
+    def test_progress_callback_receives_cleanup_stage(self, tmp_path):
+        """progress_callback 应收到'清理'阶段"""
+        from vibeocr.env_manager import reinstall_embedded_python
+
+        stages = []
+        with (
+            patch("vibeocr.env_manager.shutil.rmtree"),
+            patch(
+                "vibeocr.env_manager.install_embedded_python",
+                return_value=(True, "ok"),
+            ),
+        ):
+            ok, _msg = reinstall_embedded_python(
+                tmp_path, progress_callback=lambda s, m: stages.append((s, m))
+            )
+
+        assert ok
+        cleanup_stages = [s for s in stages if "清理" in s[1] or "清理" in s[0]]
+        assert len(cleanup_stages) > 0, f"应收到清理阶段回调，实际: {stages}"
+
+    def test_returns_false_when_install_fails(self, tmp_path):
+        """install_embedded_python 失败时应返回 False"""
+        from vibeocr.env_manager import reinstall_embedded_python
+
+        with (
+            patch("vibeocr.env_manager.shutil.rmtree"),
+            patch(
+                "vibeocr.env_manager.install_embedded_python",
+                return_value=(False, "下载失败"),
+            ),
+        ):
+            ok, msg = reinstall_embedded_python(tmp_path)
+
+        assert not ok
+        assert "下载失败" in msg
