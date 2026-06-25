@@ -540,3 +540,45 @@ class TestGenerateVersionJson:
         assert data["python_version"] == "3.99", (
             f"python_version 应读自 .python-version（3.99），实际: {data['python_version']}"
         )
+
+
+class TestInteractiveMenuBuildOption:
+    """交互式菜单的"仅打包当前版本"选项测试"""
+
+    @staticmethod
+    def _load_module():
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location("bump_version", SCRIPT)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+    def test_option_5_returns_build_sentinel(self, monkeypatch):
+        """选项 5 应返回哨兵 'build'（表示仅打包当前版本，不升级版本号）"""
+        mod = self._load_module()
+        monkeypatch.setattr("builtins.input", lambda _prompt="": "5")
+
+        result = mod.interactive_menu((0, 1, 4))
+
+        assert result == "build", (
+            f"选项 5 应返回 'build' 哨兵，实际: {result!r}"
+        )
+
+    def test_option_0_returns_none_cancel(self, monkeypatch):
+        """选项 0 仍返回 None（取消）"""
+        mod = self._load_module()
+        monkeypatch.setattr("builtins.input", lambda _prompt="": "0")
+
+        result = mod.interactive_menu((0, 1, 4))
+
+        assert result is None, f"选项 0 应返回 None（取消），实际: {result!r}"
+
+    def test_option_1_still_returns_bumped_version(self, monkeypatch):
+        """选项 1 (patch) 仍正常返回升级后的版本号三元组"""
+        mod = self._load_module()
+        monkeypatch.setattr("builtins.input", lambda _prompt="": "1")
+
+        result = mod.interactive_menu((0, 1, 4))
+
+        assert result == (0, 1, 5), f"选项 1 应返回 patch 升级 (0,1,5)，实际: {result!r}"

@@ -2,7 +2,7 @@
 """语义化版本管理与打包脚本
 
 用法:
-    python scripts/bump_version.py              # 交互式菜单
+    python scripts/bump_version.py              # 交互式菜单（含"仅打包当前版本"）
     python scripts/bump_version.py patch        # 升级修订号 x.y.Z
     python scripts/bump_version.py minor        # 升级次版本 x.Y.0
     python scripts/bump_version.py major        # 升级主版本 X.0.0
@@ -391,14 +391,14 @@ def update_changelog(version: str, commits: list[tuple[str, str]]) -> None:
     CHANGELOG.write_text(content, encoding="utf-8")
 
 
-def interactive_menu(current: tuple[int, int, int]) -> tuple[int, int, int] | None:
+def interactive_menu(current: tuple[int, int, int]) -> tuple[int, int, int] | str | None:
     """交互式版本选择菜单
 
     Args:
         current: 当前版本号三元组
 
     Returns:
-        新版本号三元组，或 None 表示取消
+        新版本号三元组 / 字符串 "build"（仅打包当前版本，不升级版本号）/ None（取消）
     """
     major, minor, patch = current
     current_str = f"{major}.{minor}.{patch}"
@@ -413,8 +413,9 @@ def interactive_menu(current: tuple[int, int, int]) -> tuple[int, int, int] | No
     print(f"  2) Minor  (次版本)  {current_str} → {'.'.join(map(str, minor_new))}")
     print(f"  3) Major  (主版本)  {current_str} → {'.'.join(map(str, major_new))}")
     print("  4) 自定义版本号")
+    print(f"  5) 仅打包当前版本（{current_str}，不升级版本号）")
     print("  0) 取消")
-    print("请输入选项 [0-4]: ", end="", flush=True)
+    print("请输入选项 [0-5]: ", end="", flush=True)
 
     choice = input().strip()
 
@@ -432,6 +433,9 @@ def interactive_menu(current: tuple[int, int, int]) -> tuple[int, int, int] | No
             print(f"错误: 无效版本号 '{custom}'")
             return None
         return (int(m[1]), int(m[2]), int(m[3]))
+    if choice == "5":
+        # 仅打包当前版本，不升级版本号、不动 git
+        return "build"
     return None
 
 
@@ -1053,6 +1057,9 @@ def main() -> int:
         if new_version is None:
             print("已取消")
             return 0
+        if new_version == "build":
+            # 仅打包当前版本（不升级版本号、不动 git）
+            return 0 if _run_build(current_str) else 1
     elif args.version in ("patch", "minor", "major"):
         new_version = bump_version(current, args.version)
     elif SEMVER_RE.match(args.version):
