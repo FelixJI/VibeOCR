@@ -8,6 +8,7 @@ import pytest
 
 from vibeocr.env_manager import (
     _check_imports,
+    _install_paddle_stack,
     _load_dep_specs,
     ensure_mineru_models,
     install_embedded_dependencies,
@@ -350,6 +351,91 @@ class TestLoadDepSpecs:
         # 清理：恢复真实缓存
         em._dep_specs_cache = None
         _load_dep_specs()
+
+
+class TestInstallPaddleStackAlias:
+    """_install_paddle_stack 键名兼容测试
+
+    回归：打包环境 version.json 由 bump_version 生成，其 dep_versions 用
+    _KEY_ALIASES 把 paddlepaddle-gpu 归一为 paddlepaddle；_load_dep_specs 的
+    version.json 分支据此构造的 specs 只有 "paddlepaddle" 键。_install_paddle_stack
+    必须同时兼容 paddlepaddle-gpu（dev pyproject）与 paddlepaddle（打包）两种键，
+    否则打包环境抛 KeyError: 'paddlepaddle-gpu'（依赖安装阶段，pip 还没开始下包）。
+    """
+
+    @staticmethod
+    def _mock_pip_success():
+        calls = []
+
+        def mock_run(cmd, **kwargs):
+            calls.append(cmd)
+            r = MagicMock()
+            r.returncode = 0
+            r.stderr = ""
+            return r
+
+        return calls, mock_run
+
+    def test_specs_with_paddlepaddle_key_only_succeeds(self, tmp_path):
+        """specs 仅含 paddlepaddle 键（打包环境 version.json 风格）时应正常安装，不抛 KeyError"""
+        python_exe = tmp_path / "python.exe"
+        python_exe.touch()
+
+        # 模拟打包环境 _load_dep_specs 的 version.json 分支输出：
+        # 键为 paddlepaddle（归一化后），无 paddlepaddle-gpu
+        specs = {
+            "paddlepaddle": "paddlepaddle>=3.3.1",
+            "paddleocr": "paddleocr[doc-parser]>=3.7.0",
+            "mineru": "mineru[core]>=3.2.0",
+            "torch": "torch>=2.6.0",
+        }
+        calls, mock_run = self._mock_pip_success()
+
+        with patch("vibeocr.env_manager.subprocess.run", side_effect=mock_run):
+            ok, msg = _install_paddle_stack(
+                python_exe=python_exe,
+                specs=specs,
+                pip_source="https://pypi.tuna.tsinghua.edu.cn/simple",
+                network_type="domestic",
+                use_gpu=True,
+                cuda_version="cu126",
+                report_fn=lambda stage, m: None,
+                success_msg="done",
+            )
+
+        assert ok, f"应成功，msg={msg}"
+        # 应实际安装 paddlepaddle-gpu（值由 paddlepaddle 规格替换得到）
+        joined = " ".join(" ".join(c) for c in calls)
+        assert "paddlepaddle-gpu" in joined, f"应安装 paddlepaddle-gpu，实际: {joined}"
+
+    def test_specs_with_paddlepaddle_gpu_key_still_works(self, tmp_path):
+        """dev 环境（pyproject 分支，键为 paddlepaddle-gpu）行为不变"""
+        python_exe = tmp_path / "python.exe"
+        python_exe.touch()
+
+        specs = {
+            "paddlepaddle-gpu": "paddlepaddle-gpu>=3.3.1",
+            "paddleocr": "paddleocr[doc-parser]>=3.7.0",
+            "mineru": "mineru[core]>=3.2.0",
+            "torch": "torch>=2.6.0",
+        }
+        calls, mock_run = self._mock_pip_success()
+
+        with patch("vibeocr.env_manager.subprocess.run", side_effect=mock_run):
+            ok, _ = _install_paddle_stack(
+                python_exe=python_exe,
+                specs=specs,
+                pip_source="https://pypi.org/simple",
+                network_type="international",
+                use_gpu=True,
+                cuda_version="cu126",
+                report_fn=lambda stage, m: None,
+                success_msg="done",
+            )
+
+        assert ok
+        joined = " ".join(" ".join(c) for c in calls)
+        assert "paddlepaddle-gpu" in joined
 
 
 class TestCheckImportsPrimitive:

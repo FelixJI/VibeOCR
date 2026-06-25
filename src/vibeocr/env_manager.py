@@ -746,8 +746,19 @@ def _install_paddle_stack(
     Returns:
         (是否成功, 消息)
     """
-    paddle_gpu_spec = specs["paddlepaddle-gpu"]
-    paddle_cpu_spec = paddle_gpu_spec.replace("paddlepaddle-gpu", "paddlepaddle")
+    # 打包环境 version.json 由 bump_version._generate_version_json 生成，
+    # 它用 _KEY_ALIASES 把 paddlepaddle-gpu 归一为 paddlepaddle（键与值都变成
+    # CPU 名，如 "paddlepaddle": "3.3.1"）；开发环境 pyproject.toml 分支则保留
+    # paddlepaddle-gpu（值如 "paddlepaddle-gpu>=3.3.1"）。两端键名/值都不对称，
+    # 这里从取到的规格提取版本约束，重建 GPU / CPU 两条规格字符串，避免 GPU 模式
+    # 误装 CPU 版 paddlepaddle，也避免打包环境 KeyError: 'paddlepaddle-gpu'。
+    raw_paddle_spec = specs.get("paddlepaddle-gpu") or specs["paddlepaddle"]
+    import re as _re
+
+    _ver_m = _re.search(r"(==|>=|<=|~=|>|<).+", raw_paddle_spec)
+    paddle_version_constraint = _ver_m.group(0) if _ver_m else ""
+    paddle_gpu_spec = f"paddlepaddle-gpu{paddle_version_constraint}"
+    paddle_cpu_spec = f"paddlepaddle{paddle_version_constraint}"
 
     # 决定 PaddlePaddle 版本（GPU 优先）
     # 注意：cuda_version 已是 cu-tag（detect_cuda_version 输出，如 "cu126"），
