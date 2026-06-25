@@ -743,8 +743,6 @@ class TestInstallLogging:
 
     def test_install_python_logs_stages(self, tmp_path, caplog):
         """install_embedded_python 各阶段（安装开始/下载源/解压/pip自检）应有日志"""
-        import logging
-
         ok, _msg = self._run_install_python(tmp_path, caplog)
 
         assert ok
@@ -831,11 +829,11 @@ class TestInstallLogging:
                 return_value=python_exe,
             ),
             patch("vibeocr.env_manager.subprocess.run", side_effect=mock_run),
+            caplog.at_level(logging.INFO, logger="vibeocr.env_manager"),
         ):
-            with caplog.at_level(logging.INFO, logger="vibeocr.env_manager"):
-                ok, _msg = install_embedded_dependencies(
-                    tmp_path, progress_callback=lambda s, m: None
-                )
+            ok, _msg = install_embedded_dependencies(
+                tmp_path, progress_callback=lambda s, m: None
+            )
 
         assert ok
         info_msgs = " ".join(r.message for r in caplog.records)
@@ -868,11 +866,11 @@ class TestInstallLogging:
             patch("vibeocr.env_manager.subprocess.run", side_effect=mock_run),
             patch("vibeocr.env_manager.detect_gpu", return_value=(True, "cu126")),
             patch("vibeocr.env_manager.update_cache_field", return_value=True),
+            caplog.at_level(logging.INFO, logger="vibeocr.env_manager"),
         ):
-            with caplog.at_level(logging.INFO, logger="vibeocr.env_manager"):
-                ok, _msg = switch_paddle_backend(
-                    tmp_path, "cpu", progress_callback=lambda s, m: None
-                )
+            ok, _msg = switch_paddle_backend(
+                tmp_path, "cpu", progress_callback=lambda s, m: None
+            )
 
         assert ok
         info_msgs = " ".join(r.message for r in caplog.records)
@@ -905,7 +903,7 @@ class TestReinstallPython:
                 "vibeocr.env_manager.install_embedded_python", side_effect=fake_install
             ),
         ):
-            ok, msg = reinstall_embedded_python(tmp_path)
+            ok, _msg = reinstall_embedded_python(tmp_path)
 
         assert ok
         # 先删后装

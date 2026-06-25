@@ -73,9 +73,11 @@ def test_progress_signal_also_logged(qtbot, tmp_path, caplog):
         (tmp_path / "python.exe").touch()
         mock_em.install_embedded_dependencies.return_value = (True, "ok")
 
-        with caplog.at_level(logging.INFO, logger="vibeocr.widgets.install_dialog"):
-            with qtbot.waitSignal(worker.finished, timeout=5000):
-                worker.start()
+        with (
+            caplog.at_level(logging.INFO, logger="vibeocr.widgets.install_dialog"),
+            qtbot.waitSignal(worker.finished, timeout=5000),
+        ):
+            worker.start()
 
     info_msgs = " ".join(r.message for r in caplog.records)
     assert "依赖安装" in info_msgs or "安装" in info_msgs, (

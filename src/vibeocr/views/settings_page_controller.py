@@ -631,7 +631,7 @@ class SettingsPageController:
 
     def _update_cache_status(self, status: str | None = None) -> None:
         """更新缓存状态"""
-        from vibeocr.machine_cache import get_cache_info, is_cache_valid
+        from vibeocr.machine_cache import get_cache_info
 
         label = self._ui.findChild(QLabel, "labelCacheStatus")
         if label:
