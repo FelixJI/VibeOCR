@@ -2,6 +2,7 @@
 
 import logging
 import os
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -368,9 +369,9 @@ def install_embedded_python(
     if python_dir.exists():
         return True, f"Python 运行时已安装: {python_dir}"
 
-    print("\n" + "=" * 50)
-    print("[环境安装] 安装 Python 运行时（python-build-standalone）")
-    print("=" * 50)
+    logger.info("==================================================")
+    logger.info("[环境安装] 安装 Python 运行时（python-build-standalone）")
+    logger.info("==================================================")
 
     # 根据网络类型排序下载源：international 优先 GitHub 直链，domestic 优先国内镜像
     urls = list(PYTHON_STANDALONE_URLS)
@@ -393,7 +394,7 @@ def install_embedded_python(
         used_url = ""
         for i, url in enumerate(urls, 1):
             label = "Python(GitHub)" if "github.com" in url else "Python(镜像)"
-            print(f"[环境安装] 尝试下载源 {i}/{len(urls)}: {label}")
+            logger.info("[环境安装] 尝试下载源 %d/%d: %s", i, len(urls), label)
             if download_file_with_progress(url, tar_path, label):
                 download_ok = True
                 used_url = url
@@ -409,7 +410,7 @@ def install_embedded_python(
                 f"解压 {PYTHON_BUILD_STANDALONE_ASSET} 内的 python/ 到: {python_dir}",
             )
 
-        print(f"[环境安装] 下载完成，正在解压 {PYTHON_BUILD_STANDALONE_ASSET}...")
+        logger.info("[环境安装] 下载完成，正在解压 %s...", PYTHON_BUILD_STANDALONE_ASSET)
         try:
             python_dir.mkdir(parents=True, exist_ok=True)
             # tar.gz 内顶层为 install_only/python/，需 flatten 到 project_root/python/
@@ -443,12 +444,11 @@ def install_embedded_python(
                     elif member.issym() or member.islnk():
                         # standalone 偶尔含符号链接（如 python3 → python3.13），跳过以保 Windows 兼容
                         continue
-            print("[环境安装] 解压完成")
+            logger.info("[环境安装] 解压完成")
         except Exception as e:
             # 解压失败时清理半成品目录，避免误判为已安装
-            import shutil
-
             shutil.rmtree(python_dir, ignore_errors=True)
+            logger.error("[环境安装] 解压失败: %s", e)
             return False, f"解压失败: {e}"
 
     python_exe = get_embedded_python_executable(project_root)
@@ -468,13 +468,14 @@ def install_embedded_python(
             creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
         )
         if result.returncode == 0:
-            print(f"[环境安装] pip 可用: {result.stdout.strip()}")
+            logger.info("[环境安装] pip 可用: %s", result.stdout.strip())
         else:
-            print(
-                f"[环境安装] 警告: pip 自检失败: {result.stderr[-200:] if result.stderr else ''}"
+            logger.warning(
+                "[环境安装] pip 自检失败: %s",
+                result.stderr[-200:] if result.stderr else "",
             )
     except Exception as e:
-        print(f"[环境安装] 警告: pip 自检异常: {e}")
+        logger.warning("[环境安装] pip 自检异常: %s", e)
 
     return True, f"Python 运行时安装成功: {python_exe}"
 

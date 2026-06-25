@@ -740,3 +740,70 @@ class TestInstallLogging:
         assert any("正在下载" in m for m in info_msgs), (
             f"应通过 logger.info 输出下载开始，实际 records: {info_msgs}"
         )
+
+    def test_install_python_logs_stages(self, tmp_path, caplog):
+        """install_embedded_python 各阶段（安装开始/下载源/解压/pip自检）应有日志"""
+        import logging
+
+        ok, _msg = self._run_install_python(tmp_path, caplog)
+
+        assert ok
+        all_msgs = " ".join(r.message for r in caplog.records)
+        assert "安装 Python 运行时" in all_msgs, "应记录安装开始"
+        assert "尝试下载源" in all_msgs, "应记录下载源尝试"
+        assert "解压完成" in all_msgs, "应记录解压完成"
+        assert "pip 可用" in all_msgs, "应记录 pip 自检结果"
+
+    @staticmethod
+    def _run_install_python(tmp_path, caplog):
+        """共享的 mock 安装执行器，写入最小 standalone tar.gz 并捕获日志"""
+        import logging as _logging
+
+        with (
+            patch("vibeocr.env_manager.get_environment_mode", return_value="none"),
+            patch(
+                "vibeocr.env_manager.download_file_with_progress"
+            ) as mock_dl,
+            patch("tarfile.open", wraps=tarfile.open),
+            patch(
+                "vibeocr.env_manager.get_embedded_python_executable",
+                return_value=tmp_path / "python" / "python.exe",
+            ),
+            patch("vibeocr.env_manager.subprocess.run") as mock_run,
+        ):
+            # 让下载写一个最小 tar.gz
+            def _make_tar():
+                buf = io.BytesIO()
+                with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+                    for d in (
+                        "install_only/python",
+                        "install_only/python/Lib",
+                        "install_only/python/Lib/site-packages",
+                        "install_only/python/Lib/site-packages/pip",
+                    ):
+                        info = tarfile.TarInfo(name=d)
+                        info.type = tarfile.DIRTYPE
+                        info.mode = 0o755
+                        tar.addfile(info)
+                    exe_data = b"fake"
+                    info = tarfile.TarInfo(name="install_only/python/python.exe")
+                    info.size = len(exe_data)
+                    tar.addfile(info, io.BytesIO(exe_data))
+                    pip_data = b"pip"
+                    info = tarfile.TarInfo(
+                        name="install_only/python/Lib/site-packages/pip/__init__.py"
+                    )
+                    info.size = len(pip_data)
+                    tar.addfile(info, io.BytesIO(pip_data))
+                return buf.getvalue()
+
+            def _fake_dl(url, dest, *a, **kw):
+                dest.write_bytes(_make_tar())
+                return True
+
+            mock_dl.side_effect = _fake_dl
+            mock_run.return_value = MagicMock(returncode=0, stdout="pip 25.0", stderr="")
+
+            with caplog.at_level(_logging.INFO, logger="vibeocr.env_manager"):
+                ok, msg = install_embedded_python(tmp_path)
+        return ok, msg
