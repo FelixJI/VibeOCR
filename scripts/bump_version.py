@@ -40,6 +40,7 @@ MAIN_PY = Path(
     os.environ.get("MAIN_PY", str(PROJECT_ROOT / "src" / "vibeocr" / "main.py"))
 )
 CHANGELOG = Path(os.environ.get("CHANGELOG", str(PROJECT_ROOT / "CHANGELOG.md")))
+UV_LOCK = Path(os.environ.get("UV_LOCK", str(PROJECT_ROOT / "uv.lock")))
 
 VERSION_RE = re.compile(r'version\s*=\s*"(\d+)\.(\d+)\.(\d+)"')
 SEMVER_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
@@ -471,7 +472,7 @@ def _sync_uv_lock(version: str) -> bool:
     Returns:
         uv.lock 是否已更新（False 表示 uv 不可用或无变化）
     """
-    lock_path = PROJECT_ROOT / "uv.lock"
+    lock_path = UV_LOCK
     if not lock_path.exists():
         return False
 
@@ -1104,9 +1105,8 @@ def main() -> int:
             subprocess.run(["git", "add", str(INIT_PY)], check=True)
         subprocess.run(["git", "add", str(CHANGELOG)], check=True)
         # uv.lock 与版本号同源，纳入同一 release 提交
-        uv_lock = PROJECT_ROOT / "uv.lock"
-        if uv_lock.exists():
-            subprocess.run(["git", "add", str(uv_lock)], check=True)
+        if UV_LOCK.exists():
+            subprocess.run(["git", "add", str(UV_LOCK)], check=True)
         subprocess.run(["git", "commit", "-m", f"release: v{new_str}"], check=True)
         subprocess.run(["git", "tag", f"v{new_str}"], check=True)
         print(f"  已创建 git commit 和 tag v{new_str}")

@@ -56,6 +56,9 @@ def _run_bump(tmp_path, args, env=None):
     env["INIT_PY"] = str(init_py)
     env["MAIN_PY"] = str(main_py)
     env["CHANGELOG"] = str(tmp_path / "CHANGELOG.md")
+    # uv.lock 指向临时目录（不存在），避免命中真实仓库的 uv.lock
+    # 导致 git add 一个仓库外文件而失败（uv.lock 同步功能的测试隔离）
+    env["UV_LOCK"] = str(tmp_path / "uv.lock")
 
     return subprocess.run(
         [sys.executable, str(SCRIPT), *args],
@@ -120,6 +123,8 @@ def _run_bump_with_extra_commits(tmp_path, args, commits_to_add):
     env["INIT_PY"] = str(init_py)
     env["MAIN_PY"] = str(main_py)
     env["CHANGELOG"] = str(tmp_path / "CHANGELOG.md")
+    # uv.lock 指向临时目录（不存在），避免命中真实仓库的 uv.lock
+    env["UV_LOCK"] = str(tmp_path / "uv.lock")
 
     return subprocess.run(
         [sys.executable, str(SCRIPT), *args],
@@ -386,6 +391,8 @@ class TestChangelogGeneration:
         env["INIT_PY"] = str(init_py)
         env["MAIN_PY"] = str(main_py)
         env["CHANGELOG"] = str(changelog)
+        # uv.lock 指向临时目录（不存在），避免命中真实仓库的 uv.lock
+        env["UV_LOCK"] = str(tmp_path / "uv.lock")
 
         result = subprocess.run(
             [sys.executable, str(SCRIPT), "minor", "--no-edit", "--no-build"],
