@@ -1,5 +1,6 @@
 """环境管理模块：负责自动部署 Python 运行时（python-build-standalone）和管理项目依赖"""
 
+import logging
 import os
 import subprocess
 import sys
@@ -76,6 +77,8 @@ TORCH_CUDA_MAP = {
     "cu118": "cu118",
     "cu126": "cu126",
 }
+
+logger = logging.getLogger(__name__)
 
 _dep_specs_cache: dict[str, str] | None = None
 
@@ -294,13 +297,14 @@ def download_file_with_progress(
 ) -> bool:
     """下载文件并显示进度"""
     try:
-        print(f"[{description}] 正在下载: {url}")
+        logger.info("[%s] 正在下载: %s", description, url)
         req = Request(url, headers={"User-Agent": "Mozilla/5.0"})
 
         with urlopen(req, timeout=30) as response:
             total_size = int(response.headers.get("content-length", 0))
             downloaded = 0
             chunk_size = 8192
+            last_pct = -1
 
             with open(dest_path, "wb") as f:
                 while True:
@@ -312,16 +316,22 @@ def download_file_with_progress(
 
                     if total_size > 0:
                         progress = int(downloaded / total_size * 100)
-                        print(
-                            f"\r[{description}] 进度: {progress}% ({downloaded // 1024 // 1024}MB / {total_size // 1024 // 1024}MB)",
-                            end="",
-                        )
+                        # 每 10% 记一条日志（避免日志爆炸）
+                        if progress >= last_pct + 10:
+                            last_pct = (progress // 10) * 10
+                            logger.info(
+                                "[%s] 进度: %d%% (%dMB / %dMB)",
+                                description,
+                                progress,
+                                downloaded // 1024 // 1024,
+                                total_size // 1024 // 1024,
+                            )
 
-        print(f"\r[{description}] 下载完成")
+        logger.info("[%s] 下载完成", description)
         return True
 
     except Exception as e:
-        print(f"\r[{description}] 下载失败: {e}")
+        logger.error("[%s] 下载失败: %s", description, e)
         return False
 
 

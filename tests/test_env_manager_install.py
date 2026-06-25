@@ -704,3 +704,39 @@ class TestSwitchPaddleBackend:
             ok, msg = switch_paddle_backend(tmp_path, "tpu")
         assert not ok
         assert "无效" in msg or "tpu" in msg
+
+
+class TestInstallLogging:
+    """安装过程日志应走 logging（写 vibeocr.log）而非 print"""
+
+    def test_download_with_progress_uses_logging(self, tmp_path, caplog):
+        """download_file_with_progress 应通过 logger.info 输出，不依赖 print"""
+        import logging
+
+        from vibeocr.env_manager import download_file_with_progress
+
+        dest = tmp_path / "fake.tar.gz"
+        with (
+            patch("vibeocr.env_manager.urlopen") as mock_urlopen,
+            patch("vibeocr.env_manager.Request"),
+        ):
+            # 构造一个最小 response：content-length=4，body=b"data"
+            fake_resp = MagicMock()
+            fake_resp.headers = {"content-length": "4"}
+            fake_resp.__enter__ = MagicMock(return_value=fake_resp)
+            fake_resp.__exit__ = MagicMock(return_value=False)
+            # read 第一次返回 b"data"，第二次返回空（终止循环）
+            fake_resp.read.side_effect = [b"data", b""]
+            mock_urlopen.return_value = fake_resp
+
+            with caplog.at_level(logging.INFO, logger="vibeocr.env_manager"):
+                ok = download_file_with_progress(
+                    "http://x/y.tar.gz", dest, "Python(镜像)"
+                )
+
+        assert ok
+        # 应有 info 级日志记录下载开始（message 含"正在下载"）
+        info_msgs = [r.message for r in caplog.records if r.levelno == logging.INFO]
+        assert any("正在下载" in m for m in info_msgs), (
+            f"应通过 logger.info 输出下载开始，实际 records: {info_msgs}"
+        )
