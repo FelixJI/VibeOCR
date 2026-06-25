@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.1.5] - 2026-06-25
+
+### Added
+- feat(settings): 应用设置页连接重装 Python/依赖按钮 + 状态刷新
+- feat(ui): 应用设置页新增'环境维护'分组（重装按钮）
+- feat(dialog): BackendChoiceDialog 透传 reinstall_python
+- feat(install): InstallWorker 加 reinstall_python + 进度日志镜像
+- feat(env): 新增 reinstall_embedded_python 强制删除后重装
+
+### Changed
+- chore: lint 清理（安装日志 + 重装入口）
+- refactor(env): 依赖安装/后端切换 report 闭包改用 logging
+- refactor(env): install_embedded_python 改用 logging 落盘日志
+- refactor(env): download_file_with_progress 改用 logging 落盘日志
+- docs(plan): 安装日志接入 logging + 设置页重装入口实施计划
+- docs: 安装日志接入 logging + 设置页重装入口设计
+
 ## [0.1.4] - 2026-06-25
 
 ### Fixed
