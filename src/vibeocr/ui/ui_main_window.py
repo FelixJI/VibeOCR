@@ -359,6 +359,29 @@ class Ui_MainWindowWidget:
 
         self.pageAppLayout.addWidget(self.groupAppSettings)
 
+        self.groupEnvMaintenance = QGroupBox(self.pageAppSettings)
+        self.groupEnvMaintenance.setObjectName("groupEnvMaintenance")
+        self.envMaintenanceLayout = QVBoxLayout(self.groupEnvMaintenance)
+        self.envMaintenanceLayout.setSpacing(8)
+        self.envMaintenanceLayout.setObjectName("envMaintenanceLayout")
+        self.labelEnvStatus = QLabel(self.groupEnvMaintenance)
+        self.labelEnvStatus.setObjectName("labelEnvStatus")
+        self.labelEnvStatus.setWordWrap(True)
+
+        self.envMaintenanceLayout.addWidget(self.labelEnvStatus)
+
+        self.btnReinstallPython = QPushButton(self.groupEnvMaintenance)
+        self.btnReinstallPython.setObjectName("btnReinstallPython")
+
+        self.envMaintenanceLayout.addWidget(self.btnReinstallPython)
+
+        self.btnReinstallDeps = QPushButton(self.groupEnvMaintenance)
+        self.btnReinstallDeps.setObjectName("btnReinstallDeps")
+
+        self.envMaintenanceLayout.addWidget(self.btnReinstallDeps)
+
+        self.pageAppLayout.addWidget(self.groupEnvMaintenance)
+
         self.spacerAppPage = QSpacerItem(
             20, 40, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Expanding
         )
@@ -659,6 +682,47 @@ class Ui_MainWindowWidget:
         self.chkAutoStart.setText(
             QCoreApplication.translate(
                 "MainWindowWidget", "\u5f00\u673a\u81ea\u542f\u52a8", None
+            )
+        )
+        self.groupEnvMaintenance.setTitle(
+            QCoreApplication.translate("MainWindowWidget", "\u73af\u5883\u7ef4\u62a4", None)
+        )
+        self.labelEnvStatus.setText(
+            QCoreApplication.translate(
+                "MainWindowWidget",
+                "Python \u8fd0\u884c\u65f6\uff1a\u68c0\u6d4b\u4e2d...",
+                None,
+            )
+        )
+        # if QT_CONFIG(tooltip)
+        self.btnReinstallPython.setToolTip(
+            QCoreApplication.translate(
+                "MainWindowWidget",
+                "\u5220\u9664 python/ \u76ee\u5f55\u540e\u91cd\u65b0\u4e0b\u8f7d\u5b89\u88c5"
+                " Python \u8fd0\u884c\u65f6\u53ca OCR \u4f9d\u8d56\u3002"
+                "\u4ec5\u5220\u9664 python/\uff0c\u4e0d\u5f71\u54cd\u914d\u7f6e\u3001\u6a21\u578b\u7f13\u5b58\u548c\u65e5\u5fd7\u3002",
+                None,
+            )
+        )
+        # endif // QT_CONFIG(tooltip)
+        self.btnReinstallPython.setText(
+            QCoreApplication.translate(
+                "MainWindowWidget", "\u91cd\u88c5 Python \u8fd0\u884c\u65f6", None
+            )
+        )
+        # if QT_CONFIG(tooltip)
+        self.btnReinstallDeps.setToolTip(
+            QCoreApplication.translate(
+                "MainWindowWidget",
+                "\u4f7f\u7528 pip \u91cd\u65b0\u5b89\u88c5 paddle/torch/mineru \u7b49"
+                " OCR \u4f9d\u8d56\uff0c\u4e0d\u5220\u9664\u4efb\u4f55\u76ee\u5f55\u3002",
+                None,
+            )
+        )
+        # endif // QT_CONFIG(tooltip)
+        self.btnReinstallDeps.setText(
+            QCoreApplication.translate(
+                "MainWindowWidget", "\u91cd\u88c5 OCR \u4f9d\u8d56", None
             )
         )
         self.groupModelDownload.setTitle(
