@@ -1,5 +1,6 @@
 """安装进度对话框"""
 
+import logging
 from pathlib import Path
 
 from PySide6.QtCore import QThread, Signal, Slot
@@ -15,6 +16,8 @@ from PySide6.QtWidgets import (
 from vibeocr import env_manager
 from vibeocr.network_detector import NetworkDetector
 
+logger = logging.getLogger(__name__)
+
 
 class InstallWorker(QThread):
     """安装工作线程"""
@@ -22,16 +25,30 @@ class InstallWorker(QThread):
     progress = Signal(str, str)  # (stage, message)
     finished = Signal(bool, str)  # (success, message)
 
-    def __init__(self, project_root: Path, force_backend: str | None = None) -> None:
+    def __init__(
+        self,
+        project_root: Path,
+        force_backend: str | None = None,
+        reinstall_python: bool = False,
+    ) -> None:
         super().__init__()
         self._project_root = project_root
         self._force_backend = force_backend
+        self._reinstall_python = reinstall_python
+
+    def _emit_progress(self, stage: str, message: str) -> None:
+        """发送进度信号并同步写入 logger（确保 UI 进度落盘到 vibeocr.log）。
+
+        无论是否连接 InstallDialog，进度都落盘，便于无界面场景（如测试/后台）排查。
+        """
+        logger.info("[%s] %s", stage, message)
+        self.progress.emit(stage, message)
 
     def run(self) -> None:
         """执行安装"""
         try:
             # 1. 检测网络环境
-            self.progress.emit("网络检测", "正在检测网络环境...")
+            self._emit_progress("网络检测", "正在检测网络环境...")
             detector = NetworkDetector(self._project_root)
             network_type = detector.network_type
 
@@ -41,40 +58,55 @@ class InstallWorker(QThread):
                 cuda_version = None
                 if has_gpu:
                     # GPU 需要 cuda_version（cu-tag）选 paddle index
-                    self.progress.emit("硬件检测", "正在检测 GPU CUDA 版本...")
+                    self._emit_progress("硬件检测", "正在检测 GPU CUDA 版本...")
                     _detected, cuda_version = env_manager.detect_gpu()
             else:
-                self.progress.emit("硬件检测", "正在检测GPU...")
+                self._emit_progress("硬件检测", "正在检测GPU...")
                 has_gpu, cuda_version = env_manager.detect_gpu()
 
-            # 3. 检查嵌入式Python是否存在
-            python_exe = env_manager.get_embedded_python_executable(self._project_root)
-            if not python_exe.exists():
-                # 需要先安装嵌入式Python
-                self.progress.emit("环境安装", "正在安装嵌入式Python...")
-                success, msg = env_manager.install_embedded_python(
-                    self._project_root, network_type
+            # 3. Python 运行时
+            if self._reinstall_python:
+                # 重装模式：强制删除 python/ 后重下（连带丢失依赖，后续装依赖）
+                self._emit_progress(
+                    "环境安装", "正在重装 Python 运行时（删除 python/ 后重新下载）..."
+                )
+                success, msg = env_manager.reinstall_embedded_python(
+                    self._project_root,
+                    network_type,
+                    progress_callback=self._emit_progress,
                 )
                 if not success:
-                    self.finished.emit(False, f"安装嵌入式Python失败:\n{msg}")
+                    self.finished.emit(False, f"重装 Python 运行时失败:\n{msg}")
                     return
+            else:
+                # 常规模式：检查嵌入式Python是否存在，不存在才装
+                python_exe = env_manager.get_embedded_python_executable(
+                    self._project_root
+                )
+                if not python_exe.exists():
+                    self._emit_progress("环境安装", "正在安装嵌入式Python...")
+                    success, msg = env_manager.install_embedded_python(
+                        self._project_root, network_type
+                    )
+                    if not success:
+                        self.finished.emit(False, f"安装嵌入式Python失败:\n{msg}")
+                        return
 
             # 4. 安装OCR依赖
-            self.progress.emit("依赖安装", "正在安装OCR依赖...")
+            self._emit_progress("依赖安装", "正在安装OCR依赖...")
             success, msg = env_manager.install_embedded_dependencies(
                 self._project_root,
                 network_type,
                 has_gpu,
                 cuda_version,
-                progress_callback=lambda stage, message: self.progress.emit(
-                    stage, message
-                ),
+                progress_callback=self._emit_progress,
                 force_backend=self._force_backend,
             )
 
             self.finished.emit(success, msg)
 
         except Exception as e:
+            logger.error("安装异常: %s", e)
             self.finished.emit(False, f"安装异常: {e}")
 
 
@@ -138,7 +170,7 @@ class InstallDialog(QDialog):
 
     @Slot(str, str)
     def _on_progress(self, stage: str, message: str) -> None:
-        """进度更新"""
+        """进度更新（日志已在 InstallWorker._emit_progress 落盘，此处仅更新 UI）"""
         self._stage_label.setText(f"[{stage}] {message}")
         self._log(f"[{stage}] {message}")
 
