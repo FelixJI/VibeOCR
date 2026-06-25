@@ -1,6 +1,6 @@
 """首启 GPU/CPU 选择对话框测试"""
 
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -55,3 +55,36 @@ def test_install_button_visible_initially(_cleanup, qtbot, tmp_path):
     assert not dlg._install_button.isHidden()
     assert dlg._install_button.isEnabled()
     assert "安装" in dlg._install_button.text()
+
+
+def test_reinstall_python_passed_to_worker(_cleanup, qtbot, tmp_path):
+    """reinstall_python=True 应透传给 InstallWorker"""
+    captured = {}
+
+    class FakeWorker:
+        def __init__(self, project_root, force_backend=None, reinstall_python=False):
+            captured["force_backend"] = force_backend
+            captured["reinstall_python"] = reinstall_python
+
+        progress = MagicMock()
+        finished = MagicMock()
+
+        def start(self):
+            pass
+
+        def isRunning(self):
+            return False
+
+        def wait(self):
+            pass
+
+    with patch.object(bcd_module, "env_manager") as mock_em:
+        mock_em.detect_gpu.return_value = (False, None)  # CPU 模式
+        with patch.object(bcd_module, "InstallWorker", FakeWorker):
+            dlg = bcd_module.BackendChoiceDialog(tmp_path, reinstall_python=True)
+            qtbot.addWidget(dlg)
+            dlg._on_install_clicked()
+
+    assert captured.get("reinstall_python") is True, (
+        "reinstall_python 应透传给 InstallWorker"
+    )

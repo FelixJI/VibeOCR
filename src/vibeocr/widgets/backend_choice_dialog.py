@@ -35,11 +35,17 @@ class BackendChoiceDialog(QDialog):
 
     install_succeeded = Signal()
 
-    def __init__(self, project_root: Path, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        project_root: Path,
+        parent: QWidget | None = None,
+        reinstall_python: bool = False,
+    ) -> None:
         super().__init__(parent)
         self._project_root = project_root
         self._worker: InstallWorker | None = None
         self._has_gpu = False
+        self._reinstall_python = reinstall_python
         self._setup_ui()
         self._detect_and_set_default()
 
@@ -121,7 +127,11 @@ class BackendChoiceDialog(QDialog):
         backend = self.selected_backend()
         self._log(f"选择后端：{backend.upper()}，开始安装...")
 
-        self._worker = InstallWorker(self._project_root, force_backend=backend)
+        self._worker = InstallWorker(
+            self._project_root,
+            force_backend=backend,
+            reinstall_python=self._reinstall_python,
+        )
         self._worker.progress.connect(self._on_progress)
         self._worker.finished.connect(self._on_finished)
         self._worker.start()
