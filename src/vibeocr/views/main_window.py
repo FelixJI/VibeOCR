@@ -412,6 +412,14 @@ class MainWindow(QMainWindow):
             missing_str = ", ".join(missing)
             self._statusbar.showMessage(f"OCR功能未就绪: {missing_str}")
 
+            # 首启场景：Python 运行时未安装意味着用户首次运行，且无任何 OCR
+            # 依赖。此时仅更新状态栏会让用户无所适从（安装入口原本只在用户
+            # 点截图/打开图片时才经 _check_ocr_ready 弹出）。这里主动弹出首启
+            # 安装引导，引导用户先安装 Python 运行时 + OCR 依赖。
+            # 用 singleShot 延迟，避免在依赖检查回调线程上下文直接弹模态对话框。
+            if any("Python 运行时" in m for m in missing):
+                QTimer.singleShot(300, self._start_install)
+
     def _check_pending_sync(self) -> bool:
         """检测并消费"依赖版本待同步"标记（updater 写入的 pending_sync.json）
 

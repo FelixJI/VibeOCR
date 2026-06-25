@@ -13,7 +13,6 @@ import base64
 import html as html_lib
 import json
 import logging
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from PySide6.QtCore import QObject, QUrl, Signal, Slot
@@ -25,10 +24,22 @@ from vibeocr.models.ocr_result import DISCARDED_BLOCK_TYPES
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-_RESOURCES_DIR = Path(__file__).resolve().parent.parent.parent / "resources"
+
+def _get_resources_dir() -> Path:
+    """获取 resources 目录路径（打包态/开发态通用）
+
+    打包态 resources 在 exe 同级（PyInstaller --add-data 打入 _internal
+    或 exe 同级）；开发态在仓库根。统一走 env_manager.get_project_root()
+    定位根目录，避免硬编码层级在 PYZ 虚拟路径下算错。
+    采用函数惰性求值，避免模块导入时触发 env_manager 的循环导入。
+    """
+    from vibeocr.env_manager import get_project_root
+
+    return get_project_root() / "resources"
 
 # 块类型 → CSS 左边框颜色
 BLOCK_BORDER_COLORS: dict[str, str] = {
@@ -563,9 +574,10 @@ class ResultViewWidget(QWidget):
             else:
                 body = '<p style="color:#888;">未识别到文字</p>'
 
-        katex_dir = _RESOURCES_DIR / "katex"
+        resources_dir = _get_resources_dir()
+        katex_dir = resources_dir / "katex"
         full_html = _build_full_html(body, katex_dir)
-        base_url = QUrl.fromLocalFile(str(_RESOURCES_DIR) + "/")
+        base_url = QUrl.fromLocalFile(str(resources_dir) + "/")
         self._ensure_web_view().setHtml(full_html, base_url)
 
     def update_block_text(self, index: int, text: str) -> None:

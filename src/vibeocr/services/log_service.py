@@ -99,7 +99,11 @@ def setup_logging() -> QtLogHandler:
     root_logger.addHandler(console_handler)
 
     # 文件 handler：DEBUG 及以上（全量记录，便于排查）
-    log_dir = Path(__file__).resolve().parent.parent.parent.parent / "logs"
+    # 日志目录跟随 project_root（打包态在 exe 同级，开发态在仓库根），
+    # 与 env_manager.get_project_root 保持一致，避免硬编码层级偏差。
+    from vibeocr.env_manager import get_project_root
+
+    log_dir = get_project_root() / "logs"
     log_dir.mkdir(exist_ok=True)
     _cleanup_old_logs(log_dir)
 

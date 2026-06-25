@@ -115,15 +115,14 @@ def is_macos() -> bool:
 def get_project_root() -> Path:
     """获取项目根目录
 
-    判断条件与 env_manager.get_project_root 一致：向上查找含 src/vibeocr 的目录。
-    统一条件避免两份实现在非标准布局下返回不同结果。
+    委托 env_manager.get_project_root()，保持单一实现源（SSOT）。
+    判断逻辑：打包态锚定 exe 所在目录；开发态向上查找含 src/vibeocr 的目录。
+    统一调用避免两份实现在非标准布局下返回不同结果。
     """
-    current = Path(__file__).resolve()
-    while current.parent != current:
-        if (current / "src" / "vibeocr").exists():
-            return current
-        current = current.parent
-    return Path(__file__).parent.parent.parent.parent
+    # 延迟导入打破循环依赖（env_manager 反向依赖本模块的常量）
+    from vibeocr.env_manager import get_project_root as _get_root
+
+    return _get_root()
 
 
 def get_config_dir() -> Path:

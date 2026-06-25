@@ -138,10 +138,32 @@ class OCRWorkerProcess:
         return self._ready and self.is_running
 
     def _get_python_executable(self) -> str:
-        """获取 Python 可执行文件路径"""
-        # 优先使用当前 Python 解释器
+        """获取 Worker 子进程的解释器路径
+
+        打包态 VibeOCR.exe 是 PyInstaller frozen exe，其 bootloader 会忽略
+        ``-m`` 参数而无条件执行打包入口 main.py。若用 VibeOCR.exe 跑
+        ``-m vibeocr.workers.ocr_worker``，子进程会变成完整 GUI 并再次
+        spawn Worker，形成进程递归爆炸（界面卡死）。
+
+        故打包态必须用嵌入式 Python（便携 python/python.exe）跑 Worker——
+        这正是「重依赖由嵌入式 Python 独立安装」架构的本意。开发态仍用
+        当前解释器 sys.executable。
+
+        Returns:
+            解释器可执行文件路径
+        """
         import sys
 
+        if getattr(sys, "frozen", False):
+            from vibeocr import env_manager
+
+            project_root = env_manager.get_project_root()
+            python_exe = env_manager.get_embedded_python_executable(project_root)
+            if python_exe.exists():
+                return str(python_exe)
+            # 兜底：嵌入式 Python 不存在时回退 sys.executable。
+            # 此时 Worker 会因 import paddle/torch 失败而退出（不会递归成
+            # GUI，因为那是 frozen exe 的行为），依赖检测/安装引导会介入。
         return sys.executable
 
     def _parse_and_forward_log(self, text: str) -> None:

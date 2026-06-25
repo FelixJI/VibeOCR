@@ -64,6 +64,112 @@ EXCLUDED_PACKAGES = [
     "triton",
 ]
 
+# PySide6 中本项目完全未使用的子模块。
+#
+# 代码实际只用：QtCore / QtGui / QtWidgets / QtSvg / QtPdf /
+# QtWebChannel / QtWebEngineCore / QtWebEngineWidgets，以及 WebEngine 的
+# 依赖 QtNetwork / QtOpenGL / QtPrintSupport / QtPositioning。
+# 下方所有模块确认无引用，排除后不触发 import 即不打入 .pyd/.dll。
+# 注意：--exclude-module 只阻止 Python 侧 import 收集，对应 Qt6*.dll 仍会被
+# PyInstaller 二进制依赖扫描带入，需配合 CLEANUP_QT_BINARIES 删除。
+EXCLUDED_QT_MODULES = [
+    "PySide6.Qt3DAnimation",
+    "PySide6.Qt3DCore",
+    "PySide6.Qt3DExtras",
+    "PySide6.Qt3DInput",
+    "PySide6.Qt3DLogic",
+    "PySide6.Qt3DRender",
+    "PySide6.QtCharts",
+    "PySide6.QtDataVisualization",
+    "PySide6.QtGraphs",
+    "PySide6.QtLocation",
+    "PySide6.QtMultimedia",
+    "PySide6.QtMultimediaWidgets",
+    "PySide6.QtNfc",
+    "PySide6.QtQuick",
+    "PySide6.QtQuick3D",
+    "PySide6.QtQuickControls2",
+    "PySide6.QtQuickWidgets",
+    "PySide6.QtRemoteObjects",
+    "PySide6.QtScxml",
+    "PySide6.QtSensors",
+    "PySide6.QtSerialBus",
+    "PySide6.QtSerialPort",
+    "PySide6.QtSpatialAudio",
+    "PySide6.QtSql",
+    "PySide6.QtTest",
+    "PySide6.QtTextToSpeech",
+    "PySide6.QtVirtualKeyboard",
+    "PySide6.QtWebSockets",
+    "PySide6.QtXml",
+]
+
+# 打包后需删除的无用 Qt 二进制（PyInstaller 的二进制依赖扫描无法识别这些
+# 是未使用模块的附属 DLL，会全量收入）。
+# - Qt6*3D*/Qt6Quick*/Qt6Qml*/Qt6Charts/Qt6Graphs 等：QML/3D/图表全家桶，
+#   本项目是纯 QWidgets，不使用
+# - opengl32sw.dll：软件渲染兜底，目标机器有 GPU 时用不到
+# - Qt6VirtualKeyboard/Qt6Test/Qt6Scxml/Qt6TextToSpeech/Qt6SerialPort 等：
+#   对应排除的子模块
+# - PySide6/translations：Qt 全语种翻译（~53MB），仅保留 qtbase 中文
+# - PySide6/resources：WebEngine Chromium 资源中与 QML/示例无关的冗余
+#   （谨慎处理：resources 含 WebEngine 必需的 icudtl，不能整体删）
+CLEANUP_QT_BINARIES = [
+    "Qt63DAnimation.dll",
+    "Qt63DCore.dll",
+    "Qt63DExtras.dll",
+    "Qt63DInput.dll",
+    "Qt63DLogic.dll",
+    "Qt63DRender.dll",
+    "Qt6Charts.dll",
+    "Qt6ChartsQml.dll",
+    "Qt6DataVisualization.dll",
+    "Qt6DataVisualizationQml.dll",
+    "Qt6Graphs.dll",
+    "Qt6Location.dll",
+    "Qt6Multimedia.dll",
+    "Qt6MultimediaQuick.dll",
+    "Qt6PdfQuick.dll",
+    "Qt6PositioningQuick.dll",
+    "Qt6Qml.dll",
+    "Qt6QmlCore.dll",
+    "Qt6QmlLocalStorage.dll",
+    "Qt6QmlMeta.dll",
+    "Qt6QmlModels.dll",
+    "Qt6QmlNetwork.dll",
+    "Qt6QmlWorkerScript.dll",
+    "Qt6QmlXmlListModel.dll",
+    "Qt6Quick.dll",
+    "Qt6Quick3D.dll",
+    "Qt6QuickControls2.dll",
+    "Qt6QuickControls2Basic.dll",
+    "Qt6QuickControls2Fusion.dll",
+    "Qt6QuickControls2Imagine.dll",
+    "Qt6QuickControls2Material.dll",
+    "Qt6QuickControls2Universal.dll",
+    "Qt6QuickDialogs2.dll",
+    "Qt6QuickEffects.dll",
+    "Qt6QuickLayouts.dll",
+    "Qt6QuickParticles.dll",
+    "Qt6QuickShapes.dll",
+    "Qt6QuickTemplates2.dll",
+    "Qt6QuickTest.dll",
+    "Qt6QuickTimeline.dll",
+    "Qt6QuickWidgets.dll",
+    "Qt6RemoteObjects.dll",
+    "Qt6Scxml.dll",
+    "Qt6Sensors.dll",
+    "Qt6SerialPort.dll",
+    "Qt6ShaderTools.dll",
+    "Qt6SpatialAudio.dll",
+    "Qt6Test.dll",
+    "Qt6TextToSpeech.dll",
+    "Qt6VirtualKeyboard.dll",
+    "Qt6WebSockets.dll",
+    "Qt6WebView.dll",
+    "opengl32sw.dll",
+]
+
 # 需要打包进 exe 的数据文件 (源目录, 目标目录)
 PACKAGE_DATA = [
     ("config", "config"),
@@ -435,16 +541,59 @@ def _build_updater(dist_dir: Path) -> bool:
         return False
 
 
+def _cleanup_dist(dist_dir: Path) -> None:
+    """打包后清理无用 Qt 二进制，削减体积
+
+    PyInstaller 的 --exclude-module 只阻止 Python 侧 import 收集，但 Qt 的
+    Qt6*.dll 是被二进制依赖扫描带进来的（PyInstaller 无法判断某个 DLL
+    属于哪个 Qt 模块），所以排除模块后这些 DLL 仍残留在 _internal。
+    这里在打包完成后、打 zip 前显式删除它们。
+
+    删除范围见 CLEANUP_QT_BINARIES（仅删确认无用的 QML/3D/图表/传感器等），
+    WebEngine 必需的 Qt6WebEngineCore/Qt6Core/Qt6Gui/Qt6Widgets 等全部保留。
+    同时精简 PySide6/translations（仅保留 qtbase 中文翻译）。
+
+    Args:
+        dist_dir: VibeOCR 应用目录（含 _internal）
+    """
+    pyside6_dir = dist_dir / "_internal" / "PySide6"
+    deleted = 0
+    freed_bytes = 0
+
+    for name in CLEANUP_QT_BINARIES:
+        target = pyside6_dir / name
+        if target.exists():
+            freed_bytes += target.stat().st_size
+            target.unlink()
+            deleted += 1
+
+    # 精简 translations：删除除 qtbase_zh_CN.qm 外的所有 .qm（~53MB → ~几十 KB）
+    trans_dir = pyside6_dir / "translations"
+    if trans_dir.is_dir():
+        for qm in trans_dir.glob("*.qm"):
+            if qm.name != "qtbase_zh_CN.qm":
+                freed_bytes += qm.stat().st_size
+                qm.unlink()
+                deleted += 1
+
+    freed_mb = freed_bytes / (1024 * 1024)
+    print(f"  清理无用 Qt 文件: 删除 {deleted} 个，释放 {freed_mb:.1f} MB")
+
+
 def _package_zip(dist_dir: Path, version: str) -> Path | None:
     """将 dist_dir 打包为 zip 并计算 SHA256"""
     zip_name = f"VibeOCR-v{version}-win64"
     zip_path = DIST_BASE_DIR / f"{zip_name}.zip"
 
+    # 解压后顶层文件夹命名为 VibeOCR（而非版本号目录），方便用户手动拖出。
+    # zip 文件名本身保留版本号，便于分发与归档。
+    top_folder = "VibeOCR"
+
     print(f"打包 {zip_path}...")
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
         for file_path in dist_dir.rglob("*"):
             if file_path.is_file():
-                arcname = f"{zip_name}/{file_path.relative_to(dist_dir)}"
+                arcname = f"{top_folder}/{file_path.relative_to(dist_dir)}"
                 zf.write(file_path, arcname)
 
     sha256 = hashlib.sha256(zip_path.read_bytes()).hexdigest()
@@ -513,6 +662,9 @@ def _get_pyinstaller_cmd(version: str) -> list[str]:
     for pkg in EXCLUDED_PACKAGES:
         cmd.extend(["--exclude-module", pkg])
 
+    for qt_mod in EXCLUDED_QT_MODULES:
+        cmd.extend(["--exclude-module", qt_mod])
+
     cmd.extend(["--collect-submodules", "vibeocr"])
 
     for mod in HIDDEN_IMPORTS:
@@ -542,7 +694,7 @@ def _run_build(version: str) -> bool:
 
     # 1. 打包主程序
     cmd = _get_pyinstaller_cmd(version)
-    print(f"\n[1/4] 打包主程序 VibeOCR v{version}...")
+    print(f"\n[1/5] 打包主程序 VibeOCR v{version}...")
     try:
         subprocess.run(cmd, check=True)
     except subprocess.CalledProcessError as e:
@@ -550,16 +702,20 @@ def _run_build(version: str) -> bool:
         return False
 
     # 2. 打包 updater.exe
-    print("\n[2/4] 打包 updater.exe...")
+    print("\n[2/5] 打包 updater.exe...")
     if not _build_updater(dist_path):
         return False
 
-    # 3. 生成 version.json
-    print("\n[3/4] 生成 version.json...")
+    # 3. 清理无用 Qt 二进制（削减 ~230MB 体积）
+    print("\n[3/5] 清理无用 Qt 模块...")
+    _cleanup_dist(dist_path)
+
+    # 4. 生成 version.json
+    print("\n[4/5] 生成 version.json...")
     _generate_version_json(version, dist_path)
 
-    # 4. 打 zip + SHA256
-    print("\n[4/4] 打包 zip...")
+    # 5. 打 zip + SHA256
+    print("\n[5/5] 打包 zip...")
     zip_path = _package_zip(dist_path, version)
     if zip_path is None:
         return False

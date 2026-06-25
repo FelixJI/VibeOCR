@@ -2,6 +2,7 @@
 
 import os
 import subprocess
+import sys
 import tarfile
 import tempfile
 from collections.abc import Callable
@@ -1112,14 +1113,27 @@ def switch_paddle_backend(
 
 
 def get_project_root() -> Path:
-    """获取项目根目录"""
-    # 从当前文件向上查找项目根目录（包含src目录）
+    """获取项目根目录
+
+    打包态（PyInstaller --onedir）直接锚定 exe 所在目录：
+    python/、config/、resources/、logs/ 等运行时目录都位于 exe 同级，
+    不依赖目录树向上查找（打包产物里没有 src/vibeocr 目录）。
+
+    开发态向上查找含 ``src/vibeocr`` 的目录（即仓库根）。
+
+    Returns:
+        项目根目录路径
+    """
+    if getattr(sys, "frozen", False):
+        # 打包态：exe 所在目录 = 应用根（onedir 布局）
+        return Path(sys.executable).resolve().parent
+    # 开发态：从当前文件向上查找含 src/vibeocr 的目录
     current = Path(__file__).resolve()
     while current.parent != current:
         if (current / "src" / "vibeocr").exists():
             return current
         current = current.parent
-    # 默认返回main.py的父目录的父目录
+    # 默认返回 main.py 的父目录的父目录
     return Path(__file__).parent.parent.parent
 
 
