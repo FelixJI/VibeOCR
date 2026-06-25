@@ -106,14 +106,21 @@ EXCLUDED_QT_MODULES = [
 
 # 打包后需删除的无用 Qt 二进制（PyInstaller 的二进制依赖扫描无法识别这些
 # 是未使用模块的附属 DLL，会全量收入）。
-# - Qt6*3D*/Qt6Quick*/Qt6Qml*/Qt6Charts/Qt6Graphs 等：QML/3D/图表全家桶，
-#   本项目是纯 QWidgets，不使用
+#
+# ⚠ 依赖保留清单：QtWebChannel / QtWebEngine 在 C++ 层依赖 Qml + Quick 核心，
+#    故以下必须保留，不可删除：
+#      Qt6Qml / Qt6QmlCore / Qt6QmlMeta / Qt6QmlModels / Qt6QmlNetwork
+#      Qt6Quick / Qt6QuickWidgets
+#    （QtWebChannel.dll→Qt6Qml.dll；Qt6WebEngineCore.dll→Qt6Qml/Qt6Quick.dll；
+#     Qt6WebEngineWidgets.dll→Qt6QuickWidgets.dll。误删会导致
+#     "DLL load failed while importing QtWebChannel"。）
+# 可删除的是 Quick 的扩展控件（Controls2/Shapes/Layouts/Dialogs 等）与
+# 3D/图表/传感器等独立模块——它们不被 WebChannel/WebEngine 依赖。
+#
 # - opengl32sw.dll：软件渲染兜底，目标机器有 GPU 时用不到
 # - Qt6VirtualKeyboard/Qt6Test/Qt6Scxml/Qt6TextToSpeech/Qt6SerialPort 等：
 #   对应排除的子模块
 # - PySide6/translations：Qt 全语种翻译（~53MB），仅保留 qtbase 中文
-# - PySide6/resources：WebEngine Chromium 资源中与 QML/示例无关的冗余
-#   （谨慎处理：resources 含 WebEngine 必需的 icudtl，不能整体删）
 CLEANUP_QT_BINARIES = [
     "Qt63DAnimation.dll",
     "Qt63DCore.dll",
@@ -131,15 +138,10 @@ CLEANUP_QT_BINARIES = [
     "Qt6MultimediaQuick.dll",
     "Qt6PdfQuick.dll",
     "Qt6PositioningQuick.dll",
-    "Qt6Qml.dll",
-    "Qt6QmlCore.dll",
-    "Qt6QmlLocalStorage.dll",
-    "Qt6QmlMeta.dll",
-    "Qt6QmlModels.dll",
-    "Qt6QmlNetwork.dll",
-    "Qt6QmlWorkerScript.dll",
-    "Qt6QmlXmlListModel.dll",
-    "Qt6Quick.dll",
+    # 注意：Qt6Qml*/Qt6Quick/Qt6QuickWidgets 不可删（WebChannel/WebEngine 依赖）。
+    # Qml 核心模块之间有交叉依赖（如 Qt6QmlMeta→Qt6QmlWorkerScript），
+    # 整组 Qt6Qml* 必须全保留；Qt6Qml 系列总共仅十几 MB，不值得冒险逐个删。
+    # Qt6Quick.dll / Qt6QuickWidgets.dll 同样是 WebEngine 的 C++ 依赖。
     "Qt6Quick3D.dll",
     "Qt6QuickControls2.dll",
     "Qt6QuickControls2Basic.dll",
@@ -155,7 +157,7 @@ CLEANUP_QT_BINARIES = [
     "Qt6QuickTemplates2.dll",
     "Qt6QuickTest.dll",
     "Qt6QuickTimeline.dll",
-    "Qt6QuickWidgets.dll",
+    # Qt6QuickWidgets.dll 保留（WebEngineWidgets 依赖）
     "Qt6RemoteObjects.dll",
     "Qt6Scxml.dll",
     "Qt6Sensors.dll",
