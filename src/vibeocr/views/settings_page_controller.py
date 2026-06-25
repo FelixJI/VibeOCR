@@ -23,6 +23,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from vibeocr.env_manager import get_embedded_python_info, get_environment_mode
+from vibeocr.machine_cache import is_cache_valid
+from vibeocr.widgets.backend_choice_dialog import BackendChoiceDialog
+
 if TYPE_CHECKING:
     from vibeocr.services.ocr_service import OCRPipeline
 
@@ -95,6 +99,17 @@ class SettingsPageController:
             btn_release_all.clicked.connect(self._on_release_all_clicked)
 
         self._restore_pipeline_ttl_state()
+
+        # --- 环境维护：重装 Python 运行时 / 重装 OCR 依赖 ---
+        btn_reinstall_python = self._ui.findChild(QPushButton, "btnReinstallPython")
+        if btn_reinstall_python:
+            btn_reinstall_python.clicked.connect(self._on_reinstall_python)
+
+        btn_reinstall_deps = self._ui.findChild(QPushButton, "btnReinstallDeps")
+        if btn_reinstall_deps:
+            btn_reinstall_deps.clicked.connect(self._on_reinstall_deps)
+
+        self._refresh_env_maintenance_state()
 
         self._init_screenshot_options(nav_list, stacked)
         self._init_pdf_options(nav_list, stacked)
@@ -534,6 +549,68 @@ class SettingsPageController:
         refresh_cache(self._project_root)
         self._update_cache_status("缓存已刷新")
         logger.debug("[缓存] 已刷新（依赖缓存 + 模型缓存）")
+
+    def _on_reinstall_python(self) -> None:
+        """重装 Python 运行时按钮：确认后弹 BackendChoiceDialog(reinstall_python=True)"""
+        reply = QMessageBox.question(
+            None,
+            "确认重装 Python 运行时",
+            "将删除 python/ 目录（含所有 OCR 依赖）后重新下载安装 Python 运行时。\n\n"
+            "删除范围：仅 python/ 目录。\n"
+            "不受影响：用户配置、模型缓存、日志、机器检测缓存。\n\n"
+            "是否继续？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        dialog = BackendChoiceDialog(self._project_root, reinstall_python=True)
+        dialog.finished.connect(lambda _r: self._refresh_env_maintenance_state())
+        dialog.exec()
+
+    def _on_reinstall_deps(self) -> None:
+        """重装 OCR 依赖按钮：确认后弹 BackendChoiceDialog(reinstall_python=False)"""
+        reply = QMessageBox.question(
+            None,
+            "确认重装 OCR 依赖",
+            "将使用 pip 重新安装 OCR 依赖（paddle/torch/mineru）。\n\n"
+            "此操作不删除任何文件，仅重装 pip 包。\n\n"
+            "是否继续？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        dialog = BackendChoiceDialog(self._project_root, reinstall_python=False)
+        dialog.finished.connect(lambda _r: self._refresh_env_maintenance_state())
+        dialog.exec()
+
+    def _refresh_env_maintenance_state(self) -> None:
+        """刷新环境维护区状态：显示 Python 路径/就绪，非 portable 模式禁用按钮"""
+        label = self._ui.findChild(QLabel, "labelEnvStatus")
+        btn_py = self._ui.findChild(QPushButton, "btnReinstallPython")
+        btn_deps = self._ui.findChild(QPushButton, "btnReinstallDeps")
+
+        mode = get_environment_mode(self._project_root)
+        info = get_embedded_python_info(self._project_root)
+
+        if label:
+            if mode == "portable":
+                status = "已安装" if info.get("ready") else "未安装"
+                label.setText(f"Python 运行时：{status}\n路径：{info.get('path', '未知')}")
+            elif mode == "venv":
+                label.setText("开发模式（.venv），请用 uv sync 管理环境")
+            else:
+                label.setText("Python 运行时：未安装")
+
+        # 仅 portable 模式启用重装按钮（开发态 .venv 由 uv 管理）
+        enabled = mode == "portable"
+        if btn_py:
+            btn_py.setEnabled(enabled)
+        if btn_deps:
+            btn_deps.setEnabled(enabled)
 
     def _on_clear_cache_clicked(self) -> None:
         """清除缓存按钮点击"""
