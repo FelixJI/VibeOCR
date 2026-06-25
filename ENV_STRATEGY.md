@@ -118,7 +118,7 @@ nvidia 包**。旧文档里的 `cublas64_13.dll` / `nvidia-cublas==13.0.2.14` �
 
 ### GPU/CPU 后端切换
 
-- `install_embedded_dependencies` / `install_dependencies` 有 `force_backend` 参数
+- `install_embedded_dependencies` 有 `force_backend` 参数
   （`"gpu"`/`"cpu"`/`None`），用于首启让用户选择或设置页切换。
 - `switch_paddle_backend(project_root, target)`：卸载当前 paddle（两包名都卸防冲突）
   → 安装目标后端 → 写 `pending_backend` 到缓存。CUDA 运行时由 torch wheel 的
@@ -157,7 +157,7 @@ nvidia 包**。旧文档里的 `cublas64_13.dll` / `nvidia-cublas==13.0.2.14` �
                     ↓
           env_manager._load_dep_specs()  (读 pyproject,读不到则 raise)
                     ↓
-          install_dependencies / install_embedded_dependencies
+          install_embedded_dependencies
 
 打包环境:  bump_version.py 从 pyproject 生成 version.json
                     ↓ (dep_versions 键名归一为纯包名,与 OCR_CHECK_MODULES 一致)

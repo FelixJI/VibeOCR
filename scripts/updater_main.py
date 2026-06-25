@@ -21,6 +21,7 @@ import shutil
 import subprocess
 import sys
 import zipfile
+from datetime import datetime
 from pathlib import Path
 
 # 更新时保留的目录
@@ -161,8 +162,7 @@ def replace_app_files(new_files_dir: Path, app_dir: Path) -> bool:
     if new_version_json.exists():
         try:
             new_data = json.loads(new_version_json.read_text(encoding="utf-8"))
-            new_deps = new_data.get("dep_versions", {})
-            _sync_dependencies(old_deps, new_deps, app_dir)
+            _sync_dependencies(old_deps, new_data, app_dir)
         except Exception as e:
             print(f"[updater] 警告: 检查依赖版本失败: {e}")
 
@@ -200,37 +200,44 @@ def _restore_backup(
     shutil.rmtree(backup_dir, ignore_errors=True)
 
 
-def _sync_dependencies(old_deps: dict, new_deps: dict, app_dir: Path) -> None:
-    changed = {}
-    for pkg, version in new_deps.items():
-        if old_deps.get(pkg) != version:
-            changed[pkg] = version
+def _sync_dependencies(old_deps: dict, new_data: dict, app_dir: Path) -> None:
+    """检查 AI 依赖版本变化并写入"待同步"标记。
+
+    updater 不能 import vibeocr（python/ 里没装 vibeocr，updater 是独立 --onefile
+    打包），因此不在 updater 里直接 pip 安装。改为：若 dep_versions 有变化，把变更项
+    写入 data/settings/pending_sync.json，由覆盖后的新版 VibeOCR 启动时用
+    env_manager.install_embedded_dependencies（含 GPU/CUDA tag/镜像/PyPI 回退的完整
+    逻辑）执行升级。这样避免 updater 用裸 pip 走 PyPI 把 paddle/torch 装成 CPU 版。
+    """
+    new_deps = new_data.get("dep_versions", {})
+    changed = {
+        pkg: version for pkg, version in new_deps.items()
+        if old_deps.get(pkg) != version
+    }
 
     if not changed:
         print("[updater] AI 依赖版本无变化")
         return
 
     print(f"[updater] 检测到依赖变化: {changed}")
-    print("[updater] 开始更新 AI 依赖...")
+    print("[updater] 写入待同步标记，将由新版 VibeOCR 启动时升级...")
 
-    python_exe = app_dir / "python" / "python.exe"
-    if not python_exe.exists():
-        print("[updater] 警告: 未找到 Python 运行时，跳过依赖更新")
-        return
+    settings_dir = app_dir / "data" / "settings"
+    settings_dir.mkdir(parents=True, exist_ok=True)
+    pending_path = settings_dir / "pending_sync.json"
 
-    for pkg, version in changed.items():
-        print(f"[updater] 更新 {pkg} → {version}")
-        try:
-            subprocess.run(
-                [str(python_exe), "-m", "pip", "install", "--upgrade", f"{pkg}=={version}"],
-                check=True,
-                timeout=600,
-                creationflags=0x8 if os.name == "nt" else 0,
-            )
-        except subprocess.CalledProcessError as e:
-            print(f"[updater] 警告: 更新 {pkg} 失败: {e}")
-        except subprocess.TimeoutExpired:
-            print(f"[updater] 警告: 更新 {pkg} 超时")
+    pending = {
+        "version": new_data.get("version", ""),
+        "dep_versions": changed,
+        "written_at": datetime.now().isoformat(),
+    }
+    try:
+        pending_path.write_text(
+            json.dumps(pending, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        print(f"[updater] 已写入待同步标记: {pending_path}")
+    except Exception as e:
+        print(f"[updater] 警告: 写入待同步标记失败（依赖将不会自动升级）: {e}")
 
 
 def cleanup(zip_path: Path, tmp_dir: Path | None) -> None:

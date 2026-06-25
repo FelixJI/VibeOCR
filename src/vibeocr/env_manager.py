@@ -2,7 +2,6 @@
 
 import os
 import subprocess
-import sys
 import tarfile
 import tempfile
 from collections.abc import Callable
@@ -20,7 +19,6 @@ from vibeocr.services.env_config import (
     PYTHON_BUILD_STANDALONE_BASE,
     PYTHON_BUILD_STANDALONE_MIRRORS,
     PYTHON_BUILD_STANDALONE_TAG,
-    PYTHON_VERSION_SHORT,
     get_pytorch_mirror,
 )
 
@@ -673,12 +671,11 @@ def _install_paddle_stack(
     use_gpu: bool,
     cuda_version: str | None,
     report_fn: Callable[[str, str], None],
-    extra_requirements: list[tuple[str, str, str]],
     success_msg: str,
 ) -> tuple[bool, str]:
     """安装 PaddlePaddle + PaddleOCR + MinerU (+可选 torch) 依赖栈
 
-    install_dependencies 与 install_embedded_dependencies 的共享实现，
+    install_embedded_dependencies 与 switch_paddle_backend 的共享实现，
     消除 pip 升级、GPU/CPU 分支、torch index 计算、PyPI 回退等重复逻辑。
 
     Args:
@@ -689,7 +686,6 @@ def _install_paddle_stack(
         use_gpu: 是否安装 GPU 版本
         cuda_version: CUDA 版本字符串
         report_fn: 日志回调 (stage, msg)
-        extra_requirements: 前置额外包 [(name, spec, index), ...]（如 PySide6/Pillow）
         success_msg: 全部成功时的返回消息
 
     Returns:
@@ -733,12 +729,11 @@ def _install_paddle_stack(
                 f"pip升级警告: {result.stderr[-100:] if result.stderr else ''}",
             )
 
-        requirements = list(extra_requirements)
-        requirements.extend([
+        requirements = [
             (paddle_name, paddle_package, paddle_index),
             ("PaddleOCR", f'"{specs["paddleocr"]}"', pip_source),
             ("MinerU", f'"{specs["mineru"]}"', pip_source),
-        ])
+        ]
 
         # GPU 环境下安装 torch+CUDA 覆盖 mineru 附带的 CPU 版本
         if use_gpu:
@@ -851,7 +846,6 @@ def install_embedded_dependencies(
     report("依赖安装", f"pip源: {pip_source}")
 
     specs = _load_dep_specs()
-    # 嵌入式模式不装 PySide6/Pillow，extra_requirements 为空
     return _install_paddle_stack(
         python_exe=python_exe,
         specs=specs,
@@ -860,7 +854,6 @@ def install_embedded_dependencies(
         use_gpu=use_gpu,
         cuda_version=cuda_version,
         report_fn=report,
-        extra_requirements=[],
         success_msg="OCR依赖安装成功",
     )
 
@@ -1092,225 +1085,6 @@ def switch_paddle_backend(
         return False, "后端切换超时"
     except Exception as e:
         return False, f"后端切换异常: {e}"
-
-
-def install_dependencies(
-    project_root: Path,
-    network_type: Literal["domestic", "international"] = "domestic",
-    use_gpu: bool = False,
-    cuda_version: str | None = None,
-    force_backend: str | None = None,
-) -> tuple[bool, str]:
-    """
-    安装项目依赖到 Python 运行时
-
-    Args:
-        project_root: 项目根目录
-        network_type: 网络类型
-        use_gpu: 是否安装 GPU 版本（优先），False 则安装 CPU 版
-        cuda_version: CUDA 版本 cu-tag（如 "cu126"），用于选择对应的 GPU 包
-        force_backend: 强制后端 "gpu" / "cpu" / None。指定时覆盖 use_gpu/cuda_version。
-
-    Returns:
-        (是否成功, 消息)
-    """
-    python_exe = get_embedded_python_executable(project_root)
-
-    if not python_exe.exists():
-        return False, "Python 运行时未安装"
-
-    # force_backend 覆盖自动检测结果
-    if force_backend == "gpu":
-        use_gpu = True
-        if not cuda_version:
-            _has_gpu, cuda_version = detect_gpu()
-    elif force_backend == "cpu":
-        use_gpu = False
-        cuda_version = None
-
-    pip_source = get_pip_source(network_type)
-
-    print("\n" + "=" * 50)
-    print("[依赖安装] 安装项目依赖")
-    print("=" * 50)
-    print(f"[依赖安装] pip源: {pip_source}")
-
-    specs = _load_dep_specs()
-
-    def report(stage: str, msg: str):
-        print(f"[{stage}] {msg}")
-
-    # 完整安装含生产依赖 PySide6/Pillow
-    extra_requirements = [
-        ("PySide6", specs["pyside6"], pip_source),
-        ("Pillow", specs["pillow"], pip_source),
-    ]
-    return _install_paddle_stack(
-        python_exe=python_exe,
-        specs=specs,
-        pip_source=pip_source,
-        network_type=network_type,
-        use_gpu=use_gpu,
-        cuda_version=cuda_version,
-        report_fn=report,
-        extra_requirements=extra_requirements,
-        success_msg="依赖安装成功",
-    )
-
-
-def setup_environment(project_root: Path) -> tuple[bool, str]:
-    """
-    完整的环境设置流程
-
-    支持两种模式:
-    1. 虚拟环境模式 (.venv): 开发调试使用,需要预先创建
-    2. 便携式模式 (python/): 便携部署使用,自动下载安装
-
-    Args:
-        project_root: 项目根目录
-
-    Returns:
-        (是否成功, 消息)
-    """
-    print("\n" + "=" * 60)
-    print("VibeOCR - 首次运行，正在配置环境")
-    print("=" * 60)
-
-    mode = get_environment_mode(project_root)
-    if mode == "venv":
-        print("[环境设置] 检测到虚拟环境模式")
-        print("\n这将自动完成以下步骤:")
-        print("1. 检测GPU并选择合适的PaddlePaddle版本")
-        print("2. 安装所有项目依赖到虚拟环境")
-    else:
-        print("[环境设置] 使用便携式部署模式")
-        print("\n这将自动完成以下步骤:")
-        print(f"1. 下载并安装 Python {PYTHON_VERSION_SHORT}（python-build-standalone）")
-        print("2. 检测GPU并选择合适的PaddlePaddle版本")
-        print("3. 安装所有项目依赖")
-
-    print("\n整个过程可能需要几分钟，请耐心等待...")
-
-    # 1. 检测网络环境
-    network_type = detect_network_source()
-
-    # 2. 安装/检查 Python 运行时
-    success, msg = install_embedded_python(project_root, network_type)
-    if not success:
-        return False, f"安装 Python 运行时失败:\n{msg}"
-
-    # 3. 检测GPU和CUDA版本
-    has_gpu, cuda_version = detect_gpu()
-
-    # 4. 安装依赖
-    success, msg = install_dependencies(
-        project_root, network_type, has_gpu, cuda_version
-    )
-    if not success:
-        return False, f"安装依赖失败:\n{msg}"
-
-    return True, "环境配置完成！"
-
-
-def ensure_environment(
-    project_root: Path, ask_user: bool = False
-) -> tuple[bool, str, bool]:
-    """
-    确保环境就绪 - 统一的环境检查和安装入口
-
-    这个函数封装了所有环境相关的逻辑:
-    1. 检测当前运行环境
-    2. 检查依赖是否完整
-    3. 如需安装,自动检测网络/GPU并安装
-
-    Args:
-        project_root: 项目根目录
-        ask_user: 是否需要用户确认(GUI场景)
-
-    Returns:
-        (是否就绪, 消息, 是否需要重启)
-        - 如果需要重启,调用方应使用 Python 运行时重启
-    """
-    embedded_python = get_embedded_python_executable(project_root)
-
-    # 情况1: 使用嵌入式Python运行
-    current_python = Path(sys.executable).resolve()
-    is_embedded = (
-        embedded_python.exists() and current_python == embedded_python.resolve()
-    )
-
-    if is_embedded:
-        print("[VibeOCR] 使用 Python 运行时环境")
-
-        # 检查依赖
-        deps_status = check_dependencies(project_root)
-        missing_deps = [pkg for pkg, installed in deps_status.items() if not installed]
-
-        if not missing_deps:
-            return True, "依赖完整，可以启动应用", False
-
-        # 依赖缺失,自动安装
-        print(f"[VibeOCR] 检测到缺失依赖: {', '.join(missing_deps)}")
-        print("[VibeOCR] 正在自动安装依赖...")
-
-        network_type = detect_network_source()
-        has_gpu, cuda_version = detect_gpu()
-
-        success, msg = install_dependencies(
-            project_root, network_type, has_gpu, cuda_version
-        )
-        if not success:
-            return False, f"依赖安装失败: {msg}", False
-
-        print("[VibeOCR] 依赖安装完成")
-        return True, "依赖安装完成，可以启动应用", False
-
-    # 情况2: Python 运行时存在但使用其他Python运行(开发模式)
-    if embedded_python.exists():
-        print("[VibeOCR] 检测到 Python 运行时环境")
-
-        # 检查依赖
-        deps_status = check_dependencies(project_root)
-        missing_deps = [pkg for pkg, installed in deps_status.items() if not installed]
-
-        if not missing_deps:
-            print("[VibeOCR] 依赖完整，建议使用 Python 运行时运行")
-            return True, "依赖完整，但建议使用 Python 运行时运行", True
-
-        # 依赖缺失
-        msg = f"Python 运行时缺少依赖: {', '.join(missing_deps)}"
-
-        if ask_user:
-            # 返回信息让调用方处理用户交互
-            return False, msg, False
-        # 自动安装
-        print(f"[VibeOCR] {msg}")
-        print("[VibeOCR] 正在自动安装依赖...")
-
-        network_type = detect_network_source()
-        has_gpu, cuda_version = detect_gpu()
-
-        success, msg = install_dependencies(
-            project_root, network_type, has_gpu, cuda_version
-        )
-        if not success:
-            return False, f"依赖安装失败: {msg}", False
-
-        print("[VibeOCR] 依赖安装完成")
-        return True, "依赖安装完成，请使用 Python 运行时运行", True
-
-    # 情况3: 首次运行,无 Python 运行时
-    print("[VibeOCR] 未检测到 Python 运行时环境")
-
-    if ask_user:
-        # 返回信息让调用方处理用户交互
-        return False, "首次运行，需要安装 Python 运行时和依赖", False
-    # 自动安装
-    success, msg = setup_environment(project_root)
-    if not success:
-        return False, f"环境设置失败: {msg}", False
-
-    return True, "环境设置完成，请使用嵌入式Python运行", True
 
 
 def get_project_root() -> Path:

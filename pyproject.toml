@@ -198,9 +198,27 @@ index-strategy = "unsafe-best-match"
 # - paddle cu126 找 cublas64_12.dll，torch cu126 的 torch/lib 正好提供
 # - 不用 cu129/cu130：cu129 paddle 要 cu12 DLL 但 torch 无 cu129 win wheel；
 #   cu130 paddle 要 cublas64_13.dll，与 torch/lib 的 _12 系列 ABI 不匹配
-torch = { index = "pytorch-cu126" }
-torchvision = { index = "pytorch-cu126" }
+#
+# torch/torchvision 的 +cu126 变体不在 PyPI（PyPI 默认版是 CPU 版），必须走
+# PyTorch 官方 whl index 或其镜像。这里优先用南大镜像（与便携环境 env_config
+# 的 PYTORCH_MIRROR_SOURCES["nju"] 对齐，国内加速），官方 index 作 fallback：
+# 两者均列为 source（无 marker，恒匹配），index-strategy=unsafe-best-match
+# 时 uv 会从命中的 index 择优（南大可用则走南大，超时/缺包回退官方）。
+torch = [
+  { index = "pytorch-cu126-nju" },
+  { index = "pytorch-cu126-official" },
+]
+torchvision = [
+  { index = "pytorch-cu126-nju" },
+  { index = "pytorch-cu126-official" },
+]
 
 [[tool.uv.index]]
-name = "pytorch-cu126"
+name = "pytorch-cu126-nju"
+url = "https://mirrors.nju.edu.cn/pytorch/whl/cu126"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cu126-official"
 url = "https://download.pytorch.org/whl/cu126"
+explicit = true

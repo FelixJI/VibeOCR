@@ -10,7 +10,6 @@ from vibeocr.env_manager import (
     _check_imports,
     _load_dep_specs,
     ensure_mineru_models,
-    install_dependencies,
     install_embedded_dependencies,
     install_embedded_python,
     resolve_use_gpu,
@@ -156,39 +155,6 @@ class TestInstallSpecs:
         assert "mineru[core]" in joined, f"应使用 mineru[core]，实际: {joined}"
         assert "mineru[all]" not in joined
 
-    def test_install_deps_uses_core_not_all(self, tmp_path):
-        """完整安装应使用 mineru[core] 而非 [all]"""
-        python_exe = tmp_path / "python.exe"
-        python_exe.touch()
-
-        calls = []
-
-        def mock_run(cmd, **kwargs):
-            calls.append(cmd)
-            r = MagicMock()
-            r.returncode = 0
-            r.stderr = ""
-            return r
-
-        with (
-            patch(
-                "vibeocr.env_manager.get_pip_source",
-                return_value="https://pypi.org/simple",
-            ),
-            patch(
-                "vibeocr.env_manager.get_embedded_python_executable",
-                return_value=python_exe,
-            ),
-            patch("vibeocr.env_manager.subprocess.run", side_effect=mock_run),
-        ):
-            install_dependencies(tmp_path)
-
-        mineru_cmd = [c for c in calls if "mineru" in " ".join(c)]
-        assert len(mineru_cmd) > 0
-        joined = " ".join(mineru_cmd[0])
-        assert "mineru[core]" in joined
-        assert "mineru[all]" not in joined
-
     def test_embedded_deps_gpu_with_cuda_version(self, tmp_path):
         """便携模式 GPU 安装应使用 paddlepaddle-gpu + cu-tag index
 
@@ -259,39 +225,6 @@ class TestInstallSpecs:
             install_embedded_dependencies(
                 tmp_path, use_gpu=True, progress_callback=lambda s, m: None
             )
-
-        paddle_cmd = [c for c in calls if "paddlepaddle" in " ".join(c)]
-        assert len(paddle_cmd) > 0
-        joined = " ".join(paddle_cmd[0])
-        assert "paddlepaddle-gpu" in joined
-        assert "cu126" in joined
-
-    def test_install_deps_gpu_with_cuda_version(self, tmp_path):
-        """完整安装 GPU 应使用 paddlepaddle-gpu + cu-tag index"""
-        python_exe = tmp_path / "python.exe"
-        python_exe.touch()
-
-        calls = []
-
-        def mock_run(cmd, **kwargs):
-            calls.append(cmd)
-            r = MagicMock()
-            r.returncode = 0
-            r.stderr = ""
-            return r
-
-        with (
-            patch(
-                "vibeocr.env_manager.get_pip_source",
-                return_value="https://pypi.org/simple",
-            ),
-            patch(
-                "vibeocr.env_manager.get_embedded_python_executable",
-                return_value=python_exe,
-            ),
-            patch("vibeocr.env_manager.subprocess.run", side_effect=mock_run),
-        ):
-            install_dependencies(tmp_path, use_gpu=True, cuda_version="cu126")
 
         paddle_cmd = [c for c in calls if "paddlepaddle" in " ".join(c)]
         assert len(paddle_cmd) > 0

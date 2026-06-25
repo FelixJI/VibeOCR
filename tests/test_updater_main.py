@@ -206,3 +206,102 @@ class TestReplaceAppFiles:
         # 旧文件被清除
         assert not (app_dir / "old_unused.dll").exists()
         assert (app_dir / "VibeOCR.exe").read_bytes() == b"new exe"
+
+
+# ---------------------------------------------------------------------------
+# _sync_dependencies（写 pending_sync.json 标记，而非直接 pip）
+# ---------------------------------------------------------------------------
+
+
+class TestSyncDependencies:
+    """依赖版本同步：updater 不再直接 pip，改为写 pending_sync.json 交给新版程序。
+
+    旧实现用裸 pip install pkg==ver 走 PyPI 默认源，会把 paddle/torch 装成
+    CPU 版丢失 CUDA。新实现写标记文件，由覆盖后的 VibeOCR 用
+    install_embedded_dependencies（含 GPU/CUDA tag/镜像）升级。
+    """
+
+    def test_writes_pending_sync_when_deps_changed(self, updater, tmp_path):
+        """dep_versions 有变化时，应写入 pending_sync.json（含变更项）。"""
+        old_deps = {"paddlepaddle": "3.3.0", "torch": "2.6.0"}
+        new_data = {
+            "version": "0.2.0",
+            "dep_versions": {"paddlepaddle": "3.3.1", "torch": "2.6.0"},
+        }
+
+        updater._sync_dependencies(old_deps, new_data, tmp_path)
+
+        pending = tmp_path / "data" / "settings" / "pending_sync.json"
+        assert pending.exists(), "应写入 pending_sync.json"
+        import json
+
+        data = json.loads(pending.read_text(encoding="utf-8"))
+        # 只含变更项（torch 未变，不应出现）
+        assert data["dep_versions"] == {"paddlepaddle": "3.3.1"}
+        assert data["version"] == "0.2.0"
+        assert "written_at" in data
+
+    def test_no_marker_when_deps_unchanged(self, updater, tmp_path):
+        """dep_versions 无变化时，不应写入 pending_sync.json。"""
+        old_deps = {"paddlepaddle": "3.3.1", "torch": "2.6.0"}
+        new_data = {
+            "version": "0.2.0",
+            "dep_versions": {"paddlepaddle": "3.3.1", "torch": "2.6.0"},
+        }
+
+        updater._sync_dependencies(old_deps, new_data, tmp_path)
+
+        pending = tmp_path / "data" / "settings" / "pending_sync.json"
+        assert not pending.exists(), "无变化时不应写标记"
+
+    def test_marker_only_includes_changed_subset(self, updater, tmp_path):
+        """多包变更时，标记应只含实际变更的包。"""
+        old_deps = {"paddlepaddle": "3.3.0", "paddleocr": "3.7.0", "mineru": "3.4.0"}
+        new_data = {
+            "version": "0.3.0",
+            "dep_versions": {
+                "paddlepaddle": "3.3.1",  # 变
+                "paddleocr": "3.7.0",  # 不变
+                "mineru": "3.4.1",  # 变
+            },
+        }
+
+        updater._sync_dependencies(old_deps, new_data, tmp_path)
+
+        import json
+
+        pending = tmp_path / "data" / "settings" / "pending_sync.json"
+        data = json.loads(pending.read_text(encoding="utf-8"))
+        assert set(data["dep_versions"].keys()) == {"paddlepaddle", "mineru"}
+        assert data["dep_versions"]["paddlepaddle"] == "3.3.1"
+        assert data["dep_versions"]["mineru"] == "3.4.1"
+
+    def test_does_not_call_pip(self, updater, tmp_path, monkeypatch):
+        """同步不应再调用 subprocess（不直接 pip 安装）。"""
+        import subprocess as _subprocess
+
+        called = []
+        monkeypatch.setattr(
+            _subprocess, "run", lambda *a, **kw: called.append(a) or None
+        )
+        monkeypatch.setattr(
+            _subprocess, "Popen", lambda *a, **kw: called.append(a) or None
+        )
+
+        old_deps = {"paddlepaddle": "3.3.0"}
+        new_data = {"version": "0.2.0", "dep_versions": {"paddlepaddle": "3.3.1"}}
+
+        updater._sync_dependencies(old_deps, new_data, tmp_path)
+
+        assert called == [], "同步不应调用 subprocess（pip 安装交给新版程序）"
+
+    def test_creates_settings_dir_if_missing(self, updater, tmp_path):
+        """data/settings/ 目录不存在时应自动创建。"""
+        old_deps = {"paddlepaddle": "3.3.0"}
+        new_data = {"version": "0.2.0", "dep_versions": {"paddlepaddle": "3.3.1"}}
+
+        # app_dir 是空的，data/settings 不存在
+        updater._sync_dependencies(old_deps, new_data, tmp_path)
+
+        assert (tmp_path / "data" / "settings" / "pending_sync.json").exists()
+

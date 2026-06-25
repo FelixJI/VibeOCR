@@ -162,3 +162,15 @@ def get_update_settings_path() -> Path:
     d = get_data_dir() / "settings"
     d.mkdir(parents=True, exist_ok=True)
     return d / "update_settings.json"
+
+
+def get_pending_sync_path() -> Path:
+    """获取依赖版本待同步标记文件路径
+
+    updater 在替换应用文件后写入此文件（含变更的 dep_versions），
+    新版 VibeOCR 启动时读取并据此用 install_embedded_dependencies 升级 python/，
+    升级成功后删除。与 updater_main.py 的写入路径保持一致。
+    """
+    d = get_data_dir() / "settings"
+    d.mkdir(parents=True, exist_ok=True)
+    return d / "pending_sync.json"
