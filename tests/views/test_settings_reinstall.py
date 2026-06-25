@@ -91,6 +91,9 @@ def test_click_reinstall_python_confirms_then_opens_dialog(controller, monkeypat
         def exec(self):
             return 1
 
+        def show(self):
+            pass
+
         finished = MagicMock()
         install_succeeded = MagicMock()
 
@@ -145,6 +148,9 @@ def test_click_reinstall_deps_opens_dialog_without_reinstall(controller, monkeyp
 
         def exec(self):
             return 1
+
+        def show(self):
+            pass
 
         finished = MagicMock()
         install_succeeded = MagicMock()

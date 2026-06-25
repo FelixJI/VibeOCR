@@ -483,6 +483,8 @@ class MainWindow(QMainWindow):
             em._dep_specs_cache = None
             self._dependency_manager.reset()
             self._dependency_manager.check_dependencies()
+            # 同步会重装 python/ 内的包，Python 运行时状态可能变化，刷新设置页 label
+            self._refresh_settings_env_state()
         else:
             # 升级失败：保留标记供下次启动重试（与 pending_backend 同模式）
             self._ocr_ready = False
@@ -723,6 +725,8 @@ class MainWindow(QMainWindow):
             self._statusbar.showMessage("OCR依赖安装成功")
             # 安装成功后启动子进程 Worker
             self._start_subprocess_worker()
+            # 双保险刷新设置页（覆盖只发 finished 不发 install_succeeded 的路径）
+            self._refresh_settings_env_state()
         else:
             self._statusbar.showMessage("OCR依赖安装失败")
 
@@ -731,6 +735,22 @@ class MainWindow(QMainWindow):
         """安装成功后标记就绪"""
         self._ocr_ready = True
         self._statusbar.showMessage("OCR依赖安装成功，首次识别将自动下载模型")
+        # 安装完成后 Python 运行时状态已变，刷新设置页环境维护区 label
+        # （首启时 label 在 Python 未装时写下"未安装"，此处避免重启才更新）
+        self._refresh_settings_env_state()
+
+    def _refresh_settings_env_state(self) -> None:
+        """刷新设置页"环境维护区"状态（Python 路径/就绪）。
+
+        安装/同步/重装成功后调用，避免 label 停留在启动时计算的"未安装"，
+        导致用户必须重启程序才看到正确状态。
+        """
+        controller = getattr(self, "_settings_controller", None)
+        if controller is not None:
+            try:
+                controller._refresh_env_maintenance_state()
+            except Exception as e:
+                logging.warning("[MainWindow] 刷新设置页环境状态失败: %s", e)
 
     @Slot()
     def _on_open_image(self) -> None:

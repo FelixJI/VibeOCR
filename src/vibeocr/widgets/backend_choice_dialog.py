@@ -52,7 +52,9 @@ class BackendChoiceDialog(QDialog):
     def _setup_ui(self) -> None:
         self.setWindowTitle("选择 OCR 推理后端")
         self.setMinimumSize(520, 480)
-        self.setModal(True)
+        # 非模态：设置页重装时不阻塞主窗口（首启路径由 main_window.exec() 调起，
+        # exec() 自身是模态事件循环，与 setModal 无关，首启仍阻塞，符合预期）。
+        self.setModal(False)
 
         layout = QVBoxLayout(self)
 

@@ -56,6 +56,9 @@ class SettingsPageController:
         self._preload_complete_callback = preload_complete_callback
         self._manual_preload_total = 0
         self._manual_preload_task: object | None = None
+        # 非模态重装对话框引用：show() 后须持有，否则被 GC 立即销毁；
+        # 对话框 finished 时从列表移除，允许再次打开。
+        self._active_dialogs: list = []
 
     def connect_signals(self) -> None:
         """连接设置页面的信号槽"""
@@ -550,6 +553,27 @@ class SettingsPageController:
         self._update_cache_status("缓存已刷新")
         logger.debug("[缓存] 已刷新（依赖缓存 + 模型缓存）")
 
+    def _open_reinstall_dialog(self, reinstall_python: bool) -> None:
+        """以非模态方式打开重装对话框（不阻塞主窗口）。
+
+        show() 后必须持有 dialog 引用以防 GC；finished 时刷新环境状态并移除引用。
+        """
+        dialog = BackendChoiceDialog(
+            self._project_root, reinstall_python=reinstall_python
+        )
+
+        def _on_finished(_result: int) -> None:
+            self._refresh_env_maintenance_state()
+            # 移除引用，允许对话框被回收（用户也可再次打开新的）
+            try:
+                self._active_dialogs.remove(dialog)
+            except ValueError:
+                pass
+
+        dialog.finished.connect(_on_finished)
+        self._active_dialogs.append(dialog)
+        dialog.show()
+
     def _on_reinstall_python(self) -> None:
         """重装 Python 运行时按钮：确认后弹 BackendChoiceDialog(reinstall_python=True)"""
         reply = QMessageBox.question(
@@ -565,9 +589,7 @@ class SettingsPageController:
         if reply != QMessageBox.StandardButton.Yes:
             return
 
-        dialog = BackendChoiceDialog(self._project_root, reinstall_python=True)
-        dialog.finished.connect(lambda _r: self._refresh_env_maintenance_state())
-        dialog.exec()
+        self._open_reinstall_dialog(reinstall_python=True)
 
     def _on_reinstall_deps(self) -> None:
         """重装 OCR 依赖按钮：确认后弹 BackendChoiceDialog(reinstall_python=False)"""
@@ -583,9 +605,7 @@ class SettingsPageController:
         if reply != QMessageBox.StandardButton.Yes:
             return
 
-        dialog = BackendChoiceDialog(self._project_root, reinstall_python=False)
-        dialog.finished.connect(lambda _r: self._refresh_env_maintenance_state())
-        dialog.exec()
+        self._open_reinstall_dialog(reinstall_python=False)
 
     def _refresh_env_maintenance_state(self) -> None:
         """刷新环境维护区状态：显示 Python 路径/就绪，非 portable 模式禁用按钮"""

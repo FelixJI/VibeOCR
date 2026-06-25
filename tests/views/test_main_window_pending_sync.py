@@ -28,6 +28,7 @@ class _StubWindow:
     _check_pending_sync = MainWindow._check_pending_sync
     _on_sync_finished = MainWindow._on_sync_finished
     _delete_pending_sync = MainWindow._delete_pending_sync
+    _refresh_settings_env_state = MainWindow._refresh_settings_env_state
 
 
 def _write_pending(path: Path, dep_versions: dict, version: str = "0.2.0") -> None:
