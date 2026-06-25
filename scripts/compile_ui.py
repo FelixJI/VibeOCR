@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 
 
-def compile_ui_file(ui_path: Path, output_path: Path) -> None:
+def compile_ui_file(ui_path: Path, output_path: Path) -> bool:
     """编译单个 UI 文件"""
     print(f"编译: {ui_path.name} -> {output_path.name}")
 

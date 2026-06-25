@@ -9,7 +9,7 @@ from PySide6.QtCore import QPoint, QRect
 from vibeocr.widgets.window_detector import WindowDetector
 
 
-def _make_mapper(dpr: float = 1.0, virtual_offset: QPoint = None) -> MagicMock:
+def _make_mapper(dpr: float = 1.0, virtual_offset: QPoint | None = None) -> MagicMock:
     mapper = MagicMock()
     mapper.dpr_at.return_value = dpr
     mapper.virtual_geometry = QRect(virtual_offset or QPoint(0, 0), QPoint(9999, 9999))

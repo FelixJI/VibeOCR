@@ -29,8 +29,10 @@ class TestLayoutManagerWithDir:
         lm.save()
 
         lm2 = LayoutManager(tmp_path)
-        assert lm2.get_main_window_geometry().data() == b"\x01\x02\x03"
-        assert lm2.get_splitter_state("main").data() == b"\x04\x05\x06"
+        geom = lm2.get_main_window_geometry()
+        assert geom is not None and geom.data() == b"\x01\x02\x03"
+        splitter = lm2.get_splitter_state("main")
+        assert splitter is not None and splitter.data() == b"\x04\x05\x06"
         assert lm2.get_tab_index() == 2
 
     def test_load_corrupt_file(self, tmp_path):
@@ -56,8 +58,10 @@ class TestLayoutManagerWithDir:
         config.write_text(json.dumps(data), encoding="utf-8")
 
         lm = LayoutManager(tmp_path)
-        assert lm.get_main_window_geometry().data() == b"\xaa\xbb"
-        assert lm.get_splitter_state("left").data() == b"\xcc\xdd"
+        geom2 = lm.get_main_window_geometry()
+        assert geom2 is not None and geom2.data() == b"\xaa\xbb"
+        splitter2 = lm.get_splitter_state("left")
+        assert splitter2 is not None and splitter2.data() == b"\xcc\xdd"
         assert lm.get_tab_index() == 1
 
     def test_save_creates_directory(self, tmp_path):

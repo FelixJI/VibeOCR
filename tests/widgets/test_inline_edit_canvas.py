@@ -9,7 +9,9 @@ from PySide6.QtWidgets import QGraphicsRectItem
 from vibeocr.widgets.inline_edit_canvas import InlineEditCanvas
 
 
-def _make_pixmap(w: int, h: int, color: QColor = None, dpr: float = 1.0) -> QPixmap:
+def _make_pixmap(
+    w: int, h: int, color: QColor | None = None, dpr: float = 1.0
+) -> QPixmap:
     px = QPixmap(int(w * dpr), int(h * dpr))
     if color:
         px.fill(color)

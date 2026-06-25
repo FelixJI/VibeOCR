@@ -133,7 +133,7 @@ class TestExportHtml:
 
 class TestExportDocxExtra:
     def test_title_block(self, tmp_path):
-        from docx import Document
+        from docx import Document  # type: ignore[import-not-found]
 
         result = _make_result(
             content_list=[{"type": "title", "text": "My Title", "level": 2}],
@@ -145,7 +145,7 @@ class TestExportDocxExtra:
         assert any("My Title" in h.text for h in headings)
 
     def test_equation_block(self, tmp_path):
-        from docx import Document
+        from docx import Document  # type: ignore[import-not-found]
 
         result = _make_result(
             content_list=[{"type": "equation", "text": "a^2+b^2=c^2"}],
@@ -156,7 +156,7 @@ class TestExportDocxExtra:
         assert any("a^2+b^2=c^2" in p.text for p in doc.paragraphs)
 
     def test_code_block(self, tmp_path):
-        from docx import Document
+        from docx import Document  # type: ignore[import-not-found]
 
         result = _make_result(
             content_list=[{"type": "code", "code_body": "print('hi')"}],
@@ -167,7 +167,7 @@ class TestExportDocxExtra:
         assert any("print" in p.text for p in doc.paragraphs)
 
     def test_fallback_to_raw_text(self, tmp_path):
-        from docx import Document
+        from docx import Document  # type: ignore[import-not-found]
 
         result = _make_result(raw_text="line1\nline2")
         out = tmp_path / "test.docx"
@@ -178,7 +178,7 @@ class TestExportDocxExtra:
         assert "line2" in texts
 
     def test_table_caption_and_footnote(self, tmp_path):
-        from docx import Document
+        from docx import Document  # type: ignore[import-not-found]
 
         result = _make_result(
             content_list=[
@@ -208,7 +208,8 @@ class TestExportXlsxExtra:
         out = tmp_path / "test.xlsx"
         assert ExportService.export(result, out, "xlsx")
         wb = load_workbook(str(out))
-        assert wb.active.title == "文本汇总"
+        ws = wb.active
+        assert ws is not None and ws.title == "文本汇总"
 
     def test_code_block(self, tmp_path):
         from openpyxl import load_workbook
@@ -219,7 +220,9 @@ class TestExportXlsxExtra:
         out = tmp_path / "test.xlsx"
         assert ExportService.export(result, out, "xlsx")
         wb = load_workbook(str(out))
-        values = [c.value for row in wb.active.iter_rows() for c in row if c.value]
+        ws2 = wb.active
+        assert ws2 is not None
+        values = [c.value for row in ws2.iter_rows() for c in row if c.value]
         assert any("x=1" in str(v) for v in values)
 
     def test_fallback_to_raw_text(self, tmp_path):
@@ -229,7 +232,9 @@ class TestExportXlsxExtra:
         out = tmp_path / "test.xlsx"
         assert ExportService.export(result, out, "xlsx")
         wb = load_workbook(str(out))
-        values = [c.value for row in wb.active.iter_rows() for c in row if c.value]
+        ws3 = wb.active
+        assert ws3 is not None
+        values = [c.value for row in ws3.iter_rows() for c in row if c.value]
         assert "hello" in values
         assert "world" in values
 

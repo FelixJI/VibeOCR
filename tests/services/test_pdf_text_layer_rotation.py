@@ -94,7 +94,10 @@ class TestRotatedPageTextLayer:
         d2 = fitz.open(str(out))
         p2 = d2[0]
         layer_rects = []
-        for b in p2.get_text("dict")["blocks"]:
+        # get_text("dict") 运行时返回 dict（PyMuPDF），但其 stub 标注为 str，
+        # 此处显式标注为 dict 以正确索引 blocks/lines/bbox。
+        p2_dict: dict = p2.get_text("dict")  # type: ignore[assignment]
+        for b in p2_dict["blocks"]:
             if "lines" in b:
                 for line in b["lines"]:
                     layer_rects.append(fitz.Rect(*line["bbox"]))
@@ -144,7 +147,8 @@ class TestRotatedPageTextLayer:
         doc.close()
 
         d2 = fitz.open(str(tmp_path / "out0.pdf"))
-        for b in d2[0].get_text("dict")["blocks"]:
+        d2_dict: dict = d2[0].get_text("dict")  # type: ignore[assignment]
+        for b in d2_dict["blocks"]:
             if "lines" in b:
                 for line in b["lines"]:
                     r = fitz.Rect(*line["bbox"])

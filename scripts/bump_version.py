@@ -372,7 +372,9 @@ def _generate_version_json(version: str, dist_dir: Path) -> None:
                 # 使 key 与 env_config.OCR_CHECK_MODULES 包名一致
                 pkg = pkg.split("[", 1)[0]
                 if any(pkg.startswith(p) for p in _TRACKED_PREFIXES):
-                    key = _KEY_ALIASES.get(pkg, pkg)
+                    # dict.get 在 _KEY_ALIASES 命中时返回别名，否则回退 pkg（恒非 None）；
+                    # 静态签名是 str|None，故用 pkg 默认值并显式断言收窄。
+                    key: str = _KEY_ALIASES.get(pkg) or pkg
                     dep_versions[key] = ver.strip()
                 break
 
@@ -630,7 +632,7 @@ def _upload_to_gitee(
 
     owner = "felixji"
     repo = "vibeocr"
-    api = f"https://gitee.com/api/v5/repos/{owner}/{repo}/releases"
+    api: str = f"https://gitee.com/api/v5/repos/{owner}/{repo}/releases"
 
     resp = httpx.post(
         api,
@@ -668,7 +670,7 @@ def _upload_to_github(
 
     owner = "felixji"
     repo = "vibeocr"
-    api = f"https://api.github.com/repos/{owner}/{repo}/releases"
+    api: str = f"https://api.github.com/repos/{owner}/{repo}/releases"
 
     resp = httpx.post(
         api,
@@ -719,6 +721,23 @@ def _ask_build(version: str) -> bool:
     print("是否立即执行 PyInstaller 打包? [Y/n]: ", end="", flush=True)
     choice = input().strip().lower()
     return choice in ("", "y", "yes", "是")
+
+
+class _Args(argparse.Namespace):
+    """带类型注解的 Namespace，让静态检查器能识别 args 的各字段类型。
+
+    argparse.Namespace 的属性是动态的，静态检查器只能看到
+    __getattr__(name: str)，访问 args.release 等会被推断为 Literal['release']
+    与 str 不兼容（PyCharm/Pyright 报 reportArgumentType）。这里显式声明
+    每个字段的类型，并通过 parse_args(namespace=_Args()) 绑定。
+    """
+
+    release: bool
+    build: bool
+    no_edit: bool
+    no_build: bool
+    version: str | None
+    rebuild: str | None
 
 
 def main() -> int:
@@ -773,7 +792,7 @@ def main() -> int:
         help="构建并发布到 Gitee/GitHub（需要 GITEE_TOKEN / GITHUB_TOKEN）",
     )
 
-    args = parser.parse_args()
+    args = parser.parse_args(namespace=_Args())
 
     # 模式0: 构建并发布
     if args.release:

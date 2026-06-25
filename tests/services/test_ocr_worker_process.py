@@ -5,6 +5,7 @@ Tests the subprocess-based OCR service implementation.
 """
 
 import threading
+from typing import Any
 
 import numpy as np
 import pytest
@@ -19,6 +20,11 @@ try:
 
     HAS_SUBPROCESS_MODULES = True
 except ImportError:
+    # 可选依赖缺失时占位；测试由 @skipif(not HAS_SUBPROCESS_MODULES) 跳过，
+    # 这些占位值运行时永不被调用。用 Any 类型满足静态绑定分析，
+    # 避免后续类体内的构造/调用报 OptionalCall/MemberAccess。
+    OCRServiceSubprocess: Any = None  # type: ignore[assignment]
+    OCRWorkerProcess: Any = None  # type: ignore[assignment]
     HAS_SUBPROCESS_MODULES = False
 
 

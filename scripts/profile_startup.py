@@ -13,6 +13,7 @@ import os
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
 # 环境变量（与 main.py 一致）
 os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
@@ -35,7 +36,8 @@ class ImportProfiler:
 
     def __init__(self):
         self._import_times: dict[str, float] = {}
-        self._original_import = None
+        # __import__ 的原始引用，start() 时赋值；类型标注为 Any 以便调用。
+        self._original_import: Any = None
 
     def start(self):
         self._original_import = __builtins__.__import__
@@ -46,10 +48,10 @@ class ImportProfiler:
             __builtins__.__import__ = self._original_import
 
     def _timing_import(self, name, *args, **kwargs):
-        if not name.startswith("_"):
-            start = time.perf_counter()
+        tracked = not name.startswith("_")
+        start = time.perf_counter() if tracked else 0.0
         result = self._original_import(name, *args, **kwargs)
-        if not name.startswith("_"):
+        if tracked:
             elapsed = time.perf_counter() - start
             top_level = name.split(".")[0]
             self._import_times[top_level] = (

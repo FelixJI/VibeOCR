@@ -71,7 +71,8 @@ class TestBatchRequest:
         # 开始处理后
         request.mark_processing()
         time.sleep(0.1)
-        assert request.elapsed_time >= 0.1
+        elapsed = request.elapsed_time
+        assert elapsed is not None and elapsed >= 0.1
 
         # 完成后固定
         request.mark_completed(result={})

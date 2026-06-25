@@ -1,6 +1,7 @@
 """测试批量队列管理器"""
 
 import io
+from typing import cast
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -204,7 +205,7 @@ class TestBatchQueueManagerOptionFiltering:
 
         request_id = next(iter(manager._queue))
         assert results[request_id] != {"error": "结果数量不匹配"}
-        assert "text" in results[request_id]
+        assert "text" in cast("dict", results[request_id])
 
     def test_each_pipeline_only_receives_supported_options(self):
         """每种管道的批量提交只应转发该管道 supported_options 内的选项"""
@@ -221,7 +222,7 @@ class TestBatchQueueManagerOptionFiltering:
 
             results = manager.commit(options)
             request_id = next(iter(manager._queue))
-            assert "text" in results[request_id], (
+            assert "text" in cast("dict", results[request_id]), (
                 f"管道 {target.value} 批量提交失败："
                 f"结果包含错误而非文本（选项过滤异常）"
             )

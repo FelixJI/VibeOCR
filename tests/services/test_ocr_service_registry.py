@@ -581,6 +581,7 @@ class TestRecognizeBatch:
         # 两张图各自归一化：50/100*1000=500, 25/50*1000=500
         bbox_a = got[0].text_blocks[0].bbox
         bbox_b = got[1].text_blocks[0].bbox
+        assert bbox_a is not None and bbox_b is not None
         assert abs(bbox_a[0] - 500) < 1 and abs(bbox_a[1] - 500) < 1
         assert abs(bbox_b[0] - 500) < 1 and abs(bbox_b[1] - 500) < 1
         # 归一化后记录的图像尺寸为预处理尺寸

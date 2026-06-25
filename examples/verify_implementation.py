@@ -26,7 +26,9 @@ def check_imports():
 
     # 检查 workers 模块
     try:
-        from vibeocr.workers import OCRWorkerError  # noqa: F401
+        from vibeocr.workers import (
+            OCRWorkerError,  # noqa: F401  # type: ignore[unused-import]
+        )
 
         print("[OK] vibeocr.workers 模块可导入")
     except ImportError as e:
@@ -36,10 +38,10 @@ def check_imports():
     # 检查 env_manager 新增函数
     try:
         from vibeocr.env_manager import (  # noqa: F401
-            get_embedded_python,
-            get_embedded_python_info,
-            get_embedded_venv_python,
-            is_embedded_python_ready,
+            get_embedded_python,  # type: ignore[unused-import]
+            get_embedded_python_info,  # type: ignore[unused-import]
+            get_embedded_venv_python,  # type: ignore[unused-import]
+            is_embedded_python_ready,  # type: ignore[unused-import]
         )
 
         print("[OK] env_manager 子进程辅助函数可导入")

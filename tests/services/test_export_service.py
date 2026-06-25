@@ -42,7 +42,7 @@ class TestTableExport:
         out = tmp_path / "test.docx"
         assert ExportService.export(result, out, "docx")
 
-        from docx import Document
+        from docx import Document  # type: ignore[import-not-found]
 
         doc = Document(str(out))
         assert len(doc.tables) == 1
@@ -74,7 +74,7 @@ class TestTableExport:
         out = tmp_path / "test.docx"
         assert ExportService.export(result, out, "docx")
 
-        from docx import Document
+        from docx import Document  # type: ignore[import-not-found]
 
         doc = Document(str(out))
         assert len(doc.tables) == 1
@@ -92,7 +92,7 @@ class TestTableExport:
         out = tmp_path / "test.docx"
         assert ExportService.export(result, out, "docx")
 
-        from docx import Document
+        from docx import Document  # type: ignore[import-not-found]
 
         doc = Document(str(out))
         assert doc.tables[0].rows[0].cells[0].text == "body"
@@ -126,7 +126,7 @@ class TestImageExport:
         out = tmp_path / "test.docx"
         assert ExportService.export(result, out, "docx")
 
-        from docx import Document
+        from docx import Document  # type: ignore[import-not-found]
 
         doc = Document(str(out))
         assert len(doc.inline_shapes) == 1
@@ -140,7 +140,7 @@ class TestImageExport:
         out = tmp_path / "test.docx"
         assert ExportService.export(result, out, "docx")
 
-        from docx import Document
+        from docx import Document  # type: ignore[import-not-found]
 
         doc = Document(str(out))
         assert any("Figure 1" in p.text for p in doc.paragraphs)
@@ -178,7 +178,7 @@ class TestTextLevelExport:
         out = tmp_path / "test.docx"
         assert ExportService.export(result, out, "docx")
 
-        from docx import Document
+        from docx import Document  # type: ignore[import-not-found]
 
         doc = Document(str(out))
         headings = [p for p in doc.paragraphs if p.style.name.startswith("Heading")]
@@ -199,6 +199,7 @@ class TestTextLevelExport:
 
         wb = load_workbook(str(out))
         ws = wb.active
+        assert ws is not None
         values = [cell.value for row in ws.iter_rows() for cell in row if cell.value]
         assert "# 标题一" in values
         assert "内容" in values
@@ -218,7 +219,7 @@ class TestOtherBlockTypes:
         out = tmp_path / "test.docx"
         assert ExportService.export(result, out, "docx")
 
-        from docx import Document
+        from docx import Document  # type: ignore[import-not-found]
 
         doc = Document(str(out))
         list_items = [
@@ -237,9 +238,9 @@ class TestOtherBlockTypes:
         from openpyxl import load_workbook
 
         wb = load_workbook(str(out))
-        values = [
-            cell.value for row in wb.active.iter_rows() for cell in row if cell.value
-        ]
+        ws2 = wb.active
+        assert ws2 is not None
+        values = [cell.value for row in ws2.iter_rows() for cell in row if cell.value]
         assert any("E=mc^2" in str(v) for v in values)
 
 

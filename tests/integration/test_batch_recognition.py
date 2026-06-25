@@ -87,7 +87,7 @@ def test_shared_memory_batch_messages():
     assert result == commit_opts
 
     # Batch result
-    results = {"req-1": {"text": "Hello"}}
+    results: dict[str, object] = {"req-1": {"text": "Hello"}}
     serialized = serialize_batch_result(results)
     restored = deserialize_batch_result(serialized)
     assert restored == results

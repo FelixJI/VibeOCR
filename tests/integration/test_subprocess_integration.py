@@ -6,6 +6,7 @@ Tests the full integration of subprocess-based OCR service.
 
 import os
 import time
+from typing import Any
 
 import pytest
 from PIL import Image, ImageDraw
@@ -30,6 +31,17 @@ try:
     MSG_RESULT = MessageType.RESULT
     HAS_MODULES = True
 except ImportError:
+    # 可选依赖缺失时占位；测试由 @skipif(not HAS_MODULES) 跳过，
+    # 这些占位值运行时永不被调用。用 Any 类型满足静态绑定分析。
+    OCRServiceSubprocess: Any = None  # type: ignore[assignment]
+    OCRWorkerProcess: Any = None  # type: ignore[assignment]
+    OCRWorkerProcessError: Any = None  # type: ignore[assignment]
+    MessageType: Any = None  # type: ignore[assignment]
+    serialize_request: Any = None  # type: ignore[assignment]
+    serialize_result: Any = None  # type: ignore[assignment]
+    SharedMemoryProtocol: Any = None  # type: ignore[assignment]
+    MSG_RECOGNIZE: Any = None
+    MSG_RESULT: Any = None
     HAS_MODULES = False
 
 # Check if running in CI
@@ -248,12 +260,16 @@ class TestServiceFactoryIntegration:
         original = os.environ.get("VIBEOCR_USE_SUBPROCESS")
         os.environ["VIBEOCR_USE_SUBPROCESS"] = "false"
 
+        _importlib = None
+        _vibeocr_services = None
         try:
             # Need to reload the module to pick up new env var
             import importlib
 
             import vibeocr.services
 
+            _importlib = importlib
+            _vibeocr_services = vibeocr.services
             importlib.reload(vibeocr.services)
 
             from vibeocr.services import USE_SUBPROCESS
@@ -268,5 +284,6 @@ class TestServiceFactoryIntegration:
                 os.environ.pop("VIBEOCR_USE_SUBPROCESS", None)
             else:
                 os.environ["VIBEOCR_USE_SUBPROCESS"] = original
-            # Reload to restore original state
-            importlib.reload(vibeocr.services)
+            # Reload to restore original state（仅当 try 中导入成功时）
+            if _importlib is not None and _vibeocr_services is not None:
+                _importlib.reload(_vibeocr_services)

@@ -4,6 +4,8 @@ Tests for SharedMemoryProtocol V2.
 Tests the shared memory communication protocol for subprocess OCR.
 """
 
+from typing import Any
+
 import pytest
 
 # Check if shared_memory module is available
@@ -29,6 +31,21 @@ try:
     MSG_ACK = MessageType.ACK
     HAS_SHARED_MEMORY = True
 except ImportError:
+    # 可选依赖缺失时占位；测试由 @skipif(not HAS_SHARED_MEMORY) 跳过，
+    # 这些占位值运行时永不被调用。用 Any 类型满足静态绑定分析。
+    MessageType: Any = None  # type: ignore[assignment]
+    SharedMemoryProtocolError: Any = None  # type: ignore[assignment]
+    deserialize_request: Any = None  # type: ignore[assignment]
+    deserialize_result: Any = None  # type: ignore[assignment]
+    serialize_request: Any = None  # type: ignore[assignment]
+    serialize_result: Any = None  # type: ignore[assignment]
+    SharedMemoryProtocol: Any = None  # type: ignore[assignment]
+    MSG_INIT: Any = None
+    MSG_RECOGNIZE: Any = None
+    MSG_RESULT: Any = None
+    MSG_ERROR: Any = None
+    MSG_SHUTDOWN: Any = None
+    MSG_ACK: Any = None
     HAS_SHARED_MEMORY = False
 
 

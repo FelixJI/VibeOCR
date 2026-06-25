@@ -15,8 +15,12 @@ class ConcreteOCRService(OCRServiceBase):
         """初始化 GPU"""
         self._device = "cpu"
 
-    def recognize(self, image: Any, options=None) -> dict:
-        """执行 OCR"""
+    def recognize(self, image: Any, options: Any = None) -> dict:  # type: ignore[override]
+        """执行 OCR
+
+        测试桩返回 dict（与基类 OCRResult 契约的简化）；忽略 options 参数。
+        返回类型与基类不一致，此处显式 ignore。
+        """
         return {"text": "test result"}
 
     def is_ready(self) -> bool:
@@ -142,7 +146,7 @@ class TestOCRServiceBaseAbstract:
     def test_cannot_instantiate_base_class(self):
         """测试不能直接实例化基类"""
         with pytest.raises(TypeError):
-            OCRServiceBase()
+            OCRServiceBase()  # type: ignore[abstract]
 
     def test_subclass_must_implement_abstract_methods(self):
         """测试子类必须实现抽象方法"""
@@ -154,4 +158,4 @@ class TestOCRServiceBaseAbstract:
             # 缺少 recognize 和 is_ready
 
         with pytest.raises(TypeError):
-            IncompleteService()
+            IncompleteService()  # type: ignore[abstract]

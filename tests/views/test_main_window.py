@@ -65,7 +65,7 @@ class TestMainWindow:
         # 验证 CF_HTML 格式（Microsoft Office 专用）
         cf_html_data = mime_data.data("HTML Format")
         assert not cf_html_data.isEmpty()
-        cf_html_str = bytes(cf_html_data).decode("utf-8")
+        cf_html_str = cf_html_data.data().decode("utf-8")
         assert "Version:0.9" in cf_html_str
         assert "StartFragment" in cf_html_str
         assert "测试文本" in cf_html_str
