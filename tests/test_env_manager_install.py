@@ -807,3 +807,73 @@ class TestInstallLogging:
             with caplog.at_level(_logging.INFO, logger="vibeocr.env_manager"):
                 ok, msg = install_embedded_python(tmp_path)
         return ok, msg
+
+    def test_install_deps_logs_report(self, tmp_path, caplog):
+        """install_embedded_dependencies 的 report 应通过 logger.info 输出"""
+        import logging
+
+        python_exe = tmp_path / "python.exe"
+        python_exe.touch()
+
+        def mock_run(cmd, **kw):
+            r = MagicMock()
+            r.returncode = 0
+            r.stderr = ""
+            return r
+
+        with (
+            patch(
+                "vibeocr.env_manager.get_pip_source",
+                return_value="https://pypi.org/simple",
+            ),
+            patch(
+                "vibeocr.env_manager.get_embedded_python_executable",
+                return_value=python_exe,
+            ),
+            patch("vibeocr.env_manager.subprocess.run", side_effect=mock_run),
+        ):
+            with caplog.at_level(logging.INFO, logger="vibeocr.env_manager"):
+                ok, _msg = install_embedded_dependencies(
+                    tmp_path, progress_callback=lambda s, m: None
+                )
+
+        assert ok
+        info_msgs = " ".join(r.message for r in caplog.records)
+        assert "开始安装OCR依赖" in info_msgs, "应记录安装开始"
+        assert "pip源" in info_msgs, "应记录 pip 源"
+
+    def test_switch_backend_logs_report(self, tmp_path, caplog):
+        """switch_paddle_backend 的 report 应通过 logger.info 输出"""
+        import logging
+
+        python_exe = tmp_path / "python.exe"
+        python_exe.touch()
+
+        def mock_run(cmd, **kw):
+            r = MagicMock()
+            r.returncode = 0
+            r.stderr = ""
+            r.stdout = ""
+            return r
+
+        with (
+            patch(
+                "vibeocr.env_manager.get_pip_source",
+                return_value="https://pypi.org/simple",
+            ),
+            patch(
+                "vibeocr.env_manager.get_embedded_python_executable",
+                return_value=python_exe,
+            ),
+            patch("vibeocr.env_manager.subprocess.run", side_effect=mock_run),
+            patch("vibeocr.env_manager.detect_gpu", return_value=(True, "cu126")),
+            patch("vibeocr.env_manager.update_cache_field", return_value=True),
+        ):
+            with caplog.at_level(logging.INFO, logger="vibeocr.env_manager"):
+                ok, _msg = switch_paddle_backend(
+                    tmp_path, "cpu", progress_callback=lambda s, m: None
+                )
+
+        assert ok
+        info_msgs = " ".join(r.message for r in caplog.records)
+        assert "开始切换到 CPU" in info_msgs, "应记录切换开始"

@@ -874,7 +874,7 @@ def install_embedded_dependencies(
     pip_source = get_pip_source(network_type)
 
     def report(stage: str, msg: str):
-        print(f"[{stage}] {msg}")
+        logger.info("[%s] %s", stage, msg)
         if progress_callback:
             progress_callback(stage, msg)
 
@@ -1072,7 +1072,7 @@ def switch_paddle_backend(
         return False, "Python 运行时未安装"
 
     def report(stage: str, msg: str):
-        print(f"[{stage}] {msg}")
+        logger.info("[%s] %s", stage, msg)
         if progress_callback:
             progress_callback(stage, msg)
 
