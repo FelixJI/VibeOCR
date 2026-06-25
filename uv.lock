@@ -2233,7 +2233,7 @@ wheels = [
 
 [[package]]
 name = "vibeocr"
-version = "0.1.5"
+version = "0.1.6"
 source = { editable = "." }
 dependencies = [
     { name = "fonttools", marker = "sys_platform == 'win32'" },

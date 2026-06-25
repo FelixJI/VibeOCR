@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.1.6] - 2026-06-25
+
+### Added
+- feat(bump): 交互式菜单新增'仅打包当前版本'选项
+
+### Fixed
+- fix(install): _install_paddle_stack 兼容打包环境 paddlepaddle 键名，修复 KeyError
+- fix(test): uv.lock 路径支持环境变量隔离，修复 10 个预存测试失败
+
 ## [0.1.5] - 2026-06-25
 
 ### Added
