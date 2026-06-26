@@ -766,3 +766,109 @@ class TestInteractiveMenuMergeOption:
         mod.interactive_menu((0, 1, 6))
         captured = capsys.readouterr()
         assert "合并至 main" in captured.out
+
+
+class TestCmdToMain:
+    """测试 cmd_to_main 端到端合并流程（双分支真实 git 仓库）"""
+
+    def _setup_two_branch_repo(self, tmp_path):
+        """建一个含 main + develop 两分支、develop 领先的仓库"""
+        import subprocess
+
+        def git(*args):
+            subprocess.run(["git", *args], cwd=tmp_path, capture_output=True)
+
+        git("init", "-b", "main")
+        git("config", "user.email", "t@t.com")
+        git("config", "user.name", "T")
+        # main 初始提交 + CHANGELOG
+        (tmp_path / "pyproject.toml").write_text(
+            '[project]\nname = "vibeocr"\nversion = "0.1.0"\n', encoding="utf-8"
+        )
+        (tmp_path / "CHANGELOG.md").write_text(
+            "# Changelog\n\n## [0.1.0] - 2025-01-01\n\n### Added\n- init\n",
+            encoding="utf-8",
+        )
+        git("add", ".")
+        git("commit", "-m", "init main")
+        git("tag", "v0.1.0")
+        # develop 分支 + 领先若干提交 + release
+        git("checkout", "-b", "develop")
+        git("commit", "--allow-empty", "-m", "feat: feature A")
+        git("commit", "--allow-empty", "-m", "fix: bug B")
+        # bump 到 0.1.1（develop 路径：版本号前进 + release 提交，无 tag）
+        (tmp_path / "pyproject.toml").write_text(
+            '[project]\nname = "vibeocr"\nversion = "0.1.1"\n', encoding="utf-8"
+        )
+        git("add", "pyproject.toml")
+        git("commit", "-m", "release: v0.1.1")
+        return tmp_path
+
+    def test_merge_consolidates_and_tags_on_main(self, tmp_path):
+        """--to-main 后：main 有 v0.1.1 tag、整合 CHANGELOG、最终在 develop"""
+        import os
+        import subprocess
+        import sys
+
+        repo = self._setup_two_branch_repo(tmp_path)
+
+        env = os.environ.copy()
+        env["PYPROJECT_TOML"] = str(repo / "pyproject.toml")
+        env["CHANGELOG"] = str(repo / "CHANGELOG.md")
+        env["UV_LOCK"] = str(repo / "uv.lock")  # 不存在，跳过同步
+
+        result = subprocess.run(
+            [sys.executable, str(SCRIPT), "--to-main", "--no-edit"],
+            cwd=repo,
+            capture_output=True,
+            encoding="utf-8",
+            errors="replace",
+            env=env,
+            input="y\n",
+        )
+        assert result.returncode == 0, f"失败: {result.stdout}\n{result.stderr}"
+
+        # main 上应有 v0.1.1 tag
+        tags = subprocess.run(
+            ["git", "tag", "-l"], cwd=repo, capture_output=True, encoding="utf-8",
+        ).stdout.strip().split("\n")
+        assert "v0.1.1" in tags
+
+        # CHANGELOG 顶部应有 0.1.1 整合条目，含 feature A / bug B
+        content = (repo / "CHANGELOG.md").read_text(encoding="utf-8")
+        assert "0.1.1" in content
+        assert "feat: feature A" in content
+        assert "fix: bug B" in content
+        # 0.1.1 整合条目在 0.1.0 之前
+        assert content.index("0.1.1") < content.index("0.1.0")
+
+    def test_blocks_when_unversioned_commits_exist(self, tmp_path):
+        """develop release 之后还有未版本化提交 → --to-main 阻止并引导先 bump"""
+        import os
+        import subprocess
+        import sys
+
+        repo = self._setup_two_branch_repo(tmp_path)
+        # 在 release v0.1.1 之后再加提交（未版本化）
+        subprocess.run(
+            ["git", "commit", "--allow-empty", "-m", "feat: unversioned"],
+            cwd=repo, capture_output=True,
+        )
+
+        env = os.environ.copy()
+        env["PYPROJECT_TOML"] = str(repo / "pyproject.toml")
+        env["CHANGELOG"] = str(repo / "CHANGELOG.md")
+        env["UV_LOCK"] = str(repo / "uv.lock")
+
+        result = subprocess.run(
+            [sys.executable, str(SCRIPT), "--to-main", "--no-edit"],
+            cwd=repo, capture_output=True, encoding="utf-8", errors="replace",
+            env=env, input="y\n",
+        )
+        # 应中止（非零退出），且不打 tag、不切到 main
+        assert result.returncode != 0
+        assert "未发版" in result.stdout or "未版本化" in result.stdout
+        tags = subprocess.run(
+            ["git", "tag", "-l"], cwd=repo, capture_output=True, encoding="utf-8",
+        ).stdout.strip().split("\n")
+        assert "v0.1.1" not in tags

@@ -1099,6 +1099,150 @@ def _ask_build(version: str) -> bool:
     return choice in ("", "y", "yes", "是")
 
 
+def _current_branch() -> str:
+    """返回当前 git 分支名"""
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            capture_output=True,
+            encoding="utf-8",
+            check=True,
+        )
+        return result.stdout.strip()
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return ""
+
+
+def _working_tree_clean() -> bool:
+    """工作区是否干净（无未提交改动）"""
+    try:
+        result = subprocess.run(
+            ["git", "status", "--porcelain"],
+            capture_output=True,
+            encoding="utf-8",
+            check=True,
+        )
+        return result.stdout.strip() == ""
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return False
+
+
+def cmd_to_main(skip_confirm: bool = False) -> int:
+    """合并 develop → main：squash + 整合 CHANGELOG + 打 tag + 同步回 develop
+
+    完整流程见设计文档 §「cmd_to_main() 流程」：
+    1. 预检（develop 分支、工作区干净、develop 领先 main）
+    2. 未版本化提交检测（发版安全闸，有则阻止）
+    3. 取 develop 当前版本号
+    4. 确认提示（skip_confirm=True 时跳过）
+    5. checkout main
+    6. git merge --squash develop
+    7. 重建 main CHANGELOG（generate_consolidated_entry + update_main_changelog）
+    8. git commit "release: vX.Y.Z"
+    9. git tag vX.Y.Z（main 唯一 tag 来源）
+    10. 切回 develop + merge main 同步整合 CHANGELOG 回 develop
+
+    Args:
+        skip_confirm: True 跳过确认提示（用于上游已确认/CI 场景）
+
+    Returns:
+        0=成功, 1=失败/中止
+    """
+    # 1. 预检
+    if _current_branch() != "develop":
+        print("错误: 必须在 develop 分支上执行 --to-main")
+        return 1
+    if not _working_tree_clean():
+        print("错误: 工作区不干净，请先提交或暂存改动")
+        return 1
+
+    try:
+        ahead = subprocess.run(
+            ["git", "rev-list", "--count", "main..develop"],
+            capture_output=True, encoding="utf-8", check=True,
+        )
+        n_ahead = int(ahead.stdout.strip() or "0")
+    except (subprocess.CalledProcessError, FileNotFoundError, ValueError):
+        print("错误: 无法确定 develop 相对 main 的领先提交数（main 分支是否存在？）")
+        return 1
+    if n_ahead == 0:
+        print("develop 与 main 无差异，无需合并")
+        return 1
+
+    # 2. 未版本化提交检测（发版安全闸）
+    current = read_current_version(PYPROJECT_TOML)
+    current_str = ".".join(map(str, current))
+    has_unversioned, n_unversioned = check_unversioned_commits(current_str)
+    if has_unversioned:
+        print(
+            f"错误: 检测到 v{current_str} 之后有 {n_unversioned} 个未发版提交。"
+            "发版前需先升级版本号（选 1-4 bump），再合并。"
+        )
+        return 1
+
+    # 3-4. 取版本 + 确认
+    v_new = current_str
+    print(
+        f"将执行：develop → main squash 合并 + 整合 CHANGELOG + 打 tag v{v_new}"
+    )
+    print("这会切换分支并创建提交。确认继续？[y/N]: ", end="", flush=True)
+    if not skip_confirm:
+        choice = input().strip().lower()
+        if choice not in ("y", "yes"):
+            print("已取消")
+            return 1
+
+    # 5. checkout main
+    try:
+        subprocess.run(["git", "checkout", "main"], check=True)
+    except subprocess.CalledProcessError as e:
+        print(f"错误: 切换到 main 失败: {e}")
+        return 1
+
+    # 6. squash merge
+    try:
+        subprocess.run(["git", "merge", "--squash", "develop"], check=True)
+    except subprocess.CalledProcessError as e:
+        print(f"错误: squash 合并失败: {e}")
+        return 1
+
+    # 7. 重建 main CHANGELOG
+    commits = _collect_commits("main..develop")
+    entry = generate_consolidated_entry(v_new, commits)
+    update_main_changelog(entry)
+    print(f"  已整合 CHANGELOG（v{v_new}，{len(commits)} 个提交）")
+
+    # 8. commit
+    try:
+        subprocess.run(["git", "add", str(CHANGELOG)], check=True)
+        subprocess.run(
+            ["git", "commit", "-m", f"release: v{v_new}"], check=True
+        )
+    except subprocess.CalledProcessError as e:
+        print(f"错误: 提交失败: {e}")
+        return 1
+
+    # 9. tag
+    try:
+        subprocess.run(["git", "tag", f"v{v_new}"], check=True)
+        print(f"  已在 main 打 tag v{v_new}")
+    except subprocess.CalledProcessError as e:
+        print(f"警告: 打 tag 失败: {e}")
+
+    # 10. 同步回 develop
+    try:
+        subprocess.run(["git", "checkout", "develop"], check=True)
+        subprocess.run(
+            ["git", "merge", "main", "--no-edit"], check=True
+        )
+        print("  已同步整合 CHANGELOG 回 develop")
+    except subprocess.CalledProcessError as e:
+        print(f"警告: 同步回 develop 失败: {e}")
+
+    print(f"\n完成! main 已更新到 v{v_new}，可用 --release 发布")
+    return 0
+
+
 class _Args(argparse.Namespace):
     """带类型注解的 Namespace，让静态检查器能识别 args 的各字段类型。
 
@@ -1111,6 +1255,7 @@ class _Args(argparse.Namespace):
     release: bool
     build: bool
     no_edit: bool
+    to_main: bool
     no_build: bool
     version: str | None
     rebuild: str | None
@@ -1167,8 +1312,18 @@ def main() -> int:
         action="store_true",
         help="构建并发布到 Gitee/GitHub（需要 GITEE_TOKEN / GITHUB_TOKEN）",
     )
+    parser.add_argument(
+        "--to-main",
+        action="store_true",
+        dest="to_main",
+        help="合并 develop → main（squash + 整合 CHANGELOG + 打 tag）",
+    )
 
     args = parser.parse_args(namespace=_Args())
+
+    # 模式: 合并至 main
+    if args.to_main:
+        return cmd_to_main(skip_confirm=args.no_edit)
 
     # 模式0: 构建并发布
     if args.release:
