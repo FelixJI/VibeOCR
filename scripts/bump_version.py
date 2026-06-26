@@ -1226,10 +1226,8 @@ def main() -> int:
     new_str = ".".join(map(str, new_version))
     print(f"版本升级: {current_str} → {new_str}")
 
-    # 获取提交记录
-    commits = get_commits_since_last_tag()
-
-    # 更新文件
+    # 更新版本号文件（develop bump 只前进版本号 + release 提交；
+    # CHANGELOG 与 tag 改由 --to-main 在 main 上维护）
     update_file_version(PYPROJECT_TOML, current_str, new_str)
     print(f"  已更新 {PYPROJECT_TOML}")
 
@@ -1239,29 +1237,19 @@ def main() -> int:
 
     # 注意：main.py 通过 __version__ 引用版本号（无字面量），无需在此更新。
 
-    # 更新 CHANGELOG
-    update_changelog(new_str, commits)
-    print(f"  已更新 {CHANGELOG}")
-
     # 同步 uv.lock（pyproject 版本号已变，锁文件需刷新避免滞后漂移）
     _sync_uv_lock(new_str)
 
-    # 打开编辑器（CHANGELOG）
-    if not args.no_edit:
-        _open_editor(CHANGELOG)
-
-    # Git 操作
+    # Git 操作（develop 不打 tag —— tag 只在 main 上由 --to-main 创建）
     try:
         subprocess.run(["git", "add", str(PYPROJECT_TOML)], check=True)
         if INIT_PY.exists():
             subprocess.run(["git", "add", str(INIT_PY)], check=True)
-        subprocess.run(["git", "add", str(CHANGELOG)], check=True)
         # uv.lock 与版本号同源，纳入同一 release 提交
         if UV_LOCK.exists():
             subprocess.run(["git", "add", str(UV_LOCK)], check=True)
         subprocess.run(["git", "commit", "-m", f"release: v{new_str}"], check=True)
-        subprocess.run(["git", "tag", f"v{new_str}"], check=True)
-        print(f"  已创建 git commit 和 tag v{new_str}")
+        print(f"  已创建 git commit release: v{new_str}")
     except (subprocess.CalledProcessError, FileNotFoundError) as e:
         print(f"警告: git 操作失败: {e}")
         return 1

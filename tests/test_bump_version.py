@@ -274,39 +274,13 @@ class TestVersionBumping:
 class TestChangelogGeneration:
     """测试 CHANGELOG 生成"""
 
-    def test_changelog_created(self, tmp_path):
-        """验证 CHANGELOG.md 在 bump 后被创建/更新"""
+    def test_changelog_not_created_on_bump(self, tmp_path):
+        """验证 develop bump 不再生成 CHANGELOG（CHANGELOG 改由 --to-main 维护）"""
         result = _run_bump(tmp_path, ["patch", "--no-edit", "--no-build"])
         assert result.returncode == 0, f"Script failed: {result.stderr}"
 
         changelog = tmp_path / "CHANGELOG.md"
-        assert changelog.exists()
-        content = changelog.read_text(encoding="utf-8")
-        assert "0.1.1" in content
-
-    def test_changelog_with_commits(self, tmp_path):
-        """验证提交信息被正确分类到 CHANGELOG"""
-        result = _run_bump_with_extra_commits(
-            tmp_path,
-            ["minor", "--no-edit", "--no-build"],
-            [
-                "feat: add new feature",
-                "fix: fix a bug",
-                "refactor: clean up code",
-            ],
-        )
-        assert result.returncode == 0, f"Script failed: {result.stderr}"
-
-        changelog = tmp_path / "CHANGELOG.md"
-        content = changelog.read_text(encoding="utf-8")
-        assert "0.2.0" in content
-        assert "feat: add new feature" in content
-        assert "fix: fix a bug" in content
-        assert "refactor: clean up code" in content
-        # 检查分类标题
-        assert (
-            "### Added" in content or "### Fixed" in content or "### Changed" in content
-        )
+        assert not changelog.exists(), "develop bump 不应生成 CHANGELOG"
 
     def test_categorize_commits(self):
         """测试 commit 分类函数"""
@@ -340,82 +314,17 @@ class TestChangelogGeneration:
         assert "docs: update readme" in result.get("Changed", [])
         assert "chore: update deps" in result.get("Changed", [])
 
-    def test_changelog_inserts_before_existing(self, tmp_path):
-        """验证新条目插入到现有 CHANGELOG 条目之前"""
-        pyproject = tmp_path / "pyproject.toml"
-        init_py = tmp_path / "__init__.py"
-        main_py = tmp_path / "main.py"
-        changelog = tmp_path / "CHANGELOG.md"
-
-        pyproject.write_text(
-            textwrap.dedent("""\
-            [project]
-            name = "vibeocr"
-            version = "0.1.0"
-        """),
-            encoding="utf-8",
-        )
-        init_py.write_text('__version__ = "0.1.0"', encoding="utf-8")
-        main_py.write_text('    app.setApplicationVersion("0.1.0")', encoding="utf-8")
-        # 用纯 ASCII 内容避免编码问题
-        changelog.write_text(
-            "# Changelog\n\n## [0.1.0] - 2025-01-01\n\n### Added\n- Initial version\n",
-            encoding="utf-8",
-        )
-
-        subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True)
-        subprocess.run(
-            ["git", "config", "user.email", "test@test.com"],
-            cwd=tmp_path,
-            capture_output=True,
-        )
-        subprocess.run(
-            ["git", "config", "user.name", "Test"],
-            cwd=tmp_path,
-            capture_output=True,
-        )
-        subprocess.run(["git", "add", "."], cwd=tmp_path, capture_output=True)
-        subprocess.run(
-            ["git", "commit", "-m", "init"],
-            cwd=tmp_path,
-            capture_output=True,
-        )
-        subprocess.run(
-            ["git", "tag", "v0.1.0"],
-            cwd=tmp_path,
-            capture_output=True,
-        )
-
-        env = os.environ.copy()
-        env["PYPROJECT_TOML"] = str(pyproject)
-        env["INIT_PY"] = str(init_py)
-        env["MAIN_PY"] = str(main_py)
-        env["CHANGELOG"] = str(changelog)
-        # uv.lock 指向临时目录（不存在），避免命中真实仓库的 uv.lock
-        env["UV_LOCK"] = str(tmp_path / "uv.lock")
-
-        result = subprocess.run(
-            [sys.executable, str(SCRIPT), "minor", "--no-edit", "--no-build"],
-            cwd=tmp_path,
-            capture_output=True,
-            encoding="utf-8",
-            errors="replace",
-            env=env,
-        )
-        assert result.returncode == 0, f"Script failed: {result.stderr}"
-
-        content = changelog.read_text(encoding="utf-8")
-        # 0.2.0 应该出现在 0.1.0 之前
-        pos_020 = content.index("0.2.0")
-        pos_010 = content.index("0.1.0")
-        assert pos_020 < pos_010, "New version entry should appear before old entry"
+    # 注：原 test_changelog_inserts_before_existing（验证 develop bump 把新版本
+    # 条目插到 CHANGELOG 顶部）已删除——develop bump 不再写 CHANGELOG。
+    # 「新条目插在现有之上」的行为现由 TestUpdateMainChangelog::test_inserts_new_entry_above_existing
+    # 覆盖（针对 --to-main 路径的 update_main_changelog）。
 
 
 class TestGitTagging:
     """测试 git 标签创建"""
 
-    def test_git_tag_created(self, tmp_path):
-        """验证 git tag vx.y.z 被创建"""
+    def test_no_tag_created_on_develop_bump(self, tmp_path):
+        """验证 develop bump 不再打 tag（tag 改由 --to-main 在 main 上打）"""
         result = _run_bump(tmp_path, ["patch", "--no-edit", "--no-build"])
         assert result.returncode == 0, f"Script failed: {result.stderr}"
 
@@ -426,11 +335,13 @@ class TestGitTagging:
             encoding="utf-8",
             errors="replace",
         )
-        tags = tag_result.stdout.strip().split("\n")
-        assert "v0.1.1" in tags
+        tags = [t for t in tag_result.stdout.strip().split("\n") if t]
+        assert "v0.1.1" not in tags, "develop bump 不应打 tag"
+        # 仅保留测试夹具里打的 v0.1.0
+        assert tags == ["v0.1.0"]
 
     def test_git_commit_created(self, tmp_path):
-        """验证 git commit 被创建"""
+        """验证 git commit 被创建（develop bump 仍生成 release: 提交）"""
         result = _run_bump(tmp_path, ["minor", "--no-edit", "--no-build"])
         assert result.returncode == 0, f"Script failed: {result.stderr}"
 
@@ -442,21 +353,6 @@ class TestGitTagging:
             errors="replace",
         )
         assert "release: v0.2.0" in log_result.stdout
-
-    def test_major_tag(self, tmp_path):
-        """验证 major 版本的 git tag"""
-        result = _run_bump(tmp_path, ["major", "--no-edit", "--no-build"])
-        assert result.returncode == 0, f"Script failed: {result.stderr}"
-
-        tag_result = subprocess.run(
-            ["git", "tag", "-l"],
-            cwd=tmp_path,
-            capture_output=True,
-            encoding="utf-8",
-            errors="replace",
-        )
-        tags = tag_result.stdout.strip().split("\n")
-        assert "v1.0.0" in tags
 
 
 class TestGenerateVersionJson:
