@@ -390,6 +390,45 @@ def generate_changelog_entry(version: str, commits: list[tuple[str, str]]) -> st
     return "\n".join(lines)
 
 
+def generate_consolidated_entry(
+    version: str, commits: list[tuple[str, str]]
+) -> str:
+    """生成合并至 main 用的单条整合 CHANGELOG 条目
+
+    与 generate_changelog_entry 区别：自动过滤 release: 提交、对 subject 去重。
+    合并至 main 时，多个 develop 小版本的提交揉成一条正式版条目。
+
+    Args:
+        version: 整合后的目标版本号字符串（如 "0.1.6"）
+        commits: 范围内的原始提交列表（含 release: 提交，会被过滤）
+
+    Returns:
+        格式化的单条 CHANGELOG 条目（## [version] - 日期 + 分类）
+    """
+    today = date.today().isoformat()
+    lines: list[str] = [f"## [{version}] - {today}", ""]
+
+    filtered = _filter_release_commits(commits)
+    # 按 subject 去重，保留首次出现顺序
+    seen: set[str] = set()
+    deduped: list[tuple[str, str]] = []
+    for h, s in filtered:
+        if s not in seen:
+            seen.add(s)
+            deduped.append((h, s))
+
+    categories = categorize_commits(deduped)
+    for cat_name, cat_commits in categories.items():
+        if not cat_commits:
+            continue
+        lines.append(f"### {cat_name}")
+        for commit_msg in cat_commits:
+            lines.append(f"- {commit_msg}")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
 def update_changelog(version: str, commits: list[tuple[str, str]]) -> None:
     """更新 CHANGELOG.md，在第一个 ## 标题之前插入新条目
 

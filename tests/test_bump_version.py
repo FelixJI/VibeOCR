@@ -650,3 +650,54 @@ class TestCollectCommits:
         assert "feat: a" in subjects
         assert "fix: b" in subjects
         assert not any("release:" in s for s in subjects)
+
+
+class TestGenerateConsolidatedEntry:
+    """测试 generate_consolidated_entry 整合生成单条 CHANGELOG 条目"""
+
+    @staticmethod
+    def _load_module():
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location("bump_version", SCRIPT)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+    def test_filters_release_commits_and_categorizes(self):
+        """自动过滤 release: 提交，剩余按 Added/Fixed/Changed 分类"""
+        mod = self._load_module()
+        commits = [
+            ("h1", "feat: add X"),
+            ("h2", "release: v0.1.5"),
+            ("h3", "fix: bug Y"),
+            ("h4", "chore: cleanup"),
+            ("h5", "release: v0.1.6"),
+        ]
+        entry = mod.generate_consolidated_entry("0.1.6", commits)
+        assert "## [0.1.6]" in entry
+        assert "feat: add X" in entry
+        assert "fix: bug Y" in entry
+        assert "chore: cleanup" in entry
+        assert "release: v0.1.5" not in entry
+        assert "release: v0.1.6" not in entry
+
+    def test_dedupes_identical_subjects(self):
+        """相同 subject 只保留一条"""
+        mod = self._load_module()
+        commits = [
+            ("h1", "feat: add X"),
+            ("h2", "feat: add X"),  # 重复
+            ("h3", "feat: add X"),  # 重复
+        ]
+        entry = mod.generate_consolidated_entry("0.1.6", commits)
+        assert entry.count("feat: add X") == 1
+
+    def test_omits_empty_categories(self):
+        """空分类不出现在条目中"""
+        mod = self._load_module()
+        commits = [("h1", "feat: only added")]
+        entry = mod.generate_consolidated_entry("0.1.6", commits)
+        assert "### Added" in entry
+        assert "### Fixed" not in entry
+        assert "### Changed" not in entry
