@@ -30,11 +30,13 @@ class InstallWorker(QThread):
         project_root: Path,
         force_backend: str | None = None,
         reinstall_python: bool = False,
+        missing_only: bool = False,
     ) -> None:
         super().__init__()
         self._project_root = project_root
         self._force_backend = force_backend
         self._reinstall_python = reinstall_python
+        self._missing_only = missing_only
 
     def _emit_progress(self, stage: str, message: str) -> None:
         """发送进度信号并同步写入 logger（确保 UI 进度落盘到 vibeocr.log）。
@@ -92,9 +94,15 @@ class InstallWorker(QThread):
                         self.finished.emit(False, f"安装嵌入式Python失败:\n{msg}")
                         return
 
-            # 4. 安装OCR依赖
-            self._emit_progress("依赖安装", "正在安装OCR依赖...")
-            success, msg = env_manager.install_embedded_dependencies(
+            # 4. 安装OCR依赖（增量或全量）
+            install_fn = (
+                env_manager.install_missing_dependencies
+                if self._missing_only
+                else env_manager.install_embedded_dependencies
+            )
+            action = "补装缺失" if self._missing_only else "安装"
+            self._emit_progress("依赖安装", f"正在{action}OCR依赖...")
+            success, msg = install_fn(
                 self._project_root,
                 network_type,
                 has_gpu,
