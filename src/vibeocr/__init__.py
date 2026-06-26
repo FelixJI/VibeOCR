@@ -1,3 +1,3 @@
 """VibeOCR - Screenshot OCR Application"""
 
-__version__ = "m.e.r.g.e"
+__version__ = "0.1.6"

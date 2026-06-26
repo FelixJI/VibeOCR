@@ -1,6 +1,6 @@
 [project]
 name = "vibeocr"
-version = "m.e.r.g.e"
+version = "0.1.6"
 description = "A screenshot OCR application"
 requires-python = ">=3.13,<3.14"
 dependencies = [
