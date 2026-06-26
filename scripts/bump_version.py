@@ -517,6 +517,33 @@ def update_changelog(version: str, commits: list[tuple[str, str]]) -> None:
     CHANGELOG.write_text(content, encoding="utf-8")
 
 
+def update_main_changelog(entry: str) -> None:
+    """把整合条目插入 main 的 CHANGELOG.md 顶部
+
+    与 update_changelog 区别：接受已生成好的 entry 文本（由
+    generate_consolidated_entry 产出），不复算分类。
+
+    Args:
+        entry: 单条 CHANGELOG 条目文本（含 ``## [version]`` 标题）
+    """
+    if CHANGELOG.exists():
+        content = CHANGELOG.read_text(encoding="utf-8")
+    else:
+        content = "# Changelog\n"
+
+    # 在第一个 ## 标题前插入（与 update_changelog 同逻辑）
+    idx = content.find("\n## ")
+    if idx >= 0:
+        insert_pos = idx + 1
+        content = content[:insert_pos] + entry + "\n" + content[insert_pos:]
+    else:
+        if not content.endswith("\n"):
+            content += "\n"
+        content += "\n" + entry
+
+    CHANGELOG.write_text(content, encoding="utf-8")
+
+
 def interactive_menu(current: tuple[int, int, int]) -> tuple[int, int, int] | str | None:
     """交互式版本选择菜单
 

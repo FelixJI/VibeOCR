@@ -796,3 +796,47 @@ class TestCheckUnversionedCommits:
         assert has is True
         # 找不到 release 点，n 取全部提交数（>=2）
         assert n >= 2
+
+
+class TestUpdateMainChangelog:
+    """测试 update_main_changelog 在 main CHANGELOG 顶部插入整合条目"""
+
+    @staticmethod
+    def _load_module():
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location("bump_version", SCRIPT)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+    def test_creates_changelog_when_absent(self, tmp_path):
+        """main 无 CHANGELOG 时创建（# Changelog + 首条）"""
+        mod = self._load_module()
+        changelog = tmp_path / "CHANGELOG.md"
+        mod.CHANGELOG = changelog
+        entry = "## [0.2.0] - 2026-06-26\n\n### Added\n- feat: X\n"
+
+        mod.update_main_changelog(entry)
+
+        content = changelog.read_text(encoding="utf-8")
+        assert content.startswith("# Changelog")
+        assert "0.2.0" in content
+
+    def test_inserts_new_entry_above_existing(self, tmp_path):
+        """新条目插在现有最新条目之上（顶部）"""
+        mod = self._load_module()
+        changelog = tmp_path / "CHANGELOG.md"
+        changelog.write_text(
+            "# Changelog\n\n## [0.1.0] - 2025-01-01\n\n### Added\n- init\n",
+            encoding="utf-8",
+        )
+        mod.CHANGELOG = changelog
+        entry = "## [0.2.0] - 2026-06-26\n\n### Added\n- feat: X\n"
+
+        mod.update_main_changelog(entry)
+
+        content = changelog.read_text(encoding="utf-8")
+        pos_new = content.index("0.2.0")
+        pos_old = content.index("0.1.0")
+        assert pos_new < pos_old
