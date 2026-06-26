@@ -206,3 +206,21 @@ def test_env_status_label_shows_python_info(controller, monkeypatch):
     assert "python.exe" in text or "就绪" in text or "已安装" in text, (
         f"应显示 Python 状态，实际: {text}"
     )
+
+
+def test_install_missing_button_exists(controller):
+    """补充安装缺失依赖按钮应在 UI 中可找到"""
+    _ctrl, host = controller
+    from PySide6.QtWidgets import QPushButton
+
+    btn = host.findChild(QPushButton, "btnInstallMissing")
+    assert btn is not None, "btnInstallMissing 应存在"
+
+
+def test_deps_status_table_exists(controller):
+    """依赖状态表格应在 UI 中可找到"""
+    _ctrl, host = controller
+    from PySide6.QtWidgets import QTableWidget
+
+    table = host.findChild(QTableWidget, "tableDepsStatus")
+    assert table is not None, "tableDepsStatus 应存在"
