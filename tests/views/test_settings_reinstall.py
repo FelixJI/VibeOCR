@@ -224,3 +224,93 @@ def test_deps_status_table_exists(controller):
 
     table = host.findChild(QTableWidget, "tableDepsStatus")
     assert table is not None, "tableDepsStatus 应存在"
+
+
+def test_click_install_missing_opens_dialog_with_missing_only(controller, monkeypatch):
+    """点补充安装缺失依赖：应弹 BackendChoiceDialog(missing_only=True)"""
+    _ctrl, host = controller
+    from PySide6.QtWidgets import QMessageBox, QPushButton
+
+    btn = host.findChild(QPushButton, "btnInstallMissing")
+    btn.setEnabled(True)
+
+    monkeypatch.setattr(
+        QMessageBox, "question", lambda *a, **kw: QMessageBox.StandardButton.Yes
+    )
+    instances = []
+
+    class FakeDialog:
+        def __init__(self, *args, **kwargs):
+            instances.append(kwargs)
+
+        def exec(self):
+            return 1
+
+        def show(self):
+            pass
+
+        finished = MagicMock()
+        install_succeeded = MagicMock()
+
+    monkeypatch.setattr(
+        "vibeocr.views.settings_page_controller.BackendChoiceDialog", FakeDialog
+    )
+
+    btn.click()
+
+    assert len(instances) == 1
+    assert instances[0].get("missing_only") is True
+
+
+def test_refresh_fills_deps_table(controller, monkeypatch):
+    """_refresh_env_maintenance_state 应填充依赖状态表格"""
+    ctrl, host = controller
+    from PySide6.QtWidgets import QTableWidget
+
+    monkeypatch.setattr(
+        "vibeocr.views.settings_page_controller.get_environment_mode",
+        lambda root: "portable",
+    )
+    monkeypatch.setattr(
+        "vibeocr.views.settings_page_controller.get_embedded_python_info",
+        lambda root: {
+            "path": "C:/app/python/python.exe",
+            "mode": "portable",
+            "ready": True,
+        },
+    )
+    monkeypatch.setattr(
+        "vibeocr.views.settings_page_controller.get_embedded_python_executable",
+        lambda root: __import__("pathlib").Path("C:/app/python/python.exe"),
+    )
+    # mock 依赖状态检测：paddle 已装，其余未装
+    monkeypatch.setattr(
+        "vibeocr.views.settings_page_controller.check_embedded_environment_dependencies",
+        lambda root: {
+            "paddlepaddle": True,
+            "paddleocr": False,
+            "mineru": False,
+            "torch": False,
+        },
+    )
+    monkeypatch.setattr(
+        "vibeocr.views.settings_page_controller.get_dependency_versions",
+        lambda root: {
+            "paddlepaddle": "3.3.1",
+            "paddleocr": "",
+            "mineru": "",
+            "torch": "",
+        },
+    )
+
+    ctrl._refresh_env_maintenance_state()
+
+    table = host.findChild(QTableWidget, "tableDepsStatus")
+    assert table is not None
+    assert table.rowCount() == 4, f"应有 4 行依赖，实际: {table.rowCount()}"
+    # 第一行 paddlepaddle 应标记已装
+    status_item = table.item(0, 1)
+    assert status_item is not None
+    assert "已安装" in status_item.text() or "✓" in status_item.text(), (
+        f"paddlepaddle 应已安装，实际: {status_item.text()}"
+    )

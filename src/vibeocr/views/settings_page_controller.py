@@ -19,11 +19,19 @@ from PySide6.QtWidgets import (
     QSpacerItem,
     QSpinBox,
     QStackedWidget,
+    QTableWidget,
+    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
 
-from vibeocr.env_manager import get_embedded_python_info, get_environment_mode
+from vibeocr.env_manager import (
+    check_embedded_environment_dependencies,
+    get_dependency_versions,
+    get_embedded_python_executable,
+    get_embedded_python_info,
+    get_environment_mode,
+)
 from vibeocr.machine_cache import is_cache_valid
 from vibeocr.widgets.backend_choice_dialog import BackendChoiceDialog
 
@@ -103,7 +111,7 @@ class SettingsPageController:
 
         self._restore_pipeline_ttl_state()
 
-        # --- 环境维护：重装 Python 运行时 / 重装 OCR 依赖 ---
+        # --- 环境维护：重装 Python 运行时 / 重装 OCR 依赖 / 补充安装缺失依赖 ---
         btn_reinstall_python = self._ui.findChild(QPushButton, "btnReinstallPython")
         if btn_reinstall_python:
             btn_reinstall_python.clicked.connect(self._on_reinstall_python)
@@ -111,6 +119,10 @@ class SettingsPageController:
         btn_reinstall_deps = self._ui.findChild(QPushButton, "btnReinstallDeps")
         if btn_reinstall_deps:
             btn_reinstall_deps.clicked.connect(self._on_reinstall_deps)
+
+        btn_install_missing = self._ui.findChild(QPushButton, "btnInstallMissing")
+        if btn_install_missing:
+            btn_install_missing.clicked.connect(self._on_install_missing)
 
         self._refresh_env_maintenance_state()
 
@@ -553,13 +565,17 @@ class SettingsPageController:
         self._update_cache_status("缓存已刷新")
         logger.debug("[缓存] 已刷新（依赖缓存 + 模型缓存）")
 
-    def _open_reinstall_dialog(self, reinstall_python: bool) -> None:
-        """以非模态方式打开重装对话框（不阻塞主窗口）。
+    def _open_reinstall_dialog(
+        self, reinstall_python: bool = False, missing_only: bool = False
+    ) -> None:
+        """以非模态方式打开重装/补装对话框（不阻塞主窗口）。
 
         show() 后必须持有 dialog 引用以防 GC；finished 时刷新环境状态并移除引用。
         """
         dialog = BackendChoiceDialog(
-            self._project_root, reinstall_python=reinstall_python
+            self._project_root,
+            reinstall_python=reinstall_python,
+            missing_only=missing_only,
         )
 
         def _on_finished(_result: int) -> None:
@@ -607,11 +623,28 @@ class SettingsPageController:
 
         self._open_reinstall_dialog(reinstall_python=False)
 
+    def _on_install_missing(self) -> None:
+        """补充安装缺失依赖按钮：确认后弹 BackendChoiceDialog(missing_only=True)"""
+        reply = QMessageBox.question(
+            None,
+            "确认补充安装缺失依赖",
+            "将检测并只安装缺失的 OCR 依赖（已安装的自动跳过，不重复下载）。\n\n"
+            "适合上次安装中途失败后补装。\n\n是否继续？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        self._open_reinstall_dialog(missing_only=True)
+
     def _refresh_env_maintenance_state(self) -> None:
-        """刷新环境维护区状态：显示 Python 路径/就绪，非 portable 模式禁用按钮"""
+        """刷新环境维护区状态：显示 Python 路径/就绪，依赖状态表格，非 portable 禁用按钮"""
         label = self._ui.findChild(QLabel, "labelEnvStatus")
         btn_py = self._ui.findChild(QPushButton, "btnReinstallPython")
         btn_deps = self._ui.findChild(QPushButton, "btnReinstallDeps")
+        btn_missing = self._ui.findChild(QPushButton, "btnInstallMissing")
+        table = self._ui.findChild(QTableWidget, "tableDepsStatus")
 
         mode = get_environment_mode(self._project_root)
         info = get_embedded_python_info(self._project_root)
@@ -625,12 +658,50 @@ class SettingsPageController:
             else:
                 label.setText("Python 运行时：未安装")
 
-        # 仅 portable 模式启用重装按钮（开发态 .venv 由 uv 管理）
+        # 仅 portable 模式启用重装/补装按钮（开发态 .venv 由 uv 管理）
         enabled = mode == "portable"
         if btn_py:
             btn_py.setEnabled(enabled)
         if btn_deps:
             btn_deps.setEnabled(enabled)
+        if btn_missing:
+            btn_missing.setEnabled(enabled)
+
+        # 填充依赖状态表格（仅 portable 模式）
+        if table and mode == "portable":
+            self._populate_deps_table(table)
+        elif table:
+            table.setRowCount(0)
+
+    def _populate_deps_table(self, table: QTableWidget) -> None:
+        """填充依赖状态表格（名称/状态/版本）"""
+        # 依赖展示顺序与 OCR_CHECK_MODULES 一致
+        from vibeocr.services.env_config import OCR_CHECK_MODULES
+
+        display_names = {
+            "paddlepaddle": "PaddlePaddle",
+            "paddleocr": "PaddleOCR",
+            "mineru": "MinerU",
+            "torch": "PyTorch",
+        }
+        ordered_pkgs = list(OCR_CHECK_MODULES.values())  # 保持插入顺序
+
+        python_exe = get_embedded_python_executable(self._project_root)
+        deps_status = check_embedded_environment_dependencies(self._project_root)
+        versions = (
+            get_dependency_versions(python_exe) if python_exe.exists() else {}
+        )
+
+        table.setRowCount(len(ordered_pkgs))
+        for row, pkg in enumerate(ordered_pkgs):
+            installed = deps_status.get(pkg, False)
+            name_item = QTableWidgetItem(display_names.get(pkg, pkg))
+            status_text = "✓ 已安装" if installed else "✗ 未安装"
+            status_item = QTableWidgetItem(status_text)
+            ver_item = QTableWidgetItem(versions.get(pkg, ""))
+            table.setItem(row, 0, name_item)
+            table.setItem(row, 1, status_item)
+            table.setItem(row, 2, ver_item)
 
     def _on_clear_cache_clicked(self) -> None:
         """清除缓存按钮点击"""
