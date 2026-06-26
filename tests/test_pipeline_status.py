@@ -81,4 +81,6 @@ def test_pipeline_names_constant():
     assert "OCR" in PIPELINE_NAMES
     assert "PP-StructureV3" in PIPELINE_NAMES
     assert "PaddleOCR-VL" in PIPELINE_NAMES
-    assert "MinerU" not in PIPELINE_NAMES
+    # MinerU 纳入跟踪：首次使用文档解析需下载模型，
+    # 标记成功以跳过重复下载（PdfSessionManager 首用 guard 据此判断）
+    assert "MinerU" in PIPELINE_NAMES

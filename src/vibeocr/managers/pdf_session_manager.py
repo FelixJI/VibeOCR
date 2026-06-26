@@ -52,6 +52,8 @@ class PdfSessionManager(QObject):
     ocr_progress = Signal(str, int, int)
     ocr_done = Signal(str, int, int)
     ocr_stats_ready = Signal(str, int, int)  # (file_path, written, skipped)
+    # MinerU 模型下载状态提示（首次使用 PDF 文档解析时）
+    mineru_models_status = Signal(str)
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -217,6 +219,12 @@ class PdfSessionManager(QObject):
         if session is None or self._ocr_service is None:
             return
 
+        # MinerU 文档解析：首次使用需下载模型（数 GB）。
+        # 已成功过（pipeline_success 标记）则跳过，避免每次重复检测。
+        if self._is_mineru_first_use(ocr_options):
+            if not self._ensure_mineru_models_blocking(session.file_path):
+                return
+
         self._cancel_ocr_worker()
 
         pages: list[tuple[int, np.ndarray]] = []
@@ -249,6 +257,48 @@ class PdfSessionManager(QObject):
         self._ocr_worker.progress.connect(self._on_ocr_progress)
         self._ocr_worker.all_done.connect(self._on_ocr_all_done)
         self._ocr_worker.start()
+
+    def _is_mineru_first_use(self, ocr_options: OCROptions | None) -> bool:
+        """判断是否为 MinerU 文档解析管道且模型尚未下载成功"""
+        if ocr_options is None:
+            return False
+        try:
+            from vibeocr.core.pipelines import OCRPipeline
+
+            if ocr_options.pipeline != OCRPipeline.DOCUMENT_PARSING:
+                return False
+            from vibeocr.env_manager import get_project_root
+            from vibeocr.pipeline_status import is_pipeline_ever_succeeded
+
+            return not is_pipeline_ever_succeeded("MinerU", get_project_root())
+        except Exception:
+            return False
+
+    def _ensure_mineru_models_blocking(self, file_path: str) -> bool:
+        """下载 MinerU 模型（阻塞主线程，期间通过信号反馈进度）。
+
+        首次使用 PDF 文档解析时调用。模型数 GB，下载耗时较长，
+        通过 mineru_models_status 信号通知 UI（状态栏/进度提示）。
+        下载期间周期性 processEvents 保持 UI 可响应（避免"无响应"假死）。
+        """
+        from PySide6.QtWidgets import QApplication
+
+        from vibeocr.env_manager import ensure_mineru_models, get_project_root
+
+        def on_progress(stage: str, message: str):
+            self.mineru_models_status.emit(f"[{stage}] {message}")
+            # 保持 UI 响应（下载进度逐行回调，每次让出事件循环）
+            QApplication.processEvents()
+
+        self.mineru_models_status.emit("首次使用文档解析，正在下载 MinerU 模型（约数 GB）...")
+        ok, msg = ensure_mineru_models(get_project_root(), progress_callback=on_progress)
+        if ok:
+            self.mineru_models_status.emit("MinerU 模型准备就绪")
+            return True
+        # 下载失败：通知 UI 并视为本次 OCR 失败
+        self.mineru_models_status.emit(f"模型下载失败: {msg}")
+        self.ocr_done.emit(file_path, 0, 1)
+        return False
 
     def cancel_ocr(self) -> None:
         self._cancel_ocr_worker()

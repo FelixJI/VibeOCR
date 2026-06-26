@@ -288,6 +288,144 @@ class TestOcrOverwritePassThrough:
         assert session.ocr_stats["skipped"] == 0
 
 
+class TestMinerUFirstUseGuard:
+    """start_ocr 在 MinerU 文档解析首用时触发模型下载"""
+
+    def test_triggers_model_download_on_first_use(self, manager, test_pdf_a, monkeypatch):
+        """MinerU 管道 + 模型未下载 → 应调用 ensure_mineru_models"""
+        from unittest.mock import MagicMock
+
+        from vibeocr.core.pipelines import OCRPipeline
+        from vibeocr.models.ocr_options import OCROptions
+        from vibeocr.services.pdf_service import PdfService
+
+        session = manager.open_session(str(test_pdf_a))
+        with session.doc_lock:
+            PdfService.build_page_infos(session.doc, session.pdf_document)
+
+        fake_worker = MagicMock()
+        fake_worker.session_id = session.file_path
+        monkeypatch.setattr(
+            "vibeocr.managers.pdf_session_manager.PdfOcrWorker",
+            lambda *a, **k: fake_worker,
+        )
+        manager._ocr_service = MagicMock()
+
+        # 模型未下载（首用）
+        monkeypatch.setattr(
+            "vibeocr.pipeline_status.is_pipeline_ever_succeeded", lambda *a, **k: False
+        )
+        download_calls = []
+        monkeypatch.setattr(
+            "vibeocr.env_manager.ensure_mineru_models",
+            lambda *a, **k: (download_calls.append(1) or (True, "ok")),
+        )
+
+        opts = OCROptions(pipeline=OCRPipeline.DOCUMENT_PARSING)
+        manager.start_ocr([0], ocr_options=opts)
+
+        assert len(download_calls) == 1, "首用应触发模型下载"
+
+    def test_skips_download_when_already_succeeded(self, manager, test_pdf_a, monkeypatch):
+        """MinerU 已成功过 → 跳过模型下载"""
+        from unittest.mock import MagicMock
+
+        from vibeocr.core.pipelines import OCRPipeline
+        from vibeocr.models.ocr_options import OCROptions
+        from vibeocr.services.pdf_service import PdfService
+
+        session = manager.open_session(str(test_pdf_a))
+        with session.doc_lock:
+            PdfService.build_page_infos(session.doc, session.pdf_document)
+
+        fake_worker = MagicMock()
+        fake_worker.session_id = session.file_path
+        monkeypatch.setattr(
+            "vibeocr.managers.pdf_session_manager.PdfOcrWorker",
+            lambda *a, **k: fake_worker,
+        )
+        manager._ocr_service = MagicMock()
+
+        # 模型已下载（已成功过）
+        monkeypatch.setattr(
+            "vibeocr.pipeline_status.is_pipeline_ever_succeeded", lambda *a, **k: True
+        )
+        download_calls = []
+        monkeypatch.setattr(
+            "vibeocr.env_manager.ensure_mineru_models",
+            lambda *a, **k: (download_calls.append(1) or (True, "ok")),
+        )
+
+        opts = OCROptions(pipeline=OCRPipeline.DOCUMENT_PARSING)
+        manager.start_ocr([0], ocr_options=opts)
+
+        assert len(download_calls) == 0, "已成功过应跳过下载"
+
+    def test_download_failure_aborts_ocr(self, manager, test_pdf_a, monkeypatch):
+        """模型下载失败时应终止本次 OCR（不启动 worker）"""
+        from unittest.mock import MagicMock
+
+        from vibeocr.core.pipelines import OCRPipeline
+        from vibeocr.models.ocr_options import OCROptions
+        from vibeocr.services.pdf_service import PdfService
+
+        session = manager.open_session(str(test_pdf_a))
+        with session.doc_lock:
+            PdfService.build_page_infos(session.doc, session.pdf_document)
+
+        worker_created = []
+        monkeypatch.setattr(
+            "vibeocr.managers.pdf_session_manager.PdfOcrWorker",
+            lambda *a, **k: worker_created.append(1) or MagicMock(),
+        )
+        manager._ocr_service = MagicMock()
+
+        monkeypatch.setattr(
+            "vibeocr.pipeline_status.is_pipeline_ever_succeeded", lambda *a, **k: False
+        )
+        monkeypatch.setattr(
+            "vibeocr.env_manager.ensure_mineru_models",
+            lambda *a, **k: (False, "下载失败"),
+        )
+
+        opts = OCROptions(pipeline=OCRPipeline.DOCUMENT_PARSING)
+        manager.start_ocr([0], ocr_options=opts)
+
+        assert len(worker_created) == 0, "下载失败不应启动 OCR worker"
+
+    def test_non_mineru_pipeline_skips_check(self, manager, test_pdf_a, monkeypatch):
+        """非 MinerU 管道不应触发模型检查"""
+        from unittest.mock import MagicMock
+
+        from vibeocr.core.pipelines import OCRPipeline
+        from vibeocr.models.ocr_options import OCROptions
+        from vibeocr.services.pdf_service import PdfService
+
+        session = manager.open_session(str(test_pdf_a))
+        with session.doc_lock:
+            PdfService.build_page_infos(session.doc, session.pdf_document)
+
+        fake_worker = MagicMock()
+        fake_worker.session_id = session.file_path
+        monkeypatch.setattr(
+            "vibeocr.managers.pdf_session_manager.PdfOcrWorker",
+            lambda *a, **k: fake_worker,
+        )
+        manager._ocr_service = MagicMock()
+
+        download_calls = []
+        monkeypatch.setattr(
+            "vibeocr.env_manager.ensure_mineru_models",
+            lambda *a, **k: (download_calls.append(1) or (True, "ok")),
+        )
+
+        # 普通 OCR 管道（非文档解析）
+        opts = OCROptions(pipeline=OCRPipeline.OCR)
+        manager.start_ocr([0], ocr_options=opts)
+
+        assert len(download_calls) == 0, "非 MinerU 管道不应触发模型下载"
+
+
 class TestPdfSessionManagerBlockEdit:
     """双击改字 → 内存模型更新（update_page_block_text）。"""
 

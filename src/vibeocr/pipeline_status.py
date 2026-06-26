@@ -14,6 +14,7 @@ PIPELINE_NAMES = {
     "PaddleOCR-VL",
     "TABLE_RECOGNITION",
     "FORMULA_RECOGNITION",
+    "MinerU",  # 文档解析（首次使用需下载模型，标记成功以跳过重复下载）
 }
 
 

@@ -318,6 +318,7 @@ class PdfTab(QWidget):
         mgr.ocr_progress.connect(self._on_ocr_progress_update)
         mgr.ocr_done.connect(self._on_ocr_finished)
         mgr.ocr_stats_ready.connect(self._on_ocr_stats_ready)
+        mgr.mineru_models_status.connect(self._on_mineru_models_status)
 
     # ---- splitter layout persistence --------------------------------
 
@@ -415,6 +416,13 @@ class PdfTab(QWidget):
     def _on_ocr_progress_update(self, file_path: str, current: int, total: int) -> None:
         self._progress_bar.setValue(current)
         self._status_label.setText(f"正在识别第 {current}/{total} 页...")
+
+    def _on_mineru_models_status(self, message: str) -> None:
+        """MinerU 模型下载状态提示（首次使用文档解析时）"""
+        self._status_label.setText(message)
+        # 下载期间显示不确定进度条（无具体百分比）
+        self._progress_bar.setRange(0, 0)
+        self._progress_bar.setVisible(True)
 
     def _on_ocr_finished(self, file_path: str, success: int, fail: int) -> None:
         self._progress_bar.setVisible(False)

@@ -239,7 +239,13 @@ class OCRServiceSubprocess:
             from vibeocr.models.ocr_options import OCROptions
 
             ocr_opts = OCROptions.from_dict(options_dict) if options_dict else None
-            return MinerUService().parse(image_data, mime_type, ocr_opts)
+            result = MinerUService().parse(image_data, mime_type, ocr_opts)
+            # 标记 MinerU 管道识别成功（首用模型下载据此跳过）
+            try:
+                mark_pipeline_success("MinerU", self._get_project_root())
+            except Exception:
+                pass
+            return result
 
         result = self._paddlex_manager.execute(
             lambda w: w.recognize(image_data, options_dict, timeout=timeout),
