@@ -701,3 +701,98 @@ class TestGenerateConsolidatedEntry:
         assert "### Added" in entry
         assert "### Fixed" not in entry
         assert "### Changed" not in entry
+
+
+class TestCheckUnversionedCommits:
+    """测试 check_unversioned_commits 发版前未版本化提交检测"""
+
+    @staticmethod
+    def _load_module():
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location("bump_version", SCRIPT)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+    def test_clean_head_is_release_point(self, tmp_path):
+        """HEAD 恰为 release: v0.1.0 提交 → 无未版本化提交"""
+        import subprocess
+
+        mod = self._load_module()
+        subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True)
+        subprocess.run(
+            ["git", "config", "user.email", "t@t.com"], cwd=tmp_path, capture_output=True
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "T"], cwd=tmp_path, capture_output=True
+        )
+        subprocess.run(
+            ["git", "commit", "--allow-empty", "-m", "release: v0.1.0"],
+            cwd=tmp_path,
+            capture_output=True,
+        )
+
+        has, n = mod.check_unversioned_commits("0.1.0", cwd=tmp_path)
+        assert has is False
+        assert n == 0
+
+    def test_commits_after_release_point_detected(self, tmp_path):
+        """release 之后还有 2 个提交 → 检测到，n=2"""
+        import subprocess
+
+        mod = self._load_module()
+        subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True)
+        subprocess.run(
+            ["git", "config", "user.email", "t@t.com"], cwd=tmp_path, capture_output=True
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "T"], cwd=tmp_path, capture_output=True
+        )
+        subprocess.run(
+            ["git", "commit", "--allow-empty", "-m", "release: v0.1.0"],
+            cwd=tmp_path,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", "commit", "--allow-empty", "-m", "feat: a"],
+            cwd=tmp_path,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", "commit", "--allow-empty", "-m", "fix: b"],
+            cwd=tmp_path,
+            capture_output=True,
+        )
+
+        has, n = mod.check_unversioned_commits("0.1.0", cwd=tmp_path)
+        assert has is True
+        assert n == 2
+
+    def test_no_release_commit_found_treats_all_as_unversioned(self, tmp_path):
+        """找不到 release: vX 提交 → 视为全部未版本化（保守策略）"""
+        import subprocess
+
+        mod = self._load_module()
+        subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True)
+        subprocess.run(
+            ["git", "config", "user.email", "t@t.com"], cwd=tmp_path, capture_output=True
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "T"], cwd=tmp_path, capture_output=True
+        )
+        subprocess.run(
+            ["git", "commit", "--allow-empty", "-m", "feat: a"],
+            cwd=tmp_path,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", "commit", "--allow-empty", "-m", "feat: b"],
+            cwd=tmp_path,
+            capture_output=True,
+        )
+
+        has, n = mod.check_unversioned_commits("9.9.9", cwd=tmp_path)
+        assert has is True
+        # 找不到 release 点，n 取全部提交数（>=2）
+        assert n >= 2

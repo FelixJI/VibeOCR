@@ -324,6 +324,63 @@ def get_commits_since_last_tag() -> list[tuple[str, str]]:
     return _collect_commits("HEAD")
 
 
+def check_unversioned_commits(
+    version: str, cwd: Path | None = None
+) -> tuple[bool, int]:
+    """检测当前版本号之后是否有未版本化提交（发版安全闸）
+
+    找 ``release: v{version}`` 提交，比较它与 HEAD：
+    - 相等 → HEAD 即 release 点，干净，返回 (False, 0)。
+    - 不等 → 用 rev-list 统计其后提交数，返回 (True, N)。
+    - 找不到 release 提交 → 保守视为全部未版本化，
+      N 取该仓库全部提交数。
+
+    Args:
+        version: 当前版本号字符串（如 "0.1.6"）
+        cwd: git 仓库目录；None 表示继承调用者 CWD
+
+    Returns:
+        (是否有未版本化提交, 未版本化提交数)
+    """
+    kwargs: dict[str, object] = {"capture_output": True, "encoding": "utf-8", "check": True}
+    if cwd is not None:
+        kwargs["cwd"] = str(cwd)
+
+    # 找 release 提交的完整 hash
+    try:
+        result = subprocess.run(
+            ["git", "log", "--grep", f"^release: v{version}$", "--pretty=%H", "-1"],
+            **kwargs,  # type: ignore[arg-type]
+        )
+        release_hash = (result.stdout or "").strip()
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        release_hash = ""
+
+    if not release_hash:
+        # 找不到 release 点：保守统计全部提交数
+        try:
+            result = subprocess.run(
+                ["git", "rev-list", "--count", "HEAD"],
+                **kwargs,  # type: ignore[arg-type]
+            )
+            total = int((result.stdout or "0").strip() or "0")
+        except (subprocess.CalledProcessError, FileNotFoundError, ValueError):
+            total = 0
+        return (True, total)
+
+    # release 点之后有多少提交
+    try:
+        result = subprocess.run(
+            ["git", "rev-list", "--count", f"{release_hash}..HEAD"],
+            **kwargs,  # type: ignore[arg-type]
+        )
+        count = int((result.stdout or "0").strip() or "0")
+    except (subprocess.CalledProcessError, FileNotFoundError, ValueError):
+        count = 0
+
+    return (count > 0, count)
+
+
 def categorize_commits(
     commits: list[tuple[str, str]],
 ) -> dict[str, list[str]]:
