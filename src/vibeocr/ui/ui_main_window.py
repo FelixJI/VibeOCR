@@ -3,7 +3,7 @@
 ################################################################################
 ## Form generated from reading UI file 'main_window.ui'
 ##
-## Created by: Qt User Interface Compiler version 6.11.1
+## Created by: Qt User Interface Compiler version 6.10.1
 ##
 ## WARNING! All changes made in this file will be lost when recompiling UI file!
 ################################################################################
@@ -246,6 +246,12 @@ class Ui_MainWindowWidget(object):
         self.appSettingsLayout = QVBoxLayout(self.groupAppSettings)
         self.appSettingsLayout.setSpacing(8)
         self.appSettingsLayout.setObjectName(u"appSettingsLayout")
+        self.labelToolbarDesc = QLabel(self.groupAppSettings)
+        self.labelToolbarDesc.setObjectName(u"labelToolbarDesc")
+        self.labelToolbarDesc.setWordWrap(True)
+
+        self.appSettingsLayout.addWidget(self.labelToolbarDesc)
+
         self.chkShowToolbar = QCheckBox(self.groupAppSettings)
         self.chkShowToolbar.setObjectName(u"chkShowToolbar")
 
@@ -398,11 +404,11 @@ class Ui_MainWindowWidget(object):
         __sortingEnabled = self.settingsNavList.isSortingEnabled()
         self.settingsNavList.setSortingEnabled(False)
         ___qlistwidgetitem = self.settingsNavList.item(0)
-        ___qlistwidgetitem.setText(QCoreApplication.translate("MainWindowWidget", u"\u6a21\u578b\u7ba1\u7406", None))
+        ___qlistwidgetitem.setText(QCoreApplication.translate("MainWindowWidget", u"\u6a21\u578b\u7ba1\u7406", None));
         ___qlistwidgetitem1 = self.settingsNavList.item(1)
-        ___qlistwidgetitem1.setText(QCoreApplication.translate("MainWindowWidget", u"\u5e94\u7528\u8bbe\u7f6e", None))
+        ___qlistwidgetitem1.setText(QCoreApplication.translate("MainWindowWidget", u"\u5e94\u7528\u8bbe\u7f6e", None));
         ___qlistwidgetitem2 = self.settingsNavList.item(2)
-        ___qlistwidgetitem2.setText(QCoreApplication.translate("MainWindowWidget", u"\u5de5\u5177", None))
+        ___qlistwidgetitem2.setText(QCoreApplication.translate("MainWindowWidget", u"\u5de5\u5177", None));
         self.settingsNavList.setSortingEnabled(__sortingEnabled)
 
         self.groupPreload.setTitle(QCoreApplication.translate("MainWindowWidget", u"\u6a21\u578b\u9884\u52a0\u8f7d", None))
@@ -439,6 +445,7 @@ class Ui_MainWindowWidget(object):
         self.btnClearCache.setText(QCoreApplication.translate("MainWindowWidget", u"\u6e05\u9664\u7f13\u5b58", None))
         self.labelCacheStatus.setText(QCoreApplication.translate("MainWindowWidget", u"\u7f13\u5b58\u72b6\u6001: \u672a\u77e5", None))
         self.groupAppSettings.setTitle(QCoreApplication.translate("MainWindowWidget", u"\u5e94\u7528\u8bbe\u7f6e", None))
+        self.labelToolbarDesc.setText(QCoreApplication.translate("MainWindowWidget", u"\u8fb9\u7f18\u5de5\u5177\u680f\uff1a\u60ac\u6d6e\u5728\u5c4f\u5e55\u8fb9\u7f18\u7684\u5feb\u6377\u5de5\u5177\u6761\uff0c\u63d0\u4f9b\u4e00\u952e\u622a\u56fe\u548c\u547c\u51fa\u4e3b\u7a97\u53e3\u3002\u53ef\u62d6\u52a8\u5230\u5c4f\u5e55\u4efb\u610f\u8fb9\u7f18\uff0c\u505c\u9760\u540e\u81ea\u52a8\u9690\u85cf\uff0c\u9f20\u6807\u9760\u8fd1\u65f6\u5f39\u51fa\u3002", None))
 #if QT_CONFIG(tooltip)
         self.chkShowToolbar.setToolTip(QCoreApplication.translate("MainWindowWidget", u"\u663e\u793a\u684c\u9762\u8fb9\u7f18\u6d6e\u52a8\u5de5\u5177\u680f\uff0c\u63d0\u4f9b\u5feb\u901f\u622a\u56fe\u548c\u4e3b\u7a97\u53e3\u5165\u53e3", None))
 #endif // QT_CONFIG(tooltip)
@@ -460,11 +467,11 @@ class Ui_MainWindowWidget(object):
         self.groupEnvMaintenance.setTitle(QCoreApplication.translate("MainWindowWidget", u"\u73af\u5883\u7ef4\u62a4", None))
         self.labelEnvStatus.setText(QCoreApplication.translate("MainWindowWidget", u"Python \u8fd0\u884c\u65f6\uff1a\u68c0\u6d4b\u4e2d...", None))
         ___qtablewidgetitem = self.tableDepsStatus.horizontalHeaderItem(0)
-        ___qtablewidgetitem.setText(QCoreApplication.translate("MainWindowWidget", u"\u4f9d\u8d56", None))
+        ___qtablewidgetitem.setText(QCoreApplication.translate("MainWindowWidget", u"\u4f9d\u8d56", None));
         ___qtablewidgetitem1 = self.tableDepsStatus.horizontalHeaderItem(1)
-        ___qtablewidgetitem1.setText(QCoreApplication.translate("MainWindowWidget", u"\u72b6\u6001", None))
+        ___qtablewidgetitem1.setText(QCoreApplication.translate("MainWindowWidget", u"\u72b6\u6001", None));
         ___qtablewidgetitem2 = self.tableDepsStatus.horizontalHeaderItem(2)
-        ___qtablewidgetitem2.setText(QCoreApplication.translate("MainWindowWidget", u"\u7248\u672c", None))
+        ___qtablewidgetitem2.setText(QCoreApplication.translate("MainWindowWidget", u"\u7248\u672c", None));
 #if QT_CONFIG(tooltip)
         self.tableDepsStatus.setToolTip(QCoreApplication.translate("MainWindowWidget", u"\u5404 OCR \u4f9d\u8d56\u7684\u5b89\u88c5\u72b6\u6001\uff08\u4ec5\u4fbf\u643a\u6a21\u5f0f\u53ef\u89c1\uff09", None))
 #endif // QT_CONFIG(tooltip)

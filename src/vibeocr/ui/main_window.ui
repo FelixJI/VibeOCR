@@ -480,6 +480,16 @@
                <number>8</number>
               </property>
               <item>
+               <widget class="QLabel" name="labelToolbarDesc">
+                <property name="text">
+                 <string>边缘工具栏：悬浮在屏幕边缘的快捷工具条，提供一键截图和呼出主窗口。可拖动到屏幕任意边缘，停靠后自动隐藏，鼠标靠近时弹出。</string>
+                </property>
+                <property name="wordWrap">
+                 <bool>true</bool>
+                </property>
+               </widget>
+              </item>
+              <item>
                <widget class="QCheckBox" name="chkShowToolbar">
                 <property name="toolTip">
                  <string>显示桌面边缘浮动工具栏，提供快速截图和主窗口入口</string>

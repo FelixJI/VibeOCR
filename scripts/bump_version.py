@@ -865,6 +865,10 @@ def _get_pyinstaller_cmd(version: str) -> list[str]:
         "--noconfirm",
         "--paths",
         str(PROJECT_ROOT / "src"),
+        # 禁用 UPX 压缩：UPX 压缩的 DLL（尤其 PySide6 的 Qt6*.dll，数十 MB）
+        # 每次启动都要在内存解压，是 .exe 启动慢的主因。
+        # 牺牲约 30% 磁盘体积换取启动免解压提速。
+        "--noupx",
     ]
 
     if APP_ICON.exists():

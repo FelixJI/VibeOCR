@@ -1045,3 +1045,31 @@ class TestBumpMergePrompt:
         assert not merged.get("merged"), "答 N 不应合并"
         # --no-build 时 _ask_build 仍被调用但由 no_build 跳过实际打包；
         # 此处验证没有走合并分支即可（built.asked 可能 True 但无害）
+
+
+class TestPyInstallerNoUpx:
+    """_get_pyinstaller_cmd 应禁用 UPX（启动慢主因）"""
+
+    @staticmethod
+    def _load_module():
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location("bump_version", SCRIPT)
+        assert spec is not None and spec.loader is not None
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+    def test_cmd_contains_noupx(self):
+        """打包命令应包含 --noupx（禁用 UPX 压缩换取启动提速）"""
+        mod = self._load_module()
+        cmd = mod._get_pyinstaller_cmd("0.1.7")
+        assert "--noupx" in cmd, (
+            f"应包含 --noupx 禁用 UPX 压缩，实际命令: {cmd}"
+        )
+
+    def test_cmd_uses_onedir(self):
+        """打包命令应使用 --onedir 模式"""
+        mod = self._load_module()
+        cmd = mod._get_pyinstaller_cmd("0.1.7")
+        assert "--onedir" in cmd
