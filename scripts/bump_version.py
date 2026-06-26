@@ -1345,6 +1345,20 @@ def main() -> int:
             print(f"错误: {e}")
             return 1
         current_str = ".".join(map(str, current))
+
+        # 未版本化提交警告（打包内容可能超出版本号标注）
+        has_unversioned, n = check_unversioned_commits(current_str)
+        if has_unversioned:
+            print(
+                f"警告: 当前版本 {current_str} 之后有 {n} 个未发版提交，"
+                "打包内容将超出版本号标注。仍要打包？[y/N]: ",
+                end="",
+                flush=True,
+            )
+            if input().strip().lower() not in ("y", "yes"):
+                print("已取消打包")
+                return 0
+
         return 0 if _run_build(current_str) else 1
 
     # 模式2: 重新打包指定版本
@@ -1417,8 +1431,15 @@ def main() -> int:
         print(f"警告: git 操作失败: {e}")
         return 1
 
-    # 询问是否打包
-    if not args.no_build and _ask_build(new_str):
+    # 先问是否合并至 main（更重操作优先）；否决后再问打包
+    merged = False
+    if not args.no_edit:
+        print("\n是否立即合并至 main 并发版？[y/N]: ", end="", flush=True)
+        if input().strip().lower() in ("y", "yes"):
+            rc_merge = cmd_to_main(skip_confirm=True)
+            merged = rc_merge == 0
+
+    if not merged and not args.no_build and _ask_build(new_str):
         _run_build(new_str)
 
     print(f"\n完成! 版本已升级到 {new_str}")

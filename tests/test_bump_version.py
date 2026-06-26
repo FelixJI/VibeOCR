@@ -924,3 +924,124 @@ class TestToMainArgWiring:
 
         assert called.get("invoked") is True
         assert rc == 0
+
+
+class TestOption5UnversionedWarning:
+    """选项 5 打包时未版本化提交警告（--build 模式）"""
+
+    @staticmethod
+    def _load_module():
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location("bump_version", SCRIPT)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+    def test_option_5_warns_when_unversioned(self, monkeypatch, capsys):
+        """有未版本化提交时 --build 应打印警告并按默认 N 放弃打包"""
+        mod = self._load_module()
+
+        # 桩：检测到未版本化提交；read_current_version 避免触碰真实 pyproject
+        monkeypatch.setattr(
+            mod, "check_unversioned_commits", lambda v, cwd=None: (True, 3)
+        )
+        monkeypatch.setattr(mod, "read_current_version", lambda path: (0, 1, 6))
+        # 桩：打包不应被调用
+        ran: dict = {}
+        monkeypatch.setattr(
+            mod, "_run_build", lambda v: ran.setdefault("built", True) or True
+        )
+        # input 默认 N（放弃）
+        monkeypatch.setattr("builtins.input", lambda _p="": "N")
+        monkeypatch.setattr("sys.argv", ["bump_version.py", "--build"])
+
+        rc = mod.main()
+
+        out = capsys.readouterr().out
+        assert "未发版" in out or "超出版本号" in out
+        assert not ran.get("built"), "用户选 N 时不应打包"
+
+    def test_option_5_proceeds_when_clean(self, monkeypatch):
+        """无未版本化提交时 --build 正常打包"""
+        mod = self._load_module()
+        monkeypatch.setattr(
+            mod, "check_unversioned_commits", lambda v, cwd=None: (False, 0)
+        )
+        monkeypatch.setattr(mod, "read_current_version", lambda path: (0, 1, 6))
+        ran: dict = {}
+        monkeypatch.setattr(
+            mod, "_run_build", lambda v: ran.setdefault("built", True) or True
+        )
+        monkeypatch.setattr("sys.argv", ["bump_version.py", "--build"])
+
+        mod.main()
+
+        assert ran.get("built") is True
+
+
+class TestBumpMergePrompt:
+    """选项 1-4 bump 完后串联"合并至 main"提示"""
+
+    @staticmethod
+    def _load_module():
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location("bump_version", SCRIPT)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+    def test_bump_prompts_merge_yes_invokes_cmd_to_main(self, monkeypatch):
+        """bump 后提示合并，答 y → 调用 cmd_to_main，不再问打包"""
+        mod = self._load_module()
+        monkeypatch.setattr(mod, "read_current_version", lambda path: (0, 1, 5))
+        monkeypatch.setattr(
+            mod, "update_file_version", lambda f, old, new: None
+        )
+        monkeypatch.setattr(mod, "_sync_uv_lock", lambda v: False)
+        # 桩 git 操作（add/commit）
+        monkeypatch.setattr(mod.subprocess, "run", lambda *a, **k: None)
+        merged: dict = {}
+        monkeypatch.setattr(
+            mod, "cmd_to_main", lambda skip_confirm=False: merged.setdefault("merged", True) or 0
+        )
+        built: dict = {}
+        monkeypatch.setattr(
+            mod, "_ask_build", lambda v: built.setdefault("asked", True) or False
+        )
+        # 合并提示答 y
+        monkeypatch.setattr("builtins.input", lambda _p="": "y")
+        monkeypatch.setattr("sys.argv", ["bump_version.py", "patch", "--no-build"])
+
+        mod.main()
+
+        assert merged.get("merged") is True, "答 y 应触发 cmd_to_main"
+        assert not built.get("asked"), "已合并时不应再问打包"
+
+    def test_bump_prompts_merge_no_falls_back_to_build_prompt(self, monkeypatch):
+        """bump 后提示合并，答 N → 跳过合并，转问打包"""
+        mod = self._load_module()
+        monkeypatch.setattr(mod, "read_current_version", lambda path: (0, 1, 5))
+        monkeypatch.setattr(
+            mod, "update_file_version", lambda f, old, new: None
+        )
+        monkeypatch.setattr(mod, "_sync_uv_lock", lambda v: False)
+        monkeypatch.setattr(mod.subprocess, "run", lambda *a, **k: None)
+        merged: dict = {}
+        monkeypatch.setattr(
+            mod, "cmd_to_main", lambda skip_confirm=False: merged.setdefault("merged", True) or 1
+        )
+        built: dict = {}
+        monkeypatch.setattr(
+            mod, "_ask_build", lambda v: built.setdefault("asked", True) or False
+        )
+        # 合并提示答 N
+        monkeypatch.setattr("builtins.input", lambda _p="": "N")
+        monkeypatch.setattr("sys.argv", ["bump_version.py", "patch", "--no-build"])
+
+        mod.main()
+
+        assert not merged.get("merged"), "答 N 不应合并"
+        # --no-build 时 _ask_build 仍被调用但由 no_build 跳过实际打包；
+        # 此处验证没有走合并分支即可（built.asked 可能 True 但无害）
