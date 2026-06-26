@@ -897,8 +897,14 @@ def _get_pyinstaller_cmd(version: str) -> list[str]:
     return cmd
 
 
-def _run_build(version: str) -> bool:
-    """执行完整构建流程"""
+def _run_build(version: str, force: bool = False) -> bool:
+    """执行完整构建流程
+
+    Args:
+        version: 版本号字符串
+        force: True 时已存在的目标目录直接删除重建，不交互询问
+            （CI/非交互场景用）。False 时遇到已存在目录会 input() 询问。
+    """
     if not _check_pyinstaller():
         print("\n错误: PyInstaller 未安装")
         print(f"请运行: {sys.executable} -m pip install pyinstaller")
@@ -908,13 +914,17 @@ def _run_build(version: str) -> bool:
     dist_path = DIST_BASE_DIR / dist_name / "VibeOCR"
 
     if dist_path.exists():
-        print(f"\n目标目录已存在: {dist_path}")
-        print("是否删除后重新打包? [Y/n]: ", end="", flush=True)
-        choice = input().strip().lower()
-        if choice not in ("", "y", "yes", "是"):
-            print("已取消打包")
-            return False
-        shutil.rmtree(DIST_BASE_DIR / dist_name, ignore_errors=True)
+        if force:
+            print(f"\n目标目录已存在（--force）: {dist_path}，直接删除重建")
+            shutil.rmtree(DIST_BASE_DIR / dist_name, ignore_errors=True)
+        else:
+            print(f"\n目标目录已存在: {dist_path}")
+            print("是否删除后重新打包? [Y/n]: ", end="", flush=True)
+            choice = input().strip().lower()
+            if choice not in ("", "y", "yes", "是"):
+                print("已取消打包")
+                return False
+            shutil.rmtree(DIST_BASE_DIR / dist_name, ignore_errors=True)
 
     # 1. 打包主程序
     cmd = _get_pyinstaller_cmd(version)
@@ -1261,6 +1271,7 @@ class _Args(argparse.Namespace):
     no_edit: bool
     to_main: bool
     no_build: bool
+    force: bool
     version: str | None
     rebuild: str | None
 
@@ -1306,6 +1317,11 @@ def main() -> int:
         help="重新打包指定版本 (如 1.2.3)",
     )
     parser.add_argument(
+        "--force",
+        action="store_true",
+        help="打包时遇到已存在的目标目录直接删除重建，不交互询问（CI/非交互场景用）",
+    )
+    parser.add_argument(
         "--no-build",
         action="store_true",
         dest="no_build",
@@ -1337,7 +1353,7 @@ def main() -> int:
             print(f"错误: {e}")
             return 1
         current_str = ".".join(map(str, current))
-        if not _run_build(current_str):
+        if not _run_build(current_str, force=args.force):
             return 1
         return 0 if _create_release(current_str) else 1
 
@@ -1363,7 +1379,7 @@ def main() -> int:
                 print("已取消打包")
                 return 0
 
-        return 0 if _run_build(current_str) else 1
+        return 0 if _run_build(current_str, force=args.force) else 1
 
     # 模式2: 重新打包指定版本
     if args.rebuild:
@@ -1371,7 +1387,7 @@ def main() -> int:
         if not SEMVER_RE.match(rebuild_version):
             print(f"错误: 无效版本号 '{rebuild_version}'")
             return 1
-        return 0 if _run_build(rebuild_version) else 1
+        return 0 if _run_build(rebuild_version, force=args.force) else 1
 
     # 模式3: 版本升级流程
     try:
@@ -1390,7 +1406,7 @@ def main() -> int:
             return 0
         if new_version == "build":
             # 仅打包当前版本（不升级版本号、不动 git）
-            return 0 if _run_build(current_str) else 1
+            return 0 if _run_build(current_str, force=args.force) else 1
         if new_version == "merge":
             # 合并至 main（菜单选项 6 的哨兵）
             return cmd_to_main(skip_confirm=args.no_edit)
@@ -1444,7 +1460,7 @@ def main() -> int:
             merged = rc_merge == 0
 
     if not merged and not args.no_build and _ask_build(new_str):
-        _run_build(new_str)
+        _run_build(new_str, force=args.force)
 
     print(f"\n完成! 版本已升级到 {new_str}")
     return 0

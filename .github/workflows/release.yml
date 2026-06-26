@@ -1,0 +1,113 @@
+# VibeOCR 自动打包发版流程
+#
+# 触发：推送 v* 格式的 tag（由本地 `bump_version.py --to-main` 创建并 push）
+# 产物：Windows 便携版 zip + sha256，上传到对应 tag 的 GitHub Release
+#
+# 依赖策略：CI 不跑 uv sync（会拉数 GB 的 paddle/torch CUDA 包），
+# 而是显式安装 PyInstaller 打包真正需要 import 的最小依赖集。
+# paddle/torch 在打包时被 --exclude-module 排除（见 bump_version.py
+# EXCLUDED_PACKAGES），version.json 的依赖版本从 pyproject.toml 解析，
+# 不依赖实际安装的包。
+
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+# 同一 tag 重复推送时取消旧 run，避免并发打包
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write  # softprops/action-gh-release 创建 Release 需要
+
+jobs:
+  build:
+    name: Build & Release (Windows)
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Parse version from tag
+        id: version
+        shell: bash
+        run: |
+          # tag 形如 refs/tags/v0.1.7 → version=0.1.7
+          tag="${GITHUB_REF_NAME#v}"
+          if ! [[ "$tag" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::tag '$GITHUB_REF_NAME' 不符合 vX.Y.Z 格式"
+            exit 1
+          fi
+          echo "version=$tag" >> "$GITHUB_OUTPUT"
+          echo "解析到版本号: $tag"
+
+      - name: Install minimal build dependencies
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          # PyInstaller 实际需要 import 的全部第三方包（paddle/torch 被
+          # --exclude-module 排除，不在此列）。版本约束宽松，由 PyPI 解析最新兼容版。
+          pip install \
+            pyinstaller \
+            pyside6 \
+            pillow \
+            numpy \
+            markdown \
+            qasync \
+            httpx \
+            pymupdf \
+            fonttools \
+            "qrcode[pil]" \
+            python-barcode \
+            opencv-contrib-python \
+            pyzbar
+
+      - name: Build (PyInstaller via bump_version.py)
+        shell: bash
+        run: |
+          python scripts/bump_version.py --rebuild "${{ steps.version.outputs.version }}" --force
+
+      - name: Extract release notes from CHANGELOG
+        id: notes
+        shell: python
+        run: |
+          import re, sys
+          from pathlib import Path
+
+          version = "${{ steps.version.outputs.version }}"
+          changelog = Path("CHANGELOG.md")
+          body = ""
+          if changelog.exists():
+              content = changelog.read_text(encoding="utf-8")
+              pattern = rf"##\s+\[{re.escape(version)}\].*?(?=\n##\s|$)"
+              m = re.search(pattern, content, re.DOTALL)
+              if m:
+                  body = m.group(0).strip()
+
+          if not body:
+              body = f"VibeOCR v{version}"
+
+          # 写到文件，避免多行字符串在 GITHUB_OUTPUT 里的转义问题
+          Path("release_notes.md").write_text(body, encoding="utf-8")
+          print(f"提取到 {len(body)} 字符的 release notes")
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          # body 走文件，避免 GitHub Actions 多行字符串注入陷阱
+          body_path: release_notes.md
+          files: |
+            dist/VibeOCR-v${{ steps.version.outputs.version }}-win64.zip
+            dist/VibeOCR-v${{ steps.version.outputs.version }}-win64.zip.sha256
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

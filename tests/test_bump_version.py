@@ -950,7 +950,7 @@ class TestOption5UnversionedWarning:
         # 桩：打包不应被调用
         ran: dict = {}
         monkeypatch.setattr(
-            mod, "_run_build", lambda v: ran.setdefault("built", True) or True
+            mod, "_run_build", lambda v, force=False: ran.setdefault("built", True) or True
         )
         # input 默认 N（放弃）
         monkeypatch.setattr("builtins.input", lambda _p="": "N")
@@ -971,7 +971,7 @@ class TestOption5UnversionedWarning:
         monkeypatch.setattr(mod, "read_current_version", lambda path: (0, 1, 6))
         ran: dict = {}
         monkeypatch.setattr(
-            mod, "_run_build", lambda v: ran.setdefault("built", True) or True
+            mod, "_run_build", lambda v, force=False: ran.setdefault("built", True) or True
         )
         monkeypatch.setattr("sys.argv", ["bump_version.py", "--build"])
 
