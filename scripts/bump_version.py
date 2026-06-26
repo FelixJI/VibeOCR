@@ -1373,6 +1373,9 @@ def main() -> int:
         if new_version == "build":
             # 仅打包当前版本（不升级版本号、不动 git）
             return 0 if _run_build(current_str) else 1
+        if new_version == "merge":
+            # 合并至 main（菜单选项 6 的哨兵）
+            return cmd_to_main(skip_confirm=args.no_edit)
     elif args.version in ("patch", "minor", "major"):
         new_version = bump_version(current, args.version)
     elif SEMVER_RE.match(args.version):

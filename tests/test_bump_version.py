@@ -872,3 +872,55 @@ class TestCmdToMain:
             ["git", "tag", "-l"], cwd=repo, capture_output=True, encoding="utf-8",
         ).stdout.strip().split("\n")
         assert "v0.1.1" not in tags
+
+
+class TestToMainArgWiring:
+    """--to-main 参数与 merge 哨兵接线测试"""
+
+    @staticmethod
+    def _load_module():
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location("bump_version", SCRIPT)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+    def test_to_main_flag_invokes_cmd_to_main(self, monkeypatch):
+        """--to-main 应调用 cmd_to_main（用 monkeypatch 桩掉真实 git 操作）"""
+        mod = self._load_module()
+
+        called: dict = {}
+
+        def fake_cmd(skip_confirm: bool = False) -> int:
+            called["invoked"] = True
+            called["skip_confirm"] = skip_confirm
+            return 0
+
+        monkeypatch.setattr(mod, "cmd_to_main", fake_cmd)
+        monkeypatch.setattr("sys.argv", ["bump_version.py", "--to-main"])
+
+        rc = mod.main()
+
+        assert called.get("invoked") is True
+        assert rc == 0
+
+    def test_merge_sentinel_invokes_cmd_to_main(self, monkeypatch):
+        """菜单返回 'merge' 哨兵时 main() 应调用 cmd_to_main"""
+        mod = self._load_module()
+
+        called: dict = {}
+
+        def fake_cmd(skip_confirm: bool = False) -> int:
+            called["invoked"] = True
+            return 0
+
+        monkeypatch.setattr(mod, "cmd_to_main", fake_cmd)
+        monkeypatch.setattr(mod, "read_current_version", lambda path: (0, 1, 6))
+        monkeypatch.setattr(mod, "interactive_menu", lambda current: "merge")
+        monkeypatch.setattr("sys.argv", ["bump_version.py"])
+
+        rc = mod.main()
+
+        assert called.get("invoked") is True
+        assert rc == 0
