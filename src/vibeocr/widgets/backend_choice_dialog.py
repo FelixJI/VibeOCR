@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QLabel,
+    QMessageBox,
     QProgressBar,
     QPushButton,
     QRadioButton,
@@ -40,12 +41,14 @@ class BackendChoiceDialog(QDialog):
         project_root: Path,
         parent: QWidget | None = None,
         reinstall_python: bool = False,
+        missing_only: bool = False,
     ) -> None:
         super().__init__(parent)
         self._project_root = project_root
         self._worker: InstallWorker | None = None
         self._has_gpu = False
         self._reinstall_python = reinstall_python
+        self._missing_only = missing_only
         self._setup_ui()
         self._detect_and_set_default()
 
@@ -133,6 +136,7 @@ class BackendChoiceDialog(QDialog):
             self._project_root,
             force_backend=backend,
             reinstall_python=self._reinstall_python,
+            missing_only=self._missing_only,
         )
         self._worker.progress.connect(self._on_progress)
         self._worker.finished.connect(self._on_finished)
@@ -158,6 +162,13 @@ class BackendChoiceDialog(QDialog):
             self._log(f"\n{message}")
             self._close_button.setVisible(True)
             self._close_button.setText("关闭")
+            # 失败弹窗：展示详情 + 提示增量重试
+            QMessageBox.warning(
+                self,
+                "依赖安装失败",
+                f"{message}\n\n"
+                "可点击「补充安装缺失依赖」按钮重试（已安装的依赖会自动跳过）。",
+            )
             self.done(0)
 
     def _log(self, msg: str) -> None:

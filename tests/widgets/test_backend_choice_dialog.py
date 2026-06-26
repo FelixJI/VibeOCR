@@ -62,7 +62,13 @@ def test_reinstall_python_passed_to_worker(_cleanup, qtbot, tmp_path):
     captured = {}
 
     class FakeWorker:
-        def __init__(self, project_root, force_backend=None, reinstall_python=False):
+        def __init__(
+            self,
+            project_root,
+            force_backend=None,
+            reinstall_python=False,
+            missing_only=False,
+        ):
             captured["force_backend"] = force_backend
             captured["reinstall_python"] = reinstall_python
 
@@ -88,3 +94,80 @@ def test_reinstall_python_passed_to_worker(_cleanup, qtbot, tmp_path):
     assert captured.get("reinstall_python") is True, (
         "reinstall_python 应透传给 InstallWorker"
     )
+
+
+def test_missing_only_passed_to_install_worker(_cleanup, qtbot, tmp_path):
+    """missing_only=True 应透传给 InstallWorker"""
+    captured = {}
+
+    class FakeWorker:
+        def __init__(
+            self,
+            project_root,
+            force_backend=None,
+            reinstall_python=False,
+            missing_only=False,
+        ):
+            captured["force_backend"] = force_backend
+            captured["reinstall_python"] = reinstall_python
+            captured["missing_only"] = missing_only
+
+        progress = MagicMock()
+        finished = MagicMock()
+
+        def start(self):
+            pass
+
+        def isRunning(self):
+            return False
+
+        def wait(self):
+            pass
+
+    with patch.object(bcd_module, "env_manager") as mock_em:
+        mock_em.detect_gpu.return_value = (False, None)  # CPU 模式
+        with patch.object(bcd_module, "InstallWorker", FakeWorker):
+            dlg = bcd_module.BackendChoiceDialog(tmp_path, missing_only=True)
+            qtbot.addWidget(dlg)
+            dlg._on_install_clicked()
+
+    assert captured.get("missing_only") is True, "missing_only 应透传给 InstallWorker"
+
+
+def test_failure_shows_warning_messagebox(_cleanup, qtbot, tmp_path):
+    """安装失败时应弹 QMessageBox.warning"""
+    from PySide6.QtWidgets import QMessageBox
+
+    warnings_shown = []
+    with patch.object(
+        QMessageBox, "warning", lambda *args, **kwargs: warnings_shown.append(args)
+    ):
+        with patch.object(bcd_module, "env_manager") as mock_em:
+            mock_em.detect_gpu.return_value = (False, None)
+            dlg = bcd_module.BackendChoiceDialog(tmp_path)
+            qtbot.addWidget(dlg)
+            # 直接调用 _on_finished 模拟失败
+            dlg._on_finished(False, "torch 安装失败:\n网络超时")
+
+    assert len(warnings_shown) == 1, "失败时应弹一次 warning"
+    all_text = " ".join(str(a) for a in warnings_shown[0])
+    assert "torch" in all_text or "失败" in all_text, (
+        f"弹窗应含失败信息，实际: {all_text}"
+    )
+
+
+def test_success_does_not_show_warning(_cleanup, qtbot, tmp_path):
+    """安装成功时不应弹 warning"""
+    from PySide6.QtWidgets import QMessageBox
+
+    warnings_shown = []
+    with patch.object(
+        QMessageBox, "warning", lambda *args, **kwargs: warnings_shown.append(args)
+    ):
+        with patch.object(bcd_module, "env_manager") as mock_em:
+            mock_em.detect_gpu.return_value = (False, None)
+            dlg = bcd_module.BackendChoiceDialog(tmp_path)
+            qtbot.addWidget(dlg)
+            dlg._on_finished(True, "安装成功")
+
+    assert len(warnings_shown) == 0
