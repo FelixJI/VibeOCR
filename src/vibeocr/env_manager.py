@@ -718,6 +718,62 @@ def is_embedded_environment_ready(project_root: Path) -> tuple[bool, list[str]]:
     return len(missing) == 0, missing
 
 
+def _build_paddle_requirements(
+    specs: dict[str, str],
+    use_gpu: bool,
+    cuda_version: str | None,
+    network_type: Literal["domestic", "international"],
+    report_fn: Callable[[str, str], None],
+) -> list[tuple[str, str, str]]:
+    """构建 paddle 项（GPU/CPU 包名 + index URL 选择）。
+
+    只构建 paddle 这一项（最复杂、需复用的逻辑）；paddleocr/mineru/torch 项由调用方
+    自行拼接（它们的 index 是 pip_source / torch_index，属调用方局部值）。
+
+    Args:
+        specs: _load_dep_specs() 返回的依赖规格
+        use_gpu: 是否安装 GPU 版本
+        cuda_version: CUDA 版本 cu-tag（如 "cu126"）
+        network_type: 网络类型（决定 torch 镜像）
+        report_fn: 日志回调 (stage, msg)
+
+    Returns:
+        [(paddle 展示名, paddle 包规格, paddle index URL)]
+    """
+    import re as _re
+
+    # 打包环境 version.json 用 _KEY_ALIASES 把 paddlepaddle-gpu 归一为 paddlepaddle；
+    # 开发环境 pyproject 保留 paddlepaddle-gpu。两端兼容取规格。
+    raw_paddle_spec = specs.get("paddlepaddle-gpu") or specs["paddlepaddle"]
+    _ver_m = _re.search(r"(==|>=|<=|~=|>|<).+", raw_paddle_spec)
+    paddle_version_constraint = _ver_m.group(0) if _ver_m else ""
+    paddle_gpu_spec = f"paddlepaddle-gpu{paddle_version_constraint}"
+    paddle_cpu_spec = f"paddlepaddle{paddle_version_constraint}"
+
+    default_gpu_tag = "cu126"
+    if use_gpu and cuda_version:
+        paddle_package = paddle_gpu_spec
+        paddle_index = (
+            f"https://www.paddlepaddle.org.cn/packages/stable/{cuda_version}/"
+        )
+        paddle_name = f"PaddlePaddle GPU ({cuda_version})"
+        report_fn("依赖安装", f"检测到 CUDA {cuda_version}，安装 GPU 版本")
+    elif use_gpu:
+        paddle_package = paddle_gpu_spec
+        paddle_index = (
+            f"https://www.paddlepaddle.org.cn/packages/stable/{default_gpu_tag}/"
+        )
+        paddle_name = f"PaddlePaddle GPU ({default_gpu_tag})"
+        report_fn("依赖安装", f"安装 GPU 版本（默认 {default_gpu_tag}）")
+    else:
+        paddle_package = paddle_cpu_spec
+        paddle_index = "https://www.paddlepaddle.org.cn/packages/stable/cpu/"
+        paddle_name = "PaddlePaddle CPU"
+        report_fn("依赖安装", "使用CPU版本")
+
+    return [(paddle_name, paddle_package, paddle_index)]
+
+
 def _install_paddle_stack(
     python_exe: Path,
     specs: dict[str, str],
@@ -746,44 +802,6 @@ def _install_paddle_stack(
     Returns:
         (是否成功, 消息)
     """
-    # 打包环境 version.json 由 bump_version._generate_version_json 生成，
-    # 它用 _KEY_ALIASES 把 paddlepaddle-gpu 归一为 paddlepaddle（键与值都变成
-    # CPU 名，如 "paddlepaddle": "3.3.1"）；开发环境 pyproject.toml 分支则保留
-    # paddlepaddle-gpu（值如 "paddlepaddle-gpu>=3.3.1"）。两端键名/值都不对称，
-    # 这里从取到的规格提取版本约束，重建 GPU / CPU 两条规格字符串，避免 GPU 模式
-    # 误装 CPU 版 paddlepaddle，也避免打包环境 KeyError: 'paddlepaddle-gpu'。
-    raw_paddle_spec = specs.get("paddlepaddle-gpu") or specs["paddlepaddle"]
-    import re as _re
-
-    _ver_m = _re.search(r"(==|>=|<=|~=|>|<).+", raw_paddle_spec)
-    paddle_version_constraint = _ver_m.group(0) if _ver_m else ""
-    paddle_gpu_spec = f"paddlepaddle-gpu{paddle_version_constraint}"
-    paddle_cpu_spec = f"paddlepaddle{paddle_version_constraint}"
-
-    # 决定 PaddlePaddle 版本（GPU 优先）
-    # 注意：cuda_version 已是 cu-tag（detect_cuda_version 输出，如 "cu126"），
-    # 直接用于构造 paddle index URL，不要再查 CUDA_VERSION_MAP（那是原始版本→cu-tag 的映射）。
-    default_gpu_tag = "cu126"
-    if use_gpu and cuda_version:
-        paddle_package = paddle_gpu_spec
-        paddle_index = (
-            f"https://www.paddlepaddle.org.cn/packages/stable/{cuda_version}/"
-        )
-        paddle_name = f"PaddlePaddle GPU ({cuda_version})"
-        report_fn("依赖安装", f"检测到 CUDA {cuda_version}，安装 GPU 版本")
-    elif use_gpu:
-        paddle_package = paddle_gpu_spec
-        paddle_index = (
-            f"https://www.paddlepaddle.org.cn/packages/stable/{default_gpu_tag}/"
-        )
-        paddle_name = f"PaddlePaddle GPU ({default_gpu_tag})"
-        report_fn("依赖安装", f"安装 GPU 版本（默认 {default_gpu_tag}）")
-    else:
-        paddle_package = paddle_cpu_spec
-        paddle_index = "https://www.paddlepaddle.org.cn/packages/stable/cpu/"
-        paddle_name = "PaddlePaddle CPU"
-        report_fn("依赖安装", "使用CPU版本")
-
     try:
         # 升级pip
         report_fn("依赖安装", "正在升级pip...")
@@ -809,14 +827,24 @@ def _install_paddle_stack(
                 f"pip升级警告: {result.stderr[-100:] if result.stderr else ''}",
             )
 
+        paddle_reqs = _build_paddle_requirements(
+            specs=specs,
+            use_gpu=use_gpu,
+            cuda_version=cuda_version,
+            network_type=network_type,
+            report_fn=report_fn,
+        )
         requirements = [
-            (paddle_name, paddle_package, paddle_index),
+            *paddle_reqs,
             ("PaddleOCR", f'"{specs["paddleocr"]}"', pip_source),
             ("MinerU", f'"{specs["mineru"]}"', pip_source),
         ]
 
         # GPU 环境下安装 torch+CUDA 覆盖 mineru 附带的 CPU 版本
         if use_gpu:
+            # 注意：cuda_version 已是 cu-tag（detect_cuda_version 输出，如 "cu126"），
+            # 直接用于构造 index URL，不要再查 CUDA_VERSION_MAP。
+            default_gpu_tag = "cu126"
             paddle_cuda_tag = cuda_version or default_gpu_tag
             torch_cuda_tag = TORCH_CUDA_MAP.get(paddle_cuda_tag, "cu126")
             pytorch_mirror_name = "nju" if network_type == "domestic" else "official"

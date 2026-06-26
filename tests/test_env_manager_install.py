@@ -1050,3 +1050,84 @@ class TestReinstallPython:
 
         assert not ok
         assert "下载失败" in msg
+
+
+class TestBuildPaddleRequirements:
+    """_build_paddle_requirements：构建 paddle 项（GPU/CPU/index 选择）"""
+
+    @staticmethod
+    def _specs():
+        return {
+            "paddlepaddle-gpu": "paddlepaddle-gpu>=3.3.1",
+            "paddlepaddle": "paddlepaddle>=3.3.1",
+            "paddleocr": "paddleocr[doc-parser]>=3.7.0",
+            "mineru": "mineru[core]>=3.4.0",
+            "torch": "torch>=2.6.0",
+        }
+
+    def test_gpu_with_cuda_selects_gpu_index(self):
+        """GPU + cuda_version → paddlepaddle-gpu + 含 cu-tag 的 index"""
+        from vibeocr.env_manager import _build_paddle_requirements
+
+        reqs = _build_paddle_requirements(
+            specs=self._specs(),
+            use_gpu=True,
+            cuda_version="cu126",
+            network_type="domestic",
+            report_fn=lambda s, m: None,
+        )
+        assert len(reqs) == 1
+        name, pkg_spec, index = reqs[0]
+        assert "GPU" in name
+        assert "paddlepaddle-gpu" in pkg_spec
+        assert "cu126" in index
+
+    def test_cpu_selects_cpu_index(self):
+        """CPU → paddlepaddle(CPU) + cpu index"""
+        from vibeocr.env_manager import _build_paddle_requirements
+
+        reqs = _build_paddle_requirements(
+            specs=self._specs(),
+            use_gpu=False,
+            cuda_version=None,
+            network_type="domestic",
+            report_fn=lambda s, m: None,
+        )
+        assert len(reqs) == 1
+        name, pkg_spec, index = reqs[0]
+        assert "CPU" in name
+        assert pkg_spec.startswith("paddlepaddle")
+        assert "paddlepaddle-gpu" not in pkg_spec
+        assert "/cpu/" in index
+
+    def test_gpu_default_tag_when_no_cuda(self):
+        """GPU 无 cuda_version → 用默认 cu126"""
+        from vibeocr.env_manager import _build_paddle_requirements
+
+        reqs = _build_paddle_requirements(
+            specs=self._specs(),
+            use_gpu=True,
+            cuda_version=None,
+            network_type="domestic",
+            report_fn=lambda s, m: None,
+        )
+        name, _pkg, index = reqs[0]
+        assert "cu126" in name
+        assert "cu126" in index
+
+    def test_specs_with_paddlepaddle_key_only(self):
+        """specs 仅含 paddlepaddle 键（打包环境 version.json 风格）应正常工作"""
+        from vibeocr.env_manager import _build_paddle_requirements
+
+        specs = {"paddlepaddle": "paddlepaddle>=3.3.1"}
+        reqs = _build_paddle_requirements(
+            specs=specs,
+            use_gpu=True,
+            cuda_version="cu126",
+            network_type="domestic",
+            report_fn=lambda s, m: None,
+        )
+        assert len(reqs) == 1
+        name, pkg_spec, _index = reqs[0]
+        assert "GPU" in name
+        assert "paddlepaddle-gpu" in pkg_spec
