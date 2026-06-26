@@ -736,3 +736,33 @@ class TestUpdateMainChangelog:
         pos_new = content.index("0.2.0")
         pos_old = content.index("0.1.0")
         assert pos_new < pos_old
+
+
+class TestInteractiveMenuMergeOption:
+    """交互式菜单的"合并至 main"选项 6 测试"""
+
+    @staticmethod
+    def _load_module():
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location("bump_version", SCRIPT)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+    def test_option_6_returns_merge_sentinel(self, monkeypatch):
+        """选项 6 应返回哨兵 'merge'"""
+        mod = self._load_module()
+        monkeypatch.setattr("builtins.input", lambda _prompt="": "6")
+
+        result = mod.interactive_menu((0, 1, 6))
+
+        assert result == "merge", f"选项 6 应返回 'merge'，实际: {result!r}"
+
+    def test_menu_lists_option_6(self, capsys, monkeypatch):
+        """菜单输出应包含"合并至 main"描述"""
+        mod = self._load_module()
+        monkeypatch.setattr("builtins.input", lambda _prompt="": "0")
+        mod.interactive_menu((0, 1, 6))
+        captured = capsys.readouterr()
+        assert "合并至 main" in captured.out

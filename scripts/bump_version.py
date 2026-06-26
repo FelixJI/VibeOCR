@@ -545,13 +545,14 @@ def update_main_changelog(entry: str) -> None:
 
 
 def interactive_menu(current: tuple[int, int, int]) -> tuple[int, int, int] | str | None:
-    """交互式版本选择菜单
+    """交互式操作选择菜单
 
     Args:
         current: 当前版本号三元组
 
     Returns:
-        新版本号三元组 / 字符串 "build"（仅打包当前版本，不升级版本号）/ None（取消）
+        新版本号三元组 / 字符串 "build"（仅打包当前版本，不升级版本号）/
+        字符串 "merge"（合并至 main）/ None（取消）
     """
     major, minor, patch = current
     current_str = f"{major}.{minor}.{patch}"
@@ -561,14 +562,15 @@ def interactive_menu(current: tuple[int, int, int]) -> tuple[int, int, int] | st
     major_new = bump_version(current, "major")
 
     print(f"当前版本: {current_str}")
-    print("请选择版本升级方式:")
+    print("请选择操作:")
     print(f"  1) Patch  (修订号)  {current_str} → {'.'.join(map(str, patch_new))}")
     print(f"  2) Minor  (次版本)  {current_str} → {'.'.join(map(str, minor_new))}")
     print(f"  3) Major  (主版本)  {current_str} → {'.'.join(map(str, major_new))}")
     print("  4) 自定义版本号")
     print(f"  5) 仅打包当前版本（{current_str}，不升级版本号）")
+    print("  6) 合并至 main（squash + 整合 CHANGELOG + 打 tag）")
     print("  0) 取消")
-    print("请输入选项 [0-5]: ", end="", flush=True)
+    print("请输入选项 [0-6]: ", end="", flush=True)
 
     choice = input().strip()
 
@@ -589,6 +591,9 @@ def interactive_menu(current: tuple[int, int, int]) -> tuple[int, int, int] | st
     if choice == "5":
         # 仅打包当前版本，不升级版本号、不动 git
         return "build"
+    if choice == "6":
+        # 合并至 main：由 main() 识别 'merge' 哨兵后调用 cmd_to_main
+        return "merge"
     return None
 
 
