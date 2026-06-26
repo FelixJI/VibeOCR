@@ -57,6 +57,21 @@ main 当前 CHANGELOG 为空。首次开源发版需要一份完整的、可读�
 - 为何手工：历史归并需要人工判断归类与重点，不适合自动脚本。
 - develop 上现有的 CHANGELOG.md 在此次初始化后从 develop 删除（develop 不再维护 CHANGELOG）。
 
+### 首次初始化步骤（人工执行，一次性）
+
+> **这是自动化 `--to-main` 跑通后、第一次真实发版前必须先做的手工步骤。**
+> 之后所有 main CHANGELOG 增长都由 `python scripts/bump_version.py --to-main` 自动完成。
+
+1. `git checkout main`
+2. 手工整理 develop 现有 `CHANGELOG.md`（0.1.0~0.1.6 各条）为 main 的整合基线（归并成少数正式版条目），写入 main 的 `CHANGELOG.md`。
+3. 从 develop 同步当前版本号到 main 的 `pyproject.toml`（`version = "0.1.6"`）与 `src/vibeocr/__init__.py`（`__version__ = "0.1.6"`）。
+4. `git add CHANGELOG.md pyproject.toml src/vibeocr/__init__.py && git commit -m "release: v0.1.6"`
+5. `git tag v0.1.6`
+6. `git checkout develop && git merge main --no-edit`（让 develop 拿到整合 CHANGELOG）。
+7. 之后每次发版跑 `python scripts/bump_version.py --to-main`（或菜单选 6）。
+
+**注意**：首次执行前 develop 的 HEAD 必须是干净的 release 点（即 `release: v0.1.6` 提交 = HEAD），否则 `--to-main` 的未版本化检测会阻止。
+
 ## develop 的 bump 流程改动（瘦身）
 
 现有 `main()` 版本升级路径（`bump_version.py:1078-1112`）做如下删减：

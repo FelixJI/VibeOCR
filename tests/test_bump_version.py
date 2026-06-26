@@ -956,7 +956,7 @@ class TestOption5UnversionedWarning:
         monkeypatch.setattr("builtins.input", lambda _p="": "N")
         monkeypatch.setattr("sys.argv", ["bump_version.py", "--build"])
 
-        rc = mod.main()
+        mod.main()
 
         out = capsys.readouterr().out
         assert "未发版" in out or "超出版本号" in out
