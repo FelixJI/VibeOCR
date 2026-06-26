@@ -589,3 +589,64 @@ class TestInteractiveMenuBuildOption:
         result = mod.interactive_menu((0, 1, 4))
 
         assert result == (0, 1, 5), f"选项 1 应返回 patch 升级 (0,1,5)，实际: {result!r}"
+
+
+class TestCollectCommits:
+    """测试 _collect_commits 按任意 git 范围收集提交"""
+
+    @staticmethod
+    def _load_module():
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location("bump_version", SCRIPT)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+    def test_collect_commits_returns_hash_subject_tuples(self, tmp_path):
+        """_collect_commits 返回 [(hash, subject), ...]，覆盖给定范围内的提交
+
+        注意：测试传入 cwd=tmp_path 以隔离到临时仓库；_collect_commits 的默认
+        cwd=None 表示继承调用者 CWD（与原 get_commits_since_last_tag 行为一致）。
+        """
+        mod = self._load_module()
+        import subprocess
+
+        subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True)
+        subprocess.run(
+            ["git", "config", "user.email", "t@t.com"], cwd=tmp_path, capture_output=True
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "T"], cwd=tmp_path, capture_output=True
+        )
+        subprocess.run(
+            ["git", "commit", "--allow-empty", "-m", "feat: one"],
+            cwd=tmp_path,
+            capture_output=True,
+        )
+        subprocess.run(["git", "tag", "v0.1.0"], cwd=tmp_path, capture_output=True)
+        subprocess.run(
+            ["git", "commit", "--allow-empty", "-m", "fix: two"],
+            cwd=tmp_path,
+            capture_output=True,
+        )
+
+        commits = mod._collect_commits("v0.1.0..HEAD", cwd=tmp_path)
+        subjects = [s for _, s in commits]
+        assert "fix: two" in subjects
+        assert "feat: one" not in subjects  # 在范围之外（tag 之前）
+
+    def test_filter_release_commits_drops_release_prefix(self):
+        """_filter_release_commits 过滤掉 release: 前缀提交"""
+        mod = self._load_module()
+        commits = [
+            ("aaa1111", "feat: a"),
+            ("bbb2222", "release: v0.1.5"),
+            ("ccc3333", "fix: b"),
+            ("ddd4444", "release: v0.1.6"),
+        ]
+        filtered = mod._filter_release_commits(commits)
+        subjects = [s for _, s in filtered]
+        assert "feat: a" in subjects
+        assert "fix: b" in subjects
+        assert not any("release:" in s for s in subjects)

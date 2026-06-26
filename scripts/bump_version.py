@@ -253,31 +253,27 @@ def update_file_version(file_path: Path, old_version: str, new_version: str) -> 
     file_path.write_text(text, encoding="utf-8")
 
 
-def get_commits_since_last_tag() -> list[tuple[str, str]]:
-    """获取自上次 tag 以来的 git 提交
+def _collect_commits(
+    rev_range: str, cwd: Path | None = None
+) -> list[tuple[str, str]]:
+    """收集给定 git 范围内的提交
+
+    Args:
+        rev_range: git 修订范围，如 "v0.1.0..HEAD" 或 "main..develop"
+        cwd: git 仓库目录；None 表示继承调用者 CWD（与原 get_commits_since_last_tag
+            行为一致，子进程跑在脚本启动目录）。测试可显式传 tmp_path 隔离。
 
     Returns:
         [(hash, subject), ...] 列表
     """
-    # 查找最近的 tag
-    try:
-        result = subprocess.run(
-            ["git", "describe", "--tags", "--abbrev=0"],
-            capture_output=True,
-            encoding="utf-8",
-            check=True,
-        )
-        last_tag = result.stdout.strip()
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        last_tag = ""
-
-    # 获取提交列表
-    cmd = ["git", "log", "--pretty=format:%h %s"]
-    if last_tag:
-        cmd.insert(3, f"{last_tag}..HEAD")
+    cmd = ["git", "log", "--pretty=format:%h %s", rev_range]
+    # cwd=None 时不传 cwd，让子进程继承调用者工作目录（保持原行为）
+    kwargs: dict[str, object] = {"capture_output": True, "encoding": "utf-8", "check": True}
+    if cwd is not None:
+        kwargs["cwd"] = str(cwd)
 
     try:
-        result = subprocess.run(cmd, capture_output=True, encoding="utf-8", check=True)
+        result = subprocess.run(cmd, **kwargs)  # type: ignore[arg-type]
     except (subprocess.CalledProcessError, FileNotFoundError):
         return []
 
@@ -293,6 +289,39 @@ def get_commits_since_last_tag() -> list[tuple[str, str]]:
             commits.append((parts[0], ""))
 
     return commits
+
+
+def _filter_release_commits(
+    commits: list[tuple[str, str]],
+) -> list[tuple[str, str]]:
+    """过滤掉 ``release: vX.Y.Z`` 提交（版本边界，非功能性改动）
+
+    Args:
+        commits: [(hash, subject), ...]
+
+    Returns:
+        不含 release: 前缀提交的列表
+    """
+    return [(h, s) for h, s in commits if not s.startswith("release: ")]
+
+
+def get_commits_since_last_tag() -> list[tuple[str, str]]:
+    """获取自上次 tag 以来的 git 提交（develop bump 路径用，保留向后兼容）"""
+    # 查找最近的 tag
+    try:
+        result = subprocess.run(
+            ["git", "describe", "--tags", "--abbrev=0"],
+            capture_output=True,
+            encoding="utf-8",
+            check=True,
+        )
+        last_tag = result.stdout.strip()
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        last_tag = ""
+
+    if last_tag:
+        return _collect_commits(f"{last_tag}..HEAD")
+    return _collect_commits("HEAD")
 
 
 def categorize_commits(
