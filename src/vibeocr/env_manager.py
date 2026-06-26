@@ -783,6 +783,7 @@ def _install_paddle_stack(
     cuda_version: str | None,
     report_fn: Callable[[str, str], None],
     success_msg: str,
+    requirements_override: list[tuple[str, str, str]] | None = None,
 ) -> tuple[bool, str]:
     """安装 PaddlePaddle + PaddleOCR + MinerU (+可选 torch) 依赖栈
 
@@ -798,6 +799,8 @@ def _install_paddle_stack(
         cuda_version: CUDA 版本字符串
         report_fn: 日志回调 (stage, msg)
         success_msg: 全部成功时的返回消息
+        requirements_override: 外部传入的 requirements 子集。指定时跳过内部完整列表
+            构建，直接安装子集（用于增量安装：只装缺失的包）。None 时构建完整列表。
 
     Returns:
         (是否成功, 消息)
@@ -827,36 +830,45 @@ def _install_paddle_stack(
                 f"pip升级警告: {result.stderr[-100:] if result.stderr else ''}",
             )
 
-        paddle_reqs = _build_paddle_requirements(
-            specs=specs,
-            use_gpu=use_gpu,
-            cuda_version=cuda_version,
-            network_type=network_type,
-            report_fn=report_fn,
-        )
-        requirements = [
-            *paddle_reqs,
-            ("PaddleOCR", f'"{specs["paddleocr"]}"', pip_source),
-            ("MinerU", f'"{specs["mineru"]}"', pip_source),
-        ]
-
-        # GPU 环境下安装 torch+CUDA 覆盖 mineru 附带的 CPU 版本
-        if use_gpu:
-            # 注意：cuda_version 已是 cu-tag（detect_cuda_version 输出，如 "cu126"），
-            # 直接用于构造 index URL，不要再查 CUDA_VERSION_MAP。
-            default_gpu_tag = "cu126"
-            paddle_cuda_tag = cuda_version or default_gpu_tag
-            torch_cuda_tag = TORCH_CUDA_MAP.get(paddle_cuda_tag, "cu126")
-            pytorch_mirror_name = "nju" if network_type == "domestic" else "official"
-            torch_index = get_pytorch_mirror(pytorch_mirror_name, torch_cuda_tag)
-            requirements.append(
-                (f"PyTorch CUDA ({torch_cuda_tag})", "torch torchvision", torch_index)
+        if requirements_override is not None:
+            # 增量模式：直接用外部传入的子集，跳过完整构建
+            requirements = list(requirements_override)
+        else:
+            # 完整模式：构建 paddle + paddleocr + mineru (+GPU torch)
+            paddle_reqs = _build_paddle_requirements(
+                specs=specs,
+                use_gpu=use_gpu,
+                cuda_version=cuda_version,
+                network_type=network_type,
+                report_fn=report_fn,
             )
-            report_fn("依赖安装", f"将安装 PyTorch CUDA ({torch_cuda_tag})")
-            # torch wheel 自带完整的 CUDA 12.x + cuDNN 9 运行时（torch/lib 目录），
-            # paddlepaddle-gpu (cu126, CUDA 12 构建) 所需的 cublas64_12.dll 等全部
-            # 由 torch/lib 提供，OCRService._setup_cuda_dll_path 会注册该目录。
-            # 因此无需额外安装 nvidia-*-cu12 / cu13 系列包。
+            requirements = [
+                *paddle_reqs,
+                ("PaddleOCR", f'"{specs["paddleocr"]}"', pip_source),
+                ("MinerU", f'"{specs["mineru"]}"', pip_source),
+            ]
+
+            # GPU 环境下安装 torch+CUDA 覆盖 mineru 附带的 CPU 版本
+            if use_gpu:
+                # 注意：cuda_version 已是 cu-tag（detect_cuda_version 输出，如 "cu126"），
+                # 直接用于构造 index URL，不要再查 CUDA_VERSION_MAP。
+                default_gpu_tag = "cu126"
+                paddle_cuda_tag = cuda_version or default_gpu_tag
+                torch_cuda_tag = TORCH_CUDA_MAP.get(paddle_cuda_tag, "cu126")
+                pytorch_mirror_name = "nju" if network_type == "domestic" else "official"
+                torch_index = get_pytorch_mirror(pytorch_mirror_name, torch_cuda_tag)
+                requirements.append(
+                    (
+                        f"PyTorch CUDA ({torch_cuda_tag})",
+                        "torch torchvision",
+                        torch_index,
+                    )
+                )
+                report_fn("依赖安装", f"将安装 PyTorch CUDA ({torch_cuda_tag})")
+                # torch wheel 自带完整的 CUDA 12.x + cuDNN 9 运行时（torch/lib 目录），
+                # paddlepaddle-gpu (cu126, CUDA 12 构建) 所需的 cublas64_12.dll 等全部
+                # 由 torch/lib 提供，OCRService._setup_cuda_dll_path 会注册该目录。
+                # 因此无需额外安装 nvidia-*-cu12 / cu13 系列包。
 
         for name, package_spec, index_url in requirements:
             report_fn("依赖安装", f"正在安装 {name}...")

@@ -1131,3 +1131,93 @@ class TestBuildPaddleRequirements:
         name, pkg_spec, _index = reqs[0]
         assert "GPU" in name
         assert "paddlepaddle-gpu" in pkg_spec
+
+
+class TestInstallPaddleStackRequirementsOverride:
+    """_install_paddle_stack 的 requirements_override 参数"""
+
+    @staticmethod
+    def _specs():
+        return {
+            "paddlepaddle-gpu": "paddlepaddle-gpu>=3.3.1",
+            "paddlepaddle": "paddlepaddle>=3.3.1",
+            "paddleocr": "paddleocr[doc-parser]>=3.7.0",
+            "mineru": "mineru[core]>=3.4.0",
+            "torch": "torch>=2.6.0",
+        }
+
+    @staticmethod
+    def _filter_install_cmds(calls):
+        """从 subprocess.run 调用中过滤出真正的 pip install 命令（排除 pip 升级）。"""
+        return [
+            c
+            for c in calls
+            if "install" in c
+            and "--upgrade" not in c
+            and "pip" not in " ".join(c[3:])
+        ]
+
+    def test_override_installs_only_provided_subset(self, tmp_path):
+        """传 requirements_override 时只装子集，不构建完整列表"""
+        python_exe = tmp_path / "python.exe"
+        python_exe.touch()
+        calls = []
+
+        def mock_run(cmd, **kw):
+            calls.append(cmd)
+            r = MagicMock()
+            r.returncode = 0
+            r.stderr = ""
+            return r
+
+        # 只装 mineru 一个
+        subset = [("MinerU", "mineru[core]>=3.4.0", "https://pypi.org/simple")]
+        with patch("vibeocr.env_manager.subprocess.run", side_effect=mock_run):
+            ok, _msg = _install_paddle_stack(
+                python_exe=python_exe,
+                specs=self._specs(),
+                pip_source="https://pypi.org/simple",
+                network_type="domestic",
+                use_gpu=True,
+                cuda_version="cu126",
+                report_fn=lambda s, m: None,
+                success_msg="done",
+                requirements_override=subset,
+            )
+
+        assert ok
+        install_cmds = self._filter_install_cmds(calls)
+        assert len(install_cmds) == 1, f"应只装 1 个包，实际命令: {install_cmds}"
+        assert "mineru" in " ".join(install_cmds[0])
+
+    def test_no_override_builds_full_requirements(self, tmp_path):
+        """不传 requirements_override 时构建完整列表（向后兼容）"""
+        python_exe = tmp_path / "python.exe"
+        python_exe.touch()
+        calls = []
+
+        def mock_run(cmd, **kw):
+            calls.append(cmd)
+            r = MagicMock()
+            r.returncode = 0
+            r.stderr = ""
+            return r
+
+        with patch("vibeocr.env_manager.subprocess.run", side_effect=mock_run):
+            ok, _msg = _install_paddle_stack(
+                python_exe=python_exe,
+                specs=self._specs(),
+                pip_source="https://pypi.org/simple",
+                network_type="domestic",
+                use_gpu=True,
+                cuda_version="cu126",
+                report_fn=lambda s, m: None,
+                success_msg="done",
+            )
+
+        assert ok
+        install_cmds = self._filter_install_cmds(calls)
+        # GPU 完整列表：paddle + paddleocr + mineru + torch = 4 个安装命令
+        assert len(install_cmds) == 4, (
+            f"GPU 完整列表应装 4 个，实际: {install_cmds}"
+        )
