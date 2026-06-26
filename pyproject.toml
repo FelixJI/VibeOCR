@@ -1,0 +1,221 @@
+[project]
+name = "vibeocr"
+version = "0.1.6"
+description = "A screenshot OCR application"
+requires-python = ">=3.13,<3.14"
+dependencies = [
+    "pyside6>=6.11.1",
+    "pillow>=12.2.0",
+    "numpy>=2.3.5",
+    "markdown>=3.10.2",
+    "qasync>=0.28.0",
+    "paddlepaddle-gpu>=3.3.1",
+    # paddlepaddle-gpu 3.3.1 是 CUDA 12 构建，运行时需要 cublas64_12.dll /
+    # cudnn64_9.dll / cufft64_*.dll 等 CUDA 12 + cuDNN 9 全套 DLL。
+    # paddle wheel 本身不含这些 DLL，且 uv 不会自动安装 paddle 声明的
+    # nvidia-*-cu12 传递依赖（uv.lock 不收录）。
+    # 这些 DLL 由 torch wheel 自带（torch/lib 目录提供完整的 CUDA 12.6 +
+    # cuDNN 9 运行时），OCRService._setup_cuda_dll_path 会把 torch/lib
+    # 注册到 DLL 搜索路径供 paddle 使用。因此这里显式声明 torch 依赖，
+    # 确保它的 wheel 被安装；无需再声明 nvidia-*-cu12 系列。
+    "torch>=2.6.0",
+    "paddleocr[doc-parser]>=3.7.0",
+    "httpx>=0.28.1",
+    "mineru[core]>=3.4.0",
+    "pymupdf>=1.27.2.3",
+    # PDF 文字层字体内嵌：fontTools 按字符集子集化系统 CJK 字体，
+    # 嵌入后 PyMuPDF 自动生成 ToUnicode CMap，使文字层在所有阅读器可搜索。
+    "fonttools>=4.61.1",
+    "qrcode[pil]>=8.2",
+    "python-barcode>=0.16.1",
+    "opencv-contrib-python>=4.10.0.84",
+    "pyzbar>=0.1.9",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+    "pytest-qt>=4.5.0",
+    "pytest-cov>=7.1.0",
+    "ruff>=0.15.13",
+    "pyright>=1.1.409",
+    "pre-commit>=4.6.0",
+    "uv>=0.11.14",
+    # 程序内更新链路的打包步骤（bump_version.py --build/--release）依赖它
+    "pyinstaller>=6.0",
+]
+
+[build-system]
+requires = ["hatchling>=1.0.0"]
+build-backend = "hatchling.build"
+
+# =============================================================================
+# Ruff - Linter + Formatter
+# =============================================================================
+[tool.ruff]
+target-version = "py313"
+line-length = 88
+
+[tool.ruff.lint]
+select = [
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings
+    "F",      # Pyflakes
+    "I",      # isort
+    "B",      # flake8-bugbear
+    "C4",     # flake8-comprehensions
+    "UP",     # pyupgrade
+    "ARG",    # flake8-unused-arguments
+    "SIM",    # flake8-simplify
+    "TCH",    # flake8-type-checking
+    "PTH",    # flake8-use-pathlib
+    "RUF",    # Ruff 特定规则
+    "A",      # flake8-builtins
+    "COM",    # flake8-commas
+    "DTZ",    # flake8-datetimez
+    "PIE",    # flake8-pie
+    "RET",    # flake8-return
+    "YTT",    # flake8-2020
+]
+ignore = [
+    "E501",     # 行长度由 formatter 处理
+    "COM812",   # 与 formatter 冲突
+    "B008",     # 函数调用作为默认参数（Qt 信号/槽）
+    "RUF001",   # 中文全角字符
+    "RUF002",
+    "RUF003",
+    "RUF012",   # 类属性可变默认值（Qt/PySide 模式）
+    "PTH123",   # open() vs Path.open()（现有代码风格）
+    "DTZ005",   # datetime.now() 时区（本地时间足够）
+    "DTZ006",   # datetime.fromtimestamp() 时区
+    "DTZ011",   # date.today() 时区（版权年份/changelog 用本地日期即可）
+    "ARG001",   # 未使用的函数参数（接口兼容性）
+    "ARG002",   # 未使用的方法参数（Qt 覆盖）
+    "ARG004",   # 未使用的静态方法参数
+    "ARG005",   # 未使用的 lambda 参数
+    "SIM102",   # 嵌套 if 语句（可读性）
+    "SIM105",   # contextlib.suppress（可读性）
+    "B905",     # zip() strict 参数（现有代码风格）
+    "UP046",    # Generic 类型参数（兼容性）
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["vibeocr"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101", "ARG", "PLR2004"]
+"__init__.py" = ["F401"]
+
+# =============================================================================
+# Pyright - 静态类型检查
+# =============================================================================
+[tool.pyright]
+pythonVersion = "3.13"
+pythonPlatform = "Windows"
+typeCheckingMode = "standard"
+include = ["src", "scripts", "tests", "qa", "examples"]
+exclude = [".venv", "**/__pycache__"]
+reportMissingImports = true
+reportMissingTypeStubs = false
+reportUnusedImport = "error"
+reportUnusedClass = "warning"
+reportUnusedFunction = "warning"
+reportUnusedVariable = "warning"
+reportDuplicateImport = "error"
+# PySide6 自动生成的 UI 文件使用旧式枚举访问
+reportAttributeAccessIssue = "warning"
+
+# =============================================================================
+# Mypy - 静态类型检查
+# =============================================================================
+[tool.mypy]
+python_version = "3.13"
+warn_unused_configs = true
+disallow_untyped_defs = false
+
+[[tool.mypy.overrides]]
+module = [
+    "paddleocr",
+    "fitz",
+    "docx",
+    "docx.shared",
+    "openpyxl",
+    "markdown",
+    "markdown.extensions.*",
+    "qrcode",
+    "pyzbar",
+    "pyzbar.pyzbar",
+    "pyzbar.symbols",
+    "qrcode.image.svg",
+    "barcode",
+    "barcode.writer",
+    "pynvml",
+    "qasync",
+    "oleacc",
+]
+ignore_missing_imports = true
+
+# =============================================================================
+# Pytest
+# =============================================================================
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+qt_api = "pyside6"
+addopts = "-v --tb=short"
+
+# =============================================================================
+# Coverage
+# =============================================================================
+[tool.coverage.run]
+source = ["src"]
+branch = true
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+]
+
+# =============================================================================
+# uv 配置
+# =============================================================================
+[tool.uv]
+override-dependencies = [
+    "opencv-python ; sys_platform == 'nonexistent'",
+    # torchvision 是 torch 的传递依赖。unsafe-best-match + index-strategy 下，
+    # PyPI 的 CPU 版 torchvision==0.27.1（无后缀）在 PEP 440 排序中高于
+    # 南大镜像的 0.27.1+cu126（local version 排序靠后），uv 会误选 CPU 版。
+    # 而 torch 是 CUDA 版，torchvision 必须同为 cu126 才能配套 CUDA ops。
+    # PEP 440 禁止在 >= 等「范围」操作符上使用 local version（+cu126），
+    # 故只能用 == 精确锁定；升级 torch 时需同步手动更新这里的版本号。
+    "torchvision==0.27.1+cu126",
+]
+environments = ["sys_platform == 'win32'"]
+extra-index-url = [
+    "https://mirrors.aliyun.com/pypi/simple",
+    "https://www.paddlepaddle.org.cn/packages/stable/cu126/",
+]
+index-strategy = "unsafe-best-match"
+
+[tool.uv.sources]
+# paddlepaddle-gpu 和 torch 都用 CUDA 12.6 构建（cu126），保持同源：
+# - paddle cu126 找 cublas64_12.dll，torch cu126 的 torch/lib 正好提供
+# - 不用 cu129/cu130：cu129 paddle 要 cu12 DLL 但 torch 无 cu129 win wheel；
+#   cu130 paddle 要 cublas64_13.dll，与 torch/lib 的 _12 系列 ABI 不匹配
+#
+# torch/torchvision 的 +cu126 变体不在 PyPI（PyPI 默认版是 CPU 版），必须走
+# PyTorch 官方 whl index 或其镜像。开发环境在国内，统一走南大镜像
+# （与便携环境 env_config 的 PYTORCH_MIRROR_SOURCES["nju"] 对齐，国内加速）。
+# 单一 source，uv 不要求 platform marker；index 保持 explicit=true，
+# 仅对显式声明的 torch/torchvision 生效，不污染其它包的解析。
+torch = { index = "pytorch-cu126-nju" }
+torchvision = { index = "pytorch-cu126-nju" }
+
+[[tool.uv.index]]
+name = "pytorch-cu126-nju"
+url = "https://mirrors.nju.edu.cn/pytorch/whl/cu126"
+explicit = true

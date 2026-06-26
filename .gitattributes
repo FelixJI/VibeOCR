@@ -1,0 +1,54 @@
+# Git 换行符与文件属性配置
+#
+# 目标：仓库与工作区统一使用 LF，消除 core.autocrlf 在 Windows 下的
+# "LF will be replaced by CRLF" 警告，并保证跨平台换行符一致。
+#
+# 背景：此前依赖每人的 core.autocrlf=true（仓库存 LF、工作区签出 CRLF），
+# 但 uv/pip 等工具写出的文件是 LF，与 autocrlf 期望的 CRLF 工作区冲突，
+# 触发警告。这里显式声明策略，统一行为，不再依赖个人 git 配置。
+
+# 默认：所有文本文件用 LF（仓库 + 工作区一致）
+* text=auto eol=lf
+
+# 源码与配置：强制 LF
+*.py   text eol=lf
+*.pyi  text eol=lf
+*.md   text eol=lf
+*.txt  text eol=lf
+*.toml text eol=lf
+*.cfg  text eol=lf
+*.ini  text eol=lf
+*.json text eol=lf
+*.yaml text eol=lf
+*.yml  text eol=lf
+*.lock text eol=lf
+*.spec text eol=lf
+*.qss  text eol=lf
+*.ui   text eol=lf
+*.js   text eol=lf
+*.css  text eol=lf
+*.html text eol=lf
+*.sh   text eol=lf
+# Windows 批处理需 CRLF
+*.bat  text eol=crlf
+*.cmd  text eol=crlf
+
+# 无扩展名的文本文件（如 .python-version、LICENSE、CHANGELOG）
+.python-version text eol=lf
+LICENSE         text eol=lf
+CHANGELOG.md    text eol=lf
+
+# 二进制文件：不做换行符转换
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.icns  binary
+*.webp  binary
+*.pdf   binary
+*.zip   binary
+*.gz    binary
+*.tgz   binary
+*.sha256 binary
+.coverage binary
