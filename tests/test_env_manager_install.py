@@ -1221,3 +1221,254 @@ class TestInstallPaddleStackRequirementsOverride:
         assert len(install_cmds) == 4, (
             f"GPU 完整列表应装 4 个，实际: {install_cmds}"
         )
+
+
+class TestInstallMissingDependencies:
+    """install_missing_dependencies：增量安装（跳过已 import 成功的包）"""
+
+    @staticmethod
+    def _specs():
+        return {
+            "paddlepaddle-gpu": "paddlepaddle-gpu>=3.3.1",
+            "paddlepaddle": "paddlepaddle>=3.3.1",
+            "paddleocr": "paddleocr[doc-parser]>=3.7.0",
+            "mineru": "mineru[core]>=3.4.0",
+            "torch": "torch>=2.6.0",
+        }
+
+    @staticmethod
+    def _filter_install_cmds(calls):
+        """从 subprocess.run 调用中过滤出 pip install 命令（排除 import 检测、pip 升级）。"""
+        return [
+            c
+            for c in calls
+            if "install" in c
+            and "--upgrade" not in c
+            and "-c" not in c
+            and "import" not in " ".join(c)
+        ]
+
+    def test_skips_installed_packages_only_installs_missing(self, tmp_path):
+        """已 import 成功的包应跳过，只装缺失的"""
+        from vibeocr.env_manager import install_missing_dependencies
+
+        python_exe = tmp_path / "python.exe"
+        python_exe.touch()
+        all_calls = []
+
+        def mock_run(cmd, **kw):
+            all_calls.append(cmd)
+            r = MagicMock()
+            r.stderr = ""
+            # _check_imports 走 subprocess.run：paddle/paddleocr 成功，mineru/torch 失败
+            import_code = cmd[cmd.index("-c") + 1] if "-c" in cmd else ""
+            if import_code.startswith("import "):
+                module = import_code.split()[1]
+                r.returncode = 0 if module in ("paddle", "paddleocr") else 1
+            else:
+                # pip install 成功
+                r.returncode = 0
+            return r
+
+        with (
+            patch(
+                "vibeocr.env_manager.get_pip_source",
+                return_value="https://pypi.org/simple",
+            ),
+            patch(
+                "vibeocr.env_manager.get_embedded_python_executable",
+                return_value=python_exe,
+            ),
+            patch("vibeocr.env_manager._load_dep_specs", return_value=self._specs()),
+            patch("vibeocr.env_manager.subprocess.run", side_effect=mock_run),
+        ):
+            ok, msg = install_missing_dependencies(
+                tmp_path,
+                use_gpu=True,
+                cuda_version="cu126",
+                progress_callback=lambda s, m: None,
+            )
+
+        assert ok, f"应成功: {msg}"
+        pip_installs = self._filter_install_cmds(all_calls)
+        # paddle + paddleocr 已装 → 跳过；只应装 mineru + torch
+        joined = " ".join(" ".join(c) for c in pip_installs)
+        assert "paddlepaddle" not in joined, "paddle 已装应跳过"
+        assert "paddleocr" not in joined, "paddleocr 已装应跳过"
+        assert "mineru" in joined, "mineru 缺失应安装"
+        assert "torch" in joined, "torch 缺失应安装"
+
+    def test_all_installed_skips_everything(self, tmp_path):
+        """全部已装时应跳过所有安装，返回成功"""
+        from vibeocr.env_manager import install_missing_dependencies
+
+        python_exe = tmp_path / "python.exe"
+        python_exe.touch()
+
+        def mock_run(cmd, **kw):
+            r = MagicMock()
+            r.returncode = 0  # 所有 import 都成功
+            r.stderr = ""
+            return r
+
+        with (
+            patch(
+                "vibeocr.env_manager.get_pip_source",
+                return_value="https://pypi.org/simple",
+            ),
+            patch(
+                "vibeocr.env_manager.get_embedded_python_executable",
+                return_value=python_exe,
+            ),
+            patch("vibeocr.env_manager._load_dep_specs", return_value=self._specs()),
+            patch("vibeocr.env_manager.subprocess.run", side_effect=mock_run),
+        ):
+            ok, msg = install_missing_dependencies(
+                tmp_path, progress_callback=lambda s, m: None
+            )
+
+        assert ok
+        assert "已安装" in msg or "无需" in msg
+
+    def test_all_missing_installs_everything(self, tmp_path):
+        """全部缺失时应装全部（等同全量）"""
+        from vibeocr.env_manager import install_missing_dependencies
+
+        python_exe = tmp_path / "python.exe"
+        python_exe.touch()
+        all_calls = []
+
+        def mock_run(cmd, **kw):
+            all_calls.append(cmd)
+            r = MagicMock()
+            r.stderr = ""
+            import_code = cmd[cmd.index("-c") + 1] if "-c" in cmd else ""
+            if import_code.startswith("import "):
+                r.returncode = 1  # 全部 import 失败
+            else:
+                r.returncode = 0
+            return r
+
+        with (
+            patch(
+                "vibeocr.env_manager.get_pip_source",
+                return_value="https://pypi.org/simple",
+            ),
+            patch(
+                "vibeocr.env_manager.get_embedded_python_executable",
+                return_value=python_exe,
+            ),
+            patch("vibeocr.env_manager._load_dep_specs", return_value=self._specs()),
+            patch("vibeocr.env_manager.subprocess.run", side_effect=mock_run),
+        ):
+            ok, _msg = install_missing_dependencies(
+                tmp_path,
+                use_gpu=False,
+                progress_callback=lambda s, m: None,
+            )
+
+        assert ok
+        pip_installs = self._filter_install_cmds(all_calls)
+        # CPU 模式完整列表：paddle + paddleocr + mineru = 3 个
+        assert len(pip_installs) == 3, (
+            f"CPU 全量应装 3 个，实际: {pip_installs}"
+        )
+
+    def test_force_backend_gpu_uses_gpu_requirements(self, tmp_path):
+        """force_backend=gpu 时应构建 GPU requirements（含 torch）"""
+        from vibeocr.env_manager import install_missing_dependencies
+
+        python_exe = tmp_path / "python.exe"
+        python_exe.touch()
+        all_calls = []
+
+        def mock_run(cmd, **kw):
+            all_calls.append(cmd)
+            r = MagicMock()
+            r.stderr = ""
+            import_code = cmd[cmd.index("-c") + 1] if "-c" in cmd else ""
+            if import_code.startswith("import "):
+                r.returncode = 1  # 全部缺失
+            else:
+                r.returncode = 0
+            return r
+
+        with (
+            patch(
+                "vibeocr.env_manager.get_pip_source",
+                return_value="https://pypi.org/simple",
+            ),
+            patch(
+                "vibeocr.env_manager.get_embedded_python_executable",
+                return_value=python_exe,
+            ),
+            patch("vibeocr.env_manager._load_dep_specs", return_value=self._specs()),
+            patch("vibeocr.env_manager.subprocess.run", side_effect=mock_run),
+            patch("vibeocr.env_manager.detect_gpu", return_value=(True, "cu126")),
+        ):
+            ok, _msg = install_missing_dependencies(
+                tmp_path,
+                force_backend="gpu",
+                progress_callback=lambda s, m: None,
+            )
+
+        assert ok
+        pip_installs = self._filter_install_cmds(all_calls)
+        # GPU 完整列表：paddle + paddleocr + mineru + torch = 4 个
+        assert len(pip_installs) == 4, (
+            f"GPU force_backend 应装 4 个，实际: {pip_installs}"
+        )
+
+
+class TestInstallFailureLogging:
+    """安装失败时应 logger.error 完整 stderr（UI 只显示截断版）"""
+
+    def test_failure_logs_full_stderr(self, tmp_path, caplog):
+        """pip 返回非 0 时应 logger.error 完整 stderr（不止返回的 500 字截断）"""
+        import logging
+
+        python_exe = tmp_path / "python.exe"
+        python_exe.touch()
+        long_stderr = "ERROR: " + "x" * 800  # 超过 500 字截断阈值
+
+        def mock_run(cmd, **kw):
+            r = MagicMock()
+            # pip 升级成功；安装命令失败
+            if "--upgrade" in cmd:
+                r.returncode = 0
+                r.stderr = ""
+            else:
+                r.returncode = 1
+                r.stderr = long_stderr
+            r.stdout = ""
+            return r
+
+        specs = {
+            "paddlepaddle": "paddlepaddle>=3.3.1",
+            "paddleocr": "paddleocr[doc-parser]>=3.7.0",
+            "mineru": "mineru[core]>=3.4.0",
+            "torch": "torch>=2.6.0",
+        }
+        with (
+            patch("vibeocr.env_manager.subprocess.run", side_effect=mock_run),
+            caplog.at_level(logging.ERROR, logger="vibeocr.env_manager"),
+        ):
+            ok, _msg = _install_paddle_stack(
+                python_exe=python_exe,
+                specs=specs,
+                pip_source="https://pypi.org/simple",
+                network_type="domestic",
+                use_gpu=False,
+                cuda_version=None,
+                report_fn=lambda s, m: None,
+                success_msg="done",
+            )
+
+        assert not ok
+        # 完整 stderr（800 个 x）应在 ERROR 日志中
+        error_msgs = " ".join(
+            r.message for r in caplog.records if r.levelno >= logging.ERROR
+        )
+        assert "x" * 800 in error_msgs, (
+            f"应记录完整 stderr（800 个 x），实际 ERROR 日志长度: {len(error_msgs)}"
+        )

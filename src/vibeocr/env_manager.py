@@ -718,6 +718,40 @@ def is_embedded_environment_ready(project_root: Path) -> tuple[bool, list[str]]:
     return len(missing) == 0, missing
 
 
+def get_dependency_versions(python_exe: Path) -> dict[str, str]:
+    """获取各 OCR 依赖的版本号（用于设置页状态表格展示）。
+
+    对每个 OCR_CHECK_MODULES 模块执行 `python -c "import X; print(X.__version__)"`，
+    失败或无 __version__ 属性返回空字符串。
+
+    Args:
+        python_exe: 目标 Python 可执行文件
+
+    Returns:
+        {pip包名: 版本号字符串}，未安装/无版本号为空串
+    """
+    from vibeocr.services.env_config import OCR_CHECK_MODULES, OCR_CHECK_TIMEOUTS
+
+    versions: dict[str, str] = {}
+    for module, pkg in OCR_CHECK_MODULES.items():
+        try:
+            result = subprocess.run(
+                [
+                    str(python_exe),
+                    "-c",
+                    f"import {module}; print(getattr({module}, '__version__', ''))",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=OCR_CHECK_TIMEOUTS.get(module, 15),
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+            )
+            versions[pkg] = result.stdout.strip() if result.returncode == 0 else ""
+        except Exception:
+            versions[pkg] = ""
+    return versions
+
+
 def _build_paddle_requirements(
     specs: dict[str, str],
     use_gpu: bool,
@@ -909,6 +943,8 @@ def _install_paddle_stack(
 
                 if result.returncode != 0:
                     error_msg = result.stderr or result.stdout or "未知错误"
+                    # 完整 stderr 落盘（UI 只显示截断版），便于排查
+                    logger.error("%s 安装失败，完整输出:\n%s", name, error_msg)
                     return False, f"{name} 安装失败:\n{error_msg[:500]}"
 
             report_fn("依赖安装", f"{name} 安装成功")
@@ -981,6 +1017,124 @@ def install_embedded_dependencies(
         cuda_version=cuda_version,
         report_fn=report,
         success_msg="OCR依赖安装成功",
+    )
+
+
+def install_missing_dependencies(
+    project_root: Path,
+    network_type: Literal["domestic", "international"] = "domestic",
+    use_gpu: bool = False,
+    cuda_version: str | None = None,
+    progress_callback=None,
+    force_backend: str | None = None,
+) -> tuple[bool, str]:
+    """增量安装：只装 import 失败（缺失/损坏）的依赖，已 import 成功的跳过下载。
+
+    与 install_embedded_dependencies 的区别：安装前先 _check_imports 检测每个包，
+    已可导入的包跳过 pip install（实现"非严格意义断点续传"——已装的不会重复下载）。
+
+    Args:
+        project_root: 项目根目录
+        network_type: 网络类型
+        use_gpu: 是否安装 GPU 版本
+        cuda_version: CUDA 版本 cu-tag
+        progress_callback: 进度回调 (stage, message)
+        force_backend: 强制后端 "gpu"/"cpu"/None
+
+    Returns:
+        (是否成功, 消息)
+    """
+    python_exe = get_embedded_python_executable(project_root)
+    if not python_exe.exists():
+        return False, "Python 运行时未安装"
+
+    # force_backend 覆盖自动检测结果
+    if force_backend == "gpu":
+        use_gpu = True
+        if not cuda_version:
+            _has_gpu, cuda_version = detect_gpu()
+    elif force_backend == "cpu":
+        use_gpu = False
+        cuda_version = None
+
+    pip_source = get_pip_source(network_type)
+
+    def report(stage: str, msg: str):
+        logger.info("[%s] %s", stage, msg)
+        if progress_callback:
+            progress_callback(stage, msg)
+
+    report("依赖安装", "开始检测已安装的依赖...")
+    report("依赖安装", f"pip源: {pip_source}")
+
+    specs = _load_dep_specs()
+
+    # 1. 构建完整 requirements 列表
+    paddle_reqs = _build_paddle_requirements(
+        specs=specs,
+        use_gpu=use_gpu,
+        cuda_version=cuda_version,
+        network_type=network_type,
+        report_fn=report,
+    )
+    requirements: list[tuple[str, str, str]] = [
+        *paddle_reqs,
+        ("PaddleOCR", f'"{specs["paddleocr"]}"', pip_source),
+        ("MinerU", f'"{specs["mineru"]}"', pip_source),
+    ]
+    if use_gpu:
+        default_gpu_tag = "cu126"
+        paddle_cuda_tag = cuda_version or default_gpu_tag
+        torch_cuda_tag = TORCH_CUDA_MAP.get(paddle_cuda_tag, "cu126")
+        pytorch_mirror_name = "nju" if network_type == "domestic" else "official"
+        torch_index = get_pytorch_mirror(pytorch_mirror_name, torch_cuda_tag)
+        requirements.append(
+            (f"PyTorch CUDA ({torch_cuda_tag})", "torch torchvision", torch_index)
+        )
+
+    # 2. 检测每个包是否已可 import
+    report("依赖安装", "正在检测已安装的依赖...")
+    import_status = _check_imports(python_exe)
+
+    def _is_installed(req_name: str) -> bool:
+        """根据 requirements 项展示名查 import 状态"""
+        if "PaddlePaddle" in req_name:
+            return import_status.get("paddlepaddle", False)
+        if "PyTorch" in req_name:
+            return import_status.get("torch", False)
+        if "PaddleOCR" in req_name:
+            return import_status.get("paddleocr", False)
+        if "MinerU" in req_name:
+            return import_status.get("mineru", False)
+        return False
+
+    # 3. 过滤掉已装的
+    subset: list[tuple[str, str, str]] = []
+    for name, pkg_spec, index_url in requirements:
+        if _is_installed(name):
+            report("依赖安装", f"✓ {name} 已安装，跳过")
+        else:
+            subset.append((name, pkg_spec, index_url))
+
+    # 4. 全部已装
+    if not subset:
+        report("依赖安装", "所有依赖已安装，无需补装")
+        return True, "所有OCR依赖已安装"
+
+    missing_names = ", ".join(n for n, _, _ in subset)
+    report("依赖安装", f"需补装: {missing_names}")
+
+    # 5. 只装子集
+    return _install_paddle_stack(
+        python_exe=python_exe,
+        specs=specs,
+        pip_source=pip_source,
+        network_type=network_type,
+        use_gpu=use_gpu,
+        cuda_version=cuda_version,
+        report_fn=report,
+        success_msg="OCR依赖补装成功",
+        requirements_override=subset,
     )
 
 
