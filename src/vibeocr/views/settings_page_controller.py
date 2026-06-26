@@ -698,7 +698,11 @@ class SettingsPageController:
             name_item = QTableWidgetItem(display_names.get(pkg, pkg))
             status_text = "✓ 已安装" if installed else "✗ 未安装"
             status_item = QTableWidgetItem(status_text)
-            ver_item = QTableWidgetItem(versions.get(pkg, ""))
+            # 版本为空但状态已安装时显示占位，避免"已安装却无版本号"的困惑
+            ver = versions.get(pkg, "")
+            if installed and not ver:
+                ver = "（版本未知）"
+            ver_item = QTableWidgetItem(ver)
             table.setItem(row, 0, name_item)
             table.setItem(row, 1, status_item)
             table.setItem(row, 2, ver_item)

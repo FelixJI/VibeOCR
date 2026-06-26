@@ -249,3 +249,50 @@ class TestEnvManagerIntegration:
         # 不使用缓存时，应该返回空（因为 Python 不存在）
         result = check_embedded_environment_dependencies(tmp_path, use_cache=False)
         assert result == {}  # Python 不存在，返回空
+
+    def test_check_dependencies_refreshes_stale_cache(self, tmp_path):
+        """缓存显示 False 但实时 import 成功时应刷新缓存并返回 True
+
+        回归：设置页表格状态走缓存、版本走实时 pip，两源不同步导致
+        "显示未安装/已安装状态错误"。装完依赖后缓存仍是旧的 False 状态。
+        """
+        from vibeocr.env_manager import (
+            check_embedded_environment_dependencies,
+        )
+        from vibeocr.machine_cache import generate_machine_id, load_cache, save_cache
+
+        # 构造一个存在的 python.exe
+        python_exe = tmp_path / "python" / "python.exe"
+        python_exe.parent.mkdir(parents=True)
+        python_exe.touch()
+
+        # 缓存：paddlepaddle=False（旧状态，实际已装）
+        machine_id = generate_machine_id()
+        cache_data = {
+            "version": 1,
+            "machine_id": machine_id,
+            "dependencies": {"paddlepaddle": False, "torch": True},
+        }
+        save_cache(tmp_path, cache_data)
+
+        # 实时复核：paddlepaddle 实际可导入
+        with (
+            patch(
+                "vibeocr.env_manager.get_embedded_python_executable",
+                return_value=python_exe,
+            ),
+            patch(
+                "vibeocr.env_manager._quick_verify_deps",
+                return_value={"paddlepaddle": True, "torch": True},
+            ),
+            patch("vibeocr.env_manager.detect_gpu", return_value=(False, None)),
+        ):
+            result = check_embedded_environment_dependencies(tmp_path, use_cache=True)
+
+        # 应返回刷新后的状态（paddlepaddle=True）
+        assert result.get("paddlepaddle") is True, (
+            f"缓存过期应刷新为 True，实际: {result}"
+        )
+        # 缓存文件也应已更新
+        refreshed = load_cache(tmp_path)
+        assert refreshed["dependencies"]["paddlepaddle"] is True

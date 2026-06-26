@@ -135,6 +135,48 @@ class TestInstallStandalonePython:
             ok, _msg = install_embedded_python(tmp_path)
         assert not ok
 
+    def test_short_circuit_validates_python_exe(self, tmp_path):
+        """python/ 存在但缺 python.exe（半成品）时不应短路返回 True，应清理后重装
+
+        回归：解压中断会留下不完整的 python/ 目录，旧逻辑仅凭
+        python_dir.exists() 即短路返回"已安装"，导致后续依赖安装找不到解释器。
+        """
+        # 构造半成品：python/ 存在但无 python.exe
+        python_dir = tmp_path / "python"
+        python_dir.mkdir()
+        (python_dir / "Lib").mkdir()  # 有内容但缺可执行文件
+
+        rmtree_called = []
+
+        def fake_rmtree(path, *a, **kw):
+            rmtree_called.append(str(path))
+
+        with (
+            patch("vibeocr.env_manager.get_environment_mode", return_value="none"),
+            # python.exe 检测：不存在（半成品）
+            patch(
+                "vibeocr.env_manager.get_embedded_python_executable",
+                return_value=tmp_path / "python" / "python.exe",
+            ),
+            patch(
+                "vibeocr.env_manager.download_file_with_progress", return_value=True
+            ) as mock_dl,
+            patch("vibeocr.env_manager.shutil.rmtree", side_effect=fake_rmtree),
+            patch("vibeocr.env_manager.subprocess.run"),
+        ):
+            def _fake_dl(url, dest, *a, **kw):
+                dest.write_bytes(self._make_standalone_tar_bytes())
+                return True
+
+            mock_dl.side_effect = _fake_dl
+            ok, _msg = install_embedded_python(tmp_path)
+
+        assert ok, "半成品清理后应重新安装成功"
+        # 应先清理半成品 python/ 目录
+        assert any("python" in p for p in rmtree_called), (
+            f"应清理半成品 python/，实际 rmtree 调用: {rmtree_called}"
+        )
+
 
 class TestInstallSpecs:
     """安装规格测试"""
@@ -257,19 +299,92 @@ class TestEnsureMineruModels:
         python_exe = tmp_path / "python.exe"
         python_exe.touch()
 
+        def mock_popen_factory():
+            proc = MagicMock()
+            proc.stdout = iter([b"downloading model...\n", b""])
+            proc.returncode = 0
+            proc.poll.return_value = 0
+            proc.wait.return_value = None
+            return proc
+
         with (
             patch(
                 "vibeocr.env_manager.get_embedded_python_executable",
                 return_value=python_exe,
             ),
-            patch("vibeocr.env_manager.subprocess.run") as mock_run,
+            patch(
+                "vibeocr.env_manager.subprocess.Popen", return_value=mock_popen_factory()
+            ) as mock_popen,
+            patch("vibeocr.env_manager.detect_network_source", return_value="domestic"),
         ):
-            mock_run.return_value = MagicMock(returncode=0, stderr="")
             ok, _msg = ensure_mineru_models(tmp_path)
 
         assert ok
-        cmd = mock_run.call_args[0][0]
+        cmd = mock_popen.call_args[0][0]
         assert "mineru.cli.models_download" in " ".join(cmd)
+
+    def test_progress_callback_receives_output(self, tmp_path):
+        """progress_callback 应收到下载进度（逐行输出）"""
+        python_exe = tmp_path / "python.exe"
+        python_exe.touch()
+
+        def mock_popen_factory():
+            proc = MagicMock()
+            proc.stdout = iter(
+                [b"downloading file1.zip\n", b"downloading file2.zip\n", b""]
+            )
+            proc.returncode = 0
+            proc.poll.return_value = 0
+            proc.wait.return_value = None
+            return proc
+
+        messages: list[str] = []
+        with (
+            patch(
+                "vibeocr.env_manager.get_embedded_python_executable",
+                return_value=python_exe,
+            ),
+            patch(
+                "vibeocr.env_manager.subprocess.Popen", return_value=mock_popen_factory()
+            ),
+            patch("vibeocr.env_manager.detect_network_source", return_value="domestic"),
+        ):
+            ok, _msg = ensure_mineru_models(
+                tmp_path, progress_callback=lambda s, m: messages.append(m)
+            )
+
+        assert ok
+        # 应收到子进程的逐行输出
+        assert any("file1.zip" in m for m in messages), f"实际: {messages}"
+        assert any("file2.zip" in m for m in messages), f"实际: {messages}"
+
+    def test_returns_false_when_popen_fails(self, tmp_path):
+        """子进程返回非 0 退出码时应返回 False"""
+        python_exe = tmp_path / "python.exe"
+        python_exe.touch()
+
+        def mock_popen_factory():
+            proc = MagicMock()
+            proc.stdout = iter([b""])
+            proc.returncode = 1
+            proc.poll.return_value = 1
+            proc.wait.return_value = None
+            return proc
+
+        with (
+            patch(
+                "vibeocr.env_manager.get_embedded_python_executable",
+                return_value=python_exe,
+            ),
+            patch(
+                "vibeocr.env_manager.subprocess.Popen", return_value=mock_popen_factory()
+            ),
+            patch("vibeocr.env_manager.detect_network_source", return_value="domestic"),
+        ):
+            ok, msg = ensure_mineru_models(tmp_path)
+
+        assert not ok
+        assert "失败" in msg or "退出码" in msg
 
     def test_returns_false_when_no_python(self, tmp_path):
         with patch(
@@ -692,6 +807,142 @@ class TestGpuInstallUsesTorchForCudaRuntime:
         assert "cu126" in joined, f"默认应使用 cu126，实际: {joined}"
 
 
+class TestGpuNoFallbackPyPi:
+    """GPU 依赖镜像失败时重试同源镜像，绝不回退 PyPI（避免装成 CPU 版）"""
+
+    @staticmethod
+    def _specs():
+        return {
+            "paddlepaddle-gpu": "paddlepaddle-gpu>=3.3.1",
+            "paddleocr": "paddleocr[doc-parser]>=3.7.0",
+            "mineru": "mineru[core]>=3.4.0",
+            "torch": "torch>=2.6.0",
+        }
+
+    def test_gpu_req_retries_same_mirror_not_pypi(self, tmp_path):
+        """GPU 项（torch）镜像失败 → 重试仍带 -i mirror，不出现裸 PyPI 调用，最终返回 False"""
+        python_exe = tmp_path / "python.exe"
+        python_exe.touch()
+        calls = []
+
+        def mock_run(cmd, **kw):
+            calls.append(cmd)
+            r = MagicMock()
+            # pip 升级成功；torch 安装始终失败（模拟大文件 IncompleteRead）
+            if "--upgrade" in cmd:
+                r.returncode = 0
+                r.stderr = ""
+            elif "torch" in " ".join(cmd):
+                r.returncode = 1
+                r.stderr = "ERROR: IncompleteRead Connection broken"
+            else:
+                r.returncode = 0
+                r.stderr = ""
+            return r
+
+        with (
+            patch("vibeocr.env_manager.subprocess.run", side_effect=mock_run),
+        ):
+            ok, _msg = _install_paddle_stack(
+                python_exe=python_exe,
+                specs=self._specs(),
+                pip_source="https://pypi.org/simple",
+                network_type="domestic",
+                use_gpu=True,
+                cuda_version="cu126",
+                report_fn=lambda s, m: None,
+                success_msg="done",
+            )
+
+        assert not ok, "GPU torch 持续失败应返回 False"
+        # 所有 torch 相关安装命令都应带 -i <mirror>（重试同源，不回退 PyPI）
+        torch_cmds = [c for c in calls if "torch" in " ".join(c)]
+        assert len(torch_cmds) >= 2, f"应至少重试 1 次，实际 torch 命令数: {len(torch_cmds)}"
+        for c in torch_cmds:
+            joined = " ".join(c)
+            assert "-i" in joined, f"GPU 重试仍应带 -i mirror，实际: {joined}"
+            assert "mirrors.nju.edu.cn" in joined or "pytorch" in joined, (
+                f"应走 torch 镜像源，实际: {joined}"
+            )
+
+    def test_cpu_req_falls_back_to_pypi_on_version_not_found(self, tmp_path):
+        """非 GPU 包镜像源确无此版本 → 回退官方 PyPI"""
+        python_exe = tmp_path / "python.exe"
+        python_exe.touch()
+        calls = []
+
+        def mock_run(cmd, **kw):
+            calls.append(cmd)
+            r = MagicMock()
+            if "--upgrade" in cmd:
+                r.returncode = 0
+                r.stderr = ""
+            elif "-i" in cmd and "paddleocr" in " ".join(cmd):
+                # 镜像源无此版本
+                r.returncode = 1
+                r.stderr = "ERROR: Could not find a version"
+            else:
+                # 回退 PyPI 成功
+                r.returncode = 0
+                r.stderr = ""
+            return r
+
+        with patch("vibeocr.env_manager.subprocess.run", side_effect=mock_run):
+            ok, _msg = _install_paddle_stack(
+                python_exe=python_exe,
+                specs=self._specs(),
+                pip_source="https://pypi.org/simple",
+                network_type="domestic",
+                use_gpu=False,
+                cuda_version=None,
+                report_fn=lambda s, m: None,
+                success_msg="done",
+            )
+
+        assert ok, "CPU 包回退 PyPI 成功应返回 True"
+        # 应有一次不带 -i 的 paddleocr 安装（回退 PyPI）
+        paddleocr_no_index = [
+            c
+            for c in calls
+            if "paddleocr" in " ".join(c)
+            and "install" in c
+            and "--upgrade" not in c
+            and "-i" not in c
+        ]
+        assert len(paddleocr_no_index) >= 1, "应回退 PyPI（不带 -i）"
+
+    def test_pip_install_has_retries_flag(self, tmp_path):
+        """所有 pip install 命令都应带 --retries（大文件韧性）"""
+        python_exe = tmp_path / "python.exe"
+        python_exe.touch()
+        calls = []
+
+        def mock_run(cmd, **kw):
+            calls.append(cmd)
+            r = MagicMock()
+            r.returncode = 0
+            r.stderr = ""
+            return r
+
+        with patch("vibeocr.env_manager.subprocess.run", side_effect=mock_run):
+            _install_paddle_stack(
+                python_exe=python_exe,
+                specs=self._specs(),
+                pip_source="https://pypi.org/simple",
+                network_type="domestic",
+                use_gpu=True,
+                cuda_version="cu126",
+                report_fn=lambda s, m: None,
+                success_msg="done",
+            )
+
+        install_cmds = [c for c in calls if "install" in c]
+        assert len(install_cmds) > 0
+        for c in install_cmds:
+            assert "--retries" in c, f"pip install 应带 --retries，实际: {c}"
+            assert "--timeout" in c, f"pip install 应带 --timeout，实际: {c}"
+
+
 class TestSwitchPaddleBackend:
     """switch_paddle_backend 测试：GPU ↔ CPU 切换"""
 
@@ -826,6 +1077,43 @@ class TestInstallLogging:
         assert any("正在下载" in m for m in info_msgs), (
             f"应通过 logger.info 输出下载开始，实际 records: {info_msgs}"
         )
+
+    def test_download_retries_on_failure(self, tmp_path):
+        """下载失败时应重试（max_retries 次），最终成功"""
+        import contextlib
+
+        from vibeocr.env_manager import download_file_with_progress
+
+        dest = tmp_path / "fake.tar.gz"
+        call_count = {"n": 0}
+
+        def fake_resp_factory():
+            fake_resp = MagicMock()
+            fake_resp.headers = {"content-length": "4"}
+            fake_resp.status = 200
+            fake_resp.__enter__ = MagicMock(return_value=fake_resp)
+            fake_resp.__exit__ = MagicMock(return_value=False)
+            return fake_resp
+
+        def side_effect(req, timeout=30):
+            call_count["n"] += 1
+            if call_count["n"] < 3:
+                raise ConnectionError("simulated network break")
+            resp = fake_resp_factory()
+            resp.read.side_effect = [b"data", b""]
+            return resp
+
+        with (
+            patch("vibeocr.env_manager.urlopen", side_effect=side_effect),
+            patch("vibeocr.env_manager.Request"),
+            contextlib.nullcontext(),
+        ):
+            ok = download_file_with_progress(
+                "http://x/y.tar.gz", dest, "Python(镜像)", max_retries=3
+            )
+
+        assert ok
+        assert call_count["n"] == 3, f"应重试到第 3 次成功，实际 {call_count['n']}"
 
     def test_install_python_logs_stages(self, tmp_path, caplog):
         """install_embedded_python 各阶段（安装开始/下载源/解压/pip自检）应有日志"""

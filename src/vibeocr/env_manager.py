@@ -294,46 +294,91 @@ def is_embedded_python_installed(project_root: Path) -> bool:
 
 
 def download_file_with_progress(
-    url: str, dest_path: Path, description: str = "下载"
+    url: str,
+    dest_path: Path,
+    description: str = "下载",
+    max_retries: int = 3,
 ) -> bool:
-    """下载文件并显示进度"""
-    try:
-        logger.info("[%s] 正在下载: %s", description, url)
-        req = Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    """下载文件并显示进度，支持断点续传 + 失败重试
 
-        with urlopen(req, timeout=30) as response:
-            total_size = int(response.headers.get("content-length", 0))
-            downloaded = 0
-            chunk_size = 8192
-            last_pct = -1
+    大文件（如 torch wheel ~2.6GB）在弱网下常因连接中断报 IncompleteRead。
+    本函数：
+    - 每次重试时，若 dest_path 已有部分内容，通过 HTTP Range 头断点续传（追加写）；
+    - 服务端不支持 Range（返回 200 而非 206）时回退为整体重下（覆盖写）；
+    - 最多重试 max_retries 次，全部失败才返回 False。
 
-            with open(dest_path, "wb") as f:
-                while True:
-                    chunk = response.read(chunk_size)
-                    if not chunk:
-                        break
-                    f.write(chunk)
-                    downloaded += len(chunk)
+    Args:
+        url: 下载地址
+        dest_path: 目标文件路径
+        description: 日志描述
+        max_retries: 最大重试次数（含首次）
+    """
+    chunk_size = 65536  # 64KB，比 8KB 更适配大文件
+    last_pct = -1
 
-                    if total_size > 0:
-                        progress = int(downloaded / total_size * 100)
-                        # 每 10% 记一条日志（避免日志爆炸）
-                        if progress >= last_pct + 10:
-                            last_pct = (progress // 10) * 10
-                            logger.info(
-                                "[%s] 进度: %d%% (%dMB / %dMB)",
-                                description,
-                                progress,
-                                downloaded // 1024 // 1024,
-                                total_size // 1024 // 1024,
-                            )
+    for attempt in range(1, max_retries + 1):
+        try:
+            # 断点续传：dest 已有部分内容时，用 Range 头从断点继续
+            existing = dest_path.stat().st_size if dest_path.exists() else 0
+            headers = {"User-Agent": "Mozilla/5.0"}
+            if existing > 0:
+                headers["Range"] = f"bytes={existing}-"
 
-        logger.info("[%s] 下载完成", description)
-        return True
+            req = Request(url, headers=headers)
+            logger.info(
+                "[%s] 正在下载: %s（第 %d/%d 次%s）",
+                description,
+                url,
+                attempt,
+                max_retries,
+                f"，断点续传 {existing // 1024 // 1024}MB" if existing else "",
+            )
 
-    except Exception as e:
-        logger.error("[%s] 下载失败: %s", description, e)
-        return False
+            with urlopen(req, timeout=30) as response:
+                # 206 = Partial Content（续传成功）；200 = 服务端忽略 Range，整体返回
+                is_resume = response.status == 206
+                # 续传时 content-length 是剩余大小，整体总大小 = 已下载 + 剩余
+                remaining = int(response.headers.get("content-length", 0))
+                total_size = (existing + remaining) if is_resume else remaining
+                downloaded = existing if is_resume else 0
+                last_pct = -1
+
+                mode = "ab" if is_resume else "wb"
+                # 非续传模式需先清空已有部分文件
+                if not is_resume and existing > 0:
+                    dest_path.unlink()
+
+                with open(dest_path, mode) as f:
+                    while True:
+                        chunk = response.read(chunk_size)
+                        if not chunk:
+                            break
+                        f.write(chunk)
+                        downloaded += len(chunk)
+
+                        if total_size > 0:
+                            progress = int(downloaded / total_size * 100)
+                            # 每 10% 记一条日志（避免日志爆炸）
+                            if progress >= last_pct + 10:
+                                last_pct = (progress // 10) * 10
+                                logger.info(
+                                    "[%s] 进度: %d%% (%dMB / %dMB)",
+                                    description,
+                                    progress,
+                                    downloaded // 1024 // 1024,
+                                    total_size // 1024 // 1024,
+                                )
+
+            logger.info("[%s] 下载完成", description)
+            return True
+
+        except Exception as e:
+            logger.error("[%s] 下载失败（第 %d 次）: %s", description, attempt, e)
+            if attempt < max_retries:
+                logger.info("[%s] 将重试（保留已下载部分用于断点续传）...", description)
+            else:
+                return False
+    return False
 
 
 def install_embedded_python(
@@ -367,7 +412,17 @@ def install_embedded_python(
     python_dir = project_root / "python"
 
     if python_dir.exists():
-        return True, f"Python 运行时已安装: {python_dir}"
+        # 校验 python.exe 确实存在：解压中断/磁盘满等会留下不完整的 python/
+        # 目录，此时 python_dir.exists() 命中短路却返回"已安装"，导致后续
+        # 依赖安装因找不到解释器而失败且难以定位。半成品则清理后重装。
+        python_exe_check = get_embedded_python_executable(project_root)
+        if python_exe_check.exists():
+            return True, f"Python 运行时已安装: {python_dir}"
+        logger.warning(
+            "[环境安装] python/ 存在但缺少 %s，判定为半成品，清理后重装",
+            python_exe_check,
+        )
+        shutil.rmtree(python_dir, ignore_errors=True)
 
     logger.info("==================================================")
     logger.info("[环境安装] 安装 Python 运行时（python-build-standalone）")
@@ -453,6 +508,8 @@ def install_embedded_python(
 
     python_exe = get_embedded_python_executable(project_root)
     if not python_exe.exists():
+        # 清理半成品，避免下次启动因 python_dir.exists() 短路误判为已安装
+        shutil.rmtree(python_dir, ignore_errors=True)
         return False, (
             f"解压后未找到 {python_exe}，下载源可能损坏: {used_url}\n"
             f"请手动下载并解压: {PYTHON_BUILD_STANDALONE_BASE}"
@@ -562,8 +619,29 @@ def check_embedded_environment_dependencies(
     if use_cache:
         is_valid, cached_data = is_cache_valid(project_root)
         if is_valid and cached_data:
-            print("[依赖检测] 使用缓存结果")
-            return cached_data.get("dependencies", {})
+            cached_deps = cached_data.get("dependencies", {})
+            # 缓存显示缺失的项最可能是过期（用户刚装完依赖但缓存未刷新）。
+            # 对这些项做一次实时复核；若与缓存不一致则刷新缓存，避免设置页
+            # 表格"状态/版本"两列数据源不同步（状态走缓存、版本走实时 pip）。
+            stale_pkgs = [pkg for pkg, ok in cached_deps.items() if not ok]
+            if stale_pkgs:
+                python_exe = get_embedded_python_executable(project_root)
+                if python_exe.exists():
+                    verified = _quick_verify_deps(python_exe)
+                    changed = False
+                    for pkg in stale_pkgs:
+                        if verified.get(pkg, False):
+                            cached_deps[pkg] = True
+                            changed = True
+                    if changed:
+                        logger.info("[依赖检测] 缓存过期，已用实时结果刷新")
+                        has_gpu, cuda_version = detect_gpu()
+                        create_cache_entry(
+                            project_root,
+                            cached_deps,
+                            {"has_gpu": has_gpu, "cuda_version": cuda_version},
+                        )
+            return cached_deps
 
     # 2. 执行实际检测（委托给 _check_imports 原语，模块清单由 OCR_CHECK_MODULES 统一）
     python_exe = get_embedded_python_executable(project_root)
@@ -808,6 +886,17 @@ def _build_paddle_requirements(
     return [(paddle_name, paddle_package, paddle_index)]
 
 
+def _is_gpu_requirement(name: str) -> bool:
+    """判断 requirements 项是否为 GPU 专用包（回退 PyPI 会装成 CPU 版，不可回退）
+
+    通过展示名（tuple 元素 0）子串匹配，与 _is_installed 的判别风格一致。
+    - "PaddlePaddle GPU (cu126)" → True（PyPI 无 GPU wheel）
+    - "PyTorch CUDA (cu126)"     → True（PyPI torch 为 CPU 版）
+    - "PaddlePaddle CPU"/"PaddleOCR"/"MinerU" → False（可回退 PyPI）
+    """
+    return "GPU" in name or "CUDA" in name
+
+
 def _install_paddle_stack(
     python_exe: Path,
     specs: dict[str, str],
@@ -849,6 +938,10 @@ def _install_paddle_stack(
                 "pip",
                 "install",
                 "--upgrade",
+                "--retries",
+                "5",
+                "--timeout",
+                "120",
                 "pip",
                 "-i",
                 pip_source,
@@ -919,8 +1012,21 @@ def _install_paddle_stack(
             )
             pkg_args = [a.strip('"').strip("'") for a in raw_args]
 
+            # 首次安装走指定镜像源；带 --retries/--timeout 提升大文件（torch ~2.6GB）韧性
             result = subprocess.run(
-                [str(python_exe), "-m", "pip", "install", *pkg_args, "-i", index_url],
+                [
+                    str(python_exe),
+                    "-m",
+                    "pip",
+                    "install",
+                    "--retries",
+                    "5",
+                    "--timeout",
+                    "120",
+                    *pkg_args,
+                    "-i",
+                    index_url,
+                ],
                 capture_output=True,
                 text=True,
                 timeout=600,
@@ -929,22 +1035,96 @@ def _install_paddle_stack(
 
             if result.returncode != 0:
                 error_msg = result.stderr or result.stdout or "未知错误"
-                if "Could not find a version" in str(
-                    error_msg
-                ) or "No matching distribution" in str(error_msg):
-                    report_fn("依赖安装", f"{name} 安装失败，尝试使用官方PyPI源...")
+                is_version_not_found = (
+                    "Could not find a version" in str(error_msg)
+                    or "No matching distribution" in str(error_msg)
+                )
+
+                if _is_gpu_requirement(name):
+                    # GPU 专用包（paddlepaddle-gpu / torch+cu126）：PyPI 只有 CPU 版，
+                    # 回退会静默装成 CPU 导致 GPU 永不生效。
+                    # 改为对同一镜像源重试最多 2 次（大文件 IncompleteRead 常见）。
+                    gpu_retried = False
+                    for retry in range(1, 3):
+                        report_fn(
+                            "依赖安装",
+                            f"{name} 安装失败（第 {retry} 次），重试同源镜像...",
+                        )
+                        result = subprocess.run(
+                            [
+                                str(python_exe),
+                                "-m",
+                                "pip",
+                                "install",
+                                "--retries",
+                                "5",
+                                "--timeout",
+                                "120",
+                                *pkg_args,
+                                "-i",
+                                index_url,
+                            ],
+                            capture_output=True,
+                            text=True,
+                            timeout=600,
+                            creationflags=subprocess.CREATE_NO_WINDOW
+                            if os.name == "nt"
+                            else 0,
+                        )
+                        if result.returncode == 0:
+                            gpu_retried = True
+                            break
+                    if not gpu_retried:
+                        error_msg = (
+                            result.stderr or result.stdout or "未知错误"
+                        )
+                        logger.error(
+                            "%s 安装失败（GPU 包不回退 PyPI），完整输出:\n%s",
+                            name,
+                            error_msg,
+                        )
+                        return (
+                            False,
+                            f"{name} 安装失败（已重试，GPU 包不可回退 PyPI）:"
+                            f"\n{error_msg[:500]}",
+                        )
+                elif is_version_not_found:
+                    # 非 GPU 包且镜像源确无此版本：回退官方 PyPI
+                    report_fn(
+                        "依赖安装", f"{name} 安装失败，尝试使用官方PyPI源..."
+                    )
                     result = subprocess.run(
-                        [str(python_exe), "-m", "pip", "install", *pkg_args],
+                        [
+                            str(python_exe),
+                            "-m",
+                            "pip",
+                            "install",
+                            "--retries",
+                            "5",
+                            "--timeout",
+                            "120",
+                            *pkg_args,
+                        ],
                         capture_output=True,
                         text=True,
                         timeout=600,
-                        creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+                        creationflags=subprocess.CREATE_NO_WINDOW
+                        if os.name == "nt"
+                        else 0,
                     )
 
-                if result.returncode != 0:
-                    error_msg = result.stderr or result.stdout or "未知错误"
-                    # 完整 stderr 落盘（UI 只显示截断版），便于排查
-                    logger.error("%s 安装失败，完整输出:\n%s", name, error_msg)
+                    if result.returncode != 0:
+                        error_msg = result.stderr or result.stdout or "未知错误"
+                        # 完整 stderr 落盘（UI 只显示截断版），便于排查
+                        logger.error(
+                            "%s 安装失败，完整输出:\n%s", name, error_msg
+                        )
+                        return False, f"{name} 安装失败:\n{error_msg[:500]}"
+                else:
+                    # 非 GPU 包但非版本问题（如网络中断）：直接失败，不回退
+                    logger.error(
+                        "%s 安装失败，完整输出:\n%s", name, error_msg
+                    )
                     return False, f"{name} 安装失败:\n{error_msg[:500]}"
 
             report_fn("依赖安装", f"{name} 安装成功")
@@ -1394,37 +1574,70 @@ def get_project_root() -> Path:
 
 def ensure_mineru_models(
     project_root: Path,
-    timeout: int = 600,
+    timeout: int = 1800,
+    progress_callback: Callable[[str, str], None] | None = None,
 ) -> tuple[bool, str]:
     """下载 MinerU 所需模型（首次运行时调用）
 
+    用 Popen 启动 mineru.cli.models_download 并逐行读取输出转发到回调，
+    实现"首次使用 PDF 时下载模型 + UI 进度提示"。
+
     Args:
         project_root: 项目根目录
-        timeout: 超时时间（秒）
+        timeout: 超时时间（秒），默认 1800（30 分钟，模型数 GB）
+        progress_callback: 进度回调 (stage, message)，None 时仅写日志
 
     Returns:
         (是否成功, 消息)
     """
+    import threading
+
     python_exe = get_embedded_python_executable(project_root)
     if not python_exe.exists():
         return False, "Python 未安装"
 
-    print("[模型下载] 正在下载 MinerU 模型...")
+    def report(stage: str, msg: str):
+        logger.info("[%s] %s", stage, msg)
+        if progress_callback:
+            progress_callback(stage, msg)
+
+    report("模型下载", "正在下载 MinerU 模型（首次使用需数 GB，请耐心等待）...")
+    proc: subprocess.Popen | None = None
     try:
         network = detect_network_source()
         source = "modelscope" if network == "domestic" else "huggingface"
-        print(f"[模型下载] 使用模型源: {source}")
-        result = subprocess.run(
+        report("模型下载", f"使用模型源: {source}")
+
+        proc = subprocess.Popen(
             [str(python_exe), "-m", "mineru.cli.models_download", "-s", source],
-            capture_output=True,
-            text=True,
-            timeout=timeout,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
             creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
         )
-        if result.returncode == 0:
+
+        # 逐行读取转发到回调，避免数 GB 下载期间 UI 无反馈
+        def _read_output():
+            try:
+                assert proc is not None and proc.stdout is not None
+                for raw in proc.stdout:
+                    text = raw.decode("utf-8", errors="replace").strip()
+                    if text:
+                        report("模型下载", text)
+            except Exception:
+                pass
+
+        reader = threading.Thread(target=_read_output, daemon=True, name="MinerUModelDl")
+        reader.start()
+        proc.wait(timeout=timeout)
+        reader.join(timeout=5)
+
+        if proc.returncode == 0:
+            report("模型下载", "MinerU 模型下载完成")
             return True, "MinerU 模型下载完成"
-        return False, f"模型下载失败: {result.stderr[:200]}"
+        return False, f"模型下载失败（退出码 {proc.returncode}）"
     except subprocess.TimeoutExpired:
+        if proc is not None:
+            proc.kill()
         return False, "模型下载超时"
     except Exception as e:
         return False, f"模型下载异常: {e}"
