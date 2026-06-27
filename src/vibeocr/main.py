@@ -196,6 +196,20 @@ def launch_application() -> int:
     app.setApplicationName("VibeOCR")
     app.setApplicationVersion(__version__)
 
+    # 注册退出清理：协作式取消残留的 InstallWorker 并 kill 其子进程。
+    # 作为 closeEvent 的兜底——若用户在安装进行中直接退出应用（而非关闭对话框），
+    # 避免留下孤儿 pip 子进程（main.py 末尾的 os._exit 不会回收它们）。
+    def _cleanup_install_workers_on_quit() -> None:
+        from PySide6.QtCore import QThread
+
+        for widget in app.topLevelWidgets():
+            for thread in widget.findChildren(QThread):
+                if hasattr(thread, "request_cancel"):
+                    thread.request_cancel()
+                    thread.wait(3000)
+
+    app.aboutToQuit.connect(_cleanup_install_workers_on_quit)
+
     # 设置应用图标（必须在主窗口创建之前，窗口才能继承图标）
     _setup_app_icon(app)
 

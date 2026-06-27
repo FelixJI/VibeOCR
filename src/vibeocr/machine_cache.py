@@ -9,8 +9,10 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 
-# 缓存版本号（用于缓存格式升级时失效旧缓存）
-CACHE_VERSION = 1
+# 缓存版本号（用于缓存格式升级时失效旧缓存）。
+# v2：markdown 纳入 OCR_CHECK_MODULES / required_deps，旧缓存（无 markdown key）
+# 必须失效，否则会被判为"已装"，掩盖真实缺失。
+CACHE_VERSION = 2
 
 
 def _get_cpu_id() -> str:

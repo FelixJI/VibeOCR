@@ -100,8 +100,13 @@ class BackendChoiceDialog(QDialog):
         btn_layout = QHBoxLayout()
         self._install_button = QPushButton("开始安装")
         self._install_button.clicked.connect(self._on_install_clicked)
+        # 取消按钮（安装进行中显示，触发协作式取消）
+        self._cancel_button = QPushButton("取消安装")
+        self._cancel_button.clicked.connect(self._on_cancel_clicked)
+        self._cancel_button.setVisible(False)
         btn_layout.addStretch()
         btn_layout.addWidget(self._install_button)
+        btn_layout.addWidget(self._cancel_button)
         self._close_button = QPushButton("关闭")
         self._close_button.clicked.connect(self.reject)
         self._close_button.setVisible(False)
@@ -125,6 +130,8 @@ class BackendChoiceDialog(QDialog):
         self._gpu_radio.setEnabled(False)
         self._cpu_radio.setEnabled(False)
         self._install_button.setEnabled(False)
+        self._install_button.setVisible(False)
+        self._cancel_button.setVisible(True)
         self._progress_label.setVisible(True)
         self._progress_bar.setVisible(True)
         self._log_text.setVisible(True)
@@ -142,6 +149,25 @@ class BackendChoiceDialog(QDialog):
         self._worker.finished.connect(self._on_finished)
         self._worker.start()
 
+    def _on_cancel_clicked(self) -> None:
+        """取消按钮：确认后协作式取消安装。"""
+        reply = QMessageBox.question(
+            self,
+            "取消安装",
+            "确定要取消安装吗？\n已下载的内容会保留，下次可继续补装缺失依赖。",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        if self._worker and self._worker.isRunning():
+            self._cancel_button.setEnabled(False)
+            self._cancel_button.setText("正在取消...")
+            self._log("用户取消安装，正在停止当前任务（可能需要数秒）...")
+            self._worker.request_cancel()
+        else:
+            self._cancel_button.setVisible(False)
+
     @Slot(str, str)
     def _on_progress(self, stage: str, message: str) -> None:
         self._progress_label.setText(f"[{stage}] {message}")
@@ -150,6 +176,7 @@ class BackendChoiceDialog(QDialog):
     @Slot(bool, str)
     def _on_finished(self, success: bool, message: str) -> None:
         self._progress_bar.setVisible(False)
+        self._cancel_button.setVisible(False)
         if success:
             self._progress_label.setText("安装成功！")
             self._log(f"\n{message}")
@@ -177,7 +204,8 @@ class BackendChoiceDialog(QDialog):
         sb.setValue(sb.maximum())
 
     def closeEvent(self, event) -> None:
+        """关闭事件：协作式取消安装，绝不强杀线程（避免孤儿 pip 进程）。"""
         if self._worker and self._worker.isRunning():
-            self._worker.terminate()
-            self._worker.wait()
+            self._worker.request_cancel()
+            self._worker.wait(5000)
         event.accept()

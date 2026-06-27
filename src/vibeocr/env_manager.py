@@ -4,9 +4,12 @@ import logging
 import os
 import shutil
 import subprocess
+import contextlib
 import sys
 import tarfile
 import tempfile
+import threading
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Literal
@@ -620,28 +623,34 @@ def check_embedded_environment_dependencies(
         is_valid, cached_data = is_cache_valid(project_root)
         if is_valid and cached_data:
             cached_deps = cached_data.get("dependencies", {})
-            # 缓存显示缺失的项最可能是过期（用户刚装完依赖但缓存未刷新）。
-            # 对这些项做一次实时复核；若与缓存不一致则刷新缓存，避免设置页
-            # 表格"状态/版本"两列数据源不同步（状态走缓存、版本走实时 pip）。
-            stale_pkgs = [pkg for pkg, ok in cached_deps.items() if not ok]
-            if stale_pkgs:
-                python_exe = get_embedded_python_executable(project_root)
-                if python_exe.exists():
-                    verified = _quick_verify_deps(python_exe)
-                    changed = False
-                    for pkg in stale_pkgs:
-                        if verified.get(pkg, False):
-                            cached_deps[pkg] = True
-                            changed = True
-                    if changed:
-                        logger.info("[依赖检测] 缓存过期，已用实时结果刷新")
-                        has_gpu, cuda_version = detect_gpu()
-                        create_cache_entry(
-                            project_root,
-                            cached_deps,
-                            {"has_gpu": has_gpu, "cuda_version": cuda_version},
-                        )
-            return cached_deps
+            # 缓存缺 dependencies 字段或为空（如首启从未检测过、或缓存 schema
+            # 变更后未重建）→ 视为缓存失效，落入下方实时检测。
+            # 旧逻辑在此处 return {} 会静默跳过检测，导致设置页表格全部显示
+            # "未安装"、is_embedded_environment_ready 误报缺失。
+            if cached_deps:
+                # 缓存显示缺失的项最可能是过期（用户刚装完依赖但缓存未刷新）。
+                # 对这些项做一次实时复核；若与缓存不一致则刷新缓存，避免设置页
+                # 表格"状态/版本"两列数据源不同步（状态走缓存、版本走实时 pip）。
+                stale_pkgs = [pkg for pkg, ok in cached_deps.items() if not ok]
+                if stale_pkgs:
+                    python_exe = get_embedded_python_executable(project_root)
+                    if python_exe.exists():
+                        verified = _quick_verify_deps(python_exe)
+                        changed = False
+                        for pkg in stale_pkgs:
+                            if verified.get(pkg, False):
+                                cached_deps[pkg] = True
+                                changed = True
+                        if changed:
+                            logger.info("[依赖检测] 缓存过期，已用实时结果刷新")
+                            has_gpu, cuda_version = detect_gpu()
+                            create_cache_entry(
+                                project_root,
+                                cached_deps,
+                                {"has_gpu": has_gpu, "cuda_version": cuda_version},
+                            )
+                return cached_deps
+            logger.info("[依赖检测] 缓存无 dependencies 字段，执行实时检测")
 
     # 2. 执行实际检测（委托给 _check_imports 原语，模块清单由 OCR_CHECK_MODULES 统一）
     python_exe = get_embedded_python_executable(project_root)
@@ -899,6 +908,110 @@ def _is_gpu_requirement(name: str) -> bool:
     return "GPU" in name or "CUDA" in name
 
 
+class InstallCancelled(Exception):
+    """用户取消安装（协作式取消，区别于 QThread.terminate() 的强杀）。
+
+    由 _run_pip 在检测到 cancel_event 被置位后抛出，_install_paddle_stack
+    在外层捕获并转为 (False, "用户已取消安装") 返回。
+    """
+
+
+def _run_pip(
+    cmd: list[str],
+    timeout: int = 600,
+    cancel_event: threading.Event | None = None,
+    on_proc: Callable[[subprocess.Popen], None] | None = None,
+) -> subprocess.CompletedProcess:
+    """运行 pip 命令，支持协作式取消与子进程句柄交出。
+
+    用 subprocess.Popen 启动子进程，通过 on_proc 回调把 Popen 句柄交给调用方
+    （通常是 InstallWorker），使其能在取消/关闭时真正 kill 掉 pip 子进程，
+    而非留下孤儿进程（旧代码用 subprocess.run + QThread.terminate() 会导致
+    pip 子进程变孤儿、Python 层 timeout 失效）。
+
+    取消语义：cancel_event 被置位时，立即 kill 子进程并抛 InstallCancelled。
+    超时语义：timeout 为 wall-clock 上限，到期抛 subprocess.TimeoutExpired。
+
+    Args:
+        cmd: 命令列表（含 python -m pip ...）
+        timeout: wall-clock 超时秒数
+        cancel_event: 取消事件；非 None 且被 set 时中止
+        on_proc: 子进程启动后回调，参数为 Popen 句柄
+
+    Returns:
+        CompletedProcess（与 subprocess.run 返回类型兼容：.returncode/.stdout/.stderr）
+
+    Raises:
+        InstallCancelled: cancel_event 被置位
+        subprocess.TimeoutExpired: 超时
+    """
+    creation = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+    proc = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        creationflags=creation,
+    )
+    # 交出句柄，调用方可在取消/关闭时 kill
+    if on_proc is not None:
+        on_proc(proc)
+
+    deadline = time.monotonic() + timeout
+    try:
+        # 轮询：每 0.2s 检查一次进程状态、取消事件、超时。
+        # communicate() 会阻塞到 EOF，因此用线程异步收尾 + 主线程轮询。
+        stdout_buf: list[str] = []
+        stderr_buf: list[str] = []
+        comm_exc: BaseException | None = None
+
+        def _communicate() -> None:
+            nonlocal comm_exc
+            try:
+                out, err = proc.communicate()
+                stdout_buf.append(out or "")
+                stderr_buf.append(err or "")
+            except BaseException as e:  # noqa: BLE001 - 透传给主线程
+                comm_exc = e
+
+        comm_thread = threading.Thread(target=_communicate, daemon=True)
+        comm_thread.start()
+
+        while True:
+            if cancel_event is not None and cancel_event.is_set():
+                # 协作式取消：先 kill 子进程，再等待 communicate 收尾
+                with contextlib.suppress(ProcessLookupError, OSError):
+                    proc.kill()
+                comm_thread.join(timeout=5)
+                raise InstallCancelled("用户取消安装")
+            if proc.poll() is not None:
+                # 进程已退出，等 communicate 收完剩余输出
+                comm_thread.join(timeout=5)
+                break
+            if time.monotonic() >= deadline:
+                with contextlib.suppress(ProcessLookupError, OSError):
+                    proc.kill()
+                comm_thread.join(timeout=5)
+                raise subprocess.TimeoutExpired(cmd, timeout)
+            time.sleep(0.2)
+
+        if comm_exc is not None:
+            raise comm_exc
+        return subprocess.CompletedProcess(
+            args=cmd,
+            returncode=proc.returncode,
+            stdout=stdout_buf[0] if stdout_buf else "",
+            stderr=stderr_buf[0] if stderr_buf else "",
+        )
+    except (InstallCancelled, subprocess.TimeoutExpired):
+        raise
+    except Exception:
+        # 兜底：异常退出时确保子进程被回收，避免孤儿
+        with contextlib.suppress(ProcessLookupError, OSError):
+            proc.kill()
+        raise
+
+
 def _install_paddle_stack(
     python_exe: Path,
     specs: dict[str, str],
@@ -909,6 +1022,9 @@ def _install_paddle_stack(
     report_fn: Callable[[str, str], None],
     success_msg: str,
     requirements_override: list[tuple[str, str, str]] | None = None,
+    cancel_event: threading.Event | None = None,
+    on_proc: Callable[[subprocess.Popen], None] | None = None,
+    project_root: Path | None = None,
 ) -> tuple[bool, str]:
     """安装 PaddlePaddle + PaddleOCR + MinerU (+可选 torch) 依赖栈
 
@@ -926,6 +1042,12 @@ def _install_paddle_stack(
         success_msg: 全部成功时的返回消息
         requirements_override: 外部传入的 requirements 子集。指定时跳过内部完整列表
             构建，直接安装子集（用于增量安装：只装缺失的包）。None 时构建完整列表。
+        cancel_event: 取消事件；非 None 且被 set 时，在下一个包安装前中止并返回取消。
+            由 InstallWorker 透传，配合 closeEvent 实现协作式取消（避免强杀线程）。
+        on_proc: 每个子进程启动后的回调（参数为 Popen 句柄），供调用方在取消时
+            kill 子进程。
+        project_root: 项目根目录，用于安装成功后写依赖缓存。None 时跳过写缓存
+            （保持与 switch_paddle_backend 等非首启路径的兼容）。
 
     Returns:
         (是否成功, 消息)
@@ -933,7 +1055,7 @@ def _install_paddle_stack(
     try:
         # 升级pip
         report_fn("依赖安装", "正在升级pip...")
-        result = subprocess.run(
+        result = _run_pip(
             [
                 str(python_exe),
                 "-m",
@@ -948,10 +1070,9 @@ def _install_paddle_stack(
                 "-i",
                 pip_source,
             ],
-            capture_output=True,
-            text=True,
             timeout=120,
-            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+            cancel_event=cancel_event,
+            on_proc=on_proc,
         )
         if result.returncode != 0:
             report_fn(
@@ -977,7 +1098,9 @@ def _install_paddle_stack(
                 ("MinerU", f'"{specs["mineru"]}"', pip_source),
                 # markdown 已从 PyInstaller exe 包排除，由便携 Python 安装，
                 # 供 OCR/MinerU worker 子进程的 markdown_to_html 使用。
-                ("Markdown", f'"{specs["markdown"]}"', pip_source),
+                # 用 .get() 防御：旧 specs 字典（pyproject 未声明 markdown 时）会缺 key，
+                # 避免抛 KeyError 中断整个安装。
+                ("Markdown", f'"{specs.get("markdown", "markdown")}"', pip_source),
             ]
 
             # GPU 环境下安装 torch+CUDA 覆盖 mineru 附带的 CPU 版本
@@ -1003,6 +1126,12 @@ def _install_paddle_stack(
                 # 因此无需额外安装 nvidia-*-cu12 / cu13 系列包。
 
         for name, package_spec, index_url in requirements:
+            # 协作式取消：在每个包安装前检查取消事件。
+            # 已启动的子进程由 _run_pip 内部的 cancel_event 检查负责 kill，
+            # 这里负责在包之间快速中止（避免启动下一个 pip）。
+            if cancel_event is not None and cancel_event.is_set():
+                report_fn("依赖安装", "安装已取消")
+                return False, "用户已取消安装"
             report_fn("依赖安装", f"正在安装 {name}...")
             report_fn("依赖安装", f"包规格: {package_spec}")
             report_fn("依赖安装", f"使用源: {index_url}")
@@ -1018,7 +1147,7 @@ def _install_paddle_stack(
             pkg_args = [a.strip('"').strip("'") for a in raw_args]
 
             # 首次安装走指定镜像源；带 --retries/--timeout 提升大文件（torch ~2.6GB）韧性
-            result = subprocess.run(
+            result = _run_pip(
                 [
                     str(python_exe),
                     "-m",
@@ -1032,10 +1161,9 @@ def _install_paddle_stack(
                     "-i",
                     index_url,
                 ],
-                capture_output=True,
-                text=True,
                 timeout=600,
-                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+                cancel_event=cancel_event,
+                on_proc=on_proc,
             )
 
             if result.returncode != 0:
@@ -1055,7 +1183,7 @@ def _install_paddle_stack(
                             "依赖安装",
                             f"{name} 安装失败（第 {retry} 次），重试同源镜像...",
                         )
-                        result = subprocess.run(
+                        result = _run_pip(
                             [
                                 str(python_exe),
                                 "-m",
@@ -1069,12 +1197,9 @@ def _install_paddle_stack(
                                 "-i",
                                 index_url,
                             ],
-                            capture_output=True,
-                            text=True,
                             timeout=600,
-                            creationflags=subprocess.CREATE_NO_WINDOW
-                            if os.name == "nt"
-                            else 0,
+                            cancel_event=cancel_event,
+                            on_proc=on_proc,
                         )
                         if result.returncode == 0:
                             gpu_retried = True
@@ -1098,7 +1223,7 @@ def _install_paddle_stack(
                     report_fn(
                         "依赖安装", f"{name} 安装失败，尝试使用官方PyPI源..."
                     )
-                    result = subprocess.run(
+                    result = _run_pip(
                         [
                             str(python_exe),
                             "-m",
@@ -1110,12 +1235,9 @@ def _install_paddle_stack(
                             "120",
                             *pkg_args,
                         ],
-                        capture_output=True,
-                        text=True,
                         timeout=600,
-                        creationflags=subprocess.CREATE_NO_WINDOW
-                        if os.name == "nt"
-                        else 0,
+                        cancel_event=cancel_event,
+                        on_proc=on_proc,
                     )
 
                     if result.returncode != 0:
@@ -1135,8 +1257,20 @@ def _install_paddle_stack(
             report_fn("依赖安装", f"{name} 安装成功")
 
         report_fn("依赖安装", "所有OCR依赖安装完成")
+        # 安装成功后刷新依赖缓存，避免设置页表格读到旧值（与 main_window
+        # 同步升级路径 _on_sync_finished 的清缓存做法对齐）。
+        # 用 update_cache_field 增量写 dependencies，不会覆盖 pending_backend 等。
+        if project_root is not None:
+            try:
+                verified = _quick_verify_deps(python_exe)
+                update_cache_field(project_root, "dependencies", verified)
+                logger.info("[依赖安装] 已刷新依赖缓存")
+            except Exception as e:
+                logger.warning("[依赖安装] 刷新依赖缓存失败: %s", e)
         return True, success_msg
 
+    except InstallCancelled:
+        return False, "用户已取消安装"
     except subprocess.TimeoutExpired:
         return False, "依赖安装超时（10分钟）"
     except Exception as e:
@@ -1150,6 +1284,8 @@ def install_embedded_dependencies(
     cuda_version: str | None = None,
     progress_callback=None,
     force_backend: str | None = None,
+    cancel_event: threading.Event | None = None,
+    on_proc: Callable[[subprocess.Popen], None] | None = None,
 ) -> tuple[bool, str]:
     """
     仅安装嵌入式OCR依赖（PaddlePaddle GPU/CPU, PaddleX, MinerU）
@@ -1202,6 +1338,9 @@ def install_embedded_dependencies(
         cuda_version=cuda_version,
         report_fn=report,
         success_msg="OCR依赖安装成功",
+        cancel_event=cancel_event,
+        on_proc=on_proc,
+        project_root=project_root,
     )
 
 
@@ -1212,6 +1351,8 @@ def install_missing_dependencies(
     cuda_version: str | None = None,
     progress_callback=None,
     force_backend: str | None = None,
+    cancel_event: threading.Event | None = None,
+    on_proc: Callable[[subprocess.Popen], None] | None = None,
 ) -> tuple[bool, str]:
     """增量安装：只装 import 失败（缺失/损坏）的依赖，已 import 成功的跳过下载。
 
@@ -1267,7 +1408,8 @@ def install_missing_dependencies(
         ("PaddleOCR", f'"{specs["paddleocr"]}"', pip_source),
         ("MinerU", f'"{specs["mineru"]}"', pip_source),
         # markdown 已从 PyInstaller exe 包排除，由便携 Python 安装。
-        ("Markdown", f'"{specs["markdown"]}"', pip_source),
+        # 用 .get() 防御旧 specs 字典缺 key。
+        ("Markdown", f'"{specs.get("markdown", "markdown")}"', pip_source),
     ]
     if use_gpu:
         default_gpu_tag = "cu126"
@@ -1308,6 +1450,13 @@ def install_missing_dependencies(
     # 4. 全部已装
     if not subset:
         report("依赖安装", "所有依赖已安装，无需补装")
+        # 增量补装发现全部已装时也刷新缓存，纠正可能过期的 dependencies 字段
+        # （如用户手动 pip install 后缓存未更新）。
+        try:
+            update_cache_field(project_root, "dependencies", import_status)
+            logger.info("[依赖补装] 已刷新依赖缓存（全部已装）")
+        except Exception as e:
+            logger.warning("[依赖补装] 刷新依赖缓存失败: %s", e)
         return True, "所有OCR依赖已安装"
 
     missing_names = ", ".join(n for n, _, _ in subset)
@@ -1324,6 +1473,9 @@ def install_missing_dependencies(
         report_fn=report,
         success_msg="OCR依赖补装成功",
         requirements_override=subset,
+        cancel_event=cancel_event,
+        on_proc=on_proc,
+        project_root=project_root,
     )
 
 

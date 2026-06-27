@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (
 )
 
 from vibeocr.env_manager import (
-    check_embedded_environment_dependencies,
+    check_embedded_environment_dependencies_fresh,
     get_dependency_versions,
     get_embedded_python_executable,
     get_embedded_python_info,
@@ -687,7 +687,10 @@ class SettingsPageController:
         ordered_pkgs = list(OCR_CHECK_MODULES.values())  # 保持插入顺序
 
         python_exe = get_embedded_python_executable(self._project_root)
-        deps_status = check_embedded_environment_dependencies(self._project_root)
+        # 用 fresh 检测（忽略缓存）：设置页是用户查看实时状态的入口，
+        # 走缓存会在"刚装完依赖但缓存未刷新"时显示过期的"未安装"。
+        # 配合 env_manager 安装成功后主动写缓存，双保险保证状态及时准确。
+        deps_status = check_embedded_environment_dependencies_fresh(self._project_root)
         versions = (
             get_dependency_versions(python_exe) if python_exe.exists() else {}
         )
