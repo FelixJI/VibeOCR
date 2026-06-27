@@ -56,6 +56,11 @@ DIST_BASE_DIR = PROJECT_ROOT / "dist"
 # markdown：纯 Python，主进程 UI 不直接用（markdown_to_html 仅在 OCR/MinerU
 # 子进程调用，主进程只用 markdown_converter.HTML_STYLE 字符串常量）。
 # 主进程 import 已下沉到函数内，故可安全排除，由便携 Python 安装供 worker 用。
+#
+# scipy / pandas：paddleocr → paddlex[ocr] 的传递依赖，仅 OCR 子进程使用。
+# 主进程 UI 零 import（src 树无任何引用），且便携 Python 安装 paddleocr 时
+# pip 会自动拉取它们（paddlex 硬依赖），故便携侧无需显式安装或检测。
+# *.libs 是 OpenBLAS 等 DLL 子目录，一并排除防止 PyInstaller 重新收入。
 EXCLUDED_PACKAGES = [
     "paddle",
     "paddlepaddle",
@@ -68,6 +73,10 @@ EXCLUDED_PACKAGES = [
     "nvidia",
     "triton",
     "markdown",
+    "scipy",
+    "scipy.libs",
+    "pandas",
+    "pandas.libs",
 ]
 
 # PySide6 中本项目完全未使用的子模块。
