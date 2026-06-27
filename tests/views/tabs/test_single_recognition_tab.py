@@ -42,6 +42,34 @@ class TestSingleRecognitionTab:
         tab = SingleRecognitionTab()
         assert tab._copy_image_btn.isEnabled() is False
 
+    def test_copy_image_btn_enabled_after_set_pixmap(self, qapp, sample_pixmap):
+        tab = SingleRecognitionTab()
+        tab.set_pixmap(sample_pixmap)
+        assert tab._copy_image_btn.isEnabled() is True
+
+    def test_copy_image_btn_enabled_after_set_image_for_recognition(
+        self, qapp, sample_pixmap
+    ):
+        # 真实流程（main_window）：set_image_for_recognition 与 set_pixmap 配合调用；
+        # 仅前者不加载预览，故复制按钮以预览 original_pixmap 为准。
+        tab = SingleRecognitionTab()
+        tab.set_pixmap(sample_pixmap)
+        tab.set_image_for_recognition(sample_pixmap)
+        assert tab._copy_image_btn.isEnabled() is True
+
+    def test_copy_image_btn_enabled_after_paste(self, qapp, sample_pixmap, monkeypatch):
+        """模拟粘贴：让剪贴板返回 sample_pixmap（_on_paste 用 QGuiApplication）。"""
+        from PySide6.QtGui import QGuiApplication
+
+        class FakeClipboard:
+            def pixmap(self):
+                return sample_pixmap
+
+        monkeypatch.setattr(QGuiApplication, "clipboard", lambda *a, **k: FakeClipboard())
+        tab = SingleRecognitionTab()
+        tab._on_paste()
+        assert tab._copy_image_btn.isEnabled() is True
+
     def test_screenshot_btn_emits_signal(self, qapp):
         tab = SingleRecognitionTab()
         emitted = []

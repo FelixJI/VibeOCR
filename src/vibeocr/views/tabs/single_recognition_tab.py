@@ -150,6 +150,7 @@ class SingleRecognitionTab(BaseOcrTab):
         if is_document_file(file_path):
             self._preprocess_options.lock_to_document_parsing("当前文件仅支持文档解析")
             self._preview_widget.load_file(file_path)
+            self._copy_image_btn.setEnabled(False)  # PDF 文档非位图原图，禁用
         else:
             self._preprocess_options.unlock_pipeline()
             pixmap = QPixmap(file_path)
@@ -209,6 +210,12 @@ class SingleRecognitionTab(BaseOcrTab):
 
     def set_pixmap(self, pixmap) -> None:
         self._preview_widget.set_pixmap(pixmap)
+        self._update_copy_image_enabled()
+
+    def _update_copy_image_enabled(self) -> None:
+        """根据是否有原始图片启用/禁用「复制图片」按钮。"""
+        pix = self._preview_widget.original_pixmap()
+        self._copy_image_btn.setEnabled(pix is not None and not pix.isNull())
 
     def set_image_for_recognition(self, pixmap: QPixmap) -> None:
         """记录待识别图（用于粘贴 / 截图后启用「重新识别」）。
@@ -224,6 +231,7 @@ class SingleRecognitionTab(BaseOcrTab):
         self._pending_pixmap = pixmap
         self._pending_file_path = None
         self._start_btn.setEnabled(True)
+        self._update_copy_image_enabled()
 
     def pixmap(self):
         return self._preview_widget.pixmap()
