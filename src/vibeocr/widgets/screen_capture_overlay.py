@@ -10,9 +10,23 @@
 
 from __future__ import annotations
 
+import logging
+import os
+import sys
+import tempfile
+from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QPoint, QPointF, QRect, Qt, Signal
+from PySide6.QtCore import (
+    QBuffer,
+    QMimeData,
+    QPoint,
+    QPointF,
+    QRect,
+    Qt,
+    QUrl,
+    Signal,
+)
 from PySide6.QtGui import (
     QColor,
     QGuiApplication,
@@ -46,6 +60,8 @@ try:
     from vibeocr.widgets.window_detector import WindowDetector
 except ImportError:
     WindowDetector = None  # type: ignore[assignment,misc]
+
+logger = logging.getLogger(__name__)
 
 
 class ScreenCaptureOverlay(QWidget):
@@ -100,6 +116,14 @@ class ScreenCaptureOverlay(QWidget):
 
         # 状态
         self._state: str = "CAPTURING"
+
+        # 临时剪贴板文件管理：复制截图时写入 temp 供资源管理器粘贴（CF_HDROP），
+        # 维护进程内列表以滚动清理，避免常驻进程长期堆积临时文件。
+        self._temp_clip_files: list[Path] = []
+        self._temp_clip_max = 10
+        app = QApplication.instance()
+        if app is not None:
+            app.aboutToQuit.connect(self._cleanup_temp_clip_files)
 
         # 截图相关
         self._start_pos: QPoint | None = None
@@ -644,14 +668,100 @@ class ScreenCaptureOverlay(QWidget):
         self._cleanup()
 
     def _on_copy(self) -> None:
-        """复制到剪贴板"""
+        """复制到剪贴板
+
+        Windows 下同时写入位图格式（供微信/画图等粘贴）和文件格式（CF_HDROP，
+        供资源管理器粘贴到文件夹）；其它平台保持原有位图写入。
+        """
         if not self._canvas:
             return
         pixmap = self._canvas.export_image()
+
+        # 统一编码为 PNG 字节，供位图格式与临时文件共用
+        png_bytes = self._pixmap_to_png(pixmap)
+
         clipboard = QApplication.clipboard()
-        clipboard.setPixmap(pixmap)
+        if sys.platform == "win32":
+            mime_data = QMimeData()
+            if png_bytes is not None:
+                mime_data.setImageData(png_bytes)
+            # 写入临时文件并附带本地路径，Qt 在 Windows 上会据此生成
+            # CF_HDROP/FileNameW，使资源管理器能够粘贴出文件。
+            temp_path = self._write_temp_clip_file(png_bytes)
+            if temp_path is not None:
+                mime_data.setUrls([QUrl.fromLocalFile(str(temp_path))])
+                self._prune_temp_clip_files()
+            clipboard.setMimeData(mime_data)
+        else:
+            clipboard.setPixmap(pixmap)
+
         self.copied.emit(pixmap)
         self._cleanup()
+
+    @staticmethod
+    def _pixmap_to_png(pixmap: QPixmap) -> bytes | None:
+        """将 QPixmap 编码为 PNG 字节；失败返回 None。"""
+        try:
+            image = pixmap.toImage()
+            buffer = QBuffer()
+            buffer.open(QBuffer.OpenModeFlag.WriteOnly)
+            ok = image.save(buffer, "PNG")
+            buffer.close()
+            if not ok:
+                return None
+            return bytes(buffer.data())
+        except Exception:  # 编码失败不应阻断复制流程
+            logger.exception("编码 PNG 失败")
+            return None
+
+    def _write_temp_clip_file(self, png_bytes: bytes | None) -> Path | None:
+        """写入临时 PNG 文件并登记到进程内列表；失败返回 None。"""
+        if png_bytes is None:
+            return None
+        try:
+            fd, name = tempfile.mkstemp(
+                prefix="vibeocr_clip_", suffix=".png", dir=tempfile.gettempdir()
+            )
+            path = Path(name)
+            with os.fdopen(fd, "wb") as f:
+                f.write(png_bytes)
+            self._temp_clip_files.append(path)
+            return path
+        except Exception:  # 临时文件失败不应阻断复制
+            logger.exception("写入临时剪贴板文件失败")
+            return None
+
+    def _prune_temp_clip_files(self) -> None:
+        """惰性校验 + 滚动清理临时剪贴板文件。
+
+        先剔除被外部删除的幽灵条目（仅 stat），再在超限时删除最旧的若干文件，
+        保留最近 _temp_clip_max 个。整个过程不扫描磁盘目录。
+        """
+        try:
+            # 惰性校验：剔除已不存在的条目，保证计数器准确
+            self._temp_clip_files = [p for p in self._temp_clip_files if p.exists()]
+            # 滚动清理：保留最近 N 个
+            overflow = len(self._temp_clip_files) - self._temp_clip_max
+            for _ in range(max(0, overflow)):
+                oldest = self._temp_clip_files.pop(0)
+                try:
+                    oldest.unlink(missing_ok=True)
+                except OSError:
+                    logger.warning("删除临时剪贴板文件失败: %s", oldest)
+        except Exception:  # 清理失败不应阻断复制
+            logger.exception("清理临时剪贴板文件失败")
+
+    def _cleanup_temp_clip_files(self) -> None:
+        """应用退出时兜底清理所有临时剪贴板文件。"""
+        try:
+            for path in self._temp_clip_files:
+                try:
+                    path.unlink(missing_ok=True)
+                except OSError:
+                    logger.warning("退出清理临时剪贴板文件失败: %s", path)
+            self._temp_clip_files.clear()
+        except Exception:
+            logger.exception("退出清理临时剪贴板文件失败")
 
     def _on_save(self) -> None:
         """另存为"""

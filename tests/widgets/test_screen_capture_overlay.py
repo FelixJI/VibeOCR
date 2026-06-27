@@ -291,3 +291,66 @@ class TestPaintDetectionHighlight:
         overlay._virtual_geometry = QRect(0, 0, 1920, 1080)
         overlay.resize(1920, 1080)
         overlay.repaint()
+
+
+class TestTempClipFileManagement:
+    """临时剪贴板文件管理：写入/滚动清理/惰性校验/退出清理。"""
+
+    def test_write_temp_clip_file_creates_file(self, qapp):
+        overlay = ScreenCaptureOverlay()
+        path = overlay._write_temp_clip_file(b"\x89PNG\r\n\x1a\n")
+        assert path is not None
+        assert path.exists()
+        assert path in overlay._temp_clip_files
+        path.unlink(missing_ok=True)
+
+    def test_write_temp_clip_file_none_input(self, qapp):
+        overlay = ScreenCaptureOverlay()
+        assert overlay._write_temp_clip_file(None) is None
+
+    def test_prune_respects_max_limit(self, qapp):
+        overlay = ScreenCaptureOverlay()
+        overlay._temp_clip_max = 3
+        paths = []
+        for _ in range(5):
+            p = overlay._write_temp_clip_file(b"data")
+            assert p is not None
+            paths.append(p)
+        overlay._prune_temp_clip_files()
+        # 超过上限的最旧文件被删除
+        assert len(overlay._temp_clip_files) == 3
+        for p in paths[:2]:
+            assert not p.exists()
+        for p in paths[2:]:
+            assert p.exists()
+            p.unlink(missing_ok=True)
+
+    def test_prune_drops_ghost_entries(self, qapp):
+        overlay = ScreenCaptureOverlay()
+        # 手动构造已不存在的幽灵路径
+        from pathlib import Path
+
+        overlay._temp_clip_files = [Path("nonexistent_a.png"), Path("nonexistent_b.png")]
+        overlay._prune_temp_clip_files()
+        assert overlay._temp_clip_files == []
+
+    def test_cleanup_temp_clip_files_deletes_all(self, qapp):
+        overlay = ScreenCaptureOverlay()
+        created = []
+        for _ in range(3):
+            p = overlay._write_temp_clip_file(b"data")
+            assert p is not None
+            created.append(p)
+        overlay._cleanup_temp_clip_files()
+        assert overlay._temp_clip_files == []
+        for p in created:
+            assert not p.exists()
+
+    def test_pixmap_to_png_returns_bytes(self, qapp):
+        from vibeocr.widgets.screen_capture_overlay import ScreenCaptureOverlay as SCO
+
+        pixmap = QPixmap(8, 8)
+        pixmap.fill(Qt.GlobalColor.red)
+        data = SCO._pixmap_to_png(pixmap)
+        assert data is not None
+        assert data.startswith(b"\x89PNG")
