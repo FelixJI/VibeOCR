@@ -168,7 +168,7 @@ class SingleRecognitionTab(BaseOcrTab):
             self._preprocess_options.unlock_pipeline()
             pixmap = QPixmap(file_path)
             if not pixmap.isNull():
-                self._preview_widget.set_pixmap(pixmap)
+                self.set_pixmap(pixmap)
                 self._pending_pixmap = pixmap
 
         self._start_btn.setEnabled(True)

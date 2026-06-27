@@ -60,7 +60,6 @@ class TestSingleRecognitionTab:
 
     def test_copy_image_btn_enabled_after_paste(self, qapp, sample_pixmap, monkeypatch):
         """模拟粘贴：让剪贴板返回 sample_pixmap（_on_paste 用 QGuiApplication）。"""
-        from PySide6.QtGui import QGuiApplication
 
         class FakeClipboard:
             def pixmap(self):
