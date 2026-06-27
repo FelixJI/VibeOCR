@@ -464,6 +464,14 @@ class PreviewWidget(QWidget):
     def pixmap(self) -> QPixmap | None:
         return self._pixmap
 
+    def original_pixmap(self) -> QPixmap | None:
+        """返回原始图片（未预处理、未缩放）。
+
+        OCR 预处理可能把 _pixmap（显示用）替换为预处理后图像，
+        但 _original_pixmap 始终保留原图，供"复制原图"使用。
+        """
+        return self._original_pixmap
+
     def set_text_blocks(self, blocks: list[TextBlock]) -> None:
         """设置文本块用于置信度模式高亮"""
         self._text_blocks = blocks

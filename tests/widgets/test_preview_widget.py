@@ -17,6 +17,18 @@ class TestPreviewWidgetBasic:
         widget.set_pixmap(sample_pixmap)
         assert widget._pixmap is not None
 
+    def test_original_pixmap_after_set(self, qapp, sample_pixmap):
+        widget = PreviewWidget()
+        widget.set_pixmap(sample_pixmap)
+        assert widget.original_pixmap() is not None
+        assert not widget.original_pixmap().isNull()
+
+    def test_original_pixmap_none_after_clear(self, qapp, sample_pixmap):
+        widget = PreviewWidget()
+        widget.set_pixmap(sample_pixmap)
+        widget.clear()
+        assert widget.original_pixmap() is None
+
     def test_clear(self, qapp, sample_pixmap):
         widget = PreviewWidget()
         widget.set_pixmap(sample_pixmap)
