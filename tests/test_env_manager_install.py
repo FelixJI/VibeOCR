@@ -1,6 +1,7 @@
 """验证 env_manager 安装依赖的规格"""
 
 import io
+import subprocess
 import tarfile
 from unittest.mock import MagicMock, patch
 
@@ -330,6 +331,14 @@ class TestInstallSpecs:
 class TestEnsureMineruModels:
     """MinerU 模型下载测试"""
 
+    @pytest.fixture(autouse=True)
+    def _stub_job_object_guard(self):
+        """所有测试都 mock subprocess.Popen 返回假进程，真实 JobObjectGuard 会
+        拿假 pid 调用原生 OpenProcess/AssignProcessToJobObject 导致崩溃，
+        故统一替换为 MagicMock。"""
+        with patch("vibeocr.env_manager.JobObjectGuard") as guard:
+            yield guard
+
     def test_calls_models_download(self, tmp_path):
         python_exe = tmp_path / "python.exe"
         python_exe.touch()
@@ -428,6 +437,70 @@ class TestEnsureMineruModels:
         ):
             ok, _msg = ensure_mineru_models(tmp_path)
         assert not ok
+
+    def test_download_subprocess_bound_to_job_object(self, tmp_path, _stub_job_object_guard):
+        """下载子进程必须绑定 JobObjectGuard，防止主进程崩溃后留下孤儿下载进程。
+
+        回归测试：ensure_mineru_models 跑几十分钟的模型下载，若主进程中途崩溃，
+        未绑定的下载子进程会成为孤儿。绑定 JobObjectGuard（KILL_ON_JOB_CLOSE）
+        后由内核在主进程退出时连带终止。
+        """
+        python_exe = tmp_path / "python.exe"
+        python_exe.touch()
+
+        def mock_popen_factory():
+            proc = MagicMock()
+            proc.stdout = iter([b"downloading model...\n", b""])
+            proc.returncode = 0
+            proc.poll.return_value = 0
+            proc.wait.return_value = None
+            return proc
+
+        with (
+            patch(
+                "vibeocr.env_manager.get_embedded_python_executable",
+                return_value=python_exe,
+            ),
+            patch(
+                "vibeocr.env_manager.subprocess.Popen",
+                return_value=mock_popen_factory(),
+            ),
+            patch("vibeocr.env_manager.detect_network_source", return_value="domestic"),
+        ):
+            ok, _msg = ensure_mineru_models(tmp_path)
+
+        assert ok
+        # JobObjectGuard 实例应被创建，且下载子进程被绑定
+        _stub_job_object_guard.assert_called_once()
+        guard_instance = _stub_job_object_guard.return_value
+        guard_instance.assign_from_popen.assert_called_once()
+        # close() 在 finally 中调用（下载完成后关闭 Job 句柄，无活进程时 no-op）
+        guard_instance.close.assert_called_once()
+
+    def test_job_object_closed_on_timeout(self, tmp_path, _stub_job_object_guard):
+        """下载超时时，子进程被 kill，Job 句柄也在 finally 中关闭。"""
+        python_exe = tmp_path / "python.exe"
+        python_exe.touch()
+
+        proc = MagicMock()
+        proc.stdout = iter([b""])
+        proc.wait.side_effect = subprocess.TimeoutExpired(cmd="x", timeout=1)
+
+        with (
+            patch(
+                "vibeocr.env_manager.get_embedded_python_executable",
+                return_value=python_exe,
+            ),
+            patch("vibeocr.env_manager.subprocess.Popen", return_value=proc),
+            patch("vibeocr.env_manager.detect_network_source", return_value="domestic"),
+        ):
+            ok, msg = ensure_mineru_models(tmp_path, timeout=1)
+
+        assert not ok
+        assert "超时" in msg
+        proc.kill.assert_called_once()
+        guard_instance = _stub_job_object_guard.return_value
+        guard_instance.close.assert_called_once()
 
 
 class TestLoadDepSpecs:

@@ -129,6 +129,12 @@ class OCRWorkerProcess:
         self._raw_log_count = 0
         self._raw_log_lock = threading.Lock()
 
+        # 启动期原始输出缓冲：Worker 就绪前的全部 stdout 行（含 stderr，
+        # 因 stderr 已合并到 stdout）原样保留，便于进程早退时定位真实错误
+        # （如 ModuleNotFoundError）。就绪后停止累积，避免长期运行占用内存。
+        self._startup_output: list[str] = []
+        self._startup_output_lock = threading.Lock()
+
     @property
     def is_running(self) -> bool:
         """检查 Worker 进程是否在运行"""
@@ -167,6 +173,36 @@ class OCRWorkerProcess:
             # 此时 Worker 会因 import paddle/torch 失败而退出（不会递归成
             # GUI，因为那是 frozen exe 的行为），依赖检测/安装引导会介入。
         return sys.executable
+
+    def _get_worker_env(self) -> dict[str, str]:
+        """构造 Worker 子进程的环境变量
+
+        打包态下 Worker 用嵌入式 Python 运行，而 vibeocr 源码由 PyInstaller
+        以 datas 形式平铺到 ``sys._MEIPASS/vibeocr``（见 VibeOCR.spec）。
+        嵌入式 Python 是独立解释器，无法读取 exe 内部的 PYZ 归档，必须通过
+        PYTHONPATH 显式指向 ``_MEIPASS`` 才能 ``import vibeocr``。
+
+        开发态当前解释器已能从 ``src/`` 找到 vibeocr，无需额外设置；直接继承
+        父进程环境即可。
+
+        Returns:
+            子进程环境变量字典
+        """
+        import os
+        import sys
+
+        env = os.environ.copy()
+
+        if getattr(sys, "frozen", False):
+            # _MEIPASS 是 PyInstaller 解包目录，datas 中的 vibeocr 源码平铺于此
+            meipass = getattr(sys, "_MEIPASS", None)
+            if meipass:
+                existing = env.get("PYTHONPATH", "")
+                env["PYTHONPATH"] = (
+                    f"{meipass};{existing}" if existing else str(meipass)
+                )
+
+        return env
 
     def _parse_and_forward_log(self, text: str) -> None:
         """解析子进程日志行并按原始级别转发
@@ -326,6 +362,7 @@ class OCRWorkerProcess:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,  # 合并 stderr 到 stdout
                 text=False,
+                env=self._get_worker_env(),
                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
             )
 
@@ -370,6 +407,13 @@ class OCRWorkerProcess:
                                         ).strip()
 
                                 if text:
+                                    # 就绪前累积原始输出，用于进程早退时定位真实错误
+                                    # （如 ModuleNotFoundError），避免被 communicate() 吞成"未知错误"
+                                    if not self._ready:
+                                        with self._startup_output_lock:
+                                            # 上限保护，避免异常大量输出耗尽内存
+                                            if len(self._startup_output) < 200:
+                                                self._startup_output.append(text)
                                     # 过滤 PaddlePaddle 内部调试输出
                                     if text.startswith("return tensor("):
                                         continue
@@ -404,19 +448,24 @@ class OCRWorkerProcess:
             elapsed = time.time() - wait_start_time
 
             if not self.is_running:
-                # 进程已退出，读取错误信息（使用 UTF-8 解码）
-                stdout_bytes, stderr_bytes = self.process.communicate(timeout=5)
-                stdout = (
-                    stdout_bytes.decode("utf-8", errors="replace")
-                    if stdout_bytes
-                    else ""
-                )
-                stderr = (
-                    stderr_bytes.decode("utf-8", errors="replace")
-                    if stderr_bytes
-                    else ""
-                )
-                error_msg = stderr or stdout or "未知错误"
+                # 进程已退出，读取错误信息。
+                # 注意：后台 read_stdout 线程已持续消费 stdout，此时 communicate()
+                # 通常返回空，故优先使用启动期累积的原始输出（_startup_output），
+                # 它包含 Worker 就绪前的全部 stderr/stderr（已合并）。
+                error_parts: list[str] = []
+                with self._startup_output_lock:
+                    error_parts.extend(self._startup_output)
+                # 兜底：若启动期缓冲为空，再尝试 communicate() 取管道残余
+                if not error_parts:
+                    try:
+                        stdout_bytes, _ = self.process.communicate(timeout=5)
+                        if stdout_bytes:
+                            fallback = stdout_bytes.decode("utf-8", errors="replace")
+                            if fallback.strip():
+                                error_parts.append(fallback)
+                    except Exception:
+                        pass
+                error_msg = "\n".join(error_parts).strip() or "未知错误"
                 logger.error(f"[主进程] Worker 进程退出，错误: {error_msg[:500]}")
                 raise OCRWorkerProcessError(
                     f"Worker 进程启动失败 (等待 {elapsed:.1f}秒): {error_msg[:200]}"

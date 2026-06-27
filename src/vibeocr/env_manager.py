@@ -27,6 +27,7 @@ from vibeocr.services.env_config import (
     PYTHON_BUILD_STANDALONE_TAG,
     get_pytorch_mirror,
 )
+from vibeocr.utils.job_object import JobObjectGuard
 
 # Python 运行时下载地址（python-build-standalone）
 # GitHub 直链 + 国内镜像（NJU/ghproxy）已在 env_config.PYTHON_BUILD_STANDALONE_MIRRORS 定义
@@ -323,7 +324,11 @@ def download_file_with_progress(
         try:
             # 断点续传：dest 已有部分内容时，用 Range 头从断点继续
             existing = dest_path.stat().st_size if dest_path.exists() else 0
-            headers = {"User-Agent": "Mozilla/5.0"}
+            # 注意：不能用 Mozilla/5.0 等浏览器 UA。部分镜像（如南大镜像
+            # mirror.nju.edu.cn）的 nginx 反爬规则会对以 Mozilla 开头的 UA
+            # 返回 302 自重定向死循环，导致 urllib 报 "infinite loop"。
+            # 用中性的非浏览器 UA 即可正常下载。
+            headers = {"User-Agent": "VibeOCR-Downloader/1.0"}
             if existing > 0:
                 headers["Range"] = f"bytes={existing}-"
 
@@ -1764,6 +1769,10 @@ def ensure_mineru_models(
 
     report("模型下载", "正在下载 MinerU 模型（首次使用需数 GB，请耐心等待）...")
     proc: subprocess.Popen | None = None
+    # 绑定 Windows Job Object：主进程崩溃/强杀时内核连带终止下载子进程，
+    # 避免数 GB 下载进程成为孤儿（持续占用网络/磁盘数十分钟）。
+    # 下载正常完成后子进程已退出，Job 句柄关闭无副作用。
+    job_guard = JobObjectGuard(name="vibeocr_mineru_models_dl")
     try:
         network = detect_network_source()
         source = "modelscope" if network == "domestic" else "huggingface"
@@ -1775,6 +1784,7 @@ def ensure_mineru_models(
             stderr=subprocess.STDOUT,
             creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
         )
+        job_guard.assign_from_popen(proc)
 
         # 逐行读取转发到回调，避免数 GB 下载期间 UI 无反馈
         def _read_output():
@@ -1802,3 +1812,7 @@ def ensure_mineru_models(
         return False, "模型下载超时"
     except Exception as e:
         return False, f"模型下载异常: {e}"
+    finally:
+        # 关闭 Job 句柄。下载已完成则 Job 内已无活进程（no-op）；
+        # 异常分支已先 proc.kill()；主进程崩溃路径由内核兜底。
+        job_guard.close()

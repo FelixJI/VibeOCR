@@ -83,6 +83,59 @@ class TestOCRWorkerProcess:
 
         assert python_exe == sys.executable
 
+    def test_get_worker_env_dev_mode_no_frozen(self):
+        """开发态（非 frozen）不注入 PYTHONPATH，直接继承父进程环境。"""
+        worker = OCRWorkerProcess(worker_id=0, use_gpu=False)
+        env = worker._get_worker_env()
+        # 开发态不应主动设置 PYTHONPATH（除非父进程本来就有）
+        import os
+
+        if "PYTHONPATH" in os.environ:
+            # 父进程有则原样继承
+            assert env["PYTHONPATH"] == os.environ["PYTHONPATH"]
+        else:
+            assert "PYTHONPATH" not in env
+
+    def test_get_worker_env_frozen_injects_meipass(self):
+        """打包态注入 PYTHONPATH 指向 _MEIPASS，让子进程能 import vibeocr。"""
+        import sys
+        from unittest.mock import patch
+
+        worker = OCRWorkerProcess(worker_id=0, use_gpu=False)
+        fake_meipass = r"C:\fake\_MEIPASS"
+        # 清理父进程 PYTHONPATH，避免干扰断言
+        with patch.object(sys, "frozen", True, create=True), patch.object(
+            sys, "_MEIPASS", fake_meipass, create=True
+        ), patch.dict("os.environ", {}, clear=False):
+            import os
+
+            os.environ.pop("PYTHONPATH", None)
+            env = worker._get_worker_env()
+
+        assert env["PYTHONPATH"] == fake_meipass
+
+    def test_get_worker_env_frozen_preserves_existing_pythonpath(self):
+        """打包态注入 PYTHONPATH 时保留父进程已有的 PYTHONPATH。"""
+        import sys
+        from unittest.mock import patch
+
+        worker = OCRWorkerProcess(worker_id=0, use_gpu=False)
+        fake_meipass = r"C:\fake\_MEIPASS"
+        existing = r"C:\some\other\path"
+        with patch.object(sys, "frozen", True, create=True), patch.object(
+            sys, "_MEIPASS", fake_meipass, create=True
+        ), patch.dict("os.environ", {"PYTHONPATH": existing}, clear=False):
+            env = worker._get_worker_env()
+
+        # _MEIPASS 应排在前面，原有路径保留
+        assert env["PYTHONPATH"].startswith(fake_meipass)
+        assert existing in env["PYTHONPATH"]
+
+    def test_startup_output_buffer_initially_empty(self):
+        """初始化后启动期输出缓冲为空。"""
+        worker = OCRWorkerProcess(worker_id=0, use_gpu=False)
+        assert worker._startup_output == []
+
     def test_init_has_no_job_guard(self):
         """初始化后 _job_guard 为 None。"""
         worker = OCRWorkerProcess(worker_id=0, use_gpu=False)
@@ -233,6 +286,46 @@ class TestOCRWorkerProcessLifeCycle:
         worker.stop()
         worker.stop()
         assert not worker.is_running
+
+    def test_startup_failure_uses_buffered_output_not_unknown(self):
+        """子进程早退时，错误信息应来自启动期输出缓冲，而非被吞成"未知错误"。
+
+        回归测试：后台 read_stdout 线程会消费 stdout，导致 process.communicate()
+        返回空，旧逻辑因此报"未知错误"而丢失真实错误（如 ModuleNotFoundError）。
+        修复后优先使用 _startup_output。
+        """
+        from unittest.mock import MagicMock, patch
+
+        worker = OCRWorkerProcess(worker_id=0, use_gpu=False, shm_size=1024)
+        real_error = "ModuleNotFoundError: No module named 'vibeocr'"
+
+        # 模拟进程已退出 + communicate() 返回空（stdout 已被后台线程消费）
+        mock_proc = MagicMock()
+        mock_proc.poll.return_value = 1  # 已退出
+        mock_proc.communicate.return_value = (b"", b"")
+
+        # 预填充启动期缓冲（模拟后台线程在进程退出前已捕获真实错误）。
+        # read_stdout 线程读到内容会 append 到 _startup_output；这里直接预置。
+        worker._startup_output = [real_error]
+
+        # patch 掉共享内存创建、子进程启动、Windows Job Object 绑定
+        # （JobObjectGuard 会调用原生 Job Object API，mock 进程无真实句柄会 segfault）
+        mock_protocol = MagicMock()
+        with patch(
+            "vibeocr.services.ocr_worker_process.SharedMemoryProtocol",
+            return_value=mock_protocol,
+        ), patch(
+            "vibeocr.services.ocr_worker_process.subprocess.Popen",
+            return_value=mock_proc,
+        ), patch(
+            "vibeocr.services.ocr_worker_process.JobObjectGuard"
+        ):
+            with pytest.raises(Exception) as exc_info:
+                worker.start(timeout=0.1)
+
+        # 真实错误应出现在异常信息里，而非"未知错误"
+        assert real_error in str(exc_info.value)
+        assert "未知错误" not in str(exc_info.value)
 
 
 @pytest.mark.skipif(

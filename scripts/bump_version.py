@@ -208,6 +208,16 @@ CLEANUP_QT_BINARIES = [
 PACKAGE_DATA = [
     ("config", "config"),
     ("resources", "resources"),
+    # vibeocr 源码需以原始 .py 形式随主 exe 分发：打包态下 OCR Worker 子进程
+    # 用便携式 Python（python/python.exe）跑 `python -m vibeocr.workers.ocr_worker`，
+    # 而便携式 Python 是独立解释器，无法读取主 exe 内部的 PYZ 归档（collect_submodules
+    # 收集的字节码只进 PYZ）。通过 PYTHONPATH 指向 _MEIPASS（见 ocr_worker_process
+    # 的 _get_worker_env）让它能 import 这份平铺源码。
+    #
+    # 目标目录与 PYZ 内同名为 vibeocr：主 exe 与便携 Python 是两个独立解释器，
+    # 主 exe 走 PyInstaller bootstrap（PYZ 优先），便携 Python 走 PYTHONPATH 的
+    # 平铺 .py，互不干扰。
+    ("src/vibeocr", "vibeocr"),
 ]
 
 # vibeocr 子模块通过 --collect-submodules 自动收集，此处只列出第三方包
