@@ -87,6 +87,18 @@ class ScreenCoordinateMapper:
             round(rect.height() * dpr),
         )
 
+    def logical_to_screenshot_physical_point(self, pos: QPoint) -> QPoint:
+        """单点逻辑坐标 → 合并截图的物理像素坐标（统一使用 screenshot_dpr）。
+
+        合并截图在 ``start_capture`` 中统一按 ``max_dpr`` 渲染，每块屏的像素被
+        等比例拉伸到 ``max_dpr`` 空间，因此**任何屏幕上**的点都必须用统一的
+        ``screenshot_dpr`` 换算，而非 per-screen dpr（否则在混合 DPR 多屏下，
+        低 DPR 屏上的坐标会被映射到错误的物理位置）。与处理单屏 grab 的
+        :meth:`logical_to_physical`（per-screen）区分使用。
+        """
+        dpr = self._screenshot_dpr
+        return QPoint(round(pos.x() * dpr), round(pos.y() * dpr))
+
     def sample_pixel(self, logical_pos: QPoint) -> QColor:
         info = self.screen_at(logical_pos)
         if info is None:

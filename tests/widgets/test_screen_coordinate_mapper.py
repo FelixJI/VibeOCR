@@ -123,6 +123,49 @@ class TestLogicalRectToPhysical:
         assert result == QRect(20, 40, 200, 100)
 
 
+class TestLogicalToScreenshotPhysicalPoint:
+    """单点逻辑坐标 → 合并截图物理坐标（统一使用 screenshot_dpr）。
+
+    合并截图统一按 max_dpr 渲染，每块屏的像素被等比例拉伸到 max_dpr 空间，
+    因此任何屏幕上的点都必须用统一的 screenshot_dpr 换算，而非 per-screen dpr。
+    """
+
+    def test_single_screen_dpr_2(self, qapp):
+        screens = [_make_screen_info(0, 0, 1920, 1080, dpr=2.0)]
+        mapper = ScreenCoordinateMapper(screens)
+        assert mapper.logical_to_screenshot_physical_point(QPoint(100, 200)) == QPoint(
+            200, 400
+        )
+
+    def test_round_not_truncation(self, qapp):
+        screens = [_make_screen_info(0, 0, 1920, 1080, dpr=1.5)]
+        mapper = ScreenCoordinateMapper(screens)
+        # screenshot_dpr == max_dpr == 1.5 → 1*1.5=1.5 → round 为 2
+        assert mapper.logical_to_screenshot_physical_point(QPoint(1, 1)) == QPoint(2, 2)
+
+    def test_mixed_dpr_uses_unified_screenshot_dpr(self, qapp):
+        """混合 DPR：低 DPR 屏上的点也按统一的 max_dpr 换算。
+
+        屏幕 A dpr=1 @ (0,0)，屏幕 B dpr=2 @ (1920,0)。
+        合并图 max_dpr=2.0，故 A 区逻辑 (100,100) → 物理 (200,200)，
+        B 区逻辑 (2000,100) → 物理 (4000,200)。
+        """
+        screens = [
+            _make_screen_info(0, 0, 1920, 1080, dpr=1.0),
+            _make_screen_info(1920, 0, 1920, 1080, dpr=2.0),
+        ]
+        mapper = ScreenCoordinateMapper(screens)
+        assert mapper.screenshot_dpr == 2.0
+        # A 区：不能用 per-screen dpr=1 算成 (100,100)
+        assert mapper.logical_to_screenshot_physical_point(QPoint(100, 100)) == QPoint(
+            200, 200
+        )
+        # B 区
+        assert mapper.logical_to_screenshot_physical_point(QPoint(2000, 100)) == QPoint(
+            4000, 200
+        )
+
+
 class TestSamplePixel:
     def test_returns_pixel_color_from_grab(self, qapp):
         screens = [_make_screen_info(0, 0, 100, 100, dpr=1.0, color="#FF0000")]

@@ -62,10 +62,14 @@ class MagnifierOverlay:
         mag_rect = QRect(mag_x, mag_y, mag_size, mag_size)
 
         # 计算从截图中取样的源矩形
-        # 通过 mapper 将逻辑坐标转换为物理坐标
-        phys = mapper.logical_to_physical(mouse_pos)
+        # 注意：screen_pixmap 是合并截图，在 start_capture 中统一按 max_dpr
+        # 渲染（每块屏的像素被等比例拉伸到 max_dpr 空间），因此取样坐标必须
+        # 用统一的 screenshot_dpr 换算，而非 per-screen dpr。否则在混合 DPR
+        # 多屏下，低 DPR 屏上的鼠标位置会被映射到错误的物理位置，放大镜显示
+        # 内容与鼠标实际位置错位。
+        phys = mapper.logical_to_screenshot_physical_point(mouse_pos)
         phys_x, phys_y = phys.x(), phys.y()
-        dpr = mapper.dpr_at(mouse_pos)
+        dpr = mapper.screenshot_dpr
 
         # 取样区域大小（物理像素）
         sample_size = int(mag_size * dpr / zoom_level)
