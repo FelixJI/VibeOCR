@@ -25,9 +25,9 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Gitee/GitHub 仓库信息
-_GITEE_OWNER = "felixji"
+_GITEE_OWNER = "felixjii"
 _GITEE_REPO = "vibeocr"
-_GITHUB_OWNER = "felixji"
+_GITHUB_OWNER = "FelixJI"
 _GITHUB_REPO = "vibeocr"
 
 _GITEE_API_URL = (

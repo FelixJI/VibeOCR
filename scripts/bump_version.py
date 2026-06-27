@@ -61,6 +61,13 @@ DIST_BASE_DIR = PROJECT_ROOT / "dist"
 # 主进程 UI 零 import（src 树无任何引用），且便携 Python 安装 paddleocr 时
 # pip 会自动拉取它们（paddlex 硬依赖），故便携侧无需显式安装或检测。
 # *.libs 是 OpenBLAS 等 DLL 子目录，一并排除防止 PyInstaller 重新收入。
+#
+# lxml / pydantic(_core) / chardet / aiohttp 等：均为 paddleocr/mineru/paddlex
+# 的核心传递依赖，仅 OCR 子进程使用，主进程 UI 零 import。便携 Python 安装
+# paddleocr/mineru 时 pip 自动带入，无需显式安装或检测。
+# 注意：已核实 httpx 0.28 不依赖 chardet（依赖 anyio/certifi/httpcore/idna），
+# 故排除 chardet 不影响主进程 update_service/mineru_service 的 httpx 调用。
+# aiohttp 卫星包（multidict/yarl/frozenlist/propcache 等）一并排除。
 EXCLUDED_PACKAGES = [
     "paddle",
     "paddlepaddle",
@@ -77,6 +84,16 @@ EXCLUDED_PACKAGES = [
     "scipy.libs",
     "pandas",
     "pandas.libs",
+    "lxml",
+    "pydantic",
+    "pydantic_core",
+    "chardet",
+    "aiohttp",
+    "multidict",
+    "yarl",
+    "frozenlist",
+    "propcache",
+    "aiosignal",
 ]
 
 # PySide6 中本项目完全未使用的子模块。
