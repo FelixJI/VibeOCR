@@ -284,8 +284,9 @@ def test_refresh_fills_deps_table(controller, monkeypatch):
         lambda root: __import__("pathlib").Path("C:/app/python/python.exe"),
     )
     # mock 依赖状态检测：paddle 已装，其余未装
+    # 注意：_populate_deps_table 现在用 _fresh 变体（忽略缓存，保证状态实时）
     monkeypatch.setattr(
-        "vibeocr.views.settings_page_controller.check_embedded_environment_dependencies",
+        "vibeocr.views.settings_page_controller.check_embedded_environment_dependencies_fresh",
         lambda root: {
             "paddlepaddle": True,
             "paddleocr": False,
@@ -314,3 +315,58 @@ def test_refresh_fills_deps_table(controller, monkeypatch):
     assert "已安装" in status_item.text() or "✓" in status_item.text(), (
         f"paddlepaddle 应已安装，实际: {status_item.text()}"
     )
+
+
+def test_deps_table_uses_fresh_check(controller, qtbot, tmp_path, monkeypatch):
+    """依赖状态表格应使用 fresh 检测（忽略缓存），保证装完即刷新
+
+    回归（修复 4）：旧逻辑 _populate_deps_table 用 check_embedded_environment_dependencies
+    （带缓存），装完依赖但缓存未刷新时表格显示过期状态。
+    """
+    from PySide6.QtWidgets import QTableWidget
+
+    host, ctrl = controller
+
+    monkeypatch.setattr(
+        "vibeocr.views.settings_page_controller.get_environment_mode",
+        lambda root: "portable",
+    )
+    monkeypatch.setattr(
+        "vibeocr.views.settings_page_controller.get_embedded_python_info",
+        lambda root: {"path": "C:/app/python/python.exe", "mode": "portable", "ready": True},
+    )
+    monkeypatch.setattr(
+        "vibeocr.views.settings_page_controller.get_embedded_python_executable",
+        lambda root: __import__("pathlib").Path("C:/app/python/python.exe"),
+    )
+    monkeypatch.setattr(
+        "vibeocr.views.settings_page_controller.get_dependency_versions",
+        lambda root: {},
+    )
+
+    # 关键：验证调用的是 _fresh 变体而非带缓存的版本
+    fresh_called = {"count": 0}
+    non_fresh_called = {"count": 0}
+
+    def _fresh_tracker(root):
+        fresh_called["count"] += 1
+        return {"paddlepaddle": True, "paddleocr": True, "mineru": True, "torch": True}
+
+    def _non_fresh_tracker(root):
+        non_fresh_called["count"] += 1
+        return {}
+
+    monkeypatch.setattr(
+        "vibeocr.views.settings_page_controller.check_embedded_environment_dependencies_fresh",
+        _fresh_tracker,
+    )
+    # 旧的非 fresh 函数不应被调用
+    monkeypatch.setattr(
+        "vibeocr.views.settings_page_controller.check_embedded_environment_dependencies",
+        _non_fresh_tracker,
+    )
+
+    ctrl._refresh_env_maintenance_state()
+
+    assert fresh_called["count"] >= 1, "应调用 _fresh 变体"
+    assert non_fresh_called["count"] == 0, "不应调用带缓存的非 fresh 版本"

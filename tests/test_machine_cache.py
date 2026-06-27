@@ -3,6 +3,8 @@
 import subprocess
 from unittest.mock import patch
 
+from vibeocr.machine_cache import CACHE_VERSION
+
 
 class TestGenerateMachineId:
     """Tests for generate_machine_id function."""
@@ -111,7 +113,7 @@ class TestCacheValidation:
 
         # 保存一个使用假机器码的缓存
         cache_data = {
-            "version": 1,
+            "version": CACHE_VERSION,
             "machine_id": "fake_machine_id_12345",
             "dependencies": {"paddlepaddle": True},
         }
@@ -130,7 +132,7 @@ class TestCacheValidation:
 
         machine_id = generate_machine_id()
         cache_data = {
-            "version": 1,
+            "version": CACHE_VERSION,
             "machine_id": machine_id,
             "dependencies": {"paddlepaddle": True},
         }
@@ -194,7 +196,7 @@ class TestCacheOperations:
 
         result = create_cache_entry(tmp_path, dependencies, hardware_info)
         assert result is not None
-        assert result["version"] == 1
+        assert result["version"] == CACHE_VERSION
         assert result["machine_id"] == generate_machine_id()
         assert result["dependencies"] == dependencies
         assert result["hardware_info"] == hardware_info
@@ -219,7 +221,7 @@ class TestEnvManagerIntegration:
         # 创建假的缓存
         machine_id = generate_machine_id()
         cache_data = {
-            "version": 1,
+            "version": CACHE_VERSION,
             "machine_id": machine_id,
             "dependencies": {"paddlepaddle": True, "paddlex": True, "is_gpu": True},
         }
@@ -237,7 +239,7 @@ class TestEnvManagerIntegration:
         # 创建假的缓存
         machine_id = generate_machine_id()
         cache_data = {
-            "version": 1,
+            "version": CACHE_VERSION,
             "machine_id": machine_id,
             "dependencies": {
                 "paddlepaddle": True,
@@ -269,7 +271,7 @@ class TestEnvManagerIntegration:
         # 缓存：paddlepaddle=False（旧状态，实际已装）
         machine_id = generate_machine_id()
         cache_data = {
-            "version": 1,
+            "version": CACHE_VERSION,
             "machine_id": machine_id,
             "dependencies": {"paddlepaddle": False, "torch": True},
         }
@@ -296,3 +298,115 @@ class TestEnvManagerIntegration:
         # 缓存文件也应已更新
         refreshed = load_cache(tmp_path)
         assert refreshed["dependencies"]["paddlepaddle"] is True
+
+    def test_empty_dependencies_cache_falls_back_to_real_check(self, tmp_path):
+        """缓存有效但 dependencies 为空字典时不应静默返回空，应落入实时检测
+
+        回归（修复 3）：旧逻辑在 cached_deps={} 时 stale_pkgs=[] 直接 return {}，
+        导致设置页表格全显示"未安装"、首启 is_embedded_environment_ready 误报。
+        """
+        from vibeocr.env_manager import (
+            check_embedded_environment_dependencies,
+        )
+        from vibeocr.machine_cache import generate_machine_id, save_cache
+
+        python_exe = tmp_path / "python" / "python.exe"
+        python_exe.parent.mkdir(parents=True)
+        python_exe.touch()
+
+        # 缓存有效，但 dependencies 是空字典（如首启从未检测过）
+        machine_id = generate_machine_id()
+        cache_data = {
+            "version": CACHE_VERSION,
+            "machine_id": machine_id,
+            "dependencies": {},  # 空 → 旧逻辑会 return {}
+        }
+        save_cache(tmp_path, cache_data)
+
+        # mock 实时检测返回真实结果
+        with (
+            patch(
+                "vibeocr.env_manager.get_embedded_python_executable",
+                return_value=python_exe,
+            ),
+            patch(
+                "vibeocr.env_manager._check_imports",
+                return_value={"paddlepaddle": True, "paddleocr": False},
+            ),
+            patch("vibeocr.env_manager.detect_gpu", return_value=(False, None)),
+        ):
+            result = check_embedded_environment_dependencies(tmp_path, use_cache=True)
+
+        # 不应返回空字典，而应是实时检测结果
+        assert result == {"paddlepaddle": True, "paddleocr": False}, (
+            f"空 dependencies 缓存应触发实时检测，实际: {result}"
+        )
+
+    def test_missing_dependencies_field_triggers_real_check(self, tmp_path):
+        """缓存完全没有 dependencies 字段时也应落入实时检测"""
+        from vibeocr.env_manager import (
+            check_embedded_environment_dependencies,
+        )
+        from vibeocr.machine_cache import generate_machine_id, save_cache
+
+        python_exe = tmp_path / "python" / "python.exe"
+        python_exe.parent.mkdir(parents=True)
+        python_exe.touch()
+
+        # 缓存有效，但完全没有 dependencies 键
+        machine_id = generate_machine_id()
+        cache_data = {
+            "version": CACHE_VERSION,
+            "machine_id": machine_id,
+            # 没有 dependencies 键
+        }
+        save_cache(tmp_path, cache_data)
+
+        with (
+            patch(
+                "vibeocr.env_manager.get_embedded_python_executable",
+                return_value=python_exe,
+            ),
+            patch(
+                "vibeocr.env_manager._check_imports",
+                return_value={"paddlepaddle": True},
+            ),
+            patch("vibeocr.env_manager.detect_gpu", return_value=(False, None)),
+        ):
+            result = check_embedded_environment_dependencies(tmp_path, use_cache=True)
+
+        assert result == {"paddlepaddle": True}, (
+            f"缺 dependencies 字段应触发实时检测，实际: {result}"
+        )
+
+
+class TestCacheVersionInvalidation:
+    """CACHE_VERSION 变更应使旧缓存失效（修复 5）"""
+
+    def test_old_version_cache_invalidated(self, tmp_path):
+        """version 旧值（< CACHE_VERSION）的缓存应被判无效
+
+        回归：markdown 纳入 required_deps 后，旧缓存（无 markdown key）必须失效，
+        否则 is_embedded_environment_ready 会用旧缓存误判 markdown 已装。
+        """
+        from vibeocr.machine_cache import (
+            CACHE_VERSION,
+            generate_machine_id,
+            is_cache_valid,
+            save_cache,
+        )
+
+        machine_id = generate_machine_id()
+        # 模拟旧版本缓存（version 比 CACHE_VERSION 旧）
+        old_version = CACHE_VERSION - 1
+        cache_data = {
+            "version": old_version,
+            "machine_id": machine_id,
+            "dependencies": {"paddlepaddle": True},  # 旧缓存无 markdown
+        }
+        save_cache(tmp_path, cache_data)
+
+        is_valid, _data = is_cache_valid(tmp_path)
+        assert is_valid is False, (
+            f"version={old_version} 的旧缓存应失效（当前 CACHE_VERSION={CACHE_VERSION}）"
+        )
