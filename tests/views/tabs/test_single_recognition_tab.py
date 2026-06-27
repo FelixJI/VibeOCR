@@ -33,6 +33,15 @@ class TestSingleRecognitionTab:
         assert tab._file_btn is not None
         assert tab._paste_btn is not None
 
+    def test_has_copy_image_button(self, qapp):
+        tab = SingleRecognitionTab()
+        assert tab._copy_image_btn is not None
+        assert tab._copy_image_btn.text() == "复制图片"
+
+    def test_copy_image_btn_disabled_by_default(self, qapp):
+        tab = SingleRecognitionTab()
+        assert tab._copy_image_btn.isEnabled() is False
+
     def test_screenshot_btn_emits_signal(self, qapp):
         tab = SingleRecognitionTab()
         emitted = []

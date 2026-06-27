@@ -70,6 +70,9 @@ class SingleRecognitionTab(BaseOcrTab):
         self._file_btn.setFixedHeight(28)
         self._paste_btn = QPushButton("粘贴")
         self._paste_btn.setFixedHeight(28)
+        self._copy_image_btn = QPushButton("复制图片")
+        self._copy_image_btn.setFixedHeight(28)
+        self._copy_image_btn.setEnabled(False)  # 默认禁用，有图后启用
         self._start_btn = QPushButton("开始识别")
         self._start_btn.setFixedHeight(28)
         self._start_btn.setEnabled(False)
@@ -77,6 +80,7 @@ class SingleRecognitionTab(BaseOcrTab):
         action_layout.addWidget(self._screenshot_btn)
         action_layout.addWidget(self._file_btn)
         action_layout.addWidget(self._paste_btn)
+        action_layout.addWidget(self._copy_image_btn)
         action_layout.addStretch()
         action_layout.addWidget(self._start_btn)
 
