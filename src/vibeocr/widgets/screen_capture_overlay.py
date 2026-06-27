@@ -84,7 +84,19 @@ class ScreenCaptureOverlay(QWidget):
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground)
-        self.setStyleSheet("background: transparent;")
+        # WA_TranslucentBackground/WA_NoSystemBackground 会沿窗口树向下传播，
+        # 导致子控件（浮动工具栏、颜色选择器等按钮）弹出 QToolTip 时背景无法被系统
+        # 填充，呈现为黑色。这里仅为覆盖层自身保持透明，并给 QToolTip 显式指定不透明
+        # 背景；不改动子控件样式，也不影响其它界面（全局 QSS 当前未启用）。
+        self.setStyleSheet(
+            "background: transparent;"
+            " QToolTip {"
+            f" background-color: {theme.Colors.text};"
+            f" color: {theme.Colors.surface};"
+            " border: none; padding: 4px;"
+            f" border-radius: {theme.Radius.sm}px;"
+            " }"
+        )
 
         # 状态
         self._state: str = "CAPTURING"
