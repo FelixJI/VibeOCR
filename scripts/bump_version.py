@@ -52,6 +52,10 @@ APP_ICON = PROJECT_ROOT / "resources" / "app_icon.ico"
 DIST_BASE_DIR = PROJECT_ROOT / "dist"
 
 # PyInstaller 排除的大依赖（由嵌入式 Python 独立安装）
+#
+# markdown：纯 Python，主进程 UI 不直接用（markdown_to_html 仅在 OCR/MinerU
+# 子进程调用，主进程只用 markdown_converter.HTML_STYLE 字符串常量）。
+# 主进程 import 已下沉到函数内，故可安全排除，由便携 Python 安装供 worker 用。
 EXCLUDED_PACKAGES = [
     "paddle",
     "paddlepaddle",
@@ -63,6 +67,7 @@ EXCLUDED_PACKAGES = [
     "torchaudio",
     "nvidia",
     "triton",
+    "markdown",
 ]
 
 # PySide6 中本项目完全未使用的子模块。
@@ -180,13 +185,15 @@ PACKAGE_DATA = [
 ]
 
 # vibeocr 子模块通过 --collect-submodules 自动收集，此处只列出第三方包
+#
+# markdown 已移至 EXCLUDED_PACKAGES（由便携 Python 安装，主进程仅用 HTML_STYLE
+# 字符串常量，import 下沉到函数内）。故不在此处声明 hidden-import。
 HIDDEN_IMPORTS = [
     "shiboken6",
     "qasync",
     "httpx",
     "PIL",
     "numpy",
-    "markdown",
     "qrcode",
     "qrcode.image.pil",
     "barcode",

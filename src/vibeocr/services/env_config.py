@@ -64,6 +64,9 @@ OCR_CHECK_MODULES: dict[str, str] = {
     "paddleocr": "paddleocr",
     "mineru": "mineru",
     "torch": "torch",
+    # markdown 已从 exe 包排除，由便携 Python 安装供 OCR/MinerU worker 用，
+    # 故纳入便携环境就绪检测，避免装漏导致 worker 子进程崩溃。
+    "markdown": "markdown",
 }
 
 # 各模块 import 检测的 timeout（秒）。
@@ -73,6 +76,7 @@ OCR_CHECK_TIMEOUTS: dict[str, int] = {
     "paddleocr": 30,
     "mineru": 15,
     "torch": 15,
+    "markdown": 10,
 }
 
 

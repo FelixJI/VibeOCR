@@ -771,8 +771,10 @@ def is_embedded_environment_ready(project_root: Path) -> tuple[bool, list[str]]:
         return False, ["Python 运行时未安装"]
 
     deps = check_embedded_environment_dependencies(project_root)
-    # 只检查 paddlepaddle 和 paddleocr，排除 is_gpu 等元数据字段
-    required_deps = ["paddlepaddle", "paddleocr", "mineru"]
+    # 只检查 OCR 核心依赖，排除 is_gpu 等元数据字段。
+    # markdown 纳入检查：它已从 exe 包排除，由便携 Python 安装供 worker 用，
+    # 缺失会导致 OCR 子进程崩溃，故与 paddleocr/mineru 同等要求。
+    required_deps = ["paddlepaddle", "paddleocr", "mineru", "markdown"]
     missing = [pkg for pkg in required_deps if pkg not in deps or not deps[pkg]]
 
     # 缓存显示缺失时，做一次轻量验证排除过期缓存
@@ -973,6 +975,9 @@ def _install_paddle_stack(
                 *paddle_reqs,
                 ("PaddleOCR", f'"{specs["paddleocr"]}"', pip_source),
                 ("MinerU", f'"{specs["mineru"]}"', pip_source),
+                # markdown 已从 PyInstaller exe 包排除，由便携 Python 安装，
+                # 供 OCR/MinerU worker 子进程的 markdown_to_html 使用。
+                ("Markdown", f'"{specs["markdown"]}"', pip_source),
             ]
 
             # GPU 环境下安装 torch+CUDA 覆盖 mineru 附带的 CPU 版本
@@ -1261,6 +1266,8 @@ def install_missing_dependencies(
         *paddle_reqs,
         ("PaddleOCR", f'"{specs["paddleocr"]}"', pip_source),
         ("MinerU", f'"{specs["mineru"]}"', pip_source),
+        # markdown 已从 PyInstaller exe 包排除，由便携 Python 安装。
+        ("Markdown", f'"{specs["markdown"]}"', pip_source),
     ]
     if use_gpu:
         default_gpu_tag = "cu126"
@@ -1286,6 +1293,8 @@ def install_missing_dependencies(
             return import_status.get("paddleocr", False)
         if "MinerU" in req_name:
             return import_status.get("mineru", False)
+        if req_name == "Markdown":
+            return import_status.get("markdown", False)
         return False
 
     # 3. 过滤掉已装的

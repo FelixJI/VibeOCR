@@ -2,9 +2,6 @@
 
 import logging
 
-import markdown
-from markdown.extensions.tables import TableExtension
-
 from .indent_processor import IndentProcessor
 
 _logger = logging.getLogger(__name__)
@@ -112,6 +109,12 @@ def markdown_to_html(
     """
     if not markdown_text:
         return ""
+
+    # markdown 仅由 OCR/MinerU 子进程实际调用，主进程只用本模块的 HTML_STYLE
+    # 字符串常量。此处延迟 import，使主进程（PyInstaller 冻结 exe，已排除
+    # markdown）加载 markdown_converter 时不触发 ImportError。
+    import markdown
+    from markdown.extensions.tables import TableExtension
 
     # 预处理：将 LaTeX 公式转换为 HTML span 标签
     processed_text = _process_latex_formulas(markdown_text)
