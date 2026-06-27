@@ -51,7 +51,7 @@ class Constants:
     SUPPORTED_DOC_FORMATS = ["*.doc", "*.docx"]
 
     # 共享内存配置
-    DEFAULT_SHM_SIZE = 10 * 1024 * 1024  # 10MB
+    DEFAULT_SHM_SIZE = 16 * 1024 * 1024  # 16MB
     DEFAULT_SHM_LOG_SIZE = 1 * 1024 * 1024  # 1MB
     WORKER_TIMEOUT = 300.0  # 5分钟
     WORKER_START_TIMEOUT = 30.0  # 30秒

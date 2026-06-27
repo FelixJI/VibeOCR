@@ -17,6 +17,8 @@ import time
 import traceback
 from typing import TYPE_CHECKING, cast
 
+from vibeocr.core.constants import DEFAULT_SHM_SIZE
+
 if TYPE_CHECKING:
     import numpy as np
 
@@ -632,8 +634,8 @@ def main():
     parser.add_argument(
         "--shm-size",
         type=int,
-        default=10 * 1024 * 1024,
-        help="数据共享内存大小（字节），默认 10MB",
+        default=DEFAULT_SHM_SIZE,
+        help="数据共享内存大小（字节），默认 16MB",
     )
     parser.add_argument(
         "--use-gpu", action="store_true", default=False, help="使用 GPU 加速"

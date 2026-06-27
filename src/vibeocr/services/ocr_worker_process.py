@@ -14,6 +14,7 @@ import time
 import uuid
 from collections.abc import Callable
 
+from vibeocr.core.constants import DEFAULT_SHM_SIZE
 from vibeocr.pipeline_status import is_pipeline_ever_succeeded
 from vibeocr.utils.job_object import JobObjectGuard
 from vibeocr.utils.shared_memory_v2 import (
@@ -79,7 +80,7 @@ class OCRWorkerProcess:
         self,
         worker_id: int,
         use_gpu: bool = True,
-        shm_size: int = 10 * 1024 * 1024,
+        shm_size: int = DEFAULT_SHM_SIZE,
         worker_module: str = "vibeocr.workers.ocr_worker",
     ):
         """初始化 Worker 进程管理器

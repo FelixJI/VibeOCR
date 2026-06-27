@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Any
 
+from vibeocr.core.constants import DEFAULT_SHM_SIZE
 from vibeocr.services.ocr_worker_process import OCRWorkerProcess, OCRWorkerProcessError
 
 logger = logging.getLogger(__name__)
@@ -84,7 +85,7 @@ class WorkerManager:
         self,
         max_workers: int = 1,
         use_gpu: bool = True,
-        shm_size: int = 10 * 1024 * 1024,
+        shm_size: int = DEFAULT_SHM_SIZE,
         start_timeout: float = 120.0,
         health_check_interval: float = 30.0,
         auto_restart: bool = True,

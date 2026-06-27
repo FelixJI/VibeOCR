@@ -17,6 +17,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional, Union
 
+from vibeocr.core.constants import DEFAULT_SHM_SIZE
 from vibeocr.pipeline_status import is_pipeline_ever_succeeded, mark_pipeline_success
 from vibeocr.services.worker_manager import WorkerManager
 
@@ -54,7 +55,7 @@ class OCRServiceSubprocess:
         cls,
         max_workers: int = 1,
         use_gpu: bool = False,
-        shm_size: int = 128 * 1024 * 1024,
+        shm_size: int = DEFAULT_SHM_SIZE,
         auto_start: bool = True,
         start_timeout: float = 120.0,
         start_progress_callback: Callable[[str], None] | None = None,
@@ -76,7 +77,7 @@ class OCRServiceSubprocess:
         self,
         max_workers: int = 1,
         use_gpu: bool = False,
-        shm_size: int = 128 * 1024 * 1024,
+        shm_size: int = DEFAULT_SHM_SIZE,
         auto_start: bool = True,
         start_timeout: float = 120.0,
         start_progress_callback: Callable[[str], None] | None = None,
