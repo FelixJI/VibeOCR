@@ -147,6 +147,15 @@ class ScreenCaptureOverlay(QWidget):
         if not screens:
             return
 
+        # 防御性清空上一轮可能残留的选区/检测状态（异常退出路径下 _cleanup 未必执行），
+        # 避免本窗口变为可见时 paintEvent 短暂绘制上一轮的选区（即「一闪而过」）。
+        self._selection_rect = None
+        self._detected_rect = None
+        self._start_pos = None
+        self._end_pos = None
+        self._sub_state = "HOVER"
+        self._state = "CAPTURING"
+
         # 计算虚拟桌面几何
         virtual_geometry = screens[0].geometry()
         for screen in screens[1:]:
@@ -205,10 +214,14 @@ class ScreenCaptureOverlay(QWidget):
         if WindowDetector is not None:
             self._window_detector = WindowDetector(hwnd)
 
+        # 关键：在 show() 前同步重绘，用新截图刷新后备存储。
+        # 本覆盖层设置了 WA_NoSystemBackground/WA_TranslucentBackground，窗口系统在
+        # show() 时不会清屏，会短暂显示上一轮截图遗留的选区画面（即「一闪而过」）。
+        # repaint() 为同步绘制，确保窗口变为可见时后备存储已是本次截图，无残留。
+        self.repaint()
         self.show()
         self.activateWindow()
         self.grabMouse()
-        self.repaint()
 
     def paintEvent(self, _event) -> None:
         """绘制冻结截图背景、遮罩（CAPTURING/EDITING 共用）和放大镜"""

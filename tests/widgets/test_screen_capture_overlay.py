@@ -102,6 +102,38 @@ class TestStartCaptureInit:
         overlay.hide()
 
 
+class TestStartCaptureClearsPreviousSelection:
+    """回归：开始新一轮截图时，不得残留上一轮的选区状态。
+
+    背景：覆盖层是单例复用的，WA_NoSystemBackground 下窗口系统在 show()
+    时不清屏。若上一轮的 _selection_rect / _detected_rect 未被清空，
+    窗口变为可见的瞬间会短暂绘制上一轮的选区（即「一闪而过前面截图过的区域」）。
+    """
+
+    def test_start_capture_clears_stale_selection_rect(self, qapp):
+        overlay = ScreenCaptureOverlay()
+        overlay.show()
+        overlay.winId()  # 确保有后备存储
+        # 模拟上一轮截图遗留的选区状态
+        overlay._selection_rect = QRect(100, 100, 400, 300)
+        overlay._detected_rect = QRect(100, 100, 400, 300)
+        overlay.start_capture()
+        assert overlay._selection_rect is None
+        assert overlay._detected_rect is None
+        overlay.hide()
+
+    def test_cleanup_clears_selection_before_hide(self, qapp):
+        overlay = ScreenCaptureOverlay()
+        overlay._state = "CAPTURING"
+        overlay._selection_rect = QRect(10, 10, 90, 90)
+        overlay._screen_pixmap = QPixmap(100, 100)
+        overlay._cleanup()
+        # 清理后不得残留可绘制状态
+        assert overlay._selection_rect is None
+        assert overlay._screen_pixmap is None
+        assert not overlay.isVisible()
+
+
 from unittest.mock import MagicMock  # noqa: E402
 
 
