@@ -94,7 +94,8 @@ def _recognize_formula(
             if out_arr is not None:
                 from PIL import Image as _PILImage
 
-                rgb = out_arr[:, :, ::-1] if out_arr.ndim == 3 else out_arr
+                # output_img 已是 RGB，不可做 [::-1] 翻转（否则 R/B 对调）
+                rgb = out_arr.copy()
                 pil_img = _PILImage.fromarray(rgb)
                 preproc_w, preproc_h = pil_img.size
                 buf = io.BytesIO()

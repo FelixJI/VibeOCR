@@ -999,7 +999,8 @@ class OCRService(metaclass=SingletonMeta):
                 if out_arr is not None:
                     from PIL import Image as _PILImage
 
-                    rgb = out_arr[:, :, ::-1] if out_arr.ndim == 3 else out_arr
+                    # output_img 已是 RGB，不可做 [::-1] 翻转（否则 R/B 对调）
+                    rgb = out_arr.copy()
                     pil_img = _PILImage.fromarray(rgb)
                     preproc_w, preproc_h = pil_img.size
                     buf = io.BytesIO()
@@ -1336,7 +1337,8 @@ class OCRService(metaclass=SingletonMeta):
 
         # 提取预处理信息：旋转角度和实际预处理后图像
         # res.img['preprocessed_img'] 是拼接可视化，不用；
-        # 实际预处理图在 doc_preprocessor_res['output_img']（numpy BGR）
+        # 实际预处理图在 doc_preprocessor_res['output_img']（numpy RGB，
+        # PaddleOCR 3.7 实测即为 RGB）。不可做 [::-1] 翻转，否则 R/B 对调。
         preproc_angle = 0
         preprocessed_png: bytes | None = None
         preproc_w = preproc_h = 0
@@ -1349,7 +1351,7 @@ class OCRService(metaclass=SingletonMeta):
                 if out_arr is not None:
                     from PIL import Image as _PILImage
 
-                    rgb = out_arr[:, :, ::-1] if out_arr.ndim == 3 else out_arr
+                    rgb = out_arr.copy()
                     pil_img = _PILImage.fromarray(rgb)
                     preproc_w, preproc_h = pil_img.size
                     buf = io.BytesIO()

@@ -202,8 +202,10 @@ def _parse_single_result(res: Any) -> tuple[list[tuple[str, float]], list]:
 def _extract_preproc_info(res: Any) -> tuple[int, bytes | None, int, int]:
     """从单个结果项提取预处理信息 (angle, preprocessed_png, w, h)。
 
-    实际预处理图在 doc_preprocessor_res['output_img']（numpy BGR），
-    res.img['preprocessed_img'] 是拼接可视化，不用。
+    实际预处理图在 doc_preprocessor_res['output_img']（numpy RGB，
+    PaddleOCR 3.7 实测即为 RGB），res.img['preprocessed_img'] 是拼接可视化，不用。
+    注意：不可对 output_img 做 [:, :, ::-1] 通道翻转——旧注释误以为是 BGR，
+    翻转会导致 R/B 对调（黄色变青蓝）。见 scripts/verify_preproc_channels.py。
     """
     preproc_angle = 0
     preprocessed_png: bytes | None = None
@@ -215,7 +217,8 @@ def _extract_preproc_info(res: Any) -> tuple[int, bytes | None, int, int]:
         if out_arr is not None:
             from PIL import Image as _PILImage
 
-            rgb = out_arr[:, :, ::-1] if out_arr.ndim == 3 else out_arr
+            # output_img 已是 RGB，直接转换；取可写副本避免 PIL 共享只读缓冲
+            rgb = out_arr.copy()
             pil_img = _PILImage.fromarray(rgb)
             preproc_w, preproc_h = pil_img.size
             buf = io.BytesIO()
@@ -253,7 +256,7 @@ def _recognize_ocr(service: Any, image: Any, options: OCROptions) -> Any:
 
     # 提取预处理信息：旋转角度和实际预处理后图像
     # 注意：res.img['preprocessed_img'] 是拼接可视化，不用；
-    #       实际预处理图在 doc_preprocessor_res['output_img']（numpy BGR）
+    #       实际预处理图在 doc_preprocessor_res['output_img']（numpy RGB）
     preproc_angle, preprocessed_png, preproc_w, preproc_h = (0, None, 0, 0)
     if output_list:
         preproc_angle, preprocessed_png, preproc_w, preproc_h = _extract_preproc_info(
