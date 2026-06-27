@@ -683,6 +683,7 @@ class SettingsPageController:
             "paddleocr": "PaddleOCR",
             "mineru": "MinerU",
             "torch": "PyTorch",
+            "markdown": "Markdown",
         }
         ordered_pkgs = list(OCR_CHECK_MODULES.values())  # 保持插入顺序
 

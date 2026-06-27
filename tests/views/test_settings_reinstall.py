@@ -292,6 +292,7 @@ def test_refresh_fills_deps_table(controller, monkeypatch):
             "paddleocr": False,
             "mineru": False,
             "torch": False,
+            "markdown": False,
         },
     )
     monkeypatch.setattr(
@@ -301,6 +302,7 @@ def test_refresh_fills_deps_table(controller, monkeypatch):
             "paddleocr": "",
             "mineru": "",
             "torch": "",
+            "markdown": "",
         },
     )
 
@@ -308,7 +310,13 @@ def test_refresh_fills_deps_table(controller, monkeypatch):
 
     table = host.findChild(QTableWidget, "tableDepsStatus")
     assert table is not None
-    assert table.rowCount() == 4, f"应有 4 行依赖，实际: {table.rowCount()}"
+    # 行数应等于 OCR_CHECK_MODULES 的模块数（paddle/paddleocr/mineru/torch/markdown）。
+    # 直接读源常量长度，避免新增模块时再改硬编码魔数。
+    from vibeocr.services.env_config import OCR_CHECK_MODULES
+
+    assert table.rowCount() == len(OCR_CHECK_MODULES), (
+        f"应有 {len(OCR_CHECK_MODULES)} 行依赖，实际: {table.rowCount()}"
+    )
     # 第一行 paddlepaddle 应标记已装
     status_item = table.item(0, 1)
     assert status_item is not None
@@ -325,7 +333,7 @@ def test_deps_table_uses_fresh_check(controller, qtbot, tmp_path, monkeypatch):
     """
     from PySide6.QtWidgets import QTableWidget
 
-    host, ctrl = controller
+    ctrl, host = controller
 
     monkeypatch.setattr(
         "vibeocr.views.settings_page_controller.get_environment_mode",
@@ -344,29 +352,26 @@ def test_deps_table_uses_fresh_check(controller, qtbot, tmp_path, monkeypatch):
         lambda root: {},
     )
 
-    # 关键：验证调用的是 _fresh 变体而非带缓存的版本
+    # 关键：验证 _populate_deps_table 走的是 _fresh 变体（忽略缓存）。
+    # controller 仅 import 了 check_embedded_environment_dependencies_fresh，
+    # 代码路径上没有对带缓存旧函数的调用，因此这里只断言 _fresh 被触发。
     fresh_called = {"count": 0}
-    non_fresh_called = {"count": 0}
 
     def _fresh_tracker(root):
         fresh_called["count"] += 1
-        return {"paddlepaddle": True, "paddleocr": True, "mineru": True, "torch": True}
-
-    def _non_fresh_tracker(root):
-        non_fresh_called["count"] += 1
-        return {}
+        return {
+            "paddlepaddle": True,
+            "paddleocr": True,
+            "mineru": True,
+            "torch": True,
+            "markdown": True,
+        }
 
     monkeypatch.setattr(
         "vibeocr.views.settings_page_controller.check_embedded_environment_dependencies_fresh",
         _fresh_tracker,
     )
-    # 旧的非 fresh 函数不应被调用
-    monkeypatch.setattr(
-        "vibeocr.views.settings_page_controller.check_embedded_environment_dependencies",
-        _non_fresh_tracker,
-    )
 
     ctrl._refresh_env_maintenance_state()
 
     assert fresh_called["count"] >= 1, "应调用 _fresh 变体"
-    assert non_fresh_called["count"] == 0, "不应调用带缓存的非 fresh 版本"
