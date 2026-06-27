@@ -5,17 +5,19 @@ import logging
 from pathlib import Path
 
 from PIL import Image
-from PySide6.QtCore import QBuffer, Signal
-from PySide6.QtGui import QPixmap
+from PySide6.QtCore import QBuffer, QTimer, Signal
+from PySide6.QtGui import QGuiApplication, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QHBoxLayout,
+    QLabel,
     QPushButton,
     QSplitter,
     QVBoxLayout,
     QWidget,
 )
 
+from vibeocr.ui import theme
 from vibeocr.views.tabs.base_tab import BaseOcrTab
 from vibeocr.widgets.preprocess_options_widget import PreprocessOptionsWidget
 from vibeocr.widgets.preview_widget import PreviewWidget
@@ -73,6 +75,16 @@ class SingleRecognitionTab(BaseOcrTab):
         self._copy_image_btn = QPushButton("复制图片")
         self._copy_image_btn.setFixedHeight(28)
         self._copy_image_btn.setEnabled(False)  # 默认禁用，有图后启用
+
+        # 复制图片成功浮层提示（锚点为复制图片按钮）
+        self._copy_toast = QLabel("原图已复制到剪贴板", self._copy_image_btn)
+        self._copy_toast.setStyleSheet(
+            f"QLabel {{ background-color: {theme.Colors.text};"
+            f" color: {theme.Colors.surface}; padding: 6px 12px;"
+            f" border-radius: {theme.Radius.sm}px;"
+            f" font-size: {theme.Typography.small}px; }}"
+        )
+        self._copy_toast.hide()
         self._start_btn = QPushButton("开始识别")
         self._start_btn.setFixedHeight(28)
         self._start_btn.setEnabled(False)
@@ -128,6 +140,7 @@ class SingleRecognitionTab(BaseOcrTab):
         self._screenshot_btn.clicked.connect(self.screenshot_requested.emit)
         self._file_btn.clicked.connect(self._on_file_btn_clicked)
         self._paste_btn.clicked.connect(self._on_paste)
+        self._copy_image_btn.clicked.connect(self._on_copy_image)
         self._start_btn.clicked.connect(self._start_recognition)
 
     def _on_file_btn_clicked(self) -> None:
@@ -177,6 +190,25 @@ class SingleRecognitionTab(BaseOcrTab):
         self._preview_widget.set_pixmap(pixmap)
         self.set_image_for_recognition(pixmap)
         self._start_btn.setText("开始识别")
+
+    def _on_copy_image(self) -> None:
+        """复制原始图片到剪贴板（取 original_pixmap，非预处理后图像）。"""
+        pixmap = self._preview_widget.original_pixmap()
+        if pixmap is None or pixmap.isNull():
+            return
+        QGuiApplication.clipboard().setPixmap(pixmap)
+        self._show_copy_toast()
+
+    def _show_copy_toast(self) -> None:
+        """显示「原图已复制到剪贴板」浮层提示（按钮上方居中，1.5s 自动隐藏）。"""
+        toast = self._copy_toast
+        toast.setText("原图已复制到剪贴板")
+        toast.adjustSize()
+        x = (self._copy_image_btn.width() - toast.width()) // 2
+        y = -toast.height() - 8
+        toast.move(x, y)
+        toast.show()
+        QTimer.singleShot(1500, toast.hide)
 
     def _on_start(self):
         self._start_recognition()

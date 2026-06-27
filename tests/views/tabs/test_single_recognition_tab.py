@@ -1,5 +1,6 @@
 """SingleRecognitionTab 测试"""
 
+from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import QWidget
 
 from vibeocr.views.tabs.base_tab import BaseOcrTab
@@ -76,3 +77,64 @@ class TestSingleRecognitionTab:
         tab.screenshot_requested.connect(lambda: emitted.append(True))
         tab._screenshot_btn.click()
         assert emitted
+
+
+class TestSingleRecognitionTabCopyImage:
+    """「复制图片」复制逻辑测试"""
+
+    def test_on_copy_image_copies_original(self, qapp, sample_pixmap, monkeypatch):
+        """点复制图片后，剪贴板收到的是原始图片（original_pixmap）。"""
+        captured = {}
+
+        class FakeClipboard:
+            def setPixmap(self, pm):
+                captured["pixmap"] = pm
+
+        monkeypatch.setattr(QGuiApplication, "clipboard", lambda *a, **k: FakeClipboard())
+        tab = SingleRecognitionTab()
+        tab.set_pixmap(sample_pixmap)
+        tab._on_copy_image()
+        assert "pixmap" in captured
+        # 复制的是原图（cacheKey 与 original_pixmap 一致）
+        assert (
+            captured["pixmap"].cacheKey()
+            == tab._preview_widget.original_pixmap().cacheKey()
+        )
+
+    def test_on_copy_image_shows_toast(self, qapp, sample_pixmap, monkeypatch):
+        class FakeClipboard:
+            def setPixmap(self, pm):
+                pass
+
+        monkeypatch.setattr(QGuiApplication, "clipboard", lambda *a, **k: FakeClipboard())
+        tab = SingleRecognitionTab()
+        tab.set_pixmap(sample_pixmap)
+        tab._on_copy_image()
+        # 注意：未 show() 顶层窗口时 isVisible() 恒为 False，改用 isHidden() 判定
+        assert tab._copy_toast.isHidden() is False
+        assert "原图已复制" in tab._copy_toast.text()
+
+    def test_on_copy_image_noop_without_pixmap(self, qapp, monkeypatch):
+        called = {"yes": False}
+
+        class FakeClipboard:
+            def setPixmap(self, pm):
+                called["yes"] = True
+
+        monkeypatch.setattr(QGuiApplication, "clipboard", lambda *a, **k: FakeClipboard())
+        tab = SingleRecognitionTab()  # 无图
+        tab._on_copy_image()
+        assert called["yes"] is False
+
+    def test_copy_image_btn_triggers_on_copy(self, qapp, sample_pixmap, monkeypatch):
+        called = {"yes": False}
+
+        class FakeClipboard:
+            def setPixmap(self, pm):
+                called["yes"] = True
+
+        monkeypatch.setattr(QGuiApplication, "clipboard", lambda *a, **k: FakeClipboard())
+        tab = SingleRecognitionTab()
+        tab.set_pixmap(sample_pixmap)
+        tab._copy_image_btn.click()
+        assert called["yes"] is True
