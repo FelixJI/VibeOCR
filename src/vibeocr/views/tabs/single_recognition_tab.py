@@ -350,6 +350,20 @@ class SingleRecognitionTab(BaseOcrTab):
             return
 
         if is_document_file(file_path):
+            # 文档文件(PDF/Office)强制走 MinerU 文档解析，CPU 后端下不可用。
+            # 在此拦截，避免进入 _run_ocr_with_data 后因管道被 GPU 门控禁用而崩溃。
+            from vibeocr.env_manager import get_runtime_gpu_capability, get_project_root
+
+            if not get_runtime_gpu_capability(get_project_root()):
+                from PySide6.QtWidgets import QMessageBox
+
+                QMessageBox.warning(
+                    self,
+                    "文档解析不可用",
+                    "当前为 CPU 后端，文档解析(MinerU)需要 GPU 支持。\n"
+                    "请将文件转为图片后识别，或在设置页切换到 GPU 后端后重启。",
+                )
+                return
             data = path.read_bytes()
             mime_type = guess_mime_from_filename(file_path)
             self._run_ocr_with_data(data, mime_type, path.name)

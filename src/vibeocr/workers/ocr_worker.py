@@ -25,6 +25,19 @@ if TYPE_CHECKING:
 # 跳过模型源网络检测，避免推理时网络超时
 os.environ["PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK"] = "True"
 
+# CPU 线程数自适应：worker 才是真正执行 CPU 推理的进程，必须在 import paddle
+# 之前设置 OpenMP / paddle 线程数，否则 paddle 用默认 1 线程。
+# 用 setdefault 不覆盖父进程（ocr_worker_process._get_worker_env）已注入的值。
+try:
+    from vibeocr.utils.cpu_info import get_cpu_thread_count
+
+    _cpu_threads = str(get_cpu_thread_count())
+    os.environ.setdefault("OMP_NUM_THREADS", _cpu_threads)
+    os.environ.setdefault("FLAGS_omp_num_threads", _cpu_threads)
+    os.environ.setdefault("FLAGS_cpu_threads", _cpu_threads)
+except Exception:
+    pass
+
 # Worker 只使用 PaddlePaddle 推理，不需要 PyTorch。
 # 但 paddlex 的依赖链 (modelscope) 会在导入时探测 torch，
 # 而 torch 与 paddle 的 CUDA 运行时 DLL 在 Windows 上互相冲突。

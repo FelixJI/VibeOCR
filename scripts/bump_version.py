@@ -8,6 +8,7 @@
     python scripts/bump_version.py major        # 升级主版本 X.0.0
     python scripts/bump_version.py 2.0.0        # 指定版本号
     python scripts/bump_version.py ... --no-edit  # 跳过编辑器
+    python scripts/bump_version.py ... --yes      # 跳过推送/打包确认（仅升级版本号+commit）
     python scripts/bump_version.py --build      # 打包当前版本
     python scripts/bump_version.py --rebuild 1.2.3  # 重新打包指定版本
 """
@@ -1378,6 +1379,7 @@ class _Args(argparse.Namespace):
     release: bool
     build: bool
     no_edit: bool
+    yes: bool
     to_main: bool
     no_build: bool
     force: bool
@@ -1400,6 +1402,7 @@ def main() -> int:
   %(prog)s patch            升级修订号
   %(prog)s 2.0.0            指定版本号
   %(prog)s minor --no-edit  升级次版本，跳过编辑器
+  %(prog)s minor --yes      升级并跳过推送/打包确认（脚本化用）
   %(prog)s --build          仅打包当前版本
   %(prog)s --rebuild 1.2.3  重新打包指定版本
         """,
@@ -1414,6 +1417,12 @@ def main() -> int:
         action="store_true",
         dest="no_edit",
         help="跳过编辑器审阅 CHANGELOG",
+    )
+    parser.add_argument(
+        "--yes", "-y",
+        action="store_true",
+        dest="yes",
+        help="跳过所有交互确认（推送 main 发版、本地打包），脚本化/非交互场景用",
     )
     parser.add_argument(
         "--build",
@@ -1452,7 +1461,7 @@ def main() -> int:
 
     # 模式: 推送快照到 GitHub main
     if args.to_main:
-        return cmd_publish_main(skip_confirm=args.no_edit)
+        return cmd_publish_main(skip_confirm=args.yes)
 
     # 模式0: 构建并发布
     if args.release:
@@ -1518,7 +1527,7 @@ def main() -> int:
             return 0 if _run_build(current_str, force=args.force) else 1
         if new_version == "merge":
             # 推送快照到 GitHub main（菜单选项 6 的哨兵）
-            return cmd_publish_main(skip_confirm=args.no_edit)
+            return cmd_publish_main(skip_confirm=args.yes)
     elif args.version in ("patch", "minor", "major"):
         new_version = bump_version(current, args.version)
     elif SEMVER_RE.match(args.version):
@@ -1571,15 +1580,17 @@ def main() -> int:
         print(f"警告: git 操作失败: {e}")
         return 1
 
-    # 先问是否推送快照到 GitHub main（更重操作优先）；否决后再问打包
+    # 先问是否推送快照到 GitHub main（更重操作优先）；否决后再问打包。
+    # 注意：发版/打包确认由 --yes 控制，与 --no-edit（仅跳编辑器）解耦，
+    # 避免日常手动发版时这两个确认被连带跳过。
     merged = False
-    if not args.no_edit:
+    if not args.yes:
         print("\n是否立即推送快照到 GitHub main 并发版？[y/N]: ", end="", flush=True)
         if input().strip().lower() in ("y", "yes"):
             rc_merge = cmd_publish_main(skip_confirm=True)
             merged = rc_merge == 0
 
-    if not merged and not args.no_build and _ask_build(new_str):
+    if not merged and not args.yes and not args.no_build and _ask_build(new_str):
         _run_build(new_str, force=args.force)
 
     print(f"\n完成! 版本已升级到 {new_str}")

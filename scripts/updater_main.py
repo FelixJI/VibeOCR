@@ -102,8 +102,11 @@ def verify_zip(zip_path: Path) -> bool:
 def verify_sha256(zip_path: Path) -> bool:
     sha256_path = Path(str(zip_path) + ".sha256")
     if not sha256_path.exists():
-        logger.warning("未找到 SHA256 校验文件，跳过校验")
-        return True
+        # 与主程序下载阶段（update_service.verify_sha256）保持一致：
+        # 缺失校验文件即视为不可信，拒绝更新，而不是放行。
+        # 此前这里「找不到就跳过」会让更新包在下载阶段之后绕过完整性校验。
+        logger.error(f"未找到 SHA256 校验文件，拒绝更新: {sha256_path}")
+        return False
 
     expected = sha256_path.read_text(encoding="utf-8").strip().split()[0].lower()
     actual = hashlib.sha256(zip_path.read_bytes()).hexdigest().lower()

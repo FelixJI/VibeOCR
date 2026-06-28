@@ -45,8 +45,25 @@ class PreprocessOptionsWidget(QGroupBox):
         super().__init__("识别选项", parent)
         self._current_options = OCROptions()
         self._pipeline_locked = False
+        # 上下文锁定允许的管道集合（仅 _pipeline_locked 为 True 时有效）。
+        # 由 lock_to_pipelines 写入，_apply_pipeline_enabled_states 读取。
+        self._locked_allowed: set[OCRPipeline] = set()
+        # GPU 门控禁用的管道集合（正交于上下文锁定）。
+        # 无 GPU 或 CPU 后端时 = _GPU_REQUIRED_PIPELINES，有 GPU 后端时为空集。
+        # apply_gpu_gating 写入，_apply_pipeline_enabled_states 读取；
+        # 与上下文锁定取并集禁用，且不被 unlock_pipeline 冲掉。
+        self._gpu_disabled_pipelines: set[OCRPipeline] = set()
         self._setup_ui()
         self._connect_signals()
+
+        # 进程级 GPU 能力缓存已被 main_window 在启动时算出 → 立即应用门控
+        # （无 nvidia-smi 开销，瞬时完成）。缓存未就绪时跳过，由 main_window
+        # 算完后通过 apply_gpu_gating 广播补齐。这覆盖了懒加载的 inline 面板：
+        # 它在截图时才构造，此时缓存通常已就绪。
+        from vibeocr.env_manager import _runtime_gpu_capability_cache
+
+        if _runtime_gpu_capability_cache is not None:
+            self.apply_gpu_gating(_runtime_gpu_capability_cache)
 
     def _setup_ui(self):
         """设置 UI"""
@@ -104,6 +121,8 @@ class PreprocessOptionsWidget(QGroupBox):
                 get_pipeline_display_name(pipeline),
                 pipeline.value,
             )
+        # 首启即应用 GPU 门控（apply_gpu_gating 未调用前为空集，全启用）。
+        self._apply_pipeline_enabled_states()
 
     def _create_preprocess_tab(self) -> QWidget:
         """创建预处理选项卡"""
@@ -913,6 +932,10 @@ class PreprocessOptionsWidget(QGroupBox):
 
     _DOCUMENT_PIPELINES = {OCRPipeline.DOCUMENT_PARSING, OCRPipeline.PADDLEOCR_VL}
 
+    # 需 GPU 后端的重 VLM 管道：MinerU（VLM 引擎依赖 vLLM/lmdeploy，CUDA-only）、
+    # PaddleOCR-VL（重 VLM 模型）。CPU 后端下禁用以避免不可用/体验极差。
+    _GPU_REQUIRED_PIPELINES = {OCRPipeline.DOCUMENT_PARSING, OCRPipeline.PADDLEOCR_VL}
+
     def lock_to_pipelines(
         self,
         allowed: set[OCRPipeline],
@@ -930,15 +953,11 @@ class PreprocessOptionsWidget(QGroupBox):
         if self._pipeline_locked:
             return
         self._pipeline_locked = True
+        self._locked_allowed = set(allowed)
 
-        # 禁用不在 allowed 集合内的下拉项
-        for i in range(self._pipeline_combo.count()):
-            data = self._pipeline_combo.itemData(i)
-            try:
-                pipeline = OCRPipeline(data)
-            except ValueError:
-                continue
-            self._pipeline_combo.model().item(i).setEnabled(pipeline in allowed)
+        # 应用启用状态：上下文锁定 + GPU 门控取并集禁用（统一逻辑，
+        # 确保 GPU 约束在锁定后仍生效）。
+        self._apply_pipeline_enabled_states()
 
         # 若当前管道不在 allowed 内，切到指定默认（或 allowed 内第一个）
         current = self.get_current_pipeline()
@@ -981,17 +1000,102 @@ class PreprocessOptionsWidget(QGroupBox):
         )
 
     def unlock_pipeline(self) -> None:
-        """解除管道锁定，恢复自由选择。"""
+        """解除管道锁定，恢复自由选择。
+
+        注意：解除上下文锁定后仍会重新应用 GPU 门控（CPU 后端下文档解析/VL
+        保持禁用），不会无条件全部恢复。
+        """
         if not self._pipeline_locked:
             return
         self._pipeline_locked = False
+        self._locked_allowed = set()
 
-        # 恢复所有下拉项
-        for i in range(self._pipeline_combo.count()):
-            self._pipeline_combo.model().item(i).setEnabled(True)
+        # 重新应用启用状态：上下文锁定已解除，但 GPU 门控仍生效。
+        self._apply_pipeline_enabled_states()
 
         self._pipeline_lock_label.setVisible(False)
 
     @property
     def is_pipeline_locked(self) -> bool:
         return self._pipeline_locked
+
+    # ── GPU 门控（正交于上下文锁定） ──
+
+    def apply_gpu_gating(self, has_gpu: bool) -> None:
+        """根据运行时是否使用 GPU 后端，禁用/启用需 GPU 的重管道。
+
+        与上下文锁定（lock_to_pipelines/unlock_pipeline）正交：二者取并集禁用，
+        且 GPU 门控不会被 unlock_pipeline 冲掉（unlock 后仍重新应用）。
+
+        无 GPU 或 CPU 后端时禁用 MinerU(文档解析)/PaddleOCR-VL；有 GPU 后端时
+        恢复可选。由 MainWindow 在启动时（依赖检测完成后）调用一次。
+
+        Args:
+            has_gpu: 运行时是否使用 GPU 后端（见 env_manager.get_runtime_gpu_capability）
+        """
+        self._gpu_disabled_pipelines = (
+            set() if has_gpu else set(self._GPU_REQUIRED_PIPELINES)
+        )
+        self._apply_pipeline_enabled_states()
+
+        # 若当前选中的管道被 GPU 门控禁用，回退到下拉框中第一个可选项，
+        # 避免停留在灰色不可用项上（与 lock_to_pipelines 的回退逻辑一致）。
+        if not has_gpu:
+            current = self.get_current_pipeline()
+            if current in self._gpu_disabled_pipelines:
+                fallback = self._first_enabled_pipeline()
+                if fallback is not None and fallback != current:
+                    idx = self._pipeline_combo.findData(fallback.value)
+                    if idx >= 0:
+                        self._pipeline_combo.blockSignals(True)
+                        self._pipeline_combo.setCurrentIndex(idx)
+                        self._pipeline_combo.blockSignals(False)
+                        self._update_tab_visibility()
+
+    def _first_enabled_pipeline(self) -> OCRPipeline | None:
+        """返回下拉框中第一个启用的管道（用于 GPU 门控回退）。"""
+        for i in range(self._pipeline_combo.count()):
+            item = self._pipeline_combo.model().item(i)
+            if item.isEnabled():
+                data = self._pipeline_combo.itemData(i)
+                try:
+                    return OCRPipeline(data)
+                except ValueError:
+                    continue
+        return None
+
+    def _apply_pipeline_enabled_states(self) -> None:
+        """统一重算下拉项启用状态（上下文锁定 ∪ GPU 门控）
+
+        每项 pipeline 的启用条件 = 同时满足：
+        - 不在 GPU 门控禁用集合内（_gpu_disabled_pipelines）
+        - 上下文锁定未激活，或在锁定允许集合内（_locked_allowed）
+
+        二者任一为禁用则禁用。被 GPU 门控禁用的项附加说明性 tooltip。
+        """
+        for i in range(self._pipeline_combo.count()):
+            data = self._pipeline_combo.itemData(i)
+            try:
+                pipeline = OCRPipeline(data)
+            except ValueError:
+                continue
+
+            item = self._pipeline_combo.model().item(i)
+            gpu_disabled = pipeline in self._gpu_disabled_pipelines
+            # 上下文锁定未激活时视为"允许所有"（仅由 GPU 门控决定）
+            context_disabled = (
+                self._pipeline_locked and pipeline not in self._locked_allowed
+            )
+
+            if gpu_disabled:
+                item.setEnabled(False)
+                item.setToolTip(
+                    "未检测到 CUDA GPU 或当前为 CPU 后端，此管道不可用。\n"
+                    "如需使用，请在设置页切换到 GPU 后端后重启。"
+                )
+            elif context_disabled:
+                item.setEnabled(False)
+                item.setToolTip("")
+            else:
+                item.setEnabled(True)
+                item.setToolTip("")

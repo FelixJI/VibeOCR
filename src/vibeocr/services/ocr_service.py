@@ -523,6 +523,38 @@ class OCRService(metaclass=SingletonMeta):
         _logger.info("[推理设备] CPU（未检测到可用 GPU，已回退）")
         return "cpu"
 
+    # oneDNN 安全性判定结果缓存（进程级，避免每次创建管道重复探测指令集）
+    _onednn_safe_cache: bool | None = None
+
+    @classmethod
+    def _decide_enable_mkldnn(cls, device: str) -> bool:
+        """决定是否向 PaddleOCR 构造函数传入 ``enable_mkldnn=True``。
+
+        - GPU 设备：不传（PaddleOCR 默认），返回 False。
+        - CPU 设备：调用 ``cpu_info.can_safely_enable_onednn`` 综合判定
+          （指令集 + paddle 版本黑名单 + 用户强制覆盖）。结果缓存。
+
+        历史背景：paddle 3.3.x 的 PIR 新执行器与 oneDNN 不兼容
+        （ConvertPirAttribute2RuntimeAttribute 未实现，predict 抛
+        NotImplementedError），参考 PaddleOCR #17539、Paddle #77340。
+        故默认对受影响版本拒绝；满足条件（新 paddle + AVX2+ CPU）时
+        才启用以拿回 oneDNN 加速。
+        """
+        if device != "cpu":
+            return False
+        if cls._onednn_safe_cache is None:
+            try:
+                from vibeocr.utils.cpu_info import can_safely_enable_onednn
+
+                safe, reason = can_safely_enable_onednn()
+                cls._onednn_safe_cache = safe
+                _logger.info("[oneDNN] %s: %s", "启用" if safe else "禁用", reason)
+            except Exception as e:
+                # 探测失败保守禁用（与历史行为一致）
+                cls._onednn_safe_cache = False
+                _logger.warning("[oneDNN] 安全性探测失败，保守禁用: %s", e)
+        return cls._onednn_safe_cache
+
     @staticmethod
     def _log_gpu_summary() -> None:
         """在确定使用 GPU 推理后，输出一条设备摘要 INFO 日志。
@@ -626,11 +658,10 @@ class OCRService(metaclass=SingletonMeta):
                 f"正在初始化 {display_name} 管道（首次使用需要下载模型）...",
             )
 
-        # CPU 设备禁用 mkldnn：paddle 3.3 的 PIR new executor 与 oneDNN 存在已知
-        # 不兼容（ConvertPirAttribute2RuntimeAttribute 对 ArrayAttribute<DoubleAttribute>
-        # 未实现，predict 抛 NotImplementedError），CPU 推理时关闭 mkldnn 绕过。
-        # 参考 PaddleOCR #17539、Paddle #77340。
-        kwargs = {"enable_mkldnn": False} if device == "cpu" else {}
+        # CPU 设备的 mkldnn 启用与否由 _decide_enable_mkldnn 综合判定
+        # （指令集 + paddle 版本黑名单），而非硬编码 False。
+        enable_mkldnn = self._decide_enable_mkldnn(device)
+        kwargs = {"enable_mkldnn": enable_mkldnn} if device == "cpu" else {}
 
         if pipeline == OCRPipeline.OCR:
             from paddleocr import PaddleOCR
@@ -689,12 +720,10 @@ class OCRService(metaclass=SingletonMeta):
                     if registry.has(pipeline_name):
                         spec = registry.get(pipeline_name)
                         device = self._get_device()
-                        # CPU 设备禁用 mkldnn：paddle 3.3 的 PIR new executor 与
-                        # oneDNN 存在已知不兼容（ConvertPirAttribute2RuntimeAttribute
-                        # 对 ArrayAttribute<DoubleAttribute> 未实现，predict 抛
-                        # NotImplementedError），CPU 推理时关闭 mkldnn 绕过。
-                        # 参考 PaddleOCR #17539、Paddle #77340。
-                        kwargs = {"enable_mkldnn": False} if device == "cpu" else {}
+                        # CPU 设备的 mkldnn 启用与否由 _decide_enable_mkldnn
+                        # 综合判定（指令集 + paddle 版本黑名单）。
+                        enable_mkldnn = self._decide_enable_mkldnn(device)
+                        kwargs = {"enable_mkldnn": enable_mkldnn} if device == "cpu" else {}
                         self._pipelines[pipeline_name] = spec.create_pipeline(
                             device, **kwargs
                         )

@@ -107,6 +107,32 @@ class MainWindow(QMainWindow):
         self._try_load_cache()
         # 异步检查嵌入式依赖（在UI显示后）
         QTimer.singleShot(100, self._check_embedded_dependencies)
+        # 异步计算运行时 GPU 能力并广播到所有 PreprocessOptionsWidget（CPU 后端下
+        # 禁用文档解析/VL 管道）。延迟到 UI 显示后，避免 nvidia-smi 阻塞启动。
+        QTimer.singleShot(200, self._apply_gpu_gating_to_all)
+
+    def _apply_gpu_gating_to_all(self) -> None:
+        """计算运行时 GPU 能力并对所有已创建的 PreprocessOptionsWidget 应用门控。
+
+        get_runtime_gpu_capability 首次调用可能触发 nvidia-smi（~5s，无缓存时），
+        故用 singleShot 延迟到 UI 显示后执行，避免阻塞启动。结果写入进程级缓存，
+        此后懒加载构造的 PreprocessOptionsWidget（如截图 inline 面板）会自动从
+        缓存读取并应用（见其 __init__）。
+        """
+        if self._closing:
+            return
+        try:
+            has_gpu = env_manager.get_runtime_gpu_capability(self._project_root)
+        except Exception:
+            logging.exception("[GPU 门控] 获取运行时 GPU 能力失败，跳过")
+            return
+
+        from vibeocr.widgets.preprocess_options_widget import (
+            PreprocessOptionsWidget,
+        )
+
+        for widget in self.findChildren(PreprocessOptionsWidget):
+            widget.apply_gpu_gating(has_gpu)
 
     def _setup_ocr_status_callback(self) -> None:
         """设置 OCR 状态回调，用于在状态栏显示模型下载进度"""

@@ -61,6 +61,14 @@ class BackendChoiceDialog(QDialog):
 
         layout = QVBoxLayout(self)
 
+        # 硬件信息展示区（在选项上方，让用户知情后选择）
+        self._hw_label = QLabel("正在检测硬件…")
+        self._hw_label.setWordWrap(True)
+        self._hw_label.setStyleSheet(
+            "QLabel { background: #f5f5f5; padding: 8px; border-radius: 4px; }"
+        )
+        layout.addWidget(self._hw_label)
+
         # 后端选择区
         choice_group = QGroupBox("选择推理后端")
         choice_layout = QVBoxLayout(choice_group)
@@ -114,7 +122,26 @@ class BackendChoiceDialog(QDialog):
         layout.addLayout(btn_layout)
 
     def _detect_and_set_default(self) -> None:
-        self._has_gpu, _cuda = env_manager.detect_gpu()
+        info = env_manager.detect_gpu_info()
+        self._has_gpu = bool(info["has_gpu"])
+        cuda = info["cuda"]
+
+        # 展示检测到的硬件信息（GPU 型号/显存/CUDA 或未检测到）
+        if self._has_gpu:
+            name = info.get("name") or "NVIDIA GPU"
+            vram = info.get("vram_mb") or 0
+            vram_str = f"{vram // 1024}GB" if vram >= 1024 else f"{vram}MB"
+            cuda_str = f"CUDA {cuda}" if cuda else "CUDA 版本未知"
+            self._hw_label.setText(
+                f"✅ 检测到 GPU：{name}（{vram_str}），{cuda_str}\n"
+                f"建议选择 GPU 加速以获得更快的识别速度。"
+            )
+        else:
+            self._hw_label.setText(
+                "⚠️ 未检测到符合 CUDA 条件的 NVIDIA GPU。\n"
+                "将使用 CPU 模式（文档解析 MinerU 与 VL 模型将不可用）。"
+            )
+
         if self._has_gpu:
             self._gpu_radio.setChecked(True)
         else:
