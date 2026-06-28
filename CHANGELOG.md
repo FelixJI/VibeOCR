@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.3.0] - 2026-06-28
+
+### Added
+- feat(startup): 无 CUDA GPU 或 CPU 后端时禁用文档解析与 VL 管道
+
+### Fixed
+- fix(updater): 缺失 SHA256 校验文件时拒绝更新而非放行
+- fix(bump): 解耦 --no-edit 与发版/打包确认，新增 --yes 开关
+
+### Changed
+- perf(cpu): CPU 推理线程自适应 + oneDNN 安全探测替代硬编码
+- ci(release): 升级 action-gh-release 至 v3 并为 Gitee 同步加重试
+
 ## [0.2.3] - 2026-06-28
 
 ### Fixed
