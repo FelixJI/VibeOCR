@@ -1595,6 +1595,75 @@ def detect_gpu() -> tuple[bool, str | None]:
     return False, None
 
 
+def detect_gpu_info() -> dict[str, object]:
+    """一次性探测 NVIDIA GPU 的硬件信息（供 UI 展示）
+
+    通过单次 ``nvidia-smi`` 调用解析 GPU 名称、显存、CUDA 版本，
+    避免 UI 层多次 shell out。任何环节失败都回退到现有 detect_gpu() 的
+    简单结果（仅 has_gpu + cuda），保证调用方总能拿到可用结构。
+
+    Returns:
+        ``{"has_gpu": bool, "name": str, "vram_mb": int, "cuda": str | None}``
+        - has_gpu：是否有可用的 NVIDIA GPU
+        - name：GPU 型号（无 GPU 时为空串）
+        - vram_mb：总显存 MB（无 GPU 时为 0）
+        - cuda：CUDA 版本 cu-tag（如 "cu126"），无 GPU 或解析失败为 None
+    """
+    import re
+
+    # 结果默认值（无 GPU / 解析失败）
+    info: dict[str, object] = {
+        "has_gpu": False,
+        "name": "",
+        "vram_mb": 0,
+        "cuda": None,
+    }
+
+    try:
+        result = subprocess.run(
+            [
+                "nvidia-smi",
+                "--query-gpu=name,memory.total,driver_version",
+                "--format=csv,noheader,nounits",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+        )
+        if result.returncode != 0 or not result.stdout.strip():
+            # nvidia-smi 不可用 → 回退到 detect_gpu（处理 nvcc 等次要探测路径）
+            has_gpu, cuda = detect_gpu()
+            info["has_gpu"] = has_gpu
+            info["cuda"] = cuda
+            return info
+
+        # 取第一块 GPU 的信息（多卡场景仅展示首卡）
+        first_line = result.stdout.strip().splitlines()[0]
+        # 格式："NVIDIA GeForce RTX 4090, 24564 MiB, 560.94"（nounits 已去掉单位，
+        # 但 memory.total 仍带 "MiB"，按逗号拆分后 strip）
+        parts = [p.strip() for p in first_line.split(",")]
+        name = parts[0] if parts else ""
+        vram_mb = 0
+        if len(parts) > 1:
+            # "24564 MiB" → 24564；纯数字也兼容
+            m = re.search(r"(\d+)", parts[1])
+            if m:
+                vram_mb = int(m.group(1))
+
+        info["has_gpu"] = True
+        info["name"] = name
+        info["vram_mb"] = vram_mb
+        info["cuda"] = detect_cuda_version()
+        return info
+    except Exception as e:
+        print(f"[硬件检测] detect_gpu_info 解析失败: {e}")
+        has_gpu, cuda = detect_gpu()
+        info["has_gpu"] = has_gpu
+        info["cuda"] = cuda
+        return info
+
+
 def resolve_use_gpu(project_root: Path) -> bool:
     """决定运行时是否使用 GPU（缓存优先 + 探测回退）
 
@@ -1628,6 +1697,37 @@ def resolve_use_gpu(project_root: Path) -> bool:
     # 缓存不可用，实时探测
     has_gpu, _cuda_version = detect_gpu()
     return has_gpu
+
+
+# 进程级运行时 GPU 能力缓存：避免多个 UI widget 各自重复 shell out nvidia-smi。
+# 仅缓存 resolve_use_gpu 的结果（尊重 pending_backend），不缓存 detect_gpu_info
+# （后者是纯展示用、无副作用，且后端切换后缓存需失效，故不缓存）。
+_runtime_gpu_capability_cache: bool | None = None
+
+
+def get_runtime_gpu_capability(project_root: Path) -> bool:
+    """获取运行时是否具备 GPU 推理能力（进程级缓存）
+
+    与 ``resolve_use_gpu`` 的语义一致：基于"实际运行后端"判断，而非单纯的
+    物理 GPU 存在性。因此以下两种情况都返回 False：
+    - 无符合 CUDA 条件的 NVIDIA GPU
+    - 有 GPU 但用户在设置页选择了 CPU 后端（``pending_backend="cpu"``）
+
+    结果做进程级缓存，避免多个 PreprocessOptionsWidget 实例各自探测。
+    缓存在进程生命周期内有效——后端切换需要重启才生效（见 switch_paddle_backend
+    写入 pending_backend 的注释），故无需主动失效。
+
+    Args:
+        project_root: 项目根目录
+
+    Returns:
+        运行时是否使用 GPU 后端
+    """
+    global _runtime_gpu_capability_cache
+    if _runtime_gpu_capability_cache is not None:
+        return _runtime_gpu_capability_cache
+    _runtime_gpu_capability_cache = resolve_use_gpu(project_root)
+    return _runtime_gpu_capability_cache
 
 
 def switch_paddle_backend(

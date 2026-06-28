@@ -22,6 +22,12 @@ def _make_widget(tmp_path, has_gpu=True, cached_hardware_gpu=False, pending=None
     mock_update = patch.object(bow, "update_cache_field").start()
 
     mock_em.detect_gpu.return_value = (has_gpu, "cu126") if has_gpu else (False, None)
+    mock_em.detect_gpu_info.return_value = {
+        "has_gpu": has_gpu,
+        "name": "NVIDIA GeForce RTX 4090" if has_gpu else "",
+        "vram_mb": 24564 if has_gpu else 0,
+        "cuda": "cu126" if has_gpu else None,
+    }
     mock_cache.return_value = (
         True,
         {

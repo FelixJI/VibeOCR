@@ -274,6 +274,22 @@ class BatchRecognitionTab(BaseOcrTab):
 
         has_document = any(is_document_file(f["path"]) for f in files)
         if has_document:
+            # 文档文件需 MinerU 文档解析（GPU 后端）。CPU 后端下文档解析被禁用，
+            # 此时提示用户而非静默锁定到不可用管道。
+            from vibeocr.env_manager import (
+                get_project_root,
+                get_runtime_gpu_capability,
+            )
+
+            if not get_runtime_gpu_capability(get_project_root()):
+                from PySide6.QtWidgets import QMessageBox
+
+                QMessageBox.warning(
+                    self,
+                    "文档解析不可用",
+                    "当前为 CPU 后端，文档解析(MinerU)需要 GPU 支持。\n"
+                    "请移除文档文件，或在设置页切换到 GPU 后端后重启。",
+                )
             self._preprocess_options.lock_to_document_parsing(
                 "队列含文档文件，仅支持文档解析"
             )

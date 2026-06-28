@@ -53,6 +53,12 @@ class BackendOptionsWidget(QWidget):
         self._current_label = QLabel("当前后端：检测中...")
         group_layout.addWidget(self._current_label)
 
+        # 硬件信息展示（GPU 型号/显存/CUDA 或未检测到）
+        self._hw_label = QLabel("")
+        self._hw_label.setWordWrap(True)
+        self._hw_label.setStyleSheet(f"color: {theme.Colors.text_muted};")
+        group_layout.addWidget(self._hw_label)
+
         # 单选（放进 QButtonGroup 确保互斥）
         self._radio_group = QButtonGroup(self)
         radio_layout = QHBoxLayout()
@@ -90,8 +96,9 @@ class BackendOptionsWidget(QWidget):
         self._gpu_radio.toggled.connect(self._update_apply_state)
 
     def _load_state(self) -> None:
-        """从 detect_gpu + 缓存加载当前/待切换状态"""
-        self._has_gpu, _cuda = env_manager.detect_gpu()
+        """从 detect_gpu_info + 缓存加载当前/待切换状态"""
+        info = env_manager.detect_gpu_info()
+        self._has_gpu = bool(info["has_gpu"])
         is_valid, cached = is_cache_valid(self._project_root)
         hw = (cached or {}).get("hardware_info", {}) if is_valid else {}
         self._current = "gpu" if hw.get("has_gpu") else "cpu"
@@ -101,6 +108,21 @@ class BackendOptionsWidget(QWidget):
             self._gpu_radio.setEnabled(False)
             self._gpu_radio.setToolTip("未检测到 NVIDIA GPU")
             self._current = "cpu"
+
+        # 展示检测到的硬件信息
+        if self._has_gpu:
+            gpu_name = info.get("name") or "NVIDIA GPU"
+            vram = info.get("vram_mb") or 0
+            vram_str = f"{vram // 1024}GB" if vram >= 1024 else f"{vram}MB"
+            cuda = info.get("cuda")
+            cuda_str = f"CUDA {cuda}" if cuda else "CUDA 版本未知"
+            self._hw_label.setText(
+                f"GPU：{gpu_name}（{vram_str}），{cuda_str}"
+            )
+        else:
+            self._hw_label.setText(
+                "未检测到符合 CUDA 条件的 NVIDIA GPU（文档解析 MinerU 与 VL 模型不可用）"
+            )
 
         name = "GPU" if self._current == "gpu" else "CPU"
         self._current_label.setText(f"当前后端：{name}")
