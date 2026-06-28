@@ -1,0 +1,310 @@
+"""VibeOCR 应用程序入口点"""
+
+import os
+import sys
+from pathlib import Path
+
+# ============================================================
+# 重要：必须在导入任何其他模块之前设置以下环境变量
+# 这些设置解决 Windows + PaddlePaddle + NumPy 环境下的常见崩溃问题
+# ============================================================
+
+# 解决 OpenMP 库冲突 (libiomp5md.dll 重复加载导致 0xC0000005 崩溃)
+# 当多个库（PaddlePaddle、NumPy、Intel MKL）各自捆绑不同版本的 OpenMP 时会发生冲突
+os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
+
+# 禁用 OneDNN 以提高兼容性（某些 CPU 指令集不兼容会导致崩溃）
+os.environ.setdefault("FLAGS_enable_onednn_backend", "0")
+os.environ.setdefault("FLAGS_use_mkldnn", "0")
+
+# 设置环境变量以抑制不必要的警告
+# 禁用 PaddleX 的模型源连接检查
+os.environ.setdefault("PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK", "True")
+
+# 导入环境管理模块
+from vibeocr import env_manager
+
+# 确保src目录在路径中
+src_path = Path(__file__).parent.parent
+if str(src_path) not in sys.path:
+    sys.path.insert(0, str(src_path))
+
+
+def check_production_dependencies() -> bool:
+    """检查生产环境依赖
+
+    Returns:
+        是否所有生产依赖都已安装
+    """
+    ready, missing = env_manager.is_production_environment_ready()
+    if not ready:
+        print(f"[VibeOCR] 缺少生产依赖: {', '.join(missing)}")
+        print("[VibeOCR] 请使用以下命令安装:")
+        print("  pip install pyside6 pillow")
+        print("  或")
+        print("  uv sync")
+    return ready
+
+
+def _create_tray_icon(app, window, app_settings):
+    """创建系统托盘图标
+
+    Args:
+        app: QApplication 实例
+        window: MainWindow 实例
+        app_settings: AppSettings 实例
+
+    Returns:
+        QSystemTrayIcon 实例，如果不支持返回 None
+    """
+    from PySide6.QtGui import QAction, QIcon
+    from PySide6.QtWidgets import QMenu, QSystemTrayIcon
+
+    if not QSystemTrayIcon.isSystemTrayAvailable():
+        print("[VibeOCR] 系统不支持托盘图标")
+        return None
+
+    # 使用应用默认图标，如果没有则创建简单的彩色图标
+    icon = app.windowIcon()
+    if icon.isNull():
+        from PySide6.QtCore import QSize
+        from PySide6.QtGui import QColor, QPixmap
+
+        pixmap = QPixmap(QSize(64, 64))
+        pixmap.fill(QColor("#0078d4"))
+        icon = QIcon(pixmap)
+
+    tray = QSystemTrayIcon(icon, app)
+    tray.setToolTip("VibeOCR")
+
+    # 上下文菜单
+    menu = QMenu()
+
+    action_show = QAction("显示主窗口", menu)
+    action_show.triggered.connect(lambda: _show_main_window(window))
+    menu.addAction(action_show)
+
+    action_settings = QAction("设置", menu)
+    action_settings.triggered.connect(lambda: _show_tray_settings(window))
+    menu.addAction(action_settings)
+
+    menu.addSeparator()
+
+    action_quit = QAction("退出", menu)
+    action_quit.triggered.connect(lambda: _quit_app(app, window))
+    menu.addAction(action_quit)
+
+    tray.setContextMenu(menu)
+
+    # 点击托盘图标切换主窗口显示
+    tray.activated.connect(lambda reason: _on_tray_activated(reason, window))
+
+    tray.show()
+    return tray
+
+
+def _show_main_window(window):
+    """显示并激活主窗口"""
+    window.showNormal()
+    window.activateWindow()
+    window.raise_()
+
+
+def _show_tray_settings(parent):
+    """从托盘菜单打开主窗口设置标签页"""
+    _show_main_window(parent)
+    # 切换到设置标签页
+    if hasattr(parent, "_ui") and hasattr(parent._ui, "tabWidget"):
+        tab_widget = parent._ui.tabWidget
+        for i in range(tab_widget.count()):
+            if tab_widget.tabText(i) == "设置":
+                tab_widget.setCurrentIndex(i)
+                break
+
+
+def _quit_app(app, window):
+    """完全退出应用"""
+    # 标记为真正退出（而非最小化到托盘）
+    window._force_quit = True
+    window.close()
+    app.quit()
+
+
+def _on_tray_activated(reason, window):
+    """托盘图标激活事件"""
+    from PySide6.QtWidgets import QSystemTrayIcon
+
+    if reason == QSystemTrayIcon.ActivationReason.Trigger:
+        if window.isVisible() and not window.isMinimized():
+            window.hide()
+        else:
+            _show_main_window(window)
+
+
+def _resolve_app_icon_path() -> Path | None:
+    """解析应用图标路径，兼容开发态与 PyInstaller 打包态。
+
+    开发态图标位于 `<project_root>/resources/app_icon.ico`；
+    打包态（PyInstaller --onedir）resources 目录随 exe 同级拷贝，
+    图标位于 `<exe_dir>/resources/app_icon.ico`。
+
+    Returns:
+        图标文件路径；找不到时返回 None。
+    """
+    if getattr(sys, "frozen", False):
+        # 打包态：与可执行文件同级的 resources 目录
+        base = Path(sys.executable).resolve().parent
+    else:
+        base = env_manager.get_project_root()
+
+    icon = base / "resources" / "app_icon.ico"
+    return icon if icon.exists() else None
+
+
+def _setup_app_icon(app) -> None:
+    """为 QApplication 设置应用图标（窗口标题栏、任务栏、托盘共用）。
+
+    图标必须在主窗口创建之前设置，窗口才会继承；缺失时不抛错，仅记录警告。
+    """
+    from PySide6.QtGui import QIcon
+
+    icon_path = _resolve_app_icon_path()
+    if icon_path is None:
+        print("[VibeOCR] 未找到应用图标 resources/app_icon.ico，跳过设置")
+        return
+
+    icon = QIcon(str(icon_path))
+    if icon.isNull():
+        print(f"[VibeOCR] 图标加载失败: {icon_path}")
+        return
+
+    app.setWindowIcon(icon)
+    app.setApplicationName("VibeOCR")
+
+
+def launch_application() -> int:
+    """启动应用程序"""
+    from PySide6.QtWidgets import QApplication
+
+    from vibeocr import __version__
+    from vibeocr.managers.config_manager import ConfigManager
+    from vibeocr.utils.app_settings import AppSettings
+    from vibeocr.utils.qt_async import create_qasync_event_loop
+    from vibeocr.views.main_window import MainWindow
+
+    app = QApplication(sys.argv)
+    app.setApplicationName("VibeOCR")
+    app.setApplicationVersion(__version__)
+
+    # 注册退出清理：协作式取消残留的 InstallWorker 并 kill 其子进程。
+    # 作为 closeEvent 的兜底——若用户在安装进行中直接退出应用（而非关闭对话框），
+    # 避免留下孤儿 pip 子进程（main.py 末尾的 os._exit 不会回收它们）。
+    def _cleanup_install_workers_on_quit() -> None:
+        from PySide6.QtCore import QThread
+
+        for widget in app.topLevelWidgets():
+            for thread in widget.findChildren(QThread):
+                if hasattr(thread, "request_cancel"):
+                    thread.request_cancel()
+                    thread.wait(3000)
+
+    app.aboutToQuit.connect(_cleanup_install_workers_on_quit)
+
+    # 设置应用图标（必须在主窗口创建之前，窗口才能继承图标）
+    _setup_app_icon(app)
+
+    # 全局浅色主题 QSS 暂时禁用：实际观感不如 Qt 原生控件风格。
+    # theme.py token 模块与各文件的 token 化迁移均保留，便于日后调整配色后重试。
+    # from vibeocr.ui import theme
+    # app.setStyleSheet(theme.global_qss())
+
+    # 初始化统一配置管理器
+    project_root = env_manager.get_project_root()
+    cm = ConfigManager.instance(project_root)
+
+    # 初始化 OCR 偏好设置单例（必须在 UI 创建之前，否则所有选项读写均静默失败）
+    from vibeocr.utils.ocr_preferences import OCRPreferences
+
+    OCRPreferences.instance(cm)
+
+    # 加载应用设置
+    app_settings = AppSettings(cm)
+
+    # 创建 qasync 事件循环（整合 Qt 和 asyncio）
+    loop = create_qasync_event_loop(app)
+
+    window = MainWindow()
+    window.set_app_settings(app_settings)
+    window.show()
+
+    # 打包环境下延迟检查更新
+    if getattr(sys, "frozen", False):
+        import asyncio
+
+        async def _check_update():
+            import logging
+
+            from vibeocr.services.update_service import UpdateService
+
+            log = logging.getLogger(__name__)
+            try:
+                service = UpdateService(project_root)
+                await service.check_and_prompt(window)  # noqa: F821
+            except Exception:
+                # ensure_future 会静默吞掉协程异常，这里必须显式捕获，
+                # 否则"检查更新失败"对用户和开发者都不可见。
+                log.exception("启动检查更新失败")
+
+        loop.call_later(5, lambda: asyncio.ensure_future(_check_update()))
+
+    # 创建系统托盘图标
+    tray = _create_tray_icon(app, window, app_settings)
+    if tray:
+        window.set_tray_icon(tray)
+        # 仅在启用最小化到托盘时阻止关闭窗口退出程序
+        app.setQuitOnLastWindowClosed(not app_settings.minimize_to_tray)
+
+    # 使用 qasync 事件循环运行应用
+    try:
+        loop.run_forever()
+    except Exception as e:
+        print(f"[VibeOCR] 应用异常退出: {e}")
+        return 1
+
+    # 事件循环退出后，显式清理原生资源，避免解释器关闭阶段 DLL 卸载崩溃 (0xC0000409)
+    try:
+        app.processEvents()
+        import gc
+
+        gc.collect()
+        del window
+        del app
+        gc.collect()
+    except Exception:
+        pass
+
+    os._exit(0)
+
+
+def main() -> int:
+    """应用程序入口点
+
+    启动流程：
+    1. 检测生产环境依赖（PySide6, Pillow）
+    2. 失败 → 控制台错误提示，退出
+    3. 通过 → 启动GUI
+    4. GUI启动后 → 异步检测嵌入式OCR依赖
+    """
+
+    # 1. 检查生产环境依赖
+    if not check_production_dependencies():
+        input("\n按回车键退出...")
+        return 1
+
+    # 2. 启动应用
+    print("[VibeOCR] 启动应用...")
+    return launch_application()
+
+
+if __name__ == "__main__":
+    sys.exit(main())
