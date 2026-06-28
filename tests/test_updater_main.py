@@ -302,3 +302,118 @@ class TestSyncDependencies:
         updater._sync_dependencies(old_deps, new_data, tmp_path)
 
         assert (tmp_path / "data" / "settings" / "pending_sync.json").exists()
+
+
+# ---------------------------------------------------------------------------
+# _setup_logging（写文件日志，确保 console=False 时仍有现场）
+# ---------------------------------------------------------------------------
+
+
+class TestSetupLogging:
+    def test_writes_log_file(self, updater, tmp_path):
+        """_setup_logging 应在 data/logs/ 下创建 updater.log 并能记录日志。"""
+        updater._setup_logging(tmp_path)
+
+        updater.logger.info("test message from setup_logging")
+
+        log_file = tmp_path / "data" / "logs" / "updater.log"
+        assert log_file.exists(), "应创建 updater.log"
+        content = log_file.read_text(encoding="utf-8")
+        assert "test message from setup_logging" in content
+
+    def test_logging_survives_missing_log_dir(self, updater, tmp_path, monkeypatch):
+        """日志目录创建失败时不应抛异常（退化到 stdout）。"""
+        def _boom(*a, **kw):
+            raise OSError("no permission")
+
+        monkeypatch.setattr("pathlib.Path.mkdir", _boom)
+        # 不应抛异常
+        updater._setup_logging(tmp_path)
+
+
+# ---------------------------------------------------------------------------
+# _rename_locked_self_exe（处理运行中的 updater.exe 无法删除/覆盖）
+# ---------------------------------------------------------------------------
+
+
+class TestRenameLockedSelfExe:
+    def test_renames_self_exe_on_windows_only(self, updater, tmp_path, monkeypatch):
+        """Windows 下应把 updater.exe 改名为 updater.exe.old。"""
+        app_dir = tmp_path / "app"
+        app_dir.mkdir()
+        (app_dir / "updater.exe").write_bytes(b"old running exe")
+
+        monkeypatch.setattr(updater.os, "name", "nt")
+        updater._rename_locked_self_exe(app_dir)
+
+        assert not (app_dir / "updater.exe").exists()
+        assert (app_dir / "updater.exe.old").read_bytes() == b"old running exe"
+
+    def test_noop_on_non_windows(self, updater, tmp_path, monkeypatch):
+        """非 Windows 下不做任何事。"""
+        app_dir = tmp_path / "app"
+        app_dir.mkdir()
+        (app_dir / "updater.exe").write_bytes(b"exe")
+
+        monkeypatch.setattr(updater.os, "name", "posix")
+        updater._rename_locked_self_exe(app_dir)
+
+        # 文件保持不变
+        assert (app_dir / "updater.exe").read_bytes() == b"exe"
+        assert not (app_dir / "updater.exe.old").exists()
+
+    def test_noop_when_self_exe_absent(self, updater, tmp_path, monkeypatch):
+        """updater.exe 不存在时不应抛异常。"""
+        app_dir = tmp_path / "app"
+        app_dir.mkdir()
+
+        monkeypatch.setattr(updater.os, "name", "nt")
+        updater._rename_locked_self_exe(app_dir)  # 不应抛异常
+
+    def test_removes_stale_old_before_rename(self, updater, tmp_path, monkeypatch):
+        """应先清理上次更新残留的 .old 再改名。"""
+        app_dir = tmp_path / "app"
+        app_dir.mkdir()
+        (app_dir / "updater.exe").write_bytes(b"current")
+        (app_dir / "updater.exe.old").write_bytes(b"stale from last update")
+
+        monkeypatch.setattr(updater.os, "name", "nt")
+        updater._rename_locked_self_exe(app_dir)
+
+        assert not (app_dir / "updater.exe").exists()
+        assert (app_dir / "updater.exe.old").read_bytes() == b"current"
+
+
+# ---------------------------------------------------------------------------
+# main（顶层异常兜底：写日志后返回 1，不静默崩溃）
+# ---------------------------------------------------------------------------
+
+
+class TestMainExceptionGuard:
+    def test_uncaught_exception_returns_1_and_logs(
+        self, updater, tmp_path, monkeypatch
+    ):
+        """verify_zip 抛非预期异常时，main 应回退捕获并写日志、返回 1。"""
+        zp = tmp_path / "pkg.zip"
+        zp.write_bytes(b"data")
+        app_dir = tmp_path / "app"
+        app_dir.mkdir()
+
+        def _boom(_zip):
+            raise RuntimeError("unexpected boom")
+
+        monkeypatch.setattr(updater, "verify_zip", _boom)
+
+        # main() 接收 zip/app-dir 通过 argparse，这里直接构造 argv
+        import sys as _sys
+
+        monkeypatch.setattr(
+            _sys,
+            "argv",
+            ["updater.exe", "--update", str(zp), "--app-dir", str(app_dir)],
+        )
+        assert updater.main() == 1
+
+        log_file = app_dir / "data" / "logs" / "updater.log"
+        assert log_file.exists()
+        assert "unexpected boom" in log_file.read_text(encoding="utf-8")
