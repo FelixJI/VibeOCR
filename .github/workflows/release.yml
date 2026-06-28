@@ -74,12 +74,20 @@ jobs:
 
       - name: Build (PyInstaller via bump_version.py)
         shell: bash
+        # PYTHONUTF8=1 确保 bump_version.py 及其子进程（PyInstaller 等）在
+        # Windows runner 上统一走 UTF-8，避免打印中文时 cp1252 编码崩溃。
+        env:
+          PYTHONUTF8: "1"
         run: |
           python scripts/bump_version.py --rebuild "${{ steps.version.outputs.version }}" --force
 
       - name: Extract release notes from CHANGELOG
         id: notes
         shell: python
+        # Windows runner 默认 stdout 编码为 cp1252，print 中文会抛
+        # UnicodeEncodeError。PYTHONUTF8=1 强制整个 Python 进程走 UTF-8 IO。
+        env:
+          PYTHONUTF8: "1"
         run: |
           import re, sys
           from pathlib import Path
