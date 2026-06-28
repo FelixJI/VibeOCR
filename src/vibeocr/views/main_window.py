@@ -607,17 +607,19 @@ class MainWindow(QMainWindow):
                 self._pdf_tab.set_ocr_service(cast("OCRServiceBase", paddlex_service))
                 logging.debug("[MainWindow] PDF 处理标签页已连接服务")
 
-            # 子进程就绪后，触发预加载（如果配置了预加载管道）
-            # 预加载完成后再显示"OCR 服务已就绪"
+            # 子进程就绪后，触发 TTL 下发 + 可选预加载
+            # TTL 总是需要下发，预加载仅当配置了管道且启用时执行
+            # 全部在后台线程，不阻塞 GUI
+            self._start_subprocess_preload()
+
+            # 状态提示：根据是否预加载显示不同消息
             from vibeocr.managers.config_manager import ConfigManager
 
             cm = ConfigManager.instance()
             pipelines = cm.get_preload_pipelines()
             if pipelines and cm.get_preload_enabled():
                 self._statusbar.showMessage("正在预热 OCR 模型...")
-                self._start_subprocess_preload()
             else:
-                # 没有配置预加载管道，直接显示就绪
                 self._statusbar.showMessage("OCR 服务已就绪")
         else:
             logging.warning("[MainWindow] 子进程 Worker 启动失败")
@@ -660,50 +662,56 @@ class MainWindow(QMainWindow):
             self._single_tab.show_waiting_message(message)
 
     def _start_subprocess_preload(self) -> None:
-        """在子进程中预加载用户配置的管道"""
+        """在子进程中下发 TTL 并（可选）预加载用户配置的管道
+
+        全部操作在 SubprocessManager 的后台线程执行，避免阻塞 GUI 主线程。
+        TTL 无论是否启用预加载都会下发。
+        """
         if not self._subprocess_manager.is_ready:
             return
 
-        # 下发用户配置的 TTL 到 worker（无论是否预加载）
+        # 读取用户配置的 TTL（无论是否预加载都需要下发）
         from vibeocr.managers.config_manager import ConfigManager
 
         try:
             ttl = ConfigManager.instance().get_pipeline_ttl_seconds()
-            service = self._subprocess_manager.service
-            if service is None:
-                logging.warning("[子进程预加载] service 未就绪，跳过 TTL 下发")
-                return
-            service.set_pipeline_ttl(ttl)
-            logging.debug("[子进程预加载] 已下发 TTL=%d 到 worker", ttl)
         except Exception as e:
-            logging.warning("[子进程预加载] 下发 TTL 失败: %s", e)
+            logging.warning("[子进程预加载] 读取 TTL 配置失败: %s", e)
+            ttl = None
 
-        # 获取用户配置的预加载管道
+        # 读取用户配置的预加载管道
         from vibeocr.core.pipelines import OCRPipeline
 
         cm = ConfigManager.instance()
         if not cm.get_preload_enabled():
-            logging.debug("[子进程预加载] 预加载已禁用")
+            logging.debug("[子进程预加载] 预加载已禁用，仅下发 TTL")
+            # 仍然下发 TTL（后台线程）
+            self._subprocess_manager.preload_pipelines([], ttl_seconds=ttl)
             return
 
         raw_pipelines = cm.get_preload_pipelines()
 
-        # 过滤无效的管道名称
+        # 过滤无效的管道名称（大小写不敏感匹配，兼容历史小写配置）
         valid_values = {p.value for p in OCRPipeline}
-        pipelines = [p for p in raw_pipelines if p in valid_values]
+        value_lower_map = {p.value.lower(): p.value for p in OCRPipeline}
+        pipelines: list[str] = []
+        invalid: set[str] = set()
+        for p in raw_pipelines:
+            if p in valid_values:
+                pipelines.append(p)
+            elif p.lower() in value_lower_map:
+                # 历史小写配置自动归一化到标准值
+                pipelines.append(value_lower_map[p.lower()])
+            else:
+                invalid.add(p)
 
-        if set(raw_pipelines) != set(pipelines):
-            invalid = set(raw_pipelines) - set(pipelines)
+        if invalid:
             logging.warning(f"[子进程预加载] 忽略无效管道: {invalid}")
-
-        if not pipelines:
-            logging.debug("[子进程预加载] 未配置预加载管道")
-            return
 
         logging.debug(f"[子进程预加载] 开始预加载管道: {pipelines}")
 
-        # 使用 SubprocessManager 预加载
-        self._subprocess_manager.preload_pipelines(pipelines)
+        # TTL 下发与预加载均在后台线程执行
+        self._subprocess_manager.preload_pipelines(pipelines, ttl_seconds=ttl)
 
     def _show_install_dialog(self, missing: list) -> None:
         """显示后端选择 + 安装对话框（首启合并对话框）"""

@@ -543,11 +543,14 @@ def run_worker(shm_name: str, shm_size: int, use_gpu: bool) -> None:
                             json.dumps({"released": released}).encode("utf-8"),
                             sender="worker",
                         )
+                        # 等待主进程读取响应，避免读回自己刚写的消息
+                        protocol.wait_for_read(timeout=5.0)
                     except Exception as e:
                         logger.error("[Worker] 释放管道失败: %s", e)
                         protocol.write_message(
                             MSG_ERROR, str(e).encode("utf-8"), sender="worker"
                         )
+                        protocol.wait_for_read(timeout=5.0)
 
                 elif msg_type == MSG_SET_TTL:
                     # 更新 TTL
@@ -559,11 +562,14 @@ def run_worker(shm_name: str, shm_size: int, use_gpu: bool) -> None:
                         ocr_service.cache_manager.ttl_seconds = ttl
                         logger.info("[Worker] TTL 更新为 %d 秒", ttl)
                         protocol.write_message(MSG_ACK, b"ok", sender="worker")
+                        # 等待主进程读取响应，避免读回自己刚写的消息
+                        protocol.wait_for_read(timeout=5.0)
                     except Exception as e:
                         logger.error("[Worker] 设置 TTL 失败: %s", e)
                         protocol.write_message(
                             MSG_ERROR, str(e).encode("utf-8"), sender="worker"
                         )
+                        protocol.wait_for_read(timeout=5.0)
 
                 elif msg_type == MSG_READY:
                     # Worker 不应该读取到自己的 READY 消息

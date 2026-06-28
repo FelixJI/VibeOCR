@@ -94,21 +94,41 @@ class PreloadSignals(QObject):
 
 
 class PreloadTask(QRunnable):
-    """预加载任务（在后台线程执行）"""
+    """预加载任务（在后台线程执行）
+
+    在后台线程下发 TTL 并预加载/预热管道，避免阻塞 GUI 主线程。
+    """
 
     def __init__(
         self,
         service: "OCRServiceSubprocess",
         pipelines: list[str],
+        ttl_seconds: int | None = None,
     ) -> None:
         super().__init__()
         self._service = service
         self._pipelines = pipelines
+        self._ttl_seconds = ttl_seconds
         self.signals = PreloadSignals()
 
     def run(self) -> None:
-        """预加载管道并预热"""
+        """下发 TTL、预加载管道并预热"""
         try:
+            # 先下发 TTL（无论是否预加载，TTL 配置都需要同步到 worker）
+            if self._ttl_seconds is not None:
+                try:
+                    self._service.set_pipeline_ttl(self._ttl_seconds)
+                    logger.debug(
+                        f"[SubprocessManager] 已下发 TTL={self._ttl_seconds} 到 worker"
+                    )
+                except Exception as e:
+                    logger.warning(f"[SubprocessManager] 下发 TTL 失败: {e}")
+
+            if not self._pipelines:
+                logger.debug("[SubprocessManager] 未配置预加载管道，仅完成 TTL 下发")
+                self.signals.finished.emit({})
+                return
+
             results = self._service.preload_pipelines(self._pipelines)
             success_count = sum(1 for v in results.values() if v)
             logger.debug(
@@ -224,23 +244,33 @@ class SubprocessManager(QObject):
         else:
             logger.warning("[SubprocessManager] 子进程服务启动失败")
 
-    def preload_pipelines(self, pipelines: list[str]) -> None:
-        """预加载管道
+    def preload_pipelines(
+        self,
+        pipelines: list[str],
+        ttl_seconds: int | None = None,
+    ) -> None:
+        """预加载管道（在后台线程执行，同时下发 TTL）
 
         Args:
-            pipelines: 要预加载的管道名称列表
+            pipelines: 要预加载的管道名称列表（可为空，此时仅下发 TTL）
+            ttl_seconds: 可选的 TTL 秒数，下发到 worker
         """
         if not self._service:
             logger.warning("[SubprocessManager] 服务未就绪，无法预加载")
             return
 
-        if not pipelines:
-            logger.debug("[SubprocessManager] 未配置预加载管道")
+        if not pipelines and ttl_seconds is None:
+            logger.debug("[SubprocessManager] 无预加载管道且无需下发 TTL")
             return
 
-        logger.debug(f"[SubprocessManager] 开始预加载管道: {pipelines}")
+        logger.debug(
+            f"[SubprocessManager] 开始预加载管道: {pipelines}"
+            + (f"，下发 TTL={ttl_seconds}" if ttl_seconds is not None else "")
+        )
 
-        self._preload_task = PreloadTask(self._service, pipelines)
+        self._preload_task = PreloadTask(
+            self._service, pipelines, ttl_seconds=ttl_seconds
+        )
         self._preload_task.signals.finished.connect(self._on_preload_done)
         self._thread_pool.start(self._preload_task)
 
