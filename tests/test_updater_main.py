@@ -57,12 +57,12 @@ class TestVerifyZip:
 
 
 class TestVerifySha256:
-    def test_missing_sha256_file_skipped(self, updater, tmp_path):
-        """校验文件缺失时按当前约定返回 True（跳过校验）。"""
+    def test_missing_sha256_file_rejected(self, updater, tmp_path):
+        """校验文件缺失时拒绝更新（返回 False），与下载阶段保持一致。"""
         zp = tmp_path / "pkg.zip"
         zp.write_bytes(b"data")
         # 不创建 .sha256 文件
-        assert updater.verify_sha256(zp) is True
+        assert updater.verify_sha256(zp) is False
 
     def test_matching_hash(self, updater, tmp_path):
         zp = tmp_path / "pkg.zip"
