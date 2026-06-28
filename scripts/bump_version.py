@@ -595,7 +595,7 @@ def interactive_menu(current: tuple[int, int, int]) -> tuple[int, int, int] | st
 
     Returns:
         新版本号三元组 / 字符串 "build"（仅打包当前版本，不升级版本号）/
-        字符串 "merge"（合并至 main）/ None（取消）
+        字符串 "merge"（推送快照到 GitHub main）/ None（取消）
     """
     major, minor, patch = current
     current_str = f"{major}.{minor}.{patch}"
@@ -611,7 +611,7 @@ def interactive_menu(current: tuple[int, int, int]) -> tuple[int, int, int] | st
     print(f"  3) Major  (主版本)  {current_str} → {'.'.join(map(str, major_new))}")
     print("  4) 自定义版本号")
     print(f"  5) 仅打包当前版本（{current_str}，不升级版本号）")
-    print("  6) 合并至 main（squash + 整合 CHANGELOG + 打 tag）")
+    print("  6) 推送快照到 GitHub main（单提交 + 整合 CHANGELOG + 打 tag）")
     print("  0) 取消")
     print("请输入选项 [0-6]: ", end="", flush=True)
 
@@ -635,7 +635,7 @@ def interactive_menu(current: tuple[int, int, int]) -> tuple[int, int, int] | st
         # 仅打包当前版本，不升级版本号、不动 git
         return "build"
     if choice == "6":
-        # 合并至 main：由 main() 识别 'merge' 哨兵后调用 cmd_to_main
+        # 推送快照到 GitHub main：由 main() 识别 'merge' 哨兵后调用 cmd_publish_main
         return "merge"
     return None
 
@@ -1184,20 +1184,49 @@ def _working_tree_clean() -> bool:
         return False
 
 
-def cmd_to_main(skip_confirm: bool = False) -> int:
-    """合并 develop → main：squash + 整合 CHANGELOG + 打 tag + 同步回 develop
+PUBLISH_REMOTE = os.environ.get("VIBEOCR_PUBLISH_REMOTE", "GitHub")
+PUBLISH_BRANCH = os.environ.get("VIBEOCR_PUBLISH_BRANCH", "main")
 
-    完整流程见设计文档 §「cmd_to_main() 流程」：
-    1. 预检（develop 分支、工作区干净、develop 领先 main）
+
+def _remote_head_sha(remote: str, branch: str) -> str:
+    """查询远程分支当前 HEAD 的完整 hash（不修改本地 refs）
+
+    Args:
+        remote: 远程名（如 "GitHub"）
+        branch: 分支名（如 "main"）
+
+    Returns:
+        完整 hash 字符串；远程无此分支（空仓库）返回 ""
+    """
+    try:
+        result = subprocess.run(
+            ["git", "ls-remote", remote, f"refs/heads/{branch}"],
+            capture_output=True, encoding="utf-8", check=True,
+        )
+        line = (result.stdout or "").strip().splitlines()
+        if not line:
+            return ""
+        # 格式: "<sha>\trefs/heads/main"
+        return line[0].split("\t", 1)[0].strip()
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return ""
+
+
+def cmd_publish_main(skip_confirm: bool = False) -> int:
+    """把 develop 压成单提交快照，推送到 GitHub main（版本快照链）
+
+    本地不保留 main 分支。每次发版：
+    1. 预检（develop 分支、工作区干净）
     2. 未版本化提交检测（发版安全闸，有则阻止）
     3. 取 develop 当前版本号
     4. 确认提示（skip_confirm=True 时跳过）
-    5. checkout main
-    6. git merge --squash develop
-    7. 重建 main CHANGELOG（generate_consolidated_entry + update_main_changelog）
-    8. git commit "release: vX.Y.Z"
-    9. git tag vX.Y.Z（main 唯一 tag 来源）
-    10. 切回 develop + merge main 同步整合 CHANGELOG 回 develop
+    5. 整合 CHANGELOG（自上次 tag 以来的提交汇总成一条 vX.Y.Z 条目）
+    6. 查询 GitHub main 当前 HEAD（首次为空 → 孤儿提交；否则以其为 parent）
+    7. 用 git commit-tree 造单个 release 提交（develop 全部内容 + 新 CHANGELOG）
+    8. push 到 GitHub main（fast-forward，无需 force）+ push tag
+
+    快照链形态：v0.2.0 → v0.3.0 → ...，每个版本恰好 1 个提交，有父子关系。
+    develop 完整历史不受影响（不改写 hash，不切换分支）。
 
     Args:
         skip_confirm: True 跳过确认提示（用于上游已确认/CI 场景）
@@ -1213,19 +1242,6 @@ def cmd_to_main(skip_confirm: bool = False) -> int:
         print("错误: 工作区不干净，请先提交或暂存改动")
         return 1
 
-    try:
-        ahead = subprocess.run(
-            ["git", "rev-list", "--count", "main..develop"],
-            capture_output=True, encoding="utf-8", check=True,
-        )
-        n_ahead = int(ahead.stdout.strip() or "0")
-    except (subprocess.CalledProcessError, FileNotFoundError, ValueError):
-        print("错误: 无法确定 develop 相对 main 的领先提交数（main 分支是否存在？）")
-        return 1
-    if n_ahead == 0:
-        print("develop 与 main 无差异，无需合并")
-        return 1
-
     # 2. 未版本化提交检测（发版安全闸）
     current = read_current_version(PYPROJECT_TOML)
     current_str = ".".join(map(str, current))
@@ -1239,65 +1255,119 @@ def cmd_to_main(skip_confirm: bool = False) -> int:
 
     # 3-4. 取版本 + 确认
     v_new = current_str
+    remote = PUBLISH_REMOTE
+    branch = PUBLISH_BRANCH
     print(
-        f"将执行：develop → main squash 合并 + 整合 CHANGELOG + 打 tag v{v_new}"
+        f"将执行：develop → {remote}/{branch} 单提交快照 + 整合 CHANGELOG + 打 tag v{v_new}"
     )
-    print("这会切换分支并创建提交。确认继续？[y/N]: ", end="", flush=True)
+    print("本地不切换分支，仅推送远程。确认继续？[y/N]: ", end="", flush=True)
     if not skip_confirm:
         choice = input().strip().lower()
         if choice not in ("y", "yes"):
             print("已取消")
             return 1
 
-    # 5. checkout main
+    # 5. 整合 CHANGELOG（自上次 tag 以来的提交 → 单条 vX.Y.Z 条目）
+    #    用 git describe 找最近 tag 作为范围下界；无 tag 则取全部历史
     try:
-        subprocess.run(["git", "checkout", "main"], check=True)
-    except subprocess.CalledProcessError as e:
-        print(f"错误: 切换到 main 失败: {e}")
-        return 1
+        describe = subprocess.run(
+            ["git", "describe", "--tags", "--abbrev=0"],
+            capture_output=True, encoding="utf-8", check=True,
+        )
+        last_tag = describe.stdout.strip()
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        last_tag = ""
 
-    # 6. squash merge
-    try:
-        subprocess.run(["git", "merge", "--squash", "develop"], check=True)
-    except subprocess.CalledProcessError as e:
-        print(f"错误: squash 合并失败: {e}")
-        return 1
-
-    # 7. 重建 main CHANGELOG
-    commits = _collect_commits("main..develop")
+    if last_tag:
+        commits = _collect_commits(f"{last_tag}..HEAD")
+    else:
+        commits = _collect_commits("HEAD")
     entry = generate_consolidated_entry(v_new, commits)
     update_main_changelog(entry)
-    print(f"  已整合 CHANGELOG（v{v_new}，{len(commits)} 个提交）")
+    print(f"  已整合 CHANGELOG（v{v_new}，{len(commits)} 个提交，自 {last_tag or '初始'}）")
 
-    # 8. commit
+    # 6. 查询 GitHub main 当前 HEAD，决定 parent
+    parent_sha = _remote_head_sha(remote, branch)
+    if parent_sha:
+        # 拉取 parent 到本地对象库（commit-tree -p 需要它在本地）
+        try:
+            subprocess.run(
+                ["git", "fetch", remote, branch],
+                capture_output=True, encoding="utf-8", check=True,
+            )
+        except subprocess.CalledProcessError as e:
+            print(f"错误: 拉取 {remote}/{branch} 失败: {e}")
+            return 1
+        print(f"  {remote}/{branch} 当前 HEAD: {parent_sha[:12]}（将作为 parent）")
+    else:
+        print(f"  {remote}/{branch} 为空仓库，将创建孤儿单提交")
+
+    # 7. 造单提交：develop 树 + 新 CHANGELOG（写入 index 后用 index 树）
+    #    注意：update_main_changelog 已改工作区文件，需 git add 进 index
     try:
         subprocess.run(["git", "add", str(CHANGELOG)], check=True)
-        subprocess.run(
-            ["git", "commit", "-m", f"release: v{v_new}"], check=True
-        )
+        tree_sha = subprocess.run(
+            ["git", "write-tree"],
+            capture_output=True, encoding="utf-8", check=True,
+        ).stdout.strip()
     except subprocess.CalledProcessError as e:
-        print(f"错误: 提交失败: {e}")
+        print(f"错误: 构建 tree 失败: {e}")
         return 1
 
-    # 9. tag
+    commit_tree_cmd = ["git", "commit-tree", tree_sha, "-m", f"release: v{v_new}"]
+    if parent_sha:
+        commit_tree_cmd += ["-p", parent_sha]
     try:
-        subprocess.run(["git", "tag", f"v{v_new}"], check=True)
-        print(f"  已在 main 打 tag v{v_new}")
+        new_commit = subprocess.run(
+            commit_tree_cmd,
+            capture_output=True, encoding="utf-8", check=True,
+        ).stdout.strip()
     except subprocess.CalledProcessError as e:
-        print(f"警告: 打 tag 失败: {e}")
+        print(f"错误: 创建快照提交失败: {e}")
+        return 1
+    print(f"  已创建快照提交: {new_commit[:12]}")
 
-    # 10. 同步回 develop
+    # 8. push 到远程 main + tag
     try:
-        subprocess.run(["git", "checkout", "develop"], check=True)
         subprocess.run(
-            ["git", "merge", "main", "--no-edit"], check=True
+            ["git", "push", remote, f"{new_commit}:refs/heads/{branch}"],
+            check=True,
         )
-        print("  已同步整合 CHANGELOG 回 develop")
+        print(f"  已推送 {remote}/{branch}")
     except subprocess.CalledProcessError as e:
-        print(f"警告: 同步回 develop 失败: {e}")
+        print(f"错误: 推送 {remote}/{branch} 失败: {e}")
+        print("  （若远程有 unrelated 历史，需首次用 --force；后续应 fast-forward）")
+        return 1
 
-    print(f"\n完成! main 已更新到 v{v_new}，可用 --release 发布")
+    # 9. 打 tag 并推送
+    #    tag 打在 develop HEAD（release 提交）上，而非快照提交。
+    #    原因：快照提交是独立链，与 develop 无共同祖先；若 tag 打在快照上，
+    #    下次发版算 {tag}..HEAD 会返回 develop 全部历史（范围计算错误）。
+    #    tag 打在 develop HEAD 上 → 下次 {tag}..HEAD 正确只算新增提交。
+    #    推送 tag 时 git 会把 develop HEAD 提交对象一并推到远程对象库，
+    #    GitHub Release API 即可通过此 tag 找到提交。
+    try:
+        subprocess.run(
+            ["git", "tag", "-f", f"v{v_new}", "HEAD"],
+            capture_output=True, encoding="utf-8", check=True,
+        )
+        subprocess.run(
+            ["git", "push", remote, f"refs/tags/v{v_new}"],
+            check=True,
+        )
+        print(f"  已在 develop HEAD 打 tag v{v_new} 并推送")
+    except subprocess.CalledProcessError as e:
+        print(f"警告: 打/推 tag 失败: {e}")
+
+    # 9. CHANGELOG 已写入 develop 工作区，提示提交回 develop
+    print(f"\n完成! {remote}/{branch} 已更新到 v{v_new}（单提交快照）")
+    print("  CHANGELOG.md 已更新，请提交回 develop: git add CHANGELOG.md && git commit")
+    print(f"  可用 --release 发布产物（Release 会关联到 v{v_new} tag）")
     return 0
+
+
+# 向后兼容别名（旧调用方/文档引用 cmd_to_main）
+cmd_to_main = cmd_publish_main
 
 
 class _Args(argparse.Namespace):
@@ -1379,14 +1449,14 @@ def main() -> int:
         "--to-main",
         action="store_true",
         dest="to_main",
-        help="合并 develop → main（squash + 整合 CHANGELOG + 打 tag）",
+        help="推送 develop 快照到 GitHub main（单提交 + 整合 CHANGELOG + 打 tag）",
     )
 
     args = parser.parse_args(namespace=_Args())
 
-    # 模式: 合并至 main
+    # 模式: 推送快照到 GitHub main
     if args.to_main:
-        return cmd_to_main(skip_confirm=args.no_edit)
+        return cmd_publish_main(skip_confirm=args.no_edit)
 
     # 模式0: 构建并发布
     if args.release:
@@ -1451,8 +1521,8 @@ def main() -> int:
             # 仅打包当前版本（不升级版本号、不动 git）
             return 0 if _run_build(current_str, force=args.force) else 1
         if new_version == "merge":
-            # 合并至 main（菜单选项 6 的哨兵）
-            return cmd_to_main(skip_confirm=args.no_edit)
+            # 推送快照到 GitHub main（菜单选项 6 的哨兵）
+            return cmd_publish_main(skip_confirm=args.no_edit)
     elif args.version in ("patch", "minor", "major"):
         new_version = bump_version(current, args.version)
     elif SEMVER_RE.match(args.version):
@@ -1494,12 +1564,12 @@ def main() -> int:
         print(f"警告: git 操作失败: {e}")
         return 1
 
-    # 先问是否合并至 main（更重操作优先）；否决后再问打包
+    # 先问是否推送快照到 GitHub main（更重操作优先）；否决后再问打包
     merged = False
     if not args.no_edit:
-        print("\n是否立即合并至 main 并发版？[y/N]: ", end="", flush=True)
+        print("\n是否立即推送快照到 GitHub main 并发版？[y/N]: ", end="", flush=True)
         if input().strip().lower() in ("y", "yes"):
-            rc_merge = cmd_to_main(skip_confirm=True)
+            rc_merge = cmd_publish_main(skip_confirm=True)
             merged = rc_merge == 0
 
     if not merged and not args.no_build and _ask_build(new_str):
