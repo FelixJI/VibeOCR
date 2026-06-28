@@ -134,6 +134,11 @@ def setup_logging() -> QtLogHandler:
         "huggingface_hub",
         "filelock",
         "asyncio",
+        # 更新检查走 qasync+httpx/httpcore，DEBUG 级会刷出大量 IO 轮询日志
+        # （每读一个 64KB chunk 打两行 poll/event），把真正有用的 INFO 淹没。
+        "qasync",
+        "httpcore",
+        "httpx",
     )
     for name in _noisy_loggers:
         logging.getLogger(name).setLevel(logging.WARNING)

@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.3] - 2026-06-28
+
+### Fixed
+- fix(updater): 修复更新静默失败——updater 写文件日志、解决 updater.exe 自替换锁死
+
+### Changed
+- ci(release): 发版后同步代码镜像与 Release 产物到 Gitee
+
 ## \[0.2.2] - 2026-06-28
 
 ### Fixed

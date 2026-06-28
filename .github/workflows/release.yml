@@ -119,3 +119,130 @@ jobs:
             dist/VibeOCR-v${{ steps.version.outputs.version }}-win64.zip.sha256
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # -------------------------------------------------------------------
+      # Gitee 同步（代码镜像 + Release 产物）
+      # -------------------------------------------------------------------
+      # 两步都读 secrets.GITEE_TOKEN；token 缺失或任一步失败时只发 ::warning::，
+      # 不阻断 job —— 保证 GitHub 发版永远成功，Gitee 可事后补。
+      # owner/repo 与 src/vibeocr/services/update_service.py 的 _GITEE_OWNER/_GITEE_REPO 对齐。
+
+      - name: Mirror code to Gitee (all refs)
+        id: gitee_mirror
+        # actions/checkout@v5 默认浅克隆（fetch-depth:1）且只 fetch 触发的那一个 ref，
+        # 做不了 --mirror。这里显式 fetch 全部分支 + tag 到本地 refs，再 --mirror 推。
+        shell: bash
+        env:
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+        run: |
+          if [ -z "$GITEE_TOKEN" ]; then
+            echo "::warning::未配置 secrets.GITEE_TOKEN，跳过 Gitee 代码镜像"
+            exit 0
+          fi
+
+          set +e
+          # 补齐完整历史（已完整时该命令无害）
+          git fetch --unshallow 2>/dev/null
+          # 拉取所有 heads + tag 到本地 refs（checkout 默认不带这些 refspec）
+          git fetch --force origin \
+            '+refs/heads/*:refs/heads/*' \
+            '+refs/tags/*:refs/tags/*'
+
+          GITEE_URL="https://oauth2:${GITEE_TOKEN}@gitee.com/felixjii/vibeocr.git"
+          # --mirror 推送所有 refs（heads + tags），并删除远端已不存在的引用。
+          # 首次推送到空仓库同样适用。
+          git push --mirror "$GITEE_URL"
+          status=$?
+          if [ $status -ne 0 ]; then
+            echo "::warning::Gitee 代码镜像失败 (exit $status)，不阻断发版"
+            exit 0
+          fi
+          echo "Gitee 代码镜像成功"
+
+      - name: Sync release assets to Gitee
+        id: gitee_release
+        shell: python
+        env:
+          PYTHONUTF8: "1"
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          import json
+          import os
+          import sys
+          import urllib.request
+          from pathlib import Path
+
+          token = os.environ.get("GITEE_TOKEN", "")
+          if not token:
+              print("::warning::未配置 secrets.GITEE_TOKEN，跳过 Gitee Release 同步")
+              sys.exit(0)
+
+          version = os.environ["VERSION"]
+          owner, repo = "felixjii", "vibeocr"
+          api_base = f"https://gitee.com/api/v5/repos/{owner}/{repo}"
+
+          zip_path = Path(f"dist/VibeOCR-v{version}-win64.zip")
+          sha_path = Path(f"dist/VibeOCR-v{version}-win64.zip.sha256")
+          notes = Path("release_notes.md")
+          body = notes.read_text(encoding="utf-8") if notes.exists() else f"VibeOCR v{version}"
+
+          try:
+              # 1) 创建 Release（契约对齐 bump_version.py:_upload_to_gitee）
+              data = {
+                  "access_token": token,
+                  "tag_name": f"v{version}",
+                  "name": f"v{version}",
+                  "body": body,
+                  "target_commitish": "main",
+              }
+              req = urllib.request.Request(
+                  f"{api_base}/releases",
+                  data=json.dumps(data).encode("utf-8"),
+                  headers={"Content-Type": "application/json"},
+                  method="POST",
+              )
+              with urllib.request.urlopen(req, timeout=60) as resp:
+                  release = json.loads(resp.read().decode("utf-8"))
+              release_id = release["id"]
+              print(f"Gitee Release 创建成功 id={release_id}")
+
+              # 2) 上传 zip + sha256 附件
+              boundary = "----vibeocr-boundary"
+              for path in (zip_path, sha_path):
+                  if not path.exists():
+                      print(f"::warning::附件不存在，跳过: {path}")
+                      continue
+                  with open(path, "rb") as f:
+                      file_bytes = f.read()
+                  parts = []
+                  parts.append(f"--{boundary}\r\n".encode())
+                  parts.append(
+                      f'Content-Disposition: form-data; name="access_token"\r\n\r\n'
+                      f"{token}\r\n".encode()
+                  )
+                  parts.append(f"--{boundary}\r\n".encode())
+                  parts.append(
+                      f'Content-Disposition: form-data; name="file"; '
+                      f'filename="{path.name}"\r\n'
+                      f"Content-Type: application/octet-stream\r\n\r\n".encode()
+                  )
+                  parts.append(file_bytes)
+                  parts.append(f"\r\n--{boundary}--\r\n".encode())
+                  body_bytes = b"".join(parts)
+
+                  req = urllib.request.Request(
+                      f"{api_base}/releases/{release_id}/attach_files",
+                      data=body_bytes,
+                      headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+                      method="POST",
+                  )
+                  with urllib.request.urlopen(req, timeout=300) as resp:
+                      resp.read()
+                  print(f"  上传附件成功: {path.name}")
+
+              print("Gitee Release 同步完成")
+          except Exception as e:
+              # 失败不阻断：GitHub 发版已成功，Gitee 可事后补
+              print(f"::warning::Gitee Release 同步失败: {e}")
+              sys.exit(0)
