@@ -110,7 +110,9 @@ jobs:
           print(f"提取到 {len(body)} 字符的 release notes")
 
       - name: Upload to GitHub Release
-        uses: softprops/action-gh-release@v2
+        # v3 运行在 Node 24 runtime 上，消除 Node 20 弃用警告
+        # （v2 不会得到 Node 24 更新，见 softprops/action-gh-release#654）。
+        uses: softprops/action-gh-release@v3
         with:
           # body 走文件，避免 GitHub Actions 多行字符串注入陷阱
           body_path: release_notes.md
@@ -150,11 +152,15 @@ jobs:
 
           GITEE_URL="https://oauth2:${GITEE_TOKEN}@gitee.com/felixjii/vibeocr.git"
           # --mirror 推送所有 refs（heads + tags），并删除远端已不存在的引用。
-          # 首次推送到空仓库同样适用。
-          git push --mirror "$GITEE_URL"
-          status=$?
+          # 首次推送到空仓库同样适用。Gitee 网络偶发超时，最多重试 3 次。
+          status=1
+          for attempt in 1 2 3; do
+            git push --mirror "$GITEE_URL" && { status=0; break; }
+            echo "Gitee push 第 $attempt 次失败 (exit $?)，等待后重试..."
+            [ "$attempt" -lt 3 ] && sleep $((attempt * 15))
+          done
           if [ $status -ne 0 ]; then
-            echo "::warning::Gitee 代码镜像失败 (exit $status)，不阻断发版"
+            echo "::warning::Gitee 代码镜像失败 (3 次重试后仍失败)，不阻断发版"
             exit 0
           fi
           echo "Gitee 代码镜像成功"
@@ -170,6 +176,8 @@ jobs:
           import json
           import os
           import sys
+          import time
+          import urllib.error
           import urllib.request
           from pathlib import Path
 
@@ -180,6 +188,7 @@ jobs:
 
           version = os.environ["VERSION"]
           owner, repo = "felixjii", "vibeocr"
+          tag = f"v{version}"
           api_base = f"https://gitee.com/api/v5/repos/{owner}/{repo}"
 
           zip_path = Path(f"dist/VibeOCR-v{version}-win64.zip")
@@ -187,27 +196,61 @@ jobs:
           notes = Path("release_notes.md")
           body = notes.read_text(encoding="utf-8") if notes.exists() else f"VibeOCR v{version}"
 
+          def request_with_retry(req, *, attempts=3, base_delay=10):
+              """带指数退避的 urlopen 包装。Gitee 网络偶发超时/5xx，重试可解决。"""
+              last_err = None
+              for i in range(1, attempts + 1):
+                  try:
+                      return urllib.request.urlopen(req, timeout=req.timeout if hasattr(req, "timeout") else 60)
+                  except (urllib.error.URLError, TimeoutError, ConnectionError) as e:
+                      last_err = e
+                      if i == attempts:
+                          raise
+                      delay = base_delay * i
+                      print(f"  请求失败 ({e})，{delay}s 后第 {i + 1} 次尝试...")
+                      time.sleep(delay)
+              raise last_err  # 不可达
+
           try:
-              # 1) 创建 Release（契约对齐 bump_version.py:_upload_to_gitee）
-              data = {
+              # 1) 创建 Release —— 若同名 tag 的 Release 已存在则复用，避免重跑时重复创建。
+              #    （契约对齐 bump_version.py:_upload_to_gitee）
+              data = json.dumps({
                   "access_token": token,
-                  "tag_name": f"v{version}",
-                  "name": f"v{version}",
+                  "tag_name": tag,
+                  "name": tag,
                   "body": body,
                   "target_commitish": "main",
-              }
+              }).encode("utf-8")
               req = urllib.request.Request(
                   f"{api_base}/releases",
-                  data=json.dumps(data).encode("utf-8"),
+                  data=data,
                   headers={"Content-Type": "application/json"},
                   method="POST",
               )
-              with urllib.request.urlopen(req, timeout=60) as resp:
+              req.timeout = 60
+              try:
+                  resp = request_with_retry(req)
                   release = json.loads(resp.read().decode("utf-8"))
-              release_id = release["id"]
-              print(f"Gitee Release 创建成功 id={release_id}")
+                  resp.close()
+                  release_id = release["id"]
+                  print(f"Gitee Release 创建成功 id={release_id}")
+              except urllib.error.HTTPError as e:
+                  # 409/422 等通常表示该 tag 的 release 已存在 → 列出后复用
+                  if e.code in (409, 422):
+                      list_req = urllib.request.Request(
+                          f"{api_base}/releases/tags/{tag}?access_token={token}",
+                          method="GET",
+                      )
+                      list_req.timeout = 60
+                      resp = request_with_retry(list_req)
+                      release = json.loads(resp.read().decode("utf-8"))
+                      resp.close()
+                      release_id = release["id"]
+                      print(f"Gitee Release 已存在，复用 id={release_id}")
+                  else:
+                      raise
 
-              # 2) 上传 zip + sha256 附件
+              # 2) 上传 zip + sha256 附件。大文件写超时是常见失败点，重试 + 长超时。
               boundary = "----vibeocr-boundary"
               for path in (zip_path, sha_path):
                   if not path.exists():
@@ -215,30 +258,28 @@ jobs:
                       continue
                   with open(path, "rb") as f:
                       file_bytes = f.read()
-                  parts = []
-                  parts.append(f"--{boundary}\r\n".encode())
-                  parts.append(
-                      f'Content-Disposition: form-data; name="access_token"\r\n\r\n'
-                      f"{token}\r\n".encode()
-                  )
-                  parts.append(f"--{boundary}\r\n".encode())
-                  parts.append(
-                      f'Content-Disposition: form-data; name="file"; '
-                      f'filename="{path.name}"\r\n'
-                      f"Content-Type: application/octet-stream\r\n\r\n".encode()
-                  )
-                  parts.append(file_bytes)
-                  parts.append(f"\r\n--{boundary}--\r\n".encode())
-                  body_bytes = b"".join(parts)
-
+                  parts = [
+                      f"--{boundary}\r\n".encode(),
+                      (f'Content-Disposition: form-data; name="access_token"\r\n\r\n'
+                       f"{token}\r\n").encode(),
+                      f"--{boundary}\r\n".encode(),
+                      (f'Content-Disposition: form-data; name="file"; '
+                       f'filename="{path.name}"\r\n'
+                       f"Content-Type: application/octet-stream\r\n\r\n").encode(),
+                      file_bytes,
+                      f"\r\n--{boundary}--\r\n".encode(),
+                  ]
                   req = urllib.request.Request(
                       f"{api_base}/releases/{release_id}/attach_files",
-                      data=body_bytes,
+                      data=b"".join(parts),
                       headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
                       method="POST",
                   )
-                  with urllib.request.urlopen(req, timeout=300) as resp:
-                      resp.read()
+                  # zip 较大，给足 300s；重试 3 次。
+                  req.timeout = 300
+                  resp = request_with_retry(req, attempts=3, base_delay=15)
+                  resp.read()
+                  resp.close()
                   print(f"  上传附件成功: {path.name}")
 
               print("Gitee Release 同步完成")
