@@ -27,6 +27,21 @@ from datetime import date
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
+# stdout/stderr 强制 UTF-8
+# ---------------------------------------------------------------------------
+# Windows 默认控制台编码常为 cp1252/gbk，无法编码脚本里的中文（如
+# "[1/5] 打包主程序..."），在 GitHub Actions windows-latest 上会抛
+# UnicodeEncodeError 直接退出码 1。这里在导入后第一时间把标准输出/错误
+# 流切到 UTF-8，保证任何 Windows 环境（CI、本地、任意代码页）都能正常打印。
+# reconfigure 失败（极旧 Python 或非 TextI/O）时降级为 errors="replace"，
+# 绝不因编码设置本身抛异常。
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
+
+# ---------------------------------------------------------------------------
 # 常量 — 支持通过环境变量覆盖（便于测试）
 # ---------------------------------------------------------------------------
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
