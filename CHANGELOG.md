@@ -1,739 +1,754 @@
 # Changelog
 
-## [0.2.1] - 2026-06-28
+## \[0.2.2] - 2026-06-28
 
 ### Fixed
-- fix(ci): 强制 stdout/stderr UTF-8，修复 Windows CI 中文打印崩溃；升级 checkout/setup-python 消 Node20 警告
+
+* fix(release): CHANGELOG 改回 develop bump 时生成编辑提交；修 CI 内联 Python cp1252 崩溃
+
+## \[0.2.1] - 2026-06-28
+
+### Fixed
+
+* fix(ci): 强制 stdout/stderr UTF-8，修复 Windows CI 中文打印崩溃；升级 checkout/setup-python 消 Node20 警告
 
 ### Changed
-- docs(changelog): 整合 v0.2.0 发布条目（GitHub main 首次快照）
 
-## [0.2.0] - 2026-06-28
+* docs(changelog): 整合 v0.2.0 发布条目（GitHub main 首次快照）
+
+## \[0.2.0] - 2026-06-28
 
 ### Added
-- feat(single-tab): 复制原始图片到剪贴板 + 浮层提示
-- feat(single-tab): 复制图片按钮启用控制（有图启用/PDF禁用）
-- feat(single-tab): 新增「复制图片」按钮（默认禁用）
-- feat(preview): 暴露 original_pixmap() getter 供复制原图
-- feat(clipboard): 截图复制同时写入文件格式，支持粘贴到文件夹
-- feat(ci): 增加 GitHub Actions 推送 tag 自动打包发版流程
-- feat(mineru): 首次使用 PDF 文档解析时下载模型 + 进度提示
-- feat(bump): 选项 5 未版本化警告 + 选项 1-4 串联合并提示
-- feat(bump): 接线 merge 哨兵到 main() 交互式分支
-- feat(bump): 实现 cmd_to_main 合并至 main 完整流程
-- feat(bump): 交互式菜单新增选项 6 合并至 main
-- feat(bump): 新增 update_main_changelog 顶部插入整合条目
-- feat(bump): 新增 check_unversioned_commits 发版安全闸
-- feat(bump): 新增 generate_consolidated_entry 整合生成单条 CHANGELOG
-- feat(settings): 连接补充安装按钮，依赖状态表格填充版本与状态
-- feat(ui): 设置页新增补充安装按钮与依赖状态表格
-- feat(dialog): BackendChoiceDialog 透传 missing_only + 失败弹窗提示重试
-- feat(install): InstallWorker 支持 missing_only 标志分流增量/全量安装
-- feat(env): 新增 install_missing_dependencies/get_dependency_versions，失败 logger.error 全文
-- feat(env): _install_paddle_stack 支持 requirements_override 增量子集
-- feat(bump): 交互式菜单新增'仅打包当前版本'选项
-- feat(settings): 应用设置页连接重装 Python/依赖按钮 + 状态刷新
-- feat(ui): 应用设置页新增'环境维护'分组（重装按钮）
-- feat(dialog): BackendChoiceDialog 透传 reinstall_python
-- feat(install): InstallWorker 加 reinstall_python + 进度日志镜像
-- feat(env): 新增 reinstall_embedded_python 强制删除后重装
-- feat(pdf-preview): 预览窗口翻页工具栏+键盘+信号注入；块编辑刷新弹窗
-- feat(pdf-tab): 缩略图增量更新——拖拽只移item不渲染、旋转逐页渲染
-- feat(pdf-tab): 网格 ↔ 缩略图双向选中同步（重入保护 + 多选）
-- feat(pdf-tab): OCR 逐页即时变绿 + 删除文字层逐页变灰，移除缩略图无谓渲染
-- feat(pdf-tab): 文字层状态网格化（IconMode + delegate + 图例汇总）
-- feat(about): 关于页卡片化重写——品牌/信息/日志三卡片 + token 配色
-- feat(theme): main.py 加载全局浅色 QSS
-- feat(theme): 新建浅色 token 模块 ui/theme.py + QSS 生成器
-- feat(ui): apply new app icon across runtime, packaging, and About page
-- feat(pdf-service): embed subset CJK font in text layer for cross-reader search
-- feat(cjk-font): module singleton + atexit cleanup hook
-- feat(cjk-font): fontTools subsetting + resolve/cleanup with charset cache
-- feat(cjk-font): system CJK font detection with caching
-- feat(ui): pipeline TTL spin + release heavy/all buttons in settings
-- feat(rpc): worker RELEASE_PIPELINES/SET_TTL handlers + evict_idle + subprocess client
-- feat(rpc+config): RELEASE_PIPELINES/SET_TTL msg types + TTL/max_heavy settings
-- feat(ocr-service): integrate PipelineCacheManager (touch + FIFO on create)
-- feat(cache): PipelineCacheManager with VRAM-tiered max_heavy, FIFO eviction, TTL idle reclaim, explicit release
-- feat(pipelines): mark heavy pipelines (PP-V3/VL/MinerU) in metadata
-- feat(pdf): dynamic BATCH_SIZE based on GPU VRAM / CPU RAM
-- feat(utils): add estimate_cpu_batch_size for RAM-based dynamic batching
-- feat(gpu): add estimate_gpu_batch_size pure function for PDF dynamic batching
-- feat(utils): add system_memory.get_available_ram_mb (cross-platform, stdlib-only)
-- feat(mineru): bind JobObjectGuard to mineru-api subprocess
-- feat(worker): bind JobObjectGuard to PaddleX worker subprocess
-- feat(job-object): implement close handle with idempotency
-- feat(job-object): implement assign_from_popen process binding
-- feat(job-object): implement CreateJobObjectW with kill-on-close flags
-- feat(job-object): add JobObjectGuard non-Windows no-op skeleton
-- feat: CUDA 运行时改用 torch/lib，统一 cu126，CPU 禁用 mkldnn
-- feat(pdf): status-list context menu to add text layer for selected no-layer pages
-- feat(pdf): soft-guard dialog when adding text layer to pages with existing layer
-- feat(pdf): button to add text layer for pages without one
-- feat(pdf): start_ocr accepts overwrite; add get_pages_without_text_layer
-- feat(pdf): add_text_layer guard against duplicate via overwrite flag
-- feat: auto-preview and failure summary after text-layer OCR completion
-- feat: nested resizable splitters, scrollable status, embedded preview in PdfTab
-- feat: persist pdf splitter state in OCRPreferences
-- feat: accumulate OCR write/skip stats and emit ocr_stats_ready
-- feat: add ocr_stats tracking to PdfSession
-- feat: write Chinese text layer with china-s CID font, return write/skip counts
-- feat: BackendChoiceDialog for first-launch GPU/CPU choice
-- feat: MainWindow consumes pending_backend on restart, shows SwitchDialog
-- feat: SwitchDialog for restart-time backend switching
-- feat: register '推理后端' settings page
-- feat: BackendOptionsWidget for settings page backend switching
-- feat: InstallWorker accepts force_backend to override GPU/CPU auto-detect
-- feat: resolve GPU/CPU at runtime via cache-first fallback
-- feat: rename top tab title from "二维码生成" to "二维码"
-- feat: implement QR decode behavior — paste/drop/select/recognize/open-url
-- feat: build decode sub-panel UI with result list and DecodeResultWidget
-- feat: add QrcodeDecodeService for QR/barcode decoding via pyzbar
-- feat: migrate embedded Python to python-build-standalone
-- feat: migrate MinerU backend names to 3.3 canonical + add effort option
-- feat: restrict PDF text-layer pipelines to OCR/Table/Formula
-- feat: PdfTab reads PDF OCR options from preferences
-- feat: add PDF options page to settings
-- feat: add PdfOptionsWidget with pipeline options and global settings
-- feat: OCRPreferences adds 'pdf' source and PdfGlobalSettings persistence
-- feat: PdfSessionManager passes PdfGlobalSettings to add_text_layer
-- feat: add_text_layer uses inverse rotation and PdfGlobalSettings
-- feat: add bbox inverse rotation transform and pixel conversion
-- feat: add PdfGlobalSettings data model with DPI adjustment
-- feat: wire PdfTab shutdown into MainWindow closeEvent
-- feat: refactor PdfTab for multi-file support with PdfSessionManager
-- feat: add PdfSessionManager for multi-file session orchestration
-- feat: add PdfOcrWorker for async OCR processing
-- feat: add PdfLoadWorker for async page loading
-- feat: add PdfSession dataclass for multi-file PDF state
-- feat(settings): add screenshot panel per-pipeline options page
-- feat(screenshot-panel): read persisted options per-pipeline with tooltips
-- feat(main-ui): per-pipeline option init and save on recognition start
-- feat(preprocess-options): add pipeline_switching/switched signals
-- feat(ocr-preferences): per-pipeline options storage with v1→v2 migration
-- feat(ui): 补齐表格识别和公式识别的完整配置控件及信号连接
-- feat: 统一 OCROptions 补齐 TABLE_RECOGNITION 和 FORMULA_RECOGNITION 缺失字段
-- feat: supported_options 补齐表格识别和公式识别的完整选项声明
-- feat(prefs): 支持 TABLE_RECOGNITION / FORMULA_RECOGNITION 持久化和首次使用提示
-- feat(ui): PreprocessOptionsWidget 支持表格/公式识别管道选项
-- feat(pipelines): 向后兼容 — OCRPipeline 枚举新增 TABLE_RECOGNITION 和 FORMULA_RECOGNITION
-- feat(pipeline): 注册所有管道 PipelineSpec 并导出 get_registry()
-- feat(pipeline): 创建公式识别管道 (FORMULA_RECOGNITION)
-- feat(pipeline): add PipelineSpec and PipelineRegistry for pipeline registration
-- feat(pipelines): 创建四个管道独立 Options 类 (Task 2)
-- feat(pipeline-registry): add BasePipelineOptions base class
-- feat: 坐标映射层重构 - 修复高DPI bbox偏移和预处理旋转归一化
-- feat(mapper): 新增 screenshot_dpr 和 logical_to_screenshot_physical
-- feat(screenshot): 新增 ScreenCoordinateMapper 多屏坐标映射器
-- feat: 集成 PDF 处理标签页到主窗口
-- feat(status): pipeline_status 扩展 PADDLEOCR_VL 管道追踪
-- feat(ui): 文档类管道锁定改造，MineRU 和 PaddleOCR-VL 可互切换
-- feat: 添加 PDF 标签页完整 UI
-- feat(ui): PreprocessOptionsWidget 新增 PaddleOCR-VL 选项组
-- feat(service): 子进程服务三路路由，PADDLEOCR_VL 走 WorkerManager
-- feat: 添加 PDF 独立预览窗口
-- feat(service): OCRService 新增 PADDLEOCR_VL 管道映射和识别方法
-- feat: 添加 PdfService 删除文字层功能
-- feat(options): OCROptions 新增 vl_task 字段支持 PaddleOCR-VL 任务类型
-- feat: 添加 PdfService 文字层写入功能
-- feat(pipeline): 新增 PADDLEOCR_VL 枚举，DOCUMENT_PARSING 改名 MineRU（文档）
-- feat: 添加 PdfService 页面操作（旋转/删除/插入/移动）
-- feat: 添加 PdfService 基础功能（打开/保存/渲染/文字层检测）
-- feat: 添加 PDF 文档数据模型
-- feat(overlay): 连接填充颜色/透明度/联动信号到画布和标注项
-- feat(canvas): 添加 fill_opacity/fill_linked 属性和 setter 方法
-- feat(annotation): 扩展 RectAnnotation/EllipseAnnotation 支持独立填充色和透明度
-- feat: paintEvent 绘制窗口检测高亮
-- feat: mousePressEvent HOVER 点击选中 / DRAG 切换
-- feat: mouseMoveEvent HOVER 子状态窗口检测
-- feat: start_capture 初始化 WindowDetector
-- feat: ScreenCaptureOverlay 新增 HOVER/DRAG 子状态属性
-- feat: WindowDetector._get_control_rect — IAccessible + EnumChildWindows 降级
-- feat: WindowDetector._get_window_rect 实现
-- feat: WindowDetector 基础框架 — _hit_test 窗口检测
-- feat: 首次识别失败时提示保持网络畅通
-- feat: 识别前显示首次使用提示
-- feat: 添加 pipeline_status 管道成功记录模块
-- feat: UI 选项面板新增语言下拉和页码范围控件
-- feat: MinerUService API 参数对齐 — 默认后端改为 hybrid、新增 lang_list/页面范围参数、回退链反转、响应状态校验
-- feat: add content_list normalization layer (legacy + V2 formats)
-- feat: DOCUMENT_PARSING supported_options 新增 lang_list/start_page_id/end_page_id
-- feat: 扩展 OCROptions 新增 lang_list/start_page_id/end_page_id 字段，默认后端改为 hybrid-auto-engine
-- feat: 连接右侧编辑信号并实现数据同步
-- feat: 添加 ResultViewWidget.update_block_text 方法
-- feat: 添加右侧结果视图的 contenteditable 编辑交互逻辑
-- feat: 添加 Bridge blockEdited 信号和 ResultViewWidget block_edited 信号
-- feat: bump_version 添加 --release 命令，支持 Gitee/GitHub 发布
-- feat: bump_version 增强 — version.json、updater.exe、zip 打包、SHA256
-- feat: 集成更新检查到启动流程和关于页面
-- feat: 新增 updater_main.py 独立更新助手脚本
-- feat: 新增 update_service — 版本检查、下载校验、跳过版本、更新对话框、编排器
-- feat: 新增 data/ 目录路径函数，用于更新系统
-- feat: 引入 Pillow 替换马赛克/模糊效果实现
-- feat: 工具栏添加"选择"按钮，默认选中选择模式
-- feat: 连接属性条信号到选中标注项，支持实时属性修改
-- feat: ToolPropertiesBar 支持选中项属性编辑，新增通用属性页
-- feat: EditCanvas 集成 SelectionDecorator 生命周期管理
-- feat: 创建 SelectionDecorator，支持 8 个手柄的选中态装饰器
-- feat: MosaicItem/BlurItem 添加 resize 支持（_resizing 标志 + regenerate 方法）
-- feat: 为 RectAnnotation/EllipseAnnotation 添加属性 setter 方法，所有标注项启用 ItemSendsGeometryChanges
-- feat: ScreenCaptureOverlay 集成 SelectionResizeFrame
-- feat: InlineEditCanvas.update_crop_region 更新裁剪区域和平移标注
-- feat: SelectionResizeFrame 选区拖拽手柄控件
-- feat: MosaicItem/BlurItem 新增 update_background 方法
-- feat(toolbar): 用 Lucide SVG 图标替换 Unicode 按钮，统一 QToolButton
-- feat(icons): 添加 Lucide SVG 图标模块用于工具栏按钮
-- feat(log): 转发子进程日志到项目日志系统
-- feat(log): 用 RotatingFileHandler 替换 FileHandler 并集成清理功能
-- feat(log): 添加 _cleanup_old_logs 函数及测试
-- feat: 重写启动性能分析脚本（import/init/render 分层）
-- feat(inline-editor): 将 ScreenCaptureOverlay 集成到 MainWindow
-- feat(inline-editor): 添加带状态机的 ScreenCaptureOverlay
-- feat(inline-editor): 添加带快捷按钮的 InlineRecognitionPanel
-- feat(inline-editor): 添加支持标注的 InlineEditCanvas
-- feat(inline-editor): 添加带图标按钮的 InlineToolbar
-- feat(inline-editor): 添加磨砂玻璃浅色主题样式常量
-- feat(toolbar): 添加专用拖拽手柄，文字替换为图标
-- feat(main-window): 集成 show_toolbar 开关和工具栏位置持久化
-- feat(ui): 添加显示工具栏复选框及缩进子选项
-- feat(toolbar): 添加 position_changed 信号和 set_initial_position
-- feat(settings): 添加 show_toolbar 和 toolbar_pos 属性，兼容旧配置
-- feat(tabs): 添加预处理选项的双向偏好同步
-- feat: 添加 NetworkDetector 支持并行端点探测
-- feat(qrcode): 将 QrcodeTab 集成到 MainWindow
-- feat(qrcode): 添加完整的 QrcodeTab UI 布局和预览
-- feat(qrcode): 添加 QR 码 SVG 导出
-- feat(qrcode): 添加文字标签叠加和颜色反转
-- feat(qrcode): 添加 QR 码 logo 嵌入
-- feat(qrcode): 添加条形码生成（Code128、Code39、EAN-13 等）
-- feat(qrcode): 添加 QrcodeService 提供 QR 码生成
-- feat(widgets): 添加预览组件支持图像显示和屏幕截图功能按钮
-- feat(single-tab): 连接操作按钮 — 文件对话框和剪贴板粘贴
-- feat(single-tab): 在预览上方添加截图/文件/粘贴操作按钮
-- feat(preload): 识别请求排队等待预加载完成，替代抢占机制
-- feat(tabs): 将 OCR 执行逻辑迁移到 SingleRecognitionTab
-- feat(tabs): 创建 SingleRecognitionTab 基础结构
-- feat(widgets): 为 PreviewWidget 添加 PDF、页面导航和 content_list
-- feat(main_window): 为批量识别标签页添加 PaddleX 服务支持
-- feat(ui): 添加文件预览组件和OCR服务功能
-- feat(main): 添加主窗口视图逻辑和应用设置配置
-- feat(ocr): 添加 OCR 服务和 Worker 进程管理功能
-- feat(core): 添加模型缓存管理和OCR服务预加载功能
-- feat: 统一文件对话框，支持所有 MineRU 格式和 Office 预览占位
-- feat: 用 QWebEngineView、block registry 和 KaTeX 重写 result_view_widget
-- feat: 添加离线 KaTeX 资源及更新脚本
-- feat: 为 TextBlock 添加 page_idx，标准化 bbox 到 [0,1000]
-- feat: 添加共享 MIME 类型映射和文件过滤器常量
-- feat(ui): 在设置中添加工具页面用于模型下载
-- feat: 添加关于标签页，含版本、更新日志和应用信息
-- feat: 添加语义版本管理脚本
-- feat: 为 OCR 结果块添加悬停提示标题属性，移除内联置信度显示
-- feat(ocr): 添加 OCR 服务和子进程 worker 支持
-- feat(subprocess): 双 WorkerManager 路由（PaddleX 和 MinerU）
-- feat(worker): 添加 MinerU worker 子进程脚本
-- feat(ui): 添加批量识别标签页和主窗口批量识别功能
-- feat(core): 添加日志服务和主窗口视图
-- feat(batch): 添加批量文件列表组件和批量识别标签页
-- feat(export): 添加 OCR 结果导出功能和服务
-- feat: 将 ModelDownloadDialog 集成到安装流程并添加菜单项
-- feat: 添加 ModelDownloadDialog 模型下载进度 UI
-- feat: 添加 ModelDownloadService 管理模型下载
-- feat: 添加 GPU 环境下 PyTorch CUDA 版本支持
-- feat(env): 更新依赖配置以支持 MinerU 和 PaddlePaddle 环境分离
-- feat(env): 添加 torch 检测和 MinerU 模型下载
-- feat(ui): 添加主窗口视图逻辑实现
-- feat(core): 初始化核心模块和批量识别功能
-- feat(batch): 创建 MinerUBatchService，绕过子进程层直接批量处理
-- feat: MineRU 集成与 PaddlePaddle-GPU 移除
-- feat(routing): DOCUMENT_PARSING 流水线路由到 MinerUService
-- feat(mineru): 实现 MinerU FastAPI 服务封装
-- feat(main): 添加主窗口视图逻辑实现
-- feat(ocr): 增强OCR服务的HTML和Markdown处理功能
-- feat(ui): 实现 OCR 选项持久化及同步功能
-- feat(core): 优化缓存刷新及预加载预热逻辑
-- feat(extraction): 实现抽取功能的工作线程和进度管理
-- feat(tray): 添加系统托盘与边缘工具栏功能集成
-- feat(editor): 添加截图编辑窗口及图像编辑画布功能
-- feat: 重构模型缓存管理器，使用配置文件管理管道模型
-- feat: 统一管道定义和预处理选项，支持全部7个管道
-- feat(config): 支持同时管理 MLLM 和 LLM 配置
-- feat: 添加窗口和组件尺寸可拖动与持久化功能
-- feat(ocr): 基于模型缓存状态的智能超时机制
-- feat(ui): 添加 UI 编译脚本和生成的 Python UI 文件
-- feat(services): 添加 OCRServiceBase 抽象基类
-- feat(services): 添加 env_config 模块用于环境配置
-- feat(views): 添加 BaseOcrTab 轻量级基类
-- feat(managers): 添加 SettingsManager 用于 LLM 配置和模板
-- feat(managers): 添加 SubprocessManager 管理 OCR 子进程生命周期
-- feat(ocr): 新增 PaddleOCR-VL 多模态文档解析管道支持
-- feat(settings): 添加 LLM 配置和模板管理
-- feat(extraction): 将抽取标签页集成到主窗口
-- feat(extraction): 添加 ExtractionWorker 后台抽取
-- feat(extraction): 实现 ExtractionTab 视图
-- feat(extraction): 添加抽取标签页 UI 文件
-- feat(extraction): 添加抽取功能数据模型
-- feat(batch): 实现批量 OCR 识别功能
-- feat(main_window): 将 BatchRecognitionTab 集成到主窗口
-- feat(views): 添加 BatchRecognitionTab 用于批量文件处理
-- feat(widgets): 添加 BatchFileListWidget 用于文件管理
-- feat(widgets): 添加 PreprocessOptionsWidget 用于批量预处理
-- feat(service): 为 OCRServiceSubprocess 添加批量处理接口
-- feat(worker): 集成 BatchQueueManager 用于批量处理
-- feat(workers): 添加 BatchQueueManager 用于批量推理
-- feat(models): 添加 BatchRequest 及相关数据模型
-- feat(utils): 添加 GPUMemoryMonitor 用于动态批量大小估算
-- feat(shared_memory): 添加批量消息类型和序列化函数
-- feat(main): 添加子进程启动进度反馈及预热机制
-- feat(core): 增加子进程OCR服务与管道预加载支持
-- feat(subprocess): 实现 OCR 子进程架构
-- feat(main): 优化OCR线程和增加模型预加载设置界面
-- feat(model_cache): 新增模型缓存管理器以提升启动性能
-- feat(utils): 导出 IndentProcessor 和 IndentConfig
-- feat(converter): 集成 IndentProcessor 和 sane_lists 扩展
-- feat(converter): 添加中文缩进和列表嵌套 CSS 样式
-- feat(indent): 实现 process_markdown 中文段落换行
-- feat(indent): 实现 is_chinese_text 检测方法
-- feat(indent): 添加 IndentProcessor 基类和配置
-- feat(core): 支持多种OCR管道预设及低置信度提示
-- feat: 在主窗口添加刷新缓存菜单项
-- feat: 将缓存集成到依赖检查中
-- feat: 添加缓存验证和操作函数
-- feat: 添加缓存路径和读写函数
-- feat: 使用硬件信息生成机器 ID
-- feat: 为关键操作添加日志
-- feat: 将 ConsoleWidget 集成到主窗口并添加日志
-- feat: 在主窗口 UI 中添加控制台容器
-- feat: 添加基于表格的日志显示 ConsoleWidget
-- feat: 添加带 QtLogHandler 的日志服务
+
+* feat(single-tab): 复制原始图片到剪贴板 + 浮层提示
+* feat(single-tab): 复制图片按钮启用控制（有图启用/PDF禁用）
+* feat(single-tab): 新增「复制图片」按钮（默认禁用）
+* feat(preview): 暴露 original\_pixmap() getter 供复制原图
+* feat(clipboard): 截图复制同时写入文件格式，支持粘贴到文件夹
+* feat(ci): 增加 GitHub Actions 推送 tag 自动打包发版流程
+* feat(mineru): 首次使用 PDF 文档解析时下载模型 + 进度提示
+* feat(bump): 选项 5 未版本化警告 + 选项 1-4 串联合并提示
+* feat(bump): 接线 merge 哨兵到 main() 交互式分支
+* feat(bump): 实现 cmd\_to\_main 合并至 main 完整流程
+* feat(bump): 交互式菜单新增选项 6 合并至 main
+* feat(bump): 新增 update\_main\_changelog 顶部插入整合条目
+* feat(bump): 新增 check\_unversioned\_commits 发版安全闸
+* feat(bump): 新增 generate\_consolidated\_entry 整合生成单条 CHANGELOG
+* feat(settings): 连接补充安装按钮，依赖状态表格填充版本与状态
+* feat(ui): 设置页新增补充安装按钮与依赖状态表格
+* feat(dialog): BackendChoiceDialog 透传 missing\_only + 失败弹窗提示重试
+* feat(install): InstallWorker 支持 missing\_only 标志分流增量/全量安装
+* feat(env): 新增 install\_missing\_dependencies/get\_dependency\_versions，失败 logger.error 全文
+* feat(env): \_install\_paddle\_stack 支持 requirements\_override 增量子集
+* feat(bump): 交互式菜单新增'仅打包当前版本'选项
+* feat(settings): 应用设置页连接重装 Python/依赖按钮 + 状态刷新
+* feat(ui): 应用设置页新增'环境维护'分组（重装按钮）
+* feat(dialog): BackendChoiceDialog 透传 reinstall\_python
+* feat(install): InstallWorker 加 reinstall\_python + 进度日志镜像
+* feat(env): 新增 reinstall\_embedded\_python 强制删除后重装
+* feat(pdf-preview): 预览窗口翻页工具栏+键盘+信号注入；块编辑刷新弹窗
+* feat(pdf-tab): 缩略图增量更新——拖拽只移item不渲染、旋转逐页渲染
+* feat(pdf-tab): 网格 ↔ 缩略图双向选中同步（重入保护 + 多选）
+* feat(pdf-tab): OCR 逐页即时变绿 + 删除文字层逐页变灰，移除缩略图无谓渲染
+* feat(pdf-tab): 文字层状态网格化（IconMode + delegate + 图例汇总）
+* feat(about): 关于页卡片化重写——品牌/信息/日志三卡片 + token 配色
+* feat(theme): main.py 加载全局浅色 QSS
+* feat(theme): 新建浅色 token 模块 ui/theme.py + QSS 生成器
+* feat(ui): apply new app icon across runtime, packaging, and About page
+* feat(pdf-service): embed subset CJK font in text layer for cross-reader search
+* feat(cjk-font): module singleton + atexit cleanup hook
+* feat(cjk-font): fontTools subsetting + resolve/cleanup with charset cache
+* feat(cjk-font): system CJK font detection with caching
+* feat(ui): pipeline TTL spin + release heavy/all buttons in settings
+* feat(rpc): worker RELEASE\_PIPELINES/SET\_TTL handlers + evict\_idle + subprocess client
+* feat(rpc+config): RELEASE\_PIPELINES/SET\_TTL msg types + TTL/max\_heavy settings
+* feat(ocr-service): integrate PipelineCacheManager (touch + FIFO on create)
+* feat(cache): PipelineCacheManager with VRAM-tiered max\_heavy, FIFO eviction, TTL idle reclaim, explicit release
+* feat(pipelines): mark heavy pipelines (PP-V3/VL/MinerU) in metadata
+* feat(pdf): dynamic BATCH\_SIZE based on GPU VRAM / CPU RAM
+* feat(utils): add estimate\_cpu\_batch\_size for RAM-based dynamic batching
+* feat(gpu): add estimate\_gpu\_batch\_size pure function for PDF dynamic batching
+* feat(utils): add system\_memory.get\_available\_ram\_mb (cross-platform, stdlib-only)
+* feat(mineru): bind JobObjectGuard to mineru-api subprocess
+* feat(worker): bind JobObjectGuard to PaddleX worker subprocess
+* feat(job-object): implement close handle with idempotency
+* feat(job-object): implement assign\_from\_popen process binding
+* feat(job-object): implement CreateJobObjectW with kill-on-close flags
+* feat(job-object): add JobObjectGuard non-Windows no-op skeleton
+* feat: CUDA 运行时改用 torch/lib，统一 cu126，CPU 禁用 mkldnn
+* feat(pdf): status-list context menu to add text layer for selected no-layer pages
+* feat(pdf): soft-guard dialog when adding text layer to pages with existing layer
+* feat(pdf): button to add text layer for pages without one
+* feat(pdf): start\_ocr accepts overwrite; add get\_pages\_without\_text\_layer
+* feat(pdf): add\_text\_layer guard against duplicate via overwrite flag
+* feat: auto-preview and failure summary after text-layer OCR completion
+* feat: nested resizable splitters, scrollable status, embedded preview in PdfTab
+* feat: persist pdf splitter state in OCRPreferences
+* feat: accumulate OCR write/skip stats and emit ocr\_stats\_ready
+* feat: add ocr\_stats tracking to PdfSession
+* feat: write Chinese text layer with china-s CID font, return write/skip counts
+* feat: BackendChoiceDialog for first-launch GPU/CPU choice
+* feat: MainWindow consumes pending\_backend on restart, shows SwitchDialog
+* feat: SwitchDialog for restart-time backend switching
+* feat: register '推理后端' settings page
+* feat: BackendOptionsWidget for settings page backend switching
+* feat: InstallWorker accepts force\_backend to override GPU/CPU auto-detect
+* feat: resolve GPU/CPU at runtime via cache-first fallback
+* feat: rename top tab title from "二维码生成" to "二维码"
+* feat: implement QR decode behavior — paste/drop/select/recognize/open-url
+* feat: build decode sub-panel UI with result list and DecodeResultWidget
+* feat: add QrcodeDecodeService for QR/barcode decoding via pyzbar
+* feat: migrate embedded Python to python-build-standalone
+* feat: migrate MinerU backend names to 3.3 canonical + add effort option
+* feat: restrict PDF text-layer pipelines to OCR/Table/Formula
+* feat: PdfTab reads PDF OCR options from preferences
+* feat: add PDF options page to settings
+* feat: add PdfOptionsWidget with pipeline options and global settings
+* feat: OCRPreferences adds 'pdf' source and PdfGlobalSettings persistence
+* feat: PdfSessionManager passes PdfGlobalSettings to add\_text\_layer
+* feat: add\_text\_layer uses inverse rotation and PdfGlobalSettings
+* feat: add bbox inverse rotation transform and pixel conversion
+* feat: add PdfGlobalSettings data model with DPI adjustment
+* feat: wire PdfTab shutdown into MainWindow closeEvent
+* feat: refactor PdfTab for multi-file support with PdfSessionManager
+* feat: add PdfSessionManager for multi-file session orchestration
+* feat: add PdfOcrWorker for async OCR processing
+* feat: add PdfLoadWorker for async page loading
+* feat: add PdfSession dataclass for multi-file PDF state
+* feat(settings): add screenshot panel per-pipeline options page
+* feat(screenshot-panel): read persisted options per-pipeline with tooltips
+* feat(main-ui): per-pipeline option init and save on recognition start
+* feat(preprocess-options): add pipeline\_switching/switched signals
+* feat(ocr-preferences): per-pipeline options storage with v1→v2 migration
+* feat(ui): 补齐表格识别和公式识别的完整配置控件及信号连接
+* feat: 统一 OCROptions 补齐 TABLE\_RECOGNITION 和 FORMULA\_RECOGNITION 缺失字段
+* feat: supported\_options 补齐表格识别和公式识别的完整选项声明
+* feat(prefs): 支持 TABLE\_RECOGNITION / FORMULA\_RECOGNITION 持久化和首次使用提示
+* feat(ui): PreprocessOptionsWidget 支持表格/公式识别管道选项
+* feat(pipelines): 向后兼容 — OCRPipeline 枚举新增 TABLE\_RECOGNITION 和 FORMULA\_RECOGNITION
+* feat(pipeline): 注册所有管道 PipelineSpec 并导出 get\_registry()
+* feat(pipeline): 创建公式识别管道 (FORMULA\_RECOGNITION)
+* feat(pipeline): add PipelineSpec and PipelineRegistry for pipeline registration
+* feat(pipelines): 创建四个管道独立 Options 类 (Task 2)
+* feat(pipeline-registry): add BasePipelineOptions base class
+* feat: 坐标映射层重构 - 修复高DPI bbox偏移和预处理旋转归一化
+* feat(mapper): 新增 screenshot\_dpr 和 logical\_to\_screenshot\_physical
+* feat(screenshot): 新增 ScreenCoordinateMapper 多屏坐标映射器
+* feat: 集成 PDF 处理标签页到主窗口
+* feat(status): pipeline\_status 扩展 PADDLEOCR\_VL 管道追踪
+* feat(ui): 文档类管道锁定改造，MineRU 和 PaddleOCR-VL 可互切换
+* feat: 添加 PDF 标签页完整 UI
+* feat(ui): PreprocessOptionsWidget 新增 PaddleOCR-VL 选项组
+* feat(service): 子进程服务三路路由，PADDLEOCR\_VL 走 WorkerManager
+* feat: 添加 PDF 独立预览窗口
+* feat(service): OCRService 新增 PADDLEOCR\_VL 管道映射和识别方法
+* feat: 添加 PdfService 删除文字层功能
+* feat(options): OCROptions 新增 vl\_task 字段支持 PaddleOCR-VL 任务类型
+* feat: 添加 PdfService 文字层写入功能
+* feat(pipeline): 新增 PADDLEOCR\_VL 枚举，DOCUMENT\_PARSING 改名 MineRU（文档）
+* feat: 添加 PdfService 页面操作（旋转/删除/插入/移动）
+* feat: 添加 PdfService 基础功能（打开/保存/渲染/文字层检测）
+* feat: 添加 PDF 文档数据模型
+* feat(overlay): 连接填充颜色/透明度/联动信号到画布和标注项
+* feat(canvas): 添加 fill\_opacity/fill\_linked 属性和 setter 方法
+* feat(annotation): 扩展 RectAnnotation/EllipseAnnotation 支持独立填充色和透明度
+* feat: paintEvent 绘制窗口检测高亮
+* feat: mousePressEvent HOVER 点击选中 / DRAG 切换
+* feat: mouseMoveEvent HOVER 子状态窗口检测
+* feat: start\_capture 初始化 WindowDetector
+* feat: ScreenCaptureOverlay 新增 HOVER/DRAG 子状态属性
+* feat: WindowDetector.\_get\_control\_rect — IAccessible + EnumChildWindows 降级
+* feat: WindowDetector.\_get\_window\_rect 实现
+* feat: WindowDetector 基础框架 — \_hit\_test 窗口检测
+* feat: 首次识别失败时提示保持网络畅通
+* feat: 识别前显示首次使用提示
+* feat: 添加 pipeline\_status 管道成功记录模块
+* feat: UI 选项面板新增语言下拉和页码范围控件
+* feat: MinerUService API 参数对齐 — 默认后端改为 hybrid、新增 lang\_list/页面范围参数、回退链反转、响应状态校验
+* feat: add content\_list normalization layer (legacy + V2 formats)
+* feat: DOCUMENT\_PARSING supported\_options 新增 lang\_list/start\_page\_id/end\_page\_id
+* feat: 扩展 OCROptions 新增 lang\_list/start\_page\_id/end\_page\_id 字段，默认后端改为 hybrid-auto-engine
+* feat: 连接右侧编辑信号并实现数据同步
+* feat: 添加 ResultViewWidget.update\_block\_text 方法
+* feat: 添加右侧结果视图的 contenteditable 编辑交互逻辑
+* feat: 添加 Bridge blockEdited 信号和 ResultViewWidget block\_edited 信号
+* feat: bump\_version 添加 --release 命令，支持 Gitee/GitHub 发布
+* feat: bump\_version 增强 — version.json、updater.exe、zip 打包、SHA256
+* feat: 集成更新检查到启动流程和关于页面
+* feat: 新增 updater\_main.py 独立更新助手脚本
+* feat: 新增 update\_service — 版本检查、下载校验、跳过版本、更新对话框、编排器
+* feat: 新增 data/ 目录路径函数，用于更新系统
+* feat: 引入 Pillow 替换马赛克/模糊效果实现
+* feat: 工具栏添加"选择"按钮，默认选中选择模式
+* feat: 连接属性条信号到选中标注项，支持实时属性修改
+* feat: ToolPropertiesBar 支持选中项属性编辑，新增通用属性页
+* feat: EditCanvas 集成 SelectionDecorator 生命周期管理
+* feat: 创建 SelectionDecorator，支持 8 个手柄的选中态装饰器
+* feat: MosaicItem/BlurItem 添加 resize 支持（\_resizing 标志 + regenerate 方法）
+* feat: 为 RectAnnotation/EllipseAnnotation 添加属性 setter 方法，所有标注项启用 ItemSendsGeometryChanges
+* feat: ScreenCaptureOverlay 集成 SelectionResizeFrame
+* feat: InlineEditCanvas.update\_crop\_region 更新裁剪区域和平移标注
+* feat: SelectionResizeFrame 选区拖拽手柄控件
+* feat: MosaicItem/BlurItem 新增 update\_background 方法
+* feat(toolbar): 用 Lucide SVG 图标替换 Unicode 按钮，统一 QToolButton
+* feat(icons): 添加 Lucide SVG 图标模块用于工具栏按钮
+* feat(log): 转发子进程日志到项目日志系统
+* feat(log): 用 RotatingFileHandler 替换 FileHandler 并集成清理功能
+* feat(log): 添加 \_cleanup\_old\_logs 函数及测试
+* feat: 重写启动性能分析脚本（import/init/render 分层）
+* feat(inline-editor): 将 ScreenCaptureOverlay 集成到 MainWindow
+* feat(inline-editor): 添加带状态机的 ScreenCaptureOverlay
+* feat(inline-editor): 添加带快捷按钮的 InlineRecognitionPanel
+* feat(inline-editor): 添加支持标注的 InlineEditCanvas
+* feat(inline-editor): 添加带图标按钮的 InlineToolbar
+* feat(inline-editor): 添加磨砂玻璃浅色主题样式常量
+* feat(toolbar): 添加专用拖拽手柄，文字替换为图标
+* feat(main-window): 集成 show\_toolbar 开关和工具栏位置持久化
+* feat(ui): 添加显示工具栏复选框及缩进子选项
+* feat(toolbar): 添加 position\_changed 信号和 set\_initial\_position
+* feat(settings): 添加 show\_toolbar 和 toolbar\_pos 属性，兼容旧配置
+* feat(tabs): 添加预处理选项的双向偏好同步
+* feat: 添加 NetworkDetector 支持并行端点探测
+* feat(qrcode): 将 QrcodeTab 集成到 MainWindow
+* feat(qrcode): 添加完整的 QrcodeTab UI 布局和预览
+* feat(qrcode): 添加 QR 码 SVG 导出
+* feat(qrcode): 添加文字标签叠加和颜色反转
+* feat(qrcode): 添加 QR 码 logo 嵌入
+* feat(qrcode): 添加条形码生成（Code128、Code39、EAN-13 等）
+* feat(qrcode): 添加 QrcodeService 提供 QR 码生成
+* feat(widgets): 添加预览组件支持图像显示和屏幕截图功能按钮
+* feat(single-tab): 连接操作按钮 — 文件对话框和剪贴板粘贴
+* feat(single-tab): 在预览上方添加截图/文件/粘贴操作按钮
+* feat(preload): 识别请求排队等待预加载完成，替代抢占机制
+* feat(tabs): 将 OCR 执行逻辑迁移到 SingleRecognitionTab
+* feat(tabs): 创建 SingleRecognitionTab 基础结构
+* feat(widgets): 为 PreviewWidget 添加 PDF、页面导航和 content\_list
+* feat(main\_window): 为批量识别标签页添加 PaddleX 服务支持
+* feat(ui): 添加文件预览组件和OCR服务功能
+* feat(main): 添加主窗口视图逻辑和应用设置配置
+* feat(ocr): 添加 OCR 服务和 Worker 进程管理功能
+* feat(core): 添加模型缓存管理和OCR服务预加载功能
+* feat: 统一文件对话框，支持所有 MineRU 格式和 Office 预览占位
+* feat: 用 QWebEngineView、block registry 和 KaTeX 重写 result\_view\_widget
+* feat: 添加离线 KaTeX 资源及更新脚本
+* feat: 为 TextBlock 添加 page\_idx，标准化 bbox 到 \[0,1000]
+* feat: 添加共享 MIME 类型映射和文件过滤器常量
+* feat(ui): 在设置中添加工具页面用于模型下载
+* feat: 添加关于标签页，含版本、更新日志和应用信息
+* feat: 添加语义版本管理脚本
+* feat: 为 OCR 结果块添加悬停提示标题属性，移除内联置信度显示
+* feat(ocr): 添加 OCR 服务和子进程 worker 支持
+* feat(subprocess): 双 WorkerManager 路由（PaddleX 和 MinerU）
+* feat(worker): 添加 MinerU worker 子进程脚本
+* feat(ui): 添加批量识别标签页和主窗口批量识别功能
+* feat(core): 添加日志服务和主窗口视图
+* feat(batch): 添加批量文件列表组件和批量识别标签页
+* feat(export): 添加 OCR 结果导出功能和服务
+* feat: 将 ModelDownloadDialog 集成到安装流程并添加菜单项
+* feat: 添加 ModelDownloadDialog 模型下载进度 UI
+* feat: 添加 ModelDownloadService 管理模型下载
+* feat: 添加 GPU 环境下 PyTorch CUDA 版本支持
+* feat(env): 更新依赖配置以支持 MinerU 和 PaddlePaddle 环境分离
+* feat(env): 添加 torch 检测和 MinerU 模型下载
+* feat(ui): 添加主窗口视图逻辑实现
+* feat(core): 初始化核心模块和批量识别功能
+* feat(batch): 创建 MinerUBatchService，绕过子进程层直接批量处理
+* feat: MineRU 集成与 PaddlePaddle-GPU 移除
+* feat(routing): DOCUMENT\_PARSING 流水线路由到 MinerUService
+* feat(mineru): 实现 MinerU FastAPI 服务封装
+* feat(main): 添加主窗口视图逻辑实现
+* feat(ocr): 增强OCR服务的HTML和Markdown处理功能
+* feat(ui): 实现 OCR 选项持久化及同步功能
+* feat(core): 优化缓存刷新及预加载预热逻辑
+* feat(extraction): 实现抽取功能的工作线程和进度管理
+* feat(tray): 添加系统托盘与边缘工具栏功能集成
+* feat(editor): 添加截图编辑窗口及图像编辑画布功能
+* feat: 重构模型缓存管理器，使用配置文件管理管道模型
+* feat: 统一管道定义和预处理选项，支持全部7个管道
+* feat(config): 支持同时管理 MLLM 和 LLM 配置
+* feat: 添加窗口和组件尺寸可拖动与持久化功能
+* feat(ocr): 基于模型缓存状态的智能超时机制
+* feat(ui): 添加 UI 编译脚本和生成的 Python UI 文件
+* feat(services): 添加 OCRServiceBase 抽象基类
+* feat(services): 添加 env\_config 模块用于环境配置
+* feat(views): 添加 BaseOcrTab 轻量级基类
+* feat(managers): 添加 SettingsManager 用于 LLM 配置和模板
+* feat(managers): 添加 SubprocessManager 管理 OCR 子进程生命周期
+* feat(ocr): 新增 PaddleOCR-VL 多模态文档解析管道支持
+* feat(settings): 添加 LLM 配置和模板管理
+* feat(extraction): 将抽取标签页集成到主窗口
+* feat(extraction): 添加 ExtractionWorker 后台抽取
+* feat(extraction): 实现 ExtractionTab 视图
+* feat(extraction): 添加抽取标签页 UI 文件
+* feat(extraction): 添加抽取功能数据模型
+* feat(batch): 实现批量 OCR 识别功能
+* feat(main\_window): 将 BatchRecognitionTab 集成到主窗口
+* feat(views): 添加 BatchRecognitionTab 用于批量文件处理
+* feat(widgets): 添加 BatchFileListWidget 用于文件管理
+* feat(widgets): 添加 PreprocessOptionsWidget 用于批量预处理
+* feat(service): 为 OCRServiceSubprocess 添加批量处理接口
+* feat(worker): 集成 BatchQueueManager 用于批量处理
+* feat(workers): 添加 BatchQueueManager 用于批量推理
+* feat(models): 添加 BatchRequest 及相关数据模型
+* feat(utils): 添加 GPUMemoryMonitor 用于动态批量大小估算
+* feat(shared\_memory): 添加批量消息类型和序列化函数
+* feat(main): 添加子进程启动进度反馈及预热机制
+* feat(core): 增加子进程OCR服务与管道预加载支持
+* feat(subprocess): 实现 OCR 子进程架构
+* feat(main): 优化OCR线程和增加模型预加载设置界面
+* feat(model\_cache): 新增模型缓存管理器以提升启动性能
+* feat(utils): 导出 IndentProcessor 和 IndentConfig
+* feat(converter): 集成 IndentProcessor 和 sane\_lists 扩展
+* feat(converter): 添加中文缩进和列表嵌套 CSS 样式
+* feat(indent): 实现 process\_markdown 中文段落换行
+* feat(indent): 实现 is\_chinese\_text 检测方法
+* feat(indent): 添加 IndentProcessor 基类和配置
+* feat(core): 支持多种OCR管道预设及低置信度提示
+* feat: 在主窗口添加刷新缓存菜单项
+* feat: 将缓存集成到依赖检查中
+* feat: 添加缓存验证和操作函数
+* feat: 添加缓存路径和读写函数
+* feat: 使用硬件信息生成机器 ID
+* feat: 为关键操作添加日志
+* feat: 将 ConsoleWidget 集成到主窗口并添加日志
+* feat: 在主窗口 UI 中添加控制台容器
+* feat: 添加基于表格的日志显示 ConsoleWidget
+* feat: 添加带 QtLogHandler 的日志服务
 
 ### Fixed
-- fix(subprocess): 修复启动卡顿30秒、SET_TTL超时、无效管道警告
-- fix(test): 修复依赖状态表格测试与 markdown 模块同步
-- fix(overlay): start_capture 前清空旧选区并提前重绘，消除「一闪而过」
-- fix(ocr): 修正预处理图 RGB/BGR 误翻转导致 bbox 预览颜色异常
-- fix(magnifier): 修复混合 DPR 多屏下放大镜取样错位
-- fix(overlay): 修复截图编辑界面 QToolTip 黑色背景
-- fix(worker): 修复打包态 OCR Worker 启动失败及相关问题
-- fix(install): 修复依赖安装孤儿进程、缓存不刷新、markdown 误报缺失
-- fix(env): 安装韧性增强 + 半成品清理 + 依赖状态不同步
-- fix: 恢复 pyproject/__init__ 版本号为 0.1.6
-- fix(install): 安装完成后刷新设置页环境状态，设置页重装改非模态
-- fix(install): 屏蔽依赖安装/OCR子进程的命令行弹窗
-- fix(install): _install_paddle_stack 兼容打包环境 paddlepaddle 键名，修复 KeyError
-- fix(test): uv.lock 路径支持环境变量隔离，修复 10 个预存测试失败
-- fix(打包): 修正方案A误删 Qt6Qml*/Qt6Quick 导致 QtWebChannel 加载失败
-- fix(发版): 发版时自动同步 uv.lock，修正版本号滞后漂移
-- fix(打包): 修复进程递归卡死/体积臃肿/安装入口缺失/路径解析错误
-- fix(pyright): 扩展检查范围至 scripts/tests/qa/examples 并清零 156 个 error
-- fix(updater): 修复 item 可能未绑定导致的 Pyright 告警
-- fix(pdf-text-layer): 修复带 /Rotate 页面文字层坐标旋转错位
-- fix(日志): 修正推理硬件误报 + 预热输出设备信息 + 第三方库降噪
-- fix(updater): 加固程序内更新链路
-- fix(pdf-tab): 终审修复——OCR 完成不全量重建网格（保留用户选中）+ 新增选中保留测试
-- fix(pdf-preview): Task 6 审查修复——切换文件/删页关闭预览窗避免失效索引 + 键盘翻页测试
-- fix(pdf-tab): Task 5 审查修复——拖拽重排保留选中态 + 新增选中保留测试
-- fix(pdf-tab): Task 4 审查修复——重建期间抑制同步 + 简化 role + 加强递归/双向断言
-- fix(pdf-tab): Task 2 审查修复——hover 态描边 + delegate 顶层导入 + 直接 QSize + 新增颜色采样测试
-- fix(pdf-tab): Task 1 代码审查修复——更新 _on_ocr_stats_ready 文档+清理内嵌预览残留测试
-- fix(about): 修复 Logo 模糊 + 宽屏右侧大片空白
-- fix(editor): QColorDialog 改用 Qt 自绘对话框，修复透明父窗口下黑底
-- fix(toolbar): EdgeToolbar 改用 paintEvent 绘制浅色背景
-- fix(cjk-font): address code review — temp leak, fontname regression test, dead property
-- fix(mineru): _start_api 用 self.__class__ 替代未定义的 cls（F821 生产崩溃）
-- fix(ui): enable 重新识别 after screenshot + clarify option source
-- fix(log): 折叠子进程裸 print，避免用户文档内容泄漏到日志
-- fix(ui): PDF preview bbox follows zoom + add drag-to-pan
-- fix(cache): CPU mode max_heavy=1 + wire max_heavy_pipelines config override
-- fix: PDF 批量 OCR 拆批（每批10页）+ 健康检查阈值修复
-- fix: PDF 文字层预览改用 OCR 原始块（单一信源）+ 双击改字
-- fix: 边缘隐身悬浮工具栏补 WA_StyledBackground，浅色背景不再透明
-- fix: 修复批量识别参数透传错误与 request_id 不匹配导致结果丢失
-- fix: PDF 文字层写入在窄/瘦高 bbox 时降级 insert_text 兜底
-- fix: PDF 文字层 OCR 改用真批量 predict(list)，子进程 RCBG 协议
-- fix: CUDA 版本映射对齐真实 wheel（cu126 同源，弃用 cu129）
-- fix: 文字层不丢块 + 预览状态列表联动缩略图
-- fix: guard zero-write case, add embedded-preview E2E test, correct spec doc
-- fix: correct misleading text-layer status wording to block count
-- fix: log warning on None-bbox skip path in add_text_layer
-- fix(portable): repair GPU install + lay groundwork for backend switching
-- fix: restore cu13 nvidia deps + disable mkldnn on CPU for OCR
-- fix: remove redundant nvidia-* deps — paddle uses system CUDA driver
-- fix: address final code review nits
-- fix: correct text layer preview coordinates and add hover tooltips
-- fix: resolve C1-C3 critical issues and I1 from code review
-- fix(settings): 持久化预加载启用开关和单文件识别选项
-- fix: PaddleOCR-VL 补传预处理参数 use_doc_orientation_classify/use_doc_unwarping
-- fix(ocr): 提取预处理后图像用于bbox归一化和预览显示
-- fix(ocr): 预处理旋转90°/270°时交换归一化维度，修复bbox偏移
-- fix(preview): 延迟 overlay 更新，确保布局稳定后再计算坐标
-- fix(canvas): update_crop_region 改用 screenshot_dpr
-- fix(overlay): 截图坐标转换改用 screenshot_dpr
-- fix(bbox): 修复 bbox 覆盖层定位偏离
-- fix(selection): 修复 constrain_rect 边界约束优先于最小尺寸
-- fix(vl): 修正管道名为 PaddleOCR-VL-1.5，替换选项为实际支持的布局/图表/印章开关
-- fix: PDF 标签页使用 PaddleX 服务而非 MinerU 服务
-- fix: 减小截图界面识别面板宽度 200→120
-- fix: update tests for _mineru_manager -> _mineru_batch refactor
-- fix: 修复右侧编辑同步问题（全量重建 raw_text、同步 list/code 结构化字段、更新 text_with_scores、清理重复 docstring）
-- fix: 初始化 cl_idx 消除 Pyright possibly unbound 警告
-- fix: 修复预热期间并发识别导致的竞态条件和 Web 视图空指针问题
-- fix: 修正嵌入式 Python 版本为 3.13.0，与 pyproject.toml 一致
-- fix: ResizeAnnotationCommand 支持 MosaicItem/BlurItem 重新生成效果
-- fix: 修复截图编辑工具无法绘制的问题
-- fix: 选区内部鼠标事件不再被拦截，仅边框区域可移动选区
-- fix: 识别面板底部对齐选区下沿，高度仅容纳按钮
-- fix: 修复截图选区移动时内部内容波纹和晃动问题
-- fix: EDITING 模式下绘制冻结截图背景，避免实时桌面透出
-- fix: SelectionResizeFrame 覆盖全屏避免拖拽闪烁
-- fix(shm): 移除 _is_data_ready 轮询中的重复 debug 日志
-- fix(toolbar): 修复截图界面工具栏tooltip黑色背景问题
-- fix(widgets): 修复高DPR屏幕下坐标映射和截图偏移问题
-- fix(toolbar): 浅灰色背景带边框，隐藏空属性条，显示工具提示
-- fix(toolbar): 通过 WA_StyledBackground 实现不透明背景，紧凑识别按钮，移除所有阴影
-- fix(panels): 在识别面板中使用 recognition_button_style 样式
-- fix(screenshot): 修复高 DPI 下截图选区大小变化的问题
-- fix: 修复 PropertiesBar 信号名称不匹配
-- fix: 显式销毁 QWebEngineView 避免退出时崩溃 0xC0000409
-- fix(qrcode): 修复 QR 码非对齐尺寸下的倾斜问题，改善文字清晰度
-- fix(env): 使用 detect_gpu() 进行准确的 GPU 和 CUDA 检测
-- fix(toolbar): 操作按钮使用 PointingHandCursor
-- fix(toolbar): 启用从按钮区域拖拽，添加事件过滤和光标反馈
-- fix(tray): 仅在启用最小化到托盘时阻止关闭窗口退出程序
-- fix(single-recognition): 修复剪贴板 bbox 偏移，添加手动启动按钮
-- fix(export): 自动重命名输出文件，避免静默覆盖
-- fix(preview,export): 识别 MinerU 标题块并包含表格标题
-- fix(download): 改进对话框取消逻辑，使用管道枚举显示名称
-- fix: 修复 bump_version 在 Windows 上的编码问题，重连下载按钮，移除过期测试
-- fix: 解决 bump_version 脚本和测试中的 Pyright 类型问题
-- fix(mineru_service): 修复 MinerU 服务中的边界框坐标转换问题
-- fix(worker): 为 MinerU worker 添加 --use-gpu/--no-gpu 兼容参数
-- fix(cuda): 扫描所有 nvidia 包 bin 目录进行 DLL 注册
-- fix: 将未缓存管道超时从 300s 增加到 600s 用于模型下载
-- fix: 移除 ModelDownloadDialog 中未使用的 DownloadStatus 导入
-- fix: 更新 download_pipeline 和 download_mineru_models 中的 _statuses
-- fix(deps): 更新依赖配置和模型下载逻辑
-- fix(env): 在安装函数中将 mineru[all] 改为 mineru[pipeline]
-- fix(tray): 修复托盘菜单设置功能
-- fix(batch): MinerUBatchService 改用延迟导入，修复 Pyright 警告
-- fix: 修复共享内存批量操作 read-own-write race condition
-- fix: 优化纯文本提取和日志过滤
-- fix(worker): 优化 Worker 管理和OCR服务状态显示
-- fix(core): 统一处理管道名称中的枚举类型
-- fix(env_manager): 添加缺失的导出函数和常量
-- fix(screenshot): 优化截图窗口的透明背景和绘制逻辑
-- fix(types): 修复 IndentProcessor 类型注解错误
-- fix(console): 优化低置信度日志信号和详情收集
-- fix: 添加缺失的 QWidget 和 QVBoxLayout 导入，修复 hatchling 包路径
-- fix: 修复 QMainWindow 嵌套问题解决空白 UI
-- fix: 用 QBuffer 替换 BytesIO 用于 QPixmap.save
-- fix: 修正引擎延迟加载测试
+
+* fix(subprocess): 修复启动卡顿30秒、SET\_TTL超时、无效管道警告
+* fix(test): 修复依赖状态表格测试与 markdown 模块同步
+* fix(overlay): start\_capture 前清空旧选区并提前重绘，消除「一闪而过」
+* fix(ocr): 修正预处理图 RGB/BGR 误翻转导致 bbox 预览颜色异常
+* fix(magnifier): 修复混合 DPR 多屏下放大镜取样错位
+* fix(overlay): 修复截图编辑界面 QToolTip 黑色背景
+* fix(worker): 修复打包态 OCR Worker 启动失败及相关问题
+* fix(install): 修复依赖安装孤儿进程、缓存不刷新、markdown 误报缺失
+* fix(env): 安装韧性增强 + 半成品清理 + 依赖状态不同步
+* fix: 恢复 pyproject/**init** 版本号为 0.1.6
+* fix(install): 安装完成后刷新设置页环境状态，设置页重装改非模态
+* fix(install): 屏蔽依赖安装/OCR子进程的命令行弹窗
+* fix(install): \_install\_paddle\_stack 兼容打包环境 paddlepaddle 键名，修复 KeyError
+* fix(test): uv.lock 路径支持环境变量隔离，修复 10 个预存测试失败
+* fix(打包): 修正方案A误删 Qt6Qml\*/Qt6Quick 导致 QtWebChannel 加载失败
+* fix(发版): 发版时自动同步 uv.lock，修正版本号滞后漂移
+* fix(打包): 修复进程递归卡死/体积臃肿/安装入口缺失/路径解析错误
+* fix(pyright): 扩展检查范围至 scripts/tests/qa/examples 并清零 156 个 error
+* fix(updater): 修复 item 可能未绑定导致的 Pyright 告警
+* fix(pdf-text-layer): 修复带 /Rotate 页面文字层坐标旋转错位
+* fix(日志): 修正推理硬件误报 + 预热输出设备信息 + 第三方库降噪
+* fix(updater): 加固程序内更新链路
+* fix(pdf-tab): 终审修复——OCR 完成不全量重建网格（保留用户选中）+ 新增选中保留测试
+* fix(pdf-preview): Task 6 审查修复——切换文件/删页关闭预览窗避免失效索引 + 键盘翻页测试
+* fix(pdf-tab): Task 5 审查修复——拖拽重排保留选中态 + 新增选中保留测试
+* fix(pdf-tab): Task 4 审查修复——重建期间抑制同步 + 简化 role + 加强递归/双向断言
+* fix(pdf-tab): Task 2 审查修复——hover 态描边 + delegate 顶层导入 + 直接 QSize + 新增颜色采样测试
+* fix(pdf-tab): Task 1 代码审查修复——更新 \_on\_ocr\_stats\_ready 文档+清理内嵌预览残留测试
+* fix(about): 修复 Logo 模糊 + 宽屏右侧大片空白
+* fix(editor): QColorDialog 改用 Qt 自绘对话框，修复透明父窗口下黑底
+* fix(toolbar): EdgeToolbar 改用 paintEvent 绘制浅色背景
+* fix(cjk-font): address code review — temp leak, fontname regression test, dead property
+* fix(mineru): \_start\_api 用 self.**class** 替代未定义的 cls（F821 生产崩溃）
+* fix(ui): enable 重新识别 after screenshot + clarify option source
+* fix(log): 折叠子进程裸 print，避免用户文档内容泄漏到日志
+* fix(ui): PDF preview bbox follows zoom + add drag-to-pan
+* fix(cache): CPU mode max\_heavy=1 + wire max\_heavy\_pipelines config override
+* fix: PDF 批量 OCR 拆批（每批10页）+ 健康检查阈值修复
+* fix: PDF 文字层预览改用 OCR 原始块（单一信源）+ 双击改字
+* fix: 边缘隐身悬浮工具栏补 WA\_StyledBackground，浅色背景不再透明
+* fix: 修复批量识别参数透传错误与 request\_id 不匹配导致结果丢失
+* fix: PDF 文字层写入在窄/瘦高 bbox 时降级 insert\_text 兜底
+* fix: PDF 文字层 OCR 改用真批量 predict(list)，子进程 RCBG 协议
+* fix: CUDA 版本映射对齐真实 wheel（cu126 同源，弃用 cu129）
+* fix: 文字层不丢块 + 预览状态列表联动缩略图
+* fix: guard zero-write case, add embedded-preview E2E test, correct spec doc
+* fix: correct misleading text-layer status wording to block count
+* fix: log warning on None-bbox skip path in add\_text\_layer
+* fix(portable): repair GPU install + lay groundwork for backend switching
+* fix: restore cu13 nvidia deps + disable mkldnn on CPU for OCR
+* fix: remove redundant nvidia-\* deps — paddle uses system CUDA driver
+* fix: address final code review nits
+* fix: correct text layer preview coordinates and add hover tooltips
+* fix: resolve C1-C3 critical issues and I1 from code review
+* fix(settings): 持久化预加载启用开关和单文件识别选项
+* fix: PaddleOCR-VL 补传预处理参数 use\_doc\_orientation\_classify/use\_doc\_unwarping
+* fix(ocr): 提取预处理后图像用于bbox归一化和预览显示
+* fix(ocr): 预处理旋转90°/270°时交换归一化维度，修复bbox偏移
+* fix(preview): 延迟 overlay 更新，确保布局稳定后再计算坐标
+* fix(canvas): update\_crop\_region 改用 screenshot\_dpr
+* fix(overlay): 截图坐标转换改用 screenshot\_dpr
+* fix(bbox): 修复 bbox 覆盖层定位偏离
+* fix(selection): 修复 constrain\_rect 边界约束优先于最小尺寸
+* fix(vl): 修正管道名为 PaddleOCR-VL-1.5，替换选项为实际支持的布局/图表/印章开关
+* fix: PDF 标签页使用 PaddleX 服务而非 MinerU 服务
+* fix: 减小截图界面识别面板宽度 200→120
+* fix: update tests for \_mineru\_manager -> \_mineru\_batch refactor
+* fix: 修复右侧编辑同步问题（全量重建 raw\_text、同步 list/code 结构化字段、更新 text\_with\_scores、清理重复 docstring）
+* fix: 初始化 cl\_idx 消除 Pyright possibly unbound 警告
+* fix: 修复预热期间并发识别导致的竞态条件和 Web 视图空指针问题
+* fix: 修正嵌入式 Python 版本为 3.13.0，与 pyproject.toml 一致
+* fix: ResizeAnnotationCommand 支持 MosaicItem/BlurItem 重新生成效果
+* fix: 修复截图编辑工具无法绘制的问题
+* fix: 选区内部鼠标事件不再被拦截，仅边框区域可移动选区
+* fix: 识别面板底部对齐选区下沿，高度仅容纳按钮
+* fix: 修复截图选区移动时内部内容波纹和晃动问题
+* fix: EDITING 模式下绘制冻结截图背景，避免实时桌面透出
+* fix: SelectionResizeFrame 覆盖全屏避免拖拽闪烁
+* fix(shm): 移除 \_is\_data\_ready 轮询中的重复 debug 日志
+* fix(toolbar): 修复截图界面工具栏tooltip黑色背景问题
+* fix(widgets): 修复高DPR屏幕下坐标映射和截图偏移问题
+* fix(toolbar): 浅灰色背景带边框，隐藏空属性条，显示工具提示
+* fix(toolbar): 通过 WA\_StyledBackground 实现不透明背景，紧凑识别按钮，移除所有阴影
+* fix(panels): 在识别面板中使用 recognition\_button\_style 样式
+* fix(screenshot): 修复高 DPI 下截图选区大小变化的问题
+* fix: 修复 PropertiesBar 信号名称不匹配
+* fix: 显式销毁 QWebEngineView 避免退出时崩溃 0xC0000409
+* fix(qrcode): 修复 QR 码非对齐尺寸下的倾斜问题，改善文字清晰度
+* fix(env): 使用 detect\_gpu() 进行准确的 GPU 和 CUDA 检测
+* fix(toolbar): 操作按钮使用 PointingHandCursor
+* fix(toolbar): 启用从按钮区域拖拽，添加事件过滤和光标反馈
+* fix(tray): 仅在启用最小化到托盘时阻止关闭窗口退出程序
+* fix(single-recognition): 修复剪贴板 bbox 偏移，添加手动启动按钮
+* fix(export): 自动重命名输出文件，避免静默覆盖
+* fix(preview,export): 识别 MinerU 标题块并包含表格标题
+* fix(download): 改进对话框取消逻辑，使用管道枚举显示名称
+* fix: 修复 bump\_version 在 Windows 上的编码问题，重连下载按钮，移除过期测试
+* fix: 解决 bump\_version 脚本和测试中的 Pyright 类型问题
+* fix(mineru\_service): 修复 MinerU 服务中的边界框坐标转换问题
+* fix(worker): 为 MinerU worker 添加 --use-gpu/--no-gpu 兼容参数
+* fix(cuda): 扫描所有 nvidia 包 bin 目录进行 DLL 注册
+* fix: 将未缓存管道超时从 300s 增加到 600s 用于模型下载
+* fix: 移除 ModelDownloadDialog 中未使用的 DownloadStatus 导入
+* fix: 更新 download\_pipeline 和 download\_mineru\_models 中的 \_statuses
+* fix(deps): 更新依赖配置和模型下载逻辑
+* fix(env): 在安装函数中将 mineru\[all] 改为 mineru\[pipeline]
+* fix(tray): 修复托盘菜单设置功能
+* fix(batch): MinerUBatchService 改用延迟导入，修复 Pyright 警告
+* fix: 修复共享内存批量操作 read-own-write race condition
+* fix: 优化纯文本提取和日志过滤
+* fix(worker): 优化 Worker 管理和OCR服务状态显示
+* fix(core): 统一处理管道名称中的枚举类型
+* fix(env\_manager): 添加缺失的导出函数和常量
+* fix(screenshot): 优化截图窗口的透明背景和绘制逻辑
+* fix(types): 修复 IndentProcessor 类型注解错误
+* fix(console): 优化低置信度日志信号和详情收集
+* fix: 添加缺失的 QWidget 和 QVBoxLayout 导入，修复 hatchling 包路径
+* fix: 修复 QMainWindow 嵌套问题解决空白 UI
+* fix: 用 QBuffer 替换 BytesIO 用于 QPixmap.save
+* fix: 修正引擎延迟加载测试
 
 ### Changed
-- refactor(release): cmd_to_main → cmd_publish_main 推送 GitHub 快照链
-- refactor(single-tab): 文件打开图片分支统一走 set_pixmap 更新复制按钮启用状态
-- perf(shm): 共享内存 128MB→16MB 并统一默认值来源
-- test(install): 补充取消机制/缓存写入/版本失效测试，迁移 run mock→Popen
-- perf(pack): lxml/pydantic/chardet/aiohttp 等从 exe 包排除（省 ~14MB）
-- perf(pack): scipy/pandas 从 exe 包排除（省 ~80MB）
-- perf(pack): markdown 从 exe 包移至便携 Python 安装
-- chore(repo): 取消跟踪 docs（保留本地文件）
-- perf(pack): 去掉 UPX 压缩提速启动 + 工具栏说明 + compile_ui 修复
-- chore(changelog): develop 同步 main 的整合版 CHANGELOG（首次初始化）
-- test(bump): 修复 ruff 未用变量 + 补充 main 首次初始化步骤
-- refactor(bump): develop bump 瘦身，不再生成 CHANGELOG/打 tag
-- refactor(bump): 抽出 _collect_commits/_filter_release_commits 供合并复用
-- docs(plan): develop→main 合并发版与 CHANGELOG 整合实施计划
-- docs(spec): develop→main 合并发版与 CHANGELOG 整合设计
-- refactor(env): 提取 _build_paddle_requirements，消除 paddle 项构建重复
-- docs(plan): 依赖增量安装实现计划（9 个任务，TDD）
-- docs(spec): 依赖增量安装（断点续传语义）设计
-- chore: lint 清理（安装日志 + 重装入口）
-- refactor(env): 依赖安装/后端切换 report 闭包改用 logging
-- refactor(env): install_embedded_python 改用 logging 落盘日志
-- refactor(env): download_file_with_progress 改用 logging 落盘日志
-- docs(plan): 安装日志接入 logging + 设置页重装入口实施计划
-- docs: 安装日志接入 logging + 设置页重装入口设计
-- chore(换行符): 新增 .gitattributes 统一 LF，消除 autocrlf 警告
-- refactor(质量): ruff/pyright 全量清零 + 版本测试永久免疫 bump
-- refactor(env): 修正 torch 镜像源、移除无调用方的安装入口、修复更新后依赖降级
-- chore(版权): 版权年份更新为 2025–2026，关于页年份改为运行时取系统日期
-- refactor(pdf-tab): Task 3 审查修复——提取 _layer_cell_tooltip 消除重复
-- refactor(pdf-tab): 删除右分隔器与内嵌预览，操作面板直挂主 splitter
-- revert(ui): 暂时禁用全局浅色 QSS，回到 Qt 原生控件风格
-- test(constants): 适配 COLOR_* 迁移到 theme.Colors
-- refactor(cleanup): A 类零星内联样式迁移到 theme token（batch/backend/preprocess/update）
-- refactor(widgets): B 类内联样式迁移到 theme token（chat/preview/clipboard/qrcode）
-- refactor(styles): 删除 editor_styles/inline_styles/styles 旧样式模块 + constants 旧色名 + 测试
-- refactor(screen_capture): 迁移 InlineStyles 尺寸常量到 theme.Layout
-- refactor(inline): inline_toolbar/recognition_panel 迁移到 theme token
-- refactor(tool_properties_bar): 迁移到 theme token（暗→浅色）
-- refactor(edit_toolbar): 迁移到 theme token（暗→浅色）
-- refactor(recognition_panel): 迁移到 theme token（暗→浅色）
-- docs(plan): 浅色主题统一迁移实施计划（12 个 Task）
-- docs(spec): 补 styles.py 第4色源 + Layout 尺寸 token（计划前发现）
-- docs(spec): 适配近期提交——图标已落地、toolbar WA_StyledBackground gotcha
-- test(pdf): cross-reader searchability assertions (ToUnicode/FontFile/volume)
-- build(deps): add fonttools for PDF text layer font subsetting
-- docs(spec+plan): PDF text layer embedded font (fontTools subset + ToUnicode)
-- test(integration): pipeline cache lifecycle e2e (release/set_ttl flow)
-- docs(plans): implementation plans for dynamic batch size + pipeline cache lifecycle
-- docs(spec): pipeline cache lifecycle + dynamic batch size design
-- Merge remote-tracking branch 'gitee/develop' into develop
-- docs: 浅色主题统一 + 关于页卡片化设计 spec
-- refactor(pdf): extract _load_ocr_prefs/_begin_ocr_ui; add start_ocr overwrite e2e test
-- refactor: 收敛防御性代码，消除冗余/无效/风格不一致
-- Merge feat/cjk-font-text-layer: PDF text-layer fix (CJK font, preview, resizable layout)
-- docs: mark PDF text layer fix as delivered
-- perf: debounce splitter state save; test right-splitter persistence
-- refactor: extract PreviewCanvas as public reusable class
-- docs: implementation plan for PDF text layer fix
-- docs: design spec for PDF text layer fix
-- test: mock NetworkDetector in mineru tests to stop wmic Popen leak
-- docs: mark backend choice UI as delivered (batch 2)
-- refactor: unify env management — consolidate dep specs, dedupe install, remove dead code
-- test: cover image-drop signal and generate-subtab drop rejection
-- refactor: restructure QrcodeTab into nested generate/decode sub-tabs
-- test: cover multi-code, blank, file/bytes, large-image, URL edge cases
-- chore: add pyzbar dependency for QR/barcode decoding
-- docs: add QR code decode feature implementation plan
-- docs: add QR code decode feature design spec
-- chore: track PyInstaller .spec files (build config versioning)
-- docs: mark preproc_angle resolved via pipeline restriction
-- chore: default _last_pdf_pipeline to OCR (matches PDF allowed set)
-- refactor: add generic lock_to_pipelines; lock_to_document_parsing wraps it
-- test: add preproc_angle=0 production path regression test
-- ⚡️ perf(pdf): 用轻量占位页面替代 open_doc 中的 build_page_infos 调用
-- docs: add PDF OCR settings implementation plan
-- docs: add PDF OCR settings and text layer fix design spec
-- chore: checkpoint workspace changes on develop
-- ♻️ refactor: 将 PdfService 重构为无状态工具层
-- ♻️ refactor: 统一依赖版本管理，消除 env_manager 与 env_config 的常量重复
-- 🐛 fix: 使用 uv override-dependencies 彻底排除 opencv-python
-- 🐛 fix: 修复 opencv 包冲突导致 cv2.IMREAD_COLOR 不可用
-- 🎨 style: ruff format 自动格式化测试文件
-- 🏷️ fix(types): 添加 get_ocr_service 返回类型标注及 is_ready 方法
-- ✅ test: 新增 120 个测试，提升 5 个模块覆盖率
-- 🐛 fix: 修复 test_bump_version 编码问题、test_update_service 废弃API、export_service HTML导出bug
-- 🎨 style: 格式化 preprocess_options_widget 和 toolbar 代码行宽
-- 🐛 fix(lint+types): 修复 ruff lint 错误与 mypy/pyright 类型检查问题
-- 🐛 fix(types): 修复 64 项 Pyright 类型检查错误
-- 🐛 fix(lint): 修复 187 项 ruff 代码检查问题
-- 🎨 style: 全局代码格式化，统一行宽与 import 空行规范
-- 🐛 fix(qa): 修正 subprocess.run 参数名 creation_flags → creationflags
-- 🐛 fix(build): 修复打包脚本多处不适配问题
-- 🐛 fix(preferences): 初始化 OCRPreferences 单例，修复设置选项无法持久化的 bug
-- ✨ feat(ui): 识别成功后按钮变为「重新识别」，加载新图片时恢复「开始识别」
-- 🐛 fix(ui): 块类型模式下 bbox 根据置信度着色并标记低置信度
-- 🔧 chore(log): 控制台日志开发环境设为 DEBUG，打包环境保持 WARNING
-- 🐛 fix(pipelines): 修复 TABLE_RECOGNITION/FORMULA_RECOGNITION 预热失败 — 将枚举转换为字符串后再传给 get_or_create_pipeline
-- 🐛 fix(ocr): 修复预处理后 bbox 偏移 — 用 dict.get 替代 getattr 提取 doc_preprocessor_res
-- ✅ test: 同步测试与代码变更
-- 🐛 fix(tests): 同步测试断言到当前代码
-- ♻️ refactor(tests): 重组测试目录结构与 src/vibeocr/ 镜像对齐
-- docs: 添加按管道独立选项持久化设计文档
-- 🐛 fix: 使用 doc_preprocessor_res['output_img'] 替换拼接可视化图
-- 🐛 fix(toolbar): 修复截图界面悬浮工具栏变透明的问题
-- ♻️ refactor(settings): 预加载管道复选框从注册表动态生成，移除硬编码映射
-- ♻️ refactor(ui): 截图识别面板从管道注册表动态生成按钮，移除硬编码配置和更多按钮
-- 🐛 fix(deps): 恢复 nvidia-cublas-cu12 依赖修复 GPU 推理失败
-- test: 新增字段序列化往返和持久化测试
-- test: 添加管道注册表端到端测试
-- refactor(ocr): 改造 OCRService 使用注册表进行管道分发
-- ✨ feat(pipelines): 创建表格识别管道 TableRecognitionOptions 和 TABLE_RECOGNITION_SPEC
-- docs: 管道注册表模式实现计划
-- docs: 管道注册表模式设计文档
-- refactor(preview): 用 _compute_scale_factor 替代 _compute_display_rect
-- docs: 坐标映射层重构设计文档
-- docs: 坐标映射层重构实施计划
-- refactor(screenshot): 清理废弃的 _device_pixel_ratio 属性
-- refactor(canvas): InlineEditCanvas 改用 ScreenCoordinateMapper
-- refactor(window-detector): 改用 ScreenCoordinateMapper，添加结果裁剪
-- refactor(magnifier): 放大镜改用 ScreenCoordinateMapper，尺寸改为 121px
-- refactor(screenshot): 集成 ScreenCoordinateMapper 到 ScreenCaptureOverlay
-- 🐛 fix(ocr): 归一化 content_list bbox 坐标并提取显示矩形计算
-- 🐛 fix: 修复退出崩溃、重复日志、AttributeError 及机器码重复检测
-- 🐛 fix: 增强预加载与 Worker 通信的健壮性
-- 🎨 style: ruff format 全量格式化与依赖版本升级
-- 🐛 fix(deps): 保留 pyproject 版本上界约束，仅更新下界
-- ♻️ refactor(ocr): 完成 PaddleX → PaddleOCR 3.x 迁移
-- refactor(ocr): 迁移 PaddleX → PaddleOCR 3.x
-- test: 更新测试以反映 PADDLEOCR_VL 枚举和 MineRU 显示名变更
-- style: 修复 Pyright 类型安全问题
-- chore: 添加 pymupdf 依赖
-- 📝 docs: 添加 PDF 处理标签页实现计划
-- 📝 docs: 添加PDF处理标签页设计文档
-- ✨ feat(tool-properties-bar): 添加填充色按钮、链接按钮和透明度滑块控件
-- 📝 docs: 添加填充颜色与透明度控制实现计划
-- 📝 docs: 添加截图工具填充颜色与透明度控制设计文档
-- 🎨 style(toolbar): 启用边缘工具栏圆角显示
-- 🐛 fix(toolbar): 修复截图工具栏调色盘黑色背景问题
-- ✨ feat(inline-toolbar): 添加选择工具按钮
-- 🐛 fix(toolbar): 启动时恢复位置后执行边缘检测，修复贴边不自动隐藏
-- test: WindowDetector.detect_at 坐标转换和缓存测试
-- docs: 截图界面窗口识别框选功能实施计划
-- docs: 截图界面窗口识别框选功能设计文档
-- chore: 清理计划和设计文档
-- refactor: 删除设置页的下载模型按钮
-- refactor: 安装成功后不再弹模型下载窗口
-- chore: 删除模型下载弹窗和 ModelDownloadService
-- chore: 删除 model_cache_manager 和自定义管道 YAML 配置
-- refactor: OCRService 超时判断改用 pipeline_status
-- refactor: 超时判断改用 pipeline_status 替代 model_cache_manager
-- docs: 管道识别成功记录设计文档
-- ✨ feat(ui): 非图片文件自动锁定文档解析管道，表格识别输出 Markdown
-- 🐛 fix(qrcode): 修复文字标签位置和预览高分屏适配
-- 🎨 fix(qrcode): 提升二维码渲染清晰度
-- 🐛 fix(shutdown): 修复退出时 QtWebEngine 崩溃 0xC0000409
-- 🐛 fix(batch): 批量识别改为流式返回结果，完成一个即显示一个
-- chore: 升级依赖并增强 upgrade_deps.py CUDA 验证
-- 🔥 chore: 删除废弃的 mineru_worker.py — MineRU 管道已不再通过共享内存 worker 子进程处理
-- refactor: OCRServiceSubprocess MineRU 管道从共享内存 IPC 改为直调 MinerUService 单例
-- refactor: _build_ocr_result 使用 normalize_content_list 正常化层
-- 🔧 chore: bump pyside6 6.11.1, mineru 3.1.13, ruff 0.15.13, uv 0.11.14
-- 🐛 fix: 恢复 overlay 为 viewport 子组件，修复 bbox 偏移问题
-- refactor: 集中 DISCARDED_BLOCK_TYPES/normalize_bbox 到 ocr_result 模块，修复覆盖层坐标对齐
-- refactor: 左侧编辑同步右侧改为增量更新避免全量重渲染
-- 🐛 fix(ocr): 修复 MinerU 文档解析超时导致通信错误
-- chore: 添加 MIT LICENSE，修正 ruff target-version 为 py313
-- chore: 将 docs/ 目录添加到 .gitignore
-- chore: 清理 .gitignore，移除 .qoder 等 AI 工具缓存追踪
-- Merge remote-tracking branch 'origin/mineru-integration' into mineru-integration
-- build: 升级 mineru 3.1.11, nvidia-cudnn 9.22.0.52, uv 0.11.13
-- refactor: 移除截图编辑工具栏中的裁剪按钮及相关代码
-- refactor: 将截图属性条从主工具栏分离为独立面板
-- refactor: 识别面板点击管道按钮直接触发识别，移除工具栏识别按钮
-- style: 优化截图界面按钮布局和交互体验
-- refactor: 工具栏和识别面板按钮改为纯文字，工具栏靠选区右下角定位
-- style(toolbar): 不透明面板背景，移除工具栏阴影，统一识别按钮样式
-- style(toolbar): 更新按钮样式为透明默认，工具栏高度 48px
-- refactor(log): 降低日常操作日志级别 info→debug
-- perf(startup): 延迟初始化 QWebEngineView，用 uuid.getnode 替换 wmic，延迟导入 OCRService
-- refactor(log): 精简状态栏关键字过滤为关键里程碑
-- refactor(log): 将非里程碑日志降级为 debug（managers/utils/views 层）
-- refactor(log): 将非里程碑日志降级为 debug（workers 层）
-- refactor(log): 将非里程碑日志降级为 debug（services 层）
-- refactor(log): 将非里程碑日志降级为 debug（main_window）
-- perf(qrcode): 优化 QR 码渲染，使用动态 box_size 和 NEAREST 重采样
-- chore: 更新依赖
-- refactor: 移除旧的 ScreenshotWidget 和 ScreenshotEditWindow
-- style(toolbar): 切换为白色背景和浅色主题
-- chore(deps): 更新项目依赖版本
-- chore: 移除已过时的模型源测试
-- refactor: 将 install_dialog 迁移到 NetworkDetector
-- refactor: 将 ocr_service 迁移到 NetworkDetector
-- refactor: 将 mineru_service 迁移到 NetworkDetector
-- refactor: 将 model_download_service 迁移到 NetworkDetector
-- refactor: 废弃旧的网络检测函数，委托给 NetworkDetector
-- test(qrcode): 添加格式切换和预览的行为测试
-- chore: 添加 qrcode[pil] 和 python-barcode 依赖
-- test: 更新测试
-- test(export): 添加导出服务单元测试
-- chore: 移除 FilePreviewWidget（已合并到 PreviewWidget）
-- refactor(main-window): 精简 MainWindow，将 OCR 委托给 SingleRecognitionTab
-- refactor(tabs): 重构 BatchRecognitionTab 使用 BaseOcrTab 共享逻辑
-- refactor(tabs): 为 BaseOcrTab 添加悬停同步、文本编辑和偏好设置
-- refactor(tabs): 为 BaseOcrTab 添加 _build_content_list 和 _display_result
-- refactor(tabs): 为 BaseOcrTab 添加共享状态和管道路由
-- test(widgets): 添加 PreviewWidget 单元测试
-- refactor(widgets): 在 PreviewWidget 中创建 UnifiedBBoxOverlay
-- chore(build): 删除旧的 lint.py 脚本
-- test: 添加多页 PDF 结果结构的集成测试
-- refactor: 用共享 mime_types 模块替换内联 MIME 映射
-- refactor: 重写 _build_ocr_result，修复纯文本提取和 TextBlock
-- refactor: 移除菜单栏，添加关于标签页和键盘快捷键
-- refactor: 在 main.py 中使用 __init__.py 的动态版本
-- docs: 添加初始 CHANGELOG.md
-- refactor(settings): 清理设置页面 — 移除废弃功能，重新设计为左右分栏
-- refactor(settings_manager): 移除 LLM/模板桥接，仅保留预加载
-- refactor(config_manager): 移除 LLM 配置和模板方法
-- refactor: 移除废弃模型（ExtractionOptions、ExtractionTemplate、LLMConfig）
-- chore: 添加导出配置和报告文件
-- test(widgets): 添加 _build_block_html 和 _build_text_blocks_html 标题属性的 TDD 测试
-- test: 更新双 WorkerManager 架构的测试
-- refactor(ocr_service): 移除 _recognize_document 和 DOCUMENT_PARSING 分支
-- refactor(worker): 从 PaddleX worker 批量逻辑中移除 MinerU/DOCUMENT_PARSING
-- refactor(worker): 用 sys.meta_path 导入钩子替换 torch 桩
-- refactor(worker): WorkerManager 支持可配置的 worker_module
-- refactor(worker): OCRWorkerProcess 支持可配置的 worker_module
-- refactor(mineru): 用 python -m 替换 shutil.which 调用 mineru-api
-- refactor(env): 将 OCR_DEPENDENCIES 拆分为 PADDLE/MINERU 组
-- docs: 删除部分文档
-- chore: 清理所有 PaddleOCR-VL 和 GPU 相关残留引用
-- chore: 切换 paddlepaddle-gpu 为 CPU 版，清理配置
-- refactor(env): 简化为 CPU 安装，新增 MinerU 依赖
-- refactor(services): 清理 GPU 代码和已删流水线引用
-- refactor(ocr-service): 移除 GPU 代码和已删流水线，简化为 CPU 模式
-- refactor(options): 移除 PaddleOCR-VL/PP-StructureV3 选项，新增 MineRU 选项
-- Merge remote-tracking branch 'origin/master'
-- refactor(config): 引入统一配置管理器并重构各配置模块
-- chore(reports): 删除代码质量检查报告文件
-- refactor(code): 优化代码结构和类型注解
-- refactor(core): 重构代码结构和清理冗余代码
-- refactor(editor): 优化多种标注功能和撤销堆栈支持
-- refactor: 简化进度回调机制并优化UI组件
-- style: 调整UI
-- refactor(log): 优化日志表格显示，添加来源字段支持
-- refactor(ocr): 优化worker进程重启和预热逻辑
-- refactor(ui): 优化UI组件布局与日志状态处理
-- style: 代码格式化
-- chore: 更新 ruff 配置添加 pre-commit 忽略规则
-- chore: 添加 pre-commit 钩子配置
-- refactor(core): 优化模块导入顺序和类型注解
-- chore(deps): 集成代码质量工具并完善配置
-- refactor(views): 从 main_window 提取 ClipboardController
-- refactor(views): 使用 SettingsPageController 处理设置页面逻辑
-- refactor(views): 使所有 OCR 标签页继承自 BaseOcrTab
-- refactor(views): 在 main_window 中使用 SubprocessManager
-- refactor(phase1): 在 services 和 views 中使用 SingletonMeta 和 WindowsColors
-- refactor(core): 重构信息抽取工作线程为批处理基类继承
-- refactor(worker): 实现批量队列管理器延迟初始化
-- test(extraction): 添加集成测试
-- refactor(ui): 本地化批量识别相关界面文本
-- test(batch_recognition): 添加全面的集成测试
-- test(test_batch_recognition): 添加批量识别集成测试
-- refactor(ocr): 优化 OCR 子进程服务管理和主进程集成
-- refactor(env_manager): 移除便携式 Python 支持相关代码
-- refactor(main_window): 移除旧的 OCR 任务及相关测试代码
-- refactor(utils): 优化 Markdown 缩进处理逻辑
-- test: 添加 markdown 渲染集成测试
-- chore: 将 .vibeocr 缓存目录添加到 gitignore
-- docs: 初始化项目文档
-- docs: 在 README 中添加测试说明
-- test: 添加 MainWindow 集成测试
-- test: 添加 ScreenshotWidget 测试
-- test: 添加 PreviewWidget GUI 测试
-- test: 添加 OCRTask 线程测试
-- test: 添加 OCRService 单元测试
-- test: 添加共享 pytest fixtures
-- chore: 使用 pytest 搭建测试环境
 
-## [0.1.6] - 2026-06-26
+* refactor(release): cmd\_to\_main → cmd\_publish\_main 推送 GitHub 快照链
+* refactor(single-tab): 文件打开图片分支统一走 set\_pixmap 更新复制按钮启用状态
+* perf(shm): 共享内存 128MB→16MB 并统一默认值来源
+* test(install): 补充取消机制/缓存写入/版本失效测试，迁移 run mock→Popen
+* perf(pack): lxml/pydantic/chardet/aiohttp 等从 exe 包排除（省 \~14MB）
+* perf(pack): scipy/pandas 从 exe 包排除（省 \~80MB）
+* perf(pack): markdown 从 exe 包移至便携 Python 安装
+* chore(repo): 取消跟踪 docs（保留本地文件）
+* perf(pack): 去掉 UPX 压缩提速启动 + 工具栏说明 + compile\_ui 修复
+* chore(changelog): develop 同步 main 的整合版 CHANGELOG（首次初始化）
+* test(bump): 修复 ruff 未用变量 + 补充 main 首次初始化步骤
+* refactor(bump): develop bump 瘦身，不再生成 CHANGELOG/打 tag
+* refactor(bump): 抽出 \_collect\_commits/\_filter\_release\_commits 供合并复用
+* docs(plan): develop→main 合并发版与 CHANGELOG 整合实施计划
+* docs(spec): develop→main 合并发版与 CHANGELOG 整合设计
+* refactor(env): 提取 \_build\_paddle\_requirements，消除 paddle 项构建重复
+* docs(plan): 依赖增量安装实现计划（9 个任务，TDD）
+* docs(spec): 依赖增量安装（断点续传语义）设计
+* chore: lint 清理（安装日志 + 重装入口）
+* refactor(env): 依赖安装/后端切换 report 闭包改用 logging
+* refactor(env): install\_embedded\_python 改用 logging 落盘日志
+* refactor(env): download\_file\_with\_progress 改用 logging 落盘日志
+* docs(plan): 安装日志接入 logging + 设置页重装入口实施计划
+* docs: 安装日志接入 logging + 设置页重装入口设计
+* chore(换行符): 新增 .gitattributes 统一 LF，消除 autocrlf 警告
+* refactor(质量): ruff/pyright 全量清零 + 版本测试永久免疫 bump
+* refactor(env): 修正 torch 镜像源、移除无调用方的安装入口、修复更新后依赖降级
+* chore(版权): 版权年份更新为 2025–2026，关于页年份改为运行时取系统日期
+* refactor(pdf-tab): Task 3 审查修复——提取 \_layer\_cell\_tooltip 消除重复
+* refactor(pdf-tab): 删除右分隔器与内嵌预览，操作面板直挂主 splitter
+* revert(ui): 暂时禁用全局浅色 QSS，回到 Qt 原生控件风格
+* test(constants): 适配 COLOR\_\* 迁移到 theme.Colors
+* refactor(cleanup): A 类零星内联样式迁移到 theme token（batch/backend/preprocess/update）
+* refactor(widgets): B 类内联样式迁移到 theme token（chat/preview/clipboard/qrcode）
+* refactor(styles): 删除 editor\_styles/inline\_styles/styles 旧样式模块 + constants 旧色名 + 测试
+* refactor(screen\_capture): 迁移 InlineStyles 尺寸常量到 theme.Layout
+* refactor(inline): inline\_toolbar/recognition\_panel 迁移到 theme token
+* refactor(tool\_properties\_bar): 迁移到 theme token（暗→浅色）
+* refactor(edit\_toolbar): 迁移到 theme token（暗→浅色）
+* refactor(recognition\_panel): 迁移到 theme token（暗→浅色）
+* docs(plan): 浅色主题统一迁移实施计划（12 个 Task）
+* docs(spec): 补 styles.py 第4色源 + Layout 尺寸 token（计划前发现）
+* docs(spec): 适配近期提交——图标已落地、toolbar WA\_StyledBackground gotcha
+* test(pdf): cross-reader searchability assertions (ToUnicode/FontFile/volume)
+* build(deps): add fonttools for PDF text layer font subsetting
+* docs(spec+plan): PDF text layer embedded font (fontTools subset + ToUnicode)
+* test(integration): pipeline cache lifecycle e2e (release/set\_ttl flow)
+* docs(plans): implementation plans for dynamic batch size + pipeline cache lifecycle
+* docs(spec): pipeline cache lifecycle + dynamic batch size design
+* Merge remote-tracking branch 'gitee/develop' into develop
+* docs: 浅色主题统一 + 关于页卡片化设计 spec
+* refactor(pdf): extract \_load\_ocr\_prefs/\_begin\_ocr\_ui; add start\_ocr overwrite e2e test
+* refactor: 收敛防御性代码，消除冗余/无效/风格不一致
+* Merge feat/cjk-font-text-layer: PDF text-layer fix (CJK font, preview, resizable layout)
+* docs: mark PDF text layer fix as delivered
+* perf: debounce splitter state save; test right-splitter persistence
+* refactor: extract PreviewCanvas as public reusable class
+* docs: implementation plan for PDF text layer fix
+* docs: design spec for PDF text layer fix
+* test: mock NetworkDetector in mineru tests to stop wmic Popen leak
+* docs: mark backend choice UI as delivered (batch 2)
+* refactor: unify env management — consolidate dep specs, dedupe install, remove dead code
+* test: cover image-drop signal and generate-subtab drop rejection
+* refactor: restructure QrcodeTab into nested generate/decode sub-tabs
+* test: cover multi-code, blank, file/bytes, large-image, URL edge cases
+* chore: add pyzbar dependency for QR/barcode decoding
+* docs: add QR code decode feature implementation plan
+* docs: add QR code decode feature design spec
+* chore: track PyInstaller .spec files (build config versioning)
+* docs: mark preproc\_angle resolved via pipeline restriction
+* chore: default \_last\_pdf\_pipeline to OCR (matches PDF allowed set)
+* refactor: add generic lock\_to\_pipelines; lock\_to\_document\_parsing wraps it
+* test: add preproc\_angle=0 production path regression test
+* ⚡️ perf(pdf): 用轻量占位页面替代 open\_doc 中的 build\_page\_infos 调用
+* docs: add PDF OCR settings implementation plan
+* docs: add PDF OCR settings and text layer fix design spec
+* chore: checkpoint workspace changes on develop
+* ♻️ refactor: 将 PdfService 重构为无状态工具层
+* ♻️ refactor: 统一依赖版本管理，消除 env\_manager 与 env\_config 的常量重复
+* 🐛 fix: 使用 uv override-dependencies 彻底排除 opencv-python
+* 🐛 fix: 修复 opencv 包冲突导致 cv2.IMREAD\_COLOR 不可用
+* 🎨 style: ruff format 自动格式化测试文件
+* 🏷️ fix(types): 添加 get\_ocr\_service 返回类型标注及 is\_ready 方法
+* ✅ test: 新增 120 个测试，提升 5 个模块覆盖率
+* 🐛 fix: 修复 test\_bump\_version 编码问题、test\_update\_service 废弃API、export\_service HTML导出bug
+* 🎨 style: 格式化 preprocess\_options\_widget 和 toolbar 代码行宽
+* 🐛 fix(lint+types): 修复 ruff lint 错误与 mypy/pyright 类型检查问题
+* 🐛 fix(types): 修复 64 项 Pyright 类型检查错误
+* 🐛 fix(lint): 修复 187 项 ruff 代码检查问题
+* 🎨 style: 全局代码格式化，统一行宽与 import 空行规范
+* 🐛 fix(qa): 修正 subprocess.run 参数名 creation\_flags → creationflags
+* 🐛 fix(build): 修复打包脚本多处不适配问题
+* 🐛 fix(preferences): 初始化 OCRPreferences 单例，修复设置选项无法持久化的 bug
+* ✨ feat(ui): 识别成功后按钮变为「重新识别」，加载新图片时恢复「开始识别」
+* 🐛 fix(ui): 块类型模式下 bbox 根据置信度着色并标记低置信度
+* 🔧 chore(log): 控制台日志开发环境设为 DEBUG，打包环境保持 WARNING
+* 🐛 fix(pipelines): 修复 TABLE\_RECOGNITION/FORMULA\_RECOGNITION 预热失败 — 将枚举转换为字符串后再传给 get\_or\_create\_pipeline
+* 🐛 fix(ocr): 修复预处理后 bbox 偏移 — 用 dict.get 替代 getattr 提取 doc\_preprocessor\_res
+* ✅ test: 同步测试与代码变更
+* 🐛 fix(tests): 同步测试断言到当前代码
+* ♻️ refactor(tests): 重组测试目录结构与 src/vibeocr/ 镜像对齐
+* docs: 添加按管道独立选项持久化设计文档
+* 🐛 fix: 使用 doc\_preprocessor\_res\['output\_img'] 替换拼接可视化图
+* 🐛 fix(toolbar): 修复截图界面悬浮工具栏变透明的问题
+* ♻️ refactor(settings): 预加载管道复选框从注册表动态生成，移除硬编码映射
+* ♻️ refactor(ui): 截图识别面板从管道注册表动态生成按钮，移除硬编码配置和更多按钮
+* 🐛 fix(deps): 恢复 nvidia-cublas-cu12 依赖修复 GPU 推理失败
+* test: 新增字段序列化往返和持久化测试
+* test: 添加管道注册表端到端测试
+* refactor(ocr): 改造 OCRService 使用注册表进行管道分发
+* ✨ feat(pipelines): 创建表格识别管道 TableRecognitionOptions 和 TABLE\_RECOGNITION\_SPEC
+* docs: 管道注册表模式实现计划
+* docs: 管道注册表模式设计文档
+* refactor(preview): 用 \_compute\_scale\_factor 替代 \_compute\_display\_rect
+* docs: 坐标映射层重构设计文档
+* docs: 坐标映射层重构实施计划
+* refactor(screenshot): 清理废弃的 \_device\_pixel\_ratio 属性
+* refactor(canvas): InlineEditCanvas 改用 ScreenCoordinateMapper
+* refactor(window-detector): 改用 ScreenCoordinateMapper，添加结果裁剪
+* refactor(magnifier): 放大镜改用 ScreenCoordinateMapper，尺寸改为 121px
+* refactor(screenshot): 集成 ScreenCoordinateMapper 到 ScreenCaptureOverlay
+* 🐛 fix(ocr): 归一化 content\_list bbox 坐标并提取显示矩形计算
+* 🐛 fix: 修复退出崩溃、重复日志、AttributeError 及机器码重复检测
+* 🐛 fix: 增强预加载与 Worker 通信的健壮性
+* 🎨 style: ruff format 全量格式化与依赖版本升级
+* 🐛 fix(deps): 保留 pyproject 版本上界约束，仅更新下界
+* ♻️ refactor(ocr): 完成 PaddleX → PaddleOCR 3.x 迁移
+* refactor(ocr): 迁移 PaddleX → PaddleOCR 3.x
+* test: 更新测试以反映 PADDLEOCR\_VL 枚举和 MineRU 显示名变更
+* style: 修复 Pyright 类型安全问题
+* chore: 添加 pymupdf 依赖
+* 📝 docs: 添加 PDF 处理标签页实现计划
+* 📝 docs: 添加PDF处理标签页设计文档
+* ✨ feat(tool-properties-bar): 添加填充色按钮、链接按钮和透明度滑块控件
+* 📝 docs: 添加填充颜色与透明度控制实现计划
+* 📝 docs: 添加截图工具填充颜色与透明度控制设计文档
+* 🎨 style(toolbar): 启用边缘工具栏圆角显示
+* 🐛 fix(toolbar): 修复截图工具栏调色盘黑色背景问题
+* ✨ feat(inline-toolbar): 添加选择工具按钮
+* 🐛 fix(toolbar): 启动时恢复位置后执行边缘检测，修复贴边不自动隐藏
+* test: WindowDetector.detect\_at 坐标转换和缓存测试
+* docs: 截图界面窗口识别框选功能实施计划
+* docs: 截图界面窗口识别框选功能设计文档
+* chore: 清理计划和设计文档
+* refactor: 删除设置页的下载模型按钮
+* refactor: 安装成功后不再弹模型下载窗口
+* chore: 删除模型下载弹窗和 ModelDownloadService
+* chore: 删除 model\_cache\_manager 和自定义管道 YAML 配置
+* refactor: OCRService 超时判断改用 pipeline\_status
+* refactor: 超时判断改用 pipeline\_status 替代 model\_cache\_manager
+* docs: 管道识别成功记录设计文档
+* ✨ feat(ui): 非图片文件自动锁定文档解析管道，表格识别输出 Markdown
+* 🐛 fix(qrcode): 修复文字标签位置和预览高分屏适配
+* 🎨 fix(qrcode): 提升二维码渲染清晰度
+* 🐛 fix(shutdown): 修复退出时 QtWebEngine 崩溃 0xC0000409
+* 🐛 fix(batch): 批量识别改为流式返回结果，完成一个即显示一个
+* chore: 升级依赖并增强 upgrade\_deps.py CUDA 验证
+* 🔥 chore: 删除废弃的 mineru\_worker.py — MineRU 管道已不再通过共享内存 worker 子进程处理
+* refactor: OCRServiceSubprocess MineRU 管道从共享内存 IPC 改为直调 MinerUService 单例
+* refactor: \_build\_ocr\_result 使用 normalize\_content\_list 正常化层
+* 🔧 chore: bump pyside6 6.11.1, mineru 3.1.13, ruff 0.15.13, uv 0.11.14
+* 🐛 fix: 恢复 overlay 为 viewport 子组件，修复 bbox 偏移问题
+* refactor: 集中 DISCARDED\_BLOCK\_TYPES/normalize\_bbox 到 ocr\_result 模块，修复覆盖层坐标对齐
+* refactor: 左侧编辑同步右侧改为增量更新避免全量重渲染
+* 🐛 fix(ocr): 修复 MinerU 文档解析超时导致通信错误
+* chore: 添加 MIT LICENSE，修正 ruff target-version 为 py313
+* chore: 将 docs/ 目录添加到 .gitignore
+* chore: 清理 .gitignore，移除 .qoder 等 AI 工具缓存追踪
+* Merge remote-tracking branch 'origin/mineru-integration' into mineru-integration
+* build: 升级 mineru 3.1.11, nvidia-cudnn 9.22.0.52, uv 0.11.13
+* refactor: 移除截图编辑工具栏中的裁剪按钮及相关代码
+* refactor: 将截图属性条从主工具栏分离为独立面板
+* refactor: 识别面板点击管道按钮直接触发识别，移除工具栏识别按钮
+* style: 优化截图界面按钮布局和交互体验
+* refactor: 工具栏和识别面板按钮改为纯文字，工具栏靠选区右下角定位
+* style(toolbar): 不透明面板背景，移除工具栏阴影，统一识别按钮样式
+* style(toolbar): 更新按钮样式为透明默认，工具栏高度 48px
+* refactor(log): 降低日常操作日志级别 info→debug
+* perf(startup): 延迟初始化 QWebEngineView，用 uuid.getnode 替换 wmic，延迟导入 OCRService
+* refactor(log): 精简状态栏关键字过滤为关键里程碑
+* refactor(log): 将非里程碑日志降级为 debug（managers/utils/views 层）
+* refactor(log): 将非里程碑日志降级为 debug（workers 层）
+* refactor(log): 将非里程碑日志降级为 debug（services 层）
+* refactor(log): 将非里程碑日志降级为 debug（main\_window）
+* perf(qrcode): 优化 QR 码渲染，使用动态 box\_size 和 NEAREST 重采样
+* chore: 更新依赖
+* refactor: 移除旧的 ScreenshotWidget 和 ScreenshotEditWindow
+* style(toolbar): 切换为白色背景和浅色主题
+* chore(deps): 更新项目依赖版本
+* chore: 移除已过时的模型源测试
+* refactor: 将 install\_dialog 迁移到 NetworkDetector
+* refactor: 将 ocr\_service 迁移到 NetworkDetector
+* refactor: 将 mineru\_service 迁移到 NetworkDetector
+* refactor: 将 model\_download\_service 迁移到 NetworkDetector
+* refactor: 废弃旧的网络检测函数，委托给 NetworkDetector
+* test(qrcode): 添加格式切换和预览的行为测试
+* chore: 添加 qrcode\[pil] 和 python-barcode 依赖
+* test: 更新测试
+* test(export): 添加导出服务单元测试
+* chore: 移除 FilePreviewWidget（已合并到 PreviewWidget）
+* refactor(main-window): 精简 MainWindow，将 OCR 委托给 SingleRecognitionTab
+* refactor(tabs): 重构 BatchRecognitionTab 使用 BaseOcrTab 共享逻辑
+* refactor(tabs): 为 BaseOcrTab 添加悬停同步、文本编辑和偏好设置
+* refactor(tabs): 为 BaseOcrTab 添加 \_build\_content\_list 和 \_display\_result
+* refactor(tabs): 为 BaseOcrTab 添加共享状态和管道路由
+* test(widgets): 添加 PreviewWidget 单元测试
+* refactor(widgets): 在 PreviewWidget 中创建 UnifiedBBoxOverlay
+* chore(build): 删除旧的 lint.py 脚本
+* test: 添加多页 PDF 结果结构的集成测试
+* refactor: 用共享 mime\_types 模块替换内联 MIME 映射
+* refactor: 重写 \_build\_ocr\_result，修复纯文本提取和 TextBlock
+* refactor: 移除菜单栏，添加关于标签页和键盘快捷键
+* refactor: 在 main.py 中使用 **init**.py 的动态版本
+* docs: 添加初始 CHANGELOG.md
+* refactor(settings): 清理设置页面 — 移除废弃功能，重新设计为左右分栏
+* refactor(settings\_manager): 移除 LLM/模板桥接，仅保留预加载
+* refactor(config\_manager): 移除 LLM 配置和模板方法
+* refactor: 移除废弃模型（ExtractionOptions、ExtractionTemplate、LLMConfig）
+* chore: 添加导出配置和报告文件
+* test(widgets): 添加 \_build\_block\_html 和 \_build\_text\_blocks\_html 标题属性的 TDD 测试
+* test: 更新双 WorkerManager 架构的测试
+* refactor(ocr\_service): 移除 \_recognize\_document 和 DOCUMENT\_PARSING 分支
+* refactor(worker): 从 PaddleX worker 批量逻辑中移除 MinerU/DOCUMENT\_PARSING
+* refactor(worker): 用 sys.meta\_path 导入钩子替换 torch 桩
+* refactor(worker): WorkerManager 支持可配置的 worker\_module
+* refactor(worker): OCRWorkerProcess 支持可配置的 worker\_module
+* refactor(mineru): 用 python -m 替换 shutil.which 调用 mineru-api
+* refactor(env): 将 OCR\_DEPENDENCIES 拆分为 PADDLE/MINERU 组
+* docs: 删除部分文档
+* chore: 清理所有 PaddleOCR-VL 和 GPU 相关残留引用
+* chore: 切换 paddlepaddle-gpu 为 CPU 版，清理配置
+* refactor(env): 简化为 CPU 安装，新增 MinerU 依赖
+* refactor(services): 清理 GPU 代码和已删流水线引用
+* refactor(ocr-service): 移除 GPU 代码和已删流水线，简化为 CPU 模式
+* refactor(options): 移除 PaddleOCR-VL/PP-StructureV3 选项，新增 MineRU 选项
+* Merge remote-tracking branch 'origin/master'
+* refactor(config): 引入统一配置管理器并重构各配置模块
+* chore(reports): 删除代码质量检查报告文件
+* refactor(code): 优化代码结构和类型注解
+* refactor(core): 重构代码结构和清理冗余代码
+* refactor(editor): 优化多种标注功能和撤销堆栈支持
+* refactor: 简化进度回调机制并优化UI组件
+* style: 调整UI
+* refactor(log): 优化日志表格显示，添加来源字段支持
+* refactor(ocr): 优化worker进程重启和预热逻辑
+* refactor(ui): 优化UI组件布局与日志状态处理
+* style: 代码格式化
+* chore: 更新 ruff 配置添加 pre-commit 忽略规则
+* chore: 添加 pre-commit 钩子配置
+* refactor(core): 优化模块导入顺序和类型注解
+* chore(deps): 集成代码质量工具并完善配置
+* refactor(views): 从 main\_window 提取 ClipboardController
+* refactor(views): 使用 SettingsPageController 处理设置页面逻辑
+* refactor(views): 使所有 OCR 标签页继承自 BaseOcrTab
+* refactor(views): 在 main\_window 中使用 SubprocessManager
+* refactor(phase1): 在 services 和 views 中使用 SingletonMeta 和 WindowsColors
+* refactor(core): 重构信息抽取工作线程为批处理基类继承
+* refactor(worker): 实现批量队列管理器延迟初始化
+* test(extraction): 添加集成测试
+* refactor(ui): 本地化批量识别相关界面文本
+* test(batch\_recognition): 添加全面的集成测试
+* test(test\_batch\_recognition): 添加批量识别集成测试
+* refactor(ocr): 优化 OCR 子进程服务管理和主进程集成
+* refactor(env\_manager): 移除便携式 Python 支持相关代码
+* refactor(main\_window): 移除旧的 OCR 任务及相关测试代码
+* refactor(utils): 优化 Markdown 缩进处理逻辑
+* test: 添加 markdown 渲染集成测试
+* chore: 将 .vibeocr 缓存目录添加到 gitignore
+* docs: 初始化项目文档
+* docs: 在 README 中添加测试说明
+* test: 添加 MainWindow 集成测试
+* test: 添加 ScreenshotWidget 测试
+* test: 添加 PreviewWidget GUI 测试
+* test: 添加 OCRTask 线程测试
+* test: 添加 OCRService 单元测试
+* test: 添加共享 pytest fixtures
+* chore: 使用 pytest 搭建测试环境
+
+## \[0.1.6] - 2026-06-26
 
 ### Added
-- 项目初始化
-- 截图 OCR 识别功能
-- PaddleOCR 集成
-- MinerU 文档解析集成
-- 批量识别功能
-- 应用设置页新增「环境维护」分组（重装 Python/依赖按钮）
-- BackendChoiceDialog 透传 reinstall_python
-- InstallWorker 支持 reinstall_python + 进度日志镜像
-- reinstall_embedded_python 强制删除后重装
-- 交互式菜单新增「仅打包当前版本」选项
+
+* 项目初始化
+* 截图 OCR 识别功能
+* PaddleOCR 集成
+* MinerU 文档解析集成
+* 批量识别功能
+* 应用设置页新增「环境维护」分组（重装 Python/依赖按钮）
+* BackendChoiceDialog 透传 reinstall\_python
+* InstallWorker 支持 reinstall\_python + 进度日志镜像
+* reinstall\_embedded\_python 强制删除后重装
+* 交互式菜单新增「仅打包当前版本」选项
 
 ### Changed
-- 安装/下载日志接入 logging（替代 print）
-- torch 镜像源修正、移除无调用方安装入口
-- ruff/pyright 全量清零 + 版本测试永久免疫 bump
-- 统一 LF 换行符（.gitattributes）
-- 发版时自动同步 uv.lock
+
+* 安装/下载日志接入 logging（替代 print）
+* torch 镜像源修正、移除无调用方安装入口
+* ruff/pyright 全量清零 + 版本测试永久免疫 bump
+* 统一 LF 换行符（.gitattributes）
+* 发版时自动同步 uv.lock
 
 ### Fixed
-- updater 未绑定变量告警
-- PDF 文字层旋转页面坐标错位
-- 推理硬件误报 + 预热输出设备信息 + 第三方库降噪
-- _install_paddle_stack 兼容打包环境键名（KeyError）
-- uv.lock 路径支持环境变量隔离
-- 方案 A 打包误删 Qt6Qml/Quick 导致 QtWebChannel 加载失败
-- 发版 uv.lock 版本号滞后漂移
-- 打包进程递归卡死 / 体积臃肿 / 安装入口缺失 / 路径解析错误
+
+* updater 未绑定变量告警
+* PDF 文字层旋转页面坐标错位
+* 推理硬件误报 + 预热输出设备信息 + 第三方库降噪
+* \_install\_paddle\_stack 兼容打包环境键名（KeyError）
+* uv.lock 路径支持环境变量隔离
+* 方案 A 打包误删 Qt6Qml/Quick 导致 QtWebChannel 加载失败
+* 发版 uv.lock 版本号滞后漂移
+* 打包进程递归卡死 / 体积臃肿 / 安装入口缺失 / 路径解析错误
+

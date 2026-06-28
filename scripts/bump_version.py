@@ -1235,10 +1235,11 @@ def cmd_publish_main(skip_confirm: bool = False) -> int:
     2. 未版本化提交检测（发版安全闸，有则阻止）
     3. 取 develop 当前版本号
     4. 确认提示（skip_confirm=True 时跳过）
-    5. 整合 CHANGELOG（自上次 tag 以来的提交汇总成一条 vX.Y.Z 条目）
+    5. CHANGELOG 已在 develop bump 时生成并提交，此处直接复用 develop 的树
     6. 查询 GitHub main 当前 HEAD（首次为空 → 孤儿提交；否则以其为 parent）
-    7. 用 git commit-tree 造单个 release 提交（develop 全部内容 + 新 CHANGELOG）
-    8. push 到 GitHub main（fast-forward，无需 force）+ push tag
+    7. 用 git commit-tree 造单个 release 提交（develop 全部内容，含 CHANGELOG）
+    8. push 到 GitHub main（fast-forward，无需 force）
+    9. 打 tag 并推送（tag 指向 develop HEAD）
 
     快照链形态：v0.2.0 → v0.3.0 → ...，每个版本恰好 1 个提交，有父子关系。
     develop 完整历史不受影响（不改写 hash，不切换分支）。
@@ -1282,24 +1283,8 @@ def cmd_publish_main(skip_confirm: bool = False) -> int:
             print("已取消")
             return 1
 
-    # 5. 整合 CHANGELOG（自上次 tag 以来的提交 → 单条 vX.Y.Z 条目）
-    #    用 git describe 找最近 tag 作为范围下界；无 tag 则取全部历史
-    try:
-        describe = subprocess.run(
-            ["git", "describe", "--tags", "--abbrev=0"],
-            capture_output=True, encoding="utf-8", check=True,
-        )
-        last_tag = describe.stdout.strip()
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        last_tag = ""
-
-    if last_tag:
-        commits = _collect_commits(f"{last_tag}..HEAD")
-    else:
-        commits = _collect_commits("HEAD")
-    entry = generate_consolidated_entry(v_new, commits)
-    update_main_changelog(entry)
-    print(f"  已整合 CHANGELOG（v{v_new}，{len(commits)} 个提交，自 {last_tag or '初始'}）")
+    # 5. CHANGELOG 已在 develop bump 时生成并提交，此处直接复用 develop 的树
+    #    （不再单独整合/改写 CHANGELOG，main 快照链与 develop CHANGELOG 同源）。
 
     # 6. 查询 GitHub main 当前 HEAD，决定 parent
     parent_sha = _remote_head_sha(remote, branch)
@@ -1317,10 +1302,8 @@ def cmd_publish_main(skip_confirm: bool = False) -> int:
     else:
         print(f"  {remote}/{branch} 为空仓库，将创建孤儿单提交")
 
-    # 7. 造单提交：develop 树 + 新 CHANGELOG（写入 index 后用 index 树）
-    #    注意：update_main_changelog 已改工作区文件，需 git add 进 index
+    # 7. 造单提交：直接用 develop 当前 index 树（含已提交的 CHANGELOG）
     try:
-        subprocess.run(["git", "add", str(CHANGELOG)], check=True)
         tree_sha = subprocess.run(
             ["git", "write-tree"],
             capture_output=True, encoding="utf-8", check=True,
@@ -1355,7 +1338,7 @@ def cmd_publish_main(skip_confirm: bool = False) -> int:
         return 1
 
     # 9. 打 tag 并推送
-    #    tag 打在 develop HEAD（release 提交）上，而非快照提交。
+    #    tag 打在 develop HEAD（release 提交，已含 CHANGELOG）上，而非快照提交。
     #    原因：快照提交是独立链，与 develop 无共同祖先；若 tag 打在快照上，
     #    下次发版算 {tag}..HEAD 会返回 develop 全部历史（范围计算错误）。
     #    tag 打在 develop HEAD 上 → 下次 {tag}..HEAD 正确只算新增提交。
@@ -1374,9 +1357,7 @@ def cmd_publish_main(skip_confirm: bool = False) -> int:
     except subprocess.CalledProcessError as e:
         print(f"警告: 打/推 tag 失败: {e}")
 
-    # 9. CHANGELOG 已写入 develop 工作区，提示提交回 develop
     print(f"\n完成! {remote}/{branch} 已更新到 v{v_new}（单提交快照）")
-    print("  CHANGELOG.md 已更新，请提交回 develop: git add CHANGELOG.md && git commit")
     print(f"  可用 --release 发布产物（Release 会关联到 v{v_new} tag）")
     return 0
 
@@ -1551,8 +1532,8 @@ def main() -> int:
     new_str = ".".join(map(str, new_version))
     print(f"版本升级: {current_str} → {new_str}")
 
-    # 更新版本号文件（develop bump 只前进版本号 + release 提交；
-    # CHANGELOG 与 tag 改由 --to-main 在 main 上维护）
+    # 更新版本号文件（develop bump 前进版本号 + 生成 CHANGELOG + release 提交；
+    # tag 仍由 --to-main 在 main 上创建）
     update_file_version(PYPROJECT_TOML, current_str, new_str)
     print(f"  已更新 {PYPROJECT_TOML}")
 
@@ -1565,11 +1546,22 @@ def main() -> int:
     # 同步 uv.lock（pyproject 版本号已变，锁文件需刷新避免滞后漂移）
     _sync_uv_lock(new_str)
 
+    # 更新 CHANGELOG（develop bump 时生成条目，弹编辑器审阅，纳入 release 提交）
+    commits = get_commits_since_last_tag()
+    update_changelog(new_str, commits)
+    print(f"  已更新 {CHANGELOG}")
+
+    # 打开编辑器审阅 CHANGELOG（--no-edit 跳过）
+    if not args.no_edit:
+        _open_editor(CHANGELOG)
+
     # Git 操作（develop 不打 tag —— tag 只在 main 上由 --to-main 创建）
     try:
         subprocess.run(["git", "add", str(PYPROJECT_TOML)], check=True)
         if INIT_PY.exists():
             subprocess.run(["git", "add", str(INIT_PY)], check=True)
+        # CHANGELOG 随版本号一同进入 release 提交（--to-main 时不再单独改）
+        subprocess.run(["git", "add", str(CHANGELOG)], check=True)
         # uv.lock 与版本号同源，纳入同一 release 提交
         if UV_LOCK.exists():
             subprocess.run(["git", "add", str(UV_LOCK)], check=True)
