@@ -14,8 +14,23 @@ from pathlib import Path
 os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 
 # 禁用 OneDNN 以提高兼容性（某些 CPU 指令集不兼容会导致崩溃）
+# 注：CPU 模式下的精细 oneDNN 判定见 OCRService（can_safely_enable_onednn），
+# 这里仅作为兜底默认关闭，避免历史崩溃场景。
 os.environ.setdefault("FLAGS_enable_onednn_backend", "0")
 os.environ.setdefault("FLAGS_use_mkldnn", "0")
+
+# CPU 线程数自适应：paddle/OpenMP 默认仅用 1 线程，浪费多核 CPU。
+# 按逻辑核数设置，避免 i9-14900KF 这类 32 线程 CPU 仅单核推理。
+# 用户可用 VIBEOCR_CPU_THREADS 显式覆盖。
+try:
+    from vibeocr.utils.cpu_info import get_cpu_thread_count
+
+    _cpu_threads = str(get_cpu_thread_count())
+    os.environ.setdefault("OMP_NUM_THREADS", _cpu_threads)
+    os.environ.setdefault("FLAGS_omp_num_threads", _cpu_threads)
+    os.environ.setdefault("FLAGS_cpu_threads", _cpu_threads)
+except Exception:
+    pass
 
 # 设置环境变量以抑制不必要的警告
 # 禁用 PaddleX 的模型源连接检查
