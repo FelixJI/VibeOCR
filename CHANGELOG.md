@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.1] - 2026-06-28
+
+### Fixed
+- fix(ci): 强制 stdout/stderr UTF-8，修复 Windows CI 中文打印崩溃；升级 checkout/setup-python 消 Node20 警告
+
+### Changed
+- docs(changelog): 整合 v0.2.0 发布条目（GitHub main 首次快照）
+
 ## [0.2.0] - 2026-06-28
 
 ### Added

@@ -1354,13 +1354,41 @@ def cmd_publish_main(skip_confirm: bool = False) -> int:
         print("  （若远程有 unrelated 历史，需首次用 --force；后续应 fast-forward）")
         return 1
 
-    # 9. 打 tag 并推送
-    #    tag 打在 develop HEAD（release 提交）上，而非快照提交。
-    #    原因：快照提交是独立链，与 develop 无共同祖先；若 tag 打在快照上，
-    #    下次发版算 {tag}..HEAD 会返回 develop 全部历史（范围计算错误）。
-    #    tag 打在 develop HEAD 上 → 下次 {tag}..HEAD 正确只算新增提交。
-    #    推送 tag 时 git 会把 develop HEAD 提交对象一并推到远程对象库，
-    #    GitHub Release API 即可通过此 tag 找到提交。
+    # 9. 把整合后的 CHANGELOG 提交回 develop（保持工作区干净）
+    #    CHANGELOG 在第 5 步已写入 develop 工作区（update_main_changelog），
+    #    且在第 7 步已被 add 进 index 用于构造快照 tree。这里把它在 develop
+    #    分支上正式提交，使 develop 工作区回到 clean 状态，无需手动收尾。
+    #    注意顺序：必须在第 10 步「打 tag」之前提交，否则 tag 会指向
+    #    CHANGELOG 提交之前的旧 HEAD，导致下次 {tag}..HEAD 把这个
+    #    changelog: 提交误算进发版范围，污染下一次的 CHANGELOG。
+    changelog_committed = False
+    try:
+        # CHANGELOG 可能已在第 7 步 git add 过；若无改动 commit 会失败，先检查
+        status = subprocess.run(
+            ["git", "status", "--porcelain", str(CHANGELOG)],
+            capture_output=True, encoding="utf-8", check=True,
+        )
+        if status.stdout.strip():
+            subprocess.run(
+                ["git", "commit", "-m", f"changelog: v{v_new}"],
+                check=True,
+            )
+            print(f"  已在 develop 提交 CHANGELOG（changelog: v{v_new}）")
+            changelog_committed = True
+        else:
+            print("  CHANGELOG 无变化，跳过提交")
+            changelog_committed = True
+    except subprocess.CalledProcessError as e:
+        print(f"警告: CHANGELOG 提交回 develop 失败: {e}")
+        print(f"  请手动: git add {CHANGELOG.name} && git commit -m 'changelog: v{v_new}'")
+
+    # 10. 打 tag 并推送
+    #     tag 打在 develop HEAD（含 CHANGELOG 提交）上，而非快照提交。
+    #     原因：快照提交是独立链，与 develop 无共同祖先；若 tag 打在快照上，
+    #     下次发版算 {tag}..HEAD 会返回 develop 全部历史（范围计算错误）。
+    #     tag 打在 develop HEAD 上 → 下次 {tag}..HEAD 正确只算新增提交。
+    #     推送 tag 时 git 会把 develop HEAD 提交对象一并推到远程对象库，
+    #     GitHub Release API 即可通过此 tag 找到提交。
     try:
         subprocess.run(
             ["git", "tag", "-f", f"v{v_new}", "HEAD"],
@@ -1374,9 +1402,9 @@ def cmd_publish_main(skip_confirm: bool = False) -> int:
     except subprocess.CalledProcessError as e:
         print(f"警告: 打/推 tag 失败: {e}")
 
-    # 9. CHANGELOG 已写入 develop 工作区，提示提交回 develop
     print(f"\n完成! {remote}/{branch} 已更新到 v{v_new}（单提交快照）")
-    print("  CHANGELOG.md 已更新，请提交回 develop: git add CHANGELOG.md && git commit")
+    if not changelog_committed:
+        print("  ⚠ CHANGELOG 未提交，请按上方警告手动提交")
     print(f"  可用 --release 发布产物（Release 会关联到 v{v_new} tag）")
     return 0
 
