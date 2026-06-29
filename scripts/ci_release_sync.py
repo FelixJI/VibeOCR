@@ -82,8 +82,107 @@ def build_release_body(base: str, tag: str) -> str:
 
 
 def cmd_sync_cnb(args: argparse.Namespace) -> int:
-    # Task 7 实现
-    raise NotImplementedError
+    token = os.environ.get("CNB_TOKEN", "")
+    if not token:
+        print("::warning::未配置 CNB_TOKEN，跳过 CNB Release 同步")
+        return 0
+
+    version = args.version
+    tag = f"v{version}"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.cnb.api+json",
+    }
+
+    zip_path = Path(f"dist/VibeOCR-v{version}-win64.zip")
+    sha_path = Path(f"dist/VibeOCR-v{version}-win64.zip.sha256")
+    notes_path = Path(args.notes)
+    base_body = notes_path.read_text(encoding="utf-8") if notes_path.exists() else ""
+    body = build_release_body(base_body, tag)
+
+    def request_with_retry(req, *, attempts=3, base_delay=10):
+        last_err = None
+        for i in range(1, attempts + 1):
+            try:
+                timeout = req.timeout if hasattr(req, "timeout") else 60
+                return urllib.request.urlopen(req, timeout=timeout)
+            except (urllib.error.URLError, TimeoutError, ConnectionError) as e:
+                last_err = e
+                if i == attempts:
+                    raise
+                delay = base_delay * i
+                print(f"  请求失败 ({e})，{delay}s 后第 {i + 1} 次尝试...")
+                time.sleep(delay)
+        raise last_err  # 不可达
+
+    def api_request(method, path, *, payload=None, timeout=60):
+        data = json.dumps(payload).encode("utf-8") if payload is not None else None
+        req = urllib.request.Request(
+            f"{_CNB_API}{path}",
+            data=data,
+            headers={**headers, "Content-Type": "application/json"},
+            method=method,
+        )
+        req.timeout = timeout
+        return request_with_retry(req)
+
+    # 1) 创建 Release；已存在则按 tag 复用并 PATCH 更新 body（补下载地址）
+    release_id = None
+    try:
+        resp = api_request("POST", "/-/releases", payload={
+            "tag_name": tag,
+            "name": tag,
+            "body": body,
+            "target_commitish": "main",
+            "make_latest": "true",
+        })
+        release = json.loads(resp.read().decode("utf-8"))
+        resp.close()
+        release_id = release["id"]
+        print(f"CNB Release 创建成功 id={release_id}")
+    except urllib.error.HTTPError:
+        resp2 = api_request("GET", f"/-/releases/tags/{tag}")
+        release = json.loads(resp2.read().decode("utf-8"))
+        resp2.close()
+        release_id = release["id"]
+        print(f"CNB Release 已存在，复用 id={release_id}")
+        try:
+            api_request("PATCH", f"/-/releases/{release_id}", payload={"body": body})
+            print("  已更新 Release body（追加下载地址）")
+        except Exception as e2:
+            print(f"  ::warning::更新 Release body 失败（不影响附件上传）: {e2}")
+
+    # 2) 三步上传每个附件（取地址 → PUT → 确认）
+    for path in (zip_path, sha_path):
+        if not path.exists():
+            print(f"::warning::附件不存在，跳过: {path}")
+            continue
+        file_bytes = path.read_bytes()
+        resp = api_request(
+            "POST",
+            f"/-/releases/{release_id}/asset-upload-url",
+            payload={"asset_name": path.name, "size": len(file_bytes), "overwrite": True, "ttl": 0},
+        )
+        up = json.loads(resp.read().decode("utf-8"))
+        resp.close()
+        upload_url, verify_url = up["upload_url"], up["verify_url"]
+
+        put_req = urllib.request.Request(
+            upload_url, data=file_bytes,
+            headers={"Content-Type": "application/octet-stream"}, method="PUT",
+        )
+        put_req.timeout = 300
+        r = request_with_retry(put_req, attempts=3, base_delay=15)
+        r.read(); r.close()
+
+        verify_req = urllib.request.Request(verify_url, method="POST")
+        verify_req.timeout = 60
+        r = request_with_retry(verify_req)
+        r.read(); r.close()
+        print(f"  上传附件成功: {path.name}")
+
+    print("CNB Release 同步完成")
+    return 0
 
 
 def cmd_prune_github(args: argparse.Namespace) -> int:
