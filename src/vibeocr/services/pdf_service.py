@@ -8,7 +8,7 @@ from __future__ import annotations
 import logging
 import shutil
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 import fitz
 import numpy as np
@@ -18,6 +18,11 @@ from vibeocr.models.pdf_document import PdfDocument, PdfPageInfo, TextLayerInfo
 from vibeocr.utils.cjk_font_resolver import _CJK_RESOLVER
 
 logger = logging.getLogger(__name__)
+
+
+class SaveResult(NamedTuple):
+    rewritten_pages: list[int]
+    path: str | None
 
 
 class PdfService:
@@ -73,6 +78,71 @@ class PdfService:
         else:
             doc.save(path, deflate=True)
         pdf_document.is_modified = False
+
+    @staticmethod
+    def save_with_rewrite(
+        doc: fitz.Document,
+        pdf_document: PdfDocument,
+        path: str | None = None,
+        pdf_settings: object | None = None,
+    ) -> SaveResult:
+        """对所有有 OCR 块的页重写文字层后落盘（保存/另存为共用）。
+
+        rewrite 阶段用词级 redact（delete_text_layers 循环验证），
+        落盘按 has_structural_change 分流：无结构改动 → incremental（快），
+        有结构改动 → full save（garbage+deflate）。另存为永远 full save。
+
+        Args:
+            doc: fitz.Document 实例。
+            pdf_document: PdfDocument 状态对象。
+            path: None=覆盖原文件；str=另存为到该路径。
+            pdf_settings: PdfGlobalSettings（rewrite 用）。
+
+        Returns:
+            SaveResult(rewritten_pages, path)。
+        """
+        from vibeocr.models.pdf_ocr_options import PdfGlobalSettings
+
+        settings = pdf_settings if pdf_settings is not None else PdfGlobalSettings()
+        rewritten: list[int] = []
+        for info in pdf_document.pages:
+            if not info.ocr_text_blocks:
+                continue
+            PdfService.rewrite_text_layer(
+                doc,
+                pdf_document,
+                info.page_index,
+                info.ocr_text_blocks,
+                info.ocr_preproc_angle,
+                pdf_settings=settings,
+            )
+            rewritten.append(info.page_index)
+
+        if path is None:
+            save_path = pdf_document.file_path
+            if save_path is None:
+                pdf_document.is_modified = False
+                pdf_document.has_structural_change = False
+                return SaveResult(rewritten, None)
+            backup_path = save_path + ".bak"
+            shutil.copy2(save_path, backup_path)
+            try:
+                if pdf_document.has_structural_change:
+                    # 结构改动不能用 incremental，全量写
+                    doc.save(save_path, garbage=4, deflate=True)
+                else:
+                    doc.save(save_path, incremental=True, encryption=0)
+                Path(backup_path).unlink(missing_ok=True)
+            except Exception:
+                shutil.copy2(backup_path, save_path)
+                Path(backup_path).unlink(missing_ok=True)
+                raise
+        else:
+            doc.save(path, deflate=True)
+
+        pdf_document.is_modified = False
+        pdf_document.has_structural_change = False
+        return SaveResult(rewritten, path)
 
     # ---- render -----------------------------------------------------
 
