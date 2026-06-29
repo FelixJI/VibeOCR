@@ -16,8 +16,6 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from PySide6.QtCore import QObject, QUrl, Signal, Slot
-from PySide6.QtWebChannel import QWebChannel
-from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWidgets import QVBoxLayout, QWidget
 
 from vibeocr.models.ocr_result import DISCARDED_BLOCK_TYPES
@@ -26,20 +24,26 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
+    # QWebEngineView / QWebChannel 仅作类型注解引用，运行时延迟 import
+    # （WebEngine 资源按需下载：首启前 Qt6WebEngineCore.dll 可能不存在，
+    # 顶层 import 会触发 DLL 加载导致整个模块 import 失败）。
+    from PySide6.QtWebChannel import QWebChannel
+    from PySide6.QtWebEngineWidgets import QWebEngineView
+
 logger = logging.getLogger(__name__)
 
 
 def _get_resources_dir() -> Path:
     """获取 resources 目录路径（打包态/开发态通用）
 
-    打包态 resources 在 exe 同级（PyInstaller --add-data 打入 _internal
-    或 exe 同级）；开发态在仓库根。统一走 env_manager.get_project_root()
-    定位根目录，避免硬编码层级在 PYZ 虚拟路径下算错。
+    委托 env_manager.get_bundled_resources_dir() 作为 SSOT：
+    打包态 resources 由 ``--add-data`` 打入 ``sys._MEIPASS``（``_internal/resources``），
+    而非 exe 同级；开发态位于仓库根。
     采用函数惰性求值，避免模块导入时触发 env_manager 的循环导入。
     """
-    from vibeocr.env_manager import get_project_root
+    from vibeocr.env_manager import get_bundled_resources_dir
 
-    return get_project_root() / "resources"
+    return get_bundled_resources_dir()
 
 # 块类型 → CSS 左边框颜色
 BLOCK_BORDER_COLORS: dict[str, str] = {
@@ -514,6 +518,8 @@ class ResultViewWidget(QWidget):
     block_unhovered = Signal()
     block_clicked = Signal(int)
     block_edited = Signal(int, str)  # 新增：(block_index, new_text)
+    # WebEngine 未就绪（资源包未下载）时触发，供上层弹下载引导。
+    webengine_missing = Signal()
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
@@ -524,13 +530,29 @@ class ResultViewWidget(QWidget):
     def _setup_ui(self) -> None:
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
+        # 延迟创建：WebEngine 资源按需下载，首启前可能未就绪。
         self._web_view: QWebEngineView | None = None
         self._channel: QWebChannel | None = None
         self._bridge: _Bridge | None = None
 
-    def _ensure_web_view(self) -> QWebEngineView:
+    def _ensure_web_view(self) -> QWebEngineView | None:
+        """惰性创建并返回 QWebEngineView；WebEngine 未就绪时返回 None。
+
+        WebEngine（Qt6WebEngineCore.dll 等）从主包中剔除，首启向导按需下载
+        解压到 _internal/PySide6/。下载完成前此处的延迟 import 会失败，
+        调用方需处理 None（通常是显示一个引导下载的占位提示）。
+        """
         if self._web_view is not None:
             return self._web_view
+
+        # 运行时延迟 import：避免模块顶层加载触发 WebEngine DLL
+        try:
+            from PySide6.QtWebChannel import QWebChannel
+            from PySide6.QtWebEngineWidgets import QWebEngineView
+        except (ImportError, OSError) as e:
+            # Qt6WebEngineCore.dll 缺失或损坏 → ImportError/OSError
+            logger.warning(f"WebEngine 不可用，结果页无法渲染: {e}")
+            return None
 
         self._web_view = QWebEngineView(self)
         self._channel = QWebChannel(self._web_view)
@@ -550,7 +572,11 @@ class ResultViewWidget(QWidget):
 
     def display_result(self, result: Any) -> None:
         """显示 OCR 识别结果"""
-        self._ensure_web_view()
+        web_view = self._ensure_web_view()
+        if web_view is None:
+            # WebEngine 未就绪：发出信号供上层弹下载引导（上层连接此信号）。
+            self.webengine_missing.emit()
+            return
         global _current_images
         self._current_result = result
         self._highlighted_index = -1
@@ -578,7 +604,7 @@ class ResultViewWidget(QWidget):
         katex_dir = resources_dir / "katex"
         full_html = _build_full_html(body, katex_dir)
         base_url = QUrl.fromLocalFile(str(resources_dir) + "/")
-        self._ensure_web_view().setHtml(full_html, base_url)
+        web_view.setHtml(full_html, base_url)
 
     def update_block_text(self, index: int, text: str) -> None:
         """从外部更新指定块的显示文本（如左侧编辑同步时调用）"""

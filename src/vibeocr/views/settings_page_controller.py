@@ -55,6 +55,7 @@ class SettingsPageController:
         ocr_ready_callback: Callable[[], bool],
         subprocess_manager,
         preload_complete_callback: Callable[[], None] | None = None,
+        install_succeeded_callback: Callable[[], None] | None = None,
     ) -> None:
         self._ui = ui
         self._project_root = project_root
@@ -62,6 +63,13 @@ class SettingsPageController:
         self._ocr_ready_callback = ocr_ready_callback
         self._subprocess_manager = subprocess_manager
         self._preload_complete_callback = preload_complete_callback
+        # 设置页重装/补装依赖成功后的联动回调（由 MainWindow 提供）。
+        # 回归（Bug A）：旧逻辑设置页 BackendChoiceDialog 只连 finished 刷新表格，
+        # 没联动 MainWindow._ocr_ready / 子进程 Worker，导致装完仍提示"未就绪"。
+        # 现由 MainWindow 传入一个触发 dependency_manager.check_dependencies
+        # 的回调，使设置页安装成功后与首启路径行为一致（检测完成回调里自动
+        # 设 _ocr_ready + 启动 Worker + 消费 pending_backend）。
+        self._install_succeeded_callback = install_succeeded_callback
         self._manual_preload_total = 0
         self._manual_preload_task: object | None = None
         # 非模态重装对话框引用：show() 后须持有，否则被 GC 立即销毁；
@@ -571,6 +579,9 @@ class SettingsPageController:
         """以非模态方式打开重装/补装对话框（不阻塞主窗口）。
 
         show() 后必须持有 dialog 引用以防 GC；finished 时刷新环境状态并移除引用。
+        install_succeeded 联动 MainWindow 重新检测依赖（Bug A 修复）：装完依赖后
+        由 MainWindow 触发 dependency_manager.check_dependencies，使截图界面立即可用，
+        无需重启程序。
         """
         dialog = BackendChoiceDialog(
             self._project_root,
@@ -586,7 +597,17 @@ class SettingsPageController:
             except ValueError:
                 pass
 
+        def _on_install_succeeded() -> None:
+            # 装完依赖联动 MainWindow：刷新设置页状态 + 触发重新检测依赖
+            # （检测完成回调里自动设 _ocr_ready、启动子进程 Worker、消费 pending_backend）。
+            # 不直接设 _ocr_ready=True：让真实检测反映"装了但间接依赖没装完"等
+            # 异常状态，避免假就绪。
+            self._refresh_env_maintenance_state()
+            if self._install_succeeded_callback is not None:
+                self._install_succeeded_callback()
+
         dialog.finished.connect(_on_finished)
+        dialog.install_succeeded.connect(_on_install_succeeded)
         self._active_dialogs.append(dialog)
         dialog.show()
 

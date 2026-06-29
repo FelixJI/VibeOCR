@@ -41,6 +41,15 @@ def controller(qtbot, tmp_path):
         ),
     ):
         mock_em.detect_gpu.return_value = (False, None)
+        # BackendOptionsWidget._load_state 读 detect_gpu_info()（含 vram/cuda
+        # 等字段），必须返回真实结构而非默认 MagicMock，否则 vram >= 1024
+        # 会因 MagicMock 与 int 比较抛 TypeError。此处配置无 GPU 的回退值。
+        mock_em.detect_gpu_info.return_value = {
+            "has_gpu": False,
+            "name": "",
+            "vram_mb": 0,
+            "cuda": None,
+        }
         mock_cm.instance.return_value = MagicMock(
             get_pipeline_ttl_seconds=MagicMock(return_value=3600),
             get_preload_pipelines=MagicMock(return_value=[]),
@@ -331,9 +340,7 @@ def test_deps_table_uses_fresh_check(controller, qtbot, tmp_path, monkeypatch):
     回归（修复 4）：旧逻辑 _populate_deps_table 用 check_embedded_environment_dependencies
     （带缓存），装完依赖但缓存未刷新时表格显示过期状态。
     """
-    from PySide6.QtWidgets import QTableWidget
-
-    ctrl, host = controller
+    ctrl, _host = controller
 
     monkeypatch.setattr(
         "vibeocr.views.settings_page_controller.get_environment_mode",

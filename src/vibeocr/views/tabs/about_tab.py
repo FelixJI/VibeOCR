@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import logging
 from datetime import date
-from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QIcon
@@ -24,9 +23,6 @@ from PySide6.QtWidgets import (
 from vibeocr import __version__, env_manager
 from vibeocr.ui import theme
 
-if TYPE_CHECKING:
-    from pathlib import Path
-
 logger = logging.getLogger(__name__)
 
 _APP_NAME = "VibeOCR"
@@ -43,7 +39,9 @@ _year_range = (
     else f"{_FIRST_YEAR}–{_current_year}"
 )
 _COPYRIGHT = f"© {_year_range} Felix Ji. All rights reserved."
-_GITHUB_URL = "https://github.com/felixji/vibeocr"
+_GITHUB_URL = "https://github.com/FelixJI/VibeOCR"
+_GITEE_URL = "https://gitee.com/felixjii/vibeocr"
+_CNB_URL = "https://cnb.cool/feljii/VibeOCR"
 _TECH_STACK = [
     ("PaddlePaddle / PaddleX", "OCR 引擎"),
     ("MinerU", "文档解析"),
@@ -191,16 +189,20 @@ class AboutTab(QWidget):
             return lbl
 
         tech = " · ".join(name for name, _ in _TECH_STACK)
-        link = QLabel(
-            f'<a href="{_GITHUB_URL}" style="color:{theme.Colors.accent};">'
-            f"{_GITHUB_URL}</a>"
-        )
-        link.setOpenExternalLinks(True)
+
+        def make_link(url: str) -> QLabel:
+            lbl = QLabel(
+                f'<a href="{url}" style="color:{theme.Colors.accent};">{url}</a>'
+            )
+            lbl.setOpenExternalLinks(True)
+            return lbl
 
         form.addRow(make_label("作者"), QLabel(_AUTHOR))
         form.addRow(make_label("版权"), QLabel(_COPYRIGHT))
         form.addRow(make_label("技术栈"), QLabel(tech))
-        form.addRow(make_label("项目"), link)
+        form.addRow(make_label("GitHub"), make_link(_GITHUB_URL))
+        form.addRow(make_label("Gitee"), make_link(_GITEE_URL))
+        form.addRow(make_label("代码镜像"), make_link(_CNB_URL))
         card_layout.addLayout(form)
         return card
 
@@ -222,13 +224,16 @@ class AboutTab(QWidget):
         self._changelog_browser.setFrameShape(QTextBrowser.Shape.NoFrame)
         self._changelog_browser.setStyleSheet("background: transparent;")
 
-        changelog_path: Path = env_manager.get_project_root() / "CHANGELOG.md"
-        if changelog_path.exists():
+        # 打包态 CHANGELOG.md 由 --add-data 捆绑进 _internal/（sys._MEIPASS），
+        # 早期用 get_project_root()（exe 同级）找不到，导致客户机显示"暂无更新日志"。
+        # 改用 get_bundled_changelog_path 统一解析 dev/frozen 两态。
+        changelog_path = env_manager.get_bundled_changelog_path()
+        if changelog_path is not None:
             try:
                 raw = changelog_path.read_text(encoding="utf-8")
                 self._changelog_browser.setMarkdown(raw)
             except Exception:
-                logger.exception("读取 CHANGELOG.md 失败")
+                logger.exception("读取 CHANGELOG.md 失败: %s", changelog_path)
                 self._changelog_browser.setMarkdown("暂无更新日志")
         else:
             self._changelog_browser.setMarkdown("暂无更新日志")
@@ -246,7 +251,7 @@ class AboutTab(QWidget):
         （16×16），再放大到 ``size`` 会模糊。QIcon 才会按需挑选高分辨率
         子图（见实测：请求 96 时取 144 这一档）。
         """
-        icon_path = env_manager.get_project_root() / "resources" / "app_icon.ico"
+        icon_path = env_manager.get_bundled_resources_dir() / "app_icon.ico"
         if not icon_path.exists():
             logger.warning(f"应用图标不存在: {icon_path}")
             return None

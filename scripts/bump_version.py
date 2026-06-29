@@ -224,6 +224,10 @@ CLEANUP_QT_BINARIES = [
 PACKAGE_DATA = [
     ("config", "config"),
     ("resources", "resources"),
+    # CHANGELOG.md：关于页"更新日志"卡片读取，缺失时客户端只显示"暂无更新日志"。
+    # 打入 . 让其落在 _MEIPASS/CHANGELOG.md（= _internal/CHANGELOG.md），
+    # 由 env_manager.get_bundled_changelog_path() 解析。
+    ("CHANGELOG.md", "."),
     # vibeocr 源码需以原始 .py 形式随主 exe 分发：打包态下 OCR Worker 子进程
     # 用便携式 Python（python/python.exe）跑 `python -m vibeocr.workers.ocr_worker`，
     # 而便携式 Python 是独立解释器，无法读取主 exe 内部的 PYZ 归档（collect_submodules
@@ -775,6 +779,11 @@ def _generate_version_json(version: str, dist_dir: Path) -> None:
         "channel": "stable",
         "python_version": python_version,
         "dep_versions": dep_versions,
+        # WebEngine 资源包版本（主包剔除 WebEngine 后单独下载）。
+        # 用主版本号对齐：每次发版资源包都重打，客户端据此判断需重装。
+        # 全量包（--bundle-webengine）时此处仍写版本号，但资源包 zip 不产出，
+        # 客户端 is_webengine_ready() 为真即跳过下载。
+        "webengine_assets_version": version,
     }
     version_path = dist_dir / "version.json"
     version_path.write_text(
@@ -830,7 +839,9 @@ def _cleanup_dist(dist_dir: Path) -> None:
 
     删除范围见 CLEANUP_QT_BINARIES（仅删确认无用的 QML/3D/图表/传感器等），
     WebEngine 必需的 Qt6WebEngineCore/Qt6Core/Qt6Gui/Qt6Widgets 等全部保留。
-    同时精简 PySide6/translations（仅保留 qtbase 中文翻译）。
+    同时精简 PySide6/translations（仅保留 qtbase 中文翻译）、
+    qtwebengine_locales（仅保留 zh-CN/en-US）以及 WebEngine 的 debug/devtools
+    资源（release 运行时不加载，详见 Qt qtwebengine-deploying 文档）。
 
     Args:
         dist_dir: VibeOCR 应用目录（含 _internal）
@@ -855,8 +866,134 @@ def _cleanup_dist(dist_dir: Path) -> None:
                 qm.unlink()
                 deleted += 1
 
+        # 精简 WebEngine 语言包：qtwebengine_locales 下 Chromium 的 53 种语言
+        # .pak（~43MB）。Chromium 在缺某语言时会回退到 en-US.pak，故只保留
+        # zh-CN（界面主语言）+ en-US（兜底）即可，其余删除。
+        # 见 Qt 文档 qtwebengine-deploying：locale .pak 用于 Chromium 自身的
+        # UI 文案（右键菜单、错误页等），缺失时静默回退，不影响页面渲染。
+        webengine_locales_dir = trans_dir / "qtwebengine_locales"
+        if webengine_locales_dir.is_dir():
+            for pak in webengine_locales_dir.glob("*.pak"):
+                if pak.name not in ("zh-CN.pak", "en-US.pak"):
+                    freed_bytes += pak.stat().st_size
+                    pak.unlink()
+                    deleted += 1
+
+    # 清理 WebEngine 的 debug/devtools 资源（~88MB）：
+    # - qtwebengine_devtools_resources*.pak：Chromium DevTools 远程调试资源，
+    #   仅 F12 远程调试需要，release 用户用不到（Qt 官方文档明确可删）。
+    # - *.debug.pak / *.debug.bin：Debug 构建专用资源（含未压缩的 source map
+    #   与调试符号），release 运行时完全不加载。
+    # 保留：icudtl.dat、qtwebengine_resources.pak（Chromium 核心，删了会崩溃）、
+    # v8_context_snapshot.bin（非 debug 版）。
+    resources_dir = pyside6_dir / "resources"
+    if resources_dir.is_dir():
+        for res_file in resources_dir.iterdir():
+            name = res_file.name
+            if name.endswith((".debug.pak", ".debug.bin")) or name.startswith(
+                "qtwebengine_devtools_resources"
+            ):
+                freed_bytes += res_file.stat().st_size
+                res_file.unlink()
+                deleted += 1
+
     freed_mb = freed_bytes / (1024 * 1024)
     print(f"  清理无用 Qt 文件: 删除 {deleted} 个，释放 {freed_mb:.1f} MB")
+
+
+# WebEngine 独有文件清单（从主包拆出，按需下载）。
+# 仅含 WebEngine/Chromium 专有文件；通用 Qt 模块（Qt6Core/Gui/Widgets/Svg/Pdf、
+# 以及 WebEngine 的传递依赖 Qt6Qml/Quick/Network/OpenGL 等）保留在主包——
+# 它们体积小且可能被 PySide6 其它子模块链接，移走有崩溃风险。
+# WebEngine 独有文件缺失时，仅 result_view 的延迟 import 失败（已被改造为容错）。
+_WEBENGINE_DLLS = (
+    "Qt6WebEngineCore.dll",
+    "Qt6WebEngineWidgets.dll",
+    "Qt6WebChannel.dll",
+    "QtWebEngineProcess.exe",
+)
+
+
+def _collect_webengine_files(pyside6_dir: Path) -> list[Path]:
+    """收集 PySide6 目录下属于 WebEngine 的文件（绝对路径）。
+
+    包括：WebEngine 独有 dll/exe、resources/ 全部（Chromium 资源）、
+    translations/qtwebengine_locales/（Chromium 语言包）。
+    """
+    files: list[Path] = []
+    # 1. WebEngine 独有 dll/exe
+    for name in _WEBENGINE_DLLS:
+        f = pyside6_dir / name
+        if f.exists():
+            files.append(f)
+    # 2. resources/ 目录（Chromium 资源，全属 WebEngine）
+    resources_dir = pyside6_dir / "resources"
+    if resources_dir.is_dir():
+        files.extend(p for p in resources_dir.rglob("*") if p.is_file())
+    # 3. translations/qtwebengine_locales/
+    locales_dir = pyside6_dir / "translations" / "qtwebengine_locales"
+    if locales_dir.is_dir():
+        files.extend(p for p in locales_dir.rglob("*") if p.is_file())
+    return files
+
+
+def _split_webengine_assets(dist_dir: Path, version: str) -> Path | None:
+    """把 WebEngine 资源从主包拆到独立资源包 zip。
+
+    将 _internal/PySide6/ 下的 WebEngine 独有文件移到临时目录（保持
+    PySide6/ 相对结构），打成 VibeOCR-v<ver>-webengine-win64.zip + sha256。
+    移动后主包不再含这些文件（由首启向导按需下载解压还原）。
+
+    注意：通用 Qt dll（Core/Gui/Qml/Quick 等）保留在主包不动。
+    """
+    pyside6_dir = dist_dir / "_internal" / "PySide6"
+    if not pyside6_dir.is_dir():
+        print("  PySide6 目录不存在，跳过 WebEngine 拆分")
+        return None
+
+    webengine_files = _collect_webengine_files(pyside6_dir)
+    if not webengine_files:
+        print("  未找到 WebEngine 文件，跳过拆分（可能已是全量精简或无 WebEngine）")
+        return None
+
+    total_mb = sum(f.stat().st_size for f in webengine_files) / (1024 * 1024)
+    print(f"  待拆分 WebEngine 文件: {len(webengine_files)} 个，{total_mb:.1f} MB")
+
+    # 移到临时暂存目录（DIST_BASE_DIR 下），保持 PySide6/ 相对结构
+    staging = DIST_BASE_DIR / f"_webengine_staging_v{version}"
+    if staging.exists():
+        shutil.rmtree(staging, ignore_errors=True)
+
+    moved = 0
+    for src in webengine_files:
+        rel = src.relative_to(pyside6_dir)  # e.g. resources/icudtl.dat
+        dest = staging / "PySide6" / rel
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(src), str(dest))
+        moved += 1
+    print(f"  已移出 {moved} 个文件到暂存目录")
+
+    # 打资源包 zip（顶层目录为 PySide6/，客户端解压即归位到 _internal/PySide6/）
+    zip_name = f"VibeOCR-v{version}-webengine-win64"
+    zip_path = DIST_BASE_DIR / f"{zip_name}.zip"
+    print(f"  打包资源包 {zip_path}...")
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
+        for file_path in (staging / "PySide6").rglob("*"):
+            if file_path.is_file():
+                arcname = file_path.relative_to(staging)  # PySide6/...
+                zf.write(file_path, arcname)
+
+    sha256 = hashlib.sha256(zip_path.read_bytes()).hexdigest()
+    sha256_path = DIST_BASE_DIR / f"{zip_name}.zip.sha256"
+    sha256_path.write_text(f"{sha256}  {zip_name}.zip\n", encoding="utf-8")
+
+    size_mb = zip_path.stat().st_size / (1024 * 1024)
+    print(f"  资源包 zip 大小: {size_mb:.1f} MB")
+    print(f"  SHA256: {sha256}")
+
+    # 清理暂存目录（文件已进 zip，主包不再需要）
+    shutil.rmtree(staging, ignore_errors=True)
+    return zip_path
 
 
 def _package_zip(dist_dir: Path, version: str) -> Path | None:
@@ -956,13 +1093,15 @@ def _get_pyinstaller_cmd(version: str) -> list[str]:
     return cmd
 
 
-def _run_build(version: str, force: bool = False) -> bool:
+def _run_build(version: str, force: bool = False, bundle_webengine: bool = False) -> bool:
     """执行完整构建流程
 
     Args:
         version: 版本号字符串
         force: True 时已存在的目标目录直接删除重建，不交互询问
             （CI/非交互场景用）。False 时遇到已存在目录会 input() 询问。
+        bundle_webengine: True 时不拆分 WebEngine 资源包（全量打包）。
+            False（默认）时把 WebEngine 移到独立资源包，首启向导按需下载。
     """
     if not _check_pyinstaller():
         print("\n错误: PyInstaller 未安装")
@@ -1004,25 +1143,38 @@ def _run_build(version: str, force: bool = False) -> bool:
     _cleanup_dist(dist_path)
 
     # 4. 生成 version.json
-    print("\n[4/5] 生成 version.json...")
+    print("\n[4/6] 生成 version.json...")
     _generate_version_json(version, dist_path)
 
-    # 5. 打 zip + SHA256
-    print("\n[5/5] 打包 zip...")
+    # 5. 拆分 WebEngine 资源包（默认按需下载模式）
+    webengine_zip_path: Path | None = None
+    if bundle_webengine:
+        print("\n[5/6] 跳过 WebEngine 拆分（--bundle-webengine 全量打包）")
+    else:
+        print("\n[5/6] 拆分 WebEngine 资源包...")
+        webengine_zip_path = _split_webengine_assets(dist_path, version)
+        if webengine_zip_path is None:
+            print("  WebEngine 资源包拆分失败")
+            return False
+
+    # 6. 打主包 zip + SHA256
+    print("\n[6/6] 打包 zip...")
     zip_path = _package_zip(dist_path, version)
     if zip_path is None:
         return False
 
     print(f"\n{'=' * 50}")
     print("构建完成!")
-    print(f"  应用目录: {dist_path}")
-    print(f"  分发包:   {zip_path}")
+    print(f"  应用目录:   {dist_path}")
+    print(f"  主分发包:   {zip_path}")
+    if webengine_zip_path is not None:
+        print(f"  WebEngine 包: {webengine_zip_path}")
     print(f"{'=' * 50}")
     return True
 
 
 def _create_release(version: str) -> bool:
-    """创建 Gitee/GitHub Release 并上传产物"""
+    """创建 GitHub Release 并上传产物"""
 
     zip_name = f"VibeOCR-v{version}-win64"
     zip_path = DIST_BASE_DIR / f"{zip_name}.zip"
@@ -1045,19 +1197,6 @@ def _create_release(version: str) -> bool:
     print(f"\n发布 v{version} 到:")
     print(f"  zip: {zip_path} ({zip_path.stat().st_size / (1024 * 1024):.1f} MB)")
 
-    gitee_token = os.environ.get("GITEE_TOKEN", "")
-    if gitee_token:
-        print("\n上传到 Gitee...")
-        try:
-            _upload_to_gitee(
-                version, zip_path, sha256_path, changelog_body, gitee_token
-            )
-            print("  Gitee 上传成功")
-        except Exception as e:
-            print(f"  Gitee 上传失败: {e}")
-    else:
-        print("\n跳过 Gitee（未设置 GITEE_TOKEN 环境变量）")
-
     github_token = os.environ.get("GITHUB_TOKEN", "")
     if github_token:
         print("\n上传到 GitHub...")
@@ -1072,44 +1211,6 @@ def _create_release(version: str) -> bool:
         print("\n跳过 GitHub（未设置 GITHUB_TOKEN 环境变量）")
 
     return True
-
-
-def _upload_to_gitee(
-    version: str, zip_path: Path, sha256_path: Path, body: str, token: str
-) -> None:
-    import httpx
-
-    owner = "felixji"
-    repo = "vibeocr"
-    api: str = f"https://gitee.com/api/v5/repos/{owner}/{repo}/releases"
-
-    resp = httpx.post(
-        api,
-        json={
-            "access_token": token,
-            "tag_name": f"v{version}",
-            "name": f"v{version}",
-            "body": body or f"VibeOCR v{version}",
-            "target_commitish": "main",
-        },
-    )
-    if resp.status_code not in (200, 201):
-        raise RuntimeError(f"Gitee Release 创建失败: {resp.status_code} {resp.text}")
-
-    release_id = resp.json()["id"]
-    upload_url = f"https://gitee.com/api/v5/repos/{owner}/{repo}/releases/{release_id}/attach_files"
-
-    for file_path in [zip_path, sha256_path]:
-        if not file_path.exists():
-            continue
-        with open(file_path, "rb") as f:
-            resp = httpx.post(
-                upload_url,
-                params={"access_token": token},
-                files={"file": (file_path.name, f)},
-            )
-        if resp.status_code not in (200, 201):
-            raise RuntimeError(f"Gitee asset 上传失败: {resp.status_code} {resp.text}")
 
 
 def _upload_to_github(
@@ -1383,6 +1484,7 @@ class _Args(argparse.Namespace):
     to_main: bool
     no_build: bool
     force: bool
+    bundle_webengine: bool
     version: str | None
     rebuild: str | None
 
@@ -1446,9 +1548,16 @@ def main() -> int:
         help="跳过打包提示",
     )
     parser.add_argument(
+        "--bundle-webengine",
+        action="store_true",
+        dest="bundle_webengine",
+        help="将 WebEngine 内置进主包（不拆分资源包）。默认按需下载模式会"
+        "把 WebEngine 拆到独立资源包，首启向导下载；此开关用于回退到全量打包。",
+    )
+    parser.add_argument(
         "--release",
         action="store_true",
-        help="构建并发布到 Gitee/GitHub（需要 GITEE_TOKEN / GITHUB_TOKEN）",
+        help="构建并发布到 GitHub（需要 GITHUB_TOKEN）",
     )
     parser.add_argument(
         "--to-main",
@@ -1471,7 +1580,7 @@ def main() -> int:
             print(f"错误: {e}")
             return 1
         current_str = ".".join(map(str, current))
-        if not _run_build(current_str, force=args.force):
+        if not _run_build(current_str, force=args.force, bundle_webengine=args.bundle_webengine):
             return 1
         return 0 if _create_release(current_str) else 1
 
@@ -1497,7 +1606,7 @@ def main() -> int:
                 print("已取消打包")
                 return 0
 
-        return 0 if _run_build(current_str, force=args.force) else 1
+        return 0 if _run_build(current_str, force=args.force, bundle_webengine=args.bundle_webengine) else 1
 
     # 模式2: 重新打包指定版本
     if args.rebuild:
@@ -1505,7 +1614,7 @@ def main() -> int:
         if not SEMVER_RE.match(rebuild_version):
             print(f"错误: 无效版本号 '{rebuild_version}'")
             return 1
-        return 0 if _run_build(rebuild_version, force=args.force) else 1
+        return 0 if _run_build(rebuild_version, force=args.force, bundle_webengine=args.bundle_webengine) else 1
 
     # 模式3: 版本升级流程
     try:
@@ -1524,7 +1633,7 @@ def main() -> int:
             return 0
         if new_version == "build":
             # 仅打包当前版本（不升级版本号、不动 git）
-            return 0 if _run_build(current_str, force=args.force) else 1
+            return 0 if _run_build(current_str, force=args.force, bundle_webengine=args.bundle_webengine) else 1
         if new_version == "merge":
             # 推送快照到 GitHub main（菜单选项 6 的哨兵）
             return cmd_publish_main(skip_confirm=args.yes)
@@ -1591,7 +1700,7 @@ def main() -> int:
             merged = rc_merge == 0
 
     if not merged and not args.yes and not args.no_build and _ask_build(new_str):
-        _run_build(new_str, force=args.force)
+        _run_build(new_str, force=args.force, bundle_webengine=args.bundle_webengine)
 
     print(f"\n完成! 版本已升级到 {new_str}")
     return 0

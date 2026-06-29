@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING, Any, cast
 
 from PySide6.QtCore import (
     QPoint,
+    Qt,
+    QThread,
     QTimer,
     Signal,
     Slot,
@@ -15,12 +17,16 @@ from PySide6.QtCore import (
 from PySide6.QtGui import QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import (
     QCheckBox,
+    QDialog,
     QFileDialog,
+    QLabel,
     QMainWindow,
     QMessageBox,
+    QProgressBar,
     QSizePolicy,
     QSpinBox,
     QStatusBar,
+    QVBoxLayout,
     QWidget,
 )
 
@@ -49,6 +55,64 @@ if TYPE_CHECKING:
 # 延迟导入: OCR 服务模块导入很慢（~33s），延迟到首次使用时导入
 
 
+class _WebEngineDownloadWorker(QThread):
+    """后台下载 WebEngine 资源包的 worker。
+
+    webengine_manager.download_and_install 是同步阻塞函数（含网络 I/O），
+    必须放后台线程，通过信号回主线程更新进度对话框。
+    """
+
+    progress = Signal(str, int, int)  # (message, downloaded, total)
+    finished_result = Signal(bool)  # 安装是否成功
+
+    def __init__(self, project_root: str) -> None:
+        super().__init__()
+        self._project_root = project_root
+
+    def run(self) -> None:
+        try:
+            from vibeocr.network_detector import NetworkDetector
+            from vibeocr.services import webengine_manager as wm
+
+            detector = NetworkDetector(self._project_root)
+            ok = wm.download_and_install(
+                detector=detector,
+                report_fn=lambda msg, dl, total: self.progress.emit(msg, dl, total),
+            )
+            self.finished_result.emit(ok)
+        except Exception as e:
+            logging.error(f"[WebEngine] 后台下载异常: {e}", exc_info=True)
+            self.finished_result.emit(False)
+
+
+class _WebEngineDownloadDialog(QDialog):
+    """WebEngine 资源包下载进度对话框。"""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("下载结果渲染组件")
+        self.setMinimumWidth(420)
+        self.setWindowFlags(self.windowFlags() & ~Qt.WindowType.WindowCloseButtonHint)
+
+        layout = QVBoxLayout(self)
+        self._status = QLabel("正在准备下载 WebEngine 渲染组件…")
+        self._status.setWordWrap(True)
+        layout.addWidget(self._status)
+
+        self._bar = QProgressBar()
+        self._bar.setRange(0, 0)  # 不确定进度（下载阶段）
+        layout.addWidget(self._bar)
+
+    @Slot(str, int, int)
+    def update_progress(self, message: str, downloaded: int, total: int) -> None:
+        self._status.setText(message)
+        if total > 0:
+            self._bar.setRange(0, 100)
+            self._bar.setValue(int(downloaded / total * 100))
+        else:
+            self._bar.setRange(0, 0)
+
+
 class MainWindow(QMainWindow):
     """主窗口"""
 
@@ -60,6 +124,17 @@ class MainWindow(QMainWindow):
         self._project_root = env_manager.get_project_root()
         self._ocr_ready = False
         self._dependency_check_complete = False  # 依赖检测是否完成
+
+        # WebEngine 可写性回退场景：若资源包此前解压到了 python/webengine_assets/
+        # （_internal/PySide6/ 不可写时），在此补充 DLL 搜索路径，使后续
+        # result_view_widget 的延迟 import 能找到 Qt6WebEngineCore.dll。
+        # 必须在任何 QtWebEngineWidgets import 之前调用。
+        try:
+            from vibeocr.services import webengine_manager as _wm
+
+            _wm.maybe_patch_dll_search_path()
+        except Exception as _e:
+            logging.debug(f"WebEngine DLL 路径补丁跳过: {_e}")
         self._preload_complete = False  # 预加载是否完成
         self._closing = False  # 是否正在关闭（防止关闭时重复启动 Worker）
         self._force_quit = False  # 是否强制退出（而非最小化到托盘）
@@ -381,12 +456,37 @@ class MainWindow(QMainWindow):
             ocr_ready_callback=lambda: self._ocr_ready,
             subprocess_manager=self._subprocess_manager,
             preload_complete_callback=self._on_preload_complete,
+            # 设置页重装/补装依赖成功后联动重新检测（Bug A 修复）：
+            # 旧逻辑设置页装完只刷新表格，不联动 _ocr_ready/Worker，截图界面
+            # 仍提示"未就绪"。现复用 dependency_manager.check_dependencies，
+            # 检测完成回调（_on_dependency_check_finished）自动设 _ocr_ready、
+            # 启动子进程 Worker、消费 pending_backend，与首启路径行为一致。
+            install_succeeded_callback=self._on_settings_install_succeeded,
         )
         self._settings_controller.connect_signals()
 
     def _on_preload_complete(self) -> None:
         """预加载完成回调"""
         self._preload_complete = True
+
+    def _on_settings_install_succeeded(self) -> None:
+        """设置页重装/补装依赖成功后的联动回调（Bug A 修复）
+
+        由 SettingsPageController._open_reinstall_dialog 在对话框 emit
+        install_succeeded 时调用。复用 DependencyManager.check_dependencies
+        重新检测便携环境——检测完成回调（_on_dependency_check_finished）会
+        自动设置 _ocr_ready、启动子进程 Worker、消费 pending_backend，使
+        截图界面立即生效，无需重启程序。
+
+        不直接设 _ocr_ready=True：让真实检测（双层 _probe_module）正确反映
+        "装了但 mineru 间接依赖没装完"等异常状态，避免假就绪。
+        """
+        if self._closing:
+            return
+        logging.info("[设置安装] 依赖安装成功，重新检测以联动截图功能")
+        # reset 确保重入安全（若上一次检测仍在进行，避免 _is_checking 短路）
+        self._dependency_manager.reset()
+        self._dependency_manager.check_dependencies()
 
     def _try_load_cache(self) -> None:
         """尝试从缓存加载依赖检测结果"""
@@ -445,6 +545,10 @@ class MainWindow(QMainWindow):
             # 用 singleShot 延迟，避免在依赖检查回调线程上下文直接弹模态对话框。
             if any("Python 运行时" in m for m in missing):
                 QTimer.singleShot(300, self._start_install)
+
+        # WebEngine 资源按需下载（独立于 OCR 依赖）：主包剔除 WebEngine 后，
+        # 首启需下载资源包才能渲染结构化结果页。延迟执行避免阻塞依赖回调。
+        QTimer.singleShot(500, self._check_webengine)
 
     def _check_pending_sync(self) -> bool:
         """检测并消费"依赖版本待同步"标记（updater 写入的 pending_sync.json）
@@ -526,6 +630,54 @@ class MainWindow(QMainWindow):
             pending_path.unlink(missing_ok=True)
         except Exception as e:
             logging.warning(f"[依赖同步] 删除 pending_sync.json 失败: {e}")
+
+    def _check_webengine(self) -> None:
+        """首启/更新后按需下载 WebEngine 资源包。
+
+        主包剔除 WebEngine（~280MB）后，结果页渲染组件（QWebEngineView）所需的
+        Qt6WebEngineCore.dll 等需要单独下载。needs_install() 为真时弹下载进度
+        对话框，后台线程执行下载+解压。失败保留标记，下次启动重试。
+
+        仅在 WebEngine 确实被剔除的场景生效：开发态或全量包（--bundle-webengine）
+        时 is_webengine_ready() 为真，本方法直接返回，无副作用。
+        """
+        from vibeocr.services import webengine_manager as wm
+
+        if not wm.needs_install():
+            return
+
+        logging.info("[WebEngine] 检测到资源包缺失或版本变更，启动下载")
+        self._statusbar.showMessage("正在下载结果渲染组件（WebEngine）…")
+
+        dialog = _WebEngineDownloadDialog(self)
+        worker = _WebEngineDownloadWorker(str(self._project_root))
+
+        def on_progress(msg: str, dl: int, total: int) -> None:
+            dialog.update_progress(msg, dl, total)
+
+        def on_done(ok: bool) -> None:
+            dialog.accept()
+            if ok:
+                self._statusbar.showMessage("结果渲染组件（WebEngine）安装完成")
+                logging.info("[WebEngine] 资源包安装完成")
+            else:
+                self._statusbar.showMessage(
+                    "结果渲染组件下载失败，将在下次启动重试（结果页暂不可用）"
+                )
+                logging.warning("[WebEngine] 资源包安装失败，保留待重试标记")
+                QMessageBox.warning(
+                    self,
+                    "渲染组件下载失败",
+                    "结果页渲染组件（WebEngine，约 80MB）下载失败。\n\n"
+                    "可能是网络问题。程序其余功能不受影响，结果页将在下次启动时重试下载，"
+                    "或你可稍后在「设置」中重试。",
+                )
+            worker.deleteLater()
+
+        worker.progress.connect(on_progress)
+        worker.finished_result.connect(on_done)
+        worker.start()
+        dialog.exec()
 
     def _check_pending_backend(self) -> tuple[bool, str | None]:
         """检测是否有待生效的后端切换（重启消费 pending_backend）

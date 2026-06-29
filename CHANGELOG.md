@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.3.1] - 2026-06-29
+
+### Added
+- feat(packaging): WebEngine 按需下载 + 发布渠道由 CNB 迁移至 Gitee
+- feat(ci): 实现 prune_cnb 子命令（仅删 Release 记录，保留 tag）
+- feat(ci): 实现 prune_github 子命令（仅删 Release 记录，保留 tag）
+- feat(ci): 实现 sync_cnb 子命令（CNB OpenAPI 三步上传 + 公告加 GitHub 下载地址）
+- feat(ci): 新增 ci_release_sync 脚本骨架与纯函数（版本排序/清理选择/body 拼接）
+- feat(update): GitHub 不可达时提示去 CNB 手动下载
+
+### Fixed
+- fix(test): 修复 3 个预存测试缺陷
+- fix(packaging): 打包态只读资源路径解析 + CHANGELOG 打入构建
+- fix(deps): 设置页重装联动重新检测 + MinerU 双层依赖检测/版本探测
+- fix(about): 修正 GitHub 仓库链接大小写并补 CNB 入口
+
+### Changed
+- test(bump): 修复 13 个既存测试失败
+- perf(build): 清理 WebEngine debug/devtools 资源与多余 locales
+- ci(release): 取消 Gitee Release 上传，接入 CNB 镜像/sync_cnb/清理
+- refactor(bump): 移除本地 Gitee 上传，--release 仅发 GitHub
+- refactor(update): 更新检查改为仅 GitHub，返回 (info, fetch_ok)
+- refactor(update): 更新检查仓库常量改用 GitHub FelixJI/VibeOCR
+
 ## [0.3.0] - 2026-06-28
 
 ### Added

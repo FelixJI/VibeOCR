@@ -175,13 +175,16 @@ def replace_app_files(new_files_dir: Path, app_dir: Path) -> bool:
     """
     logger.info("替换应用文件...")
 
-    # 记录旧 version.json 的 dep_versions（用于依赖同步）
+    # 记录旧 version.json 的 dep_versions 与 webengine_assets_version
+    # （用于依赖同步及 WebEngine 资源包重装判定）
     old_version_json = app_dir / "version.json"
     old_deps: dict = {}
+    old_webengine_ver: str = ""
     if old_version_json.exists():
         try:
             old_data = json.loads(old_version_json.read_text(encoding="utf-8"))
             old_deps = old_data.get("dep_versions", {})
+            old_webengine_ver = str(old_data.get("webengine_assets_version") or "")
         except Exception:
             pass
 
@@ -247,12 +250,13 @@ def replace_app_files(new_files_dir: Path, app_dir: Path) -> bool:
     # 4) 复制成功，清理备份
     shutil.rmtree(backup_dir, ignore_errors=True)
 
-    # 5) 检查 AI 依赖版本变化
+    # 5) 检查 AI 依赖版本变化 + WebEngine 资源包版本变化
     new_version_json = app_dir / "version.json"
     if new_version_json.exists():
         try:
             new_data = json.loads(new_version_json.read_text(encoding="utf-8"))
             _sync_dependencies(old_deps, new_data, app_dir)
+            _sync_webengine(old_webengine_ver, new_data, app_dir)
         except Exception as e:
             logger.warning(f"检查依赖版本失败: {e}")
 
@@ -329,6 +333,56 @@ def _sync_dependencies(old_deps: dict, new_data: dict, app_dir: Path) -> None:
         logger.info(f"已写入待同步标记: {pending_path}")
     except Exception as e:
         logger.warning(f"写入待同步标记失败（依赖将不会自动升级）: {e}")
+
+
+def _sync_webengine(old_ver: str, new_data: dict, app_dir: Path) -> None:
+    """检查 WebEngine 资源包版本变化并写入"待重装"标记。
+
+    主包剔除 WebEngine 后，资源包单独下载解压。更新时 replace_app_files 会
+    删除旧 _internal/PySide6/ 下的 WebEngine 文件（不在保留目录中），而新主包
+    又不含 WebEngine。若新版资源包版本与本地已装版本不一致（或已被删除），
+    写入 webengine_pending_reinstall.json，由新版 VibeOCR 启动时通过
+    webengine_manager.download_and_install 重新下载。
+
+    与 _sync_dependencies 同模式：updater 无法 import vibeocr，仅写标记。
+    """
+    new_ver = str(new_data.get("webengine_assets_version") or "")
+    if not new_ver:
+        # 主包未声明 webengine 版本（全量包 --bundle-webengine 或旧版），
+        # 无需外置下载，跳过。
+        logger.info("新版未声明 webengine_assets_version，跳过 WebEngine 同步")
+        return
+
+    settings_dir = app_dir / "data" / "settings"
+    settings_dir.mkdir(parents=True, exist_ok=True)
+    reinstall_marker = settings_dir / "webengine_pending_reinstall.json"
+
+    if old_ver == new_ver:
+        # 版本未变，但旧文件可能已被 replace_app_files 删除——检测 DLL 是否在位，
+        # 不在则需重新下载（PySide6 不在保留目录中，更新会整体替换）。
+        pyside6_dir = app_dir / "_internal" / "PySide6"
+        if (pyside6_dir / "Qt6WebEngineCore.dll").exists():
+            logger.info("WebEngine 资源包版本无变化且文件在位，无需重装")
+            return
+        logger.info("WebEngine 文件已在更新中被删除，写入待重装标记")
+        reason = "files_removed_by_update"
+    else:
+        logger.info(
+            f"WebEngine 资源包版本变化: {old_ver or '(未安装)'} -> {new_ver}，写入待重装标记"
+        )
+        reason = "version_changed"
+
+    try:
+        reinstall_marker.write_text(
+            json.dumps(
+                {"version": new_ver, "reason": reason},
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        logger.info(f"已写入 WebEngine 待重装标记: {reinstall_marker}")
+    except Exception as e:
+        logger.warning(f"写入 WebEngine 待重装标记失败: {e}")
 
 
 def cleanup(zip_path: Path, tmp_dir: Path | None) -> None:

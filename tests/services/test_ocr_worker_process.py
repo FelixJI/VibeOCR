@@ -84,17 +84,23 @@ class TestOCRWorkerProcess:
         assert python_exe == sys.executable
 
     def test_get_worker_env_dev_mode_no_frozen(self):
-        """开发态（非 frozen）不注入 PYTHONPATH，直接继承父进程环境。"""
+        """开发态（非 frozen）注入 src/ 到 PYTHONPATH，让子进程能 import vibeocr。
+
+        子进程是独立的 sys.executable，不继承主进程 conftest 的 sys.path 修改，
+        故必须显式把 src/（vibeocr 包父目录）注入 PYTHONPATH，否则子进程报
+        ModuleNotFoundError: No module named 'vibeocr'。
+        """
         worker = OCRWorkerProcess(worker_id=0, use_gpu=False)
         env = worker._get_worker_env()
-        # 开发态不应主动设置 PYTHONPATH（除非父进程本来就有）
         import os
+        from pathlib import Path
 
-        if "PYTHONPATH" in os.environ:
-            # 父进程有则原样继承
-            assert env["PYTHONPATH"] == os.environ["PYTHONPATH"]
-        else:
-            assert "PYTHONPATH" not in env
+        import vibeocr
+
+        # 开发态必须注入 src/（vibeocr 包父目录）到 PYTHONPATH
+        assert "PYTHONPATH" in env
+        src_dir = str(Path(vibeocr.__file__).resolve().parent.parent)
+        assert src_dir in env["PYTHONPATH"].split(os.pathsep)
 
     def test_get_worker_env_frozen_injects_meipass(self):
         """打包态注入 PYTHONPATH 指向 _MEIPASS，让子进程能 import vibeocr。"""
@@ -319,9 +325,8 @@ class TestOCRWorkerProcessLifeCycle:
             return_value=mock_proc,
         ), patch(
             "vibeocr.services.ocr_worker_process.JobObjectGuard"
-        ):
-            with pytest.raises(Exception) as exc_info:
-                worker.start(timeout=0.1)
+        ), pytest.raises(Exception) as exc_info:
+            worker.start(timeout=0.1)
 
         # 真实错误应出现在异常信息里，而非"未知错误"
         assert real_error in str(exc_info.value)

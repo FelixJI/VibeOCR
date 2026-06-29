@@ -159,20 +159,16 @@ def _on_tray_activated(reason, window):
 def _resolve_app_icon_path() -> Path | None:
     """解析应用图标路径，兼容开发态与 PyInstaller 打包态。
 
-    开发态图标位于 `<project_root>/resources/app_icon.ico`；
-    打包态（PyInstaller --onedir）resources 目录随 exe 同级拷贝，
-    图标位于 `<exe_dir>/resources/app_icon.ico`。
+    打包态（PyInstaller --onedir）resources 目录由 ``--add-data`` 打入
+    ``sys._MEIPASS``（即 ``_internal/resources``），而非 exe 同级——
+    exe 同级只放运行时创建的可写目录。统一走
+    ``env_manager.get_bundled_resources_dir()`` 定位，避免在 exe 同级找不到
+    图标导致窗口/任务栏/托盘图标不显示。
 
     Returns:
         图标文件路径；找不到时返回 None。
     """
-    if getattr(sys, "frozen", False):
-        # 打包态：与可执行文件同级的 resources 目录
-        base = Path(sys.executable).resolve().parent
-    else:
-        base = env_manager.get_project_root()
-
-    icon = base / "resources" / "app_icon.ico"
+    icon = env_manager.get_bundled_resources_dir() / "app_icon.ico"
     return icon if icon.exists() else None
 
 
@@ -216,8 +212,16 @@ def launch_application() -> int:
     # 避免留下孤儿 pip 子进程（main.py 末尾的 os._exit 不会回收它们）。
     def _cleanup_install_workers_on_quit() -> None:
         from PySide6.QtCore import QThread
+        from PySide6.QtWidgets import QApplication
 
-        for widget in app.topLevelWidgets():
+        # 用 QApplication.instance() 取全局实例而非闭包捕获局部变量 app，
+        # 既消除 ruff 的 F821（闭包内未定义名）误报，也保证 aboutToQuit 回调
+        # 触发时取到的一定是当前 QApplication。其声明返回基类 QCoreApplication，
+        # 需 isinstance 收窄到 QApplication 才能访问 topLevelWidgets()。
+        instance = QApplication.instance()
+        if not isinstance(instance, QApplication):
+            return
+        for widget in instance.topLevelWidgets():
             for thread in widget.findChildren(QThread):
                 if hasattr(thread, "request_cancel"):
                     thread.request_cancel()

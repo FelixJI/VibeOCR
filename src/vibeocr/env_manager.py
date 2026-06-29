@@ -1,10 +1,10 @@
 """环境管理模块：负责自动部署 Python 运行时（python-build-standalone）和管理项目依赖"""
 
+import contextlib
 import logging
 import os
 import shutil
 import subprocess
-import contextlib
 import sys
 import tarfile
 import tempfile
@@ -731,11 +731,96 @@ def is_production_environment_ready() -> tuple[bool, list[str]]:
     return len(missing) == 0, missing
 
 
-def _check_imports(python_exe: Path) -> dict[str, bool]:
-    """检测嵌入式 Python 可导入哪些 OCR 模块（单一实现，消除重复）
+def _probe_module(python_exe: Path, module: str, pkg: str) -> tuple[bool, bool]:
+    """双层检测一个 OCR 模块：发行版是否存在 + 是否可导入
 
-    遍历 env_config.OCR_CHECK_MODULES，对每个 import 模块名执行
-    `python -c "import <module>"`，结果以包名为 key 返回。
+    解决"装了发行版但 import 失败"被误判为"未安装"的问题（典型场景：
+    ``mineru[core]`` 的间接依赖 torch/paddle/opencv/rapid-table 没装完时，
+    ``import mineru`` 抛 ModuleNotFoundError，旧逻辑静默判 False，掩盖了
+    "包已装但依赖损坏"的真实状态）。
+
+    两层：
+    1. ``importlib.metadata.version('<pkg>')`` 判**发行版是否存在**（标准库，
+       无新依赖）。现代包（如 mineru）不暴露 ``__version__``，metadata 是权威源。
+    2. ``import <module>`` 判**是否可导入**（间接依赖是否完整）。
+
+    发行版不存在时跳过 import 探测（省一次 subprocess，且 import 必然失败）。
+    发行版存在但 import 失败时，logger.warning 落盘"间接依赖未完成"提示，
+    便于排查（stderr 截断到 200 字）。
+
+    Args:
+        python_exe: 目标（便携）Python 可执行文件
+        module: import 模块名（如 "mineru"）
+        pkg: pip 包名/发行版名（如 "mineru"），用于 metadata 查询
+
+    Returns:
+        (installed, usable)：
+        - installed：发行版是否存在（metadata 查询成功）
+        - usable：是否可导入（import 成功）
+    """
+    from vibeocr.services.env_config import OCR_CHECK_TIMEOUTS
+
+    metadata_code = (
+        "import importlib.metadata as m; m.version(" + repr(pkg) + ")"
+    )
+    # 第 1 层：metadata 判发行版存在
+    try:
+        meta_result = subprocess.run(
+            [str(python_exe), "-c", metadata_code],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+        )
+        installed = meta_result.returncode == 0
+    except Exception:
+        installed = False
+
+    if not installed:
+        # 发行版不存在 → import 必然失败，跳过第 2 层
+        return False, False
+
+    # 第 2 层：import 判可导入（间接依赖是否完整）
+    # import_stderr 在 except 分支保留：subprocess.run 抛异常时记录异常名，
+    # 正常分支记录子进程 stderr，供下方 import 失败时的 warning 落盘排查。
+    import_stderr = ""
+    try:
+        result = subprocess.run(
+            [str(python_exe), "-c", f"import {module}"],
+            capture_output=True,
+            text=True,
+            timeout=OCR_CHECK_TIMEOUTS.get(module, 15),
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+        )
+        usable = result.returncode == 0
+        import_stderr = result.stderr or ""
+    except Exception as exc:
+        usable = False
+        import_stderr = f"(子进程异常: {exc})"
+
+    if not usable:
+        # 发行版存在但 import 失败：明确指向"间接依赖损坏"，而非"包没装"。
+        # stderr 含 ModuleNotFoundError 等关键信息，截断落盘便于排查。
+        logger.warning(
+            "[依赖检测] %s 发行版已装但 import 失败，可能间接依赖未完成: %s",
+            pkg,
+            import_stderr[-200:],
+        )
+
+    return installed, usable
+
+
+def _check_imports(python_exe: Path) -> dict[str, bool]:
+    """检测嵌入式 Python 可导入哪些 OCR 模块（双层检测，单一实现，消除重复）
+
+    遍历 env_config.OCR_CHECK_MODULES，对每个模块用 _probe_module 做双层检测
+    （发行版是否存在 + 是否可导入），结果以包名为 key 返回 **usable** 值。
+
+    返回签名与旧版一致：``{包名: 是否可导入}``，保持所有调用方向后兼容
+    （``is_embedded_environment_ready`` 等语义"可用即可用"不变）。
+    关键改进：发行版存在但 import 失败时（间接依赖损坏），usable 仍判 False
+    （不掩盖真实不可用状态），但 _probe_module 会 logger.warning 落盘指向
+    "间接依赖未完成"，便于排查。
 
     Args:
         python_exe: 目标 Python 可执行文件
@@ -743,21 +828,12 @@ def _check_imports(python_exe: Path) -> dict[str, bool]:
     Returns:
         {包名: 是否可导入}，如 {"paddlepaddle": True, "torch": False}
     """
-    from vibeocr.services.env_config import OCR_CHECK_MODULES, OCR_CHECK_TIMEOUTS
+    from vibeocr.services.env_config import OCR_CHECK_MODULES
 
     deps: dict[str, bool] = {}
     for module, pkg in OCR_CHECK_MODULES.items():
-        try:
-            result = subprocess.run(
-                [str(python_exe), "-c", f"import {module}"],
-                capture_output=True,
-                text=True,
-                timeout=OCR_CHECK_TIMEOUTS.get(module, 15),
-                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
-            )
-            deps[pkg] = result.returncode == 0
-        except Exception:
-            deps[pkg] = False
+        _installed, usable = _probe_module(python_exe, module, pkg)
+        deps[pkg] = usable
     return deps
 
 
@@ -815,8 +891,14 @@ def is_embedded_environment_ready(project_root: Path) -> tuple[bool, list[str]]:
 def get_dependency_versions(python_exe: Path) -> dict[str, str]:
     """获取各 OCR 依赖的版本号（用于设置页状态表格展示）。
 
-    对每个 OCR_CHECK_MODULES 模块执行 `python -c "import X; print(X.__version__)"`，
-    失败或无 __version__ 属性返回空字符串。
+    优先用 ``importlib.metadata.version('<pkg>')``（标准库，Py 3.8+），
+    这是获取发行版版本的权威方式。失败时（极少数旧包无 metadata）回退
+    ``import <module>; print(getattr(module, '__version__', ''))``。
+
+    为什么改 metadata：现代 mineru 包**不暴露** ``__version__`` 属性，
+    旧逻辑 ``getattr(mineru, '__version__', '')`` 恒返回空串，导致设置页
+    表格显示"（版本未知）"，掩盖真实版本。importlib.metadata 是 PEP 566
+    的权威来源（[Python 讨论]建议弃用 __version__，统一走 metadata）。
 
     Args:
         python_exe: 目标 Python 可执行文件
@@ -828,6 +910,25 @@ def get_dependency_versions(python_exe: Path) -> dict[str, str]:
 
     versions: dict[str, str] = {}
     for module, pkg in OCR_CHECK_MODULES.items():
+        # 第 1 层：importlib.metadata.version（权威源）
+        metadata_code = (
+            "from importlib.metadata import version; print(version(" + repr(pkg) + "))"
+        )
+        try:
+            result = subprocess.run(
+                [str(python_exe), "-c", metadata_code],
+                capture_output=True,
+                text=True,
+                timeout=15,
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+            )
+            if result.returncode == 0:
+                versions[pkg] = result.stdout.strip()
+                continue
+        except Exception:
+            pass
+
+        # 第 2 层回退：getattr(module, '__version__', '')（兼容极旧包）
         try:
             result = subprocess.run(
                 [
@@ -976,7 +1077,8 @@ def _run_pip(
                 out, err = proc.communicate()
                 stdout_buf.append(out or "")
                 stderr_buf.append(err or "")
-            except BaseException as e:  # noqa: BLE001 - 透传给主线程
+            except BaseException as e:  # 需捕获含 KeyboardInterrupt 在内的所有
+                # 异常并透传给主线程（comm_exc），不在后台线程静默吞掉
                 comm_exc = e
 
         comm_thread = threading.Thread(target=_communicate, daemon=True)
@@ -1836,6 +1938,61 @@ def get_project_root() -> Path:
         current = current.parent
     # 默认返回 main.py 的父目录的父目录
     return Path(__file__).parent.parent.parent
+
+
+def _get_meipass() -> Path | None:
+    """获取 PyInstaller 打包态的解包目录（_internal/），非打包态返回 None。
+
+    onedir 布局下 ``sys._MEIPASS`` 指向 exe 同级的 ``_internal/``，所有
+    ``--add-data`` 捆绑进来的只读资源（resources/、CHANGELOG.md、vibeocr
+    源码）都平铺于此。它与 exe 同级目录（python/、config、logs/ 等运行时
+    可写目录所在）是两个不同的目录，不可混用。
+    """
+    meipass = getattr(sys, "_MEIPASS", None)
+    return Path(meipass) if meipass else None
+
+
+def get_bundled_resources_dir() -> Path:
+    """获取 resources 目录路径（打包态/开发态通用，SSOT）。
+
+    打包态（PyInstaller --onedir）：resources 由 ``--add-data`` 打入
+    ``sys._MEIPASS``（即 ``_internal/resources``），而非 exe 同级——
+    exe 同级只有运行时创建的可写目录（python/、config、logs/）。
+    故打包态必须用 ``_MEIPASS`` 定位，否则图标/CHANGELOG/KaTeX 全部读不到。
+
+    开发态：resources 位于仓库根。
+
+    Returns:
+        resources 目录路径（不保证存在，调用方按需判断）
+    """
+    meipass = _get_meipass()
+    if meipass is not None:
+        return meipass / "resources"
+    return get_project_root() / "resources"
+
+
+def get_bundled_changelog_path() -> Path | None:
+    """获取 CHANGELOG.md 路径，找不到返回 None。
+
+    按优先级查找：
+    1. 打包态 ``_MEIPASS/CHANGELOG.md``（``--add-data`` 捆绑位置）
+    2. 打包态 exe 同级 ``CHANGELOG.md``（用户手动放入的兜底）
+    3. 开发态仓库根 ``CHANGELOG.md``
+
+    Returns:
+        CHANGELOG.md 路径；三处都不存在时返回 None，调用方回退占位文案。
+    """
+    candidates: list[Path] = []
+    meipass = _get_meipass()
+    if meipass is not None:
+        candidates.append(meipass / "CHANGELOG.md")
+        candidates.append(Path(sys.executable).resolve().parent / "CHANGELOG.md")
+    else:
+        candidates.append(get_project_root() / "CHANGELOG.md")
+    for cand in candidates:
+        if cand.exists():
+            return cand
+    return None
 
 
 def ensure_mineru_models(

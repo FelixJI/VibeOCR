@@ -179,3 +179,27 @@ def get_pending_sync_path() -> Path:
     d = get_data_dir() / "settings"
     d.mkdir(parents=True, exist_ok=True)
     return d / "pending_sync.json"
+
+
+def get_webengine_assets_path() -> Path:
+    """获取 WebEngine 资源包已安装记录文件路径
+
+    webengine_manager 在下载解压资源包成功后写入（含 assets_version），
+    用于判断 WebEngine 是否就绪及是否需重装。与 webengine_manager 的
+    读写路径保持一致。
+    """
+    d = get_data_dir() / "settings"
+    d.mkdir(parents=True, exist_ok=True)
+    return d / "webengine_assets.json"
+
+
+def get_webengine_reinstall_marker_path() -> Path:
+    """获取 WebEngine 资源包待重装标记文件路径
+
+    updater 在替换应用文件后，若主包 version.json 的
+    webengine_assets_version 与本地已装版本不一致则写入此文件；
+    新版 VibeOCR 启动时读取并触发 webengine_manager 重新下载解压。
+    """
+    d = get_data_dir() / "settings"
+    d.mkdir(parents=True, exist_ok=True)
+    return d / "webengine_pending_reinstall.json"
