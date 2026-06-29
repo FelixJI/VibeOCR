@@ -1,10 +1,10 @@
 """环境管理模块：负责自动部署 Python 运行时（python-build-standalone）和管理项目依赖"""
 
+import contextlib
 import logging
 import os
 import shutil
 import subprocess
-import contextlib
 import sys
 import tarfile
 import tempfile
@@ -1077,8 +1077,8 @@ def _run_pip(
                 out, err = proc.communicate()
                 stdout_buf.append(out or "")
                 stderr_buf.append(err or "")
-            except BaseException as e:  # noqa: BLE001 - 捕获含 KeyboardInterrupt 在内的
-                # 所有异常并透传给主线程（comm_exc），不在后台线程静默吞掉
+            except BaseException as e:  # 需捕获含 KeyboardInterrupt 在内的所有
+                # 异常并透传给主线程（comm_exc），不在后台线程静默吞掉
                 comm_exc = e
 
         comm_thread = threading.Thread(target=_communicate, daemon=True)

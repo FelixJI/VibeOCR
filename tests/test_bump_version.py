@@ -67,6 +67,9 @@ def _run_bump(tmp_path, args, env=None):
         encoding="utf-8",
         errors="replace",
         env=env,
+        # bump 完成后会交互式询问“是否推送发版”。测试以子进程跑、无 TTY，
+        # 传一个换行（=回车=N）让它走“否”，避免 input() 读到 EOF 崩溃。
+        input="\n",
     )
 
 
@@ -133,6 +136,7 @@ def _run_bump_with_extra_commits(tmp_path, args, commits_to_add):
         encoding="utf-8",
         errors="replace",
         env=env,
+        input="\n",
     )
 
 
@@ -274,13 +278,18 @@ class TestVersionBumping:
 class TestChangelogGeneration:
     """测试 CHANGELOG 生成"""
 
-    def test_changelog_not_created_on_bump(self, tmp_path):
-        """验证 develop bump 不再生成 CHANGELOG（CHANGELOG 改由 --to-main 维护）"""
+    def test_changelog_created_on_bump(self, tmp_path):
+        """验证 develop bump 生成 CHANGELOG（v0.2.2 起改回 develop bump 时生成）
+
+        早期设计曾让 develop bump 不生成 CHANGELOG，但 v0.2.2 修复
+        （见 CHANGELOG「CHANGELOG 改回 develop bump 时生成编辑提交」）恢复为
+        在 develop bump 时生成条目并纳入 release 提交。
+        """
         result = _run_bump(tmp_path, ["patch", "--no-edit", "--no-build"])
         assert result.returncode == 0, f"Script failed: {result.stderr}"
 
         changelog = tmp_path / "CHANGELOG.md"
-        assert not changelog.exists(), "develop bump 不应生成 CHANGELOG"
+        assert changelog.exists(), "develop bump 应生成 CHANGELOG"
 
     def test_categorize_commits(self):
         """测试 commit 分类函数"""
@@ -772,7 +781,11 @@ class TestCmdToMain:
     """测试 cmd_to_main 端到端合并流程（双分支真实 git 仓库）"""
 
     def _setup_two_branch_repo(self, tmp_path):
-        """建一个含 main + develop 两分支、develop 领先的仓库"""
+        """建一个含 main + develop 两分支、develop 领先的仓库
+
+        同时建一个本地 bare 仓库作为 ``GitHub`` 远端（cmd_publish_main 会
+        ``git push GitHub ...``），否则端到端测试会因找不到 remote 而失败。
+        """
         import subprocess
 
         def git(*args):
@@ -796,13 +809,32 @@ class TestCmdToMain:
         git("checkout", "-b", "develop")
         git("commit", "--allow-empty", "-m", "feat: feature A")
         git("commit", "--allow-empty", "-m", "fix: bug B")
-        # bump 到 0.1.1（develop 路径：版本号前进 + release 提交，无 tag）
+        # bump 到 0.1.1（develop 路径：版本号前进 + release 提交，无 tag）。
+        # 真实流程里 develop bump 会生成 CHANGELOG 的 0.1.1 条目（整合 feature A/bug B），
+        # cmd_publish_main 不再单独整合、只复用 develop 的 CHANGELOG，故这里预置该条目。
         (tmp_path / "pyproject.toml").write_text(
             '[project]\nname = "vibeocr"\nversion = "0.1.1"\n', encoding="utf-8"
         )
-        git("add", "pyproject.toml")
+        (tmp_path / "CHANGELOG.md").write_text(
+            "# Changelog\n\n"
+            "## [0.1.1] - 2025-01-02\n\n### Added\n- feat: feature A\n\n"
+            "### Fixed\n- fix: bug B\n\n"
+            "## [0.1.0] - 2025-01-01\n\n### Added\n- init\n",
+            encoding="utf-8",
+        )
+        git("add", "pyproject.toml", "CHANGELOG.md")
         git("commit", "-m", "release: v0.1.1")
+        # 建 bare 远端并注册为 GitHub（cmd_publish_main 的 PUBLISH_REMOTE 默认值）
+        bare = tmp_path.parent / (tmp_path.name + "-github.git")
+        subprocess.run(["git", "init", "--bare", str(bare)], capture_output=True)
+        git("remote", "add", "GitHub", str(bare))
+        # 先把 main + tag 推上去，模拟远端已有历史
+        subprocess.run(
+            ["git", "push", "GitHub", "main", "v0.1.0"],
+            cwd=tmp_path, capture_output=True,
+        )
         return tmp_path
+
 
     def test_merge_consolidates_and_tags_on_main(self, tmp_path):
         """--to-main 后：main 有 v0.1.1 tag、整合 CHANGELOG、最终在 develop"""
@@ -897,7 +929,7 @@ class TestToMainArgWiring:
             called["skip_confirm"] = skip_confirm
             return 0
 
-        monkeypatch.setattr(mod, "cmd_to_main", fake_cmd)
+        monkeypatch.setattr(mod, "cmd_publish_main", fake_cmd)
         monkeypatch.setattr("sys.argv", ["bump_version.py", "--to-main"])
 
         rc = mod.main()
@@ -915,7 +947,7 @@ class TestToMainArgWiring:
             called["invoked"] = True
             return 0
 
-        monkeypatch.setattr(mod, "cmd_to_main", fake_cmd)
+        monkeypatch.setattr(mod, "cmd_publish_main", fake_cmd)
         monkeypatch.setattr(mod, "read_current_version", lambda path: (0, 1, 6))
         monkeypatch.setattr(mod, "interactive_menu", lambda current: "merge")
         monkeypatch.setattr("sys.argv", ["bump_version.py"])
@@ -993,18 +1025,20 @@ class TestBumpMergePrompt:
         return mod
 
     def test_bump_prompts_merge_yes_invokes_cmd_to_main(self, monkeypatch):
-        """bump 后提示合并，答 y → 调用 cmd_to_main，不再问打包"""
+        """bump 后提示合并，答 y → 调用 cmd_publish_main，不再问打包"""
         mod = self._load_module()
         monkeypatch.setattr(mod, "read_current_version", lambda path: (0, 1, 5))
         monkeypatch.setattr(
             mod, "update_file_version", lambda f, old, new: None
         )
         monkeypatch.setattr(mod, "_sync_uv_lock", lambda v: False)
-        # 桩 git 操作（add/commit）
+        # 桩 git/changelog 相关操作（避免触碰真实仓库与真实 git）
+        monkeypatch.setattr(mod, "get_commits_since_last_tag", lambda: [])
+        monkeypatch.setattr(mod, "update_changelog", lambda v, c: None)
         monkeypatch.setattr(mod.subprocess, "run", lambda *a, **k: None)
         merged: dict = {}
         monkeypatch.setattr(
-            mod, "cmd_to_main", lambda skip_confirm=False: merged.setdefault("merged", True) or 0
+            mod, "cmd_publish_main", lambda skip_confirm=False: merged.setdefault("merged", True) or 0
         )
         built: dict = {}
         monkeypatch.setattr(
@@ -1016,7 +1050,7 @@ class TestBumpMergePrompt:
 
         mod.main()
 
-        assert merged.get("merged") is True, "答 y 应触发 cmd_to_main"
+        assert merged.get("merged") is True, "答 y 应触发 cmd_publish_main"
         assert not built.get("asked"), "已合并时不应再问打包"
 
     def test_bump_prompts_merge_no_falls_back_to_build_prompt(self, monkeypatch):
@@ -1027,10 +1061,12 @@ class TestBumpMergePrompt:
             mod, "update_file_version", lambda f, old, new: None
         )
         monkeypatch.setattr(mod, "_sync_uv_lock", lambda v: False)
+        monkeypatch.setattr(mod, "get_commits_since_last_tag", lambda: [])
+        monkeypatch.setattr(mod, "update_changelog", lambda v, c: None)
         monkeypatch.setattr(mod.subprocess, "run", lambda *a, **k: None)
         merged: dict = {}
         monkeypatch.setattr(
-            mod, "cmd_to_main", lambda skip_confirm=False: merged.setdefault("merged", True) or 1
+            mod, "cmd_publish_main", lambda skip_confirm=False: merged.setdefault("merged", True) or 1
         )
         built: dict = {}
         monkeypatch.setattr(

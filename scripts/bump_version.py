@@ -885,10 +885,8 @@ def _cleanup_dist(dist_dir: Path) -> None:
     if resources_dir.is_dir():
         for res_file in resources_dir.iterdir():
             name = res_file.name
-            if (
-                name.endswith(".debug.pak")
-                or name.endswith(".debug.bin")
-                or name.startswith("qtwebengine_devtools_resources")
+            if name.endswith((".debug.pak", ".debug.bin")) or name.startswith(
+                "qtwebengine_devtools_resources"
             ):
                 freed_bytes += res_file.stat().st_size
                 res_file.unlink()

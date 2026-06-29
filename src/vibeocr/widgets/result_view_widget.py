@@ -32,14 +32,14 @@ logger = logging.getLogger(__name__)
 def _get_resources_dir() -> Path:
     """获取 resources 目录路径（打包态/开发态通用）
 
-    打包态 resources 在 exe 同级（PyInstaller --add-data 打入 _internal
-    或 exe 同级）；开发态在仓库根。统一走 env_manager.get_project_root()
-    定位根目录，避免硬编码层级在 PYZ 虚拟路径下算错。
+    委托 env_manager.get_bundled_resources_dir() 作为 SSOT：
+    打包态 resources 由 ``--add-data`` 打入 ``sys._MEIPASS``（``_internal/resources``），
+    而非 exe 同级；开发态位于仓库根。
     采用函数惰性求值，避免模块导入时触发 env_manager 的循环导入。
     """
-    from vibeocr.env_manager import get_project_root
+    from vibeocr.env_manager import get_bundled_resources_dir
 
-    return get_project_root() / "resources"
+    return get_bundled_resources_dir()
 
 # 块类型 → CSS 左边框颜色
 BLOCK_BORDER_COLORS: dict[str, str] = {
