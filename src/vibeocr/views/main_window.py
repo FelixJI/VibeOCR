@@ -381,12 +381,37 @@ class MainWindow(QMainWindow):
             ocr_ready_callback=lambda: self._ocr_ready,
             subprocess_manager=self._subprocess_manager,
             preload_complete_callback=self._on_preload_complete,
+            # 设置页重装/补装依赖成功后联动重新检测（Bug A 修复）：
+            # 旧逻辑设置页装完只刷新表格，不联动 _ocr_ready/Worker，截图界面
+            # 仍提示"未就绪"。现复用 dependency_manager.check_dependencies，
+            # 检测完成回调（_on_dependency_check_finished）自动设 _ocr_ready、
+            # 启动子进程 Worker、消费 pending_backend，与首启路径行为一致。
+            install_succeeded_callback=self._on_settings_install_succeeded,
         )
         self._settings_controller.connect_signals()
 
     def _on_preload_complete(self) -> None:
         """预加载完成回调"""
         self._preload_complete = True
+
+    def _on_settings_install_succeeded(self) -> None:
+        """设置页重装/补装依赖成功后的联动回调（Bug A 修复）
+
+        由 SettingsPageController._open_reinstall_dialog 在对话框 emit
+        install_succeeded 时调用。复用 DependencyManager.check_dependencies
+        重新检测便携环境——检测完成回调（_on_dependency_check_finished）会
+        自动设置 _ocr_ready、启动子进程 Worker、消费 pending_backend，使
+        截图界面立即生效，无需重启程序。
+
+        不直接设 _ocr_ready=True：让真实检测（双层 _probe_module）正确反映
+        "装了但 mineru 间接依赖没装完"等异常状态，避免假就绪。
+        """
+        if self._closing:
+            return
+        logging.info("[设置安装] 依赖安装成功，重新检测以联动截图功能")
+        # reset 确保重入安全（若上一次检测仍在进行，避免 _is_checking 短路）
+        self._dependency_manager.reset()
+        self._dependency_manager.check_dependencies()
 
     def _try_load_cache(self) -> None:
         """尝试从缓存加载依赖检测结果"""

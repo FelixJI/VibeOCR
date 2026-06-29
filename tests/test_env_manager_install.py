@@ -751,6 +751,289 @@ class TestCheckImportsPrimitive:
         )
 
 
+class TestProbeModuleDoubleLayer:
+    """_probe_module 双层检测：metadata 判发行版存在 + import 判可导入
+
+    回归（Bug B）：MinerU[core] 间接依赖（torch/paddle/opencv/rapid-table）未装完时，
+    `import mineru` 会抛 ImportError，旧 `_check_imports` 误判为"未安装"，
+    掩盖了"装了但依赖损坏"的真实状态。双层检测区分二者，import 失败但发行版
+    存在时落盘 warning 指向"间接依赖未完成"。
+    """
+
+    def test_installed_and_importable(self, tmp_path):
+        """发行版存在 + import 成功 → (installed=True, usable=True)"""
+        python_exe = tmp_path / "python.exe"
+        python_exe.touch()
+
+        def mock_run(cmd, **kwargs):
+            r = MagicMock()
+            code = cmd[cmd.index("-c") + 1] if "-c" in cmd else ""
+            r.returncode = 0  # metadata.version + import 都成功
+            r.stderr = ""
+            r.stdout = "3.4.0" if "metadata" in code else ""
+            return r
+
+        from vibeocr.env_manager import _probe_module
+
+        with patch("vibeocr.env_manager.subprocess.run", side_effect=mock_run):
+            installed, usable = _probe_module(python_exe, "mineru", "mineru")
+
+        assert installed is True
+        assert usable is True
+
+    def test_installed_but_import_fails(self, tmp_path):
+        """发行版存在但 import 失败 → (installed=True, usable=False)
+
+        典型场景：mineru[core] 装了发行版，但 torch/paddle 等间接依赖缺失，
+        import mineru 抛 ModuleNotFoundError。
+        """
+        python_exe = tmp_path / "python.exe"
+        python_exe.touch()
+
+        def mock_run(cmd, **kwargs):
+            r = MagicMock()
+            code = cmd[cmd.index("-c") + 1] if "-c" in cmd else ""
+            if "metadata" in code:
+                r.returncode = 0  # 发行版存在
+                r.stdout = "3.4.0"
+                r.stderr = ""
+            else:
+                # import 失败（间接依赖缺失）
+                r.returncode = 1
+                r.stderr = "ModuleNotFoundError: No module named 'torch'"
+                r.stdout = ""
+            return r
+
+        from vibeocr.env_manager import _probe_module
+
+        with patch("vibeocr.env_manager.subprocess.run", side_effect=mock_run):
+            installed, usable = _probe_module(python_exe, "mineru", "mineru")
+
+        assert installed is True, "发行版存在应判 installed=True"
+        assert usable is False, "import 失败应判 usable=False（不掩盖）"
+
+    def test_installed_but_import_fails_logs_warning(self, tmp_path, caplog):
+        """发行版存在但 import 失败时，应 logger.warning 记录'间接依赖'提示"""
+        python_exe = tmp_path / "python.exe"
+        python_exe.touch()
+        import logging
+
+        def mock_run(cmd, **kwargs):
+            r = MagicMock()
+            code = cmd[cmd.index("-c") + 1] if "-c" in cmd else ""
+            if "metadata" in code:
+                r.returncode = 0
+                r.stdout = "3.4.0"
+                r.stderr = ""
+            else:
+                r.returncode = 1
+                r.stderr = "ModuleNotFoundError: No module named 'torch'"
+                r.stdout = ""
+            return r
+
+        from vibeocr.env_manager import _probe_module
+
+        with (
+            patch("vibeocr.env_manager.subprocess.run", side_effect=mock_run),
+            caplog.at_level(logging.WARNING, logger="vibeocr.env_manager"),
+        ):
+            _probe_module(python_exe, "mineru", "mineru")
+
+        warn_msgs = " ".join(
+            r.message for r in caplog.records if r.levelno >= logging.WARNING
+        )
+        assert "mineru" in warn_msgs, "warning 应提及包名"
+        assert "间接依赖" in warn_msgs or "import" in warn_msgs.lower(), (
+            f"应提示间接依赖/import 问题，实际: {warn_msgs}"
+        )
+
+    def test_not_installed(self, tmp_path):
+        """发行版不存在 → (installed=False, usable=False)，且跳过 import 探测"""
+        python_exe = tmp_path / "python.exe"
+        python_exe.touch()
+
+        call_count = {"n": 0}
+
+        def mock_run(cmd, **kwargs):
+            call_count["n"] += 1
+            r = MagicMock()
+            # metadata.version 找不到包（PackageNotFoundError → returncode 1）
+            r.returncode = 1
+            r.stderr = "PackageNotFoundError: mineru"
+            r.stdout = ""
+            return r
+
+        from vibeocr.env_manager import _probe_module
+
+        with patch("vibeocr.env_manager.subprocess.run", side_effect=mock_run):
+            installed, usable = _probe_module(python_exe, "mineru", "mineru")
+
+        assert installed is False
+        assert usable is False
+        # 发行版不存在时不应再做 import 探测（省一次 subprocess）
+        assert call_count["n"] == 1, (
+            f"包不存在时应只探 metadata（1 次 subprocess），实际: {call_count['n']}"
+        )
+
+
+class TestCheckImportsDoubleLayer:
+    """改写后的 _check_imports：双层检测，返回签名不变 + 损坏时落盘 warning
+
+    回归（Bug B）：MinerU 装了发行版但 import 失败时，旧逻辑静默判 False，
+    用户无法区分"包没装"vs"装了但依赖损坏"。
+    """
+
+    def test_returns_mapping_signature_unchanged(self, tmp_path):
+        """返回签名应保持 dict[str,bool]，key 集合 == OCR_CHECK_MODULES.values()"""
+        python_exe = tmp_path / "python.exe"
+        python_exe.touch()
+
+        def mock_run(cmd, **kwargs):
+            r = MagicMock()
+            r.returncode = 0
+            r.stderr = ""
+            r.stdout = "1.0.0" if "metadata" in (cmd[cmd.index("-c") + 1] if "-c" in cmd else "") else ""
+            return r
+
+        with patch("vibeocr.env_manager.subprocess.run", side_effect=mock_run):
+            result = _check_imports(python_exe)
+
+        from vibeocr.services.env_config import OCR_CHECK_MODULES
+
+        assert set(result.keys()) == set(OCR_CHECK_MODULES.values()), (
+            "key 集合应等于 OCR_CHECK_MODULES 的包名集合"
+        )
+        assert all(isinstance(v, bool) for v in result.values())
+
+    def test_installed_but_unusable_still_returns_false(self, tmp_path, caplog):
+        """mineru 装了发行版但 import 崩 → usable=False（不掩盖），且落盘 warning"""
+        python_exe = tmp_path / "python.exe"
+        python_exe.touch()
+        import logging
+
+        def mock_run(cmd, **kwargs):
+            r = MagicMock()
+            code = cmd[cmd.index("-c") + 1] if "-c" in cmd else ""
+            # mineru：metadata 成功，import 失败（间接依赖缺失）
+            if "metadata" in code:
+                if "mineru" in code:
+                    r.returncode = 0
+                    r.stdout = "3.4.0"
+                else:
+                    r.returncode = 0
+                    r.stdout = "1.0.0"
+                r.stderr = ""
+            else:
+                # import 路径：mineru 失败，其余成功
+                if code == "import mineru":
+                    r.returncode = 1
+                    r.stderr = "ModuleNotFoundError: No module named 'torch'"
+                else:
+                    r.returncode = 0
+                    r.stderr = ""
+                r.stdout = ""
+            return r
+
+        with (
+            patch("vibeocr.env_manager.subprocess.run", side_effect=mock_run),
+            caplog.at_level(logging.WARNING, logger="vibeocr.env_manager"),
+        ):
+            result = _check_imports(python_exe)
+
+        assert result["mineru"] is False, "import 失败应判 False（可用性准确）"
+        warn_msgs = " ".join(
+            r.message for r in caplog.records if r.levelno >= logging.WARNING
+        )
+        assert "mineru" in warn_msgs, "应落盘 warning 指向 mineru 间接依赖"
+
+
+class TestGetDependencyVersionsImportlibMetadata:
+    """get_dependency_versions 改用 importlib.metadata（修复 mineru 版本空串）
+
+    回归（Bug B）：getattr(mineru, '__version__', '') 返回空串——现代 mineru 包
+    不暴露 __version__，依赖 importlib.metadata.version('mineru')。导致设置页
+    表格显示"（版本未知）"。
+    """
+
+    def test_uses_importlib_metadata_version(self, tmp_path):
+        """版本应来自 importlib.metadata.version，而非 __version__ 属性"""
+        python_exe = tmp_path / "python.exe"
+        python_exe.touch()
+
+        def mock_run(cmd, **kwargs):
+            r = MagicMock()
+            code = cmd[cmd.index("-c") + 1] if "-c" in cmd else ""
+            r.returncode = 0
+            r.stderr = ""
+            # metadata 路径返回版本号
+            r.stdout = "3.4.0" if "metadata" in code else ""
+            return r
+
+        with patch("vibeocr.env_manager.subprocess.run", side_effect=mock_run):
+            from vibeocr.env_manager import get_dependency_versions
+
+            versions = get_dependency_versions(python_exe)
+
+        # mineru 应有版本号（来自 metadata），不再是空串
+        assert versions["mineru"] == "3.4.0", (
+            f"mineru 版本应来自 importlib.metadata，实际: {versions['mineru']!r}"
+        )
+
+    def test_falls_back_to_dunder_version_when_metadata_fails(self, tmp_path):
+        """metadata 探测失败时，回退 getattr(module, '__version__', '')"""
+        python_exe = tmp_path / "python.exe"
+        python_exe.touch()
+
+        def mock_run(cmd, **kwargs):
+            r = MagicMock()
+            code = cmd[cmd.index("-c") + 1] if "-c" in cmd else ""
+            if "metadata" in code:
+                # metadata 失败（旧包无 metadata）
+                r.returncode = 1
+                r.stderr = "PackageNotFoundError"
+                r.stdout = ""
+            else:
+                # 回退路径：getattr(module, '__version__', '')
+                r.returncode = 0
+                r.stderr = ""
+                r.stdout = "2.6.0"  # __version__ 返回值
+            return r
+
+        with patch("vibeocr.env_manager.subprocess.run", side_effect=mock_run):
+            from vibeocr.env_manager import get_dependency_versions
+
+            versions = get_dependency_versions(python_exe)
+
+        # 回退到 __version__
+        assert versions["torch"] == "2.6.0", (
+            f"metadata 失败应回退 __version__，实际: {versions['torch']!r}"
+        )
+
+    def test_returns_empty_for_not_installed(self, tmp_path):
+        """包未安装（metadata + __version__ 都失败）→ 空串"""
+        python_exe = tmp_path / "python.exe"
+        python_exe.touch()
+
+        def mock_run(cmd, **kwargs):
+            r = MagicMock()
+            r.returncode = 1
+            r.stderr = "PackageNotFoundError"
+            r.stdout = ""
+            return r
+
+        with patch("vibeocr.env_manager.subprocess.run", side_effect=mock_run):
+            from vibeocr.env_manager import get_dependency_versions
+
+            versions = get_dependency_versions(python_exe)
+
+        from vibeocr.services.env_config import OCR_CHECK_MODULES
+
+        assert all(v == "" for v in versions.values()), (
+            f"未安装应全为空串，实际: {versions}"
+        )
+        assert set(versions.keys()) == set(OCR_CHECK_MODULES.values())
+
+
 class TestResolveUseGpu:
     """resolve_use_gpu 测试：缓存优先 + 探测回退"""
 
@@ -1704,9 +1987,15 @@ class TestInstallMissingDependencies:
             all_calls.append(cmd)
             r = MagicMock()
             r.stderr = ""
-            # _check_imports 走 subprocess.run：paddle/paddleocr 成功，mineru/torch 失败
             import_code = cmd[cmd.index("-c") + 1] if "-c" in cmd else ""
-            if import_code.startswith("import "):
+            # _check_imports 现走双层 _probe_module：metadata 判发行版存在 + import 判可用。
+            # metadata 调用形如 "import importlib.metadata as m; m.version('paddlepaddle')"
+            if "metadata" in import_code and "version" in import_code:
+                # 所有发行版都存在（installed=True），让双层探针进入 import 层
+                r.returncode = 0
+                r.stdout = "1.0.0"
+            elif import_code.startswith("import "):
+                # import 层：paddle/paddleocr 可用（usable=True），mineru/torch 不可用
                 module = import_code.split()[1]
                 r.returncode = 0 if module in ("paddle", "paddleocr") else 1
             else:
@@ -1724,7 +2013,7 @@ class TestInstallMissingDependencies:
                 return_value=python_exe,
             ),
             patch("vibeocr.env_manager._load_dep_specs", return_value=self._specs()),
-            # _check_imports 走 subprocess.run（mock_run 区分 import 成功/失败）；
+            # _check_imports 走 subprocess.run（mock_run 区分 metadata/import 成功失败）；
             # 安装路径走 Popen。
             patch("vibeocr.env_manager.subprocess.run", side_effect=mock_run),
             patch(

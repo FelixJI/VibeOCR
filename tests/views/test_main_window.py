@@ -132,3 +132,42 @@ class TestQrcodeTabIntegration:
         assert qrcode_idx is not None
         assert settings_idx is not None
         assert qrcode_idx < settings_idx
+
+
+class TestSettingsInstallSucceededTriggersRecheck:
+    """设置页重装依赖成功后应联动 MainWindow 重新检测（Bug A 修复）
+
+    回归：用户在设置页重装 OCR 依赖成功后，截图界面仍提示"OCR功能未就绪"。
+    根因：设置页重装路径（_open_reinstall_dialog）只连 dialog.finished 刷新
+    设置页表格，没连 dialog.install_succeeded，也没触发 dependency_manager
+    重新检测 + 启动子进程 Worker。修复：SettingsPageController 接收
+    install_succeeded_callback，MainWindow 传入一个触发 check_dependencies
+    的回调，使设置页安装成功后与首启路径行为一致。
+    """
+
+    def test_settings_controller_receives_install_succeeded_callback(
+        self, main_window
+    ):
+        """MainWindow 应把 install_succeeded_callback 传给 SettingsPageController"""
+        controller = main_window._settings_controller
+        assert hasattr(controller, "_install_succeeded_callback"), (
+            "SettingsPageController 应持有 install_succeeded_callback"
+        )
+        assert callable(controller._install_succeeded_callback), (
+            "install_succeeded_callback 应是可调用对象"
+        )
+
+    def test_callback_triggers_dependency_recheck(self, main_window):
+        """install_succeeded_callback 触发时应调用 dependency_manager.check_dependencies
+
+        mock check_dependencies 验证联动，不真正跑后台检测（避免测试耗时长）。
+        """
+        import unittest.mock as _mock
+
+        dep_mgr = main_window._dependency_manager
+        with _mock.patch.object(dep_mgr, "check_dependencies") as mock_check:
+            # 调用 callback（模拟设置页 install_succeeded 信号）
+            main_window._settings_controller._install_succeeded_callback()
+            mock_check.assert_called_once(), (
+                "install_succeeded_callback 应触发 dependency_manager.check_dependencies"
+            )
