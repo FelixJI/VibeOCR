@@ -186,8 +186,39 @@ def cmd_sync_cnb(args: argparse.Namespace) -> int:
 
 
 def cmd_prune_github(args: argparse.Namespace) -> int:
-    # Task 8 实现
-    raise NotImplementedError
+    import subprocess
+
+    # gh 可能不在本机 PATH（仅 CI runner 有）；缺失则跳过
+    try:
+        listing = subprocess.run(
+            ["gh", "release", "list", "--repo", GITHUB_OWNER_REPO, "--limit", "50",
+             "--json", "tagName,isDraft,isPreRelease"],
+            capture_output=True, encoding="utf-8", check=True,
+        )
+    except (FileNotFoundError, subprocess.CalledProcessError) as e:
+        print(f"::warning::gh 调用失败，跳过 GitHub Release 清理: {e}")
+        return 0
+
+    try:
+        data = json.loads(listing.stdout or "[]")
+    except json.JSONDecodeError:
+        data = []
+
+    to_delete = select_for_prune(rank_releases(data), keep=KEEP)
+    if not to_delete:
+        print("  无需清理（<= 10 个 Release）")
+        return 0
+
+    for r in to_delete:
+        tag = r["tagName"]
+        print(f"  删除 GitHub Release 记录: {tag}（保留 tag）")
+        subprocess.run(
+            ["gh", "release", "delete", tag, "--repo", GITHUB_OWNER_REPO,
+             "--cleanup-tag=false", "--yes"],
+            check=False,
+        )
+    print("GitHub Release 清理完成")
+    return 0
 
 
 def cmd_prune_cnb(args: argparse.Namespace) -> int:
