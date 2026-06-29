@@ -40,6 +40,7 @@ _year_range = (
 )
 _COPYRIGHT = f"© {_year_range} Felix Ji. All rights reserved."
 _GITHUB_URL = "https://github.com/FelixJI/VibeOCR"
+_GITEE_URL = "https://gitee.com/felixjii/vibeocr"
 _CNB_URL = "https://cnb.cool/feljii/VibeOCR"
 _TECH_STACK = [
     ("PaddlePaddle / PaddleX", "OCR 引擎"),
@@ -200,7 +201,8 @@ class AboutTab(QWidget):
         form.addRow(make_label("版权"), QLabel(_COPYRIGHT))
         form.addRow(make_label("技术栈"), QLabel(tech))
         form.addRow(make_label("GitHub"), make_link(_GITHUB_URL))
-        form.addRow(make_label("CNB"), make_link(_CNB_URL))
+        form.addRow(make_label("Gitee"), make_link(_GITEE_URL))
+        form.addRow(make_label("代码镜像"), make_link(_CNB_URL))
         card_layout.addLayout(form)
         return card
 

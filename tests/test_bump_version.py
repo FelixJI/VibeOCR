@@ -423,6 +423,8 @@ class TestGenerateVersionJson:
         assert "torch" in dep_versions
         # nvidia 包也应记录（更新器需要）
         assert any(k.startswith("nvidia") for k in dep_versions)
+        # webengine 资源包版本（主包剔除 WebEngine 后按需下载）
+        assert data["webengine_assets_version"] == "1.2.3"
 
     def test_python_version_read_from_dot_python_version(self, tmp_path):
         """version.json 的 python_version 应从 .python-version 文件读取，而非硬编码"""
@@ -982,7 +984,7 @@ class TestOption5UnversionedWarning:
         # 桩：打包不应被调用
         ran: dict = {}
         monkeypatch.setattr(
-            mod, "_run_build", lambda v, force=False: ran.setdefault("built", True) or True
+            mod, "_run_build", lambda v, force=False, bundle_webengine=False: ran.setdefault("built", True) or True
         )
         # input 默认 N（放弃）
         monkeypatch.setattr("builtins.input", lambda _p="": "N")
@@ -1003,7 +1005,7 @@ class TestOption5UnversionedWarning:
         monkeypatch.setattr(mod, "read_current_version", lambda path: (0, 1, 6))
         ran: dict = {}
         monkeypatch.setattr(
-            mod, "_run_build", lambda v, force=False: ran.setdefault("built", True) or True
+            mod, "_run_build", lambda v, force=False, bundle_webengine=False: ran.setdefault("built", True) or True
         )
         monkeypatch.setattr("sys.argv", ["bump_version.py", "--build"])
 
@@ -1033,7 +1035,7 @@ class TestBumpMergePrompt:
         )
         monkeypatch.setattr(mod, "_sync_uv_lock", lambda v: False)
         # 桩 git/changelog 相关操作（避免触碰真实仓库与真实 git）
-        monkeypatch.setattr(mod, "get_commits_since_last_tag", lambda: [])
+        monkeypatch.setattr(mod, "get_commits_since_last_tag", list)
         monkeypatch.setattr(mod, "update_changelog", lambda v, c: None)
         monkeypatch.setattr(mod.subprocess, "run", lambda *a, **k: None)
         merged: dict = {}
@@ -1061,7 +1063,7 @@ class TestBumpMergePrompt:
             mod, "update_file_version", lambda f, old, new: None
         )
         monkeypatch.setattr(mod, "_sync_uv_lock", lambda v: False)
-        monkeypatch.setattr(mod, "get_commits_since_last_tag", lambda: [])
+        monkeypatch.setattr(mod, "get_commits_since_last_tag", list)
         monkeypatch.setattr(mod, "update_changelog", lambda v, c: None)
         monkeypatch.setattr(mod.subprocess, "run", lambda *a, **k: None)
         merged: dict = {}

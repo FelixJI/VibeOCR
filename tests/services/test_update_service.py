@@ -83,6 +83,41 @@ class TestUpdateInfo:
         assert info.download_url == ""
         assert info.sha256_url == ""
 
+    def test_excludes_webengine_asset(self):
+        """_find_asset_url 必须排除 webengine 资源包，只匹配主包。
+
+        资源包命名 VibeOCR-v*-webengine-win64.zip，由 webengine_manager 单独
+        处理；更新检测只应拿主包 zip。
+        """
+        from vibeocr.services.update_service import _find_asset_size, _find_asset_url
+
+        # webengine 资源包排在前面，确认不会被误取
+        release = {
+            "assets": [
+                {
+                    "name": "VibeOCR-v0.4.0-webengine-win64.zip",
+                    "browser_download_url": "http://webengine.zip",
+                    "size": 999,
+                },
+                {
+                    "name": "VibeOCR-v0.4.0-webengine-win64.zip.sha256",
+                    "browser_download_url": "http://webengine.sha256",
+                },
+                {
+                    "name": "VibeOCR-v0.4.0-win64.zip",
+                    "browser_download_url": "http://main.zip",
+                    "size": 100,
+                },
+                {
+                    "name": "VibeOCR-v0.4.0-win64.zip.sha256",
+                    "browser_download_url": "http://main.sha256",
+                },
+            ],
+        }
+        assert _find_asset_url(release, ".zip") == "http://main.zip"
+        assert _find_asset_url(release, ".sha256") == "http://main.sha256"
+        assert _find_asset_size(release, ".zip") == 100
+
 
 class TestLocalVersion:
     """本地版本读取测试"""
@@ -129,7 +164,7 @@ class TestCheckForUpdates:
             ],
         }
         with patch(
-            "vibeocr.services.update_service._fetch_github_release",
+            "vibeocr.services.update_service._fetch_release",
             return_value=mock_release,
         ):
             update_info, fetch_ok = _run(check_for_updates("0.1.0"))
@@ -156,7 +191,7 @@ class TestCheckForUpdates:
             ],
         }
         with patch(
-            "vibeocr.services.update_service._fetch_github_release",
+            "vibeocr.services.update_service._fetch_release",
             return_value=mock_release,
         ):
             update_info, fetch_ok = _run(check_for_updates("0.1.0"))
@@ -168,7 +203,7 @@ class TestCheckForUpdates:
         from vibeocr.services.update_service import check_for_updates
 
         with patch(
-            "vibeocr.services.update_service._fetch_github_release",
+            "vibeocr.services.update_service._fetch_release",
             return_value=None,
         ):
             update_info, fetch_ok = _run(check_for_updates("0.1.0"))

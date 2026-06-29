@@ -60,4 +60,4 @@ def test_build_release_body_appends_download_links():
     body = build_release_body(base="## [0.3.0]\n- fix", tag="v0.3.0")
     assert "## [0.3.0]" in body
     assert "https://github.com/FelixJI/VibeOCR/releases/v0.3.0" in body
-    assert "https://cnb.cool/feljii/VibeOCR/-/releases/v0.3.0" in body
+    assert "https://gitee.com/felixjii/vibeocr/releases/v0.3.0" in body

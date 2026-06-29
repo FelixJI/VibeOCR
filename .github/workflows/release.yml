@@ -119,6 +119,8 @@ jobs:
           files: |
             dist/VibeOCR-v${{ steps.version.outputs.version }}-win64.zip
             dist/VibeOCR-v${{ steps.version.outputs.version }}-win64.zip.sha256
+            dist/VibeOCR-v${{ steps.version.outputs.version }}-webengine-win64.zip
+            dist/VibeOCR-v${{ steps.version.outputs.version }}-webengine-win64.zip.sha256
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -164,20 +166,21 @@ jobs:
           fi
           echo "CNB 代码镜像成功"
 
-      - name: Sync release assets to CNB
-        # 创建/复用 CNB Release，上传 zip+sha256，并在公告追加 GitHub 下载地址。
+      - name: Sync release assets to Gitee
+        # 创建/复用 Gitee Release，上传 主包+WebEngine 资源包 + sha256。
+        # 国内客户端按 NetworkDetector 优先走 Gitee 下载（匿名可读）。
         # 逻辑在 scripts/ci_release_sync.py，失败发 ::warning:: 不阻断发版。
         shell: bash
         env:
           PYTHONUTF8: "1"
-          CNB_TOKEN: ${{ secrets.CNB_TOKEN }}
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
         run: |
-          python scripts/ci_release_sync.py sync_cnb \
+          python scripts/ci_release_sync.py sync_gitee \
             --version "${{ steps.version.outputs.version }}" \
             --notes release_notes.md
 
       # -------------------------------------------------------------------
-      # Gitee 代码镜像（Release 产物不再上传 Gitee，改由 CNB 托管）
+      # Gitee 代码镜像（Release 产物同步见上一步）
       # -------------------------------------------------------------------
       # 读 secrets.GITEE_TOKEN；token 缺失或失败时只发 ::warning::，不阻断 job。
 
@@ -218,8 +221,9 @@ jobs:
           echo "Gitee 代码镜像成功"
 
       # -------------------------------------------------------------------
-      # 历史版本清理（GitHub + CNB 各保留最近 10 个 Release 记录，不删 tag）
+      # 历史版本清理（GitHub 保留 10 个，Gitee 保留 3 个 Release 记录，不删 tag）
       # -------------------------------------------------------------------
+      # Gitee 单仓库附件 1GB 上限，每版主包+资源包约 150MB，保留 3 版即 ~450MB。
       # 失败只发 ::warning::，不阻断发版。
 
       - name: Prune old GitHub releases (keep 10)
@@ -228,9 +232,9 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python scripts/ci_release_sync.py prune_github
 
-      - name: Prune old CNB releases (keep 10)
+      - name: Prune old Gitee releases (keep 3)
         shell: bash
         env:
           PYTHONUTF8: "1"
-          CNB_TOKEN: ${{ secrets.CNB_TOKEN }}
-        run: python scripts/ci_release_sync.py prune_cnb
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+        run: python scripts/ci_release_sync.py prune_gitee

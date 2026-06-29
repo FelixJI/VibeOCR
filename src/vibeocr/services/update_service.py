@@ -24,14 +24,25 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# GitHub 仓库信息（CNB 的 OpenAPI 需 token 鉴权，客户端无法匿名访问，
-# 故更新检查与下载统一走 GitHub；CNB 仅作 CI 镜像与产物托管目标）。
+# 仓库信息（与 about_tab.py / ci_release_sync.py 对齐）。
+# 发布渠道（方案 C）：CNB 仅镜像代码；产物主源 GitHub，镜像源 Gitee。
+# 客户端按 NetworkDetector 选源：国内优先 Gitee（匿名可读 Release），回退 GitHub；
+# 海外直连 GitHub。CNB OpenAPI 需 token 鉴权，客户端无法匿名访问，不用于更新。
 _GITHUB_OWNER = "FelixJI"
 _GITHUB_REPO = "VibeOCR"
-_CNB_RELEASES_URL = "https://cnb.cool/feljii/VibeOCR/-/releases"
+_GITEE_OWNER = "felixjii"
+_GITEE_REPO = "vibeocr"
+
+_GITHUB_RELEASES_URL = (
+    f"https://github.com/{_GITHUB_OWNER}/{_GITHUB_REPO}/releases"
+)
+_GITEE_RELEASES_URL = f"https://gitee.com/{_GITEE_OWNER}/{_GITEE_REPO}/releases"
 
 _GITHUB_API_URL = (
     f"https://api.github.com/repos/{_GITHUB_OWNER}/{_GITHUB_REPO}/releases/latest"
+)
+_GITEE_API_URL = (
+    f"https://gitee.com/api/v5/repos/{_GITEE_OWNER}/{_GITEE_REPO}/releases/latest"
 )
 
 
@@ -84,17 +95,35 @@ class UpdateInfo:
 def _find_asset_url(release: dict, suffix: str) -> str:
     for asset in release.get("assets", []):
         name = asset["name"]
-        if suffix == ".zip" and name.endswith(".zip") and ".sha256" not in name:
-            return asset["browser_download_url"]
-        if suffix == ".sha256" and name.endswith(".sha256"):
-            return asset["browser_download_url"]
+        # 主包匹配：排除 .sha256 校验文件，也排除 webengine 资源包
+        # （资源包单独命名 VibeOCR-v*-webengine-win64.zip，由 webengine_manager 处理）
+        if (
+            suffix == ".zip"
+            and name.endswith(".zip")
+            and ".sha256" not in name
+            and "-webengine-" not in name
+        ):
+            # GitHub 用 browser_download_url，Gitee 用 download_url
+            return asset.get("browser_download_url") or asset.get("download_url", "")
+        # sha256 校验文件同理排除 webengine 的
+        if (
+            suffix == ".sha256"
+            and name.endswith(".sha256")
+            and "-webengine-" not in name
+        ):
+            return asset.get("browser_download_url") or asset.get("download_url", "")
     return ""
 
 
 def _find_asset_size(release: dict, suffix: str) -> int:
     for asset in release.get("assets", []):
         name = asset["name"]
-        if suffix == ".zip" and name.endswith(".zip") and ".sha256" not in name:
+        if (
+            suffix == ".zip"
+            and name.endswith(".zip")
+            and ".sha256" not in name
+            and "-webengine-" not in name
+        ):
             return asset.get("size", 0)
     return 0
 
@@ -115,33 +144,63 @@ def read_local_version(version_json_path: Path) -> str:
 # ---------------------------------------------------------------------------
 
 
-async def _fetch_github_release() -> dict | None:
+async def _fetch_release(url: str, headers: dict | None = None) -> dict | None:
+    """通用：获取单个 release API 端点的 JSON，失败返回 None。"""
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
-            resp = await client.get(
-                _GITHUB_API_URL,
-                headers={"Accept": "application/vnd.github+json"},
-            )
+            resp = await client.get(url, headers=headers or {})
             if resp.status_code == 200:
                 return resp.json()
     except Exception:
-        logger.debug("GitHub API 请求失败")
+        logger.debug(f"release API 请求失败: {url}")
     return None
+
+
+def _detect_network_type() -> str:
+    """读取 NetworkDetector 的网络类型；探测失败默认 international。"""
+    try:
+        from vibeocr.env_manager import get_project_root
+        from vibeocr.network_detector import NetworkDetector
+
+        return NetworkDetector(get_project_root()).network_type
+    except Exception:
+        return "international"
 
 
 async def check_for_updates(
     current_version: str,
 ) -> tuple[UpdateInfo | None, bool]:
-    """检查是否有新版本（仅 GitHub）
+    """检查是否有新版本（按网络环境选源：国内 Gitee，海外 GitHub）
+
+    按网络类型确定 API 端点优先级，逐个尝试：
+    - domestic：Gitee（匿名可读）→ GitHub（回退）
+    - international：GitHub → Gitee（回退）
 
     Returns:
         (update_info, fetch_ok)：
-        - fetch_ok=False 表示 GitHub 请求失败（上层应提示手动下载）。
+        - fetch_ok=False 表示所有源均请求失败（上层应提示手动下载）。
         - fetch_ok=True 且 update_info=None 表示已是最新。
     """
-    release = await _fetch_github_release()
+    network_type = _detect_network_type()
+    if network_type == "domestic":
+        sources = [
+            (_GITEE_API_URL, None),
+            (_GITHUB_API_URL, {"Accept": "application/vnd.github+json"}),
+        ]
+    else:
+        sources = [
+            (_GITHUB_API_URL, {"Accept": "application/vnd.github+json"}),
+            (_GITEE_API_URL, None),
+        ]
+
+    release: dict | None = None
+    for url, headers in sources:
+        release = await _fetch_release(url, headers)
+        if release is not None:
+            break
+
     if release is None:
-        logger.info("无法获取 GitHub 远程版本信息")
+        logger.info("无法获取远程版本信息（Gitee/GitHub 均失败）")
         return None, False
 
     remote = UpdateInfo.from_release(release)
@@ -435,14 +494,23 @@ class UpdateService:
 
         update_info, fetch_ok = await check_for_updates(current)
 
-        # GitHub 不可达：提示用户去 CNB 手动下载并覆盖安装（需先退出程序）
+        # 自动检查失败：提示用户去下载页手动下载并覆盖安装（需先退出程序）。
+        # 按网络环境给主源链接（国内 Gitee，海外 GitHub）。
         if not fetch_ok:
+            network_type = _detect_network_type()
+            manual_url = (
+                _GITEE_RELEASES_URL
+                if network_type == "domestic"
+                else _GITHUB_RELEASES_URL
+            )
+            source_label = "Gitee" if network_type == "domestic" else "GitHub"
             QMessageBox.warning(
                 parent,
                 "检查更新",
                 "自动检查更新失败，可能是网络问题。\n\n"
-                "可前往 CNB 手动下载对应版本，覆盖安装前请先退出本程序：\n"
-                f"{_CNB_RELEASES_URL}",
+                f"可前往 {source_label} 手动下载对应版本，"
+                "覆盖安装前请先退出本程序：\n"
+                f"{manual_url}",
             )
             return
 
