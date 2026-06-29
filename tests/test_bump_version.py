@@ -769,12 +769,12 @@ class TestInteractiveMenuMergeOption:
         assert result == "merge", f"选项 6 应返回 'merge'，实际: {result!r}"
 
     def test_menu_lists_option_6(self, capsys, monkeypatch):
-        """菜单输出应包含"合并至 main"描述"""
+        """菜单输出应包含"推送快照到 GitHub main"选项描述"""
         mod = self._load_module()
         monkeypatch.setattr("builtins.input", lambda _prompt="": "0")
         mod.interactive_menu((0, 1, 6))
         captured = capsys.readouterr()
-        assert "合并至 main" in captured.out
+        assert "推送快照到 GitHub main" in captured.out
 
 
 class TestCmdToMain:
