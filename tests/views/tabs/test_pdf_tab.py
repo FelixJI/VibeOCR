@@ -1023,3 +1023,41 @@ class TestThumbnailIncrementalUpdate:
             assert pdf_tab._get_selected_page_indices() == [1, 2]
         finally:
             doc.close()
+
+
+class TestPdfTabDeleteTextLayerAsync:
+    """删除文字层改异步：调 manager.delete_text_layers_async 而非主线程循环。"""
+
+    def test_delete_calls_manager_async(self, pdf_tab, monkeypatch):
+        """_on_delete_text_layer 应调 manager.delete_text_layers_async。"""
+        from unittest.mock import MagicMock
+
+        # 让 _get_selected_page_indices 返回 [0]，跳过"请先选择页面"
+        monkeypatch.setattr(pdf_tab, "_get_selected_page_indices", lambda: [0])
+        # 跳过确认对话框（直接返回 Yes）
+        from PySide6.QtWidgets import QMessageBox
+        monkeypatch.setattr(QMessageBox, "question", staticmethod(lambda *a, **k: QMessageBox.StandardButton.Yes))
+        # mock manager
+        mock_mgr = MagicMock()
+        pdf_tab._session_mgr = mock_mgr
+        mock_mgr.active_session = MagicMock()
+
+        pdf_tab._on_delete_text_layer()
+        mock_mgr.delete_text_layers_async.assert_called_once_with([0])
+
+    def test_delete_layer_done_shows_residual_warning(self, pdf_tab, monkeypatch):
+        """_on_delete_layer_done 有 residual_pages 时弹 warning。"""
+        from unittest.mock import MagicMock
+        from PySide6.QtWidgets import QMessageBox
+
+        mock_mgr = MagicMock()
+        pdf_tab._session_mgr = mock_mgr
+        session = MagicMock()
+        session.file_path = "/tmp/x.pdf"
+        mock_mgr.active_session = session
+
+        warnings = []
+        monkeypatch.setattr(QMessageBox, "warning", staticmethod(lambda *a, **k: warnings.append(a)))
+
+        pdf_tab._on_delete_layer_done("/tmp/x.pdf", [2, 5])
+        assert len(warnings) == 1

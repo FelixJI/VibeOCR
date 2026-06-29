@@ -319,6 +319,14 @@ class PdfTab(QWidget):
         mgr.ocr_done.connect(self._on_ocr_finished)
         mgr.ocr_stats_ready.connect(self._on_ocr_stats_ready)
         mgr.mineru_models_status.connect(self._on_mineru_models_status)
+        mgr.mutate_progress.connect(self._on_mutate_progress)
+        mgr.mutate_done.connect(self._on_mutate_done)
+        mgr.mutate_failed.connect(self._on_mutate_failed)
+        mgr.save_done.connect(self._on_save_done)
+        mgr.delete_layer_done.connect(self._on_delete_layer_done)
+        mgr.render_progress.connect(self._on_render_progress_update)
+        mgr.export_progress.connect(self._on_export_progress)
+        mgr.export_done.connect(self._on_export_done)
 
     # ---- splitter layout persistence --------------------------------
 
@@ -423,6 +431,69 @@ class PdfTab(QWidget):
         # 下载期间显示不确定进度条（无具体百分比）
         self._progress_bar.setRange(0, 0)
         self._progress_bar.setVisible(True)
+
+    def _on_render_progress_update(self, file_path: str, current: int, total: int) -> None:
+        """OCR 渲染前置阶段进度（render worker 渲染页面，OCR 未开始）。"""
+        session = self._session_mgr.active_session
+        if session is None or session.file_path != file_path:
+            return
+        self._progress_bar.setRange(0, total)
+        self._progress_bar.setValue(current)
+        self._status_label.setText(f"正在渲染页面 {current}/{total}…")
+
+    def _on_mutate_progress(self, file_path: str, current: int, total: int) -> None:
+        session = self._session_mgr.active_session
+        if session is None or session.file_path != file_path:
+            return
+        if total > 0:
+            self._progress_bar.setRange(0, total)
+            self._progress_bar.setValue(current)
+            self._status_label.setText(f"正在处理 {current}/{total}…")
+
+    def _on_mutate_done(self, file_path: str, result) -> None:
+        """mutate 逐页/整体完成。逐页 payload 更新 grid 格子。"""
+        session = self._session_mgr.active_session
+        if session is None or session.file_path != file_path:
+            return
+        if isinstance(result, dict) and "page" in result:
+            self._update_layer_grid_page(result["page"])
+
+    def _on_mutate_failed(self, file_path: str, error: str) -> None:
+        session = self._session_mgr.active_session
+        if session is None or session.file_path != file_path:
+            return
+        self._progress_bar.setVisible(False)
+        self._set_file_buttons_enabled(True)
+        QMessageBox.warning(self, "操作失败", error)
+
+    def _on_delete_layer_done(self, file_path: str, residual_pages: list) -> None:
+        session = self._session_mgr.active_session
+        if session is None or session.file_path != file_path:
+            return
+        self._progress_bar.setVisible(False)
+        self._set_file_buttons_enabled(True)
+        self._update_status()
+        if residual_pages:
+            QMessageBox.warning(
+                self,
+                "删除文字层",
+                f"第 {', '.join(str(p + 1) for p in residual_pages)} 页经多轮删除"
+                f"仍有少量残留文字，\n可能是特殊字体或嵌入图片文字，建议手动检查。",
+            )
+        else:
+            self._status_label.setText("文字层删除完成")
+
+    def _on_save_done(self, file_path: str) -> None:
+        # Placeholder — full impl in Task 18
+        pass
+
+    def _on_export_progress(self, current: int, total: int, file_name: str) -> None:
+        # Placeholder — full impl in Task 20
+        pass
+
+    def _on_export_done(self, exported_paths: list) -> None:
+        # Placeholder — full impl in Task 20
+        pass
 
     def _on_ocr_finished(self, file_path: str, success: int, fail: int) -> None:
         self._progress_bar.setVisible(False)
@@ -1254,13 +1325,13 @@ class PdfTab(QWidget):
         if reply != QMessageBox.StandardButton.Yes:
             return
 
-        for idx in indices:
-            with session.doc_lock:
-                PdfService.delete_text_layers(session.doc, session.pdf_document, idx)
-            # 文字层是隐形层，删除不影响缩略图视觉 → 不重建缩略图。
-            # 逐页把网格格子变灰（增量，保留用户选中）。
-            self._update_layer_grid_page(idx)
-        self._update_status()
+        # 异步：后台逐页词级 redact，主线程不阻塞
+        self._progress_bar.setRange(0, len(indices))
+        self._progress_bar.setValue(0)
+        self._progress_bar.setVisible(True)
+        self._set_file_buttons_enabled(False)
+
+        self._session_mgr.delete_text_layers_async(indices)
 
     def _on_preview_text_layer(self) -> None:
         """打开预览窗口浏览文字层（可翻页，无文字层页显示纯页面图）。"""
