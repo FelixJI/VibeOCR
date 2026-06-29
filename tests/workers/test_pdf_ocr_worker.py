@@ -485,3 +485,72 @@ class TestComputeBatchSize:
 
         assert worker.isFinished()
         assert cpu_called["n"] == 1, "CPU 批量公式应被调用"
+
+
+class TestPdfOcrWorkerStreaming:
+    """queue 流式消费模式：从 render_queue 取 (idx, array) 识别。"""
+
+    def test_consumes_queue_until_sentinel(self, qapp, wait_worker):
+        from queue import Queue
+
+        mock_service = MagicMock()
+        mock_service.recognize_batch.return_value = [_mk_result("a"), _mk_result("b")]
+        q: Queue = Queue()
+        q.put((0, np.ones((10, 10, 3), dtype=np.uint8)))
+        q.put((1, np.ones((10, 10, 3), dtype=np.uint8)))
+        q.put(None)  # 哨兵
+
+        done_pages: list = []
+        done_summary: list = []
+        worker = PdfOcrWorker(
+            session_id="stream.pdf",
+            ocr_service=mock_service,
+            ocr_options=None,
+            render_queue=q,
+        )
+        worker.page_done.connect(
+            lambda i, r: done_pages.append((i, r.raw_text)),
+            Qt.ConnectionType.DirectConnection,
+        )
+        worker.all_done.connect(
+            lambda sid, s, f: done_summary.append((sid, s, f)),
+            Qt.ConnectionType.DirectConnection,
+        )
+        worker.start()
+        wait_worker(worker)
+
+        assert worker.isFinished()
+        assert done_pages == [(0, "a"), (1, "b")]
+        assert done_summary == [("stream.pdf", 2, 0)]
+
+    def test_handles_none_array_as_fail(self, qapp, wait_worker):
+        """渲染失败的页（array=None）计为 fail，不调 recognize。"""
+        from queue import Queue
+
+        mock_service = MagicMock()
+        q: Queue = Queue()
+        q.put((0, None))  # 渲染失败
+        q.put(None)
+
+        done_pages: list = []
+        done_summary: list = []
+        worker = PdfOcrWorker(
+            session_id="fail.pdf",
+            ocr_service=mock_service,
+            ocr_options=None,
+            render_queue=q,
+        )
+        worker.page_done.connect(
+            lambda i, r: done_pages.append((i, r)),
+            Qt.ConnectionType.DirectConnection,
+        )
+        worker.all_done.connect(
+            lambda sid, s, f: done_summary.append((sid, s, f)),
+            Qt.ConnectionType.DirectConnection,
+        )
+        worker.start()
+        wait_worker(worker)
+
+        assert done_pages == [(0, None)]
+        assert done_summary == [("fail.pdf", 0, 1)]
+        mock_service.recognize_batch.assert_not_called()
