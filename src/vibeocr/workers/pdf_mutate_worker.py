@@ -228,6 +228,10 @@ class PdfMutateWorker(QThread):
                     self._doc, self._pdf_document, path=path,
                     pdf_settings=self._task.pdf_settings,
                 )
+                # 全量压缩覆盖时 doc 已 close+reopen，更新本地引用（manager 的
+                # _on_mutate_all_done 会据 save_result.new_doc 更新 session.doc）
+                if save_result.new_doc is not None:
+                    self._doc = save_result.new_doc
             # save_with_rewrite 内部已 rewrite，一次性 emit 进度
             total = len(save_result.rewritten_pages)
             self.progress.emit(total, total)

@@ -199,8 +199,9 @@ class TestCrossReaderSearchability:
             ],
         )
         PdfService.add_text_layer(doc, pdf_doc, 0, result)
-        PdfService.save(doc, pdf_doc)
-        doc.close()
+        new_doc = PdfService.save(doc, pdf_doc)
+        # 全量压缩覆盖：doc 已 close+reopen，关新 doc
+        (new_doc or doc).close()
 
         raw = Path(path).read_bytes()
         assert b"ToUnicode" in raw, "PDF 缺少 ToUnicode CMap，外部阅读器无法搜索"
@@ -216,8 +217,8 @@ class TestCrossReaderSearchability:
             ],
         )
         PdfService.add_text_layer(doc, pdf_doc, 0, result)
-        PdfService.save(doc, pdf_doc)
-        doc.close()
+        new_doc = PdfService.save(doc, pdf_doc)
+        (new_doc or doc).close()
 
         raw = Path(path).read_bytes()
         assert b"FontFile" in raw, "PDF 缺少嵌入字体，字形未随文件保存"
@@ -242,8 +243,8 @@ class TestCrossReaderSearchability:
             ],
         )
         PdfService.add_text_layer(doc, pdf_doc, 0, result)
-        PdfService.save(doc, pdf_doc)
-        doc.close()
+        new_doc = PdfService.save(doc, pdf_doc)
+        (new_doc or doc).close()
 
         increase = path.stat().st_size - base_size
         # 子集字体增量应远小于整字体（整字体 3.5MB+）；放宽到 100KB 容错
@@ -270,8 +271,8 @@ class TestCrossReaderSearchability:
                 ],
             )
             PdfService.add_text_layer(doc, pdf_doc, 0, result)
-            PdfService.save(doc, pdf_doc)
-            doc.close()
+            new_doc = PdfService.save(doc, pdf_doc)
+            (new_doc or doc).close()
 
             verify = fitz.open(str(path))
             assert "签收联" in verify[0].get_text()
@@ -316,8 +317,8 @@ class TestAddRewriteFontCollision:
         )
 
         # 落盘后重开验证（用 fitz 读已保存文件，模拟外部读取路径）
-        PdfService.save(doc, pdf_doc)
-        doc.close()
+        new_doc = PdfService.save(doc, pdf_doc)
+        (new_doc or doc).close()
 
         verify = fitz.open(str(path))
         text = verify[0].get_text()

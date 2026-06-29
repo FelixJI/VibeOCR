@@ -452,6 +452,11 @@ class PdfSessionManager(QObject):
             self.delete_layer_done.emit(session_id, result["residual_pages"])
         elif result is not None:
             # SAVE/SAVE_AS：result 是 SaveResult
+            # 全量压缩覆盖时 doc 已 close+reopen，更新 session.doc 引用，
+            # 否则后续 OCR/渲染/再编辑会操作已关闭的 doc 对象。
+            new_doc = getattr(result, "new_doc", None)
+            if new_doc is not None:
+                session.doc = new_doc
             self.save_done.emit(session_id)
         self.mutate_done.emit(session_id, result)
 
@@ -516,9 +521,27 @@ class PdfSessionManager(QObject):
         if session is None:
             return
         with session.doc_lock:
-            for info in session.pdf_document.pages:
-                if not info.ocr_text_blocks:
-                    continue
+            # 整文档一次聚合子集字体：把所有有 OCR 块的页字符汇成一个子集，
+            # 全文档共享单一字体对象（避免每页一份独立子集放大体积）。
+            # 探测失败为 None → rewrite_text_layer 内部回退 china-s。
+            from vibeocr.utils.cjk_font_resolver import _CJK_RESOLVER
+
+            target_pages = [
+                info
+                for info in session.pdf_document.pages
+                if info.ocr_text_blocks
+            ]
+            shared_font_path: str | None = None
+            if target_pages:
+                all_chars = "".join(
+                    b.text
+                    for info in target_pages
+                    for b in info.ocr_text_blocks
+                    if b.text
+                )
+                shared_font_path = _CJK_RESOLVER.resolve(all_chars)
+
+            for info in target_pages:
                 PdfService.rewrite_text_layer(
                     session.doc,
                     session.pdf_document,
@@ -526,6 +549,7 @@ class PdfSessionManager(QObject):
                     info.ocr_text_blocks,
                     info.ocr_preproc_angle,
                     pdf_settings=self._pdf_settings,
+                    font_path=shared_font_path,
                 )
 
     def _save_active_to_disk_for_test(self) -> None:
@@ -534,7 +558,10 @@ class PdfSessionManager(QObject):
         if session is None:
             return
         with session.doc_lock:
-            PdfService.save(session.doc, session.pdf_document)
+            new_doc = PdfService.save(session.doc, session.pdf_document)
+            # 全量压缩覆盖时 doc 已重开，更新 session.doc 引用
+            if new_doc is not None:
+                session.doc = new_doc
 
     # ---- batch export -----------------------------------------------
 

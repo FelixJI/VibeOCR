@@ -101,16 +101,27 @@ class TestPdfServiceSave:
         assert verify[0].rotation == 90
         verify.close()
 
-    def test_save_in_place_creates_backup(self, opened_doc):
-        doc, pdf_doc = opened_doc
-        PdfService.rotate_pages(doc, pdf_doc, [0], 90)
-        file_path = pdf_doc.file_path
-        PdfService.save(doc, pdf_doc)
+    def test_save_in_place_creates_backup(self, test_pdf):
+        # 不用 opened_doc fixture：默认 compress_on_save=True 时 save 会
+        # close+reopen doc，fixture 持有的旧 doc 引用会失效。
+        doc, pdf_doc = PdfService.open_doc(str(test_pdf))
+        try:
+            PdfService.rotate_pages(doc, pdf_doc, [0], 90)
+            file_path = pdf_doc.file_path
+            new_doc = PdfService.save(doc, pdf_doc)
 
-        assert Path(str(file_path) + ".bak").exists() is False
-        verify = fitz.open(str(file_path))
-        assert verify[0].rotation == 90
-        verify.close()
+            assert Path(str(file_path) + ".bak").exists() is False
+            verify = fitz.open(str(file_path))
+            assert verify[0].rotation == 90
+            verify.close()
+            # 全量压缩覆盖：关新 doc（原 doc 已 close）
+            if new_doc is not None:
+                new_doc.close()
+            else:
+                doc.close()
+        except Exception:
+            doc.close()
+            raise
 
 
 class TestPdfServiceRender:

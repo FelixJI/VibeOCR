@@ -205,4 +205,9 @@ class TestSaveTask:
         verify = fitz.open(str(path))
         assert "Hi" in verify[0].get_text()
         verify.close()
-        doc.close()
+        # 全量压缩覆盖：worker 内部已 close+reopen doc（self._doc 更新），
+        # 测试持有的旧 doc 引用已失效，容错关闭
+        try:
+            doc.close()
+        except (ValueError, RuntimeError):
+            pass

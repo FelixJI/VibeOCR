@@ -23,6 +23,9 @@ logger = logging.getLogger(__name__)
 class SaveResult(NamedTuple):
     rewritten_pages: list[int]
     path: str | None
+    # 全量压缩覆盖原文件时，doc 必须关闭重开（Windows 锁），新 doc 通过此字段
+    # 返回，由调用方更新 session.doc 引用。incremental/另存为时为 None（doc 不变）。
+    new_doc: "fitz.Document | None" = None
 
 
 class PdfService:
@@ -61,11 +64,32 @@ class PdfService:
         doc: fitz.Document,
         pdf_document: PdfDocument,
         path: str | None = None,
-    ) -> None:
+        pdf_settings: object | None = None,
+    ) -> "fitz.Document | None":
+        """落盘 PDF，返回覆盖保存后的新 doc（全量压缩时 doc 已重开）。
+
+        覆盖保存（path is None）按 compress_on_save 分流：True（默认）= 全量
+        压缩（garbage=4 + deflate + clean）。PyMuPDF 不能全量保存覆盖自身已打开
+        源文件，且 Windows 锁定打开的文件，因此全量压缩采用
+        tobytes→close→write→reopen：先取压缩字节、关闭释放文件锁、写回原路径、
+        重新打开并返回新 doc（调用方需更新其 doc 引用，如 session.doc）。
+        False = 增量追加快路径（incremental，doc 不变，返回 None）。
+        另存为（path 指定）统一 deflate + clean（新文件，doc 不变）。
+        """
+        from vibeocr.models.pdf_ocr_options import PdfGlobalSettings
+
+        settings = pdf_settings if pdf_settings is not None else PdfGlobalSettings()
+        compress = getattr(settings, "compress_on_save", True)
+
         if path is None:
             save_path = pdf_document.file_path
             if save_path is None:
-                return
+                return None
+            if compress:
+                new_doc = PdfService._compress_in_place(doc, save_path)
+                pdf_document.is_modified = False
+                return new_doc
+            # 增量快路径：incremental 可原地追加，doc 不变
             backup_path = save_path + ".bak"
             shutil.copy2(save_path, backup_path)
             try:
@@ -75,9 +99,44 @@ class PdfService:
                 shutil.copy2(backup_path, save_path)
                 Path(backup_path).unlink(missing_ok=True)
                 raise
+            pdf_document.is_modified = False
+            return None
         else:
-            doc.save(path, deflate=True)
-        pdf_document.is_modified = False
+            doc.save(path, deflate=True, clean=True)
+            pdf_document.is_modified = False
+            return None
+
+    @staticmethod
+    def _compress_in_place(
+        doc: fitz.Document, save_path: str
+    ) -> "fitz.Document":
+        """全量压缩覆盖原文件（Windows 兼容），返回重开后的新 doc。
+
+        流程：先备份原文件 → tobytes(garbage+deflate+clean) 取压缩字节 →
+        关闭 doc 释放文件锁 → 写回原路径 → 重新打开。失败时用备份回滚
+        （但 doc 已关闭，无法恢复原 doc 对象，调用方需处理）。
+
+        关闭/重开是必须的：Windows 锁定被 fitz 打开的文件，不关 doc 无法覆盖。
+        """
+        backup_path = save_path + ".bak"
+        shutil.copy2(save_path, backup_path)
+        try:
+            data = doc.tobytes(garbage=4, deflate=True, clean=True)
+            doc.close()
+            with open(save_path, "wb") as f:
+                f.write(data)
+            new_doc = fitz.open(save_path)
+            Path(backup_path).unlink(missing_ok=True)
+            return new_doc
+        except Exception:
+            # 失败回滚：doc 可能已关闭，原文件从备份恢复
+            try:
+                doc.close()
+            except Exception:
+                pass
+            shutil.copy2(backup_path, save_path)
+            Path(backup_path).unlink(missing_ok=True)
+            raise
 
     @staticmethod
     def save_with_rewrite(
@@ -88,9 +147,11 @@ class PdfService:
     ) -> SaveResult:
         """对所有有 OCR 块的页重写文字层后落盘（保存/另存为共用）。
 
-        rewrite 阶段用词级 redact（delete_text_layers 循环验证），
-        落盘按 has_structural_change 分流：无结构改动 → incremental（快），
-        有结构改动 → full save（garbage+deflate）。另存为永远 full save。
+        rewrite 阶段用词级 redact（delete_text_layers 循环验证），并对全文档
+        共享单一子集字体（整文档聚合字符一次解析，避免每页一份字体）。
+        落盘覆盖原文件时：有结构改动或 compress_on_save=True → 全量压缩
+        （garbage+deflate+clean，临时文件原子替换）；否则 incremental（快）。
+        另存为永远 deflate+clean。
 
         Args:
             doc: fitz.Document 实例。
@@ -104,10 +165,23 @@ class PdfService:
         from vibeocr.models.pdf_ocr_options import PdfGlobalSettings
 
         settings = pdf_settings if pdf_settings is not None else PdfGlobalSettings()
+        compress = getattr(settings, "compress_on_save", True)
+
+        # 整文档一次聚合子集字体：把所有有 OCR 块的页字符汇成一个子集，
+        # 全文档共享单一字体对象，避免每页一份独立子集放大体积。
+        # （探测失败为 None → rewrite_text_layer 内部回退 china-s。）
+        target_pages = [
+            info for info in pdf_document.pages if info.ocr_text_blocks
+        ]
+        shared_font_path: str | None = None
+        if target_pages:
+            all_chars = "".join(
+                b.text for info in target_pages for b in info.ocr_text_blocks if b.text
+            )
+            shared_font_path = _CJK_RESOLVER.resolve(all_chars)
+
         rewritten: list[int] = []
-        for info in pdf_document.pages:
-            if not info.ocr_text_blocks:
-                continue
+        for info in target_pages:
             PdfService.rewrite_text_layer(
                 doc,
                 pdf_document,
@@ -115,34 +189,38 @@ class PdfService:
                 info.ocr_text_blocks,
                 info.ocr_preproc_angle,
                 pdf_settings=settings,
+                font_path=shared_font_path,
             )
             rewritten.append(info.page_index)
 
+        new_doc: "fitz.Document | None" = None
         if path is None:
             save_path = pdf_document.file_path
             if save_path is None:
                 pdf_document.is_modified = False
                 pdf_document.has_structural_change = False
                 return SaveResult(rewritten, None)
-            backup_path = save_path + ".bak"
-            shutil.copy2(save_path, backup_path)
-            try:
-                if pdf_document.has_structural_change:
-                    # 结构改动不能用 incremental，全量写
-                    doc.save(save_path, garbage=4, deflate=True)
-                else:
+            # 需要全量压缩（结构改动或 compress_on_save）→ _compress_in_place
+            # （Windows 锁要求 close+write+reopen，返回新 doc）。
+            need_full = pdf_document.has_structural_change or compress
+            if need_full:
+                new_doc = PdfService._compress_in_place(doc, save_path)
+            else:
+                backup_path = save_path + ".bak"
+                shutil.copy2(save_path, backup_path)
+                try:
                     doc.save(save_path, incremental=True, encryption=0)
-                Path(backup_path).unlink(missing_ok=True)
-            except Exception:
-                shutil.copy2(backup_path, save_path)
-                Path(backup_path).unlink(missing_ok=True)
-                raise
+                    Path(backup_path).unlink(missing_ok=True)
+                except Exception:
+                    shutil.copy2(backup_path, save_path)
+                    Path(backup_path).unlink(missing_ok=True)
+                    raise
         else:
-            doc.save(path, deflate=True)
+            doc.save(path, deflate=True, clean=True)
 
         pdf_document.is_modified = False
         pdf_document.has_structural_change = False
-        return SaveResult(rewritten, path)
+        return SaveResult(rewritten, path, new_doc)
 
     # ---- render -----------------------------------------------------
 
@@ -437,6 +515,7 @@ class PdfService:
         text_blocks: list,
         preproc_angle: int,
         settings: object,
+        font_path: str | None = None,
     ) -> tuple[int, int]:
         """将文本块逐个写入指定页面（纯写入，不修改 PdfPageInfo 元信息）。
 
@@ -449,6 +528,9 @@ class PdfService:
             text_blocks: TextBlock 列表（归一化 [0,1000] bbox）。
             preproc_angle: OCR 预处理旋转角度（用于坐标逆旋转）。
             settings: PdfGlobalSettings 实例。
+            font_path: 调用方预先解析的共享子集字体路径。None 时按本页字符内部
+                解析子集（逐页 OCR 用）；非 None 时直接复用（保存时整文档共享
+                单一子集字体，避免每页一份字体对象放大体积）。
 
         Returns:
             (written, skipped) 成功写入与被跳过的文本块数量。
@@ -503,10 +585,14 @@ class PdfService:
         # 的 md5 前 4 字节派生名字，保证同页两次写入（add→rewrite）不同字符集
         # 的子集不冲突。子集路径是 tempfile 随机名，fontname 随之每进程不同，
         # 但本进程内同子集（同路径）名字稳定即可。
+        #
+        # font_path 参数非 None 时（保存路径整文档共享子集），直接复用调用方
+        # 传入的子集，跳过本页解析——避免每页一份独立子集放大体积。
         import hashlib
 
-        all_chars = "".join(b.text for b in text_blocks if b.text)
-        font_path = _CJK_RESOLVER.resolve(all_chars)
+        if font_path is None:
+            all_chars = "".join(b.text for b in text_blocks if b.text)
+            font_path = _CJK_RESOLVER.resolve(all_chars)
         if font_path is not None:
             fontname = "F" + hashlib.md5(font_path.encode()).hexdigest()[:4]
         else:
@@ -618,6 +704,7 @@ class PdfService:
         text_blocks: list,
         preproc_angle: int,
         pdf_settings: object | None = None,
+        font_path: str | None = None,
     ) -> tuple[int, int]:
         """删除整页文字层后，按 text_blocks 全量重写。
 
@@ -631,6 +718,8 @@ class PdfService:
             text_blocks: 编辑后的 TextBlock 列表（归一化 [0,1000] bbox）。
             preproc_angle: OCR 预处理旋转角度。
             pdf_settings: PdfGlobalSettings 实例（None 则使用默认值）。
+            font_path: 调用方预先解析的共享子集字体路径（保存时整文档共享单一
+                子集）。None 时按本页字符内部解析子集。
 
         Returns:
             (written, skipped) 成功写入与被跳过的文本块数量。
@@ -645,7 +734,7 @@ class PdfService:
         PdfService.delete_text_layers(doc, pdf_document, page_index)
 
         written, skipped = PdfService._write_blocks_to_page(
-            doc, page_index, text_blocks, preproc_angle, settings
+            doc, page_index, text_blocks, preproc_angle, settings, font_path=font_path
         )
 
         # 重设缓存（delete 清空了）
