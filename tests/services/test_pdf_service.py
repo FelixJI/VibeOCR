@@ -878,3 +878,28 @@ class TestPdfServiceDeleteClearsOcrBlocks:
         assert info.ocr_text_blocks == []
         assert info.ocr_preproc_angle == 0
         doc.close()
+
+
+class TestOpenDocNoRotationRead:
+    def test_placeholder_pages_have_zero_rotation(self, tmp_path):
+        """open_doc 创建的占位页 rotation=0，不读 doc[i].rotation。"""
+        path = tmp_path / "rot.pdf"
+        doc = fitz.open()
+        page = doc.new_page(width=612, height=792)
+        page.insert_text((72, 72), "text", fontsize=12)
+        page.set_rotation(90)  # 真实 rotation=90
+        doc.save(str(path))
+        doc.close()
+
+        opened_doc, pdf_doc = PdfService.open_doc(str(path))
+        # 占位页 rotation 应为 0（不读真实值），由 LoadWorker 后台覆盖
+        assert pdf_doc.pages[0].rotation == 0
+        assert opened_doc[0].rotation == 90  # fitz 侧真实值不变
+        opened_doc.close()
+
+    def test_placeholder_page_count_matches(self, tmp_path):
+        path = tmp_path / "multi.pdf"
+        _create_test_pdf(path, num_pages=5)
+        opened_doc, pdf_doc = PdfService.open_doc(str(path))
+        assert len(pdf_doc.pages) == 5
+        opened_doc.close()

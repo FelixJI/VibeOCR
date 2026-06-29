@@ -29,7 +29,12 @@ class PdfService:
 
     @staticmethod
     def open_doc(file_path: str) -> tuple[fitz.Document, PdfDocument]:
-        """打开 PDF 并返回 (fitz.Document, PdfDocument)。"""
+        """打开 PDF 并返回 (fitz.Document, PdfDocument)。
+
+        主线程只做 fitz.open + 创建轻量占位页（rotation=0，不逐页读 doc[i]）。
+        真实 rotation 及文字层信息由 PdfLoadWorker 在后台逐页填充，
+        避免打开大 PDF 时主线程遍历每页冻结 UI。
+        """
         if not Path(file_path).exists():
             raise FileNotFoundError(f"文件不存在: {file_path}")
 
@@ -39,11 +44,10 @@ class PdfService:
             raise RuntimeError("不支持加密 PDF 文件")
 
         pdf_document = PdfDocument(file_path=file_path)
-        # 创建轻量占位页面，避免在主线程上对每页执行 detect_text_layers /
-        # is_page_scanned 等耗时操作。详细的页面信息由 PdfLoadWorker 在后台逐页填充。
+        # 创建轻量占位页面（rotation=0），避免在主线程上逐页读 doc[i] 解析页对象。
+        # 详细的页面信息（rotation / 文字层 / is_scanned）由 PdfLoadWorker 在后台逐页填充。
         pdf_document.pages = [
-            PdfPageInfo(page_index=i, rotation=doc[i].rotation)
-            for i in range(doc.page_count)
+            PdfPageInfo(page_index=i) for i in range(doc.page_count)
         ]
         return doc, pdf_document
 
