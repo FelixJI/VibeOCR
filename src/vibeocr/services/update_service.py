@@ -24,15 +24,12 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Gitee/GitHub 仓库信息
-_GITEE_OWNER = "felixjii"
-_GITEE_REPO = "vibeocr"
+# GitHub 仓库信息（CNB 的 OpenAPI 需 token 鉴权，客户端无法匿名访问，
+# 故更新检查与下载统一走 GitHub；CNB 仅作 CI 镜像与产物托管目标）。
 _GITHUB_OWNER = "FelixJI"
-_GITHUB_REPO = "vibeocr"
+_GITHUB_REPO = "VibeOCR"
+_CNB_RELEASES_URL = "https://cnb.cool/feljii/VibeOCR/-/releases"
 
-_GITEE_API_URL = (
-    f"https://gitee.com/api/v5/repos/{_GITEE_OWNER}/{_GITEE_REPO}/releases/latest"
-)
 _GITHUB_API_URL = (
     f"https://api.github.com/repos/{_GITHUB_OWNER}/{_GITHUB_REPO}/releases/latest"
 )

@@ -48,32 +48,7 @@ class TestVersionComparison:
 class TestUpdateInfo:
     """UpdateInfo 数据模型测试"""
 
-    def test_from_gitee_release(self):
-        from vibeocr.services.update_service import UpdateInfo
-
-        release = {
-            "tag_name": "v0.2.0",
-            "body": "- feat: 新功能\n- fix: 修复bug",
-            "assets": [
-                {
-                    "name": "VibeOCR-v0.2.0-win64.zip",
-                    "browser_download_url": "https://gitee.com/test/v0.2.0.zip",
-                    "size": 150000000,
-                },
-                {
-                    "name": "VibeOCR-v0.2.0-win64.zip.sha256",
-                    "browser_download_url": "https://gitee.com/test/v0.2.0.zip.sha256",
-                },
-            ],
-        }
-        info = UpdateInfo.from_gitee_release(release)
-        assert info.version == "0.2.0"
-        assert info.download_url == "https://gitee.com/test/v0.2.0.zip"
-        assert info.sha256_url == "https://gitee.com/test/v0.2.0.zip.sha256"
-        assert "新功能" in info.changelog
-        assert info.file_size == 150000000
-
-    def test_from_github_release(self):
+    def test_from_release(self):
         from vibeocr.services.update_service import UpdateInfo
 
         release = {
@@ -91,9 +66,10 @@ class TestUpdateInfo:
                 },
             ],
         }
-        info = UpdateInfo.from_github_release(release)
+        info = UpdateInfo.from_release(release)
         assert info.version == "0.3.0"
         assert info.download_url == "https://github.com/test/v0.3.0.zip"
+        assert info.sha256_url == "https://github.com/test/v0.3.0.zip.sha256"
 
     def test_no_matching_assets(self):
         from vibeocr.services.update_service import UpdateInfo
@@ -103,7 +79,7 @@ class TestUpdateInfo:
             "body": "",
             "assets": [],
         }
-        info = UpdateInfo.from_gitee_release(release)
+        info = UpdateInfo.from_release(release)
         assert info.download_url == ""
         assert info.sha256_url == ""
 
@@ -132,9 +108,9 @@ class TestLocalVersion:
 
 
 class TestCheckForUpdates:
-    """远程版本检查测试"""
+    """远程版本检查测试（GitHub only）"""
 
-    def test_check_gitee_has_update(self):
+    def test_check_has_update(self):
         from vibeocr.services.update_service import check_for_updates
 
         mock_release = {
@@ -153,12 +129,13 @@ class TestCheckForUpdates:
             ],
         }
         with patch(
-            "vibeocr.services.update_service._fetch_gitee_release",
+            "vibeocr.services.update_service._fetch_github_release",
             return_value=mock_release,
         ):
-            result = _run(check_for_updates("0.1.0", prefer_gitee=True))
-        assert result is not None
-        assert result.version == "99.0.0"
+            update_info, fetch_ok = _run(check_for_updates("0.1.0"))
+        assert update_info is not None
+        assert update_info.version == "99.0.0"
+        assert fetch_ok is True
 
     def test_check_no_update(self):
         from vibeocr.services.update_service import check_for_updates
@@ -179,59 +156,24 @@ class TestCheckForUpdates:
             ],
         }
         with patch(
-            "vibeocr.services.update_service._fetch_gitee_release",
+            "vibeocr.services.update_service._fetch_github_release",
             return_value=mock_release,
         ):
-            result = _run(check_for_updates("0.1.0", prefer_gitee=True))
-        assert result is None
+            update_info, fetch_ok = _run(check_for_updates("0.1.0"))
+        assert update_info is None
+        assert fetch_ok is True
 
-    def test_check_gitee_fallback_github(self):
+    def test_check_github_unreachable(self):
+        """GitHub 请求失败 → 返回 (None, False)，上层据此提示手动下载"""
         from vibeocr.services.update_service import check_for_updates
 
-        mock_release = {
-            "tag_name": "v0.2.0",
-            "body": "update",
-            "assets": [
-                {
-                    "name": "VibeOCR-v0.2.0-win64.zip",
-                    "browser_download_url": "http://test.zip",
-                    "size": 0,
-                },
-                {
-                    "name": "VibeOCR-v0.2.0-win64.zip.sha256",
-                    "browser_download_url": "http://test.sha256",
-                },
-            ],
-        }
-        with (
-            patch(
-                "vibeocr.services.update_service._fetch_gitee_release",
-                return_value=None,
-            ),
-            patch(
-                "vibeocr.services.update_service._fetch_github_release",
-                return_value=mock_release,
-            ),
+        with patch(
+            "vibeocr.services.update_service._fetch_github_release",
+            return_value=None,
         ):
-            result = _run(check_for_updates("0.1.0", prefer_gitee=True))
-        assert result is not None
-        assert result.version == "0.2.0"
-
-    def test_check_all_fail(self):
-        from vibeocr.services.update_service import check_for_updates
-
-        with (
-            patch(
-                "vibeocr.services.update_service._fetch_gitee_release",
-                return_value=None,
-            ),
-            patch(
-                "vibeocr.services.update_service._fetch_github_release",
-                return_value=None,
-            ),
-        ):
-            result = _run(check_for_updates("0.1.0", prefer_gitee=True))
-        assert result is None
+            update_info, fetch_ok = _run(check_for_updates("0.1.0"))
+        assert update_info is None
+        assert fetch_ok is False
 
 
 class TestVerifySha256:
