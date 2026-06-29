@@ -224,6 +224,10 @@ CLEANUP_QT_BINARIES = [
 PACKAGE_DATA = [
     ("config", "config"),
     ("resources", "resources"),
+    # CHANGELOG.md：关于页"更新日志"卡片读取，缺失时客户端只显示"暂无更新日志"。
+    # 打入 . 让其落在 _MEIPASS/CHANGELOG.md（= _internal/CHANGELOG.md），
+    # 由 env_manager.get_bundled_changelog_path() 解析。
+    ("CHANGELOG.md", "."),
     # vibeocr 源码需以原始 .py 形式随主 exe 分发：打包态下 OCR Worker 子进程
     # 用便携式 Python（python/python.exe）跑 `python -m vibeocr.workers.ocr_worker`，
     # 而便携式 Python 是独立解释器，无法读取主 exe 内部的 PYZ 归档（collect_submodules
@@ -1022,7 +1026,7 @@ def _run_build(version: str, force: bool = False) -> bool:
 
 
 def _create_release(version: str) -> bool:
-    """创建 Gitee/GitHub Release 并上传产物"""
+    """创建 GitHub Release 并上传产物"""
 
     zip_name = f"VibeOCR-v{version}-win64"
     zip_path = DIST_BASE_DIR / f"{zip_name}.zip"
@@ -1045,19 +1049,6 @@ def _create_release(version: str) -> bool:
     print(f"\n发布 v{version} 到:")
     print(f"  zip: {zip_path} ({zip_path.stat().st_size / (1024 * 1024):.1f} MB)")
 
-    gitee_token = os.environ.get("GITEE_TOKEN", "")
-    if gitee_token:
-        print("\n上传到 Gitee...")
-        try:
-            _upload_to_gitee(
-                version, zip_path, sha256_path, changelog_body, gitee_token
-            )
-            print("  Gitee 上传成功")
-        except Exception as e:
-            print(f"  Gitee 上传失败: {e}")
-    else:
-        print("\n跳过 Gitee（未设置 GITEE_TOKEN 环境变量）")
-
     github_token = os.environ.get("GITHUB_TOKEN", "")
     if github_token:
         print("\n上传到 GitHub...")
@@ -1072,44 +1063,6 @@ def _create_release(version: str) -> bool:
         print("\n跳过 GitHub（未设置 GITHUB_TOKEN 环境变量）")
 
     return True
-
-
-def _upload_to_gitee(
-    version: str, zip_path: Path, sha256_path: Path, body: str, token: str
-) -> None:
-    import httpx
-
-    owner = "felixji"
-    repo = "vibeocr"
-    api: str = f"https://gitee.com/api/v5/repos/{owner}/{repo}/releases"
-
-    resp = httpx.post(
-        api,
-        json={
-            "access_token": token,
-            "tag_name": f"v{version}",
-            "name": f"v{version}",
-            "body": body or f"VibeOCR v{version}",
-            "target_commitish": "main",
-        },
-    )
-    if resp.status_code not in (200, 201):
-        raise RuntimeError(f"Gitee Release 创建失败: {resp.status_code} {resp.text}")
-
-    release_id = resp.json()["id"]
-    upload_url = f"https://gitee.com/api/v5/repos/{owner}/{repo}/releases/{release_id}/attach_files"
-
-    for file_path in [zip_path, sha256_path]:
-        if not file_path.exists():
-            continue
-        with open(file_path, "rb") as f:
-            resp = httpx.post(
-                upload_url,
-                params={"access_token": token},
-                files={"file": (file_path.name, f)},
-            )
-        if resp.status_code not in (200, 201):
-            raise RuntimeError(f"Gitee asset 上传失败: {resp.status_code} {resp.text}")
 
 
 def _upload_to_github(
@@ -1448,7 +1401,7 @@ def main() -> int:
     parser.add_argument(
         "--release",
         action="store_true",
-        help="构建并发布到 Gitee/GitHub（需要 GITEE_TOKEN / GITHUB_TOKEN）",
+        help="构建并发布到 GitHub（需要 GITHUB_TOKEN）",
     )
     parser.add_argument(
         "--to-main",
