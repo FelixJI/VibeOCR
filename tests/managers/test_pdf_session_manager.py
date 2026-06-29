@@ -555,3 +555,34 @@ class TestPdfSessionManagerRewritePages:
         manager.open_session(str(test_pdf_a))
         # 没有 OCR 过，ocr_text_blocks 为空，rewrite 应安全跳过
         manager.rewrite_modified_pages()  # 不应报错
+
+
+class TestStartOcrStreaming:
+    def test_uses_render_worker_and_queue(self, manager, test_pdf_a, monkeypatch):
+        """start_ocr 应启动 PdfRenderWorker + PdfOcrWorker(queue 模式)。"""
+        from queue import Queue
+        from unittest.mock import MagicMock
+
+        from vibeocr.services.pdf_service import PdfService
+
+        session = manager.open_session(str(test_pdf_a))
+        with session.doc_lock:
+            PdfService.build_page_infos(session.doc, session.pdf_document)
+
+        render_created = []
+        ocr_created = []
+        monkeypatch.setattr(
+            "vibeocr.managers.pdf_session_manager.PdfRenderWorker",
+            lambda *a, **k: render_created.append(k) or MagicMock(),
+        )
+        monkeypatch.setattr(
+            "vibeocr.managers.pdf_session_manager.PdfOcrWorker",
+            lambda *a, **k: ocr_created.append(k) or MagicMock(),
+        )
+        manager._ocr_service = MagicMock()
+
+        manager.start_ocr([0])
+        assert len(render_created) == 1
+        assert len(ocr_created) == 1
+        # ocr worker 应以 render_queue 参数构造（流式模式）
+        assert "render_queue" in ocr_created[0]
