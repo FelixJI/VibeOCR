@@ -16,6 +16,7 @@ from PySide6.QtCore import QCoreApplication, QObject, QThread, Signal
 from vibeocr.models.pdf_session import PdfSession
 from vibeocr.services.pdf_service import PdfService
 from vibeocr.workers.pdf_load_worker import PdfLoadWorker
+from vibeocr.workers.pdf_mutate_worker import MutateTask, PdfMutateWorker, TaskKind
 from vibeocr.workers.pdf_ocr_worker import PdfOcrWorker
 from vibeocr.workers.pdf_render_worker import PdfRenderWorker
 
@@ -55,6 +56,11 @@ class PdfSessionManager(QObject):
     # MinerU 模型下载状态提示（首次使用 PDF 文档解析时）
     mineru_models_status = Signal(str)
     render_progress = Signal(str, int, int)  # (file_path, current, total)
+    mutate_progress = Signal(str, int, int)
+    mutate_done = Signal(str, object)
+    mutate_failed = Signal(str, str)
+    save_done = Signal(str)
+    delete_layer_done = Signal(str, list)  # (file_path, residual_pages)
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -63,6 +69,7 @@ class PdfSessionManager(QObject):
         self._load_worker: PdfLoadWorker | None = None
         self._ocr_worker: PdfOcrWorker | None = None
         self._render_worker: PdfRenderWorker | None = None
+        self._mutate_worker: PdfMutateWorker | None = None
         self._ocr_service: OCRServiceBase | None = None
         self._pdf_settings: PdfGlobalSettings | None = None
         self._overwrite_text_layer: bool = False
@@ -125,6 +132,7 @@ class PdfSessionManager(QObject):
 
         self._cancel_load_worker()
         self._cancel_ocr_pipeline()
+        self._cancel_mutate_worker()
         self._active_path = file_path
         self.active_changed.emit(file_path)
 
@@ -244,6 +252,7 @@ class PdfSessionManager(QObject):
             render_queue=render_queue,
         )
         self._render_worker.render_progress.connect(self._on_render_progress)
+        self._render_worker.all_done.connect(self._on_render_worker_done)
 
         self._ocr_worker = PdfOcrWorker(
             session_id=session.file_path,
@@ -260,6 +269,10 @@ class PdfSessionManager(QObject):
 
     def _on_render_progress(self, session_id: str, current: int, total: int) -> None:
         self.render_progress.emit(session_id, current, total)
+
+    def _on_render_worker_done(self, session_id: str) -> None:
+        """render worker 正常完成 → 释放引用（避免 QThread 对象残留）。"""
+        self._render_worker = None
 
     def _is_mineru_first_use(self, ocr_options: OCROptions | None) -> bool:
         """判断是否为 MinerU 文档解析管道且模型尚未下载成功"""
@@ -353,6 +366,95 @@ class PdfSessionManager(QObject):
             stats = session.ocr_stats
             self.ocr_stats_ready.emit(session_id, stats["written"], stats["skipped"])
         self._ocr_worker = None
+
+    # ---- async mutate (save / delete layer / rotate / etc.) ------------
+
+    def save_async(self, path: str | None = None, pdf_settings=None) -> None:
+        """异步保存（rewrite + 落盘在后台）。path=None 覆盖原文件。"""
+        session = self.active_session
+        if session is None:
+            return
+        self._cancel_mutate_worker()
+        kind = TaskKind.SAVE_AS if path is not None else TaskKind.SAVE
+        task = MutateTask(kind=kind, path=path, pdf_settings=pdf_settings)
+        self._start_mutate(session, task)
+
+    def delete_text_layers_async(self, page_indices: list[int]) -> None:
+        """异步删除文字层（逐页词级 redact 在后台）。"""
+        session = self.active_session
+        if session is None:
+            return
+        self._cancel_mutate_worker()
+        task = MutateTask(kind=TaskKind.DELETE_TEXT_LAYER, page_indices=page_indices)
+        self._start_mutate(session, task)
+
+    def rotate_pages_async(self, page_indices: list[int], angle: int) -> None:
+        session = self.active_session
+        if session is None:
+            return
+        self._cancel_mutate_worker()
+        task = MutateTask(kind=TaskKind.ROTATE, page_indices=page_indices, angle=angle)
+        self._start_mutate(session, task)
+
+    def delete_pages_async(self, page_indices: list[int]) -> None:
+        session = self.active_session
+        if session is None:
+            return
+        self._cancel_mutate_worker()
+        task = MutateTask(kind=TaskKind.DELETE_PAGES, page_indices=page_indices)
+        self._start_mutate(session, task)
+
+    def _start_mutate(self, session, task: MutateTask) -> None:
+        self._mutate_worker = PdfMutateWorker(
+            session_id=session.file_path,
+            doc=session.doc,
+            pdf_document=session.pdf_document,
+            doc_lock=session.doc_lock,
+            task=task,
+        )
+        self._mutate_worker.page_done.connect(self._on_mutate_page_done)
+        self._mutate_worker.progress.connect(self._on_mutate_progress)
+        self._mutate_worker.all_done.connect(self._on_mutate_all_done)
+        self._mutate_worker.failed.connect(self._on_mutate_failed)
+        self._mutate_worker.start()
+
+    def _cancel_mutate_worker(self) -> None:
+        if self._mutate_worker is not None:
+            self._mutate_worker.cancel()
+            _wait_thread(self._mutate_worker, timeout=5000)
+            self._mutate_worker = None
+
+    def _on_mutate_progress(self, current: int, total: int) -> None:
+        session = self.active_session
+        if session:
+            self.mutate_progress.emit(session.file_path, current, total)
+
+    def _on_mutate_page_done(self, page_index: int, payload) -> None:
+        """逐页完成 → 转发为 mutate_done（payload 含 page_index）供 UI 更新 grid。"""
+        session = self.active_session
+        if session:
+            self.mutate_done.emit(
+                session.file_path, {"page": page_index, "payload": payload}
+            )
+
+    def _on_mutate_all_done(self, session_id: str, result) -> None:
+        if self._mutate_worker is not None:
+            self._mutate_worker = None
+        session = self._sessions.get(session_id)
+        if session is None:
+            return
+        # 按任务结果类型转发专用信号
+        if isinstance(result, dict) and "residual_pages" in result:
+            self.delete_layer_done.emit(session_id, result["residual_pages"])
+        elif result is not None:
+            # SAVE/SAVE_AS：result 是 SaveResult
+            self.save_done.emit(session_id)
+        self.mutate_done.emit(session_id, result)
+
+    def _on_mutate_failed(self, session_id: str, error: str) -> None:
+        if self._mutate_worker is not None:
+            self._mutate_worker = None
+        self.mutate_failed.emit(session_id, error)
 
     # ---- block text editing (双击改字 → 内存模型更新) ----------------
 
@@ -461,6 +563,7 @@ class PdfSessionManager(QObject):
     def shutdown(self) -> None:
         self._cancel_load_worker()
         self._cancel_ocr_pipeline()
+        self._cancel_mutate_worker()
         for session in self._sessions.values():
             # fitz doc.close() 在文档已关闭/损坏时抛各类异常，关闭路径静默忽略
             try:

@@ -586,3 +586,66 @@ class TestStartOcrStreaming:
         assert len(ocr_created) == 1
         # ocr worker 应以 render_queue 参数构造（流式模式）
         assert "render_queue" in ocr_created[0]
+
+
+class TestSaveAsync:
+    def test_save_async_starts_mutate_worker(self, manager, test_pdf_a, monkeypatch):
+        from unittest.mock import MagicMock
+        from vibeocr.workers.pdf_mutate_worker import MutateTask, TaskKind
+
+        session = manager.open_session(str(test_pdf_a))
+        pdf_doc = session.pdf_document
+        pdf_doc.is_modified = True
+
+        created_tasks = []
+        fake_worker = MagicMock()
+        fake_worker.session_id = session.file_path
+        monkeypatch.setattr(
+            "vibeocr.managers.pdf_session_manager.PdfMutateWorker",
+            lambda *a, **k: created_tasks.append(k.get("task")) or fake_worker,
+        )
+
+        manager.save_async()
+        assert len(created_tasks) == 1
+        assert created_tasks[0].kind == TaskKind.SAVE
+
+
+class TestDeleteTextLayerAsync:
+    def test_starts_mutate_worker(self, manager, test_pdf_a, monkeypatch):
+        from unittest.mock import MagicMock
+        from vibeocr.workers.pdf_mutate_worker import MutateTask, TaskKind
+
+        session = manager.open_session(str(test_pdf_a))
+        fake_worker = MagicMock()
+        fake_worker.session_id = session.file_path
+        monkeypatch.setattr(
+            "vibeocr.managers.pdf_session_manager.PdfMutateWorker",
+            lambda *a, **k: fake_worker,
+        )
+        manager.delete_text_layers_async([0])
+        # worker 已构造（mock），验证调用未报错即可
+
+
+class TestMutateSignalForwarding:
+    def test_delete_layer_done_forwarded_with_residual(self, manager, test_pdf_a, monkeypatch):
+        """_on_mutate_all_done 对 DELETE_TEXT_LAYER 的 residual_pages dict 转发 delete_layer_done。"""
+        from unittest.mock import MagicMock
+        from vibeocr.workers.pdf_mutate_worker import MutateTask, TaskKind
+
+        session = manager.open_session(str(test_pdf_a))
+        fake_worker = MagicMock()
+        fake_worker.session_id = session.file_path
+        monkeypatch.setattr(
+            "vibeocr.managers.pdf_session_manager.PdfMutateWorker",
+            lambda *a, **k: fake_worker,
+        )
+        manager.delete_text_layers_async([0])
+        manager._mutate_worker = fake_worker
+
+        received: list = []
+        manager.delete_layer_done.connect(
+            lambda sid, residual: received.append((sid, residual))
+        )
+        # 模拟 worker 完成（DELETE_TEXT_LAYER 的 all_done 载荷）
+        manager._on_mutate_all_done(session.file_path, {"residual_pages": [2, 5]})
+        assert received == [(session.file_path, [2, 5])]
