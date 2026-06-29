@@ -21,6 +21,10 @@ logger = logging.getLogger(__name__)
 
 
 class PdfService:
+    # 词级 redact 的最大循环轮数。绝大多数页 1 轮清零；仅嵌套/合并异常的
+    # 文本结构需多轮。内部常量，不暴露为用户配置。
+    _DELETE_LAYER_MAX_ROUNDS = 5
+
     # ---- open / save ------------------------------------------------
 
     @staticmethod
@@ -562,7 +566,7 @@ class PdfService:
         settings = pdf_settings if pdf_settings is not None else PdfGlobalSettings()
 
         # 先删除旧文字层（redact 全页文字，保留图片）
-        # 注意：delete_text_layers 会 update_page_info 并清空 ocr_text_blocks，
+        # 注意：delete_text_layers 会 _clear_page_layer_info 并清空 ocr_text_blocks，
         # 所以必须在删除后重新设置 ocr_text_blocks。
         PdfService.delete_text_layers(doc, pdf_document, page_index)
 
@@ -584,26 +588,58 @@ class PdfService:
         doc: fitz.Document,
         pdf_document: PdfDocument,
         page_index: int,
-    ) -> None:
+    ) -> tuple[int, int, bool]:
+        """删除整页文字层（词级 redact + 循环验证至清零）。
+
+        用 get_text("words") 取词级 bbox 建 redact（比 block 级精确，避免
+        嵌套/合并文本块遗漏）。每轮 redact 后重新检测残留，仅当仍有文字才
+        继续下一轮，最多 _DELETE_LAYER_MAX_ROUNDS 轮（防死循环）。
+
+        Returns:
+            (initial_word_count, rounds_used, has_residual)
+            initial_word_count: 初始词数（删除前）；rounds_used: 实际执行轮数；
+            has_residual: 多轮后是否仍有残留（True 需 UI 提示用户）。
+        """
         page = doc[page_index]
-        page_dict: dict[str, Any] = page.get_text("dict")  # type: ignore[assignment]
-        blocks: list[dict[str, Any]] = page_dict["blocks"]
+        words = page.get_text("words")
+        if not words:
+            # 无文字 → 不做 redact，直接清状态
+            PdfService._clear_page_layer_info(pdf_document, page_index)
+            return 0, 0, False
 
-        has_text = any(block["type"] == 0 for block in blocks)
-        if not has_text:
-            return
+        initial_word_count = len(words)
+        rounds_used = 0
+        for round_idx in range(PdfService._DELETE_LAYER_MAX_ROUNDS):
+            current_words = page.get_text("words")
+            if not current_words:
+                break
+            for w in current_words:
+                page.add_redact_annot(fitz.Rect(w[:4]), fill=None)
+            page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_NONE)  # type: ignore[attr-defined]
+            rounds_used = round_idx + 1
 
-        for block in blocks:
-            if block["type"] != 0:
-                continue
-            rect = fitz.Rect(block["bbox"])
-            page.add_redact_annot(rect, fill=None)
+        has_residual = bool(page.get_text().strip())
+        if has_residual:
+            logger.warning(
+                "page %d 经 %d 轮 redact 仍有残留: %r",
+                page_index,
+                rounds_used,
+                page.get_text()[:50],
+            )
 
-        page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_NONE)  # type: ignore[attr-defined]
         pdf_document.is_modified = True
-        PdfService.update_page_info(doc, pdf_document, page_index)
-        # 清空 OCR 原始块缓存（文字层已删，缓存的块不再对应任何 PDF 内容）
+        PdfService._clear_page_layer_info(pdf_document, page_index)
+        return initial_word_count, rounds_used, has_residual
+
+    @staticmethod
+    def _clear_page_layer_info(pdf_document: PdfDocument, page_index: int) -> None:
+        """删除文字层后清空页状态（替代旧的 update_page_info 冗余重检）。"""
+        if page_index >= len(pdf_document.pages):
+            return
         info = pdf_document.pages[page_index]
+        info.has_text_layer = False
+        info.text_layers = []
+        info.is_scanned = False
         info.ocr_text_blocks = []
         info.ocr_preproc_angle = 0
 
