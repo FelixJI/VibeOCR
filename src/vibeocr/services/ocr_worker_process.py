@@ -13,6 +13,7 @@ import threading
 import time
 import uuid
 from collections.abc import Callable
+from pathlib import Path
 
 from vibeocr.core.constants import DEFAULT_SHM_SIZE
 from vibeocr.pipeline_status import is_pipeline_ever_succeeded
@@ -200,6 +201,20 @@ class OCRWorkerProcess:
                 existing = env.get("PYTHONPATH", "")
                 env["PYTHONPATH"] = (
                     f"{meipass};{existing}" if existing else str(meipass)
+                )
+        else:
+            # 开发态：vibeocr 通过 conftest 的 sys.path.insert(0, src/) 在主进程
+            # 可见，但子进程是独立的 sys.executable，不继承该 sys.path 修改，
+            # 会报 ModuleNotFoundError: No module named 'vibeocr'。
+            # 显式把 src/（vibeocr 包父目录）加入子进程 PYTHONPATH。
+            import vibeocr
+
+            src_dir = str(Path(vibeocr.__file__).resolve().parent.parent)
+            sep = os.pathsep
+            existing = env.get("PYTHONPATH", "")
+            if src_dir not in existing.split(sep):
+                env["PYTHONPATH"] = (
+                    f"{src_dir}{sep}{existing}" if existing else src_dir
                 )
 
         return env
