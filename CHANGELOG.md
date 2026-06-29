@@ -1,5 +1,19 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+- fix(ocr): NVML/pynvml 不可用时 PDF 批量识别退化为逐张（4090 占用仅 20-40%）
+  - `_read_free_vram_mb` NVML 失败时增加 `paddle.device.cuda` 二级兜底读取显存
+  - `estimate_gpu_batch_size` 显存探测失败（free_mb=0）但 GPU 模式下返回
+    `GPU_FALLBACK_BATCH_SIZE=4` 而非 1，避免大显存卡被迫逐张识别
+- fix(ocr): PaddleOCR 3.x 构造时未传 `text_recognition_batch_size`，GPU 模式
+  默认注入 8 以喂满显卡
+
+### Changed
+- feat(ocr): `OCROptions.use_doc_unwarping` 默认改为 `False`（PDF 文字层场景
+  多无扭曲矫正需求，开启每页多跑一个矫正网络）
+
 ## [0.3.0] - 2026-06-28
 
 ### Added

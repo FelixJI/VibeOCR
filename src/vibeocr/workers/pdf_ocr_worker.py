@@ -173,13 +173,56 @@ class PdfOcrWorker(QThread):
 def _read_free_vram_mb() -> int:
     """读取 GPU 可用显存（MB）。
 
-    失败时返回 0（estimate_gpu_batch_size 会兜底返回 batch=1）。
+    优先用 NVML（pynvml）；失败时用 ``paddle.device.cuda`` 兜底（这条路径
+    更可靠，已被 ``OCRService._log_gpu_summary`` 验证可用）。两条都失败
+    才返回 0（此时 :func:`estimate_gpu_batch_size` 会用
+    :data:`GPU_FALLBACK_BATCH_SIZE` 兜底，不再钉死成 batch=1）。
+
     作为模块级函数以便测试 mock。
     """
+    # 1. 优先 NVML
     try:
         from vibeocr.utils.gpu_memory_monitor import GPUMemoryMonitor
 
         info = GPUMemoryMonitor().get_status()
-        return info.free if info.available else 0
+        if info.available:
+            return info.free
+    except Exception:
+        pass
+    # 2. NVML 失败 → paddle.device.cuda 兜底
+    return _read_free_vram_mb_via_paddle()
+
+
+def _read_free_vram_mb_via_paddle() -> int:
+    """用 paddle.device.cuda 读取可用显存（MB）。
+
+    NVML 不可用时的二级兜底。返回 total - reserved - allocated 的估算值，
+    失败返回 0。
+    """
+    try:
+        import paddle.device as paddle_device  # type: ignore[import-untyped]
+
+        if paddle_device.cuda.device_count() <= 0:
+            return 0
+        total_b = paddle_device.cuda.get_device_properties(0).total_memory
+        # Paddle 的显存统计接口（与 PyTorch 对齐）；任一缺失则只减去 allocated
+        allocated_b = 0
+        reserved_b = 0
+        for getter in (
+            paddle_device.cuda.memory_allocated,
+            getattr(paddle_device.cuda, "memory_reserved", None),
+        ):
+            if getter is None:
+                continue
+            try:
+                val = getter(0)
+                if "reserved" in getattr(getter, "__name__", ""):
+                    reserved_b = val
+                else:
+                    allocated_b = val
+            except Exception:
+                pass
+        free_b = max(0, total_b - reserved_b - allocated_b)
+        return free_b // (1024 * 1024)
     except Exception:
         return 0

@@ -4,7 +4,10 @@
 会跳过整个文件）。本文件只测纯函数，不需要 GPU/pynvml。
 """
 
-from vibeocr.utils.gpu_memory_monitor import estimate_gpu_batch_size
+from vibeocr.utils.gpu_memory_monitor import (
+    GPU_FALLBACK_BATCH_SIZE,
+    estimate_gpu_batch_size,
+)
 
 
 def test_estimate_gpu_batch_size_large_vram_caps_at_10():
@@ -31,7 +34,14 @@ def test_estimate_gpu_batch_size_tiny_image():
     assert batch == 10
 
 
-def test_estimate_gpu_batch_size_zero_inputs_returns_1():
-    """零或负输入兜底返回 1。"""
-    assert estimate_gpu_batch_size(free_mb=0, avg_pixels=8_700_000) == 1
+def test_estimate_gpu_batch_size_zero_free_returns_fallback():
+    """显存探测失败（free_mb=0）但 GPU 模式 → 兜底返回 GPU_FALLBACK_BATCH_SIZE。"""
+    assert (
+        estimate_gpu_batch_size(free_mb=0, avg_pixels=8_700_000)
+        == GPU_FALLBACK_BATCH_SIZE
+    )
+
+
+def test_estimate_gpu_batch_size_zero_pixels_returns_1():
+    """非法像素输入（avg_pixels=0）→ 返回 1。"""
     assert estimate_gpu_batch_size(free_mb=6144, avg_pixels=0) == 1

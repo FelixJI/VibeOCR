@@ -31,7 +31,7 @@ class OCROptions(BasePipelineOptions):
 
     pipeline: str = "OCR"
     use_doc_orientation_classify: bool = True
-    use_doc_unwarping: bool = True
+    use_doc_unwarping: bool = False
     use_textline_orientation: bool = False
 
 
@@ -39,9 +39,16 @@ def _create_ocr_pipeline(device: str, **kwargs: Any) -> Any:
     """创建通用 OCR 管道实例
 
     额外 kwargs 透传给 PaddleOCR（例如 enable_mkldnn）。
+
+    GPU 模式下显式注入 ``text_recognition_batch_size``（对应 PaddleOCR 2.x
+    的 ``rec_batch_num``）。PaddleOCR 3.x 默认识别批量偏保守，导致 4090 等
+    大显存卡 GPU 占用仅 20-40%；这里在 GPU 模式给一个较大的批量以喂满 GPU。
+    调用方显式传入该参数时不覆盖。
     """
     from paddleocr import PaddleOCR
 
+    if device == "gpu" and "text_recognition_batch_size" not in kwargs:
+        kwargs["text_recognition_batch_size"] = 8
     return PaddleOCR(device=device, **kwargs)
 
 
