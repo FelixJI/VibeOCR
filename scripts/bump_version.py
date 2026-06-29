@@ -834,7 +834,9 @@ def _cleanup_dist(dist_dir: Path) -> None:
 
     删除范围见 CLEANUP_QT_BINARIES（仅删确认无用的 QML/3D/图表/传感器等），
     WebEngine 必需的 Qt6WebEngineCore/Qt6Core/Qt6Gui/Qt6Widgets 等全部保留。
-    同时精简 PySide6/translations（仅保留 qtbase 中文翻译）。
+    同时精简 PySide6/translations（仅保留 qtbase 中文翻译）、
+    qtwebengine_locales（仅保留 zh-CN/en-US）以及 WebEngine 的 debug/devtools
+    资源（release 运行时不加载，详见 Qt qtwebengine-deploying 文档）。
 
     Args:
         dist_dir: VibeOCR 应用目录（含 _internal）
@@ -857,6 +859,39 @@ def _cleanup_dist(dist_dir: Path) -> None:
             if qm.name != "qtbase_zh_CN.qm":
                 freed_bytes += qm.stat().st_size
                 qm.unlink()
+                deleted += 1
+
+        # 精简 WebEngine 语言包：qtwebengine_locales 下 Chromium 的 53 种语言
+        # .pak（~43MB）。Chromium 在缺某语言时会回退到 en-US.pak，故只保留
+        # zh-CN（界面主语言）+ en-US（兜底）即可，其余删除。
+        # 见 Qt 文档 qtwebengine-deploying：locale .pak 用于 Chromium 自身的
+        # UI 文案（右键菜单、错误页等），缺失时静默回退，不影响页面渲染。
+        webengine_locales_dir = trans_dir / "qtwebengine_locales"
+        if webengine_locales_dir.is_dir():
+            for pak in webengine_locales_dir.glob("*.pak"):
+                if pak.name not in ("zh-CN.pak", "en-US.pak"):
+                    freed_bytes += pak.stat().st_size
+                    pak.unlink()
+                    deleted += 1
+
+    # 清理 WebEngine 的 debug/devtools 资源（~88MB）：
+    # - qtwebengine_devtools_resources*.pak：Chromium DevTools 远程调试资源，
+    #   仅 F12 远程调试需要，release 用户用不到（Qt 官方文档明确可删）。
+    # - *.debug.pak / *.debug.bin：Debug 构建专用资源（含未压缩的 source map
+    #   与调试符号），release 运行时完全不加载。
+    # 保留：icudtl.dat、qtwebengine_resources.pak（Chromium 核心，删了会崩溃）、
+    # v8_context_snapshot.bin（非 debug 版）。
+    resources_dir = pyside6_dir / "resources"
+    if resources_dir.is_dir():
+        for res_file in resources_dir.iterdir():
+            name = res_file.name
+            if (
+                name.endswith(".debug.pak")
+                or name.endswith(".debug.bin")
+                or name.startswith("qtwebengine_devtools_resources")
+            ):
+                freed_bytes += res_file.stat().st_size
+                res_file.unlink()
                 deleted += 1
 
     freed_mb = freed_bytes / (1024 * 1024)
