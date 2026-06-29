@@ -111,9 +111,20 @@ class PdfMutateWorker(QThread):
 
     def _dispatch(self):
         kind = self._task.kind
-        if kind == TaskKind.DELETE_TEXT_LAYER:
-            return self._run_delete_text_layer
-        raise ValueError(f"未支持的任务类型: {kind}")
+        handlers = {
+            TaskKind.DELETE_TEXT_LAYER: self._run_delete_text_layer,
+            TaskKind.ROTATE: self._run_rotate,
+            TaskKind.DELETE_PAGES: self._run_delete_pages,
+            TaskKind.REORDER: self._run_reorder,
+            TaskKind.INSERT_BLANK: self._run_insert_blank,
+            TaskKind.INSERT_FROM: self._run_insert_from,
+            TaskKind.SAVE: self._run_save,
+            TaskKind.SAVE_AS: self._run_save_as,
+        }
+        handler = handlers.get(kind)
+        if handler is None:
+            raise ValueError(f"未支持的任务类型: {kind}")
+        return handler
 
     def _run_delete_text_layer(self) -> None:
         from vibeocr.services.pdf_service import PdfService
@@ -145,3 +156,82 @@ class PdfMutateWorker(QThread):
                 self.page_done.emit(page_index, None)
             self.progress.emit(n + 1, total)
         self.all_done.emit(self._session_id, {"residual_pages": residual_pages})
+
+    def _run_rotate(self) -> None:
+        from vibeocr.services.pdf_service import PdfService
+
+        indices = self._task.page_indices
+        total = len(indices)
+        # 旋转是快速原子操作，一次性批量应用；之后逐页 emit 仅用于 UI 进度反馈。
+        # （区别于 DELETE_TEXT_LAYER 的逐页加锁——rotate 无需逐页串行化。）
+        with self._doc_lock:
+            PdfService.rotate_pages(
+                self._doc, self._pdf_document, indices, self._task.angle
+            )
+        for n, idx in enumerate(indices):
+            if self._cancelled:
+                break
+            self.page_done.emit(idx, None)
+            self.progress.emit(n + 1, total)
+        self.all_done.emit(self._session_id, None)
+
+    def _run_delete_pages(self) -> None:
+        from vibeocr.services.pdf_service import PdfService
+
+        with self._doc_lock:
+            PdfService.delete_pages(
+                self._doc, self._pdf_document, self._task.page_indices
+            )
+        self.all_done.emit(self._session_id, None)
+
+    def _run_reorder(self) -> None:
+        from vibeocr.services.pdf_service import PdfService
+
+        with self._doc_lock:
+            PdfService.reorder_pages(
+                self._doc, self._pdf_document, self._task.new_order
+            )
+        self.all_done.emit(self._session_id, None)
+
+    def _run_insert_blank(self) -> None:
+        from vibeocr.services.pdf_service import PdfService
+
+        with self._doc_lock:
+            PdfService.insert_blank_page(
+                self._doc, self._pdf_document,
+                self._task.after_index, self._task.width, self._task.height,
+            )
+        self.all_done.emit(self._session_id, None)
+
+    def _run_insert_from(self) -> None:
+        from vibeocr.services.pdf_service import PdfService
+
+        with self._doc_lock:
+            PdfService.insert_pages_from(
+                self._doc, self._pdf_document,
+                self._task.source_path, self._task.after_index,
+            )
+        self.all_done.emit(self._session_id, None)
+
+    def _run_save(self) -> None:
+        self._do_save(path=None)
+
+    def _run_save_as(self) -> None:
+        self._do_save(path=self._task.path)
+
+    def _do_save(self, path: str | None) -> None:
+        from vibeocr.services.pdf_service import PdfService
+
+        try:
+            with self._doc_lock:
+                save_result = PdfService.save_with_rewrite(
+                    self._doc, self._pdf_document, path=path,
+                    pdf_settings=self._task.pdf_settings,
+                )
+            # save_with_rewrite 内部已 rewrite，一次性 emit 进度
+            total = len(save_result.rewritten_pages)
+            self.progress.emit(total, total)
+            self.all_done.emit(self._session_id, save_result)
+        except Exception as e:
+            logger.error("保存失败: %s", e, exc_info=True)
+            self.failed.emit(self._session_id, str(e))
