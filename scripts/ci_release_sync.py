@@ -222,8 +222,43 @@ def cmd_prune_github(args: argparse.Namespace) -> int:
 
 
 def cmd_prune_cnb(args: argparse.Namespace) -> int:
-    # Task 9 实现
-    raise NotImplementedError
+    token = os.environ.get("CNB_TOKEN", "")
+    if not token:
+        print("::warning::未配置 CNB_TOKEN，跳过 CNB Release 清理")
+        return 0
+
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.cnb.api+json",
+    }
+    req = urllib.request.Request(
+        f"{_CNB_API}/-/releases?page=1&page_size=100",
+        headers=headers, method="GET",
+    )
+    req.timeout = 60
+    with urllib.request.urlopen(req, timeout=60) as resp:
+        releases = json.loads(resp.read().decode("utf-8"))
+
+    # rank_releases 兼容 CNB 字段名（draft/prerelease）；id 为字符串，直接拼 URL
+    to_delete = select_for_prune(rank_releases(releases), keep=KEEP)
+    if not to_delete:
+        print("  无需清理（<= 10 个 Release）")
+        return 0
+
+    for r in to_delete:
+        rid = r.get("id")
+        print(f"  删除 CNB Release 记录: {r.get('tag_name')} (id={rid})")
+        dreq = urllib.request.Request(
+            f"{_CNB_API}/-/releases/{rid}", headers=headers, method="DELETE",
+        )
+        dreq.timeout = 60
+        try:
+            with urllib.request.urlopen(dreq, timeout=60) as dresp:
+                dresp.read()
+        except urllib.error.HTTPError as e:
+            print(f"  ::warning::删除失败 {rid}: HTTP {e.code}")
+    print("CNB Release 清理完成")
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
