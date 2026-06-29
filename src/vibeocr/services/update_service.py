@@ -71,7 +71,7 @@ class UpdateInfo:
     file_size: int = 0
 
     @classmethod
-    def from_gitee_release(cls, release: dict) -> UpdateInfo:
+    def from_release(cls, release: dict) -> UpdateInfo:
         return cls(
             version=release["tag_name"].lstrip("v"),
             download_url=_find_asset_url(release, ".zip"),
@@ -79,10 +79,6 @@ class UpdateInfo:
             changelog=release.get("body", ""),
             file_size=_find_asset_size(release, ".zip"),
         )
-
-    @classmethod
-    def from_github_release(cls, release: dict) -> UpdateInfo:
-        return cls.from_gitee_release(release)
 
 
 def _find_asset_url(release: dict, suffix: str) -> str:
@@ -119,17 +115,6 @@ def read_local_version(version_json_path: Path) -> str:
 # ---------------------------------------------------------------------------
 
 
-async def _fetch_gitee_release() -> dict | None:
-    try:
-        async with httpx.AsyncClient(timeout=3.0) as client:
-            resp = await client.get(_GITEE_API_URL)
-            if resp.status_code == 200:
-                return resp.json()
-    except Exception:
-        logger.debug("Gitee API 请求失败")
-    return None
-
-
 async def _fetch_github_release() -> dict | None:
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
@@ -146,35 +131,30 @@ async def _fetch_github_release() -> dict | None:
 
 async def check_for_updates(
     current_version: str,
-    prefer_gitee: bool = True,
-) -> UpdateInfo | None:
-    """检查是否有新版本"""
-    release = None
+) -> tuple[UpdateInfo | None, bool]:
+    """检查是否有新版本（仅 GitHub）
 
-    if prefer_gitee:
-        release = await _fetch_gitee_release()
-        if release is None:
-            release = await _fetch_github_release()
-    else:
-        release = await _fetch_github_release()
-        if release is None:
-            release = await _fetch_gitee_release()
-
+    Returns:
+        (update_info, fetch_ok)：
+        - fetch_ok=False 表示 GitHub 请求失败（上层应提示手动下载）。
+        - fetch_ok=True 且 update_info=None 表示已是最新。
+    """
+    release = await _fetch_github_release()
     if release is None:
-        logger.info("无法获取远程版本信息")
-        return None
+        logger.info("无法获取 GitHub 远程版本信息")
+        return None, False
 
-    remote = UpdateInfo.from_gitee_release(release)
+    remote = UpdateInfo.from_release(release)
 
     if compare_versions(remote.version, current_version) <= 0:
         logger.debug(f"当前版本 {current_version} 已是最新")
-        return None
+        return None, True
 
     if not remote.download_url:
         logger.warning("未找到下载链接")
-        return None
+        return None, True
 
-    return remote
+    return remote, True
 
 
 # ---------------------------------------------------------------------------
