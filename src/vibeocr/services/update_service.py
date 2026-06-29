@@ -433,15 +433,19 @@ class UpdateService:
             logger.debug("无法读取本地版本，跳过更新检查")
             return
 
-        try:
-            from vibeocr.network_detector import NetworkDetector
+        update_info, fetch_ok = await check_for_updates(current)
 
-            nd = NetworkDetector(self._app_dir)
-            prefer_gitee = nd.network_type == "domestic"
-        except Exception:
-            prefer_gitee = True
+        # GitHub 不可达：提示用户去 CNB 手动下载并覆盖安装（需先退出程序）
+        if not fetch_ok:
+            QMessageBox.warning(
+                parent,
+                "检查更新",
+                "自动检查更新失败，可能是网络问题。\n\n"
+                "可前往 CNB 手动下载对应版本，覆盖安装前请先退出本程序：\n"
+                f"{_CNB_RELEASES_URL}",
+            )
+            return
 
-        update_info = await check_for_updates(current, prefer_gitee=prefer_gitee)
         if update_info is None:
             return
 
