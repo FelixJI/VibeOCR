@@ -17,6 +17,7 @@ from vibeocr.models.pdf_session import PdfSession
 from vibeocr.services.pdf_service import PdfService
 from vibeocr.workers.pdf_load_worker import PdfLoadWorker
 from vibeocr.workers.pdf_mutate_worker import MutateTask, PdfMutateWorker, TaskKind
+from vibeocr.workers.pdf_export_worker import PdfExportWorker
 from vibeocr.workers.pdf_ocr_worker import PdfOcrWorker
 from vibeocr.workers.pdf_render_worker import PdfRenderWorker
 
@@ -61,6 +62,8 @@ class PdfSessionManager(QObject):
     mutate_failed = Signal(str, str)
     save_done = Signal(str)
     delete_layer_done = Signal(str, list)  # (file_path, residual_pages)
+    export_progress = Signal(int, int, str)   # (current, total, file_name)
+    export_done = Signal(list)                 # (exported_paths)
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -70,6 +73,7 @@ class PdfSessionManager(QObject):
         self._ocr_worker: PdfOcrWorker | None = None
         self._render_worker: PdfRenderWorker | None = None
         self._mutate_worker: PdfMutateWorker | None = None
+        self._export_worker: PdfExportWorker | None = None
         self._ocr_service: OCRServiceBase | None = None
         self._pdf_settings: PdfGlobalSettings | None = None
         self._overwrite_text_layer: bool = False
@@ -558,9 +562,30 @@ class PdfSessionManager(QObject):
                 logger.error("导出失败 %s: %s", file_path, e)
         return exported
 
+    def export_all_async(self, output_dir: str) -> None:
+        """异步批量导出所有 modified session。"""
+        sessions = [s for _, s in self.get_modified_sessions()]
+        if not sessions:
+            self.export_done.emit([])
+            return
+        self._export_worker = PdfExportWorker(sessions, output_dir)
+        self._export_worker.progress.connect(self._on_export_progress)
+        self._export_worker.done.connect(self._on_export_done)
+        self._export_worker.start()
+
+    def _on_export_progress(self, current: int, total: int, file_name: str) -> None:
+        self.export_progress.emit(current, total, file_name)
+
+    def _on_export_done(self, exported_paths: list) -> None:
+        self._export_worker = None
+        self.export_done.emit(exported_paths)
+
     # ---- cleanup ----------------------------------------------------
 
     def shutdown(self) -> None:
+        if self._export_worker is not None:
+            self._export_worker.cancel()
+            self._export_worker = None
         self._cancel_load_worker()
         self._cancel_ocr_pipeline()
         self._cancel_mutate_worker()

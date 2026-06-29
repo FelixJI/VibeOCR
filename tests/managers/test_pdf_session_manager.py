@@ -649,3 +649,21 @@ class TestMutateSignalForwarding:
         # 模拟 worker 完成（DELETE_TEXT_LAYER 的 all_done 载荷）
         manager._on_mutate_all_done(session.file_path, {"residual_pages": [2, 5]})
         assert received == [(session.file_path, [2, 5])]
+
+
+class TestExportAllAsync:
+    def test_starts_export_worker(self, manager, test_pdf_a, monkeypatch):
+        from unittest.mock import MagicMock
+
+        session = manager.open_session(str(test_pdf_a))
+        session.pdf_document.is_modified = True
+
+        created = []
+        monkeypatch.setattr(
+            "vibeocr.managers.pdf_session_manager.PdfExportWorker",
+            lambda sessions, out, **k: created.append((sessions, out)) or MagicMock(),
+        )
+        manager.export_all_async("/tmp/out")
+        assert len(created) == 1
+        sessions_arg, out_arg = created[0]
+        assert out_arg == "/tmp/out"
