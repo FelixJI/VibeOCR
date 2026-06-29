@@ -223,6 +223,7 @@ class PdfService:
                 doc.delete_page(idx)
         pdf_document.pages = remaining
         pdf_document.is_modified = True
+        pdf_document.has_structural_change = True
 
     @staticmethod
     def insert_blank_page(
@@ -235,6 +236,7 @@ class PdfService:
         insert_at = after_index + 1
         doc.new_page(pno=insert_at, width=width, height=height)
         pdf_document.is_modified = True
+        pdf_document.has_structural_change = True
         PdfService.build_page_infos(doc, pdf_document)
 
     @staticmethod
@@ -249,6 +251,7 @@ class PdfService:
         doc.insert_pdf(src, start_at=insert_at)
         src.close()
         pdf_document.is_modified = True
+        pdf_document.has_structural_change = True
         PdfService.build_page_infos(doc, pdf_document)
 
     @staticmethod
@@ -267,6 +270,7 @@ class PdfService:
         pages.insert(to_index, page_info)
         pdf_document.pages = pages
         pdf_document.is_modified = True
+        pdf_document.has_structural_change = True
 
     @staticmethod
     def reorder_pages(
@@ -287,6 +291,7 @@ class PdfService:
         doc.select(new_order)
         pdf_document.pages = [pdf_document.pages[i] for i in new_order]
         pdf_document.is_modified = True
+        pdf_document.has_structural_change = True
 
     # ---- text layer mutations ---------------------------------------
 
@@ -632,11 +637,15 @@ class PdfService:
         pw, ph = page_rect.width, page_rect.height
 
         if preproc_angle == 90:
-            # 逆时针 90°: y→x, (1-x)→y
-            x0 = ny0 * pw
-            y0 = (1 - nx1) * ph
-            x1 = ny1 * pw
-            y1 = (1 - nx0) * ph
+            # PaddleOCR 实测约定（scripts/verify_orient_roundtrip2/3.py）：
+            # reported angle == 内容相对正向「顺时针」偏转度数；output_img 是把图
+            # 「逆时针」旋转 angle 度得到的正向图，bbox 在 output(正向)空间。
+            # 还原回「显示空间」(= 顺时针偏转 angle 度)：把 output bbox「顺时针 90°」。
+            # 顺时针 90°: (1-y)→x, x→y
+            x0 = (1 - ny1) * pw
+            y0 = nx0 * ph
+            x1 = (1 - ny0) * pw
+            y1 = nx1 * ph
         elif preproc_angle == 180:
             # 中心对称
             x0 = (1 - nx1) * pw
@@ -644,11 +653,11 @@ class PdfService:
             x1 = (1 - nx0) * pw
             y1 = (1 - ny0) * ph
         elif preproc_angle == 270:
-            # 顺时针 90° (= 逆时针 270°): (1-y)→x, x→y
-            x0 = (1 - ny1) * pw
-            y0 = nx0 * ph
-            x1 = (1 - ny0) * pw
-            y1 = nx1 * ph
+            # 顺时针 270° = 逆时针 90°: y→x, (1-x)→y
+            x0 = ny0 * pw
+            y0 = (1 - nx1) * ph
+            x1 = ny1 * pw
+            y1 = (1 - nx0) * ph
         else:
             # 0° 或未知角度：直接映射
             x0 = nx0 * pw

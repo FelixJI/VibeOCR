@@ -101,6 +101,69 @@ class TestDenormalizeAndUnrotateBbox:
         assert abs(result.y0 - expected.y0) < 1
 
 
+class TestUnrotatePosition:
+    """位置敏感回归：90/270 角度的逆变换必须落在正确象限。
+
+    复现用户报告「开启文档方向分类后，部分页面文字层方向旋转 90°」。
+    根因：_denormalize_and_unrotate_bbox 的 90 与 270 分支被写反。
+
+    PaddleOCR 实测约定（scripts/verify_orient_roundtrip2/3.py）：
+      reported angle == 内容相对正向「顺时针」偏转的度数；PaddleOCR 把图
+      「逆时针」旋转 angle 度得到正向 output_img。bbox 在 output(正向)空间。
+      要还原回「显示空间」(= 顺时针偏转 angle 度的图)，需把 output bbox
+      「顺时针」旋转 angle 度。
+
+    本组测试用一个「正向图顶部窄条」的归一化 bbox，验证它经各角度逆变换后
+    在显示空间落到的正确位置（左/右/上/下），而非仅校验宽高互换。
+    """
+
+    def test_90_top_band_lands_on_right(self):
+        """angle=90：正向图「顶部窄条」还原到显示空间应在「右侧」。
+
+        正向图顶部窄条 (x:40-60%, y:5-10%)。CW90 后该条在显示图右侧（x 大）。
+        """
+        result = PdfService._denormalize_and_unrotate_bbox(
+            (400.0, 50.0, 600.0, 100.0), 90, _PAGE_RECT
+        )
+        # 应落在右半部分（接近右边缘）
+        assert result.x0 > _PAGE_RECT.width * 0.5, (
+            f"angle=90: 顶部窄条还原后应在右侧(x0>{_PAGE_RECT.width*0.5:.0f})，"
+            f"实际 rect={result}（90/270 分支写反的症状）"
+        )
+
+    def test_270_top_band_lands_on_left(self):
+        """angle=270：正向图「顶部窄条」还原到显示空间应在「左侧」。"""
+        result = PdfService._denormalize_and_unrotate_bbox(
+            (400.0, 50.0, 600.0, 100.0), 270, _PAGE_RECT
+        )
+        # 应落在左半部分（接近左边缘）
+        assert result.x1 < _PAGE_RECT.width * 0.5, (
+            f"angle=270: 顶部窄条还原后应在左侧(x1<{_PAGE_RECT.width*0.5:.0f})，"
+            f"实际 rect={result}（90/270 分支写反的症状）"
+        )
+
+    def test_90_left_band_lands_on_top(self):
+        """angle=90：正向图「左侧窄条」还原到显示空间应在「顶部」。"""
+        # 左侧竖条 (x:5-10%, y:40-60%)
+        result = PdfService._denormalize_and_unrotate_bbox(
+            (50.0, 400.0, 100.0, 600.0), 90, _PAGE_RECT
+        )
+        assert result.y1 < _PAGE_RECT.height * 0.5, (
+            f"angle=90: 左侧竖条还原后应在顶部(y1<{_PAGE_RECT.height*0.5:.0f})，"
+            f"实际 rect={result}"
+        )
+
+    def test_270_left_band_lands_on_bottom(self):
+        """angle=270：正向图「左侧窄条」还原到显示空间应在「底部」。"""
+        result = PdfService._denormalize_and_unrotate_bbox(
+            (50.0, 400.0, 100.0, 600.0), 270, _PAGE_RECT
+        )
+        assert result.y0 > _PAGE_RECT.height * 0.5, (
+            f"angle=270: 左侧竖条还原后应在底部(y0>{_PAGE_RECT.height*0.5:.0f})，"
+            f"实际 rect={result}"
+        )
+
+
 class TestBboxToPixel:
     """测试 bbox_to_pixel 的坐标转换。"""
 
