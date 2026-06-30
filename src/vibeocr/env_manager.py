@@ -389,6 +389,144 @@ def download_file_with_progress(
     return False
 
 
+def download_artifact_multi_source(
+    url_candidates: list[str],
+    dest_path: Path,
+    description: str = "下载",
+    max_retries: int = 3,
+    sha_candidates: list[str] | None = None,
+    sha_dest_path: Path | None = None,
+    source_switch_fn: Callable[[str, str], None] | None = None,
+) -> tuple[bool, str]:
+    """同步多源下载编排：逐源尝试，可选 SHA256 校验，统一失败原因。
+
+    WebEngine 资源包（带 sha）与 Python 运行时（不带 sha）共用此编排，
+    统一「多源回退 + 换源提示 + 失败原因结构化」的语义（与 update_service 的
+    异步 download_update 对齐，但本函数走同步 urllib 栈，供首启/重装等同步链路调用）。
+
+    单源下载复用 download_file_with_progress（断点续传 + 重试 + 中性 UA），
+    故断点续传与 UA 等关键不变量在本层不受影响。
+
+    Args:
+        url_candidates: 有序 URL 候选，逐个尝试直至成功（去重保序由调用方负责）
+        dest_path: 目标文件路径
+        description: 日志/进度描述
+        max_retries: 单源最大重试次数（含首次），透传给 download_file_with_progress
+        sha_candidates: 若提供，需与 url_candidates 同序的 sha URL；同时提供
+            sha_dest_path 时，每源下载 zip 后再下 sha 并校验，校验失败换源
+        sha_dest_path: sha 文件目标路径（仅当 sha_candidates 非空时有效）
+        source_switch_fn: 某源失败时回调 (source_label, reason)，供 UI 实时提示
+            「源 X 失败，切换源 Y…」。source_label 取自 update_service._source_label
+
+    Returns:
+        (成功?, 失败原因)：成功时原因为 DOWNLOAD_REASON_OK；
+        失败原因复用 update_service.DOWNLOAD_REASON_* 常量集
+        （http_error / sha_missing / sha_mismatch / exception），最后一个失败源的
+        原因作为返回值（调用方可据此分桶提示用户，与 update_service 行为一致）
+    """
+    # 优先复用 update_service 的 SSOT 常量与 verify_sha256 / _source_label，
+    # 保持同步/异步两套下载链路的失败原因与源名提示一致。
+    # 若 update_service 因缺 httpx 等依赖不可 import（如最小测试环境），
+    # 回退到本模块自带的等价实现，使编排器自包含、不强耦合 update_service。
+    try:
+        from vibeocr.services.update_service import (
+            DOWNLOAD_REASON_EXCEPTION,
+            DOWNLOAD_REASON_HTTP_ERROR,
+            DOWNLOAD_REASON_OK,
+            DOWNLOAD_REASON_SHA_MISMATCH,
+            DOWNLOAD_REASON_SHA_MISSING,
+            _source_label,
+            verify_sha256,
+        )
+    except ImportError:
+        DOWNLOAD_REASON_OK = "ok"
+        DOWNLOAD_REASON_HTTP_ERROR = "http_error"
+        DOWNLOAD_REASON_SHA_MISSING = "sha_missing"
+        DOWNLOAD_REASON_SHA_MISMATCH = "sha_mismatch"
+        DOWNLOAD_REASON_EXCEPTION = "exception"
+
+        def _source_label(url: str) -> str:  # type: ignore[no-redef]
+            for label, marker in (
+                ("Gitee", "gitee.com"),
+                ("gh-proxy", "gh-proxy.com"),
+                ("ghproxy", "ghproxy.com"),
+                ("GitHub", "github.com"),
+            ):
+                if marker in url:
+                    return label
+            return url
+
+        def verify_sha256(file_path: Path, sha256_file: Path) -> bool:  # type: ignore[no-redef]
+            import hashlib
+
+            if not sha256_file.exists():
+                return False
+            expected = sha256_file.read_text(encoding="utf-8").strip().split()[0].lower()
+            actual = hashlib.sha256(file_path.read_bytes()).hexdigest().lower()
+            return actual == expected
+
+    use_sha = bool(sha_candidates) and sha_dest_path is not None
+    if use_sha and len(sha_candidates) != len(url_candidates):  # type: ignore[arg-type]
+        raise ValueError(
+            "sha_candidates 长度必须与 url_candidates 一致（同源配对）"
+        )
+
+    last_reason = DOWNLOAD_REASON_HTTP_ERROR
+    sha_list = sha_candidates if use_sha else None
+
+    for idx, url in enumerate(url_candidates):
+        source_name = _source_label(url)
+        logger.info("[%s] 尝试下载源 %d/%d: %s", description, idx + 1, len(url_candidates), source_name)
+        try:
+            ok = download_file_with_progress(
+                url, dest_path, description=description, max_retries=max_retries
+            )
+            if not ok:
+                last_reason = DOWNLOAD_REASON_HTTP_ERROR
+                logger.warning("[%s] 下载失败，换源: %s", description, url)
+                dest_path.unlink(missing_ok=True)
+                if source_switch_fn:
+                    source_switch_fn(source_name, last_reason)
+                continue
+
+            # 可选：下载 sha 并校验（仅 WebEngine 资源包走此分支）
+            if use_sha:
+                sha_url = sha_list[idx]  # type: ignore[index]
+                sha_ok = download_file_with_progress(
+                    sha_url, sha_dest_path, description=f"{description}校验", max_retries=max_retries  # type: ignore[arg-type]
+                )
+                if not sha_ok:
+                    last_reason = DOWNLOAD_REASON_SHA_MISSING
+                    logger.warning("[%s] 校验文件下载失败，换源: %s", description, sha_url)
+                    dest_path.unlink(missing_ok=True)
+                    sha_dest_path.unlink(missing_ok=True)  # type: ignore[union-attr]
+                    if source_switch_fn:
+                        source_switch_fn(source_name, last_reason)
+                    continue
+                if not verify_sha256(dest_path, sha_dest_path):  # type: ignore[arg-type]
+                    last_reason = DOWNLOAD_REASON_SHA_MISMATCH
+                    logger.error("[%s] SHA256 校验失败，换源: %s", description, url)
+                    dest_path.unlink(missing_ok=True)
+                    sha_dest_path.unlink(missing_ok=True)  # type: ignore[union-attr]
+                    if source_switch_fn:
+                        source_switch_fn(source_name, last_reason)
+                    continue
+
+            logger.info("[%s] 下载成功（源 %s）", description, source_name)
+            return True, DOWNLOAD_REASON_OK
+        except Exception as e:
+            last_reason = DOWNLOAD_REASON_EXCEPTION
+            logger.error("[%s] 下载异常，换源: %s: %s", description, url, e)
+            dest_path.unlink(missing_ok=True)
+            if use_sha and sha_dest_path is not None:
+                sha_dest_path.unlink(missing_ok=True)
+            if source_switch_fn:
+                source_switch_fn(source_name, last_reason)
+
+    logger.error("[%s] 所有下载源均失败（最后原因: %s）", description, last_reason)
+    return False, last_reason
+
+
 def install_embedded_python(
     project_root: Path, network_type: Literal["domestic", "international"] = "domestic"
 ) -> tuple[bool, str]:
@@ -453,15 +591,11 @@ def install_embedded_python(
         temp_path = Path(temp_dir)
         tar_path = temp_path / PYTHON_BUILD_STANDALONE_ASSET.replace(".tar.gz", ".tgz")
 
-        download_ok = False
-        used_url = ""
-        for i, url in enumerate(urls, 1):
-            label = "Python(GitHub)" if "github.com" in url else "Python(镜像)"
-            logger.info("[环境安装] 尝试下载源 %d/%d: %s", i, len(urls), label)
-            if download_file_with_progress(url, tar_path, label):
-                download_ok = True
-                used_url = url
-                break
+        # python-build-standalone 上游不发 sha256，故不传 sha_candidates（跳过校验）。
+        # 多源回退/换源/失败原因由 download_artifact_multi_source 统一编排。
+        download_ok, _reason = download_artifact_multi_source(
+            urls, tar_path, description="Python 运行时", max_retries=3
+        )
 
         if not download_ok:
             return (
@@ -519,7 +653,7 @@ def install_embedded_python(
         # 清理半成品，避免下次启动因 python_dir.exists() 短路误判为已安装
         shutil.rmtree(python_dir, ignore_errors=True)
         return False, (
-            f"解压后未找到 {python_exe}，下载源可能损坏: {used_url}\n"
+            f"解压后未找到 {python_exe}，下载源可能损坏（已尝试 {len(urls)} 个源）\n"
             f"请手动下载并解压: {PYTHON_BUILD_STANDALONE_BASE}"
         )
 

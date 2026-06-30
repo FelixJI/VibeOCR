@@ -108,11 +108,22 @@ class TestVersionAlignment:
 
 
 class TestSelectAssetsSource:
+    """源序逻辑现已收敛到 env_config.build_asset_url_pairs（download_and_install 用它
+    生成同源 (zip, sha) 配对候选）。这些测试验证源序不变量：国内 Gitee→gh-proxy→
+    ghproxy→GitHub；海外 GitHub→Gitee。等价于旧的 select_assets_source 行为。"""
+
+    @staticmethod
+    def _zip_urls(network_type: str, version: str = "0.4.0") -> list[str]:
+        from vibeocr.services.env_config import build_asset_url_pairs
+
+        fname = f"VibeOCR-v{version}-webengine-win64.zip"
+        sha_fname = f"{fname}.sha256"
+        pairs = build_asset_url_pairs(network_type, version, fname, sha_fname)
+        return [p[0] for p in pairs]
+
     def test_domestic_prefers_gitee_with_four_candidates(self):
         """国内：Gitee 优先，4 候选（Gitee→gh-proxy→ghproxy→GitHub）"""
-        from vibeocr.services import webengine_manager as wm
-
-        urls = wm.select_assets_source("domestic", "0.4.0")
+        urls = self._zip_urls("domestic")
         assert len(urls) == 4
         assert "gitee.com" in urls[0]
         assert urls[0].endswith("VibeOCR-v0.4.0-webengine-win64.zip")
@@ -122,18 +133,14 @@ class TestSelectAssetsSource:
 
     def test_international_prefers_github_with_two_candidates(self):
         """海外：GitHub 优先，2 候选（GitHub→Gitee）"""
-        from vibeocr.services import webengine_manager as wm
-
-        urls = wm.select_assets_source("international", "0.4.0")
+        urls = self._zip_urls("international")
         assert len(urls) == 2
         assert "github.com" in urls[0]
         assert "gitee.com" in urls[1]
 
     def test_domestic_includes_gh_proxy_fallback(self):
         """国内候选必须含 gh 代理加速（gh-proxy / ghproxy）"""
-        from vibeocr.services import webengine_manager as wm
-
-        urls = wm.select_assets_source("domestic", "0.4.0")
+        urls = self._zip_urls("domestic")
         joined = " ".join(urls)
         assert "gh-proxy" in joined or "ghproxy" in joined
 

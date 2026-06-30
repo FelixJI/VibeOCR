@@ -26,12 +26,13 @@ from typing import TYPE_CHECKING
 
 from vibeocr.env_manager import (
     _get_meipass,
-    download_file_with_progress,
+    download_artifact_multi_source,
     get_project_root,
 )
 from vibeocr.services.env_config import (
-    build_github_asset_urls,
+    build_asset_url_pairs,
     get_webengine_assets_path,
+    get_webengine_cache_dir,
     get_webengine_reinstall_marker_path,
 )
 
@@ -173,23 +174,6 @@ def _build_assets_filename(version: str) -> str:
     return f"VibeOCR-v{version}-webengine-win64.zip"
 
 
-def select_assets_source(network_type: str, version: str) -> list[str]:
-    """按网络环境返回资源包下载 URL 候选列表（有序回退）。
-
-    实际选源逻辑收敛到 env_config.build_github_asset_urls（SSOT）：
-    国内 Gitee→gh-proxy→ghproxy→GitHub 裸连；海外 GitHub→Gitee。
-
-    Args:
-        network_type: "domestic" 或 "international"
-        version: 主包版本号（用于拼资源包文件名）
-
-    Returns:
-        URL 候选列表，调用方逐个尝试直至下载成功
-    """
-    fname = _build_assets_filename(version)
-    return build_github_asset_urls(network_type, version, fname)
-
-
 # ---------------------------------------------------------------------------
 # 下载与解压
 # ---------------------------------------------------------------------------
@@ -264,41 +248,35 @@ def download_and_install(
         except Exception:
             network_type = "international"
 
-    urls = select_assets_source(network_type, version)
+    # 用 build_asset_url_pairs 生成同源 (zip, sha) 候选对，确保校验文件与
+    # 被校验文件同源同 tag（替代旧的 select_assets_source + 盲拼 {url}.sha256）。
     fname = _build_assets_filename(version)
-    cache_dir = get_project_root() / "data" / "cache" / "webengine"
-    cache_dir.mkdir(parents=True, exist_ok=True)
+    sha_fname = f"{fname}.sha256"
+    url_pairs = build_asset_url_pairs(network_type, version, fname, sha_fname)
+    zip_urls = [p[0] for p in url_pairs]
+    sha_urls = [p[1] for p in url_pairs]
+
+    cache_dir = get_webengine_cache_dir()
     zip_path = cache_dir / fname
-    sha_path = cache_dir / f"{fname}.sha256"
+    sha_path = cache_dir / sha_fname
 
-    # 逐源尝试下载 zip + sha256
-    downloaded = False
-    for url in urls:
-        sha_url = f"{url}.sha256"
-        if report_fn:
-            report_fn(f"正在下载 WebEngine 渲染组件（{len(urls)} 个源）…", 0, 0)
-        ok_zip = download_file_with_progress(
-            url, zip_path, description="WebEngine 资源包", max_retries=3
-        )
-        if not ok_zip:
-            logger.warning(f"资源包下载失败，换源: {url}")
-            continue
-        ok_sha = download_file_with_progress(
-            sha_url, sha_path, description="WebEngine 校验", max_retries=3
-        )
-        if not ok_sha:
-            logger.warning(f"校验文件下载失败，换源: {sha_url}")
-            continue
-        # SHA256 校验
-        from vibeocr.services.update_service import verify_sha256
+    if report_fn:
+        report_fn(f"正在下载 WebEngine 渲染组件（{len(zip_urls)} 个源）…", 0, 0)
 
-        if not verify_sha256(zip_path, sha_path):
-            logger.error(f"SHA256 校验失败，换源: {url}")
-            zip_path.unlink(missing_ok=True)
-            sha_path.unlink(missing_ok=True)
-            continue
-        downloaded = True
-        break
+    # 多源回退 + 成对同源 SHA 校验 + 结构化失败原因，统一走 download_artifact_multi_source
+    downloaded, _reason = download_artifact_multi_source(
+        zip_urls,
+        zip_path,
+        description="WebEngine 资源包",
+        max_retries=3,
+        sha_candidates=sha_urls,
+        sha_dest_path=sha_path,
+        source_switch_fn=(
+            (lambda src, r: report_fn(f"{src} 失败，切换下一个源…", 0, 0))
+            if report_fn
+            else None
+        ),
+    )
 
     if not downloaded:
         if report_fn:

@@ -359,7 +359,11 @@ async def download_update(
 
 
 def _source_label(url: str) -> str:
-    """从 URL 提取人类可读的源名，用于换源提示文案。"""
+    """从 URL 提取人类可读的源名，用于换源提示文案。
+
+    同时被 env_manager.download_artifact_multi_source（同步多源下载编排器）复用，
+    保持同步/异步两套下载链路的源名提示一致。修改此处会同时影响两者。
+    """
     for label, marker in (
         ("Gitee", "gitee.com"),
         ("gh-proxy", "gh-proxy.com"),

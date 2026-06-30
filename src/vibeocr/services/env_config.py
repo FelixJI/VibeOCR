@@ -276,6 +276,17 @@ def get_update_cache_dir() -> Path:
     return d
 
 
+def get_webengine_cache_dir() -> Path:
+    """获取 WebEngine 资源包下载缓存目录
+
+    webengine_manager 下载 zip + sha256 的临时落盘位置，解压成功后即清理。
+    与 get_update_cache_dir 对称，统一 data/cache/<artifact>/ 命名规范。
+    """
+    d = get_data_dir() / "cache" / "webengine"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
 def get_update_settings_path() -> Path:
     """获取更新设置文件路径（skip_version 等）"""
     d = get_data_dir() / "settings"
