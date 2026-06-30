@@ -30,6 +30,7 @@ from vibeocr.env_manager import (
     get_project_root,
 )
 from vibeocr.services.env_config import (
+    build_github_asset_urls,
     get_webengine_assets_path,
     get_webengine_reinstall_marker_path,
 )
@@ -175,34 +176,18 @@ def _build_assets_filename(version: str) -> str:
 def select_assets_source(network_type: str, version: str) -> list[str]:
     """按网络环境返回资源包下载 URL 候选列表（有序回退）。
 
+    实际选源逻辑收敛到 env_config.build_github_asset_urls（SSOT）：
+    国内 Gitee→gh-proxy→ghproxy→GitHub 裸连；海外 GitHub→Gitee。
+
     Args:
         network_type: "domestic" 或 "international"
         version: 主包版本号（用于拼资源包文件名）
 
     Returns:
         URL 候选列表，调用方逐个尝试直至下载成功
-
-    注意：这里的 owner/repo 与 update_service / env_config SSOT 对齐。
-    国内优先 Gitee Release（匿名可读），回退 GitHub 直连；
-    海外直连 GitHub。
     """
     fname = _build_assets_filename(version)
-    # 与 about_tab / update_service 的仓库标识保持一致
-    gitee_release_base = (
-        "https://gitee.com/felixjii/vibeocr/releases/download"
-    )
-    github_release_base = (
-        "https://github.com/FelixJI/VibeOCR/releases/download"
-    )
-    domestic = [
-        f"{gitee_release_base}/v{version}/{fname}",
-        f"{github_release_base}/v{version}/{fname}",
-    ]
-    international = [
-        f"{github_release_base}/v{version}/{fname}",
-        f"{gitee_release_base}/v{version}/{fname}",
-    ]
-    return domestic if network_type == "domestic" else international
+    return build_github_asset_urls(network_type, version, fname)
 
 
 # ---------------------------------------------------------------------------

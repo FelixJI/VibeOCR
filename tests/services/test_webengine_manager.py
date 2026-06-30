@@ -108,25 +108,34 @@ class TestVersionAlignment:
 
 
 class TestSelectAssetsSource:
-    def test_domestic_prefers_gitee(self):
+    def test_domestic_prefers_gitee_with_four_candidates(self):
+        """国内：Gitee 优先，4 候选（Gitee→gh-proxy→ghproxy→GitHub）"""
         from vibeocr.services import webengine_manager as wm
 
         urls = wm.select_assets_source("domestic", "0.4.0")
+        assert len(urls) == 4
         assert "gitee.com" in urls[0]
         assert urls[0].endswith("VibeOCR-v0.4.0-webengine-win64.zip")
+        # gh 代理候选在中间
+        assert "gh-proxy.com" in urls[1]
+        assert "ghproxy.com" in urls[2]
 
-    def test_international_prefers_github(self):
+    def test_international_prefers_github_with_two_candidates(self):
+        """海外：GitHub 优先，2 候选（GitHub→Gitee）"""
         from vibeocr.services import webengine_manager as wm
 
         urls = wm.select_assets_source("international", "0.4.0")
+        assert len(urls) == 2
         assert "github.com" in urls[0]
+        assert "gitee.com" in urls[1]
 
-    def test_both_sources_present(self):
+    def test_domestic_includes_gh_proxy_fallback(self):
+        """国内候选必须含 gh 代理加速（gh-proxy / ghproxy）"""
         from vibeocr.services import webengine_manager as wm
 
         urls = wm.select_assets_source("domestic", "0.4.0")
-        assert any("gitee.com" in u for u in urls)
-        assert any("github.com" in u for u in urls)
+        joined = " ".join(urls)
+        assert "gh-proxy" in joined or "ghproxy" in joined
 
 
 class TestSafeExtractZip:
