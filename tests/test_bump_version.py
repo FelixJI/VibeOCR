@@ -67,8 +67,9 @@ def _run_bump(tmp_path, args, env=None):
         encoding="utf-8",
         errors="replace",
         env=env,
-        # bump 完成后会交互式询问“是否推送发版”。测试以子进程跑、无 TTY，
-        # 传一个换行（=回车=N）让它走“否”，避免 input() 读到 EOF 崩溃。
+        # bump 完成后会交互式询问“是否推送发版”和“是否本地打包”。
+        # 测试以子进程跑、无 TTY，传一个换行（=回车=N）让两者都走“否”，
+        # 避免 input() 读到 EOF 崩溃。
         input="\n",
     )
 
@@ -279,17 +280,12 @@ class TestChangelogGeneration:
     """测试 CHANGELOG 生成"""
 
     def test_changelog_created_on_bump(self, tmp_path):
-        """验证 develop bump 生成 CHANGELOG（v0.2.2 起改回 develop bump 时生成）
-
-        早期设计曾让 develop bump 不生成 CHANGELOG，但 v0.2.2 修复
-        （见 CHANGELOG「CHANGELOG 改回 develop bump 时生成编辑提交」）恢复为
-        在 develop bump 时生成条目并纳入 release 提交。
-        """
+        """验证 bump 时生成 CHANGELOG 条目并纳入 release 提交"""
         result = _run_bump(tmp_path, ["patch", "--no-edit", "--no-build"])
         assert result.returncode == 0, f"Script failed: {result.stderr}"
 
         changelog = tmp_path / "CHANGELOG.md"
-        assert changelog.exists(), "develop bump 应生成 CHANGELOG"
+        assert changelog.exists(), "bump 应生成 CHANGELOG"
 
     def test_categorize_commits(self):
         """测试 commit 分类函数"""
@@ -323,17 +319,12 @@ class TestChangelogGeneration:
         assert "docs: update readme" in result.get("Changed", [])
         assert "chore: update deps" in result.get("Changed", [])
 
-    # 注：原 test_changelog_inserts_before_existing（验证 develop bump 把新版本
-    # 条目插到 CHANGELOG 顶部）已删除——develop bump 不再写 CHANGELOG。
-    # 「新条目插在现有之上」的行为现由 TestUpdateMainChangelog::test_inserts_new_entry_above_existing
-    # 覆盖（针对 --to-main 路径的 update_main_changelog）。
-
 
 class TestGitTagging:
     """测试 git 标签创建"""
 
-    def test_no_tag_created_on_develop_bump(self, tmp_path):
-        """验证 develop bump 不再打 tag（tag 改由 --to-main 在 main 上打）"""
+    def test_tag_created_on_bump(self, tmp_path):
+        """验证 bump 后直接打 tag（新模型：main 上 bump → commit → tag）"""
         result = _run_bump(tmp_path, ["patch", "--no-edit", "--no-build"])
         assert result.returncode == 0, f"Script failed: {result.stderr}"
 
@@ -345,12 +336,12 @@ class TestGitTagging:
             errors="replace",
         )
         tags = [t for t in tag_result.stdout.strip().split("\n") if t]
-        assert "v0.1.1" not in tags, "develop bump 不应打 tag"
-        # 仅保留测试夹具里打的 v0.1.0
-        assert tags == ["v0.1.0"]
+        # bump 到 0.1.1 后应创建 v0.1.1 tag，连同夹具里的 v0.1.0
+        assert "v0.1.1" in tags, "bump 后应打 tag v0.1.1"
+        assert "v0.1.0" in tags
 
     def test_git_commit_created(self, tmp_path):
-        """验证 git commit 被创建（develop bump 仍生成 release: 提交）"""
+        """验证 git commit 被创建（bump 生成 release: 提交）"""
         result = _run_bump(tmp_path, ["minor", "--no-edit", "--no-build"])
         assert result.returncode == 0, f"Script failed: {result.stderr}"
 
@@ -543,72 +534,6 @@ class TestCollectCommits:
         assert "fix: two" in subjects
         assert "feat: one" not in subjects  # 在范围之外（tag 之前）
 
-    def test_filter_release_commits_drops_release_prefix(self):
-        """_filter_release_commits 过滤掉 release: 前缀提交"""
-        mod = self._load_module()
-        commits = [
-            ("aaa1111", "feat: a"),
-            ("bbb2222", "release: v0.1.5"),
-            ("ccc3333", "fix: b"),
-            ("ddd4444", "release: v0.1.6"),
-        ]
-        filtered = mod._filter_release_commits(commits)
-        subjects = [s for _, s in filtered]
-        assert "feat: a" in subjects
-        assert "fix: b" in subjects
-        assert not any("release:" in s for s in subjects)
-
-
-class TestGenerateConsolidatedEntry:
-    """测试 generate_consolidated_entry 整合生成单条 CHANGELOG 条目"""
-
-    @staticmethod
-    def _load_module():
-        import importlib.util
-
-        spec = importlib.util.spec_from_file_location("bump_version", SCRIPT)
-        mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
-        return mod
-
-    def test_filters_release_commits_and_categorizes(self):
-        """自动过滤 release: 提交，剩余按 Added/Fixed/Changed 分类"""
-        mod = self._load_module()
-        commits = [
-            ("h1", "feat: add X"),
-            ("h2", "release: v0.1.5"),
-            ("h3", "fix: bug Y"),
-            ("h4", "chore: cleanup"),
-            ("h5", "release: v0.1.6"),
-        ]
-        entry = mod.generate_consolidated_entry("0.1.6", commits)
-        assert "## [0.1.6]" in entry
-        assert "feat: add X" in entry
-        assert "fix: bug Y" in entry
-        assert "chore: cleanup" in entry
-        assert "release: v0.1.5" not in entry
-        assert "release: v0.1.6" not in entry
-
-    def test_dedupes_identical_subjects(self):
-        """相同 subject 只保留一条"""
-        mod = self._load_module()
-        commits = [
-            ("h1", "feat: add X"),
-            ("h2", "feat: add X"),  # 重复
-            ("h3", "feat: add X"),  # 重复
-        ]
-        entry = mod.generate_consolidated_entry("0.1.6", commits)
-        assert entry.count("feat: add X") == 1
-
-    def test_omits_empty_categories(self):
-        """空分类不出现在条目中"""
-        mod = self._load_module()
-        commits = [("h1", "feat: only added")]
-        entry = mod.generate_consolidated_entry("0.1.6", commits)
-        assert "### Added" in entry
-        assert "### Fixed" not in entry
-        assert "### Changed" not in entry
-
 
 class TestCheckUnversionedCommits:
     """测试 check_unversioned_commits 发版前未版本化提交检测"""
@@ -705,8 +630,8 @@ class TestCheckUnversionedCommits:
         assert n >= 2
 
 
-class TestUpdateMainChangelog:
-    """测试 update_main_changelog 在 main CHANGELOG 顶部插入整合条目"""
+class TestBumpPushConfirm:
+    """bump 后推送确认接线测试（答 y/答 N/--yes）"""
 
     @staticmethod
     def _load_module():
@@ -717,247 +642,65 @@ class TestUpdateMainChangelog:
         spec.loader.exec_module(mod)
         return mod
 
-    def test_creates_changelog_when_absent(self, tmp_path):
-        """main 无 CHANGELOG 时创建（# Changelog + 首条）"""
+    def _stub_bump_deps(self, mod, monkeypatch):
+        """桩掉 bump 流程里的文件/git/changelog 副作用"""
+        monkeypatch.setattr(mod, "read_current_version", lambda path: (0, 1, 5))
+        monkeypatch.setattr(mod, "update_file_version", lambda f, old, new: None)
+        monkeypatch.setattr(mod, "_sync_uv_lock", lambda v: False)
+        monkeypatch.setattr(mod, "get_commits_since_last_tag", list)
+        monkeypatch.setattr(mod, "update_changelog", lambda v, c: None)
+        monkeypatch.setattr(mod.subprocess, "run", lambda *a, **k: None)
+
+    def test_push_yes_invokes_push_release(self, monkeypatch):
+        """推送确认答 y → 调用 _push_release，不再问本地打包"""
         mod = self._load_module()
-        changelog = tmp_path / "CHANGELOG.md"
-        mod.CHANGELOG = changelog
-        entry = "## [0.2.0] - 2026-06-26\n\n### Added\n- feat: X\n"
+        self._stub_bump_deps(mod, monkeypatch)
+        pushed: dict = {}
+        monkeypatch.setattr(
+            mod, "_push_release", lambda v: pushed.setdefault("v", v) or True
+        )
+        built: dict = {}
+        monkeypatch.setattr(
+            mod, "_ask_build", lambda v: built.setdefault("asked", True) or False
+        )
+        # 推送确认答 y
+        monkeypatch.setattr("builtins.input", lambda _p="": "y")
+        monkeypatch.setattr("sys.argv", ["bump_version.py", "patch", "--no-build"])
 
-        mod.update_main_changelog(entry)
+        mod.main()
 
-        content = changelog.read_text(encoding="utf-8")
-        assert content.startswith("# Changelog")
-        assert "0.2.0" in content
+        assert pushed.get("v") == "0.1.6", "答 y 应触发 _push_release(0.1.6)"
+        assert not built.get("asked"), "已推送时不应再问本地打包"
 
-    def test_inserts_new_entry_above_existing(self, tmp_path):
-        """新条目插在现有最新条目之上（顶部）"""
+    def test_push_no_skips_push(self, monkeypatch):
+        """推送确认答 N（默认）→ 不推送"""
         mod = self._load_module()
-        changelog = tmp_path / "CHANGELOG.md"
-        changelog.write_text(
-            "# Changelog\n\n## [0.1.0] - 2025-01-01\n\n### Added\n- init\n",
-            encoding="utf-8",
+        self._stub_bump_deps(mod, monkeypatch)
+        pushed: dict = {}
+        monkeypatch.setattr(
+            mod, "_push_release", lambda v: pushed.setdefault("pushed", True) or False
         )
-        mod.CHANGELOG = changelog
-        entry = "## [0.2.0] - 2026-06-26\n\n### Added\n- feat: X\n"
+        # 推送确认答 N；--no-build 跳过打包提示避免再触发 input
+        monkeypatch.setattr("builtins.input", lambda _p="": "N")
+        monkeypatch.setattr("sys.argv", ["bump_version.py", "patch", "--no-build"])
 
-        mod.update_main_changelog(entry)
+        mod.main()
 
-        content = changelog.read_text(encoding="utf-8")
-        pos_new = content.index("0.2.0")
-        pos_old = content.index("0.1.0")
-        assert pos_new < pos_old
+        assert not pushed.get("pushed"), "答 N 不应推送"
 
-
-class TestInteractiveMenuMergeOption:
-    """交互式菜单的"合并至 main"选项 6 测试"""
-
-    @staticmethod
-    def _load_module():
-        import importlib.util
-
-        spec = importlib.util.spec_from_file_location("bump_version", SCRIPT)
-        mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
-        return mod
-
-    def test_option_6_returns_merge_sentinel(self, monkeypatch):
-        """选项 6 应返回哨兵 'merge'"""
+    def test_yes_flag_auto_pushes(self, monkeypatch):
+        """--yes 跳过推送确认直接 _push_release"""
         mod = self._load_module()
-        monkeypatch.setattr("builtins.input", lambda _prompt="": "6")
-
-        result = mod.interactive_menu((0, 1, 6))
-
-        assert result == "merge", f"选项 6 应返回 'merge'，实际: {result!r}"
-
-    def test_menu_lists_option_6(self, capsys, monkeypatch):
-        """菜单输出应包含"推送快照到 GitHub main"选项描述"""
-        mod = self._load_module()
-        monkeypatch.setattr("builtins.input", lambda _prompt="": "0")
-        mod.interactive_menu((0, 1, 6))
-        captured = capsys.readouterr()
-        assert "推送快照到 GitHub main" in captured.out
-
-
-class TestCmdToMain:
-    """测试 cmd_to_main 端到端合并流程（双分支真实 git 仓库）"""
-
-    def _setup_two_branch_repo(self, tmp_path):
-        """建一个含 main + develop 两分支、develop 领先的仓库
-
-        同时建一个本地 bare 仓库作为 ``GitHub`` 远端（cmd_publish_main 会
-        ``git push GitHub ...``），否则端到端测试会因找不到 remote 而失败。
-        """
-        import subprocess
-
-        def git(*args):
-            subprocess.run(["git", *args], cwd=tmp_path, capture_output=True)
-
-        git("init", "-b", "main")
-        git("config", "user.email", "t@t.com")
-        git("config", "user.name", "T")
-        # main 初始提交 + CHANGELOG
-        (tmp_path / "pyproject.toml").write_text(
-            '[project]\nname = "vibeocr"\nversion = "0.1.0"\n', encoding="utf-8"
+        self._stub_bump_deps(mod, monkeypatch)
+        pushed: dict = {}
+        monkeypatch.setattr(
+            mod, "_push_release", lambda v: pushed.setdefault("pushed", True) or True
         )
-        (tmp_path / "CHANGELOG.md").write_text(
-            "# Changelog\n\n## [0.1.0] - 2025-01-01\n\n### Added\n- init\n",
-            encoding="utf-8",
-        )
-        git("add", ".")
-        git("commit", "-m", "init main")
-        git("tag", "v0.1.0")
-        # develop 分支 + 领先若干提交 + release
-        git("checkout", "-b", "develop")
-        git("commit", "--allow-empty", "-m", "feat: feature A")
-        git("commit", "--allow-empty", "-m", "fix: bug B")
-        # bump 到 0.1.1（develop 路径：版本号前进 + release 提交，无 tag）。
-        # 真实流程里 develop bump 会生成 CHANGELOG 的 0.1.1 条目（整合 feature A/bug B），
-        # cmd_publish_main 不再单独整合、只复用 develop 的 CHANGELOG，故这里预置该条目。
-        (tmp_path / "pyproject.toml").write_text(
-            '[project]\nname = "vibeocr"\nversion = "0.1.1"\n', encoding="utf-8"
-        )
-        (tmp_path / "CHANGELOG.md").write_text(
-            "# Changelog\n\n"
-            "## [0.1.1] - 2025-01-02\n\n### Added\n- feat: feature A\n\n"
-            "### Fixed\n- fix: bug B\n\n"
-            "## [0.1.0] - 2025-01-01\n\n### Added\n- init\n",
-            encoding="utf-8",
-        )
-        git("add", "pyproject.toml", "CHANGELOG.md")
-        git("commit", "-m", "release: v0.1.1")
-        # 建 bare 远端并注册为 GitHub（cmd_publish_main 的 PUBLISH_REMOTE 默认值）
-        bare = tmp_path.parent / (tmp_path.name + "-github.git")
-        subprocess.run(["git", "init", "--bare", str(bare)], capture_output=True)
-        git("remote", "add", "GitHub", str(bare))
-        # 先把 main + tag 推上去，模拟远端已有历史
-        subprocess.run(
-            ["git", "push", "GitHub", "main", "v0.1.0"],
-            cwd=tmp_path, capture_output=True,
-        )
-        return tmp_path
+        monkeypatch.setattr("sys.argv", ["bump_version.py", "patch", "--yes", "--no-build"])
 
+        mod.main()
 
-    def test_merge_consolidates_and_tags_on_main(self, tmp_path):
-        """--to-main 后：main 有 v0.1.1 tag、整合 CHANGELOG、最终在 develop"""
-        import os
-        import subprocess
-        import sys
-
-        repo = self._setup_two_branch_repo(tmp_path)
-
-        env = os.environ.copy()
-        env["PYPROJECT_TOML"] = str(repo / "pyproject.toml")
-        env["CHANGELOG"] = str(repo / "CHANGELOG.md")
-        env["UV_LOCK"] = str(repo / "uv.lock")  # 不存在，跳过同步
-
-        result = subprocess.run(
-            [sys.executable, str(SCRIPT), "--to-main", "--no-edit"],
-            cwd=repo,
-            capture_output=True,
-            encoding="utf-8",
-            errors="replace",
-            env=env,
-            input="y\n",
-        )
-        assert result.returncode == 0, f"失败: {result.stdout}\n{result.stderr}"
-
-        # main 上应有 v0.1.1 tag
-        tags = subprocess.run(
-            ["git", "tag", "-l"], cwd=repo, capture_output=True, encoding="utf-8",
-        ).stdout.strip().split("\n")
-        assert "v0.1.1" in tags
-
-        # CHANGELOG 顶部应有 0.1.1 整合条目，含 feature A / bug B
-        content = (repo / "CHANGELOG.md").read_text(encoding="utf-8")
-        assert "0.1.1" in content
-        assert "feat: feature A" in content
-        assert "fix: bug B" in content
-        # 0.1.1 整合条目在 0.1.0 之前
-        assert content.index("0.1.1") < content.index("0.1.0")
-
-    def test_blocks_when_unversioned_commits_exist(self, tmp_path):
-        """develop release 之后还有未版本化提交 → --to-main 阻止并引导先 bump"""
-        import os
-        import subprocess
-        import sys
-
-        repo = self._setup_two_branch_repo(tmp_path)
-        # 在 release v0.1.1 之后再加提交（未版本化）
-        subprocess.run(
-            ["git", "commit", "--allow-empty", "-m", "feat: unversioned"],
-            cwd=repo, capture_output=True,
-        )
-
-        env = os.environ.copy()
-        env["PYPROJECT_TOML"] = str(repo / "pyproject.toml")
-        env["CHANGELOG"] = str(repo / "CHANGELOG.md")
-        env["UV_LOCK"] = str(repo / "uv.lock")
-
-        result = subprocess.run(
-            [sys.executable, str(SCRIPT), "--to-main", "--no-edit"],
-            cwd=repo, capture_output=True, encoding="utf-8", errors="replace",
-            env=env, input="y\n",
-        )
-        # 应中止（非零退出），且不打 tag、不切到 main
-        assert result.returncode != 0
-        assert "未发版" in result.stdout or "未版本化" in result.stdout
-        tags = subprocess.run(
-            ["git", "tag", "-l"], cwd=repo, capture_output=True, encoding="utf-8",
-        ).stdout.strip().split("\n")
-        assert "v0.1.1" not in tags
-
-
-class TestToMainArgWiring:
-    """--to-main 参数与 merge 哨兵接线测试"""
-
-    @staticmethod
-    def _load_module():
-        import importlib.util
-
-        spec = importlib.util.spec_from_file_location("bump_version", SCRIPT)
-        mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
-        return mod
-
-    def test_to_main_flag_invokes_cmd_to_main(self, monkeypatch):
-        """--to-main 应调用 cmd_to_main（用 monkeypatch 桩掉真实 git 操作）"""
-        mod = self._load_module()
-
-        called: dict = {}
-
-        def fake_cmd(skip_confirm: bool = False) -> int:
-            called["invoked"] = True
-            called["skip_confirm"] = skip_confirm
-            return 0
-
-        monkeypatch.setattr(mod, "cmd_publish_main", fake_cmd)
-        monkeypatch.setattr("sys.argv", ["bump_version.py", "--to-main"])
-
-        rc = mod.main()
-
-        assert called.get("invoked") is True
-        assert rc == 0
-
-    def test_merge_sentinel_invokes_cmd_to_main(self, monkeypatch):
-        """菜单返回 'merge' 哨兵时 main() 应调用 cmd_to_main"""
-        mod = self._load_module()
-
-        called: dict = {}
-
-        def fake_cmd(skip_confirm: bool = False) -> int:
-            called["invoked"] = True
-            return 0
-
-        monkeypatch.setattr(mod, "cmd_publish_main", fake_cmd)
-        monkeypatch.setattr(mod, "read_current_version", lambda path: (0, 1, 6))
-        monkeypatch.setattr(mod, "interactive_menu", lambda current: "merge")
-        monkeypatch.setattr("sys.argv", ["bump_version.py"])
-
-        rc = mod.main()
-
-        assert called.get("invoked") is True
-        assert rc == 0
+        assert pushed.get("pushed") is True, "--yes 应直接推送"
 
 
 class TestOption5UnversionedWarning:
@@ -1012,77 +755,6 @@ class TestOption5UnversionedWarning:
         mod.main()
 
         assert ran.get("built") is True
-
-
-class TestBumpMergePrompt:
-    """选项 1-4 bump 完后串联"合并至 main"提示"""
-
-    @staticmethod
-    def _load_module():
-        import importlib.util
-
-        spec = importlib.util.spec_from_file_location("bump_version", SCRIPT)
-        mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
-        return mod
-
-    def test_bump_prompts_merge_yes_invokes_cmd_to_main(self, monkeypatch):
-        """bump 后提示合并，答 y → 调用 cmd_publish_main，不再问打包"""
-        mod = self._load_module()
-        monkeypatch.setattr(mod, "read_current_version", lambda path: (0, 1, 5))
-        monkeypatch.setattr(
-            mod, "update_file_version", lambda f, old, new: None
-        )
-        monkeypatch.setattr(mod, "_sync_uv_lock", lambda v: False)
-        # 桩 git/changelog 相关操作（避免触碰真实仓库与真实 git）
-        monkeypatch.setattr(mod, "get_commits_since_last_tag", list)
-        monkeypatch.setattr(mod, "update_changelog", lambda v, c: None)
-        monkeypatch.setattr(mod.subprocess, "run", lambda *a, **k: None)
-        merged: dict = {}
-        monkeypatch.setattr(
-            mod, "cmd_publish_main", lambda skip_confirm=False: merged.setdefault("merged", True) or 0
-        )
-        built: dict = {}
-        monkeypatch.setattr(
-            mod, "_ask_build", lambda v: built.setdefault("asked", True) or False
-        )
-        # 合并提示答 y
-        monkeypatch.setattr("builtins.input", lambda _p="": "y")
-        monkeypatch.setattr("sys.argv", ["bump_version.py", "patch", "--no-build"])
-
-        mod.main()
-
-        assert merged.get("merged") is True, "答 y 应触发 cmd_publish_main"
-        assert not built.get("asked"), "已合并时不应再问打包"
-
-    def test_bump_prompts_merge_no_falls_back_to_build_prompt(self, monkeypatch):
-        """bump 后提示合并，答 N → 跳过合并，转问打包"""
-        mod = self._load_module()
-        monkeypatch.setattr(mod, "read_current_version", lambda path: (0, 1, 5))
-        monkeypatch.setattr(
-            mod, "update_file_version", lambda f, old, new: None
-        )
-        monkeypatch.setattr(mod, "_sync_uv_lock", lambda v: False)
-        monkeypatch.setattr(mod, "get_commits_since_last_tag", list)
-        monkeypatch.setattr(mod, "update_changelog", lambda v, c: None)
-        monkeypatch.setattr(mod.subprocess, "run", lambda *a, **k: None)
-        merged: dict = {}
-        monkeypatch.setattr(
-            mod, "cmd_publish_main", lambda skip_confirm=False: merged.setdefault("merged", True) or 1
-        )
-        built: dict = {}
-        monkeypatch.setattr(
-            mod, "_ask_build", lambda v: built.setdefault("asked", True) or False
-        )
-        # 合并提示答 N
-        monkeypatch.setattr("builtins.input", lambda _p="": "N")
-        monkeypatch.setattr("sys.argv", ["bump_version.py", "patch", "--no-build"])
-
-        mod.main()
-
-        assert not merged.get("merged"), "答 N 不应合并"
-        # --no-build 时 _ask_build 仍被调用但由 no_build 跳过实际打包；
-        # 此处验证没有走合并分支即可（built.asked 可能 True 但无害）
 
 
 class TestPyInstallerNoUpx:
