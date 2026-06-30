@@ -49,8 +49,12 @@ GITEE_OWNER = "felixjii"
 GITEE_REPO = "vibeocr"
 
 # GitHub / Gitee 直链基址
-GITHUB_RELEASES_BASE = f"https://github.com/{GITHUB_OWNER}/{GITHUB_REPO}/releases"
-GITEE_RELEASES_BASE = f"https://gitee.com/{GITEE_OWNER}/{GITEE_REPO}/releases"
+# repo 根：仓库主页（关于页"项目主页"链接用）
+GITHUB_REPO_BASE = f"https://github.com/{GITHUB_OWNER}/{GITHUB_REPO}"
+GITEE_REPO_BASE = f"https://gitee.com/{GITEE_OWNER}/{GITEE_REPO}"
+# releases 页：发布列表（手动下载兜底链接用）
+GITHUB_RELEASES_BASE = f"{GITHUB_REPO_BASE}/releases"
+GITEE_RELEASES_BASE = f"{GITEE_REPO_BASE}/releases"
 GITHUB_DOWNLOAD_BASE = f"{GITHUB_RELEASES_BASE}/download"  # .../download/v{ver}/{asset}
 GITEE_DOWNLOAD_BASE = f"{GITEE_RELEASES_BASE}/download"
 

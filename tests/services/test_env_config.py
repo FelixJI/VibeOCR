@@ -11,11 +11,13 @@ from vibeocr.services.env_config import (
     GITHUB_PROXY_PREFIXES,
     GITHUB_RELEASES_BASE,
     GITHUB_REPO,
+    GITHUB_REPO_BASE,
     GITEE_API_LATEST,
     GITEE_DOWNLOAD_BASE,
     GITEE_OWNER,
     GITEE_RELEASES_BASE,
     GITEE_REPO,
+    GITEE_REPO_BASE,
     OCR_CHECK_MODULES,
     PORTABLE_PYTHON_DIR,
     PYTHON_BUILD_STANDALONE_ASSET,
@@ -162,6 +164,14 @@ class TestReleaseRepoConstants:
         assert GITHUB_RELEASES_BASE.endswith("/releases")
         assert GITEE_RELEASES_BASE.startswith("https://gitee.com/")
         assert GITEE_RELEASES_BASE.endswith("/releases")
+
+    def test_repo_base_is_repo_root(self):
+        """repo 基址应指向仓库根（无 /releases 后缀），供关于页主页链接用"""
+        assert GITHUB_REPO_BASE == "https://github.com/FelixJI/VibeOCR"
+        assert GITEE_REPO_BASE == "https://gitee.com/felixjii/vibeocr"
+        # releases 基址 = repo 基址 + /releases
+        assert GITHUB_RELEASES_BASE == f"{GITHUB_REPO_BASE}/releases"
+        assert GITEE_RELEASES_BASE == f"{GITEE_REPO_BASE}/releases"
 
     def test_download_base_ends_with_download(self):
         assert GITHUB_DOWNLOAD_BASE.endswith("/download")
