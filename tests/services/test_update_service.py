@@ -3,7 +3,7 @@
 import asyncio
 import hashlib
 import json
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 
 def _run(coro):
@@ -267,3 +267,90 @@ class TestSkipVersion:
         save_skip_version("0.2.0", settings_path)
         save_skip_version("0.3.0", settings_path)
         assert load_skip_version(settings_path) == "0.3.0"
+
+
+class TestDownloadUpdateMultiSource:
+    """download_update 多源回退测试（mock _download_zip_with_sha）"""
+
+    def test_returns_path_when_first_source_succeeds(self, tmp_path):
+        from vibeocr.services.update_service import UpdateInfo, download_update
+
+        info = UpdateInfo(
+            version="0.3.1",
+            download_url="https://example.com/zip",
+            sha256_url="https://example.com/sha",
+            changelog="",
+        )
+        with patch(
+            "vibeocr.services.update_service._download_zip_with_sha",
+            new_callable=AsyncMock,
+            return_value=True,
+        ) as mock_dl:
+            result = _run(download_update(info, tmp_path))
+        assert result is not None
+        assert result.name == "VibeOCR-v0.3.1-win64.zip"
+        mock_dl.assert_called_once()
+
+    def test_falls_back_to_next_source_on_failure(self, tmp_path):
+        """首源失败 → 换源成功"""
+        from vibeocr.services.update_service import UpdateInfo, download_update
+
+        info = UpdateInfo(
+            version="0.3.1",
+            download_url="https://example.com/zip",
+            sha256_url="https://example.com/sha",
+            changelog="",
+        )
+        with patch(
+            "vibeocr.services.update_service._detect_network_type",
+            return_value="international",
+        ), patch(
+            "vibeocr.services.update_service._download_zip_with_sha",
+            new_callable=AsyncMock,
+            side_effect=[False, True],
+        ) as mock_dl:
+            result = _run(download_update(info, tmp_path))
+        assert result is not None
+        assert mock_dl.call_count == 2  # 首源失败后换源成功
+
+    def test_returns_none_when_all_sources_fail(self, tmp_path):
+        from vibeocr.services.update_service import UpdateInfo, download_update
+
+        info = UpdateInfo(
+            version="0.3.1",
+            download_url="https://example.com/zip",
+            sha256_url="https://example.com/sha",
+            changelog="",
+        )
+        with patch(
+            "vibeocr.services.update_service._detect_network_type",
+            return_value="international",
+        ), patch(
+            "vibeocr.services.update_service._download_zip_with_sha",
+            new_callable=AsyncMock,
+            return_value=False,
+        ) as mock_dl:
+            result = _run(download_update(info, tmp_path))
+        assert result is None
+        assert mock_dl.call_count == 2  # 海外 2 候选全部失败
+
+    def test_domestic_uses_four_candidates(self, tmp_path):
+        """国内走 4 候选（Gitee→gh-proxy→ghproxy→GitHub）"""
+        from vibeocr.services.update_service import UpdateInfo, download_update
+
+        info = UpdateInfo(
+            version="0.3.1",
+            download_url="https://example.com/zip",
+            sha256_url="https://example.com/sha",
+            changelog="",
+        )
+        with patch(
+            "vibeocr.services.update_service._detect_network_type",
+            return_value="domestic",
+        ), patch(
+            "vibeocr.services.update_service._download_zip_with_sha",
+            new_callable=AsyncMock,
+            return_value=False,
+        ) as mock_dl:
+            _run(download_update(info, tmp_path))
+        assert mock_dl.call_count == 4

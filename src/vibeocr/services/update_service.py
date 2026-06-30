@@ -24,25 +24,17 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# 仓库信息（与 about_tab.py / ci_release_sync.py 对齐）。
+# 发布仓库标识与下载源选择收敛到 env_config（SSOT）。
 # 发布渠道（方案 C）：CNB 仅镜像代码；产物主源 GitHub，镜像源 Gitee。
-# 客户端按 NetworkDetector 选源：国内优先 Gitee（匿名可读 Release），回退 GitHub；
-# 海外直连 GitHub。CNB OpenAPI 需 token 鉴权，客户端无法匿名访问，不用于更新。
-_GITHUB_OWNER = "FelixJI"
-_GITHUB_REPO = "VibeOCR"
-_GITEE_OWNER = "felixjii"
-_GITEE_REPO = "vibeocr"
-
-_GITHUB_RELEASES_URL = (
-    f"https://github.com/{_GITHUB_OWNER}/{_GITHUB_REPO}/releases"
-)
-_GITEE_RELEASES_URL = f"https://gitee.com/{_GITEE_OWNER}/{_GITEE_REPO}/releases"
-
-_GITHUB_API_URL = (
-    f"https://api.github.com/repos/{_GITHUB_OWNER}/{_GITHUB_REPO}/releases/latest"
-)
-_GITEE_API_URL = (
-    f"https://gitee.com/api/v5/repos/{_GITEE_OWNER}/{_GITEE_REPO}/releases/latest"
+# 客户端按 NetworkDetector 选源：国内优先 Gitee（匿名可读 Release），
+# 回退 gh 代理加速（gh-proxy / ghproxy）→ GitHub 裸连；海外直连 GitHub，回退 Gitee。
+# CNB OpenAPI 需 token 鉴权，客户端无法匿名访问，不用于更新。
+from vibeocr.services.env_config import (  # noqa: E402
+    GITHUB_API_LATEST,
+    GITHUB_RELEASES_BASE,
+    GITEE_API_LATEST,
+    GITEE_RELEASES_BASE,
+    build_github_asset_urls,
 )
 
 
@@ -184,13 +176,13 @@ async def check_for_updates(
     network_type = _detect_network_type()
     if network_type == "domestic":
         sources = [
-            (_GITEE_API_URL, None),
-            (_GITHUB_API_URL, {"Accept": "application/vnd.github+json"}),
+            (GITEE_API_LATEST, None),
+            (GITHUB_API_LATEST, {"Accept": "application/vnd.github+json"}),
         ]
     else:
         sources = [
-            (_GITHUB_API_URL, {"Accept": "application/vnd.github+json"}),
-            (_GITEE_API_URL, None),
+            (GITHUB_API_LATEST, {"Accept": "application/vnd.github+json"}),
+            (GITEE_API_LATEST, None),
         ]
 
     release: dict | None = None
@@ -236,12 +228,67 @@ def verify_sha256(file_path: Path, sha256_file: Path) -> bool:
     return True
 
 
+async def _download_zip_with_sha(
+    client: httpx.AsyncClient,
+    zip_url: str,
+    zip_path: Path,
+    sha256_path: Path,
+    progress_callback: Callable[[int, int], None] | None,
+) -> bool:
+    """从单个 URL 下载 zip + 对应 ``{zip_url}.sha256`` 并校验。
+
+    成功返回 True；失败（状态码非 200 / SHA256 不匹配 / 异常）清理残留返回 False。
+    供 download_update 在多源候选间逐个调用。
+    """
+    sha_url = f"{zip_url}.sha256"
+    try:
+        # 流式下载 zip（带进度回调）
+        async with client.stream("GET", zip_url) as resp:
+            if resp.status_code != 200:
+                logger.warning(f"zip 下载失败({resp.status_code})：{zip_url}")
+                return False
+            total = int(resp.headers.get("content-length", 0))
+            with open(zip_path, "wb") as f:
+                downloaded = 0
+                async for chunk in resp.aiter_bytes(chunk_size=65536):
+                    f.write(chunk)
+                    downloaded += len(chunk)
+                    if progress_callback:
+                        progress_callback(downloaded, total)
+
+        # 下载 sha256
+        sha_resp = await client.get(sha_url)
+        if sha_resp.status_code != 200:
+            logger.warning(f"sha256 下载失败({sha_resp.status_code})：{sha_url}")
+            zip_path.unlink(missing_ok=True)
+            return False
+        sha256_path.write_text(sha_resp.text, encoding="utf-8")
+
+        # 校验
+        if not verify_sha256(zip_path, sha256_path):
+            logger.warning(f"SHA256 校验失败，换源：{zip_url}")
+            zip_path.unlink(missing_ok=True)
+            sha256_path.unlink(missing_ok=True)
+            return False
+        return True
+    except Exception as e:
+        logger.warning(f"下载异常，换源：{zip_url}: {e}")
+        zip_path.unlink(missing_ok=True)
+        sha256_path.unlink(missing_ok=True)
+        return False
+
+
 async def download_update(
     update_info: UpdateInfo,
     cache_dir: Path,
     progress_callback: Callable[[int, int], None] | None = None,
 ) -> Path | None:
-    """下载更新包"""
+    """下载更新包（按网络环境多源回退）。
+
+    不再直接用 update_info.download_url（API 返回的原始直链，仅作参考），
+    而是由 env_config.build_github_asset_urls 按 tag 重拼候选列表逐个尝试，
+    确保 GitHub 来源在国内有 gh 代理加速（gh-proxy / ghproxy）。
+    """
     if not update_info.download_url:
         logger.error("下载 URL 为空")
         return None
@@ -258,43 +305,25 @@ async def download_update(
 
     zip_filename = f"VibeOCR-v{update_info.version}-win64.zip"
     zip_path = cache_dir / zip_filename
+    sha256_path = cache_dir / f"{zip_filename}.sha256"
+    network_type = _detect_network_type()
+    urls = build_github_asset_urls(
+        network_type, update_info.version, zip_filename
+    )
 
-    try:
-        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
-            # 下载 zip
-            async with client.stream("GET", update_info.download_url) as resp:
-                if resp.status_code != 200:
-                    logger.error(f"下载失败，状态码: {resp.status_code}")
-                    return None
-                total = int(resp.headers.get("content-length", 0))
-                with open(zip_path, "wb") as f:
-                    downloaded = 0
-                    async for chunk in resp.aiter_bytes(chunk_size=65536):
-                        f.write(chunk)
-                        downloaded += len(chunk)
-                        if progress_callback:
-                            progress_callback(downloaded, total)
+    async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+        for url in urls:
+            logger.info(f"尝试下载源：{url}")
+            ok = await _download_zip_with_sha(
+                client, url, zip_path, sha256_path, progress_callback
+            )
+            if ok:
+                logger.info(f"更新包下载完成：{zip_path}")
+                return zip_path
+            logger.warning(f"更新包下载/校验失败，换源：{url}")
 
-            # 下载 sha256
-            sha256_path = cache_dir / f"{zip_filename}.sha256"
-            if update_info.sha256_url:
-                sha_resp = await client.get(update_info.sha256_url)
-                if sha_resp.status_code == 200:
-                    sha256_path.write_text(sha_resp.text, encoding="utf-8")
-
-                    if not verify_sha256(zip_path, sha256_path):
-                        logger.error("下载文件 SHA256 校验失败")
-                        zip_path.unlink(missing_ok=True)
-                        sha256_path.unlink(missing_ok=True)
-                        return None
-
-        logger.info(f"更新包下载完成: {zip_path}")
-        return zip_path
-
-    except Exception as e:
-        logger.error(f"下载更新失败: {e}")
-        zip_path.unlink(missing_ok=True)
-        return None
+    logger.error("所有更新包下载源均失败")
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -499,9 +528,9 @@ class UpdateService:
         if not fetch_ok:
             network_type = _detect_network_type()
             manual_url = (
-                _GITEE_RELEASES_URL
+                GITEE_RELEASES_BASE
                 if network_type == "domestic"
-                else _GITHUB_RELEASES_URL
+                else GITHUB_RELEASES_BASE
             )
             source_label = "Gitee" if network_type == "domestic" else "GitHub"
             QMessageBox.warning(
