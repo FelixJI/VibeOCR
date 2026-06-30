@@ -132,8 +132,9 @@ jobs:
 
       - name: Mirror code to CNB (all refs)
         id: cnb_mirror
-        # actions/checkout@v5 默认浅克隆（fetch-depth:1）且只 fetch 触发的那一个 ref，
-        # 做不了 --mirror。这里显式 fetch 全部分支 + tag 到本地 refs，再 --mirror 推。
+        # actions/checkout@v5 默认浅克隆（fetch-depth:1）且只 fetch 触发的那一个 ref。
+        # 这里显式 fetch 全部分支 + tag 到本地 refs，再用 --prune + 显式 refspec 推
+        # （见下方说明，为何不用 --mirror）。
         shell: bash
         env:
           CNB_TOKEN: ${{ secrets.CNB_TOKEN }}
@@ -152,11 +153,15 @@ jobs:
             '+refs/tags/*:refs/tags/*'
 
           CNB_URL="https://oauth2:${CNB_TOKEN}@cnb.cool/feljii/VibeOCR.git"
-          # --mirror 推送所有 refs（heads + tags），并删除远端已不存在的引用。
-          # 首次推送到空仓库同样适用。CNB 网络偶发超时，最多重试 3 次。
+          # 只推 heads + tags（带 --prune：远端已删的分支/tag 同步删除，等价于
+          # --mirror 的清理语义）。不用 --mirror：它会连 refs/remotes/origin/*
+          # 这类"远程跟踪引用"一起推，被远端以 "deny updating a hidden ref"
+          # 拒收，导致 git exit 1 + 误判镜像失败。CNB 网络偶发超时，最多重试 3 次。
           status=1
           for attempt in 1 2 3; do
-            git push --mirror "$CNB_URL" && { status=0; break; }
+            git push --prune "$CNB_URL" \
+              '+refs/heads/*:refs/heads/*' \
+              '+refs/tags/*:refs/tags/*' && { status=0; break; }
             echo "CNB push 第 $attempt 次失败 (exit $?)，等待后重试..."
             [ "$attempt" -lt 3 ] && sleep $((attempt * 15))
           done
@@ -174,8 +179,9 @@ jobs:
 
       - name: Mirror code to Gitee (all refs)
         id: gitee_mirror
-        # actions/checkout@v5 默认浅克隆（fetch-depth:1）且只 fetch 触发的那一个 ref，
-        # 做不了 --mirror。这里显式 fetch 全部分支 + tag 到本地 refs，再 --mirror 推。
+        # actions/checkout@v5 默认浅克隆（fetch-depth:1）且只 fetch 触发的那一个 ref。
+        # 这里显式 fetch 全部分支 + tag 到本地 refs，再用 --prune + 显式 refspec 推
+        # （见下方说明，为何不用 --mirror）。
         shell: bash
         env:
           GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
@@ -194,11 +200,16 @@ jobs:
             '+refs/tags/*:refs/tags/*'
 
           GITEE_URL="https://oauth2:${GITEE_TOKEN}@gitee.com/felixjii/vibeocr.git"
-          # --mirror 推送所有 refs（heads + tags），并删除远端已不存在的引用。
-          # 首次推送到空仓库同样适用。Gitee 网络偶发超时，最多重试 3 次。
+          # 只推 heads + tags（带 --prune：远端已删的分支/tag 同步删除，等价于
+          # --mirror 的清理语义）。不用 --mirror：它会连 refs/remotes/origin/*
+          # 这类"远程跟踪引用"一起推，被远端以 "deny updating a hidden ref"
+          # 拒收（见 logs_76753636076 step 11），导致 git exit 1 + 误判镜像失败。
+          # Gitee 网络偶发超时，最多重试 3 次。
           status=1
           for attempt in 1 2 3; do
-            git push --mirror "$GITEE_URL" && { status=0; break; }
+            git push --prune "$GITEE_URL" \
+              '+refs/heads/*:refs/heads/*' \
+              '+refs/tags/*:refs/tags/*' && { status=0; break; }
             echo "Gitee push 第 $attempt 次失败 (exit $?)，等待后重试..."
             [ "$attempt" -lt 3 ] && sleep $((attempt * 15))
           done
@@ -230,8 +241,12 @@ jobs:
       # 失败只发 ::warning::，不阻断发版。
 
       - name: Prune old GitHub releases (keep 10)
+        # PYTHONUTF8=1 与其它 Python step 对齐：Windows runner stdout 默认 cp1252，
+        # print 中文（如 "::warning::gh 调用失败…"）会抛 UnicodeEncodeError。
+        # 此前 run 正是因漏设它，把本该是 warning 的 gh 失败升级成了致命 exit 1。
         shell: bash
         env:
+          PYTHONUTF8: "1"
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python scripts/ci_release_sync.py prune_github
 
