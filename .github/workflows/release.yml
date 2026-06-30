@@ -166,21 +166,9 @@ jobs:
           fi
           echo "CNB 代码镜像成功"
 
-      - name: Sync release assets to Gitee
-        # 创建/复用 Gitee Release，上传 主包+WebEngine 资源包 + sha256。
-        # 国内客户端按 NetworkDetector 优先走 Gitee 下载（匿名可读）。
-        # 逻辑在 scripts/ci_release_sync.py，失败发 ::warning:: 不阻断发版。
-        shell: bash
-        env:
-          PYTHONUTF8: "1"
-          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
-        run: |
-          python scripts/ci_release_sync.py sync_gitee \
-            --version "${{ steps.version.outputs.version }}" \
-            --notes release_notes.md
-
       # -------------------------------------------------------------------
-      # Gitee 代码镜像（Release 产物同步见上一步）
+      # Gitee 代码镜像（必须在 Release 同步之前：先推 commit + tag，
+      # 否则下一步 POST /releases 时 Gitee 会按旧 main 自动建 tag，指向错误 commit）
       # -------------------------------------------------------------------
       # 读 secrets.GITEE_TOKEN；token 缺失或失败时只发 ::warning::，不阻断 job。
 
@@ -219,6 +207,21 @@ jobs:
             exit 0
           fi
           echo "Gitee 代码镜像成功"
+
+      - name: Sync release assets to Gitee
+        # 创建/复用 Gitee Release，上传 主包+WebEngine 资源包 + sha256。
+        # 国内客户端按 NetworkDetector 优先走 Gitee 下载（匿名可读）。
+        # 逻辑在 scripts/ci_release_sync.py，失败发 ::warning:: 不阻断发版。
+        # 依赖上一步：tag 必须先由代码镜像推到 Gitee，否则 POST /releases 会按
+        # target_commitish(main) 凭空建 tag——此刻 Gitee 的 main 还是旧 commit。
+        shell: bash
+        env:
+          PYTHONUTF8: "1"
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+        run: |
+          python scripts/ci_release_sync.py sync_gitee \
+            --version "${{ steps.version.outputs.version }}" \
+            --notes release_notes.md
 
       # -------------------------------------------------------------------
       # 历史版本清理（GitHub 保留 10 个，Gitee 保留 3 个 Release 记录，不删 tag）

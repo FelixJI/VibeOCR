@@ -46,6 +46,19 @@ GITEE_UPLOAD_CHUNK = 1024 * 1024        # 1MB/块，每块后报进度 + 查墙�
 GITEE_UPLOAD_RETRIES = 2                # 网络错误重试次数（HTTPError 不重试）
 
 
+def _gitee_auth_header(token: str) -> dict[str, str]:
+    """Gitee v5 REST 鉴权头。
+
+    用 ``Authorization: token <token>`` 替代 URL query 里的 access_token，
+    避免 token 出现在 URL / CI 日志 / 代理日志里。
+
+    注意：附件上传（attach_files，multipart/form-data）不走这里——multipart 时
+    Gitee 不读 query token，access_token 必须作为 multipart body 的 form 字段，
+    见 upload_asset_streaming。
+    """
+    return {"Authorization": f"token {token}"}
+
+
 # ---------------------------------------------------------------------------
 # 纯函数（可测）
 # ---------------------------------------------------------------------------
@@ -229,9 +242,10 @@ def cmd_sync_gitee(args: argparse.Namespace) -> int:
         raise last_err  # 不可达
 
     def _gitee_url(path: str) -> str:
-        # Gitee v5 用 access_token query 参数鉴权
-        sep = "&" if "?" in path else "?"
-        return f"{_GITEE_API}{path}{sep}access_token={token}"
+        # REST 端点 URL（不带 token；鉴权走 Authorization header，见下方 headers=）
+        return f"{_GITEE_API}{path}"
+
+    auth = _gitee_auth_header(token)
 
     # 1) 创建 Release；已存在则按 tag 复用并 PATCH 更新 body（补下载地址）
     release_id = None
@@ -242,7 +256,7 @@ def cmd_sync_gitee(args: argparse.Namespace) -> int:
         "target_commitish": "main",
         "prerelease": "false",
     }).encode("utf-8")
-    create_req = urllib.request.Request(_gitee_url("/releases"), data=create_data, method="POST")
+    create_req = urllib.request.Request(_gitee_url("/releases"), data=create_data, method="POST", headers=auth)
     create_req.timeout = 60
     try:
         resp = request_with_retry(create_req)
@@ -253,7 +267,7 @@ def cmd_sync_gitee(args: argparse.Namespace) -> int:
     except urllib.error.HTTPError:
         # 已存在则按 tag 查询复用
         get_req = urllib.request.Request(
-            _gitee_url(f"/releases/tags/{tag}"), method="GET"
+            _gitee_url(f"/releases/tags/{tag}"), method="GET", headers=auth
         )
         get_req.timeout = 60
         resp2 = request_with_retry(get_req)
@@ -264,7 +278,7 @@ def cmd_sync_gitee(args: argparse.Namespace) -> int:
         try:
             patch_data = urllib.parse.urlencode({"body": body}).encode("utf-8")
             patch_req = urllib.request.Request(
-                _gitee_url(f"/releases/{release_id}"), data=patch_data, method="PATCH"
+                _gitee_url(f"/releases/{release_id}"), data=patch_data, method="PATCH", headers=auth
             )
             patch_req.timeout = 60
             r = request_with_retry(patch_req)
@@ -385,10 +399,12 @@ def cmd_prune_gitee(args: argparse.Namespace) -> int:
         print("::warning::未配置 GITEE_TOKEN，跳过 Gitee Release 清理")
         return 0
 
-    # Gitee v5 列出 releases（含 draft/prerelease 字段）
+    # Gitee v5 列出 releases（含 draft/prerelease 字段）。鉴权走 header，
+    # 不再把 token 拼进 URL（与 cmd_sync_gitee 保持一致）。
+    auth = _gitee_auth_header(token)
     list_req = urllib.request.Request(
-        f"{_GITEE_API}/releases?access_token={token}&page=1&per_page=100",
-        method="GET",
+        f"{_GITEE_API}/releases?page=1&per_page=100",
+        method="GET", headers=auth,
     )
     list_req.timeout = 60
     try:
@@ -409,7 +425,7 @@ def cmd_prune_gitee(args: argparse.Namespace) -> int:
         tag = r.get("tag_name", r.get("tagName"))
         print(f"  删除 Gitee Release 记录: {tag} (id={rid})")
         dreq = urllib.request.Request(
-            f"{_GITEE_API}/releases/{rid}?access_token={token}", method="DELETE"
+            f"{_GITEE_API}/releases/{rid}", method="DELETE", headers=auth
         )
         dreq.timeout = 60
         try:
