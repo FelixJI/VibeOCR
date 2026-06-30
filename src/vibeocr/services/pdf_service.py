@@ -8,7 +8,7 @@ from __future__ import annotations
 import logging
 import shutil
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 import fitz
 import numpy as np
@@ -20,12 +20,29 @@ from vibeocr.utils.cjk_font_resolver import _CJK_RESOLVER
 logger = logging.getLogger(__name__)
 
 
+class SaveResult(NamedTuple):
+    rewritten_pages: list[int]
+    path: str | None
+    # 全量压缩覆盖原文件时，doc 必须关闭重开（Windows 锁），新 doc 通过此字段
+    # 返回，由调用方更新 session.doc 引用。incremental/另存为时为 None（doc 不变）。
+    new_doc: "fitz.Document | None" = None
+
+
 class PdfService:
+    # 词级 redact 的最大循环轮数。绝大多数页 1 轮清零；仅嵌套/合并异常的
+    # 文本结构需多轮。内部常量，不暴露为用户配置。
+    _DELETE_LAYER_MAX_ROUNDS = 5
+
     # ---- open / save ------------------------------------------------
 
     @staticmethod
     def open_doc(file_path: str) -> tuple[fitz.Document, PdfDocument]:
-        """打开 PDF 并返回 (fitz.Document, PdfDocument)。"""
+        """打开 PDF 并返回 (fitz.Document, PdfDocument)。
+
+        主线程只做 fitz.open + 创建轻量占位页（rotation=0，不逐页读 doc[i]）。
+        真实 rotation 及文字层信息由 PdfLoadWorker 在后台逐页填充，
+        避免打开大 PDF 时主线程遍历每页冻结 UI。
+        """
         if not Path(file_path).exists():
             raise FileNotFoundError(f"文件不存在: {file_path}")
 
@@ -35,11 +52,10 @@ class PdfService:
             raise RuntimeError("不支持加密 PDF 文件")
 
         pdf_document = PdfDocument(file_path=file_path)
-        # 创建轻量占位页面，避免在主线程上对每页执行 detect_text_layers /
-        # is_page_scanned 等耗时操作。详细的页面信息由 PdfLoadWorker 在后台逐页填充。
+        # 创建轻量占位页面（rotation=0），避免在主线程上逐页读 doc[i] 解析页对象。
+        # 详细的页面信息（rotation / 文字层 / is_scanned）由 PdfLoadWorker 在后台逐页填充。
         pdf_document.pages = [
-            PdfPageInfo(page_index=i, rotation=doc[i].rotation)
-            for i in range(doc.page_count)
+            PdfPageInfo(page_index=i) for i in range(doc.page_count)
         ]
         return doc, pdf_document
 
@@ -48,11 +64,32 @@ class PdfService:
         doc: fitz.Document,
         pdf_document: PdfDocument,
         path: str | None = None,
-    ) -> None:
+        pdf_settings: object | None = None,
+    ) -> "fitz.Document | None":
+        """落盘 PDF，返回覆盖保存后的新 doc（全量压缩时 doc 已重开）。
+
+        覆盖保存（path is None）按 compress_on_save 分流：True（默认）= 全量
+        压缩（garbage=4 + deflate + clean）。PyMuPDF 不能全量保存覆盖自身已打开
+        源文件，且 Windows 锁定打开的文件，因此全量压缩采用
+        tobytes→close→write→reopen：先取压缩字节、关闭释放文件锁、写回原路径、
+        重新打开并返回新 doc（调用方需更新其 doc 引用，如 session.doc）。
+        False = 增量追加快路径（incremental，doc 不变，返回 None）。
+        另存为（path 指定）统一 deflate + clean（新文件，doc 不变）。
+        """
+        from vibeocr.models.pdf_ocr_options import PdfGlobalSettings
+
+        settings = pdf_settings if pdf_settings is not None else PdfGlobalSettings()
+        compress = getattr(settings, "compress_on_save", True)
+
         if path is None:
             save_path = pdf_document.file_path
             if save_path is None:
-                return
+                return None
+            if compress:
+                new_doc = PdfService._compress_in_place(doc, save_path)
+                pdf_document.is_modified = False
+                return new_doc
+            # 增量快路径：incremental 可原地追加，doc 不变
             backup_path = save_path + ".bak"
             shutil.copy2(save_path, backup_path)
             try:
@@ -62,9 +99,128 @@ class PdfService:
                 shutil.copy2(backup_path, save_path)
                 Path(backup_path).unlink(missing_ok=True)
                 raise
+            pdf_document.is_modified = False
+            return None
         else:
-            doc.save(path, deflate=True)
+            doc.save(path, deflate=True, clean=True)
+            pdf_document.is_modified = False
+            return None
+
+    @staticmethod
+    def _compress_in_place(
+        doc: fitz.Document, save_path: str
+    ) -> "fitz.Document":
+        """全量压缩覆盖原文件（Windows 兼容），返回重开后的新 doc。
+
+        流程：先备份原文件 → tobytes(garbage+deflate+clean) 取压缩字节 →
+        关闭 doc 释放文件锁 → 写回原路径 → 重新打开。失败时用备份回滚
+        （但 doc 已关闭，无法恢复原 doc 对象，调用方需处理）。
+
+        关闭/重开是必须的：Windows 锁定被 fitz 打开的文件，不关 doc 无法覆盖。
+        """
+        backup_path = save_path + ".bak"
+        shutil.copy2(save_path, backup_path)
+        try:
+            data = doc.tobytes(garbage=4, deflate=True, clean=True)
+            doc.close()
+            with open(save_path, "wb") as f:
+                f.write(data)
+            new_doc = fitz.open(save_path)
+            Path(backup_path).unlink(missing_ok=True)
+            return new_doc
+        except Exception:
+            # 失败回滚：doc 可能已关闭，原文件从备份恢复
+            try:
+                doc.close()
+            except Exception:
+                pass
+            shutil.copy2(backup_path, save_path)
+            Path(backup_path).unlink(missing_ok=True)
+            raise
+
+    @staticmethod
+    def save_with_rewrite(
+        doc: fitz.Document,
+        pdf_document: PdfDocument,
+        path: str | None = None,
+        pdf_settings: object | None = None,
+    ) -> SaveResult:
+        """对所有有 OCR 块的页重写文字层后落盘（保存/另存为共用）。
+
+        rewrite 阶段用词级 redact（delete_text_layers 循环验证），并对全文档
+        共享单一子集字体（整文档聚合字符一次解析，避免每页一份字体）。
+        落盘覆盖原文件时：有结构改动或 compress_on_save=True → 全量压缩
+        （garbage+deflate+clean，临时文件原子替换）；否则 incremental（快）。
+        另存为永远 deflate+clean。
+
+        Args:
+            doc: fitz.Document 实例。
+            pdf_document: PdfDocument 状态对象。
+            path: None=覆盖原文件；str=另存为到该路径。
+            pdf_settings: PdfGlobalSettings（rewrite 用）。
+
+        Returns:
+            SaveResult(rewritten_pages, path)。
+        """
+        from vibeocr.models.pdf_ocr_options import PdfGlobalSettings
+
+        settings = pdf_settings if pdf_settings is not None else PdfGlobalSettings()
+        compress = getattr(settings, "compress_on_save", True)
+
+        # 整文档一次聚合子集字体：把所有有 OCR 块的页字符汇成一个子集，
+        # 全文档共享单一字体对象，避免每页一份独立子集放大体积。
+        # （探测失败为 None → rewrite_text_layer 内部回退 china-s。）
+        target_pages = [
+            info for info in pdf_document.pages if info.ocr_text_blocks
+        ]
+        shared_font_path: str | None = None
+        if target_pages:
+            all_chars = "".join(
+                b.text for info in target_pages for b in info.ocr_text_blocks if b.text
+            )
+            shared_font_path = _CJK_RESOLVER.resolve(all_chars)
+
+        rewritten: list[int] = []
+        for info in target_pages:
+            PdfService.rewrite_text_layer(
+                doc,
+                pdf_document,
+                info.page_index,
+                info.ocr_text_blocks,
+                info.ocr_preproc_angle,
+                pdf_settings=settings,
+                font_path=shared_font_path,
+            )
+            rewritten.append(info.page_index)
+
+        new_doc: "fitz.Document | None" = None
+        if path is None:
+            save_path = pdf_document.file_path
+            if save_path is None:
+                pdf_document.is_modified = False
+                pdf_document.has_structural_change = False
+                return SaveResult(rewritten, None)
+            # 需要全量压缩（结构改动或 compress_on_save）→ _compress_in_place
+            # （Windows 锁要求 close+write+reopen，返回新 doc）。
+            need_full = pdf_document.has_structural_change or compress
+            if need_full:
+                new_doc = PdfService._compress_in_place(doc, save_path)
+            else:
+                backup_path = save_path + ".bak"
+                shutil.copy2(save_path, backup_path)
+                try:
+                    doc.save(save_path, incremental=True, encryption=0)
+                    Path(backup_path).unlink(missing_ok=True)
+                except Exception:
+                    shutil.copy2(backup_path, save_path)
+                    Path(backup_path).unlink(missing_ok=True)
+                    raise
+        else:
+            doc.save(path, deflate=True, clean=True)
+
         pdf_document.is_modified = False
+        pdf_document.has_structural_change = False
+        return SaveResult(rewritten, path, new_doc)
 
     # ---- render -----------------------------------------------------
 
@@ -223,6 +379,7 @@ class PdfService:
                 doc.delete_page(idx)
         pdf_document.pages = remaining
         pdf_document.is_modified = True
+        pdf_document.has_structural_change = True
 
     @staticmethod
     def insert_blank_page(
@@ -235,6 +392,7 @@ class PdfService:
         insert_at = after_index + 1
         doc.new_page(pno=insert_at, width=width, height=height)
         pdf_document.is_modified = True
+        pdf_document.has_structural_change = True
         PdfService.build_page_infos(doc, pdf_document)
 
     @staticmethod
@@ -249,6 +407,7 @@ class PdfService:
         doc.insert_pdf(src, start_at=insert_at)
         src.close()
         pdf_document.is_modified = True
+        pdf_document.has_structural_change = True
         PdfService.build_page_infos(doc, pdf_document)
 
     @staticmethod
@@ -267,6 +426,7 @@ class PdfService:
         pages.insert(to_index, page_info)
         pdf_document.pages = pages
         pdf_document.is_modified = True
+        pdf_document.has_structural_change = True
 
     @staticmethod
     def reorder_pages(
@@ -287,6 +447,7 @@ class PdfService:
         doc.select(new_order)
         pdf_document.pages = [pdf_document.pages[i] for i in new_order]
         pdf_document.is_modified = True
+        pdf_document.has_structural_change = True
 
     # ---- text layer mutations ---------------------------------------
 
@@ -354,6 +515,7 @@ class PdfService:
         text_blocks: list,
         preproc_angle: int,
         settings: object,
+        font_path: str | None = None,
     ) -> tuple[int, int]:
         """将文本块逐个写入指定页面（纯写入，不修改 PdfPageInfo 元信息）。
 
@@ -366,6 +528,9 @@ class PdfService:
             text_blocks: TextBlock 列表（归一化 [0,1000] bbox）。
             preproc_angle: OCR 预处理旋转角度（用于坐标逆旋转）。
             settings: PdfGlobalSettings 实例。
+            font_path: 调用方预先解析的共享子集字体路径。None 时按本页字符内部
+                解析子集（逐页 OCR 用）；非 None 时直接复用（保存时整文档共享
+                单一子集字体，避免每页一份字体对象放大体积）。
 
         Returns:
             (written, skipped) 成功写入与被跳过的文本块数量。
@@ -420,10 +585,14 @@ class PdfService:
         # 的 md5 前 4 字节派生名字，保证同页两次写入（add→rewrite）不同字符集
         # 的子集不冲突。子集路径是 tempfile 随机名，fontname 随之每进程不同，
         # 但本进程内同子集（同路径）名字稳定即可。
+        #
+        # font_path 参数非 None 时（保存路径整文档共享子集），直接复用调用方
+        # 传入的子集，跳过本页解析——避免每页一份独立子集放大体积。
         import hashlib
 
-        all_chars = "".join(b.text for b in text_blocks if b.text)
-        font_path = _CJK_RESOLVER.resolve(all_chars)
+        if font_path is None:
+            all_chars = "".join(b.text for b in text_blocks if b.text)
+            font_path = _CJK_RESOLVER.resolve(all_chars)
         if font_path is not None:
             fontname = "F" + hashlib.md5(font_path.encode()).hexdigest()[:4]
         else:
@@ -535,6 +704,7 @@ class PdfService:
         text_blocks: list,
         preproc_angle: int,
         pdf_settings: object | None = None,
+        font_path: str | None = None,
     ) -> tuple[int, int]:
         """删除整页文字层后，按 text_blocks 全量重写。
 
@@ -548,6 +718,8 @@ class PdfService:
             text_blocks: 编辑后的 TextBlock 列表（归一化 [0,1000] bbox）。
             preproc_angle: OCR 预处理旋转角度。
             pdf_settings: PdfGlobalSettings 实例（None 则使用默认值）。
+            font_path: 调用方预先解析的共享子集字体路径（保存时整文档共享单一
+                子集）。None 时按本页字符内部解析子集。
 
         Returns:
             (written, skipped) 成功写入与被跳过的文本块数量。
@@ -557,12 +729,12 @@ class PdfService:
         settings = pdf_settings if pdf_settings is not None else PdfGlobalSettings()
 
         # 先删除旧文字层（redact 全页文字，保留图片）
-        # 注意：delete_text_layers 会 update_page_info 并清空 ocr_text_blocks，
+        # 注意：delete_text_layers 会 _clear_page_layer_info 并清空 ocr_text_blocks，
         # 所以必须在删除后重新设置 ocr_text_blocks。
         PdfService.delete_text_layers(doc, pdf_document, page_index)
 
         written, skipped = PdfService._write_blocks_to_page(
-            doc, page_index, text_blocks, preproc_angle, settings
+            doc, page_index, text_blocks, preproc_angle, settings, font_path=font_path
         )
 
         # 重设缓存（delete 清空了）
@@ -579,26 +751,58 @@ class PdfService:
         doc: fitz.Document,
         pdf_document: PdfDocument,
         page_index: int,
-    ) -> None:
+    ) -> tuple[int, int, bool]:
+        """删除整页文字层（词级 redact + 循环验证至清零）。
+
+        用 get_text("words") 取词级 bbox 建 redact（比 block 级精确，避免
+        嵌套/合并文本块遗漏）。每轮 redact 后重新检测残留，仅当仍有文字才
+        继续下一轮，最多 _DELETE_LAYER_MAX_ROUNDS 轮（防死循环）。
+
+        Returns:
+            (initial_word_count, rounds_used, has_residual)
+            initial_word_count: 初始词数（删除前）；rounds_used: 实际执行轮数；
+            has_residual: 多轮后是否仍有残留（True 需 UI 提示用户）。
+        """
         page = doc[page_index]
-        page_dict: dict[str, Any] = page.get_text("dict")  # type: ignore[assignment]
-        blocks: list[dict[str, Any]] = page_dict["blocks"]
+        words = page.get_text("words")
+        if not words:
+            # 无文字 → 不做 redact，直接清状态
+            PdfService._clear_page_layer_info(pdf_document, page_index)
+            return 0, 0, False
 
-        has_text = any(block["type"] == 0 for block in blocks)
-        if not has_text:
-            return
+        initial_word_count = len(words)
+        rounds_used = 0
+        for round_idx in range(PdfService._DELETE_LAYER_MAX_ROUNDS):
+            current_words = page.get_text("words")
+            if not current_words:
+                break
+            for w in current_words:
+                page.add_redact_annot(fitz.Rect(w[:4]), fill=None)
+            page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_NONE)  # type: ignore[attr-defined]
+            rounds_used = round_idx + 1
 
-        for block in blocks:
-            if block["type"] != 0:
-                continue
-            rect = fitz.Rect(block["bbox"])
-            page.add_redact_annot(rect, fill=None)
+        has_residual = bool(page.get_text().strip())
+        if has_residual:
+            logger.warning(
+                "page %d 经 %d 轮 redact 仍有残留: %r",
+                page_index,
+                rounds_used,
+                page.get_text()[:50],
+            )
 
-        page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_NONE)  # type: ignore[attr-defined]
         pdf_document.is_modified = True
-        PdfService.update_page_info(doc, pdf_document, page_index)
-        # 清空 OCR 原始块缓存（文字层已删，缓存的块不再对应任何 PDF 内容）
+        PdfService._clear_page_layer_info(pdf_document, page_index)
+        return initial_word_count, rounds_used, has_residual
+
+    @staticmethod
+    def _clear_page_layer_info(pdf_document: PdfDocument, page_index: int) -> None:
+        """删除文字层后清空页状态（替代旧的 update_page_info 冗余重检）。"""
+        if page_index >= len(pdf_document.pages):
+            return
         info = pdf_document.pages[page_index]
+        info.has_text_layer = False
+        info.text_layers = []
+        info.is_scanned = False
         info.ocr_text_blocks = []
         info.ocr_preproc_angle = 0
 
@@ -632,11 +836,15 @@ class PdfService:
         pw, ph = page_rect.width, page_rect.height
 
         if preproc_angle == 90:
-            # 逆时针 90°: y→x, (1-x)→y
-            x0 = ny0 * pw
-            y0 = (1 - nx1) * ph
-            x1 = ny1 * pw
-            y1 = (1 - nx0) * ph
+            # PaddleOCR 实测约定（scripts/verify_orient_roundtrip2/3.py）：
+            # reported angle == 内容相对正向「顺时针」偏转度数；output_img 是把图
+            # 「逆时针」旋转 angle 度得到的正向图，bbox 在 output(正向)空间。
+            # 还原回「显示空间」(= 顺时针偏转 angle 度)：把 output bbox「顺时针 90°」。
+            # 顺时针 90°: (1-y)→x, x→y
+            x0 = (1 - ny1) * pw
+            y0 = nx0 * ph
+            x1 = (1 - ny0) * pw
+            y1 = nx1 * ph
         elif preproc_angle == 180:
             # 中心对称
             x0 = (1 - nx1) * pw
@@ -644,11 +852,11 @@ class PdfService:
             x1 = (1 - nx0) * pw
             y1 = (1 - ny0) * ph
         elif preproc_angle == 270:
-            # 顺时针 90° (= 逆时针 270°): (1-y)→x, x→y
-            x0 = (1 - ny1) * pw
-            y0 = nx0 * ph
-            x1 = (1 - ny0) * pw
-            y1 = nx1 * ph
+            # 顺时针 270° = 逆时针 90°: y→x, (1-x)→y
+            x0 = ny0 * pw
+            y0 = (1 - nx1) * ph
+            x1 = ny1 * pw
+            y1 = (1 - nx0) * ph
         else:
             # 0° 或未知角度：直接映射
             x0 = nx0 * pw

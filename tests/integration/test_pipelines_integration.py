@@ -70,7 +70,7 @@ class TestPipelineIntegration:
         options = OCROptions()
         assert options.pipeline == OCRPipeline.OCR
         assert options.use_doc_orientation_classify is True
-        assert options.use_doc_unwarping is True
+        assert options.use_doc_unwarping is False
         assert options.use_textline_orientation is False
 
     def test_options_copy(self):

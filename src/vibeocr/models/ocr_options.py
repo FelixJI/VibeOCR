@@ -28,7 +28,7 @@ class OCROptions:
 
     # === 通用预处理选项（OCR + PP-StructureV3 共享）===
     use_doc_orientation_classify: bool = True  # 文档方向分类（0/90/180/270度）
-    use_doc_unwarping: bool = True  # 文档扭曲矫正
+    use_doc_unwarping: bool = False  # 文档扭曲矫正（默认关闭：PDF 文字层场景多无此需求，开启每页多跑一个矫正网络）
     use_textline_orientation: bool = False  # 文本行方向分类（0/180度）
 
     # === PP-StructureV3 专用 ===
@@ -153,7 +153,7 @@ class OCROptions:
         return cls(
             pipeline=pipeline,
             use_doc_orientation_classify=data.get("use_doc_orientation_classify", True),
-            use_doc_unwarping=data.get("use_doc_unwarping", True),
+            use_doc_unwarping=data.get("use_doc_unwarping", False),
             use_textline_orientation=data.get("use_textline_orientation", False),
             use_table_recognition=data.get("use_table_recognition", True),
             use_formula_recognition=data.get("use_formula_recognition", True),

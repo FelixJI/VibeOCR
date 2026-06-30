@@ -313,12 +313,21 @@ class PdfTab(QWidget):
         mgr.session_removed.connect(self._on_session_removed)
         mgr.active_changed.connect(self._on_active_changed)
         mgr.page_loaded.connect(self._on_page_loaded)
+        mgr.load_progress.connect(self._on_load_progress)
         mgr.load_done.connect(self._on_load_done)
         mgr.ocr_page_done.connect(self._on_ocr_page_result)
         mgr.ocr_progress.connect(self._on_ocr_progress_update)
         mgr.ocr_done.connect(self._on_ocr_finished)
         mgr.ocr_stats_ready.connect(self._on_ocr_stats_ready)
         mgr.mineru_models_status.connect(self._on_mineru_models_status)
+        mgr.mutate_progress.connect(self._on_mutate_progress)
+        mgr.mutate_done.connect(self._on_mutate_done)
+        mgr.mutate_failed.connect(self._on_mutate_failed)
+        mgr.save_done.connect(self._on_save_done)
+        mgr.delete_layer_done.connect(self._on_delete_layer_done)
+        mgr.render_progress.connect(self._on_render_progress_update)
+        mgr.export_progress.connect(self._on_export_progress)
+        mgr.export_done.connect(self._on_export_done)
 
     # ---- splitter layout persistence --------------------------------
 
@@ -399,6 +408,12 @@ class PdfTab(QWidget):
         else:
             self._refresh_thumbnails()
 
+    def _on_load_progress(self, file_path: str, loaded: int, total: int) -> None:
+        session = self._session_mgr.active_session
+        if session is None or session.file_path != file_path:
+            return
+        self._status_label.setText(f"{Path(file_path).name} 正在加载 {loaded}/{total} 页…")
+
     def _on_load_done(self, file_path: str) -> None:
         session = self._session_mgr.active_session
         if session and session.file_path == file_path:
@@ -423,6 +438,82 @@ class PdfTab(QWidget):
         # 下载期间显示不确定进度条（无具体百分比）
         self._progress_bar.setRange(0, 0)
         self._progress_bar.setVisible(True)
+
+    def _on_render_progress_update(self, file_path: str, current: int, total: int) -> None:
+        """OCR 渲染前置阶段进度（render worker 渲染页面，OCR 未开始）。"""
+        session = self._session_mgr.active_session
+        if session is None or session.file_path != file_path:
+            return
+        self._progress_bar.setRange(0, total)
+        self._progress_bar.setValue(current)
+        self._status_label.setText(f"正在渲染页面 {current}/{total}…")
+
+    def _on_mutate_progress(self, file_path: str, current: int, total: int) -> None:
+        session = self._session_mgr.active_session
+        if session is None or session.file_path != file_path:
+            return
+        if total > 0:
+            self._progress_bar.setRange(0, total)
+            self._progress_bar.setValue(current)
+            self._status_label.setText(f"正在处理 {current}/{total}…")
+
+    def _on_mutate_done(self, file_path: str, result) -> None:
+        """mutate 逐页/整体完成。逐页 payload 更新 grid 格子。"""
+        session = self._session_mgr.active_session
+        if session is None or session.file_path != file_path:
+            return
+        if isinstance(result, dict) and "page" in result:
+            self._update_layer_grid_page(result["page"])
+
+    def _on_mutate_failed(self, file_path: str, error: str) -> None:
+        session = self._session_mgr.active_session
+        if session is None or session.file_path != file_path:
+            return
+        self._progress_bar.setVisible(False)
+        self._set_file_buttons_enabled(True)
+        QMessageBox.warning(self, "操作失败", error)
+
+    def _on_delete_layer_done(self, file_path: str, residual_pages: list) -> None:
+        session = self._session_mgr.active_session
+        if session is None or session.file_path != file_path:
+            return
+        self._progress_bar.setVisible(False)
+        self._set_file_buttons_enabled(True)
+        self._update_status()
+        if residual_pages:
+            QMessageBox.warning(
+                self,
+                "删除文字层",
+                f"第 {', '.join(str(p + 1) for p in residual_pages)} 页经多轮删除"
+                f"仍有少量残留文字，\n可能是特殊字体或嵌入图片文字，建议手动检查。",
+            )
+        else:
+            self._status_label.setText("文字层删除完成")
+
+    def _on_save_done(self, file_path: str) -> None:
+        session = self._session_mgr.active_session
+        if session is None or session.file_path != file_path:
+            return
+        self._progress_bar.setVisible(False)
+        self._set_file_buttons_enabled(True)
+        self._btn_open.setEnabled(True)
+        self._btn_add_file.setEnabled(True)
+        self._update_status()
+        self._status_label.setText(f"{Path(file_path).name} 保存完成")
+
+    def _on_export_progress(self, current: int, total: int, file_name: str) -> None:
+        self._progress_bar.setRange(0, total)
+        self._progress_bar.setValue(current)
+        self._status_label.setText(f"正在导出 {file_name} ({current}/{total})…")
+
+    def _on_export_done(self, exported_paths: list) -> None:
+        self._progress_bar.setVisible(False)
+        self._set_file_buttons_enabled(True)
+        QMessageBox.information(
+            self,
+            "批量导出完成",
+            f"成功导出 {len(exported_paths)} 个文件。",
+        )
 
     def _on_ocr_finished(self, file_path: str, success: int, fail: int) -> None:
         self._progress_bar.setVisible(False)
@@ -819,15 +910,14 @@ class PdfTab(QWidget):
         session = self._session_mgr.active_session
         if session is None:
             return
-        try:
-            # 保存前：把编辑过的 OCR 块重写回 PDF 文字层（单一信源 → 文件）
-            self._session_mgr.rewrite_modified_pages()
-            with session.doc_lock:
-                PdfService.save(session.doc, session.pdf_document)
-        except Exception as e:
-            QMessageBox.warning(self, "保存失败", str(e))
-            return
-        self._update_status()
+        self._set_file_buttons_enabled(False)
+        self._btn_open.setEnabled(False)
+        self._btn_add_file.setEnabled(False)
+        self._progress_bar.setRange(0, 0)  # 不确定进度（rewrite+落盘）
+        self._progress_bar.setVisible(True)
+        self._status_label.setText("正在保存…")
+        pdf_settings, _ = self._load_ocr_prefs()
+        self._session_mgr.save_async(path=None, pdf_settings=pdf_settings)
 
     def _on_save_as(self) -> None:
         session = self._session_mgr.active_session
@@ -836,15 +926,14 @@ class PdfTab(QWidget):
         path, _ = QFileDialog.getSaveFileName(self, "另存为", "", "PDF 文件 (*.pdf)")
         if not path:
             return
-        try:
-            # 另存为同样先重写编辑过的块
-            self._session_mgr.rewrite_modified_pages()
-            with session.doc_lock:
-                PdfService.save(session.doc, session.pdf_document, path)
-        except Exception as e:
-            QMessageBox.warning(self, "保存失败", str(e))
-            return
-        self._update_status()
+        self._set_file_buttons_enabled(False)
+        self._btn_open.setEnabled(False)
+        self._btn_add_file.setEnabled(False)
+        self._progress_bar.setRange(0, 0)
+        self._progress_bar.setVisible(True)
+        self._status_label.setText("正在保存…")
+        pdf_settings, _ = self._load_ocr_prefs()
+        self._session_mgr.save_async(path=path, pdf_settings=pdf_settings)
 
     def _on_export_all(self) -> None:
         mgr = self._session_mgr
@@ -857,12 +946,12 @@ class PdfTab(QWidget):
         if not dir_path:
             return
 
-        exported = mgr.export_all_modified(dir_path)
-        QMessageBox.information(
-            self,
-            "批量导出完成",
-            f"成功导出 {len(exported)} 个文件到:\n{dir_path}",
-        )
+        self._set_file_buttons_enabled(False)
+        self._progress_bar.setRange(0, len(modified_paths))
+        self._progress_bar.setValue(0)
+        self._progress_bar.setVisible(True)
+        self._status_label.setText("正在批量导出…")
+        mgr.export_all_async(dir_path)
 
     # ---- page operations --------------------------------------------
 
@@ -1254,13 +1343,13 @@ class PdfTab(QWidget):
         if reply != QMessageBox.StandardButton.Yes:
             return
 
-        for idx in indices:
-            with session.doc_lock:
-                PdfService.delete_text_layers(session.doc, session.pdf_document, idx)
-            # 文字层是隐形层，删除不影响缩略图视觉 → 不重建缩略图。
-            # 逐页把网格格子变灰（增量，保留用户选中）。
-            self._update_layer_grid_page(idx)
-        self._update_status()
+        # 异步：后台逐页词级 redact，主线程不阻塞
+        self._progress_bar.setRange(0, len(indices))
+        self._progress_bar.setValue(0)
+        self._progress_bar.setVisible(True)
+        self._set_file_buttons_enabled(False)
+
+        self._session_mgr.delete_text_layers_async(indices)
 
     def _on_preview_text_layer(self) -> None:
         """打开预览窗口浏览文字层（可翻页，无文字层页显示纯页面图）。"""

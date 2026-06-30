@@ -1,5 +1,33 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- feat(worker): 新增 PdfRenderWorker / PdfOcrWorker / PdfMutateWorker /
+  PdfExportWorker，PDF 渲染/识别/结构操作/批量导出改为后台线程 + queue 背压
+- feat(manager): pdf_session_manager 异步编排——start_ocr（render+ocr 流式）、
+  save_async / delete_text_layers_async / export_all_async 等 mutate 异步化
+- feat(ui): PdfTab 接入 manager 异步信号；保存/另存为/批量导出/删除文字层改异步
+  并带加载进度提示
+
+### Fixed
+- fix(ocr): NVML/pynvml 不可用时 PDF 批量识别退化为逐张（4090 占用仅 20-40%）
+  - `_read_free_vram_mb` NVML 失败时增加 `paddle.device.cuda` 二级兜底读取显存
+  - `estimate_gpu_batch_size` 显存探测失败（free_mb=0）但 GPU 模式下返回
+    `GPU_FALLBACK_BATCH_SIZE=4` 而非 1，避免大显存卡被迫逐张识别
+- fix(ocr): PaddleOCR 3.x 构造时未传 `text_recognition_batch_size`，GPU 模式
+  默认注入 8 以喂满显卡
+- fix(pdf-service): 删除文字层改为词级 redact + 循环验证至清零，避免残留
+- fix(pdf-service): 文档方向分类 90/270 文字层逆变换公式写反
+
+### Changed
+- feat(ocr): `OCROptions.use_doc_unwarping` 默认改为 `False`（PDF 文字层场景
+  多无扭曲矫正需求，开启每页多跑一个矫正网络）
+- feat(pdf-service): `save_with_rewrite` 按结构改动分流保存策略；
+  `PdfDocument` 增加 `has_structural_change` 标志
+- perf(pdf-service): OCR 文字层保存全量压缩 + 整文档共享子集字体，消除体积膨胀
+- perf(pdf-service): `open_doc` 砍掉主线程 rotation 遍历
+
 ## [0.3.1] - 2026-06-29
 
 ### Added

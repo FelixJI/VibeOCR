@@ -27,6 +27,11 @@ class PdfGlobalSettings:
         font_size_shrink_factor: 每次重试的字号缩放因子。
         min_font_size: 字号下限（pt）。矮行/窄框导致字号过小时夹紧到此值，
             确保隐形文字层仍可被阅读器提取，避免因“塞不进”整块丢弃。
+        compress_on_save: 覆盖保存时的压缩策略。True（默认）= 全量重写
+            （garbage=4 + deflate + clean + 临时文件原子替换），体积最优，代价是
+            大文件保存稍慢；False = 增量追加快路径（incremental，快但大，保留
+            旧行为）。OCR 加文字层后建议 True，否则字体/文字流不压缩、旧对象
+            不回收，720MB 文档可膨胀上百 MB。
     """
 
     render_dpi: int = 300
@@ -36,6 +41,7 @@ class PdfGlobalSettings:
     font_size_retry_count: int = 5
     font_size_shrink_factor: float = 0.75
     min_font_size: float = 4.0
+    compress_on_save: bool = True
 
     def to_dict(self) -> dict:
         return {
@@ -46,6 +52,7 @@ class PdfGlobalSettings:
             "font_size_retry_count": self.font_size_retry_count,
             "font_size_shrink_factor": self.font_size_shrink_factor,
             "min_font_size": self.min_font_size,
+            "compress_on_save": self.compress_on_save,
         }
 
     @classmethod
@@ -60,6 +67,7 @@ class PdfGlobalSettings:
             font_size_retry_count=data.get("font_size_retry_count", 5),
             font_size_shrink_factor=data.get("font_size_shrink_factor", 0.75),
             min_font_size=data.get("min_font_size", 4.0),
+            compress_on_save=data.get("compress_on_save", True),
         )
 
     def adjust_dpi(self, page_width: float, page_height: float) -> int:

@@ -43,6 +43,7 @@ class PdfDocument:
     file_path: str | None = None
     pages: list[PdfPageInfo] = field(default_factory=list)
     is_modified: bool = False
+    has_structural_change: bool = False  # 结构性改动（删页/插页/重排），影响保存策略
     render_dpi: int = 300
     thumbnail_dpi: int = 96
 

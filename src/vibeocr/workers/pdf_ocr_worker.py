@@ -1,6 +1,13 @@
 """PDF 异步 OCR Worker — 在后台线程执行 OCR 识别。
 
-接收预渲染的 numpy 数组列表，不直接访问 fitz.Document。
+两种消费模式：
+
+- **batch 模式**（默认，向后兼容）：构造时传入预渲染的 ``pages`` 列表，
+  一次性识别全部页。适合页数少、内存充足的场景。
+- **streaming 流式模式**：构造时传入 ``render_queue``，从队列取
+  ``(page_index, array)`` 识别，直到哨兵 ``None``。配合 PdfRenderWorker
+  实现 render→recognize 流水线，内存峰值从全部页降到约 batch_size 页，
+  主线程零渲染。
 """
 
 from __future__ import annotations
@@ -26,6 +33,12 @@ logger = logging.getLogger(__name__)
 class PdfOcrWorker(QThread):
     """异步 OCR Worker。
 
+    支持两种消费模式（由构造参数决定）：
+
+    - **batch 模式**：传 ``pages`` 列表，一次性识别（向后兼容，默认）。
+    - **streaming 流式模式**：传 ``render_queue``，从队列流式消费
+      ``(page_index, array)``，直到哨兵 ``None``，边渲染边识别、内存更低。
+
     Signals:
         page_done(page_index: int, result: OCRResult | None)
         progress(current: int, total: int)
@@ -39,16 +52,18 @@ class PdfOcrWorker(QThread):
     def __init__(
         self,
         session_id: str,
-        pages: list[tuple[int, np.ndarray]],
-        ocr_service: OCRServiceBase,
+        pages: list[tuple[int, np.ndarray]] | None = None,
+        ocr_service: OCRServiceBase | None = None,
         ocr_options: OCROptions | None = None,
+        render_queue=None,
         parent=None,
     ) -> None:
         super().__init__(parent)
         self._session_id = session_id
-        self._pages = pages
+        self._pages = pages or []
         self._ocr_service = ocr_service
         self._ocr_options = ocr_options
+        self._render_queue = render_queue
         self._cancelled = False
 
     def cancel(self) -> None:
@@ -94,8 +109,16 @@ class PdfOcrWorker(QThread):
     def run(self) -> None:
         from vibeocr.models.ocr_options import OCROptions
 
-        total = len(self._pages)
         options = self._ocr_options if self._ocr_options is not None else OCROptions()
+
+        if self._render_queue is not None:
+            self._run_streaming(options)
+        else:
+            self._run_batch(options)
+
+    def _run_batch(self, options) -> None:
+        """batch 模式：一次性识别全部预渲染页（向后兼容的旧逻辑）。"""
+        total = len(self._pages)
 
         if total == 0:
             self.all_done.emit(self._session_id, 0, 0)
@@ -145,6 +168,61 @@ class PdfOcrWorker(QThread):
 
         self.all_done.emit(self._session_id, success, fail)
 
+    def _run_streaming(self, options) -> None:
+        """queue 流式模式：边渲染边识别。
+
+        从 ``render_queue`` 阻塞取 ``(page_index, array)``，攒到
+        ``DEFAULT_BATCH_SIZE`` 或收到哨兵 ``None`` 时 flush。流式下 total
+        未知，故用固定 ``DEFAULT_BATCH_SIZE`` 累积（而非
+        :meth:`_compute_batch_size`）——内存由队列背压（maxsize）而非批量
+        估算控制。``array is None`` 表示该页渲染失败，计为 fail，不调
+        recognize。
+        """
+        success = 0
+        fail = 0
+        processed = 0
+        pending: list[tuple[int, object]] = []  # 攒 batch：(page_index, array)
+
+        def flush():
+            nonlocal success, fail, processed
+            if not pending:
+                return
+            indices = [idx for idx, _ in pending]
+            images = [arr for _, arr in pending]
+            results = self._recognize_batch(images, options)
+            for page_index, result in zip(indices, results, strict=False):
+                processed += 1
+                self.progress.emit(processed, processed)  # 流式 total 未知
+                if result is not None:
+                    self.page_done.emit(page_index, result)
+                    success += 1
+                else:
+                    self.page_done.emit(page_index, None)
+                    fail += 1
+            pending.clear()
+
+        while not self._cancelled:
+            item = self._render_queue.get()  # 阻塞等待
+            if item is None:
+                break  # 哨兵
+            page_index, array = item
+            if array is None:
+                # 渲染失败页
+                processed += 1
+                self.progress.emit(processed, processed)
+                self.page_done.emit(page_index, None)
+                fail += 1
+                continue
+            pending.append((page_index, array))
+            # 攒到 batch_size 就 flush（流式下 batch 较小，控制延迟）
+            if len(pending) >= self.DEFAULT_BATCH_SIZE:
+                flush()
+        if self._cancelled:
+            pending.clear()
+        else:
+            flush()  # flush 剩余
+        self.all_done.emit(self._session_id, success, fail)
+
     def _recognize_batch(self, images, options):
         """批量识别一批图像，逐张容错。
 
@@ -173,13 +251,56 @@ class PdfOcrWorker(QThread):
 def _read_free_vram_mb() -> int:
     """读取 GPU 可用显存（MB）。
 
-    失败时返回 0（estimate_gpu_batch_size 会兜底返回 batch=1）。
+    优先用 NVML（pynvml）；失败时用 ``paddle.device.cuda`` 兜底（这条路径
+    更可靠，已被 ``OCRService._log_gpu_summary`` 验证可用）。两条都失败
+    才返回 0（此时 :func:`estimate_gpu_batch_size` 会用
+    :data:`GPU_FALLBACK_BATCH_SIZE` 兜底，不再钉死成 batch=1）。
+
     作为模块级函数以便测试 mock。
     """
+    # 1. 优先 NVML
     try:
         from vibeocr.utils.gpu_memory_monitor import GPUMemoryMonitor
 
         info = GPUMemoryMonitor().get_status()
-        return info.free if info.available else 0
+        if info.available:
+            return info.free
+    except Exception:
+        pass
+    # 2. NVML 失败 → paddle.device.cuda 兜底
+    return _read_free_vram_mb_via_paddle()
+
+
+def _read_free_vram_mb_via_paddle() -> int:
+    """用 paddle.device.cuda 读取可用显存（MB）。
+
+    NVML 不可用时的二级兜底。返回 total - reserved - allocated 的估算值，
+    失败返回 0。
+    """
+    try:
+        import paddle.device as paddle_device  # type: ignore[import-untyped]
+
+        if paddle_device.cuda.device_count() <= 0:
+            return 0
+        total_b = paddle_device.cuda.get_device_properties(0).total_memory
+        # Paddle 的显存统计接口（与 PyTorch 对齐）；任一缺失则只减去 allocated
+        allocated_b = 0
+        reserved_b = 0
+        for getter in (
+            paddle_device.cuda.memory_allocated,
+            getattr(paddle_device.cuda, "memory_reserved", None),
+        ):
+            if getter is None:
+                continue
+            try:
+                val = getter(0)
+                if "reserved" in getattr(getter, "__name__", ""):
+                    reserved_b = val
+                else:
+                    allocated_b = val
+            except Exception:
+                pass
+        free_b = max(0, total_b - reserved_b - allocated_b)
+        return free_b // (1024 * 1024)
     except Exception:
         return 0
