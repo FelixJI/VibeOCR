@@ -26,6 +26,7 @@ from vibeocr.services.env_config import (
     PYTHON_BUILD_STANDALONE_TAG,
     PYTHON_VERSION_SHORT,
     build_github_asset_urls,
+    build_asset_url_pairs,
     ensure_config_dir,
     get_config_dir,
     get_portable_python_dir,
@@ -232,3 +233,38 @@ class TestBuildGithubAssetUrls:
         assert urls[2] == "https://ghproxy.com/" + github_direct
         # 最后一个是裸 GitHub 直连
         assert urls[3] == github_direct
+
+
+class TestBuildAssetUrlPairs:
+    """build_asset_url_pairs：zip + sha256 成对候选，同源序"""
+
+    def test_domestic_four_pairs_same_source_order(self):
+        """国内 4 对候选，每对的 zip 与 sha 同源（host 一致）"""
+        pairs = build_asset_url_pairs(
+            "domestic", "0.3.1", "VibeOCR-v0.3.1-win64.zip", "VibeOCR-v0.3.1-win64.zip.sha256"
+        )
+        assert len(pairs) == 4
+        host_order = ["gitee.com", "gh-proxy.com", "ghproxy.com", "github.com"]
+        for (zip_url, sha_url), host in zip(pairs, host_order):
+            assert host in zip_url
+            assert host in sha_url
+            # sha 文件名正确
+            assert sha_url.endswith("VibeOCR-v0.3.1-win64.zip.sha256")
+            # zip 与 sha 共享同一源前缀（同 tag 目录）
+            assert sha_url.replace(".sha256", "") == zip_url
+
+    def test_international_two_pairs(self):
+        """海外 2 对候选：GitHub 直连 → Gitee"""
+        pairs = build_asset_url_pairs(
+            "international", "0.3.1", "x.zip", "x.zip.sha256"
+        )
+        assert len(pairs) == 2
+        assert "github.com" in pairs[0][0]
+        assert "gitee.com" in pairs[1][0]
+
+    def test_pairs_share_source_order_with_single_version(self):
+        """配对版的源序与单文件 build_github_asset_urls 完全一致"""
+        net, ver, name = "domestic", "0.3.1", "x.zip"
+        single = build_github_asset_urls(net, ver, name)
+        pairs = build_asset_url_pairs(net, ver, name, f"{name}.sha256")
+        assert [z for z, _ in pairs] == single

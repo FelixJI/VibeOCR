@@ -329,7 +329,12 @@ class TestDownloadUpdateMultiSource:
     """download_update 多源回退测试（mock _download_zip_with_sha）"""
 
     def test_returns_path_when_first_source_succeeds(self, tmp_path):
-        from vibeocr.services.update_service import UpdateInfo, download_update
+        from vibeocr.services.update_service import (
+            DOWNLOAD_REASON_OK,
+            SourceAttempt,
+            UpdateInfo,
+            download_update,
+        )
 
         info = UpdateInfo(
             version="0.3.1",
@@ -340,16 +345,23 @@ class TestDownloadUpdateMultiSource:
         with patch(
             "vibeocr.services.update_service._download_zip_with_sha",
             new_callable=AsyncMock,
-            return_value=True,
+            return_value=SourceAttempt(True, DOWNLOAD_REASON_OK),
         ) as mock_dl:
-            result = _run(download_update(info, tmp_path))
+            result, reasons = _run(download_update(info, tmp_path))
         assert result is not None
         assert result.name == "VibeOCR-v0.3.1-win64.zip"
+        assert reasons == []
         mock_dl.assert_called_once()
 
     def test_falls_back_to_next_source_on_failure(self, tmp_path):
         """首源失败 → 换源成功"""
-        from vibeocr.services.update_service import UpdateInfo, download_update
+        from vibeocr.services.update_service import (
+            DOWNLOAD_REASON_HTTP_ERROR,
+            DOWNLOAD_REASON_OK,
+            SourceAttempt,
+            UpdateInfo,
+            download_update,
+        )
 
         info = UpdateInfo(
             version="0.3.1",
@@ -363,14 +375,24 @@ class TestDownloadUpdateMultiSource:
         ), patch(
             "vibeocr.services.update_service._download_zip_with_sha",
             new_callable=AsyncMock,
-            side_effect=[False, True],
+            side_effect=[
+                SourceAttempt(False, DOWNLOAD_REASON_HTTP_ERROR),
+                SourceAttempt(True, DOWNLOAD_REASON_OK),
+            ],
         ) as mock_dl:
-            result = _run(download_update(info, tmp_path))
+            result, reasons = _run(download_update(info, tmp_path))
         assert result is not None
+        assert reasons == []
         assert mock_dl.call_count == 2  # 首源失败后换源成功
 
-    def test_returns_none_when_all_sources_fail(self, tmp_path):
-        from vibeocr.services.update_service import UpdateInfo, download_update
+    def test_returns_none_with_reasons_when_all_sources_fail(self, tmp_path):
+        """全部源失败：返回 (None, reasons)，reasons 反映真实失败原因"""
+        from vibeocr.services.update_service import (
+            DOWNLOAD_REASON_SHA_MISMATCH,
+            SourceAttempt,
+            UpdateInfo,
+            download_update,
+        )
 
         info = UpdateInfo(
             version="0.3.1",
@@ -384,15 +406,21 @@ class TestDownloadUpdateMultiSource:
         ), patch(
             "vibeocr.services.update_service._download_zip_with_sha",
             new_callable=AsyncMock,
-            return_value=False,
+            return_value=SourceAttempt(False, DOWNLOAD_REASON_SHA_MISMATCH),
         ) as mock_dl:
-            result = _run(download_update(info, tmp_path))
+            result, reasons = _run(download_update(info, tmp_path))
         assert result is None
+        assert reasons == [DOWNLOAD_REASON_SHA_MISMATCH, DOWNLOAD_REASON_SHA_MISMATCH]
         assert mock_dl.call_count == 2  # 海外 2 候选全部失败
 
     def test_domestic_uses_four_candidates(self, tmp_path):
         """国内走 4 候选（Gitee→gh-proxy→ghproxy→GitHub）"""
-        from vibeocr.services.update_service import UpdateInfo, download_update
+        from vibeocr.services.update_service import (
+            DOWNLOAD_REASON_HTTP_ERROR,
+            SourceAttempt,
+            UpdateInfo,
+            download_update,
+        )
 
         info = UpdateInfo(
             version="0.3.1",
@@ -406,22 +434,67 @@ class TestDownloadUpdateMultiSource:
         ), patch(
             "vibeocr.services.update_service._download_zip_with_sha",
             new_callable=AsyncMock,
-            return_value=False,
+            return_value=SourceAttempt(False, DOWNLOAD_REASON_HTTP_ERROR),
         ) as mock_dl:
             _run(download_update(info, tmp_path))
         assert mock_dl.call_count == 4
+
+    def test_source_switch_callback_invoked_on_each_failure(self, tmp_path):
+        """每源失败触发换源回调，回调收到 (源名, reason)"""
+        from vibeocr.services.update_service import (
+            DOWNLOAD_REASON_SHA_MISMATCH,
+            SourceAttempt,
+            UpdateInfo,
+            download_update,
+        )
+
+        info = UpdateInfo(
+            version="0.3.1",
+            download_url="https://example.com/zip",
+            sha256_url="https://example.com/sha",
+            changelog="",
+        )
+        switches: list[tuple[str, str]] = []
+
+        def _on_switch(source_name: str, reason: str) -> None:
+            switches.append((source_name, reason))
+
+        with patch(
+            "vibeocr.services.update_service._detect_network_type",
+            return_value="domestic",
+        ), patch(
+            "vibeocr.services.update_service._download_zip_with_sha",
+            new_callable=AsyncMock,
+            return_value=SourceAttempt(False, DOWNLOAD_REASON_SHA_MISMATCH),
+        ):
+            _run(
+                download_update(
+                    info, tmp_path, source_switch_callback=_on_switch
+                )
+            )
+        # 国内 4 候选全部失败 → 4 次回调
+        assert len(switches) == 4
+        # 源名顺序：Gitee → gh-proxy → ghproxy → GitHub
+        assert [s for s, _ in switches] == [
+            "Gitee",
+            "gh-proxy",
+            "ghproxy",
+            "GitHub",
+        ]
+        # reason 正确透传
+        assert all(r == DOWNLOAD_REASON_SHA_MISMATCH for _, r in switches)
 
 
 class TestDownloadZipWithSha:
     """``_download_zip_with_sha`` 直接测试（用 mock httpx.AsyncClient 驱动真实协程）。
 
     覆盖成功路径、zip 非 200、sha 非 200、sha 不匹配、流式异常、进度回调六个分支。
-    重点验证语义变更：sha 总是从 ``{zip_url}.sha256`` 获取，且 sha 非 200 / 不匹配
-    会触发清理并换源（返回 False）。
+    重点验证：sha URL 由调用方精确传入（不再盲拼），且 sha 非 200 / 不匹配
+    会触发清理并换源（返回带 reason 的失败 SourceAttempt）。
     """
 
     ZIP_URL = "https://example.com/VibeOCR-v0.3.1-win64.zip"
-    # 被测代码恒定从 {zip_url}.sha256 取校验文件
+    # sha URL 由调用方精确传入，而非被测代码盲拼
     EXPECTED_SHA_URL = "https://example.com/VibeOCR-v0.3.1-win64.zip.sha256"
 
     def _import(self):
@@ -444,14 +517,17 @@ class TestDownloadZipWithSha:
         sha_path = tmp_path / "x.zip.sha256"
 
         ok = _run(
-            _download_zip_with_sha(client, self.ZIP_URL, zip_path, sha_path, None)
+            _download_zip_with_sha(
+                client, self.ZIP_URL, self.EXPECTED_SHA_URL, zip_path, sha_path, None
+            )
         )
 
-        assert ok is True
+        assert ok.ok is True
+        assert ok.reason == "ok"
         # zip 真正落盘
         assert zip_path.exists()
         assert zip_path.read_bytes() == zip_bytes
-        # sha 候选 URL 恰为 {zip_url}.sha256
+        # sha 用的是调用方精确传入的 URL
         client.get.assert_awaited_once_with(self.EXPECTED_SHA_URL)
         # 校验文件也落盘
         assert sha_path.exists()
@@ -465,10 +541,13 @@ class TestDownloadZipWithSha:
         sha_path = tmp_path / "x.zip.sha256"
 
         ok = _run(
-            _download_zip_with_sha(client, self.ZIP_URL, zip_path, sha_path, None)
+            _download_zip_with_sha(
+                client, self.ZIP_URL, self.EXPECTED_SHA_URL, zip_path, sha_path, None
+            )
         )
 
-        assert ok is False
+        assert ok.ok is False
+        assert ok.reason == "http_error"
         # zip 非 200 直接返回，不应落盘、不应尝试取 sha
         assert not zip_path.exists()
         client.get.assert_not_awaited()
@@ -484,10 +563,13 @@ class TestDownloadZipWithSha:
         sha_path = tmp_path / "x.zip.sha256"
 
         ok = _run(
-            _download_zip_with_sha(client, self.ZIP_URL, zip_path, sha_path, None)
+            _download_zip_with_sha(
+                client, self.ZIP_URL, self.EXPECTED_SHA_URL, zip_path, sha_path, None
+            )
         )
 
-        assert ok is False
+        assert ok.ok is False
+        assert ok.reason == "sha_missing"
         client.get.assert_awaited_once_with(self.EXPECTED_SHA_URL)
         # sha 非 200：已落盘的 zip 必须被清理；sha 文件根本没写
         assert not zip_path.exists()
@@ -508,10 +590,13 @@ class TestDownloadZipWithSha:
         sha_path = tmp_path / "x.zip.sha256"
 
         ok = _run(
-            _download_zip_with_sha(client, self.ZIP_URL, zip_path, sha_path, None)
+            _download_zip_with_sha(
+                client, self.ZIP_URL, self.EXPECTED_SHA_URL, zip_path, sha_path, None
+            )
         )
 
-        assert ok is False
+        assert ok.ok is False
+        assert ok.reason == "sha_mismatch"
         client.get.assert_awaited_once_with(self.EXPECTED_SHA_URL)
         # 不匹配：zip 与 sha 文件均应被清理
         assert not zip_path.exists()
@@ -526,11 +611,14 @@ class TestDownloadZipWithSha:
         sha_path = tmp_path / "x.zip.sha256"
 
         ok = _run(
-            _download_zip_with_sha(client, self.ZIP_URL, zip_path, sha_path, None)
+            _download_zip_with_sha(
+                client, self.ZIP_URL, self.EXPECTED_SHA_URL, zip_path, sha_path, None
+            )
         )
 
-        # 宽 except 吞掉异常并返回 False，不抛出
-        assert ok is False
+        # 宽 except 吞掉异常并返回失败 SourceAttempt，不抛出
+        assert ok.ok is False
+        assert ok.reason == "exception"
         assert not zip_path.exists()
         assert not sha_path.exists()
 
@@ -557,11 +645,11 @@ class TestDownloadZipWithSha:
 
         ok = _run(
             _download_zip_with_sha(
-                client, self.ZIP_URL, zip_path, sha_path, _capture
+                client, self.ZIP_URL, self.EXPECTED_SHA_URL, zip_path, sha_path, _capture
             )
         )
 
-        assert ok is True
+        assert ok.ok is True
         assert zip_path.read_bytes() == zip_bytes
         # 至少每块回调一次
         assert len(calls) >= 2
@@ -572,3 +660,79 @@ class TestDownloadZipWithSha:
         downloaded_seq = [d for d, _ in calls]
         assert downloaded_seq == sorted(downloaded_seq)
         assert downloaded_seq[-1] == total
+
+
+class TestSourceLabel:
+    """_source_label：URL → 人类可读源名"""
+
+    def test_known_sources(self):
+        from vibeocr.services.update_service import _source_label
+
+        assert _source_label("https://gitee.com/x/y") == "Gitee"
+        assert _source_label("https://gh-proxy.com/x") == "gh-proxy"
+        assert _source_label("https://ghproxy.com/x") == "ghproxy"
+        assert _source_label("https://github.com/x") == "GitHub"
+
+    def test_unknown_falls_back_to_url(self):
+        from vibeocr.services.update_service import _source_label
+
+        assert _source_label("https://cdn.example.com/x") == "https://cdn.example.com/x"
+
+
+class TestFormatFailureMessage:
+    """_format_failure_message：失败原因分桶文案"""
+
+    def _patch_net(self, net="international"):
+        return patch(
+            "vibeocr.services.update_service._detect_network_type",
+            return_value=net,
+        )
+
+    def test_sha_mismatch_mentions_integrity(self):
+        from vibeocr.services.update_service import (
+            DOWNLOAD_REASON_SHA_MISMATCH,
+            _format_failure_message,
+        )
+
+        with self._patch_net():
+            msg = _format_failure_message(
+                ["http_error", DOWNLOAD_REASON_SHA_MISMATCH]
+            )
+        # 最坏原因（完整性）优先，必须出现明确措辞，而不是泛泛「网络问题」
+        assert "完整性校验失败" in msg
+        assert "网络" not in msg
+
+    def test_sha_missing_mentions_missing_checksum(self):
+        from vibeocr.services.update_service import (
+            DOWNLOAD_REASON_SHA_MISSING,
+            _format_failure_message,
+        )
+
+        with self._patch_net():
+            msg = _format_failure_message(
+                ["http_error", DOWNLOAD_REASON_SHA_MISSING]
+            )
+        assert "缺少 SHA256 校验文件" in msg
+
+    def test_all_http_errors_mentions_network(self):
+        from vibeocr.services.update_service import (
+            DOWNLOAD_REASON_HTTP_ERROR,
+            _format_failure_message,
+        )
+
+        with self._patch_net():
+            msg = _format_failure_message(
+                [DOWNLOAD_REASON_HTTP_ERROR, DOWNLOAD_REASON_HTTP_ERROR]
+            )
+        assert "无法连接服务器" in msg
+
+    def test_message_includes_manual_download_link(self):
+        from vibeocr.services.update_service import (
+            DOWNLOAD_REASON_HTTP_ERROR,
+            _format_failure_message,
+        )
+
+        with self._patch_net("domestic"):
+            msg = _format_failure_message([DOWNLOAD_REASON_HTTP_ERROR])
+        # 国内给出 Gitee 链接
+        assert "gitee.com" in msg

@@ -71,6 +71,37 @@ GITEE_API_LATEST = (
 GITHUB_PROXY_PREFIXES = ["https://gh-proxy.com/", "https://ghproxy.com/"]
 
 
+def _ordered_download_prefixes(network_type: str) -> list[str]:
+    """返回各下载源的「直链前缀」候选，按 network_type 决定优先级顺序。
+
+    每个前缀与 asset 名拼接即得完整下载 URL。约定：
+    - 空串 ""：GitHub 裸连（GITHUB_DOWNLOAD_BASE 由调用方拼）
+    - "https://gitee.com/...": Gitee 直连
+    - 代理前缀：拼在 GitHub 直链之前
+
+    这里改用「前缀」表达，是因为同一源的 zip 与 sha256 需要分别拼 URL，
+    但共享同一源序——用前缀列表配对最清晰。
+    国内(domestic)：Gitee → gh-proxy → ghproxy → GitHub 裸连（4 候选）
+    海外(international)：GitHub 直连 → Gitee（2 候选）
+    未知 network_type 按国际（直连优先）处理。
+    """
+    if network_type == "domestic":
+        return [GITEE_DOWNLOAD_BASE, *GITHUB_PROXY_PREFIXES, GITHUB_DOWNLOAD_BASE]
+    return [GITHUB_DOWNLOAD_BASE, GITEE_DOWNLOAD_BASE]
+
+
+def _asset_url(prefix: str, version: str, asset_name: str) -> str:
+    """按源前缀拼单个 asset 的完整下载 URL。
+
+    代理前缀（gh-proxy / ghproxy）需拼在 GitHub 直链之前，其余前缀（Gitee /
+    GitHub 直连）自身已是完整基址。
+    """
+    github_url = f"{GITHUB_DOWNLOAD_BASE}/v{version}/{asset_name}"
+    if prefix in GITHUB_PROXY_PREFIXES:
+        return prefix + github_url
+    return f"{prefix}/v{version}/{asset_name}"
+
+
 def build_github_asset_urls(
     network_type: str, version: str, asset_name: str
 ) -> list[str]:
@@ -88,12 +119,37 @@ def build_github_asset_urls(
     Returns:
         有序 URL 候选列表，调用方逐个尝试直至下载成功
     """
-    github_url = f"{GITHUB_DOWNLOAD_BASE}/v{version}/{asset_name}"
-    gitee_url = f"{GITEE_DOWNLOAD_BASE}/v{version}/{asset_name}"
-    if network_type == "domestic":
-        proxied = [p + github_url for p in GITHUB_PROXY_PREFIXES]
-        return [gitee_url, *proxied, github_url]
-    return [github_url, gitee_url]
+    return [
+        _asset_url(p, version, asset_name)
+        for p in _ordered_download_prefixes(network_type)
+    ]
+
+
+def build_asset_url_pairs(
+    network_type: str, version: str, zip_name: str, sha_name: str
+) -> list[tuple[str, str]]:
+    """构造 zip + 校验文件的成对下载候选（同源序，源序与 build_github_asset_urls 一致）。
+
+    与单文件版本不同：每个候选源同时给出 zip_url 与 sha_url，二者来自同一源、
+    同一 tag 目录，确保校验文件和被校验文件确实同源同版——避免此前用
+    ``f"{zip_url}.sha256"`` 盲拼、可能下到无关/404 内容的问题。
+
+    Args:
+        network_type: "domestic" 或 "international"
+        version: 版本号（不含 v 前缀）
+        zip_name: zip 资产文件名
+        sha_name: 对应 sha256 资产文件名
+
+    Returns:
+        有序 (zip_url, sha_url) 候选对列表
+    """
+    return [
+        (
+            _asset_url(p, version, zip_name),
+            _asset_url(p, version, sha_name),
+        )
+        for p in _ordered_download_prefixes(network_type)
+    ]
 
 # PyTorch CUDA 镜像源
 PYTORCH_MIRROR_SOURCES = {

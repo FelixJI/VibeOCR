@@ -12,7 +12,7 @@ import os
 import subprocess
 import sys
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 import httpx
 
@@ -34,7 +34,7 @@ from vibeocr.services.env_config import (  # noqa: E402
     GITHUB_RELEASES_BASE,
     GITEE_API_LATEST,
     GITEE_RELEASES_BASE,
-    build_github_asset_urls,
+    build_asset_url_pairs,
 )
 
 
@@ -213,6 +213,20 @@ async def check_for_updates(
 # ---------------------------------------------------------------------------
 
 
+# 单个下载源的尝试结果。reason 用于汇总失败原因，让上层向用户呈现真实原因，
+# 而不是一律甩锅「网络问题」。OK 时 reason == "ok"。
+DOWNLOAD_REASON_OK = "ok"
+DOWNLOAD_REASON_HTTP_ERROR = "http_error"  # zip 非 200 等
+DOWNLOAD_REASON_SHA_MISSING = "sha_missing"  # 校验文件下不到（404/非 200）
+DOWNLOAD_REASON_SHA_MISMATCH = "sha_mismatch"  # 校验文件在但哈希对不上
+DOWNLOAD_REASON_EXCEPTION = "exception"
+
+
+class SourceAttempt(NamedTuple):
+    ok: bool
+    reason: str
+
+
 def verify_sha256(file_path: Path, sha256_file: Path) -> bool:
     if not sha256_file.exists():
         logger.warning(f"SHA256 文件不存在: {sha256_file}")
@@ -231,22 +245,24 @@ def verify_sha256(file_path: Path, sha256_file: Path) -> bool:
 async def _download_zip_with_sha(
     client: httpx.AsyncClient,
     zip_url: str,
+    sha_url: str,
     zip_path: Path,
     sha256_path: Path,
     progress_callback: Callable[[int, int], None] | None,
-) -> bool:
-    """从单个 URL 下载 zip + 对应 ``{zip_url}.sha256`` 并校验。
+) -> SourceAttempt:
+    """从单个源下载 zip + 对应 sha256 校验文件并校验。
 
-    成功返回 True；失败（状态码非 200 / SHA256 不匹配 / 异常）清理残留返回 False。
-    供 download_update 在多源候选间逐个调用。
+    ``sha_url`` 由调用方从 release asset 列表精确匹配提供（同源同 tag），
+    而非这里盲拼 ``{zip_url}.sha256``——后者可能下到无关/404 内容。
+
+    返回 SourceAttempt；失败时清理残留。供 download_update 在多源候选间逐个调用。
     """
-    sha_url = f"{zip_url}.sha256"
     try:
         # 流式下载 zip（带进度回调）
         async with client.stream("GET", zip_url) as resp:
             if resp.status_code != 200:
                 logger.warning(f"zip 下载失败({resp.status_code})：{zip_url}")
-                return False
+                return SourceAttempt(False, DOWNLOAD_REASON_HTTP_ERROR)
             total = int(resp.headers.get("content-length", 0))
             with open(zip_path, "wb") as f:
                 downloaded = 0
@@ -261,7 +277,7 @@ async def _download_zip_with_sha(
         if sha_resp.status_code != 200:
             logger.warning(f"sha256 下载失败({sha_resp.status_code})：{sha_url}")
             zip_path.unlink(missing_ok=True)
-            return False
+            return SourceAttempt(False, DOWNLOAD_REASON_SHA_MISSING)
         sha256_path.write_text(sha_resp.text, encoding="utf-8")
 
         # 校验
@@ -269,29 +285,39 @@ async def _download_zip_with_sha(
             logger.warning(f"SHA256 校验失败，换源：{zip_url}")
             zip_path.unlink(missing_ok=True)
             sha256_path.unlink(missing_ok=True)
-            return False
-        return True
+            return SourceAttempt(False, DOWNLOAD_REASON_SHA_MISMATCH)
+        return SourceAttempt(True, DOWNLOAD_REASON_OK)
     except Exception as e:
         logger.warning(f"下载异常，换源：{zip_url}: {e}")
         zip_path.unlink(missing_ok=True)
         sha256_path.unlink(missing_ok=True)
-        return False
+        return SourceAttempt(False, DOWNLOAD_REASON_EXCEPTION)
 
 
 async def download_update(
     update_info: UpdateInfo,
     cache_dir: Path,
     progress_callback: Callable[[int, int], None] | None = None,
-) -> Path | None:
+    source_switch_callback: Callable[[str, str], None] | None = None,
+) -> tuple[Path | None, list[str]]:
     """下载更新包（按网络环境多源回退）。
 
     不再直接用 update_info.download_url（API 返回的原始直链，仅作参考），
-    而是由 env_config.build_github_asset_urls 按 tag 重拼候选列表逐个尝试，
-    确保 GitHub 来源在国内有 gh 代理加速（gh-proxy / ghproxy）。
+    而是由 env_config.build_asset_url_pairs 按 tag 重拼 (zip, sha256) 配对候选，
+    逐个尝试，确保 GitHub 来源在国内有 gh 代理加速（gh-proxy / ghproxy）。
+    校验文件 URL 与 zip 同源同 tag 精确匹配，不再盲拼 ``{zip}.sha256``。
+
+    Args:
+        source_switch_callback: 某源失败时回调 ``(failed_source_name, reason)``，
+            供进度框实时显示「源 X 校验失败，切换源 Y…」。
+
+    Returns:
+        (zip_path, fail_reasons)：成功时 fail_reasons 为空列表；全失败时 zip_path
+        为 None，fail_reasons 为各源失败原因（供上层分桶提示用户）。
     """
     if not update_info.download_url:
         logger.error("下载 URL 为空")
-        return None
+        return None, [DOWNLOAD_REASON_HTTP_ERROR]
 
     cache_dir.mkdir(parents=True, exist_ok=True)
 
@@ -304,26 +330,45 @@ async def download_update(
                 pass
 
     zip_filename = f"VibeOCR-v{update_info.version}-win64.zip"
+    sha_filename = f"{zip_filename}.sha256"
     zip_path = cache_dir / zip_filename
-    sha256_path = cache_dir / f"{zip_filename}.sha256"
+    sha256_path = cache_dir / sha_filename
     network_type = _detect_network_type()
-    urls = build_github_asset_urls(
-        network_type, update_info.version, zip_filename
+    url_pairs = build_asset_url_pairs(
+        network_type, update_info.version, zip_filename, sha_filename
     )
 
+    fail_reasons: list[str] = []
     async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
-        for url in urls:
+        for url, sha_url in url_pairs:
+            source_name = _source_label(url)
             logger.info(f"尝试下载源：{url}")
-            ok = await _download_zip_with_sha(
-                client, url, zip_path, sha256_path, progress_callback
+            attempt = await _download_zip_with_sha(
+                client, url, sha_url, zip_path, sha256_path, progress_callback
             )
-            if ok:
+            if attempt.ok:
                 logger.info(f"更新包下载完成：{zip_path}")
-                return zip_path
+                return zip_path, []
+            fail_reasons.append(attempt.reason)
             logger.warning(f"更新包下载/校验失败，换源：{url}")
+            if source_switch_callback:
+                source_switch_callback(source_name, attempt.reason)
 
     logger.error("所有更新包下载源均失败")
-    return None
+    return None, fail_reasons
+
+
+def _source_label(url: str) -> str:
+    """从 URL 提取人类可读的源名，用于换源提示文案。"""
+    for label, marker in (
+        ("Gitee", "gitee.com"),
+        ("gh-proxy", "gh-proxy.com"),
+        ("ghproxy", "ghproxy.com"),
+        ("GitHub", "github.com"),
+    ):
+        if marker in url:
+            return label
+    return url
 
 
 # ---------------------------------------------------------------------------
@@ -477,6 +522,13 @@ class DownloadProgressDialog(QDialog):
         self._progress_bar.setRange(0, 100)
         layout.addWidget(self._progress_bar)
 
+        # 换源状态：默认隐藏，仅在下载过程中某源失败时显示
+        self._source_status_label = QLabel("")
+        self._source_status_label.setStyleSheet(f"color: {theme.Colors.text_muted};")
+        self._source_status_label.setWordWrap(True)
+        self._source_status_label.setVisible(False)
+        layout.addWidget(self._source_status_label)
+
     def update_progress(self, downloaded: int, total: int) -> None:
         if total > 0:
             pct = int(downloaded / total * 100)
@@ -490,6 +542,49 @@ class DownloadProgressDialog(QDialog):
             dl_mb = downloaded / (1024 * 1024)
             self._status_label.setText(f"正在下载... {dl_mb:.1f} MB")
             self._progress_bar.setRange(0, 0)
+
+    def set_source_status(self, text: str) -> None:
+        """显示换源提示，如『Gitee 校验失败，切换 gh-proxy…』"""
+        self._source_status_label.setText(text)
+        self._source_status_label.setVisible(bool(text))
+
+
+# ---------------------------------------------------------------------------
+# 失败原因 → 用户文案映射
+# ---------------------------------------------------------------------------
+# reason → 进度框换源提示里的简短短语
+_DOWNLOAD_REASON_HINTS: dict[str, str] = {
+    DOWNLOAD_REASON_HTTP_ERROR: "连接失败",
+    DOWNLOAD_REASON_SHA_MISSING: "缺少校验文件",
+    DOWNLOAD_REASON_SHA_MISMATCH: "校验失败",
+    DOWNLOAD_REASON_EXCEPTION: "失败",
+}
+
+
+def _format_failure_message(fail_reasons: list[str]) -> str:
+    """把各源失败原因汇总成给用户的分桶文案，按「最坏」原因决定主语义。
+
+    优先级：完整性校验失败 > 缺少校验文件 > 连接/异常。
+    这样镜像被篡改/损坏（sha_mismatch）会优先明确告知用户，
+    而不是淹没在「网络问题」里——避免装作成功式的敷衍。
+    """
+    network_type = _detect_network_type()
+    manual_url = (
+        GITEE_RELEASES_BASE
+        if network_type == "domestic"
+        else GITHUB_RELEASES_BASE
+    )
+    tail = f"\n\n如持续失败，可前往手动下载（覆盖安装前请先退出本程序）：\n{manual_url}"
+
+    if DOWNLOAD_REASON_SHA_MISMATCH in fail_reasons:
+        return (
+            "更新包完整性校验失败，下载源文件可能损坏或被篡改。\n"
+            "请稍后重试，或手动下载。" + tail
+        )
+    if DOWNLOAD_REASON_SHA_MISSING in fail_reasons:
+        return "服务端缺少 SHA256 校验文件，更新暂不可用。请稍后重试。" + tail
+    # 全是连接/异常类
+    return "下载更新包失败（无法连接服务器）。请检查网络后重试。" + tail
 
 
 # ---------------------------------------------------------------------------
@@ -563,22 +658,45 @@ class UpdateService:
     async def _do_download_and_update(
         self, info: UpdateInfo, parent: QWidget | None
     ) -> None:
-        progress_dialog = DownloadProgressDialog(parent)
-        progress_dialog.show()
+        # 重试上限，防用户连点导致无限下载循环；用户可在失败框主动取消。
+        max_attempts = 3
+        for attempt in range(1, max_attempts + 1):
+            progress_dialog = DownloadProgressDialog(parent)
+            progress_dialog.show()
 
-        def progress_cb(downloaded: int, total: int) -> None:
-            progress_dialog.update_progress(downloaded, total)
+            def progress_cb(downloaded: int, total: int) -> None:
+                progress_dialog.update_progress(downloaded, total)
 
-        zip_path = await download_update(
-            info, self._cache_dir, progress_callback=progress_cb
-        )
+            def on_source_switch(source_name: str, reason: str) -> None:
+                # reason 映射成用户能理解的短语
+                hint = _DOWNLOAD_REASON_HINTS.get(reason, "失败")
+                progress_dialog.set_source_status(
+                    f"{source_name} {hint}，正在切换备用源…"
+                )
 
-        progress_dialog.close()
-
-        if zip_path is None:
-            QMessageBox.warning(
-                parent, "更新失败", "下载更新包失败，请检查网络连接后重试。"
+            zip_path, fail_reasons = await download_update(
+                info,
+                self._cache_dir,
+                progress_callback=progress_cb,
+                source_switch_callback=on_source_switch,
             )
+
+            progress_dialog.close()
+
+            if zip_path is not None:
+                break
+
+            # 全失败：按真实原因分桶，给出重试 / 取消
+            msg = _format_failure_message(fail_reasons)
+            retry_btn = QMessageBox.StandardButton.Retry
+            cancel_btn = QMessageBox.StandardButton.Cancel
+            reply = QMessageBox.warning(
+                parent, "更新失败", msg, retry_btn | cancel_btn
+            )
+            if reply != retry_btn:
+                return
+        else:
+            # 重试用尽仍未成功
             return
 
         reply = QMessageBox.information(
