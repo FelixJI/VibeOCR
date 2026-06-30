@@ -25,7 +25,10 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-# 仓库信息（与 src/vibeocr/views/tabs/about_tab.py、update_service.py 对齐）
+# 仓库信息 —— 运行时 SSOT 在 src/vibeocr/services/env_config.py
+# （GITHUB_OWNER / GITHUB_REPO / GITEE_OWNER / GITEE_REPO 等）。
+# 本脚本因纯 stdlib 独立运行（python scripts/ci_release_sync.py）无法 import；
+# 改动 owner/repo 时需手动同步两处。
 GITHUB_OWNER_REPO = "FelixJI/VibeOCR"
 GITEE_OWNER_REPO = "felixjii/vibeocr"
 KEEP = 10  # GitHub 保留数
