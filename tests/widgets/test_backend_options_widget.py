@@ -3,6 +3,23 @@
 from unittest.mock import patch
 
 import pytest
+from PySide6.QtCore import QObject, Signal
+
+
+class _StubGpuDetectWorker(QObject):
+    """替代 _GpuDetectWorker 的桩：不启动真线程，start() 为空操作。
+
+    信号 finished_info 与真 worker 同名，测试可显式 emit 触发回填，
+    使断言不依赖 QThread 异步时序。
+    """
+
+    finished_info = Signal(dict)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+
+    def start(self):  # 真线程启动的空操作
+        pass
 
 
 def _make_widget(tmp_path, has_gpu=True, cached_hardware_gpu=False, pending=None):
@@ -10,24 +27,29 @@ def _make_widget(tmp_path, has_gpu=True, cached_hardware_gpu=False, pending=None
 
     返回 widget。由于 widget 的 _apply 在构造后才调用，patch 必须覆盖调用时刻。
     本函数把 update_cache_field 的 mock 存到 widget._mock_update 以便断言。
+
+    GPU 探测由后台 _GpuDetectWorker 完成；测试用 _StubGpuDetectWorker 替换，
+    构造后显式 emit finished_info 同步触发回填，避免依赖真线程时序。
     """
     from vibeocr.widgets import backend_options_widget as bow
 
     # 直接替换模块级引用（widget 内 from ... import 拿到的就是模块属性）
     orig_em = bow.env_manager
     orig_cache = bow.is_cache_valid
+    orig_worker = bow._GpuDetectWorker
 
     mock_em = patch.object(bow, "env_manager").start()
     mock_cache = patch.object(bow, "is_cache_valid").start()
     mock_update = patch.object(bow, "update_cache_field").start()
 
     mock_em.detect_gpu.return_value = (has_gpu, "cu126") if has_gpu else (False, None)
-    mock_em.detect_gpu_info.return_value = {
+    detect_info = {
         "has_gpu": has_gpu,
         "name": "NVIDIA GeForce RTX 4090" if has_gpu else "",
         "vram_mb": 24564 if has_gpu else 0,
         "cuda": "cu126" if has_gpu else None,
     }
+    mock_em.detect_gpu_info.return_value = detect_info
     mock_cache.return_value = (
         True,
         {
@@ -37,12 +59,18 @@ def _make_widget(tmp_path, has_gpu=True, cached_hardware_gpu=False, pending=None
     )
     mock_update.return_value = True
 
+    # 用桩替换真 worker 类，构造时不会启动真线程
+    bow._GpuDetectWorker = _StubGpuDetectWorker
+
     try:
         widget = bow.BackendOptionsWidget(tmp_path)
+        # 显式触发回填（模拟后台探测完成回调在主线程执行）
+        widget._detect_worker.finished_info.emit(detect_info)
     finally:
         # 恢复模块引用（构造已完成，状态已读入 widget 实例）
         patch.object(bow, "env_manager", orig_em).start()
         patch.object(bow, "is_cache_valid", orig_cache).start()
+        bow._GpuDetectWorker = orig_worker
         # 注意：update_cache_field 保持 mock，因为 _apply 才调用
         bow.update_cache_field = mock_update
     widget._mock_update = mock_update
