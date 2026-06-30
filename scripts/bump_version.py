@@ -1109,12 +1109,33 @@ def _ask_build(version: str) -> bool:
     return choice in ("", "y", "yes", "是")
 
 
+def _detect_upstream_remote() -> str:
+    """返回当前分支上游所在的 remote（GitHub/main -> GitHub）。
+
+    tag 必须推到与分支同一个 remote；不同仓库 remote 名不一（本仓叫
+    GitHub 而非 origin），故据此动态探测，不再硬编码 origin。
+
+    没有上游或读取失败时返回空串，由调用方提示手动推送。
+    """
+    try:
+        res = subprocess.run(
+            ["git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        # 形如 "GitHub/main"，取首个 "/" 之前即 remote（分支名可含 /，不影响）
+        return res.stdout.strip().split("/", 1)[0]
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return ""
+
+
 def _push_release(version: str) -> bool:
     """推送当前分支与 tag 到远程，触发 CI 发版
 
-    依次执行：
-      git push <上游分支>
-      git push <上游> refs/tags/v{version}
+    依次执行（remote 取自当前分支上游，如 GitHub）：
+      git push <remote>              # 同步分支
+      git push <remote> refs/tags/v{version}  # 触发 CI
 
     tag 一推，GitHub Actions（release.yml）即触发打包并发布到
     GitHub/Gitee/CNB。本地不再直接调用 GitHub Release API。
@@ -1126,23 +1147,31 @@ def _push_release(version: str) -> bool:
         True=推送成功，False=失败（仅警告，不致命）
     """
     tag = f"v{version}"
+    remote = _detect_upstream_remote()
+    if not remote:
+        print(
+            "警告: 无法确定当前分支上游 remote（branch.<name>.remote 未配置），"
+            f"请手动推送: git push <remote> && git push <remote> {tag}"
+        )
+        return False
+
     # 推送当前分支（让远程 main 与本地提交同步）
     try:
-        subprocess.run(["git", "push"], check=True)
+        subprocess.run(["git", "push", remote], check=True)
     except (subprocess.CalledProcessError, FileNotFoundError) as e:
         print(f"警告: 推送分支失败: {e}")
-        print(f"  可手动执行: git push && git push origin {tag}")
+        print(f"  可手动执行: git push {remote} && git push {remote} {tag}")
         return False
 
     # 推送 tag（触发 CI 发版）
     try:
-        subprocess.run(["git", "push", "origin", f"refs/tags/{tag}"], check=True)
+        subprocess.run(["git", "push", remote, f"refs/tags/{tag}"], check=True)
     except (subprocess.CalledProcessError, FileNotFoundError) as e:
         print(f"警告: 推送 tag {tag} 失败: {e}")
-        print(f"  可手动执行: git push origin {tag}")
+        print(f"  可手动执行: git push {remote} {tag}")
         return False
 
-    print(f"  已推送 tag {tag}，CI 将自动打包并发布")
+    print(f"  已推送 tag {tag}（remote={remote}），CI 将自动打包并发布")
     return True
 
 
