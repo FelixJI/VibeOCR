@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """语义化版本管理与打包脚本
 
+在 main 分支上 bump 版本号 → 生成 CHANGELOG → commit → 打 tag。
+tag 一推（git push + push tag），GitHub Actions 自动打包并发布到
+GitHub/Gitee/CNB（见 .github/workflows/release.yml）。
+
 用法:
     python scripts/bump_version.py              # 交互式菜单（含"仅打包当前版本"）
     python scripts/bump_version.py patch        # 升级修订号 x.y.Z
@@ -8,7 +12,7 @@
     python scripts/bump_version.py major        # 升级主版本 X.0.0
     python scripts/bump_version.py 2.0.0        # 指定版本号
     python scripts/bump_version.py ... --no-edit  # 跳过编辑器
-    python scripts/bump_version.py ... --yes      # 跳过推送/打包确认（仅升级版本号+commit）
+    python scripts/bump_version.py ... --yes      # 跳过推送/打包确认（直接 commit+tag+push）
     python scripts/bump_version.py --build      # 打包当前版本
     python scripts/bump_version.py --rebuild 1.2.3  # 重新打包指定版本
 """
@@ -354,22 +358,8 @@ def _collect_commits(
     return commits
 
 
-def _filter_release_commits(
-    commits: list[tuple[str, str]],
-) -> list[tuple[str, str]]:
-    """过滤掉 ``release: vX.Y.Z`` 提交（版本边界，非功能性改动）
-
-    Args:
-        commits: [(hash, subject), ...]
-
-    Returns:
-        不含 release: 前缀提交的列表
-    """
-    return [(h, s) for h, s in commits if not s.startswith("release: ")]
-
-
 def get_commits_since_last_tag() -> list[tuple[str, str]]:
-    """获取自上次 tag 以来的 git 提交（develop bump 路径用，保留向后兼容）"""
+    """获取自上次 tag 以来的 git 提交（bump 时用于生成 CHANGELOG 条目）"""
     # 查找最近的 tag
     try:
         result = subprocess.run(
@@ -510,45 +500,6 @@ def generate_changelog_entry(version: str, commits: list[tuple[str, str]]) -> st
     return "\n".join(lines)
 
 
-def generate_consolidated_entry(
-    version: str, commits: list[tuple[str, str]]
-) -> str:
-    """生成合并至 main 用的单条整合 CHANGELOG 条目
-
-    与 generate_changelog_entry 区别：自动过滤 release: 提交、对 subject 去重。
-    合并至 main 时，多个 develop 小版本的提交揉成一条正式版条目。
-
-    Args:
-        version: 整合后的目标版本号字符串（如 "0.1.6"）
-        commits: 范围内的原始提交列表（含 release: 提交，会被过滤）
-
-    Returns:
-        格式化的单条 CHANGELOG 条目（## [version] - 日期 + 分类）
-    """
-    today = date.today().isoformat()
-    lines: list[str] = [f"## [{version}] - {today}", ""]
-
-    filtered = _filter_release_commits(commits)
-    # 按 subject 去重，保留首次出现顺序
-    seen: set[str] = set()
-    deduped: list[tuple[str, str]] = []
-    for h, s in filtered:
-        if s not in seen:
-            seen.add(s)
-            deduped.append((h, s))
-
-    categories = categorize_commits(deduped)
-    for cat_name, cat_commits in categories.items():
-        if not cat_commits:
-            continue
-        lines.append(f"### {cat_name}")
-        for commit_msg in cat_commits:
-            lines.append(f"- {commit_msg}")
-        lines.append("")
-
-    return "\n".join(lines)
-
-
 def update_changelog(version: str, commits: list[tuple[str, str]]) -> None:
     """更新 CHANGELOG.md，在第一个 ## 标题之前插入新条目
 
@@ -580,33 +531,6 @@ def update_changelog(version: str, commits: list[tuple[str, str]]) -> None:
     CHANGELOG.write_text(content, encoding="utf-8")
 
 
-def update_main_changelog(entry: str) -> None:
-    """把整合条目插入 main 的 CHANGELOG.md 顶部
-
-    与 update_changelog 区别：接受已生成好的 entry 文本（由
-    generate_consolidated_entry 产出），不复算分类。
-
-    Args:
-        entry: 单条 CHANGELOG 条目文本（含 ``## [version]`` 标题）
-    """
-    if CHANGELOG.exists():
-        content = CHANGELOG.read_text(encoding="utf-8")
-    else:
-        content = "# Changelog\n"
-
-    # 在第一个 ## 标题前插入（与 update_changelog 同逻辑）
-    idx = content.find("\n## ")
-    if idx >= 0:
-        insert_pos = idx + 1
-        content = content[:insert_pos] + entry + "\n" + content[insert_pos:]
-    else:
-        if not content.endswith("\n"):
-            content += "\n"
-        content += "\n" + entry
-
-    CHANGELOG.write_text(content, encoding="utf-8")
-
-
 def interactive_menu(current: tuple[int, int, int]) -> tuple[int, int, int] | str | None:
     """交互式操作选择菜单
 
@@ -615,7 +539,7 @@ def interactive_menu(current: tuple[int, int, int]) -> tuple[int, int, int] | st
 
     Returns:
         新版本号三元组 / 字符串 "build"（仅打包当前版本，不升级版本号）/
-        字符串 "merge"（推送快照到 GitHub main）/ None（取消）
+        None（取消）
     """
     major, minor, patch = current
     current_str = f"{major}.{minor}.{patch}"
@@ -631,9 +555,8 @@ def interactive_menu(current: tuple[int, int, int]) -> tuple[int, int, int] | st
     print(f"  3) Major  (主版本)  {current_str} → {'.'.join(map(str, major_new))}")
     print("  4) 自定义版本号")
     print(f"  5) 仅打包当前版本（{current_str}，不升级版本号）")
-    print("  6) 推送快照到 GitHub main（单提交 + 整合 CHANGELOG + 打 tag）")
     print("  0) 取消")
-    print("请输入选项 [0-6]: ", end="", flush=True)
+    print("请输入选项 [0-5]: ", end="", flush=True)
 
     choice = input().strip()
 
@@ -654,9 +577,6 @@ def interactive_menu(current: tuple[int, int, int]) -> tuple[int, int, int] | st
     if choice == "5":
         # 仅打包当前版本，不升级版本号、不动 git
         return "build"
-    if choice == "6":
-        # 推送快照到 GitHub main：由 main() 识别 'merge' 哨兵后调用 cmd_publish_main
-        return "merge"
     return None
 
 
@@ -1173,90 +1093,6 @@ def _run_build(version: str, force: bool = False, bundle_webengine: bool = False
     return True
 
 
-def _create_release(version: str) -> bool:
-    """创建 GitHub Release 并上传产物"""
-
-    zip_name = f"VibeOCR-v{version}-win64"
-    zip_path = DIST_BASE_DIR / f"{zip_name}.zip"
-    sha256_path = DIST_BASE_DIR / f"{zip_name}.zip.sha256"
-
-    if not zip_path.exists():
-        print(f"错误: 分发包不存在: {zip_path}")
-        print("请先运行 --build 构建分发包")
-        return False
-
-    # 读取 CHANGELOG
-    changelog_body = ""
-    if CHANGELOG.exists():
-        content = CHANGELOG.read_text(encoding="utf-8")
-        pattern = rf"##\s+\[{re.escape(version)}\].*?(?=\n##\s|$)"
-        m = re.search(pattern, content, re.DOTALL)
-        if m:
-            changelog_body = m.group(0).strip()
-
-    print(f"\n发布 v{version} 到:")
-    print(f"  zip: {zip_path} ({zip_path.stat().st_size / (1024 * 1024):.1f} MB)")
-
-    github_token = os.environ.get("GITHUB_TOKEN", "")
-    if github_token:
-        print("\n上传到 GitHub...")
-        try:
-            _upload_to_github(
-                version, zip_path, sha256_path, changelog_body, github_token
-            )
-            print("  GitHub 上传成功")
-        except Exception as e:
-            print(f"  GitHub 上传失败: {e}")
-    else:
-        print("\n跳过 GitHub（未设置 GITHUB_TOKEN 环境变量）")
-
-    return True
-
-
-def _upload_to_github(
-    version: str, zip_path: Path, sha256_path: Path, body: str, token: str
-) -> None:
-    import httpx
-
-    owner = "felixji"
-    repo = "vibeocr"
-    api: str = f"https://api.github.com/repos/{owner}/{repo}/releases"
-
-    resp = httpx.post(
-        api,
-        headers={
-            "Authorization": f"Bearer {token}",
-            "Accept": "application/vnd.github+json",
-        },
-        json={
-            "tag_name": f"v{version}",
-            "name": f"v{version}",
-            "body": body or f"VibeOCR v{version}",
-            "target_commitish": "main",
-        },
-    )
-    if resp.status_code not in (200, 201):
-        raise RuntimeError(f"GitHub Release 创建失败: {resp.status_code} {resp.text}")
-
-    upload_url_template = resp.json()["upload_url"].split("{")[0]
-
-    for file_path in [zip_path, sha256_path]:
-        if not file_path.exists():
-            continue
-        with open(file_path, "rb") as f:
-            resp = httpx.post(
-                upload_url_template,
-                params={"name": file_path.name},
-                headers={
-                    "Authorization": f"Bearer {token}",
-                    "Content-Type": "application/zip",
-                },
-                content=f.read(),
-            )
-        if resp.status_code not in (200, 201):
-            raise RuntimeError(f"GitHub asset 上传失败: {resp.status_code} {resp.text}")
-
-
 def _ask_build(version: str) -> bool:
     """交互式询问是否打包
 
@@ -1273,215 +1109,55 @@ def _ask_build(version: str) -> bool:
     return choice in ("", "y", "yes", "是")
 
 
-def _current_branch() -> str:
-    """返回当前 git 分支名"""
-    try:
-        result = subprocess.run(
-            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-            capture_output=True,
-            encoding="utf-8",
-            check=True,
-        )
-        return result.stdout.strip()
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        return ""
+def _push_release(version: str) -> bool:
+    """推送当前分支与 tag 到远程，触发 CI 发版
 
+    依次执行：
+      git push <上游分支>
+      git push <上游> refs/tags/v{version}
 
-def _working_tree_clean() -> bool:
-    """工作区是否干净（无未提交改动）"""
+    tag 一推，GitHub Actions（release.yml）即触发打包并发布到
+    GitHub/Gitee/CNB。本地不再直接调用 GitHub Release API。
+
+    Args:
+        version: 版本号字符串（用于 tag 名）
+
+    Returns:
+        True=推送成功，False=失败（仅警告，不致命）
+    """
+    tag = f"v{version}"
+    # 推送当前分支（让远程 main 与本地提交同步）
     try:
-        result = subprocess.run(
-            ["git", "status", "--porcelain"],
-            capture_output=True,
-            encoding="utf-8",
-            check=True,
-        )
-        return result.stdout.strip() == ""
-    except (subprocess.CalledProcessError, FileNotFoundError):
+        subprocess.run(["git", "push"], check=True)
+    except (subprocess.CalledProcessError, FileNotFoundError) as e:
+        print(f"警告: 推送分支失败: {e}")
+        print(f"  可手动执行: git push && git push origin {tag}")
         return False
 
-
-PUBLISH_REMOTE = os.environ.get("VIBEOCR_PUBLISH_REMOTE", "GitHub")
-PUBLISH_BRANCH = os.environ.get("VIBEOCR_PUBLISH_BRANCH", "main")
-
-
-def _remote_head_sha(remote: str, branch: str) -> str:
-    """查询远程分支当前 HEAD 的完整 hash（不修改本地 refs）
-
-    Args:
-        remote: 远程名（如 "GitHub"）
-        branch: 分支名（如 "main"）
-
-    Returns:
-        完整 hash 字符串；远程无此分支（空仓库）返回 ""
-    """
+    # 推送 tag（触发 CI 发版）
     try:
-        result = subprocess.run(
-            ["git", "ls-remote", remote, f"refs/heads/{branch}"],
-            capture_output=True, encoding="utf-8", check=True,
-        )
-        line = (result.stdout or "").strip().splitlines()
-        if not line:
-            return ""
-        # 格式: "<sha>\trefs/heads/main"
-        return line[0].split("\t", 1)[0].strip()
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        return ""
+        subprocess.run(["git", "push", "origin", f"refs/tags/{tag}"], check=True)
+    except (subprocess.CalledProcessError, FileNotFoundError) as e:
+        print(f"警告: 推送 tag {tag} 失败: {e}")
+        print(f"  可手动执行: git push origin {tag}")
+        return False
 
-
-def cmd_publish_main(skip_confirm: bool = False) -> int:
-    """把 develop 压成单提交快照，推送到 GitHub main（版本快照链）
-
-    本地不保留 main 分支。每次发版：
-    1. 预检（develop 分支、工作区干净）
-    2. 未版本化提交检测（发版安全闸，有则阻止）
-    3. 取 develop 当前版本号
-    4. 确认提示（skip_confirm=True 时跳过）
-    5. CHANGELOG 已在 develop bump 时生成并提交，此处直接复用 develop 的树
-    6. 查询 GitHub main 当前 HEAD（首次为空 → 孤儿提交；否则以其为 parent）
-    7. 用 git commit-tree 造单个 release 提交（develop 全部内容，含 CHANGELOG）
-    8. push 到 GitHub main（fast-forward，无需 force）
-    9. 打 tag 并推送（tag 指向 develop HEAD）
-
-    快照链形态：v0.2.0 → v0.3.0 → ...，每个版本恰好 1 个提交，有父子关系。
-    develop 完整历史不受影响（不改写 hash，不切换分支）。
-
-    Args:
-        skip_confirm: True 跳过确认提示（用于上游已确认/CI 场景）
-
-    Returns:
-        0=成功, 1=失败/中止
-    """
-    # 1. 预检
-    if _current_branch() != "develop":
-        print("错误: 必须在 develop 分支上执行 --to-main")
-        return 1
-    if not _working_tree_clean():
-        print("错误: 工作区不干净，请先提交或暂存改动")
-        return 1
-
-    # 2. 未版本化提交检测（发版安全闸）
-    current = read_current_version(PYPROJECT_TOML)
-    current_str = ".".join(map(str, current))
-    has_unversioned, n_unversioned = check_unversioned_commits(current_str)
-    if has_unversioned:
-        print(
-            f"错误: 检测到 v{current_str} 之后有 {n_unversioned} 个未发版提交。"
-            "发版前需先升级版本号（选 1-4 bump），再合并。"
-        )
-        return 1
-
-    # 3-4. 取版本 + 确认
-    v_new = current_str
-    remote = PUBLISH_REMOTE
-    branch = PUBLISH_BRANCH
-    print(
-        f"将执行：develop → {remote}/{branch} 单提交快照 + 整合 CHANGELOG + 打 tag v{v_new}"
-    )
-    print("本地不切换分支，仅推送远程。确认继续？[y/N]: ", end="", flush=True)
-    if not skip_confirm:
-        choice = input().strip().lower()
-        if choice not in ("y", "yes"):
-            print("已取消")
-            return 1
-
-    # 5. CHANGELOG 已在 develop bump 时生成并提交，此处直接复用 develop 的树
-    #    （不再单独整合/改写 CHANGELOG，main 快照链与 develop CHANGELOG 同源）。
-
-    # 6. 查询 GitHub main 当前 HEAD，决定 parent
-    parent_sha = _remote_head_sha(remote, branch)
-    if parent_sha:
-        # 拉取 parent 到本地对象库（commit-tree -p 需要它在本地）
-        try:
-            subprocess.run(
-                ["git", "fetch", remote, branch],
-                capture_output=True, encoding="utf-8", check=True,
-            )
-        except subprocess.CalledProcessError as e:
-            print(f"错误: 拉取 {remote}/{branch} 失败: {e}")
-            return 1
-        print(f"  {remote}/{branch} 当前 HEAD: {parent_sha[:12]}（将作为 parent）")
-    else:
-        print(f"  {remote}/{branch} 为空仓库，将创建孤儿单提交")
-
-    # 7. 造单提交：直接用 develop 当前 index 树（含已提交的 CHANGELOG）
-    try:
-        tree_sha = subprocess.run(
-            ["git", "write-tree"],
-            capture_output=True, encoding="utf-8", check=True,
-        ).stdout.strip()
-    except subprocess.CalledProcessError as e:
-        print(f"错误: 构建 tree 失败: {e}")
-        return 1
-
-    commit_tree_cmd = ["git", "commit-tree", tree_sha, "-m", f"release: v{v_new}"]
-    if parent_sha:
-        commit_tree_cmd += ["-p", parent_sha]
-    try:
-        new_commit = subprocess.run(
-            commit_tree_cmd,
-            capture_output=True, encoding="utf-8", check=True,
-        ).stdout.strip()
-    except subprocess.CalledProcessError as e:
-        print(f"错误: 创建快照提交失败: {e}")
-        return 1
-    print(f"  已创建快照提交: {new_commit[:12]}")
-
-    # 8. push 到远程 main + tag
-    try:
-        subprocess.run(
-            ["git", "push", remote, f"{new_commit}:refs/heads/{branch}"],
-            check=True,
-        )
-        print(f"  已推送 {remote}/{branch}")
-    except subprocess.CalledProcessError as e:
-        print(f"错误: 推送 {remote}/{branch} 失败: {e}")
-        print("  （若远程有 unrelated 历史，需首次用 --force；后续应 fast-forward）")
-        return 1
-
-    # 9. 打 tag 并推送
-    #    tag 打在 develop HEAD（release 提交，已含 CHANGELOG）上，而非快照提交。
-    #    原因：快照提交是独立链，与 develop 无共同祖先；若 tag 打在快照上，
-    #    下次发版算 {tag}..HEAD 会返回 develop 全部历史（范围计算错误）。
-    #    tag 打在 develop HEAD 上 → 下次 {tag}..HEAD 正确只算新增提交。
-    #    推送 tag 时 git 会把 develop HEAD 提交对象一并推到远程对象库，
-    #    GitHub Release API 即可通过此 tag 找到提交。
-    try:
-        subprocess.run(
-            ["git", "tag", "-f", f"v{v_new}", "HEAD"],
-            capture_output=True, encoding="utf-8", check=True,
-        )
-        subprocess.run(
-            ["git", "push", remote, f"refs/tags/v{v_new}"],
-            check=True,
-        )
-        print(f"  已在 develop HEAD 打 tag v{v_new} 并推送")
-    except subprocess.CalledProcessError as e:
-        print(f"警告: 打/推 tag 失败: {e}")
-
-    print(f"\n完成! {remote}/{branch} 已更新到 v{v_new}（单提交快照）")
-    print(f"  可用 --release 发布产物（Release 会关联到 v{v_new} tag）")
-    return 0
-
-
-# 向后兼容别名（旧调用方/文档引用 cmd_to_main）
-cmd_to_main = cmd_publish_main
+    print(f"  已推送 tag {tag}，CI 将自动打包并发布")
+    return True
 
 
 class _Args(argparse.Namespace):
     """带类型注解的 Namespace，让静态检查器能识别 args 的各字段类型。
 
     argparse.Namespace 的属性是动态的，静态检查器只能看到
-    __getattr__(name: str)，访问 args.release 等会被推断为 Literal['release']
+    __getattr__(name: str)，访问 args.build 等会被推断为 Literal['build']
     与 str 不兼容（PyCharm/Pyright 报 reportArgumentType）。这里显式声明
     每个字段的类型，并通过 parse_args(namespace=_Args()) 绑定。
     """
 
-    release: bool
     build: bool
     no_edit: bool
     yes: bool
-    to_main: bool
     no_build: bool
     force: bool
     bundle_webengine: bool
@@ -1524,7 +1200,7 @@ def main() -> int:
         "--yes", "-y",
         action="store_true",
         dest="yes",
-        help="跳过所有交互确认（推送 main 发版、本地打包），脚本化/非交互场景用",
+        help="跳过推送确认直接 push（触发 CI 发版），脚本化/非交互场景用",
     )
     parser.add_argument(
         "--build",
@@ -1554,35 +1230,8 @@ def main() -> int:
         help="将 WebEngine 内置进主包（不拆分资源包）。默认按需下载模式会"
         "把 WebEngine 拆到独立资源包，首启向导下载；此开关用于回退到全量打包。",
     )
-    parser.add_argument(
-        "--release",
-        action="store_true",
-        help="构建并发布到 GitHub（需要 GITHUB_TOKEN）",
-    )
-    parser.add_argument(
-        "--to-main",
-        action="store_true",
-        dest="to_main",
-        help="推送 develop 快照到 GitHub main（单提交 + 整合 CHANGELOG + 打 tag）",
-    )
 
     args = parser.parse_args(namespace=_Args())
-
-    # 模式: 推送快照到 GitHub main
-    if args.to_main:
-        return cmd_publish_main(skip_confirm=args.yes)
-
-    # 模式0: 构建并发布
-    if args.release:
-        try:
-            current = read_current_version(PYPROJECT_TOML)
-        except (FileNotFoundError, ValueError) as e:
-            print(f"错误: {e}")
-            return 1
-        current_str = ".".join(map(str, current))
-        if not _run_build(current_str, force=args.force, bundle_webengine=args.bundle_webengine):
-            return 1
-        return 0 if _create_release(current_str) else 1
 
     # 模式1: 仅打包当前版本
     if args.build:
@@ -1616,7 +1265,7 @@ def main() -> int:
             return 1
         return 0 if _run_build(rebuild_version, force=args.force, bundle_webengine=args.bundle_webengine) else 1
 
-    # 模式3: 版本升级流程
+    # 模式3: 版本升级流程（在 main 上 bump → commit → tag）
     try:
         current = read_current_version(PYPROJECT_TOML)
     except (FileNotFoundError, ValueError) as e:
@@ -1634,9 +1283,6 @@ def main() -> int:
         if new_version == "build":
             # 仅打包当前版本（不升级版本号、不动 git）
             return 0 if _run_build(current_str, force=args.force, bundle_webengine=args.bundle_webengine) else 1
-        if new_version == "merge":
-            # 推送快照到 GitHub main（菜单选项 6 的哨兵）
-            return cmd_publish_main(skip_confirm=args.yes)
     elif args.version in ("patch", "minor", "major"):
         new_version = bump_version(current, args.version)
     elif SEMVER_RE.match(args.version):
@@ -1650,8 +1296,7 @@ def main() -> int:
     new_str = ".".join(map(str, new_version))
     print(f"版本升级: {current_str} → {new_str}")
 
-    # 更新版本号文件（develop bump 前进版本号 + 生成 CHANGELOG + release 提交；
-    # tag 仍由 --to-main 在 main 上创建）
+    # 更新版本号文件（pyproject.toml / __init__.py）
     update_file_version(PYPROJECT_TOML, current_str, new_str)
     print(f"  已更新 {PYPROJECT_TOML}")
 
@@ -1664,7 +1309,7 @@ def main() -> int:
     # 同步 uv.lock（pyproject 版本号已变，锁文件需刷新避免滞后漂移）
     _sync_uv_lock(new_str)
 
-    # 更新 CHANGELOG（develop bump 时生成条目，弹编辑器审阅，纳入 release 提交）
+    # 更新 CHANGELOG（生成条目，弹编辑器审阅，纳入 release 提交）
     commits = get_commits_since_last_tag()
     update_changelog(new_str, commits)
     print(f"  已更新 {CHANGELOG}")
@@ -1673,33 +1318,40 @@ def main() -> int:
     if not args.no_edit:
         _open_editor(CHANGELOG)
 
-    # Git 操作（develop 不打 tag —— tag 只在 main 上由 --to-main 创建）
+    # Git 操作：版本号 + CHANGELOG + uv.lock 进入同一个 release 提交，并打 tag。
     try:
         subprocess.run(["git", "add", str(PYPROJECT_TOML)], check=True)
         if INIT_PY.exists():
             subprocess.run(["git", "add", str(INIT_PY)], check=True)
-        # CHANGELOG 随版本号一同进入 release 提交（--to-main 时不再单独改）
         subprocess.run(["git", "add", str(CHANGELOG)], check=True)
         # uv.lock 与版本号同源，纳入同一 release 提交
         if UV_LOCK.exists():
             subprocess.run(["git", "add", str(UV_LOCK)], check=True)
         subprocess.run(["git", "commit", "-m", f"release: v{new_str}"], check=True)
         print(f"  已创建 git commit release: v{new_str}")
+        subprocess.run(["git", "tag", f"v{new_str}"], check=True)
+        print(f"  已打 tag v{new_str}")
     except (subprocess.CalledProcessError, FileNotFoundError) as e:
         print(f"警告: git 操作失败: {e}")
         return 1
 
-    # 先问是否推送快照到 GitHub main（更重操作优先）；否决后再问打包。
-    # 注意：发版/打包确认由 --yes 控制，与 --no-edit（仅跳编辑器）解耦，
-    # 避免日常手动发版时这两个确认被连带跳过。
-    merged = False
-    if not args.yes:
-        print("\n是否立即推送快照到 GitHub main 并发版？[y/N]: ", end="", flush=True)
+    # 推送确认：推 tag 会触发 CI 打包发版（不可逆），故默认否。
+    # --yes 跳过此确认直接推送。推送由 --yes 控制，与 --no-edit（仅跳编辑器）解耦。
+    pushed = False
+    if args.yes:
+        pushed = _push_release(new_str)
+    else:
+        print(
+            f"\n已创建 tag v{new_str}。是否推送到 GitHub/main 触发发版？[y/N]: ",
+            end="",
+            flush=True,
+        )
         if input().strip().lower() in ("y", "yes"):
-            rc_merge = cmd_publish_main(skip_confirm=True)
-            merged = rc_merge == 0
+            pushed = _push_release(new_str)
 
-    if not merged and not args.yes and not args.no_build and _ask_build(new_str):
+    # 未推送时才问本地打包（已推送则 CI 会打包，本地打包多余）。
+    # 本地打包确认默认否，与推送确认共用 --yes 跳过。
+    if not pushed and not args.yes and not args.no_build and _ask_build(new_str):
         _run_build(new_str, force=args.force, bundle_webengine=args.bundle_webengine)
 
     print(f"\n完成! 版本已升级到 {new_str}")
