@@ -41,9 +41,13 @@ _GITEE_API = f"https://gitee.com/api/v5/repos/{GITEE_OWNER_REPO}"
 # Gitee 大文件上传参数：海外 runner → 国内 Gitee，慢且不稳，须流式 + 进度 + 墙钟。
 # 历史 CI 此处 socket timeout 600s 静默卡满 + 重试 3 次，导致发版卡 27 分钟被取消。
 GITEE_UPLOAD_HOST = "gitee.com"
-GITEE_UPLOAD_PER_ASSET_LIMIT = 8 * 60   # 单附件墙钟上限（秒），超时主动 abort
+# 单附件墙钟上限。实测美国 runner→Gitee 速率 0.03~0.05MB/s，88MB 单文件最差
+# (0.03) 需 ~49min；按 55min 给余量，保证单次能传完，不再无谓重试同一慢链路。
+GITEE_UPLOAD_PER_ASSET_LIMIT = 55 * 60  # 单附件墙钟上限（秒），超时主动 abort
 GITEE_UPLOAD_CHUNK = 1024 * 1024        # 1MB/块，每块后报进度 + 查墙钟
-GITEE_UPLOAD_RETRIES = 2                # 网络错误重试次数（HTTPError 不重试）
+# 重试次数：带宽瓶颈导致的墙钟超时，重试结果一样，纯属浪费 CI 时间且可能
+# 撞 GitHub job 360min 上限。降到 1 次（共 2 次尝试）兜底即可。
+GITEE_UPLOAD_RETRIES = 1                # 网络错误重试次数（HTTPError 不重试）
 
 
 def _gitee_auth_header(token: str) -> dict[str, str]:
