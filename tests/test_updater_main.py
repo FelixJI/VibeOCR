@@ -1,6 +1,10 @@
-"""scripts/updater_main.py 单元测试
+"""scripts/update_replacer.py 单元测试
 
-覆盖更新助手的核心逻辑：zip 校验/解压、文件替换（含失败回滚）、SHA256 校验。
+覆盖共享替换逻辑的核心功能：zip 校验/解压、文件替换（含失败回滚）、SHA256 校验、
+依赖同步标记、日志、运行中 exe 改名避让、就绪握手信号、统一入口 run_replacement。
+
+该模块被两个调用方复用：updater.exe（首选替换器）与主程序 --self-update 兜底模式。
+因此测试锚定在共享模块上（而非轻量入口 updater_main.py），保证两条路径行为一致。
 通过 importlib 按文件路径加载脚本模块（与 test_bump_version.py 一致的做法）。
 """
 
@@ -14,20 +18,20 @@ from pathlib import Path
 
 import pytest
 
-SCRIPT = Path(__file__).parent.parent / "scripts" / "updater_main.py"
+SCRIPT = Path(__file__).parent.parent / "scripts" / "update_replacer.py"
 
 
 @pytest.fixture(scope="module")
 def updater():
-    """按文件路径加载 updater_main.py 为模块。"""
-    spec = importlib.util.spec_from_file_location("updater_main", SCRIPT)
+    """按文件路径加载 update_replacer.py 为模块。"""
+    spec = importlib.util.spec_from_file_location("update_replacer", SCRIPT)
     assert spec is not None and spec.loader is not None
     mod = importlib.util.module_from_spec(spec)
-    # 注入 sys.modules，使模块内 if __name__ 之外的顶层执行正常
-    sys.modules["updater_main"] = mod
+    # 注入 sys.modules，使模块内顶层执行正常
+    sys.modules["update_replacer"] = mod
     spec.loader.exec_module(mod)
     yield mod
-    sys.modules.pop("updater_main", None)
+    sys.modules.pop("update_replacer", None)
 
 
 # ---------------------------------------------------------------------------
@@ -311,8 +315,8 @@ class TestSyncDependencies:
 
 class TestSetupLogging:
     def test_writes_log_file(self, updater, tmp_path):
-        """_setup_logging 应在 data/logs/ 下创建 updater.log 并能记录日志。"""
-        updater._setup_logging(tmp_path)
+        """setup_logging 应在 data/logs/ 下创建指定日志文件并能记录日志。"""
+        updater.setup_logging(tmp_path, "updater.log")
 
         updater.logger.info("test message from setup_logging")
 
@@ -321,6 +325,15 @@ class TestSetupLogging:
         content = log_file.read_text(encoding="utf-8")
         assert "test message from setup_logging" in content
 
+    def test_self_update_log_uses_separate_filename(self, updater, tmp_path):
+        """self-update 模式应能写入独立的 self_update.log，与 updater.log 区分。"""
+        updater.setup_logging(tmp_path, "self_update.log")
+        updater.logger.info("self-update path message")
+
+        log_file = tmp_path / "data" / "logs" / "self_update.log"
+        assert log_file.exists(), "应创建 self_update.log"
+        assert "self-update path message" in log_file.read_text(encoding="utf-8")
+
     def test_logging_survives_missing_log_dir(self, updater, tmp_path, monkeypatch):
         """日志目录创建失败时不应抛异常（退化到 stdout）。"""
         def _boom(*a, **kw):
@@ -328,7 +341,7 @@ class TestSetupLogging:
 
         monkeypatch.setattr("pathlib.Path.mkdir", _boom)
         # 不应抛异常
-        updater._setup_logging(tmp_path)
+        updater.setup_logging(tmp_path, "updater.log")
 
 
 # ---------------------------------------------------------------------------
@@ -344,10 +357,22 @@ class TestRenameLockedSelfExe:
         (app_dir / "updater.exe").write_bytes(b"old running exe")
 
         monkeypatch.setattr(updater.os, "name", "nt")
-        updater._rename_locked_self_exe(app_dir)
+        updater.rename_locked_self_exe(app_dir, "updater.exe")
 
         assert not (app_dir / "updater.exe").exists()
         assert (app_dir / "updater.exe.old").read_bytes() == b"old running exe"
+
+    def test_renames_vibeocr_exe_for_self_update(self, updater, tmp_path, monkeypatch):
+        """self-update 模式应能把 VibeOCR.exe 改名避让（通用化 self_name 参数）。"""
+        app_dir = tmp_path / "app"
+        app_dir.mkdir()
+        (app_dir / "VibeOCR.exe").write_bytes(b"running main exe")
+
+        monkeypatch.setattr(updater.os, "name", "nt")
+        updater.rename_locked_self_exe(app_dir, "VibeOCR.exe")
+
+        assert not (app_dir / "VibeOCR.exe").exists()
+        assert (app_dir / "VibeOCR.exe.old").read_bytes() == b"running main exe"
 
     def test_noop_on_non_windows(self, updater, tmp_path, monkeypatch):
         """非 Windows 下不做任何事。"""
@@ -356,19 +381,19 @@ class TestRenameLockedSelfExe:
         (app_dir / "updater.exe").write_bytes(b"exe")
 
         monkeypatch.setattr(updater.os, "name", "posix")
-        updater._rename_locked_self_exe(app_dir)
+        updater.rename_locked_self_exe(app_dir, "updater.exe")
 
         # 文件保持不变
         assert (app_dir / "updater.exe").read_bytes() == b"exe"
         assert not (app_dir / "updater.exe.old").exists()
 
     def test_noop_when_self_exe_absent(self, updater, tmp_path, monkeypatch):
-        """updater.exe 不存在时不应抛异常。"""
+        """目标 exe 不存在时不应抛异常。"""
         app_dir = tmp_path / "app"
         app_dir.mkdir()
 
         monkeypatch.setattr(updater.os, "name", "nt")
-        updater._rename_locked_self_exe(app_dir)  # 不应抛异常
+        updater.rename_locked_self_exe(app_dir, "updater.exe")  # 不应抛异常
 
     def test_removes_stale_old_before_rename(self, updater, tmp_path, monkeypatch):
         """应先清理上次更新残留的 .old 再改名。"""
@@ -378,22 +403,39 @@ class TestRenameLockedSelfExe:
         (app_dir / "updater.exe.old").write_bytes(b"stale from last update")
 
         monkeypatch.setattr(updater.os, "name", "nt")
-        updater._rename_locked_self_exe(app_dir)
+        updater.rename_locked_self_exe(app_dir, "updater.exe")
 
         assert not (app_dir / "updater.exe").exists()
         assert (app_dir / "updater.exe.old").read_bytes() == b"current"
 
 
 # ---------------------------------------------------------------------------
-# main（顶层异常兜底：写日志后返回 1，不静默崩溃）
+# run_replacement（统一入口：写就绪信号 + 顶层异常兜底写日志后返回 1）
 # ---------------------------------------------------------------------------
 
 
-class TestMainExceptionGuard:
+class TestRunReplacementExceptionGuard:
+    def test_writes_ready_signal_before_work(self, updater, tmp_path):
+        """run_replacement 应在做任何替换前写出就绪信号文件（供主程序端握手）。"""
+        zp = tmp_path / "pkg.zip"
+        zp.write_bytes(b"data")
+        # 校验会失败（缺 .sha256），但 ready 信号应已写出。
+        app_dir = tmp_path / "app"
+        app_dir.mkdir()
+
+        updater.run_replacement(zp, app_dir, ready_filename="updater.ready")
+
+        ready = app_dir / "data" / "cache" / "update" / "updater.ready"
+        assert ready.exists(), "应在替换前写出就绪信号"
+
     def test_uncaught_exception_returns_1_and_logs(
         self, updater, tmp_path, monkeypatch
     ):
-        """verify_zip 抛非预期异常时，main 应回退捕获并写日志、返回 1。"""
+        """verify_zip 抛非预期异常时，run_replacement 应回退捕获并写日志、返回 1。
+
+        与真实调用方（updater_main.main / main._run_self_update）一致：先 setup_logging
+        再调 run_replacement，故异常现场会落到日志文件。
+        """
         zp = tmp_path / "pkg.zip"
         zp.write_bytes(b"data")
         app_dir = tmp_path / "app"
@@ -404,15 +446,8 @@ class TestMainExceptionGuard:
 
         monkeypatch.setattr(updater, "verify_zip", _boom)
 
-        # main() 接收 zip/app-dir 通过 argparse，这里直接构造 argv
-        import sys as _sys
-
-        monkeypatch.setattr(
-            _sys,
-            "argv",
-            ["updater.exe", "--update", str(zp), "--app-dir", str(app_dir)],
-        )
-        assert updater.main() == 1
+        updater.setup_logging(app_dir, "updater.log")
+        assert updater.run_replacement(zp, app_dir) == 1
 
         log_file = app_dir / "data" / "logs" / "updater.log"
         assert log_file.exists()

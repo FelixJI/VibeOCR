@@ -5,12 +5,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
 import os
 import subprocess
 import sys
+import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, NamedTuple
 
@@ -605,6 +607,12 @@ class UpdateService:
         self._updater_path = (
             app_dir / "updater.exe" if os.name == "nt" else app_dir / "updater"
         )
+        # 主程序本体路径：握手失败（updater.exe 坏）时，启动 [VibeOCR.exe --self-update]
+        # 让主程序自身充当兜底替换器。VibeOCR.exe 是最不可能坏的 exe（它若坏，应用
+        # 根本启动不了，谈更新无意义），用它的另一启动模式做兜底等于建立在最稳定基座上。
+        self._self_exe_path = (
+            app_dir / "VibeOCR.exe" if os.name == "nt" else app_dir / "VibeOCR"
+        )
         from vibeocr.services.env_config import (
             get_update_cache_dir,
             get_update_settings_path,
@@ -712,20 +720,144 @@ class UpdateService:
         if reply != QMessageBox.StandardButton.Ok:
             return
 
-        self._launch_updater(zip_path)
+        # 先尝试 updater.exe（首选替换器），握手确认它「活着」再退出。
+        # 握手三态：
+        #   ready/timeout → 替换器确认在工作（ready=快，timeout=慢但仍在跑）→ sys.exit 放心。
+        #   crashed       → updater 确认坏了 → 启动 [VibeOCR.exe --self-update] 兜底。
+        # 关键：timeout 不能误判为坏，否则并发启 self-update 会与仍在工作的 updater
+        # 抢着替换 app_dir，导致文件损坏。
+        result = await self._launch_updater(zip_path)
+        if result in ("ready", "timeout"):
+            sys.exit(0)
 
-    def _launch_updater(self, zip_path: Path) -> None:
+        # updater 确认崩溃（crashed）→ 主程序自身充当兜底替换器。
+        logger.warning("updater.exe 握手失败（crashed），改用主程序自带更新模式（--self-update）兜底")
+        result = await self._launch_self_update(zip_path)
+        if result in ("ready", "timeout"):
+            sys.exit(0)
+
+        # 极端罕见：连主程序自身都起不来（VibeOCR.exe 若坏，应用本就无法启动）。
+        # 不退出主程序，明确告知用户手动重装——避免「应用关了什么都不发生」的困惑。
+        network_type = _detect_network_type()
+        manual_url = (
+            GITEE_RELEASES_BASE
+            if network_type == "domestic"
+            else GITHUB_RELEASES_BASE
+        )
+        QMessageBox.critical(
+            parent,
+            "更新失败",
+            "更新助手与自带更新器均无法启动。\n\n"
+            "请手动下载最新版，覆盖安装前请先退出本程序：\n"
+            f"{manual_url}",
+        )
+
+    # 握手超时（秒）：替换器需在此窗口内写出就绪信号文件。
+    # onefile 解压 + Python 初始化在慢机器上可能数秒，给 15s 余量。
+    _HANDSHAKE_TIMEOUT = 15.0
+    _HANDSHAKE_POLL_INTERVAL = 0.2
+
+    async def _launch_updater(self, zip_path: Path) -> str:
+        """启动 updater.exe 并握手确认它「活着」。返回握手三态（见 _handshake_launch）。
+
+        替代旧的 fire-and-forget + 立即 sys.exit：旧设计下 updater 崩溃时主程序已退出、
+        用户看到「应用关了什么都没发生」且无任何 UI 反馈。握手协议下，updater 启动后
+        会第一时间写就绪信号文件（data/cache/update/updater.ready），主程序端轮询该
+        文件 + 进程存活，确认替换器确实在干活后才退出；确认崩溃（crashed）才走兜底。
+        """
         if not self._updater_path.exists():
             logger.error(f"updater 不存在: {self._updater_path}")
-            return
+            return False
 
-        cmd = [
-            str(self._updater_path),
-            "--update",
-            str(zip_path),
-            "--app-dir",
-            str(self._app_dir),
-        ]
+        return await self._handshake_launch(
+            exe_path=self._updater_path,
+            extra_args=["--update", str(zip_path), "--app-dir", str(self._app_dir)],
+            ready_filename="updater.ready",
+            label="updater.exe",
+        )
+
+    async def _launch_self_update(self, zip_path: Path) -> str:
+        """启动 [VibeOCR.exe --self-update] 兜底替换器并握手。返回握手三态。
+
+        仅在 updater.exe 确认崩溃（crashed）时调用。复用同一握手协议，就绪信号文件用
+        self_update.ready 区分。注意：此处启动的是主程序的「另一个实例」，启动后
+        本主程序实例会 sys.exit，把 VibeOCR.exe 文件锁释放给兜底实例去覆盖。
+        """
+        if not self._self_exe_path.exists():
+            logger.error(f"主程序不存在，无法走 self-update 兜底: {self._self_exe_path}")
+            return False
+
+        return await self._handshake_launch(
+            exe_path=self._self_exe_path,
+            extra_args=["--self-update", str(zip_path), "--app-dir", str(self._app_dir)],
+            ready_filename="self_update.ready",
+            label="VibeOCR.exe --self-update",
+        )
+
+    async def _handshake_launch(
+        self,
+        exe_path: Path,
+        extra_args: list[str],
+        ready_filename: str,
+        label: str,
+    ) -> str:
+        """通用握手启动：清理旧 ready → 启动进程 → 轮询 ready 文件 + 进程存活。
+
+        返回三态（避免「超时但进程仍在跑」被误判为崩溃、进而误启 self-update 与
+        正常 updater 并发替换导致文件损坏）：
+
+        - ``"ready"``：就绪信号文件出现 → 替换器确认活着，调用方 sys.exit 放心。
+        - ``"crashed"``：进程已退出且无就绪信号 → 替换器确认坏了，调用方走兜底。
+        - ``"timeout"``：超时但进程仍在跑 → 替换器可能只是慢（慢机/杀软扫描），
+          不能判定为坏。调用方应继续等待（视为 ready，sys.exit），**绝不**启 self-update。
+
+        Args:
+            exe_path: 要启动的替换器 exe（updater.exe 或 VibeOCR.exe）。
+            extra_args: 传给 exe 的参数（不含 exe 本身）。
+            ready_filename: 替换器写出的就绪信号文件名（updater.ready / self_update.ready）。
+            label: 日志/UI 中的人类可读标签。
+        """
+        ready_path = self._cache_dir / ready_filename
+        try:
+            ready_path.unlink(missing_ok=True)  # 清理上次残留，避免读到旧信号误判
+        except OSError:
+            pass
+
         detached = 0x8 if os.name == "nt" else 0
-        subprocess.Popen(cmd, creationflags=detached)
-        sys.exit(0)
+        cmd = [str(exe_path), *extra_args]
+        logger.info(f"启动 {label}：{cmd}")
+        try:
+            proc = subprocess.Popen(cmd, creationflags=detached)
+        except OSError as e:
+            logger.error(f"启动 {label} 失败: {e}")
+            return "crashed"
+
+        # 轮询放后台线程，主事件循环不阻塞。
+        return await asyncio.to_thread(
+            self._poll_ready, proc, ready_path, label, self._HANDSHAKE_TIMEOUT
+        )
+
+    def _poll_ready(
+        self, proc: subprocess.Popen, ready_path: Path, label: str, timeout: float
+    ) -> str:
+        """阻塞轮询 ready 文件 + 进程存活，返回三态（见 _handshake_launch 文档）。"""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if ready_path.exists():
+                logger.info(f"{label} 握手成功（就绪信号已收到）")
+                return "ready"
+            if proc.poll() is not None:
+                # 进程已退出且无就绪信号：替换器崩溃/起不来，确认坏了。
+                logger.warning(
+                    f"{label} 启动后立即退出（退出码 {proc.returncode}），确认握手失败"
+                )
+                return "crashed"
+            time.sleep(self._HANDSHAKE_POLL_INTERVAL)
+        # 超时但进程仍在跑：替换器可能只是慢，不能误判为坏（否则并发启 self-update
+        # 会与这个仍在工作的 updater 抢着替换文件，导致 app_dir 损坏）。
+        # 视为「正在工作」，让主程序 sys.exit 把现场交给它。
+        logger.warning(
+            f"{label} 握手超时（{timeout}s 未收到就绪信号，但进程仍在运行），"
+            f"视为工作中（不触发兜底，避免并发替换）"
+        )
+        return "timeout"

@@ -61,6 +61,92 @@ def check_production_dependencies() -> bool:
     return ready
 
 
+def _parse_self_update_argv() -> tuple[Path | None, Path | None]:
+    """解析 ``--self-update <zip> --app-dir <dir>``，返回 (zip_path, app_dir)。
+
+    轻量手写解析（不引 argparse，保持入口简洁）。失败返回 (None, None)。
+    支持 ``--self-update <zip>`` 与 ``--self-update=<zip>`` 两种写法，``--app-dir`` 同理。
+    """
+    argv = sys.argv[1:]
+    zip_path: Path | None = None
+    app_dir: Path | None = None
+    i = 0
+    while i < len(argv):
+        arg = argv[i]
+        if arg == "--self-update":
+            if i + 1 < len(argv):
+                zip_path = Path(argv[i + 1])
+                i += 2
+                continue
+        elif arg.startswith("--self-update="):
+            zip_path = Path(arg.split("=", 1)[1])
+        elif arg == "--app-dir":
+            if i + 1 < len(argv):
+                app_dir = Path(argv[i + 1])
+                i += 2
+                continue
+        elif arg.startswith("--app-dir="):
+            app_dir = Path(arg.split("=", 1)[1])
+        i += 1
+    return zip_path, app_dir
+
+
+def _resolve_replacer_module_dir() -> Path | None:
+    """定位 update_replacer.py 所在目录，用于 --self-update 模式 import。
+
+    优先级：
+    1. 打包态：``sys._MEIPASS``（update_replacer.py 由 --add-data 打入 _internal/ 根）。
+    2. 开发态：仓库根下的 ``scripts/``（与 main.py 的相对位置回溯）。
+
+    找不到返回 None（调用方据此报错退出）。
+    """
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass is not None and (Path(meipass) / "update_replacer.py").exists():
+        return Path(meipass)
+    # 开发态：src/vibeocr/main.py -> 仓库根 -> scripts/
+    dev_scripts = Path(__file__).resolve().parent.parent.parent / "scripts"
+    if (dev_scripts / "update_replacer.py").exists():
+        return dev_scripts
+    return None
+
+
+def _run_self_update(zip_path: Path, app_dir: Path) -> int:
+    """--self-update 模式入口：主程序自身充当兜底替换器。
+
+    由 ``main()`` 在最早期（任何 Qt/重依赖 import 之前）拦截 ``--self-update`` 后调用。
+    此刻调用方主程序（旧版 VibeOCR.exe）已在 update_service 端 sys.exit，文件锁释放，
+    故本进程能正常覆盖 VibeOCR.exe；``self_exe_names`` 同时包含 VibeOCR.exe 与
+    updater.exe，rename_locked_self_exe 作为锁未及时释放的兜底。
+
+    复用 update_replacer.run_replacement 的完整替换逻辑（与 updater.exe 同一份代码）。
+    """
+    replacer_dir = _resolve_replacer_module_dir()
+    if replacer_dir is None:
+        # 极端情况：打包态漏打 update_replacer.py / 开发态文件缺失。
+        # 此时无法自助，仅打印提示。用户需手动重装。
+        print("[VibeOCR][self-update] 未找到 update_replacer.py，无法执行自带更新。")
+        print("[VibeOCR][self-update] 请手动下载最新版覆盖安装。")
+        return 1
+
+    if str(replacer_dir) not in sys.path:
+        sys.path.insert(0, str(replacer_dir))
+
+    from update_replacer import logger, run_replacement, setup_logging
+
+    # self-update 专用日志文件，与 updater.log 区分，便于排查兜底路径问题。
+    setup_logging(app_dir, "self_update.log")
+    logger.info("VibeOCR 自带更新模式启动（--self-update，兜底路径）")
+
+    # self-update 模式需同时避让 VibeOCR.exe（可能锁未释放）与 updater.exe（同目录）。
+    # 就绪信号用 self_update.ready，与 update_service._launch_self_update 的轮询对应。
+    return run_replacement(
+        zip_path,
+        app_dir,
+        self_exe_names=("VibeOCR.exe", "updater.exe"),
+        ready_filename="self_update.ready",
+    )
+
+
 def _create_tray_icon(app, window, app_settings):
     """创建系统托盘图标
 
@@ -322,11 +408,24 @@ def main() -> int:
     """应用程序入口点
 
     启动流程：
+    0. 若带 ``--self-update`` 参数 → 充当兜底替换器（updater.exe 坏时的逃生通道），
+       抢在 Qt/重依赖 import 之前执行替换并退出。
     1. 检测生产环境依赖（PySide6, Pillow）
     2. 失败 → 控制台错误提示，退出
     3. 通过 → 启动GUI
     4. GUI启动后 → 异步检测嵌入式OCR依赖
     """
+
+    # 0. --self-update 模式：主程序自身充当兜底替换器。
+    # 必须最先拦截，避免 import PySide6 等重依赖（self-update 仅需 stdlib 替换逻辑）。
+    # 用法：VibeOCR.exe --self-update <zip> --app-dir <dir>
+    # 与 updater.exe 的 --update --app-dir 对称，由 update_service 在握手失败时启动。
+    if "--self-update" in sys.argv:
+        zip_path, app_dir = _parse_self_update_argv()
+        if zip_path is None:
+            print("用法: VibeOCR.exe --self-update <更新包zip> --app-dir <应用目录>")
+            return 2
+        return _run_self_update(zip_path, app_dir)
 
     # 1. 检查生产环境依赖
     if not check_production_dependencies():

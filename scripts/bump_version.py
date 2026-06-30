@@ -242,6 +242,11 @@ PACKAGE_DATA = [
     # 主 exe 走 PyInstaller bootstrap（PYZ 优先），便携 Python 走 PYTHONPATH 的
     # 平铺 .py，互不干扰。
     ("src/vibeocr", "vibeocr"),
+    # update_replacer.py：主程序 --self-update 兜底模式需要 import 它（updater.exe
+    # 坏时主程序自身充当替换器）。打入 .（_internal/ 根），由 main.py 的
+    # _resolve_replacer_module_dir 通过 sys._MEIPASS 定位后注入 sys.path。
+    # updater.exe 是独立 --onefile，与该文件同源打包，无需在此声明。
+    ("scripts/update_replacer.py", "."),
 ]
 
 # vibeocr 子模块通过 --collect-submodules 自动收集，此处只列出第三方包
