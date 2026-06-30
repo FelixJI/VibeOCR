@@ -207,6 +207,16 @@ def launch_application() -> int:
     app.setApplicationName("VibeOCR")
     app.setApplicationVersion(__version__)
 
+    # 单实例守卫：第二个实例启动时通知本实例提到前台后自身退出。
+    # 必须在 QApplication 创建之后调用（QLocalServer 依赖 Qt 事件循环）。
+    # socket 名固定为 "VibeOCR"（不绑版本），保证升级后新旧版本互认同一应用。
+    from vibeocr.utils.single_instance import SingleInstanceGuard
+
+    guard = SingleInstanceGuard("VibeOCR")
+    if not guard.try_lock():
+        # 已有实例在运行，本实例静默退出。
+        return 0
+
     # 注册退出清理：协作式取消残留的 InstallWorker 并 kill 其子进程。
     # 作为 closeEvent 的兜底——若用户在安装进行中直接退出应用（而非关闭对话框），
     # 避免留下孤儿 pip 子进程（main.py 末尾的 os._exit 不会回收它们）。
@@ -255,6 +265,9 @@ def launch_application() -> int:
     window = MainWindow()
     window.set_app_settings(app_settings)
     window.show()
+
+    # 第二实例通知提到前台时，恢复并激活主窗口。
+    guard.raise_requested.connect(window.bring_to_front)
 
     # 打包环境下延迟检查更新
     if getattr(sys, "frozen", False):

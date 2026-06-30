@@ -1,5 +1,70 @@
 # Changelog
 
+## [0.4.0] - 2026-06-30
+
+### Added
+- feat(env_config): 新增发布仓库 SSOT 常量 + gh 代理候选工厂
+- feat(ui): 保存/另存为/批量导出改异步 + 加载进度提示
+- feat(ui): PdfTab 连接 manager 异步信号 + 删除文字层改异步
+- feat(manager): export_all_async 异步批量导出
+- feat(manager): save_async/delete_text_layers_async 等 mutate 异步编排
+- feat(manager): start_ocr 改为 render+ocr 流式编排
+- feat(worker): PdfExportWorker 跨 session 批量导出
+- feat(worker): PdfOcrWorker 支持 queue 流式消费模式
+- feat(worker): PdfRenderWorker 后台逐页渲染 + queue 背压
+- feat(worker): PdfMutateWorker 支持 ROTATE/DELETE/REORDER/INSERT/SAVE
+- feat(worker): PdfMutateWorker 核心框架 + DELETE_TEXT_LAYER 任务
+- feat(pdf-service): save_with_rewrite 按结构改动分流保存策略
+- feat(model): PdfDocument 增加 has_structural_change 标志
+
+### Fixed
+- fix(ocr): NVML 不可用时 PDF 批量识别退化为逐张
+- fix(pdf-service): 删除文字层改为词级 redact + 循环验证至清零
+- fix(pdf-service): 文档方向分类 90/270 文字层逆变换公式写反
+- fix(ci): 修复 Gitee Release 附件上传从未成功 + 失败被静默吞掉
+
+### Changed
+- Merge gitee/develop into develop
+- refactor(about): 关于页链接指向仓库主页（新增 *_REPO_BASE SSOT）
+- docs(ci): 仓库常量注释指向 env_config SSOT
+- refactor(about): URL 改用 env_config SSOT，链接指向 releases 页
+- test(update): 直接覆盖 _download_zip_with_sha 的各分支与清理逻辑
+- refactor(update): 仓库标识收敛 + download_update 多源 gh 代理回退
+- refactor(webengine): 下载源选择改用 env_config SSOT 工厂函数
+- docs: 重新添加项目 README（v0.3.1，重写功能/安装/使用说明）
+- perf(startup): 启动期 GPU 探测改后台线程 + 单实例机制
+- perf(pdf-service): OCR 文字层保存全量压缩 + 整文档共享子集字体，消除体积膨胀
+- perf(pdf-service): open_doc 砍掉主线程 rotation 遍历
+- test(pdf-service): 结构性操作置位 has_structural_change 的回归测试
+- docs(plan): PDF 异步化与性能优化实现计划
+- docs(spec): PDF 处理界面异步化与性能优化设计
+
+### Added
+- feat(worker): 新增 PdfRenderWorker / PdfOcrWorker / PdfMutateWorker /
+  PdfExportWorker，PDF 渲染/识别/结构操作/批量导出改为后台线程 + queue 背压
+- feat(manager): pdf_session_manager 异步编排——start_ocr（render+ocr 流式）、
+  save_async / delete_text_layers_async / export_all_async 等 mutate 异步化
+- feat(ui): PdfTab 接入 manager 异步信号；保存/另存为/批量导出/删除文字层改异步
+  并带加载进度提示
+
+### Fixed
+- fix(ocr): NVML/pynvml 不可用时 PDF 批量识别退化为逐张（4090 占用仅 20-40%）
+  - `_read_free_vram_mb` NVML 失败时增加 `paddle.device.cuda` 二级兜底读取显存
+  - `estimate_gpu_batch_size` 显存探测失败（free_mb=0）但 GPU 模式下返回
+    `GPU_FALLBACK_BATCH_SIZE=4` 而非 1，避免大显存卡被迫逐张识别
+- fix(ocr): PaddleOCR 3.x 构造时未传 `text_recognition_batch_size`，GPU 模式
+  默认注入 8 以喂满显卡
+- fix(pdf-service): 删除文字层改为词级 redact + 循环验证至清零，避免残留
+- fix(pdf-service): 文档方向分类 90/270 文字层逆变换公式写反
+
+### Changed
+- feat(ocr): `OCROptions.use_doc_unwarping` 默认改为 `False`（PDF 文字层场景
+  多无扭曲矫正需求，开启每页多跑一个矫正网络）
+- feat(pdf-service): `save_with_rewrite` 按结构改动分流保存策略；
+  `PdfDocument` 增加 `has_structural_change` 标志
+- perf(pdf-service): OCR 文字层保存全量压缩 + 整文档共享子集字体，消除体积膨胀
+- perf(pdf-service): `open_doc` 砍掉主线程 rotation 遍历
+
 ## [0.3.1] - 2026-06-29
 
 ### Added

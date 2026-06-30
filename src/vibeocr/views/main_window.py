@@ -1344,3 +1344,12 @@ class MainWindow(QMainWindow):
         self.showNormal()
         self.activateWindow()
         self.raise_()
+
+    def bring_to_front(self) -> None:
+        """将主窗口提到前台（由单实例守卫触发）。
+
+        第二实例启动时检测到已运行实例，通过 SingleInstanceGuard 通知本实例
+        调用此方法。复用 _show_main_window 的恢复逻辑（含最小化到托盘场景：
+        showNormal 会取消最小化并 show 隐藏窗口）。
+        """
+        self._show_main_window()

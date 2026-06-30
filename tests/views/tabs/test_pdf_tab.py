@@ -1023,3 +1023,88 @@ class TestThumbnailIncrementalUpdate:
             assert pdf_tab._get_selected_page_indices() == [1, 2]
         finally:
             doc.close()
+
+
+class TestPdfTabDeleteTextLayerAsync:
+    """删除文字层改异步：调 manager.delete_text_layers_async 而非主线程循环。"""
+
+    def test_delete_calls_manager_async(self, pdf_tab, monkeypatch):
+        """_on_delete_text_layer 应调 manager.delete_text_layers_async。"""
+        from unittest.mock import MagicMock
+
+        # 让 _get_selected_page_indices 返回 [0]，跳过"请先选择页面"
+        monkeypatch.setattr(pdf_tab, "_get_selected_page_indices", lambda: [0])
+        # 跳过确认对话框（直接返回 Yes）
+        from PySide6.QtWidgets import QMessageBox
+        monkeypatch.setattr(QMessageBox, "question", staticmethod(lambda *a, **k: QMessageBox.StandardButton.Yes))
+        # mock manager
+        mock_mgr = MagicMock()
+        pdf_tab._session_mgr = mock_mgr
+        mock_mgr.active_session = MagicMock()
+
+        pdf_tab._on_delete_text_layer()
+        mock_mgr.delete_text_layers_async.assert_called_once_with([0])
+
+    def test_delete_layer_done_shows_residual_warning(self, pdf_tab, monkeypatch):
+        """_on_delete_layer_done 有 residual_pages 时弹 warning。"""
+        from unittest.mock import MagicMock
+        from PySide6.QtWidgets import QMessageBox
+
+        mock_mgr = MagicMock()
+        pdf_tab._session_mgr = mock_mgr
+        session = MagicMock()
+        session.file_path = "/tmp/x.pdf"
+        mock_mgr.active_session = session
+
+        warnings = []
+        monkeypatch.setattr(QMessageBox, "warning", staticmethod(lambda *a, **k: warnings.append(a)))
+
+        pdf_tab._on_delete_layer_done("/tmp/x.pdf", [2, 5])
+        assert len(warnings) == 1
+
+
+class TestPdfTabSaveAsync:
+    def test_save_calls_manager_save_async(self, pdf_tab, monkeypatch):
+        """_on_save 应调 manager.save_async(path=None)，而非主线程 PdfService.save。"""
+        from unittest.mock import MagicMock
+
+        mock_mgr = MagicMock()
+        pdf_tab._session_mgr = mock_mgr
+        mock_mgr.active_session = MagicMock()
+        # _load_ocr_prefs 在 save_async 调用前被调，mock 它
+        monkeypatch.setattr(pdf_tab, "_load_ocr_prefs", lambda: (MagicMock(), None))
+
+        pdf_tab._on_save()
+        mock_mgr.save_async.assert_called_once()
+
+
+class TestPdfTabLoadHint:
+    def test_load_progress_updates_status(self, pdf_tab):
+        """_on_load_progress 应更新状态栏显示加载进度。"""
+        from unittest.mock import MagicMock
+
+        mock_mgr = MagicMock()
+        pdf_tab._session_mgr = mock_mgr
+        session = MagicMock()
+        session.file_path = "/tmp/x.pdf"
+        mock_mgr.active_session = session
+
+        pdf_tab._on_load_progress("/tmp/x.pdf", 3, 10)
+        assert "3/10" in pdf_tab._status_label.text()
+
+
+class TestPdfTabExportAsync:
+    def test_export_calls_manager_export_all_async(self, pdf_tab, monkeypatch):
+        """_on_export_all 应调 manager.export_all_async。"""
+        from unittest.mock import MagicMock
+        from PySide6.QtWidgets import QFileDialog
+
+        mock_mgr = MagicMock()
+        pdf_tab._session_mgr = mock_mgr
+        # 有 modified session
+        mock_mgr.get_modified_sessions.return_value = [("/tmp/a.pdf", MagicMock())]
+        # mock 文件对话框返回目录
+        monkeypatch.setattr(QFileDialog, "getExistingDirectory", staticmethod(lambda *a, **k: "/tmp/out"))
+
+        pdf_tab._on_export_all()
+        mock_mgr.export_all_async.assert_called_once_with("/tmp/out")

@@ -25,7 +25,10 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-# 仓库信息（与 src/vibeocr/views/tabs/about_tab.py、update_service.py 对齐）
+# 仓库信息 —— 运行时 SSOT 在 src/vibeocr/services/env_config.py
+# （GITHUB_OWNER / GITHUB_REPO / GITEE_OWNER / GITEE_REPO 等）。
+# 本脚本因纯 stdlib 独立运行（python scripts/ci_release_sync.py）无法 import；
+# 改动 owner/repo 时需手动同步两处。
 GITHUB_OWNER_REPO = "FelixJI/VibeOCR"
 GITEE_OWNER_REPO = "felixjii/vibeocr"
 KEEP = 10  # GitHub 保留数
@@ -112,6 +115,11 @@ def cmd_sync_gitee(args: argparse.Namespace) -> int:
             try:
                 timeout = req.timeout if hasattr(req, "timeout") else 60
                 return urllib.request.urlopen(req, timeout=timeout)
+            except urllib.error.HTTPError:
+                # HTTPError（401/403/500 等）是确定性失败，重试无意义且会拖时间
+                # （每附件最多 attempts×base_delay 秒）。立即抛出，由调用方打印
+                # 状态码 + 响应体定位。
+                raise
             except (urllib.error.URLError, TimeoutError, ConnectionError) as e:
                 last_err = e
                 if i == attempts:
@@ -168,17 +176,21 @@ def cmd_sync_gitee(args: argparse.Namespace) -> int:
             print(f"  ::warning::更新 Release body 失败（不影响附件上传）: {e2}")
 
     # 2) 逐个上传附件（Gitee: POST /releases/{id}/attach_files，multipart/form-data）
+    # 对齐 Gitee 官方 gitee-release-cli：access_token 作为 multipart body 的 form
+    # 字段（不能放 URL query——multipart 请求时 query token 不被读取），且只发
+    # file 字段（filename 靠 Content-Disposition 带，没有独立的 name 字段）。
+    any_failed = False
     for path in assets:
         if not path.exists():
             print(f"::warning::附件不存在，跳过: {path}")
             continue
         boundary = "----VibeOCRBoundary" + str(int(time.time() * 1000))
         file_bytes = path.read_bytes()
-        # 构造 multipart/form-data body（字段名 name=file）
+        # 构造 multipart/form-data body：access_token 字段在前，file 字段在后
         body_parts = [
             f"--{boundary}\r\n".encode(),
-            b'Content-Disposition: form-data; name="name"\r\n\r\n',
-            f"{path.name}\r\n".encode(),
+            b'Content-Disposition: form-data; name="access_token"\r\n\r\n',
+            f"{token}\r\n".encode(),
             f"--{boundary}\r\n".encode(),
             (
                 f'Content-Disposition: form-data; name="file"; '
@@ -189,7 +201,7 @@ def cmd_sync_gitee(args: argparse.Namespace) -> int:
             f"\r\n--{boundary}--\r\n".encode(),
         ]
         upload_req = urllib.request.Request(
-            _gitee_url(f"/releases/{release_id}/attach_files"),
+            f"{_GITEE_API}/releases/{release_id}/attach_files",
             data=b"".join(body_parts),
             headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
             method="POST",
@@ -200,9 +212,20 @@ def cmd_sync_gitee(args: argparse.Namespace) -> int:
             r.read()
             r.close()
             print(f"  上传附件成功: {path.name}")
+        except urllib.error.HTTPError as e:
+            # 暴露真实拒绝原因（状态码 + 响应体），便于定位；不阻断发版。
+            any_failed = True
+            detail = e.read().decode("utf-8", "replace")[:300]
+            print(f"  ::error::上传附件失败 {path.name}: HTTP {e.code} {detail}")
         except Exception as e:
-            print(f"  ::warning::上传附件失败 {path.name}: {e}")
+            any_failed = True
+            print(f"  ::error::上传附件失败 {path.name}: {e}")
 
+    if any_failed:
+        print(
+            "::warning::部分附件上传失败，详见上方 ::error::；"
+            "按设计不阻断 GitHub 主发版"
+        )
     print("Gitee Release 同步完成")
     return 0
 

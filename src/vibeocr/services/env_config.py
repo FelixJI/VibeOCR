@@ -37,6 +37,64 @@ PYTHON_BUILD_STANDALONE_MIRRORS = [
     "https://ghproxy.com/" + PYTHON_BUILD_STANDALONE_BASE,
 ]
 
+# ---------------------------------------------------------------------------
+# 发布仓库标识（SSOT）—— update_service / webengine_manager / about_tab 共享
+# ---------------------------------------------------------------------------
+# 发布渠道（方案 C）：CNB 仅镜像代码；产物主源 GitHub，镜像源 Gitee。
+# CI 脚本 scripts/ci_release_sync.py 因纯 stdlib 独立运行无法 import 本模块，
+# 同名常量需手动同步（见其文件头注释）。
+GITHUB_OWNER = "FelixJI"
+GITHUB_REPO = "VibeOCR"
+GITEE_OWNER = "felixjii"
+GITEE_REPO = "vibeocr"
+
+# GitHub / Gitee 直链基址
+# repo 根：仓库主页（关于页"项目主页"链接用）
+GITHUB_REPO_BASE = f"https://github.com/{GITHUB_OWNER}/{GITHUB_REPO}"
+GITEE_REPO_BASE = f"https://gitee.com/{GITEE_OWNER}/{GITEE_REPO}"
+# releases 页：发布列表（手动下载兜底链接用）
+GITHUB_RELEASES_BASE = f"{GITHUB_REPO_BASE}/releases"
+GITEE_RELEASES_BASE = f"{GITEE_REPO_BASE}/releases"
+GITHUB_DOWNLOAD_BASE = f"{GITHUB_RELEASES_BASE}/download"  # .../download/v{ver}/{asset}
+GITEE_DOWNLOAD_BASE = f"{GITEE_RELEASES_BASE}/download"
+
+# GitHub Release API（latest）
+GITHUB_API_LATEST = (
+    f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/releases/latest"
+)
+GITEE_API_LATEST = (
+    f"https://gitee.com/api/v5/repos/{GITEE_OWNER}/{GITEE_REPO}/releases/latest"
+)
+
+# GitHub 加速代理前缀（拼接在 GitHub 直链之前，按优先级）
+# 与 PYTHON_BUILD_STANDALONE_MIRRORS 一致的加速策略
+GITHUB_PROXY_PREFIXES = ["https://gh-proxy.com/", "https://ghproxy.com/"]
+
+
+def build_github_asset_urls(
+    network_type: str, version: str, asset_name: str
+) -> list[str]:
+    """构造某个 GitHub release asset 的有序下载候选 URL 列表。
+
+    国内(domestic)：Gitee → gh-proxy → ghproxy → GitHub 裸连（4 候选）
+    海外(international)：GitHub 直连 → Gitee（2 候选）
+    未知 network_type 按国际（直连优先）处理。
+
+    Args:
+        network_type: "domestic" 或 "international"
+        version: 版本号（不含 v 前缀，如 "0.3.1"）
+        asset_name: 资产文件名，如 "VibeOCR-v0.3.1-win64.zip"
+
+    Returns:
+        有序 URL 候选列表，调用方逐个尝试直至下载成功
+    """
+    github_url = f"{GITHUB_DOWNLOAD_BASE}/v{version}/{asset_name}"
+    gitee_url = f"{GITEE_DOWNLOAD_BASE}/v{version}/{asset_name}"
+    if network_type == "domestic":
+        proxied = [p + github_url for p in GITHUB_PROXY_PREFIXES]
+        return [gitee_url, *proxied, github_url]
+    return [github_url, gitee_url]
+
 # PyTorch CUDA 镜像源
 PYTORCH_MIRROR_SOURCES = {
     "nju": "https://mirrors.nju.edu.cn/pytorch/whl",

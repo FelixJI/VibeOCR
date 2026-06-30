@@ -3,12 +3,68 @@
 import asyncio
 import hashlib
 import json
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import httpx
 
 
 def _run(coro):
     """在同步测试中运行协程"""
     return asyncio.run(coro)
+
+
+# ---------------------------------------------------------------------------
+# _download_zip_with_sha 直接测试用的 mock 构造助手
+# ---------------------------------------------------------------------------
+
+
+def _make_stream_response(status_code, chunks):
+    """构造一个可直接用于 ``async with`` 的伪流式响应。
+
+    支持被测代码用到的：``status_code``、``headers["content-length"]``、
+    ``async for chunk in resp.aiter_bytes(chunk_size=...)``。
+    """
+    total = sum(len(c) for c in chunks)
+
+    async def _aiter():
+        for c in chunks:
+            yield c
+
+    class _StreamCM:
+        def __init__(self) -> None:
+            self.status_code = status_code
+            self.headers = {"content-length": str(total)}
+
+        async def __aenter__(self) -> "_StreamCM":
+            return self
+
+        async def __aexit__(self, *exc) -> bool:
+            return False
+
+        def aiter_bytes(self, chunk_size: int = 65536):
+            return _aiter()
+
+    return _StreamCM()
+
+
+def _make_client(stream_cm=None, stream_side_effect=None, sha_status=200, sha_text=""):
+    """构造一个伪 ``httpx.AsyncClient``。
+
+    - ``client.stream(...)`` 同步返回流式上下文管理器（或抛 ``stream_side_effect``）；
+    - ``client.get(sha_url)`` 返回 awaitable，解析为伪 sha 响应。
+    """
+    client = MagicMock()
+    if stream_side_effect is not None:
+        client.stream.side_effect = stream_side_effect
+    else:
+        client.stream.return_value = stream_cm
+
+    client.get = AsyncMock()
+    sha_resp = MagicMock()
+    sha_resp.status_code = sha_status
+    sha_resp.text = sha_text
+    client.get.return_value = sha_resp
+    return client
 
 
 class TestVersionComparison:
@@ -267,3 +323,252 @@ class TestSkipVersion:
         save_skip_version("0.2.0", settings_path)
         save_skip_version("0.3.0", settings_path)
         assert load_skip_version(settings_path) == "0.3.0"
+
+
+class TestDownloadUpdateMultiSource:
+    """download_update 多源回退测试（mock _download_zip_with_sha）"""
+
+    def test_returns_path_when_first_source_succeeds(self, tmp_path):
+        from vibeocr.services.update_service import UpdateInfo, download_update
+
+        info = UpdateInfo(
+            version="0.3.1",
+            download_url="https://example.com/zip",
+            sha256_url="https://example.com/sha",
+            changelog="",
+        )
+        with patch(
+            "vibeocr.services.update_service._download_zip_with_sha",
+            new_callable=AsyncMock,
+            return_value=True,
+        ) as mock_dl:
+            result = _run(download_update(info, tmp_path))
+        assert result is not None
+        assert result.name == "VibeOCR-v0.3.1-win64.zip"
+        mock_dl.assert_called_once()
+
+    def test_falls_back_to_next_source_on_failure(self, tmp_path):
+        """首源失败 → 换源成功"""
+        from vibeocr.services.update_service import UpdateInfo, download_update
+
+        info = UpdateInfo(
+            version="0.3.1",
+            download_url="https://example.com/zip",
+            sha256_url="https://example.com/sha",
+            changelog="",
+        )
+        with patch(
+            "vibeocr.services.update_service._detect_network_type",
+            return_value="international",
+        ), patch(
+            "vibeocr.services.update_service._download_zip_with_sha",
+            new_callable=AsyncMock,
+            side_effect=[False, True],
+        ) as mock_dl:
+            result = _run(download_update(info, tmp_path))
+        assert result is not None
+        assert mock_dl.call_count == 2  # 首源失败后换源成功
+
+    def test_returns_none_when_all_sources_fail(self, tmp_path):
+        from vibeocr.services.update_service import UpdateInfo, download_update
+
+        info = UpdateInfo(
+            version="0.3.1",
+            download_url="https://example.com/zip",
+            sha256_url="https://example.com/sha",
+            changelog="",
+        )
+        with patch(
+            "vibeocr.services.update_service._detect_network_type",
+            return_value="international",
+        ), patch(
+            "vibeocr.services.update_service._download_zip_with_sha",
+            new_callable=AsyncMock,
+            return_value=False,
+        ) as mock_dl:
+            result = _run(download_update(info, tmp_path))
+        assert result is None
+        assert mock_dl.call_count == 2  # 海外 2 候选全部失败
+
+    def test_domestic_uses_four_candidates(self, tmp_path):
+        """国内走 4 候选（Gitee→gh-proxy→ghproxy→GitHub）"""
+        from vibeocr.services.update_service import UpdateInfo, download_update
+
+        info = UpdateInfo(
+            version="0.3.1",
+            download_url="https://example.com/zip",
+            sha256_url="https://example.com/sha",
+            changelog="",
+        )
+        with patch(
+            "vibeocr.services.update_service._detect_network_type",
+            return_value="domestic",
+        ), patch(
+            "vibeocr.services.update_service._download_zip_with_sha",
+            new_callable=AsyncMock,
+            return_value=False,
+        ) as mock_dl:
+            _run(download_update(info, tmp_path))
+        assert mock_dl.call_count == 4
+
+
+class TestDownloadZipWithSha:
+    """``_download_zip_with_sha`` 直接测试（用 mock httpx.AsyncClient 驱动真实协程）。
+
+    覆盖成功路径、zip 非 200、sha 非 200、sha 不匹配、流式异常、进度回调六个分支。
+    重点验证语义变更：sha 总是从 ``{zip_url}.sha256`` 获取，且 sha 非 200 / 不匹配
+    会触发清理并换源（返回 False）。
+    """
+
+    ZIP_URL = "https://example.com/VibeOCR-v0.3.1-win64.zip"
+    # 被测代码恒定从 {zip_url}.sha256 取校验文件
+    EXPECTED_SHA_URL = "https://example.com/VibeOCR-v0.3.1-win64.zip.sha256"
+
+    def _import(self):
+        from vibeocr.services.update_service import _download_zip_with_sha
+
+        return _download_zip_with_sha
+
+    def test_success_writes_zip_and_returns_true(self, tmp_path):
+        _download_zip_with_sha = self._import()
+
+        zip_bytes = b"fake-zip-content"
+        real_hash = hashlib.sha256(zip_bytes).hexdigest()
+        stream = _make_stream_response(200, [zip_bytes])
+        client = _make_client(
+            stream_cm=stream,
+            sha_status=200,
+            sha_text=f"{real_hash}  VibeOCR-v0.3.1-win64.zip\n",
+        )
+        zip_path = tmp_path / "x.zip"
+        sha_path = tmp_path / "x.zip.sha256"
+
+        ok = _run(
+            _download_zip_with_sha(client, self.ZIP_URL, zip_path, sha_path, None)
+        )
+
+        assert ok is True
+        # zip 真正落盘
+        assert zip_path.exists()
+        assert zip_path.read_bytes() == zip_bytes
+        # sha 候选 URL 恰为 {zip_url}.sha256
+        client.get.assert_awaited_once_with(self.EXPECTED_SHA_URL)
+        # 校验文件也落盘
+        assert sha_path.exists()
+
+    def test_zip_non_200_returns_false_and_no_sha_fetch(self, tmp_path):
+        _download_zip_with_sha = self._import()
+
+        stream = _make_stream_response(404, [b"not found"])
+        client = _make_client(stream_cm=stream)
+        zip_path = tmp_path / "x.zip"
+        sha_path = tmp_path / "x.zip.sha256"
+
+        ok = _run(
+            _download_zip_with_sha(client, self.ZIP_URL, zip_path, sha_path, None)
+        )
+
+        assert ok is False
+        # zip 非 200 直接返回，不应落盘、不应尝试取 sha
+        assert not zip_path.exists()
+        client.get.assert_not_awaited()
+
+    def test_sha_non_200_cleans_up_zip(self, tmp_path):
+        _download_zip_with_sha = self._import()
+
+        zip_bytes = b"fake-zip-content"
+        stream = _make_stream_response(200, [zip_bytes])
+        # zip 成功，但 sha 端点非 200
+        client = _make_client(stream_cm=stream, sha_status=404)
+        zip_path = tmp_path / "x.zip"
+        sha_path = tmp_path / "x.zip.sha256"
+
+        ok = _run(
+            _download_zip_with_sha(client, self.ZIP_URL, zip_path, sha_path, None)
+        )
+
+        assert ok is False
+        client.get.assert_awaited_once_with(self.EXPECTED_SHA_URL)
+        # sha 非 200：已落盘的 zip 必须被清理；sha 文件根本没写
+        assert not zip_path.exists()
+        assert not sha_path.exists()
+
+    def test_sha_mismatch_cleans_up_zip_and_sha(self, tmp_path):
+        _download_zip_with_sha = self._import()
+
+        zip_bytes = b"fake-zip-content"
+        stream = _make_stream_response(200, [zip_bytes])
+        # sha 200 但内容与 zip 实际哈希不符
+        client = _make_client(
+            stream_cm=stream,
+            sha_status=200,
+            sha_text="0000000000000000000000000000000000000000000000000000000000000000  x.zip\n",
+        )
+        zip_path = tmp_path / "x.zip"
+        sha_path = tmp_path / "x.zip.sha256"
+
+        ok = _run(
+            _download_zip_with_sha(client, self.ZIP_URL, zip_path, sha_path, None)
+        )
+
+        assert ok is False
+        client.get.assert_awaited_once_with(self.EXPECTED_SHA_URL)
+        # 不匹配：zip 与 sha 文件均应被清理
+        assert not zip_path.exists()
+        assert not sha_path.exists()
+
+    def test_exception_during_stream_returns_false_and_cleans_up(self, tmp_path):
+        _download_zip_with_sha = self._import()
+
+        # client.stream 抛异常（被宽 except 捕获）
+        client = _make_client(stream_side_effect=httpx.ConnectError("boom"))
+        zip_path = tmp_path / "x.zip"
+        sha_path = tmp_path / "x.zip.sha256"
+
+        ok = _run(
+            _download_zip_with_sha(client, self.ZIP_URL, zip_path, sha_path, None)
+        )
+
+        # 宽 except 吞掉异常并返回 False，不抛出
+        assert ok is False
+        assert not zip_path.exists()
+        assert not sha_path.exists()
+
+    def test_progress_callback_invoked_with_accumulating_totals(self, tmp_path):
+        _download_zip_with_sha = self._import()
+
+        # 分两块返回，验证 downloaded 累加
+        chunk_a, chunk_b = b"AAAA", b"BBBBBBBB"  # 4 + 8 = 12 字节
+        zip_bytes = chunk_a + chunk_b
+        real_hash = hashlib.sha256(zip_bytes).hexdigest()
+        stream = _make_stream_response(200, [chunk_a, chunk_b])
+        client = _make_client(
+            stream_cm=stream,
+            sha_status=200,
+            sha_text=f"{real_hash}  x.zip\n",
+        )
+        zip_path = tmp_path / "x.zip"
+        sha_path = tmp_path / "x.zip.sha256"
+
+        calls: list[tuple[int, int]] = []
+
+        def _capture(downloaded: int, total: int) -> None:
+            calls.append((downloaded, total))
+
+        ok = _run(
+            _download_zip_with_sha(
+                client, self.ZIP_URL, zip_path, sha_path, _capture
+            )
+        )
+
+        assert ok is True
+        assert zip_path.read_bytes() == zip_bytes
+        # 至少每块回调一次
+        assert len(calls) >= 2
+        # 每次回调的 total 即 content-length
+        total = len(zip_bytes)
+        assert all(t == total for _, t in calls)
+        # downloaded 单调累加，最后一次等于总字节数
+        downloaded_seq = [d for d, _ in calls]
+        assert downloaded_seq == sorted(downloaded_seq)
+        assert downloaded_seq[-1] == total

@@ -5,6 +5,19 @@ from unittest.mock import patch
 
 from vibeocr.services.env_config import (
     CONFIG_DIR,
+    GITHUB_API_LATEST,
+    GITHUB_DOWNLOAD_BASE,
+    GITHUB_OWNER,
+    GITHUB_PROXY_PREFIXES,
+    GITHUB_RELEASES_BASE,
+    GITHUB_REPO,
+    GITHUB_REPO_BASE,
+    GITEE_API_LATEST,
+    GITEE_DOWNLOAD_BASE,
+    GITEE_OWNER,
+    GITEE_RELEASES_BASE,
+    GITEE_REPO,
+    GITEE_REPO_BASE,
     OCR_CHECK_MODULES,
     PORTABLE_PYTHON_DIR,
     PYTHON_BUILD_STANDALONE_ASSET,
@@ -12,6 +25,7 @@ from vibeocr.services.env_config import (
     PYTHON_BUILD_STANDALONE_MIRRORS,
     PYTHON_BUILD_STANDALONE_TAG,
     PYTHON_VERSION_SHORT,
+    build_github_asset_urls,
     ensure_config_dir,
     get_config_dir,
     get_portable_python_dir,
@@ -136,3 +150,85 @@ class TestOcrCheckModules:
             # 包名不应包含版本操作符（清单只表达"检测哪些"，版本来自 pyproject）
             for op in (">", "=", "<", "~"):
                 assert op not in package, f"{package} 不应含版本约束"
+
+
+class TestReleaseRepoConstants:
+    """发布仓库标识 SSOT 常量测试"""
+
+    def test_repo_constants_nonempty(self):
+        assert GITHUB_OWNER and GITHUB_REPO
+        assert GITEE_OWNER and GITEE_REPO
+
+    def test_releases_base_format(self):
+        assert GITHUB_RELEASES_BASE.startswith("https://github.com/")
+        assert GITHUB_RELEASES_BASE.endswith("/releases")
+        assert GITEE_RELEASES_BASE.startswith("https://gitee.com/")
+        assert GITEE_RELEASES_BASE.endswith("/releases")
+
+    def test_repo_base_is_repo_root(self):
+        """repo 基址应指向仓库根（无 /releases 后缀），供关于页主页链接用"""
+        assert GITHUB_REPO_BASE == "https://github.com/FelixJI/VibeOCR"
+        assert GITEE_REPO_BASE == "https://gitee.com/felixjii/vibeocr"
+        # releases 基址 = repo 基址 + /releases
+        assert GITHUB_RELEASES_BASE == f"{GITHUB_REPO_BASE}/releases"
+        assert GITEE_RELEASES_BASE == f"{GITEE_REPO_BASE}/releases"
+
+    def test_download_base_ends_with_download(self):
+        assert GITHUB_DOWNLOAD_BASE.endswith("/download")
+        assert GITEE_DOWNLOAD_BASE.endswith("/download")
+        # download 基址应为 releases 基址 + /download
+        assert GITHUB_DOWNLOAD_BASE == f"{GITHUB_RELEASES_BASE}/download"
+        assert GITEE_DOWNLOAD_BASE == f"{GITEE_RELEASES_BASE}/download"
+
+    def test_api_latest_format(self):
+        assert "api.github.com" in GITHUB_API_LATEST
+        assert "releases/latest" in GITHUB_API_LATEST
+        assert "gitee.com/api/v5" in GITEE_API_LATEST
+        assert "releases/latest" in GITEE_API_LATEST
+
+    def test_proxy_prefixes_include_ghproxy(self):
+        joined = " ".join(GITHUB_PROXY_PREFIXES)
+        assert "gh-proxy" in joined or "ghproxy" in joined
+        assert len(GITHUB_PROXY_PREFIXES) >= 2
+
+
+class TestBuildGithubAssetUrls:
+    """build_github_asset_urls 工厂函数测试"""
+
+    def test_domestic_order_four_candidates(self):
+        """国内：Gitee → gh-proxy → ghproxy → GitHub 裸连（4 候选）"""
+        urls = build_github_asset_urls("domestic", "0.3.1", "VibeOCR-v0.3.1-win64.zip")
+        assert len(urls) == 4
+        assert "gitee.com" in urls[0]
+        assert "gh-proxy.com" in urls[1]
+        assert "ghproxy.com" in urls[2]
+        assert "github.com" in urls[3] and "gh-proxy" not in urls[3]
+
+    def test_international_order_two_candidates(self):
+        """海外：GitHub 直连 → Gitee（2 候选）"""
+        urls = build_github_asset_urls(
+            "international", "0.3.1", "VibeOCR-v0.3.1-win64.zip"
+        )
+        assert len(urls) == 2
+        assert "github.com" in urls[0]
+        assert "gitee.com" in urls[1]
+
+    def test_unknown_network_falls_back_to_international(self):
+        """未知 network_type 走 international 分支（2 候选）"""
+        urls = build_github_asset_urls("unknown", "0.3.1", "x.zip")
+        assert len(urls) == 2
+        assert "github.com" in urls[0]
+
+    def test_version_prefix_in_url(self):
+        """URL 中含 /v0.3.1/（带 v 前缀）"""
+        urls = build_github_asset_urls("international", "0.3.1", "x.zip")
+        assert all("/v0.3.1/x.zip" in u for u in urls)
+
+    def test_domestic_proxied_urls_prefix_github_direct(self):
+        """gh 代理候选是 前缀 + GitHub 直链"""
+        urls = build_github_asset_urls("domestic", "0.3.1", "x.zip")
+        github_direct = f"{GITHUB_DOWNLOAD_BASE}/v0.3.1/x.zip"
+        assert urls[1] == "https://gh-proxy.com/" + github_direct
+        assert urls[2] == "https://ghproxy.com/" + github_direct
+        # 最后一个是裸 GitHub 直连
+        assert urls[3] == github_direct

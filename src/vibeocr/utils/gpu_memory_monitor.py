@@ -124,6 +124,14 @@ GPU_AMP_FACTOR = 5
 GPU_SAFETY_FACTOR = 0.5
 #: GPU 模式 batch 上限（避免超时风险）。
 GPU_BATCH_CAP = 10
+#: 显存探测失败但已知处于 GPU 模式时的保守兜底批量。
+#:
+#: 背景：NVML（pynvml）在 Windows 上常因驱动/NVML 版本不匹配而初始化失败，
+#: 此时 ``free_mb`` 为 0。若直接返回 batch=1，4090 等大显存卡也会被钉死成
+#: 逐张识别（GPU 占用仅 20-40%）。这里给出一个保守但合理的默认值，
+#: 让显存探测失败时仍能受益于批量识别；真正的非法输入（avg_pixels<=0）
+#: 仍返回 1。
+GPU_FALLBACK_BATCH_SIZE = 4
 #: 每像素字节数（RGB）。
 BYTES_PER_PIXEL = 3
 
@@ -134,6 +142,11 @@ def estimate_gpu_batch_size(free_mb: int, avg_pixels: int) -> int:
     单页峰值（MB）= avg_pixels * 3 字节 * 5× 放大 / 1MB。
     batch = free * 0.5 / 单页峰值，夹到 [1, 10]。
 
+    - ``free_mb <= 0``：显存探测失败（NVML 不可用），但调用方已确认处于
+      GPU 模式，返回 :data:`GPU_FALLBACK_BATCH_SIZE` 而非 1，避免大显存卡
+      被迫逐张识别。
+    - ``avg_pixels <= 0``：非法输入（拿不到页面尺寸），返回 1。
+
     Args:
         free_mb: 可用显存（MB）。
         avg_pixels: 单页平均像素数（width * height）。
@@ -141,8 +154,10 @@ def estimate_gpu_batch_size(free_mb: int, avg_pixels: int) -> int:
     Returns:
         批量大小，范围 [1, 10]。
     """
-    if free_mb <= 0 or avg_pixels <= 0:
+    if avg_pixels <= 0:
         return 1
+    if free_mb <= 0:
+        return max(1, min(GPU_FALLBACK_BATCH_SIZE, GPU_BATCH_CAP))
     per_page_peak_mb = (avg_pixels * BYTES_PER_PIXEL * GPU_AMP_FACTOR) / (1024 * 1024)
     if per_page_peak_mb <= 0:
         return 1

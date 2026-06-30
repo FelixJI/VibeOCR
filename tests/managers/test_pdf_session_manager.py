@@ -555,3 +555,115 @@ class TestPdfSessionManagerRewritePages:
         manager.open_session(str(test_pdf_a))
         # 没有 OCR 过，ocr_text_blocks 为空，rewrite 应安全跳过
         manager.rewrite_modified_pages()  # 不应报错
+
+
+class TestStartOcrStreaming:
+    def test_uses_render_worker_and_queue(self, manager, test_pdf_a, monkeypatch):
+        """start_ocr 应启动 PdfRenderWorker + PdfOcrWorker(queue 模式)。"""
+        from queue import Queue
+        from unittest.mock import MagicMock
+
+        from vibeocr.services.pdf_service import PdfService
+
+        session = manager.open_session(str(test_pdf_a))
+        with session.doc_lock:
+            PdfService.build_page_infos(session.doc, session.pdf_document)
+
+        render_created = []
+        ocr_created = []
+        monkeypatch.setattr(
+            "vibeocr.managers.pdf_session_manager.PdfRenderWorker",
+            lambda *a, **k: render_created.append(k) or MagicMock(),
+        )
+        monkeypatch.setattr(
+            "vibeocr.managers.pdf_session_manager.PdfOcrWorker",
+            lambda *a, **k: ocr_created.append(k) or MagicMock(),
+        )
+        manager._ocr_service = MagicMock()
+
+        manager.start_ocr([0])
+        assert len(render_created) == 1
+        assert len(ocr_created) == 1
+        # ocr worker 应以 render_queue 参数构造（流式模式）
+        assert "render_queue" in ocr_created[0]
+
+
+class TestSaveAsync:
+    def test_save_async_starts_mutate_worker(self, manager, test_pdf_a, monkeypatch):
+        from unittest.mock import MagicMock
+        from vibeocr.workers.pdf_mutate_worker import MutateTask, TaskKind
+
+        session = manager.open_session(str(test_pdf_a))
+        pdf_doc = session.pdf_document
+        pdf_doc.is_modified = True
+
+        created_tasks = []
+        fake_worker = MagicMock()
+        fake_worker.session_id = session.file_path
+        monkeypatch.setattr(
+            "vibeocr.managers.pdf_session_manager.PdfMutateWorker",
+            lambda *a, **k: created_tasks.append(k.get("task")) or fake_worker,
+        )
+
+        manager.save_async()
+        assert len(created_tasks) == 1
+        assert created_tasks[0].kind == TaskKind.SAVE
+
+
+class TestDeleteTextLayerAsync:
+    def test_starts_mutate_worker(self, manager, test_pdf_a, monkeypatch):
+        from unittest.mock import MagicMock
+        from vibeocr.workers.pdf_mutate_worker import MutateTask, TaskKind
+
+        session = manager.open_session(str(test_pdf_a))
+        fake_worker = MagicMock()
+        fake_worker.session_id = session.file_path
+        monkeypatch.setattr(
+            "vibeocr.managers.pdf_session_manager.PdfMutateWorker",
+            lambda *a, **k: fake_worker,
+        )
+        manager.delete_text_layers_async([0])
+        # worker 已构造（mock），验证调用未报错即可
+
+
+class TestMutateSignalForwarding:
+    def test_delete_layer_done_forwarded_with_residual(self, manager, test_pdf_a, monkeypatch):
+        """_on_mutate_all_done 对 DELETE_TEXT_LAYER 的 residual_pages dict 转发 delete_layer_done。"""
+        from unittest.mock import MagicMock
+        from vibeocr.workers.pdf_mutate_worker import MutateTask, TaskKind
+
+        session = manager.open_session(str(test_pdf_a))
+        fake_worker = MagicMock()
+        fake_worker.session_id = session.file_path
+        monkeypatch.setattr(
+            "vibeocr.managers.pdf_session_manager.PdfMutateWorker",
+            lambda *a, **k: fake_worker,
+        )
+        manager.delete_text_layers_async([0])
+        manager._mutate_worker = fake_worker
+
+        received: list = []
+        manager.delete_layer_done.connect(
+            lambda sid, residual: received.append((sid, residual))
+        )
+        # 模拟 worker 完成（DELETE_TEXT_LAYER 的 all_done 载荷）
+        manager._on_mutate_all_done(session.file_path, {"residual_pages": [2, 5]})
+        assert received == [(session.file_path, [2, 5])]
+
+
+class TestExportAllAsync:
+    def test_starts_export_worker(self, manager, test_pdf_a, monkeypatch):
+        from unittest.mock import MagicMock
+
+        session = manager.open_session(str(test_pdf_a))
+        session.pdf_document.is_modified = True
+
+        created = []
+        monkeypatch.setattr(
+            "vibeocr.managers.pdf_session_manager.PdfExportWorker",
+            lambda sessions, out, **k: created.append((sessions, out)) or MagicMock(),
+        )
+        manager.export_all_async("/tmp/out")
+        assert len(created) == 1
+        sessions_arg, out_arg = created[0]
+        assert out_arg == "/tmp/out"
