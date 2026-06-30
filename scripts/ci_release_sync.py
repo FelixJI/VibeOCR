@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import argparse
+import http.client
 import json
 import os
 import re
@@ -36,6 +37,13 @@ KEEP_GITEE = 3  # Gitee 保留数（单仓库附件 1GB 上限，每版 ~150MB�
 
 _GITHUB_API = f"https://api.github.com/repos/{GITHUB_OWNER_REPO}"
 _GITEE_API = f"https://gitee.com/api/v5/repos/{GITEE_OWNER_REPO}"
+
+# Gitee 大文件上传参数：海外 runner → 国内 Gitee，慢且不稳，须流式 + 进度 + 墙钟。
+# 历史 CI 此处 socket timeout 600s 静默卡满 + 重试 3 次，导致发版卡 27 分钟被取消。
+GITEE_UPLOAD_HOST = "gitee.com"
+GITEE_UPLOAD_PER_ASSET_LIMIT = 8 * 60   # 单附件墙钟上限（秒），超时主动 abort
+GITEE_UPLOAD_CHUNK = 1024 * 1024        # 1MB/块，每块后报进度 + 查墙钟
+GITEE_UPLOAD_RETRIES = 2                # 网络错误重试次数（HTTPError 不重试）
 
 
 # ---------------------------------------------------------------------------
@@ -85,7 +93,98 @@ def build_release_body(base: str, tag: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# 子命令（后续 Task 填充）
+# Gitee 大文件流式上传（http.client 分块 send + 进度回调 + 墙钟超时）
+# ---------------------------------------------------------------------------
+
+
+def upload_asset_streaming(
+    host: str,
+    path: str,
+    token: str,
+    file_path: Path,
+    *,
+    deadline: float,
+    chunk_size: int = GITEE_UPLOAD_CHUNK,
+    on_progress=None,
+    conn_factory=None,
+) -> tuple[int, bytes]:
+    """流式上传单附件到 Gitee attach_files，返回 (status, body)。
+
+    用 http.client 手动分块 send（每 chunk_size 字节一块），每块后：
+    - 调 on_progress(sent, total, rate) 上报进度；
+    - 检查 deadline（墙钟），超时抛 TimeoutError。
+
+    multipart/form-data 与现有 Gitee 上传一致：access_token 作为 body 的 form
+    字段（不放 URL query），file 字段靠 Content-Disposition 带 filename。
+
+    HTTP 非 2xx 抛 RuntimeError（含状态码 + 响应体），供调用方记 ::error::。
+    conn_factory 可注入 fake connection，便于测试。
+
+    总体大小须在 Content-Length 中预先告知（multipart 是一次性拼接的固定结构，
+    无法真正的 transfer-encoding:chunked 流式，但分块 send 仍带来进度+墙钟收益）。
+    """
+    file_bytes = file_path.read_bytes()
+    total = len(file_bytes)
+
+    # multipart body 的固定头部与尾部（不含文件体）
+    boundary = "----VibeOCRBoundary" + str(int(time.time() * 1000))
+    head = b"".join([
+        f"--{boundary}\r\n".encode(),
+        b'Content-Disposition: form-data; name="access_token"\r\n\r\n',
+        f"{token}\r\n".encode(),
+        f"--{boundary}\r\n".encode(),
+        (
+            f'Content-Disposition: form-data; name="file"; '
+            f'filename="{file_path.name}"\r\n'
+        ).encode(),
+        b"Content-Type: application/octet-stream\r\n\r\n",
+    ])
+    tail = f"\r\n--{boundary}--\r\n".encode()
+    content_length = len(head) + total + len(tail)
+
+    conn = (conn_factory or http.client.HTTPSConnection)(host, timeout=60)
+    try:
+        conn.putrequest("POST", path)
+        conn.putheader("Content-Type", f"multipart/form-data; boundary={boundary}")
+        conn.putheader("Content-Length", str(content_length))
+        conn.endheaders()
+
+        # 头部一次性发送（小）
+        conn.send(head)
+
+        # 文件体分块发送，每块报进度 + 查墙钟
+        sent = 0
+        start = time.time()
+        for off in range(0, total, chunk_size):
+            chunk = file_bytes[off:off + chunk_size]
+            conn.send(chunk)
+            sent += len(chunk)
+            now = time.time()
+            elapsed = max(now - start, 1e-6)
+            rate = sent / elapsed
+            if on_progress is not None:
+                on_progress(sent, total, rate)
+            if now > deadline:
+                raise TimeoutError(
+                    f"上传 {file_path.name} 已超墙钟上限（{int(deadline - start)}s+）"
+                )
+
+        # 尾部 boundary
+        conn.send(tail)
+
+        resp = conn.getresponse()
+        body = resp.read()
+        status = resp.status
+    finally:
+        conn.close()
+
+    if not (200 <= status < 300):
+        raise RuntimeError(f"HTTP {status} {body.decode('utf-8', 'replace')[:300]}")
+    return status, body
+
+
+# ---------------------------------------------------------------------------
+# 子命令
 # ---------------------------------------------------------------------------
 
 
@@ -180,46 +279,60 @@ def cmd_sync_gitee(args: argparse.Namespace) -> int:
     # 字段（不能放 URL query——multipart 请求时 query token 不被读取），且只发
     # file 字段（filename 靠 Content-Disposition 带，没有独立的 name 字段）。
     any_failed = False
+    upload_path = f"/api/v5/repos/{GITEE_OWNER_REPO}/releases/{release_id}/attach_files"
     for path in assets:
         if not path.exists():
             print(f"::warning::附件不存在，跳过: {path}")
             continue
-        boundary = "----VibeOCRBoundary" + str(int(time.time() * 1000))
-        file_bytes = path.read_bytes()
-        # 构造 multipart/form-data body：access_token 字段在前，file 字段在后
-        body_parts = [
-            f"--{boundary}\r\n".encode(),
-            b'Content-Disposition: form-data; name="access_token"\r\n\r\n',
-            f"{token}\r\n".encode(),
-            f"--{boundary}\r\n".encode(),
-            (
-                f'Content-Disposition: form-data; name="file"; '
-                f'filename="{path.name}"\r\n'
-            ).encode(),
-            b"Content-Type: application/octet-stream\r\n\r\n",
-            file_bytes,
-            f"\r\n--{boundary}--\r\n".encode(),
-        ]
-        upload_req = urllib.request.Request(
-            f"{_GITEE_API}/releases/{release_id}/attach_files",
-            data=b"".join(body_parts),
-            headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
-            method="POST",
-        )
-        upload_req.timeout = 600  # 主包 ~70MB，给足时间
-        try:
-            r = request_with_retry(upload_req, attempts=3, base_delay=15)
-            r.read()
-            r.close()
-            print(f"  上传附件成功: {path.name}")
-        except urllib.error.HTTPError as e:
-            # 暴露真实拒绝原因（状态码 + 响应体），便于定位；不阻断发版。
-            any_failed = True
-            detail = e.read().decode("utf-8", "replace")[:300]
-            print(f"  ::error::上传附件失败 {path.name}: HTTP {e.code} {detail}")
-        except Exception as e:
-            any_failed = True
-            print(f"  ::error::上传附件失败 {path.name}: {e}")
+
+        size_mb = path.stat().st_size / (1024 * 1024)
+        print(f"  开始上传 {path.name}（{size_mb:.1f}MB）…")
+
+        # 进度回调：每 5% 或每 3 秒打一行，避免 CI 日志被淹没
+        state = {"last_pct": -5, "last_ts": 0.0}
+
+        def on_progress(sent, total, rate, _name=path.name, _st=state):
+            pct = int(sent * 100 / total) if total else 100
+            now = time.time()
+            if pct >= _st["last_pct"] + 5 or now - _st["last_ts"] >= 3:
+                _st["last_pct"] = pct
+                _st["last_ts"] = now
+                sent_mb = sent / (1024 * 1024)
+                total_mb = total / (1024 * 1024)
+                rate_mb = rate / (1024 * 1024)
+                print(f"    …上传 {_name} {pct}% "
+                      f"({sent_mb:.1f}MB/{total_mb:.1f}MB) {rate_mb:.2f}MB/s")
+
+        # 重试：网络错误/超时重试 GITEE_UPLOAD_RETRIES 次（每次重新建连 + 新 deadline）；
+        # HTTPError（由 upload_asset_streaming 转为 RuntimeError）是确定性失败，不重试。
+        attempt = 0
+        while True:
+            attempt += 1
+            deadline = time.time() + GITEE_UPLOAD_PER_ASSET_LIMIT
+            try:
+                upload_asset_streaming(
+                    GITEE_UPLOAD_HOST, upload_path, token, path,
+                    deadline=deadline, on_progress=on_progress,
+                )
+                # 覆盖到 100% 的收尾进度行
+                on_progress(path.stat().st_size, path.stat().st_size, 0.0)
+                print(f"  上传附件成功: {path.name}")
+                break
+            except (urllib.error.URLError, TimeoutError, ConnectionError) as e:
+                if attempt > GITEE_UPLOAD_RETRIES:
+                    any_failed = True
+                    print(f"  ::error::上传附件失败 {path.name} "
+                          f"（{GITEE_UPLOAD_RETRIES + 1} 次尝试后仍失败）: {e}")
+                    break
+                delay = 15 * attempt
+                print(f"  上传 {path.name} 失败 ({e})，{delay}s 后重试 "
+                      f"（{attempt}/{GITEE_UPLOAD_RETRIES}）…")
+                time.sleep(delay)
+            except Exception as e:
+                # RuntimeError(HTTP 非 2xx) 或其他确定性失败，不重试
+                any_failed = True
+                print(f"  ::error::上传附件失败 {path.name}: {e}")
+                break
 
     if any_failed:
         print(
