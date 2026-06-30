@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.4.2] - 2026-06-30
+
+### Added
+- feat(update): updater 坏时主程序 self-update 兜底 + 三态握手
+- feat(update): 校验文件同源配对 + 失败原因结构化 + 重试/换源提示
+
+### Fixed
+- fix(ci): Gitee 单附件墙钟 8min→55min，重试 2→1 次
+- fix(ci): 修复 prune_github 编码崩溃 + Gitee/CNB 镜像假失败
+- fix(ci): Gitee 代码镜像移到 Release 同步前 + REST 鉴权改 Header
+- fix(bump): tag 推送按上游 remote 自动探测，不再硬编码 origin
+
+### Changed
+- refactor(download): 整合 WebEngine 与 Python 运行时同步下载编排
+- ci(release): git push 镜像加 --progress，CI 网页可见传输进度
+
 ## [0.4.1] - 2026-06-30
 
 ### Fixed
