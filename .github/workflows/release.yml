@@ -159,7 +159,7 @@ jobs:
           # 拒收，导致 git exit 1 + 误判镜像失败。CNB 网络偶发超时，最多重试 3 次。
           status=1
           for attempt in 1 2 3; do
-            git push --prune "$CNB_URL" \
+            git push --progress --prune "$CNB_URL" \
               '+refs/heads/*:refs/heads/*' \
               '+refs/tags/*:refs/tags/*' && { status=0; break; }
             echo "CNB push 第 $attempt 次失败 (exit $?)，等待后重试..."
@@ -207,7 +207,7 @@ jobs:
           # Gitee 网络偶发超时，最多重试 3 次。
           status=1
           for attempt in 1 2 3; do
-            git push --prune "$GITEE_URL" \
+            git push --progress --prune "$GITEE_URL" \
               '+refs/heads/*:refs/heads/*' \
               '+refs/tags/*:refs/tags/*' && { status=0; break; }
             echo "Gitee push 第 $attempt 次失败 (exit $?)，等待后重试..."
