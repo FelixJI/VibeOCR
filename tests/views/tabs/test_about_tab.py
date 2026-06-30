@@ -71,3 +71,28 @@ class TestAboutTabFrozen:
 
         text = tab._changelog_browser.toPlainText()
         assert "暂无更新日志" in text
+
+
+class TestAboutTabRepoUrls:
+    """关于页 URL 应来自 env_config SSOT，且指向正确的 owner/repo"""
+
+    def test_github_url_points_to_repo(self):
+        from vibeocr.views.tabs import about_tab
+
+        assert "github.com/FelixJI/VibeOCR" in about_tab._GITHUB_URL
+
+    def test_gitee_url_points_to_repo(self):
+        from vibeocr.views.tabs import about_tab
+
+        assert "gitee.com/felixjii/vibeocr" in about_tab._GITEE_URL
+
+    def test_urls_imported_from_env_config_ssot(self):
+        """URL 常量应与 env_config SSOT 完全一致"""
+        from vibeocr.services.env_config import (
+            GITHUB_RELEASES_BASE,
+            GITEE_RELEASES_BASE,
+        )
+        from vibeocr.views.tabs import about_tab
+
+        assert about_tab._GITHUB_URL == GITHUB_RELEASES_BASE
+        assert about_tab._GITEE_URL == GITEE_RELEASES_BASE

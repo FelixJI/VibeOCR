@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
 )
 
 from vibeocr import __version__, env_manager
+from vibeocr.services.env_config import GITHUB_RELEASES_BASE, GITEE_RELEASES_BASE
 from vibeocr.ui import theme
 
 logger = logging.getLogger(__name__)
@@ -39,8 +40,8 @@ _year_range = (
     else f"{_FIRST_YEAR}–{_current_year}"
 )
 _COPYRIGHT = f"© {_year_range} Felix Ji. All rights reserved."
-_GITHUB_URL = "https://github.com/FelixJI/VibeOCR"
-_GITEE_URL = "https://gitee.com/felixjii/vibeocr"
+_GITHUB_URL = GITHUB_RELEASES_BASE
+_GITEE_URL = GITEE_RELEASES_BASE
 _CNB_URL = "https://cnb.cool/feljii/VibeOCR"
 _TECH_STACK = [
     ("PaddlePaddle / PaddleX", "OCR 引擎"),
