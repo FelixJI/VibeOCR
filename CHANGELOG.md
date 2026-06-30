@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.4.1] - 2026-06-30
+
+### Fixed
+- fix(ci): Gitee 上传改流式分块 + 进度日志 + 墙钟超时，修复发版卡死
+
+### Changed
+- merge: Gitee 上传改流式分块 + 进度日志 + 墙钟超时
+- refactor(bump): 回归单 main 分支发版，删除 develop→main 快照链
+- refactor(bump): 回归单 main 分支发版，删除 develop→main 快照链
+
+
 ## [0.4.0] - 2026-06-30
 
 ### Added
