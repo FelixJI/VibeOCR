@@ -171,7 +171,8 @@ CONFIG_DIR = "config"
 # OCR 依赖检测单一清单源（SSOT）
 # ---------------------------------------------------------------------------
 # {import 模块名: pip 包名} —— 检测环境时 import 模块名，结果/缓存用包名做 key。
-# - paddle 模块：paddlepaddle-gpu 与 paddlepaddle(CPU) 均导入为 paddle，故只检 paddle
+# - paddle 模块：paddlepaddle-gpu / paddlepaddle-cpu / paddlepaddle 均导入为 paddle，
+#   故只检 paddle；但它们的发行版名各异，额外候选见 OCR_DIST_NAME_ALIASES。
 # - 版本约束不在此处，安装版本来自 pyproject.toml（env_manager._load_dep_specs）
 OCR_CHECK_MODULES: dict[str, str] = {
     "paddle": "paddlepaddle",
@@ -181,6 +182,16 @@ OCR_CHECK_MODULES: dict[str, str] = {
     # markdown 已从 exe 包排除，由便携 Python 安装供 OCR/MinerU worker 用，
     # 故纳入便携环境就绪检测，避免装漏导致 worker 子进程崩溃。
     "markdown": "markdown",
+}
+
+# 同一 import 模块可能来自不同发行版名的额外候选。
+# paddle 模块：paddlepaddle-gpu / paddlepaddle-cpu / paddlepaddle 均导入为 paddle，
+# 但它们的 PyPI/分发发行版名各异。metadata 第一层探测只查 OCR_CHECK_MODULES
+# 的归一 key（"paddlepaddle"）会漏掉 GPU/CPU 专用包（其发行版名不是 paddlepaddle），
+# 导致"装了 paddlepaddle-gpu 却误报缺失"。此处补全候选，探测时任一命中即视为已安装；
+# 结果 dict 仍用归一 key（"paddlepaddle"），下游（required_deps/缓存/设置页）不受影响。
+OCR_DIST_NAME_ALIASES: dict[str, tuple[str, ...]] = {
+    "paddlepaddle": ("paddlepaddle-gpu", "paddlepaddle-cpu"),
 }
 
 # 各模块 import 检测的 timeout（秒）。

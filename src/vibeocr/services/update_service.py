@@ -27,15 +27,12 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # 发布仓库标识与下载源选择收敛到 env_config（SSOT）。
-# 发布渠道（方案 C）：CNB 仅镜像代码；产物主源 GitHub，镜像源 Gitee。
-# 客户端按 NetworkDetector 选源：国内优先 Gitee（匿名可读 Release），
-# 回退 gh 代理加速（gh-proxy / ghproxy）→ GitHub 裸连；海外直连 GitHub，回退 Gitee。
-# CNB OpenAPI 需 token 鉴权，客户端无法匿名访问，不用于更新。
+# 发布渠道：CNB 仅镜像代码；产物唯一源 GitHub。
+# 客户端按 NetworkDetector 选源：国内走 gh 代理加速（gh-proxy / ghproxy）→ GitHub 裸连；
+# 海外直连 GitHub。CNB OpenAPI 需 token 鉴权，客户端无法匿名访问，不用于更新。
 from vibeocr.services.env_config import (  # noqa: E402
     GITHUB_API_LATEST,
     GITHUB_RELEASES_BASE,
-    GITEE_API_LATEST,
-    GITEE_RELEASES_BASE,
     build_asset_url_pairs,
 )
 
@@ -164,28 +161,16 @@ def _detect_network_type() -> str:
 async def check_for_updates(
     current_version: str,
 ) -> tuple[UpdateInfo | None, bool]:
-    """检查是否有新版本（按网络环境选源：国内 Gitee，海外 GitHub）
-
-    按网络类型确定 API 端点优先级，逐个尝试：
-    - domestic：Gitee（匿名可读）→ GitHub（回退）
-    - international：GitHub → Gitee（回退）
+    """检查是否有新版本（GitHub Release API）
 
     Returns:
         (update_info, fetch_ok)：
-        - fetch_ok=False 表示所有源均请求失败（上层应提示手动下载）。
+        - fetch_ok=False 表示请求 GitHub 失败（上层应提示手动下载）。
         - fetch_ok=True 且 update_info=None 表示已是最新。
     """
-    network_type = _detect_network_type()
-    if network_type == "domestic":
-        sources = [
-            (GITEE_API_LATEST, None),
-            (GITHUB_API_LATEST, {"Accept": "application/vnd.github+json"}),
-        ]
-    else:
-        sources = [
-            (GITHUB_API_LATEST, {"Accept": "application/vnd.github+json"}),
-            (GITEE_API_LATEST, None),
-        ]
+    sources = [
+        (GITHUB_API_LATEST, {"Accept": "application/vnd.github+json"}),
+    ]
 
     release: dict | None = None
     for url, headers in sources:
@@ -194,7 +179,7 @@ async def check_for_updates(
             break
 
     if release is None:
-        logger.info("无法获取远程版本信息（Gitee/GitHub 均失败）")
+        logger.info("无法获取远程版本信息（GitHub 失败）")
         return None, False
 
     remote = UpdateInfo.from_release(release)
@@ -367,7 +352,6 @@ def _source_label(url: str) -> str:
     保持同步/异步两套下载链路的源名提示一致。修改此处会同时影响两者。
     """
     for label, marker in (
-        ("Gitee", "gitee.com"),
         ("gh-proxy", "gh-proxy.com"),
         ("ghproxy", "ghproxy.com"),
         ("GitHub", "github.com"),
@@ -574,12 +558,7 @@ def _format_failure_message(fail_reasons: list[str]) -> str:
     这样镜像被篡改/损坏（sha_mismatch）会优先明确告知用户，
     而不是淹没在「网络问题」里——避免装作成功式的敷衍。
     """
-    network_type = _detect_network_type()
-    manual_url = (
-        GITEE_RELEASES_BASE
-        if network_type == "domestic"
-        else GITHUB_RELEASES_BASE
-    )
+    manual_url = GITHUB_RELEASES_BASE
     tail = f"\n\n如持续失败，可前往手动下载（覆盖安装前请先退出本程序）：\n{manual_url}"
 
     if DOWNLOAD_REASON_SHA_MISMATCH in fail_reasons:
@@ -631,20 +610,13 @@ class UpdateService:
         update_info, fetch_ok = await check_for_updates(current)
 
         # 自动检查失败：提示用户去下载页手动下载并覆盖安装（需先退出程序）。
-        # 按网络环境给主源链接（国内 Gitee，海外 GitHub）。
         if not fetch_ok:
-            network_type = _detect_network_type()
-            manual_url = (
-                GITEE_RELEASES_BASE
-                if network_type == "domestic"
-                else GITHUB_RELEASES_BASE
-            )
-            source_label = "Gitee" if network_type == "domestic" else "GitHub"
+            manual_url = GITHUB_RELEASES_BASE
             QMessageBox.warning(
                 parent,
                 "检查更新",
                 "自动检查更新失败，可能是网络问题。\n\n"
-                f"可前往 {source_label} 手动下载对应版本，"
+                "可前往 GitHub 手动下载对应版本，"
                 "覆盖安装前请先退出本程序：\n"
                 f"{manual_url}",
             )
@@ -738,12 +710,7 @@ class UpdateService:
 
         # 极端罕见：连主程序自身都起不来（VibeOCR.exe 若坏，应用本就无法启动）。
         # 不退出主程序，明确告知用户手动重装——避免「应用关了什么都不发生」的困惑。
-        network_type = _detect_network_type()
-        manual_url = (
-            GITEE_RELEASES_BASE
-            if network_type == "domestic"
-            else GITHUB_RELEASES_BASE
-        )
+        manual_url = GITHUB_RELEASES_BASE
         QMessageBox.critical(
             parent,
             "更新失败",

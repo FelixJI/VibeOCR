@@ -107,11 +107,19 @@ def is_webengine_ready() -> bool:
 
 
 def _read_version_json_webengine_ver() -> str | None:
-    """读 version.json 的 webengine_assets_version；缺失返回 None。"""
-    meipass = _get_meipass()
-    if meipass is None:
-        return None
-    vj = meipass / "version.json"
+    """读 version.json（exe 同级）的 webengine_assets_version；缺失返回 None。
+
+    version.json 由 bump_version.py 写在 **exe 同级目录**（非 ``_internal/``），
+    未通过 ``--add-data`` 捆绑进 ``_MEIPASS``。故必须用 ``get_project_root()``
+    （打包态 = ``Path(sys.executable).parent`` = exe 同级）定位，与
+    ``env_manager._load_dep_specs``（``project_root/"version.json"``）和
+    ``update_service``（``app_dir/"version.json"``）读取位置一致。
+
+    旧实现误用 ``_get_meipass()/"version.json"``（= ``_internal/version.json``），
+    该文件在打包产物中不存在，导致恒返回 None → 版本回退 ``0.0.0`` →
+    下载 URL 拼成 ``v0.0.0`` → 404。
+    """
+    vj = get_project_root() / "version.json"
     if not vj.exists():
         return None
     try:

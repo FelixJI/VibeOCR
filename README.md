@@ -51,7 +51,7 @@ VibeOCR 是一款基于 [PySide6](https://www.qt.io/) + [PaddlePaddle](https://w
 - **推理后端自适应** —— 首次启动自动检测 GPU/CPU，可在设置页切换后端
 - **子进程隔离** —— OCR 在独立子进程执行，隔离 GPU 上下文，主界面不卡顿
 - **流水线缓存** —— 按显存分层的重型流水线缓存（FIFO 淘汰 + TTL 回收），减少重复加载
-- **程序内更新** —— 自动检查新版本，国内客户端优先走 Gitee 镜像加速下载
+- **程序内更新** —— 自动检查新版本，国内客户端走 gh 代理加速下载
 - **系统托盘** —— 最小化到托盘，边缘悬浮工具栏快捷唤起
 
 ## 下载安装
@@ -60,7 +60,7 @@ VibeOCR 是一款基于 [PySide6](https://www.qt.io/) + [PaddlePaddle](https://w
 
 前往 [Releases](https://github.com/FelixJI/VibeOCR/releases) 下载最新版 `VibeOCR-vX.Y.Z-win64.zip`，解压后运行 `VibeOCR.exe` 即可。
 
-> 国内用户访问 GitHub 较慢时，可使用 Gitee 镜像：<https://gitee.com/felixjii/vibeocr/releases>
+> 国内用户访问 GitHub 较慢时，可在程序内检查更新（自动走 gh 代理加速），或使用 gh 代理前缀手动下载。
 
 首次启动时，应用会自动检测 GPU/CPU 并引导安装推理依赖；WebEngine 渲染组件按需下载。
 
@@ -165,7 +165,7 @@ vibeocr/
 
 1. 用 PyInstaller 构建便携版 zip（主包 + WebEngine 资源包 + SHA256 校验）
 2. 上传到 GitHub Release
-3. 镜像代码与产物到 Gitee / CNB（国内加速），并清理历史版本
+3. 镜像代码到 CNB（国内加速）
 
 ```bash
 # 本地打包当前版本
@@ -180,7 +180,7 @@ uv run python scripts/bump_version.py minor
 | 渠道 | 地址 |
 |------|------|
 | GitHub（主） | <https://github.com/FelixJI/VibeOCR> |
-| Gitee（国内镜像） | <https://gitee.com/felixjii/vibeocr> |
+| Gitee（代码仓库） | <https://gitee.com/felixjii/vibeocr> |
 | CNB（代码镜像） | <https://cnb.cool/feljii/VibeOCR> |
 
 ## 许可证

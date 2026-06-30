@@ -410,11 +410,11 @@ class TestDownloadUpdateMultiSource:
         ) as mock_dl:
             result, reasons = _run(download_update(info, tmp_path))
         assert result is None
-        assert reasons == [DOWNLOAD_REASON_SHA_MISMATCH, DOWNLOAD_REASON_SHA_MISMATCH]
-        assert mock_dl.call_count == 2  # 海外 2 候选全部失败
+        assert reasons == [DOWNLOAD_REASON_SHA_MISMATCH]
+        assert mock_dl.call_count == 1  # 海外 1 候选（GitHub 直连）失败
 
-    def test_domestic_uses_four_candidates(self, tmp_path):
-        """国内走 4 候选（Gitee→gh-proxy→ghproxy→GitHub）"""
+    def test_domestic_uses_three_candidates(self, tmp_path):
+        """国内走 3 候选（gh-proxy→ghproxy→GitHub）"""
         from vibeocr.services.update_service import (
             DOWNLOAD_REASON_HTTP_ERROR,
             SourceAttempt,
@@ -437,7 +437,7 @@ class TestDownloadUpdateMultiSource:
             return_value=SourceAttempt(False, DOWNLOAD_REASON_HTTP_ERROR),
         ) as mock_dl:
             _run(download_update(info, tmp_path))
-        assert mock_dl.call_count == 4
+        assert mock_dl.call_count == 3
 
     def test_source_switch_callback_invoked_on_each_failure(self, tmp_path):
         """每源失败触发换源回调，回调收到 (源名, reason)"""
@@ -472,11 +472,10 @@ class TestDownloadUpdateMultiSource:
                     info, tmp_path, source_switch_callback=_on_switch
                 )
             )
-        # 国内 4 候选全部失败 → 4 次回调
-        assert len(switches) == 4
-        # 源名顺序：Gitee → gh-proxy → ghproxy → GitHub
+        # 国内 3 候选全部失败 → 3 次回调
+        assert len(switches) == 3
+        # 源名顺序：gh-proxy → ghproxy → GitHub
         assert [s for s, _ in switches] == [
-            "Gitee",
             "gh-proxy",
             "ghproxy",
             "GitHub",
@@ -668,7 +667,6 @@ class TestSourceLabel:
     def test_known_sources(self):
         from vibeocr.services.update_service import _source_label
 
-        assert _source_label("https://gitee.com/x/y") == "Gitee"
         assert _source_label("https://gh-proxy.com/x") == "gh-proxy"
         assert _source_label("https://ghproxy.com/x") == "ghproxy"
         assert _source_label("https://github.com/x") == "GitHub"
@@ -734,5 +732,5 @@ class TestFormatFailureMessage:
 
         with self._patch_net("domestic"):
             msg = _format_failure_message([DOWNLOAD_REASON_HTTP_ERROR])
-        # 国内给出 Gitee 链接
-        assert "gitee.com" in msg
+        # 手动下载链接指向 GitHub
+        assert "github.com" in msg

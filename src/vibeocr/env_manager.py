@@ -892,10 +892,22 @@ def _probe_module(python_exe: Path, module: str, pkg: str) -> tuple[bool, bool]:
         - installed：发行版是否存在（metadata 查询成功）
         - usable：是否可导入（import 成功）
     """
-    from vibeocr.services.env_config import OCR_CHECK_TIMEOUTS
+    from vibeocr.services.env_config import OCR_CHECK_TIMEOUTS, OCR_DIST_NAME_ALIASES
 
+    # 同一 import 模块可能来自不同发行版名（如 paddle ← paddlepaddle-gpu /
+    # paddlepaddle-cpu / paddlepaddle）。任一候选发行版存在即视为已安装，
+    # 否则只查归一 key 会漏掉 GPU/CPU 专用包，误报"装了却缺失"。
+    dist_candidates = (pkg, *OCR_DIST_NAME_ALIASES.get(pkg, ()))
     metadata_code = (
-        "import importlib.metadata as m; m.version(" + repr(pkg) + ")"
+        "import importlib.metadata as m, sys\n"
+        + "".join(
+            "try:\n"
+            "    m.version(" + repr(c) + "); sys.exit(0)\n"
+            "except m.PackageNotFoundError:\n"
+            "    pass\n"
+            for c in dist_candidates
+        )
+        + "sys.exit(1)\n"
     )
     # 第 1 层：metadata 判发行版存在
     try:
@@ -1040,13 +1052,27 @@ def get_dependency_versions(python_exe: Path) -> dict[str, str]:
     Returns:
         {pip包名: 版本号字符串}，未安装/无版本号为空串
     """
-    from vibeocr.services.env_config import OCR_CHECK_MODULES, OCR_CHECK_TIMEOUTS
+    from vibeocr.services.env_config import (
+        OCR_CHECK_MODULES,
+        OCR_CHECK_TIMEOUTS,
+        OCR_DIST_NAME_ALIASES,
+    )
 
     versions: dict[str, str] = {}
     for module, pkg in OCR_CHECK_MODULES.items():
         # 第 1 层：importlib.metadata.version（权威源）
+        # 同一模块可能来自不同发行版名（见 OCR_DIST_NAME_ALIASES），取首个命中
+        # 候选的版本；结果仍归一到 canonical key（pkg），设置页表格 key 不变。
+        dist_candidates = (pkg, *OCR_DIST_NAME_ALIASES.get(pkg, ()))
         metadata_code = (
-            "from importlib.metadata import version; print(version(" + repr(pkg) + "))"
+            "from importlib.metadata import version, PackageNotFoundError\n"
+            + "".join(
+                "try:\n"
+                "    print(version(" + repr(c) + ")); raise SystemExit\n"
+                "except PackageNotFoundError:\n"
+                "    pass\n"
+                for c in dist_candidates
+            )
         )
         try:
             result = subprocess.run(
@@ -1056,7 +1082,7 @@ def get_dependency_versions(python_exe: Path) -> dict[str, str]:
                 timeout=15,
                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
             )
-            if result.returncode == 0:
+            if result.returncode == 0 and result.stdout.strip():
                 versions[pkg] = result.stdout.strip()
                 continue
         except Exception:

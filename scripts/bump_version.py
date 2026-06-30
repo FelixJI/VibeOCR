@@ -3,7 +3,7 @@
 
 在 main 分支上 bump 版本号 → 生成 CHANGELOG → commit → 打 tag。
 tag 一推（git push + push tag），GitHub Actions 自动打包并发布到
-GitHub/Gitee/CNB（见 .github/workflows/release.yml）。
+GitHub（代码另镜像到 CNB；见 .github/workflows/release.yml）。
 
 用法:
     python scripts/bump_version.py              # 交互式菜单（含"仅打包当前版本"）
@@ -1143,7 +1143,7 @@ def _push_release(version: str) -> bool:
       git push <remote> refs/tags/v{version}  # 触发 CI
 
     tag 一推，GitHub Actions（release.yml）即触发打包并发布到
-    GitHub/Gitee/CNB。本地不再直接调用 GitHub Release API。
+    GitHub（代码另镜像到 CNB）。本地不再直接调用 GitHub Release API。
 
     Args:
         version: 版本号字符串（用于 tag 名）

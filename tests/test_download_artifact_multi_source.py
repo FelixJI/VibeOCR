@@ -39,7 +39,6 @@ _fake_us.DOWNLOAD_REASON_EXCEPTION = "exception"
 
 def _fake_source_label(url: str) -> str:
     for label, marker in (
-        ("Gitee", "gitee.com"),
         ("gh-proxy", "gh-proxy.com"),
         ("ghproxy", "ghproxy.com"),
         ("GitHub", "github.com"),
@@ -110,7 +109,7 @@ class TestNoShaPath:
         assert reason == REASON_HTTP_ERROR
 
     def test_source_switch_callback_invoked(self, dest: Path):
-        urls = ["https://gitee.com/x", "https://github.com/y"]
+        urls = ["https://gh-proxy.com/x", "https://github.com/y"]
         switch = MagicMock()
         with patch(
             "vibeocr.env_manager.download_file_with_progress",
@@ -120,8 +119,8 @@ class TestNoShaPath:
                 urls, dest, source_switch_fn=switch
             )
         assert ok is True
-        # 首源失败触发一次换源回调，label 为 Gitee
-        switch.assert_called_once_with("Gitee", REASON_HTTP_ERROR)
+        # 首源失败触发一次换源回调，label 为 gh-proxy
+        switch.assert_called_once_with("gh-proxy", REASON_HTTP_ERROR)
 
     def test_exception_treated_as_switch(self, dest: Path):
         urls = ["https://a", "https://b"]
@@ -194,8 +193,8 @@ class TestWithShaPath:
         assert reason == REASON_SHA_MISMATCH
 
     def test_mismatch_triggers_switch_callback(self, dest: Path, sha_dest: Path):
-        zip_urls = ["https://gitee.com/a.zip", "https://github.com/b.zip"]
-        sha_urls = ["https://gitee.com/a.sha256", "https://github.com/b.sha256"]
+        zip_urls = ["https://gh-proxy.com/a.zip", "https://github.com/b.zip"]
+        sha_urls = ["https://gh-proxy.com/a.sha256", "https://github.com/b.sha256"]
         switch = MagicMock()
         with patch(
             "vibeocr.env_manager.download_file_with_progress", return_value=True
@@ -211,7 +210,7 @@ class TestWithShaPath:
                 source_switch_fn=switch,
             )
         assert ok is True
-        switch.assert_called_once_with("Gitee", REASON_SHA_MISMATCH)
+        switch.assert_called_once_with("gh-proxy", REASON_SHA_MISMATCH)
 
 
 class TestGuardClauses:
