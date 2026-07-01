@@ -311,6 +311,8 @@ class MainWindow(QMainWindow):
     def _init_preset_combo(self) -> None:
         """初始化截图组件"""
         self._overlay = ScreenCaptureOverlay()
+        # 记录截图开始前主窗口的最小化状态，用于截图结束后恢复窗口状态。
+        self._main_window_minimized_before_capture = False
 
     def _init_batch_tab(self) -> None:
         """初始化批量识别标签页"""
@@ -962,9 +964,24 @@ class MainWindow(QMainWindow):
         if not self._check_ocr_ready():
             return
 
+        # 记录截图前主窗口的最小化状态，截图结束后据此恢复（不抢焦点）。
+        self._main_window_minimized_before_capture = self.isMinimized()
         self.showMinimized()
         # 延迟启动截图，让窗口有时间最小化
         QTimer.singleShot(200, self._overlay.start_capture)
+
+    def _restore_main_window(self, *, activate: bool) -> None:
+        """截图结束后恢复主窗口状态。
+
+        若截图前主窗口未被最小化，则恢复为可见（showNormal）；否则保持最小化。
+        ``activate`` 为 True 时额外激活窗口并置顶——仅用于需要立即展示
+        结果的操作（如识别）；复制/保存/取消等静默操作不应抢焦点。
+        """
+        if not self._main_window_minimized_before_capture:
+            self.showNormal()
+        if activate:
+            self.activateWindow()
+            self.raise_()
 
     @Slot(QPixmap, object)
     def _on_overlay_confirmed(self, pixmap: QPixmap, options) -> None:
@@ -974,8 +991,8 @@ class MainWindow(QMainWindow):
         同时经 set_image_for_recognition 启用「重新识别」按钮——
         之后点「重新识别」会改用界面面板选项（main 源）。
         """
-        self.showNormal()
-        self.activateWindow()
+        # 识别需要立即展示 OCR 结果，故激活并置顶主窗口。
+        self._restore_main_window(activate=True)
         if not pixmap.isNull():
             self._single_tab.set_image_for_recognition(pixmap)
             self._single_tab.set_pixmap(pixmap)
@@ -984,22 +1001,22 @@ class MainWindow(QMainWindow):
     @Slot(QPixmap)
     def _on_overlay_copied(self, pixmap: QPixmap) -> None:
         """截图复制完成"""
-        self.showNormal()
-        self.activateWindow()
+        # 复制为静默操作，仅恢复可见性、不抢焦点。
+        self._restore_main_window(activate=False)
         self._statusbar.showMessage("图片已复制到剪贴板")
 
     @Slot(str)
     def _on_overlay_saved(self, file_path: str) -> None:
         """截图保存完成"""
-        self.showNormal()
-        self.activateWindow()
+        # 保存为静默操作，仅恢复可见性、不抢焦点。
+        self._restore_main_window(activate=False)
         self._statusbar.showMessage(f"图片已保存: {file_path}")
 
     @Slot()
     def _on_overlay_cancelled(self) -> None:
         """截图取消"""
-        self.showNormal()
-        self.activateWindow()
+        # 取消为静默操作，仅恢复可见性、不抢焦点。
+        self._restore_main_window(activate=False)
 
     def closeEvent(self, event) -> None:
         """关闭窗口事件
