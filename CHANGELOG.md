@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.4.4] - 2026-07-01
+
+### Added
+- feat(ui): 单识别标签页接入文本块处理选项
+- feat(prefs): OCRPreferences 持久化文本块处理选项
+- feat(ocr): 新增文本块处理选项数据模型与后处理器
+
+### Fixed
+- fix(ui): 修复截图界面颜色选择对话框黑底
+- fix(ui): 修复截图覆盖层 QToolTip 黑底，统一为浅色主题
+- fix(主窗口): 截图结束后按操作类型分类恢复主窗口状态
+- fix(tests): webengine _frozen fixture 锚定 get_project_root 至临时目录
+- fix(tests): 移除 download_artifact 测试对 sys.modules 的伪造注入污染
+- fix(ocr): 修复表格/公式按钮走文字识别 + 截图选项页按管道分组 + 状态栏三态提示
+
+### Changed
+- Merge branch 'fix/screenshot-popup-black-bg'
+- Merge branch 'fix/screenshot-overlay-window-restore'
+- test(主窗口): 补充截图窗口恢复逻辑的测试用例
+- Merge branch 'fix/test-validation-and-repairs'
+- Merge branch 'feat/screenshot-text-block-options'
+- Merge branch 'feat/screenshot-pipeline-authority'
+- refactor(settings): 合并 WebEngine 下载入安装流程，下载源收敛为 GitHub 唯一源
+
 ## [Unreleased]
 
 ### Changed
