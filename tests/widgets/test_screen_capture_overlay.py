@@ -3,6 +3,7 @@
 from PySide6.QtCore import QPoint, QRect, Qt
 from PySide6.QtGui import QPixmap
 
+from vibeocr.ui import theme
 from vibeocr.widgets.screen_capture_overlay import ScreenCaptureOverlay
 
 
@@ -88,6 +89,34 @@ class TestSubState:
         overlay._reset_capturing()
         assert overlay._sub_state == "HOVER"
         assert overlay._detected_rect is None
+
+
+class TestTooltipStyle:
+    """回归：截图覆盖层的 QToolTip 必须使用浅色不透明背景，避免黑底。
+
+    背景：覆盖层设置了 WA_TranslucentBackground/WA_NoSystemBackground，会传播到
+    QToolTip 顶层窗口导致黑底。修复后 QToolTip 应指定浅色背景 token，并通过
+    _fixup_popup 在显示前清除透明属性。
+    """
+
+    def test_tooltip_style_is_light_theme(self, qapp):
+        overlay = ScreenCaptureOverlay()
+        qss = overlay.styleSheet()
+        # 浅色背景（surface_alt）而非近黑（text）
+        assert theme.Colors.surface_alt.lower() in qss.lower()
+        assert theme.Colors.text.lower() in qss.lower()  # 深色文字
+
+    def test_fixup_popup_clears_translucent_attribute(self, qapp):
+        """_fixup_popup 应清除弹出窗口的透明属性并启用样式背景。"""
+        from PySide6.QtWidgets import QWidget
+
+        popup = QWidget()
+        popup.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        popup.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
+        ScreenCaptureOverlay._fixup_popup(popup)
+        assert not popup.testAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        assert not popup.testAttribute(Qt.WidgetAttribute.WA_NoSystemBackground)
+        assert popup.testAttribute(Qt.WidgetAttribute.WA_StyledBackground)
 
 
 class TestStartCaptureInit:

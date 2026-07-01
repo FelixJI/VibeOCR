@@ -423,14 +423,26 @@ class ToolPropertiesBar(QWidget):
     # ==================== 颜色处理 ====================
 
     def _make_color_dialog(self, color: QColor) -> QColorDialog:
-        """创建颜色选择对话框（Qt 自绘，非原生）。
+        """创建颜色选择对话框（Qt 自绘、不透明）。
 
-        父窗口是截图覆盖层（WA_TranslucentBackground），原生颜色对话框会继承
-        透明属性导致整窗黑底；强制使用 Qt 自绘对话框可彻底规避此问题，
-        且不受系统背景/透明属性影响。
+        父窗口是截图覆盖层（WA_TranslucentBackground/WA_NoSystemBackground），
+        该属性会传播到对话框顶层窗口：原生对话框直接整窗黑底，Qt 自绘对话框
+        若继承透明属性同样会出现黑底。因此除强制非原生外，还需：
+        - 清除对话框的 WA_TranslucentBackground/WA_NoSystemBackground，
+          置位 WA_StyledBackground，让背景由样式表填充；
+        - 设浅色不透明 QSS（背景 surface、文字 text），与浅色主题一致。
+        仅作用于本对话框，不影响其它界面。
         """
         dialog = QColorDialog(color, self)
         dialog.setOption(QColorDialog.ColorDialogOption.DontUseNativeDialog, True)
+        # 脱离父覆盖层的透明属性，确保对话框背景不透明（规避黑底）
+        dialog.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
+        dialog.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, False)
+        dialog.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        dialog.setStyleSheet(
+            f"QColorDialog {{ background-color: {theme.Colors.surface};"
+            f" color: {theme.Colors.text}; }}"
+        )
         return dialog
 
     def _on_color_pick(self) -> None:

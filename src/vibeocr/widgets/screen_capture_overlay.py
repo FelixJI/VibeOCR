@@ -19,6 +19,7 @@ from typing import Any
 
 from PySide6.QtCore import (
     QBuffer,
+    QEvent,
     QMimeData,
     QPoint,
     QPointF,
@@ -100,16 +101,19 @@ class ScreenCaptureOverlay(QWidget):
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground)
-        # WA_TranslucentBackground/WA_NoSystemBackground 会沿窗口树向下传播，
-        # 导致子控件（浮动工具栏、颜色选择器等按钮）弹出 QToolTip 时背景无法被系统
-        # 填充，呈现为黑色。这里仅为覆盖层自身保持透明，并给 QToolTip 显式指定不透明
-        # 背景；不改动子控件样式，也不影响其它界面（全局 QSS 当前未启用）。
+        # WA_TranslucentBackground/WA_NoSystemBackground 会沿窗口树向下传播到
+        # 顶层弹出窗口（QToolTip、QColorDialog 等）。这些弹出窗口是独立顶层窗口，
+        # 其表面不被系统填充 → 呈现黑底。覆盖层自身保持透明，仅对弹出的子窗口
+        # 修正属性（见 _fixup_popup / event）。这里给 QToolTip 指定浅色不透明
+        # 背景（与浅色主题一致），并在 event() 中拦截 ToolTip 事件对 QToolTip
+        # 顶层窗口清除透明属性，确保背景真正被填充。不改动其它界面。
         self.setStyleSheet(
             "background: transparent;"
             " QToolTip {"
-            f" background-color: {theme.Colors.text};"
-            f" color: {theme.Colors.surface};"
-            " border: none; padding: 4px;"
+            f" background-color: {theme.Colors.surface_alt};"
+            f" color: {theme.Colors.text};"
+            f" border: 1px solid {theme.Colors.border_strong};"
+            f" padding: {theme.Spacing.xs}px;"
             f" border-radius: {theme.Radius.sm}px;"
             " }"
         )
@@ -150,6 +154,36 @@ class ScreenCaptureOverlay(QWidget):
         self._recognition_panel: InlineRecognitionPanel | None = None
         self._captured_pixmap: QPixmap | None = None
         self._resize_frame: SelectionResizeFrame | None = None
+
+    # ==================== 弹出窗口透明属性修正 ====================
+
+    @staticmethod
+    def _fixup_popup(widget: QWidget) -> None:
+        """让弹出窗口脱离父覆盖层的透明属性，确保背景不透明。
+
+        覆盖层设置了 WA_TranslucentBackground/WA_NoSystemBackground，Qt 会把这两个
+        属性传播到顶层弹出子窗口（QToolTip、QColorDialog 等），导致其表面不被系统
+        填充而呈现黑底。这里对弹出窗口本身清除这两个属性并置位 WA_StyledBackground，
+        使其背景由样式表填充，从而规避黑底。仅作用于传入的弹出窗口，不影响其它界面。
+        """
+        widget.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
+        widget.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, False)
+        widget.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+
+    def event(self, event: QEvent) -> bool:  # noqa: D401
+        """拦截 ToolTip 事件：在系统显示 tooltip 前修正 QToolTip 顶层窗口属性。
+
+        QToolTip 是独立顶层窗口，会继承覆盖层的透明属性 → 黑底。本覆盖层
+        setStyleSheet 指定的浅色背景在透明窗口属性下未必生效，因此在系统即将
+        显示 tooltip 时，主动找到该 QToolTip 顶层窗口并调用 _fixup_popup。
+        """
+        if event.type() == QEvent.Type.ToolTip:
+            # QToolTip 实例在事件投递到本控件时已由 Qt 创建为顶层窗口。
+            top_level = QApplication.topLevelWidgets()
+            for w in top_level:
+                if w.__class__.__name__ == "QToolTip" and w.isVisible():
+                    self._fixup_popup(w)
+        return super().event(event)
 
     # ==================== CAPTURING 模式 ====================
 
