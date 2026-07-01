@@ -15,45 +15,17 @@
 """
 
 from pathlib import Path
-from types import ModuleType
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-# ---- 隔离 httpx 依赖 -------------------------------------------------------
-# env_manager.download_artifact_multi_source 延迟 import update_service，
-# 而 update_service 顶部 `import httpx` 在未装全量依赖的环境会失败。
-# 这里在导入编排器之前，向 sys.modules 注入一个假的 update_service 模块，
-# 提供编排器所需的常量 / _source_label / verify_sha256。
-# 真正的 verify_sha256 在各用例里用 patch("vibeocr.services.update_service.verify_sha256")
-# 覆盖（patch 命中已注入的模块对象）。
-import sys as _sys
-
-_fake_us = ModuleType("vibeocr.services.update_service")
-_fake_us.DOWNLOAD_REASON_OK = "ok"
-_fake_us.DOWNLOAD_REASON_HTTP_ERROR = "http_error"
-_fake_us.DOWNLOAD_REASON_SHA_MISSING = "sha_missing"
-_fake_us.DOWNLOAD_REASON_SHA_MISMATCH = "sha_mismatch"
-_fake_us.DOWNLOAD_REASON_EXCEPTION = "exception"
-
-
-def _fake_source_label(url: str) -> str:
-    for label, marker in (
-        ("gh-proxy", "gh-proxy.com"),
-        ("ghproxy", "ghproxy.com"),
-        ("GitHub", "github.com"),
-    ):
-        if marker in url:
-            return label
-    return url
-
-
-_fake_us._source_label = _fake_source_label
-_fake_us.verify_sha256 = MagicMock(return_value=True)
-_sys.modules["vibeocr.services.update_service"] = _fake_us
-# ---------------------------------------------------------------------------
-
-from vibeocr.env_manager import download_artifact_multi_source  # noqa: E402
+# update_service 已是项目正式依赖（httpx 已声明并安装），
+# env_manager.download_artifact_multi_source 内部对 update_service 的 import
+# 直接命中真实模块；各用例再用 patch 覆盖 verify_sha256 即可。
+# 注意：切勿在此向 sys.modules 注入伪造的 update_service——那会污染整个
+# pytest 会话，导致 test_update_service.py 的 `from ... import ...` 全部报
+# ImportError (unknown location)。
+from vibeocr.env_manager import download_artifact_multi_source
 
 # 失败原因常量值（与 src/vibeocr/services/update_service.py 一致）
 REASON_OK = "ok"
