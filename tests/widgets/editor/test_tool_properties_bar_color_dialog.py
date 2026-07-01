@@ -58,3 +58,14 @@ class TestColorDialogOpaqueBackground:
         qss = dialog.styleSheet()
         assert theme.Colors.surface.lower() in qss.lower()
         assert theme.Colors.text.lower() in qss.lower()
+
+
+class TestPropertiesBarButtonsNoTooltip:
+    """回归：截图覆盖层内按钮不得带 tooltip（黑底问题已通过移除 tooltip 解决）。"""
+
+    def test_buttons_have_no_tooltip(self, qapp):
+        from PySide6.QtWidgets import QToolButton
+
+        bar = ToolPropertiesBar()
+        for btn in bar.findChildren(QToolButton):
+            assert btn.toolTip() == "", f"{btn.objectName() or btn.text()} 仍有 tooltip"

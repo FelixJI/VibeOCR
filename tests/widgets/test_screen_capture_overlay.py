@@ -3,7 +3,6 @@
 from PySide6.QtCore import QPoint, QRect, Qt
 from PySide6.QtGui import QPixmap
 
-from vibeocr.ui import theme
 from vibeocr.widgets.screen_capture_overlay import ScreenCaptureOverlay
 
 
@@ -91,32 +90,29 @@ class TestSubState:
         assert overlay._detected_rect is None
 
 
-class TestTooltipStyle:
-    """回归：截图覆盖层的 QToolTip 必须使用浅色不透明背景，避免黑底。
+class TestOverlayTransparency:
+    """回归：覆盖层自身保持透明（WA_TranslucentBackground/WA_NoSystemBackground）。
 
-    背景：覆盖层设置了 WA_TranslucentBackground/WA_NoSystemBackground，会传播到
-    QToolTip 顶层窗口导致黑底。修复后 QToolTip 应指定浅色背景 token，并通过
-    _fixup_popup 在显示前清除透明属性。
+    背景曾尝试给 QToolTip 设浅色样式 + event 拦截修正透明属性以规避 tooltip 黑底，
+    但该方案无效（ToolTip 事件只投递给叶子控件，不会冒泡到覆盖层）。最终改为移除
+    截图覆盖层内按钮的 tooltip，因此覆盖层不再带 QToolTip 样式，仅保留自身透明。
     """
 
-    def test_tooltip_style_is_light_theme(self, qapp):
+    def test_overlay_keeps_translucent_attributes(self, qapp):
+        """覆盖层自身必须保持透明属性（用于全屏选区绘制）。"""
         overlay = ScreenCaptureOverlay()
-        qss = overlay.styleSheet()
-        # 浅色背景（surface_alt）而非近黑（text）
-        assert theme.Colors.surface_alt.lower() in qss.lower()
-        assert theme.Colors.text.lower() in qss.lower()  # 深色文字
+        assert overlay.testAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        assert overlay.testAttribute(Qt.WidgetAttribute.WA_NoSystemBackground)
 
-    def test_fixup_popup_clears_translucent_attribute(self, qapp):
-        """_fixup_popup 应清除弹出窗口的透明属性并启用样式背景。"""
-        from PySide6.QtWidgets import QWidget
+    def test_overlay_stylesheet_has_no_tooltip_rule(self, qapp):
+        """覆盖层样式表不应再含 QToolTip 规则（黑底问题已通过移除 tooltip 解决）。"""
+        overlay = ScreenCaptureOverlay()
+        assert "QToolTip" not in overlay.styleSheet()
 
-        popup = QWidget()
-        popup.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-        popup.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
-        ScreenCaptureOverlay._fixup_popup(popup)
-        assert not popup.testAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        assert not popup.testAttribute(Qt.WidgetAttribute.WA_NoSystemBackground)
-        assert popup.testAttribute(Qt.WidgetAttribute.WA_StyledBackground)
+    def test_overlay_has_no_event_override(self, qapp):
+        """覆盖层不应再重写 event() 拦截 ToolTip（无效方案已移除）。"""
+        # ScreenCaptureOverlay 不应定义自己的 event 方法（继承 QWidget 默认行为）
+        assert "event" not in ScreenCaptureOverlay.__dict__
 
 
 class TestStartCaptureInit:

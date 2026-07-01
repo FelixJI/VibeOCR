@@ -190,7 +190,6 @@ class ToolPropertiesBar(QWidget):
         self._fill_link_btn.setCheckable(True)
         self._fill_link_btn.setChecked(True)
         self._fill_link_btn.setFixedSize(24, 24)
-        self._fill_link_btn.setToolTip("链接：填充色跟随描边色 / 独立填充色")
         self._fill_link_btn.setStyleSheet(
             "QToolButton { font-size: 14px; }"
             f"QToolButton:checked {{ background-color: {theme.Colors.accent}; color: white; }}"
@@ -243,7 +242,6 @@ class ToolPropertiesBar(QWidget):
         self._bold_btn = QToolButton()
         self._bold_btn.setText("B")
         self._bold_btn.setCheckable(True)
-        self._bold_btn.setToolTip("粗体")
         self._bold_btn.setStyleSheet(
             "QToolButton { font-weight: bold; min-width: 24px; min-height: 24px; }"
             f"QToolButton:checked {{ background-color: {theme.Colors.accent}; color: white; }}"
@@ -254,7 +252,6 @@ class ToolPropertiesBar(QWidget):
         self._italic_btn = QToolButton()
         self._italic_btn.setText("I")
         self._italic_btn.setCheckable(True)
-        self._italic_btn.setToolTip("斜体")
         self._italic_btn.setStyleSheet(
             "QToolButton { font-style: italic; min-width: 24px; min-height: 24px; }"
             f"QToolButton:checked {{ background-color: {theme.Colors.accent}; color: white; }}"
@@ -331,7 +328,6 @@ class ToolPropertiesBar(QWidget):
         self._common_fill_link_btn.setCheckable(True)
         self._common_fill_link_btn.setChecked(True)
         self._common_fill_link_btn.setFixedSize(24, 24)
-        self._common_fill_link_btn.setToolTip("链接：填充色跟随描边色 / 独立填充色")
         self._common_fill_link_btn.setStyleSheet(
             "QToolButton { font-size: 14px; }"
             f"QToolButton:checked {{ background-color: {theme.Colors.accent}; color: white; }}"

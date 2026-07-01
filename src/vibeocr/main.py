@@ -279,6 +279,54 @@ def _setup_app_icon(app) -> None:
     app.setApplicationName("VibeOCR")
 
 
+def _install_qt_translations(app, locale: str | None = None) -> None:
+    """加载 Qt 自带中文翻译，使标准对话框（QColorDialog/QFileDialog/QMessageBox
+    等的 OK/Cancel/基本颜色 等按钮文案）显示为中文。
+
+    PySide6 随包附带官方 .qm 翻译文件，其中 qtbase 覆盖基础模块（含 QColorDialog）。
+    找不到时静默跳过（不抛错），此时控件退回 Qt 默认英文文案，不影响功能。
+    翻译器需保留引用以防被回收。
+
+    Args:
+        app: QApplication 实例。
+        locale: 显式指定 locale 名（如 "zh_CN"），默认取系统 locale。便于测试。
+    """
+    import os
+
+    from PySide6.QtCore import QLibraryInfo, QLocale, QTranslator
+
+    if locale is None:
+        locale = QLocale.system().name()  # 如 "zh_CN"
+    # 仅加载中文；其它语言保留 Qt 默认。
+    if not locale.startswith("zh"):
+        return
+
+    translations_dir = QLibraryInfo.path(QLibraryInfo.LibraryPath.TranslationsPath)
+    # PySide6 的 TranslationsPath 未必含 qtbase，回退到包内 translations 目录。
+    if not os.path.isfile(os.path.join(translations_dir, f"qtbase_{locale}.qm")):
+        try:
+            import PySide6
+
+            translations_dir = os.path.join(
+                os.path.dirname(PySide6.__file__), "translations"
+            )
+        except Exception:
+            return
+
+    # 保留在 app 上的引用，避免被垃圾回收导致翻译失效
+    if not hasattr(app, "_qt_translators"):
+        app._qt_translators = []  # type: ignore[attr-defined]
+
+    for base in ("qtbase", "qt"):
+        qm = os.path.join(translations_dir, f"{base}_{locale}.qm")
+        if not os.path.isfile(qm):
+            continue
+        translator = QTranslator(app)
+        if translator.load(qm):
+            app.installTranslator(translator)
+            app._qt_translators.append(translator)  # type: ignore[attr-defined]
+
+
 def launch_application() -> int:
     """启动应用程序"""
     from PySide6.QtWidgets import QApplication
@@ -292,6 +340,9 @@ def launch_application() -> int:
     app = QApplication(sys.argv)
     app.setApplicationName("VibeOCR")
     app.setApplicationVersion(__version__)
+
+    # 加载 Qt 标准对话框的中文翻译（颜色选择对话框等）。必须在创建对话框前安装。
+    _install_qt_translations(app)
 
     # 单实例守卫：第二个实例启动时通知本实例提到前台后自身退出。
     # 必须在 QApplication 创建之后调用（QLocalServer 依赖 Qt 事件循环）。
