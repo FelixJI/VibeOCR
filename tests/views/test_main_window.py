@@ -2,6 +2,7 @@
 
 import pytest
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import QApplication
 
 from vibeocr.models.ocr_result import OCRResult
@@ -171,3 +172,120 @@ class TestSettingsInstallSucceededTriggersRecheck:
             mock_check.assert_called_once(), (
                 "install_succeeded_callback 应触发 dependency_manager.check_dependencies"
             )
+
+
+class TestOverlayWindowRestore:
+    """测试截图结束后主窗口状态的恢复逻辑。
+
+    截图开始前主窗口会被最小化（_on_screenshot 调用 showMinimized）。
+    截图结束后，不同操作对主窗口的处理应分类：
+    - 识别（confirmed）：需立即展示 OCR 结果 → 恢复可见并激活/置顶。
+    - 复制/保存/取消：静默操作 → 仅恢复可见性，不抢焦点；若截图前已最小化则保持最小化。
+    """
+
+    def test_restore_init_state_default(self, main_window, qtbot):
+        """_init_preset_combo 应将截图前窗口状态标记初始化为未最小化。"""
+        assert hasattr(main_window, "_main_window_minimized_before_capture"), (
+            "MainWindow 应持有 _main_window_minimized_before_capture 属性"
+        )
+        assert main_window._main_window_minimized_before_capture is False
+
+    def test_confirmed_restores_and_activates(self, main_window, qtbot):
+        """识别结束后应恢复窗口可见并激活、置顶。"""
+        import unittest.mock as _mock
+
+        pixmap = QPixmap(10, 10)
+        pixmap.fill(Qt.GlobalColor.white)
+
+        with (
+            _mock.patch.object(main_window, "showNormal") as mock_show,
+            _mock.patch.object(main_window, "activateWindow") as mock_activate,
+            _mock.patch.object(main_window, "raise_") as mock_raise,
+            _mock.patch.object(main_window._single_tab, "run_ocr"),
+            _mock.patch.object(main_window._single_tab, "set_image_for_recognition"),
+            _mock.patch.object(main_window._single_tab, "set_pixmap"),
+        ):
+            main_window._main_window_minimized_before_capture = False
+            main_window._on_overlay_confirmed(pixmap, None)
+
+        mock_show.assert_called_once()
+        mock_activate.assert_called_once()
+        mock_raise.assert_called_once()
+
+    def test_copied_restores_without_activating(self, main_window, qtbot):
+        """复制为静默操作，应恢复可见但不激活/置顶。"""
+        import unittest.mock as _mock
+
+        pixmap = QPixmap(10, 10)
+        pixmap.fill(Qt.GlobalColor.white)
+
+        with (
+            _mock.patch.object(main_window, "showNormal") as mock_show,
+            _mock.patch.object(main_window, "activateWindow") as mock_activate,
+            _mock.patch.object(main_window, "raise_") as mock_raise,
+        ):
+            main_window._main_window_minimized_before_capture = False
+            main_window._on_overlay_copied(pixmap)
+
+        mock_show.assert_called_once()
+        mock_activate.assert_not_called()
+        mock_raise.assert_not_called()
+
+    def test_saved_restores_without_activating(self, main_window, qtbot):
+        """保存为静默操作，应恢复可见但不激活/置顶。"""
+        import unittest.mock as _mock
+
+        with (
+            _mock.patch.object(main_window, "showNormal") as mock_show,
+            _mock.patch.object(main_window, "activateWindow") as mock_activate,
+            _mock.patch.object(main_window, "raise_") as mock_raise,
+        ):
+            main_window._main_window_minimized_before_capture = False
+            main_window._on_overlay_saved("/tmp/fake.png")
+
+        mock_show.assert_called_once()
+        mock_activate.assert_not_called()
+        mock_raise.assert_not_called()
+
+    def test_cancelled_restores_without_activating(self, main_window, qtbot):
+        """取消为静默操作，应恢复可见但不激活/置顶。"""
+        import unittest.mock as _mock
+
+        with (
+            _mock.patch.object(main_window, "showNormal") as mock_show,
+            _mock.patch.object(main_window, "activateWindow") as mock_activate,
+            _mock.patch.object(main_window, "raise_") as mock_raise,
+        ):
+            main_window._main_window_minimized_before_capture = False
+            main_window._on_overlay_cancelled()
+
+        mock_show.assert_called_once()
+        mock_activate.assert_not_called()
+        mock_raise.assert_not_called()
+
+    def test_silent_ops_keep_minimized_when_was_minimized(self, main_window, qtbot):
+        """截图前已最小化时，复制/保存/取消应保持最小化（不调用 showNormal）。"""
+        import unittest.mock as _mock
+
+        pixmap = QPixmap(10, 10)
+        pixmap.fill(Qt.GlobalColor.white)
+
+        main_window._main_window_minimized_before_capture = True
+
+        for slot, arg in [
+            (main_window._on_overlay_copied, pixmap),
+            (main_window._on_overlay_saved, "/tmp/fake.png"),
+            (main_window._on_overlay_cancelled, None),
+        ]:
+            with (
+                _mock.patch.object(main_window, "showNormal") as mock_show,
+                _mock.patch.object(main_window, "activateWindow") as mock_activate,
+                _mock.patch.object(main_window, "raise_") as mock_raise,
+            ):
+                if arg is None:
+                    slot()
+                else:
+                    slot(arg)
+            mock_show.assert_not_called()
+            mock_activate.assert_not_called()
+            mock_raise.assert_not_called()
