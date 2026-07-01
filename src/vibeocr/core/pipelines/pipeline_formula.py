@@ -103,7 +103,17 @@ def _recognize_formula(
                 preprocessed_png = buf.getvalue()
 
     for res in output_list:
-        parsing_res_list = getattr(res, "parsing_res_list", [])
+        # PaddleX 结果是 dict 子类，parsing_res_list 是 dict key（非属性），
+        # 必须用下标取值；getattr 对 dict 会恒返回默认值 []（属性不存在）。
+        parsing_res_list: list[Any] = []
+        if hasattr(res, "__getitem__"):
+            parsing_res_list = (
+                res["parsing_res_list"]
+                if "parsing_res_list" in (res.keys() if hasattr(res, "keys") else [])
+                else []
+            )
+        if not parsing_res_list and hasattr(res, "parsing_res_list"):
+            parsing_res_list = res.parsing_res_list
         for block in parsing_res_list:
             label = getattr(block, "label", "text")
             bbox = getattr(block, "bbox", None)

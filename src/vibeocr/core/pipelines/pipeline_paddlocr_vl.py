@@ -175,47 +175,85 @@ def _recognize_paddlocr_vl(
     images: dict[str, Any] = {}
 
     for res in output_list:
-        if hasattr(res, "markdown"):
+        # PaddleX 结果是 dict 子类，content_list/images/parsing_res_list 是
+        # dict key（非属性），必须用下标取值；hasattr 对 dict 恒为 False 会导致
+        # 整个解析被跳过。markdown 在 MarkdownMixin 中是 property，可作兜底。
+        if hasattr(res, "get"):
+            md = res.get("markdown")
+            if md:
+                markdown_text = md or markdown_text
+        elif hasattr(res, "markdown"):
             markdown_text = getattr(res, "markdown", "") or markdown_text
 
-        if hasattr(res, "content_list"):
+        cl = res.get("content_list") if hasattr(res, "get") else None
+        if not cl and hasattr(res, "content_list"):
             cl = getattr(res, "content_list", None)
-            if cl:
-                content_list = list(cl) if not isinstance(cl, list) else cl
+        if cl:
+            content_list = list(cl) if not isinstance(cl, list) else cl
 
-        if hasattr(res, "images"):
+        imgs = res.get("images") if hasattr(res, "get") else None
+        if imgs is None and hasattr(res, "images"):
             imgs = getattr(res, "images", None)
-            if imgs and isinstance(imgs, dict):
-                images.update(imgs)
+        if imgs and isinstance(imgs, dict):
+            images.update(imgs)
 
         # PaddleOCR-VL 3.x: parsing_res_list with block-level localization
-        if hasattr(res, "parsing_res_list"):
-            for block in res.parsing_res_list:
-                bbox = _extract_block_bbox(block.get("block_bbox"))
-                text = block.get("block_content", "")
-                label = block.get("block_label", "text")
-                order = block.get("block_order", -1)
-                score = _get_block_score(res, block)
+        parsing_res_list: list[Any] = []
+        if hasattr(res, "__getitem__"):
+            parsing_res_list = (
+                res["parsing_res_list"]
+                if "parsing_res_list" in (res.keys() if hasattr(res, "keys") else [])
+                else []
+            )
+        if not parsing_res_list and hasattr(res, "parsing_res_list"):
+            parsing_res_list = res.parsing_res_list
+        for block in parsing_res_list:
+            # PaddleOCRVLBlock 是普通对象（非 dict），属性为 content/label/bbox/
+            # global_block_id；同时兼容 dict 形态（block_content 等键）。
+            text = (
+                getattr(block, "content", None)
+                if not isinstance(block, dict)
+                else block.get("block_content") or block.get("content", "")
+            )
+            label = (
+                getattr(block, "label", "text")
+                if not isinstance(block, dict)
+                else block.get("block_label") or block.get("label", "text")
+            )
+            raw_bbox = (
+                getattr(block, "bbox", None)
+                if not isinstance(block, dict)
+                else block.get("block_bbox") or block.get("bbox")
+            )
+            order = (
+                getattr(block, "global_block_id", -1)
+                if not isinstance(block, dict)
+                else block.get("block_order", -1)
+            )
+            bbox = _extract_block_bbox(raw_bbox)
+            score = _get_block_score(res, block)
 
-                if text:
-                    text_blocks.append(
-                        TextBlock(
-                            text=text,
-                            score=score,
-                            bbox=bbox,
-                            label=label,
-                            order=order,
-                        )
+            if text:
+                text_blocks.append(
+                    TextBlock(
+                        text=text,
+                        score=score,
+                        bbox=bbox,
+                        label=label,
+                        order=order,
                     )
-                    text_with_scores.append((text, score))
-                    content_list.append(
-                        {
-                            "type": label,
-                            "text": text,
-                            "bbox": bbox,
-                        }
-                    )
-        elif hasattr(res, "rec_texts") and hasattr(res, "rec_scores"):
+                )
+                text_with_scores.append((text, score))
+                content_list.append(
+                    {
+                        "type": label,
+                        "text": text,
+                        "bbox": bbox,
+                    }
+                )
+        if not parsing_res_list and hasattr(res, "rec_texts") and hasattr(
+            res, "rec_scores"
+        ):
             # Fallback: legacy output format
             rec_boxes = getattr(res, "rec_boxes", None)
             for i, (text, score) in enumerate(

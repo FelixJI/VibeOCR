@@ -117,72 +117,109 @@ def _recognize_table(service: Any, image: Any, options: TableRecognitionOptions)
     content_list: list[dict[str, Any]] = []
 
     for res in output_list:
-        if hasattr(res, "markdown"):
-            md_info = getattr(res, "markdown", None)
-            if isinstance(md_info, dict):
-                md_text = md_info.get("markdown_texts", "")
-                if md_text:
-                    markdown_parts.append(md_text)
-
-        parsing_res_list = []
-        if hasattr(res, "parsing_res_list"):
-            parsing_res_list = res.parsing_res_list
-
-        for block in parsing_res_list:
-            label = getattr(block, "label", "table")
-            bbox = getattr(block, "bbox", None)
-            content = getattr(block, "content", "")
-            order_index = getattr(block, "order_index", -1)
-
-            if not content:
-                continue
-
-            cl_idx = len(content_list)
-            bbox_tuple = (
-                (float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3]))
-                if bbox
-                else None
+        # PaddleX 表格结果（TableRecognitionResult）是 dict 子类，键需下标访问。
+        # 表格内容在 "table_res_list"（每项含 pred_html），而非 parsing_res_list
+        # （后者属于版面解析管道）。早期代码误读 parsing_res_list 导致永远取空，
+        # 表现为"未识别到文字"。
+        table_res_list: list[Any] = []
+        if hasattr(res, "__getitem__"):
+            table_res_list = (
+                res["table_res_list"]
+                if "table_res_list" in (res.keys() if hasattr(res, "keys") else [])
+                else []
             )
 
-            if label == "table":
-                from vibeocr.services.ocr_service import (
-                    _extract_table_html,
-                    _html_table_to_markdown,
-                )
+        for idx, table_res in enumerate(table_res_list):
+            # pred_html: <html><body><table>...</table></body></html>
+            pred_html = (
+                table_res.get("pred_html") if hasattr(table_res, "get") else None
+            )
+            if not pred_html:
+                continue
 
-                table_html = _extract_table_html(content)
-                table_md = _html_table_to_markdown(table_html)
-                if table_md:
-                    markdown_parts.append(table_md)
-                text_blocks.append(
-                    TextBlock(
-                        text=content,
-                        score=0.9,
-                        bbox=bbox_tuple,
-                        label=label,
-                        order=order_index or -1,
-                        content_index=cl_idx,
+            from vibeocr.services.ocr_service import (
+                _extract_table_html,
+                _html_table_to_markdown,
+            )
+
+            table_html = _extract_table_html(pred_html)
+            table_md = _html_table_to_markdown(table_html)
+            if table_md:
+                markdown_parts.append(table_md)
+
+            cl_idx = len(content_list)
+            text_blocks.append(
+                TextBlock(
+                    text=table_html,
+                    score=0.9,
+                    bbox=None,
+                    label="table",
+                    order=idx,
+                    content_index=cl_idx,
+                )
+            )
+            text_with_scores.append((table_html, 0.9))
+            content_list.append(
+                {"type": "table", "table_body": table_html, "bbox": None}
+            )
+
+        # 表格外的普通文字（overall_ocr_res）：截图场景多为整图表格，此处通常为空，
+        # 但保留以兼容"表格 + 周边文字"的图片。
+        overall_ocr_res = (
+            res.get("overall_ocr_res") if hasattr(res, "get") else None
+        )
+        if overall_ocr_res is not None:
+            rec_texts = (
+                overall_ocr_res.get("rec_texts")
+                if hasattr(overall_ocr_res, "get")
+                else None
+            )
+            rec_scores = (
+                overall_ocr_res.get("rec_scores")
+                if hasattr(overall_ocr_res, "get")
+                else None
+            )
+            rec_polys = (
+                overall_ocr_res.get("rec_polys")
+                if hasattr(overall_ocr_res, "get")
+                else None
+            )
+            if rec_texts:
+                for i, text in enumerate(rec_texts):
+                    if not text:
+                        continue
+                    score = (
+                        float(rec_scores[i])
+                        if rec_scores and i < len(rec_scores)
+                        else 0.9
                     )
-                )
-                text_with_scores.append((content, 0.9))
-                content_list.append(
-                    {"type": "table", "table_body": table_html, "bbox": bbox_tuple}
-                )
-            else:
-                text_blocks.append(
-                    TextBlock(
-                        text=content,
-                        score=0.9,
-                        bbox=bbox_tuple,
-                        label=label,
-                        order=order_index or -1,
-                        content_index=cl_idx,
+                    poly = rec_polys[i] if rec_polys and i < len(rec_polys) else None
+                    bbox_tuple = None
+                    if poly is not None and hasattr(poly, "shape") and poly.size >= 4:
+                        xs = poly[:, 0].tolist() if poly.ndim == 2 else None
+                        ys = poly[:, 1].tolist() if poly.ndim == 2 else None
+                        if xs and ys:
+                            bbox_tuple = (
+                                float(min(xs)),
+                                float(min(ys)),
+                                float(max(xs)),
+                                float(max(ys)),
+                            )
+                    cl_idx = len(content_list)
+                    text_blocks.append(
+                        TextBlock(
+                            text=text,
+                            score=score,
+                            bbox=bbox_tuple,
+                            label="text",
+                            order=-1,
+                            content_index=cl_idx,
+                        )
                     )
-                )
-                text_with_scores.append((content, 0.9))
-                content_list.append(
-                    {"type": label, "text": content, "bbox": bbox_tuple}
-                )
+                    text_with_scores.append((text, score))
+                    content_list.append(
+                        {"type": "text", "text": text, "bbox": bbox_tuple}
+                    )
 
     raw_text = "\n".join(b.text for b in text_blocks)
     markdown_text = "\n\n".join(markdown_parts) if markdown_parts else raw_text
