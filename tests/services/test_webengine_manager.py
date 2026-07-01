@@ -14,9 +14,19 @@ import pytest
 
 @pytest.fixture
 def _frozen(monkeypatch, tmp_path):
-    """模拟 PyInstaller 打包态：frozen=True 且 _MEIPASS 指向临时目录。"""
+    """模拟 PyInstaller 打包态：frozen=True 且 _MEIPASS 指向临时目录。
+
+    打包态下 ``get_project_root()`` 返回 exe 同级目录（version.json 等
+    运行时文件所在），而非 ``_MEIPASS``（``_internal/``，只读资源所在）。
+    故此处同步把 ``get_project_root`` 指向 tmp_path，使测试写入的
+    version.json 能被 ``_read_version_json_webengine_ver`` 读到——与生产
+    环境中 version.json 位于 exe 同级、而非 ``_internal/`` 的事实一致。
+    """
+    from vibeocr.services import webengine_manager as wm
+
     monkeypatch.setattr(sys, "frozen", True, raising=False)
     monkeypatch.setattr(sys, "_MEIPASS", str(tmp_path), raising=False)
+    monkeypatch.setattr(wm, "get_project_root", lambda: tmp_path)
     return tmp_path
 
 
