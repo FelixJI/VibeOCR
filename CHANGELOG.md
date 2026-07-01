@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.4.3] - 2026-07-01
+
+### Changed
+- refactor(update): 移除 Gitee 作为更新/下载/发版源，产物唯一源 GitHub
+
 ## [0.4.2] - 2026-06-30
 
 ### Added
