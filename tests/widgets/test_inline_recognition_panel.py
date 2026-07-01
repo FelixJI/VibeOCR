@@ -59,27 +59,15 @@ class TestInlineRecognitionPanel:
         finally:
             OCRPreferences.reset_instance()
 
-    def test_tooltip_shows_option_state(self, qapp, tmp_path):
-        """按钮 tooltip 显示关键选项状态"""
-        from vibeocr.utils.ocr_preferences import OCRPreferences
+    def test_pipeline_buttons_have_no_tooltip(self, qapp):
+        """回归：截图覆盖层内按钮不得带 tooltip（黑底问题难以可靠修复，已移除）。
 
-        OCRPreferences.reset_instance()
-        try:
-            prefs = OCRPreferences.instance(tmp_path)
-            prefs.set_pipeline_options(
-                "screenshot",
-                OCRPipeline.OCR,
-                OCROptions(
-                    pipeline=OCRPipeline.OCR,
-                    use_doc_orientation_classify=False,
-                ),
-            )
-
-            panel = InlineRecognitionPanel()
-            tooltip = panel._pipeline_buttons[OCRPipeline.OCR].toolTip()
-            assert "方向分类: 关" in tooltip
-        finally:
-            OCRPreferences.reset_instance()
+        背景：覆盖层设置了 WA_TranslucentBackground，QToolTip 顶层窗口在其下呈现
+        黑底；尝试过的样式表/event 拦截方案均不可靠。最终移除覆盖层内按钮的 tooltip。
+        """
+        panel = InlineRecognitionPanel()
+        for btn in panel._pipeline_buttons.values():
+            assert btn.toolTip() == ""
 
     def test_set_options(self, qapp):
         panel = InlineRecognitionPanel()
