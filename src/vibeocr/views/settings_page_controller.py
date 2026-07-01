@@ -142,12 +142,17 @@ class SettingsPageController:
     def _init_screenshot_options(
         self, nav_list: QListWidget | None, stacked: QStackedWidget | None
     ) -> None:
-        """初始化截图面板选项页面"""
+        """初始化截图面板选项页面。
+
+        按管道分组展示预处理参数（无管道下拉框）：识别类型由截图工具栏按钮
+        唯一决定，此处仅配置各管道的预处理参数。
+        """
         if not nav_list or not stacked:
             return
 
-        from vibeocr.utils.ocr_preferences import OCRPreferences
-        from vibeocr.widgets.preprocess_options_widget import PreprocessOptionsWidget
+        from vibeocr.widgets.screenshot_options_widget import (
+            ScreenshotOptionsWidget,
+        )
 
         # 添加导航项和页面
         nav_list.addItem("截图选项")
@@ -157,7 +162,7 @@ class SettingsPageController:
         page_layout.setContentsMargins(16, 16, 16, 16)
         page_layout.setSpacing(12)
 
-        self._screenshot_options = PreprocessOptionsWidget()
+        self._screenshot_options = ScreenshotOptionsWidget()
         page_layout.addWidget(self._screenshot_options)
 
         spacer = QSpacerItem(
@@ -167,62 +172,8 @@ class SettingsPageController:
 
         stacked.addWidget(page)
 
-        # 初始化选项
-        try:
-            prefs = OCRPreferences.instance()
-            default_pipeline = self._screenshot_options.get_current_pipeline()
-            self._screenshot_options.set_options(
-                prefs.get_pipeline_options("screenshot", default_pipeline)
-            )
-        except RuntimeError:
-            pass
-
-        # 连接信号
-        self._screenshot_switching = False
-        self._screenshot_options.pipeline_switching.connect(
-            self._on_screenshot_pipeline_switching
-        )
-        self._screenshot_options.pipeline_switched.connect(
-            self._on_screenshot_pipeline_switched
-        )
-        self._screenshot_options.options_changed.connect(
-            self._on_screenshot_option_changed
-        )
-
-    def _on_screenshot_pipeline_switching(self, old_pipeline, options) -> None:
-        self._screenshot_switching = True
-        try:
-            from vibeocr.utils.ocr_preferences import OCRPreferences
-
-            OCRPreferences.instance().set_pipeline_options(
-                "screenshot", old_pipeline, options
-            )
-        except RuntimeError:
-            pass
-
-    def _on_screenshot_pipeline_switched(self, new_pipeline) -> None:
-        try:
-            from vibeocr.utils.ocr_preferences import OCRPreferences
-
-            loaded = OCRPreferences.instance().get_pipeline_options(
-                "screenshot", new_pipeline
-            )
-            self._screenshot_options.set_options(loaded)
-        except RuntimeError:
-            pass
-        self._screenshot_switching = False
-
-    def _on_screenshot_option_changed(self, options) -> None:
-        if self._screenshot_switching:
-            return
-        try:
-            from vibeocr.utils.ocr_preferences import OCRPreferences
-
-            OCRPreferences.instance().set_pipeline_options(
-                "screenshot", options.pipeline, options
-            )
-        except RuntimeError:
-            pass
+        # ScreenshotOptionsWidget 自管持久化（构造时 load、变更时直接写
+        # screenshot 源），此处无需连接信号。
 
     def _init_pdf_options(
         self, nav_list: QListWidget | None, stacked: QStackedWidget | None

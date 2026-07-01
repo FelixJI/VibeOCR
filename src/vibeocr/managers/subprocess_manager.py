@@ -91,12 +91,15 @@ class PreloadSignals(QObject):
     """预加载信号"""
 
     finished = Signal(dict)  # {pipeline_name: success}
+    # 逐管道进度：(当前 1-based 序号, 总数, 管道显示名)
+    progress = Signal(int, int, str)
 
 
 class PreloadTask(QRunnable):
     """预加载任务（在后台线程执行）
 
-    在后台线程下发 TTL 并预加载/预热管道，避免阻塞 GUI 主线程。
+    在后台线程下发 TTL 并逐个预加载/预热管道，每完成一个上报进度，
+    避免长时间无反馈。避免阻塞 GUI 主线程。
     """
 
     def __init__(
@@ -112,7 +115,7 @@ class PreloadTask(QRunnable):
         self.signals = PreloadSignals()
 
     def run(self) -> None:
-        """下发 TTL、预加载管道并预热"""
+        """下发 TTL、逐个预加载管道并预热"""
         try:
             # 先下发 TTL（无论是否预加载，TTL 配置都需要同步到 worker）
             if self._ttl_seconds is not None:
@@ -129,7 +132,20 @@ class PreloadTask(QRunnable):
                 self.signals.finished.emit({})
                 return
 
-            results = self._service.preload_pipelines(self._pipelines)
+            # 逐个预加载：每完成一个上报进度，让状态栏实时反映
+            results: dict[str, bool] = {}
+            total = len(self._pipelines)
+            for i, pipeline_name in enumerate(self._pipelines, 1):
+                self.signals.progress.emit(i, total, pipeline_name)
+                try:
+                    single = self._service.preload_pipelines([pipeline_name])
+                    results.update(single)
+                except Exception as e:
+                    logger.warning(
+                        f"[SubprocessManager] 预加载 {pipeline_name} 失败: {e}"
+                    )
+                    results[pipeline_name] = False
+
             success_count = sum(1 for v in results.values() if v)
             logger.debug(
                 f"[SubprocessManager] 预加载完成: {success_count}/{len(results)} 个管道"
@@ -168,6 +184,8 @@ class SubprocessManager(QObject):
     service_ready = Signal(bool)
     progress_update = Signal(str)
     preload_finished = Signal(dict)
+    # 预加载逐管道进度：(当前 1-based 序号, 总数, 管道显示名)
+    preload_progress = Signal(int, int, str)
     recognition_queued = Signal(str)  # 识别请求因预加载排队，参数为提示消息
 
     def __init__(
@@ -272,6 +290,7 @@ class SubprocessManager(QObject):
             self._service, pipelines, ttl_seconds=ttl_seconds
         )
         self._preload_task.signals.finished.connect(self._on_preload_done)
+        self._preload_task.signals.progress.connect(self.preload_progress.emit)
         self._thread_pool.start(self._preload_task)
 
     def _on_preload_done(self, results: dict) -> None:
@@ -303,6 +322,9 @@ class SubprocessManager(QObject):
         if self._preload_task is not None:
             try:
                 self._preload_task.signals.finished.disconnect(self._on_preload_done)
+                self._preload_task.signals.progress.disconnect(
+                    self.preload_progress.emit
+                )
             except RuntimeError:
                 pass
 

@@ -72,6 +72,7 @@ class MainWindow(QMainWindow):
         except Exception as _e:
             logging.debug(f"WebEngine DLL 路径补丁跳过: {_e}")
         self._preload_complete = False  # 预加载是否完成
+        self._preload_in_progress = False  # 预加载是否进行中（状态栏三态区分）
         self._closing = False  # 是否正在关闭（防止关闭时重复启动 Worker）
         self._force_quit = False  # 是否强制退出（而非最小化到托盘）
         self._tray_icon = None  # 系统托盘图标
@@ -95,6 +96,7 @@ class MainWindow(QMainWindow):
         self._subprocess_manager.service_ready.connect(self._on_subprocess_worker_ready)
         self._subprocess_manager.progress_update.connect(self._on_subprocess_progress)
         self._subprocess_manager.preload_finished.connect(self._on_preload_finished)
+        self._subprocess_manager.preload_progress.connect(self._on_preload_progress)
         self._subprocess_manager.recognition_queued.connect(self._on_recognition_queued)
 
         self._setup_ui()
@@ -141,8 +143,13 @@ class MainWindow(QMainWindow):
         from vibeocr.widgets.preprocess_options_widget import (
             PreprocessOptionsWidget,
         )
+        from vibeocr.widgets.screenshot_options_widget import (
+            ScreenshotOptionsWidget,
+        )
 
         for widget in self.findChildren(PreprocessOptionsWidget):
+            widget.apply_gpu_gating(has_gpu)
+        for widget in self.findChildren(ScreenshotOptionsWidget):
             widget.apply_gpu_gating(has_gpu)
 
     def _setup_ocr_status_callback(self) -> None:
@@ -207,6 +214,8 @@ class MainWindow(QMainWindow):
         # 创建状态栏
         self._statusbar = QStatusBar(self)
         self.setStatusBar(self._statusbar)
+        # 启动初期即提示，避免状态栏空白让用户以为程序无响应
+        self._statusbar.showMessage("正在检测 OCR 环境...")
 
         # 初始化 OCR 预设下拉框（包含截图组件和复制提示的初始化）
         self._init_preset_combo()
@@ -688,15 +697,18 @@ class MainWindow(QMainWindow):
             # 全部在后台线程，不阻塞 GUI
             self._start_subprocess_preload()
 
-            # 状态提示：根据是否预加载显示不同消息
+            # 状态提示：区分「进程就绪」与「模型预加载完成」两个阶段，
+            # 避免进程一就绪就显示"已就绪"误导用户在模型未加载时使用。
             from vibeocr.managers.config_manager import ConfigManager
 
             cm = ConfigManager.instance()
             pipelines = cm.get_preload_pipelines()
             if pipelines and cm.get_preload_enabled():
-                self._statusbar.showMessage("正在预热 OCR 模型...")
+                self._preload_in_progress = True
+                self._statusbar.showMessage("OCR 服务进程已就绪，正在预热模型...")
             else:
-                self._statusbar.showMessage("OCR 服务已就绪")
+                self._preload_in_progress = False
+                self._statusbar.showMessage("OCR 服务已就绪（模型按需加载）")
         else:
             logging.warning("[MainWindow] 子进程 Worker 启动失败")
             self._statusbar.showMessage("OCR 服务启动失败")
@@ -720,15 +732,31 @@ class MainWindow(QMainWindow):
     @Slot(dict)
     def _on_preload_finished(self, results: dict) -> None:
         """预加载完成回调"""
+        self._preload_in_progress = False
         success_count = sum(1 for v in results.values() if v)
         total_count = len(results)
-        if success_count > 0:
+        if total_count > 0 and success_count > 0:
             self._statusbar.showMessage(
                 f"OCR 服务已就绪（{success_count}/{total_count} 个模型已预热）"
             )
         else:
             self._statusbar.showMessage("OCR 服务已就绪")
         logging.debug(f"[MainWindow] 预加载完成: {results}")
+
+    @Slot(int, int, str)
+    def _on_preload_progress(self, current: int, total: int, pipeline_name: str) -> None:
+        """预加载逐管道进度回调"""
+        from vibeocr.core.pipelines import OCRPipeline, get_pipeline_display_name
+
+        # 管道名转中文显示名（如 "OCR" -> "通用 OCR"）
+        try:
+            pipeline = OCRPipeline(pipeline_name)
+            display_name = get_pipeline_display_name(pipeline)
+        except ValueError:
+            display_name = pipeline_name
+        self._statusbar.showMessage(
+            f"正在预热模型 {current}/{total}：{display_name}..."
+        )
 
     @Slot(str)
     def _on_recognition_queued(self, message: str) -> None:
@@ -915,6 +943,16 @@ class MainWindow(QMainWindow):
             )
             if reply == QMessageBox.StandardButton.Yes:
                 self._start_install()
+            return False
+
+        # 依赖已就绪，但 OCR 子进程服务尚未启动完成 —— 拦截截图，
+        # 避免在 Worker 启动/预加载期间触发识别导致报错或长时间等待。
+        if not self._subprocess_manager.is_ready:
+            QMessageBox.information(
+                self,
+                "服务启动中",
+                "OCR 服务正在启动，请稍候片刻再试...",
+            )
             return False
         return True
 

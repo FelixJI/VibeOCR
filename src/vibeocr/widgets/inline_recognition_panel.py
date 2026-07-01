@@ -38,7 +38,9 @@ class InlineRecognitionPanel(QWidget):
     """内联识别面板
 
     从管道注册表动态生成按钮，点击直接触发识别。
-    按钮选项从 OCRPreferences 的 "screenshot" 源读取。
+
+    识别类型（pipeline）由按钮唯一决定；OCRPreferences 的 "screenshot" 源
+    仅提供该管道的参数默认值（预处理/子选项），不会覆盖按钮选定的识别类型。
     """
 
     recognize_requested = Signal()
@@ -107,7 +109,11 @@ class InlineRecognitionPanel(QWidget):
         self.recognize_requested.emit()
 
     def get_options(self) -> OCROptions:
-        return OCROptions.from_dict(self._current_options.to_dict())
+        options = OCROptions.from_dict(self._current_options.to_dict())
+        # 识别类型由按钮唯一决定，screenshot 源不可覆盖。
+        # 即使 screenshot 源里该管道存入了 .pipeline 不一致的腐烂数据，
+        # 按钮选什么就识别什么。
+        return options.copy(pipeline=self._current_pipeline)
 
     def set_options(self, options: OCROptions):
         self._current_options = OCROptions.from_dict(options.to_dict())
