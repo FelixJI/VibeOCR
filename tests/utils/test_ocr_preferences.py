@@ -117,7 +117,7 @@ class TestOCRPreferencesNewFields:
         with open(config_path, encoding="utf-8") as f:
             data = json.load(f)
 
-        assert data["version"] == 3
+        assert data["version"] == 4
         main_data = data["main"]["TABLE_RECOGNITION"]
         assert main_data["use_wireless_table"] is True
         assert main_data["use_table_orientation_classify"] is False
@@ -523,3 +523,72 @@ class TestPdfRightSplitterState:
         prefs2 = OCRPreferences(tmp_config_dir)
         assert prefs2.get_pdf_splitter_state() == main
         assert prefs2.get_pdf_right_splitter_state() == right
+
+
+class TestTextBlockOptions:
+    """文本块处理选项（TextBlockOptions）持久化测试"""
+
+    def test_round_trip(self, tmp_config_dir):
+        from vibeocr.models.text_block_options import (
+            LINE_MODE_SMART,
+            TextBlockOptions,
+        )
+
+        prefs = OCRPreferences(tmp_config_dir)
+        opts = TextBlockOptions(
+            line_mode=LINE_MODE_SMART,
+            block_join_space=True,
+            chinese_indent=True,
+            drop_blank_blocks=False,
+        )
+        prefs.set_text_options(opts)
+
+        OCRPreferences.reset_instance()
+        prefs2 = OCRPreferences(tmp_config_dir)
+        loaded = prefs2.get_text_options()
+        assert loaded.line_mode == LINE_MODE_SMART
+        assert loaded.block_join_space is True
+        assert loaded.chinese_indent is True
+        assert loaded.drop_blank_blocks is False
+
+    def test_default_when_absent(self, tmp_config_dir):
+        """空配置时返回默认值。"""
+        from vibeocr.models.text_block_options import LINE_MODE_MERGE
+
+        prefs = OCRPreferences(tmp_config_dir)
+        loaded = prefs.get_text_options()
+        assert loaded.line_mode == LINE_MODE_MERGE
+        assert loaded.drop_blank_blocks is True
+
+    def test_old_config_without_field_uses_defaults(self, tmp_config_dir):
+        """v3 配置（无 text_block_options 字段）加载后走默认值。"""
+        from vibeocr.models.text_block_options import LINE_MODE_MERGE
+
+        config_path = tmp_config_dir / "ocr_preferences.json"
+        v3_data = {
+            "version": 3,
+            "last_main_pipeline": "OCR",
+            "main": {"OCR": {"pipeline": "OCR"}},
+            "screenshot": {},
+            "batch_options": {"pipeline": "OCR"},
+        }
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(config_path, "w", encoding="utf-8") as f:
+            json.dump(v3_data, f)
+
+        prefs = OCRPreferences(tmp_config_dir)
+        loaded = prefs.get_text_options()
+        assert loaded.line_mode == LINE_MODE_MERGE
+        assert loaded.drop_blank_blocks is True
+
+    def test_json_file_contains_field(self, tmp_config_dir):
+        """JSON 文件确实包含 text_block_options 字段。"""
+        config_path = tmp_config_dir / "ocr_preferences.json"
+        prefs = OCRPreferences(tmp_config_dir)
+        prefs.save()
+
+        with open(config_path, encoding="utf-8") as f:
+            data = json.load(f)
+        assert "text_block_options" in data
+        assert data["text_block_options"]["line_mode"] == "merge"
+        assert data["text_block_options"]["drop_blank_blocks"] is True
