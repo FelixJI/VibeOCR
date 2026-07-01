@@ -303,11 +303,13 @@ class SettingsPageController:
 
         cm = ConfigManager.instance()
         saved = cm.get_preload_pipelines()
+        # 大小写不敏感匹配，兼容历史小写配置（如 'table_recognition'）
+        saved_lower = {s.lower() for s in saved}
         for pipeline in self._get_preloadable_pipelines():
             chk = self._ui.findChild(QCheckBox, f"chkPreload_{pipeline.name}")
             if chk:
                 chk.blockSignals(True)
-                chk.setChecked(pipeline.value in saved)
+                chk.setChecked(pipeline.value.lower() in saved_lower)
                 chk.blockSignals(False)
 
         chk_enable = self._ui.findChild(QCheckBox, "chkEnablePreload")

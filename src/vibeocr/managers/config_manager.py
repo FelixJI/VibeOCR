@@ -133,6 +133,11 @@ class ConfigManager(QObject):
 
     def set_preload_pipelines(self, pipelines: list[str]) -> bool:
         data = self._load_json("app_settings.json", {})
+        # 规范化管道名（大小写容错，兼容历史小写配置如 'table_recognition'）
+        from vibeocr.core.pipelines import OCRPipeline
+
+        valid_map = {p.value.lower(): p.value for p in OCRPipeline}
+        pipelines = [valid_map.get(p.lower(), p) for p in pipelines]
         data["preload_pipelines"] = pipelines
         self._preload_pipelines = pipelines
         success = self._save_json("app_settings.json", data)

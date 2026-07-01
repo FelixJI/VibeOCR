@@ -154,3 +154,40 @@ def test_save_preload_pipelines_config_persisted_as_values(controller, monkeypat
     assert "value" in captured
     assert "OCR" in captured["value"]
     assert "TABLE_RECOGNITION" in captured["value"]
+
+
+def test_restore_preload_checkbox_case_insensitive(controller, monkeypatch):
+    """回归 bug：历史小写配置应能正确恢复 UI 勾选状态。
+
+    配置文件曾存小写 'table_recognition'（枚举标准值为
+    'TABLE_RECOGNITION'）。_restore_preload_checkbox_state 用大小写不敏感
+    匹配后，对应复选框应被勾选，避免"配置有但 UI 显示无"的不一致。
+    """
+    from vibeocr.managers import config_manager
+
+    ctrl, host = controller
+
+    # 模拟历史小写配置
+    fake_cm = MagicMock()
+    fake_cm.get_preload_pipelines.return_value = ["ocr", "table_recognition"]
+    fake_cm.get_preload_enabled.return_value = True
+    monkeypatch.setattr(
+        config_manager.ConfigManager, "instance", lambda: fake_cm
+    )
+
+    # 先全部取消勾选
+    for pipeline in get_preloadable_pipelines():
+        chk = host.findChild(QCheckBox, f"chkPreload_{pipeline.name}")
+        _check_silently(chk, False)
+
+    ctrl._restore_preload_checkbox_state()
+
+    # 小写配置应能正确勾选对应复选框
+    assert host.findChild(QCheckBox, "chkPreload_OCR").isChecked()
+    assert host.findChild(
+        QCheckBox, "chkPreload_TABLE_RECOGNITION"
+    ).isChecked()
+    # 未在配置中的管道不应被勾选
+    assert not host.findChild(
+        QCheckBox, "chkPreload_FORMULA_RECOGNITION"
+    ).isChecked()

@@ -158,6 +158,104 @@ class TestOCRWorkerProcess:
         mock_guard.close.assert_called_once()
         assert worker._job_guard is None
 
+    def test_preload_polls_is_data_ready_after_writing(self):
+        """回归 bug：发送 PREL 后应轮询 _is_data_ready 确认 Worker 已读取。
+
+        旧实现用 time.sleep(0.1) 等待，Worker 加载慢时主进程 read_message
+        重试会读到自己刚写的 PREL 并清除就绪标志，导致 Worker 永远收不到
+        请求而死锁超时。修复后应调用 protocol._is_data_ready() 轮询。
+        """
+        from unittest.mock import MagicMock, patch
+
+        from vibeocr.services.ocr_worker_process import (
+            MSG_PRELOAD_DONE,
+            OCRWorkerProcessError,
+        )
+        from vibeocr.utils.shared_memory_v2 import (
+            MessageType,
+            serialize_preload_result,
+        )
+
+        worker = OCRWorkerProcess(worker_id=0, use_gpu=False)
+
+        # 构造 mock protocol：_is_data_ready 先 True 后 False（模拟 Worker 读取）
+        mock_protocol = MagicMock()
+        ready_sequence = iter([True, False])
+
+        def fake_is_data_ready():
+            try:
+                return next(ready_sequence)
+            except StopIteration:
+                return False
+
+        mock_protocol._is_data_ready.side_effect = fake_is_data_ready
+        # read_message 返回 PRELOAD_DONE 携带成功结果
+        mock_protocol.read_message.return_value = (
+            MSG_PRELOAD_DONE,
+            serialize_preload_result({"OCR": True}),
+        )
+        worker.protocol = mock_protocol
+
+        # 让 is_ready 检查通过（无需真正启动子进程）
+        with (
+            patch.object(type(worker), "is_ready", new=True),
+            patch.object(type(worker), "is_running", new=True),
+        ):
+            # 同时禁用真实的 _calculate_preload_timeout 干扰
+            with patch.object(
+                type(worker),
+                "_calculate_preload_timeout",
+                return_value=10.0,
+            ):
+                results = worker.preload_pipelines(["OCR"])
+
+        # 关键断言：发送后调用了 _is_data_ready 轮询（而非依赖 sleep）
+        assert mock_protocol._is_data_ready.called, (
+            "preload_pipelines 应轮询 _is_data_ready 确认 Worker 已读取请求"
+        )
+        assert results == {"OCR": True}
+        # write_message 应以 MSG_PRELOAD 类型发送一次
+        assert mock_protocol.write_message.call_count == 1
+        sent_type = mock_protocol.write_message.call_args[0][0]
+        assert sent_type == MessageType.PRELOAD
+
+    def test_preload_self_read_guard_raises_after_threshold(self):
+        """回归 bug：兜底分支连续读到自身请求超过阈值应抛异常。
+
+        正常流程（已轮询确认）不应走到兜底分支；若仍连续读到自身请求，
+        说明状态异常，超过阈值应主动失败而非无限等待。
+        """
+        from unittest.mock import MagicMock, patch
+
+        from vibeocr.services.ocr_worker_process import (
+            MSG_PRELOAD,
+            OCRWorkerProcessError,
+        )
+
+        worker = OCRWorkerProcess(worker_id=0, use_gpu=False)
+
+        mock_protocol = MagicMock()
+        # _is_data_ready 立即 False（轮询确认通过，不干扰本测试）
+        mock_protocol._is_data_ready.return_value = False
+        # read_message 每次都返回主进程自己的 PREL（模拟异常竞态）
+        mock_protocol.read_message.return_value = (MSG_PRELOAD, b"\x00")
+        worker.protocol = mock_protocol
+
+        with (
+            patch.object(type(worker), "is_ready", new=True),
+            patch.object(type(worker), "is_running", new=True),
+            patch.object(
+                type(worker),
+                "_calculate_preload_timeout",
+                return_value=100.0,
+            ),
+        ):
+            with pytest.raises(OCRWorkerProcessError, match="多次读到自身请求"):
+                worker.preload_pipelines(["OCR"])
+
+        # 应在第 5 次命中时抛出
+        assert worker._preload_self_read_count >= 5
+
 
 @pytest.mark.skipif(
     not HAS_SUBPROCESS_MODULES, reason="subprocess modules not available"

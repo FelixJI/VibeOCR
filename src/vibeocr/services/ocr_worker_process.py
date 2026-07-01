@@ -115,6 +115,9 @@ class OCRWorkerProcess:
         self.busy = False
         self._ready = False
 
+        # 预加载兜底防护：连续读到自身请求的计数（超过阈值判定异常）
+        self._preload_self_read_count = 0
+
         # 防止并发重启的锁（健康检查和识别任务可能同时触发重启）
         self._restart_lock = threading.Lock()
 
@@ -826,14 +829,26 @@ class OCRWorkerProcess:
         self.busy = True
 
         try:
+            # 重置自读计数器（用于兜底分支的防护）
+            self._preload_self_read_count = 0
+
             # 序列化并发送预加载请求
             request_data = serialize_preload_request(pipelines)
             protocol.write_message(
                 MSG_PRELOAD, request_data, timeout=timeout, sender="main"
             )
 
-            # 给 Worker 一点时间读取请求
-            time.sleep(0.1)
+            # 等待 Worker 读取请求（等待 _is_data_ready 变为 False）
+            # 对齐 recognize() 的做法：确认 Worker 已消费请求，避免主进程
+            # 在 read_message 重试时读到自己刚写入的 PREL（曾导致死锁超时）
+            wait_start = time.time()
+            while protocol._is_data_ready():
+                if time.time() - wait_start > 5.0:
+                    logger.warning(
+                        f"Worker {self.worker_id} 未及时读取预加载请求"
+                    )
+                    break
+                time.sleep(0.01)
 
             # 等待预加载结果
             start_time = time.time()
@@ -888,10 +903,19 @@ class OCRWorkerProcess:
                     raise OCRWorkerProcessError(f"预加载失败: {error_msg}")
 
                 if msg_type == MSG_PRELOAD:
-                    # 读到自己发送的预加载请求，Worker 还未处理，继续等待
-                    logger.debug(
-                        f"Worker {self.worker_id} 读到自己的预加载请求，继续等待响应..."
+                    # 兜底：正常流程下（已轮询确认 Worker 读取）不应走到这里。
+                    # 若仍读到自身请求，说明 Worker 处理缓慢或存在竞态。
+                    self._preload_self_read_count += 1
+                    logger.warning(
+                        f"Worker {self.worker_id} 读到自己的预加载请求"
+                        f"（第 {self._preload_self_read_count} 次），"
+                        f"这可能表明 Worker 处理缓慢；继续等待响应..."
                     )
+                    # 连续命中超过阈值则判定异常，避免无限等待
+                    if self._preload_self_read_count >= 5:
+                        raise OCRWorkerProcessError(
+                            "预加载异常：多次读到自身请求，Worker 可能无响应"
+                        )
                     continue
 
                 logger.warning(
