@@ -16,6 +16,7 @@ from PySide6.QtCore import QObject, Signal
 
 from vibeocr.core.pipelines import OCRPipeline
 from vibeocr.models.ocr_options import OCROptions
+from vibeocr.models.text_block_options import TextBlockOptions
 
 if TYPE_CHECKING:
     from vibeocr.managers.config_manager import ConfigManager
@@ -24,7 +25,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _CONFIG_FILENAME = "ocr_preferences.json"
-_CONFIG_VERSION = 3
+_CONFIG_VERSION = 4
 
 _instance: OCRPreferences | None = None
 
@@ -68,6 +69,8 @@ class OCRPreferences(QObject):
         self._pdf_splitter_state: bytes | None = None
         self._pdf_right_splitter_state: bytes | None = None
         self._last_pdf_pipeline: OCRPipeline = OCRPipeline.OCR
+        # 文本块处理选项（与 OCR 引擎/管道无关，不按管道/来源分，独立顶层字段）
+        self._text_block_options = TextBlockOptions()
         self._load()
 
     @staticmethod
@@ -149,6 +152,11 @@ class OCRPreferences(QObject):
         else:
             self._pdf_right_splitter_state = None
 
+        # 文本块处理选项（版本 <4 的旧配置无此字段，from_dict({}) 走默认值）
+        self._text_block_options = TextBlockOptions.from_dict(
+            data.get("text_block_options")
+        )
+
         logger.debug("OCR 选项已加载")
 
     def get_pipeline_options(self, source: str, pipeline: OCRPipeline) -> OCROptions:
@@ -195,6 +203,17 @@ class OCRPreferences(QObject):
         self.save()
         self.batch_options_changed.emit(self._batch_options)
 
+    # ---- 文本块处理选项 ----
+
+    def get_text_options(self) -> TextBlockOptions:
+        """获取文本块处理选项（与管道/来源无关的顶层设置）。"""
+        return TextBlockOptions.from_dict(self._text_block_options.to_dict())
+
+    def set_text_options(self, options: TextBlockOptions) -> None:
+        """保存文本块处理选项并持久化。"""
+        self._text_block_options = TextBlockOptions.from_dict(options.to_dict())
+        self.save()
+
     def save(self) -> bool:
         save_data = {
             "version": _CONFIG_VERSION,
@@ -222,6 +241,7 @@ class OCRPreferences(QObject):
                 else None
             ),
             "batch_options": self._batch_options.to_dict(),
+            "text_block_options": self._text_block_options.to_dict(),
         }
         if self._cm is not None:
             return self._cm._save_json(_CONFIG_FILENAME, save_data)

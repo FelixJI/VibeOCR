@@ -22,6 +22,8 @@ from vibeocr.views.tabs.base_tab import BaseOcrTab
 from vibeocr.widgets.preprocess_options_widget import PreprocessOptionsWidget
 from vibeocr.widgets.preview_widget import PreviewWidget
 from vibeocr.widgets.result_view_widget import ResultViewWidget
+from vibeocr.widgets.text_block_options_widget import TextBlockOptionsWidget
+from vibeocr.services.text_block_processor import TextBlockProcessor
 
 logger = logging.getLogger(__name__)
 
@@ -113,6 +115,9 @@ class SingleRecognitionTab(BaseOcrTab):
 
         self._preprocess_options = PreprocessOptionsWidget()
         right_layout.addWidget(self._preprocess_options)
+
+        self._text_options_widget = TextBlockOptionsWidget()
+        right_layout.addWidget(self._text_options_widget)
 
         self._result_widget = ResultViewWidget()
         right_layout.addWidget(self._result_widget, stretch=1)
@@ -515,8 +520,16 @@ class SingleRecognitionTab(BaseOcrTab):
                     result.text_with_scores[tb.content_index] = (new_text, score)
                 break
 
-        # 全量重建 raw_text，避免 str.replace 子串误匹配
-        result.raw_text = "\n".join(b.text for b in result.text_blocks if b.text)
+        # 全量重建 raw_text，避免 str.replace 子串误匹配。
+        # 结构化结果（has_content_list）保持原 "\n".join 行为；纯文本结果走后处理器，
+        # 保证手动改某块后重建的 raw_text 与识别时排版规则一致。
+        if result.has_content_list:
+            result.raw_text = "\n".join(b.text for b in result.text_blocks if b.text)
+        else:
+            text_opts = self._text_options_widget.get_text_options()
+            result.raw_text = TextBlockProcessor.process(
+                result.text_blocks, text_opts, result.image_height
+            )
 
         # 同步更新 markdown_text / html_text
         if old_text:
@@ -535,6 +548,14 @@ class SingleRecognitionTab(BaseOcrTab):
         """OCR 完成回调"""
         self._current_ocr_result = result
         self._start_btn.setText("重新识别")
+
+        # 文本块后处理：仅对纯文本结果应用（结构化结果走块类型渲染，不读 raw_text）。
+        # 改写 raw_text 后，下游的 _display_result / 复制 / 手动编辑重建均读 raw_text，自动一致。
+        if not result.has_content_list:
+            text_opts = self._text_options_widget.get_text_options()
+            result.raw_text = TextBlockProcessor.process(
+                result.text_blocks, text_opts, result.image_height
+            )
 
         char_count = len(result.raw_text) if result.raw_text else 0
         block_count = len(result.text_with_scores)
