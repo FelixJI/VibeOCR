@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.4.5] - 2026-07-02
+
+### Added
+- feat(i18n): 加载 Qt 标准对话框中文翻译，颜色选择对话框中文化
+
+### Fixed
+- fix(table): 修复表格识别误读 parsing_res_list 导致未识别到文字
+- fix(preload): 修复预加载管道列表不一致与 OCR 预加载死锁超时
+- fix(ui): 移除截图覆盖层内按钮的 tooltip，规避 QToolTip 黑底
+
+### Changed
+- Merge branch 'fix/screenshot-tooltip-and-i18n'
+
 ## [0.4.4] - 2026-07-01
 
 ### Added
