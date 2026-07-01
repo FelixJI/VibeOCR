@@ -40,30 +40,22 @@ PYTHON_BUILD_STANDALONE_MIRRORS = [
 # ---------------------------------------------------------------------------
 # 发布仓库标识（SSOT）—— update_service / webengine_manager / about_tab 共享
 # ---------------------------------------------------------------------------
-# 发布渠道（方案 C）：CNB 仅镜像代码；产物主源 GitHub，镜像源 Gitee。
-# CI 脚本 scripts/ci_release_sync.py 因纯 stdlib 独立运行无法 import 本模块，
-# 同名常量需手动同步（见其文件头注释）。
+# 发布渠道：CNB 仅镜像代码；产物唯一源 GitHub（国内走 gh 代理加速）。
+# Gitee 不再作为下载/发版源，仅保留仓库主页链接供关于页展示。
 GITHUB_OWNER = "FelixJI"
 GITHUB_REPO = "VibeOCR"
-GITEE_OWNER = "felixjii"
-GITEE_REPO = "vibeocr"
 
-# GitHub / Gitee 直链基址
 # repo 根：仓库主页（关于页"项目主页"链接用）
 GITHUB_REPO_BASE = f"https://github.com/{GITHUB_OWNER}/{GITHUB_REPO}"
-GITEE_REPO_BASE = f"https://gitee.com/{GITEE_OWNER}/{GITEE_REPO}"
+# Gitee 仓库主页：仅作代码仓库展示（关于页），不参与下载
+GITEE_REPO_BASE = "https://gitee.com/felixjii/vibeocr"
 # releases 页：发布列表（手动下载兜底链接用）
 GITHUB_RELEASES_BASE = f"{GITHUB_REPO_BASE}/releases"
-GITEE_RELEASES_BASE = f"{GITEE_REPO_BASE}/releases"
 GITHUB_DOWNLOAD_BASE = f"{GITHUB_RELEASES_BASE}/download"  # .../download/v{ver}/{asset}
-GITEE_DOWNLOAD_BASE = f"{GITEE_RELEASES_BASE}/download"
 
 # GitHub Release API（latest）
 GITHUB_API_LATEST = (
     f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/releases/latest"
-)
-GITEE_API_LATEST = (
-    f"https://gitee.com/api/v5/repos/{GITEE_OWNER}/{GITEE_REPO}/releases/latest"
 )
 
 # GitHub 加速代理前缀（拼接在 GitHub 直链之前，按优先级）
@@ -76,25 +68,24 @@ def _ordered_download_prefixes(network_type: str) -> list[str]:
 
     每个前缀与 asset 名拼接即得完整下载 URL。约定：
     - 空串 ""：GitHub 裸连（GITHUB_DOWNLOAD_BASE 由调用方拼）
-    - "https://gitee.com/...": Gitee 直连
     - 代理前缀：拼在 GitHub 直链之前
 
     这里改用「前缀」表达，是因为同一源的 zip 与 sha256 需要分别拼 URL，
     但共享同一源序——用前缀列表配对最清晰。
-    国内(domestic)：Gitee → gh-proxy → ghproxy → GitHub 裸连（4 候选）
-    海外(international)：GitHub 直连 → Gitee（2 候选）
+    国内(domestic)：gh-proxy → ghproxy → GitHub 裸连（3 候选）
+    海外(international)：GitHub 直连（1 候选）
     未知 network_type 按国际（直连优先）处理。
     """
     if network_type == "domestic":
-        return [GITEE_DOWNLOAD_BASE, *GITHUB_PROXY_PREFIXES, GITHUB_DOWNLOAD_BASE]
-    return [GITHUB_DOWNLOAD_BASE, GITEE_DOWNLOAD_BASE]
+        return [*GITHUB_PROXY_PREFIXES, GITHUB_DOWNLOAD_BASE]
+    return [GITHUB_DOWNLOAD_BASE]
 
 
 def _asset_url(prefix: str, version: str, asset_name: str) -> str:
     """按源前缀拼单个 asset 的完整下载 URL。
 
-    代理前缀（gh-proxy / ghproxy）需拼在 GitHub 直链之前，其余前缀（Gitee /
-    GitHub 直连）自身已是完整基址。
+    代理前缀（gh-proxy / ghproxy）需拼在 GitHub 直链之前，GitHub 直连前缀
+    自身已是完整基址。
     """
     github_url = f"{GITHUB_DOWNLOAD_BASE}/v{version}/{asset_name}"
     if prefix in GITHUB_PROXY_PREFIXES:
@@ -107,8 +98,8 @@ def build_github_asset_urls(
 ) -> list[str]:
     """构造某个 GitHub release asset 的有序下载候选 URL 列表。
 
-    国内(domestic)：Gitee → gh-proxy → ghproxy → GitHub 裸连（4 候选）
-    海外(international)：GitHub 直连 → Gitee（2 候选）
+    国内(domestic)：gh-proxy → ghproxy → GitHub 裸连（3 候选）
+    海外(international)：GitHub 直连（1 候选）
     未知 network_type 按国际（直连优先）处理。
 
     Args:

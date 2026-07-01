@@ -136,7 +136,7 @@ class SettingsPageController:
 
         self._init_screenshot_options(nav_list, stacked)
         self._init_pdf_options(nav_list, stacked)
-        self._init_backend_options(nav_list, stacked)
+        self._init_backend_options_in_group()
         self._init_settings_page()
 
     def _init_screenshot_options(
@@ -278,30 +278,23 @@ class SettingsPageController:
         # 连接全局设置信号
         self._pdf_options.settings_changed.connect(self._on_pdf_settings_changed)
 
-    def _init_backend_options(
-        self, nav_list: QListWidget | None, stacked: QStackedWidget | None
-    ) -> None:
-        """初始化推理后端选项页面"""
-        if not nav_list or not stacked:
+    def _init_backend_options_in_group(self) -> None:
+        """把推理后端组件放入「应用设置」页的「推理后端与依赖」分组内。
+
+        推理后端（GPU/CPU 选择）与 OCR 依赖安装本质上是同一件事——后端决定
+        要装哪些依赖，依赖表格/重装按钮负责查看与维护这些依赖。故合并到同一
+        分组，不再单列导航项。
+        """
+        container = self._ui.findChild(QWidget, "backendOptionsContainer")
+        if container is None:
             return
 
         from vibeocr.widgets.backend_options_widget import BackendOptionsWidget
 
-        nav_list.addItem("推理后端")
-
-        page = QWidget()
-        page_layout = QVBoxLayout(page)
-        page_layout.setContentsMargins(16, 16, 16, 16)
-        page_layout.setSpacing(12)
-
         self._backend_options = BackendOptionsWidget(self._project_root)
-        page_layout.addWidget(self._backend_options)
-
-        spacer = QSpacerItem(
-            20, 40, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Expanding
-        )
-        page_layout.addItem(spacer)
-        stacked.addWidget(page)
+        layout = container.layout()
+        if layout is not None:
+            layout.addWidget(self._backend_options)
 
     def _on_pdf_pipeline_switching(self, old_pipeline, options) -> None:
         self._pdf_switching = True

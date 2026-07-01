@@ -196,11 +196,6 @@
            <string>应用设置</string>
           </property>
          </item>
-         <item>
-          <property name="text">
-           <string>工具</string>
-          </property>
-         </item>
         </widget>
        </item>
        <item>
@@ -278,7 +273,7 @@
                     <number>4</number>
                    </property>
                    <item>
-                    <widget class="QCheckBox" name="chkPreloadOCR">
+                    <widget class="QCheckBox" name="chkPreload_OCR">
                      <property name="toolTip">
                       <string>通用 OCR 管道（约 600MB 显存）</string>
                      </property>
@@ -291,7 +286,33 @@
                     </widget>
                    </item>
                    <item>
-                    <widget class="QCheckBox" name="chkPreloadTable">
+                    <widget class="QCheckBox" name="chkPreload_PP_STRUCTURE_V3">
+                     <property name="toolTip">
+                      <string>PP-StructureV3 文档结构分析管道</string>
+                     </property>
+                     <property name="text">
+                      <string>PP-StructureV3</string>
+                     </property>
+                     <property name="checked">
+                      <bool>false</bool>
+                     </property>
+                    </widget>
+                   </item>
+                   <item>
+                    <widget class="QCheckBox" name="chkPreload_PADDLEOCR_VL">
+                     <property name="toolTip">
+                      <string>PaddleOCR-VL 文档解析管道</string>
+                     </property>
+                     <property name="text">
+                      <string>文档P</string>
+                     </property>
+                     <property name="checked">
+                      <bool>false</bool>
+                     </property>
+                    </widget>
+                   </item>
+                   <item>
+                    <widget class="QCheckBox" name="chkPreload_TABLE_RECOGNITION">
                      <property name="toolTip">
                       <string>表格识别管道</string>
                      </property>
@@ -304,7 +325,7 @@
                     </widget>
                    </item>
                    <item>
-                    <widget class="QCheckBox" name="chkPreloadFormula">
+                    <widget class="QCheckBox" name="chkPreload_FORMULA_RECOGNITION">
                      <property name="toolTip">
                       <string>公式识别管道</string>
                      </property>
@@ -602,12 +623,33 @@
            <item>
             <widget class="QGroupBox" name="groupEnvMaintenance">
              <property name="title">
-              <string>环境维护</string>
+              <string>推理后端与依赖</string>
              </property>
              <layout class="QVBoxLayout" name="envMaintenanceLayout">
               <property name="spacing">
                <number>8</number>
               </property>
+              <item>
+               <widget class="QWidget" name="backendOptionsContainer" native="true">
+                <layout class="QVBoxLayout" name="backendOptionsContainerLayout">
+                 <property name="spacing">
+                  <number>6</number>
+                 </property>
+                 <property name="leftMargin">
+                  <number>0</number>
+                 </property>
+                 <property name="topMargin">
+                  <number>0</number>
+                 </property>
+                 <property name="rightMargin">
+                  <number>0</number>
+                 </property>
+                 <property name="bottomMargin">
+                  <number>0</number>
+                 </property>
+                </layout>
+               </widget>
+              </item>
               <item>
                <widget class="QLabel" name="labelEnvStatus">
                 <property name="text">
@@ -678,38 +720,6 @@
            </item>
            <item>
             <spacer name="spacerAppPage">
-             <property name="orientation">
-              <enum>Qt::Vertical</enum>
-             </property>
-             <property name="sizeHint" stdset="0">
-              <size>
-               <width>20</width>
-               <height>40</height>
-              </size>
-             </property>
-            </spacer>
-           </item>
-          </layout>
-         </widget>
-         <widget class="QWidget" name="pageTools">
-          <layout class="QVBoxLayout" name="pageToolsLayout">
-           <property name="spacing">
-            <number>12</number>
-           </property>
-           <property name="leftMargin">
-            <number>16</number>
-           </property>
-           <property name="topMargin">
-            <number>16</number>
-           </property>
-           <property name="rightMargin">
-            <number>16</number>
-           </property>
-           <property name="bottomMargin">
-            <number>16</number>
-           </property>
-           <item>
-            <spacer name="spacerToolsPage">
              <property name="orientation">
               <enum>Qt::Vertical</enum>
              </property>

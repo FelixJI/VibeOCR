@@ -94,7 +94,7 @@ def _find_asset_url(release: dict, suffix: str) -> str:
             and ".sha256" not in name
             and "-webengine-" not in name
         ):
-            # GitHub 用 browser_download_url，Gitee 用 download_url
+            # GitHub Release asset 用 browser_download_url；download_url 兜底防御
             return asset.get("browser_download_url") or asset.get("download_url", "")
         # sha256 校验文件同理排除 webengine 的
         if (
@@ -534,7 +534,7 @@ class DownloadProgressDialog(QDialog):
             self._progress_bar.setRange(0, 0)
 
     def set_source_status(self, text: str) -> None:
-        """显示换源提示，如『Gitee 校验失败，切换 gh-proxy…』"""
+        """显示换源提示，如『gh-proxy 校验失败，切换 GitHub…』"""
         self._source_status_label.setText(text)
         self._source_status_label.setVisible(bool(text))
 

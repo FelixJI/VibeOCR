@@ -103,7 +103,6 @@ class Ui_MainWindowWidget(object):
         self.settingsNavList = QListWidget(self.tabSettings)
         QListWidgetItem(self.settingsNavList)
         QListWidgetItem(self.settingsNavList)
-        QListWidgetItem(self.settingsNavList)
         self.settingsNavList.setObjectName(u"settingsNavList")
         self.settingsNavList.setMaximumSize(QSize(160, 16777215))
         self.settingsNavList.setFrameShape(QFrame.NoFrame)
@@ -145,23 +144,35 @@ class Ui_MainWindowWidget(object):
         self.preloadPipelinesLayout = QHBoxLayout()
         self.preloadPipelinesLayout.setSpacing(4)
         self.preloadPipelinesLayout.setObjectName(u"preloadPipelinesLayout")
-        self.chkPreloadOCR = QCheckBox(self.preloadOptions)
-        self.chkPreloadOCR.setObjectName(u"chkPreloadOCR")
-        self.chkPreloadOCR.setChecked(True)
+        self.chkPreload_OCR = QCheckBox(self.preloadOptions)
+        self.chkPreload_OCR.setObjectName(u"chkPreload_OCR")
+        self.chkPreload_OCR.setChecked(True)
 
-        self.preloadPipelinesLayout.addWidget(self.chkPreloadOCR)
+        self.preloadPipelinesLayout.addWidget(self.chkPreload_OCR)
 
-        self.chkPreloadTable = QCheckBox(self.preloadOptions)
-        self.chkPreloadTable.setObjectName(u"chkPreloadTable")
-        self.chkPreloadTable.setChecked(False)
+        self.chkPreload_PP_STRUCTURE_V3 = QCheckBox(self.preloadOptions)
+        self.chkPreload_PP_STRUCTURE_V3.setObjectName(u"chkPreload_PP_STRUCTURE_V3")
+        self.chkPreload_PP_STRUCTURE_V3.setChecked(False)
 
-        self.preloadPipelinesLayout.addWidget(self.chkPreloadTable)
+        self.preloadPipelinesLayout.addWidget(self.chkPreload_PP_STRUCTURE_V3)
 
-        self.chkPreloadFormula = QCheckBox(self.preloadOptions)
-        self.chkPreloadFormula.setObjectName(u"chkPreloadFormula")
-        self.chkPreloadFormula.setChecked(False)
+        self.chkPreload_PADDLEOCR_VL = QCheckBox(self.preloadOptions)
+        self.chkPreload_PADDLEOCR_VL.setObjectName(u"chkPreload_PADDLEOCR_VL")
+        self.chkPreload_PADDLEOCR_VL.setChecked(False)
 
-        self.preloadPipelinesLayout.addWidget(self.chkPreloadFormula)
+        self.preloadPipelinesLayout.addWidget(self.chkPreload_PADDLEOCR_VL)
+
+        self.chkPreload_TABLE_RECOGNITION = QCheckBox(self.preloadOptions)
+        self.chkPreload_TABLE_RECOGNITION.setObjectName(u"chkPreload_TABLE_RECOGNITION")
+        self.chkPreload_TABLE_RECOGNITION.setChecked(False)
+
+        self.preloadPipelinesLayout.addWidget(self.chkPreload_TABLE_RECOGNITION)
+
+        self.chkPreload_FORMULA_RECOGNITION = QCheckBox(self.preloadOptions)
+        self.chkPreload_FORMULA_RECOGNITION.setObjectName(u"chkPreload_FORMULA_RECOGNITION")
+        self.chkPreload_FORMULA_RECOGNITION.setChecked(False)
+
+        self.preloadPipelinesLayout.addWidget(self.chkPreload_FORMULA_RECOGNITION)
 
         self.horizontalSpacerPreload = QSpacerItem(40, 20, QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
 
@@ -313,6 +324,15 @@ class Ui_MainWindowWidget(object):
         self.envMaintenanceLayout = QVBoxLayout(self.groupEnvMaintenance)
         self.envMaintenanceLayout.setSpacing(8)
         self.envMaintenanceLayout.setObjectName(u"envMaintenanceLayout")
+        self.backendOptionsContainer = QWidget(self.groupEnvMaintenance)
+        self.backendOptionsContainer.setObjectName(u"backendOptionsContainer")
+        self.backendOptionsContainerLayout = QVBoxLayout(self.backendOptionsContainer)
+        self.backendOptionsContainerLayout.setSpacing(6)
+        self.backendOptionsContainerLayout.setObjectName(u"backendOptionsContainerLayout")
+        self.backendOptionsContainerLayout.setContentsMargins(0, 0, 0, 0)
+
+        self.envMaintenanceLayout.addWidget(self.backendOptionsContainer)
+
         self.labelEnvStatus = QLabel(self.groupEnvMaintenance)
         self.labelEnvStatus.setObjectName(u"labelEnvStatus")
         self.labelEnvStatus.setWordWrap(True)
@@ -356,17 +376,6 @@ class Ui_MainWindowWidget(object):
         self.pageAppLayout.addItem(self.spacerAppPage)
 
         self.settingsStackedWidget.addWidget(self.pageAppSettings)
-        self.pageTools = QWidget()
-        self.pageTools.setObjectName(u"pageTools")
-        self.pageToolsLayout = QVBoxLayout(self.pageTools)
-        self.pageToolsLayout.setSpacing(12)
-        self.pageToolsLayout.setObjectName(u"pageToolsLayout")
-        self.pageToolsLayout.setContentsMargins(16, 16, 16, 16)
-        self.spacerToolsPage = QSpacerItem(20, 40, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Expanding)
-
-        self.pageToolsLayout.addItem(self.spacerToolsPage)
-
-        self.settingsStackedWidget.addWidget(self.pageTools)
 
         self.settingsHLayout.addWidget(self.settingsStackedWidget)
 
@@ -407,8 +416,6 @@ class Ui_MainWindowWidget(object):
         ___qlistwidgetitem.setText(QCoreApplication.translate("MainWindowWidget", u"\u6a21\u578b\u7ba1\u7406", None));
         ___qlistwidgetitem1 = self.settingsNavList.item(1)
         ___qlistwidgetitem1.setText(QCoreApplication.translate("MainWindowWidget", u"\u5e94\u7528\u8bbe\u7f6e", None));
-        ___qlistwidgetitem2 = self.settingsNavList.item(2)
-        ___qlistwidgetitem2.setText(QCoreApplication.translate("MainWindowWidget", u"\u5de5\u5177", None));
         self.settingsNavList.setSortingEnabled(__sortingEnabled)
 
         self.groupPreload.setTitle(QCoreApplication.translate("MainWindowWidget", u"\u6a21\u578b\u9884\u52a0\u8f7d", None))
@@ -418,17 +425,25 @@ class Ui_MainWindowWidget(object):
         self.chkEnablePreload.setText(QCoreApplication.translate("MainWindowWidget", u"\u542f\u52a8\u65f6\u81ea\u52a8\u9884\u52a0\u8f7d\u6a21\u578b", None))
         self.labelPreloadPipelines.setText(QCoreApplication.translate("MainWindowWidget", u"\u9884\u52a0\u8f7d\u7ba1\u9053:", None))
 #if QT_CONFIG(tooltip)
-        self.chkPreloadOCR.setToolTip(QCoreApplication.translate("MainWindowWidget", u"\u901a\u7528 OCR \u7ba1\u9053\uff08\u7ea6 600MB \u663e\u5b58\uff09", None))
+        self.chkPreload_OCR.setToolTip(QCoreApplication.translate("MainWindowWidget", u"\u901a\u7528 OCR \u7ba1\u9053\uff08\u7ea6 600MB \u663e\u5b58\uff09", None))
 #endif // QT_CONFIG(tooltip)
-        self.chkPreloadOCR.setText(QCoreApplication.translate("MainWindowWidget", u"\u901a\u7528 OCR", None))
+        self.chkPreload_OCR.setText(QCoreApplication.translate("MainWindowWidget", u"\u901a\u7528 OCR", None))
 #if QT_CONFIG(tooltip)
-        self.chkPreloadTable.setToolTip(QCoreApplication.translate("MainWindowWidget", u"\u8868\u683c\u8bc6\u522b\u7ba1\u9053", None))
+        self.chkPreload_PP_STRUCTURE_V3.setToolTip(QCoreApplication.translate("MainWindowWidget", u"PP-StructureV3 \u6587\u6863\u7ed3\u6784\u5206\u6790\u7ba1\u9053", None))
 #endif // QT_CONFIG(tooltip)
-        self.chkPreloadTable.setText(QCoreApplication.translate("MainWindowWidget", u"\u8868\u683c", None))
+        self.chkPreload_PP_STRUCTURE_V3.setText(QCoreApplication.translate("MainWindowWidget", u"PP-StructureV3", None))
 #if QT_CONFIG(tooltip)
-        self.chkPreloadFormula.setToolTip(QCoreApplication.translate("MainWindowWidget", u"\u516c\u5f0f\u8bc6\u522b\u7ba1\u9053", None))
+        self.chkPreload_PADDLEOCR_VL.setToolTip(QCoreApplication.translate("MainWindowWidget", u"PaddleOCR-VL \u6587\u6863\u89e3\u6790\u7ba1\u9053", None))
 #endif // QT_CONFIG(tooltip)
-        self.chkPreloadFormula.setText(QCoreApplication.translate("MainWindowWidget", u"\u516c\u5f0f", None))
+        self.chkPreload_PADDLEOCR_VL.setText(QCoreApplication.translate("MainWindowWidget", u"\u6587\u6863P", None))
+#if QT_CONFIG(tooltip)
+        self.chkPreload_TABLE_RECOGNITION.setToolTip(QCoreApplication.translate("MainWindowWidget", u"\u8868\u683c\u8bc6\u522b\u7ba1\u9053", None))
+#endif // QT_CONFIG(tooltip)
+        self.chkPreload_TABLE_RECOGNITION.setText(QCoreApplication.translate("MainWindowWidget", u"\u8868\u683c", None))
+#if QT_CONFIG(tooltip)
+        self.chkPreload_FORMULA_RECOGNITION.setToolTip(QCoreApplication.translate("MainWindowWidget", u"\u516c\u5f0f\u8bc6\u522b\u7ba1\u9053", None))
+#endif // QT_CONFIG(tooltip)
+        self.chkPreload_FORMULA_RECOGNITION.setText(QCoreApplication.translate("MainWindowWidget", u"\u516c\u5f0f", None))
 #if QT_CONFIG(tooltip)
         self.btnPreloadNow.setToolTip(QCoreApplication.translate("MainWindowWidget", u"\u7acb\u5373\u9884\u52a0\u8f7d\u9009\u4e2d\u7684\u7ba1\u9053", None))
 #endif // QT_CONFIG(tooltip)
@@ -464,7 +479,7 @@ class Ui_MainWindowWidget(object):
         self.chkAutoStart.setToolTip(QCoreApplication.translate("MainWindowWidget", u"\u7cfb\u7edf\u542f\u52a8\u65f6\u81ea\u52a8\u8fd0\u884c VibeOCR", None))
 #endif // QT_CONFIG(tooltip)
         self.chkAutoStart.setText(QCoreApplication.translate("MainWindowWidget", u"\u5f00\u673a\u81ea\u542f\u52a8", None))
-        self.groupEnvMaintenance.setTitle(QCoreApplication.translate("MainWindowWidget", u"\u73af\u5883\u7ef4\u62a4", None))
+        self.groupEnvMaintenance.setTitle(QCoreApplication.translate("MainWindowWidget", u"\u63a8\u7406\u540e\u7aef\u4e0e\u4f9d\u8d56", None))
         self.labelEnvStatus.setText(QCoreApplication.translate("MainWindowWidget", u"Python \u8fd0\u884c\u65f6\uff1a\u68c0\u6d4b\u4e2d...", None))
         ___qtablewidgetitem = self.tableDepsStatus.horizontalHeaderItem(0)
         ___qtablewidgetitem.setText(QCoreApplication.translate("MainWindowWidget", u"\u4f9d\u8d56", None));

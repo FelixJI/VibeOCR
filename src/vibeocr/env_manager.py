@@ -447,7 +447,6 @@ def download_artifact_multi_source(
 
         def _source_label(url: str) -> str:  # type: ignore[no-redef]
             for label, marker in (
-                ("Gitee", "gitee.com"),
                 ("gh-proxy", "gh-proxy.com"),
                 ("ghproxy", "ghproxy.com"),
                 ("GitHub", "github.com"),

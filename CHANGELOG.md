@@ -1,5 +1,13 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+- refactor(webengine): 结果渲染组件（WebEngine）下载并入安装流程，复用 InstallDialog
+  统一对话框（标题/进度条/日志/取消），删除 main_window 独立的 WebEngine 下载对话框与 worker
+- refactor(download): 移除所有下载路径的 Gitee 源（env_config 下载源序、env_manager
+  回退 _source_label），产物下载彻底 GitHub 唯一源（国内走 gh 代理加速）；关于页保留 Gitee 仓库主页链接
+
 ## [0.4.3] - 2026-07-01
 
 ### Changed

@@ -6,7 +6,7 @@
 设计要点：
 - 检测就绪：``_internal/PySide6/Qt6WebEngineCore.dll`` 是否存在
 - 版本对齐：version.json 的 ``webengine_assets_version`` 与本地 marker 比对
-- 下载源选择：按 NetworkDetector.network_type 选 Gitee/GitHub（与 update_service 共享 SSOT）
+- 下载源选择：按 NetworkDetector.network_type 选 gh 代理/GitHub 直连（与 update_service 共享 SSOT）
 - 解压：仿 updater_main.extract_zip + 路径穿越防护
 - 可写性回退：_internal/PySide6/ 不可写时回退到 python/webengine_assets/
 

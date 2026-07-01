@@ -354,7 +354,7 @@ class TestDownloadUpdateMultiSource:
         mock_dl.assert_called_once()
 
     def test_falls_back_to_next_source_on_failure(self, tmp_path):
-        """首源失败 → 换源成功"""
+        """国内首源失败 → 换源成功（domestic 有多候选才能验证换源）"""
         from vibeocr.services.update_service import (
             DOWNLOAD_REASON_HTTP_ERROR,
             DOWNLOAD_REASON_OK,
@@ -371,7 +371,7 @@ class TestDownloadUpdateMultiSource:
         )
         with patch(
             "vibeocr.services.update_service._detect_network_type",
-            return_value="international",
+            return_value="domestic",
         ), patch(
             "vibeocr.services.update_service._download_zip_with_sha",
             new_callable=AsyncMock,
