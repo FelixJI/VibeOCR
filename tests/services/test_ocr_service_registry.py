@@ -5,7 +5,8 @@ Verifies that:
 - get_or_create_pipeline() uses registry's spec.create_pipeline when available
 - get_or_create_pipeline() falls back to old _create_pipeline for unregistered names
 - recognize() dispatches to registered pipeline specs via registry
-- recognize() falls back to old _recognize_* methods for unregistered pipelines
+- recognize() falls back to spec.recognize (逐张) for pipelines without recognize_batch
+- 表格/公式等无 recognize_batch 的管道走对应 spec.recognize，而非被当 OCR
 - Old OCROptions (enum pipeline) still works end-to-end
 """
 
@@ -292,22 +293,27 @@ class TestRecognizeRegistryDispatch:
         assert len(call_args[0][1]) == 1
         assert result.raw_text == "hello"
 
-    def test_falls_back_to_old_recognize(self):
-        """recognize() falls back to old _recognize_* for unregistered pipelines."""
+    def test_dispatches_to_spec_recognize_when_no_batch(self):
+        """管道注册了但无 recognize_batch 时，逐张走 spec.recognize（统一分发）。
+
+        这覆盖 OCR / PP-StructureV3 / PaddleOCR-VL / 表格 / 公式 等所有
+        未提供 recognize_batch 的管道——它们都应通过 spec.recognize 分发，
+        而非硬编码的私有方法（曾导致表格/公式被当 OCR 处理）。
+        """
         service = OCRService()
 
         mock_result = _make_ocr_result()
-        mock_registry = MagicMock()
-        mock_registry.has.return_value = False
+        mock_spec = MagicMock()
+        mock_spec.recognize_batch = None  # 该管道无批量接口
+        mock_spec.recognize.return_value = mock_result
 
-        with (
-            patch(
-                "vibeocr.core.pipelines.get_registry",
-                return_value=mock_registry,
-            ),
-            patch.object(
-                service, "_recognize_ocr", return_value=mock_result
-            ) as mock_rec,
+        mock_registry = MagicMock()
+        mock_registry.has.return_value = True
+        mock_registry.get.return_value = mock_spec
+
+        with patch(
+            "vibeocr.core.pipelines.get_registry",
+            return_value=mock_registry,
         ):
             import numpy as np
 
@@ -315,58 +321,72 @@ class TestRecognizeRegistryDispatch:
             opts = OCROptions(pipeline=OCRPipeline.OCR)
             result = service.recognize(img, opts)
 
-        mock_rec.assert_called_once()
+        mock_spec.recognize.assert_called_once()
         assert result.raw_text == "hello"
 
-    def test_falls_back_to_structure_for_pp_structure(self):
-        """Falls back to _recognize_structure for unregistered PP-StructureV3."""
+    def test_table_pipeline_dispatches_to_table_spec(self):
+        """表格管道走 TABLE_RECOGNITION spec.recognize，不被当 OCR 处理。
+
+        回归测试：修复前 dispatch 的 else 兜底分支硬编码 if/elif 漏掉表格，
+        导致点表格按钮实际走 _recognize_ocr（纯文字识别）。
+        """
         service = OCRService()
 
-        mock_result = _make_ocr_result()
-        mock_registry = MagicMock()
-        mock_registry.has.return_value = False
+        table_result = _make_ocr_result(
+            raw_text="<table>", pipeline_type="TABLE_RECOGNITION"
+        )
+        mock_table_spec = MagicMock()
+        mock_table_spec.recognize_batch = None
+        mock_table_spec.recognize.return_value = table_result
 
-        with (
-            patch(
-                "vibeocr.core.pipelines.get_registry",
-                return_value=mock_registry,
-            ),
-            patch.object(
-                service, "_recognize_structure", return_value=mock_result
-            ) as mock_rec,
+        mock_registry = MagicMock()
+        mock_registry.has.return_value = True
+        mock_registry.get.return_value = mock_table_spec
+
+        with patch(
+            "vibeocr.core.pipelines.get_registry",
+            return_value=mock_registry,
         ):
             import numpy as np
 
             img = np.zeros((50, 100, 3), dtype=np.uint8)
-            opts = OCROptions(pipeline=OCRPipeline.PP_STRUCTURE_V3)
-            service.recognize(img, opts)
+            opts = OCROptions(pipeline=OCRPipeline.TABLE_RECOGNITION)
+            result = service.recognize(img, opts)
 
-        mock_rec.assert_called_once()
+        # 必须调用表格 spec 的 recognize，而非 OCR
+        mock_table_spec.recognize.assert_called_once()
+        call_args = mock_table_spec.recognize.call_args[0]
+        assert call_args[0] is service  # service
+        assert opts.pipeline == OCRPipeline.TABLE_RECOGNITION
+        assert result.pipeline_type == "TABLE_RECOGNITION"
 
-    def test_falls_back_to_paddlocr_vl(self):
-        """Falls back to _recognize_paddlocr_vl for unregistered PaddleOCR-VL."""
+    def test_formula_pipeline_dispatches_to_formula_spec(self):
+        """公式管道走 FORMULA_RECOGNITION spec.recognize（同根因回归测试）。"""
         service = OCRService()
 
-        mock_result = _make_ocr_result()
-        mock_registry = MagicMock()
-        mock_registry.has.return_value = False
+        formula_result = _make_ocr_result(
+            raw_text="E=mc^2", pipeline_type="FORMULA_RECOGNITION"
+        )
+        mock_formula_spec = MagicMock()
+        mock_formula_spec.recognize_batch = None
+        mock_formula_spec.recognize.return_value = formula_result
 
-        with (
-            patch(
-                "vibeocr.core.pipelines.get_registry",
-                return_value=mock_registry,
-            ),
-            patch.object(
-                service, "_recognize_paddlocr_vl", return_value=mock_result
-            ) as mock_rec,
+        mock_registry = MagicMock()
+        mock_registry.has.return_value = True
+        mock_registry.get.return_value = mock_formula_spec
+
+        with patch(
+            "vibeocr.core.pipelines.get_registry",
+            return_value=mock_registry,
         ):
             import numpy as np
 
             img = np.zeros((50, 100, 3), dtype=np.uint8)
-            opts = OCROptions(pipeline=OCRPipeline.PADDLEOCR_VL)
-            service.recognize(img, opts)
+            opts = OCROptions(pipeline=OCRPipeline.FORMULA_RECOGNITION)
+            result = service.recognize(img, opts)
 
-        mock_rec.assert_called_once()
+        mock_formula_spec.recognize.assert_called_once()
+        assert result.pipeline_type == "FORMULA_RECOGNITION"
 
     def test_bytes_input_converted_before_dispatch(self):
         """bytes input is converted to numpy before dispatching to registry."""
@@ -504,28 +524,22 @@ class TestRecognizeBatch:
         mock_spec.recognize_batch.assert_not_called()
 
     def test_falls_back_to_per_image_when_no_batch_spec(self):
-        """管道未注册 recognize_batch 时，逐张识别并保持顺序与数量。"""
+        """管道未注册 recognize_batch 时，逐张走 spec.recognize 并保持顺序与数量。"""
         service = OCRService()
         mock_spec = MagicMock()
         mock_spec.recognize_batch = None  # 该管道无批量接口
+        mock_spec.recognize.side_effect = [
+            _make_ocr_result(raw_text="a"),
+            _make_ocr_result(raw_text="b"),
+        ]
 
         mock_registry = MagicMock()
         mock_registry.has.return_value = True
         mock_registry.get.return_value = mock_spec
 
-        with (
-            patch(
-                "vibeocr.core.pipelines.get_registry",
-                return_value=mock_registry,
-            ),
-            patch.object(
-                service,
-                "_recognize_ocr",
-                side_effect=[
-                    _make_ocr_result(raw_text="a"),
-                    _make_ocr_result(raw_text="b"),
-                ],
-            ) as mock_rec,
+        with patch(
+            "vibeocr.core.pipelines.get_registry",
+            return_value=mock_registry,
         ):
             import numpy as np
 
@@ -533,7 +547,7 @@ class TestRecognizeBatch:
             got = service.recognize_batch(images, OCROptions(pipeline=OCRPipeline.OCR))
 
         assert [r.raw_text for r in got] == ["a", "b"]
-        assert mock_rec.call_count == 2
+        assert mock_spec.recognize.call_count == 2
 
     def test_bbox_normalization_per_image_in_batch(self):
         """批量结果中每张图的 bbox 按各自预处理图尺寸独立归一化到 [0,1000]。

@@ -886,21 +886,17 @@ class OCRService(metaclass=SingletonMeta):
                     self, images, actual_options
                 )
             else:
-                # 回退：管道未提供批量接口时，逐张识别以保持兼容
+                # 回退：管道未提供批量接口时，逐张识别以保持兼容。
+                # 统一通过注册表的单图 recognize 分发，避免硬编码 if/elif
+                # 漏掉某管道（曾导致 TABLE/FORMULA 被当 OCR 处理）。
                 _logger.debug(
                     "[recognize_batch] 管道 %s 未注册批量接口，回退逐张识别",
                     pipeline_name,
                 )
+                spec = registry.get(pipeline_name)
                 results = []
                 for img in images:
-                    if actual_options.pipeline == OCRPipeline.OCR:
-                        r = self._recognize_ocr(img, actual_options)
-                    elif actual_options.pipeline == OCRPipeline.PP_STRUCTURE_V3:
-                        r = self._recognize_structure(img, actual_options)
-                    elif actual_options.pipeline == OCRPipeline.PADDLEOCR_VL:
-                        r = self._recognize_paddlocr_vl(img, actual_options)
-                    else:
-                        r = self._recognize_ocr(img, actual_options)
+                    r = spec.recognize(self, img, actual_options)
                     results.append(r)
 
             # Normalize each result's bbox from pixel coords to [0-1000]

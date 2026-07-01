@@ -89,6 +89,7 @@ class TestSubprocessManager:
         assert hasattr(manager, "service_ready")
         assert hasattr(manager, "progress_update")
         assert hasattr(manager, "preload_finished")
+        assert hasattr(manager, "preload_progress")
 
     def test_service_property(self, manager):
         """测试服务属性"""

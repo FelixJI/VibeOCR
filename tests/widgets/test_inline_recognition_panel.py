@@ -86,3 +86,25 @@ class TestInlineRecognitionPanel:
         options = OCROptions(pipeline=OCRPipeline.PADDLEOCR_VL)
         panel.set_options(options)
         assert panel.get_options().pipeline == OCRPipeline.PADDLEOCR_VL
+
+    def test_pipeline_authority_over_corrupted_screenshot_source(self, qapp, tmp_path):
+        """加固：即使 screenshot 源存了 .pipeline 不一致的腐烂数据，
+        按钮选什么就识别什么——get_options().pipeline 恒等于按钮选择。"""
+        from vibeocr.utils.ocr_preferences import OCRPreferences
+
+        OCRPreferences.reset_instance()
+        try:
+            prefs = OCRPreferences.instance(tmp_path)
+            # 故意存入腐烂数据：TABLE_RECOGNITION key 下挂一个 pipeline=OCR 的 options
+            corrupted = OCROptions(pipeline=OCRPipeline.OCR)
+            prefs.set_pipeline_options(
+                "screenshot", OCRPipeline.TABLE_RECOGNITION, corrupted
+            )
+
+            panel = InlineRecognitionPanel()
+            panel._pipeline_buttons[OCRPipeline.TABLE_RECOGNITION].click()
+            options = panel.get_options()
+            # 按钮选表格 → 必须是表格，绝不被腐烂的 OCR 数据覆盖
+            assert options.pipeline == OCRPipeline.TABLE_RECOGNITION
+        finally:
+            OCRPreferences.reset_instance()
