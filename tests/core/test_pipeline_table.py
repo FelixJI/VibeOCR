@@ -60,15 +60,29 @@ class _FakeService:
 def _make_table_result(
     pred_html="<html><body><table><tr><td>Name</td><td>Age</td></tr></table></body></html>",
     ocr_texts=None,
+    cell_box_list=None,
+    ocr_polys=None,
 ):
+    """构造模拟结果。
+
+    cell_box_list 对应 PaddleX 真实字段：每个单元格的 [x1,y1,x2,y2]
+    （原图坐标系）。PaddleX 的 SingleTableRecognitionResult 不含
+    ``table_bbox`` 字段，表格整体框需从 cell_box_list 的并集推导。
+    """
+    table_entry = {"pred_html": pred_html, "table_region_id": 1}
+    if cell_box_list is not None:
+        table_entry["cell_box_list"] = cell_box_list
     res = {
-        "table_res_list": [{"pred_html": pred_html, "table_region_id": 1}],
+        "table_res_list": [table_entry],
     }
     if ocr_texts is not None:
-        res["overall_ocr_res"] = {
+        ocr_entry = {
             "rec_texts": ocr_texts,
             "rec_scores": [0.9] * len(ocr_texts),
         }
+        if ocr_polys is not None:
+            ocr_entry["rec_polys"] = ocr_polys
+        res["overall_ocr_res"] = ocr_entry
     return _DictResult(res)
 
 
@@ -110,5 +124,45 @@ def test_recognize_table_empty_result():
     result = _recognize_table(service, image=None, options=TableRecognitionOptions())
     assert result.raw_text == ""
     assert result.content_list == []
+
+
+def test_recognize_table_filters_text_inside_table_bbox():
+    """表格区域内的文字不应重复出现在 content_list 中。
+
+    overall_ocr_res 包含整图所有文字（含表格内文字），需要过滤掉
+    落在表格区域内的文本块，只保留表格外的文字。
+
+    注意：PaddleX 的 SingleTableRecognitionResult 不含 ``table_bbox`` 字段，
+    只有 ``cell_box_list``（各单元格 [x1,y1,x2,y2]，原图坐标系）。
+    表格整体框需从 cell_box_list 的并集推导，否则过滤条件永远为空，
+    所有文本都会被重复展示。
+    """
+    import numpy as np
+
+    # 单元格覆盖 [10,10]-[500,200] 区域（与旧测试的 table_bbox 等价）
+    cell_box_list = [
+        [10.0, 10.0, 250.0, 100.0],
+        [250.0, 10.0, 500.0, 100.0],
+        [10.0, 100.0, 250.0, 200.0],
+        [250.0, 100.0, 500.0, 200.0],
+    ]
+    # 两个文本：一个在表格内（中心点 100,50），一个在表格外（中心点 300,300）
+    inside_poly = np.array([[80, 40], [120, 40], [120, 60], [80, 60]], dtype=float)
+    outside_poly = np.array([[280, 290], [320, 290], [320, 310], [280, 310]], dtype=float)
+
+    res = _make_table_result(
+        ocr_texts=["表格内文字", "表格外文字"],
+        cell_box_list=cell_box_list,
+        ocr_polys=[inside_poly, outside_poly],
+    )
+    service = _FakeService([res])
+    result = _recognize_table(service, image=None, options=TableRecognitionOptions())
+
+    # 表格块
+    assert any(b["type"] == "table" for b in result.content_list)
+    # 表格外文字应保留
+    assert any(b.get("text") == "表格外文字" for b in result.content_list)
+    # 表格内文字应被过滤（已在 table 块中展示）
+    assert not any(b.get("text") == "表格内文字" for b in result.content_list)
 
 

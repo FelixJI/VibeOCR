@@ -128,13 +128,11 @@ class TestGetOptions:
         """修改 TABLE_RECOGNITION 选项后 get_options 反映变化"""
         _select_pipeline(widget, OCRPipeline.TABLE_RECOGNITION)
 
-        widget._use_wireless_table_cb.setChecked(False)
         widget._use_table_orientation_classify_cb.setChecked(False)
         widget._use_ocr_with_table_cells_cb.setChecked(False)
         widget._doc_orientation_cb.setChecked(False)
 
         opts = widget.get_options()
-        assert opts.use_wireless_table is False
         assert opts.use_table_orientation_classify is False
         assert opts.use_ocr_results_with_table_cells is False
         assert opts.use_doc_orientation_classify is False
@@ -161,14 +159,12 @@ class TestSetOptions:
 
         options = OCROptions(
             pipeline=OCRPipeline.TABLE_RECOGNITION,
-            use_wireless_table=False,
             use_table_orientation_classify=False,
             use_ocr_results_with_table_cells=False,
             use_doc_orientation_classify=False,
         )
         widget.set_options(options)
 
-        assert widget._use_wireless_table_cb.isChecked() is False
         assert widget._use_table_orientation_classify_cb.isChecked() is False
         assert widget._use_ocr_with_table_cells_cb.isChecked() is False
         assert widget._doc_orientation_cb.isChecked() is False
@@ -200,7 +196,6 @@ class TestSetOptions:
 
         options = OCROptions(
             pipeline=OCRPipeline.TABLE_RECOGNITION,
-            use_wireless_table=False,
         )
         widget.set_options(options)
 
@@ -210,7 +205,6 @@ class TestSetOptions:
         """set_options -> get_options 往返测试（TABLE_RECOGNITION）"""
         original = OCROptions(
             pipeline=OCRPipeline.TABLE_RECOGNITION,
-            use_wireless_table=False,
             use_table_orientation_classify=False,
             use_ocr_results_with_table_cells=False,
             use_doc_orientation_classify=False,
@@ -220,7 +214,6 @@ class TestSetOptions:
         restored = widget.get_options()
 
         assert restored.pipeline == original.pipeline
-        assert restored.use_wireless_table == original.use_wireless_table
         assert (
             restored.use_table_orientation_classify
             == original.use_table_orientation_classify

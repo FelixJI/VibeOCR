@@ -106,18 +106,8 @@ _PIPELINE_METADATA: dict[OCRPipeline, dict] = {
         "supported_options": [
             "use_doc_orientation_classify",
             "use_doc_unwarping",
-            "use_wireless_table",
             "use_table_orientation_classify",
             "use_ocr_results_with_table_cells",
-            "use_e2e_wired_table_rec_model",
-            "use_e2e_wireless_table_rec_model",
-            "use_wired_table_cells_trans_to_html",
-            "use_wireless_table_cells_trans_to_html",
-            "text_det_limit_side_len",
-            "text_det_thresh",
-            "text_det_box_thresh",
-            "text_det_unclip_ratio",
-            "text_rec_score_thresh",
         ],
     },
     OCRPipeline.FORMULA_RECOGNITION: {

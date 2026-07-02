@@ -36,7 +36,7 @@ _EDGE_THRESHOLD = 20
 # 隐藏后露出的像素宽度
 _VISIBLE_STRIP = 3
 # 动画持续时间（毫秒）
-_ANIM_DURATION = 200
+_ANIM_DURATION = 80
 
 
 class EdgeSide(Enum):
@@ -116,6 +116,7 @@ class EdgeToolbar(QWidget):
     screenshot_requested = Signal()
     show_main_requested = Signal()
     position_changed = Signal(QPoint)
+    pipeline_screenshot_requested = Signal(str)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -203,6 +204,57 @@ class EdgeToolbar(QWidget):
         btn_screenshot.clicked.connect(self.screenshot_requested.emit)
         layout.addWidget(btn_screenshot)
 
+        # 分隔线
+        sep2 = QFrame(self)
+        sep2.setFrameShape(QFrame.Shape.VLine)
+        sep2.setStyleSheet(
+            f"color: {theme.Colors.border}; max-width: 1px; margin: 4px 4px;"
+        )
+        layout.addWidget(sep2)
+
+        # 文本识别快捷按钮
+        btn_text = QPushButton("T")
+        btn_text.setToolTip("文本识别截图")
+        btn_text.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_text.setStyleSheet(
+            f"QPushButton {{ font-weight: bold; font-size: 14px;"
+            f" color: {theme.Colors.accent}; padding: 6px 8px; }}"
+            f" QPushButton:hover {{ background-color: {theme.Colors.hover_bg};"
+            f" border-radius: {theme.Radius.sm}px; }}"
+        )
+        btn_text.clicked.connect(lambda: self.pipeline_screenshot_requested.emit("OCR"))
+        layout.addWidget(btn_text)
+
+        # 表格识别快捷按钮
+        btn_table = QPushButton("⊞")
+        btn_table.setToolTip("表格识别截图")
+        btn_table.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_table.setStyleSheet(
+            f"QPushButton {{ font-size: 15px;"
+            f" color: {theme.Colors.accent}; padding: 6px 8px; }}"
+            f" QPushButton:hover {{ background-color: {theme.Colors.hover_bg};"
+            f" border-radius: {theme.Radius.sm}px; }}"
+        )
+        btn_table.clicked.connect(
+            lambda: self.pipeline_screenshot_requested.emit("TABLE_RECOGNITION")
+        )
+        layout.addWidget(btn_table)
+
+        # 公式识别快捷按钮
+        btn_formula = QPushButton("∑")
+        btn_formula.setToolTip("公式识别截图")
+        btn_formula.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_formula.setStyleSheet(
+            f"QPushButton {{ font-size: 15px; font-weight: bold;"
+            f" color: {theme.Colors.accent}; padding: 6px 8px; }}"
+            f" QPushButton:hover {{ background-color: {theme.Colors.hover_bg};"
+            f" border-radius: {theme.Radius.sm}px; }}"
+        )
+        btn_formula.clicked.connect(
+            lambda: self.pipeline_screenshot_requested.emit("FORMULA_RECOGNITION")
+        )
+        layout.addWidget(btn_formula)
+
         # 显示主窗口按钮
         btn_main = QPushButton("⌂")
         btn_main.setToolTip("显示主窗口")
@@ -218,7 +270,7 @@ class EdgeToolbar(QWidget):
         self.setCursor(Qt.CursorShape.OpenHandCursor)
 
         self.setFixedHeight(36)
-        self.setMinimumWidth(120)
+        self.setMinimumWidth(220)
         self.adjustSize()
 
     def paintEvent(self, event: QPaintEvent) -> None:

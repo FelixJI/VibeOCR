@@ -102,6 +102,9 @@ class MainWindow(QMainWindow):
         self._edge_toolbar.screenshot_requested.connect(self._on_screenshot)
         self._edge_toolbar.show_main_requested.connect(self._show_main_window)
         self._edge_toolbar.position_changed.connect(self._on_toolbar_position_changed)
+        self._edge_toolbar.pipeline_screenshot_requested.connect(
+            self._on_pipeline_screenshot
+        )
 
         # 设置 OCRService 状态回调（用于显示模型下载进度）
         self._setup_ocr_status_callback()
@@ -944,6 +947,22 @@ class MainWindow(QMainWindow):
         self._main_window_minimized_before_capture = self.isMinimized()
         self.showMinimized()
         # 延迟启动截图，让窗口有时间最小化
+        QTimer.singleShot(200, self._overlay.start_capture)
+
+    @Slot(str)
+    def _on_pipeline_screenshot(self, pipeline_name: str) -> None:
+        """从工具栏快捷管道按钮触发截图识别
+
+        与 _on_screenshot 相同，但预先设置管道名称，截图选区完成后
+        直接进入对应管道识别，跳过截图编辑界面。
+        """
+        if not self._check_ocr_ready():
+            return
+
+        self._main_window_minimized_before_capture = self.isMinimized()
+        self.showMinimized()
+        # 预设管道，截图选区完成后自动用该管道识别
+        self._overlay.set_pending_pipeline(pipeline_name)
         QTimer.singleShot(200, self._overlay.start_capture)
 
     def _restore_main_window(self, *, activate: bool) -> None:

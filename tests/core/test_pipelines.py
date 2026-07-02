@@ -78,14 +78,11 @@ class TestOCRPipeline:
         assert "use_ocr_for_image_block" in options
 
     def test_table_recognition_options(self):
-        """表格识别应支持有线/无线表格选项"""
+        """表格识别应支持表格方向和单元格文字识别选项"""
         options = get_pipeline_supported_options(OCRPipeline.TABLE_RECOGNITION)
         assert "use_doc_orientation_classify" in options
-        assert "use_wireless_table" in options
         assert "use_table_orientation_classify" in options
         assert "use_ocr_results_with_table_cells" in options
-        assert "use_e2e_wired_table_rec_model" in options
-        assert "use_e2e_wireless_table_rec_model" in options
 
     def test_formula_recognition_options(self):
         """公式识别应支持公式相关选项"""

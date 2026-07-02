@@ -15,8 +15,9 @@ import json
 import logging
 from typing import TYPE_CHECKING, Any
 
-from PySide6.QtCore import QObject, QUrl, Signal, Slot
-from PySide6.QtWidgets import QVBoxLayout, QWidget
+from PySide6.QtCore import QObject, QUrl, QTimer, Signal, Slot
+from PySide6.QtGui import QGuiApplication
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
 from vibeocr.models.ocr_result import DISCARDED_BLOCK_TYPES
 
@@ -481,6 +482,20 @@ function highlightBlock(index) {{
         target.scrollIntoView({{ behavior: 'smooth', block: 'center' }});
     }}
 }}
+
+function getCopyText() {{
+    var sel = window.getSelection();
+    if (sel && sel.toString().trim().length > 0) {{
+        return sel.toString();
+    }}
+    var blocks = document.querySelectorAll('.ocr-block');
+    var parts = [];
+    blocks.forEach(function(b) {{
+        var t = b.innerText.trim();
+        if (t) parts.push(t);
+    }});
+    return parts.join('\n\n');
+}}
 </script>
 </body>
 </html>"""
@@ -531,10 +546,39 @@ class ResultViewWidget(QWidget):
     def _setup_ui(self) -> None:
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(2)
+
+        # 工具栏（复制按钮）
+        toolbar = QWidget()
+        toolbar.setFixedHeight(28)
+        tb_layout = QHBoxLayout(toolbar)
+        tb_layout.setContentsMargins(0, 0, 4, 0)
+        tb_layout.setSpacing(4)
+        tb_layout.addStretch()
+
+        self._copy_btn = QPushButton("复制文本")
+        self._copy_btn.setFixedHeight(24)
+        self._copy_btn.setStyleSheet(
+            "QPushButton { padding: 2px 12px; font-size: 12px; }"
+        )
+        self._copy_btn.hide()
+        tb_layout.addWidget(self._copy_btn)
+        layout.addWidget(toolbar)
+
+        # 复制成功浮层提示
+        self._copy_toast = QLabel("已复制到剪贴板", self)
+        self._copy_toast.setStyleSheet(
+            "QLabel { background-color: #1f2937; color: #ffffff;"
+            " padding: 6px 12px; border-radius: 4px; font-size: 12px; }"
+        )
+        self._copy_toast.hide()
+
         # 延迟创建：WebEngine 内置主包，import 通常成功；惰性创建避免启动即加载。
         self._web_view: QWebEngineView | None = None
         self._channel: QWebChannel | None = None
         self._bridge: _Bridge | None = None
+
+        self._copy_btn.clicked.connect(self._on_copy_text)
 
     def _ensure_web_view(self) -> QWebEngineView | None:
         """惰性创建并返回 QWebEngineView；WebEngine 未就绪时返回 None。
@@ -571,6 +615,28 @@ class ResultViewWidget(QWidget):
         layout.addWidget(self._web_view)
         return self._web_view
 
+    def _on_copy_text(self) -> None:
+        """复制选中文本或全部文本到剪贴板"""
+        if not self._web_view:
+            return
+        self._web_view.page().runJavaScript("getCopyText()", self._do_copy_text)
+
+    def _do_copy_text(self, text: str | None) -> None:
+        if text:
+            QGuiApplication.clipboard().setText(text)
+            self._show_copy_toast()
+
+    def _show_copy_toast(self) -> None:
+        """显示复制成功浮层"""
+        self._copy_toast.adjustSize()
+        # 显示在 widget 右上角
+        x = self.width() - self._copy_toast.width() - 12
+        y = 4
+        self._copy_toast.move(x, y)
+        self._copy_toast.raise_()
+        self._copy_toast.show()
+        QTimer.singleShot(1500, self._copy_toast.hide)
+
     def display_result(self, result: Any) -> None:
         """显示 OCR 识别结果"""
         web_view = self._ensure_web_view()
@@ -578,6 +644,7 @@ class ResultViewWidget(QWidget):
             # WebEngine 未就绪：发出信号供上层弹下载引导（上层连接此信号）。
             self.webengine_missing.emit()
             return
+        self._copy_btn.show()
         global _current_images
         self._current_result = result
         self._highlighted_index = -1
@@ -665,6 +732,7 @@ class ResultViewWidget(QWidget):
     def clear(self) -> None:
         self._current_result = None
         self._highlighted_index = -1
+        self._copy_btn.hide()
         if self._web_view:
             self._web_view.setHtml("")
 

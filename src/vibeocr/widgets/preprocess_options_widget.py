@@ -5,7 +5,6 @@ from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
-    QDoubleSpinBox,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -334,97 +333,19 @@ class PreprocessOptionsWidget(QGroupBox):
         group = QGroupBox("表格识别选项")
         layout = QVBoxLayout(group)
 
-        self._use_wireless_table_cb = QCheckBox("无线表格模式")
-        self._use_wireless_table_cb.setToolTip(
-            "使用无线表格识别模型（SLANeXt_wireless）"
-        )
-        self._use_wireless_table_cb.setChecked(True)
-        layout.addWidget(self._use_wireless_table_cb)
-
         self._use_table_orientation_classify_cb = QCheckBox("表格方向分类")
+        self._use_table_orientation_classify_cb.setToolTip(
+            "自动检测并矫正表格方向 (0/90/180/270度)"
+        )
         self._use_table_orientation_classify_cb.setChecked(True)
         layout.addWidget(self._use_table_orientation_classify_cb)
 
         self._use_ocr_with_table_cells_cb = QCheckBox("单元格文字识别")
+        self._use_ocr_with_table_cells_cb.setToolTip(
+            "识别表格结构后，对每个单元格内的文字进行 OCR"
+        )
         self._use_ocr_with_table_cells_cb.setChecked(True)
         layout.addWidget(self._use_ocr_with_table_cells_cb)
-
-        # 端到端模型
-        e2e_layout = QHBoxLayout()
-        self._use_e2e_wired_table_cb = QCheckBox("端到端有线表格模型")
-        self._use_e2e_wired_table_cb.setToolTip("使用端到端有线表格识别模型")
-        self._use_e2e_wired_table_cb.setChecked(False)
-        e2e_layout.addWidget(self._use_e2e_wired_table_cb)
-        self._use_e2e_wireless_table_cb = QCheckBox("端到端无线表格模型")
-        self._use_e2e_wireless_table_cb.setToolTip("使用端到端无线表格识别模型")
-        self._use_e2e_wireless_table_cb.setChecked(True)
-        e2e_layout.addWidget(self._use_e2e_wireless_table_cb)
-        e2e_layout.addStretch()
-        layout.addLayout(e2e_layout)
-
-        # HTML 转换
-        html_layout = QHBoxLayout()
-        self._use_wired_html_cb = QCheckBox("有线表格 HTML 转换")
-        self._use_wired_html_cb.setToolTip("将有线表格单元格内容转换为 HTML")
-        self._use_wired_html_cb.setChecked(False)
-        html_layout.addWidget(self._use_wired_html_cb)
-        self._use_wireless_html_cb = QCheckBox("无线表格 HTML 转换")
-        self._use_wireless_html_cb.setToolTip("将无线表格单元格内容转换为 HTML")
-        self._use_wireless_html_cb.setChecked(False)
-        html_layout.addWidget(self._use_wireless_html_cb)
-        html_layout.addStretch()
-        layout.addLayout(html_layout)
-
-        # 文本检测参数
-        det_label = QLabel("文本检测参数:")
-        layout.addWidget(det_label)
-
-        det_grid = QHBoxLayout()
-        det_grid.addWidget(QLabel("边长限制:"))
-        self._text_det_limit_side_spin = QSpinBox()
-        self._text_det_limit_side_spin.setRange(0, 9999)
-        self._text_det_limit_side_spin.setValue(0)
-        self._text_det_limit_side_spin.setToolTip("文本检测边长限制，0 表示使用默认值")
-        det_grid.addWidget(self._text_det_limit_side_spin)
-
-        det_grid.addWidget(QLabel("检测阈值:"))
-        self._text_det_thresh_spin = QDoubleSpinBox()
-        self._text_det_thresh_spin.setRange(0.0, 1.0)
-        self._text_det_thresh_spin.setSingleStep(0.05)
-        self._text_det_thresh_spin.setSpecialValueText("默认")
-        self._text_det_thresh_spin.setValue(0.0)
-        det_grid.addWidget(self._text_det_thresh_spin)
-
-        det_grid.addWidget(QLabel("框阈值:"))
-        self._text_det_box_thresh_spin = QDoubleSpinBox()
-        self._text_det_box_thresh_spin.setRange(0.0, 1.0)
-        self._text_det_box_thresh_spin.setSingleStep(0.05)
-        self._text_det_box_thresh_spin.setSpecialValueText("默认")
-        self._text_det_box_thresh_spin.setValue(0.0)
-        det_grid.addWidget(self._text_det_box_thresh_spin)
-
-        det_grid.addStretch()
-        layout.addLayout(det_grid)
-
-        det_grid2 = QHBoxLayout()
-        det_grid2.addWidget(QLabel("反裁剪比率:"))
-        self._text_det_unclip_ratio_spin = QDoubleSpinBox()
-        self._text_det_unclip_ratio_spin.setRange(0.0, 10.0)
-        self._text_det_unclip_ratio_spin.setSingleStep(0.5)
-        self._text_det_unclip_ratio_spin.setSpecialValueText("默认")
-        self._text_det_unclip_ratio_spin.setValue(0.0)
-        det_grid2.addWidget(self._text_det_unclip_ratio_spin)
-
-        det_grid2.addWidget(QLabel("识别阈值:"))
-        self._text_rec_score_thresh_spin = QDoubleSpinBox()
-        self._text_rec_score_thresh_spin.setRange(0.0, 1.0)
-        self._text_rec_score_thresh_spin.setSingleStep(0.05)
-        self._text_rec_score_thresh_spin.setSpecialValueText("默认")
-        self._text_rec_score_thresh_spin.setValue(0.0)
-        det_grid2.addWidget(self._text_rec_score_thresh_spin)
-
-        det_grid2.addStretch()
-        layout.addLayout(det_grid2)
 
         return group
 
@@ -494,23 +415,11 @@ class PreprocessOptionsWidget(QGroupBox):
         self._use_chart_cb.toggled.connect(self._on_option_changed)
 
         # 表格识别选项
-        self._use_wireless_table_cb.toggled.connect(self._on_option_changed)
         self._use_table_orientation_classify_cb.toggled.connect(self._on_option_changed)
         self._use_ocr_with_table_cells_cb.toggled.connect(self._on_option_changed)
 
         # 公式识别选项
         self._formula_batch_size_spin.valueChanged.connect(self._on_option_changed)
-
-        # 表格识别新增选项
-        self._use_e2e_wired_table_cb.toggled.connect(self._on_option_changed)
-        self._use_e2e_wireless_table_cb.toggled.connect(self._on_option_changed)
-        self._use_wired_html_cb.toggled.connect(self._on_option_changed)
-        self._use_wireless_html_cb.toggled.connect(self._on_option_changed)
-        self._text_det_limit_side_spin.valueChanged.connect(self._on_option_changed)
-        self._text_det_thresh_spin.valueChanged.connect(self._on_option_changed)
-        self._text_det_box_thresh_spin.valueChanged.connect(self._on_option_changed)
-        self._text_det_unclip_ratio_spin.valueChanged.connect(self._on_option_changed)
-        self._text_rec_score_thresh_spin.valueChanged.connect(self._on_option_changed)
 
         # 公式识别新增选项
         self._formula_model_name_edit.textChanged.connect(self._on_option_changed)
@@ -562,18 +471,8 @@ class PreprocessOptionsWidget(QGroupBox):
                 "vl_use_chart_recognition",
                 "vl_use_seal_recognition",
                 "use_ocr_for_image_block",
-                "use_wireless_table",
                 "use_table_orientation_classify",
                 "use_ocr_results_with_table_cells",
-                "use_e2e_wireless_table_rec_model",
-                "use_e2e_wired_table_rec_model",
-                "use_wired_table_cells_trans_to_html",
-                "use_wireless_table_cells_trans_to_html",
-                "text_det_limit_side_len",
-                "text_det_thresh",
-                "text_det_box_thresh",
-                "text_det_unclip_ratio",
-                "text_rec_score_thresh",
                 "formula_recognition_batch_size",
                 "formula_recognition_model_name",
                 "formula_recognition_model_dir",
@@ -619,18 +518,8 @@ class PreprocessOptionsWidget(QGroupBox):
 
         # 表格识别选项组可见性
         table_opts = [
-            "use_wireless_table",
             "use_table_orientation_classify",
             "use_ocr_results_with_table_cells",
-            "use_e2e_wireless_table_rec_model",
-            "use_e2e_wired_table_rec_model",
-            "use_wired_table_cells_trans_to_html",
-            "use_wireless_table_cells_trans_to_html",
-            "text_det_limit_side_len",
-            "text_det_thresh",
-            "text_det_box_thresh",
-            "text_det_unclip_ratio",
-            "text_rec_score_thresh",
         ]
         self._table_recognition_group.setVisible(
             any(opt in supported for opt in table_opts)
@@ -721,8 +610,6 @@ class PreprocessOptionsWidget(QGroupBox):
             kwargs["use_seal_recognition"] = self._use_seal_cb.isChecked()
         if is_option_supported(pipeline, "use_chart_recognition"):
             kwargs["use_chart_recognition"] = self._use_chart_cb.isChecked()
-        if is_option_supported(pipeline, "use_wireless_table"):
-            kwargs["use_wireless_table"] = self._use_wireless_table_cb.isChecked()
         if is_option_supported(pipeline, "use_table_orientation_classify"):
             kwargs["use_table_orientation_classify"] = (
                 self._use_table_orientation_classify_cb.isChecked()
@@ -734,43 +621,6 @@ class PreprocessOptionsWidget(QGroupBox):
         if is_option_supported(pipeline, "formula_recognition_batch_size"):
             kwargs["formula_recognition_batch_size"] = (
                 self._formula_batch_size_spin.value()
-            )
-        if is_option_supported(pipeline, "use_e2e_wired_table_rec_model"):
-            kwargs["use_e2e_wired_table_rec_model"] = (
-                self._use_e2e_wired_table_cb.isChecked()
-            )
-        if is_option_supported(pipeline, "use_e2e_wireless_table_rec_model"):
-            kwargs["use_e2e_wireless_table_rec_model"] = (
-                self._use_e2e_wireless_table_cb.isChecked()
-            )
-        if is_option_supported(pipeline, "use_wired_table_cells_trans_to_html"):
-            kwargs["use_wired_table_cells_trans_to_html"] = (
-                self._use_wired_html_cb.isChecked()
-            )
-        if is_option_supported(pipeline, "use_wireless_table_cells_trans_to_html"):
-            kwargs["use_wireless_table_cells_trans_to_html"] = (
-                self._use_wireless_html_cb.isChecked()
-            )
-        if is_option_supported(pipeline, "text_det_limit_side_len"):
-            val = self._text_det_limit_side_spin.value()
-            kwargs["text_det_limit_side_len"] = int(val) if val > 0 else None
-        if is_option_supported(pipeline, "text_det_thresh"):
-            thresh_val = self._text_det_thresh_spin.value()
-            kwargs["text_det_thresh"] = float(thresh_val) if thresh_val > 0.0 else None
-        if is_option_supported(pipeline, "text_det_box_thresh"):
-            box_thresh_val = self._text_det_box_thresh_spin.value()
-            kwargs["text_det_box_thresh"] = (
-                float(box_thresh_val) if box_thresh_val > 0.0 else None
-            )
-        if is_option_supported(pipeline, "text_det_unclip_ratio"):
-            unclip_val = self._text_det_unclip_ratio_spin.value()
-            kwargs["text_det_unclip_ratio"] = (
-                float(unclip_val) if unclip_val > 0.0 else None
-            )
-        if is_option_supported(pipeline, "text_rec_score_thresh"):
-            score_val = self._text_rec_score_thresh_spin.value()
-            kwargs["text_rec_score_thresh"] = (
-                float(score_val) if score_val > 0.0 else None
             )
         if is_option_supported(pipeline, "formula_recognition_model_name"):
             text = self._formula_model_name_edit.text().strip()
@@ -815,19 +665,9 @@ class PreprocessOptionsWidget(QGroupBox):
             self._use_formula_cb,
             self._use_seal_cb,
             self._use_chart_cb,
-            self._use_wireless_table_cb,
             self._use_table_orientation_classify_cb,
             self._use_ocr_with_table_cells_cb,
             self._formula_batch_size_spin,
-            self._use_e2e_wired_table_cb,
-            self._use_e2e_wireless_table_cb,
-            self._use_wired_html_cb,
-            self._use_wireless_html_cb,
-            self._text_det_limit_side_spin,
-            self._text_det_thresh_spin,
-            self._text_det_box_thresh_spin,
-            self._text_det_unclip_ratio_spin,
-            self._text_rec_score_thresh_spin,
             self._formula_model_name_edit,
             self._formula_model_dir_edit,
         ]
@@ -892,26 +732,12 @@ class PreprocessOptionsWidget(QGroupBox):
         self._use_chart_cb.setChecked(options.use_chart_recognition)
 
         # 设置表格识别选项
-        self._use_wireless_table_cb.setChecked(options.use_wireless_table)
         self._use_table_orientation_classify_cb.setChecked(
             options.use_table_orientation_classify
         )
         self._use_ocr_with_table_cells_cb.setChecked(
             options.use_ocr_results_with_table_cells
         )
-        self._use_e2e_wired_table_cb.setChecked(options.use_e2e_wired_table_rec_model)
-        self._use_e2e_wireless_table_cb.setChecked(
-            options.use_e2e_wireless_table_rec_model
-        )
-        self._use_wired_html_cb.setChecked(options.use_wired_table_cells_trans_to_html)
-        self._use_wireless_html_cb.setChecked(
-            options.use_wireless_table_cells_trans_to_html
-        )
-        self._text_det_limit_side_spin.setValue(options.text_det_limit_side_len or 0)
-        self._text_det_thresh_spin.setValue(options.text_det_thresh or 0.0)
-        self._text_det_box_thresh_spin.setValue(options.text_det_box_thresh or 0.0)
-        self._text_det_unclip_ratio_spin.setValue(options.text_det_unclip_ratio or 0.0)
-        self._text_rec_score_thresh_spin.setValue(options.text_rec_score_thresh or 0.0)
 
         # 设置公式识别选项
         self._formula_batch_size_spin.setValue(options.formula_recognition_batch_size)

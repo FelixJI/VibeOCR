@@ -88,14 +88,14 @@ def _recognize_table(service: Any, image: Any, options: TableRecognitionOptions)
         options.use_e2e_wireless_table_rec_model
     )
 
-    if options.use_wireless_table:
-        predict_kwargs["wireless_table_structure_recognition_model_name"] = (
-            options.wireless_table_model_name
-        )
-    else:
-        predict_kwargs["wireless_table_structure_recognition_model_name"] = (
-            options.wired_table_model_name
-        )
+    # 同时传入有线和无线模型名，管道内部的表格分类器
+    # (PP-LCNet_x1_0_table_cls) 会自动判断表格类型并选用对应模型。
+    predict_kwargs["wireless_table_structure_recognition_model_name"] = (
+        options.wireless_table_model_name
+    )
+    predict_kwargs["wired_table_structure_recognition_model_name"] = (
+        options.wired_table_model_name
+    )
 
     if options.text_det_limit_side_len is not None:
         predict_kwargs["text_det_limit_side_len"] = options.text_det_limit_side_len
@@ -129,6 +129,7 @@ def _recognize_table(service: Any, image: Any, options: TableRecognitionOptions)
                 else []
             )
 
+        table_bboxes: list[tuple[float, float, float, float]] = []
         for idx, table_res in enumerate(table_res_list):
             # pred_html: <html><body><table>...</table></body></html>
             pred_html = (
@@ -136,6 +137,47 @@ def _recognize_table(service: Any, image: Any, options: TableRecognitionOptions)
             )
             if not pred_html:
                 continue
+
+            # 记录表格区域 bbox，用于后续过滤 overall_ocr_res 中的重复文本。
+            # 注意：PaddleX 的 SingleTableRecognitionResult 不含 ``table_bbox``
+            # 字段，只有 ``cell_box_list``（各单元格 [x1,y1,x2,y2]，原图坐标系，
+            # 已在 post-processing 中 clip 到原图范围）。表格整体外接框需从
+            # cell_box_list 的并集推导，否则过滤条件永远为空，overall_ocr_res
+            # 里整图文字（含表格内文字）会被原样再展示一遍。
+            cell_box_list = (
+                table_res.get("cell_box_list") if hasattr(table_res, "get") else None
+            )
+            if cell_box_list:
+                try:
+                    xs_min: list[float] = []
+                    ys_min: list[float] = []
+                    xs_max: list[float] = []
+                    ys_max: list[float] = []
+                    for cell in cell_box_list:
+                        if hasattr(cell, "tolist"):
+                            cell = cell.tolist()
+                        if (
+                            isinstance(cell, (list, tuple))
+                            and len(cell) >= 4
+                            and all(
+                                isinstance(v, (int, float)) for v in cell[:4]
+                            )
+                        ):
+                            xs_min.append(float(cell[0]))
+                            ys_min.append(float(cell[1]))
+                            xs_max.append(float(cell[2]))
+                            ys_max.append(float(cell[3]))
+                    if xs_min:
+                        table_bboxes.append(
+                            (
+                                min(xs_min),
+                                min(ys_min),
+                                max(xs_max),
+                                max(ys_max),
+                            )
+                        )
+                except (TypeError, ValueError, IndexError):
+                    pass
 
             from vibeocr.services.ocr_service import (
                 _extract_table_html,
@@ -165,6 +207,8 @@ def _recognize_table(service: Any, image: Any, options: TableRecognitionOptions)
 
         # 表格外的普通文字（overall_ocr_res）：截图场景多为整图表格，此处通常为空，
         # 但保留以兼容"表格 + 周边文字"的图片。
+        # 注意：overall_ocr_res 包含整图所有文本（含表格内文字），需要过滤掉
+        # 落在表格区域内的文本块，避免与已提取的表格内容重复。
         overall_ocr_res = (
             res.get("overall_ocr_res") if hasattr(res, "get") else None
         )
@@ -205,6 +249,15 @@ def _recognize_table(service: Any, image: Any, options: TableRecognitionOptions)
                                 float(max(xs)),
                                 float(max(ys)),
                             )
+                    # 跳过落在表格区域内的文本块（已在 table 块中展示）
+                    if bbox_tuple and table_bboxes:
+                        cx = (bbox_tuple[0] + bbox_tuple[2]) / 2
+                        cy = (bbox_tuple[1] + bbox_tuple[3]) / 2
+                        if any(
+                            tb[0] <= cx <= tb[2] and tb[1] <= cy <= tb[3]
+                            for tb in table_bboxes
+                        ):
+                            continue
                     cl_idx = len(content_list)
                     text_blocks.append(
                         TextBlock(

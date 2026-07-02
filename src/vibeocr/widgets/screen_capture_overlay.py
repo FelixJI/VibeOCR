@@ -139,6 +139,9 @@ class ScreenCaptureOverlay(QWidget):
         self._captured_pixmap: QPixmap | None = None
         self._resize_frame: SelectionResizeFrame | None = None
 
+        # 管道快捷截图：设置后选区完成直接识别，跳过编辑界面
+        self._pending_pipeline: str | None = None
+
     # ==================== CAPTURING 模式 ====================
 
     def _logical_rect_to_physical(self, rect: QRect) -> QRect:
@@ -167,6 +170,7 @@ class ScreenCaptureOverlay(QWidget):
         self._end_pos = None
         self._sub_state = "HOVER"
         self._state = "CAPTURING"
+        # 注意：不清空 _pending_pipeline，由外部在 start_capture 前设置
 
         # 计算虚拟桌面几何
         virtual_geometry = screens[0].geometry()
@@ -397,8 +401,36 @@ class ScreenCaptureOverlay(QWidget):
 
     # ==================== EDITING 模式 ====================
 
+    def set_pending_pipeline(self, pipeline_name: str) -> None:
+        """设置快捷管道名称，下次截图选区完成后直接识别（跳过编辑界面）"""
+        self._pending_pipeline = pipeline_name
+
+    def _build_pipeline_options(self, pipeline_name: str) -> Any:
+        """为快捷管道构建 OCROptions，优先使用 screenshot 源的持久化配置"""
+        try:
+            from vibeocr.core.pipelines import OCRPipeline
+            from vibeocr.models.ocr_options import OCROptions
+            from vibeocr.utils.ocr_preferences import OCRPreferences
+
+            pipeline_enum = OCRPipeline(pipeline_name)
+            prefs = OCRPreferences.instance()
+            return prefs.get_pipeline_options("screenshot", pipeline_enum)
+        except Exception:
+            from vibeocr.models.ocr_options import OCROptions
+            from vibeocr.core.pipelines import OCRPipeline
+
+            try:
+                pipeline_enum = OCRPipeline(pipeline_name)
+            except ValueError:
+                pipeline_enum = OCRPipeline.OCR
+            return OCROptions(pipeline=pipeline_enum)
+
     def _enter_editing(self) -> None:
-        """进入 EDITING 模式，创建子组件"""
+        """进入 EDITING 模式，创建子组件
+
+        若 _pending_pipeline 已设置（工具栏快捷管道按钮触发），则跳过编辑界面，
+        直接用对应管道选项确认识别。
+        """
         self._state = "EDITING"
         self.setMouseTracking(False)
 
@@ -407,6 +439,22 @@ class ScreenCaptureOverlay(QWidget):
 
         sel_rect = self._selection_rect
         if sel_rect is None:
+            return
+
+        # 快捷管道：跳过编辑界面，直接确认识别
+        if self._pending_pipeline is not None:
+            pipeline_name = self._pending_pipeline
+            self._pending_pipeline = None
+            options = self._build_pipeline_options(pipeline_name)
+            # DPR 归一化（与 InlineEditCanvas.export_image 行为一致）
+            pixmap = self._captured_pixmap
+            if pixmap.devicePixelRatio() != 1.0:
+                pixmap = QPixmap(pixmap)
+                pixmap.setDevicePixelRatio(1.0)
+            logger.debug(f"[快捷管道] 直接确认识别，管道: {pipeline_name}")
+            self.confirmed.emit(pixmap, options)
+            self._reset_capturing()
+            self.hide()
             return
 
         # 创建画布
@@ -890,6 +938,7 @@ class ScreenCaptureOverlay(QWidget):
         self._detected_rect = None
         self._last_detect_pos = QPoint()
         self._state = "CAPTURING"
+        self._pending_pipeline = None
         self.update()
 
     def finish_capture(self) -> None:
