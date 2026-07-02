@@ -947,7 +947,7 @@ class MainWindow(QMainWindow):
         self._main_window_minimized_before_capture = self.isMinimized()
         self.showMinimized()
         # 延迟启动截图，让窗口有时间最小化
-        QTimer.singleShot(200, self._overlay.start_capture)
+        QTimer.singleShot(200, self._start_fresh_overlay_capture)
 
     @Slot(str)
     def _on_pipeline_screenshot(self, pipeline_name: str) -> None:
@@ -962,8 +962,39 @@ class MainWindow(QMainWindow):
         self._main_window_minimized_before_capture = self.isMinimized()
         self.showMinimized()
         # 预设管道，截图选区完成后自动用该管道识别
-        self._overlay.set_pending_pipeline(pipeline_name)
-        QTimer.singleShot(200, self._overlay.start_capture)
+        QTimer.singleShot(200, lambda: self._start_fresh_overlay_capture(pipeline_name))
+
+    def _start_fresh_overlay_capture(self, pipeline_name: str | None = None) -> None:
+        """每次截图创建全新的 ScreenCaptureOverlay 实例并启动。
+
+        早期复用单个 overlay 实例（hide()/show() 之间），分层窗口
+        （WA_TranslucentBackground）的后备存储在会话间保留上一轮画面，
+        导致下次 show() 时「一闪而过上一次截图界面」。尝试在 show 前
+        repaint() 清屏、show 后再 repaint() 均无效——分层窗口的合成像素
+        不随隐藏窗口的 repaint 更新。
+
+        根治方案：每次截图新建 overlay（新原生窗口、空后备存储），
+        _cleanup 时 deleteLater() 释放。代价是每轮一次轻量窗口创建，
+        远小于残留帧带来的体验问题。
+        """
+        # 释放上一轮（若未正常 _cleanup，防御性清理）
+        if self._overlay is not None:
+            try:
+                self._overlay.finish_capture()
+            except Exception:
+                logging.exception("清理旧截图覆盖层失败")
+            self._overlay.deleteLater()
+            self._overlay = None
+
+        self._overlay = ScreenCaptureOverlay()
+        self._overlay.confirmed.connect(self._on_overlay_confirmed)
+        self._overlay.copied.connect(self._on_overlay_copied)
+        self._overlay.saved.connect(self._on_overlay_saved)
+        self._overlay.cancelled.connect(self._on_overlay_cancelled)
+
+        if pipeline_name is not None:
+            self._overlay.set_pending_pipeline(pipeline_name)
+        self._overlay.start_capture()
 
     def _restore_main_window(self, *, activate: bool) -> None:
         """截图结束后恢复主窗口状态。

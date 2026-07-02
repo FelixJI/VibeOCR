@@ -66,6 +66,9 @@ BLOCK_BORDER_COLORS: dict[str, str] = {
     "equation": "#f97316",
     "interline_equation": "#f97316",
     "inline_equation": "#f97316",
+    # PaddleX 公式管道（pipeline_formula / pipeline_pp_structure）输出 label="formula"，
+    # 在渲染层归一到公式渲染（KaTeX），避免下游（导出/Markdown）受影响。
+    "formula": "#f97316",
     "list": "#06b6d4",
     "code": "#8b5cf6",
     "seal": "#6b7280",
@@ -81,6 +84,7 @@ BLOCK_TYPE_LABELS: dict[str, str] = {
     "equation": "公式",
     "interline_equation": "公式",
     "inline_equation": "公式",
+    "formula": "公式",
     "list": "列表",
     "code": "代码",
     "seal": "印章",
@@ -236,6 +240,8 @@ BLOCK_RENDERERS: dict[str, Callable[[dict, int], str]] = {
     "equation": _render_equation,
     "interline_equation": _render_equation,
     "inline_equation": _render_equation,
+    # PaddleX 公式管道输出 type="formula"，归一到公式渲染（KaTeX）。
+    "formula": _render_equation,
     "list": _render_list,
     "code": _render_code,
     "seal": _render_seal,
@@ -275,7 +281,7 @@ def _render_block(block: dict, index: int) -> str:
         f'<div class="ocr-block" data-block-index="{index}" '
         f'data-block-type="{html_lib.escape(block_type)}" id="block-{index}" '
         f'style="padding:4px 8px;border-left:3px solid {border_color};'
-        f'margin:2px 0;border-radius:2px;cursor:pointer;" '
+        f'margin:2px 0;border-radius:2px;" '
         f'title="{title_attr}">'
         f"{content_html}"
         f"</div>"
@@ -285,12 +291,20 @@ def _render_block(block: dict, index: int) -> str:
 def _build_full_html(blocks_html: str, katex_dir: Path | None = None) -> str:
     """构建完整 HTML 页面（含 KaTeX、CSS、JS）"""
     katex_css = ""
-    katex_js = ""
+    katex_js_tag = ""  # 外部 KaTeX <script>（onload 触发渲染）
     if katex_dir and katex_dir.exists():
-        katex_css_url = QUrl.fromLocalFile(str(katex_dir / "katex.min.css")).toString()
-        katex_js_url = QUrl.fromLocalFile(str(katex_dir / "katex.min.js")).toString()
-        katex_css = f'<link rel="stylesheet" href="{katex_css_url}">'
-        katex_js = f'<script src="{katex_js_url}"></script>'
+        # 必须用绝对路径：早期版本传相对路径 resources/katex/katex.min.js，
+        # QUrl.fromLocalFile 会生成畸形 URL（file:resources/... 而非 file:///...），
+        # Chromium WebEngine 无法加载 → KaTeX 不执行 → 公式显示为原始 LaTeX。
+        katex_css_url = QUrl.fromLocalFile(str((katex_dir / "katex.min.css").resolve()))
+        katex_js_url = QUrl.fromLocalFile(str((katex_dir / "katex.min.js").resolve()))
+        katex_css = f'<link rel="stylesheet" href="{katex_css_url.toString()}">'
+        # KaTeX 加载完成后再触发渲染（onload），避免外部脚本加载失败时
+        # 阻塞其后内联脚本（编辑/光标逻辑）的执行。
+        katex_js_tag = (
+            f'<script src="{katex_js_url.toString()}" '
+            f'onload="renderAllMath()"></script>'
+        )
 
     return f"""<!DOCTYPE html>
 <html>
@@ -302,6 +316,10 @@ body {{ margin:0; padding:8px; font-family:"Microsoft YaHei","Segoe UI",sans-ser
 .ocr-block {{ transition: background-color 0.15s; }}
 .ocr-block:hover {{ background-color: #f0f9ff; }}
 .ocr-block.highlight {{ background-color: #fef08a !important; border-left-width: 4px !important; }}
+/* 光标：文本区显示 I-beam（提示可编辑），表格单元格默认箭头。
+   不在 .ocr-block 内联 style 设 cursor:pointer（旧版这样做会压过编辑态样式表）。 */
+.ocr-block p, .ocr-block h1, .ocr-block h2, .ocr-block h3,
+.ocr-block h4, .ocr-block h5, .ocr-block h6, .ocr-block li {{ cursor: text; }}
 .ocr-table {{ overflow-x: auto; }}
 .ocr-table table {{ border-collapse: collapse; width: 100%; font-size: 13px; }}
 .ocr-table td, .ocr-table th {{ border: 1px solid #d1d5db; padding: 6px 8px; }}
@@ -310,17 +328,19 @@ body {{ margin:0; padding:8px; font-family:"Microsoft YaHei","Segoe UI",sans-ser
    视觉区分靠边框 + th 加粗即可；复制时另有 copy 拦截器输出无样式 HTML。 */
 .ocr-table td.sel-cell, .ocr-table th.sel-cell {{ background-color: rgba(25,118,210,0.18) !important; }}
 .manually-edited {{ border-left-color: #ff9800 !important; border-left-width: 4px !important; }}
-[contenteditable="true"] {{ outline: 2px solid #1976d2; background-color: rgba(255,255,255,0.95); cursor: text; }}
+/* 编辑态：!important 压过任何继承/内联 cursor，确保进入编辑时光标变 I-beam。 */
+[contenteditable="true"] {{ outline: 2px solid #1976d2; background-color: rgba(255,255,255,0.95); cursor: text !important; }}
 </style>
 </head>
 <body>
 <div id="content">
 {blocks_html}
 </div>
-{katex_js}
 <script>
-// KaTeX 自动渲染
-if (typeof katex !== 'undefined') {{
+// 公式渲染函数：由 KaTeX <script onload> 触发，也可被编辑后手动调用。
+// 放在内联脚本最前面定义，确保 KaTeX 加载完成时函数已存在。
+function renderAllMath() {{
+    if (typeof katex === 'undefined') return;
     document.querySelectorAll('.math-block').forEach(function(el) {{
         var latex = el.getAttribute('data-latex');
         if (latex) {{
@@ -399,43 +419,52 @@ function _startEquationEdit(block, index) {{
     }});
 }}
 
-// 高亮通信
-new QWebChannel(qt.webChannelTransport, function(channel) {{
-    _bridge = channel.objects.bridge;
-    document.querySelectorAll('.ocr-block').forEach(function(el) {{
-        el.addEventListener('mouseenter', function() {{
-            _bridge.onBlockHover(parseInt(this.getAttribute('data-block-index')));
-        }});
-        el.addEventListener('mouseleave', function() {{
-            _bridge.onBlockLeave();
-        }});
-        el.addEventListener('click', function() {{
-            _bridge.onBlockClick(parseInt(this.getAttribute('data-block-index')));
-        }});
-        el.addEventListener('dblclick', function(e) {{
-            var blockType = this.getAttribute('data-block-type');
-            if (_NON_EDITABLE.indexOf(blockType) >= 0) return;
-            e.preventDefault();
-            e.stopPropagation();
-            var index = parseInt(this.getAttribute('data-block-index'));
+// ── 块事件绑定（顶层立即执行，不依赖 QWebChannel）──
+// 关键：早期版本把 addEventListener 全部放在 `new QWebChannel(...)` 回调里，
+// 但页面未加载 qwebchannel.js → QWebChannel 构造函数未定义 → 回调永不执行 →
+// dblclick/click 监听器从未绑定（表现为结果区无法编辑、无点击高亮）。
+// 现改为顶层绑定事件；QWebChannel 回调只负责赋值 _bridge，所有 _bridge.*
+// 调用都用 if(_bridge) 守卫，bridge 不可用时编辑/光标/复制照常工作。
+document.querySelectorAll('.ocr-block').forEach(function(el) {{
+    el.addEventListener('mouseenter', function() {{
+        if (_bridge) _bridge.onBlockHover(parseInt(this.getAttribute('data-block-index')));
+    }});
+    el.addEventListener('mouseleave', function() {{
+        if (_bridge) _bridge.onBlockLeave();
+    }});
+    el.addEventListener('click', function() {{
+        if (_bridge) _bridge.onBlockClick(parseInt(this.getAttribute('data-block-index')));
+    }});
+    el.addEventListener('dblclick', function(e) {{
+        var blockType = this.getAttribute('data-block-type');
+        if (_NON_EDITABLE.indexOf(blockType) >= 0) return;
+        e.preventDefault();
+        e.stopPropagation();
+        var index = parseInt(this.getAttribute('data-block-index'));
 
-            if (blockType === 'table') {{
-                _editOriginals[index] = this.querySelector('.ocr-table').innerHTML;
-                this.querySelectorAll('.ocr-table td, .ocr-table th').forEach(function(cell) {{
-                    cell.setAttribute('contenteditable', 'true');
-                }});
-                var firstCell = this.querySelector('.ocr-table td, .ocr-table th');
-                if (firstCell) firstCell.focus();
-            }} else if (['equation', 'interline_equation', 'inline_equation'].indexOf(blockType) >= 0) {{
-                _startEquationEdit(this, index);
-            }} else {{
-                _editOriginals[index] = this.innerText;
-                this.setAttribute('contenteditable', 'true');
-                this.focus();
-            }}
-        }});
+        if (blockType === 'table') {{
+            _editOriginals[index] = this.querySelector('.ocr-table').innerHTML;
+            this.querySelectorAll('.ocr-table td, .ocr-table th').forEach(function(cell) {{
+                cell.setAttribute('contenteditable', 'true');
+            }});
+            var firstCell = this.querySelector('.ocr-table td, .ocr-table th');
+            if (firstCell) firstCell.focus();
+        }} else if (['equation', 'interline_equation', 'inline_equation', 'formula'].indexOf(blockType) >= 0) {{
+            _startEquationEdit(this, index);
+        }} else {{
+            _editOriginals[index] = this.innerText;
+            this.setAttribute('contenteditable', 'true');
+            this.focus();
+        }}
     }});
 }});
+
+// 高亮通信：仅赋值 _bridge。失败（qwebchannel.js 缺失）不影响上方编辑逻辑。
+if (typeof QWebChannel !== 'undefined') {{
+    new QWebChannel(qt.webChannelTransport, function(channel) {{
+        _bridge = channel.objects.bridge;
+    }});
+}}
 
 // 全局 blur 处理
 document.addEventListener('focusout', function(e) {{
@@ -509,7 +538,7 @@ function getCopyText() {{
         var t = b.innerText.trim();
         if (t) parts.push(t);
     }});
-    return parts.join('\n\n');
+    return parts.join('\\n\\n');
 }}
 
 // ── 表格单元格级拖选（Word/Excel 式）──
@@ -604,9 +633,9 @@ function _tableSelToOutput(sel) {{
             ch.push('<' + tag + '>' + text.replace(/&/g,'&amp;').replace(/</g,'&lt;') + '</' + tag + '>');
         }}
         trHtml.push('<tr>' + ch.join('') + '</tr>');
-        lines.push(texts.join('\t'));
+        lines.push(texts.join('\\t'));
     }}
-    return {{ html: '<table>' + trHtml.join('') + '</table>', text: lines.join('\n') }};
+    return {{ html: '<table>' + trHtml.join('') + '</table>', text: lines.join('\\n') }};
 }}
 
 // ── 拦截 copy：表格选中时输出无样式 HTML + Tab 文本 ──
@@ -618,6 +647,7 @@ document.addEventListener('copy', function(e) {{
     e.preventDefault();
 }});
 </script>
+{katex_js_tag}
 </body>
 </html>"""
 

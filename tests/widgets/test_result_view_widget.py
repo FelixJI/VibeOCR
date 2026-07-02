@@ -327,6 +327,193 @@ class TestTableCopyAndSelectionJS:
         assert "setData('text/plain'" in html
 
 
+class TestFormulaTypeRendering:
+    """PaddleX 公式管道输出 type='formula'，应在渲染层归一到公式渲染（KaTeX）。"""
+
+    def test_formula_type_uses_equation_renderer(self):
+        """type='formula' 的块应渲染出 .math-block + data-latex（同 equation）。"""
+        block = {"type": "formula", "text": "E=mc^2"}
+        html = _render_block(block, 0)
+        assert 'class="math-block"' in html
+        assert "data-latex=" in html
+
+    def test_formula_has_equation_border_color(self):
+        block = {"type": "formula", "text": "x^2"}
+        html = _render_block(block, 0)
+        assert "#f97316" in html  # 与 equation 同色
+
+    def test_formula_has_type_label(self):
+        block = {"type": "formula", "text": "a+b"}
+        html = _render_block(block, 0)
+        assert "类型: 公式" in html
+
+
+class TestCursorStyling:
+    """光标样式：.ocr-block 不再有内联 cursor:pointer；编辑态用 !important。"""
+
+    def test_no_inline_cursor_pointer(self):
+        block = {"type": "text", "text": "hi"}
+        html = _render_block(block, 0)
+        assert "cursor:pointer" not in html
+
+    def test_text_cursor_in_stylesheet(self):
+        """样式表应给文本元素设 cursor:text。"""
+        from pathlib import Path
+
+        html = _build_full_html("<p>x</p>", Path("resources/katex"))
+        assert "cursor: text" in html
+
+    def test_editable_cursor_important(self):
+        """[contenteditable=true] 的 cursor:text 必须带 !important 压过内联。"""
+        from pathlib import Path
+
+        html = _build_full_html("<p>x</p>", Path("resources/katex"))
+        assert "cursor: text !important" in html
+
+
+class TestEventBindingDecoupledFromQWebChannel:
+    """事件监听器必须在顶层绑定，不能依赖 QWebChannel 回调（qwebchannel.js 未加载）。"""
+
+    def _full_html(self) -> str:
+        from pathlib import Path
+
+        return _build_full_html("<p>x</p>", Path("resources/katex"))
+
+    def test_dblclick_bound_outside_qwebchannel_callback(self):
+        """事件绑定块必须出现在 QWebChannel 守卫之前（顶层绑定，不依赖回调）。
+
+        用 'document.querySelectorAll(\\'.ocr-block\\').forEach' 标记事件绑定块的
+        起点，用 'typeof QWebChannel' 标记 QWebChannel 调用块的起点（避免匹配到
+        注释中提到的 'new QWebChannel' 字样）。
+        """
+        html = self._full_html()
+        binding_pos = html.find("document.querySelectorAll('.ocr-block').forEach")
+        guard_pos = html.find("typeof QWebChannel !== 'undefined'")
+        assert binding_pos > 0, "顶层事件绑定块缺失"
+        assert guard_pos > 0, "QWebChannel 守卫块缺失"
+        assert binding_pos < guard_pos, "事件绑定必须在 QWebChannel 之前（顶层绑定）"
+        # dblclick 监听器应在绑定块内（在 QWebChannel 守卫之前）
+        dblclick_pos = html.find("addEventListener('dblclick'")
+        assert binding_pos < dblclick_pos < guard_pos
+
+    def test_qwebchannel_guarded_by_typeof(self):
+        """QWebChannel 调用必须用 typeof 守卫，避免未定义时抛错。"""
+        html = self._full_html()
+        assert "typeof QWebChannel !== 'undefined'" in html
+
+    def test_bridge_calls_guarded(self):
+        """所有 _bridge.* 调用应有 if(_bridge) 守卫（bridge 不可用时不影响编辑）。"""
+        html = self._full_html()
+        # click 处理器里的 _bridge.onBlockClick 必须有守卫
+        assert "if (_bridge) _bridge.onBlockClick" in html
+
+    def test_formula_in_equation_edit_branch(self):
+        """dblclick 的公式编辑分支应包含 'formula' 类型。"""
+        html = self._full_html()
+        assert "'formula'" in html
+
+
+class TestKaTeXLoading:
+    """KaTeX 外部脚本加载与公式渲染触发。"""
+
+    def _full_html(self) -> str:
+        from pathlib import Path
+
+        return _build_full_html("<p>x</p>", Path("resources/katex"))
+
+    def test_katex_uses_absolute_url(self):
+        """KaTeX 脚本 URL 必须是 file:/// 绝对路径，而非 file:resources/... 畸形 URL。
+
+        早期版本传相对路径给 QUrl.fromLocalFile 生成畸形 URL，WebEngine 无法加载，
+        导致公式显示为原始 LaTeX。
+        """
+        html = self._full_html()
+        assert "file:///" in html, "KaTeX 应使用 file:/// 绝对路径"
+        assert "file:resources/" not in html, "不应出现畸形 file:resources/ URL"
+
+    def test_katex_onload_triggers_render(self):
+        """KaTeX <script> 应带 onload=renderAllMath()，加载完成即触发渲染。"""
+        html = self._full_html()
+        assert 'onload="renderAllMath()"' in html
+
+    def test_render_all_math_defined(self):
+        """应定义 renderAllMath() 函数供 onload 调用。"""
+        html = self._full_html()
+        assert "function renderAllMath()" in html
+
+    def test_inline_script_before_katex_script(self):
+        """内联 <script>（编辑逻辑）应在 KaTeX 外部 <script> 之前，
+        确保 KaTeX 加载失败时不阻塞编辑/光标逻辑。"""
+        html = self._full_html()
+        inline_pos = html.find("function renderAllMath()")
+        # 内联脚本结束 </script> 后才出现 KaTeX 外部 script 标签
+        katex_script_pos = html.find('onload="renderAllMath()"')
+        assert inline_pos > 0
+        assert katex_script_pos > inline_pos
+
+
+class TestInlineJsSyntaxRegression:
+    """回归测试：内联 <script> 必须是合法 JS，否则整个脚本不执行
+    （表现为无法编辑 + 公式不渲染）。
+
+    历史根因：_build_full_html 是个 f-string，里面写了 ``parts.join('\\n\\n')``
+    但 Python 把 ``\\n`` 当转义符处理成真换行，导致 JS 单引号字符串字面量
+    跨行 → SyntaxError → 整个内联脚本不执行。
+    """
+
+    def _inline_script(self) -> str:
+        from pathlib import Path
+
+        html = _build_full_html("<p>x</p>", Path("resources/katex"))
+        m = re.search(r"<script>(.*?)</script>", html, re.DOTALL)
+        assert m is not None, "应存在内联 <script>"
+        return m.group(1)
+
+    def test_no_raw_newline_in_single_quoted_js_strings(self):
+        """JS 单引号字符串字面量内不得出现裸换行（会破坏整个脚本解析）。
+
+        检查 join('\\n') 等：在生成的 JS 里应是 ``join('\\n')``（反斜杠+n），
+        而非跨真实行。
+        """
+        js = self._inline_script()
+        # join 调用应为 join('\\n...') —— 反斜杠 + 字母 n，不是真换行
+        for m in re.finditer(r"\.join\('([^']*)'\)", js):
+            inner = m.group(1)
+            # 不应含真实换行符（\n 字节）
+            assert "\n" not in inner, (
+                f"join() 字符串含真实换行会破坏 JS 语法: {inner!r}"
+            )
+        # texts.join('\t') 同理
+        for m in re.finditer(r"join\('(\\\\t|[^']*)'\)", js):
+            assert "\t" not in m.group(1), "join() 字符串含真实制表符"
+
+    def test_node_syntax_check(self):
+        """若有 node，做真正的 JS 语法检查（最严格）。"""
+        import shutil
+        import subprocess
+        import tempfile
+
+        node = shutil.which("node")
+        if node is None:
+            pytest.skip("node 不可用，跳过 JS 语法检查")
+        js = self._inline_script()
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".js", delete=False, encoding="utf-8"
+        ) as f:
+            f.write(js)
+            path = f.name
+        try:
+            r = subprocess.run([node, "--check", path], capture_output=True, text=True)
+            assert r.returncode == 0, (
+                f"内联 JS 语法错误（会导致整个脚本不执行，无法编辑+公式不渲染）:\n"
+                f"{r.stderr}"
+            )
+        finally:
+            from pathlib import Path
+
+            Path(path).unlink(missing_ok=True)
+
+
 class TestResultViewExportButtons:
     """结果区工具栏导出/复制按钮测试。"""
 

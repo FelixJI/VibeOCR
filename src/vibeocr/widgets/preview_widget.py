@@ -387,6 +387,15 @@ class PreviewWidget(QWidget):
         # 优先置信度模式（单次识别结果）命中
         idx = self._hit_test_block(pos.x(), pos.y())
         if idx >= 0:
+            # 表格管道的 text_block.text 是原始 HTML、label=="table"。
+            # 走内联 QLineEdit 会把 HTML 当纯文本显示（问题：用户看到的是
+            # <table>... 标签而非表格）。改走表格网格编辑器，与块类型模式一致。
+            block = self._text_blocks[idx]
+            if getattr(block, "label", "") == "table":
+                content_index = getattr(block, "content_index", None)
+                if content_index is not None:
+                    self._start_table_edit(content_index)
+                    return
             self._start_inline_edit(idx)
             return
 
@@ -529,8 +538,11 @@ class PreviewWidget(QWidget):
                 new_grid.append(row)
         if not new_grid:
             return
-        new_html = grid_to_table_html(new_grid)
-        if new_html != table_body:
+        # 比较"单元格内容"而非"原始 HTML"：原始 table_body 来自 PaddleX（含 inline
+        # style、外层包装等），经 parse→grid→序列化往返后 HTML 必然不同，即便用户
+        # 没改任何单元格。按内容比较可避免无改动时误标记 manually-edited（bbox 变黄）。
+        if new_grid != grid:
+            new_html = grid_to_table_html(new_grid)
             self.table_text_edited.emit(content_index, new_html)
 
     # ── 标签点击（空状态触发截图/文件选择）──

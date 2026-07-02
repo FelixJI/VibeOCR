@@ -217,6 +217,36 @@ class TestBuildContentList:
         cl = tab._build_content_list(result)
         assert cl == []
 
+    def test_table_block_no_fake_confidence(self, qapp):
+        """表格/图片等结构识别块不应写入占位置信度（pipeline 里 score 是占位值，
+        显示"置信度: 90%"会误导）。文本块保留真实置信度。"""
+        from vibeocr.models.ocr_result import OCRResult, TextBlock
+
+        tab = ConcreteTab()
+        result = OCRResult(
+            content_list=[
+                {"type": "text", "text": "文本"},
+                {"type": "table", "table_body": "<table></table>"},
+            ],
+            text_blocks=[
+                TextBlock(
+                    text="文本", score=0.85, bbox=(0, 0, 100, 50), content_index=0
+                ),
+                TextBlock(
+                    text="<table></table>",
+                    score=0.9,  # 占位值
+                    bbox=(0, 60, 100, 110),
+                    content_index=1,
+                    label="table",
+                ),
+            ],
+        )
+        cl = tab._build_content_list(result)
+        # 文本块：保留真实置信度
+        assert cl[0].get("confidence") == 0.85
+        # 表格块：不写入占位置信度
+        assert "confidence" not in cl[1]
+
     def test_display_result_updates_state(self, qapp):
         from vibeocr.models.ocr_result import OCRResult, TextBlock
 
@@ -226,3 +256,69 @@ class TestBuildContentList:
         )
         tab._display_result(result)
         assert tab._current_ocr_result is result
+
+
+class TestDisplayResultContentListBackfill:
+    """_display_result 应为通用 OCR（content_list 为空）构建并回填 content_list，
+    使右侧结果区按块渲染（可编辑）而非走 <pre> 不可编辑分支。
+    """
+
+    def test_empty_content_list_backfilled_from_text_blocks(self, qapp):
+        from vibeocr.models.ocr_result import OCRResult, TextBlock
+
+        tab = ConcreteTab()
+        result = OCRResult(
+            raw_text="第一行\n第二行",
+            text_with_scores=[("第一行", 0.95), ("第二行", 0.88)],
+            text_blocks=[
+                TextBlock(text="第一行", score=0.95, bbox=(10, 10, 100, 40)),
+                TextBlock(text="第二行", score=0.88, bbox=(10, 50, 100, 80)),
+            ],
+            content_list=[],  # 通用 OCR 管道 content_list 为空
+        )
+        tab._display_result(result)
+        # content_list 被回填
+        assert len(result.content_list) == 2
+        assert result.content_list[0]["type"] == "text"
+        # text_blocks 补建了 content_index（编辑回调按此反查）
+        assert result.text_blocks[0].content_index == 0
+        assert result.text_blocks[1].content_index == 1
+
+    def test_existing_content_index_not_overwritten(self, qapp):
+        """结构化管道（table/formula）已设 content_index，不应被覆盖。"""
+        from vibeocr.models.ocr_result import OCRResult, TextBlock
+
+        tab = ConcreteTab()
+        result = OCRResult(
+            text_blocks=[
+                TextBlock(
+                    text="<table/>",
+                    score=0.9,
+                    bbox=(0, 0, 100, 50),
+                    content_index=5,
+                    label="table",
+                )
+            ],
+            content_list=[{"type": "table", "table_body": "<table/>"}],
+        )
+        tab._display_result(result)
+        # content_index=5 不应被改成 0
+        assert result.text_blocks[0].content_index == 5
+
+    def test_backfill_enables_block_rendering(self, qapp):
+        """回填后 display_result 应走 .ocr-block 渲染（可编辑），而非 <pre>。"""
+        from vibeocr.models.ocr_result import OCRResult, TextBlock
+        from vibeocr.widgets.result_view_widget import _render_block
+
+        tab = ConcreteTab()
+        result = OCRResult(
+            raw_text="文本",
+            text_with_scores=[("文本", 0.9)],
+            text_blocks=[TextBlock(text="文本", score=0.9, bbox=(0, 0, 10, 10))],
+            content_list=[],
+        )
+        tab._display_result(result)
+        # 模拟 display_result 的渲染分支
+        body = "\n".join(_render_block(b, i) for i, b in enumerate(result.content_list))
+        assert "ocr-block" in body
+        assert "<pre" not in body
