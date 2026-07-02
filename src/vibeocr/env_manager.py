@@ -400,7 +400,7 @@ def download_artifact_multi_source(
 ) -> tuple[bool, str]:
     """同步多源下载编排：逐源尝试，可选 SHA256 校验，统一失败原因。
 
-    WebEngine 资源包（带 sha）与 Python 运行时（不带 sha）共用此编排，
+    通用多源下载（带 sha 校验）与 Python 运行时（不带 sha）共用此编排，
     统一「多源回退 + 换源提示 + 失败原因结构化」的语义（与 update_service 的
     异步 download_update 对齐，但本函数走同步 urllib 栈，供首启/重装等同步链路调用）。
 
@@ -488,7 +488,7 @@ def download_artifact_multi_source(
                     source_switch_fn(source_name, last_reason)
                 continue
 
-            # 可选：下载 sha 并校验（仅 WebEngine 资源包走此分支）
+            # 可选：下载 sha 并校验（仅带 sha 的通用多源下载走此分支）
             if use_sha:
                 sha_url = sha_list[idx]  # type: ignore[index]
                 sha_ok = download_file_with_progress(

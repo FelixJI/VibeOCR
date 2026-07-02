@@ -38,7 +38,7 @@ PYTHON_BUILD_STANDALONE_MIRRORS = [
 ]
 
 # ---------------------------------------------------------------------------
-# 发布仓库标识（SSOT）—— update_service / webengine_manager / about_tab 共享
+# 发布仓库标识（SSOT）—— update_service / about_tab 共享
 # ---------------------------------------------------------------------------
 # 发布渠道：CNB 仅镜像代码；产物唯一源 GitHub（国内走 gh 代理加速）。
 # Gitee 不再作为下载/发版源，仅保留仓库主页链接供关于页展示。
@@ -278,17 +278,6 @@ def get_update_cache_dir() -> Path:
     return d
 
 
-def get_webengine_cache_dir() -> Path:
-    """获取 WebEngine 资源包下载缓存目录
-
-    webengine_manager 下载 zip + sha256 的临时落盘位置，解压成功后即清理。
-    与 get_update_cache_dir 对称，统一 data/cache/<artifact>/ 命名规范。
-    """
-    d = get_data_dir() / "cache" / "webengine"
-    d.mkdir(parents=True, exist_ok=True)
-    return d
-
-
 def get_update_settings_path() -> Path:
     """获取更新设置文件路径（skip_version 等）"""
     d = get_data_dir() / "settings"
@@ -306,27 +295,3 @@ def get_pending_sync_path() -> Path:
     d = get_data_dir() / "settings"
     d.mkdir(parents=True, exist_ok=True)
     return d / "pending_sync.json"
-
-
-def get_webengine_assets_path() -> Path:
-    """获取 WebEngine 资源包已安装记录文件路径
-
-    webengine_manager 在下载解压资源包成功后写入（含 assets_version），
-    用于判断 WebEngine 是否就绪及是否需重装。与 webengine_manager 的
-    读写路径保持一致。
-    """
-    d = get_data_dir() / "settings"
-    d.mkdir(parents=True, exist_ok=True)
-    return d / "webengine_assets.json"
-
-
-def get_webengine_reinstall_marker_path() -> Path:
-    """获取 WebEngine 资源包待重装标记文件路径
-
-    updater 在替换应用文件后，若主包 version.json 的
-    webengine_assets_version 与本地已装版本不一致则写入此文件；
-    新版 VibeOCR 启动时读取并触发 webengine_manager 重新下载解压。
-    """
-    d = get_data_dir() / "settings"
-    d.mkdir(parents=True, exist_ok=True)
-    return d / "webengine_pending_reinstall.json"
