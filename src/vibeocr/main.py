@@ -311,7 +311,7 @@ def _install_qt_translations(app, locale: str | None = None) -> None:
         app: QApplication 实例。
         locale: 显式指定 locale 名（如 "zh_CN"），默认取系统 locale。便于测试。
     """
-    import os
+    from pathlib import Path
 
     from PySide6.QtCore import QLibraryInfo, QLocale, QTranslator
 
@@ -321,15 +321,15 @@ def _install_qt_translations(app, locale: str | None = None) -> None:
     if not locale.startswith("zh"):
         return
 
-    translations_dir = QLibraryInfo.path(QLibraryInfo.LibraryPath.TranslationsPath)
+    translations_dir = Path(
+        QLibraryInfo.path(QLibraryInfo.LibraryPath.TranslationsPath)
+    )
     # PySide6 的 TranslationsPath 未必含 qtbase，回退到包内 translations 目录。
-    if not os.path.isfile(os.path.join(translations_dir, f"qtbase_{locale}.qm")):
+    if not (translations_dir / f"qtbase_{locale}.qm").is_file():
         try:
             import PySide6
 
-            translations_dir = os.path.join(
-                os.path.dirname(PySide6.__file__), "translations"
-            )
+            translations_dir = Path(PySide6.__file__).parent / "translations"
         except Exception:
             return
 
@@ -338,11 +338,11 @@ def _install_qt_translations(app, locale: str | None = None) -> None:
         app._qt_translators = []  # type: ignore[attr-defined]
 
     for base in ("qtbase", "qt"):
-        qm = os.path.join(translations_dir, f"{base}_{locale}.qm")
-        if not os.path.isfile(qm):
+        qm = translations_dir / f"{base}_{locale}.qm"
+        if not qm.is_file():
             continue
         translator = QTranslator(app)
-        if translator.load(qm):
+        if translator.load(str(qm)):
             app.installTranslator(translator)
             app._qt_translators.append(translator)  # type: ignore[attr-defined]
 

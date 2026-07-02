@@ -35,7 +35,6 @@ from vibeocr.services.env_config import (  # noqa: E402
     build_asset_url_pairs,
 )
 
-
 # ---------------------------------------------------------------------------
 # 版本比较与数据模型
 # ---------------------------------------------------------------------------
@@ -643,17 +642,25 @@ class UpdateService:
     ) -> None:
         # 重试上限，防用户连点导致无限下载循环；用户可在失败框主动取消。
         max_attempts = 3
-        for attempt in range(1, max_attempts + 1):
+        for _attempt in range(1, max_attempts + 1):
             progress_dialog = DownloadProgressDialog(parent)
             progress_dialog.show()
 
-            def progress_cb(downloaded: int, total: int) -> None:
-                progress_dialog.update_progress(downloaded, total)
+            # 把 progress_dialog 作为默认参数显式绑定，避免闭包按引用捕获循环变量
+            # （B023：循环内定义的闭包共享最后一次迭代的 progress_dialog）。
+            def progress_cb(
+                downloaded: int, total: int, dialog: DownloadProgressDialog = progress_dialog
+            ) -> None:
+                dialog.update_progress(downloaded, total)
 
-            def on_source_switch(source_name: str, reason: str) -> None:
+            def on_source_switch(
+                source_name: str,
+                reason: str,
+                dialog: DownloadProgressDialog = progress_dialog,
+            ) -> None:
                 # reason 映射成用户能理解的短语
                 hint = _DOWNLOAD_REASON_HINTS.get(reason, "失败")
-                progress_dialog.set_source_status(
+                dialog.set_source_status(
                     f"{source_name} {hint}，正在切换备用源…"
                 )
 
