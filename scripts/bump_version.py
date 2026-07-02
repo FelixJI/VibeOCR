@@ -338,7 +338,10 @@ def _collect_commits(
     Returns:
         [(hash, subject), ...] 列表
     """
-    cmd = ["git", "log", "--pretty=format:%h %s", rev_range]
+    # --no-merges：剔除 merge commit（"Merge branch 'fix/xxx'" 这类），
+    # 只保留真实的功能/修复提交。团队规范要求不在 main 上直接提交、走分支合并，
+    # 不加该开关会让 CHANGELOG 充斥一堆 merge 噪音。
+    cmd = ["git", "log", "--no-merges", "--pretty=format:%h %s", rev_range]
     # cwd=None 时不传 cwd，让子进程继承调用者工作目录（保持原行为）
     kwargs: dict[str, object] = {"capture_output": True, "encoding": "utf-8", "check": True}
     if cwd is not None:

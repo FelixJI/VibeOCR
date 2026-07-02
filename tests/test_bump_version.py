@@ -534,6 +534,55 @@ class TestCollectCommits:
         assert "fix: two" in subjects
         assert "feat: one" not in subjects  # 在范围之外（tag 之前）
 
+    def test_collect_commits_excludes_merge_commits(self, tmp_path):
+        """_collect_commits 必须剔除 merge commit，避免 CHANGELOG 充斥合并噪音
+
+        团队规范要求功能分支合并到 main，git log 默认会列出 "Merge branch 'fix/xxx'"
+        这类 merge commit，它们不是真实的变更语义，必须过滤掉。
+        """
+        mod = self._load_module()
+        import subprocess
+
+        subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True)
+        subprocess.run(
+            ["git", "config", "user.email", "t@t.com"], cwd=tmp_path, capture_output=True
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "T"], cwd=tmp_path, capture_output=True
+        )
+        # main 上一个基线提交并打 tag
+        subprocess.run(
+            ["git", "commit", "--allow-empty", "-m", "feat: baseline"],
+            cwd=tmp_path,
+            capture_output=True,
+        )
+        subprocess.run(["git", "tag", "v0.1.0"], cwd=tmp_path, capture_output=True)
+
+        # 建功能分支、提交一条真实改动，再 --no-ff 合并回 main（产生 merge commit）
+        subprocess.run(
+            ["git", "checkout", "-b", "fix/branch"], cwd=tmp_path, capture_output=True
+        )
+        subprocess.run(
+            ["git", "commit", "--allow-empty", "-m", "fix: real change"],
+            cwd=tmp_path,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", "checkout", "main"],
+            cwd=tmp_path,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", "merge", "--no-ff", "fix/branch", "-m", "Merge branch 'fix/branch'"],
+            cwd=tmp_path,
+            capture_output=True,
+        )
+
+        commits = mod._collect_commits("v0.1.0..HEAD", cwd=tmp_path)
+        subjects = [s for _, s in commits]
+        assert "fix: real change" in subjects
+        assert not any(s.startswith("Merge branch") for s in subjects)
+
 
 class TestCheckUnversionedCommits:
     """测试 check_unversioned_commits 发版前未版本化提交检测"""

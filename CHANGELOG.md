@@ -10,9 +10,6 @@
 - fix(preload): 修复预加载管道列表不一致与 OCR 预加载死锁超时
 - fix(ui): 移除截图覆盖层内按钮的 tooltip，规避 QToolTip 黑底
 
-### Changed
-- Merge branch 'fix/screenshot-tooltip-and-i18n'
-
 ## [0.4.4] - 2026-07-01
 
 ### Added
@@ -29,12 +26,7 @@
 - fix(ocr): 修复表格/公式按钮走文字识别 + 截图选项页按管道分组 + 状态栏三态提示
 
 ### Changed
-- Merge branch 'fix/screenshot-popup-black-bg'
-- Merge branch 'fix/screenshot-overlay-window-restore'
 - test(主窗口): 补充截图窗口恢复逻辑的测试用例
-- Merge branch 'fix/test-validation-and-repairs'
-- Merge branch 'feat/screenshot-text-block-options'
-- Merge branch 'feat/screenshot-pipeline-authority'
 - refactor(settings): 合并 WebEngine 下载入安装流程，下载源收敛为 GitHub 唯一源
 
 ## [Unreleased]
@@ -72,8 +64,6 @@
 - fix(ci): Gitee 上传改流式分块 + 进度日志 + 墙钟超时，修复发版卡死
 
 ### Changed
-- merge: Gitee 上传改流式分块 + 进度日志 + 墙钟超时
-- refactor(bump): 回归单 main 分支发版，删除 develop→main 快照链
 - refactor(bump): 回归单 main 分支发版，删除 develop→main 快照链
 
 
@@ -101,7 +91,6 @@
 - fix(ci): 修复 Gitee Release 附件上传从未成功 + 失败被静默吞掉
 
 ### Changed
-- Merge gitee/develop into develop
 - refactor(about): 关于页链接指向仓库主页（新增 *_REPO_BASE SSOT）
 - docs(ci): 仓库常量注释指向 env_config SSOT
 - refactor(about): URL 改用 env_config SSOT，链接指向 releases 页
@@ -676,11 +665,9 @@
 * test(integration): pipeline cache lifecycle e2e (release/set\_ttl flow)
 * docs(plans): implementation plans for dynamic batch size + pipeline cache lifecycle
 * docs(spec): pipeline cache lifecycle + dynamic batch size design
-* Merge remote-tracking branch 'gitee/develop' into develop
 * docs: 浅色主题统一 + 关于页卡片化设计 spec
 * refactor(pdf): extract \_load\_ocr\_prefs/\_begin\_ocr\_ui; add start\_ocr overwrite e2e test
 * refactor: 收敛防御性代码，消除冗余/无效/风格不一致
-* Merge feat/cjk-font-text-layer: PDF text-layer fix (CJK font, preview, resizable layout)
 * docs: mark PDF text layer fix as delivered
 * perf: debounce splitter state save; test right-splitter persistence
 * refactor: extract PreviewCanvas as public reusable class
@@ -795,7 +782,6 @@
 * chore: 添加 MIT LICENSE，修正 ruff target-version 为 py313
 * chore: 将 docs/ 目录添加到 .gitignore
 * chore: 清理 .gitignore，移除 .qoder 等 AI 工具缓存追踪
-* Merge remote-tracking branch 'origin/mineru-integration' into mineru-integration
 * build: 升级 mineru 3.1.11, nvidia-cudnn 9.22.0.52, uv 0.11.13
 * refactor: 移除截图编辑工具栏中的裁剪按钮及相关代码
 * refactor: 将截图属性条从主工具栏分离为独立面板
@@ -862,7 +848,6 @@
 * refactor(services): 清理 GPU 代码和已删流水线引用
 * refactor(ocr-service): 移除 GPU 代码和已删流水线，简化为 CPU 模式
 * refactor(options): 移除 PaddleOCR-VL/PP-StructureV3 选项，新增 MineRU 选项
-* Merge remote-tracking branch 'origin/master'
 * refactor(config): 引入统一配置管理器并重构各配置模块
 * chore(reports): 删除代码质量检查报告文件
 * refactor(code): 优化代码结构和类型注解
