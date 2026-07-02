@@ -810,17 +810,20 @@ class ResultViewWidget(QWidget):
 
     def display_result(self, result: Any) -> None:
         """显示 OCR 识别结果"""
+        # 先记录结果并显示 WebEngine 无关的按钮（复制MD/导出），
+        # 这样即便 WebEngine 不可用，用户仍可复制 Markdown、导出 Word/Excel。
+        self._current_result = result
+        self._copy_md_btn.show()
+        self._export_docx_btn.show()
+        self._export_xlsx_btn.show()
+
         web_view = self._ensure_web_view()
         if web_view is None:
             # WebEngine 未就绪：发出信号供上层弹下载引导（上层连接此信号）。
             self.webengine_missing.emit()
             return
         self._copy_btn.show()
-        self._copy_md_btn.show()
-        self._export_docx_btn.show()
-        self._export_xlsx_btn.show()
         global _current_images
-        self._current_result = result
         self._highlighted_index = -1
 
         content_list = getattr(result, "content_list", [])

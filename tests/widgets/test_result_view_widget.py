@@ -284,8 +284,7 @@ class TestTableNormalizationInRender:
         """不规则行应在渲染时补齐为矩形，避免 Excel 粘贴错位。"""
         block = {
             "table_body": (
-                "<table><tr><th>H1</th><th>H2</th></tr>"
-                "<tr><td>only</td></tr></table>"
+                "<table><tr><th>H1</th><th>H2</th></tr><tr><td>only</td></tr></table>"
             )
         }
         html = _render_table(block, 0)
@@ -343,7 +342,9 @@ class TestResultViewExportButtons:
         qtbot.addWidget(w)
         return w
 
-    def _make_result(self, markdown_text="# 标题\n\n正文段落", raw_text="标题\n正文段落"):
+    def _make_result(
+        self, markdown_text="# 标题\n\n正文段落", raw_text="标题\n正文段落"
+    ):
         return SimpleNamespace(
             content_list=[],
             markdown_text=markdown_text,
@@ -422,7 +423,11 @@ class TestResultViewExportButtons:
         # mock QFileDialog.getSaveFileName 返回 (路径, 过滤)
         monkeypatch.setattr(
             "vibeocr.widgets.result_view_widget.QFileDialog",
-            type("F", (), {"getSaveFileName": staticmethod(lambda *a, **k: (str(out), ""))}),
+            type(
+                "F",
+                (),
+                {"getSaveFileName": staticmethod(lambda *a, **k: (str(out), ""))},
+            ),
             raising=False,
         )
         # mock QMessageBox 避免弹窗阻塞
@@ -451,7 +456,11 @@ class TestResultViewExportButtons:
         out = tmp_path / "out.xlsx"
         monkeypatch.setattr(
             "vibeocr.widgets.result_view_widget.QFileDialog",
-            type("F", (), {"getSaveFileName": staticmethod(lambda *a, **k: (str(out), ""))}),
+            type(
+                "F",
+                (),
+                {"getSaveFileName": staticmethod(lambda *a, **k: (str(out), ""))},
+            ),
             raising=False,
         )
         monkeypatch.setattr(
@@ -489,3 +498,40 @@ class TestResultViewExportButtons:
         """无结果时导出不报错。"""
         widget._current_result = None
         widget._on_export_file("docx")  # 不应抛异常
+
+    def test_export_failure_shows_warning(self, widget, qtbot, monkeypatch, tmp_path):
+        """ExportService.export 返回 False 时走 warning 分支，不抛异常。"""
+        result = self._make_result(raw_text="失败测试")
+        widget._current_result = result
+
+        out = tmp_path / "fail.docx"
+        monkeypatch.setattr(
+            "vibeocr.widgets.result_view_widget.QFileDialog",
+            type(
+                "F",
+                (),
+                {"getSaveFileName": staticmethod(lambda *a, **k: (str(out), ""))},
+            ),
+            raising=False,
+        )
+        monkeypatch.setattr(
+            "vibeocr.widgets.result_view_widget.QMessageBox",
+            type(
+                "M",
+                (),
+                {
+                    "information": staticmethod(lambda *a, **k: None),
+                    "warning": staticmethod(lambda *a, **k: None),
+                },
+            ),
+            raising=False,
+        )
+        # 让 ExportService.export 返回 False（导出失败）
+        monkeypatch.setattr(
+            "vibeocr.services.export_service.ExportService.export",
+            staticmethod(lambda *a, **k: False),
+        )
+        # 不应抛异常
+        widget._on_export_file("docx")
+        # 失败时不应写出文件
+        assert not out.exists()
