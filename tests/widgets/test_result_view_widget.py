@@ -1,6 +1,10 @@
 """Tests for result_view_widget block rendering functions."""
 
 import re
+from types import SimpleNamespace
+
+import pytest
+from PySide6.QtWidgets import QApplication
 
 from vibeocr.widgets.result_view_widget import (
     BLOCK_BORDER_COLORS,
@@ -322,3 +326,84 @@ class TestTableCopyAndSelectionJS:
         html = self._full_html()
         assert "setData('text/html'" in html
         assert "setData('text/plain'" in html
+
+
+class TestResultViewExportButtons:
+    """结果区工具栏导出/复制按钮测试。"""
+
+    @pytest.fixture
+    def app(self, qtbot):
+        return QApplication.instance() or QApplication([])
+
+    @pytest.fixture
+    def widget(self, app, qtbot):
+        from vibeocr.widgets.result_view_widget import ResultViewWidget
+
+        w = ResultViewWidget()
+        qtbot.addWidget(w)
+        return w
+
+    def _make_result(self, markdown_text="# 标题\n\n正文段落", raw_text="标题\n正文段落"):
+        return SimpleNamespace(
+            content_list=[],
+            markdown_text=markdown_text,
+            raw_text=raw_text,
+            html_text="",
+            text_with_scores=[],
+            images={},
+        )
+
+    @staticmethod
+    def _fake_clipboard(monkeypatch):
+        """注入一个可读写的假剪贴板（避免依赖 Windows COM 剪贴板可用性）。"""
+
+        class FakeClipboard:
+            def __init__(self):
+                self._text = ""
+
+            def setText(self, text):
+                self._text = text
+
+            def text(self):
+                return self._text
+
+        fake = FakeClipboard()
+
+        from PySide6.QtGui import QGuiApplication
+
+        monkeypatch.setattr(QGuiApplication, "clipboard", lambda *a, **k: fake)
+        return fake
+
+    def test_copy_markdown_to_clipboard(self, widget, qtbot, monkeypatch):
+        """复制为 Markdown：剪贴板内容 == markdown_text。"""
+        result = self._make_result(markdown_text="# H1\n内容")
+        # 绕过 WebEngine 渲染，直接设 _current_result
+        widget._current_result = result
+        fake = self._fake_clipboard(monkeypatch)
+
+        widget._on_copy_markdown()
+        assert fake.text() == "# H1\n内容"
+
+    def test_copy_markdown_falls_back_to_raw(self, widget, qtbot, monkeypatch):
+        """无 markdown_text 时回退到 raw_text。"""
+        result = self._make_result(markdown_text="", raw_text="纯文本")
+        widget._current_result = result
+        fake = self._fake_clipboard(monkeypatch)
+
+        widget._on_copy_markdown()
+        assert fake.text() == "纯文本"
+
+    def test_copy_markdown_no_result_is_noop(self, widget, qtbot, monkeypatch):
+        """无结果时不报错、不写剪贴板。"""
+        widget._current_result = None
+        fake = self._fake_clipboard(monkeypatch)
+
+        fake.setText("SENTINEL")
+        widget._on_copy_markdown()
+        assert fake.text() == "SENTINEL"
+
+    def test_buttons_hidden_initially(self, widget):
+        """初始（无结果）三个新按钮隐藏。"""
+        assert widget._copy_md_btn.isVisible() is False
+        assert widget._export_docx_btn.isVisible() is False
+        assert widget._export_xlsx_btn.isVisible() is False
