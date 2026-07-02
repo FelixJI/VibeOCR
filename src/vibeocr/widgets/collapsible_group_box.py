@@ -40,7 +40,7 @@ class CollapsibleGroupBox(QGroupBox):
 
     # ── 公开 API ──
 
-    def contentLayout(self) -> QVBoxLayout:  # noqa: N802 - 兼容 Qt 命名
+    def contentLayout(self) -> QVBoxLayout:
         """返回内容容器上的布局，子类把控件加到这里。"""
         return self._content_layout
 
@@ -59,13 +59,13 @@ class CollapsibleGroupBox(QGroupBox):
 
     # ── QGroupBox 兼容 ──
 
-    def setTitle(self, title: str) -> None:  # noqa: N802 - Qt 命名
+    def setTitle(self, title: str) -> None:
         self._pure_title = title
         self._refresh_title()
 
     # ── 折叠交互 ──
 
-    def mousePressEvent(self, event) -> None:  # noqa: N802 - Qt 命名
+    def mousePressEvent(self, event) -> None:
         """点击标题区切换折叠。标题区约在顶部 margin-top 一带。"""
         if event.button() == Qt.MouseButton.LeftButton:
             # 标题区：顶部到内容容器起点之间。margin-top 通常 ~12px。

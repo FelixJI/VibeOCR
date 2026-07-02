@@ -54,6 +54,7 @@ def _get_resources_dir() -> Path:
 
     return get_bundled_resources_dir()
 
+
 # 块类型 → CSS 左边框颜色
 BLOCK_BORDER_COLORS: dict[str, str] = {
     "text": "#3b82f6",

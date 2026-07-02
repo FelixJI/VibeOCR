@@ -77,12 +77,12 @@ class TestCollapsibleGroupBox:
 
     def test_click_title_area_toggles(self, group, qtbot):
         """点击标题区域切换折叠（标题区在顶部 margin-top 一带）。"""
-        from PySide6.QtCore import QEvent, QPointF, Qt
-        from PySide6.QtGui import QMouseEvent
-
         # PySide6 把 QMouseEvent 所有构造式标为 deprecated（推荐走事件发送），
         # 此处仅做同步命中测试，过滤该构造器告警以保持输出干净。
         import warnings
+
+        from PySide6.QtCore import QEvent, QPointF, Qt
+        from PySide6.QtGui import QMouseEvent
 
         assert group.is_collapsed() is False
         # 标题区大致在顶部 4px 处（QGroupBox margin-top 默认）
