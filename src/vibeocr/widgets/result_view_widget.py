@@ -25,8 +25,8 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     # QWebEngineView / QWebChannel 仅作类型注解引用，运行时延迟 import
-    # （WebEngine 资源按需下载：首启前 Qt6WebEngineCore.dll 可能不存在，
-    # 顶层 import 会触发 DLL 加载导致整个模块 import 失败）。
+    # （WebEngine 内置主包：Qt6WebEngineCore.dll 随 _internal/ 一起分发，
+    # 延迟 import 仅为避免顶层立即触发 DLL 加载）。
     from PySide6.QtWebChannel import QWebChannel
     from PySide6.QtWebEngineWidgets import QWebEngineView
 
@@ -518,7 +518,8 @@ class ResultViewWidget(QWidget):
     block_unhovered = Signal()
     block_clicked = Signal(int)
     block_edited = Signal(int, str)  # 新增：(block_index, new_text)
-    # WebEngine 未就绪（资源包未下载）时触发，供上层弹下载引导。
+    # WebEngine 不可用时触发（保留信号：内置打包后通常不会触发，
+    # 但作为 import 失败时的防御性通知机制保留）。
     webengine_missing = Signal()
 
     def __init__(self, parent: QWidget | None = None):
@@ -530,7 +531,7 @@ class ResultViewWidget(QWidget):
     def _setup_ui(self) -> None:
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        # 延迟创建：WebEngine 资源按需下载，首启前可能未就绪。
+        # 延迟创建：WebEngine 内置主包，import 通常成功；惰性创建避免启动即加载。
         self._web_view: QWebEngineView | None = None
         self._channel: QWebChannel | None = None
         self._bridge: _Bridge | None = None
@@ -538,9 +539,9 @@ class ResultViewWidget(QWidget):
     def _ensure_web_view(self) -> QWebEngineView | None:
         """惰性创建并返回 QWebEngineView；WebEngine 未就绪时返回 None。
 
-        WebEngine（Qt6WebEngineCore.dll 等）从主包中剔除，首启向导按需下载
-        解压到 _internal/PySide6/。下载完成前此处的延迟 import 会失败，
-        调用方需处理 None（通常是显示一个引导下载的占位提示）。
+        WebEngine（Qt6WebEngineCore.dll 等）内置主包，随 _internal/PySide6/ 分发。
+        import 通常成功，返回 None 仅作为 DLL 加载异常时的防御性回退
+        （调用方据此显示占位提示）。
         """
         if self._web_view is not None:
             return self._web_view
