@@ -140,10 +140,10 @@ class TestUpdateInfo:
         assert info.sha256_url == ""
 
     def test_excludes_webengine_asset(self):
-        """_find_asset_url 必须排除 webengine 资源包，只匹配主包。
+        """_find_asset_url 必须排除历史 webengine 资源包，只匹配主包。
 
-        资源包命名 VibeOCR-v*-webengine-win64.zip，由 webengine_manager 单独
-        处理；更新检测只应拿主包 zip。
+        旧版曾单独发布 VibeOCR-v*-webengine-win64.zip（现已内置主包）；
+        排除守卫保留作历史 release asset 的防御，更新检测只应拿主包 zip。
         """
         from vibeocr.services.update_service import _find_asset_size, _find_asset_url
 

@@ -84,8 +84,9 @@ class UpdateInfo:
 def _find_asset_url(release: dict, suffix: str) -> str:
     for asset in release.get("assets", []):
         name = asset["name"]
-        # 主包匹配：排除 .sha256 校验文件，也排除 webengine 资源包
-        # （资源包单独命名 VibeOCR-v*-webengine-win64.zip，由 webengine_manager 处理）
+        # 主包匹配：排除 .sha256 校验文件，也排除历史 webengine 资源包
+        # （旧版曾单独发布 VibeOCR-v*-webengine-win64.zip，现已内置主包；
+        # 此排除守卫保留作历史 release asset 的防御）
         if (
             suffix == ".zip"
             and name.endswith(".zip")
