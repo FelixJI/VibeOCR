@@ -575,6 +575,13 @@ class SingleRecognitionTab(BaseOcrTab):
         # 显示结果（包括 content_list 块类型模式）
         self._display_result(result)
 
+        # 识别成功后折叠选项面板，让结果区获得最大空间（失败路径不折叠，
+        # 保留选项可见方便调整重试；用户可随时点标题重新展开）。
+        if self._preprocess_options is not None:
+            self._preprocess_options.set_collapsed(True)
+        if self._text_options_widget is not None:
+            self._text_options_widget.set_collapsed(True)
+
     def _first_use_suffix(self, pipeline_val: str) -> str:
         """首次使用失败时返回追加提示"""
         if pipeline_val in (
