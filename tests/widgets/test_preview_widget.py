@@ -217,3 +217,107 @@ class TestPreviewWidgetTableHitTest:
         widget._type_screen_rects = [(0, QRectF(0, 0, 10, 10), "table")]
         widget.set_pixmap(sample_pixmap)
         assert widget._type_screen_rects == []
+
+
+class TestConfidenceModeTableDoubleClick:
+    """置信度模式下双击表格块（label=='table'）应走表格网格编辑器，
+    而非把原始 HTML 塞进 QLineEdit 内联编辑器。
+    """
+
+    @staticmethod
+    def _pos(x: int, y: int):
+        """构造带 x()/y() 方法的 pos 桩（_on_block_double_click 调用 pos.x()）。"""
+
+        class _P:
+            def x(self):
+                return x
+
+            def y(self):
+                return y
+
+        return _P()
+
+    def test_table_block_routes_to_grid_editor(self, qapp, sample_pixmap):
+        """label=='table' 的置信度块双击应调用 _start_table_edit(content_index)。"""
+        widget = PreviewWidget()
+        widget.set_pixmap(sample_pixmap)
+        # 表格管道：text_block.text 是原始 HTML、label=='table'、content_index 指向
+        # content_list 中带 table_body 的表格块。
+        widget._text_blocks = [
+            TextBlock(
+                text="<table><tr><td>x</td></tr></table>",
+                score=0.9,
+                bbox=(10, 10, 200, 80),
+                label="table",
+                content_index=0,
+            )
+        ]
+        widget._block_screen_rects = [(10, 10, 190, 70)]
+        widget._content_list = [
+            {"type": "table", "table_body": "<table><tr><td>x</td></tr></table>"}
+        ]
+
+        called: list[int] = []
+        widget._start_table_edit = lambda ci: called.append(ci)
+        widget._start_inline_edit = lambda idx: called.append(("inline", idx))
+
+        # 双击落在表格 bbox 内（置信度模式命中）
+        widget._on_block_double_click(self._pos(50, 40))
+        assert called == [0], "应调用 _start_table_edit(0)，而非 _start_inline_edit"
+
+    def test_text_block_routes_to_inline_edit(self, qapp, sample_pixmap):
+        """label!='table' 的置信度块双击仍走 _start_inline_edit。"""
+        widget = PreviewWidget()
+        widget.set_pixmap(sample_pixmap)
+        widget._text_blocks = [
+            TextBlock(text="普通文本", score=0.9, bbox=(10, 10, 200, 80), label="text")
+        ]
+        widget._block_screen_rects = [(10, 10, 190, 70)]
+
+        called: list = []
+        widget._start_table_edit = lambda ci: called.append(("table", ci))
+        widget._start_inline_edit = lambda idx: called.append(("inline", idx))
+
+        widget._on_block_double_click(self._pos(50, 40))
+        assert called == [("inline", 0)]
+
+
+class TestTableEditNoChangeNoSignal:
+    """表格网格编辑器：用户未改动单元格内容时不应触发 table_text_edited
+    （不应误标记 manually-edited 使 bbox 变黄）。
+    """
+
+    def test_unchanged_cells_no_signal(self, qapp, sample_pixmap, monkeypatch):
+        widget = PreviewWidget()
+        widget.set_pixmap(sample_pixmap)
+        # PaddleX 风格的 table_body（含 inline style 等噪声）
+        table_body = '<table><tr><td style="color:red">A</td><td>B</td></tr></table>'
+        widget._content_list = [{"type": "table", "table_body": table_body}]
+
+        # parse_table_html_to_grid 解析出的网格
+        grid = [["A", "B"]]
+
+        # 拦截 ocr_service 内的解析/序列化函数
+        import vibeocr.services.ocr_service as ocr_svc
+
+        monkeypatch.setattr(ocr_svc, "parse_table_html_to_grid", lambda h: grid)
+        monkeypatch.setattr(
+            ocr_svc,
+            "grid_to_table_html",
+            lambda g: "<table><tr><td>A</td><td>B</td></tr></table>",
+        )
+        # 让对话框直接返回 Accepted（不弹窗）
+        from PySide6.QtWidgets import QDialog
+
+        monkeypatch.setattr(QDialog, "exec", lambda self: QDialog.DialogCode.Accepted)
+
+        emitted: list = []
+        widget.table_text_edited.connect(lambda i, h: emitted.append((i, h)))
+
+        widget._start_table_edit(0)
+        # 单元格内容未变（grid == [["A","B"]]，QTableWidget 初始也是 A/B）
+        # → 不应 emit
+        assert emitted == []
+
+
+

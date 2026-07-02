@@ -50,6 +50,15 @@ def _make_widget(tmp_path, has_gpu=True, cached_hardware_gpu=False, pending=None
         "cuda": "cu126" if has_gpu else None,
     }
     mock_em.detect_gpu_info.return_value = detect_info
+    # resolve_use_gpu 决定"当前后端"展示值，须与实际推理（main_window 启动 worker）
+    # 一致。此处用 cached_hardware_gpu/pending 推导期望值，模拟 resolve_use_gpu 逻辑。
+    if pending == "gpu":
+        resolved_gpu = True
+    elif pending == "cpu":
+        resolved_gpu = False
+    else:
+        resolved_gpu = cached_hardware_gpu
+    mock_em.resolve_use_gpu.return_value = resolved_gpu
     mock_cache.return_value = (
         True,
         {
@@ -145,3 +154,23 @@ def test_apply_emits_backend_changed(_cleanup, qtbot, tmp_path):
     widget._cpu_radio.setChecked(True)
     widget._apply()
     assert received == [True]
+
+
+def test_current_backend_matches_resolve_use_gpu_not_live_detect(
+    _cleanup, qtbot, tmp_path
+):
+    """问题5：实时 nvidia-smi 探测失败（has_gpu=False）但 resolve_use_gpu=True
+    （缓存 has_gpu=True）时，"当前后端"应显示 GPU（与实际推理一致），而非 CPU。
+
+    早期版本用 detect_gpu_info 的 has_gpu 直接覆盖 _current，导致 UI 显示 CPU
+    而推理实为 GPU。修复后 _current 由 resolve_use_gpu 决定。
+    """
+    widget = _make_widget(
+        tmp_path,
+        has_gpu=False,  # 实时探测失败（nvidia-smi 超时/不可用）
+        cached_hardware_gpu=True,  # 缓存记录有 GPU → resolve_use_gpu 返回 True
+    )
+    qtbot.addWidget(widget)
+    assert widget.current_backend() == "gpu"
+    assert "GPU" in widget._current_label.text()
+

@@ -107,7 +107,12 @@ class BaseOcrTab(QWidget):
                         content_list[cl_idx]["bbox"] = list(
                             normalize_bbox(tb.bbox, img_w, img_h)
                         )
-                    content_list[cl_idx]["confidence"] = tb.score
+                    # 表格/图片/印章等结构识别块没有文本置信度（pipeline 里 score
+                    # 是占位值），不写入 confidence，避免在 hover title 里显示
+                    # 误导性的"置信度: 90%"。文本/标题块保留真实置信度。
+                    cl_type = content_list[cl_idx].get("type", "")
+                    if cl_type not in ("table", "image", "figure", "chart", "seal"):
+                        content_list[cl_idx]["confidence"] = tb.score
             return content_list
 
         if not text_blocks:
@@ -126,10 +131,22 @@ class BaseOcrTab(QWidget):
     def _display_result(self, result) -> None:
         """显示 OCR 结果到结果面板和预览面板"""
         self._current_ocr_result = result
+        # 统一构建 content_list 并回填到 result，保证右侧结果区与左侧预览、
+        # 编辑回调用同一套索引。通用 OCR 管道的 content_list 为空（只有 text_blocks），
+        # 若不回填，display_result 会走 raw_text 的 <pre> 分支，无法按块编辑；
+        # _on_result_block_edited 按 content_index 反查 text_block 也会失败。
+        content_list = self._build_content_list(result)
+        if content_list:
+            result.content_list = content_list
+            # 为通用 OCR（text_blocks 无 content_index）补建索引，使编辑回调能反查。
+            # 结构化管道（table/formula/mineru）的 content_index 在 pipeline 已设好，
+            # 这里只在缺失时补，不覆盖。
+            for i, tb in enumerate(result.text_blocks):
+                if getattr(tb, "content_index", None) is None and i < len(content_list):
+                    tb.content_index = i
         if self._result_widget:
             self._result_widget.display_result(result)
         if self._preview_widget:
-            content_list = self._build_content_list(result)
             self._preview_widget.set_content_list(content_list)
 
     def _setup_hover_sync(self) -> None:

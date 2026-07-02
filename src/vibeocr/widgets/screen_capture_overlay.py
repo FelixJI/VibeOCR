@@ -230,11 +230,8 @@ class ScreenCaptureOverlay(QWidget):
         if WindowDetector is not None:
             self._window_detector = WindowDetector(hwnd)
 
-        # 关键：在 show() 前同步重绘，用新截图刷新后备存储。
-        # 本覆盖层设置了 WA_NoSystemBackground/WA_TranslucentBackground，窗口系统在
-        # show() 时不会清屏，会短暂显示上一轮截图遗留的选区画面（即「一闪而过」）。
-        # repaint() 为同步绘制，确保窗口变为可见时后备存储已是本次截图，无残留。
-        self.repaint()
+        # 新原生窗口（由 MainWindow._start_fresh_overlay_capture 每次新建）天然无
+        # 残留后备存储，show() 直接以本次截图上屏，无「一闪而过」。
         self.show()
         self.activateWindow()
         self.grabMouse()
@@ -416,8 +413,8 @@ class ScreenCaptureOverlay(QWidget):
             prefs = OCRPreferences.instance()
             return prefs.get_pipeline_options("screenshot", pipeline_enum)
         except Exception:
-            from vibeocr.models.ocr_options import OCROptions
             from vibeocr.core.pipelines import OCRPipeline
+            from vibeocr.models.ocr_options import OCROptions
 
             try:
                 pipeline_enum = OCRPipeline(pipeline_name)

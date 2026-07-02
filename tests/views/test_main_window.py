@@ -146,9 +146,7 @@ class TestSettingsInstallSucceededTriggersRecheck:
     的回调，使设置页安装成功后与首启路径行为一致。
     """
 
-    def test_settings_controller_receives_install_succeeded_callback(
-        self, main_window
-    ):
+    def test_settings_controller_receives_install_succeeded_callback(self, main_window):
         """MainWindow 应把 install_succeeded_callback 传给 SettingsPageController"""
         controller = main_window._settings_controller
         assert hasattr(controller, "_install_succeeded_callback"), (
@@ -169,8 +167,11 @@ class TestSettingsInstallSucceededTriggersRecheck:
         with _mock.patch.object(dep_mgr, "check_dependencies") as mock_check:
             # 调用 callback（模拟设置页 install_succeeded 信号）
             main_window._settings_controller._install_succeeded_callback()
-            mock_check.assert_called_once(), (
-                "install_succeeded_callback 应触发 dependency_manager.check_dependencies"
+            (
+                mock_check.assert_called_once(),
+                (
+                    "install_succeeded_callback 应触发 dependency_manager.check_dependencies"
+                ),
             )
 
 
@@ -289,3 +290,49 @@ class TestOverlayWindowRestore:
             mock_show.assert_not_called()
             mock_activate.assert_not_called()
             mock_raise.assert_not_called()
+
+
+class TestFreshOverlayPerCapture:
+    """每次截图应创建全新的 ScreenCaptureOverlay（消除分层窗口后备存储残留
+    导致的「一闪而过上一次截图界面」）。
+    """
+
+    def test_fresh_overlay_replaces_old(self, main_window, monkeypatch):
+        """_start_fresh_overlay_capture 应创建新 overlay 并释放旧的。"""
+        from vibeocr.widgets.screen_capture_overlay import ScreenCaptureOverlay
+
+        old_overlay = main_window._overlay
+        assert old_overlay is not None
+
+        # mock start_capture 避免真实截图（grabWindow）在 headless 环境失败
+        started: list = []
+        monkeypatch.setattr(
+            ScreenCaptureOverlay, "start_capture", lambda self: started.append(self)
+        )
+
+        main_window._start_fresh_overlay_capture()
+
+        # 新实例已创建并 start_capture 被调用
+        assert main_window._overlay is not old_overlay
+        assert isinstance(main_window._overlay, ScreenCaptureOverlay)
+        assert len(started) == 1
+
+    def test_fresh_overlay_reconnects_signals(self, main_window, monkeypatch):
+        """新 overlay 的信号应连接到 MainWindow 的槽。"""
+        from vibeocr.widgets.screen_capture_overlay import ScreenCaptureOverlay
+
+        monkeypatch.setattr(ScreenCaptureOverlay, "start_capture", lambda self: None)
+        main_window._start_fresh_overlay_capture()
+        # confirmed 信号连接可触发槽（不报错）
+        received: list = []
+        main_window._overlay.confirmed.connect(lambda *a: received.append(a))
+        main_window._overlay.confirmed.emit(QPixmap(2, 2), None)
+        assert len(received) == 1
+
+    def test_pipeline_passed_to_fresh_overlay(self, main_window, monkeypatch):
+        """快捷管道截图应把 pipeline 传给新 overlay。"""
+        from vibeocr.widgets.screen_capture_overlay import ScreenCaptureOverlay
+
+        monkeypatch.setattr(ScreenCaptureOverlay, "start_capture", lambda self: None)
+        main_window._start_fresh_overlay_capture("FORMULA_RECOGNITION")
+        assert main_window._overlay._pending_pipeline == "FORMULA_RECOGNITION"

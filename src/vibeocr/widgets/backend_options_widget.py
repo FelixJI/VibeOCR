@@ -154,16 +154,26 @@ class BackendOptionsWidget(QWidget):
     def _apply_detected_state(self, info: dict[str, Any]) -> None:
         """后台 GPU 探测完成后，在主线程回填 _has_gpu 与硬件展示、启用控件。
 
+        ``_current``（"当前后端"展示值）必须与实际推理设备一致——实际推理走
+        ``env_manager.resolve_use_gpu(project_root)``（main_window 启动 worker 时
+        同样调用它）。早期版本用实时 ``detect_gpu_info()`` 的 has_gpu 直接覆盖
+        ``_current``，当 nvidia-smi 后台探测超时/失败（返回 has_gpu=False）但缓存
+        ``hardware_info.has_gpu=True`` 时，UI 误显示 CPU 而推理实为 GPU。
+        现在 ``detect_gpu_info()`` 仅用于：①决定 GPU 单选是否可用；②展示硬件信息。
+
         Args:
             info: ``detect_gpu_info()`` 返回的 dict
                 (has_gpu/name/vram_mb/cuda)
         """
         self._has_gpu = bool(info.get("has_gpu"))
+        # 实际运行后端：与 main_window 启动 worker 用同一判断，保证展示与推理一致。
+        self._current = (
+            "gpu" if env_manager.resolve_use_gpu(self._project_root) else "cpu"
+        )
 
         if not self._has_gpu:
             self._gpu_radio.setEnabled(False)
             self._gpu_radio.setToolTip("未检测到 NVIDIA GPU")
-            self._current = "cpu"
             self._hw_label.setText(
                 "未检测到符合 CUDA 条件的 NVIDIA GPU（文档解析 MinerU 与 VL 模型不可用）"
             )
