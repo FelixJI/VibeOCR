@@ -200,6 +200,83 @@ class BaseOcrTab(QWidget):
             else:
                 self._result_widget.display_result(result)
 
+    def _on_table_block_edited(self, content_index: int, new_html: str) -> None:
+        """表格块被网格编辑后同步更新结果和展示。
+
+        与 ``_on_block_text_edited``（普通文本内联编辑）并列，专处理左侧画布
+        双击表格弹出的网格编辑器结果：整体替换 ``content_list`` 中的
+        ``table_body`` 及对应 text_block 的文本，重算纯文本/markdown/html，
+        并反向同步右侧 HTML 视图。
+        """
+        if not self._current_ocr_result:
+            return
+        result = self._current_ocr_result
+        if not result.content_list or not (
+            0 <= content_index < len(result.content_list)
+        ):
+            return
+
+        cl_block = result.content_list[content_index]
+        old_html = cl_block.get("table_body", "")
+        if old_html == new_html:
+            return
+
+        # 更新 content_list 的 table_body，并从新 HTML 提取纯文本回填 text 字段
+        cl_block["table_body"] = new_html
+        cl_block["text"] = self._table_html_to_plain_text(new_html)
+
+        # 同步匹配的 text_block（按 content_index 反查）
+        for tb in result.text_blocks:
+            if getattr(tb, "content_index", None) == content_index:
+                tb.text = new_html
+                tb.is_manually_edited = True
+                if content_index < len(result.text_with_scores):
+                    score = result.text_with_scores[content_index][1]
+                    result.text_with_scores[content_index] = (new_html, score)
+                break
+
+        result.raw_text = "\n".join(b.text for b in result.text_blocks if b.text)
+
+        # markdown/html 难以精确替换单个表格，全量重建最稳妥
+        if result.has_content_list:
+            from vibeocr.services.ocr_service import (
+                _extract_table_html,
+                _html_table_to_markdown,
+            )
+
+            md_parts = []
+            for blk in result.content_list:
+                if blk.get("type") == "table":
+                    md = _html_table_to_markdown(
+                        _extract_table_html(blk.get("table_body", ""))
+                    )
+                    if md:
+                        md_parts.append(md)
+                else:
+                    t = blk.get("text", "")
+                    if t:
+                        md_parts.append(t)
+            result.markdown_text = "\n\n".join(md_parts)
+            from vibeocr.utils.markdown_converter import markdown_to_html
+
+            result.html_text = (
+                markdown_to_html(result.markdown_text) if result.markdown_text else ""
+            )
+
+        if self._preview_widget:
+            self._preview_widget.set_content_list(result.content_list)
+        if self._result_widget:
+            # update_block_text 现已支持 table 块的 DOM 重建
+            self._result_widget.update_block_text(content_index, new_html)
+
+    @staticmethod
+    def _table_html_to_plain_text(html: str) -> str:
+        """从表格 HTML 提取纯文本（供 content_list 的 text 字段）。"""
+        import re
+
+        text = re.sub(r"<[^>]+>", " ", html)
+        return re.sub(r"\s+", " ", text).strip()
+
     def _init_options_from_preferences(self, *, batch: bool = False) -> None:
         """从 OCRPreferences 恢复选项，建立管道切换同步"""
         if not self._preprocess_options:

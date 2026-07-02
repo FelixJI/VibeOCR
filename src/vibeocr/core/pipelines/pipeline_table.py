@@ -129,6 +129,12 @@ def _recognize_table(service: Any, image: Any, options: TableRecognitionOptions)
                 else []
             )
 
+        # 记录每个表格的外接框，用于后续过滤 overall_ocr_res 中的重复文本。
+        # 注意：PaddleX 的 SingleTableRecognitionResult 不含 ``table_bbox``
+        # 字段，只有 ``cell_box_list``（各单元格 [x1,y1,x2,y2]，原图坐标系，
+        # 已在 post-processing 中 clip 到原图范围）。表格整体外接框需从
+        # cell_box_list 的并集推导，否则过滤条件永远为空，overall_ocr_res
+        # 里整图文字（含表格内文字）会被原样再展示一遍。
         table_bboxes: list[tuple[float, float, float, float]] = []
         for idx, table_res in enumerate(table_res_list):
             # pred_html: <html><body><table>...</table></body></html>
@@ -138,15 +144,14 @@ def _recognize_table(service: Any, image: Any, options: TableRecognitionOptions)
             if not pred_html:
                 continue
 
-            # 记录表格区域 bbox，用于后续过滤 overall_ocr_res 中的重复文本。
-            # 注意：PaddleX 的 SingleTableRecognitionResult 不含 ``table_bbox``
-            # 字段，只有 ``cell_box_list``（各单元格 [x1,y1,x2,y2]，原图坐标系，
-            # 已在 post-processing 中 clip 到原图范围）。表格整体外接框需从
-            # cell_box_list 的并集推导，否则过滤条件永远为空，overall_ocr_res
-            # 里整图文字（含表格内文字）会被原样再展示一遍。
+            # 从 cell_box_list 并集推导当前表格的外接框（原图像素坐标）。
+            # 该值既用于下方过滤重复文本，也挂回表格块自身的 bbox（替代
+            # 早期写死的 None），让左侧画布能正确绘制表格 bbox。
+            # 归一化到 [0,1000] 由 service 层 _normalize_result_bbox 统一完成。
             cell_box_list = (
                 table_res.get("cell_box_list") if hasattr(table_res, "get") else None
             )
+            current_bbox: tuple[float, float, float, float] | None = None
             if cell_box_list:
                 try:
                     xs_min: list[float] = []
@@ -168,14 +173,13 @@ def _recognize_table(service: Any, image: Any, options: TableRecognitionOptions)
                             xs_max.append(float(cell[2]))
                             ys_max.append(float(cell[3]))
                     if xs_min:
-                        table_bboxes.append(
-                            (
-                                min(xs_min),
-                                min(ys_min),
-                                max(xs_max),
-                                max(ys_max),
-                            )
+                        current_bbox = (
+                            min(xs_min),
+                            min(ys_min),
+                            max(xs_max),
+                            max(ys_max),
                         )
+                        table_bboxes.append(current_bbox)
                 except (TypeError, ValueError, IndexError):
                     pass
 
@@ -194,7 +198,7 @@ def _recognize_table(service: Any, image: Any, options: TableRecognitionOptions)
                 TextBlock(
                     text=table_html,
                     score=0.9,
-                    bbox=None,
+                    bbox=current_bbox,
                     label="table",
                     order=idx,
                     content_index=cl_idx,
@@ -202,7 +206,11 @@ def _recognize_table(service: Any, image: Any, options: TableRecognitionOptions)
             )
             text_with_scores.append((table_html, 0.9))
             content_list.append(
-                {"type": "table", "table_body": table_html, "bbox": None}
+                {
+                    "type": "table",
+                    "table_body": table_html,
+                    "bbox": list(current_bbox) if current_bbox else None,
+                }
             )
 
         # 表格外的普通文字（overall_ocr_res）：截图场景多为整图表格，此处通常为空，

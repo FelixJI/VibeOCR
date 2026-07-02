@@ -132,6 +132,7 @@ class SingleRecognitionTab(BaseOcrTab):
     def _connect_signals(self):
         self._setup_hover_sync()
         self._preview_widget.block_text_edited.connect(self._on_block_text_edited)
+        self._preview_widget.table_text_edited.connect(self._on_table_block_edited)
         self._preview_widget.block_clicked.connect(self._result_widget.highlight_block)
         self._result_widget.block_edited.connect(self._on_result_block_edited)
 

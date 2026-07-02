@@ -14,6 +14,7 @@ from PySide6.QtCore import (
     QPoint,
     QPropertyAnimation,
     QRect,
+    QSize,
     Qt,
     QTimer,
     Signal,
@@ -27,6 +28,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from vibeocr.core.toolbar_icons import toolbar_icon
 from vibeocr.ui import theme
 
 logger = logging.getLogger(__name__)
@@ -149,6 +151,7 @@ class EdgeToolbar(QWidget):
             Qt.WindowType.FramelessWindowHint
             | Qt.WindowType.WindowStaysOnTopHint
             | Qt.WindowType.Tool
+            | Qt.WindowType.NoDropShadowWindowHint
         )
         # 透明背景以支持圆角；浅色实体背景改由 paintEvent 绘制
         # （WA_TranslucentBackground 下，QSS 的 background-color 在 Windows 上不可靠）
@@ -157,23 +160,15 @@ class EdgeToolbar(QWidget):
 
         self.setStyleSheet(f"""
             QPushButton {{
-                color: {theme.Colors.text};
                 background-color: transparent;
                 border: none;
-                padding: 6px 8px;
-                font-size: 15px;
+                padding: 5px 6px;
             }}
             QPushButton:hover {{
                 background-color: {theme.Colors.hover_bg};
                 border-radius: {theme.Radius.sm}px;
             }}
-            QPushButton#gripBtn {{
-                color: {theme.Colors.text_subtle};
-                font-size: 13px;
-                padding: 6px 4px;
-            }}
             QPushButton#gripBtn:hover {{
-                color: {theme.Colors.text_muted};
                 background-color: transparent;
             }}
         """)
@@ -183,8 +178,10 @@ class EdgeToolbar(QWidget):
         layout.setSpacing(0)
 
         # 拖拽把手
-        btn_grip = QPushButton("⠿")
+        btn_grip = QPushButton()
         btn_grip.setObjectName("gripBtn")
+        btn_grip.setIcon(toolbar_icon("grip", size=16, color=theme.Colors.text_subtle))
+        btn_grip.setIconSize(QSize(16, 16))
         btn_grip.setToolTip("拖拽移动")
         btn_grip.setCursor(Qt.CursorShape.OpenHandCursor)
         layout.addWidget(btn_grip)
@@ -198,7 +195,9 @@ class EdgeToolbar(QWidget):
         layout.addWidget(sep)
 
         # 截图按钮
-        btn_screenshot = QPushButton("✂")
+        btn_screenshot = QPushButton()
+        btn_screenshot.setIcon(toolbar_icon("scissors", size=16, color=theme.Colors.text))
+        btn_screenshot.setIconSize(QSize(16, 16))
         btn_screenshot.setToolTip("截图识别 (Ctrl+S)")
         btn_screenshot.setCursor(Qt.CursorShape.PointingHandCursor)
         btn_screenshot.clicked.connect(self.screenshot_requested.emit)
@@ -213,50 +212,40 @@ class EdgeToolbar(QWidget):
         layout.addWidget(sep2)
 
         # 文本识别快捷按钮
-        btn_text = QPushButton("T")
+        btn_text = QPushButton()
+        btn_text.setIcon(toolbar_icon("text", size=16, color=theme.Colors.text))
+        btn_text.setIconSize(QSize(16, 16))
         btn_text.setToolTip("文本识别截图")
         btn_text.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn_text.setStyleSheet(
-            f"QPushButton {{ font-weight: bold; font-size: 14px;"
-            f" color: {theme.Colors.accent}; padding: 6px 8px; }}"
-            f" QPushButton:hover {{ background-color: {theme.Colors.hover_bg};"
-            f" border-radius: {theme.Radius.sm}px; }}"
-        )
         btn_text.clicked.connect(lambda: self.pipeline_screenshot_requested.emit("OCR"))
         layout.addWidget(btn_text)
 
         # 表格识别快捷按钮
-        btn_table = QPushButton("⊞")
+        btn_table = QPushButton()
+        btn_table.setIcon(toolbar_icon("table", size=16, color=theme.Colors.text))
+        btn_table.setIconSize(QSize(16, 16))
         btn_table.setToolTip("表格识别截图")
         btn_table.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn_table.setStyleSheet(
-            f"QPushButton {{ font-size: 15px;"
-            f" color: {theme.Colors.accent}; padding: 6px 8px; }}"
-            f" QPushButton:hover {{ background-color: {theme.Colors.hover_bg};"
-            f" border-radius: {theme.Radius.sm}px; }}"
-        )
         btn_table.clicked.connect(
             lambda: self.pipeline_screenshot_requested.emit("TABLE_RECOGNITION")
         )
         layout.addWidget(btn_table)
 
         # 公式识别快捷按钮
-        btn_formula = QPushButton("∑")
+        btn_formula = QPushButton()
+        btn_formula.setIcon(toolbar_icon("sigma", size=16, color=theme.Colors.text))
+        btn_formula.setIconSize(QSize(16, 16))
         btn_formula.setToolTip("公式识别截图")
         btn_formula.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn_formula.setStyleSheet(
-            f"QPushButton {{ font-size: 15px; font-weight: bold;"
-            f" color: {theme.Colors.accent}; padding: 6px 8px; }}"
-            f" QPushButton:hover {{ background-color: {theme.Colors.hover_bg};"
-            f" border-radius: {theme.Radius.sm}px; }}"
-        )
         btn_formula.clicked.connect(
             lambda: self.pipeline_screenshot_requested.emit("FORMULA_RECOGNITION")
         )
         layout.addWidget(btn_formula)
 
         # 显示主窗口按钮
-        btn_main = QPushButton("⌂")
+        btn_main = QPushButton()
+        btn_main.setIcon(toolbar_icon("home", size=16, color=theme.Colors.text))
+        btn_main.setIconSize(QSize(16, 16))
         btn_main.setToolTip("显示主窗口")
         btn_main.setCursor(Qt.CursorShape.PointingHandCursor)
         btn_main.clicked.connect(self.show_main_requested.emit)

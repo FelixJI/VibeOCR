@@ -148,3 +148,72 @@ class TestPreviewWidgetSignals:
 
         with qtbot.waitSignal(widget.image_changed, timeout=1000):
             widget.clear()
+
+
+class TestPreviewWidgetTableHitTest:
+    """块类型模式下的表格块双击命中测试与表格编辑信号。
+
+    _start_table_edit 会弹出模态 QDialog（exec()），无法在 headless 测试中
+    完整驱动，因此这里聚焦可单测的命中逻辑与信号机制。
+    """
+
+    def test_hit_test_type_block_hits_table(self, qapp, sample_pixmap):
+        """_hit_test_type_block 应命中预设的表格矩形并返回 block_type。"""
+        from PySide6.QtCore import QRectF
+
+        widget = PreviewWidget()
+        widget.set_pixmap(sample_pixmap)
+        # 直接构造命中矩形，避免依赖布局时序（_update_type_overlay 需有效尺寸）
+        widget._type_screen_rects = [
+            (0, QRectF(10, 10, 100, 80), "table"),
+            (1, QRectF(200, 10, 100, 50), "text"),
+        ]
+        # 命中表格区域
+        cl_idx, block_type = widget._hit_test_type_block(50, 40)
+        assert cl_idx == 0
+        assert block_type == "table"
+        # 命中文本区域
+        cl_idx, block_type = widget._hit_test_type_block(230, 30)
+        assert cl_idx == 1
+        assert block_type == "text"
+
+    def test_hit_test_type_block_miss(self, qapp, sample_pixmap):
+        from PySide6.QtCore import QRectF
+
+        widget = PreviewWidget()
+        widget.set_pixmap(sample_pixmap)
+        widget._type_screen_rects = [(0, QRectF(10, 10, 50, 50), "table")]
+        cl_idx, block_type = widget._hit_test_type_block(500, 500)
+        assert cl_idx == -1
+        assert block_type == ""
+
+    def test_find_text_block_by_content_index(self, qapp, sample_pixmap):
+        """_find_text_block_by_content_index 按 content_index 反查 text_blocks。"""
+        widget = PreviewWidget()
+        widget.set_pixmap(sample_pixmap)
+        blocks = [
+            TextBlock(text="A", score=0.9, bbox=None, content_index=0),
+            TextBlock(text="B", score=0.9, bbox=None, content_index=2),
+        ]
+        widget.set_text_blocks(blocks)
+        assert widget._find_text_block_by_content_index(2) == 1
+        assert widget._find_text_block_by_content_index(0) == 0
+        assert widget._find_text_block_by_content_index(99) == -1
+        assert widget._find_text_block_by_content_index(-1) == -1
+
+    def test_table_text_edited_signal_exists(self, qapp):
+        """table_text_edited 信号应可正常 emit（验证信号已定义且签名正确）。"""
+        widget = PreviewWidget()
+        received: list[tuple[int, str]] = []
+        widget.table_text_edited.connect(lambda i, h: received.append((i, h)))
+        widget.table_text_edited.emit(3, "<table></table>")
+        assert received == [(3, "<table></table>")]
+
+    def test_type_screen_rects_cleared_on_set_pixmap(self, qapp, sample_pixmap):
+        """切换图片时 _type_screen_rects 应被重置，避免残留命中数据。"""
+        from PySide6.QtCore import QRectF
+
+        widget = PreviewWidget()
+        widget._type_screen_rects = [(0, QRectF(0, 0, 10, 10), "table")]
+        widget.set_pixmap(sample_pixmap)
+        assert widget._type_screen_rects == []

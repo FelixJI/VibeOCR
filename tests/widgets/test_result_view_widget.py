@@ -5,6 +5,7 @@ import re
 from vibeocr.widgets.result_view_widget import (
     BLOCK_BORDER_COLORS,
     BLOCK_TYPE_LABELS,
+    _build_full_html,
     _render_block,
     _render_code,
     _render_equation,
@@ -258,3 +259,66 @@ class TestBorderColorLookup:
             "seal",
         ]:
             assert t in BLOCK_TYPE_LABELS
+
+
+class TestTableNormalizationInRender:
+    """_render_table 应规整化表格：剥离 inline style、补齐空单元格。"""
+
+    def test_strips_inline_style_on_render(self):
+        """渲染时 PaddleX 自带的 style 属性应被剥离。"""
+        block = {
+            "table_body": (
+                '<table><tr><td style="background:#eee">A</td>'
+                '<th style="color:red">B</th></tr></table>'
+            )
+        }
+        html = _render_table(block, 0)
+        assert "style" not in html
+        assert "<td>A</td>" in html
+
+    def test_fills_missing_cells_on_render(self):
+        """不规则行应在渲染时补齐为矩形，避免 Excel 粘贴错位。"""
+        block = {
+            "table_body": (
+                "<table><tr><th>H1</th><th>H2</th></tr>"
+                "<tr><td>only</td></tr></table>"
+            )
+        }
+        html = _render_table(block, 0)
+        assert "<td>only</td><td></td>" in html
+
+    def test_no_zebra_stripe_in_css(self):
+        """CSS 中不应有斑马纹/底纹（避免原生 copy 带样式）。"""
+        from pathlib import Path
+
+        html = _build_full_html("<p>x</p>", Path("resources/katex"))
+        assert "nth-child(even)" not in html
+        # th 不应有 background
+        th_rule = re.search(r"\.ocr-table th\s*\{[^}]*\}", html)
+        assert th_rule is None or "background" not in th_rule.group(0)
+
+
+class TestTableCopyAndSelectionJS:
+    """验证表格 copy 拦截与单元格拖选的 JS 已注入页面。"""
+
+    def _full_html(self) -> str:
+        from pathlib import Path
+
+        return _build_full_html("<p>x</p>", Path("resources/katex"))
+
+    def test_copy_interceptor_present(self):
+        html = self._full_html()
+        assert "addEventListener('copy'" in html
+        assert "_tableSelToOutput" in html
+
+    def test_cell_selection_js_present(self):
+        html = self._full_html()
+        assert "_startCellSelect" in html
+        assert "_applyTableSelHighlight" in html
+        assert "sel-cell" in html
+
+    def test_copy_outputs_clean_html_marker(self):
+        """copy 拦截器应输出无属性的 <table>/<td>（setData text/html）。"""
+        html = self._full_html()
+        assert "setData('text/html'" in html
+        assert "setData('text/plain'" in html

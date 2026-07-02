@@ -166,3 +166,79 @@ def test_recognize_table_filters_text_inside_table_bbox():
     assert not any(b.get("text") == "表格内文字" for b in result.content_list)
 
 
+def test_recognize_table_assigns_bbox_from_cell_box_union():
+    """表格块的 bbox 应从 cell_box_list 并集推导，而非 None。
+
+    修复前 TextBlock.bbox 和 content_list[].bbox 均写死为 None，导致左侧
+    画布无法绘制表格 bbox。修复后二者均应携带外接框（原图像素坐标）。
+    """
+    cell_box_list = [
+        [10.0, 20.0, 250.0, 100.0],
+        [250.0, 20.0, 500.0, 100.0],
+        [10.0, 100.0, 250.0, 200.0],
+        [250.0, 100.0, 500.0, 200.0],
+    ]
+    res = _make_table_result(cell_box_list=cell_box_list)
+    service = _FakeService([res])
+    result = _recognize_table(
+        service, image=None, options=TableRecognitionOptions()
+    )
+
+    # TextBlock 的 bbox 应为单元格并集 [10,20,500,200]
+    table_block = result.text_blocks[0]
+    assert table_block.label == "table"
+    assert table_block.bbox is not None
+    x0, y0, x1, y1 = table_block.bbox
+    assert (x0, y0, x1, y1) == (10.0, 20.0, 500.0, 200.0)
+
+    # content_list 的 table 项也应携带 bbox
+    cl = result.content_list[0]
+    assert cl["type"] == "table"
+    assert cl["bbox"] is not None
+    assert cl["bbox"] == [10.0, 20.0, 500.0, 200.0]
+
+
+def test_recognize_table_bbox_none_when_no_cell_box_list():
+    """cell_box_list 缺失时表格 bbox 应为 None，但仍正常生成表格块。
+
+    验证修复不会因缺少 cell_box_list 而崩溃或丢失表格内容。
+    """
+    res = _make_table_result()  # 不传 cell_box_list
+    service = _FakeService([res])
+    result = _recognize_table(
+        service, image=None, options=TableRecognitionOptions()
+    )
+
+    assert len(result.text_blocks) == 1
+    assert result.text_blocks[0].bbox is None
+    assert result.content_list[0]["bbox"] is None
+    assert "<table>" in result.text_blocks[0].text
+
+
+def test_recognize_table_bbox_multiple_tables_no_misalignment():
+    """多表格场景：每个表格 bbox 独立正确，不因列表错位而串框。
+
+    回归保护：修复前 table_bboxes 只在 cell_box_list 有效时 append，
+    与无条件创建的 text_blocks 会错位。修复后用局部变量即时赋值，
+    即使某表格缺 cell_box_list 也不影响其他表格的 bbox。
+    """
+    # 两个表格：第一个有 cell_box_list，第二个没有
+    res1 = _make_table_result(
+        pred_html="<table><tr><td>A</td></tr></table>",
+        cell_box_list=[[5.0, 5.0, 100.0, 50.0]],
+    )
+    res2 = _make_table_result(pred_html="<table><tr><td>B</td></tr></table>")
+    service = _FakeService([res1, res2])
+    result = _recognize_table(
+        service, image=None, options=TableRecognitionOptions()
+    )
+
+    table_blocks = [b for b in result.text_blocks if b.label == "table"]
+    assert len(table_blocks) == 2
+    # 第一个表格有 bbox
+    assert table_blocks[0].bbox == (5.0, 5.0, 100.0, 50.0)
+    # 第二个表格 bbox 为 None（无 cell_box_list），但内容正常
+    assert table_blocks[1].bbox is None
+    assert "B" in table_blocks[1].text
+
+

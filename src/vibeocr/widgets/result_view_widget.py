@@ -96,6 +96,8 @@ def _render_title(block: dict, index: int) -> str:
 
 
 def _render_table(block: dict, index: int) -> str:
+    from vibeocr.services.ocr_service import normalize_table_html
+
     parts: list[str] = []
     captions = block.get("table_caption") or []
     if captions:
@@ -104,10 +106,12 @@ def _render_table(block: dict, index: int) -> str:
         )
     table_body = block.get("table_body", "")
     html_content = block.get("html", "")
-    if table_body:
-        parts.append(f'<div class="ocr-table">{table_body}</div>')
-    elif html_content:
-        parts.append(f'<div class="ocr-table">{html_content}</div>')
+    raw_table = table_body or html_content
+    if raw_table:
+        # 规整化：剥离 PaddleX 自带的 inline style（避免复制带底纹），
+        # 并补齐空单元格（避免 Excel 粘贴错位）。
+        clean_table = normalize_table_html(raw_table)
+        parts.append(f'<div class="ocr-table">{clean_table}</div>')
     else:
         text = html_lib.escape(block.get("text", ""))
         parts.append(f"<p>{text}</p>")
@@ -292,8 +296,10 @@ body {{ margin:0; padding:8px; font-family:"Microsoft YaHei","Segoe UI",sans-ser
 .ocr-table {{ overflow-x: auto; }}
 .ocr-table table {{ border-collapse: collapse; width: 100%; font-size: 13px; }}
 .ocr-table td, .ocr-table th {{ border: 1px solid #d1d5db; padding: 6px 8px; }}
-.ocr-table th {{ background: #f3f4f6; font-weight: 600; }}
-.ocr-table tr:nth-child(even) {{ background: #f9fafb; }}
+.ocr-table th {{ font-weight: 600; }}
+/* 不加 th 背景与斑马纹：避免原生 Ctrl+C 把底纹带进剪贴板（Excel/Word 粘贴出灰底）。
+   视觉区分靠边框 + th 加粗即可；复制时另有 copy 拦截器输出无样式 HTML。 */
+.ocr-table td.sel-cell, .ocr-table th.sel-cell {{ background-color: rgba(25,118,210,0.18) !important; }}
 .manually-edited {{ border-left-color: #ff9800 !important; border-left-width: 4px !important; }}
 [contenteditable="true"] {{ outline: 2px solid #1976d2; background-color: rgba(255,255,255,0.95); cursor: text; }}
 </style>
@@ -496,6 +502,112 @@ function getCopyText() {{
     }});
     return parts.join('\n\n');
 }}
+
+// ── 表格单元格级拖选（Word/Excel 式）──
+// 当前选中状态：null 表示无单元格选中（回退原生选区）
+var _tableSel = null;  // {{ table, r0, c0, r1, c1 }}
+
+function _cellIndex(cell) {{
+    // 计算 td/th 在其 table 中的 (row, col)，考虑跨行/跨列已由规整化补齐
+    var tr = cell.parentNode;
+    var row = Array.prototype.indexOf.call(tr.parentNode.children, tr);
+    var col = Array.prototype.indexOf.call(tr.children, cell);
+    return {{ row: row, col: col }};
+}}
+
+function _clearTableSelHighlight() {{
+    document.querySelectorAll('.ocr-table .sel-cell').forEach(function(c) {{
+        c.classList.remove('sel-cell');
+    }});
+}}
+
+function _applyTableSelHighlight(sel) {{
+    _clearTableSelHighlight();
+    if (!sel) return;
+    var rows = sel.table.querySelectorAll('tr');
+    var r0 = Math.min(sel.r0, sel.r1), r1 = Math.max(sel.r0, sel.r1);
+    var c0 = Math.min(sel.c0, sel.c1), c1 = Math.max(sel.c0, sel.c1);
+    for (var r = r0; r <= r1; r++) {{
+        var cells = rows[r] ? rows[r].children : [];
+        for (var c = c0; c <= c1; c++) {{
+            if (cells[c]) cells[c].classList.add('sel-cell');
+        }}
+    }}
+}}
+
+function _startCellSelect(cell, e) {{
+    // contenteditable 编辑中的单元格不拦截（让用户正常编辑文字）
+    if (cell.getAttribute('contenteditable') === 'true') return;
+    var table = cell.closest('table');
+    if (!table) return;
+    var pos = _cellIndex(cell);
+    _tableSel = {{ table: table, r0: pos.row, c0: pos.col, r1: pos.row, c1: pos.col }};
+    _applyTableSelHighlight(_tableSel);
+    e.preventDefault();  // 阻止原生文本选区
+}}
+
+function _extendCellSelect(cell) {{
+    if (!_tableSel) return;
+    var pos = _cellIndex(cell);
+    _tableSel.r1 = pos.row;
+    _tableSel.c1 = pos.col;
+    _applyTableSelHighlight(_tableSel);
+}}
+
+// mousedown：在单元格上启动拖选
+document.addEventListener('mousedown', function(e) {{
+    var cell = e.target.closest('.ocr-table td, .ocr-table th');
+    if (cell) _startCellSelect(cell, e);
+}});
+
+// mousemove（按下时）：扩展选区
+document.addEventListener('mousemove', function(e) {{
+    if (!_tableSel || (e.buttons & 1) === 0) return;  // 仅左键按下时
+    var cell = e.target.closest('.ocr-table td, .ocr-table th');
+    if (cell && _tableSel.table.contains(cell)) _extendCellSelect(cell);
+}});
+
+// 点击表格外的区域：清除单元格选中
+document.addEventListener('mousedown', function(e) {{
+    if (!e.target.closest('.ocr-table')) {{
+        if (_tableSel) {{
+            _tableSel = null;
+            _clearTableSelHighlight();
+        }}
+    }}
+}});
+
+// ── 从选中区域构建干净 HTML + Tab 分隔文本（复制用）──
+function _tableSelToOutput(sel) {{
+    var rows = sel.table.querySelectorAll('tr');
+    var r0 = Math.min(sel.r0, sel.r1), r1 = Math.max(sel.r0, sel.r1);
+    var c0 = Math.min(sel.c0, sel.c1), c1 = Math.max(sel.c0, sel.c1);
+    var trHtml = [], lines = [];
+    for (var r = r0; r <= r1; r++) {{
+        var cells = rows[r] ? rows[r].children : [];
+        var ch = [], texts = [];
+        for (var c = c0; c <= c1; c++) {{
+            var cell = cells[c];
+            var text = cell ? cell.innerText : '';
+            texts.push(text);
+            // 保留原标签（td/th），不加任何属性 → Excel/Word 粘贴无底纹
+            var tag = cell ? cell.tagName.toLowerCase() : 'td';
+            ch.push('<' + tag + '>' + text.replace(/&/g,'&amp;').replace(/</g,'&lt;') + '</' + tag + '>');
+        }}
+        trHtml.push('<tr>' + ch.join('') + '</tr>');
+        lines.push(texts.join('\t'));
+    }}
+    return {{ html: '<table>' + trHtml.join('') + '</table>', text: lines.join('\n') }};
+}}
+
+// ── 拦截 copy：表格选中时输出无样式 HTML + Tab 文本 ──
+document.addEventListener('copy', function(e) {{
+    if (!_tableSel) return;  // 无单元格选中 → 走原生 copy（普通文本块）
+    var out = _tableSelToOutput(_tableSel);
+    e.clipboardData.setData('text/html', out.html);
+    e.clipboardData.setData('text/plain', out.text);
+    e.preventDefault();
+}});
 </script>
 </body>
 </html>"""
@@ -675,7 +787,11 @@ class ResultViewWidget(QWidget):
         web_view.setHtml(full_html, base_url)
 
     def update_block_text(self, index: int, text: str) -> None:
-        """从外部更新指定块的显示文本（如左侧编辑同步时调用）"""
+        """从外部更新指定块的显示文本（如左侧编辑同步时调用）。
+
+        对 table 块，``text`` 应为新的 ``<table>`` HTML，会重建 ``.ocr-table``
+        容器的 innerHTML（替代早期直接 return 不刷新的行为）。
+        """
         if not self._web_view:
             return
         escaped = json.dumps(text)
@@ -684,12 +800,19 @@ class ResultViewWidget(QWidget):
         var block = document.getElementById('block-{index}');
         if (!block) return;
         var blockType = block.getAttribute('data-block-type');
-        if (blockType === 'table') return;
-        var contentEl = block.querySelector('p, h1, h2, h3, h4, h5, h6, pre code, ul');
-        if (contentEl) {{
-            contentEl.innerText = {escaped};
+        if (blockType === 'table') {{
+            // 表格：重建 .ocr-table 容器内容
+            var tableBox = block.querySelector('.ocr-table');
+            if (tableBox) {{
+                tableBox.innerHTML = {escaped};
+            }}
         }} else {{
-            block.innerText = {escaped};
+            var contentEl = block.querySelector('p, h1, h2, h3, h4, h5, h6, pre code, ul');
+            if (contentEl) {{
+                contentEl.innerText = {escaped};
+            }} else {{
+                block.innerText = {escaped};
+            }}
         }}
         block.classList.add('manually-edited');
     }})();
