@@ -1,5 +1,37 @@
 # Changelog
 
+## [0.4.6] - 2026-07-02
+
+### Added
+- feat(result-view): 工具栏新增复制MD/导出Word/导出Excel按钮
+- feat(single-tab): 识别成功后自动折叠选项面板
+- feat(widget): TextBlockOptionsWidget 改用 CollapsibleGroupBox
+- feat(widget): PreprocessOptionsWidget 改用 CollapsibleGroupBox
+- feat(widget): 新增可折叠 CollapsibleGroupBox 组件
+- feat(table): 表格 bbox 修复 + 双击编辑 + 复制去底纹/单元格拖选
+- feat(toolbar): 工具栏快捷管道截图、表格去重、复制按钮与打包版本信息
+
+### Fixed
+- fix: 结果区编辑/公式渲染/通用管道编辑/表格双击/设置后端/截图闪屏
+- fix: gate only WebEngine-dependent UI on WebEngine availability; add export-failure test
+- fix(tests): 消除 paddle+torch 同进程 DLL 冲突导致的 pytest 0xc0000139 崩溃
+- fix(bump): _collect_commits 加 --no-merges，剔除 CHANGELOG 的分支合并噪音
+- fix(update): 修复主程序未退出导致文件锁冲突、失败无提示、临时产物残留
+
+### Changed
+- style(ruff): 修正分支新增文件的 import 排序与多余 noqa 指令
+- test(result-view): 导出 Word/Excel 集成测试
+- chore(deps): 显式声明 python-docx、openpyxl 依赖
+- docs(update): 修正 webengine_manager 残留注释
+- chore(release): CI 不再上传 webengine zip，README 改为内置打包
+- docs(result_view): 更新 WebEngine 注释为内置打包语义
+- refactor(main_window): 删除 WebEngine DLL 补丁与安装分支
+- refactor(install): 删除 InstallWorker 的 WebEngine 下载步骤
+- refactor: 删除 webengine_manager 模块与 env_config 路径函数
+- refactor(update): 删除 _sync_webengine 及调用点
+- refactor(build): 删除 WebEngine 拆分逻辑，始终内置打包
+- style: 修复 main.py / update_service.py 既有 lint 问题
+
 ## [0.4.5] - 2026-07-02
 
 ### Added
