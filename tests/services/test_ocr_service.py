@@ -19,6 +19,23 @@ try:
 except ImportError:
     HAS_PADDLEX = False
 
+# paddle 与 torch 同进程共存时，两者的 OpenMP/CUDA DLL 冲突会触发 Windows
+# 致命异常 0xc0000139 (ENTRYPOINT_NOT_FOUND)，直接杀死 pytest 进程（无法被
+# try/except 捕获）。生产代码通过子进程 Worker 隔离 OCR（ocr_worker_process.py），
+# 但下面两个测试类在 pytest 主进程内直接访问 service.pipeline / service.recognize，
+# 会触发 paddle→modelscope→torch 的 import 链导致崩溃。
+# 检测 paddle + modelscope 共存（modelscope 会拉入 torch）时跳过这些测试；
+# 用 find_spec('torch') 不可靠——torch 可能经 sys.path 注入而在收集期不可见。
+# pipeline 的子进程路径另有集成测试覆盖，跳过主进程路径不丢真实覆盖。
+try:
+    import importlib.util as _ilu
+
+    _HAS_PADDLE = _ilu.find_spec("paddle") is not None
+    _HAS_MODELSCOPE = _ilu.find_spec("modelscope") is not None
+    PADDLE_TORCH_CONFLICT = _HAS_PADDLE and _HAS_MODELSCOPE
+except ImportError:
+    PADDLE_TORCH_CONFLICT = False
+
 
 class TestOCRServiceSingleton:
     """测试单例模式。"""
@@ -95,7 +112,10 @@ class TestOCROptions:
         assert options.enable_table is False
 
 
-@pytest.mark.skipif(not HAS_PADDLEX, reason="paddleocr not installed")
+@pytest.mark.skipif(
+    not HAS_PADDLEX or PADDLE_TORCH_CONFLICT,
+    reason="paddleocr not installed, or paddle+torch 同进程 DLL 冲突",
+)
 class TestOCRServicePipeline:
     """测试 OCR 产线懒加载。"""
 
@@ -113,7 +133,10 @@ class TestOCRServicePipeline:
         OCRService._pipelines = {}
 
 
-@pytest.mark.skipif(not HAS_PADDLEX, reason="paddleocr not installed")
+@pytest.mark.skipif(
+    not HAS_PADDLEX or PADDLE_TORCH_CONFLICT,
+    reason="paddleocr not installed, or paddle+torch 同进程 DLL 冲突",
+)
 class TestOCRServiceRecognize:
     """测试 OCR 识别功能。"""
 
