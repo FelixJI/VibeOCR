@@ -119,8 +119,6 @@ jobs:
           files: |
             dist/VibeOCR-v${{ steps.version.outputs.version }}-win64.zip
             dist/VibeOCR-v${{ steps.version.outputs.version }}-win64.zip.sha256
-            dist/VibeOCR-v${{ steps.version.outputs.version }}-webengine-win64.zip
-            dist/VibeOCR-v${{ steps.version.outputs.version }}-webengine-win64.zip.sha256
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

@@ -62,7 +62,7 @@ VibeOCR 是一款基于 [PySide6](https://www.qt.io/) + [PaddlePaddle](https://w
 
 > 国内用户访问 GitHub 较慢时，可在程序内检查更新（自动走 gh 代理加速），或使用 gh 代理前缀手动下载。
 
-首次启动时，应用会自动检测 GPU/CPU 并引导安装推理依赖；WebEngine 渲染组件按需下载。
+首次启动时，应用会自动检测 GPU/CPU 并引导安装推理依赖；WebEngine 渲染组件已内置主包。
 
 ### 方式二：从源码运行（开发者）
 
@@ -163,7 +163,7 @@ vibeocr/
 打包与发版由 [`scripts/bump_version.py`](scripts/bump_version.py) 编排（基于 PyInstaller），
 推送到 `v*` 格式的 tag 后，GitHub Actions（[`.github/workflows/release.yml`](.github/workflows/release.yml)）会：
 
-1. 用 PyInstaller 构建便携版 zip（主包 + WebEngine 资源包 + SHA256 校验）
+1. 用 PyInstaller 构建便携版 zip（含 WebEngine 渲染组件 + SHA256 校验）
 2. 上传到 GitHub Release
 3. 镜像代码到 CNB（国内加速）
 
