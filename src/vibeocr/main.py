@@ -139,12 +139,32 @@ def _run_self_update(zip_path: Path, app_dir: Path) -> int:
 
     # self-update 模式需同时避让 VibeOCR.exe（可能锁未释放）与 updater.exe（同目录）。
     # 就绪信号用 self_update.ready，与 update_service._launch_self_update 的轮询对应。
+    # on_failure: windowed 运行下 stdout 不可见，失败必须弹窗告知用户。
     return run_replacement(
         zip_path,
         app_dir,
         self_exe_names=("VibeOCR.exe", "updater.exe"),
         ready_filename="self_update.ready",
+        on_failure=_notify_self_update_failure,
     )
+
+
+def _notify_self_update_failure(message: str) -> None:
+    """--self-update 兜底替换失败时弹窗提示（与 updater.exe 的 _notify_failure 对称）。
+
+    兜底路径由主程序充当替换器，windowed 运行 stdout 不可见，失败必须有可见反馈，
+    否则用户会卡在「应用关了什么都没发生」的盲区。弹窗本身异常时退化为 stderr
+    （windowed 下虽不可见，但 self_update.log 已由 update_replacer 记录失败详情）。
+    """
+    if sys.platform != "win32":
+        print(message, file=sys.stderr)
+        return
+    try:
+        import ctypes
+
+        ctypes.windll.user32.MessageBoxW(0, message, "VibeOCR 更新失败", 0x10)
+    except Exception as e:
+        print(f"[VibeOCR][self-update] 弹出失败提示框异常: {e}", file=sys.stderr)
 
 
 def _create_tray_icon(app, window, app_settings):

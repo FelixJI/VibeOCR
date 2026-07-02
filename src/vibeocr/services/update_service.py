@@ -11,7 +11,6 @@ import json
 import logging
 import os
 import subprocess
-import sys
 import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, NamedTuple
@@ -694,19 +693,19 @@ class UpdateService:
 
         # 先尝试 updater.exe（首选替换器），握手确认它「活着」再退出。
         # 握手三态：
-        #   ready/timeout → 替换器确认在工作（ready=快，timeout=慢但仍在跑）→ sys.exit 放心。
+        #   ready/timeout → 替换器确认在工作（ready=快，timeout=慢但仍在跑）→ 退出，释放文件锁。
         #   crashed       → updater 确认坏了 → 启动 [VibeOCR.exe --self-update] 兜底。
         # 关键：timeout 不能误判为坏，否则并发启 self-update 会与仍在工作的 updater
         # 抢着替换 app_dir，导致文件损坏。
         result = await self._launch_updater(zip_path)
         if result in ("ready", "timeout"):
-            sys.exit(0)
+            self._force_quit()
 
         # updater 确认崩溃（crashed）→ 主程序自身充当兜底替换器。
         logger.warning("updater.exe 握手失败（crashed），改用主程序自带更新模式（--self-update）兜底")
         result = await self._launch_self_update(zip_path)
         if result in ("ready", "timeout"):
-            sys.exit(0)
+            self._force_quit()
 
         # 极端罕见：连主程序自身都起不来（VibeOCR.exe 若坏，应用本就无法启动）。
         # 不退出主程序，明确告知用户手动重装——避免「应用关了什么都不发生」的困惑。
@@ -718,6 +717,30 @@ class UpdateService:
             "请手动下载最新版，覆盖安装前请先退出本程序：\n"
             f"{manual_url}",
         )
+
+    def _force_quit(self) -> None:
+        """强制退出主程序，把 VibeOCR.exe 及 _internal/*.dll 的文件锁释放给替换器。
+
+        不能用 ``sys.exit``：本方法运行于 qasync 调度的 asyncio Task 内
+        （``_do_download_and_update`` 由 ``asyncio.ensure_future`` 挂载）。``SystemExit``
+        被 Task 当成普通异常吞进 ``Task.exception()``，进程不会终止——日志中
+        「删除 VibeOCR.exe 失败: WinError 5」的根因正是主程序没退出、文件锁未释放，
+        替换器在锁定状态下替换必然失败且回滚也失败。
+
+        用 ``os._exit(0)`` 跳过解释器常规关闭流程（与 main.launch_application 末尾的
+        ``os._exit(0)`` 一致），确保进程立即终止、句柄立刻释放。Qt 对象不析构无妨：
+        替换器会覆盖整个应用目录，旧实例的资源回收没有意义。
+        """
+        logger.info("握手成功，主程序退出以释放文件锁，交给替换器完成更新")
+        # 先尝试关闭事件循环，给 Qt/asyncio 一个快速收尾机会；再 os._exit 兜底。
+        try:
+            loop = asyncio.get_event_loop()
+            loop.stop()
+        except Exception:
+            pass
+        # 短暂让出 CPU，确保子进程（替换器）已真正接管；随后硬退出。
+        time.sleep(0.1)
+        os._exit(0)
 
     # 握手超时（秒）：替换器需在此窗口内写出就绪信号文件。
     # onefile 解压 + Python 初始化在慢机器上可能数秒，给 15s 余量。

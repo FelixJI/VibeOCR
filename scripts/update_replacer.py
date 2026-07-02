@@ -24,12 +24,16 @@ import logging
 import os
 import shutil
 import subprocess
-import sys
+import time
 import traceback
 import zipfile
 from datetime import datetime
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 # 更新时保留的目录
 _PRESERVE_DIRS = {"python", "data", "config"}
@@ -104,7 +108,7 @@ def signal_ready(app_dir: Path, ready_filename: str) -> None:
         ready_path = app_dir / "data" / "cache" / "update" / ready_filename
         ready_path.parent.mkdir(parents=True, exist_ok=True)
         ready_path.write_text(datetime.now().isoformat(), encoding="utf-8")
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         # 写 ready 失败不致命：最坏情况是主程序端误判握手失败、走兜底路径，
         # 兜底路径同样能完成替换。仅记录。
         logger.warning(f"写就绪信号失败（主程序端可能误判握手失败）: {e}")
@@ -257,9 +261,9 @@ def replace_app_files(
         for item in old_items:
             bak = backup_dir / item.name
             if item.is_dir():
-                shutil.copytree(item, bak, dirs_exist_ok=True)
+                shutil.copytree(item, bak, dirs_exist_ok=True, copy_function=_busy_copy2)
             else:
-                shutil.copy2(item, bak)
+                _busy_copy2(item, bak)
             backed_up.append((item, bak))
     except Exception as e:
         logger.error(f"备份旧文件失败，中止更新: {e}")
@@ -267,32 +271,46 @@ def replace_app_files(
         return False
 
     # 2) 删除旧条目
+    #    注意：删除失败（含被占用）不致命——复制阶段会再尝试覆盖。但「文件被占用」
+    #    属瞬时抖动，先退避重试吸收，避免残留旧文件干扰后续复制判定。
     for item in old_items:
+        is_dir = item.is_dir()
         try:
-            if item.is_dir():
+            if is_dir:
+                # rmtree 对占用中的目录整体失败，对子文件逐项重试更稳；
+                # ignore_errors=True 兜底（目录里混有运行中 exe 时逐文件删不干净
+                # 是常态，交给复制阶段的 _busy_copy_file / 回滚处理）。
                 shutil.rmtree(item, ignore_errors=True)
-            else:
-                item.unlink(missing_ok=True)
+            elif not _busy_remove(item, is_dir=False):
+                logger.warning(f"删除 {item} 失败: 文件持续被占用")
         except Exception as e:
             logger.warning(f"删除 {item} 失败: {e}")
 
     # 3) 复制新文件；任一失败则回滚
+    #    单文件复制对「文件被占用」退避重试（杀独占扫描、OS 句柄释放延迟），
+    #    避免瞬时抖动误触发整包回滚。目录用 copytree（内部逐项复制，无法单点重试），
+    #    失败仍走原回滚逻辑。
     try:
         for item in new_files_dir.iterdir():
             if item.name in _PRESERVE_DIRS:
                 continue
             dest = app_dir / item.name
-            try:
-                if item.is_dir():
-                    shutil.copytree(item, dest, dirs_exist_ok=True)
-                else:
-                    shutil.copy2(item, dest)
-            except Exception as e:
-                # 此处 item 必然已绑定（来自上面的 for）
-                logger.error(f"复制 {item} 失败: {e}")
-                logger.info("正在回滚到更新前状态...")
-                _restore_backup(app_dir, backed_up, backup_dir)
-                return False
+            if item.is_dir():
+                try:
+                    shutil.copytree(
+                        item, dest, dirs_exist_ok=True, copy_function=_busy_copy2
+                    )
+                except Exception as e:
+                    logger.error(f"复制目录 {item} 失败: {e}")
+                    logger.info("正在回滚到更新前状态...")
+                    _restore_backup(app_dir, backed_up, backup_dir)
+                    return False
+            else:
+                if not _busy_copy_file(item, dest):
+                    logger.error(f"复制 {item} 失败: 文件持续被占用")
+                    logger.info("正在回滚到更新前状态...")
+                    _restore_backup(app_dir, backed_up, backup_dir)
+                    return False
     except Exception as e:
         # iterdir() 自身失败（目录不存在/无权限等），item 此时未绑定
         logger.error(f"读取更新包内容失败: {e}")
@@ -338,13 +356,100 @@ def _restore_backup(
     for original, bak in backed_up:
         try:
             if bak.is_dir():
-                shutil.copytree(bak, original, dirs_exist_ok=True)
+                shutil.copytree(
+                    bak, original, dirs_exist_ok=True, copy_function=_busy_copy2
+                )
             else:
-                shutil.copy2(bak, original)
+                _busy_copy2(bak, original)
         except Exception as e:
             logger.warning(f"回滚 {original} 失败: {e}")
 
     shutil.rmtree(backup_dir, ignore_errors=True)
+
+
+# ---------------------------------------------------------------------------
+# 瞬时文件占用重试（Windows 杀软扫描 / OS 句柄释放延迟）
+# ---------------------------------------------------------------------------
+
+# 删除 / 复制单文件时，遇到「拒绝访问(5) / 文件被占用(32)」的累计等待上限。
+# 实测主程序退出后 DLL 锁释放 + 杀软扫描新文件可达数秒；给 10s 既覆盖慢机器，
+# 又不致让失败用户干等过久。超时后照常落入删除失败（warning）→ 复制失败（回滚）路径。
+_BUSY_TIMEOUT = 10.0
+_BUSY_POLL_INTERVAL = 0.2
+
+
+def _is_busy_error(exc: OSError) -> bool:
+    """判断 OSError 是否为「文件被占用」类瞬时错误（WinError 5 / 32）。"""
+    return getattr(exc, "winerror", None) in (5, 32)
+
+
+def _busy_remove(path: Path, *, is_dir: bool) -> bool:
+    """带重试地删除文件或目录，遇到文件占用错误时退避等待。
+
+    Windows 上杀毒软件会在新文件出现瞬间扫描、短暂独占；OS 释放已退出进程的
+    句柄也有延迟。直接 unlink/rmtree 常在此刻失败（WinError 5/32），徒增回滚。
+    本函数对这类瞬时占用退避重试，对其它错误（如权限不足）立即放弃交上层处理。
+
+    Returns:
+        True 表示删除成功（或目标本就不存在）；False 表示最终仍失败。
+    """
+    if not path.exists():
+        return True
+    deadline = time.monotonic() + _BUSY_TIMEOUT
+    while True:
+        try:
+            if is_dir:
+                shutil.rmtree(path, ignore_errors=False)
+            else:
+                path.unlink(missing_ok=True)
+            return True
+        except OSError as e:
+            if not _is_busy_error(e) or time.monotonic() >= deadline:
+                return False
+            logger.debug(f"删除 {path.name} 被占用，等待重试: {e}")
+            time.sleep(_BUSY_POLL_INTERVAL)
+
+
+def _busy_copy_file(src: Path, dest: Path) -> bool:
+    """带重试地复制单文件，遇到文件占用错误时退避等待（覆盖已存在目标）。
+
+    复制阶段的目标文件可能是旧版本（尚未删除/改名）或被杀软扫描的新写入文件，
+    瞬时占用会导致 copy2 抛 WinError 5/32。退避重试可吸收这类抖动，避免误触发
+    整体回滚。对其它错误（磁盘满、路径不存在）不重试，由调用方记录并回滚。
+
+    Returns:
+        True 表示复制成功；False 表示最终仍失败（调用方应回滚）。
+    """
+    deadline = time.monotonic() + _BUSY_TIMEOUT
+    while True:
+        try:
+            shutil.copy2(src, dest)
+            return True
+        except OSError as e:
+            if not _is_busy_error(e) or time.monotonic() >= deadline:
+                return False
+            logger.debug(f"复制 {src.name} 被占用，等待重试: {e}")
+            time.sleep(_BUSY_POLL_INTERVAL)
+
+
+def _busy_copy2(src, dst):
+    """``shutil.copytree`` 的 copy_function 适配：与 ``copy2`` 同签名，遇占用则重试。
+
+    copytree 复制目录时逐文件调用 copy_function；默认 copy2 不重试，目录内任一
+    文件被杀独占/句柄延迟占用即整体抛错。本函数把重试逻辑注入 copytree，使
+    ``_internal/`` 这类大目录的复制也能吸收瞬时占用。重试耗尽后照常抛出 OSError，
+    让上层 copytree 异常传播 → 触发回滚。
+    """
+    src_path = Path(src)
+    deadline = time.monotonic() + _BUSY_TIMEOUT
+    while True:
+        try:
+            return shutil.copy2(src, dst)
+        except OSError as e:
+            if not _is_busy_error(e) or time.monotonic() >= deadline:
+                raise
+            logger.debug(f"复制 {src_path.name} 被占用，等待重试: {e}")
+            time.sleep(_BUSY_POLL_INTERVAL)
 
 
 # ---------------------------------------------------------------------------
@@ -449,7 +554,46 @@ def _sync_webengine(old_ver: str, new_data: dict, app_dir: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _safe_cleanup_artifacts(zip_path: Path, tmp_dir: Path | None) -> None:
+    """失败路径兜底清理：删 zip / sha256 / 解压临时目录 / 备份目录。
+
+    成功路径由 ``cleanup`` 负责（且 ``replace_app_files`` 已删 _backup）；
+    失败路径下 ``cleanup`` 不会被调用，若不清理会有三处残留堆积：
+    1. 解压目录 ``data/cache/update/tmp``（数百 MB）——``download_update`` 重下时
+       只删 update 目录里的「文件」，不清子目录，残留会越积越多；
+    2. 备份目录 ``data/cache/update/_backup``（回滚后会留空目录或残留文件）；
+    3. 已下载的 zip / sha256（下次下载会覆盖，但留着占用空间）。
+
+    所有删除都用 ignore_errors / 容错，确保清理本身不会抛异常打断通知流程。
+    """
+    # zip + sha256
+    zip_path.unlink(missing_ok=True)
+    sha256_path = Path(str(zip_path) + ".sha256")
+    sha256_path.unlink(missing_ok=True)
+
+    update_dir = zip_path.parent  # data/cache/update
+    # 解压临时目录：tmp_dir 可能指向 tmp/ 本身或其下唯一的 VibeOCR/ 子目录，
+    # 一律回到 tmp/ 整个删。即便 tmp_dir 为 None（校验阶段就失败、未解压），
+    # 也按路径清掉可能残留的 tmp/（上次失败遗留）。
+    tmp_root: Path | None = None
+    if tmp_dir is not None:
+        tmp_root = tmp_dir if tmp_dir.name == "tmp" else tmp_dir.parent
+    if tmp_root is None or tmp_root.name != "tmp":
+        tmp_root = update_dir / "tmp"
+    if tmp_root.exists():
+        shutil.rmtree(tmp_root, ignore_errors=True)
+    # 备份目录（失败时仍存在，回滚只复制不删 _backup）
+    backup_dir = update_dir / "_backup"
+    if backup_dir.exists():
+        shutil.rmtree(backup_dir, ignore_errors=True)
+
+
 def cleanup(zip_path: Path, tmp_dir: Path | None) -> None:
+    """成功路径收尾：删解压临时目录、zip、sha256，并清理上次残留的 *.exe.old。
+
+    注意本函数不清 ``_backup`` 目录——成功路径下 ``replace_app_files`` 已在复制成功后
+    删除它。失败路径的清理（含 _backup）走 ``_safe_cleanup_artifacts``。
+    """
     if tmp_dir and tmp_dir.exists():
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
@@ -506,6 +650,7 @@ def run_replacement(
     app_dir: Path,
     self_exe_names: tuple[str, ...] = ("updater.exe",),
     ready_filename: str = "updater.ready",
+    on_failure: Callable[[str], None] | None = None,
 ) -> int:
     """替换流程统一入口：校验 → 写就绪信号 → 解压 → 替换 → 清理 → 启动。
 
@@ -514,9 +659,13 @@ def run_replacement(
         app_dir: 应用安装目录。
         self_exe_names: 替换前需改名避让的运行中 exe（见 replace_app_files）。
         ready_filename: 就绪信号文件名（见 signal_ready），由调用方区分路径来源。
+        on_failure: 可选的失败通知回调。替换流程在任何阶段失败时调用，传入面向用户
+            的提示文案。替换器以 ``console=False``（windowed）运行，stdout 不可见，
+            仅写日志文件的话用户无法感知失败（历史问题：「应用关了什么都没发生」）。
+            调用方传入「弹窗」实现（如 ctypes MessageBox），确保失败时用户能看到。
 
     Returns:
-        0 成功，1 失败（已写日志，调用方据此 sys.exit）。
+        0 成功，1 失败（已写日志 + 已调用 on_failure，调用方据此 sys.exit）。
     """
     logger.info("VibeOCR 替换流程启动")
     logger.info(f"更新包: {zip_path}")
@@ -526,16 +675,30 @@ def run_replacement(
     # 必须在任何可能失败的替换步骤之前，否则主程序端握不到手会误判。
     signal_ready(app_dir, ready_filename)
 
+    fail_reason = ""
+    # 解压目录引用：无论哪个阶段失败，都要清理掉，避免数百 MB 的临时文件长期堆积
+    # （download_update 只清 update 目录里的「文件」，不清子目录，残留 tmp/ 会越积越多）。
+    new_files_dir: Path | None = None
+    # 失败时是否尝试重启旧版本：仅替换失败并已回滚的场景需要（此刻旧文件仍在位）。
+    # zip/sha256 校验失败时根本没动 app_dir，旧版本必然完好，也可重启。
+    relaunch_on_fail = True
+
     try:
         if not verify_zip(zip_path):
+            fail_reason = "更新包已损坏或校验失败。"
             return 1
         if not verify_sha256(zip_path):
+            fail_reason = "更新包完整性（SHA256）校验失败，文件可能损坏或被篡改。"
             return 1
 
         new_files_dir = extract_zip(zip_path, app_dir)
 
         if not replace_app_files(new_files_dir, app_dir, self_exe_names):
-            logger.error("更新失败，请手动下载最新版本")
+            # replace_app_files 已记录详细日志并尝试回滚；这里给用户一个明确结论。
+            fail_reason = (
+                "更新失败：替换文件时出错（可能文件被占用或权限不足）。\n"
+                "已尝试回滚到更新前状态。"
+            )
             return 1
 
         cleanup(
@@ -548,4 +711,22 @@ def run_replacement(
     except Exception:
         # 兜底：任何未捕获异常都写进日志文件，避免「静默崩溃、无现场」。
         logger.error("更新过程中发生未捕获异常:\n%s", traceback.format_exc())
+        fail_reason = "更新过程中发生异常，请查看日志或手动下载最新版。"
         return 1
+    finally:
+        # 失败时务必清理临时产物（zip / sha256 / 解压目录 / 备份目录），避免长期堆积。
+        # 成功路径已在 try 内 cleanup，不走这里。
+        if fail_reason:
+            _safe_cleanup_artifacts(zip_path, new_files_dir)
+            # 替换失败并回滚后，旧版本仍在位 → 重启它，避免「主程序已退出、应用打不开」
+            # （主程序端 os._exit 后无法再自己起来，必须由替换器代为拉起）。重启在通知
+            # 之前发起，这样即使用户停在弹窗上，旧版应用也能在后台加载起来。
+            if relaunch_on_fail:
+                launch_app(app_dir)
+            # 通知用户：替换器无 GUI 主体，windowed 运行下 stdout 不可见，唯一可见反馈
+            # 是调用方注入的弹窗。历史 bug「更新失败无任何提示」即源于此缺失。
+            if on_failure is not None:
+                try:
+                    on_failure(fail_reason)
+                except Exception as notify_err:
+                    logger.error(f"失败通知回调异常: {notify_err}")

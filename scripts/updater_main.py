@@ -25,6 +25,27 @@ from pathlib import Path
 from update_replacer import logger, run_replacement, setup_logging
 
 
+def _notify_failure(message: str) -> None:
+    """用 Windows 原生 MessageBox 弹出更新失败提示。
+
+    updater.exe 以 ``console=False``（windowed）运行，stdout/stderr 不可见，仅写日志文件。
+    历史问题：更新失败时用户只看到「应用关了什么都没发生」，因为没有任何 UI 反馈。
+    本回调由 run_replacement 在失败路径调用，确保用户能看到失败结论 + 手动下载指引。
+    用 ctypes 调 user32.MessageBoxW 避免引入 PySide6（替换器须保持纯 stdlib）。
+    """
+    if sys.platform != "win32":
+        # 非 Windows（开发/CI）退化到 stderr，总比静默好。
+        print(message, file=sys.stderr)
+        return
+    try:
+        import ctypes
+
+        # MB_ICONERROR=0x10；返回值忽略。
+        ctypes.windll.user32.MessageBoxW(0, message, "VibeOCR 更新失败", 0x10)
+    except Exception as e:
+        logger.error(f"弹出失败提示框异常: {e}")
+
+
 def parse_args() -> tuple[Path, Path]:
     parser = argparse.ArgumentParser(description="VibeOCR 更新助手")
     parser.add_argument("--update", required=True, help="更新包 zip 路径")
@@ -42,11 +63,13 @@ def main() -> int:
     # updater.exe 是独立进程，替换时只需避让自己（主程序 VibeOCR.exe 已在
     # 主程序端 sys.exit 后释放文件锁）。就绪信号用默认的 updater.ready，
     # 与主程序端 _launch_updater 的轮询文件名对应。
+    # on_failure: windowed 运行下 stdout 不可见，失败必须弹窗告知用户。
     return run_replacement(
         zip_path,
         app_dir,
         self_exe_names=("updater.exe",),
         ready_filename="updater.ready",
+        on_failure=_notify_failure,
     )
 
 
