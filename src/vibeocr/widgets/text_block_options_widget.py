@@ -14,10 +14,8 @@ from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
-    QGroupBox,
     QHBoxLayout,
     QLabel,
-    QVBoxLayout,
     QWidget,
 )
 
@@ -28,6 +26,7 @@ from vibeocr.models.text_block_options import (
     TextBlockOptions,
 )
 from vibeocr.ui import theme
+from vibeocr.widgets.collapsible_group_box import CollapsibleGroupBox
 
 # 换行模式下拉项：(显示名, line_mode 值)
 _LINE_MODE_ITEMS: list[tuple[str, str]] = [
@@ -37,7 +36,7 @@ _LINE_MODE_ITEMS: list[tuple[str, str]] = [
 ]
 
 
-class TextBlockOptionsWidget(QGroupBox):
+class TextBlockOptionsWidget(CollapsibleGroupBox):
     """文本块处理选项面板。"""
 
     options_changed = Signal(object)  # TextBlockOptions
@@ -53,7 +52,7 @@ class TextBlockOptionsWidget(QGroupBox):
     # ── UI 构建 ──
 
     def _setup_ui(self) -> None:
-        layout = QVBoxLayout(self)
+        layout = self.contentLayout()
         layout.setSpacing(6)
 
         # 换行模式下拉

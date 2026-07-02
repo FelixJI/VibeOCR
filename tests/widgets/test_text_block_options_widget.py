@@ -122,3 +122,13 @@ class TestGetTextOptions:
         assert opts.block_join_space is True
         assert opts.chinese_indent is False
         assert opts.drop_blank_blocks is True
+
+
+class TestCollapsible:
+    def test_is_collapsible(self, widget):
+        """改基类后支持折叠 API。"""
+        from vibeocr.widgets.collapsible_group_box import CollapsibleGroupBox
+
+        assert isinstance(widget, CollapsibleGroupBox)
+        widget.set_collapsed(True)
+        assert widget.is_collapsed() is True
