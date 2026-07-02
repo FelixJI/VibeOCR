@@ -403,7 +403,89 @@ class TestResultViewExportButtons:
         assert fake.text() == "SENTINEL"
 
     def test_buttons_hidden_initially(self, widget):
-        """初始（无结果）三个新按钮隐藏。"""
-        assert widget._copy_md_btn.isVisible() is False
-        assert widget._export_docx_btn.isVisible() is False
-        assert widget._export_xlsx_btn.isVisible() is False
+        """初始（无结果）三个新按钮隐藏。
+
+        用 isHidden() 而非 isVisible()：父窗口从未 show()，isVisible() 恒为
+        False（弱断言）；isHidden() 仅在显式 hide() 后为 True，能真正验证
+        _setup_ui 里的 btn.hide() 生效。
+        """
+        assert widget._copy_md_btn.isHidden() is True
+        assert widget._export_docx_btn.isHidden() is True
+        assert widget._export_xlsx_btn.isHidden() is True
+
+    def test_export_docx_creates_file(self, widget, qtbot, monkeypatch, tmp_path):
+        """导出 Word：mock 另存为对话框，断言生成 .docx 文件。"""
+        result = self._make_result(raw_text="导出测试内容")
+        widget._current_result = result
+
+        out = tmp_path / "out.docx"
+        # mock QFileDialog.getSaveFileName 返回 (路径, 过滤)
+        monkeypatch.setattr(
+            "vibeocr.widgets.result_view_widget.QFileDialog",
+            type("F", (), {"getSaveFileName": staticmethod(lambda *a, **k: (str(out), ""))}),
+            raising=False,
+        )
+        # mock QMessageBox 避免弹窗阻塞
+        monkeypatch.setattr(
+            "vibeocr.widgets.result_view_widget.QMessageBox",
+            type(
+                "M",
+                (),
+                {
+                    "information": staticmethod(lambda *a, **k: None),
+                    "warning": staticmethod(lambda *a, **k: None),
+                },
+            ),
+            raising=False,
+        )
+        widget._on_export_file("docx")
+        assert out.exists()
+        # docx 是 zip 包，文件头 PK
+        assert out.read_bytes()[:2] == b"PK"
+
+    def test_export_xlsx_creates_file(self, widget, qtbot, monkeypatch, tmp_path):
+        """导出 Excel：断言生成 .xlsx 文件。"""
+        result = self._make_result(raw_text="表格导出测试")
+        widget._current_result = result
+
+        out = tmp_path / "out.xlsx"
+        monkeypatch.setattr(
+            "vibeocr.widgets.result_view_widget.QFileDialog",
+            type("F", (), {"getSaveFileName": staticmethod(lambda *a, **k: (str(out), ""))}),
+            raising=False,
+        )
+        monkeypatch.setattr(
+            "vibeocr.widgets.result_view_widget.QMessageBox",
+            type(
+                "M",
+                (),
+                {
+                    "information": staticmethod(lambda *a, **k: None),
+                    "warning": staticmethod(lambda *a, **k: None),
+                },
+            ),
+            raising=False,
+        )
+        widget._on_export_file("xlsx")
+        assert out.exists()
+        # xlsx 也是 zip 包
+        assert out.read_bytes()[:2] == b"PK"
+
+    def test_export_cancel_is_noop(self, widget, qtbot, monkeypatch, tmp_path):
+        """用户取消对话框（返回空路径）不报错、不生成文件。"""
+        result = self._make_result(raw_text="取消测试")
+        widget._current_result = result
+
+        monkeypatch.setattr(
+            "vibeocr.widgets.result_view_widget.QFileDialog",
+            type("F", (), {"getSaveFileName": staticmethod(lambda *a, **k: ("", ""))}),
+            raising=False,
+        )
+        out = tmp_path / "should_not_exist.docx"
+        widget._on_export_file("docx")
+        assert not out.exists()
+
+    def test_export_no_result_is_noop(self, widget, qtbot):
+        """无结果时导出不报错。"""
+        widget._current_result = None
+        widget._on_export_file("docx")  # 不应抛异常
