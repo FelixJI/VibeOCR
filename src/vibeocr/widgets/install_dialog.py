@@ -151,26 +151,6 @@ class InstallWorker(QThread):
                 self.finished.emit(success, msg)
                 return
 
-            # 5. WebEngine 结果渲染组件（条件：仅 needs_install 时下载+解压）
-            # 独立于 OCR 后端，主包剔除 WebEngine（~280MB）后需按需下载资源包。
-            # 复用步骤1已构造的 detector 选源；download_and_install 的三参
-            # report_fn(message, dl, total) 适配为本 worker 的 _emit_progress(stage, msg)。
-            # 取消语义：WebEngine 内部走 urllib 同步下载，不响应 cancel_event，
-            # 若用户取消则等当前下载完成后 worker 自然结束（与既有行为一致）。
-            from vibeocr.services import webengine_manager as wm
-
-            if wm.needs_install():
-                self._emit_progress(
-                    "渲染组件", "正在下载结果渲染组件（WebEngine，约 80MB）..."
-                )
-                web_ok = wm.download_and_install(
-                    detector=detector,
-                    report_fn=lambda m, dl, total: self._emit_progress("渲染组件", m),
-                )
-                if not web_ok:
-                    self.finished.emit(False, "结果渲染组件下载失败，请检查网络后重试")
-                    return
-
             self.finished.emit(True, msg)
 
         except Exception as e:
