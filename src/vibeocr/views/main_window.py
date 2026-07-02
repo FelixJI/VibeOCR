@@ -61,16 +61,6 @@ class MainWindow(QMainWindow):
         self._ocr_ready = False
         self._dependency_check_complete = False  # 依赖检测是否完成
 
-        # WebEngine 可写性回退场景：若资源包此前解压到了 python/webengine_assets/
-        # （_internal/PySide6/ 不可写时），在此补充 DLL 搜索路径，使后续
-        # result_view_widget 的延迟 import 能找到 Qt6WebEngineCore.dll。
-        # 必须在任何 QtWebEngineWidgets import 之前调用。
-        try:
-            from vibeocr.services import webengine_manager as _wm
-
-            _wm.maybe_patch_dll_search_path()
-        except Exception as _e:
-            logging.debug(f"WebEngine DLL 路径补丁跳过: {_e}")
         self._preload_complete = False  # 预加载是否完成
         self._preload_in_progress = False  # 预加载是否进行中（状态栏三态区分）
         self._closing = False  # 是否正在关闭（防止关闭时重复启动 Worker）
@@ -478,17 +468,6 @@ class MainWindow(QMainWindow):
                 self._show_switch_dialog(target)
                 return  # 切换完成后再启动 worker
 
-            # WebEngine 结果渲染组件：OCR 依赖已就绪但资源包缺失/版本变更时，
-            # 复用安装对话框（InstallWorker 的 WebEngine 阶段会按需下载+解压；
-            # pip 阶段因依赖已就绪会快速跳过）。完成后重新走依赖检查启动 worker。
-            from vibeocr.services import webengine_manager as wm
-
-            if wm.needs_install():
-                logging.info("[WebEngine] OCR 依赖已就绪但资源包需安装，启动安装流程")
-                self._statusbar.showMessage("正在下载结果渲染组件（WebEngine）…")
-                QTimer.singleShot(300, self._start_install)
-                return
-
             # 启动子进程 Worker（依赖检测完成后立即启动）
             self._start_subprocess_worker()
         else:
@@ -503,9 +482,6 @@ class MainWindow(QMainWindow):
             # 用 singleShot 延迟，避免在依赖检查回调线程上下文直接弹模态对话框。
             if any("Python 运行时" in m for m in missing):
                 QTimer.singleShot(300, self._start_install)
-
-        # WebEngine 资源包下载已并入安装流程（InstallWorker.run() 末尾阶段），
-        # 不再独立触发——首启走 _start_install，回头用户在下方 if ready 分支处理。
 
     def _check_pending_sync(self) -> bool:
         """检测并消费"依赖版本待同步"标记（updater 写入的 pending_sync.json）
