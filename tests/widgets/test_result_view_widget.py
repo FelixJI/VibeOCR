@@ -1,6 +1,10 @@
 """Tests for result_view_widget block rendering functions."""
 
 import re
+from types import SimpleNamespace
+
+import pytest
+from PySide6.QtWidgets import QApplication
 
 from vibeocr.widgets.result_view_widget import (
     BLOCK_BORDER_COLORS,
@@ -280,8 +284,7 @@ class TestTableNormalizationInRender:
         """不规则行应在渲染时补齐为矩形，避免 Excel 粘贴错位。"""
         block = {
             "table_body": (
-                "<table><tr><th>H1</th><th>H2</th></tr>"
-                "<tr><td>only</td></tr></table>"
+                "<table><tr><th>H1</th><th>H2</th></tr><tr><td>only</td></tr></table>"
             )
         }
         html = _render_table(block, 0)
@@ -322,3 +325,213 @@ class TestTableCopyAndSelectionJS:
         html = self._full_html()
         assert "setData('text/html'" in html
         assert "setData('text/plain'" in html
+
+
+class TestResultViewExportButtons:
+    """结果区工具栏导出/复制按钮测试。"""
+
+    @pytest.fixture
+    def app(self, qtbot):
+        return QApplication.instance() or QApplication([])
+
+    @pytest.fixture
+    def widget(self, app, qtbot):
+        from vibeocr.widgets.result_view_widget import ResultViewWidget
+
+        w = ResultViewWidget()
+        qtbot.addWidget(w)
+        return w
+
+    def _make_result(
+        self, markdown_text="# 标题\n\n正文段落", raw_text="标题\n正文段落"
+    ):
+        return SimpleNamespace(
+            content_list=[],
+            markdown_text=markdown_text,
+            raw_text=raw_text,
+            html_text="",
+            text_with_scores=[],
+            images={},
+        )
+
+    @staticmethod
+    def _fake_clipboard(monkeypatch):
+        """注入一个可读写的假剪贴板（避免依赖 Windows COM 剪贴板可用性）。"""
+
+        class FakeClipboard:
+            def __init__(self):
+                self._text = ""
+
+            def setText(self, text):
+                self._text = text
+
+            def text(self):
+                return self._text
+
+        fake = FakeClipboard()
+
+        from PySide6.QtGui import QGuiApplication
+
+        monkeypatch.setattr(QGuiApplication, "clipboard", lambda *a, **k: fake)
+        return fake
+
+    def test_copy_markdown_to_clipboard(self, widget, qtbot, monkeypatch):
+        """复制为 Markdown：剪贴板内容 == markdown_text。"""
+        result = self._make_result(markdown_text="# H1\n内容")
+        # 绕过 WebEngine 渲染，直接设 _current_result
+        widget._current_result = result
+        fake = self._fake_clipboard(monkeypatch)
+
+        widget._on_copy_markdown()
+        assert fake.text() == "# H1\n内容"
+
+    def test_copy_markdown_falls_back_to_raw(self, widget, qtbot, monkeypatch):
+        """无 markdown_text 时回退到 raw_text。"""
+        result = self._make_result(markdown_text="", raw_text="纯文本")
+        widget._current_result = result
+        fake = self._fake_clipboard(monkeypatch)
+
+        widget._on_copy_markdown()
+        assert fake.text() == "纯文本"
+
+    def test_copy_markdown_no_result_is_noop(self, widget, qtbot, monkeypatch):
+        """无结果时不报错、不写剪贴板。"""
+        widget._current_result = None
+        fake = self._fake_clipboard(monkeypatch)
+
+        fake.setText("SENTINEL")
+        widget._on_copy_markdown()
+        assert fake.text() == "SENTINEL"
+
+    def test_buttons_hidden_initially(self, widget):
+        """初始（无结果）三个新按钮隐藏。
+
+        用 isHidden() 而非 isVisible()：父窗口从未 show()，isVisible() 恒为
+        False（弱断言）；isHidden() 仅在显式 hide() 后为 True，能真正验证
+        _setup_ui 里的 btn.hide() 生效。
+        """
+        assert widget._copy_md_btn.isHidden() is True
+        assert widget._export_docx_btn.isHidden() is True
+        assert widget._export_xlsx_btn.isHidden() is True
+
+    def test_export_docx_creates_file(self, widget, qtbot, monkeypatch, tmp_path):
+        """导出 Word：mock 另存为对话框，断言生成 .docx 文件。"""
+        result = self._make_result(raw_text="导出测试内容")
+        widget._current_result = result
+
+        out = tmp_path / "out.docx"
+        # mock QFileDialog.getSaveFileName 返回 (路径, 过滤)
+        monkeypatch.setattr(
+            "vibeocr.widgets.result_view_widget.QFileDialog",
+            type(
+                "F",
+                (),
+                {"getSaveFileName": staticmethod(lambda *a, **k: (str(out), ""))},
+            ),
+            raising=False,
+        )
+        # mock QMessageBox 避免弹窗阻塞
+        monkeypatch.setattr(
+            "vibeocr.widgets.result_view_widget.QMessageBox",
+            type(
+                "M",
+                (),
+                {
+                    "information": staticmethod(lambda *a, **k: None),
+                    "warning": staticmethod(lambda *a, **k: None),
+                },
+            ),
+            raising=False,
+        )
+        widget._on_export_file("docx")
+        assert out.exists()
+        # docx 是 zip 包，文件头 PK
+        assert out.read_bytes()[:2] == b"PK"
+
+    def test_export_xlsx_creates_file(self, widget, qtbot, monkeypatch, tmp_path):
+        """导出 Excel：断言生成 .xlsx 文件。"""
+        result = self._make_result(raw_text="表格导出测试")
+        widget._current_result = result
+
+        out = tmp_path / "out.xlsx"
+        monkeypatch.setattr(
+            "vibeocr.widgets.result_view_widget.QFileDialog",
+            type(
+                "F",
+                (),
+                {"getSaveFileName": staticmethod(lambda *a, **k: (str(out), ""))},
+            ),
+            raising=False,
+        )
+        monkeypatch.setattr(
+            "vibeocr.widgets.result_view_widget.QMessageBox",
+            type(
+                "M",
+                (),
+                {
+                    "information": staticmethod(lambda *a, **k: None),
+                    "warning": staticmethod(lambda *a, **k: None),
+                },
+            ),
+            raising=False,
+        )
+        widget._on_export_file("xlsx")
+        assert out.exists()
+        # xlsx 也是 zip 包
+        assert out.read_bytes()[:2] == b"PK"
+
+    def test_export_cancel_is_noop(self, widget, qtbot, monkeypatch, tmp_path):
+        """用户取消对话框（返回空路径）不报错、不生成文件。"""
+        result = self._make_result(raw_text="取消测试")
+        widget._current_result = result
+
+        monkeypatch.setattr(
+            "vibeocr.widgets.result_view_widget.QFileDialog",
+            type("F", (), {"getSaveFileName": staticmethod(lambda *a, **k: ("", ""))}),
+            raising=False,
+        )
+        out = tmp_path / "should_not_exist.docx"
+        widget._on_export_file("docx")
+        assert not out.exists()
+
+    def test_export_no_result_is_noop(self, widget, qtbot):
+        """无结果时导出不报错。"""
+        widget._current_result = None
+        widget._on_export_file("docx")  # 不应抛异常
+
+    def test_export_failure_shows_warning(self, widget, qtbot, monkeypatch, tmp_path):
+        """ExportService.export 返回 False 时走 warning 分支，不抛异常。"""
+        result = self._make_result(raw_text="失败测试")
+        widget._current_result = result
+
+        out = tmp_path / "fail.docx"
+        monkeypatch.setattr(
+            "vibeocr.widgets.result_view_widget.QFileDialog",
+            type(
+                "F",
+                (),
+                {"getSaveFileName": staticmethod(lambda *a, **k: (str(out), ""))},
+            ),
+            raising=False,
+        )
+        monkeypatch.setattr(
+            "vibeocr.widgets.result_view_widget.QMessageBox",
+            type(
+                "M",
+                (),
+                {
+                    "information": staticmethod(lambda *a, **k: None),
+                    "warning": staticmethod(lambda *a, **k: None),
+                },
+            ),
+            raising=False,
+        )
+        # 让 ExportService.export 返回 False（导出失败）
+        monkeypatch.setattr(
+            "vibeocr.services.export_service.ExportService.export",
+            staticmethod(lambda *a, **k: False),
+        )
+        # 不应抛异常
+        widget._on_export_file("docx")
+        # 失败时不应写出文件
+        assert not out.exists()

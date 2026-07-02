@@ -26,9 +26,10 @@ from vibeocr.core.pipelines.pipeline_mineru import (
 )
 from vibeocr.models.ocr_options import OCROptions
 from vibeocr.ui import theme
+from vibeocr.widgets.collapsible_group_box import CollapsibleGroupBox
 
 
-class PreprocessOptionsWidget(QGroupBox):
+class PreprocessOptionsWidget(CollapsibleGroupBox):
     """预处理选项组件
 
     选项卡式布局，根据管道动态显示选项。
@@ -66,7 +67,7 @@ class PreprocessOptionsWidget(QGroupBox):
 
     def _setup_ui(self):
         """设置 UI"""
-        layout = QVBoxLayout(self)
+        layout = self.contentLayout()
         layout.setSpacing(8)
 
         # 管道选择

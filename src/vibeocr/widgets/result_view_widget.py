@@ -15,9 +15,17 @@ import json
 import logging
 from typing import TYPE_CHECKING, Any
 
-from PySide6.QtCore import QObject, QUrl, QTimer, Signal, Slot
+from PySide6.QtCore import QObject, QTimer, QUrl, Signal, Slot
 from PySide6.QtGui import QGuiApplication
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QFileDialog,
+    QHBoxLayout,
+    QLabel,
+    QMessageBox,
+    QPushButton,
+    QVBoxLayout,
+    QWidget,
+)
 
 from vibeocr.models.ocr_result import DISCARDED_BLOCK_TYPES
 
@@ -45,6 +53,7 @@ def _get_resources_dir() -> Path:
     from vibeocr.env_manager import get_bundled_resources_dir
 
     return get_bundled_resources_dir()
+
 
 # 块类型 → CSS 左边框颜色
 BLOCK_BORDER_COLORS: dict[str, str] = {
@@ -669,12 +678,22 @@ class ResultViewWidget(QWidget):
         tb_layout.addStretch()
 
         self._copy_btn = QPushButton("复制文本")
-        self._copy_btn.setFixedHeight(24)
-        self._copy_btn.setStyleSheet(
-            "QPushButton { padding: 2px 12px; font-size: 12px; }"
-        )
-        self._copy_btn.hide()
+        self._copy_md_btn = QPushButton("复制MD")
+        self._export_docx_btn = QPushButton("导出Word")
+        self._export_xlsx_btn = QPushButton("导出Excel")
+        for btn in (
+            self._copy_btn,
+            self._copy_md_btn,
+            self._export_docx_btn,
+            self._export_xlsx_btn,
+        ):
+            btn.setFixedHeight(24)
+            btn.setStyleSheet("QPushButton { padding: 2px 12px; font-size: 12px; }")
+            btn.hide()
         tb_layout.addWidget(self._copy_btn)
+        tb_layout.addWidget(self._copy_md_btn)
+        tb_layout.addWidget(self._export_docx_btn)
+        tb_layout.addWidget(self._export_xlsx_btn)
         layout.addWidget(toolbar)
 
         # 复制成功浮层提示
@@ -691,6 +710,9 @@ class ResultViewWidget(QWidget):
         self._bridge: _Bridge | None = None
 
         self._copy_btn.clicked.connect(self._on_copy_text)
+        self._copy_md_btn.clicked.connect(self._on_copy_markdown)
+        self._export_docx_btn.clicked.connect(lambda: self._on_export_file("docx"))
+        self._export_xlsx_btn.clicked.connect(lambda: self._on_export_file("xlsx"))
 
     def _ensure_web_view(self) -> QWebEngineView | None:
         """惰性创建并返回 QWebEngineView；WebEngine 未就绪时返回 None。
@@ -738,8 +760,45 @@ class ResultViewWidget(QWidget):
             QGuiApplication.clipboard().setText(text)
             self._show_copy_toast()
 
-    def _show_copy_toast(self) -> None:
+    def _on_copy_markdown(self) -> None:
+        """复制 Markdown 到剪贴板（直读 _current_result，不走 WebEngine JS）。"""
+        if self._current_result is None:
+            return
+        md = getattr(self._current_result, "markdown_text", "") or getattr(
+            self._current_result, "raw_text", ""
+        )
+        if not md:
+            return
+        QGuiApplication.clipboard().setText(md)
+        self._show_copy_toast("Markdown 已复制")
+
+    def _on_export_file(self, fmt: str) -> None:
+        """导出为 Word/Excel 文件（另存为对话框 + ExportService）。"""
+        if self._current_result is None:
+            return
+        from pathlib import Path
+
+        from vibeocr.services.export_service import ExportService
+
+        filter_label = {
+            "docx": "Word 文档 (*.docx)",
+            "xlsx": "Excel 工作簿 (*.xlsx)",
+        }[fmt]
+        default_name = ExportService.get_output_filename("ocr_result", fmt)
+        path, _ = QFileDialog.getSaveFileName(
+            self, f"导出 {fmt.upper()}", default_name, filter_label
+        )
+        if not path:
+            return
+        ok = ExportService.export(self._current_result, Path(path), fmt)
+        if ok:
+            QMessageBox.information(self, "导出成功", f"已导出到：\n{path}")
+        else:
+            QMessageBox.warning(self, "导出失败", "导出失败，请重试或查看日志。")
+
+    def _show_copy_toast(self, message: str = "已复制到剪贴板") -> None:
         """显示复制成功浮层"""
+        self._copy_toast.setText(message)
         self._copy_toast.adjustSize()
         # 显示在 widget 右上角
         x = self.width() - self._copy_toast.width() - 12
@@ -751,6 +810,13 @@ class ResultViewWidget(QWidget):
 
     def display_result(self, result: Any) -> None:
         """显示 OCR 识别结果"""
+        # 先记录结果并显示 WebEngine 无关的按钮（复制MD/导出），
+        # 这样即便 WebEngine 不可用，用户仍可复制 Markdown、导出 Word/Excel。
+        self._current_result = result
+        self._copy_md_btn.show()
+        self._export_docx_btn.show()
+        self._export_xlsx_btn.show()
+
         web_view = self._ensure_web_view()
         if web_view is None:
             # WebEngine 未就绪：发出信号供上层弹下载引导（上层连接此信号）。
@@ -758,7 +824,6 @@ class ResultViewWidget(QWidget):
             return
         self._copy_btn.show()
         global _current_images
-        self._current_result = result
         self._highlighted_index = -1
 
         content_list = getattr(result, "content_list", [])
@@ -856,6 +921,9 @@ class ResultViewWidget(QWidget):
         self._current_result = None
         self._highlighted_index = -1
         self._copy_btn.hide()
+        self._copy_md_btn.hide()
+        self._export_docx_btn.hide()
+        self._export_xlsx_btn.hide()
         if self._web_view:
             self._web_view.setHtml("")
 

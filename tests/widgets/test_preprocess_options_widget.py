@@ -86,6 +86,15 @@ class TestPreprocessOptionsWidget:
         combo_count = widget._pipeline_combo.count()
         assert combo_count == 6  # 6 个管道
 
+    def test_is_collapsible(self, widget):
+        """改基类后支持折叠 API。"""
+        from vibeocr.widgets.collapsible_group_box import CollapsibleGroupBox
+
+        assert isinstance(widget, CollapsibleGroupBox)
+        assert widget.is_collapsed() is False
+        widget.set_collapsed(True)
+        assert widget.is_collapsed() is True
+
 
 class TestLangCombo:
     """语言下拉框测试"""
