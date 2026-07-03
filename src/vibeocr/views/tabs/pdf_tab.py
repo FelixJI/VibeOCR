@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 from PySide6.QtCore import QRectF, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QIcon, QPen, QPixmap
+from PySide6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -48,6 +48,7 @@ _GRID_CELL_SIZE = 40  # 文字层状态网格单格尺寸（正方形）
 # 文字层网格 item 数据角色：_LAYER_ROLE 存 page_index，_HAS_LAYER_ROLE 存 has_text_layer
 _LAYER_ROLE = Qt.ItemDataRole.UserRole
 _HAS_LAYER_ROLE = Qt.ItemDataRole.UserRole + 1
+_DESKEWED_ROLE = Qt.ItemDataRole.UserRole + 2  # 存 deskewed（本会话是否被自动摆正纠正）
 
 
 class LayerStatusDelegate(QStyledItemDelegate):
@@ -96,6 +97,21 @@ class LayerStatusDelegate(QStyledItemDelegate):
         font.setPointSize(10)
         painter.setFont(font)
         painter.drawText(option.rect, Qt.AlignmentFlag.AlignCenter, page_num)
+
+        # 已纠偏标记：右上角橙色小圆点（底色保持不变，两维信息并存）
+        deskewed = index.data(_DESKEWED_ROLE)
+        if deskewed:
+            dot_d = 10  # 直径
+            dot = QRectF(
+                cell.right() - dot_d - 2,
+                cell.top() + 2,
+                dot_d,
+                dot_d,
+            )
+            painter.setBrush(QColor(Colors.warning))
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.drawEllipse(dot)
+
         painter.restore()
 
 
@@ -702,6 +718,7 @@ class PdfTab(QWidget):
             item = QListWidgetItem()
             item.setData(_LAYER_ROLE, p.page_index)
             item.setData(_HAS_LAYER_ROLE, p.has_text_layer)
+            item.setData(_DESKEWED_ROLE, p.deskewed)
             item.setToolTip(self._layer_cell_tooltip(p))
             grid.addItem(item)
         self._update_layer_summary(pages)
@@ -715,8 +732,12 @@ class PdfTab(QWidget):
                 if page_info.ocr_text_blocks
                 else len(page_info.text_layers)
             )
-            return f"第{page_info.page_index + 1}页 · 已添加文字层（{block_count}个文本块）"
-        return f"第{page_info.page_index + 1}页 · 无文字层"
+            tip = f"第{page_info.page_index + 1}页 · 已添加文字层（{block_count}个文本块）"
+        else:
+            tip = f"第{page_info.page_index + 1}页 · 无文字层"
+        if getattr(page_info, "deskewed", False):
+            tip += " · 已纠偏"
+        return tip
 
     def _update_layer_grid_page(self, page_index: int) -> None:
         """增量更新单页网格格子（不全量重建），用于 OCR/删除文字层即时反馈。
@@ -734,6 +755,7 @@ class PdfTab(QWidget):
             item = grid.item(row)
             if item.data(_LAYER_ROLE) == page_index:
                 item.setData(_HAS_LAYER_ROLE, page_info.has_text_layer)
+                item.setData(_DESKEWED_ROLE, page_info.deskewed)
                 item.setToolTip(self._layer_cell_tooltip(page_info))
                 break
         # 汇总统计实时刷新

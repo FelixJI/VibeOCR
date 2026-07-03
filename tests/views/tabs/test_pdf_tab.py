@@ -1169,3 +1169,26 @@ class TestPdfTabAutoDeskew:
             assert len(called) == 1
         finally:
             doc.close()
+
+
+def test_layer_cell_tooltip_marks_deskewed():
+    from vibeocr.views.tabs.pdf_tab import PdfTab
+    from vibeocr.models.pdf_document import PdfPageInfo
+
+    p = PdfPageInfo(page_index=3)
+    p.has_text_layer = True
+    p.deskewed = True
+    tip = PdfTab._layer_cell_tooltip(p)
+    assert "已纠偏" in tip
+    assert "已添加文字层" in tip  # 底色信息仍在
+
+
+def test_layer_cell_tooltip_no_deskew_when_false():
+    from vibeocr.views.tabs.pdf_tab import PdfTab
+    from vibeocr.models.pdf_document import PdfPageInfo
+
+    p = PdfPageInfo(page_index=0)
+    p.has_text_layer = True
+    p.deskewed = False
+    tip = PdfTab._layer_cell_tooltip(p)
+    assert "已纠偏" not in tip
