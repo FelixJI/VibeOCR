@@ -165,7 +165,6 @@ class UnifiedBBoxOverlay(QWidget):
     def _paint_block_type(self) -> None:
         if not self._type_rects:
             return
-        from PySide6.QtCore import QPointF
 
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -200,23 +199,72 @@ class UnifiedBBoxOverlay(QWidget):
             painter.setPen(pen)
             painter.drawRect(rect)
 
-            if is_hovered or len(self._type_rects) <= 20:
-                label = BLOCK_TYPE_LABELS.get(block_type, block_type)
-                label_w = 36
-                if is_low_conf:
-                    label = f"{label} {confidence:.0%}"
-                    label_w = 62
-                label_rect = QRectF(
-                    rect.topLeft(), rect.topLeft() + QPointF(label_w, 14)
-                )
-                painter.fillRect(label_rect, border)
-                font = painter.font()
-                font.setPointSize(7)
-                painter.setFont(font)
-                painter.setPen(QPen(QColor(255, 255, 255)))
-                painter.drawText(label_rect, Qt.AlignmentFlag.AlignCenter, label)
-
+        # 类型用边框颜色编码，文字标识集中在右上角图例中，避免遮挡框选内容
+        self._paint_type_legend(painter)
         painter.end()
+
+    def _paint_type_legend(self, painter: QPainter) -> None:
+        """在画布右上角绘制类型图例，仅列出当前画面中出现的类型（按中文标签去重）"""
+        # 收集出现过的类型，按首次出现顺序保留
+        seen: set[str] = set()
+        entries: list[tuple[str, QColor]] = []
+        for _idx, _rect, block_type, _fill, border_color, _conf in self._type_rects:
+            if block_type in seen:
+                continue
+            seen.add(block_type)
+            label = BLOCK_TYPE_LABELS.get(block_type, block_type)
+            # figure/image 等同色同名的合并：按中文标签去重
+            if any(lbl == label for lbl, _ in entries):
+                continue
+            swatch = QColor(border_color)
+            swatch.setAlpha(255)
+            entries.append((label, swatch))
+        if not entries:
+            return
+
+        font = painter.font()
+        font.setPointSize(8)
+        painter.setFont(font)
+        metrics = painter.fontMetrics()
+
+        padding = 6
+        swatch_size = 10
+        swatch_gap = 5
+        line_height = max(metrics.height(), swatch_size) + 2
+        max_label_w = max(metrics.horizontalAdvance(label) for label, _ in entries)
+        legend_w = padding * 2 + swatch_size + swatch_gap + max_label_w
+        legend_h = padding * 2 + line_height * len(entries)
+
+        margin = 8
+        # 右上角，若空间不足则退到左上角
+        legend_x = self.width() - margin - legend_w
+        if legend_x < margin:
+            legend_x = margin
+        legend_y = margin
+        legend_rect = QRectF(legend_x, legend_y, legend_w, legend_h)
+
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(0, 0, 0, 160))
+        painter.drawRoundedRect(legend_rect, 4, 4)
+
+        text_pen = QPen(QColor(255, 255, 255))
+        for i, (label, color) in enumerate(entries):
+            row_y = legend_y + padding + i * line_height
+            sx = legend_x + padding
+            sy = row_y + (line_height - swatch_size) / 2
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(color)
+            painter.drawRect(QRectF(sx, sy, swatch_size, swatch_size))
+            tx = sx + swatch_size + swatch_gap
+            text_rect = QRectF(
+                tx, row_y, legend_x + legend_w - padding - tx, line_height
+            )
+            painter.setPen(text_pen)
+            painter.drawText(
+                text_rect,
+                Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
+                label,
+            )
 
 
 class PreviewWidget(QWidget):
