@@ -15,9 +15,10 @@ from PySide6.QtCore import QCoreApplication, QObject, QThread, Signal
 
 from vibeocr.models.pdf_session import PdfSession
 from vibeocr.services.pdf_service import PdfService
+from vibeocr.workers.pdf_deskew_worker import PdfDeskewWorker
+from vibeocr.workers.pdf_export_worker import PdfExportWorker
 from vibeocr.workers.pdf_load_worker import PdfLoadWorker
 from vibeocr.workers.pdf_mutate_worker import MutateTask, PdfMutateWorker, TaskKind
-from vibeocr.workers.pdf_export_worker import PdfExportWorker
 from vibeocr.workers.pdf_ocr_worker import PdfOcrWorker
 from vibeocr.workers.pdf_render_worker import PdfRenderWorker
 
@@ -64,6 +65,10 @@ class PdfSessionManager(QObject):
     delete_layer_done = Signal(str, list)  # (file_path, residual_pages)
     export_progress = Signal(int, int, str)   # (current, total, file_name)
     export_done = Signal(list)                 # (exported_paths)
+    deskew_page_done = Signal(str, int, bool)  # (file_path, page_index, was_corrected)
+    deskew_progress = Signal(str, int, int)    # (file_path, current, total)
+    deskew_done = Signal(str, object)          # (file_path, summary dict)
+    deskew_failed = Signal(str, str)           # (file_path, error_msg)
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -74,6 +79,7 @@ class PdfSessionManager(QObject):
         self._render_worker: PdfRenderWorker | None = None
         self._mutate_worker: PdfMutateWorker | None = None
         self._export_worker: PdfExportWorker | None = None
+        self._deskew_worker: PdfDeskewWorker | None = None
         self._ocr_service: OCRServiceBase | None = None
         self._pdf_settings: PdfGlobalSettings | None = None
         self._overwrite_text_layer: bool = False
@@ -408,6 +414,59 @@ class PdfSessionManager(QObject):
         task = MutateTask(kind=TaskKind.DELETE_PAGES, page_indices=page_indices)
         self._start_mutate(session, task)
 
+    # ---- async deskew ------------------------------------------------
+
+    def auto_deskew_async(self, page_indices: list[int]) -> None:
+        """异步自动摆正选中页（方向检测+旋转+文字层同步在后台）。"""
+        session = self.active_session
+        if session is None or self._ocr_service is None:
+            return
+        self._cancel_deskew_worker()
+        worker = PdfDeskewWorker(
+            session_id=session.file_path,
+            doc=session.doc,
+            pdf_document=session.pdf_document,
+            doc_lock=session.doc_lock,
+            ocr_service=self._ocr_service,
+            page_indices=page_indices,
+            pdf_settings=self._pdf_settings,
+        )
+        worker.page_done.connect(self._on_deskew_page_done)
+        worker.progress.connect(self._on_deskew_progress)
+        worker.all_done.connect(self._on_deskew_all_done)
+        worker.failed.connect(self._on_deskew_failed)
+        self._deskew_worker = worker
+        worker.start()
+
+    def cancel_deskew(self) -> None:
+        self._cancel_deskew_worker()
+
+    def _cancel_deskew_worker(self) -> None:
+        if self._deskew_worker is not None:
+            self._deskew_worker.cancel()
+            _wait_thread(self._deskew_worker, timeout=5000)
+            self._deskew_worker = None
+
+    def _on_deskew_page_done(self, page_index: int, was_corrected: bool) -> None:
+        session = self.active_session
+        if session:
+            self.deskew_page_done.emit(session.file_path, page_index, was_corrected)
+
+    def _on_deskew_progress(self, current: int, total: int) -> None:
+        session = self.active_session
+        if session:
+            self.deskew_progress.emit(session.file_path, current, total)
+
+    def _on_deskew_all_done(self, session_id: str, summary) -> None:
+        if self._deskew_worker is not None:
+            self._deskew_worker = None
+        self.deskew_done.emit(session_id, summary)
+
+    def _on_deskew_failed(self, session_id: str, error: str) -> None:
+        if self._deskew_worker is not None:
+            self._deskew_worker = None
+        self.deskew_failed.emit(session_id, error)
+
     def _start_mutate(self, session, task: MutateTask) -> None:
         self._mutate_worker = PdfMutateWorker(
             session_id=session.file_path,
@@ -616,6 +675,7 @@ class PdfSessionManager(QObject):
         self._cancel_load_worker()
         self._cancel_ocr_pipeline()
         self._cancel_mutate_worker()
+        self._cancel_deskew_worker()
         for session in self._sessions.values():
             # fitz doc.close() 在文档已关闭/损坏时抛各类异常，关闭路径静默忽略
             try:
