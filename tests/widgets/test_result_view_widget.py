@@ -184,6 +184,43 @@ class TestRenderEquation:
         html = _render_equation(block, 0)
         assert 'data-latex="a &lt; b"' in html
 
+    def test_no_hardcoded_blue_border(self):
+        """_render_equation 不应再自带蓝色左边框（#0078d4）。
+
+        外层 _render_block 已为公式块加了橙色左边框作为类型标识；
+        此处再叠加会形成"双条色标"，且蓝色与文本蓝混淆。
+        """
+        block = {"text": "E=mc^2"}
+        html = _render_equation(block, 0)
+        assert "#0078d4" not in html.lower()
+        assert "border-left" not in html
+
+    def test_retains_background_and_styles(self):
+        """移除蓝边框后，背景/圆角/字体样式应保留。"""
+        block = {"text": "x^2"}
+        html = _render_equation(block, 0)
+        assert "background:#f8f9fa" in html
+        assert "border-radius:4px" in html
+        assert "Consolas" in html
+
+
+class TestFormulaBlockColor:
+    """公式块（type=equation/formula）外层边框应为橙色，避免与文字蓝混淆。"""
+
+    def test_equation_block_uses_orange_border(self):
+        block = {"type": "equation", "text": "E=mc^2"}
+        html = _render_block(block, 0)
+        orange = BLOCK_BORDER_COLORS["equation"]
+        assert f"border-left:3px solid {orange}" in html
+
+    def test_formula_type_uses_orange_border(self):
+        """PaddleX 公式管道输出 type=formula，同样映射到橙色边框。"""
+        block = {"type": "formula", "text": "a+b"}
+        html = _render_block(block, 0)
+        orange = BLOCK_BORDER_COLORS["formula"]
+        assert orange == "#f97316"
+        assert f"border-left:3px solid {orange}" in html
+
 
 class TestRenderList:
     """测试 _render_list 函数。"""

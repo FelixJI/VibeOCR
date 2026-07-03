@@ -135,6 +135,10 @@ class SingleRecognitionTab(BaseOcrTab):
         self._preview_widget.table_text_edited.connect(self._on_table_block_edited)
         self._preview_widget.block_clicked.connect(self._result_widget.highlight_block)
         self._result_widget.block_edited.connect(self._on_result_block_edited)
+        # 文本块处理选项变化 → 实时重排当前结果（仅纯文本结果生效）。
+        self._text_options_widget.options_changed.connect(
+            self._on_text_options_changed
+        )
 
         # 转发预览组件的截图/文件请求信号
         self._preview_widget.screenshot_requested.connect(
@@ -488,7 +492,13 @@ class SingleRecognitionTab(BaseOcrTab):
             self._on_ocr_error(str(e) + self._first_use_suffix(options.pipeline.value))
 
     def _on_result_block_edited(self, index: int, new_text: str) -> None:
-        """右侧结果块被编辑后同步更新数据模型"""
+        """右侧结果块被编辑后同步更新数据模型。
+
+        表格块的 new_text 是新的 ``<table>`` HTML（见 JS _finishTableEdit），
+        其数据源是 ``content_list`` 的 ``table_body``，处理逻辑与左侧网格编辑
+        一致，故直接委托给 ``_on_table_block_edited``，复用其 table_body 更新、
+        set_content_list（保持块类型模式）、update_block_text(HTML) 等正确流程。
+        """
         if not self._current_ocr_result or index < 0:
             return
         result = self._current_ocr_result
@@ -497,6 +507,11 @@ class SingleRecognitionTab(BaseOcrTab):
             return
 
         cl_block = result.content_list[index]
+        # 表格块委托给表格专用同步逻辑（举一反三：与左侧网格编辑同一数据源）
+        if cl_block.get("type", "") == "table":
+            self._on_table_block_edited(index, new_text)
+            return
+
         old_text = cl_block.get("text", "")
         if old_text == new_text:
             return
@@ -541,9 +556,40 @@ class SingleRecognitionTab(BaseOcrTab):
             if result.html_text and old_text in result.html_text:
                 result.html_text = result.html_text.replace(old_text, new_text, 1)
 
-        # 刷新左侧 overlay（显示手动修改标记）
+        # 刷新左侧 overlay（显示手动修改标记）。
+        # 结构化结果（表格/公式/MinerU）左侧在块类型模式渲染，必须用
+        # set_content_list 保持该模式；否则切到置信度模式会让块类型着色与
+        # 编辑状态错位（右侧变黄但左侧无变化）。
         if self._preview_widget:
-            self._preview_widget.set_text_blocks(result.text_blocks)
+            if result.has_content_list:
+                self._preview_widget.set_content_list(result.content_list)
+            else:
+                self._preview_widget.set_text_blocks(result.text_blocks)
+
+    def _on_text_options_changed(self, _options) -> None:
+        """「文本块处理」选项变化 → 实时重排当前结果。
+
+        仅对识别时即为纯文本的结果生效（_plain_text_at_recognition=True）：
+        结构化结果（表格/公式/MinerU）走块类型渲染，不读 raw_text，重排无意义
+        且会破坏复制/导出链路（误改其 raw_text）。
+
+        重排后重算 raw_text / markdown_text，并刷新结果区（块间排版会随
+        换行模式/空格/缩进/去空白块选项变化）。
+        """
+        result = self._current_ocr_result
+        if result is None or not getattr(
+            self, "_plain_text_at_recognition", False
+        ):
+            return
+
+        text_opts = self._text_options_widget.get_text_options()
+        result.raw_text = TextBlockProcessor.process(
+            result.text_blocks, text_opts, result.image_height
+        )
+        # markdown_text 对纯文本结果即 raw_text（见各 pipeline 的 `or raw_text` 兜底），
+        # 同步以保持复制 MD / 导出的一致性。
+        result.markdown_text = result.raw_text
+        self._display_result(result)
 
     def _on_ocr_finished(self, result) -> None:
         """OCR 完成回调"""
@@ -552,7 +598,11 @@ class SingleRecognitionTab(BaseOcrTab):
 
         # 文本块后处理：仅对纯文本结果应用（结构化结果走块类型渲染，不读 raw_text）。
         # 改写 raw_text 后，下游的 _display_result / 复制 / 手动编辑重建均读 raw_text，自动一致。
-        if not result.has_content_list:
+        # 同时记录识别时的纯文本标志，供 _on_text_options_changed 实时重排判断：
+        # 注意 has_content_list 必须在 _display_result 之前读，否则通用 OCR 会被
+        # _build_content_list 回填成 content_list 而误判为结构化结果。
+        self._plain_text_at_recognition = not result.has_content_list
+        if self._plain_text_at_recognition:
             text_opts = self._text_options_widget.get_text_options()
             result.raw_text = TextBlockProcessor.process(
                 result.text_blocks, text_opts, result.image_height

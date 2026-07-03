@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from PySide6.QtCore import QRectF, Qt, QTimer, Signal
+from PySide6.QtCore import QSettings, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QColor, QPainter, QPen, QPixmap
 from PySide6.QtPdf import QPdfDocument
 from PySide6.QtWidgets import (
@@ -26,6 +26,14 @@ from vibeocr.ui import theme
 # 置信度阈值
 LOW_CONFIDENCE_THRESHOLD = 0.80
 
+# 无真实文本置信度的块类型：结构识别（表格/图片/图表/印章）与公式管道
+# 在 pipeline 里 score 是占位值（0.9 / 1.0），不应在 tooltip 里显示为
+# 误导性的百分比。与 base_tab._build_content_list 的白名单保持一致，
+# 并补充 formula（score=1.0 占位）。键取自 TextBlock.label。
+NO_CONFIDENCE_LABELS = frozenset(
+    {"table", "image", "figure", "chart", "seal", "formula"}
+)
+
 # 置信度着色颜色
 HIGH_CONF_FILL = QColor(76, 175, 80, 40)  # 淡绿色填充
 HIGH_CONF_BORDER = QColor(76, 175, 80, 160)  # 淡绿色边框
@@ -47,6 +55,9 @@ BLOCK_COLORS = {
     "equation": QColor(249, 115, 22, 30),
     "interline_equation": QColor(249, 115, 22, 30),
     "inline_equation": QColor(249, 115, 22, 30),
+    # PaddleX 公式管道（pipeline_formula）输出 label/type="formula"，
+    # 归一到橙色（与 equation 一致），避免回退到蓝色文本色与文字混淆。
+    "formula": QColor(249, 115, 22, 30),
     "list": QColor(6, 182, 212, 30),
     "code": QColor(139, 92, 246, 30),
     "seal": QColor(107, 114, 128, 30),
@@ -62,6 +73,7 @@ BLOCK_BORDER_COLORS = {
     "equation": QColor(249, 115, 22, 200),
     "interline_equation": QColor(249, 115, 22, 200),
     "inline_equation": QColor(249, 115, 22, 200),
+    "formula": QColor(249, 115, 22, 200),
     "list": QColor(6, 182, 212, 200),
     "code": QColor(139, 92, 246, 200),
     "seal": QColor(107, 114, 128, 200),
@@ -77,6 +89,7 @@ BLOCK_TYPE_LABELS = {
     "equation": "公式",
     "interline_equation": "公式",
     "inline_equation": "公式",
+    "formula": "公式",
     "list": "列表",
     "code": "代码",
     "seal": "印章",
@@ -160,6 +173,9 @@ class UnifiedBBoxOverlay(QWidget):
             painter.setPen(pen)
             painter.drawRect(rect)
 
+        # 置信度模式下：若存在手动修改的块，绘制图例说明橙色含义
+        # （橙色 = 手动修改）。普通高/低置信度颜色固定且语义明显，不入图例。
+        self._paint_type_legend(painter)
         painter.end()
 
     def _paint_block_type(self) -> None:
@@ -203,9 +219,13 @@ class UnifiedBBoxOverlay(QWidget):
         self._paint_type_legend(painter)
         painter.end()
 
-    def _paint_type_legend(self, painter: QPainter) -> None:
-        """在画布右上角绘制类型图例，仅列出当前画面中出现的类型（按中文标签去重）"""
-        # 收集出现过的类型，按首次出现顺序保留
+    def _legend_entries(self) -> list[tuple[str, QColor]]:
+        """计算图例条目：(标签, 色块颜色)。
+
+        - 块类型模式：按中文标签去重收集当前画面出现的类型颜色。
+        - 若存在任一手动修改块（置信度模式 _conf_rects 的 is_manually_edited），
+          追加一项"修改后"（橙色 EDIT_BORDER），解释橙色含义。
+        """
         seen: set[str] = set()
         entries: list[tuple[str, QColor]] = []
         for _idx, _rect, block_type, _fill, border_color, _conf in self._type_rects:
@@ -219,6 +239,22 @@ class UnifiedBBoxOverlay(QWidget):
             swatch = QColor(border_color)
             swatch.setAlpha(255)
             entries.append((label, swatch))
+
+        # 追加"修改后"图例：只要存在任一手动修改块就显示。
+        # 置信度模式 _conf_rects 的第 7 项（index 6）是 is_manually_edited。
+        if any(r[6] for r in self._conf_rects):
+            edited_swatch = QColor(EDIT_BORDER)
+            edited_swatch.setAlpha(255)
+            entries.append(("修改后", edited_swatch))
+        return entries
+
+    def _paint_type_legend(self, painter: QPainter) -> None:
+        """在画布右上角绘制类型图例，仅列出当前画面中出现的类型（按中文标签去重）。
+
+        除块类型颜色外，若画面上存在"手动修改"的块（橙色 EDIT_BORDER），
+        追加一项"修改后"图例，避免用户不知橙色含义。
+        """
+        entries = self._legend_entries()
         if not entries:
             return
 
@@ -267,6 +303,116 @@ class UnifiedBBoxOverlay(QWidget):
             )
 
 
+class ImageViewerDialog(QDialog):
+    """原图查看对话框，支持滚轮缩放和拖动滚动。"""
+
+    _MIN_SCALE = 0.1
+    _MAX_SCALE = 10.0
+
+    def __init__(self, pixmap: QPixmap, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("查看原图")
+        self.setMinimumSize(640, 480)
+
+        self._pixmap = pixmap
+        self._scale = 1.0  # 1.0 = 原始尺寸
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        # 工具栏
+        toolbar = QWidget()
+        tb_layout = QHBoxLayout(toolbar)
+        tb_layout.setContentsMargins(6, 4, 6, 4)
+
+        self._zoom_out_btn = QPushButton("-")
+        self._zoom_out_btn.setFixedWidth(30)
+        self._zoom_out_btn.setToolTip("缩小")
+        self._zoom_out_btn.clicked.connect(lambda: self._adjust_scale(0.8))
+
+        self._zoom_label = QLabel("100%")
+        self._zoom_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._zoom_label.setMinimumWidth(60)
+
+        self._zoom_in_btn = QPushButton("+")
+        self._zoom_in_btn.setFixedWidth(30)
+        self._zoom_in_btn.setToolTip("放大")
+        self._zoom_in_btn.clicked.connect(lambda: self._adjust_scale(1.25))
+
+        self._fit_btn = QPushButton("适应")
+        self._fit_btn.setFixedWidth(50)
+        self._fit_btn.setToolTip("适应窗口")
+        self._fit_btn.clicked.connect(self._fit_to_window)
+
+        self._orig_btn = QPushButton("1:1")
+        self._orig_btn.setFixedWidth(40)
+        self._orig_btn.setToolTip("原始大小")
+        self._orig_btn.clicked.connect(lambda: self._set_scale(1.0))
+
+        tb_layout.addWidget(self._zoom_out_btn)
+        tb_layout.addWidget(self._zoom_label)
+        tb_layout.addWidget(self._zoom_in_btn)
+        tb_layout.addStretch()
+        tb_layout.addWidget(self._fit_btn)
+        tb_layout.addWidget(self._orig_btn)
+
+        layout.addWidget(toolbar)
+
+        # 滚动区域 + 图片标签
+        self._scroll = QScrollArea()
+        self._scroll.setWidgetResizable(False)
+        self._scroll.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self._scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+
+        self._img_label = QLabel()
+        self._img_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._scroll.setWidget(self._img_label)
+
+        layout.addWidget(self._scroll, stretch=1)
+
+        # 初始按窗口大小适应
+        QTimer.singleShot(0, self._fit_to_window)
+
+    def _update_display(self) -> None:
+        scaled_w = int(self._pixmap.width() * self._scale)
+        scaled_h = int(self._pixmap.height() * self._scale)
+        scaled = self._pixmap.scaled(
+            scaled_w,
+            scaled_h,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        self._img_label.setPixmap(scaled)
+        self._img_label.resize(scaled.size())
+        self._zoom_label.setText(f"{self._scale:.0%}")
+
+    def _set_scale(self, scale: float) -> None:
+        self._scale = max(self._MIN_SCALE, min(self._MAX_SCALE, scale))
+        self._update_display()
+
+    def _adjust_scale(self, factor: float) -> None:
+        self._set_scale(self._scale * factor)
+
+    def _fit_to_window(self) -> None:
+        vw = self._scroll.viewport().width()
+        vh = self._scroll.viewport().height()
+        pw = self._pixmap.width()
+        ph = self._pixmap.height()
+        if pw <= 0 or ph <= 0:
+            return
+        self._set_scale(min(vw / pw, vh / ph))
+
+    def wheelEvent(self, event) -> None:
+        """滚轮缩放。"""
+        delta = event.angleDelta().y()
+        if delta > 0:
+            self._adjust_scale(1.15)
+        elif delta < 0:
+            self._adjust_scale(1 / 1.15)
+
+
 class PreviewWidget(QWidget):
     """统一图片预览组件
 
@@ -302,7 +448,7 @@ class PreviewWidget(QWidget):
         self._block_screen_rects: list[tuple[float, float, float, float]] = []
         # 块类型模式的命中矩形：list of (content_index, screen_rect, block_type)
         self._type_screen_rects: list[tuple[int, QRectF, str]] = []
-        self._hovered_block: int = -1
+        self._hovered_block: int | str = -1
         self._editing_index: int = -1
         self._content_list: list[dict] = []
         self._current_file: str = ""
@@ -392,15 +538,16 @@ class PreviewWidget(QWidget):
     # ── 事件过滤器 ──
 
     def eventFilter(self, obj, event) -> bool:
-        if obj == self._image_label and self._pixmap and self._text_blocks:
-            if event.type() == event.Type.MouseMove:
-                self._on_mouse_move(event.pos())
-            elif event.type() == event.Type.MouseButtonPress:
+        if obj == self._image_label and self._pixmap:
+            if event.type() == event.Type.MouseButtonDblClick:
                 if event.button() == Qt.MouseButton.LeftButton:
-                    self._on_block_click(event.pos())
-            elif event.type() == event.Type.MouseButtonDblClick:
-                if event.button() == Qt.MouseButton.LeftButton:
-                    self._on_block_double_click(event.pos())
+                    self._on_label_double_click(event.pos())
+            elif self._text_blocks:
+                if event.type() == event.Type.MouseMove:
+                    self._on_mouse_move(event.pos())
+                elif event.type() == event.Type.MouseButtonPress:
+                    if event.button() == Qt.MouseButton.LeftButton:
+                        self._on_block_click(event.pos())
         elif obj == self._inline_editor and event.type() == event.Type.KeyPress:
             from PySide6.QtGui import QKeyEvent
 
@@ -411,27 +558,99 @@ class PreviewWidget(QWidget):
         return super().eventFilter(obj, event)
 
     def _on_mouse_move(self, pos) -> None:
+        # 统一悬停键：置信度模式用 text_block 下标，块类型模式用
+        # "t:" + content_list 索引，避免两种模式命中互相串扰。
         idx = self._hit_test_block(pos.x(), pos.y())
-        if idx != self._hovered_block:
-            self._hovered_block = idx
-            self._overlay.set_hovered(idx)
+        if idx >= 0:
+            hover_key = idx
+        elif self._content_list:
+            # 块类型模式回退：表格/公式等结构识别管道左侧在块类型模式渲染，
+            # 置信度命中测试恒返回 -1，需用 _hit_test_type_block 命中 content_list。
+            cl_idx, _bt = self._hit_test_type_block(pos.x(), pos.y())
+            hover_key = f"t:{cl_idx}" if cl_idx >= 0 else -1
+        else:
+            hover_key = -1
+
+        if hover_key != self._hovered_block:
+            self._hovered_block = hover_key
             if idx >= 0:
+                # 置信度模式命中
+                self._overlay.set_hovered(idx)
                 self.block_hovered.emit(idx)
                 block = self._text_blocks[idx]
-                tooltip = f"{block.text[:50]}\n置信度: {block.score:.1%}"
-                if block.is_manually_edited:
-                    tooltip += "\n[手动修改]"
-                self._image_label.setToolTip(tooltip)
+                self._image_label.setToolTip(
+                    self._build_block_tooltip(
+                        getattr(block, "label", "text"),
+                        block.text,
+                        block.score,
+                        block.is_manually_edited,
+                    )
+                )
+            elif isinstance(hover_key, str) and hover_key.startswith("t:"):
+                # 块类型模式命中
+                cl_idx = int(hover_key[2:])
+                self._overlay.set_hovered(cl_idx)
+                self.block_hovered.emit(cl_idx)
+                tb_idx = self._find_text_block_by_content_index(cl_idx)
+                block = (
+                    self._text_blocks[tb_idx]
+                    if tb_idx >= 0
+                    else None
+                )
+                if block is not None:
+                    self._image_label.setToolTip(
+                        self._build_block_tooltip(
+                            getattr(block, "label", "text"),
+                            block.text,
+                            block.score,
+                            block.is_manually_edited,
+                        )
+                    )
+                else:
+                    # 无对应 text_block（如纯图片块）：用 content_list 元信息
+                    cl_block = (
+                        self._content_list[cl_idx]
+                        if 0 <= cl_idx < len(self._content_list)
+                        else {}
+                    )
+                    self._image_label.setToolTip(
+                        self._build_block_tooltip(
+                            cl_block.get("type", "text"),
+                            cl_block.get("text", ""),
+                            None,
+                            False,
+                        )
+                    )
             else:
+                self._overlay.set_hovered(-1)
                 self.block_unhovered.emit()
                 self._image_label.setToolTip("")
+
+    @staticmethod
+    def _build_block_tooltip(
+        label: str, text: str, score: float | None, is_edited: bool
+    ) -> str:
+        """构造 bbox 悬停 tooltip。
+
+        表格/图片/公式等结构识别块的 score 是占位值（0.9/1.0），显示为百分比
+        会误导（如表格显示"90%"），改为"无置信度"；普通文本块保留真实百分比。
+        """
+        if label in NO_CONFIDENCE_LABELS or score is None:
+            conf_line = "置信度: 无置信度"
+        else:
+            conf_line = f"置信度: {score:.1%}"
+        tooltip = f"{(text or '')[:50]}\n{conf_line}"
+        if is_edited:
+            tooltip += "\n[手动修改]"
+        return tooltip
 
     def _on_block_click(self, pos) -> None:
         idx = self._hit_test_block(pos.x(), pos.y())
         if idx >= 0:
             self.block_clicked.emit(idx)
 
-    def _on_block_double_click(self, pos) -> None:
+    def _on_label_double_click(self, pos) -> None:
+        """双击处理：优先 bbox 编辑，空白区域打开原图查看器。"""
         # 优先置信度模式（单次识别结果）命中
         idx = self._hit_test_block(pos.x(), pos.y())
         if idx >= 0:
@@ -449,15 +668,27 @@ class PreviewWidget(QWidget):
 
         # 回退块类型模式（content_list），支持表格网格编辑
         cl_idx, block_type = self._hit_test_type_block(pos.x(), pos.y())
-        if cl_idx < 0:
+        if cl_idx >= 0:
+            if block_type == "table":
+                self._start_table_edit(cl_idx)
+            else:
+                # 块类型模式下普通文本块：尝试定位到对应 text_block 做内联编辑
+                tb_idx = self._find_text_block_by_content_index(cl_idx)
+                if tb_idx >= 0:
+                    self._start_inline_edit(tb_idx)
             return
-        if block_type == "table":
-            self._start_table_edit(cl_idx)
-        else:
-            # 块类型模式下普通文本块：尝试定位到对应 text_block 做内联编辑
-            tb_idx = self._find_text_block_by_content_index(cl_idx)
-            if tb_idx >= 0:
-                self._start_inline_edit(tb_idx)
+
+        # 未命中任何 bbox → 打开原图查看器
+        self._show_original_image()
+
+    def _show_original_image(self) -> None:
+        """弹出原图查看对话框。"""
+        pm = self._original_pixmap
+        if pm is None or pm.isNull():
+            return
+        dialog = ImageViewerDialog(pm, self)
+        dialog.resize(min(pm.width() + 40, 1200), min(pm.height() + 80, 900))
+        dialog.exec()
 
     def _start_inline_edit(self, index: int) -> None:
         if index < 0 or index >= len(self._block_screen_rects):
@@ -572,7 +803,16 @@ class PreviewWidget(QWidget):
         buttons.rejected.connect(dialog.reject)
         dlg_layout.addWidget(buttons)
 
-        if dialog.exec() != QDialog.DialogCode.Accepted:
+        # 恢复上次窗口尺寸（首次打开无历史则用上面的 setMinimumSize 默认布局）。
+        # 用显式 (organization, application) 构造 QSettings，不依赖全局 app 名设置。
+        settings = QSettings("VibeOCR", "VibeOCR")
+        if geom := settings.value("table_edit_dialog/geometry"):
+            dialog.restoreGeometry(geom)
+
+        rc = dialog.exec()
+        # 无论确认/取消都记住尺寸，下次打开沿用。
+        settings.setValue("table_edit_dialog/geometry", dialog.saveGeometry())
+        if rc != QDialog.DialogCode.Accepted:
             return
 
         new_grid: list[list[str]] = []

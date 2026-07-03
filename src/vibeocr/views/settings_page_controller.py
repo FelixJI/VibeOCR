@@ -4,12 +4,16 @@
 """
 
 import logging
+import os
+import subprocess
+import sys
 from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from PySide6.QtWidgets import (
     QCheckBox,
+    QHBoxLayout,
     QLabel,
     QListWidget,
     QMessageBox,
@@ -39,6 +43,59 @@ if TYPE_CHECKING:
     from vibeocr.services.ocr_service import OCRPipeline
 
 logger = logging.getLogger(__name__)
+
+
+def _is_bundled() -> bool:
+    """检测当前是否为 PyInstaller 打包态。"""
+    return bool(getattr(sys, "frozen", False))
+
+
+def _resolve_shortcut_icon_path() -> str:
+    """解析快捷方式图标路径（.ico），兼容开发态与打包态。"""
+    from vibeocr import env_manager
+
+    icon = env_manager.get_bundled_resources_dir() / "app_icon.ico"
+    return str(icon) if icon.exists() else ""
+
+
+def _create_windows_shortcut(
+    target: str,
+    shortcut_path: str,
+    description: str = "VibeOCR",
+    icon_path: str = "",
+    working_dir: str = "",
+) -> bool:
+    """在 Windows 上通过 PowerShell COM 创建 .lnk 快捷方式。"""
+    # 确保目标目录存在
+    try:
+        os.makedirs(os.path.dirname(shortcut_path), exist_ok=True)
+    except OSError:
+        pass
+
+    ps_lines = [
+        "$WshShell = New-Object -ComObject WScript.Shell",
+        f"$Shortcut = $WshShell.CreateShortcut('{shortcut_path}')",
+        f"$Shortcut.TargetPath = '{target}'",
+        f"$Shortcut.Description = '{description}'",
+    ]
+    if icon_path:
+        ps_lines.append(f"$Shortcut.IconLocation = '{icon_path}'")
+    if working_dir:
+        ps_lines.append(f"$Shortcut.WorkingDirectory = '{working_dir}'")
+    ps_lines.append("$Shortcut.Save()")
+
+    script = "; ".join(ps_lines)
+    try:
+        result = subprocess.run(
+            ["powershell", "-NoProfile", "-Command", script],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        return result.returncode == 0
+    except Exception:
+        logger.exception("PowerShell 创建快捷方式失败")
+        return False
 
 
 class SettingsPageController:
@@ -134,10 +191,111 @@ class SettingsPageController:
 
         self._refresh_env_maintenance_state()
 
+        self._init_shortcut_buttons()
+
         self._init_screenshot_options(nav_list, stacked)
         self._init_pdf_options(nav_list, stacked)
         self._init_backend_options_in_group()
         self._init_settings_page()
+
+    # ----------------------------------------------------------------
+    # Toast 提示
+    # ----------------------------------------------------------------
+
+    def _show_settings_toast(self, text: str = "保存成功") -> None:
+        """在所属窗口顶部居中显示 Toast 通知。"""
+        try:
+            from vibeocr.widgets.toast_widget import show_toast
+
+            # 查找顶层窗口作为 toast 父控件，避免被 Tab 裁剪
+            window = self._ui
+            if hasattr(window, "window"):
+                window = window.window()
+            show_toast(window, text)
+        except Exception:
+            logger.debug("[Toast] 显示失败（不允许影响主流程）")
+
+    # ----------------------------------------------------------------
+    # 快捷方式创建
+    # ----------------------------------------------------------------
+
+    def _init_shortcut_buttons(self) -> None:
+        """在「应用设置」分组底部动态添加快捷方式按钮。
+
+        按钮仅在 Windows 打包态可点击；开发态灰显并提示。
+        """
+        group = self._ui.findChild(QWidget, "groupAppSettings")
+        if group is None:
+            return
+
+        layout = group.layout()
+        if layout is None:
+            return
+
+        # 水平按钮行
+        row = QWidget()
+        row_layout = QHBoxLayout(row)
+        row_layout.setContentsMargins(0, 0, 0, 0)
+        row_layout.setSpacing(8)
+
+        self._btn_desktop = QPushButton("发送快捷方式到桌面")
+        self._btn_desktop.setToolTip("在桌面上创建 VibeOCR 快捷方式")
+        self._btn_desktop.clicked.connect(self._on_create_desktop_shortcut)
+        row_layout.addWidget(self._btn_desktop)
+
+        self._btn_startmenu = QPushButton("发送快捷方式到开始菜单")
+        self._btn_startmenu.setToolTip("在开始菜单中创建 VibeOCR 快捷方式")
+        self._btn_startmenu.clicked.connect(self._on_create_start_menu_shortcut)
+        row_layout.addWidget(self._btn_startmenu)
+
+        row_layout.addStretch()
+
+        # 非打包态禁用按钮并修改文案
+        if not _is_bundled():
+            self._btn_desktop.setEnabled(False)
+            self._btn_desktop.setToolTip("仅在打包版本中可用")
+            self._btn_startmenu.setEnabled(False)
+            self._btn_startmenu.setToolTip("仅在打包版本中可用")
+
+        layout.addWidget(row)
+
+    def _on_create_desktop_shortcut(self) -> None:
+        """在桌面创建 VibeOCR 快捷方式。"""
+        if not _is_bundled():
+            self._show_settings_toast("仅在打包版本中可用")
+            return
+
+        desktop = Path(os.environ.get("USERPROFILE", "")) / "Desktop"
+        lnk = str(desktop / "VibeOCR.lnk")
+        target = sys.executable
+        icon = _resolve_shortcut_icon_path()
+        wd = str(Path(sys.executable).parent)
+
+        if _create_windows_shortcut(target, lnk, "VibeOCR", icon, wd):
+            self._show_settings_toast("桌面快捷方式已创建")
+        else:
+            QMessageBox.warning(None, "创建失败", "创建桌面快捷方式失败，请检查权限。")
+
+    def _on_create_start_menu_shortcut(self) -> None:
+        """在开始菜单创建 VibeOCR 快捷方式。"""
+        if not _is_bundled():
+            self._show_settings_toast("仅在打包版本中可用")
+            return
+
+        start_menu = Path(os.environ.get("APPDATA", "")) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "VibeOCR"
+        lnk = str(start_menu / "VibeOCR.lnk")
+        target = sys.executable
+        icon = _resolve_shortcut_icon_path()
+        wd = str(Path(sys.executable).parent)
+
+        if _create_windows_shortcut(target, lnk, "VibeOCR", icon, wd):
+            self._show_settings_toast("开始菜单快捷方式已创建")
+        else:
+            QMessageBox.warning(None, "创建失败", "创建开始菜单快捷方式失败，请检查权限。")
+
+    # ----------------------------------------------------------------
+    # 截图 / PDF 选项页初始化
+    # ----------------------------------------------------------------
 
     def _init_screenshot_options(
         self, nav_list: QListWidget | None, stacked: QStackedWidget | None
@@ -171,6 +329,11 @@ class SettingsPageController:
         page_layout.addItem(spacer)
 
         stacked.addWidget(page)
+
+        # 截图选项变更时弹出保存成功提示
+        self._screenshot_options.options_changed.connect(
+            lambda _: self._show_settings_toast()
+        )
 
         # ScreenshotOptionsWidget 自管持久化（构造时 load、变更时直接写
         # screenshot 源），此处无需连接信号。
@@ -247,6 +410,11 @@ class SettingsPageController:
         if layout is not None:
             layout.addWidget(self._backend_options)
 
+        # 后端切换时弹出保存成功提示
+        self._backend_options.backend_changed.connect(
+            lambda: self._show_settings_toast()
+        )
+
     def _on_pdf_pipeline_switching(self, old_pipeline, options) -> None:
         self._pdf_switching = True
         try:
@@ -273,6 +441,7 @@ class SettingsPageController:
             from vibeocr.utils.ocr_preferences import OCRPreferences
 
             OCRPreferences.instance().set_pdf_pipeline_options(options)
+            self._show_settings_toast()
         except RuntimeError:
             pass
 
@@ -281,6 +450,7 @@ class SettingsPageController:
             from vibeocr.utils.ocr_preferences import OCRPreferences
 
             OCRPreferences.instance().set_pdf_settings(settings)
+            self._show_settings_toast()
         except RuntimeError:
             pass
 
@@ -327,6 +497,7 @@ class SettingsPageController:
         from vibeocr.managers.config_manager import ConfigManager
 
         ConfigManager.instance().set_preload_enabled(checked)
+        self._show_settings_toast()
         logger.debug(f"[设置] 预加载功能: {'启用' if checked else '禁用'}")
 
     def _on_preload_now_clicked(self) -> None:
@@ -381,6 +552,7 @@ class SettingsPageController:
         pipeline_names = [p.value for p in pipelines]
 
         if ConfigManager.instance().set_preload_pipelines(pipeline_names):
+            self._show_settings_toast()
             logger.debug(f"[设置] 预加载管道配置已保存: {pipeline_names}")
         else:
             logger.error("[设置] 保存预加载管道配置失败")
@@ -517,6 +689,7 @@ class SettingsPageController:
         self._update_cache_status("正在刷新缓存...")
         refresh_cache(self._project_root)
         self._update_cache_status("缓存已刷新")
+        self._show_settings_toast("缓存已刷新")
         logger.debug("[缓存] 已刷新（依赖缓存 + 模型缓存）")
 
     def _open_reinstall_dialog(
@@ -729,6 +902,7 @@ class SettingsPageController:
 
         ttl_sec = minutes * 60
         ConfigManager.instance().set_pipeline_ttl_seconds(ttl_sec)
+        self._show_settings_toast()
         if self._subprocess_manager and self._subprocess_manager.is_ready:
             try:
                 self._subprocess_manager.service.set_pipeline_ttl(ttl_sec)

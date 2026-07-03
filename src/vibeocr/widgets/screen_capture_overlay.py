@@ -301,8 +301,13 @@ class ScreenCaptureOverlay(QWidget):
             )
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
-        """CAPTURING: HOVER 点击选中窗口 / DRAG 开始拖拽"""
+        """CAPTURING: HOVER 点击选中窗口 / DRAG 开始拖拽 / 右键状态相关退出"""
         if self._state != "CAPTURING":
+            return
+        # 右键：框选前退出，框选后重新框选（与 ESC 逻辑一致）
+        if event.button() == Qt.MouseButton.RightButton:
+            self.releaseMouse()
+            self._handle_capturing_abort()
             return
         if event.button() != Qt.MouseButton.LeftButton:
             return
@@ -390,10 +395,23 @@ class ScreenCaptureOverlay(QWidget):
         self.update()
 
     def keyPressEvent(self, event) -> None:
-        """ESC 取消"""
+        """ESC：CAPTURING 阶段有选区则重新框选，无选区则退出；EDITING 阶段退出。"""
         if event.key() == Qt.Key.Key_Escape:
             if self._state == "CAPTURING":
                 self.releaseMouse()
+                self._handle_capturing_abort()
+                return
+            self._do_cancel()
+
+    def _handle_capturing_abort(self) -> None:
+        """CAPTURING 下 ESC/右键：有选区则重新框选，无选区则退出。
+
+        - 框选前（无选区）：取消整个截图
+        - 框选后（已有选区 / DRAG 进行中）：清除选区，回到 HOVER 继续框选
+        """
+        if self._selection_rect is not None:
+            self._reset_selection_for_re_capture()
+        else:
             self._do_cancel()
 
     # ==================== EDITING 模式 ====================
@@ -921,6 +939,20 @@ class ScreenCaptureOverlay(QWidget):
         widget.setGraphicsEffect(effect)
 
     # ==================== 状态重置 ====================
+
+    def _reset_selection_for_re_capture(self) -> None:
+        """清除当前选区但保留截图底图，使 ESC/右键能重新框选。
+
+        与 _reset_capturing 的区别：不清空 _screen_pixmap / _mapper /
+        _virtual_geometry（重新框选仍需底图），也不改 _state / _pending_pipeline。
+        """
+        self._start_pos = None
+        self._end_pos = None
+        self._selection_rect = None
+        self._detected_rect = None
+        self._sub_state = "HOVER"
+        self._last_detect_pos = QPoint()
+        self.update()
 
     def _reset_capturing(self) -> None:
         """重置 CAPTURING 状态"""
