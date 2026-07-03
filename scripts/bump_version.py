@@ -806,6 +806,9 @@ def _generate_version_file(
     )
 
     version_file = output_dir / out_name
+    # CI 等全新克隆环境下 dist/ 不存在（已 gitignore），write_text 不会自动
+    # 创建父目录，故须显式 mkdir，否则 FileNotFoundError。
+    version_file.parent.mkdir(parents=True, exist_ok=True)
     version_file.write_text(content, encoding="utf-8")
     print(f"  已生成版本信息文件 ({target}): {version_file}")
     return version_file
