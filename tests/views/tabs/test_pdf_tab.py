@@ -1108,3 +1108,64 @@ class TestPdfTabExportAsync:
 
         pdf_tab._on_export_all()
         mock_mgr.export_all_async.assert_called_once_with("/tmp/out")
+
+
+class TestPdfTabAutoDeskew:
+    """自动摆正按钮：点击 → 调 manager.auto_deskew_async(selected_indices)。"""
+
+    def _inject_single_page_session(self, pdf_tab):
+        import fitz
+
+        from vibeocr.models.pdf_document import PdfDocument, PdfPageInfo
+        from vibeocr.models.pdf_session import PdfSession
+
+        doc = fitz.open()
+        doc.new_page(width=200, height=300)
+        pdf_doc = PdfDocument(file_path="x.pdf", pages=[PdfPageInfo(page_index=0)])
+        session = PdfSession(file_path="x.pdf", doc=doc, pdf_document=pdf_doc)
+        pdf_tab._session_mgr._sessions["x.pdf"] = session
+        pdf_tab._session_mgr._active_path = "x.pdf"
+        pdf_tab._refresh_thumbnails()
+        # 直接注入底层字段不会触发 active_changed → 手动同步按钮启用态
+        # （生产中由 _on_active_changed/_set_file_buttons_enabled 处理）。
+        pdf_tab._set_file_buttons_enabled(True)
+        return doc
+
+    def test_button_exists(self, pdf_tab):
+        btn = getattr(pdf_tab, "_btn_auto_deskew", None)
+        assert btn is not None
+        assert "自动摆正" in btn.text()
+
+    def test_auto_deskew_button_calls_manager(self, pdf_tab):
+        """点'自动摆正'应调用 session_manager.auto_deskew_async。"""
+        from unittest.mock import patch
+
+        doc = self._inject_single_page_session(pdf_tab)
+        try:
+            # 选中第一页
+            pdf_tab._thumbnail_list.setCurrentRow(0)
+
+            with patch.object(pdf_tab._session_mgr, "auto_deskew_async") as mock_async:
+                pdf_tab._btn_auto_deskew.click()
+                mock_async.assert_called_once_with([0])
+        finally:
+            doc.close()
+
+    def test_auto_deskew_no_selection_shows_info(self, pdf_tab, monkeypatch):
+        """未选中页时点击应弹 information 提示，不调 auto_deskew_async。"""
+        from unittest.mock import patch
+
+        doc = self._inject_single_page_session(pdf_tab)
+        try:
+            import vibeocr.views.tabs.pdf_tab as mod
+
+            called = []
+            monkeypatch.setattr(
+                mod.QMessageBox, "information", lambda *a, **k: called.append(a)
+            )
+            with patch.object(pdf_tab._session_mgr, "auto_deskew_async") as mock_async:
+                pdf_tab._btn_auto_deskew.click()
+                mock_async.assert_not_called()
+            assert len(called) == 1
+        finally:
+            doc.close()

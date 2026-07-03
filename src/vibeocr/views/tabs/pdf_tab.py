@@ -214,6 +214,11 @@ class PdfTab(QWidget):
         self._btn_rotate_ccw.clicked.connect(lambda: self._on_rotate(-90))
         self._btn_rotate_all = QPushButton("旋转全部")
         self._btn_rotate_all.clicked.connect(self._on_rotate_all)
+        self._btn_auto_deskew = QPushButton("自动摆正")
+        self._btn_auto_deskew.setToolTip(
+            "自动检测选中页方向并旋转至文字朝上（仅 90° 倍数）"
+        )
+        self._btn_auto_deskew.clicked.connect(self._on_auto_deskew)
         self._btn_delete = QPushButton("删除选中页")
         self._btn_delete.clicked.connect(self._on_delete_pages)
         self._btn_insert = QPushButton("在选中页后插入")
@@ -221,6 +226,7 @@ class PdfTab(QWidget):
         page_layout.addWidget(self._btn_rotate_cw)
         page_layout.addWidget(self._btn_rotate_ccw)
         page_layout.addWidget(self._btn_rotate_all)
+        page_layout.addWidget(self._btn_auto_deskew)
         page_layout.addWidget(self._btn_delete)
         page_layout.addWidget(self._btn_insert)
         layout.addWidget(page_group)
@@ -328,6 +334,9 @@ class PdfTab(QWidget):
         mgr.render_progress.connect(self._on_render_progress_update)
         mgr.export_progress.connect(self._on_export_progress)
         mgr.export_done.connect(self._on_export_done)
+        mgr.deskew_page_done.connect(self._on_deskew_page_done)
+        mgr.deskew_done.connect(self._on_deskew_done)
+        mgr.deskew_failed.connect(self._on_deskew_failed)
 
     # ---- splitter layout persistence --------------------------------
 
@@ -576,6 +585,7 @@ class PdfTab(QWidget):
             self._btn_rotate_cw,
             self._btn_rotate_ccw,
             self._btn_rotate_all,
+            self._btn_auto_deskew,
             self._btn_delete,
             self._btn_insert,
             self._btn_add_text_layer,
@@ -1024,6 +1034,52 @@ class PdfTab(QWidget):
             PdfService.rotate_pages(session.doc, session.pdf_document, indices, 90)
         for idx in indices:
             self._update_thumbnail_icon(idx)
+        self._update_status()
+
+    def _on_auto_deskew(self) -> None:
+        session = self._session_mgr.active_session
+        if session is None:
+            return
+        indices = self._get_selected_page_indices()
+        if not indices:
+            QMessageBox.information(self, "自动摆正", "请先选中要摆正的页面。")
+            return
+        self._btn_auto_deskew.setEnabled(False)
+        self._session_mgr.auto_deskew_async(indices)
+
+    def _on_deskew_page_done(
+        self, session_id: str, page_index: int, was_corrected: bool
+    ) -> None:
+        session = self._session_mgr.active_session
+        if session is None or session.file_path != session_id:
+            return
+        # 缩略图刷新（rotate 改变页面视觉）
+        self._update_thumbnail_icon(page_index)
+        # 格子刷新（Task 5 会让此处同时刷新 _DESKEWED_ROLE）
+        self._update_layer_grid_page(page_index)
+
+    def _on_deskew_done(self, session_id: str, summary) -> None:
+        self._btn_auto_deskew.setEnabled(True)
+        session = self._session_mgr.active_session
+        if session is None or session.file_path != session_id:
+            return
+        corrected = summary.get("corrected", 0)
+        skipped = summary.get("skipped", 0)
+        pages = summary.get("corrected_pages", [])
+        if corrected == 0:
+            QMessageBox.information(self, "自动摆正", "选中页本已正向，无需纠正。")
+        else:
+            page_str = "、".join(str(p + 1) for p in pages)
+            QMessageBox.information(
+                self,
+                "自动摆正",
+                f"已摆正 {corrected} 页（第 {page_str} 页）；跳过 {skipped} 页（本已正向）。",
+            )
+        self._update_status()
+
+    def _on_deskew_failed(self, session_id: str, error: str) -> None:
+        self._btn_auto_deskew.setEnabled(True)
+        QMessageBox.warning(self, "自动摆正失败", error)
         self._update_status()
 
     def _on_delete_pages(self) -> None:
