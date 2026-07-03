@@ -83,6 +83,48 @@ class TestPdfSessionManagerSessions:
             manager.open_session("/nonexistent/file.pdf")
 
 
+class TestRerenderThumbnailsAsync:
+    """rerender_thumbnails_async：旋转全部后后台重渲染缩略图。"""
+
+    def test_invalidates_and_removes_from_loaded(self, manager, test_pdf_a, qapp):
+        """指定页 thumbnail 置 None、从 loaded_pages 移除，重启 worker。"""
+        import time
+
+        from PySide6.QtCore import QCoreApplication
+
+        session = manager.open_session(str(test_pdf_a))
+        # 等待初始加载完成（PdfLoadWorker 填充缩略图）
+        deadline = time.monotonic() + 5.0
+        while len(session.loaded_pages) < session.pdf_document.page_count:
+            QCoreApplication.processEvents()
+            time.sleep(0.01)
+            if time.monotonic() > deadline:
+                break
+
+        assert len(session.loaded_pages) == session.pdf_document.page_count
+        # 全部页都有缩略图
+        assert all(p.thumbnail is not None for p in session.pdf_document.pages)
+
+        # 重渲染第 0 页
+        manager.rerender_thumbnails_async([0])
+
+        # 第 0 页 thumbnail 已失效，loaded_pages 已移除
+        assert session.pdf_document.pages[0].thumbnail is None
+        assert 0 not in session.loaded_pages
+        # 第 1 页未受影响
+        assert session.pdf_document.pages[1].thumbnail is not None
+        assert 1 in session.loaded_pages
+
+        # 等待 worker 重渲染完成
+        deadline = time.monotonic() + 5.0
+        while session.pdf_document.pages[0].thumbnail is None:
+            QCoreApplication.processEvents()
+            time.sleep(0.01)
+            if time.monotonic() > deadline:
+                break
+        assert session.pdf_document.pages[0].thumbnail is not None
+
+
 class TestPdfSessionManagerShutdown:
     def test_shutdown_closes_all_docs(self, manager, test_pdf_a, test_pdf_b):
         manager.open_session(str(test_pdf_a))
@@ -667,3 +709,88 @@ class TestExportAllAsync:
         assert len(created) == 1
         sessions_arg, out_arg = created[0]
         assert out_arg == "/tmp/out"
+
+
+class TestOpenSessionsAsync:
+    """异步批量打开文件：fitz.open 在后台线程，主线程通过信号接收结果。"""
+
+    def test_creates_session_for_each_opened_file(
+        self, manager, test_pdf_a, test_pdf_b, qapp
+    ):
+        added: list[str] = []
+        manager.session_added.connect(lambda p: added.append(p))
+
+        manager.open_sessions_async([str(test_pdf_a), str(test_pdf_b)])
+
+        # 等待后台 worker 完成（PdfSessionManager 用真实 PdfOpenWorker）
+        import time
+
+        from PySide6.QtCore import QCoreApplication
+
+        deadline = time.monotonic() + 5.0
+        while len(added) < 2 and time.monotonic() < deadline:
+            QCoreApplication.processEvents()
+            time.sleep(0.01)
+
+        assert set(added) == {str(test_pdf_a), str(test_pdf_b)}
+        assert manager.get_session(str(test_pdf_a)) is not None
+        assert manager.get_session(str(test_pdf_b)) is not None
+
+    def test_signals_open_progress(self, manager, test_pdf_a, test_pdf_b, qapp):
+        progresses: list[tuple[int, int]] = []
+        manager.open_progress.connect(lambda c, t: progresses.append((c, t)))
+
+        manager.open_sessions_async([str(test_pdf_a), str(test_pdf_b)])
+
+        import time
+
+        from PySide6.QtCore import QCoreApplication
+
+        deadline = time.monotonic() + 5.0
+        while len(progresses) < 2 and time.monotonic() < deadline:
+            QCoreApplication.processEvents()
+            time.sleep(0.01)
+
+        assert len(progresses) == 2
+        assert progresses[0] == (1, 2)
+        assert progresses[1] == (2, 2)
+
+    def test_open_failed_for_missing_file(self, manager, qapp):
+        failures: list[tuple[str, str]] = []
+        manager.open_failed.connect(lambda p, e: failures.append((p, e)))
+
+        manager.open_sessions_async(["nonexistent.pdf"])
+
+        import time
+
+        from PySide6.QtCore import QCoreApplication
+
+        deadline = time.monotonic() + 5.0
+        while len(failures) == 0 and time.monotonic() < deadline:
+            QCoreApplication.processEvents()
+            time.sleep(0.01)
+
+        assert len(failures) == 1
+        assert failures[0][0] == "nonexistent.pdf"
+        assert "不存在" in failures[0][1]
+
+    def test_first_file_becomes_active(self, manager, test_pdf_a, test_pdf_b, qapp):
+        """批量导入时第一个文件成为 active，后续文件不重复切换（避免 N 次全量重建）。"""
+        active_changes: list[str] = []
+        manager.active_changed.connect(lambda p: active_changes.append(p))
+
+        manager.open_sessions_async([str(test_pdf_a), str(test_pdf_b)])
+
+        import time
+
+        from PySide6.QtCore import QCoreApplication
+
+        deadline = time.monotonic() + 5.0
+        while manager.get_session(str(test_pdf_b)) is None and time.monotonic() < deadline:
+            QCoreApplication.processEvents()
+            time.sleep(0.01)
+
+        # 第一个文件触发 active_changed；已有 active 时后续文件不再切换
+        assert str(test_pdf_a) in active_changes
+        assert manager.active_session is not None
+        assert manager.active_session.file_path == str(test_pdf_a)
