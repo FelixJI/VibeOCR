@@ -1062,6 +1062,15 @@ class PdfTab(QWidget):
         session = self._session_mgr.active_session
         if session is None:
             return
+        # 无 OCR 服务时 auto_deskew_async 会静默 return，导致按钮永久禁用
+        # （不发 deskew_done/deskew_failed 信号）。此处前置校验并提示。
+        if not self._session_mgr.is_ocr_ready:
+            QMessageBox.information(
+                self,
+                "自动摆正",
+                "未配置 OCR 服务，无法检测页面方向。请先在设置中选择 OCR 引擎。",
+            )
+            return
         indices = self._get_selected_page_indices()
         if not indices:
             QMessageBox.information(self, "自动摆正", "请先选中要摆正的页面。")

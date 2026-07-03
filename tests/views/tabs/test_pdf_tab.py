@@ -1136,10 +1136,14 @@ class TestPdfTabAutoDeskew:
         assert btn is not None
         assert "自动摆正" in btn.text()
 
-    def test_auto_deskew_button_calls_manager(self, pdf_tab):
+    def test_auto_deskew_button_calls_manager(self, pdf_tab, monkeypatch):
         """点'自动摆正'应调用 session_manager.auto_deskew_async。"""
         from unittest.mock import patch
 
+        # OCR 服务就绪（否则前置校验会拦截，不会调 auto_deskew_async）
+        monkeypatch.setattr(
+            type(pdf_tab._session_mgr), "is_ocr_ready", property(lambda self: True)
+        )
         doc = self._inject_single_page_session(pdf_tab)
         try:
             # 选中第一页
@@ -1155,6 +1159,10 @@ class TestPdfTabAutoDeskew:
         """未选中页时点击应弹 information 提示，不调 auto_deskew_async。"""
         from unittest.mock import patch
 
+        # OCR 服务就绪：跳过 OCR 校验，验证选中页校验分支
+        monkeypatch.setattr(
+            type(pdf_tab._session_mgr), "is_ocr_ready", property(lambda self: True)
+        )
         doc = self._inject_single_page_session(pdf_tab)
         try:
             import vibeocr.views.tabs.pdf_tab as mod
@@ -1167,6 +1175,34 @@ class TestPdfTabAutoDeskew:
                 pdf_tab._btn_auto_deskew.click()
                 mock_async.assert_not_called()
             assert len(called) == 1
+        finally:
+            doc.close()
+
+    def test_auto_deskew_no_ocr_service_shows_info(self, pdf_tab, monkeypatch):
+        """无 OCR 服务时点击应弹 information 提示，不禁用按钮、不调 async。"""
+        from unittest.mock import patch
+
+        # 无 OCR 服务（is_ocr_ready == False）
+        monkeypatch.setattr(
+            type(pdf_tab._session_mgr), "is_ocr_ready", property(lambda self: False)
+        )
+        doc = self._inject_single_page_session(pdf_tab)
+        try:
+            import vibeocr.views.tabs.pdf_tab as mod
+
+            called = []
+            monkeypatch.setattr(
+                mod.QMessageBox, "information", lambda *a, **k: called.append(a)
+            )
+            # 按钮先启用，点击后应保持启用（不被禁用）
+            pdf_tab._btn_auto_deskew.setEnabled(True)
+            with patch.object(pdf_tab._session_mgr, "auto_deskew_async") as mock_async:
+                pdf_tab._btn_auto_deskew.click()
+                mock_async.assert_not_called()
+            assert len(called) == 1
+            assert "未配置 OCR 服务" in called[0][2]
+            # 关键：按钮未被禁用（无 OCR 服务时静默 return 前置校验）
+            assert pdf_tab._btn_auto_deskew.isEnabled() is True
         finally:
             doc.close()
 
