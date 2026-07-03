@@ -6,6 +6,7 @@
 import asyncio
 import functools
 import logging
+import warnings
 import weakref
 from collections.abc import Callable, Coroutine
 from typing import Any
@@ -14,6 +15,32 @@ logger = logging.getLogger(__name__)
 
 # 存储异步任务引用，防止垃圾回收
 _async_tasks: weakref.WeakSet[asyncio.Task] = weakref.WeakSet()
+
+
+def _get_running_or_set_loop() -> asyncio.AbstractEventLoop:
+    """获取当前线程的事件循环，必要时创建并设为当前循环。
+
+    Python 3.13 起，无参 ``asyncio.get_event_loop()`` 在当前线程没有已设置
+    的事件循环时会抛出 ``RuntimeError``（3.10+ 已对其 DeprecationWarning，
+    3.12+ 在无 running loop 且无 set 过 loop 时直接报错）。
+
+    生产环境由 ``create_qasync_event_loop`` 提前 ``set_event_loop``，这里仅在
+    单元测试等未经过 main.py 初始化的场景兜底：若无当前循环则新建一个，避免
+    ``run_coroutine`` / ``AsyncTaskRunner`` 在这些环境下崩溃。
+    """
+    # 复用当前线程已设置的事件循环（生产环境的 qasync 循环通过
+    # ``set_event_loop`` 注册）。3.13 起无循环时 ``get_event_loop()`` 既发
+    # DeprecationWarning 又抛 RuntimeError；用 catch_warnings 屏蔽该 warning，
+    # 再在 RuntimeError 时新建循环，避免在未经 ``create_qasync_event_loop``
+    # 初始化的场景（如单元测试）下崩溃或留下噪音日志。
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        try:
+            return asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            return loop
 
 
 def create_qasync_event_loop(app) -> asyncio.AbstractEventLoop:
@@ -49,7 +76,7 @@ def run_coroutine(coro: Coroutine, callback: Callable | None = None) -> None:
         callback: 可选的完成回调函数，接收协程返回值作为参数
     """
     logger.debug("[run_coroutine] 开始执行协程...")
-    loop = asyncio.get_event_loop()
+    loop = _get_running_or_set_loop()
     logger.debug(
         f"[run_coroutine] 事件循环: {type(loop).__name__}, running={loop.is_running()}"
     )
@@ -171,7 +198,7 @@ class AsyncTaskRunner:
                 if task in self._tasks:
                     self._tasks.remove(task)
 
-        loop = asyncio.get_event_loop()
+        loop = _get_running_or_set_loop()
         task = loop.create_task(wrapped())
         self._tasks.append(task)
         return task
