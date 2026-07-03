@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 from PySide6.QtCore import QRectF, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QIcon, QPen, QPixmap
+from PySide6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -48,6 +48,7 @@ _GRID_CELL_SIZE = 40  # 文字层状态网格单格尺寸（正方形）
 # 文字层网格 item 数据角色：_LAYER_ROLE 存 page_index，_HAS_LAYER_ROLE 存 has_text_layer
 _LAYER_ROLE = Qt.ItemDataRole.UserRole
 _HAS_LAYER_ROLE = Qt.ItemDataRole.UserRole + 1
+_DESKEWED_ROLE = Qt.ItemDataRole.UserRole + 2  # 存 deskewed（本会话是否被自动摆正纠正）
 
 
 class LayerStatusDelegate(QStyledItemDelegate):
@@ -96,6 +97,21 @@ class LayerStatusDelegate(QStyledItemDelegate):
         font.setPointSize(10)
         painter.setFont(font)
         painter.drawText(option.rect, Qt.AlignmentFlag.AlignCenter, page_num)
+
+        # 已纠偏标记：右上角橙色小圆点（底色保持不变，两维信息并存）
+        deskewed = index.data(_DESKEWED_ROLE)
+        if deskewed:
+            dot_d = 10  # 直径
+            dot = QRectF(
+                cell.right() - dot_d - 2,
+                cell.top() + 2,
+                dot_d,
+                dot_d,
+            )
+            painter.setBrush(QColor(Colors.warning))
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.drawEllipse(dot)
+
         painter.restore()
 
 
@@ -214,6 +230,11 @@ class PdfTab(QWidget):
         self._btn_rotate_ccw.clicked.connect(lambda: self._on_rotate(-90))
         self._btn_rotate_all = QPushButton("旋转全部")
         self._btn_rotate_all.clicked.connect(self._on_rotate_all)
+        self._btn_auto_deskew = QPushButton("自动摆正")
+        self._btn_auto_deskew.setToolTip(
+            "自动检测选中页方向并旋转至文字朝上（仅 90° 倍数）"
+        )
+        self._btn_auto_deskew.clicked.connect(self._on_auto_deskew)
         self._btn_delete = QPushButton("删除选中页")
         self._btn_delete.clicked.connect(self._on_delete_pages)
         self._btn_insert = QPushButton("在选中页后插入")
@@ -221,6 +242,7 @@ class PdfTab(QWidget):
         page_layout.addWidget(self._btn_rotate_cw)
         page_layout.addWidget(self._btn_rotate_ccw)
         page_layout.addWidget(self._btn_rotate_all)
+        page_layout.addWidget(self._btn_auto_deskew)
         page_layout.addWidget(self._btn_delete)
         page_layout.addWidget(self._btn_insert)
         layout.addWidget(page_group)
@@ -328,6 +350,9 @@ class PdfTab(QWidget):
         mgr.render_progress.connect(self._on_render_progress_update)
         mgr.export_progress.connect(self._on_export_progress)
         mgr.export_done.connect(self._on_export_done)
+        mgr.deskew_page_done.connect(self._on_deskew_page_done)
+        mgr.deskew_done.connect(self._on_deskew_done)
+        mgr.deskew_failed.connect(self._on_deskew_failed)
 
     # ---- splitter layout persistence --------------------------------
 
@@ -576,6 +601,7 @@ class PdfTab(QWidget):
             self._btn_rotate_cw,
             self._btn_rotate_ccw,
             self._btn_rotate_all,
+            self._btn_auto_deskew,
             self._btn_delete,
             self._btn_insert,
             self._btn_add_text_layer,
@@ -692,6 +718,7 @@ class PdfTab(QWidget):
             item = QListWidgetItem()
             item.setData(_LAYER_ROLE, p.page_index)
             item.setData(_HAS_LAYER_ROLE, p.has_text_layer)
+            item.setData(_DESKEWED_ROLE, p.deskewed)
             item.setToolTip(self._layer_cell_tooltip(p))
             grid.addItem(item)
         self._update_layer_summary(pages)
@@ -705,8 +732,12 @@ class PdfTab(QWidget):
                 if page_info.ocr_text_blocks
                 else len(page_info.text_layers)
             )
-            return f"第{page_info.page_index + 1}页 · 已添加文字层（{block_count}个文本块）"
-        return f"第{page_info.page_index + 1}页 · 无文字层"
+            tip = f"第{page_info.page_index + 1}页 · 已添加文字层（{block_count}个文本块）"
+        else:
+            tip = f"第{page_info.page_index + 1}页 · 无文字层"
+        if getattr(page_info, "deskewed", False):
+            tip += " · 已纠偏"
+        return tip
 
     def _update_layer_grid_page(self, page_index: int) -> None:
         """增量更新单页网格格子（不全量重建），用于 OCR/删除文字层即时反馈。
@@ -724,6 +755,7 @@ class PdfTab(QWidget):
             item = grid.item(row)
             if item.data(_LAYER_ROLE) == page_index:
                 item.setData(_HAS_LAYER_ROLE, page_info.has_text_layer)
+                item.setData(_DESKEWED_ROLE, page_info.deskewed)
                 item.setToolTip(self._layer_cell_tooltip(page_info))
                 break
         # 汇总统计实时刷新
@@ -1024,6 +1056,61 @@ class PdfTab(QWidget):
             PdfService.rotate_pages(session.doc, session.pdf_document, indices, 90)
         for idx in indices:
             self._update_thumbnail_icon(idx)
+        self._update_status()
+
+    def _on_auto_deskew(self) -> None:
+        session = self._session_mgr.active_session
+        if session is None:
+            return
+        # 无 OCR 服务时 auto_deskew_async 会静默 return，导致按钮永久禁用
+        # （不发 deskew_done/deskew_failed 信号）。此处前置校验并提示。
+        if not self._session_mgr.is_ocr_ready:
+            QMessageBox.information(
+                self,
+                "自动摆正",
+                "未配置 OCR 服务，无法检测页面方向。请先在设置中选择 OCR 引擎。",
+            )
+            return
+        indices = self._get_selected_page_indices()
+        if not indices:
+            QMessageBox.information(self, "自动摆正", "请先选中要摆正的页面。")
+            return
+        self._btn_auto_deskew.setEnabled(False)
+        self._session_mgr.auto_deskew_async(indices)
+
+    def _on_deskew_page_done(
+        self, session_id: str, page_index: int, was_corrected: bool
+    ) -> None:
+        session = self._session_mgr.active_session
+        if session is None or session.file_path != session_id:
+            return
+        # 缩略图刷新（rotate 改变页面视觉）
+        self._update_thumbnail_icon(page_index)
+        # 格子刷新（Task 5 会让此处同时刷新 _DESKEWED_ROLE）
+        self._update_layer_grid_page(page_index)
+
+    def _on_deskew_done(self, session_id: str, summary) -> None:
+        self._btn_auto_deskew.setEnabled(True)
+        session = self._session_mgr.active_session
+        if session is None or session.file_path != session_id:
+            return
+        corrected = summary.get("corrected", 0)
+        skipped = summary.get("skipped", 0)
+        pages = summary.get("corrected_pages", [])
+        if corrected == 0:
+            QMessageBox.information(self, "自动摆正", "选中页本已正向，无需纠正。")
+        else:
+            page_str = "、".join(str(p + 1) for p in pages)
+            QMessageBox.information(
+                self,
+                "自动摆正",
+                f"已摆正 {corrected} 页（第 {page_str} 页）；跳过 {skipped} 页（本已正向）。",
+            )
+        self._update_status()
+
+    def _on_deskew_failed(self, session_id: str, error: str) -> None:
+        self._btn_auto_deskew.setEnabled(True)
+        QMessageBox.warning(self, "自动摆正失败", error)
         self._update_status()
 
     def _on_delete_pages(self) -> None:

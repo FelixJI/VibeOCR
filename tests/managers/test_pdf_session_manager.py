@@ -2,6 +2,7 @@
 
 import fitz
 import pytest
+from PySide6.QtCore import Qt
 
 from vibeocr.managers.pdf_session_manager import PdfSessionManager
 
@@ -667,3 +668,34 @@ class TestExportAllAsync:
         assert len(created) == 1
         sessions_arg, out_arg = created[0]
         assert out_arg == "/tmp/out"
+
+
+def test_auto_deskew_emits_done(manager, qapp, wait_worker, tmp_path):
+    from unittest.mock import MagicMock
+
+    # 构造一个单页 PDF session
+    path = str(tmp_path / "d.pdf")
+    doc = fitz.open()
+    doc.new_page(width=200, height=300)
+    doc.save(path)
+    doc.close()
+
+    manager.open_session(path)
+    session = manager.active_session
+    assert session is not None  # open_session 同步设置 active_session
+    # 注入 mock ocr_service（避免加载真实模型）
+    result = MagicMock()
+    result.preproc_angle = 90
+    ocr_service = MagicMock()
+    ocr_service.recognize_batch.return_value = [result]
+    manager.set_ocr_service(ocr_service)
+
+    received = []
+    manager.deskew_done.connect(
+        lambda sid, s: received.append(s), Qt.ConnectionType.DirectConnection
+    )
+    manager.auto_deskew_async([0])
+    wait_worker(manager._deskew_worker)
+
+    assert received, "deskew_done 未触发"
+    assert received[0]["corrected"] == 1

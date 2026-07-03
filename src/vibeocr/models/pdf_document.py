@@ -34,6 +34,7 @@ class PdfPageInfo:
     # detect_text_layers 重读会被 PyMuPDF 合并块，不能作为预览信源，故单独缓存。
     ocr_text_blocks: list = field(default_factory=list)
     ocr_preproc_angle: int = 0
+    deskewed: bool = False  # 本会话内是否被自动摆正纠正过（仅 UI 标记，不持久化）
 
 
 @dataclass
