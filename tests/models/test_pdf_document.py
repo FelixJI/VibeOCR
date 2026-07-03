@@ -80,3 +80,14 @@ class TestPdfDocument:
     def test_page_count(self):
         doc = PdfDocument(pages=[PdfPageInfo(page_index=i) for i in range(5)])
         assert doc.page_count == 5
+
+
+def test_page_info_deskewed_defaults_false():
+    info = PdfPageInfo(page_index=0)
+    assert info.deskewed is False
+
+
+def test_page_info_deskewed_settable():
+    info = PdfPageInfo(page_index=0)
+    info.deskewed = True
+    assert info.deskewed is True
