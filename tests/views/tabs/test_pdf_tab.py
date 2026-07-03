@@ -975,12 +975,11 @@ class TestThumbnailIncrementalUpdate:
         finally:
             doc.close()
 
-    def test_rotate_renders_affected_pages(self, pdf_tab, monkeypatch):
-        """旋转后应渲染受影响页的缩略图（仅选中页）。"""
+    def test_rotate_invalidates_affected_thumbnail(self, pdf_tab):
+        """旋转单页后：受影响页缩略图缓存失效（按需重渲，不再主线程渲染）。"""
         from PySide6.QtCore import QItemSelectionModel
-        from PySide6.QtGui import QPixmap
 
-        import vibeocr.views.tabs.pdf_tab as mod
+        from PySide6.QtGui import QPixmap
 
         doc, _ = self._setup(pdf_tab)
         try:
@@ -993,15 +992,15 @@ class TestThumbnailIncrementalUpdate:
                         model.index(row, 0), QItemSelectionModel.ClearAndSelect
                     )
                     break
-            called = []
-            monkeypatch.setattr(
-                mod.PdfService,
-                "render_page",
-                lambda *a, **k: called.append(a) or QPixmap(10, 10),
-            )
+            # 预填缓存 page_index=1（row=1）的缩略图
+            target_row = 1
+            pdf_tab._thumbnail_model._cache.put(target_row, QPixmap(10, 10))
+            assert target_row in pdf_tab._thumbnail_model._cache
+
             pdf_tab._on_rotate(90)
-            # 仅渲染选中的 1 页
-            assert len(called) == 1
+
+            # 旋转后该行缓存失效（按需 worker 会重渲）
+            assert target_row not in pdf_tab._thumbnail_model._cache
         finally:
             doc.close()
 

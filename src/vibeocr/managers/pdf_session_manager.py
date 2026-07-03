@@ -68,6 +68,8 @@ class PdfSessionManager(QObject):
     # 异步批量打开文件（open_sessions_async）
     open_progress = Signal(int, int)           # (current, total)
     open_failed = Signal(str, str)             # (file_path, error_msg)
+    # 缩略图缓存失效（旋转后），由 ThumbnailModel 监听清缓存并按需重渲
+    thumbnails_invalidated = Signal(list)      # (page_indices) 或 [] 表示全部
     open_done = Signal()                        # 全部批量打开流程结束
 
     def __init__(self, parent=None) -> None:
@@ -255,28 +257,20 @@ class PdfSessionManager(QObject):
             pdf_document=session.pdf_document,
             loaded_pages=session.loaded_pages,
             doc_lock=session.doc_lock,
-            thumbnail_dpi=session.pdf_document.thumbnail_dpi,
         )
         self._load_worker.page_ready.connect(self._on_page_ready)
         self._load_worker.all_done.connect(self._on_load_all_done)
         self._load_worker.start()
 
     def rerender_thumbnails_async(self, page_indices: list[int]) -> None:
-        """后台重新渲染指定页的缩略图（旋转全部后调用，避免主线程逐页渲染卡顿）。
+        """通知缩略图缓存失效（旋转后），由 ThumbnailModel 按需重渲可见页。
 
-        先取消现有 load worker（避免其排队中的 page_ready 把页面标记为已加载，
-        导致新 worker 跳过它们），再使指定页 thumbnail 失效并从 loaded_pages 移除，
-        最后重启 PdfLoadWorker 异步重渲染（跳过仍有效的已加载页）。
+        文字层状态未变（旋转不改 has_text_layer），无需重启文字层 load worker。
+        缩略图按需渲染：失效缓存后，滚动到该页或该页可见时自动重渲。
         """
-        session = self.active_session
-        if session is None or not page_indices:
+        if not page_indices:
             return
-        self._cancel_load_worker()
-        for idx in page_indices:
-            if 0 <= idx < len(session.pdf_document.pages):
-                session.pdf_document.pages[idx].thumbnail = None
-            session.loaded_pages.discard(idx)
-        self._start_load_worker(session)
+        self.thumbnails_invalidated.emit(page_indices)
 
     def _cancel_load_worker(self) -> None:
         if self._load_worker is not None:
@@ -284,14 +278,13 @@ class PdfSessionManager(QObject):
             _wait_thread(self._load_worker, timeout=3000)
             self._load_worker = None
 
-    def _on_page_ready(self, page_index: int, page_info, pixmap) -> None:
+    def _on_page_ready(self, page_index: int, page_info) -> None:
         worker = self._load_worker
         if worker is None:
             return
         session = self._sessions.get(worker.session_id)
         if session is None:
             return
-        page_info.thumbnail = pixmap
         if page_index < len(session.pdf_document.pages):
             session.pdf_document.pages[page_index] = page_info
         session.loaded_pages.add(page_index)

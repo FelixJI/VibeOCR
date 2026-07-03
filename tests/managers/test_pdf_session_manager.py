@@ -84,45 +84,31 @@ class TestPdfSessionManagerSessions:
 
 
 class TestRerenderThumbnailsAsync:
-    """rerender_thumbnails_async：旋转全部后后台重渲染缩略图。"""
+    """rerender_thumbnails_async：旋转后 emit thumbnails_invalidated 信号。
 
-    def test_invalidates_and_removes_from_loaded(self, manager, test_pdf_a, qapp):
-        """指定页 thumbnail 置 None、从 loaded_pages 移除，重启 worker。"""
-        import time
+    缩略图不再由 load worker 渲染（改为按需），故 rerender 只发失效信号，
+    不改 page_info.thumbnail（那是按需缓存的领域）。
+    """
 
-        from PySide6.QtCore import QCoreApplication
+    def test_emits_thumbnails_invalidated(self, manager, test_pdf_a):
+        """rerender_thumbnails_async 应 emit thumbnails_invalidated(page_indices)。"""
+        invalidated: list[list[int]] = []
+        manager.thumbnails_invalidated.connect(
+            lambda indices: invalidated.append(indices)
+        )
 
-        session = manager.open_session(str(test_pdf_a))
-        # 等待初始加载完成（PdfLoadWorker 填充缩略图）
-        deadline = time.monotonic() + 5.0
-        while len(session.loaded_pages) < session.pdf_document.page_count:
-            QCoreApplication.processEvents()
-            time.sleep(0.01)
-            if time.monotonic() > deadline:
-                break
+        manager.rerender_thumbnails_async([0, 1])
 
-        assert len(session.loaded_pages) == session.pdf_document.page_count
-        # 全部页都有缩略图
-        assert all(p.thumbnail is not None for p in session.pdf_document.pages)
+        assert len(invalidated) == 1
+        assert invalidated[0] == [0, 1]
 
-        # 重渲染第 0 页
-        manager.rerender_thumbnails_async([0])
-
-        # 第 0 页 thumbnail 已失效，loaded_pages 已移除
-        assert session.pdf_document.pages[0].thumbnail is None
-        assert 0 not in session.loaded_pages
-        # 第 1 页未受影响
-        assert session.pdf_document.pages[1].thumbnail is not None
-        assert 1 in session.loaded_pages
-
-        # 等待 worker 重渲染完成
-        deadline = time.monotonic() + 5.0
-        while session.pdf_document.pages[0].thumbnail is None:
-            QCoreApplication.processEvents()
-            time.sleep(0.01)
-            if time.monotonic() > deadline:
-                break
-        assert session.pdf_document.pages[0].thumbnail is not None
+    def test_empty_indices_does_not_emit(self, manager, test_pdf_a):
+        invalidated: list[list[int]] = []
+        manager.thumbnails_invalidated.connect(
+            lambda indices: invalidated.append(indices)
+        )
+        manager.rerender_thumbnails_async([])
+        assert invalidated == []
 
 
 class TestPdfSessionManagerShutdown:

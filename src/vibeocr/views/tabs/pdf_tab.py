@@ -40,10 +40,12 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from vibeocr.managers.pdf_session_manager import PdfSessionManager
+from vibeocr.managers.pdf_session_manager import PdfSessionManager, _wait_thread
 from vibeocr.services.pdf_service import PdfService
 from vibeocr.ui.theme import Colors
+from vibeocr.utils.thumbnail_lru_cache import ThumbnailLruCache
 from vibeocr.views.pdf_preview_window import PdfPreviewWindow
+from vibeocr.workers.pdf_render_thumb_worker import ThumbnailRenderWorker
 
 if TYPE_CHECKING:
     from vibeocr.models.ocr_options import OCROptions
@@ -113,20 +115,86 @@ class LayerStatusDelegate(QStyledItemDelegate):
 class ThumbnailModel(QAbstractListModel):
     """缩略图列表虚拟化数据模型（数据源 = 活动会话的 pages）。
 
-    替代原 QListWidget 每页实例化一个 QListWidgetItem 的非虚拟化实现。
-    data() 只读取缓存在 PdfPageInfo.thumbnail 中的已缩放 pixmap，
-    不在 data() 里做 scaled —— 缩放由 PdfLoadWorker 后台线程完成。
+    按需渲染：data(DecorationRole) 查 LRU 缓存，命中返回 QIcon；未命中返回
+    None（占位）并投递渲染请求到后台 worker。滚动到可见页时由
+    ThumbnailListView 主动请求渲染。渲染完成后 thumbnail_ready 回调
+    回填缓存并 dataChanged 通知视图重绘。
     """
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self._session: PdfSession | None = None
+        self._cache = ThumbnailLruCache(capacity=200)
+        self._render_worker: ThumbnailRenderWorker | None = None
+        self._render_dpi = 96
 
     def set_session(self, session: PdfSession | None) -> None:
-        """切换数据源（切文件/导入时），触发整体 reset。"""
+        """切换数据源（切文件/导入时）：停旧 worker、清缓存、起新 worker。"""
+        self._stop_render_worker()
         self.beginResetModel()
         self._session = session
+        self._cache.clear()
         self.endResetModel()
+        if session is not None:
+            self._start_render_worker(session)
+
+    def _start_render_worker(self, session: PdfSession) -> None:
+        self._render_worker = ThumbnailRenderWorker(
+            doc=session.doc,
+            doc_lock=session.doc_lock,
+            dpi=session.pdf_document.thumbnail_dpi,
+            size=_THUMBNAIL_SIZE,
+        )
+        self._render_worker.thumbnail_ready.connect(self._on_thumbnail_ready)
+        self._render_worker.start()
+
+    def _stop_render_worker(self) -> None:
+        if self._render_worker is not None:
+            self._render_worker.cancel()
+            _wait_thread(self._render_worker, timeout=3000)
+            self._render_worker = None
+
+    def _on_thumbnail_ready(self, page_index: int, pixmap: QPixmap) -> None:
+        """后台渲染回调：回填 LRU 缓存并通知视图重绘该行。"""
+        self._cache.put(page_index, pixmap)
+        # page_index == row（重排前顺序一致）
+        if 0 <= page_index < self.rowCount():
+            idx = self.index(page_index, 0)
+            self.dataChanged.emit(idx, idx, [Qt.ItemDataRole.DecorationRole])
+
+    def request_render(self, row: int) -> None:
+        """请求渲染指定行（已在缓存则跳过）。滚动监听 / data() miss 时调用。"""
+        if self._render_worker is None:
+            return
+        if row in self._cache:
+            return
+        self._render_worker.request(row)
+
+    def request_range(self, first: int, last: int) -> None:
+        """请求渲染 [first, last] 行范围（去重由 worker 处理）。"""
+        if self._render_worker is None:
+            return
+        for row in range(max(0, first), min(self.rowCount(), last + 1)):
+            if row not in self._cache:
+                self._render_worker.request(row)
+
+    def invalidate(self, row: int) -> None:
+        """失效单页缓存（旋转后），并触发该行重渲（若可能可见）。"""
+        self._cache.invalidate(row)
+        if 0 <= row < self.rowCount():
+            idx = self.index(row, 0)
+            self.dataChanged.emit(idx, idx, [Qt.ItemDataRole.DecorationRole])
+            self.request_render(row)
+
+    def invalidate_all(self) -> None:
+        """失效全部缓存（旋转全部后），触发可见行重渲。"""
+        self._cache.clear()
+        if self.rowCount() > 0:
+            self.dataChanged.emit(
+                self.index(0, 0),
+                self.index(self.rowCount() - 1, 0),
+                [Qt.ItemDataRole.DecorationRole],
+            )
 
     def session(self) -> PdfSession | None:
         return self._session
@@ -153,42 +221,70 @@ class ThumbnailModel(QAbstractListModel):
         if role == Qt.ItemDataRole.DisplayRole:
             return f"第 {page_info.page_index + 1} 页"
         if role == Qt.ItemDataRole.DecorationRole:
-            return QIcon(page_info.thumbnail) if page_info.thumbnail else None
+            pixmap = self._cache.get(index.row())
+            if pixmap is not None:
+                return QIcon(pixmap)
+            # 缓存未命中：占位 + 投递渲染请求（双保险，配合 scroll 主动请求）
+            self.request_render(index.row())
+            return None
         if role == Qt.ItemDataRole.UserRole:
             return page_info.page_index
         return None
 
-    def update_thumbnail(self, page_index: int) -> None:
-        """单页缩略图更新后通知视图重绘对应行（page_index == row）。"""
-        if self._session is None:
-            return
-        if 0 <= page_index < self.rowCount():
-            idx = self.index(page_index, 0)
-            self.dataChanged.emit(
-                idx, idx, [Qt.ItemDataRole.DecorationRole]
-            )
-
-    def reset_all_thumbnails(self) -> None:
-        """全部页缩略图已更新（如旋转全部），通知视图刷新所有行。"""
-        if self.rowCount() > 0:
-            self.dataChanged.emit(
-                self.index(0, 0),
-                self.index(self.rowCount() - 1, 0),
-                [Qt.ItemDataRole.DecorationRole],
-            )
-
 
 class ThumbnailListView(QListView):
-    """支持拖拽排序的缩略图列表视图（InternalMove）。
+    """支持拖拽排序 + 按需渲染的缩略图列表视图。
 
     基类 QListView 的 InternalMove 依赖模型的 insertRows/removeRows，
     但本项目的模型是只读视图（数据源 = session.pdf_document.pages）。
     故在此拦截 dropEvent：根据拖拽前后行的 UserRole(page_index) 计算
     new_order，emit pages_reordered 交由 PdfTab 调用 PdfService.reorder_pages
     统一重排文档与模型数据源，避免数据双写。
+
+    按需渲染：滚动/resize 时计算可见行范围，emit visible_range_changed，
+    由 PdfTab 调用 model.request_range 触发后台渲染（去抖 50ms 合并）。
     """
 
     pages_reordered = Signal(list)  # new_order: list[int]
+    visible_range_changed = Signal(int, int)  # (first_visible_row, last_visible_row)
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        # 滚动去抖：连续滚动合并为一次渲染请求
+        self._scroll_timer = QTimer(self)
+        self._scroll_timer.setSingleShot(True)
+        self._scroll_timer.timeout.connect(self._emit_visible_range)
+
+    def scrollContentsBy(self, dx, dy) -> None:  # noqa: N802 — Qt API 命名
+        super().scrollContentsBy(dx, dy)
+        self._schedule_visible_range()
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 — Qt API 命名
+        super().resizeEvent(event)
+        self._schedule_visible_range()
+
+    def showEvent(self, event) -> None:  # noqa: N802 — Qt API 命名
+        super().showEvent(event)
+        self._schedule_visible_range()
+
+    def _schedule_visible_range(self) -> None:
+        """防抖：50ms 内合并多次滚动/resize 为一次渲染请求。"""
+        self._scroll_timer.start(50)
+
+    def _emit_visible_range(self) -> None:
+        model = self.model()
+        if model is None or model.rowCount() == 0:
+            return
+        vp = self.viewport()
+        first_idx = self.indexAt(vp.rect().topLeft())
+        last_idx = self.indexAt(vp.rect().bottomLeft())
+        first = first_idx.row() if first_idx.isValid() else 0
+        last = last_idx.row() if last_idx.isValid() else model.rowCount() - 1
+        if first < 0:
+            first = 0
+        if last < 0:
+            last = model.rowCount() - 1
+        self.visible_range_changed.emit(first, last)
 
     def dropEvent(self, event) -> None:  # noqa: N802 — Qt API 命名
         if event.source() is not self:
@@ -322,6 +418,10 @@ class PdfTab(QWidget):
         )
         self._thumbnail_list.pages_reordered.connect(
             self._on_pages_reordered_with_order
+        )
+        # 按需渲染：滚动时请求可见行渲染
+        self._thumbnail_list.visible_range_changed.connect(
+            self._thumbnail_model.request_range
         )
         # 反向联动：缩略图选中变化 → 状态列表同步当前行
         self._thumbnail_list.selectionModel().selectionChanged.connect(
@@ -482,6 +582,7 @@ class PdfTab(QWidget):
         mgr.open_progress.connect(self._on_open_progress)
         mgr.open_failed.connect(self._on_open_failed)
         mgr.open_done.connect(self._on_open_done)
+        mgr.thumbnails_invalidated.connect(self._on_thumbnails_invalidated)
 
     # ---- splitter layout persistence --------------------------------
 
@@ -546,18 +647,13 @@ class PdfTab(QWidget):
         self._set_file_buttons_enabled(has_doc)
 
     def _on_page_loaded(self, file_path: str, page_index: int) -> None:
+        """文字层 worker 逐页完成：更新文字层网格格子（缩略图由按需 worker 渲）。"""
         session = self._session_mgr.active_session
         if session is None or session.file_path != file_path:
             return
-        pages = session.pdf_document.pages
-        if page_index >= len(pages):
-            return
-        page_info = pages[page_index]
-        # worker 回写的是 96dpi 原图，此处缩放到缩略图尺寸并缓存，
-        # 模型 data(DecorationRole) 直接读缓存值，滚动时零主线程缩放开销。
-        if page_info.thumbnail:
-            page_info.thumbnail = self._scale_thumbnail(page_info.thumbnail)
-        self._thumbnail_model.update_thumbnail(page_index)
+        # 缩略图不在此处理（按需渲染由 ThumbnailModel 驱动）；
+        # 仅逐页更新文字层网格状态 + 汇总。
+        self._update_layer_grid_page(page_index)
 
     def _on_load_progress(self, file_path: str, loaded: int, total: int) -> None:
         session = self._session_mgr.active_session
@@ -742,7 +838,7 @@ class PdfTab(QWidget):
             _THUMBNAIL_SIZE,
             _THUMBNAIL_SIZE,
             Qt.AspectRatioMode.KeepAspectRatio,
-            Qt.TransformationMode.SmoothTransformation,
+            Qt.TransformationMode.FastTransformation,
         )
 
     @staticmethod
@@ -751,31 +847,15 @@ class PdfTab(QWidget):
         pm.fill(Qt.GlobalColor.lightGray)
         return pm
 
-    def _render_single_thumbnail(self, page_index: int) -> QPixmap:
-        """主线程渲染单页缩略图（thumbnail_dpi）并写回缓存。用于旋转后增量更新。"""
-        session = self._session_mgr.active_session
-        if session is None:
-            return self._placeholder_pixmap()
-        with session.doc_lock:
-            pixmap = PdfService.render_page(
-                session.doc, page_index, dpi=session.pdf_document.thumbnail_dpi
-            )
-        scaled = self._scale_thumbnail(pixmap)
-        page_info = session.pdf_document.get_page(page_index)
-        if page_info is not None:
-            page_info.thumbnail = scaled
-        return scaled
-
     def _update_thumbnail_icon(self, page_index: int) -> None:
-        """渲染单页并通知模型重绘对应行（旋转后调用）。
+        """旋转单页后：失效该页缓存并触发按需重渲（后台 worker）。
 
         page_index 是 page_info.page_index（原始标识），重排后与行号不一致，
         需先找到它所在的当前行号。
         """
-        scaled = self._render_single_thumbnail(page_index)
         row = self._row_of_page(page_index)
         if row is not None:
-            self._thumbnail_model.update_thumbnail(row)
+            self._thumbnail_model.invalidate(row)
 
     def _row_of_page(self, page_index: int) -> int | None:
         """根据 page_info.page_index 查找它在模型中的当前行号（重排后会变化）。"""
@@ -1209,10 +1289,26 @@ class PdfTab(QWidget):
         indices = list(range(session.pdf_document.page_count))
         with session.doc_lock:
             PdfService.rotate_pages(session.doc, session.pdf_document, indices, 90)
-        # 后台异步重渲染所有页缩略图（避免主线程逐页 render_page 卡顿）。
-        # worker 完成后通过 page_loaded 信号逐页回填模型。
+        # 失效全部缩略图缓存，由按需 worker 重渲可见页（旋转全部后）。
         self._session_mgr.rerender_thumbnails_async(indices)
         self._update_status()
+
+    def _on_thumbnails_invalidated(self, page_indices: list[int]) -> None:
+        """旋转后缩略图缓存失效：清缓存并触发可见页按需重渲。"""
+        if not page_indices:
+            return
+        # 全部失效用 invalidate_all（旋转全部），否则逐页失效
+        session = self._session_mgr.active_session
+        if session is None:
+            return
+        total = session.pdf_document.page_count
+        if len(page_indices) >= total:
+            self._thumbnail_model.invalidate_all()
+        else:
+            for idx in page_indices:
+                row = self._row_of_page(idx)
+                if row is not None:
+                    self._thumbnail_model.invalidate(row)
 
     def _on_delete_pages(self) -> None:
         session = self._session_mgr.active_session
