@@ -5,6 +5,7 @@ from pathlib import Path
 
 from vibeocr.machine_cache import generate_machine_id
 from vibeocr.pipeline_status import (
+    LOCAL_MARKABLE_PIPELINES,
     PIPELINE_NAMES,
     is_pipeline_ever_succeeded,
     mark_pipeline_success,
@@ -84,3 +85,24 @@ def test_pipeline_names_constant():
     # MinerU 纳入跟踪：首次使用文档解析需下载模型，
     # 标记成功以跳过重复下载（PdfSessionManager 首用 guard 据此判断）
     assert "MinerU" in PIPELINE_NAMES
+
+
+def test_local_markable_pipelines_excludes_mineru_and_covers_local():
+    """LOCAL_MARKABLE_PIPELINES 必须覆盖全部本地推理管道、排除远程 MinerU。
+
+    回归测试：历史上 mark_pipeline_success 的调用方 gating 元组漏掉了
+    TABLE_RECOGNITION / FORMULA_RECOGNITION，导致 is_pipeline_ever_succeeded
+    对它们永远为 False，每次识别都同步构造 QWebEngineView，表现为"点击表格
+    按钮后截图遮罩卡顿"。本测试锁定该契约，防止未来再次遗漏。
+    """
+    assert "MinerU" not in LOCAL_MARKABLE_PIPELINES  # 远程 API，单独标记
+    for name in (
+        "OCR",
+        "PP-StructureV3",
+        "PaddleOCR-VL",
+        "TABLE_RECOGNITION",
+        "FORMULA_RECOGNITION",
+    ):
+        assert name in LOCAL_MARKABLE_PIPELINES, (
+            f"{name} 缺失会导致其 is_pipeline_ever_succeeded 永久为 False"
+        )

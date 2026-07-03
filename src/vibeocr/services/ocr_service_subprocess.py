@@ -18,7 +18,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Optional, Union
 
 from vibeocr.core.constants import DEFAULT_SHM_SIZE
-from vibeocr.pipeline_status import is_pipeline_ever_succeeded, mark_pipeline_success
+from vibeocr.pipeline_status import (
+    LOCAL_MARKABLE_PIPELINES,
+    is_pipeline_ever_succeeded,
+    mark_pipeline_success,
+)
 from vibeocr.services.worker_manager import WorkerManager
 
 if TYPE_CHECKING:
@@ -252,9 +256,11 @@ class OCRServiceSubprocess:
             lambda w: w.recognize(image_data, options_dict, timeout=timeout),
             timeout=timeout,
         )
-        # 标记管道识别成功
+        # 标记管道识别成功：覆盖全部本地管道（见 LOCAL_MARKABLE_PIPELINES），
+        # 遗漏会导致 is_pipeline_ever_succeeded 永远 False，触发 QWebEngineView
+        # 冷启动卡顿（见该常量的文档注释）。
         pipeline_name_for_mark = options_dict.get("pipeline", "OCR")
-        if pipeline_name_for_mark in ("OCR", "PP-StructureV3"):
+        if pipeline_name_for_mark in LOCAL_MARKABLE_PIPELINES:
             try:
                 mark_pipeline_success(pipeline_name_for_mark, self._get_project_root())
             except Exception:
@@ -340,10 +346,12 @@ class OCRServiceSubprocess:
             for k, idx in enumerate(sub_idx):
                 results[idx] = sub_results[k] if k < len(sub_results) else None
 
-        # 标记管道成功（整批至少一张成功）
+        # 标记管道成功（整批至少一张成功）：覆盖全部本地管道
+        # （见 LOCAL_MARKABLE_PIPELINES），与单图路径保持一致。
         pipeline_name_for_mark = str(pipeline_name)
-        if pipeline_name_for_mark in ("OCR", "PP-StructureV3") and any(
-            r is not None for r in results
+        if (
+            pipeline_name_for_mark in LOCAL_MARKABLE_PIPELINES
+            and any(r is not None for r in results)
         ):
             try:
                 mark_pipeline_success(pipeline_name_for_mark, self._get_project_root())

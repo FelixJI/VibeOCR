@@ -214,6 +214,7 @@ def normalize_table_html(html: str) -> str:
 # 工作线程设计已确保这一点
 
 from vibeocr.pipeline_status import (  # noqa: E402
+    LOCAL_MARKABLE_PIPELINES,
     is_pipeline_ever_succeeded,
     mark_pipeline_success,
 )
@@ -1053,9 +1054,11 @@ class OCRService(metaclass=SingletonMeta):
             for img, result in zip(images, results, strict=False):
                 self._normalize_result_bbox(result, img)
 
-            # 标记管道识别成功
+            # 标记管道识别成功：覆盖全部本地管道（见 LOCAL_MARKABLE_PIPELINES），
+            # 遗漏会导致 is_pipeline_ever_succeeded 永远 False，触发 QWebEngineView
+            # 冷启动卡顿（见该常量的文档注释）。
             pipeline_val = pipeline_name
-            if pipeline_val in ("OCR", "PP-StructureV3", "PaddleOCR-VL"):
+            if pipeline_val in LOCAL_MARKABLE_PIPELINES:
                 try:
                     mark_pipeline_success(pipeline_val, self._get_project_root())
                 except Exception:
