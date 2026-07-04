@@ -187,11 +187,13 @@ def _render_chart(block: dict, index: int) -> str:
 
 def _render_equation(block: dict, index: int) -> str:
     latex = html_lib.escape(block.get("text", ""))
+    # 注意：不再在此处加 border-left。外层 _render_block 已为公式块加了
+    # 橙色左边框（#f97316）作为类型标识；此处再叠加会形成"双条色标"，
+    # 且蓝色（#0078d4）与文本蓝（#3b82f6）混淆，难以区分。
     return (
         f'<div class="math-block" data-latex="{latex}" '
         f'style="background:#f8f9fa;padding:8px 12px;border-radius:4px;'
-        f"font-family:Consolas,Monaco,monospace;font-size:13px;"
-        f'border-left:3px solid #0078d4;">'
+        f'font-family:Consolas,Monaco,monospace;font-size:13px;">'
         f"{latex}</div>"
     )
 
@@ -372,13 +374,15 @@ function _finishTextEdit(block) {{
 function _finishTableEdit(block) {{
     var index = parseInt(block.getAttribute('data-block-index'));
     var tableEl = block.querySelector('.ocr-table');
-    var newText = tableEl ? tableEl.innerText.trim() : '';
+    // 传回表格 HTML（不是 innerText 纯文本），与 update_block_text 重建
+    // .ocr-table.innerHTML 的契约一致；Python 侧据此更新 table_body。
+    var newHtml = tableEl ? tableEl.innerHTML.trim() : '';
     block.querySelectorAll('.ocr-table td, .ocr-table th').forEach(function(cell) {{
         cell.removeAttribute('contenteditable');
     }});
-    if (newText !== _editOriginals[index]) {{
+    if (newHtml !== _editOriginals[index]) {{
         block.classList.add('manually-edited');
-        if (_bridge) _bridge.onBlockEdited(index, newText);
+        if (_bridge) _bridge.onBlockEdited(index, newHtml);
     }}
     delete _editOriginals[index];
 }}
@@ -443,7 +447,11 @@ document.querySelectorAll('.ocr-block').forEach(function(el) {{
         var index = parseInt(this.getAttribute('data-block-index'));
 
         if (blockType === 'table') {{
-            _editOriginals[index] = this.querySelector('.ocr-table').innerHTML;
+            // 基线与 _finishTableEdit 的比较值统一用 innerHTML（表格 HTML），
+            // 保证"未改动不标黄"，且 onBlockEdited 回传的就是新表格 HTML，
+            // 与 Python 侧 table_body 更新 / update_block_text 重建契约一致。
+            var tableEl = this.querySelector('.ocr-table');
+            _editOriginals[index] = tableEl ? tableEl.innerHTML.trim() : '';
             this.querySelectorAll('.ocr-table td, .ocr-table th').forEach(function(cell) {{
                 cell.setAttribute('contenteditable', 'true');
             }});

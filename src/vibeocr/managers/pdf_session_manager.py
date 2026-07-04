@@ -18,6 +18,7 @@ from vibeocr.services.pdf_service import PdfService
 from vibeocr.workers.pdf_deskew_worker import PdfDeskewWorker
 from vibeocr.workers.pdf_export_worker import PdfExportWorker
 from vibeocr.workers.pdf_load_worker import PdfLoadWorker
+from vibeocr.workers.pdf_open_worker import PdfOpenWorker
 from vibeocr.workers.pdf_mutate_worker import MutateTask, PdfMutateWorker, TaskKind
 from vibeocr.workers.pdf_ocr_worker import PdfOcrWorker
 from vibeocr.workers.pdf_render_worker import PdfRenderWorker
@@ -69,12 +70,20 @@ class PdfSessionManager(QObject):
     deskew_progress = Signal(str, int, int)    # (file_path, current, total)
     deskew_done = Signal(str, object)          # (file_path, summary dict)
     deskew_failed = Signal(str, str)           # (file_path, error_msg)
+    # 异步批量打开文件（open_sessions_async）
+    open_progress = Signal(int, int)           # (current, total)
+    open_failed = Signal(str, str)             # (file_path, error_msg)
+    # 缩略图缓存失效（旋转后），由 ThumbnailModel 监听清缓存并按需重渲
+    thumbnails_invalidated = Signal(list)      # (page_indices) 或 [] 表示全部
+    open_done = Signal()                        # 全部批量打开流程结束
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self._sessions: dict[str, PdfSession] = {}
         self._active_path: str | None = None
         self._load_worker: PdfLoadWorker | None = None
+        self._open_worker: PdfOpenWorker | None = None
+        self._pending_open_paths: list[str] = []  # open_sessions_async 待处理文件
         self._ocr_worker: PdfOcrWorker | None = None
         self._render_worker: PdfRenderWorker | None = None
         self._mutate_worker: PdfMutateWorker | None = None
@@ -134,6 +143,80 @@ class PdfSessionManager(QObject):
         self._start_load_worker(session)
         return session
 
+    # ---- async batch open -------------------------------------------
+
+    def open_sessions_async(self, paths: list[str]) -> None:
+        """批量异步打开多个 PDF 文件（后台线程，避免冻结主线程）。
+
+        fitz.open 在 PdfOpenWorker 的后台线程执行；每个文件打开完成后，
+        doc_opened 回到主线程创建会话、emit session_added，并启动缩略图加载。
+        失败的文件通过 open_failed 信号上报，不阻断其余文件。
+
+        第一个新文件成为 active 并触发一次 active_changed；后续文件不重复
+        切换 active（避免每个文件都触发 UI 全量重建缩略图列表）。
+        """
+        # 过滤已打开的文件，避免重复创建会话
+        new_paths = [p for p in paths if p not in self._sessions]
+        if not new_paths:
+            # 全部已打开：切到第一个
+            if paths:
+                self.switch_session(paths[0])
+            return
+
+        self._cancel_open_worker()
+        self._pending_open_paths = list(new_paths)
+
+        self._open_worker = PdfOpenWorker(new_paths)
+        self._open_worker.doc_opened.connect(self._on_doc_opened)
+        self._open_worker.open_failed.connect(self._on_open_failed)
+        self._open_worker.open_progress.connect(self.open_progress)
+        self._open_worker.all_done.connect(self._on_open_all_done)
+        # 线程结束后安全释放，避免 "Destroyed while still running" 警告
+        self._open_worker.finished.connect(self._open_worker.deleteLater)
+        self._open_worker.start()
+
+    def _on_doc_opened(self, file_path: str, doc, pdf_document, doc_lock) -> None:
+        """PdfOpenWorker 回调：在主线程创建会话。
+
+        仅第一个新文件成为 active 并启动 load worker；后续文件静默加入会话表，
+        切换到它们时（switch_session）才按需启动 load worker。
+        避免批量导入时每个文件都 cancel+restart load worker + 全量重建 UI。
+        """
+        session = PdfSession(
+            file_path=file_path,
+            doc=doc,
+            pdf_document=pdf_document,
+            doc_lock=doc_lock,
+        )
+        self._sessions[file_path] = session
+
+        prev_active = self._active_path
+        self.session_added.emit(file_path)
+
+        # 第一个成功打开的新文件成为 active（后续不再切换）。
+        became_active = prev_active is None
+        if became_active:
+            self._active_path = file_path
+            self.active_changed.emit(file_path)
+            # 仅为活动会话启动缩略图加载（非活动会话延迟到 switch_session）
+            self._start_load_worker(session)
+
+    def _on_open_failed(self, file_path: str, error: str) -> None:
+        logger.warning("异步打开失败 %s: %s", file_path, error)
+        self.open_failed.emit(file_path, error)
+
+    def _on_open_all_done(self) -> None:
+        self._open_worker = None
+        self._pending_open_paths = []
+        self.open_done.emit()
+
+    def _cancel_open_worker(self) -> None:
+        if self._open_worker is not None:
+            self._open_worker.cancel()
+            _wait_thread(self._open_worker, timeout=5000)
+            self._open_worker = None
+        self._pending_open_paths = []
+
     def switch_session(self, file_path: str) -> None:
         if file_path not in self._sessions:
             return
@@ -180,11 +263,20 @@ class PdfSessionManager(QObject):
             pdf_document=session.pdf_document,
             loaded_pages=session.loaded_pages,
             doc_lock=session.doc_lock,
-            thumbnail_dpi=session.pdf_document.thumbnail_dpi,
         )
         self._load_worker.page_ready.connect(self._on_page_ready)
         self._load_worker.all_done.connect(self._on_load_all_done)
         self._load_worker.start()
+
+    def rerender_thumbnails_async(self, page_indices: list[int]) -> None:
+        """通知缩略图缓存失效（旋转后），由 ThumbnailModel 按需重渲可见页。
+
+        文字层状态未变（旋转不改 has_text_layer），无需重启文字层 load worker。
+        缩略图按需渲染：失效缓存后，滚动到该页或该页可见时自动重渲。
+        """
+        if not page_indices:
+            return
+        self.thumbnails_invalidated.emit(page_indices)
 
     def _cancel_load_worker(self) -> None:
         if self._load_worker is not None:
@@ -192,14 +284,13 @@ class PdfSessionManager(QObject):
             _wait_thread(self._load_worker, timeout=3000)
             self._load_worker = None
 
-    def _on_page_ready(self, page_index: int, page_info, pixmap) -> None:
+    def _on_page_ready(self, page_index: int, page_info) -> None:
         worker = self._load_worker
         if worker is None:
             return
         session = self._sessions.get(worker.session_id)
         if session is None:
             return
-        page_info.thumbnail = pixmap
         if page_index < len(session.pdf_document.pages):
             session.pdf_document.pages[page_index] = page_info
         session.loaded_pages.add(page_index)
@@ -672,6 +763,7 @@ class PdfSessionManager(QObject):
         if self._export_worker is not None:
             self._export_worker.cancel()
             self._export_worker = None
+        self._cancel_open_worker()
         self._cancel_load_worker()
         self._cancel_ocr_pipeline()
         self._cancel_mutate_worker()

@@ -1,4 +1,15 @@
-"""PDF 异步加载 Worker — 后台检测文字层 + 渲染缩略图。"""
+"""PDF 文字层检测 Worker — 后台检测每页文字层/扫描状态（不渲染缩略图）。
+
+缩略图渲染由 ThumbnailRenderWorker 按需完成（只渲染可见页，避免大 PDF
+全量渲染卡顿）。本 worker 只做轻量的文字层检测（get_text("dict")，比
+get_pixmap 快得多），用于文字层状态网格的绿/灰染色与汇总统计。
+
+Signals:
+    page_ready(page_index: int, page_info: PdfPageInfo)
+        单页文字层检测完成。
+    all_done(session_id: str)
+        全部页检测完成。
+"""
 
 from __future__ import annotations
 
@@ -6,9 +17,8 @@ import logging
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QThread, Signal
-from PySide6.QtGui import QPixmap
 
-from vibeocr.models.pdf_document import PdfDocument, PdfPageInfo
+from vibeocr.models.pdf_document import PdfPageInfo
 from vibeocr.services.pdf_service import PdfService
 
 if TYPE_CHECKING:
@@ -16,18 +26,15 @@ if TYPE_CHECKING:
 
     import fitz
 
+    from vibeocr.models.pdf_document import PdfDocument
+
 logger = logging.getLogger(__name__)
 
 
 class PdfLoadWorker(QThread):
-    """逐页检测文字层并渲染缩略图的异步 Worker。
+    """逐页检测文字层状态的异步 Worker（不渲染缩略图）。"""
 
-    Signals:
-        page_ready(page_index: int, page_info: PdfPageInfo, thumbnail: QPixmap)
-        all_done(session_id: str)
-    """
-
-    page_ready = Signal(int, object, QPixmap)
+    page_ready = Signal(int, object)
     all_done = Signal(str)
 
     def __init__(
@@ -37,7 +44,6 @@ class PdfLoadWorker(QThread):
         pdf_document: PdfDocument,
         loaded_pages: set[int],
         doc_lock: threading.RLock,
-        thumbnail_dpi: int = 96,
         parent=None,
     ) -> None:
         super().__init__(parent)
@@ -46,7 +52,6 @@ class PdfLoadWorker(QThread):
         self._pdf_document = pdf_document
         self._loaded_pages = loaded_pages
         self._doc_lock = doc_lock
-        self._thumbnail_dpi = thumbnail_dpi
         self._cancelled = False
 
     def cancel(self) -> None:
@@ -76,10 +81,7 @@ class PdfLoadWorker(QThread):
                         text_layers=text_layers,
                         is_scanned=is_scanned,
                     )
-                    pixmap = PdfService.render_page(
-                        self._doc, i, dpi=self._thumbnail_dpi
-                    )
-                self.page_ready.emit(i, page_info, pixmap)
+                self.page_ready.emit(i, page_info)
             except Exception as e:
                 logger.error("PdfLoadWorker page %d failed: %s", i, e)
         self.all_done.emit(self._session_id)

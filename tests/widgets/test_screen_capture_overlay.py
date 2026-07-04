@@ -1,7 +1,7 @@
 """Tests for ScreenCaptureOverlay."""
 
-from PySide6.QtCore import QPoint, QRect, Qt
-from PySide6.QtGui import QPixmap
+from PySide6.QtCore import QEvent, QPoint, QRect, Qt
+from PySide6.QtGui import QKeyEvent, QPixmap
 
 from vibeocr.widgets.screen_capture_overlay import ScreenCaptureOverlay
 
@@ -246,6 +246,11 @@ def _make_mouse_press_event(pos: QPoint, button) -> MagicMock:
     return event
 
 
+def _make_key_event(key: Qt.Key) -> QKeyEvent:
+    """构造真实 QKeyEvent（keyPressEvent 直接使用，不依赖窗口焦点）。"""
+    return QKeyEvent(QEvent.Type.KeyPress, int(key), Qt.KeyboardModifier.NoModifier)
+
+
 class TestMousePressSubState:
     def test_hover_with_detected_rect_selects_and_enters_editing(self, qapp):
         overlay = ScreenCaptureOverlay()
@@ -273,16 +278,126 @@ class TestMousePressSubState:
         assert overlay._sub_state == "DRAG"
         assert overlay._start_pos == QPoint(200, 200)
 
-    def test_right_button_ignored(self, qapp):
+    def test_right_button_before_selection_cancels(self, qapp):
+        """框选前右键 → 退出（无选区时）。"""
         overlay = ScreenCaptureOverlay()
         overlay._state = "CAPTURING"
         overlay._sub_state = "HOVER"
+        overlay._selection_rect = None
+
+        cancelled = []
+        overlay.cancelled.connect(lambda: cancelled.append(True))
 
         event = _make_mouse_press_event(QPoint(200, 200), Qt.MouseButton.RightButton)
         overlay.mousePressEvent(event)
 
-        assert overlay._sub_state == "HOVER"
+        assert cancelled == [True]
+
+
+class TestCapturingAbortBehavior:
+    """CAPTURING 下 ESC/右键的状态相关逻辑：框选前退出，框选后重新框选。"""
+
+    def test_esc_before_selection_cancels(self, qapp):
+        """框选前（无选区）按 ESC → 退出，emit cancelled。"""
+        overlay = ScreenCaptureOverlay()
+        overlay._state = "CAPTURING"
+        overlay._sub_state = "HOVER"
+        overlay._selection_rect = None
+
+        cancelled = []
+        overlay.cancelled.connect(lambda: cancelled.append(True))
+
+        overlay.keyPressEvent(_make_key_event(Qt.Key.Key_Escape))
+
+        assert cancelled == [True]
+
+    def test_esc_after_selection_re_captures(self, qapp):
+        """框选后（有选区）按 ESC → 清除选区，回到 HOVER 继续框选，不退出。"""
+        overlay = ScreenCaptureOverlay()
+        overlay._state = "CAPTURING"
+        overlay._sub_state = "DRAG"
+        overlay._selection_rect = QRect(100, 100, 400, 300)
+        overlay._start_pos = QPoint(100, 100)
+        overlay._screen_pixmap = QPixmap(1920, 1080)
+        overlay._virtual_geometry = QRect(0, 0, 1920, 1080)
+
+        cancelled = []
+        overlay.cancelled.connect(lambda: cancelled.append(True))
+
+        overlay.keyPressEvent(_make_key_event(Qt.Key.Key_Escape))
+
+        # 选区/起点清空，子状态回到 HOVER，仍处于 CAPTURING
+        assert overlay._selection_rect is None
         assert overlay._start_pos is None
+        assert overlay._sub_state == "HOVER"
+        assert overlay._state == "CAPTURING"
+        # 底图保留，才能继续框选
+        assert overlay._screen_pixmap is not None
+        # 不触发退出
+        assert cancelled == []
+
+    def test_right_button_before_selection_cancels(self, qapp):
+        """框选前右键 → 退出。"""
+        overlay = ScreenCaptureOverlay()
+        overlay._state = "CAPTURING"
+        overlay._sub_state = "HOVER"
+        overlay._selection_rect = None
+
+        cancelled = []
+        overlay.cancelled.connect(lambda: cancelled.append(True))
+
+        event = _make_mouse_press_event(QPoint(200, 200), Qt.MouseButton.RightButton)
+        overlay.mousePressEvent(event)
+
+        assert cancelled == [True]
+
+    def test_right_button_after_selection_re_captures(self, qapp):
+        """框选后右键 → 清除选区，重新框选。"""
+        overlay = ScreenCaptureOverlay()
+        overlay._state = "CAPTURING"
+        overlay._sub_state = "DRAG"
+        overlay._selection_rect = QRect(100, 100, 400, 300)
+        overlay._start_pos = QPoint(100, 100)
+        overlay._screen_pixmap = QPixmap(1920, 1080)
+
+        cancelled = []
+        overlay.cancelled.connect(lambda: cancelled.append(True))
+
+        event = _make_mouse_press_event(QPoint(500, 500), Qt.MouseButton.RightButton)
+        overlay.mousePressEvent(event)
+
+        assert overlay._selection_rect is None
+        assert overlay._start_pos is None
+        assert overlay._sub_state == "HOVER"
+        assert overlay._state == "CAPTURING"
+        assert overlay._screen_pixmap is not None
+        assert cancelled == []
+
+    def test_reset_selection_for_re_capture_keeps_backdrop(self, qapp):
+        """_reset_selection_for_re_capture 仅清选区，保留底图/mapper。"""
+        overlay = ScreenCaptureOverlay()
+        overlay._state = "CAPTURING"
+        overlay._sub_state = "DRAG"
+        overlay._start_pos = QPoint(10, 10)
+        overlay._end_pos = QPoint(100, 100)
+        overlay._selection_rect = QRect(10, 10, 90, 90)
+        overlay._detected_rect = QRect(10, 10, 90, 90)
+        overlay._screen_pixmap = QPixmap(100, 100)
+        mapper = MagicMock()
+        overlay._mapper = mapper
+        overlay._virtual_geometry = QRect(0, 0, 1920, 1080)
+
+        overlay._reset_selection_for_re_capture()
+
+        assert overlay._selection_rect is None
+        assert overlay._start_pos is None
+        assert overlay._end_pos is None
+        assert overlay._detected_rect is None
+        assert overlay._sub_state == "HOVER"
+        # 底图与 mapper 必须保留
+        assert overlay._screen_pixmap is not None
+        assert overlay._mapper is mapper
+        assert overlay._virtual_geometry == QRect(0, 0, 1920, 1080)
 
 
 class TestPaintDetectionHighlight:

@@ -1,8 +1,8 @@
 """PdfTab UI 结构测试。"""
 
 import pytest
-from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QListWidget, QScrollArea, QSplitter
+from PySide6.QtCore import QItemSelectionModel, Qt
+from PySide6.QtWidgets import QListWidget, QListView, QScrollArea, QSplitter
 
 from vibeocr.views.tabs.pdf_tab import _THUMBNAIL_SIZE, PdfTab
 
@@ -34,7 +34,7 @@ class TestPdfTabStructure:
 
     def test_thumbnail_list_has_no_fixed_width(self, pdf_tab):
         """缩略图列表不应被 setFixedWidth 钉死，否则 splitter 不可拖。"""
-        lst = pdf_tab.findChild(QListWidget)
+        lst = pdf_tab.findChild(QListView)
         assert lst is not None
         # 被 setFixedWidth 时 maximumWidth == minimumWidth == 200；
         # 现在只设了 minimumWidth(120)，maximumWidth 应保持默认大值。
@@ -203,10 +203,11 @@ class TestPdfTabLayerStatusLinkage:
         doc = self._setup_session(pdf_tab)
         try:
             lst = pdf_tab._thumbnail_list
-            for row in range(lst.count()):
-                if lst.item(row).data(Qt.ItemDataRole.UserRole) == 2:
+            model = lst.model()
+            for row in range(model.rowCount()):
+                if model.data(model.index(row, 0), Qt.ItemDataRole.UserRole) == 2:
                     lst.selectionModel().select(
-                        lst.model().index(row, 0), QItemSelectionModel.ClearAndSelect
+                        model.index(row, 0), QItemSelectionModel.ClearAndSelect
                     )
                     break
             grid = pdf_tab._layer_status_grid
@@ -873,14 +874,15 @@ class TestOcrPerPageFeedback:
             PdfPageInfo(page_index=1, has_text_layer=False),
         ]
         self._inject(pdf_tab, pages)
+        # 刷新缩略图模型数据源（_inject 只改 session_mgr，模型需手动同步）
+        pdf_tab._refresh_thumbnails()
         # 用户选中 page_index=1
         lst = pdf_tab._thumbnail_list
-        # 需先重建缩略图，列表才有 item
-        pdf_tab._refresh_thumbnails()
-        for row in range(lst.count()):
-            if lst.item(row).data(Qt.ItemDataRole.UserRole) == 1:
+        model = lst.model()
+        for row in range(model.rowCount()):
+            if model.data(model.index(row, 0), Qt.ItemDataRole.UserRole) == 1:
                 lst.selectionModel().select(
-                    lst.model().index(row, 0), QItemSelectionModel.ClearAndSelect
+                    model.index(row, 0), QItemSelectionModel.ClearAndSelect
                 )
                 break
         assert pdf_tab._get_selected_page_indices() == [1]
@@ -954,18 +956,18 @@ class TestThumbnailIncrementalUpdate:
                 lambda *a, **k: called.append(1) or QPixmap(10, 10),
             )
             # 记录重排前各 page_index 顺序
-            lst = pdf_tab._thumbnail_list
+            model = pdf_tab._thumbnail_list.model()
             before_order = [
-                lst.item(row).data(Qt.ItemDataRole.UserRole)
-                for row in range(lst.count())
+                model.data(model.index(row, 0), Qt.ItemDataRole.UserRole)
+                for row in range(model.rowCount())
             ]
 
             pdf_tab._on_pages_reordered_with_order([2, 1, 0])
 
             # 重排后顺序应反转，且未触发任何渲染
             after_order = [
-                lst.item(row).data(Qt.ItemDataRole.UserRole)
-                for row in range(lst.count())
+                model.data(model.index(row, 0), Qt.ItemDataRole.UserRole)
+                for row in range(model.rowCount())
             ]
             assert after_order == [2, 1, 0]
             assert before_order == [0, 1, 2]
@@ -973,48 +975,49 @@ class TestThumbnailIncrementalUpdate:
         finally:
             doc.close()
 
-    def test_rotate_renders_affected_pages(self, pdf_tab, monkeypatch):
-        """旋转后应渲染受影响页的缩略图（仅选中页）。"""
+    def test_rotate_invalidates_affected_thumbnail(self, pdf_tab):
+        """旋转单页后：受影响页缩略图缓存失效（按需重渲，不再主线程渲染）。"""
         from PySide6.QtCore import QItemSelectionModel
-        from PySide6.QtGui import QPixmap
 
-        import vibeocr.views.tabs.pdf_tab as mod
+        from PySide6.QtGui import QPixmap
 
         doc, _ = self._setup(pdf_tab)
         try:
             # 选中 page_index=1
             lst = pdf_tab._thumbnail_list
-            for row in range(lst.count()):
-                if lst.item(row).data(Qt.ItemDataRole.UserRole) == 1:
+            model = lst.model()
+            for row in range(model.rowCount()):
+                if model.data(model.index(row, 0), Qt.ItemDataRole.UserRole) == 1:
                     lst.selectionModel().select(
-                        lst.model().index(row, 0), QItemSelectionModel.ClearAndSelect
+                        model.index(row, 0), QItemSelectionModel.ClearAndSelect
                     )
                     break
-            called = []
-            monkeypatch.setattr(
-                mod.PdfService,
-                "render_page",
-                lambda *a, **k: called.append(a) or QPixmap(10, 10),
-            )
+            # 预填缓存 page_index=1（row=1）的缩略图
+            target_row = 1
+            pdf_tab._thumbnail_model._cache.put(target_row, QPixmap(10, 10))
+            assert target_row in pdf_tab._thumbnail_model._cache
+
             pdf_tab._on_rotate(90)
-            # 仅渲染选中的 1 页
-            assert len(called) == 1
+
+            # 旋转后该行缓存失效（按需 worker 会重渲）
+            assert target_row not in pdf_tab._thumbnail_model._cache
         finally:
             doc.close()
 
     def test_reorder_preserves_selection(self, pdf_tab):
-        """拖拽重排应保留选中状态（takeItem 会丢选中，需手动恢复）。"""
+        """拖拽重排应保留选中状态（reset 会丢选中，需手动恢复）。"""
         from PySide6.QtCore import QItemSelectionModel
 
         doc, _ = self._setup(pdf_tab)
         try:
             lst = pdf_tab._thumbnail_list
-            # 选中 page_index=1 和 2
-            for row in range(lst.count()):
-                if lst.item(row).data(Qt.ItemDataRole.UserRole) in (1, 2):
-                    lst.selectionModel().select(
-                        lst.model().index(row, 0), QItemSelectionModel.Select
-                    )
+            model = lst.model()
+            sm = lst.selectionModel()
+            # 先清空再选中 page_index=1 和 2（ExtendedSelection 多选）
+            sm.clear()
+            for row in range(model.rowCount()):
+                if model.data(model.index(row, 0), Qt.ItemDataRole.UserRole) in (1, 2):
+                    sm.select(model.index(row, 0), QItemSelectionModel.Select)
             assert pdf_tab._get_selected_page_indices() == [1, 2]
 
             pdf_tab._on_pages_reordered_with_order([2, 1, 0])
@@ -1146,8 +1149,15 @@ class TestPdfTabAutoDeskew:
         )
         doc = self._inject_single_page_session(pdf_tab)
         try:
-            # 选中第一页
-            pdf_tab._thumbnail_list.setCurrentRow(0)
+            # 选中第一页（ThumbnailListView 基于 QListView+ThumbnailModel，
+            # 用 selectionModel 选中第 0 行）
+            sm = pdf_tab._thumbnail_list.selectionModel()
+            model = pdf_tab._thumbnail_model
+            sm.select(
+                model.index(0, 0),
+                QItemSelectionModel.SelectionFlag.Select
+                | QItemSelectionModel.SelectionFlag.Current,
+            )
 
             with patch.object(pdf_tab._session_mgr, "auto_deskew_async") as mock_async:
                 pdf_tab._btn_auto_deskew.click()
@@ -1228,3 +1238,54 @@ def test_layer_cell_tooltip_no_deskew_when_false():
     p.deskewed = False
     tip = PdfTab._layer_cell_tooltip(p)
     assert "已纠偏" not in tip
+
+
+class TestBatchOpenSuppressesSwitch:
+    """批量异步导入：不在每个 session_added 时切换 active（避免 N 次全量重建）。"""
+
+    def test_batch_opening_suppresses_combo_switch(self, pdf_tab, tmp_path, monkeypatch):
+        """导入多文件时,_batch_opening 抑制 setCurrentIndex;open_done 后切换一次。"""
+        import fitz
+
+        from PySide6.QtWidgets import QFileDialog
+
+        # 造 2 个真实 PDF
+        paths = []
+        for n in range(2):
+            p = tmp_path / f"doc_{n}.pdf"
+            doc = fitz.open()
+            doc.new_page()
+            doc.save(str(p))
+            doc.close()
+            paths.append(str(p))
+
+        monkeypatch.setattr(
+            QFileDialog,
+            "getOpenFileNames",
+            staticmethod(lambda *a, **k: (paths, "")),
+        )
+
+        # 记录 active_changed 触发次数（每次都会调 _on_active_changed → set_session）
+        active_changes: list[str] = []
+        pdf_tab._session_mgr.active_changed.connect(
+            lambda p: active_changes.append(p)
+        )
+
+        pdf_tab._on_open_file()
+
+        # 等待异步打开完成
+        import time
+
+        from PySide6.QtCore import QCoreApplication
+
+        deadline = time.monotonic() + 5.0
+        while pdf_tab._batch_opening and time.monotonic() < deadline:
+            QCoreApplication.processEvents()
+            time.sleep(0.01)
+
+        assert not pdf_tab._batch_opening  # open_done 已复位
+        # 批量导入期间 active_changed 只触发一次（第一个文件），
+        # 不是每个文件都触发（否则 = N 次全量重建）
+        assert len(active_changes) == 1
+        # combo box 有 2 项
+        assert pdf_tab._file_selector.count() == 2

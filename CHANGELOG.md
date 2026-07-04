@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.4.7] - 2026-07-03
+
+### Added
+- feat(ui): Toast 通知 + 桌面/开始菜单快捷方式 + 预览区缩放/图例/原图查看
+- feat(ui): bbox 类型标识改为颜色编码 + 右上角图例，避免遮挡框选内容
+
+### Fixed
+- fix(perf): 表格/公式识别卡顿 — mark_pipeline_success 漏标 TABLE/FORMULA
+- fix(ci): 生成版本信息文件前确保 dist 目录存在
+
+### Changed
+- perf(pdf): 缩略图按需渲染(lazy render)，修复大文件(655页)缩略图无显示+卡顿
+- perf(pdf): 批量导入异步化 + 缩略图列表虚拟化，消除导入卡顿和滚动卡顿
+
 ## [0.4.6] - 2026-07-02
 
 ### Added

@@ -40,6 +40,7 @@ from vibeocr.views.settings_page_controller import SettingsPageController
 from vibeocr.views.tabs.pdf_tab import PdfTab
 from vibeocr.views.tabs.single_recognition_tab import SingleRecognitionTab
 from vibeocr.widgets.screen_capture_overlay import ScreenCaptureOverlay
+from vibeocr.widgets.toast_widget import show_toast
 from vibeocr.widgets.toolbar import EdgeToolbar
 
 if TYPE_CHECKING:
@@ -1233,6 +1234,7 @@ class MainWindow(QMainWindow):
         self._edge_toolbar.set_auto_hide(checked)
         if self._spin_hide_delay:
             self._spin_hide_delay.setEnabled(checked)
+        show_toast(self, "保存成功")
         logging.debug(f"自动隐藏工具栏: {'启用' if checked else '禁用'}")
 
     @Slot(int)
@@ -1247,6 +1249,7 @@ class MainWindow(QMainWindow):
         """防抖延迟后实际保存设置"""
         if self._app_settings:
             self._app_settings.save()
+            show_toast(self, "保存成功")
             logging.debug(f"工具栏隐藏延迟: {self._app_settings.hide_delay_ms}ms")
 
     @Slot(bool)
@@ -1270,6 +1273,7 @@ class MainWindow(QMainWindow):
             self._spin_hide_delay.setEnabled(
                 checked and self._app_settings.auto_hide_toolbar
             )
+        show_toast(self, "保存成功")
         logging.debug(f"显示边缘工具栏: {'启用' if checked else '禁用'}")
 
     @Slot(QPoint)
@@ -1295,6 +1299,7 @@ class MainWindow(QMainWindow):
         from PySide6.QtWidgets import QApplication
 
         QApplication.setQuitOnLastWindowClosed(not checked)
+        show_toast(self, "保存成功")
         logging.debug(f"最小化到系统托盘: {'启用' if checked else '禁用'}")
 
     @Slot(bool)
@@ -1306,6 +1311,7 @@ class MainWindow(QMainWindow):
         if success and self._app_settings:
             self._app_settings.auto_start = checked
             self._app_settings.save()
+            show_toast(self, "保存成功")
             logging.debug(f"开机自启动: {'启用' if checked else '禁用'}")
         elif not success:
             logging.warning("设置开机自启动失败")

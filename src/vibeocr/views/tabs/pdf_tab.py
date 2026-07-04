@@ -7,7 +7,16 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
-from PySide6.QtCore import QRectF, QSize, Qt, QTimer, Signal
+from PySide6.QtCore import (
+    QAbstractListModel,
+    QItemSelectionModel,
+    QModelIndex,
+    QRectF,
+    QSize,
+    Qt,
+    QTimer,
+    Signal,
+)
 from PySide6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -18,6 +27,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QListWidget,
     QListWidgetItem,
+    QListView,
     QMenu,
     QMessageBox,
     QProgressBar,
@@ -30,14 +40,17 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from vibeocr.managers.pdf_session_manager import PdfSessionManager
+from vibeocr.managers.pdf_session_manager import PdfSessionManager, _wait_thread
 from vibeocr.services.pdf_service import PdfService
 from vibeocr.ui.theme import Colors
+from vibeocr.utils.thumbnail_lru_cache import ThumbnailLruCache
 from vibeocr.views.pdf_preview_window import PdfPreviewWindow
+from vibeocr.workers.pdf_render_thumb_worker import ThumbnailRenderWorker
 
 if TYPE_CHECKING:
     from vibeocr.models.ocr_options import OCROptions
     from vibeocr.models.pdf_ocr_options import PdfGlobalSettings
+    from vibeocr.models.pdf_session import PdfSession
     from vibeocr.services.ocr_service_base import OCRServiceBase
 
 logger = logging.getLogger(__name__)
@@ -115,6 +128,224 @@ class LayerStatusDelegate(QStyledItemDelegate):
         painter.restore()
 
 
+class ThumbnailModel(QAbstractListModel):
+    """缩略图列表虚拟化数据模型（数据源 = 活动会话的 pages）。
+
+    按需渲染：data(DecorationRole) 查 LRU 缓存，命中返回 QIcon；未命中返回
+    None（占位）并投递渲染请求到后台 worker。滚动到可见页时由
+    ThumbnailListView 主动请求渲染。渲染完成后 thumbnail_ready 回调
+    回填缓存并 dataChanged 通知视图重绘。
+    """
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self._session: PdfSession | None = None
+        self._cache = ThumbnailLruCache(capacity=200)
+        self._render_worker: ThumbnailRenderWorker | None = None
+        self._render_dpi = 96
+
+    def set_session(self, session: PdfSession | None) -> None:
+        """切换数据源（切文件/导入时）：停旧 worker、清缓存、起新 worker。"""
+        self._stop_render_worker()
+        self.beginResetModel()
+        self._session = session
+        self._cache.clear()
+        self.endResetModel()
+        if session is not None:
+            self._start_render_worker(session)
+
+    def _start_render_worker(self, session: PdfSession) -> None:
+        self._render_worker = ThumbnailRenderWorker(
+            doc=session.doc,
+            doc_lock=session.doc_lock,
+            dpi=session.pdf_document.thumbnail_dpi,
+            size=_THUMBNAIL_SIZE,
+        )
+        self._render_worker.thumbnail_ready.connect(self._on_thumbnail_ready)
+        self._render_worker.start()
+
+    def _stop_render_worker(self) -> None:
+        if self._render_worker is not None:
+            self._render_worker.cancel()
+            _wait_thread(self._render_worker, timeout=3000)
+            self._render_worker = None
+
+    def _on_thumbnail_ready(self, page_index: int, pixmap: QPixmap) -> None:
+        """后台渲染回调：回填 LRU 缓存并通知视图重绘该行。"""
+        self._cache.put(page_index, pixmap)
+        # page_index == row（重排前顺序一致）
+        if 0 <= page_index < self.rowCount():
+            idx = self.index(page_index, 0)
+            self.dataChanged.emit(idx, idx, [Qt.ItemDataRole.DecorationRole])
+
+    def request_render(self, row: int) -> None:
+        """请求渲染指定行（已在缓存则跳过）。滚动监听 / data() miss 时调用。"""
+        if self._render_worker is None:
+            return
+        if row in self._cache:
+            return
+        self._render_worker.request(row)
+
+    def request_range(self, first: int, last: int) -> None:
+        """请求渲染 [first, last] 行范围（去重由 worker 处理）。"""
+        if self._render_worker is None:
+            return
+        for row in range(max(0, first), min(self.rowCount(), last + 1)):
+            if row not in self._cache:
+                self._render_worker.request(row)
+
+    def invalidate(self, row: int) -> None:
+        """失效单页缓存（旋转后），并触发该行重渲（若可能可见）。"""
+        self._cache.invalidate(row)
+        if 0 <= row < self.rowCount():
+            idx = self.index(row, 0)
+            self.dataChanged.emit(idx, idx, [Qt.ItemDataRole.DecorationRole])
+            self.request_render(row)
+
+    def invalidate_all(self) -> None:
+        """失效全部缓存（旋转全部后），触发可见行重渲。"""
+        self._cache.clear()
+        if self.rowCount() > 0:
+            self.dataChanged.emit(
+                self.index(0, 0),
+                self.index(self.rowCount() - 1, 0),
+                [Qt.ItemDataRole.DecorationRole],
+            )
+
+    def session(self) -> PdfSession | None:
+        return self._session
+
+    def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:  # noqa: B008
+        if parent.isValid() or self._session is None:
+            return 0
+        return len(self._session.pdf_document.pages)
+
+    def _page_at_row(self, row: int):
+        if self._session is None:
+            return None
+        pages = self._session.pdf_document.pages
+        if 0 <= row < len(pages):
+            return pages[row]
+        return None
+
+    def data(self, index: QModelIndex, role: int = Qt.ItemDataRole.DisplayRole):
+        if not index.isValid():
+            return None
+        page_info = self._page_at_row(index.row())
+        if page_info is None:
+            return None
+        if role == Qt.ItemDataRole.DisplayRole:
+            return f"第 {page_info.page_index + 1} 页"
+        if role == Qt.ItemDataRole.DecorationRole:
+            pixmap = self._cache.get(index.row())
+            if pixmap is not None:
+                return QIcon(pixmap)
+            # 缓存未命中：占位 + 投递渲染请求（双保险，配合 scroll 主动请求）
+            self.request_render(index.row())
+            return None
+        if role == Qt.ItemDataRole.UserRole:
+            return page_info.page_index
+        return None
+
+
+class ThumbnailListView(QListView):
+    """支持拖拽排序 + 按需渲染的缩略图列表视图。
+
+    基类 QListView 的 InternalMove 依赖模型的 insertRows/removeRows，
+    但本项目的模型是只读视图（数据源 = session.pdf_document.pages）。
+    故在此拦截 dropEvent：根据拖拽前后行的 UserRole(page_index) 计算
+    new_order，emit pages_reordered 交由 PdfTab 调用 PdfService.reorder_pages
+    统一重排文档与模型数据源，避免数据双写。
+
+    按需渲染：滚动/resize 时计算可见行范围，emit visible_range_changed，
+    由 PdfTab 调用 model.request_range 触发后台渲染（去抖 50ms 合并）。
+    """
+
+    pages_reordered = Signal(list)  # new_order: list[int]
+    visible_range_changed = Signal(int, int)  # (first_visible_row, last_visible_row)
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        # 滚动去抖：连续滚动合并为一次渲染请求
+        self._scroll_timer = QTimer(self)
+        self._scroll_timer.setSingleShot(True)
+        self._scroll_timer.timeout.connect(self._emit_visible_range)
+
+    def scrollContentsBy(self, dx, dy) -> None:  # noqa: N802 — Qt API 命名
+        super().scrollContentsBy(dx, dy)
+        self._schedule_visible_range()
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 — Qt API 命名
+        super().resizeEvent(event)
+        self._schedule_visible_range()
+
+    def showEvent(self, event) -> None:  # noqa: N802 — Qt API 命名
+        super().showEvent(event)
+        self._schedule_visible_range()
+
+    def _schedule_visible_range(self) -> None:
+        """防抖：50ms 内合并多次滚动/resize 为一次渲染请求。"""
+        self._scroll_timer.start(50)
+
+    def _emit_visible_range(self) -> None:
+        model = self.model()
+        if model is None or model.rowCount() == 0:
+            return
+        vp = self.viewport()
+        first_idx = self.indexAt(vp.rect().topLeft())
+        last_idx = self.indexAt(vp.rect().bottomLeft())
+        first = first_idx.row() if first_idx.isValid() else 0
+        last = last_idx.row() if last_idx.isValid() else model.rowCount() - 1
+        if first < 0:
+            first = 0
+        if last < 0:
+            last = model.rowCount() - 1
+        self.visible_range_changed.emit(first, last)
+
+    def dropEvent(self, event) -> None:  # noqa: N802 — Qt API 命名
+        if event.source() is not self:
+            super().dropEvent(event)
+            return
+        model = self.model()
+        if model is None or model.rowCount() == 0:
+            event.ignore()
+            return
+        n = model.rowCount()
+        before = [
+            model.data(model.index(r, 0), Qt.ItemDataRole.UserRole) for r in range(n)
+        ]
+        source_rows = sorted({i.row() for i in self.selectedIndexes()})
+        if not source_rows:
+            event.ignore()
+            return
+        # 目标行：用 indexAt 推算鼠标所在行 + dropIndicatorPosition 判定上/下
+        target_row = self._target_row_at(event.position().toPoint())
+        moved = [before[r] for r in source_rows]
+        remaining = [v for r, v in enumerate(before) if r not in source_rows]
+        insert_at = min(target_row, len(remaining))
+        new_order = remaining[:insert_at] + moved + remaining[insert_at:]
+        if new_order == before:
+            event.ignore()
+            return
+        event.accept()
+        self.pages_reordered.emit(new_order)
+
+    def _target_row_at(self, pos) -> int:
+        """根据鼠标位置推算应插入的行号。"""
+        model = self.model()
+        if model is None or model.rowCount() == 0:
+            return 0
+        idx = self.indexAt(pos)
+        if not idx.isValid():
+            return model.rowCount()  # 视口空白：追加到末尾
+        row = idx.row()
+        rect = self.rectForIndex(idx)
+        # 鼠标在格子的下半部分 → 插到下一行
+        if pos.y() > rect.center().y():
+            row += 1
+        return row
+
+
 class PdfTab(QWidget):
     """PDF 处理标签页。"""
 
@@ -126,6 +357,11 @@ class PdfTab(QWidget):
         self._preview_window: PdfPreviewWindow | None = None
         # 网格 ↔ 缩略图双向同步的重入保护，避免 itemSelectionChanged 递归
         self._syncing_selection = False
+        # 批量异步打开期间的失败项收集（open_done 后统一弹一次提示）
+        self._open_errors: list[tuple[str, str]] = []
+        # 批量异步打开期间抑制 combo box 自动切换（每个 session_added 否则都会
+        # 触发 setCurrentIndex → switch_session → 全量重建，抵消异步优化）。
+        self._batch_opening = False
         # splitter 拖动期间 splitterMoved 连续触发，用单次定时器防抖，
         # 停止拖动 300ms 后才落盘，避免每个鼠标移动 tick 都写文件。
         self._splitter_save_timer = QTimer(self)
@@ -169,27 +405,42 @@ class PdfTab(QWidget):
         self._file_selector.currentIndexChanged.connect(self._on_file_selected)
         layout.addWidget(self._file_selector)
 
-        self._thumbnail_list = QListWidget()
+        self._thumbnail_model = ThumbnailModel(self)
+        self._thumbnail_list = ThumbnailListView()
         self._thumbnail_list.setMinimumWidth(120)
         self._thumbnail_list.setIconSize(
             QPixmap(_THUMBNAIL_SIZE, _THUMBNAIL_SIZE).size()
         )
+        self._thumbnail_list.setModel(self._thumbnail_model)
+        # 虚拟化关键：统一 item 尺寸 + 按批布局，滚动只渲染可见行
+        self._thumbnail_list.setUniformItemSizes(True)
+        self._thumbnail_list.setLayoutMode(QListView.LayoutMode.Batched)
+        self._thumbnail_list.setBatchSize(20)
         self._thumbnail_list.setSelectionMode(
-            QListWidget.SelectionMode.ExtendedSelection
+            QAbstractItemView.SelectionMode.ExtendedSelection
         )
-        self._thumbnail_list.setDragDropMode(QListWidget.DragDropMode.InternalMove)
+        self._thumbnail_list.setDragDropMode(
+            QAbstractItemView.DragDropMode.InternalMove
+        )
+        self._thumbnail_list.setDefaultDropAction(Qt.DropAction.MoveAction)
         self._thumbnail_list.setContextMenuPolicy(
             Qt.ContextMenuPolicy.CustomContextMenu
         )
         self._thumbnail_list.customContextMenuRequested.connect(
             self._on_thumbnail_context_menu
         )
-        self._thumbnail_list.itemDoubleClicked.connect(
+        self._thumbnail_list.doubleClicked.connect(
             self._on_thumbnail_double_clicked
         )
-        self._thumbnail_list.model().rowsMoved.connect(self._on_pages_reordered)
+        self._thumbnail_list.pages_reordered.connect(
+            self._on_pages_reordered_with_order
+        )
+        # 按需渲染：滚动时请求可见行渲染
+        self._thumbnail_list.visible_range_changed.connect(
+            self._thumbnail_model.request_range
+        )
         # 反向联动：缩略图选中变化 → 状态列表同步当前行
-        self._thumbnail_list.itemSelectionChanged.connect(
+        self._thumbnail_list.selectionModel().selectionChanged.connect(
             self._on_thumbnail_selection_changed
         )
 
@@ -353,6 +604,10 @@ class PdfTab(QWidget):
         mgr.deskew_page_done.connect(self._on_deskew_page_done)
         mgr.deskew_done.connect(self._on_deskew_done)
         mgr.deskew_failed.connect(self._on_deskew_failed)
+        mgr.open_progress.connect(self._on_open_progress)
+        mgr.open_failed.connect(self._on_open_failed)
+        mgr.open_done.connect(self._on_open_done)
+        mgr.thumbnails_invalidated.connect(self._on_thumbnails_invalidated)
 
     # ---- splitter layout persistence --------------------------------
 
@@ -387,7 +642,10 @@ class PdfTab(QWidget):
     def _on_session_added(self, file_path: str) -> None:
         name = Path(file_path).name
         self._file_selector.addItem(name, file_path)
-        self._file_selector.setCurrentIndex(self._file_selector.count() - 1)
+        # 批量导入期间不逐个切换（否则每个文件触发 switch_session→全量重建）。
+        # 仅在 open_done 后切换到第一个新文件。
+        if not self._batch_opening:
+            self._file_selector.setCurrentIndex(self._file_selector.count() - 1)
         self._btn_export_all.setEnabled(True)
 
     def _on_session_removed(self, file_path: str) -> None:
@@ -401,11 +659,11 @@ class PdfTab(QWidget):
     def _on_active_changed(self, file_path: str) -> None:
         # 切换文件：预览窗口的 _page_indices 指向旧文档，关闭它避免翻页到失效索引。
         self._close_preview_window_if_open()
-        # 全量重建期间抑制双向选中同步：clear() 会触发 itemSelectionChanged，
+        # 全量重建期间抑制双向选中同步：reset 会触发 selectionChanged，
         # 此时两侧控件尚处于不一致的中间态，让同步逻辑静默直到重建完成。
         self._syncing_selection = True
         try:
-            self._refresh_thumbnails()
+            self._thumbnail_model.set_session(self._session_mgr.active_session)
             self._update_status()
             self._update_layer_status()
         finally:
@@ -414,24 +672,13 @@ class PdfTab(QWidget):
         self._set_file_buttons_enabled(has_doc)
 
     def _on_page_loaded(self, file_path: str, page_index: int) -> None:
+        """文字层 worker 逐页完成：更新文字层网格格子（缩略图由按需 worker 渲）。"""
         session = self._session_mgr.active_session
         if session is None or session.file_path != file_path:
             return
-        if page_index < self._thumbnail_list.count():
-            page_info = (
-                session.pdf_document.pages[page_index]
-                if page_index < len(session.pdf_document.pages)
-                else None
-            )
-            if page_info and page_info.thumbnail:
-                scaled = self._scale_thumbnail(page_info.thumbnail)
-            else:
-                scaled = self._placeholder_pixmap()
-            item = self._thumbnail_list.item(page_index)
-            if item:
-                item.setIcon(QIcon(scaled))
-        else:
-            self._refresh_thumbnails()
+        # 缩略图不在此处理（按需渲染由 ThumbnailModel 驱动）；
+        # 仅逐页更新文字层网格状态 + 汇总。
+        self._update_layer_grid_page(page_index)
 
     def _on_load_progress(self, file_path: str, loaded: int, total: int) -> None:
         session = self._session_mgr.active_session
@@ -617,7 +864,7 @@ class PdfTab(QWidget):
             _THUMBNAIL_SIZE,
             _THUMBNAIL_SIZE,
             Qt.AspectRatioMode.KeepAspectRatio,
-            Qt.TransformationMode.SmoothTransformation,
+            Qt.TransformationMode.FastTransformation,
         )
 
     @staticmethod
@@ -626,73 +873,48 @@ class PdfTab(QWidget):
         pm.fill(Qt.GlobalColor.lightGray)
         return pm
 
-    def _render_single_thumbnail(self, page_index: int) -> QPixmap:
-        """主线程渲染单页缩略图（thumbnail_dpi）并写回缓存。用于旋转后增量更新。"""
-        session = self._session_mgr.active_session
-        if session is None:
-            return self._placeholder_pixmap()
-        with session.doc_lock:
-            pixmap = PdfService.render_page(
-                session.doc, page_index, dpi=session.pdf_document.thumbnail_dpi
-            )
-        scaled = self._scale_thumbnail(pixmap)
-        page_info = session.pdf_document.get_page(page_index)
-        if page_info is not None:
-            page_info.thumbnail = scaled
-        return scaled
-
     def _update_thumbnail_icon(self, page_index: int) -> None:
-        """渲染单页并更新对应缩略图 item 的 icon（旋转后调用）。"""
-        scaled = self._render_single_thumbnail(page_index)
-        item = self._find_thumbnail_item(page_index)
-        if item is not None:
-            item.setIcon(QIcon(scaled))
+        """旋转单页后：失效该页缓存并触发按需重渲（后台 worker）。
 
-    def _find_thumbnail_item(self, page_index: int) -> QListWidgetItem | None:
-        for row in range(self._thumbnail_list.count()):
-            item = self._thumbnail_list.item(row)
-            if item.data(Qt.ItemDataRole.UserRole) == page_index:
-                return item
+        page_index 是 page_info.page_index（原始标识），重排后与行号不一致，
+        需先找到它所在的当前行号。
+        """
+        row = self._row_of_page(page_index)
+        if row is not None:
+            self._thumbnail_model.invalidate(row)
+
+    def _row_of_page(self, page_index: int) -> int | None:
+        """根据 page_info.page_index 查找它在模型中的当前行号（重排后会变化）。"""
+        model = self._thumbnail_model
+        for r in range(model.rowCount()):
+            if model.data(model.index(r, 0), Qt.ItemDataRole.UserRole) == page_index:
+                return r
         return None
 
-    def _reorder_thumbnail_items(self, new_order: list[int]) -> None:
-        """拖拽排序后：按 new_order 重排缩略图 item，复用原有 icon（不重新渲染）。
+    def _reorder_thumbnail_model(self, selected_pages: list[int] | None = None) -> None:
+        """PdfService.reorder_pages 已改写 pdf_document.pages 顺序，
+        模型数据源随之更新，通知视图整体刷新（保留选中 page_index）。
 
-        takeItem 摘出 item（保留 icon/role），再按新顺序重新插入。
-        takeItem 会清除选中态，故重排前记录选中的 page_index，重排后恢复。
+        selected_pages 须在 reorder_pages 之前捕获（调用方负责传入）。
+        调用方应在调用前后用 _syncing_selection 抑制选中同步。
         """
-        # 记录重排前选中的 page_index（takeItem 会丢掉选中态）
-        selected_pages = self._get_selected_page_indices()
-        old_items: list[QListWidgetItem] = []
-        for _ in range(self._thumbnail_list.count()):
-            old_items.append(self._thumbnail_list.takeItem(0))
-        by_page = {it.data(Qt.ItemDataRole.UserRole): it for it in old_items}
-        for page_idx in new_order:
-            item = by_page.get(page_idx)
-            if item is not None:
-                self._thumbnail_list.addItem(item)
+        self._thumbnail_model.set_session(self._session_mgr.active_session)
         # 恢复选中（page_index 未变，只是行序变了）
-        want = set(selected_pages)
-        for row in range(self._thumbnail_list.count()):
-            item = self._thumbnail_list.item(row)
-            item.setSelected(item.data(Qt.ItemDataRole.UserRole) in want)
+        if selected_pages:
+            want = set(selected_pages)
+            sm = self._thumbnail_list.selectionModel()
+            model = self._thumbnail_model
+            sm.clear()
+            for r in range(model.rowCount()):
+                if model.data(model.index(r, 0), Qt.ItemDataRole.UserRole) in want:
+                    sm.select(
+                        model.index(r, 0),
+                        QItemSelectionModel.SelectionFlag.Select,
+                    )
 
     def _refresh_thumbnails(self) -> None:
-        session = self._session_mgr.active_session
-        if session is None:
-            self._thumbnail_list.clear()
-            return
-        doc = session.pdf_document
-        self._thumbnail_list.clear()
-        for page_info in doc.pages:
-            scaled = (
-                self._scale_thumbnail(page_info.thumbnail)
-                if page_info.thumbnail
-                else self._placeholder_pixmap()
-            )
-            item = QListWidgetItem(QIcon(scaled), f"第 {page_info.page_index + 1} 页")
-            item.setData(Qt.ItemDataRole.UserRole, page_info.page_index)
-            self._thumbnail_list.addItem(item)
+        """重置缩略图模型数据源（删页/插页后页结构变化时调用）。"""
+        self._thumbnail_model.set_session(self._session_mgr.active_session)
 
     def _update_status(self) -> None:
         session = self._session_mgr.active_session
@@ -878,27 +1100,42 @@ class PdfTab(QWidget):
         finally:
             self._syncing_selection = False
 
-    def _sync_selection_to(self, target: QListWidget, page_indices: list[int]) -> None:
+    def _sync_selection_to(self, target, page_indices: list[int]) -> None:
         """把给定 page_index 集合同步选中到 target 列表（按 page_index 匹配，清旧选新）。
 
-        两个列表都用 _LAYER_ROLE（== Qt.ItemDataRole.UserRole）存 page_index。
+        target 可以是 QListWidget（网格）或 QListView（缩略图），两者都有
+        selectionModel()。两个列表都用 UserRole 存 page_index。
         """
         want = set(page_indices)
-        for row in range(target.count()):
-            item = target.item(row)
-            item.setSelected(item.data(_LAYER_ROLE) in want)
+        sm = target.selectionModel()
+        model = target.model()
+        if sm is None or model is None:
+            return
+        # 逐行：在 want 中则 Select，不在则 Deselect（不清空整列，保留其余）
+        for row in range(model.rowCount()):
+            idx = model.index(row, 0)
+            in_want = model.data(idx, _LAYER_ROLE) in want
+            if in_want:
+                sm.select(idx, QItemSelectionModel.SelectionFlag.Select)
+            else:
+                sm.select(idx, QItemSelectionModel.SelectionFlag.Deselect)
 
     def _get_selected_page_indices(self) -> list[int]:
+        model = self._thumbnail_model
         indices = []
-        for item in self._thumbnail_list.selectedItems():
-            idx = item.data(Qt.ItemDataRole.UserRole)
-            if idx is not None:
-                indices.append(idx)
+        for idx in self._thumbnail_list.selectedIndexes():
+            val = model.data(idx, Qt.ItemDataRole.UserRole)
+            if val is not None:
+                indices.append(val)
         return sorted(set(indices))
 
     # ---- file operations --------------------------------------------
 
     def _on_file_selected(self, index: int) -> None:
+        # 批量导入期间 addItem 会改变 combo 当前项，忽略其触发的切换
+        # （切换在 open_done 后由 _on_open_done 统一完成一次）。
+        if self._batch_opening:
+            return
         file_path = self._file_selector.itemData(index)
         if not file_path:
             return
@@ -929,11 +1166,40 @@ class PdfTab(QWidget):
         )
         if not paths:
             return
-        for path in paths:
+        # 单文件走同步快路径；多文件走后台异步（避免 fitz.open 串行冻结主线程）。
+        if len(paths) == 1:
             try:
-                self._session_mgr.open_session(path)
+                self._session_mgr.open_session(paths[0])
             except (FileNotFoundError, RuntimeError) as e:
                 QMessageBox.warning(self, "打开失败", str(e))
+        else:
+            self._open_errors = []
+            self._batch_opening = True
+            self._status_label.setText(f"正在打开 0/{len(paths)} 个文件…")
+            self._session_mgr.open_sessions_async(paths)
+
+    def _on_open_progress(self, current: int, total: int) -> None:
+        self._status_label.setText(f"正在打开 {current}/{total} 个文件…")
+
+    def _on_open_failed(self, file_path: str, error: str) -> None:
+        """批量导入时收集失败项，全部完成后统一弹一次提示。"""
+        name = Path(file_path).name if file_path else ""
+        self._open_errors.append((name, error))
+
+    def _on_open_done(self) -> None:
+        """批量打开流程结束：切换到第一个新文件（一次性，避免逐文件重建）。"""
+        self._batch_opening = False
+        # 切换到活动会话（manager 已设第一个新文件为 active）
+        active = self._session_mgr.active_session
+        if active is not None:
+            for i in range(self._file_selector.count()):
+                if self._file_selector.itemData(i) == active.file_path:
+                    self._file_selector.setCurrentIndex(i)
+                    break
+        if self._open_errors:
+            lines = "\n".join(f"• {n}: {e}" for n, e in self._open_errors)
+            QMessageBox.warning(self, "部分文件打开失败", lines)
+            self._open_errors = []
 
     def _on_add_file(self) -> None:
         self._on_open_file()
@@ -998,31 +1264,32 @@ class PdfTab(QWidget):
         menu.addAction("预览", lambda: self._open_preview_for_selected())
         menu.exec(self._thumbnail_list.mapToGlobal(pos))
 
-    def _on_thumbnail_double_clicked(self, item: QListWidgetItem) -> None:
-        idx = item.data(Qt.ItemDataRole.UserRole)
+    def _on_thumbnail_double_clicked(self, index: QModelIndex) -> None:
+        idx = index.data(Qt.ItemDataRole.UserRole)
         if idx is not None:
             self._open_preview(idx)
 
-    def _on_pages_reordered(self) -> None:
-        new_order: list[int] = []
-        for row in range(self._thumbnail_list.count()):
-            item = self._thumbnail_list.item(row)
-            old_idx = item.data(Qt.ItemDataRole.UserRole)
-            if old_idx is not None:
-                new_order.append(old_idx)
-        self._on_pages_reordered_with_order(new_order)
-
     def _on_pages_reordered_with_order(self, new_order: list[int]) -> None:
-        """用显式 new_order 应用重排：PdfService 重排文档 + 增量移动缩略图 item。
+        """用显式 new_order 应用重排：PdfService 重排文档 + 刷新缩略图模型。
 
-        缩略图 pixmap 内容不变（只是顺序变了），故只移动 item 不重新渲染。
+        缩略图 pixmap 内容不变（只是顺序变了），PdfService.reorder_pages 会改写
+        pdf_document.pages 顺序（模型数据源），故须先记录选中 page_index 再重排。
         """
         session = self._session_mgr.active_session
         if session is None or not new_order:
             return
+        # 必须在 reorder_pages 之前捕获选中：它直接改写 pdf_document.pages，
+        # 而模型读取同一列表，重排后 UserRole 会与原选中行错位。
+        selected_pages = self._get_selected_page_indices()
         with session.doc_lock:
             PdfService.reorder_pages(session.doc, session.pdf_document, new_order)
-        self._reorder_thumbnail_items(new_order)
+        # 两侧面板都读取 pages（缩略图 model + 文字层网格），须同步刷新
+        self._syncing_selection = True
+        try:
+            self._reorder_thumbnail_model(selected_pages)
+            self._update_layer_status()
+        finally:
+            self._syncing_selection = False
         self._update_status()
 
     def _on_rotate(self, angle: int) -> None:
@@ -1054,8 +1321,8 @@ class PdfTab(QWidget):
         indices = list(range(session.pdf_document.page_count))
         with session.doc_lock:
             PdfService.rotate_pages(session.doc, session.pdf_document, indices, 90)
-        for idx in indices:
-            self._update_thumbnail_icon(idx)
+        # 失效全部缩略图缓存，由按需 worker 重渲可见页（旋转全部后）。
+        self._session_mgr.rerender_thumbnails_async(indices)
         self._update_status()
 
     def _on_auto_deskew(self) -> None:
@@ -1112,6 +1379,23 @@ class PdfTab(QWidget):
         self._btn_auto_deskew.setEnabled(True)
         QMessageBox.warning(self, "自动摆正失败", error)
         self._update_status()
+
+    def _on_thumbnails_invalidated(self, page_indices: list[int]) -> None:
+        """旋转后缩略图缓存失效：清缓存并触发可见页按需重渲。"""
+        if not page_indices:
+            return
+        # 全部失效用 invalidate_all（旋转全部），否则逐页失效
+        session = self._session_mgr.active_session
+        if session is None:
+            return
+        total = session.pdf_document.page_count
+        if len(page_indices) >= total:
+            self._thumbnail_model.invalidate_all()
+        else:
+            for idx in page_indices:
+                row = self._row_of_page(idx)
+                if row is not None:
+                    self._thumbnail_model.invalidate(row)
 
     def _on_delete_pages(self) -> None:
         session = self._session_mgr.active_session

@@ -17,6 +17,22 @@ PIPELINE_NAMES = {
     "MinerU",  # 文档解析（首次使用需下载模型，标记成功以跳过重复下载）
 }
 
+# 本地推理管道集合（走 PaddleX/registry，非远程 MinerU）。
+# ``mark_pipeline_success`` 的调用方据此判断是否标记——必须覆盖此集合的
+# 全部成员，否则被遗漏管道的 ``is_pipeline_ever_succeeded`` 永远为 False，
+# 导致 SingleRecognitionTab.run_ocr 每次识别都同步构造 QWebEngineView
+# （Chromium 冷启动数百毫秒），表现为截图遮罩在点击管道按钮后卡住。
+# MinerU 由各自调用方单独硬编码标记（远程 API，独立路径）。
+LOCAL_MARKABLE_PIPELINES = frozenset(
+    {
+        "OCR",
+        "PP-StructureV3",
+        "PaddleOCR-VL",
+        "TABLE_RECOGNITION",
+        "FORMULA_RECOGNITION",
+    }
+)
+
 
 def _cache_path(project_root: Path) -> Path:
     return project_root / ".vibeocr" / "cache.json"

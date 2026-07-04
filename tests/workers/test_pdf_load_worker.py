@@ -1,4 +1,4 @@
-"""Tests for PdfLoadWorker."""
+"""Tests for PdfLoadWorker — 只做文字层检测，不再渲染缩略图。"""
 
 import fitz
 import pytest
@@ -36,10 +36,9 @@ class TestPdfLoadWorker:
             pdf_document=session.pdf_document,
             loaded_pages=session.loaded_pages,
             doc_lock=session.doc_lock,
-            thumbnail_dpi=96,
         )
         worker.page_ready.connect(
-            lambda i, info, pm: loaded_pages.append(i),
+            lambda i, info: loaded_pages.append(i),
             Qt.ConnectionType.DirectConnection,
         )
 
@@ -66,10 +65,9 @@ class TestPdfLoadWorker:
             pdf_document=session.pdf_document,
             loaded_pages=session.loaded_pages,
             doc_lock=session.doc_lock,
-            thumbnail_dpi=96,
         )
         worker.page_ready.connect(
-            lambda i, info, pm: loaded_pages.append(i),
+            lambda i, info: loaded_pages.append(i),
             Qt.ConnectionType.DirectConnection,
         )
         worker.start()
@@ -87,7 +85,7 @@ class TestPdfLoadWorker:
 
         loaded_pages: list[int] = []
 
-        def on_first_page(i, info, pm):
+        def on_first_page(i, info):
             loaded_pages.append(i)
             worker.cancel()
 
@@ -97,7 +95,6 @@ class TestPdfLoadWorker:
             pdf_document=session.pdf_document,
             loaded_pages=session.loaded_pages,
             doc_lock=session.doc_lock,
-            thumbnail_dpi=96,
         )
         worker.page_ready.connect(
             on_first_page,
@@ -126,10 +123,9 @@ class TestPdfLoadWorker:
             pdf_document=session.pdf_document,
             loaded_pages=session.loaded_pages,
             doc_lock=session.doc_lock,
-            thumbnail_dpi=96,
         )
         worker.page_ready.connect(
-            lambda i, info, pm: page_infos.append((i, info)),
+            lambda i, info: page_infos.append((i, info)),
             Qt.ConnectionType.DirectConnection,
         )
         worker.start()
@@ -141,4 +137,39 @@ class TestPdfLoadWorker:
             assert isinstance(info.has_text_layer, bool)
             if info.has_text_layer:
                 assert len(info.text_layers) > 0
+        doc.close()
+
+    def test_does_not_render_thumbnail(self, three_page_pdf, qapp, wait_worker):
+        """文字层 worker 不应渲染缩略图（由按需 worker 负责）。"""
+        from PySide6.QtGui import QPixmap
+
+        import vibeocr.workers.pdf_load_worker as mod
+
+        doc, pdf_doc = PdfService.open_doc(str(three_page_pdf))
+        session = PdfSession(
+            file_path=str(three_page_pdf), doc=doc, pdf_document=pdf_doc
+        )
+
+        called: list = []
+        # render_page 不应被调用
+        import vibeocr.services.pdf_service as svc
+
+        orig = svc.PdfService.render_page
+        svc.PdfService.render_page = staticmethod(  # type: ignore[assignment]
+            lambda *a, **k: called.append(1) or QPixmap(10, 10)
+        )
+        try:
+            worker = PdfLoadWorker(
+                session_id=session.file_path,
+                doc=session.doc,
+                pdf_document=session.pdf_document,
+                loaded_pages=session.loaded_pages,
+                doc_lock=session.doc_lock,
+            )
+            worker.start()
+            wait_worker(worker)
+        finally:
+            svc.PdfService.render_page = orig  # type: ignore[assignment]
+
+        assert called == []  # 文字层 worker 不渲染缩略图
         doc.close()
