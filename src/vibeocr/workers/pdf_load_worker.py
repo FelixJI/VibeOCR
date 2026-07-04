@@ -16,10 +16,11 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QThread, Signal
+from PySide6.QtCore import Signal
 
 from vibeocr.models.pdf_document import PdfPageInfo
 from vibeocr.services.pdf_service import PdfService
+from vibeocr.workers.pdf_session_worker_base import PdfSessionWorker
 
 if TYPE_CHECKING:
     import threading
@@ -31,7 +32,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class PdfLoadWorker(QThread):
+class PdfLoadWorker(PdfSessionWorker):
     """逐页检测文字层状态的异步 Worker（不渲染缩略图）。"""
 
     page_ready = Signal(int, object)
@@ -40,26 +41,14 @@ class PdfLoadWorker(QThread):
     def __init__(
         self,
         session_id: str,
-        doc: fitz.Document,
-        pdf_document: PdfDocument,
+        doc: "fitz.Document",
+        pdf_document: "PdfDocument",
         loaded_pages: set[int],
-        doc_lock: threading.RLock,
+        doc_lock: "threading.RLock",
         parent=None,
     ) -> None:
-        super().__init__(parent)
-        self._session_id = session_id
-        self._doc = doc
-        self._pdf_document = pdf_document
+        super().__init__(session_id, doc, pdf_document, doc_lock, parent)
         self._loaded_pages = loaded_pages
-        self._doc_lock = doc_lock
-        self._cancelled = False
-
-    def cancel(self) -> None:
-        self._cancelled = True
-
-    @property
-    def session_id(self) -> str:
-        return self._session_id
 
     def run(self) -> None:
         for i in range(self._pdf_document.page_count):

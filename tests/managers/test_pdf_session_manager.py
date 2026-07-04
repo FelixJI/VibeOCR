@@ -680,6 +680,90 @@ class TestMutateSignalForwarding:
         assert received == [(session.file_path, [2, 5])]
 
 
+class TestDeskewViaMutateForwarding:
+    """AUTO_DESKEW 经 _start_mutate 路径：page_done/progress/all_done/failed
+    应按 kind 分流到 deskew_* 信号（而非 mutate_*）。"""
+
+    def test_deskew_progress_uses_worker_session_id(self, manager, test_pdf_a, monkeypatch):
+        """_on_mutate_progress 在 AUTO_DESKEW 时转发到 deskew_progress，
+        且用 worker.session_id 而非 active_session（修复切换文件错位 bug）。"""
+        from unittest.mock import MagicMock
+        from vibeocr.workers.pdf_mutate_worker import TaskKind
+
+        session = manager.open_session(str(test_pdf_a))
+        fake_worker = MagicMock()
+        fake_worker.session_id = session.file_path
+        monkeypatch.setattr(
+            "vibeocr.managers.pdf_session_manager.PdfMutateWorker",
+            lambda *a, **k: fake_worker,
+        )
+        manager.auto_deskew_async([0])  # 注入 OCR service 前会静默 return
+        # auto_deskew_async 在无 ocr_service 时 return，手动注入 kind + worker
+        manager.set_ocr_service(MagicMock())
+        manager.auto_deskew_async([0])
+        manager._mutate_worker = fake_worker
+        assert manager._current_mutate_kind == TaskKind.AUTO_DESKEW
+
+        received: list = []
+        manager.deskew_progress.connect(lambda sid, c, t: received.append((sid, c, t)))
+        # 切换 active_session 到另一文件，模拟任务运行中用户切文件
+        manager._active_path = "/other/file.pdf"
+        manager._on_mutate_progress(1, 3)
+        # 应仍用 worker.session_id（原文件），而非 active_session（/other）
+        assert received == [(session.file_path, 1, 3)]
+
+    def test_deskew_all_done_emits_thumbnails_invalidated(
+        self, manager, test_pdf_a, monkeypatch
+    ):
+        """AUTO_DESKEW all_done 应 emit deskew_done + thumbnails_invalidated(corrected_pages)。"""
+        from unittest.mock import MagicMock
+        from vibeocr.workers.pdf_mutate_worker import TaskKind
+
+        session = manager.open_session(str(test_pdf_a))
+        fake_worker = MagicMock()
+        fake_worker.session_id = session.file_path
+        monkeypatch.setattr(
+            "vibeocr.managers.pdf_session_manager.PdfMutateWorker",
+            lambda *a, **k: fake_worker,
+        )
+        manager.set_ocr_service(MagicMock())
+        manager.auto_deskew_async([0, 1])
+        manager._mutate_worker = fake_worker
+        assert manager._current_mutate_kind == TaskKind.AUTO_DESKEW
+
+        done_received: list = []
+        thumb_received: list = []
+        manager.deskew_done.connect(lambda sid, s: done_received.append(s))
+        manager.thumbnails_invalidated.connect(lambda idx: thumb_received.append(idx))
+        manager._on_mutate_all_done(
+            session.file_path,
+            {"corrected": 1, "skipped": 1, "corrected_pages": [0]},
+        )
+        assert done_received and done_received[0]["corrected"] == 1
+        assert thumb_received == [[0]]
+
+    def test_deskew_failed_forwarded(self, manager, test_pdf_a, monkeypatch):
+        """AUTO_DESKEW failed 应转发到 deskew_failed（而非 mutate_failed）。"""
+        from unittest.mock import MagicMock
+        from vibeocr.workers.pdf_mutate_worker import TaskKind
+
+        session = manager.open_session(str(test_pdf_a))
+        fake_worker = MagicMock()
+        fake_worker.session_id = session.file_path
+        monkeypatch.setattr(
+            "vibeocr.managers.pdf_session_manager.PdfMutateWorker",
+            lambda *a, **k: fake_worker,
+        )
+        manager.set_ocr_service(MagicMock())
+        manager.auto_deskew_async([0])
+        manager._mutate_worker = fake_worker
+
+        failed_received: list = []
+        manager.deskew_failed.connect(lambda sid, e: failed_received.append((sid, e)))
+        manager._on_mutate_failed(session.file_path, "boom")
+        assert failed_received == [(session.file_path, "boom")]
+
+
 class TestExportAllAsync:
     def test_starts_export_worker(self, manager, test_pdf_a, monkeypatch):
         from unittest.mock import MagicMock
@@ -723,7 +807,7 @@ def test_auto_deskew_emits_done(manager, qapp, wait_worker, tmp_path):
         lambda sid, s: received.append(s), Qt.ConnectionType.DirectConnection
     )
     manager.auto_deskew_async([0])
-    wait_worker(manager._deskew_worker)
+    wait_worker(manager._mutate_worker)
 
     assert received, "deskew_done 未触发"
     assert received[0]["corrected"] == 1

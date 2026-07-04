@@ -1,3 +1,9 @@
+"""自动摆正测试 — AUTO_DESKEW 已合并入 PdfMutateWorker（原独立 PdfDeskewWorker）。
+
+测试 angle_to_correction 静态方法 + AUTO_DESKEW 任务路径：
+方向检测 → 旋转 → 文字层同步 + deskewed 标记。
+"""
+
 from threading import RLock
 from unittest.mock import MagicMock
 
@@ -6,7 +12,11 @@ import pytest
 from PySide6.QtCore import Qt
 
 from vibeocr.models.pdf_document import PdfDocument, PdfPageInfo
-from vibeocr.workers.pdf_deskew_worker import PdfDeskewWorker
+from vibeocr.workers.pdf_mutate_worker import (
+    MutateTask,
+    PdfMutateWorker,
+    TaskKind,
+)
 
 
 @pytest.mark.parametrize("angle,expected", [
@@ -19,7 +29,7 @@ from vibeocr.workers.pdf_deskew_worker import PdfDeskewWorker
     (450, 270),    # 越界取模 (450%360=90 → 270)
 ])
 def test_angle_to_correction(angle, expected):
-    assert PdfDeskewWorker.angle_to_correction(angle) == expected
+    assert PdfMutateWorker.angle_to_correction(angle) == expected
 
 
 def _make_session(tmp_path, angle_report=90):
@@ -42,12 +52,23 @@ def _make_session(tmp_path, angle_report=90):
     return path, doc, pdf_doc, ocr_service
 
 
+def _make_deskew_worker(path, doc, pdf_doc, ocr_service, pdf_settings=None):
+    """构造 AUTO_DESKEW 任务的 PdfMutateWorker。"""
+    task = MutateTask(
+        kind=TaskKind.AUTO_DESKEW,
+        page_indices=[0],
+        ocr_service=ocr_service,
+        pdf_settings=pdf_settings,
+    )
+    return PdfMutateWorker(
+        session_id=path, doc=doc, pdf_document=pdf_doc,
+        doc_lock=RLock(), task=task,
+    )
+
+
 def test_deskew_rotates_and_marks_deskewed(qapp, wait_worker, tmp_path):
     path, doc, pdf_doc, ocr_service = _make_session(tmp_path, angle_report=90)
-    worker = PdfDeskewWorker(
-        session_id=path, doc=doc, pdf_document=pdf_doc,
-        doc_lock=RLock(), ocr_service=ocr_service, page_indices=[0],
-    )
+    worker = _make_deskew_worker(path, doc, pdf_doc, ocr_service)
     done: list = []
     worker.all_done.connect(
         lambda sid, s: done.append(s), Qt.ConnectionType.DirectConnection
@@ -67,10 +88,7 @@ def test_deskew_rotates_and_marks_deskewed(qapp, wait_worker, tmp_path):
 
 def test_deskew_skips_already_upright(qapp, wait_worker, tmp_path):
     path, doc, pdf_doc, ocr_service = _make_session(tmp_path, angle_report=0)
-    worker = PdfDeskewWorker(
-        session_id=path, doc=doc, pdf_document=pdf_doc,
-        doc_lock=RLock(), ocr_service=ocr_service, page_indices=[0],
-    )
+    worker = _make_deskew_worker(path, doc, pdf_doc, ocr_service)
     done: list = []
     worker.all_done.connect(
         lambda sid, s: done.append(s), Qt.ConnectionType.DirectConnection
@@ -96,10 +114,7 @@ def test_deskew_rewrites_text_layer_when_blocks_exist(qapp, wait_worker, tmp_pat
     pdf_doc.pages[0].ocr_preproc_angle = 0
     pdf_doc.pages[0].has_text_layer = True
 
-    worker = PdfDeskewWorker(
-        session_id=path, doc=doc, pdf_document=pdf_doc,
-        doc_lock=RLock(), ocr_service=ocr_service, page_indices=[0],
-    )
+    worker = _make_deskew_worker(path, doc, pdf_doc, ocr_service)
     done: list = []
     worker.all_done.connect(
         lambda sid, s: done.append(s), Qt.ConnectionType.DirectConnection

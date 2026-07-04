@@ -873,16 +873,6 @@ class PdfTab(QWidget):
         pm.fill(Qt.GlobalColor.lightGray)
         return pm
 
-    def _update_thumbnail_icon(self, page_index: int) -> None:
-        """旋转单页后：失效该页缓存并触发按需重渲（后台 worker）。
-
-        page_index 是 page_info.page_index（原始标识），重排后与行号不一致，
-        需先找到它所在的当前行号。
-        """
-        row = self._row_of_page(page_index)
-        if row is not None:
-            self._thumbnail_model.invalidate(row)
-
     def _row_of_page(self, page_index: int) -> int | None:
         """根据 page_info.page_index 查找它在模型中的当前行号（重排后会变化）。"""
         model = self._thumbnail_model
@@ -1301,9 +1291,10 @@ class PdfTab(QWidget):
             return
         with session.doc_lock:
             PdfService.rotate_pages(session.doc, session.pdf_document, indices, angle)
-        # 旋转改变了页面视觉 → 仅增量渲染受影响页（不全量重建）
-        for idx in indices:
-            self._update_thumbnail_icon(idx)
+        # 旋转改变了页面视觉 → 失效缓存，由按需 worker 重渲可见页。
+        # 统一走 rerender_thumbnails_async → thumbnails_invalidated 信号，
+        # 与 rotate_all / deskew 共用唯一缩略图失效入口。
+        self._session_mgr.rerender_thumbnails_async(indices)
         self._update_status()
 
     def _on_rotate_all(self) -> None:
@@ -1351,9 +1342,9 @@ class PdfTab(QWidget):
         session = self._session_mgr.active_session
         if session is None or session.file_path != session_id:
             return
-        # 缩略图刷新（rotate 改变页面视觉）
-        self._update_thumbnail_icon(page_index)
-        # 格子刷新（Task 5 会让此处同时刷新 _DESKEWED_ROLE）
+        # 缩略图刷新由 manager 在 all_done 时统一 emit thumbnails_invalidated
+        # （_on_thumbnails_invalidated 是唯一缩略图失效入口）。此处仅刷新格子，
+        # 让已纠偏角标（_DESKEWED_ROLE）即时更新。
         self._update_layer_grid_page(page_index)
 
     def _on_deskew_done(self, session_id: str, summary) -> None:

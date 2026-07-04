@@ -11,17 +11,21 @@ import logging
 from queue import Queue
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QThread, Signal
+from PySide6.QtCore import Signal
+
+from vibeocr.workers.pdf_session_worker_base import PdfSessionWorker
 
 if TYPE_CHECKING:
     import threading
 
     import fitz
 
+    from vibeocr.models.pdf_document import PdfDocument
+
 logger = logging.getLogger(__name__)
 
 
-class PdfRenderWorker(QThread):
+class PdfRenderWorker(PdfSessionWorker):
     """逐页渲染 Worker。
 
     Signals:
@@ -42,21 +46,11 @@ class PdfRenderWorker(QThread):
         render_queue: Queue,
         parent=None,
     ) -> None:
-        super().__init__(parent)
-        self._session_id = session_id
-        self._doc = doc
-        self._doc_lock = doc_lock
+        # PdfRenderWorker 不持有 pdf_document，传 None 占位
+        super().__init__(session_id, doc, None, doc_lock, parent)  # type: ignore[arg-type]
         self._page_indices = page_indices
         self._pdf_settings = pdf_settings
         self._queue = render_queue
-        self._cancelled = False
-
-    def cancel(self) -> None:
-        self._cancelled = True
-
-    @property
-    def session_id(self) -> str:
-        return self._session_id
 
     def run(self) -> None:
         from vibeocr.models.pdf_ocr_options import PdfGlobalSettings

@@ -15,7 +15,6 @@ from PySide6.QtCore import QCoreApplication, QObject, QThread, Signal
 
 from vibeocr.models.pdf_session import PdfSession
 from vibeocr.services.pdf_service import PdfService
-from vibeocr.workers.pdf_deskew_worker import PdfDeskewWorker
 from vibeocr.workers.pdf_export_worker import PdfExportWorker
 from vibeocr.workers.pdf_load_worker import PdfLoadWorker
 from vibeocr.workers.pdf_open_worker import PdfOpenWorker
@@ -88,7 +87,8 @@ class PdfSessionManager(QObject):
         self._render_worker: PdfRenderWorker | None = None
         self._mutate_worker: PdfMutateWorker | None = None
         self._export_worker: PdfExportWorker | None = None
-        self._deskew_worker: PdfDeskewWorker | None = None
+        # 当前 mutate 任务的 kind（用于回调分流到 mutate_* 还是 deskew_* 信号）
+        self._current_mutate_kind: TaskKind | None = None
         self._ocr_service: OCRServiceBase | None = None
         self._pdf_settings: PdfGlobalSettings | None = None
         self._overwrite_text_layer: bool = False
@@ -121,6 +121,43 @@ class PdfSessionManager(QObject):
         if self._load_worker is not None:
             return self._load_worker.session_id
         return None
+
+    # ---- worker 生命周期 helper（统一 6 处重复的 cancel/start 脚手架） --
+
+    def _cancel_thread(self, attr: str, timeout: int = 5000) -> None:
+        """取消并等待某个 worker 线程结束，然后清空引用。
+
+        Args:
+            attr: self 上的 worker 字段名（如 "_load_worker"）。
+            timeout: 等待线程退出的超时（毫秒）。
+        """
+        w = getattr(self, attr, None)
+        if w is not None:
+            if hasattr(w, "cancel"):
+                w.cancel()
+            _wait_thread(w, timeout=timeout)
+            setattr(self, attr, None)
+
+    def _start_worker(
+        self,
+        attr: str,
+        worker: QThread,
+        connections: list[tuple[str, object]],
+        timeout: int = 5000,
+    ) -> None:
+        """取消旧 worker → 连接信号 → 启动新 worker 并存入字段。
+
+        Args:
+            attr: self 上的 worker 字段名。
+            worker: 待启动的 worker（已构造）。
+            connections: [(signal属性名, slot), ...]。
+            timeout: 取消旧 worker 的等待超时（毫秒）。
+        """
+        self._cancel_thread(attr, timeout=timeout)
+        for signal_attr, slot in connections:
+            getattr(worker, signal_attr).connect(slot)
+        setattr(self, attr, worker)
+        worker.start()
 
     # ---- session lifecycle ------------------------------------------
 
@@ -166,14 +203,19 @@ class PdfSessionManager(QObject):
         self._cancel_open_worker()
         self._pending_open_paths = list(new_paths)
 
-        self._open_worker = PdfOpenWorker(new_paths)
-        self._open_worker.doc_opened.connect(self._on_doc_opened)
-        self._open_worker.open_failed.connect(self._on_open_failed)
-        self._open_worker.open_progress.connect(self.open_progress)
-        self._open_worker.all_done.connect(self._on_open_all_done)
+        open_worker = PdfOpenWorker(new_paths)
         # 线程结束后安全释放，避免 "Destroyed while still running" 警告
-        self._open_worker.finished.connect(self._open_worker.deleteLater)
-        self._open_worker.start()
+        open_worker.finished.connect(open_worker.deleteLater)
+        self._start_worker(
+            "_open_worker",
+            open_worker,
+            [
+                ("doc_opened", self._on_doc_opened),
+                ("open_failed", self._on_open_failed),
+                ("open_progress", self.open_progress),
+                ("all_done", self._on_open_all_done),
+            ],
+        )
 
     def _on_doc_opened(self, file_path: str, doc, pdf_document, doc_lock) -> None:
         """PdfOpenWorker 回调：在主线程创建会话。
@@ -211,10 +253,7 @@ class PdfSessionManager(QObject):
         self.open_done.emit()
 
     def _cancel_open_worker(self) -> None:
-        if self._open_worker is not None:
-            self._open_worker.cancel()
-            _wait_thread(self._open_worker, timeout=5000)
-            self._open_worker = None
+        self._cancel_thread("_open_worker")
         self._pending_open_paths = []
 
     def switch_session(self, file_path: str) -> None:
@@ -255,18 +294,22 @@ class PdfSessionManager(QObject):
     # ---- load worker ------------------------------------------------
 
     def _start_load_worker(self, session: PdfSession) -> None:
-        self._cancel_load_worker()
-
-        self._load_worker = PdfLoadWorker(
+        worker = PdfLoadWorker(
             session_id=session.file_path,
             doc=session.doc,
             pdf_document=session.pdf_document,
             loaded_pages=session.loaded_pages,
             doc_lock=session.doc_lock,
         )
-        self._load_worker.page_ready.connect(self._on_page_ready)
-        self._load_worker.all_done.connect(self._on_load_all_done)
-        self._load_worker.start()
+        self._start_worker(
+            "_load_worker",
+            worker,
+            [
+                ("page_ready", self._on_page_ready),
+                ("all_done", self._on_load_all_done),
+            ],
+            timeout=3000,
+        )
 
     def rerender_thumbnails_async(self, page_indices: list[int]) -> None:
         """通知缩略图缓存失效（旋转后），由 ThumbnailModel 按需重渲可见页。
@@ -279,10 +322,7 @@ class PdfSessionManager(QObject):
         self.thumbnails_invalidated.emit(page_indices)
 
     def _cancel_load_worker(self) -> None:
-        if self._load_worker is not None:
-            self._load_worker.cancel()
-            _wait_thread(self._load_worker, timeout=3000)
-            self._load_worker = None
+        self._cancel_thread("_load_worker", timeout=3000)
 
     def _on_page_ready(self, page_index: int, page_info) -> None:
         worker = self._load_worker
@@ -422,14 +462,8 @@ class PdfSessionManager(QObject):
 
     def _cancel_ocr_pipeline(self) -> None:
         """取消 render + ocr worker。render 取消后推哨兵，ocr 自然结束。"""
-        if self._render_worker is not None:
-            self._render_worker.cancel()
-            _wait_thread(self._render_worker, timeout=5000)
-            self._render_worker = None
-        if self._ocr_worker is not None:
-            self._ocr_worker.cancel()
-            _wait_thread(self._ocr_worker, timeout=5000)
-            self._ocr_worker = None
+        self._cancel_thread("_render_worker")
+        self._cancel_thread("_ocr_worker")
 
     def _on_ocr_page_done(self, page_index: int, result) -> None:
         worker = self._ocr_worker
@@ -505,95 +539,89 @@ class PdfSessionManager(QObject):
         task = MutateTask(kind=TaskKind.DELETE_PAGES, page_indices=page_indices)
         self._start_mutate(session, task)
 
-    # ---- async deskew ------------------------------------------------
+    # ---- async deskew（经 _start_mutate 统一路径，task.kind=AUTO_DESKEW） -
 
     def auto_deskew_async(self, page_indices: list[int]) -> None:
         """异步自动摆正选中页（方向检测+旋转+文字层同步在后台）。"""
         session = self.active_session
         if session is None or self._ocr_service is None:
             return
-        self._cancel_deskew_worker()
-        worker = PdfDeskewWorker(
-            session_id=session.file_path,
-            doc=session.doc,
-            pdf_document=session.pdf_document,
-            doc_lock=session.doc_lock,
-            ocr_service=self._ocr_service,
+        task = MutateTask(
+            kind=TaskKind.AUTO_DESKEW,
             page_indices=page_indices,
+            ocr_service=self._ocr_service,
             pdf_settings=self._pdf_settings,
         )
-        worker.page_done.connect(self._on_deskew_page_done)
-        worker.progress.connect(self._on_deskew_progress)
-        worker.all_done.connect(self._on_deskew_all_done)
-        worker.failed.connect(self._on_deskew_failed)
-        self._deskew_worker = worker
-        worker.start()
+        self._start_mutate(session, task)
 
     def cancel_deskew(self) -> None:
-        self._cancel_deskew_worker()
-
-    def _cancel_deskew_worker(self) -> None:
-        if self._deskew_worker is not None:
-            self._deskew_worker.cancel()
-            _wait_thread(self._deskew_worker, timeout=5000)
-            self._deskew_worker = None
-
-    def _on_deskew_page_done(self, page_index: int, was_corrected: bool) -> None:
-        session = self.active_session
-        if session:
-            self.deskew_page_done.emit(session.file_path, page_index, was_corrected)
-
-    def _on_deskew_progress(self, current: int, total: int) -> None:
-        session = self.active_session
-        if session:
-            self.deskew_progress.emit(session.file_path, current, total)
-
-    def _on_deskew_all_done(self, session_id: str, summary) -> None:
-        if self._deskew_worker is not None:
-            self._deskew_worker = None
-        self.deskew_done.emit(session_id, summary)
-
-    def _on_deskew_failed(self, session_id: str, error: str) -> None:
-        if self._deskew_worker is not None:
-            self._deskew_worker = None
-        self.deskew_failed.emit(session_id, error)
+        """取消正在进行的自动摆正（仅当当前 mutate 任务是 AUTO_DESKEW）。"""
+        if self._current_mutate_kind == TaskKind.AUTO_DESKEW:
+            self._cancel_mutate_worker()
 
     def _start_mutate(self, session, task: MutateTask) -> None:
-        self._mutate_worker = PdfMutateWorker(
+        worker = PdfMutateWorker(
             session_id=session.file_path,
             doc=session.doc,
             pdf_document=session.pdf_document,
             doc_lock=session.doc_lock,
             task=task,
         )
-        self._mutate_worker.page_done.connect(self._on_mutate_page_done)
-        self._mutate_worker.progress.connect(self._on_mutate_progress)
-        self._mutate_worker.all_done.connect(self._on_mutate_all_done)
-        self._mutate_worker.failed.connect(self._on_mutate_failed)
-        self._mutate_worker.start()
+        self._current_mutate_kind = task.kind
+        self._start_worker(
+            "_mutate_worker",
+            worker,
+            [
+                ("page_done", self._on_mutate_page_done),
+                ("progress", self._on_mutate_progress),
+                ("all_done", self._on_mutate_all_done),
+                ("failed", self._on_mutate_failed),
+            ],
+        )
 
     def _cancel_mutate_worker(self) -> None:
-        if self._mutate_worker is not None:
-            self._mutate_worker.cancel()
-            _wait_thread(self._mutate_worker, timeout=5000)
-            self._mutate_worker = None
+        self._cancel_thread("_mutate_worker")
+        self._current_mutate_kind = None
 
     def _on_mutate_progress(self, current: int, total: int) -> None:
-        session = self.active_session
-        if session:
-            self.mutate_progress.emit(session.file_path, current, total)
+        worker = self._mutate_worker
+        session_id = worker.session_id if worker is not None else None
+        if session_id is None:
+            return
+        # AUTO_DESKEW 转发到 deskew_progress，其余转发到 mutate_progress。
+        # 用 worker.session_id 而非 active_session，避免切换文件时错位。
+        if self._current_mutate_kind == TaskKind.AUTO_DESKEW:
+            self.deskew_progress.emit(session_id, current, total)
+        else:
+            self.mutate_progress.emit(session_id, current, total)
 
     def _on_mutate_page_done(self, page_index: int, payload) -> None:
-        """逐页完成 → 转发为 mutate_done（payload 含 page_index）供 UI 更新 grid。"""
-        session = self.active_session
-        if session:
+        """逐页完成 → 按任务类型转发专用信号供 UI 更新。"""
+        worker = self._mutate_worker
+        session_id = worker.session_id if worker is not None else None
+        if session_id is None:
+            return
+        # 用 worker.session_id 而非 active_session，避免切换文件时错位。
+        if self._current_mutate_kind == TaskKind.AUTO_DESKEW:
+            # payload 是 was_corrected: bool
+            self.deskew_page_done.emit(session_id, page_index, bool(payload))
+        else:
             self.mutate_done.emit(
-                session.file_path, {"page": page_index, "payload": payload}
+                session_id, {"page": page_index, "payload": payload}
             )
 
     def _on_mutate_all_done(self, session_id: str, result) -> None:
-        if self._mutate_worker is not None:
-            self._mutate_worker = None
+        self._mutate_worker = None
+        kind = self._current_mutate_kind
+        self._current_mutate_kind = None
+        # AUTO_DESKEW：result 是 summary dict → 转发 deskew_done + 缩略图失效
+        if kind == TaskKind.AUTO_DESKEW:
+            self.deskew_done.emit(session_id, result)
+            # 统一缩略图失效入口：corrected_pages 非空时清缓存并触发按需重渲。
+            corrected = (result or {}).get("corrected_pages", [])
+            if corrected:
+                self.thumbnails_invalidated.emit(list(corrected))
+            return
         session = self._sessions.get(session_id)
         if session is None:
             return
@@ -611,8 +639,13 @@ class PdfSessionManager(QObject):
         self.mutate_done.emit(session_id, result)
 
     def _on_mutate_failed(self, session_id: str, error: str) -> None:
-        if self._mutate_worker is not None:
-            self._mutate_worker = None
+        kind = self._current_mutate_kind
+        self._mutate_worker = None
+        self._current_mutate_kind = None
+        if kind == TaskKind.AUTO_DESKEW:
+            self.deskew_failed.emit(session_id, error)
+        else:
+            self.mutate_failed.emit(session_id, error)
         self.mutate_failed.emit(session_id, error)
 
     # ---- block text editing (双击改字 → 内存模型更新) ----------------
@@ -745,10 +778,15 @@ class PdfSessionManager(QObject):
         if not sessions:
             self.export_done.emit([])
             return
-        self._export_worker = PdfExportWorker(sessions, output_dir)
-        self._export_worker.progress.connect(self._on_export_progress)
-        self._export_worker.done.connect(self._on_export_done)
-        self._export_worker.start()
+        export_worker = PdfExportWorker(sessions, output_dir)
+        self._start_worker(
+            "_export_worker",
+            export_worker,
+            [
+                ("progress", self._on_export_progress),
+                ("done", self._on_export_done),
+            ],
+        )
 
     def _on_export_progress(self, current: int, total: int, file_name: str) -> None:
         self.export_progress.emit(current, total, file_name)
@@ -760,14 +798,11 @@ class PdfSessionManager(QObject):
     # ---- cleanup ----------------------------------------------------
 
     def shutdown(self) -> None:
-        if self._export_worker is not None:
-            self._export_worker.cancel()
-            self._export_worker = None
+        self._cancel_thread("_export_worker")
         self._cancel_open_worker()
         self._cancel_load_worker()
         self._cancel_ocr_pipeline()
         self._cancel_mutate_worker()
-        self._cancel_deskew_worker()
         for session in self._sessions.values():
             # fitz doc.close() 在文档已关闭/损坏时抛各类异常，关闭路径静默忽略
             try:
