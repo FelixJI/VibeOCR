@@ -445,10 +445,20 @@ class PdfTab(QWidget):
             QPixmap(_THUMBNAIL_SIZE, _THUMBNAIL_SIZE).size()
         )
         self._thumbnail_list.setModel(self._thumbnail_model)
-        # 虚拟化关键：统一 item 尺寸 + 按批布局，滚动只渲染可见行
+        # IconMode + 固定 gridSize：让 QListView 一次性算出全部内容高度，
+        # 滚动条稳定不回弹（此前默认 ListMode + Batched 布局下高度计算
+        # 不稳定，向下滚动后滚动条跳回）。UniformItemSizes 配合 gridSize
+        # 实现虚拟化，无需 Batched。
+        self._thumbnail_list.setViewMode(QListView.ViewMode.IconMode)
+        self._thumbnail_list.setFlow(QListView.Flow.TopToBottom)
+        self._thumbnail_list.setWrapping(False)
+        self._thumbnail_list.setResizeMode(QListView.ResizeMode.Adjust)
+        self._thumbnail_list.setMovement(QListView.Movement.Static)
         self._thumbnail_list.setUniformItemSizes(True)
-        self._thumbnail_list.setLayoutMode(QListView.LayoutMode.Batched)
-        self._thumbnail_list.setBatchSize(20)
+        # gridSize：缩略图 160 + 8px 边距宽；高 +28 给"第 N 页"文字标签留空间
+        self._thumbnail_list.setGridSize(
+            QSize(_THUMBNAIL_SIZE + 8, _THUMBNAIL_SIZE + 28)
+        )
         self._thumbnail_list.setSelectionMode(
             QAbstractItemView.SelectionMode.ExtendedSelection
         )
@@ -695,7 +705,7 @@ class PdfTab(QWidget):
         if self._file_selector.count() == 0:
             self._btn_export_all.setEnabled(False)
 
-    def _on_active_changed(self, file_path: str) -> None:
+    def _on_active_changed(self, file_path: str | None) -> None:
         # 切换文件：预览窗口的 _page_indices 指向旧文档，关闭它避免翻页到失效索引。
         self._close_preview_window_if_open()
         # 全量重建期间抑制双向选中同步：reset 会触发 selectionChanged，

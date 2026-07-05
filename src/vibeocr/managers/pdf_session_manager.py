@@ -125,7 +125,15 @@ class PdfSessionManager(QObject):
     # ---- worker 生命周期 helper（统一 6 处重复的 cancel/start 脚手架） --
 
     def _cancel_thread(self, attr: str, timeout: int = 5000) -> None:
-        """取消并等待某个 worker 线程结束，然后清空引用。
+        """取消某个 worker 线程（cancel → 同步等待结束 → 释放）。
+
+        等待用 _wait_thread（纯阻塞 wait，不调 processEvents）。
+        此前用 processEvents + wait(50) 循环是 Qt 反模式：processEvents 让
+        迟到的跨线程信号在等待期间重入执行，用旧数据错更新新 session。
+
+        不调 w.disconnect()：实测 PySide6 中对一个仍连接信号的 QThread 调
+        disconnect() 会导致后续 wait() 无法返回（疑似破坏 QThread 内部
+        finished 信号链）。改由各 slot 用 session_id 守卫过滤迟到信号。
 
         Args:
             attr: self 上的 worker 字段名（如 "_load_worker"）。
@@ -297,6 +305,13 @@ class PdfSessionManager(QObject):
                 last_path = list(self._sessions.keys())[-1]
                 self._active_path = last_path
                 self.active_changed.emit(last_path)
+            else:
+                # 最后一个文件被移除：必须 emit active_changed 通知 UI 清空，
+                # 否则 _on_active_changed 永不运行 → set_session(None) /
+                # grid.clear() 不执行 → 缩略图和文字层网格残留已删文件内容。
+                # 信号类型为 Signal(str)，用空串作哨兵（slot 用 active_session
+                # 属性判 None，不直接读此参数）。
+                self.active_changed.emit("")
 
     # ---- load worker ------------------------------------------------
 
@@ -332,6 +347,13 @@ class PdfSessionManager(QObject):
         self._cancel_thread("_load_worker", timeout=3000)
 
     def _on_page_ready(self, page_index: int, page_info) -> None:
+        # processEvents 重入守卫：_wait_thread 期间 processEvents 可能让旧
+        # load worker 的迟到 page_ready 信号在此执行。此时 self._load_worker
+        # 已指向新 worker，旧信号会用旧 page_info 错更新新 session。
+        # 用 sender() 比对当前 worker，拒绝非当前 worker 的信号。
+        sender = self.sender()
+        if sender is not self._load_worker:
+            return
         worker = self._load_worker
         if worker is None:
             return
@@ -828,8 +850,12 @@ class PdfSessionManager(QObject):
 def _wait_thread(worker: QThread, timeout: int = 3000) -> None:
     """等待 QThread 结束，期间处理事件循环以避免跨线程信号死锁。
 
-    超时后强制终止线程并记录错误日志。
-    注意：terminate() 不安全，仅在超时无法恢复时作为最后手段使用。
+    PySide6 中 worker.wait() 在不泵事件循环时会与排队信号投递死锁
+    （worker 的 page_ready.emit 入队但主线程不处理 → 实测 wait 永不返回），
+    故必须 processEvents。超时后强制 terminate（不安全，仅兜底）。
+
+    重入风险（processEvents 让迟到信号执行）由各 slot 的 session_id /
+    worker 守卫过滤，不在此处规避。
     """
     start = time.monotonic()
     while not worker.isFinished():
