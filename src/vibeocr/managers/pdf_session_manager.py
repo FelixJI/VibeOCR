@@ -147,6 +147,7 @@ class PdfSessionManager(QObject):
         """同步打开单个文件(GUI 线程会短暂阻塞,适合已知小文件)。
 
         批量打开用 open_sessions_async。本方法保留供测试/特殊路径。
+        同步跑完流式 load(逐页检测),适合小文件。
         """
         if file_path in self._sessions:
             self.switch_session(file_path)
@@ -154,13 +155,13 @@ class PdfSessionManager(QObject):
         try:
             self._client.start()
             open_resp = self._client.open_session(file_path)
-            load_resp = self._client.load(open_resp.session_id)
-            full_model = (
-                load_resp.diff.full_model
-                if load_resp.diff.full_model is not None
-                else open_resp.model
-            )
-            session = self._make_session(file_path, open_resp.session_id, full_model)
+            session = self._make_session(file_path, open_resp.session_id, open_resp.model)
+            # 流式 load 逐页填充(同步,小文件可接受)
+            for ev in self._client.load_stream(open_resp.session_id):
+                if ev.page_index is not None and ev.page_payload is not None:
+                    self._apply_page_loaded(session, ev.page_index, ev.page_payload)
+                if ev.message == "done":
+                    break
             self._sessions[file_path] = session
             self._active_path = file_path
             self.session_added.emit(file_path)
@@ -193,6 +194,8 @@ class PdfSessionManager(QObject):
         worker = PdfIpcOpenWorker(self._client, new_paths)
         worker.finished.connect(worker.deleteLater)
         worker.doc_opened.connect(self._on_doc_opened)
+        worker.page_loaded.connect(self._on_page_loaded)
+        worker.load_progress.connect(self._on_load_progress)
         worker.open_failed.connect(self._on_open_failed)
         worker.open_progress.connect(self.open_progress)
         worker.all_done.connect(self._on_open_all_done)
@@ -202,16 +205,37 @@ class PdfSessionManager(QObject):
     def _make_session(
         self, file_path: str, session_id: str, full_model: PdfDocumentMirror
     ) -> PdfSession:
+        """从占位 model 创建 session(open 后立即调用,load 尚未跑)。
+
+        page_infos 是占位(rotation=0,has_text_layer=False),逐页真实信息
+        由后续 page_loaded 信号流式更新。
+        """
         pdf_doc = mirror_to_doc(full_model)
         session = PdfSession(file_path=file_path, session_id=session_id, pdf_document=pdf_doc)
-        # load 已在后端完成,标记全部页已加载
-        session.loaded_pages = set(range(pdf_doc.page_count))
         return session
+
+    def _apply_page_loaded(
+        self, session: PdfSession, page_index: int, page_mirror: object
+    ) -> None:
+        """把单页 load 结果 apply 到 session model(就地更新该页 PageInfo)。"""
+        from vibeocr.ipc.model_bridge import page_mirror_to_info
+        if not isinstance(page_mirror, dict):
+            return
+        # page_mirror 是 dict(ProgressEvent.page_payload,model_dump(mode="json"))
+        from vibeocr.ipc.schemas import PdfPageInfoMirror
+        mirror = PdfPageInfoMirror.model_validate(page_mirror)
+        if 0 <= page_index < len(session.pdf_document.pages):
+            session.pdf_document.pages[page_index] = page_mirror_to_info(mirror)
+            session.loaded_pages.add(page_index)
 
     def _on_doc_opened(
         self, file_path: str, session_id: str, full_model: object
     ) -> None:
-        """PdfIpcOpenWorker 回调:在主线程创建会话。"""
+        """PdfIpcOpenWorker 阶段 1 回调:open 完成,立即创建占位 session。
+
+        此时 model 是占位(页数已有,但 rotation/has_text_layer 是默认值),
+        逐页真实信息由后续 page_loaded 信号流式填充。
+        """
         assert isinstance(full_model, PdfDocumentMirror)
         session = self._make_session(file_path, session_id, full_model)
         self._sessions[file_path] = session
@@ -219,22 +243,36 @@ class PdfSessionManager(QObject):
         prev_active = self._active_path
         self.session_added.emit(file_path)
 
-        # 第一个成功打开的新文件成为 active
+        # 第一个成功打开的新文件成为 active(UI 立刻显示页数 + 占位缩略图)
         if prev_active is None:
             self._active_path = file_path
             self.active_changed.emit(file_path)
-            # 逐页发 page_loaded(供 UI 网格染色)
-            total = session.pdf_document.page_count
-            for i in range(total):
-                self.page_loaded.emit(file_path, i)
-                self.load_progress.emit(file_path, i + 1, total)
-            self.load_done.emit(file_path)
+
+    def _on_page_loaded(
+        self, file_path: str, page_index: int, page_mirror: object
+    ) -> None:
+        """PdfIpcOpenWorker 阶段 2 回调:单页文字层检测完成,流式更新 UI。"""
+        session = self._sessions.get(file_path)
+        if session is None:
+            return
+        self._apply_page_loaded(session, page_index, page_mirror)
+        total = session.pdf_document.page_count
+        loaded = len(session.loaded_pages)
+        self.page_loaded.emit(file_path, page_index)
+        self.load_progress.emit(file_path, loaded, total)
+
+    def _on_load_progress(self, file_path: str, current: int, total: int) -> None:
+        """PdfIpcOpenWorker load 进度(批量文件场景)。"""
+        self.load_progress.emit(file_path, current, total)
 
     def _on_open_failed(self, file_path: str, error: str) -> None:
         logger.warning("异步打开失败 %s: %s", file_path, error)
         self.open_failed.emit(file_path, error)
 
     def _on_open_all_done(self) -> None:
+        # 所有文件 load 完成后,逐个发 load_done
+        for path in list(self._sessions.keys()):
+            self.load_done.emit(path)
         self._open_worker = None
         self.open_done.emit()
 

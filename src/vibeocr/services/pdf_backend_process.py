@@ -246,52 +246,69 @@ def session_model(sid: str) -> PdfDocumentMirror:
     return _doc_to_mirror(s.pdf_document)
 
 
-# ---- 后台逐页文字层检测(打开后异步)------------------------------------
+# ---- 后台逐页文字层检测(打开后流式)----------------------------------
 
-def _load_worker(session: BackendSession, queue: list, qlock: threading.Lock) -> None:
-    """逐页检测文字层/扫描/几何,结果累积;主进程通过 /load/stream 拉取。
-
-    简化实现:直接在打开时同步跑完(快路径 get_text("text") ~3ms/页,
-    655 页 ~2s 可接受;若需异步再改 thread + queue)。
-    """
-    import time
-
-    for i in range(session.pdf_document.page_count):
-        if session.cancel_event.is_set():
-            break
-        try:
-            rotation = PdfService.page_rotation(session.doc, i)
-            page_rect = PdfService.page_rect(session.doc, i)
-            has_text_layer = bool(session.doc[i].get_text("text").strip())
-            is_scanned = (
-                not has_text_layer and PdfService.is_page_scanned(session.doc, i)
-            )
-            info = PdfPageInfo(
-                page_index=i,
-                rotation=rotation,
-                has_text_layer=has_text_layer,
-                text_layers=[],
-                is_scanned=is_scanned,
-                rect=page_rect,
-            )
-            session.pdf_document.pages[i] = info
-            with qlock:
-                queue.append(info)
-        except Exception as e:
-            logger.error("[pdf-backend] load page %d failed: %s", i, e)
-        time.sleep(0)  # 让出 GIL(虽单进程,习惯保留)
+def _detect_one_page(session: BackendSession, i: int) -> PdfPageInfo:
+    """检测单页文字层/扫描/几何,写入 session model 并返回 info。"""
+    rotation = PdfService.page_rotation(session.doc, i)
+    page_rect = PdfService.page_rect(session.doc, i)
+    has_text_layer = bool(session.doc[i].get_text("text").strip())
+    is_scanned = (
+        not has_text_layer and PdfService.is_page_scanned(session.doc, i)
+    )
+    info = PdfPageInfo(
+        page_index=i,
+        rotation=rotation,
+        has_text_layer=has_text_layer,
+        text_layers=[],
+        is_scanned=is_scanned,
+        rect=page_rect,
+    )
+    session.pdf_document.pages[i] = info
+    return info
 
 
 @app.post("/session/{sid}/load")
-def session_load(sid: str) -> MutateResponse:
-    """同步逐页文字层检测,返回全量 model diff。
+def session_load(sid: str) -> StreamingResponse:
+    """流式逐页文字层检测:每完成一页推一条 NDJSON ProgressEvent。
 
-    简化:打开后主进程显式调一次 /load 触发检测,完成后返回 full_model。
-    大文件会阻塞几秒(单进程内,不影响主进程 GUI)。
+    主进程收到后可立即展示页数 + 占位缩略图(open 已返回页数),
+    然后逐页染色文字层状态,无需等全部检测完。
+
+    每行 JSON:
+        {"phase":"load","current":N,"total":T,"page_index":I,
+         "page_payload":{PdfPageInfoMirror...}}
+    末行:{"phase":"load","current":total,"total":total,"message":"done"}
     """
+    import json as _json
+
     s = _get_registry().get(sid)
-    _load_worker(s, [], threading.Lock())
-    return MutateResponse(diff=_diff_full(s.pdf_document))
+    total = s.pdf_document.page_count
+
+    def gen():
+        for i in range(total):
+            if s.cancel_event.is_set():
+                break
+            try:
+                info = _detect_one_page(s, i)
+                page_mirror = _page_to_mirror(info)
+                ev = ProgressEvent(
+                    phase=ProgressPhase.LOAD,
+                    current=i + 1,
+                    total=total,
+                    page_index=i,
+                    page_payload=page_mirror.model_dump(mode="json"),
+                )
+                yield (_json.dumps(ev.model_dump(mode="json")) + "\n").encode()
+            except Exception as e:
+                logger.error("[pdf-backend] load page %d failed: %s", i, e)
+        # 完成哨兵
+        done_ev = ProgressEvent(
+            phase=ProgressPhase.LOAD, current=total, total=total, message="done"
+        )
+        yield (_json.dumps(done_ev.model_dump(mode="json")) + "\n").encode()
+
+    return StreamingResponse(gen(), media_type="application/x-ndjson")
 
 
 # ---- 渲染 ---------------------------------------------------------------

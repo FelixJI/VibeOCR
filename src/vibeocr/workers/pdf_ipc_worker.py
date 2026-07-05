@@ -22,16 +22,26 @@ logger = logging.getLogger(__name__)
 
 
 class PdfIpcOpenWorker(QThread):
-    """批量打开 PDF(后台 IPC open + load)。
+    """批量打开 PDF(后台 IPC open + 流式 load)。
+
+    两阶段渐进展示:
+    1. open_session(快,fitz.open + 占位页)→ 立即 emit doc_opened(占位 model)
+       主进程收到后立刻创建 session + 显示页数 + 占位缩略图
+    2. load_stream(逐页文字层检测)→ 每页 emit page_loaded(page_index + page_mirror)
+       主进程逐页染色文字层状态,无需等全部检测完
 
     Signals:
-        doc_opened(file_path, session_id, model_mirror_dict)  单文件打开+加载完成
+        doc_opened(file_path, session_id, model_mirror_dict)  open 完成(占位)
+        page_loaded(file_path, page_index, page_mirror_dict)  单页 load 完成
+        load_progress(file_path, current, total)              load 进度
         open_failed(file_path, error_msg)
-        open_progress(current, total)
+        open_progress(current, total)                         批量文件进度
         all_done()
     """
 
-    doc_opened = Signal(str, str, object)  # (file_path, session_id, full_model_dict)
+    doc_opened = Signal(str, str, object)  # (file_path, session_id, 占位 full_model)
+    page_loaded = Signal(str, int, object)  # (file_path, page_index, page_mirror_dict)
+    load_progress = Signal(str, int, int)  # (file_path, current, total)
     open_failed = Signal(str, str)
     open_progress = Signal(int, int)
     all_done = Signal()
@@ -60,15 +70,20 @@ class PdfIpcOpenWorker(QThread):
             if self._cancelled:
                 break
             try:
+                # 阶段 1:open(快)→ 立即 emit 占位 model
                 open_resp = self._client.open_session(path)
-                # 立即触发逐页文字层检测(load),返回 full_model
-                load_resp = self._client.load(open_resp.session_id)
-                full_model = (
-                    load_resp.diff.full_model
-                    if load_resp.diff.full_model is not None
-                    else open_resp.model
-                )
-                self.doc_opened.emit(path, open_resp.session_id, full_model)
+                self.doc_opened.emit(path, open_resp.session_id, open_resp.model)
+
+                # 阶段 2:流式 load → 逐页 emit
+                for ev in self._client.load_stream(open_resp.session_id):
+                    if self._cancelled:
+                        break
+                    if ev.page_index is not None:
+                        self.page_loaded.emit(path, ev.page_index, ev.page_payload)
+                    if ev.total > 0:
+                        self.load_progress.emit(path, ev.current, ev.total)
+                    if ev.message == "done":
+                        break
             except Exception as e:  # noqa: BLE001
                 logger.error("[ipc-open] 打开 %s 失败: %s", path, e)
                 self.open_failed.emit(path, str(e))

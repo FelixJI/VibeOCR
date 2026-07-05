@@ -273,12 +273,27 @@ class PdfBackendClient:
     def get_model(self, sid: str) -> PdfDocumentMirror:
         return self._parse(self._post(f"/session/{sid}/model"), PdfDocumentMirror)
 
-    def load(self, sid: str) -> MutateResponse:
-        """打开后触发逐页文字层检测,返回全量 model diff。"""
-        return self._parse(
-            self._post(f"/session/{sid}/load", timeout=_HTTP_LONG_TIMEOUT),
-            MutateResponse,
-        )
+    def load_stream(self, sid: str) -> Iterator[ProgressEvent]:
+        """打开后流式逐页文字层检测:每页 yield 一个 ProgressEvent。
+
+        每个事件的 page_payload 是该页的 PdfPageInfoMirror dict。
+        末行 message="done" 表示完成。
+        """
+        client = self._ensure_started()
+        try:
+            with client.stream(
+                "POST",
+                f"/session/{sid}/load",
+                timeout=_HTTP_LONG_TIMEOUT,
+            ) as resp:
+                if resp.status_code >= 400:
+                    raise PdfBackendError(f"load 失败 ({resp.status_code})")
+                for line in resp.iter_lines():
+                    if not line:
+                        continue
+                    yield ProgressEvent.model_validate_json(line)
+        except httpx.HTTPError as e:
+            raise PdfBackendError(f"load 流式调用失败: {e}") from e
 
     def render_thumbnail(self, sid: str, page: int, size: int = 160) -> bytes:
         """渲染缩略图,返回 PNG 字节。"""
