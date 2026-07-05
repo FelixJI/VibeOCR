@@ -16,12 +16,6 @@ from typing import TYPE_CHECKING, Any
 from PySide6.QtCore import QThread, Signal
 
 if TYPE_CHECKING:
-    from vibeocr.ipc.schemas import (
-        ModelDiff,
-        MutateResponse,
-        OpenResponse,
-        ProgressEvent,
-    )
     from vibeocr.services.pdf_backend_client import PdfBackendClient
 
 logger = logging.getLogger(__name__)
@@ -133,8 +127,6 @@ class PdfIpcMutateWorker(QThread):
             if self._op == "delete_text_layers":
                 # 流式:迭代 ProgressEvent
                 pages = self._params.get("pages", [])
-                total = len(pages)
-                last_current = 0
                 for ev in self._client.delete_text_layers_stream(self._session_id, pages):
                     if self._cancelled:
                         break
@@ -142,7 +134,6 @@ class PdfIpcMutateWorker(QThread):
                         self.page_done.emit(self._session_id, ev.page_index, ev.page_payload)
                     if ev.total > 0:
                         self.progress.emit(self._session_id, ev.current, ev.total)
-                    last_current = ev.current
                 # 流结束后取一次 model 拿 diff(删除文字层改变 has_text_layer)
                 # 简化:用 get_model 构造 full diff
                 from vibeocr.ipc.schemas import ModelDiff

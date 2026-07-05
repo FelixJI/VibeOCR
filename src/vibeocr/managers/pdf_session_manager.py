@@ -18,7 +18,6 @@ from PySide6.QtCore import QObject, Signal
 
 from vibeocr.ipc.model_bridge import apply_diff, mirror_to_doc
 from vibeocr.ipc.schemas import ModelDiff, PdfDocumentMirror
-from vibeocr.models.pdf_document import PdfDocument
 from vibeocr.models.pdf_session import PdfSession
 from vibeocr.services.pdf_backend_client import PdfBackendClient, PdfBackendError
 from vibeocr.workers.pdf_export_worker import PdfExportWorker
@@ -26,7 +25,6 @@ from vibeocr.workers.pdf_ipc_worker import PdfIpcMutateWorker, PdfIpcOpenWorker
 
 if TYPE_CHECKING:
     from vibeocr.models.ocr_options import OCROptions
-    from vibeocr.models.ocr_result import OCRResult
     from vibeocr.models.pdf_ocr_options import PdfGlobalSettings
     from vibeocr.services.ocr_service_base import OCRServiceBase
 
@@ -733,7 +731,7 @@ class PdfSessionManager(QObject):
             if ocr_options.pipeline != OCRPipeline.DOCUMENT_PARSING:
                 return False
             from vibeocr.env_manager import get_project_root
-            from vibeocr.pipeline_status import is_pipeline_ever_successful
+            from vibeocr.pipeline_status import is_pipeline_ever_succeeded
             return not is_pipeline_ever_succeeded("MinerU", get_project_root())
         except Exception:
             return False
@@ -824,20 +822,13 @@ class PdfSessionManager(QObject):
     # ---- 辅助 -----------------------------------------------------------
 
     def _settings_to_dict(self, settings) -> dict[str, Any] | None:
-        """PdfGlobalSettings → dict。"""
+        """PdfGlobalSettings → dict(传后端)。"""
         if settings is None:
             return None
-        if hasattr(settings, "model_dump"):
-            return settings.model_dump()
-        try:
-            from vibeocr.models.pdf_ocr_options import PdfGlobalSettings
-            if isinstance(settings, PdfGlobalSettings):
-                return {
-                    "compress_on_save": settings.compress_on_save,
-                    "render_dpi": settings.render_dpi,
-                }
-        except Exception:
-            pass
+        if hasattr(settings, "to_dict"):
+            return settings.to_dict()
+        if isinstance(settings, dict):
+            return settings
         return None
 
     def _ocr_result_to_dict(self, result) -> dict[str, Any]:
@@ -878,3 +869,28 @@ class PdfSessionManager(QObject):
             pass
         from vibeocr.utils.cjk_font_resolver import _CJK_RESOLVER
         _CJK_RESOLVER.cleanup()
+
+
+def _wait_thread(worker, timeout_ms: int | None = None) -> None:
+    """等待 QThread 结束,期间处理事件循环以避免跨线程信号死锁。
+
+    PdfTab 的缩略图 worker 停止时用。超时后强制 terminate(不安全,仅兜底)。
+    """
+    import time
+
+    from PySide6.QtCore import QCoreApplication
+
+    from vibeocr.core.constants import Constants
+
+    if timeout_ms is None:
+        timeout_ms = Constants.Timeout.Ms.PDF_WORKER_CANCEL_SHORT
+    start = time.monotonic()
+    while not worker.isFinished():
+        QCoreApplication.processEvents()
+        worker.wait(Constants.Timeout.Ms.PDF_WORKER_POLL_STEP)
+        if time.monotonic() - start > timeout_ms / 1000:
+            logger.error("Worker 未在 %dms 内结束，强制终止", timeout_ms)
+            worker.terminate()
+            worker.wait(Constants.Timeout.Ms.PDF_WORKER_TERMINATE_WAIT)
+            break
+    QCoreApplication.processEvents()

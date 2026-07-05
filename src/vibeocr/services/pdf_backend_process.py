@@ -599,6 +599,8 @@ def _settings_from_dict(d: dict | None):
     if d is None:
         return None
     from vibeocr.models.pdf_ocr_options import PdfGlobalSettings
+    if hasattr(PdfGlobalSettings, "from_dict"):
+        return PdfGlobalSettings.from_dict(d)
     return PdfGlobalSettings(**d)
 
 
