@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Any
 
-from vibeocr.core.constants import DEFAULT_SHM_SIZE
+from vibeocr.core.constants import DEFAULT_SHM_SIZE, Constants
 from vibeocr.services.ocr_worker_process import OCRWorkerProcess, OCRWorkerProcessError
 
 logger = logging.getLogger(__name__)
@@ -86,11 +86,12 @@ class WorkerManager:
         max_workers: int = 1,
         use_gpu: bool = True,
         shm_size: int = DEFAULT_SHM_SIZE,
-        start_timeout: float = 120.0,
+        start_timeout: float = Constants.Timeout.WORKER_START,
         health_check_interval: float = 30.0,
         auto_restart: bool = True,
         max_retries: int = 2,
         worker_module: str = "vibeocr.workers.ocr_worker",
+        cancel_event: threading.Event | None = None,
     ):
         """初始化 Worker 管理器
 
@@ -103,6 +104,9 @@ class WorkerManager:
             auto_restart: Worker 崩溃时是否自动重启
             max_retries: 任务失败时的最大重试次数
             worker_module: Worker 子进程模块路径
+            cancel_event: 外部取消事件。set() 后,正在 _get_available_worker
+                中长等待的 execute 调用会立即返回并抛 OCRWorkerProcessError,
+                避免 5 分钟盲等无法中断。None 时退化为旧行为(纯 sleep 轮询)。
         """
         self.max_workers = max_workers
         self.use_gpu = use_gpu
@@ -134,6 +138,9 @@ class WorkerManager:
 
         # 任务排队通知回调
         self._task_queued_callback: Callable | None = None
+
+        # 外部取消事件（用于中断 _get_available_worker 的长等待）
+        self._cancel_event: threading.Event | None = cancel_event
 
         logger.debug(
             f"WorkerManager 初始化: max_workers={max_workers}, use_gpu={use_gpu}"
@@ -232,14 +239,18 @@ class WorkerManager:
     def execute(
         self,
         task: Callable[[OCRWorkerProcess], Any],
-        timeout: float = 60.0,
         retry_count: int = 0,
     ) -> Any:
         """在可用的 Worker 上执行任务
 
+        注意:本方法**不强制任务超时**。任务的超时由 ``task`` 闭包通过
+        ``worker.recognize(..., timeout=)`` 自行管理(下沉到 SHM IPC 层)。
+        历史上本方法曾有 ``timeout`` 形参,但从未传给 ``task``,属于死参数,
+        已移除以避免误导。
+
         Args:
-            task: 任务函数，接收 WorkerProcess 参数
-            timeout: 任务超时时间（秒）
+            task: 任务函数，接收 WorkerProcess 参数。调用方应在闭包内
+                绑定具体的超时值（如 ``lambda w: w.recognize(..., timeout=to)``）。
             retry_count: 当前重试次数（内部使用）
 
         Returns:
@@ -259,6 +270,9 @@ class WorkerManager:
 
             if worker_info is None:
                 # Worker 仍在忙（可能在预加载），通知 UI 并长等待
+                # 但若已收到取消信号,直接抛错,不进入 300s 盲等
+                if self._cancel_event is not None and self._cancel_event.is_set():
+                    raise OCRWorkerProcessError("任务已取消（应用关闭中）")
                 logger.debug("Worker 忙碌，排队等待...")
                 if self._task_queued_callback:
                     try:
@@ -305,7 +319,7 @@ class WorkerManager:
                         if self._restart_worker(worker_info):
                             self._retried_tasks += 1
                             # 重试任务
-                            return self.execute(task, timeout, retry_count + 1)
+                            return self.execute(task, retry_count + 1)
 
             # 避免覆盖其他任务（如抢占重启后的识别任务）设置的状态
             if worker_info.state not in (WorkerState.BUSY, WorkerState.STARTING):
@@ -319,10 +333,10 @@ class WorkerManager:
             wait_timeout: 等待 Worker 可用的超时时间（秒）
 
         Returns:
-            可用的 WorkerInfo，如果没有则返回 None
+            可用的 WorkerInfo，如果没有则返回 None。
+            若设置了 cancel_event 且被 set,会提前返回 None。
         """
         start_time = time.time()
-
         while time.time() - start_time < wait_timeout:
             with self._workers_lock:
                 if not self._workers:
@@ -338,8 +352,16 @@ class WorkerManager:
                     if worker_info.is_available and not worker_info.process.busy:
                         return worker_info
 
-            # 等待一小段时间再重试
-            time.sleep(0.1)
+            # 等待一小段时间再重试。
+            # 若设置了 cancel_event,用 event.wait(0.1) 替代 sleep(0.1),
+            # 这样事件被 set 时能立即返回 True,中断长等待。
+            if self._cancel_event is not None:
+                if self._cancel_event.wait(0.1):
+                    # 取消信号已触发,立即返回 None
+                    logger.debug("等待 Worker 时收到取消信号,提前返回")
+                    return None
+            else:
+                time.sleep(0.1)
 
         # 超时，没有空闲 Worker
         return None
@@ -371,6 +393,14 @@ class WorkerManager:
     def set_task_queued_callback(self, callback: Callable) -> None:
         """设置任务排队通知回调"""
         self._task_queued_callback = callback
+
+    def set_cancel_event(self, event: threading.Event) -> None:
+        """设置外部取消事件（用于中断 execute 内 _get_available_worker 的长等待）
+
+        可在应用关闭时 set() 该事件,使正在排队等待 Worker 的 execute
+        调用立即返回,而不是继续等待最多 5 分钟。
+        """
+        self._cancel_event = event
 
     def _preempt_busy_worker(self) -> WorkerInfo | None:
         """抢占被后台任务（如预加载）阻塞的 Worker

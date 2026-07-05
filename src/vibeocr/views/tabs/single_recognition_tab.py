@@ -331,9 +331,15 @@ class SingleRecognitionTab(BaseOcrTab):
         buffer.close()
 
         if USE_SUBPROCESS:
+            from vibeocr.core.constants import Constants
             from vibeocr.utils.qt_async import run_coroutine
 
-            run_coroutine(self._perform_ocr_async(image_data, options))
+            # 兜底超时:底层 IPC 超时(60-600s)会先触发,此值仅防止协程
+            # 在 worker 卡死且 IPC 未响应的边缘场景下永久挂起。
+            run_coroutine(
+                self._perform_ocr_async(image_data, options),
+                timeout=Constants.Timeout.MINERU_HTTP_TOTAL,
+            )
         else:
             try:
                 pil_image = Image.open(io.BytesIO(image_data))
@@ -395,10 +401,13 @@ class SingleRecognitionTab(BaseOcrTab):
         options.pipeline = OCRPipeline.DOCUMENT_PARSING
 
         if USE_SUBPROCESS:
+            from vibeocr.core.constants import Constants
             from vibeocr.utils.qt_async import run_coroutine
 
+            # 兜底超时:文档解析(MinerU)可能很慢,用 MINERU_HTTP_TOTAL(30 分钟)
             run_coroutine(
-                self._perform_ocr_with_data_async(data, mime_type, filename, options)
+                self._perform_ocr_with_data_async(data, mime_type, filename, options),
+                timeout=Constants.Timeout.MINERU_HTTP_TOTAL,
             )
         else:
             try:

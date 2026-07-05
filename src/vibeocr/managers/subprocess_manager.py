@@ -206,6 +206,10 @@ class SubprocessManager(QObject):
         self._is_ready = False
         self._start_task: SubprocessStartTask | None = None
         self._preload_task: PreloadTask | None = None
+        # 取消事件:shutdown 时 set,中断 WorkerManager.execute 内的 5 分钟长等待
+        import threading
+
+        self._cancel_event = threading.Event()
 
     @property
     def service(self) -> Optional["OCRServiceSubprocess"]:
@@ -259,6 +263,8 @@ class SubprocessManager(QObject):
                         "正在预加载模型，识别请求将在预加载完成后自动执行..."
                     )
                 )
+                # 下发取消事件,使 shutdown 时能中断 execute 内的长等待
+                self._service.set_cancel_event(self._cancel_event)
 
         self._start_task = None
         self.service_ready.emit(success)
@@ -314,6 +320,9 @@ class SubprocessManager(QObject):
             是否成功关闭
         """
         logger.debug("[SubprocessManager] 正在关闭子进程服务...")
+
+        # 立即触发取消事件,中断 WorkerManager.execute 内正在进行的 5 分钟长等待
+        self._cancel_event.set()
 
         # 取消正在进行的启动任务并断开信号
         if self._start_task is not None:

@@ -836,3 +836,68 @@ class TestBuildOcrResultV2:
         result = service._build_ocr_result(api_resp, "input.pdf", data=None)
         assert len(result.text_blocks) == 1
         assert result.text_blocks[0].text == "Hello world"
+
+
+class TestMinerUModelCheck:
+    """MinerU 模型完整性校验测试(_check_models_available)"""
+
+    def test_models_available_returns_true_when_returncode_zero(self):
+        """子进程返回 0 时,判定模型就绪"""
+        from unittest.mock import MagicMock
+
+        service = MinerUService.__new__(MinerUService)
+        fake_python = MagicMock()
+        fake_python.exists.return_value = True
+
+        with patch.object(service, "_resolve_python_executable", return_value=fake_python):
+            with patch("vibeocr.env_manager.detect_network_source") as mock_net:
+                mock_net.return_value = "international"
+                with patch("vibeocr.services.mineru_service.subprocess.run") as mock_run:
+                    mock_run.return_value = MagicMock(returncode=0, stdout=b"ok")
+                    assert service._check_models_available() is True
+
+    def test_models_available_returns_false_when_returncode_nonzero(self):
+        """子进程返回非 0 时,判定模型缺失"""
+        from unittest.mock import MagicMock
+
+        service = MinerUService.__new__(MinerUService)
+        fake_python = MagicMock()
+        fake_python.exists.return_value = True
+
+        with patch.object(service, "_resolve_python_executable", return_value=fake_python):
+            with patch("vibeocr.env_manager.detect_network_source") as mock_net:
+                mock_net.return_value = "international"
+                with patch("vibeocr.services.mineru_service.subprocess.run") as mock_run:
+                    mock_run.return_value = MagicMock(returncode=1, stdout=b"err")
+                    assert service._check_models_available() is False
+
+    def test_models_available_returns_false_on_timeout(self):
+        """子进程超时时(可能在下载),判定模型缺失"""
+        import subprocess as sp
+        from unittest.mock import MagicMock
+
+        service = MinerUService.__new__(MinerUService)
+        fake_python = MagicMock()
+        fake_python.exists.return_value = True
+
+        with patch.object(service, "_resolve_python_executable", return_value=fake_python):
+            with patch("vibeocr.env_manager.detect_network_source") as mock_net:
+                mock_net.return_value = "international"
+                with patch("vibeocr.services.mineru_service.subprocess.run") as mock_run:
+                    mock_run.side_effect = sp.TimeoutExpired(cmd="mineru", timeout=30)
+                    assert service._check_models_available() is False
+
+    def test_ensure_api_running_raises_when_models_missing(self):
+        """模型缺失时,_ensure_api_running 抛 RuntimeError 而非等 120s"""
+        from unittest.mock import MagicMock
+
+        service = MinerUService.__new__(MinerUService)
+        # 最小化初始化:跳过 __init__ 的单例逻辑
+        service._lock = __import__("threading").Lock()
+        MinerUService._api_url = None
+        MinerUService._api_process = None
+
+        with patch.object(service, "_check_api_running", return_value=False):
+            with patch.object(service, "_check_models_available", return_value=False):
+                with pytest.raises(RuntimeError, match="模型未下载"):
+                    service._ensure_api_running()

@@ -219,14 +219,18 @@ class SharedMemoryProtocolV2:
             raise SharedMemoryProtocolError("共享内存未初始化")
         return self._buf[8] == 1
 
-    def wait_for_read(self, timeout: float = 5.0) -> None:
+    def wait_for_read(self, timeout: float | None = None) -> None:
         """等待消息被读取（等待 _is_data_ready 变为 False）
 
         在发送响应后调用，确保对方进程已读取消息。
 
         Args:
-            timeout: 超时时间（秒）
+            timeout: 超时时间（秒），None 时取 Constants.Timeout.SHM_WAIT_FOR_READ
         """
+        if timeout is None:
+            from vibeocr.core.constants import Constants
+
+            timeout = Constants.Timeout.SHM_WAIT_FOR_READ
         if self.shm is None:
             raise SharedMemoryProtocolError("共享内存未初始化")
         start_time = time.time()
@@ -252,7 +256,7 @@ class SharedMemoryProtocolV2:
         self,
         msg_type: MessageType | bytes,
         data: bytes,
-        timeout: float = 30.0,
+        timeout: float | None = None,
         sender: str | None = None,
     ) -> int:
         """写入消息
@@ -262,7 +266,7 @@ class SharedMemoryProtocolV2:
         Args:
             msg_type: 消息类型（4 字节）
             data: 消息数据
-            timeout: 超时时间（秒）
+            timeout: 超时时间（秒），None 时取 Constants.Timeout.SHM_WRITE
 
         Returns:
             写入的字节数
@@ -270,6 +274,10 @@ class SharedMemoryProtocolV2:
         Raises:
             SharedMemoryProtocolError: 超时或数据过大
         """
+        if timeout is None:
+            from vibeocr.core.constants import Constants
+
+            timeout = Constants.Timeout.SHM_WRITE
         if self.shm is None:
             raise SharedMemoryProtocolError("共享内存未初始化")
 
@@ -333,7 +341,7 @@ class SharedMemoryProtocolV2:
 
     def read_message(
         self,
-        timeout: float = 60.0,
+        timeout: float | None = None,
         check_interval: float = 0.001,
         expected_sender: str | None = None,
     ) -> tuple[bytes, bytes]:
@@ -342,7 +350,7 @@ class SharedMemoryProtocolV2:
         等待数据就绪，然后读取消息。
 
         Args:
-            timeout: 超时时间（秒）
+            timeout: 超时时间（秒），None 时取 Constants.Timeout.SHM_READ
             check_interval: 检查间隔（秒），用于平衡延迟和 CPU 使用
 
         Returns:
@@ -353,6 +361,11 @@ class SharedMemoryProtocolV2:
         """
         if self.shm is None:
             raise SharedMemoryProtocolError("共享内存未初始化")
+
+        if timeout is None:
+            from vibeocr.core.constants import Constants
+
+            timeout = Constants.Timeout.SHM_READ
 
         # 等待数据就绪（使用指数退避）
         start_time = time.time()

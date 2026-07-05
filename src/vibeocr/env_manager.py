@@ -2304,7 +2304,7 @@ def get_bundled_changelog_path() -> Path | None:
 
 def ensure_mineru_models(
     project_root: Path,
-    timeout: int = 1800,
+    timeout: int | None = None,
     progress_callback: Callable[[str, str], None] | None = None,
 ) -> tuple[bool, str]:
     """下载 MinerU 所需模型（首次运行时调用）
@@ -2314,13 +2314,18 @@ def ensure_mineru_models(
 
     Args:
         project_root: 项目根目录
-        timeout: 超时时间（秒），默认 1800（30 分钟，模型数 GB）
+        timeout: 超时时间（秒），None 时取 Constants.Timeout.MINERU_MODEL_DOWNLOAD
         progress_callback: 进度回调 (stage, message)，None 时仅写日志
 
     Returns:
         (是否成功, 消息)
     """
     import threading
+
+    if timeout is None:
+        from vibeocr.core.constants import Constants
+
+        timeout = int(Constants.Timeout.MINERU_MODEL_DOWNLOAD)
 
     python_exe = get_embedded_python_executable(project_root)
     if not python_exe.exists():

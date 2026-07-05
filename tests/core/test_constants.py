@@ -54,14 +54,16 @@ class TestConstants:
         """测试共享内存配置"""
         assert Constants.DEFAULT_SHM_SIZE > 0
         assert Constants.DEFAULT_SHM_LOG_SIZE > 0
-        assert Constants.WORKER_TIMEOUT > 0
-        assert Constants.WORKER_START_TIMEOUT > 0
+        # WORKER_TIMEOUT / WORKER_START_TIMEOUT 已移至 Constants.Timeout
+        assert Constants.Timeout.WORKER_TIMEOUT > 0
+        assert Constants.Timeout.WORKER_START_BASE > 0
 
     def test_batch_config(self):
         """测试批量处理配置"""
         assert Constants.DEFAULT_BATCH_SIZE > 0
         assert Constants.MAX_BATCH_SIZE >= Constants.DEFAULT_BATCH_SIZE
-        assert Constants.BATCH_QUEUE_TIMEOUT > 0
+        # BATCH_QUEUE_TIMEOUT 已移至 Constants.Timeout.BATCH_QUEUE
+        assert Constants.Timeout.BATCH_QUEUE > 0
 
     def test_style_constants(self):
         """测试样式常量"""
@@ -71,9 +73,28 @@ class TestConstants:
 
     def test_timeout_constants(self):
         """测试超时常量"""
-        assert Constants.Timeout.OCR_RECOGNIZE > 0
-        assert Constants.Timeout.PIPELINE_PRELOAD > 0
-        assert Constants.Timeout.FILE_OPERATION > 0
+        T = Constants.Timeout
+        # 向后兼容别名仍存在
+        assert T.OCR_RECOGNIZE > 0
+        assert T.PIPELINE_PRELOAD > 0
+        assert T.FILE_OPERATION > 0
+        # 新增的语义化常量
+        assert T.RECOGNIZE_CACHED > 0
+        assert T.RECOGNIZE_UNCACHED > 0
+        assert T.DOCUMENT_PARSING > 0
+        assert T.PRELOAD_CACHED > 0
+        assert T.PRELOAD_UNCACHED > 0
+        assert T.WORKER_TIMEOUT > 0
+        assert T.WORKER_START > 0
+        assert T.SHUTDOWN > 0
+        assert T.MINERU_HTTP_TOTAL > 0
+        assert T.MINERU_MODEL_DOWNLOAD > 0
+        # 关键语义关系:未缓存必须 > 已缓存(给下载留时间)
+        assert T.RECOGNIZE_UNCACHED > T.RECOGNIZE_CACHED
+        assert T.PRELOAD_UNCACHED > T.PRELOAD_CACHED
+        # 毫秒子类
+        assert T.Ms.PDF_WORKER_CANCEL > 0
+        assert T.Ms.SUBPROCESS_SHUTDOWN > 0
 
 
 class TestOCRPipeline:

@@ -15,7 +15,7 @@ import uuid
 from collections.abc import Callable
 from pathlib import Path
 
-from vibeocr.core.constants import DEFAULT_SHM_SIZE
+from vibeocr.core.constants import DEFAULT_SHM_SIZE, Constants
 from vibeocr.pipeline_status import is_pipeline_ever_succeeded
 from vibeocr.utils.job_object import JobObjectGuard
 from vibeocr.utils.shared_memory_v2 import (
@@ -317,7 +317,7 @@ class OCRWorkerProcess:
 
     def start(
         self,
-        timeout: float = 60.0,
+        timeout: float = Constants.Timeout.WORKER_START,
         progress_callback: Callable[[str, int], None] | None = None,
     ) -> None:
         """启动 Worker 进程
@@ -560,7 +560,7 @@ class OCRWorkerProcess:
         self,
         image_data: bytes,
         options_dict: dict,
-        timeout: float = 60.0,
+        timeout: float = Constants.Timeout.RECOGNIZE_CACHED,
         auto_restart: bool = True,
     ):
         """执行 OCR 识别
@@ -659,7 +659,7 @@ class OCRWorkerProcess:
         self,
         images: list[bytes],
         options_dict: dict,
-        timeout: float = 60.0,
+        timeout: float = Constants.Timeout.RECOGNIZE_CACHED,
         auto_restart: bool = True,
     ) -> list:
         """批量 OCR 识别（多图一次 predict）
@@ -765,7 +765,7 @@ class OCRWorkerProcess:
             finally:
                 self.busy = False
 
-    def _try_restart(self, timeout: float = 60.0) -> bool:
+    def _try_restart(self, timeout: float = Constants.Timeout.RESTART) -> bool:
         """尝试重启 Worker
 
         使用锁确保同一时间只有一个线程执行重启，
@@ -944,10 +944,7 @@ class OCRWorkerProcess:
         Returns:
             超时时间（秒）
         """
-        # 超时配置常量
-        TIMEOUT_CACHED = 60.0  # 模型已缓存时的超时（秒）
-        TIMEOUT_UNCACHED = 300.0  # 模型未缓存时的超时（秒）- 5分钟
-        TIMEOUT_PER_PIPELINE = 30.0  # 每个额外管道增加的超时
+        T = Constants.Timeout  # 超时配置统一来源
 
         # 检查是否有任何模型未缓存
         uncached_pipelines = []
@@ -970,17 +967,17 @@ class OCRWorkerProcess:
                 f"使用延长超时（首次使用可能需要下载模型）"
             )
             # 基础超时 + 每个管道额外时间
-            timeout = TIMEOUT_UNCACHED + len(pipelines) * TIMEOUT_PER_PIPELINE
+            timeout = T.PRELOAD_UNCACHED + len(pipelines) * T.PRELOAD_PER_PIPELINE
         else:
             # 所有模型已缓存，使用较短超时
-            logger.debug(f"[预加载] 所有模型已缓存，使用标准超时 ({TIMEOUT_CACHED}s)")
-            timeout = TIMEOUT_CACHED + len(pipelines) * (TIMEOUT_PER_PIPELINE / 2)
+            logger.debug(f"[预加载] 所有模型已缓存，使用标准超时 ({T.PRELOAD_CACHED}s)")
+            timeout = T.PRELOAD_CACHED + len(pipelines) * (T.PRELOAD_PER_PIPELINE / 2)
 
         logger.debug(f"[预加载] 计算的超时时间: {timeout}s")
         return timeout
 
     def warmup_pipelines(
-        self, pipelines: list[str], timeout: float = 180.0
+        self, pipelines: list[str], timeout: float = Constants.Timeout.PIPELINE_PRELOAD_DEFAULT
     ) -> dict[str, bool]:
         """使用测试图片预热指定管道
 
@@ -1021,7 +1018,7 @@ class OCRWorkerProcess:
     # 批量处理方法
     # =========================================================================
 
-    def _send_batch_add(self, request_data: bytes, timeout: float = 30.0) -> bool:
+    def _send_batch_add(self, request_data: bytes, timeout: float = Constants.Timeout.SHM_WRITE) -> bool:
         """发送批量添加请求
 
         Args:
@@ -1065,7 +1062,7 @@ class OCRWorkerProcess:
     def _send_batch_commit(
         self,
         commit_data: bytes,
-        timeout: float = 300.0,
+        timeout: float = Constants.Timeout.BATCH_COMMIT_DEFAULT,
         file_completed_callback=None,
     ) -> dict:
         """发送批量提交请求并等待结果
@@ -1165,7 +1162,7 @@ class OCRWorkerProcess:
         finally:
             self.busy = False
 
-    def _send_batch_cancel(self, timeout: float = 5.0) -> bool:
+    def _send_batch_cancel(self, timeout: float = Constants.Timeout.SHUTDOWN) -> bool:
         """发送批量取消请求
 
         Args:
@@ -1200,7 +1197,7 @@ class OCRWorkerProcess:
             return False
 
     def release_pipelines(
-        self, heavy_only: bool = True, timeout: float = 60.0
+        self, heavy_only: bool = True, timeout: float = Constants.Timeout.WORKER_TIMEOUT
     ) -> list[str]:
         """向 worker 发送 RELEASE_PIPELINES 命令，返回被释放的管道名列表。
 
@@ -1241,7 +1238,7 @@ class OCRWorkerProcess:
             logger.warning(f"发送释放管道请求失败: {e}")
             return []
 
-    def set_ttl(self, ttl_seconds: int, timeout: float = 30.0) -> bool:
+    def set_ttl(self, ttl_seconds: int, timeout: float = Constants.Timeout.SHM_WRITE) -> bool:
         """向 worker 发送 SET_TTL 命令。
 
         Args:
@@ -1275,7 +1272,7 @@ class OCRWorkerProcess:
             logger.warning(f"发送 SET_TTL 请求失败: {e}")
             return False
 
-    def stop(self, timeout: float = 5.0) -> None:
+    def stop(self, timeout: float = Constants.Timeout.SHUTDOWN) -> None:
         """停止 Worker 进程
 
         Args:
@@ -1317,7 +1314,7 @@ class OCRWorkerProcess:
 
         logger.debug(f"Worker {self.worker_id} 已停止")
 
-    def restart(self, timeout: float = 60.0) -> None:
+    def restart(self, timeout: float = Constants.Timeout.RESTART) -> None:
         """重启 Worker 进程
 
         Args:

@@ -53,13 +53,10 @@ class Constants:
     # 共享内存配置
     DEFAULT_SHM_SIZE = 16 * 1024 * 1024  # 16MB
     DEFAULT_SHM_LOG_SIZE = 1 * 1024 * 1024  # 1MB
-    WORKER_TIMEOUT = 300.0  # 5分钟
-    WORKER_START_TIMEOUT = 30.0  # 30秒
 
     # 批量处理配置
     DEFAULT_BATCH_SIZE = 8
     MAX_BATCH_SIZE = 32
-    BATCH_QUEUE_TIMEOUT = 5.0
 
     # 日志配置
     LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
@@ -80,17 +77,82 @@ class Constants:
 
     # 超时配置（秒）
     class Timeout:
-        """超时配置"""
+        """超时配置（单位:秒,毫秒子类除外）
 
-        OCR_RECOGNIZE = 60.0
-        PIPELINE_PRELOAD = 120.0
-        FILE_OPERATION = 10.0
-        SHUTDOWN = 5.0
+        所有超时收敛到此处的单一来源。同名常量在不同场景的值差异
+        通过命名前缀区分（如 RECOGNIZE_* vs PRELOAD_*）,避免跨文件
+        "同名不同值"的隐患。
+        """
+
+        # —— OCR 识别 ——
+        RECOGNIZE_CACHED = 60.0  # 模型已缓存时的单次识别超时
+        RECOGNIZE_UNCACHED = 600.0  # 模型未缓存（首次,给下载留时间）
+        DOCUMENT_PARSING = 600.0  # MinerU/PaddleOCR-VL/PP-StructureV3 文档解析
+        BATCH_PER_PAGE_EXTRA = 30.0  # 批量识别每页额外超时
+        BATCH_MAX = 1800.0  # 批量识别子批封顶（30 分钟）
+
+        # —— 预加载 / 预热 ——
+        PRELOAD_CACHED = 60.0  # 所有模型已缓存时的预加载基础超时
+        PRELOAD_UNCACHED = 300.0  # 有模型未缓存时的预加载基础超时（5 分钟）
+        PRELOAD_PER_PIPELINE = 30.0  # 每个额外管道增加的预加载超时
+        PIPELINE_PRELOAD_DEFAULT = 180.0  # preload_pipelines 形参默认
+        WARMUP_DEFAULT = 60.0  # warmup_pipelines 形参默认
+
+        # —— Worker 进程 ——
+        WORKER_TIMEOUT = 300.0  # SHM 通信/Worker 主循环空闲上限（5 分钟）
+        WORKER_START = 120.0  # Worker 启动超时（含 CUDA 上下文初始化）
+        WORKER_START_BASE = 30.0  # 基础启动超时（轻量场景）
+        RESTART = 60.0  # Worker 重启尝试超时
+        SHUTDOWN = 5.0  # 优雅关闭超时
+
+        # —— 批量队列 ——
+        BATCH_QUEUE = 5.0  # 批量队列 get/put 超时
+        BATCH_COMMIT_DEFAULT = 300.0  # batch_commit 形参默认（5 分钟,多文件汇总）
+
+        # —— IPC / SHM 协议 ——
+        SHM_WRITE = 30.0  # write_message 默认超时
+        SHM_READ = 60.0  # read_message 默认超时
+        SHM_WAIT_FOR_READ = 5.0  # wait_for_read 默认超时
+
+        # —— MinerU 远程服务 ——
+        MINERU_API_START = 120.0  # mineru-api 启动轮询上限
+        MINERU_HTTP_TOTAL = 1800.0  # file_parse httpx 总超时（30 分钟）
+        MINERU_HTTP_CONNECT = 30.0  # file_parse httpx 连接超时
+        MINERU_MODEL_DOWNLOAD = 1800.0  # ensure_mineru_models 下载超时
+        MINERU_MODEL_PROBE = 30.0  # 模型可用性探测子进程超时
+
+        # —— 通用 ——
+        FILE_OPERATION = 10.0  # 文件操作（读/写/复制）
+        HEALTH_CHECK_INTERVAL = 30.0  # Worker 健康检查间隔
+
+        # —— 向后兼容别名 ——
+        # 旧代码可能引用这些名称,保留以避免破坏。新增代码应使用上面的语义命名。
+        OCR_RECOGNIZE = 60.0  # = RECOGNIZE_CACHED
+        PIPELINE_PRELOAD = 120.0  # 历史值,新代码用 PIPELINE_PRELOAD_DEFAULT
+
+        class Ms:
+            """毫秒级超时（Qt API 边界,如 QThread.wait / QLocalSocket.waitFor*）
+
+            这些值直接传给 Qt 的毫秒参数 API,不参与秒级换算。
+            """
+
+            SINGLE_INSTANCE = 1000  # 单实例 socket 连接/读写
+            SUBPROCESS_SHUTDOWN = 3000  # 子进程线程池关闭
+            PDF_WORKER_CANCEL = 5000  # PDF worker 取消等待默认
+            PDF_WORKER_CANCEL_SHORT = 3000  # PDF worker 取消等待（加载场景）
+            PDF_WORKER_POLL_STEP = 50  # _wait_thread 单步轮询
+            PDF_WORKER_TERMINATE_WAIT = 500  # terminate 后兜底等待
+
+
+# 向后兼容的模块级导出（旧代码可能直接 import WORKER_TIMEOUT 等）
+WORKER_TIMEOUT = Constants.Timeout.WORKER_TIMEOUT
+WORKER_START_TIMEOUT = Constants.Timeout.WORKER_START_BASE
+BATCH_QUEUE_TIMEOUT = Constants.Timeout.BATCH_QUEUE
 
 
 # 向后兼容的常量导出
 DEFAULT_SHM_SIZE = Constants.DEFAULT_SHM_SIZE
-SHM_TIMEOUT = Constants.WORKER_TIMEOUT
+SHM_TIMEOUT = Constants.Timeout.WORKER_TIMEOUT  # = WORKER_TIMEOUT,向后兼容别名
 SHORT_DELAY_MS = 100
 MEDIUM_DELAY_MS = 500
 LONG_DELAY_MS = 1000

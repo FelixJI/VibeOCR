@@ -68,3 +68,77 @@ class TestHealthCheckThreshold:
 
         idle_time = time.time() - worker_info.last_active
         assert idle_time > WorkerManager.STALE_THRESHOLD
+
+
+class TestCancelEvent:
+    """cancel_event 取消机制测试:中断 _get_available_worker 的长等待"""
+
+    def test_cancel_event_set_returns_immediately(self):
+        """cancel_event 已 set 时,_get_available_worker 立即返回 None"""
+        import threading
+
+        cancel_event = threading.Event()
+        cancel_event.set()
+        mgr = WorkerManager(
+            max_workers=1, use_gpu=False, auto_restart=False, cancel_event=cancel_event
+        )
+        start = time.monotonic()
+        result = mgr._get_available_worker(wait_timeout=300.0)
+        elapsed = time.monotonic() - start
+        assert result is None
+        # 应在 1 秒内返回(event.wait(0.1) 检测到 set),而非等 300 秒
+        assert elapsed < 1.0, f"cancel 未生效,等待了 {elapsed:.2f}s"
+
+    def test_cancel_event_set_during_wait(self):
+        """等待期间 set cancel_event,能中断后续轮询"""
+        import threading
+        from unittest.mock import MagicMock
+
+        from vibeocr.services.worker_manager import WorkerInfo
+
+        cancel_event = threading.Event()
+        mgr = WorkerManager(
+            max_workers=1, use_gpu=False, auto_restart=False, cancel_event=cancel_event
+        )
+        # 注入一个 busy worker,使 _get_available_worker 进入轮询
+        mock_process = MagicMock()
+        mock_process.busy = True
+        info = WorkerInfo(
+            worker_id="fake", process=mock_process, state=WorkerState.IDLE
+        )
+        mgr._workers.append(info)
+
+        def setter():
+            time.sleep(0.3)
+            cancel_event.set()
+
+        threading.Thread(target=setter, daemon=True).start()
+
+        start = time.monotonic()
+        result = mgr._get_available_worker(wait_timeout=300.0)
+        elapsed = time.monotonic() - start
+        assert result is None
+        assert elapsed < 1.0, f"cancel 未中断等待,耗时 {elapsed:.2f}s"
+
+    def test_no_cancel_event_fallback_to_sleep(self):
+        """未设置 cancel_event 时,保持旧行为(不报错)"""
+        mgr = WorkerManager(
+            max_workers=1, use_gpu=False, auto_restart=False, cancel_event=None
+        )
+        result = mgr._get_available_worker(wait_timeout=0.2)
+        assert result is None
+
+    def test_set_cancel_event_after_init(self):
+        """set_cancel_event 能在构造后注入事件"""
+        import threading
+
+        mgr = WorkerManager(
+            max_workers=1, use_gpu=False, auto_restart=False
+        )
+        assert mgr._cancel_event is None
+        event = threading.Event()
+        mgr.set_cancel_event(event)
+        assert mgr._cancel_event is event
+        event.set()
+        result = mgr._get_available_worker(wait_timeout=300.0)
+        assert result is None

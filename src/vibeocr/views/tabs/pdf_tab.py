@@ -40,6 +40,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from vibeocr.core.constants import Constants
 from vibeocr.managers.pdf_session_manager import PdfSessionManager, _wait_thread
 from vibeocr.services.pdf_service import PdfService
 from vibeocr.ui.theme import Colors
@@ -192,7 +193,10 @@ class ThumbnailModel(QAbstractListModel):
             # worker 常驻不自杀，cancel() 投 _STOP 后最多一页渲染（96DPI ~50ms）
             # 即退出；锁获取带 0.5s 超时不会长卡。500ms 足够，避免切文件时
             # GUI 线程长阻塞。
-            _wait_thread(self._render_worker, timeout=500)
+            _wait_thread(
+                self._render_worker,
+                timeout_ms=Constants.Timeout.Ms.PDF_WORKER_TERMINATE_WAIT,
+            )
             self._render_worker = None
 
     def _on_thumbnail_ready(self, page_index: int, pixmap: QPixmap) -> None:

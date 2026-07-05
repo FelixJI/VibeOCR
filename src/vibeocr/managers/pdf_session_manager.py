@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QCoreApplication, QObject, QThread, QTimer, Signal
 
+from vibeocr.core.constants import Constants
 from vibeocr.models.pdf_session import PdfSession
 from vibeocr.services.pdf_service import PdfService
 from vibeocr.workers.pdf_export_worker import PdfExportWorker
@@ -124,7 +125,9 @@ class PdfSessionManager(QObject):
 
     # ---- worker 生命周期 helper（统一 6 处重复的 cancel/start 脚手架） --
 
-    def _cancel_thread(self, attr: str, timeout: int = 5000) -> None:
+    def _cancel_thread(
+        self, attr: str, timeout_ms: int | None = None
+    ) -> None:
         """取消某个 worker 线程（cancel → 同步等待结束 → 释放）。
 
         等待用 _wait_thread（纯阻塞 wait，不调 processEvents）。
@@ -137,13 +140,16 @@ class PdfSessionManager(QObject):
 
         Args:
             attr: self 上的 worker 字段名（如 "_load_worker"）。
-            timeout: 等待线程退出的超时（毫秒）。
+            timeout_ms: 等待线程退出的超时（毫秒），None 时取
+                Constants.Timeout.Ms.PDF_WORKER_CANCEL。
         """
+        if timeout_ms is None:
+            timeout_ms = Constants.Timeout.Ms.PDF_WORKER_CANCEL
         w = getattr(self, attr, None)
         if w is not None:
             if hasattr(w, "cancel"):
                 w.cancel()
-            _wait_thread(w, timeout=timeout)
+            _wait_thread(w, timeout_ms=timeout_ms)
             setattr(self, attr, None)
 
     def _start_worker(
@@ -151,7 +157,7 @@ class PdfSessionManager(QObject):
         attr: str,
         worker: QThread,
         connections: list[tuple[str, object]],
-        timeout: int = 5000,
+        timeout_ms: int | None = None,
     ) -> None:
         """取消旧 worker → 连接信号 → 启动新 worker 并存入字段。
 
@@ -159,9 +165,10 @@ class PdfSessionManager(QObject):
             attr: self 上的 worker 字段名。
             worker: 待启动的 worker（已构造）。
             connections: [(signal属性名, slot), ...]。
-            timeout: 取消旧 worker 的等待超时（毫秒）。
+            timeout_ms: 取消旧 worker 的等待超时（毫秒），None 时取
+                Constants.Timeout.Ms.PDF_WORKER_CANCEL。
         """
-        self._cancel_thread(attr, timeout=timeout)
+        self._cancel_thread(attr, timeout_ms=timeout_ms)
         for signal_attr, slot in connections:
             getattr(worker, signal_attr).connect(slot)
         setattr(self, attr, worker)
@@ -338,11 +345,11 @@ class PdfSessionManager(QObject):
                 "_load_worker",
                 worker,
                 [
-                    ("page_ready", self._on_page_ready),
-                    ("all_done", self._on_load_all_done),
-                ],
-                timeout=3000,
-            )
+                ("page_ready", self._on_page_ready),
+                ("all_done", self._on_load_all_done),
+            ],
+            timeout_ms=Constants.Timeout.Ms.PDF_WORKER_CANCEL_SHORT,
+        )
 
         if delay_ms > 0:
             QTimer.singleShot(delay_ms, _do_start)
@@ -360,7 +367,9 @@ class PdfSessionManager(QObject):
         self.thumbnails_invalidated.emit(page_indices)
 
     def _cancel_load_worker(self) -> None:
-        self._cancel_thread("_load_worker", timeout=3000)
+        self._cancel_thread(
+            "_load_worker", timeout_ms=Constants.Timeout.Ms.PDF_WORKER_CANCEL_SHORT
+        )
 
     def _on_page_ready(self, page_index: int, page_info) -> None:
         # processEvents 重入守卫：_wait_thread 期间 processEvents 可能让旧
@@ -863,7 +872,7 @@ class PdfSessionManager(QObject):
         _CJK_RESOLVER.cleanup()
 
 
-def _wait_thread(worker: QThread, timeout: int = 3000) -> None:
+def _wait_thread(worker: QThread, timeout_ms: int | None = None) -> None:
     """等待 QThread 结束，期间处理事件循环以避免跨线程信号死锁。
 
     PySide6 中 worker.wait() 在不泵事件循环时会与排队信号投递死锁
@@ -872,18 +881,26 @@ def _wait_thread(worker: QThread, timeout: int = 3000) -> None:
 
     重入风险（processEvents 让迟到信号执行）由各 slot 的 session_id /
     worker 守卫过滤，不在此处规避。
+
+    Args:
+        worker: 待等待的 QThread。
+        timeout_ms: 超时（毫秒），None 时取
+            Constants.Timeout.Ms.PDF_WORKER_CANCEL_SHORT。
     """
+    if timeout_ms is None:
+        timeout_ms = Constants.Timeout.Ms.PDF_WORKER_CANCEL_SHORT
+    # Qt QThread.wait 接受毫秒;time.monotonic() 返回秒,故此处 / 1000 换算
     start = time.monotonic()
     while not worker.isFinished():
         QCoreApplication.processEvents()
-        worker.wait(50)
-        if time.monotonic() - start > timeout / 1000:
+        worker.wait(Constants.Timeout.Ms.PDF_WORKER_POLL_STEP)
+        if time.monotonic() - start > timeout_ms / 1000:
             logger.error(
                 "Worker %s 未在 %dms 内结束，强制终止",
                 worker.objectName(),
-                timeout,
+                timeout_ms,
             )
             worker.terminate()
-            worker.wait(500)
+            worker.wait(Constants.Timeout.Ms.PDF_WORKER_TERMINATE_WAIT)
             break
     QCoreApplication.processEvents()

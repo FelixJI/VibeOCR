@@ -17,7 +17,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional, Union
 
-from vibeocr.core.constants import DEFAULT_SHM_SIZE
+from vibeocr.core.constants import DEFAULT_SHM_SIZE, Constants
 from vibeocr.pipeline_status import (
     LOCAL_MARKABLE_PIPELINES,
     is_pipeline_ever_succeeded,
@@ -61,7 +61,7 @@ class OCRServiceSubprocess:
         use_gpu: bool = False,
         shm_size: int = DEFAULT_SHM_SIZE,
         auto_start: bool = True,
-        start_timeout: float = 120.0,
+        start_timeout: float = Constants.Timeout.WORKER_START,
         start_progress_callback: Callable[[str], None] | None = None,
     ) -> "OCRServiceSubprocess":
         """线程安全的单例创建
@@ -83,7 +83,7 @@ class OCRServiceSubprocess:
         use_gpu: bool = False,
         shm_size: int = DEFAULT_SHM_SIZE,
         auto_start: bool = True,
-        start_timeout: float = 120.0,
+        start_timeout: float = Constants.Timeout.WORKER_START,
         start_progress_callback: Callable[[str], None] | None = None,
     ):
         """初始化子进程 OCR 服务
@@ -254,7 +254,6 @@ class OCRServiceSubprocess:
 
         result = self._paddlex_manager.execute(
             lambda w: w.recognize(image_data, options_dict, timeout=timeout),
-            timeout=timeout,
         )
         # 标记管道识别成功：覆盖全部本地管道（见 LOCAL_MARKABLE_PIPELINES），
         # 遗漏会导致 is_pipeline_ever_succeeded 永远 False，触发 QWebEngineView
@@ -302,8 +301,8 @@ class OCRServiceSubprocess:
         options_dict = self._prepare_options_dict(options)
         pipeline_name = options_dict.get("pipeline", "OCR")
         base_timeout = self._calculate_recognize_timeout(pipeline_name)
-        # 子批超时按页数线性放大：每页 30s 额外，封顶 1800s（30 分钟）
-        per_page_extra = 30.0
+        # 子批超时按页数线性放大：每页额外超时，封顶 BATCH_MAX（30 分钟）
+        per_page_extra = Constants.Timeout.BATCH_PER_PAGE_EXTRA
 
         # 单条 SHM 消息上限 = shm_size - 9；预留 30% 给 options pickle + 协议开销
         budget = max(1024, int(0.7 * (self.shm_size - 9)))
@@ -329,13 +328,12 @@ class OCRServiceSubprocess:
                 if seg + 4 > budget:
                     break
 
-            timeout = min(1800.0, base_timeout + per_page_extra * len(sub_imgs))
+            timeout = min(Constants.Timeout.BATCH_MAX, base_timeout + per_page_extra * len(sub_imgs))
             try:
                 sub_results = self._paddlex_manager.execute(
                     lambda w, imgs=sub_imgs, to=timeout: w.recognize_batch(
                         imgs, options_dict, timeout=to
                     ),
-                    timeout=timeout,
                 )
             except Exception as e:
                 logger.error(
@@ -372,8 +370,9 @@ class OCRServiceSubprocess:
             return []
         try:
             return self._paddlex_manager.execute(
-                lambda w: w.release_pipelines(heavy_only=heavy_only),
-                timeout=60.0,
+                lambda w: w.release_pipelines(
+                    heavy_only=heavy_only, timeout=Constants.Timeout.WORKER_TIMEOUT
+                ),
             )
         except Exception as e:
             logger.error("release_pipelines 失败: %s", e)
@@ -392,7 +391,9 @@ class OCRServiceSubprocess:
             return False
         try:
             return self._paddlex_manager.execute(
-                lambda w: w.set_ttl(ttl_seconds), timeout=30.0
+                lambda w: w.set_ttl(
+                    ttl_seconds, timeout=Constants.Timeout.SHM_WRITE
+                )
             )
         except Exception as e:
             logger.error("set_pipeline_ttl 失败: %s", e)
@@ -505,12 +506,7 @@ class OCRServiceSubprocess:
 
         from vibeocr.core.pipelines import OCRPipeline
 
-        # 超时配置常量
-        TIMEOUT_CACHED = 60.0  # 模型已缓存时的超时（秒）
-        TIMEOUT_UNCACHED = 600.0  # 模型未缓存时的超时（秒）- 10分钟，给模型下载留足时间
-        TIMEOUT_DOCUMENT_PARSING = (
-            600.0  # MinerU 文档解析超时（秒）- 10分钟，匹配 httpx 远程调用的耗时
-        )
+        T = Constants.Timeout  # 超时配置统一来源
 
         if isinstance(pipeline_name, Enum):
             pipeline_name = pipeline_name.value
@@ -523,22 +519,22 @@ class OCRServiceSubprocess:
             OCRPipeline.PP_STRUCTURE_V3.value,
         ):
             logger.debug(
-                f"[识别] 管道 {pipeline_name} 为文档解析类，使用延长超时 ({TIMEOUT_DOCUMENT_PARSING}s)"
+                f"[识别] 管道 {pipeline_name} 为文档解析类，使用延长超时 ({T.DOCUMENT_PARSING}s)"
             )
-            return TIMEOUT_DOCUMENT_PARSING
+            return T.DOCUMENT_PARSING
 
         if is_pipeline_ever_succeeded(pipeline_name_str, self._get_project_root()):
             logger.debug(
-                f"[识别] 管道 {pipeline_name} 模型已缓存，使用标准超时 ({TIMEOUT_CACHED}s)"
+                f"[识别] 管道 {pipeline_name} 模型已缓存，使用标准超时 ({T.RECOGNIZE_CACHED}s)"
             )
-            return TIMEOUT_CACHED
+            return T.RECOGNIZE_CACHED
         logger.warning(
-            f"[识别] 管道 {pipeline_name} 模型未缓存，使用延长超时 ({TIMEOUT_UNCACHED}s)"
+            f"[识别] 管道 {pipeline_name} 模型未缓存，使用延长超时 ({T.RECOGNIZE_UNCACHED}s)"
         )
-        return TIMEOUT_UNCACHED
+        return T.RECOGNIZE_UNCACHED
 
     def preload_pipelines(
-        self, pipelines: list[str], timeout: float = 180.0
+        self, pipelines: list[str], timeout: float = Constants.Timeout.PIPELINE_PRELOAD_DEFAULT
     ) -> dict[str, bool]:
         """预加载指定管道
 
@@ -559,7 +555,7 @@ class OCRServiceSubprocess:
             )
         return results
 
-    def preload_pipeline(self, pipeline: "OCRPipeline", timeout: float = 180.0) -> bool:
+    def preload_pipeline(self, pipeline: "OCRPipeline", timeout: float = Constants.Timeout.PIPELINE_PRELOAD_DEFAULT) -> bool:
         """预加载单个管道
 
         Args:
@@ -574,7 +570,7 @@ class OCRServiceSubprocess:
         return results.get(pipeline_name, False)
 
     def warmup_pipelines(
-        self, pipelines: list[str], timeout: float = 180.0
+        self, pipelines: list[str], timeout: float = Constants.Timeout.PIPELINE_PRELOAD_DEFAULT
     ) -> dict[str, bool]:
         """使用测试图片预热指定管道
 
@@ -635,7 +631,7 @@ class OCRServiceSubprocess:
         return result
 
     async def preload_pipelines_async(
-        self, pipelines: list[str], timeout: float = 180.0
+        self, pipelines: list[str], timeout: float = Constants.Timeout.PIPELINE_PRELOAD_DEFAULT
     ) -> dict[str, bool]:
         """异步预加载指定管道（asyncio 协程）
 
@@ -746,7 +742,7 @@ class OCRServiceSubprocess:
     def batch_commit(
         self,
         preprocess_options: "PreprocessOptions",
-        timeout: float = 300.0,
+        timeout: float = Constants.Timeout.BATCH_COMMIT_DEFAULT,
         progress_callback=None,
         file_completed_callback=None,
     ) -> dict:
@@ -798,6 +794,13 @@ class OCRServiceSubprocess:
     def set_task_queued_callback(self, callback: Callable) -> None:
         """设置任务排队通知回调（透传到 PaddleX WorkerManager）"""
         self._paddlex_manager.set_task_queued_callback(callback)
+
+    def set_cancel_event(self, event) -> None:
+        """设置外部取消事件（透传到 PaddleX WorkerManager）
+
+        用于在应用关闭时中断 execute 内 _get_available_worker 的 5 分钟长等待。
+        """
+        self._paddlex_manager.set_cancel_event(event)
 
     def __enter__(self) -> "OCRServiceSubprocess":
         """上下文管理器入口"""

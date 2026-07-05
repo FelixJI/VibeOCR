@@ -66,35 +66,28 @@ def create_qasync_event_loop(app) -> asyncio.AbstractEventLoop:
         return loop
 
 
-def run_coroutine(coro: Coroutine, callback: Callable | None = None) -> None:
+def run_coroutine(
+    coro: Coroutine,
+    callback: Callable | None = None,
+    timeout: float | None = None,
+) -> None:
     """在 Qt 环境中运行协程
 
-    将协程添加到事件循环中执行，可选提供完成回调。
+    将协程添加到事件循环中执行，可选提供完成回调和超时。
+    内部委托给全局 ``AsyncTaskRunner``，复用其任务管理与 ``asyncio.wait_for``
+    超时保护能力。
 
     Args:
         coro: 要执行的协程
         callback: 可选的完成回调函数，接收协程返回值作为参数
+        timeout: 可选超时时间（秒）。None 时无超时（依赖协程底层自管）。
+            建议为可能长时间阻塞的协程传入兜底超时，避免 UI 协程永久挂起。
     """
-    logger.debug("[run_coroutine] 开始执行协程...")
-    loop = _get_running_or_set_loop()
     logger.debug(
-        f"[run_coroutine] 事件循环: {type(loop).__name__}, running={loop.is_running()}"
+        f"[run_coroutine] 开始执行协程 (timeout={timeout})..."
     )
-
-    async def wrapped():
-        logger.debug("[run_coroutine] wrapped 协程开始执行")
-        try:
-            result = await coro
-            logger.debug("[run_coroutine] 协程执行完成")
-            if callback:
-                callback(result)
-            return result
-        except Exception as e:
-            logger.error(f"[run_coroutine] 协程执行失败: {e}", exc_info=True)
-            raise
-
-    future = asyncio.ensure_future(wrapped(), loop=loop)
-    logger.debug(f"[run_coroutine] Future 已创建: {future}")
+    runner = get_async_runner()
+    runner.run(coro, on_complete=callback, timeout=timeout)
 
 
 def async_slot(*types):
@@ -193,10 +186,13 @@ class AsyncTaskRunner:
                 raise
 
             finally:
-                # 从任务列表中移除
+                # 从任务列表中移除（防御性：task 可能已被 cancel_all 清空）
                 task = asyncio.current_task()
-                if task in self._tasks:
-                    self._tasks.remove(task)
+                if task is not None:
+                    try:
+                        self._tasks.remove(task)
+                    except ValueError:
+                        pass
 
         loop = _get_running_or_set_loop()
         task = loop.create_task(wrapped())

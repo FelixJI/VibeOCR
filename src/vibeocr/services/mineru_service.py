@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 
+from vibeocr.core.constants import Constants
 from vibeocr.core.pipelines.pipeline_mineru import (
     MINERU_BACKEND_CHAIN,
     MINERU_BACKEND_DEFAULT,
@@ -144,6 +145,56 @@ class MinerUService(metaclass=SingletonMeta):
 
         return Path(sys.executable)
 
+    def _check_models_available(self) -> bool:
+        """快速探测 MinerU 模型是否已下载完整。
+
+        用嵌入式 Python 运行 ``mineru.cli.models_download``(模型已存在时
+        该命令会快速完成文件校验并返回 0)。若超时(可能在下载)或失败,
+        返回 False,调用方应给出"模型未就绪"的明确错误,而非等 120s API
+        启动超时。
+
+        Returns:
+            True 表示模型就绪;False 表示缺失/超时/探测异常(保守不阻塞)。
+        """
+        python_exe = self._resolve_python_executable()
+        if python_exe is None or not python_exe.exists():
+            # 无 Python 解释器,无法探测,交给后续流程报错
+            return True
+
+        from vibeocr.env_manager import detect_network_source
+
+        try:
+            network = detect_network_source()
+            source = "modelscope" if network == "domestic" else "huggingface"
+            env = os.environ.copy()
+            if source == "modelscope" and not env.get("MINERU_MODEL_SOURCE"):
+                env["MINERU_MODEL_SOURCE"] = "modelscope"
+            result = subprocess.run(
+                [str(python_exe), "-m", "mineru.cli.models_download", "-s", source],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                timeout=Constants.Timeout.MINERU_MODEL_PROBE,
+                env=env,
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+            )
+            if result.returncode == 0:
+                return True
+            _logger.warning(
+                f"[MinerU] 模型探测失败(returncode={result.returncode}): "
+                f"{result.stdout[:300]!r}"
+            )
+            return False
+        except subprocess.TimeoutExpired:
+            _logger.warning(
+                f"[MinerU] 模型探测超时(>{int(Constants.Timeout.MINERU_MODEL_PROBE)}s),"
+                f"模型可能仍在下载中"
+            )
+            return False
+        except Exception as e:
+            # 探测本身异常不阻塞主流程,交给 _start_api 兜底
+            _logger.warning(f"[MinerU] 模型探测异常(忽略): {e}")
+            return True
+
     def _start_api(self) -> None:
         """启动 mineru-api 进程"""
         python_exe = self._resolve_python_executable()
@@ -195,7 +246,7 @@ class MinerUService(metaclass=SingletonMeta):
         _logger.debug("[MinerU] 日志输出到项目日志系统")
 
         # 等待 API 就绪
-        for _ in range(120):
+        for _ in range(int(Constants.Timeout.MINERU_API_START)):
             if self.__class__._api_process.poll() is not None:
                 raise RuntimeError(
                     f"mineru-api 启动失败，退出码: {self.__class__._api_process.returncode}"
@@ -206,7 +257,9 @@ class MinerUService(metaclass=SingletonMeta):
                 return
             time.sleep(1)
 
-        raise RuntimeError("mineru-api 启动超时（120秒）")
+        raise RuntimeError(
+            f"mineru-api 启动超时（{int(Constants.Timeout.MINERU_API_START)}秒）"
+        )
 
     def _ensure_api_running(self) -> None:
         """确保 mineru-api 正在运行"""
@@ -225,6 +278,14 @@ class MinerUService(metaclass=SingletonMeta):
                 except subprocess.TimeoutExpired:
                     self.__class__._api_process.kill()
                 self.__class__._api_process = None
+            # 启动前快速探测模型是否就绪,避免进入 120s API 启动轮询后才发现
+            # 模型缺失(用户体验差)。探测失败时抛清晰错误。
+            if not self._check_models_available():
+                raise RuntimeError(
+                    "MinerU 模型未下载完整,无法启动 API。\n"
+                    "请先在设置页下载 MinerU 模型(首次使用需数 GB),"
+                    "或在终端运行: python -m mineru.cli.models_download"
+                )
             self._start_api()
 
     def _call_api(
@@ -286,7 +347,10 @@ class MinerUService(metaclass=SingletonMeta):
                     f"{self.__class__._api_url}/file_parse",
                     files=files,
                     data=request_params,
-                    timeout=httpx.Timeout(timeout=1800.0, connect=30.0),
+                    timeout=httpx.Timeout(
+                        timeout=Constants.Timeout.MINERU_HTTP_TOTAL,
+                        connect=Constants.Timeout.MINERU_HTTP_CONNECT,
+                    ),
                 )
             except httpx.TimeoutException as e:
                 last_error = e
