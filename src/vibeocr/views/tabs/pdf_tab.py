@@ -58,8 +58,9 @@ logger = logging.getLogger(__name__)
 _THUMBNAIL_SIZE = 160
 _GRID_CELL_SIZE = 40  # 文字层状态网格单格尺寸（正方形）
 
-# 缓存占位灰图（缩略图未渲染时显示），避免每次 data() 调用都新建 QPixmap。
+# 缓存占位灰图（缩略图未渲染时显示），避免每次 data() 调用都新建 QPixmap/QIcon。
 _PLACEHOLDER_PIXMAP: QPixmap | None = None
+_PLACEHOLDER_ICON: QIcon | None = None
 
 
 def _placeholder_pixmap() -> QPixmap:
@@ -70,6 +71,14 @@ def _placeholder_pixmap() -> QPixmap:
         pm.fill(Qt.GlobalColor.lightGray)
         _PLACEHOLDER_PIXMAP = pm
     return _PLACEHOLDER_PIXMAP
+
+
+def _placeholder_icon() -> QIcon:
+    """占位 QIcon 单例：data() cache miss 时返回，避免每次新建 QIcon 开销。"""
+    global _PLACEHOLDER_ICON
+    if _PLACEHOLDER_ICON is None:
+        _PLACEHOLDER_ICON = QIcon(_placeholder_pixmap())
+    return _PLACEHOLDER_ICON
 
 # 文字层网格 item 数据角色：_LAYER_ROLE 存 page_index，_HAS_LAYER_ROLE 存 has_text_layer
 _LAYER_ROLE = Qt.ItemDataRole.UserRole
@@ -272,10 +281,12 @@ class ThumbnailModel(QAbstractListModel):
             pixmap = self._cache.get(index.row())
             if pixmap is not None:
                 return QIcon(pixmap)
-            # 缓存未命中：返回占位灰图（让槽位可见、确保触发重绘），
-            # 并投递渲染请求（双保险，配合 scroll 主动请求）。
-            self.request_render(index.row())
-            return QIcon(_placeholder_pixmap())
+            # 缓存未命中：返回占位图标。不在 data() 里调 request_render——
+            # 滚动时 Qt 对每行多次查 data(DecorationRole)，每次 miss 调
+            # request_render 会争 _pending_lock + 放大开销。渲染请求统一由
+            # ThumbnailListView 的 visible_range_changed → request_range 驱动
+            # （scroll/showEvent 触发，去抖 50ms）。
+            return _placeholder_icon()
         if role == Qt.ItemDataRole.UserRole:
             return page_info.page_index
         return None

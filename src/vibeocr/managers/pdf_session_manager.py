@@ -11,7 +11,7 @@ from pathlib import Path
 from queue import Queue
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QCoreApplication, QObject, QThread, Signal
+from PySide6.QtCore import QCoreApplication, QObject, QThread, QTimer, Signal
 
 from vibeocr.models.pdf_session import PdfSession
 from vibeocr.services.pdf_service import PdfService
@@ -315,23 +315,39 @@ class PdfSessionManager(QObject):
 
     # ---- load worker ------------------------------------------------
 
-    def _start_load_worker(self, session: PdfSession) -> None:
-        worker = PdfLoadWorker(
-            session_id=session.file_path,
-            doc=session.doc,
-            pdf_document=session.pdf_document,
-            loaded_pages=session.loaded_pages,
-            doc_lock=session.doc_lock,
-        )
-        self._start_worker(
-            "_load_worker",
-            worker,
-            [
-                ("page_ready", self._on_page_ready),
-                ("all_done", self._on_load_all_done),
-            ],
-            timeout=3000,
-        )
+    def _start_load_worker(self, session: PdfSession, delay_ms: int = 300) -> None:
+        """启动文字层检测 worker。
+
+        delay_ms: 延迟启动毫秒数（默认 300ms）。文字层检测持 doc_lock + GIL
+        做 get_text/is_page_scanned，与缩略图渲染竞争。延迟启动让缩略图
+        worker 先渲染可见页（用户更快看到缩略图），文字层网格稍后填充。
+        delay_ms=0 表示立即启动。
+        """
+        def _do_start() -> None:
+            # 延迟期间可能已切换/关闭会话，二次校验
+            if self._sessions.get(session.file_path) is not session:
+                return
+            worker = PdfLoadWorker(
+                session_id=session.file_path,
+                doc=session.doc,
+                pdf_document=session.pdf_document,
+                loaded_pages=session.loaded_pages,
+                doc_lock=session.doc_lock,
+            )
+            self._start_worker(
+                "_load_worker",
+                worker,
+                [
+                    ("page_ready", self._on_page_ready),
+                    ("all_done", self._on_load_all_done),
+                ],
+                timeout=3000,
+            )
+
+        if delay_ms > 0:
+            QTimer.singleShot(delay_ms, _do_start)
+        else:
+            _do_start()
 
     def rerender_thumbnails_async(self, page_indices: list[int]) -> None:
         """通知缩略图缓存失效（旋转后），由 ThumbnailModel 按需重渲可见页。

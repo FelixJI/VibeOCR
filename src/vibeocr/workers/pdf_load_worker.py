@@ -57,19 +57,26 @@ class PdfLoadWorker(PdfSessionWorker):
             if i in self._loaded_pages:
                 continue
             try:
+                # 拆分锁粒度：detect + rotation 一段，is_page_scanned 单独一段。
+                # is_page_scanned（遍历图片 rect）最慢，单独持锁让缩略图 worker
+                # 在两段之间能插入获取 doc_lock（配合 ThumbnailRenderWorker 的
+                # 短超时重试 + sleep 让出 GIL）。
                 with self._doc_lock:
                     text_layers = PdfService.detect_text_layers(self._doc, i)
-                    is_scanned = not text_layers and PdfService.is_page_scanned(
-                        self._doc, i
-                    )
                     page = self._doc[i]
-                    page_info = PdfPageInfo(
-                        page_index=i,
-                        rotation=page.rotation,
-                        has_text_layer=len(text_layers) > 0,
-                        text_layers=text_layers,
-                        is_scanned=is_scanned,
-                    )
+                    rotation = page.rotation
+                is_scanned = False
+                if not text_layers:
+                    # 无文字层才需检测是否扫描页（有文字层必非扫描页）
+                    with self._doc_lock:
+                        is_scanned = PdfService.is_page_scanned(self._doc, i)
+                page_info = PdfPageInfo(
+                    page_index=i,
+                    rotation=rotation,
+                    has_text_layer=len(text_layers) > 0,
+                    text_layers=text_layers,
+                    is_scanned=is_scanned,
+                )
                 self.page_ready.emit(i, page_info)
             except Exception as e:
                 logger.error("PdfLoadWorker page %d failed: %s", i, e)

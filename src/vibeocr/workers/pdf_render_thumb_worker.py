@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import queue
 import threading
+import time
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QThread, Signal
@@ -99,16 +100,22 @@ class ThumbnailRenderWorker(QThread):
             if self._cancelled:
                 return
             try:
-                # 带超时获取 doc_lock：OCR 前置渲染（PdfRenderWorker）逐页持锁
-                # 渲 300DPI（~500ms/页），本 worker 渲 96DPI（~50ms/页）。若用
-                # 阻塞 with 会饿死——OCR 跑时缩略图永远拿不到锁。这里 0.5s 抢不到
-                # 就让出（重新投递到队尾），让 OCR 翻页间隙的空闲窗口能插入缩略图。
-                if not self._doc_lock.acquire(timeout=0.5):
-                    # 锁被 OCR 长持有：重新入队尾，避免饥饿，也让出当前页给 OCR
-                    with self._pending_lock:
-                        if page_index not in self._pending and not self._cancelled:
-                            self._pending.add(page_index)
-                            self._queue.put(page_index)
+                # 带超时获取 doc_lock：load worker（文字层检测）/ OCR 前置渲染
+                # 持锁时，本 worker 不能忙等（零间隔重试会饿死 GUI 事件循环——
+                # 每次循环体争 GIL）。改为短超时 + sleep 让出 GIL，重试若干次后
+                # 放弃该页（load worker 完成后可重渲）。
+                acquired = False
+                for _ in range(60):  # 最多等 ~3s（60 × 0.05s）
+                    if self._cancelled:
+                        return
+                    if self._doc_lock.acquire(timeout=0.05):
+                        acquired = True
+                        break
+                    # 让出 GIL 给 GUI 事件循环 / load worker，避免忙等卡顿
+                    time.sleep(0.02)
+                if not acquired:
+                    # 锁长时间被占（大文件文字层检测）：放弃该页，取下一个任务。
+                    # 用户滚动到该页时 data()/request_range 会重新触发渲染。
                     continue
                 try:
                     pixmap = PdfService.render_page(
