@@ -1014,12 +1014,15 @@ class PdfTab(QWidget):
     def _layer_cell_tooltip(page_info) -> str:
         """生成文字层网格格子的 tooltip（block_count 优先用 OCR 原始块）。"""
         if page_info.has_text_layer:
-            block_count = (
-                len(page_info.ocr_text_blocks)
-                if page_info.ocr_text_blocks
-                else len(page_info.text_layers)
-            )
-            tip = f"第{page_info.page_index + 1}页 · 已添加文字层（{block_count}个文本块）"
+            if page_info.ocr_text_blocks:
+                block_count = len(page_info.ocr_text_blocks)
+                tip = f"第{page_info.page_index + 1}页 · 已添加文字层（{block_count}个文本块）"
+            elif page_info.text_layers:
+                block_count = len(page_info.text_layers)
+                tip = f"第{page_info.page_index + 1}页 · 已添加文字层（{block_count}个文本块）"
+            else:
+                # text_layers 延迟加载（load worker 只判 has_text_layer 不取详情）
+                tip = f"第{page_info.page_index + 1}页 · 已添加文字层"
         else:
             tip = f"第{page_info.page_index + 1}页 · 无文字层"
         if getattr(page_info, "deskewed", False):
@@ -1584,6 +1587,29 @@ class PdfTab(QWidget):
             win.setWindowTitle(
                 f"文字层预览 — 第{page_idx + 1}页 ({len(page_info.ocr_text_blocks)}个文字块)"
             )
+        elif page_info.has_text_layer and not page_info.text_layers:
+            # 延迟加载：load worker 只判 has_text_layer 不取 text_layers 详情，
+            # 预览时按需调 detect_text_layers 取 bbox（单页 ~180ms，用户主动触发可接受）。
+            with session.doc_lock:
+                page_info.text_layers = PdfService.detect_text_layers(
+                    session.doc, page_idx
+                )
+            if page_info.text_layers:
+                with session.doc_lock:
+                    page_rect = session.doc[page_idx].rect
+                win.set_highlight(
+                    pixmap,
+                    page_info.text_layers,
+                    render_dpi=150,
+                    page_rect=page_rect,
+                    source="pdf",
+                )
+                win.setWindowTitle(
+                    f"文字层预览 — 第{page_idx + 1}页 ({len(page_info.text_layers)}个文字块)"
+                )
+            else:
+                win.set_page_pixmap(pixmap)
+                win.setWindowTitle(f"文字层预览 — 第{page_idx + 1}页 (无文字层)")
         elif page_info.text_layers:
             with session.doc_lock:
                 page_rect = session.doc[page_idx].rect

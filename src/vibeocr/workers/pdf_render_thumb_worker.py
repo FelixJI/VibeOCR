@@ -127,9 +127,14 @@ class ThumbnailRenderWorker(QThread):
                     self._size,
                     self._size,
                     Qt.AspectRatioMode.KeepAspectRatio,
-                    Qt.TransformationMode.FastTransformation,
+                    # SmoothTransformation（双线性插值）避免扫描件缩略图线条锯齿
+                    # （FastTransformation 是最近邻，扫描图像线条会粗糙不均）。
+                    Qt.TransformationMode.SmoothTransformation,
                 )
                 self.thumbnail_ready.emit(page_index, scaled)
+                # 协作式让步：render_page 持 GIL 做 fitz C 调用，连续渲染会
+                # 饿死主线程。每页后 sleep(0) 释放 GIL 让主线程处理事件。
+                time.sleep(0)
             except Exception as e:  # noqa: BLE001 — 单页失败不阻断其余
                 logger.error(
                     "ThumbnailRenderWorker 渲染页 %d 失败: %s", page_index, e

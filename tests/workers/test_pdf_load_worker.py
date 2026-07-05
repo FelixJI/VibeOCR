@@ -135,8 +135,10 @@ class TestPdfLoadWorker:
         for idx, info in page_infos:
             assert info.page_index == idx
             assert isinstance(info.has_text_layer, bool)
-            if info.has_text_layer:
-                assert len(info.text_layers) > 0
+            # text_layers 延迟加载：load worker 只判 has_text_layer（轻量
+            # get_text("text") ~3ms），text_layers 详情留空，预览时按需
+            # detect_text_layers 填充（避免每页 ~180ms dict 持 GIL 卡顿）。
+            assert info.text_layers == []
         doc.close()
 
     def test_does_not_render_thumbnail(self, three_page_pdf, qapp, wait_worker):

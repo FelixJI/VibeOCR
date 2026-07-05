@@ -51,33 +51,37 @@ class PdfLoadWorker(PdfSessionWorker):
         self._loaded_pages = loaded_pages
 
     def run(self) -> None:
+        import time
+
         for i in range(self._pdf_document.page_count):
             if self._cancelled:
                 break
             if i in self._loaded_pages:
                 continue
             try:
-                # 拆分锁粒度：detect + rotation 一段，is_page_scanned 单独一段。
-                # is_page_scanned（遍历图片 rect）最慢，单独持锁让缩略图 worker
-                # 在两段之间能插入获取 doc_lock（配合 ThumbnailRenderWorker 的
-                # 短超时重试 + sleep 让出 GIL）。
+                # 轻量文字层检测：get_text("text") ~3ms 判断有无文字（用于网格染色），
+                # 不调 get_text("dict") ~180ms（扫描件每页都跑会卡 ~118s 持 GIL）。
+                # text_layers 详情（bbox）延迟到预览/tooltip 时按需 detect_text_layers。
+                # is_page_scanned 仅在无文字层时才检测。
                 with self._doc_lock:
-                    text_layers = PdfService.detect_text_layers(self._doc, i)
                     page = self._doc[i]
                     rotation = page.rotation
-                is_scanned = False
-                if not text_layers:
-                    # 无文字层才需检测是否扫描页（有文字层必非扫描页）
-                    with self._doc_lock:
-                        is_scanned = PdfService.is_page_scanned(self._doc, i)
+                    raw_text = page.get_text("text")
+                    has_text_layer = bool(raw_text.strip())
+                    is_scanned = (
+                        not has_text_layer
+                        and PdfService.is_page_scanned(self._doc, i)
+                    )
                 page_info = PdfPageInfo(
                     page_index=i,
                     rotation=rotation,
-                    has_text_layer=len(text_layers) > 0,
-                    text_layers=text_layers,
+                    has_text_layer=has_text_layer,
+                    text_layers=[],  # 延迟加载：预览/tooltip 时按需 detect
                     is_scanned=is_scanned,
                 )
                 self.page_ready.emit(i, page_info)
+                # 协作式让步：fitz 调用持 GIL，连续跑饿死主线程 Qt 事件循环。
+                time.sleep(0)
             except Exception as e:
                 logger.error("PdfLoadWorker page %d failed: %s", i, e)
         self.all_done.emit(self._session_id)

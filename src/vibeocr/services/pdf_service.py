@@ -258,6 +258,11 @@ class PdfService:
     @staticmethod
     def detect_text_layers(doc: fitz.Document, page_index: int) -> list[TextLayerInfo]:
         page = doc[page_index]
+        # 快速预检：get_text("text") ~4ms vs get_text("dict") ~173ms（扫描件）。
+        # 扫描件绝大多数页无文字层，先 4ms 判空，无文字直接返回避免 173ms dict。
+        # 有文字才调 dict 取 block bbox 详情。
+        if not page.get_text("text").strip():
+            return []
         page_dict: dict[str, Any] = page.get_text("dict")  # type: ignore[assignment]
         blocks: list[dict[str, Any]] = page_dict["blocks"]
 
