@@ -1,5 +1,49 @@
 # Changelog
 
+## [0.4.8] - 2026-07-05
+
+### Added
+- feat(pdf): PDF 后端 FastAPI 子进程 + 主进程 httpx 客户端(端到端冒烟通过)
+- feat(ipc): PDF 后端 IPC 共享 schema(pydantic)+ 加 fastapi/uvicorn 依赖
+- feat(update): 依赖更新替换能力增强 — PEP 440 全格式 + 精确锁/降级 + 失败重试提示 + 移除清理
+- feat(ui): 文字层网格已纠偏橙色角标
+- feat(ui): 自动摆正按钮 + handler + 回调
+- feat(manager): PdfSessionManager.auto_deskew_async + signals
+- feat(worker): PdfDeskewWorker 方向检测+旋转+文字层同步
+- feat(model): PdfPageInfo 新增 deskewed 字段
+
+### Fixed
+- fix(pdf): 缩略图宽度自适应面板宽度，消除右侧空白
+- fix(pdf): 移除文件后UI残留 + 缩略图滚动条回弹 + page_ready 重入守卫
+- fix(pdf): 缩略图静默死亡 + doc_lock 饥饿 + 预热日志矛盾 + OCR 队列提示
+- fix: 自动摆正无OCR服务时按钮卡死 + 补充文字层重写测试
+- fix: qt_async 在无事件循环时兜底新建（修复 3.13 测试崩溃）
+
+### Changed
+- perf(pdf): 打开大文件渐进展示 — open 立即返回页数,load 流式逐页染色
+- chore(lint): 修复进程化新代码的 F 类 lint(import 清理 + QThread import)
+- test(main_window): ScreenCaptureOverlay 测试在 offscreen 下跳过
+- test(pdf): OCR/摆正编排链路测试(mock OCR + 真实后端)
+- refactor(pdf): 删除 8 个废弃 worker 源文件 + 清理死引用
+- test(pdf): 适配进程化架构 — pdf_tab/export/e2e/session 测试全绿
+- test(pdf): 更新 manager 测试适配进程化架构 + 删除废弃 worker 测试
+- refactor(pdf): PdfTab 改造走 IPC + 缩略图 IPC worker + generation 校验
+- refactor(pdf): PdfSessionManager 重塑为进程化 + IPC worker + model bridge
+- refactor(pdf): 阶段0预备 — 折回 fitz 泄漏到 PdfService + PdfPageInfo 加 rect
+- docs(pdf): PDF 模块进程化重构设计文档
+- chore(deps): uv.lock 依赖版本升级
+- refactor(timeout): 超时设置全面收敛 + 死参数清理 + 取消机制
+- refactor(cache): cache.json 收敛写入入口 + 原子写 + TTL 抽检 + 一致性校验
+- perf(pdf): 文字层检测轻量化 + text_layers 延迟加载 + 缩略图平滑缩放
+- perf(pdf): 消除大文件打开/滚动卡顿 — GIL 争用 + 锁忙等
+- refactor(pdf): 解耦合并分支 — worker 基类化 + deskew 并入 mutate + session 错位修复
+
+### Dependencies
+- 新增:
+  - 新增 fastapi>=0.115.0
+  - 新增 uvicorn>=0.34.0
+  - 新增 pydantic>=2.11.0
+
 ## [0.4.7] - 2026-07-03
 
 ### Added
