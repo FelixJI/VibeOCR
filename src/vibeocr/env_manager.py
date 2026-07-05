@@ -796,27 +796,49 @@ def check_embedded_environment_dependencies(
             # 旧逻辑在此处 return {} 会静默跳过检测，导致设置页表格全部显示
             # "未安装"、is_embedded_environment_ready 误报缺失。
             if cached_deps:
-                # 缓存显示缺失的项最可能是过期（用户刚装完依赖但缓存未刷新）。
-                # 对这些项做一次实时复核；若与缓存不一致则刷新缓存，避免设置页
-                # 表格"状态/版本"两列数据源不同步（状态走缓存、版本走实时 pip）。
+                python_exe = get_embedded_python_executable(project_root)
+
+                # ---- 决定要复核哪些项 ----
+                # (a) 缓存显示 False 的项：每次都复核（用户可能刚装完）。
+                # (b) 缓存超过 CACHE_TTL_DAYS：对 True 的项也复核一次，防止
+                #     "用户删了 site-packages 但缓存仍报已装"的假阳性。
+                #     本函数在 DependencyCheckTask(QRunnable) 后台线程执行，
+                #     复核不阻塞 UI。
                 stale_pkgs = [pkg for pkg, ok in cached_deps.items() if not ok]
-                if stale_pkgs:
-                    python_exe = get_embedded_python_executable(project_root)
-                    if python_exe.exists():
-                        verified = _quick_verify_deps(python_exe)
-                        changed = False
-                        for pkg in stale_pkgs:
-                            if verified.get(pkg, False):
-                                cached_deps[pkg] = True
-                                changed = True
-                        if changed:
-                            logger.info("[依赖检测] 缓存过期，已用实时结果刷新")
-                            has_gpu, cuda_version = detect_gpu()
-                            create_cache_entry(
-                                project_root,
-                                cached_deps,
-                                {"has_gpu": has_gpu, "cuda_version": cuda_version},
+                from vibeocr.machine_cache import CACHE_TTL_DAYS, get_cache_age_seconds
+
+                age = get_cache_age_seconds(project_root)
+                ttl_expired = age is not None and age > CACHE_TTL_DAYS * 86400
+                ttl_recheck_pkgs = (
+                    [pkg for pkg, ok in cached_deps.items() if ok]
+                    if ttl_expired
+                    else []
+                )
+                recheck_pkgs = stale_pkgs + ttl_recheck_pkgs
+
+                if recheck_pkgs and python_exe.exists():
+                    verified = _quick_verify_deps(python_exe)
+                    changed = False
+                    for pkg in recheck_pkgs:
+                        # 复核结果覆盖缓存值（True→False 或 False→True 都接受）
+                        new_val = bool(verified.get(pkg, False))
+                        if cached_deps.get(pkg) != new_val:
+                            cached_deps[pkg] = new_val
+                            changed = True
+                    if changed:
+                        if ttl_expired:
+                            logger.info(
+                                "[依赖检测] 缓存超过 %d 天 TTL，已用实时结果复核刷新",
+                                CACHE_TTL_DAYS,
                             )
+                        else:
+                            logger.info("[依赖检测] 缓存过期，已用实时结果刷新")
+                        has_gpu, cuda_version = detect_gpu()
+                        create_cache_entry(
+                            project_root,
+                            cached_deps,
+                            {"has_gpu": has_gpu, "cuda_version": cuda_version},
+                        )
                 return cached_deps
             logger.info("[依赖检测] 缓存无 dependencies 字段，执行实时检测")
 

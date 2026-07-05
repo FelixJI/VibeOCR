@@ -1,10 +1,24 @@
-"""src/vibeocr/pipeline_status.py"""
+"""src/vibeocr/pipeline_status.py
 
-import json
+管道"曾经成功运行"标记的读写。
+
+历史上此模块自行直接读写 ``.vibeocr/cache.json``（绕过 machine_cache），
+导致：
+1. 校验逻辑与 ``machine_cache.is_cache_valid`` 分叉（不校验 version）；
+2. fallback 路径写死 ``version:1``，会把当前 ``CACHE_VERSION`` 降级污染缓存；
+3. 重复实现读写原语，与 machine_cache 的写入分叉。
+
+现已收敛到 ``machine_cache`` 的 SSOT API：
+- 读：``is_cache_valid``（version + machine_id + 存在性三重校验）
+- 写：``update_cache_field``（增量写单字段，保留其余字段，自动走原子写）
+
+由此 pipeline_success 字段自动继承 version/machine_id 校验与原子写，
+不再可能写入错位的 version 或损坏文件。
+"""
+
 import logging
-from pathlib import Path
 
-from vibeocr.machine_cache import generate_machine_id
+from vibeocr.machine_cache import is_cache_valid, update_cache_field
 
 _logger = logging.getLogger(__name__)
 
@@ -34,41 +48,32 @@ LOCAL_MARKABLE_PIPELINES = frozenset(
 )
 
 
-def _cache_path(project_root: Path) -> Path:
-    return project_root / ".vibeocr" / "cache.json"
+def is_pipeline_ever_succeeded(pipeline_name: str, project_root) -> bool:
+    """管道是否曾在此机器上成功运行过。
 
-
-def _read_cache(project_root: Path) -> dict | None:
-    path = _cache_path(project_root)
-    if not path.exists():
-        return None
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-        if data.get("machine_id") != generate_machine_id():
-            return None
-        return data
-    except (json.JSONDecodeError, OSError):
-        return None
-
-
-def _write_cache(project_root: Path, data: dict) -> None:
-    path = _cache_path(project_root)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-
-
-def is_pipeline_ever_succeeded(pipeline_name: str, project_root: Path) -> bool:
-    cache = _read_cache(project_root)
-    if cache is None:
+    走 ``machine_cache.is_cache_valid`` 三重校验（version + machine_id + 存在），
+    缓存无效时返回 False（保守路径：调用方会按"未成功"处理，如延长预加载超时、
+    提示"首次使用需下载模型"——均不致命）。
+    """
+    is_valid, data = is_cache_valid(project_root)
+    if not is_valid or data is None:
         return False
-    return bool(cache.get("pipeline_success", {}).get(pipeline_name, False))
+    return bool(data.get("pipeline_success", {}).get(pipeline_name, False))
 
 
-def mark_pipeline_success(pipeline_name: str, project_root: Path) -> None:
-    cache = _read_cache(project_root)
-    if cache is None:
-        cache = {"version": 1, "machine_id": generate_machine_id()}
-    ps = cache.setdefault("pipeline_success", {})
+def mark_pipeline_success(pipeline_name: str, project_root) -> None:
+    """标记管道已成功运行。
+
+    缓存无效时**静默不标记**（不创建新缓存）——避免旧 fallback 路径写错
+    version/machine_id 污染缓存。下次依赖检测重建缓存后自然会被再次标记。
+    """
+    is_valid, data = is_cache_valid(project_root)
+    if not is_valid or data is None:
+        _logger.debug(
+            "缓存无效，跳过标记管道 %s 成功（待缓存重建后再标记）", pipeline_name
+        )
+        return
+    ps = dict(data.get("pipeline_success", {}))
     ps[pipeline_name] = True
-    _write_cache(project_root, cache)
+    update_cache_field(project_root, "pipeline_success", ps)
     _logger.debug("管道 %s 标记为已成功", pipeline_name)

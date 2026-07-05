@@ -351,10 +351,6 @@ class OCRService(metaclass=SingletonMeta):
             cls._is_preloading = False
 
     @classmethod
-    def preload_model_cache(cls) -> dict[str, bool]:
-        return {}
-
-    @classmethod
     def set_preload_progress_callback(
         cls, callback: Callable[[str, int, int], None] | None
     ) -> None:

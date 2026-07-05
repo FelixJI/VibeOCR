@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from unittest.mock import MagicMock, patch
 from urllib.error import URLError
 
-from vibeocr.machine_cache import generate_machine_id, save_cache
+from vibeocr.machine_cache import CACHE_VERSION, generate_machine_id, save_cache
 
 
 class TestNetworkDetectorConstants:
@@ -97,7 +97,7 @@ class TestNetworkDetectorCache:
         save_cache(
             tmp_path,
             {
-                "version": 1,
+                "version": CACHE_VERSION,
                 "machine_id": generate_machine_id(),
                 "network": network,
             },
@@ -119,7 +119,7 @@ class TestNetworkDetectorCache:
         save_cache(
             tmp_path,
             {
-                "version": 1,
+                "version": CACHE_VERSION,
                 "machine_id": generate_machine_id(),
                 "network": network,
             },
@@ -141,7 +141,7 @@ class TestNetworkDetectorCache:
         save_cache(
             tmp_path,
             {
-                "version": 1,
+                "version": CACHE_VERSION,
                 "machine_id": "wrong_machine_id",
                 "network": network,
             },
@@ -169,7 +169,7 @@ class TestNetworkDetectorEnvVar:
         save_cache(
             tmp_path,
             {
-                "version": 1,
+                "version": CACHE_VERSION,
                 "machine_id": generate_machine_id(),
                 "network": network,
             },

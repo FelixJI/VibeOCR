@@ -14,6 +14,77 @@ from pathlib import Path
 # 必须失效，否则会被判为"已装"，掩盖真实缺失。
 CACHE_VERSION = 2
 
+# =============================================================================
+# cache.json Schema（权威定义——所有读写方必须遵守）
+# =============================================================================
+# 此文件是 VibeOCR 的机器本地状态缓存，存放于 <project_root>/.vibeocr/cache.json。
+# .vibeocr/ 在 .gitignore 中，不会进入版本库。
+#
+# 顶层字段：
+#   version: int                    schema 版本号，= CACHE_VERSION。bump 即失效
+#                                   全部旧缓存（machine_id 校验之外的第二道防线）。
+#   machine_id: str                 SHA256(CPU ID | 主板序列号 | MAC)，跨机器失效。
+#   last_check_time: ISO 8601 str   依赖检测时间戳。CACHE_TTL_DAYS 据此判断是否
+#                                   需要对缓存里 true 的依赖做周期性复核。
+#   python_version: str             检测时的嵌入式 Python 版本（展示用）。
+#   dependencies: {pkg: bool}       OCR 依赖存在性。键来自 OCR_CHECK_MODULES.values()
+#                                   （paddlepaddle/paddleocr/mineru/torch/markdown）。
+#                                   写入方：env_manager（create_cache_entry /
+#                                   update_cache_field）。
+#   hardware_info: {has_gpu: bool, cuda_version: str|None}
+#                                   GPU 检测结果。写入方：env_manager。
+#   pipeline_success: {name: bool}  管道"曾在此机器跑通"标记。写入方：
+#                                   pipeline_status.mark_pipeline_success（经
+#                                   update_cache_field 增量写）。
+#   network: {last_detected: ISO str, paddlex_source: str, mineru_source: str}
+#                                   模型源网络探测结果，7 天 TTL。写入方：
+#                                   network_detector._save_to_cache（经 save_cache）。
+#   pending_backend: "gpu"|"cpu"|null
+#                                   用户在设置页选择的待切换后端，下次启动 worker
+#                                   时由 resolve_use_gpu 读取消费。写入方：
+#                                   env_manager.switch_paddle_backend（经
+#                                   update_cache_field）。
+#   preload_pipelines: [str]        历史字段。已迁移至 app_settings.json，
+#                                   config_manager.get_preload_pipelines 仅做
+#                                   一次性读迁移（只读，不再写入此文件）。
+#
+# 写入规约（所有写入方必须遵守，避免再次分叉）：
+#   1. 通过本模块的 save_cache / update_cache_field / create_cache_entry 写入，
+#      不要自行 open(cache.json, 'w')——原子写与字段保留逻辑由本模块统一保证。
+#   2. 增量改单字段用 update_cache_field；全量重建用 create_cache_entry。
+#   3. 写入的数据必须包含 version + machine_id（create_cache_entry 自动补）。
+# =============================================================================
+
+# 缓存有效期（天）。超过此期限，env_manager.check_embedded_environment_dependencies
+# 会对缓存里 true 的依赖也做一次实时复核，防止"用户手动删了 site-packages 但缓存仍
+# 报已装"的假阳性。TTL 仅作用于 true 项——false 项每次都复核（已有逻辑）。
+CACHE_TTL_DAYS = 7
+
+
+def get_cache_age_seconds(project_root: Path) -> float | None:
+    """返回缓存距今的秒数。
+
+    用于 TTL 抽检判断。无缓存、无 last_check_time 字段、或时间戳解析失败时
+    返回 None（调用方据此决定是否做完整实时检测）。
+
+    Args:
+        project_root: 项目根目录
+
+    Returns:
+        距今秒数，或 None
+    """
+    cache_data = load_cache(project_root)
+    if cache_data is None:
+        return None
+    last_check = cache_data.get("last_check_time")
+    if not last_check:
+        return None
+    try:
+        checked_at = datetime.fromisoformat(last_check)
+    except (ValueError, TypeError):
+        return None
+    return (datetime.now() - checked_at).total_seconds()
+
 
 def _get_cpu_id() -> str:
     """获取 CPU ID"""
@@ -120,7 +191,11 @@ def get_cache_path(project_root: Path) -> Path:
 
 def save_cache(project_root: Path, data: dict) -> bool:
     """
-    保存缓存到文件
+    保存缓存到文件（原子写）
+
+    采用"写临时文件 → os.replace 原子替换"模式，防止写到一半崩溃/断电
+    留下半截损坏的 JSON。os.replace 在同盘上是原子的（POSIX rename /
+    Windows MoveFileEx 都保证），失败时清理临时文件。
 
     Args:
         project_root: 项目根目录
@@ -129,17 +204,21 @@ def save_cache(project_root: Path, data: dict) -> bool:
     Returns:
         是否保存成功
     """
+    cache_file = get_cache_path(project_root)
+    tmp_file = cache_file.with_suffix(".json.tmp")
     try:
         cache_dir = get_cache_dir(project_root)
         cache_dir.mkdir(parents=True, exist_ok=True)
-        cache_file = get_cache_path(project_root)
 
-        with open(cache_file, "w", encoding="utf-8") as f:
+        with open(tmp_file, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
-
+        tmp_file.replace(cache_file)  # 同盘原子替换（Path.replace 内部用 os.replace）
         return True
     except Exception as e:
         print(f"[缓存] 保存缓存失败: {e}")
+        # 清理可能残留的临时文件（os.replace 失败时 tmp_file 仍存在）
+        with contextlib.suppress(OSError):
+            tmp_file.unlink(missing_ok=True)
         return False
 
 
@@ -306,7 +385,7 @@ def refresh_cache(project_root: Path) -> bool:
 
 def get_cache_info(project_root: Path) -> str:
     """
-    获取缓存信息字符串
+    获取缓存信息字符串（多行，覆盖所有顶层字段，便于调试）
 
     Args:
         project_root: 项目根目录
@@ -318,6 +397,41 @@ def get_cache_info(project_root: Path) -> str:
     if cache_data is None:
         return "无缓存"
 
-    last_check = cache_data.get("last_check_time", "未知")
     version = cache_data.get("version", "未知")
-    return f"版本 {version}, 最后检查: {last_check}"
+    machine_id = cache_data.get("machine_id", "未知")
+    last_check = cache_data.get("last_check_time", "未知")
+    py_ver = cache_data.get("python_version", "未知")
+    deps = cache_data.get("dependencies", {})
+    deps_summary = (
+        ", ".join(f"{k}={'✓' if v else '✗'}" for k, v in deps.items())
+        if deps
+        else "(空)"
+    )
+    hw = cache_data.get("hardware_info", {})
+    pipeline_success = cache_data.get("pipeline_success", {})
+    pipeline_summary = (
+        ", ".join(sorted(pipeline_success.keys())) if pipeline_success else "(无)"
+    )
+    network = cache_data.get("network", {})
+    network_summary = (
+        f"paddlex={network.get('paddlex_source', '?')}, "
+        f"mineru={network.get('mineru_source', '?')}, "
+        f"@ {network.get('last_detected', '?')}"
+        if network
+        else "(未探测)"
+    )
+    pending_backend = cache_data.get("pending_backend")
+
+    lines = [
+        f"version={version} (current CACHE_VERSION={CACHE_VERSION})",
+        f"machine_id={machine_id[:16]}...",
+        f"last_check_time={last_check}",
+        f"python_version={py_ver}",
+        f"dependencies: {deps_summary}",
+        f"hardware: has_gpu={hw.get('has_gpu', '?')}, cuda={hw.get('cuda_version', '?')}",
+        f"pipeline_success: {pipeline_summary}",
+        f"network: {network_summary}",
+    ]
+    if pending_backend is not None:
+        lines.append(f"pending_backend={pending_backend}")
+    return "\n".join(lines)

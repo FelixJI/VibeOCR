@@ -117,6 +117,9 @@ class MainWindow(QMainWindow):
         # 异步计算运行时 GPU 能力并广播到所有 PreprocessOptionsWidget（CPU 后端下
         # 禁用文档解析/VL 管道）。延迟到 UI 显示后，避免 nvidia-smi 阻塞启动。
         QTimer.singleShot(200, self._apply_gpu_gating_to_all)
+        # 后台校验 OCR_CHECK_MODULES 与 pyproject.toml 一致性（仅开发期告警，
+        # 防止新增 OCR 依赖时漏更新清单/漏 bump CACHE_VERSION）。延迟 2s 避免抢启动资源。
+        QTimer.singleShot(2000, self._check_dep_check_consistency)
 
     def _apply_gpu_gating_to_all(self) -> None:
         """计算运行时 GPU 能力并对所有已创建的 PreprocessOptionsWidget 应用门控。
@@ -145,6 +148,25 @@ class MainWindow(QMainWindow):
             widget.apply_gpu_gating(has_gpu)
         for widget in self.findChildren(ScreenshotOptionsWidget):
             widget.apply_gpu_gating(has_gpu)
+
+    def _check_dep_check_consistency(self) -> None:
+        """后台校验 OCR_CHECK_MODULES 与 pyproject.toml 一致性。
+
+        仅开发期诊断工具：发现漂移时 logger.warning，不阻塞、不报错。
+        防止新增 OCR 依赖时漏更新 OCR_CHECK_MODULES 或漏 bump CACHE_VERSION，
+        导致检测漏项或旧缓存误判。
+        """
+        if self._closing:
+            return
+        try:
+            from vibeocr.services.env_config import validate_dep_check_consistency
+
+            warnings = validate_dep_check_consistency(self._project_root)
+        except Exception:
+            logging.debug("[依赖清单] 一致性校验异常，跳过", exc_info=True)
+            return
+        for w in warnings:
+            logging.warning("[依赖清单] %s", w)
 
     def _setup_ocr_status_callback(self) -> None:
         """设置 OCR 状态回调，用于在状态栏显示模型下载进度"""

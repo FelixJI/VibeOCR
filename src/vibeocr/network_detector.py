@@ -14,7 +14,12 @@ from typing import Literal
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
-from vibeocr.machine_cache import generate_machine_id, load_cache, save_cache
+from vibeocr.machine_cache import (
+    CACHE_VERSION,
+    generate_machine_id,
+    load_cache,
+    save_cache,
+)
 
 # 探测端点
 CHINA_ENDPOINT = "https://paddleocr.bj.bcebos.com"
@@ -82,6 +87,10 @@ class NetworkDetector:
         network = cache.get("network")
         if not network:
             return False
+        # version + machine_id 校验与 machine_cache.is_cache_valid 对齐，
+        # 避免 bump CACHE_VERSION 后 network 字段仍被当作有效（P1）。
+        if cache.get("version") != CACHE_VERSION:
+            return False
         if cache.get("machine_id") != generate_machine_id():
             return False
         last_detected = network.get("last_detected")
@@ -147,8 +156,12 @@ class NetworkDetector:
             "paddlex_source": self._paddlex_source,
             "mineru_source": self._mineru_source,
         }
+        # 仅在缓存已具备 machine_id 时保留；不补写 version（旧 fallback 写 1
+        # 会污染当前 CACHE_VERSION）。无 machine_id 的空缓存说明从未经过
+        # create_cache_entry 正常初始化，由后续依赖检测重建，此处只填 network
+        # 字段并保留 machine_id（若存在）。
         if "machine_id" not in cache:
             cache["machine_id"] = generate_machine_id()
-        if "version" not in cache:
-            cache["version"] = 1
+        # 不写 version——让 machine_cache.is_cache_valid 在 version 缺失时
+        # 自然失效重建，避免错误兜底值。
         save_cache(self._project_root, cache)

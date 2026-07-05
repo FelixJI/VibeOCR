@@ -95,6 +95,31 @@ class TestCacheReadWrite:
         assert save_cache(tmp_path, data) is True
         assert (tmp_path / ".vibeocr").exists()
 
+    def test_save_cache_is_atomic_on_replace_failure(self, tmp_path):
+        """os.replace 失败时不应留下半截 cache.json，且应清理临时文件。
+
+        回归（P3 修复）：旧 save_cache 直接 open(cache.json, 'w') 写，
+        写到一半崩溃会留下损坏 JSON，下次 load_cache 失败。原子写模式下
+        即使 os.replace 失败，原 cache.json（若有）保持不变，临时文件被清理。
+        """
+        from vibeocr.machine_cache import load_cache, save_cache
+
+        # 先写入一份有效缓存作为"旧值"
+        old_data = {"version": 999, "old": True}
+        assert save_cache(tmp_path, old_data) is True
+        tmp_file = tmp_path / ".vibeocr" / "cache.json.tmp"
+
+        # mock os.replace 抛异常模拟崩溃
+        with patch("vibeocr.machine_cache.os.replace", side_effect=OSError("boom")):
+            result = save_cache(tmp_path, {"new": True})
+
+        assert result is False  # 保存失败
+        # 原 cache.json 应保持旧值（未被半截写入污染）
+        loaded = load_cache(tmp_path)
+        assert loaded == old_data, "原子写失败时原缓存应保持不变"
+        # 临时文件应被清理
+        assert not tmp_file.exists(), "临时文件应被清理"
+
 
 class TestCacheValidation:
     """Tests for cache validation."""
@@ -378,6 +403,116 @@ class TestEnvManagerIntegration:
         assert result == {"paddlepaddle": True}, (
             f"缺 dependencies 字段应触发实时检测，实际: {result}"
         )
+
+
+class TestCacheTTLRevalidation:
+    """TTL 抽检：缓存超过 CACHE_TTL_DAYS 时对 true 项也做实时复核。"""
+
+    def _setup_cache(self, tmp_path, days_ago: float, deps: dict):
+        """构造一份 N 天前的有效缓存。"""
+        from datetime import datetime, timedelta
+
+        from vibeocr.machine_cache import generate_machine_id, save_cache
+
+        python_exe = tmp_path / "python" / "python.exe"
+        python_exe.parent.mkdir(parents=True)
+        python_exe.touch()
+
+        last_check = (datetime.now() - timedelta(days=days_ago)).isoformat()
+        cache_data = {
+            "version": CACHE_VERSION,
+            "machine_id": generate_machine_id(),
+            "last_check_time": last_check,
+            "dependencies": deps,
+        }
+        save_cache(tmp_path, cache_data)
+        return python_exe
+
+    def test_ttl_expired_revalidates_true_entries(self, tmp_path):
+        """缓存超过 TTL，缓存报 true 的项若实际缺失应被复核纠正为 false。
+
+        回归：用户清理过 site-packages 但缓存仍报已装 → 启动期误判 ready。
+        TTL 抽检捕获此类假阳性。
+        """
+        from vibeocr.env_manager import check_embedded_environment_dependencies
+        from vibeocr.machine_cache import load_cache
+
+        self._setup_cache(tmp_path, days_ago=8, deps={"paddlepaddle": True})
+
+        with (
+            patch(
+                "vibeocr.env_manager.get_embedded_python_executable",
+                return_value=tmp_path / "python" / "python.exe",
+            ),
+            patch(
+                "vibeocr.env_manager._quick_verify_deps",
+                return_value={"paddlepaddle": False},  # 实际已缺失
+            ),
+            patch("vibeocr.env_manager.detect_gpu", return_value=(False, None)),
+        ):
+            result = check_embedded_environment_dependencies(tmp_path, use_cache=True)
+
+        assert result.get("paddlepaddle") is False, (
+            f"TTL 过期后 true 项应被复核纠正，实际: {result}"
+        )
+        # 缓存应已刷新
+        refreshed = load_cache(tmp_path)
+        assert refreshed["dependencies"]["paddlepaddle"] is False
+
+    def test_within_ttl_skips_true_revalidation(self, tmp_path):
+        """缓存未过 TTL，true 项不应触发复核（仅 false 项复核保留）。
+
+        mock _quick_verify_deps 应只被 false 项调用，true 项的复核不应发生。
+        用 call_count 断言：false 项 0 个时 _quick_verify_deps 不应被调用。
+        """
+        from vibeocr.env_manager import check_embedded_environment_dependencies
+
+        # 1 天前缓存，全 true（无 false 项 → 旧 stale_pkgs 逻辑不触发）
+        self._setup_cache(tmp_path, days_ago=1, deps={"paddlepaddle": True})
+
+        with (
+            patch(
+                "vibeocr.env_manager.get_embedded_python_executable",
+                return_value=tmp_path / "python" / "python.exe",
+            ),
+            patch(
+                "vibeocr.env_manager._quick_verify_deps"
+            ) as mock_verify,
+        ):
+            result = check_embedded_environment_dependencies(tmp_path, use_cache=True)
+
+        # TTL 未过期 + 无 false 项 → 不应触发复核
+        mock_verify.assert_not_called()
+        assert result == {"paddlepaddle": True}
+
+    def test_get_cache_age_seconds_returns_none_without_cache(self, tmp_path):
+        """无缓存时 get_cache_age_seconds 返回 None。"""
+        from vibeocr.machine_cache import get_cache_age_seconds
+
+        assert get_cache_age_seconds(tmp_path) is None
+
+    def test_get_cache_age_seconds_returns_seconds(self, tmp_path):
+        """有效缓存返回正的秒数。"""
+        from datetime import datetime, timedelta
+
+        from vibeocr.machine_cache import (
+            generate_machine_id,
+            get_cache_age_seconds,
+            save_cache,
+        )
+
+        last_check = (datetime.now() - timedelta(hours=2)).isoformat()
+        save_cache(
+            tmp_path,
+            {
+                "version": CACHE_VERSION,
+                "machine_id": generate_machine_id(),
+                "last_check_time": last_check,
+            },
+        )
+        age = get_cache_age_seconds(tmp_path)
+        assert age is not None
+        assert 7000 < age < 8000  # ~7200s，留余量
 
 
 class TestCacheVersionInvalidation:

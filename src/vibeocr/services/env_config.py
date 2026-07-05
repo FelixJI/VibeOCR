@@ -196,6 +196,100 @@ OCR_CHECK_TIMEOUTS: dict[str, int] = {
 }
 
 
+# -----------------------------------------------------------------------------
+# 依赖清单一致性校验
+# -----------------------------------------------------------------------------
+# OCR_CHECK_MODULES 是人工维护的 SSOT（携带 import 名映射、超时、别名、
+# required 子集四套耦合元数据，无法从 pyproject.toml 完全自动推导）。
+# 此函数做"漂移检测"：比对 OCR_CHECK_MODULES.values() 与 pyproject.toml 声明的
+# OCR 相关依赖，发现不一致时返回告警列表，供启动期 logger.warning 提示开发者。
+# 不自动 bump CACHE_VERSION——那需要语义判断，交给人处理更安全。
+
+# 不自动 bump CACHE_VERSION——那需要语义判断，交给人处理更安全。
+
+
+def _parse_pep508_name(dep_spec: str) -> str:
+    """从 PEP 508 依赖规格提取纯包名（小写规范化）。
+
+    例：
+        "paddleocr[doc-parser]>=3.7.0" → "paddleocr"
+        "paddlepaddle-gpu>=3.3.1"       → "paddlepaddle-gpu"
+        "torch >= 2.6.0"                → "torch"
+    """
+    # PEP 508: name 在最左，后接可选 extras/markers/版本约束。
+    # 取首个出现 <,>,=,!,[ ,;,~ 之前的部分作为 name。
+    import re
+
+    match = re.match(r"^\s*([A-Za-z0-9][A-Za-z0-9._-]*)", dep_spec)
+    return match.group(1).lower() if match else ""
+
+
+def validate_dep_check_consistency(project_root: Path) -> list[str]:
+    """校验 OCR_CHECK_MODULES 与 pyproject.toml 的 OCR 依赖是否同步。
+
+    Returns:
+        告警字符串列表（空列表表示一致）。告警类型：
+        - pyproject 声明了 OCR 依赖但 OCR_CHECK_MODULES 未覆盖
+        - OCR_CHECK_MODULES 覆盖的包在 pyproject 找不到声明
+    """
+    warnings: list[str] = []
+    pyproject = project_root / "pyproject.toml"
+    if not pyproject.exists():
+        # 打包后无 pyproject.toml，跳过校验（正常运行时路径）
+        return warnings
+
+    try:
+        import tomllib  # Python 3.11+ 标准库
+
+        with open(pyproject, "rb") as f:
+            data = tomllib.load(f)
+    except (OSError, ValueError) as e:
+        warnings.append(f"无法解析 pyproject.toml：{e}（一致性校验跳过）")
+        return warnings
+
+    declared_deps = data.get("project", {}).get("dependencies", []) or []
+    # 提取声明的依赖名（小写规范化）
+    declared_names = {_parse_pep508_name(d) for d in declared_deps if d}
+
+    # 构造"声明名 → OCR canonical 名"映射，覆盖两类来源：
+    # (a) OCR_CHECK_MODULES.values() 本身（paddleocr/torch/mineru/markdown 等）
+    # (b) OCR_DIST_NAME_ALIASES 里的别名（paddlepaddle-gpu → paddlepaddle）
+    name_to_canonical: dict[str, str] = {}
+    for canonical in OCR_CHECK_MODULES.values():
+        name_to_canonical[canonical.lower()] = canonical
+    for canonical, aliases in OCR_DIST_NAME_ALIASES.items():
+        name_to_canonical[canonical.lower()] = canonical
+        for a in aliases:
+            name_to_canonical[a.lower()] = canonical
+
+    # 视为"已声明的 OCR canonical 名"集合：声明名能映射到 canonical 的才算
+    declared_ocr: set[str] = set()
+    for name in declared_names:
+        canonical = name_to_canonical.get(name)
+        if canonical:
+            declared_ocr.add(canonical)
+
+    check_modules_names = set(OCR_CHECK_MODULES.values())
+
+    # 漂移 1：OCR_CHECK_MODULES 有但 pyproject 没声明
+    not_declared = check_modules_names - declared_ocr
+    for pkg in sorted(not_declared):
+        warnings.append(
+            f"OCR_CHECK_MODULES 包含 '{pkg}'，但 pyproject.toml 未声明对应依赖——"
+            f"若新增 OCR 依赖请同时更新两者并 bump CACHE_VERSION"
+        )
+
+    # 漂移 2：pyproject 声明了 OCR 依赖但 OCR_CHECK_MODULES 未覆盖
+    not_covered = declared_ocr - check_modules_names
+    for pkg in sorted(not_covered):
+        warnings.append(
+            f"pyproject.toml 声明了 OCR 依赖 '{pkg}'，但 OCR_CHECK_MODULES 未覆盖——"
+            f"检测时会漏检，请补全或 bump CACHE_VERSION"
+        )
+
+    return warnings
+
+
 def get_pytorch_mirror(
     name: str = DEFAULT_PYTORCH_MIRROR,
     cuda_tag: str = "",
