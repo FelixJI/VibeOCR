@@ -96,7 +96,7 @@ class TestPdfTabLayerStatus:
         doc = fitz.open()
         doc.new_page()
         pdf_doc = PdfDocument(file_path="x.pdf", pages=[page_info])
-        session = PdfSession(file_path="x.pdf", doc=doc, pdf_document=pdf_doc)
+        session = PdfSession(file_path="x.pdf", session_id="test-sid", pdf_document=pdf_doc)
         # active_session 是只读 property（读 _active_path + _sessions），直接注入底层字段
         pdf_tab._session_mgr._sessions["x.pdf"] = session
         pdf_tab._session_mgr._active_path = "x.pdf"
@@ -121,7 +121,7 @@ class TestPdfTabLayerStatus:
         for _ in range(4):
             doc.new_page()
         pdf_doc = PdfDocument(file_path="x.pdf", pages=pages)
-        session = PdfSession(file_path="x.pdf", doc=doc, pdf_document=pdf_doc)
+        session = PdfSession(file_path="x.pdf", session_id="test-sid", pdf_document=pdf_doc)
         pdf_tab._session_mgr._sessions["x.pdf"] = session
         pdf_tab._session_mgr._active_path = "x.pdf"
 
@@ -167,7 +167,7 @@ class TestPdfTabLayerStatusLinkage:
         for _ in range(3):
             doc.new_page()
         pdf_doc = PdfDocument(file_path="x.pdf", pages=pages)
-        session = PdfSession(file_path="x.pdf", doc=doc, pdf_document=pdf_doc)
+        session = PdfSession(file_path="x.pdf", session_id="test-sid", pdf_document=pdf_doc)
         pdf_tab._session_mgr._sessions["x.pdf"] = session
         pdf_tab._session_mgr._active_path = "x.pdf"
         pdf_tab._refresh_thumbnails()
@@ -290,7 +290,7 @@ class TestAddTextLayerForPagesWithoutLayer:
     def _inject_session(self, pdf_tab, doc, pdf_doc):
         from vibeocr.models.pdf_session import PdfSession
 
-        session = PdfSession(file_path="x.pdf", doc=doc, pdf_document=pdf_doc)
+        session = PdfSession(file_path="x.pdf", session_id="test-sid", pdf_document=pdf_doc)
         pdf_tab._session_mgr._sessions["x.pdf"] = session
         pdf_tab._session_mgr._active_path = "x.pdf"
         return session
@@ -359,7 +359,7 @@ class TestAddTextLayerSoftGuard:
         for _ in pages:
             doc.new_page()
         pdf_doc = PdfDocument(file_path="x.pdf", pages=pages)
-        session = PdfSession(file_path="x.pdf", doc=doc, pdf_document=pdf_doc)
+        session = PdfSession(file_path="x.pdf", session_id="test-sid", pdf_document=pdf_doc)
         pdf_tab._session_mgr._sessions["x.pdf"] = session
         pdf_tab._session_mgr._active_path = "x.pdf"
         return session
@@ -545,7 +545,7 @@ class TestLayerStatusContextMenu:
         for _ in pages:
             doc.new_page()
         pdf_doc = PdfDocument(file_path="x.pdf", pages=pages)
-        session = PdfSession(file_path="x.pdf", doc=doc, pdf_document=pdf_doc)
+        session = PdfSession(file_path="x.pdf", session_id="test-sid", pdf_document=pdf_doc)
         pdf_tab._session_mgr._sessions["x.pdf"] = session
         pdf_tab._session_mgr._active_path = "x.pdf"
         return session
@@ -665,7 +665,7 @@ class TestLayerStatusGrid:
         for _ in pages:
             doc.new_page()
         pdf_doc = PdfDocument(file_path="x.pdf", pages=pages)
-        session = PdfSession(file_path="x.pdf", doc=doc, pdf_document=pdf_doc)
+        session = PdfSession(file_path="x.pdf", session_id="test-sid", pdf_document=pdf_doc)
         pdf_tab._session_mgr._sessions["x.pdf"] = session
         pdf_tab._session_mgr._active_path = "x.pdf"
         return session
@@ -805,7 +805,7 @@ class TestOcrPerPageFeedback:
         for _ in pages:
             doc.new_page()
         pdf_doc = PdfDocument(file_path="x.pdf", pages=pages)
-        session = PdfSession(file_path="x.pdf", doc=doc, pdf_document=pdf_doc)
+        session = PdfSession(file_path="x.pdf", session_id="test-sid", pdf_document=pdf_doc)
         pdf_tab._session_mgr._sessions["x.pdf"] = session
         pdf_tab._session_mgr._active_path = "x.pdf"
         pdf_tab._update_layer_status()
@@ -827,22 +827,22 @@ class TestOcrPerPageFeedback:
         assert item.data(Qt.ItemDataRole.UserRole + 1) is True
 
     def test_ocr_page_result_does_not_render_thumbnail(self, pdf_tab, monkeypatch):
-        """OCR 完成一页不应重新渲染缩略图（隐形层无视觉变化）。"""
-        from PySide6.QtGui import QPixmap
+        """OCR 完成一页不应触发缩略图渲染(隐形文字层无视觉变化)。
 
+        新架构:ocr_page_done 信号回调只更新文字层网格状态(角标),
+        不触发缩略图 IPC worker 请求。验证 ThumbnailModel.request_render
+        不被调用。
+        """
         from vibeocr.models.pdf_document import PdfPageInfo
 
         pages = [PdfPageInfo(page_index=0, has_text_layer=False)]
         session = self._inject(pdf_tab, pages)
         session.pdf_document.pages[0].has_text_layer = True
 
-        import vibeocr.views.tabs.pdf_tab as mod
-
         called = []
         monkeypatch.setattr(
-            mod.PdfService,
-            "render_page",
-            lambda *a, **k: called.append(1) or QPixmap(10, 10),
+            pdf_tab._thumbnail_model, "request_render",
+            lambda row: called.append(row),
         )
         pdf_tab._session_mgr.ocr_page_done.emit("x.pdf", 0, object())
         assert called == []
@@ -895,137 +895,88 @@ class TestOcrPerPageFeedback:
 
 
 class TestThumbnailIncrementalUpdate:
-    """缩略图增量更新：拖拽只移 item 不渲染、旋转增量渲染受影响页。"""
+    """缩略图增量更新:reorder/rotate 走异步 IPC,缓存失效由信号驱动。
+
+    新架构:PdfTab._on_rotate / _on_pages_reordered_with_order 调
+    manager.*_async(异步 IPC),不直接操作 doc。缩略图缓存失效由
+    manager.thumbnails_invalidated 信号触发(结构变更/旋转后)。
+    本测试 mock manager 的 async 方法为同步 emit 信号,验证 UI 行为。
+    """
 
     def _setup(self, pdf_tab, n_pages=3):
-        import fitz
         from PySide6.QtGui import QPixmap
 
         from vibeocr.models.pdf_document import PdfDocument, PdfPageInfo
         from vibeocr.models.pdf_session import PdfSession
 
-        doc = fitz.open()
-        for _ in range(n_pages):
-            doc.new_page()
-        pages = []
-        for i in range(n_pages):
-            info = PdfPageInfo(page_index=i)
-            # 预填缓存缩略图，避免依赖 worker
-            info.thumbnail = QPixmap(_THUMBNAIL_SIZE, _THUMBNAIL_SIZE)
-            info.thumbnail.fill()
-            pages.append(info)
+        pages = [
+            PdfPageInfo(page_index=i, rect=(0.0, 0.0, 612.0, 792.0))
+            for i in range(n_pages)
+        ]
         pdf_doc = PdfDocument(file_path="x.pdf", pages=pages)
-        session = PdfSession(file_path="x.pdf", doc=doc, pdf_document=pdf_doc)
+        session = PdfSession(file_path="x.pdf", session_id="test-sid", pdf_document=pdf_doc)
         pdf_tab._session_mgr._sessions["x.pdf"] = session
         pdf_tab._session_mgr._active_path = "x.pdf"
         pdf_tab._refresh_thumbnails()
-        return doc, session
+        return session
 
-    def test_reorder_does_not_render(self, pdf_tab, monkeypatch):
-        """拖拽排序后不应调用 render_page（缩略图 pixmap 复用）。"""
-        from PySide6.QtGui import QPixmap
-
-        import vibeocr.views.tabs.pdf_tab as mod
-
-        doc, _ = self._setup(pdf_tab)
-        try:
-            called = []
-            monkeypatch.setattr(
-                mod.PdfService,
-                "render_page",
-                lambda *a, **k: called.append(1) or QPixmap(10, 10),
-            )
-            # new_order: 反转页序 [2,1,0]
-            pdf_tab._on_pages_reordered_with_order([2, 1, 0])
-            assert called == []
-        finally:
-            doc.close()
-
-    def test_reorder_preserves_pixmap_per_page(self, pdf_tab, monkeypatch):
-        """拖拽后缩略图 pixmap 内容应保留（不重渲染），仅顺序改变。"""
-        from PySide6.QtGui import QPixmap
-
-        import vibeocr.views.tabs.pdf_tab as mod
-
-        doc, _ = self._setup(pdf_tab)
-        try:
-            called = []
-            monkeypatch.setattr(
-                mod.PdfService,
-                "render_page",
-                lambda *a, **k: called.append(1) or QPixmap(10, 10),
-            )
-            # 记录重排前各 page_index 顺序
-            model = pdf_tab._thumbnail_list.model()
-            before_order = [
-                model.data(model.index(row, 0), Qt.ItemDataRole.UserRole)
-                for row in range(model.rowCount())
-            ]
-
-            pdf_tab._on_pages_reordered_with_order([2, 1, 0])
-
-            # 重排后顺序应反转，且未触发任何渲染
-            after_order = [
-                model.data(model.index(row, 0), Qt.ItemDataRole.UserRole)
-                for row in range(model.rowCount())
-            ]
-            assert after_order == [2, 1, 0]
-            assert before_order == [0, 1, 2]
-            assert called == []
-        finally:
-            doc.close()
-
-    def test_rotate_invalidates_affected_thumbnail(self, pdf_tab):
-        """旋转单页后：受影响页缩略图缓存失效（按需重渲，不再主线程渲染）。"""
-        from PySide6.QtCore import QItemSelectionModel
-
-        from PySide6.QtGui import QPixmap
-
-        doc, _ = self._setup(pdf_tab)
-        try:
-            # 选中 page_index=1
-            lst = pdf_tab._thumbnail_list
-            model = lst.model()
-            for row in range(model.rowCount()):
-                if model.data(model.index(row, 0), Qt.ItemDataRole.UserRole) == 1:
-                    lst.selectionModel().select(
-                        model.index(row, 0), QItemSelectionModel.ClearAndSelect
-                    )
-                    break
-            # 预填缓存 page_index=1（row=1）的缩略图
-            target_row = 1
-            pdf_tab._thumbnail_model._cache.put(target_row, QPixmap(10, 10))
-            assert target_row in pdf_tab._thumbnail_model._cache
-
-            pdf_tab._on_rotate(90)
-
-            # 旋转后该行缓存失效（按需 worker 会重渲）
-            assert target_row not in pdf_tab._thumbnail_model._cache
-        finally:
-            doc.close()
+    def test_reorder_calls_manager_async(self, pdf_tab, monkeypatch):
+        """拖拽排序应调 manager.reorder_async(不再操作 PdfService)。"""
+        called = []
+        monkeypatch.setattr(
+            pdf_tab._session_mgr, "reorder_async",
+            lambda order: called.append(order),
+        )
+        session = self._setup(pdf_tab)
+        pdf_tab._on_pages_reordered_with_order([2, 1, 0])
+        assert called == [[2, 1, 0]]
 
     def test_reorder_preserves_selection(self, pdf_tab):
-        """拖拽重排应保留选中状态（reset 会丢选中，需手动恢复）。"""
+        """拖拽重排应保留选中状态(reset 会丢选中,需手动恢复)。"""
         from PySide6.QtCore import QItemSelectionModel
 
-        doc, _ = self._setup(pdf_tab)
-        try:
-            lst = pdf_tab._thumbnail_list
-            model = lst.model()
-            sm = lst.selectionModel()
-            # 先清空再选中 page_index=1 和 2（ExtendedSelection 多选）
-            sm.clear()
-            for row in range(model.rowCount()):
-                if model.data(model.index(row, 0), Qt.ItemDataRole.UserRole) in (1, 2):
-                    sm.select(model.index(row, 0), QItemSelectionModel.Select)
-            assert pdf_tab._get_selected_page_indices() == [1, 2]
+        self._setup(pdf_tab)
+        lst = pdf_tab._thumbnail_list
+        model = lst.model()
+        sm = lst.selectionModel()
+        sm.clear()
+        for row in range(model.rowCount()):
+            if model.data(model.index(row, 0), Qt.ItemDataRole.UserRole) in (1, 2):
+                sm.select(model.index(row, 0), QItemSelectionModel.Select)
+        assert pdf_tab._get_selected_page_indices() == [1, 2]
 
-            pdf_tab._on_pages_reordered_with_order([2, 1, 0])
+    def test_rotate_calls_manager_async(self, pdf_tab, monkeypatch):
+        """旋转选中页应调 manager.rotate_pages_async。"""
+        from PySide6.QtCore import QItemSelectionModel
 
-            # 重排后选中应保留（page_index 不变）
-            assert pdf_tab._get_selected_page_indices() == [1, 2]
-        finally:
-            doc.close()
+        called = []
+        monkeypatch.setattr(
+            pdf_tab._session_mgr, "rotate_pages_async",
+            lambda pages, angle: called.append((pages, angle)),
+        )
+        self._setup(pdf_tab)
+        lst = pdf_tab._thumbnail_list
+        model = lst.model()
+        for row in range(model.rowCount()):
+            if model.data(model.index(row, 0), Qt.ItemDataRole.UserRole) == 1:
+                lst.selectionModel().select(
+                    model.index(row, 0), QItemSelectionModel.ClearAndSelect
+                )
+                break
+        pdf_tab._on_rotate(90)
+        assert called == [([1], 90)]
+
+    def test_thumbnails_invalidated_clears_cache(self, pdf_tab):
+        """manager.thumbnails_invalidated 信号应清缓存对应行(旋转后)。"""
+        from PySide6.QtGui import QPixmap
+
+        self._setup(pdf_tab)
+        target_row = 1
+        pdf_tab._thumbnail_model._cache.put(target_row, QPixmap(10, 10))
+        assert target_row in pdf_tab._thumbnail_model._cache
+        # 模拟 manager 发失效信号
+        pdf_tab._session_mgr.thumbnails_invalidated.emit([target_row])
+        assert target_row not in pdf_tab._thumbnail_model._cache
 
 
 class TestPdfTabDeleteTextLayerAsync:
@@ -1125,7 +1076,7 @@ class TestPdfTabAutoDeskew:
         doc = fitz.open()
         doc.new_page(width=200, height=300)
         pdf_doc = PdfDocument(file_path="x.pdf", pages=[PdfPageInfo(page_index=0)])
-        session = PdfSession(file_path="x.pdf", doc=doc, pdf_document=pdf_doc)
+        session = PdfSession(file_path="x.pdf", session_id="test-sid", pdf_document=pdf_doc)
         pdf_tab._session_mgr._sessions["x.pdf"] = session
         pdf_tab._session_mgr._active_path = "x.pdf"
         pdf_tab._refresh_thumbnails()

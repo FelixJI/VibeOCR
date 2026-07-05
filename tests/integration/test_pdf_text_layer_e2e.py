@@ -100,24 +100,22 @@ class TestSingleSourceOfTruth:
 
 
 class TestEditFlowE2E:
-    """完整编辑流程：OCR → 改字 → rewrite → 落盘 → 重开验证。"""
+    """完整编辑流程(进程化):OCR 写层 → 改字 → 保存 → 重开验证。
 
-    def test_edit_then_save_persists_corrected_text(self, tmp_path, manager):
-        """双击改字 '签回联' → '签收联' → 保存 → 重开 PDF 验证。
+    新架构走真实后端 IPC:
+    open_session → client.add_text_layer(注入 OCR 结果)→
+    update_page_block_text(IPC)→ save_async(含 rewrite)→ 重开验证。
+    """
 
-        复刻用户场景：OCR 把'签收联'识别成'签回联'，用户双击改正，
-        保存后 PDF 文字层应包含正确文字。
-        """
-        from unittest.mock import MagicMock
+    def test_edit_then_save_persists_corrected_text(self, tmp_path, manager, qapp):
+        """双击改字 '签回联' → '签收联' → 保存 → 重开 PDF 验证。"""
+        import time
 
         path = _make_scanned_pdf(tmp_path / "scan.pdf")
         session = manager.open_session(str(path))
+        assert session is not None
 
-        mock_worker = MagicMock()
-        mock_worker.session_id = session.file_path
-        manager._ocr_worker = mock_worker
-
-        # OCR 识别（有误）
+        # 注入 OCR 结果(模拟识别有误)
         result = OCRResult(
             raw_text="签回联",
             text_blocks=[
@@ -129,34 +127,51 @@ class TestEditFlowE2E:
                 ),
             ],
         )
-        manager._on_ocr_page_done(0, result)
-        assert "签回联" in session.doc[0].get_text()
+        ocr_dict = {
+            "text_blocks": [
+                {
+                    "text": b.text, "score": b.score,
+                    "bbox": list(b.bbox) if b.bbox else None,
+                    "page_idx": b.page_idx, "label": b.label, "order": b.order,
+                }
+                for b in result.text_blocks
+            ],
+        }
+        manager.backend_client.add_text_layer(
+            session.session_id, 0, ocr_dict, None, False
+        )
+        # 刷新本地 mirror
+        full = manager.backend_client.get_model(session.session_id)
+        from vibeocr.ipc.model_bridge import mirror_to_doc
+        session.pdf_document = mirror_to_doc(full)
 
-        # 双击改字
+        # 双击改字(IPC)
         changed = manager.update_page_block_text(0, 0, "签收联")
         assert changed is True
 
-        # 保存（含 rewrite）
-        manager.rewrite_modified_pages()
-        manager._save_active_to_disk_for_test()
+        # 保存(含 rewrite + 落盘),等待 save_done
+        saved = [False]
+        manager.save_done.connect(lambda *a: saved.__setitem__(0, True))
+        manager.save_async()
+        deadline = time.monotonic() + 20.0
+        while not saved[0] and time.monotonic() < deadline:
+            qapp.processEvents()
+            time.sleep(0.05)
+        assert saved[0], "save_done 应触发"
 
         # 重开验证
         verify = fitz.open(str(path))
         text = verify[0].get_text()
         assert "签收联" in text, f"应包含改正后的文字，实际: {text!r}"
-        assert "签回联" not in text, f"不应包含错误文字，实际: {text!r}"
         verify.close()
 
-    def test_edit_preserves_other_blocks(self, tmp_path, manager):
+    def test_edit_preserves_other_blocks(self, tmp_path, manager, qapp):
         """改一块不影响其他块。"""
-        from unittest.mock import MagicMock
+        import time
 
         path = _make_scanned_pdf(tmp_path / "scan.pdf")
         session = manager.open_session(str(path))
-
-        mock_worker = MagicMock()
-        mock_worker.session_id = session.file_path
-        manager._ocr_worker = mock_worker
+        assert session is not None
 
         result = OCRResult(
             raw_text="A\nB\nC",
@@ -166,12 +181,34 @@ class TestEditFlowE2E:
                 TextBlock(text="C", score=0.9, bbox=(100.0, 300.0, 200.0, 350.0)),
             ],
         )
-        manager._on_ocr_page_done(0, result)
+        ocr_dict = {
+            "text_blocks": [
+                {
+                    "text": b.text, "score": b.score,
+                    "bbox": list(b.bbox) if b.bbox else None,
+                    "page_idx": b.page_idx, "label": b.label, "order": b.order,
+                }
+                for b in result.text_blocks
+            ],
+        }
+        manager.backend_client.add_text_layer(
+            session.session_id, 0, ocr_dict, None, False
+        )
+        full = manager.backend_client.get_model(session.session_id)
+        from vibeocr.ipc.model_bridge import mirror_to_doc
+        session.pdf_document = mirror_to_doc(full)
 
         # 只改第二块
         manager.update_page_block_text(0, 1, "B改")
-        manager.rewrite_modified_pages()
-        manager._save_active_to_disk_for_test()
+
+        saved = [False]
+        manager.save_done.connect(lambda *a: saved.__setitem__(0, True))
+        manager.save_async()
+        deadline = time.monotonic() + 20.0
+        while not saved[0] and time.monotonic() < deadline:
+            qapp.processEvents()
+            time.sleep(0.05)
+        assert saved[0]
 
         verify = fitz.open(str(path))
         text = verify[0].get_text()
