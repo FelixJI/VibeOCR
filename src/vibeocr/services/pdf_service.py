@@ -316,6 +316,31 @@ class PdfService:
                     return True
         return False
 
+    # ---- geometry helpers（避免调用方直接访问 fitz 对象）-------------
+
+    @staticmethod
+    def page_rect(doc: fitz.Document, page_index: int) -> tuple[float, float, float, float]:
+        """返回页面 rect（x0, y0, x1, y1），单位 PDF point。
+
+        供主进程预览 highlight 几何计算用——下沉子进程后主进程不再持 doc，
+        此方法在子进程内调用，结果序列化回主进程。
+        """
+        r = doc[page_index].rect
+        return (r.x0, r.y0, r.x1, r.y1)
+
+    @staticmethod
+    def page_rotation(doc: fitz.Document, page_index: int) -> int:
+        """返回页面旋转角（0/90/180/270）。"""
+        return int(doc[page_index].rotation)
+
+    @staticmethod
+    def page_has_text(doc: fitz.Document, page_index: int) -> bool:
+        """页面是否含可见文字（get_text("text") 快速判断，~3ms）。
+
+        供删除文字层前的预检查用——无文字直接跳过 redact 循环。
+        """
+        return bool(doc[page_index].get_text("text").strip())
+
     # ---- page infos -------------------------------------------------
 
     @staticmethod
@@ -332,6 +357,7 @@ class PdfService:
                     text_layers=text_layers,
                     is_scanned=len(text_layers) == 0
                     and PdfService.is_page_scanned(doc, i),
+                    rect=PdfService.page_rect(doc, i),
                 )
             )
         pdf_document.pages = pages
@@ -351,6 +377,7 @@ class PdfService:
         info.is_scanned = not text_layers and PdfService.is_page_scanned(
             doc, page_index
         )
+        info.rect = PdfService.page_rect(doc, page_index)
         info.thumbnail = None
 
     # ---- page mutations ---------------------------------------------
@@ -874,7 +901,7 @@ class PdfService:
     @staticmethod
     def bbox_to_pixel(
         bbox: tuple[float, float, float, float],
-        page_rect: fitz.Rect,
+        page_rect: "fitz.Rect | tuple[float, float, float, float]",
         render_dpi: int,
         source: str = "pdf",
     ) -> tuple[float, float, float, float]:
@@ -882,7 +909,8 @@ class PdfService:
 
         Args:
             bbox: 输入 bbox。
-            page_rect: PDF 页面矩形 (points)。
+            page_rect: PDF 页面矩形 (points)。接受 fitz.Rect 或 4-tuple，
+                下沉子进程后主进程不再 import fitz，统一传 tuple。
             render_dpi: 渲染 DPI。
             source: "pdf" 表示 bbox 是 PDF points 坐标，
                     "normalized" 表示 [0, 1000] 归一化坐标。
@@ -890,12 +918,18 @@ class PdfService:
         Returns:
             像素坐标 (x0, y0, x1, y1)。
         """
+        # 兼容 fitz.Rect（有 .width/.height）与 4-tuple (x0,y0,x1,y1)
+        if hasattr(page_rect, "width"):
+            pw, ph = page_rect.width, page_rect.height
+        else:
+            pw = page_rect[2] - page_rect[0]
+            ph = page_rect[3] - page_rect[1]
         if source == "normalized":
             # 先转为 PDF points
-            x0 = bbox[0] / 1000 * page_rect.width
-            y0 = bbox[1] / 1000 * page_rect.height
-            x1 = bbox[2] / 1000 * page_rect.width
-            y1 = bbox[3] / 1000 * page_rect.height
+            x0 = bbox[0] / 1000 * pw
+            y0 = bbox[1] / 1000 * ph
+            x1 = bbox[2] / 1000 * pw
+            y1 = bbox[3] / 1000 * ph
         else:
             x0, y0, x1, y1 = bbox
 

@@ -1599,13 +1599,12 @@ class PdfTab(QWidget):
                     session.doc, page_idx
                 )
             if page_info.text_layers:
-                with session.doc_lock:
-                    page_rect = session.doc[page_idx].rect
+                # page_rect 已由 load worker 缓存到模型，不再直接读 fitz 对象。
                 win.set_highlight(
                     pixmap,
                     page_info.text_layers,
                     render_dpi=150,
-                    page_rect=page_rect,
+                    page_rect=page_info.rect,
                     source="pdf",
                 )
                 win.setWindowTitle(
@@ -1615,13 +1614,11 @@ class PdfTab(QWidget):
                 win.set_page_pixmap(pixmap)
                 win.setWindowTitle(f"文字层预览 — 第{page_idx + 1}页 (无文字层)")
         elif page_info.text_layers:
-            with session.doc_lock:
-                page_rect = session.doc[page_idx].rect
             win.set_highlight(
                 pixmap,
                 page_info.text_layers,
                 render_dpi=150,
-                page_rect=page_rect,
+                page_rect=page_info.rect,
                 source="pdf",
             )
             win.setWindowTitle(

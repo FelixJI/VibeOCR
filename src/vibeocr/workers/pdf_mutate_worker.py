@@ -214,8 +214,8 @@ class PdfMutateWorker(PdfSessionWorker):
                 break
             try:
                 with self._doc_lock:
-                    page = self._doc[page_index]
-                    if not page.get_text().strip():
+                    has_text = PdfService.page_has_text(self._doc, page_index)
+                    if not has_text:
                         # 无文字 → 跳过 redact，仍清状态
                         PdfService.delete_text_layers(
                             self._doc, self._pdf_document, page_index

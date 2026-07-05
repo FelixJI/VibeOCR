@@ -64,10 +64,8 @@ class PdfRenderWorker(PdfSessionWorker):
                     break
                 try:
                     with self._doc_lock:
-                        page = self._doc[page_idx]
-                        adjusted_dpi = settings.adjust_dpi(
-                            page.rect.width, page.rect.height
-                        )
+                        rect = PdfService.page_rect(self._doc, page_idx)
+                        adjusted_dpi = settings.adjust_dpi(rect[2] - rect[0], rect[3] - rect[1])
                         img_array = PdfService.render_page_as_array(
                             self._doc, page_idx, dpi=adjusted_dpi
                         )
