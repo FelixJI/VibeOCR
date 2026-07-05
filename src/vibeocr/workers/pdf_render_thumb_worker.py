@@ -84,11 +84,13 @@ class ThumbnailRenderWorker(QThread):
 
     def run(self) -> None:
         while True:
+            # 永久阻塞等待任务：worker 生命周期由 cancel() 投 _STOP 哨兵显式终止，
+            # 不再用 10s idle 超时自杀（自杀后 request_render 不检查 isFinished()
+            # 会把请求投进无人消费的队列，导致缩略图永久空白）。
             try:
-                item = self._queue.get(timeout=10)
+                item = self._queue.get()
             except queue.Empty:
-                # 长时间无任务，退出避免线程泄漏（调用方需重新 start）
-                return
+                continue
             if item is _STOP:
                 return
             page_index = item  # type: ignore[assignment]
@@ -97,10 +99,23 @@ class ThumbnailRenderWorker(QThread):
             if self._cancelled:
                 return
             try:
-                with self._doc_lock:
+                # 带超时获取 doc_lock：OCR 前置渲染（PdfRenderWorker）逐页持锁
+                # 渲 300DPI（~500ms/页），本 worker 渲 96DPI（~50ms/页）。若用
+                # 阻塞 with 会饿死——OCR 跑时缩略图永远拿不到锁。这里 0.5s 抢不到
+                # 就让出（重新投递到队尾），让 OCR 翻页间隙的空闲窗口能插入缩略图。
+                if not self._doc_lock.acquire(timeout=0.5):
+                    # 锁被 OCR 长持有：重新入队尾，避免饥饿，也让出当前页给 OCR
+                    with self._pending_lock:
+                        if page_index not in self._pending and not self._cancelled:
+                            self._pending.add(page_index)
+                            self._queue.put(page_index)
+                    continue
+                try:
                     pixmap = PdfService.render_page(
                         self._doc, page_index, dpi=self._dpi
                     )
+                finally:
+                    self._doc_lock.release()
                 scaled = pixmap.scaled(
                     self._size,
                     self._size,

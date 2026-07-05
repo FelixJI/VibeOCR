@@ -195,9 +195,11 @@ class PdfSessionManager(QObject):
         # 过滤已打开的文件，避免重复创建会话
         new_paths = [p for p in paths if p not in self._sessions]
         if not new_paths:
-            # 全部已打开：切到第一个
+            # 全部已打开：切到第一个。仍需 emit open_done，
+            # 否则调用方（_on_open_done）的 _batch_opening 标志不会复位。
             if paths:
                 self.switch_session(paths[0])
+            self.open_done.emit()
             return
 
         self._cancel_open_worker()
@@ -276,8 +278,13 @@ class PdfSessionManager(QObject):
         if file_path not in self._sessions:
             return
 
+        # 仅当被关闭的是活动会话时，才取消可能正在跑的 OCR/mutate worker
+        # （这些 worker 只作用于活动会话）。load worker 按 session_id 精确匹配。
         if self.load_worker_session_id == file_path:
             self._cancel_load_worker()
+        if self._active_path == file_path:
+            self._cancel_ocr_pipeline()
+            self._cancel_mutate_worker()
 
         session = self._sessions.pop(file_path)
         session.doc.close()

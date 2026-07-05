@@ -58,6 +58,19 @@ logger = logging.getLogger(__name__)
 _THUMBNAIL_SIZE = 160
 _GRID_CELL_SIZE = 40  # 文字层状态网格单格尺寸（正方形）
 
+# 缓存占位灰图（缩略图未渲染时显示），避免每次 data() 调用都新建 QPixmap。
+_PLACEHOLDER_PIXMAP: QPixmap | None = None
+
+
+def _placeholder_pixmap() -> QPixmap:
+    """缩略图占位灰图（懒初始化单例）。供 ThumbnailModel.data() 与 PdfTab 共用。"""
+    global _PLACEHOLDER_PIXMAP
+    if _PLACEHOLDER_PIXMAP is None:
+        pm = QPixmap(_THUMBNAIL_SIZE, _THUMBNAIL_SIZE)
+        pm.fill(Qt.GlobalColor.lightGray)
+        _PLACEHOLDER_PIXMAP = pm
+    return _PLACEHOLDER_PIXMAP
+
 # 文字层网格 item 数据角色：_LAYER_ROLE 存 page_index，_HAS_LAYER_ROLE 存 has_text_layer
 _LAYER_ROLE = Qt.ItemDataRole.UserRole
 _HAS_LAYER_ROLE = Qt.ItemDataRole.UserRole + 1
@@ -167,7 +180,10 @@ class ThumbnailModel(QAbstractListModel):
     def _stop_render_worker(self) -> None:
         if self._render_worker is not None:
             self._render_worker.cancel()
-            _wait_thread(self._render_worker, timeout=3000)
+            # worker 常驻不自杀，cancel() 投 _STOP 后最多一页渲染（96DPI ~50ms）
+            # 即退出；锁获取带 0.5s 超时不会长卡。500ms 足够，避免切文件时
+            # GUI 线程长阻塞。
+            _wait_thread(self._render_worker, timeout=500)
             self._render_worker = None
 
     def _on_thumbnail_ready(self, page_index: int, pixmap: QPixmap) -> None:
@@ -180,7 +196,7 @@ class ThumbnailModel(QAbstractListModel):
 
     def request_render(self, row: int) -> None:
         """请求渲染指定行（已在缓存则跳过）。滚动监听 / data() miss 时调用。"""
-        if self._render_worker is None:
+        if not self._ensure_render_worker_alive():
             return
         if row in self._cache:
             return
@@ -188,11 +204,27 @@ class ThumbnailModel(QAbstractListModel):
 
     def request_range(self, first: int, last: int) -> None:
         """请求渲染 [first, last] 行范围（去重由 worker 处理）。"""
-        if self._render_worker is None:
+        if not self._ensure_render_worker_alive():
             return
         for row in range(max(0, first), min(self.rowCount(), last + 1)):
             if row not in self._cache:
                 self._render_worker.request(row)
+
+    def _ensure_render_worker_alive(self) -> bool:
+        """确保 render worker 存活：None 或已结束（isFinished）则重启。
+
+        worker 现在常驻不自杀，但 set_session 切换/异常后可能为 None；
+        极端情况下（terminate）也可能 isFinished。此方法做兜底重启，
+        避免请求投进无人消费的队列导致缩略图永久空白。
+        """
+        if self._session is None:
+            return False
+        if self._render_worker is not None and not self._render_worker.isFinished():
+            return True
+        # worker 死亡或为 None：停掉残骸并重启
+        self._stop_render_worker()
+        self._start_render_worker(self._session)
+        return True
 
     def invalidate(self, row: int) -> None:
         """失效单页缓存（旋转后），并触发该行重渲（若可能可见）。"""
@@ -240,9 +272,10 @@ class ThumbnailModel(QAbstractListModel):
             pixmap = self._cache.get(index.row())
             if pixmap is not None:
                 return QIcon(pixmap)
-            # 缓存未命中：占位 + 投递渲染请求（双保险，配合 scroll 主动请求）
+            # 缓存未命中：返回占位灰图（让槽位可见、确保触发重绘），
+            # 并投递渲染请求（双保险，配合 scroll 主动请求）。
             self.request_render(index.row())
-            return None
+            return QIcon(_placeholder_pixmap())
         if role == Qt.ItemDataRole.UserRole:
             return page_info.page_index
         return None
@@ -456,6 +489,10 @@ class PdfTab(QWidget):
         self._btn_open.clicked.connect(self._on_open_file)
         self._btn_add_file = QPushButton("添加文件")
         self._btn_add_file.clicked.connect(self._on_add_file)
+        self._btn_remove_file = QPushButton("移除文件")
+        self._btn_remove_file.setToolTip("从列表中移除当前文件（不删除源文件）")
+        self._btn_remove_file.clicked.connect(self._on_remove_file)
+        self._btn_remove_file.setEnabled(False)
         self._btn_save = QPushButton("保存")
         self._btn_save.clicked.connect(self._on_save)
         self._btn_save.setEnabled(False)
@@ -467,6 +504,7 @@ class PdfTab(QWidget):
         self._btn_export_all.setEnabled(False)
         file_layout.addWidget(self._btn_open)
         file_layout.addWidget(self._btn_add_file)
+        file_layout.addWidget(self._btn_remove_file)
         file_layout.addWidget(self._btn_save)
         file_layout.addWidget(self._btn_save_as)
         file_layout.addWidget(self._btn_export_all)
@@ -558,8 +596,10 @@ class PdfTab(QWidget):
         grid_scroll.setWidgetResizable(True)
         grid_scroll.setWidget(self._layer_status_grid)
         grid_scroll.setMinimumHeight(120)
-        text_layout.addWidget(grid_scroll)
-        layout.addWidget(text_group)
+        # stretch=1：方格子滚动区吃满 text_group 内剩余垂直空间（大文件自动滚动）。
+        text_layout.addWidget(grid_scroll, 1)
+        # stretch=1：文字层组吃满面板内剩余垂直空间，按钮区/进度条固定在上下。
+        layout.addWidget(text_group, 1)
 
         self._progress_bar = QProgressBar()
         self._progress_bar.setVisible(False)
@@ -574,7 +614,6 @@ class PdfTab(QWidget):
         self._status_label = QLabel("")
         layout.addWidget(self._status_label)
 
-        layout.addStretch()
         self._set_file_buttons_enabled(False)
         return panel
 
@@ -670,6 +709,9 @@ class PdfTab(QWidget):
             self._syncing_selection = False
         has_doc = self._session_mgr.active_session is not None
         self._set_file_buttons_enabled(has_doc)
+        # 模型 reset 后主动触发一次可见范围请求：程序性 reset 不会产生
+        # showEvent/scrollContentsBy/resizeEvent，否则首次打开时可见页永不进渲染队列。
+        self._thumbnail_list._schedule_visible_range()
 
     def _on_page_loaded(self, file_path: str, page_index: int) -> None:
         """文字层 worker 逐页完成：更新文字层网格格子（缩略图由按需 worker 渲）。"""
@@ -708,6 +750,19 @@ class PdfTab(QWidget):
         """MinerU 模型下载状态提示（首次使用文档解析时）"""
         self._status_label.setText(message)
         # 下载期间显示不确定进度条（无具体百分比）
+        self._progress_bar.setRange(0, 0)
+        self._progress_bar.setVisible(True)
+
+    def on_ocr_queued(self, message: str) -> None:
+        """OCR worker 忙碌（如预热中）时，识别请求已排队。
+
+        WorkerManager 是单 worker 串行队列：预热/预加载独占 worker 时，
+        后续 OCR（添加文字层/自动摆正）会排队等待（最长 300s）。
+        此前 PDF tab 无提示，用户以为"卡死"。这里明确告知"排队中，会自动执行"，
+        并用不确定进度条表示等待态。OCR 真正开始后 _on_render_progress_update
+        会切回确定进度。
+        """
+        self._status_label.setText(f"{message}（完成后自动继续）")
         self._progress_bar.setRange(0, 0)
         self._progress_bar.setVisible(True)
 
@@ -845,6 +900,7 @@ class PdfTab(QWidget):
         for btn in (
             self._btn_save,
             self._btn_save_as,
+            self._btn_remove_file,
             self._btn_rotate_cw,
             self._btn_rotate_ccw,
             self._btn_rotate_all,
@@ -869,9 +925,7 @@ class PdfTab(QWidget):
 
     @staticmethod
     def _placeholder_pixmap() -> QPixmap:
-        pm = QPixmap(_THUMBNAIL_SIZE, _THUMBNAIL_SIZE)
-        pm.fill(Qt.GlobalColor.lightGray)
-        return pm
+        return _placeholder_pixmap()
 
     def _row_of_page(self, page_index: int) -> int | None:
         """根据 page_info.page_index 查找它在模型中的当前行号（重排后会变化）。"""
@@ -1156,17 +1210,13 @@ class PdfTab(QWidget):
         )
         if not paths:
             return
-        # 单文件走同步快路径；多文件走后台异步（避免 fitz.open 串行冻结主线程）。
-        if len(paths) == 1:
-            try:
-                self._session_mgr.open_session(paths[0])
-            except (FileNotFoundError, RuntimeError) as e:
-                QMessageBox.warning(self, "打开失败", str(e))
-        else:
-            self._open_errors = []
-            self._batch_opening = True
-            self._status_label.setText(f"正在打开 0/{len(paths)} 个文件…")
-            self._session_mgr.open_sessions_async(paths)
+        # 统一走后台异步打开（fitz.open 在 PdfOpenWorker 线程执行，
+        # 避免大文件在主线程阻塞冻结 UI）。单/多文件路径一致。
+        # open_sessions_async 已处理"文件已打开则 switch"的语义。
+        self._open_errors = []
+        self._batch_opening = True
+        self._status_label.setText(f"正在打开 0/{len(paths)} 个文件…")
+        self._session_mgr.open_sessions_async(paths)
 
     def _on_open_progress(self, current: int, total: int) -> None:
         self._status_label.setText(f"正在打开 {current}/{total} 个文件…")
@@ -1193,6 +1243,31 @@ class PdfTab(QWidget):
 
     def _on_add_file(self) -> None:
         self._on_open_file()
+
+    def _on_remove_file(self) -> None:
+        """从列表移除当前活动文件（关闭会话，不删除源文件）。
+
+        有未保存修改时弹确认；确认后调 manager.close_session，
+        后者 emit session_removed（_on_session_removed 自动从下拉框移除）
+        与 active_changed（自动切到剩余文件）。无剩余文件时 UI 清空。
+        """
+        session = self._session_mgr.active_session
+        if session is None:
+            return
+        name = Path(session.file_path).name
+        if session.is_modified:
+            reply = QMessageBox.question(
+                self,
+                "移除文件",
+                f"{name} 有未保存的修改，确定移除吗？移除不会保存修改。",
+                QMessageBox.StandardButton.Yes
+                | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Cancel,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+        self._session_mgr.close_session(session.file_path)
+        self._status_label.setText(f"已移除 {name}")
 
     def _on_save(self) -> None:
         session = self._session_mgr.active_session

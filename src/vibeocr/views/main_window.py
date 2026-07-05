@@ -713,17 +713,36 @@ class MainWindow(QMainWindow):
 
     @Slot(dict)
     def _on_preload_finished(self, results: dict) -> None:
-        """预加载完成回调"""
+        """预加载完成回调。
+
+        results 形如 {"preload": {pipeline: bool}, "warmup": {pipeline: bool}}。
+        preload=管道定义已加载；warmup=CUDA/模型权重已初始化（虚拟识别）。
+        预热失败不影响使用（首次真实识别会按需初始化，仅首次稍慢）。
+        """
         self._preload_in_progress = False
-        success_count = sum(1 for v in results.values() if v)
-        total_count = len(results)
-        if total_count > 0 and success_count > 0:
-            self._statusbar.showMessage(
-                f"OCR 服务已就绪（{success_count}/{total_count} 个模型已预热）"
-            )
+        preload = results.get("preload", {}) if isinstance(results, dict) else {}
+        warmup = results.get("warmup", {}) if isinstance(results, dict) else {}
+        preload_ok = sum(1 for v in preload.values() if v)
+        preload_total = len(preload)
+        warmup_ok = sum(1 for v in warmup.values() if v)
+        warmup_total = len(warmup)
+
+        if preload_total > 0 and preload_ok > 0:
+            if warmup_total > 0 and warmup_ok < warmup_total:
+                # 预加载成功但预热部分/全部失败：明确告知，避免"已预热"误导
+                self._statusbar.showMessage(
+                    f"OCR 服务已就绪（模型已加载 {preload_ok}/{preload_total}，"
+                    f"预热 {warmup_ok}/{warmup_total} 失败，首次识别会按需初始化）"
+                )
+            else:
+                self._statusbar.showMessage(
+                    f"OCR 服务已就绪（{preload_ok}/{preload_total} 个模型已预热）"
+                )
         else:
             self._statusbar.showMessage("OCR 服务已就绪")
-        logging.debug(f"[MainWindow] 预加载完成: {results}")
+        logging.debug(
+            f"[MainWindow] 预加载完成: preload={preload}, warmup={warmup}"
+        )
 
     @Slot(int, int, str)
     def _on_preload_progress(self, current: int, total: int, pipeline_name: str) -> None:
@@ -746,6 +765,10 @@ class MainWindow(QMainWindow):
         self._statusbar.showMessage(message)
         if hasattr(self, "_single_tab") and self._single_tab:
             self._single_tab.show_waiting_message(message)
+        # PDF tab 的 OCR（添加文字层/自动摆正）也走同一 worker，
+        # 遇到 worker 忙（预热中）同样会排队，需告知用户"在排队"而非"卡住"。
+        if hasattr(self, "_pdf_tab") and self._pdf_tab:
+            self._pdf_tab.on_ocr_queued(message)
 
     def _start_subprocess_preload(self) -> None:
         """在子进程中下发 TTL 并（可选）预加载用户配置的管道
