@@ -1,30 +1,28 @@
-"""PDF 会话数据模型 — 单个已打开文件的状态。"""
+"""PDF 会话数据模型 — 单个已打开文件的状态(进程化后,主进程只持 mirror)。"""
 
 from __future__ import annotations
 
-import threading
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    import fitz
 
 from vibeocr.models.pdf_document import PdfDocument  # noqa: TC001
 
 
 @dataclass
 class PdfSession:
-    """单个 PDF 文件的会话状态。
+    """单个 PDF 文件的会话状态(主进程侧,不持 fitz.Document)。
 
-    doc_lock 用于保护 fitz.Document 的跨线程访问，
-    PdfLoadWorker（后台线程）和主线程操作必须通过此锁序列化。
+    进程化重构后,fitz.Document 只存在于 PDF 后端子进程。主进程通过
+    session_id 标识后端会话,pdf_document 是从 PdfDocumentMirror 转换来的
+    显示镜像(供 UI 读页数/旋转/文字层状态用)。doc_lock 已删除——后端
+    单线程,无需锁。
+
+    保留 loaded_pages / ocr_stats 等 UI 状态字段,PdfTab/manager 依赖它们。
     """
 
     file_path: str
-    doc: fitz.Document
-    pdf_document: PdfDocument
+    session_id: str = ""  # 后端 session 标识
+    pdf_document: PdfDocument = field(default_factory=PdfDocument)
     loaded_pages: set[int] = field(default_factory=set)
-    doc_lock: threading.RLock = field(default_factory=threading.RLock, repr=False)
     _ocr_stats: dict[str, int] = field(
         default_factory=lambda: {"written": 0, "skipped": 0}, repr=False
     )
@@ -50,14 +48,3 @@ class PdfSession:
     def add_ocr_stats(self, written: int, skipped: int) -> None:
         self._ocr_stats["written"] += written
         self._ocr_stats["skipped"] += skipped
-
-    def __enter__(self) -> PdfSession:
-        return self
-
-    def __exit__(self, *args) -> None:
-        # fitz doc.close() 在文档已关闭/底层资源损坏时抛各类异常，
-        # 退出路径不应再向外抛，静默忽略
-        try:
-            self.doc.close()
-        except Exception:
-            pass
