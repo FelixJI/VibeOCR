@@ -20,7 +20,6 @@ from vibeocr.ipc.model_bridge import apply_diff, mirror_to_doc
 from vibeocr.ipc.schemas import ModelDiff, PdfDocumentMirror
 from vibeocr.models.pdf_session import PdfSession
 from vibeocr.services.pdf_backend_client import PdfBackendClient, PdfBackendError
-from vibeocr.workers.pdf_export_worker import PdfExportWorker
 from vibeocr.workers.pdf_ipc_worker import PdfIpcMutateWorker, PdfIpcOpenWorker
 
 if TYPE_CHECKING:
@@ -85,7 +84,7 @@ class PdfSessionManager(QObject):
         self._active_path: str | None = None
         self._open_worker: PdfIpcOpenWorker | None = None
         self._mutate_worker: PdfIpcMutateWorker | None = None
-        self._export_worker: PdfExportWorker | None = None
+        self._export_worker: QThread | None = None
         # OCR 编排状态(主进程:后端渲染 → 主进程 OCR → 后端写层)
         self._ocr_service: OCRServiceBase | None = None
         self._pdf_settings: PdfGlobalSettings | None = None
@@ -854,6 +853,11 @@ class PdfSessionManager(QObject):
         self._cancel_mutate_worker()
         self._cancel_ocr()
         self._cancel_open_worker()
+        if self._export_worker is not None:
+            if hasattr(self._export_worker, "cancel"):
+                self._export_worker.cancel()
+            self._export_worker.wait(5000)
+            self._export_worker = None
         # 关闭所有后端 session
         for session in list(self._sessions.values()):
             try:
