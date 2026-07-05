@@ -295,3 +295,9 @@ def get_pending_sync_path() -> Path:
     d = get_data_dir() / "settings"
     d.mkdir(parents=True, exist_ok=True)
     return d / "pending_sync.json"
+
+
+# 依赖同步失败重试上限：达到后主程序提示用户"建议重装嵌入式 Python"。
+# 单次同步失败常为网络/镜像抖动，多次失败则更可能是 python/ 损坏，
+# 此时引导用户走 reinstall_embedded_python（设置页入口）比继续重试更有效。
+SYNC_MAX_ATTEMPTS = 3

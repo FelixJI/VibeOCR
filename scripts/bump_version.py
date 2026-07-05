@@ -442,6 +442,162 @@ def check_unversioned_commits(
     return (count > 0, count)
 
 
+def _parse_dependencies(pyproject_path: Path) -> dict[str, str]:
+    """解析 pyproject.toml 的 [project.dependencies]，返回 {规范化包名: 完整规格}。
+
+    规范化：小写 + 剥 extras（paddleocr[doc-parser] → paddleocr）。
+    用于 dep diff：按包名对齐新旧两版，比较完整规格字符串。
+
+    Args:
+        pyproject_path: pyproject.toml 路径
+
+    Returns:
+        {"paddlepaddle-gpu": "paddlepaddle-gpu>=3.3.1", "torch": "torch>=2.6.0", ...}
+        文件不存在或解析失败时返回空 dict（CI 浅克隆等场景降级）。
+    """
+    if not pyproject_path.exists():
+        return {}
+    try:
+        import tomllib
+
+        data = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    deps = data.get("project", {}).get("dependencies", [])
+    result: dict[str, str] = {}
+    for dep in deps:
+        dep = dep.strip()
+        if dep.startswith("#") or not dep:
+            continue
+        m = re.match(r"^([a-zA-Z0-9_.-]+)", dep)
+        if m:
+            pkg = m.group(1).lower()
+            result[pkg] = dep
+    return result
+
+
+def _compute_dep_diff(
+    old_deps: dict[str, str], new_deps: dict[str, str]
+) -> dict[str, list[str]]:
+    """对比新旧依赖列表，返回分类变更文案。
+
+    分类：
+    - "upgraded"：版本约束变化（如 paddlepaddle-gpu 3.3.1 → 3.4.0）
+    - "added"：新增依赖
+    - "removed"：移除依赖
+
+    Args:
+        old_deps: 旧版 _parse_dependencies 结果
+        new_deps: 新版 _parse_dependencies 结果
+
+    Returns:
+        {"upgraded": [...], "added": [...], "removed": [...]}
+        每项为人类可读文案字符串。全空时表示无依赖变更。
+    """
+    upgraded: list[str] = []
+    added: list[str] = []
+    removed: list[str] = []
+
+    # 提取完整 constraint 串用于展示（含 local version +cu126、多段、!= 等）。
+    # spec 形如 "paddlepaddle-gpu>=3.3.1" / "torch==2.6.0+cu126" / "x>=1,<2"。
+    # 无版本约束时返回 "(无版本约束)"。
+    def _extract_constraint(spec: str) -> str:
+        m = re.search(r"(==|!=|>=|<=|~=|>|<).+$", spec)
+        return m.group(0) if m else "(无版本约束)"
+
+    for pkg, new_spec in new_deps.items():
+        if pkg not in old_deps:
+            added.append(f"新增 {new_spec}")
+        elif old_deps[pkg] != new_spec:
+            old_c = _extract_constraint(old_deps[pkg])
+            new_c = _extract_constraint(new_deps[pkg])
+            upgraded.append(f"升级 {pkg} {old_c} → {new_c}")
+
+    for pkg, old_spec in old_deps.items():
+        if pkg not in new_deps:
+            removed.append(f"移除 {old_spec}")
+
+    return {"upgraded": upgraded, "added": added, "removed": removed}
+
+
+def _get_last_release_pyproject_deps(
+    version: str, cwd: Path | None = None
+) -> dict[str, str]:
+    """从上一个 release tag 读取 pyproject.toml 的依赖列表。
+
+    用 ``git show v{last_tag}:pyproject.toml`` 取旧版内容到临时解析。
+    失败场景（首次发版无 tag、浅克隆无历史）返回空 dict，CHANGELOG 不含依赖段。
+
+    Args:
+        version: 当前版本号（用于查找上一个 tag）
+        cwd: git 仓库目录；None 表示用 PROJECT_ROOT（发版场景）。
+            测试传 tmp_path 隔离。
+
+    Returns:
+        {规范化包名: 完整规格}，失败时空 dict。
+    """
+    if cwd is None:
+        cwd = PROJECT_ROOT
+    try:
+        current_tag = f"v{version}"
+        last_tag = ""
+        # 候选 ref（按优先级）：v{version}^（release commit 的父，bump 流程）→
+        # HEAD^（CI checkout tag 后，HEAD 即 release commit）→ 最近 tag（--build 路径，
+        # HEAD 是上个 release，取其本身）。最后一个用 --all 匹配最近 tag 名。
+        for ref in [f"{current_tag}^", "HEAD^"]:
+            result = subprocess.run(
+                ["git", "describe", "--tags", "--abbrev=0", ref],
+                capture_output=True,
+                encoding="utf-8",
+                cwd=str(cwd),
+            )
+            if result.returncode == 0:
+                last_tag = result.stdout.strip()
+                # 不能等于当前版本（否则 diff 无意义）
+                if last_tag != current_tag:
+                    break
+                last_tag = ""
+
+        # 回退：取仓库里最近的 tag（--build 路径：HEAD 即上个 release 本身）
+        if not last_tag:
+            result = subprocess.run(
+                ["git", "describe", "--tags", "--abbrev=0"],
+                capture_output=True,
+                encoding="utf-8",
+                cwd=str(cwd),
+            )
+            if result.returncode == 0:
+                candidate = result.stdout.strip()
+                if candidate and candidate != current_tag:
+                    last_tag = candidate
+
+        if not last_tag:
+            return {}
+        # 取旧版 pyproject.toml 内容
+        show = subprocess.run(
+            ["git", "show", f"{last_tag}:pyproject.toml"],
+            capture_output=True,
+            encoding="utf-8",
+            cwd=str(cwd),
+        )
+        if show.returncode != 0:
+            return {}
+        # 写临时文件解析（复用 _parse_dependencies 的 tomllib 路径）
+        import tempfile
+
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".toml", delete=False, encoding="utf-8"
+        ) as tf:
+            tf.write(show.stdout)
+            tmp_path = Path(tf.name)
+        try:
+            return _parse_dependencies(tmp_path)
+        finally:
+            tmp_path.unlink(missing_ok=True)
+    except Exception:
+        return {}
+
+
 def categorize_commits(
     commits: list[tuple[str, str]],
 ) -> dict[str, list[str]]:
@@ -482,12 +638,18 @@ def categorize_commits(
     return categories
 
 
-def generate_changelog_entry(version: str, commits: list[tuple[str, str]]) -> str:
+def generate_changelog_entry(
+    version: str,
+    commits: list[tuple[str, str]],
+    dep_diff: dict[str, list[str]] | None = None,
+) -> str:
     """生成 CHANGELOG 条目文本
 
     Args:
         version: 新版本号字符串
         commits: 提交列表
+        dep_diff: 依赖变更分类（{"upgraded": [...], "added": [...], "removed": [...]}）。
+            非空时在条目末尾追加 "### Dependencies" 段。None 或全空时省略。
 
     Returns:
         格式化的 CHANGELOG 条目
@@ -505,10 +667,29 @@ def generate_changelog_entry(version: str, commits: list[tuple[str, str]]) -> st
             lines.append(f"- {commit_msg}")
         lines.append("")
 
+    # 依赖变更段（P3）：发版者升级/新增/移除依赖时让用户在 CHANGELOG 可见
+    if dep_diff and any(dep_diff.values()):
+        lines.append("### Dependencies")
+        for label, items in (
+            ("升级", dep_diff.get("upgraded", [])),
+            ("新增", dep_diff.get("added", [])),
+            ("移除", dep_diff.get("removed", [])),
+        ):
+            if not items:
+                continue
+            lines.append(f"- {label}:")
+            for item in items:
+                lines.append(f"  - {item}")
+        lines.append("")
+
     return "\n".join(lines)
 
 
-def update_changelog(version: str, commits: list[tuple[str, str]]) -> None:
+def update_changelog(
+    version: str,
+    commits: list[tuple[str, str]],
+    dep_diff: dict[str, list[str]] | None = None,
+) -> None:
     """更新 CHANGELOG.md，在第一个 ## 标题之前插入新条目
 
     如果文件不存在则创建。
@@ -516,8 +697,9 @@ def update_changelog(version: str, commits: list[tuple[str, str]]) -> None:
     Args:
         version: 新版本号字符串
         commits: 提交列表
+        dep_diff: 依赖变更（传给 generate_changelog_entry）
     """
-    entry = generate_changelog_entry(version, commits)
+    entry = generate_changelog_entry(version, commits, dep_diff)
 
     if CHANGELOG.exists():
         content = CHANGELOG.read_text(encoding="utf-8")
@@ -666,7 +848,21 @@ def _sync_uv_lock(version: str) -> bool:
 
 
 def _generate_version_json(version: str, dist_dir: Path) -> None:
-    """生成 version.json 到输出目录"""
+    """生成 version.json 到输出目录
+
+    字段说明：
+    - dep_versions：追踪包 → 约束串（如 ">=3.3.1"、"==3.3.1+cu126"、">=2.6,<3"）。
+        完整保留 PEP 440 规格（含 local version +cu126、多段约束、!= / ~> 等），
+        读端拼接 ``{pkg}{constraint}`` 即得合法 pip requirement。
+        向后兼容三层：旧裸版本号 str（"3.3.1"）按 ">=3.3.1"；曾用 {version,op} dict
+        按 "{op}{version}"；新约束串 str 直接用。
+    - dep_extras：追踪包 → extras 列表（如 paddleocr → ["doc-parser"]）。
+        extras 是包名一部分，重建 spec 时拼回 ``pkg[extra1,extra2]``。
+        无 extras 的包不出现于此 dict；该字段整体缺失时按"无 extras"处理（旧版兼容）。
+    - removed：自上个 release tag 起从依赖中移除的包名（P4，主程序据此 pip uninstall）。
+        无移除时省略 removed 字段。
+    """
+    import re as _re
     import tomllib
 
     tomldata = tomllib.loads(PYPROJECT_TOML.read_text(encoding="utf-8"))
@@ -677,23 +873,39 @@ def _generate_version_json(version: str, dist_dir: Path) -> None:
     _KEY_ALIASES = {"paddlepaddle-gpu": "paddlepaddle"}
 
     dep_versions: dict[str, str] = {}
+    dep_extras: dict[str, list[str]] = {}
     for dep in deps:
         dep = dep.strip()
         if dep.startswith("#"):
             continue
-        for op in [">=", "==", "<=", "~="]:
-            if op in dep:
-                pkg, ver = dep.split(op, 1)
-                pkg = pkg.strip().lower()
-                # 剥掉 extras 后缀：paddleocr[doc-parser] → paddleocr
-                # 使 key 与 env_config.OCR_CHECK_MODULES 包名一致
-                pkg = pkg.split("[", 1)[0]
-                if any(pkg.startswith(p) for p in _TRACKED_PREFIXES):
-                    # dict.get 在 _KEY_ALIASES 命中时返回别名，否则回退 pkg（恒非 None）；
-                    # 静态签名是 str|None，故用 pkg 默认值并显式断言收窄。
-                    key: str = _KEY_ALIASES.get(pkg) or pkg
-                    dep_versions[key] = ver.strip()
-                break
+        # PEP 508 规格形如：name[extra1,extra2]<op><version>[,<op2><v2>]...
+        # 先分离 name + extras（[] 内）与后续 constraint。
+        m = _re.match(
+            r"^([a-zA-Z0-9_.-]+)"  # 包名
+            r"(?:\[([^\]]*)\])?"  # 可选 extras（逗号分隔）
+            r"(.+)?$",  # 后续 constraint（含操作符）
+            dep,
+        )
+        if not m:
+            continue
+        pkg_raw = m.group(1).lower()
+        extras_str = m.group(2)  # 形如 "doc-parser" 或 "a,b" 或 None
+        constraint = (m.group(3) or "").strip()
+        if not any(pkg_raw.startswith(p) for p in _TRACKED_PREFIXES):
+            continue
+        # dict.get 在 _KEY_ALIASES 命中时返回别名，否则回退 pkg（恒非 None）；
+        # 静态签名是 str|None，故用 pkg 默认值并显式断言收窄。
+        key: str = _KEY_ALIASES.get(pkg_raw) or pkg_raw
+        # constraint 必须以合法 PEP 440 操作符开头，否则视为无版本约束
+        if constraint and _re.match(r"^(==|!=|>=|<=|~=|>|<)", constraint):
+            dep_versions[key] = constraint
+        else:
+            # 无版本约束（仅 "mineru"），记录为空串占位（读端按"无约束"处理）
+            dep_versions[key] = ""
+        if extras_str:
+            extras = [e.strip() for e in extras_str.split(",") if e.strip()]
+            if extras:
+                dep_extras[key] = extras
 
     # python_version 读自 .python-version（单一源，避免与 pyproject requires-python 漂移）
     dot_python_version_path = PROJECT_ROOT / ".python-version"
@@ -702,12 +914,31 @@ def _generate_version_json(version: str, dist_dir: Path) -> None:
     else:
         python_version = "3.13"  # fallback：与 .python-version 默认值一致
 
-    data = {
+    # P4：计算自上个 release tag 起被移除的追踪包。
+    # 从上个 tag 的 pyproject 取旧依赖 → 归一化包名 → 找出现版已不存在的追踪包。
+    # 用 _KEY_ALIASES 反向映射（paddlepaddle-gpu → paddlepaddle）以与 dep_versions 的
+    # key 一致；失败时（首次发版/浅克隆）返回空，省略 removed 字段。
+    old_full_deps = _get_last_release_pyproject_deps(version, cwd=PROJECT_ROOT)
+    old_tracked_keys = set()
+    for pkg_name in old_full_deps:
+        bare = pkg_name.split("[", 1)[0]
+        if any(bare.startswith(p) for p in _TRACKED_PREFIXES):
+            key = _KEY_ALIASES.get(bare) or bare
+            old_tracked_keys.add(key)
+    removed = sorted(old_tracked_keys - set(dep_versions.keys()))
+
+    data: dict = {
         "version": version,
         "channel": "stable",
         "python_version": python_version,
         "dep_versions": dep_versions,
     }
+    # extras 单列，避免与 constraint 串混在一起难以解析。
+    # 仅在有包带 extras 时写入（旧版兼容：缺失按"无 extras"）。
+    if dep_extras:
+        data["dep_extras"] = dep_extras
+    if removed:
+        data["removed"] = removed
     version_path = dist_dir / "version.json"
     version_path.write_text(
         json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
@@ -1339,7 +1570,14 @@ def main() -> int:
 
     # 更新 CHANGELOG（生成条目，弹编辑器审阅，纳入 release 提交）
     commits = get_commits_since_last_tag()
-    update_changelog(new_str, commits)
+    # P3：对比上个 release tag 的依赖，生成依赖变更说明
+    old_deps = _get_last_release_pyproject_deps(current_str)
+    new_deps = _parse_dependencies(PYPROJECT_TOML)
+    dep_diff = _compute_dep_diff(old_deps, new_deps)
+    if any(dep_diff.values()):
+        diff_summary = sum(len(v) for v in dep_diff.values())
+        print(f"  检测到 {diff_summary} 项依赖变更，将写入 CHANGELOG")
+    update_changelog(new_str, commits, dep_diff)
     print(f"  已更新 {CHANGELOG}")
 
     # 打开编辑器审阅 CHANGELOG（--no-edit 跳过）

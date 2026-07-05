@@ -444,6 +444,328 @@ class TestGenerateVersionJson:
             f"python_version 应读自 .python-version（3.99），实际: {data['python_version']}"
         )
 
+    def test_dep_versions_use_constraint_string(self, tmp_path):
+        """P1：dep_versions 值应为 constraint 串（完整 PEP 440），保留操作符。
+
+        形如 ">=3.3.1" / "==3.3.1+cu126" / ">=2.6,<3"，读端拼接 {pkg}{constraint}
+        即得合法 pip requirement。extras 单独存于 dep_extras。
+        """
+        import json
+
+        mod = self._load_script()
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            textwrap.dedent("""\
+                [project]
+                name = "vibeocr"
+                version = "0.1.0"
+                dependencies = [
+                    "paddlepaddle-gpu>=3.3.1",
+                    "paddleocr[doc-parser]>=3.7.0",
+                    "torch>=2.6.0",
+                ]
+            """),
+            encoding="utf-8",
+        )
+        mod.PYPROJECT_TOML = pyproject
+
+        mod._generate_version_json("1.2.3", tmp_path)
+
+        data = json.loads((tmp_path / "version.json").read_text(encoding="utf-8"))
+        dep_versions = data["dep_versions"]
+        # constraint 串（含操作符）
+        assert dep_versions["paddlepaddle"] == ">=3.3.1"
+        assert dep_versions["torch"] == ">=2.6.0"
+        # extras 单独存放
+        assert data.get("dep_extras") == {"paddleocr": ["doc-parser"]}
+
+    def test_dep_versions_preserves_local_version(self, tmp_path):
+        """P1：local version (+cu126) 应完整保留在 constraint 中。"""
+        import json
+
+        mod = self._load_script()
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            textwrap.dedent("""\
+                [project]
+                name = "vibeocr"
+                version = "0.1.0"
+                dependencies = [
+                    "paddlepaddle-gpu==3.3.1+cu126",
+                ]
+            """),
+            encoding="utf-8",
+        )
+        mod.PYPROJECT_TOML = pyproject
+
+        mod._generate_version_json("1.2.3", tmp_path)
+
+        data = json.loads((tmp_path / "version.json").read_text(encoding="utf-8"))
+        # +cu126 必须保留（不被截断成 3.3.1）
+        assert data["dep_versions"]["paddlepaddle"] == "==3.3.1+cu126"
+
+    def test_dep_versions_preserves_multi_segment_constraint(self, tmp_path):
+        """P1：多段约束 (>=2.6,<3) 应完整保留，不丢失后半段。"""
+        import json
+
+        mod = self._load_script()
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            textwrap.dedent("""\
+                [project]
+                name = "vibeocr"
+                version = "0.1.0"
+                dependencies = [
+                    "torch>=2.6.0,<3.0.0",
+                ]
+            """),
+            encoding="utf-8",
+        )
+        mod.PYPROJECT_TOML = pyproject
+
+        mod._generate_version_json("1.2.3", tmp_path)
+
+        data = json.loads((tmp_path / "version.json").read_text(encoding="utf-8"))
+        assert data["dep_versions"]["torch"] == ">=2.6.0,<3.0.0"
+
+    def test_dep_versions_preserves_compatible_release(self, tmp_path):
+        """P1：~= 兼容发行操作符应正确记录。"""
+        import json
+
+        mod = self._load_script()
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            textwrap.dedent("""\
+                [project]
+                name = "vibeocr"
+                version = "0.1.0"
+                dependencies = [
+                    "torch~=2.6.0",
+                ]
+            """),
+            encoding="utf-8",
+        )
+        mod.PYPROJECT_TOML = pyproject
+
+        mod._generate_version_json("1.2.3", tmp_path)
+
+        data = json.loads((tmp_path / "version.json").read_text(encoding="utf-8"))
+        assert data["dep_versions"]["torch"] == "~=2.6.0"
+
+    def test_dep_versions_handles_not_equal_operator(self, tmp_path):
+        """P1：!= 操作符应被识别（不漏掉包）。"""
+        import json
+
+        mod = self._load_script()
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            textwrap.dedent("""\
+                [project]
+                name = "vibeocr"
+                version = "0.1.0"
+                dependencies = [
+                    "torch!=2.7.0",
+                ]
+            """),
+            encoding="utf-8",
+        )
+        mod.PYPROJECT_TOML = pyproject
+
+        mod._generate_version_json("1.2.3", tmp_path)
+
+        data = json.loads((tmp_path / "version.json").read_text(encoding="utf-8"))
+        # != 应被识别，torch 不应丢失
+        assert "torch" in data["dep_versions"]
+        assert data["dep_versions"]["torch"] == "!=2.7.0"
+
+    def test_dep_versions_multi_extras(self, tmp_path):
+        """P1：多 extras（[a,b]）应正确拆分列表。"""
+        import json
+
+        mod = self._load_script()
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            textwrap.dedent("""\
+                [project]
+                name = "vibeocr"
+                version = "0.1.0"
+                dependencies = [
+                    "paddleocr[doc-parser,rapid-table]>=3.7.0",
+                ]
+            """),
+            encoding="utf-8",
+        )
+        mod.PYPROJECT_TOML = pyproject
+
+        mod._generate_version_json("1.2.3", tmp_path)
+
+        data = json.loads((tmp_path / "version.json").read_text(encoding="utf-8"))
+        assert data["dep_versions"]["paddleocr"] == ">=3.7.0"
+        assert data["dep_extras"]["paddleocr"] == ["doc-parser", "rapid-table"]
+
+    def test_removed_field_when_dep_dropped(self, tmp_path):
+        """P4：新版移除某依赖时，version.json 应含 removed 字段。
+
+        通过 git 历史：先 commit 旧 pyproject（含 mineru）→ tag → 改 pyproject
+        移除 mineru → _generate_version_json 应把 mineru 记入 removed。
+        """
+        import json
+
+        mod = self._load_script()
+        # 初始化 git 仓库（_get_last_release_pyproject_deps 依赖 git history）
+        subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True)
+        subprocess.run(
+            ["git", "config", "user.email", "t@t.com"], cwd=tmp_path, capture_output=True
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "T"], cwd=tmp_path, capture_output=True
+        )
+        old_pyproject = tmp_path / "pyproject.toml"
+        old_pyproject.write_text(
+            textwrap.dedent("""\
+                [project]
+                name = "vibeocr"
+                version = "0.1.0"
+                dependencies = [
+                    "paddlepaddle-gpu>=3.3.1",
+                    "mineru[core]>=3.4.0",
+                ]
+            """),
+            encoding="utf-8",
+        )
+        subprocess.run(["git", "add", "."], cwd=tmp_path, capture_output=True)
+        subprocess.run(
+            ["git", "commit", "-m", "init"], cwd=tmp_path, capture_output=True
+        )
+        subprocess.run(
+            ["git", "tag", "v0.1.0"], cwd=tmp_path, capture_output=True
+        )
+
+        # 新版 pyproject：移除 mineru
+        new_pyproject_text = textwrap.dedent("""\
+            [project]
+            name = "vibeocr"
+            version = "0.2.0"
+            dependencies = [
+                "paddlepaddle-gpu>=3.3.1",
+            ]
+        """)
+        old_pyproject.write_text(new_pyproject_text, encoding="utf-8")
+        subprocess.run(["git", "add", "."], cwd=tmp_path, capture_output=True)
+        # 注意：不 commit，让 _get_last_release_pyproject_deps 从 v0.1.0 tag 读旧版
+
+        mod.PYPROJECT_TOML = old_pyproject
+        mod.PROJECT_ROOT = tmp_path
+
+        mod._generate_version_json("0.2.0", tmp_path)
+
+        data = json.loads((tmp_path / "version.json").read_text(encoding="utf-8"))
+        assert data.get("removed") == ["mineru"], (
+            f"应记入 removed=['mineru']，实际: {data.get('removed')}"
+        )
+
+    def test_no_removed_field_when_nothing_dropped(self, tmp_path):
+        """P4：无移除时不应写 removed 字段（旧读端兼容）。"""
+        import json
+
+        mod = self._load_script()
+        # 无 git 历史 → _get_last_release_pyproject_deps 返回空 → removed 为空
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            textwrap.dedent("""\
+                [project]
+                name = "vibeocr"
+                version = "0.1.0"
+                dependencies = [
+                    "paddlepaddle-gpu>=3.3.1",
+                ]
+            """),
+            encoding="utf-8",
+        )
+        mod.PYPROJECT_TOML = pyproject
+        mod.PROJECT_ROOT = tmp_path
+
+        mod._generate_version_json("1.2.3", tmp_path)
+
+        data = json.loads((tmp_path / "version.json").read_text(encoding="utf-8"))
+        assert "removed" not in data, "无移除时不应写 removed 字段"
+
+
+class TestChangelogDepDiff:
+    """P3：CHANGELOG 应附带依赖变更说明（升级/新增/移除）。"""
+
+    @staticmethod
+    def _load_script():
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location("bump_version", SCRIPT)
+        assert spec is not None and spec.loader is not None
+        mod = importlib.util.module_from_spec(spec)
+        for k in ("PYPROJECT_TOML", "INIT_PY", "MAIN_PY", "CHANGELOG"):
+            os.environ[k] = ""
+        spec.loader.exec_module(mod)
+        return mod
+
+    def test_changelog_includes_upgrade(self):
+        """dep_versions 升级时 CHANGELOG 条目应含 '### Dependencies' 段与升级文案。"""
+        mod = self._load_script()
+        dep_diff = {
+            "upgraded": ["升级 paddlepaddle-gpu 3.3.1 → 3.4.0"],
+            "added": [],
+            "removed": [],
+        }
+        entry = mod.generate_changelog_entry("1.0.0", [], dep_diff)
+        assert "### Dependencies" in entry
+        assert "升级 paddlepaddle-gpu 3.3.1 → 3.4.0" in entry
+
+    def test_changelog_includes_added_and_removed(self):
+        """新增 + 移除依赖时 CHANGELOG 应同时列出。"""
+        mod = self._load_script()
+        dep_diff = {
+            "upgraded": [],
+            "added": ["新增 scipy>=1.14.0"],
+            "removed": ["移除 mineru[core]>=3.4.0"],
+        }
+        entry = mod.generate_changelog_entry("1.0.0", [], dep_diff)
+        assert "新增 scipy>=1.14.0" in entry
+        assert "移除 mineru[core]>=3.4.0" in entry
+
+    def test_changelog_omits_dependencies_when_no_diff(self):
+        """无依赖变更时 CHANGELOG 不应含 '### Dependencies' 段。"""
+        mod = self._load_script()
+        entry = mod.generate_changelog_entry("1.0.0", [], None)
+        assert "### Dependencies" not in entry
+
+        # 全空 dict 也不应出现
+        entry2 = mod.generate_changelog_entry(
+            "1.0.0", [], {"upgraded": [], "added": [], "removed": []}
+        )
+        assert "### Dependencies" not in entry2
+
+    def test_compute_dep_diff_detects_upgrade(self):
+        """_compute_dep_diff 应识别版本升级。"""
+        mod = self._load_script()
+        old = {"paddlepaddle-gpu": "paddlepaddle-gpu>=3.3.1"}
+        new = {"paddlepaddle-gpu": "paddlepaddle-gpu>=3.4.0"}
+        diff = mod._compute_dep_diff(old, new)
+        assert len(diff["upgraded"]) == 1
+        assert "3.3.1" in diff["upgraded"][0]
+        assert "3.4.0" in diff["upgraded"][0]
+        assert diff["added"] == []
+        assert diff["removed"] == []
+
+    def test_compute_dep_diff_detects_add_and_remove(self):
+        """_compute_dep_diff 应识别新增与移除。"""
+        mod = self._load_script()
+        old = {"mineru": "mineru[core]>=3.4.0"}
+        new = {"scipy": "scipy>=1.14.0"}
+        diff = mod._compute_dep_diff(old, new)
+        assert len(diff["added"]) == 1
+        assert "scipy" in diff["added"][0]
+        assert len(diff["removed"]) == 1
+        assert "mineru" in diff["removed"][0]
+        assert diff["upgraded"] == []
+
 
 class TestInteractiveMenuBuildOption:
     """交互式菜单的"仅打包当前版本"选项测试"""
@@ -695,7 +1017,7 @@ class TestBumpPushConfirm:
         monkeypatch.setattr(mod, "update_file_version", lambda f, old, new: None)
         monkeypatch.setattr(mod, "_sync_uv_lock", lambda v: False)
         monkeypatch.setattr(mod, "get_commits_since_last_tag", list)
-        monkeypatch.setattr(mod, "update_changelog", lambda v, c: None)
+        monkeypatch.setattr(mod, "update_changelog", lambda v, c, *a, **k: None)
         monkeypatch.setattr(mod.subprocess, "run", lambda *a, **k: None)
 
     def test_push_yes_invokes_push_release(self, monkeypatch):
