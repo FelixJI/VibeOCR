@@ -1,5 +1,7 @@
 """Tests for MainWindow."""
 
+import os
+
 import pytest
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QPixmap
@@ -292,6 +294,10 @@ class TestOverlayWindowRestore:
             mock_raise.assert_not_called()
 
 
+@pytest.mark.skipif(
+    os.environ.get("QT_QPA_PLATFORM") == "offscreen",
+    reason="ScreenCaptureOverlay 在 offscreen/headless 下全量测试易崩溃(需真实屏幕)",
+)
 class TestFreshOverlayPerCapture:
     """每次截图应创建全新的 ScreenCaptureOverlay（消除分层窗口后备存储残留
     导致的「一闪而过上一次截图界面」）。

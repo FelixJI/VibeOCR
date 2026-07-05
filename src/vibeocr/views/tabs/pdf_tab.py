@@ -17,7 +17,7 @@ from PySide6.QtCore import (
     QTimer,
     Signal,
 )
-from PySide6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap
+from PySide6.QtGui import QColor, QIcon, QPen, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -42,17 +42,16 @@ from PySide6.QtWidgets import (
 
 from vibeocr.core.constants import Constants
 from vibeocr.managers.pdf_session_manager import PdfSessionManager, _wait_thread
-from vibeocr.services.pdf_service import PdfService
 from vibeocr.ui.theme import Colors
 from vibeocr.utils.thumbnail_lru_cache import ThumbnailLruCache
 from vibeocr.views.pdf_preview_window import PdfPreviewWindow
-from vibeocr.workers.pdf_render_thumb_worker import ThumbnailRenderWorker
 
 if TYPE_CHECKING:
     from vibeocr.models.ocr_options import OCROptions
     from vibeocr.models.pdf_ocr_options import PdfGlobalSettings
     from vibeocr.models.pdf_session import PdfSession
     from vibeocr.services.ocr_service_base import OCRServiceBase
+    from vibeocr.workers.pdf_render_thumb_ipc_worker import ThumbnailIpcWorker
 
 logger = logging.getLogger(__name__)
 
@@ -164,8 +163,11 @@ class ThumbnailModel(QAbstractListModel):
         super().__init__(parent)
         self._session: PdfSession | None = None
         self._cache = ThumbnailLruCache(capacity=200)
-        self._render_worker: ThumbnailRenderWorker | None = None
+        self._render_worker: ThumbnailIpcWorker | None = None
         self._render_dpi = 96
+        # generation 校验:invalidate(row) 自增该行 gen;请求带 gen,响应带 gen,
+        # 只在 gen 匹配时入缓存,丢弃失效后仍在途的旧渲染结果(旋转 ABA)。
+        self._gen: dict[int, int] = {}
 
     def set_session(self, session: PdfSession | None) -> None:
         """切换数据源（切文件/导入时）：停旧 worker、清缓存、起新 worker。"""
@@ -173,36 +175,51 @@ class ThumbnailModel(QAbstractListModel):
         self.beginResetModel()
         self._session = session
         self._cache.clear()
+        self._gen.clear()
         self.endResetModel()
         if session is not None:
             self._start_render_worker(session)
 
     def _start_render_worker(self, session: PdfSession) -> None:
-        self._render_worker = ThumbnailRenderWorker(
-            doc=session.doc,
-            doc_lock=session.doc_lock,
-            dpi=session.pdf_document.thumbnail_dpi,
+        # 进程化:缩略图走 IPC(client.render_thumbnail → PNG → QPixmap)
+        from vibeocr.workers.pdf_render_thumb_ipc_worker import ThumbnailIpcWorker
+
+        mgr = self._get_manager()
+        if mgr is None:
+            return
+        self._render_worker = ThumbnailIpcWorker(
+            client=mgr.backend_client,
+            session_id=session.session_id,
             size=_THUMBNAIL_SIZE,
         )
         self._render_worker.thumbnail_ready.connect(self._on_thumbnail_ready)
         self._render_worker.start()
 
+    def _get_manager(self):
+        """从父 PdfTab 拿 manager(渲染需要 backend_client)。延迟绑定避免构造期依赖。"""
+        parent = self.parent()
+        if parent is None:
+            return None
+        # parent 通常是 PdfTab(ThumbnailModel 作为 QAbstractListModel,
+        # 由 PdfTab 持有,parent() 返回 PdfTab)
+        return getattr(parent, "_session_mgr", None) or getattr(parent, "manager", None)
+
     def _stop_render_worker(self) -> None:
         if self._render_worker is not None:
             self._render_worker.cancel()
-            # worker 常驻不自杀，cancel() 投 _STOP 后最多一页渲染（96DPI ~50ms）
-            # 即退出；锁获取带 0.5s 超时不会长卡。500ms 足够，避免切文件时
-            # GUI 线程长阻塞。
             _wait_thread(
                 self._render_worker,
                 timeout_ms=Constants.Timeout.Ms.PDF_WORKER_TERMINATE_WAIT,
             )
             self._render_worker = None
 
-    def _on_thumbnail_ready(self, page_index: int, pixmap: QPixmap) -> None:
-        """后台渲染回调：回填 LRU 缓存并通知视图重绘该行。"""
+    def _on_thumbnail_ready(self, page_index: int, pixmap: object, gen: int) -> None:
+        """IPC 渲染回调:generation 校验后回填 LRU 缓存。"""
+        # 丢弃陈旧结果(gen 不匹配说明该页已被 invalidate,新请求在路上)
+        if self._gen.get(page_index, 0) != gen:
+            return
+        assert isinstance(pixmap, QPixmap)
         self._cache.put(page_index, pixmap)
-        # page_index == row（重排前顺序一致）
         if 0 <= page_index < self.rowCount():
             idx = self.index(page_index, 0)
             self.dataChanged.emit(idx, idx, [Qt.ItemDataRole.DecorationRole])
@@ -213,43 +230,42 @@ class ThumbnailModel(QAbstractListModel):
             return
         if row in self._cache:
             return
-        self._render_worker.request(row)
+        assert self._render_worker is not None
+        self._render_worker.request(row, self._gen.get(row, 0))
 
     def request_range(self, first: int, last: int) -> None:
         """请求渲染 [first, last] 行范围（去重由 worker 处理）。"""
         if not self._ensure_render_worker_alive():
             return
+        assert self._render_worker is not None
         for row in range(max(0, first), min(self.rowCount(), last + 1)):
             if row not in self._cache:
-                self._render_worker.request(row)
+                self._render_worker.request(row, self._gen.get(row, 0))
 
     def _ensure_render_worker_alive(self) -> bool:
-        """确保 render worker 存活：None 或已结束（isFinished）则重启。
-
-        worker 现在常驻不自杀，但 set_session 切换/异常后可能为 None；
-        极端情况下（terminate）也可能 isFinished。此方法做兜底重启，
-        避免请求投进无人消费的队列导致缩略图永久空白。
-        """
+        """确保 render worker 存活:None 或已结束则重启。"""
         if self._session is None:
             return False
         if self._render_worker is not None and not self._render_worker.isFinished():
             return True
-        # worker 死亡或为 None：停掉残骸并重启
         self._stop_render_worker()
         self._start_render_worker(self._session)
         return True
 
     def invalidate(self, row: int) -> None:
-        """失效单页缓存（旋转后），并触发该行重渲（若可能可见）。"""
+        """失效单页缓存(旋转后),自增 gen 触发该行重渲。"""
         self._cache.invalidate(row)
+        self._gen[row] = self._gen.get(row, 0) + 1
         if 0 <= row < self.rowCount():
             idx = self.index(row, 0)
             self.dataChanged.emit(idx, idx, [Qt.ItemDataRole.DecorationRole])
             self.request_render(row)
 
     def invalidate_all(self) -> None:
-        """失效全部缓存（旋转全部后），触发可见行重渲。"""
+        """失效全部缓存(旋转全部后),自增全部 gen,触发可见行重渲。"""
         self._cache.clear()
+        for row in range(self.rowCount()):
+            self._gen[row] = self._gen.get(row, 0) + 1
         if self.rowCount() > 0:
             self.dataChanged.emit(
                 self.index(0, 0),
@@ -666,6 +682,7 @@ class PdfTab(QWidget):
         mgr.export_progress.connect(self._on_export_progress)
         mgr.export_done.connect(self._on_export_done)
         mgr.deskew_page_done.connect(self._on_deskew_page_done)
+        mgr.deskew_progress.connect(self._on_deskew_progress)
         mgr.deskew_done.connect(self._on_deskew_done)
         mgr.deskew_failed.connect(self._on_deskew_failed)
         mgr.open_progress.connect(self._on_open_progress)
@@ -810,12 +827,44 @@ class PdfTab(QWidget):
             self._status_label.setText(f"正在处理 {current}/{total}…")
 
     def _on_mutate_done(self, file_path: str, result) -> None:
-        """mutate 逐页/整体完成。逐页 payload 更新 grid 格子。"""
+        """mutate 逐页/整体完成。
+
+        - {"page": ...}:逐页 payload(删除文字层逐页),更新 grid 格子。
+        - {"diff_applied": True}:结构变更(旋转/删页/插页/重排)整体完成,
+          model 已由 manager apply,此处刷新缩略图模型 + 文字层网格 + 状态。
+        """
         session = self._session_mgr.active_session
         if session is None or session.file_path != file_path:
             return
-        if isinstance(result, dict) and "page" in result:
-            self._update_layer_grid_page(result["page"])
+        if isinstance(result, dict):
+            if "page" in result:
+                self._update_layer_grid_page(result["page"])
+            elif result.get("diff_applied"):
+                # 结构变更:model 已刷新,重置缩略图模型数据源 + 文字层网格。
+                self._after_structural_change()
+
+    def _after_structural_change(self) -> None:
+        """结构变更(删页/插页/重排/旋转全部)后统一刷新 UI。
+
+        model 的 pages 已由 manager apply_diff 刷新,缩略图模型读取同一列表,
+        故只需 beginResetModel/endResetModel 通知视图重读,并刷新文字层网格。
+        """
+        session = self._session_mgr.active_session
+        if session is None:
+            return
+        # 删页:清理 loaded_pages 中已不存在的索引
+        pending_del = getattr(self, "_pending_delete_indices", None)
+        if pending_del:
+            session.loaded_pages -= pending_del
+            self._pending_delete_indices = None
+        # 插页:loaded_pages 失效(索引移位),清空让 UI 按需重判
+        extra = getattr(self, "_pending_insert", False)
+        if extra:
+            session.loaded_pages.clear()
+            self._pending_insert = False
+        self._refresh_thumbnails()
+        self._update_status()
+        self._update_layer_status()
 
     def _on_mutate_failed(self, file_path: str, error: str) -> None:
         session = self._session_mgr.active_session
@@ -1363,27 +1412,19 @@ class PdfTab(QWidget):
             self._open_preview(idx)
 
     def _on_pages_reordered_with_order(self, new_order: list[int]) -> None:
-        """用显式 new_order 应用重排：PdfService 重排文档 + 刷新缩略图模型。
+        """用显式 new_order 应用重排(异步 IPC)。
 
-        缩略图 pixmap 内容不变（只是顺序变了），PdfService.reorder_pages 会改写
-        pdf_document.pages 顺序（模型数据源），故须先记录选中 page_index 再重排。
+        重排是结构变更,后端 reorder 完成后 manager 通过 mutate_done +
+        thumbnails_invalidated 信号通知 UI 刷新(model 已 apply diff)。
         """
         session = self._session_mgr.active_session
         if session is None or not new_order:
             return
-        # 必须在 reorder_pages 之前捕获选中：它直接改写 pdf_document.pages，
-        # 而模型读取同一列表，重排后 UserRole 会与原选中行错位。
+        # 必须在 reorder 之前捕获选中:重排后 UserRole 会与原选中行错位。
         selected_pages = self._get_selected_page_indices()
-        with session.doc_lock:
-            PdfService.reorder_pages(session.doc, session.pdf_document, new_order)
-        # 两侧面板都读取 pages（缩略图 model + 文字层网格），须同步刷新
-        self._syncing_selection = True
-        try:
-            self._reorder_thumbnail_model(selected_pages)
-            self._update_layer_status()
-        finally:
-            self._syncing_selection = False
-        self._update_status()
+        self._reorder_pending_selection = selected_pages
+        self._session_mgr.reorder_async(new_order)
+        # UI 刷新在 _on_mutate_done 回调里做(见 _handle_mutate_done_for_reorder)
 
     def _on_rotate(self, angle: int) -> None:
         session = self._session_mgr.active_session
@@ -1392,12 +1433,8 @@ class PdfTab(QWidget):
         indices = self._get_selected_page_indices()
         if not indices:
             return
-        with session.doc_lock:
-            PdfService.rotate_pages(session.doc, session.pdf_document, indices, angle)
-        # 旋转改变了页面视觉 → 失效缓存，由按需 worker 重渲可见页。
-        # 统一走 rerender_thumbnails_async → thumbnails_invalidated 信号，
-        # 与 rotate_all / deskew 共用唯一缩略图失效入口。
-        self._session_mgr.rerender_thumbnails_async(indices)
+        # 异步 IPC:后端旋转 + apply diff + thumbnails_invalidated 由 manager 处理。
+        self._session_mgr.rotate_pages_async(indices, angle)
         self._update_status()
 
     def _on_rotate_all(self) -> None:
@@ -1413,10 +1450,8 @@ class PdfTab(QWidget):
         if reply != QMessageBox.StandardButton.Yes:
             return
         indices = list(range(session.pdf_document.page_count))
-        with session.doc_lock:
-            PdfService.rotate_pages(session.doc, session.pdf_document, indices, 90)
-        # 失效全部缩略图缓存，由按需 worker 重渲可见页（旋转全部后）。
-        self._session_mgr.rerender_thumbnails_async(indices)
+        # 异步 IPC:后端旋转全部 + 缩略图失效由 manager 处理。
+        self._session_mgr.rotate_pages_async(indices, 90)
         self._update_status()
 
     def _on_auto_deskew(self) -> None:
@@ -1436,7 +1471,12 @@ class PdfTab(QWidget):
         if not indices:
             QMessageBox.information(self, "自动摆正", "请先选中要摆正的页面。")
             return
-        self._btn_auto_deskew.setEnabled(False)
+        # 进度 UI + 独占锁(禁用所有页操作按钮,仅留取消)
+        self._progress_bar.setRange(0, 0)  # 不确定(检测阶段无 tick)
+        self._progress_bar.setVisible(True)
+        self._btn_cancel.setVisible(True)
+        self._set_file_buttons_enabled(False)
+        self._status_label.setText("正在摆正…")
         self._session_mgr.auto_deskew_async(indices)
 
     def _on_deskew_page_done(
@@ -1450,8 +1490,27 @@ class PdfTab(QWidget):
         # 让已纠偏角标（_DESKEWED_ROLE）即时更新。
         self._update_layer_grid_page(page_index)
 
+    def _on_deskew_progress(
+        self, file_path: str, current: int, total: int
+    ) -> None:
+        """摆正进度:total > 0 时切确定进度条。"""
+        session = self._session_mgr.active_session
+        if session is None or session.file_path != file_path:
+            return
+        if total > 0:
+            self._progress_bar.setRange(0, total)
+            self._progress_bar.setValue(current)
+            phase = "识别方向" if current <= total // 2 else "纠正"
+            self._status_label.setText(f"正在{phase} {current}/{total}…")
+        else:
+            self._progress_bar.setRange(0, 0)
+            self._status_label.setText("正在摆正…")
+
     def _on_deskew_done(self, session_id: str, summary) -> None:
-        self._btn_auto_deskew.setEnabled(True)
+        # 收尾进度 UI + 恢复按钮
+        self._progress_bar.setVisible(False)
+        self._btn_cancel.setVisible(False)
+        self._set_file_buttons_enabled(True)
         session = self._session_mgr.active_session
         if session is None or session.file_path != session_id:
             return
@@ -1470,7 +1529,9 @@ class PdfTab(QWidget):
         self._update_status()
 
     def _on_deskew_failed(self, session_id: str, error: str) -> None:
-        self._btn_auto_deskew.setEnabled(True)
+        self._progress_bar.setVisible(False)
+        self._btn_cancel.setVisible(False)
+        self._set_file_buttons_enabled(True)
         QMessageBox.warning(self, "自动摆正失败", error)
         self._update_status()
 
@@ -1506,14 +1567,12 @@ class PdfTab(QWidget):
         )
         if reply != QMessageBox.StandardButton.Yes:
             return
-        with session.doc_lock:
-            PdfService.delete_pages(session.doc, session.pdf_document, indices)
-        session.loaded_pages -= set(indices)
-        # 删页改变了 page_index 与位置映射，预览窗口的 _page_indices 会错位 → 关闭。
+        # 异步 IPC:结构变更,manager 通过 mutate_done + thumbnails_invalidated 刷新。
+        # 标记待删页索引,供 _on_mutate_done 回调里更新 loaded_pages。
+        self._pending_delete_indices = set(indices)
+        self._session_mgr.delete_pages_async(indices)
+        # 删页改变 page_index 映射,预览窗口的 _page_indices 会错位 → 关闭。
         self._close_preview_window_if_open()
-        self._refresh_thumbnails()
-        self._update_status()
-        self._update_layer_status()
 
     def _on_insert_page(self) -> None:
         session = self._session_mgr.active_session
@@ -1526,23 +1585,14 @@ class PdfTab(QWidget):
             self, "选择要插入的 PDF", "", "PDF 文件 (*.pdf)"
         )
         if path:
-            try:
-                with session.doc_lock:
-                    PdfService.insert_pages_from(
-                        session.doc, session.pdf_document, path, after_index
-                    )
-            except Exception as e:
-                QMessageBox.warning(self, "插入失败", str(e))
-                return
+            # 异步 IPC 插入(失败由 manager.mutate_failed 信号上报)
+            self._pending_insert = True
+            self._session_mgr.insert_from_async(path, after_index)
         else:
-            with session.doc_lock:
-                PdfService.insert_blank_page(
-                    session.doc, session.pdf_document, after_index
-                )
-        session.loaded_pages.clear()
-        self._refresh_thumbnails()
-        self._update_status()
-        self._update_layer_status()
+            # 未选文件 → 插入空白页
+            self._pending_insert = True
+            self._session_mgr.insert_blank_async(after_index)
+        # 结构变更刷新在 _on_mutate_done 回调(loaded_pages 清空 + 重渲)
 
     # ---- preview ----------------------------------------------------
 
@@ -1573,6 +1623,7 @@ class PdfTab(QWidget):
     def _render_preview_page(self, page_idx: int) -> None:
         """渲染指定页填充预览窗口（翻页信号回调 / 初始打开共用）。
 
+        进程化:预览图走 IPC(client.render_preview → PNG → QPixmap)。
         优先 OCR 原始块（细粒度，可双击编辑），无则回退 text_layers（粗块仅可视化），
         都没有则显示纯页面图（无高亮）。
         """
@@ -1582,8 +1633,18 @@ class PdfTab(QWidget):
         page_info = session.pdf_document.get_page(page_idx)
         if page_info is None:
             return
-        with session.doc_lock:
-            pixmap = PdfService.render_page(session.doc, page_idx, dpi=150)
+        # IPC 取预览 PNG(同步,GUI 短暂阻塞;单页 150dpi ~50-200ms 可接受)
+        try:
+            png = self._session_mgr.backend_client.render_preview(
+                session.session_id, page_idx, dpi=150
+            )
+            pixmap = QPixmap()
+            pixmap.loadFromData(png, "PNG")
+        except Exception as e:
+            logger.error("预览渲染页 %d 失败: %s", page_idx, e)
+            return
+        if pixmap.isNull():
+            return
         win = self._preview_window
         assert win is not None
         if page_info.ocr_text_blocks:
@@ -1592,20 +1653,16 @@ class PdfTab(QWidget):
                 f"文字层预览 — 第{page_idx + 1}页 ({len(page_info.ocr_text_blocks)}个文字块)"
             )
         elif page_info.has_text_layer and not page_info.text_layers:
-            # 延迟加载：load worker 只判 has_text_layer 不取 text_layers 详情，
-            # 预览时按需调 detect_text_layers 取 bbox（单页 ~180ms，用户主动触发可接受）。
-            with session.doc_lock:
-                page_info.text_layers = PdfService.detect_text_layers(
-                    session.doc, page_idx
-                )
+            # 延迟加载:后端只判 has_text_layer 不取 text_layers 详情,
+            # 预览时按需调 IPC detect_text_layers 取 bbox(单页 ~180ms,用户主动触发可接受)。
+            page_info.text_layers = self._session_mgr.detect_text_layers(page_idx)
             if page_info.text_layers:
-                with session.doc_lock:
-                    page_rect = session.doc[page_idx].rect
+                # page_rect 已由 load worker 缓存到模型，不再直接读 fitz 对象。
                 win.set_highlight(
                     pixmap,
                     page_info.text_layers,
                     render_dpi=150,
-                    page_rect=page_rect,
+                    page_rect=page_info.rect,
                     source="pdf",
                 )
                 win.setWindowTitle(
@@ -1615,13 +1672,11 @@ class PdfTab(QWidget):
                 win.set_page_pixmap(pixmap)
                 win.setWindowTitle(f"文字层预览 — 第{page_idx + 1}页 (无文字层)")
         elif page_info.text_layers:
-            with session.doc_lock:
-                page_rect = session.doc[page_idx].rect
             win.set_highlight(
                 pixmap,
                 page_info.text_layers,
                 render_dpi=150,
-                page_rect=page_rect,
+                page_rect=page_info.rect,
                 source="pdf",
             )
             win.setWindowTitle(
@@ -1853,7 +1908,15 @@ class PdfTab(QWidget):
     # ---- cancel -----------------------------------------------------
 
     def _on_cancel(self) -> None:
-        self._session_mgr.cancel_ocr()
+        """取消当前操作:按运行状态路由到 deskew / ocr / mutate。"""
+        mgr = self._session_mgr
+        if mgr.is_deskew_running:
+            mgr.cancel_deskew()
+        elif mgr.is_ocr_running:
+            mgr.cancel_ocr()
+        elif mgr.is_mutate_running:
+            # 通用 mutate(删除文字层等):后端 cancel_event 协作式
+            mgr._cancel_mutate_worker()  # noqa: SLF001
 
     # ---- public API for MainWindow ----------------------------------
 

@@ -18,7 +18,7 @@ class TestPdfSession:
     def test_defaults(self, single_page_doc):
         pdf_doc = PdfDocument(file_path="test.pdf", pages=[PdfPageInfo(page_index=0)])
         session = PdfSession(
-            file_path="test.pdf", doc=single_page_doc, pdf_document=pdf_doc
+            file_path="test.pdf", session_id="test-sid", pdf_document=pdf_doc
         )
 
         assert session.file_path == "test.pdf"
@@ -30,7 +30,7 @@ class TestPdfSession:
     def test_is_modified_delegates_to_pdf_document(self, single_page_doc):
         pdf_doc = PdfDocument(file_path="test.pdf", pages=[PdfPageInfo(page_index=0)])
         session = PdfSession(
-            file_path="test.pdf", doc=single_page_doc, pdf_document=pdf_doc
+            file_path="test.pdf", session_id="test-sid", pdf_document=pdf_doc
         )
 
         assert session.is_modified is False
@@ -44,7 +44,7 @@ class TestPdfSession:
             pages=[PdfPageInfo(page_index=0), PdfPageInfo(page_index=1)],
         )
         session = PdfSession(
-            file_path="test.pdf", doc=single_page_doc, pdf_document=pdf_doc
+            file_path="test.pdf", session_id="test-sid", pdf_document=pdf_doc
         )
         session.loaded_pages.add(0)
 
@@ -53,7 +53,7 @@ class TestPdfSession:
     def test_load_progress_empty_doc(self):
         doc = fitz.open()
         pdf_doc = PdfDocument(file_path="empty.pdf", pages=[])
-        session = PdfSession(file_path="empty.pdf", doc=doc, pdf_document=pdf_doc)
+        session = PdfSession(file_path="empty.pdf", session_id="test-sid", pdf_document=pdf_doc)
 
         assert session.load_progress == 1.0
         doc.close()
@@ -61,7 +61,7 @@ class TestPdfSession:
     def test_load_progress_all_loaded(self, single_page_doc):
         pdf_doc = PdfDocument(file_path="test.pdf", pages=[PdfPageInfo(page_index=0)])
         session = PdfSession(
-            file_path="test.pdf", doc=single_page_doc, pdf_document=pdf_doc
+            file_path="test.pdf", session_id="test-sid", pdf_document=pdf_doc
         )
         session.loaded_pages.add(0)
 
@@ -73,7 +73,7 @@ class TestPdfSessionOcrStats:
     def test_default_ocr_stats_are_zero(self, single_page_doc):
         pdf_doc = PdfDocument(file_path="test.pdf", pages=[PdfPageInfo(page_index=0)])
         session = PdfSession(
-            file_path="test.pdf", doc=single_page_doc, pdf_document=pdf_doc
+            file_path="test.pdf", session_id="test-sid", pdf_document=pdf_doc
         )
         assert session.ocr_stats == {"written": 0, "skipped": 0}
         single_page_doc.close()
@@ -81,7 +81,7 @@ class TestPdfSessionOcrStats:
     def test_reset_ocr_stats(self, single_page_doc):
         pdf_doc = PdfDocument(file_path="test.pdf", pages=[PdfPageInfo(page_index=0)])
         session = PdfSession(
-            file_path="test.pdf", doc=single_page_doc, pdf_document=pdf_doc
+            file_path="test.pdf", session_id="test-sid", pdf_document=pdf_doc
         )
         session.add_ocr_stats(3, 1)
         assert session.ocr_stats == {"written": 3, "skipped": 1}
@@ -92,7 +92,7 @@ class TestPdfSessionOcrStats:
     def test_add_ocr_stats_accumulates(self, single_page_doc):
         pdf_doc = PdfDocument(file_path="test.pdf", pages=[PdfPageInfo(page_index=0)])
         session = PdfSession(
-            file_path="test.pdf", doc=single_page_doc, pdf_document=pdf_doc
+            file_path="test.pdf", session_id="test-sid", pdf_document=pdf_doc
         )
         session.add_ocr_stats(2, 1)
         session.add_ocr_stats(5, 0)

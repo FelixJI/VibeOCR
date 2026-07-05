@@ -56,7 +56,9 @@ class PreviewCanvas(QWidget):
         # 旧数据源：text_layers（PDF points 坐标）
         self._highlight_layers: list = []
         self._render_dpi: int = 150
-        self._page_rect: fitz.Rect | None = None
+        # page_rect 接受 fitz.Rect 或 4-tuple (x0,y0,x1,y1)，
+        # 下沉子进程后主进程不再 import fitz，统一传 tuple。
+        self._page_rect: tuple[float, float, float, float] | fitz.Rect | None = None
         self._source: str = "pdf"
 
         # 新数据源：OCR 原始块（归一化 [0,1000] bbox）
@@ -155,7 +157,7 @@ class PreviewCanvas(QWidget):
         self,
         layers: list,
         render_dpi: int = 150,
-        page_rect: fitz.Rect | None = None,
+        page_rect: tuple[float, float, float, float] | fitz.Rect | None = None,
         source: str = "pdf",
     ) -> None:
         self._clear_ocr_blocks()  # 切换数据源时清除 OCR 块
@@ -502,7 +504,7 @@ class PdfPreviewWindow(QWidget):
         pixmap: QPixmap,
         layers: list,
         render_dpi: int = 150,
-        page_rect: fitz.Rect | None = None,
+        page_rect: tuple[float, float, float, float] | fitz.Rect | None = None,
         source: str = "pdf",
     ) -> None:
         """设置预览页面与高亮层（公共 API，替代直接访问 _canvas）。"""

@@ -2247,6 +2247,7 @@ name = "vibeocr"
 version = "0.4.7"
 source = { editable = "." }
 dependencies = [
+    { name = "fastapi", marker = "sys_platform == 'win32'" },
     { name = "fonttools", marker = "sys_platform == 'win32'" },
     { name = "httpx", marker = "sys_platform == 'win32'" },
     { name = "markdown", marker = "sys_platform == 'win32'" },
@@ -2257,6 +2258,7 @@ dependencies = [
     { name = "paddleocr", extra = ["doc-parser"], marker = "sys_platform == 'win32'" },
     { name = "paddlepaddle-gpu", marker = "sys_platform == 'win32'" },
     { name = "pillow", marker = "sys_platform == 'win32'" },
+    { name = "pydantic", marker = "sys_platform == 'win32'" },
     { name = "pymupdf", marker = "sys_platform == 'win32'" },
     { name = "pyside6", marker = "sys_platform == 'win32'" },
     { name = "python-barcode", marker = "sys_platform == 'win32'" },
@@ -2265,6 +2267,7 @@ dependencies = [
     { name = "qasync", marker = "sys_platform == 'win32'" },
     { name = "qrcode", extra = ["pil"], marker = "sys_platform == 'win32'" },
     { name = "torch", marker = "sys_platform == 'win32'" },
+    { name = "uvicorn", marker = "sys_platform == 'win32'" },
 ]
 
 [package.dev-dependencies]
@@ -2281,6 +2284,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "fastapi", specifier = ">=0.115.0" },
     { name = "fonttools", specifier = ">=4.61.1" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "markdown", specifier = ">=3.10.2" },
@@ -2291,6 +2295,7 @@ requires-dist = [
     { name = "paddleocr", extras = ["doc-parser"], specifier = ">=3.7.0" },
     { name = "paddlepaddle-gpu", specifier = ">=3.3.1" },
     { name = "pillow", specifier = ">=12.2.0" },
+    { name = "pydantic", specifier = ">=2.11.0" },
     { name = "pymupdf", specifier = ">=1.27.2.3" },
     { name = "pyside6", specifier = ">=6.11.1" },
     { name = "python-barcode", specifier = ">=0.16.1" },
@@ -2299,6 +2304,7 @@ requires-dist = [
     { name = "qasync", specifier = ">=0.28.0" },
     { name = "qrcode", extras = ["pil"], specifier = ">=8.2" },
     { name = "torch", specifier = ">=2.6.0", index = "https://mirrors.nju.edu.cn/pytorch/whl/cu126" },
+    { name = "uvicorn", specifier = ">=0.34.0" },
 ]
 
 [package.metadata.requires-dev]
