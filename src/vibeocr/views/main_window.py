@@ -496,6 +496,11 @@ class MainWindow(QMainWindow):
         install_embedded_dependencies（含 GPU/CUDA tag/镜像/PyPI 回退的完整逻辑）
         升级 python/，避免裸 pip 走 PyPI 把 paddle/torch 装成 CPU 版。
 
+        pending_sync 字段（向后兼容）：
+        - dep_versions：变化的包 → {"version", "op"} 或旧式裸 str（展示用 key 即可）
+        - removed：被移除的包名列表（同步成功后调 uninstall_removed_deps 清理）
+        - attempts：失败重试计数（达 SYNC_MAX_ATTEMPTS 提示重装 Python）
+
         Returns:
             是否存在待同步标记（True 表示已弹出升级对话框接管流程）
         """
@@ -515,23 +520,39 @@ class MainWindow(QMainWindow):
             return False
 
         changed = data.get("dep_versions", {})
-        if not changed:
+        removed = data.get("removed", [])
+        if not changed and not removed:
             # 空标记，清理后走常规流程
             self._delete_pending_sync()
             return False
 
         version = data.get("version", "")
-        pkgs = ", ".join(changed.keys())
-        logging.info(f"[依赖同步] 检测到待同步标记（目标版本 {version}）：{changed}")
-        self._statusbar.showMessage(f"正在同步 OCR 依赖更新：{pkgs}")
+        # 展示用包名列表：取 dict/str 的 key 即可，兼容两种格式
+        pkgs = ", ".join(changed.keys()) if changed else ""
+        removed_str = ", ".join(removed) if removed else ""
+        display_parts = [p for p in (pkgs, removed_str) if p]
+        display = "、".join(display_parts) if display_parts else ""
+
+        logging.info(
+            f"[依赖同步] 检测到待同步标记（目标版本 {version}）："
+            f"changed={changed} removed={removed}"
+        )
+        self._statusbar.showMessage(f"正在同步 OCR 依赖更新：{display}")
 
         from vibeocr.widgets.install_dialog import InstallDialog
 
         dialog = InstallDialog(self._project_root, self)
         dialog.setWindowTitle("同步 OCR 依赖更新")
-        dialog._title_label.setText(
-            f"检测到新版本依赖（{version}），正在同步更新：\n{pkgs}"
-        )
+
+        title_lines = [f"检测到新版本依赖（{version}），正在同步更新："]
+        if pkgs:
+            title_lines.append(f"升级：{pkgs}")
+        if removed_str:
+            title_lines.append(f"清理：{removed_str}")
+        dialog._title_label.setText("\n".join(title_lines))
+
+        # 缓存 removed 供 _on_sync_finished 升级成功后清理
+        self._pending_removed = list(removed)
         dialog.finished.connect(self._on_sync_finished)
         dialog.exec()
         return True
@@ -540,7 +561,11 @@ class MainWindow(QMainWindow):
     def _on_sync_finished(self, result: int) -> None:
         """依赖同步对话框完成"""
         if result == 1:
-            # 升级成功，删除一次性标记
+            # 升级成功，先清理已移除的依赖（P4），再删除一次性标记
+            removed = getattr(self, "_pending_removed", [])
+            if removed:
+                self._cleanup_removed_deps(removed)
+                self._pending_removed = []
             self._delete_pending_sync()
             self._statusbar.showMessage("OCR 依赖同步完成")
             logging.info("[依赖同步] 依赖同步完成，重新检查依赖")
@@ -553,10 +578,78 @@ class MainWindow(QMainWindow):
             # 同步会重装 python/ 内的包，Python 运行时状态可能变化，刷新设置页 label
             self._refresh_settings_env_state()
         else:
-            # 升级失败：保留标记供下次启动重试（与 pending_backend 同模式）
+            # 升级失败：递增 attempts 计数，达阈值提示重装 Python（P2）
+            attempts = self._increment_sync_attempts()
+            from vibeocr.services.env_config import SYNC_MAX_ATTEMPTS
+
             self._ocr_ready = False
-            self._statusbar.showMessage("OCR 依赖同步失败，将在下次启动重试")
-            logging.warning("[依赖同步] 同步失败，保留 pending_sync.json 供重试")
+            if attempts >= SYNC_MAX_ATTEMPTS:
+                msg = (
+                    f"OCR 依赖同步已失败 {attempts} 次，建议在「设置 → 环境」中"
+                    "重装 Python 运行时后再试"
+                )
+                self._statusbar.showMessage(msg)
+                logging.warning(
+                    "[依赖同步] 同步失败次数达阈值 %d，已提示用户重装 Python",
+                    attempts,
+                )
+            else:
+                self._statusbar.showMessage(
+                    f"OCR 依赖同步失败（第 {attempts} 次），将在下次启动重试"
+                )
+                logging.warning(
+                    "[依赖同步] 同步失败（第 %d 次），保留 pending_sync.json 供重试",
+                    attempts,
+                )
+
+    def _increment_sync_attempts(self) -> int:
+        """递增 pending_sync.json 的 attempts 字段并返回新值。
+
+        读取失败或字段缺失时按 1 处理（首次失败）。写入失败仅记录警告，
+        不阻断流程（最坏情况是提示滞后一次）。
+        """
+        from vibeocr.services.env_config import get_pending_sync_path
+
+        pending_path = get_pending_sync_path()
+        try:
+            import json
+
+            data = (
+                json.loads(pending_path.read_text(encoding="utf-8"))
+                if pending_path.exists()
+                else {}
+            )
+            attempts = int(data.get("attempts", 1)) + 1
+            data["attempts"] = attempts
+            pending_path.write_text(
+                json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+            return attempts
+        except Exception as e:
+            logging.warning(f"[依赖同步] 递增 attempts 失败: {e}")
+            return 1
+
+    def _cleanup_removed_deps(self, removed: list[str]) -> None:
+        """升级成功后清理已移除的依赖（P4）。
+
+        在独立线程跑 uninstall_removed_deps，避免阻塞 UI。
+        失败仅记录日志（不阻断主流程，残留包不影响运行）。
+        """
+        import threading
+
+        from vibeocr.env_manager import uninstall_removed_deps
+
+        def _run() -> None:
+            try:
+                ok, msg = uninstall_removed_deps(self._project_root, removed)
+                if ok:
+                    logging.info(f"[依赖同步] 依赖清理完成: {msg}")
+                else:
+                    logging.warning(f"[依赖同步] 依赖清理未完全成功: {msg}")
+            except Exception as e:
+                logging.warning(f"[依赖同步] 依赖清理异常: {e}")
+
+        threading.Thread(target=_run, daemon=True).start()
 
     def _delete_pending_sync(self) -> None:
         """删除 pending_sync.json 标记文件（同步成功或标记无效时调用）"""

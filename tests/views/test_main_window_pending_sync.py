@@ -23,12 +23,16 @@ class _StubWindow:
         self._ocr_ready = False
         self._statusbar = MagicMock()
         self._dependency_manager = MagicMock()
+        # P4：_check_pending_sync 缓存 removed 供 _on_sync_finished 清理
+        self._pending_removed: list[str] = []
 
     # 借用 MainWindow 的未绑定方法
     _check_pending_sync = MainWindow._check_pending_sync
     _on_sync_finished = MainWindow._on_sync_finished
     _delete_pending_sync = MainWindow._delete_pending_sync
     _refresh_settings_env_state = MainWindow._refresh_settings_env_state
+    _increment_sync_attempts = MainWindow._increment_sync_attempts
+    _cleanup_removed_deps = MainWindow._cleanup_removed_deps
 
 
 def _write_pending(path: Path, dep_versions: dict, version: str = "0.2.0") -> None:
@@ -147,6 +151,47 @@ def test_sync_failure_preserves_marker(tmp_path):
     assert pending.exists(), "失败时标记应保留"
     assert stub._ocr_ready is False
     stub._dependency_manager.reset.assert_not_called()
+
+
+def test_sync_failure_increments_attempts(tmp_path):
+    """P2：同步失败时应递增 pending_sync.json 的 attempts 字段。"""
+    pending = tmp_path / "pending_sync.json"
+    _write_pending(pending, {"paddlepaddle": "3.3.1"})
+    # 初始 attempts 为 1（模拟 updater 首次写入）
+    data = json.loads(pending.read_text(encoding="utf-8"))
+    data["attempts"] = 1
+    pending.write_text(json.dumps(data), encoding="utf-8")
+
+    stub = _StubWindow()
+    with patch(
+        "vibeocr.services.env_config.get_pending_sync_path", return_value=pending
+    ):
+        stub._on_sync_finished(0)
+
+    updated = json.loads(pending.read_text(encoding="utf-8"))
+    assert updated["attempts"] == 2, f"attempts 应递增到 2，实际: {updated.get('attempts')}"
+
+
+def test_sync_failure_threshold_shows_reinstall_hint(tmp_path):
+    """P2：attempts 达 SYNC_MAX_ATTEMPTS 时状态栏应提示重装 Python。"""
+    from vibeocr.services.env_config import SYNC_MAX_ATTEMPTS
+
+    pending = tmp_path / "pending_sync.json"
+    _write_pending(pending, {"paddlepaddle": "3.3.1"})
+    # attempts 设为阈值 - 1，递增后恰好达到阈值
+    data = json.loads(pending.read_text(encoding="utf-8"))
+    data["attempts"] = SYNC_MAX_ATTEMPTS - 1
+    pending.write_text(json.dumps(data), encoding="utf-8")
+
+    stub = _StubWindow()
+    with patch(
+        "vibeocr.services.env_config.get_pending_sync_path", return_value=pending
+    ):
+        stub._on_sync_finished(0)
+
+    # 状态栏消息应含"重装"提示
+    msg = stub._statusbar.showMessage.call_args[0][0]
+    assert "重装" in msg, f"达阈值应提示重装 Python，实际消息: {msg}"
 
 
 # ---------------------------------------------------------------------------

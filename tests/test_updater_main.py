@@ -221,14 +221,27 @@ class TestSyncDependencies:
     旧实现用裸 pip install pkg==ver 走 PyPI 默认源，会把 paddle/torch 装成
     CPU 版丢失 CUDA。新实现写标记文件，由覆盖后的 VibeOCR 用
     install_embedded_dependencies（含 GPU/CUDA tag/镜像）升级。
+
+    dep_versions 值为 constraint 串（完整 PEP 440，如 ">=3.3.1" / "==3.3.1+cu126" /
+    ">=2.6,<3"），归一化函数兼容三种历史格式（约束串 / {version,op} dict / 裸版本号）。
+
+    新增字段（P1/P2/P4）：
+    - dep_versions：变化的包 → constraint 串
+    - dep_extras：变化的包的 extras 列表（透传）
+    - attempts：失败重试计数（主程序递增，达阈值提示重装 Python）
+    - removed：被移除的包名列表（主程序 pip uninstall 清理）
     """
 
     def test_writes_pending_sync_when_deps_changed(self, updater, tmp_path):
-        """dep_versions 有变化时，应写入 pending_sync.json（含变更项）。"""
+        """dep_versions 有变化时，应写入 pending_sync.json（含变更项 + constraint + attempts）。"""
+        # 旧格式 str / 新格式 constraint 串混合，验证归一化比较
         old_deps = {"paddlepaddle": "3.3.0", "torch": "2.6.0"}
         new_data = {
             "version": "0.2.0",
-            "dep_versions": {"paddlepaddle": "3.3.1", "torch": "2.6.0"},
+            "dep_versions": {
+                "paddlepaddle": ">=3.3.1",
+                "torch": ">=2.6.0",
+            },
         }
 
         updater._sync_dependencies(old_deps, new_data, tmp_path)
@@ -238,17 +251,23 @@ class TestSyncDependencies:
         import json
 
         data = json.loads(pending.read_text(encoding="utf-8"))
-        # 只含变更项（torch 未变，不应出现）
-        assert data["dep_versions"] == {"paddlepaddle": "3.3.1"}
+        # 只含变更项（torch 未变，不应出现）；值为 constraint 串
+        assert data["dep_versions"] == {"paddlepaddle": ">=3.3.1"}
         assert data["version"] == "0.2.0"
         assert "written_at" in data
+        # P2：初始 attempts 为 1
+        assert data["attempts"] == 1
 
     def test_no_marker_when_deps_unchanged(self, updater, tmp_path):
         """dep_versions 无变化时，不应写入 pending_sync.json。"""
+        # 旧裸 str "3.3.1" 归一化为 ">=3.3.1"，与新 constraint ">=3.3.1" 相等 → 不变
         old_deps = {"paddlepaddle": "3.3.1", "torch": "2.6.0"}
         new_data = {
             "version": "0.2.0",
-            "dep_versions": {"paddlepaddle": "3.3.1", "torch": "2.6.0"},
+            "dep_versions": {
+                "paddlepaddle": ">=3.3.1",
+                "torch": ">=2.6.0",
+            },
         }
 
         updater._sync_dependencies(old_deps, new_data, tmp_path)
@@ -262,9 +281,9 @@ class TestSyncDependencies:
         new_data = {
             "version": "0.3.0",
             "dep_versions": {
-                "paddlepaddle": "3.3.1",  # 变
-                "paddleocr": "3.7.0",  # 不变
-                "mineru": "3.4.1",  # 变
+                "paddlepaddle": ">=3.3.1",  # 变
+                "paddleocr": ">=3.7.0",  # 不变
+                "mineru": ">=3.4.1",  # 变
             },
         }
 
@@ -275,8 +294,8 @@ class TestSyncDependencies:
         pending = tmp_path / "data" / "settings" / "pending_sync.json"
         data = json.loads(pending.read_text(encoding="utf-8"))
         assert set(data["dep_versions"].keys()) == {"paddlepaddle", "mineru"}
-        assert data["dep_versions"]["paddlepaddle"] == "3.3.1"
-        assert data["dep_versions"]["mineru"] == "3.4.1"
+        assert data["dep_versions"]["paddlepaddle"] == ">=3.3.1"
+        assert data["dep_versions"]["mineru"] == ">=3.4.1"
 
     def test_does_not_call_pip(self, updater, tmp_path, monkeypatch):
         """同步不应再调用 subprocess（不直接 pip 安装）。"""
@@ -291,7 +310,10 @@ class TestSyncDependencies:
         )
 
         old_deps = {"paddlepaddle": "3.3.0"}
-        new_data = {"version": "0.2.0", "dep_versions": {"paddlepaddle": "3.3.1"}}
+        new_data = {
+            "version": "0.2.0",
+            "dep_versions": {"paddlepaddle": ">=3.3.1"},
+        }
 
         updater._sync_dependencies(old_deps, new_data, tmp_path)
 
@@ -300,12 +322,251 @@ class TestSyncDependencies:
     def test_creates_settings_dir_if_missing(self, updater, tmp_path):
         """data/settings/ 目录不存在时应自动创建。"""
         old_deps = {"paddlepaddle": "3.3.0"}
-        new_data = {"version": "0.2.0", "dep_versions": {"paddlepaddle": "3.3.1"}}
+        new_data = {
+            "version": "0.2.0",
+            "dep_versions": {"paddlepaddle": ">=3.3.1"},
+        }
 
         # app_dir 是空的，data/settings 不存在
         updater._sync_dependencies(old_deps, new_data, tmp_path)
 
         assert (tmp_path / "data" / "settings" / "pending_sync.json").exists()
+
+    # ------------------------------------------------------------------
+    # P1：constraint 透传（PEP 440 全格式）
+    # ------------------------------------------------------------------
+
+    def test_sync_passes_equals_constraint(self, updater, tmp_path):
+        """=='==' 时应原样透传，使主程序能精确锁定/降级版本。"""
+        old_deps = {"paddlepaddle": ">=3.4.0"}
+        new_data = {
+            "version": "0.4.0",
+            "dep_versions": {"paddlepaddle": "==3.3.1"},
+        }
+
+        updater._sync_dependencies(old_deps, new_data, tmp_path)
+        import json
+
+        pending = tmp_path / "data" / "settings" / "pending_sync.json"
+        data = json.loads(pending.read_text(encoding="utf-8"))
+        assert data["dep_versions"]["paddlepaddle"] == "==3.3.1"
+
+    def test_sync_passes_local_version(self, updater, tmp_path):
+        """local version (+cu126) 应完整保留在 constraint 中。"""
+        old_deps = {"paddlepaddle": ">=3.3.1"}
+        new_data = {
+            "version": "0.4.0",
+            "dep_versions": {"paddlepaddle": "==3.3.1+cu126"},
+        }
+
+        updater._sync_dependencies(old_deps, new_data, tmp_path)
+        import json
+
+        pending = tmp_path / "data" / "settings" / "pending_sync.json"
+        data = json.loads(pending.read_text(encoding="utf-8"))
+        assert data["dep_versions"]["paddlepaddle"] == "==3.3.1+cu126"
+
+    def test_sync_passes_multi_segment_constraint(self, updater, tmp_path):
+        """多段约束（>=2.6,<3）应完整透传，不丢失后半段。"""
+        old_deps = {"torch": ">=2.6.0"}
+        new_data = {
+            "version": "0.4.0",
+            "dep_versions": {"torch": ">=2.6.0,<3.0.0"},
+        }
+
+        updater._sync_dependencies(old_deps, new_data, tmp_path)
+        import json
+
+        pending = tmp_path / "data" / "settings" / "pending_sync.json"
+        data = json.loads(pending.read_text(encoding="utf-8"))
+        assert data["dep_versions"]["torch"] == ">=2.6.0,<3.0.0"
+
+    def test_sync_passes_compatible_release(self, updater, tmp_path):
+        """~= 兼容发行操作符应正确透传。"""
+        old_deps = {"torch": ">=2.5.0"}
+        new_data = {
+            "version": "0.4.0",
+            "dep_versions": {"torch": "~=2.6.0"},
+        }
+
+        updater._sync_dependencies(old_deps, new_data, tmp_path)
+        import json
+
+        pending = tmp_path / "data" / "settings" / "pending_sync.json"
+        data = json.loads(pending.read_text(encoding="utf-8"))
+        assert data["dep_versions"]["torch"] == "~=2.6.0"
+
+    def test_constraint_change_triggers_sync(self, updater, tmp_path):
+        """仅 constraint 变化(版本相同但操作符变)也应触发同步。"""
+        old_deps = {"paddlepaddle": ">=3.3.1"}
+        new_data = {
+            "version": "0.4.0",
+            "dep_versions": {"paddlepaddle": "==3.3.1"},
+        }
+
+        updater._sync_dependencies(old_deps, new_data, tmp_path)
+        import json
+
+        pending = tmp_path / "data" / "settings" / "pending_sync.json"
+        data = json.loads(pending.read_text(encoding="utf-8"))
+        assert data["dep_versions"]["paddlepaddle"] == "==3.3.1"
+
+    # ------------------------------------------------------------------
+    # 三层向后兼容（归一化）
+    # ------------------------------------------------------------------
+
+    def test_normalizes_legacy_version_op_dict(self, updater, tmp_path):
+        """曾用 {version, op} dict 格式应被归一化为 constraint 串比较。"""
+        # 旧版 dict {version:3.3.0,op:>=} 与新版 constraint ">=3.3.0" 应判为相等
+        old_deps = {"paddlepaddle": {"version": "3.3.0", "op": ">="}}
+        new_data = {
+            "version": "0.4.0",
+            "dep_versions": {"paddlepaddle": ">=3.3.0"},
+        }
+
+        updater._sync_dependencies(old_deps, new_data, tmp_path)
+        pending = tmp_path / "data" / "settings" / "pending_sync.json"
+        assert not pending.exists(), "归一化后相等不应写标记"
+
+    def test_normalizes_legacy_bare_version(self, updater, tmp_path):
+        """旧旧版裸版本号 str 应按 >=N 归一化比较。"""
+        # 旧裸 "3.3.0" → ">=3.3.0"，与新版 ">=3.3.0" 相等
+        old_deps = {"paddlepaddle": "3.3.0"}
+        new_data = {
+            "version": "0.4.0",
+            "dep_versions": {"paddlepaddle": ">=3.3.0"},
+        }
+
+        updater._sync_dependencies(old_deps, new_data, tmp_path)
+        pending = tmp_path / "data" / "settings" / "pending_sync.json"
+        assert not pending.exists(), "归一化后相等不应写标记"
+
+    def test_writes_legacy_dict_format_as_constraint(self, updater, tmp_path):
+        """新版若仍写 {version,op} dict（旧 bump_version 生成），应转成 constraint 写入。"""
+        old_deps = {"paddlepaddle": "3.3.0"}
+        new_data = {
+            "version": "0.4.0",
+            "dep_versions": {"paddlepaddle": {"version": "3.3.1", "op": "=="}},
+        }
+
+        updater._sync_dependencies(old_deps, new_data, tmp_path)
+        import json
+
+        pending = tmp_path / "data" / "settings" / "pending_sync.json"
+        data = json.loads(pending.read_text(encoding="utf-8"))
+        # dict 应被归一化为 constraint 串
+        assert data["dep_versions"]["paddlepaddle"] == "==3.3.1"
+
+    # ------------------------------------------------------------------
+    # P1 extras：透传
+    # ------------------------------------------------------------------
+
+    def test_passes_extras_for_changed_pkg(self, updater, tmp_path):
+        """变化的包带 extras 时，应透传 dep_extras。"""
+        old_deps = {"paddleocr": ">=3.6.0"}
+        new_data = {
+            "version": "0.4.0",
+            "dep_versions": {"paddleocr": ">=3.7.0"},
+            "dep_extras": {"paddleocr": ["doc-parser"]},
+        }
+
+        updater._sync_dependencies(old_deps, new_data, tmp_path)
+        import json
+
+        pending = tmp_path / "data" / "settings" / "pending_sync.json"
+        data = json.loads(pending.read_text(encoding="utf-8"))
+        assert data.get("dep_extras") == {"paddleocr": ["doc-parser"]}
+
+    def test_no_extras_field_when_none(self, updater, tmp_path):
+        """无 extras 时不写 dep_extras 字段。"""
+        old_deps = {"paddlepaddle": "3.3.0"}
+        new_data = {
+            "version": "0.2.0",
+            "dep_versions": {"paddlepaddle": ">=3.3.1"},
+        }
+
+        updater._sync_dependencies(old_deps, new_data, tmp_path)
+        import json
+
+        pending = tmp_path / "data" / "settings" / "pending_sync.json"
+        data = json.loads(pending.read_text(encoding="utf-8"))
+        assert "dep_extras" not in data
+
+    # ------------------------------------------------------------------
+    # P2：attempts 计数初始化
+    # ------------------------------------------------------------------
+
+    def test_attempts_initialized_to_1(self, updater, tmp_path):
+        """pending_sync 首次写入时 attempts 应为 1。"""
+        old_deps = {"paddlepaddle": "3.3.0"}
+        new_data = {
+            "version": "0.2.0",
+            "dep_versions": {"paddlepaddle": ">=3.3.1"},
+        }
+
+        updater._sync_dependencies(old_deps, new_data, tmp_path)
+        import json
+
+        pending = tmp_path / "data" / "settings" / "pending_sync.json"
+        data = json.loads(pending.read_text(encoding="utf-8"))
+        assert data["attempts"] == 1
+
+    # ------------------------------------------------------------------
+    # P4：removed 字段透传
+    # ------------------------------------------------------------------
+
+    def test_writes_removed_when_dep_dropped(self, updater, tmp_path):
+        """旧版有、新版无的追踪包，应记入 removed 字段。"""
+        old_deps = {
+            "paddlepaddle": ">=3.3.1",
+            "mineru": ">=3.4.0",  # 新版移除
+        }
+        new_data = {
+            "version": "0.5.0",
+            "dep_versions": {"paddlepaddle": ">=3.3.1"},
+        }
+
+        updater._sync_dependencies(old_deps, new_data, tmp_path)
+        import json
+
+        pending = tmp_path / "data" / "settings" / "pending_sync.json"
+        data = json.loads(pending.read_text(encoding="utf-8"))
+        assert data.get("removed") == ["mineru"]
+
+    def test_no_removed_field_when_nothing_dropped(self, updater, tmp_path):
+        """无移除时不应写 removed 字段（旧读端兼容）。"""
+        old_deps = {"paddlepaddle": "3.3.0"}
+        new_data = {
+            "version": "0.2.0",
+            "dep_versions": {"paddlepaddle": ">=3.3.1"},
+        }
+
+        updater._sync_dependencies(old_deps, new_data, tmp_path)
+        import json
+
+        pending = tmp_path / "data" / "settings" / "pending_sync.json"
+        data = json.loads(pending.read_text(encoding="utf-8"))
+        assert "removed" not in data
+
+    def test_filters_non_tracked_from_removed(self, updater, tmp_path):
+        """removed 只含 _TRACKED_PREFIXES 内的包，过滤掉非追踪残留。"""
+        old_deps = {
+            "paddlepaddle": ">=3.3.1",
+            "numpy": ">=2.0.0",  # 非追踪包，不应进 removed
+            "torch": ">=2.6.0",
+        }
+        new_data = {
+            "version": "0.5.0",
+            # 新版移除 torch，保留 paddlepaddle
+            "dep_versions": {"paddlepaddle": ">=3.3.1"},
+        }
+
+        updater._sync_dependencies(old_deps, new_data, tmp_path)
+        import json
+
+        pending = tmp_path / "data" / "settings" / "pending_sync.json"
+        data = json.loads(pending.read_text(encoding="utf-8"))
+        assert data.get("removed") == ["torch"]
 
 
 # ---------------------------------------------------------------------------

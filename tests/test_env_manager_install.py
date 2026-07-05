@@ -576,6 +576,242 @@ class TestLoadDepSpecs:
         _load_dep_specs()
 
 
+class TestLoadDepSpecsVersionJsonFormat:
+    """_load_dep_specs 的 version.json 分支：三层格式向后兼容。
+
+    P1：bump_version 现在写 constraint 串（如 ">=3.3.1" / "==3.3.1+cu126"），
+    完整保留 PEP 440 规格（含 local version、多段、!= 等）。读端拼接
+    ``{pkg}{constraint}`` 即得合法 pip requirement；extras 从 dep_extras 拼回。
+
+    三层兼容：
+    - 当前版：constraint 串 str（以 PEP 440 操作符开头）→ 直接用
+    - 曾用版：{"version", "op"} dict → 拼 "{op}{version}"
+    - 旧旧版：裸版本号 str（如 "3.3.1"）→ 按 ">=3.3.1"
+    """
+
+    def _load_with_version_json(self, tmp_path, dep_versions, dep_extras=None):
+        """patch project_root 到 tmp_path，写入 version.json，重置缓存后调用。
+
+        用 try/finally 确保测试后还原 _dep_specs_cache，避免污染后续测试
+        （缓存命中会让其它测试读到测试数据而非真实 pyproject）。
+        """
+        import json
+
+        import vibeocr.env_manager as em
+
+        em._dep_specs_cache = None
+        payload: dict = {"version": "1.0.0", "dep_versions": dep_versions}
+        if dep_extras is not None:
+            payload["dep_extras"] = dep_extras
+        (tmp_path / "version.json").write_text(
+            json.dumps(payload),
+            encoding="utf-8",
+        )
+        try:
+            with patch("vibeocr.env_manager.get_project_root", return_value=tmp_path):
+                return _load_dep_specs()
+        finally:
+            em._dep_specs_cache = None
+
+    def test_parses_constraint_string(self, tmp_path):
+        """当前版 constraint 串应直接拼成完整 spec。"""
+        specs = self._load_with_version_json(
+            tmp_path,
+            {
+                "paddlepaddle": ">=3.3.1",
+                "torch": "==2.6.0+cu126",
+            },
+        )
+        assert specs["paddlepaddle"] == "paddlepaddle>=3.3.1"
+        # local version 完整保留
+        assert specs["torch"] == "torch==2.6.0+cu126"
+
+    def test_parses_multi_segment_constraint(self, tmp_path):
+        """多段约束应完整拼回。"""
+        specs = self._load_with_version_json(
+            tmp_path,
+            {"torch": ">=2.6.0,<3.0.0"},
+        )
+        assert specs["torch"] == "torch>=2.6.0,<3.0.0"
+
+    def test_parses_not_equal_constraint(self, tmp_path):
+        """!= 操作符的 constraint 应正确识别。"""
+        specs = self._load_with_version_json(
+            tmp_path,
+            {"torch": "!=2.7.0"},
+        )
+        assert specs["torch"] == "torch!=2.7.0"
+
+    def test_parses_legacy_dict_format(self, tmp_path):
+        """曾用 {version, op} dict 应拼成 '{op}{version}'。"""
+        specs = self._load_with_version_json(
+            tmp_path,
+            {
+                "paddlepaddle": {"version": "3.3.1", "op": ">="},
+                "torch": {"version": "2.6.0", "op": "=="},
+            },
+        )
+        assert specs["paddlepaddle"] == "paddlepaddle>=3.3.1"
+        assert specs["torch"] == "torch==2.6.0"
+
+    def test_parses_legacy_bare_string(self, tmp_path):
+        """旧旧版裸版本号 str 应按 >=N 处理。"""
+        specs = self._load_with_version_json(
+            tmp_path,
+            {"paddlepaddle": "3.3.1", "torch": "2.6.0"},
+        )
+        assert specs["paddlepaddle"] == "paddlepaddle>=3.3.1"
+        assert specs["torch"] == "torch>=2.6.0"
+
+    def test_legacy_dict_default_op_when_missing(self, tmp_path):
+        """dict 缺 op 字段时按 >= 处理（防御）。"""
+        specs = self._load_with_version_json(
+            tmp_path,
+            {"paddlepaddle": {"version": "3.3.1"}},  # 无 op
+        )
+        assert specs["paddlepaddle"] == "paddlepaddle>=3.3.1"
+
+    def test_legacy_dict_empty_op_falls_back_to_ge(self, tmp_path):
+        """dict 的 op 为空串时按 >= 处理。"""
+        specs = self._load_with_version_json(
+            tmp_path,
+            {"paddlepaddle": {"version": "3.3.1", "op": ""}},
+        )
+        assert specs["paddlepaddle"] == "paddlepaddle>=3.3.1"
+
+    def test_rebuilds_extras(self, tmp_path):
+        """extras 应从 dep_extras 拼回 spec：pkg[extra]constraint。"""
+        specs = self._load_with_version_json(
+            tmp_path,
+            {"paddleocr": ">=3.7.0"},
+            dep_extras={"paddleocr": ["doc-parser"]},
+        )
+        assert specs["paddleocr"] == "paddleocr[doc-parser]>=3.7.0"
+
+    def test_rebuilds_multi_extras(self, tmp_path):
+        """多 extras 应按 [a,b] 顺序拼回。"""
+        specs = self._load_with_version_json(
+            tmp_path,
+            {"paddleocr": ">=3.7.0"},
+            dep_extras={"paddleocr": ["doc-parser", "rapid-table"]},
+        )
+        assert specs["paddleocr"] == "paddleocr[doc-parser,rapid-table]>=3.7.0"
+
+    def test_no_extras_field_means_bare_pkg(self, tmp_path):
+        """无 dep_extras 字段时，包名不带 extras（兼容旧 version.json）。"""
+        specs = self._load_with_version_json(
+            tmp_path,
+            {"paddleocr": ">=3.7.0"},  # 无 dep_extras
+        )
+        assert specs["paddleocr"] == "paddleocr>=3.7.0"
+
+    def test_empty_constraint_means_bare_pkg(self, tmp_path):
+        """constraint 为空串（无版本约束）时 spec 只剩包名。"""
+        specs = self._load_with_version_json(
+            tmp_path,
+            {"mineru": ""},  # 无版本约束
+        )
+        # 裸包名（pip install mineru 装最新版）
+        assert specs["mineru"] == "mineru"
+
+
+class TestUninstallRemovedDeps:
+    """P4：uninstall_removed_deps 卸载已从 dep_versions 移除的依赖。"""
+
+    def test_empty_list_returns_success(self, tmp_path):
+        """空 removed_names 应立即返回成功，不调用 pip。"""
+        from vibeocr.env_manager import uninstall_removed_deps
+
+        ok, msg = uninstall_removed_deps(tmp_path, [])
+        assert ok
+        assert "无依赖需移除" in msg
+
+    def test_returns_failure_when_python_missing(self, tmp_path):
+        """嵌入式 Python 不存在时应失败。"""
+        from vibeocr.env_manager import uninstall_removed_deps
+
+        # tmp_path 下无 python/python.exe
+        with patch(
+            "vibeocr.env_manager.get_embedded_python_executable",
+            return_value=tmp_path / "python" / "python.exe",
+        ):
+            ok, msg = uninstall_removed_deps(tmp_path, ["mineru"])
+        assert not ok
+        assert "Python 运行时未安装" in msg
+
+    def test_uninstall_calls_pip_for_each_pkg(self, tmp_path):
+        """对每个包应调用 pip uninstall -y。"""
+        from vibeocr.env_manager import uninstall_removed_deps
+
+        python_exe = tmp_path / "python.exe"
+        python_exe.touch()
+
+        calls = []
+
+        def mock_run(cmd, **kwargs):
+            calls.append(cmd)
+            r = MagicMock()
+            r.returncode = 0
+            r.stdout = "Successfully uninstalled"
+            r.stderr = ""
+            return r
+
+        with (
+            patch(
+                "vibeocr.env_manager.get_embedded_python_executable",
+                return_value=python_exe,
+            ),
+            patch(
+                "vibeocr.env_manager._check_imports", return_value={"mineru": False}
+            ),
+            patch("vibeocr.env_manager.update_cache_field"),
+            patch(
+                "vibeocr.env_manager.subprocess.Popen",
+                side_effect=_popen_side_effect(mock_run),
+            ),
+        ):
+            ok, msg = uninstall_removed_deps(tmp_path, ["mineru", "scipy"])
+
+        assert ok, f"应成功，msg={msg}"
+        # 应有两次 pip uninstall 调用
+        uninstall_cmds = [c for c in calls if "uninstall" in c]
+        assert len(uninstall_cmds) == 2
+        # 验证 -y 非交互
+        for cmd in uninstall_cmds:
+            assert "-y" in cmd
+
+    def test_package_not_installed_treated_as_success(self, tmp_path):
+        """pip 返回非零但提示"未安装"时视为成功（目标已达成）。"""
+        from vibeocr.env_manager import uninstall_removed_deps
+
+        python_exe = tmp_path / "python.exe"
+        python_exe.touch()
+
+        def mock_run(cmd, **kwargs):
+            r = MagicMock()
+            r.returncode = 1  # 非零
+            r.stdout = "WARNING: Skipping mineru as it is not installed."
+            r.stderr = ""
+            return r
+
+        with (
+            patch(
+                "vibeocr.env_manager.get_embedded_python_executable",
+                return_value=python_exe,
+            ),
+            patch(
+                "vibeocr.env_manager._check_imports", return_value={}
+            ),
+            patch("vibeocr.env_manager.update_cache_field"),
+            patch(
+                "vibeocr.env_manager.subprocess.Popen",
+                side_effect=_popen_side_effect(mock_run),
+            ),
+        ):
+            ok, msg = uninstall_removed_deps(tmp_path, ["mineru"])
+        assert ok, f"包未安装应视为成功，msg={msg}"
+
+
 class TestInstallPaddleStackAlias:
     """_install_paddle_stack 键名兼容测试
 

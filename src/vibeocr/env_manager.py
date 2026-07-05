@@ -129,9 +129,39 @@ def _load_dep_specs() -> dict[str, str]:
     version_json = project_root / "version.json"
     if version_json.exists():
         import json
+        import re as _re
 
         data = json.loads(version_json.read_text(encoding="utf-8"))
-        specs = {k: f"{k}>={v}" for k, v in data.get("dep_versions", {}).items()}
+        raw_versions: dict = data.get("dep_versions", {})
+        # dep_extras: {pkg: [extra1, extra2]}，缺失时按空（无 extras）处理。
+        raw_extras: dict = data.get("dep_extras", {})
+        specs: dict[str, str] = {}
+        for k, v in raw_versions.items():
+            # 三层向后兼容（按历史演进顺序）：
+            # 1. 旧旧版：裸版本号 str（如 "3.3.1"），按 ">=3.3.1" 处理
+            # 2. 曾用版：{"version": "3.3.1", "op": ">="} dict，拼成 ">=3.3.1"
+            # 3. 当前版：约束串 str（如 ">=3.3.1" / "==3.3.1+cu126" / ">=1,<2"）
+            #    —— 以 PEP 440 操作符开头即为约束串，否则按裸版本号处理。
+            if isinstance(v, dict):
+                ver = str(v.get("version", "")).strip()
+                op = str(v.get("op", ">=")).strip() or ">="
+                constraint = f"{op}{ver}"
+            else:
+                s = str(v).strip()
+                # 已是约束串（以操作符开头）→ 直接用；否则视为裸版本号
+                if s and _re.match(r"^(==|!=|>=|<=|~=|>|<)", s):
+                    constraint = s
+                elif s:
+                    constraint = f">={s}"
+                else:
+                    constraint = ""  # 无版本约束
+            # 拼回完整 PEP 508 规格：pkg[extras]constraint
+            extras_list = raw_extras.get(k)
+            if extras_list:
+                extras_str = "[" + ",".join(extras_list) + "]"
+                specs[k] = f"{k}{extras_str}{constraint}".rstrip()
+            else:
+                specs[k] = f"{k}{constraint}".rstrip() if constraint else k
         _dep_specs_cache = specs
         return specs
 
@@ -1133,7 +1163,10 @@ def _build_paddle_requirements(
     # 打包环境 version.json 用 _KEY_ALIASES 把 paddlepaddle-gpu 归一为 paddlepaddle；
     # 开发环境 pyproject 保留 paddlepaddle-gpu。两端兼容取规格。
     raw_paddle_spec = specs.get("paddlepaddle-gpu") or specs["paddlepaddle"]
-    _ver_m = _re.search(r"(==|>=|<=|~=|>|<).+", raw_paddle_spec)
+    # 提取完整 constraint 串（含 local version +cu126、多段约束、!= 等）。
+    # 注意：!= 单独使用无意义（不指定要哪个版本），但组合约束里可能出现，
+    # 故纳入匹配。无 constraint 时（仅包名）返回空串，pip 装最新版。
+    _ver_m = _re.search(r"(==|!=|>=|<=|~=|>|<).+", raw_paddle_spec)
     paddle_version_constraint = _ver_m.group(0) if _ver_m else ""
     paddle_gpu_spec = f"paddlepaddle-gpu{paddle_version_constraint}"
     paddle_cpu_spec = f"paddlepaddle{paddle_version_constraint}"
@@ -1743,6 +1776,99 @@ def install_missing_dependencies(
         on_proc=on_proc,
         project_root=project_root,
     )
+
+
+def uninstall_removed_deps(
+    project_root: Path,
+    removed_names: list[str],
+    progress_callback: Callable[[str, str], None] | None = None,
+    cancel_event: threading.Event | None = None,
+    on_proc: Callable[[subprocess.Popen], None] | None = None,
+) -> tuple[bool, str]:
+    """卸载已从 dep_versions 移除的依赖（P4：依赖移除清理）。
+
+    场景：发版者主动从 pyproject.toml 移除某依赖（如不再用 mineru），
+    bump_version 计算 removed 列表写入 version.json → updater 透传到
+    pending_sync.json → 主程序消费时调用本函数清理 python/Lib/site-packages
+    中残留的包，避免占空间。
+
+    安全保障：
+    - removed_names 仅来自发版者的 pyproject 移除声明（白名单严格），不会误删
+      用户手动装的包（用户手装的包不在 dep_versions 里，自然不会进 removed）。
+    - 单个包卸载失败不阻断整体流程（包不存在时 pip 返回非零，按成功对待）。
+    - 不卸载 paddle/torch 核心 CUDA 运行时（即便被移除，其它包可能仍依赖其 DLL），
+      由调用方保证 removed 列表准确；本函数信任输入。
+
+    Args:
+        project_root: 项目根目录
+        removed_names: 要卸载的包名列表（已归一化，如 ["mineru"]）
+        progress_callback: 进度回调 (stage, message)
+        cancel_event: 取消事件
+        on_proc: 子进程句柄回调（与 _run_pip 一致）
+
+    Returns:
+        (是否成功, 消息)。全部卸载完成（含"包不存在"跳过）即成功。
+    """
+    if not removed_names:
+        return True, "无依赖需移除"
+
+    python_exe = get_embedded_python_executable(project_root)
+    if not python_exe.exists():
+        return False, "Python 运行时未安装"
+
+    def report(stage: str, msg: str) -> None:
+        logger.info("[%s] %s", stage, msg)
+        if progress_callback:
+            progress_callback(stage, msg)
+
+    report("依赖清理", f"开始卸载已移除的依赖: {', '.join(removed_names)}")
+
+    failed: list[str] = []
+    for pkg in removed_names:
+        if cancel_event is not None and cancel_event.is_set():
+            report("依赖清理", "卸载已取消")
+            return False, "用户已取消卸载"
+        # pip uninstall -y 非交互卸载。包不存在时 pip 报 "WARNING: Skipping <pkg>"
+        # 并返回非零；此处视为成功（目标"不存在"已达成）。
+        report("依赖清理", f"正在卸载 {pkg}...")
+        try:
+            result = _run_pip(
+                [str(python_exe), "-m", "pip", "uninstall", "-y", pkg],
+                timeout=120,
+                cancel_event=cancel_event,
+                on_proc=on_proc,
+            )
+            # returncode != 0 通常是"包未安装"，按成功对待；仅记录 warning 供排查。
+            if result.returncode != 0:
+                out = (result.stdout or "") + (result.stderr or "")
+                if "not installed" in out.lower() or "skip" in out.lower():
+                    report("依赖清理", f"{pkg} 未安装，跳过")
+                else:
+                    report("依赖清理", f"{pkg} 卸载返回非零（可能部分残留）: {out[:100]}")
+                    logger.warning("[依赖清理] %s 卸载异常: %s", pkg, out[:200])
+        except InstallCancelled:
+            return False, "用户已取消卸载"
+        except subprocess.TimeoutExpired:
+            failed.append(pkg)
+            report("依赖清理", f"{pkg} 卸载超时")
+            logger.warning("[依赖清理] %s 卸载超时", pkg)
+        except Exception as e:
+            failed.append(pkg)
+            report("依赖清理", f"{pkg} 卸载异常: {e}")
+            logger.warning("[依赖清理] %s 卸载异常: %s", pkg, e)
+
+    # 刷新依赖缓存（卸载后 import_status 应变化）
+    try:
+        import_status = _check_imports(python_exe)
+        update_cache_field(project_root, "dependencies", import_status)
+        logger.info("[依赖清理] 已刷新依赖缓存")
+    except Exception as e:
+        logger.warning("[依赖清理] 刷新依赖缓存失败: %s", e)
+
+    if failed:
+        return False, f"部分依赖卸载失败: {', '.join(failed)}"
+    report("依赖清理", "已移除依赖清理完成")
+    return True, "已移除依赖清理完成"
 
 
 def detect_cuda_version() -> str | None:

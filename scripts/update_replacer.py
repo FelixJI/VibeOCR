@@ -453,6 +453,30 @@ def _busy_copy2(src, dst):
 # ---------------------------------------------------------------------------
 
 
+def _normalize_dep_value(v: object) -> str:
+    """把 dep_versions 的值归一化为 constraint 串（如 ">=3.3.1"）。
+
+    兼容三种历史格式（替换器读到的 version.json 可能由不同版本写入）：
+    - 当前版：约束串 str（如 ">=3.3.1" / "==3.3.1+cu126" / ">=1,<2"）→ 直接用
+    - 曾用版：{"version": "3.3.1", "op": ">="} dict → 拼成 ">=3.3.1"
+    - 旧旧版：裸版本号 str（如 "3.3.1"）→ 按 ">=3.3.1"
+
+    替换器需在 diff 前归一化，避免不同格式因类型/字符串差异被误判为变化。
+    """
+    if isinstance(v, dict):
+        ver = str(v.get("version", "")).strip()
+        op = str(v.get("op", ">=")).strip() or ">="
+        return f"{op}{ver}"
+    s = str(v).strip()
+    # 已是约束串（以 PEP 440 操作符开头）→ 直接返回；否则视为裸版本号
+    if s and (
+        s.startswith(("==", "!=", ">=", "<=", "~="))
+        or (s[:1] in "><" and len(s) > 1)
+    ):
+        return s
+    return f">={s}" if s else ""
+
+
 def _sync_dependencies(old_deps: dict, new_data: dict, app_dir: Path) -> None:
     """检查 AI 依赖版本变化并写入"待同步"标记。
 
@@ -462,30 +486,60 @@ def _sync_dependencies(old_deps: dict, new_data: dict, app_dir: Path) -> None:
     写入 data/settings/pending_sync.json，由覆盖后的新版 VibeOCR 启动时用
     env_manager.install_embedded_dependencies（含 GPU/CUDA tag/镜像/PyPI 回退的完整
     逻辑）执行升级。这样避免替换器用裸 pip 走 PyPI 把 paddle/torch 装成 CPU 版。
+
+    写入字段：
+    - dep_versions：变化的包 → constraint 串（完整 PEP 440，支持 local version、
+        多段约束、精确锁 ==/降级）
+    - dep_extras：变化的包的 extras 列表（透传新版 dep_extras 中对应项）
+    - removed：新版从 dep_versions 中移除的包名列表（由主程序 pip uninstall）
+    - attempts：失败重试计数，初始为 1，主程序每次同步失败递增
     """
     new_deps = new_data.get("dep_versions", {})
-    changed = {
-        pkg: version
-        for pkg, version in new_deps.items()
-        if old_deps.get(pkg) != version
-    }
+    new_extras = new_data.get("dep_extras", {})
 
-    if not changed:
+    # diff：归一化为 constraint 串后比较，提取变化的包
+    changed: dict[str, str] = {}
+    for pkg, new_v in new_deps.items():
+        new_norm = _normalize_dep_value(new_v)
+        old_norm = _normalize_dep_value(old_deps.get(pkg))
+        if old_norm != new_norm:
+            changed[pkg] = new_norm
+
+    # removed：旧版有、新版无的包（仅范围 dep_versions，非全部 EXCLUDED_PACKAGES）
+    removed = [pkg for pkg in old_deps if pkg not in new_deps]
+    # 过滤掉非追踪的包（旧 version.json 可能含 _TRACKED_PREFIXES 之外的残留）
+    _TRACKED_PREFIXES = ("paddle", "paddleocr", "mineru", "torch", "nvidia")
+    removed = [p for p in removed if any(p.startswith(pre) for pre in _TRACKED_PREFIXES)]
+
+    if not changed and not removed:
         logger.info("AI 依赖版本无变化")
         return
 
-    logger.info(f"检测到依赖变化: {changed}")
+    if changed:
+        logger.info(f"检测到依赖变化: {changed}")
+    if removed:
+        logger.info(f"检测到依赖移除: {removed}")
     logger.info("写入待同步标记，将由新版 VibeOCR 启动时升级...")
 
     settings_dir = app_dir / "data" / "settings"
     settings_dir.mkdir(parents=True, exist_ok=True)
     pending_path = settings_dir / "pending_sync.json"
 
-    pending = {
+    pending: dict = {
         "version": new_data.get("version", ""),
         "dep_versions": changed,
         "written_at": datetime.now().isoformat(),
+        # 失败重试计数：主程序 _on_sync_finished 失败时递增。
+        # 达 SYNC_MAX_ATTEMPTS（env_config）后提示用户重装嵌入式 Python。
+        "attempts": 1,
     }
+    # extras 透传：只写 changed 中带 extras 的包，避免空 dict 污染
+    changed_extras = {k: v for k, v in new_extras.items() if k in changed}
+    if changed_extras:
+        pending["dep_extras"] = changed_extras
+    if removed:
+        pending["removed"] = removed
+
     try:
         pending_path.write_text(
             json.dumps(pending, ensure_ascii=False, indent=2), encoding="utf-8"
