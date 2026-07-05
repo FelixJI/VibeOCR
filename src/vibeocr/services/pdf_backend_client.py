@@ -12,14 +12,12 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 import socket
 import subprocess
 import sys
 import threading
-from pathlib import Path
 from typing import Iterator
 
 import httpx
@@ -29,11 +27,9 @@ from vibeocr.ipc.schemas import (
     DeletePagesRequest,
     DetectTextLayersRequest,
     DetectTextLayersResponse,
-    EmptyOk,
     HealthResponse,
     InsertBlankRequest,
     InsertFromRequest,
-    ModelDiff,
     MovePageRequest,
     MutateResponse,
     OpenRequest,

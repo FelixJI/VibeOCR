@@ -14,7 +14,7 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QObject, QThread, Signal
 
 from vibeocr.ipc.model_bridge import apply_diff, mirror_to_doc
 from vibeocr.ipc.schemas import ModelDiff, PdfDocumentMirror
