@@ -55,30 +55,36 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_THUMBNAIL_SIZE = 160
+_THUMBNAIL_SIZE = 160  # 初始/默认缩略图边长（px）；运行时随面板宽度自适应
+_THUMBNAIL_MIN_SIZE = 120  # 自适应下限：再小则页码/文字不可读
+_THUMBNAIL_MAX_SIZE = 320  # 自适应上限：再大则单张占屏过多、IPC 渲染开销上升
+_THUMBNAIL_HPAD = 8  # gridSize 左右内边距（缩略图两侧各留白）
+_THUMBNAIL_TEXT_HEIGHT = 28  # gridSize 高度额外预留：给"第 N 页"文字标签
 _GRID_CELL_SIZE = 40  # 文字层状态网格单格尺寸（正方形）
 
-# 缓存占位灰图（缩略图未渲染时显示），避免每次 data() 调用都新建 QPixmap/QIcon。
-_PLACEHOLDER_PIXMAP: QPixmap | None = None
-_PLACEHOLDER_ICON: QIcon | None = None
+# 占位灰图按 size 缓存（缩略图自适应宽度后，不同尺寸需要不同占位图），
+# 避免每次 data() 调用都新建 QPixmap/QIcon。
+_PLACEHOLDER_PIXMAPS: dict[int, QPixmap] = {}
+_PLACEHOLDER_ICONS: dict[int, QIcon] = {}
 
 
-def _placeholder_pixmap() -> QPixmap:
-    """缩略图占位灰图（懒初始化单例）。供 ThumbnailModel.data() 与 PdfTab 共用。"""
-    global _PLACEHOLDER_PIXMAP
-    if _PLACEHOLDER_PIXMAP is None:
-        pm = QPixmap(_THUMBNAIL_SIZE, _THUMBNAIL_SIZE)
+def _placeholder_pixmap(size: int = _THUMBNAIL_SIZE) -> QPixmap:
+    """缩略图占位灰图（按 size 缓存）。供 ThumbnailModel.data() 与 PdfTab 共用。"""
+    pm = _PLACEHOLDER_PIXMAPS.get(size)
+    if pm is None:
+        pm = QPixmap(size, size)
         pm.fill(Qt.GlobalColor.lightGray)
-        _PLACEHOLDER_PIXMAP = pm
-    return _PLACEHOLDER_PIXMAP
+        _PLACEHOLDER_PIXMAPS[size] = pm
+    return pm
 
 
-def _placeholder_icon() -> QIcon:
-    """占位 QIcon 单例：data() cache miss 时返回，避免每次新建 QIcon 开销。"""
-    global _PLACEHOLDER_ICON
-    if _PLACEHOLDER_ICON is None:
-        _PLACEHOLDER_ICON = QIcon(_placeholder_pixmap())
-    return _PLACEHOLDER_ICON
+def _placeholder_icon(size: int = _THUMBNAIL_SIZE) -> QIcon:
+    """占位 QIcon（按 size 缓存）：data() cache miss 时返回。"""
+    icon = _PLACEHOLDER_ICONS.get(size)
+    if icon is None:
+        icon = QIcon(_placeholder_pixmap(size))
+        _PLACEHOLDER_ICONS[size] = icon
+    return icon
 
 # 文字层网格 item 数据角色：_LAYER_ROLE 存 page_index，_HAS_LAYER_ROLE 存 has_text_layer
 _LAYER_ROLE = Qt.ItemDataRole.UserRole
@@ -165,6 +171,9 @@ class ThumbnailModel(QAbstractListModel):
         self._cache = ThumbnailLruCache(capacity=200)
         self._render_worker: ThumbnailIpcWorker | None = None
         self._render_dpi = 96
+        # 当前缩略图渲染边长（px）。随 ThumbnailListView 自适应宽度更新；
+        # worker 用此值请求后端 PNG 尺寸，占位图也按此尺寸生成。
+        self._thumb_size = _THUMBNAIL_SIZE
         # generation 校验:invalidate(row) 自增该行 gen;请求带 gen,响应带 gen,
         # 只在 gen 匹配时入缓存,丢弃失效后仍在途的旧渲染结果(旋转 ABA)。
         self._gen: dict[int, int] = {}
@@ -190,7 +199,7 @@ class ThumbnailModel(QAbstractListModel):
         self._render_worker = ThumbnailIpcWorker(
             client=mgr.backend_client,
             session_id=session.session_id,
-            size=_THUMBNAIL_SIZE,
+            size=self._thumb_size,
         )
         self._render_worker.thumbnail_ready.connect(self._on_thumbnail_ready)
         self._render_worker.start()
@@ -212,6 +221,18 @@ class ThumbnailModel(QAbstractListModel):
                 timeout_ms=Constants.Timeout.Ms.PDF_WORKER_TERMINATE_WAIT,
             )
             self._render_worker = None
+
+    def set_thumbnail_size(self, size: int) -> None:
+        """更新缩略图渲染边长（自适应宽度时调用）。
+
+        停掉旧 worker（其 size 已过期）；下次 request_range/request_render
+        经 _ensure_render_worker_alive 自动用新 size 起新 worker。配合
+        invalidate_all() 清空缓存，可见行会用新尺寸重渲染。
+        """
+        if size == self._thumb_size:
+            return
+        self._thumb_size = size
+        self._stop_render_worker()
 
     def _on_thumbnail_ready(self, page_index: int, pixmap: object, gen: int) -> None:
         """IPC 渲染回调:generation 校验后回填 LRU 缓存。"""
@@ -306,7 +327,7 @@ class ThumbnailModel(QAbstractListModel):
             # request_render 会争 _pending_lock + 放大开销。渲染请求统一由
             # ThumbnailListView 的 visible_range_changed → request_range 驱动
             # （scroll/showEvent 触发，去抖 50ms）。
-            return _placeholder_icon()
+            return _placeholder_icon(self._thumb_size)
         if role == Qt.ItemDataRole.UserRole:
             return page_info.page_index
         return None
@@ -323,17 +344,25 @@ class ThumbnailListView(QListView):
 
     按需渲染：滚动/resize 时计算可见行范围，emit visible_range_changed，
     由 PdfTab 调用 model.request_range 触发后台渲染（去抖 50ms 合并）。
+
+    自适应宽度：viewport 宽度变化时重算缩略图边长（clamp 到
+    [_THUMBNAIL_MIN_SIZE, _THUMBNAIL_MAX_SIZE]），更新 iconSize/gridSize，
+    emit thumbnail_size_changed 通知 PdfTab 清缓存 + 用新 size 重渲染。
+    与可见范围渲染共用 50ms 防抖定时器，连续拖 splitter 只在停下后重算一次。
     """
 
     pages_reordered = Signal(list)  # new_order: list[int]
     visible_range_changed = Signal(int, int)  # (first_visible_row, last_visible_row)
+    thumbnail_size_changed = Signal(int)  # new_size
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
-        # 滚动去抖：连续滚动合并为一次渲染请求
+        # 滚动去抖：连续滚动/resize 合并为一次渲染请求
         self._scroll_timer = QTimer(self)
         self._scroll_timer.setSingleShot(True)
         self._scroll_timer.timeout.connect(self._emit_visible_range)
+        # 当前缩略图边长；与 iconSize 保持同步，用于检测尺寸是否真的变化
+        self._current_thumb_size = _THUMBNAIL_SIZE
 
     def scrollContentsBy(self, dx, dy) -> None:  # noqa: N802 — Qt API 命名
         super().scrollContentsBy(dx, dy)
@@ -351,7 +380,37 @@ class ThumbnailListView(QListView):
         """防抖：50ms 内合并多次滚动/resize 为一次渲染请求。"""
         self._scroll_timer.start(50)
 
+    def _compute_thumbnail_size(self) -> int:
+        """按 viewport 宽度计算缩略图边长，clamp 到 [MIN, MAX]。
+
+        减去 gridSize 左右内边距 _THUMBNAIL_HPAD（8px），使缩略图主体尽量
+        填满列宽，避免面板比缩略图宽时右侧出现空白。
+        """
+        w = self.viewport().width() - _THUMBNAIL_HPAD
+        return max(_THUMBNAIL_MIN_SIZE, min(_THUMBNAIL_MAX_SIZE, w))
+
+    def _apply_thumbnail_size(self, size: int) -> bool:
+        """应用缩略图边长：更新 iconSize/gridSize，尺寸变化时返回 True。
+
+        返回值用于决定是否 emit thumbnail_size_changed（驱动 model 清缓存
+        + 用新 size 重渲染）。
+        """
+        if size == self._current_thumb_size:
+            return False
+        self._current_thumb_size = size
+        self.setIconSize(QSize(size, size))
+        # gridSize：缩略图边长 + 8px 左右边距；高 +28 给"第 N 页"文字留空间
+        self.setGridSize(
+            QSize(size + _THUMBNAIL_HPAD, size + _THUMBNAIL_TEXT_HEIGHT)
+        )
+        return True
+
     def _emit_visible_range(self) -> None:
+        # 先重算缩略图尺寸（自适应宽度）；不依赖 model，空文档也要更新布局
+        new_size = self._compute_thumbnail_size()
+        if self._apply_thumbnail_size(new_size):
+            self.thumbnail_size_changed.emit(new_size)
+
         model = self.model()
         if model is None or model.rowCount() == 0:
             return
@@ -472,8 +531,13 @@ class PdfTab(QWidget):
         self._thumbnail_model = ThumbnailModel(self)
         self._thumbnail_list = ThumbnailListView()
         self._thumbnail_list.setMinimumWidth(120)
+        # 初始 iconSize/gridSize 用默认尺寸；首次 showEvent 会按 viewport
+        # 宽度自适应到实际尺寸（避免首帧空白/右侧留白）。
         self._thumbnail_list.setIconSize(
-            QPixmap(_THUMBNAIL_SIZE, _THUMBNAIL_SIZE).size()
+            QSize(_THUMBNAIL_SIZE, _THUMBNAIL_SIZE)
+        )
+        self._thumbnail_list.setGridSize(
+            QSize(_THUMBNAIL_SIZE + _THUMBNAIL_HPAD, _THUMBNAIL_SIZE + _THUMBNAIL_TEXT_HEIGHT)
         )
         self._thumbnail_list.setModel(self._thumbnail_model)
         # IconMode + 固定 gridSize：让 QListView 一次性算出全部内容高度，
@@ -486,10 +550,6 @@ class PdfTab(QWidget):
         self._thumbnail_list.setResizeMode(QListView.ResizeMode.Adjust)
         self._thumbnail_list.setMovement(QListView.Movement.Static)
         self._thumbnail_list.setUniformItemSizes(True)
-        # gridSize：缩略图 160 + 8px 边距宽；高 +28 给"第 N 页"文字标签留空间
-        self._thumbnail_list.setGridSize(
-            QSize(_THUMBNAIL_SIZE + 8, _THUMBNAIL_SIZE + 28)
-        )
         self._thumbnail_list.setSelectionMode(
             QAbstractItemView.SelectionMode.ExtendedSelection
         )
@@ -512,6 +572,10 @@ class PdfTab(QWidget):
         # 按需渲染：滚动时请求可见行渲染
         self._thumbnail_list.visible_range_changed.connect(
             self._thumbnail_model.request_range
+        )
+        # 自适应宽度：viewport 尺寸变化 → 更新 model 渲染尺寸 + 清缓存重渲染
+        self._thumbnail_list.thumbnail_size_changed.connect(
+            self._on_thumbnail_size_changed
         )
         # 反向联动：缩略图选中变化 → 状态列表同步当前行
         self._thumbnail_list.selectionModel().selectionChanged.connect(
@@ -989,13 +1053,24 @@ class PdfTab(QWidget):
             btn.setEnabled(enabled)
 
     @staticmethod
-    def _scale_thumbnail(pixmap: QPixmap) -> QPixmap:
+    def _scale_thumbnail(pixmap: QPixmap, size: int = _THUMBNAIL_SIZE) -> QPixmap:
         return pixmap.scaled(
-            _THUMBNAIL_SIZE,
-            _THUMBNAIL_SIZE,
+            size,
+            size,
             Qt.AspectRatioMode.KeepAspectRatio,
             Qt.TransformationMode.FastTransformation,
         )
+
+    def _on_thumbnail_size_changed(self, size: int) -> None:
+        """viewport 宽度变化导致缩略图边长改变：更新 model 渲染尺寸并重渲染。
+
+        - set_thumbnail_size 会停掉旧 worker（其 size 已过期），下次
+          request_range 经 _ensure_render_worker_alive 用新 size 起新 worker。
+        - invalidate_all 清空 LRU 缓存并 dataChanged 通知视图，可见行通过
+          现有 visible_range_changed 链路用新尺寸重新请求渲染。
+        """
+        self._thumbnail_model.set_thumbnail_size(size)
+        self._thumbnail_model.invalidate_all()
 
     @staticmethod
     def _placeholder_pixmap() -> QPixmap:

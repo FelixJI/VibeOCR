@@ -4,7 +4,14 @@ import pytest
 from PySide6.QtCore import QItemSelectionModel, Qt
 from PySide6.QtWidgets import QListWidget, QListView, QScrollArea, QSplitter
 
-from vibeocr.views.tabs.pdf_tab import _THUMBNAIL_SIZE, PdfTab
+from vibeocr.views.tabs.pdf_tab import (
+    _THUMBNAIL_HPAD,
+    _THUMBNAIL_MAX_SIZE,
+    _THUMBNAIL_MIN_SIZE,
+    _THUMBNAIL_SIZE,
+    _THUMBNAIL_TEXT_HEIGHT,
+    PdfTab,
+)
 
 
 @pytest.fixture
@@ -1240,3 +1247,70 @@ class TestBatchOpenSuppressesSwitch:
         assert len(active_changes) == 1
         # combo box 有 2 项
         assert pdf_tab._file_selector.count() == 2
+
+
+class TestThumbnailAutoSize:
+    """缩略图自适应面板宽度：viewport 宽度变化时缩略图边长 clamp 到
+    [_THUMBNAIL_MIN_SIZE, _THUMBNAIL_MAX_SIZE]，并联动 iconSize/gridSize/
+    model 渲染尺寸。"""
+
+    def test_compute_clamps_to_min(self, pdf_tab):
+        """viewport 很窄时缩略图边长取下限，不至于小到无法阅读。"""
+        lst = pdf_tab._thumbnail_list
+        lst.setFixedWidth(_THUMBNAIL_MIN_SIZE)  # 极窄
+        # setFixedWidth 后 viewport 宽度更新需布局生效
+        lst.viewport().setGeometry(0, 0, _THUMBNAIL_MIN_SIZE, 100)
+        size = lst._compute_thumbnail_size()
+        assert size == _THUMBNAIL_MIN_SIZE
+
+    def test_compute_clamps_to_max(self, pdf_tab):
+        """viewport 很宽时缩略图边长取上限，不至于大到一张占满屏。"""
+        lst = pdf_tab._thumbnail_list
+        wide = _THUMBNAIL_MAX_SIZE + 200
+        lst.setFixedWidth(wide)
+        lst.viewport().setGeometry(0, 0, wide, 100)
+        size = lst._compute_thumbnail_size()
+        assert size == _THUMBNAIL_MAX_SIZE
+
+    def test_compute_tracks_viewport(self, pdf_tab):
+        """中等宽度时缩略图边长 = viewport 宽 - 内边距。"""
+        lst = pdf_tab._thumbnail_list
+        mid = (_THUMBNAIL_MIN_SIZE + _THUMBNAIL_MAX_SIZE) // 2
+        lst.setFixedWidth(mid)
+        lst.viewport().setGeometry(0, 0, mid, 100)
+        size = lst._compute_thumbnail_size()
+        assert size == mid - _THUMBNAIL_HPAD
+
+    def test_apply_updates_icon_and_grid_size(self, pdf_tab):
+        """_apply_thumbnail_size 同步更新 iconSize / gridSize。"""
+        lst = pdf_tab._thumbnail_list
+        target = 200
+        changed = lst._apply_thumbnail_size(target)
+        assert changed is True
+        assert lst.iconSize().width() == target
+        assert lst.iconSize().height() == target
+        assert lst.gridSize().width() == target + _THUMBNAIL_HPAD
+        assert lst.gridSize().height() == target + _THUMBNAIL_TEXT_HEIGHT
+
+    def test_apply_no_change_returns_false(self, pdf_tab):
+        """尺寸未变时不重复设置/发信号。"""
+        lst = pdf_tab._thumbnail_list
+        lst._apply_thumbnail_size(180)
+        # 再应用相同尺寸：返回 False，不发信号
+        received: list[int] = []
+        lst.thumbnail_size_changed.connect(lambda s: received.append(s))
+        assert lst._apply_thumbnail_size(180) is False
+
+    def test_emit_drives_signal_and_model_size(self, pdf_tab):
+        """_emit_visible_range 检测到尺寸变化后：
+        - emit thumbnail_size_changed
+        - PdfTab._on_thumbnail_size_changed 更新 model._thumb_size"""
+        lst = pdf_tab._thumbnail_list
+        model = pdf_tab._thumbnail_model
+        # 模拟 viewport 变宽到触发新尺寸（绕过防抖定时器直接调 _emit）
+        target = _THUMBNAIL_MAX_SIZE + 100  # 必然 clamp 到 MAX
+        lst.viewport().setGeometry(0, 0, target, 100)
+        lst._emit_visible_range()
+        # 信号经 PdfTab 槽同步更新 model 渲染尺寸
+        assert model._thumb_size == _THUMBNAIL_MAX_SIZE
+        assert lst.iconSize().width() == _THUMBNAIL_MAX_SIZE
