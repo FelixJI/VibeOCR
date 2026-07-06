@@ -1,8 +1,16 @@
-"""缩略图渲染 IPC Worker — 后台线程调后端取 PNG 字节,构 QPixmap 回传。
+"""缩略图渲染 IPC Worker — 后台线程并发调后端取 PNG 字节,回传主线程构 QPixmap。
 
 替代原 ThumbnailRenderWorker(持 doc + doc_lock)。进程化后主进程不持 fitz,
-缩略图渲染走 IPC:queue 投页索引 → 后台线程调 client.render_thumbnail(sid, page)
-拿 PNG 字节 → QPixmap.loadFromData → emit thumbnail_ready。
+缩略图渲染走 IPC:queue 投页索引 → 线程池并发调 client.render_thumbnail(sid, page)
+拿 PNG 字节 → emit thumbnail_ready(主线程 loadFromData 构 QPixmap)。
+
+并发模型:单个 QThread.run() 持有一个 ThreadPoolExecutor(max_workers=N),
+从 queue 取页索引提交到线程池并发渲染。后端 fitz 栅格化由 per-session
+fitz_lock 串行化,PIL 缩放/PNG 编码并行,客户端 HTTP 由每线程独立 httpx
+Client 隔离,整体提速首屏与滚动渲染。
+
+QPixmap 线程安全:worker 只回传 PNG bytes,QPixmap 构造在主线程
+_on_thumbnail_ready 里完成(AutoConnection 自动排队到主线程)。
 
 generation 校验:请求带 gen,响应带 gen;ThumbnailModel 只在 gen 匹配时入缓存,
 丢弃失效后仍在途的旧渲染结果(旋转/删除导致的 ABA 问题)。
@@ -13,11 +21,10 @@ from __future__ import annotations
 import logging
 import queue
 import threading
-import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QThread, Qt, Signal
-from PySide6.QtGui import QPixmap
+from PySide6.QtCore import QThread, Signal
 
 if TYPE_CHECKING:
     from vibeocr.services.pdf_backend_client import PdfBackendClient
@@ -26,15 +33,20 @@ logger = logging.getLogger(__name__)
 
 _STOP = object()
 
+# 缩略图并发渲染线程数。后端 fitz 栅格化已串行化(fitz_lock),瓶颈主要在
+# HTTP 往返 + PIL 缩放/PNG 编码,4 并发足以掩盖单页延迟。过高会争 CPU。
+_THUMB_CONCURRENCY = 4
+
 
 class ThumbnailIpcWorker(QThread):
-    """缩略图 IPC 渲染 worker。
+    """缩略图 IPC 渲染 worker(多线程并发)。
 
     Signals:
-        thumbnail_ready(page_index, pixmap, gen)
+        thumbnail_ready(page_index, png_bytes, gen)
+            png_bytes 为后端返回的 PNG 字节流,由主线程 loadFromData 构 QPixmap。
     """
 
-    thumbnail_ready = Signal(int, object, int)  # (page_index, QPixmap, gen)
+    thumbnail_ready = Signal(int, object, int)  # (page_index, png_bytes, gen)
 
     def __init__(
         self,
@@ -65,39 +77,45 @@ class ThumbnailIpcWorker(QThread):
         self._queue.put(page_index)
 
     def cancel(self) -> None:
-        """取消:投哨兵,worker 退出。"""
+        """取消:设标志 + 投哨兵,worker 主循环退出后等线程池收尾。"""
         self._cancelled = True
         self._queue.put(_STOP)
 
-    def run(self) -> None:
-        while True:
-            try:
-                item = self._queue.get()
-            except queue.Empty:
-                continue
-            if item is _STOP:
-                return
-            page_index = item  # type: ignore[assignment]
+    def _render_one(self, page_index: int) -> None:
+        """线程池 worker:渲染单页 → emit PNG bytes。取消则尽早返回。
+
+        _pending.discard 推迟到 emit 之后,避免 in-flight 期间同页被重新入队
+        (重复渲染浪费)。gen 用请求入队时的快照,_on_thumbnail_ready 会校验。
+        """
+        if self._cancelled:
             with self._pending_lock:
                 self._pending.discard(page_index)
+            return
+        try:
+            with self._pending_lock:
                 gen = self._gen_map.get(page_index, 0)
-            if self._cancelled:
-                return
-            try:
-                png_bytes = self._client.render_thumbnail(
-                    self._session_id, page_index, size=self._size
-                )
-                pixmap = QPixmap()
-                if pixmap.loadFromData(png_bytes, "PNG"):
-                    pixmap = pixmap.scaled(
-                        self._size, self._size,
-                        Qt.AspectRatioMode.KeepAspectRatio,
-                        Qt.TransformationMode.SmoothTransformation,
-                    )
-                    self.thumbnail_ready.emit(page_index, pixmap, gen)
-                else:
-                    logger.warning("[thumb-ipc] 页 %d PNG 解析失败", page_index)
-            except Exception as e:  # noqa: BLE001
-                logger.error("[thumb-ipc] 渲染页 %d 失败: %s", page_index, e)
-            # 协作式让步
-            time.sleep(0)
+            png_bytes = self._client.render_thumbnail(
+                self._session_id, page_index, size=self._size
+            )
+            if not self._cancelled:
+                self.thumbnail_ready.emit(page_index, png_bytes, gen)
+        except Exception as e:  # noqa: BLE001
+            logger.error("[thumb-ipc] 渲染页 %d 失败: %s", page_index, e)
+        finally:
+            with self._pending_lock:
+                self._pending.discard(page_index)
+
+    def run(self) -> None:
+        """主循环:从队列取页 → 提交线程池并发渲染。哨兵/取消时退出。"""
+        with ThreadPoolExecutor(max_workers=_THUMB_CONCURRENCY) as pool:
+            while not self._cancelled:
+                try:
+                    # 带超时轮询,便于响应 cancel(避免无限阻塞在 get)
+                    item = self._queue.get(timeout=0.2)
+                except queue.Empty:
+                    continue
+                if item is _STOP:
+                    break
+                pool.submit(self._render_one, item)  # type: ignore[arg-type]
+            # with 块退出时,ThreadPoolExecutor 会等待所有 in-flight 任务完成
+            # (_render_one 检查 _cancelled 会快速返回)
