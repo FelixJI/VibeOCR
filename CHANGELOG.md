@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.4.10] - 2026-07-06
+
+### Changed
+- refactor(packaging): PDF 重依赖下沉子进程,主 exe 瘦身 ~55M
+
 ## [0.4.9] - 2026-07-06
 
 ### Fixed
