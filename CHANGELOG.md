@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.13] - 2026-07-07
+
+### Fixed
+- fix(deps): fonttools 依赖检测误报残缺安装致无限重装
+
+### Changed
+- perf(pdf): PDF文字层批量OCR + 缩略图/渲染并发
+
 ## [0.4.12] - 2026-07-06
 
 ### Fixed
