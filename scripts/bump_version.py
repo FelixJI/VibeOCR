@@ -82,12 +82,13 @@ DIST_BASE_DIR = PROJECT_ROOT / "dist"
 # pip 会自动拉取它们（paddlex 硬依赖），故便携侧无需显式安装或检测。
 # *.libs 是 OpenBLAS 等 DLL 子目录，一并排除防止 PyInstaller 重新收入。
 #
-# lxml / pydantic(_core) / chardet / aiohttp 等：均为 paddleocr/mineru/paddlex
-# 的核心传递依赖，仅 OCR 子进程使用，主进程 UI 零 import。便携 Python 安装
-# paddleocr/mineru 时 pip 自动带入，无需显式安装或检测。
+# lxml / chardet / aiohttp 等：均为 paddleocr/mineru/paddlex 的核心传递依赖，
+# 仅 OCR 子进程使用，主进程 UI 零 import。便携 Python 安装 paddleocr/mineru
+# 时 pip 自动带入，无需显式安装或检测。
 # 注意：已核实 httpx 0.28 不依赖 chardet（依赖 anyio/certifi/httpcore/idna），
 # 故排除 chardet 不影响主进程 update_service/mineru_service 的 httpx 调用。
 # aiohttp 卫星包（multidict/yarl/frozenlist/propcache 等）一并排除。
+# 注意：pydantic / pydantic_core 不可放此处（见下方列表内联注释）。
 EXCLUDED_PACKAGES = [
     "paddle",
     "paddlepaddle",
@@ -105,8 +106,10 @@ EXCLUDED_PACKAGES = [
     "pandas",
     "pandas.libs",
     "lxml",
-    "pydantic",
-    "pydantic_core",
+    # 注意：pydantic / pydantic_core 不能排除。PDF 模块进程化后，主进程
+    # vibeocr.ipc.schemas 在启动时顶层 import pydantic（main → main_window →
+    # pdf_tab → pdf_session_manager → model_bridge → schemas），排除会导致
+    # ModuleNotFoundError。子进程(便携 Python)侧自带，不影响。
     "chardet",
     "aiohttp",
     "multidict",
@@ -253,6 +256,14 @@ PACKAGE_DATA = [
 #
 # markdown 已移至 EXCLUDED_PACKAGES（由便携 Python 安装，主进程仅用 HTML_STYLE
 # 字符串常量，import 下沉到函数内）。故不在此处声明 hidden-import。
+#
+# 以下均为"主进程延迟 import"（import 在函数体内，PyInstaller 静态分析虽
+# 多数能追踪到，但若处于 try/except 或条件分支中有漏报风险），显式声明
+# 保险：触发相应功能时不会 ModuleNotFoundError。
+#   - pydantic：vibeocr.ipc.schemas 顶层依赖（PDF 进程化后主进程必用）。
+#   - openpyxl / docx：导出 Excel / Word（export_service）。
+#   - fontTools：CJK 字体回退解析（utils/cjk_font_resolver）。
+#   - pyzbar：二维码解码（qrcode_decode_service，venv 未装但代码引用）。
 HIDDEN_IMPORTS = [
     "shiboken6",
     "qasync",
@@ -264,6 +275,11 @@ HIDDEN_IMPORTS = [
     "barcode",
     "barcode.writer",
     "fitz",
+    "pydantic",
+    "openpyxl",
+    "docx",
+    "fontTools",
+    "pyzbar",
 ]
 
 

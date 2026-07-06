@@ -47,6 +47,7 @@ from vibeocr.ipc.schemas import (
     UpdateBlockTextRequest,
 )
 from vibeocr.utils.job_object import JobObjectGuard
+from vibeocr.utils.subprocess_log import SubprocessLogForwarder
 
 logger = logging.getLogger(__name__)
 
@@ -102,26 +103,29 @@ class PdfBackendClient:
             return s.getsockname()[1]
 
     def _start_log_reader(self, process: subprocess.Popen) -> None:
-        """后台线程读子进程 stdout,转发到项目日志 + 解析就绪端口。"""
+        """后台线程读子进程 stdout,转发到项目日志。
+
+        用统一的 SubprocessLogForwarder（与 OCR worker、MinerU 共用同一套逻辑）：
+        结构化日志行按原始级别转发，uvicorn/库的裸 print 按行数折叠，
+        避免泄漏用户文档内容。
+        """
+        forwarder = SubprocessLogForwarder(
+            logger_name="vibeocr.subprocess.pdf_backend",
+            source_label="[PDF Backend]",
+        )
+
         def _read() -> None:
-            backend_logger = logging.getLogger("vibeocr.pdf_backend")
             try:
                 assert process.stdout is not None
                 for raw in process.stdout:
-                    line = raw.decode("utf-8", errors="replace").rstrip()
-                    if not line:
+                    text = raw.decode("utf-8", errors="replace")
+                    if not text:
                         continue
-                    # uvicorn 日志级别前缀粗解析
-                    if line.startswith("INFO"):
-                        backend_logger.info("%s", line)
-                    elif line.startswith("WARNING") or line.startswith("WARN"):
-                        backend_logger.warning("%s", line)
-                    elif line.startswith("ERROR"):
-                        backend_logger.error("%s", line)
-                    elif line.startswith("DEBUG"):
-                        backend_logger.debug("%s", line)
-                    else:
-                        backend_logger.info("%s", line)
+                    # uvicorn 有时无换行拼接多行，按 datetime 模式切分
+                    for line in forwarder.split_mixed_lines(text):
+                        forwarder.forward(line)
+                # 进程退出后 flush 累积的裸 print 概括
+                forwarder.flush()
             except Exception:
                 pass
 
