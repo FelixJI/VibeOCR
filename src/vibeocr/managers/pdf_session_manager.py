@@ -666,10 +666,25 @@ class PdfSessionManager(QObject):
         self._ocr_worker.failed.connect(lambda sid, e: logger.error("OCR 失败: %s", e))
         self._ocr_worker.start()
 
+    # 每批页数：平衡内存(每页 300dpi ≈ 2-4MB numpy)与批量 predict 吞吐。
+    _OCR_BATCH_SIZE = 16
+    # 渲染并发线程数。后端 fitz 栅格化由 fitz_lock 串行化，但 PIL/PNG 编码 +
+    # HTTP 往返可并行，N 并发可掩盖单页往返延迟。httpx Client 按线程独立(见
+    # PdfBackendClient._ensure_started)，故可安全并发调用 render_preview。
+    _RENDER_CONCURRENCY = 4
+
     def _run_ocr(self, runner, session_id: str, pages: list[int],
                  ocr_options, settings_dict: dict, overwrite: bool) -> None:
-        """在 OCR runner 线程内:逐页后端渲染 → OCR → 后端写文字层。"""
+        """在 OCR runner 线程内:分批 [并发渲染 → 批量 OCR → 逐页写文字层]。
+
+        - 渲染:线程池并发调 render_preview(后端 fitz_lock 串行化栅格化，
+          PIL/PNG 编码并行)，结果按页序对齐。
+        - 识别:recognize_batch() 一次 predict(list)，利用 PaddleOCR 内部
+          ImageBatchSampler 分批，省去每页重复管道开销。
+        - 写层:逐页串行 add_text_layer(fitz 写操作不可并发)。
+        """
         import io
+        from concurrent.futures import ThreadPoolExecutor
         import numpy as np
         from PIL import Image
         from vibeocr.models.ocr_options import OCROptions
@@ -680,34 +695,86 @@ class PdfSessionManager(QObject):
         total = len(pages)
         success = 0
         fail = 0
-        for n, idx in enumerate(pages):
+        done = 0  # 已处理页数(跨批次累计，用于进度信号)
+        opts = ocr_options if ocr_options is not None else OCROptions()
+        batch_size = self._OCR_BATCH_SIZE
+        client = self._client
+
+        def _render_page(idx: int) -> np.ndarray | None:
+            """渲染单页 300dpi → numpy。失败返回 None。"""
+            try:
+                png = client.render_preview(session_id, idx, dpi=300)
+                img = Image.open(io.BytesIO(png)).convert("RGB")
+                return np.array(img)
+            except Exception as e:
+                logger.error("渲染页 %d 失败: %s", idx, e)
+                return None
+
+        for batch_start in range(0, total, batch_size):
             if runner._cancelled:  # noqa: SLF001
                 break
-            try:
-                # 后端渲染 300dpi → PNG → numpy
-                png = self._client.render_preview(session_id, idx, dpi=300)
-                img = Image.open(io.BytesIO(png)).convert("RGB")
-                arr = np.array(img)
-                # OCR 识别
-                opts = ocr_options if ocr_options is not None else OCROptions()
-                result = self._ocr_service.recognize(arr, opts)  # type: ignore[union-attr]
-                if result is not None and result.text_blocks:
-                    # 序列化 OCRResult → dict 传后端写文字层
-                    ocr_dict = self._ocr_result_to_dict(result)
-                    self._client.add_text_layer(
-                        session_id, idx, ocr_dict, settings_dict, overwrite
+            batch_pages = pages[batch_start:batch_start + batch_size]
+
+            # 阶段1：并发渲染(线程池，结果按 batch_pages 顺序对齐)
+            images: list[np.ndarray | None] = [None] * len(batch_pages)
+            if not runner._cancelled:
+                with ThreadPoolExecutor(
+                    max_workers=min(self._RENDER_CONCURRENCY, len(batch_pages))
+                ) as pool:
+                    # map 保持输入顺序，逐页结果对齐 images
+                    rendered = pool.map(_render_page, batch_pages)
+                    for i, arr in enumerate(rendered):
+                        images[i] = arr
+            page_failed = [arr is None for arr in images]
+
+            # 阶段2：批量识别(单次 predict，跳过渲染失败的页)
+            valid_indices = [i for i, img in enumerate(images) if img is not None]
+            results_map: dict[int, object] = {}
+            if valid_indices and not runner._cancelled:
+                valid_images = [images[i] for i in valid_indices]  # type: ignore[list-item]
+                try:
+                    batch_results = self._ocr_service.recognize_batch(  # type: ignore[union-attr]
+                        valid_images, opts
                     )
-                    session.add_ocr_stats(len(result.text_blocks), 0)
-                    success += 1
-                    runner.page_done.emit(session_id, idx, result)
-                else:
+                    for vi, res in zip(valid_indices, batch_results):
+                        results_map[vi] = res
+                except Exception as e:
+                    logger.error("批量识别失败(批起始页 %d): %s", batch_pages[0], e)
+                    # 整批识别失败：标记这些页失败
+                    for vi in valid_indices:
+                        page_failed[vi] = True
+
+            # 阶段3：逐页写层 + 进度信号
+            for i, idx in enumerate(batch_pages):
+                if runner._cancelled:
+                    done += 1
+                    continue
+                if page_failed[i]:
+                    fail += 1
                     session.add_ocr_stats(0, 1)
                     runner.page_done.emit(session_id, idx, None)
-            except Exception as e:
-                logger.error("OCR 页 %d 失败: %s", idx, e)
-                fail += 1
-                runner.page_done.emit(session_id, idx, None)
-            runner.progress.emit(session_id, n + 1, total)
+                    done += 1
+                    runner.progress.emit(session_id, done, total)
+                    continue
+                result = results_map.get(i)
+                try:
+                    if result is not None and result.text_blocks:
+                        ocr_dict = self._ocr_result_to_dict(result)
+                        self._client.add_text_layer(
+                            session_id, idx, ocr_dict, settings_dict, overwrite
+                        )
+                        session.add_ocr_stats(len(result.text_blocks), 0)
+                        success += 1
+                        runner.page_done.emit(session_id, idx, result)
+                    else:
+                        session.add_ocr_stats(0, 1)
+                        runner.page_done.emit(session_id, idx, None)
+                except Exception as e:
+                    logger.error("写文字层页 %d 失败: %s", idx, e)
+                    fail += 1
+                    runner.page_done.emit(session_id, idx, None)
+                done += 1
+                runner.progress.emit(session_id, done, total)
 
         # 刷新 model(OCR 改变了 has_text_layer + ocr_text_blocks)
         try:

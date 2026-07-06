@@ -72,24 +72,36 @@ def manager(qapp):
     mgr.shutdown()
 
 
+def _make_ocr_result(text="识别文字", preproc_angle=0):
+    """构造固定 OCRResult(单图/批量路径共用)。"""
+    return OCRResult(
+        raw_text=text,
+        text_blocks=[
+            TextBlock(
+                text=text, score=0.95,
+                bbox=(50.0, 50.0, 200.0, 120.0), page_idx=0,
+            ),
+        ],
+        preproc_angle=preproc_angle,
+    )
+
+
 def _make_mock_ocr_service(text="识别文字", preproc_angle=0):
     """构造 mock OCR 服务,返回固定 OCRResult。
 
-    preproc_angle 模拟方向检测(摆正用):90/180/270 表示需纠正。
+    - recognize(单图):摆正(auto_deskew)路径用。
+    - recognize_batch(批量):PDF 文字层 OCR 路径用,按输入 images 数量返回等长列表。
     """
     service = MagicMock()
     service.recognize = MagicMock(
-        return_value=OCRResult(
-            raw_text=text,
-            text_blocks=[
-                TextBlock(
-                    text=text, score=0.95,
-                    bbox=(50.0, 50.0, 200.0, 120.0), page_idx=0,
-                ),
-            ],
-            preproc_angle=preproc_angle,
-        )
+        return_value=_make_ocr_result(text, preproc_angle)
     )
+
+    def _batch_side_effect(images, options=None):
+        # 批量识别：按输入图像数量返回等长结果列表
+        return [_make_ocr_result(text, preproc_angle) for _ in images]
+
+    service.recognize_batch = MagicMock(side_effect=_batch_side_effect)
     return service
 
 
@@ -120,7 +132,7 @@ class TestOcrOrchestration:
         # OCR 完成后应有文字块(model 已刷新)
         assert len(session.pdf_document.pages[0].ocr_text_blocks) >= 1
         assert session.pdf_document.pages[0].ocr_text_blocks[0].text == "测试OCR"
-        assert mock_service.recognize.called
+        assert mock_service.recognize_batch.called
 
     def test_start_ocr_progress_emitted(self, manager, tmp_path, qapp):
         """OCR 期间应发 ocr_progress 信号。"""

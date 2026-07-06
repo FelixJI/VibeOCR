@@ -157,6 +157,9 @@ class BackendSession:
     doc: fitz.Document
     pdf_document: PdfDocument
     cancel_event: threading.Event = field(default_factory=threading.Event)
+    # fitz(Document) 非线程安全:并发渲染缩略图时串行化 get_pixmap 等 fitz 调用。
+    # 锁粒度仅覆盖 fitz 栅格化,PIL 缩放/PNG 编码在锁外可并行。
+    fitz_lock: threading.Lock = field(default_factory=threading.Lock)
     # 文字层后台逐页检测线程(打开后异步跑,逐页发 progress)
     _load_thread: threading.Thread | None = None
 
@@ -319,15 +322,22 @@ def render_thumbnail(sid: str, req: RenderThumbnailRequest) -> StreamingResponse
 
     直接用 fitz Pixmap → PNG,不经过 QPixmap(后端子进程无 QApplication,
     不能用 PdfService.render_page)。先按 thumbnail_dpi 渲染再缩放到目标尺寸。
+
+    并发安全:fitz(Document) 非线程安全,用 per-session fitz_lock 串行化栅格化;
+    PIL 缩放/PNG 编码在锁外,可被多线程并发执行(缩略图并发渲染的提速来源)。
     """
     s = _get_registry().get(sid)
     try:
-        page = s.doc[req.page]
-        zoom = s.pdf_document.thumbnail_dpi / 72.0
-        pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), alpha=False)
-        # 缩放到目标尺寸(fitz Pixmap 支持 shrink/scale;这里用 PIL 更简单)
+        # 锁内:fitz 栅格化,取出原始像素字节(fitz 对象锁外不安全)
+        with s.fitz_lock:
+            page = s.doc[req.page]
+            zoom = s.pdf_document.thumbnail_dpi / 72.0
+            pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), alpha=False)
+            width, height = pix.width, pix.height
+            samples = bytes(pix.samples)  # 拷贝,锁外不再触碰 fitz 对象
+        # 锁外:PIL 缩放 + PNG 编码(CPU 密集,无 fitz 调用,可并行)
         from PIL import Image
-        img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+        img = Image.frombytes("RGB", (width, height), samples)
         img.thumbnail((req.size, req.size), Image.LANCZOS)
         buf = io.BytesIO()
         img.save(buf, "PNG")
@@ -338,14 +348,23 @@ def render_thumbnail(sid: str, req: RenderThumbnailRequest) -> StreamingResponse
 
 @app.post("/session/{sid}/render_preview")
 def render_preview(sid: str, req: RenderPreviewRequest) -> StreamingResponse:
-    """渲染预览页,返回 PNG 字节流(直接 fitz Pixmap → PNG)。"""
+    """渲染预览页,返回 PNG 字节流(直接 fitz Pixmap → PNG)。
+
+    并发安全:与 render_thumbnail 共用 per-session fitz_lock 串行化栅格化;
+    PIL/PNG 编码在锁外。OCR 批量渲染会并发调用本接口。
+    """
     s = _get_registry().get(sid)
     try:
-        page = s.doc[req.page]
-        zoom = req.dpi / 72.0
-        pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), alpha=False)
+        # 锁内:fitz 栅格化,取出原始像素字节(fitz 对象锁外不安全)
+        with s.fitz_lock:
+            page = s.doc[req.page]
+            zoom = req.dpi / 72.0
+            pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), alpha=False)
+            width, height = pix.width, pix.height
+            samples = bytes(pix.samples)
+        # 锁外:PIL 转 PNG(CPU 密集,无 fitz 调用,可并行)
         from PIL import Image
-        img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+        img = Image.frombytes("RGB", (width, height), samples)
         buf = io.BytesIO()
         img.save(buf, "PNG")
         return StreamingResponse(io.BytesIO(buf.getvalue()), media_type="image/png")

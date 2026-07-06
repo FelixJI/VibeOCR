@@ -234,12 +234,24 @@ class ThumbnailModel(QAbstractListModel):
         self._thumb_size = size
         self._stop_render_worker()
 
-    def _on_thumbnail_ready(self, page_index: int, pixmap: object, gen: int) -> None:
-        """IPC 渲染回调:generation 校验后回填 LRU 缓存。"""
+    def _on_thumbnail_ready(self, page_index: int, data: object, gen: int) -> None:
+        """IPC 渲染回调:generation 校验 → 主线程构 QPixmap → 回填 LRU 缓存。
+
+        worker 线程只回传 PNG bytes(不构造 QPixmap,因 QPixmap 非线程安全);
+        本槽在主线程执行(AutoConnection),此处 loadFromData + scaled。
+        """
         # 丢弃陈旧结果(gen 不匹配说明该页已被 invalidate,新请求在路上)
         if self._gen.get(page_index, 0) != gen:
             return
-        assert isinstance(pixmap, QPixmap)
+        assert isinstance(data, (bytes, bytearray))
+        pixmap = QPixmap()
+        if not pixmap.loadFromData(data, "PNG"):
+            return
+        pixmap = pixmap.scaled(
+            self._thumb_size, self._thumb_size,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
         self._cache.put(page_index, pixmap)
         if 0 <= page_index < self.rowCount():
             idx = self.index(page_index, 0)

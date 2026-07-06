@@ -74,7 +74,9 @@ class PdfBackendClient:
         self._job_guard: JobObjectGuard | None = None
         self._lock = threading.RLock()
         self._started = False
-        self._http: httpx.Client | None = None
+        # httpx 同步 Client 非线程安全:按线程标识各持独立 client。
+        # 缩略图并发渲染时多个 worker 线程并发调用,各自取本线程的 client。
+        self._http_clients: dict[int, httpx.Client] = {}
         self._log_thread: threading.Thread | None = None
 
     @classmethod
@@ -165,7 +167,7 @@ class PdfBackendClient:
 
             # 等待就绪
             self._wait_ready()
-            self._http = httpx.Client(base_url=self._base_url, timeout=_HTTP_TIMEOUT)
+            # http client 改为按线程懒建(见 _ensure_started),此处不再预建
             self._started = True
 
     def _is_alive(self) -> bool:
@@ -210,12 +212,13 @@ class PdfBackendClient:
                 except Exception:
                     pass
             self._process = None
-        if self._http is not None:
+        # 关闭所有线程的 http client
+        for c in self._http_clients.values():
             try:
-                self._http.close()
+                c.close()
             except Exception:
                 pass
-            self._http = None
+        self._http_clients.clear()
         self._started = False
 
     def stop(self) -> None:
@@ -223,11 +226,21 @@ class PdfBackendClient:
             self._stop_locked()
 
     def _ensure_started(self) -> httpx.Client:
-        """确保后端已启动,返回 http client。崩溃则重启。"""
+        """确保后端已启动,返回当前线程专属的 http client。崩溃则重启。
+
+        httpx 同步 Client 非线程安全,故每个调用线程持独立 client(按 thread ident)。
+        首次调用或后端崩溃重启后,懒建新 client。
+        """
+        tid = threading.get_ident()
+        client = self._http_clients.get(tid)
+        if client is not None and self._started and self._is_alive():
+            return client
+        # 需要启动/重启后端:加锁避免多线程并发首次启动
         if not self._started or not self._is_alive():
             self.start()
-        assert self._http is not None
-        return self._http
+        client = httpx.Client(base_url=self._base_url, timeout=_HTTP_TIMEOUT)
+        self._http_clients[tid] = client
+        return client
 
     # ---- HTTP 调用辅助 ---------------------------------------------------
 
