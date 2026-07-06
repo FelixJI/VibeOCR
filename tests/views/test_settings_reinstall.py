@@ -236,7 +236,11 @@ def test_deps_status_table_exists(controller):
 
 
 def test_click_install_missing_opens_dialog_with_missing_only(controller, monkeypatch):
-    """点补充安装缺失依赖：应弹 BackendChoiceDialog(missing_only=True)"""
+    """点补充安装缺失依赖：走当前后端，弹 InstallDialog(missing_only=True)
+
+    回归（问题4）：补装不再二次提示选择 GPU/CPU（旧逻辑弹 BackendChoiceDialog）。
+    改为直接读 resolve_use_gpu 当前后端，用 InstallDialog 跑增量补装。
+    """
     _ctrl, host = controller
     from PySide6.QtWidgets import QMessageBox, QPushButton
 
@@ -252,23 +256,28 @@ def test_click_install_missing_opens_dialog_with_missing_only(controller, monkey
         def __init__(self, *args, **kwargs):
             instances.append(kwargs)
 
-        def exec(self):
-            return 1
-
         def show(self):
             pass
 
         finished = MagicMock()
         install_succeeded = MagicMock()
 
+    # 补装现在走 InstallDialog（非 BackendChoiceDialog），用当前后端
     monkeypatch.setattr(
-        "vibeocr.views.settings_page_controller.BackendChoiceDialog", FakeDialog
+        "vibeocr.widgets.install_dialog.InstallDialog", FakeDialog
+    )
+    # resolve_use_gpu 返回 False（CPU），验证 force_backend 被透传
+    monkeypatch.setattr(
+        "vibeocr.env_manager.resolve_use_gpu", lambda root: False
     )
 
     btn.click()
 
-    assert len(instances) == 1
-    assert instances[0].get("missing_only") is True
+    assert len(instances) == 1, f"应打开一个 InstallDialog，实际: {instances}"
+    assert instances[0].get("missing_only") is True, "应为 missing_only 模式"
+    assert instances[0].get("force_backend") == "cpu", (
+        f"应用当前后端 cpu，实际: {instances[0].get('force_backend')}"
+    )
 
 
 def test_refresh_fills_deps_table(controller, monkeypatch):

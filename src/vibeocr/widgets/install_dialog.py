@@ -163,9 +163,17 @@ class InstallDialog(QDialog):
 
     install_succeeded = Signal()
 
-    def __init__(self, project_root: Path, parent=None) -> None:
+    def __init__(
+        self,
+        project_root: Path,
+        parent=None,
+        missing_only: bool = False,
+        force_backend: str | None = None,
+    ) -> None:
         super().__init__(parent)
         self._project_root = project_root
+        self._missing_only = missing_only
+        self._force_backend = force_backend
         self._setup_ui()
         self._worker: InstallWorker | None = None
 
@@ -217,7 +225,11 @@ class InstallDialog(QDialog):
         """开始安装"""
         self._log("开始安装OCR依赖...")
 
-        self._worker = InstallWorker(self._project_root)
+        self._worker = InstallWorker(
+            self._project_root,
+            missing_only=self._missing_only,
+            force_backend=self._force_backend,
+        )
         self._worker.progress.connect(self._on_progress)
         self._worker.finished.connect(self._on_finished)
         self._worker.start()
