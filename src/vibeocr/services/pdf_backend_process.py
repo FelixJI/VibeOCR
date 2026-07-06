@@ -638,7 +638,9 @@ def main() -> None:
 
     logging.basicConfig(
         level=args.log_level.upper(),
-        format="%(asctime)s [pdf-backend] %(levelname)s %(name)s: %(message)s",
+        # 格式与 OCR worker / 整个子进程统一：YYYY-MM-DD HH:MM:SS [LEVEL] name: msg
+        # 主进程 SubprocessLogForwarder 按此格式正则解析、级别还原、转发。
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
         stream=sys.stdout,  # 主进程读 stdout 转发日志
     )
 

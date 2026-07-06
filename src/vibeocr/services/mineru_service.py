@@ -92,8 +92,16 @@ class MinerUService(metaclass=SingletonMeta):
         return logging.DEBUG
 
     def _start_log_reader(self, process: subprocess.Popen) -> None:
-        """启动守护线程读取 mineru-api 子进程的 stderr 并转发到项目日志系统"""
-        mineru_logger = logging.getLogger("vibeocr.mineru_api")
+        """启动守护线程读取 mineru-api 子进程的 stderr 并转发到项目日志系统。
+
+        注意：mineru-api 是第三方 FastAPI 服务，其日志格式（uvicorn 风格，
+        如 ``INFO:     127.0.0.1:... "POST /file_parse HTTP/1.1" 200``）不符合
+        SubprocessLogForwarder 的结构化正则（YYYY-MM-DD HH:MM:SS [LEVEL] name: msg），
+        因此这里不复用 forwarder 的折叠逻辑（会把 uvicorn 的有用 INFO 全折叠掉），
+        而是保留原有的"按级别词匹配 + 原文转发"。仅 logger 名统一到
+        vibeocr.subprocess.<name> 规范。
+        """
+        mineru_logger = logging.getLogger("vibeocr.subprocess.mineru_api")
         stderr = process.stderr
         if stderr is None:
             return

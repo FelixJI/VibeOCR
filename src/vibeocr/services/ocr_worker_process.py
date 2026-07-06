@@ -18,6 +18,7 @@ from pathlib import Path
 from vibeocr.core.constants import DEFAULT_SHM_SIZE, Constants
 from vibeocr.pipeline_status import is_pipeline_ever_succeeded
 from vibeocr.utils.job_object import JobObjectGuard
+from vibeocr.utils.subprocess_log import SubprocessLogForwarder
 from vibeocr.utils.shared_memory_v2 import (
     MessageType,
     SharedMemoryConfig,
@@ -127,11 +128,14 @@ class OCRWorkerProcess:
         # Windows Job Object 守卫：主进程崩溃时内核连带终止 worker 子进程
         self._job_guard: JobObjectGuard | None = None
 
-        # 子进程裸 print（无标准日志格式的 stdout 行）缓冲。
-        # PaddleX/transformers 等库会直接 print 识别结果/文本内容，
-        # 这些行不能原样转发（会泄漏用户文档内容），只按行数概括输出。
-        self._raw_log_count = 0
-        self._raw_log_lock = threading.Lock()
+        # 子进程 stdout 日志转发器（统一的日志通道）。
+        # 裸 print（无标准日志格式的 stdout 行，可能含用户文档内容）只按行数
+        # 概括输出，结构化行按原级别转发。逻辑见 vibeocr.utils.subprocess_log，
+        # 与 PDF 后端、MinerU 共用同一套转发器。
+        self._log_forwarder = SubprocessLogForwarder(
+            logger_name="vibeocr.subprocess.ocr_worker",
+            source_label=f"[Worker {worker_id}]",
+        )
 
         # 启动期原始输出缓冲：Worker 就绪前的全部 stdout 行（含 stderr，
         # 因 stderr 已合并到 stdout）原样保留，便于进程早退时定位真实错误
@@ -223,92 +227,25 @@ class OCRWorkerProcess:
         return env
 
     def _parse_and_forward_log(self, text: str) -> None:
-        """解析子进程日志行并按原始级别转发
+        """解析子进程日志行并按原始级别转发（委托给 SubprocessLogForwarder）。
 
-        子进程日志格式: "YYYY-MM-DD HH:MM:SS [LEVEL] name: message"
-        匹配该格式的结构化行按原级别转发。
-
-        无法匹配的裸 print（PaddleX/transformers 等库直接 print 的内容，
-        可能包含用户文档的文本片段）不原样转发，只累加计数，
-        在遇到结构化行、显式 flush 或达到阈值时以概括形式输出行数，
-        避免泄漏用户文档内容。
+        历史实现见 vibeocr.utils.subprocess_log，2026-07 统一日志通道时抽出，
+        与 PDF 后端、MinerU 共用同一套转发逻辑：结构化行按级别转发，
+        裸 print 只输出概括行数，避免泄漏用户文档内容。
         """
-        import re
-
-        prefix = f"[Worker {self.worker_id}]"
-
-        # 匹配日志格式: 2024-01-15 10:30:45 [INFO] module: message
-        match = re.match(
-            r"\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\s+\[(DEBUG|INFO|WARNING|ERROR|CRITICAL)\]\s+(.*)",
-            text,
-        )
-        if match:
-            # 结构化行到来前，先把累积的裸 print 概括输出
-            self.flush_raw_log_buffer()
-            level_name = match.group(1)
-            message = match.group(2)
-            level = getattr(logging, level_name, logging.DEBUG)
-            logger.log(level, f"{prefix} {message}")
-        else:
-            # 纯空白行忽略，不计数、不转发
-            if not text.strip():
-                return
-            with self._raw_log_lock:
-                self._raw_log_count += 1
-                # 累积超过阈值则立即 flush，避免长时间不输出
-                if self._raw_log_count >= 50:
-                    count = self._raw_log_count
-                    self._raw_log_count = 0
-                else:
-                    return
-            logger.debug(f"{prefix} 子进程原始输出 {count} 行（已折叠，含库调试信息）")
+        self._log_forwarder.forward(text)
 
     def flush_raw_log_buffer(self) -> None:
-        """输出并清空已累积的裸 print 概括计数。
-
-        在结构化日志行到来、或读取循环结束时调用，确保折叠的概括被输出。
-        """
-        with self._raw_log_lock:
-            count = self._raw_log_count
-            self._raw_log_count = 0
-        if count > 0:
-            prefix = f"[Worker {self.worker_id}]"
-            logger.debug(f"{prefix} 子进程原始输出 {count} 行（已折叠，含库调试信息）")
+        """输出并清空已累积的裸 print 概括计数（委托给 SubprocessLogForwarder）。"""
+        self._log_forwarder.flush()
 
     def _split_mixed_log_lines(self, text: str) -> list[str]:
-        """分割混合的日志行
+        """分割混合的日志行（委托给 SubprocessLogForwarder）。
 
         PaddlePaddle 的 warnings.warn() 输出有时没有换行符，
-        导致多个日志行被拼接到一行。此方法尝试识别并分割这些行。
-
-        Args:
-            text: 可能包含多个日志行的文本
-
-        Returns:
-            分割后的日志行列表
+        导致多个日志行被拼接到一行。
         """
-        import re
-
-        # 日期时间模式：YYYY-MM-DD HH:MM:SS
-        datetime_pattern = r"\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}"
-
-        # 如果文本中包含多个日期时间模式，说明是多行被拼接
-        matches = list(re.finditer(datetime_pattern, text))
-
-        if len(matches) <= 1:
-            # 没有拼接，直接返回
-            return [text] if text else []
-
-        # 按日期时间模式分割
-        lines = []
-        for i, match in enumerate(matches):
-            start = match.start()
-            end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
-            line = text[start:end].strip()
-            if line:
-                lines.append(line)
-
-        return lines
+        return SubprocessLogForwarder.split_mixed_lines(text)
 
     def _get_worker_script(self) -> str:
         """获取 Worker 脚本路径"""

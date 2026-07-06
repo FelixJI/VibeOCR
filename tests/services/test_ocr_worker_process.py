@@ -260,108 +260,50 @@ class TestOCRWorkerProcess:
 @pytest.mark.skipif(
     not HAS_SUBPROCESS_MODULES, reason="subprocess modules not available"
 )
-class TestParseAndForwardLog:
-    """子进程 stdout 转发为日志的行为。
+class TestOCRWorkerProcessLogForwarding:
+    """OCRWorkerProcess 把子进程 stdout 转发委托给 SubprocessLogForwarder。
 
-    背景：PaddleX/transformers 等库会向 stdout 直接 print 识别结果/文本内容
-    （如 "/x86" 这类用户文档片段），这些裸 print 不带标准日志格式，
-    此前会被原样转发到日志，导致用户文档内容泄漏。
-    期望：结构化日志行仍按级别转发；裸 print 只输出概括（行数），
-    不输出具体内容。
+    转发逻辑本身的完整测试见 tests/utils/test_subprocess_log.py
+    （三套子进程通道参数化共用）。这里仅验证 OCRWorkerProcess 正确接线：
+    logger 名走 vibeocr.subprocess.ocr_worker，source_label 带 [Worker N] 前缀，
+    行为与公共 forwarder 一致。
     """
 
-    def test_structured_line_forwarded_at_its_level(self, caplog):
-        """标准日志格式（带时间戳+级别）按原级别转发，内容保留。"""
-        worker = OCRWorkerProcess(worker_id=0, use_gpu=False)
-        line = (
-            "2024-01-15 10:30:45 [INFO] vibeocr.workers.ocr_worker: OCR 服务初始化完成"
-        )
+    _LOGGER = "vibeocr.subprocess.ocr_worker"
 
-        with caplog.at_level("DEBUG", logger="vibeocr.services.ocr_worker_process"):
+    def test_structured_line_forwarded_at_info_with_worker_label(self, caplog):
+        """结构化行按 INFO 转发，消息带 [Worker 0] 前缀。"""
+        worker = OCRWorkerProcess(worker_id=0, use_gpu=False)
+        line = "2024-01-15 10:30:45 [INFO] vibeocr.workers.ocr_worker: 就绪"
+
+        with caplog.at_level("DEBUG", logger=self._LOGGER):
             worker._parse_and_forward_log(line)
 
         assert any(
-            "OCR 服务初始化完成" in r.message and r.levelname == "INFO"
-            for r in caplog.records
-        )
-
-    def test_structured_warning_line_forwarded_at_warning_level(self, caplog):
-        """WARNING 级别的标准行按 WARNING 转发。"""
-        worker = OCRWorkerProcess(worker_id=0, use_gpu=False)
-        line = "2024-01-15 10:30:45 [WARNING] foo: 模型加载较慢"
-
-        with caplog.at_level("DEBUG", logger="vibeocr.services.ocr_worker_process"):
-            worker._parse_and_forward_log(line)
-
-        assert any(
-            "模型加载较慢" in r.message and r.levelname == "WARNING"
+            "就绪" in r.message and r.levelname == "INFO" and "[Worker 0]" in r.message
             for r in caplog.records
         )
 
     def test_raw_print_does_not_leak_content(self, caplog):
-        """裸 print（无标准日志格式）不得把原始内容写进日志。
-
-        模拟库 print 出识别到的文本片段 "/x86"。这些内容绝不能出现在日志里。
-        """
+        """裸 print 不泄漏原始内容（委托 forwarder 的折叠行为）。"""
         worker = OCRWorkerProcess(worker_id=0, use_gpu=False)
-        line = "/x86  这是用户文档里的敏感文本片段"
 
-        with caplog.at_level("DEBUG", logger="vibeocr.services.ocr_worker_process"):
-            worker._parse_and_forward_log(line)
+        with caplog.at_level("DEBUG", logger=self._LOGGER):
+            worker._parse_and_forward_log("/x86  敏感片段")
+            worker.flush_raw_log_buffer()
 
         leaked = [r.message for r in caplog.records if "/x86" in r.message]
         assert leaked == [], f"裸 print 内容泄漏到日志: {leaked}"
 
-    def test_raw_print_summarized_as_count(self, caplog):
-        """连续多条裸 print 只输出一条概括（行数），不逐条 dump。"""
-        worker = OCRWorkerProcess(worker_id=0, use_gpu=False)
-        raw_lines = [
-            "/x86  内容1",
-            "some raw paddle debug 一二三",
-            "另一行裸输出",
-        ]
+    def test_worker_id_reflected_in_label(self, caplog):
+        """不同 worker_id 产生不同 source_label。"""
+        worker = OCRWorkerProcess(worker_id=3, use_gpu=False)
 
-        with caplog.at_level("DEBUG", logger="vibeocr.services.ocr_worker_process"):
-            for line in raw_lines:
-                worker._parse_and_forward_log(line)
-            # 触发 flush（例如来了一个结构化行，或显式 flush）
-            worker.flush_raw_log_buffer()
+        with caplog.at_level("DEBUG", logger=self._LOGGER):
+            worker._parse_and_forward_log("2024-01-15 10:30:45 [INFO] mod: hi")
 
-        # 内容绝不出现在任何日志记录里
-        assert all("内容1" not in r.message for r in caplog.records)
-        assert all("一二三" not in r.message for r in caplog.records)
-        # 至少有一条概括记录，且提到行数 3
-        summary = [r.message for r in caplog.records if "3" in r.message]
-        assert summary, "应有概括记录（行数）"
+        assert any("[Worker 3]" in r.message for r in caplog.records)
 
-    def test_structured_line_after_raw_flushes_summary(self, caplog):
-        """结构化行到来时，先 flush 之前的裸 print 概括，再转发结构化行。"""
-        worker = OCRWorkerProcess(worker_id=0, use_gpu=False)
-        structured = "2024-01-15 10:30:45 [INFO] mod: 完成"
-
-        with caplog.at_level("DEBUG", logger="vibeocr.services.ocr_worker_process"):
-            worker._parse_and_forward_log("裸输出A")
-            worker._parse_and_forward_log("裸输出B")
-            worker._parse_and_forward_log(structured)
-
-        msgs = [r.message for r in caplog.records]
-        levels = [r.levelname for r in caplog.records]
-        # 第一条是概括（不含裸内容），最后一条是结构化 INFO
-        assert "裸输出A" not in msgs[0]
-        assert "完成" in msgs[-1]
-        assert levels[-1] == "INFO"
-        # 概括记录提到了 2 行
-        assert "2" in msgs[0]
-
-    def test_newline_only_raw_print_is_ignored(self, caplog):
-        """空行/纯空白的裸 print 不计入概括。"""
-        worker = OCRWorkerProcess(worker_id=0, use_gpu=False)
-
-        with caplog.at_level("DEBUG", logger="vibeocr.services.ocr_worker_process"):
-            worker._parse_and_forward_log("   ")
-            worker.flush_raw_log_buffer()
-
-        assert caplog.records == []
 
 
 @pytest.mark.skipif(
