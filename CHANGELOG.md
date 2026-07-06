@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.11] - 2026-07-06
+
+### Fixed
+- fix(settings,deps): 设置界面问题 + 依赖安装/更新修复
+
+### Changed
+- docs(readme): 更新至 v0.4.10 + 新增源码阅读辅助章节
+
 ## [0.4.10] - 2026-07-06
 
 ### Changed
