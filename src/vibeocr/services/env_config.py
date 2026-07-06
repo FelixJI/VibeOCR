@@ -159,12 +159,14 @@ PORTABLE_PYTHON_DIR = "python"
 CONFIG_DIR = "config"
 
 # ---------------------------------------------------------------------------
-# OCR 依赖检测单一清单源（SSOT）
+# OCR / PDF 依赖检测单一清单源（SSOT）
 # ---------------------------------------------------------------------------
 # {import 模块名: pip 包名} —— 检测环境时 import 模块名，结果/缓存用包名做 key。
 # - paddle 模块：paddlepaddle-gpu / paddlepaddle-cpu / paddlepaddle 均导入为 paddle，
 #   故只检 paddle；但它们的发行版名各异，额外候选见 OCR_DIST_NAME_ALIASES。
 # - 版本约束不在此处，安装版本来自 pyproject.toml（env_manager._load_dep_specs）
+# - PDF 后端依赖（fitz/fastapi/uvicorn/pydantic/fonttools）已从主 exe 排除，
+#   由便携 Python 安装供 PDF 子进程用，故与 OCR 依赖同等纳入就绪检测。
 OCR_CHECK_MODULES: dict[str, str] = {
     "paddle": "paddlepaddle",
     "paddleocr": "paddleocr",
@@ -173,6 +175,13 @@ OCR_CHECK_MODULES: dict[str, str] = {
     # markdown 已从 exe 包排除，由便携 Python 安装供 OCR/MinerU worker 用，
     # 故纳入便携环境就绪检测，避免装漏导致 worker 子进程崩溃。
     "markdown": "markdown",
+    # PDF 后端子进程依赖（pdf_backend_process.py 顶层 import）。
+    # 注意 fitz 的 import 名与发行版名不一致：PyMuPDF wheel 提供 fitz 模块。
+    "fitz": "pymupdf",
+    "fastapi": "fastapi",
+    "uvicorn": "uvicorn",
+    "pydantic": "pydantic",
+    "fonttools": "fonttools",
 }
 
 # 同一 import 模块可能来自不同发行版名的额外候选。
@@ -193,6 +202,12 @@ OCR_CHECK_TIMEOUTS: dict[str, int] = {
     "mineru": 15,
     "torch": 15,
     "markdown": 10,
+    # PDF 后端依赖：纯 Python 或轻量扩展，10s 足够。
+    "fitz": 10,
+    "fastapi": 10,
+    "uvicorn": 10,
+    "pydantic": 10,
+    "fonttools": 10,
 }
 
 

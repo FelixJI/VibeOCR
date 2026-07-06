@@ -11,7 +11,6 @@ PreviewCanvas 支持两种高亮数据源：
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QMouseEvent, QPainter, QPen, QPixmap, QWheelEvent
@@ -24,9 +23,6 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-
-if TYPE_CHECKING:
-    import fitz
 
 logger = logging.getLogger(__name__)
 
@@ -56,9 +52,8 @@ class PreviewCanvas(QWidget):
         # 旧数据源：text_layers（PDF points 坐标）
         self._highlight_layers: list = []
         self._render_dpi: int = 150
-        # page_rect 接受 fitz.Rect 或 4-tuple (x0,y0,x1,y1)，
-        # 下沉子进程后主进程不再 import fitz，统一传 tuple。
-        self._page_rect: tuple[float, float, float, float] | fitz.Rect | None = None
+        # page_rect 统一用 4-tuple (x0,y0,x1,y1);主进程不再依赖 fitz。
+        self._page_rect: tuple[float, float, float, float] | None = None
         self._source: str = "pdf"
 
         # 新数据源：OCR 原始块（归一化 [0,1000] bbox）
@@ -157,7 +152,7 @@ class PreviewCanvas(QWidget):
         self,
         layers: list,
         render_dpi: int = 150,
-        page_rect: tuple[float, float, float, float] | fitz.Rect | None = None,
+        page_rect: tuple[float, float, float, float] | None = None,
         source: str = "pdf",
     ) -> None:
         self._clear_ocr_blocks()  # 切换数据源时清除 OCR 块
@@ -209,7 +204,7 @@ class PreviewCanvas(QWidget):
 
     def _paint_text_layers(self, painter: QPainter) -> None:
         """渲染旧 text_layers（PDF points 坐标）。"""
-        from vibeocr.services.pdf_service import PdfService
+        from vibeocr.utils.pdf_coords import bbox_to_pixel
 
         if self._page_rect is None:
             return
@@ -227,7 +222,7 @@ class PreviewCanvas(QWidget):
                 (80, 80, 215, 80),
             ]
             r, g, b, a = palette[color_idx]
-            pixel_bbox = PdfService.bbox_to_pixel(
+            pixel_bbox = bbox_to_pixel(
                 bbox, self._page_rect, self._render_dpi, source=self._source
             )
             x0, y0, x1, y1 = pixel_bbox
@@ -286,14 +281,14 @@ class PreviewCanvas(QWidget):
         self.setToolTip("")
 
     def _handle_layer_hover(self, event: QMouseEvent) -> None:
-        from vibeocr.services.pdf_service import PdfService
+        from vibeocr.utils.pdf_coords import bbox_to_pixel
 
         if self._page_rect is None:
             return
         mx = event.position().x() / self._scale
         my = event.position().y() / self._scale
         for layer in self._highlight_layers:
-            pixel_bbox = PdfService.bbox_to_pixel(
+            pixel_bbox = bbox_to_pixel(
                 layer.bbox, self._page_rect, self._render_dpi, source=self._source
             )
             x0, y0, x1, y1 = pixel_bbox
@@ -504,7 +499,7 @@ class PdfPreviewWindow(QWidget):
         pixmap: QPixmap,
         layers: list,
         render_dpi: int = 150,
-        page_rect: tuple[float, float, float, float] | fitz.Rect | None = None,
+        page_rect: tuple[float, float, float, float] | None = None,
         source: str = "pdf",
     ) -> None:
         """设置预览页面与高亮层（公共 API，替代直接访问 _canvas）。"""

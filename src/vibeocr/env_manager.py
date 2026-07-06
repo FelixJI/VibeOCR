@@ -1061,7 +1061,20 @@ def is_embedded_environment_ready(project_root: Path) -> tuple[bool, list[str]]:
     # 只检查 OCR 核心依赖，排除 is_gpu 等元数据字段。
     # markdown 纳入检查：它已从 exe 包排除，由便携 Python 安装供 worker 用，
     # 缺失会导致 OCR 子进程崩溃，故与 paddleocr/mineru 同等要求。
-    required_deps = ["paddlepaddle", "paddleocr", "mineru", "markdown"]
+    # PDF 后端依赖（pymupdf/fastapi/uvicorn/pydantic/fonttools）同理：
+    # 已从主 exe 排除，缺失会导致 PDF 子进程启动崩溃，纳入必需检测。
+    required_deps = [
+        "paddlepaddle",
+        "paddleocr",
+        "mineru",
+        "markdown",
+        # PDF 后端子进程依赖
+        "pymupdf",
+        "fastapi",
+        "uvicorn",
+        "pydantic",
+        "fonttools",
+    ]
     missing = [pkg for pkg in required_deps if pkg not in deps or not deps[pkg]]
 
     # 缓存显示缺失时，做一次轻量验证排除过期缓存
@@ -1422,6 +1435,13 @@ def _install_paddle_stack(
                 # 用 .get() 防御：旧 specs 字典（pyproject 未声明 markdown 时）会缺 key，
                 # 避免抛 KeyError 中断整个安装。
                 ("Markdown", f'"{specs.get("markdown", "markdown")}"', pip_source),
+                # PDF 后端子进程依赖（pdf_backend_process.py 顶层 import）。
+                # 已从主 exe 排除，由便携 Python 安装；用 .get() 防御旧 specs 缺 key。
+                ("PyMuPDF", f'"{specs.get("pymupdf", "pymupdf")}"', pip_source),
+                ("FastAPI", f'"{specs.get("fastapi", "fastapi")}"', pip_source),
+                ("Uvicorn", f'"{specs.get("uvicorn", "uvicorn")}"', pip_source),
+                ("Pydantic", f'"{specs.get("pydantic", "pydantic")}"', pip_source),
+                ("FontTools", f'"{specs.get("fonttools", "fonttools")}"', pip_source),
             ]
 
             # GPU 环境下安装 torch+CUDA 覆盖 mineru 附带的 CPU 版本
@@ -1731,6 +1751,12 @@ def install_missing_dependencies(
         # markdown 已从 PyInstaller exe 包排除，由便携 Python 安装。
         # 用 .get() 防御旧 specs 字典缺 key。
         ("Markdown", f'"{specs.get("markdown", "markdown")}"', pip_source),
+        # PDF 后端子进程依赖（与 _install_paddle_stack 完整模式同步）。
+        ("PyMuPDF", f'"{specs.get("pymupdf", "pymupdf")}"', pip_source),
+        ("FastAPI", f'"{specs.get("fastapi", "fastapi")}"', pip_source),
+        ("Uvicorn", f'"{specs.get("uvicorn", "uvicorn")}"', pip_source),
+        ("Pydantic", f'"{specs.get("pydantic", "pydantic")}"', pip_source),
+        ("FontTools", f'"{specs.get("fonttools", "fonttools")}"', pip_source),
     ]
     if use_gpu:
         default_gpu_tag = "cu126"
@@ -1758,6 +1784,17 @@ def install_missing_dependencies(
             return import_status.get("mineru", False)
         if req_name == "Markdown":
             return import_status.get("markdown", False)
+        # PDF 后端依赖：import_status 的 key 是 pip 包名(OCR_CHECK_MODULES value)
+        if req_name == "PyMuPDF":
+            return import_status.get("pymupdf", False)
+        if req_name == "FastAPI":
+            return import_status.get("fastapi", False)
+        if req_name == "Uvicorn":
+            return import_status.get("uvicorn", False)
+        if req_name == "Pydantic":
+            return import_status.get("pydantic", False)
+        if req_name == "FontTools":
+            return import_status.get("fonttools", False)
         return False
 
     # 3. 过滤掉已装的
