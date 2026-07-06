@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/FelixJI/VibeOCR/releases"><img alt="版本" src="https://img.shields.io/badge/version-0.3.1-blue" /></a>
+  <a href="https://github.com/FelixJI/VibeOCR/releases"><img alt="版本" src="https://img.shields.io/badge/version-0.4.10-blue" /></a>
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-green" /></a>
   <img alt="Python" src="https://img.shields.io/badge/python-3.13-blue" />
   <img alt="Platform" src="https://img.shields.io/badge/platform-Windows%2064--bit-lightgrey" />
@@ -49,9 +49,11 @@ VibeOCR 是一款基于 [PySide6](https://www.qt.io/) + [PaddlePaddle](https://w
 ### 🛠 工程化
 
 - **推理后端自适应** —— 首次启动自动检测 GPU/CPU，可在设置页切换后端
-- **子进程隔离** —— OCR 在独立子进程执行，隔离 GPU 上下文，主界面不卡顿
+- **双子进程隔离** —— OCR 与 PDF 重依赖分别下沉到独立常驻子进程：
+  - **OCR 子进程**（`ocr_worker_process.py`）隔离 PaddlePaddle GPU 上下文，主界面不卡顿；张量走共享内存 IPC
+  - **PDF 后端**（`pdf_backend_process.py`）以 FastAPI + uvicorn 在子进程内提供 localhost HTTP 服务，主进程通过 `httpx` 客户端调用，彻底规避 PyMuPDF 不支持多线程的隐患；崩溃自动重启
 - **流水线缓存** —— 按显存分层的重型流水线缓存（FIFO 淘汰 + TTL 回收），减少重复加载
-- **程序内更新** —— 自动检查新版本，国内客户端走 gh 代理加速下载
+- **程序内更新** —— 自动检查新版本，国内客户端走 gh 代理加速下载；含 `--self-update` 兜底替换通道
 - **系统托盘** —— 最小化到托盘，边缘悬浮工具栏快捷唤起
 
 ## 下载安装
@@ -77,8 +79,11 @@ VibeOCR 是一款基于 [PySide6](https://www.qt.io/) + [PaddlePaddle](https://w
 | 文档解析 | MinerU、PaddleOCR-VL |
 | 深度学习运行时 | PyTorch（cu126，同时为 Paddle 提供 CUDA DLL） |
 | PDF 处理 | PyMuPDF、fontTools（CJK 子集化） |
+| PDF 后端进程 | FastAPI + uvicorn（子进程内 HTTP 服务） |
+| 进程间通信 | pydantic（共享 schema）、httpx（主进程客户端）、共享内存（OCR 张量） |
 | 条码 | qrcode、python-barcode、pyzbar、OpenCV |
-| 异步集成 | qasync |
+| 导出 | python-docx（Word）、openpyxl（Excel） |
+| 异步集成 | qasync（Qt 事件循环 + asyncio） |
 | 依赖管理 | [uv](https://github.com/astral-sh/uv) |
 | 代码质量 | ruff + pyright + pytest |
 
@@ -127,36 +132,255 @@ uv run python qa/coverage.py --html
 
 提交前建议执行 `pre-commit install` 配置 Git 钩子。
 
+### 运行测试
+
+测试按模块组织在 `tests/` 下（`core` / `managers` / `models` / `services` / `views` / `widgets` / `workers` / `integration`），共 134 个：
+
+```bash
+# 跑全部测试
+uv run pytest
+
+# 只跑某一层（推荐：改动后定向验证）
+uv run pytest tests/services
+uv run pytest tests/views/tabs
+
+# 单个测试文件 / 函数
+uv run pytest tests/services/test_pdf_service.py
+uv run pytest tests/services/test_pdf_service.py::test_add_text_layer
+```
+
 ## 项目结构
 
 ```
 vibeocr/
 ├── src/vibeocr/
-│   ├── main.py                 # 应用入口（环境变量预处理 + 启动）
-│   ├── env_manager.py          # 环境与依赖管理（生产依赖检测、CUDA DLL 路径）
-│   ├── core/
-│   │   └── pipelines/          # 推理流水线注册表与各管道选项定义
-│   ├── services/
-│   │   ├── ocr_service_subprocess.py  # 子进程 OCR 服务（生产路径）
-│   │   ├── ocr_worker_process.py      # OCR worker 子进程
-│   │   ├── mineru_service.py          # MinerU 文档解析
-│   │   ├── pdf_service.py             # PDF 操作与文字层写入
-│   │   ├── pipeline_cache_manager.py  # 流水线缓存（FIFO + TTL）
-│   │   └── update_service.py          # 程序内更新
-│   ├── views/
-│   │   ├── main_window.py             # 主窗口
-│   │   ├── tabs/                      # 各功能标签页（单文件 / PDF / 二维码 / 关于）
-│   │   └── settings_page_controller.py
-│   ├── widgets/                       # 截图遮罩、编辑画布、结果视图等
-│   ├── workers/                       # OCR / PDF 后台线程
-│   ├── managers/                      # 配置、依赖、布局、子进程管理
-│   └── utils/                         # CPU/GPU 信息、CJK 字体、Markdown 转换等
-├── resources/                  # 应用图标、KaTeX 资源
-├── scripts/                    # 版本管理（bump_version）、更新助手、CI 同步
-├── qa/                         # 代码质量脚本
-├── tests/                      # 测试
+│   ├── main.py                       # 应用入口（环境变量预处理 + 单实例 + 启动 + --self-update 兜底）
+│   ├── env_manager.py                # 环境与依赖管理（python-build-standalone 部署、CUDA DLL 路径）
+│   ├── pipeline_status.py            # 流水线首次成功状态记录（防重复引导）
+│   ├── machine_cache.py              # 机器特征缓存（避免重复探测 GPU/模型源）
+│   ├── network_detector.py           # 国内/海外网络环境探测
+│   ├── python_path_manager.py        # 打包态内嵌 Python 路径解析
+│   ├── core/                         # 领域内核（与 Qt/网络无关）
+│   │   ├── constants.py              # 全局常量（共享内存大小、超时等）
+│   │   ├── base_worker.py            # Worker 基类
+│   │   ├── singleton_meta.py         # 线程安全单例元类
+│   │   └── pipelines/               # 推理流水线注册表 + 各管道 spec/选项
+│   │       ├── __init__.py           # OCRPipeline 枚举 + 元数据（单一事实源）
+│   │       ├── registry.py           # PipelineRegistry / PipelineSpec
+│   │       ├── pipeline_ocr.py       # 通用 OCR
+│   │       ├── pipeline_pp_structure.py  # PP-StructureV3
+│   │       ├── pipeline_table.py     # 表格识别
+│   │       ├── pipeline_formula.py   # 公式识别
+│   │       ├── pipeline_mineru.py    # MinerU 文档解析
+│   │       └── pipeline_paddlocr_vl.py   # PaddleOCR-VL
+│   ├── models/                       # 数据模型（dataclass，跨进程共享）
+│   │   ├── ocr_result.py             # OCRResult / TextBlock
+│   │   ├── pdf_document.py           # PdfDocument / PdfPageInfo / TextLayerInfo（规范模型）
+│   │   ├── pdf_session.py            # PDF 会话状态
+│   │   ├── batch_request.py          # 批量请求 + 预处理选项
+│   │   ├── ocr_options.py            # OCR 选项
+│   │   ├── pdf_ocr_options.py        # PDF OCR 选项
+│   │   ├── export_settings.py        # 导出设置
+│   │   └── text_block_options.py     # 文本块选项
+│   ├── ipc/                          # PDF 后端进程间通信契约
+│   │   ├── schemas.py                # pydantic 共享 schema（请求/响应/Mirror/Diff）
+│   │   └── model_bridge.py           # PdfDocumentMirror ↔ PdfDocument 桥接（主进程侧）
+│   ├── services/                     # 业务服务层
+│   │   ├── ocr_service_subprocess.py # OCR 子进程服务（主进程侧单例，对外接口）
+│   │   ├── ocr_worker_process.py     # OCR worker 子进程入口（持有 PaddleX）
+│   │   ├── worker_manager.py         # PaddleX WorkerManager 封装（共享内存 IPC）
+│   │   ├── ocr_service.py / _base.py / _portable.py  # 多形态 OCRService
+│   │   ├── pdf_backend_process.py    # PDF 后端 FastAPI 子进程（持有 fitz）
+│   │   ├── pdf_backend_client.py     # 主进程 httpx 客户端 + 进程托管
+│   │   ├── pdf_service.py            # PDF 操作与文字层写入（在后端进程内调用）
+│   │   ├── mineru_service.py / _batch.py  # MinerU 文档解析
+│   │   ├── pipeline_cache_manager.py # 流水线缓存（FIFO + TTL）
+│   │   ├── export_service.py         # 导出 Word/Excel/Markdown
+│   │   ├── qrcode_service.py         # 二维码/条码生成
+│   │   ├── qrcode_decode_service.py  # 二维码/条码解码
+│   │   ├── text_block_processor.py   # 文本块后处理
+│   │   ├── update_service.py         # 程序内更新
+│   │   ├── env_config.py             # 镜像源、python-build-standalone 配置
+│   │   └── log_service.py            # 日志初始化
+│   ├── workers/                      # Qt 后台线程（主进程内）
+│   │   ├── ocr_worker.py             # OCR QRunnable
+│   │   ├── batch_queue_manager.py    # 批量任务队列
+│   │   ├── pdf_ipc_worker.py         # PDF IPC 请求线程
+│   │   └── pdf_render_thumb_ipc_worker.py  # PDF 缩略图渲染线程
+│   ├── managers/                     # 应用级管理器（单例）
+│   │   ├── config_manager.py         # 统一配置
+│   │   ├── settings_manager.py       # 设置持久化
+│   │   ├── dependency_manager.py     # 依赖安装/更新
+│   │   ├── subprocess_manager.py     # OCR 子进程生命周期
+│   │   ├── pdf_session_manager.py    # PDF 会话编排
+│   │   └── layout_manager.py         # 窗口布局持久化
+│   ├── views/                        # 视图层（Controller + 复合页）
+│   │   ├── main_window.py            # 主窗口
+│   │   ├── clipboard_controller.py   # 剪贴板协调
+│   │   ├── settings_page_controller.py
+│   │   ├── batch_recognition_tab.py  # 批量识别页
+│   │   ├── pdf_preview_window.py     # PDF 独立预览窗
+│   │   └── tabs/                     # 各功能标签页（单文件 / PDF / 二维码 / 关于）
+│   ├── widgets/                      # 可复用 Qt 组件
+│   │   ├── screen_capture_overlay.py # 全屏截图遮罩
+│   │   ├── inline_edit_canvas.py     # 截图内联编辑器
+│   │   ├── editor/                   # 编辑器子模块（画布/工具栏/标注项/命令栈）
+│   │   ├── recognition_panel.py / result_view_widget.py
+│   │   ├── install_dialog.py / backend_choice_dialog.py
+│   │   ├── toast_widget.py / toolbar.py / magnifier_overlay.py
+│   │   └── *_options_widget.py       # 各类选项面板
+│   ├── ui/                           # Qt 自动生成代码
+│   │   ├── ui_main_window.py         # 由 .ui 编译（见 scripts/compile_ui.py）
+│   │   └── theme.py                  # 主题 token（当前禁用，保留）
+│   └── utils/                        # 工具集
+│       ├── cpu_info.py / system_memory.py / gpu_memory_monitor.py
+│       ├── cjk_font_resolver.py      # 系统中文字体定位 + 子集化
+│       ├── shared_memory_v2.py       # 跨进程张量共享内存
+│       ├── job_object.py             # Windows Job Object 孤儿子进程清理
+│       ├── subprocess_log.py         # 子进程 stdout → 主进程日志转发
+│       ├── single_instance.py        # 单实例守卫
+│       ├── qt_async.py               # qasync 事件循环工厂
+│       ├── markdown_converter.py     # Markdown → HTML（KaTeX 渲染）
+│       ├── thumbnail_lru_cache.py    # PDF 缩略图 LRU 缓存
+│       ├── warmup_utils.py / ocr_preferences.py / app_settings.py
+│       └── indent_processor.py / pdf_coords.py / mime_types.py / autostart.py
+├── resources/                  # 应用图标、KaTeX 资源（打包由 --add-data 内嵌）
+├── scripts/                    # bump_version（打包发版）、compile_ui、update_replacer、updater_main、profile_startup
+├── qa/                         # 代码质量脚本（lint/format/type_check/coverage/upgrade_deps）
+├── tests/                      # 单元 + 集成测试（134 个，按模块组织）
+├── .github/workflows/release.yml  # GitHub Actions 发版（PyInstaller + 镜像 CNB）
 └── pyproject.toml
 ```
+
+## 源码阅读辅助
+
+本章帮助新加入的开发者快速建立对整体架构的心智模型。代码库规模约 **132 个源文件 / 4.5 万行**，按职责分层清晰，但有几处「隔离边界」是阅读时的关键。
+
+### 架构总览
+
+VibeOCR 是一个 **多进程 + Qt 主线程** 的桌面应用。主进程只跑 GUI 和轻量协调，所有重依赖（PaddlePaddle、PyMuPDF）都下沉到独立子进程，通过 IPC 通信。
+
+```
+┌──────────────────────── 主进程（GUI，qasync 事件循环）────────────────────────┐
+│                                                                            │
+│  views/  ──→  managers/  ──→  services/  ──→  IPC 边界（httpx / 共享内存）   │
+│  (Qt UI)     (编排/单例)     (业务逻辑)                                      │
+│                                                                            │
+│   main.py ─ 启动 → ConfigManager → MainWindow → 各 Tab                      │
+└──────────────────────────────────┬─────────────────────────────────────────┘
+                                   │
+              ┌────────────────────┼────────────────────┐
+              ▼                                          ▼
+   ┌─────────────────────┐                  ┌──────────────────────────┐
+   │  OCR 子进程          │                  │  PDF 后端子进程           │
+   │  ocr_worker_process  │                  │  pdf_backend_process     │
+   │  · PaddleX 流水线    │                  │  · FastAPI + uvicorn     │
+   │  · GPU/CPU 推理      │                  │  · fitz.Document         │
+   │  · 张量经共享内存返回 │                  │  · localhost HTTP        │
+   └─────────────────────┘                  └──────────────────────────┘
+              ▲                                          ▲
+              │ 共享内存 v2                              │ httpx + pydantic schema
+              │ (utils/shared_memory_v2)                 │ (ipc/schemas.py)
+              │                                          │
+   services/ocr_service_subprocess.py        services/pdf_backend_client.py
+```
+
+### 分层职责
+
+| 层 | 目录 | 职责 | 依赖方向 |
+|----|------|------|----------|
+| **入口** | `main.py`, `env_manager.py` | 环境变量预处理、单实例、依赖检测、启动 | → 所有层 |
+| **领域内核** | `core/`, `models/` | 流水线枚举/注册表、纯数据模型 | 不依赖 Qt/网络 |
+| **业务服务** | `services/` | OCR/PDF/二维码/导出/更新等业务逻辑 | → core, models, ipc |
+| **IPC 契约** | `ipc/` | 跨进程 schema（pydantic）+ 模型桥接 | → models |
+| **应用编排** | `managers/` | 配置/依赖/子进程/会话/布局（单例） | → services |
+| **后台线程** | `workers/` | 主进程内 QRunnable/QThread | → services |
+| **视图** | `views/` | 主窗口 + 各 Tab Controller | → managers, services, widgets |
+| **组件** | `widgets/`, `ui/` | 可复用 Qt 组件、编译产物 | → core, models |
+| **工具** | `utils/` | CPU/GPU 信息、字体、共享内存等纯工具 | 无外部依赖 |
+
+> **规则**：依赖只能「向右/向下」。`core`/`models`/`utils` 不应 import `views`/`services`（除 `TYPE_CHECKING` 外）。`ipc/schemas.py` 是主进程与 PDF 后端共享的**唯一契约**，改动需同步两边。
+
+### 关键数据流
+
+#### 1. 截图 OCR（最常用路径）
+
+```
+全局快捷键 → widgets/screen_capture_overlay.py（全屏遮罩 + 框选）
+          → widgets/inline_edit_canvas.py（可选标注：马赛克/模糊/矩形）
+          → workers/ocr_worker.py（QRunnable，避免阻塞 UI）
+          → services/ocr_service_subprocess.py（主进程侧单例）
+          │   ↓ 写入共享内存 + 跨进程调用
+          → services/ocr_worker_process.py（子进程，PaddleX 推理）
+          │   ↓ 结果经共享内存回传
+          → widgets/recognition_panel.py（渲染结果，支持复制/导出）
+```
+
+#### 2. PDF 处理（进程化架构）
+
+```
+views/tabs/pdf_tab.py（UI 交互）
+  → managers/pdf_session_manager.py（会话编排）
+  → workers/pdf_ipc_worker.py（Qt 线程，发 HTTP）
+  → services/pdf_backend_client.py（httpx 客户端，单例）
+  │   ↓ POST localhost:{port}/...
+  → services/pdf_backend_process.py（FastAPI 子进程，单线程）
+  │     → services/pdf_service.py（fitz 操作 + OCR 文字层写入）
+  │     ← 返回 PdfDocumentMirror / ModelDiff / PNG 字节
+  → ipc/model_bridge.py（Mirror → PdfDocument 只读视图）
+  → widgets（缩略图/预览刷新）
+```
+
+> PDF 后端返回的是 `PdfDocumentMirror`（纯数据，可序列化），主进程通过 `ipc/model_bridge.py` 重建为 UI 现有代码熟悉的 `PdfDocument` 只读视图。所有修改操作（旋转/删除/插入/OCR 写层）走 IPC，后端返回增量 `ModelDiff`，主进程 `apply_diff` 刷新视图。
+
+#### 3. 批量识别
+
+```
+views/batch_recognition_tab.py（拖入多文件）
+  → workers/batch_queue_manager.py（队列 + 并发控制）
+  → services/ocr_service_subprocess.py（逐文件复用 OCR 子进程）
+  → services/export_service.py（Word/Excel/Markdown 导出）
+```
+
+### 推荐阅读顺序
+
+按以下顺序读，能在最短时间内建立完整心智模型：
+
+1. **`main.py`** —— 启动流程：环境变量预处理 → 单实例守卫 → `ConfigManager` → `MainWindow` → qasync 循环。注意 `--self-update` 兜底通道（抢在 Qt import 之前拦截）。
+2. **`core/pipelines/__init__.py`** —— 流水线**单一事实源**：`OCRPipeline` 枚举 + `_PIPELINE_METADATA`。所有支持的识别类型、选项、是否可预加载/重型，都在这里查。再看 `registry.py` 的 `PipelineSpec` 了解一条流水线的完整元数据。
+3. **`services/ocr_service_subprocess.py`** —— OCR 主进程侧门面（单例）。理解它如何委托给 `worker_manager.py`（共享内存 IPC）与 `ocr_worker_process.py`（子进程）。
+4. **`services/pdf_backend_process.py` + `pdf_backend_client.py`** —— PDF 进程化的两端。先读文件头注释（设计要点），再看 `ipc/schemas.py`（共享契约）和 `ipc/model_bridge.py`（Mirror↔Doc 桥接）。
+5. **`views/main_window.py` → `views/tabs/`** —— 从主窗口到各功能 Tab，看 UI 如何经 `managers/` 编排 `services/`。
+6. **`managers/`** —— 应用级单例：`config_manager`（统一配置）、`subprocess_manager`（OCR 子进程生命周期）、`pdf_session_manager`（PDF 会话编排）、`dependency_manager`（依赖安装）。
+
+### 关键设计决策（读码前必知）
+
+- **为什么 OCR 要子进程？** PaddlePaddle GPU 上下文与 Qt 的 QThread 存在兼容性问题，且推理会阻塞事件循环。隔离到子进程后主界面永不卡顿，GPU 上下文崩溃也不影响主程序。张量走 `utils/shared_memory_v2.py` 共享内存，避免序列化开销。
+- **为什么 PDF 也要子进程？** PyMuPDF（fitz）**不支持多线程**并发访问同一 `Document`。把所有 fitz 调用收敛到 FastAPI 子进程的单线程内，主进程完全不碰 fitz，彻底消除并发隐患。代价是 localhost HTTP 往返，但 PDF 操作本就不是高频调用。
+- **为什么有 `Mirror` 和 `Diff`？** 主进程不能持有 fitz 上下文，但 UI 代码大量直接读 `PdfPageInfo` 字段。`ipc/model_bridge.py` 把后端返回的纯数据 `Mirror` 重建为 UI 熟悉的 `PdfDocument` 只读视图；修改操作返回增量 `ModelDiff` 而非整文档，减少传输。
+- **流水线缓存（`pipeline_cache_manager.py`）**：重型流水线（PP-StructureV3 / MinerU / PaddleOCR-VL）按显存分层加载，FIFO 淘汰 + TTL 闲置回收。改流水线相关代码前先读它，理解生命周期边界。
+- **CUDA DLL 同源（`env_manager.py` + `pyproject.toml` 注释）**：Paddle cu126 找 `cublas64_12.dll`，由 torch cu126 的 `torch/lib` 提供。所以项目显式依赖 torch 不仅为推理，也为给 paddle 提供 CUDA 运行时 DLL。`OCRService._setup_cuda_dll_path` 负责注册路径。
+- **孤儿进程清理（`utils/job_object.py`）**：子进程由 Windows Job Object 托管，主进程崩溃时子进程自动终止，不残留。
+
+### 常见读码问题
+
+| 问题 | 入口文件 |
+|------|----------|
+| 新加一种识别流水线？ | `core/pipelines/`（新建 `pipeline_xxx.py` + 注册到 `__init__.py`） |
+| 改 OCR 选项 UI？ | `widgets/backend_options_widget.py` + `models/ocr_options.py` |
+| 改 PDF 页面操作？ | `views/tabs/pdf_tab.py`（UI）→ `managers/pdf_session_manager.py` |
+| 新增 PDF 后端 API？ | `ipc/schemas.py`（加 schema）→ `pdf_backend_process.py`（实现）→ `pdf_backend_client.py`（客户端） |
+| 改导出格式？ | `services/export_service.py` |
+| 改快捷键/托盘？ | `views/main_window.py` + `main.py` |
+| 调整流水线缓存策略？ | `services/pipeline_cache_manager.py` |
+
+### 开发调试技巧
+
+- **日志**：`services/log_service.py` 统一初始化；子进程 stdout 由 `utils/subprocess_log.py` 转发到主进程日志。三套子进程（OCR worker / PDF 后端 / updater）的日志通道已统一。
+- **UI 文件**：`ui/ui_main_window.py` 由 `scripts/compile_ui.py` 从 `.ui` 编译生成，**不要手改**，改 `.ui` 后重新编译。
+- **代码质量**：提交前跑 `uv run python qa/run.py --all --quick`（lint + 格式 + 类型检查）。
+- **测试**：`tests/` 按模块组织（core/managers/models/services/views/widgets/workers/integration），134 个测试。`uv run pytest tests/<子目录>` 跑某一层。
+- **网络环境**：`network_detector.py` 探测国内/海外，影响镜像源选择；调试时可关注 `services/env_config.py`。
 
 ## 发布流程
 
