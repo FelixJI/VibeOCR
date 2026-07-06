@@ -898,44 +898,8 @@ class PdfService:
 
         return fitz.Rect(x0, y0, x1, y1)
 
-    @staticmethod
-    def bbox_to_pixel(
-        bbox: tuple[float, float, float, float],
-        page_rect: "fitz.Rect | tuple[float, float, float, float]",
-        render_dpi: int,
-        source: str = "pdf",
-    ) -> tuple[float, float, float, float]:
-        """将 bbox 转换为渲染图像的像素坐标。
-
-        Args:
-            bbox: 输入 bbox。
-            page_rect: PDF 页面矩形 (points)。接受 fitz.Rect 或 4-tuple，
-                下沉子进程后主进程不再 import fitz，统一传 tuple。
-            render_dpi: 渲染 DPI。
-            source: "pdf" 表示 bbox 是 PDF points 坐标，
-                    "normalized" 表示 [0, 1000] 归一化坐标。
-
-        Returns:
-            像素坐标 (x0, y0, x1, y1)。
-        """
-        # 兼容 fitz.Rect（有 .width/.height）与 4-tuple (x0,y0,x1,y1)
-        if hasattr(page_rect, "width"):
-            pw, ph = page_rect.width, page_rect.height
-        else:
-            pw = page_rect[2] - page_rect[0]
-            ph = page_rect[3] - page_rect[1]
-        if source == "normalized":
-            # 先转为 PDF points
-            x0 = bbox[0] / 1000 * pw
-            y0 = bbox[1] / 1000 * ph
-            x1 = bbox[2] / 1000 * pw
-            y1 = bbox[3] / 1000 * ph
-        else:
-            x0, y0, x1, y1 = bbox
-
-        # PDF points → pixels: coord / 72 * dpi
-        scale = render_dpi / 72.0
-        return (x0 * scale, y0 * scale, x1 * scale, y1 * scale)
+    # bbox_to_pixel 已抽到 vibeocr.utils.pdf_coords(纯数学,无 fitz 依赖),
+    # 供主进程 PDF 预览窗口使用。子进程不调用该方法,此处不再保留。
 
     # ---- helpers ----------------------------------------------------
 

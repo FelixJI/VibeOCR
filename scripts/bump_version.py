@@ -117,6 +117,15 @@ EXCLUDED_PACKAGES = [
     "frozenlist",
     "propcache",
     "aiosignal",
+    # fastapi / uvicorn:仅 PDF 后端子进程(pdf_backend_process.py)用,
+    # 该模块由嵌入式 Python 经 `python -m` 加载,不进主 exe import 链。
+    "fastapi",
+    "uvicorn",
+    # pymupdf(import 名 fitz):仅 PDF 后端子进程用(pdf_service.py 顶层 import)。
+    # bbox_to_pixel 已抽到 utils/pdf_coords.py,主进程不再加载 pdf_service,
+    # 故 fitz 可从主 exe 排除,由便携 Python 安装供子进程用。
+    "pymupdf",
+    "fitz",
 ]
 
 # PySide6 中本项目完全未使用的子模块。
@@ -274,7 +283,6 @@ HIDDEN_IMPORTS = [
     "qrcode.image.pil",
     "barcode",
     "barcode.writer",
-    "fitz",
     "pydantic",
     "openpyxl",
     "docx",
@@ -885,7 +893,12 @@ def _generate_version_json(version: str, dist_dir: Path) -> None:
     deps = tomldata.get("project", {}).get("dependencies", [])
 
     # 需要追踪版本的包前缀（对应 EXCLUDED_PACKAGES 中排除的大依赖）
-    _TRACKED_PREFIXES = ("paddle", "paddleocr", "mineru", "torch", "nvidia")
+    # PDF 后端依赖(pymupdf/fastapi/uvicorn/pydantic/fonttools)已从主 exe 排除,
+    # 由便携 Python 安装,故需追踪版本写入 version.json,供打包态 _load_dep_specs 读取。
+    _TRACKED_PREFIXES = (
+        "paddle", "paddleocr", "mineru", "torch", "nvidia",
+        "pymupdf", "fastapi", "uvicorn", "pydantic", "fonttools",
+    )
     _KEY_ALIASES = {"paddlepaddle-gpu": "paddlepaddle"}
 
     dep_versions: dict[str, str] = {}
