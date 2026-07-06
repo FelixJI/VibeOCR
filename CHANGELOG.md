@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.4.9] - 2026-07-06
+
+### Fixed
+- fix(packaging): pydantic 不应排除，并补齐主进程延迟 import 的 hidden imports
+
+### Changed
+- refactor(log): 统一三套子进程日志通道
+
+### Dependencies
+- 新增:
+  - 新增 fastapi>=0.115.0
+  - 新增 uvicorn>=0.34.0
+  - 新增 pydantic>=2.11.0
+
 ## [0.4.8] - 2026-07-05
 
 ### Added
