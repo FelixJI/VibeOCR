@@ -1114,11 +1114,15 @@ class TestProbeModuleDoubleLayer:
     def test_installed_but_module_self_missing_warns_broken_install(
         self, tmp_path, caplog
     ):
-        """残缺安装（fonttools 场景）：metadata 在但 import 报 No module named 'fonttools'
+        """残缺安装（合成纯 Python 包场景）：metadata 在但 import 报模块自身缺失
 
-        回归：旧 warning 统一称"间接依赖未完成"，但 fonttools 是纯 Python 包、无间接依赖，
+        回归：旧 warning 统一称"间接依赖未完成"，但纯 Python 包无间接依赖，
         真实原因是 .dist-info 残留导致模块文件缺失。warning 文案应指向"残缺/损坏"，
         不应再误导为"间接依赖"。
+
+        用合成包名 ``brokenpkg`` 而非真实 ``fonttools``：fonttools 的真实 import 名是
+        fontTools（大写 T，PEP 235 区分大小写），用它做"import 失败"fixture 会与
+        OCR_CHECK_MODULES 的真实映射冲突。brokenpkg 是不存在的包，纯粹验证机制。
         """
         import logging
 
@@ -1129,16 +1133,16 @@ class TestProbeModuleDoubleLayer:
             r = MagicMock()
             code = cmd[cmd.index("-c") + 1] if "-c" in cmd else ""
             if "metadata" in code:
-                r.returncode = 0  # fonttools 发行版元数据存在（.dist-info 残留）
-                r.stdout = "4.61.1"
+                r.returncode = 0  # 发行版元数据存在（.dist-info 残留）
+                r.stdout = "1.0.0"
                 r.stderr = ""
             else:
-                # import fonttools 报模块自身缺失（非间接依赖）
+                # import brokenpkg 报模块自身缺失（非间接依赖）
                 r.returncode = 1
                 r.stderr = (
                     'Traceback (most recent call last):\n  File "<string>", '
-                    'line 1, in <module>\n    import fonttools\n'
-                    "ModuleNotFoundError: No module named 'fonttools'"
+                    'line 1, in <module>\n    import brokenpkg\n'
+                    "ModuleNotFoundError: No module named 'brokenpkg'"
                 )
                 r.stdout = ""
             return r
@@ -1150,7 +1154,7 @@ class TestProbeModuleDoubleLayer:
             caplog.at_level(logging.WARNING, logger="vibeocr.env_manager"),
         ):
             installed, usable = _probe_module(
-                python_exe, "fonttools", "fonttools"
+                python_exe, "brokenpkg", "brokenpkg"
             )
 
         assert installed is True, ".dist-info 残留时 metadata 层应判 installed=True"
@@ -1158,12 +1162,12 @@ class TestProbeModuleDoubleLayer:
         warn_msgs = " ".join(
             r.message for r in caplog.records if r.levelno >= logging.WARNING
         )
-        assert "fonttools" in warn_msgs
+        assert "brokenpkg" in warn_msgs
         assert "残缺" in warn_msgs or "损坏" in warn_msgs, (
             f"残缺安装应提示'残缺/损坏'，实际: {warn_msgs}"
         )
         assert "间接依赖" not in warn_msgs, (
-            f"fonttools 无间接依赖，不应误报'间接依赖未完成'，实际: {warn_msgs}"
+            f"纯 Python 包无间接依赖，不应误报'间接依赖未完成'，实际: {warn_msgs}"
         )
 
     def test_installed_but_indirect_dep_missing_warns_indirect(
@@ -1319,6 +1323,10 @@ class TestCheckImportsDetailed:
         """fonttools 残缺安装：metadata 在 + import 自身失败 → (True, False)
 
         这是补装走 --force-reinstall 的触发条件。
+
+        注意：fonttools 的真实 import 名是 ``fontTools``（大写 T，PEP 235），
+        OCR_CHECK_MODULES 已修正为 ``fontTools``。mock 需匹配 ``import fontTools``
+        才能模拟"import 失败"。结果 dict 的 key 仍是 pip 包名 ``fonttools``。
         """
         python_exe = tmp_path / "python.exe"
         python_exe.touch()
@@ -1330,9 +1338,9 @@ class TestCheckImportsDetailed:
                 r.returncode = 0
                 r.stdout = "4.61.1"
                 r.stderr = ""
-            elif code == "import fonttools":
+            elif code == "import fontTools":
                 r.returncode = 1
-                r.stderr = "ModuleNotFoundError: No module named 'fonttools'"
+                r.stderr = "ModuleNotFoundError: No module named 'fontTools'"
                 r.stdout = ""
             else:
                 r.returncode = 0
@@ -2658,10 +2666,11 @@ class TestInstallMissingDependencies:
             if "metadata" in code and "version" in code:
                 r.returncode = 0
                 r.stdout = "1.0.0"
-            elif code == "import fonttools":
-                # fonttools 残缺：import 报模块自身缺失（非间接依赖）
+            elif code == "import fontTools":
+                # fonttools 残缺：import 报模块自身缺失（非间接依赖）。
+                # 注意 import 名是 fontTools（大写 T，PEP 235），与 OCR_CHECK_MODULES 一致。
                 r.returncode = 1
-                r.stderr = "ModuleNotFoundError: No module named 'fonttools'"
+                r.stderr = "ModuleNotFoundError: No module named 'fontTools'"
                 r.stdout = ""
             elif code.startswith("import "):
                 # 其余包正常可用 → 跳过，只补装 fonttools

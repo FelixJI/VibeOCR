@@ -181,7 +181,15 @@ OCR_CHECK_MODULES: dict[str, str] = {
     "fastapi": "fastapi",
     "uvicorn": "uvicorn",
     "pydantic": "pydantic",
-    "fonttools": "fonttools",
+    # 注意 import 名大小写：fonttools wheel 安装的顶层目录是 fontTools（大写 T，
+    # 见 RECORD: fontTools/__init__.py）。Python 导入区分大小写（PEP 235），
+    # 即便 Windows 文件系统不区分大小写，``import fonttools`` 仍会 ModuleNotFoundError。
+    # 之前键用小写 ``fonttools`` 导致探测器永远 import 失败 → 被误判为"安装残缺"
+    # → install_missing_dependencies 走 --force-reinstall 无限重装仍修不好（用户实测）。
+    # 改为 fontTools 后 import 与项目内 cjk_font_resolver.py 的 ``from fontTools import ...``
+    # 一致，依赖检测通过。value 仍是 pip 包名 ``fonttools``，下游 required_deps/缓存/
+    # 设置页表格以 value 为 key，不受影响。
+    "fontTools": "fonttools",
 }
 
 # 同一 import 模块可能来自不同发行版名的额外候选。
@@ -207,7 +215,9 @@ OCR_CHECK_TIMEOUTS: dict[str, int] = {
     "fastapi": 10,
     "uvicorn": 10,
     "pydantic": 10,
-    "fonttools": 10,
+    # 键须与 OCR_CHECK_MODULES 的 import 名一致（fontTools），否则
+    # _probe_module 的 OCR_CHECK_TIMEOUTS.get(module, 15) 命不中、回退到默认 15s。
+    "fontTools": 10,
 }
 
 
