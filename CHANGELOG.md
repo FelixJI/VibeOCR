@@ -4,6 +4,23 @@
 
 ### Fixed
 - fix(settings,deps): 设置界面问题 + 依赖安装/更新修复
+- fix(update): 启动自动检查与关于页"检查更新"按钮并发时崩溃
+  （`RuntimeError: Cannot enter into task ... while another task ...
+  is being executed`）。根因：两调用点各自 ensure_future 起
+  `check_and_prompt`，并发时第二个任务在第一个阻塞于 qasync 嵌套
+  事件循环（QMessageBox / dialog.exec()）期间被唤醒，触发 asyncio
+  `_enter_task` 重入保护。修复：`UpdateService.check_and_prompt` 加
+  类级 `asyncio.Lock` 串行化临界区（含新增并发回归测试）。
+- fix(update): 下载进度对话框支持「取消」与「最小化」。
+  - 取消：底部「取消」按钮 + 恢复标题栏关闭 X（行为等同取消），
+    直接退出整个更新流程（不弹重试框）；协作式 `asyncio.Event`
+    在下载入口 / 换源间隙 / 流式块级三处检查中止网络流并清理半成品 zip。
+  - 最小化：标题栏恢复标准最小化按钮，长下载时可切回主界面继续操作，
+    下载在后台进行。
+  - 根因：原对话框用 `& ~WindowCloseButtonHint` 去掉关闭按钮且无取消
+    按钮，下载一旦开始无法中止。沿用本仓库协作式取消惯例
+    （`install_dialog` / `base_worker`），取消令牌从 `threading.Event`
+    换为 `asyncio.Event`（下载本就是 async 协程）。含 11 个新增回归测试。
 
 ### Changed
 - docs(readme): 更新至 v0.4.10 + 新增源码阅读辅助章节

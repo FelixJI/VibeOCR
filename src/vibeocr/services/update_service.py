@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
+    from PySide6.QtGui import QCloseEvent
     from PySide6.QtWidgets import QWidget
 
 logger = logging.getLogger(__name__)
@@ -206,6 +207,10 @@ DOWNLOAD_REASON_HTTP_ERROR = "http_error"  # zip 非 200 等
 DOWNLOAD_REASON_SHA_MISSING = "sha_missing"  # 校验文件下不到（404/非 200）
 DOWNLOAD_REASON_SHA_MISMATCH = "sha_mismatch"  # 校验文件在但哈希对不上
 DOWNLOAD_REASON_EXCEPTION = "exception"
+# 用户主动取消（点对话框「取消」按钮或标题栏 X）。与上面失败原因并列，
+# 让 download_update 的 (zip_path, fail_reasons) 返回结构在取消路径上仍统一；
+# 上层 _do_download_and_update 据此短路退出整个更新流程，不弹重试框。
+DOWNLOAD_REASON_CANCELLED = "cancelled"
 
 
 class SourceAttempt(NamedTuple):
@@ -235,16 +240,22 @@ async def _download_zip_with_sha(
     zip_path: Path,
     sha256_path: Path,
     progress_callback: Callable[[int, int], None] | None,
+    cancel_event: asyncio.Event | None = None,
 ) -> SourceAttempt:
     """从单个源下载 zip + 对应 sha256 校验文件并校验。
 
     ``sha_url`` 由调用方从 release asset 列表精确匹配提供（同源同 tag），
     而非这里盲拼 ``{zip_url}.sha256``——后者可能下到无关/404 内容。
 
+    ``cancel_event``：可选的协作式取消令牌。每写完一块就检查；被 set 时
+    跳出流式循环，清理已落盘的 zip，返回 ``SourceAttempt(False, cancelled)``。
+    这是下载链路里最细粒度的取消点——大文件分块下载时能在百 KB 级别响应取消。
+
     返回 SourceAttempt；失败时清理残留。供 download_update 在多源候选间逐个调用。
     """
     try:
         # 流式下载 zip（带进度回调）
+        cancelled = False
         async with client.stream("GET", zip_url) as resp:
             if resp.status_code != 200:
                 logger.warning(f"zip 下载失败({resp.status_code})：{zip_url}")
@@ -257,6 +268,14 @@ async def _download_zip_with_sha(
                     downloaded += len(chunk)
                     if progress_callback:
                         progress_callback(downloaded, total)
+                    # 每块写入后检查取消：用户点「取消」后无需等整包下完
+                    if cancel_event is not None and cancel_event.is_set():
+                        cancelled = True
+                        logger.info(f"用户取消下载，清理残留：{zip_url}")
+                        break
+        if cancelled:
+            zip_path.unlink(missing_ok=True)
+            return SourceAttempt(False, DOWNLOAD_REASON_CANCELLED)
 
         # 下载 sha256
         sha_resp = await client.get(sha_url)
@@ -285,6 +304,7 @@ async def download_update(
     cache_dir: Path,
     progress_callback: Callable[[int, int], None] | None = None,
     source_switch_callback: Callable[[str, str], None] | None = None,
+    cancel_event: asyncio.Event | None = None,
 ) -> tuple[Path | None, list[str]]:
     """下载更新包（按网络环境多源回退）。
 
@@ -296,6 +316,9 @@ async def download_update(
     Args:
         source_switch_callback: 某源失败时回调 ``(failed_source_name, reason)``，
             供进度框实时显示「源 X 校验失败，切换源 Y…」。
+        cancel_event: 可选的协作式取消令牌。在「清理残留」前、每次换源前
+            检查；被 set 时立即返回 ``(None, [cancelled])``，不再尝试后续源。
+            流式块级取消由 ``_download_zip_with_sha`` 在内部检查。
 
     Returns:
         (zip_path, fail_reasons)：成功时 fail_reasons 为空列表；全失败时 zip_path
@@ -304,6 +327,11 @@ async def download_update(
     if not update_info.download_url:
         logger.error("下载 URL 为空")
         return None, [DOWNLOAD_REASON_HTTP_ERROR]
+
+    # 进入函数即检查取消（用户在进度框一弹出就点取消）
+    if cancel_event is not None and cancel_event.is_set():
+        logger.info("下载开始前用户已取消")
+        return None, [DOWNLOAD_REASON_CANCELLED]
 
     cache_dir.mkdir(parents=True, exist_ok=True)
 
@@ -327,20 +355,33 @@ async def download_update(
     fail_reasons: list[str] = []
     async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
         for url, sha_url in url_pairs:
+            # 换源间隙检查取消（前一源失败后、下一源开始前）
+            if cancel_event is not None and cancel_event.is_set():
+                logger.info("换源间隙用户已取消下载")
+                break
             source_name = _source_label(url)
             logger.info(f"尝试下载源：{url}")
             attempt = await _download_zip_with_sha(
-                client, url, sha_url, zip_path, sha256_path, progress_callback
+                client,
+                url,
+                sha_url,
+                zip_path,
+                sha256_path,
+                progress_callback,
+                cancel_event=cancel_event,
             )
             if attempt.ok:
                 logger.info(f"更新包下载完成：{zip_path}")
                 return zip_path, []
             fail_reasons.append(attempt.reason)
+            # 用户取消：不再换源，直接跳出（reason 已是 cancelled）
+            if attempt.reason == DOWNLOAD_REASON_CANCELLED:
+                break
             logger.warning(f"更新包下载/校验失败，换源：{url}")
             if source_switch_callback:
                 source_switch_callback(source_name, attempt.reason)
 
-    logger.error("所有更新包下载源均失败")
+    logger.error("所有更新包下载源均失败（或用户已取消）")
     return None, fail_reasons
 
 
@@ -397,7 +438,7 @@ def should_skip_version(version: str, settings_path: Path) -> bool:
 # 更新对话框 UI
 # ---------------------------------------------------------------------------
 
-from PySide6.QtCore import Qt  # noqa: E402
+from PySide6.QtCore import Qt, Signal  # noqa: E402
 from PySide6.QtWidgets import (  # noqa: E402
     QDialog,
     QHBoxLayout,
@@ -495,13 +536,33 @@ class UpdateDialog(QDialog):
 
 
 class DownloadProgressDialog(QDialog):
-    """下载进度对话框"""
+    """下载进度对话框。
+
+    支持两种中断方式，均走同一条协作式取消路径（emit ``cancel_requested``）：
+    - 底部「取消」按钮；
+    - 标题栏「关闭 X」（恢复可见，行为等同取消）。
+    另支持标题栏「最小化」按钮，让用户在长下载过程中切回主界面操作。
+    """
+
+    # 用户请求取消（按钮或 X）。编排器 _do_download_and_update 连接此信号，
+    # 在槽里 set 一个 asyncio.Event，下载协程检查后中止。对话框自身不直接
+    # 关闭——必须等编排器 await download_update 返回后再 close()，
+    # 避免对话框在下载协程仍引用它时被 Qt 提前销毁。
+    cancel_requested = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("正在下载更新")
         self.setMinimumWidth(360)
-        self.setWindowFlags(self.windowFlags() & ~Qt.WindowType.WindowCloseButtonHint)
+        # 默认 QDialog 标题栏只有关闭按钮，且原代码用 & ~ 把关闭也去掉了——
+        # 下载一旦开始就无法中止。这里恢复关闭 X 并加上最小化按钮：
+        #   - 最小化：长下载时切回主界面，下载继续在后台跑；
+        #   - 关闭 X：等同「取消」（见 closeEvent）。
+        self.setWindowFlags(
+            self.windowFlags()
+            | Qt.WindowType.WindowMinimizeButtonHint
+            | Qt.WindowType.WindowCloseButtonHint
+        )
 
         layout = QVBoxLayout(self)
         self._status_label = QLabel("正在下载...")
@@ -517,6 +578,14 @@ class DownloadProgressDialog(QDialog):
         self._source_status_label.setWordWrap(True)
         self._source_status_label.setVisible(False)
         layout.addWidget(self._source_status_label)
+
+        # 取消按钮：右对齐，参照 install_dialog._on_cancel_clicked 的视觉反馈
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+        self._cancel_btn = QPushButton("取消")
+        self._cancel_btn.clicked.connect(self._on_cancel_clicked)
+        btn_layout.addWidget(self._cancel_btn)
+        layout.addLayout(btn_layout)
 
     def update_progress(self, downloaded: int, total: int) -> None:
         if total > 0:
@@ -536,6 +605,37 @@ class DownloadProgressDialog(QDialog):
         """显示换源提示，如『gh-proxy 校验失败，切换 GitHub…』"""
         self._source_status_label.setText(text)
         self._source_status_label.setVisible(bool(text))
+
+    def _on_cancel_clicked(self) -> None:
+        """取消按钮 / 关闭 X 的统一入口：发信号 + 即时视觉反馈。
+
+        幂等：重复点击不会再 emit（按钮已 disabled），避免编排器端多次 set。
+        """
+        if not self._cancel_btn.isEnabled():
+            return
+        self.mark_cancelling()
+        self.cancel_requested.emit()
+
+    def mark_cancelling(self) -> None:
+        """进入「正在取消」状态：禁用按钮、改文案，等编排器 await 返回后真正关闭。"""
+        self._cancel_btn.setEnabled(False)
+        self._cancel_btn.setText("正在取消...")
+        self._status_label.setText("正在取消下载...")
+
+    def mark_finished(self) -> None:
+        """下载结束（成功/失败/已取消）后禁用取消入口，防止误触。"""
+        self._cancel_btn.setEnabled(False)
+        self._cancel_btn.setVisible(False)
+
+    def closeEvent(self, event: QCloseEvent) -> None:
+        """拦截标题栏「关闭 X」：不当场关闭，转为协作式取消信号。
+
+        直接 accept()/忽略事件都不对——前者会在下载协程仍引用对话框时销毁它，
+        后者让 X 失效。正确做法：忽略关闭事件 + emit cancel_requested，让编排器
+        在 await 返回后主动 close()。
+        """
+        event.ignore()
+        self._on_cancel_clicked()
 
 
 # ---------------------------------------------------------------------------
@@ -579,6 +679,29 @@ def _format_failure_message(fail_reasons: list[str]) -> str:
 class UpdateService:
     """应用更新服务编排器"""
 
+    # check_and_prompt 的进程级互斥锁（类属性，跨实例共享）。
+    #
+    # 背景与根因：两个调用点各自 ensure_future 起 check_and_prompt——
+    #   1) main._check_update：frozen 态 loop.call_later(5) 启动自动检查；
+    #   2) AboutTab._on_check_update：用户点「检查更新」按钮。
+    # 二者并发时，第二个任务会在第一个任务阻塞于 QMessageBox.warning /
+    # dialog.exec()（qasync 嵌套事件循环）期间被唤醒，触发 CPython
+    # asyncio.tasks._enter_task 的重入保护：
+    #   RuntimeError: Cannot enter into task <Task-1> while another task
+    #   <Task-2> is being executed.
+    #
+    # 用类级（而非实例级）锁：两处调用点各 new 出独立 UpdateService 实例，
+    # 实例锁无法互斥；必须进程级共享。惰性创建：asyncio.Lock() 在构造时
+    # 绑定当前事件循环，模块 import 阶段尚无运行循环，故延后到首次使用。
+    _check_lock: asyncio.Lock | None = None
+
+    @classmethod
+    def _get_check_lock(cls) -> asyncio.Lock:
+        """惰性创建进程级互斥锁。绑定首次调用时的运行事件循环（qasync）。"""
+        if cls._check_lock is None:
+            cls._check_lock = asyncio.Lock()
+        return cls._check_lock
+
     def __init__(self, app_dir: Path) -> None:
         self._app_dir = app_dir
         self._version_json_path = app_dir / "version.json"
@@ -600,51 +723,70 @@ class UpdateService:
         self._settings_path = get_update_settings_path()
 
     async def check_and_prompt(self, parent: QWidget | None = None) -> None:
-        """异步检查更新并提示用户"""
-        current = read_local_version(self._version_json_path)
-        if current == "0.0.0":
-            logger.debug("无法读取本地版本，跳过更新检查")
-            return
+        """异步检查更新并提示用户
 
-        update_info, fetch_ok = await check_for_updates(current)
+        临界区（网络拉取 + 模态对话框）受类级 ``_check_lock`` 保护，串行化所有
+        并发调用。否则启动自动检查与关于页按钮检查并发时，第二个任务会在
+        第一个阻塞于 ``QMessageBox`` / ``dialog.exec()`` 的 qasync 嵌套事件循环
+        期间被唤醒，触发 ``RuntimeError: Cannot enter into task ...``（asyncio
+        ``_enter_task`` 重入保护）。
+        """
+        async with self._get_check_lock():
+            current = read_local_version(self._version_json_path)
+            if current == "0.0.0":
+                logger.debug("无法读取本地版本，跳过更新检查")
+                return
 
-        # 自动检查失败：提示用户去下载页手动下载并覆盖安装（需先退出程序）。
-        if not fetch_ok:
-            manual_url = GITHUB_RELEASES_BASE
-            QMessageBox.warning(
-                parent,
-                "检查更新",
-                "自动检查更新失败，可能是网络问题。\n\n"
-                "可前往 GitHub 手动下载对应版本，"
-                "覆盖安装前请先退出本程序：\n"
-                f"{manual_url}",
-            )
-            return
+            update_info, fetch_ok = await check_for_updates(current)
 
-        if update_info is None:
-            return
+            # 自动检查失败：提示用户去下载页手动下载并覆盖安装（需先退出程序）。
+            if not fetch_ok:
+                manual_url = GITHUB_RELEASES_BASE
+                QMessageBox.warning(
+                    parent,
+                    "检查更新",
+                    "自动检查更新失败，可能是网络问题。\n\n"
+                    "可前往 GitHub 手动下载对应版本，"
+                    "覆盖安装前请先退出本程序：\n"
+                    f"{manual_url}",
+                )
+                return
 
-        if should_skip_version(update_info.version, self._settings_path):
-            logger.debug(f"用户已跳过版本 {update_info.version}")
-            return
+            if update_info is None:
+                return
 
-        dialog = UpdateDialog(update_info, current, parent)
-        dialog.exec()
+            if should_skip_version(update_info.version, self._settings_path):
+                logger.debug(f"用户已跳过版本 {update_info.version}")
+                return
 
-        if dialog.user_action == "skip":
-            save_skip_version(update_info.version, self._settings_path)
-            return
+            dialog = UpdateDialog(update_info, current, parent)
+            dialog.exec()
 
-        if dialog.user_action == "update":
-            await self._do_download_and_update(update_info, parent)
+            if dialog.user_action == "skip":
+                save_skip_version(update_info.version, self._settings_path)
+                return
+
+            if dialog.user_action == "update":
+                await self._do_download_and_update(update_info, parent)
 
     async def _do_download_and_update(
         self, info: UpdateInfo, parent: QWidget | None
     ) -> None:
         # 重试上限，防用户连点导致无限下载循环；用户可在失败框主动取消。
         max_attempts = 3
+        # 进程内取消令牌：对话框 cancel_requested 信号 → set 此 event →
+        # download_update / _download_zip_with_sha 检查后中止下载。
+        # 用 asyncio.Event 而非 threading.Event：下载是 async 协程，Event 在
+        # 同一事件循环内 set/is_set 无需锁，且 is_set() 在协程 await 点自然可见。
+        cancel_event = asyncio.Event()
         for _attempt in range(1, max_attempts + 1):
+            # 重试入口检查取消（上一次重试框用户可能已点取消并触发 set）
+            if cancel_event.is_set():
+                return
             progress_dialog = DownloadProgressDialog(parent)
+            # 信号 → 令牌桥；同时给即时视觉反馈（按钮置灰 + 文案改「正在取消...」）
+            progress_dialog.cancel_requested.connect(cancel_event.set)
+            progress_dialog.cancel_requested.connect(progress_dialog.mark_cancelling)
             progress_dialog.show()
 
             # 把 progress_dialog 作为默认参数显式绑定，避免闭包按引用捕获循环变量
@@ -670,9 +812,20 @@ class UpdateService:
                 self._cache_dir,
                 progress_callback=progress_cb,
                 source_switch_callback=on_source_switch,
+                cancel_event=cancel_event,
             )
 
+            progress_dialog.mark_finished()
             progress_dialog.close()
+
+            # 用户主动取消：直接退出整个更新流程，不弹重试框、不弹任何后续消息。
+            # 判定双保险：cancel_event.is_set()（信号触发）或 fail_reasons 含 cancelled
+            # （download_update 因 event 跳出多源循环返回的语义原因）。
+            if cancel_event.is_set() or (
+                zip_path is None and DOWNLOAD_REASON_CANCELLED in fail_reasons
+            ):
+                logger.info("用户取消下载，退出更新流程")
+                return
 
             if zip_path is not None:
                 break

@@ -6,6 +6,7 @@ import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
+import pytest
 
 
 def _run(coro):
@@ -734,3 +735,348 @@ class TestFormatFailureMessage:
             msg = _format_failure_message([DOWNLOAD_REASON_HTTP_ERROR])
         # 手动下载链接指向 GitHub
         assert "github.com" in msg
+
+
+class TestCheckAndPromptConcurrency:
+    """check_and_prompt 并发互斥回归测试。
+
+    背景：启动检查（main._check_update）与关于页"检查更新"按钮
+    （AboutTab._on_check_update）各自 ensure_future 起 check_and_prompt；
+    两者并发时，第二个任务会在第一个任务阻塞于 QMessageBox / dialog.exec()
+    （qasync 嵌套事件循环）时被唤醒，触发
+    ``RuntimeError: Cannot enter into task ... while another task ... is
+    being executed``（asyncio.tasks._enter_task 重入保护）。
+
+    根因修复：check_and_prompt 用类级 asyncio.Lock 串行化，第二个调用必须在
+    锁上 await 挂起，而不是穿透进网络/对话框代码。本测试验证两件事：
+    1. 两并发调用的临界区不会重叠（lock 持有期间无第二个 in-flight）。
+    2. 第二次调用正常等到第一次释放后执行（不死锁、不丢弃）。
+    """
+
+    def _make_service(self, tmp_path, monkeypatch):
+        """构造 UpdateService，version.json/缓存/设置均落在 tmp_path 隔离区。"""
+        from vibeocr.services import env_config, update_service
+
+        # 隔离 data 目录，避免污染真实用户态目录
+        (tmp_path / "version.json").write_text(
+            json.dumps({"version": "0.1.0"}), encoding="utf-8"
+        )
+        monkeypatch.setattr(
+            env_config, "get_data_dir", lambda: tmp_path, raising=False
+        )
+        # get_update_cache_dir / get_update_settings_path 走 get_data_dir，但已被模块顶层
+        # import 时绑定，直接 patch 它们的返回更稳妥
+        monkeypatch.setattr(
+            env_config,
+            "get_update_cache_dir",
+            lambda: tmp_path / "cache" / "update",
+            raising=False,
+        )
+        monkeypatch.setattr(
+            env_config,
+            "get_update_settings_path",
+            lambda: tmp_path / "settings" / "update_settings.json",
+            raising=False,
+        )
+
+        # 重置类级锁，避免上一个测试遗留的锁状态干扰
+        update_service.UpdateService._check_lock = None
+
+        return update_service.UpdateService(tmp_path)
+
+    def test_two_concurrent_check_and_prompt_do_not_overlap(self, tmp_path, monkeypatch):
+        """两并发 check_and_prompt：临界区互斥，第二个等第一个释放后才进入。"""
+        from vibeocr.services import update_service
+
+        service = self._make_service(tmp_path, monkeypatch)
+
+        # 远程版本与本地相同 → check_and_prompt 走「已是最新」早退，不弹任何对话框，
+        # 让测试不依赖 Qt modal。但早退发生在 await check_for_updates 之后，
+        # 仍会与第二个调用在网络 await 点交错——正好覆盖竞态窗口。
+        mock_release = {
+            "tag_name": "v0.1.0",
+            "body": "",
+            "assets": [
+                {
+                    "name": "VibeOCR-v0.1.0-win64.zip",
+                    "browser_download_url": "http://test.zip",
+                    "size": 0,
+                }
+            ],
+        }
+
+        in_flight = 0
+        max_in_flight = 0
+
+        async def fake_fetch(*a, **kw):
+            nonlocal in_flight, max_in_flight
+            in_flight += 1
+            max_in_flight = max(max_in_flight, in_flight)
+            # 让出事件循环，给另一个并发任务机会尝试进入临界区
+            await asyncio.sleep(0)
+            in_flight -= 1
+            return mock_release
+
+        monkeypatch.setattr(update_service, "_fetch_release", fake_fetch)
+
+        async def driver():
+            t1 = asyncio.ensure_future(service.check_and_prompt(None))
+            t2 = asyncio.ensure_future(service.check_and_prompt(None))
+            await asyncio.gather(t1, t2)
+
+        asyncio.run(driver())
+
+        # 临界区一次只允许一个任务进入：max_in_flight 必须为 1。
+        # 修复前无锁时两任务会同时在 _fetch_release 里 in_flight=2。
+        assert max_in_flight == 1, (
+            f"check_and_prompt 并发互斥失败：max_in_flight={max_in_flight}（应为 1），"
+            "说明两个更新检查任务的临界区发生重叠，会触发 asyncio _enter_task 重入错误。"
+        )
+
+
+class TestDownloadCancel:
+    """下载取消（协作式 asyncio.Event）回归测试。
+
+    覆盖三个取消检查点：
+    1. download_update 入口（进度框刚弹出就取消）；
+    2. download_update 换源间隙（前一源失败、下一源开始前）；
+    3. _download_zip_with_sha 流式块级（大文件下载中途）。
+
+    取消语义：返回 (None, [cancelled])，不再尝试后续源；半成品 zip 被清理。
+    """
+
+    def _make_info(self):
+        from vibeocr.services.update_service import UpdateInfo
+
+        return UpdateInfo(
+            version="0.3.1",
+            download_url="https://example.com/zip",
+            sha256_url="https://example.com/sha",
+            changelog="",
+        )
+
+    def test_download_update_aborts_when_cancel_event_set_before_start(self, tmp_path):
+        """进入 download_update 前 cancel_event 已 set → 立即返回，不触发任何下载。"""
+        from vibeocr.services.update_service import (
+            DOWNLOAD_REASON_CANCELLED,
+            download_update,
+        )
+
+        info = self._make_info()
+        cancel_event = asyncio.Event()
+        cancel_event.set()
+
+        with patch(
+            "vibeocr.services.update_service._download_zip_with_sha",
+            new_callable=AsyncMock,
+        ) as mock_dl:
+            result, reasons = _run(
+                download_update(info, tmp_path, cancel_event=cancel_event)
+            )
+
+        assert result is None
+        assert reasons == [DOWNLOAD_REASON_CANCELLED]
+        # 入口短路：根本不应进入任何源的下载
+        mock_dl.assert_not_called()
+
+    def test_download_update_aborts_between_sources_on_cancel(self, tmp_path):
+        """前一源 sha_mismatch 失败返回 cancelled 语义 → 不再尝试后续源。
+
+        用 domestic（多候选）验证：第一个源返回 cancelled 后，download_update
+        应 break 循环，第二个源不会被调用。
+        """
+        from vibeocr.services.update_service import (
+            DOWNLOAD_REASON_CANCELLED,
+            SourceAttempt,
+            download_update,
+        )
+
+        info = self._make_info()
+        with patch(
+            "vibeocr.services.update_service._detect_network_type",
+            return_value="domestic",
+        ), patch(
+            "vibeocr.services.update_service._download_zip_with_sha",
+            new_callable=AsyncMock,
+            return_value=SourceAttempt(False, DOWNLOAD_REASON_CANCELLED),
+        ) as mock_dl:
+            result, reasons = _run(download_update(info, tmp_path))
+
+        assert result is None
+        # 仅第一个源被尝试，cancelled 让循环立即 break，不试 ghproxy / GitHub
+        assert mock_dl.call_count == 1
+        assert reasons == [DOWNLOAD_REASON_CANCELLED]
+
+    def test_download_update_aborts_in_loop_when_event_set_between_sources(self, tmp_path):
+        """换源间隙 event 被 set → break 循环，后续源不被调用。
+
+        模拟：第一源 http_error 失败（非取消），编排器此时 set event；
+        download_update 在下一源循环顶部检测到 → 跳出，fail_reasons 仅含第一源原因。
+        """
+        from vibeocr.services.update_service import (
+            DOWNLOAD_REASON_HTTP_ERROR,
+            SourceAttempt,
+            download_update,
+        )
+
+        info = self._make_info()
+        cancel_event = asyncio.Event()
+
+        async def fake_dl(*a, **kw):
+            # 第一次调用（第一源）失败后，set event；下一次循环顶部检测到就 break
+            cancel_event.set()
+            return SourceAttempt(False, DOWNLOAD_REASON_HTTP_ERROR)
+
+        with patch(
+            "vibeocr.services.update_service._detect_network_type",
+            return_value="domestic",
+        ), patch(
+            "vibeocr.services.update_service._download_zip_with_sha",
+            side_effect=fake_dl,
+        ) as mock_dl:
+            result, reasons = _run(
+                download_update(info, tmp_path, cancel_event=cancel_event)
+            )
+
+        assert result is None
+        assert mock_dl.call_count == 1  # 换源间隙被 event 拦下，第二源没机会跑
+        assert reasons == [DOWNLOAD_REASON_HTTP_ERROR]  # 已记录的第一源失败原因
+
+    def test_download_zip_with_sha_aborts_mid_stream_and_cleans_up(self, tmp_path):
+        """流式块级取消：第一块写入后 set event → break，zip 被清理，回调次数受限。"""
+        from vibeocr.services.update_service import (
+            DOWNLOAD_REASON_CANCELLED,
+            _download_zip_with_sha,
+        )
+
+        chunk_a, chunk_b = b"AAAA", b"BBBBBBBB"  # 2 块
+        stream = _make_stream_response(200, [chunk_a, chunk_b])
+        client = _make_client(stream_cm=stream, sha_status=200, sha_text="dummy")
+
+        cancel_event = asyncio.Event()
+        calls: list[tuple[int, int]] = []
+
+        def progress_cb(downloaded: int, total: int) -> None:
+            calls.append((downloaded, total))
+            # 第一块回调后立即取消（下一块写入前的检查点会 break）
+            cancel_event.set()
+
+        zip_path = tmp_path / "x.zip"
+        sha_path = tmp_path / "x.zip.sha256"
+
+        attempt = _run(
+            _download_zip_with_sha(
+                client,
+                "https://example.com/zip",
+                "https://example.com/zip.sha256",
+                zip_path,
+                sha_path,
+                progress_cb,
+                cancel_event=cancel_event,
+            )
+        )
+
+        # 取消语义：返回 cancelled + zip 被清理
+        assert attempt.ok is False
+        assert attempt.reason == DOWNLOAD_REASON_CANCELLED
+        assert not zip_path.exists()
+        # 关键：只回调了第一块就 break，没把第二块也写入（< 总块数 2）
+        assert len(calls) == 1, f"应在第一块后立即中断，实际回调次数={len(calls)}"
+        # sha 下载不应被触发（取消优先于 sha 拉取）
+        client.get.assert_not_called()
+
+    def test_download_zip_with_sha_completes_when_not_cancelled(self, tmp_path):
+        """回归保护：未取消时正常完成（取消逻辑不破坏成功路径）。"""
+        from vibeocr.services.update_service import _download_zip_with_sha
+
+        zip_bytes = b"fake-zip-content"
+        real_hash = hashlib.sha256(zip_bytes).hexdigest()
+        stream = _make_stream_response(200, [zip_bytes])
+        client = _make_client(
+            stream_cm=stream,
+            sha_status=200,
+            sha_text=f"{real_hash}  x.zip\n",
+        )
+        cancel_event = asyncio.Event()  # 不 set
+        zip_path = tmp_path / "x.zip"
+        sha_path = tmp_path / "x.zip.sha256"
+
+        attempt = _run(
+            _download_zip_with_sha(
+                client,
+                "https://example.com/zip",
+                "https://example.com/zip.sha256",
+                zip_path,
+                sha_path,
+                None,
+                cancel_event=cancel_event,
+            )
+        )
+
+        assert attempt.ok is True
+        assert zip_path.read_bytes() == zip_bytes
+
+
+class TestDownloadProgressDialogCancel:
+    """DownloadProgressDialog 取消 / 最小化 / 关闭 X 行为测试（pytest-qt）。
+
+    惯例：参照 tests/widgets/test_backend_choice_dialog.py —— qtbot.addWidget 后
+    直接调 handler（_on_cancel_clicked / closeEvent），用 qtbot.waitSignal 或
+    spy 断言信号。
+    """
+
+    @pytest.fixture
+    def dialog(self, qtbot):
+        from vibeocr.services.update_service import DownloadProgressDialog
+
+        dlg = DownloadProgressDialog()
+        qtbot.addWidget(dlg)
+        return dlg
+
+    def test_cancel_button_emits_cancel_requested(self, dialog, qtbot):
+        """点取消按钮 → emit cancel_requested（编排器据此 set 取消令牌）。"""
+        with qtbot.waitSignal(dialog.cancel_requested, timeout=1000):
+            dialog._on_cancel_clicked()
+        # 编排器连的是 cancel_event.set，这里只验证信号真发出去了
+
+    def test_cancel_button_marks_cancelling_state(self, dialog):
+        """取消后按钮立即置灰 + 文案改为「正在取消...」，给即时反馈。"""
+        assert dialog._cancel_btn.isEnabled() is True
+        dialog._on_cancel_clicked()
+        assert dialog._cancel_btn.isEnabled() is False
+        assert "正在取消" in dialog._cancel_btn.text()
+        assert "正在取消" in dialog._status_label.text()
+
+    def test_cancel_click_is_idempotent(self, dialog):
+        """重复点取消：按钮 disabled 后不再 emit（避免编排器端多次 set）。"""
+        emit_count = [0]
+        dialog.cancel_requested.connect(lambda: emit_count.__setitem__(0, emit_count[0] + 1))
+        dialog._on_cancel_clicked()
+        dialog._on_cancel_clicked()  # 第二次：按钮已 disabled，应直接 return
+        assert emit_count[0] == 1
+
+    def test_close_event_triggers_cancel_not_destroy(self, dialog, qtbot):
+        """标题栏 X（closeEvent）：忽略事件 + emit cancel_requested。
+
+        关键：不能让 Qt 直接销毁对话框（下载协程仍引用它），故 event 必须 ignore。
+        """
+        from PySide6.QtGui import QCloseEvent
+
+        evt = QCloseEvent()
+        with qtbot.waitSignal(dialog.cancel_requested, timeout=1000):
+            dialog.closeEvent(evt)
+        assert evt.isAccepted() is False  # 必须忽略，防 Qt 销毁
+
+    def test_mark_finished_disables_cancel_button(self, dialog):
+        """下载结束（成功/失败/已取消）后取消入口禁用 + 隐藏，防误触。"""
+        dialog.mark_finished()
+        assert dialog._cancel_btn.isEnabled() is False
+        assert dialog._cancel_btn.isVisible() is False
+
+    def test_window_flags_has_minimize_and_close_hints(self, dialog):
+        """标题栏同时含最小化按钮与关闭 X 标志（恢复 X + 新增最小化的回归守卫）。"""
+        from PySide6.QtCore import Qt
+
+        flags = dialog.windowFlags()
+        assert flags & Qt.WindowType.WindowMinimizeButtonHint
+        assert flags & Qt.WindowType.WindowCloseButtonHint
