@@ -1111,6 +1111,104 @@ class TestProbeModuleDoubleLayer:
             f"包不存在时应只探 metadata（1 次 subprocess），实际: {call_count['n']}"
         )
 
+    def test_installed_but_module_self_missing_warns_broken_install(
+        self, tmp_path, caplog
+    ):
+        """残缺安装（fonttools 场景）：metadata 在但 import 报 No module named 'fonttools'
+
+        回归：旧 warning 统一称"间接依赖未完成"，但 fonttools 是纯 Python 包、无间接依赖，
+        真实原因是 .dist-info 残留导致模块文件缺失。warning 文案应指向"残缺/损坏"，
+        不应再误导为"间接依赖"。
+        """
+        import logging
+
+        python_exe = tmp_path / "python.exe"
+        python_exe.touch()
+
+        def mock_run(cmd, **kwargs):
+            r = MagicMock()
+            code = cmd[cmd.index("-c") + 1] if "-c" in cmd else ""
+            if "metadata" in code:
+                r.returncode = 0  # fonttools 发行版元数据存在（.dist-info 残留）
+                r.stdout = "4.61.1"
+                r.stderr = ""
+            else:
+                # import fonttools 报模块自身缺失（非间接依赖）
+                r.returncode = 1
+                r.stderr = (
+                    'Traceback (most recent call last):\n  File "<string>", '
+                    'line 1, in <module>\n    import fonttools\n'
+                    "ModuleNotFoundError: No module named 'fonttools'"
+                )
+                r.stdout = ""
+            return r
+
+        from vibeocr.env_manager import _probe_module
+
+        with (
+            patch("vibeocr.env_manager.subprocess.run", side_effect=mock_run),
+            caplog.at_level(logging.WARNING, logger="vibeocr.env_manager"),
+        ):
+            installed, usable = _probe_module(
+                python_exe, "fonttools", "fonttools"
+            )
+
+        assert installed is True, ".dist-info 残留时 metadata 层应判 installed=True"
+        assert usable is False, "import 失败应判 usable=False"
+        warn_msgs = " ".join(
+            r.message for r in caplog.records if r.levelno >= logging.WARNING
+        )
+        assert "fonttools" in warn_msgs
+        assert "残缺" in warn_msgs or "损坏" in warn_msgs, (
+            f"残缺安装应提示'残缺/损坏'，实际: {warn_msgs}"
+        )
+        assert "间接依赖" not in warn_msgs, (
+            f"fonttools 无间接依赖，不应误报'间接依赖未完成'，实际: {warn_msgs}"
+        )
+
+    def test_installed_but_indirect_dep_missing_warns_indirect(
+        self, tmp_path, caplog
+    ):
+        """间接依赖缺失（mineru 场景）：import mineru 报 No module named 'torch'
+
+        回归：A/B 类区分后，B 类（缺的是别的模块）仍应提示"间接依赖未完成"。
+        """
+        import logging
+
+        python_exe = tmp_path / "python.exe"
+        python_exe.touch()
+
+        def mock_run(cmd, **kwargs):
+            r = MagicMock()
+            code = cmd[cmd.index("-c") + 1] if "-c" in cmd else ""
+            if "metadata" in code:
+                r.returncode = 0
+                r.stdout = "3.4.0"
+                r.stderr = ""
+            else:
+                r.returncode = 1
+                r.stderr = "ModuleNotFoundError: No module named 'torch'"
+                r.stdout = ""
+            return r
+
+        from vibeocr.env_manager import _probe_module
+
+        with (
+            patch("vibeocr.env_manager.subprocess.run", side_effect=mock_run),
+            caplog.at_level(logging.WARNING, logger="vibeocr.env_manager"),
+        ):
+            installed, usable = _probe_module(python_exe, "mineru", "mineru")
+
+        assert installed is True
+        assert usable is False
+        warn_msgs = " ".join(
+            r.message for r in caplog.records if r.levelno >= logging.WARNING
+        )
+        assert "mineru" in warn_msgs
+        assert "间接依赖" in warn_msgs, (
+            f"缺 torch 应提示'间接依赖未完成'，实际: {warn_msgs}"
+        )
+
 
 class TestCheckImportsDoubleLayer:
     """改写后的 _check_imports：双层检测，返回签名不变 + 损坏时落盘 warning
@@ -1181,6 +1279,75 @@ class TestCheckImportsDoubleLayer:
             r.message for r in caplog.records if r.levelno >= logging.WARNING
         )
         assert "mineru" in warn_msgs, "应落盘 warning 指向 mineru 间接依赖"
+
+
+class TestCheckImportsDetailed:
+    """_check_imports_detailed：返回 (installed, usable) 二元组
+
+    补装逻辑用此区分三类状态：
+    - (True, True) → 已装可用，跳过
+    - (False, False) → 未安装，普通 pip install
+    - (True, False) → 残缺安装（.dist-info 残留），pip install --force-reinstall
+    """
+
+    def test_returns_tuple_mapping(self, tmp_path):
+        """返回 dict[pkg, (installed, usable)]，key 集合 == OCR_CHECK_MODULES.values()"""
+        python_exe = tmp_path / "python.exe"
+        python_exe.touch()
+
+        def mock_run(cmd, **kwargs):
+            r = MagicMock()
+            code = cmd[cmd.index("-c") + 1] if "-c" in cmd else ""
+            r.returncode = 0  # metadata + import 全成功
+            r.stderr = ""
+            r.stdout = "1.0.0" if "metadata" in code else ""
+            return r
+
+        with patch("vibeocr.env_manager.subprocess.run", side_effect=mock_run):
+            from vibeocr.env_manager import _check_imports_detailed
+
+            result = _check_imports_detailed(python_exe)
+
+        from vibeocr.services.env_config import OCR_CHECK_MODULES
+
+        assert set(result.keys()) == set(OCR_CHECK_MODULES.values())
+        for _pkg, (installed, usable) in result.items():
+            assert isinstance(installed, bool)
+            assert isinstance(usable, bool)
+
+    def test_broken_install_reports_installed_true_usable_false(self, tmp_path):
+        """fonttools 残缺安装：metadata 在 + import 自身失败 → (True, False)
+
+        这是补装走 --force-reinstall 的触发条件。
+        """
+        python_exe = tmp_path / "python.exe"
+        python_exe.touch()
+
+        def mock_run(cmd, **kwargs):
+            r = MagicMock()
+            code = cmd[cmd.index("-c") + 1] if "-c" in cmd else ""
+            if "metadata" in code:
+                r.returncode = 0
+                r.stdout = "4.61.1"
+                r.stderr = ""
+            elif code == "import fonttools":
+                r.returncode = 1
+                r.stderr = "ModuleNotFoundError: No module named 'fonttools'"
+                r.stdout = ""
+            else:
+                r.returncode = 0
+                r.stderr = ""
+                r.stdout = ""
+            return r
+
+        with patch("vibeocr.env_manager.subprocess.run", side_effect=mock_run):
+            from vibeocr.env_manager import _check_imports_detailed
+
+            result = _check_imports_detailed(python_exe)
+
+        assert result["fonttools"] == (True, False), (
+            f"fonttools 残缺应为 (True, False)，实际: {result['fonttools']}"
+        )
 
 
 class TestGetDependencyVersionsImportlibMetadata:
@@ -2179,10 +2346,69 @@ class TestInstallPaddleStackRequirementsOverride:
 
         assert ok
         install_cmds = self._filter_install_cmds(calls)
-        # GPU 完整列表：paddle + paddleocr + mineru + markdown + torch = 5 个安装命令
-        # （markdown 已从 exe 包排除，由便携 Python 安装，供 OCR/MinerU worker 用）
-        assert len(install_cmds) == 5, (
-            f"GPU 完整列表应装 5 个，实际: {install_cmds}"
+        # GPU 完整列表：paddle + paddleocr + mineru + markdown + pymupdf + fastapi
+        # + uvicorn + pydantic + fonttools + torch = 10 个安装命令
+        # （PDF 后端依赖 + markdown 已从 exe 包排除，由便携 Python 安装）
+        assert len(install_cmds) == 10, (
+            f"GPU 完整列表应装 10 个，实际: {install_cmds}"
+        )
+
+    def test_continues_after_package_failure(self, tmp_path):
+        """单个包失败不应中止整个安装：记录失败后继续装后续包。
+
+        回归（用户痛点"漏装、需二次补装"）：旧逻辑遇首个 pip 失败即 return False，
+        排在后面的 fonttools/fastapi 等小包被跳过。改为收集失败继续装，
+        循环结束后汇总返回失败（让用户二次补装真正失败的）。
+        """
+        from vibeocr.env_manager import _install_paddle_stack
+
+        python_exe = tmp_path / "python.exe"
+        python_exe.touch()
+        calls = []
+
+        def mock_run(cmd, **kw):
+            calls.append(cmd)
+            r = MagicMock()
+            # pip 升级成功
+            if "--upgrade" in cmd:
+                r.returncode = 0
+                r.stderr = ""
+                r.stdout = ""
+            # 让 mineru 安装失败（版本找不到走 PyPI 回退也失败）
+            elif "mineru" in " ".join(cmd):
+                r.returncode = 1
+                r.stderr = "No matching distribution found for mineru"
+                r.stdout = ""
+            else:
+                r.returncode = 0
+                r.stderr = ""
+                r.stdout = ""
+            return r
+
+        with patch(
+            "vibeocr.env_manager.subprocess.Popen",
+            side_effect=_popen_side_effect(mock_run),
+        ):
+            ok, msg = _install_paddle_stack(
+                python_exe=python_exe,
+                specs=self._specs(),
+                pip_source="https://pypi.org/simple",
+                network_type="domestic",
+                use_gpu=False,
+                cuda_version=None,
+                report_fn=lambda s, m: None,
+                success_msg="done",
+            )
+
+        # 有失败 → 返回失败
+        assert ok is False, "有包失败应返回 False（汇总）"
+        assert "mineru" in msg, "失败消息应提及 mineru"
+        # 关键：mineru 失败后，排在它后面的 fonttools 仍应被安装
+        install_cmds = self._filter_install_cmds(calls)
+        joined = " ".join(" ".join(c) for c in install_cmds)
+        assert "mineru" in joined, "mineru 应被尝试安装"
+        assert "fonttools" in joined, (
+            f"mineru 失败后 fonttools 仍应被安装（漏装修复），实际命令: {joined}"
         )
 
 
@@ -2354,9 +2580,10 @@ class TestInstallMissingDependencies:
 
         assert ok
         pip_installs = self._filter_install_cmds(all_calls)
-        # CPU 模式完整列表：paddle + paddleocr + mineru + markdown = 4 个
-        assert len(pip_installs) == 4, (
-            f"CPU 全量应装 4 个，实际: {pip_installs}"
+        # CPU 模式完整列表：paddle + paddleocr + mineru + markdown + pymupdf
+        # + fastapi + uvicorn + pydantic + fonttools = 9 个（含 PDF 后端依赖）
+        assert len(pip_installs) == 9, (
+            f"CPU 全量应装 9 个，实际: {pip_installs}"
         )
 
     def test_force_backend_gpu_uses_gpu_requirements(self, tmp_path):
@@ -2404,10 +2631,84 @@ class TestInstallMissingDependencies:
 
         assert ok
         pip_installs = self._filter_install_cmds(all_calls)
-        # GPU 完整列表：paddle + paddleocr + mineru + markdown + torch = 5 个
-        assert len(pip_installs) == 5, (
-            f"GPU force_backend 应装 5 个，实际: {pip_installs}"
+        # GPU 完整列表：CPU 9 个 + torch = 10 个
+        assert len(pip_installs) == 10, (
+            f"GPU force_backend 应装 10 个，实际: {pip_installs}"
         )
+
+    def test_broken_install_uses_force_reinstall(self, tmp_path):
+        """fonttools 残缺安装（.dist-info 在但 import 失败）应 --force-reinstall 补装
+
+        回归：普通 `pip install fonttools` 看到残留 .dist-info 报 already satisfied 跳过，
+        import 永远失败（用户报告"装几次还失败"）。残缺时必须 --force-reinstall --no-deps
+        才能真正重写模块文件。
+        """
+        from vibeocr.env_manager import install_missing_dependencies
+
+        python_exe = tmp_path / "python.exe"
+        python_exe.touch()
+        all_calls = []
+
+        def mock_run(cmd, **kw):
+            all_calls.append(cmd)
+            r = MagicMock()
+            r.stderr = ""
+            code = cmd[cmd.index("-c") + 1] if "-c" in cmd else ""
+            # metadata 层：所有包发行版都"存在"
+            if "metadata" in code and "version" in code:
+                r.returncode = 0
+                r.stdout = "1.0.0"
+            elif code == "import fonttools":
+                # fonttools 残缺：import 报模块自身缺失（非间接依赖）
+                r.returncode = 1
+                r.stderr = "ModuleNotFoundError: No module named 'fonttools'"
+                r.stdout = ""
+            elif code.startswith("import "):
+                # 其余包正常可用 → 跳过，只补装 fonttools
+                r.returncode = 0
+                r.stdout = ""
+            else:
+                # pip install 成功
+                r.returncode = 0
+                r.stdout = ""
+            return r
+
+        with (
+            patch(
+                "vibeocr.env_manager.get_pip_source",
+                return_value="https://pypi.org/simple",
+            ),
+            patch(
+                "vibeocr.env_manager.get_embedded_python_executable",
+                return_value=python_exe,
+            ),
+            patch("vibeocr.env_manager._load_dep_specs", return_value=self._specs()),
+            patch("vibeocr.env_manager.subprocess.run", side_effect=mock_run),
+            patch(
+                "vibeocr.env_manager.subprocess.Popen",
+                side_effect=_popen_side_effect(mock_run),
+            ),
+        ):
+            ok, _msg = install_missing_dependencies(
+                tmp_path,
+                use_gpu=False,
+                progress_callback=lambda s, m: None,
+            )
+
+        assert ok, "fonttools 补装应成功"
+        pip_installs = self._filter_install_cmds(all_calls)
+        # 只应补装 fonttools（其余都 usable）
+        assert len(pip_installs) == 1, (
+            f"只补装 fonttools，实际: {pip_installs}"
+        )
+        fonttools_cmd = pip_installs[0]
+        assert "--force-reinstall" in fonttools_cmd, (
+            f"残缺安装应 --force-reinstall，实际: {fonttools_cmd}"
+        )
+        assert "--no-deps" in fonttools_cmd, (
+            f"残缺安装应 --no-deps 避免重装依赖树，实际: {fonttools_cmd}"
+        )
+        assert "fonttools" in " ".join(fonttools_cmd)
 
 
 class TestInstallFailureLogging:

@@ -104,7 +104,8 @@ class Ui_MainWindowWidget(object):
         QListWidgetItem(self.settingsNavList)
         QListWidgetItem(self.settingsNavList)
         self.settingsNavList.setObjectName(u"settingsNavList")
-        self.settingsNavList.setMaximumSize(QSize(160, 16777215))
+        self.settingsNavList.setMinimumSize(QSize(150, 0))
+        self.settingsNavList.setMaximumSize(QSize(180, 16777215))
         self.settingsNavList.setFrameShape(QFrame.NoFrame)
         self.settingsNavList.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.settingsNavList.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -349,7 +350,11 @@ class Ui_MainWindowWidget(object):
         __qtablewidgetitem2 = QTableWidgetItem()
         self.tableDepsStatus.setHorizontalHeaderItem(2, __qtablewidgetitem2)
         self.tableDepsStatus.setObjectName(u"tableDepsStatus")
+        self.tableDepsStatus.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.tableDepsStatus.setSelectionMode(QAbstractItemView.NoSelection)
+        self.tableDepsStatus.setFocusPolicy(Qt.NoFocus)
         self.tableDepsStatus.horizontalHeader().setDefaultSectionSize(120)
+        self.tableDepsStatus.horizontalHeader().setStretchLastSection(True)
 
         self.envMaintenanceLayout.addWidget(self.tableDepsStatus)
 
@@ -367,6 +372,11 @@ class Ui_MainWindowWidget(object):
         self.btnInstallMissing.setObjectName(u"btnInstallMissing")
 
         self.envMaintenanceLayout.addWidget(self.btnInstallMissing)
+
+        self.btnUpdateDeps = QPushButton(self.groupEnvMaintenance)
+        self.btnUpdateDeps.setObjectName(u"btnUpdateDeps")
+
+        self.envMaintenanceLayout.addWidget(self.btnUpdateDeps)
 
 
         self.pageAppLayout.addWidget(self.groupEnvMaintenance)
@@ -502,6 +512,10 @@ class Ui_MainWindowWidget(object):
         self.btnInstallMissing.setToolTip(QCoreApplication.translate("MainWindowWidget", u"\u53ea\u5b89\u88c5\u7f3a\u5931\u7684 OCR \u4f9d\u8d56\uff08\u5df2\u5b89\u88c5\u7684\u81ea\u52a8\u8df3\u8fc7\uff0c\u4e0d\u91cd\u590d\u4e0b\u8f7d\uff09\u3002\u9002\u5408\u4e0a\u6b21\u5b89\u88c5\u4e2d\u9014\u5931\u8d25\u540e\u8865\u88c5\u3002", None))
 #endif // QT_CONFIG(tooltip)
         self.btnInstallMissing.setText(QCoreApplication.translate("MainWindowWidget", u"\u8865\u5145\u5b89\u88c5\u7f3a\u5931\u4f9d\u8d56", None))
+#if QT_CONFIG(tooltip)
+        self.btnUpdateDeps.setToolTip(QCoreApplication.translate("MainWindowWidget", u"\u68c0\u6d4b\u5404 OCR \u4f9d\u8d56\u662f\u5426\u6709\u65b0\u7248\u672c\u53ef\u7528\uff08\u4f9d\u636e\u5f53\u524d\u4e3b\u7a0b\u5e8f\u8981\u6c42\u7684\u7248\u672c\u89c4\u683c\uff09\uff0c\u6709\u5219\u5347\u7ea7\u3002\u8986\u76d6\u5b89\u88c5\u540e\u82e5\u4f9d\u8d56\u7248\u672c\u53d8\u5316\u4e5f\u53ef\u7528\u6b64\u5165\u53e3\u624b\u52a8\u66f4\u65b0\u3002", None))
+#endif // QT_CONFIG(tooltip)
+        self.btnUpdateDeps.setText(QCoreApplication.translate("MainWindowWidget", u"\u66f4\u65b0\u4f9d\u8d56", None))
         self.tabWidget.setTabText(self.tabWidget.indexOf(self.tabSettings), QCoreApplication.translate("MainWindowWidget", u"\u8bbe\u7f6e", None))
         pass
     # retranslateUi

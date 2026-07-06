@@ -488,6 +488,11 @@ class MainWindow(QMainWindow):
                 self._statusbar.showMessage("OCR功能已就绪")
             logging.info("OCR功能已就绪")
 
+            # 覆盖安装检测：version.json 的 dep_versions 可能比已装版本新（用户直接
+            # 覆盖文件升级、无 pending_sync.json）。便携环境就绪时检测并提示更新。
+            # 与 pending_sync 互斥（pending_sync 已 return 接管），开发态不触发。
+            self._maybe_prompt_dependency_updates()
+
             # 检测是否有待生效的后端切换（重启消费 pending_backend）
             needs_switch, target = self._check_pending_backend()
             if needs_switch and target:
@@ -682,6 +687,75 @@ class MainWindow(QMainWindow):
             pending_path.unlink(missing_ok=True)
         except Exception as e:
             logging.warning(f"[依赖同步] 删除 pending_sync.json 失败: {e}")
+
+    def _maybe_prompt_dependency_updates(self) -> None:
+        """启动时检测 OCR 依赖是否有版本更新，有则弹窗提示用户升级。
+
+        覆盖安装场景（用户直接覆盖文件升级 app，无 pending_sync.json）下，
+        version.json 的 dep_versions 可能比便携 Python 里已装的版本新。
+        本方法在环境就绪后检测，发现可更新包时弹 QMessageBox 让用户选择是否升级。
+
+        互斥：pending_sync 已由 _check_pending_sync 接管时会 return，不会走到这里。
+        开发态（.venv）不触发（detect_dependency_updates 在 python_exe 不存在时返回空）。
+        每个进程生命周期内只提示一次（_deps_update_prompted 标志）。
+        """
+        # 防止依赖检查多次回调导致重复弹窗
+        if getattr(self, "_deps_update_prompted", False):
+            return
+        try:
+            import vibeocr.env_manager as em
+
+            updates = em.detect_dependency_updates(self._project_root)
+        except Exception as e:
+            logging.warning(f"[依赖更新] 启动检测失败: {e}")
+            return
+        if not updates:
+            return
+
+        self._deps_update_prompted = True
+        lines = []
+        for pkg, (installed, required) in updates.items():
+            lines.append(f"  • {pkg}：{installed or '（未安装）'} → {required}")
+        detail = "\n".join(lines)
+
+        from PySide6.QtWidgets import QMessageBox
+
+        reply = QMessageBox.question(
+            self,
+            "检测到依赖更新",
+            f"检测到以下 OCR 依赖有新版本可用：\n\n{detail}\n\n"
+            "是否立即更新？（将使用当前推理后端下载升级）",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        # 走全量安装升级，后端用当前值；复用 InstallDialog 进度 UI
+        current_backend = "gpu" if em.resolve_use_gpu(self._project_root) else "cpu"
+        from vibeocr.widgets.install_dialog import InstallDialog
+
+        dialog = InstallDialog(
+            self._project_root,
+            parent=self,
+            force_backend=current_backend,
+        )
+        dialog.setWindowTitle("更新 OCR 依赖")
+        dialog._title_label.setText("正在更新 OCR 依赖...")
+        dialog.finished.connect(self._on_deps_update_finished)
+        dialog.exec()
+
+    @Slot(int)
+    def _on_deps_update_finished(self, result: int) -> None:
+        """依赖更新对话框完成：刷新设置页状态 + 重新检测依赖。"""
+        self._refresh_settings_env_state()
+        if result == 1:
+            # 升级成功：重置 specs 缓存 + 重新检测依赖（让设置页表格反映新版本）
+            import vibeocr.env_manager as em
+
+            em._dep_specs_cache = None
+            self._dependency_manager.reset()
+            self._dependency_manager.check_dependencies()
 
     def _check_pending_backend(self) -> tuple[bool, str | None]:
         """检测是否有待生效的后端切换（重启消费 pending_backend）

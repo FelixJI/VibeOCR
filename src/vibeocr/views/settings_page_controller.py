@@ -12,13 +12,16 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QCheckBox,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QListWidget,
     QMessageBox,
     QProgressBar,
     QPushButton,
+    QScrollArea,
     QSizePolicy,
     QSpacerItem,
     QSpinBox,
@@ -189,6 +192,10 @@ class SettingsPageController:
         if btn_install_missing:
             btn_install_missing.clicked.connect(self._on_install_missing)
 
+        btn_update_deps = self._ui.findChild(QPushButton, "btnUpdateDeps")
+        if btn_update_deps:
+            btn_update_deps.clicked.connect(self._on_update_deps)
+
         self._refresh_env_maintenance_state()
 
         self._init_shortcut_buttons()
@@ -197,6 +204,10 @@ class SettingsPageController:
         self._init_pdf_options(nav_list, stacked)
         self._init_backend_options_in_group()
         self._init_settings_page()
+
+        # 所有子页（静态 .ui 页 + 动态插入页）就绪后统一包滚动条，
+        # 规范设置界面滚动行为：内容超出窗口高度时出垂直滚动条而非被裁剪。
+        self._wrap_settings_pages_in_scroll()
 
     # ----------------------------------------------------------------
     # Toast 提示
@@ -459,6 +470,51 @@ class SettingsPageController:
         self._update_cache_status()
         self._update_preload_status()
         self._restore_preload_checkbox_state()
+
+    def _wrap_settings_pages_in_scroll(self) -> None:
+        """把 settingsStackedWidget 的每个子页包进 QScrollArea。
+
+        修复：原页面直接塞进 QStackedWidget 无滚动区，窗口高度不足时内容被裁剪
+        （用户反馈"部分内容显示区域很矮/看不见"）。包一层 setWidgetResizable
+        的 QScrollArea 后，垂直超出自动出滚动条，水平不滚动（宽度跟随窗口）。
+
+        所有子页（pageModelManagement / pageAppSettings / 截图选项 / PDF 选项）
+        统一处理。原页 widget 从 stacked 移除、用 scroll 替换占位，
+        索引与导航行（currentRowChanged→setCurrentIndex）保持一一对应。
+        """
+        from PySide6.QtCore import Qt
+
+        stacked = self._ui.findChild(QStackedWidget, "settingsStackedWidget")
+        if stacked is None:
+            return
+
+        # 先 snapshot 所有原页（按索引顺序），再统一清空 + 按顺序回填 scroll。
+        # 循环中边遍历边 insert/remove 会导致索引错位、widget(i) 返回 None
+        # （AttributeError 根因）。snapshot 后先全部脱离 stacked，再顺序加回，
+        # 保证索引与导航行（currentRowChanged→setCurrentIndex）一一对应。
+        pages: list[QWidget] = []
+        for i in range(stacked.count()):
+            page = stacked.widget(i)
+            if page is not None:
+                pages.append(page)
+
+        # 全部从 stacked 移除（setParent(None) 同时解除父子关系）
+        for page in pages:
+            stacked.removeWidget(page)
+
+        # 按原顺序加回（每个包一层 scroll，已包裹的幂等跳过）
+        for page in pages:
+            if isinstance(page, QScrollArea):
+                stacked.addWidget(page)
+                continue
+            scroll = QScrollArea()
+            scroll.setWidgetResizable(True)  # 内容宽度跟随 scroll，不出水平滚动条
+            scroll.setFrameShape(QFrame.Shape.NoFrame)  # 无边框，视觉与原页一致
+            scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            page.setParent(None)  # 解除与原 stacked 的父子关系
+            scroll.setWidget(page)
+            page.setAutoFillBackground(False)
+            stacked.addWidget(scroll)
 
     @staticmethod
     def _get_preloadable_pipelines():
@@ -764,11 +820,18 @@ class SettingsPageController:
         self._open_reinstall_dialog(reinstall_python=False)
 
     def _on_install_missing(self) -> None:
-        """补充安装缺失依赖按钮：确认后弹 BackendChoiceDialog(missing_only=True)"""
+        """补充安装缺失依赖按钮。
+
+        走当前推理后端（不再二次提示选择 GPU/CPU）：补装只是补齐缺失/损坏的依赖，
+        后端（GPU/CPU）在首启或设置页「推理后端」已确定，补装时重选无意义且易误操作。
+        故直接读 resolve_use_gpu 作为 force_backend，跳过 BackendChoiceDialog。
+        重装 OCR 依赖 / 重装 Python 运行时会清空环境，仍保留 BackendChoiceDialog。
+        """
         reply = QMessageBox.question(
             None,
             "确认补充安装缺失依赖",
             "将检测并只安装缺失的 OCR 依赖（已安装的自动跳过，不重复下载）。\n\n"
+            "将使用当前推理后端，不重新选择。\n"
             "适合上次安装中途失败后补装。\n\n是否继续？",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
@@ -776,7 +839,94 @@ class SettingsPageController:
         if reply != QMessageBox.StandardButton.Yes:
             return
 
-        self._open_reinstall_dialog(missing_only=True)
+        # 读当前后端作为补装后端，避免二次提示
+        from vibeocr import env_manager
+
+        current_backend = "gpu" if env_manager.resolve_use_gpu(self._project_root) else "cpu"
+        self._open_install_dialog(missing_only=True, force_backend=current_backend)
+
+    def _on_update_deps(self) -> None:
+        """更新依赖按钮：检测是否有新版本，有则升级（全量安装，当前后端）。
+
+        用户要求：① 新增独立入口；② 启动时检测到 version.json 规格比已装版本新也弹窗
+        （覆盖安装场景）。本方法处理①的主动入口；启动弹窗在 MainWindow。
+        """
+        from vibeocr import env_manager
+
+        python_exe = get_embedded_python_executable(self._project_root)
+        if not python_exe.exists():
+            QMessageBox.warning(
+                None,
+                "无法检测更新",
+                "Python 运行时未安装，请先安装 OCR 依赖。",
+            )
+            return
+
+        # 检测：返回需更新的包 {pkg: (installed_ver, required_spec)}
+        try:
+            updates = env_manager.detect_dependency_updates(self._project_root)
+        except Exception as e:
+            logger.exception("[依赖更新] 检测失败")
+            QMessageBox.warning(None, "检测失败", f"检测依赖更新时出错：\n{e}")
+            return
+
+        if not updates:
+            self._show_settings_toast("依赖已是最新")
+            return
+
+        # 列出待更新包让用户确认
+        lines = []
+        for pkg, (installed, required) in updates.items():
+            lines.append(f"  • {pkg}：{installed or '（未安装）'} → {required}")
+        detail = "\n".join(lines)
+        reply = QMessageBox.question(
+            None,
+            "确认更新依赖",
+            f"检测到以下依赖有新版本可用：\n\n{detail}\n\n"
+            "将下载并升级（使用当前推理后端）。是否继续？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        # 走全量安装（install_embedded_dependencies），后端用当前值
+        current_backend = "gpu" if env_manager.resolve_use_gpu(self._project_root) else "cpu"
+        self._open_install_dialog(missing_only=False, force_backend=current_backend)
+
+    def _open_install_dialog(
+        self, missing_only: bool = False, force_backend: str | None = None
+    ) -> None:
+        """以非模态方式打开安装进度对话框（补装/更新共用，不阻塞主窗口）。
+
+        与 _open_reinstall_dialog 的区别：不弹 BackendChoiceDialog 选后端，
+        直接用传入的 force_backend（通常来自 resolve_use_gpu 当前值）。
+        """
+        from vibeocr.widgets.install_dialog import InstallDialog
+
+        dialog = InstallDialog(
+            self._project_root,
+            missing_only=missing_only,
+            force_backend=force_backend,
+        )
+
+        def _on_finished(_result: int) -> None:
+            self._refresh_env_maintenance_state()
+            try:
+                self._active_dialogs.remove(dialog)
+            except ValueError:
+                pass
+
+        def _on_install_succeeded() -> None:
+            self._refresh_env_maintenance_state()
+            if self._install_succeeded_callback is not None:
+                self._install_succeeded_callback()
+
+        dialog.finished.connect(_on_finished)
+        if hasattr(dialog, "install_succeeded"):
+            dialog.install_succeeded.connect(_on_install_succeeded)
+        self._active_dialogs.append(dialog)
+        dialog.show()
 
     def _refresh_env_maintenance_state(self) -> None:
         """刷新环境维护区状态：显示 Python 路径/就绪，依赖状态表格，非 portable 禁用按钮"""
@@ -784,6 +934,7 @@ class SettingsPageController:
         btn_py = self._ui.findChild(QPushButton, "btnReinstallPython")
         btn_deps = self._ui.findChild(QPushButton, "btnReinstallDeps")
         btn_missing = self._ui.findChild(QPushButton, "btnInstallMissing")
+        btn_update = self._ui.findChild(QPushButton, "btnUpdateDeps")
         table = self._ui.findChild(QTableWidget, "tableDepsStatus")
 
         mode = get_environment_mode(self._project_root)
@@ -798,7 +949,7 @@ class SettingsPageController:
             else:
                 label.setText("Python 运行时：未安装")
 
-        # 仅 portable 模式启用重装/补装按钮（开发态 .venv 由 uv 管理）
+        # 仅 portable 模式启用重装/补装/更新按钮（开发态 .venv 由 uv 管理）
         enabled = mode == "portable"
         if btn_py:
             btn_py.setEnabled(enabled)
@@ -806,6 +957,8 @@ class SettingsPageController:
             btn_deps.setEnabled(enabled)
         if btn_missing:
             btn_missing.setEnabled(enabled)
+        if btn_update:
+            btn_update.setEnabled(enabled)
 
         # 填充依赖状态表格（仅 portable 模式）
         if table and mode == "portable":
@@ -836,6 +989,19 @@ class SettingsPageController:
             get_dependency_versions(python_exe) if python_exe.exists() else {}
         )
 
+        # 运行时双保险：禁用编辑（.ui 已设 NoEditTriggers，此处防遗漏）
+        # + 各单元格 item 设不可编辑 flag + 列宽自适应。
+        table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        header = table.horizontalHeader()
+        if header is not None:
+            from PySide6.QtWidgets import QHeaderView
+
+            header.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+
+        from PySide6.QtCore import Qt
+
+        item_flag_no_edit = Qt.ItemFlag.ItemIsEditable
+
         table.setRowCount(len(ordered_pkgs))
         for row, pkg in enumerate(ordered_pkgs):
             installed = deps_status.get(pkg, False)
@@ -847,6 +1013,9 @@ class SettingsPageController:
             if installed and not ver:
                 ver = "（版本未知）"
             ver_item = QTableWidgetItem(ver)
+            # 单元格强制只读（防止 NoEditTriggers 被某处覆盖后仍可编辑）
+            for item in (name_item, status_item, ver_item):
+                item.setFlags(item.flags() & ~item_flag_no_edit)
             table.setItem(row, 0, name_item)
             table.setItem(row, 1, status_item)
             table.setItem(row, 2, ver_item)

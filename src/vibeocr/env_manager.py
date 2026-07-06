@@ -916,6 +916,23 @@ def is_production_environment_ready() -> tuple[bool, list[str]]:
     return len(missing) == 0, missing
 
 
+def _module_name_matches(missing_module: str, module: str) -> bool:
+    """判断 import 报错的缺失模块名是否指向被探测模块自身（A 类：本体残缺）
+
+    `import fonttools` 报 `No module named 'fonttools'` 时，missing_module
+    与 module 都是 'fonttools' → True（本体残缺）。
+    `import mineru` 报 `No module named 'torch'` 时，missing_module='torch'
+    ≠ module='mineru' → False（间接依赖）。
+
+    处理边界：
+    - 大小写/连字符/下划线归一（FontTools vs fonttools）。
+    - 顶层包名匹配（missing_module 含 '.' 时取首段，如 'fonttools.sub' → 'fonttools'）。
+    """
+    a = missing_module.lower().replace("-", "_").split(".")[0]
+    b = module.lower().replace("-", "_").split(".")[0]
+    return a == b
+
+
 def _probe_module(python_exe: Path, module: str, pkg: str) -> tuple[bool, bool]:
     """双层检测一个 OCR 模块：发行版是否存在 + 是否可导入
 
@@ -996,13 +1013,54 @@ def _probe_module(python_exe: Path, module: str, pkg: str) -> tuple[bool, bool]:
         import_stderr = f"(子进程异常: {exc})"
 
     if not usable:
-        # 发行版存在但 import 失败：明确指向"间接依赖损坏"，而非"包没装"。
-        # stderr 含 ModuleNotFoundError 等关键信息，截断落盘便于排查。
-        logger.warning(
-            "[依赖检测] %s 发行版已装但 import 失败，可能间接依赖未完成: %s",
-            pkg,
-            import_stderr[-200:],
-        )
+        # 发行版存在但 import 失败：区分两种根因，给出准确诊断而非笼统的
+        # "间接依赖未完成"。
+        #
+        # A. 包本体残缺（.dist-info 残留但模块文件缺失）：
+        #    `import fonttools` 报 `No module named 'fonttools'` —— 被探测的
+        #    模块自身就找不到。此时"发行版已装"的 metadata 记录来自残留的
+        #    `fonttools-*.dist-info` 目录（上次装到一半中断/被手动删了部分文件）。
+        #    fonttools 是纯 Python 无间接依赖，绝不是"间接依赖未完成"。
+        #    更糟的是 `pip install fonttools` 会看到 .dist-info 报 "already
+        #    satisfied" 跳过 → import 永远失败（用户报告"装几次还失败"的根因），
+        #    补装时需 --force-reinstall 才能真正修好。
+        #
+        # B. 间接依赖未完成（mineru 依赖的 torch/paddle 缺失）：
+        #    `import mineru` 报 `No module named 'torch'` —— 缺的是别的模块。
+        import re as _re
+
+        missing_module = None
+        m = _re.search(r"No module named '([^']+)'", import_stderr)
+        if m:
+            missing_module = m.group(1)
+        stderr_tail = import_stderr[-200:]
+
+        if missing_module is not None and _module_name_matches(missing_module, module):
+            # A 类：包本体残缺
+            logger.warning(
+                "[依赖检测] %s 安装残缺：发行版元数据存在（残留 .dist-info）"
+                "但 import %s 失败（%s）。补装时将强制重写文件。原始错误: %s",
+                pkg,
+                module,
+                missing_module,
+                stderr_tail,
+            )
+        elif missing_module is not None:
+            # B 类：间接依赖未完成
+            logger.warning(
+                "[依赖检测] %s 发行版已装但 import 失败，间接依赖未完成"
+                "（缺 %s）。原始错误: %s",
+                pkg,
+                missing_module,
+                stderr_tail,
+            )
+        else:
+            # 其他 import 错误（非 ModuleNotFoundError）
+            logger.warning(
+                "[依赖检测] %s 发行版已装但 import 失败（可能间接依赖未完成）: %s",
+                pkg,
+                stderr_tail,
+            )
 
     return installed, usable
 
@@ -1031,6 +1089,32 @@ def _check_imports(python_exe: Path) -> dict[str, bool]:
     for module, pkg in OCR_CHECK_MODULES.items():
         _installed, usable = _probe_module(python_exe, module, pkg)
         deps[pkg] = usable
+    return deps
+
+
+def _check_imports_detailed(python_exe: Path) -> dict[str, tuple[bool, bool]]:
+    """检测各 OCR 模块的双层状态（发行版是否存在, 是否可导入）
+
+    与 ``_check_imports`` 的区别：返回 ``(installed, usable)`` 二元组而非仅 usable，
+    供补装逻辑区分三类状态：
+    - ``(True, True)``  → 已装且可用，补装跳过。
+    - ``(False, False)`` → 未安装，补装走普通 ``pip install``。
+    - ``(True, False)`` → **残缺安装**（.dist-info 残留但 import 失败），补装需
+      ``--force-reinstall`` 才能真正写入模块文件（否则 pip 报 already satisfied 跳过，
+      永远修不好，见 _probe_module 的 A 类诊断）。
+
+    Args:
+        python_exe: 目标 Python 可执行文件
+
+    Returns:
+        {包名: (installed, usable)}，key 与 _check_imports 一致（OCR_CHECK_MODULES value）。
+    """
+    from vibeocr.services.env_config import OCR_CHECK_MODULES
+
+    deps: dict[str, tuple[bool, bool]] = {}
+    for module, pkg in OCR_CHECK_MODULES.items():
+        installed, usable = _probe_module(python_exe, module, pkg)
+        deps[pkg] = (installed, usable)
     return deps
 
 
@@ -1346,6 +1430,31 @@ def _run_pip(
         raise
 
 
+def _pkg_in_force_reinstall_set(
+    display_name: str, force_reinstall_pkgs: set[str] | None
+) -> bool:
+    """判断 requirements 项的展示名是否在强制重装集合中。
+
+    ``force_reinstall_pkgs`` 存的是 OCR_CHECK_MODULES 的 pip 包名（归一 key，
+    如 "fonttools"/"pymupdf"/"paddleocr"），由 install_missing_dependencies 从
+    _check_imports_detailed 收集（installed=True 且 usable=False 的包）。
+    安装循环里的 ``name`` 是展示名（如 "FontTools"/"PyMuPDF"/"PaddleOCR GPU (cu126)"），
+    需要子串匹配归一后再比较（大小写/连字符/下划线无关）。
+
+    与 install_missing_dependencies._is_installed 的展示名→包名映射风格一致。
+    """
+    if not force_reinstall_pkgs:
+        return False
+    norm = display_name.lower().replace("-", "_")
+    for pkg in force_reinstall_pkgs:
+        p = pkg.lower().replace("-", "_")
+        # 展示名可能含后缀（"PaddleOCR GPU (cu126)"），取核心名子串匹配；
+        # 纯包名（"fonttools"）则精确匹配。
+        if p in norm or norm.startswith(p):
+            return True
+    return False
+
+
 def _install_paddle_stack(
     python_exe: Path,
     specs: dict[str, str],
@@ -1359,6 +1468,7 @@ def _install_paddle_stack(
     cancel_event: threading.Event | None = None,
     on_proc: Callable[[subprocess.Popen], None] | None = None,
     project_root: Path | None = None,
+    force_reinstall_pkgs: set[str] | None = None,
 ) -> tuple[bool, str]:
     """安装 PaddlePaddle + PaddleOCR + MinerU (+可选 torch) 依赖栈
 
@@ -1382,6 +1492,10 @@ def _install_paddle_stack(
             kill 子进程。
         project_root: 项目根目录，用于安装成功后写依赖缓存。None 时跳过写缓存
             （保持与 switch_paddle_backend 等非首启路径的兼容）。
+        force_reinstall_pkgs: 需强制重装的 pip 包名集合（小写归一）。集合中的包在
+            ``pip install`` 时追加 ``--force-reinstall --no-deps``，用于修复"残缺安装"
+            （.dist-info 残留但模块文件缺失，普通 install 会报 already satisfied 跳过）。
+            为空/None 时按常规 install。仅 install_missing_dependencies 增量路径传入。
 
     Returns:
         (是否成功, 消息)
@@ -1466,6 +1580,11 @@ def _install_paddle_stack(
                 # 由 torch/lib 提供，OCRService._setup_cuda_dll_path 会注册该目录。
                 # 因此无需额外安装 nvidia-*-cu12 / cu13 系列包。
 
+        # 收集单个包的失败，循环结束后统一汇总。旧逻辑遇首个失败即 return，
+        # 导致排在后面的 fonttools/fastapi 等小包被跳过，需二次补装（用户痛点）。
+        # 现改为：单个包失败记录后 continue，尽量多装其余包；全成功才返回成功。
+        failed: list[tuple[str, str]] = []
+
         for name, package_spec, index_url in requirements:
             # 协作式取消：在每个包安装前检查取消事件。
             # 已启动的子进程由 _run_pip 内部的 cancel_event 检查负责 kill，
@@ -1487,6 +1606,17 @@ def _install_paddle_stack(
             )
             pkg_args = [a.strip('"').strip("'") for a in raw_args]
 
+            # 残缺安装修复：force_reinstall_pkgs 中的包追加 --force-reinstall --no-deps。
+            # 普通补装会因残留 .dist-info 报 already satisfied 跳过，永远修不好；
+            # --force-reinstall 强制重写文件，--no-deps 避免重装整个依赖树
+            # （fonttools 这类纯 Python 包无 deps，且 GPU 包有独立重试/回退逻辑不应加 --no-deps）。
+            is_force_reinstall = _pkg_in_force_reinstall_set(
+                name, force_reinstall_pkgs
+            )
+            if is_force_reinstall:
+                report_fn("依赖安装", f"{name} 检测为残缺安装，强制重写文件")
+            reinstall_flags = ["--force-reinstall", "--no-deps"] if is_force_reinstall else []
+
             # 首次安装走指定镜像源；带 --retries/--timeout 提升大文件（torch ~2.6GB）韧性
             result = _run_pip(
                 [
@@ -1498,6 +1628,7 @@ def _install_paddle_stack(
                     "5",
                     "--timeout",
                     "120",
+                    *reinstall_flags,
                     *pkg_args,
                     "-i",
                     index_url,
@@ -1534,6 +1665,7 @@ def _install_paddle_stack(
                                 "5",
                                 "--timeout",
                                 "120",
+                                *reinstall_flags,
                                 *pkg_args,
                                 "-i",
                                 index_url,
@@ -1554,11 +1686,20 @@ def _install_paddle_stack(
                             name,
                             error_msg,
                         )
-                        return (
-                            False,
-                            f"{name} 安装失败（已重试，GPU 包不可回退 PyPI）:"
-                            f"\n{error_msg[:500]}",
+                        # 记录失败但继续装后续包（用户可二次补装真正失败的），
+                        # 避免前面 mineru 失败就跳过末尾的 fonttools 等小包。
+                        failed.append(
+                            (
+                                name,
+                                f"{name} 安装失败（已重试，GPU 包不可回退 PyPI）:"
+                                f"\n{error_msg[:500]}",
+                            )
                         )
+                        report_fn(
+                            "依赖安装",
+                            f"⚠ {name} 安装失败，跳过继续装后续包（稍后可补装）",
+                        )
+                        continue
                 elif is_version_not_found:
                     # 非 GPU 包且镜像源确无此版本：回退官方 PyPI
                     report_fn(
@@ -1574,6 +1715,7 @@ def _install_paddle_stack(
                             "5",
                             "--timeout",
                             "120",
+                            *reinstall_flags,
                             *pkg_args,
                         ],
                         timeout=600,
@@ -1587,15 +1729,36 @@ def _install_paddle_stack(
                         logger.error(
                             "%s 安装失败，完整输出:\n%s", name, error_msg
                         )
-                        return False, f"{name} 安装失败:\n{error_msg[:500]}"
+                        failed.append((name, f"{name} 安装失败:\n{error_msg[:500]}"))
+                        report_fn(
+                            "依赖安装",
+                            f"⚠ {name} 安装失败，跳过继续装后续包（稍后可补装）",
+                        )
+                        continue
                 else:
                     # 非 GPU 包但非版本问题（如网络中断）：直接失败，不回退
                     logger.error(
                         "%s 安装失败，完整输出:\n%s", name, error_msg
                     )
-                    return False, f"{name} 安装失败:\n{error_msg[:500]}"
+                    failed.append((name, f"{name} 安装失败:\n{error_msg[:500]}"))
+                    report_fn(
+                        "依赖安装",
+                        f"⚠ {name} 安装失败，跳过继续装后续包（稍后可补装）",
+                    )
+                    continue
 
             report_fn("依赖安装", f"{name} 安装成功")
+
+        # 循环结束：汇总失败。全成功才走成功路径（刷缓存 + success_msg）；
+        # 有失败则返回失败汇总，但此时已尽量多装了其余包，用户二次补装只补真正失败的。
+        if failed:
+            failed_names = "、".join(n for n, _ in failed)
+            detail = "\n\n".join(f"{n}:\n{m}" for n, m in failed)
+            report_fn(
+                "依赖安装",
+                f"安装完成（部分失败）：{failed_names}。可点「补充安装缺失依赖」重试。",
+            )
+            return False, f"部分依赖安装失败（{failed_names}）：\n\n{detail}"
 
         report_fn("依赖安装", "所有OCR依赖安装完成")
         # 安装成功后刷新依赖缓存，避免设置页表格读到旧值（与 main_window
@@ -1768,42 +1931,65 @@ def install_missing_dependencies(
             (f"PyTorch CUDA ({torch_cuda_tag})", "torch torchvision", torch_index)
         )
 
-    # 2. 检测每个包是否已可 import
+    # 2. 检测每个包是否已可 import（用 detailed 版拿 (installed, usable) 二元组）
     report("依赖安装", "正在检测已安装的依赖...")
-    import_status = _check_imports(python_exe)
+    # detailed: {pkg: (installed, usable)}；installed=True/usable=False 即残缺安装
+    # （.dist-info 残留但 import 失败），补装时需 --force-reinstall 才能真正修好。
+    import_detailed = _check_imports_detailed(python_exe)
+    # 仅 usable 的扁平视图，供下面 _is_installed（语义不变：可用才算已装）与
+    # 全部已装时的缓存写入使用。
+    import_status = {pkg: usable for pkg, (_inst, usable) in import_detailed.items()}
+
+    def _pkg_key_for_req(req_name: str) -> str | None:
+        """根据 requirements 项展示名映射到 import_detailed 的归一包名 key"""
+        if "PaddlePaddle" in req_name:
+            return "paddlepaddle"
+        if "PyTorch" in req_name:
+            return "torch"
+        if "PaddleOCR" in req_name:
+            return "paddleocr"
+        if "MinerU" in req_name:
+            return "mineru"
+        if req_name == "Markdown":
+            return "markdown"
+        # PDF 后端依赖：import_detailed 的 key 是 pip 包名(OCR_CHECK_MODULES value)
+        if req_name == "PyMuPDF":
+            return "pymupdf"
+        if req_name == "FastAPI":
+            return "fastapi"
+        if req_name == "Uvicorn":
+            return "uvicorn"
+        if req_name == "Pydantic":
+            return "pydantic"
+        if req_name == "FontTools":
+            return "fonttools"
+        return None
 
     def _is_installed(req_name: str) -> bool:
-        """根据 requirements 项展示名查 import 状态"""
-        if "PaddlePaddle" in req_name:
-            return import_status.get("paddlepaddle", False)
-        if "PyTorch" in req_name:
-            return import_status.get("torch", False)
-        if "PaddleOCR" in req_name:
-            return import_status.get("paddleocr", False)
-        if "MinerU" in req_name:
-            return import_status.get("mineru", False)
-        if req_name == "Markdown":
-            return import_status.get("markdown", False)
-        # PDF 后端依赖：import_status 的 key 是 pip 包名(OCR_CHECK_MODULES value)
-        if req_name == "PyMuPDF":
-            return import_status.get("pymupdf", False)
-        if req_name == "FastAPI":
-            return import_status.get("fastapi", False)
-        if req_name == "Uvicorn":
-            return import_status.get("uvicorn", False)
-        if req_name == "Pydantic":
-            return import_status.get("pydantic", False)
-        if req_name == "FontTools":
-            return import_status.get("fonttools", False)
-        return False
+        """根据 requirements 项展示名查 import 状态（usable=True 才算已装）"""
+        key = _pkg_key_for_req(req_name)
+        return import_status.get(key, False) if key else False
 
-    # 3. 过滤掉已装的
+    # 3. 过滤掉已装的；收集残缺安装（installed=True/usable=False）需强制重装的包
     subset: list[tuple[str, str, str]] = []
+    force_reinstall_pkgs: set[str] = set()
     for name, pkg_spec, index_url in requirements:
-        if _is_installed(name):
+        key = _pkg_key_for_req(name)
+        installed, usable = (
+            import_detailed.get(key, (False, False)) if key else (False, False)
+        )
+        if usable:
             report("依赖安装", f"✓ {name} 已安装，跳过")
         else:
             subset.append((name, pkg_spec, index_url))
+            # 残缺安装：metadata 在但 import 失败。普通 pip install 会报
+            # "already satisfied" 跳过 → 永远修不好，必须 --force-reinstall。
+            if installed and key:
+                force_reinstall_pkgs.add(key)
+                report(
+                    "依赖安装",
+                    f"⚠ {name} 安装残缺（元数据在但 import 失败），将强制重装",
+                )
 
     # 4. 全部已装
     if not subset:
@@ -1820,7 +2006,7 @@ def install_missing_dependencies(
     missing_names = ", ".join(n for n, _, _ in subset)
     report("依赖安装", f"需补装: {missing_names}")
 
-    # 5. 只装子集
+    # 5. 只装子集（残缺安装的包走 --force-reinstall）
     return _install_paddle_stack(
         python_exe=python_exe,
         specs=specs,
@@ -1834,7 +2020,94 @@ def install_missing_dependencies(
         cancel_event=cancel_event,
         on_proc=on_proc,
         project_root=project_root,
+        force_reinstall_pkgs=force_reinstall_pkgs,
     )
+
+
+def detect_dependency_updates(project_root: Path) -> dict[str, tuple[str, str]]:
+    """检测便携 Python 环境中哪些 OCR 依赖版本落后于主程序要求的版本规格。
+
+    覆盖安装场景（用户直接覆盖文件升级 app，无 pending_sync.json）下，
+    version.json 里的 dep_versions 可能比已装版本新，主程序据此提示用户更新。
+
+    对比逻辑：
+    - 规格来源：``_load_dep_specs()``（version.json/pyproject.toml 的约束串）。
+    - 已装来源：``get_dependency_versions(python_exe)``（importlib.metadata）。
+    - 对每个 OCR_CHECK_MODULES 包，提取规格的下界版本（如 ``>=3.7.0`` → 3.7.0），
+      与已装版本比较；已装 < 下界，或未安装/空，记为"需更新"。
+
+    Args:
+        project_root: 项目根目录
+
+    Returns:
+        {pkg: (installed_version, required_spec)}，仅含需更新的包。
+        installed_version 为空串表示未安装；required_spec 为原始约束串（展示用）。
+    """
+    python_exe = get_embedded_python_executable(project_root)
+    if not python_exe.exists():
+        return {}
+
+    specs = _load_dep_specs()
+    installed_versions = get_dependency_versions(python_exe)
+
+    from vibeocr.services.env_config import OCR_CHECK_MODULES
+
+    try:
+        from packaging.requirements import Requirement
+        from packaging.version import InvalidVersion, Version
+    except ImportError:
+        # 便携 Python 应有 packaging（pip 依赖），但防御性兜底：仅比较字符串前缀。
+        Requirement = None  # type: ignore[assignment]
+        Version = None  # type: ignore[assignment]
+        InvalidVersion = Exception  # type: ignore[misc,assignment]
+
+    def _extract_lower_bound(spec_str: str) -> str | None:
+        """从 PEP 508 规格串提取版本下界（如 'paddleocr[doc-parser]>=3.7.0' → '3.7.0'）。
+
+        无法解析（无约束/复杂约束）时返回 None，调用方按"无法比较→不报更新"处理，
+        避免误报。
+        """
+        import re as _re
+
+        # 取约束操作符 + 版本号（首个 >= / > / == 约束段）
+        m = _re.search(r"(>=|>|==|~=)\s*([0-9][0-9a-zA-Z.\-+!]*)", spec_str)
+        return m.group(2) if m else None
+
+    updates: dict[str, tuple[str, str]] = {}
+    for _module, pkg in OCR_CHECK_MODULES.items():
+        # specs 的 key 是归一包名（小写），paddle 特殊：specs 里是 paddlepaddle-gpu
+        # 或 paddlepaddle；OCR_CHECK_MODULES value 是 paddlepaddle。取 specs.get(pkg)。
+        spec_str = specs.get(pkg) or specs.get(f"{pkg}-gpu")
+        if not spec_str:
+            continue  # 无规格无法比较
+
+        required_ver = _extract_lower_bound(spec_str)
+        if required_ver is None:
+            continue  # 约束不可解析（如纯包名无版本）
+
+        installed_ver = installed_versions.get(pkg, "")
+
+        # 未安装 → 视为需更新（补装/更新都会装上）
+        if not installed_ver:
+            updates[pkg] = (installed_ver, spec_str)
+            continue
+
+        # 版本比较：优先用 packaging（权威），失败则按字符串前缀长度兜底
+        need_update = False
+        if Version is not None:
+            try:
+                if Version(installed_ver) < Version(required_ver):
+                    need_update = True
+            except InvalidVersion:
+                # 非标准版本（如含 local label），按字符串比较兜底
+                need_update = str(installed_ver) < str(required_ver)
+        else:
+            need_update = str(installed_ver) < str(required_ver)
+
+        if need_update:
+            updates[pkg] = (installed_ver, spec_str)
+
+    return updates
 
 
 def uninstall_removed_deps(
