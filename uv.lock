@@ -2244,7 +2244,7 @@ wheels = [
 
 [[package]]
 name = "vibeocr"
-version = "0.4.15"
+version = "0.4.16"
 source = { editable = "." }
 dependencies = [
     { name = "fastapi" },
@@ -2310,7 +2310,7 @@ requires-dist = [
 [package.metadata.requires-dev]
 dev = [
     { name = "pre-commit", specifier = ">=4.6.0" },
-    { name = "pyinstaller", specifier = ">=6.0" },
+    { name = "pyinstaller", specifier = ">=6.6" },
     { name = "pyright", specifier = ">=1.1.409" },
     { name = "pytest", specifier = ">=9.0.3" },
     { name = "pytest-cov", specifier = ">=7.1.0" },

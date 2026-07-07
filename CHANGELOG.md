@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.4.16] - 2026-07-08
+
+### Added
+- feat(update): 更新进度阶段计时 + 关于页展示各阶段耗时
+
+### Changed
+- perf(startup): 延迟重型 Tab 模块 import + 打包 optimize=2
+- perf(startup): 启动加速——splash 屏 + 懒加载 Tab + 图标缓存
+
 ## [0.4.15] - 2026-07-07
 
 ### Added
