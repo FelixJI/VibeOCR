@@ -248,7 +248,14 @@ def verify_sha256(file_path: Path, sha256_file: Path) -> bool:
         return False
 
     expected_hash = sha256_file.read_text(encoding="utf-8").strip().split()[0].lower()
-    actual_hash = hashlib.sha256(file_path.read_bytes()).hexdigest().lower()
+    # 分块流式计算（与 update_replacer.verify_sha256 一致）：避免一次性把 ~227MB+ 的
+    # zip 读进内存造成瞬时峰值。此处虽已被 asyncio.to_thread 搬到线程池、不冻结 UI，
+    # 但内存峰值仍会与并发任务叠加。8MB 块恒定峰值，速度持平或略快。
+    h = hashlib.sha256()
+    with open(file_path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 23), b""):  # 8MB
+            h.update(chunk)
+    actual_hash = h.hexdigest().lower()
 
     if actual_hash != expected_hash:
         logger.error(f"SHA256 校验失败: expected={expected_hash}, actual={actual_hash}")
@@ -951,7 +958,10 @@ class UpdateService:
         """
         if not self._updater_path.exists():
             logger.error(f"updater 不存在: {self._updater_path}")
-            return False
+            # 与 _handshake_launch 三态语义统一：替换器确认起不来 → crashed，
+            # 调用方据此走 self-update 兜底 / 弹窗路径。不要 return False
+            # （布尔）：调用方只识别 "ready"/"timeout"，布尔会绕过三态判断。
+            return "crashed"
 
         return await self._handshake_launch(
             exe_path=self._updater_path,
@@ -969,7 +979,8 @@ class UpdateService:
         """
         if not self._self_exe_path.exists():
             logger.error(f"主程序不存在，无法走 self-update 兜底: {self._self_exe_path}")
-            return False
+            # 同 _launch_updater：返回三态字符串 crashed 而非布尔，保持类型一致。
+            return "crashed"
 
         return await self._handshake_launch(
             exe_path=self._self_exe_path,

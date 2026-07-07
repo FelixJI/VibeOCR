@@ -444,6 +444,20 @@ def get_update_settings_path() -> Path:
     return d / "update_settings.json"
 
 
+def get_update_progress_path() -> Path:
+    """获取更新替换流程进度文件路径。
+
+    替换器（updater.exe / self-update）在替换各阶段写入耗时记录（见
+    update_replacer._StageTimer），新版 VibeOCR 启动后由关于页读取展示
+    「上次更新各阶段耗时」，方便用户/开发者排查更新慢的瓶颈。
+
+    放 cache/update/ 与 updater.ready 同目录：更新缓存清理时一并删除，
+    不会永久残留；失败路径下 _safe_cleanup_artifacts 也覆盖此目录。
+    不主动 mkdir——替换器写它时已 ensure parent（与 ready 信号一致）。
+    """
+    return get_data_dir() / "cache" / "update" / "progress.json"
+
+
 def get_pending_sync_path() -> Path:
     """获取依赖版本待同步标记文件路径
 

@@ -40,6 +40,119 @@ _PRESERVE_DIRS = {"python", "data", "config"}
 
 logger = logging.getLogger("updater")
 
+# 单阶段耗时超过此阈值（秒）时，日志额外标 [SLOW]，便于事后在 updater.log /
+# self_update.log 里一眼定位瓶颈（典型来源：杀独占扫描新 exe、HDD 随机 IO、
+# 网络盘 app_dir）。阈值取经验值——握手超时是 15s，单阶段接近或超过即值得警觉。
+_SLOW_STAGE_THRESHOLD = 10.0
+
+# 本轮替换流程的阶段耗时记录（模块级，替换器单进程单次运行，全局状态安全）。
+# _StageTimer 每次退出追加一条；run_replacement 入口 reset、出口落盘成
+# progress.json，供新版关于页读取展示「上次更新各阶段耗时」。
+# 嵌套阶段（如「替换应用文件」内含 5 个子阶段）按进入顺序平铺记录，展示时
+# 用层次（parent）标记父子关系。
+_stage_records: list[dict] = []
+# 当前嵌套深度：顶层阶段为 0，replace_app_files 内的子阶段为 1。
+# 用于在展示时区分父子阶段（子阶段缩进显示，汇总行不重复计总耗时）。
+_stage_depth = 0
+
+
+class _StageTimer:
+    """替换流程各阶段耗时埋点的轻量上下文管理器。
+
+    用 ``time.monotonic()``（不受系统时钟回调影响，适合测耗时）。退出时：
+    1. 写一条 ``[计时] <阶段名> 耗时 <dt>s`` 日志（超阈值追加 ``[SLOW]``）；
+    2. 追加一条记录到模块级 ``_stage_records``，供 ``run_replacement`` 出口
+       落盘成 ``progress.json``，新版关于页据此展示各阶段耗时分布。
+
+    纯 stdlib、零依赖，符合替换器「不 import vibeocr」的约束。
+
+    用法::
+
+        with _StageTimer("解压更新包"):
+            new_files_dir = extract_zip(zip_path, app_dir)
+
+    失败路径（块内抛异常）也会记录耗时——异常在 ``__exit__`` 计时后才向上抛，
+    故障排查时能看到「失败发生在哪个阶段、卡了多久」。
+    """
+
+    __slots__ = ("_name", "_t0", "_depth")
+
+    def __init__(self, name: str) -> None:
+        self._name = name
+        self._t0 = 0.0
+        self._depth = 0
+
+    def __enter__(self) -> "_StageTimer":
+        global _stage_depth
+        self._t0 = time.monotonic()
+        self._depth = _stage_depth
+        _stage_depth += 1
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        global _stage_depth
+        dt = time.monotonic() - self._t0
+        _stage_depth = self._depth  # 退回到本层（防御异常路径下深度错位）
+        slow = " [SLOW]" if dt >= _SLOW_STAGE_THRESHOLD else ""
+        # exc 为真说明阶段内抛了异常，额外标注，方便事后定位「失败卡在哪一步」。
+        failed = " [FAILED]" if exc is not None else ""
+        indent = "  " * self._depth
+        logger.info(f"[计时] {indent}{self._name} 耗时 {dt:.2f}s{slow}{failed}")
+        _stage_records.append(
+            {
+                "name": self._name,
+                "seconds": round(dt, 3),
+                "depth": self._depth,
+                "slow": dt >= _SLOW_STAGE_THRESHOLD,
+                "failed": exc is not None,
+            }
+        )
+
+
+def _flush_progress(app_dir: Path, success: bool, version: str = "") -> None:
+    """把本轮阶段耗时记录落盘成 progress.json，供新版关于页读取展示。
+
+    落盘路径 ``app_dir/data/cache/update/progress.json``（与 updater.ready 同目录，
+    更新缓存清理时一并删除）。失败路径也落盘——这样「更新失败」的现场同样可见，
+    便于排查「卡在哪一步」。落盘失败本身仅记录，不影响主流程（progress 是辅助信息）。
+
+    Args:
+        app_dir: 应用目录，progress.json 落在其 data/cache/update/ 下。
+        success: 本轮替换是否成功（展示时区分「成功更新」「失败回滚」两次记录）。
+        version: 目标版本号（从 version.json 读取，展示用）。
+    """
+    if not _stage_records:
+        return
+    progress_path = app_dir / "data" / "cache" / "update" / "progress.json"
+    payload = {
+        "version": version,
+        "success": success,
+        "total_seconds": round(sum(r["seconds"] for r in _stage_records), 3),
+        "stages": _stage_records,
+        "recorded_at": datetime.now().isoformat(),
+    }
+    try:
+        progress_path.parent.mkdir(parents=True, exist_ok=True)
+        progress_path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        logger.info(f"已写入更新进度记录: {progress_path}")
+    except Exception as e:
+        logger.warning(f"写入 progress.json 失败（不影响更新，仅丢失耗时展示）: {e}")
+
+
+def _read_version(app_dir: Path) -> str:
+    """读 app_dir/version.json 的 version 字段，供 progress.json 展示。
+
+    替换成功后 version.json 已是新版；失败/校验阶段 version.json 仍是旧版或不存在。
+    任何异常都返回空串——progress.json 的 version 仅作展示，非关键数据。
+    """
+    try:
+        data = json.loads((app_dir / "version.json").read_text(encoding="utf-8"))
+        return str(data.get("version", ""))
+    except Exception:
+        return ""
+
 
 # ---------------------------------------------------------------------------
 # 日志（与 updater_main / self-update 共用，写到 app_dir/data/logs/<name>.log）
@@ -145,7 +258,15 @@ def verify_sha256(zip_path: Path) -> bool:
         return False
 
     expected = sha256_path.read_text(encoding="utf-8").strip().split()[0].lower()
-    actual = hashlib.sha256(zip_path.read_bytes()).hexdigest().lower()
+    # 分块流式计算哈希，而非 ``hashlib.sha256(zip_path.read_bytes())``。
+    # 后者一次性把整个 zip（~227–378MB）读进内存，峰值占用 = 包体大小，在弱内存机器
+    # 上与解压/复制阶段的内存叠加可能触发换页抖动，反而更慢。流式按 8MB 块喂给
+    # hashlib，峰值恒定 ~8MB，速度持平或略快（省去一次大 buffer 分配）。
+    h = hashlib.sha256()
+    with open(zip_path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 23), b""):  # 1<<23 == 8MB
+            h.update(chunk)
+    actual = h.hexdigest().lower()
 
     if actual != expected:
         logger.error("SHA256 校验失败")
@@ -242,8 +363,9 @@ def replace_app_files(
             pass
 
     # 运行中的 exe 必须先改名，否则下面 rmtree 删它必然失败
-    for self_name in self_exe_names:
-        rename_locked_self_exe(app_dir, self_name)
+    with _StageTimer("改名避让运行中 exe"):
+        for self_name in self_exe_names:
+            rename_locked_self_exe(app_dir, self_name)
 
     # 待替换的旧条目（保留目录除外）
     old_items = [item for item in app_dir.iterdir() if item.name not in _PRESERVE_DIRS]
@@ -254,73 +376,76 @@ def replace_app_files(
         shutil.rmtree(backup_dir, ignore_errors=True)
     backup_dir.mkdir(parents=True, exist_ok=True)
     backed_up: list[tuple[Path, Path]] = []  # (原位置, 备份位置)
-    try:
-        for item in old_items:
-            bak = backup_dir / item.name
-            if item.is_dir():
-                shutil.copytree(item, bak, dirs_exist_ok=True, copy_function=_busy_copy2)
-            else:
-                _busy_copy2(item, bak)
-            backed_up.append((item, bak))
-    except Exception as e:
-        logger.error(f"备份旧文件失败，中止更新: {e}")
-        shutil.rmtree(backup_dir, ignore_errors=True)
-        return False
+    with _StageTimer("备份旧文件"):
+        try:
+            for item in old_items:
+                bak = backup_dir / item.name
+                if item.is_dir():
+                    shutil.copytree(item, bak, dirs_exist_ok=True, copy_function=_busy_copy2)
+                else:
+                    _busy_copy2(item, bak)
+                backed_up.append((item, bak))
+        except Exception as e:
+            logger.error(f"备份旧文件失败，中止更新: {e}")
+            shutil.rmtree(backup_dir, ignore_errors=True)
+            return False
 
     # 2) 删除旧条目
     #    注意：删除失败（含被占用）不致命——复制阶段会再尝试覆盖。但「文件被占用」
     #    属瞬时抖动，先退避重试吸收，避免残留旧文件干扰后续复制判定。
-    for item in old_items:
-        # *.exe.old（如 updater.exe.old）是 rename_locked_self_exe 刚改名避让的
-        # 运行中进程映像，此刻 100% 被 PE 映射区锁定，_busy_remove 轮询 10s 必失败
-        # （历史 bug 的 WARNING 噪音 + 无谓等待即源于此）。它不阻塞后续复制（新版
-        # updater.exe 是另一个文件名），故此处直接跳过，交给 cleanup 末尾的
-        # _safe_remove_running_exe 用 MoveFileEx 标记重启清理。
-        if item.name.endswith(".exe.old"):
-            continue
-        is_dir = item.is_dir()
-        try:
-            if is_dir:
-                # rmtree 对占用中的目录整体失败，对子文件逐项重试更稳；
-                # ignore_errors=True 兜底（目录里混有运行中 exe 时逐文件删不干净
-                # 是常态，交给复制阶段的 _busy_copy_file / 回滚处理）。
-                shutil.rmtree(item, ignore_errors=True)
-            elif not _busy_remove(item, is_dir=False):
-                logger.warning(f"删除 {item} 失败: 文件持续被占用")
-        except Exception as e:
-            logger.warning(f"删除 {item} 失败: {e}")
+    with _StageTimer("删除旧文件"):
+        for item in old_items:
+            # *.exe.old（如 updater.exe.old）是 rename_locked_self_exe 刚改名避让的
+            # 运行中进程映像，此刻 100% 被 PE 映射区锁定，_busy_remove 轮询 10s 必失败
+            # （历史 bug 的 WARNING 噪音 + 无谓等待即源于此）。它不阻塞后续复制（新版
+            # updater.exe 是另一个文件名），故此处直接跳过，交给 cleanup 末尾的
+            # _safe_remove_running_exe 用 MoveFileEx 标记重启清理。
+            if item.name.endswith(".exe.old"):
+                continue
+            is_dir = item.is_dir()
+            try:
+                if is_dir:
+                    # rmtree 对占用中的目录整体失败，对子文件逐项重试更稳；
+                    # ignore_errors=True 兜底（目录里混有运行中 exe 时逐文件删不干净
+                    # 是常态，交给复制阶段的 _busy_copy_file / 回滚处理）。
+                    shutil.rmtree(item, ignore_errors=True)
+                elif not _busy_remove(item, is_dir=False):
+                    logger.warning(f"删除 {item} 失败: 文件持续被占用")
+            except Exception as e:
+                logger.warning(f"删除 {item} 失败: {e}")
 
     # 3) 复制新文件；任一失败则回滚
     #    单文件复制对「文件被占用」退避重试（杀独占扫描、OS 句柄释放延迟），
     #    避免瞬时抖动误触发整包回滚。目录用 copytree（内部逐项复制，无法单点重试），
     #    失败仍走原回滚逻辑。
-    try:
-        for item in new_files_dir.iterdir():
-            if item.name in _PRESERVE_DIRS:
-                continue
-            dest = app_dir / item.name
-            if item.is_dir():
-                try:
-                    shutil.copytree(
-                        item, dest, dirs_exist_ok=True, copy_function=_busy_copy2
-                    )
-                except Exception as e:
-                    logger.error(f"复制目录 {item} 失败: {e}")
-                    logger.info("正在回滚到更新前状态...")
-                    _restore_backup(app_dir, backed_up, backup_dir)
-                    return False
-            else:
-                if not _busy_copy_file(item, dest):
-                    logger.error(f"复制 {item} 失败: 文件持续被占用")
-                    logger.info("正在回滚到更新前状态...")
-                    _restore_backup(app_dir, backed_up, backup_dir)
-                    return False
-    except Exception as e:
-        # iterdir() 自身失败（目录不存在/无权限等），item 此时未绑定
-        logger.error(f"读取更新包内容失败: {e}")
-        logger.info("正在回滚到更新前状态...")
-        _restore_backup(app_dir, backed_up, backup_dir)
-        return False
+    with _StageTimer("复制新文件"):
+        try:
+            for item in new_files_dir.iterdir():
+                if item.name in _PRESERVE_DIRS:
+                    continue
+                dest = app_dir / item.name
+                if item.is_dir():
+                    try:
+                        shutil.copytree(
+                            item, dest, dirs_exist_ok=True, copy_function=_busy_copy2
+                        )
+                    except Exception as e:
+                        logger.error(f"复制目录 {item} 失败: {e}")
+                        logger.info("正在回滚到更新前状态...")
+                        _restore_backup(app_dir, backed_up, backup_dir)
+                        return False
+                else:
+                    if not _busy_copy_file(item, dest):
+                        logger.error(f"复制 {item} 失败: 文件持续被占用")
+                        logger.info("正在回滚到更新前状态...")
+                        _restore_backup(app_dir, backed_up, backup_dir)
+                        return False
+        except Exception as e:
+            # iterdir() 自身失败（目录不存在/无权限等），item 此时未绑定
+            logger.error(f"读取更新包内容失败: {e}")
+            logger.info("正在回滚到更新前状态...")
+            _restore_backup(app_dir, backed_up, backup_dir)
+            return False
 
     # 4) 复制成功，清理备份
     shutil.rmtree(backup_dir, ignore_errors=True)
@@ -328,11 +453,12 @@ def replace_app_files(
     # 5) 检查 AI 依赖版本变化（写待同步标记，由新版主程序启动时执行）
     new_version_json = app_dir / "version.json"
     if new_version_json.exists():
-        try:
-            new_data = json.loads(new_version_json.read_text(encoding="utf-8"))
-            _sync_dependencies(old_deps, new_data, app_dir)
-        except Exception as e:
-            logger.warning(f"检查依赖版本失败: {e}")
+        with _StageTimer("依赖版本同步（写标记）"):
+            try:
+                new_data = json.loads(new_version_json.read_text(encoding="utf-8"))
+                _sync_dependencies(old_deps, new_data, app_dir)
+            except Exception as e:
+                logger.warning(f"检查依赖版本失败: {e}")
 
     return True
 
@@ -728,9 +854,13 @@ def run_replacement(
     logger.info(f"更新包: {zip_path}")
     logger.info(f"应用目录: {app_dir}")
 
+    # 重置本轮阶段耗时记录（模块级状态，防御上次运行残留）。
+    _stage_records.clear()
+
     # 第一时间写就绪信号，让主程序端确认替换器「活着」。
     # 必须在任何可能失败的替换步骤之前，否则主程序端握不到手会误判。
-    signal_ready(app_dir, ready_filename)
+    with _StageTimer("写就绪信号"):
+        signal_ready(app_dir, ready_filename)
 
     fail_reason = ""
     # 解压目录引用：无论哪个阶段失败，都要清理掉，避免数百 MB 的临时文件长期堆积
@@ -741,16 +871,24 @@ def run_replacement(
     relaunch_on_fail = True
 
     try:
-        if not verify_zip(zip_path):
+        with _StageTimer("校验 zip 完整性"):
+            zip_ok = verify_zip(zip_path)
+        if not zip_ok:
             fail_reason = "更新包已损坏或校验失败。"
             return 1
-        if not verify_sha256(zip_path):
+
+        with _StageTimer("校验 SHA256"):
+            sha_ok = verify_sha256(zip_path)
+        if not sha_ok:
             fail_reason = "更新包完整性（SHA256）校验失败，文件可能损坏或被篡改。"
             return 1
 
-        new_files_dir = extract_zip(zip_path, app_dir)
+        with _StageTimer("解压更新包"):
+            new_files_dir = extract_zip(zip_path, app_dir)
 
-        if not replace_app_files(new_files_dir, app_dir, self_exe_names):
+        with _StageTimer("替换应用文件（备份-删除-复制-依赖同步）"):
+            replace_ok = replace_app_files(new_files_dir, app_dir, self_exe_names)
+        if not replace_ok:
             # replace_app_files 已记录详细日志并尝试回滚；这里给用户一个明确结论。
             fail_reason = (
                 "更新失败：替换文件时出错（可能文件被占用或权限不足）。\n"
@@ -758,12 +896,17 @@ def run_replacement(
             )
             return 1
 
-        cleanup(
-            zip_path, new_files_dir.parent if new_files_dir.name != "tmp" else new_files_dir
-        )
-        launch_app(app_dir)
+        with _StageTimer("清理临时产物"):
+            cleanup(
+                zip_path, new_files_dir.parent if new_files_dir.name != "tmp" else new_files_dir
+            )
+        with _StageTimer("启动新版主程序"):
+            launch_app(app_dir)
 
         logger.info("更新完成!")
+        # 落盘进度记录（success=True）。必须在 os._exit 之前——os._exit 跳过 finally，
+        # 不在这里写就永远丢了。版本号从替换后的 version.json 读，展示「更新到 vX」。
+        _flush_progress(app_dir, success=True, version=_read_version(app_dir))
         # 显式硬退出，确保替换器进程立即终止。updater.exe 是 --onefile --windowed，
         # return 0 后进程才退出；某些机器上主程序启动慢或文件锁释放延迟会让 updater
         # 卡在退出阶段，表现为「下载完成后无响应」（主程序已起来但旧 updater 还挂着）。
@@ -777,6 +920,12 @@ def run_replacement(
         fail_reason = "更新过程中发生异常，请查看日志或手动下载最新版。"
         return 1
     finally:
+        # 落盘进度记录（success=False）：失败现场同样值得留存，便于排查「卡在哪一步」。
+        # 放在清理之前——清理删除 zip/sha256，但 progress.json 在 cache/update/ 下，
+        # _safe_cleanup_artifacts 只删文件不删 progress.json（它写时已是清理之后），
+        # 故此处先 flush 再清理，progress.json 能留存。
+        if fail_reason:
+            _flush_progress(app_dir, success=False, version=_read_version(app_dir))
         # 失败时务必清理临时产物（zip / sha256 / 解压目录 / 备份目录），避免长期堆积。
         # 成功路径已在 try 内 cleanup，不走这里。
         if fail_reason:

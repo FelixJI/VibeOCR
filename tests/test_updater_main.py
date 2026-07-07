@@ -809,3 +809,122 @@ class TestRunReplacementExceptionGuard:
         log_file = app_dir / "data" / "logs" / "updater.log"
         assert log_file.exists()
         assert "unexpected boom" in log_file.read_text(encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
+# _StageTimer / _flush_progress / _read_version
+# ---------------------------------------------------------------------------
+
+
+class TestStageTimer:
+    """_StageTimer 各阶段耗时埋点测试。"""
+
+    def test_records_duration_and_name(self, updater):
+        """退出后应在 _stage_records 留下 (name, seconds) 记录。"""
+        updater._stage_records.clear()
+        import time
+
+        with updater._StageTimer("测试阶段"):
+            time.sleep(0.01)
+        assert len(updater._stage_records) == 1
+        rec = updater._stage_records[0]
+        assert rec["name"] == "测试阶段"
+        assert rec["seconds"] >= 0.01
+        assert rec["slow"] is False
+        assert rec["failed"] is False
+        assert rec["depth"] == 0
+
+    def test_marks_slow_when_over_threshold(self, updater, monkeypatch):
+        """耗时超过 _SLOW_STAGE_THRESHOLD 时 slow=True。"""
+        updater._stage_records.clear()
+        monkeypatch.setattr(updater, "_SLOW_STAGE_THRESHOLD", 0.0)  # 阈值设 0 → 必触发
+        with updater._StageTimer("必慢"):
+            pass
+        assert updater._stage_records[0]["slow"] is True
+
+    def test_marks_failed_on_exception(self, updater):
+        """块内抛异常时 failed=True，且异常仍向上抛。"""
+        updater._stage_records.clear()
+        with pytest.raises(ValueError, match="boom"):
+            with updater._StageTimer("会失败"):
+                raise ValueError("boom")
+        assert updater._stage_records[0]["failed"] is True
+
+    def test_nested_stages_track_depth(self, updater):
+        """嵌套阶段应正确记录 depth（父子关系）。
+
+        退出顺序是「后进先出」：子的 __exit__ 先于父的，故记录顺序是 子1, 子2, 父。
+        depth 才是父子关系的判据，不是列表顺序。
+        """
+        updater._stage_records.clear()
+        with updater._StageTimer("父"):
+            with updater._StageTimer("子1"):
+                pass
+            with updater._StageTimer("子2"):
+                pass
+        # 退出顺序：子1 → 子2 → 父（嵌套 LIFO）
+        names_depths = [(r["name"], r["depth"]) for r in updater._stage_records]
+        assert names_depths == [("子1", 1), ("子2", 1), ("父", 0)]
+
+
+class TestFlushProgress:
+    """_flush_progress 落盘测试。"""
+
+    def test_writes_progress_json_with_stages(self, updater, tmp_path):
+        """有阶段记录时应落盘 progress.json，含 stages / total / version。"""
+        import json
+
+        updater._stage_records = [
+            {"name": "A", "seconds": 1.5, "depth": 0, "slow": False, "failed": False},
+            {"name": "B", "seconds": 2.5, "depth": 1, "slow": True, "failed": False},
+        ]
+        updater._flush_progress(tmp_path, success=True, version="0.4.15")
+
+        progress = tmp_path / "data" / "cache" / "update" / "progress.json"
+        assert progress.exists()
+        data = json.loads(progress.read_text(encoding="utf-8"))
+        assert data["success"] is True
+        assert data["version"] == "0.4.15"
+        assert data["total_seconds"] == 4.0
+        assert len(data["stages"]) == 2
+        assert data["stages"][1]["slow"] is True
+
+    def test_noop_when_no_records(self, updater, tmp_path):
+        """无阶段记录时不写文件（避免空 progress.json）。"""
+        updater._stage_records = []
+        updater._flush_progress(tmp_path, success=False)
+        assert not (tmp_path / "data" / "cache" / "update" / "progress.json").exists()
+
+    def test_write_failure_does_not_raise(self, updater, tmp_path, monkeypatch):
+        """落盘失败本身不应抛异常（progress 是辅助信息，不影响主流程）。"""
+        updater._stage_records = [
+            {"name": "A", "seconds": 1.0, "depth": 0, "slow": False, "failed": False}
+        ]
+
+        def _boom(*a, **kw):
+            raise OSError("disk full")
+
+        monkeypatch.setattr(updater.Path, "write_text", _boom)
+        # 不应抛
+        updater._flush_progress(tmp_path, success=True)
+
+
+class TestReadVersion:
+    """_read_version 测试。"""
+
+    def test_reads_version_from_json(self, updater, tmp_path):
+        import json
+
+        (tmp_path / "version.json").write_text(
+            json.dumps({"version": "9.9.9"}), encoding="utf-8"
+        )
+        assert updater._read_version(tmp_path) == "9.9.9"
+
+    def test_returns_empty_when_missing(self, updater, tmp_path):
+        """version.json 不存在时返回空串。"""
+        assert updater._read_version(tmp_path) == ""
+
+    def test_returns_empty_when_corrupt(self, updater, tmp_path):
+        """version.json 损坏时返回空串（不抛异常）。"""
+        (tmp_path / "version.json").write_text("not json", encoding="utf-8")
+        assert updater._read_version(tmp_path) == ""
