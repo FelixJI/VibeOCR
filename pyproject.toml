@@ -49,8 +49,9 @@ dev = [
     "pyright>=1.1.409",
     "pre-commit>=4.6.0",
     "uv>=0.11.14",
-    # 程序内更新链路的打包步骤（bump_version.py --build/--release）依赖它
-    "pyinstaller>=6.0",
+    # 程序内更新链路的打包步骤（bump_version.py --build/--release）依赖它。
+    # >=6.6：bump_version 打包注入 --optimize 2（字节码优化），该参数自此版本引入。
+    "pyinstaller>=6.6",
 ]
 
 [build-system]

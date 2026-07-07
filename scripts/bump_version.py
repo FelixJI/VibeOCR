@@ -1258,6 +1258,12 @@ def _get_pyinstaller_cmd(
         # 每次启动都要在内存解压，是 .exe 启动慢的主因。
         # 牺牲约 30% 磁盘体积换取启动免解压提速。
         "--noupx",
+        # 字节码优化等级 2（等价 python -OO）：移除 assert 与 __doc__，减小 PYZ 归档、
+        # 略微加速字节码加载。本项目 assert 全为类型收窄防御（无运行时逻辑依赖），
+        # GUI 进程不暴露 __doc__；worker 子进程走 datas 原始 .py 不受影响。
+        # 需 PyInstaller >= 6.6（--optimize 参数自此版本引入）。
+        "--optimize",
+        "2",
     ]
 
     if APP_ICON.exists():

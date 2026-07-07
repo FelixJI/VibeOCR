@@ -34,10 +34,8 @@ from vibeocr.managers import (
 )
 from vibeocr.services.log_service import setup_logging
 from vibeocr.ui.ui_main_window import Ui_MainWindowWidget
-from vibeocr.views.batch_recognition_tab import BatchRecognitionTab
 from vibeocr.views.clipboard_controller import ClipboardController
 from vibeocr.views.settings_page_controller import SettingsPageController
-from vibeocr.views.tabs.pdf_tab import PdfTab
 from vibeocr.views.tabs.single_recognition_tab import SingleRecognitionTab
 from vibeocr.widgets.screen_capture_overlay import ScreenCaptureOverlay
 from vibeocr.widgets.toast_widget import show_toast
@@ -359,7 +357,13 @@ class MainWindow(QMainWindow):
         self._lazy_tab_builders[idx] = (role, builder)
 
     def _build_batch_tab(self) -> Any:
-        """构造批量识别标签页（懒加载时调用）。"""
+        """构造批量识别标签页（懒加载时调用）。
+
+        import 延迟到此处：BatchRecognitionTab 模块顶层拉起 pdf_session_manager
+        → pydantic/httpx 等重链，启动期不需要，避免拖慢 main_window 模块加载。
+        """
+        from vibeocr.views.batch_recognition_tab import BatchRecognitionTab
+
         tab = BatchRecognitionTab()
         tab.set_layout_manager(self._layout_manager)
         return tab
@@ -371,7 +375,13 @@ class MainWindow(QMainWindow):
         return QrcodeTab()
 
     def _build_pdf_tab(self) -> Any:
-        """构造 PDF 处理标签页（懒加载时调用）。"""
+        """构造 PDF 处理标签页（懒加载时调用）。
+
+        import 延迟到此处：PdfTab 顶层拉起 pdf_session_manager → pydantic/httpx，
+        启动期不需要。
+        """
+        from vibeocr.views.tabs.pdf_tab import PdfTab
+
         return PdfTab()
 
     def _on_lazy_tab_changed(self, index: int) -> None:
