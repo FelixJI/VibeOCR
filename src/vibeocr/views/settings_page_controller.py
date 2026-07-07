@@ -26,15 +26,17 @@ from PySide6.QtWidgets import (
     QSpacerItem,
     QSpinBox,
     QStackedWidget,
-    QTableWidget,
-    QTableWidgetItem,
+    QTreeWidget,
+    QTreeWidgetItem,
     QVBoxLayout,
     QWidget,
 )
 
 from vibeocr.env_manager import (
+    check_dependencies_status_detailed,
     check_embedded_environment_dependencies_fresh,
     get_dependency_versions,
+    get_direct_dependencies,
     get_embedded_python_executable,
     get_embedded_python_info,
     get_environment_mode,
@@ -908,12 +910,14 @@ class SettingsPageController:
         missing_only: bool = False,
         force_backend: str | None = None,
         single_pkg: str | None = None,
+        packages: list[str] | None = None,
     ) -> None:
-        """以非模态方式打开安装进度对话框（补装/更新/单包重装共用，不阻塞主窗口）。
+        """以非模态方式打开安装进度对话框（补装/更新/单包/批量重装共用，不阻塞主窗口）。
 
         与 _open_reinstall_dialog 的区别：不弹 BackendChoiceDialog 选后端，
         直接用传入的 force_backend（通常来自 resolve_use_gpu 当前值）。
-        single_pkg 指定时进入单包重装模式（设置页依赖表格"重装"按钮）。
+        single_pkg 指定时进入单包重装模式；packages 指定时进入批量重装模式
+        （二者互斥，均不弹后端选择）。设置页依赖树"重装选中项"走 packages。
         """
         from vibeocr.widgets.install_dialog import InstallDialog
 
@@ -922,6 +926,7 @@ class SettingsPageController:
             missing_only=missing_only,
             force_backend=force_backend,
             single_pkg=single_pkg,
+            packages=packages,
         )
 
         def _on_finished(_result: int) -> None:
@@ -942,10 +947,12 @@ class SettingsPageController:
         self._active_dialogs.append(dialog)
         dialog.show()
         logger.info(
-            "[依赖更新] 安装对话框已 show()（missing_only=%s, backend=%s, single_pkg=%s）",
+            "[依赖更新] 安装对话框已 show()（missing_only=%s, backend=%s, "
+            "single_pkg=%s, packages=%s）",
             missing_only,
             force_backend,
             single_pkg,
+            packages,
         )
 
     def _on_reinstall_single_dep(self, pkg: str) -> None:
@@ -955,14 +962,53 @@ class SettingsPageController:
         """
         self._open_install_dialog(single_pkg=pkg)
 
+    def _on_reinstall_selected(self) -> None:
+        """批量重装入口（依赖树"重装选中项"按钮）。
+
+        取依赖树中选中的顶层节点对应的包（子节点忽略——间接依赖通过重装承载
+        顶层包修复）。批量影响范围比单包大，需二次确认。
+        """
+        from PySide6.QtCore import Qt
+
+        tree = self._ui.findChild(QTreeWidget, "treeDepsStatus")
+        if tree is None:
+            return
+        # 只取顶层节点（parent() is None）；子节点是间接依赖，重装顶层包会重新
+        # 解析传递树，逐个选 leaf 反而低效且可能漏 leaf 自身的间接依赖。
+        selected_pkgs: list[str] = []
+        for item in tree.selectedItems():
+            if item.parent() is None:
+                pkg = item.data(0, Qt.ItemDataRole.UserRole)
+                if pkg:
+                    selected_pkgs.append(pkg)
+        if not selected_pkgs:
+            return
+
+        # 去重保序
+        seen: set[str] = set()
+        unique = [p for p in selected_pkgs if not (p in seen or seen.add(p))]
+
+        reply = QMessageBox.question(
+            None,
+            "确认批量重装",
+            f"将重装以下 {len(unique)} 个依赖包：\n\n{', '.join(unique)}\n\n"
+            "顶层包会重新解析其传递依赖。是否继续？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        self._open_install_dialog(packages=unique)
+
     def _refresh_env_maintenance_state(self) -> None:
-        """刷新环境维护区状态：显示 Python 路径/就绪，依赖状态表格，非 portable 禁用按钮"""
+        """刷新环境维护区状态：显示 Python 路径/就绪，依赖状态树，非 portable 禁用按钮"""
         label = self._ui.findChild(QLabel, "labelEnvStatus")
         btn_py = self._ui.findChild(QPushButton, "btnReinstallPython")
         btn_deps = self._ui.findChild(QPushButton, "btnReinstallDeps")
         btn_missing = self._ui.findChild(QPushButton, "btnInstallMissing")
         btn_update = self._ui.findChild(QPushButton, "btnUpdateDeps")
-        table = self._ui.findChild(QTableWidget, "tableDepsStatus")
+        btn_reinstall_sel = self._ui.findChild(QPushButton, "btnReinstallSelected")
+        tree = self._ui.findChild(QTreeWidget, "treeDepsStatus")
 
         mode = get_environment_mode(self._project_root)
         info = get_embedded_python_info(self._project_root)
@@ -986,24 +1032,46 @@ class SettingsPageController:
             btn_missing.setEnabled(enabled)
         if btn_update:
             btn_update.setEnabled(enabled)
+        # "重装选中项"初始禁用，由依赖树选择变化驱动启用状态
+        if btn_reinstall_sel:
+            btn_reinstall_sel.setEnabled(False)
 
-        # 填充依赖状态表格（仅 portable 模式）
-        if table and mode == "portable":
-            self._populate_deps_table(table)
-        elif table:
-            table.setRowCount(0)
+        # 填充依赖状态树（仅 portable 模式）
+        if tree and mode == "portable":
+            self._populate_deps_tree(tree)
+            # 连接一次选择/按钮信号（用标志位避免重复 connect 触发 disconnect 噪音）。
+            # 首次调用 connect，后续 refresh 只重填树内容，信号连接保持有效。
+            if not getattr(self, "_deps_tree_signals_connected", False):
+                tree.itemSelectionChanged.connect(
+                    lambda: self._update_reinstall_selected_btn(tree, btn_reinstall_sel)
+                )
+                if btn_reinstall_sel:
+                    btn_reinstall_sel.clicked.connect(self._on_reinstall_selected)
+                self._deps_tree_signals_connected = True
+        elif tree:
+            tree.clear()
 
-    def _populate_deps_table(self, table: QTableWidget) -> None:
-        """填充依赖状态表格（名称/状态/版本/操作）
+    def _update_reinstall_selected_btn(
+        self, tree: QTreeWidget, btn: QPushButton | None
+    ) -> None:
+        """根据依赖树选中状态更新"重装选中项"按钮的 enabled 和计数文本"""
+        if btn is None:
+            return
+        count = sum(1 for it in tree.selectedItems() if it.parent() is None)
+        btn.setEnabled(count > 0)
+        btn.setText(f"重装选中项 ({count})" if count > 0 else "重装选中项")
 
-        顶层 OCR 依赖 + paddlex[ocr] leaf 包（表格识别间接依赖）。
-        每行附"重装"按钮，支持单包精准重装（缺失时尤其有用）。
+    def _populate_deps_tree(self, tree: QTreeWidget) -> None:
+        """填充依赖状态树（依赖/状态/版本）
+
+        顶层 OCR 依赖作为可展开父节点，点击展开其**直接依赖**（由
+        importlib.metadata.requires 动态推导，覆盖所有顶层包而非仅 paddlex[ocr]）。
+        状态列三态：完整安装 / 已安装，缺 xxx / 未安装。
+        多选顶层节点 + 上方"重装选中项"按钮批量重装（替代旧版每行一个重装按钮）。
         """
-        # 顶层依赖展示顺序与 OCR_CHECK_MODULES 一致
-        from vibeocr.services.env_config import (
-            OCR_CHECK_LEAF_MODULES,
-            OCR_CHECK_MODULES,
-        )
+        from PySide6.QtCore import Qt
+
+        from vibeocr.services.env_config import OCR_CHECK_MODULES
 
         display_names = {
             "paddlepaddle": "PaddlePaddle",
@@ -1012,70 +1080,59 @@ class SettingsPageController:
             "torch": "PyTorch",
             "markdown": "Markdown",
         }
-        # 顶层包 + leaf 包（leaf 在下方，用 leaf 分组标题区分）
-        toplevel_pkgs = list(OCR_CHECK_MODULES.values())
-        leaf_pkgs = list(OCR_CHECK_LEAF_MODULES.values())
-        all_pkgs = toplevel_pkgs + leaf_pkgs
-        leaf_pkg_set = set(leaf_pkgs)
 
         python_exe = get_embedded_python_executable(self._project_root)
-        # 用 fresh 检测（忽略缓存）：设置页是用户查看实时状态的入口，
-        # 走缓存会在"刚装完依赖但缓存未刷新"时显示过期的"未安装"。
-        # 配合 env_manager 安装成功后主动写缓存，双保险保证状态及时准确。
-        deps_status = check_embedded_environment_dependencies_fresh(self._project_root)
+        # 三元检测（含缺失模块名）：设置页是用户查看实时状态的入口，走 fresh 检测
+        # 忽略缓存，配合 env_manager 安装成功后主动写缓存双保险保证状态及时准确。
+        deps_status = check_dependencies_status_detailed(self._project_root)
         versions = (
             get_dependency_versions(python_exe) if python_exe.exists() else {}
         )
 
-        # 运行时双保险：禁用编辑（.ui 已设 NoEditTriggers，此处防遗漏）
-        # + 各单元格 item 设不可编辑 flag + 列宽自适应。
-        table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        # 扩展为 4 列：依赖 / 状态 / 版本 / 操作（.ui 原为 3 列，此处动态扩展）
-        table.setColumnCount(4)
-        header_item = table.horizontalHeaderItem(3)
-        if header_item is None:
-            table.setHorizontalHeaderItem(3, QTableWidgetItem("操作"))
-        header = table.horizontalHeader()
-        if header is not None:
-            from PySide6.QtWidgets import QHeaderView
+        tree.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        tree.clear()
 
-            # 前 3 列自适应，操作列固定宽度（按钮不需要拉伸）
-            header.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-            header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
-
-        from PySide6.QtCore import Qt
-
-        item_flag_no_edit = Qt.ItemFlag.ItemIsEditable
-
-        table.setRowCount(len(all_pkgs))
-        for row, pkg in enumerate(all_pkgs):
-            installed = deps_status.get(pkg, False)
-            # leaf 包展示名：纯包名（已是 pip 包名，如 scikit-learn）
+        toplevel_pkgs = list(OCR_CHECK_MODULES.values())
+        for pkg in toplevel_pkgs:
+            installed, usable, missing_module = deps_status.get(
+                pkg, (False, False, None)
+            )
             name = display_names.get(pkg, pkg)
-            if pkg in leaf_pkg_set:
-                name = f"  └ {name}"  # 缩进+连接符，视觉上归属"表格识别间接依赖"
-            name_item = QTableWidgetItem(name)
-            status_text = "✓ 已安装" if installed else "✗ 未安装"
-            status_item = QTableWidgetItem(status_text)
-            # 版本为空但状态已安装时显示占位，避免"已安装却无版本号"的困惑
+            status_text = self._format_dep_status(installed, usable, missing_module)
             ver = versions.get(pkg, "")
             if installed and not ver:
                 ver = "（版本未知）"
-            ver_item = QTableWidgetItem(ver)
-            # 单元格强制只读（防止 NoEditTriggers 被某处覆盖后仍可编辑）
-            for item in (name_item, status_item, ver_item):
-                item.setFlags(item.flags() & ~item_flag_no_edit)
-            table.setItem(row, 0, name_item)
-            table.setItem(row, 1, status_item)
-            table.setItem(row, 2, ver_item)
-            # 操作列：重装按钮（单包重装，复用 InstallDialog 进度展示）
-            reinstall_btn = QPushButton("重装")
-            reinstall_btn.setToolTip(f"单独重装 {pkg}（不影响其它已装依赖）")
-            # 用 lambda 默认参数捕获 pkg，避免循环里闭包延迟绑定问题
-            reinstall_btn.clicked.connect(
-                lambda _checked=False, p=pkg: self._on_reinstall_single_dep(p)
-            )
-            table.setCellWidget(row, 3, reinstall_btn)
+            top_item = QTreeWidgetItem([name, status_text, ver])
+            # 包名存 UserRole，供"重装选中项"读取（只对顶层节点有意义）
+            top_item.setData(0, Qt.ItemDataRole.UserRole, pkg)
+            # 有问题的顶层节点默认展开，让用户一眼看到诊断
+            top_item.setExpanded(not usable)
+            tree.addTopLevelItem(top_item)
+
+            # 动态推导顶层包的直接依赖（一层），作为可展开子节点。
+            # 只在包已安装时查 requires；未装时无 metadata 可查，子节点留空。
+            direct_deps: list[str] = []
+            if installed:
+                direct_deps = get_direct_dependencies(python_exe, pkg)
+            for dep in direct_deps:
+                child = QTreeWidgetItem([f"  └ {dep}", "", ""])
+                child.setData(0, Qt.ItemDataRole.UserRole, dep)
+                # 子节点禁用选中（避免批量重装误选间接依赖；修复走顶层包）
+                child.setFlags(Qt.ItemFlag.NoItemFlags)
+                top_item.addChild(child)
+
+    @staticmethod
+    def _format_dep_status(
+        installed: bool, usable: bool, missing_module: str | None
+    ) -> str:
+        """把 (installed, usable, missing_module) 三元组格式化为状态列文本"""
+        if usable:
+            return "✓ 完整安装"
+        if installed and missing_module:
+            return f"⚠ 已安装，缺 {missing_module}"
+        if installed:
+            return "⚠ 安装残缺"
+        return "✗ 未安装"
 
     def _on_clear_cache_clicked(self) -> None:
         """清除缓存按钮点击"""

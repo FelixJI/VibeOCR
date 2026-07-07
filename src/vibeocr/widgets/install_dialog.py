@@ -34,6 +34,7 @@ class InstallWorker(QThread):
         reinstall_python: bool = False,
         missing_only: bool = False,
         single_pkg: str | None = None,
+        packages: list[str] | None = None,
     ) -> None:
         super().__init__()
         self._project_root = project_root
@@ -43,6 +44,9 @@ class InstallWorker(QThread):
         # 单包重装模式：只装指定的一个包（设置页依赖表格"重装"按钮）。
         # 与 missing_only 互斥；指定时跳过 Python 运行时/GPU 检测，直接单包安装。
         self._single_pkg = single_pkg
+        # 批量重装模式：一次装多个指定包（设置页依赖树"重装选中项"）。
+        # 与 single_pkg / missing_only 互斥；跳过 Python 运行时/GPU 检测，直接批量装。
+        self._packages = packages
         # 协作式取消机制：替代危险的 QThread.terminate()。
         # cancel_event 被 set 后，env_manager._run_pip 会 kill 当前 pip 子进程并抛
         # InstallCancelled；for 循环在每个包安装前检查 event 快速中止。
@@ -100,6 +104,27 @@ class InstallWorker(QThread):
                 success, msg = env_manager.install_single_dependency(
                     self._project_root,
                     self._single_pkg,
+                    network_type,
+                    progress_callback=self._emit_progress,
+                    cancel_event=self._cancel_event,
+                    on_proc=self._on_proc,
+                )
+                self.finished.emit(success, msg)
+                return
+
+            # 批量重装模式：跳过网络/GPU/Python 检测，直接批量装指定包。
+            # 复用 install_dependencies_batch 的取消/超时/进度机制。
+            if self._packages is not None:
+                n = len(self._packages)
+                self._emit_progress(
+                    "批量重装", f"正在批量重装 {n} 个依赖包..."
+                )
+                # 批量重装仍需网络源选镜像，做一次轻量网络检测。
+                detector = NetworkDetector(self._project_root)
+                network_type = detector.network_type
+                success, msg = env_manager.install_dependencies_batch(
+                    self._project_root,
+                    self._packages,
                     network_type,
                     progress_callback=self._emit_progress,
                     cancel_event=self._cancel_event,
@@ -194,12 +219,14 @@ class InstallDialog(QDialog):
         missing_only: bool = False,
         force_backend: str | None = None,
         single_pkg: str | None = None,
+        packages: list[str] | None = None,
     ) -> None:
         super().__init__(parent)
         self._project_root = project_root
         self._missing_only = missing_only
         self._force_backend = force_backend
         self._single_pkg = single_pkg
+        self._packages = packages
         self._setup_ui()
         self._worker: InstallWorker | None = None
 
@@ -207,15 +234,21 @@ class InstallDialog(QDialog):
         """设置UI"""
         if self._single_pkg:
             self.setWindowTitle(f"重装依赖：{self._single_pkg}")
+            self._title_text = f"正在重装 {self._single_pkg}..."
+        elif self._packages is not None:
+            n = len(self._packages)
+            self.setWindowTitle(f"批量重装 {n} 个依赖包")
+            self._title_text = f"正在批量重装 {n} 个依赖包..."
         else:
             self.setWindowTitle("安装OCR依赖")
+            self._title_text = "正在安装OCR依赖..."
         self.setMinimumSize(500, 400)
         self.setModal(True)
 
         layout = QVBoxLayout(self)
 
         # 标题
-        self._title_label = QLabel("正在安装OCR依赖...")
+        self._title_label = QLabel(self._title_text)
         layout.addWidget(self._title_label)
 
         # 进度条
@@ -252,13 +285,19 @@ class InstallDialog(QDialog):
 
     def _start_install(self) -> None:
         """开始安装"""
-        self._log("开始安装OCR依赖...")
+        if self._single_pkg:
+            self._log(f"开始重装 {self._single_pkg}...")
+        elif self._packages is not None:
+            self._log(f"开始批量重装 {len(self._packages)} 个依赖包...")
+        else:
+            self._log("开始安装OCR依赖...")
 
         self._worker = InstallWorker(
             self._project_root,
             missing_only=self._missing_only,
             force_backend=self._force_backend,
             single_pkg=self._single_pkg,
+            packages=self._packages,
         )
         self._worker.progress.connect(self._on_progress)
         self._worker.finished.connect(self._on_finished)
@@ -302,7 +341,9 @@ class InstallDialog(QDialog):
 
         if success:
             self._title_label.setText("安装成功!")
-            self._stage_label.setText("OCR依赖安装完成")
+            # 单包/批量重装时 message 是具体结果（如"scipy 安装成功"/"已重装 3 个依赖包"），
+            # 优先用它，避免笼统的"OCR依赖安装完成"（用户报告"单包却提示全部安装完毕"）。
+            self._stage_label.setText(message or "OCR依赖安装完成")
             self._log(f"\n安装成功: {message}")
             self._close_button.setVisible(True)
             # 设置结果为成功

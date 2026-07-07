@@ -271,6 +271,13 @@ def replace_app_files(
     #    注意：删除失败（含被占用）不致命——复制阶段会再尝试覆盖。但「文件被占用」
     #    属瞬时抖动，先退避重试吸收，避免残留旧文件干扰后续复制判定。
     for item in old_items:
+        # *.exe.old（如 updater.exe.old）是 rename_locked_self_exe 刚改名避让的
+        # 运行中进程映像，此刻 100% 被 PE 映射区锁定，_busy_remove 轮询 10s 必失败
+        # （历史 bug 的 WARNING 噪音 + 无谓等待即源于此）。它不阻塞后续复制（新版
+        # updater.exe 是另一个文件名），故此处直接跳过，交给 cleanup 末尾的
+        # _safe_remove_running_exe 用 MoveFileEx 标记重启清理。
+        if item.name.endswith(".exe.old"):
+            continue
         is_dir = item.is_dir()
         try:
             if is_dir:
@@ -448,6 +455,57 @@ def _busy_copy2(src, dst):
             time.sleep(_BUSY_POLL_INTERVAL)
 
 
+def _safe_remove_running_exe(path: Path, *, label: str = "") -> None:
+    """删除可能是运行中进程映像的 exe。
+
+    Windows 不允许删除正在运行的 exe（PE 映射区锁定，WinError 5）。updater.exe
+    更新时会把自己改名为 ``updater.exe.old`` 后继续运行，导致 cleanup 阶段删除
+    ``.old`` 必然失败——它此刻就是正在跑的进程映像，退避重试 10s 也等不到锁释放。
+
+    本函数的删除策略（层层降级，保证不留永久残留）：
+    1. 先用 ``_busy_remove`` 退避重试——吸收杀毒瞬时独占（非进程映像锁的情况）；
+    2. 仍失败 → Windows 上调 ``MoveFileExW(MOVEFILE_DELAY_UNTIL_REBOOT=4)`` 标记，
+       OS 在下次重启时（进程已退出、锁已释放）自动删除。这是删运行中 exe 的标准
+       Windows 惯用法（``machine_cache.py`` 的原子写注释亦引用此 API）。
+    3. 非 Windows / MoveFileEx 不可用：仅记录，留待下次更新入口
+       （``rename_locked_self_exe`` 开头会清残留 ``.old``）兜底。
+
+    Args:
+        path: 要删除的 exe（通常是 ``<app>/updater.exe.old`` 或 ``VibeOCR.exe.old``）。
+        label: 日志里的人类可读名，缺省用文件名。
+    """
+    if not path.exists():
+        return
+    name = label or path.name
+    # 1. 退避重试吸收瞬时占用（杀毒扫描新 exe / OS 句柄释放延迟）
+    if _busy_remove(path, is_dir=False):
+        logger.info(f"已清理上次更新残留: {name}")
+        return
+
+    # 2. Windows: 标记重启时删除（运行中 exe 的唯一可靠删除途径）
+    if os.name == "nt":
+        try:
+            import ctypes
+
+            # MOVEFILE_DELAY_UNTIL_REBOOT = 4。把文件加入 SMSS 的延迟删除队列，
+            # 下次开机时（无进程占用）由系统删除。返回 0 表示失败，需 get_last_error。
+            # 用 use_last_error=True 让 ctypes.get_last_error() 拿到真实错误码。
+            move_file_ex = ctypes.windll.kernel32.MoveFileExW  # type: ignore[attr-defined]
+            move_file_ex.restype = ctypes.c_int
+            move_file_ex.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint32]
+            ok = move_file_ex(str(path), None, 4)
+            if ok:
+                logger.info(f"{name} 被占用，已标记在下次重启时删除")
+                return
+            err = ctypes.get_last_error()
+            logger.debug(f"MoveFileEx 标记 {name} 失败（错误码 {err}），留待下次清理")
+        except Exception as e:
+            logger.debug(f"MoveFileEx 不可用，放弃标记 {name}: {e}")
+    else:
+        # 非 Windows 不会有 PE 映射锁，能走到这说明真有其它占用，留待下次入口清理
+        logger.debug(f"{name} 仍被占用，留待下次清理")
+
+
 # ---------------------------------------------------------------------------
 # 依赖同步（写标记，由新版主程序启动时执行）
 # ---------------------------------------------------------------------------
@@ -609,19 +667,18 @@ def cleanup(zip_path: Path, tmp_dir: Path | None) -> None:
         except OSError:
             pass
 
-    # 清理上次更新残留的旧 *.exe.old（此刻旧进程已退出，可删除）。
+    # 清理上次更新残留的旧 *.exe.old。
+    # 注意：本次更新的 .old（如 updater.exe.old）此刻可能仍是运行中的进程映像——
+    # updater.exe 会把自己改名后继续跑，Windows 禁止删运行中 exe（WinError 5）。
+    # 用 _safe_remove_running_exe：退避重试吸收瞬时锁，仍失败则 MoveFileEx 标记
+    # 重启清理，彻底消除残留（历史 bug：.old 永久残留 + cleanup WARNING 噪音）。
     # zip_path 形如 <app>/data/cache/update/VibeOCR-vX-win64.zip，向上回溯到 app_dir。
     app_dir = zip_path.parents[3] if len(zip_path.parents) >= 4 else None
     if app_dir is not None and os.name == "nt":
         for exe_name in ("updater.exe", "VibeOCR.exe"):
             old_exe = app_dir / f"{exe_name}.old"
             if old_exe.exists():
-                try:
-                    old_exe.unlink(missing_ok=True)
-                    logger.info(f"已清理上次更新残留: {old_exe.name}")
-                except OSError as e:
-                    # 仍被占用也无妨，下次更新会再清理
-                    logger.debug(f"清理 {old_exe.name} 失败（忽略）: {e}")
+                _safe_remove_running_exe(old_exe, label=old_exe.name)
 
 
 def launch_app(app_dir: Path, exe_name: str = "") -> None:
@@ -707,7 +764,13 @@ def run_replacement(
         launch_app(app_dir)
 
         logger.info("更新完成!")
-        return 0
+        # 显式硬退出，确保替换器进程立即终止。updater.exe 是 --onefile --windowed，
+        # return 0 后进程才退出；某些机器上主程序启动慢或文件锁释放延迟会让 updater
+        # 卡在退出阶段，表现为「下载完成后无响应」（主程序已起来但旧 updater 还挂着）。
+        # os._exit 跳过解释器常规关闭流程，与主程序 _force_quit 一致。短暂 sleep 让
+        # 刚 Popen 的主程序子进程有时间真正接管，避免主程序还没初始化就失去父进程。
+        time.sleep(0.3)
+        os._exit(0)
     except Exception:
         # 兜底：任何未捕获异常都写进日志文件，避免「静默崩溃、无现场」。
         logger.error("更新过程中发生未捕获异常:\n%s", traceback.format_exc())

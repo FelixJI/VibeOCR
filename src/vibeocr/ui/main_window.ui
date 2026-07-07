@@ -667,23 +667,29 @@
                </widget>
               </item>
               <item>
-               <widget class="QTableWidget" name="tableDepsStatus">
+               <widget class="QTreeWidget" name="treeDepsStatus">
                 <property name="toolTip">
-                 <string>各 OCR 依赖的安装状态（仅便携模式可见）</string>
+                 <string>各 OCR 依赖的安装状态（仅便携模式可见）。点击顶层包左侧箭头展开其间接依赖；按住 Ctrl/Shift 多选后点"重装选中项"批量重装。</string>
                 </property>
                 <property name="editTriggers">
                  <set>QAbstractItemView::NoEditTriggers</set>
                 </property>
                 <property name="selectionMode">
-                 <enum>QAbstractItemView::NoSelection</enum>
+                 <enum>QAbstractItemView::ExtendedSelection</enum>
                 </property>
-                <property name="focusPolicy">
-                 <enum>Qt::NoFocus</enum>
+                <property name="selectionBehavior">
+                 <enum>QAbstractItemView::SelectRows</enum>
                 </property>
-                <attribute name="horizontalHeaderDefaultSectionSize">
+                <property name="rootIsDecorated">
+                 <bool>true</bool>
+                </property>
+                <property name="expandsOnDoubleClick">
+                 <bool>true</bool>
+                </property>
+                <attribute name="headerDefaultSectionSize">
                  <number>120</number>
                 </attribute>
-                <attribute name="horizontalHeaderStretchLastSection">
+                <attribute name="headerStretchLastSection">
                  <bool>true</bool>
                 </attribute>
                 <column>
@@ -701,6 +707,19 @@
                   <string>版本</string>
                  </property>
                 </column>
+               </widget>
+              </item>
+              <item>
+               <widget class="QPushButton" name="btnReinstallSelected">
+                <property name="enabled">
+                 <bool>false</bool>
+                </property>
+                <property name="toolTip">
+                 <string>重装上方依赖树中选中的顶层包（按 Ctrl/Shift 多选）。间接依赖通过重装其承载顶层包修复，无需逐个选 leaf。</string>
+                </property>
+                <property name="text">
+                 <string>重装选中项</string>
+                </property>
                </widget>
               </item>
               <item>

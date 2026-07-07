@@ -1080,3 +1080,220 @@ class TestDownloadProgressDialogCancel:
         flags = dialog.windowFlags()
         assert flags & Qt.WindowType.WindowMinimizeButtonHint
         assert flags & Qt.WindowType.WindowCloseButtonHint
+
+
+# ---------------------------------------------------------------------------
+# _probe_github_reachable（GitHub 直连可达性探测）
+# ---------------------------------------------------------------------------
+
+
+class TestProbeGithubReachable:
+    """探测 api.github.com 是否可达：用于区分 international 环境下 GitHub 实际能否
+    直连。不可达时 download_update 改走国内代理源序，避免「直连失败后才提示网络问题」。"""
+
+    def test_2xx_3xx_4xx_treated_as_reachable(self):
+        """2xx/3xx/4xx 均视为可达（4xx 说明能连上 GitHub，只是 rate limited 等）。"""
+        from vibeocr.services.update_service import _probe_github_reachable
+
+        for status in (200, 301, 403, 404):
+            resp = MagicMock()
+            resp.status_code = status
+            with patch("httpx.AsyncClient") as mock_client_cls:
+                client = AsyncMock()
+                client.head.return_value = resp
+                client.__aenter__.return_value = client
+                client.__aexit__.return_value = False
+                mock_client_cls.return_value = client
+                assert _run(_probe_github_reachable()) is True
+
+    def test_5xx_treated_as_unreachable(self):
+        """5xx（服务端错误）视为不可达。"""
+        from vibeocr.services.update_service import _probe_github_reachable
+
+        resp = MagicMock()
+        resp.status_code = 503
+        with patch("httpx.AsyncClient") as mock_client_cls:
+            client = AsyncMock()
+            client.head.return_value = resp
+            client.__aenter__.return_value = client
+            client.__aexit__.return_value = False
+            mock_client_cls.return_value = client
+            assert _run(_probe_github_reachable()) is False
+
+    def test_exception_treated_as_unreachable(self):
+        """网络异常（DNS/连接/超时/SSL）一律视为不可达。"""
+        from vibeocr.services.update_service import _probe_github_reachable
+
+        with patch("httpx.AsyncClient") as mock_client_cls:
+            client = AsyncMock()
+            client.head.side_effect = httpx.ConnectError("boom")
+            client.__aenter__.return_value = client
+            client.__aexit__.return_value = False
+            mock_client_cls.return_value = client
+            assert _run(_probe_github_reachable()) is False
+
+
+# ---------------------------------------------------------------------------
+# download_update：GitHub 不可达时 international → domestic 源序修正
+# ---------------------------------------------------------------------------
+
+
+class TestDownloadUpdateGithubProbeFallback:
+    """international 环境下若 GitHub 直连不可达，应改走国内代理源序（3 候选）。
+
+    历史问题：海外网络但 GitHub 被墙时，NetworkDetector 判 international（直连），
+    下载只在所有源失败后才提示「网络问题」，浪费一次完整下载。修复：下载前探测
+    GitHub，不可达则降级 domestic 源序。
+    """
+
+    def test_international_github_unreachable_falls_back_to_domestic(self, tmp_path):
+        """international + GitHub 不可达 → 用 domestic 源序（3 候选）。"""
+        from vibeocr.services.update_service import (
+            DOWNLOAD_REASON_HTTP_ERROR,
+            SourceAttempt,
+            UpdateInfo,
+            download_update,
+        )
+
+        info = UpdateInfo(
+            version="0.3.1",
+            download_url="https://example.com/zip",
+            sha256_url="https://example.com/sha",
+            changelog="",
+        )
+        with patch(
+            "vibeocr.services.update_service._detect_network_type",
+            return_value="international",
+        ), patch(
+            "vibeocr.services.update_service._probe_github_reachable",
+            new_callable=AsyncMock,
+            return_value=False,
+        ), patch(
+            "vibeocr.services.update_service._download_zip_with_sha",
+            new_callable=AsyncMock,
+            return_value=SourceAttempt(False, DOWNLOAD_REASON_HTTP_ERROR),
+        ) as mock_dl:
+            _run(download_update(info, tmp_path))
+        # domestic 源序：3 候选（gh-proxy → ghproxy → GitHub）
+        assert mock_dl.call_count == 3
+
+    def test_international_github_reachable_keeps_international(self, tmp_path):
+        """international + GitHub 可达 → 保持 international 源序（1 候选：GitHub 直连）。"""
+        from vibeocr.services.update_service import (
+            DOWNLOAD_REASON_HTTP_ERROR,
+            SourceAttempt,
+            UpdateInfo,
+            download_update,
+        )
+
+        info = UpdateInfo(
+            version="0.3.1",
+            download_url="https://example.com/zip",
+            sha256_url="https://example.com/sha",
+            changelog="",
+        )
+        with patch(
+            "vibeocr.services.update_service._detect_network_type",
+            return_value="international",
+        ), patch(
+            "vibeocr.services.update_service._probe_github_reachable",
+            new_callable=AsyncMock,
+            return_value=True,
+        ), patch(
+            "vibeocr.services.update_service._download_zip_with_sha",
+            new_callable=AsyncMock,
+            return_value=SourceAttempt(False, DOWNLOAD_REASON_HTTP_ERROR),
+        ) as mock_dl:
+            _run(download_update(info, tmp_path))
+        # international 源序：1 候选（GitHub 直连）
+        assert mock_dl.call_count == 1
+
+    def test_domestic_does_not_probe_github(self, tmp_path):
+        """domestic 环境本就代理优先，不应触发 GitHub 探测（避免多余请求）。"""
+        from vibeocr.services.update_service import (
+            DOWNLOAD_REASON_HTTP_ERROR,
+            SourceAttempt,
+            UpdateInfo,
+            download_update,
+        )
+
+        info = UpdateInfo(
+            version="0.3.1",
+            download_url="https://example.com/zip",
+            sha256_url="https://example.com/sha",
+            changelog="",
+        )
+        with patch(
+            "vibeocr.services.update_service._detect_network_type",
+            return_value="domestic",
+        ), patch(
+            "vibeocr.services.update_service._probe_github_reachable",
+            new_callable=AsyncMock,
+        ) as mock_probe, patch(
+            "vibeocr.services.update_service._download_zip_with_sha",
+            new_callable=AsyncMock,
+            return_value=SourceAttempt(False, DOWNLOAD_REASON_HTTP_ERROR),
+        ):
+            _run(download_update(info, tmp_path))
+        mock_probe.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# _download_zip_with_sha：SHA256 校验移到线程池（不阻塞事件循环）
+# ---------------------------------------------------------------------------
+
+
+class TestDownloadZipWithShaThreadedVerify:
+    """verify_sha256 通过 asyncio.to_thread 在线程池执行，避免 ~50MB 同步 read_bytes
+    + 哈希阻塞 qasync 事件循环（历史 bug：下载完成后无响应）。"""
+
+    def test_verify_runs_via_to_thread(self, tmp_path, monkeypatch):
+        """校验应通过 asyncio.to_thread 派发，而非直接同步调用。
+
+        历史 bug：校验直接 verify_sha256(...) 同步读整个 zip 入内存，在 qasync
+        事件循环里冻结 UI 与取消响应。修复后必须经 to_thread。这里 mock to_thread，
+        断言它被调用且第一参数是 verify_sha256，且校验函数确实在工作线程执行。
+        """
+        from vibeocr.services import update_service as us
+        from vibeocr.services.update_service import _download_zip_with_sha
+
+        zip_bytes = b"fake-zip-content"
+        real_hash = hashlib.sha256(zip_bytes).hexdigest()
+        stream = _make_stream_response(200, [zip_bytes])
+        client = _make_client(
+            stream_cm=stream,
+            sha_status=200,
+            sha_text=f"{real_hash}  x.zip\n",
+        )
+        zip_path = tmp_path / "x.zip"
+        sha_path = tmp_path / "x.zip.sha256"
+
+        # 包裹真实 to_thread，记录调用以断言校验确实走了它
+        real_to_thread = asyncio.to_thread
+        to_thread_calls: list[tuple] = []
+
+        async def _spy_to_thread(func, *args, **kwargs):
+            to_thread_calls.append((func, args, kwargs))
+            return await real_to_thread(func, *args, **kwargs)
+
+        monkeypatch.setattr(
+            us.asyncio, "to_thread", _spy_to_thread, raising=True
+        )
+
+        ok = _run(
+            _download_zip_with_sha(
+                client,
+                "https://example.com/x.zip",
+                "https://example.com/x.zip.sha256",
+                zip_path,
+                sha_path,
+                None,
+            )
+        )
+
+        assert ok.ok is True
+        # 校验经 to_thread 派发：唯一一次调用，第一参数是 verify_sha256
+        assert len(to_thread_calls) == 1
+        func, args, _kwargs = to_thread_calls[0]
+        assert func is us.verify_sha256
+        assert args == (zip_path, sha_path)

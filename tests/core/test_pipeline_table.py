@@ -35,41 +35,42 @@ def test_table_spec():
 class TestCheckTableDeps:
     """_check_table_deps / TableDependencyError 单测。
 
-    验证管道创建前的依赖探测能拦截 paddlex[ocr] leaf 包缺失，
-    报告具体缺失包名，而非让 PaddleX 抛无信息的 RuntimeError。
+    验证管道创建前的依赖探测能拦截 paddlex[ocr] 依赖缺失，
+    报告具体缺失发行版名，而非让 PaddleX 抛无信息的 RuntimeError。
+
+    关键：_check_table_deps 复用 PaddleX 的 is_extra_available / is_dep_available
+    （与 @pipeline_requires_extra("ocr") 同一判定路径），故测试 mock paddlex.deps
+    模块，而非 importlib.util.find_spec。
     """
 
     def test_all_present_passes(self, monkeypatch):
-        """所有 leaf 包 find_spec 都返回非 None 时不抛错。"""
+        """is_extra_available('ocr') 返回 True 时不抛错。"""
         from vibeocr.core.pipelines import pipeline_table
 
-        def fake_find_spec(name, package=None):
-            return object()  # 非 None 视为存在
+        import paddlex.utils.deps as pdx_deps
 
-        # importlib.util 是 _check_table_deps 内部 import 的真实模块
-        import importlib.util
-
-        monkeypatch.setattr(importlib.util, "find_spec", fake_find_spec)
+        monkeypatch.setattr(pdx_deps, "is_extra_available", lambda extra: True)
+        monkeypatch.setattr(pdx_deps, "is_dep_available", lambda dep: True)
         # 不抛异常即通过
         pipeline_table._check_table_deps()
 
     def test_missing_raises_with_package_names(self, monkeypatch):
-        """缺失包时抛 TableDependencyError 且消息含具体包名。"""
+        """is_extra_available 返回 False 时抛错，且消息含具体缺失发行版名。"""
         from vibeocr.core.pipelines import pipeline_table
-        from vibeocr.services.env_config import OCR_CHECK_LEAF_MODULES
 
-        missing_pkg = "scipy"
-        missing_import = next(
-            mod for mod, pkg in OCR_CHECK_LEAF_MODULES.items() if pkg == missing_pkg
+        import paddlex.utils.deps as pdx_deps
+
+        # 选取当前 paddlex 版本 ocr extra 中确实存在的一个包作为缺失项
+        # （不同 paddlex 版本 extra 清单不同，不能硬编码）
+        ocr_deps = list(pdx_deps.EXTRAS.get("ocr", []))
+        assert ocr_deps, "测试前提失效：paddlex ocr extra 为空"
+        missing_pkg = ocr_deps[0]
+        monkeypatch.setattr(pdx_deps, "is_extra_available", lambda extra: False)
+        monkeypatch.setattr(
+            pdx_deps,
+            "is_dep_available",
+            lambda dep: dep != missing_pkg,
         )
-
-        def fake_find_spec(name, package=None):
-            # 仅 missing_import 返回 None（缺失），其余返回非 None
-            return None if name == missing_import else object()
-
-        import importlib.util
-
-        monkeypatch.setattr(importlib.util, "find_spec", fake_find_spec)
         try:
             pipeline_table._check_table_deps()
         except pipeline_table.TableDependencyError as e:
@@ -82,18 +83,17 @@ class TestCheckTableDeps:
     def test_multiple_missing_all_listed(self, monkeypatch):
         """多个包缺失时全部列在错误消息里。"""
         from vibeocr.core.pipelines import pipeline_table
-        from vibeocr.services.env_config import OCR_CHECK_LEAF_MODULES
 
-        # 让前 3 个包缺失
-        missing_imports = list(OCR_CHECK_LEAF_MODULES.keys())[:3]
-        missing_pkgs = [OCR_CHECK_LEAF_MODULES[m] for m in missing_imports]
+        import paddlex.utils.deps as pdx_deps
 
-        def fake_find_spec(name, package=None):
-            return None if name in missing_imports else object()
-
-        import importlib.util
-
-        monkeypatch.setattr(importlib.util, "find_spec", fake_find_spec)
+        # 让 ocr extra 前 3 个包不可用
+        missing_pkgs = list(pdx_deps.EXTRAS.get("ocr", []))[:3]
+        monkeypatch.setattr(pdx_deps, "is_extra_available", lambda extra: False)
+        monkeypatch.setattr(
+            pdx_deps,
+            "is_dep_available",
+            lambda dep: dep not in missing_pkgs,
+        )
         try:
             pipeline_table._check_table_deps()
         except pipeline_table.TableDependencyError as e:
@@ -102,6 +102,42 @@ class TestCheckTableDeps:
                 assert pkg in msg, f"错误消息应含 {pkg}: {msg}"
         else:
             raise AssertionError("缺失时应抛 TableDependencyError")
+
+    def test_paddlex_import_error_falls_back_to_find_spec(self, monkeypatch):
+        """paddlex 不可导入时，回退到 find_spec 兜底探测仍能拦截缺失。
+
+        覆盖极端残缺环境（paddlex 本身未装）：_check_table_deps 不能因 paddlex
+        导入失败而静默放过，应回退到本项目 leaf 清单的 find_spec 探测。
+        """
+        from vibeocr.core.pipelines import pipeline_table
+        from vibeocr.services.env_config import OCR_CHECK_LEAF_MODULES
+
+        # 让 from paddlex.utils.deps import ... 抛 ImportError
+        import builtins
+
+        real_import = builtins.__import__
+
+        def fake_import(name, *args, **kwargs):
+            if name.startswith("paddlex.utils.deps"):
+                raise ImportError("simulated: paddlex not installed")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", fake_import)
+
+        # find_spec 让第一个 leaf 缺失
+        missing_mod = next(iter(OCR_CHECK_LEAF_MODULES.keys()))
+        import importlib.util
+
+        def fake_find_spec(name, package=None):
+            return None if name == missing_mod else object()
+
+        monkeypatch.setattr(importlib.util, "find_spec", fake_find_spec)
+        try:
+            pipeline_table._check_table_deps()
+        except pipeline_table.TableDependencyError as e:
+            assert "设置" in str(e) or "重装" in str(e)
+        else:
+            raise AssertionError("回退路径缺失时也应抛 TableDependencyError")
 
 
 class _DictResult(dict):

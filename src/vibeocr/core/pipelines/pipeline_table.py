@@ -7,11 +7,14 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Any
 
 from vibeocr.core.pipelines.base_options import BasePipelineOptions
 from vibeocr.core.pipelines.registry import PipelineSpec
+
+_logger = logging.getLogger(__name__)
 
 
 class TableDependencyError(RuntimeError):
@@ -24,23 +27,50 @@ class TableDependencyError(RuntimeError):
 
 
 def _check_table_deps() -> None:
-    """检测表格识别所需 paddlex[ocr] leaf 包，缺失则抛 TableDependencyError。
+    """检测表格识别所需 paddlex[ocr] 依赖，缺失则抛 TableDependencyError。
 
-    用 ``importlib.util.find_spec`` 轻量探测（不实际 import，避免 scipy 首次
-    import 慢）。缺失时列出具体包名，便于用户在设置页精准重装。
+    核心策略：**直接复用 PaddleX 的判定**（``is_extra_available("ocr")`` +
+    ``is_dep_available``），与 ``TableRecognitionPipelineV2`` 实例化时
+    ``@pipeline_requires_extra("ocr")`` 走的是**同一条代码路径**，杜绝
+    "本探测通过但 PaddleX 判否"的盲区。
+
+    历史问题：早期版本用 ``importlib.util.find_spec`` 探测一份手工维护的
+    leaf 清单（``OCR_CHECK_LEAF_MODULES``），但 PaddleX 的 ``is_dep_available``
+    对绝大多数包走 ``importlib.metadata.version``（查发行版元数据），与
+    ``find_spec``（查 import 名）是两套机制：包可能 ``find_spec`` 命中却无
+    ``.dist-info`` 元数据，反之亦然。便携环境曾出现 leaf 探测全通过、PaddleX
+    却判 extra 不可用、实例化时爆炸为无信息 ``RuntimeError`` 的情况。
+
+    缺失时列出 PaddleX 视角的具体发行版名，引导用户在设置页精准重装。
     """
-    import importlib.util
+    try:
+        from paddlex.utils.deps import EXTRAS, is_dep_available, is_extra_available
+    except ImportError:
+        # paddlex 未安装（极端残缺环境）：回退到本项目的 leaf 清单兜底探测，
+        # 总比静默放过、让 PaddleX 抛无信息 RuntimeError 强。
+        import importlib.util
 
-    from vibeocr.services.env_config import OCR_CHECK_LEAF_MODULES
+        from vibeocr.services.env_config import OCR_CHECK_LEAF_MODULES
 
-    missing = [
-        pkg
-        for mod, pkg in OCR_CHECK_LEAF_MODULES.items()
-        if importlib.util.find_spec(mod) is None
-    ]
-    if missing:
+        missing = [
+            pkg
+            for mod, pkg in OCR_CHECK_LEAF_MODULES.items()
+            if importlib.util.find_spec(mod) is None
+        ]
+        if missing:
+            raise TableDependencyError(
+                f"表格识别缺少依赖：{', '.join(missing)}。"
+                "请在「设置 → 重装 OCR 依赖」修复后重试。"
+            )
+        return
+
+    # PaddleX 判 extra 不可用 → 用其同一判定路径列出具体缺失发行版。
+    # 注意 is_dep_available / is_extra_available 均 @lru_cache，此处结果与
+    # 实例化时的检查完全一致。
+    if not is_extra_available("ocr"):
+        missing = [dep for dep in EXTRAS.get("ocr", []) if not is_dep_available(dep)]
         raise TableDependencyError(
-            f"表格识别缺少依赖：{', '.join(missing)}。"
+            f"表格识别缺少 PaddleX[ocr] 依赖：{', '.join(missing) or '（未知）'}。"
             "请在「设置 → 重装 OCR 依赖」修复后重试。"
         )
 
@@ -72,6 +102,23 @@ class TableRecognitionOptions(BasePipelineOptions):
     formula_recognition_batch_size: int = 1
 
 
+def _diagnose_paddlex_ocr_extra() -> list[str]:
+    """从 PaddleX 视角列出 ``ocr`` extra 中被判不可用的发行版名。
+
+    供 ``_create_table_pipeline`` 的 except 分支补充日志：理论上
+    ``_check_table_deps`` 已用同一 ``is_extra_available`` 前置拦截，但若
+    PaddleX 内部状态在两次调用间发生变化（如 lru_cache 时序），此处兜底
+    把具体缺失包名落进 error 日志，便于定位。
+    """
+    try:
+        from paddlex.utils.deps import EXTRAS, is_dep_available
+
+        return [dep for dep in EXTRAS.get("ocr", []) if not is_dep_available(dep)]
+    except Exception as diag_err:  # 诊断本身不能掩盖原始错误
+        _logger.exception("[表格依赖诊断] 诊断失败: %s", diag_err)
+        return []
+
+
 def _create_table_pipeline(device: str, **kwargs: Any) -> Any:
     """创建表格识别管道实例
 
@@ -82,7 +129,20 @@ def _create_table_pipeline(device: str, **kwargs: Any) -> Any:
     _check_table_deps()
     from paddleocr import TableRecognitionPipelineV2
 
-    return TableRecognitionPipelineV2(device=device, **kwargs)
+    try:
+        return TableRecognitionPipelineV2(device=device, **kwargs)
+    except Exception:
+        # _check_table_deps 已用 is_extra_available 前置拦截，正常情况下此处
+        # 不会因 ocr extra 缺失触发。但 defense-in-depth：若 PaddleX 内部状态
+        # 在两次调用间变化（lru_cache 时序 / 并发），把具体缺失包名落进日志，
+        # 避免又退回无信息的 RuntimeError。
+        paddlex_missing = _diagnose_paddlex_ocr_extra()
+        if paddlex_missing:
+            _logger.error(
+                "[表格管道] PaddleX 判定 ocr extra 不可用，缺失发行版: %s",
+                ", ".join(paddlex_missing),
+            )
+        raise
 
 
 def _recognize_table(service: Any, image: Any, options: TableRecognitionOptions) -> Any:

@@ -12,6 +12,7 @@ from vibeocr.env_manager import (
     _install_paddle_stack,
     _load_dep_specs,
     ensure_mineru_models,
+    install_dependencies_batch,
     install_embedded_dependencies,
     install_embedded_python,
     install_missing_dependencies,
@@ -651,6 +652,9 @@ class TestInstallSingleDependency:
         # leaf 包用纯包名（无版本约束，无 extras）
         assert "scipy" in spec
         assert "[" not in spec, f"leaf 包不应有 extras: {spec}"
+        # 单包重装：跳过 pip 升级 + 完成日志用具体包名（而非"所有OCR依赖安装完成"）
+        assert captured_stack.get("skip_pip_upgrade") is True
+        assert "scipy" in captured_stack.get("done_msg", "")
 
     def test_toplevel_pkg_uses_full_spec(self, tmp_path):
         """顶层包（如 paddleocr）用完整 spec（含 extras+版本约束）"""
@@ -694,6 +698,114 @@ class TestInstallSingleDependency:
             ok, msg = install_single_dependency(tmp_path, "scipy")
         assert ok is False
         assert "Python" in msg or "运行时" in msg
+
+
+class TestInstallDependenciesBatch:
+    """install_dependencies_batch 批量重装测试（设置页"重装选中项"）"""
+
+    def test_batch_builds_requirements_with_count(self, tmp_path):
+        """批量重装：去重保序 + 每个包带计数展示名 (i/n)"""
+        python_exe = tmp_path / "python.exe"
+        python_exe.touch()
+
+        captured_stack = {}
+
+        def fake_stack(**kwargs):
+            captured_stack.update(kwargs)
+            return True, "ok"
+
+        with (
+            patch(
+                "vibeocr.env_manager.get_pip_source",
+                return_value="https://pypi.org/simple",
+            ),
+            patch(
+                "vibeocr.env_manager.get_embedded_python_executable",
+                return_value=python_exe,
+            ),
+            patch("vibeocr.env_manager._install_paddle_stack", side_effect=fake_stack),
+        ):
+            ok, _msg = install_dependencies_batch(
+                tmp_path, ["scipy", "einops", "scipy"]
+            )
+
+        assert ok is True
+        requirements = captured_stack.get("requirements_override", [])
+        # 去重后剩 2 个
+        assert len(requirements) == 2
+        # 计数展示名 (1/2) (2/2)
+        names = [r[0] for r in requirements]
+        assert "(1/2)" in names[0]
+        assert "(2/2)" in names[1]
+        # 批量也跳过 pip 升级 + done_msg 带计数
+        assert captured_stack.get("skip_pip_upgrade") is True
+        assert "2" in captured_stack.get("done_msg", "")
+
+    def test_empty_packages_short_circuits(self, tmp_path):
+        """空列表直接返回成功，不调 _install_paddle_stack"""
+        with patch(
+            "vibeocr.env_manager._install_paddle_stack"
+        ) as mock_stack:
+            ok, msg = install_dependencies_batch(tmp_path, [])
+        assert ok is True
+        mock_stack.assert_not_called()
+
+    def test_returns_false_when_python_missing(self, tmp_path):
+        """Python 运行时不存在时返回失败"""
+        with patch(
+            "vibeocr.env_manager.get_embedded_python_executable",
+            return_value=tmp_path / "nonexistent.exe",
+        ):
+            ok, msg = install_dependencies_batch(tmp_path, ["scipy"])
+        assert ok is False
+        assert "Python" in msg or "运行时" in msg
+
+
+class TestGetDirectDependencies:
+    """get_direct_dependencies 直接依赖动态推导测试"""
+
+    def test_parses_requires_and_filters_extras(self, tmp_path):
+        """从 metadata.requires 解析直接依赖名，过滤 extra marker"""
+        import json
+
+        from vibeocr.env_manager import get_direct_dependencies
+
+        python_exe = tmp_path / "python.exe"
+        python_exe.touch()
+
+        def mock_run(cmd, **kwargs):
+            r = MagicMock()
+            # requires 返回含 extra marker 的可选依赖 + 无条件直接依赖
+            r.returncode = 0
+            r.stdout = json.dumps(
+                ["numpy>=1.21", 'pandas; extra == "full"', "scipy"]
+            )
+            return r
+
+        with patch("vibeocr.env_manager.subprocess.run", side_effect=mock_run):
+            deps = get_direct_dependencies(python_exe, "mineru")
+
+        # extra == "full" 的 pandas 应被过滤；保留 numpy/scipy
+        assert "numpy" in deps
+        assert "scipy" in deps
+        assert "pandas" not in deps, "仅 extra 条件的依赖应被过滤"
+
+    def test_returns_empty_when_not_installed(self, tmp_path):
+        """包未安装（requires 返回 None）时返回空列表"""
+        from vibeocr.env_manager import get_direct_dependencies
+
+        python_exe = tmp_path / "python.exe"
+        python_exe.touch()
+
+        def mock_run(cmd, **kwargs):
+            r = MagicMock()
+            r.returncode = 0
+            r.stdout = "[]"
+            return r
+
+        with patch("vibeocr.env_manager.subprocess.run", side_effect=mock_run):
+            deps = get_direct_dependencies(python_exe, "nonexistent")
+        assert deps == []
 
 
 class TestLoadDepSpecs:
@@ -1209,10 +1321,11 @@ class TestProbeModuleDoubleLayer:
         from vibeocr.env_manager import _probe_module
 
         with patch("vibeocr.env_manager.subprocess.run", side_effect=mock_run):
-            installed, usable = _probe_module(python_exe, "mineru", "mineru")
+            installed, usable, missing = _probe_module(python_exe, "mineru", "mineru")
 
         assert installed is True
         assert usable is True
+        assert missing is None, "import 成功时 missing_module 应为 None"
 
     def test_installed_but_import_fails(self, tmp_path):
         """发行版存在但 import 失败 → (installed=True, usable=False)
@@ -1240,10 +1353,11 @@ class TestProbeModuleDoubleLayer:
         from vibeocr.env_manager import _probe_module
 
         with patch("vibeocr.env_manager.subprocess.run", side_effect=mock_run):
-            installed, usable = _probe_module(python_exe, "mineru", "mineru")
+            installed, usable, missing = _probe_module(python_exe, "mineru", "mineru")
 
         assert installed is True, "发行版存在应判 installed=True"
         assert usable is False, "import 失败应判 usable=False（不掩盖）"
+        assert missing == "torch", "应从 stderr 抓到缺失模块名 torch"
 
     def test_installed_but_import_fails_logs_warning(self, tmp_path, caplog):
         """发行版存在但 import 失败时，应 logger.warning 记录'间接依赖'提示"""
@@ -1299,10 +1413,11 @@ class TestProbeModuleDoubleLayer:
         from vibeocr.env_manager import _probe_module
 
         with patch("vibeocr.env_manager.subprocess.run", side_effect=mock_run):
-            installed, usable = _probe_module(python_exe, "mineru", "mineru")
+            installed, usable, missing = _probe_module(python_exe, "mineru", "mineru")
 
         assert installed is False
         assert usable is False
+        assert missing is None, "发行版不存在时 missing_module 应为 None"
         # 发行版不存在时不应再做 import 探测（省一次 subprocess）
         assert call_count["n"] == 1, (
             f"包不存在时应只探 metadata（1 次 subprocess），实际: {call_count['n']}"
@@ -1350,12 +1465,13 @@ class TestProbeModuleDoubleLayer:
             patch("vibeocr.env_manager.subprocess.run", side_effect=mock_run),
             caplog.at_level(logging.WARNING, logger="vibeocr.env_manager"),
         ):
-            installed, usable = _probe_module(
+            installed, usable, missing = _probe_module(
                 python_exe, "brokenpkg", "brokenpkg"
             )
 
         assert installed is True, ".dist-info 残留时 metadata 层应判 installed=True"
         assert usable is False, "import 失败应判 usable=False"
+        assert missing == "brokenpkg", "本体残缺时抓到的就是模块自身名"
         warn_msgs = " ".join(
             r.message for r in caplog.records if r.levelno >= logging.WARNING
         )
@@ -1398,10 +1514,11 @@ class TestProbeModuleDoubleLayer:
             patch("vibeocr.env_manager.subprocess.run", side_effect=mock_run),
             caplog.at_level(logging.WARNING, logger="vibeocr.env_manager"),
         ):
-            installed, usable = _probe_module(python_exe, "mineru", "mineru")
+            installed, usable, missing = _probe_module(python_exe, "mineru", "mineru")
 
         assert installed is True
         assert usable is False
+        assert missing == "torch"
         warn_msgs = " ".join(
             r.message for r in caplog.records if r.levelno >= logging.WARNING
         )

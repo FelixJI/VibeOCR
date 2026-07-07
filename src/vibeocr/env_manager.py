@@ -956,9 +956,11 @@ def _probe_module(python_exe: Path, module: str, pkg: str) -> tuple[bool, bool]:
         pkg: pip 包名/发行版名（如 "mineru"），用于 metadata 查询
 
     Returns:
-        (installed, usable)：
+        (installed, usable, missing_module)：
         - installed：发行版是否存在（metadata 查询成功）
         - usable：是否可导入（import 成功）
+        - missing_module：import 失败时从 stderr 抓取的缺失模块名（str | None）。
+          usable=True 时恒为 None。供设置页表格状态列显示"已安装，缺 xxx"。
     """
     from vibeocr.services.env_config import OCR_CHECK_TIMEOUTS, OCR_DIST_NAME_ALIASES
 
@@ -992,7 +994,7 @@ def _probe_module(python_exe: Path, module: str, pkg: str) -> tuple[bool, bool]:
 
     if not installed:
         # 发行版不存在 → import 必然失败，跳过第 2 层
-        return False, False
+        return False, False, None
 
     # 第 2 层：import 判可导入（间接依赖是否完整）
     # import_stderr 在 except 分支保留：subprocess.run 抛异常时记录异常名，
@@ -1012,6 +1014,9 @@ def _probe_module(python_exe: Path, module: str, pkg: str) -> tuple[bool, bool]:
         usable = False
         import_stderr = f"(子进程异常: {exc})"
 
+    # import 失败时从 stderr 抓缺失模块名，供 UI 状态列显示"已安装，缺 xxx"。
+    # usable=True 时 missing_module 恒为 None（函数末尾兜底赋值）。
+    missing_module = None
     if not usable:
         # 发行版存在但 import 失败：区分两种根因，给出准确诊断而非笼统的
         # "间接依赖未完成"。
@@ -1029,7 +1034,6 @@ def _probe_module(python_exe: Path, module: str, pkg: str) -> tuple[bool, bool]:
         #    `import mineru` 报 `No module named 'torch'` —— 缺的是别的模块。
         import re as _re
 
-        missing_module = None
         m = _re.search(r"No module named '([^']+)'", import_stderr)
         if m:
             missing_module = m.group(1)
@@ -1062,7 +1066,7 @@ def _probe_module(python_exe: Path, module: str, pkg: str) -> tuple[bool, bool]:
                 stderr_tail,
             )
 
-    return installed, usable
+    return installed, usable, missing_module
 
 
 def _check_imports(python_exe: Path) -> dict[str, bool]:
@@ -1091,12 +1095,12 @@ def _check_imports(python_exe: Path) -> dict[str, bool]:
 
     deps: dict[str, bool] = {}
     for module, pkg in OCR_CHECK_MODULES.items():
-        _installed, usable = _probe_module(python_exe, module, pkg)
+        _installed, usable, _missing = _probe_module(python_exe, module, pkg)
         deps[pkg] = usable
     # paddlex[ocr] leaf 包：顶层 paddleocr import 不触发其检查（装饰器仅实例化时
     # 检查），单独探测以暴露便携安装中途失败导致的漏装。
     for module, pkg in OCR_CHECK_LEAF_MODULES.items():
-        _installed, usable = _probe_module(python_exe, module, pkg)
+        _installed, usable, _missing = _probe_module(python_exe, module, pkg)
         deps[pkg] = usable
     return deps
 
@@ -1125,14 +1129,64 @@ def _check_imports_detailed(python_exe: Path) -> dict[str, tuple[bool, bool]]:
 
     deps: dict[str, tuple[bool, bool]] = {}
     for module, pkg in OCR_CHECK_MODULES.items():
-        installed, usable = _probe_module(python_exe, module, pkg)
+        installed, usable, _missing = _probe_module(python_exe, module, pkg)
         deps[pkg] = (installed, usable)
     # paddlex[ocr] leaf 包同表纳入，供 install_missing_dependencies 据此判断
     # "顶层可用但 leaf 缺失" → 重装承载顶层包补齐传递树。
     for module, pkg in OCR_CHECK_LEAF_MODULES.items():
-        installed, usable = _probe_module(python_exe, module, pkg)
+        installed, usable, _missing = _probe_module(python_exe, module, pkg)
         deps[pkg] = (installed, usable)
     return deps
+
+
+def _check_imports_with_missing(
+    python_exe: Path,
+) -> dict[str, tuple[bool, bool, str | None]]:
+    """检测各 OCR 模块的三元状态（含 import 失败时缺失的模块名）
+
+    与 ``_check_imports_detailed`` 的区别：多返回一个 ``missing_module`` 字段，
+    供设置页依赖表格状态列显示"已安装，缺 torch"这类精确诊断（而非笼统的
+    "未安装"）。``missing_module`` 仅在 ``usable=False`` 且 stderr 含
+    ``No module named 'xxx'`` 时非 None。
+
+    Args:
+        python_exe: 目标 Python 可执行文件
+
+    Returns:
+        {包名: (installed, usable, missing_module)}。
+    """
+    from vibeocr.services.env_config import (
+        OCR_CHECK_LEAF_MODULES,
+        OCR_CHECK_MODULES,
+    )
+
+    deps: dict[str, tuple[bool, bool, str | None]] = {}
+    for module, pkg in OCR_CHECK_MODULES.items():
+        deps[pkg] = _probe_module(python_exe, module, pkg)
+    for module, pkg in OCR_CHECK_LEAF_MODULES.items():
+        deps[pkg] = _probe_module(python_exe, module, pkg)
+    return deps
+
+
+def check_dependencies_status_detailed(
+    project_root: Path,
+) -> dict[str, tuple[bool, bool, str | None]]:
+    """强制重新检测依赖的三元状态（含缺失模块名），供设置页依赖树展示。
+
+    与 check_embedded_environment_dependencies_fresh 的区别：返回三元组
+    (installed, usable, missing_module) 而非仅 usable 布尔，让状态列能显示
+    "已安装，缺 torch" 这类精确诊断。忽略缓存（设置页是实时状态入口）。
+
+    Args:
+        project_root: 项目根目录
+
+    Returns:
+        {包名: (installed, usable, missing_module)}。Python 运行时不存在时返回 {}。
+    """
+    python_exe = get_embedded_python_executable(project_root)
+    if not python_exe.exists():
+        return {}
+    return _check_imports_with_missing(python_exe)
 
 
 def _quick_verify_deps(python_exe: Path) -> dict[str, bool]:
@@ -1486,6 +1540,8 @@ def _install_paddle_stack(
     on_proc: Callable[[subprocess.Popen], None] | None = None,
     project_root: Path | None = None,
     force_reinstall_pkgs: set[str] | None = None,
+    skip_pip_upgrade: bool = False,
+    done_msg: str | None = None,
 ) -> tuple[bool, str]:
     """安装 PaddlePaddle + PaddleOCR + MinerU (+可选 torch) 依赖栈
 
@@ -1513,37 +1569,43 @@ def _install_paddle_stack(
             ``pip install`` 时追加 ``--force-reinstall --no-deps``，用于修复"残缺安装"
             （.dist-info 残留但模块文件缺失，普通 install 会报 already satisfied 跳过）。
             为空/None 时按常规 install。仅 install_missing_dependencies 增量路径传入。
+        skip_pip_upgrade: 为 True 时跳过开头的 ``pip install --upgrade pip``。
+            单包/批量精准重装无需升级 pip，跳过可减少噪音和潜在失败点。
+        done_msg: 全部成功时打印到日志的完成语，覆盖默认的"所有OCR依赖安装完成"。
+            单包/批量重装场景用此传"xxx 安装完成"避免误导性的"所有依赖全部安装完毕"。
+            None 时用默认值（全量/补装场景本就装一堆，默认措辞合适）。
 
     Returns:
         (是否成功, 消息)
     """
     try:
-        # 升级pip
-        report_fn("依赖安装", "正在升级pip...")
-        result = _run_pip(
-            [
-                str(python_exe),
-                "-m",
-                "pip",
-                "install",
-                "--upgrade",
-                "--retries",
-                "5",
-                "--timeout",
-                "120",
-                "pip",
-                "-i",
-                pip_source,
-            ],
-            timeout=120,
-            cancel_event=cancel_event,
-            on_proc=on_proc,
-        )
-        if result.returncode != 0:
-            report_fn(
-                "依赖安装",
-                f"pip升级警告: {result.stderr[-100:] if result.stderr else ''}",
+        # 升级pip（单包/批量精准重装跳过：精准补漏无需升级 pip，减少噪音和失败点）
+        if not skip_pip_upgrade:
+            report_fn("依赖安装", "正在升级pip...")
+            result = _run_pip(
+                [
+                    str(python_exe),
+                    "-m",
+                    "pip",
+                    "install",
+                    "--upgrade",
+                    "--retries",
+                    "5",
+                    "--timeout",
+                    "120",
+                    "pip",
+                    "-i",
+                    pip_source,
+                ],
+                timeout=120,
+                cancel_event=cancel_event,
+                on_proc=on_proc,
             )
+            if result.returncode != 0:
+                report_fn(
+                    "依赖安装",
+                    f"pip升级警告: {result.stderr[-100:] if result.stderr else ''}",
+                )
 
         if requirements_override is not None:
             # 增量模式：直接用外部传入的子集，跳过完整构建
@@ -1777,7 +1839,7 @@ def _install_paddle_stack(
             )
             return False, f"部分依赖安装失败（{failed_names}）：\n\n{detail}"
 
-        report_fn("依赖安装", "所有OCR依赖安装完成")
+        report_fn("依赖安装", done_msg or "所有OCR依赖安装完成")
         # 安装成功后刷新依赖缓存，避免设置页表格读到旧值（与 main_window
         # 同步升级路径 _on_sync_finished 的清缓存做法对齐）。
         # 用 update_cache_field 增量写 dependencies，不会覆盖 pending_backend 等。
@@ -2070,6 +2132,103 @@ def install_missing_dependencies(
     )
 
 
+def get_direct_dependencies(python_exe: Path, pkg: str) -> list[str]:
+    """查询一个已装顶层包的**直接**依赖列表（一层，不递归）。
+
+    供设置页依赖树展开节点用——动态推导 mineru/torch/paddleocr 等各自拉入了哪些
+    一层依赖，无需在 env_config 手动维护易漂移的清单。只取一层避免逐包 subprocess
+    全树展开太慢；间接依赖的实际缺失由 _probe_module 的 missing_module 单独标注。
+
+    实现用 ``importlib.metadata.requires(pkg)``（标准库），返回 PEP 508 串列表，
+    再用 packaging 解析 marker 过滤出**当前环境实际生效**的依赖（剔除仅
+    ``extra == "xxx"`` 才拉入的可选依赖，否则会把 paddlex[ocr]/[doc-parser] 的
+    全量 leaf 都算进来，与"直接依赖"语义不符）。
+
+    Args:
+        python_exe: 目标（便携）Python 可执行文件
+        pkg: pip 包名/发行版名（如 "mineru"）
+
+    Returns:
+        直接依赖的 pip 包名列表（小写规范化），按 metadata 顺序去重保序。
+        包未安装 / 无 requires / 解析失败时返回空列表。
+    """
+    from vibeocr.services.env_config import OCR_DIST_NAME_ALIASES
+
+    # 同一 import 可能来自不同发行版名（paddlepaddle-gpu/cpu），任一命中即查。
+    dist_candidates = (pkg, *OCR_DIST_NAME_ALIASES.get(pkg, ()))
+    # 用一次 subprocess 跑 importlib.metadata.requires，输出 JSON 数组避免
+    # 多行 requires 的换行解析问题。
+    cand_repr = ",".join(repr(c) for c in dist_candidates)
+    code = (
+        "import importlib.metadata as m, json, sys\n"
+        "reqs = []\n"
+        f"for c in [{cand_repr}]:\n"
+        "    try:\n"
+        "        r = m.requires(c)\n"
+        "    except Exception:\n"
+        "        r = None\n"
+        "    if r:\n"
+        "        reqs.extend(r)\n"
+        "        break\n"
+        "json.dump(reqs, sys.stdout)"
+    )
+    try:
+        result = subprocess.run(
+            [str(python_exe), "-c", code],
+            capture_output=True,
+            text=True,
+            timeout=20,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+        )
+        if result.returncode != 0:
+            return []
+        import json
+
+        raw_reqs = json.loads(result.stdout or "[]")
+    except Exception:
+        return []
+
+    # 解析 marker，过滤掉仅 extra 条件才生效的可选依赖，保留当前环境默认生效项。
+    try:
+        from packaging.requirements import Requirement
+    except ImportError:
+        # packaging 不可用时退化为纯名解析（丢失 marker 过滤，但至少给出一层列表）
+        from vibeocr.services.env_config import _parse_pep508_name
+
+        return _dedup_preserve_order(_parse_pep508_name(r) for r in raw_reqs)
+
+    names: list[str] = []
+    for raw in raw_reqs:
+        try:
+            req = Requirement(raw)
+        except Exception:
+            continue
+        # marker 为 None → 无条件依赖，保留。
+        # marker 存在且 evaluate 为 True → 当前环境生效，保留。
+        # marker 含 extra == "..." → 仅可选 extras 拉入，默认环境不生效，剔除。
+        if req.marker is not None:
+            try:
+                if not req.marker.evaluate():
+                    continue
+            except Exception:
+                # marker 求值失败（缺环境变量等），保守保留以便用户能看到。
+                pass
+        if req.name:
+            names.append(req.name.lower())
+    return _dedup_preserve_order(names)
+
+
+def _dedup_preserve_order(items) -> list:
+    """去重并保留首次出现顺序（items 可含空串/重复项）。"""
+    seen: set[str] = set()
+    out: list[str] = []
+    for it in items:
+        if it and it not in seen:
+            seen.add(it)
+            out.append(it)
+    return out
+
+
 def install_single_dependency(
     project_root: Path,
     pkg: str,
@@ -2132,6 +2291,81 @@ def install_single_dependency(
         cancel_event=cancel_event,
         on_proc=on_proc,
         project_root=project_root,
+        # 单包精准补漏：跳过 pip 升级减少噪音；完成日志用具体包名而非
+        # 误导性的"所有 OCR 依赖安装完成"（用户报告"单包却提示全部安装完毕"的根因）。
+        skip_pip_upgrade=True,
+        done_msg=f"{pkg} 安装完成",
+    )
+
+
+def install_dependencies_batch(
+    project_root: Path,
+    packages: list[str],
+    network_type: Literal["domestic", "international"] = "domestic",
+    progress_callback=None,
+    cancel_event: threading.Event | None = None,
+    on_proc: Callable[[subprocess.Popen], None] | None = None,
+) -> tuple[bool, str]:
+    """批量安装多个依赖包（设置页依赖树多选"重装选中项"）。
+
+    与逐个调 install_single_dependency 的区别：用单次 _install_paddle_stack
+    调用 + requirements_override=[...] 批量装，pip 在一次会话内处理，进度带
+    计数（``批量重装 (i/n)``）；失败汇总（部分失败不阻断后续包）。
+
+    Args:
+        project_root: 项目根目录
+        packages: pip 包名列表（顶层包用归一名，如 paddleocr；leaf 用纯名如 scipy）
+        network_type: 网络类型
+        progress_callback: 进度回调 (stage, message)
+        cancel_event: 协作式取消事件
+        on_proc: 子进程句柄回调（取消时 kill）
+
+    Returns:
+        (是否成功, 消息)
+    """
+    if not packages:
+        return True, "无待安装包"
+
+    python_exe = get_embedded_python_executable(project_root)
+    if not python_exe.exists():
+        return False, "Python 运行时未安装"
+
+    pip_source = get_pip_source(network_type)
+
+    def report(stage: str, msg: str):
+        logger.info("[%s] %s", stage, msg)
+        if progress_callback:
+            progress_callback(stage, msg)
+
+    # 去重保序，避免用户多选同一包重复装
+    unique_pkgs = _dedup_preserve_order(packages)
+    n = len(unique_pkgs)
+    report("批量重装", f"开始批量重装 {n} 个依赖包")
+
+    specs = _load_dep_specs()
+    # 构造 requirements 子集：顶层包取完整 spec（重解析传递树），leaf 用纯名。
+    # 带计数前缀的展示名让进度日志清晰（批量重装 (i/n)）。
+    requirements: list[tuple[str, str, str]] = []
+    for i, pkg in enumerate(unique_pkgs, 1):
+        spec = specs.get(pkg, pkg)
+        requirements.append((f"{pkg} ({i}/{n})", spec, pip_source))
+    report("批量重装", f"pip源: {pip_source}")
+
+    return _install_paddle_stack(
+        python_exe=python_exe,
+        specs=specs,
+        pip_source=pip_source,
+        network_type=network_type,
+        use_gpu=False,
+        cuda_version=None,
+        report_fn=report,
+        success_msg=f"已重装 {n} 个依赖包",
+        requirements_override=requirements,
+        cancel_event=cancel_event,
+        on_proc=on_proc,
+        project_root=project_root,
+        skip_pip_upgrade=True,
+        done_msg=f"已重装 {n} 个依赖包",
     )
 
 
