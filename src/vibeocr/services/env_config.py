@@ -202,6 +202,34 @@ OCR_DIST_NAME_ALIASES: dict[str, tuple[str, ...]] = {
     "paddlepaddle": ("paddlepaddle-gpu", "paddlepaddle-cpu"),
 }
 
+# paddlex[ocr] extra 的 leaf 包——表格识别管道 (TableRecognitionPipelineV2) 经
+# @pipeline_requires_extra("ocr") 强制要求，但顶层 paddleocr 的 import 不触发其检查
+# （装饰器仅在管道实例化时检查），形成探测盲区：便携环境若 paddleocr[doc-parser]
+# 安装事务中途失败（镜像 404/超时），这些 leaf 包会漏装，而 import paddleocr 仍成功 →
+# cache 误标已装 → 直到用户跑表格识别实例化时才爆炸为无信息的 DependencyError。
+# 纳入检测让漏装能在启动期/设置页暴露。
+# 注意 sklearn 的 import 名与 pip 包名不一致（scikit-learn）。
+OCR_CHECK_LEAF_MODULES: dict[str, str] = {
+    "einops": "einops",
+    "ftfy": "ftfy",
+    "latex2mathml": "latex2mathml",
+    "premailer": "premailer",
+    "regex": "regex",
+    "sklearn": "scikit-learn",
+    "scipy": "scipy",
+    "sentencepiece": "sentencepiece",
+    "tiktoken": "tiktoken",
+    "tokenizers": "tokenizers",
+}
+
+# leaf→承载顶层包映射（pip 包名）。
+# 这些 leaf 全部由 paddleocr[doc-parser] → paddlex[ocr] 的传递依赖拉入，
+# 故承载顶层包统一是 paddleocr。leaf 缺失时，补装应重装承载顶层包以重新解析
+# 整条传递树（而非逐个 leaf 单装，后者无法覆盖 leaf 自身的传递依赖）。
+LEAF_TO_TOPLEVEL: dict[str, str] = {
+    pkg: "paddleocr" for pkg in OCR_CHECK_LEAF_MODULES.values()
+}
+
 # 各模块 import 检测的 timeout（秒）。
 # paddle 首次导入需初始化 CUDA 上下文，显著慢于其他模块。
 OCR_CHECK_TIMEOUTS: dict[str, int] = {
@@ -218,6 +246,18 @@ OCR_CHECK_TIMEOUTS: dict[str, int] = {
     # 键须与 OCR_CHECK_MODULES 的 import 名一致（fontTools），否则
     # _probe_module 的 OCR_CHECK_TIMEOUTS.get(module, 15) 命不中、回退到默认 15s。
     "fontTools": 10,
+    # paddlex[ocr] leaf 包：scipy 首次 import 加载 OpenBLAS 较慢给 15s，
+    # tokenizers/sentencepiece/tiktoken 有原生扩展给 10s，纯 Python 包 5s。
+    "scipy": 15,
+    "tokenizers": 10,
+    "sentencepiece": 10,
+    "tiktoken": 10,
+    "einops": 5,
+    "ftfy": 5,
+    "latex2mathml": 5,
+    "premailer": 5,
+    "regex": 5,
+    "sklearn": 10,
 }
 
 

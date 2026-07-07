@@ -1068,8 +1068,9 @@ def _probe_module(python_exe: Path, module: str, pkg: str) -> tuple[bool, bool]:
 def _check_imports(python_exe: Path) -> dict[str, bool]:
     """检测嵌入式 Python 可导入哪些 OCR 模块（双层检测，单一实现，消除重复）
 
-    遍历 env_config.OCR_CHECK_MODULES，对每个模块用 _probe_module 做双层检测
-    （发行版是否存在 + 是否可导入），结果以包名为 key 返回 **usable** 值。
+    遍历 env_config.OCR_CHECK_MODULES + OCR_CHECK_LEAF_MODULES，对每个模块用
+    _probe_module 做双层检测（发行版是否存在 + 是否可导入），结果以包名为 key
+    返回 **usable** 值。
 
     返回签名与旧版一致：``{包名: 是否可导入}``，保持所有调用方向后兼容
     （``is_embedded_environment_ready`` 等语义"可用即可用"不变）。
@@ -1083,10 +1084,18 @@ def _check_imports(python_exe: Path) -> dict[str, bool]:
     Returns:
         {包名: 是否可导入}，如 {"paddlepaddle": True, "torch": False}
     """
-    from vibeocr.services.env_config import OCR_CHECK_MODULES
+    from vibeocr.services.env_config import (
+        OCR_CHECK_LEAF_MODULES,
+        OCR_CHECK_MODULES,
+    )
 
     deps: dict[str, bool] = {}
     for module, pkg in OCR_CHECK_MODULES.items():
+        _installed, usable = _probe_module(python_exe, module, pkg)
+        deps[pkg] = usable
+    # paddlex[ocr] leaf 包：顶层 paddleocr import 不触发其检查（装饰器仅实例化时
+    # 检查），单独探测以暴露便携安装中途失败导致的漏装。
+    for module, pkg in OCR_CHECK_LEAF_MODULES.items():
         _installed, usable = _probe_module(python_exe, module, pkg)
         deps[pkg] = usable
     return deps
@@ -1109,10 +1118,18 @@ def _check_imports_detailed(python_exe: Path) -> dict[str, tuple[bool, bool]]:
     Returns:
         {包名: (installed, usable)}，key 与 _check_imports 一致（OCR_CHECK_MODULES value）。
     """
-    from vibeocr.services.env_config import OCR_CHECK_MODULES
+    from vibeocr.services.env_config import (
+        OCR_CHECK_LEAF_MODULES,
+        OCR_CHECK_MODULES,
+    )
 
     deps: dict[str, tuple[bool, bool]] = {}
     for module, pkg in OCR_CHECK_MODULES.items():
+        installed, usable = _probe_module(python_exe, module, pkg)
+        deps[pkg] = (installed, usable)
+    # paddlex[ocr] leaf 包同表纳入，供 install_missing_dependencies 据此判断
+    # "顶层可用但 leaf 缺失" → 重装承载顶层包补齐传递树。
+    for module, pkg in OCR_CHECK_LEAF_MODULES.items():
         installed, usable = _probe_module(python_exe, module, pkg)
         deps[pkg] = (installed, usable)
     return deps
@@ -1970,6 +1987,31 @@ def install_missing_dependencies(
         key = _pkg_key_for_req(req_name)
         return import_status.get(key, False) if key else False
 
+    # paddlex[ocr] leaf 包缺失检测：顶层 paddleocr 的 import 不触发 leaf 检查
+    # （@pipeline_requires_extra 仅实例化时检查），故顶层 usable=True 不代表
+    # leaf 齐全。若任一 leaf 缺失，承载顶层包（paddleocr）即使 usable 也要重装，
+    # 让 pip 重新解析 paddleocr[doc-parser]→paddlex[ocr] 的整条传递树以补齐。
+    from vibeocr.services.env_config import (
+        LEAF_TO_TOPLEVEL,
+        OCR_CHECK_LEAF_MODULES,
+    )
+
+    leaf_missing_pkgs = {
+        pkg
+        for pkg in OCR_CHECK_LEAF_MODULES.values()
+        if not import_status.get(pkg, False)
+    }
+    # 需因 leaf 缺失而重装的承载顶层包集合（leaf→toplevel 映射）
+    leaf_triggered_toplevels: set[str] = {
+        LEAF_TO_TOPLEVEL[pkg] for pkg in leaf_missing_pkgs if pkg in LEAF_TO_TOPLEVEL
+    }
+    if leaf_missing_pkgs:
+        report(
+            "依赖安装",
+            f"⚠ 表格识别间接依赖缺失: {', '.join(sorted(leaf_missing_pkgs))}，"
+            "将重装承载顶层包以补齐传递树",
+        )
+
     # 3. 过滤掉已装的；收集残缺安装（installed=True/usable=False）需强制重装的包
     subset: list[tuple[str, str, str]] = []
     force_reinstall_pkgs: set[str] = set()
@@ -1978,13 +2020,17 @@ def install_missing_dependencies(
         installed, usable = (
             import_detailed.get(key, (False, False)) if key else (False, False)
         )
-        if usable:
+        # leaf 缺失时，承载顶层包(paddleocr)即使 usable 也要重装补齐传递树
+        leaf_triggered = key in leaf_triggered_toplevels
+        if usable and not leaf_triggered:
             report("依赖安装", f"✓ {name} 已安装，跳过")
         else:
             subset.append((name, pkg_spec, index_url))
             # 残缺安装：metadata 在但 import 失败。普通 pip install 会报
             # "already satisfied" 跳过 → 永远修不好，必须 --force-reinstall。
-            if installed and key:
+            # 注意：leaf_triggered 重装不走 force-reinstall（顶层 usable 说明
+            # 本体完好，只是传递 leaf 缺失，普通 install 即可触发 pip 重解析）。
+            if installed and key and not usable:
                 force_reinstall_pkgs.add(key)
                 report(
                     "依赖安装",
@@ -2021,6 +2067,71 @@ def install_missing_dependencies(
         on_proc=on_proc,
         project_root=project_root,
         force_reinstall_pkgs=force_reinstall_pkgs,
+    )
+
+
+def install_single_dependency(
+    project_root: Path,
+    pkg: str,
+    network_type: Literal["domestic", "international"] = "domestic",
+    progress_callback=None,
+    cancel_event: threading.Event | None = None,
+    on_proc: Callable[[subprocess.Popen], None] | None = None,
+) -> tuple[bool, str]:
+    """单独安装一个依赖包（精准补漏）。
+
+    用于设置页依赖表格的"重装"按钮：用户看到某个包未装（特别是 paddlex[ocr]
+    的 leaf 包如 scipy/einops），点一下只装这一个，无需重装整个 paddleocr。
+
+    - 顶层包（如 paddleocr）：从 _load_dep_specs() 取完整 spec（含 extras+版本约束，
+      如 ``paddleocr[doc-parser]>=3.7.0``），重装会重新解析传递树。
+    - leaf 包（如 scipy）：不在 specs 中，用纯包名安装，pip 自动解析其直接依赖
+      （如 scipy 依赖 numpy，tokenizers 依赖 huggingface-hub，这些通常已装）。
+
+    Args:
+        project_root: 项目根目录
+        pkg: pip 包名（归一，如 "scipy"/"paddleocr"/"scikit-learn"）
+        network_type: 网络类型
+        progress_callback: 进度回调 (stage, message)
+        cancel_event: 协作式取消事件
+        on_proc: 子进程句柄回调（取消时 kill）
+
+    Returns:
+        (是否成功, 消息)
+    """
+    python_exe = get_embedded_python_executable(project_root)
+    if not python_exe.exists():
+        return False, "Python 运行时未安装"
+
+    pip_source = get_pip_source(network_type)
+
+    def report(stage: str, msg: str):
+        logger.info("[%s] %s", stage, msg)
+        if progress_callback:
+            progress_callback(stage, msg)
+
+    # 顶层包取完整 spec（含 extras+约束）；leaf 包用纯包名（pip 选最新兼容版）
+    specs = _load_dep_specs()
+    spec = specs.get(pkg, pkg)
+    report("依赖安装", f"开始单独安装: {spec}")
+    report("依赖安装", f"pip源: {pip_source}")
+
+    # 复用 _install_paddle_stack 的取消/超时/进度/句柄机制，单元素 requirements。
+    # use_gpu/cuda_version 仅对 GPU 包（paddlepaddle-gpu/torch）有意义；单装普通
+    # 包时传 False/None 即可，_is_gpu_requirement 不会命中普通包。
+    return _install_paddle_stack(
+        python_exe=python_exe,
+        specs=specs,
+        pip_source=pip_source,
+        network_type=network_type,
+        use_gpu=False,
+        cuda_version=None,
+        report_fn=report,
+        success_msg=f"{pkg} 安装成功",
+        requirements_override=[(pkg, spec, pip_source)],
+        cancel_event=cancel_event,
+        on_proc=on_proc,
+        project_root=project_root,
     )
 
 

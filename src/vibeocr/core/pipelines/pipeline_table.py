@@ -14,6 +14,37 @@ from vibeocr.core.pipelines.base_options import BasePipelineOptions
 from vibeocr.core.pipelines.registry import PipelineSpec
 
 
+class TableDependencyError(RuntimeError):
+    """表格识别所需依赖（paddlex[ocr] leaf 包）缺失。
+
+    PaddleX 会把真因 ``DependencyError`` 包成无信息的 ``RuntimeError: A dependency
+    error occurred...``，本类在管道创建前主动探测并报告**具体缺失包名**，引导用户
+    走设置页重装，而非展示无信息的泛化错误。
+    """
+
+
+def _check_table_deps() -> None:
+    """检测表格识别所需 paddlex[ocr] leaf 包，缺失则抛 TableDependencyError。
+
+    用 ``importlib.util.find_spec`` 轻量探测（不实际 import，避免 scipy 首次
+    import 慢）。缺失时列出具体包名，便于用户在设置页精准重装。
+    """
+    import importlib.util
+
+    from vibeocr.services.env_config import OCR_CHECK_LEAF_MODULES
+
+    missing = [
+        pkg
+        for mod, pkg in OCR_CHECK_LEAF_MODULES.items()
+        if importlib.util.find_spec(mod) is None
+    ]
+    if missing:
+        raise TableDependencyError(
+            f"表格识别缺少依赖：{', '.join(missing)}。"
+            "请在「设置 → 重装 OCR 依赖」修复后重试。"
+        )
+
+
 @dataclass
 class TableRecognitionOptions(BasePipelineOptions):
     """表格识别管道选项
@@ -46,6 +77,9 @@ def _create_table_pipeline(device: str, **kwargs: Any) -> Any:
 
     额外 kwargs 透传给 TableRecognitionPipelineV2（例如 enable_mkldnn）。
     """
+    # 创建前主动探测 paddlex[ocr] leaf 包。PaddleX 会把真因 DependencyError 包成
+    # 无信息的 RuntimeError，此处提前拦截并报告具体缺失包，引导用户修复。
+    _check_table_deps()
     from paddleocr import TableRecognitionPipelineV2
 
     return TableRecognitionPipelineV2(device=device, **kwargs)

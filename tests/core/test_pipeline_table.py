@@ -32,6 +32,78 @@ def test_table_spec():
     assert TABLE_RECOGNITION_SPEC.options_class is TableRecognitionOptions
 
 
+class TestCheckTableDeps:
+    """_check_table_deps / TableDependencyError 单测。
+
+    验证管道创建前的依赖探测能拦截 paddlex[ocr] leaf 包缺失，
+    报告具体缺失包名，而非让 PaddleX 抛无信息的 RuntimeError。
+    """
+
+    def test_all_present_passes(self, monkeypatch):
+        """所有 leaf 包 find_spec 都返回非 None 时不抛错。"""
+        from vibeocr.core.pipelines import pipeline_table
+
+        def fake_find_spec(name, package=None):
+            return object()  # 非 None 视为存在
+
+        # importlib.util 是 _check_table_deps 内部 import 的真实模块
+        import importlib.util
+
+        monkeypatch.setattr(importlib.util, "find_spec", fake_find_spec)
+        # 不抛异常即通过
+        pipeline_table._check_table_deps()
+
+    def test_missing_raises_with_package_names(self, monkeypatch):
+        """缺失包时抛 TableDependencyError 且消息含具体包名。"""
+        from vibeocr.core.pipelines import pipeline_table
+        from vibeocr.services.env_config import OCR_CHECK_LEAF_MODULES
+
+        missing_pkg = "scipy"
+        missing_import = next(
+            mod for mod, pkg in OCR_CHECK_LEAF_MODULES.items() if pkg == missing_pkg
+        )
+
+        def fake_find_spec(name, package=None):
+            # 仅 missing_import 返回 None（缺失），其余返回非 None
+            return None if name == missing_import else object()
+
+        import importlib.util
+
+        monkeypatch.setattr(importlib.util, "find_spec", fake_find_spec)
+        try:
+            pipeline_table._check_table_deps()
+        except pipeline_table.TableDependencyError as e:
+            msg = str(e)
+            assert missing_pkg in msg, f"错误消息应含缺失包名 {missing_pkg}: {msg}"
+            assert "设置" in msg or "重装" in msg, f"应引导用户重装: {msg}"
+        else:
+            raise AssertionError("缺失时应抛 TableDependencyError")
+
+    def test_multiple_missing_all_listed(self, monkeypatch):
+        """多个包缺失时全部列在错误消息里。"""
+        from vibeocr.core.pipelines import pipeline_table
+        from vibeocr.services.env_config import OCR_CHECK_LEAF_MODULES
+
+        # 让前 3 个包缺失
+        missing_imports = list(OCR_CHECK_LEAF_MODULES.keys())[:3]
+        missing_pkgs = [OCR_CHECK_LEAF_MODULES[m] for m in missing_imports]
+
+        def fake_find_spec(name, package=None):
+            return None if name in missing_imports else object()
+
+        import importlib.util
+
+        monkeypatch.setattr(importlib.util, "find_spec", fake_find_spec)
+        try:
+            pipeline_table._check_table_deps()
+        except pipeline_table.TableDependencyError as e:
+            msg = str(e)
+            for pkg in missing_pkgs:
+                assert pkg in msg, f"错误消息应含 {pkg}: {msg}"
+        else:
+            raise AssertionError("缺失时应抛 TableDependencyError")
+
+
 class _DictResult(dict):
     """模拟 PaddleX TableRecognitionResult：dict 子类，键需下标访问。
 

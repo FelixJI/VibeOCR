@@ -12,7 +12,10 @@ from pathlib import Path
 # 缓存版本号（用于缓存格式升级时失效旧缓存）。
 # v2：markdown 纳入 OCR_CHECK_MODULES / required_deps，旧缓存（无 markdown key）
 # 必须失效，否则会被判为"已装"，掩盖真实缺失。
-CACHE_VERSION = 2
+# v3：paddlex[ocr] leaf 包（einops/scipy/.../tokenizers 等 10 个）纳入
+# OCR_CHECK_LEAF_MODULES 检测，旧缓存（无这些 leaf key）必须失效重建，
+# 否则会被判为"已装"，掩盖便携安装中途失败导致的漏装（表格识别爆炸的根因）。
+CACHE_VERSION = 3
 
 # =============================================================================
 # cache.json Schema（权威定义——所有读写方必须遵守）

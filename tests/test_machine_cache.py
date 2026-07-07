@@ -545,3 +545,18 @@ class TestCacheVersionInvalidation:
         assert is_valid is False, (
             f"version={old_version} 的旧缓存应失效（当前 CACHE_VERSION={CACHE_VERSION}）"
         )
+
+    def test_cache_version_is_current(self):
+        """CACHE_VERSION 应为 3（paddlex[ocr] leaf 包纳入检测的版本）。
+
+        v3 变更：OCR_CHECK_LEAF_MODULES（einops/scipy/.../tokenizers 等 10 个）
+        纳入依赖检测，旧缓存（无这些 leaf key）必须失效重建，否则会被误判为已装，
+        掩盖便携安装中途失败导致的漏装（表格识别爆炸的根因）。
+        升级此值须同步更新本测试和 machine_cache.py 的版本注释。
+        """
+        from vibeocr.machine_cache import CACHE_VERSION
+
+        assert CACHE_VERSION == 3, (
+            f"CACHE_VERSION 应为 3（leaf 包纳入检测），实际 {CACHE_VERSION}。"
+            "若新增/移除检测项，请同步 bump 版本号并更新此测试。"
+        )

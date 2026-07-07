@@ -354,7 +354,7 @@ class SingleRecognitionTab(BaseOcrTab):
             except Exception as e:
                 logger.error(f"OCR 识别失败: {e}", exc_info=True)
                 self._on_ocr_error(
-                    str(e) + self._first_use_suffix(options.pipeline.value)
+                    str(e) + self._first_use_suffix(options.pipeline.value, str(e))
                 )
 
     def process_file(self, file_path: str) -> None:
@@ -419,7 +419,7 @@ class SingleRecognitionTab(BaseOcrTab):
             except Exception as e:
                 logger.error(f"OCR 识别失败: {e}", exc_info=True)
                 self._on_ocr_error(
-                    str(e) + self._first_use_suffix(options.pipeline.value)
+                    str(e) + self._first_use_suffix(options.pipeline.value, str(e))
                 )
 
     async def _perform_ocr_async(self, image_data: bytes, options) -> None:
@@ -453,7 +453,7 @@ class SingleRecognitionTab(BaseOcrTab):
             if self._closing:
                 return
             logger.error(f"[异步OCR] 识别失败: {e}", exc_info=True)
-            self._on_ocr_error(str(e) + self._first_use_suffix(options.pipeline.value))
+            self._on_ocr_error(str(e) + self._first_use_suffix(options.pipeline.value, str(e)))
 
     async def _perform_ocr_with_data_async(
         self, data: bytes, mime_type: str, filename: str, options
@@ -498,7 +498,7 @@ class SingleRecognitionTab(BaseOcrTab):
             if self._closing:
                 return
             logger.error(f"[异步OCR] 识别失败: {e}", exc_info=True)
-            self._on_ocr_error(str(e) + self._first_use_suffix(options.pipeline.value))
+            self._on_ocr_error(str(e) + self._first_use_suffix(options.pipeline.value, str(e)))
 
     def _on_result_block_edited(self, index: int, new_text: str) -> None:
         """右侧结果块被编辑后同步更新数据模型。
@@ -641,8 +641,27 @@ class SingleRecognitionTab(BaseOcrTab):
         if self._text_options_widget is not None:
             self._text_options_widget.set_collapsed(True)
 
-    def _first_use_suffix(self, pipeline_val: str) -> str:
-        """首次使用失败时返回追加提示"""
+    def _first_use_suffix(self, pipeline_val: str, error_text: str = "") -> str:
+        """首次使用失败时返回追加提示。
+
+        依赖类错误（dependency/缺少依赖/DependencyError）优先给依赖修复提示，
+        而非误导性的"下载模型"——模型下载解决不了依赖缺失，反而让用户白等。
+        """
+        # 依赖缺失特征词（覆盖 PaddleX DependencyError / 本项目 TableDependencyError）
+        lowered = error_text.lower()
+        if any(
+            k in lowered
+            for k in (
+                "dependency",
+                "依赖",
+                "缺少依赖",
+                "paddlex[ocr]",
+                "additional dependencies",
+                "tabledependencyerror",
+            )
+        ):
+            return "\n\n提示：检测到依赖缺失，请在「设置 → 重装 OCR 依赖」修复后重试。"
+
         if pipeline_val in (
             "OCR",
             "PP-StructureV3",

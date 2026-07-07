@@ -14,6 +14,8 @@ from vibeocr.env_manager import (
     ensure_mineru_models,
     install_embedded_dependencies,
     install_embedded_python,
+    install_missing_dependencies,
+    install_single_dependency,
     resolve_use_gpu,
     switch_paddle_backend,
 )
@@ -503,6 +505,197 @@ class TestEnsureMineruModels:
         guard_instance.close.assert_called_once()
 
 
+class TestInstallMissingLeafTrigger:
+    """install_missing_dependencies 的 leaf 缺失→重装承载顶层包逻辑测试。
+
+    核心场景：paddleocr 顶层 import 成功（usable=True）但 paddlex[ocr] leaf 缺失时，
+    补装应把 paddleocr 加入 subset 重装，让 pip 重新解析传递树补齐 leaf。
+    """
+
+    def test_paddleocr_reinstalled_when_leaf_missing(self, tmp_path):
+        """顶层 paddleocr 可用但 leaf 缺失时，paddleocr 应被加入重装 subset"""
+        python_exe = tmp_path / "python.exe"
+        python_exe.touch()
+
+        # 构造 import_detailed：顶层全 usable，但 leaf（scipy）usable=False
+        from vibeocr.services.env_config import (
+            OCR_CHECK_LEAF_MODULES,
+            OCR_CHECK_MODULES,
+        )
+
+        detailed = {}
+        for _mod, pkg in OCR_CHECK_MODULES.items():
+            detailed[pkg] = (True, True)  # 顶层全装且可用
+        for _mod, pkg in OCR_CHECK_LEAF_MODULES.items():
+            detailed[pkg] = (True, True)
+        # 制造 leaf 缺失：scipy usable=False
+        detailed["scipy"] = (False, False)
+
+        captured_stack = {}
+
+        def fake_stack(**kwargs):
+            captured_stack.update(kwargs)
+            return True, "ok"
+
+        with (
+            patch(
+                "vibeocr.env_manager.get_pip_source",
+                return_value="https://pypi.org/simple",
+            ),
+            patch(
+                "vibeocr.env_manager.get_embedded_python_executable",
+                return_value=python_exe,
+            ),
+            patch(
+                "vibeocr.env_manager._check_imports_detailed",
+                return_value=detailed,
+            ),
+            patch("vibeocr.env_manager._install_paddle_stack", side_effect=fake_stack),
+            patch("vibeocr.env_manager.detect_gpu", return_value=(False, None)),
+        ):
+            ok, _msg = install_missing_dependencies(
+                tmp_path, progress_callback=lambda s, m: None
+            )
+
+        assert ok is True
+        subset = captured_stack.get("requirements_override", [])
+        subset_names = [name for name, _spec, _idx in subset]
+        # paddleocr 应在 subset 中（因 leaf 缺失触发）
+        assert any("PaddleOCR" in n for n in subset_names), (
+            f"leaf 缺失时 paddleocr 应被加入重装 subset，实际 subset: {subset_names}"
+        )
+
+    def test_paddleocr_skipped_when_all_leafs_present(self, tmp_path):
+        """顶层和 leaf 全可用时，paddleocr 应被跳过（不在 subset）"""
+        python_exe = tmp_path / "python.exe"
+        python_exe.touch()
+
+        from vibeocr.services.env_config import (
+            OCR_CHECK_LEAF_MODULES,
+            OCR_CHECK_MODULES,
+        )
+
+        detailed = {}
+        for _mod, pkg in OCR_CHECK_MODULES.items():
+            detailed[pkg] = (True, True)
+        for _mod, pkg in OCR_CHECK_LEAF_MODULES.items():
+            detailed[pkg] = (True, True)  # 全部 leaf 可用
+
+        captured_stack = {}
+
+        def fake_stack(**kwargs):
+            captured_stack.update(kwargs)
+            return True, "ok"
+
+        with (
+            patch(
+                "vibeocr.env_manager.get_pip_source",
+                return_value="https://pypi.org/simple",
+            ),
+            patch(
+                "vibeocr.env_manager.get_embedded_python_executable",
+                return_value=python_exe,
+            ),
+            patch(
+                "vibeocr.env_manager._check_imports_detailed",
+                return_value=detailed,
+            ),
+            patch("vibeocr.env_manager._install_paddle_stack", side_effect=fake_stack),
+            patch("vibeocr.env_manager.detect_gpu", return_value=(False, None)),
+        ):
+            install_missing_dependencies(
+                tmp_path, progress_callback=lambda s, m: None
+            )
+
+        subset = captured_stack.get("requirements_override")
+        # 全部已装时 subset 为空（函数提前返回 "所有OCR依赖已安装"）
+        # 或 subset 不含 paddleocr
+        if subset is not None:
+            subset_names = [name for name, _spec, _idx in subset]
+            assert not any("PaddleOCR" in n for n in subset_names), (
+                f"全部可用时 paddleocr 不应在 subset: {subset_names}"
+            )
+
+
+class TestInstallSingleDependency:
+    """install_single_dependency 单包重装测试"""
+
+    def test_leaf_pkg_uses_plain_name(self, tmp_path):
+        """leaf 包（如 scipy）用纯包名安装（不在 specs 中）"""
+        python_exe = tmp_path / "python.exe"
+        python_exe.touch()
+
+        captured_stack = {}
+
+        def fake_stack(**kwargs):
+            captured_stack.update(kwargs)
+            return True, "ok"
+
+        with (
+            patch(
+                "vibeocr.env_manager.get_pip_source",
+                return_value="https://pypi.org/simple",
+            ),
+            patch(
+                "vibeocr.env_manager.get_embedded_python_executable",
+                return_value=python_exe,
+            ),
+            patch("vibeocr.env_manager._install_paddle_stack", side_effect=fake_stack),
+        ):
+            ok, _msg = install_single_dependency(tmp_path, "scipy")
+
+        assert ok is True
+        requirements = captured_stack.get("requirements_override", [])
+        assert len(requirements) == 1, "单包重装应只装一个包"
+        _name, spec, _idx = requirements[0]
+        # leaf 包用纯包名（无版本约束，无 extras）
+        assert "scipy" in spec
+        assert "[" not in spec, f"leaf 包不应有 extras: {spec}"
+
+    def test_toplevel_pkg_uses_full_spec(self, tmp_path):
+        """顶层包（如 paddleocr）用完整 spec（含 extras+版本约束）"""
+        python_exe = tmp_path / "python.exe"
+        python_exe.touch()
+
+        captured_stack = {}
+
+        def fake_stack(**kwargs):
+            captured_stack.update(kwargs)
+            return True, "ok"
+
+        with (
+            patch(
+                "vibeocr.env_manager.get_pip_source",
+                return_value="https://pypi.org/simple",
+            ),
+            patch(
+                "vibeocr.env_manager.get_embedded_python_executable",
+                return_value=python_exe,
+            ),
+            patch("vibeocr.env_manager._install_paddle_stack", side_effect=fake_stack),
+        ):
+            ok, _msg = install_single_dependency(tmp_path, "paddleocr")
+
+        assert ok is True
+        requirements = captured_stack.get("requirements_override", [])
+        assert len(requirements) == 1
+        _name, spec, _idx = requirements[0]
+        # 顶层包应有 extras（doc-parser）和版本约束
+        assert "paddleocr[doc-parser]" in spec, (
+            f"顶层包应用完整 spec（含 extras），实际: {spec}"
+        )
+
+    def test_returns_false_when_python_missing(self, tmp_path):
+        """Python 运行时不存在时返回失败"""
+        with patch(
+            "vibeocr.env_manager.get_embedded_python_executable",
+            return_value=tmp_path / "nonexistent.exe",
+        ):
+            ok, msg = install_single_dependency(tmp_path, "scipy")
+        assert ok is False
+        assert "Python" in msg or "运行时" in msg
+
+
 class TestLoadDepSpecs:
     """_load_dep_specs 依赖规格加载测试"""
 
@@ -947,7 +1140,7 @@ class TestCheckImportsPrimitive:
         assert result["paddlepaddle"] is False
 
     def test_covers_same_modules_as_ocr_check_modules(self, tmp_path):
-        """检测的模块集应与 env_config.OCR_CHECK_MODULES 一致（单一源）"""
+        """检测的模块集应与 OCR_CHECK_MODULES + OCR_CHECK_LEAF_MODULES 一致（单一源）"""
         python_exe = tmp_path / "python.exe"
         python_exe.touch()
 
@@ -955,10 +1148,14 @@ class TestCheckImportsPrimitive:
             mock_run.return_value = MagicMock(returncode=0, stderr="")
             result = _check_imports(python_exe)
 
-        from vibeocr.services.env_config import OCR_CHECK_MODULES
+        from vibeocr.services.env_config import (
+            OCR_CHECK_LEAF_MODULES,
+            OCR_CHECK_MODULES,
+        )
 
-        # 返回的 key 集合应等于 OCR_CHECK_MODULES 的 value（包名）集合
-        assert set(result.keys()) == set(OCR_CHECK_MODULES.values())
+        # 返回的 key 集合应等于顶层模块 + leaf 模块的包名集合
+        expected = set(OCR_CHECK_MODULES.values()) | set(OCR_CHECK_LEAF_MODULES.values())
+        assert set(result.keys()) == expected
 
     def test_uses_extended_timeout_for_paddle(self, tmp_path):
         """paddle 首次导入需初始化 CUDA，应使用延长 timeout（而非默认 15s）"""
@@ -1222,7 +1419,7 @@ class TestCheckImportsDoubleLayer:
     """
 
     def test_returns_mapping_signature_unchanged(self, tmp_path):
-        """返回签名应保持 dict[str,bool]，key 集合 == OCR_CHECK_MODULES.values()"""
+        """返回签名应保持 dict[str,bool]，key 集合 == 顶层 + leaf 模块包名"""
         python_exe = tmp_path / "python.exe"
         python_exe.touch()
 
@@ -1236,10 +1433,14 @@ class TestCheckImportsDoubleLayer:
         with patch("vibeocr.env_manager.subprocess.run", side_effect=mock_run):
             result = _check_imports(python_exe)
 
-        from vibeocr.services.env_config import OCR_CHECK_MODULES
+        from vibeocr.services.env_config import (
+            OCR_CHECK_LEAF_MODULES,
+            OCR_CHECK_MODULES,
+        )
 
-        assert set(result.keys()) == set(OCR_CHECK_MODULES.values()), (
-            "key 集合应等于 OCR_CHECK_MODULES 的包名集合"
+        expected = set(OCR_CHECK_MODULES.values()) | set(OCR_CHECK_LEAF_MODULES.values())
+        assert set(result.keys()) == expected, (
+            "key 集合应等于顶层 + leaf 模块的包名集合"
         )
         assert all(isinstance(v, bool) for v in result.values())
 
@@ -1312,9 +1513,13 @@ class TestCheckImportsDetailed:
 
             result = _check_imports_detailed(python_exe)
 
-        from vibeocr.services.env_config import OCR_CHECK_MODULES
+        from vibeocr.services.env_config import (
+            OCR_CHECK_LEAF_MODULES,
+            OCR_CHECK_MODULES,
+        )
 
-        assert set(result.keys()) == set(OCR_CHECK_MODULES.values())
+        expected = set(OCR_CHECK_MODULES.values()) | set(OCR_CHECK_LEAF_MODULES.values())
+        assert set(result.keys()) == expected
         for _pkg, (installed, usable) in result.items():
             assert isinstance(installed, bool)
             assert isinstance(usable, bool)
@@ -2465,9 +2670,15 @@ class TestInstallMissingDependencies:
                 r.returncode = 0
                 r.stdout = "1.0.0"
             elif import_code.startswith("import "):
-                # import 层：paddle/paddleocr 可用（usable=True），mineru/torch 不可用
+                # import 层：paddle/paddleocr + 所有 paddlex[ocr] leaf 包可用
+                # （usable=True），mineru/torch 不可用。
+                # leaf 包必须标可用，否则 install_missing_dependencies 的 leaf 缺失
+                # 检测会把 paddleocr 加入重装 subset（即使顶层可用），破坏"已装跳过"语义。
+                from vibeocr.services.env_config import OCR_CHECK_LEAF_MODULES
+
+                usable_modules = {"paddle", "paddleocr"} | set(OCR_CHECK_LEAF_MODULES.keys())
                 module = import_code.split()[1]
-                r.returncode = 0 if module in ("paddle", "paddleocr") else 1
+                r.returncode = 0 if module in usable_modules else 1
             else:
                 # pip install 成功
                 r.returncode = 0
