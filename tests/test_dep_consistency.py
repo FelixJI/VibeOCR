@@ -88,7 +88,9 @@ class TestValidateDepCheckConsistency:
 
     def test_gpu_alias_resolves_to_canonical(self, tmp_path):
         """paddlepaddle-gpu 应归一为 paddlepaddle canonical，不告警。"""
-        deps = ["paddleocr", "mineru", "torch", "markdown", "paddlepaddle-gpu>=3.3.1"]
+        # 用完整 OCR_CHECK_MODULES.values() + GPU 别名构造对齐的 pyproject
+        # （OCR_CHECK_MODULES 已含 PDF 后端模块 fitz/fastapi 等，须全部覆盖）
+        deps = [*OCR_CHECK_MODULES.values(), "paddlepaddle-gpu>=3.3.1"]
         _write_pyproject(tmp_path, deps)
         warnings = validate_dep_check_consistency(tmp_path)
         assert warnings == [], (

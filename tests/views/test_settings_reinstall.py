@@ -301,17 +301,22 @@ def test_refresh_fills_deps_table(controller, monkeypatch):
         "vibeocr.views.settings_page_controller.get_embedded_python_executable",
         lambda root: __import__("pathlib").Path("C:/app/python/python.exe"),
     )
-    # mock 依赖状态检测：paddle 已装，其余未装
+    # mock 依赖状态检测：paddle 已装，其余未装（含 paddlex[ocr] leaf 包）
     # 注意：_populate_deps_table 现在用 _fresh 变体（忽略缓存，保证状态实时）
+    from vibeocr.services.env_config import (
+        OCR_CHECK_LEAF_MODULES,
+        OCR_CHECK_MODULES,
+    )
+
+    # 构造完整状态：顶层模块 + leaf 包（leaf 全部未装，模拟表格识别依赖缺失场景）
+    deps_status = {pkg: False for pkg in OCR_CHECK_MODULES.values()}
+    deps_status["paddlepaddle"] = True
+    for pkg in OCR_CHECK_LEAF_MODULES.values():
+        deps_status[pkg] = False
+
     monkeypatch.setattr(
         "vibeocr.views.settings_page_controller.check_embedded_environment_dependencies_fresh",
-        lambda root: {
-            "paddlepaddle": True,
-            "paddleocr": False,
-            "mineru": False,
-            "torch": False,
-            "markdown": False,
-        },
+        lambda root: deps_status,
     )
     monkeypatch.setattr(
         "vibeocr.views.settings_page_controller.get_dependency_versions",
@@ -328,12 +333,14 @@ def test_refresh_fills_deps_table(controller, monkeypatch):
 
     table = host.findChild(QTableWidget, "tableDepsStatus")
     assert table is not None
-    # 行数应等于 OCR_CHECK_MODULES 的模块数（paddle/paddleocr/mineru/torch/markdown）。
-    # 直接读源常量长度，避免新增模块时再改硬编码魔数。
-    from vibeocr.services.env_config import OCR_CHECK_MODULES
-
-    assert table.rowCount() == len(OCR_CHECK_MODULES), (
-        f"应有 {len(OCR_CHECK_MODULES)} 行依赖，实际: {table.rowCount()}"
+    # 行数应等于顶层模块 + leaf 包的数量。
+    expected_rows = len(OCR_CHECK_MODULES) + len(OCR_CHECK_LEAF_MODULES)
+    assert table.rowCount() == expected_rows, (
+        f"应有 {expected_rows} 行依赖（顶层+leaf），实际: {table.rowCount()}"
+    )
+    # 表格应有 4 列（依赖/状态/版本/操作——操作列含单包重装按钮）
+    assert table.columnCount() == 4, (
+        f"应有 4 列（含操作列），实际: {table.columnCount()}"
     )
     # 第一行 paddlepaddle 应标记已装
     status_item = table.item(0, 1)

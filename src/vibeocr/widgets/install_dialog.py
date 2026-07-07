@@ -33,12 +33,16 @@ class InstallWorker(QThread):
         force_backend: str | None = None,
         reinstall_python: bool = False,
         missing_only: bool = False,
+        single_pkg: str | None = None,
     ) -> None:
         super().__init__()
         self._project_root = project_root
         self._force_backend = force_backend
         self._reinstall_python = reinstall_python
         self._missing_only = missing_only
+        # 单包重装模式：只装指定的一个包（设置页依赖表格"重装"按钮）。
+        # 与 missing_only 互斥；指定时跳过 Python 运行时/GPU 检测，直接单包安装。
+        self._single_pkg = single_pkg
         # 协作式取消机制：替代危险的 QThread.terminate()。
         # cancel_event 被 set 后，env_manager._run_pip 会 kill 当前 pip 子进程并抛
         # InstallCancelled；for 循环在每个包安装前检查 event 快速中止。
@@ -84,6 +88,26 @@ class InstallWorker(QThread):
     def run(self) -> None:
         """执行安装"""
         try:
+            # 单包重装模式：跳过网络/GPU/Python 检测，直接装指定包。
+            # 复用 install_single_dependency 的取消/超时/进度机制。
+            if self._single_pkg is not None:
+                self._emit_progress(
+                    "依赖安装", f"正在单独安装 {self._single_pkg}..."
+                )
+                # 单包重装仍需网络源选镜像，做一次轻量网络检测。
+                detector = NetworkDetector(self._project_root)
+                network_type = detector.network_type
+                success, msg = env_manager.install_single_dependency(
+                    self._project_root,
+                    self._single_pkg,
+                    network_type,
+                    progress_callback=self._emit_progress,
+                    cancel_event=self._cancel_event,
+                    on_proc=self._on_proc,
+                )
+                self.finished.emit(success, msg)
+                return
+
             # 1. 检测网络环境
             self._emit_progress("网络检测", "正在检测网络环境...")
             detector = NetworkDetector(self._project_root)
@@ -169,17 +193,22 @@ class InstallDialog(QDialog):
         parent=None,
         missing_only: bool = False,
         force_backend: str | None = None,
+        single_pkg: str | None = None,
     ) -> None:
         super().__init__(parent)
         self._project_root = project_root
         self._missing_only = missing_only
         self._force_backend = force_backend
+        self._single_pkg = single_pkg
         self._setup_ui()
         self._worker: InstallWorker | None = None
 
     def _setup_ui(self) -> None:
         """设置UI"""
-        self.setWindowTitle("安装OCR依赖")
+        if self._single_pkg:
+            self.setWindowTitle(f"重装依赖：{self._single_pkg}")
+        else:
+            self.setWindowTitle("安装OCR依赖")
         self.setMinimumSize(500, 400)
         self.setModal(True)
 
@@ -229,6 +258,7 @@ class InstallDialog(QDialog):
             self._project_root,
             missing_only=self._missing_only,
             force_backend=self._force_backend,
+            single_pkg=self._single_pkg,
         )
         self._worker.progress.connect(self._on_progress)
         self._worker.finished.connect(self._on_finished)

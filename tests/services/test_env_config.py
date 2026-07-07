@@ -14,6 +14,8 @@ from vibeocr.services.env_config import (
     GITHUB_REPO_BASE,
     GITEE_REPO_BASE,
     OCR_CHECK_MODULES,
+    LEAF_TO_TOPLEVEL,
+    OCR_CHECK_LEAF_MODULES,
     PORTABLE_PYTHON_DIR,
     PYTHON_BUILD_STANDALONE_ASSET,
     PYTHON_BUILD_STANDALONE_BASE,
@@ -146,6 +148,68 @@ class TestOcrCheckModules:
             # 包名不应包含版本操作符（清单只表达"检测哪些"，版本来自 pyproject）
             for op in (">", "=", "<", "~"):
                 assert op not in package, f"{package} 不应含版本约束"
+
+
+class TestOcrCheckLeafModules:
+    """OCR_CHECK_LEAF_MODULES（paddlex[ocr] leaf 包）测试。
+
+    这些 leaf 包是表格识别管道强制要求的，但顶层 paddleocr import 不触发其检查，
+    需单独探测以暴露便携安装中途失败导致的漏装。
+    """
+
+    def test_is_mapping_of_module_to_package(self):
+        """应是 {import 模块名: pip 包名} 映射"""
+        assert isinstance(OCR_CHECK_LEAF_MODULES, dict)
+        assert len(OCR_CHECK_LEAF_MODULES) > 0
+        for module, package in OCR_CHECK_LEAF_MODULES.items():
+            assert isinstance(module, str) and module
+            assert isinstance(package, str) and package
+
+    def test_covers_expected_leaf_packages(self):
+        """应覆盖 paddlex[ocr] 关键 leaf 包（表格识别爆炸的根因包）"""
+        pkgs = set(OCR_CHECK_LEAF_MODULES.values())
+        expected = {
+            "einops",
+            "ftfy",
+            "latex2mathml",
+            "premailer",
+            "regex",
+            "scikit-learn",
+            "scipy",
+            "sentencepiece",
+            "tiktoken",
+            "tokenizers",
+        }
+        missing = expected - pkgs
+        assert not missing, f"缺少 leaf 包: {missing}"
+
+    def test_sklearn_import_name_differs_from_package(self):
+        """scikit-learn 的 import 名是 sklearn（与 pip 包名不同）"""
+        assert OCR_CHECK_LEAF_MODULES["sklearn"] == "scikit-learn"
+
+    def test_no_version_constraints(self):
+        """包名不应含版本约束（清单只表达'检测哪些'）"""
+        for package in OCR_CHECK_LEAF_MODULES.values():
+            for op in (">", "=", "<", "~"):
+                assert op not in package, f"{package} 不应含版本约束"
+
+    def test_leaf_modules_disjoint_from_top_level(self):
+        """leaf 模块不应与顶层 OCR_CHECK_MODULES 重复（避免双重探测）"""
+        top_imports = set(OCR_CHECK_MODULES.keys())
+        leaf_imports = set(OCR_CHECK_LEAF_MODULES.keys())
+        overlap = top_imports & leaf_imports
+        assert not overlap, f"leaf 与顶层模块重复: {overlap}"
+
+    def test_leaf_to_toplevel_all_map_to_paddleocr(self):
+        """所有 leaf 的承载顶层包应是 paddleocr（paddleocr[doc-parser]→paddlex[ocr]）"""
+        assert isinstance(LEAF_TO_TOPLEVEL, dict)
+        for leaf_pkg, toplevel in LEAF_TO_TOPLEVEL.items():
+            assert toplevel == "paddleocr", (
+                f"{leaf_pkg} 的承载顶层包应为 paddleocr，实际 {toplevel}"
+            )
+            assert leaf_pkg in OCR_CHECK_LEAF_MODULES.values(), (
+                f"LEAF_TO_TOPLEVEL 的 key {leaf_pkg} 应在 OCR_CHECK_LEAF_MODULES.values()"
+            )
 
 
 class TestReleaseRepoConstants:

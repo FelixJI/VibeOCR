@@ -224,7 +224,11 @@ class SettingsPageController:
                 window = window.window()
             show_toast(window, text)
         except Exception:
-            logger.debug("[Toast] 显示失败（不允许影响主流程）")
+            # 不允许影响主流程，但必须记录完整堆栈——
+            # 旧实现用 logger.debug 无 exc_info，吞掉真正的异常类型与 traceback，
+            # 导致 [Toast] 显示失败 日志无法定位根因（用户实测：更新依赖按钮无反应，
+            # 唯一线索就是这行被吞的异常）。现用 logger.exception 落盘完整堆栈。
+            logger.exception("[Toast] 显示失败（不影响主流程，但请上报此堆栈）")
 
     # ----------------------------------------------------------------
     # 快捷方式创建
@@ -853,8 +857,10 @@ class SettingsPageController:
         """
         from vibeocr import env_manager
 
+        logger.info("[依赖更新] 按钮被点击，开始检测")
         python_exe = get_embedded_python_executable(self._project_root)
         if not python_exe.exists():
+            logger.warning("[依赖更新] 嵌入式 Python 不存在：%s", python_exe)
             QMessageBox.warning(
                 None,
                 "无法检测更新",
@@ -870,6 +876,7 @@ class SettingsPageController:
             QMessageBox.warning(None, "检测失败", f"检测依赖更新时出错：\n{e}")
             return
 
+        logger.info("[依赖更新] 检测完成，待更新包数=%d：%s", len(updates), dict(updates))
         if not updates:
             self._show_settings_toast("依赖已是最新")
             return
@@ -888,19 +895,25 @@ class SettingsPageController:
             QMessageBox.StandardButton.Yes,
         )
         if reply != QMessageBox.StandardButton.Yes:
+            logger.info("[依赖更新] 用户在确认对话框选择 No，已取消")
             return
 
         # 走全量安装（install_embedded_dependencies），后端用当前值
         current_backend = "gpu" if env_manager.resolve_use_gpu(self._project_root) else "cpu"
+        logger.info("[依赖更新] 用户确认，开始打开安装对话框（后端=%s）", current_backend)
         self._open_install_dialog(missing_only=False, force_backend=current_backend)
 
     def _open_install_dialog(
-        self, missing_only: bool = False, force_backend: str | None = None
+        self,
+        missing_only: bool = False,
+        force_backend: str | None = None,
+        single_pkg: str | None = None,
     ) -> None:
-        """以非模态方式打开安装进度对话框（补装/更新共用，不阻塞主窗口）。
+        """以非模态方式打开安装进度对话框（补装/更新/单包重装共用，不阻塞主窗口）。
 
         与 _open_reinstall_dialog 的区别：不弹 BackendChoiceDialog 选后端，
         直接用传入的 force_backend（通常来自 resolve_use_gpu 当前值）。
+        single_pkg 指定时进入单包重装模式（设置页依赖表格"重装"按钮）。
         """
         from vibeocr.widgets.install_dialog import InstallDialog
 
@@ -908,6 +921,7 @@ class SettingsPageController:
             self._project_root,
             missing_only=missing_only,
             force_backend=force_backend,
+            single_pkg=single_pkg,
         )
 
         def _on_finished(_result: int) -> None:
@@ -927,6 +941,19 @@ class SettingsPageController:
             dialog.install_succeeded.connect(_on_install_succeeded)
         self._active_dialogs.append(dialog)
         dialog.show()
+        logger.info(
+            "[依赖更新] 安装对话框已 show()（missing_only=%s, backend=%s, single_pkg=%s）",
+            missing_only,
+            force_backend,
+            single_pkg,
+        )
+
+    def _on_reinstall_single_dep(self, pkg: str) -> None:
+        """单包重装入口（依赖表格"重装"按钮）。
+
+        不二次确认——单包重装只装一个包，影响范围小，直接弹进度对话框。
+        """
+        self._open_install_dialog(single_pkg=pkg)
 
     def _refresh_env_maintenance_state(self) -> None:
         """刷新环境维护区状态：显示 Python 路径/就绪，依赖状态表格，非 portable 禁用按钮"""
@@ -967,9 +994,16 @@ class SettingsPageController:
             table.setRowCount(0)
 
     def _populate_deps_table(self, table: QTableWidget) -> None:
-        """填充依赖状态表格（名称/状态/版本）"""
-        # 依赖展示顺序与 OCR_CHECK_MODULES 一致
-        from vibeocr.services.env_config import OCR_CHECK_MODULES
+        """填充依赖状态表格（名称/状态/版本/操作）
+
+        顶层 OCR 依赖 + paddlex[ocr] leaf 包（表格识别间接依赖）。
+        每行附"重装"按钮，支持单包精准重装（缺失时尤其有用）。
+        """
+        # 顶层依赖展示顺序与 OCR_CHECK_MODULES 一致
+        from vibeocr.services.env_config import (
+            OCR_CHECK_LEAF_MODULES,
+            OCR_CHECK_MODULES,
+        )
 
         display_names = {
             "paddlepaddle": "PaddlePaddle",
@@ -978,7 +1012,11 @@ class SettingsPageController:
             "torch": "PyTorch",
             "markdown": "Markdown",
         }
-        ordered_pkgs = list(OCR_CHECK_MODULES.values())  # 保持插入顺序
+        # 顶层包 + leaf 包（leaf 在下方，用 leaf 分组标题区分）
+        toplevel_pkgs = list(OCR_CHECK_MODULES.values())
+        leaf_pkgs = list(OCR_CHECK_LEAF_MODULES.values())
+        all_pkgs = toplevel_pkgs + leaf_pkgs
+        leaf_pkg_set = set(leaf_pkgs)
 
         python_exe = get_embedded_python_executable(self._project_root)
         # 用 fresh 检测（忽略缓存）：设置页是用户查看实时状态的入口，
@@ -992,20 +1030,31 @@ class SettingsPageController:
         # 运行时双保险：禁用编辑（.ui 已设 NoEditTriggers，此处防遗漏）
         # + 各单元格 item 设不可编辑 flag + 列宽自适应。
         table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        # 扩展为 4 列：依赖 / 状态 / 版本 / 操作（.ui 原为 3 列，此处动态扩展）
+        table.setColumnCount(4)
+        header_item = table.horizontalHeaderItem(3)
+        if header_item is None:
+            table.setHorizontalHeaderItem(3, QTableWidgetItem("操作"))
         header = table.horizontalHeader()
         if header is not None:
             from PySide6.QtWidgets import QHeaderView
 
+            # 前 3 列自适应，操作列固定宽度（按钮不需要拉伸）
             header.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+            header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
 
         from PySide6.QtCore import Qt
 
         item_flag_no_edit = Qt.ItemFlag.ItemIsEditable
 
-        table.setRowCount(len(ordered_pkgs))
-        for row, pkg in enumerate(ordered_pkgs):
+        table.setRowCount(len(all_pkgs))
+        for row, pkg in enumerate(all_pkgs):
             installed = deps_status.get(pkg, False)
-            name_item = QTableWidgetItem(display_names.get(pkg, pkg))
+            # leaf 包展示名：纯包名（已是 pip 包名，如 scikit-learn）
+            name = display_names.get(pkg, pkg)
+            if pkg in leaf_pkg_set:
+                name = f"  └ {name}"  # 缩进+连接符，视觉上归属"表格识别间接依赖"
+            name_item = QTableWidgetItem(name)
             status_text = "✓ 已安装" if installed else "✗ 未安装"
             status_item = QTableWidgetItem(status_text)
             # 版本为空但状态已安装时显示占位，避免"已安装却无版本号"的困惑
@@ -1019,6 +1068,14 @@ class SettingsPageController:
             table.setItem(row, 0, name_item)
             table.setItem(row, 1, status_item)
             table.setItem(row, 2, ver_item)
+            # 操作列：重装按钮（单包重装，复用 InstallDialog 进度展示）
+            reinstall_btn = QPushButton("重装")
+            reinstall_btn.setToolTip(f"单独重装 {pkg}（不影响其它已装依赖）")
+            # 用 lambda 默认参数捕获 pkg，避免循环里闭包延迟绑定问题
+            reinstall_btn.clicked.connect(
+                lambda _checked=False, p=pkg: self._on_reinstall_single_dep(p)
+            )
+            table.setCellWidget(row, 3, reinstall_btn)
 
     def _on_clear_cache_clicked(self) -> None:
         """清除缓存按钮点击"""

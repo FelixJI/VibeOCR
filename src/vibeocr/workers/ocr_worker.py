@@ -289,8 +289,13 @@ def run_worker(shm_name: str, shm_size: int, use_gpu: bool) -> None:
                         protocol.wait_for_read(timeout=5.0)
 
                     except Exception as e:
-                        # 发送错误
+                        # 发送错误。附带 __cause__ 透传 PaddleX 真因（DependencyError
+                        # 被 PaddleX 包成无信息 RuntimeError，__cause__ 才含具体缺失包）。
                         error_msg = f"{type(e).__name__}: {e!s}"
+                        if e.__cause__ is not None:
+                            error_msg += (
+                                f" | 原因: {type(e.__cause__).__name__}: {e.__cause__}"
+                            )
                         logger.error(f"识别失败: {error_msg}")
                         protocol.write_message(
                             MSG_ERROR, error_msg.encode("utf-8"), sender="worker"
@@ -330,6 +335,10 @@ def run_worker(shm_name: str, shm_size: int, use_gpu: bool) -> None:
 
                     except Exception as e:
                         error_msg = f"{type(e).__name__}: {e!s}"
+                        if e.__cause__ is not None:
+                            error_msg += (
+                                f" | 原因: {type(e.__cause__).__name__}: {e.__cause__}"
+                            )
                         logger.error(f"批量识别失败: {error_msg}", exc_info=True)
                         protocol.write_message(
                             MSG_ERROR, error_msg.encode("utf-8"), sender="worker"
@@ -376,7 +385,17 @@ def run_worker(shm_name: str, shm_size: int, use_gpu: bool) -> None:
                                 )
                             except Exception as e:
                                 results[pipeline_name] = False
-                                logger.error(f"预加载 {pipeline_name} 失败: {e}")
+                                # 附带 __cause__ 透传 PaddleX 真因（如 DependencyError
+                                # 的具体缺失包），便于定位预加载失败的根因。
+                                cause_info = ""
+                                if e.__cause__ is not None:
+                                    cause_info = (
+                                        f" | 原因: "
+                                        f"{type(e.__cause__).__name__}: {e.__cause__}"
+                                    )
+                                logger.error(
+                                    f"预加载 {pipeline_name} 失败: {e}{cause_info}"
+                                )
 
                         # 发送预加载结果
                         logger.debug(f"[Worker] 准备发送预加载结果: {results}")
