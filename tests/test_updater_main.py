@@ -671,6 +671,102 @@ class TestRenameLockedSelfExe:
 
 
 # ---------------------------------------------------------------------------
+# _safe_remove_running_exe（删运行中 exe：退避重试 → MoveFileEx 重启清理）
+# ---------------------------------------------------------------------------
+
+
+class TestSafeRemoveRunningExe:
+    """删除运行中进程映像的 exe：Windows 禁止删运行中 exe（PE 映射锁），
+    普通删除必然 WinError 5。本函数降级到 MoveFileEx(MOVEFILE_DELAY_UNTIL_REBOOT)
+    标记 OS 重启时删除，消除 updater.exe.old 永久残留（历史 bug）。"""
+
+    def test_noop_when_file_absent(self, updater, tmp_path):
+        """目标文件不存在时应直接返回，不抛异常。"""
+        # 不应抛异常
+        updater._safe_remove_running_exe(tmp_path / "nonexistent.exe")
+
+    def test_normal_delete_succeeds(self, updater, tmp_path, monkeypatch):
+        """文件未被占用时，普通退避删除即可成功，文件消失。"""
+        path = tmp_path / "free.exe"
+        path.write_bytes(b"not locked")
+        # 不 mock os.name，真实平台删除即可（CI 上文件未被锁，能正常删）
+        updater._safe_remove_running_exe(path)
+        assert not path.exists()
+
+    def test_busy_then_movefileex_marks_for_reboot(
+        self, updater, tmp_path, monkeypatch
+    ):
+        """退避删除失败（运行中 exe）→ Windows 上调 MoveFileExW 标记重启删除。
+
+        模拟：_busy_remove 返回 False（删不掉），mock MoveFileExW 断言被以
+        flag=4（MOVEFILE_DELAY_UNTIL_REBOOT）调用且返回成功。
+        """
+        path = tmp_path / "updater.exe.old"
+        path.write_bytes(b"running image")
+        monkeypatch.setattr(updater.os, "name", "nt")
+        monkeypatch.setattr(updater, "_busy_remove", lambda p, *, is_dir: False)
+
+        calls = []
+
+        import ctypes
+
+        # windll.kernel32 是 LibraryLoader 动态生成的 CDLL 实例；
+        # 直接在其上 patch MoveFileExW 属性，使代码内
+        # ``ctypes.windll.kernel32.MoveFileExW(...)`` 命中 mock。
+        def _fake_move_file_ex_w(src, dst, flags):
+            calls.append((src, dst, flags))
+            return 1  # 成功
+
+        monkeypatch.setattr(
+            ctypes.windll.kernel32, "MoveFileExW", _fake_move_file_ex_w
+        )
+
+        updater._safe_remove_running_exe(path, label="updater.exe.old")
+
+        # 文件未被真删（模拟运行中），但 MoveFileEx 应被调用，flag=4
+        assert len(calls) == 1
+        src, dst, flags = calls[0]
+        assert src == str(path)
+        assert dst is None
+        assert flags == 4  # MOVEFILE_DELAY_UNTIL_REBOOT
+
+    def test_busy_and_movefileex_fails_logs_only(
+        self, updater, tmp_path, monkeypatch
+    ):
+        """MoveFileEx 也失败时（返回 0）不应抛异常，仅记录（留待下次入口清理）。"""
+        path = tmp_path / "updater.exe.old"
+        path.write_bytes(b"running image")
+        monkeypatch.setattr(updater.os, "name", "nt")
+        monkeypatch.setattr(updater, "_busy_remove", lambda p, *, is_dir: False)
+
+        import ctypes
+
+        def _fake_move_file_ex_w(src, dst, flags):
+            return 0  # 失败
+
+        monkeypatch.setattr(
+            ctypes.windll.kernel32, "MoveFileExW", _fake_move_file_ex_w
+        )
+        monkeypatch.setattr(ctypes, "get_last_error", lambda: 5)
+
+        # 不应抛异常
+        updater._safe_remove_running_exe(path)
+        # 文件仍在（删不掉也未标记成功）
+        assert path.exists()
+
+    def test_non_windows_busy_logs_only(self, updater, tmp_path, monkeypatch):
+        """非 Windows：退避删除失败后仅记录，不调 MoveFileEx（posix 无此 API）。"""
+        path = tmp_path / "updater.exe.old"
+        path.write_bytes(b"locked on posix")
+        monkeypatch.setattr(updater.os, "name", "posix")
+        monkeypatch.setattr(updater, "_busy_remove", lambda p, *, is_dir: False)
+
+        # 不应抛异常，文件仍在
+        updater._safe_remove_running_exe(path)
+        assert path.exists()
+
+
+# ---------------------------------------------------------------------------
 # run_replacement（统一入口：写就绪信号 + 顶层异常兜底写日志后返回 1）
 # ---------------------------------------------------------------------------
 

@@ -10,6 +10,7 @@ from PySide6.QtCore import (
     QPropertyAnimation,
     Qt,
     QTimer,
+    Signal,
 )
 from PySide6.QtWidgets import QLabel, QWidget
 
@@ -30,6 +31,10 @@ class ToastWidget(QLabel):
         toast = ToastWidget(self, "保存成功")
         toast.show_at_top()
     """
+
+    # 淡出动画完成时发出。show_toast 据此从 _active_toasts 移除并 deleteLater，
+    # 形成完整生命周期（避开 destroyed 信号在对象析构时访问 wrapper 的时序坑）。
+    faded_out = Signal()
 
     def __init__(
         self,
@@ -102,7 +107,11 @@ class ToastWidget(QLabel):
         self._fade_out.setStartValue(self.windowOpacity())
         self._fade_out.setEndValue(0.0)
         self._fade_out.setEasingCurve(QEasingCurve.Type.InCubic)
+        # 淡出完成：先 hide（立即不可见），再发 faded_out 信号让外部清理引用并
+        # deleteLater。旧实现只 hide 不 deleteLater → QLabel 对象常驻 +
+        # _active_toasts 的 Python 引用 → toast 永不析构 → 列表无限增长（内存泄漏）。
         self._fade_out.finished.connect(self.hide)
+        self._fade_out.finished.connect(self.faded_out)
         self._fade_out.start()
 
 
@@ -114,19 +123,34 @@ class ToastWidget(QLabel):
 _active_toasts: list[ToastWidget] = []
 
 
-def _on_toast_destroyed(t: ToastWidget) -> None:
+def _release_toast(toast: ToastWidget) -> None:
+    """从 _active_toasts 移除 toast 并调度其析构。
+
+    在淡出完成时调用——此时对象仍完全有效，可安全访问 wrapper。先从 Python 列表
+    移除（解除引用），再 deleteLater 让 Qt 在事件循环空闲时回收 C++ 对象。
+    避开 destroyed 信号时序坑：destroyed 触发时 wrapper 已半失效，在那时访问
+    列表移除不安全。
+    """
     try:
-        _active_toasts.remove(t)
+        _active_toasts.remove(toast)
     except ValueError:
         pass
+    toast.deleteLater()
 
 
 def show_toast(parent: QWidget, text: str, duration: int = _TOAST_DURATION) -> None:
     """便捷函数：在 *parent* 的顶部居中弹出 Toast 后自动消失。
 
     *parent* 通常传 ``self.window()`` 或 ``self``（主窗口），避免被 Tab 裁剪。
+
+    toast 的生命周期：show → 淡入 → 计时到期 → 淡出 → ``_release_toast`` 从
+    ``_active_toasts`` 移除并 ``deleteLater`` 回收，形成 GC 闭环。
+    ``_active_toasts`` 仅在动画期间持有引用，防止过早回收。
     """
     toast = ToastWidget(parent, text, duration)
-    toast.destroyed.connect(lambda obj=t: _on_toast_destroyed(obj))  # type: ignore[misc]
     _active_toasts.append(toast)
+    # 旧实现 lambda obj=t 的 t 未定义 → NameError → destroyed 清理从未生效，加上
+    # 旧 _start_fade_out 只 hide 不 deleteLater，toast 永不析构 → _active_toasts
+    # 无限增长。改在淡出完成时同步释放（对象仍有效，安全）。
+    toast.faded_out.connect(lambda t=toast: _release_toast(t))
     toast.show_at_top()

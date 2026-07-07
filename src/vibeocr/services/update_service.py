@@ -158,6 +158,30 @@ def _detect_network_type() -> str:
         return "international"
 
 
+async def _probe_github_reachable(timeout: float = 3.0) -> bool:
+    """快速探测 GitHub API（api.github.com）是否可达。
+
+    与 ``NetworkDetector`` 的国内/海外判定互补：那个判断用户所在网络环境（中国 vs
+    海外），本函数判断「此刻能不能直连 GitHub」。典型场景：海外或代理环境下
+    ``NetworkDetector`` 判 international（应直连 GitHub），但 GitHub 实际被墙/不稳定，
+    此时下载应改走国内代理（gh-proxy / ghproxy）。仅在 international 分支调用：
+    domestic 分支本就代理优先，无需再探测。
+
+    用 HEAD 请求 + 3s 超时，失败（DNS/连接/SSL/超时/5xx）一律视为不可达。
+    4xx（如 403 限流）仍视为可达——说明能连上 GitHub，只是 rate limited。
+    """
+    try:
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+            resp = await client.head(
+                GITHUB_API_LATEST,
+                headers={"Accept": "application/vnd.github+json"},
+            )
+            return resp.status_code < 500
+    except Exception as e:
+        logger.debug(f"GitHub 可达性探测失败（视为不可达）: {e}")
+        return False
+
+
 async def check_for_updates(
     current_version: str,
 ) -> tuple[UpdateInfo | None, bool]:
@@ -285,8 +309,10 @@ async def _download_zip_with_sha(
             return SourceAttempt(False, DOWNLOAD_REASON_SHA_MISSING)
         sha256_path.write_text(sha_resp.text, encoding="utf-8")
 
-        # 校验
-        if not verify_sha256(zip_path, sha256_path):
+        # 校验。verify_sha256 同步读整个 zip（~50MB+）入内存算哈希，在 qasync 事件
+        # 循环里会冻结 UI 与取消响应（弱网/慢盘下尤甚，曾表现为「下载完成后无响应」）。
+        # 用 asyncio.to_thread 把重 CPU/IO 搬到默认线程池，事件循环继续转。
+        if not await asyncio.to_thread(verify_sha256, zip_path, sha256_path):
             logger.warning(f"SHA256 校验失败，换源：{zip_url}")
             zip_path.unlink(missing_ok=True)
             sha256_path.unlink(missing_ok=True)
@@ -348,6 +374,13 @@ async def download_update(
     zip_path = cache_dir / zip_filename
     sha256_path = cache_dir / sha_filename
     network_type = _detect_network_type()
+    # 海外环境（NetworkDetector 判 international）默认直连 GitHub。但 GitHub 实际
+    # 不可达时（被墙/不稳定），直连只会在所有源失败后才提示「网络问题」，体验差且
+    # 浪费一次完整下载。此处主动探测 GitHub：不可达则降级走国内代理源序。
+    # domestic 分支本就代理优先，无需探测（避免每次更新都多打一个请求）。
+    if network_type == "international" and not await _probe_github_reachable():
+        logger.info("GitHub 直连不可达，改用国内代理源序下载")
+        network_type = "domestic"
     url_pairs = build_asset_url_pairs(
         network_type, update_info.version, zip_filename, sha_filename
     )

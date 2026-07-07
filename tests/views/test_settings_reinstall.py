@@ -226,13 +226,23 @@ def test_install_missing_button_exists(controller):
     assert btn is not None, "btnInstallMissing 应存在"
 
 
-def test_deps_status_table_exists(controller):
-    """依赖状态表格应在 UI 中可找到"""
+def test_deps_status_tree_exists(controller):
+    """依赖状态树（QTreeWidget）应在 UI 中可找到"""
     _ctrl, host = controller
-    from PySide6.QtWidgets import QTableWidget
+    from PySide6.QtWidgets import QTreeWidget
 
-    table = host.findChild(QTableWidget, "tableDepsStatus")
-    assert table is not None, "tableDepsStatus 应存在"
+    tree = host.findChild(QTreeWidget, "treeDepsStatus")
+    assert tree is not None, "treeDepsStatus 应存在"
+
+
+def test_reinstall_selected_button_exists(controller):
+    """重装选中项按钮应在 UI 中可找到，且初始禁用"""
+    _ctrl, host = controller
+    from PySide6.QtWidgets import QPushButton
+
+    btn = host.findChild(QPushButton, "btnReinstallSelected")
+    assert btn is not None, "btnReinstallSelected 应存在"
+    assert not btn.isEnabled(), "无选中时重装选中项按钮应禁用"
 
 
 def test_click_install_missing_opens_dialog_with_missing_only(controller, monkeypatch):
@@ -280,10 +290,14 @@ def test_click_install_missing_opens_dialog_with_missing_only(controller, monkey
     )
 
 
-def test_refresh_fills_deps_table(controller, monkeypatch):
-    """_refresh_env_maintenance_state 应填充依赖状态表格"""
+def test_refresh_fills_deps_tree(controller, monkeypatch):
+    """_refresh_env_maintenance_state 应填充依赖状态树
+
+    顶层 OCR 依赖每个一行（QTreeWidget 顶层节点），状态列三态：
+    完整安装 / 已安装，缺 xxx / 未安装。
+    """
     ctrl, host = controller
-    from PySide6.QtWidgets import QTableWidget
+    from PySide6.QtWidgets import QTreeWidget
 
     monkeypatch.setattr(
         "vibeocr.views.settings_page_controller.get_environment_mode",
@@ -301,60 +315,56 @@ def test_refresh_fills_deps_table(controller, monkeypatch):
         "vibeocr.views.settings_page_controller.get_embedded_python_executable",
         lambda root: __import__("pathlib").Path("C:/app/python/python.exe"),
     )
-    # mock 依赖状态检测：paddle 已装，其余未装（含 paddlex[ocr] leaf 包）
-    # 注意：_populate_deps_table 现在用 _fresh 变体（忽略缓存，保证状态实时）
-    from vibeocr.services.env_config import (
-        OCR_CHECK_LEAF_MODULES,
-        OCR_CHECK_MODULES,
-    )
+    from vibeocr.services.env_config import OCR_CHECK_MODULES
 
-    # 构造完整状态：顶层模块 + leaf 包（leaf 全部未装，模拟表格识别依赖缺失场景）
-    deps_status = {pkg: False for pkg in OCR_CHECK_MODULES.values()}
-    deps_status["paddlepaddle"] = True
-    for pkg in OCR_CHECK_LEAF_MODULES.values():
-        deps_status[pkg] = False
+    # 三元状态：paddle 完整安装；mineru 已装但缺 torch（间接依赖未完成）；
+    # paddleocr 未安装。
+    def _detailed(root):
+        return {
+            "paddlepaddle": (True, True, None),
+            "mineru": (True, False, "torch"),
+            "paddleocr": (False, False, None),
+        }
 
     monkeypatch.setattr(
-        "vibeocr.views.settings_page_controller.check_embedded_environment_dependencies_fresh",
-        lambda root: deps_status,
+        "vibeocr.views.settings_page_controller.check_dependencies_status_detailed",
+        _detailed,
+    )
+    monkeypatch.setattr(
+        "vibeocr.views.settings_page_controller.get_direct_dependencies",
+        lambda exe, pkg: [],
     )
     monkeypatch.setattr(
         "vibeocr.views.settings_page_controller.get_dependency_versions",
-        lambda root: {
-            "paddlepaddle": "3.3.1",
-            "paddleocr": "",
-            "mineru": "",
-            "torch": "",
-            "markdown": "",
-        },
+        lambda root: {"paddlepaddle": "3.3.1"},
     )
 
     ctrl._refresh_env_maintenance_state()
 
-    table = host.findChild(QTableWidget, "tableDepsStatus")
-    assert table is not None
-    # 行数应等于顶层模块 + leaf 包的数量。
-    expected_rows = len(OCR_CHECK_MODULES) + len(OCR_CHECK_LEAF_MODULES)
-    assert table.rowCount() == expected_rows, (
-        f"应有 {expected_rows} 行依赖（顶层+leaf），实际: {table.rowCount()}"
+    tree = host.findChild(QTreeWidget, "treeDepsStatus")
+    assert tree is not None
+    # 顶层节点数 == OCR_CHECK_MODULES 数量
+    assert tree.topLevelItemCount() == len(OCR_CHECK_MODULES), (
+        f"应有 {len(OCR_CHECK_MODULES)} 个顶层节点，实际: {tree.topLevelItemCount()}"
     )
-    # 表格应有 4 列（依赖/状态/版本/操作——操作列含单包重装按钮）
-    assert table.columnCount() == 4, (
-        f"应有 4 列（含操作列），实际: {table.columnCount()}"
+    # 第一行 paddlepaddle：完整安装
+    top0 = tree.topLevelItem(0)
+    assert "完整安装" in top0.text(1), f"paddlepaddle 应完整安装，实际: {top0.text(1)}"
+    # 找到 mineru 行：应显示"已安装，缺 torch"
+    statuses = [tree.topLevelItem(i).text(1) for i in range(tree.topLevelItemCount())]
+    mineru_status = next(
+        (s for s in statuses if "缺 torch" in s), None
     )
-    # 第一行 paddlepaddle 应标记已装
-    status_item = table.item(0, 1)
-    assert status_item is not None
-    assert "已安装" in status_item.text() or "✓" in status_item.text(), (
-        f"paddlepaddle 应已安装，实际: {status_item.text()}"
+    assert mineru_status is not None, (
+        f"mineru 应显示'已安装，缺 torch'，实际状态列: {statuses}"
     )
 
 
-def test_deps_table_uses_fresh_check(controller, qtbot, tmp_path, monkeypatch):
-    """依赖状态表格应使用 fresh 检测（忽略缓存），保证装完即刷新
+def test_deps_tree_uses_detailed_fresh_check(controller, monkeypatch):
+    """依赖状态树应使用 check_dependencies_status_detailed（fresh，含缺失模块名）
 
-    回归（修复 4）：旧逻辑 _populate_deps_table 用 check_embedded_environment_dependencies
-    （带缓存），装完依赖但缓存未刷新时表格显示过期状态。
+    回归：旧逻辑用 check_embedded_environment_dependencies_fresh（仅布尔），
+    无法在状态列显示"已安装，缺 xxx"。改用 detailed 三元检测。
     """
     ctrl, _host = controller
 
@@ -371,30 +381,140 @@ def test_deps_table_uses_fresh_check(controller, qtbot, tmp_path, monkeypatch):
         lambda root: __import__("pathlib").Path("C:/app/python/python.exe"),
     )
     monkeypatch.setattr(
+        "vibeocr.views.settings_page_controller.get_direct_dependencies",
+        lambda exe, pkg: [],
+    )
+    monkeypatch.setattr(
         "vibeocr.views.settings_page_controller.get_dependency_versions",
         lambda root: {},
     )
 
-    # 关键：验证 _populate_deps_table 走的是 _fresh 变体（忽略缓存）。
-    # controller 仅 import 了 check_embedded_environment_dependencies_fresh，
-    # 代码路径上没有对带缓存旧函数的调用，因此这里只断言 _fresh 被触发。
-    fresh_called = {"count": 0}
+    detailed_called = {"count": 0}
 
-    def _fresh_tracker(root):
-        fresh_called["count"] += 1
-        return {
-            "paddlepaddle": True,
-            "paddleocr": True,
-            "mineru": True,
-            "torch": True,
-            "markdown": True,
-        }
+    def _tracker(root):
+        detailed_called["count"] += 1
+        return {"paddlepaddle": (True, True, None)}
 
     monkeypatch.setattr(
-        "vibeocr.views.settings_page_controller.check_embedded_environment_dependencies_fresh",
-        _fresh_tracker,
+        "vibeocr.views.settings_page_controller.check_dependencies_status_detailed",
+        _tracker,
     )
 
     ctrl._refresh_env_maintenance_state()
 
-    assert fresh_called["count"] >= 1, "应调用 _fresh 变体"
+    assert detailed_called["count"] >= 1, "应调用 detailed 三元检测"
+
+
+def test_deps_tree_expands_direct_dependencies(controller, monkeypatch):
+    """依赖树顶层节点应可展开显示动态推导的直接依赖子节点"""
+    ctrl, host = controller
+    from PySide6.QtWidgets import QTreeWidget
+
+    monkeypatch.setattr(
+        "vibeocr.views.settings_page_controller.get_environment_mode",
+        lambda root: "portable",
+    )
+    monkeypatch.setattr(
+        "vibeocr.views.settings_page_controller.get_embedded_python_info",
+        lambda root: {"path": "C:/app/python/python.exe", "mode": "portable", "ready": True},
+    )
+    monkeypatch.setattr(
+        "vibeocr.views.settings_page_controller.get_embedded_python_executable",
+        lambda root: __import__("pathlib").Path("C:/app/python/python.exe"),
+    )
+    monkeypatch.setattr(
+        "vibeocr.views.settings_page_controller.check_dependencies_status_detailed",
+        lambda root: {"mineru": (True, True, None)},
+    )
+    # mineru 有两个直接依赖
+    monkeypatch.setattr(
+        "vibeocr.views.settings_page_controller.get_direct_dependencies",
+        lambda exe, pkg: ["opencv-python", "rapid-table"] if pkg == "mineru" else [],
+    )
+    monkeypatch.setattr(
+        "vibeocr.views.settings_page_controller.get_dependency_versions",
+        lambda root: {},
+    )
+
+    ctrl._refresh_env_maintenance_state()
+
+    tree = host.findChild(QTreeWidget, "treeDepsStatus")
+    # 遍历找到 mineru 节点（OCR_CHECK_MODULES 顺序中它不是第 0 个）
+    mineru_item = None
+    for i in range(tree.topLevelItemCount()):
+        it = tree.topLevelItem(i)
+        if "MinerU" in it.text(0):
+            mineru_item = it
+            break
+    assert mineru_item is not None, "应找到 MinerU 顶层节点"
+    assert mineru_item.childCount() == 2, (
+        f"mineru 应有 2 个直接依赖子节点，实际: {mineru_item.childCount()}"
+    )
+    child0 = mineru_item.child(0).text(0)
+    assert "opencv-python" in child0 or "rapid-table" in child0
+
+
+def test_click_reinstall_selected_batch_reinstalls(controller, monkeypatch):
+    """选中顶层节点后点"重装选中项"：确认后走 InstallDialog(packages=[...])"""
+    ctrl, host = controller
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QMessageBox, QPushButton, QTreeWidget
+
+    monkeypatch.setattr(
+        "vibeocr.views.settings_page_controller.get_environment_mode",
+        lambda root: "portable",
+    )
+    monkeypatch.setattr(
+        "vibeocr.views.settings_page_controller.get_embedded_python_info",
+        lambda root: {"path": "C:/app/python/python.exe", "mode": "portable", "ready": True},
+    )
+    monkeypatch.setattr(
+        "vibeocr.views.settings_page_controller.get_embedded_python_executable",
+        lambda root: __import__("pathlib").Path("C:/app/python/python.exe"),
+    )
+    monkeypatch.setattr(
+        "vibeocr.views.settings_page_controller.check_dependencies_status_detailed",
+        lambda root: {"mineru": (False, False, None), "paddleocr": (False, False, None)},
+    )
+    monkeypatch.setattr(
+        "vibeocr.views.settings_page_controller.get_direct_dependencies",
+        lambda exe, pkg: [],
+    )
+    monkeypatch.setattr(
+        "vibeocr.views.settings_page_controller.get_dependency_versions",
+        lambda root: {},
+    )
+    ctrl._refresh_env_maintenance_state()
+
+    tree = host.findChild(QTreeWidget, "treeDepsStatus")
+    # 选中两个顶层节点
+    tree.topLevelItem(0).setSelected(True)
+    tree.topLevelItem(1).setSelected(True)
+
+    monkeypatch.setattr(
+        QMessageBox, "question", lambda *a, **kw: QMessageBox.StandardButton.Yes
+    )
+    instances = []
+
+    class FakeDialog:
+        def __init__(self, *args, **kwargs):
+            instances.append(kwargs)
+
+        def show(self):
+            pass
+
+        finished = MagicMock()
+        install_succeeded = MagicMock()
+
+    monkeypatch.setattr(
+        "vibeocr.widgets.install_dialog.InstallDialog", FakeDialog
+    )
+
+    btn = host.findChild(QPushButton, "btnReinstallSelected")
+    btn.click()
+
+    assert len(instances) == 1
+    pkgs = instances[0].get("packages")
+    assert pkgs is not None and len(pkgs) == 2, (
+        f"应批量重装 2 个包，实际 packages: {pkgs}"
+    )

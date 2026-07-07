@@ -3,7 +3,7 @@
 ################################################################################
 ## Form generated from reading UI file 'main_window.ui'
 ##
-## Created by: Qt User Interface Compiler version 6.10.1
+## Created by: Qt User Interface Compiler version 6.11.1
 ##
 ## WARNING! All changes made in this file will be lost when recompiling UI file!
 ################################################################################
@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QFram
     QGroupBox, QHBoxLayout, QHeaderView, QLabel,
     QListWidget, QListWidgetItem, QProgressBar, QPushButton,
     QSizePolicy, QSpacerItem, QSpinBox, QSplitter,
-    QStackedWidget, QTabWidget, QTableWidget, QTableWidgetItem,
+    QStackedWidget, QTabWidget, QTreeWidget, QTreeWidgetItem,
     QVBoxLayout, QWidget)
 
 from vibeocr.widgets.preview_widget import PreviewWidget
@@ -340,23 +340,23 @@ class Ui_MainWindowWidget(object):
 
         self.envMaintenanceLayout.addWidget(self.labelEnvStatus)
 
-        self.tableDepsStatus = QTableWidget(self.groupEnvMaintenance)
-        if (self.tableDepsStatus.columnCount() < 3):
-            self.tableDepsStatus.setColumnCount(3)
-        __qtablewidgetitem = QTableWidgetItem()
-        self.tableDepsStatus.setHorizontalHeaderItem(0, __qtablewidgetitem)
-        __qtablewidgetitem1 = QTableWidgetItem()
-        self.tableDepsStatus.setHorizontalHeaderItem(1, __qtablewidgetitem1)
-        __qtablewidgetitem2 = QTableWidgetItem()
-        self.tableDepsStatus.setHorizontalHeaderItem(2, __qtablewidgetitem2)
-        self.tableDepsStatus.setObjectName(u"tableDepsStatus")
-        self.tableDepsStatus.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self.tableDepsStatus.setSelectionMode(QAbstractItemView.NoSelection)
-        self.tableDepsStatus.setFocusPolicy(Qt.NoFocus)
-        self.tableDepsStatus.horizontalHeader().setDefaultSectionSize(120)
-        self.tableDepsStatus.horizontalHeader().setStretchLastSection(True)
+        self.treeDepsStatus = QTreeWidget(self.groupEnvMaintenance)
+        self.treeDepsStatus.setObjectName(u"treeDepsStatus")
+        self.treeDepsStatus.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.treeDepsStatus.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.treeDepsStatus.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.treeDepsStatus.setRootIsDecorated(True)
+        self.treeDepsStatus.setExpandsOnDoubleClick(True)
+        self.treeDepsStatus.header().setDefaultSectionSize(120)
+        self.treeDepsStatus.header().setStretchLastSection(True)
 
-        self.envMaintenanceLayout.addWidget(self.tableDepsStatus)
+        self.envMaintenanceLayout.addWidget(self.treeDepsStatus)
+
+        self.btnReinstallSelected = QPushButton(self.groupEnvMaintenance)
+        self.btnReinstallSelected.setObjectName(u"btnReinstallSelected")
+        self.btnReinstallSelected.setEnabled(False)
+
+        self.envMaintenanceLayout.addWidget(self.btnReinstallSelected)
 
         self.btnReinstallPython = QPushButton(self.groupEnvMaintenance)
         self.btnReinstallPython.setObjectName(u"btnReinstallPython")
@@ -423,9 +423,9 @@ class Ui_MainWindowWidget(object):
         __sortingEnabled = self.settingsNavList.isSortingEnabled()
         self.settingsNavList.setSortingEnabled(False)
         ___qlistwidgetitem = self.settingsNavList.item(0)
-        ___qlistwidgetitem.setText(QCoreApplication.translate("MainWindowWidget", u"\u6a21\u578b\u7ba1\u7406", None));
+        ___qlistwidgetitem.setText(QCoreApplication.translate("MainWindowWidget", u"\u6a21\u578b\u7ba1\u7406", None))
         ___qlistwidgetitem1 = self.settingsNavList.item(1)
-        ___qlistwidgetitem1.setText(QCoreApplication.translate("MainWindowWidget", u"\u5e94\u7528\u8bbe\u7f6e", None));
+        ___qlistwidgetitem1.setText(QCoreApplication.translate("MainWindowWidget", u"\u5e94\u7528\u8bbe\u7f6e", None))
         self.settingsNavList.setSortingEnabled(__sortingEnabled)
 
         self.groupPreload.setTitle(QCoreApplication.translate("MainWindowWidget", u"\u6a21\u578b\u9884\u52a0\u8f7d", None))
@@ -491,15 +491,17 @@ class Ui_MainWindowWidget(object):
         self.chkAutoStart.setText(QCoreApplication.translate("MainWindowWidget", u"\u5f00\u673a\u81ea\u542f\u52a8", None))
         self.groupEnvMaintenance.setTitle(QCoreApplication.translate("MainWindowWidget", u"\u63a8\u7406\u540e\u7aef\u4e0e\u4f9d\u8d56", None))
         self.labelEnvStatus.setText(QCoreApplication.translate("MainWindowWidget", u"Python \u8fd0\u884c\u65f6\uff1a\u68c0\u6d4b\u4e2d...", None))
-        ___qtablewidgetitem = self.tableDepsStatus.horizontalHeaderItem(0)
-        ___qtablewidgetitem.setText(QCoreApplication.translate("MainWindowWidget", u"\u4f9d\u8d56", None));
-        ___qtablewidgetitem1 = self.tableDepsStatus.horizontalHeaderItem(1)
-        ___qtablewidgetitem1.setText(QCoreApplication.translate("MainWindowWidget", u"\u72b6\u6001", None));
-        ___qtablewidgetitem2 = self.tableDepsStatus.horizontalHeaderItem(2)
-        ___qtablewidgetitem2.setText(QCoreApplication.translate("MainWindowWidget", u"\u7248\u672c", None));
+        ___qtreewidgetitem = self.treeDepsStatus.headerItem()
+        ___qtreewidgetitem.setText(2, QCoreApplication.translate("MainWindowWidget", u"\u7248\u672c", None))
+        ___qtreewidgetitem.setText(1, QCoreApplication.translate("MainWindowWidget", u"\u72b6\u6001", None))
+        ___qtreewidgetitem.setText(0, QCoreApplication.translate("MainWindowWidget", u"\u4f9d\u8d56", None))
 #if QT_CONFIG(tooltip)
-        self.tableDepsStatus.setToolTip(QCoreApplication.translate("MainWindowWidget", u"\u5404 OCR \u4f9d\u8d56\u7684\u5b89\u88c5\u72b6\u6001\uff08\u4ec5\u4fbf\u643a\u6a21\u5f0f\u53ef\u89c1\uff09", None))
+        self.treeDepsStatus.setToolTip(QCoreApplication.translate("MainWindowWidget", u"\u5404 OCR \u4f9d\u8d56\u7684\u5b89\u88c5\u72b6\u6001\uff08\u4ec5\u4fbf\u643a\u6a21\u5f0f\u53ef\u89c1\uff09\u3002\u70b9\u51fb\u9876\u5c42\u5305\u5de6\u4fa7\u7bad\u5934\u5c55\u5f00\u5176\u95f4\u63a5\u4f9d\u8d56\uff1b\u6309\u4f4f Ctrl/Shift \u591a\u9009\u540e\u70b9\"\u91cd\u88c5\u9009\u4e2d\u9879\"\u6279\u91cf\u91cd\u88c5\u3002", None))
 #endif // QT_CONFIG(tooltip)
+#if QT_CONFIG(tooltip)
+        self.btnReinstallSelected.setToolTip(QCoreApplication.translate("MainWindowWidget", u"\u91cd\u88c5\u4e0a\u65b9\u4f9d\u8d56\u6811\u4e2d\u9009\u4e2d\u7684\u9876\u5c42\u5305\uff08\u6309 Ctrl/Shift \u591a\u9009\uff09\u3002\u95f4\u63a5\u4f9d\u8d56\u901a\u8fc7\u91cd\u88c5\u5176\u627f\u8f7d\u9876\u5c42\u5305\u4fee\u590d\uff0c\u65e0\u9700\u9010\u4e2a\u9009 leaf\u3002", None))
+#endif // QT_CONFIG(tooltip)
+        self.btnReinstallSelected.setText(QCoreApplication.translate("MainWindowWidget", u"\u91cd\u88c5\u9009\u4e2d\u9879", None))
 #if QT_CONFIG(tooltip)
         self.btnReinstallPython.setToolTip(QCoreApplication.translate("MainWindowWidget", u"\u5220\u9664 python/ \u76ee\u5f55\u540e\u91cd\u65b0\u4e0b\u8f7d\u5b89\u88c5 Python \u8fd0\u884c\u65f6\u53ca OCR \u4f9d\u8d56\u3002\u4ec5\u5220\u9664 python/\uff0c\u4e0d\u5f71\u54cd\u914d\u7f6e\u3001\u6a21\u578b\u7f13\u5b58\u548c\u65e5\u5fd7\u3002", None))
 #endif // QT_CONFIG(tooltip)
