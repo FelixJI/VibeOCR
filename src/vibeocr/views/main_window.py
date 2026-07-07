@@ -70,6 +70,19 @@ class MainWindow(QMainWindow):
         self._ocr_status_callback_fn: Any = None  # OCR 状态回调
         self._app_settings = None  # 应用设置
 
+        # 懒加载 Tab：批量/二维码/PDF 在启动期仅插占位空页，首次切换时才真正构造，
+        # 把 MainWindow 构造耗时从 ~1.5s 砍到 <0.5s（首屏仅需单次识别 Tab）。
+        # 构造后属性由 None 变为真实 widget；下游已用 hasattr/getattr 防御 None。
+        self._batch_tab: Any = None
+        self._qrcode_tab: Any = None
+        self._pdf_tab: Any = None
+        # 占位页 -> 构造方法 的映射，供 currentChanged 触发懒构造
+        self._lazy_tab_builders: dict[int, tuple[str, Any]] = {}
+        # OCR 服务句柄缓存（_on_subprocess_worker_ready 时写入），供懒构造的 Tab
+        # 构造后补发服务注入
+        self._paddlex_service: Any = None
+        self._mineru_batch_service: Any = None
+
         # 当前 OCR 结果（用于复制操作）
         self._current_ocr_result: OCRResult | None = None
 
@@ -236,14 +249,11 @@ class MainWindow(QMainWindow):
         # 初始化 OCR 预设下拉框（包含截图组件和复制提示的初始化）
         self._init_preset_combo()
 
-        # 添加批量识别标签页
-        self._init_batch_tab()
-
-        # 添加二维码生成标签页
-        self._init_qrcode_tab()
-
-        # 添加 PDF 处理标签页
-        self._init_pdf_tab()
+        # 批量/二维码/PDF 标签页：先插占位空页，首次切换时才真正构造（懒加载，
+        # 避免启动期同步构建三个重型 Tab 拖慢窗口出现）。
+        self._add_lazy_tab("批量识别", "batch", self._build_batch_tab)
+        self._add_lazy_tab("二维码", "qrcode", self._build_qrcode_tab)
+        self._add_lazy_tab("PDF 处理", "pdf", self._build_pdf_tab)
 
         # 将设置标签页移到最后
         self._move_settings_tab_to_end()
@@ -330,47 +340,140 @@ class MainWindow(QMainWindow):
         # 记录截图开始前主窗口的最小化状态，用于截图结束后恢复窗口状态。
         self._main_window_minimized_before_capture = False
 
-    def _init_batch_tab(self) -> None:
-        """初始化批量识别标签页"""
-        # 创建批量识别标签页
-        self._batch_tab = BatchRecognitionTab()
+    def _add_lazy_tab(self, title: str, role: str, builder: Any) -> None:
+        """插入一个占位空页，注册懒构造回调。
 
-        # 传递布局管理器
-        self._batch_tab.set_layout_manager(self._layout_manager)
+        启动期只插一个空 QWidget（零成本），首次切换到该页时由
+        ``_on_lazy_tab_changed`` 触发 ``builder`` 真正构造内容并替换占位页。
+        占位页插在设置页之前，保持原顺序（批量→二维码→PDF→设置→关于）。
 
-        # 添加到标签页控件
-        self._ui.tabWidget.addTab(self._batch_tab, "批量识别")
-        logging.debug("批量识别标签页已添加")
+        Args:
+            title: 标签页标题。
+            role: 角色标识（"batch"/"qrcode"/"pdf"），用于构造后回填属性名。
+            builder: 无参可调用，返回真实 tab widget。
+        """
+        placeholder = QWidget()
+        settings_idx = self._ui.tabWidget.indexOf(self._ui.tabSettings)
+        insert_at = settings_idx if settings_idx >= 0 else self._ui.tabWidget.count()
+        idx = self._ui.tabWidget.insertTab(insert_at, placeholder, title)
+        self._lazy_tab_builders[idx] = (role, builder)
 
-    def _init_qrcode_tab(self) -> None:
-        """初始化二维码标签页"""
+    def _build_batch_tab(self) -> Any:
+        """构造批量识别标签页（懒加载时调用）。"""
+        tab = BatchRecognitionTab()
+        tab.set_layout_manager(self._layout_manager)
+        return tab
+
+    def _build_qrcode_tab(self) -> Any:
+        """构造二维码标签页（懒加载时调用）。"""
         from vibeocr.views.tabs.qrcode_tab import QrcodeTab
 
-        self._qrcode_tab = QrcodeTab()
-        self._ui.tabWidget.insertTab(
-            self._ui.tabWidget.indexOf(self._ui.tabSettings),
-            self._qrcode_tab,
-            "二维码",
-        )
-        logging.debug("二维码标签页已添加")
+        return QrcodeTab()
 
-    def _init_pdf_tab(self) -> None:
-        """初始化 PDF 处理标签页"""
-        self._pdf_tab = PdfTab()
-        self._ui.tabWidget.insertTab(
-            self._ui.tabWidget.indexOf(self._ui.tabSettings),
-            self._pdf_tab,
-            "PDF 处理",
-        )
-        logging.debug("PDF 处理标签页已添加")
+    def _build_pdf_tab(self) -> Any:
+        """构造 PDF 处理标签页（懒加载时调用）。"""
+        return PdfTab()
+
+    def _on_lazy_tab_changed(self, index: int) -> None:
+        """tabWidget.currentChanged 回调：若目标页是未构造的占位页，则懒构造并替换。
+
+        构造完成后恢复该页的分割器布局（与 _restore_layout 中即时恢复一致）。
+        构造失败时保留占位页并记录错误，不阻塞应用。
+        """
+        entry = self._lazy_tab_builders.pop(index, None)
+        if entry is None:
+            return  # 已构造或非懒加载页
+        role, builder = entry
+        try:
+            widget = builder()
+        except Exception:
+            logging.exception(f"[懒加载] 构造 {role} 标签页失败")
+            # 失败时放回映射，允许用户再次切换重试
+            self._lazy_tab_builders[index] = (role, builder)
+            return
+
+        # 回填属性，使下游 hasattr/getattr 防御逻辑生效
+        attr_map = {
+            "batch": "_batch_tab",
+            "qrcode": "_qrcode_tab",
+            "pdf": "_pdf_tab",
+            "about": "_about_tab",
+        }
+        attr = attr_map.get(role)
+        if attr:
+            setattr(self, attr, widget)
+
+        # 用真实 widget 替换占位页（保持同一 index 与标题）。
+        # 替换期间临时阻塞信号：removeTab/insertTab 会改变 currentIndex 从而
+        # 再次触发 currentChanged，避免误触发其他懒加载页或重复进入本回调。
+        tab_widget = self._ui.tabWidget
+        title = tab_widget.tabText(index)
+        prev_blocked = tab_widget.blockSignals(True)
+        try:
+            tab_widget.removeTab(index)
+            tab_widget.insertTab(index, widget, title)
+            tab_widget.setCurrentIndex(index)
+        finally:
+            tab_widget.blockSignals(prev_blocked)
+        logging.debug(f"懒加载标签页已构造: {role}")
+
+        # 构造后恢复分割器布局（与 _restore_layout 逻辑对齐）
+        self._restore_lazy_tab_layout(role, widget)
+
+        # 若 OCR 服务已就绪，需把服务句柄下发给懒构造的 tab（原本在
+        # _on_subprocess_worker_ready 时同步下发，懒构造的 tab 错过了那次下发）
+        self._maybe_dispatch_ocr_service_to_lazy_tab(role, widget)
+
+    def _restore_lazy_tab_layout(self, role: str, widget: Any) -> None:
+        """懒构造的 tab 在替换占位页后恢复其分割器布局。
+
+        batch 的分割器恢复由 set_layout_manager 内部完成（构造时已调用），
+        故此处仅处理 qrcode。pdf 无需恢复分割器。
+        """
+        try:
+            if role == "qrcode" and hasattr(widget, "_splitter"):
+                state = self._layout_manager.get_splitter_state("qrcode_tab")
+                if state:
+                    widget._splitter.restoreState(state)
+        except Exception:
+            logging.debug(f"[懒加载] 恢复 {role} 布局失败（忽略）", exc_info=True)
+
+    def _maybe_dispatch_ocr_service_to_lazy_tab(self, role: str, widget: Any) -> None:
+        """若 OCR 服务已就绪，向懒构造的 tab 下发服务句柄。
+
+        正常流程中服务在 _on_subprocess_worker_ready 时下发给所有 tab，但懒构造的
+        tab 在那时还不存在。这里在构造后补发，确保懒构造的 tab 也能立即识别。
+        """
+        if not getattr(self, "_ocr_ready", False):
+            return
+        try:
+            mineru_batch = getattr(self, "_mineru_batch_service", None)
+            paddlex_service = getattr(self, "_paddlex_service", None)
+            if role == "batch":
+                if mineru_batch is not None and hasattr(widget, "set_ocr_service"):
+                    widget.set_ocr_service(mineru_batch)
+                if paddlex_service is not None and hasattr(widget, "set_paddlex_service"):
+                    widget.set_paddlex_service(paddlex_service)
+            elif role == "pdf":
+                if paddlex_service is not None and hasattr(widget, "set_ocr_service"):
+                    widget.set_ocr_service(cast("OCRServiceBase", paddlex_service))
+        except Exception:
+            logging.debug(f"[懒加载] 向 {role} 下发 OCR 服务失败（忽略）", exc_info=True)
 
     def _init_about_tab(self) -> None:
-        """初始化关于标签页"""
+        """初始化关于标签页（懒加载：首次切换到关于页才构造）。
+
+        AboutTab 构造会同步读取 CHANGELOG.md 并解析 Markdown（QTextBrowser.setMarkdown），
+        是启动期可省的 CPU 开销。延迟到用户真正查看关于页时再构造。
+        """
+        self._about_tab: Any = None
+        self._add_lazy_tab("关于", "about", self._build_about_tab)
+
+    def _build_about_tab(self) -> Any:
+        """构造关于标签页（懒加载时调用）。"""
         from vibeocr.views.tabs.about_tab import AboutTab
 
-        self._about_tab = AboutTab()
-        self._ui.tabWidget.addTab(self._about_tab, "关于")
-        logging.debug("关于标签页已添加")
+        return AboutTab()
 
     def _setup_console(self) -> None:
         """初始化日志"""
@@ -380,6 +483,15 @@ class MainWindow(QMainWindow):
 
     def _connect_signals(self) -> None:
         """连接信号槽"""
+        # 懒加载 Tab：用户切换到占位页时触发真实构造
+        self._ui.tabWidget.currentChanged.connect(self._on_lazy_tab_changed)
+        # _restore_layout 可能在信号连接前已 setCurrentIndex 到懒加载占位页，
+        # 此时 currentChanged 不会重发。这里补一次：若当前页仍是未构造的占位页，
+        # 立即触发构造，确保恢复的标签页可见、可用。
+        cur = self._ui.tabWidget.currentIndex()
+        if cur in self._lazy_tab_builders:
+            self._on_lazy_tab_changed(cur)
+
         # 快捷键（替代已删除的菜单）
         self._shortcut_open = QShortcut(QKeySequence("Ctrl+O"), self)
         self._shortcut_open.activated.connect(self._on_open_image)
@@ -846,6 +958,10 @@ class MainWindow(QMainWindow):
 
             paddlex_service = get_ocr_service(skip_auto_start=True)
             mineru_batch = MinerUBatchService()
+            # 缓存服务句柄，供懒构造的 Tab 在 _on_lazy_tab_changed 时补发（懒构造的
+            # Tab 错过了此处注入，构造后需自行获取服务句柄）
+            self._paddlex_service = paddlex_service
+            self._mineru_batch_service = mineru_batch
 
             # 单次识别 Tab 服务注入
             if hasattr(self, "_single_tab") and self._single_tab:

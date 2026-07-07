@@ -299,6 +299,53 @@ def _setup_app_icon(app) -> None:
     app.setApplicationName("VibeOCR")
 
 
+def _create_splash(app):
+    """创建启动 splash 屏，让用户在 exe 加载 + 主窗口构造期间立刻看到品牌反馈。
+
+    解决"双击 exe 后长时间无反应"的观感问题：PyInstaller bootloader 加载
+    ``_internal/`` 与 MainWindow 构造（~1.5s）合计可达数秒~数十秒（含杀软扫描），
+    此前用户只能看到空白/无响应。splash 在 QApplication 建好后立即 show，
+    远早于主窗口。
+
+    使用 resources/icon_512.png（512x512，frozen/dev 通用，走
+    ``env_manager.get_bundled_resources_dir()``）。缺失时返回 None，不阻塞启动。
+
+    Args:
+        app: QApplication 实例。
+
+    Returns:
+        QSplashScreen 实例；资源缺失时返回 None。
+    """
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QPixmap
+    from PySide6.QtWidgets import QSplashScreen
+
+    splash_path = env_manager.get_bundled_resources_dir() / "icon_512.png"
+    if not splash_path.is_file():
+        return None
+
+    pixmap = QPixmap(str(splash_path))
+    if pixmap.isNull():
+        return None
+
+    splash = QSplashScreen(pixmap, Qt.WindowType.WindowStaysOnTopHint)
+    splash.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+    # 版本号显示在图标下方
+    try:
+        from vibeocr import __version__
+
+        splash.showMessage(
+            f"  VibeOCR  v{__version__}\n  正在启动…",
+            Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignHCenter,
+            Qt.GlobalColor.white,
+        )
+    except Exception:
+        pass
+    splash.show()
+    app.processEvents()  # 强制立即绘制，不等事件循环
+    return splash
+
+
 def _install_qt_translations(app, locale: str | None = None) -> None:
     """加载 Qt 自带中文翻译，使标准对话框（QColorDialog/QFileDialog/QMessageBox
     等的 OK/Cancel/基本颜色 等按钮文案）显示为中文。
@@ -399,6 +446,10 @@ def launch_application() -> int:
     # 设置应用图标（必须在主窗口创建之前，窗口才能继承图标）
     _setup_app_icon(app)
 
+    # 启动 splash 屏：在 MainWindow（~1.5s 构造）期间立即给用户视觉反馈，
+    # 消除"双击 exe 后无反应"的观感。主窗口 show 后由 finish 衔接，无闪烁。
+    splash = _create_splash(app)
+
     # 全局浅色主题 QSS 暂时禁用：实际观感不如 Qt 原生控件风格。
     # theme.py token 模块与各文件的 token 化迁移均保留，便于日后调整配色后重试。
     # from vibeocr.ui import theme
@@ -422,6 +473,11 @@ def launch_application() -> int:
     window = MainWindow()
     window.set_app_settings(app_settings)
     window.show()
+
+    # 主窗口已显示，splash 衔接关闭（finish 会等窗口完全绘制后再隐藏 splash，避免闪空）
+    if splash is not None:
+        splash.finish(window)
+        splash.close()
 
     # 第二实例通知提到前台时，恢复并激活主窗口。
     guard.raise_requested.connect(window.bring_to_front)

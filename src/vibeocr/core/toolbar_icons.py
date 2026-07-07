@@ -164,9 +164,19 @@ _SVG_DATA: dict[str, str] = {
 
 ICON_NAMES: tuple[str, ...] = tuple(_SVG_DATA.keys())
 
+# 渲染缓存：(name, size, color) -> QIcon。图标是静态资源，同一参数反复渲染
+# 浪费 CPU（每次新建 QSvgRenderer/QPixmap/QPainter）。QPixmap/QIcon 必须在
+# QApplication 存在后使用——toolbar_icon 仅在 UI 构造期（QApplication 之后）调用，
+# 故缓存安全。EdgeToolbar 启动期渲染 6 个图标，窗口每帧重建工具栏时也命中缓存。
+_ICON_CACHE: dict[tuple[str, int, str], QIcon] = {}
+
 
 def toolbar_icon(name: str, size: int = 20, color: str = "#1f2937") -> QIcon:
     """渲染指定名称的 SVG 图标为 QIcon。
+
+    结果按 ``(name, size, color)`` 缓存，重复调用零开销（直接返回已渲染的 QIcon）。
+    注意：QIcon/QPixmap 绑定到当前 QGuiApplication，跨 QApplication 实例不复用
+    （单实例程序无此问题）。
 
     Args:
         name: 图标名称，必须是 ICON_NAMES 中的一个
@@ -179,6 +189,11 @@ def toolbar_icon(name: str, size: int = 20, color: str = "#1f2937") -> QIcon:
     Raises:
         KeyError: 名称不存在
     """
+    cache_key = (name, size, color)
+    cached = _ICON_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+
     svg = _SVG_DATA[name].replace("currentColor", color)
     svg_bytes = svg.encode("utf-8")
     renderer = QSvgRenderer(svg_bytes)
@@ -189,4 +204,6 @@ def toolbar_icon(name: str, size: int = 20, color: str = "#1f2937") -> QIcon:
     painter = QPainter(pixmap)
     renderer.render(painter)
     painter.end()
-    return QIcon(pixmap)
+    icon = QIcon(pixmap)
+    _ICON_CACHE[cache_key] = icon
+    return icon
