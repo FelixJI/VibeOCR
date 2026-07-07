@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.4.14] - 2026-07-07
+
+### Fixed
+- fix(deps): 表格识别 paddlex[ocr] leaf 包缺失检测 + 单包重装
+
 ## [0.4.13] - 2026-07-07
 
 ### Fixed
