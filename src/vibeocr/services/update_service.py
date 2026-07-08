@@ -892,31 +892,45 @@ class UpdateService:
         if reply != QMessageBox.StandardButton.Ok:
             return
 
-        # 先尝试 updater.exe（首选替换器），握手确认它「活着」再退出。
-        # 握手三态：
-        #   ready/timeout → 替换器确认在工作（ready=快，timeout=慢但仍在跑）→ 退出，释放文件锁。
-        #   crashed       → updater 确认坏了 → 启动 [VibeOCR.exe --self-update] 兜底。
-        # 关键：timeout 不能误判为坏，否则并发启 self-update 会与仍在工作的 updater
-        # 抢着替换 app_dir，导致文件损坏。
-        result = await self._launch_updater(zip_path)
+        # 新架构（黄金法则）：旧主程序只"递送"——testzip + 抽取新 updater，
+        # 由新 updater（新代码）完成部署。旧主程序不解释新格式。
+        # 1. testzip 确保能安全读出 updater 条目
+        if not self._verify_zip_integrity(zip_path):
+            QMessageBox.critical(
+                parent,
+                "更新失败",
+                "更新包已损坏（zip 校验失败）。\n\n请重新检查更新或手动下载最新版：\n"
+                f"{GITHUB_RELEASES_BASE}",
+            )
+            return
+
+        # 2. 从 zip 抽取新 updater 到暂存目录 data/cache/update/updater.exe
+        try:
+            staged_updater = self._extract_updater_from_zip(zip_path)
+        except RuntimeError as e:
+            QMessageBox.critical(
+                parent,
+                "更新失败",
+                f"{e}\n\n请手动下载最新版，覆盖安装前请先退出本程序：\n"
+                f"{GITHUB_RELEASES_BASE}",
+            )
+            return
+
+        # 3. 启动暂存的新 updater，握手确认它"活着"再退出。
+        # 握手三态：ready/timeout → 确认在工作 → 退出释放文件锁。
+        #          crashed       → 确认坏了 → 弹窗提示手动重装（不再走 self-update 兜底，
+        #                        因 self-update 本身违反黄金法则：旧主程序代码部署新代码）。
+        result = await self._launch_updater(zip_path, staged_updater)
         if result in ("ready", "timeout"):
             self._force_quit()
 
-        # updater 确认崩溃（crashed）→ 主程序自身充当兜底替换器。
-        logger.warning("updater.exe 握手失败（crashed），改用主程序自带更新模式（--self-update）兜底")
-        result = await self._launch_self_update(zip_path)
-        if result in ("ready", "timeout"):
-            self._force_quit()
-
-        # 极端罕见：连主程序自身都起不来（VibeOCR.exe 若坏，应用本就无法启动）。
-        # 不退出主程序，明确告知用户手动重装——避免「应用关了什么都不发生」的困惑。
-        manual_url = GITHUB_RELEASES_BASE
+        # 新 updater 确认崩溃 → 提示手动重装（无 self-update 兜底）。
+        logger.warning("新 updater 握手失败（crashed），提示用户手动重装")
         QMessageBox.critical(
             parent,
             "更新失败",
-            "更新助手与自带更新器均无法启动。\n\n"
-            "请手动下载最新版，覆盖安装前请先退出本程序：\n"
-            f"{manual_url}",
+            "更新助手无法启动。\n\n请手动下载最新版，覆盖安装前请先退出本程序：\n"
+            f"{GITHUB_RELEASES_BASE}",
         )
 
     def _verify_zip_integrity(self, zip_path: Path) -> bool:
@@ -1018,45 +1032,23 @@ class UpdateService:
     _HANDSHAKE_TIMEOUT = 15.0
     _HANDSHAKE_POLL_INTERVAL = 0.2
 
-    async def _launch_updater(self, zip_path: Path) -> str:
-        """启动 updater.exe 并握手确认它「活着」。返回握手三态（见 _handshake_launch）。
+    async def _launch_updater(
+        self, zip_path: Path, staged_updater: Path
+    ) -> str:
+        """启动暂存的新 updater 并握手确认它"活着"。返回握手三态。
 
-        替代旧的 fire-and-forget + 立即 sys.exit：旧设计下 updater 崩溃时主程序已退出、
-        用户看到「应用关了什么都没发生」且无任何 UI 反馈。握手协议下，updater 启动后
-        会第一时间写就绪信号文件（data/cache/update/updater.ready），主程序端轮询该
-        文件 + 进程存活，确认替换器确实在干活后才退出；确认崩溃（crashed）才走兜底。
+        新架构：启动目标是暂存目录的新 updater（由 _extract_updater_from_zip 抽取），
+        而非 app_dir 的旧 updater。新 updater 是新代码，负责部署新版本（黄金法则）。
         """
-        if not self._updater_path.exists():
-            logger.error(f"updater 不存在: {self._updater_path}")
-            # 与 _handshake_launch 三态语义统一：替换器确认起不来 → crashed，
-            # 调用方据此走 self-update 兜底 / 弹窗路径。不要 return False
-            # （布尔）：调用方只识别 "ready"/"timeout"，布尔会绕过三态判断。
+        if not staged_updater.exists():
+            logger.error(f"暂存 updater 不存在: {staged_updater}")
             return "crashed"
 
         return await self._handshake_launch(
-            exe_path=self._updater_path,
+            exe_path=staged_updater,
             extra_args=["--update", str(zip_path), "--app-dir", str(self._app_dir)],
             ready_filename="updater.ready",
-            label="updater.exe",
-        )
-
-    async def _launch_self_update(self, zip_path: Path) -> str:
-        """启动 [VibeOCR.exe --self-update] 兜底替换器并握手。返回握手三态。
-
-        仅在 updater.exe 确认崩溃（crashed）时调用。复用同一握手协议，就绪信号文件用
-        self_update.ready 区分。注意：此处启动的是主程序的「另一个实例」，启动后
-        本主程序实例会 sys.exit，把 VibeOCR.exe 文件锁释放给兜底实例去覆盖。
-        """
-        if not self._self_exe_path.exists():
-            logger.error(f"主程序不存在，无法走 self-update 兜底: {self._self_exe_path}")
-            # 同 _launch_updater：返回三态字符串 crashed 而非布尔，保持类型一致。
-            return "crashed"
-
-        return await self._handshake_launch(
-            exe_path=self._self_exe_path,
-            extra_args=["--self-update", str(zip_path), "--app-dir", str(self._app_dir)],
-            ready_filename="self_update.ready",
-            label="VibeOCR.exe --self-update",
+            label="updater.exe (staged)",
         )
 
     async def _handshake_launch(
