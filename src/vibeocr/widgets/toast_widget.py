@@ -14,9 +14,8 @@ from PySide6.QtCore import (
 )
 from PySide6.QtWidgets import QLabel, QWidget
 
-from vibeocr.ui.theme import Radius, Typography
+from vibeocr.ui.theme import Colors, Radius, Typography
 
-_TOAST_BG = "#333333"
 _TOAST_DURATION = 2000  # ms
 
 
@@ -47,9 +46,10 @@ class ToastWidget(QLabel):
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.setStyleSheet(f"""
             QLabel {{
-                background-color: {_TOAST_BG};
-                color: #ffffff;
-                padding: 8px 20px;
+                background-color: {Colors.surface};
+                color: {Colors.text};
+                border: 1px solid {Colors.border};
+                padding: 6px 14px;
                 border-radius: {Radius.md}px;
                 font-size: {Typography.body}px;
                 font-weight: {Typography.weight_medium};

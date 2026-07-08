@@ -690,6 +690,95 @@ class TestGenerateVersionJson:
         data = json.loads((tmp_path / "version.json").read_text(encoding="utf-8"))
         assert "removed" not in data, "无移除时不应写 removed 字段"
 
+    def test_dep_locked_versions_from_uv_lock(self, tmp_path):
+        """version.json 的 dep_locked_versions 应从 uv.lock 取锁定版本。
+
+        pyproject 的 ``>=3.4.0`` 只是下界，无法表达"实际锁定 3.4.2"。便携环境已装
+        3.4.0 满足下界会被误判为最新。打包时应从 uv.lock 解析锁定版写入新字段
+        ``dep_locked_versions``，运行时据此比较（见 env_manager.detect_dependency_updates）。
+
+        本测试构造 uv.lock fixture，验证：
+        - mineru 锁定版 3.4.2 正确写入；
+        - paddlepaddle-gpu 归一为 paddlepaddle key；
+        - torch 的 local label（+cu126）原样保留；
+        - 锁里缺失的追踪包被省略（运行时回退下界）。
+        """
+        import json
+
+        mod = self._load_script()
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            textwrap.dedent("""\
+                [project]
+                name = "vibeocr"
+                version = "0.1.0"
+                dependencies = [
+                    "paddlepaddle-gpu>=3.3.1",
+                    "paddleocr[doc-parser]>=3.7.0",
+                    "mineru[core]>=3.4.0",
+                    "torch>=2.6.0",
+                ]
+            """),
+            encoding="utf-8",
+        )
+        mod.PYPROJECT_TOML = pyproject
+
+        # 构造 uv.lock：锁定 mineru 3.4.2、paddlepaddle-gpu 3.3.1、torch 2.12.1+cu126。
+        # 故意不含 paddleocr（模拟某个追踪包在 lock 里查不到 → 应从 dep_locked_versions 省略）。
+        uv_lock = tmp_path / "uv.lock"
+        uv_lock.write_text(
+            textwrap.dedent("""\
+                version = 1
+
+                [[package]]
+                name = "mineru"
+                version = "3.4.2"
+
+                [[package]]
+                name = "paddlepaddle-gpu"
+                version = "3.3.1"
+
+                [[package]]
+                name = "torch"
+                version = "2.12.1+cu126"
+
+                [[package]]
+                name = "nvidia-cudnn-cu13"
+                version = "9.23.1.3"
+            """),
+            encoding="utf-8",
+        )
+        mod.UV_LOCK = uv_lock
+
+        mod._generate_version_json("1.2.3", tmp_path)
+
+        data = json.loads((tmp_path / "version.json").read_text(encoding="utf-8"))
+        # dep_locked_versions 应存在且含 lock 中找到的追踪包
+        assert "dep_locked_versions" in data, "有锁定版时应写 dep_locked_versions 字段"
+        locked = data["dep_locked_versions"]
+
+        # mineru：锁定版 3.4.2（本 Bug 的核心：下界 3.4.0 漏掉 3.4.0→3.4.2 的升级）
+        assert locked.get("mineru") == "3.4.2", (
+            f"mineru 应取 uv.lock 锁定版 3.4.2，实际: {locked.get('mineru')}"
+        )
+        # paddlepaddle-gpu → paddlepaddle（与 _KEY_ALIASES_LOCK 归一一致）
+        assert locked.get("paddlepaddle") == "3.3.1", (
+            "paddlepaddle-gpu 应归一为 paddlepaddle key 并取其锁定版"
+        )
+        assert "paddlepaddle-gpu" not in locked
+        # local label（+cu126）原样保留
+        assert locked.get("torch") == "2.12.1+cu126", (
+            f"local label 应原样保留，实际: {locked.get('torch')}"
+        )
+        # lock 中无对应追踪包（paddleocr）→ 应省略（运行时回退下界）
+        assert "paddleocr" not in locked, (
+            "lock 中缺失的追踪包不应写入 dep_locked_versions（运行时回退下界）"
+        )
+        # dep_versions 仍应含全部追踪包（不受 lock 影响）
+        assert set(data["dep_versions"]).issuperset(
+            {"paddlepaddle", "paddleocr", "mineru", "torch"}
+        )
+
 
 class TestChangelogDepDiff:
     """P3：CHANGELOG 应附带依赖变更说明（升级/新增/移除）。"""

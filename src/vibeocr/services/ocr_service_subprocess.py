@@ -304,7 +304,9 @@ class OCRServiceSubprocess:
         # 子批超时按页数线性放大：每页额外超时，封顶 BATCH_MAX（30 分钟）
         per_page_extra = Constants.Timeout.BATCH_PER_PAGE_EXTRA
 
-        # 单条 SHM 消息上限 = shm_size - 9；预留 30% 给 options pickle + 协议开销
+        # 单条 SHM 消息上限 = shm_size - 9；预留 30% 给 options pickle + 协议开销。
+        # 传输批 = budget / 单页大小，须 ≥ 计算批(8)才不卡 GPU（性能2）。
+        # DEFAULT_SHM_SIZE=128MB → budget≈90MB，可装下完整页批(16 页)，传输批不再切。
         budget = max(1024, int(0.7 * (self.shm_size - 9)))
 
         results: list = [None] * len(images)

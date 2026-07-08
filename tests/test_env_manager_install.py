@@ -3370,3 +3370,138 @@ class TestInstallWritesCache:
         # 即使写缓存失败，安装仍应成功
         assert ok, f"写缓存失败不应中断安装，msg={msg}"
 
+
+class TestDetectDependencyUpdatesLockedVersions:
+    """detect_dependency_updates 用锁定版本（uv.lock）作比较基准。
+
+    回归 Bug：便携环境已装 mineru 3.4.0，满足 ``>=3.4.0`` 下界，但实际锁定版本是
+    3.4.2。旧逻辑只比下界（3.4.0 < 3.4.0 为 False），误报"依赖已是最新"。
+    修复后应优先用锁定版 3.4.2 比较，检出 3.4.0 → 3.4.2 的更新。
+    """
+
+    def _run_detect(
+        self,
+        tmp_path,
+        installed,
+        locked,
+        specs=None,
+    ):
+        """构造 portable 环境，patch 各依赖后调用 detect_dependency_updates。
+
+        Args:
+            installed: {pkg: 已装版本}，模拟 importlib.metadata 返回值。
+            locked: {pkg: 锁定版本}，模拟 _load_locked_versions 返回值。
+            specs: {pkg: spec 串}，默认 mineru ``mineru[core]>=3.4.0``。
+        """
+        import vibeocr.env_manager as em
+
+        python_exe = tmp_path / "python.exe"
+        python_exe.touch()  # detect 早期检查 python_exe.exists()
+
+        if specs is None:
+            specs = {"mineru": "mineru[core]>=3.4.0"}
+
+        # 重置缓存（避免上一个测试的数据污染）
+        em._dep_specs_cache = None
+        em._locked_versions_cache = None
+        try:
+            with (
+                patch(
+                    "vibeocr.env_manager.get_embedded_python_executable",
+                    return_value=python_exe,
+                ),
+                patch("vibeocr.env_manager._load_dep_specs", return_value=specs),
+                patch(
+                    "vibeocr.env_manager.get_dependency_versions",
+                    return_value=dict(installed),
+                ),
+                patch(
+                    "vibeocr.env_manager._load_locked_versions",
+                    return_value=dict(locked),
+                ),
+            ):
+                return em.detect_dependency_updates(tmp_path)
+        finally:
+            em._dep_specs_cache = None
+            em._locked_versions_cache = None
+
+    def test_detect_update_when_locked_newer_than_installed(self, tmp_path):
+        """锁定版 3.4.2 vs 已装 3.4.0 → 应报更新（本 Bug 的回归用例）。
+
+        旧逻辑（只比下界 3.4.0）会漏报；修复后用锁定版 3.4.2 比较，正确报更新。
+        """
+        updates = self._run_detect(
+            tmp_path,
+            installed={"mineru": "3.4.0"},
+            locked={"mineru": "3.4.2"},
+        )
+        assert "mineru" in updates, (
+            "已装 3.4.0 落后于锁定 3.4.2，应报更新；旧逻辑只比下界 3.4.0 会漏报"
+        )
+        installed_ver, _spec = updates["mineru"]
+        assert installed_ver == "3.4.0"
+
+    def test_no_update_when_installed_equals_locked(self, tmp_path):
+        """已装 = 锁定版（3.4.2）→ 不报更新。"""
+        updates = self._run_detect(
+            tmp_path,
+            installed={"mineru": "3.4.2"},
+            locked={"mineru": "3.4.2"},
+        )
+        assert "mineru" not in updates, "已装等于锁定版不应报更新"
+
+    def test_no_update_when_installed_newer_than_locked(self, tmp_path):
+        """已装 > 锁定版 → 不报更新（用户手动装了更新版，不降级）。"""
+        updates = self._run_detect(
+            tmp_path,
+            installed={"mineru": "3.5.0"},
+            locked={"mineru": "3.4.2"},
+        )
+        assert "mineru" not in updates
+
+    def test_fallback_to_lower_bound_when_no_locked(self, tmp_path):
+        """无锁定版字段（旧 version.json）→ 回退下界比较（向后兼容）。
+
+        locked 为空 dict 模拟旧 version.json 无 dep_locked_versions 字段。
+        已装 3.4.0 = 下界 3.4.0 → 不报；已装 3.3.0 < 下界 → 报。
+        """
+        # 已装等于下界 → 不报
+        updates = self._run_detect(
+            tmp_path,
+            installed={"mineru": "3.4.0"},
+            locked={},  # 无锁定版，回退下界 3.4.0
+        )
+        assert "mineru" not in updates, "回退下界时，已装=下界不应报"
+
+        # 已装低于下界 → 报
+        updates = self._run_detect(
+            tmp_path,
+            installed={"mineru": "3.3.0"},
+            locked={},
+        )
+        assert "mineru" in updates, "回退下界时，已装<下界应报"
+
+    def test_local_version_locked_comparison(self, tmp_path):
+        """锁定版含 local label（torch 2.12.1+cu126）应正确比较。
+
+        packaging.version.Version 能解析 +cu126；已装 = 锁定 → 不报。
+        """
+        updates = self._run_detect(
+            tmp_path,
+            installed={"torch": "2.12.1+cu126"},
+            locked={"torch": "2.12.1+cu126"},
+            specs={"torch": "torch>=2.6.0"},
+        )
+        assert "torch" not in updates, "local label 版本相等不应报更新"
+
+    def test_reports_when_locked_absent_but_lower_bound_higher(self, tmp_path):
+        """锁定版缺失且下界更高 → 仍用下界报更新。"""
+        updates = self._run_detect(
+            tmp_path,
+            installed={"torch": "2.5.0"},
+            locked={},  # 无锁定版
+            specs={"torch": "torch>=2.6.0"},
+        )
+        assert "torch" in updates
+
+

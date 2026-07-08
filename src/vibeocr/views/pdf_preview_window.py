@@ -78,10 +78,13 @@ class PreviewCanvas(QWidget):
     def set_pixmap(self, pixmap: QPixmap) -> None:
         self._pixmap = pixmap
         self._scale = 1.0
+        # 裸 pixmap 入口：清除所有高亮数据源，避免上一页的 bbox 残留画到新页
+        # （见 Bug B）。set_ocr_blocks / set_highlight_layers 各自完整重设数据源，
+        # 不走本方法或随后覆盖，不受影响。
+        self._clear_ocr_blocks()
+        self._highlight_layers = []
+        self._page_rect = None
         self._update_size()
-        # pixmap 变了，重算 OCR 块屏幕坐标
-        if self._ocr_blocks is not None:
-            self._compute_ocr_block_rects()
         self.update()
 
     def _update_size(self) -> None:

@@ -862,7 +862,16 @@ class PdfTab(QWidget):
 
     def _on_ocr_progress_update(self, file_path: str, current: int, total: int) -> None:
         self._progress_bar.setValue(current)
-        self._status_label.setText(f"正在识别第 {current}/{total} 页...")
+        # current/total 是子步单位（每页 渲染/识别/写层 3 步）。换算回页数展示，
+        # 文案用"已处理"而非"正在识别第 X 页"——current 累计的是已推进的子步，
+        # 并非正在识别的页码（批量识别时多页同时在算）。
+        substeps = self._session_mgr._OCR_PROGRESS_SUBSTEPS  # noqa: SLF001
+        pages_done = min(current // substeps, total // substeps)
+        pages_total = total // substeps
+        pct = int(current * 100 / total) if total > 0 else 0
+        self._status_label.setText(
+            f"正在添加文字层… {pct}%（已处理 {pages_done}/{pages_total} 页）"
+        )
 
     def _on_mineru_models_status(self, message: str) -> None:
         """MinerU 模型下载状态提示（首次使用文档解析时）"""
@@ -999,9 +1008,10 @@ class PdfTab(QWidget):
         self._btn_open.setEnabled(True)
         self._btn_add_file.setEnabled(True)
         self._update_status()
-        # 不全量重建网格：逐页 _update_layer_grid_page 已把完成的页变绿，
-        # 全量 clear()+重建会抹掉用户在 OCR 期间的选中状态（spec 第 6 节）。
-        self._refresh_layer_summary()
+        # 不全量重建网格（保留用户在 OCR 期间的选中状态）。但逐页
+        # _update_layer_grid_page 依赖 page_done 信号即时送达，取消时信号可能
+        # 被搁置；这里按刷新后的 model 兜底同步所有格子颜色（见 Bug A）。
+        self._sync_layer_grid_from_model()
         msg = f"OCR 完成：成功 {success} 页" + (f"，失败 {fail} 页" if fail else "")
         self._status_label.setText(msg)
 
@@ -1210,6 +1220,33 @@ class PdfTab(QWidget):
         session = self._session_mgr.active_session
         pages = session.pdf_document.pages if session is not None else []
         self._update_layer_summary(pages)
+
+    def _sync_layer_grid_from_model(self) -> None:
+        """从当前 model 重新同步所有格子的 _HAS_LAYER_ROLE/_DESKEWED_ROLE。
+
+        不 clear()+重建（保留用户选中状态），仅按各格子 _LAYER_ROLE(page_index)
+        从 session.pdf_document 重读 has_text_layer/deskewed 并 setData。
+
+        用于 OCR 完成/取消兜底：逐页 _update_layer_grid_page 依赖 page_done 信号
+        即时送达，但取消时信号可能被搁置在主线程队列；此方法保证网格颜色与
+        刷新后的 model 严格一致（见 Bug A）。
+        """
+        session = self._session_mgr.active_session
+        if session is None:
+            return
+        grid = self._layer_status_grid
+        for row in range(grid.count()):
+            item = grid.item(row)
+            page_idx = item.data(_LAYER_ROLE)
+            if page_idx is None:
+                continue
+            page_info = session.pdf_document.get_page(page_idx)
+            if page_info is None:
+                continue
+            item.setData(_HAS_LAYER_ROLE, page_info.has_text_layer)
+            item.setData(_DESKEWED_ROLE, page_info.deskewed)
+            item.setToolTip(self._layer_cell_tooltip(page_info))
+        self._update_layer_summary(session.pdf_document.pages)
 
     def _on_grid_item_double_clicked(self, item: QListWidgetItem) -> None:
         """双击网格格子 → 打开预览窗口到该页。"""
@@ -1797,8 +1834,13 @@ class PdfTab(QWidget):
             return PdfGlobalSettings(), None
 
     def _begin_ocr_ui(self, indices: list[int]) -> None:
-        """启动 OCR 前的 UI 复位：进度条 + 禁用文件/操作按钮。"""
-        self._progress_bar.setRange(0, len(indices))
+        """启动 OCR 前的 UI 复位：进度条 + 禁用文件/操作按钮。
+
+        进度条范围用 页数 × 子步数（每页 渲染/识别/写层 3 步），与 manager 的
+        progress_total 对齐，使整批渲染/识别期间进度也能推进。
+        """
+        substeps = self._session_mgr._OCR_PROGRESS_SUBSTEPS  # noqa: SLF001
+        self._progress_bar.setRange(0, len(indices) * substeps)
         self._progress_bar.setValue(0)
         self._progress_bar.setVisible(True)
         self._btn_cancel.setVisible(True)

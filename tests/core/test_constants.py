@@ -58,6 +58,20 @@ class TestConstants:
         assert Constants.Timeout.WORKER_TIMEOUT > 0
         assert Constants.Timeout.WORKER_START_BASE > 0
 
+    def test_shm_transport_budget_not_smaller_than_page_batch(self):
+        """传输批须 ≥ 计算批：SHM 单消息预算能装下完整页批（性能2）。
+
+        预算 = 0.7 × (SHM − 9)。单张 300dpi A4 PNG 上限取 4MB，页批 16 页。
+        要求 budget ≥ 16 × 4MB，否则传输批(<16)会卡住计算批(8)，GPU 喂不饱。
+        """
+        budget = int(0.7 * (Constants.DEFAULT_SHM_SIZE - 9))
+        max_page_png = 4 * 1024 * 1024  # 4MB 上限
+        page_batch = 16
+        assert budget >= page_batch * max_page_png, (
+            f"SHM 预算 {budget} 字节不足以装下 {page_batch} 页 × {max_page_png} 字节；"
+            "传输批会小于计算批，卡住 GPU"
+        )
+
     def test_batch_config(self):
         """测试批量处理配置"""
         assert Constants.DEFAULT_BATCH_SIZE > 0

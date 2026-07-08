@@ -172,6 +172,97 @@ def _load_dep_specs() -> dict[str, str]:
     )
 
 
+# 包名归一映射：pyproject/uv.lock 用 paddlepaddle-gpu，运行时检测用 paddlepaddle。
+# 与 bump_version._KEY_ALIASES_LOCK 保持一致。
+_LOCK_KEY_ALIASES = {"paddlepaddle-gpu": "paddlepaddle"}
+
+# 缓存：与 _dep_specs_cache 同理，避免重复解析 uv.lock / version.json。
+_locked_versions_cache: dict[str, str] | None = None
+
+
+def _load_locked_versions() -> dict[str, str]:
+    """加载每个依赖包的锁定版本（权威比较基准）。
+
+    pyproject 的 ``>=3.4.0`` 只是下界，无法表达"实际锁定 3.4.2"。便携环境已装 3.4.0
+    满足下界，单比下界会误判为最新、漏掉 3.4.0 → 3.4.2 这类下界内升级。锁定版解决此问题。
+
+    数据源（与 _load_dep_specs 对称）：
+    - 打包环境（无 pyproject.toml，有 version.json）：读 ``dep_locked_versions``
+      字段（由 bump_version 从 uv.lock 写入）。字段缺失返回空 dict（旧版兼容）。
+    - 开发环境（有 pyproject.toml）：直接解析仓库根的 ``uv.lock``。lock 不存在返回空 dict。
+
+    返回的 key 与 _load_dep_specs 一致（paddlepaddle-gpu → paddlepaddle），
+    便于 detect_dependency_updates 用同一 pkg 查找。
+
+    Returns:
+        {归一包名: 锁定版本串}，如 {"mineru": "3.4.2", "torch": "2.12.1+cu126"}。
+        找不到锁定版本时返回空 dict（调用方回退到约束下界）。
+    """
+    global _locked_versions_cache
+    if _locked_versions_cache is not None:
+        return _locked_versions_cache
+
+    project_root = get_project_root()
+    pyproject = project_root / "pyproject.toml"
+
+    # 开发环境：直接读 uv.lock（权威锁定源）
+    if pyproject.exists():
+        uv_lock = project_root / "uv.lock"
+        versions = _parse_uv_lock(uv_lock)
+        _locked_versions_cache = versions
+        return versions
+
+    # 打包环境：读 version.json 的 dep_locked_versions（bump_version 预写）
+    version_json = project_root / "version.json"
+    if version_json.exists():
+        import json
+
+        try:
+            data = json.loads(version_json.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            _locked_versions_cache = {}
+            return {}
+        raw = data.get("dep_locked_versions", {})
+        versions = {str(k): str(v) for k, v in raw.items()} if isinstance(raw, dict) else {}
+        _locked_versions_cache = versions
+        return versions
+
+    # 两者皆无：无法获取锁定版，返回空（调用方回退下界）
+    _locked_versions_cache = {}
+    return {}
+
+
+def _parse_uv_lock(lock_path: Path) -> dict[str, str]:
+    """解析 uv.lock，返回 {归一包名: 锁定版本}。
+
+    uv.lock 是 TOML，每个包为 ``[[package]]`` 表，含 ``name`` 与 ``version``。
+    锁定版本含 local label（如 torch ``2.12.1+cu126``），原样返回；
+    packaging.version.Version 能正确解析比较。
+
+    Args:
+        lock_path: uv.lock 路径
+
+    Returns:
+        {归一包名: 版本串}；文件不存在或解析失败时返回空 dict。
+    """
+    if not lock_path.exists():
+        return {}
+    import tomllib
+
+    try:
+        lock = tomllib.loads(lock_path.read_text(encoding="utf-8"))
+    except (tomllib.TOMLDecodeError, OSError):
+        return {}
+    versions: dict[str, str] = {}
+    for pkg in lock.get("package", []):
+        name = pkg.get("name", "")
+        version = pkg.get("version", "")
+        if name and version:
+            key = _LOCK_KEY_ALIASES.get(name.lower()) or name.lower()
+            versions[key] = version
+    return versions
+
+
 def detect_network_source() -> Literal["domestic", "international"]:
     """检测网络类型（委托 NetworkDetector）
 
@@ -2378,8 +2469,9 @@ def detect_dependency_updates(project_root: Path) -> dict[str, tuple[str, str]]:
     对比逻辑：
     - 规格来源：``_load_dep_specs()``（version.json/pyproject.toml 的约束串）。
     - 已装来源：``get_dependency_versions(python_exe)``（importlib.metadata）。
-    - 对每个 OCR_CHECK_MODULES 包，提取规格的下界版本（如 ``>=3.7.0`` → 3.7.0），
-      与已装版本比较；已装 < 下界，或未安装/空，记为"需更新"。
+    - 比较基准：``_load_locked_versions()`` 的锁定版（权威，能检出下界内的升级
+      如 3.4.0→3.4.2）；无锁定版时回退约束下界（如 ``>=3.7.0`` → 3.7.0）。
+    - 对每个 OCR_CHECK_MODULES 包，与基准比较；已装 < 基准，或未安装/空，记为"需更新"。
 
     Args:
         project_root: 项目根目录
@@ -2394,6 +2486,9 @@ def detect_dependency_updates(project_root: Path) -> dict[str, tuple[str, str]]:
 
     specs = _load_dep_specs()
     installed_versions = get_dependency_versions(python_exe)
+    # 锁定版本（uv.lock / version.json 的 dep_locked_versions）作为权威比较基准；
+    # 缺失时回退到约束下界（_extract_lower_bound），保证旧 version.json 兼容。
+    locked_versions = _load_locked_versions()
 
     from vibeocr.services.env_config import OCR_CHECK_MODULES
 
@@ -2426,7 +2521,9 @@ def detect_dependency_updates(project_root: Path) -> dict[str, tuple[str, str]]:
         if not spec_str:
             continue  # 无规格无法比较
 
-        required_ver = _extract_lower_bound(spec_str)
+        # 比较基准：优先锁定版（权威，能检出下界内的升级如 3.4.0→3.4.2），
+        # 无锁定版时回退约束下界（兼容无 uv.lock / 旧 version.json）。
+        required_ver = locked_versions.get(pkg) or _extract_lower_bound(spec_str)
         if required_ver is None:
             continue  # 约束不可解析（如纯包名无版本）
 

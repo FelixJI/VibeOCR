@@ -135,7 +135,7 @@ class TestOcrOrchestration:
         assert mock_service.recognize_batch.called
 
     def test_start_ocr_progress_emitted(self, manager, tmp_path, qapp):
-        """OCR 期间应发 ocr_progress 信号。"""
+        """OCR 期间应发 ocr_progress 信号，且进度单调递增、末值=页数×子步数。"""
         path = _make_scanned_pdf(tmp_path / "ocr2.pdf", num_pages=2)
         session = manager.open_session(str(path))
         assert session is not None
@@ -143,13 +143,23 @@ class TestOcrOrchestration:
         qapp.processEvents()
 
         manager.set_ocr_service(_make_mock_ocr_service())
-        progress_fired = [False]
-        manager.ocr_progress.connect(lambda *a: progress_fired.__setitem__(0, True))
+        progress_values: list[int] = []
+        last_total = [0]
+        manager.ocr_progress.connect(
+            lambda _fp, cur, tot: (progress_values.append(cur), last_total.__setitem__(0, tot))
+        )
 
         manager.start_ocr([0, 1])
-        _wait_signal(qapp, manager.ocr_done, timeout=30.0)
+        assert _wait_signal(qapp, manager.ocr_done, timeout=30.0)
         qapp.processEvents()
-        assert progress_fired[0], "ocr_progress 应触发"
+        assert progress_values, "ocr_progress 应触发"
+        # 子步数 = 3（渲染/识别/写层），2 页 → 末值应为 6
+        substeps = manager._OCR_PROGRESS_SUBSTEPS  # noqa: SLF001
+        assert last_total[0] == 2 * substeps
+        assert progress_values[-1] == 2 * substeps, "末值应等于 total"
+        # 进度单调不减
+        assert all(b >= a for a, b in zip(progress_values, progress_values[1:])), \
+            "进度应单调不减"
 
     def test_cancel_ocr(self, manager, tmp_path, qapp):
         """cancel_ocr 应设置取消标志,不阻塞。"""

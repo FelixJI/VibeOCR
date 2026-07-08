@@ -139,6 +139,56 @@ class TestPdfTabLayerStatus:
             assert item.data(Qt.ItemDataRole.UserRole) == i
         doc.close()
 
+    def test_sync_layer_grid_from_model_updates_colors(self, pdf_tab):
+        """_sync_layer_grid_from_model 应按当前 model 重同步格子颜色，保留选中（Bug A）。
+
+        场景：网格初始全部无文字层（灰）。模拟 OCR 后 model 变化（部分页有文字层），
+        但逐页 page_done 信号因取消未送达 → 格子仍灰。调用 _sync_layer_grid_from_model
+        后，格子 _HAS_LAYER_ROLE 应与 model 一致。
+        """
+        import fitz
+        from PySide6.QtCore import Qt
+
+        from vibeocr.views.tabs.pdf_tab import _HAS_LAYER_ROLE, _LAYER_ROLE
+        from vibeocr.models.pdf_document import PdfDocument, PdfPageInfo
+        from vibeocr.models.pdf_session import PdfSession
+
+        # 初始：4 页全部无文字层
+        pages = [PdfPageInfo(page_index=i) for i in range(4)]
+        doc = fitz.open()
+        for _ in range(4):
+            doc.new_page()
+        pdf_doc = PdfDocument(file_path="x.pdf", pages=pages)
+        session = PdfSession(file_path="x.pdf", session_id="test-sid", pdf_document=pdf_doc)
+        pdf_tab._session_mgr._sessions["x.pdf"] = session
+        pdf_tab._session_mgr._active_path = "x.pdf"
+        pdf_tab._update_layer_status()
+
+        # 选中第 1、3 格（验证 sync 不清选中）
+        grid = pdf_tab._layer_status_grid
+        grid.item(1).setSelected(True)
+        grid.item(3).setSelected(True)
+
+        # 模拟 OCR 后 model 变化：页 0、2 已写入文字层（但格子还没更新）
+        session.pdf_document.pages[0].has_text_layer = True
+        session.pdf_document.pages[2].has_text_layer = True
+
+        # 初始确认：格子颜色还是旧的（全 False）
+        assert grid.item(0).data(_HAS_LAYER_ROLE) is False
+        assert grid.item(2).data(_HAS_LAYER_ROLE) is False
+
+        pdf_tab._sync_layer_grid_from_model()
+
+        # sync 后：格子 _HAS_LAYER_ROLE 与 model 一致
+        assert grid.item(0).data(_HAS_LAYER_ROLE) is True
+        assert grid.item(1).data(_HAS_LAYER_ROLE) is False
+        assert grid.item(2).data(_HAS_LAYER_ROLE) is True
+        assert grid.item(3).data(_HAS_LAYER_ROLE) is False
+        # 选中状态保留
+        assert grid.item(1).isSelected() is True
+        assert grid.item(3).isSelected() is True
+        doc.close()
+
 
 class TestPdfTabLayerStatusLinkage:
     """网格 ↔ 缩略图双向选中同步（按 page_index 匹配，重入保护防递归）。"""
@@ -1052,6 +1102,54 @@ class TestPdfTabLoadHint:
 
         pdf_tab._on_load_progress("/tmp/x.pdf", 3, 10)
         assert "3/10" in pdf_tab._status_label.text()
+
+
+class TestPdfTabOcrProgress:
+    def test_begin_ocr_ui_range_uses_substeps(self, pdf_tab):
+        """_begin_ocr_ui 进度条范围 = 页数 × 子步数（与 manager progress_total 对齐）。"""
+        from unittest.mock import MagicMock
+
+        mock_mgr = MagicMock()
+        mock_mgr._OCR_PROGRESS_SUBSTEPS = 3
+        pdf_tab._session_mgr = mock_mgr
+
+        pdf_tab._begin_ocr_ui([0, 1, 2])  # 3 页
+
+        assert pdf_tab._progress_bar.maximum() == 9  # 3 × 3
+        assert pdf_tab._progress_bar.minimum() == 0
+        assert pdf_tab._progress_bar.value() == 0
+        assert not pdf_tab._progress_bar.isHidden()  # setVisible(True) → 非 hidden
+
+    def test_progress_update_text_uses_pages_and_pct(self, pdf_tab):
+        """_on_ocr_progress_update 文案应换算页数 + 百分比，且用"已处理"而非"正在识别第X页"。"""
+        from unittest.mock import MagicMock
+
+        mock_mgr = MagicMock()
+        mock_mgr._OCR_PROGRESS_SUBSTEPS = 3
+        pdf_tab._session_mgr = mock_mgr
+
+        # 2 页 × 3 子步 = total 6；current=4 → 已处理 1/2 页，66%（int(4*100/6)）
+        pdf_tab._on_ocr_progress_update("/tmp/x.pdf", 4, 6)
+        text = pdf_tab._status_label.text()
+        assert "66%" in text
+        assert "1/2" in text
+        assert "已处理" in text
+        assert "正在识别第" not in text  # 旧文案不应残留
+
+        assert pdf_tab._progress_bar.value() == 4
+
+    def test_progress_update_at_completion(self, pdf_tab):
+        """完成时 current==total → 100%、已处理 全部页。"""
+        from unittest.mock import MagicMock
+
+        mock_mgr = MagicMock()
+        mock_mgr._OCR_PROGRESS_SUBSTEPS = 3
+        pdf_tab._session_mgr = mock_mgr
+
+        pdf_tab._on_ocr_progress_update("/tmp/x.pdf", 9, 9)  # 3 页 × 3
+        text = pdf_tab._status_label.text()
+        assert "100%" in text
+        assert "3/3" in text
 
 
 class TestPdfTabExportAsync:

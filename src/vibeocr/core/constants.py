@@ -51,7 +51,11 @@ class Constants:
     SUPPORTED_DOC_FORMATS = ["*.doc", "*.docx"]
 
     # 共享内存配置
-    DEFAULT_SHM_SIZE = 16 * 1024 * 1024  # 16MB
+    # 传输层须 ≥ 计算层：GPU 一次 predict（text_recognition_batch_size=8）×2 ≈
+    # 一个页批(16 页)。单张 300dpi A4 PNG 上限 ≈4MB，16 页 ≈64MB；预算
+    # 0.7×(128MB−9)≈90MB 能让一条 SHM 消息装下完整页批，避免传输批(~3 页)卡
+    # 住计算批(8 页)，GPU 喂不饱（性能2）。系统内存代价 +112MB，可忽略。
+    DEFAULT_SHM_SIZE = 128 * 1024 * 1024  # 128MB
     DEFAULT_SHM_LOG_SIZE = 1 * 1024 * 1024  # 1MB
 
     # 批量处理配置

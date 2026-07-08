@@ -339,6 +339,15 @@ def _create_splash(app):
     使用 resources/icon_512.png（512x512，frozen/dev 通用，走
     ``env_manager.get_bundled_resources_dir()``）。缺失时返回 None，不阻塞启动。
 
+    渲染要点（修复用户反馈的三点问题）：
+      1. LOGO 太大 → 不直接用 512px 源图，缩放到 ~200px 并放到 320px 卡片上。
+      2. 四角黑边 → 源图标四角是全透明 (0,0,0,0)，Windows 上 frameless +
+         WA_TranslucentBackground 会把透明像素合成成黑边（见 toolbar.py 注释）。
+         这里改为把图标合成到**完全不透明**的白色卡片 pixmap 上，整窗无透明像素，
+         从根源消除黑边；因此也不再设 WA_TranslucentBackground。
+      3. 始终置顶 → 不再传 WindowStaysOnTopHint（QSplashScreen 本身已具备
+         无边框/无任务栏图标的 splash 语义，无需额外置顶）。
+
     Args:
         app: QApplication 实例。
 
@@ -346,27 +355,47 @@ def _create_splash(app):
         QSplashScreen 实例；资源缺失时返回 None。
     """
     from PySide6.QtCore import Qt
-    from PySide6.QtGui import QPixmap
+    from PySide6.QtGui import QColor, QPainter, QPixmap
     from PySide6.QtWidgets import QSplashScreen
 
     splash_path = env_manager.get_bundled_resources_dir() / "icon_512.png"
     if not splash_path.is_file():
         return None
 
-    pixmap = QPixmap(str(splash_path))
-    if pixmap.isNull():
+    src = QPixmap(str(splash_path))
+    if src.isNull():
         return None
 
-    splash = QSplashScreen(pixmap, Qt.WindowType.WindowStaysOnTopHint)
-    splash.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-    # 版本号显示在图标下方
+    # 卡片整体不透明（白色），图标居中缩小，避免 512px 满屏 + 杜绝四角黑边
+    card_size = 320
+    logo_size = 200
+    canvas = QPixmap(card_size, card_size)
+    canvas.fill(QColor("#ffffff"))
+
+    painter = QPainter(canvas)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+    painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+    logo = src.scaled(
+        logo_size,
+        logo_size,
+        Qt.AspectRatioMode.KeepAspectRatio,
+        Qt.TransformationMode.SmoothTransformation,
+    )
+    logo_x = (card_size - logo.width()) // 2
+    logo_y = (card_size - logo.height()) // 2 - 8  # 略上移，给底部版本号留空
+    painter.drawPixmap(logo_x, logo_y, logo)
+    painter.end()
+
+    # 不传 WindowStaysOnTopHint → 不再置顶；不设 WA_TranslucentBackground → 无黑边
+    splash = QSplashScreen(canvas)
+    # 版本号显示在图标下方（白底卡片，用深色文字保证可读）
     try:
         from vibeocr import __version__
 
         splash.showMessage(
             f"  VibeOCR  v{__version__}\n  正在启动…",
             Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignHCenter,
-            Qt.GlobalColor.white,
+            QColor("#6b7280"),
         )
     except Exception:
         pass

@@ -666,27 +666,33 @@ class PdfSessionManager(QObject):
         self._ocr_worker.failed.connect(lambda sid, e: logger.error("OCR 失败: %s", e))
         self._ocr_worker.start()
 
-    # 每批页数：平衡内存(每页 300dpi ≈ 2-4MB numpy)与批量 predict 吞吐。
+    # 三层批关系（性能2）：
+    #   页批(此处 16) ≥ 传输批(SHM 一条消息装下的页数) ≥ 计算批(GPU predict)。
+    #   计算批 = text_recognition_batch_size=8（pipeline_ocr.py，GPU）；
+    #   传输批 由 SHM 预算 0.7×(128MB−9)≈90MB 决定，足以装下 16 页 → 传输不卡计算。
+    #   页批=16 正好 2×计算批，喂满 GPU 且不让单批 predict 超时。
     _OCR_BATCH_SIZE = 16
     # 渲染并发线程数。后端 fitz 栅格化由 fitz_lock 串行化，但 PIL/PNG 编码 +
     # HTTP 往返可并行，N 并发可掩盖单页往返延迟。httpx Client 按线程独立(见
     # PdfBackendClient._ensure_started)，故可安全并发调用 render_preview。
     _RENDER_CONCURRENCY = 4
+    # 进度子步数：每页拆成 渲染/识别/写层 3 个子步，让进度条在整批渲染/识别
+    # 期间也能推进（而非只在写层时跳变），避免长时间静止被误判为卡死。
+    # UI（PdfTab._begin_ocr_ui）的进度条范围须用 同样的子步数。
+    _OCR_PROGRESS_SUBSTEPS = 3
 
     def _run_ocr(self, runner, session_id: str, pages: list[int],
                  ocr_options, settings_dict: dict, overwrite: bool) -> None:
         """在 OCR runner 线程内:分批 [并发渲染 → 批量 OCR → 逐页写文字层]。
 
         - 渲染:线程池并发调 render_preview(后端 fitz_lock 串行化栅格化，
-          PIL/PNG 编码并行)，结果按页序对齐。
+          PNG 编码并行)，结果按页序对齐；返回原始 PNG bytes，不在主进程解码
+          （由 worker 子进程解码一次，避免 PNG 双重编解码，性能1）。
         - 识别:recognize_batch() 一次 predict(list)，利用 PaddleOCR 内部
           ImageBatchSampler 分批，省去每页重复管道开销。
         - 写层:逐页串行 add_text_layer(fitz 写操作不可并发)。
         """
-        import io
         from concurrent.futures import ThreadPoolExecutor
-        import numpy as np
-        from PIL import Image
         from vibeocr.models.ocr_options import OCROptions
 
         session = self._sessions.get(self._active_path or "")
@@ -695,17 +701,28 @@ class PdfSessionManager(QObject):
         total = len(pages)
         success = 0
         fail = 0
-        done = 0  # 已处理页数(跨批次累计，用于进度信号)
+        done = 0  # 已写层页数(跨批次累计，用于 page_done 与最终统计)
         opts = ocr_options if ocr_options is not None else OCROptions()
         batch_size = self._OCR_BATCH_SIZE
         client = self._client
+        # 进度按子步计：每页 渲染/识别/写层 各 1 步，total_steps = 页数 × 子步数。
+        # 这样整批渲染/识别完成后进度也会推进，避免长时间静止被误判为卡死。
+        substeps = self._OCR_PROGRESS_SUBSTEPS
+        progress_total = total * substeps
+        progress = 0
 
-        def _render_page(idx: int) -> np.ndarray | None:
-            """渲染单页 300dpi → numpy。失败返回 None。"""
+        def _emit_progress() -> None:
+            runner.progress.emit(session_id, progress, progress_total)
+
+        def _render_page(idx: int) -> bytes | None:
+            """渲染单页 300dpi → 原始 PNG bytes。
+
+            不在主进程解码为 ndarray：recognize_batch 的 IPC 路径对 bytes 输入
+            原样透传（_prepare_image_data:419-420），由 worker 子进程的 _to_ndarray
+            解码一次即可。省去主进程的 PNG 解码 + 重新 PNG 编码（性能1）。
+            """
             try:
-                png = client.render_preview(session_id, idx, dpi=300)
-                img = Image.open(io.BytesIO(png)).convert("RGB")
-                return np.array(img)
+                return client.render_preview(session_id, idx, dpi=300)
             except Exception as e:
                 logger.error("渲染页 %d 失败: %s", idx, e)
                 return None
@@ -716,7 +733,7 @@ class PdfSessionManager(QObject):
             batch_pages = pages[batch_start:batch_start + batch_size]
 
             # 阶段1：并发渲染(线程池，结果按 batch_pages 顺序对齐)
-            images: list[np.ndarray | None] = [None] * len(batch_pages)
+            images: list[bytes | None] = [None] * len(batch_pages)
             if not runner._cancelled:
                 with ThreadPoolExecutor(
                     max_workers=min(self._RENDER_CONCURRENCY, len(batch_pages))
@@ -726,6 +743,9 @@ class PdfSessionManager(QObject):
                     for i, arr in enumerate(rendered):
                         images[i] = arr
             page_failed = [arr is None for arr in images]
+            # 渲染子步进度：本批每页 +1（含渲染失败的页，它们仍“处理完”了渲染阶段）
+            progress += len(batch_pages)
+            _emit_progress()
 
             # 阶段2：批量识别(单次 predict，跳过渲染失败的页)
             valid_indices = [i for i, img in enumerate(images) if img is not None]
@@ -743,18 +763,25 @@ class PdfSessionManager(QObject):
                     # 整批识别失败：标记这些页失败
                     for vi in valid_indices:
                         page_failed[vi] = True
+            # 识别子步进度：仅识别成功的页（渲染失败的页不再走识别）
+            progress += len(valid_indices)
+            _emit_progress()
 
             # 阶段3：逐页写层 + 进度信号
             for i, idx in enumerate(batch_pages):
                 if runner._cancelled:
                     done += 1
+                    # 取消跳过的页补齐写层子步，保持进度连续
+                    progress += 1
+                    _emit_progress()
                     continue
                 if page_failed[i]:
                     fail += 1
                     session.add_ocr_stats(0, 1)
                     runner.page_done.emit(session_id, idx, None)
                     done += 1
-                    runner.progress.emit(session_id, done, total)
+                    progress += 1
+                    _emit_progress()
                     continue
                 result = results_map.get(i)
                 try:
@@ -774,7 +801,8 @@ class PdfSessionManager(QObject):
                     fail += 1
                     runner.page_done.emit(session_id, idx, None)
                 done += 1
-                runner.progress.emit(session_id, done, total)
+                progress += 1
+                _emit_progress()
 
         # 刷新 model(OCR 改变了 has_text_layer + ocr_text_blocks)
         try:
@@ -812,8 +840,22 @@ class PdfSessionManager(QObject):
         w = getattr(self, "_ocr_worker", None)
         if w is not None and hasattr(w, "cancel"):
             w.cancel()
-            w.wait(5000)
-            self._ocr_worker = None
+            # 轮询事件循环等待 worker 退出，让取消前已发出的 page_done/progress
+            # 等跨线程排队信号在主线程排干（否则裸 wait() 会把它们搁置在队列，
+            # 导致已写层的页格子来不及变绿——见 Bug A）。
+            # 不用 _wait_thread 的 terminate() 兜底：OCR worker 可能在 SHM 往返
+            # 中途，强杀会留下半写状态。超时后交由 all_done 信号（runner 退出时
+            # 一定会发）做最终清理（_on_ocr_all_done_signal 重置 _ocr_worker）。
+            import time
+            from PySide6.QtCore import QCoreApplication
+
+            deadline = time.monotonic() + 5.0
+            while not w.isFinished():
+                QCoreApplication.processEvents()
+                w.wait(50)
+                if time.monotonic() > deadline:
+                    break
+            QCoreApplication.processEvents()
         self._ocr_running = False
 
     def get_pages_without_text_layer(self, session_id: str) -> list[int]:

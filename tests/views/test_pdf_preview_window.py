@@ -171,6 +171,49 @@ class TestPreviewCanvasOcrBlocks:
         assert len(canvas._ocr_blocks) >= 1
 
 
+class TestPreviewCanvasSetPixmapClears:
+    """set_pixmap（裸 pixmap 入口）应清除所有高亮数据源，避免 bbox 残留（Bug B）。"""
+
+    def test_set_pixmap_clears_ocr_blocks(self, canvas, qapp):
+        """先设 OCR 块，再 set_pixmap 裸 pixmap → OCR 块应被清除。"""
+        from PySide6.QtGui import QPixmap
+
+        from vibeocr.models.ocr_result import TextBlock
+
+        pm1 = QPixmap(200, 200)
+        pm1.fill()
+        canvas.set_ocr_blocks(
+            0, [TextBlock(text="Hi", score=0.9, bbox=(10.0, 10.0, 100.0, 50.0))], pm1
+        )
+        assert canvas._ocr_blocks is not None
+
+        pm2 = QPixmap(300, 300)
+        pm2.fill()
+        canvas.set_pixmap(pm2)
+
+        assert canvas._ocr_blocks is None
+        assert canvas._ocr_block_rects == []
+        assert canvas._pixmap is pm2
+
+    def test_set_pixmap_after_highlight_clears(self, canvas):
+        """先设 highlight_layers，再 set_pixmap 裸 pixmap → highlight 应被清除。"""
+        from PySide6.QtGui import QPixmap
+
+        page_rect = fitz.Rect(0, 0, 612, 792)
+        canvas.set_highlight_layers(
+            [_FakeLayer((72.0, 72.0, 200.0, 100.0))], render_dpi=72, page_rect=page_rect
+        )
+        assert len(canvas._highlight_layers) == 1
+        assert canvas._page_rect is not None
+
+        pm = QPixmap(100, 100)
+        pm.fill()
+        canvas.set_pixmap(pm)
+
+        assert canvas._highlight_layers == []
+        assert canvas._page_rect is None
+
+
 class TestPreviewCanvasBlockEdit:
     """双击改字 → emit block_text_edited 信号。"""
 

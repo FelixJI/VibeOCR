@@ -65,6 +65,11 @@ UV_LOCK = Path(os.environ.get("UV_LOCK", str(PROJECT_ROOT / "uv.lock")))
 VERSION_RE = re.compile(r'version\s*=\s*"(\d+)\.(\d+)\.(\d+)"')
 SEMVER_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
 
+# 包名归一映射（lock/pyproject → 运行时一致 key）。
+# uv.lock / pyproject 用 paddlepaddle-gpu，便携环境检测用 paddlepaddle。
+# _generate_version_json 与 _read_uv_lock_versions 共用此映射保持一致。
+_KEY_ALIASES_LOCK = {"paddlepaddle-gpu": "paddlepaddle"}
+
 # ---------------------------------------------------------------------------
 # 打包常量
 # ---------------------------------------------------------------------------
@@ -871,6 +876,39 @@ def _sync_uv_lock(version: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
+def _read_uv_lock_versions() -> dict[str, str]:
+    """解析 uv.lock，返回 {归一包名: 锁定版本}。
+
+    uv.lock 是 TOML，每个包为 ``[[package]]`` 表，含 ``name`` 与 ``version``。
+    本函数读取全部包的锁定版本（含 local label，如 torch 的 ``2.12.1+cu126``），
+    并把 ``paddlepaddle-gpu`` 归一为 ``paddlepaddle``（与 _KEY_ALIASES 一致），
+    使运行时 detect_dependency_updates 能拿到便携环境应装的真实版本。
+
+    用于版本更新检测：pyproject 的 ``>=3.4.0`` 只是下界，无法表达"实际锁定 3.4.2"，
+    便携环境已装 3.4.0 会被误判为最新。锁定版作为权威比较基准解决此问题。
+
+    Returns:
+        {包名: 版本串}；uv.lock 不存在或解析失败时返回空 dict。
+    """
+    import tomllib
+
+    if not UV_LOCK.exists():
+        return {}
+    try:
+        lock = tomllib.loads(UV_LOCK.read_text(encoding="utf-8"))
+    except (tomllib.TOMLDecodeError, OSError):
+        return {}
+    versions: dict[str, str] = {}
+    for pkg in lock.get("package", []):
+        name = pkg.get("name", "")
+        version = pkg.get("version", "")
+        if name and version:
+            # 归一：paddlepaddle-gpu → paddlepaddle（便携用 GPU 版）
+            key = _KEY_ALIASES_LOCK.get(name.lower()) or name.lower()
+            versions[key] = version
+    return versions
+
+
 def _generate_version_json(version: str, dist_dir: Path) -> None:
     """生成 version.json 到输出目录
 
@@ -883,6 +921,9 @@ def _generate_version_json(version: str, dist_dir: Path) -> None:
     - dep_extras：追踪包 → extras 列表（如 paddleocr → ["doc-parser"]）。
         extras 是包名一部分，重建 spec 时拼回 ``pkg[extra1,extra2]``。
         无 extras 的包不出现于此 dict；该字段整体缺失时按"无 extras"处理（旧版兼容）。
+    - dep_locked_versions：追踪包 → uv.lock 锁定版本（如 "3.4.2"、torch "2.12.1+cu126"）。
+        作为更新检测的权威基准：便携环境已装版本 < 锁定版即报更新，避免只比 ``>=`` 下界
+        漏掉 3.4.0 → 3.4.2 这类下界内的升级。缺失该字段时运行时回退下界（旧版兼容）。
     - removed：自上个 release tag 起从依赖中移除的包名（P4，主程序据此 pip uninstall）。
         无移除时省略 removed 字段。
     """
@@ -899,7 +940,7 @@ def _generate_version_json(version: str, dist_dir: Path) -> None:
         "paddle", "paddleocr", "mineru", "torch", "nvidia",
         "pymupdf", "fastapi", "uvicorn", "pydantic", "fonttools",
     )
-    _KEY_ALIASES = {"paddlepaddle-gpu": "paddlepaddle"}
+    _KEY_ALIASES = _KEY_ALIASES_LOCK  # 模块级常量，与 _read_uv_lock_versions 共用
 
     dep_versions: dict[str, str] = {}
     dep_extras: dict[str, list[str]] = {}
@@ -956,6 +997,15 @@ def _generate_version_json(version: str, dist_dir: Path) -> None:
             old_tracked_keys.add(key)
     removed = sorted(old_tracked_keys - set(dep_versions.keys()))
 
+    # dep_locked_versions：从 uv.lock 取每个追踪包的锁定版本，作为更新检测权威基准。
+    # 仅记录 dep_versions 中存在且在 lock 里找到的包；找不到的省略（运行时回退下界）。
+    locked_versions_raw = _read_uv_lock_versions()
+    dep_locked_versions: dict[str, str] = {
+        key: locked_versions_raw[key]
+        for key in dep_versions
+        if key in locked_versions_raw
+    }
+
     data: dict = {
         "version": version,
         "channel": "stable",
@@ -966,6 +1016,8 @@ def _generate_version_json(version: str, dist_dir: Path) -> None:
     # 仅在有包带 extras 时写入（旧版兼容：缺失按"无 extras"）。
     if dep_extras:
         data["dep_extras"] = dep_extras
+    if dep_locked_versions:
+        data["dep_locked_versions"] = dep_locked_versions
     if removed:
         data["removed"] = removed
     version_path = dist_dir / "version.json"
