@@ -33,6 +33,15 @@ _STRUCTURED_LINE_RE = re.compile(
 # 日期时间模式：YYYY-MM-DD HH:MM:SS（用于分割无换行拼接的多行）
 _DATETIME_PATTERN = r"\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}"
 
+# Python traceback 起始行：Traceback (most recent call last):
+_TRACEBACK_START_RE = re.compile(r"Traceback \(most recent call last\):")
+
+# Python 异常末行：xxx.Error: message（如 ModuleNotFoundError: No module named 'x'）
+# 用于捕获 traceback 最后一行的真实错误原因。
+_EXCEPTION_LINE_RE = re.compile(
+    r"^(?:[A-Za-z_][\w.]*\.)?[A-Za-z_][\w]*Error\b.*|^[A-Za-z_][\w]*Exception\b.*|^ImportError\b.*|^ModuleNotFoundError\b.*"
+)
+
 
 class SubprocessLogForwarder:
     """子进程 stdout 日志转发器。
@@ -65,6 +74,10 @@ class SubprocessLogForwarder:
 
         匹配结构化格式的行按原始级别转发；不匹配的裸 print 只计数折叠，
         达到阈值时以概括形式输出行数。空白行忽略（不计数、不转发）。
+
+        **异常 traceback 不折叠**：子进程崩溃时（如 import 失败退出码 1）输出
+        的 ``Traceback (most recent call last): ...`` 及末行异常名必须以 ERROR
+        级别原样转发,否则真实错误被折叠掉,只剩"退出码 1"无法定位。
         """
         # 结构化行到来前，先把累积的裸 print 概括输出
         match = _STRUCTURED_LINE_RE.match(text)
@@ -78,6 +91,14 @@ class SubprocessLogForwarder:
 
         # 纯空白行忽略，不计数、不转发
         if not text.strip():
+            return
+
+        # 异常 traceback：原样以 ERROR 转发（不折叠,不计数）
+        # - Traceback 起始行
+        # - 末行异常名（ModuleNotFoundError / ImportError / xxxError / xxxException）
+        if _TRACEBACK_START_RE.search(text) or _EXCEPTION_LINE_RE.match(text.strip()):
+            self.flush()
+            self._logger.error(f"{self._source_label} {text.rstrip()}")
             return
 
         with self._raw_log_lock:

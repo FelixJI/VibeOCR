@@ -99,6 +99,39 @@ class PdfBackendClient:
             return str(embedded)
         return sys.executable
 
+    def _get_backend_env(self) -> dict[str, str]:
+        """构造 PDF 后端子进程环境变量。
+
+        嵌入式/便携式 Python 是独立解释器，vibeocr 源码既不在它的 site-packages
+        也不在 sys.path 中（打包态源码平铺于 ``sys._MEIPASS``，便携态则位于
+        ``src/``）。与 OCR Worker 一致，必须通过 PYTHONPATH 显式指向 vibeocr
+        包父目录，否则子进程 ``import vibeocr`` 立即失败退出码 1。
+
+        对齐 ``OCRWorkerProcess._get_worker_env`` 的逻辑。
+        """
+        env = os.environ.copy()
+
+        if getattr(sys, "frozen", False):
+            meipass = getattr(sys, "_MEIPASS", None)
+            if meipass:
+                existing = env.get("PYTHONPATH", "")
+                env["PYTHONPATH"] = (
+                    f"{meipass};{existing}" if existing else str(meipass)
+                )
+        else:
+            import vibeocr
+            from pathlib import Path
+
+            src_dir = str(Path(vibeocr.__file__).resolve().parent.parent)
+            sep = os.pathsep
+            existing = env.get("PYTHONPATH", "")
+            if src_dir not in existing.split(sep):
+                env["PYTHONPATH"] = (
+                    f"{src_dir}{sep}{existing}" if existing else src_dir
+                )
+
+        return env
+
     def _find_free_port(self) -> int:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.bind(("127.0.0.1", 0))
@@ -158,6 +191,7 @@ class PdfBackendClient:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,  # 合并到 stdout 统一读
                 text=False,
+                env=self._get_backend_env(),  # 注入 PYTHONPATH,否则便携 Python 找不到 vibeocr
                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
             )
             # 绑定 Job Object:主进程崩溃时内核连带终止后端
@@ -180,9 +214,12 @@ class PdfBackendClient:
         last_err: Exception | None = None
         while time.monotonic() < deadline:
             if self._process is not None and self._process.poll() is not None:
-                raise PdfBackendError(
-                    f"PDF 后端启动失败,退出码 {self._process.returncode}"
-                )
+                # 子进程已退出：排空 stdout 提取真实错误（traceback），否则只剩退出码无法定位
+                tail = self._drain_stdout_tail()
+                msg = f"PDF 后端启动失败,退出码 {self._process.returncode}"
+                if tail:
+                    msg += f"\n子进程输出末尾:\n{tail}"
+                raise PdfBackendError(msg)
             try:
                 resp = httpx.get(f"{self._base_url}/health", timeout=2.0)
                 if resp.status_code == 200:
@@ -194,6 +231,29 @@ class PdfBackendClient:
         raise PdfBackendError(
             f"PDF 后端 {self._base_url} 启动超时({last_err})"
         )
+
+    def _drain_stdout_tail(self, max_lines: int = 30) -> str:
+        """读取子进程 stdout 末尾若干行用于错误诊断。
+
+        日志转发线程已在并行读取 stdout，但进程退出后 pipe 中可能仍有未消费
+        缓冲。这里非阻塞地读出末尾内容（traceback），附加到异常消息中。
+        """
+        if self._process is None or self._process.stdout is None:
+            return ""
+        try:
+            lines: list[str] = []
+            # 进程已退出，pipe 写端关闭，readline 会立即返回 EOF。
+            while len(lines) < max_lines:
+                raw = self._process.stdout.readline()
+                if not raw:
+                    break
+                text = raw.decode("utf-8", errors="replace").rstrip()
+                if text:
+                    lines.append(text)
+            # 只保留末尾 max_lines 行（traceback 通常在末尾）
+            return "\n".join(lines[-max_lines:]) if lines else ""
+        except Exception:
+            return ""
 
     def _stop_locked(self) -> None:
         if self._job_guard is not None:

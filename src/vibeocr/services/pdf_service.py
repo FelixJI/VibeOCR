@@ -12,7 +12,6 @@ from typing import Any, NamedTuple
 
 import fitz
 import numpy as np
-from PySide6.QtGui import QImage, QPixmap
 
 from vibeocr.models.pdf_document import PdfDocument, PdfPageInfo, TextLayerInfo
 from vibeocr.utils.cjk_font_resolver import _CJK_RESOLVER
@@ -225,7 +224,11 @@ class PdfService:
     # ---- render -----------------------------------------------------
 
     @staticmethod
-    def render_page(doc: fitz.Document, page_index: int, dpi: int = 96) -> QPixmap:
+    def render_page(doc: fitz.Document, page_index: int, dpi: int = 96) -> "QPixmap":
+        # 延迟导入：PDF 后端子进程是无头进程,不安装 PySide6；顶层导入会让后端
+        # 启动时 ModuleNotFoundError 退出码 1。仅在主进程 GUI 渲染路径用到时才导入。
+        from PySide6.QtGui import QImage, QPixmap
+
         page = doc[page_index]
         zoom = dpi / 72.0
         mat = fitz.Matrix(zoom, zoom)

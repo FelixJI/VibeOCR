@@ -189,6 +189,43 @@ class TestSubprocessLogForwarder:
 
         assert any(source_label in r.message for r in caplog.records)
 
+    def test_traceback_start_forwarded_at_error(
+        self, caplog, logger_name, source_label
+    ):
+        """Python traceback 起始行以 ERROR 级别原样转发（不折叠）。
+
+        子进程 import 失败退出码 1 时会输出 Traceback，折叠掉就无法定位
+        真实错误（历史上 PDF 后端启动失败只剩"退出码1"无法排查）。
+        """
+        forwarder = SubprocessLogForwarder(
+            logger_name=logger_name, source_label=source_label
+        )
+
+        with caplog.at_level("DEBUG", logger=logger_name):
+            forwarder.forward("Traceback (most recent call last):")
+
+        assert any(
+            "Traceback (most recent call last):" in r.message
+            and r.levelname == "ERROR"
+            for r in caplog.records
+        )
+
+    def test_exception_line_forwarded_at_error(
+        self, caplog, logger_name, source_label
+    ):
+        """traceback 末行异常名（如 ModuleNotFoundError）以 ERROR 转发。"""
+        forwarder = SubprocessLogForwarder(
+            logger_name=logger_name, source_label=source_label
+        )
+
+        with caplog.at_level("DEBUG", logger=logger_name):
+            forwarder.forward("ModuleNotFoundError: No module named 'vibeocr'")
+
+        assert any(
+            "ModuleNotFoundError" in r.message and r.levelname == "ERROR"
+            for r in caplog.records
+        )
+
 
 class TestSplitMixedLines:
     """``SubprocessLogForwarder.split_mixed_lines`` 的行为。"""
