@@ -999,7 +999,8 @@ def run_replacement(
         if fail_reason:
             _flush_progress(app_dir, success=False, version=_read_version(app_dir))
         # 失败时务必清理临时产物（zip / sha256 / 解压目录 / 备份目录），避免长期堆积。
-        # 成功路径已在 try 内 cleanup，不走这里。
+        # 成功路径不做 cleanup（清理由新主程序后台线程负责，见 main.py
+        # _cleanup_update_artifacts），仅失败路径在此清理现场。
         if fail_reason:
             _safe_cleanup_artifacts(zip_path, new_files_dir)
             # 替换失败并回滚后，旧版本仍在位 → 重启它，避免「主程序已退出、应用打不开」
