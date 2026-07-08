@@ -17,7 +17,7 @@ from PySide6.QtCore import (
     QTimer,
     Signal,
 )
-from PySide6.QtGui import QColor, QIcon, QPen, QPixmap
+from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -84,6 +84,29 @@ def _placeholder_icon(size: int = _THUMBNAIL_SIZE) -> QIcon:
     if icon is None:
         icon = QIcon(_placeholder_pixmap(size))
         _PLACEHOLDER_ICONS[size] = icon
+    return icon
+
+# 检测中占位图按 size 缓存:灰底 + "正在检测文字层…" 文字
+_DETECTING_ICONS: dict[int, QIcon] = {}
+
+
+def _detecting_icon(size: int = _THUMBNAIL_SIZE) -> QIcon:
+    """检测中占位 QIcon(按 size 缓存):灰底 + 居中提示文字。"""
+    icon = _DETECTING_ICONS.get(size)
+    if icon is None:
+        pm = QPixmap(size, size)
+        pm.fill(Qt.GlobalColor.lightGray)
+        painter = QPainter(pm)
+        font = QFont()
+        font.setPointSize(max(7, size // 16))
+        painter.setFont(font)
+        painter.setPen(QColor(Colors.text_subtle))
+        painter.drawText(
+            pm.rect(), Qt.AlignmentFlag.AlignCenter, "正在检测文字层…"
+        )
+        painter.end()
+        icon = QIcon(pm)
+        _DETECTING_ICONS[size] = icon
     return icon
 
 # 文字层网格 item 数据角色：_LAYER_ROLE 存 page_index，_HAS_LAYER_ROLE 存 has_text_layer
@@ -177,17 +200,38 @@ class ThumbnailModel(QAbstractListModel):
         # generation 校验:invalidate(row) 自增该行 gen;请求带 gen,响应带 gen,
         # 只在 gen 匹配时入缓存,丢弃失效后仍在途的旧渲染结果(旋转 ABA)。
         self._gen: dict[int, int] = {}
+        # 文字层检测中状态:set_session 时置 True(打开时先检测不渲染缩略图),
+        # set_detection_done() 置 False 并启动 worker。检测期 data() 返回检测中
+        # 占位图标,request_range 投递被抑制,避免与 load 并发争抢后端 fitz。
+        self._detection_in_progress: bool = False
 
     def set_session(self, session: PdfSession | None) -> None:
-        """切换数据源（切文件/导入时）：停旧 worker、清缓存、起新 worker。"""
+        """切换数据源（切文件/导入时）：停旧 worker、清缓存、起新 worker。
+
+        打开后进入"检测中"状态:不立即渲染缩略图,等 load_done 触发
+        set_detection_done() 再启动 worker,避免与逐页文字层检测并发争抢
+        后端 fitz(大文件场景下两者并发会拖慢/此前有崩溃隐患)。
+        """
         self._stop_render_worker()
         self.beginResetModel()
         self._session = session
         self._cache.clear()
         self._gen.clear()
+        self._detection_in_progress = session is not None
         self.endResetModel()
-        if session is not None:
-            self._start_render_worker(session)
+
+    def set_detection_done(self) -> None:
+        """文字层检测完成:退出检测中状态,启动缩略图 worker,触发可见行渲染。
+
+        由 PdfTab._on_load_done 调用。批量打开场景下每个文件各自的 load_done
+        分别触发该文件的缩略图渲染开始。
+        """
+        if self._session is None:
+            self._detection_in_progress = False
+            return
+        self._detection_in_progress = False
+        self._start_render_worker(self._session)
+        self.invalidate_all()
 
     def _start_render_worker(self, session: PdfSession) -> None:
         # 进程化:缩略图走 IPC(client.render_thumbnail → PNG → QPixmap)
@@ -259,6 +303,8 @@ class ThumbnailModel(QAbstractListModel):
 
     def request_render(self, row: int) -> None:
         """请求渲染指定行（已在缓存则跳过）。滚动监听 / data() miss 时调用。"""
+        if self._detection_in_progress:
+            return
         if not self._ensure_render_worker_alive():
             return
         if row in self._cache:
@@ -268,6 +314,8 @@ class ThumbnailModel(QAbstractListModel):
 
     def request_range(self, first: int, last: int) -> None:
         """请求渲染 [first, last] 行范围（去重由 worker 处理）。"""
+        if self._detection_in_progress:
+            return
         if not self._ensure_render_worker_alive():
             return
         assert self._render_worker is not None
@@ -276,8 +324,8 @@ class ThumbnailModel(QAbstractListModel):
                 self._render_worker.request(row, self._gen.get(row, 0))
 
     def _ensure_render_worker_alive(self) -> bool:
-        """确保 render worker 存活:None 或已结束则重启。"""
-        if self._session is None:
+        """确保 render worker 存活:None 或已结束则重启。检测期不启动。"""
+        if self._session is None or self._detection_in_progress:
             return False
         if self._render_worker is not None and not self._render_worker.isFinished():
             return True
@@ -334,11 +382,13 @@ class ThumbnailModel(QAbstractListModel):
             pixmap = self._cache.get(index.row())
             if pixmap is not None:
                 return QIcon(pixmap)
-            # 缓存未命中：返回占位图标。不在 data() 里调 request_render——
-            # 滚动时 Qt 对每行多次查 data(DecorationRole)，每次 miss 调
-            # request_render 会争 _pending_lock + 放大开销。渲染请求统一由
-            # ThumbnailListView 的 visible_range_changed → request_range 驱动
-            # （scroll/showEvent 触发，去抖 50ms）。
+            # 缓存未命中：检测中返回带提示的占位图标；否则普通占位。
+            # 不在 data() 里调 request_render——滚动时 Qt 对每行多次查
+            # data(DecorationRole)，每次 miss 调 request_render 会争
+            # _pending_lock + 放大开销。渲染请求统一由 ThumbnailListView
+            # 的 visible_range_changed → request_range 驱动（检测期被抑制）。
+            if self._detection_in_progress:
+                return _detecting_icon(self._thumb_size)
             return _placeholder_icon(self._thumb_size)
         if role == Qt.ItemDataRole.UserRole:
             return page_info.page_index
