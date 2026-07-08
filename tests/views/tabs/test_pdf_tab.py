@@ -5,6 +5,7 @@ from PySide6.QtCore import QItemSelectionModel, Qt
 from PySide6.QtWidgets import QListWidget, QListView, QScrollArea, QSplitter
 
 from vibeocr.views.tabs.pdf_tab import (
+    ThumbnailModel,
     _THUMBNAIL_HPAD,
     _THUMBNAIL_MAX_SIZE,
     _THUMBNAIL_MIN_SIZE,
@@ -72,6 +73,10 @@ class TestPdfTabStructure:
         # 触发定时器到期 → 仅落盘一次
         pdf_tab._splitter_save_timer.timeout.emit()
         assert calls == [1]
+
+    def test_thumbnail_text_height_is_compact(self):
+        """缩略图文字行高度应收紧到 18(单行中文足够,原 28 过松)。"""
+        assert _THUMBNAIL_TEXT_HEIGHT == 18
 
 
 class TestPdfTabLayerStatus:
@@ -1412,3 +1417,89 @@ class TestThumbnailAutoSize:
         # 信号经 PdfTab 槽同步更新 model 渲染尺寸
         assert model._thumb_size == _THUMBNAIL_MAX_SIZE
         assert lst.iconSize().width() == _THUMBNAIL_MAX_SIZE
+
+
+class TestThumbnailDetectionInProgress:
+    """打开后缩略图进入'检测中'状态:不启 worker、占位图为检测中图标。"""
+
+    def _make_model_with_session(self, qtbot, n_pages=3):
+        """构造带 N 页 session 的 ThumbnailModel(不经由 PdfTab)。
+
+        模拟"打开新文件"路径:detecting=True 进入检测态,不启动 worker
+        (worker 启动需要 manager,本辅助方法构造期无 manager)。
+        """
+        from vibeocr.models.pdf_document import PdfDocument, PdfPageInfo
+        from vibeocr.models.pdf_session import PdfSession
+
+        pages = [PdfPageInfo(page_index=i) for i in range(n_pages)]
+        doc = PdfDocument(file_path="x.pdf", pages=pages)
+        session = PdfSession(file_path="x.pdf", session_id="sid1", pdf_document=doc)
+        model = ThumbnailModel(parent=None)
+        # ThumbnailModel 是 QAbstractListModel(非 QWidget),qtbot.addWidget
+        # 仅接受 QWidget;qtbot fixture 本身已确保 QApplication 存在,
+        # model 无事件循环无需注册清理,故不调 addWidget。
+        # detecting=True 模拟打开新文件(检测中,不启动 worker,避免需要 manager)。
+        model.set_session(session, detecting=True)
+        return model
+
+    def test_set_session_enters_detection_state(self, qtbot):
+        """set_session 后 _detection_in_progress=True 且 worker 未启动。"""
+        model = self._make_model_with_session(qtbot)
+        assert model._detection_in_progress is True
+        assert model._render_worker is None
+
+    def test_request_range_noop_during_detection(self, qtbot):
+        """检测期 request_range 不投递请求(worker 未启动,不应报错/启动)。"""
+        model = self._make_model_with_session(qtbot)
+        # 不应抛异常,也不应启动 worker
+        model.request_range(0, 2)
+        assert model._render_worker is None
+
+    def test_decoration_is_detecting_icon_during_detection(self, qtbot):
+        """检测期 data(DecorationRole) 缓存未命中返回检测中图标(非普通占位)。"""
+        model = self._make_model_with_session(qtbot)
+        idx = model.index(0, 0)
+        icon = idx.data(Qt.ItemDataRole.DecorationRole)
+        # 检测中图标与普通占位图标应是不同对象(不同缓存 dict)
+        from vibeocr.views.tabs.pdf_tab import _placeholder_icon
+        assert icon is not None
+        # 普通 placeholder 不应等于检测中图标(两者视觉不同)。
+        # PySide6 的 QIcon 无 serialized()(那是 PyQt5 API),用 cacheKey()
+        # 比较底层 pixmap 标识;不同像素的 QIcon cacheKey 不同。
+        normal = _placeholder_icon(model._thumb_size)
+        assert icon.cacheKey() != normal.cacheKey()
+
+    def test_set_detection_done_starts_worker_and_clears_state(self, qtbot, monkeypatch):
+        """set_detection_done 后状态清除、worker 启动、占位恢复普通。"""
+        started = []
+        model = self._make_model_with_session(qtbot)
+        # 拦截 worker 启动(避免真实起后端进程)
+        monkeypatch.setattr(
+            "vibeocr.views.tabs.pdf_tab.ThumbnailModel._start_render_worker",
+            lambda self, session: started.append(session),
+        )
+        model.set_detection_done()
+        assert model._detection_in_progress is False
+        assert started, "应启动缩略图 worker"
+
+    def test_structural_refresh_does_not_reenter_detection(self, qtbot, monkeypatch):
+        """结构性变更后的 set_session 刷新不应重新进入检测态(C1 回归防护)。
+
+        场景:文件已加载完(set_detection_done 已调用),用户做旋转/删页/
+        插页/重排,这些路径通过 set_session 刷新缩略图模型,之后不会再有
+        load_done 信号。若 set_session 误置 _detection_in_progress=True,
+        缩略图会永久卡在"检测中"占位、worker 不重启。
+        """
+        started = []
+        model = self._make_model_with_session(qtbot)
+        # 先完成检测(模拟 load_done)
+        monkeypatch.setattr(
+            "vibeocr.views.tabs.pdf_tab.ThumbnailModel._start_render_worker",
+            lambda self, session: started.append(session),
+        )
+        model.set_detection_done()
+        started.clear()
+        # 模拟结构性变更后的刷新(默认 detecting=False)
+        model.set_session(model._session)
+        assert model._detection_in_progress is False
+        assert started, "结构性刷新后应直接启动 worker,而非卡在检测态"
