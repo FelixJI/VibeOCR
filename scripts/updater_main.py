@@ -56,7 +56,7 @@ def parse_args() -> tuple[Path, Path]:
 
 def main() -> int:
     zip_path, app_dir = parse_args()
-    # updater 专用日志文件；主程序 --self-update 模式用 self_update.log 区分。
+    # updater 专用日志文件（与旧版 self_update.log 历史区分，现仅 updater 一条路径）。
     setup_logging(app_dir, "updater.log")
     logger.info("VibeOCR 更新助手启动（updater.exe）")
 

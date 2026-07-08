@@ -86,6 +86,7 @@ def _cleanup_update_artifacts(app_dir: Path) -> None:
     新架构下 updater 启动新主程序后立即退出，不做 cleanup（避免 55s I/O 阻塞
     关键路径）。本函数由新主程序在后台 daemon 线程调用，清理：
     - data/cache/update/tmp/（解压临时目录，数百 MB）
+    - data/cache/update/_backup/（备份目录，防御性兜底）
     - data/cache/update/*.zip + *.sha256（更新包）
     - data/cache/update/updater.exe（暂存的新 updater，此刻已退出不锁）
     - data/cache/update/updater.ready（就绪信号）
@@ -106,6 +107,12 @@ def _cleanup_update_artifacts(app_dir: Path) -> None:
         tmp_dir = cache_dir / "tmp"
         if tmp_dir.exists():
             shutil.rmtree(tmp_dir, ignore_errors=True)
+
+        # _backup/ 备份目录（防御：成功路径由 replace_app_files 内联删、失败路径由
+        # _safe_cleanup_artifacts 删；此处兜底，防 launch_app 异常等极端路径残留）
+        backup_dir = cache_dir / "_backup"
+        if backup_dir.exists():
+            shutil.rmtree(backup_dir, ignore_errors=True)
 
         # zip + sha256 + 暂存 updater + ready（保留 progress.json）
         for item in cache_dir.iterdir():

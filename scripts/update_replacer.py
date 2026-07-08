@@ -220,8 +220,7 @@ def signal_ready(app_dir: Path, ready_filename: str) -> None:
 
     Args:
         app_dir: 应用安装目录，ready 文件落在 ``app_dir/data/cache/update/``。
-        ready_filename: 就绪文件名，调用方区分（如 ``updater.ready`` /
-            ``self_update.ready``），避免两条路径互相误判。
+        ready_filename: 就绪文件名（``updater.ready``），主程序端据此轮询握手。
     """
     try:
         ready_path = app_dir / "data" / "cache" / "update" / ready_filename
@@ -359,14 +358,15 @@ def rename_locked_self_exe(app_dir: Path, self_name: str) -> None:
     该删除会因文件被 OS 锁定而失败，导致替换流程中断、应用停在半残状态。
 
     本函数在替换前把旧 exe 改名（加 ``.old`` 后缀），让随后的复制能写入新版。
-    改名后的旧文件由替换器在 cleanup 阶段删除（此刻旧进程已退出），或留待下次更新清理。
+    改名后的旧文件由新主程序启动时后台清理（``cleanup_leftover_old_exes``）。
 
     Args:
         app_dir: 应用安装目录。
         self_name: 要避让的 exe 文件名，如 ``"updater.exe"`` 或 ``"VibeOCR.exe"``。
-            通用化设计：updater.exe 只需避让自己；self-update 模式需同时避让
-            ``VibeOCR.exe``（调用方主程序，已 sys.exit 但锁可能未及时释放）和
-            ``updater.exe``（同目录另一个可能被锁的 exe）。仅处理 Windows。
+            新架构下 ``self_exe_names`` 由 ``_detect_self_exe_names`` 自动判断：
+            旧路径（过渡期，updater 在 app_dir）需避让 ``updater.exe``；
+            新路径（暂存目录运行）无需避让。``VibeOCR.exe`` 避让始终保留作容错
+           （旧主程序 ``_force_quit`` 后锁可能未及时释放）。仅处理 Windows。
     """
     if os.name != "nt":
         return
@@ -400,8 +400,8 @@ def replace_app_files(
         new_files_dir: 解压后的新文件目录（可能含一层 VibeOCR/ 子目录）。
         app_dir: 应用安装目录。
         self_exe_names: 替换前需「改名避让」的运行中 exe 列表。
-            updater 调用传 ``("updater.exe",)``；self-update 调用传
-            ``("VibeOCR.exe", "updater.exe")``。
+            新架构由 ``_detect_self_exe_names`` 判断：旧路径含 ``updater.exe``，
+            新路径为空；``updater_main`` 始终拼入 ``VibeOCR.exe`` 作容错。
     """
     logger.info("替换应用文件...")
 
