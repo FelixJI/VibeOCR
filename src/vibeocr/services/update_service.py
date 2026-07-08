@@ -919,6 +919,76 @@ class UpdateService:
             f"{manual_url}",
         )
 
+    def _verify_zip_integrity(self, zip_path: Path) -> bool:
+        """校验 zip 完整性（testzip），确保能安全读出 updater 条目。
+
+        旧主程序作为"递送员"，只做这个通用校验（不违反黄金法则——testzip 是格式
+        无关的完整性检查）。真正的 SHA256 完整性校验留给新 updater（新代码校验
+        自己要部署的包）。
+
+        Args:
+            zip_path: 已下载的更新包 zip。
+
+        Returns:
+            True 表示 zip 结构完整可读；False 表示损坏/不存在。
+        """
+        if not zip_path.exists():
+            logger.error(f"zip 文件不存在: {zip_path}")
+            return False
+        try:
+            import zipfile
+
+            with zipfile.ZipFile(zip_path, "r") as zf:
+                bad = zf.testzip()
+                if bad is not None:
+                    logger.error(f"zip 损坏，损坏条目: {bad}")
+                    return False
+            return True
+        except zipfile.BadZipFile:
+            logger.error(f"无效 zip 文件: {zip_path}")
+            return False
+
+    def _extract_updater_from_zip(self, zip_path: Path) -> Path:
+        """从 zip 按 arcname 抽取新 updater 到暂存目录。
+
+        新架构（黄金法则）核心：旧主程序不解压整包、不解释新格式，只把新版 updater
+        从 zip 里取出来放到 ``data/cache/update/updater.exe``，由它（新代码）完成部署。
+
+        zip 内 updater 在 ``VibeOCR/updater.exe``（与 VibeOCR.exe 同层，一层 VibeOCR/ 根目录）。
+        只抽这一个条目，不解压整包（避免与 updater 端 extract 重复 I/O）。
+
+        Args:
+            zip_path: 已下载并通过 testzip 的更新包 zip。
+
+        Returns:
+            暂存 updater 路径 ``self._cache_dir / "updater.exe"``。
+
+        Raises:
+            RuntimeError: zip 内找不到 ``VibeOCR/updater.exe`` 条目。
+        """
+        import zipfile
+
+        arcname = "VibeOCR/updater.exe"
+        dest = self._cache_dir / "updater.exe"
+        self._cache_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            with zipfile.ZipFile(zip_path, "r") as zf:
+                # 先确认条目存在（namelist 比 getinfo 容错好）
+                if arcname not in zf.namelist():
+                    raise RuntimeError(
+                        f"更新包内未找到 {arcname}，无法提取更新器。请手动下载最新版重装。"
+                    )
+                # zf.read 一次性读入内存——updater.exe 是 onefile 约 8-12MB，可接受。
+                # 不用 extract(member)（会按 arcname 写到 cache_dir/VibeOCR/updater.exe），
+                # 而是直接写到目标路径 cache_dir/updater.exe（扁平化）。
+                dest.write_bytes(zf.read(arcname))
+        except RuntimeError:
+            raise
+        except Exception as e:
+            raise RuntimeError(f"提取更新器失败: {e}") from e
+        logger.info(f"已提取新 updater 到暂存目录: {dest}")
+        return dest
+
     def _force_quit(self) -> None:
         """强制退出主程序，把 VibeOCR.exe 及 _internal/*.dll 的文件锁释放给替换器。
 

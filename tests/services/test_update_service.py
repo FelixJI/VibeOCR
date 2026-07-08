@@ -1297,3 +1297,119 @@ class TestDownloadZipWithShaThreadedVerify:
         func, args, _kwargs = to_thread_calls[0]
         assert func is us.verify_sha256
         assert args == (zip_path, sha_path)
+
+
+# ---------------------------------------------------------------------------
+# _extract_updater_from_zip / _verify_zip_integrity：递送员职责（黄金法则）
+# ---------------------------------------------------------------------------
+
+
+class TestExtractUpdaterFromZip:
+    """_extract_updater_from_zip：从 zip 按 arcname 抽取 VibeOCR/updater.exe 到暂存目录。"""
+
+    def _make_service(self, tmp_path, monkeypatch):
+        """构造 UpdateService，隔离 cache_dir 到 tmp_path。"""
+        from vibeocr.services import env_config
+        from vibeocr.services.update_service import UpdateService
+
+        monkeypatch.setattr(
+            env_config,
+            "get_update_cache_dir",
+            lambda: tmp_path / "cache" / "update",
+        )
+        monkeypatch.setattr(
+            env_config,
+            "get_update_settings_path",
+            lambda: tmp_path / "settings.json",
+        )
+        app_dir = tmp_path / "app"
+        app_dir.mkdir()
+        return UpdateService(app_dir)
+
+    def test_extracts_updater_to_staging(self, tmp_path, monkeypatch):
+        """正常：从 zip 抽取 VibeOCR/updater.exe 到 cache_dir/updater.exe。"""
+        import zipfile
+
+        service = self._make_service(tmp_path, monkeypatch)
+        zip_path = tmp_path / "cache" / "update" / "pkg.zip"
+        zip_path.parent.mkdir(parents=True)
+        with zipfile.ZipFile(zip_path, "w") as zf:
+            zf.writestr("VibeOCR/updater.exe", b"NEW UPDATER BINARY")
+            zf.writestr("VibeOCR/VibeOCR.exe", b"main")
+            zf.writestr("VibeOCR/version.json", "{}")
+
+        result = service._extract_updater_from_zip(zip_path)
+
+        assert result == service._cache_dir / "updater.exe"
+        assert result.read_bytes() == b"NEW UPDATER BINARY"
+
+    def test_missing_updater_in_zip_raises(self, tmp_path, monkeypatch):
+        """zip 内无 VibeOCR/updater.exe → 抛 RuntimeError。"""
+        import zipfile
+
+        service = self._make_service(tmp_path, monkeypatch)
+        zip_path = tmp_path / "cache" / "update" / "pkg.zip"
+        zip_path.parent.mkdir(parents=True)
+        with zipfile.ZipFile(zip_path, "w") as zf:
+            zf.writestr("VibeOCR/VibeOCR.exe", b"main")
+
+        with pytest.raises(RuntimeError, match="updater.exe"):
+            service._extract_updater_from_zip(zip_path)
+
+    def test_does_not_extract_other_files(self, tmp_path, monkeypatch):
+        """只抽 updater.exe，不碰其它文件（避免重复解压）。"""
+        import zipfile
+
+        service = self._make_service(tmp_path, monkeypatch)
+        zip_path = tmp_path / "cache" / "update" / "pkg.zip"
+        zip_path.parent.mkdir(parents=True)
+        with zipfile.ZipFile(zip_path, "w") as zf:
+            zf.writestr("VibeOCR/updater.exe", b"updater")
+            zf.writestr("VibeOCR/_internal/big.dat", b"x" * 10000)
+
+        service._extract_updater_from_zip(zip_path)
+
+        # 只应有 updater.exe，不应有 _internal
+        assert not (service._cache_dir / "_internal").exists()
+        assert (service._cache_dir / "updater.exe").exists()
+
+
+class TestVerifyZipIntegrity:
+    """_verify_zip_integrity：zipfile testzip 包装。"""
+
+    def _make_service(self, tmp_path, monkeypatch):
+        from vibeocr.services import env_config
+        from vibeocr.services.update_service import UpdateService
+
+        monkeypatch.setattr(
+            env_config,
+            "get_update_cache_dir",
+            lambda: tmp_path / "cache" / "update",
+        )
+        monkeypatch.setattr(
+            env_config,
+            "get_update_settings_path",
+            lambda: tmp_path / "settings.json",
+        )
+        app_dir = tmp_path / "app"
+        app_dir.mkdir()
+        return UpdateService(app_dir)
+
+    def test_valid_zip_returns_true(self, tmp_path, monkeypatch):
+        import zipfile
+
+        service = self._make_service(tmp_path, monkeypatch)
+        zip_path = tmp_path / "pkg.zip"
+        with zipfile.ZipFile(zip_path, "w") as zf:
+            zf.writestr("a.txt", "hello")
+        assert service._verify_zip_integrity(zip_path) is True
+
+    def test_corrupt_zip_returns_false(self, tmp_path, monkeypatch):
+        service = self._make_service(tmp_path, monkeypatch)
+        zip_path = tmp_path / "pkg.zip"
+        zip_path.write_bytes(b"not a zip file at all")
+        assert service._verify_zip_integrity(zip_path) is False
+
+    def test_nonexistent_zip_returns_false(self, tmp_path, monkeypatch):
+        service = self._make_service(tmp_path, monkeypatch)
+        assert service._verify_zip_integrity(tmp_path / "nope.zip") is False
