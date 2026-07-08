@@ -253,12 +253,13 @@ def session_model(sid: str) -> PdfDocumentMirror:
 
 def _detect_one_page(session: BackendSession, i: int) -> PdfPageInfo:
     """检测单页文字层/扫描/几何,写入 session model 并返回 info。"""
-    rotation = PdfService.page_rotation(session.doc, i)
-    page_rect = PdfService.page_rect(session.doc, i)
-    has_text_layer = bool(session.doc[i].get_text("text").strip())
-    is_scanned = (
-        not has_text_layer and PdfService.is_page_scanned(session.doc, i)
-    )
+    with session.fitz_lock:
+        rotation = PdfService.page_rotation(session.doc, i)
+        page_rect = PdfService.page_rect(session.doc, i)
+        has_text_layer = bool(session.doc[i].get_text("text").strip())
+        is_scanned = (
+            not has_text_layer and PdfService.is_page_scanned(session.doc, i)
+        )
     info = PdfPageInfo(
         page_index=i,
         rotation=rotation,
@@ -376,7 +377,8 @@ def render_preview(sid: str, req: RenderPreviewRequest) -> StreamingResponse:
 def detect_text_layers(sid: str, req: DetectTextLayersRequest) -> DetectTextLayersResponse:
     s = _get_registry().get(sid)
     try:
-        layers = PdfService.detect_text_layers(s.doc, req.page)
+        with s.fitz_lock:
+            layers = PdfService.detect_text_layers(s.doc, req.page)
         # 同步更新 model(主进程下次取 model 时可见)
         if 0 <= req.page < len(s.pdf_document.pages):
             s.pdf_document.pages[req.page].text_layers = layers
@@ -394,7 +396,8 @@ def detect_text_layers(sid: str, req: DetectTextLayersRequest) -> DetectTextLaye
 def rotate_pages(sid: str, req: RotateRequest) -> MutateResponse:
     s = _get_registry().get(sid)
     try:
-        PdfService.rotate_pages(s.doc, s.pdf_document, req.pages, req.angle)
+        with s.fitz_lock:
+            PdfService.rotate_pages(s.doc, s.pdf_document, req.pages, req.angle)
         return MutateResponse(diff=_diff_pages(
             s.pdf_document, req.pages, invalidate_thumbnails=req.pages, modified=True
         ))
@@ -406,7 +409,8 @@ def rotate_pages(sid: str, req: RotateRequest) -> MutateResponse:
 def delete_pages(sid: str, req: DeletePagesRequest) -> MutateResponse:
     s = _get_registry().get(sid)
     try:
-        PdfService.delete_pages(s.doc, s.pdf_document, req.pages)
+        with s.fitz_lock:
+            PdfService.delete_pages(s.doc, s.pdf_document, req.pages)
         return MutateResponse(diff=_diff_full(s.pdf_document))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"删除页失败: {e}") from e
@@ -416,7 +420,8 @@ def delete_pages(sid: str, req: DeletePagesRequest) -> MutateResponse:
 def insert_blank(sid: str, req: InsertBlankRequest) -> MutateResponse:
     s = _get_registry().get(sid)
     try:
-        PdfService.insert_blank_page(s.doc, s.pdf_document, req.after_index, req.width, req.height)
+        with s.fitz_lock:
+            PdfService.insert_blank_page(s.doc, s.pdf_document, req.after_index, req.width, req.height)
         return MutateResponse(diff=_diff_full(s.pdf_document))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"插入空白页失败: {e}") from e
@@ -426,7 +431,8 @@ def insert_blank(sid: str, req: InsertBlankRequest) -> MutateResponse:
 def insert_from(sid: str, req: InsertFromRequest) -> MutateResponse:
     s = _get_registry().get(sid)
     try:
-        PdfService.insert_pages_from(s.doc, s.pdf_document, req.source_path, req.after_index)
+        with s.fitz_lock:
+            PdfService.insert_pages_from(s.doc, s.pdf_document, req.source_path, req.after_index)
         return MutateResponse(diff=_diff_full(s.pdf_document))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"插入页失败: {e}") from e
@@ -436,7 +442,8 @@ def insert_from(sid: str, req: InsertFromRequest) -> MutateResponse:
 def move_page(sid: str, req: MovePageRequest) -> MutateResponse:
     s = _get_registry().get(sid)
     try:
-        PdfService.move_page(s.doc, s.pdf_document, req.from_index, req.to_index)
+        with s.fitz_lock:
+            PdfService.move_page(s.doc, s.pdf_document, req.from_index, req.to_index)
         return MutateResponse(diff=_diff_full(s.pdf_document))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"移动页失败: {e}") from e
@@ -446,7 +453,8 @@ def move_page(sid: str, req: MovePageRequest) -> MutateResponse:
 def reorder(sid: str, req: ReorderRequest) -> MutateResponse:
     s = _get_registry().get(sid)
     try:
-        PdfService.reorder_pages(s.doc, s.pdf_document, req.new_order)
+        with s.fitz_lock:
+            PdfService.reorder_pages(s.doc, s.pdf_document, req.new_order)
         return MutateResponse(diff=_diff_full(s.pdf_document))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"重排失败: {e}") from e
@@ -476,11 +484,12 @@ def add_text_layer(sid: str, req: AddTextLayerRequest) -> MutateResponse:
             for b in ocr_result_data.get("text_blocks", [])
         ]
         ocr_result = OCRResult(text_blocks=text_blocks)
-        PdfService.add_text_layer(
-            s.doc, s.pdf_document, req.page, ocr_result,
-            pdf_settings=_settings_from_dict(req.pdf_settings),
-            overwrite=req.overwrite,
-        )
+        with s.fitz_lock:
+            PdfService.add_text_layer(
+                s.doc, s.pdf_document, req.page, ocr_result,
+                pdf_settings=_settings_from_dict(req.pdf_settings),
+                overwrite=req.overwrite,
+            )
         return MutateResponse(diff=_diff_pages(
             s.pdf_document, [req.page], invalidate_thumbnails=[req.page], modified=True
         ))
@@ -500,10 +509,11 @@ def rewrite_text_layer(sid: str, req: RewriteTextLayerRequest) -> MutateResponse
             )
             for b in req.text_blocks
         ]
-        PdfService.rewrite_text_layer(
-            s.doc, s.pdf_document, req.page, blocks, req.preproc_angle,
-            pdf_settings=_settings_from_dict(req.pdf_settings),
-        )
+        with s.fitz_lock:
+            PdfService.rewrite_text_layer(
+                s.doc, s.pdf_document, req.page, blocks, req.preproc_angle,
+                pdf_settings=_settings_from_dict(req.pdf_settings),
+            )
         return MutateResponse(diff=_diff_pages(
             s.pdf_document, [req.page], modified=True
         ))
@@ -549,24 +559,28 @@ def delete_text_layers(sid: str, req: PageListRequest) -> StreamingResponse:
     for n, page in enumerate(req.pages):
         if s.cancel_event.is_set():
             break
+        has_text = False
+        residual = False
         try:
-            has_text = PdfService.page_has_text(s.doc, page)
-            if not has_text:
-                PdfService.delete_text_layers(s.doc, s.pdf_document, page)
-                events.append(ProgressEvent(
-                    phase=ProgressPhase.DELETE, current=n + 1, total=total,
-                    page_index=page, page_payload=(0, 0, False),
-                ))
-            else:
-                deleted, rounds, residual = PdfService.delete_text_layers(
-                    s.doc, s.pdf_document, page
-                )
-                if residual:
-                    residual_pages.append(page)
-                events.append(ProgressEvent(
-                    phase=ProgressPhase.DELETE, current=n + 1, total=total,
-                    page_index=page, page_payload=(deleted, rounds, residual),
-                ))
+            # page_has_text + delete_text_layers 是一次"检测+删除"单元,
+            # 一起进锁避免被并发渲染线程插入(与持 fitz_lock 的 render_* 互斥)。
+            with s.fitz_lock:
+                has_text = PdfService.page_has_text(s.doc, page)
+                if not has_text:
+                    PdfService.delete_text_layers(s.doc, s.pdf_document, page)
+                    payload = (0, 0, False)
+                else:
+                    deleted, rounds, residual = PdfService.delete_text_layers(
+                        s.doc, s.pdf_document, page
+                    )
+                    payload = (deleted, rounds, residual)
+            # 锁外:纯 Python 汇总
+            if has_text and residual:
+                residual_pages.append(page)
+            events.append(ProgressEvent(
+                phase=ProgressPhase.DELETE, current=n + 1, total=total,
+                page_index=page, page_payload=payload,
+            ))
         except Exception as e:
             logger.error("[pdf-backend] delete layer page %d: %s", page, e)
             events.append(ProgressEvent(
@@ -585,18 +599,19 @@ def save(sid: str, req: SaveRequest) -> SaveResponse:
     """保存(rewrite + 落盘)。doc 可能被 close+reopen 替换。"""
     s = _get_registry().get(sid)
     try:
-        result = PdfService.save_with_rewrite(
-            s.doc, s.pdf_document, path=req.path,
-            pdf_settings=_settings_from_dict(req.pdf_settings),
-        )
-        # 全量压缩时 doc 被替换
-        new_doc = getattr(result, "new_doc", None)
-        if new_doc is not None:
-            try:
-                s.doc.close()
-            except Exception:
-                pass
-            s.doc = new_doc
+        with s.fitz_lock:
+            result = PdfService.save_with_rewrite(
+                s.doc, s.pdf_document, path=req.path,
+                pdf_settings=_settings_from_dict(req.pdf_settings),
+            )
+            # 全量压缩时 doc 被替换
+            new_doc = getattr(result, "new_doc", None)
+            if new_doc is not None:
+                try:
+                    s.doc.close()
+                except Exception:
+                    pass
+                s.doc = new_doc
         saved_path = result.path or s.pdf_document.file_path or ""
         return SaveResponse(path=saved_path, diff=_diff_full(s.pdf_document))
     except Exception as e:
