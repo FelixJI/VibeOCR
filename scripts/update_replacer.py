@@ -948,12 +948,8 @@ def run_replacement(
     relaunch_on_fail = True
 
     try:
-        with _StageTimer("校验 zip 完整性"):
-            zip_ok = verify_zip(zip_path)
-        if not zip_ok:
-            fail_reason = "更新包已损坏或校验失败。"
-            return 1
-
+        # verify_zip(testzip) 已移交旧主程序端（递送时确保 zip 可读，可安全抽取 updater）。
+        # 此处仅做 verify_sha256（更强，且由新代码校验自己要部署的包——黄金法则）。
         with _StageTimer("校验 SHA256"):
             sha_ok = verify_sha256(zip_path)
         if not sha_ok:
@@ -973,10 +969,9 @@ def run_replacement(
             )
             return 1
 
-        with _StageTimer("清理临时产物"):
-            cleanup(
-                zip_path, new_files_dir.parent if new_files_dir.name != "tmp" else new_files_dir
-            )
+        # 清理（tmp/zip/sha256/暂存 updater）移交新主程序后台线程完成
+        # （见 main.py _cleanup_update_artifacts）。updater 关键路径到此结束——
+        # 启动主程序后立即 os._exit，不再做任何 I/O 密集的删除。
         with _StageTimer("启动新版主程序"):
             launch_app(app_dir)
 
