@@ -632,6 +632,35 @@ def _safe_remove_running_exe(path: Path, *, label: str = "") -> None:
         logger.debug(f"{name} 仍被占用，留待下次清理")
 
 
+def cleanup_leftover_old_exes(app_dir: Path) -> None:
+    """清理上次更新残留的 ``*.exe.old``（主程序启动入口）。
+
+    背景：updater.exe / VibeOCR.exe 更新时会把运行中的自己改名为 ``.old`` 后继续运行，
+    Windows 禁止删运行中 exe（PE 映射锁），所以改名后的旧进程映像在 updater 的
+    cleanup 阶段**必然删不掉**。updater 侧已有 ``MoveFileEx(MOVEFILE_DELAY_UNTIL_REBOOT)``
+    标记重启清理，但：
+
+    1. 旧版 updater（如 v0.4.13）没有 MoveFileEx 兜底，残留 ``.old`` 会永久堆积；
+    2. 即便标记了，笔记本用户从不重启 → 标记永远不生效，``.old`` 一直占着 8-9MB；
+    3. ``rename_locked_self_exe`` 入口会清残留 ``.old``，但前提是「再次发生更新」——
+       若用户停在当前版本，残留就永远在。
+
+    本函数是兜底的兜底：主程序每次启动时（进程此刻是新版 exe，旧的已退出）扫一遍
+    app_dir，把残留的 ``.exe.old`` 用 ``_safe_remove_running_exe`` 清掉。此刻旧进程
+    早已退出、PE 锁已释放，普通删除即可成功（实测瞬时完成）。复用现有清理函数保证
+    行为一致（含 MoveFileEx 降级）。非 Windows 直接 no-op（无残留）。
+
+    Args:
+        app_dir: 应用安装目录（``<app>/updater.exe.old`` / ``VibeOCR.exe.old`` 在此）。
+    """
+    if os.name != "nt" or not app_dir.is_dir():
+        return
+    for exe_name in ("updater.exe", "VibeOCR.exe"):
+        old_exe = app_dir / f"{exe_name}.old"
+        if old_exe.exists():
+            _safe_remove_running_exe(old_exe, label=old_exe.name)
+
+
 # ---------------------------------------------------------------------------
 # 依赖同步（写标记，由新版主程序启动时执行）
 # ---------------------------------------------------------------------------

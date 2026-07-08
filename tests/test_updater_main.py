@@ -767,6 +767,122 @@ class TestSafeRemoveRunningExe:
 
 
 # ---------------------------------------------------------------------------
+# cleanup_leftover_old_exes（主程序启动入口：清理上次更新残留的 *.exe.old）
+# ---------------------------------------------------------------------------
+
+
+class TestCleanupLeftoverOldExes:
+    """主程序启动时清理残留 .exe.old 的入口函数。
+
+    背景：updater 改名避让留下的 .old 必然删不掉（运行中 PE 映像锁），updater 侧
+    有 MoveFileEx 重启清理兜底，但旧版 updater 无此逻辑、且用户可能从不重启。
+    本函数是主程序启动时的最终兜底——此刻旧进程已退出、锁已释放，普通删除即可。"""
+
+    def test_removes_updater_old_on_windows(self, updater, tmp_path, monkeypatch):
+        """Windows 下应清理残留的 updater.exe.old。"""
+        app_dir = tmp_path / "app"
+        app_dir.mkdir()
+        old = app_dir / "updater.exe.old"
+        old.write_bytes(b"leftover from last update")
+
+        monkeypatch.setattr(updater.os, "name", "nt")
+        updater.cleanup_leftover_old_exes(app_dir)
+
+        assert not old.exists()
+
+    def test_removes_vibeocr_old_on_windows(self, updater, tmp_path, monkeypatch):
+        """Windows 下应同时清理 VibeOCR.exe.old（self-update 路径残留）。"""
+        app_dir = tmp_path / "app"
+        app_dir.mkdir()
+        old = app_dir / "VibeOCR.exe.old"
+        old.write_bytes(b"leftover from self-update")
+
+        monkeypatch.setattr(updater.os, "name", "nt")
+        updater.cleanup_leftover_old_exes(app_dir)
+
+        assert not old.exists()
+
+    def test_removes_both_exes(self, updater, tmp_path, monkeypatch):
+        """两种 .old 同时残留时应都清理掉。"""
+        app_dir = tmp_path / "app"
+        app_dir.mkdir()
+        u = app_dir / "updater.exe.old"
+        v = app_dir / "VibeOCR.exe.old"
+        u.write_bytes(b"updater leftover")
+        v.write_bytes(b"main leftover")
+
+        monkeypatch.setattr(updater.os, "name", "nt")
+        updater.cleanup_leftover_old_exes(app_dir)
+
+        assert not u.exists()
+        assert not v.exists()
+
+    def test_noop_when_no_residual(self, updater, tmp_path, monkeypatch):
+        """无残留文件时不应抛异常。"""
+        app_dir = tmp_path / "app"
+        app_dir.mkdir()
+
+        monkeypatch.setattr(updater.os, "name", "nt")
+        updater.cleanup_leftover_old_exes(app_dir)  # 不应抛异常
+
+    def test_noop_on_non_windows(self, updater, tmp_path, monkeypatch):
+        """非 Windows 直接 no-op，不删任何文件（无 PE 映射锁、无 .old 残留）。"""
+        app_dir = tmp_path / "app"
+        app_dir.mkdir()
+        old = app_dir / "updater.exe.old"
+        old.write_bytes(b"should remain on posix")
+
+        monkeypatch.setattr(updater.os, "name", "posix")
+        updater.cleanup_leftover_old_exes(app_dir)
+
+        assert old.exists()
+
+    def test_does_not_touch_active_exes(self, updater, tmp_path, monkeypatch):
+        """只清 .exe.old，绝不动正在运行的 updater.exe / VibeOCR.exe。"""
+        app_dir = tmp_path / "app"
+        app_dir.mkdir()
+        (app_dir / "updater.exe").write_bytes(b"current")
+        (app_dir / "VibeOCR.exe").write_bytes(b"current")
+        (app_dir / "updater.exe.old").write_bytes(b"stale")
+
+        monkeypatch.setattr(updater.os, "name", "nt")
+        updater.cleanup_leftover_old_exes(app_dir)
+
+        # 活跃 exe 必须原封不动，仅 .old 被清
+        assert (app_dir / "updater.exe").read_bytes() == b"current"
+        assert (app_dir / "VibeOCR.exe").read_bytes() == b"current"
+        assert not (app_dir / "updater.exe.old").exists()
+
+    def test_noop_when_app_dir_missing(self, updater, tmp_path, monkeypatch):
+        """app_dir 不存在时不应抛异常（防御异常路径）。"""
+        monkeypatch.setattr(updater.os, "name", "nt")
+        updater.cleanup_leftover_old_exes(tmp_path / "nonexistent")  # 不应抛异常
+
+    def test_delegates_to_safe_remove_running_exe(
+        self, updater, tmp_path, monkeypatch
+    ):
+        """应复用 _safe_remove_running_exe（保证行为一致，含 MoveFileEx 降级）。"""
+        app_dir = tmp_path / "app"
+        app_dir.mkdir()
+        (app_dir / "updater.exe.old").write_bytes(b"stale")
+
+        monkeypatch.setattr(updater.os, "name", "nt")
+        called = []
+        monkeypatch.setattr(
+            updater,
+            "_safe_remove_running_exe",
+            lambda path, *, label="": called.append((str(path), label)),
+        )
+
+        updater.cleanup_leftover_old_exes(app_dir)
+
+        assert len(called) == 1
+        path_str, label = called[0]
+        assert path_str.endswith("updater.exe.old")
+        assert label == "updater.exe.old"
+
+
+# ---------------------------------------------------------------------------
 # run_replacement（统一入口：写就绪信号 + 顶层异常兜底写日志后返回 1）
 # ---------------------------------------------------------------------------
 

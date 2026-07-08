@@ -167,6 +167,35 @@ def _notify_self_update_failure(message: str) -> None:
         print(f"[VibeOCR][self-update] 弹出失败提示框异常: {e}", file=sys.stderr)
 
 
+def _cleanup_leftover_old_exes() -> None:
+    """清理上次更新残留的 ``*.exe.old``（主程序启动入口）。
+
+    背景：updater.exe / VibeOCR.exe 更新时把运行中的自己改名为 ``.old`` 后继续运行，
+    Windows 禁止删运行中 exe（PE 映射锁），所以改名后的旧进程映像在 updater 的
+    cleanup 阶段**必然删不掉**。updater 侧有 ``MoveFileEx(MOVEFILE_DELAY_UNTIL_REBOOT)``
+    标记重启清理，但：旧版 updater（如 v0.4.13）没有 MoveFileEx 兜底、用户可能从不重启
+    （笔记本常态）→ ``.old`` 永久堆积（8-9MB/个）。
+
+    本函数是兜底的兜底：主程序每次启动（此刻旧进程已退出、锁已释放），清掉残留。
+    复用 ``update_replacer.cleanup_leftover_old_exes``（同 module 的动态 import 路径
+    与 --self-update 模式一致），保证行为统一。任何异常仅打印、绝不阻断启动——
+    清理残留是「锦上添花」，不能因它让应用起不来。
+    """
+    try:
+        replacer_dir = _resolve_replacer_module_dir()
+        if replacer_dir is None:
+            return
+        if str(replacer_dir) not in sys.path:
+            sys.path.insert(0, str(replacer_dir))
+        from update_replacer import cleanup_leftover_old_exes
+
+        app_dir = env_manager.get_project_root()
+        cleanup_leftover_old_exes(app_dir)
+    except Exception as e:
+        # 清理失败不影响启动；残留最多占点空间，下次启动再试。
+        print(f"[VibeOCR] 清理上次更新残留失败（不影响启动）: {e}")
+
+
 def _create_tray_icon(app, window, app_settings):
     """创建系统托盘图标
 
@@ -553,6 +582,12 @@ def main() -> int:
             print("用法: VibeOCR.exe --self-update <更新包zip> --app-dir <应用目录>")
             return 2
         return _run_self_update(zip_path, app_dir)
+
+    # 清理上次更新残留的 *.exe.old（兜底的兜底）。
+    # updater 更新时把运行中的自己改名 .old 后继续跑，Windows 禁止删运行中 exe，
+    # 故 .old 必然残留到本次主程序启动。此刻旧进程已退出、锁已释放，普通删除即可清掉。
+    # 详见 update_replacer.cleanup_leftover_old_exes 的背景说明。
+    _cleanup_leftover_old_exes()
 
     # 1. 检查生产环境依赖
     if not check_production_dependencies():
