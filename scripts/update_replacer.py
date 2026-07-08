@@ -24,6 +24,7 @@ import logging
 import os
 import shutil
 import subprocess
+import sys
 import time
 import traceback
 import zipfile
@@ -296,6 +297,53 @@ def extract_zip(zip_path: Path, app_dir: Path) -> Path:
 # ---------------------------------------------------------------------------
 # 文件替换（备份-删除-复制-回滚）
 # ---------------------------------------------------------------------------
+
+
+def _detect_self_exe_names(app_dir: Path) -> tuple[str, ...]:
+    """判断本替换器是否需要避让自己（``updater.exe``）。
+
+    新架构（黄金法则）下，updater 从暂存目录 ``data/cache/update/`` 运行，
+    不在 app_dir，故 ``app_dir/updater.exe``（旧版）无人运行、无 PE 映射锁，
+    可被 ``replace_app_files`` 直接覆盖——无需避让，返回空元组。
+
+    过渡期旧路径下，旧主程序仍用旧式调用（启动 ``app_dir/updater.exe``），
+    updater 自身在 app_dir，必须避让自己（Windows 禁止删/覆盖运行中 exe），
+    返回 ``("updater.exe",)``。
+
+    判定依据：``sys.argv[0]``（updater 自身 exe 路径）的父目录是否等于 app_dir。
+    无法解析时保守走旧路径（需避让），宁可多一次无害 rename 也不漏判导致锁冲突。
+
+    非 Windows：无 PE 映射锁，始终返回空元组。
+
+    注意：``VibeOCR.exe`` 的避让由调用方（``updater_main.main``）始终拼入
+    ``self_exe_names``，本函数只决定 ``updater.exe``。详见架构设计文档 §4.2.1。
+
+    Args:
+        app_dir: 应用安装目录（由 ``--app-dir`` 参数传入）。
+
+    Returns:
+        ``("updater.exe",)``（需避让，旧路径）或 ``()``（无需避让，新路径/非 Windows）。
+    """
+    if os.name != "nt":
+        return ()
+    if not sys.argv[0]:
+        # 空 argv[0] 无法定位自身 exe，保守走旧路径（需避让）。
+        # 注意：Path("").resolve() 在 Windows 下不抛错而是退化为 cwd，
+        # 故必须在 resolve 之前对原始 argv[0] 判空。
+        return ("updater.exe",)
+    try:
+        self_exe = Path(sys.argv[0]).resolve()
+    except (OSError, ValueError):
+        return ("updater.exe",)
+    if not self_exe.name:
+        return ("updater.exe",)
+    try:
+        app_dir_resolved = app_dir.resolve()
+    except (OSError, ValueError):
+        return ("updater.exe",)
+    if self_exe.parent == app_dir_resolved:
+        return ("updater.exe",)
+    return ()
 
 
 def rename_locked_self_exe(app_dir: Path, self_name: str) -> None:
