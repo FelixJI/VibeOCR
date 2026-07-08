@@ -1051,7 +1051,6 @@ def _generate_version_file(
 
     tomldata = tomllib.loads(PYPROJECT_TOML.read_text(encoding="utf-8"))
     project = tomldata.get("project", {})
-    description = project.get("description", "VibeOCR")
     authors = project.get("authors", [])
     company = authors[0].get("name", "") if authors else ""
     # 版权年份与 LICENSE / README / 关于页（about_tab.py）保持一致：
@@ -1077,7 +1076,10 @@ def _generate_version_file(
         original_filename = "VibeOCR.exe"
         internal_name = "VibeOCR"
         product_name = "VibeOCR"
-        file_description = description
+        # 主程序对外显示名固定为 "VibeOCR"（任务管理器/右键属性→详细信息→文件说明）。
+        # 不用 pyproject.toml 的 description（'A screenshot OCR application'）——
+        # 那是 PyPI 包描述，作为进程显示名既不准确也不利于用户识别。
+        file_description = "VibeOCR"
         out_name = "version_info.py"
 
     parts = [int(x) for x in version.split(".")]

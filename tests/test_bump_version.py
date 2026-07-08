@@ -1241,3 +1241,66 @@ class TestPyInstallerNoUpx:
         mod = self._load_module()
         cmd = mod._get_pyinstaller_cmd("0.1.7")
         assert "--onedir" in cmd
+
+
+class TestVersionInfoFileDescription:
+    """VibeOCR.exe 的 FileDescription 必须是 'VibeOCR'（任务管理器/属性页显示名）。
+
+    背景：曾误用 pyproject.toml 的 description（'A screenshot OCR application'），
+    导致系统里进程名显示为英文描述而非产品名。硬编码为 'VibeOCR' 与 ProductName 一致。
+    """
+
+    @staticmethod
+    def _load_module():
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location("bump_version", SCRIPT)
+        assert spec is not None and spec.loader is not None
+        mod = importlib.util.module_from_spec(spec)
+        for k in ("PYPROJECT_TOML", "INIT_PY", "MAIN_PY", "CHANGELOG"):
+            os.environ[k] = ""
+        spec.loader.exec_module(mod)
+        return mod
+
+    def test_main_file_description_is_vibeocr(self, tmp_path):
+        # 即使 pyproject.toml 的 description 是英文描述，
+        # 主程序的 FileDescription 也必须固定为 'VibeOCR'。
+        mod = self._load_module()
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            textwrap.dedent("""\
+                [project]
+                name = "vibeocr"
+                version = "0.1.0"
+                description = "A screenshot OCR application"
+            """),
+            encoding="utf-8",
+        )
+        mod.PYPROJECT_TOML = pyproject
+
+        version_file = mod._generate_version_file(
+            "1.2.3", tmp_path, target="main"
+        )
+        content = version_file.read_text(encoding="utf-8")
+        assert "StringStruct('FileDescription', 'VibeOCR')" in content
+
+    def test_updater_file_description_unchanged(self, tmp_path):
+        # updater.exe 的 FileDescription 保持 'VibeOCR auto-updater' 不变。
+        mod = self._load_module()
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            textwrap.dedent("""\
+                [project]
+                name = "vibeocr"
+                version = "0.1.0"
+                description = "A screenshot OCR application"
+            """),
+            encoding="utf-8",
+        )
+        mod.PYPROJECT_TOML = pyproject
+
+        version_file = mod._generate_version_file(
+            "1.2.3", tmp_path, target="updater"
+        )
+        content = version_file.read_text(encoding="utf-8")
+        assert "StringStruct('FileDescription', 'VibeOCR auto-updater')" in content
