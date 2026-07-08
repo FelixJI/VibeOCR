@@ -200,25 +200,36 @@ class ThumbnailModel(QAbstractListModel):
         # generation 校验:invalidate(row) 自增该行 gen;请求带 gen,响应带 gen,
         # 只在 gen 匹配时入缓存,丢弃失效后仍在途的旧渲染结果(旋转 ABA)。
         self._gen: dict[int, int] = {}
-        # 文字层检测中状态:set_session 时置 True(打开时先检测不渲染缩略图),
-        # set_detection_done() 置 False 并启动 worker。检测期 data() 返回检测中
-        # 占位图标,request_range 投递被抑制,避免与 load 并发争抢后端 fitz。
+        # 文字层检测中状态:set_session(detecting=True) 时置 True(打开时先
+        # 检测不渲染缩略图),set_detection_done() 置 False 并启动 worker。
+        # 检测期 data() 返回检测中占位图标,request_range 投递被抑制,
+        # 避免与 load 并发争抢后端 fitz。
         self._detection_in_progress: bool = False
 
-    def set_session(self, session: PdfSession | None) -> None:
-        """切换数据源（切文件/导入时）：停旧 worker、清缓存、起新 worker。
+    def set_session(
+        self, session: PdfSession | None, *, detecting: bool = False
+    ) -> None:
+        """切换数据源（切文件/导入时）：停旧 worker、清缓存。
 
-        打开后进入"检测中"状态:不立即渲染缩略图,等 load_done 触发
-        set_detection_done() 再启动 worker,避免与逐页文字层检测并发争抢
-        后端 fitz(大文件场景下两者并发会拖慢/此前有崩溃隐患)。
+        detecting=True 时进入"文字层检测中"状态(打开新文件/切到未加载完的
+        文件):不立即渲染缩略图,等 load_done 触发 set_detection_done() 再
+        启动 worker,避免与逐页文字层检测并发争抢后端 fitz(大文件场景下
+        两者并发会拖慢/此前有崩溃隐患)。
+
+        detecting=False(默认)用于结构性变更后的刷新(旋转/删页/插页/重排),
+        这些路径后无 load_done,直接正常启动 worker 渲染。
         """
         self._stop_render_worker()
         self.beginResetModel()
         self._session = session
         self._cache.clear()
         self._gen.clear()
-        self._detection_in_progress = session is not None
+        self._detection_in_progress = detecting and session is not None
         self.endResetModel()
+        # detecting=True: 不启动 worker(等 set_detection_done);
+        # detecting=False 且 session 非空: 直接启动 worker(结构性刷新路径)。
+        if session is not None and not self._detection_in_progress:
+            self._start_render_worker(session)
 
     def set_detection_done(self) -> None:
         """文字层检测完成:退出检测中状态,启动缩略图 worker,触发可见行渲染。
@@ -870,7 +881,14 @@ class PdfTab(QWidget):
         # 此时两侧控件尚处于不一致的中间态，让同步逻辑静默直到重建完成。
         self._syncing_selection = True
         try:
-            self._thumbnail_model.set_session(self._session_mgr.active_session)
+            session = self._session_mgr.active_session
+            # 切到已加载完的文件(批量打开后切换/重开)时不再有 load_done,
+            # 不应进检测态;仅未加载完(正在/即将检测)时进检测态。
+            detecting = bool(
+                session is not None
+                and len(session.loaded_pages) < session.pdf_document.page_count
+            )
+            self._thumbnail_model.set_session(session, detecting=detecting)
             self._update_status()
             self._update_layer_status()
         finally:
