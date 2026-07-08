@@ -1,6 +1,6 @@
 [project]
 name = "vibeocr"
-version = "0.4.16"
+version = "0.4.17"
 description = "A screenshot OCR application"
 authors = [{name = "Felix Ji"}]
 requires-python = ">=3.13,<3.14"
