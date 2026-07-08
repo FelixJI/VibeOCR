@@ -22,7 +22,7 @@ from pathlib import Path
 
 # 与 update_replacer.py 同目录（scripts/），PyInstaller --onefile 自动收集。
 # 打包态下两者都在 PYZ 内，普通 import 即可。
-from update_replacer import logger, run_replacement, setup_logging
+from update_replacer import _detect_self_exe_names, logger, run_replacement, setup_logging
 
 
 def _notify_failure(message: str) -> None:
@@ -60,14 +60,20 @@ def main() -> int:
     setup_logging(app_dir, "updater.log")
     logger.info("VibeOCR 更新助手启动（updater.exe）")
 
-    # updater.exe 是独立进程，替换时只需避让自己（主程序 VibeOCR.exe 已在
-    # 主程序端 sys.exit 后释放文件锁）。就绪信号用默认的 updater.ready，
-    # 与主程序端 _launch_updater 的轮询文件名对应。
+    # 自动判断新旧路径：updater 自身是否在 app_dir。
+    # 新路径（暂存目录运行）无需避让 updater.exe；旧路径（过渡期，自身在 app_dir）需避让。
+    # VibeOCR.exe 避让始终保留（容错：旧主程序 _force_quit 后锁可能未及时释放，
+    # 新路径下 rename 瞬时成功不产生持久 .old）。
+    detected = _detect_self_exe_names(app_dir)
+    self_exe_names = (*detected, "VibeOCR.exe")
+    logger.info(f"路径判定: detected={detected}, self_exe_names={self_exe_names}")
+
+    # 就绪信号用默认的 updater.ready，与主程序端 _launch_updater 的轮询文件名对应。
     # on_failure: windowed 运行下 stdout 不可见，失败必须弹窗告知用户。
     return run_replacement(
         zip_path,
         app_dir,
-        self_exe_names=("updater.exe",),
+        self_exe_names=self_exe_names,
         ready_filename="updater.ready",
         on_failure=_notify_failure,
     )

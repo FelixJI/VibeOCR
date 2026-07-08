@@ -218,3 +218,76 @@ class TestRunReplacementNoVerifyZip:
             replacer.run_replacement(zip_path, app_dir, self_exe_names=("VibeOCR.exe",))
 
         assert not verify_zip_called, "run_replacement 不应调用 verify_zip"
+
+
+class TestUpdaterMainSelfExeNames:
+    """updater_main.main 组装 self_exe_names = detect() + ('VibeOCR.exe',)。
+
+    VibeOCR.exe 避让始终保留（容错：旧主程序锁未及时释放）。
+    updater.exe 避让随路径切换。
+    """
+
+    def test_staging_path_excludes_updater_exe(self, replacer, monkeypatch, tmp_path):
+        """新路径：updater 在暂存目录 → self_exe_names 仅含 VibeOCR.exe。"""
+        import importlib.util
+
+        # 加载 updater_main 模块（它 import update_replacer，需先注入 sys.modules）
+        updater_main_script = Path(__file__).parent.parent / "scripts" / "updater_main.py"
+        monkeypatch.setitem(sys.modules, "update_replacer", replacer)
+        spec = importlib.util.spec_from_file_location("updater_main_test", updater_main_script)
+        updater_main = importlib.util.module_from_spec(spec)
+        sys.modules["updater_main_test"] = updater_main
+        spec.loader.exec_module(updater_main)
+
+        app_dir = tmp_path / "app"
+        app_dir.mkdir()
+        staging = tmp_path / "data" / "cache" / "update"
+        staging.mkdir(parents=True)
+        monkeypatch.setattr("sys.argv", [str(staging / "updater.exe"),
+                                          "--update", str(tmp_path / "x.zip"),
+                                          "--app-dir", str(app_dir)])
+
+        captured = {}
+        def fake_run_replacement(zip_p, app_d, **kwargs):
+            captured["self_exe_names"] = kwargs.get("self_exe_names")
+            return 0
+        # 注意：updater_main 内 ``run_replacement``/``setup_logging`` 是
+        # ``from update_replacer import ...`` 绑入的模块全局名，import 时已固定引用，
+        # 后续 patch ``replacer.run_replacement`` 不会影响 updater_main 内的裸调用。
+        # 必须 patch updater_main 模块自身的全局绑定，main() 里的裸调用才会命中 mock。
+        monkeypatch.setattr(updater_main, "run_replacement", fake_run_replacement)
+        monkeypatch.setattr(updater_main, "setup_logging", lambda *a, **k: None)
+
+        updater_main.main()
+
+        assert captured["self_exe_names"] == ("VibeOCR.exe",)
+
+    def test_old_path_includes_updater_exe(self, replacer, monkeypatch, tmp_path):
+        """旧路径：updater 在 app_dir → self_exe_names 含 updater.exe + VibeOCR.exe。"""
+        import importlib.util
+
+        updater_main_script = Path(__file__).parent.parent / "scripts" / "updater_main.py"
+        monkeypatch.setitem(sys.modules, "update_replacer", replacer)
+        spec = importlib.util.spec_from_file_location("updater_main_test2", updater_main_script)
+        updater_main = importlib.util.module_from_spec(spec)
+        sys.modules["updater_main_test2"] = updater_main
+        spec.loader.exec_module(updater_main)
+
+        app_dir = tmp_path / "app"
+        app_dir.mkdir()
+        (app_dir / "updater.exe").write_bytes(b"old")
+        monkeypatch.setattr("sys.argv", [str(app_dir / "updater.exe"),
+                                          "--update", str(tmp_path / "x.zip"),
+                                          "--app-dir", str(app_dir)])
+
+        captured = {}
+        def fake_run_replacement(zip_p, app_d, **kwargs):
+            captured["self_exe_names"] = kwargs.get("self_exe_names")
+            return 0
+        # 同上：patch updater_main 模块全局（from-import 绑定于 import 时已固定）。
+        monkeypatch.setattr(updater_main, "run_replacement", fake_run_replacement)
+        monkeypatch.setattr(updater_main, "setup_logging", lambda *a, **k: None)
+
+        updater_main.main()
+
+        assert captured["self_exe_names"] == ("updater.exe", "VibeOCR.exe")
