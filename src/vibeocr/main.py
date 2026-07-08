@@ -62,7 +62,7 @@ def check_production_dependencies() -> bool:
 
 
 def _resolve_replacer_module_dir() -> Path | None:
-    """定位 update_replacer.py 所在目录，用于 --self-update 模式 import。
+    """定位 update_replacer.py 所在目录，用于动态 import（cleanup_leftover_old_exes 等）。
 
     优先级：
     1. 打包态：``sys._MEIPASS``（update_replacer.py 由 --add-data 打入 _internal/ 根）。
@@ -143,7 +143,7 @@ def _cleanup_leftover_old_exes() -> None:
 
     本函数是兜底的兜底：主程序每次启动（此刻旧进程已退出、锁已释放），清掉残留。
     复用 ``update_replacer.cleanup_leftover_old_exes``（同 module 的动态 import 路径
-    与 --self-update 模式一致），保证行为统一。任何异常仅打印、绝不阻断启动——
+    与 _resolve_replacer_module_dir 一致），保证行为统一。任何异常仅打印、绝不阻断启动——
     清理残留是「锦上添花」，不能因它让应用起不来。
     """
     try:

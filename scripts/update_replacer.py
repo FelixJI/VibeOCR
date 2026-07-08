@@ -1,19 +1,24 @@
 """VibeOCR 更新替换逻辑（共享模块）
 
 被两个调用方复用：
-1. ``scripts/updater_main.py`` —— 独立 updater.exe（首选替换器），``self_exe_names=("updater.exe",)``。
-2. ``src/vibeocr/main.py`` 的 ``--self-update`` 模式 —— 主程序自身充当兜底替换器，
-   ``self_exe_names=("VibeOCR.exe", "updater.exe")``。
+1. ``scripts/updater_main.py`` —— 独立 updater.exe（新架构首选替换器）。
+   updater 自动判断新旧路径（``_detect_self_exe_names``）决定 ``self_exe_names``。
+2. ``src/vibeocr/main.py`` —— 复用本模块的 ``cleanup_leftover_old_exes`` 做后台残留清理
+   （主程序启动时 daemon 线程调用）；``update_replacer`` 内的工具函数（``_busy_remove`` 等）
+   也可被主程序侧动态 import 复用。
 
 设计约束（重要）：
 - **纯 stdlib**，不依赖 vibeocr 任何模块。原因：updater.exe 用 PyInstaller ``--onefile``
   打包且 ``pathex=[]``、无 ``--paths src``，无法 import ``src/vibeocr/`` 下任何模块。
   本模块放在 ``scripts/``，与 ``updater_main.py`` 同目录，updater 打包时自动收集；
   主程序侧把本文件作为 ``--add-data`` 资源打进 ``_internal/``，运行时注入 sys.path。
-- 复用同一份替换逻辑，避免 updater 与 self-update 两条路径各自实现导致行为漂移。
 
-核心流程：verify(sha256+zip) → signal_ready → extract → replace_app_files
-        （备份-删除-复制-失败回滚）→ sync deps → cleanup → launch_app
+新架构（黄金法则）：旧主程序只"递送"（testzip + 从 zip 抽取新 updater），由新 updater
+（从暂存目录运行，新代码）完成部署。
+
+核心流程：signal_ready → verify_sha256 → extract → replace_app_files
+        （备份-删除-复制-失败回滚）→ sync deps → launch_app
+        （cleanup 已移交新主程序后台线程，见 main.py _cleanup_update_artifacts）
 """
 
 from __future__ import annotations

@@ -748,12 +748,6 @@ class UpdateService:
         self._updater_path = (
             app_dir / "updater.exe" if os.name == "nt" else app_dir / "updater"
         )
-        # 主程序本体路径：握手失败（updater.exe 坏）时，启动 [VibeOCR.exe --self-update]
-        # 让主程序自身充当兜底替换器。VibeOCR.exe 是最不可能坏的 exe（它若坏，应用
-        # 根本启动不了，谈更新无意义），用它的另一启动模式做兜底等于建立在最稳定基座上。
-        self._self_exe_path = (
-            app_dir / "VibeOCR.exe" if os.name == "nt" else app_dir / "VibeOCR"
-        )
         from vibeocr.services.env_config import (
             get_update_cache_dir,
             get_update_settings_path,
@@ -1060,18 +1054,18 @@ class UpdateService:
     ) -> str:
         """通用握手启动：清理旧 ready → 启动进程 → 轮询 ready 文件 + 进程存活。
 
-        返回三态（避免「超时但进程仍在跑」被误判为崩溃、进而误启 self-update 与
-        正常 updater 并发替换导致文件损坏）：
+        返回三态（避免「超时但进程仍在跑」被误判为崩溃、误触失败处理路径与
+        仍在工作的 updater 并发替换导致文件损坏）：
 
         - ``"ready"``：就绪信号文件出现 → 替换器确认活着，调用方 sys.exit 放心。
-        - ``"crashed"``：进程已退出且无就绪信号 → 替换器确认坏了，调用方走兜底。
+        - ``"crashed"``：进程已退出且无就绪信号 → 替换器确认坏了，调用方弹窗提示手动重装。
         - ``"timeout"``：超时但进程仍在跑 → 替换器可能只是慢（慢机/杀软扫描），
-          不能判定为坏。调用方应继续等待（视为 ready，sys.exit），**绝不**启 self-update。
+          不能判定为坏。调用方应继续等待（视为 ready，sys.exit），**绝不**弹失败提示。
 
         Args:
-            exe_path: 要启动的替换器 exe（updater.exe 或 VibeOCR.exe）。
+            exe_path: 要启动的替换器 exe（暂存目录的新 updater.exe）。
             extra_args: 传给 exe 的参数（不含 exe 本身）。
-            ready_filename: 替换器写出的就绪信号文件名（updater.ready / self_update.ready）。
+            ready_filename: 替换器写出的就绪信号文件名（updater.ready）。
             label: 日志/UI 中的人类可读标签。
         """
         ready_path = self._cache_dir / ready_filename
