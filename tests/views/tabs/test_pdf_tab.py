@@ -74,6 +74,10 @@ class TestPdfTabStructure:
         pdf_tab._splitter_save_timer.timeout.emit()
         assert calls == [1]
 
+    def test_thumbnail_text_height_is_compact(self):
+        """缩略图文字行高度应收紧到 18(单行中文足够,原 28 过松)。"""
+        assert _THUMBNAIL_TEXT_HEIGHT == 18
+
 
 class TestPdfTabLayerStatus:
     def test_status_wording_for_text_layer(self, pdf_tab, tmp_path, monkeypatch):

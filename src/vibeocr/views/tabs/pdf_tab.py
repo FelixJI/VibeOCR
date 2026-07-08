@@ -59,7 +59,7 @@ _THUMBNAIL_SIZE = 160  # 初始/默认缩略图边长（px）；运行时随面�
 _THUMBNAIL_MIN_SIZE = 120  # 自适应下限：再小则页码/文字不可读
 _THUMBNAIL_MAX_SIZE = 320  # 自适应上限：再大则单张占屏过多、IPC 渲染开销上升
 _THUMBNAIL_HPAD = 8  # gridSize 左右内边距（缩略图两侧各留白）
-_THUMBNAIL_TEXT_HEIGHT = 28  # gridSize 高度额外预留：给"第 N 页"文字标签
+_THUMBNAIL_TEXT_HEIGHT = 18  # gridSize 高度额外预留：给"第 N 页"文字标签（单行中文）
 _GRID_CELL_SIZE = 40  # 文字层状态网格单格尺寸（正方形）
 
 # 占位灰图按 size 缓存（缩略图自适应宽度后，不同尺寸需要不同占位图），
@@ -899,6 +899,8 @@ class PdfTab(QWidget):
     def _on_load_done(self, file_path: str) -> None:
         session = self._session_mgr.active_session
         if session and session.file_path == file_path:
+            # 文字层检测完成:启动缩略图渲染(此前显示检测中占位图)
+            self._thumbnail_model.set_detection_done()
             self._update_layer_status()
             self._status_label.setText(f"{Path(file_path).name} 加载完成")
 
