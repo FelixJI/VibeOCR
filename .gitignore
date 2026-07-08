@@ -229,3 +229,4 @@ config/app_settings.json
 
 .superpowers/
 docs/
+.zcode/
