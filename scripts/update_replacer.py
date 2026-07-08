@@ -1,19 +1,24 @@
 """VibeOCR 更新替换逻辑（共享模块）
 
 被两个调用方复用：
-1. ``scripts/updater_main.py`` —— 独立 updater.exe（首选替换器），``self_exe_names=("updater.exe",)``。
-2. ``src/vibeocr/main.py`` 的 ``--self-update`` 模式 —— 主程序自身充当兜底替换器，
-   ``self_exe_names=("VibeOCR.exe", "updater.exe")``。
+1. ``scripts/updater_main.py`` —— 独立 updater.exe（新架构首选替换器）。
+   updater 自动判断新旧路径（``_detect_self_exe_names``）决定 ``self_exe_names``。
+2. ``src/vibeocr/main.py`` —— 复用本模块的 ``cleanup_leftover_old_exes`` 做后台残留清理
+   （主程序启动时 daemon 线程调用）；``update_replacer`` 内的工具函数（``_busy_remove`` 等）
+   也可被主程序侧动态 import 复用。
 
 设计约束（重要）：
 - **纯 stdlib**，不依赖 vibeocr 任何模块。原因：updater.exe 用 PyInstaller ``--onefile``
   打包且 ``pathex=[]``、无 ``--paths src``，无法 import ``src/vibeocr/`` 下任何模块。
   本模块放在 ``scripts/``，与 ``updater_main.py`` 同目录，updater 打包时自动收集；
   主程序侧把本文件作为 ``--add-data`` 资源打进 ``_internal/``，运行时注入 sys.path。
-- 复用同一份替换逻辑，避免 updater 与 self-update 两条路径各自实现导致行为漂移。
 
-核心流程：verify(sha256+zip) → signal_ready → extract → replace_app_files
-        （备份-删除-复制-失败回滚）→ sync deps → cleanup → launch_app
+新架构（黄金法则）：旧主程序只"递送"（testzip + 从 zip 抽取新 updater），由新 updater
+（从暂存目录运行，新代码）完成部署。
+
+核心流程：signal_ready → verify_sha256 → extract → replace_app_files
+        （备份-删除-复制-失败回滚）→ sync deps → launch_app
+        （cleanup 已移交新主程序后台线程，见 main.py _cleanup_update_artifacts）
 """
 
 from __future__ import annotations
@@ -24,6 +29,7 @@ import logging
 import os
 import shutil
 import subprocess
+import sys
 import time
 import traceback
 import zipfile
@@ -214,8 +220,7 @@ def signal_ready(app_dir: Path, ready_filename: str) -> None:
 
     Args:
         app_dir: 应用安装目录，ready 文件落在 ``app_dir/data/cache/update/``。
-        ready_filename: 就绪文件名，调用方区分（如 ``updater.ready`` /
-            ``self_update.ready``），避免两条路径互相误判。
+        ready_filename: 就绪文件名（``updater.ready``），主程序端据此轮询握手。
     """
     try:
         ready_path = app_dir / "data" / "cache" / "update" / ready_filename
@@ -298,6 +303,53 @@ def extract_zip(zip_path: Path, app_dir: Path) -> Path:
 # ---------------------------------------------------------------------------
 
 
+def _detect_self_exe_names(app_dir: Path) -> tuple[str, ...]:
+    """判断本替换器是否需要避让自己（``updater.exe``）。
+
+    新架构（黄金法则）下，updater 从暂存目录 ``data/cache/update/`` 运行，
+    不在 app_dir，故 ``app_dir/updater.exe``（旧版）无人运行、无 PE 映射锁，
+    可被 ``replace_app_files`` 直接覆盖——无需避让，返回空元组。
+
+    过渡期旧路径下，旧主程序仍用旧式调用（启动 ``app_dir/updater.exe``），
+    updater 自身在 app_dir，必须避让自己（Windows 禁止删/覆盖运行中 exe），
+    返回 ``("updater.exe",)``。
+
+    判定依据：``sys.argv[0]``（updater 自身 exe 路径）的父目录是否等于 app_dir。
+    无法解析时保守走旧路径（需避让），宁可多一次无害 rename 也不漏判导致锁冲突。
+
+    非 Windows：无 PE 映射锁，始终返回空元组。
+
+    注意：``VibeOCR.exe`` 的避让由调用方（``updater_main.main``）始终拼入
+    ``self_exe_names``，本函数只决定 ``updater.exe``。详见架构设计文档 §4.2.1。
+
+    Args:
+        app_dir: 应用安装目录（由 ``--app-dir`` 参数传入）。
+
+    Returns:
+        ``("updater.exe",)``（需避让，旧路径）或 ``()``（无需避让，新路径/非 Windows）。
+    """
+    if os.name != "nt":
+        return ()
+    if not sys.argv[0]:
+        # 空 argv[0] 无法定位自身 exe，保守走旧路径（需避让）。
+        # 注意：Path("").resolve() 在 Windows 下不抛错而是退化为 cwd，
+        # 故必须在 resolve 之前对原始 argv[0] 判空。
+        return ("updater.exe",)
+    try:
+        self_exe = Path(sys.argv[0]).resolve()
+    except (OSError, ValueError):
+        return ("updater.exe",)
+    if not self_exe.name:
+        return ("updater.exe",)
+    try:
+        app_dir_resolved = app_dir.resolve()
+    except (OSError, ValueError):
+        return ("updater.exe",)
+    if self_exe.parent == app_dir_resolved:
+        return ("updater.exe",)
+    return ()
+
+
 def rename_locked_self_exe(app_dir: Path, self_name: str) -> None:
     """处理正在运行、无法被删除/覆盖的可执行文件。
 
@@ -306,14 +358,15 @@ def rename_locked_self_exe(app_dir: Path, self_name: str) -> None:
     该删除会因文件被 OS 锁定而失败，导致替换流程中断、应用停在半残状态。
 
     本函数在替换前把旧 exe 改名（加 ``.old`` 后缀），让随后的复制能写入新版。
-    改名后的旧文件由替换器在 cleanup 阶段删除（此刻旧进程已退出），或留待下次更新清理。
+    改名后的旧文件由新主程序启动时后台清理（``cleanup_leftover_old_exes``）。
 
     Args:
         app_dir: 应用安装目录。
         self_name: 要避让的 exe 文件名，如 ``"updater.exe"`` 或 ``"VibeOCR.exe"``。
-            通用化设计：updater.exe 只需避让自己；self-update 模式需同时避让
-            ``VibeOCR.exe``（调用方主程序，已 sys.exit 但锁可能未及时释放）和
-            ``updater.exe``（同目录另一个可能被锁的 exe）。仅处理 Windows。
+            新架构下 ``self_exe_names`` 由 ``_detect_self_exe_names`` 自动判断：
+            旧路径（过渡期，updater 在 app_dir）需避让 ``updater.exe``；
+            新路径（暂存目录运行）无需避让。``VibeOCR.exe`` 避让始终保留作容错
+           （旧主程序 ``_force_quit`` 后锁可能未及时释放）。仅处理 Windows。
     """
     if os.name != "nt":
         return
@@ -347,8 +400,8 @@ def replace_app_files(
         new_files_dir: 解压后的新文件目录（可能含一层 VibeOCR/ 子目录）。
         app_dir: 应用安装目录。
         self_exe_names: 替换前需「改名避让」的运行中 exe 列表。
-            updater 调用传 ``("updater.exe",)``；self-update 调用传
-            ``("VibeOCR.exe", "updater.exe")``。
+            新架构由 ``_detect_self_exe_names`` 判断：旧路径含 ``updater.exe``，
+            新路径为空；``updater_main`` 始终拼入 ``VibeOCR.exe`` 作容错。
     """
     logger.info("替换应用文件...")
 
@@ -900,12 +953,8 @@ def run_replacement(
     relaunch_on_fail = True
 
     try:
-        with _StageTimer("校验 zip 完整性"):
-            zip_ok = verify_zip(zip_path)
-        if not zip_ok:
-            fail_reason = "更新包已损坏或校验失败。"
-            return 1
-
+        # verify_zip(testzip) 已移交旧主程序端（递送时确保 zip 可读，可安全抽取 updater）。
+        # 此处仅做 verify_sha256（更强，且由新代码校验自己要部署的包——黄金法则）。
         with _StageTimer("校验 SHA256"):
             sha_ok = verify_sha256(zip_path)
         if not sha_ok:
@@ -925,10 +974,9 @@ def run_replacement(
             )
             return 1
 
-        with _StageTimer("清理临时产物"):
-            cleanup(
-                zip_path, new_files_dir.parent if new_files_dir.name != "tmp" else new_files_dir
-            )
+        # 清理（tmp/zip/sha256/暂存 updater）移交新主程序后台线程完成
+        # （见 main.py _cleanup_update_artifacts）。updater 关键路径到此结束——
+        # 启动主程序后立即 os._exit，不再做任何 I/O 密集的删除。
         with _StageTimer("启动新版主程序"):
             launch_app(app_dir)
 
@@ -956,7 +1004,8 @@ def run_replacement(
         if fail_reason:
             _flush_progress(app_dir, success=False, version=_read_version(app_dir))
         # 失败时务必清理临时产物（zip / sha256 / 解压目录 / 备份目录），避免长期堆积。
-        # 成功路径已在 try 内 cleanup，不走这里。
+        # 成功路径不做 cleanup（清理由新主程序后台线程负责，见 main.py
+        # _cleanup_update_artifacts），仅失败路径在此清理现场。
         if fail_reason:
             _safe_cleanup_artifacts(zip_path, new_files_dir)
             # 替换失败并回滚后，旧版本仍在位 → 重启它，避免「主程序已退出、应用打不开」

@@ -904,10 +904,12 @@ class TestRunReplacementExceptionGuard:
     def test_uncaught_exception_returns_1_and_logs(
         self, updater, tmp_path, monkeypatch
     ):
-        """verify_zip 抛非预期异常时，run_replacement 应回退捕获并写日志、返回 1。
+        """verify_sha256 抛非预期异常时，run_replacement 应回退捕获并写日志、返回 1。
 
-        与真实调用方（updater_main.main / main._run_self_update）一致：先 setup_logging
-        再调 run_replacement，故异常现场会落到日志文件。
+        新架构下 verify_zip(testzip) 已从 run_replacement 关键路径移除（移交旧主程序
+        端递送时完成），verify_sha256 成为首个校验阶段，故用它验证异常兜底。
+        与真实调用方（updater_main.main）一致：先 setup_logging 再调 run_replacement，
+        故异常现场会落到日志文件。
         """
         zp = tmp_path / "pkg.zip"
         zp.write_bytes(b"data")
@@ -917,7 +919,7 @@ class TestRunReplacementExceptionGuard:
         def _boom(_zip):
             raise RuntimeError("unexpected boom")
 
-        monkeypatch.setattr(updater, "verify_zip", _boom)
+        monkeypatch.setattr(updater, "verify_sha256", _boom)
 
         updater.setup_logging(app_dir, "updater.log")
         assert updater.run_replacement(zp, app_dir) == 1

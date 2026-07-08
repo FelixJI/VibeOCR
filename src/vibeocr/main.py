@@ -61,38 +61,8 @@ def check_production_dependencies() -> bool:
     return ready
 
 
-def _parse_self_update_argv() -> tuple[Path | None, Path | None]:
-    """解析 ``--self-update <zip> --app-dir <dir>``，返回 (zip_path, app_dir)。
-
-    轻量手写解析（不引 argparse，保持入口简洁）。失败返回 (None, None)。
-    支持 ``--self-update <zip>`` 与 ``--self-update=<zip>`` 两种写法，``--app-dir`` 同理。
-    """
-    argv = sys.argv[1:]
-    zip_path: Path | None = None
-    app_dir: Path | None = None
-    i = 0
-    while i < len(argv):
-        arg = argv[i]
-        if arg == "--self-update":
-            if i + 1 < len(argv):
-                zip_path = Path(argv[i + 1])
-                i += 2
-                continue
-        elif arg.startswith("--self-update="):
-            zip_path = Path(arg.split("=", 1)[1])
-        elif arg == "--app-dir":
-            if i + 1 < len(argv):
-                app_dir = Path(argv[i + 1])
-                i += 2
-                continue
-        elif arg.startswith("--app-dir="):
-            app_dir = Path(arg.split("=", 1)[1])
-        i += 1
-    return zip_path, app_dir
-
-
 def _resolve_replacer_module_dir() -> Path | None:
-    """定位 update_replacer.py 所在目录，用于 --self-update 模式 import。
+    """定位 update_replacer.py 所在目录，用于动态 import（cleanup_leftover_old_exes 等）。
 
     优先级：
     1. 打包态：``sys._MEIPASS``（update_replacer.py 由 --add-data 打入 _internal/ 根）。
@@ -110,61 +80,63 @@ def _resolve_replacer_module_dir() -> Path | None:
     return None
 
 
-def _run_self_update(zip_path: Path, app_dir: Path) -> int:
-    """--self-update 模式入口：主程序自身充当兜底替换器。
+def _cleanup_update_artifacts(app_dir: Path) -> None:
+    """后台清理上次更新的残留产物（成功路径下 updater 不再清理，移交本函数）。
 
-    由 ``main()`` 在最早期（任何 Qt/重依赖 import 之前）拦截 ``--self-update`` 后调用。
-    此刻调用方主程序（旧版 VibeOCR.exe）已在 update_service 端 sys.exit，文件锁释放，
-    故本进程能正常覆盖 VibeOCR.exe；``self_exe_names`` 同时包含 VibeOCR.exe 与
-    updater.exe，rename_locked_self_exe 作为锁未及时释放的兜底。
+    新架构下 updater 启动新主程序后立即退出，不做 cleanup（避免 55s I/O 阻塞
+    关键路径）。本函数由新主程序在后台 daemon 线程调用，清理：
+    - data/cache/update/tmp/（解压临时目录，数百 MB）
+    - data/cache/update/_backup/（备份目录，防御性兜底）
+    - data/cache/update/*.zip + *.sha256（更新包）
+    - data/cache/update/updater.exe（暂存的新 updater，此刻已退出不锁）
+    - data/cache/update/updater.ready（就绪信号）
+    - *.exe.old（由 _cleanup_leftover_old_exes 单独负责）
 
-    复用 update_replacer.run_replacement 的完整替换逻辑（与 updater.exe 同一份代码）。
+    保留 data/cache/update/progress.json（关于页读取展示"上次更新各阶段耗时"）。
+
+    幂等：多次调用无副作用。失败仅 log，绝不阻断启动。
     """
-    replacer_dir = _resolve_replacer_module_dir()
-    if replacer_dir is None:
-        # 极端情况：打包态漏打 update_replacer.py / 开发态文件缺失。
-        # 此时无法自助，仅打印提示。用户需手动重装。
-        print("[VibeOCR][self-update] 未找到 update_replacer.py，无法执行自带更新。")
-        print("[VibeOCR][self-update] 请手动下载最新版覆盖安装。")
-        return 1
-
-    if str(replacer_dir) not in sys.path:
-        sys.path.insert(0, str(replacer_dir))
-
-    from update_replacer import logger, run_replacement, setup_logging
-
-    # self-update 专用日志文件，与 updater.log 区分，便于排查兜底路径问题。
-    setup_logging(app_dir, "self_update.log")
-    logger.info("VibeOCR 自带更新模式启动（--self-update，兜底路径）")
-
-    # self-update 模式需同时避让 VibeOCR.exe（可能锁未释放）与 updater.exe（同目录）。
-    # 就绪信号用 self_update.ready，与 update_service._launch_self_update 的轮询对应。
-    # on_failure: windowed 运行下 stdout 不可见，失败必须弹窗告知用户。
-    return run_replacement(
-        zip_path,
-        app_dir,
-        self_exe_names=("VibeOCR.exe", "updater.exe"),
-        ready_filename="self_update.ready",
-        on_failure=_notify_self_update_failure,
-    )
-
-
-def _notify_self_update_failure(message: str) -> None:
-    """--self-update 兜底替换失败时弹窗提示（与 updater.exe 的 _notify_failure 对称）。
-
-    兜底路径由主程序充当替换器，windowed 运行 stdout 不可见，失败必须有可见反馈，
-    否则用户会卡在「应用关了什么都没发生」的盲区。弹窗本身异常时退化为 stderr
-    （windowed 下虽不可见，但 self_update.log 已由 update_replacer 记录失败详情）。
-    """
-    if sys.platform != "win32":
-        print(message, file=sys.stderr)
-        return
     try:
-        import ctypes
+        cache_dir = app_dir / "data" / "cache" / "update"
+        if not cache_dir.is_dir():
+            return
 
-        ctypes.windll.user32.MessageBoxW(0, message, "VibeOCR 更新失败", 0x10)
+        import shutil
+
+        # tmp/ 解压目录
+        tmp_dir = cache_dir / "tmp"
+        if tmp_dir.exists():
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+
+        # _backup/ 备份目录（防御：成功路径由 replace_app_files 内联删、失败路径由
+        # _safe_cleanup_artifacts 删；此处兜底，防 launch_app 异常等极端路径残留）
+        backup_dir = cache_dir / "_backup"
+        if backup_dir.exists():
+            shutil.rmtree(backup_dir, ignore_errors=True)
+
+        # zip + sha256 + 暂存 updater + ready（保留 progress.json）
+        for item in cache_dir.iterdir():
+            if item.name == "progress.json":
+                continue
+            if not item.is_file():
+                continue
+            if item.name.endswith((".zip", ".sha256")) or item.name in (
+                "updater.exe",
+                "updater.ready",
+            ):
+                try:
+                    item.unlink(missing_ok=True)
+                except OSError:
+                    pass
+
+        # 空 update 目录可删（progress.json 不在时）
+        if cache_dir.exists() and not any(cache_dir.iterdir()):
+            try:
+                cache_dir.rmdir()
+            except OSError:
+                pass
     except Exception as e:
-        print(f"[VibeOCR][self-update] 弹出失败提示框异常: {e}", file=sys.stderr)
+        print(f"[VibeOCR] 清理更新残留失败（不影响启动）: {e}")
 
 
 def _cleanup_leftover_old_exes() -> None:
@@ -178,7 +150,7 @@ def _cleanup_leftover_old_exes() -> None:
 
     本函数是兜底的兜底：主程序每次启动（此刻旧进程已退出、锁已释放），清掉残留。
     复用 ``update_replacer.cleanup_leftover_old_exes``（同 module 的动态 import 路径
-    与 --self-update 模式一致），保证行为统一。任何异常仅打印、绝不阻断启动——
+    与 _resolve_replacer_module_dir 一致），保证行为统一。任何异常仅打印、绝不阻断启动——
     清理残留是「锦上添花」，不能因它让应用起不来。
     """
     try:
@@ -593,35 +565,36 @@ def main() -> int:
     """应用程序入口点
 
     启动流程：
-    0. 若带 ``--self-update`` 参数 → 充当兜底替换器（updater.exe 坏时的逃生通道），
-       抢在 Qt/重依赖 import 之前执行替换并退出。
     1. 检测生产环境依赖（PySide6, Pillow）
     2. 失败 → 控制台错误提示，退出
-    3. 通过 → 启动GUI
-    4. GUI启动后 → 异步检测嵌入式OCR依赖
+    3. 通过 → 启动后台清理线程（tmp/zip/sha/暂存 updater/ready + *.exe.old）
+    4. 启动GUI
+    5. GUI启动后 → 异步检测嵌入式OCR依赖
     """
-
-    # 0. --self-update 模式：主程序自身充当兜底替换器。
-    # 必须最先拦截，避免 import PySide6 等重依赖（self-update 仅需 stdlib 替换逻辑）。
-    # 用法：VibeOCR.exe --self-update <zip> --app-dir <dir>
-    # 与 updater.exe 的 --update --app-dir 对称，由 update_service 在握手失败时启动。
-    if "--self-update" in sys.argv:
-        zip_path, app_dir = _parse_self_update_argv()
-        if zip_path is None:
-            print("用法: VibeOCR.exe --self-update <更新包zip> --app-dir <应用目录>")
-            return 2
-        return _run_self_update(zip_path, app_dir)
-
-    # 清理上次更新残留的 *.exe.old（兜底的兜底）。
-    # updater 更新时把运行中的自己改名 .old 后继续跑，Windows 禁止删运行中 exe，
-    # 故 .old 必然残留到本次主程序启动。此刻旧进程已退出、锁已释放，普通删除即可清掉。
-    # 详见 update_replacer.cleanup_leftover_old_exes 的背景说明。
-    _cleanup_leftover_old_exes()
 
     # 1. 检查生产环境依赖
     if not check_production_dependencies():
         input("\n按回车键退出...")
         return 1
+
+    # 清理上次更新残留（后台 daemon 线程，不阻塞启动）。
+    # 新架构：updater 不再做 cleanup，移交本主程序后台完成。包含：
+    # - tmp/zip/sha256/暂存 updater/ready（_cleanup_update_artifacts）
+    # - *.exe.old（_cleanup_leftover_old_exes）
+    # 用 daemon 线程让出资源，避免抢 UI 冷启动；launch_application 以 os._exit
+    # 结尾从不返回，故线程必须在其之前启动（与 Qt 事件循环并行后台跑）。
+    import threading
+
+    def _background_cleanup() -> None:
+        try:
+            app_dir = env_manager.get_project_root()
+            _cleanup_update_artifacts(app_dir)
+            _cleanup_leftover_old_exes()
+        except Exception as e:
+            print(f"[VibeOCR] 后台清理异常（不影响启动）: {e}")
+
+    cleanup_thread = threading.Thread(target=_background_cleanup, daemon=True)
+    cleanup_thread.start()
 
     # 2. 启动应用
     print("[VibeOCR] 启动应用...")

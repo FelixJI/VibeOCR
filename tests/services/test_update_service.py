@@ -1297,3 +1297,228 @@ class TestDownloadZipWithShaThreadedVerify:
         func, args, _kwargs = to_thread_calls[0]
         assert func is us.verify_sha256
         assert args == (zip_path, sha_path)
+
+
+# ---------------------------------------------------------------------------
+# _extract_updater_from_zip / _verify_zip_integrity：递送员职责（黄金法则）
+# ---------------------------------------------------------------------------
+
+
+class TestExtractUpdaterFromZip:
+    """_extract_updater_from_zip：从 zip 按 arcname 抽取 VibeOCR/updater.exe 到暂存目录。"""
+
+    def _make_service(self, tmp_path, monkeypatch):
+        """构造 UpdateService，隔离 cache_dir 到 tmp_path。"""
+        from vibeocr.services import env_config
+        from vibeocr.services.update_service import UpdateService
+
+        monkeypatch.setattr(
+            env_config,
+            "get_update_cache_dir",
+            lambda: tmp_path / "cache" / "update",
+        )
+        monkeypatch.setattr(
+            env_config,
+            "get_update_settings_path",
+            lambda: tmp_path / "settings.json",
+        )
+        app_dir = tmp_path / "app"
+        app_dir.mkdir()
+        return UpdateService(app_dir)
+
+    def test_extracts_updater_to_staging(self, tmp_path, monkeypatch):
+        """正常：从 zip 抽取 VibeOCR/updater.exe 到 cache_dir/updater.exe。"""
+        import zipfile
+
+        service = self._make_service(tmp_path, monkeypatch)
+        zip_path = tmp_path / "cache" / "update" / "pkg.zip"
+        zip_path.parent.mkdir(parents=True)
+        with zipfile.ZipFile(zip_path, "w") as zf:
+            zf.writestr("VibeOCR/updater.exe", b"NEW UPDATER BINARY")
+            zf.writestr("VibeOCR/VibeOCR.exe", b"main")
+            zf.writestr("VibeOCR/version.json", "{}")
+
+        result = service._extract_updater_from_zip(zip_path)
+
+        assert result == service._cache_dir / "updater.exe"
+        assert result.read_bytes() == b"NEW UPDATER BINARY"
+
+    def test_missing_updater_in_zip_raises(self, tmp_path, monkeypatch):
+        """zip 内无 VibeOCR/updater.exe → 抛 RuntimeError。"""
+        import zipfile
+
+        service = self._make_service(tmp_path, monkeypatch)
+        zip_path = tmp_path / "cache" / "update" / "pkg.zip"
+        zip_path.parent.mkdir(parents=True)
+        with zipfile.ZipFile(zip_path, "w") as zf:
+            zf.writestr("VibeOCR/VibeOCR.exe", b"main")
+
+        with pytest.raises(RuntimeError, match="updater.exe"):
+            service._extract_updater_from_zip(zip_path)
+
+    def test_does_not_extract_other_files(self, tmp_path, monkeypatch):
+        """只抽 updater.exe，不碰其它文件（避免重复解压）。"""
+        import zipfile
+
+        service = self._make_service(tmp_path, monkeypatch)
+        zip_path = tmp_path / "cache" / "update" / "pkg.zip"
+        zip_path.parent.mkdir(parents=True)
+        with zipfile.ZipFile(zip_path, "w") as zf:
+            zf.writestr("VibeOCR/updater.exe", b"updater")
+            zf.writestr("VibeOCR/_internal/big.dat", b"x" * 10000)
+
+        service._extract_updater_from_zip(zip_path)
+
+        # 只应有 updater.exe，不应有 _internal
+        assert not (service._cache_dir / "_internal").exists()
+        assert (service._cache_dir / "updater.exe").exists()
+
+
+class TestVerifyZipIntegrity:
+    """_verify_zip_integrity：zipfile testzip 包装。"""
+
+    def _make_service(self, tmp_path, monkeypatch):
+        from vibeocr.services import env_config
+        from vibeocr.services.update_service import UpdateService
+
+        monkeypatch.setattr(
+            env_config,
+            "get_update_cache_dir",
+            lambda: tmp_path / "cache" / "update",
+        )
+        monkeypatch.setattr(
+            env_config,
+            "get_update_settings_path",
+            lambda: tmp_path / "settings.json",
+        )
+        app_dir = tmp_path / "app"
+        app_dir.mkdir()
+        return UpdateService(app_dir)
+
+    def test_valid_zip_returns_true(self, tmp_path, monkeypatch):
+        import zipfile
+
+        service = self._make_service(tmp_path, monkeypatch)
+        zip_path = tmp_path / "pkg.zip"
+        with zipfile.ZipFile(zip_path, "w") as zf:
+            zf.writestr("a.txt", "hello")
+        assert service._verify_zip_integrity(zip_path) is True
+
+    def test_corrupt_zip_returns_false(self, tmp_path, monkeypatch):
+        service = self._make_service(tmp_path, monkeypatch)
+        zip_path = tmp_path / "pkg.zip"
+        zip_path.write_bytes(b"not a zip file at all")
+        assert service._verify_zip_integrity(zip_path) is False
+
+    def test_nonexistent_zip_returns_false(self, tmp_path, monkeypatch):
+        service = self._make_service(tmp_path, monkeypatch)
+        assert service._verify_zip_integrity(tmp_path / "nope.zip") is False
+
+
+class TestDoDownloadAndUpdateNewArch:
+    """新架构编排器：testzip → 抽取 updater → 启动暂存 updater → 握手 → 退出。
+
+    编排器会实例化 ``DownloadProgressDialog``（QDialog），需 QApplication 上下文，
+    故注入 ``qapp`` fixture（pytest-qt 不默认 autouse）。其余内部方法（testzip /
+    抽取 / 启动 / 握手 / 退出）全部 mock，断言编排器走新架构流程、失败路径不退出主程序。
+    """
+
+    def _make_service_with_zip(self, tmp_path, monkeypatch, qapp):
+        """构造 service + 假 zip（含 VibeOCR/updater.exe）。"""
+        import zipfile
+        from vibeocr.services import env_config
+        from vibeocr.services.update_service import UpdateService
+        monkeypatch.setattr(env_config, "get_update_cache_dir", lambda: tmp_path / "cache" / "update")
+        monkeypatch.setattr(env_config, "get_update_settings_path", lambda: tmp_path / "settings.json")
+        app_dir = tmp_path / "app"
+        app_dir.mkdir()
+        service = UpdateService(app_dir)
+
+        zip_path = tmp_path / "cache" / "update" / "pkg.zip"
+        zip_path.parent.mkdir(parents=True)
+        with zipfile.ZipFile(zip_path, "w") as zf:
+            zf.writestr("VibeOCR/updater.exe", b"updater")
+            zf.writestr("VibeOCR/version.json", "{}")
+        return service, zip_path
+
+    def _make_info(self):
+        from vibeocr.services.update_service import UpdateInfo
+        return UpdateInfo(version="9.9.9", download_url="http://x",
+                          sha256_url="http://x.sha256", changelog="")
+
+    def _mock_msgbox(self, us_mod, monkeypatch, critical_texts=None):
+        monkeypatch.setattr(us_mod.QMessageBox, "information",
+                            lambda *a, **k: us_mod.QMessageBox.StandardButton.Ok)
+        if critical_texts is not None:
+            monkeypatch.setattr(us_mod.QMessageBox, "critical",
+                                lambda parent, title, text, *a, **k: critical_texts.append(text) or us_mod.QMessageBox.StandardButton.Ok)
+        else:
+            monkeypatch.setattr(us_mod.QMessageBox, "critical",
+                                lambda *a, **k: us_mod.QMessageBox.StandardButton.Ok)
+
+    def test_corrupt_zip_shows_error_no_quit(self, tmp_path, monkeypatch, qapp):
+        """testzip 失败 → 弹窗，不退出主程序（不 _force_quit）。"""
+        service, zip_path = self._make_service_with_zip(tmp_path, monkeypatch, qapp)
+        zip_path.write_bytes(b"corrupt")  # 把 zip 写坏
+
+        force_quit_called = []
+        monkeypatch.setattr(service, "_force_quit", lambda: force_quit_called.append(1))
+        extract_called = []
+        monkeypatch.setattr(service, "_extract_updater_from_zip", lambda p: extract_called.append(1) or p)
+
+        from vibeocr.services import update_service as us_mod
+        async def fake_download(*a, **k):
+            return zip_path, []
+        monkeypatch.setattr(us_mod, "download_update", fake_download)
+        self._mock_msgbox(us_mod, monkeypatch)
+
+        _run(service._do_download_and_update(self._make_info(), parent=None))
+
+        assert not force_quit_called, "testzip 失败不应 _force_quit"
+        assert not extract_called, "testzip 失败不应抽取 updater"
+
+    def test_extract_failure_shows_error_no_quit(self, tmp_path, monkeypatch, qapp):
+        """抽取 updater 失败 → 弹窗，不退出。"""
+        service, zip_path = self._make_service_with_zip(tmp_path, monkeypatch, qapp)
+        monkeypatch.setattr(service, "_verify_zip_integrity", lambda p: True)
+        monkeypatch.setattr(service, "_extract_updater_from_zip",
+                            lambda p: (_ for _ in ()).throw(RuntimeError("no updater")))
+
+        force_quit_called = []
+        monkeypatch.setattr(service, "_force_quit", lambda: force_quit_called.append(1))
+
+        from vibeocr.services import update_service as us_mod
+        async def fake_download(*a, **k):
+            return zip_path, []
+        monkeypatch.setattr(us_mod, "download_update", fake_download)
+        self._mock_msgbox(us_mod, monkeypatch)
+
+        _run(service._do_download_and_update(self._make_info(), parent=None))
+
+        assert not force_quit_called, "抽取失败不应 _force_quit"
+
+    def test_crashed_handshake_shows_manual_reinstall(self, tmp_path, monkeypatch, qapp):
+        """新 updater 握手 crashed → 弹窗提示手动重装，不退出（无 self-update 兜底）。"""
+        service, zip_path = self._make_service_with_zip(tmp_path, monkeypatch, qapp)
+        monkeypatch.setattr(service, "_verify_zip_integrity", lambda p: True)
+        monkeypatch.setattr(service, "_extract_updater_from_zip", lambda p: service._cache_dir / "updater.exe")
+
+        async def fake_launch(zip_p, staged):
+            return "crashed"
+        monkeypatch.setattr(service, "_launch_updater", fake_launch)
+
+        force_quit_called = []
+        monkeypatch.setattr(service, "_force_quit", lambda: force_quit_called.append(1))
+
+        from vibeocr.services import update_service as us_mod
+        async def fake_download(*a, **k):
+            return zip_path, []
+        monkeypatch.setattr(us_mod, "download_update", fake_download)
+        critical_msgs = []
+        self._mock_msgbox(us_mod, monkeypatch, critical_texts=critical_msgs)
+
+        _run(service._do_download_and_update(self._make_info(), parent=None))
+
+        assert not force_quit_called, "crashed 不应 _force_quit"
+        assert critical_msgs, "应弹窗提示"
+        assert any("手动" in m for m in critical_msgs), "应提示手动重装"
