@@ -2,20 +2,17 @@
 
 from pathlib import Path
 
-from PySide6.QtCore import QSettings, QRectF, Qt, QTimer, Signal
+from PySide6.QtCore import QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QColor, QPainter, QPen, QPixmap
 from PySide6.QtPdf import QPdfDocument
 from PySide6.QtWidgets import (
     QDialog,
-    QDialogButtonBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QMenu,
     QPushButton,
     QScrollArea,
-    QTableWidget,
-    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
@@ -427,8 +424,6 @@ class PreviewWidget(QWidget):
     image_changed = Signal()
     block_clicked = Signal(int)
     block_text_edited = Signal(int, str)
-    # 表格块网格编辑完成：参数为 content_list 索引、新的 table HTML
-    table_text_edited = Signal(int, str)
     block_hovered = Signal(int)
     block_unhovered = Signal()
 
@@ -650,28 +645,24 @@ class PreviewWidget(QWidget):
             self.block_clicked.emit(idx)
 
     def _on_label_double_click(self, pos) -> None:
-        """双击处理：优先 bbox 编辑，空白区域打开原图查看器。"""
+        """双击处理：优先 bbox 内联编辑，空白区域打开原图查看器。
+
+        表格块（label/type=="table"）的 text 是原始 HTML，走内联 QLineEdit
+        会把标签当纯文本显示，故表格块双击不做内联编辑（请在右侧结果视图
+        编辑表格）。
+        """
         # 优先置信度模式（单次识别结果）命中
         idx = self._hit_test_block(pos.x(), pos.y())
         if idx >= 0:
-            # 表格管道的 text_block.text 是原始 HTML、label=="table"。
-            # 走内联 QLineEdit 会把 HTML 当纯文本显示（问题：用户看到的是
-            # <table>... 标签而非表格）。改走表格网格编辑器，与块类型模式一致。
             block = self._text_blocks[idx]
-            if getattr(block, "label", "") == "table":
-                content_index = getattr(block, "content_index", None)
-                if content_index is not None:
-                    self._start_table_edit(content_index)
-                    return
-            self._start_inline_edit(idx)
+            if getattr(block, "label", "") != "table":
+                self._start_inline_edit(idx)
             return
 
-        # 回退块类型模式（content_list），支持表格网格编辑
+        # 回退块类型模式（content_list）
         cl_idx, block_type = self._hit_test_type_block(pos.x(), pos.y())
         if cl_idx >= 0:
-            if block_type == "table":
-                self._start_table_edit(cl_idx)
-            else:
+            if block_type != "table":
                 # 块类型模式下普通文本块：尝试定位到对应 text_block 做内联编辑
                 tb_idx = self._find_text_block_by_content_index(cl_idx)
                 if tb_idx >= 0:
@@ -747,91 +738,6 @@ class PreviewWidget(QWidget):
             if getattr(b, "content_index", None) == cl_idx:
                 return i
         return -1
-
-    def _start_table_edit(self, content_index: int) -> None:
-        """弹出表格网格编辑对话框（QTableWidget），编辑 content_list 中的
-        表格 HTML。
-
-        流程：解析 table_body → QTableWidget 逐格编辑 → 确认后序列化回 HTML
-        → 发 ``table_text_edited(content_index, new_html)`` 信号，由 tab 回写。
-        """
-        if not (0 <= content_index < len(self._content_list)):
-            return
-        block = self._content_list[content_index]
-        table_body = block.get("table_body", "")
-        if not table_body:
-            return
-
-        from vibeocr.services.ocr_service import (
-            grid_to_table_html,
-            parse_table_html_to_grid,
-        )
-
-        grid = parse_table_html_to_grid(table_body)
-        if not grid:
-            return
-        rows = len(grid)
-        cols = max(len(r) for r in grid)
-
-        dialog = QDialog(self)
-        dialog.setWindowTitle("编辑表格")
-        dialog.setMinimumSize(420, 300)
-        dlg_layout = QVBoxLayout(dialog)
-        dlg_layout.setContentsMargins(8, 8, 8, 8)
-
-        table_widget = QTableWidget(rows, cols, dialog)
-        table_widget.setHorizontalHeaderLabels(
-            [str(c) for c in range(1, cols + 1)]
-        )
-        for r in range(rows):
-            for c in range(cols):
-                cell_text = grid[r][c] if c < len(grid[r]) else ""
-                table_widget.setItem(r, c, QTableWidgetItem(cell_text))
-        dlg_layout.addWidget(table_widget)
-
-        info = QLabel(
-            "双击单元格编辑；首行视为表头。可在末行末列后用 Tab 追加内容。"
-        )
-        info.setWordWrap(True)
-        dlg_layout.addWidget(info)
-
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok
-            | QDialogButtonBox.StandardButton.Cancel
-        )
-        buttons.accepted.connect(dialog.accept)
-        buttons.rejected.connect(dialog.reject)
-        dlg_layout.addWidget(buttons)
-
-        # 恢复上次窗口尺寸（首次打开无历史则用上面的 setMinimumSize 默认布局）。
-        # 用显式 (organization, application) 构造 QSettings，不依赖全局 app 名设置。
-        settings = QSettings("VibeOCR", "VibeOCR")
-        if geom := settings.value("table_edit_dialog/geometry"):
-            dialog.restoreGeometry(geom)
-
-        rc = dialog.exec()
-        # 无论确认/取消都记住尺寸，下次打开沿用。
-        settings.setValue("table_edit_dialog/geometry", dialog.saveGeometry())
-        if rc != QDialog.DialogCode.Accepted:
-            return
-
-        new_grid: list[list[str]] = []
-        for r in range(table_widget.rowCount()):
-            row: list[str] = []
-            for c in range(table_widget.columnCount()):
-                item = table_widget.item(r, c)
-                row.append(item.text() if item else "")
-            # 丢弃尾部全空行
-            if any(cell.strip() for cell in row) or r < rows:
-                new_grid.append(row)
-        if not new_grid:
-            return
-        # 比较"单元格内容"而非"原始 HTML"：原始 table_body 来自 PaddleX（含 inline
-        # style、外层包装等），经 parse→grid→序列化往返后 HTML 必然不同，即便用户
-        # 没改任何单元格。按内容比较可避免无改动时误标记 manually-edited（bbox 变黄）。
-        if new_grid != grid:
-            new_html = grid_to_table_html(new_grid)
-            self.table_text_edited.emit(content_index, new_html)
 
     # ── 标签点击（空状态触发截图/文件选择）──
 

@@ -132,7 +132,6 @@ class SingleRecognitionTab(BaseOcrTab):
     def _connect_signals(self):
         self._setup_hover_sync()
         self._preview_widget.block_text_edited.connect(self._on_block_text_edited)
-        self._preview_widget.table_text_edited.connect(self._on_table_block_edited)
         self._preview_widget.block_clicked.connect(self._result_widget.highlight_block)
         self._result_widget.block_edited.connect(self._on_result_block_edited)
         # 文本块处理选项变化 → 实时重排当前结果（仅纯文本结果生效）。

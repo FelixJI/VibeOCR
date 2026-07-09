@@ -151,11 +151,7 @@ class TestPreviewWidgetSignals:
 
 
 class TestPreviewWidgetTableHitTest:
-    """块类型模式下的表格块双击命中测试与表格编辑信号。
-
-    _start_table_edit 会弹出模态 QDialog（exec()），无法在 headless 测试中
-    完整驱动，因此这里聚焦可单测的命中逻辑与信号机制。
-    """
+    """块类型模式下的命中测试与反查逻辑。"""
 
     def test_hit_test_type_block_hits_table(self, qapp, sample_pixmap):
         """_hit_test_type_block 应命中预设的表格矩形并返回 block_type。"""
@@ -201,14 +197,6 @@ class TestPreviewWidgetTableHitTest:
         assert widget._find_text_block_by_content_index(99) == -1
         assert widget._find_text_block_by_content_index(-1) == -1
 
-    def test_table_text_edited_signal_exists(self, qapp):
-        """table_text_edited 信号应可正常 emit（验证信号已定义且签名正确）。"""
-        widget = PreviewWidget()
-        received: list[tuple[int, str]] = []
-        widget.table_text_edited.connect(lambda i, h: received.append((i, h)))
-        widget.table_text_edited.emit(3, "<table></table>")
-        assert received == [(3, "<table></table>")]
-
     def test_type_screen_rects_cleared_on_set_pixmap(self, qapp, sample_pixmap):
         """切换图片时 _type_screen_rects 应被重置，避免残留命中数据。"""
         from PySide6.QtCore import QRectF
@@ -220,8 +208,9 @@ class TestPreviewWidgetTableHitTest:
 
 
 class TestConfidenceModeTableDoubleClick:
-    """置信度模式下双击表格块（label=='table'）应走表格网格编辑器，
-    而非把原始 HTML 塞进 QLineEdit 内联编辑器。
+    """双击行为：普通文本块走内联编辑；表格块不弹内联编辑器
+    （表格 text 是原始 HTML，内联显示会暴露标签，故表格块双击不做处理，
+    请在右侧结果视图编辑表格）。
     """
 
     @staticmethod
@@ -237,12 +226,10 @@ class TestConfidenceModeTableDoubleClick:
 
         return _P()
 
-    def test_table_block_routes_to_grid_editor(self, qapp, sample_pixmap):
-        """label=='table' 的置信度块双击应调用 _start_table_edit(content_index)。"""
+    def test_table_block_skips_inline_edit(self, qapp, sample_pixmap):
+        """label=='table' 的置信度块双击不应触发内联编辑。"""
         widget = PreviewWidget()
         widget.set_pixmap(sample_pixmap)
-        # 表格管道：text_block.text 是原始 HTML、label=='table'、content_index 指向
-        # content_list 中带 table_body 的表格块。
         widget._text_blocks = [
             TextBlock(
                 text="<table><tr><td>x</td></tr></table>",
@@ -253,17 +240,13 @@ class TestConfidenceModeTableDoubleClick:
             )
         ]
         widget._block_screen_rects = [(10, 10, 190, 70)]
-        widget._content_list = [
-            {"type": "table", "table_body": "<table><tr><td>x</td></tr></table>"}
-        ]
 
-        called: list[int] = []
-        widget._start_table_edit = lambda ci: called.append(ci)
-        widget._start_inline_edit = lambda idx: called.append(("inline", idx))
+        called: list = []
+        widget._start_inline_edit = lambda idx: called.append(idx)
 
         # 双击落在表格 bbox 内（置信度模式命中）
         widget._on_label_double_click(self._pos(50, 40))
-        assert called == [0], "应调用 _start_table_edit(0)，而非 _start_inline_edit"
+        assert called == [], "表格块双击不应触发内联编辑"
 
     def test_text_block_routes_to_inline_edit(self, qapp, sample_pixmap):
         """label!='table' 的置信度块双击仍走 _start_inline_edit。"""
@@ -275,11 +258,10 @@ class TestConfidenceModeTableDoubleClick:
         widget._block_screen_rects = [(10, 10, 190, 70)]
 
         called: list = []
-        widget._start_table_edit = lambda ci: called.append(("table", ci))
-        widget._start_inline_edit = lambda idx: called.append(("inline", idx))
+        widget._start_inline_edit = lambda idx: called.append(idx)
 
         widget._on_label_double_click(self._pos(50, 40))
-        assert called == [("inline", 0)]
+        assert called == [0]
 
 
 class TestDoubleClickOriginalImage:
@@ -338,110 +320,6 @@ class TestDoubleClickOriginalImage:
 
         widget._on_label_double_click(self._pos(50, 40))
         assert viewer_called == [], "命中 content_list 块时不应打开原图查看器"
-
-
-class TestTableEditNoChangeNoSignal:
-    """表格网格编辑器：用户未改动单元格内容时不应触发 table_text_edited
-    （不应误标记 manually-edited 使 bbox 变黄）。
-    """
-
-    def test_unchanged_cells_no_signal(self, qapp, sample_pixmap, monkeypatch):
-        widget = PreviewWidget()
-        widget.set_pixmap(sample_pixmap)
-        # PaddleX 风格的 table_body（含 inline style 等噪声）
-        table_body = '<table><tr><td style="color:red">A</td><td>B</td></tr></table>'
-        widget._content_list = [{"type": "table", "table_body": table_body}]
-
-        # parse_table_html_to_grid 解析出的网格
-        grid = [["A", "B"]]
-
-        # 拦截 ocr_service 内的解析/序列化函数
-        import vibeocr.services.ocr_service as ocr_svc
-
-        monkeypatch.setattr(ocr_svc, "parse_table_html_to_grid", lambda h: grid)
-        monkeypatch.setattr(
-            ocr_svc,
-            "grid_to_table_html",
-            lambda g: "<table><tr><td>A</td><td>B</td></tr></table>",
-        )
-        # 让对话框直接返回 Accepted（不弹窗）
-        from PySide6.QtCore import QSettings
-        from PySide6.QtWidgets import QDialog
-
-        monkeypatch.setattr(QDialog, "exec", lambda self: QDialog.DialogCode.Accepted)
-        # 隔离 QSettings：模拟首次无历史几何，且不写真实注册表/磁盘。
-        monkeypatch.setattr(QSettings, "value", lambda *a, **k: None)
-        monkeypatch.setattr(QSettings, "setValue", lambda *a, **k: None)
-
-        emitted: list = []
-        widget.table_text_edited.connect(lambda i, h: emitted.append((i, h)))
-
-        widget._start_table_edit(0)
-        # 单元格内容未变（grid == [["A","B"]]，QTableWidget 初始也是 A/B）
-        # → 不应 emit
-        assert emitted == []
-
-
-class TestTableEditGeometryPersistence:
-    """编辑表格对话框尺寸持久化：打开时恢复上次几何，关闭时保存。"""
-
-    def _make_widget(self, qapp, sample_pixmap):
-        widget = PreviewWidget()
-        widget.set_pixmap(sample_pixmap)
-        widget._content_list = [
-            {"type": "table", "table_body": "<table><tr><td>A</td></tr></table>"}
-        ]
-        import vibeocr.services.ocr_service as ocr_svc
-
-        ocr_svc.parse_table_html_to_grid = lambda h: [["A"]]
-        ocr_svc.grid_to_table_html = lambda g: "<table><tr><td>A</td></tr></table>"
-        return widget
-
-    def test_restore_geometry_applied(self, qapp, sample_pixmap, monkeypatch):
-        """QSettings 存在历史几何时，应调用 restoreGeometry 恢复。"""
-        from PySide6.QtCore import QByteArray
-        from PySide6.QtWidgets import QDialog
-
-        widget = self._make_widget(qapp, sample_pixmap)
-
-        # 一份真实的几何字节（非空），让 restoreGeometry 返回 True。
-        saved_geom = QByteArray(b"\x01\x00\x00\x00\x00\x00")
-        monkeypatch.setattr(
-            "vibeocr.widgets.preview_widget.QSettings.value",
-            lambda self, key, *a, **k: saved_geom,
-        )
-        restored: list = []
-        monkeypatch.setattr(
-            QDialog, "restoreGeometry", lambda self, g: restored.append(g) or True
-        )
-        monkeypatch.setattr(
-            "vibeocr.widgets.preview_widget.QSettings.setValue", lambda *a, **k: None
-        )
-        monkeypatch.setattr(QDialog, "exec", lambda self: QDialog.DialogCode.Rejected)
-
-        widget._start_table_edit(0)
-        assert restored and restored[0] is saved_geom
-
-    def test_save_geometry_on_close(self, qapp, sample_pixmap, monkeypatch):
-        """对话框关闭后（无论确认/取消）应把几何写入 QSettings。"""
-        from PySide6.QtWidgets import QDialog
-
-        widget = self._make_widget(qapp, sample_pixmap)
-
-        saved: list = []
-        monkeypatch.setattr(
-            "vibeocr.widgets.preview_widget.QSettings.value", lambda *a, **k: None
-        )
-        monkeypatch.setattr(
-            "vibeocr.widgets.preview_widget.QSettings.setValue",
-            lambda self, key, val: saved.append((key, val)),
-        )
-        monkeypatch.setattr(QDialog, "exec", lambda self: QDialog.DialogCode.Rejected)
-
-        widget._start_table_edit(0)
-        # 取消时也保存
-        keys = [k for k, _ in saved]
-        assert "table_edit_dialog/geometry" in keys
 
 
 def _pos(x: int, y: int):
