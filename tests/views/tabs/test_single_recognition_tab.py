@@ -304,6 +304,134 @@ class TestTextOptionsLiveUpdate:
         tab._text_options_widget._mode_combo.setCurrentIndex(1)
 
 
+class TestOcrFinishedEmitsBringToFront:
+    """OCR 完成后应发出信号通知外层（MainWindow）把主窗口提到前台。
+
+    根因：截图确认 → run_ocr（异步，数秒后完成）→ _on_ocr_finished。
+    此前主窗口的激活/置顶只发生在「截图确认的瞬间」（OCR 开始前），OCR 期间
+    用户/系统切走窗口后，识别完成时窗口就静悄悄留在后台。修复：识别完成时
+    发出信号，由 MainWindow 决定是否重新前置。
+
+    仅截图来源的识别需要抢焦点（用户离开过应用）；文件打开来源不需要
+    （用户本就在应用内）。故信号在 run_ocr 时由调用方标记是否为截图来源，
+    _on_ocr_finished 据此决定是否发信号。
+    """
+
+    def test_tab_has_bring_to_front_requested_signal(self, qapp):
+        """SingleRecognitionTab 应定义 bring_to_front_requested 信号（可 connect）。"""
+        tab = SingleRecognitionTab()
+        assert hasattr(tab, "bring_to_front_requested"), (
+            "SingleRecognitionTab 应定义 bring_to_front_requested 信号"
+        )
+        # 信号真正可 connect + emit（验证它是 Qt Signal 而非普通属性）
+        received: list = []
+        tab.bring_to_front_requested.connect(lambda: received.append(True))
+        tab.bring_to_front_requested.emit()
+        assert received == [True]
+
+    def test_on_ocr_finished_emits_signal_when_from_screenshot(self, qapp, monkeypatch):
+        """截图来源的识别完成时应发出 bring_to_front_requested。"""
+        tab = SingleRecognitionTab()
+        emitted: list = []
+        tab.bring_to_front_requested.connect(lambda: emitted.append(True))
+
+        # 标记本次识别来自截图
+        tab._ocr_from_screenshot = True
+        # _display_result 会触发 WebEngine，stub 掉
+        monkeypatch.setattr(tab, "_display_result", lambda r: None)
+
+        tab._on_ocr_finished(_make_plain_text_result())
+
+        assert emitted == [True], "截图来源识别完成应发出 bring_to_front_requested"
+
+    def test_on_ocr_finished_no_signal_when_from_file(self, qapp, monkeypatch):
+        """文件打开来源的识别完成时不应发信号（用户本就在应用内）。"""
+        tab = SingleRecognitionTab()
+        emitted: list = []
+        tab.bring_to_front_requested.connect(lambda: emitted.append(True))
+
+        tab._ocr_from_screenshot = False
+        monkeypatch.setattr(tab, "_display_result", lambda r: None)
+
+        tab._on_ocr_finished(_make_plain_text_result())
+
+        assert emitted == [], "文件来源识别完成不应发 bring_to_front_requested"
+
+    def test_on_ocr_finished_no_signal_default(self, qapp, monkeypatch):
+        """未显式标记来源时（默认 False），识别完成不发信号（保守，不抢焦点）。"""
+        tab = SingleRecognitionTab()
+        emitted: list = []
+        tab.bring_to_front_requested.connect(lambda: emitted.append(True))
+
+        monkeypatch.setattr(tab, "_display_result", lambda r: None)
+
+        tab._on_ocr_finished(_make_plain_text_result())
+
+        assert emitted == []
+
+    def test_on_ocr_error_does_not_emit_signal(self, qapp, monkeypatch):
+        """识别失败不应发 bring_to_front（失败路径保留状态由调用方处理）。
+
+        但失败仍需复位 _ocr_from_screenshot 标记，避免下次文件来源识别误判。
+        """
+        tab = SingleRecognitionTab()
+        emitted: list = []
+        tab.bring_to_front_requested.connect(lambda: emitted.append(True))
+
+        tab._ocr_from_screenshot = True
+        monkeypatch.setattr(tab._result_widget, "_ensure_web_view", lambda: _FakeWebView())
+
+        tab._on_ocr_error("boom")
+
+        assert emitted == []
+        # 失败后标记应复位
+        assert tab._ocr_from_screenshot is False
+
+    def test_run_ocr_sets_screenshot_flag(self, qapp, monkeypatch):
+        """run_ocr 应根据参数设置 _ocr_from_screenshot 标记。
+
+        from_screenshot=True（截图确认路径）→ True；
+        不传或 False（文件/粘贴路径）→ False。
+
+        只验证标记被正确设置，不真正执行识别（桩掉 run_coroutine）。
+        """
+        from PySide6.QtGui import QPixmap
+
+        from vibeocr.models.ocr_options import OCROptions
+
+        tab = SingleRecognitionTab()
+        # 桩掉真正的异步执行（USE_SUBPROCESS 分支会 import 并调用 run_coroutine）
+        monkeypatch.setattr(
+            "vibeocr.services.USE_SUBPROCESS", True, raising=False
+        )
+        monkeypatch.setattr(
+            "vibeocr.utils.qt_async.run_coroutine", lambda *a, **k: None
+        )
+        options = OCROptions()
+
+        pixmap = QPixmap(4, 4)
+        pixmap.fill()
+        tab.run_ocr(pixmap, options, from_screenshot=True)
+        assert tab._ocr_from_screenshot is True
+
+        tab.run_ocr(pixmap, options)
+        assert tab._ocr_from_screenshot is False
+
+
+class _FakeWebView:
+    """最小 web view 替身，仅实现 setHtml。"""
+
+    def setHtml(self, html):
+        self.last_html = html
+
+
+def _raise_async(msg):
+    async def _coro(*a, **k):
+        raise AssertionError(msg)
+
+    return _coro
+
+
 class TestResultBlockEditedFormulaSync:
     """右侧编辑公式块 → _on_result_block_edited 走文本分支，但 has_content_list
     时左侧应走 set_content_list（保持块类型模式），且 tb.is_manually_edited=True。

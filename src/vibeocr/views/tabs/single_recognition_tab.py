@@ -39,12 +39,21 @@ class SingleRecognitionTab(BaseOcrTab):
 
     screenshot_requested = Signal()
     file_open_requested = Signal()
+    # 截图来源的识别完成时发出，由 MainWindow 重新把主窗口提到前台。
+    # 根因：主窗口激活此前只在 OCR 开始前发生一次；异步识别期间用户/系统切走
+    # 窗口后，识别完成时窗口就静悄悄留在后台（表现为「识别后主界面不弹出」）。
+    # 仅截图来源识别需要抢焦点（用户离开过应用）；文件/粘贴来源用户本就在应用内，
+    # 不发信号以免无谓抢焦点。
+    bring_to_front_requested = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._closing = False
         self._pending_pixmap: QPixmap | None = None
         self._pending_file_path: str | None = None
+        # 本次识别是否来自截图（由 run_ocr 的 from_screenshot 参数设置）。
+        # _on_ocr_finished 据此决定是否发 bring_to_front_requested。
+        self._ocr_from_screenshot: bool = False
         self._setup_ui()
         self._connect_signals()
         self._init_options_from_preferences(batch=False)
@@ -288,9 +297,22 @@ class SingleRecognitionTab(BaseOcrTab):
 
     # ── OCR 执行 ──
 
-    def run_ocr(self, pixmap: QPixmap, options=None) -> None:
-        """执行 OCR 识别（入口方法，由 MainWindow 调用）"""
+    def run_ocr(
+        self, pixmap: QPixmap, options=None, *, from_screenshot: bool = False
+    ) -> None:
+        """执行 OCR 识别（入口方法，由 MainWindow 调用）
+
+        Args:
+            pixmap: 待识别图片。
+            options: OCR 选项；为 None 时从界面面板读取。
+            from_screenshot: 本次识别是否来自截图确认路径。为 True 时，识别完成
+                (_on_ocr_finished) 会发出 bring_to_front_requested，让 MainWindow
+                重新把主窗口提到前台。文件/粘贴来源传 False，避免无谓抢焦点。
+        """
         from vibeocr.services import USE_SUBPROCESS
+
+        # 记录识别来源，_on_ocr_finished / _on_ocr_error 据此决定是否发前置信号。
+        self._ocr_from_screenshot = from_screenshot
 
         self._preprocess_options.unlock_pipeline()
 
@@ -640,6 +662,14 @@ class SingleRecognitionTab(BaseOcrTab):
         if self._text_options_widget is not None:
             self._text_options_widget.set_collapsed(True)
 
+        # 截图来源识别完成 → 通知 MainWindow 重新把主窗口提到前台。
+        # 异步识别可能耗时数秒（首次还需下载模型），期间用户/系统切走窗口后，
+        # OCR 开始前那次激活已失效，故在此再次前置。发出后复位标记，避免
+        # 后续手动「重新识别」（文件来源语义）误触发抢焦点。
+        if self._ocr_from_screenshot:
+            self._ocr_from_screenshot = False
+            self.bring_to_front_requested.emit()
+
     def _first_use_suffix(self, pipeline_val: str, error_text: str = "") -> str:
         """首次使用失败时返回追加提示。
 
@@ -676,6 +706,8 @@ class SingleRecognitionTab(BaseOcrTab):
 
     def _on_ocr_error(self, error_msg: str) -> None:
         """OCR 失败回调"""
+        # 失败不复位标记会让下次识别误判来源，显式复位。
+        self._ocr_from_screenshot = False
         self._current_ocr_result = None
         self._start_btn.setText("开始识别")
         self._result_widget.clear()

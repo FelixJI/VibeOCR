@@ -294,6 +294,106 @@ class TestOverlayWindowRestore:
             mock_raise.assert_not_called()
 
 
+class TestOcrFinishedRaisesWindow:
+    """识别完成（截图来源）后应把主窗口提到前台。
+
+    根因：主窗口的激活/置顶此前只在「截图确认瞬间」（_on_overlay_confirmed，
+    OCR 开始前）发生一次。OCR 是异步、可能数秒（首次还需下载模型）才完成。
+    这期间用户/系统切走窗口后，_on_ocr_finished 不做任何前置动作，窗口就
+    静悄悄留在后台——表现为「识别后主界面不弹出」。
+
+    修复：SingleRecognitionTab 在截图来源识别完成时发出 bring_to_front_requested，
+    MainWindow 连接该信号，在 OCR 完成时再次 showNormal + activateWindow + raise_。
+    文件打开来源（用户本就在应用内）不发信号，避免无谓抢焦点。
+    """
+
+    def test_main_window_connects_bring_to_front_signal(self, main_window):
+        """MainWindow 应连接 single_tab.bring_to_front_requested 到前置槽。"""
+        assert hasattr(main_window, "_bring_main_window_to_front"), (
+            "MainWindow 应有 _bring_main_window_to_front 槽"
+        )
+        assert callable(main_window._bring_main_window_to_front)
+        # 信号连接：发出信号应能触发槽（通过 mock 验证回调链通畅）
+        import unittest.mock as _mock
+
+        with _mock.patch.object(main_window, "_bring_main_window_to_front") as m:
+            main_window._single_tab.bring_to_front_requested.emit()
+            m.assert_called_once()
+
+    def test_ocr_finished_raises_window(self, main_window, monkeypatch):
+        """single_tab 发出 bring_to_front_requested 时，MainWindow 应前置。"""
+        import unittest.mock as _mock
+
+        with (
+            _mock.patch.object(main_window, "showNormal") as mock_show,
+            _mock.patch.object(main_window, "activateWindow") as mock_activate,
+            _mock.patch.object(main_window, "raise_") as mock_raise,
+        ):
+            main_window._single_tab.bring_to_front_requested.emit()
+
+        mock_show.assert_called_once()
+        mock_activate.assert_called_once()
+        mock_raise.assert_called_once()
+
+    def test_screenshot_confirmed_marks_screenshot_origin(self, main_window, monkeypatch):
+        """_on_overlay_confirmed 应标记本次识别来自截图（让 tab 在完成时发信号）。
+
+        验证 run_ocr 以 from_screenshot=True 被调用。
+        """
+        pixmap = QPixmap(10, 10)
+        pixmap.fill(Qt.GlobalColor.white)
+
+        captured: dict = {}
+        monkeypatch.setattr(
+            main_window._single_tab, "run_ocr",
+            lambda pm, options=None, **kw: captured.update(
+                {"from_screenshot": kw.get("from_screenshot", False)}
+            ),
+        )
+        monkeypatch.setattr(
+            main_window._single_tab, "set_image_for_recognition", lambda *a, **k: None
+        )
+        monkeypatch.setattr(main_window._single_tab, "set_pixmap", lambda *a, **k: None)
+        # 抑制 _restore_main_window 真正操作窗口
+        monkeypatch.setattr(main_window, "showNormal", lambda: None)
+        monkeypatch.setattr(main_window, "activateWindow", lambda: None)
+        monkeypatch.setattr(main_window, "raise_", lambda: None)
+
+        main_window._main_window_minimized_before_capture = False
+        main_window._on_overlay_confirmed(pixmap, None)
+
+        assert captured.get("from_screenshot") is True
+
+
+class TestRestoreMainWindowWhenMinimized:
+    """_restore_main_window 在「识别路径 + 截图前已最小化」时仍应恢复可见。
+
+    回归：旧逻辑用 if not self._main_window_minimized_before_capture: showNormal()
+    来让复制/保存/取消在「截图前已最小化」时保持最小化（静默操作不抢焦点）。
+    但识别（confirmed）路径用户明确想看结果，即便截图前窗口是最小化的，
+    也必须把窗口恢复出来——否则工具栏/托盘触发截图后窗口永远不出现。
+    """
+
+    def test_confirmed_restores_even_when_was_minimized(self, main_window, monkeypatch):
+        """识别路径下，即便截图前已最小化，showNormal 仍应被调用。"""
+        import unittest.mock as _mock
+
+        pixmap = QPixmap(10, 10)
+        pixmap.fill(Qt.GlobalColor.white)
+
+        with (
+            _mock.patch.object(main_window, "showNormal") as mock_show,
+            _mock.patch.object(main_window, "activateWindow") as mock_activate,
+            _mock.patch.object(main_window, "raise_") as mock_raise,
+        ):
+            main_window._main_window_minimized_before_capture = True
+            main_window._on_overlay_confirmed(pixmap, None)
+
+        mock_show.assert_called_once()
+        mock_activate.assert_called_once()
+        mock_raise.assert_called_once()
+
+
 @pytest.mark.skipif(
     os.environ.get("QT_QPA_PLATFORM") == "offscreen",
     reason="ScreenCaptureOverlay 在 offscreen/headless 下全量测试易崩溃(需真实屏幕)",

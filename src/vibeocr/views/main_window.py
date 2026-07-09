@@ -521,6 +521,10 @@ class MainWindow(QMainWindow):
         # 单次识别 Tab 的截图/文件请求由 MainWindow 处理
         self._single_tab.screenshot_requested.connect(self._on_screenshot)
         self._single_tab.file_open_requested.connect(self._on_open_file_from_preview)
+        # 截图来源识别完成时，重新把主窗口提到前台（见 _bring_main_window_to_front）
+        self._single_tab.bring_to_front_requested.connect(
+            self._bring_main_window_to_front
+        )
 
         # 剪贴板控制器（连接到 UI 中的复制按钮）
         self._clipboard_controller = ClipboardController(
@@ -818,7 +822,8 @@ class MainWindow(QMainWindow):
         本方法在环境就绪后检测，发现可更新包时弹 QMessageBox 让用户选择是否升级。
 
         互斥：pending_sync 已由 _check_pending_sync 接管时会 return，不会走到这里。
-        开发态（.venv）不触发（detect_dependency_updates 在 python_exe 不存在时返回空）。
+        开发态（.venv）不触发（detect_dependency_updates 仅便携模式生效，
+        开发态由 uv 管理环境）。
         每个进程生命周期内只提示一次（_deps_update_prompted 标志）。
         """
         # 防止依赖检查多次回调导致重复弹窗
@@ -1338,15 +1343,40 @@ class MainWindow(QMainWindow):
     def _restore_main_window(self, *, activate: bool) -> None:
         """截图结束后恢复主窗口状态。
 
-        若截图前主窗口未被最小化，则恢复为可见（showNormal）；否则保持最小化。
-        ``activate`` 为 True 时额外激活窗口并置顶——仅用于需要立即展示
-        结果的操作（如识别）；复制/保存/取消等静默操作不应抢焦点。
+        静默操作（复制/保存/取消）：仅当截图前主窗口未被最小化时恢复可见，
+        截图前已最小化则保持最小化（不抢焦点）。
+        识别操作（activate=True）：用户明确想看结果，无论截图前是否最小化都恢复
+        可见——否则工具栏/托盘触发截图后窗口永远不出现。
+
+        Args:
+            activate: True 时额外激活窗口并置顶（仅识别路径）。
         """
-        if not self._main_window_minimized_before_capture:
+        if activate or not self._main_window_minimized_before_capture:
             self.showNormal()
         if activate:
             self.activateWindow()
             self.raise_()
+
+    def _bring_main_window_to_front(self) -> None:
+        """识别完成后把主窗口重新提到前台。
+
+        截图确认时（_on_overlay_confirmed）已激活过一次主窗口，但 OCR 是异步的，
+        可能耗时数秒（首次还需下载模型）。这期间用户或系统切走窗口后，开始前
+        那次激活已失效——表现为「识别后主界面不弹出」。SingleRecognitionTab 在
+        截图来源识别完成时发出 bring_to_front_requested，本槽在结果就绪后再次
+        showNormal + activateWindow + raise_，确保窗口真正前置。
+
+        Windows 上 activateWindow 对非前台进程常只闪烁任务栏，故延迟一拍重试，
+        规避 overlay 刚关闭导致前台锁丢失的竞态。
+        """
+        if self._closing:
+            return
+        self.showNormal()
+        self.activateWindow()
+        self.raise_()
+        # 延迟重试一次：跨进程前台权限在 overlay/其它窗口刚关闭后可能尚未归还，
+        # 立即 activateWindow 会失败；下一事件循环重试成功率更高。
+        QTimer.singleShot(0, self.activateWindow)
 
     @Slot(QPixmap, object)
     def _on_overlay_confirmed(self, pixmap: QPixmap, options) -> None:
@@ -1361,7 +1391,9 @@ class MainWindow(QMainWindow):
         if not pixmap.isNull():
             self._single_tab.set_image_for_recognition(pixmap)
             self._single_tab.set_pixmap(pixmap)
-            self._single_tab.run_ocr(pixmap, options)
+            # from_screenshot=True：识别完成时让 tab 发 bring_to_front_requested，
+            # MainWindow 在结果就绪后再次前置（OCR 期间窗口可能被切走）。
+            self._single_tab.run_ocr(pixmap, options, from_screenshot=True)
 
     @Slot(QPixmap)
     def _on_overlay_copied(self, pixmap: QPixmap) -> None:
