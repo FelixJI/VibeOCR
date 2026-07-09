@@ -13,6 +13,21 @@ def test_table_options_defaults():
     assert opts.formula_recognition_batch_size == 1
 
 
+def test_table_options_thresholds_default_none():
+    """检测/识别阈值默认 None，沿用 PaddleX 模型默认值。
+
+    回归保护：曾误把这些默认值改成截图友好的固定值（0.2/2.5），但会全局
+    引入误检（表格线/底纹被当文字），且漏字真因在 IoU 匹配不在检测参数。
+    正确做法是保留 None 让 PaddleX 默认值生效，极端场景由用户显式覆盖。
+    """
+    opts = TableRecognitionOptions()
+    assert opts.text_det_thresh is None
+    assert opts.text_det_box_thresh is None
+    assert opts.text_det_unclip_ratio is None
+    assert opts.text_rec_score_thresh is None
+    assert opts.text_det_limit_side_len is None
+
+
 def test_table_options_to_dict():
     opts = TableRecognitionOptions(use_wireless_table=False)
     d = opts.to_dict()
@@ -234,20 +249,214 @@ def test_recognize_table_empty_result():
     assert result.content_list == []
 
 
-def test_recognize_table_filters_text_inside_table_bbox():
-    """表格区域内的文字不应重复出现在 content_list 中。
+# ---- 空单元格回填（soft fallback）相关测试 ----
+#
+# 根因：PaddleX 内部 match_table_and_ocr 要求 IoU>0.7 才把 OCR 文字填进
+# 单元格，失配时输出空 <td></td>；但那些文字其实躺在 overall_ocr_res 里。
+# 我们原本的去重逻辑把中心落在表格 bbox 内的 overall 文本全部丢弃 →
+# 上游漏填的字被二次抹杀。修复：把落在"空单元格"内的 overall 文本回填
+# 进单元格；未被吸收但落在表内的文本也不再丢弃，保留为独立 text 块。
 
-    overall_ocr_res 包含整图所有文字（含表格内文字），需要过滤掉
-    落在表格区域内的文本块，只保留表格外的文字。
 
-    注意：PaddleX 的 SingleTableRecognitionResult 不含 ``table_bbox`` 字段，
-    只有 ``cell_box_list``（各单元格 [x1,y1,x2,y2]，原图坐标系）。
-    表格整体框需从 cell_box_list 的并集推导，否则过滤条件永远为空，
-    所有文本都会被重复展示。
+class TestBackfillEmptyTableCells:
+    """_backfill_empty_table_cells 单元测试。
+
+    不依赖 paddle / Qt，纯函数测试。验证回填几何匹配、不覆盖已填单元格、
+    返回被消费的 OCR 索引集合。
+    """
+
+    def test_backfills_text_into_empty_cell(self):
+        """空单元格（<td></td>）中心落有 OCR 文本 → 回填进该单元格。"""
+        from vibeocr.core.pipelines.pipeline_table import (
+            _backfill_empty_table_cells,
+        )
+
+        # 2x1 表格：第一格空，第二格已填
+        table_html = "<table><tr><td></td><td>已填</td></tr></table>"
+        cell_box_list = [
+            [10.0, 10.0, 100.0, 50.0],  # 空单元格 idx=0
+            [100.0, 10.0, 200.0, 50.0],  # 已填单元格 idx=1
+        ]
+        # OCR 文本中心 (55, 30) 落在第一个（空）单元格内
+        ocr_items = [
+            {"text": "漏掉的文字", "center": (55.0, 30.0)},
+        ]
+        new_html, consumed = _backfill_empty_table_cells(
+            table_html, cell_box_list, ocr_items
+        )
+        assert "漏掉的文字" in new_html
+        assert consumed == {0}
+        # 已填单元格不被覆盖
+        assert "已填" in new_html
+
+    def test_does_not_overwrite_filled_cell(self):
+        """OCR 文本落在已填单元格内时，不回填、不消费该 OCR。"""
+        from vibeocr.core.pipelines.pipeline_table import (
+            _backfill_empty_table_cells,
+        )
+
+        table_html = "<table><tr><td>原有</td></tr></table>"
+        cell_box_list = [[10.0, 10.0, 100.0, 50.0]]  # 已填单元格
+        ocr_items = [{"text": "不该回填", "center": (50.0, 30.0)}]
+        new_html, consumed = _backfill_empty_table_cells(
+            table_html, cell_box_list, ocr_items
+        )
+        assert "原有" in new_html
+        assert "不该回填" not in new_html
+        assert consumed == set()
+
+    def test_no_empty_cells_returns_unchanged(self):
+        """没有空单元格时，HTML 不变，无 OCR 被消费。"""
+        from vibeocr.core.pipelines.pipeline_table import (
+            _backfill_empty_table_cells,
+        )
+
+        table_html = "<table><tr><td>A</td><td>B</td></tr></table>"
+        cell_box_list = [[10, 10, 50, 50], [50, 10, 100, 50]]
+        ocr_items = [{"text": "X", "center": (30.0, 30.0)}]
+        new_html, consumed = _backfill_empty_table_cells(
+            table_html, cell_box_list, ocr_items
+        )
+        assert new_html == table_html
+        assert consumed == set()
+
+    def test_none_cell_box_list_returns_unchanged(self):
+        """无 cell_box_list 时安全降级：不回填、不崩。"""
+        from vibeocr.core.pipelines.pipeline_table import (
+            _backfill_empty_table_cells,
+        )
+
+        table_html = "<table><tr><td></td></tr></table>"
+        ocr_items = [{"text": "X", "center": (30.0, 30.0)}]
+        new_html, consumed = _backfill_empty_table_cells(
+            table_html, None, ocr_items
+        )
+        assert new_html == table_html
+        assert consumed == set()
+
+    def test_none_center_ocr_skipped(self):
+        """OCR 项无 center（缺 poly）时不参与回填，不崩。"""
+        from vibeocr.core.pipelines.pipeline_table import (
+            _backfill_empty_table_cells,
+        )
+
+        table_html = "<table><tr><td></td></tr></table>"
+        cell_box_list = [[10.0, 10.0, 100.0, 50.0]]
+        ocr_items = [{"text": "无坐标", "center": None}]
+        new_html, consumed = _backfill_empty_table_cells(
+            table_html, cell_box_list, ocr_items
+        )
+        assert new_html == table_html
+        assert consumed == set()
+
+    def test_multiple_empty_cells_distribute_by_geometry(self):
+        """多个空单元格时，OCR 按几何落点分配到对应单元格（不靠位置序号）。"""
+        from vibeocr.core.pipelines.pipeline_table import (
+            _backfill_empty_table_cells,
+        )
+
+        # 一行两空单元格
+        table_html = "<table><tr><td></td><td></td></tr></table>"
+        cell_box_list = [
+            [10.0, 10.0, 100.0, 50.0],
+            [100.0, 10.0, 200.0, 50.0],
+        ]
+        ocr_items = [
+            {"text": "左字", "center": (50.0, 30.0)},
+            {"text": "右字", "center": (150.0, 30.0)},
+        ]
+        new_html, consumed = _backfill_empty_table_cells(
+            table_html, cell_box_list, ocr_items
+        )
+        # 两个都被回填
+        assert "左字" in new_html and "右字" in new_html
+        assert consumed == {0, 1}
+        # 左字在第一个单元格、右字在第二个（顺序保留）
+        left_pos = new_html.index("左字")
+        right_pos = new_html.index("右字")
+        assert left_pos < right_pos
+
+
+def test_recognize_table_backfills_empty_cell_from_ocr():
+    """端到端：pred_html 含空 <td></td>，overall_ocr_res 的文字回填进该单元格。
+
+    回归根因：PaddleX IoU 失配输出空单元格，旧逻辑又把兜底的 overall 文本
+    丢弃 → 漏字。修复后该文字出现在表格 HTML 与 markdown 中，且不再作为
+    独立 text 块重复展示。
     """
     import numpy as np
 
-    # 单元格覆盖 [10,10]-[500,200] 区域（与旧测试的 table_bbox 等价）
+    pred_html = "<table><tr><td></td><td>已填</td></tr></table>"
+    cell_box_list = [
+        [10.0, 10.0, 100.0, 50.0],  # 空
+        [100.0, 10.0, 200.0, 50.0],  # 已填
+    ]
+    # OCR 文本中心 (55,30) 落在空单元格内
+    poly = np.array([[40, 20], [70, 20], [70, 40], [40, 40]], dtype=float)
+    res = _make_table_result(
+        pred_html=pred_html,
+        ocr_texts=["漏掉的字"],
+        cell_box_list=cell_box_list,
+        ocr_polys=[poly],
+    )
+    service = _FakeService([res])
+    result = _recognize_table(service, image=None, options=TableRecognitionOptions())
+
+    table_blocks = [b for b in result.content_list if b.get("type") == "table"]
+    assert table_blocks, "应含表格块"
+    table_body = table_blocks[0]["table_body"]
+    assert "漏掉的字" in table_body, f"空单元格应被回填: {table_body!r}"
+    assert "已填" in table_body
+    # markdown 同步
+    assert "漏掉的字" in result.markdown_text
+    # 已被回填的 OCR 不再作为独立 text 块重复
+    text_blocks = [b for b in result.content_list if b.get("type") == "text"]
+    assert not any(b.get("text") == "漏掉的字" for b in text_blocks)
+
+
+def test_recognize_table_keeps_unabsorbed_in_table_text():
+    """落在表格内但无法回填（单元格已填/无可对应空格）的 OCR 文本不再被丢弃。
+
+    旧逻辑：中心在 table_bbox 内 → continue（彻底丢）。新逻辑：保留为独立
+    text 块（label="text"），至少不漏字。用户可在网格编辑器手动处理。
+    """
+    import numpy as np
+
+    # 两个单元格都已填，无空格可回填
+    pred_html = "<table><tr><td>A</td><td>B</td></tr></table>"
+    cell_box_list = [
+        [10.0, 10.0, 100.0, 50.0],
+        [100.0, 10.0, 200.0, 50.0],
+    ]
+    # OCR 文本中心 (55,30) 落在表内（已填单元格 A）
+    inside_poly = np.array([[40, 20], [70, 20], [70, 40], [40, 40]], dtype=float)
+    res = _make_table_result(
+        pred_html=pred_html,
+        ocr_texts=["表内未吸收"],
+        cell_box_list=cell_box_list,
+        ocr_polys=[inside_poly],
+    )
+    service = _FakeService([res])
+    result = _recognize_table(service, image=None, options=TableRecognitionOptions())
+
+    text_blocks = [b for b in result.content_list if b.get("type") == "text"]
+    assert any(b.get("text") == "表内未吸收" for b in text_blocks), (
+        "表内未吸收的文本应保留为独立块，不应被丢弃"
+    )
+
+
+def test_recognize_table_filters_text_inside_table_bbox():
+    """表格外文字保留，表格内重复文字不重复展示（回填或保留，而非丢弃）。
+
+    语义更新：原测试断言"表格内文字"被彻底丢弃（not any）。修复后表格内
+    文本不再无条件丢弃——若对应单元格已填（无空格可回填），改为保留为独立
+    text 块。本测试用默认 pred_html（两单元格均已填），"表格内文字"落点
+    对应已填单元格，故应保留为独立块。
+    """
+    import numpy as np
+
+    # 默认 pred_html: <table><tr><td>Name</td><td>Age</td></tr></table>（均已填）
+    # 单元格覆盖 [10,10]-[500,200] 区域
     cell_box_list = [
         [10.0, 10.0, 250.0, 100.0],
         [250.0, 10.0, 500.0, 100.0],
@@ -270,8 +479,25 @@ def test_recognize_table_filters_text_inside_table_bbox():
     assert any(b["type"] == "table" for b in result.content_list)
     # 表格外文字应保留
     assert any(b.get("text") == "表格外文字" for b in result.content_list)
-    # 表格内文字应被过滤（已在 table 块中展示）
-    assert not any(b.get("text") == "表格内文字" for b in result.content_list)
+    # 表格内文字不再无条件丢弃：单元格已填无空格，保留为独立 text 块
+    assert any(b.get("text") == "表格内文字" for b in result.content_list), (
+        "表内未吸收文本应保留，不应丢弃（避免漏字）"
+    )
+
+
+def test_recognize_table_backfill_safe_without_cell_box_list():
+    """无 cell_box_list 时回填安全降级，不崩，表格内容不丢。"""
+    res = _make_table_result(
+        pred_html="<table><tr><td></td><td>有</td></tr></table>",
+        ocr_texts=["一些文字"],
+        # 不传 cell_box_list，也不传 polys（中心无法计算）
+    )
+    service = _FakeService([res])
+    result = _recognize_table(service, image=None, options=TableRecognitionOptions())
+    # 不崩，表格块存在
+    assert any(b["type"] == "table" for b in result.content_list)
+    # OCR 文本作为独立块保留（无坐标 → 不在表内过滤逻辑里）
+    assert "有" in result.raw_text
 
 
 def test_recognize_table_assigns_bbox_from_cell_box_union():

@@ -91,6 +91,11 @@ class TableRecognitionOptions(BasePipelineOptions):
     use_table_orientation_classify: bool = True
     use_ocr_results_with_table_cells: bool = True
     text_det_limit_side_len: int | None = None
+    # 检测/识别阈值默认 None → 吃 PaddleX 模型默认值（PP-OCRv4 在通用场景
+    # 验证过的工程值，准确率与误检平衡最佳）。漏字根因在 PaddleX 内部
+    # match_table_and_ocr 的 IoU>0.7 匹配（见 _backfill_empty_table_cells
+    # 的下游兜底），不应在此处改默认值引入全局误检。用户遇极端场景可
+    # 在设置页显式覆盖这些字段。
     text_det_thresh: float | None = None
     text_det_box_thresh: float | None = None
     text_det_unclip_ratio: float | None = None
@@ -230,6 +235,67 @@ def _recognize_table(service: Any, image: Any, options: TableRecognitionOptions)
         # cell_box_list 的并集推导，否则过滤条件永远为空，overall_ocr_res
         # 里整图文字（含表格内文字）会被原样再展示一遍。
         table_bboxes: list[tuple[float, float, float, float]] = []
+
+        # 先把 overall_ocr_res 解析为统一的 ocr_items（text + center + score +
+        # bbox），供回填与去重共享。center 为文本框中心点（原图坐标），
+        # None 表示无 poly（无法定位）。
+        overall_ocr_res = (
+            res.get("overall_ocr_res") if hasattr(res, "get") else None
+        )
+        ocr_items: list[dict[str, Any]] = []
+        if overall_ocr_res is not None:
+            rec_texts = (
+                overall_ocr_res.get("rec_texts")
+                if hasattr(overall_ocr_res, "get")
+                else None
+            )
+            rec_scores = (
+                overall_ocr_res.get("rec_scores")
+                if hasattr(overall_ocr_res, "get")
+                else None
+            )
+            rec_polys = (
+                overall_ocr_res.get("rec_polys")
+                if hasattr(overall_ocr_res, "get")
+                else None
+            )
+            if rec_texts:
+                for i, text in enumerate(rec_texts):
+                    score = (
+                        float(rec_scores[i])
+                        if rec_scores and i < len(rec_scores)
+                        else 0.9
+                    )
+                    poly = rec_polys[i] if rec_polys and i < len(rec_polys) else None
+                    bbox_tuple = None
+                    center: tuple[float, float] | None = None
+                    if poly is not None and hasattr(poly, "shape") and poly.size >= 4:
+                        xs = poly[:, 0].tolist() if poly.ndim == 2 else None
+                        ys = poly[:, 1].tolist() if poly.ndim == 2 else None
+                        if xs and ys:
+                            bbox_tuple = (
+                                float(min(xs)),
+                                float(min(ys)),
+                                float(max(xs)),
+                                float(max(ys)),
+                            )
+                            center = (
+                                (bbox_tuple[0] + bbox_tuple[2]) / 2,
+                                (bbox_tuple[1] + bbox_tuple[3]) / 2,
+                            )
+                    ocr_items.append(
+                        {
+                            "text": text,
+                            "score": score,
+                            "bbox": bbox_tuple,
+                            "center": center,
+                        }
+                    )
+
+        # 已被回填进空单元格的 OCR 索引（后续不再作为独立 text 块展示，
+        # 避免与表格内容重复）。
+        consumed_ocr_indices: set[int] = set()
+
         for idx, table_res in enumerate(table_res_list):
             # pred_html: <html><body><table>...</table></body></html>
             pred_html = (
@@ -283,6 +349,16 @@ def _recognize_table(service: Any, image: Any, options: TableRecognitionOptions)
             )
 
             table_html = _extract_table_html(pred_html)
+
+            # 空单元格回填（soft fallback）：PaddleX IoU 失配时输出空 <td></td>，
+            # 但那些字其实躺在 overall_ocr_res 里。把落在空单元格内的 OCR
+            # 文本回填进单元格，救回上游漏填的字，避免彻底漏字。
+            if ocr_items:
+                table_html, consumed = _backfill_empty_table_cells(
+                    table_html, cell_box_list, ocr_items
+                )
+                consumed_ocr_indices |= consumed
+
             table_md = _html_table_to_markdown(table_html)
             if table_md:
                 markdown_parts.append(table_md)
@@ -309,72 +385,39 @@ def _recognize_table(service: Any, image: Any, options: TableRecognitionOptions)
 
         # 表格外的普通文字（overall_ocr_res）：截图场景多为整图表格，此处通常为空，
         # 但保留以兼容"表格 + 周边文字"的图片。
-        # 注意：overall_ocr_res 包含整图所有文本（含表格内文字），需要过滤掉
-        # 落在表格区域内的文本块，避免与已提取的表格内容重复。
-        overall_ocr_res = (
-            res.get("overall_ocr_res") if hasattr(res, "get") else None
-        )
-        if overall_ocr_res is not None:
-            rec_texts = (
-                overall_ocr_res.get("rec_texts")
-                if hasattr(overall_ocr_res, "get")
-                else None
-            )
-            rec_scores = (
-                overall_ocr_res.get("rec_scores")
-                if hasattr(overall_ocr_res, "get")
-                else None
-            )
-            rec_polys = (
-                overall_ocr_res.get("rec_polys")
-                if hasattr(overall_ocr_res, "get")
-                else None
-            )
-            if rec_texts:
-                for i, text in enumerate(rec_texts):
-                    if not text:
-                        continue
-                    score = (
-                        float(rec_scores[i])
-                        if rec_scores and i < len(rec_scores)
-                        else 0.9
+        # 注意：overall_ocr_res 包含整图所有文本（含表格内文字）。处理策略：
+        # 1. 已被回填进空单元格的 OCR（consumed_ocr_indices）→ 跳过（已在表格中展示）。
+        # 2. 落在表格 bbox 内、但未被回填的 OCR → 旧逻辑直接丢弃（continue），
+        #    会漏掉"单元格已填但 IoU 漏匹配"的文字；新逻辑改为保留为独立 text
+        #    块（label="text"），至少不漏字，用户可在网格编辑器手动处理。
+        # 3. 表格外的 OCR → 正常展示。
+        if ocr_items:
+            for i, item in enumerate(ocr_items):
+                text = item["text"]
+                if not text:
+                    continue
+                if i in consumed_ocr_indices:
+                    continue
+                bbox_tuple = item["bbox"]
+                center = item["center"]
+                # 落在表格区域内的未吸收文本：保留（不再 continue 丢弃），
+                # 仅当无中心坐标时无法判定，仍按表外处理。
+                # （语义：宁可重复，不可漏字）
+                cl_idx = len(content_list)
+                text_blocks.append(
+                    TextBlock(
+                        text=text,
+                        score=item["score"],
+                        bbox=bbox_tuple,
+                        label="text",
+                        order=-1,
+                        content_index=cl_idx,
                     )
-                    poly = rec_polys[i] if rec_polys and i < len(rec_polys) else None
-                    bbox_tuple = None
-                    if poly is not None and hasattr(poly, "shape") and poly.size >= 4:
-                        xs = poly[:, 0].tolist() if poly.ndim == 2 else None
-                        ys = poly[:, 1].tolist() if poly.ndim == 2 else None
-                        if xs and ys:
-                            bbox_tuple = (
-                                float(min(xs)),
-                                float(min(ys)),
-                                float(max(xs)),
-                                float(max(ys)),
-                            )
-                    # 跳过落在表格区域内的文本块（已在 table 块中展示）
-                    if bbox_tuple and table_bboxes:
-                        cx = (bbox_tuple[0] + bbox_tuple[2]) / 2
-                        cy = (bbox_tuple[1] + bbox_tuple[3]) / 2
-                        if any(
-                            tb[0] <= cx <= tb[2] and tb[1] <= cy <= tb[3]
-                            for tb in table_bboxes
-                        ):
-                            continue
-                    cl_idx = len(content_list)
-                    text_blocks.append(
-                        TextBlock(
-                            text=text,
-                            score=score,
-                            bbox=bbox_tuple,
-                            label="text",
-                            order=-1,
-                            content_index=cl_idx,
-                        )
-                    )
-                    text_with_scores.append((text, score))
-                    content_list.append(
-                        {"type": "text", "text": text, "bbox": bbox_tuple}
-                    )
+                )
+                text_with_scores.append((text, item["score"]))
+                content_list.append(
+                    {"type": "text", "text": text, "bbox": bbox_tuple}
+                )
 
     raw_text = "\n".join(b.text for b in text_blocks)
     markdown_text = "\n\n".join(markdown_parts) if markdown_parts else raw_text
@@ -390,6 +433,134 @@ def _recognize_table(service: Any, image: Any, options: TableRecognitionOptions)
         text_blocks=text_blocks,
         content_list=content_list,
     )
+
+
+def _point_in_box(
+    cx: float, cy: float, box: tuple[float, float, float, float]
+) -> bool:
+    """点是否落在矩形框内（含边界）。"""
+    return box[0] <= cx <= box[2] and box[1] <= cy <= box[3]
+
+
+def _backfill_empty_table_cells(
+    table_html: str,
+    cell_box_list: list[Any] | None,
+    ocr_items: list[dict[str, Any]],
+) -> tuple[str, set[int]]:
+    """把落在"空单元格"内的 OCR 文本回填进 pred_html，救回上游漏填的字。
+
+    根因：PaddleX ``match_table_and_ocr`` 要求 IoU>0.7 才把 OCR 文字填进
+    单元格，失配时输出空 ``<td></td>`` / ``<th></th>``；但那些文字其实躺在
+    ``overall_ocr_res`` 里。本函数把这些"漏填但识别到"的字按几何落点回填
+    进对应的空单元格，避免彻底漏字。
+
+    匹配策略——**几何优先，不依赖位置序号**：
+    PaddleX 的 cell_box_list 与 pred_html 单元格虽都是 row-major，但二者
+    的 row 切分机制独立（一个几何、一个结构 token），错位时 1:1 位置对应
+    不保证。故本函数对每个空单元格，按其在 cell_box_list 的位置取候选框，
+    再用 OCR 文本中心点是否落在框内做匹配——位置序号仅用于取候选框，几何
+    才是判据。
+
+    Args:
+        table_html: 经 ``_extract_table_html`` 提取的 ``<table>...</table>``。
+        cell_box_list: PaddleX 各单元格 [x1,y1,x2,y2]（row-major，与 HTML
+            单元格顺序对齐；结构错位时按几何兜底）。
+        ocr_items: 每项 ``{"text": str, "center": (cx,cy)|None}``，center
+            为文本框中心点（原图坐标）；None 表示无坐标，跳过。
+
+    Returns:
+        (new_table_html, consumed_indices)：回填后的 HTML，与被消费的
+        ocr_items 索引集合。未被回填（已填单元格/无坐标/落点不在任何空格）
+        的项不在 consumed 中，由调用方决定后续处理。
+    """
+    from vibeocr.services.ocr_service import _RE_CELL, _RE_TR, _cell_text
+
+    if not cell_box_list or not ocr_items:
+        return table_html, set()
+
+    # 收集空单元格：遍历 <tr>/<td|th>（row-major 顺序，与 cell_box_list 对应）
+    # 注意：_RE_CELL 在 tr_match.group(1) 内匹配，其 start/end 是相对该子串
+    # 的偏移；需加上 tr_match.start(1) 换算成 table_html 内的绝对偏移，否则
+    # 注入会落到错误位置（如把字插进 <table> 标签中间）。
+    empty_cell_indices: list[int] = []
+    all_cell_spans: list[tuple[int, int]] = []  # (start, end) in table_html
+    global_idx = 0
+    for tr_match in _RE_TR.finditer(table_html):
+        tr_offset = tr_match.start(1)
+        for cm in _RE_CELL.finditer(tr_match.group(1)):
+            inner = cm.group(3)
+            if not _cell_text(inner).strip():
+                empty_cell_indices.append(global_idx)
+            all_cell_spans.append(
+                (tr_offset + cm.start(3), tr_offset + cm.end(3))
+            )
+            global_idx += 1
+
+    if not empty_cell_indices:
+        return table_html, set()
+
+    # 为每个空单元格取候选框（按位置序号；越界则跳过该格）
+    candidate_boxes: dict[int, tuple[float, float, float, float]] = {}
+    for ci in empty_cell_indices:
+        if ci < len(cell_box_list):
+            box = cell_box_list[ci]
+            if hasattr(box, "tolist"):
+                box = box.tolist()
+            if (
+                isinstance(box, (list, tuple))
+                and len(box) >= 4
+                and all(isinstance(v, (int, float)) for v in box[:4])
+            ):
+                candidate_boxes[ci] = (
+                    float(box[0]),
+                    float(box[1]),
+                    float(box[2]),
+                    float(box[3]),
+                )
+
+    if not candidate_boxes:
+        return table_html, set()
+
+    # 几何匹配：OCR 文本中心落在空单元格框内 → 回填进该格
+    # cell_to_text: 一个空格可能吸收多条 OCR（少见但兼容），用空格连接
+    cell_to_text: dict[int, list[str]] = {ci: [] for ci in candidate_boxes}
+    consumed: set[int] = set()
+    for i, item in enumerate(ocr_items):
+        center = item.get("center")
+        if center is None:
+            continue
+        cx, cy = float(center[0]), float(center[1])
+        text = (item.get("text") or "").strip()
+        if not text:
+            continue
+        for ci, box in candidate_boxes.items():
+            if _point_in_box(cx, cy, box):
+                cell_to_text[ci].append(text)
+                consumed.add(i)
+                break  # 一个 OCR 项只回填到一个空格
+
+    if not consumed:
+        return table_html, set()
+
+    # 注入：从后往前替换空单元格 inner（避免 span 偏移）
+    # 每个空格的 inner 区域替换为回填文字（已转义 HTML 特殊字符）
+    import html as _html
+
+    replacements: list[tuple[int, int, str]] = []
+    for ci, texts in cell_to_text.items():
+        if not texts:
+            continue
+        span_start, span_end = all_cell_spans[ci]
+        filled = _html.escape(" ".join(texts))
+        replacements.append((span_start, span_end, filled))
+
+    # 按位置降序替换
+    replacements.sort(key=lambda r: r[0], reverse=True)
+    new_html = table_html
+    for start, end, filled in replacements:
+        new_html = new_html[:start] + filled + new_html[end:]
+
+    return new_html, consumed
 
 
 TABLE_RECOGNITION_SPEC = PipelineSpec(
