@@ -290,8 +290,12 @@ def _render_block(block: dict, index: int) -> str:
     )
 
 
-def _build_full_html(blocks_html: str, katex_dir: Path | None = None) -> str:
-    """构建完整 HTML 页面（含 KaTeX、CSS、JS）"""
+def _build_full_html(
+    blocks_html: str,
+    katex_dir: Path | None = None,
+    resources_dir: Path | None = None,
+) -> str:
+    """构建完整 HTML 页面（含 KaTeX、qwebchannel.js、CSS、JS）"""
     katex_css = ""
     katex_js_tag = ""  # 外部 KaTeX <script>（onload 触发渲染）
     if katex_dir and katex_dir.exists():
@@ -308,11 +312,24 @@ def _build_full_html(blocks_html: str, katex_dir: Path | None = None) -> str:
             f'onload="renderAllMath()"></script>'
         )
 
+    # qwebchannel.js：QWebChannel 桥接必需。
+    # PySide6/Qt 不附带该文件，项目 resources/ 内置。必须在内联 <script>
+    # 之前加载：内联脚本里的 `new QWebChannel(...)`（见下方）依赖此处定义的
+    # 全局 QWebChannel 构造函数；不加载则 typeof QWebChannel === 'undefined'
+    # → 桥回调永不执行 → _bridge 恒为 null → 悬停联动（onBlockHover 等）失效。
+    qwebchannel_js_tag = ""
+    if resources_dir:
+        qwebchannel_path = resources_dir / "qwebchannel.js"
+        if qwebchannel_path.exists():
+            qwebchannel_js_url = QUrl.fromLocalFile(str(qwebchannel_path.resolve()))
+            qwebchannel_js_tag = f'<script src="{qwebchannel_js_url.toString()}"></script>'
+
     return f"""<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8">
 {katex_css}
+{qwebchannel_js_tag}
 <style>
 body {{ margin:0; padding:8px; font-family:"Microsoft YaHei","Segoe UI",sans-serif; font-size:14px; }}
 .ocr-block {{ transition: background-color 0.15s; }}
@@ -322,6 +339,10 @@ body {{ margin:0; padding:8px; font-family:"Microsoft YaHei","Segoe UI",sans-ser
    不在 .ocr-block 内联 style 设 cursor:pointer（旧版这样做会压过编辑态样式表）。 */
 .ocr-block p, .ocr-block h1, .ocr-block h2, .ocr-block h3,
 .ocr-block h4, .ocr-block h5, .ocr-block h6, .ocr-block li {{ cursor: text; }}
+/* 重置文本块直接子 <p> 的浏览器默认外边距：_render_text 输出 <p>，其默认
+   margin（约 1em）叠加 .ocr-block 的 padding 会让单行文本上下空白过大。
+   仅作用于直接子节点，避免影响表格/图片 caption 等带 inline 样式的 <p>。 */
+.ocr-block > p {{ margin: 0; }}
 .ocr-table {{ overflow-x: auto; }}
 .ocr-table table {{ border-collapse: collapse; width: 100%; font-size: 13px; }}
 .ocr-table td, .ocr-table th {{ border: 1px solid #d1d5db; padding: 6px 8px; }}
@@ -423,12 +444,14 @@ function _startEquationEdit(block, index) {{
     }});
 }}
 
-// ── 块事件绑定（顶层立即执行，不依赖 QWebChannel）──
-// 关键：早期版本把 addEventListener 全部放在 `new QWebChannel(...)` 回调里，
-// 但页面未加载 qwebchannel.js → QWebChannel 构造函数未定义 → 回调永不执行 →
-// dblclick/click 监听器从未绑定（表现为结果区无法编辑、无点击高亮）。
-// 现改为顶层绑定事件；QWebChannel 回调只负责赋值 _bridge，所有 _bridge.*
-// 调用都用 if(_bridge) 守卫，bridge 不可用时编辑/光标/复制照常工作。
+// ── 块事件绑定（顶层立即执行，不依赖 QWebChannel 回调时机）──
+// 历史：早期版本把 addEventListener 放在 `new QWebChannel(...)` 回调里，
+// 回调异步执行，绑定时机晚于 DOM 交互 → dblclick/click 监听器漏绑。
+// 现改为顶层立即绑定事件（与 bridge 就绪与否解耦）；QWebChannel 回调
+// 只负责赋值 _bridge，所有 _bridge.* 调用都用 if(_bridge) 守卫，
+// bridge 未就绪时编辑/光标/复制照常工作（仅悬停联动需要 _bridge）。
+// 注：qwebchannel.js 现由 <head> 的 <script> 加载（见 _build_full_html），
+// 若该文件缺失，下方 QWebChannel 分支不会执行，_bridge 保持 null。
 document.querySelectorAll('.ocr-block').forEach(function(el) {{
     el.addEventListener('mouseenter', function() {{
         if (_bridge) _bridge.onBlockHover(parseInt(this.getAttribute('data-block-index')));
@@ -885,7 +908,7 @@ class ResultViewWidget(QWidget):
 
         resources_dir = _get_resources_dir()
         katex_dir = resources_dir / "katex"
-        full_html = _build_full_html(body, katex_dir)
+        full_html = _build_full_html(body, katex_dir, resources_dir)
         base_url = QUrl.fromLocalFile(str(resources_dir) + "/")
         web_view.setHtml(full_html, base_url)
 
