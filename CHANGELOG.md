@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.4.20] - 2026-07-09
+
+### Added
+- feat(window): 关于页移到标签栏末尾
+- feat(about): 关于页改用左右两栏布局
+
+### Fixed
+- fix(result_view): 内置 qwebchannel.js 并修正文本块外边距
+- fix(update): 模态对话框改用 await_dialog 非阻塞 await
+
 ## [0.4.19] - 2026-07-09
 
 ### Fixed
