@@ -1446,6 +1446,9 @@ class MainWindow(QMainWindow):
 
         logging.debug("正在关闭应用程序...")
 
+        if hasattr(self, "_settings_controller"):
+            self._settings_controller.shutdown()
+
         # 显式清理 QWebEngineView（避免退出时 QtWebEngine 渲染进程崩溃 0xC0000409）
         for tab in (
             getattr(self, "_single_tab", None),

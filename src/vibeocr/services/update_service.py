@@ -10,6 +10,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import subprocess
 import time
 from dataclasses import dataclass
@@ -492,6 +493,79 @@ from PySide6.QtWidgets import (  # noqa: E402
 from vibeocr.ui import theme  # noqa: E402
 
 
+_CHANGELOG_COMMIT_PREFIX_RE = re.compile(
+    r"^(?:feat|fix|perf|refactor|docs|chore|test|style|ci|build|revert)"
+    r"(?:\([^)]+\))?!?:\s*",
+    re.IGNORECASE,
+)
+_CHANGELOG_ORDERED_ITEM_RE = re.compile(r"^\d+[.)]\s+")
+_CHANGELOG_SECTION_TITLES = {
+    "added",
+    "changed",
+    "deprecated",
+    "removed",
+    "fixed",
+    "security",
+    "新增",
+    "变更",
+    "修复",
+    "安全",
+    "移除",
+}
+
+
+def _clean_changelog_item(text: str) -> str:
+    text = text.strip().strip("#*- ")
+    text = re.sub(r"^\[[ xX]\]\s+", "", text)
+    text = _CHANGELOG_COMMIT_PREFIX_RE.sub("", text)
+    return " ".join(text.split())
+
+
+def _format_changelog_for_dialog(changelog: str, max_items: int = 10) -> str:
+    """Format release notes for the update dialog.
+
+    Release bodies may contain detailed indented explanations intended for
+    developers. The dialog should show only compact, top-level user-facing
+    items so wrapped continuation lines do not become noisy blank-looking
+    entries.
+    """
+    items: list[str] = []
+    fallback_items: list[str] = []
+
+    for raw_line in changelog.splitlines():
+        stripped = raw_line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+
+        is_indented = raw_line[:1].isspace()
+        unordered = stripped.startswith(("- ", "* "))
+        ordered_match = _CHANGELOG_ORDERED_ITEM_RE.match(stripped)
+
+        if unordered:
+            if is_indented:
+                continue
+            item = stripped[2:]
+            target = items
+        elif ordered_match:
+            if is_indented:
+                continue
+            item = stripped[ordered_match.end() :]
+            target = items
+        else:
+            if is_indented:
+                continue
+            item = stripped
+            target = fallback_items
+
+        item = _clean_changelog_item(item)
+        if not item or item.casefold() in _CHANGELOG_SECTION_TITLES:
+            continue
+        target.append(item)
+
+    visible_items = items or fallback_items
+    return "\n".join(f"· {item}" for item in visible_items[:max_items])
+
+
 async def await_dialog(dialog: QDialog) -> int:
     """非阻塞地运行模态对话框并 await 其结果码。
 
@@ -540,17 +614,12 @@ class UpdateDialog(QDialog):
         version_label.setStyleSheet("font-size: 14px;")
         layout.addWidget(version_label)
 
-        if info.changelog:
+        changelog_text = _format_changelog_for_dialog(info.changelog)
+        if changelog_text:
             changelog_label = QLabel("更新内容:")
             changelog_label.setStyleSheet("font-weight: bold;")
             layout.addWidget(changelog_label)
 
-            lines = []
-            for line in info.changelog.splitlines():
-                line = line.strip().lstrip("#*- ")
-                if line:
-                    lines.append(line)
-            changelog_text = "\n".join(f"· {line}" for line in lines[:10])
             cl_label = QLabel(changelog_text)
             cl_label.setWordWrap(True)
             layout.addWidget(cl_label)

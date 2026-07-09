@@ -14,6 +14,7 @@ class _StubGpuDetectWorker(QObject):
     """
 
     finished_info = Signal(dict)
+    finished = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -22,7 +23,48 @@ class _StubGpuDetectWorker(QObject):
         pass
 
 
-def _make_widget(tmp_path, has_gpu=True, cached_hardware_gpu=False, pending=None):
+    def isRunning(self):
+        return False
+
+    def quit(self):
+        pass
+
+    def wait(self, _timeout_ms):
+        return True
+
+
+class _RunningStubGpuDetectWorker(QObject):
+    finished_info = Signal(dict)
+    finished = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.quit_called = False
+        self.wait_calls: list[int] = []
+        self._running = False
+
+    def start(self):
+        self._running = True
+
+    def isRunning(self):
+        return self._running
+
+    def quit(self):
+        self.quit_called = True
+
+    def wait(self, timeout_ms):
+        self.wait_calls.append(timeout_ms)
+        self._running = False
+        return True
+
+
+def _make_widget(
+    tmp_path,
+    has_gpu=True,
+    cached_hardware_gpu=False,
+    pending=None,
+    worker_cls=_StubGpuDetectWorker,
+):
     """构造 BackendOptionsWidget（在 patch 作用域外也能用，patch 注入到模块）。
 
     返回 widget。由于 widget 的 _apply 在构造后才调用，patch 必须覆盖调用时刻。
@@ -69,7 +111,7 @@ def _make_widget(tmp_path, has_gpu=True, cached_hardware_gpu=False, pending=None
     mock_update.return_value = True
 
     # 用桩替换真 worker 类，构造时不会启动真线程
-    bow._GpuDetectWorker = _StubGpuDetectWorker
+    bow._GpuDetectWorker = worker_cls
 
     try:
         widget = bow.BackendOptionsWidget(tmp_path)
@@ -174,3 +216,20 @@ def test_current_backend_matches_resolve_use_gpu_not_live_detect(
     assert widget.current_backend() == "gpu"
     assert "GPU" in widget._current_label.text()
 
+
+def test_close_stops_running_gpu_detection_worker(_cleanup, qtbot, tmp_path):
+    """Closing the widget should not leave GPU detection running."""
+    widget = _make_widget(
+        tmp_path,
+        has_gpu=True,
+        cached_hardware_gpu=True,
+        worker_cls=_RunningStubGpuDetectWorker,
+    )
+    qtbot.addWidget(widget)
+    worker = widget._detect_worker
+    assert worker.isRunning()
+
+    widget.close()
+
+    assert worker.quit_called
+    assert worker.wait_calls

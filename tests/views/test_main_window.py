@@ -177,6 +177,25 @@ class TestSettingsInstallSucceededTriggersRecheck:
             )
 
 
+class TestMainWindowShutdown:
+    def test_close_shuts_down_settings_controller(self, main_window, monkeypatch):
+        called = []
+        original_shutdown = getattr(main_window._settings_controller, "shutdown", None)
+
+        def shutdown():
+            called.append(True)
+            if original_shutdown is not None:
+                original_shutdown()
+
+        monkeypatch.setattr(
+            main_window._settings_controller, "shutdown", shutdown, raising=False
+        )
+
+        main_window.close()
+
+        assert called == [True]
+
+
 class TestOverlayWindowRestore:
     """测试截图结束后主窗口状态的恢复逻辑。
 

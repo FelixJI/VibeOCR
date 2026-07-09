@@ -128,6 +128,38 @@ class TestUpdateInfo:
         assert info.download_url == "https://github.com/test/v0.3.0.zip"
         assert info.sha256_url == "https://github.com/test/v0.3.0.zip.sha256"
 
+    def test_changelog_dialog_text_uses_only_user_facing_top_level_items(self):
+        from vibeocr.services.update_service import _format_changelog_for_dialog
+
+        raw = """
+### Fixed
+
+- fix(update): 启动自动检查与关于页"检查更新"按钮并发时崩溃
+  (`RuntimeError: Cannot enter into task ... while another task ...
+  is being executed`). 根因：两调用点各自 ensure_future 起
+  `check_and_prompt`，并发时触发 asyncio `_enter_task` 重入保护。
+
+- fix(update): 下载进度对话框支持「取消」与「最小化」。
+  - 取消：底部「取消」按钮 + 恢复标题栏关闭 X。
+  - 根因：原对话框用 `& ~WindowCloseButtonHint` 去掉关闭按钮。
+"""
+
+        text = _format_changelog_for_dialog(raw)
+
+        assert text.splitlines() == [
+            '· 启动自动检查与关于页"检查更新"按钮并发时崩溃',
+            "· 下载进度对话框支持「取消」与「最小化」。",
+        ]
+        for forbidden in (
+            "RuntimeError",
+            "check_and_prompt",
+            "_enter_task",
+            "asyncio",
+            "WindowCloseButtonHint",
+            "根因",
+        ):
+            assert forbidden not in text
+
     def test_no_matching_assets(self):
         from vibeocr.services.update_service import UpdateInfo
 

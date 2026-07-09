@@ -902,7 +902,17 @@ class PdfService:
         return fitz.Rect(x0, y0, x1, y1)
 
     # bbox_to_pixel 已抽到 vibeocr.utils.pdf_coords(纯数学,无 fitz 依赖),
-    # 供主进程 PDF 预览窗口使用。子进程不调用该方法,此处不再保留。
+    # 供主进程 PDF 预览窗口使用。保留 PdfService 入口以兼容旧调用方和测试。
+    @staticmethod
+    def bbox_to_pixel(
+        bbox: tuple[float, float, float, float],
+        page_rect: fitz.Rect | tuple[float, float, float, float],
+        render_dpi: int,
+        source: str = "pdf",
+    ) -> tuple[float, float, float, float]:
+        from vibeocr.utils.pdf_coords import bbox_to_pixel
+
+        return bbox_to_pixel(bbox, page_rect, render_dpi, source=source)
 
     # ---- helpers ----------------------------------------------------
 

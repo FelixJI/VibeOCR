@@ -134,9 +134,16 @@ class SettingsPageController:
         self._install_succeeded_callback = install_succeeded_callback
         self._manual_preload_total = 0
         self._manual_preload_task: object | None = None
+        self._backend_options = None
         # 非模态重装对话框引用：show() 后须持有，否则被 GC 立即销毁；
         # 对话框 finished 时从列表移除，允许再次打开。
         self._active_dialogs: list = []
+
+    def shutdown(self) -> None:
+        """Release background workers owned by settings-page widgets."""
+        backend_options = self._backend_options
+        if backend_options is not None:
+            backend_options.shutdown_gpu_detection()
 
     def connect_signals(self) -> None:
         """连接设置页面的信号槽"""

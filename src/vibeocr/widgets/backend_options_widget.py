@@ -10,6 +10,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from PySide6.QtCore import QThread, Signal
+from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
     QButtonGroup,
     QGroupBox,
@@ -149,7 +150,31 @@ class BackendOptionsWidget(QWidget):
         """启动后台线程探测 GPU，完成后回填 UI。"""
         self._detect_worker = _GpuDetectWorker(self)
         self._detect_worker.finished_info.connect(self._apply_detected_state)
+        self._detect_worker.finished.connect(self._on_gpu_detection_finished)
         self._detect_worker.start()
+
+    def _on_gpu_detection_finished(self) -> None:
+        self._detect_worker = None
+
+    def shutdown_gpu_detection(self, timeout_ms: int = 16000) -> None:
+        """Stop the background GPU detection worker before this widget is destroyed."""
+        worker = self._detect_worker
+        if worker is None:
+            return
+        try:
+            worker.finished_info.disconnect(self._apply_detected_state)
+        except (RuntimeError, TypeError):
+            pass
+        if worker.isRunning():
+            worker.quit()
+            if not worker.wait(timeout_ms):
+                logger.warning("[BackendOptions] GPU detection worker did not stop")
+                return
+        self._detect_worker = None
+
+    def closeEvent(self, event: QCloseEvent) -> None:
+        self.shutdown_gpu_detection()
+        super().closeEvent(event)
 
     def _apply_detected_state(self, info: dict[str, Any]) -> None:
         """后台 GPU 探测完成后，在主线程回填 _has_gpu 与硬件展示、启用控件。
