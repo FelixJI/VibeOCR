@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.4.18] - 2026-07-09
+
+### Added
+- feat(update): 旧主程序新增 testzip + 抽取新 updater
+- feat(update): updater 自动判断新旧路径并组装 self_exe_names
+- feat(update): 新增 updater 路径自动判断（新架构基础设施）
+- feat(pdf): load_done 触发缩略图渲染；文字行高度 28→18 收紧
+- feat(pdf): 缩略图打开时先检测文字层，检测期间显示提示占位图
+
+### Fixed
+- fix(build): VibeOCR.exe 文件说明改为 VibeOCR
+- fix(pdf): 结构性变更后缩略图不误进检测态（C1 回归）+ 检测中图标断言修正
+- fix(pdf): 统一后端 fitz 调用加 fitz_lock，消除并发崩溃隐患
+
+### Changed
+- chore: gitignore 忽略 .zcode/ 工作区目录
+- docs(update): final-review 清理 stale self-update 注释 + _backup 防御性清理
+- docs(update): 清理死代码 + stale 注释（新架构收尾）
+- refactor(update): 删除 self-update 子系统 + 新增后台清理线程
+- refactor(update): 编排器走新架构 + 删除 self-update 兜底
+- docs(update): 修正失败路径注释（成功路径已不做 cleanup）[minor]
+- refactor(update): 成功路径移除 cleanup + verify_zip，清理移交新主程序
+- test(pdf): 补缩略图与 load 并发的后端安全集成测试
+- wip: 保存未提交的在途工作（依赖锁定版本检测、SHM 调优、启动闪屏、PDF OCR 编排等）
+
 ## [0.4.17] - 2026-07-08
 
 ### Fixed
