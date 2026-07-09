@@ -492,6 +492,29 @@ from PySide6.QtWidgets import (  # noqa: E402
 from vibeocr.ui import theme  # noqa: E402
 
 
+async def await_dialog(dialog: QDialog) -> int:
+    """非阻塞地运行模态对话框并 await 其结果码。
+
+    替代 ``dialog.exec()``：exec() 会跑一个嵌套 Qt 事件循环，在 qasync 下会让
+    事件循环唤醒其它 asyncio 任务并对其 ``_enter_task``，而当前任务仍处于
+    「已 enter」状态 → CPython ``asyncio.tasks._enter_task`` 重入保护抛
+    ``RuntimeError: Cannot enter into task ... while another task ... is being
+    executed``。
+
+    改用 ``show()``（非阻塞，不跑嵌套循环）+ ``finished`` 信号桥到
+    ``asyncio.Future``：整个过程中外层 qasync 事件循环正常转动，其它任务可正常
+    enter/leave，不再触发重入。返回值与 ``dialog.exec()`` 一致（结果码）。
+
+    ``QDialog`` 及其子类（含 ``QMessageBox``）都有 ``finished(int)`` 信号，
+    关闭路径（点按钮、标题栏 X、ESC）都会触发它，故 Future 总能 resolve。
+    """
+    loop = asyncio.get_event_loop()
+    fut: asyncio.Future[int] = loop.create_future()
+    dialog.finished.connect(fut.set_result)
+    dialog.show()
+    return await fut
+
+
 class UpdateDialog(QDialog):
     """更新提示对话框"""
 
@@ -721,18 +744,15 @@ class UpdateService:
 
     # check_and_prompt 的进程级互斥锁（类属性，跨实例共享）。
     #
-    # 背景与根因：两个调用点各自 ensure_future 起 check_and_prompt——
+    # 两个调用点各自 ensure_future 起 check_and_prompt——
     #   1) main._check_update：frozen 态 loop.call_later(5) 启动自动检查；
     #   2) AboutTab._on_check_update：用户点「检查更新」按钮。
-    # 二者并发时，第二个任务会在第一个任务阻塞于 QMessageBox.warning /
-    # dialog.exec()（qasync 嵌套事件循环）期间被唤醒，触发 CPython
-    # asyncio.tasks._enter_task 的重入保护：
-    #   RuntimeError: Cannot enter into task <Task-1> while another task
-    #   <Task-2> is being executed.
-    #
     # 用类级（而非实例级）锁：两处调用点各 new 出独立 UpdateService 实例，
     # 实例锁无法互斥；必须进程级共享。惰性创建：asyncio.Lock() 在构造时
     # 绑定当前事件循环，模块 import 阶段尚无运行循环，故延后到首次使用。
+    #
+    # 注：历史根因「Cannot enter into task ...」重入错误已由 await_dialog
+    # （非阻塞模态）根治，此锁现仅负责串行化两个调用点，避免并发弹出两个对话框。
     _check_lock: asyncio.Lock | None = None
 
     @classmethod
@@ -759,11 +779,12 @@ class UpdateService:
     async def check_and_prompt(self, parent: QWidget | None = None) -> None:
         """异步检查更新并提示用户
 
-        临界区（网络拉取 + 模态对话框）受类级 ``_check_lock`` 保护，串行化所有
-        并发调用。否则启动自动检查与关于页按钮检查并发时，第二个任务会在
-        第一个阻塞于 ``QMessageBox`` / ``dialog.exec()`` 的 qasync 嵌套事件循环
-        期间被唤醒，触发 ``RuntimeError: Cannot enter into task ...``（asyncio
-        ``_enter_task`` 重入保护）。
+        临界区（网络拉取 + 模态对话框）受类级 ``_check_lock`` 保护，串行化两个
+        调用点（启动自动检查、关于页按钮检查），避免并发弹出两个对话框。
+
+        所有模态对话框（``QMessageBox`` / ``UpdateDialog``）经 ``await_dialog``
+        非阻塞 await（而非 ``exec()``），避免 qasync 嵌套事件循环触发 asyncio
+        ``_enter_task`` 重入 ``RuntimeError``（详见 ``await_dialog`` 文档）。
         """
         async with self._get_check_lock():
             current = read_local_version(self._version_json_path)
@@ -776,13 +797,17 @@ class UpdateService:
             # 自动检查失败：提示用户去下载页手动下载并覆盖安装（需先退出程序）。
             if not fetch_ok:
                 manual_url = GITHUB_RELEASES_BASE
-                QMessageBox.warning(
-                    parent,
-                    "检查更新",
-                    "自动检查更新失败，可能是网络问题。\n\n"
-                    "可前往 GitHub 手动下载对应版本，"
-                    "覆盖安装前请先退出本程序：\n"
-                    f"{manual_url}",
+                await await_dialog(
+                    QMessageBox(
+                        QMessageBox.Icon.Warning,
+                        "检查更新",
+                        "自动检查更新失败，可能是网络问题。\n\n"
+                        "可前往 GitHub 手动下载对应版本，"
+                        "覆盖安装前请先退出本程序：\n"
+                        f"{manual_url}",
+                        QMessageBox.StandardButton.Ok,
+                        parent,
+                    )
                 )
                 return
 
@@ -794,7 +819,7 @@ class UpdateService:
                 return
 
             dialog = UpdateDialog(update_info, current, parent)
-            dialog.exec()
+            await await_dialog(dialog)
 
             if dialog.user_action == "skip":
                 save_skip_version(update_info.version, self._settings_path)
@@ -868,8 +893,14 @@ class UpdateService:
             msg = _format_failure_message(fail_reasons)
             retry_btn = QMessageBox.StandardButton.Retry
             cancel_btn = QMessageBox.StandardButton.Cancel
-            reply = QMessageBox.warning(
-                parent, "更新失败", msg, retry_btn | cancel_btn
+            reply = await await_dialog(
+                QMessageBox(
+                    QMessageBox.Icon.Warning,
+                    "更新失败",
+                    msg,
+                    retry_btn | cancel_btn,
+                    parent,
+                )
             )
             if reply != retry_btn:
                 return
@@ -877,11 +908,14 @@ class UpdateService:
             # 重试用尽仍未成功
             return
 
-        reply = QMessageBox.information(
-            parent,
-            "更新已下载",
-            "更新包已下载完成，点击确定重启应用以完成更新。",
-            QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel,
+        reply = await await_dialog(
+            QMessageBox(
+                QMessageBox.Icon.Information,
+                "更新已下载",
+                "更新包已下载完成，点击确定重启应用以完成更新。",
+                QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel,
+                parent,
+            )
         )
         if reply != QMessageBox.StandardButton.Ok:
             return
@@ -893,11 +927,15 @@ class UpdateService:
         # 在 qasync 事件循环里直接调用会冻结 UI（历史 bug：下载完成后无响应退出）。
         # 与 _download_zip_with_sha 里 verify_sha256 的处理一致（见 319-322 行）。
         if not await asyncio.to_thread(self._verify_zip_integrity, zip_path):
-            QMessageBox.critical(
-                parent,
-                "更新失败",
-                "更新包已损坏（zip 校验失败）。\n\n请重新检查更新或手动下载最新版：\n"
-                f"{GITHUB_RELEASES_BASE}",
+            await await_dialog(
+                QMessageBox(
+                    QMessageBox.Icon.Critical,
+                    "更新失败",
+                    "更新包已损坏（zip 校验失败）。\n\n请重新检查更新或手动下载最新版：\n"
+                    f"{GITHUB_RELEASES_BASE}",
+                    QMessageBox.StandardButton.Ok,
+                    parent,
+                )
             )
             return
 
@@ -910,11 +948,15 @@ class UpdateService:
                 self._extract_updater_from_zip, zip_path
             )
         except RuntimeError as e:
-            QMessageBox.critical(
-                parent,
-                "更新失败",
-                f"{e}\n\n请手动下载最新版，覆盖安装前请先退出本程序：\n"
-                f"{GITHUB_RELEASES_BASE}",
+            await await_dialog(
+                QMessageBox(
+                    QMessageBox.Icon.Critical,
+                    "更新失败",
+                    f"{e}\n\n请手动下载最新版，覆盖安装前请先退出本程序：\n"
+                    f"{GITHUB_RELEASES_BASE}",
+                    QMessageBox.StandardButton.Ok,
+                    parent,
+                )
             )
             return
 
@@ -928,11 +970,15 @@ class UpdateService:
 
         # 新 updater 确认崩溃 → 提示手动重装（无 self-update 兜底）。
         logger.warning("新 updater 握手失败（crashed），提示用户手动重装")
-        QMessageBox.critical(
-            parent,
-            "更新失败",
-            "更新助手无法启动。\n\n请手动下载最新版，覆盖安装前请先退出本程序：\n"
-            f"{GITHUB_RELEASES_BASE}",
+        await await_dialog(
+            QMessageBox(
+                QMessageBox.Icon.Critical,
+                "更新失败",
+                "更新助手无法启动。\n\n请手动下载最新版，覆盖安装前请先退出本程序：\n"
+                f"{GITHUB_RELEASES_BASE}",
+                QMessageBox.StandardButton.Ok,
+                parent,
+            )
         )
 
     def _verify_zip_integrity(self, zip_path: Path) -> bool:

@@ -741,16 +741,18 @@ class TestCheckAndPromptConcurrency:
     """check_and_prompt 并发互斥回归测试。
 
     背景：启动检查（main._check_update）与关于页"检查更新"按钮
-    （AboutTab._on_check_update）各自 ensure_future 起 check_and_prompt；
-    两者并发时，第二个任务会在第一个任务阻塞于 QMessageBox / dialog.exec()
-    （qasync 嵌套事件循环）时被唤醒，触发
-    ``RuntimeError: Cannot enter into task ... while another task ... is
-    being executed``（asyncio.tasks._enter_task 重入保护）。
+    （AboutTab._on_check_update）各自 ensure_future 起 check_and_prompt。
+    两层防御协同保证不触发 ``RuntimeError: Cannot enter into task ... while
+    another task ... is being executed``（asyncio ``_enter_task`` 重入保护）：
 
-    根因修复：check_and_prompt 用类级 asyncio.Lock 串行化，第二个调用必须在
-    锁上 await 挂起，而不是穿透进网络/对话框代码。本测试验证两件事：
-    1. 两并发调用的临界区不会重叠（lock 持有期间无第二个 in-flight）。
-    2. 第二次调用正常等到第一次释放后执行（不死锁、不丢弃）。
+    1. **根因修复**：模态对话框经 ``await_dialog``（``show()`` + ``finished``
+       信号 → ``asyncio.Future``）非阻塞 await，不再跑 ``exec()`` 的嵌套事件循环。
+       嵌套循环是重入错误的源头——它让事件循环唤醒其它任务并对其 ``_enter_task``，
+       而当前任务仍处于「已 enter」状态。
+    2. **串行化**：类级 ``asyncio.Lock`` 让两个调用点排队，避免并发弹出两个对话框。
+
+    本测试验证锁的串行化契约：两并发调用的临界区不重叠（lock 持有期间无第二个
+    in-flight），且第二次调用正常等到第一次释放后执行（不死锁、不丢弃）。
     """
 
     def _make_service(self, tmp_path, monkeypatch):
@@ -831,6 +833,76 @@ class TestCheckAndPromptConcurrency:
         assert max_in_flight == 1, (
             f"check_and_prompt 并发互斥失败：max_in_flight={max_in_flight}（应为 1），"
             "说明两个更新检查任务的临界区发生重叠，会触发 asyncio _enter_task 重入错误。"
+        )
+
+
+class TestAwaitDialog:
+    """await_dialog 回归测试。
+
+    ``await_dialog`` 用 ``show()``（非阻塞）+ ``finished`` 信号 → ``asyncio.Future``
+    替代阻塞的 ``dialog.exec()``，根治 qasync 嵌套事件循环触发的 ``_enter_task``
+    重入 ``RuntimeError``。本测试验证该桥接的契约：
+
+    1. ``show()`` 后另一个并发任务能在同一事件循环里推进（证明非阻塞，事件循环
+       自由转动）—— 这正是原 ``exec()`` 丢失的属性。
+    2. ``finished(result_code)`` 触发后 ``await`` 解除并返回该结果码。
+
+    用 duck-typed fake dialog（不依赖真实 Qt 事件循环）：``finished`` 是个简单
+    回调注册器，``show`` 用 ``loop.call_soon`` 异步触发 finish，模拟用户点按钮关闭。
+    这在纯 ``asyncio.run`` 下即可验证桥接逻辑，无需 qasync / pytest-qt 事件处理。
+    """
+
+    def test_await_dialog_returns_finished_code_and_is_nonblocking(self):
+        """await_dialog：返回 finished 结果码；show 期间事件循环可并发跑其它任务。"""
+        from vibeocr.services.update_service import await_dialog
+
+        class _FakeSignal:
+            """最小信号桩：connect 注册回调，emit 调用它（仿 PySide6 Signal 语义）。"""
+
+            def __init__(self) -> None:
+                self._cb = None
+
+            def connect(self, cb) -> None:
+                self._cb = cb
+
+            def emit(self, code: int) -> None:
+                if self._cb is not None:
+                    self._cb(code)
+
+        class FakeDialog:
+            """最小化 duck-type：await_dialog 只用 finished.connect / show 两个接口。"""
+
+            def __init__(self) -> None:
+                self.finished = _FakeSignal()
+                self.showed = False
+
+            def show(self) -> None:
+                self.showed = True
+                # 异步触发 finished，模拟用户关闭对话框。用 call_soon 而非直接调用，
+                # 确保 await_dialog 先 await 挂起后再 resolve（测真正的非阻塞路径）。
+                loop = asyncio.get_event_loop()
+                loop.call_soon(self.finished.emit, 42)
+
+        other_ran = []
+
+        async def driver():
+            dlg = FakeDialog()
+
+            async def other():
+                # 并发任务：await_dialog 真非阻塞时，它会在对话框 finish 前被推进。
+                other_ran.append(True)
+
+            other_task = asyncio.ensure_future(other())
+            code = await await_dialog(dlg)
+            await other_task
+            return code, dlg.showed
+
+        code, showed = asyncio.run(driver())
+
+        assert showed, "await_dialog 应调用 dialog.show()"
+        assert code == 42, f"await_dialog 应返回 finished 的结果码 42，实际 {code}"
+        assert other_ran, (
+            "await_dialog 期间事件循环未能推进并发任务，说明仍是阻塞式（exec() 回归）"
         )
 
 
@@ -1447,14 +1519,22 @@ class TestDoDownloadAndUpdateNewArch:
                           sha256_url="http://x.sha256", changelog="")
 
     def _mock_msgbox(self, us_mod, monkeypatch, critical_texts=None):
-        monkeypatch.setattr(us_mod.QMessageBox, "information",
-                            lambda *a, **k: us_mod.QMessageBox.StandardButton.Ok)
-        if critical_texts is not None:
-            monkeypatch.setattr(us_mod.QMessageBox, "critical",
-                                lambda parent, title, text, *a, **k: critical_texts.append(text) or us_mod.QMessageBox.StandardButton.Ok)
-        else:
-            monkeypatch.setattr(us_mod.QMessageBox, "critical",
-                                lambda *a, **k: us_mod.QMessageBox.StandardButton.Ok)
+        """桩住 await_dialog：critical 弹窗捕获文案，其余直接返回 Ok。
+
+        生产代码改用 ``await await_dialog(QMessageBox(...))``（非阻塞）后，旧的对
+        ``QMessageBox.information/critical`` 静态方法的 patch 已无法拦截。改为 patch
+        模块级 ``await_dialog``：从传入的 QMessageBox 实例读 icon/text 判定类型，
+        critical 时收集文案，统一返回 Ok。
+        """
+
+        async def _fake_await_dialog(dlg):
+            icon = dlg.icon()
+            text = dlg.text()
+            if icon == us_mod.QMessageBox.Icon.Critical and critical_texts is not None:
+                critical_texts.append(text)
+            return us_mod.QMessageBox.StandardButton.Ok
+
+        monkeypatch.setattr(us_mod, "await_dialog", _fake_await_dialog)
 
     def test_corrupt_zip_shows_error_no_quit(self, tmp_path, monkeypatch, qapp):
         """testzip 失败 → 弹窗，不退出主程序（不 _force_quit）。"""
@@ -1558,14 +1638,22 @@ class TestDoDownloadAndUpdateThreadedDelivery:
                           sha256_url="http://x.sha256", changelog="")
 
     def _mock_msgbox(self, us_mod, monkeypatch, critical_texts=None):
-        monkeypatch.setattr(us_mod.QMessageBox, "information",
-                            lambda *a, **k: us_mod.QMessageBox.StandardButton.Ok)
-        if critical_texts is not None:
-            monkeypatch.setattr(us_mod.QMessageBox, "critical",
-                                lambda parent, title, text, *a, **k: critical_texts.append(text) or us_mod.QMessageBox.StandardButton.Ok)
-        else:
-            monkeypatch.setattr(us_mod.QMessageBox, "critical",
-                                lambda *a, **k: us_mod.QMessageBox.StandardButton.Ok)
+        """桩住 await_dialog：critical 弹窗捕获文案，其余直接返回 Ok。
+
+        生产代码改用 ``await await_dialog(QMessageBox(...))``（非阻塞）后，旧的对
+        ``QMessageBox.information/critical`` 静态方法的 patch 已无法拦截。改为 patch
+        模块级 ``await_dialog``：从传入的 QMessageBox 实例读 icon/text 判定类型，
+        critical 时收集文案，统一返回 Ok。
+        """
+
+        async def _fake_await_dialog(dlg):
+            icon = dlg.icon()
+            text = dlg.text()
+            if icon == us_mod.QMessageBox.Icon.Critical and critical_texts is not None:
+                critical_texts.append(text)
+            return us_mod.QMessageBox.StandardButton.Ok
+
+        monkeypatch.setattr(us_mod, "await_dialog", _fake_await_dialog)
 
     def test_verify_zip_runs_via_to_thread(self, tmp_path, monkeypatch, qapp):
         """testzip 应在工作线程执行（asyncio.to_thread 派发），而非冻结事件循环。
