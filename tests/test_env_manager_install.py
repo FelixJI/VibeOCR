@@ -3385,13 +3385,15 @@ class TestDetectDependencyUpdatesLockedVersions:
         installed,
         locked,
         specs=None,
+        mode="portable",
     ):
-        """构造 portable 环境，patch 各依赖后调用 detect_dependency_updates。
+        """构造指定模式环境，patch 各依赖后调用 detect_dependency_updates。
 
         Args:
             installed: {pkg: 已装版本}，模拟 importlib.metadata 返回值。
             locked: {pkg: 锁定版本}，模拟 _load_locked_versions 返回值。
             specs: {pkg: spec 串}，默认 mineru ``mineru[core]>=3.4.0``。
+            mode: 环境模式（``"portable"`` 默认；``"venv"`` 应短路返回空）。
         """
         import vibeocr.env_manager as em
 
@@ -3418,6 +3420,10 @@ class TestDetectDependencyUpdatesLockedVersions:
                 patch(
                     "vibeocr.env_manager._load_locked_versions",
                     return_value=dict(locked),
+                ),
+                patch(
+                    "vibeocr.env_manager.get_environment_mode",
+                    return_value=mode,
                 ),
             ):
                 return em.detect_dependency_updates(tmp_path)
@@ -3503,5 +3509,25 @@ class TestDetectDependencyUpdatesLockedVersions:
             specs={"torch": "torch>=2.6.0"},
         )
         assert "torch" in updates
+
+    def test_returns_empty_in_venv_mode(self, tmp_path):
+        """开发态（.venv）必须短路返回空，不触发依赖更新提示。
+
+        回归 Bug：依赖更新检测本应仅在 portable 模式生效，但旧逻辑只检查
+        python_exe.exists()。get_embedded_python_executable 优先返回 .venv 的
+        python，开发态该路径存在 → 检测继续跑，对 .venv 内已装版本与 uv.lock
+        锁定版比较，误报更新。
+        """
+        updates = self._run_detect(
+            tmp_path,
+            installed={"mineru": "3.4.0"},  # 落后于锁定版，portable 下会报更新
+            locked={"mineru": "3.4.2"},
+            mode="venv",  # 开发态必须短路
+        )
+        # 在 venv 模式下，即使已装 < 锁定版，也必须返回空（开发态由 uv 管理）
+        assert updates == {}, (
+            "开发态（.venv）下 detect_dependency_updates 必须短路返回空，"
+            "依赖更新仅便携模式生效"
+        )
 
 

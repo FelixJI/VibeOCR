@@ -2463,6 +2463,9 @@ def install_dependencies_batch(
 def detect_dependency_updates(project_root: Path) -> dict[str, tuple[str, str]]:
     """检测便携 Python 环境中哪些 OCR 依赖版本落后于主程序要求的版本规格。
 
+    仅便携模式（``python/`` 目录）生效：开发态（``.venv``）由 uv 管理，依赖版本
+    跟随 uv.lock，不应触发更新提示，短路返回空。
+
     覆盖安装场景（用户直接覆盖文件升级 app，无 pending_sync.json）下，
     version.json 里的 dep_versions 可能比已装版本新，主程序据此提示用户更新。
 
@@ -2479,7 +2482,14 @@ def detect_dependency_updates(project_root: Path) -> dict[str, tuple[str, str]]:
     Returns:
         {pkg: (installed_version, required_spec)}，仅含需更新的包。
         installed_version 为空串表示未安装；required_spec 为原始约束串（展示用）。
+        开发态/无环境时返回空 dict。
     """
+    # 仅便携模式生效。开发态 .venv 由 uv 管理，避免对 .venv 已装版本与 uv.lock
+    # 误报更新。此前只检查 python_exe.exists()，而 get_embedded_python_executable
+    # 优先返回 .venv 的 python，开发态该路径存在 → 误触发检测。
+    if get_environment_mode(project_root) != "portable":
+        return {}
+
     python_exe = get_embedded_python_executable(project_root)
     if not python_exe.exists():
         return {}
