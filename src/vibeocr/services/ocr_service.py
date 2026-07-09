@@ -37,7 +37,6 @@ _RE_TD = _re.compile(r"<t[dh][^>]*>(.*?)</t[dh]>", _re.DOTALL | _re.IGNORECASE)
 _RE_CELL = _re.compile(
     r"<(td|th)([^>]*)>(.*?)</\1>", _re.DOTALL | _re.IGNORECASE
 )
-_RE_COLSPAN = _re.compile(r"colspan\s*=\s*['\"]?(\d+)['\"]?", _re.IGNORECASE)
 
 
 def _extract_table_html(html_str: str) -> str:
@@ -48,10 +47,17 @@ def _extract_table_html(html_str: str) -> str:
 def _html_table_to_markdown(html: str) -> str:
     rows: list[list[str]] = []
     for tr_match in _RE_TR.finditer(html):
-        cells = [
-            _re.sub(r"<[^>]+>", "", td.group(1)).strip().replace("|", "\\|")
-            for td in _RE_TD.finditer(tr_match.group(1))
-        ]
+        cells = []
+        for td in _RE_TD.finditer(tr_match.group(1)):
+            # 复用 _cell_text：剥标签（<br>→\n）、unescape 实体、规整空白。
+            # 旧实现直接 re.sub 剥所有标签，把 <br> 压成无分隔，多行单元格
+            # 拼成一行（如 "行1<br>行2" → "行1行2"），且不解码实体。
+            text = _cell_text(td.group(1))
+            # GFM 表格单元格内换行需表示为 <br>（python-markdown 的
+            # TableExtension 会吞掉单元格内的 \n），故把 \n 转回 <br>。
+            # pipe 是 markdown 表格分隔符，必须转义。
+            text = text.replace("\n", "<br>").replace("|", "\\|")
+            cells.append(text)
         if cells:
             rows.append(cells)
     if not rows:
@@ -68,8 +74,8 @@ def _html_table_to_markdown(html: str) -> str:
 def _cell_text(inner: str) -> str:
     """剥离单元格内容里的 HTML 标签，规整空白并解码常见实体。
 
-    供 ``parse_table_html_to_grid`` 使用——单元格可能含 <b>、<br>、
-    &nbsp; 等，网格编辑器需要纯文本。
+    供 ``normalize_table_html`` 使用——单元格可能含 <b>、<br>、
+    &nbsp; 等，规整化需要纯文本。
     """
     import html as _html
 
@@ -83,77 +89,6 @@ def _cell_text(inner: str) -> str:
     return "\n".join(ln for ln in lines if ln)
 
 
-def parse_table_html_to_grid(html: str) -> list[list[str]]:
-    """将 ``<table>`` HTML 解析为二维字符串网格。
-
-    处理 ``colspan``（横向合并）：合并的单元格在后续列重复填充相同文本，
-    使网格保持矩形，便于 ``QTableWidget`` 直接逐格编辑。不支持 rowspan
-    （PaddleX 表格 HTML 通常不含 rowspan；若出现则单元格文本可能错位，
-    但不会崩溃）。
-
-    与 ``grid_to_table_html`` 互为逆操作，用于表格网格编辑器的
-    解析→编辑→序列化往返。
-    """
-    # 仅取第一个 <table>（PaddleX pred_html 经 _extract_table_html 后即单个表）
-    table_match = _RE_TABLE.search(html)
-    table_html = table_match.group(1) if table_match else html
-
-    grid: list[list[str]] = []
-    for tr_match in _RE_TR.finditer(table_html):
-        row: list[str] = []
-        col_cursor = 0  # 当前行已填充到第几列（考虑 colspan 重复占位）
-        # 先按 colspan 占位扩展现有 row，再追加新单元格
-        cells = list(_RE_CELL.finditer(tr_match.group(1)))
-        for cm in cells:
-            attrs, inner = cm.group(2), cm.group(3)
-            text = _cell_text(inner)
-            cs_match = _RE_COLSPAN.search(attrs)
-            colspan = int(cs_match.group(1)) if cs_match else 1
-            # 跳过已被前置 colspan 占位的列（理论极少出现，保留以防 rowspan）
-            while len(row) > col_cursor and row[col_cursor] != "":
-                col_cursor += 1
-            for _ in range(colspan):
-                if len(row) <= col_cursor:
-                    row.append(text)
-                else:
-                    row[col_cursor] = text
-                col_cursor += 1
-        if row:
-            grid.append(row)
-
-    # 对齐为矩形（列数取最大值，空位补空串）
-    if grid:
-        max_cols = max(len(r) for r in grid)
-        for r in grid:
-            r.extend("" for _ in range(max_cols - len(r)))
-    return grid
-
-
-def grid_to_table_html(grid: list[list[str]]) -> str:
-    """将二维字符串网格序列化回 ``<table>`` HTML。
-
-    与 ``parse_table_html_to_grid`` 互为逆操作。首行渲染为 ``<th>``（表头），
-    其余行渲染为 ``<td>``；单元格文本经 ``html.escape`` 转义，换行转 ``<br>``。
-    列数不等的行右侧补空单元格。
-    """
-    import html as _html
-
-    if not grid:
-        return "<table></table>"
-    max_cols = max(len(r) for r in grid)
-    rows_html: list[str] = []
-    for r_i, row in enumerate(grid, start=1):
-        cells_html: list[str] = []
-        for c_i in range(max_cols):
-            text = row[c_i] if c_i < len(row) else ""
-            # 换行 → <br>，其余 HTML 特殊字符转义
-            safe = _html.escape(text).replace("\n", "<br>")
-            tag = "th" if r_i == 1 else "td"
-            cells_html.append(f"<{tag}>{safe}</{tag}>")
-        rows_html.append(f"<tr>{''.join(cells_html)}</tr>")
-    return f"<table>{''.join(rows_html)}</table>"
-
-
 def normalize_table_html(html: str) -> str:
     """规整化表格 HTML：剥离 inline style、补齐空单元格、统一标签。
 
@@ -165,9 +100,8 @@ def normalize_table_html(html: str) -> str:
        Excel/Word 粘贴时会把后续单元格前移（如 A1 空、A2 有内容，结果 A2
        内容跑到 A1）。这里按最大列数补齐，保证每行规整矩形。
 
-    与 ``grid_to_table_html`` 不同：本函数**保留原 td/th 标签类型**（不强制
-    首行 th），仅清洗属性 + 补空格，适合渲染展示与复制。网格编辑器专用
-    ``parse_table_html_to_grid``/``grid_to_table_html``（首行强制 th）。
+    本函数**保留原 td/th 标签类型**（不强制首行 th），仅清洗属性 + 补空格，
+    适合渲染展示与复制。
 
     Args:
         html: 原始表格 HTML（含/不含 ``<html><body>`` 外壳均可）。

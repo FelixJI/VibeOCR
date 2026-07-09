@@ -323,6 +323,31 @@ class TestHtmlTableToMarkdown:
         md = _html_table_to_markdown(html)
         assert "| D |  |  |" in md
 
+    def test_br_in_cell_preserved_as_br(self):
+        """单元格内的 <br> 应保留为 markdown 的 <br>，而非被剥成无分隔。
+
+        回归：旧实现用 ``re.sub(r"<[^>]+>", "")`` 剥所有标签，把 ``行1<br>行2``
+        压成 ``行1行2``，丢失多行结构。修复后复用 ``_cell_text``（``<br>→\\n``），
+        再把 ``\\n`` 转回 ``<br>`` 以符合 GFM 表格单元格语义。
+        """
+        from vibeocr.services.ocr_service import _html_table_to_markdown
+
+        html = "<table><tr><td>行1<br>行2</td><td>正常</td></tr></table>"
+        md = _html_table_to_markdown(html)
+        assert "行1<br>行2" in md, f"<br> 多行结构应保留: {md!r}"
+        assert "行1行2" not in md, "不应被压成一行"
+
+    def test_entity_decoded_in_cell(self):
+        """单元格内的 HTML 实体（&amp; 等）应解码，不残留实体名。
+
+        复用 ``_cell_text`` 会 unescape；旧实现只剥标签不解码实体。
+        """
+        from vibeocr.services.ocr_service import _html_table_to_markdown
+
+        html = "<table><tr><td>A&amp;B</td></tr></table>"
+        md = _html_table_to_markdown(html)
+        assert "| A&B |" in md, f"实体应解码: {md!r}"
+
 
 class TestCacheManagerIntegration:
     """OCRService 与 PipelineCacheManager 集成测试。"""
