@@ -442,3 +442,29 @@ class TestFreshOverlayPerCapture:
         monkeypatch.setattr(ScreenCaptureOverlay, "start_capture", lambda self: None)
         main_window._start_fresh_overlay_capture("FORMULA_RECOGNITION")
         assert main_window._overlay._pending_pipeline == "FORMULA_RECOGNITION"
+
+
+class TestTabOrder:
+    """标签页顺序回归测试。
+
+    期望顺序：单次识别 → 批量识别 → 二维码 → PDF 处理 → 设置 → 关于。
+    关于页应位于末尾（设置页之后），符合「关于」居末的惯例。
+    """
+
+    def test_tab_order(self, main_window):
+        """标签页应按 单次识别 → 批量 → 二维码 → PDF → 设置 → 关于 排列。"""
+        tw = main_window._ui.tabWidget
+        titles = [tw.tabText(i) for i in range(tw.count())]
+        expected = ["单次识别", "批量识别", "二维码", "PDF 处理", "设置", "关于"]
+        assert titles == expected, f"标签页顺序不符：实际 {titles}，期望 {expected}"
+
+    def test_about_tab_is_last(self, main_window):
+        """关于页应在最后一个位置。"""
+        tw = main_window._ui.tabWidget
+        assert tw.tabText(tw.count() - 1) == "关于", "关于页应在末尾"
+        # 设置页应在关于页之前
+        settings_idx = next(
+            i for i in range(tw.count()) if tw.tabText(i) == "设置"
+        )
+        about_idx = tw.count() - 1
+        assert settings_idx < about_idx, "设置页应在关于页之前"

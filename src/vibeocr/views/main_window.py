@@ -338,22 +338,33 @@ class MainWindow(QMainWindow):
         # 记录截图开始前主窗口的最小化状态，用于截图结束后恢复窗口状态。
         self._main_window_minimized_before_capture = False
 
-    def _add_lazy_tab(self, title: str, role: str, builder: Any) -> None:
+    def _add_lazy_tab(
+        self, title: str, role: str, builder: Any, at_end: bool = False
+    ) -> None:
         """插入一个占位空页，注册懒构造回调。
 
         启动期只插一个空 QWidget（零成本），首次切换到该页时由
         ``_on_lazy_tab_changed`` 触发 ``builder`` 真正构造内容并替换占位页。
-        占位页插在设置页之前，保持原顺序（批量→二维码→PDF→设置→关于）。
+
+        - ``at_end=False``（默认）：占位页插在设置页之前，保持功能页顺序
+          （批量→二维码→PDF→设置）。
+        - ``at_end=True``：占位页插到末尾（设置页之后），用于关于页（关于页
+          居末尾，符合「关于」居末的惯例）。
 
         Args:
             title: 标签页标题。
-            role: 角色标识（"batch"/"qrcode"/"pdf"），用于构造后回填属性名。
+            role: 角色标识（"batch"/"qrcode"/"pdf"/"about"），用于构造后回填属性名。
             builder: 无参可调用，返回真实 tab widget。
+            at_end: 是否插到末尾（设置页之后）。
         """
         placeholder = QWidget()
-        settings_idx = self._ui.tabWidget.indexOf(self._ui.tabSettings)
-        insert_at = settings_idx if settings_idx >= 0 else self._ui.tabWidget.count()
-        idx = self._ui.tabWidget.insertTab(insert_at, placeholder, title)
+        tw = self._ui.tabWidget
+        if at_end:
+            insert_at = tw.count()
+        else:
+            settings_idx = tw.indexOf(self._ui.tabSettings)
+            insert_at = settings_idx if settings_idx >= 0 else tw.count()
+        idx = tw.insertTab(insert_at, placeholder, title)
         self._lazy_tab_builders[idx] = (role, builder)
 
     def _build_batch_tab(self) -> Any:
@@ -473,11 +484,12 @@ class MainWindow(QMainWindow):
     def _init_about_tab(self) -> None:
         """初始化关于标签页（懒加载：首次切换到关于页才构造）。
 
-        AboutTab 构造会同步读取 CHANGELOG.md 并解析 Markdown（QTextBrowser.setMarkdown），
-        是启动期可省的 CPU 开销。延迟到用户真正查看关于页时再构造。
+        关于页置于末尾（设置页之后），符合「关于」居末的惯例。AboutTab 构造会同步
+        读取 CHANGELOG.md 并解析 Markdown（QTextBrowser.setMarkdown），是启动期可省的
+        CPU 开销，延迟到用户真正查看关于页时再构造。
         """
         self._about_tab: Any = None
-        self._add_lazy_tab("关于", "about", self._build_about_tab)
+        self._add_lazy_tab("关于", "about", self._build_about_tab, at_end=True)
 
     def _build_about_tab(self) -> Any:
         """构造关于标签页（懒加载时调用）。"""
