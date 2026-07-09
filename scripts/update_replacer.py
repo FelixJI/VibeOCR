@@ -405,13 +405,18 @@ def replace_app_files(
     """
     logger.info("替换应用文件...")
 
-    # 记录旧 version.json 的 dep_versions（用于依赖同步）
+    # 记录旧 version.json 的 dep_versions（约束）与 dep_locked_versions（锁定版基准）。
+    # 两者都用于依赖同步：约束变化反映 pyproject 显式改版；锁定版变化反映 uv.lock
+    # 在下界内升级（如 mineru 3.4.0→3.4.2，约束 >=3.4.0 不变）。后者仅靠约束比对
+    # 会漏掉，故同步把锁定版基准一并传入 _sync_dependencies 比较。
     old_version_json = app_dir / "version.json"
     old_deps: dict = {}
+    old_locked: dict = {}
     if old_version_json.exists():
         try:
             old_data = json.loads(old_version_json.read_text(encoding="utf-8"))
             old_deps = old_data.get("dep_versions", {})
+            old_locked = old_data.get("dep_locked_versions", {})
         except Exception:
             pass
 
@@ -509,7 +514,7 @@ def replace_app_files(
         with _StageTimer("依赖版本同步（写标记）"):
             try:
                 new_data = json.loads(new_version_json.read_text(encoding="utf-8"))
-                _sync_dependencies(old_deps, new_data, app_dir)
+                _sync_dependencies(old_deps, new_data, app_dir, old_locked)
             except Exception as e:
                 logger.warning(f"检查依赖版本失败: {e}")
 
@@ -743,7 +748,9 @@ def _normalize_dep_value(v: object) -> str:
     return f">={s}" if s else ""
 
 
-def _sync_dependencies(old_deps: dict, new_data: dict, app_dir: Path) -> None:
+def _sync_dependencies(
+    old_deps: dict, new_data: dict, app_dir: Path, old_locked: dict | None = None
+) -> None:
     """检查 AI 依赖版本变化并写入"待同步"标记。
 
     替换器不能 import vibeocr（python/ 里没装 vibeocr，updater 是独立 --onefile
@@ -752,6 +759,13 @@ def _sync_dependencies(old_deps: dict, new_data: dict, app_dir: Path) -> None:
     写入 data/settings/pending_sync.json，由覆盖后的新版 VibeOCR 启动时用
     env_manager.install_embedded_dependencies（含 GPU/CUDA tag/镜像/PyPI 回退的完整
     逻辑）执行升级。这样避免替换器用裸 pip 走 PyPI 把 paddle/torch 装成 CPU 版。
+
+    变化检测有两路（任一触发即同步，确保便携环境紧跟 uv.lock）：
+    1. 约束变化（dep_versions）：pyproject 显式改版（如 paddleocr >=3.7.0 →3.8.0）。
+    2. 锁定版变化（dep_locked_versions）：uv.lock 在下界内升级（如 mineru 3.4.0→3.4.2，
+       约束 >=3.4.0 不变）。仅靠约束比对会漏掉此类升级，便携环境会永久停留在旧锁定版，
+       故必须把锁定版基准一并比较。旧版无 dep_locked_versions 字段时，新版首次携带
+       视为全部变化（确保便携环境与新版 lock 对齐）。
 
     写入字段：
     - dep_versions：变化的包 → constraint 串（完整 PEP 440，支持 local version、
@@ -762,14 +776,30 @@ def _sync_dependencies(old_deps: dict, new_data: dict, app_dir: Path) -> None:
     """
     new_deps = new_data.get("dep_versions", {})
     new_extras = new_data.get("dep_extras", {})
+    new_locked = new_data.get("dep_locked_versions", {})
+    old_locked = old_locked or {}
 
-    # diff：归一化为 constraint 串后比较，提取变化的包
+    # diff 路径 1：约束变化（归一化为 constraint 串后比较）
     changed: dict[str, str] = {}
     for pkg, new_v in new_deps.items():
         new_norm = _normalize_dep_value(new_v)
         old_norm = _normalize_dep_value(old_deps.get(pkg))
         if old_norm != new_norm:
             changed[pkg] = new_norm
+
+    # diff 路径 2：锁定版变化（捕获约束不变但 uv.lock 下界内升级的场景）。
+    # 仅对新版 dep_locked_versions 中的包比较；约束已判变的包不重复处理。
+    # 旧版无 dep_locked_versions 字段（old_locked 为空 dict）时，新版首次携带的
+    # 全部锁定版都视为变化，确保从无锁定版到有锁定版的过渡也触发同步。
+    lock_changed: list[str] = []
+    for pkg, new_lock in new_locked.items():
+        if pkg in changed:
+            continue  # 约束已变，无需重复
+        old_lock = old_locked.get(pkg)
+        if old_lock != new_lock:
+            lock_changed.append(pkg)
+            # 用新版约束串填值，使主程序 install 按约束重装（约束未变时取自 new_deps）
+            changed[pkg] = _normalize_dep_value(new_deps.get(pkg))
 
     # removed：旧版有、新版无的包（仅范围 dep_versions，非全部 EXCLUDED_PACKAGES）
     removed = [pkg for pkg in old_deps if pkg not in new_deps]
@@ -783,6 +813,8 @@ def _sync_dependencies(old_deps: dict, new_data: dict, app_dir: Path) -> None:
 
     if changed:
         logger.info(f"检测到依赖变化: {changed}")
+    if lock_changed:
+        logger.info(f"检测到锁定版升级（约束不变）: {lock_changed}")
     if removed:
         logger.info(f"检测到依赖移除: {removed}")
     logger.info("写入待同步标记，将由新版 VibeOCR 启动时升级...")

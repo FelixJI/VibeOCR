@@ -415,6 +415,56 @@ class TestGenerateVersionJson:
         # nvidia 包也应记录（更新器需要）
         assert any(k.startswith("nvidia") for k in dep_versions)
 
+    def test_portable_installed_deps_all_tracked(self, tmp_path):
+        """便携 Python 安装的依赖（EXCLUDED_PACKAGES 且 OCR 检测）必须全部被追踪。
+
+        回归防护：markdown 曾因未加入 _TRACKED_PREFIXES 而漏写 version.json，
+        导致便携环境 _load_dep_specs 取不到约束 → 裸包名安装（丢失 >=3.10.2 约束）、
+        detect_dependency_updates 漏报更新、dep_locked_versions 缺基准。
+
+        不变量：EXCLUDED_PACKAGES ∩ 便携检测集 ⊆ _TRACKED_PREFIXES 覆盖的包名。
+        """
+        import json
+
+        mod = self._load_script()
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            textwrap.dedent("""\
+                [project]
+                name = "vibeocr"
+                version = "0.1.0"
+                dependencies = [
+                    "markdown>=3.10.2",
+                    "paddleocr[doc-parser]>=3.7.0",
+                    "mineru[core]>=3.3.1",
+                    "torch>=2.5.0",
+                    "pymupdf>=1.27.2.3",
+                    "fastapi>=0.115.0",
+                    "uvicorn>=0.34.0",
+                    "pydantic>=2.11.0",
+                    "fonttools>=4.61.1",
+                ]
+            """),
+            encoding="utf-8",
+        )
+        mod.PYPROJECT_TOML = pyproject
+
+        mod._generate_version_json("1.2.3", tmp_path)
+
+        data = json.loads((tmp_path / "version.json").read_text(encoding="utf-8"))
+        dep_versions = data["dep_versions"]
+
+        # 这些包均已从主 exe 排除、由便携 Python 安装，必须出现在 dep_versions
+        required_portable = {
+            "markdown", "paddleocr", "mineru", "torch",
+            "pymupdf", "fastapi", "uvicorn", "pydantic", "fonttools",
+        }
+        missing = required_portable - set(dep_versions)
+        assert not missing, (
+            f"便携安装的依赖未写入 version.json：{missing}，"
+            f"实际 keys: {sorted(dep_versions)}"
+        )
+
     def test_python_version_read_from_dot_python_version(self, tmp_path):
         """version.json 的 python_version 应从 .python-version 文件读取，而非硬编码"""
         import json

@@ -936,9 +936,13 @@ def _generate_version_json(version: str, dist_dir: Path) -> None:
     # 需要追踪版本的包前缀（对应 EXCLUDED_PACKAGES 中排除的大依赖）
     # PDF 后端依赖(pymupdf/fastapi/uvicorn/pydantic/fonttools)已从主 exe 排除,
     # 由便携 Python 安装,故需追踪版本写入 version.json,供打包态 _load_dep_specs 读取。
+    # markdown 同理(从 exe 排除,供 OCR/MinerU worker 子进程 markdown_to_html 用),
+    # 必须追踪否则便携环境 _load_dep_specs 取不到约束→裸包名安装(丢失 >= 下界),
+    # 且 dep_locked_versions 缺基准→detect_dependency_updates 漏报下界内升级。
     _TRACKED_PREFIXES = (
         "paddle", "paddleocr", "mineru", "torch", "nvidia",
         "pymupdf", "fastapi", "uvicorn", "pydantic", "fonttools",
+        "markdown",
     )
     _KEY_ALIASES = _KEY_ALIASES_LOCK  # 模块级常量，与 _read_uv_lock_versions 共用
 

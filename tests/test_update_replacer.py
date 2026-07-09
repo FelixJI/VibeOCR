@@ -291,3 +291,89 @@ class TestUpdaterMainSelfExeNames:
         updater_main.main()
 
         assert captured["self_exe_names"] == ("updater.exe", "VibeOCR.exe")
+
+
+class TestSyncDependenciesLockBump:
+    """_sync_dependencies 必须能检出 uv.lock 锁定版的升级（constraint 不变场景）。
+
+    场景：mineru 的 pyproject 约束 ``>=3.4.0`` 跨版本未变，但 uv.lock 锁定版从
+    3.4.0 升到 3.4.2。仅比对 dep_versions（约束串）会判"无变化"而漏同步，
+    导致便携环境永久停留在旧锁定版 3.4.0。
+
+    dep_locked_versions 正是为捕获这类下界内升级而引入的字段，替换器必须一并比对。
+    """
+
+    @staticmethod
+    def _read_pending(app_dir: Path) -> dict:
+        """读取待同步标记（不存在则空 dict）。"""
+        import json
+
+        pending = app_dir / "data" / "settings" / "pending_sync.json"
+        if not pending.exists():
+            return {}
+        return json.loads(pending.read_text(encoding="utf-8"))
+
+    def test_constraint_unchanged_but_lock_bumped_triggers_sync(
+        self, replacer, tmp_path
+    ):
+        """约束不变、仅锁定版升级（3.4.0→3.4.2）应写入待同步标记。"""
+        app_dir = tmp_path / "app"
+        app_dir.mkdir(parents=True)
+        # 模拟 run_replacement 实际传入：old_deps 是旧 dep_versions，
+        # old_locked 是旧 dep_locked_versions
+        old_deps = {"mineru": ">=3.4.0"}
+        old_locked = {"mineru": "3.4.0"}
+        new_data = {
+            "version": "0.4.19",
+            "dep_versions": {"mineru": ">=3.4.0"},  # 约束不变
+            "dep_locked_versions": {"mineru": "3.4.2"},  # 锁定版升级
+        }
+
+        replacer._sync_dependencies(old_deps, new_data, app_dir, old_locked)
+
+        pending = self._read_pending(app_dir)
+        changed = pending.get("dep_versions", {})
+        assert "mineru" in changed, (
+            "锁定版升级（3.4.0→3.4.2）即便约束不变也应触发同步，"
+            f"实际 changed={changed}"
+        )
+
+    def test_old_lock_absent_new_lock_present_triggers_sync(
+        self, replacer, tmp_path
+    ):
+        """旧版无 dep_locked_versions（兼容旧 version.json），新版有 → 视为变化触发同步。
+
+        旧便携版可能在 dep_locked_versions 引入前发布（字段缺失），新版首次携带，
+        全部追踪包都应同步以确保便携环境与新版 lock 对齐。
+        """
+        app_dir = tmp_path / "app"
+        app_dir.mkdir(parents=True)
+        old_deps = {"mineru": ">=3.4.0"}
+        old_locked: dict = {}  # 旧版无此字段
+        new_data = {
+            "version": "0.4.19",
+            "dep_versions": {"mineru": ">=3.4.0"},
+            "dep_locked_versions": {"mineru": "3.4.2"},
+        }
+
+        replacer._sync_dependencies(old_deps, new_data, app_dir, old_locked)
+
+        pending = self._read_pending(app_dir)
+        assert "mineru" in pending.get("dep_versions", {})
+
+    def test_lock_unchanged_no_sync(self, replacer, tmp_path):
+        """约束与锁定版都不变时不写标记（回归：不误报）。"""
+        app_dir = tmp_path / "app"
+        app_dir.mkdir(parents=True)
+        old_deps = {"mineru": ">=3.4.0"}
+        old_locked = {"mineru": "3.4.2"}
+        new_data = {
+            "version": "0.4.19",
+            "dep_versions": {"mineru": ">=3.4.0"},
+            "dep_locked_versions": {"mineru": "3.4.2"},
+        }
+
+        replacer._sync_dependencies(old_deps, new_data, app_dir, old_locked)
+
+        pending = self._read_pending(app_dir)
+        assert pending == {}, f"锁定版未变不应触发同步，实际 pending={pending}"
