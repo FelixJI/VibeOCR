@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.4.19] - 2026-07-09
+
+### Fixed
+- fix(window): OCR 完成后重新把主窗口提到前台
+- fix(env_manager): 依赖更新检测仅便携模式生效
+- fix(update): 便携环境追踪 markdown + 检出 uv.lock 锁定版升级
+- fix(update): 下载后 testzip/抽取 updater 经 asyncio.to_thread 派发，避免冻结事件循环
+- fix(table): 回填 PaddleX IoU 失配漏掉的字，不再丢弃表内未吸收文本
+
+### Changed
+- chore(deps): 升级依赖版本下界与 uv.lock 锁定版
+- refactor(preview): 移除画布表格网格编辑器，表格改在右侧结果视图编辑
+- refactor(ocr_service): 修复 markdown 表格 <br>/实体丢失，移除未用的 grid 工具
+
+### Dependencies
+- 升级:
+  - 升级 pillow >=12.2.0 → >=12.3.0
+  - 升级 mineru >=3.4.0 → >=3.4.3
+  - 升级 pymupdf >=1.27.2.3 → >=1.28.0
+  - 升级 fonttools >=4.61.1 → >=4.63.0
+  - 升级 python-docx >=1.1.0 → >=1.2.0
+  - 升级 openpyxl >=3.1.0 → >=3.1.5
+  - 升级 fastapi >=0.115.0 → >=0.139.0
+  - 升级 uvicorn >=0.34.0 → >=0.51.0
+  - 升级 pydantic >=2.11.0 → >=2.13.4
+
 ## [0.4.18] - 2026-07-09
 
 ### Added
