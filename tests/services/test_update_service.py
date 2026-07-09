@@ -1522,3 +1522,131 @@ class TestDoDownloadAndUpdateNewArch:
         assert not force_quit_called, "crashed 不应 _force_quit"
         assert critical_msgs, "应弹窗提示"
         assert any("手动" in m for m in critical_msgs), "应提示手动重装"
+
+
+class TestDoDownloadAndUpdateThreadedDelivery:
+    """编排器经 asyncio.to_thread 派发 testzip + 抽取 updater，避免同步阻塞冻结
+    qasync 事件循环（历史 bug：下载完成后 UI 无响应退出）。
+
+    与 ``TestDownloadZipWithShaThreadedVerify``（守护 verify_sha256）对齐：这两个
+    同步 zip 操作同样会把 ~50-170MB 的读 + CRC/写盘压在事件循环线程上，必须经线程池。
+    两个方法本身仍保持同步签名（供直接单元测试复用），契约只在调用点强制。
+    """
+
+    def _make_service_with_zip(self, tmp_path, monkeypatch, qapp):
+        import zipfile
+
+        from vibeocr.services import env_config
+        from vibeocr.services.update_service import UpdateService
+
+        monkeypatch.setattr(env_config, "get_update_cache_dir", lambda: tmp_path / "cache" / "update")
+        monkeypatch.setattr(env_config, "get_update_settings_path", lambda: tmp_path / "settings.json")
+        app_dir = tmp_path / "app"
+        app_dir.mkdir()
+        service = UpdateService(app_dir)
+
+        zip_path = tmp_path / "cache" / "update" / "pkg.zip"
+        zip_path.parent.mkdir(parents=True)
+        with zipfile.ZipFile(zip_path, "w") as zf:
+            zf.writestr("VibeOCR/updater.exe", b"updater")
+            zf.writestr("VibeOCR/version.json", "{}")
+        return service, zip_path
+
+    def _make_info(self):
+        from vibeocr.services.update_service import UpdateInfo
+        return UpdateInfo(version="9.9.9", download_url="http://x",
+                          sha256_url="http://x.sha256", changelog="")
+
+    def _mock_msgbox(self, us_mod, monkeypatch, critical_texts=None):
+        monkeypatch.setattr(us_mod.QMessageBox, "information",
+                            lambda *a, **k: us_mod.QMessageBox.StandardButton.Ok)
+        if critical_texts is not None:
+            monkeypatch.setattr(us_mod.QMessageBox, "critical",
+                                lambda parent, title, text, *a, **k: critical_texts.append(text) or us_mod.QMessageBox.StandardButton.Ok)
+        else:
+            monkeypatch.setattr(us_mod.QMessageBox, "critical",
+                                lambda *a, **k: us_mod.QMessageBox.StandardButton.Ok)
+
+    def test_verify_zip_runs_via_to_thread(self, tmp_path, monkeypatch, qapp):
+        """testzip 应在工作线程执行（asyncio.to_thread 派发），而非冻结事件循环。
+
+        历史 bug（v0.4.18）：下载完成后 testzip 同步读整包做 CRC，在 qasync 协程里
+        冻结事件循环，UI 无响应退出。修复后必须经线程池。用 corrupt zip 让 testzip
+        走失败路径（弹 critical，已 mock），并记录被执行时的线程 id——断言它不在
+        主线程（即确实派发到了工作线程）。
+        """
+        import threading
+
+        from vibeocr.services import update_service as us
+
+        service, zip_path = self._make_service_with_zip(tmp_path, monkeypatch, qapp)
+        zip_path.write_bytes(b"corrupt")  # 让 testzip 失败，走 critical 分支
+
+        # 记录 testzip 实际执行所在的线程。
+        exec_thread_ids: list[int] = []
+        real_verify = service._verify_zip_integrity
+
+        def _spying_verify(path):
+            exec_thread_ids.append(threading.get_ident())
+            return real_verify(path)
+
+        monkeypatch.setattr(service, "_verify_zip_integrity", _spying_verify)
+
+        force_quit_called = []
+        monkeypatch.setattr(service, "_force_quit", lambda: force_quit_called.append(1))
+
+        async def fake_download(*a, **k):
+            return zip_path, []
+        monkeypatch.setattr(us, "download_update", fake_download)
+        self._mock_msgbox(us, monkeypatch)
+
+        _run(service._do_download_and_update(self._make_info(), parent=None))
+
+        assert not force_quit_called, "testzip 失败不应 _force_quit"
+        # 关键契约：testzip 在工作线程执行（asyncio.to_thread 派发），而非主线程。
+        assert exec_thread_ids, "testzip 应被执行"
+        assert exec_thread_ids[0] != threading.get_ident(), \
+            "testzip 必须经 asyncio.to_thread 派发到工作线程（直接同步调用会冻结事件循环）"
+
+    def test_extract_updater_runs_via_to_thread(self, tmp_path, monkeypatch, qapp):
+        """抽取 updater 应在工作线程执行（asyncio.to_thread 派发）。
+
+        与 testzip 同属下载后冻结事件循环的同步 zip I/O，必须经线程池。testzip 用
+        真实有效 zip 放行，抽取阶段记录被执行时的线程 id，断言它不在主线程。
+        """
+        import threading
+
+        from vibeocr.services import update_service as us
+
+        service, zip_path = self._make_service_with_zip(tmp_path, monkeypatch, qapp)
+
+        # testzip 放行（真实有效 zip），避免抢占到 extract 之前就 return。
+        # 抽取阶段记录执行线程，断言非主线程即可——无需走完整握手（会启动真实进程）。
+        exec_thread_ids: list[int] = []
+        real_extract = service._extract_updater_from_zip
+
+        def _spying_extract(path):
+            exec_thread_ids.append(threading.get_ident())
+            return real_extract(path)
+
+        monkeypatch.setattr(service, "_extract_updater_from_zip", _spying_extract)
+        # 握手直接返回 crashed 终止流程（不启动真实 updater 进程），验证目标是
+        # extract 经 to_thread，而非握手结果。
+        async def fake_launch(zip_p, staged):
+            return "crashed"
+        monkeypatch.setattr(service, "_launch_updater", fake_launch)
+        force_quit_called = []
+        monkeypatch.setattr(service, "_force_quit", lambda: force_quit_called.append(1))
+
+        async def fake_download(*a, **k):
+            return zip_path, []
+        monkeypatch.setattr(us, "download_update", fake_download)
+        self._mock_msgbox(us, monkeypatch)
+
+        _run(service._do_download_and_update(self._make_info(), parent=None))
+
+        assert not force_quit_called, "crashed 不应 _force_quit"
+        # 关键契约：抽取 updater 在工作线程执行（asyncio.to_thread 派发）。
+        assert exec_thread_ids, "抽取 updater 应被执行"
+        assert exec_thread_ids[0] != threading.get_ident(), \
+            "_extract_updater_from_zip 必须经 asyncio.to_thread 派发到工作线程（直接同步调用会冻结事件循环）"

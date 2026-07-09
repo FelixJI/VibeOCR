@@ -889,7 +889,10 @@ class UpdateService:
         # 新架构（黄金法则）：旧主程序只"递送"——testzip + 抽取新 updater，
         # 由新 updater（新代码）完成部署。旧主程序不解释新格式。
         # 1. testzip 确保能安全读出 updater 条目
-        if not self._verify_zip_integrity(zip_path):
+        # 经 asyncio.to_thread 派发：testzip 同步读整个 zip（~50-170MB）做 CRC 校验，
+        # 在 qasync 事件循环里直接调用会冻结 UI（历史 bug：下载完成后无响应退出）。
+        # 与 _download_zip_with_sha 里 verify_sha256 的处理一致（见 319-322 行）。
+        if not await asyncio.to_thread(self._verify_zip_integrity, zip_path):
             QMessageBox.critical(
                 parent,
                 "更新失败",
@@ -899,8 +902,13 @@ class UpdateService:
             return
 
         # 2. 从 zip 抽取新 updater 到暂存目录 data/cache/update/updater.exe
+        # 经 asyncio.to_thread 派发：zf.read + write_bytes 是同步 I/O，与 testzip 同属
+        # 下载后冻结事件循环的嫌疑点（见 1. testzip 注释）。updater.exe 虽仅 ~8-12MB，
+        # 但在 qasync 协程里同步读写仍会阻塞，统一上 to_thread 保持一致。
         try:
-            staged_updater = self._extract_updater_from_zip(zip_path)
+            staged_updater = await asyncio.to_thread(
+                self._extract_updater_from_zip, zip_path
+            )
         except RuntimeError as e:
             QMessageBox.critical(
                 parent,
