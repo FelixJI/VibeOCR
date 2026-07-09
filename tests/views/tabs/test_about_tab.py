@@ -32,6 +32,29 @@ class TestAboutTab:
         html = about_tab._changelog_browser.toHtml()
         assert len(html) > 0
 
+    def test_left_right_columns_exist(self, about_tab):
+        """左右两栏布局：左栏（品牌/信息/耗时）+ 右栏（更新日志/按钮）应同时存在。"""
+        from PySide6.QtWidgets import QWidget
+
+        left = about_tab.findChild(QWidget, "leftColumn")
+        right = about_tab.findChild(QWidget, "rightColumn")
+        assert left is not None, "关于页应有左栏容器（objectName=leftColumn）"
+        assert right is not None, "关于页应有右栏容器（objectName=rightColumn）"
+
+    def test_changelog_is_in_right_column(self, about_tab):
+        """更新日志浏览器应位于右栏（不在左栏）。"""
+        from PySide6.QtWidgets import QWidget
+
+        right = about_tab.findChild(QWidget, "rightColumn")
+        assert right is not None
+        # _changelog_browser 的祖先链中应包含 right（它被 add 到右栏）
+        ancestor = about_tab._changelog_browser.parentWidget()
+        while ancestor is not None:
+            if ancestor is right:
+                break
+            ancestor = ancestor.parentWidget()
+        assert ancestor is right, "更新日志应位于右栏容器内"
+
 
 class TestAboutTabFrozen:
     """打包态（PyInstaller frozen）回归测试。

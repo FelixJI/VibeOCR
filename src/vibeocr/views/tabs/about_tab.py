@@ -87,14 +87,15 @@ class AboutTab(QWidget):
         # 居中容器：把 stretch 放进 scroll 的视口里，而非 scroll 外层。
         # 原实现把 scroll 包在 HBox(addStretch + scroll + addStretch) 中，
         # 但 setWidgetResizable=True 时 scroll 会吞掉全部宽度，外层 stretch
-        # 失效，导致 720px 的 container 左对齐、右侧留下一大片空白。
-        # 这里让 scroll 全宽透明，container 包一层 HBox 左右各 addStretch，
+        # 失效。这里让 scroll 全宽透明，container 包一层 HBox 左右各 addStretch，
         # 宽屏下 container 才真正水平居中。
         scroll.setStyleSheet("QScrollArea { background: transparent; }")
 
+        # 左右两栏布局：左侧品牌/详细信息/上次更新耗时卡片，右侧更新日志 + 检查更新按钮。
+        # 容器宽度调到 980 以容纳两栏（旧单列布局 720px 过窄，两栏会挤）。
         container = QWidget()
-        container.setMaximumWidth(720)
-        container_layout = QVBoxLayout(container)
+        container.setMaximumWidth(980)
+        container_layout = QHBoxLayout(container)
         container_layout.setContentsMargins(
             theme.Spacing.xxl,
             theme.Spacing.xl,
@@ -103,25 +104,37 @@ class AboutTab(QWidget):
         )
         container_layout.setSpacing(theme.Spacing.lg)
 
-        # 品牌卡片
-        container_layout.addWidget(self._create_brand_card())
-        # 详细信息卡片
-        container_layout.addWidget(self._create_info_card())
-        # 更新日志卡片
-        container_layout.addWidget(self._create_changelog_card())
+        # 左栏：品牌卡片 + 详细信息卡片 + 上次更新耗时卡片（如有）
+        left_column = QWidget()
+        left_column.setObjectName("leftColumn")
+        left_layout = QVBoxLayout(left_column)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.setSpacing(theme.Spacing.lg)
+        left_layout.addWidget(self._create_brand_card())
+        left_layout.addWidget(self._create_info_card())
         # 上次更新耗时详情卡片（仅当存在 progress.json 时显示）
         timing_card = self._create_update_timing_card()
         if timing_card is not None:
-            container_layout.addWidget(timing_card)
+            left_layout.addWidget(timing_card)
+        left_layout.addStretch()
 
-        # 检查更新按钮
+        # 右栏：更新日志卡片 + 检查更新按钮
+        right_column = QWidget()
+        right_column.setObjectName("rightColumn")
+        right_layout = QVBoxLayout(right_column)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.setSpacing(theme.Spacing.lg)
+        right_layout.addWidget(self._create_changelog_card(), stretch=1)
+
+        # 检查更新按钮：右栏底部右对齐，与更新日志语义相邻
         update_btn = QPushButton("检查更新")
         update_btn.setFixedWidth(160)
         update_btn.setStyleSheet(theme.button_qss("primary"))
         update_btn.clicked.connect(self._on_check_update)
-        container_layout.addWidget(update_btn, alignment=Qt.AlignmentFlag.AlignCenter)
+        right_layout.addWidget(update_btn, alignment=Qt.AlignmentFlag.AlignRight)
 
-        container_layout.addStretch()
+        container_layout.addWidget(left_column, stretch=1)
+        container_layout.addWidget(right_column, stretch=1)
 
         # 视口内居中：HBox(左 stretch + container + 右 stretch)
         viewport = QWidget()
@@ -247,7 +260,9 @@ class AboutTab(QWidget):
 
         self._changelog_browser = QTextBrowser()
         self._changelog_browser.setOpenExternalLinks(True)
-        self._changelog_browser.setMaximumHeight(320)
+        # 更新日志位于右栏，让其随右栏自由伸展（不再设固定最大高度，旧版单列布局时的
+        # 320px 上限会压缩内容）。右栏整体填满可用高度，浏览器滚动条兜底超长内容。
+        self._changelog_browser.setMinimumHeight(280)
         self._changelog_browser.setFrameShape(QTextBrowser.Shape.NoFrame)
         self._changelog_browser.setStyleSheet("background: transparent;")
 
