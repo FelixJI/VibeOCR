@@ -13,6 +13,7 @@ import argparse
 import logging
 import os
 import sys
+import threading
 import time
 import traceback
 from typing import TYPE_CHECKING, cast
@@ -97,6 +98,28 @@ logger = logging.getLogger(__name__)
 
 class OCRWorkerError(Exception):
     """OCR Worker 错误"""
+
+
+def _poll_cancel_flag(
+    protocol, mgr, stop_event: threading.Event, poll_interval: float = 0.05
+) -> None:
+    """在批量 commit 期间后台轮询 SHM cancel flag。
+
+    worker 主循环在 mgr.commit() 内同步阻塞，MSG_BATCH_CANCEL 无法在 commit
+    期间被读取。本函数作为守护线程运行，检测到 SHM cancel flag 字节后调用
+    mgr.cancel()（在子批次边界生效），然后设置 stop_event 通知主线程。
+    正常结束（commit 完成）时由调用方 set stop_event 终止本循环。
+    """
+    while not stop_event.is_set():
+        try:
+            if protocol.is_cancelled():
+                mgr.cancel()
+                stop_event.set()
+                return
+        except Exception:
+            # is_cancelled 读取异常不应崩溃轮询线程
+            pass
+        stop_event.wait(poll_interval)
 
 
 def run_worker(shm_name: str, shm_size: int, use_gpu: bool) -> None:
@@ -515,11 +538,25 @@ def run_worker(shm_name: str, shm_size: int, use_gpu: bool) -> None:
 
                             mgr.progress_callback = progress_callback
 
-                            # 执行批量处理（带流式回调）
-                            results = mgr.commit(
-                                preprocess_options,
-                                file_completed_callback=on_file_done,
+                            # 启动 cancel flag 轮询线程：commit 期间主循环阻塞，
+                            # 无法读取 MSG_BATCH_CANCEL。轮询线程检测到 SHM cancel
+                            # flag 字节后调用 mgr.cancel()（在子批次边界生效）。
+                            _cancel_stop = threading.Event()
+                            _cancel_thread = threading.Thread(
+                                target=_poll_cancel_flag,
+                                args=(protocol, mgr, _cancel_stop),
+                                daemon=True,
                             )
+                            _cancel_thread.start()
+                            try:
+                                # 执行批量处理（带流式回调）
+                                results = mgr.commit(
+                                    preprocess_options,
+                                    file_completed_callback=on_file_done,
+                                )
+                            finally:
+                                _cancel_stop.set()
+                                protocol.clear_cancel_flag()
 
                             # 发送最终汇总结果
                             results_data = serialize_batch_result(results)
