@@ -257,3 +257,85 @@ class TestAtomicWorkerReservation:
         mgr._release_worker(info, success=True)
         assert info.state == WorkerState.IDLE
         assert info.last_active > 0
+
+
+class TestForceRestartSemantics:
+    """健康检查的 stale worker 必须被真实 stop+start，而非只改 IDLE。
+
+    根因：_try_restart() 只要 is_ready 为真就立即返回 True，不 stop/start。
+    健康检查把 stale-but-alive worker 交给 _restart_worker → _try_restart，
+    后者直接返回 True，管理器标为 IDLE，但进程从未真正重启。
+    """
+
+    def test_force_restart_calls_stop_and_start_even_when_ready(self):
+        """is_ready 为真时，force_restart 仍执行 stop+start"""
+        import threading
+        from unittest.mock import MagicMock
+
+        from vibeocr.services.ocr_worker_process import OCRWorkerProcess
+
+        proc = OCRWorkerProcess.__new__(OCRWorkerProcess)
+        proc.worker_id = 0
+        proc._ready = True  # is_ready 为真
+        proc._restart_lock = threading.Lock()
+        proc._job_guard = None
+        proc.protocol = None
+        proc._stdout_thread = None
+        proc.process = MagicMock()
+        proc.process.poll.return_value = None  # running
+
+        stop_called = []
+        start_called = []
+        proc.stop = lambda *a, **k: stop_called.append(True)
+        proc.start = lambda *a, **k: start_called.append(True)
+
+        result = proc.force_restart(reason="health_check")
+        assert result is True
+        assert len(stop_called) == 1, "force_restart 必须调用 stop"
+        assert len(start_called) == 1, "force_restart 必须调用 start"
+
+    def test_try_restart_skips_when_ready(self):
+        """_try_restart（非强制）在 is_ready 时跳过 stop/start"""
+        import threading
+        from unittest.mock import MagicMock
+
+        from vibeocr.services.ocr_worker_process import OCRWorkerProcess
+
+        proc = OCRWorkerProcess.__new__(OCRWorkerProcess)
+        proc._ready = True
+        proc.process = MagicMock()
+        proc.process.poll.return_value = None  # is_running True
+        proc._restart_lock = threading.Lock()
+        proc._job_guard = None
+        proc.protocol = None
+        proc._stdout_thread = None
+
+        stop_called = []
+        proc.stop = lambda *a, **k: stop_called.append(True)
+
+        result = proc._try_restart(timeout=1.0)
+        assert result is True
+        assert len(stop_called) == 0, "_try_restart 在 ready 时不应 stop"
+
+    def test_health_check_uses_force_restart(self):
+        """_perform_health_check 对 stale worker 调用 _force_restart_worker"""
+        from unittest.mock import MagicMock, patch
+
+        from vibeocr.services.worker_manager import WorkerInfo
+
+        mgr = WorkerManager(max_workers=1, use_gpu=False, auto_restart=True)
+        mock_process = MagicMock()
+        mock_process.is_running = True  # 进程存活
+        info = WorkerInfo(worker_id=0, process=mock_process, state=WorkerState.BUSY)
+        # 模拟卡死：last_active 远超阈值
+        info.last_active = time.time() - (WorkerManager.STALE_THRESHOLD + 60)
+        mgr._workers.append(info)
+
+        forced = []
+        with patch.object(
+            mgr, "_force_restart_worker", side_effect=lambda w, reason="": forced.append((w, reason))
+        ):
+            mgr._perform_health_check()
+
+        assert len(forced) == 1, "stale worker 应被 force_restart"
+        assert forced[0][1] == "stale_health_check"

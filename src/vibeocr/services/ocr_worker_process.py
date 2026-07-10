@@ -733,6 +733,33 @@ class OCRWorkerProcess:
                 logger.error(f"[主进程] Worker {self.worker_id} 重启失败: {e}")
                 return False
 
+    def force_restart(
+        self, reason: str = "", timeout: float = Constants.Timeout.RESTART
+    ) -> bool:
+        """强制重启 Worker（总是 stop+start，即使 is_ready）。
+
+        用于健康检查发现 stale-but-alive worker、或抢占被后台任务阻塞的 worker。
+        与 _try_restart 的区别：后者在 is_ready 时直接返回 True（不重启），
+        这会导致"卡死但进程存活"的 worker 被误判为已重启并重新接单。
+        force_restart 无条件 stop+start，确保协议状态被重建。
+        """
+        with self._restart_lock:
+            try:
+                logger.warning(
+                    f"[主进程] 强制重启 Worker {self.worker_id}（原因: {reason}）..."
+                )
+                self.stop()
+                # 重新生成共享内存名称（避免与旧内存冲突）
+                unique_id = uuid.uuid4().hex[:16]
+                self.data_shm_name = f"vibeocr_data_{unique_id}_{self.worker_id}"
+                self.shm_name = self.data_shm_name
+                self.start(timeout=timeout)
+                logger.debug(f"[主进程] Worker {self.worker_id} 强制重启成功")
+                return True
+            except Exception as e:
+                logger.error(f"[主进程] Worker {self.worker_id} 强制重启失败: {e}")
+                return False
+
     def preload_pipelines(
         self,
         pipelines: list[str],

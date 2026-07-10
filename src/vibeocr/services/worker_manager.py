@@ -406,10 +406,14 @@ class WorkerManager:
         return None
 
     def _restart_worker(self, worker_info: WorkerInfo) -> bool:
-        """重启指定 Worker
+        """重启指定 Worker（仅在 worker 未就绪时真正重启）
 
         委托给 OCRWorkerProcess._try_restart() 执行，
-        内部有锁保护，防止并发重启产生重复子进程。
+        后者在 is_ready 时直接返回 True（不 stop/start）。
+        适用于崩溃恢复（进程已退出，is_ready=False）。
+
+        注意：健康检查发现 stale-but-alive worker 时不应使用此方法
+        （is_ready=True 会导致跳过重启），应使用 _force_restart_worker。
 
         Args:
             worker_info: 要重启的 Worker
@@ -429,6 +433,29 @@ class WorkerManager:
             logger.error(f"Worker {worker_info.worker_id} 重启失败")
         return success
 
+    def _force_restart_worker(
+        self, worker_info: WorkerInfo, reason: str = ""
+    ) -> bool:
+        """强制重启 worker（健康检查/抢占专用）。
+
+        调用 force_restart（总是 stop+start，即使 is_ready），而非 _try_restart
+        （后者在 is_ready 时跳过重启）。这确保 stale-but-alive worker 的
+        协议状态被重建，避免误报"重启成功"后继续消费旧响应。
+        """
+        worker_info.state = WorkerState.STARTING
+        success = worker_info.process.force_restart(
+            reason=reason, timeout=self.start_timeout
+        )
+        if success:
+            worker_info.state = WorkerState.IDLE
+            worker_info.last_error = None
+            worker_info.last_active = time.time()
+            logger.debug(f"Worker {worker_info.worker_id} 强制重启成功")
+        else:
+            worker_info.state = WorkerState.ERROR
+            logger.error(f"Worker {worker_info.worker_id} 强制重启失败")
+        return success
+
     def set_task_queued_callback(self, callback: Callable) -> None:
         """设置任务排队通知回调"""
         self._task_queued_callback = callback
@@ -440,35 +467,6 @@ class WorkerManager:
         调用立即返回,而不是继续等待最多 5 分钟。
         """
         self._cancel_event = event
-
-    def _preempt_busy_worker(self) -> WorkerInfo | None:
-        """抢占被后台任务（如预加载）阻塞的 Worker
-
-        当识别任务需要 Worker 但所有 Worker 都忙于长时间后台操作时，
-        强制重启一个 Worker 来释放给识别任务使用。
-
-        Returns:
-            被释放的 WorkerInfo，如果没有可抢占的 Worker 则返回 None
-        """
-        target = None
-        with self._workers_lock:
-            for worker_info in self._workers:
-                if worker_info.state == WorkerState.BUSY and worker_info.process.busy:
-                    target = worker_info
-                    target.state = WorkerState.STOPPING
-                    break
-
-        if target is None:
-            return None
-
-        logger.warning(
-            f"Worker {target.worker_id} 正忙于后台操作，强制重启以释放给识别任务"
-        )
-
-        if self._restart_worker(target):
-            return target
-
-        return None
 
     def _recover_workers(self) -> None:
         """恢复所有异常的 Worker"""
@@ -542,9 +540,11 @@ class WorkerManager:
                         )
                         workers_to_restart.append(worker_info)
 
-        # 在锁外执行重启（重启耗时较长，避免阻塞其他操作）
+        # 在锁外执行强制重启（重启耗时较长，避免阻塞其他操作）
+        # 必须用 _force_restart_worker 而非 _restart_worker：后者在 is_ready
+        # 时跳过 stop/start，导致 stale-but-alive worker 被误报为重启成功
         for worker_info in workers_to_restart:
-            self._restart_worker(worker_info)
+            self._force_restart_worker(worker_info, reason="stale_health_check")
 
     def get_stats(self) -> dict:
         """获取统计信息
