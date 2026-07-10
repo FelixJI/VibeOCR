@@ -718,3 +718,78 @@ def _mk_result(text: str = "ok"):
     from vibeocr.models.ocr_result import OCRResult
 
     return OCRResult(raw_text=text, text_blocks=[])
+
+
+@pytest.mark.skipif(
+    not HAS_SUBPROCESS_MODULES, reason="subprocess modules not available"
+)
+class TestBatchCancelIndependentChannel:
+    """批量取消通过 SHM cancel flag 独立通道，不经过 WorkerManager 调度。"""
+
+    def test_request_batch_cancel_writes_cancel_flag_directly(self):
+        """request_batch_cancel 直接写 SHM cancel flag，不调用 WorkerManager.execute"""
+        from unittest.mock import MagicMock
+
+        proc = OCRWorkerProcess.__new__(OCRWorkerProcess)
+        proc.worker_id = 0
+        proc.busy = False
+        proc._ready = True  # is_ready 为 True
+        mock_popen = MagicMock()
+        mock_popen.poll.return_value = None  # running
+        proc.process = mock_popen
+        mock_proto = MagicMock()
+        mock_proto.is_cancelled.return_value = False
+        proc.protocol = mock_proto
+
+        proc.request_batch_cancel()
+
+        # 应直接调用 set_cancel_flag，不经过 execute
+        mock_proto.set_cancel_flag.assert_called_once()
+
+    def test_request_batch_cancel_skips_when_not_ready(self):
+        """worker 未就绪时 request_batch_cancel 不抛异常，静默返回"""
+        from unittest.mock import MagicMock
+
+        proc = OCRWorkerProcess.__new__(OCRWorkerProcess)
+        proc.worker_id = 0
+        proc.protocol = MagicMock()
+        proc._ready = False  # is_ready 为 False
+        proc.process = None
+
+        # 不应抛异常
+        proc.request_batch_cancel()
+        # 未就绪时不应写 cancel flag
+        proc.protocol.set_cancel_flag.assert_not_called()
+
+    def test_batch_cancel_does_not_call_worker_manager_execute(self):
+        """OCRServiceSubprocess.batch_cancel 不经过 _paddlex_manager.execute
+
+        旧实现会因 worker busy 而进入最长 300 秒等待，冻结 UI。
+        修复后应直接向 busy worker 写 cancel flag。
+        """
+        from unittest.mock import MagicMock
+
+        from vibeocr.services.worker_manager import WorkerInfo, WorkerState
+
+        # Reset singleton
+        OCRServiceSubprocess._instance = None
+        svc = OCRServiceSubprocess(max_workers=1, use_gpu=False, auto_start=False)
+        svc._initialized = True
+
+        mock_manager = MagicMock()
+        # 模拟一个 busy worker（commit 正在运行）
+        mock_proc = MagicMock()
+        mock_proc.is_ready = True
+        mock_proc.busy = True
+        mock_manager._workers = [WorkerInfo(worker_id=0, process=mock_proc, state=WorkerState.BUSY)]
+        svc._paddlex_manager = mock_manager
+
+        svc.batch_cancel()
+
+        # 不应调用 execute（旧路径会因 busy 而阻塞）
+        mock_manager.execute.assert_not_called()
+        # 应直接向 busy worker 写 cancel flag
+        mock_proc.request_batch_cancel.assert_called_once()
+
+        svc._initialized = False
+        OCRServiceSubprocess._instance = None

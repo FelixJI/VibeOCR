@@ -1033,6 +1033,14 @@ class OCRWorkerProcess:
             reported_ids: set[str] = set()
             start_time = time.time()
             while True:
+                # 检查取消标志（独立控制通道，不依赖消息读取）
+                if protocol.is_cancelled():
+                    logger.info(
+                        f"Worker {self.worker_id} 批量处理被取消，返回已收集的 {len(all_results)} 个结果"
+                    )
+                    protocol.clear_cancel_flag()
+                    return all_results
+
                 remaining_timeout = timeout - (time.time() - start_time)
                 if remaining_timeout <= 0:
                     raise OCRWorkerProcessError(f"批量处理超时 ({timeout}s)")
@@ -1098,6 +1106,21 @@ class OCRWorkerProcess:
 
         finally:
             self.busy = False
+
+    def request_batch_cancel(self) -> None:
+        """请求取消正在进行的批量处理（独立控制通道）。
+
+        直接写 SHM cancel flag 字节，不经过 WorkerManager 调度，
+        也不与 _send_batch_commit 的消息读写竞争同一通道。
+        worker 端的后台轮询线程检测到此标志后调用 mgr.cancel()。
+        _send_batch_commit 的读循环也会每轮检查此标志并提前返回部分结果。
+        """
+        protocol = self.protocol
+        if protocol is None or not self.is_ready:
+            logger.debug(f"Worker {self.worker_id} 未就绪，无法发送取消")
+            return
+        protocol.set_cancel_flag()
+        logger.debug(f"Worker {self.worker_id} 批量取消标志已设置")
 
     def _send_batch_cancel(self, timeout: float = Constants.Timeout.SHUTDOWN) -> bool:
         """发送批量取消请求

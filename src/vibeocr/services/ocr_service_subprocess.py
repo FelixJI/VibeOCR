@@ -785,13 +785,20 @@ class OCRServiceSubprocess:
         )
 
     def batch_cancel(self):
-        """取消批量处理"""
+        """取消批量处理（通过独立 SHM cancel flag 通道，不阻塞 GUI）。
+
+        直接向正在运行的 worker 写 cancel flag，不经过 WorkerManager.execute
+        （后者会因 worker busy 而进入最长 300 秒等待，冻结 UI）。
+        cancel flag 是 SHM 头部独立字节，不与消息数据竞争同一通道。
+        """
         if not self._initialized:
             return
 
-        # 仅取消 PaddleX Worker（MinerU 不走 WorkerManager）
+        # 仅取消 PaddleX Worker（MinerU 不走 WorkerManager，由其自身 cancel 处理）
         with contextlib.suppress(Exception):
-            self._paddlex_manager.execute(lambda w: w._send_batch_cancel())
+            for worker_info in self._paddlex_manager._workers:
+                if worker_info.process.busy and worker_info.process.is_ready:
+                    worker_info.process.request_batch_cancel()
 
     def set_task_queued_callback(self, callback: Callable) -> None:
         """设置任务排队通知回调（透传到 PaddleX WorkerManager）"""
