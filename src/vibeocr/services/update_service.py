@@ -581,12 +581,27 @@ async def await_dialog(dialog: QDialog) -> int:
 
     ``QDialog`` 及其子类（含 ``QMessageBox``）都有 ``finished(int)`` 信号，
     关闭路径（点按钮、标题栏 X、ESC）都会触发它，故 Future 总能 resolve。
+
+    防护：_on_finished 检查 fut.done()，避免 Future 被取消后迟到的
+    finished 信号 set_result 到已完成 Future（InvalidStateError）；
+    finally 中断开信号连接避免泄漏。
     """
     loop = asyncio.get_event_loop()
     fut: asyncio.Future[int] = loop.create_future()
-    dialog.finished.connect(fut.set_result)
+
+    def _on_finished(result_code: int) -> None:
+        if not fut.done():
+            fut.set_result(result_code)
+
+    dialog.finished.connect(_on_finished)
     dialog.show()
-    return await fut
+    try:
+        return await fut
+    finally:
+        try:
+            dialog.finished.disconnect(_on_finished)
+        except (RuntimeError, TypeError, AttributeError):
+            pass
 
 
 class UpdateDialog(QDialog):

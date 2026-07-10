@@ -208,3 +208,126 @@ class TestQasyncFailFast:
             loop.close()
         except Exception:
             pass
+
+
+class TestAsyncTaskDrainAndError:
+    """AsyncTaskRunner drain + on_error + async_slot 错误观测。
+
+    根因：cancel_all 只 cancel 不 await（无 drain）；run_coroutine 不透传
+    on_error；async_slot 用 ensure_future + WeakSet，异常成为未检索任务异常。
+    """
+
+    def test_cancel_all_async_drains_tasks(self):
+        """cancel_all_async 取消后任务真正完成（drained）"""
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            runner = AsyncTaskRunner()
+
+            async def driver():
+                async def long_coro():
+                    await asyncio.sleep(10)
+
+                t1 = runner.run(long_coro())
+                t2 = runner.run(long_coro())
+                assert runner.active_count == 2
+                # cancel_all_async 应 drain（await 所有任务完成）
+                await runner.cancel_all_async()
+                assert all(t.done() for t in (t1, t2))
+                assert runner.active_count == 0
+
+            loop.run_until_complete(asyncio.wait_for(driver(), timeout=2.0))
+        finally:
+            loop.close()
+
+    def test_run_coroutine_forwards_on_error(self):
+        """run_coroutine 透传 on_error 回调"""
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            errors = []
+
+            async def failing():
+                raise ValueError("test error")
+
+            run_coroutine(failing(), on_error=lambda e: errors.append(e), timeout=0.5)
+
+            async def pump():
+                await asyncio.sleep(0.3)
+                runner = get_async_runner()
+                for t in list(runner._tasks):
+                    with contextlib_suppress():
+                        await t
+
+            loop.run_until_complete(asyncio.wait_for(pump(), timeout=2.0))
+            assert len(errors) == 1
+            assert isinstance(errors[0], ValueError)
+        finally:
+            loop.close()
+
+    def test_async_slot_logs_exception(self, caplog):
+        """async_slot 中协程抛异常应被记录，不留未检索异常"""
+        import logging
+
+        from vibeocr.utils.qt_async import async_slot
+
+        @async_slot()
+        async def failing():
+            raise ValueError("slot error")
+
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            with caplog.at_level(logging.ERROR):
+                failing()
+                # 让循环处理任务
+                loop.run_until_complete(asyncio.sleep(0.1))
+            assert any("slot error" in r.message for r in caplog.records)
+        finally:
+            loop.close()
+
+
+class TestAwaitDialogFutureGuard:
+    """await_dialog Future 防护：取消后迟到 finished 不 set_result。"""
+
+    def test_cancelled_future_ignores_late_finished(self):
+        """Future 被取消后，对话框 finished 不再 set_result（不抛 InvalidStateError）"""
+        from unittest.mock import MagicMock
+
+        from vibeocr.services.update_service import await_dialog
+
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+
+            async def test():
+                dialog = MagicMock()
+                # 模拟 finished 信号的 connect/disconnect
+                connected_cb = []
+
+                def connect(cb):
+                    connected_cb.append(cb)
+
+                dialog.finished.connect = connect
+                dialog.finished.disconnect = lambda *a: None
+                dialog.show = MagicMock()
+
+                task = loop.create_task(await_dialog(dialog))
+                await asyncio.sleep(0.05)
+                # 取消任务（模拟超时/外部取消）
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+                # 迟到的 finished 不应抛 InvalidStateError
+                # （await_dialog 的 _on_finished 应检查 fut.done()）
+                if connected_cb:
+                    try:
+                        connected_cb[0](1)
+                    except Exception as e:
+                        pytest.fail(f"迟到 finished 不应抛异常: {e}")
+
+            loop.run_until_complete(asyncio.wait_for(test(), timeout=2.0))
+        finally:
+            loop.close()

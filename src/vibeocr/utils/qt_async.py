@@ -77,6 +77,7 @@ def run_coroutine(
     coro: Coroutine,
     callback: Callable | None = None,
     timeout: float | None = None,
+    on_error: Callable[[Exception], None] | None = None,
 ) -> None:
     """在 Qt 环境中运行协程
 
@@ -89,12 +90,13 @@ def run_coroutine(
         callback: 可选的完成回调函数，接收协程返回值作为参数
         timeout: 可选超时时间（秒）。None 时无超时（依赖协程底层自管）。
             建议为可能长时间阻塞的协程传入兜底超时，避免 UI 协程永久挂起。
+        on_error: 可选的错误回调函数，接收异常作为参数。
     """
     logger.debug(
         f"[run_coroutine] 开始执行协程 (timeout={timeout})..."
     )
     runner = get_async_runner()
-    runner.run(coro, on_complete=callback, timeout=timeout)
+    runner.run(coro, on_complete=callback, on_error=on_error, timeout=timeout)
 
 
 def async_slot(*types):
@@ -121,6 +123,16 @@ def async_slot(*types):
             # 存储引用以防止垃圾回收
             _async_tasks.add(task)
             task.add_done_callback(_async_tasks.discard)
+
+            # 错误观测：记录异常，避免 "Task exception was never retrieved"
+            def _log_exception(t):
+                if t.cancelled():
+                    return
+                exc = t.exception()
+                if exc is not None:
+                    logger.error("async_slot 协程异常: %s", exc, exc_info=exc)
+
+            task.add_done_callback(_log_exception)
 
         # 添加 Qt 槽信息（用于 PySide6 元对象系统）
         wrapper.__signature__ = getattr(async_func, "__signature__", None)  # type: ignore[attr-defined]
@@ -207,10 +219,27 @@ class AsyncTaskRunner:
         return task
 
     def cancel_all(self) -> None:
-        """取消所有运行中的任务"""
+        """取消所有运行中的任务（同步，不 drain）。
+
+        注意：此方法只 cancel 不 await，取消的任务可能仍 pending。
+        在 async 上下文中应使用 cancel_all_async() 确保 drain。
+        """
         for task in self._tasks:
             if not task.done():
                 task.cancel()
+        self._tasks.clear()
+
+    async def cancel_all_async(self) -> None:
+        """取消所有运行中的任务并等待其完成（drain）。
+
+        与 cancel_all 的区别：此方法 await 所有被取消的任务，确保它们
+        真正完成（CancelledError 被处理），避免残留 pending 任务。
+        """
+        tasks = [t for t in self._tasks if not t.done()]
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
         self._tasks.clear()
 
     @property
