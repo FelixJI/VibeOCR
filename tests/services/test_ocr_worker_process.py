@@ -793,3 +793,117 @@ class TestBatchCancelIndependentChannel:
 
         svc._initialized = False
         OCRServiceSubprocess._instance = None
+
+
+@pytest.mark.skipif(
+    not HAS_SUBPROCESS_MODULES, reason="subprocess modules not available"
+)
+class TestStopShutdownOrder:
+    """stop() 优雅关闭顺序：MSG_SHUTDOWN 先于 guard.close，join stdout reader。
+
+    根因：旧 stop() 先关 Job guard（内核 kill 子进程），再发 MSG_SHUTDOWN，
+    后者已无机会执行。Job Object 应作为超时兜底，不作为第一步。
+    """
+
+    def test_stop_sends_shutdown_before_guard_close(self):
+        """stop 的调用顺序：write_message(SHUTDOWN) 在 guard.close() 之前"""
+        from unittest.mock import MagicMock
+
+        from vibeocr.services.ocr_worker_process import MSG_SHUTDOWN, OCRWorkerProcess
+
+        proc = OCRWorkerProcess.__new__(OCRWorkerProcess)
+        proc.worker_id = 0
+        proc._job_guard = MagicMock()
+        mock_popen = MagicMock()
+        mock_popen.poll.return_value = None  # running
+        proc.process = mock_popen
+        proc.protocol = MagicMock()
+        proc._ready = True
+        proc.busy = False
+        proc._stdout_thread = None
+
+        call_order = []
+        proc.protocol.write_message = lambda *a, **k: call_order.append("shutdown_msg")
+        proc._job_guard.close = lambda: call_order.append("guard_close")
+        proc.process.wait = lambda timeout=0: call_order.append("wait")
+        proc.protocol.unlink = lambda: call_order.append("unlink")
+        proc.protocol.close = lambda: call_order.append("proto_close")
+
+        proc.stop(timeout=0.5)
+
+        # MSG_SHUTDOWN 必须在 guard_close 之前
+        assert "shutdown_msg" in call_order
+        assert "guard_close" in call_order
+        assert call_order.index("shutdown_msg") < call_order.index("guard_close"), (
+            f"shutdown 必须先于 guard close，实际顺序: {call_order}"
+        )
+
+    def test_stop_joins_stdout_reader(self):
+        """stop 应 join stdout reader 线程"""
+        from unittest.mock import MagicMock
+
+        from vibeocr.services.ocr_worker_process import OCRWorkerProcess
+
+        proc = OCRWorkerProcess.__new__(OCRWorkerProcess)
+        proc.worker_id = 0
+        proc._job_guard = None
+        mock_popen = MagicMock()
+        mock_popen.poll.return_value = 0  # already exited
+        proc.process = mock_popen
+        proc.protocol = MagicMock()
+        proc._ready = False
+        proc.busy = False
+        mock_reader = MagicMock()
+        mock_reader.is_alive.return_value = False
+        proc._stdout_thread = mock_reader
+
+        proc.stop(timeout=0.5)
+
+        mock_reader.join.assert_called_once()
+
+    def test_stop_closes_guard_even_when_process_already_exited(self):
+        """进程已退出时 stop 仍关闭 guard（若存在）"""
+        from unittest.mock import MagicMock
+
+        from vibeocr.services.ocr_worker_process import OCRWorkerProcess
+
+        proc = OCRWorkerProcess.__new__(OCRWorkerProcess)
+        proc.worker_id = 0
+        mock_guard = MagicMock()
+        proc._job_guard = mock_guard
+        mock_popen = MagicMock()
+        mock_popen.poll.return_value = 0  # exited
+        proc.process = mock_popen
+        proc.protocol = MagicMock()
+        proc._ready = False
+        proc.busy = False
+        proc._stdout_thread = None
+
+        proc.stop(timeout=0.5)
+
+        mock_guard.close.assert_called_once()
+        assert proc._job_guard is None
+
+    def test_stop_clears_protocol_and_state(self):
+        """stop 清理 protocol/process/_ready/busy"""
+        from unittest.mock import MagicMock
+
+        from vibeocr.services.ocr_worker_process import OCRWorkerProcess
+
+        proc = OCRWorkerProcess.__new__(OCRWorkerProcess)
+        proc.worker_id = 0
+        proc._job_guard = None
+        mock_popen = MagicMock()
+        mock_popen.poll.return_value = 0
+        proc.process = mock_popen
+        proc.protocol = MagicMock()
+        proc._ready = True
+        proc.busy = True
+        proc._stdout_thread = None
+
+        proc.stop(timeout=0.5)
+
+        assert proc.protocol is None
+        assert proc.process is None
+        assert proc._ready is False
+        assert proc.busy is False

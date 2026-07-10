@@ -1260,40 +1260,47 @@ class OCRWorkerProcess:
             return False
 
     def stop(self, timeout: float = Constants.Timeout.SHUTDOWN) -> None:
-        """停止 Worker 进程
+        """停止 Worker 进程（优雅关闭顺序）。
 
-        Args:
-            timeout: 等待进程退出的超时时间（秒）
+        顺序：发 MSG_SHUTDOWN → 有界 wait → 超时才 kill/关 guard → 清 SHM → join reader。
+        Job Object guard 保留为超时兜底与父进程崩溃保护，不作为第一步
+        （旧实现先关 guard 导致内核 kill 子进程，MSG_SHUTDOWN 无机会执行）。
         """
-        # 先关闭 Job 守卫：触发内核 kill 子进程，使后续 wait 立即返回
-        if self._job_guard is not None:
-            self._job_guard.close()
-            self._job_guard = None
-
-        if self.process is None:
-            return
-
-        logger.debug(f"停止 Worker {self.worker_id}...")
-
-        # 尝试发送关闭信号
+        # 1. 先发 SHUTDOWN 消息，给 worker 优雅退出机会
         if self.protocol and self.is_running:
             with contextlib.suppress(SharedMemoryProtocolError):
                 self.protocol.write_message(MSG_SHUTDOWN, b"", timeout=1.0)
 
-        # 等待进程退出
-        try:
-            self.process.wait(timeout=timeout)
-        except subprocess.TimeoutExpired:
-            # 强制终止
-            logger.warning(f"Worker {self.worker_id} 未响应，强制终止")
-            self.process.kill()
-            self.process.wait(timeout=1.0)
+        # 2. 有界等待进程退出
+        if self.process is not None:
+            try:
+                self.process.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                # 3. 超时才关 Job guard（内核 kill）或 kill
+                logger.warning(f"Worker {self.worker_id} 未响应 SHUTDOWN，强制终止")
+                if self._job_guard is not None:
+                    self._job_guard.close()
+                    self._job_guard = None
+                else:
+                    self.process.kill()
+                    self.process.wait(timeout=1.0)
 
-        # 关闭数据共享内存（先 unlink 再 close，因为 close 会置 shm=None）
+        # 4. 关闭 Job guard（若仍未关闭且存在）
+        if self._job_guard is not None:
+            self._job_guard.close()
+            self._job_guard = None
+
+        # 5. 清理共享内存（先 unlink 再 close，因为 close 会置 shm=None）
         if self.protocol:
             self.protocol.unlink()
             self.protocol.close()
             self.protocol = None
+
+        # 6. join stdout reader 线程（确定性清理，避免重启时旧 reader 残留）
+        # join 对已退出的线程会立即返回，故无需先检查 is_alive
+        if self._stdout_thread is not None:
+            self._stdout_thread.join(timeout=2.0)
+        self._stdout_thread = None
 
         self.process = None
         self._ready = False
