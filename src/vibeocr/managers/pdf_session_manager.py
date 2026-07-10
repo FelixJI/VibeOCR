@@ -92,6 +92,10 @@ class PdfSessionManager(QObject):
         self._ocr_running: bool = False
         self._ocr_cancelled: bool = False
         self._client = PdfBackendClient.instance()
+        # task generation：每类操作（OCR/mutate/export）启动时递增，
+        # 信号携带 task_id，done 槽只接受当前代，避免旧任务的迟到信号
+        # 清掉新任务状态（ABA/代际竞态）。
+        self._task_generation: int = 0
 
     # ---- 属性 -----------------------------------------------------------
 
@@ -353,9 +357,13 @@ class PdfSessionManager(QObject):
         if session is None:
             return
         self._cancel_mutate_worker()
+        # 递增 task generation，使旧 runner 的迟到信号被 done 槽丢弃
+        self._task_generation += 1
+        current_task_id = self._task_generation
         worker = PdfIpcMutateWorker(
             self._client, session.session_id, op, params
         )
+        worker._task_id = current_task_id  # type: ignore[attr-defined]
         worker.progress.connect(self._on_mutate_progress)
         worker.page_done.connect(self._on_mutate_page_done)
         worker.all_done.connect(self._on_mutate_all_done)
@@ -616,7 +624,20 @@ class PdfSessionManager(QObject):
         if file_path:
             self.mutate_done.emit(file_path, {"page": page_index, "payload": payload})
 
-    def _on_mutate_all_done(self, session_id: str, diff: object, extra: object) -> None:
+    def _on_mutate_all_done(
+        self, session_id: str, diff: object, extra: object, task_id: int = 0
+    ) -> None:
+        # task_id 默认 0 时从 sender 读取（真实信号连接路径）
+        if task_id == 0:
+            sender = self.sender()
+            if sender is not None and hasattr(sender, "_task_id"):
+                task_id = sender._task_id  # type: ignore[attr-defined]
+        # 只接受当前代的信号，丢弃旧任务的迟到信号
+        if task_id != 0 and task_id != self._task_generation:
+            logger.debug(
+                f"忽略旧任务 task_id={task_id} 的迟到 mutate all_done（当前代={self._task_generation}）"
+            )
+            return
         self._mutate_worker = None
         file_path = self._path_for_session_id(session_id)
         if file_path is None:
@@ -693,6 +714,9 @@ class PdfSessionManager(QObject):
         session.reset_ocr_stats()
         self._ocr_running = True
         self._ocr_cancelled = False
+        # 递增 task generation，使旧 runner 的迟到信号被 done 槽丢弃
+        self._task_generation += 1
+        current_task_id = self._task_generation
 
         # 后台线程编排 OCR 流程
         from PySide6.QtCore import QThread
@@ -703,10 +727,10 @@ class PdfSessionManager(QObject):
         class _OcrRunner(QThread):
             page_done = Signal(str, int, object)
             progress = Signal(str, int, int)
-            all_done = Signal(str, int, int)
+            all_done = Signal(str, int, int, int)  # session_id, success, fail, task_id
             failed = Signal(str, str)
 
-            def __init__(self, mgr, sid, pages, opts, sdict, overwrite_):
+            def __init__(self, mgr, sid, pages, opts, sdict, overwrite_, task_id):
                 super().__init__()
                 self._mgr = mgr
                 self._sid = sid
@@ -714,6 +738,7 @@ class PdfSessionManager(QObject):
                 self._opts = opts
                 self._sdict = sdict
                 self._overwrite = overwrite_
+                self._task_id = task_id
                 self._cancelled = False
                 self._success = 0
                 self._fail = 0
@@ -727,7 +752,7 @@ class PdfSessionManager(QObject):
 
         self._ocr_worker = _OcrRunner(
             self, session.session_id, page_indices, ocr_options_ref,
-            settings_dict, overwrite,
+            settings_dict, overwrite, current_task_id,
         )
         self._ocr_worker.page_done.connect(self._on_ocr_page_done_signal)
         self._ocr_worker.progress.connect(self._on_ocr_progress_signal)
@@ -885,7 +910,7 @@ class PdfSessionManager(QObject):
             session.pdf_document = mirror_to_doc(full)
         except PdfBackendError as e:
             logger.error("OCR 后刷新 model 失败: %s", e)
-        runner.all_done.emit(session_id, success, fail)
+        runner.all_done.emit(session_id, success, fail, runner._task_id)
 
     def _on_ocr_page_done_signal(self, session_id: str, page_index: int, result: object) -> None:
         file_path = self._path_for_session_id(session_id)
@@ -897,7 +922,15 @@ class PdfSessionManager(QObject):
         if file_path:
             self.ocr_progress.emit(file_path, current, total)
 
-    def _on_ocr_all_done_signal(self, session_id: str, success: int, fail: int) -> None:
+    def _on_ocr_all_done_signal(
+        self, session_id: str, success: int, fail: int, task_id: int = 0
+    ) -> None:
+        # 只接受当前代的信号，丢弃旧任务的迟到信号
+        if task_id != 0 and task_id != self._task_generation:
+            logger.debug(
+                f"忽略旧任务 task_id={task_id} 的迟到 all_done（当前代={self._task_generation}）"
+            )
+            return
         self._ocr_running = False
         self._ocr_worker = None
         file_path = self._path_for_session_id(session_id)

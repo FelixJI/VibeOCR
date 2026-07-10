@@ -210,3 +210,110 @@ class TestPdfSessionManagerProperties:
 
     def test_get_modified_sessions_empty(self, manager):
         assert manager.get_modified_sessions() == []
+
+
+# ---- task generation ---------------------------------------------------
+
+class TestPdfTaskGeneration:
+    """PDF runner task generation：旧任务的迟到信号不污染新任务状态。
+
+    根因：OCR/mutate 取消后可继续启动新任务，旧 runner 的 all_done 信号
+    无条件清 _ocr_running/_ocr_worker，把新任务状态清掉。引入递增
+    task generation，信号带 task_id，槽只接受当前代。
+    """
+
+    def test_ocr_done_with_stale_task_id_ignored(self):
+        """旧 task_id 的 all_done 信号被忽略，不清 _ocr_running/_ocr_worker"""
+        from unittest.mock import MagicMock
+
+        mgr = PdfSessionManager.__new__(PdfSessionManager)
+        mgr._task_generation = 2  # 当前代
+        mgr._ocr_running = True
+        mgr._ocr_worker = MagicMock()
+        mgr._sessions = {}
+        mgr._path_for_session_id = lambda sid: None  # 模拟无匹配
+
+        # 旧代（task_id=1）的 all_done 信号
+        mgr._on_ocr_all_done_signal("session_1", 5, 0, task_id=1)
+
+        # 当前代状态不被旧信号清掉
+        assert mgr._ocr_running is True
+        assert mgr._ocr_worker is not None
+
+    def test_ocr_done_with_current_task_id_accepted(self):
+        """当前 task_id 的 all_done 信号正常清理状态"""
+        from unittest.mock import MagicMock
+
+        mgr = PdfSessionManager.__new__(PdfSessionManager)
+        mgr._task_generation = 2
+        mgr._ocr_running = True
+        mgr._ocr_worker = MagicMock()
+        mgr._sessions = {}
+        mgr._path_for_session_id = lambda sid: None
+
+        mgr._on_ocr_all_done_signal("session_2", 5, 0, task_id=2)
+
+        assert mgr._ocr_running is False
+        assert mgr._ocr_worker is None
+
+    def test_ocr_done_without_task_id_accepted(self):
+        """无 task_id 参数（默认 0）时正常处理（向后兼容）"""
+        from unittest.mock import MagicMock
+
+        mgr = PdfSessionManager.__new__(PdfSessionManager)
+        mgr._task_generation = 1
+        mgr._ocr_running = True
+        mgr._ocr_worker = MagicMock()
+        mgr._sessions = {}
+        mgr._path_for_session_id = lambda sid: None
+
+        mgr._on_ocr_all_done_signal("session_1", 5, 0)
+
+        assert mgr._ocr_running is False
+        assert mgr._ocr_worker is None
+
+    def test_mutate_done_with_stale_task_id_ignored(self):
+        """旧 task_id 的 mutate all_done 信号被忽略，不清 _mutate_worker"""
+        from unittest.mock import MagicMock
+
+        mgr = PdfSessionManager.__new__(PdfSessionManager)
+        mgr._task_generation = 2
+        mgr._mutate_worker = MagicMock()
+        mgr._sessions = {}
+        mgr._path_for_session_id = lambda sid: None
+
+        mgr._on_mutate_all_done("session_1", MagicMock(), {}, task_id=1)
+
+        assert mgr._mutate_worker is not None
+
+    def test_task_generation_increments_on_start_ocr(self):
+        """start_ocr 递增 task generation"""
+        from unittest.mock import MagicMock, patch
+
+        mgr = PdfSessionManager.__new__(PdfSessionManager)
+        mgr._task_generation = 0
+        mgr._sessions = {}
+        mgr._active_path = None
+        mgr._ocr_service = None
+        mgr._ocr_running = False
+        mgr._ocr_cancelled = False
+        mgr._ocr_worker = None
+        mgr._client = MagicMock()
+
+        # active_session 为 None 时 start_ocr 直接返回，不递增
+        # 需要有 active session
+        mock_session = MagicMock()
+        mock_session.session_id = "sid1"
+        mock_session.reset_ocr_stats = MagicMock()
+        mgr._sessions["/fake.pdf"] = mock_session
+        mgr._active_path = "/fake.pdf"
+        mgr._ocr_service = MagicMock()
+        mgr._is_mineru_first_use = MagicMock(return_value=False)
+
+        with patch.object(mgr, "_cancel_ocr"):
+            try:
+                mgr.start_ocr([0, 1])
+            except Exception:
+                pass
+
+        assert mgr._task_generation == 1
