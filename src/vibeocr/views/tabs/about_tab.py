@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import logging
+import weakref
 from datetime import date
+from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QIcon
@@ -21,9 +23,15 @@ from PySide6.QtWidgets import (
 )
 
 from vibeocr import __version__, env_manager
-from vibeocr.services.env_config import GITHUB_REPO_BASE, GITEE_REPO_BASE
-from vibeocr.services.env_config import get_update_progress_path
+from vibeocr.services.env_config import (
+    GITEE_REPO_BASE,
+    GITHUB_REPO_BASE,
+    get_update_progress_path,
+)
 from vibeocr.ui import theme
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
 
@@ -75,9 +83,15 @@ def _load_update_progress() -> dict | None:
 class AboutTab(QWidget):
     """关于标签页，展示应用元信息。"""
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        status_callback: Callable[[str, int], None] | None = None,
+    ) -> None:
         super().__init__(parent)
+        self._status_callback = status_callback
         self._setup_ui()
+        self._register_update_state_listener()
 
     def _setup_ui(self) -> None:
         scroll = QScrollArea(self)
@@ -126,12 +140,14 @@ class AboutTab(QWidget):
         right_layout.setSpacing(theme.Spacing.lg)
         right_layout.addWidget(self._create_changelog_card(), stretch=1)
 
-        # 检查更新按钮：右栏底部右对齐，与更新日志语义相邻
+        # 检查更新按钮：右栏底部右对齐，与更新日志语义相邻。
+        # 存为实例属性：下载期间由 _apply_download_state 切换为「取消下载」。
         update_btn = QPushButton("检查更新")
         update_btn.setFixedWidth(160)
         update_btn.setStyleSheet(theme.button_qss("primary"))
         update_btn.clicked.connect(self._on_check_update)
         right_layout.addWidget(update_btn, alignment=Qt.AlignmentFlag.AlignRight)
+        self._update_btn = update_btn
 
         container_layout.addWidget(left_column, stretch=1)
         container_layout.addWidget(right_column, stretch=1)
@@ -395,7 +411,7 @@ class AboutTab(QWidget):
             from vibeocr.services.update_service import UpdateService
 
             app_dir = env_manager.get_project_root()
-            service = UpdateService(app_dir)
+            service = UpdateService(app_dir, status_callback=self._status_callback)
             await service.check_and_prompt(self)
 
         async def _safe():
@@ -411,3 +427,54 @@ class AboutTab(QWidget):
             _update_task = asyncio.ensure_future(_safe())  # noqa: RUF006
         except Exception:
             logger.exception("启动检查更新失败")
+
+    # ------------------------------------------------------------------
+    # 下载状态机：关于页按钮在 idle / downloading 间切换
+    # ------------------------------------------------------------------
+
+    def _register_update_state_listener(self) -> None:
+        """注册 UpdateService 状态监听器，按钮随下载状态切换文本/样式/槽。
+
+        用 weakref.ref(self) 包装回调：AboutTab 被回收时回调自动变 no-op，
+        无需 __del__（QWidget 的 __del__ 不可靠）。
+        """
+        from vibeocr.services.update_service import UpdateService
+
+        self_ref = weakref.ref(self)
+
+        def _on_state(state: str) -> None:
+            tab = self_ref()
+            if tab is not None:
+                tab._apply_download_state(state)
+
+        UpdateService.register_state_listener(_on_state)
+        self._state_listener_fn = _on_state
+
+    def _apply_download_state(self, state: str) -> None:
+        """根据下载状态切换按钮文本/样式/连接的槽函数。
+
+        - idle:        「检查更新」(primary) → check_and_prompt
+        - downloading: 「取消下载」(danger)  → UpdateService.request_cancel
+
+        用 blocking-signal + disconnect all + reconnect 切换槽，避免 idle 槽
+        与 downloading 槽同时连接导致点「取消下载」触发两套逻辑。
+        """
+        btn = self._update_btn
+        btn.blockSignals(True)
+        try:
+            btn.disconnect()
+        except (RuntimeError, TypeError):
+            # 按钮首次连接时尚无连接，disconnect 会抛 RuntimeError
+            pass
+        btn.blockSignals(False)
+
+        if state == "downloading":
+            btn.setText("取消下载")
+            btn.setStyleSheet(theme.button_qss("danger"))
+            from vibeocr.services.update_service import UpdateService
+
+            btn.clicked.connect(UpdateService.request_cancel)
+        else:
+            btn.setText("检查更新")
+            btn.setStyleSheet(theme.button_qss("primary"))
+            btn.clicked.connect(self._on_check_update)

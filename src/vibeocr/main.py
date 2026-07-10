@@ -523,7 +523,10 @@ def launch_application() -> int:
 
             log = logging.getLogger(__name__)
             try:
-                service = UpdateService(project_root)
+                service = UpdateService(
+                    project_root,
+                    status_callback=window.statusBar().showMessage,  # noqa: F821
+                )
                 await service.check_and_prompt(window)  # noqa: F821
             except Exception:
                 # ensure_future 会静默吞掉协程异常，这里必须显式捕获，

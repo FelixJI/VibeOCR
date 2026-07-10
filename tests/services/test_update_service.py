@@ -1121,74 +1121,410 @@ class TestDownloadCancel:
         assert zip_path.read_bytes() == zip_bytes
 
 
-class TestDownloadProgressDialogCancel:
-    """DownloadProgressDialog 取消 / 最小化 / 关闭 X 行为测试（pytest-qt）。
+class TestDownloadZipWithShaCancelAtShaStage:
+    """SHA 下载 / 校验阶段的取消检查点回归测试。
 
-    惯例：参照 tests/widgets/test_backend_choice_dialog.py —— qtbot.addWidget 后
-    直接调 handler（_on_cancel_clicked / closeEvent），用 qtbot.waitSignal 或
-    spy 断言信号。
+    核心修复：_download_zip_with_sha 原来只在 zip 流式下载循环检查取消，
+    SHA 下载（client.get(sha_url)）与 verify_sha256 启动前完全不检查。
+    用户在 zip 下完、校验开始时点取消，这两个 await 照样跑完。
+    现在在 SHA 下载前 + verify 启动前各补一个检查点。
     """
 
-    @pytest.fixture
-    def dialog(self, qtbot):
-        from vibeocr.services.update_service import DownloadProgressDialog
+    def _make_stream_response(self, status_code=200, chunks=None):
+        """构造可直接用于 ``async with`` 的伪流式响应（zip 下载部分正常完成）。"""
+        chunks = chunks or [b"zipdata"]
+        total = sum(len(c) for c in chunks)
 
-        dlg = DownloadProgressDialog()
-        qtbot.addWidget(dlg)
-        return dlg
+        async def _aiter():
+            for c in chunks:
+                yield c
 
-    def test_cancel_button_emits_cancel_requested(self, dialog, qtbot):
-        """点取消按钮 → emit cancel_requested（编排器据此 set 取消令牌）。"""
-        with qtbot.waitSignal(dialog.cancel_requested, timeout=1000):
-            dialog._on_cancel_clicked()
-        # 编排器连的是 cancel_event.set，这里只验证信号真发出去了
+        class _StreamCM:
+            def __init__(self) -> None:
+                self.status_code = status_code
+                self.headers = {"content-length": str(total)}
 
-    def test_cancel_button_marks_cancelling_state(self, dialog):
-        """取消后按钮立即置灰 + 文案改为「正在取消...」，给即时反馈。"""
-        assert dialog._cancel_btn.isEnabled() is True
-        dialog._on_cancel_clicked()
-        assert dialog._cancel_btn.isEnabled() is False
-        assert "正在取消" in dialog._cancel_btn.text()
-        assert "正在取消" in dialog._status_label.text()
+            async def __aenter__(self) -> "_StreamCM":
+                return self
 
-    def test_cancel_click_is_idempotent(self, dialog):
-        """重复点取消：按钮 disabled 后不再 emit（避免编排器端多次 set）。"""
-        emit_count = [0]
-        dialog.cancel_requested.connect(lambda: emit_count.__setitem__(0, emit_count[0] + 1))
-        dialog._on_cancel_clicked()
-        dialog._on_cancel_clicked()  # 第二次：按钮已 disabled，应直接 return
-        assert emit_count[0] == 1
+            async def __aexit__(self, *exc) -> bool:
+                return False
 
-    def test_close_event_triggers_cancel_not_destroy(self, dialog, qtbot):
-        """标题栏 X（closeEvent）：忽略事件 + emit cancel_requested。
+            def aiter_bytes(self, chunk_size: int = 65536):
+                return _aiter()
 
-        关键：不能让 Qt 直接销毁对话框（下载协程仍引用它），故 event 必须 ignore。
+        return _StreamCM()
+
+    def test_cancel_before_sha_download(self, tmp_path):
+        """zip 下完后、SHA 下载前 set cancel_event → 返回 cancelled 且 zip 被清理。
+
+        模拟：在最后一个 chunk yield 后 set cancel_event，使流式循环结束、
+        进入 SHA 下载前检查点时 event 已 set，从而在进入 client.get(sha) 前中止。
         """
-        from PySide6.QtGui import QCloseEvent
+        import asyncio
 
-        evt = QCloseEvent()
-        with qtbot.waitSignal(dialog.cancel_requested, timeout=1000):
-            dialog.closeEvent(evt)
-        assert evt.isAccepted() is False  # 必须忽略，防 Qt 销毁
+        from vibeocr.services.update_service import (
+            DOWNLOAD_REASON_CANCELLED,
+            _download_zip_with_sha,
+        )
 
-    def test_mark_finished_disables_cancel_button(self, dialog):
-        """下载结束（成功/失败/已取消）后取消入口禁用 + 隐藏，防误触。"""
-        dialog.mark_finished()
-        assert dialog._cancel_btn.isEnabled() is False
-        assert dialog._cancel_btn.isVisible() is False
+        cancel_event = asyncio.Event()
+        chunks = [b"zipdata" * 100]
 
-    def test_window_flags_has_minimize_and_close_hints(self, dialog):
-        """标题栏同时含最小化按钮与关闭 X 标志（恢复 X + 新增最小化的回归守卫）。"""
-        from PySide6.QtCore import Qt
+        # 自定义 stream CM：最后一个 chunk 后 set cancel_event
+        async def _aiter_then_cancel():
+            for i, c in enumerate(chunks):
+                yield c
+                if i == len(chunks) - 1:
+                    cancel_event.set()
 
-        flags = dialog.windowFlags()
-        assert flags & Qt.WindowType.WindowMinimizeButtonHint
-        assert flags & Qt.WindowType.WindowCloseButtonHint
+        class _StreamCMCancel:
+            def __init__(self) -> None:
+                total = sum(len(c) for c in chunks)
+                self.status_code = 200
+                self.headers = {"content-length": str(total)}
+
+            async def __aenter__(self) -> "_StreamCMCancel":
+                return self
+
+            async def __aexit__(self, *exc) -> bool:
+                return False
+
+            def aiter_bytes(self, chunk_size: int = 65536):
+                return _aiter_then_cancel()
+
+        stream_cm = _StreamCMCancel()
+        client = MagicMock()
+        client.stream.return_value = stream_cm
+        client.get = AsyncMock()
+
+        zip_path = tmp_path / "pkg.zip"
+        sha_path = tmp_path / "pkg.sha256"
+        result = _run(
+            _download_zip_with_sha(
+                client, "http://zip", "http://sha", zip_path, sha_path,
+                progress_callback=None, cancel_event=cancel_event,
+            )
+        )
+
+        assert result.ok is False
+        assert result.reason == DOWNLOAD_REASON_CANCELLED
+        assert not zip_path.exists(), "zip 应被清理"
+        # sha 下载不应被触发（取消在它之前拦截）
+        client.get.assert_not_called()
+
+    def test_cancel_before_verify(self, tmp_path):
+        """SHA 文件下完后、verify_sha256 启动前 set cancel → 返回 cancelled。
+
+        模拟：client.get(sha_url) 正常返回 sha 内容，但在 verify 前取消。
+        用 patch verify_sha256 为 side_effect set event 来模拟"verify 启动前"时机。
+        """
+        import asyncio
+
+        from vibeocr.services.update_service import (
+            DOWNLOAD_REASON_CANCELLED,
+            _download_zip_with_sha,
+        )
+
+        stream_cm = self._make_stream_response(200, [b"zipdata" * 100])
+        client = MagicMock()
+        client.stream.return_value = stream_cm
+        sha_resp = MagicMock()
+        sha_resp.status_code = 200
+        sha_resp.text = "abc123  pkg.zip"
+        client.get = AsyncMock(return_value=sha_resp)
+
+        cancel_event = asyncio.Event()
+
+        # verify_sha256 不会真正执行（取消在它之前），但 mock 确保它不被调用
+        with patch(
+            "vibeocr.services.update_service.verify_sha256",
+            side_effect=lambda *a: (_ for _ in ()).throw(AssertionError("不应到达 verify")),
+        ):
+            # SHA 下载返回后、verify 前设置取消：用 client.get 的 wrapper
+            original_get = client.get.return_value
+
+            async def _delayed_get(*a, **kw):
+                result = original_get
+                # SHA 下载"完成"后立即取消（此时 verify 尚未启动）
+                cancel_event.set()
+                return result
+
+            client.get = _delayed_get
+
+            zip_path = tmp_path / "pkg.zip"
+            sha_path = tmp_path / "pkg.sha256"
+            result = _run(
+                _download_zip_with_sha(
+                    client, "http://zip", "http://sha", zip_path, sha_path,
+                    progress_callback=None, cancel_event=cancel_event,
+                )
+            )
+
+        assert result.ok is False
+        assert result.reason == DOWNLOAD_REASON_CANCELLED
+        assert not zip_path.exists(), "zip 应被清理"
+        assert not sha_path.exists(), "sha 应被清理"
 
 
-# ---------------------------------------------------------------------------
-# _probe_github_reachable（GitHub 直连可达性探测）
-# ---------------------------------------------------------------------------
+class TestUpdateServiceStateSharing:
+    """类级状态共享测试：跨实例的 cancel_event + download_state + listeners。"""
+
+    def test_request_cancel_noop_when_idle(self, tmp_path, monkeypatch):
+        """idle 态调用 request_cancel() 不抛异常（_active_cancel_event 为 None）。"""
+        from vibeocr.services import env_config
+        from vibeocr.services import update_service as us_mod
+
+        monkeypatch.setattr(env_config, "get_update_cache_dir", lambda: tmp_path / "c")
+        monkeypatch.setattr(env_config, "get_update_settings_path", lambda: tmp_path / "s.json")
+
+        # 确保 idle 态
+        us_mod.UpdateService._active_cancel_event = None
+        # 不应抛 AttributeError
+        us_mod.UpdateService.request_cancel()
+
+    def test_request_cancel_sets_active_event_across_instances(
+        self, tmp_path, monkeypatch
+    ):
+        """A 实例进入 downloading 后，B 实例 request_cancel() 能 set A 的 event。"""
+        import asyncio
+
+        from vibeocr.services import env_config
+        from vibeocr.services import update_service as us_mod
+
+        monkeypatch.setattr(env_config, "get_update_cache_dir", lambda: tmp_path / "c")
+        monkeypatch.setattr(env_config, "get_update_settings_path", lambda: tmp_path / "s.json")
+
+        app_dir = tmp_path / "app"
+        app_dir.mkdir()
+        us_mod.UpdateService(app_dir)  # service_a: 构造即生效（验证 init 不报错）
+        service_b = us_mod.UpdateService(app_dir)
+
+        # A 进入 downloading 态
+        event = asyncio.Event()
+        us_mod.UpdateService._active_cancel_event = event
+        us_mod.UpdateService._download_state = "downloading"
+        assert not event.is_set()
+
+        # B（不同实例）发起取消
+        service_b.__class__.request_cancel()
+        assert event.is_set()
+
+        # 清理
+        us_mod.UpdateService._active_cancel_event = None
+        us_mod.UpdateService._download_state = "idle"
+
+    def test_register_state_listener_syncs_current_state(self):
+        """注册监听器时立即同步当前 download_state（漏洞2回归）。"""
+        from vibeocr.services.update_service import UpdateService
+
+        original_state = UpdateService._download_state
+        received = []
+        try:
+            UpdateService._download_state = "downloading"
+            UpdateService.register_state_listener(received.append)
+            assert received == ["downloading"], "注册时应立即收到当前状态"
+        finally:
+            UpdateService._download_state = original_state
+            UpdateService.unregister_state_listener(received.append)
+
+
+class TestDoDownloadAndUpdateNewArch:
+    """新架构编排器：testzip → 抽取 updater → 启动暂存 updater → 握手 → 退出。
+
+    重构后不再实例化 DownloadProgressDialog（改为状态栏纯文本），但编排器仍
+    构造 QMessageBox（QDialog），需 QApplication 上下文，故注入 ``qapp`` fixture。
+    其余内部方法（testzip / 抽取 / 启动 / 握手 / 退出）全部 mock。
+    """
+
+    def _make_service_with_zip(self, tmp_path, monkeypatch, qapp):
+        """构造 service + 假 zip（含 VibeOCR/updater.exe）。"""
+        import zipfile
+
+        from vibeocr.services import env_config
+        from vibeocr.services.update_service import UpdateService
+        monkeypatch.setattr(env_config, "get_update_cache_dir", lambda: tmp_path / "cache" / "update")
+        monkeypatch.setattr(env_config, "get_update_settings_path", lambda: tmp_path / "settings.json")
+        app_dir = tmp_path / "app"
+        app_dir.mkdir()
+        service = UpdateService(app_dir)
+
+        zip_path = tmp_path / "cache" / "update" / "pkg.zip"
+        zip_path.parent.mkdir(parents=True)
+        with zipfile.ZipFile(zip_path, "w") as zf:
+            zf.writestr("VibeOCR/updater.exe", b"updater")
+            zf.writestr("VibeOCR/version.json", "{}")
+        return service, zip_path
+
+    def _make_info(self):
+        from vibeocr.services.update_service import UpdateInfo
+        return UpdateInfo(version="9.9.9", download_url="http://x",
+                          sha256_url="http://x.sha256", changelog="")
+
+    def _mock_msgbox(self, us_mod, monkeypatch, critical_texts=None):
+        """桩住 await_dialog：critical 弹窗捕获文案，其余直接返回 Ok。"""
+
+        async def _fake_await_dialog(dlg):
+            icon = dlg.icon()
+            text = dlg.text()
+            if icon == us_mod.QMessageBox.Icon.Critical and critical_texts is not None:
+                critical_texts.append(text)
+            return us_mod.QMessageBox.StandardButton.Ok
+
+        monkeypatch.setattr(us_mod, "await_dialog", _fake_await_dialog)
+
+    def test_corrupt_zip_shows_error_no_quit(self, tmp_path, monkeypatch, qapp):
+        """testzip 失败 → 弹窗，不退出主程序（不 _force_quit）。"""
+        service, zip_path = self._make_service_with_zip(tmp_path, monkeypatch, qapp)
+        zip_path.write_bytes(b"corrupt")  # 把 zip 写坏
+
+        force_quit_called = []
+        monkeypatch.setattr(service, "_force_quit", lambda: force_quit_called.append(1))
+        extract_called = []
+        monkeypatch.setattr(service, "_extract_updater_from_zip", lambda p: extract_called.append(1) or p)
+
+        from vibeocr.services import update_service as us_mod
+        async def fake_download(*a, **k):
+            return zip_path, []
+        monkeypatch.setattr(us_mod, "download_update", fake_download)
+        self._mock_msgbox(us_mod, monkeypatch)
+
+        _run(service._do_download_and_update(self._make_info(), parent=None))
+
+        assert not force_quit_called, "testzip 失败不应 _force_quit"
+        assert not extract_called, "testzip 失败不应抽取 updater"
+
+    def test_extract_failure_shows_error_no_quit(self, tmp_path, monkeypatch, qapp):
+        """抽取 updater 失败 → 弹窗，不退出。"""
+        service, zip_path = self._make_service_with_zip(tmp_path, monkeypatch, qapp)
+        monkeypatch.setattr(service, "_verify_zip_integrity", lambda p: True)
+        monkeypatch.setattr(service, "_extract_updater_from_zip",
+                            lambda p: (_ for _ in ()).throw(RuntimeError("no updater")))
+
+        force_quit_called = []
+        monkeypatch.setattr(service, "_force_quit", lambda: force_quit_called.append(1))
+
+        from vibeocr.services import update_service as us_mod
+        async def fake_download(*a, **k):
+            return zip_path, []
+        monkeypatch.setattr(us_mod, "download_update", fake_download)
+        self._mock_msgbox(us_mod, monkeypatch)
+
+        _run(service._do_download_and_update(self._make_info(), parent=None))
+
+        assert not force_quit_called, "抽取失败不应 _force_quit"
+
+    def test_crashed_handshake_shows_manual_reinstall(self, tmp_path, monkeypatch, qapp):
+        """新 updater 握手 crashed → 弹窗提示手动重装，不退出（无 self-update 兜底）。"""
+        service, zip_path = self._make_service_with_zip(tmp_path, monkeypatch, qapp)
+        monkeypatch.setattr(service, "_verify_zip_integrity", lambda p: True)
+        monkeypatch.setattr(service, "_extract_updater_from_zip", lambda p: service._cache_dir / "updater.exe")
+
+        async def fake_launch(zip_p, staged):
+            return "crashed"
+        monkeypatch.setattr(service, "_launch_updater", fake_launch)
+
+        force_quit_called = []
+        monkeypatch.setattr(service, "_force_quit", lambda: force_quit_called.append(1))
+
+        from vibeocr.services import update_service as us_mod
+        async def fake_download(*a, **k):
+            return zip_path, []
+        monkeypatch.setattr(us_mod, "download_update", fake_download)
+        critical_msgs = []
+        self._mock_msgbox(us_mod, monkeypatch, critical_texts=critical_msgs)
+
+        _run(service._do_download_and_update(self._make_info(), parent=None))
+
+        assert not force_quit_called, "crashed 不应 _force_quit"
+        assert critical_msgs, "应弹窗提示"
+        assert any("手动" in m for m in critical_msgs), "应提示手动重装"
+
+    def test_download_success_sets_idle_before_testzip(
+        self, tmp_path, monkeypatch, qapp
+    ):
+        """漏洞1回归：下载成功后、testzip 前立即切 idle（按钮不会在安装阶段误显取消）。"""
+        service, zip_path = self._make_service_with_zip(tmp_path, monkeypatch, qapp)
+
+        states_at_testzip = []
+
+        def _spy_verify(p):
+            # testzip 被调用时，记录此刻的类级状态
+            states_at_testzip.append(
+                (type(service)._download_state, type(service)._active_cancel_event)
+            )
+            return True
+
+        monkeypatch.setattr(service, "_verify_zip_integrity", _spy_verify)
+        monkeypatch.setattr(service, "_extract_updater_from_zip",
+                            lambda p: service._cache_dir / "updater.exe")
+        async def fake_launch(zip_p, staged):
+            return "ready"
+        monkeypatch.setattr(service, "_launch_updater", fake_launch)
+        force_quit_called = []
+        monkeypatch.setattr(service, "_force_quit", lambda: force_quit_called.append(1))
+
+        from vibeocr.services import update_service as us_mod
+        async def fake_download(*a, **k):
+            return zip_path, []
+        monkeypatch.setattr(us_mod, "download_update", fake_download)
+        self._mock_msgbox(us_mod, monkeypatch)
+
+        _run(service._do_download_and_update(self._make_info(), parent=None))
+
+        assert states_at_testzip, "testzip 应被调用"
+        state, cancel = states_at_testzip[0]
+        assert state == "idle", "下载成功后应立即切 idle"
+        assert cancel is None, "_active_cancel_event 应已清空"
+
+
+class TestAboutTabButtonStateMachine:
+    """关于页按钮状态机测试（漏洞2回归 + 按钮切换）。"""
+
+    def test_button_shows_cancel_when_downloading_on_init(self, qtbot):
+        """先进入 downloading 态，再构造 AboutTab → 按钮初始即「取消下载」。
+
+        证明注册监听器时同步了当前状态（漏洞2修复）。
+        """
+        from vibeocr.services.update_service import UpdateService
+        from vibeocr.views.tabs.about_tab import AboutTab
+
+        original_state = UpdateService._download_state
+        original_listeners = list(UpdateService._state_listeners)
+        try:
+            UpdateService._download_state = "downloading"
+            UpdateService._state_listeners = list(original_listeners)
+
+            tab = AboutTab()
+            qtbot.addWidget(tab)
+
+            assert tab._update_btn.text() == "取消下载"
+        finally:
+            UpdateService._download_state = original_state
+            UpdateService._state_listeners = original_listeners
+
+    def test_button_toggles_on_state_change(self, qtbot):
+        """状态变更时按钮文本/样式切换。"""
+        from vibeocr.services.update_service import UpdateService
+        from vibeocr.views.tabs.about_tab import AboutTab
+
+        original_state = UpdateService._download_state
+        original_listeners = list(UpdateService._state_listeners)
+        try:
+            UpdateService._state_listeners = list(original_listeners)
+            tab = AboutTab()
+            qtbot.addWidget(tab)
+
+            assert tab._update_btn.text() == "检查更新"
+
+            UpdateService._set_download_state("downloading")
+            assert tab._update_btn.text() == "取消下载"
+
+            UpdateService._set_download_state("idle")
+            assert tab._update_btn.text() == "检查更新"
+        finally:
+            UpdateService._download_state = original_state
+            UpdateService._state_listeners = original_listeners
 
 
 class TestProbeGithubReachable:
@@ -1517,123 +1853,6 @@ class TestVerifyZipIntegrity:
     def test_nonexistent_zip_returns_false(self, tmp_path, monkeypatch):
         service = self._make_service(tmp_path, monkeypatch)
         assert service._verify_zip_integrity(tmp_path / "nope.zip") is False
-
-
-class TestDoDownloadAndUpdateNewArch:
-    """新架构编排器：testzip → 抽取 updater → 启动暂存 updater → 握手 → 退出。
-
-    编排器会实例化 ``DownloadProgressDialog``（QDialog），需 QApplication 上下文，
-    故注入 ``qapp`` fixture（pytest-qt 不默认 autouse）。其余内部方法（testzip /
-    抽取 / 启动 / 握手 / 退出）全部 mock，断言编排器走新架构流程、失败路径不退出主程序。
-    """
-
-    def _make_service_with_zip(self, tmp_path, monkeypatch, qapp):
-        """构造 service + 假 zip（含 VibeOCR/updater.exe）。"""
-        import zipfile
-        from vibeocr.services import env_config
-        from vibeocr.services.update_service import UpdateService
-        monkeypatch.setattr(env_config, "get_update_cache_dir", lambda: tmp_path / "cache" / "update")
-        monkeypatch.setattr(env_config, "get_update_settings_path", lambda: tmp_path / "settings.json")
-        app_dir = tmp_path / "app"
-        app_dir.mkdir()
-        service = UpdateService(app_dir)
-
-        zip_path = tmp_path / "cache" / "update" / "pkg.zip"
-        zip_path.parent.mkdir(parents=True)
-        with zipfile.ZipFile(zip_path, "w") as zf:
-            zf.writestr("VibeOCR/updater.exe", b"updater")
-            zf.writestr("VibeOCR/version.json", "{}")
-        return service, zip_path
-
-    def _make_info(self):
-        from vibeocr.services.update_service import UpdateInfo
-        return UpdateInfo(version="9.9.9", download_url="http://x",
-                          sha256_url="http://x.sha256", changelog="")
-
-    def _mock_msgbox(self, us_mod, monkeypatch, critical_texts=None):
-        """桩住 await_dialog：critical 弹窗捕获文案，其余直接返回 Ok。
-
-        生产代码改用 ``await await_dialog(QMessageBox(...))``（非阻塞）后，旧的对
-        ``QMessageBox.information/critical`` 静态方法的 patch 已无法拦截。改为 patch
-        模块级 ``await_dialog``：从传入的 QMessageBox 实例读 icon/text 判定类型，
-        critical 时收集文案，统一返回 Ok。
-        """
-
-        async def _fake_await_dialog(dlg):
-            icon = dlg.icon()
-            text = dlg.text()
-            if icon == us_mod.QMessageBox.Icon.Critical and critical_texts is not None:
-                critical_texts.append(text)
-            return us_mod.QMessageBox.StandardButton.Ok
-
-        monkeypatch.setattr(us_mod, "await_dialog", _fake_await_dialog)
-
-    def test_corrupt_zip_shows_error_no_quit(self, tmp_path, monkeypatch, qapp):
-        """testzip 失败 → 弹窗，不退出主程序（不 _force_quit）。"""
-        service, zip_path = self._make_service_with_zip(tmp_path, monkeypatch, qapp)
-        zip_path.write_bytes(b"corrupt")  # 把 zip 写坏
-
-        force_quit_called = []
-        monkeypatch.setattr(service, "_force_quit", lambda: force_quit_called.append(1))
-        extract_called = []
-        monkeypatch.setattr(service, "_extract_updater_from_zip", lambda p: extract_called.append(1) or p)
-
-        from vibeocr.services import update_service as us_mod
-        async def fake_download(*a, **k):
-            return zip_path, []
-        monkeypatch.setattr(us_mod, "download_update", fake_download)
-        self._mock_msgbox(us_mod, monkeypatch)
-
-        _run(service._do_download_and_update(self._make_info(), parent=None))
-
-        assert not force_quit_called, "testzip 失败不应 _force_quit"
-        assert not extract_called, "testzip 失败不应抽取 updater"
-
-    def test_extract_failure_shows_error_no_quit(self, tmp_path, monkeypatch, qapp):
-        """抽取 updater 失败 → 弹窗，不退出。"""
-        service, zip_path = self._make_service_with_zip(tmp_path, monkeypatch, qapp)
-        monkeypatch.setattr(service, "_verify_zip_integrity", lambda p: True)
-        monkeypatch.setattr(service, "_extract_updater_from_zip",
-                            lambda p: (_ for _ in ()).throw(RuntimeError("no updater")))
-
-        force_quit_called = []
-        monkeypatch.setattr(service, "_force_quit", lambda: force_quit_called.append(1))
-
-        from vibeocr.services import update_service as us_mod
-        async def fake_download(*a, **k):
-            return zip_path, []
-        monkeypatch.setattr(us_mod, "download_update", fake_download)
-        self._mock_msgbox(us_mod, monkeypatch)
-
-        _run(service._do_download_and_update(self._make_info(), parent=None))
-
-        assert not force_quit_called, "抽取失败不应 _force_quit"
-
-    def test_crashed_handshake_shows_manual_reinstall(self, tmp_path, monkeypatch, qapp):
-        """新 updater 握手 crashed → 弹窗提示手动重装，不退出（无 self-update 兜底）。"""
-        service, zip_path = self._make_service_with_zip(tmp_path, monkeypatch, qapp)
-        monkeypatch.setattr(service, "_verify_zip_integrity", lambda p: True)
-        monkeypatch.setattr(service, "_extract_updater_from_zip", lambda p: service._cache_dir / "updater.exe")
-
-        async def fake_launch(zip_p, staged):
-            return "crashed"
-        monkeypatch.setattr(service, "_launch_updater", fake_launch)
-
-        force_quit_called = []
-        monkeypatch.setattr(service, "_force_quit", lambda: force_quit_called.append(1))
-
-        from vibeocr.services import update_service as us_mod
-        async def fake_download(*a, **k):
-            return zip_path, []
-        monkeypatch.setattr(us_mod, "download_update", fake_download)
-        critical_msgs = []
-        self._mock_msgbox(us_mod, monkeypatch, critical_texts=critical_msgs)
-
-        _run(service._do_download_and_update(self._make_info(), parent=None))
-
-        assert not force_quit_called, "crashed 不应 _force_quit"
-        assert critical_msgs, "应弹窗提示"
-        assert any("手动" in m for m in critical_msgs), "应提示手动重装"
 
 
 class TestDoDownloadAndUpdateThreadedDelivery:

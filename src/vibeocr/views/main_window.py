@@ -495,7 +495,7 @@ class MainWindow(QMainWindow):
         """构造关于标签页（懒加载时调用）。"""
         from vibeocr.views.tabs.about_tab import AboutTab
 
-        return AboutTab()
+        return AboutTab(status_callback=self._statusbar.showMessage)
 
     def _setup_console(self) -> None:
         """初始化日志"""
