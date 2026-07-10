@@ -46,24 +46,31 @@ def _get_running_or_set_loop() -> asyncio.AbstractEventLoop:
 def create_qasync_event_loop(app) -> asyncio.AbstractEventLoop:
     """创建 qasync 事件循环
 
+    qasync 是 VibeOCR 的必选依赖（pyproject.toml）。缺失时 fail-fast，
+    抛 RuntimeError 并显示明确依赖错误，而非返回不可用的标准 asyncio loop
+    （标准 loop 不泵 Qt 事件，会形成"窗口显示但无响应"的假启动）。
+
     Args:
         app: QApplication 实例
 
     Returns:
         QEventLoop 事件循环
+
+    Raises:
+        RuntimeError: qasync 未安装时
     """
     try:
         import qasync  # type: ignore[import-untyped]
+    except ImportError as e:
+        raise RuntimeError(
+            "qasync 是 VibeOCR 的必选依赖，缺失时 GUI 事件循环无法与 asyncio 集成。"
+            "请安装 qasync (pip install qasync) 后重试。"
+        ) from e
 
-        loop = qasync.QEventLoop(app)
-        asyncio.set_event_loop(loop)
-        logger.debug("qasync 事件循环已创建")
-        return loop
-    except ImportError:
-        logger.warning("qasync 未安装，使用标准 asyncio 事件循环")
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        return loop
+    loop = qasync.QEventLoop(app)
+    asyncio.set_event_loop(loop)
+    logger.debug("qasync 事件循环已创建")
+    return loop
 
 
 def run_coroutine(

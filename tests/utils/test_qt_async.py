@@ -171,3 +171,40 @@ def contextlib_suppress():
     import contextlib
 
     return contextlib.suppress(Exception)
+
+
+class TestQasyncFailFast:
+    """qasync 缺失时 fail-fast，不返回不可用的标准 asyncio loop。
+
+    根因：qasync 是必选依赖，但 create_qasync_event_loop 在 ImportError 时
+    返回标准 asyncio loop，main.py 仍 run_forever，标准 loop 不泵 Qt 事件，
+    形成"窗口显示但无响应"的假启动。
+    """
+
+    def test_missing_qasync_raises_runtime_error(self):
+        """qasync 导入失败时应抛 RuntimeError，而非返回标准 loop"""
+        from unittest.mock import MagicMock, patch
+
+        from vibeocr.utils.qt_async import create_qasync_event_loop
+
+        mock_app = MagicMock()
+        # 模拟 qasync 不可导入
+        with patch.dict("sys.modules", {"qasync": None}):
+            with pytest.raises(RuntimeError, match="qasync"):
+                create_qasync_event_loop(mock_app)
+
+    def test_qasync_available_returns_qasync_loop(self):
+        """qasync 可用时正常返回 loop（不抛异常）"""
+        from unittest.mock import MagicMock
+
+        from vibeocr.utils.qt_async import create_qasync_event_loop
+
+        # qasync 在测试环境中应已安装（pyproject 必选依赖）
+        mock_app = MagicMock()
+        loop = create_qasync_event_loop(mock_app)
+        assert loop is not None
+        # 清理：qasync QEventLoop 绑定了 app，关闭它
+        try:
+            loop.close()
+        except Exception:
+            pass
