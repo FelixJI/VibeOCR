@@ -1479,12 +1479,25 @@ class MainWindow(QMainWindow):
 
         self._closing = True  # 标记正在关闭，防止重复启动 Worker
 
-        # 关闭子进程管理器
+        # 统一 drain 各后台子系统（有序、有界，os._exit 前尽力收拢任务）
+        from vibeocr.managers.shutdown_coordinator import ShutdownCoordinator
+
+        coord = ShutdownCoordinator()
+
+        # async runner cancel（仅在有运行中事件循环时才有意义）
         try:
-            self._subprocess_manager.shutdown(timeout_ms=3000)
-            logging.debug("子进程管理器已关闭")
-        except Exception as e:
-            logging.warning(f"关闭子进程管理器失败: {e}")
+            from vibeocr.utils.qt_async import get_async_runner
+
+            runner = get_async_runner()
+            if runner.active_count > 0:
+                coord.register("async_runner", lambda: runner.cancel_all())
+        except Exception:
+            pass
+
+        coord.register(
+            "subprocess", lambda: self._subprocess_manager.shutdown(timeout_ms=2000)
+        )
+        coord.coordinate(timeout_ms=5000)
 
         # 清理 OCR 资源
         try:

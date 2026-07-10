@@ -344,7 +344,8 @@ class SubprocessManager(QObject):
                 pass
 
         # 等待线程池完成
-        if not self._thread_pool.waitForDone(timeout_ms):
+        timed_out = not self._thread_pool.waitForDone(timeout_ms)
+        if timed_out:
             logger.warning("[SubprocessManager] 线程池未能在超时时间内完成")
 
         # 关闭服务
@@ -354,9 +355,10 @@ class SubprocessManager(QObject):
                 logger.debug("[SubprocessManager] 子进程服务已关闭")
             except Exception as e:
                 logger.error(f"[SubprocessManager] 关闭服务失败: {e}")
+                timed_out = True
 
         self._start_task = None
         self._preload_task = None
         self._service = None
         self._is_ready = False
-        return True
+        return not timed_out
