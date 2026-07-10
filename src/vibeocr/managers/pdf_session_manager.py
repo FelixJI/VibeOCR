@@ -1009,14 +1009,25 @@ class PdfSessionManager(QObject):
 
     # ---- 批量导出 -------------------------------------------------------
 
-    def export_all_modified(self, output_dir: str) -> list[str]:
-        """同步批量导出所有 modified session(走 IPC save 到目标路径)。"""
+    def export_all_modified(
+        self, output_dir: str, cancel_check=None
+    ) -> list[str]:
+        """同步批量导出所有 modified session(走 IPC save 到目标路径)。
+
+        Args:
+            output_dir: 输出目录
+            cancel_check: 可选的无参可调用，返回 True 时停止导出后续文件
+        """
         exported: list[str] = []
         out = Path(output_dir)
         out.mkdir(parents=True, exist_ok=True)
         for file_path, session in self._sessions.items():
             if not session.is_modified:
                 continue
+            # 逐文件检查取消标志
+            if cancel_check and cancel_check():
+                logger.info("导出已取消，停止后续文件")
+                break
             name = Path(file_path).name
             dest = out / name
             if dest.exists():
@@ -1061,7 +1072,9 @@ class PdfSessionManager(QObject):
                 self._cancelled = True
 
             def run(self):
-                exported = self._mgr.export_all_modified(self._out)
+                exported = self._mgr.export_all_modified(
+                    self._out, cancel_check=lambda: self._cancelled
+                )
                 self.done.emit(exported)
 
         worker = _ExportRunner(self, output_dir)

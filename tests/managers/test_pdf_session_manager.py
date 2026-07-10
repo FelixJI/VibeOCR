@@ -317,3 +317,64 @@ class TestPdfTaskGeneration:
                 pass
 
         assert mgr._task_generation == 1
+
+
+class TestExportCancel:
+    """export cancel 真正生效：逐文件检查 cancel flag，不继续后续文件。
+
+    根因：_ExportRunner._cancelled 被 cancel() 设置但 run() 从不读取，
+    export_all_modified 也不检查它，属于无效取消。
+    """
+
+    def test_export_cancel_stops_after_current_file(self):
+        """export_all_modified 检查 cancel_check，取消后停止后续文件"""
+        from unittest.mock import MagicMock
+
+        mgr = PdfSessionManager.__new__(PdfSessionManager)
+        mgr._pdf_settings = None
+        mgr._settings_to_dict = lambda s: None
+        mgr._client = MagicMock()
+        mgr._client.save = MagicMock(return_value=None)
+
+        # 3 个 modified session
+        sessions = {}
+        for i in range(3):
+            mock_s = MagicMock()
+            mock_s.session_id = f"sid_{i}"
+            mock_s.is_modified = True
+            sessions[f"/file_{i}.pdf"] = mock_s
+        mgr._sessions = sessions
+
+        # cancel_check 第一次返回 False（处理第一个），之后返回 True
+        call_count = [0]
+        def cancel_check():
+            call_count[0] += 1
+            return call_count[0] > 1
+
+        results = mgr.export_all_modified("/tmp/out", cancel_check=cancel_check)
+
+        # 取消后只处理 1 个文件
+        assert len(results) == 1
+        assert mgr._client.save.call_count == 1
+
+    def test_export_no_cancel_processes_all(self):
+        """无取消时处理所有 modified session"""
+        from unittest.mock import MagicMock
+
+        mgr = PdfSessionManager.__new__(PdfSessionManager)
+        mgr._pdf_settings = None
+        mgr._settings_to_dict = lambda s: None
+        mgr._client = MagicMock()
+        mgr._client.save = MagicMock(return_value=None)
+
+        sessions = {}
+        for i in range(3):
+            mock_s = MagicMock()
+            mock_s.session_id = f"sid_{i}"
+            mock_s.is_modified = True
+            sessions[f"/file_{i}.pdf"] = mock_s
+        mgr._sessions = sessions
+
+        results = mgr.export_all_modified("/tmp/out")
+        assert len(results) == 3
+        assert mgr._client.save.call_count == 3
