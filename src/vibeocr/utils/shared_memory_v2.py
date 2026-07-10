@@ -63,6 +63,10 @@ class SharedMemoryProtocolError(Exception):
     """共享内存协议错误"""
 
 
+class SharedMemoryInterrupted(SharedMemoryProtocolError):
+    """共享内存操作被 interrupt() 中断"""
+
+
 @dataclass
 class SharedMemoryConfig:
     """共享内存配置"""
@@ -240,7 +244,9 @@ class SharedMemoryProtocolV2:
             if time.time() - start_time > timeout:
                 logger.warning(f"[SHM {self.config.name}] 等待读取超时")
                 break
-            time.sleep(0.01)
+            # 用 event.wait 替代 time.sleep，支持 interrupt 中断
+            if self._stop_event.wait(0.01):
+                break
 
     def _get_state(self) -> int:
         """获取状态标志（兼容 V1）"""
@@ -316,8 +322,9 @@ class SharedMemoryProtocolV2:
                 )
                 raise SharedMemoryProtocolError("写入超时: 共享内存被占用")
 
-            # 使用 time.sleep 让出 CPU 时间
-            time.sleep(wait_time)
+            # 用 event.wait 替代 time.sleep，支持 interrupt 中断
+            if self._stop_event.wait(wait_time):
+                raise SharedMemoryInterrupted("写入被中断")
 
             # 指数退避
             wait_time = min(wait_time * 2, max_wait)
@@ -383,9 +390,9 @@ class SharedMemoryProtocolV2:
             if time.time() - start_time > timeout:
                 raise SharedMemoryProtocolError("读取超时: 无可用数据")
 
-            # 使用 time.sleep 而不是 threading.Event.wait
-            # 这样可以更好地让出 CPU 时间给其他进程
-            time.sleep(wait_time)
+            # 用 event.wait 替代 time.sleep，支持 interrupt 中断
+            if self._stop_event.wait(wait_time):
+                raise SharedMemoryInterrupted("读取被中断")
 
             # 指数退避
             wait_time = min(wait_time * 2, max_wait)

@@ -7,6 +7,7 @@ Tests the shared memory communication protocol for subprocess OCR.
 from typing import Any
 
 import pytest
+import time
 
 # Check if shared_memory module is available
 try:
@@ -418,6 +419,108 @@ class TestCancelFlag:
             assert proto._buf[8] == 0
             # cancel flag (字节 9) 为 1
             assert proto._buf[9] == 1
+        finally:
+            proto.unlink()
+            proto.close()
+
+
+@pytest.mark.skipif(not HAS_SHARED_MEMORY, reason="shared_memory module not available")
+class TestInterruptContract:
+    """interrupt() 应在退避周期内中断 read/write 等待。
+
+    根因：_stop_event 被创建且 interrupt()/reset_interrupt() 存在，但
+    write_message/read_message/wait_for_read 的退避循环从不检查它，
+    只能等超时。interrupt 是无效契约。
+    """
+
+    def test_interrupt_breaks_read_wait(self):
+        """interrupt 中断 read_message 等待，抛 SharedMemoryInterrupted"""
+        import threading
+        import uuid
+
+        from vibeocr.utils.shared_memory_v2 import (
+            SharedMemoryConfig,
+            SharedMemoryProtocolV2,
+        )
+
+        name = f"vibeocr_test_intr_{uuid.uuid4().hex[:8]}"
+        proto = SharedMemoryProtocolV2(SharedMemoryConfig(name=name, size=4096))
+        proto.create()
+        try:
+            result = {"exc": None}
+
+            def reader():
+                try:
+                    proto.read_message(timeout=10.0)
+                except Exception as e:
+                    result["exc"] = e
+
+            t = threading.Thread(target=reader)
+            t.start()
+            time.sleep(0.2)  # 让 reader 进入等待
+            proto.interrupt()
+            t.join(timeout=2)
+            assert not t.is_alive(), "interrupt 未中断 read 等待"
+            assert result["exc"] is not None, "应抛出中断异常"
+        finally:
+            proto.unlink()
+            proto.close()
+
+    def test_interrupt_breaks_write_wait(self):
+        """interrupt 中断 write_message 等待"""
+        import threading
+        import uuid
+
+        from vibeocr.utils.shared_memory_v2 import (
+            SharedMemoryConfig,
+            SharedMemoryProtocolV2,
+        )
+
+        name = f"vibeocr_test_intr_w_{uuid.uuid4().hex[:8]}"
+        proto = SharedMemoryProtocolV2(SharedMemoryConfig(name=name, size=4096))
+        proto.create()
+        try:
+            # 先写一条消息但不读，使 ready flag=1，下次 write 需等待
+            proto.write_message(MSG_ACK, b"first", timeout=1.0)
+
+            result = {"exc": None}
+
+            def writer():
+                try:
+                    proto.write_message(MSG_ACK, b"second", timeout=10.0)
+                except Exception as e:
+                    result["exc"] = e
+
+            t = threading.Thread(target=writer)
+            t.start()
+            time.sleep(0.2)
+            proto.interrupt()
+            t.join(timeout=2)
+            assert not t.is_alive(), "interrupt 未中断 write 等待"
+            assert result["exc"] is not None, "应抛出中断异常"
+        finally:
+            proto.unlink()
+            proto.close()
+
+    def test_reset_interrupt_allows_normal_operation(self):
+        """reset_interrupt 后正常读写恢复"""
+        import uuid
+
+        from vibeocr.utils.shared_memory_v2 import (
+            SharedMemoryConfig,
+            SharedMemoryProtocolV2,
+        )
+
+        name = f"vibeocr_test_intr_r_{uuid.uuid4().hex[:8]}"
+        proto = SharedMemoryProtocolV2(SharedMemoryConfig(name=name, size=4096))
+        proto.create()
+        try:
+            proto.interrupt()
+            proto.reset_interrupt()
+            # 重置后应能正常读写
+            proto.write_message(MSG_ACK, b"after_reset", timeout=1.0)
+            _t, data = proto.read_message(timeout=1.0)
+            assert data == b"after_reset"
         finally:
             proto.unlink()
             proto.close()
