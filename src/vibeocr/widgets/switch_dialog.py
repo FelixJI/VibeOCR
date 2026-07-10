@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import logging
+import subprocess
+import threading
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QThread, Signal, Slot
@@ -20,9 +23,11 @@ from vibeocr import env_manager
 if TYPE_CHECKING:
     from pathlib import Path
 
+logger = logging.getLogger(__name__)
+
 
 class SwitchWorker(QThread):
-    """后端切换工作线程"""
+    """后端切换工作线程（协作式取消，复用 InstallWorker 范式）"""
 
     progress = Signal(str, str)  # (stage, message)
     finished = Signal(bool, str)  # (success, message)
@@ -31,6 +36,40 @@ class SwitchWorker(QThread):
         super().__init__()
         self._project_root = project_root
         self._target = target
+        # 协作式取消：替代危险的 QThread.terminate()。
+        # cancel_event 被 set 后，env_manager.switch_paddle_backend 内的
+        # _run_pip / Popen.wait 会检测到并中止；request_cancel 还会立即
+        # kill 当前 pip 子进程，避免孤儿进程。
+        self._cancel_event = threading.Event()
+        # 当前正在运行的子进程句柄（由 on_proc 回调设置），
+        # request_cancel 时立即 kill，避免孤儿 pip 进程。
+        self._current_proc: subprocess.Popen | None = None
+        self._proc_lock = threading.Lock()
+
+    def _on_proc(self, proc: subprocess.Popen) -> None:
+        """记录当前子进程句柄（供 request_cancel kill）"""
+        with self._proc_lock:
+            self._current_proc = proc
+
+    def request_cancel(self) -> None:
+        """协作式取消后端切换（线程安全）。
+
+        1. set cancel_event → switch_paddle_backend 内的 Popen.wait/pip 检测到后中止；
+        2. 立即 kill 当前 pip 子进程（若有），避免它成为孤儿继续后台运行。
+        调用方（对话框 closeEvent）应在 request_cancel 后用 wait(timeout)
+        等待 worker 自然结束，而非用 terminate() 强杀。
+        """
+        self._cancel_event.set()
+        with self._proc_lock:
+            proc = self._current_proc
+        if proc is not None:
+            try:
+                proc.kill()
+            except (ProcessLookupError, OSError):
+                pass
+
+    def is_cancelled(self) -> bool:
+        return self._cancel_event.is_set()
 
     def run(self) -> None:
         try:
@@ -47,9 +86,12 @@ class SwitchWorker(QThread):
                 progress_callback=lambda stage, message: self.progress.emit(
                     stage, message
                 ),
+                cancel_event=self._cancel_event,
+                on_proc=self._on_proc,
             )
             self.finished.emit(success, msg)
         except Exception as e:
+            logger.error("后端切换异常: %s", e)
             self.finished.emit(False, f"切换异常: {e}")
 
 
@@ -136,7 +178,12 @@ class SwitchDialog(QDialog):
         scrollbar.setValue(scrollbar.maximum())
 
     def closeEvent(self, event) -> None:
+        """关闭事件：协作式取消 worker + 有界等待。
+
+        使用 request_cancel（set event + kill pip）替代危险的 QThread.terminate()，
+        并用有界 wait(5000) 替代无限 wait()，避免冻结关闭。
+        """
         if self._worker and self._worker.isRunning():
-            self._worker.terminate()
-            self._worker.wait()
+            self._worker.request_cancel()
+            self._worker.wait(5000)  # 有界等待，不再无限 wait
         event.accept()

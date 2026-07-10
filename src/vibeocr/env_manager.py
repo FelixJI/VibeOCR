@@ -2906,6 +2906,8 @@ def switch_paddle_backend(
     target: str,
     network_type: Literal["domestic", "international"] = "domestic",
     progress_callback=None,
+    cancel_event: threading.Event | None = None,
+    on_proc: Callable[[subprocess.Popen], None] | None = None,
 ) -> tuple[bool, str]:
     """切换 PaddlePaddle 后端（GPU ↔ CPU）
 
@@ -2921,6 +2923,8 @@ def switch_paddle_backend(
         target: "gpu" 或 "cpu"
         network_type: 网络类型
         progress_callback: 进度回调 (stage, message)
+        cancel_event: 协作式取消事件，set 后中止卸载/安装
+        on_proc: 子进程启动回调，用于记录当前 Popen 供 cancel 时 kill
 
     Returns:
         (是否成功, 消息)
@@ -2951,14 +2955,25 @@ def switch_paddle_backend(
             "paddlepaddle",
             "paddlepaddle-gpu",
         ]
-        subprocess.run(
+        # 用 Popen + 手动 wait 替代 subprocess.run，支持 cancel_event 中止
+        uninstall_proc = subprocess.Popen(
             uninstall_cmd,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
             text=True,
-            timeout=300,
             creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
         )
+        if on_proc:
+            on_proc(uninstall_proc)
+        try:
+            uninstall_proc.wait(timeout=300)
+        except subprocess.TimeoutExpired:
+            uninstall_proc.kill()
+            uninstall_proc.wait(timeout=10)
         # uninstall 即使包不存在也返回 0，无需检查 returncode
+
+        if cancel_event and cancel_event.is_set():
+            return False, "后端切换已取消"
 
         # 2. 安装目标后端（复用 install_embedded_dependencies 的 force_backend）
         report("后端切换", f"安装 {target.upper()} 版 PaddlePaddle...")
@@ -2967,9 +2982,14 @@ def switch_paddle_backend(
             network_type=network_type,
             progress_callback=progress_callback,
             force_backend=target,
+            cancel_event=cancel_event,
+            on_proc=on_proc,
         )
         if not success:
             return False, f"{target.upper()} 安装失败: {msg}"
+
+        if cancel_event and cancel_event.is_set():
+            return False, "后端切换已取消"
 
         # 3. 写入 pending_backend（下次启动 worker 时 resolve_use_gpu 读取）
         if not update_cache_field(project_root, "pending_backend", target):
