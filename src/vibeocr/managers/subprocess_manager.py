@@ -242,6 +242,14 @@ class SubprocessManager(QObject):
 
         logger.debug("[SubprocessManager] 正在启动子进程服务...")
 
+        # 记录实际并发预算（集中配置，供未来多 worker 扩展参考）
+        try:
+            from vibeocr.core.concurrency_budget import ConcurrencyBudget
+
+            ConcurrencyBudget.default().log_summary()
+        except Exception:
+            pass
+
         self._start_task = SubprocessStartTask(
             self._project_root,
             use_gpu=use_gpu,
