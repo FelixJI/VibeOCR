@@ -236,6 +236,66 @@ class WorkerManager:
 
         logger.debug("所有 Worker 已停止")
 
+    def _reserve_worker(self, wait_timeout: float = 5.0) -> WorkerInfo | None:
+        """原子地选择空闲 worker 并标记为 BUSY。
+
+        选择 + 状态迁移 + 计数在同一个 _workers_lock 临界区内完成，
+        避免两个调用线程同时拿到同一 worker（旧 _get_available_worker 在
+        锁内返回引用、锁外才设 BUSY 的 TOCTOU 竞态）。
+        """
+        start_time = time.time()
+        while time.time() - start_time < wait_timeout:
+            with self._workers_lock:
+                if not self._workers:
+                    return None
+                for _ in range(len(self._workers)):
+                    worker_info = self._workers[self._round_robin_index]
+                    self._round_robin_index = (self._round_robin_index + 1) % len(
+                        self._workers
+                    )
+                    if (
+                        worker_info.state == WorkerState.IDLE
+                        and worker_info.process.is_ready
+                        and not worker_info.process.busy
+                    ):
+                        # 原子标记 BUSY + 计数（与选择在同一临界区）
+                        worker_info.state = WorkerState.BUSY
+                        worker_info.total_tasks += 1
+                        self._total_tasks += 1
+                        return worker_info
+            # 锁外等待
+            if self._cancel_event is not None:
+                if self._cancel_event.wait(0.1):
+                    logger.debug("等待 Worker 时收到取消信号,提前返回")
+                    return None
+            else:
+                time.sleep(0.1)
+        return None
+
+    def _release_worker(self, worker_info: WorkerInfo, success: bool) -> None:
+        """在锁内完成 worker 状态迁移（完成→IDLE 或 失败处理）。
+
+        将原 execute() 中散落在锁外的状态迁移集中到锁内，保证健康检查
+        等并发读者看到一致的状态。
+        """
+        with self._workers_lock:
+            if success:
+                worker_info.state = WorkerState.IDLE
+                worker_info.last_active = time.time()
+            else:
+                worker_info.failed_tasks += 1
+                self._failed_tasks += 1
+                if not worker_info.process.is_running:
+                    if self._shutting_down:
+                        worker_info.state = WorkerState.STOPPED
+                    else:
+                        worker_info.state = WorkerState.ERROR
+                elif worker_info.state not in (
+                    WorkerState.BUSY,
+                    WorkerState.STARTING,
+                ):
+                    worker_info.state = WorkerState.IDLE
+
     def execute(
         self,
         task: Callable[[OCRWorkerProcess], Any],
@@ -259,14 +319,14 @@ class WorkerManager:
         Raises:
             OCRWorkerProcessError: 所有 Worker 都不可用或任务执行失败
         """
-        # 获取可用 Worker（短等待）
-        worker_info = self._get_available_worker(wait_timeout=2.0)
+        # 原子领取 Worker（选择+BUSY+计数在锁内完成）
+        worker_info = self._reserve_worker(wait_timeout=2.0)
         if worker_info is None:
             # 尝试恢复 Worker
             if self.auto_restart:
                 logger.warning("无可用 Worker，尝试恢复...")
                 self._recover_workers()
-                worker_info = self._get_available_worker(wait_timeout=2.0)
+                worker_info = self._reserve_worker(wait_timeout=2.0)
 
             if worker_info is None:
                 # Worker 仍在忙（可能在预加载），通知 UI 并长等待
@@ -279,51 +339,30 @@ class WorkerManager:
                         self._task_queued_callback()
                     except Exception:
                         pass
-                worker_info = self._get_available_worker(wait_timeout=300.0)
+                worker_info = self._reserve_worker(wait_timeout=300.0)
 
             if worker_info is None:
                 raise OCRWorkerProcessError("无可用 Worker")
 
-        # 标记为忙碌
-        worker_info.state = WorkerState.BUSY
-        worker_info.total_tasks += 1
-        self._total_tasks += 1
-
         try:
             # 执行任务
             result = task(worker_info.process)
-            worker_info.state = WorkerState.IDLE
-            worker_info.last_active = time.time()
+            self._release_worker(worker_info, success=True)
             return result
 
         except Exception as e:
-            worker_info.failed_tasks += 1
-            self._failed_tasks += 1
             worker_info.last_error = str(e)
-
-            # 检查 Worker 是否仍然存活
-            if not worker_info.process.is_running:
-                # 如果正在关闭，不要误判为崩溃
-                if self._shutting_down:
-                    logger.debug(
-                        f"Worker {worker_info.worker_id} 已停止（应用程序关闭中）"
-                    )
-                    worker_info.state = WorkerState.STOPPED
-                else:
-                    logger.error(f"Worker {worker_info.worker_id} 已崩溃")
-                    worker_info.state = WorkerState.ERROR
-
-                    # 自动重启
-                    if self.auto_restart and retry_count < self.max_retries:
-                        logger.debug(f"尝试重启 Worker {worker_info.worker_id}...")
-                        if self._restart_worker(worker_info):
-                            self._retried_tasks += 1
-                            # 重试任务
-                            return self.execute(task, retry_count + 1)
-
-            # 避免覆盖其他任务（如抢占重启后的识别任务）设置的状态
-            if worker_info.state not in (WorkerState.BUSY, WorkerState.STARTING):
-                worker_info.state = WorkerState.IDLE
+            crashed = not worker_info.process.is_running
+            self._release_worker(worker_info, success=False)
+            if crashed and not self._shutting_down:
+                logger.error(f"Worker {worker_info.worker_id} 已崩溃")
+                # 自动重启
+                if self.auto_restart and retry_count < self.max_retries:
+                    logger.debug(f"尝试重启 Worker {worker_info.worker_id}...")
+                    if self._restart_worker(worker_info):
+                        self._retried_tasks += 1
+                        # 重试任务
+                        return self.execute(task, retry_count + 1)
             raise
 
     def _get_available_worker(self, wait_timeout: float = 5.0) -> WorkerInfo | None:

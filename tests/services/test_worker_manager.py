@@ -142,3 +142,118 @@ class TestCancelEvent:
         event.set()
         result = mgr._get_available_worker(wait_timeout=300.0)
         assert result is None
+
+
+class TestAtomicWorkerReservation:
+    """worker 领取与 BUSY 标记必须是原子操作。
+
+    根因：_get_available_worker 在锁内返回 IDLE worker，锁释放后 execute()
+    才设置 BUSY。两个调用线程可同时拿到同一 worker。
+    """
+
+    def test_concurrent_execute_does_not_double_reserve(self):
+        """两个线程同时 execute，同一 worker 不会被同时借出给两者。
+
+        关键场景：t1 领取 worker 进入 task（阻塞），t2 在此期间尝试领取。
+        旧实现因 TOCTOU（锁内返回、锁外设 BUSY）会让 t2 也拿到同一 worker。
+        修复后 _reserve_worker 在锁内原子完成 选择+BUSY，t2 应拿不到。
+        """
+        import threading
+        from unittest.mock import MagicMock
+
+        from vibeocr.services.worker_manager import WorkerInfo
+
+        # 预设 cancel_event，让 t2 的等待可被中断
+        cancel_event = threading.Event()
+        mgr = WorkerManager(
+            max_workers=1, use_gpu=False, auto_restart=False, cancel_event=cancel_event
+        )
+        mock_process = MagicMock()
+        mock_process.is_ready = True
+        mock_process.busy = False
+        mock_process.is_running = True
+        info = WorkerInfo(worker_id=0, process=mock_process, state=WorkerState.IDLE)
+        mgr._workers.append(info)
+
+        in_task_count = []
+        count_lock = threading.Lock()
+        first_in_task = threading.Event()
+        release_first = threading.Event()
+        t2_done = threading.Event()
+
+        def task(w):
+            with count_lock:
+                in_task_count.append(1)
+                current = len(in_task_count)
+            if current == 1:
+                # 第一个任务：通知已进入，等待放行（期间 worker 保持 BUSY）
+                first_in_task.set()
+                release_first.wait(timeout=5)
+            return "ok"
+
+        def run_execute():
+            try:
+                mgr.execute(task)
+            except Exception:
+                pass
+            finally:
+                t2_done.set()
+
+        t1 = threading.Thread(target=run_execute)
+        t2 = threading.Thread(target=run_execute)
+        t1.start()
+        # 确保第一个已进入 task 并持有 BUSY
+        first_in_task.wait(timeout=2)
+        # 启动第二个线程，它应因 worker BUSY 而无法领取
+        t2.start()
+        # 让 t2 有足够时间尝试领取（多次轮询）并持续失败
+        time.sleep(0.5)
+        # 此时 t1 仍持有 BUSY，t2 应仍在等待，未进入 task
+        with count_lock:
+            concurrent = len(in_task_count)
+        assert concurrent == 1, (
+            f"t1 仍持有 BUSY 时 t2 不应进入 task，但 in_task_count={concurrent}"
+        )
+        # 中断 t2 的等待并放行 t1
+        cancel_event.set()
+        release_first.set()
+        t1.join(timeout=5)
+        t2.join(timeout=5)
+
+    def test_reserve_worker_marks_busy_atomically(self):
+        """_reserve_worker 在锁内完成 选择+BUSY+计数"""
+        import threading
+        from unittest.mock import MagicMock
+
+        from vibeocr.services.worker_manager import WorkerInfo
+
+        mgr = WorkerManager(max_workers=1, use_gpu=False, auto_restart=False)
+        mock_process = MagicMock()
+        mock_process.is_ready = True
+        mock_process.busy = False
+        info = WorkerInfo(worker_id=0, process=mock_process, state=WorkerState.IDLE)
+        mgr._workers.append(info)
+
+        reserved = mgr._reserve_worker(wait_timeout=0.5)
+        assert reserved is not None
+        # 锁内已标记 BUSY
+        assert reserved.state == WorkerState.BUSY
+        assert reserved.total_tasks == 1
+        # 第二次领取应拿不到（已 BUSY）
+        again = mgr._reserve_worker(wait_timeout=0.1)
+        assert again is None
+
+    def test_release_worker_transitions_to_idle(self):
+        """_release_worker(success=True) 在锁内将状态迁回 IDLE"""
+        from unittest.mock import MagicMock
+
+        from vibeocr.services.worker_manager import WorkerInfo
+
+        mgr = WorkerManager(max_workers=1, use_gpu=False, auto_restart=False)
+        mock_process = MagicMock()
+        info = WorkerInfo(worker_id=0, process=mock_process, state=WorkerState.BUSY)
+        mgr._workers.append(info)
+
+        mgr._release_worker(info, success=True)
+        assert info.state == WorkerState.IDLE
+        assert info.last_active > 0
