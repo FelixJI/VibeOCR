@@ -115,6 +115,36 @@ class TextBlockProcessor:
                 segments[-1].append(cur)
         return segments
 
+    # ── 索引保留变体（供显示层排版用，保持原始 text_blocks 下标）──
+    # 入参为 (原始下标, 块) 元组列表，输出同构；排序/分段逻辑与上方一致，
+    # 仅在比较键上解包出块。这样 drop_blank 过滤或排序重排后，显示层仍能
+    # 用原始下标作为 data-block-index，保证双击编辑/悬停联动按 index 命中。
+
+    @staticmethod
+    def _sort_indexed(
+        indexed: list[tuple[int, TextBlock]],
+    ) -> list[tuple[int, TextBlock]]:
+        """_sort_blocks 的索引保留变体。"""
+        has_order = any(b.order != -1 for _, b in indexed)
+        if has_order:
+            return sorted(
+                indexed, key=lambda ib: (ib[1].order, _bbox_sort_key(ib[1]))
+            )
+        return sorted(indexed, key=lambda ib: _bbox_sort_key(ib[1]))
+
+    @staticmethod
+    def _split_indexed_into_segments(
+        indexed: list[tuple[int, TextBlock]],
+    ) -> list[list[tuple[int, TextBlock]]]:
+        """_split_into_segments 的索引保留变体。"""
+        segments: list[list[tuple[int, TextBlock]]] = [[indexed[0]]]
+        for (_pi, prev), (_ci, cur) in zip(indexed, indexed[1:]):
+            if TextBlockProcessor._is_paragraph_break(prev, cur):
+                segments.append([(_ci, cur)])
+            else:
+                segments[-1].append((_ci, cur))
+        return segments
+
     @staticmethod
     def _is_paragraph_break(prev: TextBlock, cur: TextBlock) -> bool:
         """判定 cur 是否开启新段落。"""

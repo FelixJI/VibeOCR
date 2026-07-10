@@ -604,7 +604,8 @@ class SingleRecognitionTab(BaseOcrTab):
         且会破坏复制/导出链路（误改其 raw_text）。
 
         重排后重算 raw_text / markdown_text，并刷新结果区（块间排版会随
-        换行模式/空格/缩进/去空白块选项变化）。
+        换行模式/空格/缩进/去空白块选项变化）。结果区用 display_text_layout
+        整体渲染（而非逐块），使排版变化在屏幕上可见。
         """
         result = self._current_ocr_result
         if result is None or not getattr(
@@ -619,7 +620,10 @@ class SingleRecognitionTab(BaseOcrTab):
         # markdown_text 对纯文本结果即 raw_text（见各 pipeline 的 `or raw_text` 兜底），
         # 同步以保持复制 MD / 导出的一致性。
         result.markdown_text = result.raw_text
-        self._display_result(result)
+        # 用按选项排版的整体渲染刷新右侧（而非逐块的 _display_result），
+        # 使换行模式/空格/缩进可见。左侧预览保持置信度模式（块级编辑入口仍在）。
+        if self._result_widget is not None:
+            self._result_widget.display_text_layout(result, text_opts)
 
     def _on_ocr_finished(self, result) -> None:
         """OCR 完成回调"""
@@ -652,8 +656,17 @@ class SingleRecognitionTab(BaseOcrTab):
         # 设置文本块到预览（置信度模式）
         self._preview_widget.set_text_blocks(result.text_blocks)
 
-        # 显示结果（包括 content_list 块类型模式）
-        self._display_result(result)
+        # 显示结果。纯文本结果用按选项排版的整体渲染（display_text_layout），
+        # 使换行模式/空格/缩进在识别完成即可见；结构化结果走 _display_result
+        # 的块类型渲染。二者都会为左侧预览回填 content_list（块级编辑入口）。
+        if self._plain_text_at_recognition and self._result_widget is not None:
+            text_opts = self._text_options_widget.get_text_options()
+            # 仍走 _display_result 以回填 content_list / 同步预览，随后用
+            # display_text_layout 覆盖右侧渲染，体现排版选项。
+            self._display_result(result)
+            self._result_widget.display_text_layout(result, text_opts)
+        else:
+            self._display_result(result)
 
         # 识别成功后折叠选项面板，让结果区获得最大空间（失败路径不折叠，
         # 保留选项可见方便调整重试；用户可随时点标题重新展开）。

@@ -250,6 +250,98 @@ BLOCK_RENDERERS: dict[str, Callable[[dict, int], str]] = {
 }
 
 
+def _build_text_layout_html(
+    text_blocks: list, options: Any
+) -> str:
+    """按文本块处理选项排版纯文本块为 HTML，保留逐块可编辑性。
+
+    复用 TextBlockProcessor 的分段逻辑（去空白块 / 排序 / smart 分段），但
+    输出的是 DOM 结构而非拼接字符串：每个文本块仍是一个 ``.ocr-block``
+    （带 data-block-index = 在**原始 text_blocks** 中的下标），段内块以
+    ``display:inline-block`` 横向排列（视觉上合并），段间留 margin。
+
+    这样换行模式/空格/缩进在视觉上生效，同时：
+    - 双击编辑、悬停联动按 index 仍可命中（DOM 结构未变）；
+    - 编辑回写按 content_index 反查 text_block 的契约不变（即使 drop_blank
+      过滤掉中间块，保留下来的块 index 仍指向原始列表位置）。
+
+    block_join_space / chinese_indent 在内联块间通过 HTML 文本节点体现：
+    块间加空格 → 段内块之间插入一个空格文本节点；中文缩进 → 每段首块前置
+    两个全角空格。keep 模式每块独立成行（block 级）。
+    """
+    from vibeocr.models.text_block_options import (
+        LINE_MODE_KEEP,
+        LINE_MODE_MERGE,
+        LINE_MODE_SMART,
+    )
+    from vibeocr.services.text_block_processor import TextBlockProcessor
+
+    # 用 (原始下标, 块) 配对跟踪位置，避免 drop_blank / 排序后 index 错位。
+    indexed = list(enumerate(text_blocks))
+    if options.drop_blank_blocks:
+        indexed = [(i, b) for i, b in indexed if b.text and b.text.strip()]
+    if not indexed:
+        return ""
+    indexed = TextBlockProcessor._sort_indexed(indexed)
+
+    cjk_indent = "\u3000\u3000" if options.chinese_indent else ""
+
+    # keep：每块独立成行（块级 .ocr-block）。
+    if options.line_mode == LINE_MODE_KEEP:
+        return "\n".join(
+            _text_layout_block_html(
+                i, b, prefix=cjk_indent if pos == 0 else ""
+            )
+            for pos, (i, b) in enumerate(indexed)
+        )
+
+    # merge / smart：段内块横排（inline），段间空行。
+    if options.line_mode == LINE_MODE_SMART:
+        segments = TextBlockProcessor._split_indexed_into_segments(indexed)
+    elif options.line_mode == LINE_MODE_MERGE:
+        segments = [indexed]
+    else:  # 防御：未知模式按 merge 处理
+        segments = [indexed]
+
+    sep = " " if options.block_join_space else ""
+    parts: list[str] = []
+    for seg in segments:
+        chunks: list[str] = []
+        for pos, (i, b) in enumerate(seg):
+            prefix = cjk_indent if pos == 0 else ""
+            chunks.append(
+                _text_layout_block_html(i, b, inline=True, prefix=prefix)
+            )
+            # 段内块间插入分隔（HTML 文本节点，非编辑内容）
+            if sep and pos < len(seg) - 1:
+                chunks.append(sep)
+        parts.append(f'<div class="ocr-segment">{"".join(chunks)}</div>')
+    return '<div class="ocr-segments">' + "</div>".join(parts) + "</div>"
+
+
+def _text_layout_block_html(
+    index: int,
+    block: Any,
+    inline: bool = False,
+    prefix: str = "",
+) -> str:
+    """单个文本块 → .ocr-block HTML（纯文本）。
+
+    inline=True 时块横排（display:inline-block），用于 merge/smart 段内；
+    否则块级（display:block），用于 keep 模式。prefix 是段首缩进等装饰文本
+    （放在块内文本之前，不可单独编辑）。
+    """
+    display = "inline-block" if inline else "block"
+    text = html_lib.escape(prefix + (block.text or ""))
+    return (
+        f'<div class="ocr-block" data-block-index="{index}" '
+        f'data-block-type="text" id="block-{index}" '
+        f'style="display:{display};padding:2px 6px;border-left:3px solid #3b82f6;'
+        f'margin:2px 0;border-radius:2px;">'
+        f"<p>{text}</p></div>"
+    )
+
+
 def _render_block(block: dict, index: int) -> str:
     """根据块类型查找渲染器并生成 HTML"""
     block_type = block.get("type", "text")
@@ -343,6 +435,12 @@ body {{ margin:0; padding:8px; font-family:"Microsoft YaHei","Segoe UI",sans-ser
    margin（约 1em）叠加 .ocr-block 的 padding 会让单行文本上下空白过大。
    仅作用于直接子节点，避免影响表格/图片 caption 等带 inline 样式的 <p>。 */
 .ocr-block > p {{ margin: 0; }}
+/* 文本块排版（display_text_layout）：段内块横排，段间留空行。
+   仅影响纯文本结果按换行模式 merge/smart 渲染时的视觉分组，
+   不改变 .ocr-block 的编辑/悬停契约（块仍可按 index 双击编辑）。 */
+.ocr-segments {{ line-height: 1.8; }}
+.ocr-segment {{ margin-bottom: 1em; }}
+.ocr-segment:last-child {{ margin-bottom: 0; }}
 .ocr-table {{ overflow-x: auto; }}
 .ocr-table table {{ border-collapse: collapse; width: 100%; font-size: 13px; }}
 .ocr-table td, .ocr-table th {{ border: 1px solid #d1d5db; padding: 6px 8px; }}
@@ -902,6 +1000,45 @@ class ResultViewWidget(QWidget):
             if text:
                 body = (
                     f'<pre style="white-space:pre-wrap;">{html_lib.escape(text)}</pre>'
+                )
+            else:
+                body = '<p style="color:#888;">未识别到文字</p>'
+
+        resources_dir = _get_resources_dir()
+        katex_dir = resources_dir / "katex"
+        full_html = _build_full_html(body, katex_dir, resources_dir)
+        base_url = QUrl.fromLocalFile(str(resources_dir) + "/")
+        web_view.setHtml(full_html, base_url)
+
+    def display_text_layout(self, result: Any, options: Any) -> None:
+        """按文本块处理选项排版纯文本结果，同时保留逐块可编辑性。
+
+        与 display_result 的「每块独立一行」不同：本方法把 text_blocks 按换行
+        模式（keep/merge/smart）分组为段落，每段内块按 block_join_space 拼接，
+        并对段首按 chinese_indent 加缩进。关键是：**每个文本块仍渲染为独立的
+        ``.ocr-block``（带 data-block-index）**，因此：
+
+        - 双击编辑、悬停联动、左侧 ↔ 右侧高亮（按 index）全部保留；
+        - 编辑回写按 content_index 反查 text_block（_on_result_block_edited）
+          的契约不变。
+
+        merge 模式段内多个块视觉上连成一行（display:inline），但 DOM 仍是
+        多个 .ocr-block；smart 模式按垂直间距分段，段间留空行（margin）。
+        """
+        web_view = self._ensure_web_view()
+        if web_view is None:
+            self.webengine_missing.emit()
+            return
+
+        result_text_blocks = getattr(result, "text_blocks", []) or []
+        if result_text_blocks:
+            body = _build_text_layout_html(result_text_blocks, options)
+        else:
+            text = getattr(result, "raw_text", "")
+            if text:
+                body = (
+                    f'<pre style="white-space:pre-wrap;">'
+                    f"{html_lib.escape(text)}</pre>"
                 )
             else:
                 body = '<p style="color:#888;">未识别到文字</p>'

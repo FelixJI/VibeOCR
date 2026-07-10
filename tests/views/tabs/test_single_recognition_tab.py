@@ -269,14 +269,18 @@ class TestTextOptionsLiveUpdate:
         assert tab._current_ocr_result.raw_text == "第一行第二行"
 
     def test_line_mode_change_refreshes_result_view(self, qapp, monkeypatch):
-        """切换选项后结果区应重新渲染（display_result 被调用）。"""
+        """切换选项后结果区应重新渲染。
+
+        纯文本结果走 display_text_layout（按选项整体排版），不再走逐块的
+        display_result——后者无法体现换行模式/空格/缩进的变化。
+        """
         tab = SingleRecognitionTab()
         tab._current_ocr_result = _make_plain_text_result()
         tab._plain_text_at_recognition = True
 
         refreshed = {"count": 0}
         monkeypatch.setattr(
-            tab._result_widget, "display_result",
+            tab._result_widget, "display_text_layout",
             lambda *a, **k: refreshed.__setitem__("count", refreshed["count"] + 1),
         )
 
