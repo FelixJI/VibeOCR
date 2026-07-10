@@ -148,8 +148,8 @@ class SharedMemoryProtocolV2:
         self.shm: shared_memory.SharedMemory | None = None
         self._is_creator = False
 
-        # 数据偏移（前9字节保留给头部+状态）
-        self._data_offset = 8
+        # 数据偏移（前10字节保留：头部8 + ready flag 1 + cancel flag 1）
+        self._data_offset = 9
 
         # 用于实现可中断的等待
         self._stop_event = threading.Event()
@@ -192,7 +192,9 @@ class SharedMemoryProtocolV2:
         # 字节 0-3: 消息类型
         # 字节 4-7: 数据大小
         # 字节 8: 数据就绪标志 (0=空, 1=有数据)
+        # 字节 9: 取消标志 (0=正常, 1=已取消)
         self._buf[8] = 0  # 初始化为空
+        self._buf[9] = 0  # 初始化为未取消
 
     def connect(self) -> None:
         """连接共享内存（Worker 调用）
@@ -290,9 +292,9 @@ class SharedMemoryProtocolV2:
             )
 
         total_size = HEADER_SIZE + len(data)
-        if total_size > self.config.size - 9:  # 减去状态标志占用的 9 字节
+        if total_size > self.config.size - 10:  # 头部8 + ready1 + cancel1 = 10字节保留
             raise SharedMemoryProtocolError(
-                f"数据过大: {total_size} 字节，最大可用: {self.config.size - 9} 字节"
+                f"数据过大: {total_size} 字节，最大可用: {self.config.size - 10} 字节"
             )
 
         # 等待可写状态（使用指数退避）
@@ -403,6 +405,29 @@ class SharedMemoryProtocolV2:
             f"[SHM {self.config.name}] 读取消息: type={msg_type.decode('ascii', errors='replace')}, size={data_size}"
         )
         return msg_type, data
+
+    def set_cancel_flag(self) -> None:
+        """设置取消标志（独立控制通道，不影响数据消息）。
+
+        主进程批量取消时直接写此字节，不经过 WorkerManager 调度，
+        也不与 ready flag/消息数据竞争同一通道。worker 端的后台轮询
+        线程检测到此标志后调用 mgr.cancel()。
+        """
+        if self.shm is None:
+            return
+        self._buf[9] = 1
+
+    def is_cancelled(self) -> bool:
+        """检查取消标志是否已设置"""
+        if self.shm is None:
+            return False
+        return self._buf[9] == 1
+
+    def clear_cancel_flag(self) -> None:
+        """清除取消标志"""
+        if self.shm is None:
+            return
+        self._buf[9] = 0
 
     def interrupt(self) -> None:
         """中断当前的读写操作"""

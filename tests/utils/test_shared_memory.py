@@ -348,3 +348,76 @@ class TestRecognizeBatchSerialization:
         assert (
             sm.deserialize_recognize_batch_request is not sm.deserialize_batch_request
         )
+
+
+@pytest.mark.skipif(not HAS_SHARED_MEMORY, reason="shared_memory module not available")
+class TestCancelFlag:
+    """SHM 头部 cancel 标志字节：独立于数据通道的控制通道。
+
+    字节 9 专用于批量取消标志，主进程可直接写而不经过消息调度，
+    也不与 ready flag（字节 8）/消息数据竞争同一通道。
+    """
+
+    def test_set_and_check_cancel_flag(self):
+        """cancel flag 可独立 set/check/clear"""
+        import uuid
+
+        from vibeocr.utils.shared_memory_v2 import SharedMemoryConfig, SharedMemoryProtocolV2
+
+        name = f"vibeocr_test_cancel_{uuid.uuid4().hex[:8]}"
+        proto = SharedMemoryProtocolV2(SharedMemoryConfig(name=name, size=4096))
+        proto.create()
+        try:
+            assert not proto.is_cancelled()
+            proto.set_cancel_flag()
+            assert proto.is_cancelled()
+            proto.clear_cancel_flag()
+            assert not proto.is_cancelled()
+        finally:
+            proto.unlink()
+            proto.close()
+
+    def test_cancel_flag_independent_of_data_message(self):
+        """设置 cancel flag 不破坏 ready flag 与消息数据"""
+        import uuid
+
+        from vibeocr.utils.shared_memory_v2 import SharedMemoryConfig, SharedMemoryProtocolV2
+
+        name = f"vibeocr_test_cancel_msg_{uuid.uuid4().hex[:8]}"
+        proto = SharedMemoryProtocolV2(SharedMemoryConfig(name=name, size=4096))
+        proto.create()
+        try:
+            # 写一条消息后设置 cancel flag
+            proto.write_message(MSG_ACK, b"hello", timeout=5.0)
+            proto.set_cancel_flag()
+            # ready flag 仍应为 1（有消息待读）
+            assert proto._buf[8] == 1
+            assert proto.is_cancelled()
+            # 消息可正常读出
+            msg_type, data = proto.read_message(timeout=5.0)
+            assert msg_type == MSG_ACK
+            assert data == b"hello"
+            # cancel flag 仍为 1（独立于 ready flag）
+            assert proto.is_cancelled()
+        finally:
+            proto.unlink()
+            proto.close()
+
+    def test_cancel_flag_byte_is_byte_9(self):
+        """cancel flag 存储在字节 9，ready flag 在字节 8"""
+        import uuid
+
+        from vibeocr.utils.shared_memory_v2 import SharedMemoryConfig, SharedMemoryProtocolV2
+
+        name = f"vibeocr_test_cancel_layout_{uuid.uuid4().hex[:8]}"
+        proto = SharedMemoryProtocolV2(SharedMemoryConfig(name=name, size=4096))
+        proto.create()
+        try:
+            proto.set_cancel_flag()
+            # ready flag (字节 8) 不受影响
+            assert proto._buf[8] == 0
+            # cancel flag (字节 9) 为 1
+            assert proto._buf[9] == 1
+        finally:
+            proto.unlink()
+            proto.close()
