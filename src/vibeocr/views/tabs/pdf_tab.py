@@ -1666,7 +1666,8 @@ class PdfTab(QWidget):
             QMessageBox.information(self, "自动摆正", "请先选中要摆正的页面。")
             return
         # 进度 UI + 独占锁(禁用所有页操作按钮,仅留取消)
-        self._progress_bar.setRange(0, 0)  # 不确定(检测阶段无 tick)
+        # 初始不确定态；首批渲染完成后切确定进度（渲染/识别/旋转 三阶段子步）
+        self._progress_bar.setRange(0, 0)
         self._progress_bar.setVisible(True)
         self._btn_cancel.setVisible(True)
         self._set_file_buttons_enabled(False)
@@ -1687,14 +1688,21 @@ class PdfTab(QWidget):
     def _on_deskew_progress(
         self, file_path: str, current: int, total: int
     ) -> None:
-        """摆正进度:total > 0 时切确定进度条。"""
+        """摆正进度:total = 页数 × 3 子步（渲染/识别方向/旋转），逐阶段推进。"""
         session = self._session_mgr.active_session
         if session is None or session.file_path != file_path:
             return
         if total > 0:
             self._progress_bar.setRange(0, total)
             self._progress_bar.setValue(current)
-            phase = "识别方向" if current <= total // 2 else "纠正"
+            # 三阶段（每段 = 页数）：渲染 / 识别方向 / 旋转
+            per = total // 3 if total else 1
+            if current <= per:
+                phase = "渲染"
+            elif current <= per * 2:
+                phase = "识别方向"
+            else:
+                phase = "旋转"
             self._status_label.setText(f"正在{phase} {current}/{total}…")
         else:
             self._progress_bar.setRange(0, 0)

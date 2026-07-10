@@ -32,6 +32,15 @@ class PdfGlobalSettings:
             大文件保存稍慢；False = 增量追加快路径（incremental，快但大，保留
             旧行为）。OCR 加文字层后建议 True，否则字体/文字流不压缩、旧对象
             不回收，720MB 文档可膨胀上百 MB。
+        clean_on_save: 全量压缩时是否『深度清理』内容流（PyMuPDF clean 参数）。
+            True = tobytes(garbage=4 + deflate + clean)，重写并规范化所有内容流，
+            适合来源不规范/需要清洗的 PDF。False（默认）= tobytes(garbage=4 +
+            deflate + clean=False)，保留原始内容流压缩，不重写。
+            重要：很多扫描件驱动用 ObjStm/CrossRefStream 高度压缩，MuPDF（PyMuPDF
+            底层）在序列化时无法保留这种压缩结构（会展平成传统 xref 表），
+            clean=True 还会解压并重写内容流，两者叠加可使 1.6MB 扫描件膨胀到 3MB+。
+            仅加一层隐形文字层是纯增量场景，默认 clean=False 保留原压缩度、体积
+            最小；需要清洗/规范化时再手动开 True。
     """
 
     render_dpi: int = 300
@@ -42,6 +51,7 @@ class PdfGlobalSettings:
     font_size_shrink_factor: float = 0.75
     min_font_size: float = 4.0
     compress_on_save: bool = True
+    clean_on_save: bool = False
 
     def to_dict(self) -> dict:
         return {
@@ -53,6 +63,7 @@ class PdfGlobalSettings:
             "font_size_shrink_factor": self.font_size_shrink_factor,
             "min_font_size": self.min_font_size,
             "compress_on_save": self.compress_on_save,
+            "clean_on_save": self.clean_on_save,
         }
 
     @classmethod
@@ -68,6 +79,7 @@ class PdfGlobalSettings:
             font_size_shrink_factor=data.get("font_size_shrink_factor", 0.75),
             min_font_size=data.get("min_font_size", 4.0),
             compress_on_save=data.get("compress_on_save", True),
+            clean_on_save=data.get("clean_on_save", False),
         )
 
     def adjust_dpi(self, page_width: float, page_height: float) -> int:

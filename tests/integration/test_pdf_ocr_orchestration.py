@@ -89,8 +89,9 @@ def _make_ocr_result(text="识别文字", preproc_angle=0):
 def _make_mock_ocr_service(text="识别文字", preproc_angle=0):
     """构造 mock OCR 服务,返回固定 OCRResult。
 
-    - recognize(单图):摆正(auto_deskew)路径用。
-    - recognize_batch(批量):PDF 文字层 OCR 路径用,按输入 images 数量返回等长列表。
+    - recognize(单图):保留兼容(旧摆正路径曾用,现摆正已改走批量)。
+    - recognize_batch(批量):PDF 文字层 OCR 与自动摆正(auto_deskew)均用此批量
+      路径,按输入 images 数量返回等长列表(摆正只读 preproc_angle)。
     """
     service = MagicMock()
     service.recognize = MagicMock(

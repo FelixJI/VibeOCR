@@ -437,68 +437,122 @@ class PdfSessionManager(QObject):
                     self.failed.emit(self._sid, str(e))
 
         self._mutate_worker = _DeskewRunner(self, session.session_id, page_indices)  # type: ignore[assignment]
-        self._mutate_worker.progress.connect(lambda sid, c, t: self.deskew_progress.emit(sid, c, t))  # type: ignore[attr-defined]
-        self._mutate_worker.page_done.connect(lambda sid, idx, corr: self.deskew_page_done.emit(sid, idx, corr))  # type: ignore[attr-defined]
+        # 与 OCR/mutate 一致：runner 信号携带 session_id，须经 _path_for_session_id
+        # 翻译成 file_path 再转发给 UI（UI 处理器按 file_path 匹配活跃会话）。
+        # 否则 session_id（uuid hex 串）永远 != file_path，UI 处理器全部 early-return，
+        # 进度条停滞、完成汇总（"已摆正 N 页"）永不弹出。
+        self._mutate_worker.progress.connect(self._on_deskew_progress_signal)  # type: ignore[attr-defined]
+        self._mutate_worker.page_done.connect(self._on_deskew_page_done_signal)  # type: ignore[attr-defined]
         self._mutate_worker.all_done.connect(self._on_deskew_all_done)  # type: ignore[attr-defined]
-        self._mutate_worker.failed.connect(self._on_deskew_failed)  # type: ignore[attr-defined]
+        self._mutate_worker.failed.connect(self._on_deskew_failed_signal)  # type: ignore[attr-defined]
         self._mutate_worker.start()
 
     def _run_deskew(self, runner, session_id: str, page_indices: list[int]) -> None:
-        """在 deskew runner 线程内执行三步摆正。"""
+        """在 deskew runner 线程内:分批 [并发渲染 → 批量 OCR 方向检测 → 逐页旋转]。
+
+        与 _run_ocr 共用批大小/渲染并发/子步进度（性能1/性能2），仅 DPI 与最终
+        动作不同：摆正只需 preproc_angle，用 150dpi（OCR 提取文字需 300dpi）；
+        识别后逐页按角度旋转（fitz 写不可并发，串行）。
+
+        旧实现逐页串行：渲染 → 主进程 PIL+numpy 解码 → 单页 recognize（N 次 IPC
+        往返）→ rotate。重构后复用 OCR 的批量化路径，省去主进程解码与逐页 IPC。
+        """
+        from concurrent.futures import ThreadPoolExecutor
+
         from vibeocr.models.ocr_options import OCROptions
 
         session = self._sessions.get(self._active_path or "")
         if session is None or session.session_id != session_id:
             return
         total = len(page_indices)
-        # 阶段 1+2:逐页后端渲染 → OCR 方向检测
-        results = []  # [(idx, angle)]
-        for n, idx in enumerate(page_indices):
-            if runner._cancelled:  # noqa: SLF001
-                runner.all_done.emit(
-                    session_id,
-                    {"corrected": len(self._deskew_corrected), "skipped": 0,
-                     "corrected_pages": list(self._deskew_corrected)},
-                )
-                return
-            try:
-                # 后端渲染预览图(150dpi)→ PNG 字节 → numpy
-                png = self._client.render_preview(session_id, idx, dpi=150)
-                import io
-                import numpy as np
-                from PIL import Image
-                img = Image.open(io.BytesIO(png)).convert("RGB")
-                arr = np.array(img)
-                # OCR 方向检测
-                options = OCROptions(
-                    use_doc_orientation_classify=True,
-                    use_doc_unwarping=False,
-                    use_textline_orientation=False,
-                )
-                ocr_result = self._ocr_service.recognize(arr, options)  # type: ignore[union-attr]
-                angle = int(getattr(ocr_result, "preproc_angle", 0) or 0)
-                results.append((idx, angle))
-            except Exception as e:
-                logger.error("摆正检测页 %d 失败: %s", idx, e)
-                results.append((idx, 0))
-            runner.progress.emit(session_id, n + 1, total)
+        if total == 0:
+            runner.all_done.emit(
+                session_id,
+                {"corrected": 0, "skipped": 0, "corrected_pages": []},
+            )
+            return
 
-        # 阶段 3:逐页按角度旋转(angle → correction: 顺时针偏转 angle,逆时针纠正)
-        for n, (idx, angle) in enumerate(results):
+        client = self._client
+        dpi = self._DESKEW_DPI
+        batch_size = self._OCR_BATCH_SIZE
+        substeps = self._OCR_PROGRESS_SUBSTEPS
+        progress_total = total * substeps
+        progress = 0
+
+        def _emit_progress() -> None:
+            runner.progress.emit(session_id, progress, progress_total)
+
+        def _render_page(idx: int) -> bytes | None:
+            """渲染单页 dpi → 原始 PNG bytes（不在主进程解码，性能1）。"""
+            try:
+                return client.render_preview(session_id, idx, dpi=dpi)
+            except Exception as e:
+                logger.error("摆正渲染页 %d 失败: %s", idx, e)
+                return None
+
+        # 方向检测选项：只要角度，关掉去扭曲/文本行方向（更快）
+        angle_opts = OCROptions(
+            use_doc_orientation_classify=True,
+            use_doc_unwarping=False,
+            use_textline_orientation=False,
+        )
+
+        for batch_start in range(0, total, batch_size):
             if runner._cancelled:  # noqa: SLF001
                 break
-            correction = (-int(angle)) % 360
-            if correction != 0:
+            batch_pages = page_indices[batch_start:batch_start + batch_size]
+
+            # 阶段1：并发渲染（线程池，结果按 batch_pages 顺序对齐）
+            images: list[bytes | None] = [None] * len(batch_pages)
+            if not runner._cancelled:  # noqa: SLF001
+                with ThreadPoolExecutor(
+                    max_workers=min(self._RENDER_CONCURRENCY, len(batch_pages))
+                ) as pool:
+                    rendered = pool.map(_render_page, batch_pages)
+                    for i, png in enumerate(rendered):
+                        images[i] = png
+            page_failed = [png is None for png in images]
+            progress += len(batch_pages)  # 渲染子步
+            _emit_progress()
+
+            # 阶段2：批量方向检测（单次 recognize_batch，跳过渲染失败的页）
+            valid_indices = [i for i, png in enumerate(images) if png is not None]
+            angles_map: dict[int, int] = {}
+            if valid_indices and not runner._cancelled:  # noqa: SLF001
+                valid_images = [images[i] for i in valid_indices]  # type: ignore[list-item]
                 try:
-                    self._client.rotate(session_id, [idx], correction)
-                    self._deskew_corrected.append(idx)
-                    runner.page_done.emit(session_id, idx, True)
+                    batch_results = self._ocr_service.recognize_batch(  # type: ignore[union-attr]
+                        valid_images, angle_opts
+                    )
+                    for vi, res in zip(valid_indices, batch_results):
+                        angles_map[vi] = int(getattr(res, "preproc_angle", 0) or 0)
                 except Exception as e:
-                    logger.error("摆正旋转页 %d 失败: %s", idx, e)
+                    logger.error("摆正批量方向检测失败(批起始页 %d): %s", batch_pages[0], e)
+                    for vi in valid_indices:
+                        page_failed[vi] = True
+            progress += len(valid_indices)  # 识别子步
+            _emit_progress()
+
+            # 阶段3：逐页旋转（fitz 写不可并发，串行）
+            for i, idx in enumerate(batch_pages):
+                if runner._cancelled:  # noqa: SLF001
+                    progress += 1
+                    _emit_progress()
+                    continue
+                angle = angles_map.get(i, 0) if not page_failed[i] else 0
+                correction = (-int(angle)) % 360
+                if correction != 0:
+                    try:
+                        client.rotate(session_id, [idx], correction)
+                        self._deskew_corrected.append(idx)
+                        runner.page_done.emit(session_id, idx, True)
+                    except Exception as e:
+                        logger.error("摆正旋转页 %d 失败: %s", idx, e)
+                        runner.page_done.emit(session_id, idx, False)
+                else:
                     runner.page_done.emit(session_id, idx, False)
-            else:
-                runner.page_done.emit(session_id, idx, False)
-            runner.progress.emit(session_id, total + n + 1, total * 2)
+                progress += 1  # 旋转子步
+                _emit_progress()
 
         runner.all_done.emit(
             session_id,
@@ -506,6 +560,16 @@ class PdfSessionManager(QObject):
              "skipped": total - len(self._deskew_corrected),
              "corrected_pages": list(self._deskew_corrected)},
         )
+
+    def _on_deskew_progress_signal(self, session_id: str, current: int, total: int) -> None:
+        file_path = self._path_for_session_id(session_id)
+        if file_path:
+            self.deskew_progress.emit(file_path, current, total)
+
+    def _on_deskew_page_done_signal(self, session_id: str, page_index: int, was_corrected: bool) -> None:
+        file_path = self._path_for_session_id(session_id)
+        if file_path:
+            self.deskew_page_done.emit(file_path, page_index, was_corrected)
 
     def _on_deskew_all_done(self, session_id: str, summary: object) -> None:
         self._mutate_worker = None
@@ -521,11 +585,16 @@ class PdfSessionManager(QObject):
                     self.thumbnails_invalidated.emit(invalidated)
             except PdfBackendError as e:
                 logger.error("摆正后刷新 model 失败: %s", e)
-        self.deskew_done.emit(session_id, summary)
+        # 翻译 session_id → file_path，UI 处理器按 file_path 匹配
+        file_path = self._path_for_session_id(session_id)
+        if file_path:
+            self.deskew_done.emit(file_path, summary)
 
-    def _on_deskew_failed(self, session_id: str, error: str) -> None:
+    def _on_deskew_failed_signal(self, session_id: str, error: str) -> None:
         self._mutate_worker = None
-        self.deskew_failed.emit(session_id, error)
+        file_path = self._path_for_session_id(session_id)
+        if file_path:
+            self.deskew_failed.emit(file_path, error)
 
     def cancel_deskew(self) -> None:
         w = self._mutate_worker
@@ -680,6 +749,12 @@ class PdfSessionManager(QObject):
     # 期间也能推进（而非只在写层时跳变），避免长时间静止被误判为卡死。
     # UI（PdfTab._begin_ocr_ui）的进度条范围须用 同样的子步数。
     _OCR_PROGRESS_SUBSTEPS = 3
+
+    # ---- 自动摆正(与 OCR 共用批/并发/子步，仅 DPI 与动作不同)-----------
+    # 摆正只需方向检测，150dpi 足够（OCR 需 300dpi 提取文字）；低 DPI 渲染更快、
+    # PNG 更小、传输更省。批大小/并发/子步复用 OCR 的常量，保证两路径行为一致，
+    # 也让进度模型统一（每页 渲染/识别/旋转 3 子步）。
+    _DESKEW_DPI = 150
 
     def _run_ocr(self, runner, session_id: str, pages: list[int],
                  ocr_options, settings_dict: dict, overwrite: bool) -> None:

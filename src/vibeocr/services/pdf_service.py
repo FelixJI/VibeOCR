@@ -79,13 +79,16 @@ class PdfService:
 
         settings = pdf_settings if pdf_settings is not None else PdfGlobalSettings()
         compress = getattr(settings, "compress_on_save", True)
+        # clean_on_save 默认 False：加文字层是纯增量场景，clean=True 会解压并重写
+        # 扫描件内容流，叠加 MuPDF 无法保留 ObjStm/CrossRefStream 压缩，体积可翻倍。
+        clean = getattr(settings, "clean_on_save", False)
 
         if path is None:
             save_path = pdf_document.file_path
             if save_path is None:
                 return None
             if compress:
-                new_doc = PdfService._compress_in_place(doc, save_path)
+                new_doc = PdfService._compress_in_place(doc, save_path, clean=clean)
                 pdf_document.is_modified = False
                 return new_doc
             # 增量快路径：incremental 可原地追加，doc 不变
@@ -101,26 +104,31 @@ class PdfService:
             pdf_document.is_modified = False
             return None
         else:
-            doc.save(path, deflate=True, clean=True)
+            doc.save(path, deflate=True, clean=clean)
             pdf_document.is_modified = False
             return None
 
     @staticmethod
     def _compress_in_place(
-        doc: fitz.Document, save_path: str
+        doc: fitz.Document, save_path: str, clean: bool = True
     ) -> "fitz.Document":
         """全量压缩覆盖原文件（Windows 兼容），返回重开后的新 doc。
 
-        流程：先备份原文件 → tobytes(garbage+deflate+clean) 取压缩字节 →
+        流程：先备份原文件 → tobytes(garbage+deflate[+clean]) 取压缩字节 →
         关闭 doc 释放文件锁 → 写回原路径 → 重新打开。失败时用备份回滚
         （但 doc 已关闭，无法恢复原 doc 对象，调用方需处理）。
 
         关闭/重开是必须的：Windows 锁定被 fitz 打开的文件，不关 doc 无法覆盖。
+
+        Args:
+            clean: 是否深度清理内容流（PyMuPDF clean 参数）。True 重写规范化
+                内容流；False 保留原始内容流压缩——对用 ObjStm/CrossRefStream
+                高度压缩的扫描件，False 避免解压重写导致的体积膨胀。
         """
         backup_path = save_path + ".bak"
         shutil.copy2(save_path, backup_path)
         try:
-            data = doc.tobytes(garbage=4, deflate=True, clean=True)
+            data = doc.tobytes(garbage=4, deflate=True, clean=clean)
             doc.close()
             with open(save_path, "wb") as f:
                 f.write(data)
@@ -166,6 +174,11 @@ class PdfService:
         settings = pdf_settings if pdf_settings is not None else PdfGlobalSettings()
         compress = getattr(settings, "compress_on_save", True)
 
+        # clean_on_save 决定全量压缩时是否深度清理内容流。默认 False：加文字层
+        # 是纯增量场景，clean=True 会解压并重写扫描件内容流，叠加 MuPDF 无法保留
+        # ObjStm/CrossRefStream 压缩，可使 1.6MB 扫描件膨胀到 3MB+。
+        clean = getattr(settings, "clean_on_save", False)
+
         # 整文档一次聚合子集字体：把所有有 OCR 块的页字符汇成一个子集，
         # 全文档共享单一字体对象，避免每页一份独立子集放大体积。
         # （探测失败为 None → rewrite_text_layer 内部回退 china-s。）
@@ -203,7 +216,7 @@ class PdfService:
             # （Windows 锁要求 close+write+reopen，返回新 doc）。
             need_full = pdf_document.has_structural_change or compress
             if need_full:
-                new_doc = PdfService._compress_in_place(doc, save_path)
+                new_doc = PdfService._compress_in_place(doc, save_path, clean=clean)
             else:
                 backup_path = save_path + ".bak"
                 shutil.copy2(save_path, backup_path)
@@ -215,7 +228,7 @@ class PdfService:
                     Path(backup_path).unlink(missing_ok=True)
                     raise
         else:
-            doc.save(path, deflate=True, clean=True)
+            doc.save(path, deflate=True, clean=clean)
 
         pdf_document.is_modified = False
         pdf_document.has_structural_change = False
@@ -611,6 +624,16 @@ class PdfService:
             def _derotate_to_mediabox(rect: fitz.Rect) -> fitz.Rect:
                 return rect
 
+        # 字形方向（rotate 参数）：页面 /Rotate=90/270 时，derotate 后的 mediabox
+        # 矩形宽高互换（宽框→瘦高框），若仍以默认 0°（横向）写入，insert_textbox
+        # 会把字排进瘦高框 → 字竖排堆叠 → 外部阅读器渲染 /Rotate 时看起来旋转 90°
+        # （程序内预览对，因预览直接在显示空间映射 bbox，不经此写入路径）。
+        # 实测（见 tests/services/test_pdf_service.py::test_*_page_rotation_*）：
+        # page.rotation ∈ {90,270} 时给 insert_textbox/insert_text 传 rotate=90，
+        # 字形即按显示方向正确排布（渲染后长宽比与 rotation=0 基准一致）。
+        # 180° 字形仍正向（宽高不互换），rotate=0 即可。
+        text_rotate = 90 if page_rotation in (90, 270) else 0
+
         # 收集本页所有字符，解析子集字体（探测失败则 None，回退 china-s）。
         # 子集字体嵌入后 PyMuPDF 自动生成 ToUnicode CMap，使文字层在所有
         # 主流阅读器可搜索/复制（china-s 依赖阅读器自带 Adobe GB1 CMap，脆弱）。
@@ -685,6 +708,7 @@ class PdfService:
                     fontfile=font_path,
                     color=(0, 0, 0),
                     render_mode=render_mode,
+                    rotate=text_rotate,
                 )
                 if rc >= 0:
                     inserted = True
@@ -710,6 +734,7 @@ class PdfService:
                         fontfile=font_path,
                         color=(0, 0, 0),
                         render_mode=render_mode,
+                        rotate=text_rotate,
                     )
                     written += 1
                     logger.debug(
