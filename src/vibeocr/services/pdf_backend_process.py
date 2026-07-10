@@ -22,8 +22,9 @@ import logging
 import socket
 import sys
 import threading
+import time
 import uuid
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from typing import AsyncIterator
 
@@ -162,6 +163,11 @@ class BackendSession:
     fitz_lock: threading.Lock = field(default_factory=threading.Lock)
     # 文字层后台逐页检测线程(打开后异步跑,逐页发 progress)
     _load_thread: threading.Thread | None = None
+    # 关闭同步：CLOSING 状态拒绝新操作，active_ops 跟踪进行中的 fitz 操作，
+    # remove() 等待 active_ops 归零后再在 fitz_lock 内 close doc。
+    state: str = "OPEN"  # OPEN / CLOSING / CLOSED
+    active_ops: int = 0
+    _ops_cond: threading.Condition = field(default_factory=threading.Condition)
 
 
 class SessionRegistry:
@@ -186,20 +192,57 @@ class SessionRegistry:
             s = self._sessions.get(session_id)
         if s is None:
             raise HTTPException(status_code=404, detail=f"session not found: {session_id}")
+        # CLOSING/CLOSED 状态拒绝新操作，避免 close 与新请求并发
+        if s.state != "OPEN":
+            raise HTTPException(
+                status_code=409, detail=f"session is closing/closed: {session_id}"
+            )
         return s
 
     def remove(self, session_id: str) -> None:
         with self._lock:
             s = self._sessions.pop(session_id, None)
         if s is not None:
-            try:
-                s.doc.close()
-            except Exception:
-                pass
+            # 标记 CLOSING，拒绝新操作
+            with s._ops_cond:
+                s.state = "CLOSING"
+                s.cancel_event.set()
+                # 等待活跃操作完成（有界等待，避免永久阻塞）
+                deadline = time.monotonic() + 10.0
+                while s.active_ops > 0 and time.monotonic() < deadline:
+                    s._ops_cond.wait(timeout=1.0)
+            # 在 fitz_lock 内 close，避免与持锁的 render/load/mutate 并发
+            with s.fitz_lock:
+                try:
+                    s.doc.close()
+                except Exception:
+                    pass
+            s.state = "CLOSED"
 
     def count(self) -> int:
         with self._lock:
             return len(self._sessions)
+
+
+@contextmanager
+def _fitz_op(session: BackendSession):
+    """fitz 操作的上下文管理器：维护 active_ops 计数。
+
+    开始时检查 session 是否仍 OPEN（非 CLOSING），递增 active_ops；
+    结束时递减并 notify（让 remove() 的等待能感知到 active_ops 归零）。
+    fitz_lock 由调用方在 _fitz_op 内获取（或由本上下文管理器获取）。
+    """
+    with session._ops_cond:
+        if session.state != "OPEN":
+            raise HTTPException(status_code=409, detail="session is closing/closed")
+        session.active_ops += 1
+    try:
+        yield
+    finally:
+        with session._ops_cond:
+            session.active_ops -= 1
+            if session.active_ops == 0:
+                session._ops_cond.notify_all()
 
 
 # ---- FastAPI 应用 -------------------------------------------------------
