@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-import subprocess
+import subprocess  # noqa: TC003  类型注解用，与 install_dialog 一致
 import threading
 from typing import TYPE_CHECKING
 

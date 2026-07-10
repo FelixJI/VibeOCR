@@ -58,13 +58,13 @@ class ShutdownCoordinator:
             done = threading.Event()
             exc_holder: list[BaseException | None] = [None]
 
-            def run(f=fn, h=exc_holder):
+            def run(f=fn, h=exc_holder, d=done):
                 try:
                     f()
                 except Exception as e:
                     h[0] = e
                 finally:
-                    done.set()
+                    d.set()
 
             t = threading.Thread(target=run, daemon=True)
             t.start()
