@@ -60,6 +60,45 @@ class TestPreloadTask:
         assert task._pipelines == ["OCR", "PP-StructureV3"]
         assert task.signals is not None
 
+    def test_task_has_cancel_event(self):
+        """PreloadTask 应有协作取消事件（threading.Event）。"""
+        import threading
+
+        mock_service = Mock()
+        task = PreloadTask(mock_service, ["OCR"])
+        assert hasattr(task, "_cancelled")
+        assert isinstance(task._cancelled, threading.Event)
+        assert task._cancelled.is_set() is False
+
+    def test_task_cancel_sets_event(self):
+        """cancel() 应设置取消事件。"""
+        mock_service = Mock()
+        task = PreloadTask(mock_service, ["OCR"])
+        task.cancel()
+        assert task._cancelled.is_set() is True
+
+    def test_task_run_checks_cancel_between_pipelines(self):
+        """run() 应在每个管道之间检查取消事件，取消后跳过剩余管道。"""
+        mock_service = Mock()
+        # 让 preload_pipelines 模拟耗时（但不实际阻塞）
+        mock_service.preload_pipelines.return_value = {"OCR": True}
+        task = PreloadTask(mock_service, ["OCR", "Table", "Formula"])
+        # 预先取消
+        task.cancel()
+        task.run()
+        # 取消后不应调用任何 preload（在第一个管道前就退出）
+        mock_service.preload_pipelines.assert_not_called()
+
+    def test_task_run_clears_service_ref_after_finish(self):
+        """任务结束后应清零 service 引用（避免延迟 signal 访问已销毁 UI）。"""
+        mock_service = Mock()
+        mock_service.preload_pipelines.return_value = {"OCR": True}
+        mock_service.warmup_pipelines.return_value = {"OCR": True}
+        task = PreloadTask(mock_service, ["OCR"])
+        task.run()
+        # run 完成后引用清零
+        assert task._service is None
+
 
 class TestSubprocessManager:
     """SubprocessManager 测试"""
@@ -163,6 +202,44 @@ class TestSubprocessManager:
         manager.shutdown(timeout_ms=100)
 
         mock_task.cancel.assert_called_once()
+
+    def test_shutdown_cancels_preload_task(self, manager):
+        """shutdown 应先取消 _preload_task 再关闭 service。"""
+        mock_preload = Mock()
+        manager._preload_task = mock_preload
+        manager._service = Mock()
+
+        manager.shutdown(timeout_ms=100)
+
+        # preload_task.cancel() 必须被调用
+        mock_preload.cancel.assert_called_once()
+
+    def test_shutdown_cancels_preload_before_service(self, manager):
+        """取消 preload 必须在关闭 service 之前（顺序验证）。"""
+        call_order: list[str] = []
+
+        mock_preload = Mock()
+        mock_preload.cancel.side_effect = lambda: call_order.append("cancel_preload")
+        manager._preload_task = mock_preload
+
+        mock_service = Mock()
+        mock_service.shutdown.side_effect = lambda: call_order.append("service_shutdown")
+        manager._service = mock_service
+
+        manager.shutdown(timeout_ms=100)
+
+        assert call_order[0] == "cancel_preload"
+        assert "service_shutdown" in call_order
+        assert call_order.index("cancel_preload") < call_order.index("service_shutdown")
+
+    def test_shutdown_clears_preload_task_ref(self, manager):
+        """shutdown 后 _preload_task 引用应清零。"""
+        mock_preload = Mock()
+        manager._preload_task = mock_preload
+
+        manager.shutdown(timeout_ms=100)
+
+        assert manager._preload_task is None
 
 
 class TestSubprocessManagerIntegration:

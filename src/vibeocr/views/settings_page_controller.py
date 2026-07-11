@@ -7,6 +7,7 @@ import logging
 import os
 import subprocess
 import sys
+import threading
 from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -139,7 +140,26 @@ class SettingsPageController:
         self._active_dialogs: list = []
 
     def shutdown(self) -> None:
-        """Release background workers owned by settings-page widgets."""
+        """Release background workers owned by settings-page widgets.
+
+        取消手动预加载任务（协作取消）并断开 signal，避免迟到回调访问
+        已销毁的 UI。再关闭 GPU 检测线程。
+        """
+        # 取消正在运行的手动预加载任务（运行在全局 QThreadPool 上）
+        if self._manual_preload_task is not None:
+            task = self._manual_preload_task
+            # 协作取消：设置 _cancelled 事件，run() 在下一个检查点退出
+            if hasattr(task, "cancel"):
+                task.cancel()
+            # 断开 signal，避免迟到回调
+            try:
+                if hasattr(task, "signals"):
+                    task.signals.status_changed.disconnect(self._update_preload_status)
+                    task.signals.finished.disconnect(self._on_manual_preload_finished)
+            except RuntimeError:
+                pass  # signal 已断开
+            self._manual_preload_task = None
+
         backend_options = self._backend_options
         if backend_options is not None:
             backend_options.shutdown_gpu_detection()
@@ -642,11 +662,21 @@ class SettingsPageController:
                 self._pipelines = pipelines
                 self._controller = controller
                 self.signals = _PreloadSignals()
+                # 协作取消事件：controller shutdown 时设置，run() 在每个管道前检查
+                self._cancelled = threading.Event()
+
+            def cancel(self):
+                """请求取消：run() 在下一个检查点退出。"""
+                self._cancelled.set()
 
             def run(self):
                 results = {}
 
                 for pipeline in self._pipelines:
+                    # 取消检查点：每个管道预加载前
+                    if self._cancelled.is_set():
+                        logger.debug("[预加载] 任务已取消，跳过剩余管道")
+                        break
                     try:
                         self.signals.status_changed.emit(
                             f"正在预加载 {pipeline.display_name}..."
@@ -662,6 +692,10 @@ class SettingsPageController:
                         results[pipeline.name] = True
                         logger.debug(f"[预加载] {pipeline.display_name} 预加载成功!")
 
+                        # 预热前再次检查取消
+                        if self._cancelled.is_set():
+                            logger.debug("[预加载] 任务已取消，跳过预热")
+                            break
                         self.signals.status_changed.emit(
                             f"正在预热 {pipeline.display_name}..."
                         )
@@ -674,7 +708,10 @@ class SettingsPageController:
 
                 success_count = sum(1 for v in results.values() if v)
                 total = len(results)
-                if success_count == total:
+                if self._cancelled.is_set():
+                    self.signals.status_changed.emit("预加载已取消")
+                    logger.debug("[预加载] 已取消")
+                elif success_count == total:
                     self.signals.status_changed.emit("预加载成功")
                     logger.debug(f"[预加载] 全部完成! 成功: {success_count}/{total}")
                 elif success_count > 0:
@@ -687,6 +724,9 @@ class SettingsPageController:
                     logger.error("[预加载] 全部失败!")
 
                 self.signals.finished.emit(results)
+                # 清零引用，避免延迟 signal 访问已销毁的 controller/service
+                self._service = None
+                self._controller = None
 
             def _warmup_pipeline(self, pipeline) -> bool:
                 """预热管道"""

@@ -191,3 +191,43 @@ def test_restore_preload_checkbox_case_insensitive(controller, monkeypatch):
     assert not host.findChild(
         QCheckBox, "chkPreload_FORMULA_RECOGNITION"
     ).isChecked()
+
+
+def test_shutdown_cancels_manual_preload_task(controller):
+    """shutdown 应取消 _manual_preload_task 并清零引用。"""
+    ctrl, _host = controller
+
+    # 模拟一个正在运行的手动预加载任务
+    mock_task = MagicMock()
+    ctrl._manual_preload_task = mock_task
+
+    ctrl.shutdown()
+
+    # cancel() 必须被调用
+    mock_task.cancel.assert_called_once()
+    # 引用清零
+    assert ctrl._manual_preload_task is None
+
+
+def test_shutdown_disconnects_manual_preload_signals(controller):
+    """shutdown 应断开预加载任务的 signal，避免迟到回调。"""
+    ctrl, _host = controller
+
+    mock_task = MagicMock()
+    ctrl._manual_preload_task = mock_task
+
+    ctrl.shutdown()
+
+    # signal disconnect 应被调用（status_changed 和 finished）
+    mock_task.signals.status_changed.disconnect.assert_called()
+    mock_task.signals.finished.disconnect.assert_called()
+
+
+def test_shutdown_no_error_when_no_preload_task(controller):
+    """没有正在运行的预加载任务时 shutdown 不应报错。"""
+    ctrl, _host = controller
+    assert ctrl._manual_preload_task is None
+
+    # 不应抛异常
+    ctrl.shutdown()
+

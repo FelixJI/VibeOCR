@@ -4,6 +4,7 @@
 """
 
 import logging
+import threading
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
@@ -13,6 +14,10 @@ if TYPE_CHECKING:
     from vibeocr.services.ocr_service_subprocess import OCRServiceSubprocess
 
 logger = logging.getLogger(__name__)
+
+
+class PreloadCancelled(Exception):
+    """预加载任务被协作取消（由 cancel() 触发）。"""
 
 
 class SubprocessStartSignals(QObject):
@@ -100,6 +105,10 @@ class PreloadTask(QRunnable):
 
     在后台线程下发 TTL 并逐个预加载/预热管道，每完成一个上报进度，
     避免长时间无反馈。避免阻塞 GUI 主线程。
+
+    协作取消：通过 ``_cancelled``（threading.Event）实现。``cancel()`` 设置
+    事件后，``run()`` 在每个昂贵步骤（TTL 下发、每管道预加载、预热）前检查
+    并提前退出。不使用 QThread.terminate()。
     """
 
     def __init__(
@@ -113,10 +122,24 @@ class PreloadTask(QRunnable):
         self._pipelines = pipelines
         self._ttl_seconds = ttl_seconds
         self.signals = PreloadSignals()
+        # 协作取消事件：cancel() 设置后，run() 在每个管道前检查并退出
+        self._cancelled = threading.Event()
+
+    def cancel(self) -> None:
+        """请求取消：设置取消事件，run() 在下一个检查点退出。"""
+        self._cancelled.set()
+
+    def _raise_if_cancelled(self) -> None:
+        """检查取消事件，若已取消则抛出 PreloadCancelled 中断 run()。"""
+        if self._cancelled.is_set():
+            raise PreloadCancelled
 
     def run(self) -> None:
         """下发 TTL、逐个预加载管道并预热"""
         try:
+            # 取消检查点 0：TTL 下发前
+            self._raise_if_cancelled()
+
             # 先下发 TTL（无论是否预加载，TTL 配置都需要同步到 worker）
             if self._ttl_seconds is not None:
                 try:
@@ -136,6 +159,8 @@ class PreloadTask(QRunnable):
             results: dict[str, bool] = {}
             total = len(self._pipelines)
             for i, pipeline_name in enumerate(self._pipelines, 1):
+                # 取消检查点：每个管道预加载前
+                self._raise_if_cancelled()
                 self.signals.progress.emit(i, total, pipeline_name)
                 try:
                     single = self._service.preload_pipelines([pipeline_name])
@@ -150,6 +175,9 @@ class PreloadTask(QRunnable):
             logger.debug(
                 f"[SubprocessManager] 预加载完成: {success_count}/{len(results)} 个管道"
             )
+
+            # 取消检查点：预热前
+            self._raise_if_cancelled()
 
             # 预热：对预加载成功的管道执行一次虚拟识别，触发 CUDA 上下文初始化
             succeeded_pipelines = [name for name, ok in results.items() if ok]
@@ -166,14 +194,18 @@ class PreloadTask(QRunnable):
                     logger.warning(f"[SubprocessManager] 预热失败（预加载仍有效）: {e}")
 
             # 如实上报两阶段结果：preload（管道加载）+ warmup（CUDA 初始化）。
-            # 此前只发 results（preload），warmup_results 被丢弃，导致 MainWindow
-            # 日志显示"预加载完成 {True,True}"而预热实际 0/2 失败——看似矛盾。
             self.signals.finished.emit(
                 {"preload": results, "warmup": warmup_results}
             )
+        except PreloadCancelled:
+            logger.debug("[SubprocessManager] 预加载已取消")
+            self.signals.finished.emit({"preload": {}, "warmup": {}, "cancelled": True})
         except Exception as e:
             logger.error(f"[SubprocessManager] 预加载失败: {e}")
             self.signals.finished.emit({"preload": {}, "warmup": {}})
+        finally:
+            # 任务结束后清零 service 引用，避免延迟 signal 访问已销毁的 UI/service
+            self._service = None  # type: ignore[assignment]
 
 
 class SubprocessManager(QObject):
@@ -341,8 +373,10 @@ class SubprocessManager(QObject):
             except RuntimeError:
                 pass  # 信号已断开
 
-        # 取消正在进行的预加载任务
+        # 取消正在进行的预加载任务（协作取消：设置 _cancelled 事件，
+        # run() 在下一个检查点退出；同时断开 signal 避免迟到回调）
         if self._preload_task is not None:
+            self._preload_task.cancel()
             try:
                 self._preload_task.signals.finished.disconnect(self._on_preload_done)
                 self._preload_task.signals.progress.disconnect(
