@@ -16,20 +16,25 @@ UI 侧的 PdfDocument 现在是"从 mirror 重建的只读视图",字段语义�
 from __future__ import annotations
 
 import logging
+from typing import TYPE_CHECKING
 
-from vibeocr.ipc.schemas import (
-    ModelDiff,
-    PdfDocumentMirror,
-    PdfPageInfoMirror,
-    TextBlockMirror,
-    TextLayerInfoMirror,
-)
 from vibeocr.models.ocr_result import TextBlock
 from vibeocr.models.pdf_document import (
     PdfDocument,
     PdfPageInfo,
     TextLayerInfo,
 )
+
+if TYPE_CHECKING:
+    # schemas 仅用于类型注解（from __future__ annotations 使注解惰性求值），
+    # 运行时不构造实例，放 TYPE_CHECKING 块避免无谓导入。
+    from vibeocr.ipc.schemas import (
+        ModelDiff,
+        PdfDocumentMirror,
+        PdfPageInfoMirror,
+        TextBlockMirror,
+        TextLayerInfoMirror,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -77,7 +82,7 @@ def page_mirror_to_info(m: PdfPageInfoMirror) -> PdfPageInfo:
 
 def mirror_to_doc(mirror: PdfDocumentMirror) -> PdfDocument:
     """PdfDocumentMirror → PdfDocument(完整重建)。"""
-    doc = PdfDocument(
+    return PdfDocument(
         file_path=mirror.file_path,
         pages=[page_mirror_to_info(p) for p in mirror.pages],
         is_modified=mirror.is_modified,
@@ -85,7 +90,6 @@ def mirror_to_doc(mirror: PdfDocumentMirror) -> PdfDocument:
         render_dpi=mirror.render_dpi,
         thumbnail_dpi=mirror.thumbnail_dpi,
     )
-    return doc
 
 
 def apply_diff(doc: PdfDocument, diff: ModelDiff) -> list[int]:

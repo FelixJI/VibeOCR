@@ -64,6 +64,8 @@ build-backend = "hatchling.build"
 [tool.ruff]
 target-version = "py313"
 line-length = 88
+# scripts/ 含 PowerShell 等非 Python 脚本；ruff 只检查 .py。
+extend-exclude = ["*.ps1", "*.sh", "*.cmd", "*.bat"]
 
 [tool.ruff.lint]
 select = [
@@ -112,7 +114,9 @@ ignore = [
 known-first-party = ["vibeocr"]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/*" = ["S101", "ARG", "PLR2004"]
+# S101: assert 在测试中是断言；ARG: 测试固件常留未用参数；PLR2004: 魔法数字
+# SIM117: 测试中嵌套 patch 上下文管理器可读性优于合并（3+ 层 patch）
+"tests/*" = ["S101", "ARG", "PLR2004", "SIM117"]
 "__init__.py" = ["F401"]
 
 # =============================================================================

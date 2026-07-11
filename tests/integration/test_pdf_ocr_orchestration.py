@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import itertools
 import time
 from unittest.mock import MagicMock
 
@@ -155,11 +156,11 @@ class TestOcrOrchestration:
         qapp.processEvents()
         assert progress_values, "ocr_progress 应触发"
         # 子步数 = 3（渲染/识别/写层），2 页 → 末值应为 6
-        substeps = manager._OCR_PROGRESS_SUBSTEPS  # noqa: SLF001
+        substeps = manager._OCR_PROGRESS_SUBSTEPS
         assert last_total[0] == 2 * substeps
         assert progress_values[-1] == 2 * substeps, "末值应等于 total"
         # 进度单调不减
-        assert all(b >= a for a, b in zip(progress_values, progress_values[1:])), \
+        assert all(b >= a for a, b in itertools.pairwise(progress_values)), \
             "进度应单调不减"
 
     def test_cancel_ocr(self, manager, tmp_path, qapp):
@@ -183,7 +184,7 @@ class TestDeskewOrchestration:
         assert session is not None
         _wait_signal(qapp, manager.load_done, timeout=15.0)
         qapp.processEvents()
-        initial_rotation = session.pdf_document.pages[0].rotation
+        _initial_rotation = session.pdf_document.pages[0].rotation  # 记录基线供人工排查
 
         # mock OCR 报告 90° 偏转
         manager.set_ocr_service(_make_mock_ocr_service(preproc_angle=90))
@@ -193,7 +194,9 @@ class TestDeskewOrchestration:
 
         # 90° 偏转 → correction = (-90) % 360 = 270 → rotation 应变化
         final_rotation = session.pdf_document.pages[0].rotation
-        assert final_rotation != initial_rotation or True  # rotation 可能回环到相同值
+        # rotation 可能回环到相同值，故不对其做硬断言；关键断言是 deskew_done
+        # 信号触发（已在上方 _wait_signal 验证）。
+        assert final_rotation is not None
         # 关键:deskew_done 触发,summary 有 corrected
         # (具体 rotation 值取决于 (-angle)%360 与初始 rotation 的叠加)
 
@@ -304,7 +307,7 @@ class TestThumbnailLoadConcurrency:
                 load_started.set()  # 通知主线程:load 已发起,开始并发渲染
                 for ev in gen:
                     load_events.append(ev)
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 load_error.append(e)
 
         load_thread = threading.Thread(target=_run_load, name="load-stream")
@@ -318,7 +321,7 @@ class TestThumbnailLoadConcurrency:
             try:
                 png = backend_client.render_thumbnail(sid, page_idx, 80)
                 return (png is not None and len(png) > 0, None)
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 return (False, repr(e))
 
         # 每页渲染 3 次 → 总请求数 = total * 3,分布在 4 个 worker 上并发,

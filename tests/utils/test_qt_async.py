@@ -137,7 +137,6 @@ class TestRunCoroutine:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
-            timed_out = []
 
             async def slow():
                 await asyncio.sleep(10)

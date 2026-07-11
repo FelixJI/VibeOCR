@@ -63,7 +63,7 @@ def detect_cpu_features() -> dict[str, bool]:
     if not flags_text:
         return {"avx": False, "avx2": False, "avx512": False, "fma": False, "amx": False}
 
-    feats = {
+    return {
         "avx": "avx" in flags_text,
         "avx2": "avx2" in flags_text,
         "fma": "fma" in flags_text,
@@ -71,7 +71,6 @@ def detect_cpu_features() -> dict[str, bool]:
         "avx512": bool(re.search(r"avx512[a-z_]*", flags_text)),
         "amx": "amx" in flags_text,
     }
-    return feats
 
 
 def _read_cpu_flags_text() -> str:
@@ -110,7 +109,11 @@ def _read_windows_features() -> str:
         def has(fid: int) -> bool:
             return bool(present(ctypes.c_uint(fid)))
 
-        parts = ["sse", "sse2"]
+        parts: list[str] = []
+        if has(PF_XMMI_INSTRUCTIONS_AVAILABLE):
+            parts.append("sse")
+        if has(PF_XMMI64_INSTRUCTIONS_AVAILABLE):
+            parts.append("sse2")
         if has(PF_SSE3_INSTRUCTIONS_AVAILABLE):
             parts.append("sse3")
         if has(PF_AVX_INSTRUCTIONS_AVAILABLE):
@@ -201,7 +204,7 @@ def _get_paddle_version() -> str | None:
     延迟 import 避免模块加载副作用；失败静默返回 None（判定走保守分支）。
     """
     try:
-        import paddle  # noqa: PLC0415 —— 延迟 import
+        import paddle
 
         return getattr(paddle, "__version__", "") or None
     except Exception:  # 未安装或 import 失败，保守按"未知版本"处理

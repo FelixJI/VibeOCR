@@ -125,7 +125,7 @@ class PdfSessionManager(QObject):
     @property
     def is_deskew_running(self) -> bool:
         """是否正在跑摆正(供 PdfTab cancel 路由判断)。"""
-        return self._mutate_worker is not None and self._mutate_worker._op == "deskew"  # noqa: SLF001
+        return self._mutate_worker is not None and self._mutate_worker._op == "deskew"
 
     @property
     def is_mutate_running(self) -> bool:
@@ -215,8 +215,7 @@ class PdfSessionManager(QObject):
         由后续 page_loaded 信号流式更新。
         """
         pdf_doc = mirror_to_doc(full_model)
-        session = PdfSession(file_path=file_path, session_id=session_id, pdf_document=pdf_doc)
-        return session
+        return PdfSession(file_path=file_path, session_id=session_id, pdf_document=pdf_doc)
 
     def _apply_page_loaded(
         self, session: PdfSession, page_index: int, page_mirror: object
@@ -506,13 +505,13 @@ class PdfSessionManager(QObject):
         )
 
         for batch_start in range(0, total, batch_size):
-            if runner._cancelled:  # noqa: SLF001
+            if runner._cancelled:
                 break
             batch_pages = page_indices[batch_start:batch_start + batch_size]
 
             # 阶段1：并发渲染（线程池，结果按 batch_pages 顺序对齐）
             images: list[bytes | None] = [None] * len(batch_pages)
-            if not runner._cancelled:  # noqa: SLF001
+            if not runner._cancelled:
                 with ThreadPoolExecutor(
                     max_workers=min(self._RENDER_CONCURRENCY, len(batch_pages))
                 ) as pool:
@@ -526,7 +525,7 @@ class PdfSessionManager(QObject):
             # 阶段2：批量方向检测（单次 recognize_batch，跳过渲染失败的页）
             valid_indices = [i for i, png in enumerate(images) if png is not None]
             angles_map: dict[int, int] = {}
-            if valid_indices and not runner._cancelled:  # noqa: SLF001
+            if valid_indices and not runner._cancelled:
                 valid_images = [images[i] for i in valid_indices]  # type: ignore[list-item]
                 try:
                     batch_results = self._ocr_service.recognize_batch(  # type: ignore[union-attr]
@@ -543,7 +542,7 @@ class PdfSessionManager(QObject):
 
             # 阶段3：逐页旋转（fitz 写不可并发，串行）
             for i, idx in enumerate(batch_pages):
-                if runner._cancelled:  # noqa: SLF001
+                if runner._cancelled:
                     progress += 1
                     _emit_progress()
                     continue
@@ -793,6 +792,7 @@ class PdfSessionManager(QObject):
         - 写层:逐页串行 add_text_layer(fitz 写操作不可并发)。
         """
         from concurrent.futures import ThreadPoolExecutor
+
         from vibeocr.models.ocr_options import OCROptions
 
         session = self._sessions.get(self._active_path or "")
@@ -828,7 +828,7 @@ class PdfSessionManager(QObject):
                 return None
 
         for batch_start in range(0, total, batch_size):
-            if runner._cancelled:  # noqa: SLF001
+            if runner._cancelled:
                 break
             batch_pages = pages[batch_start:batch_start + batch_size]
 
@@ -955,6 +955,7 @@ class PdfSessionManager(QObject):
             # 中途，强杀会留下半写状态。超时后交由 all_done 信号（runner 退出时
             # 一定会发）做最终清理（_on_ocr_all_done_signal 重置 _ocr_worker）。
             import time
+
             from PySide6.QtCore import QCoreApplication
 
             deadline = time.monotonic() + 5.0
@@ -992,6 +993,7 @@ class PdfSessionManager(QObject):
 
     def _ensure_mineru_models_blocking(self, file_path: str) -> bool:
         from PySide6.QtWidgets import QApplication
+
         from vibeocr.env_manager import ensure_mineru_models, get_project_root
 
         def on_progress(stage: str, message: str):

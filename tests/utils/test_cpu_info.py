@@ -9,11 +9,10 @@ import pytest
 from vibeocr.utils import cpu_info
 from vibeocr.utils.cpu_info import (
     CPU_THREADS_CAP,
+    _version_in_range,
     detect_cpu_features,
     get_cpu_thread_count,
-    _version_in_range,
 )
-
 
 # ---------------------------------------------------------------------------
 # get_cpu_thread_count

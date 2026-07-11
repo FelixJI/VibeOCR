@@ -352,9 +352,9 @@ class AboutTab(QWidget):
             color = danger if (is_slow or is_failed) else text_color
             flag = ""
             if is_failed:
-                flag = " <span style='color:%s;'>[失败]</span>" % danger
+                flag = f" <span style='color:{danger};'>[失败]</span>"
             elif is_slow:
-                flag = " <span style='color:%s;'>[慢]</span>" % danger
+                flag = f" <span style='color:{danger};'>[慢]</span>"
             rows_html.append(
                 f"<tr>"
                 f"<td style='color:{color};padding:1px 8px 1px 0;'>{indent}{name}{flag}</td>"

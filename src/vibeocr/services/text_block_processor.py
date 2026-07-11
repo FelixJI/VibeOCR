@@ -10,12 +10,12 @@
 
 from __future__ import annotations
 
+import itertools
 from typing import TYPE_CHECKING
 
 from vibeocr.models.text_block_options import (
     LINE_MODE_KEEP,
     LINE_MODE_MERGE,
-    LINE_MODE_SMART,
     TextBlockOptions,
 )
 
@@ -108,7 +108,7 @@ class TextBlockProcessor:
         行高为 0 时（y2==y1）按同段处理，避免退化。
         """
         segments: list[list[TextBlock]] = [[blocks[0]]]
-        for prev, cur in zip(blocks, blocks[1:]):
+        for prev, cur in itertools.pairwise(blocks):
             if TextBlockProcessor._is_paragraph_break(prev, cur):
                 segments.append([cur])
             else:
@@ -138,7 +138,7 @@ class TextBlockProcessor:
     ) -> list[list[tuple[int, TextBlock]]]:
         """_split_into_segments 的索引保留变体。"""
         segments: list[list[tuple[int, TextBlock]]] = [[indexed[0]]]
-        for (_pi, prev), (_ci, cur) in zip(indexed, indexed[1:]):
+        for (_pi, prev), (_ci, cur) in itertools.pairwise(indexed):
             if TextBlockProcessor._is_paragraph_break(prev, cur):
                 segments.append([(_ci, cur)])
             else:
@@ -151,7 +151,7 @@ class TextBlockProcessor:
         if prev.bbox is None or cur.bbox is None:
             return False
         _, py1, _, py2 = prev.bbox
-        cx1, cy1, _, _ = cur.bbox
+        _cx1, cy1, _, _ = cur.bbox
         prev_height = py2 - py1
         if prev_height <= 0:
             return False

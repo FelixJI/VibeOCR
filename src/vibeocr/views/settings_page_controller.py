@@ -34,7 +34,6 @@ from PySide6.QtWidgets import (
 
 from vibeocr.env_manager import (
     check_dependencies_status_detailed,
-    check_embedded_environment_dependencies_fresh,
     get_dependency_versions,
     get_direct_dependencies,
     get_embedded_python_executable,
@@ -73,7 +72,7 @@ def _create_windows_shortcut(
     """在 Windows 上通过 PowerShell COM 创建 .lnk 快捷方式。"""
     # 确保目标目录存在
     try:
-        os.makedirs(os.path.dirname(shortcut_path), exist_ok=True)
+        Path(shortcut_path).parent.mkdir(parents=True, exist_ok=True)
     except OSError:
         pass
 

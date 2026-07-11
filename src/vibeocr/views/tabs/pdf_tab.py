@@ -25,9 +25,9 @@ from PySide6.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QLabel,
+    QListView,
     QListWidget,
     QListWidgetItem,
-    QListView,
     QMenu,
     QMessageBox,
     QProgressBar,
@@ -368,7 +368,7 @@ class ThumbnailModel(QAbstractListModel):
     def session(self) -> PdfSession | None:
         return self._session
 
-    def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:  # noqa: B008
+    def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:
         if parent.isValid() or self._session is None:
             return 0
         return len(self._session.pdf_document.pages)
@@ -437,15 +437,15 @@ class ThumbnailListView(QListView):
         # 当前缩略图边长；与 iconSize 保持同步，用于检测尺寸是否真的变化
         self._current_thumb_size = _THUMBNAIL_SIZE
 
-    def scrollContentsBy(self, dx, dy) -> None:  # noqa: N802 — Qt API 命名
+    def scrollContentsBy(self, dx, dy) -> None:
         super().scrollContentsBy(dx, dy)
         self._schedule_visible_range()
 
-    def resizeEvent(self, event) -> None:  # noqa: N802 — Qt API 命名
+    def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         self._schedule_visible_range()
 
-    def showEvent(self, event) -> None:  # noqa: N802 — Qt API 命名
+    def showEvent(self, event) -> None:
         super().showEvent(event)
         self._schedule_visible_range()
 
@@ -498,7 +498,7 @@ class ThumbnailListView(QListView):
             last = model.rowCount() - 1
         self.visible_range_changed.emit(first, last)
 
-    def dropEvent(self, event) -> None:  # noqa: N802 — Qt API 命名
+    def dropEvent(self, event) -> None:
         if event.source() is not self:
             super().dropEvent(event)
             return
@@ -935,7 +935,7 @@ class PdfTab(QWidget):
         # current/total 是子步单位（每页 渲染/识别/写层 3 步）。换算回页数展示，
         # 文案用"已处理"而非"正在识别第 X 页"——current 累计的是已推进的子步，
         # 并非正在识别的页码（批量识别时多页同时在算）。
-        substeps = self._session_mgr._OCR_PROGRESS_SUBSTEPS  # noqa: SLF001
+        substeps = self._session_mgr._OCR_PROGRESS_SUBSTEPS
         pages_done = min(current // substeps, total // substeps)
         pages_total = total // substeps
         pct = int(current * 100 / total) if total > 0 else 0
@@ -1917,7 +1917,7 @@ class PdfTab(QWidget):
         进度条范围用 页数 × 子步数（每页 渲染/识别/写层 3 步），与 manager 的
         progress_total 对齐，使整批渲染/识别期间进度也能推进。
         """
-        substeps = self._session_mgr._OCR_PROGRESS_SUBSTEPS  # noqa: SLF001
+        substeps = self._session_mgr._OCR_PROGRESS_SUBSTEPS
         self._progress_bar.setRange(0, len(indices) * substeps)
         self._progress_bar.setValue(0)
         self._progress_bar.setVisible(True)
@@ -2123,7 +2123,7 @@ class PdfTab(QWidget):
             mgr.cancel_ocr()
         elif mgr.is_mutate_running:
             # 通用 mutate(删除文字层等):后端 cancel_event 协作式
-            mgr._cancel_mutate_worker()  # noqa: SLF001
+            mgr._cancel_mutate_worker()
 
     # ---- public API for MainWindow ----------------------------------
 

@@ -2,16 +2,15 @@
 
 import pytest
 from PySide6.QtCore import QItemSelectionModel, Qt
-from PySide6.QtWidgets import QListWidget, QListView, QScrollArea, QSplitter
+from PySide6.QtWidgets import QListView, QListWidget, QScrollArea, QSplitter
 
 from vibeocr.views.tabs.pdf_tab import (
-    ThumbnailModel,
     _THUMBNAIL_HPAD,
     _THUMBNAIL_MAX_SIZE,
     _THUMBNAIL_MIN_SIZE,
-    _THUMBNAIL_SIZE,
     _THUMBNAIL_TEXT_HEIGHT,
     PdfTab,
+    ThumbnailModel,
 )
 
 
@@ -152,11 +151,10 @@ class TestPdfTabLayerStatus:
         后，格子 _HAS_LAYER_ROLE 应与 model 一致。
         """
         import fitz
-        from PySide6.QtCore import Qt
 
-        from vibeocr.views.tabs.pdf_tab import _HAS_LAYER_ROLE, _LAYER_ROLE
         from vibeocr.models.pdf_document import PdfDocument, PdfPageInfo
         from vibeocr.models.pdf_session import PdfSession
+        from vibeocr.views.tabs.pdf_tab import _HAS_LAYER_ROLE
 
         # 初始：4 页全部无文字层
         pages = [PdfPageInfo(page_index=i) for i in range(4)]
@@ -966,7 +964,6 @@ class TestThumbnailIncrementalUpdate:
     """
 
     def _setup(self, pdf_tab, n_pages=3):
-        from PySide6.QtGui import QPixmap
 
         from vibeocr.models.pdf_document import PdfDocument, PdfPageInfo
         from vibeocr.models.pdf_session import PdfSession
@@ -989,7 +986,7 @@ class TestThumbnailIncrementalUpdate:
             pdf_tab._session_mgr, "reorder_async",
             lambda order: called.append(order),
         )
-        session = self._setup(pdf_tab)
+        self._setup(pdf_tab)
         pdf_tab._on_pages_reordered_with_order([2, 1, 0])
         assert called == [[2, 1, 0]]
 
@@ -1064,6 +1061,7 @@ class TestPdfTabDeleteTextLayerAsync:
     def test_delete_layer_done_shows_residual_warning(self, pdf_tab, monkeypatch):
         """_on_delete_layer_done 有 residual_pages 时弹 warning。"""
         from unittest.mock import MagicMock
+
         from PySide6.QtWidgets import QMessageBox
 
         mock_mgr = MagicMock()
@@ -1161,6 +1159,7 @@ class TestPdfTabExportAsync:
     def test_export_calls_manager_export_all_async(self, pdf_tab, monkeypatch):
         """_on_export_all 应调 manager.export_all_async。"""
         from unittest.mock import MagicMock
+
         from PySide6.QtWidgets import QFileDialog
 
         mock_mgr = MagicMock()
@@ -1279,8 +1278,8 @@ class TestPdfTabAutoDeskew:
 
 
 def test_layer_cell_tooltip_marks_deskewed():
-    from vibeocr.views.tabs.pdf_tab import PdfTab
     from vibeocr.models.pdf_document import PdfPageInfo
+    from vibeocr.views.tabs.pdf_tab import PdfTab
 
     p = PdfPageInfo(page_index=3)
     p.has_text_layer = True
@@ -1291,8 +1290,8 @@ def test_layer_cell_tooltip_marks_deskewed():
 
 
 def test_layer_cell_tooltip_no_deskew_when_false():
-    from vibeocr.views.tabs.pdf_tab import PdfTab
     from vibeocr.models.pdf_document import PdfPageInfo
+    from vibeocr.views.tabs.pdf_tab import PdfTab
 
     p = PdfPageInfo(page_index=0)
     p.has_text_layer = True
@@ -1307,7 +1306,6 @@ class TestBatchOpenSuppressesSwitch:
     def test_batch_opening_suppresses_combo_switch(self, pdf_tab, tmp_path, monkeypatch):
         """导入多文件时,_batch_opening 抑制 setCurrentIndex;open_done 后切换一次。"""
         import fitz
-
         from PySide6.QtWidgets import QFileDialog
 
         # 造 2 个真实 PDF

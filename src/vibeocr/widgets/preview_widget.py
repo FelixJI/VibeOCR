@@ -185,7 +185,7 @@ class UnifiedBBoxOverlay(QWidget):
         for (
             cl_idx,
             rect,
-            block_type,
+            _block_type,
             fill_color,
             border_color,
             confidence,

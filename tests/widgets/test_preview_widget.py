@@ -556,7 +556,7 @@ class TestLegendModifiedEntry:
         entries = overlay._legend_entries()
         labels = [lbl for lbl, _ in entries]
         assert "公式" in labels
-        formula_color = [c for lbl, c in entries if lbl == "公式"][0]
+        formula_color = next(c for lbl, c in entries if lbl == "公式")
         # 橙色 ~ (249, 115, 22)，而非文本蓝 (59, 130, 246)
         assert formula_color.red() > 200
         assert formula_color.green() < 150

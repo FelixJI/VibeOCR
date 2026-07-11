@@ -83,7 +83,6 @@ def _build_merged_pixmap(screen_infos, virtual_geometry):
     每块屏的 grab 按其逻辑 offset 绘制到一张统一 max_dpr 的 pixmap 上，
     因此低 DPR 屏的像素会被等比例拉伸到 max_dpr 空间。
     """
-    from PySide6.QtCore import QSize
 
     max_dpr = max(s.dpr for s in screen_infos)
     physical_size = virtual_geometry.size() * max_dpr

@@ -746,7 +746,7 @@ class TestInstallDependenciesBatch:
         with patch(
             "vibeocr.env_manager._install_paddle_stack"
         ) as mock_stack:
-            ok, msg = install_dependencies_batch(tmp_path, [])
+            ok, _msg = install_dependencies_batch(tmp_path, [])
         assert ok is True
         mock_stack.assert_not_called()
 

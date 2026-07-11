@@ -2503,11 +2503,9 @@ def detect_dependency_updates(project_root: Path) -> dict[str, tuple[str, str]]:
     from vibeocr.services.env_config import OCR_CHECK_MODULES
 
     try:
-        from packaging.requirements import Requirement
         from packaging.version import InvalidVersion, Version
     except ImportError:
         # 便携 Python 应有 packaging（pip 依赖），但防御性兜底：仅比较字符串前缀。
-        Requirement = None  # type: ignore[assignment]
         Version = None  # type: ignore[assignment]
         InvalidVersion = Exception  # type: ignore[misc,assignment]
 

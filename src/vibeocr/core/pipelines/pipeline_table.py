@@ -61,7 +61,7 @@ def _check_table_deps() -> None:
             raise TableDependencyError(
                 f"表格识别缺少依赖：{', '.join(missing)}。"
                 "请在「设置 → 重装 OCR 依赖」修复后重试。"
-            )
+            ) from None
         return
 
     # PaddleX 判 extra 不可用 → 用其同一判定路径列出具体缺失发行版。

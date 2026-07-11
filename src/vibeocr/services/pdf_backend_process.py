@@ -26,7 +26,7 @@ import time
 import uuid
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
-from typing import AsyncIterator
+from typing import TYPE_CHECKING
 
 import fitz
 import uvicorn
@@ -67,13 +67,16 @@ from vibeocr.models.ocr_result import OCRResult, TextBlock
 from vibeocr.models.pdf_document import PdfDocument, PdfPageInfo, TextLayerInfo
 from vibeocr.services.pdf_service import PdfService
 
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
+
 logger = logging.getLogger(__name__)
 
 # 全局注册表(单进程单例)
-_REGISTRY: "SessionRegistry | None" = None
+_REGISTRY: SessionRegistry | None = None
 
 
-def _get_registry() -> "SessionRegistry":
+def _get_registry() -> SessionRegistry:
     global _REGISTRY
     if _REGISTRY is None:
         _REGISTRY = SessionRegistry()
@@ -248,12 +251,12 @@ def _fitz_op(session: BackendSession):
 # ---- FastAPI 应用 -------------------------------------------------------
 
 @asynccontextmanager
-async def _lifespan(app: FastAPI):  # noqa: ARG001
+async def _lifespan(app: FastAPI):
     logger.info("[pdf-backend] 服务启动")
     yield
     # 关闭所有 session
     reg = _get_registry()
-    for sid in list(reg._sessions.keys()):  # noqa: SLF001
+    for sid in list(reg._sessions.keys()):
         reg.remove(sid)
     logger.info("[pdf-backend] 服务关闭")
 

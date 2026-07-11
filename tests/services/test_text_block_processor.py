@@ -1,7 +1,6 @@
 # tests/services/test_text_block_processor.py
 """TextBlockProcessor 单元测试（纯函数，无 Qt 依赖）"""
 
-import pytest
 
 from vibeocr.models.ocr_result import TextBlock
 from vibeocr.models.text_block_options import (

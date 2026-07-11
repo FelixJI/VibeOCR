@@ -5,7 +5,6 @@ os._exit 仍保留为 DLL 卸载安全网，但在其之前由本协调器尽力
 """
 
 import time
-from unittest.mock import MagicMock
 
 
 class TestShutdownCoordinator:

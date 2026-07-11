@@ -81,14 +81,14 @@ class _StageTimer:
     故障排查时能看到「失败发生在哪个阶段、卡了多久」。
     """
 
-    __slots__ = ("_name", "_t0", "_depth")
+    __slots__ = ("_depth", "_name", "_t0")
 
     def __init__(self, name: str) -> None:
         self._name = name
         self._t0 = 0.0
         self._depth = 0
 
-    def __enter__(self) -> "_StageTimer":
+    def __enter__(self) -> _StageTimer:
         global _stage_depth
         self._t0 = time.monotonic()
         self._depth = _stage_depth

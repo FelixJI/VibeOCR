@@ -6,7 +6,10 @@
 from __future__ import annotations
 
 import hashlib
-from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def _make_update_residue(cache_dir: Path) -> dict[str, Path]:

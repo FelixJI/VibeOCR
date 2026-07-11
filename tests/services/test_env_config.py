@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 from vibeocr.services.env_config import (
     CONFIG_DIR,
+    GITEE_REPO_BASE,
     GITHUB_API_LATEST,
     GITHUB_DOWNLOAD_BASE,
     GITHUB_OWNER,
@@ -12,18 +13,17 @@ from vibeocr.services.env_config import (
     GITHUB_RELEASES_BASE,
     GITHUB_REPO,
     GITHUB_REPO_BASE,
-    GITEE_REPO_BASE,
-    OCR_CHECK_MODULES,
     LEAF_TO_TOPLEVEL,
     OCR_CHECK_LEAF_MODULES,
+    OCR_CHECK_MODULES,
     PORTABLE_PYTHON_DIR,
     PYTHON_BUILD_STANDALONE_ASSET,
     PYTHON_BUILD_STANDALONE_BASE,
     PYTHON_BUILD_STANDALONE_MIRRORS,
     PYTHON_BUILD_STANDALONE_TAG,
     PYTHON_VERSION_SHORT,
-    build_github_asset_urls,
     build_asset_url_pairs,
+    build_github_asset_urls,
     ensure_config_dir,
     get_config_dir,
     get_portable_python_dir,
@@ -228,12 +228,12 @@ class TestReleaseRepoConstants:
         # Gitee 仅保留仓库主页链接（关于页展示用），不派生 releases/download 基址
         assert GITEE_REPO_BASE == "https://gitee.com/felixjii/vibeocr"
         # releases 基址 = repo 基址 + /releases
-        assert GITHUB_RELEASES_BASE == f"{GITHUB_REPO_BASE}/releases"
+        assert f"{GITHUB_REPO_BASE}/releases" == GITHUB_RELEASES_BASE
 
     def test_download_base_ends_with_download(self):
         assert GITHUB_DOWNLOAD_BASE.endswith("/download")
         # download 基址应为 releases 基址 + /download
-        assert GITHUB_DOWNLOAD_BASE == f"{GITHUB_RELEASES_BASE}/download"
+        assert f"{GITHUB_RELEASES_BASE}/download" == GITHUB_DOWNLOAD_BASE
 
     def test_api_latest_format(self):
         assert "api.github.com" in GITHUB_API_LATEST

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from vibeocr.models.pdf_document import PdfDocument  # noqa: TC001
+from vibeocr.models.pdf_document import PdfDocument
 
 
 @dataclass

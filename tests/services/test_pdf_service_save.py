@@ -1,7 +1,8 @@
 """save_with_rewrite: rewrite + 按结构改动分流落盘。"""
 
+from pathlib import Path
+
 import fitz
-import pytest
 
 from vibeocr.models.ocr_result import OCRResult, TextBlock
 from vibeocr.models.pdf_document import PdfDocument, PdfPageInfo
@@ -83,9 +84,7 @@ class TestSaveCompressOnSave:
         new_doc = PdfService.save(doc, pdf_doc, pdf_settings=settings)
 
         # 临时文件与备份均应清理
-        import os
-
-        assert not os.path.exists(str(path) + ".bak")
+        assert not Path(str(path) + ".bak").exists()
         # 产物可重新打开，文字层在
         verify = fitz.open(str(path))
         assert "Hello" in verify[0].get_text()

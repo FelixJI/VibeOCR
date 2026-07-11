@@ -48,7 +48,7 @@ class PdfIpcOpenWorker(QThread):
 
     def __init__(
         self,
-        client: "PdfBackendClient",
+        client: PdfBackendClient,
         paths: list[str],
         parent=None,
     ) -> None:
@@ -84,7 +84,7 @@ class PdfIpcOpenWorker(QThread):
                         self.load_progress.emit(path, ev.current, ev.total)
                     if ev.message == "done":
                         break
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 logger.error("[ipc-open] 打开 %s 失败: %s", path, e)
                 self.open_failed.emit(path, str(e))
             self.open_progress.emit(n + 1, total)
@@ -108,7 +108,7 @@ class PdfIpcMutateWorker(QThread):
 
     def __init__(
         self,
-        client: "PdfBackendClient",
+        client: PdfBackendClient,
         session_id: str,
         op: str,
         params: dict[str, Any],
@@ -165,7 +165,7 @@ class PdfIpcMutateWorker(QThread):
             if hasattr(resp, "path"):
                 extra = {"path": resp.path}
             self.all_done.emit(self._session_id, diff, extra)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.error("[ipc-mutate] %s 失败: %s", self._op, e)
             self.failed.emit(self._session_id, str(e))
 

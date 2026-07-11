@@ -222,7 +222,6 @@ class TestAtomicWorkerReservation:
 
     def test_reserve_worker_marks_busy_atomically(self):
         """_reserve_worker 在锁内完成 选择+BUSY+计数"""
-        import threading
         from unittest.mock import MagicMock
 
         from vibeocr.services.worker_manager import WorkerInfo

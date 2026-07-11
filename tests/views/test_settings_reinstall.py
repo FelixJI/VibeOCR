@@ -457,7 +457,6 @@ def test_deps_tree_expands_direct_dependencies(controller, monkeypatch):
 def test_click_reinstall_selected_batch_reinstalls(controller, monkeypatch):
     """选中顶层节点后点"重装选中项"：确认后走 InstallDialog(packages=[...])"""
     ctrl, host = controller
-    from PySide6.QtCore import Qt
     from PySide6.QtWidgets import QMessageBox, QPushButton, QTreeWidget
 
     monkeypatch.setattr(

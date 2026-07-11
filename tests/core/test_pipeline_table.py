@@ -60,9 +60,9 @@ class TestCheckTableDeps:
 
     def test_all_present_passes(self, monkeypatch):
         """is_extra_available('ocr') 返回 True 时不抛错。"""
-        from vibeocr.core.pipelines import pipeline_table
-
         import paddlex.utils.deps as pdx_deps
+
+        from vibeocr.core.pipelines import pipeline_table
 
         monkeypatch.setattr(pdx_deps, "is_extra_available", lambda extra: True)
         monkeypatch.setattr(pdx_deps, "is_dep_available", lambda dep: True)
@@ -71,9 +71,9 @@ class TestCheckTableDeps:
 
     def test_missing_raises_with_package_names(self, monkeypatch):
         """is_extra_available 返回 False 时抛错，且消息含具体缺失发行版名。"""
-        from vibeocr.core.pipelines import pipeline_table
-
         import paddlex.utils.deps as pdx_deps
+
+        from vibeocr.core.pipelines import pipeline_table
 
         # 选取当前 paddlex 版本 ocr extra 中确实存在的一个包作为缺失项
         # （不同 paddlex 版本 extra 清单不同，不能硬编码）
@@ -97,9 +97,9 @@ class TestCheckTableDeps:
 
     def test_multiple_missing_all_listed(self, monkeypatch):
         """多个包缺失时全部列在错误消息里。"""
-        from vibeocr.core.pipelines import pipeline_table
-
         import paddlex.utils.deps as pdx_deps
+
+        from vibeocr.core.pipelines import pipeline_table
 
         # 让 ocr extra 前 3 个包不可用
         missing_pkgs = list(pdx_deps.EXTRAS.get("ocr", []))[:3]
@@ -124,11 +124,11 @@ class TestCheckTableDeps:
         覆盖极端残缺环境（paddlex 本身未装）：_check_table_deps 不能因 paddlex
         导入失败而静默放过，应回退到本项目 leaf 清单的 find_spec 探测。
         """
-        from vibeocr.core.pipelines import pipeline_table
-        from vibeocr.services.env_config import OCR_CHECK_LEAF_MODULES
-
         # 让 from paddlex.utils.deps import ... 抛 ImportError
         import builtins
+
+        from vibeocr.core.pipelines import pipeline_table
+        from vibeocr.services.env_config import OCR_CHECK_LEAF_MODULES
 
         real_import = builtins.__import__
 
@@ -168,7 +168,7 @@ class _FakePipeline:
     def __init__(self, result_list):
         self._result_list = result_list
 
-    def predict(self, input, **kwargs):
+    def predict(self, input, **kwargs):  # noqa: A002 — 模拟 PaddleOCR API（input 关键字参数）
         return list(self._result_list)
 
 

@@ -169,7 +169,6 @@ class TestOCRWorkerProcess:
 
         from vibeocr.services.ocr_worker_process import (
             MSG_PRELOAD_DONE,
-            OCRWorkerProcessError,
         )
         from vibeocr.utils.shared_memory_v2 import (
             MessageType,
@@ -248,10 +247,9 @@ class TestOCRWorkerProcess:
                 type(worker),
                 "_calculate_preload_timeout",
                 return_value=100.0,
-            ),
+            ),pytest.raises(OCRWorkerProcessError, match="多次读到自身请求")
         ):
-            with pytest.raises(OCRWorkerProcessError, match="多次读到自身请求"):
-                worker.preload_pipelines(["OCR"])
+            worker.preload_pipelines(["OCR"])
 
         # 应在第 5 次命中时抛出
         assert worker._preload_self_read_count >= 5
@@ -809,7 +807,7 @@ class TestStopShutdownOrder:
         """stop 的调用顺序：write_message(SHUTDOWN) 在 guard.close() 之前"""
         from unittest.mock import MagicMock
 
-        from vibeocr.services.ocr_worker_process import MSG_SHUTDOWN, OCRWorkerProcess
+        from vibeocr.services.ocr_worker_process import OCRWorkerProcess
 
         proc = OCRWorkerProcess.__new__(OCRWorkerProcess)
         proc.worker_id = 0

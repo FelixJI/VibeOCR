@@ -12,11 +12,10 @@
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, Field
-
 
 # ---- 基础镜像类型 ------------------------------------------------------
 
@@ -97,7 +96,7 @@ class ModelDiff(BaseModel):
 
 # ---- 进度事件 ----------------------------------------------------------
 
-class ProgressPhase(str, Enum):
+class ProgressPhase(StrEnum):
     """长操作阶段标识,供主进程切换文案/确定 vs 不确定进度条。"""
 
     LOAD = "load"  # 打开后逐页文字层检测

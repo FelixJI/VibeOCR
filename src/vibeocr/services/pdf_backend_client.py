@@ -18,9 +18,12 @@ import socket
 import subprocess
 import sys
 import threading
-from typing import Iterator
+from typing import TYPE_CHECKING
 
 import httpx
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 from vibeocr.ipc.schemas import (
     AddTextLayerRequest,
@@ -65,7 +68,7 @@ class PdfBackendError(RuntimeError):
 class PdfBackendClient:
     """PDF 后端单例客户端。延迟启动子进程,主进程首次 open 时拉起。"""
 
-    _instance: "PdfBackendClient | None" = None
+    _instance: PdfBackendClient | None = None
     _instance_lock = threading.Lock()
 
     def __init__(self) -> None:
@@ -80,7 +83,7 @@ class PdfBackendClient:
         self._log_thread: threading.Thread | None = None
 
     @classmethod
-    def instance(cls) -> "PdfBackendClient":
+    def instance(cls) -> PdfBackendClient:
         if cls._instance is None:
             with cls._instance_lock:
                 if cls._instance is None:
@@ -119,8 +122,9 @@ class PdfBackendClient:
                     f"{meipass};{existing}" if existing else str(meipass)
                 )
         else:
-            import vibeocr
             from pathlib import Path
+
+            import vibeocr
 
             src_dir = str(Path(vibeocr.__file__).resolve().parent.parent)
             sep = os.pathsep
@@ -225,7 +229,7 @@ class PdfBackendClient:
                 if resp.status_code == 200:
                     logger.info("[pdf-backend] 就绪")
                     return
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 last_err = e
             time.sleep(0.3)
         raise PdfBackendError(

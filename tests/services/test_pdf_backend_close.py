@@ -119,6 +119,6 @@ class TestSessionCloseSync:
 
         try:
             reg.get("test4")
-            assert False, "应抛 HTTPException 409"
+            raise AssertionError("应抛 HTTPException 409")
         except HTTPException as e:
             assert e.status_code == 409

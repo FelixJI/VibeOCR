@@ -114,8 +114,8 @@ class TestAboutTabRepoUrls:
     def test_urls_imported_from_env_config_ssot(self):
         """URL 常量应与 env_config repo base SSOT 完全一致"""
         from vibeocr.services.env_config import (
-            GITHUB_REPO_BASE,
             GITEE_REPO_BASE,
+            GITHUB_REPO_BASE,
         )
         from vibeocr.views.tabs import about_tab
 

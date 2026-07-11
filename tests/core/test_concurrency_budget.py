@@ -43,6 +43,6 @@ class TestConcurrencyBudget:
         budget = ConcurrencyBudget.default()
         try:
             budget.ocr_workers = 2  # type: ignore[misc]
-            assert False, "frozen dataclass 不应允许修改"
+            raise AssertionError("frozen dataclass 不应允许修改")
         except dataclasses.FrozenInstanceError:
             pass

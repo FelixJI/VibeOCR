@@ -889,7 +889,6 @@ class TestMinerUModelCheck:
 
     def test_ensure_api_running_raises_when_models_missing(self):
         """模型缺失时,_ensure_api_running 抛 RuntimeError 而非等 120s"""
-        from unittest.mock import MagicMock
 
         service = MinerUService.__new__(MinerUService)
         # 最小化初始化:跳过 __init__ 的单例逻辑

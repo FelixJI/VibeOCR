@@ -13,7 +13,6 @@ import time
 
 import fitz
 import pytest
-from PySide6.QtCore import Qt
 
 from vibeocr.managers.pdf_session_manager import PdfSessionManager
 

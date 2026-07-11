@@ -18,7 +18,6 @@ from pathlib import Path
 from vibeocr.core.constants import DEFAULT_SHM_SIZE, Constants
 from vibeocr.pipeline_status import is_pipeline_ever_succeeded
 from vibeocr.utils.job_object import JobObjectGuard
-from vibeocr.utils.subprocess_log import SubprocessLogForwarder
 from vibeocr.utils.shared_memory_v2 import (
     MessageType,
     SharedMemoryConfig,
@@ -34,6 +33,7 @@ from vibeocr.utils.shared_memory_v2 import (
 from vibeocr.utils.shared_memory_v2 import (
     SharedMemoryProtocolV2 as SharedMemoryProtocol,  # 批量消息序列化函数
 )
+from vibeocr.utils.subprocess_log import SubprocessLogForwarder
 
 # 消息类型别名（保持兼容）
 MSG_RECOGNIZE = MessageType.RECOGNIZE

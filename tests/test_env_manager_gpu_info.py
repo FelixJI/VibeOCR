@@ -8,8 +8,7 @@ import vibeocr.env_manager as em
 
 def _mk_completed(stdout="", returncode=0):
     """构造类似 subprocess.CompletedProcess 的 mock。"""
-    m = type("R", (), {"returncode": returncode, "stdout": stdout, "stderr": ""})()
-    return m
+    return type("R", (), {"returncode": returncode, "stdout": stdout, "stderr": ""})()
 
 
 class TestDetectGpuInfo:

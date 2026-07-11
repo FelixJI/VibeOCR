@@ -159,19 +159,18 @@ def test_failure_shows_warning_messagebox(_cleanup, qtbot, tmp_path):
     warnings_shown = []
     with patch.object(
         QMessageBox, "warning", lambda *args, **kwargs: warnings_shown.append(args)
-    ):
-        with patch.object(bcd_module, "env_manager") as mock_em:
-            mock_em.detect_gpu.return_value = (False, None)
-            mock_em.detect_gpu_info.return_value = {
-                "has_gpu": False,
-                "name": "",
-                "vram_mb": 0,
-                "cuda": None,
-            }
-            dlg = bcd_module.BackendChoiceDialog(tmp_path)
-            qtbot.addWidget(dlg)
-            # 直接调用 _on_finished 模拟失败
-            dlg._on_finished(False, "torch 安装失败:\n网络超时")
+    ), patch.object(bcd_module, "env_manager") as mock_em:
+        mock_em.detect_gpu.return_value = (False, None)
+        mock_em.detect_gpu_info.return_value = {
+            "has_gpu": False,
+            "name": "",
+            "vram_mb": 0,
+            "cuda": None,
+        }
+        dlg = bcd_module.BackendChoiceDialog(tmp_path)
+        qtbot.addWidget(dlg)
+        # 直接调用 _on_finished 模拟失败
+        dlg._on_finished(False, "torch 安装失败:\n网络超时")
 
     assert len(warnings_shown) == 1, "失败时应弹一次 warning"
     all_text = " ".join(str(a) for a in warnings_shown[0])
@@ -187,17 +186,16 @@ def test_success_does_not_show_warning(_cleanup, qtbot, tmp_path):
     warnings_shown = []
     with patch.object(
         QMessageBox, "warning", lambda *args, **kwargs: warnings_shown.append(args)
-    ):
-        with patch.object(bcd_module, "env_manager") as mock_em:
-            mock_em.detect_gpu.return_value = (False, None)
-            mock_em.detect_gpu_info.return_value = {
-                "has_gpu": False,
-                "name": "",
-                "vram_mb": 0,
-                "cuda": None,
-            }
-            dlg = bcd_module.BackendChoiceDialog(tmp_path)
-            qtbot.addWidget(dlg)
-            dlg._on_finished(True, "安装成功")
+    ), patch.object(bcd_module, "env_manager") as mock_em:
+        mock_em.detect_gpu.return_value = (False, None)
+        mock_em.detect_gpu_info.return_value = {
+            "has_gpu": False,
+            "name": "",
+            "vram_mb": 0,
+            "cuda": None,
+        }
+        dlg = bcd_module.BackendChoiceDialog(tmp_path)
+        qtbot.addWidget(dlg)
+        dlg._on_finished(True, "安装成功")
 
     assert len(warnings_shown) == 0

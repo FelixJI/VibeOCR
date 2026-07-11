@@ -1,7 +1,6 @@
 """结构性操作应置 has_structural_change=True，纯文字层/旋转操作不置。"""
 
 import fitz
-import pytest
 
 from vibeocr.models.pdf_document import PdfDocument, PdfPageInfo
 from vibeocr.services.pdf_service import PdfService
@@ -9,7 +8,7 @@ from vibeocr.services.pdf_service import PdfService
 
 def _open_doc(num_pages=3):
     doc = fitz.open()
-    for i in range(num_pages):
+    for _ in range(num_pages):
         doc.new_page(width=612, height=792)
     pdf_doc = PdfDocument()
     pdf_doc.pages = [PdfPageInfo(page_index=i) for i in range(num_pages)]

@@ -10,7 +10,6 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from PySide6.QtCore import QThread, Signal
-from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
     QButtonGroup,
     QGroupBox,
@@ -28,6 +27,8 @@ from vibeocr.ui import theme
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from PySide6.QtGui import QCloseEvent
 
 logger = logging.getLogger(__name__)
 

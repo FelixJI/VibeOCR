@@ -4,10 +4,10 @@ Tests for SharedMemoryProtocol V2.
 Tests the shared memory communication protocol for subprocess OCR.
 """
 
+import time
 from typing import Any
 
 import pytest
-import time
 
 # Check if shared_memory module is available
 try:
@@ -363,7 +363,10 @@ class TestCancelFlag:
         """cancel flag 可独立 set/check/clear"""
         import uuid
 
-        from vibeocr.utils.shared_memory_v2 import SharedMemoryConfig, SharedMemoryProtocolV2
+        from vibeocr.utils.shared_memory_v2 import (
+            SharedMemoryConfig,
+            SharedMemoryProtocolV2,
+        )
 
         name = f"vibeocr_test_cancel_{uuid.uuid4().hex[:8]}"
         proto = SharedMemoryProtocolV2(SharedMemoryConfig(name=name, size=4096))
@@ -382,7 +385,10 @@ class TestCancelFlag:
         """设置 cancel flag 不破坏 ready flag 与消息数据"""
         import uuid
 
-        from vibeocr.utils.shared_memory_v2 import SharedMemoryConfig, SharedMemoryProtocolV2
+        from vibeocr.utils.shared_memory_v2 import (
+            SharedMemoryConfig,
+            SharedMemoryProtocolV2,
+        )
 
         name = f"vibeocr_test_cancel_msg_{uuid.uuid4().hex[:8]}"
         proto = SharedMemoryProtocolV2(SharedMemoryConfig(name=name, size=4096))
@@ -408,7 +414,10 @@ class TestCancelFlag:
         """cancel flag 存储在字节 9，ready flag 在字节 8"""
         import uuid
 
-        from vibeocr.utils.shared_memory_v2 import SharedMemoryConfig, SharedMemoryProtocolV2
+        from vibeocr.utils.shared_memory_v2 import (
+            SharedMemoryConfig,
+            SharedMemoryProtocolV2,
+        )
 
         name = f"vibeocr_test_cancel_layout_{uuid.uuid4().hex[:8]}"
         proto = SharedMemoryProtocolV2(SharedMemoryConfig(name=name, size=4096))

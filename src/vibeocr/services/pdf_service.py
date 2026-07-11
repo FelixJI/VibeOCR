@@ -8,10 +8,15 @@ from __future__ import annotations
 import logging
 import shutil
 from pathlib import Path
-from typing import Any, NamedTuple
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 import fitz
 import numpy as np
+
+if TYPE_CHECKING:
+    # 仅用于类型注解：render_page 返回 QPixmap，但 PDF 后端子进程是无头进程，
+    # 不安装 PySide6；TYPE_CHECKING 块在运行时不执行，避免 ModuleNotFoundError。
+    from PySide6.QtGui import QPixmap
 
 from vibeocr.models.pdf_document import PdfDocument, PdfPageInfo, TextLayerInfo
 from vibeocr.utils.cjk_font_resolver import _CJK_RESOLVER
@@ -24,7 +29,7 @@ class SaveResult(NamedTuple):
     path: str | None
     # 全量压缩覆盖原文件时，doc 必须关闭重开（Windows 锁），新 doc 通过此字段
     # 返回，由调用方更新 session.doc 引用。incremental/另存为时为 None（doc 不变）。
-    new_doc: "fitz.Document | None" = None
+    new_doc: fitz.Document | None = None
 
 
 class PdfService:
@@ -64,7 +69,7 @@ class PdfService:
         pdf_document: PdfDocument,
         path: str | None = None,
         pdf_settings: object | None = None,
-    ) -> "fitz.Document | None":
+    ) -> fitz.Document | None:
         """落盘 PDF，返回覆盖保存后的新 doc（全量压缩时 doc 已重开）。
 
         覆盖保存（path is None）按 compress_on_save 分流：True（默认）= 全量
@@ -103,15 +108,14 @@ class PdfService:
                 raise
             pdf_document.is_modified = False
             return None
-        else:
-            doc.save(path, deflate=True, clean=clean)
-            pdf_document.is_modified = False
-            return None
+        doc.save(path, deflate=True, clean=clean)
+        pdf_document.is_modified = False
+        return None
 
     @staticmethod
     def _compress_in_place(
         doc: fitz.Document, save_path: str, clean: bool = True
-    ) -> "fitz.Document":
+    ) -> fitz.Document:
         """全量压缩覆盖原文件（Windows 兼容），返回重开后的新 doc。
 
         流程：先备份原文件 → tobytes(garbage+deflate[+clean]) 取压缩字节 →
@@ -205,7 +209,7 @@ class PdfService:
             )
             rewritten.append(info.page_index)
 
-        new_doc: "fitz.Document | None" = None
+        new_doc: fitz.Document | None = None
         if path is None:
             save_path = pdf_document.file_path
             if save_path is None:
@@ -237,7 +241,7 @@ class PdfService:
     # ---- render -----------------------------------------------------
 
     @staticmethod
-    def render_page(doc: fitz.Document, page_index: int, dpi: int = 96) -> "QPixmap":
+    def render_page(doc: fitz.Document, page_index: int, dpi: int = 96) -> QPixmap:
         # 延迟导入：PDF 后端子进程是无头进程,不安装 PySide6；顶层导入会让后端
         # 启动时 ModuleNotFoundError 退出码 1。仅在主进程 GUI 渲染路径用到时才导入。
         from PySide6.QtGui import QImage, QPixmap

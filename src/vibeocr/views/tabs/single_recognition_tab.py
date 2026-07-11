@@ -17,13 +17,13 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from vibeocr.services.text_block_processor import TextBlockProcessor
 from vibeocr.ui import theme
 from vibeocr.views.tabs.base_tab import BaseOcrTab
 from vibeocr.widgets.preprocess_options_widget import PreprocessOptionsWidget
 from vibeocr.widgets.preview_widget import PreviewWidget
 from vibeocr.widgets.result_view_widget import ResultViewWidget
 from vibeocr.widgets.text_block_options_widget import TextBlockOptionsWidget
-from vibeocr.services.text_block_processor import TextBlockProcessor
 
 logger = logging.getLogger(__name__)
 
@@ -389,7 +389,7 @@ class SingleRecognitionTab(BaseOcrTab):
         if is_document_file(file_path):
             # 文档文件(PDF/Office)强制走 MinerU 文档解析，CPU 后端下不可用。
             # 在此拦截，避免进入 _run_ocr_with_data 后因管道被 GPU 门控禁用而崩溃。
-            from vibeocr.env_manager import get_runtime_gpu_capability, get_project_root
+            from vibeocr.env_manager import get_project_root, get_runtime_gpu_capability
 
             if not get_runtime_gpu_capability(get_project_root()):
                 from PySide6.QtWidgets import QMessageBox

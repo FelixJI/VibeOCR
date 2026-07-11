@@ -6,9 +6,8 @@
 有界 wait 范式。
 """
 
-import subprocess
 import threading
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 

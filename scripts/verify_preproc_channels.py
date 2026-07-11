@@ -14,7 +14,6 @@
 
 from __future__ import annotations
 
-import io
 import sys
 
 import numpy as np
@@ -80,7 +79,7 @@ def main() -> int:
     print("=== 导入 PaddleOCR OCR pipeline ===")
     try:
         from paddleocr import PaddleOCR
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         print(f"无法导入 PaddleOCR: {e}")
         return 1
 
@@ -134,7 +133,7 @@ def main() -> int:
             as_rgb = mem  # 直接当 RGB
             as_bgr = (mem[2], mem[1], mem[0])  # 翻转后当 RGB
             exp = expected_rgb[name]
-            print(f"{name:<6}{str(exp):<18}{str(mem):<20}{str(as_rgb):<18}{str(as_bgr):<18}")
+            print(f"{name:<6}{exp!s:<18}{mem!s:<20}{as_rgb!s:<18}{as_bgr!s:<18}")
 
         # 统计哪种解读更接近原图
         rgb_match = 0

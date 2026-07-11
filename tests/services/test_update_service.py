@@ -1793,7 +1793,7 @@ class TestExtractUpdaterFromZip:
         with zipfile.ZipFile(zip_path, "w") as zf:
             zf.writestr("VibeOCR/VibeOCR.exe", b"main")
 
-        with pytest.raises(RuntimeError, match="updater.exe"):
+        with pytest.raises(RuntimeError, match=r"updater\.exe"):
             service._extract_updater_from_zip(zip_path)
 
     def test_does_not_extract_other_files(self, tmp_path, monkeypatch):

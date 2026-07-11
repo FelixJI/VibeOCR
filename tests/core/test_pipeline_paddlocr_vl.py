@@ -21,7 +21,7 @@ class _FakePipeline:
     def __init__(self, result_list):
         self._result_list = result_list
 
-    def predict(self, input, **kwargs):
+    def predict(self, input, **kwargs):  # noqa: A002 — 模拟 PaddleOCR API（input 关键字参数）
         return list(self._result_list)
 
 

@@ -50,7 +50,7 @@ class ThumbnailIpcWorker(QThread):
 
     def __init__(
         self,
-        client: "PdfBackendClient",
+        client: PdfBackendClient,
         session_id: str,
         size: int = 160,
         parent=None,
@@ -99,7 +99,7 @@ class ThumbnailIpcWorker(QThread):
             )
             if not self._cancelled:
                 self.thumbnail_ready.emit(page_index, png_bytes, gen)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.error("[thumb-ipc] 渲染页 %d 失败: %s", page_index, e)
         finally:
             with self._pending_lock:

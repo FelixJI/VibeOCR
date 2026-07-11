@@ -226,9 +226,7 @@ OCR_CHECK_LEAF_MODULES: dict[str, str] = {
 # 这些 leaf 全部由 paddleocr[doc-parser] → paddlex[ocr] 的传递依赖拉入，
 # 故承载顶层包统一是 paddleocr。leaf 缺失时，补装应重装承载顶层包以重新解析
 # 整条传递树（而非逐个 leaf 单装，后者无法覆盖 leaf 自身的传递依赖）。
-LEAF_TO_TOPLEVEL: dict[str, str] = {
-    pkg: "paddleocr" for pkg in OCR_CHECK_LEAF_MODULES.values()
-}
+LEAF_TO_TOPLEVEL: dict[str, str] = dict.fromkeys(OCR_CHECK_LEAF_MODULES.values(), "paddleocr")
 
 # 各模块 import 检测的 timeout（秒）。
 # paddle 首次导入需初始化 CUDA 上下文，显著慢于其他模块。

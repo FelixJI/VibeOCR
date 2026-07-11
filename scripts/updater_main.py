@@ -22,7 +22,12 @@ from pathlib import Path
 
 # 与 update_replacer.py 同目录（scripts/），PyInstaller --onefile 自动收集。
 # 打包态下两者都在 PYZ 内，普通 import 即可。
-from update_replacer import _detect_self_exe_names, logger, run_replacement, setup_logging
+from update_replacer import (
+    _detect_self_exe_names,
+    logger,
+    run_replacement,
+    setup_logging,
+)
 
 
 def _notify_failure(message: str) -> None:
