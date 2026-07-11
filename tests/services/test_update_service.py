@@ -925,7 +925,7 @@ class TestAwaitDialog:
                 other_ran.append(True)
 
             other_task = asyncio.ensure_future(other())
-            code = await await_dialog(dlg)
+            code = await await_dialog(dlg)  # type: ignore[arg-type]
             await other_task
             return code, dlg.showed
 

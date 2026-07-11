@@ -134,7 +134,7 @@ def profile_imports() -> tuple[dict[str, float], float]:
     # 执行真实 import：env_manager 是 main.py 的顶层导入，
     # 会触发 numpy/PIL/httpx/pydantic 等传递依赖的加载。
     try:
-        import vibeocr.env_manager  # noqa: F401 — 触发 import 计时
+        import vibeocr.env_manager  # noqa: F401  # pyright: ignore[reportUnusedImport]
     except Exception:
         # 即使 import 失败也恢复 __import__（避免全局污染）
         pass

@@ -420,7 +420,7 @@ def get_app_paths(profile: str = "production"):
         AppPaths（install_root, data_root, runtime_root, model_cache_root,
         output_root, config_file）。
     """
-    from vibeocr.app_paths import AppPaths, resolve_app_paths  # noqa: F401
+    from vibeocr.app_paths import resolve_app_paths
 
     return resolve_app_paths(get_project_root(), profile=profile)
 

@@ -239,6 +239,7 @@ class TestAboutTabUpdateTiming:
 
         # card 必须赋值持有，否则其子控件 QTextBrowser 会被 GC（C++ 对象已删除）。
         card = tab._create_update_timing_card()
+        assert card is not None
         qtbot.addWidget(card)
         browsers = card.findChildren(QTextBrowser)
         html = browsers[0].toHtml()

@@ -671,6 +671,10 @@ class SettingsPageController:
 
             def run(self):
                 results = {}
+                service = self._service
+                if service is None:
+                    self.signals.finished.emit(results)
+                    return
 
                 for pipeline in self._pipelines:
                     # 取消检查点：每个管道预加载前
@@ -682,7 +686,7 @@ class SettingsPageController:
                             f"正在预加载 {pipeline.display_name}..."
                         )
                         logger.debug(f"[预加载] 正在预加载 {pipeline.display_name}...")
-                        success = self._service.preload_pipeline(pipeline)
+                        success = service.preload_pipeline(pipeline)
                         if not success:
                             logger.warning(
                                 f"[预加载] {pipeline.display_name} 预加载失败"
@@ -743,7 +747,9 @@ class SettingsPageController:
                     image_data = buffer.getvalue()
 
                     options = OCROptions(pipeline=pipeline)
-                    self._service.recognize(image_data, options=options)
+                    svc = self._service
+                    if svc is not None:
+                        svc.recognize(image_data, options=options)
                     return True
                 except Exception as e:
                     logger.warning(f"[预热] {pipeline.display_name} 预热失败: {e}")

@@ -33,6 +33,7 @@ class TestBatchCancelNonBlocking:
         mock_service = MagicMock()
         # batch_cancel 模拟为瞬间返回（独立通道不应阻塞）
         mock_service.batch_cancel.return_value = None
+        assert BatchRecognitionWorker is not None
         worker = BatchRecognitionWorker.__new__(BatchRecognitionWorker)
         worker._cancelled = False
         worker._service = mock_service
@@ -49,6 +50,7 @@ class TestBatchCancelNonBlocking:
         """service.batch_cancel 抛异常时 cancel flag 仍被设置"""
         mock_service = MagicMock()
         mock_service.batch_cancel.side_effect = RuntimeError("service error")
+        assert BatchRecognitionWorker is not None
         worker = BatchRecognitionWorker.__new__(BatchRecognitionWorker)
         worker._cancelled = False
         worker._service = mock_service

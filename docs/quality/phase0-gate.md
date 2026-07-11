@@ -45,14 +45,16 @@
 
 ## 当前容差（Phase 0 已知技术债）
 
-门禁目前对两项预先存在的问题采用容差模式，记录债务但不阻断：
+无。Phase 0 门禁所有步骤均为阻断模式：
 
-| 步骤 | 容差 | 原因 | 清除计划 |
-|---|---|---|---|
-| `pytest -q` | ≤ 3 failed | 2-3 个 flaky 测试：GPU 检测线程 `subprocess.run("nvidia-smi")` 与 Qt 事件处理的 Windows RPC 竞态（`0x8001010d`） | Task 0.5/0.6 修复协作取消后消除 |
-| `pyright` | ≤ 98 errors | 98 个遗留类型错误（测试 Qt mock 类型推断、env_manager tuple 解包、动态 importlib） | 独立类型清理任务清零后恢复阻断 |
+| 步骤 | 要求 |
+|---|---|
+| `pytest -q` | 0 failed |
+| `ruff check` | 0 errors |
+| `pyright` | 0 errors |
 
-容差只允许**减少**，不允许**增加**。若错误数超过基线，门禁立即 FAIL。
+Phase 0 初期曾有 pytest flaky 容差（≤3 failed）和 pyright 基线容差（≤101 errors），
+均在 Phase 0 内清零并恢复为完全阻断。
 
 ## 基准内容
 

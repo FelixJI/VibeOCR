@@ -452,7 +452,7 @@ class PdfSessionManager(QObject):
         self._mutate_worker.page_done.connect(self._on_deskew_page_done_signal)  # type: ignore[attr-defined]
         self._mutate_worker.all_done.connect(self._on_deskew_all_done)  # type: ignore[attr-defined]
         self._mutate_worker.failed.connect(self._on_deskew_failed_signal)  # type: ignore[attr-defined]
-        self._mutate_worker.start()
+        self._mutate_worker.start()  # type: ignore[attr-defined]
 
     def _run_deskew(self, runner, session_id: str, page_indices: list[int]) -> None:
         """在 deskew runner 线程内:分批 [并发渲染 → 批量 OCR 方向检测 → 逐页旋转]。

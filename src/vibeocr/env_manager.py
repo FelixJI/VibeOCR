@@ -10,7 +10,7 @@ import tarfile
 import tempfile
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Literal
 from urllib.request import Request, urlopen
@@ -1024,7 +1024,7 @@ def _module_name_matches(missing_module: str, module: str) -> bool:
     return a == b
 
 
-def _probe_module(python_exe: Path, module: str, pkg: str) -> tuple[bool, bool]:
+def _probe_module(python_exe: Path, module: str, pkg: str) -> tuple[bool, bool, str | None]:
     """双层检测一个 OCR 模块：发行版是否存在 + 是否可导入
 
     解决"装了发行版但 import 失败"被误判为"未安装"的问题（典型场景：
@@ -2309,7 +2309,7 @@ def get_direct_dependencies(python_exe: Path, pkg: str) -> list[str]:
     return _dedup_preserve_order(names)
 
 
-def _dedup_preserve_order(items) -> list:
+def _dedup_preserve_order(items: Iterable[str]) -> list[str]:
     """去重并保留首次出现顺序（items 可含空串/重复项）。"""
     seen: set[str] = set()
     out: list[str] = []

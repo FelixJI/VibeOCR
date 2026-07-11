@@ -462,7 +462,7 @@ class AboutTab(QWidget):
         btn = self._update_btn
         btn.blockSignals(True)
         try:
-            btn.disconnect()
+            btn.disconnect()  # type: ignore[call-overload]
         except (RuntimeError, TypeError):
             # 按钮首次连接时尚无连接，disconnect 会抛 RuntimeError
             pass

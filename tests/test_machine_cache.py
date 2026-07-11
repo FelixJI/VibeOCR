@@ -322,6 +322,7 @@ class TestEnvManagerIntegration:
         )
         # 缓存文件也应已更新
         refreshed = load_cache(tmp_path)
+        assert refreshed is not None
         assert refreshed["dependencies"]["paddlepaddle"] is True
 
     def test_empty_dependencies_cache_falls_back_to_real_check(self, tmp_path):
@@ -457,6 +458,7 @@ class TestCacheTTLRevalidation:
         )
         # 缓存应已刷新
         refreshed = load_cache(tmp_path)
+        assert refreshed is not None
         assert refreshed["dependencies"]["paddlepaddle"] is False
 
     def test_within_ttl_skips_true_revalidation(self, tmp_path):

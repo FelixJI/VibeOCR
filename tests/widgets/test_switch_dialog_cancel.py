@@ -28,6 +28,7 @@ class TestSwitchWorkerCancel:
 
     def test_request_cancel_sets_event_and_kills_proc(self):
         """request_cancel 设置 cancel_event 并 kill 当前子进程"""
+        assert SwitchWorker is not None
         worker = SwitchWorker.__new__(SwitchWorker)
         worker._cancel_event = threading.Event()
         worker._current_proc = None
@@ -43,6 +44,7 @@ class TestSwitchWorkerCancel:
 
     def test_request_cancel_no_proc_does_not_raise(self):
         """无子进程时 request_cancel 不抛异常"""
+        assert SwitchWorker is not None
         worker = SwitchWorker.__new__(SwitchWorker)
         worker._cancel_event = threading.Event()
         worker._current_proc = None
@@ -53,6 +55,7 @@ class TestSwitchWorkerCancel:
 
     def test_is_cancelled_reflects_event(self):
         """is_cancelled 反映 cancel_event 状态"""
+        assert SwitchWorker is not None
         worker = SwitchWorker.__new__(SwitchWorker)
         worker._cancel_event = threading.Event()
         assert not worker.is_cancelled()
@@ -61,6 +64,7 @@ class TestSwitchWorkerCancel:
 
     def test_close_event_uses_request_cancel_not_terminate(self):
         """closeEvent 调用 request_cancel + 有界 wait，不调用 terminate"""
+        assert SwitchDialog is not None
         dialog = SwitchDialog.__new__(SwitchDialog)
         dialog._worker = MagicMock()
         dialog._worker.isRunning.return_value = True
@@ -81,6 +85,7 @@ class TestSwitchWorkerCancel:
 
     def test_close_event_when_no_worker(self):
         """无 worker 时 closeEvent 直接 accept"""
+        assert SwitchDialog is not None
         dialog = SwitchDialog.__new__(SwitchDialog)
         dialog._worker = None
         event = MagicMock()
@@ -91,6 +96,7 @@ class TestSwitchWorkerCancel:
         """SwitchWorker 应有 _cancel_event 和 _current_proc 属性（协作式取消）"""
         from pathlib import Path
 
+        assert SwitchWorker is not None
         worker = SwitchWorker(Path("/fake"), "gpu")
         assert hasattr(worker, "_cancel_event")
         assert hasattr(worker, "_current_proc")

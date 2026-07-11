@@ -756,11 +756,11 @@ class ScreenCaptureOverlay(QWidget):
             image = pixmap.toImage()
             buffer = QBuffer()
             buffer.open(QBuffer.OpenModeFlag.WriteOnly)
-            ok = image.save(buffer, "PNG")
+            ok = image.save(buffer, "PNG")  # type: ignore[call-overload,arg-type]
             buffer.close()
             if not ok:
                 return None
-            return bytes(buffer.data())
+            return bytes(buffer.data())  # type: ignore[arg-type]
         except Exception:  # 编码失败不应阻断复制流程
             logger.exception("编码 PNG 失败")
             return None

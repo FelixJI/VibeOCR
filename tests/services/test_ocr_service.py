@@ -240,7 +240,7 @@ class TestMinerURouting:
             # recognize() 内部为局部导入 MinerUService，需先把子模块注册为
             # vibeocr.services 的属性，否则 mock.patch 在解析目标时会因
             # getattr(vibeocr.services, "mineru_service") 失败而报错。
-            import vibeocr.services.mineru_service  # noqa: F401
+            import vibeocr.services.mineru_service  # noqa: F401  # pyright: ignore[reportUnusedImport]
 
             with patch("vibeocr.services.mineru_service.MinerUService") as MockMinerU:
                 MockMinerU.return_value.parse.return_value = mock_mineru_result

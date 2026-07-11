@@ -1070,9 +1070,9 @@ class UpdateService:
         if not zip_path.exists():
             logger.error(f"zip 文件不存在: {zip_path}")
             return False
-        try:
-            import zipfile
+        import zipfile
 
+        try:
             with zipfile.ZipFile(zip_path, "r") as zf:
                 bad = zf.testzip()
                 if bad is not None:
@@ -1080,6 +1080,8 @@ class UpdateService:
                     return False
             return True
         except zipfile.BadZipFile:
+            logger.error(f"无效 zip 文件: {zip_path}")
+            return False
             logger.error(f"无效 zip 文件: {zip_path}")
             return False
 

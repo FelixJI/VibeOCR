@@ -104,7 +104,9 @@ class TestCancelEvent:
         mock_process = MagicMock()
         mock_process.busy = True
         info = WorkerInfo(
-            worker_id="fake", process=mock_process, state=WorkerState.IDLE
+            worker_id="fake",  # type: ignore[arg-type]
+            process=mock_process,
+            state=WorkerState.IDLE,
         )
         mgr._workers.append(info)
 

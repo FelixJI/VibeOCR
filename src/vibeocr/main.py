@@ -172,7 +172,9 @@ def _cleanup_leftover_old_exes() -> None:
             return
         if str(replacer_dir) not in sys.path:
             sys.path.insert(0, str(replacer_dir))
-        from update_replacer import cleanup_leftover_old_exes
+        from update_replacer import (  # pyright: ignore[reportMissingImports]
+            cleanup_leftover_old_exes,
+        )
 
         app_dir = env_manager.get_project_root()
         cleanup_leftover_old_exes(app_dir)

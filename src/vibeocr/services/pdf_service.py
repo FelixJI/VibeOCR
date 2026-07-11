@@ -941,7 +941,7 @@ class PdfService:
     ) -> tuple[float, float, float, float]:
         from vibeocr.utils.pdf_coords import bbox_to_pixel
 
-        return bbox_to_pixel(bbox, page_rect, render_dpi, source=source)
+        return bbox_to_pixel(bbox, page_rect, render_dpi, source=source)  # type: ignore[arg-type]
 
     # ---- helpers ----------------------------------------------------
 

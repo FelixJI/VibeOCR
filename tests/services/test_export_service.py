@@ -181,9 +181,15 @@ class TestTextLevelExport:
         from docx import Document  # type: ignore[import-not-found]
 
         doc = Document(str(out))
-        headings = [p for p in doc.paragraphs if p.style.name.startswith("Heading")]
+        headings = [
+            p
+            for p in doc.paragraphs
+            if (s := p.style) is not None and s.name is not None and s.name.startswith("Heading")
+        ]
         assert len(headings) == 2
+        assert headings[0].style is not None
         assert headings[0].style.name == "Heading 1"
+        assert headings[1].style is not None
         assert headings[1].style.name == "Heading 2"
 
     def test_xlsx_text_level_prefix(self, tmp_path):

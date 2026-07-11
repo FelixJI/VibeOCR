@@ -755,7 +755,7 @@ class OCRService(metaclass=SingletonMeta):
         elif pipeline == OCRPipeline.PADDLEOCR_VL:
             from paddleocr import PaddleOCRVL
 
-            instance = PaddleOCRVL(device=device, **kwargs)
+            instance = PaddleOCRVL(device=device, **kwargs)  # type: ignore[call-arg]
         else:
             msg = f"不支持的管道类型: {pipeline}"
             raise ValueError(msg)

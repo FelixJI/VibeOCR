@@ -19,6 +19,7 @@ SCRIPT = Path(__file__).parent.parent / "scripts" / "update_replacer.py"
 def replacer():
     """按路径加载 scripts/update_replacer.py（纯 stdlib 模块）。"""
     spec = importlib.util.spec_from_file_location("update_replacer_test", SCRIPT)
+    assert spec is not None and spec.loader is not None
     mod = importlib.util.module_from_spec(spec)
     sys.modules["update_replacer_test"] = mod
     spec.loader.exec_module(mod)
@@ -235,6 +236,7 @@ class TestUpdaterMainSelfExeNames:
         updater_main_script = Path(__file__).parent.parent / "scripts" / "updater_main.py"
         monkeypatch.setitem(sys.modules, "update_replacer", replacer)
         spec = importlib.util.spec_from_file_location("updater_main_test", updater_main_script)
+        assert spec is not None and spec.loader is not None
         updater_main = importlib.util.module_from_spec(spec)
         sys.modules["updater_main_test"] = updater_main
         spec.loader.exec_module(updater_main)
@@ -269,6 +271,7 @@ class TestUpdaterMainSelfExeNames:
         updater_main_script = Path(__file__).parent.parent / "scripts" / "updater_main.py"
         monkeypatch.setitem(sys.modules, "update_replacer", replacer)
         spec = importlib.util.spec_from_file_location("updater_main_test2", updater_main_script)
+        assert spec is not None and spec.loader is not None
         updater_main = importlib.util.module_from_spec(spec)
         sys.modules["updater_main_test2"] = updater_main
         spec.loader.exec_module(updater_main)

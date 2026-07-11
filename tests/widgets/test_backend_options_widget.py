@@ -63,7 +63,7 @@ def _make_widget(
     has_gpu=True,
     cached_hardware_gpu=False,
     pending=None,
-    worker_cls=_StubGpuDetectWorker,
+    worker_cls: type[_StubGpuDetectWorker] | type[_RunningStubGpuDetectWorker] = _StubGpuDetectWorker,
 ):
     """构造 BackendOptionsWidget（在 patch 作用域外也能用，patch 注入到模块）。
 
@@ -116,6 +116,7 @@ def _make_widget(
     try:
         widget = bow.BackendOptionsWidget(tmp_path)
         # 显式触发回填（模拟后台探测完成回调在主线程执行）
+        assert widget._detect_worker is not None
         widget._detect_worker.finished_info.emit(detect_info)
     finally:
         # 恢复模块引用（构造已完成，状态已读入 widget 实例）
@@ -227,9 +228,11 @@ def test_close_stops_running_gpu_detection_worker(_cleanup, qtbot, tmp_path):
     )
     qtbot.addWidget(widget)
     worker = widget._detect_worker
+    assert worker is not None
     assert worker.isRunning()
 
     widget.close()
 
+    assert isinstance(worker, _RunningStubGpuDetectWorker)
     assert worker.quit_called
     assert worker.wait_calls

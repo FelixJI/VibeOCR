@@ -525,10 +525,12 @@ class MainWindow(QMainWindow):
         self._shortcut_quit.activated.connect(self.close)
 
         # 截图组件
-        self._overlay.confirmed.connect(self._on_overlay_confirmed)
-        self._overlay.copied.connect(self._on_overlay_copied)
-        self._overlay.saved.connect(self._on_overlay_saved)
-        self._overlay.cancelled.connect(self._on_overlay_cancelled)
+        overlay = self._overlay
+        if overlay is not None:
+            overlay.confirmed.connect(self._on_overlay_confirmed)
+            overlay.copied.connect(self._on_overlay_copied)
+            overlay.saved.connect(self._on_overlay_saved)
+            overlay.cancelled.connect(self._on_overlay_cancelled)
 
         # 单次识别 Tab 的截图/文件请求由 MainWindow 处理
         self._single_tab.screenshot_requested.connect(self._on_screenshot)
@@ -1505,7 +1507,8 @@ class MainWindow(QMainWindow):
             pass
 
         coord.register(
-            "subprocess", lambda: self._subprocess_manager.shutdown(timeout_ms=2000)
+            "subprocess",
+            lambda: self._subprocess_manager.shutdown(timeout_ms=2000),  # type: ignore[arg-type]
         )
         coord.coordinate(timeout_ms=5000)
 

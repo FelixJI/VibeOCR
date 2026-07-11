@@ -103,7 +103,7 @@ class SingleInstanceGuard(QObject):
         # 读取指令（带超时，避免恶意/异常连接挂起主线程）。
         # 持有 conn 引用防止过早 GC，连接在本回调结束后由 Qt 回收。
         if conn.waitForReadyRead(_TIMEOUT_MS):
-            data = bytes(conn.readAll())
+            data = bytes(conn.readAll())  # type: ignore[arg-type]
             # 回写 ACK 让客户端确认已收到，再断开。
             conn.write(_ACK)
             conn.flush()

@@ -90,8 +90,9 @@ class TestThumbnailIpcWorkerConcurrent:
 
         assert len(results) == 8
         for i in range(8):
-            assert isinstance(results[i], (bytes, bytearray))
-            assert len(results[i]) > 0
+            data = results[i]
+            assert isinstance(data, (bytes, bytearray))
+            assert len(data) > 0
 
     def test_gen_passthrough(self, worker, qapp):
         """worker 应透传 request 时的 gen,由调用方校验丢弃。"""

@@ -68,7 +68,7 @@ from vibeocr.models.pdf_document import PdfDocument, PdfPageInfo, TextLayerInfo
 from vibeocr.services.pdf_service import PdfService
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
+    from collections.abc import Iterator
 
 logger = logging.getLogger(__name__)
 
@@ -588,7 +588,7 @@ def update_block_text(sid: str, req: UpdateBlockTextRequest) -> MutateResponse:
 
 def _stream_lines(events: list) -> StreamingResponse:
     """把 ProgressEvent 列表序列化为 chunked 一行一 JSON。"""
-    def gen() -> AsyncIterator[bytes]:
+    def gen() -> Iterator[bytes]:
         import json as _json
         for ev in events:
             yield (_json.dumps(ev.model_dump(mode="json")) + "\n").encode()

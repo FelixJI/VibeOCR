@@ -300,7 +300,7 @@ class ThumbnailModel(QAbstractListModel):
             return
         assert isinstance(data, (bytes, bytearray))
         pixmap = QPixmap()
-        if not pixmap.loadFromData(data, "PNG"):
+        if not pixmap.loadFromData(data, "PNG"):  # type: ignore[call-overload,arg-type]
             return
         pixmap = pixmap.scaled(
             self._thumb_size, self._thumb_size,
@@ -368,7 +368,7 @@ class ThumbnailModel(QAbstractListModel):
     def session(self) -> PdfSession | None:
         return self._session
 
-    def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:
+    def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:  # type: ignore[override]
         if parent.isValid() or self._session is None:
             return 0
         return len(self._session.pdf_document.pages)
@@ -381,7 +381,7 @@ class ThumbnailModel(QAbstractListModel):
             return pages[row]
         return None
 
-    def data(self, index: QModelIndex, role: int = Qt.ItemDataRole.DisplayRole):
+    def data(self, index: QModelIndex, role: int = Qt.ItemDataRole.DisplayRole):  # type: ignore[override]
         if not index.isValid():
             return None
         page_info = self._page_at_row(index.row())
@@ -1841,7 +1841,7 @@ class PdfTab(QWidget):
                 session.session_id, page_idx, dpi=150
             )
             pixmap = QPixmap()
-            pixmap.loadFromData(png, "PNG")
+            pixmap.loadFromData(png, "PNG")  # type: ignore[call-overload,arg-type]
         except Exception as e:
             logger.error("预览渲染页 %d 失败: %s", page_idx, e)
             return

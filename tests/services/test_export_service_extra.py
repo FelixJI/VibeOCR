@@ -141,7 +141,11 @@ class TestExportDocxExtra:
         out = tmp_path / "test.docx"
         assert ExportService.export(result, out, "docx")
         doc = Document(str(out))
-        headings = [p for p in doc.paragraphs if p.style.name.startswith("Heading")]
+        headings = [
+            p
+            for p in doc.paragraphs
+            if (s := p.style) is not None and (s.name or "").startswith("Heading")
+        ]
         assert any("My Title" in h.text for h in headings)
 
     def test_equation_block(self, tmp_path):

@@ -456,7 +456,7 @@ class TestInterruptContract:
         proto = SharedMemoryProtocolV2(SharedMemoryConfig(name=name, size=4096))
         proto.create()
         try:
-            result = {"exc": None}
+            result: dict[str, Exception | None] = {"exc": None}
 
             def reader():
                 try:
@@ -492,7 +492,7 @@ class TestInterruptContract:
             # 先写一条消息但不读，使 ready flag=1，下次 write 需等待
             proto.write_message(MSG_ACK, b"first", timeout=1.0)
 
-            result = {"exc": None}
+            result: dict[str, Exception | None] = {"exc": None}
 
             def writer():
                 try:

@@ -63,7 +63,8 @@ def _block_pixel(arr: np.ndarray, idx: int, block: int = 50) -> tuple[int, int, 
     r, cc = divmod(idx, 4)
     y = r * block + block // 2
     x = cc * block + block // 2
-    return tuple(int(v) for v in arr[y, x][:3])
+    px = arr[y, x][:3]
+    return int(px[0]), int(px[1]), int(px[2])
 
 
 EXPECTED = [

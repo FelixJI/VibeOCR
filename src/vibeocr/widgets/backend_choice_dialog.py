@@ -129,7 +129,7 @@ class BackendChoiceDialog(QDialog):
         # 展示检测到的硬件信息（GPU 型号/显存/CUDA 或未检测到）
         if self._has_gpu:
             name = info.get("name") or "NVIDIA GPU"
-            vram = info.get("vram_mb") or 0
+            vram = int(info.get("vram_mb") or 0)  # type: ignore[arg-type]
             vram_str = f"{vram // 1024}GB" if vram >= 1024 else f"{vram}MB"
             cuda_str = f"CUDA {cuda}" if cuda else "CUDA 版本未知"
             self._hw_label.setText(

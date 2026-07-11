@@ -195,7 +195,7 @@ def _make_table_result(
     table_entry = {"pred_html": pred_html, "table_region_id": 1}
     if cell_box_list is not None:
         table_entry["cell_box_list"] = cell_box_list
-    res = {
+    res: dict[str, object] = {
         "table_res_list": [table_entry],
     }
     if ocr_texts is not None:

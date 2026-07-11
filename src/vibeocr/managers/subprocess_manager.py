@@ -118,7 +118,7 @@ class PreloadTask(QRunnable):
         ttl_seconds: int | None = None,
     ) -> None:
         super().__init__()
-        self._service = service
+        self._service: OCRServiceSubprocess | None = service
         self._pipelines = pipelines
         self._ttl_seconds = ttl_seconds
         self.signals = PreloadSignals()
@@ -136,6 +136,12 @@ class PreloadTask(QRunnable):
 
     def run(self) -> None:
         """下发 TTL、逐个预加载管道并预热"""
+        # 捕获 service 到局部变量：finally 中清零 self._service 后，
+        # 局部变量仍持有有效引用，避免延迟回调访问已销毁的 service。
+        service = self._service
+        if service is None:
+            self.signals.finished.emit({"preload": {}, "warmup": {}})
+            return
         try:
             # 取消检查点 0：TTL 下发前
             self._raise_if_cancelled()
@@ -143,7 +149,7 @@ class PreloadTask(QRunnable):
             # 先下发 TTL（无论是否预加载，TTL 配置都需要同步到 worker）
             if self._ttl_seconds is not None:
                 try:
-                    self._service.set_pipeline_ttl(self._ttl_seconds)
+                    service.set_pipeline_ttl(self._ttl_seconds)
                     logger.debug(
                         f"[SubprocessManager] 已下发 TTL={self._ttl_seconds} 到 worker"
                     )
@@ -163,7 +169,7 @@ class PreloadTask(QRunnable):
                 self._raise_if_cancelled()
                 self.signals.progress.emit(i, total, pipeline_name)
                 try:
-                    single = self._service.preload_pipelines([pipeline_name])
+                    single = service.preload_pipelines([pipeline_name])
                     results.update(single)
                 except Exception as e:
                     logger.warning(
@@ -184,7 +190,7 @@ class PreloadTask(QRunnable):
             warmup_results: dict[str, bool] = {}
             if succeeded_pipelines:
                 try:
-                    warmup_results = self._service.warmup_pipelines(succeeded_pipelines)
+                    warmup_results = service.warmup_pipelines(succeeded_pipelines)
                     warmup_ok = sum(1 for v in warmup_results.values() if v)
                     logger.debug(
                         f"[SubprocessManager] 预热完成: {warmup_ok}/{len(succeeded_pipelines)} 个管道"
@@ -205,7 +211,7 @@ class PreloadTask(QRunnable):
             self.signals.finished.emit({"preload": {}, "warmup": {}})
         finally:
             # 任务结束后清零 service 引用，避免延迟 signal 访问已销毁的 UI/service
-            self._service = None  # type: ignore[assignment]
+            self._service = None
 
 
 class SubprocessManager(QObject):
