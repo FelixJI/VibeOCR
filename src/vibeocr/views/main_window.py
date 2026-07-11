@@ -977,6 +977,10 @@ class MainWindow(QMainWindow):
         """子进程 Worker 就绪回调"""
         if success:
             logging.debug("[MainWindow] 子进程 Worker 已就绪")
+            # 启动里程碑 T4：WorkerHost ready
+            from vibeocr.startup_metrics import StartupEvent, record_startup
+
+            record_startup(StartupEvent.WORKER_READY)
             self._ensure_ocr_status_callback()
 
             # 服务注入
@@ -1075,6 +1079,12 @@ class MainWindow(QMainWindow):
         logging.debug(
             f"[MainWindow] 预加载完成: preload={preload}, warmup={warmup}"
         )
+        # 启动里程碑 T5/T6：OCR backend ready + 首次可交互
+        from vibeocr.startup_metrics import StartupEvent, flush_startup, record_startup
+
+        record_startup(StartupEvent.BACKEND_READY)  # T5
+        record_startup(StartupEvent.INTERACTIVE)  # T6：预加载完成后用户可交互
+        flush_startup()  # 若 VIBEOCR_STARTUP_TRACE 设置则写 JSONL
 
     @Slot(int, int, str)
     def _on_preload_progress(self, current: int, total: int, pipeline_name: str) -> None:

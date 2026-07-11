@@ -44,6 +44,19 @@ src_path = Path(__file__).parent.parent
 if str(src_path) not in sys.path:
     sys.path.insert(0, str(src_path))
 
+# ============================================================
+# 启动里程碑记录：T0（进程入口）和 T1（运行时就绪）
+# ============================================================
+import time as _time  # noqa: E402
+
+from vibeocr.startup_metrics import (  # noqa: E402 — 必须在 env_manager 之后
+    StartupEvent,
+    record_startup,
+)
+
+record_startup(StartupEvent.PROCESS_START, 0.0)  # T0：进程入口基准（0.0）
+record_startup(StartupEvent.RUNTIME_READY, _time.perf_counter())  # T1：env_manager 已就绪
+
 
 def check_production_dependencies() -> bool:
     """检查生产环境依赖
@@ -437,6 +450,7 @@ def launch_application() -> int:
     app = QApplication(sys.argv)
     app.setApplicationName("VibeOCR")
     app.setApplicationVersion(__version__)
+    record_startup(StartupEvent.SHELL_CREATED)  # T2：Qt 壳创建
 
     # 加载 Qt 标准对话框的中文翻译（颜色选择对话框等）。必须在创建对话框前安装。
     _install_qt_translations(app)
@@ -503,6 +517,7 @@ def launch_application() -> int:
     window = MainWindow()
     window.set_app_settings(app_settings)
     window.show()
+    record_startup(StartupEvent.FIRST_WINDOW)  # T3：首窗可见
 
     # 主窗口已显示，splash 衔接关闭（finish 会等窗口完全绘制后再隐藏 splash，避免闪空）
     if splash is not None:
