@@ -230,3 +230,8 @@ config/app_settings.json
 .superpowers/
 docs/
 .zcode/
+
+# ============================================
+# Git worktrees (isolated workspaces)
+# ============================================
+.worktrees/
