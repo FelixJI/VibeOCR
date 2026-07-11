@@ -75,6 +75,8 @@ _KEY_ALIASES_LOCK = {"paddlepaddle-gpu": "paddlepaddle"}
 # ---------------------------------------------------------------------------
 APP_ICON = PROJECT_ROOT / "resources" / "app_icon.ico"
 DIST_BASE_DIR = PROJECT_ROOT / "dist"
+# 产物清单文件名（写入 ZIP 根目录，供 verify_archive 校验）
+_MANIFEST_FILENAME = "artifact-manifest.json"
 
 # PyInstaller 排除的大依赖（由嵌入式 Python 独立安装）
 #
@@ -1245,7 +1247,13 @@ def _cleanup_dist(dist_dir: Path) -> None:
 
 
 def _package_zip(dist_dir: Path, version: str) -> Path | None:
-    """将 dist_dir 打包为 zip 并计算 SHA256"""
+    """将 dist_dir 打包为 zip，内嵌 artifact-manifest.json，并计算 SHA256。
+
+    manifest 记录每个文件的相对路径、字节数和 SHA-256，用于校验发布包完整性
+    和防止运行产物（output/ 等）泄漏。打包后立即调用 verify_archive 自检。
+    """
+    from vibeocr.build_manifest import create_manifest, verify_archive
+
     zip_name = f"VibeOCR-v{version}-win64"
     zip_path = DIST_BASE_DIR / f"{zip_name}.zip"
 
@@ -1253,20 +1261,39 @@ def _package_zip(dist_dir: Path, version: str) -> Path | None:
     # zip 文件名本身保留版本号，便于分发与归档。
     top_folder = "VibeOCR"
 
+    # 生成 manifest：纳入 dist_dir 下全部文件（"." 代表整个目录）。
+    # create_manifest 会自动排除 output/、.venv/ 等禁止路径。
+    manifest = create_manifest(dist_dir, allowed_roots=(".",))
+
     print(f"打包 {zip_path}...")
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
         for file_path in dist_dir.rglob("*"):
             if file_path.is_file():
                 arcname = f"{top_folder}/{file_path.relative_to(dist_dir)}"
                 zf.write(file_path, arcname)
+        # manifest 放 ZIP 根目录（VibeOCR/artifact-manifest.json）
+        zf.writestr(
+            f"{top_folder}/{_MANIFEST_FILENAME}",
+            json.dumps(manifest, ensure_ascii=False),
+        )
 
     sha256 = hashlib.sha256(zip_path.read_bytes()).hexdigest()
     sha256_path = DIST_BASE_DIR / f"{zip_name}.zip.sha256"
     sha256_path.write_text(f"{sha256}  {zip_name}.zip\n", encoding="utf-8")
 
+    # 自检：刚打的包必须通过 manifest 校验
+    try:
+        verify_archive(zip_path)
+    except (ValueError, FileNotFoundError) as e:
+        print(f"\n  错误: 产物 manifest 校验失败: {e}")
+        return None
+
     size_mb = zip_path.stat().st_size / (1024 * 1024)
+    entry_count = manifest.get("entry_count", 0)
     print(f"  zip 大小: {size_mb:.1f} MB")
+    print(f"  文件数: {entry_count}")
     print(f"  SHA256: {sha256}")
+    print("  manifest 校验: OK")
     return zip_path
 
 

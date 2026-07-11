@@ -1354,3 +1354,91 @@ class TestVersionInfoFileDescription:
         )
         content = version_file.read_text(encoding="utf-8")
         assert "StringStruct('FileDescription', 'VibeOCR auto-updater')" in content
+
+
+class TestBuildManifestIntegration:
+    """_package_zip 应内嵌 artifact-manifest.json 并在打包后自检通过。
+
+    覆盖：
+    - manifest 写入 ZIP
+    - staging 不含 output/（即使 dist 目录下存在）
+    - manifest 校验通过后 _package_zip 返回路径
+    """
+
+    @staticmethod
+    def _load_module():
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location("bump_version", SCRIPT)
+        assert spec is not None and spec.loader is not None
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+    def _make_fake_dist(self, dist_dir: Path) -> None:
+        """造一个最小 dist 目录（模拟 PyInstaller 产物）。"""
+        (dist_dir / "_internal").mkdir(parents=True)
+        (dist_dir / "VibeOCR.exe").write_bytes(b"fake exe")
+        (dist_dir / "_internal" / "python313.dll").write_bytes(b"fake dll")
+        (dist_dir / "_internal" / "config.json").write_text("{}", encoding="utf-8")
+
+    def test_package_zip_embeds_manifest(self, tmp_path, monkeypatch):
+        """_package_zip 应在 ZIP 内写入 artifact-manifest.json。"""
+        import json
+        import zipfile
+
+        mod = self._load_module()
+        # 把 DIST_BASE_DIR 指向临时目录，避免污染真实 dist
+        monkeypatch.setattr(mod, "DIST_BASE_DIR", tmp_path / "dist")
+        mod.DIST_BASE_DIR.mkdir(parents=True, exist_ok=True)
+
+        dist_dir = mod.DIST_BASE_DIR / "VibeOCR"
+        self._make_fake_dist(dist_dir)
+
+        zip_path = mod._package_zip(dist_dir, "9.9.9")
+        assert zip_path is not None
+        assert zip_path.exists()
+
+        with zipfile.ZipFile(zip_path, "r") as zf:
+            names = zf.namelist()
+            manifest_members = [n for n in names if n.endswith("artifact-manifest.json")]
+            assert len(manifest_members) == 1, f"expected 1 manifest, got {manifest_members}"
+
+            raw = zf.read(manifest_members[0]).decode("utf-8")
+            manifest = json.loads(raw)
+            assert manifest["entry_count"] > 0
+            assert manifest["version"] == 1
+
+    def test_package_zip_rejects_output_in_dist(self, tmp_path, monkeypatch):
+        """dist 目录下若混入 output/（本地脏构建），_package_zip 应失败。"""
+        mod = self._load_module()
+        monkeypatch.setattr(mod, "DIST_BASE_DIR", tmp_path / "dist")
+        mod.DIST_BASE_DIR.mkdir(parents=True, exist_ok=True)
+
+        dist_dir = mod.DIST_BASE_DIR / "VibeOCR"
+        self._make_fake_dist(dist_dir)
+        # 注入 output（模拟脏工作区泄漏）
+        (dist_dir / "output").mkdir()
+        (dist_dir / "output" / "leaked.pdf").write_bytes(b"user secret data")
+
+        zip_path = mod._package_zip(dist_dir, "9.9.9")
+        # manifest 校验应检测到禁止路径，返回 None
+        assert zip_path is None
+
+    def test_lock_file_uses_exact_pins(self):
+        """build-shell.lock 每行包约束必须是精确 == 锁定（无 >= / ~>）。"""
+        import re
+
+        lock = (
+            Path(__file__).parent.parent / "requirements" / "build-shell.lock"
+        )
+        assert lock.exists(), "build-shell.lock must exist"
+        text = lock.read_text(encoding="utf-8")
+        # 每个包定义行：name==version \
+        pin_lines = re.findall(r"^([a-zA-Z0-9_\-\.\[\]]+)==([^\s\\]+)", text, re.MULTILINE)
+        assert len(pin_lines) > 0, "lock file should have pinned packages"
+        # 所有包定义行必须是 == 形式（pip-compile --generate-hashes 保证）
+        # 此处验证没有 >= / ~= / > 形式的版本约束出现在包定义行
+        bad = re.findall(r"^[a-zA-Z0-9_\-\.\[\]]+(>=|~=|>|<)", text, re.MULTILINE)
+        assert bad == [], f"lock file should use == only, found: {bad}"
+

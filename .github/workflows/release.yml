@@ -51,33 +51,18 @@ jobs:
           echo "version=$tag" >> "$GITHUB_OUTPUT"
           echo "解析到版本号: $tag"
 
-      - name: Install minimal build dependencies
+      - name: Install minimal build dependencies (hash-pinned)
         shell: bash
         run: |
           python -m pip install --upgrade pip
-          # PyInstaller 实际需要 import 的全部第三方包（paddle/torch 被
-          # --exclude-module 排除，不在此列）。版本约束宽松，由 PyPI 解析最新兼容版。
+          # 用带哈希的锁文件安装，确保 CI 构建可复现、无隐式漂移。
+          # 锁文件由 uv pip compile --generate-hashes 生成（见 requirements/build-shell.in）。
           # 清单须与 bump_version.py 的 HIDDEN_IMPORTS 对齐——凡 HIDDEN_IMPORTS
           # 列出的包，CI 必须安装，否则 PyInstaller 找不到模块打不进 bundle。
           # fastapi/uvicorn/pymupdf(fitz) 不在此列：PDF 后端子进程由嵌入式 Python
           # 独立运行，不进主 exe（见 pdf_backend_client._resolve_python_exe）。
           # fitz 从主 exe 排除后,版本约束走 version.json,由便携 Python 安装。
-          pip install \
-            pyinstaller \
-            pyside6 \
-            pillow \
-            numpy \
-            markdown \
-            qasync \
-            httpx \
-            fonttools \
-            "qrcode[pil]" \
-            python-barcode \
-            opencv-contrib-python \
-            pyzbar \
-            pydantic \
-            openpyxl \
-            python-docx
+          pip install --require-hashes -r requirements/build-shell.lock
 
       - name: Build (PyInstaller via bump_version.py)
         shell: bash

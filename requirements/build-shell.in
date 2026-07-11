@@ -1,0 +1,31 @@
+# CI 打包壳的最小直接依赖集
+#
+# 这些是 PyInstaller 打包主 exe + updater 时实际需要 import 的全部第三方包。
+# paddle/torch 被 --exclude-module 排除（由便携 Python 运行时安装），不在此列。
+# fastapi/uvicorn/pymupdf(fitz) 由 PDF 后端子进程独立运行，也不在此列。
+#
+# 生成 lock 文件：
+#   uv pip compile requirements/build-shell.in --generate-hashes -o requirements/build-shell.lock
+# CI 安装：
+#   python -m pip install --require-hashes -r requirements/build-shell.lock
+#
+# 清单须与 bump_version.py 的 HIDDEN_IMPORTS 对齐——凡 HIDDEN_IMPORTS 列出的包，
+# CI 必须安装，否则 PyInstaller 找不到模块打不进 bundle。
+#
+# 版本约束与 pyproject.toml 的生产依赖一致（CI 只装打包所需的子集）。
+
+pyinstaller>=6.6
+pyside6>=6.8
+pillow
+numpy
+markdown
+qasync
+httpx
+fonttools
+qrcode[pil]
+python-barcode
+opencv-contrib-python
+pyzbar
+pydantic
+openpyxl
+python-docx
