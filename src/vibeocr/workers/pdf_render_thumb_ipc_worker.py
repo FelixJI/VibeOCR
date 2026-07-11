@@ -106,8 +106,13 @@ class ThumbnailIpcWorker(QThread):
                 self._pending.discard(page_index)
 
     def run(self) -> None:
-        """主循环:从队列取页 → 提交线程池并发渲染。哨兵/取消时退出。"""
-        with ThreadPoolExecutor(max_workers=_THUMB_CONCURRENCY) as pool:
+        """主循环:从队列取页 → 提交线程池并发渲染。哨兵/取消时退出。
+
+        cancel 时用 cancel_futures=True 关闭线程池，取消尚未开始的待处理
+        任务，避免等待卡在阻塞 HTTP 调用的 in-flight 任务（配合有界 HTTP 超时）。
+        """
+        pool = ThreadPoolExecutor(max_workers=_THUMB_CONCURRENCY)
+        try:
             while not self._cancelled:
                 try:
                     # 带超时轮询,便于响应 cancel(避免无限阻塞在 get)
@@ -117,5 +122,8 @@ class ThumbnailIpcWorker(QThread):
                 if item is _STOP:
                     break
                 pool.submit(self._render_one, item)  # type: ignore[arg-type]
-            # with 块退出时,ThreadPoolExecutor 会等待所有 in-flight 任务完成
-            # (_render_one 检查 _cancelled 会快速返回)
+        finally:
+            # cancel_futures=True：取消尚未开始的待处理任务。
+            # 已在运行的 in-flight 任务会因 HTTP 有界超时（_HTTP_TIMEOUT）最终返回。
+            # 不使用 with 块（其 __exit__ 是 shutdown(wait=True) 无 cancel_futures）。
+            pool.shutdown(wait=True, cancel_futures=True)

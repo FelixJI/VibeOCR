@@ -1145,11 +1145,19 @@ class PdfSessionManager(QObject):
         _CJK_RESOLVER.cleanup()
 
 
-def _wait_thread(worker, timeout_ms: int | None = None) -> None:
+def _wait_thread(worker, timeout_ms: int | None = None) -> bool:
     """等待 QThread 结束,期间处理事件循环以避免跨线程信号死锁。
 
-    PdfTab 的缩略图 worker 停止时用。超时后强制 terminate(不安全,仅兜底)。
+    PdfTab 的缩略图 worker 停止时用。超时后返回 False，**不调用 terminate()**——
+    worker 仍持有 ThreadPoolExecutor 和 HTTP 连接，强杀会留下半写状态。
+    调用方应通过 cancel() 协作取消 + 有界 HTTP 超时确保 worker 最终自然退出。
+
+    Returns:
+        True 如果 worker 在超时内结束；False 如果超时（worker 仍在运行）。
     """
+    if not worker.isRunning():
+        return True
+
     import time
 
     from PySide6.QtCore import QCoreApplication
@@ -1163,8 +1171,11 @@ def _wait_thread(worker, timeout_ms: int | None = None) -> None:
         QCoreApplication.processEvents()
         worker.wait(Constants.Timeout.Ms.PDF_WORKER_POLL_STEP)
         if time.monotonic() - start > timeout_ms / 1000:
-            logger.error("Worker 未在 %dms 内结束，强制终止", timeout_ms)
-            worker.terminate()
-            worker.wait(Constants.Timeout.Ms.PDF_WORKER_TERMINATE_WAIT)
-            break
+            logger.warning(
+                "Worker 未在 %dms 内结束，保持运行等待自然退出（不 terminate）",
+                timeout_ms,
+            )
+            QCoreApplication.processEvents()
+            return False
     QCoreApplication.processEvents()
+    return True

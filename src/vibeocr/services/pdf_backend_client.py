@@ -377,10 +377,16 @@ class PdfBackendClient:
             raise PdfBackendError(f"load 流式调用失败: {e}") from e
 
     def render_thumbnail(self, sid: str, page: int, size: int = 160) -> bytes:
-        """渲染缩略图,返回 PNG 字节。"""
+        """渲染缩略图,返回 PNG 字节。
+
+        使用 _HTTP_TIMEOUT（60s 读 + 5s 连接）而非无限超时：缩略图是快速操作，
+        若后端卡死应在 60s 内超时返回异常，而非无限阻塞导致 cancel 后
+        ThreadPoolExecutor 无法收尾。
+        """
         resp = self._post(
             f"/session/{sid}/render_thumbnail",
             RenderThumbnailRequest(page=page, size=size).model_dump(),
+            timeout=_HTTP_TIMEOUT,
         )
         return resp.content
 
