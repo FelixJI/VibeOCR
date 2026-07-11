@@ -395,11 +395,34 @@ def get_project_root() -> Path:
     委托 env_manager.get_project_root()，保持单一实现源（SSOT）。
     判断逻辑：打包态锚定 exe 所在目录；开发态向上查找含 src/vibeocr 的目录。
     统一调用避免两份实现在非标准布局下返回不同结果。
+
+    .. deprecated::
+        新代码应使用 ``vibeocr.app_paths.resolve_app_paths()`` 获取完整的
+        AppPaths（含 data_root/runtime_root/model_cache_root/output_root/config_file）。
+        本函数仅返回 install_root，保留供旧调用方兼容。
     """
     # 延迟导入打破循环依赖（env_manager 反向依赖本模块的常量）
     from vibeocr.env_manager import get_project_root as _get_root
 
     return _get_root()
+
+
+def get_app_paths(profile: str = "production"):
+    """获取 AppPaths（路径单一边界）。
+
+    委托 vibeocr.app_paths.resolve_app_paths()，自动从 get_project_root()
+    解析 install_root。
+
+    Args:
+        profile: ``"production"``（默认）或 ``"winui-dev"``（旁路开发）。
+
+    Returns:
+        AppPaths（install_root, data_root, runtime_root, model_cache_root,
+        output_root, config_file）。
+    """
+    from vibeocr.app_paths import AppPaths, resolve_app_paths  # noqa: F401
+
+    return resolve_app_paths(get_project_root(), profile=profile)
 
 
 def get_config_dir() -> Path:
