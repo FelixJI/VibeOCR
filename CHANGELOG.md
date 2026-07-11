@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.4.22] - 2026-07-11
+
+### Added
+- feat(update): 下载进度移至状态栏 + 修复 SHA/校验阶段取消失效
+
+### Fixed
+- fix(concurrency): Ruff 修复 — shutdown_coordinator B023 闭包变量绑定 + switch_dialog TC003 noqa
+- fix(concurrency): 集中 ConcurrencyBudget 配置，启动时记录实际预算
+- fix(concurrency): ShutdownCoordinator 统一有序 drain，os._exit 前尽力收拢任务
+- fix(concurrency): AsyncTaskRunner 补 drain + on_error + async_slot 错误观测 + await_dialog 防护
+- fix(concurrency): qasync 缺失时 fail-fast，不再返回不可用的标准 loop
+- fix(concurrency): SHM interrupt 契约真正生效，退避循环检查 _stop_event
+- fix(concurrency): PDF session close 获取 fitz_lock + CLOSING 状态等待 active op
+- fix(concurrency): export cancel 真正生效，逐文件检查 cancel flag
+- fix(concurrency): PDF runner 引入 task generation，旧任务迟到信号不污染新任务
+- fix(concurrency): stop() 优雅关闭顺序（SHUTDOWN→wait→kill→清SHM→join reader）
+- fix(concurrency): SwitchWorker 改用协作式取消，移除 QThread.terminate
+- fix(concurrency): force_restart 与 restart_if_dead 语义分离
+- fix(concurrency): worker 领取与 BUSY 标记原子化（_reserve_worker/_release_worker）
+- fix(concurrency): worker 端后台轮询 cancel flag 并调用 mgr.cancel()
+- fix(concurrency): 批量取消走独立 SHM cancel flag，不再阻塞 GUI
+- fix(concurrency): SHM 头部新增 cancel 标志字节作为独立控制通道
+
+### Changed
+- test(concurrency): 批量取消 100ms 内返回的回归测试
+
 ## [0.4.21] - 2026-07-10
 
 ### Fixed
