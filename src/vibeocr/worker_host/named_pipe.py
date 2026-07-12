@@ -276,17 +276,30 @@ class PipeConnection:
         return bytes(buf)[:got]
 
     def _write_sync(self, data: bytes) -> int:
+        # Loop on partial writes: PIPE_TYPE_BYTE WriteFile may transfer fewer
+        # bytes than requested when the pipe buffer is full. Without this loop
+        # any frame larger than the 64 KiB pipe buffer would be truncated and
+        # desync the framing layer.
         if self._closed:
             raise ConnectionError("pipe closed")
-        n = len(data)
-        buf = (ctypes.c_ubyte * n).from_buffer_copy(data)
-        written = wt.DWORD(0)
-        ok = self._win["WriteFile"](
-            self._handle, buf, n, ctypes.byref(written), None
-        )
-        if not ok:
-            raise ConnectionError(f"WriteFile failed: GLE={ctypes.get_last_error()}")
-        return int(written.value)
+        total = len(data)
+        buf = (ctypes.c_ubyte * total).from_buffer_copy(data)
+        written_so_far = 0
+        while written_so_far < total:
+            written = wt.DWORD(0)
+            ok = self._win["WriteFile"](
+                self._handle,
+                ctypes.byref(buf, written_so_far),
+                total - written_so_far,
+                ctypes.byref(written),
+                None,
+            )
+            if not ok:
+                raise ConnectionError(f"WriteFile failed: GLE={ctypes.get_last_error()}")
+            if written.value == 0:
+                raise ConnectionError("WriteFile wrote 0 bytes (pipe full?)")
+            written_so_far += written.value
+        return written_so_far
 
     async def close(self) -> None:
         if self._closed:
@@ -382,8 +395,9 @@ def _build_security_attributes(sid_sddl: str) -> Any:
         wt.LPCWSTR, wt.DWORD, ctypes.POINTER(ctypes.c_void_p), ctypes.POINTER(wt.ULONG)
     ]
 
-    # SDDL: owner = current user (D:PAI(A;;FA;;;SY)(A;;FA;;;<sid>))
-    # FA = FILE_ALL_ACCESS, SY = SYSTEM, then the user SID.
+    # SDDL: DACL grants FILE_ALL_ACCESS (FA) to the current user SID only.
+    # Per design §11 the ACL is restricted to the current user; SYSTEM is
+    # intentionally not granted (stricter than the OS default). FA = FILE_ALL_ACCESS.
     sddl = f"D:(A;;FA;;;{sid_sddl})"
     sd = ctypes.c_void_p()
     sd_size = wt.ULONG(0)

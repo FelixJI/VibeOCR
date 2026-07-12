@@ -136,21 +136,22 @@ async def _serve(args: argparse.Namespace) -> int:
     )
     sys.stdout.flush()
 
+    conn = None
     try:
-        await asyncio.wait_for(server.accept(timeout_ms=30_000), timeout=30.0)
+        conn = await asyncio.wait_for(server.accept(timeout_ms=30_000), timeout=30.0)
     except (TimeoutError, OSError) as exc:
         _log.warning("no client connected: %s", exc)
-        await _shutdown(server, store, parent_task)
+        await _shutdown(server, store, parent_task, conn=None)
         return 1
 
-    # Accept succeeded; the connection is owned by the loop now. We do not
-    # re-implement the full read/write loop here — the integration test in
-    # test_named_pipe.py already validates the connection layer end-to-end.
-    # On a real deploy, the read loop runs until EOF or shutdown.
+    # Accept succeeded; the connection owns the pipe handle now. The full
+    # read/dispatch loop is wired in the production bootstrap; Phase 1 validates
+    # the connection layer via test_named_pipe.py and self-test. We hold the
+    # connection so it can be closed cleanly on shutdown (no handle leak).
     try:
         await stop_event.wait()
     finally:
-        await _shutdown(server, store, parent_task)
+        await _shutdown(server, store, parent_task, conn=conn)
     return 0
 
 
@@ -199,8 +200,16 @@ def _pid_alive(pid: int) -> bool:
 
 
 async def _shutdown(
-    server: Any, store: SharedPayloadStore, parent_task: asyncio.Task[None] | None
+    server: Any,
+    store: SharedPayloadStore,
+    parent_task: asyncio.Task[None] | None,
+    *,
+    conn: Any = None,
 ) -> None:
+    # Close the accepted connection first so the peer sees EOF promptly.
+    if conn is not None:
+        with contextlib.suppress(Exception):
+            await conn.close()
     with contextlib.suppress(Exception):
         await server.close()
     with contextlib.suppress(Exception):

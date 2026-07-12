@@ -184,8 +184,10 @@ class SharedPayloadStore:
         self._default_ttl = ttl_seconds
         # Owner-created segments we must keep alive: name -> mapping handle.
         # A named file-mapping object is destroyed when its LAST handle closes,
-        # so the owner holds the handle until release/shutdown.
-        self._owned: dict[str, int] = {}
+        # so the owner holds the handle until release/shutdown. We track
+        # (mapping_handle, expires_unix_ms) so the orphan sweep only reaps
+        # segments past their TTL, not in-flight ones.
+        self._owned: dict[str, tuple[int, int]] = {}
         self._win = _load_win32() if IS_WINDOWS else {}
 
     # -- create ------------------------------------------------------------
@@ -212,10 +214,10 @@ class SharedPayloadStore:
             owner=self._owner,
             expires_unix_ms=expires,
         )
-        await asyncio.to_thread(self._create_and_write_sync, name, data)
+        await asyncio.to_thread(self._create_and_write_sync, name, data, expires)
         return ref
 
-    def _create_and_write_sync(self, name: str, data: bytes) -> None:
+    def _create_and_write_sync(self, name: str, data: bytes, expires_unix_ms: int) -> None:
         size = len(data)
         handle = self._win["CreateFileMappingW"](
             INVALID_HANDLE_VALUE, None, PAGE_READWRITE, 0, size, name
@@ -234,7 +236,7 @@ class SharedPayloadStore:
         finally:
             self._win["UnmapViewOfFile"](ptr)
         # Keep the mapping handle open so the named object survives for peers.
-        self._owned[name] = handle
+        self._owned[name] = (handle, expires_unix_ms)
 
     # -- read --------------------------------------------------------------
 
@@ -282,12 +284,14 @@ class SharedPayloadStore:
         await asyncio.to_thread(self._close_owned_sync, ref.name)
 
     def _close_owned_sync(self, name: str) -> None:
-        handle = self._owned.pop(name, 0)
-        if handle:
-            try:
-                self._win["CloseHandle"](handle)
-            except Exception:
-                pass
+        entry = self._owned.pop(name, None)
+        if entry is not None:
+            handle, _expires = entry
+            if handle:
+                try:
+                    self._win["CloseHandle"](handle)
+                except Exception:
+                    pass
 
     def _unlink_sync(self, name: str) -> None:
         # Best-effort open+close for names we don't own (e.g. orphan sweep).
@@ -301,11 +305,12 @@ class SharedPayloadStore:
     # -- reclaim -----------------------------------------------------------
 
     async def sweep_orphans(self) -> int:
-        """Reap namespace-owned segments whose TTL has expired.
+        """Reap owner-held segments whose TTL has expired.
 
-        Windows does not enumerate named file-mapping objects, so the sweep
-        examines the owner's tracked segments and closes any whose descriptor
-        has expired. Callers may also pass expired refs to ``release``.
+        Only segments past their ``expires_unix_ms`` are closed; in-flight
+        segments are left untouched. Windows does not enumerate named
+        file-mapping objects, so the sweep is limited to segments this store
+        created.
         """
         if not IS_WINDOWS:
             return 0
@@ -314,19 +319,15 @@ class SharedPayloadStore:
     def _sweep_sync(self) -> int:
         now_ms = int(time.time() * 1000)
         reaped = 0
-        # Close expired owner-held handles.
-        for name in list(self._owned.keys()):
-            # We only know the handle, not the descriptor, here. The dispatcher
-            # (Task 1.5) drives explicit release of expired refs; this sweep is
-            # a safety net that closes any handle we still hold.
-            handle = self._owned.pop(name, 0)
-            if handle:
-                try:
-                    self._win["CloseHandle"](handle)
-                    reaped += 1
-                except Exception:
-                    pass
-        _ = now_ms
+        for name, (handle, expires) in list(self._owned.items()):
+            if expires > now_ms:
+                continue  # still within TTL; leave in flight
+            self._owned.pop(name, None)
+            try:
+                self._win["CloseHandle"](handle)
+                reaped += 1
+            except Exception:
+                pass
         return reaped
 
     async def shutdown(self) -> None:

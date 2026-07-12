@@ -189,20 +189,24 @@ async def test_ttl_orphan_sweep_reaps_expired_segments() -> None:
     # A segment past its TTL must be reaped by sweep_orphans.
     store = SharedPayloadStore(owner="client", ttl_seconds=60)
     ref = await store.put(b"expires soon", media_type="text/plain", ttl_seconds=0)
-    # Force expiry: rewrite the descriptor to the past.
-    expired = SharedPayloadRef(
-        name=ref.name,
-        size=ref.size,
-        media_type=ref.media_type,
-        sha256=ref.sha256,
-        owner=ref.owner,
-        expires_unix_ms=0,  # epoch => always expired
-    )
     reaped = await store.sweep_orphans()
     assert reaped >= 1
     # After sweep, reading the expired ref should fail (segment gone).
     with pytest.raises(SharedPayloadError):
-        await store.read(expired)
+        await store.read(ref)
+
+
+@win32_only
+@pytest.mark.asyncio
+async def test_sweep_does_not_reap_in_flight_segments() -> None:
+    # Regression: a segment within its TTL must survive sweep_orphans.
+    store = SharedPayloadStore(owner="client", ttl_seconds=60)
+    ref = await store.put(b"still valid", media_type="text/plain", ttl_seconds=60)
+    reaped = await store.sweep_orphans()
+    assert reaped == 0
+    data = await store.read(ref)
+    assert data == b"still valid"
+    await store.release(ref)
 
 
 @win32_only
