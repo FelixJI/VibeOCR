@@ -874,11 +874,42 @@ class PdfSessionManager(QObject):
             progress += len(valid_indices)
             _emit_progress()
 
-            # 阶段3：逐页写层 + 进度信号
+            # 阶段3：批量写层（一次 HTTP，共享聚合子集字体）+ 逐页进度信号。
+            # 先收集本批要写层的有效页，一次 add_text_layer_batch 调用让后端聚合
+            # 所有页字符解析单一子集字体（避免逐页各解析一份放大体积），写层返回
+            # 后再逐页发 page_done 信号，保持 UI 流式反馈不变。
+            # 取消/失败/空结果页不进 batch，单独处理。
+            write_items: list[dict] = []  # [{page, ocr_result, result_ref, list_idx}]
+            for i, idx in enumerate(batch_pages):
+                if runner._cancelled or page_failed[i]:
+                    continue
+                result = results_map.get(i)
+                if result is not None and result.text_blocks:
+                    write_items.append({
+                        "page": idx,
+                        "ocr_result": self._ocr_result_to_dict(result),
+                        "_result": result,
+                        "_list_idx": i,
+                    })
+
+            write_page_results: dict[int, bool] = {}  # page -> ok
+            if write_items and not runner._cancelled:
+                try:
+                    self._client.add_text_layer_batch(
+                        session_id, write_items, settings_dict, overwrite
+                    )
+                    for item in write_items:
+                        write_page_results[item["page"]] = True
+                except Exception as e:
+                    logger.error("批量写文字层失败(批起始页 %d): %s", batch_pages[0], e)
+                    # 整批写层失败：标记这些页失败
+                    for item in write_items:
+                        write_page_results[item["page"]] = False
+
+            # 逐页发 page_done + 进度信号（保持 UI 流式反馈）
             for i, idx in enumerate(batch_pages):
                 if runner._cancelled:
                     done += 1
-                    # 取消跳过的页补齐写层子步，保持进度连续
                     progress += 1
                     _emit_progress()
                     continue
@@ -891,21 +922,17 @@ class PdfSessionManager(QObject):
                     _emit_progress()
                     continue
                 result = results_map.get(i)
-                try:
-                    if result is not None and result.text_blocks:
-                        ocr_dict = self._ocr_result_to_dict(result)
-                        self._client.add_text_layer(
-                            session_id, idx, ocr_dict, settings_dict, overwrite
-                        )
-                        session.add_ocr_stats(len(result.text_blocks), 0)
-                        success += 1
-                        runner.page_done.emit(session_id, idx, result)
-                    else:
-                        session.add_ocr_stats(0, 1)
-                        runner.page_done.emit(session_id, idx, None)
-                except Exception as e:
-                    logger.error("写文字层页 %d 失败: %s", idx, e)
+                if result is not None and result.text_blocks and write_page_results.get(idx, False):
+                    session.add_ocr_stats(len(result.text_blocks), 0)
+                    success += 1
+                    runner.page_done.emit(session_id, idx, result)
+                elif result is not None and result.text_blocks and not write_page_results.get(idx, False):
+                    # 有结果但写层失败
                     fail += 1
+                    runner.page_done.emit(session_id, idx, None)
+                else:
+                    # 无文本块的空结果页
+                    session.add_ocr_stats(0, 1)
                     runner.page_done.emit(session_id, idx, None)
                 done += 1
                 progress += 1

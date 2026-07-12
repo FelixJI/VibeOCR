@@ -27,6 +27,8 @@ if TYPE_CHECKING:
 
 from vibeocr.ipc.schemas import (
     AddTextLayerRequest,
+    BatchAddTextLayerPage,
+    BatchAddTextLayerRequest,
     DeletePagesRequest,
     DetectTextLayersRequest,
     DetectTextLayersResponse,
@@ -467,6 +469,33 @@ class PdfBackendClient:
             self._post(
                 f"/session/{sid}/add_text_layer",
                 AddTextLayerRequest(page=page, ocr_result=ocr_result, pdf_settings=pdf_settings, overwrite=overwrite).model_dump(),
+            ),
+            MutateResponse,
+        )
+
+    def add_text_layer_batch(
+        self,
+        sid: str,
+        pages_data: list[dict],  # [{page, ocr_result}, ...]
+        pdf_settings: dict | None = None,
+        overwrite: bool = False,
+    ) -> MutateResponse:
+        """批量写 OCR 文字层，一批页共享单一聚合子集字体。
+
+        供 PdfSessionManager._run_ocr 阶段3 攒一批结果后一次调用，替代逐页
+        add_text_layer。后端聚合本批所有页字符解析单一子集字体，避免每页一份。
+        """
+        pages = [
+            BatchAddTextLayerPage(page=p["page"], ocr_result=p["ocr_result"])
+            for p in pages_data
+        ]
+        return self._parse(
+            self._post(
+                f"/session/{sid}/add_text_layer_batch",
+                BatchAddTextLayerRequest(
+                    pages=pages, pdf_settings=pdf_settings, overwrite=overwrite
+                ).model_dump(),
+                timeout=_HTTP_LONG_TIMEOUT,
             ),
             MutateResponse,
         )

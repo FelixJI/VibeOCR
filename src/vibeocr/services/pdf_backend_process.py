@@ -35,6 +35,7 @@ from fastapi.responses import StreamingResponse
 
 from vibeocr.ipc.schemas import (
     AddTextLayerRequest,
+    BatchAddTextLayerRequest,
     DeletePagesRequest,
     DetectTextLayersRequest,
     DetectTextLayersResponse,
@@ -590,6 +591,36 @@ def add_text_layer(sid: str, req: AddTextLayerRequest) -> MutateResponse:
         ))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"加文字层失败: {e}") from e
+
+
+@app.post("/session/{sid}/add_text_layer_batch", response_model=MutateResponse)
+def add_text_layer_batch(
+    sid: str, req: BatchAddTextLayerRequest
+) -> MutateResponse:
+    """批量写 OCR 文字层，一批页共享单一聚合子集字体。
+
+    与逐页 add_text_layer 的区别：把本批所有页字符聚合一次解析子集字体，
+    全批共享，避免每页一份独立子集字体放大体积。聚合逻辑复用
+    PdfService.add_text_layer_batch（参照 save_with_rewrite 的整文档子集模式）。
+    """
+    s = _get_registry().get(sid)
+    try:
+        pages_data = [
+            {"page": p.page, "ocr_result": p.ocr_result} for p in req.pages
+        ]
+        with s.fitz_lock:
+            results = PdfService.add_text_layer_batch(
+                s.doc, s.pdf_document, pages_data,
+                pdf_settings=_settings_from_dict(req.pdf_settings),
+                overwrite=req.overwrite,
+            )
+        written_pages = sorted(results.keys())
+        return MutateResponse(diff=_diff_pages(
+            s.pdf_document, written_pages,
+            invalidate_thumbnails=written_pages, modified=True
+        ))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"批量加文字层失败: {e}") from e
 
 
 @app.post("/session/{sid}/rewrite_text_layer", response_model=MutateResponse)

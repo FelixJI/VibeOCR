@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from PySide6.QtGui import QPixmap
 
 from vibeocr.models.pdf_document import PdfDocument, PdfPageInfo, TextLayerInfo
+from vibeocr.models.ocr_result import TextBlock
 from vibeocr.utils.cjk_font_resolver import _CJK_RESOLVER
 
 logger = logging.getLogger(__name__)
@@ -559,6 +560,99 @@ class PdfService:
         info.has_text_layer = written > 0
         info.thumbnail = None
         return written, skipped
+
+    @staticmethod
+    def add_text_layer_batch(
+        doc: fitz.Document,
+        pdf_document: PdfDocument,
+        pages_data: list[dict],
+        pdf_settings: object | None = None,
+        overwrite: bool = False,
+    ) -> dict[int, tuple[int, int]]:
+        """批量写 OCR 文字层，一批页共享单一聚合子集字体。
+
+        复用 save_with_rewrite 已验证的"整文档一次子集"模式：先把本批所有页
+        的文本块字符聚合，一次 _CJK_RESOLVER.resolve 得到共享子集字体路径，
+        再循环调 _write_blocks_to_page(font_path=shared)。避免逐页 add_text_layer
+        每页各解析一份独立子集字体（每页一份字体对象会放大 PDF 体积）。
+
+        Args:
+            doc: fitz.Document 实例。
+            pdf_document: PdfDocument 状态对象。
+            pages_data: [{page, ocr_result}] 列表，ocr_result 为序列化 OCRResult dict。
+            pdf_settings: PdfGlobalSettings 实例（None 则使用默认值）。
+            overwrite: 同 add_text_layer，控制已有文字层页的跳过/重写。
+
+        Returns:
+            {page_index: (written, skipped)} 每页写入/跳过块数。
+            已有文字层且 overwrite=False 的页不在返回值中（调用方据此判 skipped）。
+        """
+        from vibeocr.models.pdf_ocr_options import PdfGlobalSettings
+
+        settings = pdf_settings if pdf_settings is not None else PdfGlobalSettings()
+
+        # 预处理：反序列化、应用防重复守卫，收集实际要写的页
+        to_write: list[tuple[int, list, int]] = []  # (page_index, text_blocks, preproc_angle)
+        skipped_pages: list[int] = []  # 因已有文字层而跳过的页
+        for item in pages_data:
+            page_index = item["page"]
+            ocr_result_data = item["ocr_result"]
+            text_blocks = [
+                TextBlock(
+                    text=b["text"],
+                    score=b["score"],
+                    bbox=tuple(b["bbox"]) if b.get("bbox") else None,
+                    page_idx=b.get("page_idx"),
+                    is_manually_edited=b.get("is_manually_edited", False),
+                    label=b.get("label", "text"),
+                    order=b.get("order", -1),
+                )
+                for b in ocr_result_data.get("text_blocks", [])
+            ]
+            preproc_angle = int(ocr_result_data.get("preproc_angle", 0) or 0)
+
+            page_info = pdf_document.pages[page_index]
+            if page_info.has_text_layer:
+                if not overwrite:
+                    logger.info(
+                        "batch: page %d 已有文字层，跳过（overwrite=False）",
+                        page_index,
+                    )
+                    skipped_pages.append(page_index)
+                    continue
+                logger.info(
+                    "batch: page %d 已有文字层，overwrite=True，先删除再写入",
+                    page_index,
+                )
+                PdfService.delete_text_layers(doc, pdf_document, page_index)
+            to_write.append((page_index, text_blocks, preproc_angle))
+
+        results: dict[int, tuple[int, int]] = {p: (0, 1) for p in skipped_pages}
+
+        if not to_write:
+            return results
+
+        # 聚合本批所有页的字符 → 一次解析共享子集字体
+        all_chars = "".join(
+            b.text for _, blocks, _ in to_write for b in blocks if b.text
+        )
+        shared_font_path = _CJK_RESOLVER.resolve(all_chars) if all_chars else None
+
+        for page_index, text_blocks, preproc_angle in to_write:
+            written, skipped = PdfService._write_blocks_to_page(
+                doc, page_index, text_blocks, preproc_angle, settings,
+                font_path=shared_font_path,
+            )
+            # 缓存 OCR 原始块（与单页 add_text_layer 一致）
+            pdf_document.is_modified = True
+            info = pdf_document.pages[page_index]
+            info.ocr_text_blocks = text_blocks
+            info.ocr_preproc_angle = preproc_angle
+            info.has_text_layer = written > 0
+            info.thumbnail = None
+            results[page_index] = (written, skipped)
+
+        return results
 
     @staticmethod
     def _write_blocks_to_page(

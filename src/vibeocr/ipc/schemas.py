@@ -175,6 +175,25 @@ class AddTextLayerRequest(BaseModel):
     overwrite: bool = False
 
 
+class BatchAddTextLayerPage(BaseModel):
+    """批量加文字层的单页条目。"""
+
+    page: int
+    ocr_result: dict[str, Any]  # 序列化的 OCRResult(含 text_blocks)
+
+
+class BatchAddTextLayerRequest(BaseModel):
+    """批量写 OCR 文字层：一次接收一批页，后端聚合字符解析单一子集字体。
+
+    避免逐页 add_text_layer 每页各解析一份子集字体（放大体积）。
+    聚合逻辑复用 save_with_rewrite 已验证的"整文档一次子集"模式。
+    """
+
+    pages: list[BatchAddTextLayerPage]
+    pdf_settings: dict[str, Any] | None = None
+    overwrite: bool = False
+
+
 class RewriteTextLayerRequest(BaseModel):
     page: int
     text_blocks: list[TextBlockMirror]
