@@ -428,6 +428,12 @@ class PdfSessionManager(QObject):
                 self._sid = sid
                 self._pages = pages
                 self._cancelled = False
+                # 复用渲染线程池（与 _OcrRunner 同理：跨批复用 httpx 连接）。
+                from concurrent.futures import ThreadPoolExecutor
+                self._render_pool = ThreadPoolExecutor(
+                    max_workers=mgr._RENDER_CONCURRENCY,
+                    thread_name_prefix="deskew-render",
+                )
 
             def cancel(self):
                 self._cancelled = True
@@ -437,6 +443,8 @@ class PdfSessionManager(QObject):
                     self._mgr._run_deskew(self, self._sid, self._pages)
                 except Exception as e:
                     self.failed.emit(self._sid, str(e))
+                finally:
+                    self._render_pool.shutdown(wait=True)
 
         self._mutate_worker = _DeskewRunner(self, session.session_id, page_indices)  # type: ignore[assignment]
         # 与 OCR/mutate 一致：runner 信号携带 session_id，须经 _path_for_session_id
@@ -459,8 +467,6 @@ class PdfSessionManager(QObject):
         旧实现逐页串行：渲染 → 主进程 PIL+numpy 解码 → 单页 recognize（N 次 IPC
         往返）→ rotate。重构后复用 OCR 的批量化路径，省去主进程解码与逐页 IPC。
         """
-        from concurrent.futures import ThreadPoolExecutor
-
         from vibeocr.models.ocr_options import OCROptions
 
         session = self._sessions.get(self._active_path or "")
@@ -504,15 +510,12 @@ class PdfSessionManager(QObject):
                 break
             batch_pages = page_indices[batch_start:batch_start + batch_size]
 
-            # 阶段1：并发渲染（线程池，结果按 batch_pages 顺序对齐）
+            # 阶段1：并发渲染（复用 runner 线程池，结果按 batch_pages 顺序对齐）
             images: list[bytes | None] = [None] * len(batch_pages)
             if not runner._cancelled:
-                with ThreadPoolExecutor(
-                    max_workers=min(self._RENDER_CONCURRENCY, len(batch_pages))
-                ) as pool:
-                    rendered = pool.map(_render_page, batch_pages)
-                    for i, png in enumerate(rendered):
-                        images[i] = png
+                rendered = runner._render_pool.map(_render_page, batch_pages)
+                for i, png in enumerate(rendered):
+                    images[i] = png
             page_failed = [png is None for png in images]
             progress += len(batch_pages)  # 渲染子步
             _emit_progress()
@@ -736,13 +739,26 @@ class PdfSessionManager(QObject):
                 self._cancelled = False
                 self._success = 0
                 self._fail = 0
+                # runner 生命周期内复用一个渲染线程池：跨批次复用同一组工作
+                # 线程，从而复用 PdfBackendClient 按线程 ident 缓存的 httpx
+                # Client（每线程 1 个 Client，4 线程跨 N 批始终命中同一组连接
+                # 池），避免每批 16 页都重建线程池 + 新建 TCP 连接。
+                from concurrent.futures import ThreadPoolExecutor
+                self._render_pool = ThreadPoolExecutor(
+                    max_workers=mgr._RENDER_CONCURRENCY,
+                    thread_name_prefix="ocr-render",
+                )
 
             def cancel(self):
                 self._cancelled = True
 
             def run(self):
-                self._mgr._run_ocr(self, self._sid, self._pages, self._opts,
-                                   self._sdict, self._overwrite)
+                try:
+                    self._mgr._run_ocr(self, self._sid, self._pages, self._opts,
+                                       self._sdict, self._overwrite)
+                finally:
+                    # runner 退出即关闭线程池，释放 4 个工作线程及其 httpx Client。
+                    self._render_pool.shutdown(wait=True)
 
         self._ocr_worker = _OcrRunner(
             self, session.session_id, page_indices, ocr_options_ref,
@@ -786,8 +802,6 @@ class PdfSessionManager(QObject):
           ImageBatchSampler 分批，省去每页重复管道开销。
         - 写层:逐页串行 add_text_layer(fitz 写操作不可并发)。
         """
-        from concurrent.futures import ThreadPoolExecutor
-
         from vibeocr.models.ocr_options import OCROptions
 
         session = self._sessions.get(self._active_path or "")
@@ -830,13 +844,11 @@ class PdfSessionManager(QObject):
             # 阶段1：并发渲染(线程池，结果按 batch_pages 顺序对齐)
             images: list[bytes | None] = [None] * len(batch_pages)
             if not runner._cancelled:
-                with ThreadPoolExecutor(
-                    max_workers=min(self._RENDER_CONCURRENCY, len(batch_pages))
-                ) as pool:
-                    # map 保持输入顺序，逐页结果对齐 images
-                    rendered = pool.map(_render_page, batch_pages)
-                    for i, arr in enumerate(rendered):
-                        images[i] = arr
+                # 复用 runner 生命周期内的线程池（_OcrRunner.__init__ 创建），
+                # 不再每批新建/销毁。pool.map 保持输入顺序，逐页结果对齐 images。
+                rendered = runner._render_pool.map(_render_page, batch_pages)
+                for i, arr in enumerate(rendered):
+                    images[i] = arr
             page_failed = [arr is None for arr in images]
             # 渲染子步进度：本批每页 +1（含渲染失败的页，它们仍“处理完”了渲染阶段）
             progress += len(batch_pages)
