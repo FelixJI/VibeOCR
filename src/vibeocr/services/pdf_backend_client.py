@@ -479,11 +479,15 @@ class PdfBackendClient:
         pages_data: list[dict],  # [{page, ocr_result}, ...]
         pdf_settings: dict | None = None,
         overwrite: bool = False,
+        save: bool = False,
     ) -> MutateResponse:
         """批量写 OCR 文字层，一批页共享单一聚合子集字体。
 
         供 PdfSessionManager._run_ocr 阶段3 攒一批结果后一次调用，替代逐页
         add_text_layer。后端聚合本批所有页字符解析单一子集字体，避免每页一份。
+
+        save=True 时后端写层后 incremental 落盘，resp.extra["saved"] 标记结果
+        （False=回滚，调用方不写 sidecar）。
         """
         pages = [
             BatchAddTextLayerPage(page=p["page"], ocr_result=p["ocr_result"])
@@ -493,7 +497,8 @@ class PdfBackendClient:
             self._post(
                 f"/session/{sid}/add_text_layer_batch",
                 BatchAddTextLayerRequest(
-                    pages=pages, pdf_settings=pdf_settings, overwrite=overwrite
+                    pages=pages, pdf_settings=pdf_settings,
+                    overwrite=overwrite, save=save,
                 ).model_dump(),
                 timeout=_HTTP_LONG_TIMEOUT,
             ),
