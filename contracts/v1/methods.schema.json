@@ -10,7 +10,7 @@
       "additionalProperties": false,
       "required": ["name", "size", "media_type", "sha256", "owner", "expires_unix_ms"],
       "properties": {
-        "name": { "type": "string", "pattern": "^Local\\\\VibeOCR-[0-9a-f-]+-[0-9a-f-]+$", "description": "Windows shared memory object name: Local\\VibeOCR-{session}-{uuid}." },
+        "name": { "type": "string", "pattern": "^Local\\\\VibeOCR-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", "description": "Windows shared memory object name: Local\\VibeOCR-{session-uuid}-{object-uuid}, both v4 UUIDs. Tightened in Task 1.4 to match the Python store's validation and reject path injection." },
         "size": { "type": "integer", "minimum": 0 },
         "media_type": { "type": "string", "minLength": 1 },
         "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$", "description": "Lowercase hex SHA-256 of the payload bytes." },
