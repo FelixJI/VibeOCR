@@ -881,7 +881,38 @@ class PdfService:
                 )
                 baseline = fitz.Point(dpt.x0, dpt.y0)
                 text_rotate = 90 if page_rotation in (90, 270) else 0
+
+                # 宽度匹配：CJK 字符宽 ≈ fontsize（全角），拉丁/数字 ≈ 0.5×fontsize。
+                # OCR bbox 常比自然文本宽（字符间距/成组区域），不缩放时 ink 只覆盖
+                # bbox 宽度的 45-62%。用 morph 水平缩放把 ink 拉伸到 bbox 宽度
+                # （隐形层 render_mode=3 下字形拉伸不可见，选中框覆盖 bbox 才是目标）。
+                # 缩放系数夹在 [0.5, 3.0]：避免过度拉伸（稀疏 OCR 框）或过度压缩
+                # （文本溢出 bbox）。scale_x=1.0 时不传 morph（与原行为一致）。
+                width_units = 0.0
+                for ch in text:
+                    code = ord(ch)
+                    if (
+                        0x2E80 <= code <= 0x9FFF
+                        or 0xF900 <= code <= 0xFAFF
+                        or 0xFF00 <= code <= 0xFF60
+                        or 0x3000 <= code <= 0x303F
+                    ):
+                        width_units += 1.0
+                    else:
+                        width_units += 0.5
+                natural_w = max(width_units * fontsize, fontsize * 0.5)
+                scale_x = disp_rect.width / natural_w
+                scale_x = max(0.5, min(3.0, scale_x))
+
                 try:
+                    morph = None
+                    if abs(scale_x - 1.0) > 0.05:
+                        # rot=0: mediabox x 缩放；rot=90: mediabox y 缩放
+                        # （显示水平方向 = mediabox 竖直方向，因 derotation 旋 90°）
+                        if page_rotation == 90:
+                            morph = (baseline, fitz.Matrix(1.0, scale_x))
+                        else:
+                            morph = (baseline, fitz.Matrix(scale_x, 1.0))
                     page.insert_text(
                         baseline,
                         text,
@@ -891,6 +922,7 @@ class PdfService:
                         color=(0, 0, 0),
                         render_mode=render_mode,
                         rotate=text_rotate,
+                        morph=morph,
                     )
                     written += 1
                     continue

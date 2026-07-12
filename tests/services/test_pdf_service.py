@@ -1183,6 +1183,57 @@ class TestPdfServiceTextLayerPlacement:
         )
         doc.close()
 
+    def test_ink_width_matches_bbox_via_horizontal_scale(self, tmp_path):
+        """文字层 ink 宽度 ≈ bbox 宽度（morph 水平缩放匹配，不再只有 45-62%）。
+
+        Bug：CJK 字符宽 ≈ fontsize，OCR bbox 常比自然文本宽，不缩放时 ink 只
+        覆盖 bbox 宽度的 45-62%（『宽度还有优化空间』）。修复：morph 水平缩放
+        （rot=0 → Matrix(scale_x,1)，rot=90 → Matrix(1,scale_x)）把 ink 拉伸到
+        bbox 宽度。隐形层下字形拉伸不可见，选中框覆盖 bbox 才是目标。
+        """
+        import numpy as np
+
+        from vibeocr.models.ocr_result import OCRResult, TextBlock
+        from vibeocr.models.pdf_document import PdfDocument
+        from vibeocr.models.pdf_ocr_options import PdfGlobalSettings
+
+        for rot, page_w, page_h, name in [
+            (0, 612, 792, "rot0"),
+            (90, 595.2, 841.68, "rot90"),
+        ]:
+            doc = fitz.open()
+            page = doc.new_page(width=page_w, height=page_h)
+            page.set_rotation(rot)
+            pr = page.rect
+            # 5 CJK 字符，bbox 宽 300（60pt/字，比自然 ~30pt/字宽一倍），
+            # 高 30。旧路径 ink_w ≈ 155（ratio 0.52）。
+            x0, y0, x1, y1 = 100, 100, 400, 130
+            nbbox = (
+                x0 / pr.width * 1000, y0 / pr.height * 1000,
+                x1 / pr.width * 1000, y1 / pr.height * 1000,
+            )
+            block = TextBlock(text="平顶补强块", score=0.99, bbox=nbbox)
+            result = OCRResult(text_blocks=[block], preproc_angle=0)
+            settings = PdfGlobalSettings(text_layer_visible=True)
+            pdf_doc = PdfDocument(file_path="x.pdf")
+            PdfService.build_page_infos(doc, pdf_doc)
+            PdfService.add_text_layer(doc, pdf_doc, 0, result, pdf_settings=settings)
+
+            pix = doc[0].get_pixmap(matrix=fitz.Matrix(4, 4))
+            img = np.frombuffer(pix.samples, dtype=np.uint8).reshape(
+                pix.height, pix.width, pix.n
+            )
+            ink = img[:, :, 0] < 128
+            ys, xs = np.where(ink)
+            assert len(ys) > 0, f"{name}: 应写入可见文字"
+            ink_w = (xs.max() - xs.min()) / 4
+            # ink 宽度 ≈ bbox 宽度 300（±15%），旧 bug ratio ≈ 0.52
+            assert 0.85 <= ink_w / 300 <= 1.15, (
+                f"{name} ink 宽度 {ink_w:.1f} 应 ≈ bbox 宽度 300"
+                f"（ratio={ink_w/300:.2f}，旧 bug ~0.52=宽度太小）"
+            )
+            doc.close()
+
 
 class TestPdfServiceOcrBlocksCache:
     """OCR 原始块缓存（ocr_text_blocks）—— 预览/编辑/重写的唯一信源。
