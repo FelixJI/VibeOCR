@@ -59,8 +59,13 @@ class Constants:
     DEFAULT_SHM_LOG_SIZE = 1 * 1024 * 1024  # 1MB
 
     # 批量处理配置
-    DEFAULT_BATCH_SIZE = 8
-    MAX_BATCH_SIZE = 32
+    # OCR 批量识别（多文件图片 Tab）单次 predict 的 batch_size 上界。
+    # 实际值由 BatchQueueManager._calculate_batch_size 按显卡显存动态估算
+    # （gpu_memory_monitor.estimate_batch_size：free*0.7 / 单图显存），此常量
+    # 只作为动态估算的上限 clamp，必须 ≥ GPU 计算批(text_recognition_batch_size=8)
+    # 才不会人为卡死 GPU。与 estimate_batch_size 内部的 16 上限对齐。
+    # 低显存卡由动态估算自动降到更小值，无需改此常量。
+    OCR_BATCH_GPU_SIZE_CAP = 16
 
     # 日志配置
     LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
@@ -163,8 +168,7 @@ SHORT_DELAY_MS = 100
 MEDIUM_DELAY_MS = 500
 LONG_DELAY_MS = 1000
 TOAST_DELAY_MS = 3000
-DEFAULT_BATCH_SIZE = Constants.DEFAULT_BATCH_SIZE
-MAX_BATCH_SIZE = Constants.MAX_BATCH_SIZE
+OCR_BATCH_GPU_SIZE_CAP = Constants.OCR_BATCH_GPU_SIZE_CAP
 MIN_BATCH_SIZE = 1
 DEFAULT_SPACING = Constants.Style.SPACING_MEDIUM
 DEFAULT_MARGIN = Constants.Style.PADDING_MEDIUM

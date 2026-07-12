@@ -365,46 +365,6 @@ class WorkerManager:
                         return self.execute(task, retry_count + 1)
             raise
 
-    def _get_available_worker(self, wait_timeout: float = 5.0) -> WorkerInfo | None:
-        """获取可用的 Worker（轮询）
-
-        Args:
-            wait_timeout: 等待 Worker 可用的超时时间（秒）
-
-        Returns:
-            可用的 WorkerInfo，如果没有则返回 None。
-            若设置了 cancel_event 且被 set,会提前返回 None。
-        """
-        start_time = time.time()
-        while time.time() - start_time < wait_timeout:
-            with self._workers_lock:
-                if not self._workers:
-                    return None
-
-                # 轮询查找空闲 Worker
-                for _ in range(len(self._workers)):
-                    worker_info = self._workers[self._round_robin_index]
-                    self._round_robin_index = (self._round_robin_index + 1) % len(
-                        self._workers
-                    )
-
-                    if worker_info.is_available and not worker_info.process.busy:
-                        return worker_info
-
-            # 等待一小段时间再重试。
-            # 若设置了 cancel_event,用 event.wait(0.1) 替代 sleep(0.1),
-            # 这样事件被 set 时能立即返回 True,中断长等待。
-            if self._cancel_event is not None:
-                if self._cancel_event.wait(0.1):
-                    # 取消信号已触发,立即返回 None
-                    logger.debug("等待 Worker 时收到取消信号,提前返回")
-                    return None
-            else:
-                time.sleep(0.1)
-
-        # 超时，没有空闲 Worker
-        return None
-
     def _restart_worker(self, worker_info: WorkerInfo) -> bool:
         """重启指定 Worker（仅在 worker 未就绪时真正重启）
 

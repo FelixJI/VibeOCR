@@ -71,10 +71,10 @@ class TestHealthCheckThreshold:
 
 
 class TestCancelEvent:
-    """cancel_event 取消机制测试:中断 _get_available_worker 的长等待"""
+    """cancel_event 取消机制测试:中断 _reserve_worker 的长等待"""
 
     def test_cancel_event_set_returns_immediately(self):
-        """cancel_event 已 set 时,_get_available_worker 立即返回 None"""
+        """cancel_event 已 set 时,_reserve_worker 立即返回 None"""
         import threading
 
         cancel_event = threading.Event()
@@ -83,7 +83,7 @@ class TestCancelEvent:
             max_workers=1, use_gpu=False, auto_restart=False, cancel_event=cancel_event
         )
         start = time.monotonic()
-        result = mgr._get_available_worker(wait_timeout=300.0)
+        result = mgr._reserve_worker(wait_timeout=300.0)
         elapsed = time.monotonic() - start
         assert result is None
         # 应在 1 秒内返回(event.wait(0.1) 检测到 set),而非等 300 秒
@@ -100,9 +100,10 @@ class TestCancelEvent:
         mgr = WorkerManager(
             max_workers=1, use_gpu=False, auto_restart=False, cancel_event=cancel_event
         )
-        # 注入一个 busy worker,使 _get_available_worker 进入轮询
+        # 注入一个 busy worker,使 _reserve_worker 进入轮询
         mock_process = MagicMock()
         mock_process.busy = True
+        mock_process.is_ready = True
         info = WorkerInfo(
             worker_id="fake",  # type: ignore[arg-type]
             process=mock_process,
@@ -117,7 +118,7 @@ class TestCancelEvent:
         threading.Thread(target=setter, daemon=True).start()
 
         start = time.monotonic()
-        result = mgr._get_available_worker(wait_timeout=300.0)
+        result = mgr._reserve_worker(wait_timeout=300.0)
         elapsed = time.monotonic() - start
         assert result is None
         assert elapsed < 1.0, f"cancel 未中断等待,耗时 {elapsed:.2f}s"
@@ -127,7 +128,7 @@ class TestCancelEvent:
         mgr = WorkerManager(
             max_workers=1, use_gpu=False, auto_restart=False, cancel_event=None
         )
-        result = mgr._get_available_worker(wait_timeout=0.2)
+        result = mgr._reserve_worker(wait_timeout=0.2)
         assert result is None
 
     def test_set_cancel_event_after_init(self):
@@ -142,7 +143,7 @@ class TestCancelEvent:
         mgr.set_cancel_event(event)
         assert mgr._cancel_event is event
         event.set()
-        result = mgr._get_available_worker(wait_timeout=300.0)
+        result = mgr._reserve_worker(wait_timeout=300.0)
         assert result is None
 
 

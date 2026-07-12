@@ -74,8 +74,8 @@ class TestConstants:
 
     def test_batch_config(self):
         """测试批量处理配置"""
-        assert Constants.DEFAULT_BATCH_SIZE > 0
-        assert Constants.MAX_BATCH_SIZE >= Constants.DEFAULT_BATCH_SIZE
+        # OCR_BATCH_GPU_SIZE_CAP 是显存动态估算的上界，须 ≥ GPU 计算批(8)
+        assert Constants.OCR_BATCH_GPU_SIZE_CAP >= 8
         # BATCH_QUEUE_TIMEOUT 已移至 Constants.Timeout.BATCH_QUEUE
         assert Constants.Timeout.BATCH_QUEUE > 0
 
@@ -146,13 +146,11 @@ class TestBackwardCompatibility:
         assert theme.Colors.bg.startswith("#")
 
     def test_batch_constants(self):
-        """测试批处理常量向后兼容"""
+        """测试批处理常量导出"""
         from vibeocr.core.constants import (
-            DEFAULT_BATCH_SIZE,
-            MAX_BATCH_SIZE,
             MIN_BATCH_SIZE,
+            OCR_BATCH_GPU_SIZE_CAP,
         )
 
-        assert DEFAULT_BATCH_SIZE == Constants.DEFAULT_BATCH_SIZE
-        assert MAX_BATCH_SIZE == Constants.MAX_BATCH_SIZE
+        assert OCR_BATCH_GPU_SIZE_CAP == Constants.OCR_BATCH_GPU_SIZE_CAP
         assert MIN_BATCH_SIZE == 1

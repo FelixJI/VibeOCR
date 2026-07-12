@@ -16,14 +16,13 @@
 from typing import TYPE_CHECKING
 
 from vibeocr.core.constants import (
-    DEFAULT_BATCH_SIZE,
     DEFAULT_MARGIN,
     DEFAULT_SHM_SIZE,
     DEFAULT_SPACING,
     LONG_DELAY_MS,
-    MAX_BATCH_SIZE,
     MEDIUM_DELAY_MS,
     MIN_BATCH_SIZE,
+    OCR_BATCH_GPU_SIZE_CAP,
     SHM_TIMEOUT,
     SHORT_DELAY_MS,
     TOAST_DELAY_MS,
@@ -44,14 +43,13 @@ if TYPE_CHECKING:
     from vibeocr.core.base_worker import BaseWorker, BatchWorker
 
 __all__ = [
-    "DEFAULT_BATCH_SIZE",
     "DEFAULT_MARGIN",
     "DEFAULT_SHM_SIZE",
     "DEFAULT_SPACING",
     "LONG_DELAY_MS",
-    "MAX_BATCH_SIZE",
     "MEDIUM_DELAY_MS",
     "MIN_BATCH_SIZE",
+    "OCR_BATCH_GPU_SIZE_CAP",
     "SHM_TIMEOUT",
     "SHORT_DELAY_MS",
     "TOAST_DELAY_MS",

@@ -136,11 +136,6 @@ class PdfSessionManager(QObject):
         return self._ocr_running
 
     @property
-    def load_worker_session_id(self) -> str | None:
-        # 进程化后 load 在 open worker 内联完成,无独立 load worker
-        return None
-
-    @property
     def backend_client(self) -> PdfBackendClient:
         """暴露 client 供 PdfTab 直接调渲染(缩略图/预览,这些是同步快调用)。"""
         return self._client
@@ -1101,7 +1096,13 @@ class PdfSessionManager(QObject):
         return None
 
     def _ocr_result_to_dict(self, result) -> dict[str, Any]:
-        """OCRResult → dict(传后端 add_text_layer)。"""
+        """OCRResult → dict(传后端 add_text_layer)。
+
+        必须带上 preproc_angle：OCR 预处理旋转了图像时，bbox 在旋转后空间，
+        后端 add_text_layer → _denormalize_and_unrotate_bbox 需要该角度把
+        bbox 逆变换回页面坐标。此前漏传导致 angle 恒为 0，开启文档方向分类
+        时文字层坐标严重偏离（90° 时 X 轴可偏移数百点）。
+        """
         return {
             "text_blocks": [
                 {
@@ -1115,6 +1116,7 @@ class PdfSessionManager(QObject):
                 }
                 for b in result.text_blocks
             ],
+            "preproc_angle": int(getattr(result, "preproc_angle", 0) or 0),
         }
 
     # ---- cleanup --------------------------------------------------------

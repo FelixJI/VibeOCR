@@ -18,7 +18,7 @@ import time
 import traceback
 from typing import TYPE_CHECKING, cast
 
-from vibeocr.core.constants import DEFAULT_SHM_SIZE
+from vibeocr.core.constants import DEFAULT_SHM_SIZE, OCR_BATCH_GPU_SIZE_CAP
 
 if TYPE_CHECKING:
     import numpy as np
@@ -244,7 +244,13 @@ def run_worker(shm_name: str, shm_size: int, use_gpu: bool) -> None:
                 else OCRPipeline.OCR
             )
             batch_managers[pipeline_name] = BatchQueueManager(
-                pipeline, max_batch_size=4, service=ocr_service
+                pipeline,
+                # max_batch_size 是显存动态估算(_calculate_batch_size)的上界，
+                # 不是固定 batch_size。须 ≥ GPU 计算批(text_recognition_batch_size=8)
+                # 才不会人为卡死 GPU；实际值由 estimate_batch_size 按当前显存动态算出，
+                # 低显存卡会自动降到更小。原硬编码 4 < 8 导致 4090 利用率仅 20-40%。
+                max_batch_size=OCR_BATCH_GPU_SIZE_CAP,
+                service=ocr_service,
             )
             logger.debug(
                 f"[Worker] BatchQueueManager 初始化完成（使用 {pipeline_name}）"

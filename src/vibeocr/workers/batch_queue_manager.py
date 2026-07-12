@@ -12,6 +12,7 @@ import uuid
 from collections import OrderedDict
 from collections.abc import Callable
 
+from vibeocr.core.constants import OCR_BATCH_GPU_SIZE_CAP
 from vibeocr.models.batch_request import (
     BatchProgress,
     BatchRequest,
@@ -33,7 +34,7 @@ class BatchQueueManager:
     - 结果分发
 
     使用示例:
-        manager = BatchQueueManager(pipeline, max_batch_size=8)
+        manager = BatchQueueManager(pipeline)  # max_batch_size 默认为显存动态估算上界
 
         # 添加请求
         request_id = manager.add_request(image_data, options)
@@ -48,7 +49,7 @@ class BatchQueueManager:
     def __init__(
         self,
         pipeline,
-        max_batch_size: int = 8,
+        max_batch_size: int = OCR_BATCH_GPU_SIZE_CAP,
         progress_callback: Callable[[BatchProgress], None] | None = None,
         service=None,
     ):
@@ -56,7 +57,8 @@ class BatchQueueManager:
 
         Args:
             pipeline: PaddleX pipeline 对象（保留用于回退/兼容）
-            max_batch_size: 最大 batch_size
+            max_batch_size: 显存动态估算的上界（非固定 batch_size）。实际值由
+                _calculate_batch_size 按当前显存动态算出，低显存卡自动降级。
             progress_callback: 进度回调函数
             service: OCRService 实例。提供时，批量推理会委派给各管道
                 注册的 recognize_batch / recognize 函数，复用单图路径的
