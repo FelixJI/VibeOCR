@@ -152,6 +152,50 @@ def _diff_pages(
     )
 
 
+# ---- 渲染并发控制 -------------------------------------------------------
+# 渲染（render_preview / render_thumbnail）各自打开一个独立的临时
+# fitz.Document 栅格化，不再共用 session.doc。不同 Document 实例可安全并行
+# （PyMuPDF 的线程不安全仅限同一 Document 实例并发访问）。
+# 信号量限制同时打开的临时 doc 句柄数，避免大文件（数百页）并发渲染时
+# 句柄/内存暴涨。8 路并发足以让 300dpi 栅格化在多核上并行。
+_RENDER_SEMAPHORE = threading.Semaphore(8)
+
+
+def _render_page_pixels(file_path: str, page_index: int, dpi: float) -> tuple[bytes, int, int]:
+    """打开独立 fitz.Document 栅格化单页，返回 (samples, width, height)。
+
+    PyMuPDF 同一 Document 实例并发访问会段错误；不同 Document 实例（各自
+    fitz.open 同一文件）彼此独立，可安全并行栅格化。fitz.open 是惰性的
+    （只读 xref/trailer，不解析整文件），打开代价与页数无关。
+
+    _RENDER_SEMAPHORE 限制同时打开的临时 doc 句柄数，避免大文件（数百页）
+    并发渲染时句柄/内存暴涨。
+
+    Returns:
+        (samples, width, height)：RGB 像素字节（已拷贝，调用方不再触碰 fitz
+        对象）与尺寸。
+    """
+    with _RENDER_SEMAPHORE:
+        doc = fitz.open(file_path)
+        try:
+            if page_index < 0 or page_index >= doc.page_count:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"页索引越界: {page_index}（共 {doc.page_count} 页）",
+                )
+            page = doc[page_index]
+            zoom = dpi / 72.0
+            pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), alpha=False)
+            width, height = pix.width, pix.height
+            samples = bytes(pix.samples)  # 拷贝，离开本函数后不再触碰 fitz 对象
+            return samples, width, height
+        finally:
+            try:
+                doc.close()
+            except Exception:
+                pass
+
+
 # ---- Session 注册表 -----------------------------------------------------
 
 @dataclass
@@ -370,18 +414,15 @@ def render_thumbnail(sid: str, req: RenderThumbnailRequest) -> StreamingResponse
     直接用 fitz Pixmap → PNG,不经过 QPixmap(后端子进程无 QApplication,
     不能用 PdfService.render_page)。先按 thumbnail_dpi 渲染再缩放到目标尺寸。
 
-    并发安全:fitz(Document) 非线程安全,用 per-session fitz_lock 串行化栅格化;
-    PIL 缩放/PNG 编码在锁外,可被多线程并发执行(缩略图并发渲染的提速来源)。
+    并发安全:与 render_preview 同理,每次打开独立临时 fitz.Document 栅格化,
+    不同 Document 实例可安全并行;PIL 缩放/PNG 编码无 fitz 调用,亦并行。
     """
     s = _get_registry().get(sid)
     try:
-        # 锁内:fitz 栅格化,取出原始像素字节(fitz 对象锁外不安全)
-        with s.fitz_lock:
-            page = s.doc[req.page]
-            zoom = s.pdf_document.thumbnail_dpi / 72.0
-            pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), alpha=False)
-            width, height = pix.width, pix.height
-            samples = bytes(pix.samples)  # 拷贝,锁外不再触碰 fitz 对象
+        with _fitz_op(s):
+            samples, width, height = _render_page_pixels(
+                s.file_path, req.page, s.pdf_document.thumbnail_dpi
+            )
         # 锁外:PIL 缩放 + PNG 编码(CPU 密集,无 fitz 调用,可并行)
         from PIL import Image
         img = Image.frombytes("RGB", (width, height), samples)
@@ -389,6 +430,8 @@ def render_thumbnail(sid: str, req: RenderThumbnailRequest) -> StreamingResponse
         buf = io.BytesIO()
         img.save(buf, "PNG")
         return StreamingResponse(io.BytesIO(buf.getvalue()), media_type="image/png")
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"渲染缩略图失败: {e}") from e
 
@@ -397,24 +440,27 @@ def render_thumbnail(sid: str, req: RenderThumbnailRequest) -> StreamingResponse
 def render_preview(sid: str, req: RenderPreviewRequest) -> StreamingResponse:
     """渲染预览页,返回 PNG 字节流(直接 fitz Pixmap → PNG)。
 
-    并发安全:与 render_thumbnail 共用 per-session fitz_lock 串行化栅格化;
-    PIL/PNG 编码在锁外。OCR 批量渲染会并发调用本接口。
+    并发安全:每次渲染打开独立的临时 fitz.Document（fitz.open 是惰性的,
+    代价与页数无关），不同 Document 实例可安全并行栅格化（PyMuPDF 的线程
+    不安全仅限同一 Document 实例）。OCR 批量渲染的多页并发由此真正并行。
+    PIL/PNG 编码无 fitz 调用，亦并行。
+
+    _fitz_op 维护 active_ops，确保 session.remove() 的 close 等待本渲染完成。
     """
     s = _get_registry().get(sid)
     try:
-        # 锁内:fitz 栅格化,取出原始像素字节(fitz 对象锁外不安全)
-        with s.fitz_lock:
-            page = s.doc[req.page]
-            zoom = req.dpi / 72.0
-            pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), alpha=False)
-            width, height = pix.width, pix.height
-            samples = bytes(pix.samples)
+        with _fitz_op(s):
+            samples, width, height = _render_page_pixels(
+                s.file_path, req.page, req.dpi
+            )
         # 锁外:PIL 转 PNG(CPU 密集,无 fitz 调用,可并行)
         from PIL import Image
         img = Image.frombytes("RGB", (width, height), samples)
         buf = io.BytesIO()
         img.save(buf, "PNG")
         return StreamingResponse(io.BytesIO(buf.getvalue()), media_type="image/png")
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"渲染预览失败: {e}") from e
 
@@ -529,7 +575,10 @@ def add_text_layer(sid: str, req: AddTextLayerRequest) -> MutateResponse:
             )
             for b in ocr_result_data.get("text_blocks", [])
         ]
-        ocr_result = OCRResult(text_blocks=text_blocks)
+        ocr_result = OCRResult(
+            text_blocks=text_blocks,
+            preproc_angle=int(ocr_result_data.get("preproc_angle", 0) or 0),
+        )
         with s.fitz_lock:
             PdfService.add_text_layer(
                 s.doc, s.pdf_document, req.page, ocr_result,
