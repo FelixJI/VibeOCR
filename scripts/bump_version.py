@@ -62,6 +62,16 @@ MAIN_PY = Path(
 CHANGELOG = Path(os.environ.get("CHANGELOG", str(PROJECT_ROOT / "CHANGELOG.md")))
 UV_LOCK = Path(os.environ.get("UV_LOCK", str(PROJECT_ROOT / "uv.lock")))
 
+# ---------------------------------------------------------------------------
+# sys.path 注入 src/：CI 只装 build-shell.lock（PyInstaller + 壳依赖），不安装
+# vibeocr 包本身（避免拉 GB 级 paddle/torch）。但 _package_zip 需要 import
+# vibeocr.build_manifest 生成/校验产物清单。本地 editable 安装时无需此举，加上
+# 是幂等的——与 tests/conftest.py 的处理方式一致。必须在任何 from vibeocr...
+# 之前执行。
+_SRC_DIR = PROJECT_ROOT / "src"
+if str(_SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(_SRC_DIR))
+
 VERSION_RE = re.compile(r'version\s*=\s*"(\d+)\.(\d+)\.(\d+)"')
 SEMVER_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
 

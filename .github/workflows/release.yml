@@ -115,6 +115,47 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       # -------------------------------------------------------------------
+      # 历史版本清理：发版成功后删除更旧的 GitHub Release，保留最近 5 个
+      # -------------------------------------------------------------------
+      # 仅删 Release 对象 + 资产（zip/sha256），不删 git tag（--cleanup-tag=false
+      # 显式表意）。保留发布历史可追溯，只释放 Release 存储。
+      # gh CLI 预装于 windows-latest；GITHUB_TOKEN 由 permissions: contents: write
+      # 授权删除。整步 best-effort：单个删除失败仅 ::warning::，不阻断发版
+      # （与下方 CNB 镜像步容错策略一致）。
+
+      - name: Cleanup old releases (keep 5)
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set +e
+          # 按 semver 数值降序列出已发布 release 的 tag（排除 draft），
+          # 保留前 5 个，其余删除。tonumber 按数值比较（v0.10.0 > v0.9.0），
+          # 避免字典序把 v0.10.0 排在 v0.9.0 之前。
+          mapfile -t all_tags < <(gh release list --json tagName,isDraft \
+            --jq '[.[] | select(.isDraft==false) | .tagName] | sort_by(
+              ltrimstr("v") | split(".") | map(tonumber)
+            ) | reverse | .[]')
+          keep=5
+          count=${#all_tags[@]}
+          echo "共有 $count 个已发布 release，保留最近 $keep 个"
+          if [ "$count" -le "$keep" ]; then
+            echo "无需清理"
+            exit 0
+          fi
+          deleted=0
+          for tag in "${all_tags[@]:$keep}"; do
+            echo "删除旧 release: $tag"
+            if gh release delete "$tag" --yes --cleanup-tag=false 2>err.log; then
+              deleted=$((deleted + 1))
+            else
+              echo "::warning::删除 release $tag 失败: $(cat err.log)"
+            fi
+          done
+          echo "清理完成，删除了 $deleted 个旧 release"
+          exit 0
+
+      # -------------------------------------------------------------------
       # CNB 同步（代码镜像 + Release 产物）
       # -------------------------------------------------------------------
       # 读 secrets.CNB_TOKEN；token 缺失或任一步失败时只发 ::warning::，

@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.4.24] - 2026-07-12
+
+### Added
+- feat(ci): 发版成功后自动清理历史 GitHub Release，保留最近 5 个（仅删 Release 及资产，
+  不删 git tag；按 semver 数值排序，单步失败仅告警不阻断发版）
+
+### Fixed
+- fix(ci): 修复 CI 打包报 `ModuleNotFoundError: No module named 'vibeocr'`——
+  bump_version.py 启动时注入 src/ 到 sys.path（CI 仅装壳依赖，不安装 vibeocr 包）
+
 ## [0.4.23] - 2026-07-12
 
 ### Fixed
