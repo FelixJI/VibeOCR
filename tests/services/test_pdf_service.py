@@ -394,7 +394,11 @@ class TestPdfServiceTextLayer:
         doc.close()
 
     def test_add_text_layer_fallback_logs_debug(self, tmp_path, caplog):
-        """兜底写入走 DEBUG 日志（便于排查），不污染 WARNING 流。"""
+        """窄/高块装不下时兜底 insert_text 写入走 DEBUG 日志（便于排查）。
+
+        窄/高块（width < height）走 insert_textbox 路径；长文本在小框内缩字号
+        仍装不下时退化 insert_text 兜底，应有 DEBUG 日志。
+        """
         import logging
 
         import numpy as np
@@ -413,14 +417,14 @@ class TestPdfServiceTextLayer:
 
         doc, pdf_doc = PdfService.open_doc(str(path))
         narrow = TextBlock(
-            text="中文测试文字很长装不下窄框",
+            text="中文测试",
             score=0.9,
-            # 极小矩形：长文本在重试字号缩到 <1 仍溢出，强制走 insert_text 兜底。
-            # （依赖具体字体的字号策略，用长文本+小框确保任何字体都触发兜底）
-            bbox=(50.0, 50.0, 60.0, 53.0),
+            # 极小窄/高块（width=2 < height=3，均 < min_font_size 行距预算）：
+            # 走 insert_textbox 路径，字号缩到 min_font_size 仍装不下 → insert_text 兜底。
+            bbox=(50.0, 50.0, 52.0, 53.0),
             page_idx=0,
         )
-        result = OCRResult(raw_text="中文测试文字很长装不下窄框", text_blocks=[narrow])
+        result = OCRResult(raw_text="中文测试", text_blocks=[narrow])
 
         with caplog.at_level(logging.DEBUG, logger="vibeocr.services.pdf_service"):
             PdfService.add_text_layer(doc, pdf_doc, 0, result)
@@ -894,13 +898,15 @@ class TestPdfServiceTextLayerPlacement:
         doc.close()
         return PdfService.open_doc(str(path))
 
-    def test_wide_line_fits_on_first_try_correct_fontsize(self, tmp_path):
-        """典型宽行（OCR 常见）：写入字号 ≈ rect.height / 1.6，位置 = rect 左上角。
+    def test_wide_line_ink_region_matches_bbox(self, tmp_path):
+        """典型宽行（OCR 常见）：文字层 ink 区域高度 ≈ bbox 高度（不再被压到 73%）。
 
-        Bug 症状：旧逻辑 fontsize=height×0.8 恒溢出，缩字号后写入字号偏小，
-        选中框与可见文字不匹配。
+        Bug 症状：insert_textbox 行距开销 1.319×fs 把字号压到 bbox 的 ~73%，
+        ink 区域远小于 bbox（『区域太小』）。修复用 insert_text 单点写入，
+        fontsize = bbox_height / 0.955，ink 高度匹配 bbox。
         """
-        from vibeocr.models.ocr_options import OCROptions  # noqa: F401
+        import numpy as np
+
         from vibeocr.models.ocr_result import OCRResult, TextBlock
         from vibeocr.models.pdf_ocr_options import PdfGlobalSettings
 
@@ -913,21 +919,31 @@ class TestPdfServiceTextLayerPlacement:
 
         page_rect = doc[0].rect
         intended = PdfService._denormalize_and_unrotate_bbox(block.bbox, 0, page_rect)
-        spans = [
-            s for b in doc[0].get_text("dict")["blocks"] if b["type"] == 0
-            for l in b.get("lines", []) for s in l.get("spans", [])
-        ]
-        assert spans, "宽行应成功写入"
-        span = spans[0]
-        # 字号接近 height/1.6（±2pt），不再是缩字号后的偏小值
-        expected_fs = intended.height / 1.6
-        assert abs(span["size"] - expected_fs) < 2.5, (
-            f"字号应 ≈ {expected_fs:.1f}（height/1.6），实际 {span['size']:.1f}"
-            f"（旧 bug 会缩到更小）"
+        # 渲染并测量 ink 像素高度（与 OCR bbox 检测的 ink 高度同口径）
+        pix = doc[0].get_pixmap(matrix=fitz.Matrix(4, 4))
+        img = np.frombuffer(pix.samples, dtype=np.uint8).reshape(
+            pix.height, pix.width, pix.n
         )
-        # 落点在 rect 内（左上角对齐）
-        assert abs(span["bbox"][0] - intended.x0) < 2, "x 起点应 = rect.x0"
-        assert abs(span["bbox"][1] - intended.y0) < 2, "y 起点应 = rect.y0"
+        # 在 bbox 区域 + 右侧余量内找 ink（文本可能横向延伸出 bbox）
+        x0 = int(max(0, intended.x0 * 4 - 10))
+        x1 = int(min(pix.width, (intended.x1 + 200) * 4))
+        y0 = int(max(0, intended.y0 * 4 - 10))
+        y1 = int(min(pix.height, intended.y1 * 4 + 10))
+        crop = img[y0:y1, x0:x1]
+        ink = crop[:, :, 0] < 128
+        ys, xs = np.where(ink)
+        assert len(ys) > 0, "宽行应写入可见文字（text_layer_visible=True）"
+        ink_h = (ys.max() - ys.min()) / 4
+        ink_top = (ys.min() + y0) / 4
+        # ink 高度 ≈ bbox 高度（±15%，不再被压到 73%）
+        assert 0.85 <= ink_h / intended.height <= 1.15, (
+            f"ink 高度 {ink_h:.1f} 应 ≈ bbox 高度 {intended.height:.1f}"
+            f"（ratio={ink_h/intended.height:.2f}，旧 bug ~0.73=区域太小）"
+        )
+        # ink 顶部对齐 bbox 顶部（±2pt）
+        assert abs(ink_top - intended.y0) < 2, (
+            f"ink 顶部 {ink_top:.1f} 应 ≈ bbox 顶部 {intended.y0:.1f}"
+        )
         doc.close()
 
     def test_narrow_tall_block_no_horizontal_overflow(self, tmp_path):
@@ -1068,6 +1084,54 @@ class TestPdfServiceTextLayerPlacement:
                 f"{name}: 文字层应覆盖可见标记，IoU={iou:.2f}"
                 f"（旧 bug 在 cb50 下 IoU≈0，文字层偏移到 CropBox 原点）"
             )
+
+    def test_ink_height_matches_bbox_across_line_sizes(self, tmp_path):
+        """多个不同行高的块：文字层 ink 高度 ≈ bbox 高度（不再统一只有 73%）。
+
+        Bug 症状：insert_textbox 行距开销把字号压到 bbox 的 ~73%，ink 区域远小于
+        bbox（『区域太小，与实际 bbox 框大小差异太大』）。修复用 insert_text 单点
+        写入，fontsize = bbox_height / 0.955，ink 高度匹配 bbox。
+        """
+        import numpy as np
+
+        from vibeocr.models.ocr_result import OCRResult, TextBlock
+        from vibeocr.models.pdf_ocr_options import PdfGlobalSettings
+
+        doc, pdf_doc = self._make_scan(tmp_path)
+        # 三个不同行高的水平行（宽 > 高，走 insert_text 主路径）
+        cases = [
+            ("小号行", (50, 100, 400, 140)),  # h≈31.7pt
+            ("中号行文字", (50, 250, 400, 310)),  # h≈47.5pt
+            ("大号行标题文字", (50, 450, 400, 530)),  # h≈63.4pt
+        ]
+        text_blocks = [TextBlock(text=t, score=0.99, bbox=b) for t, b in cases]
+        result = OCRResult(text_blocks=text_blocks)
+        settings = PdfGlobalSettings(text_layer_visible=True)
+        PdfService.add_text_layer(doc, pdf_doc, 0, result, pdf_settings=settings)
+
+        page_rect = doc[0].rect
+        pix = doc[0].get_pixmap(matrix=fitz.Matrix(4, 4))
+        img = np.frombuffer(pix.samples, dtype=np.uint8).reshape(
+            pix.height, pix.width, pix.n
+        )
+        for _, nbbox in cases:
+            intended = PdfService._denormalize_and_unrotate_bbox(nbbox, 0, page_rect)
+            x0 = int(max(0, intended.x0 * 4 - 10))
+            x1 = int(min(pix.width, (intended.x1 + 200) * 4))
+            y0 = int(max(0, intended.y0 * 4 - 10))
+            y1 = int(min(pix.height, intended.y1 * 4 + 10))
+            crop = img[y0:y1, x0:x1]
+            ink = crop[:, :, 0] < 128
+            ys, xs = np.where(ink)
+            assert len(ys) > 0, f"bbox {nbbox} 应有 ink"
+            ink_h = (ys.max() - ys.min()) / 4
+            ratio = ink_h / intended.height
+            # ink 高度 ≈ bbox 高度（±15%），旧 bug 此 ratio ≈ 0.73
+            assert 0.85 <= ratio <= 1.15, (
+                f"ink 高度 {ink_h:.1f} 应 ≈ bbox 高度 {intended.height:.1f}"
+                f"（ratio={ratio:.2f}，旧 bug ~0.73=区域太小）"
+            )
+        doc.close()
 
 
 class TestPdfServiceOcrBlocksCache:

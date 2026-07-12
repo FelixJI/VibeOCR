@@ -34,6 +34,18 @@ logger = logging.getLogger(__name__)
 # （窄/高块文字横向大幅溢出到无关区域 → 「严重偏离」）。
 _LINE_LEADING = 1.6
 
+# insert_text 单点写入的 ink（实际墨迹像素）几何系数（CJK 子集字体实测）：
+#   ink_height / fontsize ≈ 0.955  （墨迹高度，OCR bbox 检测的就是这个）
+#   (baseline_y - ink_top) / fontsize ≈ 0.83   （基线在墨迹顶部下方 0.83×fs）
+#   (ink_bottom - baseline_y) / fontsize ≈ 0.125（基线下方少许下伸部分）
+# 用这些系数可把 ink 区域精确对齐到 OCR bbox：fontsize = bbox_height/INK_RATIO，
+# 基线 y = bbox.y0 + ASCENT_RATIO×fontsize，使 ink 顶部 = bbox 顶部、ink 高度 = bbox 高度。
+# 相比 insert_textbox（行距预算 1.319×fs 把字号压到 bbox 的 ~73%），insert_text 能让
+# 文字层 ink 区域与 OCR bbox 匹配，解决『区域太小』问题。
+_INK_RATIO = 0.955
+_ASCENT_RATIO = 0.83
+_DESCENT_RATIO = 0.125
+
 
 class SaveResult(NamedTuple):
     rewritten_pages: list[int]
@@ -830,18 +842,57 @@ class PdfService:
                 skipped += 1
                 continue
 
-            # 字号：rect.height / 行距系数，使首次 insert_textbox 即可放入
-            # （insert_textbox 要求 rect.height ≥ fontsize × _LINE_LEADING 才返回
-            # rc≥0 并真正写入；rc<0 时什么都不写）。此前用 height × font_size_ratio
-            # (0.8) 算出的字号恒超行距预算，几乎每个块都触发缩字号重试，写入字号
-            # 偏小、选中框与可见文字不匹配；窄/高块更会退化到 insert_text 兜底，
-            # 文字横向溢出到无关区域。
-            # 同时以宽度做二次上限：按字符类型估算文本宽度（CJK 全角≈1.0×fontsize，
-            # 拉丁/数字≈0.5×fontsize），取 height/leading 与 width-based 的较小者，
-            # 让长文本/窄框也尽量首试即放入、减少缩字号与溢出。
-            height_based = rect.height / _LINE_LEADING
+            # 字号与写入策略：
+            # OCR bbox 检测的是『墨迹像素高度』(ink height ≈ fontsize × _INK_RATIO)。
+            # 要让文字层 ink 区域匹配 bbox 高度，需 fontsize = bbox_height / _INK_RATIO。
+            #
+            # 水平页（page_rotation ∈ {0,180}，最常见扫描件）：用 insert_text 单点写入，
+            # fontsize = height / _INK_RATIO，基线 y = rect.y0 + _ASCENT_RATIO×fontsize，
+            # 使 ink 顶部对齐 bbox 顶部、ink 高度 ≈ bbox 高度。insert_textbox 因行距开销
+            # (1.319×fs) 会把字号压到 bbox 的 ~73%（『区域太小』），故不作为主路径。
+            #
+            # 旋转页（90/270）：mediabox 矩形宽高互换、几何复杂，沿用 insert_textbox
+            # (带 text_rotate=90) 由矩形约束排版；字号仍按 ink 比例放大但受行距上限夹紧。
+            # 窄/高块（width < height，竖排文字误检）：同样走 insert_textbox 自动换行。
             text = block.text
-            # 估算文本在 fontsize=1 下的总宽度（全角字符算 1.0，半角算 0.5）
+            render_mode = 0 if settings.text_layer_visible else 3
+            horizontal_page = page_rotation in (0, 180)
+            use_insert_text = horizontal_page and rect.width >= rect.height
+
+            if use_insert_text:
+                # 主路径：insert_text 匹配 ink 高度
+                fontsize = max(rect.height / _INK_RATIO, settings.min_font_size)
+                # 基线：ink 顶部 = rect.y0，故 baseline_y = rect.y0 + 上伸量
+                baseline_y = rect.y0 + _ASCENT_RATIO * fontsize
+                # 180° 旋转：上下翻转，基线从底部起向上
+                if page_rotation == 180:
+                    baseline_y = rect.y1 - _DESCENT_RATIO * fontsize
+                baseline = fitz.Point(rect.x0, baseline_y)
+                try:
+                    page.insert_text(
+                        baseline,
+                        text,
+                        fontsize=fontsize,
+                        fontname=fontname,
+                        fontfile=font_path,
+                        color=(0, 0, 0),
+                        render_mode=render_mode,
+                        rotate=0,
+                    )
+                    written += 1
+                    continue
+                except Exception as e:
+                    logger.warning(
+                        "page %d block insert_text 失败，回退 insert_textbox: "
+                        "rect=%s fs=%.1f err=%s",
+                        page_index, rect, fontsize, e,
+                    )
+                    # 落到下方 insert_textbox 路径
+
+            # insert_textbox 路径（旋转页 / 窄高块 / insert_text 失败回退）：
+            # 字号受行距预算夹紧（rect.height ≥ fontsize × _LINE_LEADING），
+            # 同时受宽度约束。缩字号重试确保装入。
+            height_based = rect.height / _LINE_LEADING
             width_units = 0.0
             for ch in text:
                 code = ord(ch)
@@ -855,16 +906,16 @@ class PdfService:
                 else:
                     width_units += 0.5
             width_based = rect.width / max(width_units, 0.5)
-            fontsize = min(height_based, width_based)
-            fontsize = max(fontsize, settings.min_font_size)
+            fontsize = max(
+                min(height_based, width_based), settings.min_font_size
+            )
 
-            render_mode = 0 if settings.text_layer_visible else 3
             inserted = False
             last_fontsize = fontsize
             for _ in range(settings.font_size_retry_count):
                 rc = page.insert_textbox(
                     rect,
-                    block.text,
+                    text,
                     fontsize=fontsize,
                     fontname=fontname,
                     fontfile=font_path,
@@ -883,10 +934,8 @@ class PdfService:
             if inserted:
                 written += 1
             else:
-                # 兜底：insert_textbox 在窄/瘦高矩形里装不下时
-                # （如竖排文字被聚成瘦高块），降级为 insert_text 单点定位。
-                # 用 last_fontsize（已缩到尽量小）而非初始大字号，限制横向溢出；
-                # 基线放在矩形左下，隐形层（render_mode=3）下溢出不可见但仍可搜索。
+                # 兜底：insert_textbox 装不下时降级 insert_text 单点写入。
+                # 用 min_font_size 限制溢出，基线放矩形左下，保证文字进入文字层。
                 fallback_fs = max(
                     min(last_fontsize, settings.min_font_size * 1.5),
                     settings.min_font_size,
@@ -895,7 +944,7 @@ class PdfService:
                     baseline = fitz.Point(rect.x0, rect.y1 - fallback_fs * 0.2)
                     page.insert_text(
                         baseline,
-                        block.text,
+                        text,
                         fontsize=fallback_fs,
                         fontname=fontname,
                         fontfile=font_path,
@@ -910,7 +959,7 @@ class PdfService:
                         page_index,
                         rect,
                         fallback_fs,
-                        block.text[:30],
+                        text[:30],
                     )
                 except Exception as e:
                     logger.warning(
@@ -918,7 +967,7 @@ class PdfService:
                         "fallback failed): rect=%s text=%r err=%s",
                         page_index,
                         rect,
-                        block.text[:30],
+                        text[:30],
                         e,
                     )
                     skipped += 1
