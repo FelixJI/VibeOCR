@@ -59,6 +59,11 @@ dev = [
     "pytest-asyncio>=1.2.0",
 ]
 
+[project.scripts]
+# WorkerHost console entry point (Task 1.6): launched by the WinUI shell as
+# `vibeocr-worker --pipe ... --token ... --profile winui-dev --parent-pid ...`.
+vibeocr-worker = "vibeocr.worker_host.main:main"
+
 [build-system]
 requires = ["hatchling>=1.0.0"]
 build-backend = "hatchling.build"
