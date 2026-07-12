@@ -1197,10 +1197,15 @@ class PdfService:
         page_rect: fitz.Rect | tuple[float, float, float, float],
         render_dpi: int,
         source: str = "pdf",
+        rotation: int = 0,
+        mediabox: tuple[float, float, float, float] | None = None,
     ) -> tuple[float, float, float, float]:
         from vibeocr.utils.pdf_coords import bbox_to_pixel
 
-        return bbox_to_pixel(bbox, page_rect, render_dpi, source=source)  # type: ignore[arg-type]
+        return bbox_to_pixel(  # type: ignore[arg-type]
+            bbox, page_rect, render_dpi, source=source,
+            rotation=rotation, mediabox=mediabox,
+        )
 
     # ---- helpers ----------------------------------------------------
 

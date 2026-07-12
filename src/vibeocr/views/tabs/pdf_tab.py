@@ -1956,6 +1956,7 @@ class PdfTab(QWidget):
                     render_dpi=150,
                     page_rect=page_info.rect,
                     source="pdf",
+                    rotation=page_info.rotation,
                 )
                 win.setWindowTitle(
                     f"文字层预览 — 第{page_idx + 1}页 ({len(page_info.text_layers)}个文字块)"
@@ -1970,6 +1971,7 @@ class PdfTab(QWidget):
                 render_dpi=150,
                 page_rect=page_info.rect,
                 source="pdf",
+                rotation=page_info.rotation,
             )
             win.setWindowTitle(
                 f"文字层预览 — 第{page_idx + 1}页 ({len(page_info.text_layers)}个文字块)"

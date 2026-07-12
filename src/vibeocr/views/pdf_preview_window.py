@@ -55,6 +55,7 @@ class PreviewCanvas(QWidget):
         # page_rect 统一用 4-tuple (x0,y0,x1,y1);主进程不再依赖 fitz。
         self._page_rect: tuple[float, float, float, float] | None = None
         self._source: str = "pdf"
+        self._rotation: int = 0
 
         # 新数据源：OCR 原始块（归一化 [0,1000] bbox）
         self._ocr_blocks: list | None = None
@@ -157,12 +158,14 @@ class PreviewCanvas(QWidget):
         render_dpi: int = 150,
         page_rect: tuple[float, float, float, float] | None = None,
         source: str = "pdf",
+        rotation: int = 0,
     ) -> None:
         self._clear_ocr_blocks()  # 切换数据源时清除 OCR 块
         self._highlight_layers = layers
         self._render_dpi = render_dpi
         self._page_rect = page_rect
         self._source = source
+        self._rotation = rotation
         self.update()
 
     # ---- 渲染 ----
@@ -226,7 +229,8 @@ class PreviewCanvas(QWidget):
             ]
             r, g, b, a = palette[color_idx]
             pixel_bbox = bbox_to_pixel(
-                bbox, self._page_rect, self._render_dpi, source=self._source
+                bbox, self._page_rect, self._render_dpi, source=self._source,
+                rotation=self._rotation,
             )
             x0, y0, x1, y1 = pixel_bbox
             painter.setBrush(QColor(r, g, b, a))
@@ -504,11 +508,13 @@ class PdfPreviewWindow(QWidget):
         render_dpi: int = 150,
         page_rect: tuple[float, float, float, float] | None = None,
         source: str = "pdf",
+        rotation: int = 0,
     ) -> None:
         """设置预览页面与高亮层（公共 API，替代直接访问 _canvas）。"""
         self._canvas.set_pixmap(pixmap)
         self._canvas.set_highlight_layers(
-            layers, render_dpi=render_dpi, page_rect=page_rect, source=source
+            layers, render_dpi=render_dpi, page_rect=page_rect, source=source,
+            rotation=rotation,
         )
 
     def set_ocr_blocks(self, page_index: int, blocks: list, pixmap: QPixmap) -> None:
