@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.4.23] - 2026-07-12
+
+### Fixed
+- fix(pdf): 保留缩略图 worker 所有权 + shutdown 防迟到信号
+- fix: clear all pyright errors and tighten Phase 0 gate
+- fix: drain PDF thumbnail workers cooperatively
+- fix: cancel owned preload tasks during shutdown
+
+### Changed
+- refactor: expose UI-free application facades
+- refactor: centralize portable application paths
+- perf: add trustworthy startup milestones
+- build: make portable artifacts reproducible
+- test: define phase 0 quality gate
+- style: clear 314 pre-existing ruff errors (lint baseline)
+- chore: ignore .worktrees for isolated workspaces
+- docs: add formal WinUI 3 migration plan
+- docs: define WinUI 3 migration architecture
+
 ## [0.4.22] - 2026-07-11
 
 ### Added
