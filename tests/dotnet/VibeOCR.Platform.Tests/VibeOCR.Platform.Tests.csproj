@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>VibeOCR.Platform.Tests</RootNamespace>
+    <AssemblyName>VibeOCR.Platform.Tests</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../../src/dotnet/VibeOCR.Platform/VibeOCR.Platform.csproj" />
+  </ItemGroup>
+</Project>

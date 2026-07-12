@@ -1,9 +1,10 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>net10.0</TargetFramework>
-    <ImplicitUsings>enable</ImplicitUsings>
-    <Nullable>enable</Nullable>
-    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <RootNamespace>VibeOCR.Contracts.Tests</RootNamespace>
+    <AssemblyName>VibeOCR.Contracts.Tests</AssemblyName>
   </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../../src/dotnet/VibeOCR.Contracts/VibeOCR.Contracts.csproj" />
+  </ItemGroup>
 </Project>
