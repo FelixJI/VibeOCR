@@ -1,5 +1,36 @@
 # Changelog
 
+## [0.4.25] - 2026-07-12
+
+### Added
+- feat(worker): expose application services through WorkerHost
+- feat(worker): add cancellable RPC task lifecycle
+- feat(worker): transfer large payloads through shared memory
+- feat(worker): secure control channel with named pipes
+- feat(worker): implement protocol framing and DTOs
+- feat(protocol): define version 1 worker contracts
+
+### Fixed
+- fix(pdf): 预览已有文字层用 line 级 bbox——不相邻文本不再合并到一个框
+- fix(pdf): 预览已有文字层补偿页面旋转——位置/角度不再错
+- fix(pdf): 文字层 ink 宽度匹配 OCR bbox——morph 水平缩放
+- fix(pdf): rotation=90 横向页文字层 ink 匹配 bbox——不再区域太小
+- fix(pdf): 文字层 ink 区域匹配 OCR bbox——不再区域太小
+- fix(ocr,pdf): 修复 Worker 预加载死锁与 PDF 添加文字层取消异常
+- fix(pdf): 文字层补偿 CropBox 原点偏移——不再离文字很远
+- fix(pdf): 文字层字号策略修正——写入位置/大小不再偏离
+- fix(pdf): 修复文字层坐标偏离、缩略图不自动加载、插页后缩略图不刷新
+- fix(worker): address Phase 1 review findings
+- fix: clear pyright errors in worker_host tests
+
+### Changed
+- test: 放宽渲染并行加速比阈值至 1.15x
+- perf(batch): 批量识别 Tab 改用分小批 recognize_batch
+- perf(pdf): 批量写文字层共享聚合子集字体
+- perf(pdf): 渲染并行化——独立 fitz.Document 并发栅格化
+- perf(pdf): runner 生命周期内复用渲染线程池与 httpx 连接
+- refactor: 清理死代码并让 OCR batch_size 跟随显存动态估算
+
 ## [0.4.24] - 2026-07-12
 
 ### Added
