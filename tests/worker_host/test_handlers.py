@@ -34,16 +34,20 @@ from vibeocr.worker_host.shared_payload import SharedPayloadRef
 
 
 def test_handlers_do_not_import_pyside6() -> None:
+    import importlib
     import sys
 
     # Remove any cached PySide6 so the import check is meaningful.
     for mod in list(sys.modules):
         if mod == "PySide6" or mod.startswith("PySide6."):
             sys.modules.pop(mod, None)
-    import vibeocr.worker_host.handlers.ocr
-    import vibeocr.worker_host.handlers.pdf
-    import vibeocr.worker_host.handlers.qrcode
-    import vibeocr.worker_host.handlers.settings  # noqa: F401
+    for mod_name in (
+        "vibeocr.worker_host.handlers.ocr",
+        "vibeocr.worker_host.handlers.pdf",
+        "vibeocr.worker_host.handlers.qrcode",
+        "vibeocr.worker_host.handlers.settings",
+    ):
+        importlib.import_module(mod_name)
 
     assert "PySide6" not in sys.modules, "handlers must not import PySide6"
 

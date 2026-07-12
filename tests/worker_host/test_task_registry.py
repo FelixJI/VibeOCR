@@ -20,6 +20,7 @@ import pytest
 from vibeocr.worker_host.task_registry import (
     CancelResult,
     State,
+    TaskHandle,
     TaskRegistry,
     TaskStateError,
 )
@@ -31,6 +32,13 @@ def _request_id() -> str:
 
 def _task_id() -> str:
     return str(uuid.uuid4())
+
+
+def _require(reg: TaskRegistry, tid: str) -> TaskHandle:
+    """Fetch a handle, asserting it exists (tests always create the task first)."""
+    h = reg.get(tid)
+    assert h is not None, f"task {tid} not found"
+    return h
 
 
 # ---------------------------------------------------------------------------
@@ -63,7 +71,7 @@ def test_get_returns_handle() -> None:
     reg = TaskRegistry()
     tid = _task_id()
     reg.create(request_id=_request_id(), task_id=tid, method="system.ping", retryable=True)
-    assert reg.get(tid).task_id == tid
+    assert _require(reg, tid).task_id == tid
 
 
 def test_get_unknown_task_returns_none() -> None:
@@ -81,10 +89,10 @@ def test_queued_to_running_to_completed() -> None:
     tid = _task_id()
     reg.create(request_id=_request_id(), task_id=tid, method="ocr.recognize", retryable=True)
     reg.mark_running(tid)
-    assert reg.get(tid).state is State.RUNNING
+    assert _require(reg, tid).state is State.RUNNING
     reg.complete(tid, result={"text": "hi"})
-    assert reg.get(tid).state is State.COMPLETED
-    assert reg.get(tid).result == {"text": "hi"}
+    assert _require(reg, tid).state is State.COMPLETED
+    assert _require(reg, tid).result == {"text": "hi"}
 
 
 def test_running_to_failed() -> None:
@@ -93,7 +101,7 @@ def test_running_to_failed() -> None:
     reg.create(request_id=_request_id(), task_id=tid, method="ocr.recognize", retryable=True)
     reg.mark_running(tid)
     reg.fail(tid, error_code="INTERNAL_ERROR", message="boom", detail="trace")
-    h = reg.get(tid)
+    h = _require(reg, tid)
     assert h.state is State.FAILED
     assert h.error is not None
     assert h.error["code"] == "INTERNAL_ERROR"
@@ -117,7 +125,7 @@ def test_double_complete_silently_discarded_after_terminal() -> None:
     reg.mark_running(tid)
     reg.complete(tid, result={"first": True})
     reg.complete(tid, result={"again": True})
-    h = reg.get(tid)
+    h = _require(reg, tid)
     assert h.state is State.COMPLETED
     assert h.result == {"first": True}
 
@@ -158,7 +166,7 @@ def test_cancel_queued_task() -> None:
     assert isinstance(result, CancelResult)
     assert result.accepted is True
     assert result.state is State.CANCELLED
-    assert reg.get(tid).state is State.CANCELLED
+    assert _require(reg, tid).state is State.CANCELLED
 
 
 def test_cancel_running_task_accepted_state_still_running() -> None:
@@ -170,7 +178,7 @@ def test_cancel_running_task_accepted_state_still_running() -> None:
     assert result.accepted is True
     # Cancel of a running task is accepted; the task transitions to CANCELLED
     # when the handler observes the cancel token and returns.
-    assert reg.get(tid).state is State.CANCELLED
+    assert _require(reg, tid).state is State.CANCELLED
 
 
 def test_cancel_is_idempotent() -> None:
@@ -246,8 +254,8 @@ def test_retryable_flag_stored() -> None:
     tid_m = _task_id()
     reg.create(request_id=_request_id(), task_id=tid_q, method="ocr.recognize", retryable=True)
     reg.create(request_id=_request_id(), task_id=tid_m, method="pdf.save", retryable=False)
-    assert reg.get(tid_q).retryable is True
-    assert reg.get(tid_m).retryable is False
+    assert _require(reg, tid_q).retryable is True
+    assert _require(reg, tid_m).retryable is False
 
 
 def test_non_retryable_failed_task_not_eligible_for_retry() -> None:
@@ -281,8 +289,8 @@ def test_late_result_after_cancel_discarded() -> None:
     reg.cancel(tid)
     # A late completion arrives after cancel: must be discarded, not flip state.
     reg.complete(tid, result={"late": True})
-    assert reg.get(tid).state is State.CANCELLED
-    assert reg.get(tid).result is None
+    assert _require(reg, tid).state is State.CANCELLED
+    assert _require(reg, tid).result is None
 
 
 def test_late_failure_after_complete_discarded() -> None:
@@ -292,5 +300,5 @@ def test_late_failure_after_complete_discarded() -> None:
     reg.mark_running(tid)
     reg.complete(tid, result={"ok": True})
     reg.fail(tid, error_code="INTERNAL_ERROR", message="late")
-    assert reg.get(tid).state is State.COMPLETED
-    assert reg.get(tid).error is None
+    assert _require(reg, tid).state is State.COMPLETED
+    assert _require(reg, tid).error is None
