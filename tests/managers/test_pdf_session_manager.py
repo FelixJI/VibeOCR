@@ -149,6 +149,77 @@ class TestOpenAsync:
         assert fired[0], "open_done 应触发(已存在的文件跳过)"
 
 
+# ---- 插入文件（结构变更）----------------------------------------------
+
+
+class TestPdfSessionManagerInsert:
+    """插入文件/空白页（Bug 3 回归）：dispatch 链路必须端到端工作。
+
+    Bug 3 症状被误报为"插入无响应"。实际 dispatch 正常（页数增加、mutate_done
+    触发），问题在 UI 缩略图刷新（见 test_pdf_tab.py::TestThumbnailAutoRender*）。
+    此处回归 manager 层：insert_from_async 经 mutate worker → 后端 → diff apply
+    完整链路，页数与 thumbnails_invalidated 信号正确。
+    """
+
+    def test_insert_from_async_increases_page_count(
+        self, manager, test_pdf_a, test_pdf_b, qapp
+    ):
+        manager.open_session(str(test_pdf_a))
+        qapp.processEvents()
+        session = manager.active_session
+        assert session.pdf_document.page_count == 2
+
+        done = [False]
+        manager.mutate_done.connect(lambda *a: done.__setitem__(0, True))
+        manager.insert_from_async(str(test_pdf_b), after_index=0)
+
+        deadline = time.monotonic() + 20.0
+        while not done[0] and time.monotonic() < deadline:
+            qapp.processEvents()
+            time.sleep(0.05)
+
+        assert done[0], "insert_from_async 应触发 mutate_done"
+        assert session.pdf_document.page_count == 5  # 2 + 3
+
+    def test_insert_blank_async_increases_page_count(self, manager, test_pdf_a, qapp):
+        manager.open_session(str(test_pdf_a))
+        qapp.processEvents()
+        session = manager.active_session
+        assert session.pdf_document.page_count == 2
+
+        done = [False]
+        manager.mutate_done.connect(lambda *a: done.__setitem__(0, True))
+        manager.insert_blank_async(after_index=0)
+
+        deadline = time.monotonic() + 20.0
+        while not done[0] and time.monotonic() < deadline:
+            qapp.processEvents()
+            time.sleep(0.05)
+
+        assert done[0], "insert_blank_async 应触发 mutate_done"
+        assert session.pdf_document.page_count == 3  # 2 + 1
+
+    def test_insert_from_async_emits_thumbnails_invalidated(
+        self, manager, test_pdf_a, test_pdf_b, qapp
+    ):
+        """结构变更（插页）应 emit thumbnails_invalidated（全页失效），
+        供 PdfTab 触发缩略图重渲（Bug 3 刷新链路的上游）。"""
+        manager.open_session(str(test_pdf_a))
+        qapp.processEvents()
+        invalidated = []
+        manager.thumbnails_invalidated.connect(
+            lambda pages: invalidated.append(list(pages))
+        )
+        manager.insert_from_async(str(test_pdf_b), after_index=0)
+        deadline = time.monotonic() + 20.0
+        while not invalidated and time.monotonic() < deadline:
+            qapp.processEvents()
+            time.sleep(0.05)
+        assert invalidated, "插页应 emit thumbnails_invalidated"
+        # 全量失效（结构变更）
+        assert len(invalidated[0]) == 5
+
+
 # ---- 缩略图失效信号 ----------------------------------------------------
 
 class TestRerenderThumbnailsAsync:

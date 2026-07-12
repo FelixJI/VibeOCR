@@ -188,6 +188,12 @@ class ThumbnailModel(QAbstractListModel):
     回填缓存并 dataChanged 通知视图重绘。
     """
 
+    # 程序性状态变更（打开完成/结构变更/全量失效）后，worker 已启动但 visible
+    # 行尚未入队 → emit 此信号让 PdfTab 触发一次 view 的可见范围计算，把首屏
+    # 页投递给 worker。否则 worker 队列空，缩略图要等用户滚动后才加载
+    # （打开时不自动加载、插页后不刷新的症状）。
+    render_visible_requested = Signal()
+
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self._session: PdfSession | None = None
@@ -236,6 +242,10 @@ class ThumbnailModel(QAbstractListModel):
         # detecting=False 且 session 非空: 直接启动 worker(结构性刷新路径)。
         if session is not None and not self._detection_in_progress:
             self._start_render_worker(session)
+            # 结构性刷新路径（插页/删页/重排后 _refresh_thumbnails 调本方法）：
+            # worker 已新建但 visible 行未入队，主动请求一次可见范围渲染，
+            # 否则结构变更后缩略图要等用户滚动才刷新。
+            self.render_visible_requested.emit()
 
     def set_detection_done(self) -> None:
         """文字层检测完成:退出检测中状态,启动缩略图 worker,触发可见行渲染。
@@ -250,6 +260,8 @@ class ThumbnailModel(QAbstractListModel):
             return
         self._detection_in_progress = False
         self._start_render_worker(self._session)
+        # invalidate_all 清缓存 + dataChanged + 经 render_visible_requested
+        # 把可见行投递给刚启动的 worker（否则打开后缩略图要等用户滚动才加载）。
         self.invalidate_all()
 
     def _start_render_worker(self, session: PdfSession) -> None:
@@ -421,6 +433,11 @@ class ThumbnailModel(QAbstractListModel):
                 self.index(self.rowCount() - 1, 0),
                 [Qt.ItemDataRole.DecorationRole],
             )
+        # dataChanged 只重绘占位图，不会把可见行入队 worker（data() 故意不
+        # 在 miss 时 request_render，避免滚动时每行多次查询放大开销）。结构
+        # 变更后主动请求一次可见范围渲染，确保旋转全部/插页/删页后缩略图刷新。
+        if not self._detection_in_progress and self._session is not None:
+            self.render_visible_requested.emit()
 
     def session(self) -> PdfSession | None:
         return self._session
@@ -509,6 +526,14 @@ class ThumbnailListView(QListView):
     def _schedule_visible_range(self) -> None:
         """防抖：50ms 内合并多次滚动/resize 为一次渲染请求。"""
         self._scroll_timer.start(50)
+
+    def request_current_visible(self) -> None:
+        """程序性变更（打开完成/结构变更/全量失效）后主动触发一次可见范围渲染。
+
+        复用 _schedule_visible_range 的去抖定时器：连续多次调用合并为一次
+        _emit_visible_range，避免重复投递。与滚动驱动的渲染共用同一入口。
+        """
+        self._schedule_visible_range()
 
     def _compute_thumbnail_size(self) -> int:
         """按 viewport 宽度计算缩略图边长，clamp 到 [MIN, MAX]。
@@ -703,6 +728,11 @@ class PdfTab(QWidget):
         # 按需渲染：滚动时请求可见行渲染
         self._thumbnail_list.visible_range_changed.connect(
             self._thumbnail_model.request_range
+        )
+        # 程序性变更（打开完成/结构变更/全量失效）后主动请求可见行渲染：
+        # 这些路径启动了 worker 但未入队 visible 行，否则缩略图要等用户滚动才加载。
+        self._thumbnail_model.render_visible_requested.connect(
+            self._thumbnail_list.request_current_visible
         )
         # 自适应宽度：viewport 尺寸变化 → 更新 model 渲染尺寸 + 清缓存重渲染
         self._thumbnail_list.thumbnail_size_changed.connect(
@@ -954,8 +984,10 @@ class PdfTab(QWidget):
         has_doc = self._session_mgr.active_session is not None
         self._set_file_buttons_enabled(has_doc)
         # 模型 reset 后主动触发一次可见范围请求：程序性 reset 不会产生
-        # showEvent/scrollContentsBy/resizeEvent，否则首次打开时可见页永不进渲染队列。
-        self._thumbnail_list._schedule_visible_range()
+        # showEvent/scrollContentsBy/resizeEvent，否则切到已加载文件时（detecting=False）
+        # 可见页永不进渲染队列。detecting=True 的首次打开由 set_detection_done 的
+        # render_visible_requested 信号触发（此时 request_range 仍被抑制，调了也无用）。
+        self._thumbnail_list.request_current_visible()
 
     def _on_page_loaded(self, file_path: str, page_index: int) -> None:
         """文字层 worker 逐页完成：更新文字层网格格子（缩略图由按需 worker 渲）。"""

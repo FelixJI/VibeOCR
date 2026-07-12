@@ -1508,6 +1508,106 @@ class TestThumbnailDetectionInProgress:
         assert started, "结构性刷新后应直接启动 worker,而非卡在检测态"
 
 
+class TestThumbnailAutoRenderAfterStateChange:
+    """程序性状态变更（打开完成/结构变更/全量失效）后必须主动请求可见行渲染。
+
+    Bug 2（缩略图打开时不自动加载）& Bug 3（插页后缩略图不刷新）同根因：
+    ThumbnailModel 的 set_detection_done / set_session(detecting=False) /
+    invalidate_all 启动 worker 但从不把 visible 行入队 worker —— 唯一的入队
+    入口是 ThumbnailListView 的滚动/resize/show 事件。打开/插页后无这些事件，
+    worker 队列空，缩略图要等用户滚动才加载。
+
+    修复：ThumbnailModel 在上述路径后 emit render_visible_requested，
+    PdfTab 连到 view.request_current_visible（去抖后 _emit_visible_range）。
+    """
+
+    def _make_model_with_session(self, qtbot, n_pages=3):
+        from vibeocr.models.pdf_document import PdfDocument, PdfPageInfo
+        from vibeocr.models.pdf_session import PdfSession
+
+        pages = [PdfPageInfo(page_index=i) for i in range(n_pages)]
+        doc = PdfDocument(file_path="x.pdf", pages=pages)
+        session = PdfSession(file_path="x.pdf", session_id="sid1", pdf_document=doc)
+        model = ThumbnailModel(parent=None)
+        model.set_session(session, detecting=True)
+        return model
+
+    def test_model_has_render_visible_requested_signal(self, qtbot):
+        """ThumbnailModel 必须暴露 render_visible_requested 信号。"""
+        model = ThumbnailModel(parent=None)
+        assert hasattr(model, "render_visible_requested")
+
+    def test_set_detection_done_emits_render_visible_requested(self, qtbot, monkeypatch):
+        """set_detection_done 后必须 emit render_visible_requested。
+
+        Bug 2 核心断言：打开完成（load_done → set_detection_done）后缩略图应
+        自动渲染，无需用户滚动。
+        """
+        model = self._make_model_with_session(qtbot)
+        monkeypatch.setattr(
+            model, "_start_render_worker", lambda _s: None  # 避免真实起 worker
+        )
+        fired = []
+        model.render_visible_requested.connect(lambda: fired.append(True))
+        model.set_detection_done()
+        assert fired, "set_detection_done 应 emit render_visible_requested"
+
+    def test_invalidate_all_emits_render_visible_requested(self, qtbot):
+        """invalidate_all（全页失效，如旋转全部/结构变更）后必须 emit。
+
+        Bug 3 核心断言：结构变更后全量失效缩略图，应触发可见行重渲。
+        """
+        model = self._make_model_with_session(qtbot)
+        model.set_detection_done()  # 退出检测态（_detection_in_progress=False）
+        fired = []
+        model.render_visible_requested.connect(lambda: fired.append(True))
+        model.invalidate_all()
+        assert fired, "invalidate_all 应 emit render_visible_requested"
+
+    def test_invalidate_all_no_emit_during_detection(self, qtbot):
+        """检测态下 invalidate_all 不应 emit（request_range 会被抑制，emit 无意义）。"""
+        model = self._make_model_with_session(qtbot)
+        # 仍在检测态（_detection_in_progress=True）
+        fired = []
+        model.render_visible_requested.connect(lambda: fired.append(True))
+        model.invalidate_all()
+        assert not fired, "检测态 invalidate_all 不应 emit"
+
+    def test_set_session_detecting_false_emits_render_visible_requested(
+        self, qtbot, monkeypatch
+    ):
+        """set_session(detecting=False)（结构变更刷新）后必须 emit。
+
+        Bug 3 核心断言：插页后 _refresh_thumbnails → set_session(detecting=False)
+        应触发可见行渲染，否则缩略图不刷新。
+        """
+        model = self._make_model_with_session(qtbot)
+        model.set_detection_done()  # 退出检测态
+        monkeypatch.setattr(model, "_start_render_worker", lambda _s: None)
+        fired = []
+        model.render_visible_requested.connect(lambda: fired.append(True))
+        # 结构变更刷新路径
+        model.set_session(model._session, detecting=False)
+        assert fired, "set_session(detecting=False) 应 emit render_visible_requested"
+
+    def test_pdf_tab_connects_signal_to_view(self, pdf_tab):
+        """PdfTab 必须把 model.render_visible_requested 连到 view.request_current_visible。
+
+        若未连接，emit 不会触发渲染（Bug 2/3 复发）。
+        """
+        # ThumbnailListView 必须有 request_current_visible 公有方法
+        assert callable(getattr(pdf_tab._thumbnail_list, "request_current_visible", None)), (
+            "ThumbnailListView 缺 request_current_visible 公有方法"
+        )
+        # emit render_visible_requested 应触发 view 的 _schedule_visible_range
+        called = []
+        pdf_tab._thumbnail_list._schedule_visible_range = (
+            lambda: called.append(True)
+        )
+        pdf_tab._thumbnail_model.render_visible_requested.emit()
+        assert called, "render_visible_requested 应触发 view._schedule_visible_range（去抖渲染）"
+
+
 class TestThumbnailWorkerLifecycle:
     """缩略图 worker 在切换和退出时必须保持所有权并协作收拢。"""
 
