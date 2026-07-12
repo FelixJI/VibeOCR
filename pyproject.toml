@@ -55,6 +55,8 @@ dev = [
     # WorkerHost v1 跨语言契约校验（Phase 1+）。C# 端做语义 JSON 比较，
     # Python 端用 JSON Schema (Draft 2020-12) 校验 envelope/methods/errors/golden。
     "jsonschema>=4.25.0",
+    # WorkerHost framing/lifecycle 是 asyncio；测试用 pytest-asyncio。
+    "pytest-asyncio>=1.2.0",
 ]
 
 [build-system]
@@ -181,6 +183,9 @@ python_classes = ["Test*"]
 python_functions = ["test_*"]
 qt_api = "pyside6"
 addopts = "-v --tb=short"
+# WorkerHost framing/lifecycle tests are asyncio; auto mode collects coroutines
+# as async tests without per-test markers.
+asyncio_mode = "auto"
 
 # =============================================================================
 # Coverage
