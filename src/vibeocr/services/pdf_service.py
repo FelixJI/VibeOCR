@@ -24,6 +24,15 @@ from vibeocr.utils.cjk_font_resolver import _CJK_RESOLVER
 
 logger = logging.getLogger(__name__)
 
+# insert_textbox 单行所需的最小矩形高度系数（实测：CJK≈1.58，Helvetica≈1.67，
+# 含行距/上下内边距）。fontsize × LINE_LEADING ≤ rect.height 才能在首次
+# insert_textbox 调用就放下文本（rc≥0 才真正写入；rc<0 时不写入任何字符，
+# 只触发后续字号重试或 insert_text 兜底）。此前的 font_size_ratio=0.8 算出
+# fontsize=height×0.8，恒满足不了 height ≥ fontsize×1.6，导致几乎每个块都
+# 走重试缩字号（写入字号偏小、选中框与可见文字不匹配）甚至兜底 insert_text
+# （窄/高块文字横向大幅溢出到无关区域 → 「严重偏离」）。
+_LINE_LEADING = 1.6
+
 
 class SaveResult(NamedTuple):
     rewritten_pages: list[int]
@@ -788,11 +797,33 @@ class PdfService:
                 skipped += 1
                 continue
 
-            # 字号：行高 × 比例；矮行算出的字号过小时夹紧到 min_font_size，
-            # 保证隐形文字仍可被阅读器提取（不丢块）。
-            fontsize = max(
-                rect.height * settings.font_size_ratio, settings.min_font_size
-            )
+            # 字号：rect.height / 行距系数，使首次 insert_textbox 即可放入
+            # （insert_textbox 要求 rect.height ≥ fontsize × _LINE_LEADING 才返回
+            # rc≥0 并真正写入；rc<0 时什么都不写）。此前用 height × font_size_ratio
+            # (0.8) 算出的字号恒超行距预算，几乎每个块都触发缩字号重试，写入字号
+            # 偏小、选中框与可见文字不匹配；窄/高块更会退化到 insert_text 兜底，
+            # 文字横向溢出到无关区域。
+            # 同时以宽度做二次上限：按字符类型估算文本宽度（CJK 全角≈1.0×fontsize，
+            # 拉丁/数字≈0.5×fontsize），取 height/leading 与 width-based 的较小者，
+            # 让长文本/窄框也尽量首试即放入、减少缩字号与溢出。
+            height_based = rect.height / _LINE_LEADING
+            text = block.text
+            # 估算文本在 fontsize=1 下的总宽度（全角字符算 1.0，半角算 0.5）
+            width_units = 0.0
+            for ch in text:
+                code = ord(ch)
+                if (
+                    0x2E80 <= code <= 0x9FFF  # CJK 部首/中日韩统一表意
+                    or 0xF900 <= code <= 0xFAFF  # CJK 兼容表意
+                    or 0xFF00 <= code <= 0xFF60  # 全角符号
+                    or 0x3000 <= code <= 0x303F  # CJK 标点
+                ):
+                    width_units += 1.0
+                else:
+                    width_units += 0.5
+            width_based = rect.width / max(width_units, 0.5)
+            fontsize = min(height_based, width_based)
+            fontsize = max(fontsize, settings.min_font_size)
 
             render_mode = 0 if settings.text_layer_visible else 3
             inserted = False
@@ -820,14 +851,19 @@ class PdfService:
                 written += 1
             else:
                 # 兜底：insert_textbox 在窄/瘦高矩形里装不下时
-                # （如竖排文字被聚成瘦高块），降级为 insert_text 单点定位：
-                # 文字从矩形左下角（基线）起写，溢出也写入，保证该词进入文字层。
+                # （如竖排文字被聚成瘦高块），降级为 insert_text 单点定位。
+                # 用 last_fontsize（已缩到尽量小）而非初始大字号，限制横向溢出；
+                # 基线放在矩形左下，隐形层（render_mode=3）下溢出不可见但仍可搜索。
+                fallback_fs = max(
+                    min(last_fontsize, settings.min_font_size * 1.5),
+                    settings.min_font_size,
+                )
                 try:
-                    baseline = fitz.Point(rect.x0, rect.y1 - last_fontsize * 0.2)
+                    baseline = fitz.Point(rect.x0, rect.y1 - fallback_fs * 0.2)
                     page.insert_text(
                         baseline,
                         block.text,
-                        fontsize=last_fontsize,
+                        fontsize=fallback_fs,
                         fontname=fontname,
                         fontfile=font_path,
                         color=(0, 0, 0),
@@ -836,9 +872,11 @@ class PdfService:
                     )
                     written += 1
                     logger.debug(
-                        "page %d block 写入文字层（insert_text 兜底）: rect=%s text=%r",
+                        "page %d block 写入文字层（insert_text 兜底）: rect=%s "
+                        "fs=%.1f text=%r",
                         page_index,
                         rect,
+                        fallback_fs,
                         block.text[:30],
                     )
                 except Exception as e:

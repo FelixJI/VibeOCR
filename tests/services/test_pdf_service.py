@@ -352,11 +352,12 @@ class TestPdfServiceTextLayer:
         doc.close()
 
     def test_add_text_layer_fallback_insert_text_on_narrow_bbox(self, tmp_path):
-        """窄/瘦高矩形装不下横向文字时，insert_text 兜底写入（不再跳过）。
+        """窄/瘦高矩形装不下横向文字时，缩字号后 insert_textbox 自动换行写入（不再跳过/溢出）。
 
-        复现真实报错场景：bbox 宽 ~20pt、高 ~50pt，文字是 3 个汉字，
-        insert_textbox 横向排不开、缩 5 次仍失败。兜底用 insert_text
-        单点定位写入，保证该词进入文字层（可搜索/可选中）。
+        复现真实报错场景：bbox 宽 ~20pt、高 ~50pt，文字是 3 个汉字。
+        修正后字号策略（rect.height/1.6 且受宽度约束 + min_font_size 兜底）会让
+        insert_textbox 以最小字号自动换行写入，文字留在 bbox 内、可搜索/可选中，
+        不再退化为 insert_text 单点写入导致横向大幅溢出到无关区域。
         """
         import numpy as np
 
@@ -373,7 +374,7 @@ class TestPdfServiceTextLayer:
         doc.close()
 
         doc, pdf_doc = PdfService.open_doc(str(path))
-        # 瘦高矩形（宽 20pt、高 50pt）+ 3 个汉字 → insert_textbox 必然失败
+        # 瘦高矩形（宽 20pt、高 50pt）+ 3 个汉字
         narrow = TextBlock(
             text="签回联",
             score=0.95,
@@ -384,11 +385,12 @@ class TestPdfServiceTextLayer:
 
         written, skipped = PdfService.add_text_layer(doc, pdf_doc, 0, result)
 
-        # 兜底成功写入，不计 skip
+        # 成功写入，不计 skip
         assert written == 1
         assert skipped == 0
-        # 文字层确实包含该词（可搜索）
-        assert "签回联" in doc[0].get_text()
+        # 文字层确实包含全部字符（可搜索，可能换行）
+        extracted = doc[0].get_text()
+        assert "签" in extracted and "回" in extracted and "联" in extracted
         doc.close()
 
     def test_add_text_layer_fallback_logs_debug(self, tmp_path, caplog):
@@ -681,7 +683,12 @@ class TestPdfServiceTextLayer:
         doc.close()
 
     def test_add_text_layer_writes_narrow_bbox(self, tmp_path):
-        """窄框（宽度小于字号）也不应被丢弃——文字按行原位写入。"""
+        """窄框（宽度小于字号）也不应被丢弃——文字按行写入（可换行），全部字符可搜索。
+
+        修正后：窄框下 insert_textbox 以最小字号自动换行写入，文字留在 bbox 内，
+        不再退化为 insert_text 单点写入横向溢出。文字层可搜索到全部字符（可能
+        分多行）。
+        """
         import numpy as np
 
         from vibeocr.models.ocr_result import OCRResult, TextBlock
@@ -697,11 +704,12 @@ class TestPdfServiceTextLayer:
         doc.close()
 
         doc, pdf_doc = PdfService.open_doc(str(path))
+        text = "这是一行较长的中文识别结果文本"
         result = OCRResult(
-            raw_text="这是一行较长的中文识别结果文本",
+            raw_text=text,
             text_blocks=[
                 TextBlock(
-                    text="这是一行较长的中文识别结果文本",
+                    text=text,
                     score=0.99,
                     # 归一化宽 10（=6.12pt），高 30（=23.76pt）→ 窄框
                     bbox=(100.0, 100.0, 110.0, 130.0),
@@ -713,7 +721,9 @@ class TestPdfServiceTextLayer:
         assert written == 1
         assert skipped == 0
         extracted = doc[0].get_text()
-        assert "这是一行较长的中文识别结果文本" in extracted
+        # 全部字符可搜索（换行后不连续，逐字校验）
+        for ch in text:
+            assert ch in extracted, f"窄框文字层丢失字符 {ch!r}"
         doc.close()
 
     def test_add_text_layer_respects_min_font_size_setting(self, tmp_path):
@@ -857,6 +867,132 @@ class TestPdfServiceTextLayer:
 
         page = doc[0]
         assert len(page.get_images(full=True)) == 1
+        doc.close()
+
+
+class TestPdfServiceTextLayerPlacement:
+    """文字层落点与字号回归（Bug：预览框得对，写入 PDF 后部分严重偏离/大小异常）。
+
+    根因：fontsize = rect.height × font_size_ratio(0.8) 恒满足不了 insert_textbox
+    的行距预算（rect.height ≥ fontsize × 1.6 才返回 rc≥0 并真正写入）。几乎每个
+    块都触发缩字号重试（写入字号偏小）或退化为 insert_text 单点写入（窄/高块
+    文字横向大幅溢出到无关区域）。
+
+    修正：fontsize = rect.height / _LINE_LEADING(1.6)，并受宽度约束，使常见宽行
+    首次即写入、字号匹配 OCR 行高；窄/高块以最小字号自动换行写入，不溢出。
+    """
+
+    def _make_scan(self, tmp_path):
+        path = tmp_path / "scan.pdf"
+        doc = fitz.open()
+        page = doc.new_page(width=612, height=792)
+        img = __import__("numpy").ones((792, 612, 3), dtype=__import__("numpy").uint8) * 240
+        cs = fitz.Colorspace(fitz.CS_RGB)
+        pixmap = fitz.Pixmap(cs, 612, 792, img.tobytes(), 0)
+        page.insert_image(fitz.Rect(0, 0, 612, 792), pixmap=pixmap)
+        doc.save(str(path))
+        doc.close()
+        return PdfService.open_doc(str(path))
+
+    def test_wide_line_fits_on_first_try_correct_fontsize(self, tmp_path):
+        """典型宽行（OCR 常见）：写入字号 ≈ rect.height / 1.6，位置 = rect 左上角。
+
+        Bug 症状：旧逻辑 fontsize=height×0.8 恒溢出，缩字号后写入字号偏小，
+        选中框与可见文字不匹配。
+        """
+        from vibeocr.models.ocr_options import OCROptions  # noqa: F401
+        from vibeocr.models.ocr_result import OCRResult, TextBlock
+        from vibeocr.models.pdf_ocr_options import PdfGlobalSettings
+
+        doc, pdf_doc = self._make_scan(tmp_path)
+        # 归一化 bbox：宽 600（=367pt）、高 40（=31.7pt）的典型 OCR 行
+        block = TextBlock(text="这是一行示例文字", score=0.99, bbox=(50, 100, 650, 140))
+        result = OCRResult(text_blocks=[block])
+        settings = PdfGlobalSettings(text_layer_visible=True)
+        PdfService.add_text_layer(doc, pdf_doc, 0, result, pdf_settings=settings)
+
+        page_rect = doc[0].rect
+        intended = PdfService._denormalize_and_unrotate_bbox(block.bbox, 0, page_rect)
+        spans = [
+            s for b in doc[0].get_text("dict")["blocks"] if b["type"] == 0
+            for l in b.get("lines", []) for s in l.get("spans", [])
+        ]
+        assert spans, "宽行应成功写入"
+        span = spans[0]
+        # 字号接近 height/1.6（±2pt），不再是缩字号后的偏小值
+        expected_fs = intended.height / 1.6
+        assert abs(span["size"] - expected_fs) < 2.5, (
+            f"字号应 ≈ {expected_fs:.1f}（height/1.6），实际 {span['size']:.1f}"
+            f"（旧 bug 会缩到更小）"
+        )
+        # 落点在 rect 内（左上角对齐）
+        assert abs(span["bbox"][0] - intended.x0) < 2, "x 起点应 = rect.x0"
+        assert abs(span["bbox"][1] - intended.y0) < 2, "y 起点应 = rect.y0"
+        doc.close()
+
+    def test_narrow_tall_block_no_horizontal_overflow(self, tmp_path):
+        """窄/高块：文字不再横向溢出到无关区域（旧 bug 溢出数百 pt）。
+
+        Bug 症状：旧 insert_text 兜底用初始大字号（如 190pt）单点写入，
+        文字横向延伸到 rect 右侧数百 pt 外 → '严重偏离'。
+        """
+        from vibeocr.models.ocr_result import OCRResult, TextBlock
+
+        doc, pdf_doc = self._make_scan(tmp_path)
+        # 窄高块：宽 40（=24.5pt）、高 300（=237.6pt）
+        block = TextBlock(text="窄高块标签文字", score=0.99, bbox=(50, 400, 90, 700))
+        result = OCRResult(text_blocks=[block])
+        PdfService.add_text_layer(doc, pdf_doc, 0, result)
+
+        page_rect = doc[0].rect
+        intended = PdfService._denormalize_and_unrotate_bbox(block.bbox, 0, page_rect)
+        spans = [
+            s for b in doc[0].get_text("dict")["blocks"] if b["type"] == 0
+            for l in b.get("lines", []) for s in l.get("spans", [])
+        ]
+        assert spans, "窄高块应写入（可换行）"
+        # 所有 span 的 x1 不得远超 rect 右边界（旧 bug 会到 x≈630）
+        max_x1 = max(s["bbox"][2] for s in spans)
+        overflow = max_x1 - intended.x1
+        assert overflow < intended.width * 0.5, (
+            f"窄高块文字横向溢出 {overflow:.1f}pt（应 < rect 宽度的 50%={intended.width*0.5:.1f}），"
+            f"max_x1={max_x1:.1f}, rect.x1={intended.x1:.1f}（旧 bug 会溢出到 ~630）"
+        )
+        doc.close()
+
+    def test_fontsize_matches_ocr_line_height(self, tmp_path):
+        """多个不同行高的块：写入字号应与各自行高成正比（不再统一缩到偏小）。"""
+        from vibeocr.models.ocr_result import OCRResult, TextBlock
+
+        doc, pdf_doc = self._make_scan(tmp_path)
+        # 三个不同行高的行：高 40/60/80（归一化）
+        blocks = [
+            TextBlock(text="小号行", score=0.99, bbox=(50, 100, 400, 140)),  # h≈31.7pt
+            TextBlock(text="中号行文字", score=0.99, bbox=(50, 200, 400, 260)),  # h≈47.5pt
+            TextBlock(text="大号行标题文字", score=0.99, bbox=(50, 300, 400, 380)),  # h≈63.4pt
+        ]
+        result = OCRResult(text_blocks=blocks)
+        from vibeocr.models.pdf_ocr_options import PdfGlobalSettings
+
+        PdfService.add_text_layer(
+            doc, pdf_doc, 0, result, pdf_settings=PdfGlobalSettings(text_layer_visible=True)
+        )
+
+        page_rect = doc[0].rect
+        spans_by_size = sorted(
+            [
+                s for b in doc[0].get_text("dict")["blocks"] if b["type"] == 0
+                for l in b.get("lines", []) for s in l.get("spans", [])
+            ],
+            key=lambda s: s["size"],
+        )
+        assert len(spans_by_size) >= 3
+        # 字号应随行高递增（不再被统一缩到接近的偏小值）
+        sizes = [s["size"] for s in spans_by_size[:3]]
+        # 预期字号比 ≈ 行高比（31.7:47.5:63.4）
+        assert sizes[0] < sizes[1] < sizes[2], (
+            f"字号应随行高递增，实际 {sizes}（旧 bug 缩字号后差异被压缩）"
+        )
         doc.close()
 
 
