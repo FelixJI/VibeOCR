@@ -809,6 +809,33 @@ class PdfService:
         else:
             fontname = "china-s"
 
+        # 真实字形宽度测量：用子集字体的实际 advance width 计算文本自然宽度，
+        # 替代『CJK=1.0/其余=0.5×fontsize』硬编码启发式。后者把数字（实测≈0.586×fs）
+        # 和拉丁字母（0.37–0.79×fs）一律按 0.5×fs 估算，导致 natural_w 偏小、
+        # scale_x 偏大，数字/拉丁块的 ink 被 morph 过度横向拉伸——位置错位、bbox 偏大。
+        _measure_font = fitz.Font(fontfile=font_path) if font_path else None
+
+        def _natural_width(text: str, fs: float) -> float:
+            """返回 text 在 fontsize=fs 下的自然渲染宽度（advance width 之和）。
+
+            有子集字体时用真实字形度量；无（china-s 回退）时退回启发式估算。
+            """
+            if _measure_font is not None:
+                return _measure_font.text_length(text, fontsize=fs)
+            units = 0.0
+            for ch in text:
+                code = ord(ch)
+                if (
+                    0x2E80 <= code <= 0x9FFF
+                    or 0xF900 <= code <= 0xFAFF
+                    or 0xFF00 <= code <= 0xFF60
+                    or 0x3000 <= code <= 0x303F
+                ):
+                    units += 1.0
+                else:
+                    units += 0.5
+            return units * fs
+
         written = 0
         skipped = 0
         for block in text_blocks:
@@ -883,25 +910,14 @@ class PdfService:
                 baseline = fitz.Point(dpt.x0, dpt.y0)
                 text_rotate = 90 if page_rotation in (90, 270) else 0
 
-                # 宽度匹配：CJK 字符宽 ≈ fontsize（全角），拉丁/数字 ≈ 0.5×fontsize。
-                # OCR bbox 常比自然文本宽（字符间距/成组区域），不缩放时 ink 只覆盖
-                # bbox 宽度的 45-62%。用 morph 水平缩放把 ink 拉伸到 bbox 宽度
-                # （隐形层 render_mode=3 下字形拉伸不可见，选中框覆盖 bbox 才是目标）。
+                # 宽度匹配：用子集字体真实 advance width 计算自然宽度，再算 morph
+                # 水平缩放把 ink 拉伸到 bbox 宽度（隐形层 render_mode=3 下字形拉伸
+                # 不可见，选中框覆盖 bbox 才是目标）。此前用『CJK=1.0/其余=0.5×fs』
+                # 硬编码，数字真实宽度≈0.586×fs 被低估，scale_x 偏大导致 ink 过度拉伸、
+                # 位置错位与 bbox 偏大。
                 # 缩放系数夹在 [0.5, 3.0]：避免过度拉伸（稀疏 OCR 框）或过度压缩
                 # （文本溢出 bbox）。scale_x=1.0 时不传 morph（与原行为一致）。
-                width_units = 0.0
-                for ch in text:
-                    code = ord(ch)
-                    if (
-                        0x2E80 <= code <= 0x9FFF
-                        or 0xF900 <= code <= 0xFAFF
-                        or 0xFF00 <= code <= 0xFF60
-                        or 0x3000 <= code <= 0x303F
-                    ):
-                        width_units += 1.0
-                    else:
-                        width_units += 0.5
-                natural_w = max(width_units * fontsize, fontsize * 0.5)
+                natural_w = max(_natural_width(text, fontsize), fontsize * 0.5)
                 scale_x = disp_rect.width / natural_w
                 scale_x = max(0.5, min(3.0, scale_x))
 
@@ -939,19 +955,10 @@ class PdfService:
             # 字号受行距预算夹紧（rect.height ≥ fontsize × _LINE_LEADING），
             # 同时受宽度约束。缩字号重试确保装入。
             height_based = rect.height / _LINE_LEADING
-            width_units = 0.0
-            for ch in text:
-                code = ord(ch)
-                if (
-                    0x2E80 <= code <= 0x9FFF  # CJK 部首/中日韩统一表意
-                    or 0xF900 <= code <= 0xFAFF  # CJK 兼容表意
-                    or 0xFF00 <= code <= 0xFF60  # 全角符号
-                    or 0x3000 <= code <= 0x303F  # CJK 标点
-                ):
-                    width_units += 1.0
-                else:
-                    width_units += 0.5
-            width_based = rect.width / max(width_units, 0.5)
+            # 用真实字形宽度算 width_based：避免把数字（0.586×fs）按 0.5×fs
+            # 估算导致的字号偏大/文字溢出 bbox。
+            natural_w = _natural_width(text, 1.0)  # 单位 fontsize 宽度
+            width_based = rect.width / max(natural_w, 0.5)
             fontsize = max(
                 min(height_based, width_based), settings.min_font_size
             )

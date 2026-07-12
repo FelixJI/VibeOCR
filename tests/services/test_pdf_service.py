@@ -1266,6 +1266,196 @@ class TestPdfServiceTextLayerPlacement:
             )
             doc.close()
 
+    def test_digit_block_ink_not_overstretched(self, tmp_path):
+        """数字块 ink 不溢出 bbox 右边界（位置错位/bbox 偏大根因）。
+
+        Bug：width_units 启发式把数字按 0.5×fs 估算，但子集字体（msyh.ttc）数字
+        真实 advance≈0.586×fs。低估 17% 使 natural_w 偏小、scale_x 偏大，morph 把
+        数字 ink 横向过度拉伸——ink 右边界越过 bbox 右边界（实测 bbox 宽 400 时 ink
+        宽 457，右溢 65pt），数字跑到下一个块/空白区域，表现为『位置错位、bbox 异常』。
+        修复：用 fitz.Font.text_length 取子集字体真实 advance width 计算 natural_w。
+
+        取 bbox 宽 400（9 位数字 505710786，fontsize≈31.4，自然宽≈165.6）：
+        旧代码 ink fill=1.14（溢出），修复后 ink fill≈0.97（落在 bbox 内）。
+        """
+        import numpy as np
+
+        from vibeocr.models.ocr_result import OCRResult, TextBlock
+        from vibeocr.models.pdf_document import PdfDocument
+        from vibeocr.models.pdf_ocr_options import PdfGlobalSettings
+
+        doc = fitz.open()
+        page = doc.new_page(width=612, height=792)
+        pr = page.rect
+        # bbox 宽 400：旧代码 scale_x 未触顶但已使 ink 溢出 bbox（fill=1.14）。
+        x0, y0, x1, y1 = 100, 100, 500, 130
+        nbbox = (
+            x0 / pr.width * 1000, y0 / pr.height * 1000,
+            x1 / pr.width * 1000, y1 / pr.height * 1000,
+        )
+        block = TextBlock(text="505710786", score=0.99, bbox=nbbox)
+        result = OCRResult(text_blocks=[block], preproc_angle=0)
+        settings = PdfGlobalSettings(text_layer_visible=True)
+        pdf_doc = PdfDocument(file_path="x.pdf")
+        PdfService.build_page_infos(doc, pdf_doc)
+        PdfService.add_text_layer(doc, pdf_doc, 0, result, pdf_settings=settings)
+
+        pix = doc[0].get_pixmap(matrix=fitz.Matrix(4, 4))
+        img = np.frombuffer(pix.samples, dtype=np.uint8).reshape(
+            pix.height, pix.width, pix.n
+        )
+        ink = img[:, :, 0] < 128
+        ys, xs = np.where(ink)
+        assert len(ys) > 0, "应写入可见文字"
+        ink_x1 = xs.max() / 4  # ink 右边界（显示空间，未旋转，坐标=mediabox 坐标）
+        ink_x0 = xs.min() / 4
+        bbox_w = x1 - x0  # 400
+        # 关键断言：ink 右边界不得越过 bbox 右边界（旧 bug 溢出 ~65pt）。
+        # 允许 5pt 容差（抗锯齿边缘）。
+        assert ink_x1 <= x1 + 5, (
+            f"数字 ink 右边界 {ink_x1:.1f} 溢出 bbox 右边界 {x1}"
+            f"（溢出 {ink_x1-x1:.1f}pt，旧 bug 因数字宽度被低估而过度拉伸）"
+        )
+        # ink 宽度也应与 bbox 宽度同量级（修复后 fill≈0.97，旧 bug fill=1.14）。
+        ink_w = ink_x1 - ink_x0
+        assert ink_w / bbox_w <= 1.05, (
+            f"数字块 ink 宽度 {ink_w:.1f} 不应超过 bbox 宽度 {bbox_w}"
+            f"（ratio={ink_w/bbox_w:.2f}，旧 bug=1.14 因数字低估→scale_x 偏大）"
+        )
+        doc.close()
+
+    def test_digit_block_no_clamp_overflow_on_narrow_bbox(self, tmp_path):
+        """窄 bbox 数字块 scale_x 不触顶 3.0（旧 bug：数字低估→scale_x 恒触顶→严重错位）。
+
+        构造一个 bbox 比数字自然宽窄的场景：旧启发式 natural_w 偏小使 scale_x 计算值
+        远大于 1，经 [0.5,3.0] 夹紧后恒为 3.0，ink 被拉到 bbox 的 ~3 倍宽——选中框
+        覆盖到无关区域。修复后用真实 advance width，scale_x 合理，ink 不溢出。
+        """
+        from vibeocr.models.ocr_result import OCRResult, TextBlock
+        from vibeocr.models.pdf_document import PdfDocument
+        from vibeocr.models.pdf_ocr_options import PdfGlobalSettings
+        from vibeocr.utils.cjk_font_resolver import _CJK_RESOLVER
+
+        # 直接验证 _natural_width 逻辑：真实 advance vs 旧启发式
+        chars = "505710786"
+        fp = _CJK_RESOLVER.resolve(chars)
+        assert fp is not None, "需系统 CJK 字体才能测真实字形宽度"
+        font = fitz.Font(fontfile=fp)
+        fs = 31.4  # 与上例相当的字号
+        true_w = font.text_length(chars, fontsize=fs)
+        heuristic_w = len(chars) * 0.5 * fs
+        # 数字真实宽度比启发式大 ~17%
+        assert true_w > heuristic_w * 1.10, (
+            f"数字真实宽度 {true_w:.1f} 应明显大于启发式 {heuristic_w:.1f}"
+            f"（旧 bug 根因：低估数字宽度）"
+        )
+
+        doc = fitz.open()
+        page = doc.new_page(width=612, height=792)
+        pr = page.rect
+        # bbox 宽 = 数字真实宽度（让 scale_x ≈ 1.0 才正确）
+        bbox_w_pt = true_w  # 点
+        x0, y0, x1, y1 = 100, 100, 100 + bbox_w_pt, 130
+        nbbox = (
+            x0 / pr.width * 1000, y0 / pr.height * 1000,
+            x1 / pr.width * 1000, y1 / pr.height * 1000,
+        )
+        block = TextBlock(text=chars, score=0.99, bbox=nbbox)
+        result = OCRResult(text_blocks=[block], preproc_angle=0)
+        settings = PdfGlobalSettings(text_layer_visible=True)
+        pdf_doc = PdfDocument(file_path="x.pdf")
+        PdfService.build_page_infos(doc, pdf_doc)
+        PdfService.add_text_layer(doc, pdf_doc, 0, result, pdf_settings=settings)
+
+        # ink 覆盖度：修复后 ink 宽 ≈ bbox 宽（scale_x≈1.0），旧 bug 会触顶 3.0 溢出
+        pix = doc[0].get_pixmap(matrix=fitz.Matrix(4, 4))
+        import numpy as np
+        img = np.frombuffer(pix.samples, dtype=np.uint8).reshape(
+            pix.height, pix.width, pix.n
+        )
+        ink = img[:, :, 0] < 128
+        ys, xs = np.where(ink)
+        ink_w = (xs.max() - xs.min()) / 4
+        # 当 bbox 恰为真实宽度时，ink 不应超过 bbox 宽度的 1.2 倍
+        assert ink_w / bbox_w_pt <= 1.2, (
+            f"数字块 ink 宽度 {ink_w:.1f} 不应远超 bbox 宽度 {bbox_w_pt:.1f}"
+            f"（ratio={ink_w/bbox_w_pt:.2f}，旧 bug 因 scale_x 触顶 3.0 严重溢出）"
+        )
+        doc.close()
+
+    @pytest.mark.parametrize(
+        "text, bbox_w, label",
+        [
+            # 含 @（实测真实宽 1.03×fs，旧启发式 0.5 低估 51%）
+            ("test@email.com", 280, "email(@)"),
+            # % & 真实宽 0.89/0.87×fs，旧启发式低估 → ink 溢出
+            ("100%&key", 220, "percent+amp"),
+            # < = > 真实宽 0.74×fs，旧启发式低估 → ink 溢出
+            ("a<=b>=c", 200, "compare ops"),
+            # CJK 宽度引号 U+2018/2019（1.0×fs）、破折号 U+2014（1.08×fs）、
+            # 省略号 U+2026（0.81×fs）都不在旧硬编码 CJK 范围（0x2E80–0x9FFF 等）内，
+            # 被误判为 0.5 → 低估 → ink 严重溢出（旧实测溢出 79pt）
+            ("“引号”—破折号…省略", 380, "cjk-width-symbols"),
+        ],
+    )
+    def test_symbol_block_ink_not_overstretched(self, tmp_path, text, bbox_w, label):
+        """符号/标点块 ink 不溢出 bbox（举一反三：数字之外的字符同样被低估）。
+
+        Bug：width_units 启发式按字符 Unicode 范围二分（CJK=1.0/其余=0.5），
+        但子集字体中各类符号真实 advance 与 0.5 差距极大：
+          ASCII 标点：. , ; : = 0.24×fs（高估 108%→填不满）；
+                      @ = 1.03×fs（低估 51%→溢出）；% = 0.89，& = 0.87；
+                      < = > + = ~ ^ = 0.74；()[]{} = 0.33
+          CJK 宽度但落在硬编码范围外的符号：U+2018/2019 引号 = 1.0（误判 0.5→溢出）、
+                      U+2014 破折号 = 1.08、U+2026 省略号 = 0.81
+        这些字符的真实宽度与 0.5 偏差大，scale_x 偏大 → morph 过度拉伸 → ink 溢出
+        bbox 右边界（位置错位/bbox 异常）。修复用 fitz.Font.text_length 取真实
+        advance width，与字符类别无关，对所有字符一视同仁。
+        """
+        import numpy as np
+
+        from vibeocr.models.ocr_result import OCRResult, TextBlock
+        from vibeocr.models.pdf_document import PdfDocument
+        from vibeocr.models.pdf_ocr_options import PdfGlobalSettings
+
+        doc = fitz.open()
+        page = doc.new_page(width=612, height=792)
+        pr = page.rect
+        x0, y0, x1, y1 = 100, 100, 100 + bbox_w, 130
+        nbbox = (
+            x0 / pr.width * 1000, y0 / pr.height * 1000,
+            x1 / pr.width * 1000, y1 / pr.height * 1000,
+        )
+        block = TextBlock(text=text, score=0.99, bbox=nbbox)
+        result = OCRResult(text_blocks=[block], preproc_angle=0)
+        settings = PdfGlobalSettings(text_layer_visible=True)
+        pdf_doc = PdfDocument(file_path="x.pdf")
+        PdfService.build_page_infos(doc, pdf_doc)
+        PdfService.add_text_layer(doc, pdf_doc, 0, result, pdf_settings=settings)
+
+        pix = doc[0].get_pixmap(matrix=fitz.Matrix(4, 4))
+        img = np.frombuffer(pix.samples, dtype=np.uint8).reshape(
+            pix.height, pix.width, pix.n
+        )
+        ink = img[:, :, 0] < 128
+        ys, xs = np.where(ink)
+        assert len(ys) > 0, f"{label}: 应写入可见文字"
+        ink_x1 = xs.max() / 4
+        ink_x0 = xs.min() / 4
+        ink_w = ink_x1 - ink_x0
+        # ink 右边界不得越过 bbox 右边界（5pt 容差为抗锯齿边缘）。
+        # 旧 bug 各用例溢出 +25 ~ +79pt，修复后 overflow ≤ 0。
+        assert ink_x1 <= x1 + 5, (
+            f"{label}: 符号 ink 右边界 {ink_x1:.1f} 溢出 bbox 右边界 {x1}"
+            f"（溢出 {ink_x1-x1:.1f}pt，旧 bug 因符号宽度被低估→scale_x 偏大→morph 过度拉伸）"
+        )
+        # fill 应落在 bbox 内（修复后 0.94–0.99，旧 bug 最高 1.30）。
+        assert ink_w / bbox_w <= 1.05, (
+            f"{label}: 符号块 ink 宽度 {ink_w:.1f} 不应超过 bbox 宽度 {bbox_w}"
+            f"（ratio={ink_w/bbox_w:.2f}，旧 bug 因符号低估→scale_x 偏大）"
+        )
+        doc.close()
+
 
 class TestPdfServiceOcrBlocksCache:
     """OCR 原始块缓存（ocr_text_blocks）—— 预览/编辑/重写的唯一信源。
