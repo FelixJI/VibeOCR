@@ -17,7 +17,7 @@ from PySide6.QtCore import (
     QTimer,
     Signal,
 )
-from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPen, QPixmap
+from PySide6.QtGui import QCloseEvent, QColor, QFont, QIcon, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -193,6 +193,9 @@ class ThumbnailModel(QAbstractListModel):
         self._session: PdfSession | None = None
         self._cache = ThumbnailLruCache(capacity=200)
         self._render_worker: ThumbnailIpcWorker | None = None
+        # cancel 后超过短等待窗口的 worker 仍由 model 持有，直到 finished。
+        # 不能丢引用：其线程池可能仍在等待有界 HTTP 请求返回。
+        self._draining_workers: set[ThumbnailIpcWorker] = set()
         self._render_dpi = 96
         # 当前缩略图渲染边长（px）。随 ThumbnailListView 自适应宽度更新；
         # worker 用此值请求后端 PNG 尺寸，占位图也按此尺寸生成。
@@ -205,6 +208,7 @@ class ThumbnailModel(QAbstractListModel):
         # 检测期 data() 返回检测中占位图标,request_range 投递被抑制,
         # 避免与 load 并发争抢后端 fitz。
         self._detection_in_progress: bool = False
+        self._shutdown = False
 
     def set_session(
         self, session: PdfSession | None, *, detecting: bool = False
@@ -219,6 +223,8 @@ class ThumbnailModel(QAbstractListModel):
         detecting=False(默认)用于结构性变更后的刷新(旋转/删页/插页/重排),
         这些路径后无 load_done,直接正常启动 worker 渲染。
         """
+        if self._shutdown:
+            return
         self._stop_render_worker()
         self.beginResetModel()
         self._session = session
@@ -237,6 +243,8 @@ class ThumbnailModel(QAbstractListModel):
         由 PdfTab._on_load_done 调用。批量打开场景下每个文件各自的 load_done
         分别触发该文件的缩略图渲染开始。
         """
+        if self._shutdown:
+            return
         if self._session is None:
             self._detection_in_progress = False
             return
@@ -248,6 +256,10 @@ class ThumbnailModel(QAbstractListModel):
         # 进程化:缩略图走 IPC(client.render_thumbnail → PNG → QPixmap)
         from vibeocr.workers.pdf_render_thumb_ipc_worker import ThumbnailIpcWorker
 
+        if self._shutdown:
+            return
+        # 单一替换边界：任何启动路径都必须先收拢旧实例，禁止覆盖后失去所有权。
+        self._stop_render_worker()
         mgr = self._get_manager()
         if mgr is None:
             return
@@ -269,13 +281,58 @@ class ThumbnailModel(QAbstractListModel):
         return getattr(parent, "_session_mgr", None) or getattr(parent, "manager", None)
 
     def _stop_render_worker(self) -> None:
-        if self._render_worker is not None:
-            self._render_worker.cancel()
-            _wait_thread(
-                self._render_worker,
-                timeout_ms=Constants.Timeout.Ms.PDF_WORKER_TERMINATE_WAIT,
+        worker = self._render_worker
+        if worker is None:
+            return
+        self._render_worker = None
+        try:
+            worker.thumbnail_ready.disconnect(self._on_thumbnail_ready)
+        except (RuntimeError, TypeError):
+            pass
+        worker.cancel()
+        stopped = _wait_thread(
+            worker,
+            timeout_ms=Constants.Timeout.Ms.PDF_WORKER_TERMINATE_WAIT,
+        )
+        if stopped:
+            worker.deleteLater()
+            return
+
+        # 超时不强杀、不丢所有权；finished 后再回收。先连接再复查状态，
+        # 覆盖 _wait_thread 返回与 connect 之间自然结束的竞态窗口。
+        self._draining_workers.add(worker)
+        worker.finished.connect(
+            lambda worker=worker: self._release_draining_worker(worker)
+        )
+        if worker.isFinished():
+            self._release_draining_worker(worker)
+
+    def _release_draining_worker(self, worker: ThumbnailIpcWorker) -> None:
+        if worker not in self._draining_workers:
+            return
+        self._draining_workers.discard(worker)
+        worker.deleteLater()
+
+    def shutdown(self) -> None:
+        """停止当前 worker；超时任务继续保留所有权等待自然退出。"""
+        self._shutdown = True
+        self._stop_render_worker()
+        for worker in tuple(self._draining_workers):
+            worker.cancel()
+
+    def wait_for_draining(self) -> bool:
+        """后端停止后有界等待仍在途的缩略图 worker 收尾。"""
+        all_stopped = True
+        for worker in tuple(self._draining_workers):
+            stopped = _wait_thread(
+                worker,
+                timeout_ms=Constants.Timeout.Ms.PDF_THUMBNAIL_DRAIN_WAIT,
             )
-            self._render_worker = None
+            if stopped or worker.isFinished():
+                self._release_draining_worker(worker)
+            else:
+                all_stopped = False
+        return all_stopped and not self._draining_workers
 
     def set_thumbnail_size(self, size: int) -> None:
         """更新缩略图渲染边长（自适应宽度时调用）。
@@ -336,7 +393,7 @@ class ThumbnailModel(QAbstractListModel):
 
     def _ensure_render_worker_alive(self) -> bool:
         """确保 render worker 存活:None 或已结束则重启。检测期不启动。"""
-        if self._session is None or self._detection_in_progress:
+        if self._shutdown or self._session is None or self._detection_in_progress:
             return False
         if self._render_worker is not None and not self._render_worker.isFinished():
             return True
@@ -549,6 +606,7 @@ class PdfTab(QWidget):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        self._shutdown_started = False
         self._session_mgr = PdfSessionManager(self)
         self._preview_window: PdfPreviewWindow | None = None
         # 网格 ↔ 缩略图双向同步的重入保护，避免 itemSelectionChanged 递归
@@ -2133,4 +2191,15 @@ class PdfTab(QWidget):
 
     def shutdown(self) -> None:
         """清理资源（由 MainWindow 调用）。"""
+        if self._shutdown_started:
+            return
+        self._shutdown_started = True
+        # thumbnail worker 仍可能在使用 backend client，必须先取消，再停后端。
+        self._thumbnail_model.shutdown()
         self._session_mgr.shutdown()
+        if not self._thumbnail_model.wait_for_draining():
+            logger.warning("PDF tab 关闭时仍有缩略图 worker 在有界等待后运行")
+
+    def closeEvent(self, event: QCloseEvent) -> None:
+        self.shutdown()
+        super().closeEvent(event)

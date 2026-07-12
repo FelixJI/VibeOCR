@@ -285,9 +285,11 @@ class TestPdfTaskGeneration:
 
         assert mgr._mutate_worker is not None
 
-    def test_task_generation_increments_on_start_ocr(self):
+    def test_task_generation_increments_on_start_ocr(self, qapp):
         """start_ocr 递增 task generation"""
         from unittest.mock import MagicMock, patch
+
+        from PySide6.QtCore import QThread
 
         mgr = PdfSessionManager.__new__(PdfSessionManager)
         mgr._task_generation = 0
@@ -309,13 +311,15 @@ class TestPdfTaskGeneration:
         mgr._ocr_service = MagicMock()
         mgr._is_mineru_first_use = MagicMock(return_value=False)
 
-        with patch.object(mgr, "_cancel_ocr"):
-            try:
-                mgr.start_ocr([0, 1])
-            except Exception:
-                pass
+        # 本测试只验证 generation，不应泄漏真实 OCR 后台线程到后续测试。
+        with (
+            patch.object(mgr, "_cancel_ocr"),
+            patch.object(QThread, "start") as start_mock,
+        ):
+            mgr.start_ocr([0, 1])
 
         assert mgr._task_generation == 1
+        start_mock.assert_called_once_with()
 
 
 class TestExportCancel:

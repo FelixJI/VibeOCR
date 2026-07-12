@@ -146,6 +146,8 @@ class Constants:
             PDF_WORKER_CANCEL_SHORT = 3000  # PDF worker 取消等待（加载场景）
             PDF_WORKER_POLL_STEP = 50  # _wait_thread 单步轮询
             PDF_WORKER_TERMINATE_WAIT = 500  # terminate 后兜底等待
+            # 缩略图 HTTP connect timeout 为 5s；后端停止后最终 drain 必须覆盖它。
+            PDF_THUMBNAIL_DRAIN_WAIT = 6000
 
 
 # 向后兼容的模块级导出（旧代码可能直接 import WORKER_TIMEOUT 等）

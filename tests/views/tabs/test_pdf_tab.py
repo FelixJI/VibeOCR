@@ -18,7 +18,8 @@ from vibeocr.views.tabs.pdf_tab import (
 def pdf_tab(qtbot):
     tab = PdfTab()
     qtbot.addWidget(tab)
-    return tab
+    yield tab
+    tab.shutdown()
 
 
 class TestPdfTabStructure:
@@ -1349,6 +1350,10 @@ class TestBatchOpenSuppressesSwitch:
         # combo box 有 2 项
         assert pdf_tab._file_selector.count() == 2
 
+        pdf_tab.shutdown()
+        assert pdf_tab._thumbnail_model._render_worker is None
+        assert not pdf_tab._thumbnail_model._draining_workers
+
 
 class TestThumbnailAutoSize:
     """缩略图自适应面板宽度：viewport 宽度变化时缩略图边长 clamp 到
@@ -1501,3 +1506,128 @@ class TestThumbnailDetectionInProgress:
         model.set_session(model._session)
         assert model._detection_in_progress is False
         assert started, "结构性刷新后应直接启动 worker,而非卡在检测态"
+
+
+class TestThumbnailWorkerLifecycle:
+    """缩略图 worker 在切换和退出时必须保持所有权并协作收拢。"""
+
+    def test_pdf_tab_shutdown_stops_thumbnail_worker_before_manager(
+        self, pdf_tab, monkeypatch
+    ):
+        calls: list[str] = []
+        monkeypatch.setattr(
+            pdf_tab._thumbnail_model,
+            "_stop_render_worker",
+            lambda: calls.append("thumbnail"),
+        )
+        monkeypatch.setattr(
+            pdf_tab._thumbnail_model,
+            "wait_for_draining",
+            lambda: calls.append("drain") or True,
+        )
+        monkeypatch.setattr(
+            pdf_tab._session_mgr,
+            "shutdown",
+            lambda: calls.append("manager"),
+        )
+
+        pdf_tab.shutdown()
+
+        assert calls == ["thumbnail", "manager", "drain"]
+
+    def test_timed_out_thumbnail_worker_is_retained_until_finished(
+        self, qapp, monkeypatch
+    ):
+        from unittest.mock import MagicMock
+
+        model = ThumbnailModel()
+        worker = MagicMock()
+        worker.isFinished.return_value = False
+        model._render_worker = worker
+        monkeypatch.setattr(
+            "vibeocr.views.tabs.pdf_tab._wait_thread",
+            lambda *_args, **_kwargs: False,
+        )
+
+        model._stop_render_worker()
+
+        assert model._render_worker is None
+        assert worker in model._draining_workers
+        worker.finished.connect.assert_called_once()
+
+    def test_close_event_triggers_shutdown(self, pdf_tab, qtbot, monkeypatch):
+        from unittest.mock import MagicMock
+
+        shutdown = MagicMock()
+        monkeypatch.setattr(pdf_tab, "shutdown", shutdown)
+        pdf_tab.show()
+
+        pdf_tab.close()
+        qtbot.waitUntil(lambda: shutdown.call_count == 1)
+
+        shutdown.assert_called_once_with()
+
+    def test_start_render_worker_stops_existing_before_replacement(
+        self, qapp, monkeypatch
+    ):
+        from unittest.mock import MagicMock
+
+        from vibeocr.models.pdf_document import PdfDocument
+        from vibeocr.models.pdf_session import PdfSession
+
+        calls: list[str] = []
+        model = ThumbnailModel()
+        model._render_worker = MagicMock()
+        manager = MagicMock()
+        monkeypatch.setattr(model, "_get_manager", lambda: manager)
+
+        def _stop_existing():
+            calls.append("stop")
+            model._render_worker = None
+
+        new_worker = MagicMock()
+
+        def _create_worker(**_kwargs):
+            calls.append("create")
+            return new_worker
+
+        monkeypatch.setattr(model, "_stop_render_worker", _stop_existing)
+        monkeypatch.setattr(
+            "vibeocr.workers.pdf_render_thumb_ipc_worker.ThumbnailIpcWorker",
+            _create_worker,
+        )
+        session = PdfSession(
+            file_path="x.pdf",
+            session_id="sid",
+            pdf_document=PdfDocument(file_path="x.pdf"),
+        )
+
+        model._start_render_worker(session)
+
+        assert calls == ["stop", "create"]
+        assert model._render_worker is new_worker
+
+    def test_late_detection_done_does_not_restart_after_shutdown(
+        self, qapp, monkeypatch
+    ):
+        from vibeocr.models.pdf_document import PdfDocument
+        from vibeocr.models.pdf_session import PdfSession
+
+        model = ThumbnailModel()
+        session = PdfSession(
+            file_path="x.pdf",
+            session_id="sid",
+            pdf_document=PdfDocument(file_path="x.pdf"),
+        )
+        model.set_session(session, detecting=True)
+        starts: list[str] = []
+        monkeypatch.setattr(
+            model,
+            "_start_render_worker",
+            lambda _session: starts.append("start"),
+        )
+
+        model.shutdown()
+        model.set_detection_done()
+
+        assert starts == []

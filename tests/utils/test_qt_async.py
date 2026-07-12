@@ -11,6 +11,18 @@ from vibeocr.utils.qt_async import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _clear_closed_event_loop_after_test():
+    """避免本模块关闭的 loop 污染后续 GUI 测试的线程当前 loop。"""
+    yield
+    try:
+        loop = asyncio.get_event_loop()
+    except RuntimeError:
+        return
+    if loop.is_closed():
+        asyncio.set_event_loop(None)
+
+
 def _run_loop_until_complete(coro, timeout=2.0):
     """在新事件循环上同步运行协程,带整体超时保护(测试辅助)"""
     loop = asyncio.new_event_loop()
