@@ -108,6 +108,7 @@ class ProgressPhase(StrEnum):
     DELETE = "delete"  # 删除文字层
     SAVE = "save"  # 保存落盘
     EXPORT = "export"  # 导出
+    COMPRESS = "compress"  # OCR 末尾整文档聚合压缩（不确定进度）
 
 
 class ProgressEvent(BaseModel):
@@ -187,11 +188,15 @@ class BatchAddTextLayerRequest(BaseModel):
 
     避免逐页 add_text_layer 每页各解析一份子集字体（放大体积）。
     聚合逻辑复用 save_with_rewrite 已验证的"整文档一次子集"模式。
+
+    save=True 时，写层成功后紧跟一次 incremental save 把本批落盘
+    （崩溃只丢最后一批）。返回 extra.saved 标记是否成功落盘。
     """
 
     pages: list[BatchAddTextLayerPage]
     pdf_settings: dict[str, Any] | None = None
     overwrite: bool = False
+    save: bool = False
 
 
 class RewriteTextLayerRequest(BaseModel):
