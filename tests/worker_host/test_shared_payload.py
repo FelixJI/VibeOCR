@@ -198,6 +198,27 @@ async def test_ttl_orphan_sweep_reaps_expired_segments() -> None:
 
 @win32_only
 @pytest.mark.asyncio
+async def test_read_rejects_expired_peer_descriptor() -> None:
+    owner = SharedPayloadStore(owner="client", ttl_seconds=60)
+    reader = SharedPayloadStore(owner="worker", ttl_seconds=60)
+    ref = await owner.put(b"expired peer payload", media_type="text/plain")
+    expired = SharedPayloadRef(
+        name=ref.name,
+        size=ref.size,
+        media_type=ref.media_type,
+        sha256=ref.sha256,
+        owner=ref.owner,
+        expires_unix_ms=0,
+    )
+    try:
+        with pytest.raises(SharedPayloadError, match="expired"):
+            await reader.read(expired)
+    finally:
+        await owner.release(ref)
+
+
+@win32_only
+@pytest.mark.asyncio
 async def test_sweep_does_not_reap_in_flight_segments() -> None:
     # Regression: a segment within its TTL must survive sweep_orphans.
     store = SharedPayloadStore(owner="client", ttl_seconds=60)

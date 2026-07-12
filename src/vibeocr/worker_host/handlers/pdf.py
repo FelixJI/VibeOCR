@@ -30,7 +30,13 @@ class PdfOpenHandler:
         file_path = payload.get("file_path")
         if not isinstance(file_path, str) or not file_path:
             raise WorkerError(ErrorCode.INVALID_REQUEST, "pdf.open requires 'file_path'")
-        request = PdfOpenRequest(file_path=Path(file_path))
+        path = Path(file_path)
+        if not path.is_absolute():
+            raise WorkerError(
+                ErrorCode.INVALID_REQUEST,
+                "pdf.open requires an absolute 'file_path'",
+            )
+        request = PdfOpenRequest(file_path=path)
         try:
             session = await asyncio.to_thread(self._facade.open, request, cancel)
         except PdfError as exc:

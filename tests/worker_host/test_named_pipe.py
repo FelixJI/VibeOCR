@@ -60,6 +60,12 @@ def test_pipe_endpoint_validates_token_length() -> None:
         PipeEndpoint(name=name, session_token="tooshort")
 
 
+def test_pipe_endpoint_rejects_non_hex_token() -> None:
+    name = generate_pipe_name()
+    with pytest.raises(SessionTokenError):
+        PipeEndpoint(name=name, session_token="z" * 64)
+
+
 # ---------------------------------------------------------------------------
 # NamedPipeServer (platform-neutral accept timeout)
 # ---------------------------------------------------------------------------
@@ -95,8 +101,11 @@ async def test_server_accept_times_out_when_no_client() -> None:
 @win32_only
 @pytest.mark.asyncio
 async def test_real_pipe_handshake_and_round_trip() -> None:
-    server = await NamedPipeServer.create()
+    supplied_token = generate_session_token()
+    server = await NamedPipeServer.create(session_token=supplied_token)
     try:
+        assert server.endpoint is not None
+        assert server.endpoint.session_token == supplied_token
         client = NamedPipeClient()
         client_task = asyncio.create_task(
             client.connect(server.endpoint, timeout_ms=2000)  # type: ignore[arg-type]

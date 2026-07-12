@@ -244,6 +244,8 @@ class SharedPayloadStore:
         """Open a read view, validate SHA-256 + size, and return the bytes."""
         if not IS_WINDOWS:
             raise NotImplementedError("shared memory requires Windows")
+        if ref.expires_unix_ms < int(time.time() * 1000):
+            raise SharedPayloadError("shared payload descriptor has expired")
         return await asyncio.to_thread(self._read_sync, ref)
 
     def _read_sync(self, ref: SharedPayloadRef) -> bytes:
@@ -283,7 +285,19 @@ class SharedPayloadStore:
             return
         await asyncio.to_thread(self._close_owned_sync, ref.name)
 
-    def _close_owned_sync(self, name: str) -> None:
+    async def release_owned(self, name: str) -> bool:
+        """Release an owner-created segment by its wire name.
+
+        ``memory.release`` intentionally carries only the segment name. The
+        lookup is restricted to this store's owned namespace and is idempotent.
+        """
+        if not isinstance(name, str) or not _NAME_RE.match(name):
+            raise SharedPayloadError(f"invalid shared-payload name: {name!r}")
+        if not IS_WINDOWS:
+            return False
+        return await asyncio.to_thread(self._close_owned_sync, name)
+
+    def _close_owned_sync(self, name: str) -> bool:
         entry = self._owned.pop(name, None)
         if entry is not None:
             handle, _expires = entry
@@ -292,6 +306,8 @@ class SharedPayloadStore:
                     self._win["CloseHandle"](handle)
                 except Exception:
                     pass
+            return True
+        return False
 
     def _unlink_sync(self, name: str) -> None:
         # Best-effort open+close for names we don't own (e.g. orphan sweep).

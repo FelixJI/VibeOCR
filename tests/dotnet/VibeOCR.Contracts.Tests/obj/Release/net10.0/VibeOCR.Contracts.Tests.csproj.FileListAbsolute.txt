@@ -1,0 +1,15 @@
+C:\Users\felji\PycharmProjects\VibeOCR\tests\dotnet\VibeOCR.Contracts.Tests\bin\Release\net10.0\VibeOCR.Contracts.Tests.exe
+C:\Users\felji\PycharmProjects\VibeOCR\tests\dotnet\VibeOCR.Contracts.Tests\bin\Release\net10.0\VibeOCR.Contracts.Tests.deps.json
+C:\Users\felji\PycharmProjects\VibeOCR\tests\dotnet\VibeOCR.Contracts.Tests\bin\Release\net10.0\VibeOCR.Contracts.Tests.runtimeconfig.json
+C:\Users\felji\PycharmProjects\VibeOCR\tests\dotnet\VibeOCR.Contracts.Tests\bin\Release\net10.0\VibeOCR.Contracts.Tests.dll
+C:\Users\felji\PycharmProjects\VibeOCR\tests\dotnet\VibeOCR.Contracts.Tests\bin\Release\net10.0\VibeOCR.Contracts.Tests.pdb
+C:\Users\felji\PycharmProjects\VibeOCR\tests\dotnet\VibeOCR.Contracts.Tests\obj\Release\net10.0\VibeOCR.Contracts.Tests.GeneratedMSBuildEditorConfig.editorconfig
+C:\Users\felji\PycharmProjects\VibeOCR\tests\dotnet\VibeOCR.Contracts.Tests\obj\Release\net10.0\VibeOCR.Contracts.Tests.AssemblyInfoInputs.cache
+C:\Users\felji\PycharmProjects\VibeOCR\tests\dotnet\VibeOCR.Contracts.Tests\obj\Release\net10.0\VibeOCR.Contracts.Tests.AssemblyInfo.cs
+C:\Users\felji\PycharmProjects\VibeOCR\tests\dotnet\VibeOCR.Contracts.Tests\obj\Release\net10.0\VibeOCR.Contracts.Tests.csproj.CoreCompileInputs.cache
+C:\Users\felji\PycharmProjects\VibeOCR\tests\dotnet\VibeOCR.Contracts.Tests\obj\Release\net10.0\VibeOCR.Contracts.Tests.sourcelink.json
+C:\Users\felji\PycharmProjects\VibeOCR\tests\dotnet\VibeOCR.Contracts.Tests\obj\Release\net10.0\VibeOCR.Contracts.Tests.dll
+C:\Users\felji\PycharmProjects\VibeOCR\tests\dotnet\VibeOCR.Contracts.Tests\obj\Release\net10.0\refint\VibeOCR.Contracts.Tests.dll
+C:\Users\felji\PycharmProjects\VibeOCR\tests\dotnet\VibeOCR.Contracts.Tests\obj\Release\net10.0\VibeOCR.Contracts.Tests.pdb
+C:\Users\felji\PycharmProjects\VibeOCR\tests\dotnet\VibeOCR.Contracts.Tests\obj\Release\net10.0\VibeOCR.Contracts.Tests.genruntimeconfig.cache
+C:\Users\felji\PycharmProjects\VibeOCR\tests\dotnet\VibeOCR.Contracts.Tests\obj\Release\net10.0\ref\VibeOCR.Contracts.Tests.dll

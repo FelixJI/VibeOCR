@@ -161,6 +161,117 @@ async def test_expired_deadline_returns_timeout() -> None:
     assert resp.error.code == "TASK_TIMEOUT"
 
 
+@pytest.mark.asyncio
+async def test_running_task_is_stopped_at_deadline() -> None:
+    disp = Dispatcher()
+    cancel_observed = asyncio.Event()
+
+    async def handler(payload: dict[str, Any], cancel: Any) -> dict[str, Any]:
+        try:
+            while True:
+                await asyncio.sleep(0.01)
+        finally:
+            if cancel.is_cancelled:
+                cancel_observed.set()
+
+    disp.register("test.deadline", handler, retryable=True)
+    deadline = int(time.time() * 1000) + 50
+    resp = await disp.dispatch(
+        _make_request("test.deadline", {}), deadline_unix_ms=deadline
+    )
+
+    assert resp.error is not None
+    assert resp.error.code == "TASK_TIMEOUT"
+    assert cancel_observed.is_set()
+
+
+@pytest.mark.asyncio
+async def test_late_success_after_external_cancel_returns_cancelled() -> None:
+    disp = Dispatcher()
+    started = asyncio.Event()
+    finish = asyncio.Event()
+
+    async def handler(payload: dict[str, Any], cancel: Any) -> dict[str, Any]:
+        started.set()
+        await finish.wait()
+        return {"late": True}
+
+    disp.register("test.late", handler, retryable=True)
+    tid = _tid()
+    task = asyncio.create_task(
+        disp.dispatch(_make_request("test.late", {}, task_id=tid), deadline_unix_ms=0)
+    )
+    await started.wait()
+    assert disp.registry.cancel(tid).accepted is True
+    disp.request_cancel(tid)
+    finish.set()
+
+    resp = await task
+    assert resp.error is not None
+    assert resp.error.code == "TASK_CANCELLED"
+
+
+@pytest.mark.asyncio
+async def test_late_exception_after_external_cancel_returns_cancelled() -> None:
+    disp = Dispatcher()
+    started = asyncio.Event()
+    finish = asyncio.Event()
+
+    async def handler(payload: dict[str, Any], cancel: Any) -> dict[str, Any]:
+        started.set()
+        await finish.wait()
+        raise RuntimeError("late adapter error")
+
+    disp.register("test.late_error", handler, retryable=True)
+    tid = _tid()
+    task = asyncio.create_task(
+        disp.dispatch(
+            _make_request("test.late_error", {}, task_id=tid),
+            deadline_unix_ms=0,
+        )
+    )
+    await started.wait()
+    assert disp.registry.cancel(tid).accepted is True
+    disp.request_cancel(tid)
+    finish.set()
+
+    resp = await task
+    assert resp.error is not None
+    assert resp.error.code == "TASK_CANCELLED"
+
+
+@pytest.mark.asyncio
+async def test_public_method_request_payload_is_validated() -> None:
+    disp = Dispatcher()
+
+    async def handler(payload: dict[str, Any], cancel: Any) -> dict[str, Any]:
+        return {"nonce": str(payload["nonce"])}
+
+    disp.register("system.ping", handler, retryable=True)
+    resp = await disp.dispatch(
+        _make_request("system.ping", {"nonce": "x", "extra": True}),
+        deadline_unix_ms=0,
+    )
+    assert resp.error is not None
+    assert resp.error.code == "INVALID_REQUEST"
+
+
+@pytest.mark.asyncio
+async def test_public_method_response_payload_is_validated() -> None:
+    disp = Dispatcher()
+
+    async def handler(payload: dict[str, Any], cancel: Any) -> dict[str, Any]:
+        return {"wrong": "shape"}
+
+    disp.register("system.ping", handler, retryable=True)
+    resp = await disp.dispatch(
+        _make_request("system.ping", {"nonce": "x"}),
+        deadline_unix_ms=0,
+    )
+    assert resp.error is not None
+    assert resp.error.code == "INTERNAL_ERROR"
+
+
 # ---------------------------------------------------------------------------
 # non-retryable mutation is marked
 # ---------------------------------------------------------------------------

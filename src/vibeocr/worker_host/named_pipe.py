@@ -193,8 +193,9 @@ class PipeEndpoint:
     def __post_init__(self) -> None:
         # Validate eagerly so a malformed endpoint never reaches the OS.
         validate_pipe_name(self.name)
-        if len(self.session_token) != 64:
-            raise SessionTokenError("session_token must be 64 hex chars")
+        # Comparing a token with itself reuses the canonical shape validator
+        # while retaining constant-time comparison in the actual handshake.
+        verify_session_token(self.session_token, self.session_token)
 
 
 class PipeConnection:
@@ -451,13 +452,18 @@ class NamedPipeServer:
             self._win = {}
 
     @classmethod
-    async def create(cls, *, pipe_name: str | None = None) -> NamedPipeServer:
+    async def create(
+        cls,
+        *,
+        pipe_name: str | None = None,
+        session_token: str | None = None,
+    ) -> NamedPipeServer:
         """Create the pipe (DACL = current user only) and return a bound server."""
         if not IS_WINDOWS:  # pragma: no cover
             raise NotImplementedError("Named Pipe requires Windows")
         name = pipe_name if pipe_name is not None else generate_pipe_name()
         validate_pipe_name(name)
-        token = generate_session_token()
+        token = session_token if session_token is not None else generate_session_token()
         self = cls()
         self.endpoint = PipeEndpoint(name=name, session_token=token)
         await asyncio.to_thread(self._create_pipe_sync, name)

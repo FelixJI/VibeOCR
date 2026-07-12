@@ -109,6 +109,15 @@ class TaskRegistry:
         with self._lock:
             return self._tasks.get(task_id)
 
+    def active_task_ids(self) -> tuple[str, ...]:
+        """Return a stable snapshot of queued/running task ids."""
+        with self._lock:
+            return tuple(
+                task_id
+                for task_id, handle in self._tasks.items()
+                if handle.state not in _TERMINAL
+            )
+
     # -- transitions ------------------------------------------------------
 
     def mark_running(self, task_id: str) -> None:

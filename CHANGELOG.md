@@ -11,6 +11,8 @@
 - feat(protocol): define version 1 worker contracts
 
 ### Fixed
+- fix(worker): complete Phase 1 RPC loop, token authentication, deadlines, cancellation, and resource draining
+- fix(worker): wire UI-free production services and enforce closed runtime method payloads
 - fix(pdf): 预览已有文字层用 line 级 bbox——不相邻文本不再合并到一个框
 - fix(pdf): 预览已有文字层补偿页面旋转——位置/角度不再错
 - fix(pdf): 文字层 ink 宽度匹配 OCR bbox——morph 水平缩放
@@ -24,6 +26,7 @@
 - fix: clear pyright errors in worker_host tests
 
 ### Changed
+- test(worker): add repeatable Python/C# Phase 1 contract gate
 - test: 放宽渲染并行加速比阈值至 1.15x
 - perf(batch): 批量识别 Tab 改用分小批 recognize_batch
 - perf(pdf): 批量写文字层共享聚合子集字体

@@ -128,6 +128,15 @@ async def test_pdf_open_handler_maps_payload_to_result() -> None:
     assert Path(result["file_path"]).as_posix() == "C:/data/sample.pdf"
 
 
+@pytest.mark.asyncio
+async def test_pdf_open_handler_rejects_relative_path() -> None:
+    handler = PdfOpenHandler(facade=_FakePdfFacade())  # type: ignore[arg-type]
+    from vibeocr.worker_host.errors import WorkerError
+
+    with pytest.raises(WorkerError, match="absolute"):
+        await handler.handle({"file_path": "relative.pdf"}, CancelToken())
+
+
 # ---------------------------------------------------------------------------
 # QR code handlers
 # ---------------------------------------------------------------------------

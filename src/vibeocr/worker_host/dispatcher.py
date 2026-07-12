@@ -18,6 +18,7 @@ register with ``retryable=False`` and the registry never marks them eligible.
 from __future__ import annotations
 
 import asyncio
+import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
@@ -25,6 +26,11 @@ from typing import Any
 from vibeocr.application.contracts import CancelToken
 from vibeocr.worker_host.contracts import PROTOCOL_VERSION, RpcEnvelope, RpcErrorBody
 from vibeocr.worker_host.errors import ErrorCode, WorkerError
+from vibeocr.worker_host.method_validation import (
+    PUBLIC_METHODS,
+    MethodPayloadError,
+    validate_method_payload,
+)
 from vibeocr.worker_host.task_registry import TaskRegistry, TaskStateError
 
 Handler = Callable[[dict[str, Any], CancelToken], Awaitable[dict[str, Any]]]
@@ -80,6 +86,12 @@ class Dispatcher:
                 request, ErrorCode.INVALID_REQUEST, f"unknown method: {request.method}"
             )
 
+        if request.method in PUBLIC_METHODS:
+            try:
+                validate_method_payload(request.method, "request", request.payload)
+            except MethodPayloadError as exc:
+                return _error_response(request, ErrorCode.INVALID_REQUEST, str(exc))
+
         # Register the task (rejects duplicate request_id).
         try:
             self.registry.create(
@@ -113,8 +125,44 @@ class Dispatcher:
         self.registry.mark_running(request.task_id)
         self._cancel_tokens[request.task_id] = cancel
         try:
-            result = await entry.handler(request.payload, cancel)
+            if deadline_unix_ms > 0:
+                remaining = max(0.0, (deadline_unix_ms - time.time() * 1000) / 1000)
+                handler_task = asyncio.ensure_future(
+                    entry.handler(request.payload, cancel)
+                )
+                done, _pending = await asyncio.wait({handler_task}, timeout=remaining)
+                if not done:
+                    cancel.cancel()
+                    handler_task.cancel()
+                    try:
+                        await handler_task
+                    except asyncio.CancelledError:
+                        pass
+                    self.registry.fail(
+                        request.task_id,
+                        error_code="TASK_TIMEOUT",
+                        message="task deadline exceeded",
+                    )
+                    return _error_response(
+                        request,
+                        ErrorCode.TASK_TIMEOUT,
+                        "task deadline exceeded",
+                        retryable=entry.retryable,
+                    )
+                result = handler_task.result()
+            else:
+                result = await entry.handler(request.payload, cancel)
         except WorkerError as err:
+            handle = self.registry.get(request.task_id)
+            was_cancelled = handle is not None and handle.state.value == "cancelled"
+            if err.code is ErrorCode.TASK_CANCELLED or was_cancelled:
+                self.registry.cancel(request.task_id)
+                return _error_response(
+                    request,
+                    ErrorCode.TASK_CANCELLED,
+                    "task cancelled",
+                    retryable=False,
+                )
             self.registry.fail(
                 request.task_id,
                 error_code=err.code.value,
@@ -126,13 +174,18 @@ class Dispatcher:
             )
         except asyncio.CancelledError:
             # Cooperative cancellation propagated from the handler.
-            self.registry.fail(
-                request.task_id,
-                error_code="TASK_CANCELLED",
-                message="task cancelled",
-            )
+            cancel.cancel()
+            self.registry.cancel(request.task_id)
             raise
         except Exception as exc:
+            handle = self.registry.get(request.task_id)
+            if handle is not None and handle.state.value == "cancelled":
+                return _error_response(
+                    request,
+                    ErrorCode.TASK_CANCELLED,
+                    "task cancelled",
+                    retryable=False,
+                )
             self.registry.fail(
                 request.task_id,
                 error_code="INTERNAL_ERROR",
@@ -148,7 +201,33 @@ class Dispatcher:
         finally:
             self._cancel_tokens.pop(request.task_id, None)
 
-        # Guard against a terminal state reached by a concurrent cancel.
+        # Guard against a terminal state reached by a concurrent cancel. A
+        # cooperative handler may return normally after observing its token;
+        # its late result must never escape as a successful response.
+        handle = self.registry.get(request.task_id)
+        if handle is not None and handle.state.value == "cancelled":
+            return _error_response(
+                request,
+                ErrorCode.TASK_CANCELLED,
+                "task cancelled",
+                retryable=False,
+            )
+        if request.method in PUBLIC_METHODS:
+            try:
+                validate_method_payload(request.method, "response", result)
+            except MethodPayloadError as exc:
+                self.registry.fail(
+                    request.task_id,
+                    error_code=ErrorCode.INTERNAL_ERROR.value,
+                    message="handler returned an invalid response",
+                    detail=str(exc),
+                )
+                return _error_response(
+                    request,
+                    ErrorCode.INTERNAL_ERROR,
+                    "handler returned an invalid response",
+                    detail=str(exc),
+                )
         self.registry.complete(request.task_id, result=result)
         return RpcEnvelope(
             protocol_version=PROTOCOL_VERSION,

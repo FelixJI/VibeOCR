@@ -2,7 +2,7 @@
 # Python
 # ============================================
 __pycache__/
-*.py[cod]
+*.py[cod]        # .pyc / .pyo / .pyd
 *$py.class
 *.so
 .Python
@@ -235,3 +235,7 @@ docs/
 # Git worktrees (isolated workspaces)
 # ============================================
 .worktrees/
+
+# .NET test/build outputs
+tests/dotnet/**/bin/
+tests/dotnet/**/obj/
