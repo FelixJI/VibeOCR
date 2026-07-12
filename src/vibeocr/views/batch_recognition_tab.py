@@ -55,8 +55,23 @@ class BatchRecognitionWorker(QThread):
         self._preprocess_options = preprocess_options
         self._cancelled = False
 
+    # 分小批调 recognize_batch 的批大小。每批一次 RCBG SHM 往返（单次 predict），
+    # 远少于旧逐文件 batch_add 的 N 次往返。批边界也是取消检查点。
+    # 16 与 PDF OCR 页批一致，GPU predict 内部按 text_recognition_batch_size
+    # 二次分批；SHM 预算 0.7×(128MB−9)≈90MB 足以装下 16 张图。
+    _BATCH_SIZE = 16
+
     def run(self):
-        """执行批量识别（全部入队后流式返回结果）"""
+        """执行批量识别（分小批 recognize_batch，每批完成逐文件上报）。
+
+        旧实现用逐文件 batch_add（每文件一次 SHM 往返）+ batch_commit 流式回调，
+        N 个文件 = 2N+1 次消息交换。改为 recognize_batch（RCBG 单次往返）后，
+        N 个文件 = ceil(N/16) 次往返，IPC 开销降一个数量级。
+
+        recognize_batch 阻塞返回 list（无流式回调），故按 16 个/批切片，
+        每批完成即逐文件发 file_completed + progress，保持 UI 流式反馈。
+        取消在批边界检查 _cancelled（协作式，单批 predict 进行中不可中断）。
+        """
         results = {}
         total = len(self._files)
 
@@ -64,87 +79,105 @@ class BatchRecognitionWorker(QThread):
             self.finished.emit(results)
             return
 
-        # 添加所有文件到批量队列
-        request_map = {}  # request_id -> file_info
-        for i, file_info in enumerate(self._files):
+        completed = 0
+        for batch_start in range(0, total, self._BATCH_SIZE):
             if self._cancelled:
                 break
 
-            file_path = file_info["path"]
-            self.progress.emit(i, total, f"准备: {Path(file_path).name}")
+            batch_files = self._files[batch_start:batch_start + self._BATCH_SIZE]
 
-            try:
-                with open(file_path, "rb") as f:
-                    image_data = f.read()
+            # 读文件 bytes（读取失败的单文件标记 failed，不影响整批）
+            images: list[bytes | None] = []
+            read_errors: dict[int, str] = {}  # batch 内索引 -> 错误
+            for bi, file_info in enumerate(batch_files):
+                try:
+                    with open(file_info["path"], "rb") as f:
+                        images.append(f.read())
+                except Exception as e:
+                    logger.error(f"读取文件失败 {file_info['path']}: {e}")
+                    images.append(None)
+                    read_errors[bi] = str(e)
 
-                request_id = self._service.batch_add(
-                    image_data,
-                    options=self._preprocess_options,
-                    file_name=file_info["name"],
-                )
+            # 识别有效图像
+            valid_indices = [bi for bi, img in enumerate(images) if img is not None]
+            batch_results: list = [None] * len(valid_indices)
+            if valid_indices and not self._cancelled:
+                valid_images = [images[bi] for bi in valid_indices]  # type: ignore[list-item]
+                try:
+                    batch_results = self._service.recognize_batch(
+                        valid_images, self._preprocess_options
+                    )
+                except Exception as e:
+                    logger.error(f"批量识别失败(批起始索引 {batch_start}): {e}")
+                    self.error.emit(str(e))
+                    # 识别整批失败：标记本批所有有效文件 failed
+                    for bi in valid_indices:
+                        file_path = batch_files[bi]["path"]
+                        self.file_completed.emit(
+                            file_path, "failed", {"error": str(e)}
+                        )
+                        results[file_path] = {
+                            "file_path": file_path,
+                            "error": str(e),
+                        }
+                        completed += 1
+                        self.progress.emit(
+                            completed, total,
+                            f"失败: {Path(file_path).name}",
+                        )
+                    # 继续下一批（单批失败不中断整体）
+                    continue
 
-                request_map[request_id] = file_info
-
-            except Exception as e:
-                logger.error(f"处理文件失败 {file_path}: {e}")
-                self.file_completed.emit(file_path, "failed", {"error": str(e)})
-                results[file_path] = {"file_path": file_path, "error": str(e)}
-
-        # 提交批量处理，流式获取每个完成的结果
-        if not self._cancelled and request_map:
-
-            def on_file_completed(request_id: str, result):
-                if request_id not in request_map:
-                    return
-                file_path = request_map[request_id]["path"]
+            # 逐文件上报结果（保持 UI 流式反馈）
+            result_iter = iter(batch_results)
+            for bi, file_info in enumerate(batch_files):
+                file_path = file_info["path"]
                 if file_path in results:
-                    return  # 已报告（去重）
-                if isinstance(result, dict) and "error" in result:
-                    self.file_completed.emit(file_path, "failed", result)
+                    # 已在 read_errors 或整批失败中报告
+                    completed += 1
+                    self.progress.emit(completed, total, Path(file_path).name)
+                    continue
+                if bi in read_errors:
+                    self.file_completed.emit(
+                        file_path, "failed", {"error": read_errors[bi]}
+                    )
                     results[file_path] = {
                         "file_path": file_path,
-                        "error": result["error"],
+                        "error": read_errors[bi],
                     }
                 else:
-                    self.file_completed.emit(file_path, "completed", result)
-                    results[file_path] = {
-                        "file_path": file_path,
-                        "result": result,
-                    }
-
-            try:
-                batch_results = self._service.batch_commit(
-                    self._preprocess_options,
-                    file_completed_callback=on_file_completed,
-                )
-
-                # 兜底：处理回调未覆盖的结果
-                for request_id, result in batch_results.items():
-                    if request_id in request_map:
-                        file_path = request_map[request_id]["path"]
-                        if file_path not in results:
-                            if isinstance(result, dict) and "error" in result:
-                                self.file_completed.emit(file_path, "failed", result)
-                                results[file_path] = {
-                                    "file_path": file_path,
-                                    "error": result["error"],
-                                }
-                            else:
-                                self.file_completed.emit(file_path, "completed", result)
-                                results[file_path] = {
-                                    "file_path": file_path,
-                                    "result": result,
-                                }
-
-            except Exception as e:
-                self.error.emit(str(e))
-                return
+                    # 取对应识别结果（valid_indices 顺序与 batch_results 一致）
+                    try:
+                        res = next(result_iter)
+                    except StopIteration:
+                        res = None
+                    if res is None:
+                        self.file_completed.emit(
+                            file_path, "failed", {"error": "识别失败"}
+                        )
+                        results[file_path] = {
+                            "file_path": file_path,
+                            "error": "识别失败",
+                        }
+                    else:
+                        self.file_completed.emit(file_path, "completed", res)
+                        results[file_path] = {
+                            "file_path": file_path,
+                            "result": res,
+                        }
+                completed += 1
+                self.progress.emit(completed, total, Path(file_path).name)
 
         self.progress.emit(total, total, "完成")
         self.finished.emit(results)
 
     def cancel(self):
-        """取消处理"""
+        """取消处理（协作式）。
+
+        设置 _cancelled 标志，run() 的批循环在下一个批边界检查并停止。
+        batch_cancel 仍调用以兼容 service 层（若底层有 batch_commit 路径仍可中断）；
+        对 recognize_batch 路径，当前批 predict 不可抢占，完成后即停止。
+        """
         self._cancelled = True
         with contextlib.suppress(Exception):
             self._service.batch_cancel()
