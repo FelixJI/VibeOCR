@@ -711,6 +711,14 @@ class PdfSessionManager(QObject):
         session.reset_ocr_stats()
         self._ocr_running = True
         self._ocr_cancelled = False
+        # 清掉可能残留的后端 cancel 标志：上一次取消（OCR/mutate）置位的
+        # cancel_event 若不清，会让本次 OCR 写层时后端 add_text_layer_batch
+        # 立即停在页边界（协作式取消语义）。reset_cancel 原本全代码库无调用点，
+        # 属遗漏。
+        try:
+            self._client.reset_cancel(session.session_id)
+        except Exception:
+            logger.debug("reset_cancel 失败（忽略）", exc_info=True)
         # 递增 task generation，使旧 runner 的迟到信号被 done 槽丢弃
         self._task_generation += 1
         current_task_id = self._task_generation
@@ -730,6 +738,7 @@ class PdfSessionManager(QObject):
             def __init__(self, mgr, sid, pages, opts, sdict, overwrite_, task_id):
                 super().__init__()
                 self._mgr = mgr
+                self._client = mgr._client
                 self._sid = sid
                 self._pages = pages
                 self._opts = opts
@@ -751,6 +760,13 @@ class PdfSessionManager(QObject):
 
             def cancel(self):
                 self._cancelled = True
+                # 通知后端协作式取消（对齐 PdfIpcMutateWorker.cancel 的成熟模式）：
+                # 后端 add_text_layer_batch 逐页检查 cancel_event，停在页边界，
+                # 让当前 HTTP 尽快返回，避免 runner 一直阻塞到整批写完。
+                try:
+                    self._client.cancel(self._sid)
+                except Exception:
+                    logger.debug("通知后端取消失败（忽略）", exc_info=True)
 
             def run(self):
                 try:

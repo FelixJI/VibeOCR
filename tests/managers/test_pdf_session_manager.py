@@ -392,6 +392,104 @@ class TestPdfTaskGeneration:
         assert mgr._task_generation == 1
         start_mock.assert_called_once_with()
 
+    def test_start_ocr_resets_cancel_flag(self, qapp):
+        """start_ocr 应在开始前 reset_cancel，清掉可能残留的后端 cancel 标志。
+
+        回归：reset_cancel 全代码库原本无调用点；一旦某次取消置位了
+        cancel_event，会污染后续 delete_text_layers 等协作式取消操作。
+        """
+        from unittest.mock import MagicMock, patch
+
+        from PySide6.QtCore import QThread
+
+        mgr = PdfSessionManager.__new__(PdfSessionManager)
+        mgr._task_generation = 0
+        mgr._sessions = {}
+        mgr._active_path = None
+        mgr._ocr_service = None
+        mgr._ocr_running = False
+        mgr._ocr_cancelled = False
+        mgr._ocr_worker = None
+        mgr._client = MagicMock()
+
+        mock_session = MagicMock()
+        mock_session.session_id = "sid1"
+        mock_session.reset_ocr_stats = MagicMock()
+        mgr._sessions["/fake.pdf"] = mock_session
+        mgr._active_path = "/fake.pdf"
+        mgr._ocr_service = MagicMock()
+        mgr._is_mineru_first_use = MagicMock(return_value=False)
+
+        with (
+            patch.object(mgr, "_cancel_ocr"),
+            patch.object(QThread, "start"),
+        ):
+            mgr.start_ocr([0])
+
+        # 关键断言：start_ocr 调用了 client.reset_cancel(sid)
+        mgr._client.reset_cancel.assert_called_once_with("sid1")
+
+
+class TestOcrRunnerCancel:
+    """OCR runner 取消应通知后端（协作式取消），不再只设本地 flag。"""
+
+    def test_cancel_notifies_backend(self, qapp):
+        """_OcrRunner.cancel() 应调用 client.cancel(sid)。
+
+        回归：旧 _OcrRunner.cancel() 只设本地 _cancelled bool，不通知后端；
+        后端 add_text_layer_batch 一直跑完，取消形同虚设。修复后对齐
+        PdfIpcMutateWorker.cancel() 的成熟模式。
+        """
+        from unittest.mock import MagicMock
+
+        from vibeocr.managers.pdf_session_manager import PdfSessionManager
+
+        # 复用 start_ocr 内定义的 _OcrRunner：它捕获 mgr 并持有 sid。
+        mgr = PdfSessionManager.__new__(PdfSessionManager)
+        mgr._RENDER_CONCURRENCY = 1
+        client = MagicMock()
+        sid = "sid_cancel"
+
+        # 通过 start_ocr 构造 runner，但阻止其真正 start。
+        mgr._task_generation = 0
+        mgr._sessions = {}
+        mgr._active_path = None
+        mgr._ocr_service = None
+        mgr._ocr_running = False
+        mgr._ocr_cancelled = False
+        mgr._ocr_worker = None
+        mgr._client = client
+        mgr._overwrite_text_layer = False
+        mgr._pdf_settings = None
+        mgr._path_for_session_id = MagicMock(return_value=None)
+
+        mock_session = MagicMock()
+        mock_session.session_id = sid
+        mock_session.reset_ocr_stats = MagicMock()
+        mgr._sessions["/fake.pdf"] = mock_session
+        mgr._active_path = "/fake.pdf"
+        mgr._ocr_service = MagicMock()
+        mgr._is_mineru_first_use = MagicMock(return_value=False)
+
+        from unittest.mock import patch
+
+        from PySide6.QtCore import QThread
+
+        with (
+            patch.object(mgr, "_cancel_ocr"),
+            patch.object(QThread, "start"),
+        ):
+            mgr.start_ocr([0])
+
+        runner = mgr._ocr_worker
+        assert runner is not None, "start_ocr 应创建 runner"
+
+        # 取消：应同时设 flag 并通知后端
+        runner.cancel()
+        assert runner._cancelled is True
+        client.cancel.assert_called_once_with(sid)
+
+
 
 class TestExportCancel:
     """export cancel 真正生效：逐文件检查 cancel flag，不继续后续文件。

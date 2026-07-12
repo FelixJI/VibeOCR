@@ -613,6 +613,7 @@ def add_text_layer_batch(
                 s.doc, s.pdf_document, pages_data,
                 pdf_settings=_settings_from_dict(req.pdf_settings),
                 overwrite=req.overwrite,
+                cancel_check=s.cancel_event.is_set,
             )
         written_pages = sorted(results.keys())
         return MutateResponse(diff=_diff_pages(

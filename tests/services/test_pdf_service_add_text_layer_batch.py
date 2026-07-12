@@ -159,3 +159,81 @@ class TestAddTextLayerBatchSharesSubsetFont:
         assert results[0] == (0, 1), "page 0 已有文字层应跳过"
         assert results[1][0] >= 1, "page 1 应写入"
         doc.close()
+
+
+@pytest.fixture
+def scan_pdf_3(tmp_path):
+    """三页扫描 PDF（每页一张图片，无文字层）。"""
+    import numpy as np
+
+    path = tmp_path / "scan3.pdf"
+    doc = fitz.open()
+    for _ in range(3):
+        page = doc.new_page(width=612, height=792)
+        img = np.ones((792, 612, 3), dtype=np.uint8) * 240
+        cs = fitz.Colorspace(fitz.CS_RGB)
+        pixmap = fitz.Pixmap(cs, 612, 792, img.tobytes(), 0)
+        page.insert_image(fitz.Rect(0, 0, 612, 792), pixmap=pixmap)
+    doc.save(str(path))
+    doc.close()
+    return path
+
+
+class TestAddTextLayerBatchCancel:
+    """批量写层应在 cancel_check 触发时停在页边界，已写页保留、后续页不写。"""
+
+    def test_cancel_stops_at_page_boundary(self, scan_pdf_3):
+        """cancel_check 在第 2 页返回 True：第 1 页已写入，第 2/3 页不写。"""
+        doc = fitz.open(str(scan_pdf_3))
+        pdf_doc = PdfDocument(file_path=str(scan_pdf_3))
+        pdf_doc.pages = [PdfPageInfo(page_index=i) for i in range(3)]
+
+        pages_data = [
+            {"page": 0, "ocr_result": _ocr_result_to_dict("甲")},
+            {"page": 1, "ocr_result": _ocr_result_to_dict("乙")},
+            {"page": 2, "ocr_result": _ocr_result_to_dict("丙")},
+        ]
+
+        # 取消开关：第 2 次调用（第 2 页）起返回 True
+        call_count = {"n": 0}
+
+        def cancel_check():
+            call_count["n"] += 1
+            return call_count["n"] >= 2
+
+        results = PdfService.add_text_layer_batch(
+            doc, pdf_doc, pages_data, cancel_check=cancel_check
+        )
+
+        # 第 1 页写入成功
+        assert 0 in results, "第 1 页应在取消前写入"
+        assert results[0][0] >= 1, "第 1 页应至少写入 1 块"
+        assert pdf_doc.pages[0].has_text_layer, "第 1 页 has_text_layer 应为 True"
+        # 第 2、3 页因取消未写：不在 results（或值为写入 0），has_text_layer 为 False
+        assert 1 not in results, "第 2 页不应写入（cancel）"
+        assert 2 not in results, "第 3 页不应写入（cancel）"
+        assert not pdf_doc.pages[1].has_text_layer, "第 2 页不应有文字层"
+        assert not pdf_doc.pages[2].has_text_layer, "第 3 页不应有文字层"
+        doc.close()
+
+    def test_no_cancel_writes_all_pages(self, scan_pdf_3):
+        """cancel_check 始终 False 时，三页全部写入（默认行为不变）。"""
+        doc = fitz.open(str(scan_pdf_3))
+        pdf_doc = PdfDocument(file_path=str(scan_pdf_3))
+        pdf_doc.pages = [PdfPageInfo(page_index=i) for i in range(3)]
+
+        pages_data = [
+            {"page": 0, "ocr_result": _ocr_result_to_dict("甲")},
+            {"page": 1, "ocr_result": _ocr_result_to_dict("乙")},
+            {"page": 2, "ocr_result": _ocr_result_to_dict("丙")},
+        ]
+
+        results = PdfService.add_text_layer_batch(
+            doc, pdf_doc, pages_data, cancel_check=lambda: False
+        )
+        assert set(results.keys()) == {0, 1, 2}
+        for idx in (0, 1, 2):
+            assert results[idx][0] >= 1
+            assert pdf_doc.pages[idx].has_text_layer
+        doc.close()
+

@@ -543,15 +543,19 @@ class OCRWorkerProcess:
                     f"[主进程] 请求已发送，等待 Worker {self.worker_id} 返回结果..."
                 )
 
-                # 等待 Worker 读取请求（等待 _is_data_ready 变为 False）
-                wait_start = time.time()
+                # 等待 Worker 消费请求（ready 转 False），再读响应。
+                # 不变量：单槽半双工协议下，Worker 未消费（ready 仍 True）时不能调
+                # read_message——那会读回主进程自己的 RECO 并清掉 ready，Worker
+                # 此后收不到识别请求而死锁（与 preload 同根因）。先轮询确认消费。
+                recognize_start = time.time()
                 while protocol._is_data_ready():
-                    if time.time() - wait_start > 5.0:
-                        logger.warning(f"Worker {self.worker_id} 未及时读取识别请求")
-                        break
+                    if time.time() - recognize_start >= timeout:
+                        raise OCRWorkerProcessError(
+                            f"Worker {self.worker_id} 识别超时：Worker 未及时读取请求"
+                        )
                     time.sleep(0.01)
 
-                # 等待结果
+                # 等待结果（此时 ready 已 False；下一次 ready=True 必是 Worker 响应）
                 msg_type, data = protocol.read_message(
                     timeout=timeout, expected_sender="worker"
                 )
@@ -649,17 +653,18 @@ class OCRWorkerProcess:
                     f"[主进程] 批量请求已发送，等待 Worker {self.worker_id} 返回结果..."
                 )
 
-                # 等待 Worker 读取请求（等待 _is_data_ready 变为 False）
-                wait_start = time.time()
+                # 等待 Worker 消费请求（ready 转 False），再读响应。
+                # 同 recognize()：单槽半双工协议下未消费时不能 read_message，
+                # 否则读回自己的批量请求并清 ready，Worker 收不到而死锁。
+                batch_start = time.time()
                 while protocol._is_data_ready():
-                    if time.time() - wait_start > 5.0:
-                        logger.warning(
-                            f"Worker {self.worker_id} 未及时读取批量识别请求"
+                    if time.time() - batch_start >= timeout:
+                        raise OCRWorkerProcessError(
+                            f"Worker {self.worker_id} 批量识别超时：Worker 未及时读取请求"
                         )
-                        break
                     time.sleep(0.01)
 
-                # 等待结果
+                # 等待结果（此时 ready 已 False；下一次 ready=True 必是 Worker 响应）
                 msg_type, data = protocol.read_message(
                     timeout=timeout, expected_sender="worker"
                 )
@@ -802,22 +807,21 @@ class OCRWorkerProcess:
                 MSG_PRELOAD, request_data, timeout=timeout, sender="main"
             )
 
-            # 等待 Worker 读取请求（等待 _is_data_ready 变为 False）
-            # 对齐 recognize() 的做法：确认 Worker 已消费请求，避免主进程
-            # 在 read_message 重试时读到自己刚写入的 PREL（曾导致死锁超时）
-            wait_start = time.time()
-            while protocol._is_data_ready():
-                if time.time() - wait_start > 5.0:
-                    logger.warning(
-                        f"Worker {self.worker_id} 未及时读取预加载请求"
-                    )
-                    break
-                time.sleep(0.01)
-
-            # 等待预加载结果
+            # 等待预加载结果。统一计时起点从“请求写入完成”算起，整体由 timeout 兜底。
             start_time = time.time()
             last_progress_time = start_time
             total_pipelines = len(pipelines)
+            # 关键不变量：单槽半双工协议下，_is_data_ready=True 可能是“我自己
+            # 写的 PREL 还没被 Worker 读走”，也可能是“Worker 写回的响应”——两者
+            # 无法靠 ready 标志区分。因此必须先观察到 ready 转 False（确认 Worker
+            # 已取走请求），此后 ready=True 才一定是 Worker 的响应。
+            # 在此之前绝不能调 read_message：那会把主进程自己的 PREL 读回并清掉
+            # ready，Worker 此后再也读不到请求 → 死锁超时（日志：读到自己的预加载
+            # 请求 → 反复等待响应 → 预加载超时）。
+            consumed = False
+            if not protocol._is_data_ready():
+                # Worker 已在 write_message 期间消费（极少见，但合法）
+                consumed = True
 
             while True:
                 remaining_timeout = timeout - (time.time() - start_time)
@@ -827,6 +831,27 @@ class OCRWorkerProcess:
                         "可能原因：首次使用需要下载模型\n"
                         "建议：请检查网络连接，稍后重试"
                     )
+
+                if not consumed:
+                    # Worker 还没消费请求：轮询等待 ready 转 False，绝不 read_message。
+                    if protocol._is_data_ready():
+                        if time.time() - last_progress_time >= 5.0:
+                            logger.warning(
+                                f"Worker {self.worker_id} 未及时读取预加载请求，"
+                                f"等待响应..."
+                            )
+                            if progress_callback:
+                                with contextlib.suppress(Exception):
+                                    progress_callback(
+                                        pipelines[0] if pipelines else "unknown",
+                                        0,
+                                        total_pipelines,
+                                    )
+                            last_progress_time = time.time()
+                        time.sleep(0.05)
+                        continue
+                    # ready 转 False：Worker 已消费请求
+                    consumed = True
 
                 try:
                     # 使用较短的单次读取超时，但整体受 remaining_timeout 控制

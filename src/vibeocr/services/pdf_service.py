@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 import shutil
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NamedTuple
 
@@ -577,6 +578,7 @@ class PdfService:
         pages_data: list[dict],
         pdf_settings: object | None = None,
         overwrite: bool = False,
+        cancel_check: Callable[[], bool] | None = None,
     ) -> dict[int, tuple[int, int]]:
         """批量写 OCR 文字层，一批页共享单一聚合子集字体。
 
@@ -591,6 +593,8 @@ class PdfService:
             pages_data: [{page, ocr_result}] 列表，ocr_result 为序列化 OCRResult dict。
             pdf_settings: PdfGlobalSettings 实例（None 则使用默认值）。
             overwrite: 同 add_text_layer，控制已有文字层页的跳过/重写。
+            cancel_check: 可选取消回调；在逐页写层循环每页开头调用，返回 True 时
+                立即停止写后续页（已写页保留）。供后端协作式取消使用。
 
         Returns:
             {page_index: (written, skipped)} 每页写入/跳过块数。
@@ -648,6 +652,11 @@ class PdfService:
         shared_font_path = _CJK_RESOLVER.resolve(all_chars) if all_chars else None
 
         for page_index, text_blocks, preproc_angle in to_write:
+            # 协作式取消：每页开头检查，已写页保留、停止写后续页
+            # （对齐 delete_text_layers 路由的 cancel_event 逐页检查语义）。
+            if cancel_check is not None and cancel_check():
+                logger.info("batch: 取消已请求，停止写后续页（已写页保留）")
+                break
             written, skipped = PdfService._write_blocks_to_page(
                 doc, page_index, text_blocks, preproc_angle, settings,
                 font_path=shared_font_path,

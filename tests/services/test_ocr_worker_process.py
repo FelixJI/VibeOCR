@@ -254,6 +254,91 @@ class TestOCRWorkerProcess:
         # 应在第 5 次命中时抛出
         assert worker._preload_self_read_count >= 5
 
+    def test_preload_does_not_read_own_message_when_worker_slow(self):
+        """回归死锁 bug：Worker 一直未消费 PREL 时，主进程不得 read_message
+        把自己的请求读回并清掉 ready 标志。
+
+        旧实现：5s 软轮询 guard 到期后 break，直接 read_message → 读到自己
+        刚写的 PREL（read-own-write）→ 清掉 ready → Worker 此后再也读不到
+        请求 → 死锁 → 最终"预加载超时"。修复后：guard 到期不再 fallthrough
+        去读自己的消息，而是交由响应读循环按整体 timeout 报超时；read_message
+        不应被用来消费主进程自己的 PREL。
+        """
+        from unittest.mock import MagicMock, patch
+
+        from vibeocr.services.ocr_worker_process import (
+            MSG_PRELOAD,
+            OCRWorkerProcessError,
+        )
+
+        worker = OCRWorkerProcess(worker_id=0, use_gpu=False)
+
+        mock_protocol = MagicMock()
+        # Worker 一直没消费：_is_data_ready 恒为 True
+        mock_protocol._is_data_ready.return_value = True
+        # read_message 始终返回主进程自己的 PREL（模拟旧 bug 的 read-own-write）
+        mock_protocol.read_message.return_value = (MSG_PRELOAD, b"\x00")
+        worker.protocol = mock_protocol
+
+        # 用极短 timeout 让"未消费"尽快失败，避免测试等 5s guard
+        with (
+            patch.object(type(worker), "is_ready", new=True),
+            patch.object(type(worker), "is_running", new=True),
+            patch.object(
+                type(worker),
+                "_calculate_preload_timeout",
+                return_value=0.1,
+            ),
+        ):
+            # 整体 timeout 兜底：应抛"预加载超时"，而不是读到自身请求后抛
+            # "多次读到自身请求"或继续死等。
+            with pytest.raises(OCRWorkerProcessError, match="预加载超时"):
+                worker.preload_pipelines(["OCR"])
+
+        # 关键断言：主进程不得用 read_message 消费自己刚写的 PREL（那会清掉
+        # ready 标志制造死锁）。Worker 未消费时，read_message 不应被调用。
+        assert not mock_protocol.read_message.called, (
+            "Worker 未消费请求时，主进程不得 read_message（会读回自己的 PREL 并清掉 "
+            "ready 标志，导致 Worker 永远收不到请求而死锁）"
+        )
+
+    def test_recognize_does_not_read_own_message_when_worker_slow(self):
+        """同源回归：recognize() 的 5s 软 guard 到期后，Worker 未消费时也不得
+        read_message 读回自己的 RECO 请求（同样的单槽 read-own-write 死锁）。
+
+        旧实现：guard 到期 break 后直接 read_message → 读到自己的 RECO → 清掉
+        ready → Worker 收不到识别请求。修复后：Worker 未消费（_is_data_ready
+        仍 True）时，read_message 不应被调用，交由整体 timeout 兜底。
+        """
+        from unittest.mock import MagicMock, patch
+
+        from vibeocr.services.ocr_worker_process import (
+            MSG_RECOGNIZE,
+            OCRWorkerProcessError,
+        )
+
+        worker = OCRWorkerProcess(worker_id=0, use_gpu=False)
+
+        mock_protocol = MagicMock()
+        # Worker 一直没消费请求
+        mock_protocol._is_data_ready.return_value = True
+        # read_message 若被错误调用，会返回主进程自己的 RECO
+        mock_protocol.read_message.return_value = (MSG_RECOGNIZE, b"\x00")
+        worker.protocol = mock_protocol
+
+        with (
+            patch.object(type(worker), "is_ready", new=True),
+            patch.object(type(worker), "is_running", new=True),
+        ):
+            # 极短 timeout，让 read_message 内部等待尽快抛"读取超时"并兜底
+            with pytest.raises(OCRWorkerProcessError):
+                worker.recognize(b"\x00", {}, timeout=0.1)
+
+        # Worker 未消费时，主进程不得 read_message 消费自己的 RECO
+        assert not mock_protocol.read_message.called, (
+            "Worker 未消费识别请求时，主进程不得 read_message（同 preload 死锁根因）"
+        )
+
 
 @pytest.mark.skipif(
     not HAS_SUBPROCESS_MODULES, reason="subprocess modules not available"
