@@ -825,18 +825,18 @@ class PdfService:
 
             # 逆旋转(OCR 预处理) + 归一化到『显示空间』坐标，
             # 再补偿页面 /Rotate 转到 mediabox（写入）空间。
-            rect = PdfService._denormalize_and_unrotate_bbox(
+            disp_rect = PdfService._denormalize_and_unrotate_bbox(
                 bbox, preproc_angle, page_rect
             )
-            rect = _to_mediabox(rect)
+            rect = _to_mediabox(disp_rect)
             # 仅当矩形退化（宽或高 ≤ 0）才整体跳过；
             # 矮行/窄框不丢弃：字号由 min_font_size 兜底，再交给下方
             # insert_textbox 重试 + insert_text 兜底，保证文字进入文字层。
-            if rect.is_empty or rect.width <= 0 or rect.height <= 0:
+            if disp_rect.is_empty or disp_rect.width <= 0 or disp_rect.height <= 0:
                 logger.warning(
                     "page %d block skipped (rect empty): rect=%s text=%r",
                     page_index,
-                    rect,
+                    disp_rect,
                     block.text[:30],
                 )
                 skipped += 1
@@ -856,18 +856,31 @@ class PdfService:
             # 窄/高块（width < height，竖排文字误检）：同样走 insert_textbox 自动换行。
             text = block.text
             render_mode = 0 if settings.text_layer_visible else 3
-            horizontal_page = page_rotation in (0, 180)
-            use_insert_text = horizontal_page and rect.width >= rect.height
+            # insert_text 主路径覆盖 page_rotation ∈ {0, 90}（扫描件最常见的两种：
+            # 竖向页与横向页）。180/270 几何（上下/左右翻转）基线放置复杂，仍用
+            # insert_textbox 矩形约束排版。窄/高块（竖排文字误检，display 宽<高）
+            # 也走 insert_textbox 自动换行。
+            use_insert_text = (
+                page_rotation in (0, 90)
+                and disp_rect.width >= disp_rect.height
+            )
 
             if use_insert_text:
-                # 主路径：insert_text 匹配 ink 高度
-                fontsize = max(rect.height / _INK_RATIO, settings.min_font_size)
-                # 基线：ink 顶部 = rect.y0，故 baseline_y = rect.y0 + 上伸量
-                baseline_y = rect.y0 + _ASCENT_RATIO * fontsize
-                # 180° 旋转：上下翻转，基线从底部起向上
-                if page_rotation == 180:
-                    baseline_y = rect.y1 - _DESCENT_RATIO * fontsize
-                baseline = fitz.Point(rect.x0, baseline_y)
+                # 在『显示空间』算基线（ink 顶部 = disp_rect.y0）：
+                #   baseline_disp = (disp_rect.x0, disp_rect.y0 + ASCENT×fs)
+                # 再经 derotation_matrix + cropbox 平移到 mediabox 写入空间。
+                fontsize = max(disp_rect.height / _INK_RATIO, settings.min_font_size)
+                baseline_disp_x = disp_rect.x0
+                baseline_disp_y = disp_rect.y0 + _ASCENT_RATIO * fontsize
+                # 经 _to_mediabox 同款变换（derotate + cropbox 平移）到 mediabox
+                dpt = _to_mediabox(
+                    fitz.Rect(
+                        baseline_disp_x, baseline_disp_y,
+                        baseline_disp_x, baseline_disp_y,
+                    )
+                )
+                baseline = fitz.Point(dpt.x0, dpt.y0)
+                text_rotate = 90 if page_rotation in (90, 270) else 0
                 try:
                     page.insert_text(
                         baseline,
@@ -877,7 +890,7 @@ class PdfService:
                         fontfile=font_path,
                         color=(0, 0, 0),
                         render_mode=render_mode,
-                        rotate=0,
+                        rotate=text_rotate,
                     )
                     written += 1
                     continue

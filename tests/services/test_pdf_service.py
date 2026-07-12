@@ -1133,6 +1133,56 @@ class TestPdfServiceTextLayerPlacement:
             )
         doc.close()
 
+    def test_rotated_page_90_ink_matches_bbox(self, tmp_path):
+        """rotation=90 横向页：文字层 ink 高度 ≈ bbox 高度（不再被压到 ~16%）。
+
+        Bug：rotation=90 时 mediabox 矩形宽高互换（300pt 宽 display → 30pt 宽
+        mediabox），insert_textbox 宽度约束把字号压到 min_font_size，ink 高度
+        只有 bbox 的 ~16%（『区域太小』）。修复：rotation=90 也走 insert_text
+        主路径，display 基线经 derotation_matrix 转 mediabox，ink 匹配 bbox。
+        """
+        import numpy as np
+
+        from vibeocr.models.ocr_result import OCRResult, TextBlock
+        from vibeocr.models.pdf_document import PdfDocument
+        from vibeocr.models.pdf_ocr_options import PdfGlobalSettings
+
+        doc = fitz.open()
+        page = doc.new_page(width=595.2, height=841.68)
+        page.set_rotation(90)
+        pr = page.rect
+        # 显示空间水平行 x=100-400, y=100-130（30pt 高）
+        nbbox = (
+            100 / pr.width * 1000, 100 / pr.height * 1000,
+            400 / pr.width * 1000, 130 / pr.height * 1000,
+        )
+        block = TextBlock(text="测试文字示例", score=0.99, bbox=nbbox)
+        result = OCRResult(text_blocks=[block], preproc_angle=0)
+        settings = PdfGlobalSettings(text_layer_visible=True)
+        pdf_doc = PdfDocument(file_path="x.pdf")
+        PdfService.build_page_infos(doc, pdf_doc)
+        PdfService.add_text_layer(doc, pdf_doc, 0, result, pdf_settings=settings)
+
+        # 渲染测量 ink（显示空间 = 渲染图）
+        pix = doc[0].get_pixmap(matrix=fitz.Matrix(4, 4))
+        img = np.frombuffer(pix.samples, dtype=np.uint8).reshape(
+            pix.height, pix.width, pix.n
+        )
+        ink = img[:, :, 0] < 128
+        ys, xs = np.where(ink)
+        assert len(ys) > 0, "rotation=90 应写入可见文字"
+        ink_h = (ys.max() - ys.min()) / 4
+        ink_top = ys.min() / 4
+        # ink 高度 ≈ bbox 高度 30pt（±15%），旧 bug 此 ratio ≈ 0.16
+        assert 0.85 <= ink_h / 30 <= 1.15, (
+            f"rotation=90 ink 高度 {ink_h:.1f} 应 ≈ bbox 高度 30"
+            f"（ratio={ink_h/30:.2f}，旧 bug ~0.16=区域太小）"
+        )
+        assert abs(ink_top - 100) < 3, (
+            f"rotation=90 ink 顶部 {ink_top:.1f} 应 ≈ bbox 顶部 100"
+        )
+        doc.close()
+
 
 class TestPdfServiceOcrBlocksCache:
     """OCR 原始块缓存（ocr_text_blocks）—— 预览/编辑/重写的唯一信源。
