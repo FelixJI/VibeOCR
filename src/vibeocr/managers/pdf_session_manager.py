@@ -154,7 +154,9 @@ class PdfSessionManager(QObject):
         try:
             self._client.start()
             open_resp = self._client.open_session(file_path)
-            session = self._make_session(file_path, open_resp.session_id, open_resp.model)
+            session = self._make_session(
+                file_path, open_resp.session_id, open_resp.model
+            )
             # 流式 load 逐页填充(同步,小文件可接受)
             for ev in self._client.load_stream(open_resp.session_id):
                 if ev.page_index is not None and ev.page_payload is not None:
@@ -210,17 +212,21 @@ class PdfSessionManager(QObject):
         由后续 page_loaded 信号流式更新。
         """
         pdf_doc = mirror_to_doc(full_model)
-        return PdfSession(file_path=file_path, session_id=session_id, pdf_document=pdf_doc)
+        return PdfSession(
+            file_path=file_path, session_id=session_id, pdf_document=pdf_doc
+        )
 
     def _apply_page_loaded(
         self, session: PdfSession, page_index: int, page_mirror: object
     ) -> None:
         """把单页 load 结果 apply 到 session model(就地更新该页 PageInfo)。"""
         from vibeocr.ipc.model_bridge import page_mirror_to_info
+
         if not isinstance(page_mirror, dict):
             return
         # page_mirror 是 dict(ProgressEvent.page_payload,model_dump(mode="json"))
         from vibeocr.ipc.schemas import PdfPageInfoMirror
+
         mirror = PdfPageInfoMirror.model_validate(page_mirror)
         if 0 <= page_index < len(session.pdf_document.pages):
             session.pdf_document.pages[page_index] = page_mirror_to_info(mirror)
@@ -333,6 +339,7 @@ class PdfSessionManager(QObject):
         try:
             resp = self._client.detect_text_layers(session.session_id, page_index)
             from vibeocr.ipc.model_bridge import _text_layer_mirror_to_info
+
             infos = [_text_layer_mirror_to_info(m) for m in resp.text_layers]
             # 同步更新本地 mirror
             if 0 <= page_index < len(session.pdf_document.pages):
@@ -354,9 +361,7 @@ class PdfSessionManager(QObject):
         # 递增 task generation，使旧 runner 的迟到信号被 done 槽丢弃
         self._task_generation += 1
         current_task_id = self._task_generation
-        worker = PdfIpcMutateWorker(
-            self._client, session.session_id, op, params
-        )
+        worker = PdfIpcMutateWorker(self._client, session.session_id, op, params)
         worker._task_id = current_task_id  # type: ignore[attr-defined]
         worker.progress.connect(self._on_mutate_progress)
         worker.page_done.connect(self._on_mutate_page_done)
@@ -372,9 +377,7 @@ class PdfSessionManager(QObject):
             w.wait(5000)
             self._mutate_worker = None
 
-    def save_async(
-        self, path: str | None = None, pdf_settings=None
-    ) -> None:
+    def save_async(self, path: str | None = None, pdf_settings=None) -> None:
         """异步保存。pdf_settings 转 dict 传后端。"""
         settings_dict = self._settings_to_dict(pdf_settings)
         self._start_mutate("save", {"path": path, "pdf_settings": settings_dict})
@@ -388,14 +391,23 @@ class PdfSessionManager(QObject):
     def delete_pages_async(self, page_indices: list[int]) -> None:
         self._start_mutate("delete_pages", {"pages": page_indices})
 
-    def insert_blank_async(self, after_index: int, width: float = 612.0, height: float = 792.0) -> None:
-        self._start_mutate("insert_blank", {"after_index": after_index, "width": width, "height": height})
+    def insert_blank_async(
+        self, after_index: int, width: float = 612.0, height: float = 792.0
+    ) -> None:
+        self._start_mutate(
+            "insert_blank",
+            {"after_index": after_index, "width": width, "height": height},
+        )
 
     def insert_from_async(self, source_path: str, after_index: int) -> None:
-        self._start_mutate("insert_from", {"source_path": source_path, "after_index": after_index})
+        self._start_mutate(
+            "insert_from", {"source_path": source_path, "after_index": after_index}
+        )
 
     def move_page_async(self, from_index: int, to_index: int) -> None:
-        self._start_mutate("move_page", {"from_index": from_index, "to_index": to_index})
+        self._start_mutate(
+            "move_page", {"from_index": from_index, "to_index": to_index}
+        )
 
     def reorder_async(self, new_order: list[int]) -> None:
         self._start_mutate("reorder", {"new_order": new_order})
@@ -430,6 +442,7 @@ class PdfSessionManager(QObject):
                 self._cancelled = False
                 # 复用渲染线程池（与 _OcrRunner 同理：跨批复用 httpx 连接）。
                 from concurrent.futures import ThreadPoolExecutor
+
                 self._render_pool = ThreadPoolExecutor(
                     max_workers=mgr._RENDER_CONCURRENCY,
                     thread_name_prefix="deskew-render",
@@ -508,7 +521,7 @@ class PdfSessionManager(QObject):
         for batch_start in range(0, total, batch_size):
             if runner._cancelled:
                 break
-            batch_pages = page_indices[batch_start:batch_start + batch_size]
+            batch_pages = page_indices[batch_start : batch_start + batch_size]
 
             # 阶段1：并发渲染（复用 runner 线程池，结果按 batch_pages 顺序对齐）
             images: list[bytes | None] = [None] * len(batch_pages)
@@ -532,7 +545,9 @@ class PdfSessionManager(QObject):
                     for vi, res in zip(valid_indices, batch_results):
                         angles_map[vi] = int(getattr(res, "preproc_angle", 0) or 0)
                 except Exception as e:
-                    logger.error("摆正批量方向检测失败(批起始页 %d): %s", batch_pages[0], e)
+                    logger.error(
+                        "摆正批量方向检测失败(批起始页 %d): %s", batch_pages[0], e
+                    )
                     for vi in valid_indices:
                         page_failed[vi] = True
             progress += len(valid_indices)  # 识别子步
@@ -561,17 +576,23 @@ class PdfSessionManager(QObject):
 
         runner.all_done.emit(
             session_id,
-            {"corrected": len(self._deskew_corrected),
-             "skipped": total - len(self._deskew_corrected),
-             "corrected_pages": list(self._deskew_corrected)},
+            {
+                "corrected": len(self._deskew_corrected),
+                "skipped": total - len(self._deskew_corrected),
+                "corrected_pages": list(self._deskew_corrected),
+            },
         )
 
-    def _on_deskew_progress_signal(self, session_id: str, current: int, total: int) -> None:
+    def _on_deskew_progress_signal(
+        self, session_id: str, current: int, total: int
+    ) -> None:
         file_path = self._path_for_session_id(session_id)
         if file_path:
             self.deskew_progress.emit(file_path, current, total)
 
-    def _on_deskew_page_done_signal(self, session_id: str, page_index: int, was_corrected: bool) -> None:
+    def _on_deskew_page_done_signal(
+        self, session_id: str, page_index: int, was_corrected: bool
+    ) -> None:
         file_path = self._path_for_session_id(session_id)
         if file_path:
             self.deskew_page_done.emit(file_path, page_index, was_corrected)
@@ -616,7 +637,9 @@ class PdfSessionManager(QObject):
         if file_path:
             self.mutate_progress.emit(file_path, current, total)
 
-    def _on_mutate_page_done(self, session_id: str, page_index: int, payload: object) -> None:
+    def _on_mutate_page_done(
+        self, session_id: str, page_index: int, payload: object
+    ) -> None:
         file_path = self._path_for_session_id(session_id)
         if file_path:
             self.mutate_done.emit(file_path, {"page": page_index, "payload": payload})
@@ -753,6 +776,7 @@ class PdfSessionManager(QObject):
                 # Client（每线程 1 个 Client，4 线程跨 N 批始终命中同一组连接
                 # 池），避免每批 16 页都重建线程池 + 新建 TCP 连接。
                 from concurrent.futures import ThreadPoolExecutor
+
                 self._render_pool = ThreadPoolExecutor(
                     max_workers=mgr._RENDER_CONCURRENCY,
                     thread_name_prefix="ocr-render",
@@ -770,20 +794,43 @@ class PdfSessionManager(QObject):
 
             def run(self):
                 try:
-                    self._mgr._run_ocr(self, self._sid, self._pages, self._opts,
-                                       self._sdict, self._overwrite)
+                    self._mgr._run_ocr(
+                        self,
+                        self._sid,
+                        self._pages,
+                        self._opts,
+                        self._sdict,
+                        self._overwrite,
+                    )
+                except Exception as e:
+                    # _run_ocr 末尾已对已知失败点做了 try/except，但末尾的
+                    # get_model/mirror_to_doc 块在大文件场景仍可能抛非
+                    # PdfBackendError（pydantic.ValidationError / MemoryError /
+                    # httpx 传输错误）。此前此处无 except，异常逃逸 → QThread
+                    # 静默死亡 → all_done/failed 都不发 → UI 永久卡在「OCR 进行中」。
+                    # 与 _DeskewRunner.run() 对齐：捕获后发 failed，让槽重置 UI。
+                    logger.exception("_run_ocr 未捕获异常，发 failed 信号: %s", e)
+                    self.failed.emit(self._sid, str(e))
                 finally:
                     # runner 退出即关闭线程池，释放 4 个工作线程及其 httpx Client。
                     self._render_pool.shutdown(wait=True)
 
         self._ocr_worker = _OcrRunner(
-            self, session.session_id, page_indices, ocr_options_ref,
-            settings_dict, overwrite, current_task_id,
+            self,
+            session.session_id,
+            page_indices,
+            ocr_options_ref,
+            settings_dict,
+            overwrite,
+            current_task_id,
         )
         self._ocr_worker.page_done.connect(self._on_ocr_page_done_signal)
         self._ocr_worker.progress.connect(self._on_ocr_progress_signal)
         self._ocr_worker.all_done.connect(self._on_ocr_all_done_signal)
-        self._ocr_worker.failed.connect(lambda sid, e: logger.error("OCR 失败: %s", e))
+        # failed 信号此前只记日志，不清状态/不发 ocr_done，UI 永久卡死。
+        # 改连 _on_ocr_failed_signal：重置 _ocr_running/_ocr_worker 并发 ocr_done
+        # 让 PdfTab._on_ocr_finished 复位 UI（隐进度条、启用按钮）。
+        self._ocr_worker.failed.connect(self._on_ocr_failed_signal)
         self._ocr_worker.start()
 
     # 三层批关系（性能2）：
@@ -807,8 +854,15 @@ class PdfSessionManager(QObject):
     # 也让进度模型统一（每页 渲染/识别/旋转 3 子步）。
     _DESKEW_DPI = 150
 
-    def _run_ocr(self, runner, session_id: str, pages: list[int],
-                 ocr_options, settings_dict: dict, overwrite: bool) -> None:
+    def _run_ocr(
+        self,
+        runner,
+        session_id: str,
+        pages: list[int],
+        ocr_options,
+        settings_dict: dict,
+        overwrite: bool,
+    ) -> None:
         """在 OCR runner 线程内:分批 [并发渲染 → 批量 OCR → 逐页写文字层]。
 
         - 渲染:线程池并发调 render_preview(后端 fitz_lock 串行化栅格化，
@@ -855,7 +909,7 @@ class PdfSessionManager(QObject):
         for batch_start in range(0, total, batch_size):
             if runner._cancelled:
                 break
-            batch_pages = pages[batch_start:batch_start + batch_size]
+            batch_pages = pages[batch_start : batch_start + batch_size]
 
             # 阶段1：并发渲染(线程池，结果按 batch_pages 顺序对齐)
             images: list[bytes | None] = [None] * len(batch_pages)
@@ -901,12 +955,14 @@ class PdfSessionManager(QObject):
                     continue
                 result = results_map.get(i)
                 if result is not None and result.text_blocks:
-                    write_items.append({
-                        "page": idx,
-                        "ocr_result": self._ocr_result_to_dict(result),
-                        "_result": result,
-                        "_list_idx": i,
-                    })
+                    write_items.append(
+                        {
+                            "page": idx,
+                            "ocr_result": self._ocr_result_to_dict(result),
+                            "_result": result,
+                            "_list_idx": i,
+                        }
+                    )
 
             write_page_results: dict[int, bool] = {}  # page -> ok
             if write_items and not runner._cancelled:
@@ -938,11 +994,19 @@ class PdfSessionManager(QObject):
                     _emit_progress()
                     continue
                 result = results_map.get(i)
-                if result is not None and result.text_blocks and write_page_results.get(idx, False):
+                if (
+                    result is not None
+                    and result.text_blocks
+                    and write_page_results.get(idx, False)
+                ):
                     session.add_ocr_stats(len(result.text_blocks), 0)
                     success += 1
                     runner.page_done.emit(session_id, idx, result)
-                elif result is not None and result.text_blocks and not write_page_results.get(idx, False):
+                elif (
+                    result is not None
+                    and result.text_blocks
+                    and not write_page_results.get(idx, False)
+                ):
                     # 有结果但写层失败
                     fail += 1
                     runner.page_done.emit(session_id, idx, None)
@@ -955,19 +1019,29 @@ class PdfSessionManager(QObject):
                 _emit_progress()
 
         # 刷新 model(OCR 改变了 has_text_layer + ocr_text_blocks)
+        # 大文件场景此步是内存峰值：get_model 返回全文档 mirror（含所有页的
+        # ocr_text_blocks），mirror_to_doc 全量重建 PdfPageInfo + TextBlock。
+        # 可能抛非 PdfBackendError（pydantic.ValidationError / MemoryError /
+        # httpx 传输错误）。此前只捕获 PdfBackendError，其余异常逃逸到
+        # _OcrRunner.run()，线程静默死亡导致 UI 卡死。放宽到 Exception 确保
+        # all_done 始终发出（UI 得以复位），刷新失败仅记日志（OCR 结果已写层）。
         try:
             full = self._client.get_model(session_id)
             session.pdf_document = mirror_to_doc(full)
-        except PdfBackendError as e:
+        except Exception as e:
             logger.error("OCR 后刷新 model 失败: %s", e)
         runner.all_done.emit(session_id, success, fail, runner._task_id)
 
-    def _on_ocr_page_done_signal(self, session_id: str, page_index: int, result: object) -> None:
+    def _on_ocr_page_done_signal(
+        self, session_id: str, page_index: int, result: object
+    ) -> None:
         file_path = self._path_for_session_id(session_id)
         if file_path:
             self.ocr_page_done.emit(file_path, page_index, result)
 
-    def _on_ocr_progress_signal(self, session_id: str, current: int, total: int) -> None:
+    def _on_ocr_progress_signal(
+        self, session_id: str, current: int, total: int
+    ) -> None:
         file_path = self._path_for_session_id(session_id)
         if file_path:
             self.ocr_progress.emit(file_path, current, total)
@@ -989,6 +1063,24 @@ class PdfSessionManager(QObject):
             stats = session.ocr_stats
             self.ocr_stats_ready.emit(file_path, stats["written"], stats["skipped"])
             self.ocr_done.emit(file_path, success, fail)
+
+    def _on_ocr_failed_signal(self, session_id: str, error: str) -> None:
+        """OCR runner 未捕获异常时调用：重置内部状态并通知 UI 复位。
+
+        此前 failed 信号只连了一个记日志的 lambda，_ocr_running / _ocr_worker
+        不清、ocr_done 不发，UI 永久卡在「OCR 进行中」（进度条不隐、按钮禁用）。
+        这里复用 _on_ocr_all_done_signal 的清理逻辑，并以 (0, total) 失败计数
+        发 ocr_done，让 PdfTab._on_ocr_finished 隐藏进度条、启用按钮。
+        total 取当前会话页数（无会话时退化为 0）。
+        """
+        logger.error("OCR runner 失败: %s", error)
+        self._ocr_running = False
+        self._ocr_worker = None
+        file_path = self._path_for_session_id(session_id)
+        if file_path:
+            session = self._sessions.get(file_path)
+            total = len(session.pdf_document.pages) if session else 0
+            self.ocr_done.emit(file_path, 0, total)
 
     def cancel_ocr(self) -> None:
         self._cancel_ocr()
@@ -1033,10 +1125,12 @@ class PdfSessionManager(QObject):
             return False
         try:
             from vibeocr.core.pipelines import OCRPipeline
+
             if ocr_options.pipeline != OCRPipeline.DOCUMENT_PARSING:
                 return False
             from vibeocr.env_manager import get_project_root
             from vibeocr.pipeline_status import is_pipeline_ever_succeeded
+
             return not is_pipeline_ever_succeeded("MinerU", get_project_root())
         except Exception:
             return False
@@ -1050,8 +1144,12 @@ class PdfSessionManager(QObject):
             self.mineru_models_status.emit(f"[{stage}] {message}")
             QApplication.processEvents()
 
-        self.mineru_models_status.emit("首次使用文档解析，正在下载 MinerU 模型（约数 GB）...")
-        ok, msg = ensure_mineru_models(get_project_root(), progress_callback=on_progress)
+        self.mineru_models_status.emit(
+            "首次使用文档解析，正在下载 MinerU 模型（约数 GB）..."
+        )
+        ok, msg = ensure_mineru_models(
+            get_project_root(), progress_callback=on_progress
+        )
         if ok:
             self.mineru_models_status.emit("MinerU 模型准备就绪")
             return True
@@ -1061,9 +1159,7 @@ class PdfSessionManager(QObject):
 
     # ---- 批量导出 -------------------------------------------------------
 
-    def export_all_modified(
-        self, output_dir: str, cancel_check=None
-    ) -> list[str]:
+    def export_all_modified(self, output_dir: str, cancel_check=None) -> list[str]:
         """同步批量导出所有 modified session(走 IPC save 到目标路径)。
 
         Args:
@@ -1199,6 +1295,7 @@ class PdfSessionManager(QObject):
         except Exception:
             pass
         from vibeocr.utils.cjk_font_resolver import _CJK_RESOLVER
+
         _CJK_RESOLVER.cleanup()
 
 

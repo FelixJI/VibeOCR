@@ -47,8 +47,10 @@ def test_pdf_b(tmp_path):
 def _wait_signal(qapp, signal, timeout=15.0):
     """等待信号触发,期间处理事件循环。返回是否触发。"""
     fired = [False]
+
     def _on():
         fired[0] = True
+
     signal.connect(_on)
     deadline = time.monotonic() + timeout
     try:
@@ -61,6 +63,7 @@ def _wait_signal(qapp, signal, timeout=15.0):
 
 
 # ---- session 生命周期 --------------------------------------------------
+
 
 class TestPdfSessionManagerSessions:
     def test_open_session(self, manager, test_pdf_a, qapp):
@@ -120,6 +123,7 @@ class TestPdfSessionManagerSessions:
 
 
 # ---- 异步批量打开 ------------------------------------------------------
+
 
 class TestOpenAsync:
     def test_open_sessions_async_emits_session_added(self, manager, test_pdf_a, qapp):
@@ -222,6 +226,7 @@ class TestPdfSessionManagerInsert:
 
 # ---- 缩略图失效信号 ----------------------------------------------------
 
+
 class TestRerenderThumbnailsAsync:
     def test_emits_thumbnails_invalidated(self, manager, test_pdf_a, qapp):
         manager.open_session(str(test_pdf_a))
@@ -241,6 +246,7 @@ class TestRerenderThumbnailsAsync:
 
 # ---- 文字层状态 --------------------------------------------------------
 
+
 class TestPagesWithoutTextLayer:
     def test_returns_empty_for_unknown_session(self, manager):
         assert manager.get_pages_without_text_layer("nonexistent") == []
@@ -254,6 +260,7 @@ class TestPdfSessionManagerBlockEdit:
 
 # ---- shutdown ----------------------------------------------------------
 
+
 class TestPdfSessionManagerShutdown:
     def test_shutdown_clears_sessions(self, manager, test_pdf_a, qapp):
         manager.open_session(str(test_pdf_a))
@@ -263,6 +270,7 @@ class TestPdfSessionManagerShutdown:
 
 
 # ---- 属性 ---------------------------------------------------------------
+
 
 class TestPdfSessionManagerProperties:
     def test_is_ocr_ready_default_false(self, manager):
@@ -283,6 +291,7 @@ class TestPdfSessionManagerProperties:
 
 
 # ---- task generation ---------------------------------------------------
+
 
 class TestPdfTaskGeneration:
     """PDF runner task generation：旧任务的迟到信号不污染新任务状态。
@@ -430,6 +439,66 @@ class TestPdfTaskGeneration:
         mgr._client.reset_cancel.assert_called_once_with("sid1")
 
 
+class TestOcrRunnerFailure:
+    """OCR runner 未捕获异常时：failed 信号应重置状态并通知 UI 复位。
+
+    根因：_OcrRunner.run() 此前无 except，_run_ocr 末尾 get_model 块只捕获
+    PdfBackendError；大文件场景抛非 PdfBackendError（ValidationError/MemoryError）
+    时线程静默死亡，all_done/failed 都不发，UI 永久卡在「OCR 进行中」。
+    修复后 run() 补 except 发 failed，_on_ocr_failed_signal 重置状态并发 ocr_done。
+    """
+
+    def test_failed_signal_resets_state_and_emits_ocr_done(self, qapp):
+        """_on_ocr_failed_signal 应清 _ocr_running/_ocr_worker 并发 ocr_done。"""
+        from unittest.mock import MagicMock
+
+        mgr = PdfSessionManager.__new__(PdfSessionManager)
+        mgr._ocr_running = True
+        mgr._ocr_worker = MagicMock()
+        mgr._task_generation = 1
+
+        # 构造一个有 5 页的 session
+        mock_session = MagicMock()
+        mock_pages = [MagicMock() for _ in range(5)]
+        mock_session.pdf_document.pages = mock_pages
+        mgr._sessions = {"/fake.pdf": mock_session}
+        mgr._path_for_session_id = MagicMock(return_value="/fake.pdf")
+
+        captured = []
+        mgr.ocr_done = MagicMock()
+        mgr.ocr_done.emit = lambda *a: captured.append(a)
+
+        mgr._on_ocr_failed_signal("session_1", "boom")
+
+        assert mgr._ocr_running is False
+        assert mgr._ocr_worker is None
+        # ocr_done 以 (0, total) 发出，让 UI 复位
+        assert len(captured) == 1
+        path, success, fail = captured[0]
+        assert path == "/fake.pdf"
+        assert success == 0
+        assert fail == 5
+
+    def test_failed_signal_no_session_still_resets(self, qapp):
+        """无匹配 session 时仍重置 _ocr_running/_ocr_worker（不崩）。"""
+        from unittest.mock import MagicMock
+
+        mgr = PdfSessionManager.__new__(PdfSessionManager)
+        mgr._ocr_running = True
+        mgr._ocr_worker = MagicMock()
+        mgr._sessions = {}
+        mgr._path_for_session_id = MagicMock(return_value=None)
+        mgr.ocr_done = MagicMock()
+
+        # 不应抛异常
+        mgr._on_ocr_failed_signal("unknown_session", "error")
+
+        assert mgr._ocr_running is False
+        assert mgr._ocr_worker is None
+        # 无匹配 session 时不发 ocr_done（无 file_path）
+        mgr.ocr_done.emit.assert_not_called()
+
+
 class TestOcrRunnerCancel:
     """OCR runner 取消应通知后端（协作式取消），不再只设本地 flag。"""
 
@@ -490,7 +559,6 @@ class TestOcrRunnerCancel:
         client.cancel.assert_called_once_with(sid)
 
 
-
 class TestExportCancel:
     """export cancel 真正生效：逐文件检查 cancel flag，不继续后续文件。
 
@@ -519,6 +587,7 @@ class TestExportCancel:
 
         # cancel_check 第一次返回 False（处理第一个），之后返回 True
         call_count = [0]
+
         def cancel_check():
             call_count[0] += 1
             return call_count[0] > 1

@@ -836,6 +836,7 @@ class UpdateService:
 
     def _make_progress_cb(self) -> Callable[[int, int], None]:
         """构造下载进度回调：写入状态栏纯文本（替代 DownloadProgressDialog）。"""
+
         def progress_cb(downloaded: int, total: int) -> None:
             self._status(self._fmt_progress(downloaded, total), 0)
 
@@ -843,11 +844,10 @@ class UpdateService:
 
     def _make_source_switch_cb(self) -> Callable[[str, str], None]:
         """构造换源回调：状态栏显示「X 失败，切换备用源…」。"""
+
         def on_source_switch(source_name: str, reason: str) -> None:
             hint = _DOWNLOAD_REASON_HINTS.get(reason, "失败")
-            self._status(
-                f"正在下载更新…（{source_name} {hint}，正在切换备用源…）", 0
-            )
+            self._status(f"正在下载更新…（{source_name} {hint}，正在切换备用源…）", 0)
 
         return on_source_switch
 
@@ -989,10 +989,17 @@ class UpdateService:
 
             # 新架构（黄金法则）：旧主程序只"递送"——testzip + 抽取新 updater，
             # 由新 updater（新代码）完成部署。旧主程序不解释新格式。
+            #
+            # 下载完成后的 testzip → extract → handshake 各阶段虽已 asyncio.to_thread
+            # 派发（不冻结事件循环），但此前无任何 UI 反馈：用户点「确定」后状态栏
+            # 残留的「更新已就绪」5 秒后自动清空，随后最长 15 秒空白（onefile updater
+            # 解压 + Python 初始化 + 杀软扫描），用户无法区分「正在工作」与「卡死」。
+            # 各阶段前发持久状态栏消息（timeout=0 不自动清空）消除这一感知性卡死。
             # 1. testzip 确保能安全读出 updater 条目
             # 经 asyncio.to_thread 派发：testzip 同步读整个 zip（~50-170MB）做 CRC 校验，
             # 在 qasync 事件循环里直接调用会冻结 UI（历史 bug：下载完成后无响应退出）。
             # 与 _download_zip_with_sha 里 verify_sha256 的处理一致。
+            self._status("正在校验更新包完整性…", 0)
             if not await asyncio.to_thread(self._verify_zip_integrity, zip_path):
                 await await_dialog(
                     QMessageBox(
@@ -1010,6 +1017,7 @@ class UpdateService:
             # 经 asyncio.to_thread 派发：zf.read + write_bytes 是同步 I/O，与 testzip 同属
             # 下载后冻结事件循环的嫌疑点（见 1. testzip 注释）。updater.exe 虽仅 ~8-12MB，
             # 但在 qasync 协程里同步读写仍会阻塞，统一上 to_thread 保持一致。
+            self._status("正在准备更新器…", 0)
             try:
                 staged_updater = await asyncio.to_thread(
                     self._extract_updater_from_zip, zip_path
@@ -1031,6 +1039,9 @@ class UpdateService:
             # 握手三态：ready/timeout → 确认在工作 → 退出释放文件锁。
             #          crashed       → 确认坏了 → 弹窗提示手动重装（不再走 self-update 兜底，
             #                        因 self-update 本身违反黄金法则：旧主程序代码部署新代码）。
+            # onefile updater 解压 + Python 初始化在慢机/杀软扫描下可达数秒~15s
+            # （_HANDSHAKE_TIMEOUT 上限）。持久消息让用户知道主程序正在等更新器接管。
+            self._status("正在启动更新器，即将重启…", 0)
             result = await self._launch_updater(zip_path, staged_updater)
             if result in ("ready", "timeout"):
                 self._force_quit()
@@ -1080,8 +1091,6 @@ class UpdateService:
                     return False
             return True
         except zipfile.BadZipFile:
-            logger.error(f"无效 zip 文件: {zip_path}")
-            return False
             logger.error(f"无效 zip 文件: {zip_path}")
             return False
 
@@ -1155,9 +1164,7 @@ class UpdateService:
     _HANDSHAKE_TIMEOUT = 15.0
     _HANDSHAKE_POLL_INTERVAL = 0.2
 
-    async def _launch_updater(
-        self, zip_path: Path, staged_updater: Path
-    ) -> str:
+    async def _launch_updater(self, zip_path: Path, staged_updater: Path) -> str:
         """启动暂存的新 updater 并握手确认它"活着"。返回握手三态。
 
         新架构：启动目标是暂存目录的新 updater（由 _extract_updater_from_zip 抽取），
