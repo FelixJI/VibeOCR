@@ -248,6 +248,38 @@ class TestPdfServiceTextLayer:
         assert len(layers) > 0
         assert layers[0].text_preview.startswith("Page")
 
+    def test_detect_text_layers_line_level_no_far_merge(self, tmp_path):
+        """detect_text_layers 用 line 级 bbox：纵向相距很远的文本不被合并到一个高亮框。
+
+        Bug：旧版用 block['bbox']，PyMuPDF 的 block 会把同一文本列里纵向相邻但
+        实际相距 300pt+ 的行合并成一个超大 bbox，预览高亮把不相邻的文字框在一起。
+        修复：改用 line['bbox']，每条 bbox 是一条连续文本，与 OCR 行级粒度一致。
+        """
+        # 构造一页：两条横向文本，纵向相距 300pt（PyMuPDF 会合并到同一 block）
+        path = tmp_path / "far.pdf"
+        doc = fitz.open()
+        page = doc.new_page(width=612, height=792)
+        page.insert_text((100, 100), "TOP TEXT", fontsize=14)
+        page.insert_text((100, 400), "BOTTOM TEXT", fontsize=14)  # 300pt 下方
+        doc.save(str(path))
+        doc.close()
+
+        doc, _ = PdfService.open_doc(str(path))
+        layers = PdfService.detect_text_layers(doc, 0)
+        # 应检测到 ≥2 个 layer（top/bottom 分开），而非合并成 1 个
+        assert len(layers) >= 2, (
+            f"相距 300pt 的两行文本应各自独立，实际只有 {len(layers)} 个 layer"
+            f"（旧 block 级会合并成一个跨 300pt 的大框）"
+        )
+        # 各 layer 的 bbox 高度应远小于 300（不跨整列）
+        for layer in layers:
+            h = layer.bbox[3] - layer.bbox[1]
+            assert h < 100, (
+                f"layer bbox 高度 {h:.0f} 过大（应 < 100，远小于 300pt 间距）"
+                f" text={layer.text_preview!r}"
+            )
+        doc.close()
+
     def test_add_text_layer_from_ocr_result(self, tmp_path):
         import numpy as np
 

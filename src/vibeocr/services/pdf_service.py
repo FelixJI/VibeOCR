@@ -309,37 +309,38 @@ class PdfService:
         page_dict: dict[str, Any] = page.get_text("dict")  # type: ignore[assignment]
         blocks: list[dict[str, Any]] = page_dict["blocks"]
 
+        # 用 **line 级** bbox（而非 block 级）：PyMuPDF 的 block 会把同一文本列里
+        # 纵向相邻但实际相距很远的行合并成一个超大 bbox（实测可跨 300pt+），
+        # 导致预览高亮把不相邻的文字框在一起。line 级每个 bbox 是一条连续文本，
+        # 与 OCR 行级粒度一致，高亮更精确、不误合并。
         layers: list[TextLayerInfo] = []
         layer_index = 0
         for block in blocks:
             if block["type"] != 0:
                 continue
-            lines = block.get("lines", [])
-            if not lines:
-                continue
-            text_parts = []
-            for line in lines:
+            for line in block.get("lines", []):
+                text_parts = []
                 for span in line.get("spans", []):
                     text_parts.append(span.get("text", ""))
-            full_text = "".join(text_parts).strip()
-            if not full_text:
-                continue
-            bbox = block["bbox"]
-            layers.append(
-                TextLayerInfo(
-                    index=layer_index,
-                    text_preview=full_text[:30],
-                    char_count=len(full_text),
-                    bbox=(
-                        float(bbox[0]),
-                        float(bbox[1]),
-                        float(bbox[2]),
-                        float(bbox[3]),
-                    ),
-                    color_id=layer_index % 8,
+                line_text = "".join(text_parts).strip()
+                if not line_text:
+                    continue
+                bbox = line["bbox"]
+                layers.append(
+                    TextLayerInfo(
+                        index=layer_index,
+                        text_preview=line_text[:30],
+                        char_count=len(line_text),
+                        bbox=(
+                            float(bbox[0]),
+                            float(bbox[1]),
+                            float(bbox[2]),
+                            float(bbox[3]),
+                        ),
+                        color_id=layer_index % 8,
+                    )
                 )
-            )
-            layer_index += 1
+                layer_index += 1
         return layers
 
     @staticmethod
