@@ -1,0 +1,342 @@
+{
+  "version": 1,
+  "description": "Golden request/response fixtures for the v1 WorkerHost contract. Each public method has at least one positive case. Python (tests/contracts) and C# (tests/dotnet/VibeOCR.Contracts.Tests) both deserialize/serialize these and compare semantically. Negative cases live under 'negative' and MUST be rejected by schema validation. SharedPayloadRef sha256/name values are stable fixtures (not real secrets).",
+  "shared_payload_ref_template": {
+    "name": "Local\\VibeOCR-00000000-0000-4000-8000-000000000000-00000000-0000-4000-8000-000000000001",
+    "size": 12345,
+    "media_type": "image/png",
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "owner": "client",
+    "expires_unix_ms": 1800000000000
+  },
+  "positive": {
+    "system.handshake": {
+      "request_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000001",
+        "task_id": "00000000-0000-4000-8000-000000000001",
+        "method": "system.handshake",
+        "payload": {
+          "app_version": "0.5.0",
+          "protocol_version": 1,
+          "max_message_bytes": 8388608,
+          "max_shared_payload_bytes": 268435456
+        },
+        "deadline_unix_ms": 0
+      },
+      "response_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000001",
+        "task_id": "00000000-0000-4000-8000-000000000001",
+        "result": {
+          "worker_version": "0.5.0",
+          "protocol_version": 1,
+          "capabilities": ["ocr", "pdf", "qrcode", "mineru", "settings"],
+          "python_version": "3.13.2",
+          "backend": "cpu",
+          "max_message_bytes": 8388608,
+          "max_shared_payload_bytes": 268435456
+        }
+      }
+    },
+    "system.ping": {
+      "request_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000002",
+        "task_id": "00000000-0000-4000-8000-000000000002",
+        "method": "system.ping",
+        "payload": { "nonce": "abc123" },
+        "deadline_unix_ms": 0
+      },
+      "response_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000002",
+        "task_id": "00000000-0000-4000-8000-000000000002",
+        "result": { "nonce": "abc123" }
+      }
+    },
+    "system.shutdown": {
+      "request_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000003",
+        "task_id": "00000000-0000-4000-8000-000000000003",
+        "method": "system.shutdown",
+        "payload": { "reason": "user-quit" },
+        "deadline_unix_ms": 0
+      },
+      "response_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000003",
+        "task_id": "00000000-0000-4000-8000-000000000003",
+        "result": { "acknowledged": true }
+      }
+    },
+    "task.cancel": {
+      "request_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000004",
+        "task_id": "00000000-0000-4000-8000-000000000004",
+        "method": "task.cancel",
+        "payload": { "task_id": "11111111-1111-4111-8111-111111111111" },
+        "deadline_unix_ms": 0
+      },
+      "response_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000004",
+        "task_id": "00000000-0000-4000-8000-000000000004",
+        "result": { "accepted": true, "state": "running" }
+      }
+    },
+    "memory.release": {
+      "request_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000005",
+        "task_id": "00000000-0000-4000-8000-000000000005",
+        "method": "memory.release",
+        "payload": { "name": "Local\\VibeOCR-00000000-0000-4000-8000-000000000000-00000000-0000-4000-8000-000000000001" },
+        "deadline_unix_ms": 0
+      },
+      "response_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000005",
+        "task_id": "00000000-0000-4000-8000-000000000005",
+        "result": { "released": true }
+      }
+    },
+    "ocr.recognize": {
+      "request_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000010",
+        "task_id": "00000000-0000-4000-8000-000000000010",
+        "method": "ocr.recognize",
+        "payload": {
+          "image": {
+            "name": "Local\\VibeOCR-00000000-0000-4000-8000-000000000000-00000000-0000-4000-8000-000000000010",
+            "size": 12345,
+            "media_type": "image/png",
+            "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+            "owner": "client",
+            "expires_unix_ms": 1800000000000
+          },
+          "pipeline": "OCR",
+          "language": null
+        },
+        "deadline_unix_ms": 0
+      },
+      "response_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000010",
+        "task_id": "00000000-0000-4000-8000-000000000010",
+        "result": {
+          "text": "Hello",
+          "pipeline": "OCR",
+          "raw_blocks": []
+        }
+      }
+    },
+    "pdf.open": {
+      "request_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000020",
+        "task_id": "00000000-0000-4000-8000-000000000020",
+        "method": "pdf.open",
+        "payload": { "file_path": "C:/data/sample.pdf" },
+        "deadline_unix_ms": 0
+      },
+      "response_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000020",
+        "task_id": "00000000-0000-4000-8000-000000000020",
+        "result": {
+          "session_id": "sess-1",
+          "file_path": "C:/data/sample.pdf",
+          "page_count": 3
+        }
+      }
+    },
+    "qrcode.decode": {
+      "request_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000030",
+        "task_id": "00000000-0000-4000-8000-000000000030",
+        "method": "qrcode.decode",
+        "payload": {
+          "image": {
+            "name": "Local\\VibeOCR-00000000-0000-4000-8000-000000000000-00000000-0000-4000-8000-000000000030",
+            "size": 500,
+            "media_type": "image/png",
+            "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+            "owner": "client",
+            "expires_unix_ms": 1800000000000
+          }
+        },
+        "deadline_unix_ms": 0
+      },
+      "response_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000030",
+        "task_id": "00000000-0000-4000-8000-000000000030",
+        "result": {
+          "codes": [ { "data": "https://example.com", "format": "QR_CODE" } ]
+        }
+      }
+    },
+    "qrcode.generate": {
+      "request_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000031",
+        "task_id": "00000000-0000-4000-8000-000000000031",
+        "method": "qrcode.generate",
+        "payload": { "data": "https://example.com", "format": "qrcode" },
+        "deadline_unix_ms": 0
+      },
+      "response_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000031",
+        "task_id": "00000000-0000-4000-8000-000000000031",
+        "result": {
+          "image": {
+            "name": "Local\\VibeOCR-00000000-0000-4000-8000-000000000000-00000000-0000-4000-8000-000000000031",
+            "size": 800,
+            "media_type": "image/png",
+            "sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+            "owner": "worker",
+            "expires_unix_ms": 1800000000000
+          }
+        }
+      }
+    },
+    "settings.snapshot": {
+      "request_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000040",
+        "task_id": "00000000-0000-4000-8000-000000000040",
+        "method": "settings.snapshot",
+        "payload": {},
+        "deadline_unix_ms": 0
+      },
+      "response_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000040",
+        "task_id": "00000000-0000-4000-8000-000000000040",
+        "result": {
+          "backend": "cpu",
+          "preload_pipelines": ["OCR"],
+          "ttl_seconds": 3600
+        }
+      }
+    },
+    "task.progress_event": {
+      "description": "Example asynchronous event (not a request/response). Used to validate the event envelope shape.",
+      "event_envelope": {
+        "protocol_version": 1,
+        "task_id": "00000000-0000-4000-8000-000000000010",
+        "event": "task.progress",
+        "sequence": 0,
+        "payload": { "stage": "recognize", "current": 1, "total": 3 }
+      }
+    }
+  },
+  "negative": {
+    "malformed_envelope_not_json": "this is not json",
+    "unknown_extra_field_request": {
+      "protocol_version": 1,
+      "request_id": "00000000-0000-4000-8000-000000000099",
+      "task_id": "00000000-0000-4000-8000-000000000099",
+      "method": "system.ping",
+      "payload": { "nonce": "x" },
+      "deadline_unix_ms": 0,
+      "sneaky_unknown_field": true
+    },
+    "wrong_protocol_version": {
+      "protocol_version": 2,
+      "request_id": "00000000-0000-4000-8000-000000000099",
+      "task_id": "00000000-0000-4000-8000-000000000099",
+      "method": "system.ping",
+      "payload": { "nonce": "x" },
+      "deadline_unix_ms": 0
+    },
+    "missing_request_id": {
+      "protocol_version": 1,
+      "task_id": "00000000-0000-4000-8000-000000000099",
+      "method": "system.ping",
+      "payload": { "nonce": "x" },
+      "deadline_unix_ms": 0
+    },
+    "missing_task_id": {
+      "protocol_version": 1,
+      "request_id": "00000000-0000-4000-8000-000000000099",
+      "method": "system.ping",
+      "payload": { "nonce": "x" },
+      "deadline_unix_ms": 0
+    },
+    "malformed_uuid": {
+      "protocol_version": 1,
+      "request_id": "not-a-uuid",
+      "task_id": "00000000-0000-4000-8000-000000000099",
+      "method": "system.ping",
+      "payload": { "nonce": "x" },
+      "deadline_unix_ms": 0
+    },
+    "unknown_method": {
+      "protocol_version": 1,
+      "request_id": "00000000-0000-4000-8000-000000000099",
+      "task_id": "00000000-0000-4000-8000-000000000099",
+      "method": "evil.eval",
+      "payload": { "code": "import os; os.system('rm -rf /')" },
+      "deadline_unix_ms": 0
+    },
+    "response_both_result_and_error": {
+      "protocol_version": 1,
+      "request_id": "00000000-0000-4000-8000-000000000099",
+      "task_id": "00000000-0000-4000-8000-000000000099",
+      "result": {},
+      "error": { "code": "INTERNAL_ERROR", "message": "x", "retryable": false }
+    },
+    "response_neither_result_nor_error": {
+      "protocol_version": 1,
+      "request_id": "00000000-0000-4000-8000-000000000099",
+      "task_id": "00000000-0000-4000-8000-000000000099"
+    },
+    "invalid_shared_payload_bad_sha": {
+      "protocol_version": 1,
+      "request_id": "00000000-0000-4000-8000-000000000010",
+      "task_id": "00000000-0000-4000-8000-000000000010",
+      "method": "ocr.recognize",
+      "payload": {
+        "image": {
+          "name": "Local\\VibeOCR-00000000-0000-4000-8000-000000000000-00000000-0000-4000-8000-000000000001",
+          "size": 1,
+          "media_type": "image/png",
+          "sha256": "tooshort",
+          "owner": "client",
+          "expires_unix_ms": 1
+        }
+      },
+      "deadline_unix_ms": 0
+    },
+    "invalid_shared_payload_bad_name": {
+      "protocol_version": 1,
+      "request_id": "00000000-0000-4000-8000-000000000011",
+      "task_id": "00000000-0000-4000-8000-000000000011",
+      "method": "ocr.recognize",
+      "payload": {
+        "image": {
+          "name": "C:/Windows/System32/evil.dll",
+          "size": 1,
+          "media_type": "image/png",
+          "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+          "owner": "client",
+          "expires_unix_ms": 1
+        }
+      },
+      "deadline_unix_ms": 0
+    },
+    "unknown_error_code": {
+      "protocol_version": 1,
+      "request_id": "00000000-0000-4000-8000-000000000099",
+      "task_id": "00000000-0000-4000-8000-000000000099",
+      "error": { "code": "NUKE_EVERYTHING", "message": "x", "retryable": true }
+    }
+  }
+}

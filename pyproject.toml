@@ -52,6 +52,9 @@ dev = [
     # 程序内更新链路的打包步骤（bump_version.py --build/--release）依赖它。
     # >=6.6：bump_version 打包注入 --optimize 2（字节码优化），该参数自此版本引入。
     "pyinstaller>=6.6",
+    # WorkerHost v1 跨语言契约校验（Phase 1+）。C# 端做语义 JSON 比较，
+    # Python 端用 JSON Schema (Draft 2020-12) 校验 envelope/methods/errors/golden。
+    "jsonschema>=4.25.0",
 ]
 
 [build-system]

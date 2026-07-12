@@ -1,0 +1,259 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://vibeocr.local/contracts/v1/methods.schema.json",
+  "title": "VibeOCR WorkerHost v1 methods",
+  "description": "Allow-list of RPC method names and their request/response payload schemas. The envelope schema validates framing; this schema validates per-method payloads. Method names use dotted namespace ('domain.action'). Any method not present here is INVALID_REQUEST.",
+  "$defs": {
+    "shared_payload_ref": {
+      "type": "object",
+      "description": "Reference to a large binary object in Windows shared memory. Never embedded in JSON. Descriptor and ownership rules are defined in shared_payload.py and shared-payload golden fixtures.",
+      "additionalProperties": false,
+      "required": ["name", "size", "media_type", "sha256", "owner", "expires_unix_ms"],
+      "properties": {
+        "name": { "type": "string", "pattern": "^Local\\\\VibeOCR-[0-9a-f-]+-[0-9a-f-]+$", "description": "Windows shared memory object name: Local\\VibeOCR-{session}-{uuid}." },
+        "size": { "type": "integer", "minimum": 0 },
+        "media_type": { "type": "string", "minLength": 1 },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$", "description": "Lowercase hex SHA-256 of the payload bytes." },
+        "owner": { "type": "string", "enum": ["client", "worker"], "description": "Who created and is responsible for unlinking the segment." },
+        "expires_unix_ms": { "type": "integer", "minimum": 0, "description": "Absolute expiry as unix ms; TTL-based reclaim reaps orphans past this." }
+      }
+    },
+    "pipeline": {
+      "type": "string",
+      "enum": ["OCR", "TABLE_RECOGNITION", "FORMULA_RECOGNITION"],
+      "description": "Inference pipeline name. Matches vibeocr.application.contracts."
+    },
+    "backend": { "type": "string", "enum": ["cpu", "gpu"] }
+  },
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "system.handshake": {
+      "type": "object",
+      "description": "First request after connect. Exchanges versions, capabilities, limits. Major-version mismatch -> PROTOCOL_MISMATCH.",
+      "required": ["request", "response"],
+      "properties": {
+        "request": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["app_version", "protocol_version"],
+          "properties": {
+            "app_version": { "type": "string", "minLength": 1 },
+            "protocol_version": { "const": 1 },
+            "max_message_bytes": { "type": "integer", "minimum": 1024 },
+            "max_shared_payload_bytes": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "response": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["worker_version", "protocol_version", "capabilities"],
+          "properties": {
+            "worker_version": { "type": "string", "minLength": 1 },
+            "protocol_version": { "const": 1 },
+            "capabilities": {
+              "type": "array",
+              "items": { "type": "string", "minLength": 1 },
+              "description": "Advertised capability strings (e.g. 'ocr', 'pdf', 'qrcode', 'mineru')."
+            },
+            "python_version": { "type": "string" },
+            "backend": { "$ref": "#/$defs/backend" },
+            "max_message_bytes": { "type": "integer", "minimum": 1024 },
+            "max_shared_payload_bytes": { "type": "integer", "minimum": 0 }
+          }
+        }
+      }
+    },
+    "system.ping": {
+      "type": "object",
+      "description": "Liveness probe. Payload echo'd back.",
+      "required": ["request", "response"],
+      "properties": {
+        "request": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["nonce"],
+          "properties": { "nonce": { "type": "string", "minLength": 1 } }
+        },
+        "response": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["nonce"],
+          "properties": { "nonce": { "type": "string", "minLength": 1 } }
+        }
+      }
+    },
+    "system.shutdown": {
+      "type": "object",
+      "description": "Graceful shutdown request. Worker drains and exits.",
+      "required": ["request", "response"],
+      "properties": {
+        "request": { "type": "object", "additionalProperties": false, "properties": { "reason": { "type": "string" } } },
+        "response": { "type": "object", "additionalProperties": false, "required": ["acknowledged"], "properties": { "acknowledged": { "const": true } } }
+      }
+    },
+    "task.cancel": {
+      "type": "object",
+      "description": "Cancel an in-flight task by task_id. Idempotent. ACK within 2s per design §7.",
+      "required": ["request", "response"],
+      "properties": {
+        "request": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["task_id"],
+          "properties": { "task_id": { "$ref": "envelope.schema.json#/$defs/uuid" } }
+        },
+        "response": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["accepted", "state"],
+          "properties": {
+            "accepted": { "type": "boolean" },
+            "state": { "type": "string", "enum": ["queued", "running", "completed", "failed", "cancelled", "unknown"] }
+          }
+        }
+      }
+    },
+    "memory.release": {
+      "type": "object",
+      "description": "Acknowledge consumption of a shared payload so the owner may reclaim it.",
+      "required": ["request", "response"],
+      "properties": {
+        "request": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name"],
+          "properties": { "name": { "$ref": "#/$defs/shared_payload_ref/properties/name" } }
+        },
+        "response": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["released"],
+          "properties": { "released": { "type": "boolean" } }
+        }
+      }
+    },
+    "ocr.recognize": {
+      "type": "object",
+      "description": "Single-image OCR. Image bytes transferred via shared memory; the envelope payload carries only a SharedPayloadRef plus options.",
+      "required": ["request", "response"],
+      "properties": {
+        "request": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["image"],
+          "properties": {
+            "image": { "$ref": "#/$defs/shared_payload_ref" },
+            "pipeline": { "$ref": "#/$defs/pipeline" },
+            "language": { "type": ["string", "null"] }
+          }
+        },
+        "response": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["text", "pipeline"],
+          "properties": {
+            "text": { "type": "string" },
+            "pipeline": { "$ref": "#/$defs/pipeline" },
+            "raw_blocks": { "type": "array", "description": "Structured blocks for editor/table rendering. Items are method-defined objects." }
+          }
+        }
+      }
+    },
+    "pdf.open": {
+      "type": "object",
+      "description": "Open a PDF file and create a session. The file is referenced by an absolute path canonicalized to an allowed data/runtime/model root.",
+      "required": ["request", "response"],
+      "properties": {
+        "request": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["file_path"],
+          "properties": { "file_path": { "type": "string", "minLength": 1 } }
+        },
+        "response": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["session_id", "file_path", "page_count"],
+          "properties": {
+            "session_id": { "type": "string", "minLength": 1 },
+            "file_path": { "type": "string", "minLength": 1 },
+            "page_count": { "type": "integer", "minimum": 0 }
+          }
+        }
+      }
+    },
+    "qrcode.decode": {
+      "type": "object",
+      "description": "Detect and decode QR/barcodes from an image (shared payload).",
+      "required": ["request", "response"],
+      "properties": {
+        "request": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["image"],
+          "properties": { "image": { "$ref": "#/$defs/shared_payload_ref" } }
+        },
+        "response": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["codes"],
+          "properties": {
+            "codes": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["data", "format"],
+                "properties": {
+                  "data": { "type": "string" },
+                  "format": { "type": "string", "minLength": 1 }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "qrcode.generate": {
+      "type": "object",
+      "description": "Generate a QR/barcode image. Result returned as a shared payload owned by the worker.",
+      "required": ["request", "response"],
+      "properties": {
+        "request": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["data"],
+          "properties": {
+            "data": { "type": "string", "minLength": 1 },
+            "format": { "type": "string", "enum": ["qrcode", "barcode"], "description": "Symbol family." }
+          }
+        },
+        "response": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["image"],
+          "properties": { "image": { "$ref": "#/$defs/shared_payload_ref" } }
+        }
+      }
+    },
+    "settings.snapshot": {
+      "type": "object",
+      "description": "Read-only settings snapshot. No request parameters.",
+      "required": ["request", "response"],
+      "properties": {
+        "request": { "type": "object", "additionalProperties": false },
+        "response": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["backend", "preload_pipelines", "ttl_seconds"],
+          "properties": {
+            "backend": { "$ref": "#/$defs/backend" },
+            "preload_pipelines": { "type": "array", "items": { "type": "string" } },
+            "ttl_seconds": { "type": "integer", "minimum": 0 }
+          }
+        }
+      }
+    }
+  }
+}

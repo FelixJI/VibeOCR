@@ -19,13 +19,13 @@ name = "accelerate"
 version = "1.14.0"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
 dependencies = [
-    { name = "huggingface-hub" },
-    { name = "numpy" },
-    { name = "packaging" },
-    { name = "psutil" },
-    { name = "pyyaml" },
-    { name = "safetensors" },
-    { name = "torch" },
+    { name = "huggingface-hub", marker = "sys_platform == 'win32'" },
+    { name = "numpy", marker = "sys_platform == 'win32'" },
+    { name = "packaging", marker = "sys_platform == 'win32'" },
+    { name = "psutil", marker = "sys_platform == 'win32'" },
+    { name = "pyyaml", marker = "sys_platform == 'win32'" },
+    { name = "safetensors", marker = "sys_platform == 'win32'" },
+    { name = "torch", marker = "sys_platform == 'win32'" },
 ]
 sdist = { url = "https://mirrors.aliyun.com/pypi/packages/8d/75/94cd5d389649578aca399e5aa822637eec18319a1dadc400ffe2f9a7493f/accelerate-1.14.0.tar.gz", hash = "sha256:41b9c4377a54e0b460a959b0defa1b736e4ca0a2373252d9a539964c2afe3c8d" }
 wheels = [
@@ -55,13 +55,13 @@ name = "aiohttp"
 version = "3.14.1"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
 dependencies = [
-    { name = "aiohappyeyeballs" },
-    { name = "aiosignal" },
-    { name = "attrs" },
-    { name = "frozenlist" },
-    { name = "multidict" },
-    { name = "propcache" },
-    { name = "yarl" },
+    { name = "aiohappyeyeballs", marker = "sys_platform == 'win32'" },
+    { name = "aiosignal", marker = "sys_platform == 'win32'" },
+    { name = "attrs", marker = "sys_platform == 'win32'" },
+    { name = "frozenlist", marker = "sys_platform == 'win32'" },
+    { name = "multidict", marker = "sys_platform == 'win32'" },
+    { name = "propcache", marker = "sys_platform == 'win32'" },
+    { name = "yarl", marker = "sys_platform == 'win32'" },
 ]
 sdist = { url = "https://mirrors.aliyun.com/pypi/packages/82/78/8ea7308cac6934de8c74a14f3d5f65d1c89287426688be79538d0e5c013d/aiohttp-3.14.1.tar.gz", hash = "sha256:307f2cff90a764d329e77040603fa032db89c5c24fdad50c4c15334cba744035" }
 wheels = [
@@ -78,7 +78,7 @@ name = "aiosignal"
 version = "1.4.0"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
 dependencies = [
-    { name = "frozenlist" },
+    { name = "frozenlist", marker = "sys_platform == 'win32'" },
 ]
 sdist = { url = "https://mirrors.aliyun.com/pypi/packages/61/62/06741b579156360248d1ec624842ad0edf697050bbaf7c3e46394e106ad1/aiosignal-1.4.0.tar.gz", hash = "sha256:f47eecd9468083c2029cc99945502cb7708b082c232f9aca65da147157b251c7" }
 wheels = [
@@ -90,12 +90,12 @@ name = "aistudio-sdk"
 version = "0.3.8"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
 dependencies = [
-    { name = "bce-python-sdk" },
-    { name = "click" },
-    { name = "prettytable" },
-    { name = "psutil" },
-    { name = "requests" },
-    { name = "tqdm" },
+    { name = "bce-python-sdk", marker = "sys_platform == 'win32'" },
+    { name = "click", marker = "sys_platform == 'win32'" },
+    { name = "prettytable", marker = "sys_platform == 'win32'" },
+    { name = "psutil", marker = "sys_platform == 'win32'" },
+    { name = "requests", marker = "sys_platform == 'win32'" },
+    { name = "tqdm", marker = "sys_platform == 'win32'" },
 ]
 wheels = [
     { url = "https://mirrors.aliyun.com/pypi/packages/cb/77/cd71a481bb7a76b0e9d0b6bf47711c627b1dd079001ea246893f19a9d04c/aistudio_sdk-0.3.8-py3-none-any.whl", hash = "sha256:bfc96af7243ac2ee3303014849aa4028717cce5afa622af8cfe3a1d44d1941d6" },
@@ -133,7 +133,7 @@ name = "anyio"
 version = "4.14.1"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
 dependencies = [
-    { name = "idna" },
+    { name = "idna", marker = "sys_platform == 'win32'" },
 ]
 sdist = { url = "https://mirrors.aliyun.com/pypi/packages/3b/72/5562aabb8dd7181e8e860622a38bea08d17842b99ecd4c91f84ac95251b0/anyio-4.14.1.tar.gz", hash = "sha256:8d648a3544c1a700e3ff78615cd679e4c5c3f149904287e73687b2596963629e" }
 wheels = [
@@ -168,10 +168,10 @@ name = "bce-python-sdk"
 version = "0.9.72"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
 dependencies = [
-    { name = "crc32c" },
-    { name = "future" },
-    { name = "pycryptodome" },
-    { name = "six" },
+    { name = "crc32c", marker = "sys_platform == 'win32'" },
+    { name = "future", marker = "sys_platform == 'win32'" },
+    { name = "pycryptodome", marker = "sys_platform == 'win32'" },
+    { name = "six", marker = "sys_platform == 'win32'" },
 ]
 sdist = { url = "https://mirrors.aliyun.com/pypi/packages/32/bb/1ccb8b28bfa0802356f8588e479adb61cfd2268b37fabc6c8a805d645cd5/bce_python_sdk-0.9.72.tar.gz", hash = "sha256:d9db568698792d74db4245252d98776eae8c9c5225fc0ba86548dfc52d478fcc" }
 wheels = [
@@ -183,8 +183,8 @@ name = "beautifulsoup4"
 version = "4.15.0"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
 dependencies = [
-    { name = "soupsieve" },
-    { name = "typing-extensions" },
+    { name = "soupsieve", marker = "sys_platform == 'win32'" },
+    { name = "typing-extensions", marker = "sys_platform == 'win32'" },
 ]
 sdist = { url = "https://mirrors.aliyun.com/pypi/packages/43/65/318323f98dbee45d42dff61d8f047181bc6f2268a9068cfad035a46be5af/beautifulsoup4-4.15.0.tar.gz", hash = "sha256:288e3ca7d54b06f2ac191970bc275c1939cb46d450b255bf6718b04aa37ab4f7" }
 wheels = [
@@ -255,7 +255,7 @@ name = "click"
 version = "8.4.2"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
 dependencies = [
-    { name = "colorama" },
+    { name = "colorama", marker = "sys_platform == 'win32'" },
 ]
 sdist = { url = "https://mirrors.aliyun.com/pypi/packages/76/d4/81420972a676e8ffea40450d8c8c92943e7218a78fe9b64359836cc9876b/click-8.4.2.tar.gz", hash = "sha256:9a6cea6e60b17ebe0a44c5cc636d94f09bd66142c1cd7d8b4cd731c4917a15f6" }
 wheels = [
@@ -285,7 +285,7 @@ name = "colorlog"
 version = "6.10.1"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
 dependencies = [
-    { name = "colorama" },
+    { name = "colorama", marker = "sys_platform == 'win32'" },
 ]
 sdist = { url = "https://mirrors.aliyun.com/pypi/packages/a2/61/f083b5ac52e505dfc1c624eafbf8c7589a0d7f32daa398d2e7590efa5fda/colorlog-6.10.1.tar.gz", hash = "sha256:eb4ae5cb65fe7fec7773c2306061a8e63e02efc2c72eba9d27b0fa23c94f1321" }
 wheels = [
@@ -330,8 +330,8 @@ name = "cssutils"
 version = "2.15.0"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
 dependencies = [
-    { name = "encutils" },
-    { name = "more-itertools" },
+    { name = "encutils", marker = "sys_platform == 'win32'" },
+    { name = "more-itertools", marker = "sys_platform == 'win32'" },
 ]
 sdist = { url = "https://mirrors.aliyun.com/pypi/packages/01/00/7e89107ea389e952eea73b1b90ac6633e15a519c4a518ee90bb93a2f83dc/cssutils-2.15.0.tar.gz", hash = "sha256:e9739237f3915037dacba787c4b58f280e3ec5d9864953e185bf23d40ff7d021" }
 wheels = [
@@ -370,7 +370,7 @@ name = "encutils"
 version = "1.0.0"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
 dependencies = [
-    { name = "chardet" },
+    { name = "chardet", marker = "sys_platform == 'win32'" },
 ]
 sdist = { url = "https://mirrors.aliyun.com/pypi/packages/86/24/15d0f368875e53fb02bf7475e8a8c9aec36dee5a3dcb23efc77f585f9eb6/encutils-1.0.0.tar.gz", hash = "sha256:38eca5af18cebabd8be43c17f14c9d3fbba83cc5f7ac8e3ab1c86e24c4b2b91a" }
 wheels = [
@@ -391,9 +391,9 @@ name = "fast-langdetect"
 version = "0.2.5"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
 dependencies = [
-    { name = "fasttext-predict" },
-    { name = "requests" },
-    { name = "robust-downloader" },
+    { name = "fasttext-predict", marker = "sys_platform == 'win32'" },
+    { name = "requests", marker = "sys_platform == 'win32'" },
+    { name = "robust-downloader", marker = "sys_platform == 'win32'" },
 ]
 sdist = { url = "https://mirrors.aliyun.com/pypi/packages/8d/17/2753b3d280e16f594e7a5d735568c021a355cd1edd3827f26cda5c9fd460/fast_langdetect-0.2.5.tar.gz", hash = "sha256:e5fe65973f5737107bb8314f3829280d196c87d4da0b4a6e95000175512cf2c3" }
 wheels = [
@@ -405,11 +405,11 @@ name = "fastapi"
 version = "0.139.0"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
 dependencies = [
-    { name = "annotated-doc" },
-    { name = "pydantic" },
-    { name = "starlette" },
-    { name = "typing-extensions" },
-    { name = "typing-inspection" },
+    { name = "annotated-doc", marker = "sys_platform == 'win32'" },
+    { name = "pydantic", marker = "sys_platform == 'win32'" },
+    { name = "starlette", marker = "sys_platform == 'win32'" },
+    { name = "typing-extensions", marker = "sys_platform == 'win32'" },
+    { name = "typing-inspection", marker = "sys_platform == 'win32'" },
 ]
 sdist = { url = "https://mirrors.aliyun.com/pypi/packages/d3/af/a5f50ccfa659ec1802cb4ca842c23f06d906a8cc9aef6016a2caeea3d4ed/fastapi-0.139.0.tar.gz", hash = "sha256:99ab7b2d92223c76d6cf10757ab3f89d45b38267fc20b2a136cf02f6beac3145" }
 wheels = [
@@ -494,7 +494,7 @@ name = "ftfy"
 version = "6.3.1"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
 dependencies = [
-    { name = "wcwidth" },
+    { name = "wcwidth", marker = "sys_platform == 'win32'" },
 ]
 sdist = { url = "https://mirrors.aliyun.com/pypi/packages/a5/d3/8650919bc3c7c6e90ee3fa7fd618bf373cbbe55dff043bd67353dbb20cd8/ftfy-6.3.1.tar.gz", hash = "sha256:9b3c3d90f84fb267fe64d375a07b7f8912d817cf86009ae134aa03e1819506ec" }
 wheels = [
@@ -515,35 +515,35 @@ name = "gradio"
 version = "6.8.0"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
 dependencies = [
-    { name = "aiofiles" },
-    { name = "anyio" },
-    { name = "audioop-lts" },
-    { name = "brotli" },
-    { name = "fastapi" },
-    { name = "ffmpy" },
-    { name = "gradio-client" },
-    { name = "groovy" },
-    { name = "httpx" },
-    { name = "huggingface-hub" },
-    { name = "jinja2" },
-    { name = "markupsafe" },
-    { name = "numpy" },
-    { name = "orjson" },
-    { name = "packaging" },
-    { name = "pandas" },
-    { name = "pillow" },
-    { name = "pydantic" },
-    { name = "pydub" },
-    { name = "python-multipart" },
-    { name = "pytz" },
-    { name = "pyyaml" },
-    { name = "safehttpx" },
-    { name = "semantic-version" },
-    { name = "starlette" },
-    { name = "tomlkit" },
-    { name = "typer" },
-    { name = "typing-extensions" },
-    { name = "uvicorn" },
+    { name = "aiofiles", marker = "sys_platform == 'win32'" },
+    { name = "anyio", marker = "sys_platform == 'win32'" },
+    { name = "audioop-lts", marker = "sys_platform == 'win32'" },
+    { name = "brotli", marker = "sys_platform == 'win32'" },
+    { name = "fastapi", marker = "sys_platform == 'win32'" },
+    { name = "ffmpy", marker = "sys_platform == 'win32'" },
+    { name = "gradio-client", marker = "sys_platform == 'win32'" },
+    { name = "groovy", marker = "sys_platform == 'win32'" },
+    { name = "httpx", marker = "sys_platform == 'win32'" },
+    { name = "huggingface-hub", marker = "sys_platform == 'win32'" },
+    { name = "jinja2", marker = "sys_platform == 'win32'" },
+    { name = "markupsafe", marker = "sys_platform == 'win32'" },
+    { name = "numpy", marker = "sys_platform == 'win32'" },
+    { name = "orjson", marker = "sys_platform == 'win32'" },
+    { name = "packaging", marker = "sys_platform == 'win32'" },
+    { name = "pandas", marker = "sys_platform == 'win32'" },
+    { name = "pillow", marker = "sys_platform == 'win32'" },
+    { name = "pydantic", marker = "sys_platform == 'win32'" },
+    { name = "pydub", marker = "sys_platform == 'win32'" },
+    { name = "python-multipart", marker = "sys_platform == 'win32'" },
+    { name = "pytz", marker = "sys_platform == 'win32'" },
+    { name = "pyyaml", marker = "sys_platform == 'win32'" },
+    { name = "safehttpx", marker = "sys_platform == 'win32'" },
+    { name = "semantic-version", marker = "sys_platform == 'win32'" },
+    { name = "starlette", marker = "sys_platform == 'win32'" },
+    { name = "tomlkit", marker = "sys_platform == 'win32'" },
+    { name = "typer", marker = "sys_platform == 'win32'" },
+    { name = "typing-extensions", marker = "sys_platform == 'win32'" },
+    { name = "uvicorn", marker = "sys_platform == 'win32'" },
 ]
 sdist = { url = "https://mirrors.aliyun.com/pypi/packages/70/25/68322ca161fb0f49714ea721529140ad1d4cd28804cd933ca28f9fa50899/gradio-6.8.0.tar.gz", hash = "sha256:79154e7b77ff2deb4570e94eba9a900b7b9495121e24376c2f6cfa30fee1b92d" }
 wheels = [
@@ -555,11 +555,11 @@ name = "gradio-client"
 version = "2.2.0"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
 dependencies = [
-    { name = "fsspec" },
-    { name = "httpx" },
-    { name = "huggingface-hub" },
-    { name = "packaging" },
-    { name = "typing-extensions" },
+    { name = "fsspec", marker = "sys_platform == 'win32'" },
+    { name = "httpx", marker = "sys_platform == 'win32'" },
+    { name = "huggingface-hub", marker = "sys_platform == 'win32'" },
+    { name = "packaging", marker = "sys_platform == 'win32'" },
+    { name = "typing-extensions", marker = "sys_platform == 'win32'" },
 ]
 sdist = { url = "https://mirrors.aliyun.com/pypi/packages/39/89/52722478fb42f650bacb198b525c7ce5818c95442b2872ef913dc1ab6b60/gradio_client-2.2.0.tar.gz", hash = "sha256:f25a98cd902b44ab77222f3bd752de67dd9dd9723ab8453383d78e5bc1c69497" }
 wheels = [
@@ -571,7 +571,7 @@ name = "gradio-pdf"
 version = "0.0.24"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
 dependencies = [
-    { name = "gradio" },
+    { name = "gradio", marker = "sys_platform == 'win32'" },
 ]
 wheels = [
     { url = "https://mirrors.aliyun.com/pypi/packages/52/e8/e8c4e4261cc381807705b964aab40d95f345a4c1d9d7995afe6539cbd089/gradio_pdf-0.0.24-py3-none-any.whl", hash = "sha256:b9b18eaf0e75e1394c33694e638dce6e2b8d82d0838674948148db832152ac5f" },
@@ -612,8 +612,8 @@ name = "httpcore"
 version = "1.0.9"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
 dependencies = [
-    { name = "certifi" },
-    { name = "h11" },
+    { name = "certifi", marker = "sys_platform == 'win32'" },
+    { name = "h11", marker = "sys_platform == 'win32'" },
 ]
 sdist = { url = "https://mirrors.aliyun.com/pypi/packages/06/94/82699a10bca87a5556c9c59b5963f2d039dbd239f25bc2a63907a05a14cb/httpcore-1.0.9.tar.gz", hash = "sha256:6e34463af53fd2ab5d807f399a9b45ea31c3dfa2276f15a2c3f00afff6e176e8" }
 wheels = [
@@ -625,10 +625,10 @@ name = "httpx"
 version = "0.28.1"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
 dependencies = [
-    { name = "anyio" },
-    { name = "certifi" },
-    { name = "httpcore" },
-    { name = "idna" },
+    { name = "anyio", marker = "sys_platform == 'win32'" },
+    { name = "certifi", marker = "sys_platform == 'win32'" },
+    { name = "httpcore", marker = "sys_platform == 'win32'" },
+    { name = "idna", marker = "sys_platform == 'win32'" },
 ]
 sdist = { url = "https://mirrors.aliyun.com/pypi/packages/b1/df/48c586a5fe32a0f01324ee087459e112ebb7224f646c0b5023f5e79e9956/httpx-0.28.1.tar.gz", hash = "sha256:75e98c5f16b0f35b567856f597f06ff2270a374470a5c2392242528e3e3e42fc" }
 wheels = [
@@ -640,7 +640,7 @@ name = "httpx-retries"
 version = "0.6.0"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
 dependencies = [
-    { name = "httpx" },
+    { name = "httpx", marker = "sys_platform == 'win32'" },
 ]
 sdist = { url = "https://mirrors.aliyun.com/pypi/packages/e9/d3/b7a8bb09543af40009717a08a2ceba90b6d4c6f0cdf171404217d8f4c37d/httpx_retries-0.6.0.tar.gz", hash = "sha256:3e0b404969a564829d368417964fd21e6b400a10d17c92d29b8bc247ce8186e3" }
 wheels = [
@@ -652,14 +652,14 @@ name = "huggingface-hub"
 version = "0.36.2"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
 dependencies = [
-    { name = "filelock" },
-    { name = "fsspec" },
-    { name = "hf-xet", marker = "platform_machine == 'aarch64' or platform_machine == 'amd64' or platform_machine == 'arm64' or platform_machine == 'x86_64'" },
-    { name = "packaging" },
-    { name = "pyyaml" },
-    { name = "requests" },
-    { name = "tqdm" },
-    { name = "typing-extensions" },
+    { name = "filelock", marker = "sys_platform == 'win32'" },
+    { name = "fsspec", marker = "sys_platform == 'win32'" },
+    { name = "hf-xet", marker = "(platform_machine == 'aarch64' and sys_platform == 'win32') or (platform_machine == 'amd64' and sys_platform == 'win32') or (platform_machine == 'arm64' and sys_platform == 'win32') or (platform_machine == 'x86_64' and sys_platform == 'win32')" },
+    { name = "packaging", marker = "sys_platform == 'win32'" },
+    { name = "pyyaml", marker = "sys_platform == 'win32'" },
+    { name = "requests", marker = "sys_platform == 'win32'" },
+    { name = "tqdm", marker = "sys_platform == 'win32'" },
+    { name = "typing-extensions", marker = "sys_platform == 'win32'" },
 ]
 sdist = { url = "https://mirrors.aliyun.com/pypi/packages/7c/b7/8cb61d2eece5fb05a83271da168186721c450eb74e3c31f7ef3169fa475b/huggingface_hub-0.36.2.tar.gz", hash = "sha256:1934304d2fb224f8afa3b87007d58501acfda9215b334eed53072dd5e815ff7a" }
 wheels = [
@@ -707,7 +707,7 @@ name = "jinja2"
 version = "3.1.6"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
 dependencies = [
-    { name = "markupsafe" },
+    { name = "markupsafe", marker = "sys_platform == 'win32'" },
 ]
 sdist = { url = "https://mirrors.aliyun.com/pypi/packages/df/bf/f7da0350254c0ed7c72f3e33cef02e048281fec7ecec5f032d4aac52226b/jinja2-3.1.6.tar.gz", hash = "sha256:0137fb05990d35f1275a587e9aee6d56da821fc83491a0fb838183be43f66d6d" }
 wheels = [
@@ -744,6 +744,33 @@ wheels = [
 ]
 
 [[package]]
+name = "jsonschema"
+version = "4.26.0"
+source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
+dependencies = [
+    { name = "attrs", marker = "sys_platform == 'win32'" },
+    { name = "jsonschema-specifications", marker = "sys_platform == 'win32'" },
+    { name = "referencing", marker = "sys_platform == 'win32'" },
+    { name = "rpds-py", marker = "sys_platform == 'win32'" },
+]
+sdist = { url = "https://mirrors.aliyun.com/pypi/packages/b3/fc/e067678238fa451312d4c62bf6e6cf5ec56375422aee02f9cb5f909b3047/jsonschema-4.26.0.tar.gz", hash = "sha256:0c26707e2efad8aa1bfc5b7ce170f3fccc2e4918ff85989ba9ffa9facb2be326" }
+wheels = [
+    { url = "https://mirrors.aliyun.com/pypi/packages/69/90/f63fb5873511e014207a475e2bb4e8b2e570d655b00ac19a9a0ca0a385ee/jsonschema-4.26.0-py3-none-any.whl", hash = "sha256:d489f15263b8d200f8387e64b4c3a75f06629559fb73deb8fdfb525f2dab50ce" },
+]
+
+[[package]]
+name = "jsonschema-specifications"
+version = "2025.9.1"
+source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
+dependencies = [
+    { name = "referencing", marker = "sys_platform == 'win32'" },
+]
+sdist = { url = "https://mirrors.aliyun.com/pypi/packages/19/74/a633ee74eb36c44aa6d1095e7cc5569bebf04342ee146178e2d36600708b/jsonschema_specifications-2025.9.1.tar.gz", hash = "sha256:b540987f239e745613c7a9176f3edb72b832a4ac465cf02712288397832b5e8d" }
+wheels = [
+    { url = "https://mirrors.aliyun.com/pypi/packages/41/45/1a4ed80516f02155c51f51e8cedb3c1902296743db0bbc66608a0db2814f/jsonschema_specifications-2025.9.1-py3-none-any.whl", hash = "sha256:98802fee3a11ee76ecaca44429fda8a41bff98b00a0f2838151b113f210cc6fe" },
+]
+
+[[package]]
 name = "latex2mathml"
 version = "3.81.0"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
@@ -757,8 +784,8 @@ name = "loguru"
 version = "0.7.3"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
 dependencies = [
-    { name = "colorama" },
-    { name = "win32-setctime" },
+    { name = "colorama", marker = "sys_platform == 'win32'" },
+    { name = "win32-setctime", marker = "sys_platform == 'win32'" },
 ]
 sdist = { url = "https://mirrors.aliyun.com/pypi/packages/3a/05/a1dae3dffd1116099471c643b8924f5aa6524411dc6c63fdae648c4f1aca/loguru-0.7.3.tar.gz", hash = "sha256:19480589e77d47b8d85b2c827ad95d49bf31b0dcde16593892eb51dd18706eb6" }
 wheels = [
@@ -781,8 +808,8 @@ name = "magika"
 version = "1.0.3"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
 dependencies = [
-    { name = "click" },
-    { name = "onnxruntime" },
+    { name = "click", marker = "sys_platform == 'win32'" },
+    { name = "onnxruntime", marker = "sys_platform == 'win32'" },
 ]
 sdist = { url = "https://mirrors.aliyun.com/pypi/packages/00/be/fa7d512ec15763ad7d8ba083e39bb445fa969ce5159361fa449a02569cf9/magika-1.0.3.tar.gz", hash = "sha256:ad3216012f6dd337be34c23ae3dfab36f0623bc62fbfb329f9a1852c9ad40304" }
 wheels = [
@@ -795,7 +822,7 @@ name = "mammoth"
 version = "1.12.0"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
 dependencies = [
-    { name = "cobble" },
+    { name = "cobble", marker = "sys_platform == 'win32'" },
 ]
 sdist = { url = "https://mirrors.aliyun.com/pypi/packages/af/0c/b8d04b142c28f705ac434aedfb492f62e3fa9082421b6aa0ec7be9202dc7/mammoth-1.12.0.tar.gz", hash = "sha256:10955a55d9173167b550de3aeb8f2ed48b420756fd66378156b2f78661a33dd5" }
 wheels = [
@@ -816,7 +843,7 @@ name = "markdown-it-py"
 version = "4.2.0"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
 dependencies = [
-    { name = "mdurl" },
+    { name = "mdurl", marker = "sys_platform == 'win32'" },
 ]
 sdist = { url = "https://mirrors.aliyun.com/pypi/packages/06/ff/7841249c247aa650a76b9ee4bbaeae59370dc8bfd2f6c01f3630c35eb134/markdown_it_py-4.2.0.tar.gz", hash = "sha256:04a21681d6fbb623de53f6f364d352309d4094dd4194040a10fd51833e418d49" }
 wheels = [
@@ -851,34 +878,34 @@ name = "mineru"
 version = "3.4.3"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
 dependencies = [
-    { name = "beautifulsoup4" },
-    { name = "click" },
-    { name = "fast-langdetect" },
-    { name = "fastapi" },
-    { name = "httpx" },
-    { name = "huggingface-hub" },
-    { name = "json-repair" },
-    { name = "loguru" },
-    { name = "lxml" },
-    { name = "magika" },
-    { name = "mammoth" },
-    { name = "mineru-vl-utils" },
-    { name = "modelscope" },
-    { name = "numpy" },
-    { name = "openai" },
-    { name = "openpyxl" },
-    { name = "pdftext" },
-    { name = "pillow" },
-    { name = "pylatexenc" },
-    { name = "pypdf" },
-    { name = "pypdfium2" },
-    { name = "pypptx-with-oxml" },
-    { name = "python-docx" },
-    { name = "python-multipart" },
-    { name = "reportlab" },
-    { name = "requests" },
-    { name = "tqdm" },
-    { name = "uvicorn" },
+    { name = "beautifulsoup4", marker = "sys_platform == 'win32'" },
+    { name = "click", marker = "sys_platform == 'win32'" },
+    { name = "fast-langdetect", marker = "sys_platform == 'win32'" },
+    { name = "fastapi", marker = "sys_platform == 'win32'" },
+    { name = "httpx", marker = "sys_platform == 'win32'" },
+    { name = "huggingface-hub", marker = "sys_platform == 'win32'" },
+    { name = "json-repair", marker = "sys_platform == 'win32'" },
+    { name = "loguru", marker = "sys_platform == 'win32'" },
+    { name = "lxml", marker = "sys_platform == 'win32'" },
+    { name = "magika", marker = "sys_platform == 'win32'" },
+    { name = "mammoth", marker = "sys_platform == 'win32'" },
+    { name = "mineru-vl-utils", marker = "sys_platform == 'win32'" },
+    { name = "modelscope", marker = "sys_platform == 'win32'" },
+    { name = "numpy", marker = "sys_platform == 'win32'" },
+    { name = "openai", marker = "sys_platform == 'win32'" },
+    { name = "openpyxl", marker = "sys_platform == 'win32'" },
+    { name = "pdftext", marker = "sys_platform == 'win32'" },
+    { name = "pillow", marker = "sys_platform == 'win32'" },
+    { name = "pylatexenc", marker = "sys_platform == 'win32'" },
+    { name = "pypdf", marker = "sys_platform == 'win32'" },
+    { name = "pypdfium2", marker = "sys_platform == 'win32'" },
+    { name = "pypptx-with-oxml", marker = "sys_platform == 'win32'" },
+    { name = "python-docx", marker = "sys_platform == 'win32'" },
+    { name = "python-multipart", marker = "sys_platform == 'win32'" },
+    { name = "reportlab", marker = "sys_platform == 'win32'" },
+    { name = "requests", marker = "sys_platform == 'win32'" },
+    { name = "tqdm", marker = "sys_platform == 'win32'" },
+    { name = "uvicorn", marker = "sys_platform == 'win32'" },
 ]
 wheels = [
     { url = "https://mirrors.aliyun.com/pypi/packages/0f/4e/b64dbda90c4ec6a1eb810916b475b967f1ed07dfeeccf5adb9692008e054/mineru-3.4.3-py3-none-any.whl", hash = "sha256:60dcca1113a31d1876377e9776d7f752ddd24d98115b8f6b625d001e04361938" },
@@ -886,18 +913,18 @@ wheels = [
 
 [package.optional-dependencies]
 core = [
-    { name = "accelerate" },
-    { name = "ftfy" },
-    { name = "gradio" },
-    { name = "gradio-pdf" },
-    { name = "onnxruntime" },
-    { name = "pyclipper" },
-    { name = "pyyaml" },
-    { name = "safetensors" },
-    { name = "shapely" },
-    { name = "torch" },
-    { name = "torchvision" },
-    { name = "transformers" },
+    { name = "accelerate", marker = "sys_platform == 'win32'" },
+    { name = "ftfy", marker = "sys_platform == 'win32'" },
+    { name = "gradio", marker = "sys_platform == 'win32'" },
+    { name = "gradio-pdf", marker = "sys_platform == 'win32'" },
+    { name = "onnxruntime", marker = "sys_platform == 'win32'" },
+    { name = "pyclipper", marker = "sys_platform == 'win32'" },
+    { name = "pyyaml", marker = "sys_platform == 'win32'" },
+    { name = "safetensors", marker = "sys_platform == 'win32'" },
+    { name = "shapely", marker = "sys_platform == 'win32'" },
+    { name = "torch", marker = "sys_platform == 'win32'" },
+    { name = "torchvision", marker = "sys_platform == 'win32'" },
+    { name = "transformers", marker = "sys_platform == 'win32'" },
 ]
 
 [[package]]
@@ -905,12 +932,12 @@ name = "mineru-vl-utils"
 version = "1.0.5"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
 dependencies = [
-    { name = "aiofiles" },
-    { name = "httpx" },
-    { name = "httpx-retries" },
-    { name = "loguru" },
-    { name = "pillow" },
-    { name = "pydantic" },
+    { name = "aiofiles", marker = "sys_platform == 'win32'" },
+    { name = "httpx", marker = "sys_platform == 'win32'" },
+    { name = "httpx-retries", marker = "sys_platform == 'win32'" },
+    { name = "loguru", marker = "sys_platform == 'win32'" },
+    { name = "pillow", marker = "sys_platform == 'win32'" },
+    { name = "pydantic", marker = "sys_platform == 'win32'" },
 ]
 wheels = [
     { url = "https://mirrors.aliyun.com/pypi/packages/a0/e6/71556a212ab86c8845f5bec220952e08ba288342593161da41076c678627/mineru_vl_utils-1.0.5-py3-none-any.whl", hash = "sha256:cf910e68f0607634e61b613b7f5992daf604bf80b400d81e7b9f0f117b7c3c15" },
@@ -921,13 +948,13 @@ name = "modelscope"
 version = "1.38.1"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
 dependencies = [
-    { name = "filelock" },
-    { name = "modelscope-hub" },
-    { name = "packaging" },
-    { name = "requests" },
-    { name = "setuptools" },
-    { name = "tqdm" },
-    { name = "urllib3" },
+    { name = "filelock", marker = "sys_platform == 'win32'" },
+    { name = "modelscope-hub", marker = "sys_platform == 'win32'" },
+    { name = "packaging", marker = "sys_platform == 'win32'" },
+    { name = "requests", marker = "sys_platform == 'win32'" },
+    { name = "setuptools", marker = "sys_platform == 'win32'" },
+    { name = "tqdm", marker = "sys_platform == 'win32'" },
+    { name = "urllib3", marker = "sys_platform == 'win32'" },
 ]
 sdist = { url = "https://mirrors.aliyun.com/pypi/packages/33/72/b37f46f8e1900c64485420b210eecda1f758cbd0fe8ade60c5bbf883b25e/modelscope-1.38.1.tar.gz", hash = "sha256:a81f3685b1545f52b415d88a763456416aa65170e622f9dcc02eadb3f8e1cfa0" }
 wheels = [
@@ -939,10 +966,10 @@ name = "modelscope-hub"
 version = "0.1.7"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
 dependencies = [
-    { name = "filelock" },
-    { name = "requests" },
-    { name = "tqdm" },
-    { name = "urllib3" },
+    { name = "filelock", marker = "sys_platform == 'win32'" },
+    { name = "requests", marker = "sys_platform == 'win32'" },
+    { name = "tqdm", marker = "sys_platform == 'win32'" },
+    { name = "urllib3", marker = "sys_platform == 'win32'" },
 ]
 sdist = { url = "https://mirrors.aliyun.com/pypi/packages/b6/cb/6b9d3fcbcd09db6cdd7f1e0fd60be2998c99db07be28f37982c0dbd14496/modelscope_hub-0.1.7.tar.gz", hash = "sha256:b78730f3923cf13d5fbc56c6224a5ba617bf111a562fe3808c03e34c3c07840f" }
 wheels = [
@@ -1028,10 +1055,10 @@ name = "onnxruntime"
 version = "1.27.0"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
 dependencies = [
-    { name = "flatbuffers" },
-    { name = "numpy" },
-    { name = "packaging" },
-    { name = "protobuf" },
+    { name = "flatbuffers", marker = "sys_platform == 'win32'" },
+    { name = "numpy", marker = "sys_platform == 'win32'" },
+    { name = "packaging", marker = "sys_platform == 'win32'" },
+    { name = "protobuf", marker = "sys_platform == 'win32'" },
 ]
 wheels = [
     { url = "https://mirrors.aliyun.com/pypi/packages/7f/76/59ed932b0244acd7bbbd6449480053a6d958ea66357f022f932872e19287/onnxruntime-1.27.0-cp313-cp313-win_amd64.whl", hash = "sha256:760021bca514d64a811837820d351a08a41741f16f8b4c26450da708fecf14e6" },
@@ -1043,14 +1070,14 @@ name = "openai"
 version = "2.44.0"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
 dependencies = [
-    { name = "anyio" },
-    { name = "distro" },
-    { name = "httpx" },
-    { name = "jiter" },
-    { name = "pydantic" },
-    { name = "sniffio" },
-    { name = "tqdm" },
-    { name = "typing-extensions" },
+    { name = "anyio", marker = "sys_platform == 'win32'" },
+    { name = "distro", marker = "sys_platform == 'win32'" },
+    { name = "httpx", marker = "sys_platform == 'win32'" },
+    { name = "jiter", marker = "sys_platform == 'win32'" },
+    { name = "pydantic", marker = "sys_platform == 'win32'" },
+    { name = "sniffio", marker = "sys_platform == 'win32'" },
+    { name = "tqdm", marker = "sys_platform == 'win32'" },
+    { name = "typing-extensions", marker = "sys_platform == 'win32'" },
 ]
 sdist = { url = "https://mirrors.aliyun.com/pypi/packages/49/f5/7c7cb955305cb41f7f3c5fd7e0e38bf6bbf2658468863d4b7b868a5cb8df/openai-2.44.0.tar.gz", hash = "sha256:68a5a5ffad82b8ff7d451c437529fb64f7c3b8123aaf0c021966a882d9e3947d" }
 wheels = [
@@ -1062,7 +1089,7 @@ name = "opencv-contrib-python"
 version = "4.10.0.84"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
 dependencies = [
-    { name = "numpy" },
+    { name = "numpy", marker = "sys_platform == 'win32'" },
 ]
 sdist = { url = "https://mirrors.aliyun.com/pypi/packages/1d/33/7b8ec6c4d45e678b26297e4a5e76464a93033a9adcc8c17eac01097065f6/opencv-contrib-python-4.10.0.84.tar.gz", hash = "sha256:4a3eae0ed9cadf1abe9293a6938a25a540e2fd6d7fc308595caa5896c8b36a0c" }
 wheels = [
@@ -1075,7 +1102,7 @@ name = "openpyxl"
 version = "3.1.5"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
 dependencies = [
-    { name = "et-xmlfile" },
+    { name = "et-xmlfile", marker = "sys_platform == 'win32'" },
 ]
 sdist = { url = "https://mirrors.aliyun.com/pypi/packages/3d/f9/88d94a75de065ea32619465d2f77b29a0469500e99012523b91cc4141cd1/openpyxl-3.1.5.tar.gz", hash = "sha256:cf0e3cf56142039133628b5acffe8ef0c12bc902d2aadd3e0fe5878dc08d1050" }
 wheels = [
@@ -1087,7 +1114,7 @@ name = "opt-einsum"
 version = "3.3.0"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
 dependencies = [
-    { name = "numpy" },
+    { name = "numpy", marker = "sys_platform == 'win32'" },
 ]
 sdist = { url = "https://mirrors.aliyun.com/pypi/packages/7d/bf/9257e53a0e7715bc1127e15063e831f076723c6cd60985333a1c18878fb8/opt_einsum-3.3.0.tar.gz", hash = "sha256:59f6475f77bbc37dcf7cd748519c0ec60722e91e63ca114e68821c0c54a46549" }
 wheels = [
@@ -1119,11 +1146,11 @@ name = "paddleocr"
 version = "3.7.0"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
 dependencies = [
-    { name = "aiohttp" },
-    { name = "paddlex", extra = ["ocr-core"] },
-    { name = "pyyaml" },
-    { name = "requests" },
-    { name = "typing-extensions" },
+    { name = "aiohttp", marker = "sys_platform == 'win32'" },
+    { name = "paddlex", extra = ["ocr-core"], marker = "sys_platform == 'win32'" },
+    { name = "pyyaml", marker = "sys_platform == 'win32'" },
+    { name = "requests", marker = "sys_platform == 'win32'" },
+    { name = "typing-extensions", marker = "sys_platform == 'win32'" },
 ]
 sdist = { url = "https://mirrors.aliyun.com/pypi/packages/97/b1/9454e886afa925067ce51de2e513d146524645888de299d51ddc1caa3100/paddleocr-3.7.0.tar.gz", hash = "sha256:9b81eb62cf37e590d4873e60262ff56f968ff9de6ce1f565749760ceb1c422e2" }
 wheels = [
@@ -1132,7 +1159,7 @@ wheels = [
 
 [package.optional-dependencies]
 doc-parser = [
-    { name = "paddlex", extra = ["genai-client", "ocr"] },
+    { name = "paddlex", extra = ["genai-client", "ocr"], marker = "sys_platform == 'win32'" },
 ]
 
 [[package]]
@@ -1140,15 +1167,15 @@ name = "paddlepaddle-gpu"
 version = "3.3.1"
 source = { registry = "https://www.paddlepaddle.org.cn/packages/stable/cu126/" }
 dependencies = [
-    { name = "httpx" },
-    { name = "networkx" },
-    { name = "numpy" },
-    { name = "opt-einsum" },
-    { name = "pillow" },
-    { name = "protobuf" },
-    { name = "safetensors" },
-    { name = "setuptools" },
-    { name = "typing-extensions" },
+    { name = "httpx", marker = "sys_platform == 'win32'" },
+    { name = "networkx", marker = "sys_platform == 'win32'" },
+    { name = "numpy", marker = "sys_platform == 'win32'" },
+    { name = "opt-einsum", marker = "sys_platform == 'win32'" },
+    { name = "pillow", marker = "sys_platform == 'win32'" },
+    { name = "protobuf", marker = "sys_platform == 'win32'" },
+    { name = "safetensors", marker = "sys_platform == 'win32'" },
+    { name = "setuptools", marker = "sys_platform == 'win32'" },
+    { name = "typing-extensions", marker = "sys_platform == 'win32'" },
 ]
 wheels = [
     { url = "https://paddle-whl.bj.bcebos.com/stable/cu126/paddlepaddle-gpu/paddlepaddle_gpu-3.3.1-cp313-cp313-win_amd64.whl" },
@@ -1159,24 +1186,24 @@ name = "paddlex"
 version = "3.7.2"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
 dependencies = [
-    { name = "aistudio-sdk" },
-    { name = "chardet" },
-    { name = "colorlog" },
-    { name = "filelock" },
-    { name = "huggingface-hub" },
-    { name = "modelscope" },
-    { name = "numpy" },
-    { name = "packaging" },
-    { name = "pandas" },
-    { name = "pillow" },
-    { name = "prettytable" },
-    { name = "py-cpuinfo" },
-    { name = "pydantic" },
-    { name = "pyyaml" },
-    { name = "requests" },
-    { name = "ruamel-yaml" },
-    { name = "typing-extensions" },
-    { name = "ujson" },
+    { name = "aistudio-sdk", marker = "sys_platform == 'win32'" },
+    { name = "chardet", marker = "sys_platform == 'win32'" },
+    { name = "colorlog", marker = "sys_platform == 'win32'" },
+    { name = "filelock", marker = "sys_platform == 'win32'" },
+    { name = "huggingface-hub", marker = "sys_platform == 'win32'" },
+    { name = "modelscope", marker = "sys_platform == 'win32'" },
+    { name = "numpy", marker = "sys_platform == 'win32'" },
+    { name = "packaging", marker = "sys_platform == 'win32'" },
+    { name = "pandas", marker = "sys_platform == 'win32'" },
+    { name = "pillow", marker = "sys_platform == 'win32'" },
+    { name = "prettytable", marker = "sys_platform == 'win32'" },
+    { name = "py-cpuinfo", marker = "sys_platform == 'win32'" },
+    { name = "pydantic", marker = "sys_platform == 'win32'" },
+    { name = "pyyaml", marker = "sys_platform == 'win32'" },
+    { name = "requests", marker = "sys_platform == 'win32'" },
+    { name = "ruamel-yaml", marker = "sys_platform == 'win32'" },
+    { name = "typing-extensions", marker = "sys_platform == 'win32'" },
+    { name = "ujson", marker = "sys_platform == 'win32'" },
 ]
 sdist = { url = "https://mirrors.aliyun.com/pypi/packages/dd/96/1e86d4056ffc1e494c53aebab7e2faf08dcf8b929180f9872ae46632e9bd/paddlex-3.7.2.tar.gz", hash = "sha256:6a60b4595e2d51460f7f51326672adca86b89ff9ecfd02ac348fb69739e0093c" }
 wheels = [
@@ -1185,38 +1212,38 @@ wheels = [
 
 [package.optional-dependencies]
 genai-client = [
-    { name = "openai" },
+    { name = "openai", marker = "sys_platform == 'win32'" },
 ]
 ocr = [
-    { name = "beautifulsoup4" },
-    { name = "einops" },
-    { name = "ftfy" },
-    { name = "imagesize" },
-    { name = "jinja2" },
-    { name = "latex2mathml" },
-    { name = "lxml" },
-    { name = "opencv-contrib-python" },
-    { name = "openpyxl" },
-    { name = "premailer" },
-    { name = "pyclipper" },
-    { name = "pypdfium2" },
-    { name = "python-bidi" },
-    { name = "regex" },
-    { name = "safetensors" },
-    { name = "scikit-learn" },
-    { name = "scipy" },
-    { name = "sentencepiece" },
-    { name = "shapely" },
-    { name = "tiktoken" },
-    { name = "tokenizers" },
+    { name = "beautifulsoup4", marker = "sys_platform == 'win32'" },
+    { name = "einops", marker = "sys_platform == 'win32'" },
+    { name = "ftfy", marker = "sys_platform == 'win32'" },
+    { name = "imagesize", marker = "sys_platform == 'win32'" },
+    { name = "jinja2", marker = "sys_platform == 'win32'" },
+    { name = "latex2mathml", marker = "sys_platform == 'win32'" },
+    { name = "lxml", marker = "sys_platform == 'win32'" },
+    { name = "opencv-contrib-python", marker = "sys_platform == 'win32'" },
+    { name = "openpyxl", marker = "sys_platform == 'win32'" },
+    { name = "premailer", marker = "sys_platform == 'win32'" },
+    { name = "pyclipper", marker = "sys_platform == 'win32'" },
+    { name = "pypdfium2", marker = "sys_platform == 'win32'" },
+    { name = "python-bidi", marker = "sys_platform == 'win32'" },
+    { name = "regex", marker = "sys_platform == 'win32'" },
+    { name = "safetensors", marker = "sys_platform == 'win32'" },
+    { name = "scikit-learn", marker = "sys_platform == 'win32'" },
+    { name = "scipy", marker = "sys_platform == 'win32'" },
+    { name = "sentencepiece", marker = "sys_platform == 'win32'" },
+    { name = "shapely", marker = "sys_platform == 'win32'" },
+    { name = "tiktoken", marker = "sys_platform == 'win32'" },
+    { name = "tokenizers", marker = "sys_platform == 'win32'" },
 ]
 ocr-core = [
-    { name = "imagesize" },
-    { name = "opencv-contrib-python" },
-    { name = "pyclipper" },
-    { name = "pypdfium2" },
-    { name = "python-bidi" },
-    { name = "shapely" },
+    { name = "imagesize", marker = "sys_platform == 'win32'" },
+    { name = "opencv-contrib-python", marker = "sys_platform == 'win32'" },
+    { name = "pyclipper", marker = "sys_platform == 'win32'" },
+    { name = "pypdfium2", marker = "sys_platform == 'win32'" },
+    { name = "python-bidi", marker = "sys_platform == 'win32'" },
+    { name = "shapely", marker = "sys_platform == 'win32'" },
 ]
 
 [[package]]
@@ -1224,9 +1251,9 @@ name = "pandas"
 version = "3.0.3"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
 dependencies = [
-    { name = "numpy" },
-    { name = "python-dateutil" },
-    { name = "tzdata" },
+    { name = "numpy", marker = "sys_platform == 'win32'" },
+    { name = "python-dateutil", marker = "sys_platform == 'win32'" },
+    { name = "tzdata", marker = "sys_platform == 'win32'" },
 ]
 sdist = { url = "https://mirrors.aliyun.com/pypi/packages/f8/87/4341c6252d1c47b08768c3d25ac487362bf403f0313ddae4a2a26c9b1b4c/pandas-3.0.3.tar.gz", hash = "sha256:696a4a00a2a2a35d4e5deb3fc946641b96c944f02230e4f76137fe35d806c4fc" }
 wheels = [
@@ -1240,11 +1267,11 @@ name = "pdftext"
 version = "0.7.1"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
 dependencies = [
-    { name = "click" },
-    { name = "numpy" },
-    { name = "pydantic" },
-    { name = "pydantic-settings" },
-    { name = "pypdfium2" },
+    { name = "click", marker = "sys_platform == 'win32'" },
+    { name = "numpy", marker = "sys_platform == 'win32'" },
+    { name = "pydantic", marker = "sys_platform == 'win32'" },
+    { name = "pydantic-settings", marker = "sys_platform == 'win32'" },
+    { name = "pypdfium2", marker = "sys_platform == 'win32'" },
 ]
 sdist = { url = "https://mirrors.aliyun.com/pypi/packages/b5/48/6c12661234ef71a9349bb1fbdd0259a6d8189376f664492e2c206ab3c397/pdftext-0.7.1.tar.gz", hash = "sha256:7484add28d48d8c04aab0076769f2d626454233de95de00c7b348cb6398045bd" }
 wheels = [
@@ -1297,11 +1324,11 @@ name = "pre-commit"
 version = "4.6.0"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
 dependencies = [
-    { name = "cfgv" },
-    { name = "identify" },
-    { name = "nodeenv" },
-    { name = "pyyaml" },
-    { name = "virtualenv" },
+    { name = "cfgv", marker = "sys_platform == 'win32'" },
+    { name = "identify", marker = "sys_platform == 'win32'" },
+    { name = "nodeenv", marker = "sys_platform == 'win32'" },
+    { name = "pyyaml", marker = "sys_platform == 'win32'" },
+    { name = "virtualenv", marker = "sys_platform == 'win32'" },
 ]
 sdist = { url = "https://mirrors.aliyun.com/pypi/packages/8e/22/2de9408ac81acbb8a7d05d4cc064a152ccf33b3d480ebe0cd292153db239/pre_commit-4.6.0.tar.gz", hash = "sha256:718d2208cef53fdc38206e40524a6d4d9576d103eb16f0fec11c875e7716e9d9" }
 wheels = [
@@ -1313,11 +1340,11 @@ name = "premailer"
 version = "3.10.0"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
 dependencies = [
-    { name = "cachetools" },
-    { name = "cssselect" },
-    { name = "cssutils" },
-    { name = "lxml" },
-    { name = "requests" },
+    { name = "cachetools", marker = "sys_platform == 'win32'" },
+    { name = "cssselect", marker = "sys_platform == 'win32'" },
+    { name = "cssutils", marker = "sys_platform == 'win32'" },
+    { name = "lxml", marker = "sys_platform == 'win32'" },
+    { name = "requests", marker = "sys_platform == 'win32'" },
 ]
 sdist = { url = "https://mirrors.aliyun.com/pypi/packages/a3/6f/e49bd31941eff2987076383fa6d811eb785a28f498f5bb131e981bd71e13/premailer-3.10.0.tar.gz", hash = "sha256:d1875a8411f5dc92b53ef9f193db6c0f879dc378d618e0ad292723e388bfe4c2" }
 wheels = [
@@ -1329,7 +1356,7 @@ name = "prettytable"
 version = "3.18.0"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
 dependencies = [
-    { name = "wcwidth" },
+    { name = "wcwidth", marker = "sys_platform == 'win32'" },
 ]
 sdist = { url = "https://mirrors.aliyun.com/pypi/packages/81/74/ba08d81e668ccfe8658d7520a307e63c19862c08eb4ccb26f356c5239a7a/prettytable-3.18.0.tar.gz", hash = "sha256:439217116152244369caf3d9f1caf2f9fe29b03bd79e88d2928c8e718c95d680" }
 wheels = [
@@ -1412,10 +1439,10 @@ name = "pydantic"
 version = "2.13.4"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
 dependencies = [
-    { name = "annotated-types" },
-    { name = "pydantic-core" },
-    { name = "typing-extensions" },
-    { name = "typing-inspection" },
+    { name = "annotated-types", marker = "sys_platform == 'win32'" },
+    { name = "pydantic-core", marker = "sys_platform == 'win32'" },
+    { name = "typing-extensions", marker = "sys_platform == 'win32'" },
+    { name = "typing-inspection", marker = "sys_platform == 'win32'" },
 ]
 sdist = { url = "https://mirrors.aliyun.com/pypi/packages/18/a5/b60d21ac674192f8ab0ba4e9fd860690f9b4a6e51ca5df118733b487d8d6/pydantic-2.13.4.tar.gz", hash = "sha256:c40756b57adaa8b1efeeced5c196f3f3b7c435f90e84ea7f443901bec8099ef6" }
 wheels = [
@@ -1427,7 +1454,7 @@ name = "pydantic-core"
 version = "2.46.4"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
 dependencies = [
-    { name = "typing-extensions" },
+    { name = "typing-extensions", marker = "sys_platform == 'win32'" },
 ]
 sdist = { url = "https://mirrors.aliyun.com/pypi/packages/9d/56/921726b776ace8d8f5db44c4ef961006580d91dc52b803c489fafd1aa249/pydantic_core-2.46.4.tar.gz", hash = "sha256:62f875393d7f270851f20523dd2e29f082bcc82292d66db2b64ea71f64b6e1c1" }
 wheels = [
@@ -1441,9 +1468,9 @@ name = "pydantic-settings"
 version = "2.14.2"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
 dependencies = [
-    { name = "pydantic" },
-    { name = "python-dotenv" },
-    { name = "typing-inspection" },
+    { name = "pydantic", marker = "sys_platform == 'win32'" },
+    { name = "python-dotenv", marker = "sys_platform == 'win32'" },
+    { name = "typing-inspection", marker = "sys_platform == 'win32'" },
 ]
 sdist = { url = "https://mirrors.aliyun.com/pypi/packages/5c/b5/8f48e906c3e0205276e8bd8cb7512217a87b2685304d64be27cad5b3019f/pydantic_settings-2.14.2.tar.gz", hash = "sha256:c19dd64b19097f1de80184f0cc7b0272a13ae6e170cbf240a3e27e381ed14a5f" }
 wheels = [
@@ -1473,12 +1500,12 @@ name = "pyinstaller"
 version = "6.21.0"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
 dependencies = [
-    { name = "altgraph" },
-    { name = "packaging" },
-    { name = "pefile" },
-    { name = "pyinstaller-hooks-contrib" },
-    { name = "pywin32-ctypes" },
-    { name = "setuptools" },
+    { name = "altgraph", marker = "sys_platform == 'win32'" },
+    { name = "packaging", marker = "sys_platform == 'win32'" },
+    { name = "pefile", marker = "sys_platform == 'win32'" },
+    { name = "pyinstaller-hooks-contrib", marker = "sys_platform == 'win32'" },
+    { name = "pywin32-ctypes", marker = "sys_platform == 'win32'" },
+    { name = "setuptools", marker = "sys_platform == 'win32'" },
 ]
 sdist = { url = "https://mirrors.aliyun.com/pypi/packages/d5/4d/ec706c3fcf39e26888c35b39615ff4d5865d184069666c47492cff1fbe50/pyinstaller-6.21.0.tar.gz", hash = "sha256:bb9fab705983e393a2d1cac77d6972513057ad800215fd861dc15ff5272e98fd" }
 wheels = [
@@ -1492,7 +1519,7 @@ name = "pyinstaller-hooks-contrib"
 version = "2026.6"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
 dependencies = [
-    { name = "packaging" },
+    { name = "packaging", marker = "sys_platform == 'win32'" },
 ]
 sdist = { url = "https://mirrors.aliyun.com/pypi/packages/94/5b/c9fe0db5e83ee1c39b2258fa21d23b15e1a60786b6c5990ee5074ead8bb6/pyinstaller_hooks_contrib-2026.6.tar.gz", hash = "sha256:bef5002c32f4f50bd55b005da12cff64eca8783e7eaf86a06a62410164bab725" }
 wheels = [
@@ -1541,10 +1568,10 @@ name = "pypptx-with-oxml"
 version = "1.0.3"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
 dependencies = [
-    { name = "lxml" },
-    { name = "pillow" },
-    { name = "typing-extensions" },
-    { name = "xlsxwriter" },
+    { name = "lxml", marker = "sys_platform == 'win32'" },
+    { name = "pillow", marker = "sys_platform == 'win32'" },
+    { name = "typing-extensions", marker = "sys_platform == 'win32'" },
+    { name = "xlsxwriter", marker = "sys_platform == 'win32'" },
 ]
 sdist = { url = "https://mirrors.aliyun.com/pypi/packages/43/17/7a499cea9e03b37ef5a502a7792431b5e609328908e2e11b02453071367b/pypptx_with_oxml-1.0.3.tar.gz", hash = "sha256:a093d8c8e99dfcd0131ea98b4dbc0a0a40adf44869edbb74c57d0cb87b8e4208" }
 wheels = [
@@ -1556,8 +1583,8 @@ name = "pyright"
 version = "1.1.411"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
 dependencies = [
-    { name = "nodeenv" },
-    { name = "typing-extensions" },
+    { name = "nodeenv", marker = "sys_platform == 'win32'" },
+    { name = "typing-extensions", marker = "sys_platform == 'win32'" },
 ]
 sdist = { url = "https://mirrors.aliyun.com/pypi/packages/7e/ab/265f7dc69d28113ebba19092e57b075f41543b2ed048429c5f56e2b88eac/pyright-1.1.411.tar.gz", hash = "sha256:d885a0551f2e763b089a02702174e7f4ba77548cddabc972ab86d1f7f1b0f998" }
 wheels = [
@@ -1569,9 +1596,9 @@ name = "pyside6"
 version = "6.11.1"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
 dependencies = [
-    { name = "pyside6-addons" },
-    { name = "pyside6-essentials" },
-    { name = "shiboken6" },
+    { name = "pyside6-addons", marker = "sys_platform == 'win32'" },
+    { name = "pyside6-essentials", marker = "sys_platform == 'win32'" },
+    { name = "shiboken6", marker = "sys_platform == 'win32'" },
 ]
 wheels = [
     { url = "https://mirrors.aliyun.com/pypi/packages/57/f2/d9d8ce1373dabb37e5919f63cd18446556079631d3f2eea3ada03c29f6b8/pyside6-6.11.1-cp310-abi3-win_amd64.whl", hash = "sha256:0968877ab1fb4ef3587a284da6fe05e8647ada56a6a3750b6395188e01f4aba6" },
@@ -1583,8 +1610,8 @@ name = "pyside6-addons"
 version = "6.11.1"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
 dependencies = [
-    { name = "pyside6-essentials" },
-    { name = "shiboken6" },
+    { name = "pyside6-essentials", marker = "sys_platform == 'win32'" },
+    { name = "shiboken6", marker = "sys_platform == 'win32'" },
 ]
 wheels = [
     { url = "https://mirrors.aliyun.com/pypi/packages/9a/bd/8adc4d350b3b363f3dfc8fccdcf5bfed25f7e36c2fff30c64e106f4f1572/pyside6_addons-6.11.1-cp310-abi3-win_amd64.whl", hash = "sha256:0d13c4dfd671b050a48e4f8d8ddc724b7248f9c0437e7fc47fdf316278572923" },
@@ -1596,7 +1623,7 @@ name = "pyside6-essentials"
 version = "6.11.1"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
 dependencies = [
-    { name = "shiboken6" },
+    { name = "shiboken6", marker = "sys_platform == 'win32'" },
 ]
 wheels = [
     { url = "https://mirrors.aliyun.com/pypi/packages/64/0e/b663ecc96ca57b5c91b83b6615d6b174380b0faf30338125c26e053d6aa7/pyside6_essentials-6.11.1-cp310-abi3-win_amd64.whl", hash = "sha256:63311bd48e32c584599ab04b9ef7c324082374cd2c9fa533f978fb893bb47e40" },
@@ -1608,11 +1635,11 @@ name = "pytest"
 version = "9.1.1"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
 dependencies = [
-    { name = "colorama" },
-    { name = "iniconfig" },
-    { name = "packaging" },
-    { name = "pluggy" },
-    { name = "pygments" },
+    { name = "colorama", marker = "sys_platform == 'win32'" },
+    { name = "iniconfig", marker = "sys_platform == 'win32'" },
+    { name = "packaging", marker = "sys_platform == 'win32'" },
+    { name = "pluggy", marker = "sys_platform == 'win32'" },
+    { name = "pygments", marker = "sys_platform == 'win32'" },
 ]
 sdist = { url = "https://mirrors.aliyun.com/pypi/packages/e4/47/b9efed96c114afcfa3c9d3fe98a76a1d14c74a9e266d397cf6eb64be5e01/pytest-9.1.1.tar.gz", hash = "sha256:1088fbde8f2b49d95a549a195707afa7a76a3ce9bcadc26b6d71f0ffda5fe313" }
 wheels = [
@@ -1624,9 +1651,9 @@ name = "pytest-cov"
 version = "7.1.0"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
 dependencies = [
-    { name = "coverage" },
-    { name = "pluggy" },
-    { name = "pytest" },
+    { name = "coverage", marker = "sys_platform == 'win32'" },
+    { name = "pluggy", marker = "sys_platform == 'win32'" },
+    { name = "pytest", marker = "sys_platform == 'win32'" },
 ]
 sdist = { url = "https://mirrors.aliyun.com/pypi/packages/b1/51/a849f96e117386044471c8ec2bd6cfebacda285da9525c9106aeb28da671/pytest_cov-7.1.0.tar.gz", hash = "sha256:30674f2b5f6351aa09702a9c8c364f6a01c27aae0c1366ae8016160d1efc56b2" }
 wheels = [
@@ -1638,9 +1665,9 @@ name = "pytest-qt"
 version = "4.5.0"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
 dependencies = [
-    { name = "pluggy" },
-    { name = "pytest" },
-    { name = "typing-extensions" },
+    { name = "pluggy", marker = "sys_platform == 'win32'" },
+    { name = "pytest", marker = "sys_platform == 'win32'" },
+    { name = "typing-extensions", marker = "sys_platform == 'win32'" },
 ]
 sdist = { url = "https://mirrors.aliyun.com/pypi/packages/d3/61/8bdec02663c18bf5016709b909411dce04a868710477dc9b9844ffcf8dd2/pytest_qt-4.5.0.tar.gz", hash = "sha256:51620e01c488f065d2036425cbc1cbcf8a6972295105fd285321eb47e66a319f" }
 wheels = [
@@ -1671,7 +1698,7 @@ name = "python-dateutil"
 version = "2.9.0.post0"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
 dependencies = [
-    { name = "six" },
+    { name = "six", marker = "sys_platform == 'win32'" },
 ]
 sdist = { url = "https://mirrors.aliyun.com/pypi/packages/66/c0/0c8b6ad9f17a802ee498c46e004a0eb49bc148f2fd230864601a86dcf6db/python-dateutil-2.9.0.post0.tar.gz", hash = "sha256:37dd54208da7e1cd875388217d5e00ebd4179249f90fb72437e91a35459a0ad3" }
 wheels = [
@@ -1683,8 +1710,8 @@ name = "python-discovery"
 version = "1.4.4"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
 dependencies = [
-    { name = "filelock" },
-    { name = "platformdirs" },
+    { name = "filelock", marker = "sys_platform == 'win32'" },
+    { name = "platformdirs", marker = "sys_platform == 'win32'" },
 ]
 sdist = { url = "https://mirrors.aliyun.com/pypi/packages/4c/81/58c70036dffeccb7fe7d79d6260c69f7a28272bbd3909c29a01ea9422744/python_discovery-1.4.4.tar.gz", hash = "sha256:5cad33982d412c1f3ffb8f9ca4ea292c9680bca3942451d30b69c37fce53a4a3" }
 wheels = [
@@ -1696,8 +1723,8 @@ name = "python-docx"
 version = "1.2.0"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
 dependencies = [
-    { name = "lxml" },
-    { name = "typing-extensions" },
+    { name = "lxml", marker = "sys_platform == 'win32'" },
+    { name = "typing-extensions", marker = "sys_platform == 'win32'" },
 ]
 sdist = { url = "https://mirrors.aliyun.com/pypi/packages/a9/f7/eddfe33871520adab45aaa1a71f0402a2252050c14c7e3009446c8f4701c/python_docx-1.2.0.tar.gz", hash = "sha256:7bc9d7b7d8a69c9c02ca09216118c86552704edc23bac179283f2e38f86220ce" }
 wheels = [
@@ -1774,7 +1801,7 @@ name = "qrcode"
 version = "8.2"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
 dependencies = [
-    { name = "colorama" },
+    { name = "colorama", marker = "sys_platform == 'win32'" },
 ]
 sdist = { url = "https://mirrors.aliyun.com/pypi/packages/8f/b2/7fc2931bfae0af02d5f53b174e9cf701adbb35f39d69c2af63d4a39f81a9/qrcode-8.2.tar.gz", hash = "sha256:35c3f2a4172b33136ab9f6b3ef1c00260dd2f66f858f24d88418a015f446506c" }
 wheels = [
@@ -1783,7 +1810,20 @@ wheels = [
 
 [package.optional-dependencies]
 pil = [
-    { name = "pillow" },
+    { name = "pillow", marker = "sys_platform == 'win32'" },
+]
+
+[[package]]
+name = "referencing"
+version = "0.37.0"
+source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
+dependencies = [
+    { name = "attrs", marker = "sys_platform == 'win32'" },
+    { name = "rpds-py", marker = "sys_platform == 'win32'" },
+]
+sdist = { url = "https://mirrors.aliyun.com/pypi/packages/22/f5/df4e9027acead3ecc63e50fe1e36aca1523e1719559c499951bb4b53188f/referencing-0.37.0.tar.gz", hash = "sha256:44aefc3142c5b842538163acb373e24cce6632bd54bdb01b21ad5863489f50d8" }
+wheels = [
+    { url = "https://mirrors.aliyun.com/pypi/packages/2c/58/ca301544e1fa93ed4f80d724bf5b194f6e4b945841c5bfd555878eea9fcb/referencing-0.37.0-py3-none-any.whl", hash = "sha256:381329a9f99628c9069361716891d34ad94af76e461dcb0335825aecc7692231" },
 ]
 
 [[package]]
@@ -1805,8 +1845,8 @@ name = "reportlab"
 version = "5.0.0"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
 dependencies = [
-    { name = "charset-normalizer" },
-    { name = "pillow" },
+    { name = "charset-normalizer", marker = "sys_platform == 'win32'" },
+    { name = "pillow", marker = "sys_platform == 'win32'" },
 ]
 sdist = { url = "https://mirrors.aliyun.com/pypi/packages/41/d6/4b7b0cf56880eb96533e607967be6a939e344675601e033d113a0bfa1f4e/reportlab-5.0.0.tar.gz", hash = "sha256:e4494a0c6623ae213bb856fba523171b2b54a7bf629fda02d5e525a7b899a784" }
 wheels = [
@@ -1818,10 +1858,10 @@ name = "requests"
 version = "2.34.2"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
 dependencies = [
-    { name = "certifi" },
-    { name = "charset-normalizer" },
-    { name = "idna" },
-    { name = "urllib3" },
+    { name = "certifi", marker = "sys_platform == 'win32'" },
+    { name = "charset-normalizer", marker = "sys_platform == 'win32'" },
+    { name = "idna", marker = "sys_platform == 'win32'" },
+    { name = "urllib3", marker = "sys_platform == 'win32'" },
 ]
 sdist = { url = "https://mirrors.aliyun.com/pypi/packages/ac/c3/e2a2b89f2d3e2179abd6d00ebd70bff6273f37fb3e0cc209f48b39d00cbf/requests-2.34.2.tar.gz", hash = "sha256:f288924cae4e29463698d6d60bc6a4da69c89185ad1e0bcc4104f584e960b9ed" }
 wheels = [
@@ -1833,8 +1873,8 @@ name = "rich"
 version = "15.0.0"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
 dependencies = [
-    { name = "markdown-it-py" },
-    { name = "pygments" },
+    { name = "markdown-it-py", marker = "sys_platform == 'win32'" },
+    { name = "pygments", marker = "sys_platform == 'win32'" },
 ]
 sdist = { url = "https://mirrors.aliyun.com/pypi/packages/c0/8f/0722ca900cc807c13a6a0c696dacf35430f72e0ec571c4275d2371fca3e9/rich-15.0.0.tar.gz", hash = "sha256:edd07a4824c6b40189fb7ac9bc4c52536e9780fbbfbddf6f1e2502c31b068c36" }
 wheels = [
@@ -1846,13 +1886,24 @@ name = "robust-downloader"
 version = "0.0.2"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
 dependencies = [
-    { name = "colorlog" },
-    { name = "requests" },
-    { name = "tqdm" },
+    { name = "colorlog", marker = "sys_platform == 'win32'" },
+    { name = "requests", marker = "sys_platform == 'win32'" },
+    { name = "tqdm", marker = "sys_platform == 'win32'" },
 ]
 sdist = { url = "https://mirrors.aliyun.com/pypi/packages/63/20/8d28efa080f58fa06f6378875ac482ee511c076369e5293a2e65128cf9a0/robust-downloader-0.0.2.tar.gz", hash = "sha256:08c938b96e317abe6b037e34230a91bda9b5d613f009bca4a47664997c61de90" }
 wheels = [
     { url = "https://mirrors.aliyun.com/pypi/packages/56/a1/779e9d0ebbdc704411ce30915a1105eb01aeaa9e402d7e446613ff8fb121/robust_downloader-0.0.2-py3-none-any.whl", hash = "sha256:8fe08bfb64d714fd1a048a7df6eb7b413eb4e624309a49db2c16fbb80a62869d" },
+]
+
+[[package]]
+name = "rpds-py"
+version = "2026.6.3"
+source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
+sdist = { url = "https://mirrors.aliyun.com/pypi/packages/aa/2a/9618a122aeb2a169a28b03889a2995fe297588964333d4a7d67bdf46e147/rpds_py-2026.6.3.tar.gz", hash = "sha256:1cebd1337c242e4ec2293e541f712b2da849b29f48f0c293684b71c0632625d4" }
+wheels = [
+    { url = "https://mirrors.aliyun.com/pypi/packages/85/ed/adab103321c0a6565d5ae1c2998349bc3ee175b82ccc5ae8fc04cc413075/rpds_py-2026.6.3-cp313-cp313-win32.whl", hash = "sha256:8c3d1e9c15b9d51ca0391e13da1a25a0a4df3c58a37c9dc368e0736cf7f69df0" },
+    { url = "https://mirrors.aliyun.com/pypi/packages/7b/ed/a03b09668e74e5dabbf2e211f6468e1820c0552f7b0500082da31841bf7b/rpds_py-2026.6.3-cp313-cp313-win_amd64.whl", hash = "sha256:9250a9a0a6fd4648b3f868da8d91a4c52b5811a62df58e753d50ae4454a36f80" },
+    { url = "https://mirrors.aliyun.com/pypi/packages/27/17/b8642c12930b71bc2b25831f6708ccf0f75abcd11883932ec9ce54ba3a78/rpds_py-2026.6.3-cp313-cp313-win_arm64.whl", hash = "sha256:900a67df3fd1660b035a4761c4ce73c382ea6b35f90f9863c36c6fd8bf8b09bb" },
 ]
 
 [[package]]
@@ -1880,7 +1931,7 @@ name = "safehttpx"
 version = "0.1.7"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
 dependencies = [
-    { name = "httpx" },
+    { name = "httpx", marker = "sys_platform == 'win32'" },
 ]
 sdist = { url = "https://mirrors.aliyun.com/pypi/packages/89/d1/4282284d9cf1ee873607a46442da977fc3c985059315ab23610be31d5885/safehttpx-0.1.7.tar.gz", hash = "sha256:db201c0978c41eddb8bb480f3eee59dd67304fdd91646035e9d9a720049a9d23" }
 wheels = [
@@ -1903,11 +1954,11 @@ name = "scikit-learn"
 version = "1.9.0"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
 dependencies = [
-    { name = "joblib" },
-    { name = "narwhals" },
-    { name = "numpy" },
-    { name = "scipy" },
-    { name = "threadpoolctl" },
+    { name = "joblib", marker = "sys_platform == 'win32'" },
+    { name = "narwhals", marker = "sys_platform == 'win32'" },
+    { name = "numpy", marker = "sys_platform == 'win32'" },
+    { name = "scipy", marker = "sys_platform == 'win32'" },
+    { name = "threadpoolctl", marker = "sys_platform == 'win32'" },
 ]
 sdist = { url = "https://mirrors.aliyun.com/pypi/packages/fa/6f/37092bdb25f712817231799fc5674d8e704066a8a70c1d2d40517e18b4ab/scikit_learn-1.9.0.tar.gz", hash = "sha256:8833266989d3a5110178a9fae30783675460724d0e1efb13b14901d2c660c557" }
 wheels = [
@@ -1920,7 +1971,7 @@ name = "scipy"
 version = "1.18.0"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
 dependencies = [
-    { name = "numpy" },
+    { name = "numpy", marker = "sys_platform == 'win32'" },
 ]
 sdist = { url = "https://mirrors.aliyun.com/pypi/packages/a7/25/c2700dfaf6442b4effaa91af24ebce5dc9d31bb4a69706313aae70d72cd0/scipy-1.18.0.tar.gz", hash = "sha256:67b2ad2ad54c72ca6d04975a9b2df8c3638c34ddd5b28738e94fc2b57929d378" }
 wheels = [
@@ -1965,7 +2016,7 @@ name = "shapely"
 version = "2.1.2"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
 dependencies = [
-    { name = "numpy" },
+    { name = "numpy", marker = "sys_platform == 'win32'" },
 ]
 sdist = { url = "https://mirrors.aliyun.com/pypi/packages/4d/bc/0989043118a27cccb4e906a46b7565ce36ca7b57f5a18b78f4f1b0f72d9d/shapely-2.1.2.tar.gz", hash = "sha256:2ed4ecb28320a433db18a5bf029986aa8afcfd740745e78847e330d5d94922a9" }
 wheels = [
@@ -2025,7 +2076,7 @@ name = "starlette"
 version = "0.52.1"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
 dependencies = [
-    { name = "anyio" },
+    { name = "anyio", marker = "sys_platform == 'win32'" },
 ]
 sdist = { url = "https://mirrors.aliyun.com/pypi/packages/c4/68/79977123bb7be889ad680d79a40f339082c1978b5cfcf62c2d8d196873ac/starlette-0.52.1.tar.gz", hash = "sha256:834edd1b0a23167694292e94f597773bc3f89f362be6effee198165a35d62933" }
 wheels = [
@@ -2037,7 +2088,7 @@ name = "sympy"
 version = "1.14.0"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
 dependencies = [
-    { name = "mpmath" },
+    { name = "mpmath", marker = "sys_platform == 'win32'" },
 ]
 sdist = { url = "https://mirrors.aliyun.com/pypi/packages/83/d3/803453b36afefb7c2bb238361cd4ae6125a569b4db67cd9e79846ba2d68c/sympy-1.14.0.tar.gz", hash = "sha256:d3d3fe8df1e5a0b42f0e7bdf50541697dbe7d23746e894990c030e2b05e72517" }
 wheels = [
@@ -2058,8 +2109,8 @@ name = "tiktoken"
 version = "0.13.0"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
 dependencies = [
-    { name = "regex" },
-    { name = "requests" },
+    { name = "regex", marker = "sys_platform == 'win32'" },
+    { name = "requests", marker = "sys_platform == 'win32'" },
 ]
 sdist = { url = "https://mirrors.aliyun.com/pypi/packages/e4/e5/5f3cb2159769d0f4324c0e9e87f9de3c4b1cd45848a96b2eb3566ad5ca77/tiktoken-0.13.0.tar.gz", hash = "sha256:c9435714c3a84c2319499de9a300c0e604449dd0799ff246458b3bb6a7f433c1" }
 wheels = [
@@ -2072,7 +2123,7 @@ name = "tokenizers"
 version = "0.22.2"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
 dependencies = [
-    { name = "huggingface-hub" },
+    { name = "huggingface-hub", marker = "sys_platform == 'win32'" },
 ]
 sdist = { url = "https://mirrors.aliyun.com/pypi/packages/73/6f/f80cfef4a312e1fb34baf7d85c72d4411afde10978d4657f8cdd811d3ccc/tokenizers-0.22.2.tar.gz", hash = "sha256:473b83b915e547aa366d1eee11806deaf419e17be16310ac0a14077f1e28f917" }
 wheels = [
@@ -2095,13 +2146,13 @@ name = "torch"
 version = "2.12.1+cu126"
 source = { registry = "https://mirrors.nju.edu.cn/pytorch/whl/cu126" }
 dependencies = [
-    { name = "filelock" },
-    { name = "fsspec" },
-    { name = "jinja2" },
-    { name = "networkx" },
-    { name = "setuptools" },
-    { name = "sympy" },
-    { name = "typing-extensions" },
+    { name = "filelock", marker = "sys_platform == 'win32'" },
+    { name = "fsspec", marker = "sys_platform == 'win32'" },
+    { name = "jinja2", marker = "sys_platform == 'win32'" },
+    { name = "networkx", marker = "sys_platform == 'win32'" },
+    { name = "setuptools", marker = "sys_platform == 'win32'" },
+    { name = "sympy", marker = "sys_platform == 'win32'" },
+    { name = "typing-extensions", marker = "sys_platform == 'win32'" },
 ]
 wheels = [
     { url = "https://mirrors.nju.edu.cn/pytorch/whl/cu126/torch-2.12.1%2Bcu126-cp313-cp313-win_amd64.whl", hash = "sha256:bd5ee06aa2d24be1ae954cdb45255ea9feab7c584d06cd6578a33b58fcccc91a", upload-time = "2026-06-18T02:13:17Z" },
@@ -2112,9 +2163,9 @@ name = "torchvision"
 version = "0.27.1+cu126"
 source = { registry = "https://mirrors.nju.edu.cn/pytorch/whl/cu126" }
 dependencies = [
-    { name = "numpy" },
-    { name = "pillow" },
-    { name = "torch" },
+    { name = "numpy", marker = "sys_platform == 'win32'" },
+    { name = "pillow", marker = "sys_platform == 'win32'" },
+    { name = "torch", marker = "sys_platform == 'win32'" },
 ]
 wheels = [
     { url = "https://mirrors.nju.edu.cn/pytorch/whl/cu126/torchvision-0.27.1%2Bcu126-cp313-cp313-win_amd64.whl", hash = "sha256:4b71847cf110c6b2577ad1466e7bdbfffe2b4d42a917213e26523f1943b16b6f", upload-time = "2026-06-18T04:00:05Z" },
@@ -2125,7 +2176,7 @@ name = "tqdm"
 version = "4.68.4"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
 dependencies = [
-    { name = "colorama" },
+    { name = "colorama", marker = "sys_platform == 'win32'" },
 ]
 sdist = { url = "https://mirrors.aliyun.com/pypi/packages/ae/5f/57ff8b434839e70dab45601284ea413e947a63799891b7553e5960a793a8/tqdm-4.68.4.tar.gz", hash = "sha256:19829c9673638f2a0b8617da4cdcb927e831cd88bcfcb6e78d42a4d1af131520" }
 wheels = [
@@ -2137,16 +2188,16 @@ name = "transformers"
 version = "4.57.6"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
 dependencies = [
-    { name = "filelock" },
-    { name = "huggingface-hub" },
-    { name = "numpy" },
-    { name = "packaging" },
-    { name = "pyyaml" },
-    { name = "regex" },
-    { name = "requests" },
-    { name = "safetensors" },
-    { name = "tokenizers" },
-    { name = "tqdm" },
+    { name = "filelock", marker = "sys_platform == 'win32'" },
+    { name = "huggingface-hub", marker = "sys_platform == 'win32'" },
+    { name = "numpy", marker = "sys_platform == 'win32'" },
+    { name = "packaging", marker = "sys_platform == 'win32'" },
+    { name = "pyyaml", marker = "sys_platform == 'win32'" },
+    { name = "regex", marker = "sys_platform == 'win32'" },
+    { name = "requests", marker = "sys_platform == 'win32'" },
+    { name = "safetensors", marker = "sys_platform == 'win32'" },
+    { name = "tokenizers", marker = "sys_platform == 'win32'" },
+    { name = "tqdm", marker = "sys_platform == 'win32'" },
 ]
 sdist = { url = "https://mirrors.aliyun.com/pypi/packages/c4/35/67252acc1b929dc88b6602e8c4a982e64f31e733b804c14bc24b47da35e6/transformers-4.57.6.tar.gz", hash = "sha256:55e44126ece9dc0a291521b7e5492b572e6ef2766338a610b9ab5afbb70689d3" }
 wheels = [
@@ -2158,10 +2209,10 @@ name = "typer"
 version = "0.26.8"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
 dependencies = [
-    { name = "annotated-doc" },
-    { name = "colorama" },
-    { name = "rich" },
-    { name = "shellingham" },
+    { name = "annotated-doc", marker = "sys_platform == 'win32'" },
+    { name = "colorama", marker = "sys_platform == 'win32'" },
+    { name = "rich", marker = "sys_platform == 'win32'" },
+    { name = "shellingham", marker = "sys_platform == 'win32'" },
 ]
 sdist = { url = "https://mirrors.aliyun.com/pypi/packages/7c/f7/68adc395201b20b872d68e975386832e8005ffeacedd43a1d837a32815be/typer-0.26.8.tar.gz", hash = "sha256:c244a6bd558886fe3f8780efb6bdd28bb9aff005a94eedebaa5cb32926fe2f7e" }
 wheels = [
@@ -2182,7 +2233,7 @@ name = "typing-inspection"
 version = "0.4.2"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
 dependencies = [
-    { name = "typing-extensions" },
+    { name = "typing-extensions", marker = "sys_platform == 'win32'" },
 ]
 sdist = { url = "https://mirrors.aliyun.com/pypi/packages/55/e3/70399cb7dd41c10ac53367ae42139cf4b1ca5f36bb3dc6c9d33acdb43655/typing_inspection-0.4.2.tar.gz", hash = "sha256:ba561c48a67c5958007083d386c3295464928b01faa735ab8547c5692e87f464" }
 wheels = [
@@ -2234,8 +2285,8 @@ name = "uvicorn"
 version = "0.51.0"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
 dependencies = [
-    { name = "click" },
-    { name = "h11" },
+    { name = "click", marker = "sys_platform == 'win32'" },
+    { name = "h11", marker = "sys_platform == 'win32'" },
 ]
 sdist = { url = "https://mirrors.aliyun.com/pypi/packages/a2/65/b7c6c443ccc58678c91e1e973bbe2a878591538655d6e1d47f24ba1c51f3/uvicorn-0.51.0.tar.gz", hash = "sha256:f6f4b69b657c312f516dd2d268ab9ae6f254b11e4bac504f37b2ab58b24dd0b0" }
 wheels = [
@@ -2247,39 +2298,40 @@ name = "vibeocr"
 version = "0.4.24"
 source = { editable = "." }
 dependencies = [
-    { name = "fastapi" },
-    { name = "fonttools" },
-    { name = "httpx" },
-    { name = "markdown" },
-    { name = "mineru", extra = ["core"] },
-    { name = "numpy" },
-    { name = "opencv-contrib-python" },
-    { name = "openpyxl" },
-    { name = "paddleocr", extra = ["doc-parser"] },
-    { name = "paddlepaddle-gpu" },
-    { name = "pillow" },
-    { name = "pydantic" },
-    { name = "pymupdf" },
-    { name = "pyside6" },
-    { name = "python-barcode" },
-    { name = "python-docx" },
-    { name = "pyzbar" },
-    { name = "qasync" },
-    { name = "qrcode", extra = ["pil"] },
-    { name = "torch" },
-    { name = "uvicorn" },
+    { name = "fastapi", marker = "sys_platform == 'win32'" },
+    { name = "fonttools", marker = "sys_platform == 'win32'" },
+    { name = "httpx", marker = "sys_platform == 'win32'" },
+    { name = "markdown", marker = "sys_platform == 'win32'" },
+    { name = "mineru", extra = ["core"], marker = "sys_platform == 'win32'" },
+    { name = "numpy", marker = "sys_platform == 'win32'" },
+    { name = "opencv-contrib-python", marker = "sys_platform == 'win32'" },
+    { name = "openpyxl", marker = "sys_platform == 'win32'" },
+    { name = "paddleocr", extra = ["doc-parser"], marker = "sys_platform == 'win32'" },
+    { name = "paddlepaddle-gpu", marker = "sys_platform == 'win32'" },
+    { name = "pillow", marker = "sys_platform == 'win32'" },
+    { name = "pydantic", marker = "sys_platform == 'win32'" },
+    { name = "pymupdf", marker = "sys_platform == 'win32'" },
+    { name = "pyside6", marker = "sys_platform == 'win32'" },
+    { name = "python-barcode", marker = "sys_platform == 'win32'" },
+    { name = "python-docx", marker = "sys_platform == 'win32'" },
+    { name = "pyzbar", marker = "sys_platform == 'win32'" },
+    { name = "qasync", marker = "sys_platform == 'win32'" },
+    { name = "qrcode", extra = ["pil"], marker = "sys_platform == 'win32'" },
+    { name = "torch", marker = "sys_platform == 'win32'" },
+    { name = "uvicorn", marker = "sys_platform == 'win32'" },
 ]
 
 [package.dev-dependencies]
 dev = [
-    { name = "pre-commit" },
-    { name = "pyinstaller" },
-    { name = "pyright" },
-    { name = "pytest" },
-    { name = "pytest-cov" },
-    { name = "pytest-qt" },
-    { name = "ruff" },
-    { name = "uv" },
+    { name = "jsonschema", marker = "sys_platform == 'win32'" },
+    { name = "pre-commit", marker = "sys_platform == 'win32'" },
+    { name = "pyinstaller", marker = "sys_platform == 'win32'" },
+    { name = "pyright", marker = "sys_platform == 'win32'" },
+    { name = "pytest", marker = "sys_platform == 'win32'" },
+    { name = "pytest-cov", marker = "sys_platform == 'win32'" },
+    { name = "pytest-qt", marker = "sys_platform == 'win32'" },
+    { name = "ruff", marker = "sys_platform == 'win32'" },
+    { name = "uv", marker = "sys_platform == 'win32'" },
 ]
 
 [package.metadata]
@@ -2309,6 +2361,7 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "jsonschema", specifier = ">=4.25.0" },
     { name = "pre-commit", specifier = ">=4.6.0" },
     { name = "pyinstaller", specifier = ">=6.6" },
     { name = "pyright", specifier = ">=1.1.409" },
@@ -2324,10 +2377,10 @@ name = "virtualenv"
 version = "21.6.0"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
 dependencies = [
-    { name = "distlib" },
-    { name = "filelock" },
-    { name = "platformdirs" },
-    { name = "python-discovery" },
+    { name = "distlib", marker = "sys_platform == 'win32'" },
+    { name = "filelock", marker = "sys_platform == 'win32'" },
+    { name = "platformdirs", marker = "sys_platform == 'win32'" },
+    { name = "python-discovery", marker = "sys_platform == 'win32'" },
 ]
 sdist = { url = "https://mirrors.aliyun.com/pypi/packages/74/65/ec1d92091671e6407d3e7c1f5801413bb7b2b57630a50cae7750456ba0ed/virtualenv-21.6.0.tar.gz", hash = "sha256:e18a4d750f2b64dea73e72ffde3922f3c52365fabdc8157ebd3da20d031c4734" }
 wheels = [
@@ -2366,9 +2419,9 @@ name = "yarl"
 version = "1.24.2"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
 dependencies = [
-    { name = "idna" },
-    { name = "multidict" },
-    { name = "propcache" },
+    { name = "idna", marker = "sys_platform == 'win32'" },
+    { name = "multidict", marker = "sys_platform == 'win32'" },
+    { name = "propcache", marker = "sys_platform == 'win32'" },
 ]
 sdist = { url = "https://mirrors.aliyun.com/pypi/packages/79/12/1e8f37460ea0f7eb59c221fdaf0ed75e7ac43e97f8093b9c6f411df50a78/yarl-1.24.2.tar.gz", hash = "sha256:9ac374123c6fd7abf64d1fec93962b0bd4ee2c19751755a762a72dd96c0378f8" }
 wheels = [
