@@ -731,6 +731,30 @@ class PdfService:
             def _derotate_to_mediabox(rect: fitz.Rect) -> fitz.Rect:
                 return rect
 
+        # CropBox 偏移补偿：page.rect 返回『归零的 CropBox』（原点强制为 0,0，
+        # 尺寸 = CropBox 宽高），OCR 渲染图（get_pixmap）也是 CropBox 区域，故
+        # 归一化 bbox 经 _denormalize_and_unrotate_bbox + derotate 后得到的是
+        # 『以 CropBox 左上角为原点』的坐标。但 insert_textbox/insert_text 写入
+        # 『MediaBox 空间』，原点是 MediaBox 左上角。当 CropBox != MediaBox
+        # （扫描件常见：trim/bleed 区域、非零原点 MediaBox）时，必须补上
+        # CropBox 原点偏移 (cropbox.x0, cropbox.y0)，否则文字层整体偏移到
+        # CropBox 原点处（『部分文字层离文字很远』）。该偏移在所有旋转角度下
+        # 一致（derotation_matrix 不含 CropBox 平移，见 e2e 标记测试验证）。
+        cropbox = page.cropbox
+        cb_ox = cropbox.x0
+        cb_oy = cropbox.y0
+
+        def _to_mediabox(rect: fitz.Rect) -> fitz.Rect:
+            """显示空间（CropBox 归零 + 旋转）→ MediaBox 写入空间。
+
+            先 derotate 旋转补偿，再 + CropBox 原点平移到 MediaBox 空间。
+            """
+            r = _derotate_to_mediabox(rect)
+            if cb_ox != 0.0 or cb_oy != 0.0:
+                return fitz.Rect(r.x0 + cb_ox, r.y0 + cb_oy,
+                                 r.x1 + cb_ox, r.y1 + cb_oy)
+            return r
+
         # 字形方向（rotate 参数）：页面 /Rotate=90/270 时，derotate 后的 mediabox
         # 矩形宽高互换（宽框→瘦高框），若仍以默认 0°（横向）写入，insert_textbox
         # 会把字排进瘦高框 → 字竖排堆叠 → 外部阅读器渲染 /Rotate 时看起来旋转 90°
@@ -783,7 +807,7 @@ class PdfService:
             rect = PdfService._denormalize_and_unrotate_bbox(
                 bbox, preproc_angle, page_rect
             )
-            rect = _derotate_to_mediabox(rect)
+            rect = _to_mediabox(rect)
             # 仅当矩形退化（宽或高 ≤ 0）才整体跳过；
             # 矮行/窄框不丢弃：字号由 min_font_size 兜底，再交给下方
             # insert_textbox 重试 + insert_text 兜底，保证文字进入文字层。

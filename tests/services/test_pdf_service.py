@@ -995,6 +995,80 @@ class TestPdfServiceTextLayerPlacement:
         )
         doc.close()
 
+    def test_cropbox_offset_text_layer_lands_on_visible_text(self, tmp_path):
+        """CropBox != MediaBox 时文字层必须落在可见文字上（不整体偏移）。
+
+        Bug：page.rect 返回『归零 CropBox』，OCR 渲染图也是 CropBox 区域，但
+        insert_textbox 写 MediaBox 空间。此前漏算 CropBox 原点偏移，文字层整体
+        偏到 CropBox 原点处（『部分文字层离文字很远』）。
+
+        本测试：在 MediaBox 已知位置画可见标记 → 渲染找标记像素（模拟 OCR 输入）
+        → 写文字层 → 断言写入的 MediaBox 坐标覆盖标记（IoU 高）。
+        复现矩阵：全 4 旋转 × {无 CropBox, CropBox 偏移}。
+        """
+        import numpy as np
+
+        from vibeocr.models.ocr_result import OCRResult, TextBlock
+        from vibeocr.models.pdf_ocr_options import PdfGlobalSettings
+
+        def _check(rot, cropbox):
+            doc = fitz.open()
+            page = doc.new_page(width=612, height=792)
+            # 可见标记矩形（MediaBox 坐标）
+            marker_mb = fitz.Rect(200, 300, 260, 330)
+            page.draw_rect(marker_mb, color=(1, 0, 0), width=1)
+            if cropbox is not None:
+                page.set_cropbox(cropbox)
+            if rot:
+                page.set_rotation(rot)
+            # 渲染找标记像素（模拟 OCR 在渲染图上看到的 bbox）
+            pix = page.get_pixmap(matrix=fitz.Matrix(1, 1))
+            img = np.frombuffer(pix.samples, dtype=np.uint8).reshape(
+                pix.height, pix.width, pix.n
+            )
+            red = (img[:, :, 0] > 200) & (img[:, :, 1] < 100) & (img[:, :, 2] < 100)
+            ys, xs = np.where(red)
+            if len(xs) == 0:
+                return None  # 标记在裁剪区外
+            page_rect = page.rect
+            norm_bbox = (
+                xs.min() / page_rect.width * 1000,
+                ys.min() / page_rect.height * 1000,
+                xs.max() / page_rect.width * 1000,
+                ys.max() / page_rect.height * 1000,
+            )
+            # 写文字层（可见模式便于读回）
+            blocks = [TextBlock(text="TEST", score=0.95, bbox=norm_bbox)]
+            settings = PdfGlobalSettings(text_layer_visible=True)
+            PdfService._write_blocks_to_page(doc, 0, blocks, 0, settings)
+            spans = [
+                s for b in doc[0].get_text("dict")["blocks"] if b["type"] == 0
+                for l in b.get("lines", []) for s in l.get("spans", [])
+            ]
+            doc.close()
+            if not spans:
+                return 0.0
+            text_rect = fitz.Rect(spans[0]["bbox"])
+            overlap = marker_mb & text_rect
+            if text_rect.get_area() <= 0:
+                return 0.0
+            return overlap.get_area() / text_rect.get_area()
+
+        cases = [
+            (0, None, "rot0 no-cb"),
+            (0, fitz.Rect(50, 50, 562, 742), "rot0 cb50"),
+            (90, fitz.Rect(50, 50, 562, 742), "rot90 cb50"),
+            (180, fitz.Rect(50, 50, 562, 742), "rot180 cb50"),
+            (270, fitz.Rect(50, 50, 562, 742), "rot270 cb50"),
+        ]
+        for rot, cb, name in cases:
+            iou = _check(rot, cb)
+            assert iou is not None, f"{name}: 标记应在裁剪区内可见"
+            assert iou > 0.3, (
+                f"{name}: 文字层应覆盖可见标记，IoU={iou:.2f}"
+                f"（旧 bug 在 cb50 下 IoU≈0，文字层偏移到 CropBox 原点）"
+            )
+
 
 class TestPdfServiceOcrBlocksCache:
     """OCR 原始块缓存（ocr_text_blocks）—— 预览/编辑/重写的唯一信源。
