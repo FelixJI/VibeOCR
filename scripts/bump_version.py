@@ -1255,6 +1255,20 @@ def _cleanup_dist(dist_dir: Path) -> None:
     freed_mb = freed_bytes / (1024 * 1024)
     print(f"  清理无用 Qt 文件: 删除 {deleted} 个，释放 {freed_mb:.1f} MB")
 
+    # 清理 __pycache__ 目录：src/vibeocr 经 --add-data 作为 datas 收集（worker
+    # 子进程用便携 Python 以原始 .py 形式 import，见 PACKAGE_DATA 注释），而
+    # PyInstaller 会把源码树下的 __pycache__/*.pyc 一并复制进 _internal/vibeocr。
+    # manifest 校验将 __pycache__ 视为禁止路径（见 build_manifest.FORBIDDEN_TOP_NAMES），
+    # 若不清理会导致 _package_zip 的 verify_archive 自检失败。字节码缓存对运行
+    # 无意义（便携 Python 会按需重新生成），此处递归删除整个 dist 内的 __pycache__。
+    pycache_dirs = [p for p in dist_dir.rglob("__pycache__") if p.is_dir()]
+    pycache_deleted = 0
+    for pyc in pycache_dirs:
+        shutil.rmtree(pyc, ignore_errors=True)
+        pycache_deleted += 1
+    if pycache_deleted:
+        print(f"  清理 __pycache__: 删除 {pycache_deleted} 个目录")
+
 
 def _package_zip(dist_dir: Path, version: str) -> Path | None:
     """将 dist_dir 打包为 zip，内嵌 artifact-manifest.json，并计算 SHA256。

@@ -1430,6 +1430,78 @@ class TestBuildManifestIntegration:
         # manifest 校验应检测到禁止路径，返回 None
         assert zip_path is None
 
+    def test_cleanup_dist_removes_pycache_under_vibeocr(self, tmp_path):
+        """_cleanup_dist 应删除 _internal/vibeocr/**/__pycache__。
+
+        回归：src/vibeocr 经 --add-data 收集为 datas 时，源码树下的
+        __pycache__/*.pyc 会被 PyInstaller 一并复制进 bundle。manifest 校验
+        将 __pycache__ 视为禁止路径，导致 CI 打包失败（见 v0.4.26 release）。
+        _cleanup_dist 在打包前清掉这些目录，保证 manifest 校验通过。
+        """
+        mod = self._load_module()
+        dist_dir = tmp_path / "VibeOCR"
+        self._make_fake_dist(dist_dir)
+        # 模拟 PyInstaller --add-data src/vibeocr:vibeocr 带入的字节码缓存
+        pycache = (
+            dist_dir
+            / "_internal"
+            / "vibeocr"
+            / "worker_host"
+            / "__pycache__"
+        )
+        pycache.mkdir(parents=True)
+        (pycache / "composition.cpython-313.pyc").write_bytes(b"fake pyc")
+        (pycache / "__init__.cpython-313.pyc").write_bytes(b"fake pyc")
+        # 同时植入嵌套子目录，确认递归清理
+        nested = (
+            dist_dir
+            / "_internal"
+            / "vibeocr"
+            / "worker_host"
+            / "handlers"
+            / "__pycache__"
+        )
+        nested.mkdir(parents=True)
+        (nested / "ocr.cpython-313.pyc").write_bytes(b"fake pyc")
+
+        assert pycache.exists() and nested.exists()
+
+        mod._cleanup_dist(dist_dir)
+
+        assert not pycache.exists(), "__pycache__ under _internal/vibeocr should be removed"
+        assert not nested.exists(), "nested __pycache__ should be removed recursively"
+        # 非 pycache 文件不受影响
+        assert (dist_dir / "_internal" / "config.json").exists()
+        assert (dist_dir / "VibeOCR.exe").exists()
+
+    def test_package_zip_passes_with_pycache_then_cleanup(self, tmp_path, monkeypatch):
+        """端到端：注入 __pycache__ → _cleanup_dist 清理 → _package_zip 通过。
+
+        复刻 v0.4.26 CI 失败的完整链路，验证修复后 manifest 校验 OK。
+        """
+        mod = self._load_module()
+        monkeypatch.setattr(mod, "DIST_BASE_DIR", tmp_path / "dist")
+        mod.DIST_BASE_DIR.mkdir(parents=True, exist_ok=True)
+
+        dist_dir = mod.DIST_BASE_DIR / "VibeOCR"
+        self._make_fake_dist(dist_dir)
+        # 复刻 CI 中导致失败的精确路径
+        pycache = (
+            dist_dir
+            / "_internal"
+            / "vibeocr"
+            / "worker_host"
+            / "__pycache__"
+        )
+        pycache.mkdir(parents=True)
+        (pycache / "composition.cpython-313.pyc").write_bytes(b"fake pyc")
+
+        mod._cleanup_dist(dist_dir)
+        zip_path = mod._package_zip(dist_dir, "9.9.9")
+        # 清理后 manifest 校验应通过，返回有效路径
+        assert zip_path is not None
+        assert zip_path.exists()
+
     def test_lock_file_uses_exact_pins(self):
         """build-shell.lock 每行包约束必须是精确 == 锁定（无 >= / ~>）。"""
         import re
