@@ -4,6 +4,7 @@ using System.Text.Json;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using VibeOCR.App.Features.Recognition;
+using VibeOCR.App.Features.Batch;
 using VibeOCR.App.ViewModels;
 using VibeOCR.Contracts;
 using VibeOCR.Platform.Bootstrap;
@@ -51,7 +52,10 @@ public sealed partial class App : Application
             layout,
             () => new RecognitionViewModel(
                 _workerGateway,
-                new InputService(() => WinRT.Interop.WindowNative.GetWindowHandle(_window!))));
+                new InputService(() => WinRT.Interop.WindowNative.GetWindowHandle(_window!))),
+            () => new BatchViewModel(
+                _workerGateway,
+                new BatchFileSource(() => WinRT.Interop.WindowNative.GetWindowHandle(_window!))));
         _window.AppWindow.Closing += OnAppWindowClosing;
         _window.Closed += OnWindowClosedFallback;
         _window.Activate();
@@ -325,5 +329,5 @@ public sealed record AppLaunchOptions(string Profile)
 public static class ShellNavigation
 {
     public static IReadOnlyList<string> Destinations { get; } =
-        ["home", "recognition", "diagnostics"];
+        ["home", "recognition", "batch", "diagnostics"];
 }

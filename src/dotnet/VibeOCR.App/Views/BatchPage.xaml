@@ -1,0 +1,18 @@
+<Page x:Class="VibeOCR.App.Views.BatchPage" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Grid Padding="28" RowSpacing="14">
+        <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+        <Grid ColumnSpacing="16"><TextBlock FontSize="28" FontWeight="SemiBold" Text="批量识别" /><TextBlock HorizontalAlignment="Right" VerticalAlignment="Center" Text="{x:Bind ViewModel.Progress, Mode=OneWay}" /></Grid>
+        <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="8">
+            <Button Click="OnAddClicked" Content="添加图片" /><Button Click="OnStartClicked" Content="开始识别" /><Button Click="OnCancelAllClicked" Content="取消全部" />
+            <Button Click="OnExportAllClicked" Content="导出全部 Markdown" /><Button Click="OnClearClicked" Content="清空临时队列" />
+            <TextBlock VerticalAlignment="Center" Text="并发预算" /><NumberBox Width="72" Minimum="1" Maximum="4" Value="{x:Bind ViewModel.Concurrency, Mode=TwoWay}" />
+        </StackPanel>
+        <ListView x:Name="BatchList" Grid.Row="2" ItemsSource="{x:Bind ViewModel.Items}">
+            <ListView.ItemTemplate><DataTemplate><Grid Padding="8" ColumnSpacing="12"><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="120" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                <StackPanel><TextBlock FontWeight="SemiBold" Text="{Binding Name}" /><TextBlock Opacity="0.65" Text="{Binding Path}" TextTrimming="CharacterEllipsis" /></StackPanel>
+                <TextBlock Grid.Column="1" VerticalAlignment="Center" Text="{Binding State}" />
+                <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="6"><Button Click="OnMoveUpClicked" Content="上移" /><Button Click="OnMoveDownClicked" Content="下移" /><Button Click="OnCancelItemClicked" Content="取消" /><Button Click="OnRemoveClicked" Content="移除" /></StackPanel>
+            </Grid></DataTemplate></ListView.ItemTemplate>
+        </ListView>
+    </Grid>
+</Page>

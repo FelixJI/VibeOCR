@@ -10,9 +10,11 @@
 | 结果渲染（plain/Markdown/表格/公式/代码/Unicode/XSS） | `ResultViewWidget` | PASS | `tests/web/result-renderer.test.ts` | 高对比度与屏幕阅读器 |
 | 复制（富文本/Markdown/纯文本） | `ClipboardController` | PASS | `ResultActionsTests` | Office 粘贴矩阵 |
 | 导出（HTML/Markdown/text） | Python `ExportService` | PASS | `single-recognition.spec.ps1` | 系统 picker 覆盖提示 |
-| 批量识别 | `BatchRecognitionTab` | PENDING | Phase 4.1 | — |
+| 批量识别 | `BatchRecognitionTab` | PASS | `BatchViewModelTests`、`batch.spec.ps1` | 大队列体感与并发预算上限 |
 | 二维码/条码 | QR services | PENDING | Phase 4.2 | — |
 | PDF 会话与耐久文字层 | PDF orchestrator/sidecar | PENDING | Phase 4.3 | — |
 | 设置与诊断 | Config/diagnostics | PENDING | Phase 4.4–4.5 | — |
 
 单图门禁命令：`powershell -File tests/e2e/winui/single-recognition.spec.ps1`。它同时验证 Python 导出真源、C# 命令状态与剪贴板重试、Web 语义渲染和 Unicode/XSS 夹具。
+
+批量门禁命令：`powershell -File tests/e2e/winui/batch.spec.ps1`。它验证 Python 批量队列的顺序与取消（含 PENDING 标记为 CANCELLED）、C# `BatchViewModel` 的去重/并发预算/单项与全部取消/失败继续/导出/重启不恢复，以及批量导出的唯一输出路径。
