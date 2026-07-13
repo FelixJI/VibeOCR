@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' blob:; font-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'">
+    <meta name="color-scheme" content="dark light">
+    <title>VibeOCR Preview Surface</title>
+    <link rel="stylesheet" href="src/theme.css">
+  </head>
+  <body>
+    <main class="workbench" aria-labelledby="surface-title">
+      <header class="instrument-bar">
+        <div>
+          <p class="eyebrow">VIBEOCR / OPTICAL DESK</p>
+          <h1 id="surface-title">识别检视台</h1>
+        </div>
+        <output id="bridge-status" class="status" data-state="booting" aria-live="polite">
+          正在连接预览桥
+        </output>
+      </header>
+
+      <section class="inspection-grid">
+        <article class="image-bay" aria-label="图片预览">
+          <div class="ruler ruler-x" aria-hidden="true"></div>
+          <div class="ruler ruler-y" aria-hidden="true"></div>
+          <div class="image-stage">
+            <img id="preview-image" alt="待识别图片预览" hidden>
+            <p id="image-empty" class="empty-state">DROP / PASTE / CAPTURE</p>
+          </div>
+        </article>
+
+        <article class="result-bay" aria-labelledby="result-title">
+          <div class="section-label">
+            <span>OUTPUT / 01</span>
+            <h2 id="result-title">文本结果</h2>
+          </div>
+          <pre id="result-text" tabindex="0">等待识别结果</pre>
+        </article>
+      </section>
+    </main>
+    <script type="module" src="src/preview.js"></script>
+  </body>
+</html>

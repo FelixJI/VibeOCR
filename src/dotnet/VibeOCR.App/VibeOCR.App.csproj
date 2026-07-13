@@ -17,4 +17,8 @@
     <ProjectReference Include="../VibeOCR.Contracts/VibeOCR.Contracts.csproj" />
     <ProjectReference Include="../VibeOCR.Platform/VibeOCR.Platform.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <Content Include="WebAssets/index.html" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="WebAssets/src/**/*.css;WebAssets/src/**/*.js" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>

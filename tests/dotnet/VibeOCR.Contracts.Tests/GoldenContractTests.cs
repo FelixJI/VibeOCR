@@ -89,16 +89,24 @@ public sealed class GoldenContractTests
 
     private static string FindContractsDirectory()
     {
-        DirectoryInfo? directory = new(AppContext.BaseDirectory);
-        while (directory is not null)
+        foreach (string? seed in new[]
+                 {
+                     Environment.GetEnvironmentVariable("VIBEOCR_REPOSITORY_ROOT"),
+                     Directory.GetCurrentDirectory(),
+                     AppContext.BaseDirectory,
+                 })
         {
-            string candidate = Path.Combine(directory.FullName, "contracts", "v1");
-            if (File.Exists(Path.Combine(candidate, "golden.json")))
+            DirectoryInfo? directory = string.IsNullOrWhiteSpace(seed) ? null : new(seed);
+            while (directory is not null)
             {
-                return candidate;
-            }
+                string candidate = Path.Combine(directory.FullName, "contracts", "v1");
+                if (File.Exists(Path.Combine(candidate, "golden.json")))
+                {
+                    return candidate;
+                }
 
-            directory = directory.Parent;
+                directory = directory.Parent;
+            }
         }
 
         throw new DirectoryNotFoundException("Could not locate contracts/v1 from test output.");

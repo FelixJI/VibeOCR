@@ -279,15 +279,23 @@ public sealed class WorkerHostClientTests
 
     private static string FindRepositoryRoot()
     {
-        DirectoryInfo? directory = new(AppContext.BaseDirectory);
-        while (directory is not null)
+        foreach (string? seed in new[]
+                 {
+                     Environment.GetEnvironmentVariable("VIBEOCR_REPOSITORY_ROOT"),
+                     Directory.GetCurrentDirectory(),
+                     AppContext.BaseDirectory,
+                 })
         {
-            if (File.Exists(Path.Combine(directory.FullName, "pyproject.toml")))
+            DirectoryInfo? directory = string.IsNullOrWhiteSpace(seed) ? null : new(seed);
+            while (directory is not null)
             {
-                return directory.FullName;
-            }
+                if (File.Exists(Path.Combine(directory.FullName, "pyproject.toml")))
+                {
+                    return directory.FullName;
+                }
 
-            directory = directory.Parent;
+                directory = directory.Parent;
+            }
         }
 
         throw new DirectoryNotFoundException("Could not locate repository root.");

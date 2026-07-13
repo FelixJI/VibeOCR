@@ -21,15 +21,32 @@
             <ProgressRing Width="24" Height="24" IsActive="{x:Bind ViewModel.IsBusy, Mode=OneWay}" />
         </StackPanel>
         <Border Grid.Row="2" Padding="12" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" CornerRadius="8">
-            <TextBlock Text="{x:Bind ViewModel.Status, Mode=OneWay}" />
+            <StackPanel Orientation="Horizontal" Spacing="24">
+                <TextBlock Text="{x:Bind ViewModel.Status, Mode=OneWay}" />
+                <TextBlock x:Name="PreviewBridgeStatus" Text="Web 预览正在加载" />
+            </StackPanel>
         </Border>
-        <TextBox
-            Grid.Row="3"
-            AcceptsReturn="True"
-            FontFamily="Consolas"
-            IsReadOnly="True"
-            PlaceholderText="识别结果"
-            Text="{x:Bind ViewModel.ResultText, Mode=OneWay}"
-            TextWrapping="Wrap" />
+        <Grid Grid.Row="3" ColumnSpacing="12">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="2*" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <WebView2 x:Name="PreviewWebView" />
+            <TextBox
+                Grid.Column="1"
+                AcceptsReturn="True"
+                FontFamily="Consolas"
+                IsReadOnly="True"
+                PlaceholderText="识别结果"
+                Text="{x:Bind ViewModel.ResultText, Mode=OneWay}"
+                TextWrapping="Wrap" />
+            <Border
+                x:Name="PreviewErrorPanel"
+                Padding="16"
+                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                Visibility="Collapsed">
+                <TextBlock x:Name="PreviewError" Text="预览资源未就绪" />
+            </Border>
+        </Grid>
     </Grid>
 </Page>

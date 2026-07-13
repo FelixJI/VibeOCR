@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text.Json;
+using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using VibeOCR.App.Features.Recognition;
 using VibeOCR.App.ViewModels;
@@ -15,9 +16,11 @@ public sealed partial class App : Application
     private readonly Stopwatch _startup = Stopwatch.StartNew();
     private readonly DeferredWorkerHostClient _workerGateway = new();
     private readonly SemaphoreSlim _workerLifecycle = new(1, 1);
+    private readonly CancellationTokenSource _applicationShutdown = new();
     private MainWindow? _window;
     private Process? _workerProcess;
     private WorkerHostClient? _workerClient;
+    private bool _shutdownStarted;
 
     public App()
     {
@@ -49,7 +52,8 @@ public sealed partial class App : Application
             () => new RecognitionViewModel(
                 _workerGateway,
                 new InputService(() => WinRT.Interop.WindowNative.GetWindowHandle(_window!))));
-        _window.Closed += OnWindowClosed;
+        _window.AppWindow.Closing += OnAppWindowClosing;
+        _window.Closed += OnWindowClosedFallback;
         _window.Activate();
         diagnostics.RecordMilestone("T2", _startup.Elapsed);
 
@@ -80,7 +84,7 @@ public sealed partial class App : Application
             try
             {
                 (Process process, WorkerHostClient client, HandshakeResponse handshake) =
-                    await StartWorkerAsync(layout, CancellationToken.None);
+                    await StartWorkerAsync(layout, _applicationShutdown.Token);
                 _workerProcess = process;
                 _workerClient = client;
                 diagnostics.RecordMilestone("T4", _startup.Elapsed);
@@ -266,7 +270,20 @@ public sealed partial class App : Application
         return null;
     }
 
-    private async void OnWindowClosed(object sender, WindowEventArgs args)
+    private void OnAppWindowClosing(AppWindow sender, AppWindowClosingEventArgs args)
+    {
+        if (_shutdownStarted)
+        {
+            return;
+        }
+
+        args.Cancel = true;
+        _shutdownStarted = true;
+        _applicationShutdown.Cancel();
+        _ = ShutdownAndExitAsync(sender);
+    }
+
+    private async Task ShutdownAndExitAsync(AppWindow appWindow)
     {
         await _workerLifecycle.WaitAsync();
         try
@@ -277,7 +294,22 @@ public sealed partial class App : Application
         finally
         {
             _workerLifecycle.Release();
+            _applicationShutdown.Dispose();
+            appWindow.Closing -= OnAppWindowClosing;
+            _window?.Close();
+            Exit();
         }
+    }
+
+    private void OnWindowClosedFallback(object sender, WindowEventArgs args)
+    {
+        if (!_shutdownStarted)
+        {
+            _shutdownStarted = true;
+            _applicationShutdown.Cancel();
+        }
+
+        Environment.Exit(0);
     }
 }
 

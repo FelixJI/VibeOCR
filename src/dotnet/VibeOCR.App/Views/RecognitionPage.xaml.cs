@@ -3,18 +3,83 @@ using Microsoft.UI.Xaml.Controls;
 using Windows.ApplicationModel.DataTransfer;
 using Windows.Storage;
 using VibeOCR.App.Features.Recognition;
+using VibeOCR.App.Web;
 
 namespace VibeOCR.App.Views;
 
 public sealed partial class RecognitionPage : Page
 {
+    private readonly WebMessageRouter _router;
+    private readonly PreviewHost _previewHost;
+    private bool _bridgeTerminal;
+
     public RecognitionPage(RecognitionViewModel viewModel)
     {
         ViewModel = viewModel ?? throw new ArgumentNullException(nameof(viewModel));
+        _router = new WebMessageRouter();
+        _previewHost = new PreviewHost(_router);
+        _router.MessageReceived += OnWebMessageReceived;
+        _previewHost.ProtocolViolation += OnProtocolViolation;
+        _previewHost.StateChanged += OnPreviewStateChanged;
         InitializeComponent();
+        Loaded += OnLoaded;
+        Unloaded += OnUnloaded;
     }
 
     public RecognitionViewModel ViewModel { get; }
+
+    private void OnWebMessageReceived(WebBridgeMessage message)
+    {
+        if (message.Type == "preview.ready")
+        {
+            _bridgeTerminal = true;
+            PreviewBridgeStatus.Text = "Web 预览已就绪";
+        }
+    }
+
+    private void OnProtocolViolation(WebBridgeProtocolException error)
+    {
+        _bridgeTerminal = true;
+        PreviewBridgeStatus.Text = "Web bridge 协议拒绝";
+    }
+
+    private void OnPreviewStateChanged(string state)
+    {
+        if (_bridgeTerminal)
+        {
+            return;
+        }
+
+        PreviewBridgeStatus.Text = state switch
+        {
+            "dom-content-loaded" => "Web DOM 已加载",
+            "navigation-complete" => "Web 页面已加载",
+            _ => $"Web 预览失败：{state}",
+        };
+    }
+
+    private async void OnLoaded(object sender, RoutedEventArgs args)
+    {
+        try
+        {
+            await _previewHost.InitializeAsync(
+                PreviewWebView,
+                Path.Combine(AppContext.BaseDirectory, "WebAssets"));
+        }
+        catch (Exception error)
+        {
+            PreviewError.Text = $"预览不可用：{error.GetType().Name}";
+            PreviewErrorPanel.Visibility = Visibility.Visible;
+        }
+    }
+
+    private void OnUnloaded(object sender, RoutedEventArgs args)
+    {
+        _router.MessageReceived -= OnWebMessageReceived;
+        _previewHost.ProtocolViolation -= OnProtocolViolation;
+        _previewHost.StateChanged -= OnPreviewStateChanged;
+        _previewHost.Dispose();
+    }
 
     private async void OnFileClicked(object sender, RoutedEventArgs args) =>
         await ViewModel.RecognizeFileAsync(CancellationToken.None);
