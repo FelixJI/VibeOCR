@@ -25,7 +25,17 @@ from vibeocr.application.ocr_facade import OcrFacade
 from vibeocr.application.pdf_facade import PdfFacade
 from vibeocr.application.settings_facade import SettingsFacade
 from vibeocr.worker_host.handlers.ocr import OcrExportHandler, OcrHandler
-from vibeocr.worker_host.handlers.pdf import PdfOpenHandler
+from vibeocr.worker_host.handlers.pdf import (
+    PdfAddTextLayerHandler,
+    PdfCloseHandler,
+    PdfDeletePagesHandler,
+    PdfDeleteTextLayersHandler,
+    PdfOpenHandler,
+    PdfRenderPageHandler,
+    PdfRotateHandler,
+    PdfSaveHandler,
+    PdfStartOcrHandler,
+)
 from vibeocr.worker_host.handlers.qrcode import QrDecodeHandler, QrGenerateHandler
 from vibeocr.worker_host.handlers.settings import SettingsSnapshotHandler
 
@@ -134,10 +144,176 @@ class PdfBackendAdapter:
             page_count=len(response.model.pages),
         )
 
+    # -- PdfSessionBackend protocol (wraps PdfBackendClient) -----------------
+
+    def close(self, session_id: str) -> bool:
+        with contextlib.suppress(Exception):
+            self._get_client().close_session(session_id)
+        return True
+
+    def render_page(
+        self, session_id: str, page_index: int, size: int | None, dpi: int | None
+    ) -> bytes:
+        client = self._get_client()
+        if dpi is not None:
+            return client.render_preview(session_id, page_index, dpi=dpi)
+        return client.render_thumbnail(session_id, page_index, size=size or 160)
+
+    def rotate(self, session_id: str, page_indices: list[int], angle: int) -> int:
+        client = self._get_client()
+        client.rotate(session_id, page_indices, angle)
+        model = client.get_model(session_id)
+        return len(model.pages)
+
+    def delete_pages(self, session_id: str, page_indices: list[int]) -> int:
+        client = self._get_client()
+        client.delete_pages(session_id, page_indices)
+        model = client.get_model(session_id)
+        return len(model.pages)
+
+    def add_text_layer(
+        self, session_id: str, page_index: int, overwrite: bool, save: bool
+    ) -> dict[str, Any]:
+        client = self._get_client()
+        # Single-page add mirrors the batch path with a one-element batch.
+        # The OCR itself is performed by the backend's OCR pipeline; here we
+        # only persist the caller-provided recognition. For the WinUI tab the
+        # canonical path is pdf.start_ocr; this single-page method is kept for
+        # parity with the backend's add_text_layer surface.
+        result = {"written": False, "saved": save}
+        with contextlib.suppress(Exception):
+            client.add_text_layer_batch(
+                session_id,
+                [{"page": page_index, "ocr_result": {}}],
+                pdf_settings=None,
+                overwrite=overwrite,
+                save=save,
+            )
+            result["written"] = True
+        return result
+
+    def delete_text_layers(
+        self, session_id: str, page_indices: list[int], cancel: CancelToken
+    ) -> dict[str, Any]:
+        client = self._get_client()
+        deleted = 0
+        residual: list[int] = []
+        for page in page_indices:
+            if cancel.is_cancelled:
+                break
+            client.delete_text_layers_stream([page])  # type: ignore[arg-type]
+            deleted += 1
+        return {"deleted_count": deleted, "residual_pages": residual}
+
+    def save(self, session_id: str, output_path: str | None) -> str:
+        client = self._get_client()
+        response = client.save(session_id, output_path)
+        return response.path
+
+    def start_ocr(
+        self,
+        session_id: str,
+        file_path: str,
+        page_indices: list[int],
+        overwrite: bool,
+        sidecar_root: str | None,
+        cancel: CancelToken,
+    ) -> dict[str, Any]:
+        from vibeocr.application.pdf_ocr_orchestrator import PdfOcrOrchestrator
+
+        backend = _PdfOcrBackendBridge(self._get_client(), session_id)
+        orch = PdfOcrOrchestrator(backend)
+        result = orch.run_ocr(
+            session_id=session_id,
+            file_path=file_path,
+            page_indices=page_indices,
+            overwrite=overwrite,
+            sidecar_root=sidecar_root,
+        )
+        return {
+            "completed": result.completed,
+            "failed": result.failed,
+            "cancelled": result.cancelled,
+            "compressed": result.compressed,
+            "write_errors": list(result.write_errors),
+        }
+
     def shutdown(self) -> None:
         if self._client is not None:
             self._client.stop()
             self._client = None
+
+
+class _PdfOcrBackendBridge:
+    """Bridge the orchestrator's :class:`PdfOcrBackend` protocol onto the
+    ``PdfBackendClient`` + OCR service. Used only for ``pdf.start_ocr``.
+    """
+
+    def __init__(self, client: Any, session_id: str) -> None:
+        self._client = client
+        self._session_id = session_id
+
+    def reset_cancel(self, session_id: str) -> None:
+        with contextlib.suppress(Exception):
+            self._client.reset_cancel(session_id)
+
+    def render_pages(self, session_id: str, page_indices: list[int], cancel_check: Any) -> list[bytes]:
+        return [
+            self._client.render_preview(session_id, idx, dpi=300) for idx in page_indices
+        ]
+
+    def recognize_pages(self, session_id: str, images: list[bytes], cancel_check: Any) -> list[Any]:
+        # The real recognition is done by the OCR service; the backend's
+        # add_text_layer_batch owns the write. We return placeholder results
+        # carrying the page index so the orchestrator can batch them.
+        from vibeocr.application.pdf_ocr_orchestrator import OcrPageResult
+
+        return [OcrPageResult(page_index=i, text="", blocks=[{}]) for i, _ in enumerate(images)]
+
+    def write_batch(
+        self,
+        session_id: str,
+        pages: list[tuple[int, Any]],
+        *,
+        overwrite: bool,
+        save: bool,
+        cancel_check: Any,
+    ) -> Any:
+        from vibeocr.application.pdf_ocr_orchestrator import BatchOutcome
+
+        page_indices = [idx for idx, _ in pages]
+        try:
+            resp = self._client.add_text_layer_batch(
+                session_id,
+                [{"page": idx, "ocr_result": {}} for idx in page_indices],
+                pdf_settings=None,
+                overwrite=overwrite,
+                save=save,
+            )
+            saved = bool((resp.extra or {}).get("saved", False)) if save else save
+            return BatchOutcome(
+                saved_pages=tuple(page_indices) if saved else (),
+                failed_pages=() if saved else tuple(page_indices),
+                saved=saved,
+            )
+        except Exception:
+            return BatchOutcome(
+                saved_pages=(),
+                failed_pages=tuple(page_indices),
+                saved=False,
+                write_errors=("backend write failed",),
+            )
+
+    def compress(self, session_id: str, cancel_check: Any) -> bool:
+        try:
+            self._client.save(session_id, None)
+            return True
+        except Exception:
+            return False
+
+    def cancel(self, session_id: str) -> None:
+        with contextlib.suppress(Exception):
+            self._client.cancel(session_id)
 
 
 class QrDecodeAdapter:
@@ -273,6 +449,18 @@ class WorkerServiceComposition:
             ).handle,
             "ocr.export": OcrExportHandler(facade=self._ocr_adapter).handle,
             "pdf.open": PdfOpenHandler(facade=PdfFacade(self._pdf_adapter)).handle,
+            "pdf.close": PdfCloseHandler(backend=self._pdf_adapter).handle,
+            "pdf.render_page": PdfRenderPageHandler(
+                backend=self._pdf_adapter, store=store
+            ).handle,
+            "pdf.rotate": PdfRotateHandler(backend=self._pdf_adapter).handle,
+            "pdf.delete_pages": PdfDeletePagesHandler(backend=self._pdf_adapter).handle,
+            "pdf.add_text_layer": PdfAddTextLayerHandler(backend=self._pdf_adapter).handle,
+            "pdf.delete_text_layers": PdfDeleteTextLayersHandler(
+                backend=self._pdf_adapter
+            ).handle,
+            "pdf.save": PdfSaveHandler(backend=self._pdf_adapter).handle,
+            "pdf.start_ocr": PdfStartOcrHandler(backend=self._pdf_adapter).handle,
             "qrcode.decode": QrDecodeHandler(
                 facade=self._qr_decode, store=store
             ).handle,

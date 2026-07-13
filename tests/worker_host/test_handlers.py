@@ -201,6 +201,194 @@ async def test_qr_generate_handler_maps_payload_to_result() -> None:
 
 
 # ---------------------------------------------------------------------------
+# PDF session handlers (close/render/rotate/delete/add_text_layer/delete/save/start_ocr)
+# ---------------------------------------------------------------------------
+
+
+class _FakePdfBackend:
+    """Records calls and returns canned results for PDF session methods."""
+
+    def __init__(self) -> None:
+        self.close_calls: list[str] = []
+        self.render_calls: list[tuple[str, int, int | None, int | None]] = []
+        self.rotate_calls: list[tuple[str, list[int], int]] = []
+        self.delete_calls: list[tuple[str, list[int]]] = []
+        self.add_text_layer_calls: list[tuple[str, int, bool, bool]] = []
+        self.delete_text_layers_calls: list[tuple[str, list[int]]] = []
+        self.save_calls: list[tuple[str, str | None]] = []
+        self.start_ocr_calls: list[tuple[str, str, list[int], bool, str | None]] = []
+
+    def close(self, session_id: str) -> bool:
+        self.close_calls.append(session_id)
+        return True
+
+    def render_page(self, session_id, page_index, size, dpi):
+        self.render_calls.append((session_id, page_index, size, dpi))
+        return b"\x89PNG fake"
+
+    def rotate(self, session_id, page_indices, angle):
+        self.rotate_calls.append((session_id, page_indices, angle))
+        return 3
+
+    def delete_pages(self, session_id, page_indices):
+        self.delete_calls.append((session_id, page_indices))
+        return 2
+
+    def add_text_layer(self, session_id, page_index, overwrite, save):
+        self.add_text_layer_calls.append((session_id, page_index, overwrite, save))
+        return {"written": True, "saved": save}
+
+    def delete_text_layers(self, session_id, page_indices, cancel):
+        self.delete_text_layers_calls.append((session_id, page_indices))
+        return {"deleted_count": len(page_indices), "residual_pages": []}
+
+    def save(self, session_id, output_path):
+        self.save_calls.append((session_id, output_path))
+        return output_path or "C:/data/sample.pdf"
+
+    def start_ocr(self, session_id, file_path, page_indices, overwrite, sidecar_root, cancel):
+        self.start_ocr_calls.append((session_id, file_path, page_indices, overwrite, sidecar_root))
+        return {
+            "completed": len(page_indices),
+            "failed": 0,
+            "cancelled": False,
+            "compressed": True,
+            "write_errors": [],
+        }
+
+
+@pytest.mark.asyncio
+async def test_pdf_close_handler_returns_closed_flag() -> None:
+    from vibeocr.worker_host.handlers.pdf import PdfCloseHandler
+
+    backend = _FakePdfBackend()
+    handler = PdfCloseHandler(backend=backend)  # type: ignore[arg-type]
+    result = await handler.handle({"session_id": "sess-1"}, CancelToken())
+    assert result == {"closed": True}
+    assert backend.close_calls == ["sess-1"]
+
+
+@pytest.mark.asyncio
+async def test_pdf_render_page_handler_returns_shared_payload() -> None:
+    from vibeocr.worker_host.handlers.pdf import PdfRenderPageHandler
+
+    backend = _FakePdfBackend()
+    store = _FakePayloadStore(b"")
+    handler = PdfRenderPageHandler(backend=backend, store=store)  # type: ignore[arg-type]
+    result = await handler.handle(
+        {"session_id": "sess-1", "page_index": 0, "size": 160}, CancelToken()
+    )
+    assert result["image"]["media_type"] == "image/png"
+    assert backend.render_calls == [("sess-1", 0, 160, None)]
+
+
+@pytest.mark.asyncio
+async def test_pdf_rotate_handler_maps_angle_and_returns_page_count() -> None:
+    from vibeocr.worker_host.handlers.pdf import PdfRotateHandler
+
+    backend = _FakePdfBackend()
+    handler = PdfRotateHandler(backend=backend)  # type: ignore[arg-type]
+    result = await handler.handle(
+        {"session_id": "sess-1", "page_indices": [0, 1], "angle": 90}, CancelToken()
+    )
+    assert result == {"page_count": 3}
+    assert backend.rotate_calls == [("sess-1", [0, 1], 90)]
+
+
+@pytest.mark.asyncio
+async def test_pdf_rotate_handler_rejects_invalid_angle() -> None:
+    from vibeocr.worker_host.handlers.pdf import PdfRotateHandler
+    from vibeocr.worker_host.errors import WorkerError
+
+    handler = PdfRotateHandler(backend=_FakePdfBackend())  # type: ignore[arg-type]
+    with pytest.raises(WorkerError):
+        await handler.handle(
+            {"session_id": "sess-1", "page_indices": [0], "angle": 45}, CancelToken()
+        )
+
+
+@pytest.mark.asyncio
+async def test_pdf_delete_pages_handler_returns_page_count() -> None:
+    from vibeocr.worker_host.handlers.pdf import PdfDeletePagesHandler
+
+    backend = _FakePdfBackend()
+    handler = PdfDeletePagesHandler(backend=backend)  # type: ignore[arg-type]
+    result = await handler.handle(
+        {"session_id": "sess-1", "page_indices": [2]}, CancelToken()
+    )
+    assert result == {"page_count": 2}
+
+
+@pytest.mark.asyncio
+async def test_pdf_add_text_layer_handler_returns_written_and_saved() -> None:
+    from vibeocr.worker_host.handlers.pdf import PdfAddTextLayerHandler
+
+    backend = _FakePdfBackend()
+    handler = PdfAddTextLayerHandler(backend=backend)  # type: ignore[arg-type]
+    result = await handler.handle(
+        {"session_id": "sess-1", "page_index": 0, "overwrite": False, "save": True},
+        CancelToken(),
+    )
+    assert result == {"written": True, "saved": True}
+
+
+@pytest.mark.asyncio
+async def test_pdf_delete_text_layers_handler_returns_deleted_count() -> None:
+    from vibeocr.worker_host.handlers.pdf import PdfDeleteTextLayersHandler
+
+    backend = _FakePdfBackend()
+    handler = PdfDeleteTextLayersHandler(backend=backend)  # type: ignore[arg-type]
+    result = await handler.handle(
+        {"session_id": "sess-1", "page_indices": [0, 1]}, CancelToken()
+    )
+    assert result == {"deleted_count": 2, "residual_pages": []}
+
+
+@pytest.mark.asyncio
+async def test_pdf_save_handler_overwrite_in_place_when_output_path_null() -> None:
+    from vibeocr.worker_host.handlers.pdf import PdfSaveHandler
+
+    backend = _FakePdfBackend()
+    handler = PdfSaveHandler(backend=backend)  # type: ignore[arg-type]
+    result = await handler.handle({"session_id": "sess-1", "output_path": None}, CancelToken())
+    assert result == {"saved_path": "C:/data/sample.pdf"}
+    assert backend.save_calls == [("sess-1", None)]
+
+
+@pytest.mark.asyncio
+async def test_pdf_start_ocr_handler_maps_payload_to_backend() -> None:
+    from vibeocr.worker_host.handlers.pdf import PdfStartOcrHandler
+
+    backend = _FakePdfBackend()
+    handler = PdfStartOcrHandler(backend=backend)  # type: ignore[arg-type]
+    result = await handler.handle(
+        {
+            "session_id": "sess-1",
+            "file_path": "C:/data/sample.pdf",
+            "page_indices": [0, 1, 2],
+            "overwrite": False,
+        },
+        CancelToken(),
+    )
+    assert result["completed"] == 3
+    assert result["compressed"] is True
+    assert backend.start_ocr_calls == [("sess-1", "C:/data/sample.pdf", [0, 1, 2], False, None)]
+
+
+@pytest.mark.asyncio
+async def test_pdf_session_handlers_reject_missing_session_id() -> None:
+    from vibeocr.worker_host.errors import WorkerError
+    from vibeocr.worker_host.handlers.pdf import PdfCloseHandler, PdfSaveHandler
+
+    for handler in (
+        PdfCloseHandler(backend=_FakePdfBackend()),  # type: ignore[arg-type]
+        PdfSaveHandler(backend=_FakePdfBackend()),  # type: ignore[arg-type]
+    ):
+        with pytest.raises(WorkerError):
+            await handler.handle({}, CancelToken())
+
+
+# ---------------------------------------------------------------------------
 # Settings handler
 # ---------------------------------------------------------------------------
 
