@@ -38,6 +38,11 @@ jobs:
         with:
           python-version: "3.13"
 
+      - name: Set up .NET 10.0.301
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: "10.0.301"
+
       - name: Parse version from tag
         id: version
         shell: bash
@@ -63,6 +68,16 @@ jobs:
           # 独立运行，不进主 exe（见 pdf_backend_client._resolve_python_exe）。
           # fitz 从主 exe 排除后,版本约束走 version.json,由便携 Python 安装。
           pip install --require-hashes -r requirements/build-shell.lock
+
+      - name: Validate versioned WorkerHost contracts
+        shell: pwsh
+        run: |
+          dotnet restore src/dotnet/VibeOCR.slnx --locked-mode
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m pytest tests/contracts -q
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet test tests/dotnet/VibeOCR.Contracts.Tests/VibeOCR.Contracts.Tests.csproj -c Release --no-restore
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Build (PyInstaller via bump_version.py)
         shell: bash
@@ -207,4 +222,3 @@ jobs:
       # -------------------------------------------------------------------
       # 产物唯一源改为 GitHub（国内客户端走 gh 代理加速），不再同步到 Gitee。
       # 关于页仍保留 Gitee 仓库链接，仅作代码仓库展示。
-
