@@ -1,20 +1,33 @@
 # src/vibeocr/utils/ocr_sidecar.py
 """OCR 断点续传 sidecar：记录已增量落盘的页，崩溃后可跳过。
 
-存储位置：<install_root>/.vibeocr/ocr_sessions/<fingerprint>.json
-（复用 machine_cache 的 .vibeocr 目录与原子写模式）。
+存储位置：<install_root>/.vibeocr/ocr_sessions/<path-slug>.json
+其中 path-slug = md5(规范化绝对路径)。（复用 machine_cache 的 .vibeocr
+目录与原子写模式。）
+
+设计要点（修复"增量保存导致指纹漂移"的 bug）：
+- **按路径命名，不按指纹命名**：OCR 每批 incremental save 会 append 到 PDF
+  文件（size/mtime 都变），但文件路径不变。按路径 slug 命名保证同一会话各批
+  写同一 sidecar，且重启后续传能按同一定位到它。
+- **基线 + 增长校验**：sidecar 存储 `original_size`/`original_mtime_ns`
+  （首次创建时捕获的 PDF 状态）。`load_sidecar` 校验当前文件"只增长未回退"
+  (`size >= original AND mtime >= original`)，与 incremental save 的 append
+  语义一致。若文件被替换/缩小/回退（用户换文件、回滚），返回 None 失效。
+- **`refresh_baseline`**：6C 末尾全量压缩会整体重写 PDF（可能变小），此时
+  把基线刷新为压缩后的状态，下一次重开才能通过增长校验。
 
 sidecar 是"尽力而为"：写入失败只记日志，不阻断 OCR 主流程。
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
 from pathlib import Path
 
-from vibeocr.env_manager import get_project_root
 from vibeocr.machine_cache import get_cache_dir
+from vibeocr.env_manager import get_project_root
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +36,11 @@ _SIDECAR_SUBDIR = "ocr_sessions"
 
 
 def compute_fingerprint(file_path: str) -> str:
-    """文件指纹 = f"{size}:{mtime_ns}"。O(1)，不读全文件。"""
+    """文件指纹 = f"{size}:{mtime_ns}"。O(1)，不读全文件。
+
+    仅作信息字段与诊断用——不再用于 sidecar 文件名或主校验
+    （增量保存会让它在会话期漂移）。主校验改用 `original_*` 基线的增长检查。
+    """
     st = os.stat(file_path)
     return f"{st.st_size}:{int(st.st_mtime_ns)}"
 
@@ -32,15 +49,39 @@ def _sessions_dir() -> Path:
     return get_cache_dir(get_project_root()) / _SIDECAR_SUBDIR
 
 
+def _path_slug(file_path: str) -> str:
+    """规范化绝对路径的 md5 hex，作为 sidecar 文件名键。
+
+    路径在增量保存/末尾压缩期间不变，故同会话各批 + 重启续传都定位到同一
+    sidecar 文件。
+    """
+    abspath = os.path.abspath(file_path)
+    return hashlib.md5(abspath.encode("utf-8")).hexdigest()
+
+
 def sidecar_path(file_path: str) -> Path:
-    # 指纹含 ":"，在 Windows 上 ":" 会被解析为盘符分隔符（pathlib 把
-    # "size:mtime" 当成 drive-relative，丢弃已累积的父目录）。文件名里用
-    # "_" 替换 ":"；compute_fingerprint 仍返回 "size:mtime"（供 split 校验）。
-    return _sessions_dir() / f"{compute_fingerprint(file_path).replace(':', '_')}.json"
+    return _sessions_dir() / f"{_path_slug(file_path)}.json"
+
+
+def _growth_ok(data: dict, file_path: str) -> bool:
+    """增长校验：当前文件相对基线只增长未回退（incremental save 只 append）。
+
+    文件被替换/缩小/旧版回滚 → 返回 False（sidecar 失效）。
+    缺基线字段（旧格式 / 损坏）→ 返回 False。
+    """
+    orig_size = data.get("original_size")
+    orig_mtime = data.get("original_mtime_ns")
+    if orig_size is None or orig_mtime is None:
+        return False
+    try:
+        st = os.stat(file_path)
+    except OSError:
+        return False
+    return st.st_size >= int(orig_size) and int(st.st_mtime_ns) >= int(orig_mtime)
 
 
 def load_sidecar(file_path: str) -> dict | None:
-    """读 sidecar；指纹不匹配或损坏返回 None。"""
+    """读 sidecar；版本不符 / 增长校验失败 / 损坏 → 返回 None。"""
     try:
         p = sidecar_path(file_path)
         if not p.exists():
@@ -48,7 +89,7 @@ def load_sidecar(file_path: str) -> dict | None:
         data = json.loads(p.read_text(encoding="utf-8"))
         if data.get("version") != SIDECAR_VERSION:
             return None
-        if data.get("fingerprint") != compute_fingerprint(file_path):
+        if not _growth_ok(data, file_path):
             return None
         return data
     except Exception as e:
@@ -75,10 +116,14 @@ def save_sidecar(file_path: str, data: dict) -> bool:
 
 
 def _new_sidecar(file_path: str) -> dict:
+    """新建 sidecar：捕获当前文件状态作为增长校验基线。"""
+    st = os.stat(file_path)
     return {
         "version": SIDECAR_VERSION,
         "file_path": os.path.abspath(file_path),
         "fingerprint": compute_fingerprint(file_path),
+        "original_size": st.st_size,
+        "original_mtime_ns": int(st.st_mtime_ns),
         "completed": False,
         "pages": {},
     }
@@ -87,7 +132,12 @@ def _new_sidecar(file_path: str) -> dict:
 def mark_pages_saved(
     file_path: str, page_indices: list[int], angles: dict[int, int]
 ) -> bool:
-    """增量合并：把 page_indices 标记为已落盘。angles = {page: preproc_angle}。"""
+    """增量合并：把 page_indices 标记为已落盘。angles = {page: preproc_angle}。
+
+    通过 `load_sidecar` 做增长校验：增量保存只让文件增长，校验始终通过，
+    故多批结果在同一 sidecar 累积（修复了旧版"指纹漂移丢批次"的 bug）。
+    基线不在此更新——保持首会话原始状态，直到 `refresh_baseline`。
+    """
     data = load_sidecar(file_path) or _new_sidecar(file_path)
     for idx in page_indices:
         data["pages"][str(idx)] = {
@@ -95,7 +145,6 @@ def mark_pages_saved(
             "ocr_preproc_angle": int(angles.get(idx, 0)),
         }
     data["completed"] = False
-    data["fingerprint"] = compute_fingerprint(file_path)
     return save_sidecar(file_path, data)
 
 
@@ -105,10 +154,33 @@ def mark_completed(file_path: str) -> bool:
     return save_sidecar(file_path, data)
 
 
+def refresh_baseline(file_path: str) -> bool:
+    """把 sidecar 的增长校验基线刷新为当前文件状态。
+
+    用于 6C 末尾聚合压缩后：全量压缩会整体重写 PDF（可能比原文件小），
+    若不刷新基线，下次重开会因 `size < original` 通不过增长校验。直接读
+    sidecar 原文（绕过 load_sidecar 的校验），更新 `original_size`/
+    `original_mtime_ns`/`fingerprint`，再原子写回。
+    """
+    p = sidecar_path(file_path)
+    if not p.exists():
+        return False
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+        st = os.stat(file_path)
+        data["original_size"] = st.st_size
+        data["original_mtime_ns"] = int(st.st_mtime_ns)
+        data["fingerprint"] = compute_fingerprint(file_path)
+        return save_sidecar(file_path, data)
+    except Exception as e:
+        logger.debug("sidecar refresh_baseline 失败（忽略）: %s", e)
+        return False
+
+
 def restore_pending_pages(file_path: str) -> dict[int, int] | None:
     """返回 {page_index: ocr_preproc_angle} 用于续传跳过。
 
-    None 表示：无 sidecar / 指纹不匹配 / 已 completed。
+    None 表示：无 sidecar / 增长校验失败（文件被替换/回退）/ 已 completed。
     """
     data = load_sidecar(file_path)
     if data is None or data.get("completed"):

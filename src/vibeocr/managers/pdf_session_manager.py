@@ -1072,7 +1072,12 @@ class PdfSessionManager(QObject):
             try:
                 runner.progress.emit(session_id, 0, 0)  # 不确定进度（COMPRESS 态）
                 self._client.save(session_id, None, settings_dict)
+                # 全量压缩整体重写了 PDF（可能变小）。先刷新 sidecar 基线为
+                # 当前文件状态，否则 mark_completed→load_sidecar 的增长校验会
+                # 因 size < original 失败而落盘一个空 sidecar（同 Task1 的指纹
+                # 漂移 bug 的等价表现）。
                 try:
+                    ocr_sidecar.refresh_baseline(session.file_path)
                     ocr_sidecar.mark_completed(session.file_path)
                 except Exception:
                     logger.debug(
