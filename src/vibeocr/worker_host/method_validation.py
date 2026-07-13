@@ -256,9 +256,16 @@ def _response_qr_decode(p: dict[str, Any]) -> None:
         raise MethodPayloadError("codes must be an array")
     for index, item in enumerate(p["codes"]):
         code = _object(item, f"codes[{index}]")
-        _closed(code, required={"data", "format"}, label=f"codes[{index}]")
+        _closed(
+            code,
+            required={"data", "format"},
+            optional={"is_url"},
+            label=f"codes[{index}]",
+        )
         _string(code["data"], f"codes[{index}].data", allow_empty=True)
         _string(code["format"], f"codes[{index}].format")
+        if "is_url" in code:
+            _boolean(code["is_url"], f"codes[{index}].is_url")
 
 
 def _request_qr_generate(p: dict[str, Any]) -> None:

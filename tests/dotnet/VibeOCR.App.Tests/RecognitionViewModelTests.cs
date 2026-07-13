@@ -267,6 +267,8 @@ public sealed class RecognitionViewModelTests
             return true;
         }
 
+        public byte[] ReadPayload(SharedPayloadRef reference, TimeSpan timeout, CancellationToken cancellationToken) => [];
+
         public async Task<TResponse> CallAsync<TRequest, TResponse>(
             string method,
             TRequest request,

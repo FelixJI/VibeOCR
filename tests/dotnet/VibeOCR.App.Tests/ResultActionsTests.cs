@@ -77,6 +77,7 @@ public sealed class ResultActionsTests
         public ExportOcrRequest? LastExport { get; private set; }
         public SharedPayloadRef CreatePayload(ReadOnlySpan<byte> data, string mediaType, TimeSpan ttl) => new() { Name = $@"Local\VibeOCR-{Guid.NewGuid():D}-{Guid.NewGuid():D}", Size = data.Length, MediaType = mediaType, Sha256 = Convert.ToHexStringLower(SHA256.HashData(data)), Owner = SharedPayloadOwner.Client, ExpiresUnixMs = 1 };
         public bool ReleasePayload(string name) => true;
+        public byte[] ReadPayload(SharedPayloadRef reference, TimeSpan timeout, CancellationToken cancellationToken) => [];
         public Task<TResponse> CallAsync<TRequest, TResponse>(string method, TRequest request, CancellationToken cancellationToken) where TRequest : IProtocolValidatable where TResponse : IProtocolValidatable
         {
             Assert.Equal(RpcMethods.ExportOcr, method); LastExport = Assert.IsType<ExportOcrRequest>(request);

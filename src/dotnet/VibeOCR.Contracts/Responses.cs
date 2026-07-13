@@ -131,6 +131,9 @@ public sealed record QrCodeResult : IProtocolValidatable
     public required string Data { get; init; }
     public required string Format { get; init; }
 
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? IsUrl { get; init; }
+
     public void Validate() => ContractValidation.NonEmpty(Format, nameof(Format));
 }
 

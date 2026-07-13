@@ -153,7 +153,7 @@ class QrDecodeAdapter:
             service = self._service_factory()
             self._service = service
         return [
-            {"data": item.data, "format": item.type}
+            {"data": item.data, "format": item.type, "is_url": item.is_url}
             for item in service.decode_bytes(data)
         ]
 

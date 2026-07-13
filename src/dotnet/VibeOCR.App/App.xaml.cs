@@ -5,7 +5,9 @@ using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using VibeOCR.App.Features.Recognition;
 using VibeOCR.App.Features.Batch;
+using VibeOCR.App.Features.QrCode;
 using VibeOCR.App.ViewModels;
+using VibeOCR.App.Views;
 using VibeOCR.Contracts;
 using VibeOCR.Platform.Bootstrap;
 using VibeOCR.Platform.Worker;
@@ -55,7 +57,17 @@ public sealed partial class App : Application
                 new InputService(() => WinRT.Interop.WindowNative.GetWindowHandle(_window!))),
             () => new BatchViewModel(
                 _workerGateway,
-                new BatchFileSource(() => WinRT.Interop.WindowNative.GetWindowHandle(_window!))));
+                new BatchFileSource(() => WinRT.Interop.WindowNative.GetWindowHandle(_window!))),
+            () =>
+            {
+                nint handle = WinRT.Interop.WindowNative.GetWindowHandle(_window!);
+                var qrViewModel = new QrCodeViewModel(
+                    _workerGateway,
+                    new QrCodeInputService(() => handle));
+                return new QrCodePage(
+                    qrViewModel,
+                    new QrCodeSaveCommands(_workerGateway, new QrCodeSavePlatform(() => handle)));
+            });
         _window.AppWindow.Closing += OnAppWindowClosing;
         _window.Closed += OnWindowClosedFallback;
         _window.Activate();
@@ -329,5 +341,5 @@ public sealed record AppLaunchOptions(string Profile)
 public static class ShellNavigation
 {
     public static IReadOnlyList<string> Destinations { get; } =
-        ["home", "recognition", "batch", "diagnostics"];
+        ["home", "recognition", "batch", "qrcode", "diagnostics"];
 }

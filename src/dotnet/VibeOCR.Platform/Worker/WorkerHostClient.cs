@@ -10,6 +10,7 @@ public interface IWorkerHostClient
 {
     SharedPayloadRef CreatePayload(ReadOnlySpan<byte> data, string mediaType, TimeSpan ttl);
     bool ReleasePayload(string name);
+    byte[] ReadPayload(SharedPayloadRef reference, TimeSpan timeout, CancellationToken cancellationToken);
 
     Task<TResponse> CallAsync<TRequest, TResponse>(
         string method,
@@ -50,6 +51,26 @@ public sealed class WorkerHostClient : IWorkerHostClient, IAsyncDisposable
         TimeSpan ttl) => _payloads.Create(data, mediaType, ttl);
 
     public bool ReleasePayload(string name) => _payloads.Release(name);
+
+    public byte[] ReadPayload(SharedPayloadRef reference, TimeSpan timeout, CancellationToken cancellationToken)
+    {
+        // The worker-owned generated image lives in a shared memory segment we did not
+        // create, so OpenExisting may race with the worker publishing it. Retry briefly
+        // until the mapping appears or the deadline/cancellation fires.
+        DateTimeOffset deadline = DateTimeOffset.UtcNow.Add(timeout);
+        while (true)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                return _payloads.Read(reference);
+            }
+            catch (FileNotFoundException) when (DateTimeOffset.UtcNow < deadline)
+            {
+                Thread.Sleep(20);
+            }
+        }
+    }
 
     public static async Task<WorkerHostClient> ConnectAsync(
         string pipeName,

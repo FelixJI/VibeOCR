@@ -201,7 +201,7 @@
         "request_id": "00000000-0000-4000-8000-000000000030",
         "task_id": "00000000-0000-4000-8000-000000000030",
         "result": {
-          "codes": [ { "data": "https://example.com", "format": "QR_CODE" } ]
+          "codes": [ { "data": "https://example.com", "format": "QR_CODE", "is_url": true } ]
         }
       }
     },

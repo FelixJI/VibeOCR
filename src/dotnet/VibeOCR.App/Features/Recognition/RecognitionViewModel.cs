@@ -224,6 +224,9 @@ public sealed class DeferredWorkerHostClient : IWorkerHostClient, IAsyncDisposab
 
     public bool ReleasePayload(string name) => _payloads.Release(name);
 
+    public byte[] ReadPayload(SharedPayloadRef reference, TimeSpan timeout, CancellationToken cancellationToken)
+        => _payloads.Read(reference);
+
     public async Task<TResponse> CallAsync<TRequest, TResponse>(
         string method,
         TRequest request,

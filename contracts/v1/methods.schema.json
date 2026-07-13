@@ -230,7 +230,8 @@
                 "required": ["data", "format"],
                 "properties": {
                   "data": { "type": "string" },
-                  "format": { "type": "string", "minLength": 1 }
+                  "format": { "type": "string", "minLength": 1 },
+                  "is_url": { "type": "boolean", "description": "True when data is a strict http/https URL (Python source of truth); drives the safe-open affordance." }
                 }
               }
             }

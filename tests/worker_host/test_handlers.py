@@ -167,12 +167,20 @@ async def test_pdf_open_handler_rejects_relative_path() -> None:
 async def test_qr_decode_handler_maps_payload_to_result() -> None:
     class _FakeQrDecode:
         def decode(self, data: bytes, cancel: CancelToken) -> list[dict[str, Any]]:
-            return [{"data": "https://example.com", "format": "QR_CODE"}]
+            # The first code advertises is_url; the second omits it so the handler
+            # must default it to False rather than dropping or erroring.
+            return [
+                {"data": "https://example.com", "format": "QR_CODE", "is_url": True},
+                {"data": "plain text", "format": "QR_CODE"},
+            ]
 
     store = _FakePayloadStore(b"img")
     handler = QrDecodeHandler(facade=_FakeQrDecode(), store=store)  # type: ignore[arg-type]
     result = await handler.handle({"image": _descriptor(b"img")}, CancelToken())
-    assert result["codes"] == [{"data": "https://example.com", "format": "QR_CODE"}]
+    assert result["codes"] == [
+        {"data": "https://example.com", "format": "QR_CODE", "is_url": True},
+        {"data": "plain text", "format": "QR_CODE", "is_url": False},
+    ]
 
 
 @pytest.mark.asyncio

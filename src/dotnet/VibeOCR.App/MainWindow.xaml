@@ -4,6 +4,7 @@
             <NavigationViewItem Content="主页" Icon="Home" Tag="home" />
             <NavigationViewItem Content="单图识别" Icon="Pictures" Tag="recognition" />
             <NavigationViewItem Content="批量识别" Icon="AllApps" Tag="batch" />
+            <NavigationViewItem Content="二维码" Icon="Link" Tag="qrcode" />
             <NavigationViewItem Content="诊断与修复" Icon="Help" Tag="diagnostics" />
         </NavigationView.MenuItems>
         <Frame x:Name="ContentFrame" />
