@@ -149,7 +149,27 @@ def mark_pages_saved(
 
 
 def mark_completed(file_path: str) -> bool:
-    data = load_sidecar(file_path) or _new_sidecar(file_path)
+    """标记 sidecar 为已完成。保留已有 page 记录。
+
+    若 sidecar 文件存在但校验失败（load_sidecar 返回 None），读取原始内容
+    保留 pages 记录，而非创建空 sidecar 丢失数据。仅当文件不存在时才新建。
+    这镜像 refresh_baseline 的做法（绕过校验读原文）。
+    """
+    data = load_sidecar(file_path)
+    if data is None:
+        # 校验失败或不存在。若文件存在，读原始内容保留 pages（避免丢失）。
+        p = sidecar_path(file_path)
+        if p.exists():
+            try:
+                data = json.loads(p.read_text(encoding="utf-8"))
+                # 版本不符（旧格式）→ 退回到新建（无 pages 可保）
+                if data.get("version") != SIDECAR_VERSION:
+                    data = _new_sidecar(file_path)
+            except Exception as e:
+                logger.debug("mark_completed 原始读取失败，回退新建: %s", e)
+                data = _new_sidecar(file_path)
+        else:
+            data = _new_sidecar(file_path)
     data["completed"] = True
     return save_sidecar(file_path, data)
 

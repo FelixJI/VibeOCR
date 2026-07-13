@@ -91,6 +91,47 @@ def test_mark_completed_sets_flag(tmp_path, monkeypatch):
     assert load_sidecar(str(f))["completed"] is True
 
 
+def test_mark_completed_preserves_pages_when_validation_fails(tmp_path, monkeypatch):
+    """回归：sidecar 文件存在但 load_sidecar 因增长校验失败返回 None 时，
+    mark_completed 应读原文保留 pages（不创建空 sidecar 丢失数据）。
+
+    复现：6C 末尾压缩使文件变小，且 refresh_baseline 因故未跑（manager 故障）
+    → load_sidecar 返回 None → 旧实现 _new_sidecar 丢全部 page 记录。
+    """
+    f = tmp_path / "d.pdf"
+    f.write_bytes(b"baseline-pdf-content-here")
+    monkeypatch.setattr(
+        "vibeocr.utils.ocr_sidecar._sessions_dir", lambda: tmp_path / "sessions"
+    )
+    # 积累两批页记录
+    assert mark_pages_saved(str(f), [0, 1], {0: 0, 1: 90}) is True
+    # 文件缩小（模拟压缩/换文件），使 load_sidecar 增长校验失败
+    st = os.stat(f)
+    f.write_bytes(b"short")  # 5 < 原 size
+    os.utime(f, ns=(st.st_atime_ns, st.st_mtime_ns + 2_000_000))
+    assert load_sidecar(str(f)) is None  # 校验确实失败
+    # mark_completed 不应丢失 pages
+    assert mark_completed(str(f)) is True
+    # 直接读原文（绕过校验）确认 pages 仍在
+    raw = json.loads(sidecar_path(str(f)).read_text(encoding="utf-8"))
+    assert raw["completed"] is True
+    assert set(raw["pages"].keys()) == {"0", "1"}
+    assert raw["pages"]["1"]["ocr_preproc_angle"] == 90
+
+
+def test_mark_completed_creates_new_when_sidecar_absent(tmp_path, monkeypatch):
+    """无 sidecar 文件时 mark_completed 仍新建（行为不变）。"""
+    f = tmp_path / "d.pdf"
+    f.write_bytes(b"abc")
+    monkeypatch.setattr(
+        "vibeocr.utils.ocr_sidecar._sessions_dir", lambda: tmp_path / "sessions"
+    )
+    assert mark_completed(str(f)) is True
+    raw = json.loads(sidecar_path(str(f)).read_text(encoding="utf-8"))
+    assert raw["completed"] is True
+    assert raw["pages"] == {}
+
+
 def test_restore_pending_pages_returns_dict_when_incomplete(tmp_path, monkeypatch):
     f = tmp_path / "d.pdf"
     f.write_bytes(b"abc")
