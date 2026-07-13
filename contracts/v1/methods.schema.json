@@ -206,6 +206,199 @@
         }
       }
     },
+    "pdf.close": {
+      "type": "object",
+      "description": "Close a PDF session and release backend resources. Idempotent.",
+      "required": ["request", "response"],
+      "properties": {
+        "request": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["session_id"],
+          "properties": { "session_id": { "type": "string", "minLength": 1 } }
+        },
+        "response": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["closed"],
+          "properties": { "closed": { "type": "boolean" } }
+        }
+      }
+    },
+    "pdf.render_page": {
+      "type": "object",
+      "description": "Render a single page to a PNG image (shared payload owned by the worker). Used for both thumbnails (small size) and preview (high DPI).",
+      "required": ["request", "response"],
+      "properties": {
+        "request": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["session_id", "page_index"],
+          "properties": {
+            "session_id": { "type": "string", "minLength": 1 },
+            "page_index": { "type": "integer", "minimum": 0 },
+            "size": { "type": "integer", "minimum": 16, "description": "Thumbnail target size in pixels (short edge)." },
+            "dpi": { "type": "integer", "minimum": 24, "description": "Preview render DPI. When present, overrides size." }
+          }
+        },
+        "response": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["image"],
+          "properties": { "image": { "$ref": "#/$defs/shared_payload_ref" } }
+        }
+      }
+    },
+    "pdf.rotate": {
+      "type": "object",
+      "description": "Rotate pages by a multiple of 90 degrees. Mutation; never auto-retried.",
+      "required": ["request", "response"],
+      "properties": {
+        "request": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["session_id", "page_indices", "angle"],
+          "properties": {
+            "session_id": { "type": "string", "minLength": 1 },
+            "page_indices": { "type": "array", "items": { "type": "integer", "minimum": 0 } },
+            "angle": { "type": "integer", "enum": [90, -90, 180, 270], "description": "Clockwise degrees; -90 is counter-clockwise." }
+          }
+        },
+        "response": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["page_count"],
+          "properties": { "page_count": { "type": "integer", "minimum": 0, "description": "Page count after the mutation." } }
+        }
+      }
+    },
+    "pdf.delete_pages": {
+      "type": "object",
+      "description": "Delete pages by index. Mutation; never auto-retried.",
+      "required": ["request", "response"],
+      "properties": {
+        "request": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["session_id", "page_indices"],
+          "properties": {
+            "session_id": { "type": "string", "minLength": 1 },
+            "page_indices": { "type": "array", "items": { "type": "integer", "minimum": 0 } }
+          }
+        },
+        "response": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["page_count"],
+          "properties": { "page_count": { "type": "integer", "minimum": 0 } }
+        }
+      }
+    },
+    "pdf.add_text_layer": {
+      "type": "object",
+      "description": "OCR one page and write an invisible text layer. Mutation; persisted incrementally when save=true. Mirrors the production add_text_layer_batch save contract.",
+      "required": ["request", "response"],
+      "properties": {
+        "request": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["session_id", "page_index", "overwrite"],
+          "properties": {
+            "session_id": { "type": "string", "minLength": 1 },
+            "page_index": { "type": "integer", "minimum": 0 },
+            "overwrite": { "type": "boolean", "description": "When true, replace any existing OCR text layer." },
+            "save": { "type": "boolean", "description": "When true (default), persist via incremental save." }
+          }
+        },
+        "response": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["written"],
+          "properties": {
+            "written": { "type": "boolean", "description": "True when a text layer was written for the page." },
+            "saved": { "type": "boolean", "description": "True only when the batch was committed to disk." }
+          }
+        }
+      }
+    },
+    "pdf.delete_text_layers": {
+      "type": "object",
+      "description": "Stream-delete text layers page by page. Progress events (task.progress with phase=delete) carry current/total and the current page_index; cooperative cancel stops at the page boundary. Mutation; never auto-retried.",
+      "required": ["request", "response"],
+      "properties": {
+        "request": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["session_id", "page_indices"],
+          "properties": {
+            "session_id": { "type": "string", "minLength": 1 },
+            "page_indices": { "type": "array", "items": { "type": "integer", "minimum": 0 } }
+          }
+        },
+        "response": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["deleted_count"],
+          "properties": {
+            "deleted_count": { "type": "integer", "minimum": 0 },
+            "residual_pages": { "type": "array", "items": { "type": "integer", "minimum": 0 }, "description": "Pages that retain residual text after multi-pass deletion." }
+          }
+        }
+      }
+    },
+    "pdf.save": {
+      "type": "object",
+      "description": "Save the session. With output_path null the original file is overwritten in place (aggregate compress); otherwise a copy is written. Mutation; never auto-retried.",
+      "required": ["request", "response"],
+      "properties": {
+        "request": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["session_id"],
+          "properties": {
+            "session_id": { "type": "string", "minLength": 1 },
+            "output_path": { "type": ["string", "null"], "description": "Absolute path for save-as; null overwrites the original." }
+          }
+        },
+        "response": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["saved_path"],
+          "properties": { "saved_path": { "type": "string", "minLength": 1 } }
+        }
+      }
+    },
+    "pdf.start_ocr": {
+      "type": "object",
+      "description": "Start durable batch OCR over the requested pages. Emits task.progress events with phase (render/recognize/write/compress), current/total, page_index, state (none/processing/done/failed) and persisted flag. Cooperative cancel at page boundaries; resume via sidecar when overwrite=false. The final aggregate compress refreshes the sidecar baseline and marks the session completed.",
+      "required": ["request", "response"],
+      "properties": {
+        "request": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["session_id", "file_path", "page_indices", "overwrite"],
+          "properties": {
+            "session_id": { "type": "string", "minLength": 1 },
+            "file_path": { "type": "string", "minLength": 1, "description": "Absolute path of the PDF; used as the sidecar checkpoint key." },
+            "page_indices": { "type": "array", "items": { "type": "integer", "minimum": 0 } },
+            "overwrite": { "type": "boolean" },
+            "sidecar_root": { "type": ["string", "null"], "description": "Isolated sidecar root for the winui-dev profile; null uses the production location." }
+          }
+        },
+        "response": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["completed", "failed"],
+          "properties": {
+            "completed": { "type": "integer", "minimum": 0 },
+            "failed": { "type": "integer", "minimum": 0 },
+            "cancelled": { "type": "boolean" },
+            "compressed": { "type": "boolean" },
+            "write_errors": { "type": "array", "items": { "type": "string" }, "description": "Deduplicated, ordered write-error messages aggregated across batches." }
+          }
+        }
+      }
+    },
     "qrcode.decode": {
       "type": "object",
       "description": "Detect and decode QR/barcodes from an image (shared payload).",

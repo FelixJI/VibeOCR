@@ -111,6 +111,101 @@ public sealed record OpenPdfRequest : RequestContract
 }
 
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record ClosePdfRequest : RequestContract
+{
+    public required string SessionId { get; init; }
+    public override void Validate() => ContractValidation.NonEmpty(SessionId, nameof(SessionId));
+}
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record RenderPdfPageRequest : RequestContract
+{
+    public required string SessionId { get; init; }
+    public required int PageIndex { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? Size { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? Dpi { get; init; }
+    public override void Validate()
+    {
+        ContractValidation.NonEmpty(SessionId, nameof(SessionId));
+        if (PageIndex < 0) throw new ProtocolContractException("page_index must be non-negative.");
+        if (Size is < 16) throw new ProtocolContractException("size must be at least 16.");
+        if (Dpi is < 24) throw new ProtocolContractException("dpi must be at least 24.");
+    }
+}
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record RotatePdfRequest : RequestContract
+{
+    public required string SessionId { get; init; }
+    public required int[] PageIndices { get; init; }
+    public required int Angle { get; init; }
+    public override void Validate()
+    {
+        ContractValidation.NonEmpty(SessionId, nameof(SessionId));
+        if (Angle is not (90 or -90 or 180 or 270))
+            throw new ProtocolContractException("angle must be 90, -90, 180 or 270.");
+    }
+}
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record DeletePdfPagesRequest : RequestContract
+{
+    public required string SessionId { get; init; }
+    public required int[] PageIndices { get; init; }
+    public override void Validate() => ContractValidation.NonEmpty(SessionId, nameof(SessionId));
+}
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record AddPdfTextLayerRequest : RequestContract
+{
+    public required string SessionId { get; init; }
+    public required int PageIndex { get; init; }
+    public required bool Overwrite { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? Save { get; init; }
+    public override void Validate()
+    {
+        ContractValidation.NonEmpty(SessionId, nameof(SessionId));
+        if (PageIndex < 0) throw new ProtocolContractException("page_index must be non-negative.");
+    }
+}
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record DeletePdfTextLayersRequest : RequestContract
+{
+    public required string SessionId { get; init; }
+    public required int[] PageIndices { get; init; }
+    public override void Validate() => ContractValidation.NonEmpty(SessionId, nameof(SessionId));
+}
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record SavePdfRequest : RequestContract
+{
+    public required string SessionId { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? OutputPath { get; init; }
+    public override void Validate() => ContractValidation.NonEmpty(SessionId, nameof(SessionId));
+}
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record StartPdfOcrRequest : RequestContract
+{
+    public required string SessionId { get; init; }
+    public required string FilePath { get; init; }
+    public required int[] PageIndices { get; init; }
+    public required bool Overwrite { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? SidecarRoot { get; init; }
+    public override void Validate()
+    {
+        ContractValidation.NonEmpty(SessionId, nameof(SessionId));
+        ContractValidation.NonEmpty(FilePath, nameof(FilePath));
+    }
+}
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public sealed record DecodeQrCodeRequest : RequestContract
 {
     public required SharedPayloadRef Image { get; init; }
