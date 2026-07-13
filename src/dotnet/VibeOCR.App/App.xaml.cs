@@ -5,6 +5,7 @@ using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using VibeOCR.App.Features.Recognition;
 using VibeOCR.App.Features.Batch;
+using VibeOCR.App.Features.Pdf;
 using VibeOCR.App.Features.QrCode;
 using VibeOCR.App.ViewModels;
 using VibeOCR.App.Views;
@@ -67,6 +68,12 @@ public sealed partial class App : Application
                 return new QrCodePage(
                     qrViewModel,
                     new QrCodeSaveCommands(_workerGateway, new QrCodeSavePlatform(() => handle)));
+            },
+            () =>
+            {
+                nint handle = WinRT.Interop.WindowNative.GetWindowHandle(_window!);
+                return new PdfPage(
+                    new PdfViewModel(_workerGateway, new PdfFileSource(() => handle)));
             });
         _window.AppWindow.Closing += OnAppWindowClosing;
         _window.Closed += OnWindowClosedFallback;
@@ -341,5 +348,5 @@ public sealed record AppLaunchOptions(string Profile)
 public static class ShellNavigation
 {
     public static IReadOnlyList<string> Destinations { get; } =
-        ["home", "recognition", "batch", "qrcode", "diagnostics"];
+        ["home", "recognition", "batch", "qrcode", "pdf", "diagnostics"];
 }

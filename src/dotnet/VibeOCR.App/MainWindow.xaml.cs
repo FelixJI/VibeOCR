@@ -1,6 +1,7 @@
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using VibeOCR.App.Features.Batch;
+using VibeOCR.App.Features.Pdf;
 using VibeOCR.App.Features.QrCode;
 using VibeOCR.App.Features.Recognition;
 using VibeOCR.App.ViewModels;
@@ -16,13 +17,15 @@ public sealed partial class MainWindow : Window
     private readonly Func<RecognitionViewModel> _recognitionFactory;
     private readonly Func<BatchViewModel> _batchFactory;
     private readonly Func<QrCodePage> _qrCodePageFactory;
+    private readonly Func<PdfPage> _pdfPageFactory;
     private RecognitionViewModel? _recognition;
     private BatchViewModel? _batch;
     private QrCodePage? _qrCodePage;
+    private PdfPage? _pdfPage;
 
-    public MainWindow(DiagnosticsViewModel diagnostics, PortableLayout layout, Func<RecognitionViewModel> recognitionFactory, Func<BatchViewModel> batchFactory, Func<QrCodePage> qrCodePageFactory)
+    public MainWindow(DiagnosticsViewModel diagnostics, PortableLayout layout, Func<RecognitionViewModel> recognitionFactory, Func<BatchViewModel> batchFactory, Func<QrCodePage> qrCodePageFactory, Func<PdfPage> pdfPageFactory)
     {
-        _diagnostics = diagnostics; _layout = layout; _recognitionFactory = recognitionFactory; _batchFactory = batchFactory; _qrCodePageFactory = qrCodePageFactory;
+        _diagnostics = diagnostics; _layout = layout; _recognitionFactory = recognitionFactory; _batchFactory = batchFactory; _qrCodePageFactory = qrCodePageFactory; _pdfPageFactory = pdfPageFactory;
         InitializeComponent(); Title = "VibeOCR WinUI"; RootNavigation.SelectedItem = RootNavigation.MenuItems[0]; ShowHome();
     }
 
@@ -33,6 +36,7 @@ public sealed partial class MainWindow : Window
         if (destination == "recognition") { _recognition ??= _recognitionFactory(); ContentFrame.Content = new RecognitionPage(_recognition); return; }
         if (destination == "batch") { _batch ??= _batchFactory(); ContentFrame.Content = new BatchPage(_batch); return; }
         if (destination == "qrcode") { _qrCodePage ??= _qrCodePageFactory(); ContentFrame.Content = _qrCodePage; return; }
+        if (destination == "pdf") { _pdfPage ??= _pdfPageFactory(); ContentFrame.Content = _pdfPage; return; }
         ShowHome();
     }
 

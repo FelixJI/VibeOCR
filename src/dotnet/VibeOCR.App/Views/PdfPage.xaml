@@ -1,0 +1,49 @@
+<Page
+    x:Class="VibeOCR.App.Views.PdfPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Grid Padding="28" RowSpacing="14">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <TextBlock Grid.Row="0" FontSize="28" FontWeight="SemiBold" Text="PDF" />
+
+        <!-- Open + status -->
+        <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="8">
+            <Button Click="OnOpenClicked" Content="打开 PDF" />
+            <Button Click="OnCloseClicked" Content="关闭" IsEnabled="{x:Bind ViewModel.HasSession, Mode=OneWay}" />
+            <TextBlock VerticalAlignment="Center" Text="{x:Bind ViewModel.Status, Mode=OneWay}" />
+        </StackPanel>
+
+        <!-- Page operations (matches main: 顺时针90°/逆时针90°/旋转全部/自动摆正) -->
+        <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="8">
+            <Button Click="OnRotateCwClicked" Content="顺时针90°" />
+            <Button Click="OnRotateCcwClicked" Content="逆时针90°" />
+            <Button Click="OnRotateAllClicked" Content="旋转全部" />
+            <Button Click="OnDeletePagesClicked" Content="删除选中页" />
+            <Button Click="OnAddTextLayerClicked" Content="添加文字层" />
+            <Button Click="OnDeleteTextLayersClicked" Content="删除文字层" />
+            <Button Click="OnSaveClicked" Content="保存" />
+        </StackPanel>
+
+        <ListView
+            x:Name="PageGrid"
+            Grid.Row="3"
+            ItemsSource="{x:Bind ViewModel.Pages}"
+            SelectionMode="Extended"
+            SelectionChanged="OnSelectionChanged">
+            <ListView.ItemTemplate>
+                <DataTemplate>
+                    <StackPanel Orientation="Horizontal" Spacing="12" Padding="8">
+                        <TextBlock FontWeight="SemiBold" Text="{Binding Index}" />
+                        <TextBlock VerticalAlignment="Center" Text="{Binding State}" />
+                    </StackPanel>
+                </DataTemplate>
+            </ListView.ItemTemplate>
+        </ListView>
+    </Grid>
+</Page>
