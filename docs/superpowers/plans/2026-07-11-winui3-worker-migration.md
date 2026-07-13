@@ -793,11 +793,32 @@ Task<TResponse> CallAsync<TRequest,TResponse>(string method, TRequest request, C
 - Create: `tests/dotnet/VibeOCR.App.Tests/PdfViewModelTests.cs`
 - Create: `tests/web/pdf.test.ts`
 - Create: `tests/e2e/winui/pdf.spec.ps1`
+- Create: `src/vibeocr/application/pdf_ocr_orchestrator.py`
+- Create: `tests/application/test_pdf_ocr_orchestrator.py`
+- Modify: `src/vibeocr/managers/pdf_session_manager.py`
+- Modify: `src/vibeocr/utils/ocr_sidecar.py`
+- Modify: `src/vibeocr/worker_host/composition.py`
+- Modify: `src/vibeocr/worker_host/handlers/pdf.py`
+- Modify: `tests/managers/test_pdf_session_manager.py`
+- Modify: `tests/utils/test_ocr_sidecar.py`
+- Modify: `tests/worker_host/test_handlers.py`
 - Modify: `contracts/v1/golden.json`
 
-**Tests/implementation:** 覆盖打开/分页/缩略图虚拟化、旋转/删除/纠偏/OCR/文字层/保存/另存/导出、并发 mutation 拒绝、取消、崩溃后 session 失效。mutation 不自动重试。
+**Python 真源基线（2026-07-13 已合入 `main`）：** 不再按旧的“全部写内存，最后手动保存”流程迁移。现有链路已经是每批 `add_text_layer_batch(save=True)` 写层并增量落盘；保存前备份，失败回滚且返回 `extra.saved=false`，失败批不得写 sidecar。sidecar 位于 `.vibeocr/ocr_sessions`，按规范化绝对路径的 MD5 命名，使用 `original_size`/`original_mtime_ns` 做“只增长未回退”校验；`fingerprint` 只用于诊断。末尾聚合压缩成功后必须先 `refresh_baseline()` 再 `mark_completed()`，压缩失败则保留 `completed=false` 和已落盘页。`mark_completed()` 必须保留既有 pages。仅内存的删层/改字不使 sidecar 失效，因为它记录的是磁盘状态。
 
-**Verify:** `uv run pytest tests/services/test_pdf_*.py tests/integration/test_pdf_*.py -q; dotnet test tests/dotnet/VibeOCR.App.Tests/VibeOCR.App.Tests.csproj -c Release --filter Pdf; npm test --prefix src/dotnet/VibeOCR.App/WebAssets -- --runInBand; powershell -File tests/e2e/winui/pdf.spec.ps1 -Iterations 100`；Expected: 全通过且无句柄、进程、共享内存持续增长。
+**Red:** 先把上述真实语义固化为 UI-free orchestrator/Worker contract 测试：
+
+- `overwrite=false` 自动过滤 sidecar 已落盘页；`overwrite=true` 全量重做；全部请求页已保存时仍发完成事件，UI 必须复位。
+- 每批只有 `extra.saved=true` 的成功页可进入 sidecar；保存失败回滚、批中取消、末尾压缩失败均保持可续传。
+- `reset_cancel` 在新任务前执行；批写层在页边界协作取消；mutation 不自动重试，崩溃后旧 session 明确失效。
+- 页状态闭集为 `none/processing/done/failed`；page result 立即更新 model/预览，打开未完成文件展示续传提示。
+- sidecar 根目录必须注入：`production` 保持现有兼容位置，`winui-dev` 写入 `data/profiles/winui-dev` 下的隔离缓存；旁路 OCR 前后正式 sidecar/config/model/output 的 content 与 mtime 不变。
+
+**Green:** 抽取不依赖 PySide6 的 `pdf_ocr_orchestrator.py` 作为批处理、checkpoint、压缩和恢复的唯一编排真源；现有 `PdfSessionManager` 与 WorkerHost PDF handler 共同委托它，不在 C# 复制 sidecar/保存状态机。扩展协议以覆盖打开/关闭、分页/缩略图/预览、结构 mutation、OCR 启动/取消/恢复、文字层编辑、保存/另存/导出，并让进度事件携带 phase、page、state、persisted 和单调 sequence。WinUI 只负责会话投影、命令互斥、预览编辑与用户提示。
+
+**UI/E2E:** 覆盖打开/分页/缩略图虚拟化、旋转/删除/纠偏、四态格子、逐批 OCR 落盘、崩溃后续传、取消、文字层编辑、保存/另存/导出、并发 mutation 拒绝和 session 失效。用真实多批 PDF 在批间终止 Worker，重启后必须只重做最后未落盘批；最终压缩后的体积与一次性聚合保存处于同一门限，100 次循环无句柄、进程、共享内存或 `.bak` 持续增长。
+
+**Verify:** `uv run pytest tests/utils/test_ocr_sidecar.py tests/services/test_pdf_service_save_incremental.py tests/managers/test_pdf_session_manager.py tests/application/test_pdf_ocr_orchestrator.py tests/worker_host/test_handlers.py tests/views/tabs/test_pdf_tab.py tests/services/test_pdf_*.py tests/integration/test_pdf_*.py -q; dotnet test tests/dotnet/VibeOCR.App.Tests/VibeOCR.App.Tests.csproj -c Release --filter Pdf; npm test --prefix src/dotnet/VibeOCR.App/WebAssets -- --runInBand; powershell -File tests/e2e/winui/pdf.spec.ps1 -Iterations 100`；Expected: 全通过；旁路 profile 无正式数据写入；崩溃恢复不重做已落盘批；无句柄、进程、共享内存、`.bak` 或 sidecar 临时文件持续增长。
 
 **Commit:** `git commit -m "feat(winui): reach PDF workflow parity"`
 
