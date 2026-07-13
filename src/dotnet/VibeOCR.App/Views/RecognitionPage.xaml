@@ -1,0 +1,35 @@
+<Page
+    x:Class="VibeOCR.App.Views.RecognitionPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    AllowDrop="True"
+    DragOver="OnDragOver"
+    Drop="OnDrop">
+    <Grid Padding="32" RowSpacing="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+        <TextBlock FontSize="28" FontWeight="SemiBold" Text="单图识别" />
+        <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="8">
+            <Button Click="OnFileClicked" Content="打开图片" />
+            <Button Click="OnClipboardClicked" Content="从剪贴板" />
+            <Button Click="OnScreenshotClicked" Content="截取桌面" />
+            <Button Click="OnCancelClicked" Content="取消" />
+            <ProgressRing Width="24" Height="24" IsActive="{x:Bind ViewModel.IsBusy, Mode=OneWay}" />
+        </StackPanel>
+        <Border Grid.Row="2" Padding="12" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" CornerRadius="8">
+            <TextBlock Text="{x:Bind ViewModel.Status, Mode=OneWay}" />
+        </Border>
+        <TextBox
+            Grid.Row="3"
+            AcceptsReturn="True"
+            FontFamily="Consolas"
+            IsReadOnly="True"
+            PlaceholderText="识别结果"
+            Text="{x:Bind ViewModel.ResultText, Mode=OneWay}"
+            TextWrapping="Wrap" />
+    </Grid>
+</Page>

@@ -6,7 +6,20 @@ using VibeOCR.Contracts;
 
 namespace VibeOCR.Platform.Worker;
 
-public sealed class WorkerHostClient : IAsyncDisposable
+public interface IWorkerHostClient
+{
+    SharedPayloadRef CreatePayload(ReadOnlySpan<byte> data, string mediaType, TimeSpan ttl);
+    bool ReleasePayload(string name);
+
+    Task<TResponse> CallAsync<TRequest, TResponse>(
+        string method,
+        TRequest request,
+        CancellationToken cancellationToken)
+        where TRequest : IProtocolValidatable
+        where TResponse : IProtocolValidatable;
+}
+
+public sealed class WorkerHostClient : IWorkerHostClient, IAsyncDisposable
 {
     private readonly Stream _stream;
     private readonly TimeSpan _defaultTimeout;
@@ -14,6 +27,7 @@ public sealed class WorkerHostClient : IAsyncDisposable
     private readonly ConcurrentDictionary<Guid, long> _eventSequences = new();
     private readonly SemaphoreSlim _writeLock = new(1, 1);
     private readonly CancellationTokenSource _shutdown = new();
+    private readonly SharedPayloadClient _payloads = new(Guid.NewGuid());
     private readonly Task _readerTask;
 
     public WorkerHostClient(Stream stream, TimeSpan defaultTimeout)
@@ -29,6 +43,13 @@ public sealed class WorkerHostClient : IAsyncDisposable
     }
 
     public event Func<RpcEventEnvelope, ValueTask>? EventReceived;
+
+    public SharedPayloadRef CreatePayload(
+        ReadOnlySpan<byte> data,
+        string mediaType,
+        TimeSpan ttl) => _payloads.Create(data, mediaType, ttl);
+
+    public bool ReleasePayload(string name) => _payloads.Release(name);
 
     public static async Task<WorkerHostClient> ConnectAsync(
         string pipeName,
@@ -228,6 +249,7 @@ public sealed class WorkerHostClient : IAsyncDisposable
 
         _writeLock.Dispose();
         _shutdown.Dispose();
+        await _payloads.DisposeAsync().ConfigureAwait(false);
     }
 
     private interface IPendingCall

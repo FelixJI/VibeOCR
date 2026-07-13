@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text.Json;
 using Microsoft.UI.Xaml;
+using VibeOCR.App.Features.Recognition;
 using VibeOCR.App.ViewModels;
 using VibeOCR.Contracts;
 using VibeOCR.Platform.Bootstrap;
@@ -12,6 +13,8 @@ namespace VibeOCR.App;
 public sealed partial class App : Application
 {
     private readonly Stopwatch _startup = Stopwatch.StartNew();
+    private readonly DeferredWorkerHostClient _workerGateway = new();
+    private readonly SemaphoreSlim _workerLifecycle = new(1, 1);
     private MainWindow? _window;
     private Process? _workerProcess;
     private WorkerHostClient? _workerClient;
@@ -40,11 +43,18 @@ public sealed partial class App : Application
         diagnostics.RecordMilestone("T0", TimeSpan.Zero);
         diagnostics.RecordMilestone("T1", _startup.Elapsed);
 
-        _window = new MainWindow(diagnostics, layout);
+        _window = new MainWindow(
+            diagnostics,
+            layout,
+            () => new RecognitionViewModel(
+                _workerGateway,
+                new InputService(() => WinRT.Interop.WindowNative.GetWindowHandle(_window!))));
         _window.Closed += OnWindowClosed;
         _window.Activate();
         diagnostics.RecordMilestone("T2", _startup.Elapsed);
 
+        _workerGateway.ConfigureRecovery(
+            cancellationToken => RestartWorkerAsync(layout, diagnostics, cancellationToken));
         _ = ConnectWorkerAfterFirstWindowAsync(layout, diagnostics);
     }
 
@@ -64,14 +74,90 @@ public sealed partial class App : Application
             return;
         }
 
+        await _workerLifecycle.WaitAsync();
+        try
+        {
+            try
+            {
+                (Process process, WorkerHostClient client, HandshakeResponse handshake) =
+                    await StartWorkerAsync(layout, CancellationToken.None);
+                _workerProcess = process;
+                _workerClient = client;
+                diagnostics.RecordMilestone("T4", _startup.Elapsed);
+                diagnostics.RecordMilestone("T5", _startup.Elapsed);
+                _workerGateway.Attach(client);
+                diagnostics.UpdateWorker(ReadyHealth(handshake));
+                diagnostics.RecordMilestone("T6", _startup.Elapsed);
+            }
+            catch (Exception error)
+            {
+                diagnostics.UpdateWorker(new WorkerHealth(
+                    WorkerHealthState.Faulted,
+                    null,
+                    null,
+                    error.Message));
+            }
+        }
+        finally
+        {
+            _workerLifecycle.Release();
+        }
+    }
+
+    private async Task<IWorkerHostClient> RestartWorkerAsync(
+        PortableLayout layout,
+        DiagnosticsViewModel diagnostics,
+        CancellationToken cancellationToken)
+    {
+        await _workerLifecycle.WaitAsync(cancellationToken);
+        try
+        {
+            diagnostics.UpdateWorker(new WorkerHealth(
+                WorkerHealthState.Connecting,
+                null,
+                null,
+                "WorkerHost exited; attempting one restart."));
+            await StopWorkerAsync();
+            (Process process, WorkerHostClient client, HandshakeResponse handshake) =
+                await StartWorkerAsync(layout, cancellationToken);
+            _workerProcess = process;
+            _workerClient = client;
+            diagnostics.UpdateWorker(ReadyHealth(handshake));
+            return client;
+        }
+        catch (Exception error)
+        {
+            diagnostics.UpdateWorker(new WorkerHealth(
+                WorkerHealthState.Faulted,
+                null,
+                null,
+                error.Message));
+            throw;
+        }
+        finally
+        {
+            _workerLifecycle.Release();
+        }
+    }
+
+    private static WorkerHealth ReadyHealth(HandshakeResponse handshake) => new(
+        WorkerHealthState.Ready,
+        handshake.WorkerVersion,
+        handshake.ProtocolVersion,
+        null);
+
+    private static async Task<(Process Process, WorkerHostClient Client, HandshakeResponse Handshake)>
+        StartWorkerAsync(PortableLayout layout, CancellationToken cancellationToken)
+    {
+        Process? process = null;
+        WorkerHostClient? client = null;
         try
         {
             string pipeName = $@"\\.\pipe\VibeOCR-{Guid.NewGuid():D}";
             string token = Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(32));
-            string python = Path.Combine(layout.RuntimeRoot, "python.exe");
             var startInfo = new ProcessStartInfo
             {
-                FileName = python,
+                FileName = Path.Combine(layout.RuntimeRoot, "python.exe"),
                 WorkingDirectory = layout.InstallRoot,
                 UseShellExecute = false,
                 CreateNoWindow = true,
@@ -88,13 +174,15 @@ public sealed partial class App : Application
             startInfo.ArgumentList.Add("winui-dev");
             startInfo.ArgumentList.Add("--parent-pid");
             startInfo.ArgumentList.Add(Environment.ProcessId.ToString());
-            _workerProcess = Process.Start(startInfo)
+            process = Process.Start(startInfo)
                 ?? throw new InvalidOperationException("Failed to start WorkerHost.");
-            _ = _workerProcess.StandardError.ReadToEndAsync();
+            _ = process.StandardError.ReadToEndAsync(cancellationToken);
 
-            using var readinessTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            using var readinessTimeout = CancellationTokenSource.CreateLinkedTokenSource(
+                cancellationToken);
+            readinessTimeout.CancelAfter(TimeSpan.FromSeconds(10));
             string? readyLine = await ReadReadyLineAsync(
-                _workerProcess.StandardOutput,
+                process.StandardOutput,
                 readinessTimeout.Token);
             using JsonDocument ready = JsonDocument.Parse(
                 readyLine ?? throw new InvalidDataException("WorkerHost did not publish worker.ready."));
@@ -103,14 +191,13 @@ public sealed partial class App : Application
                 throw new InvalidDataException("WorkerHost published an invalid ready event.");
             }
 
-            diagnostics.RecordMilestone("T4", _startup.Elapsed);
-            _workerClient = await WorkerHostClient.ConnectAsync(
+            client = await WorkerHostClient.ConnectAsync(
                 pipeName,
                 token,
                 TimeSpan.FromSeconds(10),
                 TimeSpan.FromSeconds(30),
-                CancellationToken.None);
-            HandshakeResponse handshake = await _workerClient.CallAsync<HandshakeRequest, HandshakeResponse>(
+                cancellationToken);
+            HandshakeResponse handshake = await client.CallAsync<HandshakeRequest, HandshakeResponse>(
                 RpcMethods.Handshake,
                 new HandshakeRequest
                 {
@@ -119,25 +206,48 @@ public sealed partial class App : Application
                     MaxMessageBytes = FrameCodec.DefaultMaxFrameBytes,
                     MaxSharedPayloadBytes = 256L << 20,
                 },
-                CancellationToken.None);
-            diagnostics.RecordMilestone("T5", _startup.Elapsed);
-            diagnostics.UpdateWorker(new WorkerHealth(
-                handshake.ProtocolVersion == ProtocolConstants.Version
-                    ? WorkerHealthState.Ready
-                    : WorkerHealthState.ProtocolIncompatible,
-                handshake.WorkerVersion,
-                handshake.ProtocolVersion,
-                null));
-            diagnostics.RecordMilestone("T6", _startup.Elapsed);
+                cancellationToken);
+            if (handshake.ProtocolVersion != ProtocolConstants.Version)
+            {
+                throw new ProtocolContractException(
+                    $"Worker protocol v{handshake.ProtocolVersion} is incompatible.");
+            }
+
+            return (process, client, handshake);
         }
-        catch (Exception error)
+        catch
         {
-            diagnostics.UpdateWorker(new WorkerHealth(
-                WorkerHealthState.Faulted,
-                null,
-                null,
-                error.Message));
+            if (client is not null)
+            {
+                await client.DisposeAsync();
+            }
+
+            if (process is { HasExited: false })
+            {
+                process.Kill(entireProcessTree: true);
+            }
+
+            process?.Dispose();
+            throw;
         }
+    }
+
+    private async Task StopWorkerAsync()
+    {
+        WorkerHostClient? client = Interlocked.Exchange(ref _workerClient, null);
+        if (client is not null)
+        {
+            _workerGateway.Detach(client);
+            await client.DisposeAsync();
+        }
+
+        Process? process = Interlocked.Exchange(ref _workerProcess, null);
+        if (process is { HasExited: false })
+        {
+            process.Kill(entireProcessTree: true);
+        }
+
+        process?.Dispose();
     }
 
     private static async Task<string?> ReadReadyLineAsync(
@@ -158,17 +268,16 @@ public sealed partial class App : Application
 
     private async void OnWindowClosed(object sender, WindowEventArgs args)
     {
-        if (_workerClient is not null)
+        await _workerLifecycle.WaitAsync();
+        try
         {
-            await _workerClient.DisposeAsync();
+            await StopWorkerAsync();
+            await _workerGateway.DisposeAsync();
         }
-
-        if (_workerProcess is { HasExited: false })
+        finally
         {
-            _workerProcess.Kill(entireProcessTree: true);
+            _workerLifecycle.Release();
         }
-
-        _workerProcess?.Dispose();
     }
 }
 
@@ -183,5 +292,6 @@ public sealed record AppLaunchOptions(string Profile)
 
 public static class ShellNavigation
 {
-    public static IReadOnlyList<string> Destinations { get; } = ["home", "diagnostics"];
+    public static IReadOnlyList<string> Destinations { get; } =
+        ["home", "recognition", "diagnostics"];
 }

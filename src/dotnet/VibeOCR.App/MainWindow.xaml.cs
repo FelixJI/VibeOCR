@@ -1,5 +1,6 @@
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using VibeOCR.App.Features.Recognition;
 using VibeOCR.App.ViewModels;
 using VibeOCR.App.Views;
 using VibeOCR.Platform.Bootstrap;
@@ -10,11 +11,17 @@ public sealed partial class MainWindow : Window
 {
     private readonly DiagnosticsViewModel _diagnostics;
     private readonly PortableLayout _layout;
+    private readonly Func<RecognitionViewModel> _recognitionFactory;
+    private RecognitionViewModel? _recognition;
 
-    public MainWindow(DiagnosticsViewModel diagnostics, PortableLayout layout)
+    public MainWindow(
+        DiagnosticsViewModel diagnostics,
+        PortableLayout layout,
+        Func<RecognitionViewModel> recognitionFactory)
     {
         _diagnostics = diagnostics;
         _layout = layout;
+        _recognitionFactory = recognitionFactory;
         InitializeComponent();
         Title = "VibeOCR WinUI 预览";
         RootNavigation.SelectedItem = RootNavigation.MenuItems[0];
@@ -27,6 +34,13 @@ public sealed partial class MainWindow : Window
         if (destination == "diagnostics")
         {
             ContentFrame.Content = new DiagnosticsPage(_diagnostics, _layout);
+            return;
+        }
+
+        if (destination == "recognition")
+        {
+            _recognition ??= _recognitionFactory();
+            ContentFrame.Content = new RecognitionPage(_recognition);
             return;
         }
 
