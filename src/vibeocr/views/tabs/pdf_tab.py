@@ -1026,6 +1026,19 @@ class PdfTab(QWidget):
             self._thumbnail_model.set_detection_done()
             self._update_layer_status()
             self._status_label.setText(f"{Path(file_path).name} 加载完成")
+        # 续传检测：若有未完成 sidecar，提示用户可继续 OCR
+        try:
+            from vibeocr.utils.ocr_sidecar import restore_pending_pages
+            if file_path:
+                pending = restore_pending_pages(file_path)
+                if pending:
+                    total_pages = len(session.pdf_document.pages) if session else 0
+                    self._status_label.setText(
+                        f"检测到上次未完成的 OCR（已保存 {len(pending)}/{total_pages} 页），"
+                        f"可继续识别剩余页"
+                    )
+        except Exception:
+            pass  # 续传提示是锦上添花，失败静默
 
     def _on_ocr_page_result(self, file_path: str, page_index: int, result) -> None:
         session = self._session_mgr.active_session
