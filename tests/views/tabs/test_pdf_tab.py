@@ -5,6 +5,7 @@ from PySide6.QtCore import QItemSelectionModel, Qt
 from PySide6.QtWidgets import QListView, QListWidget, QScrollArea, QSplitter
 
 from vibeocr.views.tabs.pdf_tab import (
+    _LAYER_STATE_ROLE,
     _THUMBNAIL_HPAD,
     _THUMBNAIL_MAX_SIZE,
     _THUMBNAIL_MIN_SIZE,
@@ -842,6 +843,47 @@ class TestLayerStatusGrid:
         assert has.name() == QColor(Colors.success).name()
         assert none_bg.name() == QColor(Colors.text_subtle).name()
 
+    def test_delegate_uses_theme_colors_for_four_states(self, pdf_tab):
+        """四态视觉投影：processing=accent(蓝)、failed=danger(红)、done=success(绿)。
+
+        即使 has_layer=False，只要 state="done" 也应显示 success 绿（已落盘）。
+        """
+        from PySide6.QtCore import QRect
+        from PySide6.QtGui import QColor, QPainter, QPixmap
+        from PySide6.QtWidgets import QStyle, QStyleOptionViewItem
+
+        from vibeocr.ui.theme import Colors
+        from vibeocr.views.tabs.pdf_tab import (
+            _HAS_LAYER_ROLE,
+            _LAYER_ROLE,
+            LayerStatusDelegate,
+        )
+
+        delegate = LayerStatusDelegate()
+
+        def _bg_for(state_str: str, has_layer: bool = False) -> QColor:
+            opt = QStyleOptionViewItem()
+            opt.rect = QRect(0, 0, 40, 40)
+            opt.state = QStyle.StateFlag.State_Enabled
+            idx = _StubIndex(
+                {(_LAYER_ROLE, 0), (_HAS_LAYER_ROLE, has_layer), (_LAYER_STATE_ROLE, state_str)}
+            )
+            pm = QPixmap(40, 40)
+            pm.fill(QColor(0, 0, 0))
+            painter = QPainter(pm)
+            try:
+                delegate.paint(painter, opt, idx)
+            finally:
+                painter.end()
+            return QColor(pm.toImage().pixel(8, 8))
+
+        assert _bg_for("processing").name() == QColor(Colors.accent).name()
+        assert _bg_for("failed").name() == QColor(Colors.danger).name()
+        assert _bg_for("done", has_layer=False).name() == QColor(Colors.success).name()
+        assert _bg_for("done", has_layer=True).name() == QColor(Colors.success).name()
+        # none 态（无 state）回退到 has_layer 推导
+        assert _bg_for("none", has_layer=False).name() == QColor(Colors.text_subtle).name()
+
 
 class _StubIndex:
     """QModelIndex 替身：按 (role) 返回预设 data。"""
@@ -953,6 +995,94 @@ class TestOcrPerPageFeedback:
         assert pdf_tab._get_selected_page_indices() == [1]
         pdf_tab._session_mgr.ocr_stats_ready.emit("x.pdf", 5, 0)
         assert pdf_tab._get_selected_page_indices() == [1]
+
+    def test_update_layer_grid_page_sets_state_role(self, pdf_tab):
+        """_update_layer_grid_page(state=...) 应把视觉态写入 _LAYER_STATE_ROLE。"""
+        from vibeocr.models.pdf_document import PdfPageInfo
+
+        pages = [
+            PdfPageInfo(page_index=0, has_text_layer=False),
+            PdfPageInfo(page_index=1, has_text_layer=False),
+        ]
+        self._inject(pdf_tab, pages)
+        # 置第 0 页为 processing、第 1 页为 failed
+        pdf_tab._update_layer_grid_page(0, state="processing")
+        pdf_tab._update_layer_grid_page(1, state="failed")
+        assert pdf_tab._layer_status_grid.item(0).data(_LAYER_STATE_ROLE) == "processing"
+        assert pdf_tab._layer_status_grid.item(1).data(_LAYER_STATE_ROLE) == "failed"
+
+    def test_update_layer_grid_page_no_state_leaves_role_unset(self, pdf_tab):
+        """state=None 时不应写入 _LAYER_STATE_ROLE（保留 has_layer 推导语义）。"""
+        from vibeocr.models.pdf_document import PdfPageInfo
+
+        pages = [PdfPageInfo(page_index=0, has_text_layer=False)]
+        self._inject(pdf_tab, pages)
+        pdf_tab._update_layer_grid_page(0)  # state=None
+        assert pdf_tab._layer_status_grid.item(0).data(_LAYER_STATE_ROLE) is None
+
+
+class TestLoadDoneSidecarHint:
+    """打开 PDF 时若检测到未完成 sidecar，状态栏提示续传（7C）。"""
+
+    def _inject(self, pdf_tab, pages):
+        from vibeocr.models.pdf_document import PdfDocument
+        from vibeocr.models.pdf_session import PdfSession
+
+        pdf_doc = PdfDocument(file_path="x.pdf", pages=pages)
+        session = PdfSession(file_path="x.pdf", session_id="test-sid", pdf_document=pdf_doc)
+        pdf_tab._session_mgr._sessions["x.pdf"] = session
+        pdf_tab._session_mgr._active_path = "x.pdf"
+        return session
+
+    def test_load_done_shows_resume_hint_when_sidecar_pending(
+        self, pdf_tab, monkeypatch
+    ):
+        """restore_pending_pages 返回非空时，状态栏应显示续传提示文案。"""
+        from vibeocr.models.pdf_document import PdfPageInfo
+
+        pages = [PdfPageInfo(page_index=i) for i in range(4)]
+        session = self._inject(pdf_tab, pages)
+
+        # 模拟 sidecar 有 2 页已保存（未完成）
+        monkeypatch.setattr(
+            "vibeocr.utils.ocr_sidecar.restore_pending_pages",
+            lambda file_path: {0: 0, 1: 0},
+        )
+        pdf_tab._on_load_done("x.pdf")
+        text = pdf_tab._status_label.text()
+        assert "检测到上次未完成的 OCR" in text
+        assert "2/4" in text
+
+    def test_load_done_no_hint_when_no_sidecar(self, pdf_tab, monkeypatch):
+        """无 sidecar（restore_pending_pages 返回 None）时不显示续传提示。"""
+        from vibeocr.models.pdf_document import PdfPageInfo
+
+        pages = [PdfPageInfo(page_index=i) for i in range(3)]
+        self._inject(pdf_tab, pages)
+
+        monkeypatch.setattr(
+            "vibeocr.utils.ocr_sidecar.restore_pending_pages",
+            lambda file_path: None,
+        )
+        pdf_tab._on_load_done("x.pdf")
+        text = pdf_tab._status_label.text()
+        assert "未完成" not in text
+        assert "加载完成" in text
+
+    def test_load_done_sidecar_error_is_silent(self, pdf_tab, monkeypatch):
+        """restore_pending_pages 抛异常时应静默（不影响正常加载文案）。"""
+        from vibeocr.models.pdf_document import PdfPageInfo
+
+        pages = [PdfPageInfo(page_index=i) for i in range(2)]
+        self._inject(pdf_tab, pages)
+
+        def _boom(file_path):
+            raise RuntimeError("sidecar 读取出错")
+
+        monkeypatch.setattr("vibeocr.utils.ocr_sidecar.restore_pending_pages", _boom)
+        pdf_tab._on_load_done("x.pdf")
+        # 异常被吞掉，状态栏应仍是"加载完成"
+        assert "加载完成" in pdf_tab._status_label.text()
 
 
 class TestThumbnailIncrementalUpdate:

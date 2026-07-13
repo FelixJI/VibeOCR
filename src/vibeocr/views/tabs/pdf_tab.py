@@ -113,13 +113,17 @@ def _detecting_icon(size: int = _THUMBNAIL_SIZE) -> QIcon:
 _LAYER_ROLE = Qt.ItemDataRole.UserRole
 _HAS_LAYER_ROLE = Qt.ItemDataRole.UserRole + 1
 _DESKEWED_ROLE = Qt.ItemDataRole.UserRole + 2  # 存 deskewed（本会话是否被自动摆正纠正）
+# 视觉状态枚举（不改 model schema，仅格子投影）：none/processing/done/failed
+_LAYER_STATE_ROLE = Qt.ItemDataRole.UserRole + 3
 
 
 class LayerStatusDelegate(QStyledItemDelegate):
     """文字层网格格子绘制：40×40 圆角方块，居中页码，背景按状态着色。
 
-    有文字层 → 绿（Colors.success）；无文字层 → 灰（Colors.text_subtle）；
-    选中态 → 蓝（Colors.accent）覆盖原色。
+    四态着色（_LAYER_STATE_ROLE 视觉投影，不改 model schema）：
+    processing → 蓝（Colors.accent，识别中）；failed → 红（Colors.danger）；
+    done/有文字层 → 绿（Colors.success，已落盘）；none → 灰（Colors.text_subtle）。
+    选中态 → 蓝覆盖。failed 右上角加白色感叹号；已纠偏右上角橙色圆点。
     """
 
     def sizeHint(self, option, index):
@@ -130,13 +134,18 @@ class LayerStatusDelegate(QStyledItemDelegate):
         page_idx = index.data(_LAYER_ROLE)
         page_num = str(page_idx + 1) if page_idx is not None else ""
         has_layer = index.data(_HAS_LAYER_ROLE)
+        state = index.data(_LAYER_STATE_ROLE)  # none/processing/done/failed
 
         if option.state & QStyle.StateFlag.State_Selected:
             bg = QColor(Colors.accent)
-        elif has_layer:
-            bg = QColor(Colors.success)
+        elif state == "processing":
+            bg = QColor(Colors.accent)  # 蓝：识别中
+        elif state == "failed":
+            bg = QColor(Colors.danger)   # 红：失败
+        elif has_layer or state == "done":
+            bg = QColor(Colors.success)  # 绿：已落盘
         else:
-            bg = QColor(Colors.text_subtle)
+            bg = QColor(Colors.text_subtle)  # 灰：未处理
 
         # 悬停态用 accent 描边，默认用 border 描边
         is_hover = bool(option.state & QStyle.StateFlag.State_MouseOver)
@@ -161,6 +170,12 @@ class LayerStatusDelegate(QStyledItemDelegate):
         font.setPointSize(10)
         painter.setFont(font)
         painter.drawText(option.rect, Qt.AlignmentFlag.AlignCenter, page_num)
+
+        # failed 态右上角感叹号标记
+        if state == "failed":
+            painter.setPen(QPen(QColor("#ffffff"), 2))
+            mark = QRectF(cell.right() - 12, cell.top() + 2, 10, 10)
+            painter.drawText(mark, Qt.AlignmentFlag.AlignCenter, "!")
 
         # 已纠偏标记：右上角橙色小圆点（底色保持不变，两维信息并存）
         deskewed = index.data(_DESKEWED_ROLE)
@@ -1011,14 +1026,29 @@ class PdfTab(QWidget):
             self._thumbnail_model.set_detection_done()
             self._update_layer_status()
             self._status_label.setText(f"{Path(file_path).name} 加载完成")
+        # 续传检测：若有未完成 sidecar，提示用户可继续 OCR
+        try:
+            from vibeocr.utils.ocr_sidecar import restore_pending_pages
+            if file_path:
+                pending = restore_pending_pages(file_path)
+                if pending:
+                    total_pages = len(session.pdf_document.pages) if session else 0
+                    self._status_label.setText(
+                        f"检测到上次未完成的 OCR（已保存 {len(pending)}/{total_pages} 页），"
+                        f"可继续识别剩余页"
+                    )
+        except Exception:
+            pass  # 续传提示是锦上添花，失败静默
 
     def _on_ocr_page_result(self, file_path: str, page_index: int, result) -> None:
         session = self._session_mgr.active_session
         if session is None or session.file_path != file_path:
             return
         # OCR 注入的是隐形文字层，缩略图无视觉变化 → 不重新渲染。
-        # 仅逐页更新文字层网格格子（即时变绿）+ 汇总统计。
-        self._update_layer_grid_page(page_index)
+        # 逐页更新文字层网格格子 + 汇总统计。
+        self._update_layer_grid_page(page_index, state="done" if result is not None else "failed")
+        # 预览窗若正显示该页，刷新以叠加刚识别的文字层高亮
+        self._refresh_preview_window_if_current(page_index)
 
     def _on_ocr_progress_update(self, file_path: str, current: int, total: int) -> None:
         self._progress_bar.setValue(current)
@@ -1339,10 +1369,11 @@ class PdfTab(QWidget):
             tip += " · 已纠偏"
         return tip
 
-    def _update_layer_grid_page(self, page_index: int) -> None:
+    def _update_layer_grid_page(self, page_index: int, state: str | None = None) -> None:
         """增量更新单页网格格子（不全量重建），用于 OCR/删除文字层即时反馈。
 
         保留用户当前选中状态（只改单格的颜色/tooltip，不清空网格）。
+        state: none/processing/done/failed 视觉态；None 时按 has_text_layer 推导。
         """
         session = self._session_mgr.active_session
         if session is None:
@@ -1356,6 +1387,8 @@ class PdfTab(QWidget):
             if item.data(_LAYER_ROLE) == page_index:
                 item.setData(_HAS_LAYER_ROLE, page_info.has_text_layer)
                 item.setData(_DESKEWED_ROLE, page_info.deskewed)
+                if state is not None:
+                    item.setData(_LAYER_STATE_ROLE, state)
                 item.setToolTip(self._layer_cell_tooltip(page_info))
                 break
         # 汇总统计实时刷新
@@ -2017,6 +2050,9 @@ class PdfTab(QWidget):
         self._set_file_buttons_enabled(False)
         self._btn_open.setEnabled(False)
         self._btn_add_file.setEnabled(False)
+        # 把本次待识别页置 processing 态（蓝），让用户看到"哪些页在算"
+        for idx in indices:
+            self._update_layer_grid_page(idx, state="processing")
 
     def _on_add_text_layer_for_pages_without_layer(self) -> None:
         """一键为当前文件所有无文字层页面添加 OCR 文字层（不弹防重复框）。"""

@@ -261,6 +261,43 @@ class PdfService:
         pdf_document.has_structural_change = False
         return SaveResult(rewritten, path, new_doc)
 
+    @staticmethod
+    def save_incremental(doc: fitz.Document, save_path: str) -> bool:
+        """增量保存（纯加文字层场景）。doc 不 close/重开，内存对象始终可用。
+
+        先备份原文件 → doc.save(incremental=True) → 删备份；异常从备份回滚文件
+        但不 close doc（内存文字层保留，调用方可继续后续操作）。
+        供 OCR 逐批落盘使用：每批写层后调用，崩溃只丢最后一批。
+
+        Args:
+            doc: fitz.Document 实例（已写好本批文字层）。无论成功失败都不 close。
+
+        Returns:
+            True 已落盘；False 失败已回滚文件（doc 内存文字层保留可用，调用方
+            不应标记该批已落盘/不写 sidecar）。
+        """
+        backup_path = save_path + ".bak"
+        try:
+            shutil.copy2(save_path, backup_path)
+        except Exception as e:
+            logger.error("save_incremental: 备份失败，跳过本批落盘: %s", e)
+            return False
+        try:
+            doc.save(save_path, incremental=True, encryption=0)
+            Path(backup_path).unlink(missing_ok=True)
+            return True
+        except Exception as e:
+            # incremental save 失败：文件可能半写，从备份恢复。
+            # doc 内存对象未受影响（fitz save 失败不改内存 doc），保持可用，
+            # 内存文字层保留。调用方据此返回 saved=False，不写 sidecar。
+            logger.error("save_incremental: 增量保存失败，从备份回滚文件: %s", e)
+            try:
+                shutil.copy2(backup_path, save_path)
+                Path(backup_path).unlink(missing_ok=True)
+            except Exception:
+                logger.error("save_incremental: 备份回滚失败", exc_info=True)
+            return False
+
     # ---- render -----------------------------------------------------
 
     @staticmethod

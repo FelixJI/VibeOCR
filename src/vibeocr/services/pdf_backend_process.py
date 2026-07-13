@@ -602,12 +602,16 @@ def add_text_layer_batch(
     与逐页 add_text_layer 的区别：把本批所有页字符聚合一次解析子集字体，
     全批共享，避免每页一份独立子集字体放大体积。聚合逻辑复用
     PdfService.add_text_layer_batch（参照 save_with_rewrite 的整文档子集模式）。
+
+    save=True 时，写层成功后紧跟一次 incremental save 把本批落盘
+    （崩溃只丢最后一批）。extra.saved 标记是否成功落盘（False=回滚，调用方不写 sidecar）。
     """
     s = _get_registry().get(sid)
     try:
         pages_data = [
             {"page": p.page, "ocr_result": p.ocr_result} for p in req.pages
         ]
+        saved = True
         with s.fitz_lock:
             results = PdfService.add_text_layer_batch(
                 s.doc, s.pdf_document, pages_data,
@@ -615,11 +619,20 @@ def add_text_layer_batch(
                 overwrite=req.overwrite,
                 cancel_check=s.cancel_event.is_set,
             )
-        written_pages = sorted(results.keys())
-        return MutateResponse(diff=_diff_pages(
-            s.pdf_document, written_pages,
-            invalidate_thumbnails=written_pages, modified=True
-        ))
+            written_pages = sorted(results.keys())
+            # 写层成功且有页 → 可选增量落盘
+            if req.save and written_pages:
+                save_path = s.pdf_document.file_path
+                if save_path:
+                    # save_incremental 成功失败都不 close doc，无需替换 s.doc
+                    saved = PdfService.save_incremental(s.doc, save_path)
+        return MutateResponse(
+            diff=_diff_pages(
+                s.pdf_document, written_pages,
+                invalidate_thumbnails=written_pages, modified=True
+            ),
+            extra={"saved": saved} if req.save else None,
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"批量加文字层失败: {e}") from e
 

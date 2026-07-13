@@ -20,6 +20,7 @@ from vibeocr.ipc.model_bridge import apply_diff, mirror_to_doc
 from vibeocr.ipc.schemas import ModelDiff, PdfDocumentMirror
 from vibeocr.models.pdf_session import PdfSession
 from vibeocr.services.pdf_backend_client import PdfBackendClient, PdfBackendError
+from vibeocr.utils import ocr_sidecar
 from vibeocr.workers.pdf_ipc_worker import PdfIpcMutateWorker, PdfIpcOpenWorker
 
 if TYPE_CHECKING:
@@ -383,6 +384,12 @@ class PdfSessionManager(QObject):
         self._start_mutate("save", {"path": path, "pdf_settings": settings_dict})
 
     def delete_text_layers_async(self, page_indices: list[int]) -> None:
+        # 仅改内存模型（后端 s.doc / s.pdf_document + is_modified=True），
+        # 不写磁盘——磁盘文件仍保留旧文字层，直到显式 save_async。故此处
+        # 无需 invalidate sidecar：sidecar 追踪的是「磁盘上哪些页已落盘 OCR
+        # 文字层」，而磁盘状态未被本操作改变。用户删除文字层后崩溃（未保存）
+        # 时，编辑丢失是既有的「未保存改动随崩溃丢失」行为（与本特性无关），
+        # sidecar 仍准确反映磁盘真实状态（旧层仍在），续传跳过该页是正确的。
         self._start_mutate("delete_text_layers", {"pages": page_indices})
 
     def rotate_pages_async(self, page_indices: list[int], angle: int) -> None:
@@ -689,6 +696,9 @@ class PdfSessionManager(QObject):
         return None
 
     # ---- 文字块编辑(双击改字,仅内存模型)-------------------------------
+    # 注：以下块编辑只改内存模型（后端规范模型 + 本地 mirror），不写磁盘，
+    # 故不影响 sidecar（sidecar 追踪磁盘落盘状态）。崩溃丢失未保存的块编辑
+    # 是既有行为，与本特性无关。
 
     def update_page_block_text(
         self, page_index: int, block_index: int, new_text: str
@@ -742,6 +752,35 @@ class PdfSessionManager(QObject):
             self._client.reset_cancel(session.session_id)
         except Exception:
             logger.debug("reset_cancel 失败（忽略）", exc_info=True)
+        # 断点续传：读取 sidecar，过滤掉已增量落盘的页（崩溃恢复）。
+        # overwrite=True 时不过滤（用户明确要求重写）。
+        if not overwrite and session.file_path:
+            try:
+                pending = ocr_sidecar.restore_pending_pages(session.file_path)
+                if pending:
+                    already = set(pending.keys())
+                    page_indices = [p for p in page_indices if p not in already]
+                    if not page_indices:
+                        logger.info("start_ocr: 所有请求页已落盘（sidecar），跳过 OCR")
+                        self._ocr_running = False
+                        # 调用方（PdfTab）在 start_ocr 之前已 _begin_ocr_ui：进度条
+                        # 已显示、按钮已禁用、格子已置 processing。这里提前 return 不
+                        # 构造 runner，故 all_done 永不发出，ocr_done 不会触发，
+                        # _on_ocr_finished 不会复位 UI → 用户卡在 0% 进度条 + 蓝格子。
+                        # 镜像 _on_ocr_all_done_signal 的收尾：发 ocr_stats_ready +
+                        # ocr_done（0 成功 0 失败：无事可做），让 UI 正常复位。
+                        stats = session.ocr_stats
+                        self.ocr_stats_ready.emit(
+                            session.file_path, stats["written"], stats["skipped"]
+                        )
+                        self.ocr_done.emit(session.file_path, 0, 0)
+                        return
+                    logger.info(
+                        "start_ocr: sidecar 续传，跳过已落盘页 %s",
+                        sorted(already),
+                    )
+            except Exception:
+                logger.debug("start_ocr: sidecar 读取失败，全量 OCR", exc_info=True)
         # 递增 task generation，使旧 runner 的迟到信号被 done 槽丢弃
         self._task_generation += 1
         current_task_id = self._task_generation
@@ -965,11 +1004,17 @@ class PdfSessionManager(QObject):
                     )
 
             write_page_results: dict[int, bool] = {}  # page -> ok
+            batch_persisted = False
             if write_items and not runner._cancelled:
                 try:
-                    self._client.add_text_layer_batch(
-                        session_id, write_items, settings_dict, overwrite
+                    resp = self._client.add_text_layer_batch(
+                        session_id,
+                        write_items,
+                        settings_dict,
+                        overwrite,
+                        save=True,
                     )
+                    batch_persisted = bool((resp.extra or {}).get("saved", False))
                     for item in write_items:
                         write_page_results[item["page"]] = True
                 except Exception as e:
@@ -977,6 +1022,27 @@ class PdfSessionManager(QObject):
                     # 整批写层失败：标记这些页失败
                     for item in write_items:
                         write_page_results[item["page"]] = False
+
+            # 本批 incremental save 成功 → 写 sidecar 标记已落盘页（断点续传）
+            # sidecar 是"尽力而为"：写入失败只记日志，不阻断 OCR 主流程。
+            if batch_persisted and session.file_path:
+                try:
+                    angles = {
+                        item["page"]: int(
+                            getattr(item["_result"], "preproc_angle", 0) or 0
+                        )
+                        for item in write_items
+                        if write_page_results.get(item["page"], False)
+                    }
+                    saved_pages = list(angles.keys())
+                    if saved_pages:
+                        ocr_sidecar.mark_pages_saved(
+                            session.file_path, saved_pages, angles
+                        )
+                except Exception:
+                    logger.debug(
+                        "sidecar mark_pages_saved 失败（忽略）", exc_info=True
+                    )
 
             # 逐页发 page_done + 进度信号（保持 UI 流式反馈）
             for i, idx in enumerate(batch_pages):
@@ -1018,6 +1084,28 @@ class PdfSessionManager(QObject):
                 progress += 1
                 _emit_progress()
 
+        # 末尾整文档聚合压缩：把批级冗余子集字体合并为单一字体 + 全量压缩落盘。
+        # 复用后端 save 路由（path=None 覆盖原文件，compress_on_save 默认 True
+        # 走 _compress_in_place）。compress 失败时 sidecar 保持 completed=false
+        # （已 incremental 落盘的页仍有效，下次 start_ocr 续传）。
+        if not runner._cancelled and success > 0 and session.file_path:
+            try:
+                runner.progress.emit(session_id, 0, 0)  # 不确定进度（COMPRESS 态）
+                self._client.save(session_id, None, settings_dict)
+                # 全量压缩整体重写了 PDF（可能变小）。先刷新 sidecar 基线为
+                # 当前文件状态，否则 mark_completed→load_sidecar 的增长校验会
+                # 因 size < original 失败而落盘一个空 sidecar（同 Task1 的指纹
+                # 漂移 bug 的等价表现）。
+                try:
+                    ocr_sidecar.refresh_baseline(session.file_path)
+                    ocr_sidecar.mark_completed(session.file_path)
+                except Exception:
+                    logger.debug(
+                        "sidecar mark_completed 失败（忽略）", exc_info=True
+                    )
+            except Exception as e:
+                logger.error("OCR 末尾聚合压缩失败（中间结果已增量落盘）: %s", e)
+
         # 刷新 model(OCR 改变了 has_text_layer + ocr_text_blocks)
         # 大文件场景此步是内存峰值：get_model 返回全文档 mirror（含所有页的
         # ocr_text_blocks），mirror_to_doc 全量重建 PdfPageInfo + TextBlock。
@@ -1037,6 +1125,22 @@ class PdfSessionManager(QObject):
     ) -> None:
         file_path = self._path_for_session_id(session_id)
         if file_path:
+            # 增量落 model：把 result.text_blocks 立即写入该页 PdfPageInfo，
+            # 消除预览滞后（此前只在整批结束 get_model 才全量刷新）。
+            # result 为 None（失败/空页）时跳过，仅转发信号。
+            if result is not None:
+                session = self._sessions.get(file_path)
+                if session is not None:
+                    info = session.pdf_document.get_page(page_index)
+                    if info is not None:
+                        info.ocr_text_blocks = list(
+                            getattr(result, "text_blocks", []) or []
+                        )
+                        info.ocr_preproc_angle = int(
+                            getattr(result, "preproc_angle", 0) or 0
+                        )
+                        if info.ocr_text_blocks:
+                            info.has_text_layer = True
             self.ocr_page_done.emit(file_path, page_index, result)
 
     def _on_ocr_progress_signal(

@@ -619,3 +619,351 @@ class TestExportCancel:
         results = mgr.export_all_modified("/tmp/out")
         assert len(results) == 3
         assert mgr._client.save.call_count == 3
+
+
+class TestOcrPageDoneIncrementalModel:
+    """_on_ocr_page_done_signal 应增量把 result.text_blocks 落 model，
+    消除预览滞后（此前只在整批结束 get_model 才全量刷新）。"""
+
+    def test_page_done_writes_ocr_blocks_to_model(self, qapp, tmp_path):
+        from unittest.mock import MagicMock
+
+        from vibeocr.managers.pdf_session_manager import PdfSessionManager
+        from vibeocr.models.pdf_document import PdfDocument, PdfPageInfo
+
+        mgr = PdfSessionManager.__new__(PdfSessionManager)
+        mgr._sessions = {}
+
+        doc = PdfDocument(file_path=str(tmp_path / "x.pdf"))
+        doc.pages = [PdfPageInfo(page_index=0), PdfPageInfo(page_index=1)]
+        session = MagicMock()
+        session.session_id = "sid1"
+        session.pdf_document = doc
+        file_path = str(tmp_path / "x.pdf")
+        mgr._sessions[file_path] = session
+
+        # 模拟 OCRResult（带 text_blocks + preproc_angle）
+        result = MagicMock()
+        block = MagicMock()
+        block.text = "hello"
+        result.text_blocks = [block]
+        result.preproc_angle = 90
+
+        # ocr_page_done 是 Signal，需替换为可调用的 mock 以便 _on_ocr_page_done_signal
+        # 末尾 emit 不抛异常。
+        mgr.ocr_page_done = MagicMock()
+
+        mgr._on_ocr_page_done_signal("sid1", 1, result)
+
+        info = doc.pages[1]
+        assert info.has_text_layer is True
+        assert info.ocr_text_blocks == [block]
+        assert info.ocr_preproc_angle == 90
+
+    def test_page_done_none_result_skips_model_write(self, qapp, tmp_path):
+        """result 为 None（失败/空页）时不写 model、不发块，仅转发信号。"""
+        from unittest.mock import MagicMock
+
+        from vibeocr.managers.pdf_session_manager import PdfSessionManager
+        from vibeocr.models.pdf_document import PdfDocument, PdfPageInfo
+
+        mgr = PdfSessionManager.__new__(PdfSessionManager)
+        mgr._sessions = {}
+
+        doc = PdfDocument(file_path=str(tmp_path / "x.pdf"))
+        doc.pages = [PdfPageInfo(page_index=0), PdfPageInfo(page_index=1)]
+        session = MagicMock()
+        session.session_id = "sid1"
+        session.pdf_document = doc
+        file_path = str(tmp_path / "x.pdf")
+        mgr._sessions[file_path] = session
+
+        mgr.ocr_page_done = MagicMock()
+
+        mgr._on_ocr_page_done_signal("sid1", 1, None)
+
+        info = doc.pages[1]
+        # 不写块
+        assert info.ocr_text_blocks == []
+        assert info.has_text_layer is False
+        # 仍转发信号
+        mgr.ocr_page_done.emit.assert_called_once_with(file_path, 1, None)
+
+
+class TestRunOcrIncrementalSave:
+    """_run_ocr 阶段3 写层后应 incremental save + 写 sidecar；
+    末尾聚合压缩后 mark_completed。覆盖 6B + 6C。"""
+
+    def test_run_ocr_calls_add_text_layer_batch_with_save_and_writes_sidecar(
+        self, qapp, tmp_path, monkeypatch
+    ):
+        from unittest.mock import MagicMock
+
+        from vibeocr.managers.pdf_session_manager import PdfSessionManager
+        from vibeocr.models.pdf_document import PdfDocument, PdfPageInfo
+
+        pdf_path = tmp_path / "doc.pdf"
+        pdf_path.write_bytes(b"%PDF-1.4 test")
+
+        mgr = PdfSessionManager.__new__(PdfSessionManager)
+        mgr._sessions = {}
+        mgr._active_path = str(pdf_path)
+
+        doc = PdfDocument(file_path=str(pdf_path))
+        doc.pages = [PdfPageInfo(page_index=i) for i in range(3)]
+        session = MagicMock()
+        session.session_id = "sid1"
+        session.file_path = str(pdf_path)
+        session.pdf_document = doc
+        session.ocr_stats = {"written": 0, "skipped": 0}
+        session.add_ocr_stats = MagicMock()
+        mgr._sessions[str(pdf_path)] = session
+        mgr._overwrite_text_layer = False
+
+        # mock client
+        client = MagicMock()
+        # render_preview 返回非空 bytes（避免被当渲染失败）
+        client.render_preview.return_value = b"\x89PNG fake"
+        # add_text_layer_batch 返回带 extra.saved=True
+        resp = MagicMock()
+        resp.extra = {"saved": True}
+        client.add_text_layer_batch.return_value = resp
+        client.get_model.return_value = MagicMock()
+        mgr._client = client
+
+        # mock OCR service：每页返回带 text_blocks 的 result
+        mgr._ocr_service = MagicMock()
+        block = MagicMock()
+        block.text = "t"
+        block.score = 0.9
+        block.bbox = [0.0, 0.0, 100.0, 100.0]
+        block.page_idx = 0
+        block.is_manually_edited = False
+        block.label = "text"
+        block.order = 0
+        result = MagicMock()
+        result.text_blocks = [block]
+        result.preproc_angle = 0
+        mgr._ocr_service.recognize_batch.return_value = [result] * 3
+
+        # sidecar 重定向到 tmp（隔离测试，避免污染真实缓存目录）
+        monkeypatch.setattr(
+            "vibeocr.utils.ocr_sidecar._sessions_dir", lambda: tmp_path / "sessions"
+        )
+
+        runner = MagicMock()
+        runner._cancelled = False
+        runner._task_id = 1
+        runner.page_done = MagicMock()
+        runner.progress = MagicMock()
+        runner.all_done = MagicMock()
+        # _run_ocr 通过 runner._render_pool.map 并发渲染；mock 成返回 3 份 PNG bytes。
+        runner._render_pool = MagicMock()
+        runner._render_pool.map.return_value = [b"\x89PNG p0", b"\x89PNG p1", b"\x89PNG p2"]
+
+        mgr._run_ocr(runner, "sid1", [0, 1, 2], None, {}, False)
+
+        # 关键断言：add_text_layer_batch 被调用且 save=True
+        assert client.add_text_layer_batch.called
+        _, kwargs = client.add_text_layer_batch.call_args
+        assert kwargs.get("save") is True
+        # 末尾聚合压缩后 mark_completed，故 completed=True
+        from vibeocr.utils.ocr_sidecar import load_sidecar
+
+        data = load_sidecar(str(pdf_path))
+        assert data is not None
+        assert data["completed"] is True
+
+
+class TestStartOcrResumeFilter:
+    """start_ocr 应读取 sidecar，过滤掉已落盘页（断点续传）。"""
+
+    def test_start_ocr_skips_pages_in_pending_sidecar(
+        self, qapp, tmp_path, monkeypatch
+    ):
+        from unittest.mock import MagicMock, patch
+
+        from PySide6.QtCore import QThread
+
+        from vibeocr.managers.pdf_session_manager import PdfSessionManager
+        from vibeocr.models.pdf_document import PdfDocument, PdfPageInfo
+
+        pdf_path = tmp_path / "r.pdf"
+        pdf_path.write_bytes(b"abc")
+        monkeypatch.setattr(
+            "vibeocr.utils.ocr_sidecar._sessions_dir", lambda: tmp_path / "s"
+        )
+        # 预置 sidecar：页 0 已落盘，未完成
+        from vibeocr.utils.ocr_sidecar import mark_pages_saved
+
+        mark_pages_saved(str(pdf_path), [0], {0: 0})
+
+        mgr = PdfSessionManager.__new__(PdfSessionManager)
+        mgr._task_generation = 0
+        mgr._sessions = {}
+        mgr._active_path = str(pdf_path)
+        mgr._ocr_running = False
+        mgr._ocr_cancelled = False
+        mgr._ocr_worker = None
+        mgr._client = MagicMock()
+
+        doc = PdfDocument(file_path=str(pdf_path))
+        doc.pages = [PdfPageInfo(page_index=0), PdfPageInfo(page_index=1)]
+        session = MagicMock()
+        session.session_id = "sid1"
+        session.file_path = str(pdf_path)
+        session.reset_ocr_stats = MagicMock()
+        session.pdf_document = doc
+        mgr._sessions[str(pdf_path)] = session
+        mgr._ocr_service = MagicMock()
+        mgr._is_mineru_first_use = MagicMock(return_value=False)
+        mgr._pdf_settings = MagicMock()
+        mgr._overwrite_text_layer = False
+        mgr._settings_to_dict = MagicMock(return_value={})
+        mgr._RENDER_CONCURRENCY = 1
+
+        with (
+            patch.object(mgr, "_cancel_ocr"),
+            patch.object(QThread, "start"),  # 阻止真线程
+        ):
+            mgr.start_ocr([0, 1])  # 用户请求 0,1
+
+        # runner 已构造（QThread.start 被 patch 不真跑），读取其 _pages：
+        # 页 0 已落盘被过滤
+        assert mgr._ocr_worker is not None
+        assert mgr._ocr_worker._pages == [1]
+
+    def test_start_ocr_overwrite_skips_filter(self, qapp, tmp_path, monkeypatch):
+        """overwrite=True 时不过滤 sidecar，全量 OCR。"""
+        from unittest.mock import MagicMock, patch
+
+        from PySide6.QtCore import QThread
+
+        from vibeocr.managers.pdf_session_manager import PdfSessionManager
+        from vibeocr.models.pdf_document import PdfDocument, PdfPageInfo
+
+        pdf_path = tmp_path / "r2.pdf"
+        pdf_path.write_bytes(b"abc")
+        monkeypatch.setattr(
+            "vibeocr.utils.ocr_sidecar._sessions_dir", lambda: tmp_path / "s2"
+        )
+        from vibeocr.utils.ocr_sidecar import mark_pages_saved
+
+        mark_pages_saved(str(pdf_path), [0], {0: 0})
+
+        mgr = PdfSessionManager.__new__(PdfSessionManager)
+        mgr._task_generation = 0
+        mgr._sessions = {}
+        mgr._active_path = str(pdf_path)
+        mgr._ocr_running = False
+        mgr._ocr_cancelled = False
+        mgr._ocr_worker = None
+        mgr._client = MagicMock()
+
+        doc = PdfDocument(file_path=str(pdf_path))
+        doc.pages = [PdfPageInfo(page_index=0), PdfPageInfo(page_index=1)]
+        session = MagicMock()
+        session.session_id = "sid1"
+        session.file_path = str(pdf_path)
+        session.reset_ocr_stats = MagicMock()
+        session.pdf_document = doc
+        mgr._sessions[str(pdf_path)] = session
+        mgr._ocr_service = MagicMock()
+        mgr._is_mineru_first_use = MagicMock(return_value=False)
+        mgr._pdf_settings = MagicMock()
+        mgr._overwrite_text_layer = False
+        mgr._settings_to_dict = MagicMock(return_value={})
+        mgr._RENDER_CONCURRENCY = 1
+
+        with (
+            patch.object(mgr, "_cancel_ocr"),
+            patch.object(QThread, "start"),
+        ):
+            mgr.start_ocr([0, 1], overwrite=True)  # overwrite 不过滤
+
+        assert mgr._ocr_worker is not None
+        # overwrite=True → 不过滤，pages 保持 [0, 1]
+        assert mgr._ocr_worker._pages == [0, 1]
+
+    def test_start_ocr_all_pages_saved_aborts_gracefully(
+        self, qapp, tmp_path, monkeypatch
+    ):
+        """所有请求页已落盘时，start_ocr 应跳过 OCR、不发 runner、复位 running。
+
+        且必须发 ocr_done（+ ocr_stats_ready）：PdfTab 在 start_ocr 之前已
+        _begin_ocr_ui（进度条可见/按钮禁用/格子 processing），若短路 return 不发
+        ocr_done，_on_ocr_finished 永不运行，UI 卡死在 0% 进度条 + 蓝格子。
+        """
+        from unittest.mock import MagicMock, patch
+
+        from PySide6.QtCore import QThread
+
+        from vibeocr.managers.pdf_session_manager import PdfSessionManager
+        from vibeocr.models.pdf_document import PdfDocument, PdfPageInfo
+
+        pdf_path = tmp_path / "r3.pdf"
+        pdf_path.write_bytes(b"abc")
+        monkeypatch.setattr(
+            "vibeocr.utils.ocr_sidecar._sessions_dir", lambda: tmp_path / "s3"
+        )
+        from vibeocr.utils.ocr_sidecar import mark_pages_saved
+
+        # 页 0,1 都已落盘
+        mark_pages_saved(str(pdf_path), [0, 1], {0: 0, 1: 0})
+
+        mgr = PdfSessionManager.__new__(PdfSessionManager)
+        mgr._task_generation = 0
+        mgr._sessions = {}
+        mgr._active_path = str(pdf_path)
+        mgr._ocr_running = True  # 预设，应被复位为 False
+        mgr._ocr_cancelled = False
+        mgr._ocr_worker = None
+        mgr._client = MagicMock()
+
+        doc = PdfDocument(file_path=str(pdf_path))
+        doc.pages = [PdfPageInfo(page_index=0), PdfPageInfo(page_index=1)]
+        session = MagicMock()
+        session.session_id = "sid1"
+        session.file_path = str(pdf_path)
+        session.reset_ocr_stats = MagicMock()
+        # ocr_stats 在短路分支被读取（emit ocr_stats_ready），需为真实 dict
+        session.ocr_stats = {"written": 0, "skipped": 0}
+        session.pdf_document = doc
+        mgr._sessions[str(pdf_path)] = session
+        mgr._ocr_service = MagicMock()
+        mgr._is_mineru_first_use = MagicMock(return_value=False)
+        mgr._pdf_settings = MagicMock()
+        mgr._overwrite_text_layer = False
+        mgr._settings_to_dict = MagicMock(return_value={})
+
+        # 捕获短路分支发出的 ocr_done / ocr_stats_ready（镜像 TestOcrRunnerFailure
+        # 的 signal-spy 做法：替换 emit 为收集 lambda）。
+        ocr_done_calls: list[tuple] = []
+        ocr_stats_calls: list[tuple] = []
+        mgr.ocr_done = MagicMock()
+        mgr.ocr_done.emit = lambda *a: ocr_done_calls.append(a)
+        mgr.ocr_stats_ready = MagicMock()
+        mgr.ocr_stats_ready.emit = lambda *a: ocr_stats_calls.append(a)
+
+        with (
+            patch.object(mgr, "_cancel_ocr"),
+            patch.object(QThread, "start") as start_mock,
+        ):
+            mgr.start_ocr([0, 1])  # 所有页已落盘
+
+        # 应提前返回：无 runner，线程未启动，running 复位
+        assert mgr._ocr_worker is None
+        start_mock.assert_not_called()
+        assert mgr._ocr_running is False
+        # 关键：ocr_done 必须发出，否则 PdfTab._on_ocr_finished 不复位 UI
+        assert len(ocr_done_calls) == 1, "短路 return 必须发 ocr_done 复位 UI"
+        path, success, fail = ocr_done_calls[0]
+        assert path == str(pdf_path)
+        assert success == 0  # 无事可做
+        assert fail == 0
+        # ocr_stats_ready 也应发出（与正常完成路径 _on_ocr_all_done_signal 对齐）
+        assert len(ocr_stats_calls) == 1
+        spath, written, skipped = ocr_stats_calls[0]
+        assert spath == str(pdf_path)
+        assert written == 0
+        assert skipped == 0
