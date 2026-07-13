@@ -384,6 +384,12 @@ class PdfSessionManager(QObject):
         self._start_mutate("save", {"path": path, "pdf_settings": settings_dict})
 
     def delete_text_layers_async(self, page_indices: list[int]) -> None:
+        # 仅改内存模型（后端 s.doc / s.pdf_document + is_modified=True），
+        # 不写磁盘——磁盘文件仍保留旧文字层，直到显式 save_async。故此处
+        # 无需 invalidate sidecar：sidecar 追踪的是「磁盘上哪些页已落盘 OCR
+        # 文字层」，而磁盘状态未被本操作改变。用户删除文字层后崩溃（未保存）
+        # 时，编辑丢失是既有的「未保存改动随崩溃丢失」行为（与本特性无关），
+        # sidecar 仍准确反映磁盘真实状态（旧层仍在），续传跳过该页是正确的。
         self._start_mutate("delete_text_layers", {"pages": page_indices})
 
     def rotate_pages_async(self, page_indices: list[int], angle: int) -> None:
@@ -690,6 +696,9 @@ class PdfSessionManager(QObject):
         return None
 
     # ---- 文字块编辑(双击改字,仅内存模型)-------------------------------
+    # 注：以下块编辑只改内存模型（后端规范模型 + 本地 mirror），不写磁盘，
+    # 故不影响 sidecar（sidecar 追踪磁盘落盘状态）。崩溃丢失未保存的块编辑
+    # 是既有行为，与本特性无关。
 
     def update_page_block_text(
         self, page_index: int, block_index: int, new_text: str
