@@ -134,6 +134,30 @@
         }
       }
     },
+    "ocr.export": {
+      "request_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000011",
+        "task_id": "00000000-0000-4000-8000-000000000011",
+        "method": "ocr.export",
+        "payload": {
+          "raw_text": "Hello 世界",
+          "markdown_text": "# Hello 世界",
+          "html_text": "<h1>Hello 世界</h1>",
+          "raw_blocks": [],
+          "output_path": "C:/data/结果.md",
+          "format": "markdown",
+          "overwrite": false
+        },
+        "deadline_unix_ms": 0
+      },
+      "response_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000011",
+        "task_id": "00000000-0000-4000-8000-000000000011",
+        "result": { "output_path": "C:/data/结果.md", "bytes_written": 14 }
+      }
+    },
     "pdf.open": {
       "request_envelope": {
         "protocol_version": 1,

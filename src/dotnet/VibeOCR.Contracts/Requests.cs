@@ -82,6 +82,28 @@ public sealed record RecognizeRequest : RequestContract
 }
 
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record ExportOcrRequest : RequestContract
+{
+    public required string RawText { get; init; }
+    public required string MarkdownText { get; init; }
+    public required string HtmlText { get; init; }
+    public required System.Text.Json.JsonElement[] RawBlocks { get; init; }
+    public required string OutputPath { get; init; }
+    public required string Format { get; init; }
+    public required bool Overwrite { get; init; }
+
+    public override void Validate()
+    {
+        ContractValidation.NonEmpty(OutputPath, nameof(OutputPath));
+        ContractValidation.OneOf(Format, nameof(Format), "txt", "markdown", "html");
+        if (!Path.IsPathFullyQualified(OutputPath))
+        {
+            throw new ProtocolContractException("output_path must be absolute.");
+        }
+    }
+}
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public sealed record OpenPdfRequest : RequestContract
 {
     public required string FilePath { get; init; }

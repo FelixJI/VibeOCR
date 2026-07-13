@@ -5,6 +5,7 @@ using Windows.ApplicationModel.DataTransfer;
 using Windows.Storage;
 using VibeOCR.App.Features.Recognition;
 using VibeOCR.App.Web;
+using VibeOCR.Platform.Worker;
 
 namespace VibeOCR.App.Views;
 
@@ -14,10 +15,12 @@ public sealed partial class RecognitionPage : Page
     private readonly PreviewHost _previewHost;
     private bool _bridgeTerminal;
     private bool _bridgeReady;
+    private readonly ResultActions _resultActions;
 
     public RecognitionPage(RecognitionViewModel viewModel)
     {
         ViewModel = viewModel ?? throw new ArgumentNullException(nameof(viewModel));
+        _resultActions = ViewModel.CreateResultActions(new WindowsResultActionPlatform(() => XamlRoot));
         _router = new WebMessageRouter();
         _previewHost = new PreviewHost(_router);
         _router.MessageReceived += OnWebMessageReceived;
@@ -84,6 +87,7 @@ public sealed partial class RecognitionPage : Page
     private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs args)
     {
         if (args.PropertyName == nameof(RecognitionViewModel.ResultText) && _bridgeReady) _ = SendResultAsync();
+        if (args.PropertyName == nameof(RecognitionViewModel.Result) && ViewModel.Result is not null) _resultActions.SetResult(ViewModel.Result);
     }
 
     private async Task SendResultAsync()
@@ -103,6 +107,21 @@ public sealed partial class RecognitionPage : Page
     private async void OnClipboardClicked(object sender, RoutedEventArgs args) => await ViewModel.RecognizeClipboardAsync(CancellationToken.None);
     private async void OnScreenshotClicked(object sender, RoutedEventArgs args) => await ViewModel.RecognizeScreenshotAsync(CancellationToken.None);
     private void OnCancelClicked(object sender, RoutedEventArgs args) => ViewModel.Cancel();
+    private async void OnCopyRichClicked(object sender, RoutedEventArgs args) => await RunResultActionAsync(ct => _resultActions.CopyAsync(ResultCopyFormat.Rich, ct));
+    private async void OnCopyMarkdownClicked(object sender, RoutedEventArgs args) => await RunResultActionAsync(ct => _resultActions.CopyAsync(ResultCopyFormat.Markdown, ct));
+    private async void OnCopyPlainClicked(object sender, RoutedEventArgs args) => await RunResultActionAsync(ct => _resultActions.CopyAsync(ResultCopyFormat.Plain, ct));
+    private async void OnExportHtmlClicked(object sender, RoutedEventArgs args) => await RunResultActionAsync(ct => _resultActions.ExportAsync(ResultExportFormat.Html, ct));
+    private async void OnExportMarkdownClicked(object sender, RoutedEventArgs args) => await RunResultActionAsync(ct => _resultActions.ExportAsync(ResultExportFormat.Markdown, ct));
+    private async void OnExportTextClicked(object sender, RoutedEventArgs args) => await RunResultActionAsync(ct => _resultActions.ExportAsync(ResultExportFormat.Text, ct));
+
+    private async Task RunResultActionAsync(Func<CancellationToken, Task> action)
+    {
+        try { await action(CancellationToken.None); PreviewBridgeStatus.Text = "结果操作完成"; }
+        catch (InvalidOperationException) { PreviewBridgeStatus.Text = "请先完成识别"; }
+        catch (Exception error) when (error is WorkerRpcException or IOException or ClipboardBusyException) { PreviewBridgeStatus.Text = "结果操作失败，请重试"; }
+    }
+
+    private Task RunResultActionAsync<T>(Func<CancellationToken, Task<T>> action) => RunResultActionAsync(async ct => { await action(ct); });
 
     private void OnDragOver(object sender, DragEventArgs args)
     {

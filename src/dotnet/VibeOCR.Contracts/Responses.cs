@@ -78,12 +78,33 @@ public sealed record RecognizeResponse : ResponseContract
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public JsonElement[]? RawBlocks { get; init; }
 
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? MarkdownText { get; init; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? HtmlText { get; init; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? RawText { get; init; }
+
     public override void Validate() => ContractValidation.OneOf(
         Pipeline,
         nameof(Pipeline),
         "OCR",
         "TABLE_RECOGNITION",
         "FORMULA_RECOGNITION");
+}
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record ExportOcrResponse : ResponseContract
+{
+    public required string OutputPath { get; init; }
+    public required long BytesWritten { get; init; }
+    public override void Validate()
+    {
+        ContractValidation.NonEmpty(OutputPath, nameof(OutputPath));
+        if (BytesWritten < 0) throw new ProtocolContractException("bytes_written must be non-negative.");
+    }
 }
 
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]

@@ -728,16 +728,16 @@ Task<TResponse> CallAsync<TRequest,TResponse>(string method, TRequest request, C
 
 - Create: `src/dotnet/VibeOCR.App/Features/Recognition/ResultActions.cs`
 - Create: `tests/e2e/winui/single-recognition.spec.ps1`
-- Create: `tests/fixtures/parity/single-recognition/input.png`
 - Create: `tests/fixtures/parity/single-recognition/expected.json`
+- Create: `tests/e2e/winui/test_single_recognition_parity.py`
 - Modify: `src/dotnet/VibeOCR.App/Views/RecognitionPage.xaml`
 - Create: `docs/quality/feature-parity.md`
 
 **Red:** clipboard busy 重试、文件覆盖确认、Unicode 路径、HTML/Markdown/text export、取消和错误提示测试先行。
 
-**Green:** 导出业务仍由 Python facade；C# 只负责 picker/clipboard/命令状态；E2E 对同一 fixture 比较旧 UI 与 WinUI 的规范化结果和输出文件 hash/结构。
+**Green:** 导出业务仍由 Python facade；C# 只负责 picker/clipboard/命令状态。E2E 使用稳定的语义 fixture 分别穿透 Python 导出真源、C# typed export/clipboard 命令和 Web renderer，再比较输出文件 hash/结构。这里不把模型权重、后端或字体渲染差异纳入 UI 迁移门禁；真实图片输入与 OCR Worker 闭环已由 Task 3.1 覆盖。
 
-**Verify:** `powershell -File tests/e2e/winui/single-recognition.spec.ps1`；Expected: all single-image parity rows marked PASS.
+**Verify:** 设置 `VIBEOCR_PYTHON`/`VIBEOCR_NODE`（若不在 PATH）后运行 `powershell -File tests/e2e/winui/single-recognition.spec.ps1`；Expected: Python export、C# result actions、Web semantic rendering 三行全部标记 PASS。
 
 **Commit:** `git commit -m "test(winui): close single-recognition parity loop"`
 

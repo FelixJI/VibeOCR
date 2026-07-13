@@ -14,6 +14,7 @@ public sealed class RecognitionViewModel : INotifyPropertyChanged
     private long _generation;
     private bool _isBusy;
     private string _resultText = string.Empty;
+    private RecognizeResponse? _result;
     private string _status = "请选择图片";
 
     public RecognitionViewModel(IWorkerHostClient worker, IInputService inputs)
@@ -45,6 +46,14 @@ public sealed class RecognitionViewModel : INotifyPropertyChanged
     public string Pipeline { get; set; } = "OCR";
 
     public string? Language { get; set; }
+    public RecognizeResponse? Result => _result;
+
+    public ResultActions CreateResultActions(IResultActionPlatform platform)
+    {
+        var actions = new ResultActions(_worker, platform);
+        if (_result is not null) actions.SetResult(_result);
+        return actions;
+    }
 
     public Task RecognizeFileAsync(CancellationToken cancellationToken) =>
         StartAsync(_inputs.PickFileAsync, cancellationToken);
@@ -113,7 +122,9 @@ public sealed class RecognitionViewModel : INotifyPropertyChanged
                 run.Token);
             if (generation == Volatile.Read(ref _generation))
             {
+                _result = response;
                 ResultText = response.Text;
+                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Result)));
                 Status = "识别完成";
             }
         }

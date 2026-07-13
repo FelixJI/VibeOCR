@@ -19,10 +19,12 @@ from vibeocr.application.contracts import (
     OcrError,
     OcrRequest,
     OcrResult,
+    OcrExportRequest,
+    OcrExportResult,
     PdfOpenRequest,
     PdfSessionDto,
 )
-from vibeocr.worker_host.handlers.ocr import OcrHandler
+from vibeocr.worker_host.handlers.ocr import OcrExportHandler, OcrHandler
 from vibeocr.worker_host.handlers.pdf import PdfOpenHandler
 from vibeocr.worker_host.handlers.qrcode import QrDecodeHandler, QrGenerateHandler
 from vibeocr.worker_host.handlers.settings import SettingsSnapshotHandler
@@ -99,6 +101,25 @@ async def test_ocr_handler_maps_ocr_error() -> None:
         await handler.handle(
             {"image": _descriptor(b"img"), "pipeline": "OCR"}, CancelToken()
         )
+
+
+@pytest.mark.asyncio
+async def test_ocr_export_handler_preserves_unicode_path_and_overwrite(tmp_path: Path) -> None:
+    class _ExportFacade:
+        last_request: OcrExportRequest | None = None
+        def export(self, request: OcrExportRequest, cancel: CancelToken) -> OcrExportResult:
+            self.last_request = request
+            request.output_path.write_text(request.markdown_text, encoding="utf-8")
+            return OcrExportResult(request.output_path, request.output_path.stat().st_size)
+
+    facade = _ExportFacade()
+    destination = tmp_path / "结果 文档.md"
+    result = await OcrExportHandler(facade=facade).handle({
+        "raw_text": "正文", "markdown_text": "# 标题 ✓", "html_text": "<h1>标题</h1>",
+        "raw_blocks": [], "output_path": str(destination), "format": "markdown", "overwrite": False,
+    }, CancelToken())
+    assert result["output_path"] == str(destination)
+    assert destination.read_text(encoding="utf-8") == "# 标题 ✓"
 
 
 # ---------------------------------------------------------------------------

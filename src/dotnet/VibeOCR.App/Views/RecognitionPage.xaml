@@ -10,6 +10,8 @@
             <Button Click="OnFileClicked" Content="打开图片" /><Button Click="OnClipboardClicked" Content="从剪贴板" />
             <Button Click="OnScreenshotClicked" Content="截取桌面" /><Button Click="OnCancelClicked" Content="取消" />
             <ProgressRing Width="24" Height="24" IsActive="{x:Bind ViewModel.IsBusy, Mode=OneWay}" />
+            <Button Click="OnCopyRichClicked" Content="复制富文本" /><Button Click="OnCopyMarkdownClicked" Content="复制 Markdown" /><Button Click="OnCopyPlainClicked" Content="复制纯文本" />
+            <Button Click="OnExportHtmlClicked" Content="导出 HTML" /><Button Click="OnExportMarkdownClicked" Content="导出 Markdown" /><Button Click="OnExportTextClicked" Content="导出文本" />
         </StackPanel>
         <Border Grid.Row="2" Padding="12" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" CornerRadius="8">
             <StackPanel Orientation="Horizontal" Spacing="24"><TextBlock Text="{x:Bind ViewModel.Status, Mode=OneWay}" /><TextBlock x:Name="PreviewBridgeStatus" Text="Web 预览正在加载" /></StackPanel>

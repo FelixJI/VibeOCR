@@ -8,6 +8,7 @@ public static class RpcMethods
     public const string Cancel = "task.cancel";
     public const string ReleaseMemory = "memory.release";
     public const string Recognize = "ocr.recognize";
+    public const string ExportOcr = "ocr.export";
     public const string OpenPdf = "pdf.open";
     public const string DecodeQrCode = "qrcode.decode";
     public const string GenerateQrCode = "qrcode.generate";
@@ -21,6 +22,7 @@ public static class RpcMethods
         Cancel,
         ReleaseMemory,
         Recognize,
+        ExportOcr,
         OpenPdf,
         DecodeQrCode,
         GenerateQrCode,

@@ -13,6 +13,7 @@ namespace VibeOCR.Contracts;
 [JsonSerializable(typeof(RpcRequestEnvelope<CancelRequest>))]
 [JsonSerializable(typeof(RpcRequestEnvelope<ReleaseMemoryRequest>))]
 [JsonSerializable(typeof(RpcRequestEnvelope<RecognizeRequest>))]
+[JsonSerializable(typeof(RpcRequestEnvelope<ExportOcrRequest>))]
 [JsonSerializable(typeof(RpcRequestEnvelope<OpenPdfRequest>))]
 [JsonSerializable(typeof(RpcRequestEnvelope<DecodeQrCodeRequest>))]
 [JsonSerializable(typeof(RpcRequestEnvelope<GenerateQrCodeRequest>))]
@@ -23,6 +24,7 @@ namespace VibeOCR.Contracts;
 [JsonSerializable(typeof(RpcResponseEnvelope<CancelResponse>))]
 [JsonSerializable(typeof(RpcResponseEnvelope<ReleaseMemoryResponse>))]
 [JsonSerializable(typeof(RpcResponseEnvelope<RecognizeResponse>))]
+[JsonSerializable(typeof(RpcResponseEnvelope<ExportOcrResponse>))]
 [JsonSerializable(typeof(RpcResponseEnvelope<OpenPdfResponse>))]
 [JsonSerializable(typeof(RpcResponseEnvelope<DecodeQrCodeResponse>))]
 [JsonSerializable(typeof(RpcResponseEnvelope<GenerateQrCodeResponse>))]
@@ -91,6 +93,7 @@ public static class ProtocolJson
                 RpcMethods.Cancel => typeof(RpcRequestEnvelope<CancelRequest>),
                 RpcMethods.ReleaseMemory => typeof(RpcRequestEnvelope<ReleaseMemoryRequest>),
                 RpcMethods.Recognize => typeof(RpcRequestEnvelope<RecognizeRequest>),
+                RpcMethods.ExportOcr => typeof(RpcRequestEnvelope<ExportOcrRequest>),
                 RpcMethods.OpenPdf => typeof(RpcRequestEnvelope<OpenPdfRequest>),
                 RpcMethods.DecodeQrCode => typeof(RpcRequestEnvelope<DecodeQrCodeRequest>),
                 RpcMethods.GenerateQrCode => typeof(RpcRequestEnvelope<GenerateQrCodeRequest>),
@@ -142,6 +145,7 @@ public static class ProtocolJson
                 RpcMethods.Cancel => typeof(RpcResponseEnvelope<CancelResponse>),
                 RpcMethods.ReleaseMemory => typeof(RpcResponseEnvelope<ReleaseMemoryResponse>),
                 RpcMethods.Recognize => typeof(RpcResponseEnvelope<RecognizeResponse>),
+                RpcMethods.ExportOcr => typeof(RpcResponseEnvelope<ExportOcrResponse>),
                 RpcMethods.OpenPdf => typeof(RpcResponseEnvelope<OpenPdfResponse>),
                 RpcMethods.DecodeQrCode => typeof(RpcResponseEnvelope<DecodeQrCodeResponse>),
                 RpcMethods.GenerateQrCode => typeof(RpcResponseEnvelope<GenerateQrCodeResponse>),
