@@ -4,7 +4,14 @@ using System.Text.Json;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using VibeOCR.App.Features.Recognition;
+using VibeOCR.App.Features.Batch;
+using VibeOCR.App.Features.Pdf;
+using VibeOCR.App.Features.QrCode;
+using VibeOCR.App.Features.Settings;
+using VibeOCR.App.Features.Shell;
+using VibeOCR.App.Features.Update;
 using VibeOCR.App.ViewModels;
+using VibeOCR.App.Views;
 using VibeOCR.Contracts;
 using VibeOCR.Platform.Bootstrap;
 using VibeOCR.Platform.Worker;
@@ -51,7 +58,33 @@ public sealed partial class App : Application
             layout,
             () => new RecognitionViewModel(
                 _workerGateway,
-                new InputService(() => WinRT.Interop.WindowNative.GetWindowHandle(_window!))));
+                new InputService(() => WinRT.Interop.WindowNative.GetWindowHandle(_window!))),
+            () => new BatchViewModel(
+                _workerGateway,
+                new BatchFileSource(() => WinRT.Interop.WindowNative.GetWindowHandle(_window!))),
+            () =>
+            {
+                nint handle = WinRT.Interop.WindowNative.GetWindowHandle(_window!);
+                var qrViewModel = new QrCodeViewModel(
+                    _workerGateway,
+                    new QrCodeInputService(() => handle));
+                return new QrCodePage(
+                    qrViewModel,
+                    new QrCodeSaveCommands(_workerGateway, new QrCodeSavePlatform(() => handle)));
+            },
+            () =>
+            {
+                nint handle = WinRT.Interop.WindowNative.GetWindowHandle(_window!);
+                return new PdfPage(
+                    new PdfViewModel(_workerGateway, new PdfFileSource(() => handle)));
+            },
+            () => new SettingsPage(new SettingsViewModel(_workerGateway)),
+            () =>
+            {
+                var shell = new ShellViewModel(new NoopHotkeyRegistrar(), new NoopStartupRegistrar());
+                var update = new UpdateViewModel(new NoopUpdateSource());
+                return new AboutPage(shell, update);
+            });
         _window.AppWindow.Closing += OnAppWindowClosing;
         _window.Closed += OnWindowClosedFallback;
         _window.Activate();
@@ -60,6 +93,20 @@ public sealed partial class App : Application
         _workerGateway.ConfigureRecovery(
             cancellationToken => RestartWorkerAsync(layout, diagnostics, cancellationToken));
         _ = ConnectWorkerAfterFirstWindowAsync(layout, diagnostics);
+
+        // Perf-gate smoke mode: exit shortly after first window so cold-start
+        // timing can be measured without the worker handshake. Production runs
+        // never set this env var.
+        if (Environment.GetEnvironmentVariable("VIBEOCR_SELF_TEST_SMOKE") == "1")
+        {
+            _ = SmokeExitAsync();
+        }
+    }
+
+    private async Task SmokeExitAsync()
+    {
+        await Task.Delay(150);  // allow first-window render
+        Environment.Exit(0);
     }
 
     private async Task ConnectWorkerAfterFirstWindowAsync(
@@ -325,5 +372,5 @@ public sealed record AppLaunchOptions(string Profile)
 public static class ShellNavigation
 {
     public static IReadOnlyList<string> Destinations { get; } =
-        ["home", "recognition", "diagnostics"];
+        ["home", "recognition", "batch", "qrcode", "pdf", "settings", "about", "diagnostics"];
 }

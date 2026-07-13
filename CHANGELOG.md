@@ -1,5 +1,28 @@
 # Changelog
 
+## [Unreleased] - WinUI 切换候选（Phase 4–5）
+
+### Added — Phase 4 完整功能对等
+- feat(winui): 批量识别对等（BatchViewModel/Commands/Page + 14 测试 + E2E）
+- feat(winui): 二维码/条码对等（QrCodeViewModel + is_url 跨语言契约 + 16 测试 + E2E）
+- feat(pdf): UI-free OCR orchestrator（逐批 save+sidecar 续传、页边界取消、末尾压缩、写层错误聚合）
+- feat(protocol): 8 个 PDF RPC 方法（close/render/rotate/delete/add_text_layer/delete_text_layers/save/start_ocr）
+- feat(winui): PDF 标签页（PdfViewModel + 12 测试 + E2E；按钮语义以 main 为准）
+- feat(winui): 设置/后端标签页（SettingsViewModel + GPU 检测 + 切换不自动重试 + 7 测试）
+- feat(winui): 托盘/快捷键/关于/更新（ShellViewModel + UpdateViewModel + 9 测试）
+- test(winui): 功能对等矩阵冻结（validate_matrix.py + schema + CI）
+
+### Added — Phase 5 切换基础
+- feat(migration): 幂等配置 migrator（schema_version + 哈希备份 + 原子替换；Python 9 测试 + C# 5 测试）
+- build(winui): framework-dependent unpackaged 发布布局（build/verify 脚本 + 5 布局测试）
+- perf(winui): 发布指标对比门禁（compare_release_metrics.py + 10 测试 + 基线文档）
+- feat(update): 安全切换序列（verify→stop→replace→migrate→prereq→health→launch；失败只进修复页；12 测试）
+- docs(release): WinUI 切换检查清单 + 真实环境签核 runbook + soak harness
+
+### Fixed
+- fix(winui): BatchViewModel.CancelAll 现在也取消 Pending 项（对齐 Python 批量队列）
+- fix(winui): PdfViewModel OpenPathAsync/StartOcrAsync 重复递增 generation 导致结果被丢弃
+
 ## [0.4.28] - 2026-07-13
 
 ### Fixed

@@ -1,0 +1,68 @@
+<Page
+    x:Class="VibeOCR.App.Views.QrCodePage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Grid Padding="28" RowSpacing="14">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <TextBlock Grid.Row="0" FontSize="28" FontWeight="SemiBold" Text="二维码 / 条码" />
+
+        <!-- Decode: image input + results -->
+        <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="8">
+            <Button Click="OnPickFileClicked" Content="选择图片" />
+            <Button Click="OnPasteClicked" Content="粘贴图片" />
+            <Button Click="OnClearClicked" Content="清空" />
+            <TextBlock VerticalAlignment="Center" Text="{x:Bind ViewModel.DecodeStatus, Mode=OneWay}" />
+        </StackPanel>
+
+        <ListView x:Name="CodeList" Grid.Row="2" ItemsSource="{x:Bind ViewModel.Codes}">
+            <ListView.ItemTemplate>
+                <DataTemplate>
+                    <Grid Padding="8" ColumnSpacing="12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="120" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock VerticalAlignment="Center" FontWeight="SemiBold" Text="{Binding Format}" />
+                        <TextBlock
+                            Grid.Column="1"
+                            VerticalAlignment="Center"
+                            IsTextSelectionEnabled="True"
+                            Text="{Binding Data}"
+                            TextTrimming="CharacterEllipsis"
+                            TextWrapping="Wrap" />
+                        <Button
+                            Grid.Column="2"
+                            Click="OnOpenUrlClicked"
+                            Content="打开链接"
+                            Tag="{Binding IsUrl}"
+                            Visibility="{Binding IsUrl}" />
+                    </Grid>
+                </DataTemplate>
+            </ListView.ItemTemplate>
+        </ListView>
+
+        <!-- Generate: text + format + save -->
+        <StackPanel Grid.Row="3" Orientation="Horizontal" Spacing="8">
+            <TextBox
+                Width="320"
+                PlaceholderText="输入要编码的内容"
+                Text="{x:Bind ViewModel.GenerateText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+            <ComboBox
+                Width="120"
+                SelectedItem="{x:Bind ViewModel.GenerateFormat, Mode=TwoWay}">
+                <x:String>qrcode</x:String>
+                <x:String>barcode</x:String>
+            </ComboBox>
+            <Button Click="OnGenerateClicked" Content="生成" />
+            <Button Click="OnSaveClicked" Content="保存" />
+            <TextBlock VerticalAlignment="Center" Text="{x:Bind ViewModel.GenerateStatus, Mode=OneWay}" />
+        </StackPanel>
+    </Grid>
+</Page>

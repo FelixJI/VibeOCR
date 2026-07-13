@@ -10,9 +10,19 @@ public static class RpcMethods
     public const string Recognize = "ocr.recognize";
     public const string ExportOcr = "ocr.export";
     public const string OpenPdf = "pdf.open";
+    public const string ClosePdf = "pdf.close";
+    public const string RenderPdfPage = "pdf.render_page";
+    public const string RotatePdf = "pdf.rotate";
+    public const string DeletePdfPages = "pdf.delete_pages";
+    public const string AddPdfTextLayer = "pdf.add_text_layer";
+    public const string DeletePdfTextLayers = "pdf.delete_text_layers";
+    public const string SavePdf = "pdf.save";
+    public const string StartPdfOcr = "pdf.start_ocr";
     public const string DecodeQrCode = "qrcode.decode";
     public const string GenerateQrCode = "qrcode.generate";
     public const string SettingsSnapshot = "settings.snapshot";
+    public const string SwitchBackend = "settings.switch_backend";
+    public const string InstallDependency = "settings.install_dependency";
 
     public static IReadOnlyList<string> All { get; } =
     [
@@ -24,9 +34,19 @@ public static class RpcMethods
         Recognize,
         ExportOcr,
         OpenPdf,
+        ClosePdf,
+        RenderPdfPage,
+        RotatePdf,
+        DeletePdfPages,
+        AddPdfTextLayer,
+        DeletePdfTextLayers,
+        SavePdf,
+        StartPdfOcr,
         DecodeQrCode,
         GenerateQrCode,
         SettingsSnapshot,
+        SwitchBackend,
+        InstallDependency,
     ];
 
     internal static void EnsureKnown(string method)

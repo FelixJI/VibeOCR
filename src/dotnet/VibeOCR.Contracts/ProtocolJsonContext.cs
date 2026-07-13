@@ -15,9 +15,19 @@ namespace VibeOCR.Contracts;
 [JsonSerializable(typeof(RpcRequestEnvelope<RecognizeRequest>))]
 [JsonSerializable(typeof(RpcRequestEnvelope<ExportOcrRequest>))]
 [JsonSerializable(typeof(RpcRequestEnvelope<OpenPdfRequest>))]
+[JsonSerializable(typeof(RpcRequestEnvelope<ClosePdfRequest>))]
+[JsonSerializable(typeof(RpcRequestEnvelope<RenderPdfPageRequest>))]
+[JsonSerializable(typeof(RpcRequestEnvelope<RotatePdfRequest>))]
+[JsonSerializable(typeof(RpcRequestEnvelope<DeletePdfPagesRequest>))]
+[JsonSerializable(typeof(RpcRequestEnvelope<AddPdfTextLayerRequest>))]
+[JsonSerializable(typeof(RpcRequestEnvelope<DeletePdfTextLayersRequest>))]
+[JsonSerializable(typeof(RpcRequestEnvelope<SavePdfRequest>))]
+[JsonSerializable(typeof(RpcRequestEnvelope<StartPdfOcrRequest>))]
 [JsonSerializable(typeof(RpcRequestEnvelope<DecodeQrCodeRequest>))]
 [JsonSerializable(typeof(RpcRequestEnvelope<GenerateQrCodeRequest>))]
 [JsonSerializable(typeof(RpcRequestEnvelope<SettingsSnapshotRequest>))]
+[JsonSerializable(typeof(RpcRequestEnvelope<SwitchBackendRequest>))]
+[JsonSerializable(typeof(RpcRequestEnvelope<InstallDependencyRequest>))]
 [JsonSerializable(typeof(RpcResponseEnvelope<HandshakeResponse>))]
 [JsonSerializable(typeof(RpcResponseEnvelope<PingResponse>))]
 [JsonSerializable(typeof(RpcResponseEnvelope<ShutdownResponse>))]
@@ -26,9 +36,19 @@ namespace VibeOCR.Contracts;
 [JsonSerializable(typeof(RpcResponseEnvelope<RecognizeResponse>))]
 [JsonSerializable(typeof(RpcResponseEnvelope<ExportOcrResponse>))]
 [JsonSerializable(typeof(RpcResponseEnvelope<OpenPdfResponse>))]
+[JsonSerializable(typeof(RpcResponseEnvelope<ClosePdfResponse>))]
+[JsonSerializable(typeof(RpcResponseEnvelope<RenderPdfPageResponse>))]
+[JsonSerializable(typeof(RpcResponseEnvelope<RotatePdfResponse>))]
+[JsonSerializable(typeof(RpcResponseEnvelope<DeletePdfPagesResponse>))]
+[JsonSerializable(typeof(RpcResponseEnvelope<AddPdfTextLayerResponse>))]
+[JsonSerializable(typeof(RpcResponseEnvelope<DeletePdfTextLayersResponse>))]
+[JsonSerializable(typeof(RpcResponseEnvelope<SavePdfResponse>))]
+[JsonSerializable(typeof(RpcResponseEnvelope<StartPdfOcrResponse>))]
 [JsonSerializable(typeof(RpcResponseEnvelope<DecodeQrCodeResponse>))]
 [JsonSerializable(typeof(RpcResponseEnvelope<GenerateQrCodeResponse>))]
 [JsonSerializable(typeof(RpcResponseEnvelope<SettingsSnapshotResponse>))]
+[JsonSerializable(typeof(RpcResponseEnvelope<SwitchBackendResponse>))]
+[JsonSerializable(typeof(RpcResponseEnvelope<InstallDependencyResponse>))]
 [JsonSerializable(typeof(RpcErrorEnvelope))]
 [JsonSerializable(typeof(RpcEventEnvelope))]
 public partial class ProtocolJsonContext : JsonSerializerContext;
@@ -95,9 +115,19 @@ public static class ProtocolJson
                 RpcMethods.Recognize => typeof(RpcRequestEnvelope<RecognizeRequest>),
                 RpcMethods.ExportOcr => typeof(RpcRequestEnvelope<ExportOcrRequest>),
                 RpcMethods.OpenPdf => typeof(RpcRequestEnvelope<OpenPdfRequest>),
+                RpcMethods.ClosePdf => typeof(RpcRequestEnvelope<ClosePdfRequest>),
+                RpcMethods.RenderPdfPage => typeof(RpcRequestEnvelope<RenderPdfPageRequest>),
+                RpcMethods.RotatePdf => typeof(RpcRequestEnvelope<RotatePdfRequest>),
+                RpcMethods.DeletePdfPages => typeof(RpcRequestEnvelope<DeletePdfPagesRequest>),
+                RpcMethods.AddPdfTextLayer => typeof(RpcRequestEnvelope<AddPdfTextLayerRequest>),
+                RpcMethods.DeletePdfTextLayers => typeof(RpcRequestEnvelope<DeletePdfTextLayersRequest>),
+                RpcMethods.SavePdf => typeof(RpcRequestEnvelope<SavePdfRequest>),
+                RpcMethods.StartPdfOcr => typeof(RpcRequestEnvelope<StartPdfOcrRequest>),
                 RpcMethods.DecodeQrCode => typeof(RpcRequestEnvelope<DecodeQrCodeRequest>),
                 RpcMethods.GenerateQrCode => typeof(RpcRequestEnvelope<GenerateQrCodeRequest>),
                 RpcMethods.SettingsSnapshot => typeof(RpcRequestEnvelope<SettingsSnapshotRequest>),
+                RpcMethods.SwitchBackend => typeof(RpcRequestEnvelope<SwitchBackendRequest>),
+                RpcMethods.InstallDependency => typeof(RpcRequestEnvelope<InstallDependencyRequest>),
                 _ => throw new ProtocolContractException($"Unknown WorkerHost method: {method}."),
             };
             object value = Deserialize(element, type);
@@ -147,9 +177,19 @@ public static class ProtocolJson
                 RpcMethods.Recognize => typeof(RpcResponseEnvelope<RecognizeResponse>),
                 RpcMethods.ExportOcr => typeof(RpcResponseEnvelope<ExportOcrResponse>),
                 RpcMethods.OpenPdf => typeof(RpcResponseEnvelope<OpenPdfResponse>),
+                RpcMethods.ClosePdf => typeof(RpcResponseEnvelope<ClosePdfResponse>),
+                RpcMethods.RenderPdfPage => typeof(RpcResponseEnvelope<RenderPdfPageResponse>),
+                RpcMethods.RotatePdf => typeof(RpcResponseEnvelope<RotatePdfResponse>),
+                RpcMethods.DeletePdfPages => typeof(RpcResponseEnvelope<DeletePdfPagesResponse>),
+                RpcMethods.AddPdfTextLayer => typeof(RpcResponseEnvelope<AddPdfTextLayerResponse>),
+                RpcMethods.DeletePdfTextLayers => typeof(RpcResponseEnvelope<DeletePdfTextLayersResponse>),
+                RpcMethods.SavePdf => typeof(RpcResponseEnvelope<SavePdfResponse>),
+                RpcMethods.StartPdfOcr => typeof(RpcResponseEnvelope<StartPdfOcrResponse>),
                 RpcMethods.DecodeQrCode => typeof(RpcResponseEnvelope<DecodeQrCodeResponse>),
                 RpcMethods.GenerateQrCode => typeof(RpcResponseEnvelope<GenerateQrCodeResponse>),
                 RpcMethods.SettingsSnapshot => typeof(RpcResponseEnvelope<SettingsSnapshotResponse>),
+                RpcMethods.SwitchBackend => typeof(RpcResponseEnvelope<SwitchBackendResponse>),
+                RpcMethods.InstallDependency => typeof(RpcResponseEnvelope<InstallDependencyResponse>),
                 _ => throw new ProtocolContractException($"Unknown WorkerHost method: {method}."),
             };
             return Deserialize(element, type);

@@ -40,7 +40,12 @@ class QrDecodeHandler:
         ref = SharedPayloadRef.from_descriptor(payload["image"])
         image_data = await self._store.read(ref)
         codes = await asyncio.to_thread(self._facade.decode, image_data, cancel)
-        return {"codes": [{"data": c["data"], "format": c["format"]} for c in codes]}
+        return {
+            "codes": [
+                {"data": c["data"], "format": c["format"], "is_url": bool(c.get("is_url"))}
+                for c in codes
+            ]
+        }
 
 
 class QrGenerateHandler:

@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://vibeocr/feature-parity.schema.json",
+  "title": "WinUI feature-parity matrix schema (documentation contract)",
+  "description": "Declarative contract for the feature-parity matrix rows. The validator (validate_matrix.py) parses the Markdown table and enforces these rules: every row has a feature, source-of-truth, status (PASS/PENDING/BLOCKED), and automation evidence; PASS requires non-empty evidence; --require-pass rejects any non-PASS row.",
+  "type": "object",
+  "required": ["columns", "statuses"],
+  "additionalProperties": false,
+  "properties": {
+    "columns": {
+      "type": "object",
+      "description": "Canonical column headers in the Markdown table.",
+      "required": ["feature", "source_of_truth", "status", "automation_evidence", "pending_human_signoff"],
+      "additionalProperties": false,
+      "properties": {
+        "feature": { "type": "string", "const": "功能" },
+        "source_of_truth": { "type": "string", "const": "PySide 语义真源" },
+        "status": { "type": "string", "const": "WinUI 状态" },
+        "automation_evidence": { "type": "string", "const": "自动化证据" },
+        "pending_human_signoff": { "type": "string", "const": "待人工签核" }
+      }
+    },
+    "statuses": {
+      "type": "object",
+      "description": "Allowed status values and their meaning.",
+      "required": ["PASS", "PENDING", "BLOCKED"],
+      "additionalProperties": false,
+      "properties": {
+        "PASS": { "type": "string", "const": "Automated evidence attached; cutover-eligible." },
+        "PENDING": { "type": "string", "const": "Not yet migrated or not yet verified." },
+        "BLOCKED": { "type": "string", "const": "Migration blocked on a dependency; allowed in Phase 4, rejected by --require-pass." }
+      }
+    },
+    "require_pass_rule": {
+      "type": "string",
+      "const": "Phase 5 cutover requires every row PASS; the CI gate runs validate_matrix.py --require-pass."
+    }
+  }
+}

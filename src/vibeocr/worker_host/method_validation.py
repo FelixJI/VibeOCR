@@ -245,6 +245,152 @@ def _response_pdf(p: dict[str, Any]) -> None:
     _integer(p["page_count"], "page_count")
 
 
+def _session_id_request(p: dict[str, Any], label: str) -> None:
+    _closed(p, required={"session_id"}, label=label)
+    _string(p["session_id"], "session_id")
+
+
+def _page_indices(value: Any, label: str) -> None:
+    if not isinstance(value, list) or not all(
+        isinstance(i, int) and not isinstance(i, bool) and i >= 0 for i in value
+    ):
+        raise MethodPayloadError(f"{label} must be an array of non-negative integers")
+
+
+def _request_pdf_close(p: dict[str, Any]) -> None:
+    _session_id_request(p, "pdf.close request")
+
+
+def _response_pdf_close(p: dict[str, Any]) -> None:
+    _closed(p, required={"closed"}, label="pdf.close response")
+    _boolean(p["closed"], "closed")
+
+
+def _request_pdf_render_page(p: dict[str, Any]) -> None:
+    _closed(
+        p,
+        required={"session_id", "page_index"},
+        optional={"size", "dpi"},
+        label="pdf.render_page request",
+    )
+    _string(p["session_id"], "session_id")
+    _integer(p["page_index"], "page_index")
+    if "size" in p:
+        _integer(p["size"], "size", minimum=16)
+    if "dpi" in p:
+        _integer(p["dpi"], "dpi", minimum=24)
+
+
+def _response_pdf_render_page(p: dict[str, Any]) -> None:
+    _closed(p, required={"image"}, label="pdf.render_page response")
+    _shared_ref(p["image"], "image")
+
+
+def _request_pdf_rotate(p: dict[str, Any]) -> None:
+    _closed(p, required={"session_id", "page_indices", "angle"}, label="pdf.rotate request")
+    _string(p["session_id"], "session_id")
+    _page_indices(p["page_indices"], "page_indices")
+    if p["angle"] not in (90, -90, 180, 270):
+        raise MethodPayloadError("angle must be 90, -90, 180 or 270")
+
+
+def _request_pdf_delete_pages(p: dict[str, Any]) -> None:
+    _closed(p, required={"session_id", "page_indices"}, label="pdf.delete_pages request")
+    _string(p["session_id"], "session_id")
+    _page_indices(p["page_indices"], "page_indices")
+
+
+def _response_pdf_page_count(p: dict[str, Any], label: str) -> None:
+    _closed(p, required={"page_count"}, label=label)
+    _integer(p["page_count"], "page_count")
+
+
+def _request_pdf_add_text_layer(p: dict[str, Any]) -> None:
+    _closed(
+        p,
+        required={"session_id", "page_index", "overwrite"},
+        optional={"save"},
+        label="pdf.add_text_layer request",
+    )
+    _string(p["session_id"], "session_id")
+    _integer(p["page_index"], "page_index")
+    _boolean(p["overwrite"], "overwrite")
+    if "save" in p:
+        _boolean(p["save"], "save")
+
+
+def _response_pdf_add_text_layer(p: dict[str, Any]) -> None:
+    _closed(p, required={"written"}, optional={"saved"}, label="pdf.add_text_layer response")
+    _boolean(p["written"], "written")
+    if "saved" in p:
+        _boolean(p["saved"], "saved")
+
+
+def _request_pdf_delete_text_layers(p: dict[str, Any]) -> None:
+    _closed(p, required={"session_id", "page_indices"}, label="pdf.delete_text_layers request")
+    _string(p["session_id"], "session_id")
+    _page_indices(p["page_indices"], "page_indices")
+
+
+def _response_pdf_delete_text_layers(p: dict[str, Any]) -> None:
+    _closed(
+        p,
+        required={"deleted_count"},
+        optional={"residual_pages"},
+        label="pdf.delete_text_layers response",
+    )
+    _integer(p["deleted_count"], "deleted_count")
+    if "residual_pages" in p:
+        _page_indices(p["residual_pages"], "residual_pages")
+
+
+def _request_pdf_save(p: dict[str, Any]) -> None:
+    _closed(p, required={"session_id"}, optional={"output_path"}, label="pdf.save request")
+    _string(p["session_id"], "session_id")
+    if "output_path" in p and p["output_path"] is not None:
+        _string(p["output_path"], "output_path")
+
+
+def _response_pdf_save(p: dict[str, Any]) -> None:
+    _closed(p, required={"saved_path"}, label="pdf.save response")
+    _string(p["saved_path"], "saved_path")
+
+
+def _request_pdf_start_ocr(p: dict[str, Any]) -> None:
+    _closed(
+        p,
+        required={"session_id", "file_path", "page_indices", "overwrite"},
+        optional={"sidecar_root"},
+        label="pdf.start_ocr request",
+    )
+    _string(p["session_id"], "session_id")
+    _string(p["file_path"], "file_path")
+    _page_indices(p["page_indices"], "page_indices")
+    _boolean(p["overwrite"], "overwrite")
+    if "sidecar_root" in p and p["sidecar_root"] is not None:
+        _string(p["sidecar_root"], "sidecar_root")
+
+
+def _response_pdf_start_ocr(p: dict[str, Any]) -> None:
+    _closed(
+        p,
+        required={"completed", "failed"},
+        optional={"cancelled", "compressed", "write_errors"},
+        label="pdf.start_ocr response",
+    )
+    _integer(p["completed"], "completed")
+    _integer(p["failed"], "failed")
+    if "cancelled" in p:
+        _boolean(p["cancelled"], "cancelled")
+    if "compressed" in p:
+        _boolean(p["compressed"], "compressed")
+    if "write_errors" in p:
+        if not isinstance(p["write_errors"], list) or not all(
+            isinstance(e, str) for e in p["write_errors"]
+        ):
+            raise MethodPayloadError("write_errors must be an array of strings")
+
+
 def _request_qr_decode(p: dict[str, Any]) -> None:
     _closed(p, required={"image"}, label="qrcode.decode request")
     _shared_ref(p["image"], "image")
@@ -256,9 +402,16 @@ def _response_qr_decode(p: dict[str, Any]) -> None:
         raise MethodPayloadError("codes must be an array")
     for index, item in enumerate(p["codes"]):
         code = _object(item, f"codes[{index}]")
-        _closed(code, required={"data", "format"}, label=f"codes[{index}]")
+        _closed(
+            code,
+            required={"data", "format"},
+            optional={"is_url"},
+            label=f"codes[{index}]",
+        )
         _string(code["data"], f"codes[{index}].data", allow_empty=True)
         _string(code["format"], f"codes[{index}].format")
+        if "is_url" in code:
+            _boolean(code["is_url"], f"codes[{index}].is_url")
 
 
 def _request_qr_generate(p: dict[str, Any]) -> None:
@@ -297,6 +450,49 @@ def _response_settings(p: dict[str, Any]) -> None:
     _integer(p["ttl_seconds"], "ttl_seconds")
 
 
+def _request_switch_backend(p: dict[str, Any]) -> None:
+    _closed(p, required={"backend"}, label="settings.switch_backend request")
+    if p["backend"] not in ("cpu", "gpu"):
+        raise MethodPayloadError("backend must be cpu or gpu")
+
+
+def _response_switch_backend(p: dict[str, Any]) -> None:
+    _closed(
+        p,
+        required={"backend", "restart_required"},
+        label="settings.switch_backend response",
+    )
+    if p["backend"] not in ("cpu", "gpu"):
+        raise MethodPayloadError("backend must be cpu or gpu")
+    _boolean(p["restart_required"], "restart_required")
+
+
+def _request_install_dependency(p: dict[str, Any]) -> None:
+    _closed(
+        p,
+        required={"name"},
+        optional={"source"},
+        label="settings.install_dependency request",
+    )
+    _string(p["name"], "name")
+    if "source" in p and p["source"] is not None:
+        _string(p["source"], "source")
+
+
+def _response_install_dependency(p: dict[str, Any]) -> None:
+    _closed(
+        p,
+        required={"installed"},
+        optional={"restarted", "name", "source"},
+        label="settings.install_dependency response",
+    )
+    _boolean(p["installed"], "installed")
+    if "restarted" in p:
+        _boolean(p["restarted"], "restarted")
+    if "name" in p:
+        _string(p["name"], "name")
+
+
 Validator = Callable[[dict[str, Any]], None]
 _VALIDATORS: dict[str, tuple[Validator, Validator]] = {
     "system.handshake": (_request_handshake, _response_handshake),
@@ -307,9 +503,28 @@ _VALIDATORS: dict[str, tuple[Validator, Validator]] = {
     "ocr.recognize": (_request_ocr, _response_ocr),
     "ocr.export": (_request_ocr_export, _response_ocr_export),
     "pdf.open": (_request_pdf, _response_pdf),
+    "pdf.close": (_request_pdf_close, _response_pdf_close),
+    "pdf.render_page": (_request_pdf_render_page, _response_pdf_render_page),
+    "pdf.rotate": (
+        _request_pdf_rotate,
+        lambda p: _response_pdf_page_count(p, "pdf.rotate response"),
+    ),
+    "pdf.delete_pages": (
+        _request_pdf_delete_pages,
+        lambda p: _response_pdf_page_count(p, "pdf.delete_pages response"),
+    ),
+    "pdf.add_text_layer": (_request_pdf_add_text_layer, _response_pdf_add_text_layer),
+    "pdf.delete_text_layers": (
+        _request_pdf_delete_text_layers,
+        _response_pdf_delete_text_layers,
+    ),
+    "pdf.save": (_request_pdf_save, _response_pdf_save),
+    "pdf.start_ocr": (_request_pdf_start_ocr, _response_pdf_start_ocr),
     "qrcode.decode": (_request_qr_decode, _response_qr_decode),
     "qrcode.generate": (_request_qr_generate, _response_qr_generate),
     "settings.snapshot": (_request_settings, _response_settings),
+    "settings.switch_backend": (_request_switch_backend, _response_switch_backend),
+    "settings.install_dependency": (_request_install_dependency, _response_install_dependency),
 }
 
 

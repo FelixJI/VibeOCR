@@ -31,7 +31,13 @@
         "result": {
           "worker_version": "0.5.0",
           "protocol_version": 1,
-          "capabilities": ["ocr", "pdf", "qrcode", "mineru", "settings"],
+          "capabilities": [
+            "ocr",
+            "pdf",
+            "qrcode",
+            "mineru",
+            "settings"
+          ],
           "python_version": "3.13.2",
           "backend": "cpu",
           "max_message_bytes": 8388608,
@@ -45,14 +51,18 @@
         "request_id": "00000000-0000-4000-8000-000000000002",
         "task_id": "00000000-0000-4000-8000-000000000002",
         "method": "system.ping",
-        "payload": { "nonce": "abc123" },
+        "payload": {
+          "nonce": "abc123"
+        },
         "deadline_unix_ms": 0
       },
       "response_envelope": {
         "protocol_version": 1,
         "request_id": "00000000-0000-4000-8000-000000000002",
         "task_id": "00000000-0000-4000-8000-000000000002",
-        "result": { "nonce": "abc123" }
+        "result": {
+          "nonce": "abc123"
+        }
       }
     },
     "system.shutdown": {
@@ -61,14 +71,18 @@
         "request_id": "00000000-0000-4000-8000-000000000003",
         "task_id": "00000000-0000-4000-8000-000000000003",
         "method": "system.shutdown",
-        "payload": { "reason": "user-quit" },
+        "payload": {
+          "reason": "user-quit"
+        },
         "deadline_unix_ms": 0
       },
       "response_envelope": {
         "protocol_version": 1,
         "request_id": "00000000-0000-4000-8000-000000000003",
         "task_id": "00000000-0000-4000-8000-000000000003",
-        "result": { "acknowledged": true }
+        "result": {
+          "acknowledged": true
+        }
       }
     },
     "task.cancel": {
@@ -77,14 +91,19 @@
         "request_id": "00000000-0000-4000-8000-000000000004",
         "task_id": "00000000-0000-4000-8000-000000000004",
         "method": "task.cancel",
-        "payload": { "task_id": "11111111-1111-4111-8111-111111111111" },
+        "payload": {
+          "task_id": "11111111-1111-4111-8111-111111111111"
+        },
         "deadline_unix_ms": 0
       },
       "response_envelope": {
         "protocol_version": 1,
         "request_id": "00000000-0000-4000-8000-000000000004",
         "task_id": "00000000-0000-4000-8000-000000000004",
-        "result": { "accepted": true, "state": "running" }
+        "result": {
+          "accepted": true,
+          "state": "running"
+        }
       }
     },
     "memory.release": {
@@ -93,14 +112,18 @@
         "request_id": "00000000-0000-4000-8000-000000000005",
         "task_id": "00000000-0000-4000-8000-000000000005",
         "method": "memory.release",
-        "payload": { "name": "Local\\VibeOCR-00000000-0000-4000-8000-000000000000-00000000-0000-4000-8000-000000000001" },
+        "payload": {
+          "name": "Local\\VibeOCR-00000000-0000-4000-8000-000000000000-00000000-0000-4000-8000-000000000001"
+        },
         "deadline_unix_ms": 0
       },
       "response_envelope": {
         "protocol_version": 1,
         "request_id": "00000000-0000-4000-8000-000000000005",
         "task_id": "00000000-0000-4000-8000-000000000005",
-        "result": { "released": true }
+        "result": {
+          "released": true
+        }
       }
     },
     "ocr.recognize": {
@@ -155,7 +178,10 @@
         "protocol_version": 1,
         "request_id": "00000000-0000-4000-8000-000000000011",
         "task_id": "00000000-0000-4000-8000-000000000011",
-        "result": { "output_path": "C:/data/结果.md", "bytes_written": 14 }
+        "result": {
+          "output_path": "C:/data/结果.md",
+          "bytes_written": 14
+        }
       }
     },
     "pdf.open": {
@@ -164,7 +190,9 @@
         "request_id": "00000000-0000-4000-8000-000000000020",
         "task_id": "00000000-0000-4000-8000-000000000020",
         "method": "pdf.open",
-        "payload": { "file_path": "C:/data/sample.pdf" },
+        "payload": {
+          "file_path": "C:/data/sample.pdf"
+        },
         "deadline_unix_ms": 0
       },
       "response_envelope": {
@@ -175,6 +203,203 @@
           "session_id": "sess-1",
           "file_path": "C:/data/sample.pdf",
           "page_count": 3
+        }
+      }
+    },
+    "pdf.close": {
+      "request_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000021",
+        "task_id": "00000000-0000-4000-8000-000000000021",
+        "method": "pdf.close",
+        "payload": {
+          "session_id": "sess-1"
+        },
+        "deadline_unix_ms": 0
+      },
+      "response_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000021",
+        "task_id": "00000000-0000-4000-8000-000000000021",
+        "result": {
+          "closed": true
+        }
+      }
+    },
+    "pdf.render_page": {
+      "request_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000022",
+        "task_id": "00000000-0000-4000-8000-000000000022",
+        "method": "pdf.render_page",
+        "payload": {
+          "session_id": "sess-1",
+          "page_index": 0,
+          "size": 160
+        },
+        "deadline_unix_ms": 0
+      },
+      "response_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000022",
+        "task_id": "00000000-0000-4000-8000-000000000022",
+        "result": {
+          "image": {
+            "name": "Local\\VibeOCR-00000000-0000-4000-8000-000000000000-00000000-0000-4000-8000-000000000020",
+            "size": 12345,
+            "media_type": "image/png",
+            "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+            "owner": "worker",
+            "expires_unix_ms": 1800000000000
+          }
+        }
+      }
+    },
+    "pdf.rotate": {
+      "request_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000023",
+        "task_id": "00000000-0000-4000-8000-000000000023",
+        "method": "pdf.rotate",
+        "payload": {
+          "session_id": "sess-1",
+          "page_indices": [
+            0,
+            1
+          ],
+          "angle": 90
+        },
+        "deadline_unix_ms": 0
+      },
+      "response_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000023",
+        "task_id": "00000000-0000-4000-8000-000000000023",
+        "result": {
+          "page_count": 3
+        }
+      }
+    },
+    "pdf.delete_pages": {
+      "request_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000024",
+        "task_id": "00000000-0000-4000-8000-000000000024",
+        "method": "pdf.delete_pages",
+        "payload": {
+          "session_id": "sess-1",
+          "page_indices": [
+            2
+          ]
+        },
+        "deadline_unix_ms": 0
+      },
+      "response_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000024",
+        "task_id": "00000000-0000-4000-8000-000000000024",
+        "result": {
+          "page_count": 2
+        }
+      }
+    },
+    "pdf.add_text_layer": {
+      "request_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000025",
+        "task_id": "00000000-0000-4000-8000-000000000025",
+        "method": "pdf.add_text_layer",
+        "payload": {
+          "session_id": "sess-1",
+          "page_index": 0,
+          "overwrite": false,
+          "save": true
+        },
+        "deadline_unix_ms": 0
+      },
+      "response_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000025",
+        "task_id": "00000000-0000-4000-8000-000000000025",
+        "result": {
+          "written": true,
+          "saved": true
+        }
+      }
+    },
+    "pdf.delete_text_layers": {
+      "request_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000026",
+        "task_id": "00000000-0000-4000-8000-000000000026",
+        "method": "pdf.delete_text_layers",
+        "payload": {
+          "session_id": "sess-1",
+          "page_indices": [
+            0,
+            1
+          ]
+        },
+        "deadline_unix_ms": 0
+      },
+      "response_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000026",
+        "task_id": "00000000-0000-4000-8000-000000000026",
+        "result": {
+          "deleted_count": 2,
+          "residual_pages": []
+        }
+      }
+    },
+    "pdf.save": {
+      "request_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000027",
+        "task_id": "00000000-0000-4000-8000-000000000027",
+        "method": "pdf.save",
+        "payload": {
+          "session_id": "sess-1"
+        },
+        "deadline_unix_ms": 0
+      },
+      "response_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000027",
+        "task_id": "00000000-0000-4000-8000-000000000027",
+        "result": {
+          "saved_path": "C:/data/sample.pdf"
+        }
+      }
+    },
+    "pdf.start_ocr": {
+      "request_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000028",
+        "task_id": "00000000-0000-4000-8000-000000000028",
+        "method": "pdf.start_ocr",
+        "payload": {
+          "session_id": "sess-1",
+          "file_path": "C:/data/sample.pdf",
+          "page_indices": [
+            0,
+            1,
+            2
+          ],
+          "overwrite": false
+        },
+        "deadline_unix_ms": 0
+      },
+      "response_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000028",
+        "task_id": "00000000-0000-4000-8000-000000000028",
+        "result": {
+          "completed": 3,
+          "failed": 0,
+          "cancelled": false,
+          "compressed": true,
+          "write_errors": []
         }
       }
     },
@@ -201,7 +426,13 @@
         "request_id": "00000000-0000-4000-8000-000000000030",
         "task_id": "00000000-0000-4000-8000-000000000030",
         "result": {
-          "codes": [ { "data": "https://example.com", "format": "QR_CODE" } ]
+          "codes": [
+            {
+              "data": "https://example.com",
+              "format": "QR_CODE",
+              "is_url": true
+            }
+          ]
         }
       }
     },
@@ -211,7 +442,10 @@
         "request_id": "00000000-0000-4000-8000-000000000031",
         "task_id": "00000000-0000-4000-8000-000000000031",
         "method": "qrcode.generate",
-        "payload": { "data": "https://example.com", "format": "qrcode" },
+        "payload": {
+          "data": "https://example.com",
+          "format": "qrcode"
+        },
         "deadline_unix_ms": 0
       },
       "response_envelope": {
@@ -245,8 +479,53 @@
         "task_id": "00000000-0000-4000-8000-000000000040",
         "result": {
           "backend": "cpu",
-          "preload_pipelines": ["OCR"],
+          "preload_pipelines": [
+            "OCR"
+          ],
           "ttl_seconds": 3600
+        }
+      }
+    },
+    "settings.switch_backend": {
+      "request_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000040",
+        "task_id": "00000000-0000-4000-8000-000000000040",
+        "method": "settings.switch_backend",
+        "payload": {
+          "backend": "gpu"
+        },
+        "deadline_unix_ms": 0
+      },
+      "response_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000040",
+        "task_id": "00000000-0000-4000-8000-000000000040",
+        "result": {
+          "backend": "gpu",
+          "restart_required": true
+        }
+      }
+    },
+    "settings.install_dependency": {
+      "request_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000041",
+        "task_id": "00000000-0000-4000-8000-000000000041",
+        "method": "settings.install_dependency",
+        "payload": {
+          "name": "runtime"
+        },
+        "deadline_unix_ms": 0
+      },
+      "response_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000041",
+        "task_id": "00000000-0000-4000-8000-000000000041",
+        "result": {
+          "installed": true,
+          "restarted": false,
+          "name": "runtime"
         }
       }
     },
@@ -257,7 +536,11 @@
         "task_id": "00000000-0000-4000-8000-000000000010",
         "event": "task.progress",
         "sequence": 0,
-        "payload": { "stage": "recognize", "current": 1, "total": 3 }
+        "payload": {
+          "stage": "recognize",
+          "current": 1,
+          "total": 3
+        }
       }
     }
   },
@@ -268,7 +551,9 @@
       "request_id": "00000000-0000-4000-8000-000000000099",
       "task_id": "00000000-0000-4000-8000-000000000099",
       "method": "system.ping",
-      "payload": { "nonce": "x" },
+      "payload": {
+        "nonce": "x"
+      },
       "deadline_unix_ms": 0,
       "sneaky_unknown_field": true
     },
@@ -277,21 +562,27 @@
       "request_id": "00000000-0000-4000-8000-000000000099",
       "task_id": "00000000-0000-4000-8000-000000000099",
       "method": "system.ping",
-      "payload": { "nonce": "x" },
+      "payload": {
+        "nonce": "x"
+      },
       "deadline_unix_ms": 0
     },
     "missing_request_id": {
       "protocol_version": 1,
       "task_id": "00000000-0000-4000-8000-000000000099",
       "method": "system.ping",
-      "payload": { "nonce": "x" },
+      "payload": {
+        "nonce": "x"
+      },
       "deadline_unix_ms": 0
     },
     "missing_task_id": {
       "protocol_version": 1,
       "request_id": "00000000-0000-4000-8000-000000000099",
       "method": "system.ping",
-      "payload": { "nonce": "x" },
+      "payload": {
+        "nonce": "x"
+      },
       "deadline_unix_ms": 0
     },
     "malformed_uuid": {
@@ -299,7 +590,9 @@
       "request_id": "not-a-uuid",
       "task_id": "00000000-0000-4000-8000-000000000099",
       "method": "system.ping",
-      "payload": { "nonce": "x" },
+      "payload": {
+        "nonce": "x"
+      },
       "deadline_unix_ms": 0
     },
     "unknown_method": {
@@ -307,7 +600,9 @@
       "request_id": "00000000-0000-4000-8000-000000000099",
       "task_id": "00000000-0000-4000-8000-000000000099",
       "method": "evil.eval",
-      "payload": { "code": "import os; os.system('rm -rf /')" },
+      "payload": {
+        "code": "import os; os.system('rm -rf /')"
+      },
       "deadline_unix_ms": 0
     },
     "response_both_result_and_error": {
@@ -315,7 +610,11 @@
       "request_id": "00000000-0000-4000-8000-000000000099",
       "task_id": "00000000-0000-4000-8000-000000000099",
       "result": {},
-      "error": { "code": "INTERNAL_ERROR", "message": "x", "retryable": false }
+      "error": {
+        "code": "INTERNAL_ERROR",
+        "message": "x",
+        "retryable": false
+      }
     },
     "response_neither_result_nor_error": {
       "protocol_version": 1,
@@ -360,7 +659,11 @@
       "protocol_version": 1,
       "request_id": "00000000-0000-4000-8000-000000000099",
       "task_id": "00000000-0000-4000-8000-000000000099",
-      "error": { "code": "NUKE_EVERYTHING", "message": "x", "retryable": true }
+      "error": {
+        "code": "NUKE_EVERYTHING",
+        "message": "x",
+        "retryable": true
+      }
     }
   }
 }

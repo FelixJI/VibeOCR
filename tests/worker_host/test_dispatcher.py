@@ -286,7 +286,7 @@ async def test_mutation_handler_marked_non_retryable() -> None:
 
     disp.register("pdf.save", handler, retryable=False)
     tid = _tid()
-    req = _make_request("pdf.save", {}, task_id=tid)
+    req = _make_request("pdf.save", {"session_id": "sess-1"}, task_id=tid)
     await disp.dispatch(req, deadline_unix_ms=0)
     handle = disp.registry.get(tid)
     assert handle is not None

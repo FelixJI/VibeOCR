@@ -79,6 +79,13 @@ jobs:
           dotnet test tests/dotnet/VibeOCR.Contracts.Tests/VibeOCR.Contracts.Tests.csproj -c Release --no-restore
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - name: Validate feature-parity matrix
+        shell: bash
+        run: |
+          python tests/parity/validate_matrix.py docs/quality/feature-parity.md
+          # Phase 5 cutover adds: --require-pass
+          python -m pytest tests/parity -q
+
       - name: Build (PyInstaller via bump_version.py)
         shell: bash
         # PYTHONUTF8=1 确保 bump_version.py 及其子进程（PyInstaller 等）在
