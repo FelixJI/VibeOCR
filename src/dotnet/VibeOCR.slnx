@@ -2,6 +2,7 @@
   <Project Path="VibeOCR.Contracts/VibeOCR.Contracts.csproj" />
   <Project Path="VibeOCR.Platform/VibeOCR.Platform.csproj" />
   <Project Path="VibeOCR.App/VibeOCR.App.csproj" />
+  <Project Path="VibeOCR.Bootstrapper/VibeOCR.Bootstrapper.csproj" />
   <Project Path="../../tests/dotnet/VibeOCR.Contracts.Tests/VibeOCR.Contracts.Tests.csproj" />
   <Project Path="../../tests/dotnet/VibeOCR.Platform.Tests/VibeOCR.Platform.Tests.csproj" />
 </Solution>
