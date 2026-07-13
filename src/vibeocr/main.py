@@ -521,6 +521,17 @@ def launch_application() -> int:
     window.show()
     record_startup(StartupEvent.FIRST_WINDOW)  # T3：首窗可见
 
+    # Perf-gate smoke mode: exit shortly after first window so cold-start
+    # timing can be measured symmetrically with the WinUI target. Production
+    # runs never set this env var.
+    if os.environ.get("VIBEOCR_SELF_TEST_SMOKE") == "1":
+        from PySide6.QtCore import QTimer
+
+        def _smoke_exit() -> None:
+            os._exit(0)
+
+        QTimer.singleShot(150, _smoke_exit)
+
     # 主窗口已显示，splash 衔接关闭（finish 会等窗口完全绘制后再隐藏 splash，避免闪空）
     if splash is not None:
         splash.finish(window)

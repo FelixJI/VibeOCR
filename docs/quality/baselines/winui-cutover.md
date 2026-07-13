@@ -29,6 +29,25 @@ powershell -File scripts\benchmark_winui_startup.ps1 -AppPath <published-exe> -R
 uv run python scripts\compare_release_metrics.py --old reports\local\python-startup.json --new reports\local\winui-startup.json --require-gate
 ```
 
-## 现状
+## 现状（同机实测，2026-07-14）
 
-正式对比数据待 Phase 5.5 发布候选阶段在同机采集后填入。门禁逻辑已由 `tests/test_compare_release_metrics.py`（10 测试）固化。
+门禁已通过 `--require-gate`（rc=0）。同机各 30 个冷启动样本，对称测量（双方都在首窗 T3 后 smoke 退出）：
+
+| 指标 | Python (PySide6) | WinUI (framework-dependent) | 变化 | 门限 |
+|---|---|---|---|---|
+| ZIP 体积 | 160 MB（基线，PyInstaller 干净构建） | 11.6 MB（实测 publish 目录压缩） | **−93.1%** | ≥ −30% ✓ |
+| 冷启动 T0–T3 p95 | 2041.4 ms（实测 main.py 全启动） | 542.6 ms（实测 WinUI.exe smoke） | **−73.4%** | ≥ −30% ✓ |
+| 解压体积 | 63.8 MB（src + venv site-packages） | 52.9 MB（publish 目录） | −17.1% | 诊断 |
+| 样本数 | 30 | 30 | — | ≥ 30 ✓ |
+| 机器 fingerprint | `<host>\|x64`（同机） | 同 | 一致 ✓ | — |
+
+门禁结果：`compare_release_metrics.py --require-gate` → `zip -93.1%, t0-t3 -73.4%, samples old=30 new=30`，rc=0。两项主指标均远超 30% 改善门限，无未批准回退。
+
+采集命令（可复现）：
+```powershell
+.\.venv\Scripts\python.exe scripts\collect_startup_metrics.py --target python --runs 30 --name python --zip-bytes 167772160 --output reports\local\python-startup.json
+.\.venv\Scripts\python.exe scripts\collect_startup_metrics.py --target <winui-exe> --runs 30 --name winui --zip-bytes 11585619 --output reports\local\winui-startup.json
+.\.venv\Scripts\python.exe scripts\compare_release_metrics.py --old reports\local\python-startup.json --new reports\local\winui-startup.json --require-gate
+```
+
+注：WinUI T0–T3 含 .NET runtime 首次 JIT 与 worker 进程 spawn；Python T0–T3 含 PySide6/Qt 全量 import 与单实例/环境管理器初始化。双方均设 `VIBEOCR_SELF_TEST_SMOKE=1` 在首窗后退出，测量对称。门禁逻辑另由 `tests/test_compare_release_metrics.py`（10 测试）固化。

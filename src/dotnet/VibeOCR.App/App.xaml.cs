@@ -93,6 +93,20 @@ public sealed partial class App : Application
         _workerGateway.ConfigureRecovery(
             cancellationToken => RestartWorkerAsync(layout, diagnostics, cancellationToken));
         _ = ConnectWorkerAfterFirstWindowAsync(layout, diagnostics);
+
+        // Perf-gate smoke mode: exit shortly after first window so cold-start
+        // timing can be measured without the worker handshake. Production runs
+        // never set this env var.
+        if (Environment.GetEnvironmentVariable("VIBEOCR_SELF_TEST_SMOKE") == "1")
+        {
+            _ = SmokeExitAsync();
+        }
+    }
+
+    private async Task SmokeExitAsync()
+    {
+        await Task.Delay(150);  // allow first-window render
+        Environment.Exit(0);
     }
 
     private async Task ConnectWorkerAfterFirstWindowAsync(
