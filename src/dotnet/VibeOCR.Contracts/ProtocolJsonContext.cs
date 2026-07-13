@@ -26,6 +26,8 @@ namespace VibeOCR.Contracts;
 [JsonSerializable(typeof(RpcRequestEnvelope<DecodeQrCodeRequest>))]
 [JsonSerializable(typeof(RpcRequestEnvelope<GenerateQrCodeRequest>))]
 [JsonSerializable(typeof(RpcRequestEnvelope<SettingsSnapshotRequest>))]
+[JsonSerializable(typeof(RpcRequestEnvelope<SwitchBackendRequest>))]
+[JsonSerializable(typeof(RpcRequestEnvelope<InstallDependencyRequest>))]
 [JsonSerializable(typeof(RpcResponseEnvelope<HandshakeResponse>))]
 [JsonSerializable(typeof(RpcResponseEnvelope<PingResponse>))]
 [JsonSerializable(typeof(RpcResponseEnvelope<ShutdownResponse>))]
@@ -45,6 +47,8 @@ namespace VibeOCR.Contracts;
 [JsonSerializable(typeof(RpcResponseEnvelope<DecodeQrCodeResponse>))]
 [JsonSerializable(typeof(RpcResponseEnvelope<GenerateQrCodeResponse>))]
 [JsonSerializable(typeof(RpcResponseEnvelope<SettingsSnapshotResponse>))]
+[JsonSerializable(typeof(RpcResponseEnvelope<SwitchBackendResponse>))]
+[JsonSerializable(typeof(RpcResponseEnvelope<InstallDependencyResponse>))]
 [JsonSerializable(typeof(RpcErrorEnvelope))]
 [JsonSerializable(typeof(RpcEventEnvelope))]
 public partial class ProtocolJsonContext : JsonSerializerContext;
@@ -122,6 +126,8 @@ public static class ProtocolJson
                 RpcMethods.DecodeQrCode => typeof(RpcRequestEnvelope<DecodeQrCodeRequest>),
                 RpcMethods.GenerateQrCode => typeof(RpcRequestEnvelope<GenerateQrCodeRequest>),
                 RpcMethods.SettingsSnapshot => typeof(RpcRequestEnvelope<SettingsSnapshotRequest>),
+                RpcMethods.SwitchBackend => typeof(RpcRequestEnvelope<SwitchBackendRequest>),
+                RpcMethods.InstallDependency => typeof(RpcRequestEnvelope<InstallDependencyRequest>),
                 _ => throw new ProtocolContractException($"Unknown WorkerHost method: {method}."),
             };
             object value = Deserialize(element, type);
@@ -182,6 +188,8 @@ public static class ProtocolJson
                 RpcMethods.DecodeQrCode => typeof(RpcResponseEnvelope<DecodeQrCodeResponse>),
                 RpcMethods.GenerateQrCode => typeof(RpcResponseEnvelope<GenerateQrCodeResponse>),
                 RpcMethods.SettingsSnapshot => typeof(RpcResponseEnvelope<SettingsSnapshotResponse>),
+                RpcMethods.SwitchBackend => typeof(RpcResponseEnvelope<SwitchBackendResponse>),
+                RpcMethods.InstallDependency => typeof(RpcResponseEnvelope<InstallDependencyResponse>),
                 _ => throw new ProtocolContractException($"Unknown WorkerHost method: {method}."),
             };
             return Deserialize(element, type);

@@ -21,6 +21,8 @@ public static class RpcMethods
     public const string DecodeQrCode = "qrcode.decode";
     public const string GenerateQrCode = "qrcode.generate";
     public const string SettingsSnapshot = "settings.snapshot";
+    public const string SwitchBackend = "settings.switch_backend";
+    public const string InstallDependency = "settings.install_dependency";
 
     public static IReadOnlyList<string> All { get; } =
     [
@@ -43,6 +45,8 @@ public static class RpcMethods
         DecodeQrCode,
         GenerateQrCode,
         SettingsSnapshot,
+        SwitchBackend,
+        InstallDependency,
     ];
 
     internal static void EnsureKnown(string method)

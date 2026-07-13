@@ -232,3 +232,19 @@ public sealed record GenerateQrCodeRequest : RequestContract
 
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public sealed record SettingsSnapshotRequest : RequestContract;
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record SwitchBackendRequest : RequestContract
+{
+    public required string Backend { get; init; }
+    public override void Validate() => ContractValidation.OneOf(Backend, nameof(Backend), "cpu", "gpu");
+}
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record InstallDependencyRequest : RequestContract
+{
+    public required string Name { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Source { get; init; }
+    public override void Validate() => ContractValidation.NonEmpty(Name, nameof(Name));
+}

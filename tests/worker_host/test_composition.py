@@ -134,6 +134,8 @@ def test_production_composition_registers_all_domain_handlers(tmp_path: Path) ->
         "qrcode.decode",
         "qrcode.generate",
         "settings.snapshot",
+        "settings.switch_backend",
+        "settings.install_dependency",
     }
     assert factories_called == [], "domain services must remain lazy until first use"
 

@@ -257,3 +257,23 @@ public sealed record SettingsSnapshotResponse : ResponseContract
         }
     }
 }
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record SwitchBackendResponse : ResponseContract
+{
+    public required string Backend { get; init; }
+    public required bool RestartRequired { get; init; }
+    public override void Validate() => ContractValidation.OneOf(Backend, nameof(Backend), "cpu", "gpu");
+}
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record InstallDependencyResponse : ResponseContract
+{
+    public required bool Installed { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? Restarted { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Name { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Source { get; init; }
+}

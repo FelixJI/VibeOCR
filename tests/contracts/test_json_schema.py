@@ -168,6 +168,8 @@ PUBLIC_METHODS = [
     "qrcode.decode",
     "qrcode.generate",
     "settings.snapshot",
+    "settings.switch_backend",
+    "settings.install_dependency",
 ]
 
 

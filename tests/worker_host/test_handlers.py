@@ -410,6 +410,85 @@ async def test_settings_snapshot_handler_maps_payload_to_result() -> None:
     assert result["ttl_seconds"] == 7200
 
 
+@pytest.mark.asyncio
+async def test_switch_backend_handler_persists_and_reports_restart() -> None:
+    from vibeocr.worker_host.handlers.settings import SwitchBackendHandler
+
+    class _FakeBackendSwitch:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def switch_backend(self, target: str) -> str:
+            self.calls.append(target)
+            return target
+
+    boundary = _FakeBackendSwitch()
+    handler = SwitchBackendHandler(boundary=boundary)  # type: ignore[arg-type]
+    result = await handler.handle({"backend": "gpu"}, CancelToken())
+    assert result == {"backend": "gpu", "restart_required": True}
+    assert boundary.calls == ["gpu"]
+
+
+@pytest.mark.asyncio
+async def test_switch_backend_handler_rejects_invalid_backend() -> None:
+    from vibeocr.worker_host.errors import WorkerError
+    from vibeocr.worker_host.handlers.settings import SwitchBackendHandler
+
+    class _Fake:
+        def switch_backend(self, target: str) -> str:
+            raise AssertionError("should not be called")
+
+    handler = SwitchBackendHandler(boundary=_Fake())  # type: ignore[arg-type]
+    with pytest.raises(WorkerError):
+        await handler.handle({"backend": "tpu"}, CancelToken())
+
+
+@pytest.mark.asyncio
+async def test_switch_backend_handler_maps_boundary_error_to_worker_error() -> None:
+    from vibeocr.worker_host.errors import WorkerError
+    from vibeocr.worker_host.handlers.settings import SwitchBackendHandler
+
+    class _FakeFailing:
+        def switch_backend(self, target: str) -> str:
+            raise OSError("config file locked")
+
+    handler = SwitchBackendHandler(boundary=_FakeFailing())  # type: ignore[arg-type]
+    with pytest.raises(WorkerError):
+        await handler.handle({"backend": "cpu"}, CancelToken())
+
+
+@pytest.mark.asyncio
+async def test_install_dependency_handler_maps_payload_to_result() -> None:
+    from vibeocr.worker_host.handlers.settings import InstallDependencyHandler
+
+    class _FakeInstall:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, str | None]] = []
+
+        def install_dependency(self, name, source, cancel):
+            self.calls.append((name, source))
+            return {"installed": True, "restarted": False, "name": name, "source": source}
+
+    boundary = _FakeInstall()
+    handler = InstallDependencyHandler(boundary=boundary)  # type: ignore[arg-type]
+    result = await handler.handle({"name": "runtime", "source": "https://mirror"}, CancelToken())
+    assert result["installed"] is True
+    assert result["name"] == "runtime"
+    assert boundary.calls == [("runtime", "https://mirror")]
+
+
+@pytest.mark.asyncio
+async def test_install_dependency_handler_rejects_missing_name() -> None:
+    from vibeocr.worker_host.errors import WorkerError
+    from vibeocr.worker_host.handlers.settings import InstallDependencyHandler
+
+    handler = InstallDependencyHandler(boundary=type("F", (), {
+        "install_dependency": lambda self, n, s, c: {}
+    })())  # type: ignore[arg-type]
+    with pytest.raises(WorkerError):
+        await handler.handle({}, CancelToken())
+
+
 # ---------------------------------------------------------------------------
 # helpers
 # ---------------------------------------------------------------------------

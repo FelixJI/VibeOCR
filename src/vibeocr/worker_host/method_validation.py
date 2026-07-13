@@ -450,6 +450,49 @@ def _response_settings(p: dict[str, Any]) -> None:
     _integer(p["ttl_seconds"], "ttl_seconds")
 
 
+def _request_switch_backend(p: dict[str, Any]) -> None:
+    _closed(p, required={"backend"}, label="settings.switch_backend request")
+    if p["backend"] not in ("cpu", "gpu"):
+        raise MethodPayloadError("backend must be cpu or gpu")
+
+
+def _response_switch_backend(p: dict[str, Any]) -> None:
+    _closed(
+        p,
+        required={"backend", "restart_required"},
+        label="settings.switch_backend response",
+    )
+    if p["backend"] not in ("cpu", "gpu"):
+        raise MethodPayloadError("backend must be cpu or gpu")
+    _boolean(p["restart_required"], "restart_required")
+
+
+def _request_install_dependency(p: dict[str, Any]) -> None:
+    _closed(
+        p,
+        required={"name"},
+        optional={"source"},
+        label="settings.install_dependency request",
+    )
+    _string(p["name"], "name")
+    if "source" in p and p["source"] is not None:
+        _string(p["source"], "source")
+
+
+def _response_install_dependency(p: dict[str, Any]) -> None:
+    _closed(
+        p,
+        required={"installed"},
+        optional={"restarted", "name", "source"},
+        label="settings.install_dependency response",
+    )
+    _boolean(p["installed"], "installed")
+    if "restarted" in p:
+        _boolean(p["restarted"], "restarted")
+    if "name" in p:
+        _string(p["name"], "name")
+
+
 Validator = Callable[[dict[str, Any]], None]
 _VALIDATORS: dict[str, tuple[Validator, Validator]] = {
     "system.handshake": (_request_handshake, _response_handshake),
@@ -480,6 +523,8 @@ _VALIDATORS: dict[str, tuple[Validator, Validator]] = {
     "qrcode.decode": (_request_qr_decode, _response_qr_decode),
     "qrcode.generate": (_request_qr_generate, _response_qr_generate),
     "settings.snapshot": (_request_settings, _response_settings),
+    "settings.switch_backend": (_request_switch_backend, _response_switch_backend),
+    "settings.install_dependency": (_request_install_dependency, _response_install_dependency),
 }
 
 

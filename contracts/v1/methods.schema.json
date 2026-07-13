@@ -399,6 +399,55 @@
         }
       }
     },
+    "settings.switch_backend": {
+      "type": "object",
+      "description": "Persist a backend switch (cpu/gpu). Mutation; never auto-retried. Requires a restart to take effect.",
+      "required": ["request", "response"],
+      "properties": {
+        "request": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["backend"],
+          "properties": { "backend": { "$ref": "#/$defs/backend" } }
+        },
+        "response": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["backend", "restart_required"],
+          "properties": {
+            "backend": { "$ref": "#/$defs/backend" },
+            "restart_required": { "type": "boolean" }
+          }
+        }
+      }
+    },
+    "settings.install_dependency": {
+      "type": "object",
+      "description": "Install a named runtime/model dependency. Mutation; never auto-retried. Cooperative cancel via task.cancel.",
+      "required": ["request", "response"],
+      "properties": {
+        "request": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name"],
+          "properties": {
+            "name": { "type": "string", "minLength": 1, "description": "Dependency identifier (runtime/model)." },
+            "source": { "type": ["string", "null"], "description": "Optional mirror URL; null uses the default source." }
+          }
+        },
+        "response": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["installed"],
+          "properties": {
+            "installed": { "type": "boolean" },
+            "restarted": { "type": "boolean" },
+            "name": { "type": "string" },
+            "source": { "type": ["string", "null"] }
+          }
+        }
+      }
+    },
     "qrcode.decode": {
       "type": "object",
       "description": "Detect and decode QR/barcodes from an image (shared payload).",

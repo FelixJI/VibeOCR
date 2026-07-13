@@ -486,6 +486,49 @@
         }
       }
     },
+    "settings.switch_backend": {
+      "request_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000040",
+        "task_id": "00000000-0000-4000-8000-000000000040",
+        "method": "settings.switch_backend",
+        "payload": {
+          "backend": "gpu"
+        },
+        "deadline_unix_ms": 0
+      },
+      "response_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000040",
+        "task_id": "00000000-0000-4000-8000-000000000040",
+        "result": {
+          "backend": "gpu",
+          "restart_required": true
+        }
+      }
+    },
+    "settings.install_dependency": {
+      "request_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000041",
+        "task_id": "00000000-0000-4000-8000-000000000041",
+        "method": "settings.install_dependency",
+        "payload": {
+          "name": "runtime"
+        },
+        "deadline_unix_ms": 0
+      },
+      "response_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000041",
+        "task_id": "00000000-0000-4000-8000-000000000041",
+        "result": {
+          "installed": true,
+          "restarted": false,
+          "name": "runtime"
+        }
+      }
+    },
     "task.progress_event": {
       "description": "Example asynchronous event (not a request/response). Used to validate the event envelope shape.",
       "event_envelope": {

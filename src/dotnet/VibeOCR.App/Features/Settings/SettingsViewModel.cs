@@ -123,12 +123,18 @@ public class SettingsViewModel(IWorkerHostClient worker) : INotifyPropertyChange
     }
 
     /// <summary>
-    /// Override hook for the actual backend-switch RPC (not yet in protocol).
-    /// The default implementation is a no-op so the view model is testable in
-    /// isolation; production wires this to the dependency manager.
+    /// Persist the backend switch through the WorkerHost
+    /// <c>settings.switch_backend</c> RPC. The mutation never auto-retries on
+    /// the worker side; a failure propagates to <see cref="SwitchBackendAsync"/>
+    /// which surfaces a localized status and leaves the current backend.
     /// </summary>
-    protected virtual Task OnSwitchBackendCoreAsync(string target, CancellationToken cancellationToken)
-        => Task.CompletedTask;
+    protected virtual async Task OnSwitchBackendCoreAsync(string target, CancellationToken cancellationToken)
+    {
+        await _worker.CallAsync<SwitchBackendRequest, SwitchBackendResponse>(
+            RpcMethods.SwitchBackend,
+            new SwitchBackendRequest { Backend = target },
+            cancellationToken);
+    }
 
     public void DetectGpu(bool available)
     {

@@ -37,7 +37,11 @@ from vibeocr.worker_host.handlers.pdf import (
     PdfStartOcrHandler,
 )
 from vibeocr.worker_host.handlers.qrcode import QrDecodeHandler, QrGenerateHandler
-from vibeocr.worker_host.handlers.settings import SettingsSnapshotHandler
+from vibeocr.worker_host.handlers.settings import (
+    InstallDependencyHandler,
+    SettingsSnapshotHandler,
+    SwitchBackendHandler,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -389,6 +393,49 @@ class JsonSettingsAdapter:
             ttl_seconds=max(0, ttl),
         )
 
+    def switch_backend(self, target: str) -> str:
+        """Persist the new backend to the profile config; never auto-retry.
+
+        Returns the new backend string. Raises ``RuntimeError`` on invalid
+        target or write failure so the handler maps it to a WorkerError.
+        """
+        if target not in ("cpu", "gpu"):
+            raise RuntimeError(f"unsupported backend: {target}")
+        data: dict[str, Any] = {}
+        try:
+            loaded = json.loads(self._paths.config_file.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                data = loaded
+        except (OSError, json.JSONDecodeError):
+            pass
+        data["backend"] = target
+        self._paths.config_file.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self._paths.config_file.with_suffix(".json.tmp")
+        try:
+            tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+            tmp.replace(self._paths.config_file)
+        except OSError as exc:
+            raise RuntimeError(f"failed to persist backend switch: {exc}") from exc
+        return target
+
+    def install_dependency(
+        self, name: str, source: str | None, cancel: Any
+    ) -> dict[str, Any]:
+        """Install a named dependency (runtime/model mirror). Best-effort stub.
+
+        The real install pipeline lives in the Python ``dependency_manager``;
+        this adapter surfaces the protocol surface so the WinUI tab can drive
+        it without a protected hook. Returns ``{installed, restarted}``.
+        """
+        if cancel is not None and getattr(cancel, "is_cancelled", False):
+            raise RuntimeError("dependency install cancelled")
+        if not name:
+            raise RuntimeError("dependency name is required")
+        # The heavy install is delegated to the dependency manager in production;
+        # this default adapter records the request and reports not-yet-installed
+        # so the handler can map the outcome without auto-retrying.
+        return {"installed": False, "restarted": False, "name": name, "source": source}
+
 
 class WorkerServiceComposition:
     """Own the production adapters and expose the protocol handler table."""
@@ -469,6 +516,12 @@ class WorkerServiceComposition:
             ).handle,
             "settings.snapshot": SettingsSnapshotHandler(
                 facade=SettingsFacade(self._settings)
+            ).handle,
+            "settings.switch_backend": SwitchBackendHandler(
+                boundary=self._settings
+            ).handle,
+            "settings.install_dependency": InstallDependencyHandler(
+                boundary=self._settings
             ).handle,
         }
 
