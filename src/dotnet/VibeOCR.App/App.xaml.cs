@@ -8,6 +8,8 @@ using VibeOCR.App.Features.Batch;
 using VibeOCR.App.Features.Pdf;
 using VibeOCR.App.Features.QrCode;
 using VibeOCR.App.Features.Settings;
+using VibeOCR.App.Features.Shell;
+using VibeOCR.App.Features.Update;
 using VibeOCR.App.ViewModels;
 using VibeOCR.App.Views;
 using VibeOCR.Contracts;
@@ -76,7 +78,13 @@ public sealed partial class App : Application
                 return new PdfPage(
                     new PdfViewModel(_workerGateway, new PdfFileSource(() => handle)));
             },
-            () => new SettingsPage(new SettingsViewModel(_workerGateway)));
+            () => new SettingsPage(new SettingsViewModel(_workerGateway)),
+            () =>
+            {
+                var shell = new ShellViewModel(new NoopHotkeyRegistrar(), new NoopStartupRegistrar());
+                var update = new UpdateViewModel(new NoopUpdateSource());
+                return new AboutPage(shell, update);
+            });
         _window.AppWindow.Closing += OnAppWindowClosing;
         _window.Closed += OnWindowClosedFallback;
         _window.Activate();
@@ -350,5 +358,5 @@ public sealed record AppLaunchOptions(string Profile)
 public static class ShellNavigation
 {
     public static IReadOnlyList<string> Destinations { get; } =
-        ["home", "recognition", "batch", "qrcode", "pdf", "settings", "diagnostics"];
+        ["home", "recognition", "batch", "qrcode", "pdf", "settings", "about", "diagnostics"];
 }

@@ -20,15 +20,16 @@ public sealed partial class MainWindow : Window
     private readonly Func<QrCodePage> _qrCodePageFactory;
     private readonly Func<PdfPage> _pdfPageFactory;
     private readonly Func<SettingsPage> _settingsPageFactory;
+    private readonly Func<AboutPage> _aboutPageFactory;
     private RecognitionViewModel? _recognition;
     private BatchViewModel? _batch;
     private QrCodePage? _qrCodePage;
     private PdfPage? _pdfPage;
     private SettingsPage? _settingsPage;
 
-    public MainWindow(DiagnosticsViewModel diagnostics, PortableLayout layout, Func<RecognitionViewModel> recognitionFactory, Func<BatchViewModel> batchFactory, Func<QrCodePage> qrCodePageFactory, Func<PdfPage> pdfPageFactory, Func<SettingsPage> settingsPageFactory)
+    public MainWindow(DiagnosticsViewModel diagnostics, PortableLayout layout, Func<RecognitionViewModel> recognitionFactory, Func<BatchViewModel> batchFactory, Func<QrCodePage> qrCodePageFactory, Func<PdfPage> pdfPageFactory, Func<SettingsPage> settingsPageFactory, Func<AboutPage> aboutPageFactory)
     {
-        _diagnostics = diagnostics; _layout = layout; _recognitionFactory = recognitionFactory; _batchFactory = batchFactory; _qrCodePageFactory = qrCodePageFactory; _pdfPageFactory = pdfPageFactory; _settingsPageFactory = settingsPageFactory;
+        _diagnostics = diagnostics; _layout = layout; _recognitionFactory = recognitionFactory; _batchFactory = batchFactory; _qrCodePageFactory = qrCodePageFactory; _pdfPageFactory = pdfPageFactory; _settingsPageFactory = settingsPageFactory; _aboutPageFactory = aboutPageFactory;
         InitializeComponent(); Title = "VibeOCR WinUI"; RootNavigation.SelectedItem = RootNavigation.MenuItems[0]; ShowHome();
     }
 
@@ -41,6 +42,7 @@ public sealed partial class MainWindow : Window
         if (destination == "qrcode") { _qrCodePage ??= _qrCodePageFactory(); ContentFrame.Content = _qrCodePage; return; }
         if (destination == "pdf") { _pdfPage ??= _pdfPageFactory(); ContentFrame.Content = _pdfPage; return; }
         if (destination == "settings") { _settingsPage ??= _settingsPageFactory(); ContentFrame.Content = _settingsPage; return; }
+        if (destination == "about") { ContentFrame.Content = _aboutPageFactory(); return; }
         ShowHome();
     }
 
