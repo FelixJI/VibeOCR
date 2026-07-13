@@ -619,3 +619,72 @@ class TestExportCancel:
         results = mgr.export_all_modified("/tmp/out")
         assert len(results) == 3
         assert mgr._client.save.call_count == 3
+
+
+class TestOcrPageDoneIncrementalModel:
+    """_on_ocr_page_done_signal 应增量把 result.text_blocks 落 model，
+    消除预览滞后（此前只在整批结束 get_model 才全量刷新）。"""
+
+    def test_page_done_writes_ocr_blocks_to_model(self, qapp, tmp_path):
+        from unittest.mock import MagicMock
+
+        from vibeocr.managers.pdf_session_manager import PdfSessionManager
+        from vibeocr.models.pdf_document import PdfDocument, PdfPageInfo
+
+        mgr = PdfSessionManager.__new__(PdfSessionManager)
+        mgr._sessions = {}
+
+        doc = PdfDocument(file_path=str(tmp_path / "x.pdf"))
+        doc.pages = [PdfPageInfo(page_index=0), PdfPageInfo(page_index=1)]
+        session = MagicMock()
+        session.session_id = "sid1"
+        session.pdf_document = doc
+        file_path = str(tmp_path / "x.pdf")
+        mgr._sessions[file_path] = session
+
+        # 模拟 OCRResult（带 text_blocks + preproc_angle）
+        result = MagicMock()
+        block = MagicMock()
+        block.text = "hello"
+        result.text_blocks = [block]
+        result.preproc_angle = 90
+
+        # ocr_page_done 是 Signal，需替换为可调用的 mock 以便 _on_ocr_page_done_signal
+        # 末尾 emit 不抛异常。
+        mgr.ocr_page_done = MagicMock()
+
+        mgr._on_ocr_page_done_signal("sid1", 1, result)
+
+        info = doc.pages[1]
+        assert info.has_text_layer is True
+        assert info.ocr_text_blocks == [block]
+        assert info.ocr_preproc_angle == 90
+
+    def test_page_done_none_result_skips_model_write(self, qapp, tmp_path):
+        """result 为 None（失败/空页）时不写 model、不发块，仅转发信号。"""
+        from unittest.mock import MagicMock
+
+        from vibeocr.managers.pdf_session_manager import PdfSessionManager
+        from vibeocr.models.pdf_document import PdfDocument, PdfPageInfo
+
+        mgr = PdfSessionManager.__new__(PdfSessionManager)
+        mgr._sessions = {}
+
+        doc = PdfDocument(file_path=str(tmp_path / "x.pdf"))
+        doc.pages = [PdfPageInfo(page_index=0), PdfPageInfo(page_index=1)]
+        session = MagicMock()
+        session.session_id = "sid1"
+        session.pdf_document = doc
+        file_path = str(tmp_path / "x.pdf")
+        mgr._sessions[file_path] = session
+
+        mgr.ocr_page_done = MagicMock()
+
+        mgr._on_ocr_page_done_signal("sid1", 1, None)
+
+        info = doc.pages[1]
+        # 不写块
+        assert info.ocr_text_blocks == []
+        assert info.has_text_layer is False
+        # 仍转发信号
+        mgr.ocr_page_done.emit.assert_called_once_with(file_path, 1, None)

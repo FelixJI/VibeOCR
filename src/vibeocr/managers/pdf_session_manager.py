@@ -1037,6 +1037,22 @@ class PdfSessionManager(QObject):
     ) -> None:
         file_path = self._path_for_session_id(session_id)
         if file_path:
+            # 增量落 model：把 result.text_blocks 立即写入该页 PdfPageInfo，
+            # 消除预览滞后（此前只在整批结束 get_model 才全量刷新）。
+            # result 为 None（失败/空页）时跳过，仅转发信号。
+            if result is not None:
+                session = self._sessions.get(file_path)
+                if session is not None:
+                    info = session.pdf_document.get_page(page_index)
+                    if info is not None:
+                        info.ocr_text_blocks = list(
+                            getattr(result, "text_blocks", []) or []
+                        )
+                        info.ocr_preproc_angle = int(
+                            getattr(result, "preproc_angle", 0) or 0
+                        )
+                        if info.ocr_text_blocks:
+                            info.has_text_layer = True
             self.ocr_page_done.emit(file_path, page_index, result)
 
     def _on_ocr_progress_signal(
