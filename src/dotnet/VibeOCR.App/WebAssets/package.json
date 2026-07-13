@@ -1,0 +1,9 @@
+{
+  "name": "vibeocr-preview-assets",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test ../../../../tests/web/*.test.ts"
+  }
+}

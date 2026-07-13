@@ -1,0 +1,6 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>VibeOCR.Contracts</RootNamespace>
+    <AssemblyName>VibeOCR.Contracts</AssemblyName>
+  </PropertyGroup>
+</Project>

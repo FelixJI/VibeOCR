@@ -155,8 +155,31 @@
           "properties": {
             "text": { "type": "string" },
             "pipeline": { "$ref": "#/$defs/pipeline" },
-            "raw_blocks": { "type": "array", "description": "Structured blocks for editor/table rendering. Items are method-defined objects." }
+            "raw_blocks": { "type": "array", "description": "Structured blocks for editor/table rendering. Items are method-defined objects." },
+            "markdown_text": { "type": "string" },
+            "html_text": { "type": "string" }
+            ,"raw_text": { "type": "string" }
           }
+        }
+      }
+    },
+    "ocr.export": {
+      "type": "object",
+      "required": ["request", "response"],
+      "properties": {
+        "request": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["raw_text", "markdown_text", "html_text", "raw_blocks", "output_path", "format", "overwrite"],
+          "properties": {
+            "raw_text": { "type": "string" }, "markdown_text": { "type": "string" }, "html_text": { "type": "string" },
+            "raw_blocks": { "type": "array" }, "output_path": { "type": "string", "minLength": 1 },
+            "format": { "enum": ["txt", "markdown", "html"] }, "overwrite": { "type": "boolean" }
+          }
+        },
+        "response": {
+          "type": "object", "additionalProperties": false, "required": ["output_path", "bytes_written"],
+          "properties": { "output_path": { "type": "string", "minLength": 1 }, "bytes_written": { "type": "integer", "minimum": 0 } }
         }
       }
     },

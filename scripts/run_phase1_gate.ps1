@@ -12,8 +12,7 @@ $Ruff = Join-Path $ProjectRoot ".venv/Scripts/ruff.exe"
 $Pyright = Join-Path $ProjectRoot ".venv/Scripts/pyright.exe"
 $Dotnet = Join-Path $env:ProgramFiles "dotnet/dotnet.exe"
 $ContractProject = Join-Path $ProjectRoot "tests/dotnet/VibeOCR.Contracts.Tests/VibeOCR.Contracts.Tests.csproj"
-$NuGetConfig = Join-Path $ProjectRoot "tests/dotnet/NuGet.Config"
-$Golden = Join-Path $ProjectRoot "contracts/v1/golden.json"
+$NuGetConfig = Join-Path $ProjectRoot "NuGet.Config"
 
 $RequiredFiles = @(
     $Python,
@@ -21,8 +20,7 @@ $RequiredFiles = @(
     $Pyright,
     $Dotnet,
     $ContractProject,
-    $NuGetConfig,
-    $Golden
+    $NuGetConfig
 )
 foreach ($Path in $RequiredFiles) {
     if (-not (Test-Path -LiteralPath $Path)) {
@@ -49,10 +47,10 @@ try {
     & $Python -m vibeocr.worker_host.main --self-test
     if ($LASTEXITCODE -ne 0) { throw "WorkerHost self-test failed" }
 
-    & $Dotnet restore $ContractProject --configfile $NuGetConfig
+    & $Dotnet restore $ContractProject --configfile $NuGetConfig --locked-mode
     if ($LASTEXITCODE -ne 0) { throw "C# contract restore failed" }
 
-    & $Dotnet run --project $ContractProject -c Release --no-restore -- $Golden
+    & $Dotnet test $ContractProject -c Release --no-restore
     if ($LASTEXITCODE -ne 0) { throw "C# golden contract failed" }
 } finally {
     Pop-Location

@@ -194,7 +194,7 @@ def _response_ocr(p: dict[str, Any]) -> None:
     _closed(
         p,
         required={"text", "pipeline"},
-        optional={"raw_blocks"},
+        optional={"raw_blocks", "markdown_text", "html_text", "raw_text"},
         label="ocr.recognize response",
     )
     _string(p["text"], "text", allow_empty=True)
@@ -202,6 +202,31 @@ def _response_ocr(p: dict[str, Any]) -> None:
         raise MethodPayloadError("pipeline is not supported by protocol v1")
     if "raw_blocks" in p and not isinstance(p["raw_blocks"], list):
         raise MethodPayloadError("raw_blocks must be an array")
+    for name in ("markdown_text", "html_text", "raw_text"):
+        if name in p:
+            _string(p[name], name, allow_empty=True)
+
+
+def _request_ocr_export(p: dict[str, Any]) -> None:
+    _closed(
+        p,
+        required={"raw_text", "markdown_text", "html_text", "raw_blocks", "output_path", "format", "overwrite"},
+        label="ocr.export request",
+    )
+    for name in ("raw_text", "markdown_text", "html_text"):
+        _string(p[name], name, allow_empty=True)
+    if not isinstance(p["raw_blocks"], list):
+        raise MethodPayloadError("raw_blocks must be an array")
+    _string(p["output_path"], "output_path")
+    if p["format"] not in {"txt", "markdown", "html"}:
+        raise MethodPayloadError("unsupported export format")
+    _boolean(p["overwrite"], "overwrite")
+
+
+def _response_ocr_export(p: dict[str, Any]) -> None:
+    _closed(p, required={"output_path", "bytes_written"}, label="ocr.export response")
+    _string(p["output_path"], "output_path")
+    _integer(p["bytes_written"], "bytes_written")
 
 
 def _request_pdf(p: dict[str, Any]) -> None:
@@ -280,6 +305,7 @@ _VALIDATORS: dict[str, tuple[Validator, Validator]] = {
     "task.cancel": (_request_cancel, _response_cancel),
     "memory.release": (_request_release, _response_release),
     "ocr.recognize": (_request_ocr, _response_ocr),
+    "ocr.export": (_request_ocr_export, _response_ocr_export),
     "pdf.open": (_request_pdf, _response_pdf),
     "qrcode.decode": (_request_qr_decode, _response_qr_decode),
     "qrcode.generate": (_request_qr_generate, _response_qr_generate),

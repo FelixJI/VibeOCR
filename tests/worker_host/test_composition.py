@@ -121,6 +121,7 @@ def test_production_composition_registers_all_domain_handlers(tmp_path: Path) ->
     handlers = composition.handlers(SharedPayloadStore(owner="worker"))
     assert set(handlers) == {
         "ocr.recognize",
+        "ocr.export",
         "pdf.open",
         "qrcode.decode",
         "qrcode.generate",

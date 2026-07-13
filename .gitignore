@@ -107,6 +107,10 @@ dmypy.json
 *.dmg
 *.msi
 
+# `*.app` 在 Windows Git 上会匹配目录名 VibeOCR.App；显式保留 WinUI 项目。
+!src/dotnet/VibeOCR.App/
+!src/dotnet/VibeOCR.App/**
+
 # ============================================
 # 日志
 # ============================================
@@ -239,3 +243,5 @@ docs/
 # .NET test/build outputs
 tests/dotnet/**/bin/
 tests/dotnet/**/obj/
+src/dotnet/**/bin/
+src/dotnet/**/obj/

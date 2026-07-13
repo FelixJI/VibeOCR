@@ -69,6 +69,26 @@ class OcrResult:
     text: str
     raw_blocks: list[Any] = field(default_factory=list)
     pipeline: str = "OCR"
+    markdown_text: str = ""
+    html_text: str = ""
+    raw_text: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class OcrExportRequest:
+    raw_text: str
+    markdown_text: str
+    html_text: str
+    raw_blocks: list[Any]
+    output_path: Path
+    format: str
+    overwrite: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class OcrExportResult:
+    output_path: Path
+    bytes_written: int
 
 
 # ---------------------------------------------------------------------------

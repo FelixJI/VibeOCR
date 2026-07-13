@@ -15,6 +15,8 @@ from vibeocr.application.contracts import (
     CancelToken,
     OcrRequest,
     OcrResult,
+    OcrExportRequest,
+    OcrExportResult,
     PdfOpenRequest,
     PdfSessionDto,
     SettingsSnapshot,
@@ -22,7 +24,7 @@ from vibeocr.application.contracts import (
 from vibeocr.application.ocr_facade import OcrFacade
 from vibeocr.application.pdf_facade import PdfFacade
 from vibeocr.application.settings_facade import SettingsFacade
-from vibeocr.worker_host.handlers.ocr import OcrHandler
+from vibeocr.worker_host.handlers.ocr import OcrExportHandler, OcrHandler
 from vibeocr.worker_host.handlers.pdf import PdfOpenHandler
 from vibeocr.worker_host.handlers.qrcode import QrDecodeHandler, QrGenerateHandler
 from vibeocr.worker_host.handlers.settings import SettingsSnapshotHandler
@@ -71,7 +73,32 @@ class OcrServiceAdapter:
             getattr(result, "copy_text", None) or getattr(result, "raw_text", "")
         )
         pipeline = str(getattr(result, "pipeline_type", request.pipeline))
-        return OcrResult(text=text, raw_blocks=blocks, pipeline=pipeline)
+        return OcrResult(
+            text=text,
+            raw_blocks=blocks,
+            pipeline=pipeline,
+            markdown_text=str(getattr(result, "markdown_text", "") or text),
+            html_text=str(getattr(result, "html_text", "") or ""),
+            raw_text=str(getattr(result, "raw_text", "") or text),
+        )
+
+    def export(self, request: OcrExportRequest, cancel: CancelToken) -> OcrExportResult:
+        if cancel.is_cancelled:
+            raise RuntimeError("OCR export cancelled")
+        from vibeocr.models.ocr_result import OCRResult
+        from vibeocr.services.export_service import ExportService
+
+        result = OCRResult(
+            raw_text=request.raw_text,
+            markdown_text=request.markdown_text,
+            html_text=request.html_text,
+            content_list=request.raw_blocks,
+        )
+        if not ExportService.export(result, request.output_path, request.format):
+            raise RuntimeError("OCR export failed")
+        if cancel.is_cancelled:
+            raise RuntimeError("OCR export cancelled")
+        return OcrExportResult(request.output_path, request.output_path.stat().st_size)
 
     def shutdown(self) -> None:
         if self._service is not None:
@@ -244,6 +271,7 @@ class WorkerServiceComposition:
             "ocr.recognize": OcrHandler(
                 facade=OcrFacade(self._ocr_adapter), store=store
             ).handle,
+            "ocr.export": OcrExportHandler(facade=self._ocr_adapter).handle,
             "pdf.open": PdfOpenHandler(facade=PdfFacade(self._pdf_adapter)).handle,
             "qrcode.decode": QrDecodeHandler(
                 facade=self._qr_decode, store=store

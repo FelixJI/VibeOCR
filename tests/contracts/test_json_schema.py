@@ -155,6 +155,7 @@ PUBLIC_METHODS = [
     "task.cancel",
     "memory.release",
     "ocr.recognize",
+    "ocr.export",
     "pdf.open",
     "qrcode.decode",
     "qrcode.generate",
