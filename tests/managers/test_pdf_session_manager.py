@@ -688,3 +688,88 @@ class TestOcrPageDoneIncrementalModel:
         assert info.has_text_layer is False
         # 仍转发信号
         mgr.ocr_page_done.emit.assert_called_once_with(file_path, 1, None)
+
+
+class TestRunOcrIncrementalSave:
+    """_run_ocr 阶段3 写层后应 incremental save + 写 sidecar；
+    末尾聚合压缩后 mark_completed。覆盖 6B + 6C。"""
+
+    def test_run_ocr_calls_add_text_layer_batch_with_save_and_writes_sidecar(
+        self, qapp, tmp_path, monkeypatch
+    ):
+        from unittest.mock import MagicMock
+
+        from vibeocr.managers.pdf_session_manager import PdfSessionManager
+        from vibeocr.models.pdf_document import PdfDocument, PdfPageInfo
+
+        pdf_path = tmp_path / "doc.pdf"
+        pdf_path.write_bytes(b"%PDF-1.4 test")
+
+        mgr = PdfSessionManager.__new__(PdfSessionManager)
+        mgr._sessions = {}
+        mgr._active_path = str(pdf_path)
+
+        doc = PdfDocument(file_path=str(pdf_path))
+        doc.pages = [PdfPageInfo(page_index=i) for i in range(3)]
+        session = MagicMock()
+        session.session_id = "sid1"
+        session.file_path = str(pdf_path)
+        session.pdf_document = doc
+        session.ocr_stats = {"written": 0, "skipped": 0}
+        session.add_ocr_stats = MagicMock()
+        mgr._sessions[str(pdf_path)] = session
+        mgr._overwrite_text_layer = False
+
+        # mock client
+        client = MagicMock()
+        # render_preview 返回非空 bytes（避免被当渲染失败）
+        client.render_preview.return_value = b"\x89PNG fake"
+        # add_text_layer_batch 返回带 extra.saved=True
+        resp = MagicMock()
+        resp.extra = {"saved": True}
+        client.add_text_layer_batch.return_value = resp
+        client.get_model.return_value = MagicMock()
+        mgr._client = client
+
+        # mock OCR service：每页返回带 text_blocks 的 result
+        mgr._ocr_service = MagicMock()
+        block = MagicMock()
+        block.text = "t"
+        block.score = 0.9
+        block.bbox = [0.0, 0.0, 100.0, 100.0]
+        block.page_idx = 0
+        block.is_manually_edited = False
+        block.label = "text"
+        block.order = 0
+        result = MagicMock()
+        result.text_blocks = [block]
+        result.preproc_angle = 0
+        mgr._ocr_service.recognize_batch.return_value = [result] * 3
+
+        # sidecar 重定向到 tmp（隔离测试，避免污染真实缓存目录）
+        monkeypatch.setattr(
+            "vibeocr.utils.ocr_sidecar._sessions_dir", lambda: tmp_path / "sessions"
+        )
+
+        runner = MagicMock()
+        runner._cancelled = False
+        runner._task_id = 1
+        runner.page_done = MagicMock()
+        runner.progress = MagicMock()
+        runner.all_done = MagicMock()
+        # _run_ocr 通过 runner._render_pool.map 并发渲染；mock 成返回 3 份 PNG bytes。
+        runner._render_pool = MagicMock()
+        runner._render_pool.map.return_value = [b"\x89PNG p0", b"\x89PNG p1", b"\x89PNG p2"]
+
+        mgr._run_ocr(runner, "sid1", [0, 1, 2], None, {}, False)
+
+        # 关键断言：add_text_layer_batch 被调用且 save=True
+        assert client.add_text_layer_batch.called
+        _, kwargs = client.add_text_layer_batch.call_args
+        assert kwargs.get("save") is True
+        # 末尾聚合压缩后 mark_completed，故 completed=True
+        from vibeocr.utils.ocr_sidecar import load_sidecar
+
+        data = load_sidecar(str(pdf_path))
+        assert data is not None
+        assert data["completed"] is True
