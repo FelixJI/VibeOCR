@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.4.27] - 2026-07-13
+
+### Fixed
+- fix(build): 清理 _internal 下 __pycache__ 修复 CI 打包失败
+
 ## [0.4.26] - 2026-07-13
 
 ### Added
