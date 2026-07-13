@@ -4,6 +4,7 @@ using VibeOCR.App.Features.Batch;
 using VibeOCR.App.Features.Pdf;
 using VibeOCR.App.Features.QrCode;
 using VibeOCR.App.Features.Recognition;
+using VibeOCR.App.Features.Settings;
 using VibeOCR.App.ViewModels;
 using VibeOCR.App.Views;
 using VibeOCR.Platform.Bootstrap;
@@ -18,14 +19,16 @@ public sealed partial class MainWindow : Window
     private readonly Func<BatchViewModel> _batchFactory;
     private readonly Func<QrCodePage> _qrCodePageFactory;
     private readonly Func<PdfPage> _pdfPageFactory;
+    private readonly Func<SettingsPage> _settingsPageFactory;
     private RecognitionViewModel? _recognition;
     private BatchViewModel? _batch;
     private QrCodePage? _qrCodePage;
     private PdfPage? _pdfPage;
+    private SettingsPage? _settingsPage;
 
-    public MainWindow(DiagnosticsViewModel diagnostics, PortableLayout layout, Func<RecognitionViewModel> recognitionFactory, Func<BatchViewModel> batchFactory, Func<QrCodePage> qrCodePageFactory, Func<PdfPage> pdfPageFactory)
+    public MainWindow(DiagnosticsViewModel diagnostics, PortableLayout layout, Func<RecognitionViewModel> recognitionFactory, Func<BatchViewModel> batchFactory, Func<QrCodePage> qrCodePageFactory, Func<PdfPage> pdfPageFactory, Func<SettingsPage> settingsPageFactory)
     {
-        _diagnostics = diagnostics; _layout = layout; _recognitionFactory = recognitionFactory; _batchFactory = batchFactory; _qrCodePageFactory = qrCodePageFactory; _pdfPageFactory = pdfPageFactory;
+        _diagnostics = diagnostics; _layout = layout; _recognitionFactory = recognitionFactory; _batchFactory = batchFactory; _qrCodePageFactory = qrCodePageFactory; _pdfPageFactory = pdfPageFactory; _settingsPageFactory = settingsPageFactory;
         InitializeComponent(); Title = "VibeOCR WinUI"; RootNavigation.SelectedItem = RootNavigation.MenuItems[0]; ShowHome();
     }
 
@@ -37,6 +40,7 @@ public sealed partial class MainWindow : Window
         if (destination == "batch") { _batch ??= _batchFactory(); ContentFrame.Content = new BatchPage(_batch); return; }
         if (destination == "qrcode") { _qrCodePage ??= _qrCodePageFactory(); ContentFrame.Content = _qrCodePage; return; }
         if (destination == "pdf") { _pdfPage ??= _pdfPageFactory(); ContentFrame.Content = _pdfPage; return; }
+        if (destination == "settings") { _settingsPage ??= _settingsPageFactory(); ContentFrame.Content = _settingsPage; return; }
         ShowHome();
     }
 

@@ -6,6 +6,7 @@
             <NavigationViewItem Content="批量识别" Icon="AllApps" Tag="batch" />
             <NavigationViewItem Content="二维码" Icon="Link" Tag="qrcode" />
             <NavigationViewItem Content="PDF" Icon="Document" Tag="pdf" />
+            <NavigationViewItem Content="设置" Icon="Setting" Tag="settings" />
             <NavigationViewItem Content="诊断与修复" Icon="Help" Tag="diagnostics" />
         </NavigationView.MenuItems>
         <Frame x:Name="ContentFrame" />
