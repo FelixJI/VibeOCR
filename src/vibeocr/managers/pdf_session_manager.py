@@ -743,6 +743,24 @@ class PdfSessionManager(QObject):
             self._client.reset_cancel(session.session_id)
         except Exception:
             logger.debug("reset_cancel 失败（忽略）", exc_info=True)
+        # 断点续传：读取 sidecar，过滤掉已增量落盘的页（崩溃恢复）。
+        # overwrite=True 时不过滤（用户明确要求重写）。
+        if not overwrite and session.file_path:
+            try:
+                pending = ocr_sidecar.restore_pending_pages(session.file_path)
+                if pending:
+                    already = set(pending.keys())
+                    page_indices = [p for p in page_indices if p not in already]
+                    if not page_indices:
+                        logger.info("start_ocr: 所有请求页已落盘（sidecar），跳过 OCR")
+                        self._ocr_running = False
+                        return
+                    logger.info(
+                        "start_ocr: sidecar 续传，跳过已落盘页 %s",
+                        sorted(already),
+                    )
+            except Exception:
+                logger.debug("start_ocr: sidecar 读取失败，全量 OCR", exc_info=True)
         # 递增 task generation，使旧 runner 的迟到信号被 done 槽丢弃
         self._task_generation += 1
         current_task_id = self._task_generation
