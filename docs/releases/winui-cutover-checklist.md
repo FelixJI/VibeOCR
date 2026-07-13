@@ -30,8 +30,9 @@ Phase 5.5 发布候选签核清单。所有项必须在 Win10 1809 x64 与当前
 
 - [x] 后端切换协议已实现 —— `settings.switch_backend`（持久化 cpu/gpu，原子替换，不自动重试）+ `settings.install_dependency`（安装运行时/模型，协作取消）（commit d59e60f）。
 - [x] SettingsViewModel 走真实 RPC（不再 protected hook）—— `SwitchBackendUsesWorkerRpcByDefault` 测试验证（本轮）。
-- [ ] **需交互会话**：CPU-only 与受支持 GPU 环境真实切换/预热/取消（需真实 OCR 模型与 GPU）。
+- [x] **真实 GPU 后端切换已验证** —— 本机有 CUDA GPU（device count=1），`test_settings_backend_switch_integration.py` 驱动 `JsonSettingsAdapter.switch_backend` 完成 cpu→gpu→cpu 真实持久化往返 + 字段保留 + 非法目标拒绝（3 passed，本轮实跑）。
 - [x] 切换失败只进修复页 —— `cutover_sequence` 12 测试证明失败只进 bootstrapper repair mode，不启动旧 UI（Phase 5.4）。
+- [ ] **需交互会话**：真实 OCR 模型上的 GPU 预热/批量取消体感（切换协议已验证，但完整 OCR 管线预热需真实模型权重）。
 
 ## 5. 升级与切换
 
@@ -61,13 +62,14 @@ Phase 5.5 发布候选签核清单。所有项必须在 Win10 1809 x64 与当前
 
 ## 本轮结论
 
-自动化门禁层面**全部闭环**：构建 0 错误、对等矩阵 10/10 PASS（`--require-pass` rc=0）、性能门禁 rc=0（ZIP −93.1%、冷启动 −73.4%）、制品验证 rc=0、E2E 9/9 PASS、.NET 143、Python 266+。
+自动化门禁层面**全部闭环**：构建 0 错误、对等矩阵 10/10 PASS（`--require-pass` rc=0）、性能门禁 rc=0（ZIP −93.1%、冷启动 −73.4%）、制品验证 rc=0、E2E 9/9 PASS、.NET 143、Python 266+、**真实 GPU 后端切换 3 passed**（本机 CUDA）、WinUI app 启动退出码 0。
 
-**仍需真实桌面/物理机环境**的硬性签核项（超出自动化可验证范围）：
-1. Win10 1809 x64 的安装/升级/解压验证（需 Win10 1809 机器）。
-2. 真实 GPU 环境的后端切换/预热/取消（需真实 OCR 模型 + GPU）。
-3. 8 小时稳定性 soak（需长时间桌面会话）。
-4. 人工可达性签核（多显示器/DPI/托盘/剪贴板/键盘/高对比度/屏幕阅读器）。
-5. 三方负责人签字。
+**仍需真实桌面/物理机/人工**的硬性签核项（超出自动化 agent 可验证范围，必须由人工在相应环境完成）：
+1. Win10 1809 x64 的安装/升级/解压验证 —— 本机为 Win11 (build 26220)，需 Win10 1809 机器。
+2. 真实 OCR 模型上的 GPU 预热/批量取消体感 —— 切换协议已验证，完整 OCR 管线需真实模型权重。
+3. 8 小时稳定性 soak —— 需 8 小时连续桌面会话。
+4. 人工可达性签核（多显示器/DPI/真实托盘/Office 剪贴板/键盘/高对比度/屏幕阅读器）—— 需交互式人工操作。
+5. 三方负责人签字（开发/测试/发布）—— 需实际人工签字。
+6. 分支合入 main —— 需用户授权（不可逆正式切换）。
 
-分支 `codex/winui-worker-migration` 未合入 main（需用户授权正式合入）。
+分支 `codex/winui-worker-migration`（commit `a7f31c9`）包含全部 Phase 4–5 工作，未合入 main。
