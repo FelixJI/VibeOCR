@@ -1,5 +1,6 @@
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using System.ComponentModel;
 using Windows.ApplicationModel.DataTransfer;
 using Windows.Storage;
 using VibeOCR.App.Features.Recognition;
@@ -12,6 +13,7 @@ public sealed partial class RecognitionPage : Page
     private readonly WebMessageRouter _router;
     private readonly PreviewHost _previewHost;
     private bool _bridgeTerminal;
+    private bool _bridgeReady;
 
     public RecognitionPage(RecognitionViewModel viewModel)
     {
@@ -21,6 +23,7 @@ public sealed partial class RecognitionPage : Page
         _router.MessageReceived += OnWebMessageReceived;
         _previewHost.ProtocolViolation += OnProtocolViolation;
         _previewHost.StateChanged += OnPreviewStateChanged;
+        ViewModel.PropertyChanged += OnViewModelPropertyChanged;
         InitializeComponent();
         Loaded += OnLoaded;
         Unloaded += OnUnloaded;
@@ -33,7 +36,9 @@ public sealed partial class RecognitionPage : Page
         if (message.Type == "preview.ready")
         {
             _bridgeTerminal = true;
+            _bridgeReady = true;
             PreviewBridgeStatus.Text = "Web 预览已就绪";
+            _ = SendResultAsync();
         }
     }
 
@@ -45,11 +50,7 @@ public sealed partial class RecognitionPage : Page
 
     private void OnPreviewStateChanged(string state)
     {
-        if (_bridgeTerminal)
-        {
-            return;
-        }
-
+        if (_bridgeTerminal) return;
         PreviewBridgeStatus.Text = state switch
         {
             "dom-content-loaded" => "Web DOM 已加载",
@@ -62,9 +63,7 @@ public sealed partial class RecognitionPage : Page
     {
         try
         {
-            await _previewHost.InitializeAsync(
-                PreviewWebView,
-                Path.Combine(AppContext.BaseDirectory, "WebAssets"));
+            await _previewHost.InitializeAsync(PreviewWebView, Path.Combine(AppContext.BaseDirectory, "WebAssets"));
         }
         catch (Exception error)
         {
@@ -78,39 +77,42 @@ public sealed partial class RecognitionPage : Page
         _router.MessageReceived -= OnWebMessageReceived;
         _previewHost.ProtocolViolation -= OnProtocolViolation;
         _previewHost.StateChanged -= OnPreviewStateChanged;
+        ViewModel.PropertyChanged -= OnViewModelPropertyChanged;
         _previewHost.Dispose();
     }
 
-    private async void OnFileClicked(object sender, RoutedEventArgs args) =>
-        await ViewModel.RecognizeFileAsync(CancellationToken.None);
+    private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs args)
+    {
+        if (args.PropertyName == nameof(RecognitionViewModel.ResultText) && _bridgeReady) _ = SendResultAsync();
+    }
 
-    private async void OnClipboardClicked(object sender, RoutedEventArgs args) =>
-        await ViewModel.RecognizeClipboardAsync(CancellationToken.None);
+    private async Task SendResultAsync()
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        try
+        {
+            await _previewHost.RequestAsync("preview.setResult", new { format = "plain", text = ViewModel.ResultText }, timeout.Token);
+        }
+        catch (Exception error) when (error is OperationCanceledException or WebBridgeProtocolException or InvalidOperationException)
+        {
+            PreviewBridgeStatus.Text = "结果预览同步失败";
+        }
+    }
 
-    private async void OnScreenshotClicked(object sender, RoutedEventArgs args) =>
-        await ViewModel.RecognizeScreenshotAsync(CancellationToken.None);
-
+    private async void OnFileClicked(object sender, RoutedEventArgs args) => await ViewModel.RecognizeFileAsync(CancellationToken.None);
+    private async void OnClipboardClicked(object sender, RoutedEventArgs args) => await ViewModel.RecognizeClipboardAsync(CancellationToken.None);
+    private async void OnScreenshotClicked(object sender, RoutedEventArgs args) => await ViewModel.RecognizeScreenshotAsync(CancellationToken.None);
     private void OnCancelClicked(object sender, RoutedEventArgs args) => ViewModel.Cancel();
 
     private void OnDragOver(object sender, DragEventArgs args)
     {
-        if (args.DataView.Contains(StandardDataFormats.StorageItems))
-        {
-            args.AcceptedOperation = DataPackageOperation.Copy;
-        }
+        if (args.DataView.Contains(StandardDataFormats.StorageItems)) args.AcceptedOperation = DataPackageOperation.Copy;
     }
 
     private async void OnDrop(object sender, DragEventArgs args)
     {
-        if (!args.DataView.Contains(StandardDataFormats.StorageItems))
-        {
-            return;
-        }
-
+        if (!args.DataView.Contains(StandardDataFormats.StorageItems)) return;
         IReadOnlyList<IStorageItem> items = await args.DataView.GetStorageItemsAsync();
-        if (items.FirstOrDefault() is StorageFile file)
-        {
-            await ViewModel.RecognizeDroppedFileAsync(file.Path, CancellationToken.None);
-        }
+        if (items.FirstOrDefault() is StorageFile file) await ViewModel.RecognizeDroppedFileAsync(file.Path, CancellationToken.None);
     }
 }

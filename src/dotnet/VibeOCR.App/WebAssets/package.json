@@ -4,6 +4,6 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test ../../../../tests/web/bridge.test.ts"
+    "test": "node --test ../../../../tests/web/*.test.ts"
   }
 }

@@ -3,9 +3,7 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta
-      http-equiv="Content-Security-Policy"
-      content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' blob:; font-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' blob:; font-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'">
     <meta name="color-scheme" content="dark light">
     <title>VibeOCR Preview Surface</title>
     <link rel="stylesheet" href="src/theme.css">
@@ -13,31 +11,36 @@
   <body>
     <main class="workbench" aria-labelledby="surface-title">
       <header class="instrument-bar">
-        <div>
-          <p class="eyebrow">VIBEOCR / OPTICAL DESK</p>
-          <h1 id="surface-title">识别检视台</h1>
-        </div>
-        <output id="bridge-status" class="status" data-state="booting" aria-live="polite">
-          正在连接预览桥
-        </output>
+        <div><p class="eyebrow">VIBEOCR / OPTICAL DESK</p><h1 id="surface-title">识别检视台</h1></div>
+        <output id="bridge-status" class="status" data-state="booting" aria-live="polite">正在连接预览桥</output>
       </header>
-
       <section class="inspection-grid">
-        <article class="image-bay" aria-label="图片预览">
-          <div class="ruler ruler-x" aria-hidden="true"></div>
-          <div class="ruler ruler-y" aria-hidden="true"></div>
+        <article class="image-bay" aria-label="图片预览与标注编辑">
+          <nav class="editor-tools" aria-label="标注工具">
+            <button type="button" data-editor-tool="select" data-active="true">选择</button>
+            <button type="button" data-editor-tool="rect">矩形</button>
+            <button type="button" data-editor-tool="ellipse">椭圆</button>
+            <button type="button" data-editor-tool="arrow">箭头</button>
+            <button type="button" data-editor-tool="text">文字</button>
+            <button type="button" data-editor-tool="mosaic">马赛克</button>
+            <button type="button" data-editor-tool="blur">模糊</button>
+            <button type="button" data-editor-tool="crop">裁剪</button>
+            <input id="editor-text-value" type="text" value="文本" aria-label="标注文字" maxlength="120">
+            <button id="editor-rotate" type="button">旋转 90°</button>
+            <span class="tool-separator" aria-hidden="true"></span>
+            <button id="editor-undo" type="button" disabled>撤销</button>
+            <button id="editor-redo" type="button" disabled>重做</button>
+          </nav>
+          <div class="ruler ruler-x" aria-hidden="true"></div><div class="ruler ruler-y" aria-hidden="true"></div>
           <div class="image-stage">
             <img id="preview-image" alt="待识别图片预览" hidden>
+            <canvas id="editor-canvas" width="1000" height="1000" aria-label="标注图层"></canvas>
             <p id="image-empty" class="empty-state">DROP / PASTE / CAPTURE</p>
           </div>
         </article>
-
         <article class="result-bay" aria-labelledby="result-title">
-          <div class="section-label">
-            <span>OUTPUT / 01</span>
-            <h2 id="result-title">文本结果</h2>
-          </div>
-          <pre id="result-text" tabindex="0">等待识别结果</pre>
+          <div class="section-label"><span>OUTPUT / 01</span><h2 id="result-title">结构化结果</h2></div>
+          <div id="result-text" tabindex="0"><p>等待识别结果</p></div>
         </article>
       </section>
     </main>

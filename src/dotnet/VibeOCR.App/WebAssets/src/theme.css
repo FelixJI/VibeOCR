@@ -113,9 +113,17 @@ h2 {
 }
 
 .image-bay {
-  padding: 28px;
+  padding: 68px 28px 28px;
   box-shadow: 16px 16px 0 #090a09;
 }
+
+.editor-tools { position: absolute; top: 15px; right: 28px; left: 28px; display: flex; align-items: center; gap: 6px; overflow-x: auto; }
+.editor-tools button { padding: 7px 11px; border: 1px solid var(--line); background: #151713; color: var(--ink); font: 12px "Cascadia Mono", Consolas, monospace; cursor: pointer; }
+.editor-tools button:hover:not(:disabled) { border-color: var(--signal); color: var(--signal); }
+.editor-tools button[data-active="true"] { border-color: var(--signal); background: var(--signal-soft); color: var(--signal); }
+.editor-tools button:disabled { color: #565950; cursor: default; }
+.editor-tools input { width: 86px; padding: 7px 9px; border: 1px solid var(--line); background: #0f100e; color: var(--ink); font: 12px "Cascadia Mono", Consolas, monospace; }
+.tool-separator { width: 1px; height: 20px; margin: 0 3px; background: var(--line); }
 
 .image-stage {
   display: grid;
@@ -126,10 +134,15 @@ h2 {
 }
 
 #preview-image {
+  grid-area: 1 / 1;
   width: 100%;
   height: 100%;
   object-fit: contain;
 }
+
+#editor-canvas { grid-area: 1 / 1; width: 100%; height: 100%; cursor: crosshair; touch-action: none; }
+#image-empty { grid-area: 1 / 1; }
+#image-empty { pointer-events: none; }
 
 .empty-state {
   color: #666960;
@@ -179,9 +192,17 @@ h2 {
   font-family: "Cascadia Mono", Consolas, monospace;
   font-size: 14px;
   line-height: 1.75;
-  white-space: pre-wrap;
   word-break: break-word;
 }
+
+#result-text p, #result-text h1, #result-text h2, #result-text h3, #result-text h4, #result-text h5, #result-text h6 { margin: 0 0 1em; white-space: pre-wrap; }
+#result-text h1, #result-text h2, #result-text h3 { color: #ef6d5f; font-family: Bahnschrift, "Aptos Narrow", sans-serif; }
+.result-formula { margin: 18px 0; padding: 14px 16px; border-left: 3px solid #f97316; background: #24170d; color: #ffc17d; white-space: pre-wrap; }
+.result-code { padding: 16px; overflow: auto; border: 1px solid #563e72; background: #121015; white-space: pre-wrap; }
+.result-table { overflow-x: auto; }
+.result-table table { width: 100%; border-collapse: collapse; }
+.result-table th, .result-table td { padding: 8px 10px; border: 1px solid #315d3e; text-align: left; }
+.result-placeholder { color: #c185e8; font-style: italic; }
 
 :focus-visible {
   outline: 2px solid var(--signal);

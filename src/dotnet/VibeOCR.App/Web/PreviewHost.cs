@@ -71,6 +71,15 @@ public sealed class PreviewHost : IDisposable
         core.Navigate(StartUri.AbsoluteUri);
     }
 
+    public Task<System.Text.Json.JsonElement> RequestAsync(
+        string type,
+        object payload,
+        CancellationToken cancellationToken)
+    {
+        CoreWebView2 core = _core ?? throw new InvalidOperationException("Preview host is not initialized.");
+        return _router.RequestAsync(type, payload, core.PostWebMessageAsJson, cancellationToken);
+    }
+
     private static void OnNavigationStarting(
         CoreWebView2 sender,
         CoreWebView2NavigationStartingEventArgs args)
