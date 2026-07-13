@@ -1032,8 +1032,10 @@ class PdfTab(QWidget):
         if session is None or session.file_path != file_path:
             return
         # OCR 注入的是隐形文字层，缩略图无视觉变化 → 不重新渲染。
-        # 仅逐页更新文字层网格格子（即时变绿）+ 汇总统计。
-        self._update_layer_grid_page(page_index)
+        # 逐页更新文字层网格格子 + 汇总统计。
+        self._update_layer_grid_page(page_index, state="done" if result is not None else "failed")
+        # 预览窗若正显示该页，刷新以叠加刚识别的文字层高亮
+        self._refresh_preview_window_if_current(page_index)
 
     def _on_ocr_progress_update(self, file_path: str, current: int, total: int) -> None:
         self._progress_bar.setValue(current)
@@ -1354,10 +1356,11 @@ class PdfTab(QWidget):
             tip += " · 已纠偏"
         return tip
 
-    def _update_layer_grid_page(self, page_index: int) -> None:
+    def _update_layer_grid_page(self, page_index: int, state: str | None = None) -> None:
         """增量更新单页网格格子（不全量重建），用于 OCR/删除文字层即时反馈。
 
         保留用户当前选中状态（只改单格的颜色/tooltip，不清空网格）。
+        state: none/processing/done/failed 视觉态；None 时按 has_text_layer 推导。
         """
         session = self._session_mgr.active_session
         if session is None:
@@ -1371,6 +1374,8 @@ class PdfTab(QWidget):
             if item.data(_LAYER_ROLE) == page_index:
                 item.setData(_HAS_LAYER_ROLE, page_info.has_text_layer)
                 item.setData(_DESKEWED_ROLE, page_info.deskewed)
+                if state is not None:
+                    item.setData(_LAYER_STATE_ROLE, state)
                 item.setToolTip(self._layer_cell_tooltip(page_info))
                 break
         # 汇总统计实时刷新
@@ -2032,6 +2037,9 @@ class PdfTab(QWidget):
         self._set_file_buttons_enabled(False)
         self._btn_open.setEnabled(False)
         self._btn_add_file.setEnabled(False)
+        # 把本次待识别页置 processing 态（蓝），让用户看到"哪些页在算"
+        for idx in indices:
+            self._update_layer_grid_page(idx, state="processing")
 
     def _on_add_text_layer_for_pages_without_layer(self) -> None:
         """一键为当前文件所有无文字层页面添加 OCR 文字层（不弹防重复框）。"""
