@@ -115,6 +115,10 @@ _HAS_LAYER_ROLE = Qt.ItemDataRole.UserRole + 1
 _DESKEWED_ROLE = Qt.ItemDataRole.UserRole + 2  # 存 deskewed（本会话是否被自动摆正纠正）
 # 视觉状态枚举（不改 model schema，仅格子投影）：none/processing/done/failed
 _LAYER_STATE_ROLE = Qt.ItemDataRole.UserRole + 3
+# 文字层来源类型（不改 model schema，仅格子投影）：
+# "ocr" = OCR 添加的文字层（ocr_text_blocks 非空）
+# "native" = PDF 自带的原生文字层（has_text_layer 但无 ocr_text_blocks）
+_LAYER_TYPE_ROLE = Qt.ItemDataRole.UserRole + 4
 
 
 class LayerStatusDelegate(QStyledItemDelegate):
@@ -122,7 +126,9 @@ class LayerStatusDelegate(QStyledItemDelegate):
 
     四态着色（_LAYER_STATE_ROLE 视觉投影，不改 model schema）：
     processing → 蓝（Colors.accent，识别中）；failed → 红（Colors.danger）；
-    done/有文字层 → 绿（Colors.success，已落盘）；none → 灰（Colors.text_subtle）。
+    done/有OCR文字层 → 深绿（Colors.success，OCR 已落盘）；
+    有原生文字层 → 浅绿（success 的浅色调，PDF 自带）；
+    none → 灰（Colors.text_subtle）。
     选中态 → 蓝覆盖。failed 右上角加白色感叹号；已纠偏右上角橙色圆点。
     """
 
@@ -135,6 +141,7 @@ class LayerStatusDelegate(QStyledItemDelegate):
         page_num = str(page_idx + 1) if page_idx is not None else ""
         has_layer = index.data(_HAS_LAYER_ROLE)
         state = index.data(_LAYER_STATE_ROLE)  # none/processing/done/failed
+        layer_type = index.data(_LAYER_TYPE_ROLE)  # "ocr" / "native" / None
 
         if option.state & QStyle.StateFlag.State_Selected:
             bg = QColor(Colors.accent)
@@ -142,8 +149,14 @@ class LayerStatusDelegate(QStyledItemDelegate):
             bg = QColor(Colors.accent)  # 蓝：识别中
         elif state == "failed":
             bg = QColor(Colors.danger)   # 红：失败
+        elif (has_layer or state == "done") and layer_type == "ocr":
+            bg = QColor(Colors.success)  # 深绿：OCR 文字层
+        elif (has_layer or state == "done") and layer_type == "native":
+            # 浅绿：PDF 自带原生文字层（非 OCR 添加）
+            bg = QColor(Colors.success)
+            bg.setAlpha(110)
         elif has_layer or state == "done":
-            bg = QColor(Colors.success)  # 绿：已落盘
+            bg = QColor(Colors.success)  # 默认绿（类型未知时退化为深绿）
         else:
             bg = QColor(Colors.text_subtle)  # 灰：未处理
 
@@ -164,7 +177,13 @@ class LayerStatusDelegate(QStyledItemDelegate):
         painter.setPen(QPen(border_color, border_width))
         painter.drawRoundedRect(cell, 6, 6)
 
-        painter.setPen(QPen(QColor("#ffffff")))
+        # 页码文字颜色：深绿背景用白色，浅色背景（原生文字层/灰）用深色
+        text_color = QColor("#ffffff")
+        if layer_type == "native":
+            text_color = QColor(Colors.success).darker(140)
+        elif not has_layer and state not in ("processing", "failed"):
+            text_color = QColor("#ffffff")
+        painter.setPen(QPen(text_color))
         font = painter.font()
         font.setBold(True)
         font.setPointSize(10)
@@ -653,6 +672,8 @@ class PdfTab(QWidget):
         self._syncing_selection = False
         # 批量异步打开期间的失败项收集（open_done 后统一弹一次提示）
         self._open_errors: list[tuple[str, str]] = []
+        # OCR 写层失败错误详情收集（_on_ocr_finished 后统一展示，帮助用户排查）
+        self._ocr_write_errors: list[str] = []
         # 批量异步打开期间抑制 combo box 自动切换（每个 session_added 否则都会
         # 触发 setCurrentIndex → switch_session → 全量重建，抵消异步优化）。
         self._batch_opening = False
@@ -798,21 +819,42 @@ class PdfTab(QWidget):
         self._btn_rotate_cw.clicked.connect(lambda: self._on_rotate(90))
         self._btn_rotate_ccw = QPushButton("逆时针90°")
         self._btn_rotate_ccw.clicked.connect(lambda: self._on_rotate(-90))
-        self._btn_rotate_all = QPushButton("旋转全部")
-        self._btn_rotate_all.clicked.connect(self._on_rotate_all)
+        self._btn_rotate_all_cw = QPushButton("全部顺时针90°")
+        self._btn_rotate_all_cw.setToolTip("将所有页面顺时针旋转 90°")
+        self._btn_rotate_all_cw.clicked.connect(lambda: self._on_rotate_all(90))
+        self._btn_rotate_all_ccw = QPushButton("全部逆时针90°")
+        self._btn_rotate_all_ccw.setToolTip("将所有页面逆时针旋转 90°")
+        self._btn_rotate_all_ccw.clicked.connect(lambda: self._on_rotate_all(-90))
         self._btn_auto_deskew = QPushButton("自动摆正")
         self._btn_auto_deskew.setToolTip(
             "自动检测选中页方向并旋转至文字朝上（仅 90° 倍数）"
         )
         self._btn_auto_deskew.clicked.connect(self._on_auto_deskew)
+        self._btn_deskew_landscape = QPushButton("横放摆正")
+        self._btn_deskew_landscape.setToolTip(
+            "将选中页旋转至横向（宽 > 高），已是横向的不动。不依赖 OCR。"
+        )
+        self._btn_deskew_landscape.clicked.connect(
+            lambda: self._on_deskew_by_aspect("landscape")
+        )
+        self._btn_deskew_portrait = QPushButton("纵放摆正")
+        self._btn_deskew_portrait.setToolTip(
+            "将选中页旋转至纵向（高 > 宽），已是纵向的不动。不依赖 OCR。"
+        )
+        self._btn_deskew_portrait.clicked.connect(
+            lambda: self._on_deskew_by_aspect("portrait")
+        )
         self._btn_delete = QPushButton("删除选中页")
         self._btn_delete.clicked.connect(self._on_delete_pages)
         self._btn_insert = QPushButton("在选中页后插入")
         self._btn_insert.clicked.connect(self._on_insert_page)
         page_layout.addWidget(self._btn_rotate_cw)
         page_layout.addWidget(self._btn_rotate_ccw)
-        page_layout.addWidget(self._btn_rotate_all)
+        page_layout.addWidget(self._btn_rotate_all_cw)
+        page_layout.addWidget(self._btn_rotate_all_ccw)
         page_layout.addWidget(self._btn_auto_deskew)
+        page_layout.addWidget(self._btn_deskew_landscape)
+        page_layout.addWidget(self._btn_deskew_portrait)
         page_layout.addWidget(self._btn_delete)
         page_layout.addWidget(self._btn_insert)
         layout.addWidget(page_group)
@@ -912,6 +954,7 @@ class PdfTab(QWidget):
         mgr.ocr_progress.connect(self._on_ocr_progress_update)
         mgr.ocr_done.connect(self._on_ocr_finished)
         mgr.ocr_stats_ready.connect(self._on_ocr_stats_ready)
+        mgr.ocr_write_error.connect(self._on_ocr_write_error)
         mgr.mineru_models_status.connect(self._on_mineru_models_status)
         mgr.mutate_progress.connect(self._on_mutate_progress)
         mgr.mutate_done.connect(self._on_mutate_done)
@@ -1096,6 +1139,13 @@ class PdfTab(QWidget):
         session = self._session_mgr.active_session
         if session is None or session.file_path != file_path:
             return
+        # 删除文字层时用滚动进度条（apply_redactions 耗时不可预测，确定性
+        # 进度反而误判"卡住"），不覆盖为确定性进度。
+        worker = self._session_mgr._mutate_worker
+        op = getattr(worker, "_op", "") if worker else ""
+        if op == "delete_text_layers":
+            self._status_label.setText(f"正在删除文字层 {current}/{total}…")
+            return
         if total > 0:
             self._progress_bar.setRange(0, total)
             self._progress_bar.setValue(current)
@@ -1204,6 +1254,18 @@ class PdfTab(QWidget):
         self._sync_layer_grid_from_model()
         msg = f"OCR 完成：成功 {success} 页" + (f"，失败 {fail} 页" if fail else "")
         self._status_label.setText(msg)
+        # 写层失败时把后端错误详情弹给用户（此前只记日志，用户无法排查）
+        if self._ocr_write_errors:
+            unique = list(dict.fromkeys(self._ocr_write_errors))  # 去重保序
+            detail = unique[0]
+            if len(unique) > 1:
+                detail += f"\n（共 {len(unique)} 种错误，详见日志）"
+            QMessageBox.warning(
+                self,
+                "添加文字层失败",
+                f"部分页面添加文字层失败：\n{detail}",
+            )
+            self._ocr_write_errors.clear()
 
     def _on_ocr_stats_ready(self, session_id: str, written: int, skipped: int) -> None:
         """文字层 OCR 完成后：汇总写入结果（成功/跳过）。
@@ -1224,6 +1286,14 @@ class PdfTab(QWidget):
         else:
             self._status_label.setText(f"文字层已添加（{written} 块）")
         self._refresh_layer_summary()
+
+    def _on_ocr_write_error(self, file_path: str, error: str) -> None:
+        """写文字层失败时：记录错误详情，供 _on_ocr_finished 完成后一并展示。
+
+        后端写层失败此前只记日志，用户只看到"失败 N 页"无法排查原因。
+        此处暂存错误，_on_ocr_stats_ready / _on_ocr_finished 完成时弹出。
+        """
+        self._ocr_write_errors.append(error)
 
     def _on_block_text_edited(
         self, page_index: int, block_index: int, new_text: str
@@ -1253,8 +1323,11 @@ class PdfTab(QWidget):
             self._btn_remove_file,
             self._btn_rotate_cw,
             self._btn_rotate_ccw,
-            self._btn_rotate_all,
+            self._btn_rotate_all_cw,
+            self._btn_rotate_all_ccw,
             self._btn_auto_deskew,
+            self._btn_deskew_landscape,
+            self._btn_deskew_portrait,
             self._btn_delete,
             self._btn_insert,
             self._btn_add_text_layer,
@@ -1345,24 +1418,39 @@ class PdfTab(QWidget):
             item = QListWidgetItem()
             item.setData(_LAYER_ROLE, p.page_index)
             item.setData(_HAS_LAYER_ROLE, p.has_text_layer)
+            item.setData(_LAYER_TYPE_ROLE, self._layer_type_of(p))
             item.setData(_DESKEWED_ROLE, p.deskewed)
             item.setToolTip(self._layer_cell_tooltip(p))
             grid.addItem(item)
         self._update_layer_summary(pages)
 
     @staticmethod
+    def _layer_type_of(page_info) -> str | None:
+        """判断文字层来源类型：OCR 添加 / PDF 原生 / 无。
+
+        ocr_text_blocks 非空 → "ocr"（本会话或历史 OCR 添加的隐形文字层）；
+        has_text_layer=True 但 ocr_text_blocks 为空 → "native"（PDF 自带文字层）；
+        其余 → None（无文字层）。
+        """
+        if getattr(page_info, "ocr_text_blocks", None):
+            return "ocr"
+        if getattr(page_info, "has_text_layer", False):
+            return "native"
+        return None
+
+    @staticmethod
     def _layer_cell_tooltip(page_info) -> str:
-        """生成文字层网格格子的 tooltip（block_count 优先用 OCR 原始块）。"""
+        """生成文字层网格格子的 tooltip（区分 OCR 文字层 vs 原生文字层）。"""
         if page_info.has_text_layer:
             if page_info.ocr_text_blocks:
                 block_count = len(page_info.ocr_text_blocks)
-                tip = f"第{page_info.page_index + 1}页 · 已添加文字层（{block_count}个文本块）"
+                tip = f"第{page_info.page_index + 1}页 · OCR文字层（{block_count}个文本块）"
             elif page_info.text_layers:
                 block_count = len(page_info.text_layers)
-                tip = f"第{page_info.page_index + 1}页 · 已添加文字层（{block_count}个文本块）"
+                tip = f"第{page_info.page_index + 1}页 · 原生文字层（{block_count}个文本块）"
             else:
                 # text_layers 延迟加载（load worker 只判 has_text_layer 不取详情）
-                tip = f"第{page_info.page_index + 1}页 · 已添加文字层"
+                tip = f"第{page_info.page_index + 1}页 · 原生文字层"
         else:
             tip = f"第{page_info.page_index + 1}页 · 无文字层"
         if getattr(page_info, "deskewed", False):
@@ -1386,6 +1474,7 @@ class PdfTab(QWidget):
             item = grid.item(row)
             if item.data(_LAYER_ROLE) == page_index:
                 item.setData(_HAS_LAYER_ROLE, page_info.has_text_layer)
+                item.setData(_LAYER_TYPE_ROLE, self._layer_type_of(page_info))
                 item.setData(_DESKEWED_ROLE, page_info.deskewed)
                 if state is not None:
                     item.setData(_LAYER_STATE_ROLE, state)
@@ -1395,13 +1484,20 @@ class PdfTab(QWidget):
         self._update_layer_summary(session.pdf_document.pages)
 
     def _update_layer_summary(self, pages) -> None:
-        """更新网格上方汇总 Label（共 N 页 / 有文字层 X / 无文字层 Y）。"""
+        """更新网格上方汇总 Label（共 N 页 / OCR文字层 X / 原生文字层 Z / 无文字层 Y）。"""
         total = len(pages)
-        with_layer = sum(1 for p in pages if p.has_text_layer)
-        without = total - with_layer
+        ocr_count = sum(
+            1 for p in pages if getattr(p, "ocr_text_blocks", None)
+        )
+        native_count = sum(
+            1 for p in pages
+            if p.has_text_layer and not getattr(p, "ocr_text_blocks", None)
+        )
+        without = total - ocr_count - native_count
         self._layer_summary_label.setText(
             f"共 {total} 页 ｜ "
-            f"<span style='color:{Colors.success}'>●</span> 有文字层 {with_layer} 页  "
+            f"<span style='color:{Colors.success}'>●</span> OCR文字层 {ocr_count} 页  "
+            f"<span style='color:{Colors.success}; opacity:0.6'>●</span> 原生文字层 {native_count} 页  "
             f"<span style='color:{Colors.text_subtle}'>●</span> 无文字层 {without} 页"
         )
 
@@ -1437,6 +1533,7 @@ class PdfTab(QWidget):
             if page_info is None:
                 continue
             item.setData(_HAS_LAYER_ROLE, page_info.has_text_layer)
+            item.setData(_LAYER_TYPE_ROLE, self._layer_type_of(page_info))
             item.setData(_DESKEWED_ROLE, page_info.deskewed)
             item.setToolTip(self._layer_cell_tooltip(page_info))
         self._update_layer_summary(session.pdf_document.pages)
@@ -1749,26 +1846,20 @@ class PdfTab(QWidget):
             return
         indices = self._get_selected_page_indices()
         if not indices:
+            QMessageBox.information(self, "旋转页面", "请先选择要旋转的页面。")
             return
         # 异步 IPC:后端旋转 + apply diff + thumbnails_invalidated 由 manager 处理。
         self._session_mgr.rotate_pages_async(indices, angle)
         self._update_status()
 
-    def _on_rotate_all(self) -> None:
+    def _on_rotate_all(self, angle: int) -> None:
+        """旋转全部页面（方向已在按钮上明确，无需二次确认）。"""
         session = self._session_mgr.active_session
         if session is None:
             return
-        reply = QMessageBox.question(
-            self,
-            "旋转全部页面",
-            "确定旋转全部页面 90°？",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        )
-        if reply != QMessageBox.StandardButton.Yes:
-            return
         indices = list(range(session.pdf_document.page_count))
         # 异步 IPC:后端旋转全部 + 缩略图失效由 manager 处理。
-        self._session_mgr.rotate_pages_async(indices, 90)
+        self._session_mgr.rotate_pages_async(indices, angle)
         self._update_status()
 
     def _on_auto_deskew(self) -> None:
@@ -1859,6 +1950,61 @@ class PdfTab(QWidget):
         self._set_file_buttons_enabled(True)
         QMessageBox.warning(self, "自动摆正失败", error)
         self._update_status()
+
+    def _on_deskew_by_aspect(self, target: str) -> None:
+        """按页面宽高比摆正（不依赖 OCR）。
+
+        target="landscape"：当前纵向（显示高>宽）的页旋转 90° 变横向，已是横向的不动。
+        target="portrait" ：当前横向（显示宽>高）的页旋转 90° 变纵向，已是纵向的不动。
+
+        显示宽高考虑 page.rotation（90/270 时宽高互换）。
+        """
+        session = self._session_mgr.active_session
+        if session is None:
+            return
+        indices = self._get_selected_page_indices()
+        if not indices:
+            QMessageBox.information(self, "摆正", "请先选择要摆正的页面。")
+            return
+
+        pages = session.pdf_document.pages
+        to_rotate: list[int] = []
+        skipped = 0
+        for idx in indices:
+            if idx >= len(pages):
+                continue
+            info = pages[idx]
+            x0, y0, x1, y1 = info.rect
+            mw = x1 - x0  # mediabox 宽
+            mh = y1 - y0  # mediabox 高
+            if mw <= 0 or mh <= 0:
+                skipped += 1
+                continue
+            # rotation ∈ {90,270} 时显示宽高互换
+            rotated = int(info.rotation or 0) % 180 != 0
+            disp_w = mh if rotated else mw
+            disp_h = mw if rotated else mh
+            is_landscape = disp_w > disp_h
+            if target == "landscape" and not is_landscape:
+                to_rotate.append(idx)
+            elif target == "portrait" and is_landscape:
+                to_rotate.append(idx)
+            else:
+                skipped += 1
+
+        verb = "横向" if target == "landscape" else "纵向"
+        if not to_rotate:
+            QMessageBox.information(
+                self, "摆正", f"选中页本已全部{verb}，无需旋转。"
+            )
+            return
+        self._session_mgr.rotate_pages_async(to_rotate, 90)
+        self._update_status()
+        QMessageBox.information(
+            self,
+            "摆正",
+            f"已旋转 {len(to_rotate)} 页至{verb}，跳过 {skipped} 页（本已{verb}）。",
+        )
 
     def _on_thumbnails_invalidated(self, page_indices: list[int]) -> None:
         """旋转后缩略图缓存失效：清缓存并触发可见页按需重渲。"""
@@ -2050,6 +2196,8 @@ class PdfTab(QWidget):
         self._set_file_buttons_enabled(False)
         self._btn_open.setEnabled(False)
         self._btn_add_file.setEnabled(False)
+        # 清空上一轮写层错误收集（新一轮 OCR 开始）
+        self._ocr_write_errors.clear()
         # 把本次待识别页置 processing 态（蓝），让用户看到"哪些页在算"
         for idx in indices:
             self._update_layer_grid_page(idx, state="processing")
@@ -2221,11 +2369,15 @@ class PdfTab(QWidget):
         if reply != QMessageBox.StandardButton.Yes:
             return
 
-        # 异步：后台逐页词级 redact，主线程不阻塞
-        self._progress_bar.setRange(0, len(indices))
-        self._progress_bar.setValue(0)
+        # 异步：后台逐页词级 redact，主线程不阻塞。
+        # 用不确定滚动进度条：apply_redactions 耗时随文字层复杂度变化极大
+        # （大文字层页可达数秒），确定性进度反而误判"卡住"。滚动条 + 逐页
+        # grid 格子刷新（mutate_done 信号逐页更新格子颜色）给用户足够的反馈。
+        self._progress_bar.setRange(0, 0)
         self._progress_bar.setVisible(True)
+        self._btn_cancel.setVisible(True)
         self._set_file_buttons_enabled(False)
+        self._status_label.setText(f"正在删除 {len(indices)} 页文字层…")
 
         self._session_mgr.delete_text_layers_async(indices)
 

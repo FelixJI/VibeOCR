@@ -26,7 +26,6 @@ import time
 import uuid
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
 
 import fitz
 import uvicorn
@@ -65,11 +64,10 @@ from vibeocr.ipc.schemas import (
     UpdateBlockTextRequest,
 )
 from vibeocr.models.ocr_result import OCRResult, TextBlock
+from collections.abc import Iterator
+
 from vibeocr.models.pdf_document import PdfDocument, PdfPageInfo, TextLayerInfo
 from vibeocr.services.pdf_service import PdfService
-
-if TYPE_CHECKING:
-    from collections.abc import Iterator
 
 logger = logging.getLogger(__name__)
 
@@ -607,11 +605,13 @@ def add_text_layer_batch(
     （崩溃只丢最后一批）。extra.saved 标记是否成功落盘（False=回滚，调用方不写 sidecar）。
     """
     s = _get_registry().get(sid)
+    pages_data = [
+        {"page": p.page, "ocr_result": p.ocr_result} for p in req.pages
+    ]
+    # 写层与落盘分离：写层成功后，落盘失败（文件占用/磁盘满/备份失败）不应
+    # 导致整批 500（文字层已在内存 doc 中，用户可手动保存）。落盘失败仅记
+    # 日志并返回 extra.saved=False，调用方不写 sidecar。
     try:
-        pages_data = [
-            {"page": p.page, "ocr_result": p.ocr_result} for p in req.pages
-        ]
-        saved = True
         with s.fitz_lock:
             results = PdfService.add_text_layer_batch(
                 s.doc, s.pdf_document, pages_data,
@@ -619,22 +619,31 @@ def add_text_layer_batch(
                 overwrite=req.overwrite,
                 cancel_check=s.cancel_event.is_set,
             )
-            written_pages = sorted(results.keys())
-            # 写层成功且有页 → 可选增量落盘
-            if req.save and written_pages:
-                save_path = s.pdf_document.file_path
-                if save_path:
-                    # save_incremental 成功失败都不 close doc，无需替换 s.doc
-                    saved = PdfService.save_incremental(s.doc, save_path)
-        return MutateResponse(
-            diff=_diff_pages(
-                s.pdf_document, written_pages,
-                invalidate_thumbnails=written_pages, modified=True
-            ),
-            extra={"saved": saved} if req.save else None,
-        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"批量加文字层失败: {e}") from e
+
+    written_pages = sorted(results.keys())
+    saved = True
+    if req.save and written_pages:
+        save_path = s.pdf_document.file_path
+        if save_path:
+            # save_incremental 成功失败都不 close doc，无需替换 s.doc
+            try:
+                saved = PdfService.save_incremental(s.doc, save_path)
+            except Exception as e:
+                logger.error(
+                    "[pdf-backend] add_text_layer_batch 增量落盘失败"
+                    "（文字层已在内存，不影响后续保存）: %s",
+                    e,
+                )
+                saved = False
+    return MutateResponse(
+        diff=_diff_pages(
+            s.pdf_document, written_pages,
+            invalidate_thumbnails=written_pages, modified=True
+        ),
+        extra={"saved": saved} if req.save else None,
+    )
 
 
 @app.post("/session/{sid}/rewrite_text_layer", response_model=MutateResponse)
@@ -680,58 +689,72 @@ def update_block_text(sid: str, req: UpdateBlockTextRequest) -> MutateResponse:
 
 # ---- 流式进度操作 -------------------------------------------------------
 
-def _stream_lines(events: list) -> StreamingResponse:
-    """把 ProgressEvent 列表序列化为 chunked 一行一 JSON。"""
-    def gen() -> Iterator[bytes]:
-        import json as _json
-        for ev in events:
+def _stream_generator(gen: Iterator[ProgressEvent]) -> StreamingResponse:
+    """把 ProgressEvent 生成器逐条序列化为一行一 JSON（真流式模式）。
+
+    每页处理完即 yield，调用方立即可收到该页的进度事件，不必等全批
+    处理完。删除文字层等逐页耗时操作用此路径，避免大文字层页
+    apply_redactions 阻塞时进度条长时间不动（此前收集到 list 再一次性
+    推送，大文字层页会卡死）。
+    """
+    import json as _json
+
+    def _gen() -> Iterator[bytes]:
+        for ev in gen:
             yield (_json.dumps(ev.model_dump(mode="json")) + "\n").encode()
-    return StreamingResponse(gen(), media_type="application/x-ndjson")
+
+    return StreamingResponse(_gen(), media_type="application/x-ndjson")
 
 
 @app.post("/session/{sid}/delete_text_layers")
 def delete_text_layers(sid: str, req: PageListRequest) -> StreamingResponse:
-    """逐页删除文字层,流式进度。"""
+    """逐页删除文字层,流式进度。
+
+    真流式：每页处理完即推送事件，避免 apply_redactions 同步阻塞时
+    进度条长时间不动（此前收集到 list 再一次性推送，大文字层页会卡死）。
+    """
     s = _get_registry().get(sid)
-    events: list[ProgressEvent] = []
     total = len(req.pages)
-    residual_pages: list[int] = []
-    for n, page in enumerate(req.pages):
-        if s.cancel_event.is_set():
-            break
-        has_text = False
-        residual = False
-        try:
-            # page_has_text + delete_text_layers 是一次"检测+删除"单元,
-            # 一起进锁避免被并发渲染线程插入(与持 fitz_lock 的 render_* 互斥)。
-            with s.fitz_lock:
-                has_text = PdfService.page_has_text(s.doc, page)
-                if not has_text:
-                    PdfService.delete_text_layers(s.doc, s.pdf_document, page)
-                    payload = (0, 0, False)
-                else:
-                    deleted, rounds, residual = PdfService.delete_text_layers(
-                        s.doc, s.pdf_document, page
-                    )
-                    payload = (deleted, rounds, residual)
-            # 锁外:纯 Python 汇总
-            if has_text and residual:
-                residual_pages.append(page)
-            events.append(ProgressEvent(
-                phase=ProgressPhase.DELETE, current=n + 1, total=total,
-                page_index=page, page_payload=payload,
-            ))
-        except Exception as e:
-            logger.error("[pdf-backend] delete layer page %d: %s", page, e)
-            events.append(ProgressEvent(
-                phase=ProgressPhase.DELETE, current=n + 1, total=total,
-                page_index=page, page_payload=None,
-            ))
-    events.append(ProgressEvent(
-        phase=ProgressPhase.DELETE, current=total, total=total, message="done",
-        page_payload={"residual_pages": residual_pages},
-    ))
-    return _stream_lines(events)
+
+    def _gen() -> Iterator[ProgressEvent]:
+        residual_pages: list[int] = []
+        for n, page in enumerate(req.pages):
+            if s.cancel_event.is_set():
+                break
+            has_text = False
+            residual = False
+            try:
+                # page_has_text + delete_text_layers 是一次"检测+删除"单元,
+                # 一起进锁避免被并发渲染线程插入(与持 fitz_lock 的 render_* 互斥)。
+                with s.fitz_lock:
+                    has_text = PdfService.page_has_text(s.doc, page)
+                    if not has_text:
+                        PdfService.delete_text_layers(s.doc, s.pdf_document, page)
+                        payload = (0, 0, False)
+                    else:
+                        deleted, rounds, residual = PdfService.delete_text_layers(
+                            s.doc, s.pdf_document, page
+                        )
+                        payload = (deleted, rounds, residual)
+                # 锁外:纯 Python 汇总
+                if has_text and residual:
+                    residual_pages.append(page)
+                yield ProgressEvent(
+                    phase=ProgressPhase.DELETE, current=n + 1, total=total,
+                    page_index=page, page_payload=payload,
+                )
+            except Exception as e:
+                logger.error("[pdf-backend] delete layer page %d: %s", page, e)
+                yield ProgressEvent(
+                    phase=ProgressPhase.DELETE, current=n + 1, total=total,
+                    page_index=page, page_payload=None,
+                )
+        yield ProgressEvent(
+            phase=ProgressPhase.DELETE, current=total, total=total, message="done",
+            page_payload={"residual_pages": residual_pages},
+        )
+
+    return _stream_generator(_gen())
 
 
 @app.post("/session/{sid}/save", response_model=SaveResponse)

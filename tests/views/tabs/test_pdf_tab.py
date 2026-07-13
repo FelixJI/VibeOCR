@@ -82,7 +82,7 @@ class TestPdfTabStructure:
 
 class TestPdfTabLayerStatus:
     def test_status_wording_for_text_layer(self, pdf_tab, tmp_path, monkeypatch):
-        """_update_layer_status 对有文字层的页应输出“已添加文字层(N 个文本块)”。"""
+        """_update_layer_status 对有文字层的页应输出文字层类型 + 文本块数。"""
         import fitz
 
         from vibeocr.models.pdf_document import (
@@ -117,7 +117,8 @@ class TestPdfTabLayerStatus:
         pdf_tab._update_layer_status()
         tip = pdf_tab._layer_status_grid.item(0).toolTip()
         assert "第1页" in tip
-        assert "已添加文字层" in tip
+        # text_layers 非空但 ocr_text_blocks 为空 → 原生文字层
+        assert "原生文字层" in tip
         assert "12个文本块" in tip
         doc.close()
 
@@ -753,7 +754,7 @@ class TestLayerStatusGrid:
             assert item.data(Qt.ItemDataRole.UserRole) == i
 
     def test_grid_has_summary_label(self, pdf_tab):
-        """网格上方应有汇总 Label（共 N 页 / 有文字层 X / 无文字层 Y）。"""
+        """网格上方应有汇总 Label（共 N 页 / OCR文字层 / 原生文字层 / 无文字层）。"""
         from vibeocr.models.pdf_document import PdfPageInfo
 
         pages = [
@@ -765,7 +766,8 @@ class TestLayerStatusGrid:
         pdf_tab._update_layer_status()
         text = pdf_tab._layer_summary_label.text()
         assert "共 3 页" in text
-        assert "有文字层 2 页" in text
+        # has_text_layer=True 但 ocr_text_blocks 为空 → 原生文字层（2 页）
+        assert "原生文字层 2 页" in text
         assert "无文字层 1 页" in text
 
     def test_grid_tooltip_shows_block_count(self, pdf_tab):
@@ -959,11 +961,14 @@ class TestOcrPerPageFeedback:
             PdfPageInfo(page_index=1, has_text_layer=False),
         ]
         session = self._inject(pdf_tab, pages)
-        # 第 0 页 OCR 完成
+        # 第 0 页 OCR 完成：设置 has_text_layer + ocr_text_blocks 模拟 OCR 写层
         session.pdf_document.pages[0].has_text_layer = True
+        session.pdf_document.pages[0].ocr_text_blocks = [
+            {"text": "test"}
+        ]
         pdf_tab._session_mgr.ocr_page_done.emit("x.pdf", 0, object())
         text = pdf_tab._layer_summary_label.text()
-        assert "有文字层 1 页" in text
+        assert "OCR文字层 1 页" in text
         assert "无文字层 1 页" in text
 
     def test_ocr_completion_preserves_selection(self, pdf_tab):
@@ -1167,6 +1172,214 @@ class TestThumbnailIncrementalUpdate:
         # 模拟 manager 发失效信号
         pdf_tab._session_mgr.thumbnails_invalidated.emit([target_row])
         assert target_row not in pdf_tab._thumbnail_model._cache
+
+
+class TestPdfTabRotateAllAndAspectDeskew:
+    """旋转全部（CW/CCW 两按钮）+ 横放/纵放摆正。"""
+
+    def _setup(self, pdf_tab, pages=None):
+        from vibeocr.models.pdf_document import PdfDocument, PdfPageInfo
+        from vibeocr.models.pdf_session import PdfSession
+
+        if pages is None:
+            pages = [
+                PdfPageInfo(page_index=i, rect=(0.0, 0.0, 612.0, 792.0))
+                for i in range(3)
+            ]
+        pdf_doc = PdfDocument(file_path="x.pdf", pages=pages)
+        session = PdfSession(file_path="x.pdf", session_id="test-sid", pdf_document=pdf_doc)
+        pdf_tab._session_mgr._sessions["x.pdf"] = session
+        pdf_tab._session_mgr._active_path = "x.pdf"
+        pdf_tab._refresh_thumbnails()
+        return session
+
+    def test_rotate_all_cw_calls_manager_with_all_indices(self, pdf_tab, monkeypatch):
+        """全部顺时针90° 按钮应调 rotate_pages_async(全部页, 90)。"""
+        called = []
+        monkeypatch.setattr(
+            pdf_tab._session_mgr, "rotate_pages_async",
+            lambda pages, angle: called.append((pages, angle)),
+        )
+        self._setup(pdf_tab)
+        pdf_tab._on_rotate_all(90)
+        assert called == [([0, 1, 2], 90)]
+
+    def test_rotate_all_ccw_calls_manager_with_all_indices(self, pdf_tab, monkeypatch):
+        """全部逆时针90° 按钮应调 rotate_pages_async(全部页, -90)。"""
+        called = []
+        monkeypatch.setattr(
+            pdf_tab._session_mgr, "rotate_pages_async",
+            lambda pages, angle: called.append((pages, angle)),
+        )
+        self._setup(pdf_tab)
+        pdf_tab._on_rotate_all(-90)
+        assert called == [([0, 1, 2], -90)]
+
+    def test_deskew_landscape_rotates_portrait_pages(self, pdf_tab, monkeypatch):
+        """横放摆正：纵向页（高>宽）应被旋转，横向页不动。"""
+        from vibeocr.models.pdf_document import PdfPageInfo
+
+        # 页0: 纵向 (612x792 高>宽)，页1: 横向 (792x612 宽>高)
+        pages = [
+            PdfPageInfo(page_index=0, rect=(0.0, 0.0, 612.0, 792.0)),
+            PdfPageInfo(page_index=1, rect=(0.0, 0.0, 792.0, 612.0)),
+        ]
+        called = []
+        monkeypatch.setattr(
+            pdf_tab._session_mgr, "rotate_pages_async",
+            lambda pages_, angle: called.append((pages_, angle)),
+        )
+        self._setup(pdf_tab, pages)
+        monkeypatch.setattr(pdf_tab, "_get_selected_page_indices", lambda: [0, 1])
+        # 跳过弹窗
+        from PySide6.QtWidgets import QMessageBox
+        monkeypatch.setattr(QMessageBox, "information", lambda *a, **k: None)
+
+        pdf_tab._on_deskew_by_aspect("landscape")
+        # 只有纵向页0需要旋转
+        assert called == [([0], 90)]
+
+    def test_deskew_portrait_rotates_landscape_pages(self, pdf_tab, monkeypatch):
+        """纵放摆正：横向页（宽>高）应被旋转，纵向页不动。"""
+        from vibeocr.models.pdf_document import PdfPageInfo
+
+        pages = [
+            PdfPageInfo(page_index=0, rect=(0.0, 0.0, 612.0, 792.0)),
+            PdfPageInfo(page_index=1, rect=(0.0, 0.0, 792.0, 612.0)),
+        ]
+        called = []
+        monkeypatch.setattr(
+            pdf_tab._session_mgr, "rotate_pages_async",
+            lambda pages_, angle: called.append((pages_, angle)),
+        )
+        self._setup(pdf_tab, pages)
+        monkeypatch.setattr(pdf_tab, "_get_selected_page_indices", lambda: [0, 1])
+        from PySide6.QtWidgets import QMessageBox
+        monkeypatch.setattr(QMessageBox, "information", lambda *a, **k: None)
+
+        pdf_tab._on_deskew_by_aspect("portrait")
+        # 只有横向页1需要旋转
+        assert called == [([1], 90)]
+
+    def test_deskew_by_aspect_respects_rotation(self, pdf_tab, monkeypatch):
+        """横放摆正考虑 page.rotation：旋转90°的纵向页显示为横向，不应再旋。"""
+        from vibeocr.models.pdf_document import PdfPageInfo
+
+        # 纵向 mediabox (612x792) + rotation=90 → 显示横向，横放摆正不应旋
+        pages = [
+            PdfPageInfo(page_index=0, rect=(0.0, 0.0, 612.0, 792.0), rotation=90),
+        ]
+        called = []
+        monkeypatch.setattr(
+            pdf_tab._session_mgr, "rotate_pages_async",
+            lambda pages_, angle: called.append((pages_, angle)),
+        )
+        self._setup(pdf_tab, pages)
+        monkeypatch.setattr(pdf_tab, "_get_selected_page_indices", lambda: [0])
+        from PySide6.QtWidgets import QMessageBox
+        monkeypatch.setattr(QMessageBox, "information", lambda *a, **k: None)
+
+        pdf_tab._on_deskew_by_aspect("landscape")
+        # 页0旋转90°后显示为横向，无需旋转
+        assert called == []
+
+
+class TestPdfTabLayerTypeIndicator:
+    """文字层图示三态：OCR文字层（深绿）/ 原生文字层（浅绿）/ 无文字层（灰）。"""
+
+    def _setup(self, pdf_tab, pages):
+        from vibeocr.models.pdf_document import PdfDocument
+        from vibeocr.models.pdf_session import PdfSession
+
+        pdf_doc = PdfDocument(file_path="x.pdf", pages=pages)
+        session = PdfSession(file_path="x.pdf", session_id="test-sid", pdf_document=pdf_doc)
+        pdf_tab._session_mgr._sessions["x.pdf"] = session
+        pdf_tab._session_mgr._active_path = "x.pdf"
+        pdf_tab._update_layer_status()
+        return session
+
+    def test_layer_type_ocr_when_blocks_present(self, pdf_tab):
+        """ocr_text_blocks 非空 → _LAYER_TYPE_ROLE = "ocr"。"""
+        from vibeocr.models.pdf_document import PdfPageInfo
+        from vibeocr.views.tabs.pdf_tab import _LAYER_TYPE_ROLE
+
+        pages = [
+            PdfPageInfo(
+                page_index=0, has_text_layer=True, ocr_text_blocks=[{"text": "x"}]
+            ),
+        ]
+        self._setup(pdf_tab, pages)
+        item = pdf_tab._layer_status_grid.item(0)
+        assert item.data(_LAYER_TYPE_ROLE) == "ocr"
+
+    def test_layer_type_native_when_no_blocks(self, pdf_tab):
+        """has_text_layer=True 但 ocr_text_blocks 空 → "native"。"""
+        from vibeocr.models.pdf_document import PdfPageInfo
+        from vibeocr.views.tabs.pdf_tab import _LAYER_TYPE_ROLE
+
+        pages = [PdfPageInfo(page_index=0, has_text_layer=True)]
+        self._setup(pdf_tab, pages)
+        item = pdf_tab._layer_status_grid.item(0)
+        assert item.data(_LAYER_TYPE_ROLE) == "native"
+
+    def test_layer_type_none_when_no_layer(self, pdf_tab):
+        """无文字层 → _LAYER_TYPE_ROLE = None。"""
+        from vibeocr.models.pdf_document import PdfPageInfo
+        from vibeocr.views.tabs.pdf_tab import _LAYER_TYPE_ROLE
+
+        pages = [PdfPageInfo(page_index=0, has_text_layer=False)]
+        self._setup(pdf_tab, pages)
+        item = pdf_tab._layer_status_grid.item(0)
+        assert item.data(_LAYER_TYPE_ROLE) is None
+
+    def test_summary_shows_three_categories(self, pdf_tab):
+        """汇总 Label 应含 OCR文字层 / 原生文字层 / 无文字层 三个类别。"""
+        from vibeocr.models.pdf_document import PdfPageInfo
+
+        pages = [
+            PdfPageInfo(
+                page_index=0, has_text_layer=True, ocr_text_blocks=[{"text": "x"}]
+            ),
+            PdfPageInfo(page_index=1, has_text_layer=True),
+            PdfPageInfo(page_index=2, has_text_layer=False),
+        ]
+        self._setup(pdf_tab, pages)
+        text = pdf_tab._layer_summary_label.text()
+        assert "OCR文字层 1 页" in text
+        assert "原生文字层 1 页" in text
+        assert "无文字层 1 页" in text
+
+
+class TestPdfTabRotateNoSelectionFeedback:
+    """旋转选中页无选中时应弹提示而非静默返回。"""
+
+    def _setup(self, pdf_tab):
+        from vibeocr.models.pdf_document import PdfDocument, PdfPageInfo
+        from vibeocr.models.pdf_session import PdfSession
+
+        pages = [PdfPageInfo(page_index=i) for i in range(3)]
+        pdf_doc = PdfDocument(file_path="x.pdf", pages=pages)
+        session = PdfSession(file_path="x.pdf", session_id="test-sid", pdf_document=pdf_doc)
+        pdf_tab._session_mgr._sessions["x.pdf"] = session
+        pdf_tab._session_mgr._active_path = "x.pdf"
+
+    def test_rotate_no_selection_shows_message(self, pdf_tab, monkeypatch):
+        """_on_rotate 无选中时应弹 information 提示，不调 manager。"""
+        from unittest.mock import MagicMock
+        from PySide6.QtWidgets import QMessageBox
+
+        self._setup(pdf_tab)
+        called = []
+        monkeypatch.setattr(QMessageBox, "information", lambda *a, **k: called.append(a))
+        monkeypatch.setattr(
+            pdf_tab._session_mgr, "rotate_pages_async",
+            MagicMock(side_effect=AssertionError("不应调 rotate_pages_async")),
+        )
+        # 无选中
+        monkeypatch.setattr(pdf_tab, "_get_selected_page_indices", lambda: [])
+        pdf_tab._on_rotate(90)
+        assert len(called) == 1
+        assert "请先选择" in called[0][2]
 
 
 class TestPdfTabDeleteTextLayerAsync:
@@ -1417,7 +1630,7 @@ def test_layer_cell_tooltip_marks_deskewed():
     p.deskewed = True
     tip = PdfTab._layer_cell_tooltip(p)
     assert "已纠偏" in tip
-    assert "已添加文字层" in tip  # 底色信息仍在
+    assert "文字层" in tip  # 底色信息仍在（原生或 OCR）
 
 
 def test_layer_cell_tooltip_no_deskew_when_false():

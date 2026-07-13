@@ -61,6 +61,7 @@ class PdfSessionManager(QObject):
     ocr_progress = Signal(str, int, int)
     ocr_done = Signal(str, int, int)
     ocr_stats_ready = Signal(str, int, int)
+    ocr_write_error = Signal(str, str)  # (file_path, error_message) — 写层失败详情
     mineru_models_status = Signal(str)
     render_progress = Signal(str, int, int)
     mutate_progress = Signal(str, int, int)
@@ -1005,6 +1006,7 @@ class PdfSessionManager(QObject):
 
             write_page_results: dict[int, bool] = {}  # page -> ok
             batch_persisted = False
+            batch_write_error: str | None = None
             if write_items and not runner._cancelled:
                 try:
                     resp = self._client.add_text_layer_batch(
@@ -1019,9 +1021,17 @@ class PdfSessionManager(QObject):
                         write_page_results[item["page"]] = True
                 except Exception as e:
                     logger.error("批量写文字层失败(批起始页 %d): %s", batch_pages[0], e)
+                    batch_write_error = str(e)
                     # 整批写层失败：标记这些页失败
                     for item in write_items:
                         write_page_results[item["page"]] = False
+
+            # 把后端写层错误详情通知 UI（此前只记日志，用户看不到原因，
+            # 只看到"失败 N 页"无法排查）。取 file_path 翻译 session_id。
+            if batch_write_error:
+                fp = self._path_for_session_id(session_id)
+                if fp:
+                    self.ocr_write_error.emit(fp, batch_write_error)
 
             # 本批 incremental save 成功 → 写 sidecar 标记已落盘页（断点续传）
             # sidecar 是"尽力而为"：写入失败只记日志，不阻断 OCR 主流程。
