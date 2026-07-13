@@ -754,6 +754,17 @@ class PdfSessionManager(QObject):
                     if not page_indices:
                         logger.info("start_ocr: 所有请求页已落盘（sidecar），跳过 OCR")
                         self._ocr_running = False
+                        # 调用方（PdfTab）在 start_ocr 之前已 _begin_ocr_ui：进度条
+                        # 已显示、按钮已禁用、格子已置 processing。这里提前 return 不
+                        # 构造 runner，故 all_done 永不发出，ocr_done 不会触发，
+                        # _on_ocr_finished 不会复位 UI → 用户卡在 0% 进度条 + 蓝格子。
+                        # 镜像 _on_ocr_all_done_signal 的收尾：发 ocr_stats_ready +
+                        # ocr_done（0 成功 0 失败：无事可做），让 UI 正常复位。
+                        stats = session.ocr_stats
+                        self.ocr_stats_ready.emit(
+                            session.file_path, stats["written"], stats["skipped"]
+                        )
+                        self.ocr_done.emit(session.file_path, 0, 0)
                         return
                     logger.info(
                         "start_ocr: sidecar 续传，跳过已落盘页 %s",

@@ -888,7 +888,12 @@ class TestStartOcrResumeFilter:
     def test_start_ocr_all_pages_saved_aborts_gracefully(
         self, qapp, tmp_path, monkeypatch
     ):
-        """所有请求页已落盘时，start_ocr 应跳过 OCR、不发 runner、复位 running。"""
+        """所有请求页已落盘时，start_ocr 应跳过 OCR、不发 runner、复位 running。
+
+        且必须发 ocr_done（+ ocr_stats_ready）：PdfTab 在 start_ocr 之前已
+        _begin_ocr_ui（进度条可见/按钮禁用/格子 processing），若短路 return 不发
+        ocr_done，_on_ocr_finished 永不运行，UI 卡死在 0% 进度条 + 蓝格子。
+        """
         from unittest.mock import MagicMock, patch
 
         from PySide6.QtCore import QThread
@@ -921,6 +926,8 @@ class TestStartOcrResumeFilter:
         session.session_id = "sid1"
         session.file_path = str(pdf_path)
         session.reset_ocr_stats = MagicMock()
+        # ocr_stats 在短路分支被读取（emit ocr_stats_ready），需为真实 dict
+        session.ocr_stats = {"written": 0, "skipped": 0}
         session.pdf_document = doc
         mgr._sessions[str(pdf_path)] = session
         mgr._ocr_service = MagicMock()
@@ -928,6 +935,15 @@ class TestStartOcrResumeFilter:
         mgr._pdf_settings = MagicMock()
         mgr._overwrite_text_layer = False
         mgr._settings_to_dict = MagicMock(return_value={})
+
+        # 捕获短路分支发出的 ocr_done / ocr_stats_ready（镜像 TestOcrRunnerFailure
+        # 的 signal-spy 做法：替换 emit 为收集 lambda）。
+        ocr_done_calls: list[tuple] = []
+        ocr_stats_calls: list[tuple] = []
+        mgr.ocr_done = MagicMock()
+        mgr.ocr_done.emit = lambda *a: ocr_done_calls.append(a)
+        mgr.ocr_stats_ready = MagicMock()
+        mgr.ocr_stats_ready.emit = lambda *a: ocr_stats_calls.append(a)
 
         with (
             patch.object(mgr, "_cancel_ocr"),
@@ -939,3 +955,15 @@ class TestStartOcrResumeFilter:
         assert mgr._ocr_worker is None
         start_mock.assert_not_called()
         assert mgr._ocr_running is False
+        # 关键：ocr_done 必须发出，否则 PdfTab._on_ocr_finished 不复位 UI
+        assert len(ocr_done_calls) == 1, "短路 return 必须发 ocr_done 复位 UI"
+        path, success, fail = ocr_done_calls[0]
+        assert path == str(pdf_path)
+        assert success == 0  # 无事可做
+        assert fail == 0
+        # ocr_stats_ready 也应发出（与正常完成路径 _on_ocr_all_done_signal 对齐）
+        assert len(ocr_stats_calls) == 1
+        spath, written, skipped = ocr_stats_calls[0]
+        assert spath == str(pdf_path)
+        assert written == 0
+        assert skipped == 0
