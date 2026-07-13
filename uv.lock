@@ -2307,7 +2307,7 @@ wheels = [
 
 [[package]]
 name = "vibeocr"
-version = "0.4.25"
+version = "0.4.26"
 source = { editable = "." }
 dependencies = [
     { name = "fastapi" },

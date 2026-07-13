@@ -1,5 +1,35 @@
 # Changelog
 
+## [0.4.26] - 2026-07-13
+
+### Added
+- feat(ui): 打开 PDF 时检测未完成 sidecar 并提示续传
+- feat(ui): OCR 进行中格子 processing 态 + 预览自动刷新
+- feat(ui): 文字层格子四态(processing/done/failed/none) + 失败感叹号
+- feat(manager): start_ocr 按 sidecar 续传过滤已落盘页
+- feat(manager): _run_ocr 逐批增量落盘 + sidecar + 末尾聚合压缩
+- feat(client): add_text_layer_batch 加 save 参数透传后端
+- feat(backend): add_text_layer_batch 路由支持 save 增量落盘
+- feat(ipc): BatchAddTextLayerRequest 加 save 字段 + ProgressPhase.COMPRESS
+- feat(pdf): 新增 save_incremental 增量落盘方法
+- feat(sidecar): 新增 OCR 断点续传 sidecar 读写模块
+
+### Fixed
+- fix(pdf-ocr): emit ocr_done on all-saved short-circuit to reset UI
+- fix(test): 恢复 TestThumbnailIncrementalUpdate 类声明（修复 Task 7 误删）
+- fix(sidecar): mark_completed 保留已有 pages 不因校验失败而丢失
+- fix(sidecar): path-keyed sidecar + growth validation, fixes incremental-save fingerprint drift
+- fix(manager): _on_ocr_page_done_signal 增量落 model 消除预览滞后
+- fix(pdf): 文字层用真实字形宽度替代硬编码启发式——数字/符号位置错位与 bbox 异常
+- fix(pdf,update): 修复 PDF 大文件 OCR 结束崩溃与更新下载后卡死
+- fix(worker): complete phase 1 worker host
+
+### Changed
+- docs(pdf-ocr): clarify sidecar not invalidated by in-memory edits
+- test(ui): 覆盖文字层格子四态着色 + state-role 写入 + 续传提示
+- docs(plan): PDF OCR 逐批增量落盘+断点续传+UI 进度细化 实现计划
+- docs(spec): PDF OCR 逐批增量落盘+断点续传+UI 进度细化 设计
+
 ## [0.4.25] - 2026-07-12
 
 ### Added
