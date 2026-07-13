@@ -1083,6 +1083,9 @@ class TestLoadDoneSidecarHint:
         pdf_tab._on_load_done("x.pdf")
         # 异常被吞掉，状态栏应仍是"加载完成"
         assert "加载完成" in pdf_tab._status_label.text()
+
+
+class TestThumbnailIncrementalUpdate:
     """缩略图增量更新:reorder/rotate 走异步 IPC,缓存失效由信号驱动。
 
     新架构:PdfTab._on_rotate / _on_pages_reordered_with_order 调
