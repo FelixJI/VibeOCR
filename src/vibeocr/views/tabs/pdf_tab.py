@@ -113,13 +113,17 @@ def _detecting_icon(size: int = _THUMBNAIL_SIZE) -> QIcon:
 _LAYER_ROLE = Qt.ItemDataRole.UserRole
 _HAS_LAYER_ROLE = Qt.ItemDataRole.UserRole + 1
 _DESKEWED_ROLE = Qt.ItemDataRole.UserRole + 2  # 存 deskewed（本会话是否被自动摆正纠正）
+# 视觉状态枚举（不改 model schema，仅格子投影）：none/processing/done/failed
+_LAYER_STATE_ROLE = Qt.ItemDataRole.UserRole + 3
 
 
 class LayerStatusDelegate(QStyledItemDelegate):
     """文字层网格格子绘制：40×40 圆角方块，居中页码，背景按状态着色。
 
-    有文字层 → 绿（Colors.success）；无文字层 → 灰（Colors.text_subtle）；
-    选中态 → 蓝（Colors.accent）覆盖原色。
+    四态着色（_LAYER_STATE_ROLE 视觉投影，不改 model schema）：
+    processing → 蓝（Colors.accent，识别中）；failed → 红（Colors.danger）；
+    done/有文字层 → 绿（Colors.success，已落盘）；none → 灰（Colors.text_subtle）。
+    选中态 → 蓝覆盖。failed 右上角加白色感叹号；已纠偏右上角橙色圆点。
     """
 
     def sizeHint(self, option, index):
@@ -130,13 +134,18 @@ class LayerStatusDelegate(QStyledItemDelegate):
         page_idx = index.data(_LAYER_ROLE)
         page_num = str(page_idx + 1) if page_idx is not None else ""
         has_layer = index.data(_HAS_LAYER_ROLE)
+        state = index.data(_LAYER_STATE_ROLE)  # none/processing/done/failed
 
         if option.state & QStyle.StateFlag.State_Selected:
             bg = QColor(Colors.accent)
-        elif has_layer:
-            bg = QColor(Colors.success)
+        elif state == "processing":
+            bg = QColor(Colors.accent)  # 蓝：识别中
+        elif state == "failed":
+            bg = QColor(Colors.danger)   # 红：失败
+        elif has_layer or state == "done":
+            bg = QColor(Colors.success)  # 绿：已落盘
         else:
-            bg = QColor(Colors.text_subtle)
+            bg = QColor(Colors.text_subtle)  # 灰：未处理
 
         # 悬停态用 accent 描边，默认用 border 描边
         is_hover = bool(option.state & QStyle.StateFlag.State_MouseOver)
@@ -161,6 +170,12 @@ class LayerStatusDelegate(QStyledItemDelegate):
         font.setPointSize(10)
         painter.setFont(font)
         painter.drawText(option.rect, Qt.AlignmentFlag.AlignCenter, page_num)
+
+        # failed 态右上角感叹号标记
+        if state == "failed":
+            painter.setPen(QPen(QColor("#ffffff"), 2))
+            mark = QRectF(cell.right() - 12, cell.top() + 2, 10, 10)
+            painter.drawText(mark, Qt.AlignmentFlag.AlignCenter, "!")
 
         # 已纠偏标记：右上角橙色小圆点（底色保持不变，两维信息并存）
         deskewed = index.data(_DESKEWED_ROLE)
