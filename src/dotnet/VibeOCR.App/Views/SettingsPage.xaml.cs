@@ -23,4 +23,10 @@ public sealed partial class SettingsPage : Page
 
     private async void OnSwitchBackendClicked(object sender, RoutedEventArgs e)
         => await ViewModel.SwitchBackendAsync(ViewModel.PendingBackend, CancellationToken.None);
+
+    // 以下从 AboutPage 迁移而来（可工作的 handler，保留绑定）：
+    private void OnApplyHotkeyClicked(object sender, RoutedEventArgs e) => Shell.ApplyHotkey();
+    private void OnStartupClicked(object sender, RoutedEventArgs e)
+        => Shell.SetStartWithSystem(Shell.StartWithSystem);
+    private void OnHideToTrayClicked(object sender, RoutedEventArgs e) => Shell.HideToTray();
 }
