@@ -26,7 +26,11 @@ from vibeocr.application.contracts import (
 )
 from vibeocr.worker_host.handlers.ocr import OcrExportHandler, OcrHandler
 from vibeocr.worker_host.handlers.pdf import PdfOpenHandler
-from vibeocr.worker_host.handlers.qrcode import QrDecodeHandler, QrGenerateHandler
+from vibeocr.worker_host.handlers.qrcode import (
+    QrDecodeHandler,
+    QrGenerateHandler,
+    QrGenerateSvgHandler,
+)
 from vibeocr.worker_host.handlers.settings import SettingsSnapshotHandler
 from vibeocr.worker_host.shared_payload import SharedPayloadRef
 
@@ -187,9 +191,11 @@ async def test_qr_decode_handler_maps_payload_to_result() -> None:
 async def test_qr_generate_handler_maps_payload_to_result() -> None:
     class _FakeQrGenerate:
         last_data: str = ""
+        last_options: dict[str, Any] = {}
 
-        def generate(self, data: str, fmt: str, cancel: CancelToken) -> bytes:
+        def generate(self, data: str, options: dict[str, Any], cancel: CancelToken) -> bytes:
             self.last_data = data
+            self.last_options = options
             return b"\x89PNG generated"
 
     gen = _FakeQrGenerate()
@@ -197,7 +203,79 @@ async def test_qr_generate_handler_maps_payload_to_result() -> None:
     handler = QrGenerateHandler(facade=gen, store=store)  # type: ignore[arg-type]
     result = await handler.handle({"data": "https://example.com", "format": "qrcode"}, CancelToken())
     assert gen.last_data == "https://example.com"
+    assert gen.last_options["format"] == "qr"
     assert result["image"]["media_type"] == "image/png"
+
+
+@pytest.mark.asyncio
+async def test_qr_generate_handler_passes_full_options_bag() -> None:
+    """The enriched request carries styling options through to the facade."""
+
+    class _FakeQrGenerate:
+        captured: dict[str, Any] = {}
+
+        def generate(self, data: str, options: dict[str, Any], cancel: CancelToken) -> bytes:
+            _FakeQrGenerate.captured = {"data": data, "options": options}
+            return b"png-bytes"
+
+    gen = _FakeQrGenerate()
+    store = _FakePayloadStore(b"")
+    handler = QrGenerateHandler(facade=gen, store=store)  # type: ignore[arg-type]
+    await handler.handle(
+        {
+            "data": "hello",
+            "format": "qrcode",
+            "size": 800,
+            "error_correction": "H",
+            "fg_color": "#112233",
+            "bg_color": "#ffffff",
+            "invert": True,
+            "label_text": "caption",
+            "label_position": "top",
+            "label_font_size": 14,
+        },
+        CancelToken(),
+    )
+    opts = _FakeQrGenerate.captured["options"]
+    assert opts["format"] == "qr"
+    assert opts["size"] == 800
+    assert opts["error_correction"] == "H"
+    assert opts["fg_color"] == "#112233"
+    assert opts["invert"] is True
+    assert opts["label_position"] == "top"
+
+
+@pytest.mark.asyncio
+async def test_qr_generate_handler_maps_barcode_format() -> None:
+    """format=barcode with barcode_format routes to the named barcode class."""
+
+    class _FakeQrGenerate:
+        captured_fmt: str = ""
+
+        def generate(self, data: str, options: dict[str, Any], cancel: CancelToken) -> bytes:
+            _FakeQrGenerate.captured_fmt = options["format"]
+            return b"png"
+
+    gen = _FakeQrGenerate()
+    handler = QrGenerateHandler(facade=gen, store=_FakePayloadStore(b""))  # type: ignore[arg-type]
+    await handler.handle(
+        {"data": "123456789012", "format": "barcode", "barcode_format": "ean13"},
+        CancelToken(),
+    )
+    assert _FakeQrGenerate.captured_fmt == "ean13"
+
+
+@pytest.mark.asyncio
+async def test_qr_generate_svg_handler_returns_svg_string() -> None:
+    class _FakeQrSvg:
+        def generate_svg(self, data: str, options: dict[str, Any], cancel: CancelToken) -> str:
+            return f"<svg>{data}</svg>"
+
+    handler = QrGenerateSvgHandler(facade=_FakeQrSvg())  # type: ignore[arg-type]
+    result = await handler.handle(
+        {"data": "https://x.test", "error_correction": "Q"}, CancelToken()
+    )
+    assert result["svg"] == "<svg>https://x.test</svg>"
 
 
 # ---------------------------------------------------------------------------

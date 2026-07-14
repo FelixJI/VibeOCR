@@ -24,7 +24,16 @@ class QrDecodeFacade(Protocol):
 
 @runtime_checkable
 class QrGenerateFacade(Protocol):
-    def generate(self, data: str, fmt: str, cancel: CancelToken) -> bytes: ...
+    """Generate a styled QR/barcode image and return PNG bytes."""
+
+    def generate(self, data: str, options: dict[str, Any], cancel: CancelToken) -> bytes: ...
+
+
+@runtime_checkable
+class QrGenerateSvgFacade(Protocol):
+    """Generate a QR code as an SVG string."""
+
+    def generate_svg(self, data: str, options: dict[str, Any], cancel: CancelToken) -> str: ...
 
 
 class QrDecodeHandler:
@@ -49,7 +58,7 @@ class QrDecodeHandler:
 
 
 class QrGenerateHandler:
-    """Handle ``qrcode.generate``: generate an image and expose it via shared memory."""
+    """Handle ``qrcode.generate``: generate a styled image and expose it via shared memory."""
 
     def __init__(self, *, facade: QrGenerateFacade, store: SharedPayloadStore) -> None:
         self._facade = facade
@@ -59,10 +68,56 @@ class QrGenerateHandler:
         data = payload.get("data")
         if not isinstance(data, str) or not data:
             raise WorkerError(ErrorCode.INVALID_REQUEST, "qrcode.generate requires 'data'")
+        # Build the options bag consumed by QrcodeService.generate + post-processing.
         fmt = str(payload.get("format", "qrcode"))
-        image_bytes = await asyncio.to_thread(self._facade.generate, data, fmt, cancel)
+        options: dict[str, Any] = {"format": "qr" if fmt == "qrcode" else fmt}
+        if fmt == "barcode":
+            barcode_fmt = str(payload.get("barcode_format", "code128")).lower()
+            options["format"] = barcode_fmt
+        for key in (
+            "size",
+            "error_correction",
+            "fg_color",
+            "bg_color",
+            "invert",
+            "logo_path",
+            "logo_ratio",
+            "label_text",
+            "label_position",
+            "label_font_size",
+        ):
+            if key in payload:
+                options[key] = payload[key]
+        image_bytes = await asyncio.to_thread(self._facade.generate, data, options, cancel)
         ref = await self._store.put(image_bytes, media_type="image/png")
         return {"image": ref.to_descriptor()}
 
 
-__all__ = ["QrDecodeFacade", "QrDecodeHandler", "QrGenerateFacade", "QrGenerateHandler"]
+class QrGenerateSvgHandler:
+    """Handle ``qrcode.generate_svg``: return a QR code as raw SVG text."""
+
+    def __init__(self, *, facade: QrGenerateSvgFacade) -> None:
+        self._facade = facade
+
+    async def handle(self, payload: dict[str, Any], cancel: CancelToken) -> dict[str, Any]:
+        data = payload.get("data")
+        if not isinstance(data, str) or not data:
+            raise WorkerError(
+                ErrorCode.INVALID_REQUEST, "qrcode.generate_svg requires 'data'"
+            )
+        options: dict[str, Any] = {}
+        for key in ("error_correction", "fg_color", "bg_color"):
+            if key in payload:
+                options[key] = payload[key]
+        svg = await asyncio.to_thread(self._facade.generate_svg, data, options, cancel)
+        return {"svg": svg}
+
+
+__all__ = [
+    "QrDecodeFacade",
+    "QrDecodeHandler",
+    "QrGenerateFacade",
+    "QrGenerateHandler",
+    "QrGenerateSvgFacade",
+    "QrGenerateSvgHandler",
+]

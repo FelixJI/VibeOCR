@@ -69,6 +69,17 @@ class BackendError(Exception):
         self.detail = detail
 
 
+class DecodedCode:
+    """One decoded QR/barcode from ``qrcode.decode``."""
+
+    __slots__ = ("data", "format", "is_url")
+
+    def __init__(self, *, data: str, fmt: str, is_url: bool) -> None:
+        self.data = data
+        self.format = fmt
+        self.is_url = is_url
+
+
 class _PendingCall:
     """One in-flight request awaiting its response."""
 
@@ -209,6 +220,58 @@ class BackendClient:
     async def release_payload(self, name: str) -> bool:
         """Release a client-owned payload by name (idempotent)."""
         return await self._store.release_owned(name)
+
+    # -- typed QR helpers ----------------------------------------------
+
+    async def decode_qrcode(self, image_bytes: bytes) -> list[DecodedCode]:
+        """Decode QR/barcodes from image bytes via ``qrcode.decode``.
+
+        The image is staged in client-owned shared memory; the worker reads it,
+        decodes, and returns ``codes``. Each code is returned as a
+        :class:`DecodedCode`.
+        """
+        ref = await self._store.put(image_bytes, media_type="image/png")
+        result = await self.call("qrcode.decode", {"image": ref.to_descriptor()})
+        codes: list[DecodedCode] = []
+        for item in result.get("codes", []):
+            codes.append(
+                DecodedCode(
+                    data=str(item.get("data", "")),
+                    fmt=str(item.get("format", "")),
+                    is_url=bool(item.get("is_url", False)),
+                )
+            )
+        await self._store.release_owned(ref.name)
+        return codes
+
+    async def generate_qrcode(
+        self, data: str, *, options: dict[str, Any] | None = None
+    ) -> bytes:
+        """Generate a styled QR/barcode PNG via ``qrcode.generate``.
+
+        ``options`` mirrors the request fields defined in
+        ``contracts/v1/methods.schema.json`` (format, barcode_format, size,
+        error_correction, fg_color, bg_color, invert, logo_path, logo_ratio,
+        label_text, label_position, label_font_size). Returns PNG bytes.
+        """
+        payload: dict[str, Any] = {"data": data}
+        if options:
+            payload.update(options)
+        result = await self.call("qrcode.generate", payload)
+        ref = SharedPayloadRef.from_descriptor(result["image"])
+        # The worker owns this segment; the client reads it and lets the worker
+        # reclaim it via TTL.
+        return await self.read_payload(ref)
+
+    async def generate_qrcode_svg(
+        self, data: str, *, options: dict[str, Any] | None = None
+    ) -> str:
+        """Generate a QR code as an SVG string via ``qrcode.generate_svg``."""
+        payload: dict[str, Any] = {"data": data}
+        if options:
+            payload.update(options)
+        result = await self.call("qrcode.generate_svg", payload)
+        return str(result["svg"])
 
     # -- shutdown -------------------------------------------------------
 
@@ -351,4 +414,4 @@ class _suppress:
         return exc_type is not None and issubclass(exc_type, self._exceptions)
 
 
-__all__ = ["BackendClient", "BackendError"]
+__all__ = ["BackendClient", "BackendError", "DecodedCode"]

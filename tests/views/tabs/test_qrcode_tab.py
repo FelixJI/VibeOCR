@@ -1,6 +1,13 @@
-"""QrcodeTab UI 测试"""
+"""QrcodeTab UI 测试
+
+Phase 3 第一切片：二维码生成/识别已迁移到 RPC 后端（SyncBackendClient）。
+测试注入一个 FakeBackend（duck-typed），不启动真实 WorkerHost。
+"""
+
+import io
 
 import pytest
+from PIL import Image
 from PySide6.QtWidgets import (
     QComboBox,
     QLabel,
@@ -9,14 +16,43 @@ from PySide6.QtWidgets import (
     QSplitter,
 )
 
-from vibeocr.services.qrcode_service import QrcodeService
+from vibeocr.worker_host.backend_client import DecodedCode
 
 
-@pytest.fixture
+class _FakeBackend:
+    """Duck-typed backend: returns deterministic PNG / decode results.
+
+    Implements the same surface QrcodeTab calls: generate_qrcode_sync,
+    generate_qrcode_svg_sync, decode_qrcode_sync. No WorkerHost subprocess.
+    """
+
+    def __init__(self) -> None:
+        self.generate_calls: list[tuple[str, dict]] = []
+        self.decode_calls: list[bytes] = []
+        # When set, decode_qrcode_sync returns these codes.
+        self.decode_result: list[list[DecodedCode]] | None = None
+
+    def generate_qrcode_sync(self, data: str, *, options: dict | None = None) -> bytes:
+        self.generate_calls.append((data, options or {}))
+        buf = io.BytesIO()
+        Image.new("RGB", (10, 10), "black").save(buf, format="PNG")
+        return buf.getvalue()
+
+    def generate_qrcode_svg_sync(self, data: str, *, options: dict | None = None) -> str:
+        return f"<svg>{data}</svg>"
+
+    def decode_qrcode_sync(self, image_bytes: bytes) -> list[DecodedCode]:
+        self.decode_calls.append(image_bytes)
+        if self.decode_result is not None:
+            return self.decode_result.pop(0)
+        return []
+
+
+@pytest.fixture()
 def qrcode_tab(qtbot):
     from vibeocr.views.tabs.qrcode_tab import QrcodeTab
 
-    tab = QrcodeTab()
+    tab = QrcodeTab(backend=_FakeBackend())
     qtbot.addWidget(tab)
     return tab
 
@@ -46,8 +82,9 @@ class TestQrcodeTabStructure:
         btn = qrcode_tab.findChild(QPushButton, "btnCopy")
         assert btn is not None
 
-    def test_tab_has_service(self, qrcode_tab):
-        assert isinstance(qrcode_tab._service, QrcodeService)
+    def test_tab_has_backend(self, qrcode_tab):
+        """The tab holds a backend client (no direct service imports)."""
+        assert qrcode_tab._backend is not None
 
     def test_format_combo_contains_qr(self, qrcode_tab):
         combo = qrcode_tab.findChild(QComboBox)
@@ -72,11 +109,6 @@ class TestQrcodeTabStructure:
         btn = qrcode_tab.findChild(QPushButton, "btnDecode")
         assert btn is not None
         assert not btn.isEnabled()  # 无图时禁用
-
-    def test_tab_has_decode_service(self, qrcode_tab):
-        from vibeocr.services.qrcode_decode_service import QrcodeDecodeService
-
-        assert isinstance(qrcode_tab._decode_service, QrcodeDecodeService)
 
 
 class TestQrcodeTabBehavior:
@@ -114,10 +146,13 @@ class TestQrcodeTabBehavior:
         qrcode_tab._logo_check.setChecked(True)
         assert qrcode_tab._logo_select_btn.isEnabled()
 
-    def test_text_input_triggers_preview(self, qrcode_tab, qtbot):
+    def test_text_input_triggers_preview_via_rpc(self, qrcode_tab, qtbot):
+        """Text input calls generate_qrcode_sync on the backend."""
         qrcode_tab._text_input.setPlainText("Hello World")
         qtbot.wait(400)
         assert qrcode_tab._current_image is not None
+        assert len(qrcode_tab._backend.generate_calls) >= 1
+        assert qrcode_tab._backend.generate_calls[-1][0] == "Hello World"
 
     def test_empty_text_shows_placeholder(self, qrcode_tab, qtbot):
         qrcode_tab._text_input.setPlainText("Hello")
@@ -173,23 +208,21 @@ class TestQrcodeDecodeBehavior:
         qrcode_tab._on_clear_decode()
         assert not qrcode_tab._btn_decode.isEnabled()
 
-    def test_decode_qr_shows_result(self, qrcode_tab, qtbot):
-        from vibeocr.services.qrcode_service import QrcodeService
+    def test_decode_qr_shows_result_via_rpc(self, qrcode_tab, qtbot):
+        """Decode calls decode_qrcode_sync and renders the returned codes."""
+        qrcode_tab._backend.decode_result = [
+            [DecodedCode(data="https://decode-test.example", fmt="QRCODE", is_url=True)]
+        ]
+        from PySide6.QtGui import QPixmap
 
-        gen = QrcodeService()
-        opts = gen.default_options()
-        opts["format"] = "qr"
-        pil_img = gen.generate("https://decode-test.example", opts)
-
-        from vibeocr.views.tabs.qrcode_tab import _pil_to_qpixmap
-
-        pm = _pil_to_qpixmap(pil_img)
+        pm = QPixmap(10, 10)
+        pm.fill()
         qrcode_tab._on_image_input(pm)
         qtbot.waitUntil(lambda: qrcode_tab._btn_decode.isEnabled())
         qrcode_tab._btn_decode.click()
-        # 同步解码，结果立即可用
         assert qrcode_tab._decode_result_list.count() == 1
         assert "1" in qrcode_tab._result_count_label.text()
+        assert len(qrcode_tab._backend.decode_calls) == 1
 
     def test_open_url_calls_desktop_services(self, qrcode_tab, monkeypatch):
         recorded = []
@@ -203,17 +236,16 @@ class TestQrcodeDecodeBehavior:
     def test_copy_all_joins_results(self, qrcode_tab, qtbot):
         from PySide6.QtGui import QGuiApplication
 
-        # 手动塞两条结果到 _decode_results 以测复制逻辑
-        from vibeocr.services.qrcode_decode_service import DecodedItem
-
         qrcode_tab._decode_results = [
-            DecodedItem("a", "QRCODE", False),
-            DecodedItem("b", "QRCODE", False),
+            DecodedCode(data="a", fmt="QRCODE", is_url=False),
+            DecodedCode(data="b", fmt="QRCODE", is_url=False),
         ]
         qrcode_tab._on_copy_all()
         assert QGuiApplication.clipboard().text() == "a\nb"
 
     def test_blank_image_shows_zero_hint(self, qrcode_tab, qtbot):
+        """A blank image decodes to zero codes → hint item shown."""
+        qrcode_tab._backend.decode_result = [[]]
         from PIL import Image
 
         from vibeocr.views.tabs.qrcode_tab import _pil_to_qpixmap
@@ -222,7 +254,6 @@ class TestQrcodeDecodeBehavior:
         pm = _pil_to_qpixmap(blank)
         qrcode_tab._on_image_input(pm)
         qrcode_tab._btn_decode.click()
-        # 空结果时 _decode_results 为空，但列表显示一条提示项
         assert qrcode_tab._decode_results == []
         assert qrcode_tab._decode_result_list.count() == 1  # 提示项
         assert "0" in qrcode_tab._result_count_label.text()

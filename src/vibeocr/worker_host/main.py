@@ -442,6 +442,7 @@ def _build_dispatcher(
         ("pdf.open", True),
         ("qrcode.decode", True),
         ("qrcode.generate", False),
+        ("qrcode.generate_svg", False),
         ("settings.snapshot", True),
     ):
         handler = (domain_handlers or {}).get(method, _not_implemented)

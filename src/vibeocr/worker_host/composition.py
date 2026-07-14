@@ -36,7 +36,11 @@ from vibeocr.worker_host.handlers.pdf import (
     PdfSaveHandler,
     PdfStartOcrHandler,
 )
-from vibeocr.worker_host.handlers.qrcode import QrDecodeHandler, QrGenerateHandler
+from vibeocr.worker_host.handlers.qrcode import (
+    QrDecodeHandler,
+    QrGenerateHandler,
+    QrGenerateSvgHandler,
+)
 from vibeocr.worker_host.handlers.settings import (
     InstallDependencyHandler,
     SettingsSnapshotHandler,
@@ -339,23 +343,62 @@ class QrDecodeAdapter:
 
 
 class QrGenerateAdapter:
+    """Generate a styled QR/barcode image and return PNG bytes.
+
+    Implements the full generate → logo → text-label → invert pipeline that
+    ``QrcodeTab`` previously drove via direct ``QrcodeService`` calls.
+    """
+
     def __init__(self, service_factory: Callable[[], Any]) -> None:
         self._service_factory = service_factory
         self._service: Any | None = None
 
-    def generate(self, data: str, fmt: str, cancel: CancelToken) -> bytes:
+    def generate(self, data: str, options: dict[str, Any], cancel: CancelToken) -> bytes:
         if cancel.is_cancelled:
             raise RuntimeError("QR generation cancelled")
         service = self._service
         if service is None:
             service = self._service_factory()
             self._service = service
-        options = service.default_options()
-        options["format"] = "qr" if fmt == "qrcode" else "code128"
-        image = service.generate(data, options)
+        # Merge caller options over the service defaults so unspecified fields
+        # keep their documented defaults (size, colors, etc.).
+        merged = service.default_options()
+        merged.update(options)
+        image = service.generate(data, merged)
+        if merged.get("logo_path"):
+            image = service.apply_logo(
+                image, merged["logo_path"], merged.get("logo_ratio", 0.2)
+            )
+        label_text = merged.get("label_text") or ""
+        label_position = merged.get("label_position", "bottom")
+        if label_text and label_position != "none":
+            image = service.apply_text_label(
+                image, label_text, label_position, merged.get("label_font_size", 12)
+            )
+        if merged.get("invert"):
+            image = service.invert_colors(image)
         output = io.BytesIO()
         image.save(output, format="PNG")
         return output.getvalue()
+
+
+class QrGenerateSvgAdapter:
+    """Generate a QR code as an SVG string (vector export)."""
+
+    def __init__(self, service_factory: Callable[[], Any]) -> None:
+        self._service_factory = service_factory
+        self._service: Any | None = None
+
+    def generate_svg(self, data: str, options: dict[str, Any], cancel: CancelToken) -> str:
+        if cancel.is_cancelled:
+            raise RuntimeError("QR SVG generation cancelled")
+        service = self._service
+        if service is None:
+            service = self._service_factory()
+            self._service = service
+        merged = service.default_options()
+        merged.update(options)
+        return service.generate_svg(data, merged)
 
 
 class JsonSettingsAdapter:
@@ -486,7 +529,9 @@ class WorkerServiceComposition:
         self._ocr_adapter = OcrServiceAdapter(ocr_factory or default_ocr)
         self._pdf_adapter = PdfBackendAdapter(pdf_factory or default_pdf)
         self._qr_decode = QrDecodeAdapter(qr_decode_factory or default_qr_decode)
-        self._qr_generate = QrGenerateAdapter(qr_generate_factory or default_qr_generate)
+        qr_generate_svc_factory = qr_generate_factory or default_qr_generate
+        self._qr_generate = QrGenerateAdapter(qr_generate_svc_factory)
+        self._qr_generate_svg = QrGenerateSvgAdapter(qr_generate_svc_factory)
         self._settings = JsonSettingsAdapter(self.paths, resolver)
 
     def handlers(self, store: SharedPayloadStore) -> dict[str, Handler]:
@@ -514,6 +559,9 @@ class WorkerServiceComposition:
             "qrcode.generate": QrGenerateHandler(
                 facade=self._qr_generate, store=store
             ).handle,
+            "qrcode.generate_svg": QrGenerateSvgHandler(
+                facade=self._qr_generate_svg
+            ).handle,
             "settings.snapshot": SettingsSnapshotHandler(
                 facade=SettingsFacade(self._settings)
             ).handle,
@@ -539,5 +587,6 @@ __all__ = [
     "PdfBackendAdapter",
     "QrDecodeAdapter",
     "QrGenerateAdapter",
+    "QrGenerateSvgAdapter",
     "WorkerServiceComposition",
 ]

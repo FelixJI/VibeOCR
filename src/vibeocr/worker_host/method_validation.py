@@ -414,21 +414,84 @@ def _response_qr_decode(p: dict[str, Any]) -> None:
             _boolean(code["is_url"], f"codes[{index}].is_url")
 
 
+_HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
+
+
+def _optional_hex_color(p: dict[str, Any], key: str) -> None:
+    if key in p:
+        if not isinstance(p[key], str) or not _HEX_COLOR_RE.match(p[key]):
+            raise MethodPayloadError(f"{key} must be a #RRGGBB hex color")
+
+
 def _request_qr_generate(p: dict[str, Any]) -> None:
     _closed(
         p,
         required={"data"},
-        optional={"format"},
+        optional={
+            "format",
+            "barcode_format",
+            "size",
+            "error_correction",
+            "fg_color",
+            "bg_color",
+            "invert",
+            "logo_path",
+            "logo_ratio",
+            "label_text",
+            "label_position",
+            "label_font_size",
+        },
         label="qrcode.generate request",
     )
     _string(p["data"], "data")
     if "format" in p and p["format"] not in ("qrcode", "barcode"):
         raise MethodPayloadError("format must be qrcode or barcode")
+    if "barcode_format" in p:
+        _string(p["barcode_format"], "barcode_format")
+    if "size" in p:
+        _integer(p["size"], "size", minimum=32)
+    if "error_correction" in p and p["error_correction"] not in ("L", "M", "Q", "H"):
+        raise MethodPayloadError("error_correction must be L, M, Q or H")
+    _optional_hex_color(p, "fg_color")
+    _optional_hex_color(p, "bg_color")
+    if "invert" in p:
+        _boolean(p["invert"], "invert")
+    if "logo_path" in p and p["logo_path"] is not None:
+        _string(p["logo_path"], "logo_path")
+    if "logo_ratio" in p:
+        ratio = p["logo_ratio"]
+        if isinstance(ratio, bool) or not isinstance(ratio, (int, float)) or not 0.01 <= ratio <= 0.9:
+            raise MethodPayloadError("logo_ratio must be a number in [0.01, 0.9]")
+    if "label_text" in p:
+        _string(p["label_text"], "label_text", allow_empty=True)
+    if "label_position" in p and p["label_position"] not in ("bottom", "top", "none"):
+        raise MethodPayloadError("label_position must be bottom, top or none")
+    if "label_font_size" in p:
+        _integer(p["label_font_size"], "label_font_size", minimum=6)
 
 
 def _response_qr_generate(p: dict[str, Any]) -> None:
     _closed(p, required={"image"}, label="qrcode.generate response")
     _shared_ref(p["image"], "image")
+
+
+def _request_qr_generate_svg(p: dict[str, Any]) -> None:
+    _closed(
+        p,
+        required={"data"},
+        optional={"error_correction", "fg_color", "bg_color"},
+        label="qrcode.generate_svg request",
+    )
+    _string(p["data"], "data")
+    if "error_correction" in p and p["error_correction"] not in ("L", "M", "Q", "H"):
+        raise MethodPayloadError("error_correction must be L, M, Q or H")
+    _optional_hex_color(p, "fg_color")
+    _optional_hex_color(p, "bg_color")
+
+
+def _response_qr_generate_svg(p: dict[str, Any]) -> None:
+    _closed(p, required={"svg"}, label="qrcode.generate_svg response")
+    _string(p["svg"], "svg")
 
 
 def _request_settings(p: dict[str, Any]) -> None:
@@ -522,6 +585,7 @@ _VALIDATORS: dict[str, tuple[Validator, Validator]] = {
     "pdf.start_ocr": (_request_pdf_start_ocr, _response_pdf_start_ocr),
     "qrcode.decode": (_request_qr_decode, _response_qr_decode),
     "qrcode.generate": (_request_qr_generate, _response_qr_generate),
+    "qrcode.generate_svg": (_request_qr_generate_svg, _response_qr_generate_svg),
     "settings.snapshot": (_request_settings, _response_settings),
     "settings.switch_backend": (_request_switch_backend, _response_switch_backend),
     "settings.install_dependency": (_request_install_dependency, _response_install_dependency),
