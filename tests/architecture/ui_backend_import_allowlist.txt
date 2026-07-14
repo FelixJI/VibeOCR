@@ -1,7 +1,7 @@
 # Frozen baseline of PySide UI -> backend direct imports.
 # Phase 0 architecture allowlist. Only-shrink ratchet.
 # Format: <posix-file-path>:<line>
-# Total: 88  (services=36, models=21, core=17, managers=12, workers=2)
+# Total: 86  (services=34, models=21, core=17, managers=12, workers=2)
 #
 # Each line is a "file:line" key. A migration slice succeeds when
 # it removes entries here. NEW entries not in this file fail the
@@ -58,7 +58,6 @@ src/vibeocr/views/tabs/pdf_tab.py:54
 src/vibeocr/views/tabs/pdf_tab.py:303
 src/vibeocr/views/tabs/pdf_tab.py:2179
 src/vibeocr/views/tabs/pdf_tab.py:2326
-src/vibeocr/views/tabs/single_recognition_tab.py:20
 src/vibeocr/views/tabs/single_recognition_tab.py:312
 src/vibeocr/views/tabs/single_recognition_tab.py:355
 src/vibeocr/views/tabs/single_recognition_tab.py:370
@@ -85,7 +84,6 @@ src/vibeocr/widgets/recognition_panel.py:14
 src/vibeocr/widgets/result_view_widget.py:30
 src/vibeocr/widgets/result_view_widget.py:112
 src/vibeocr/widgets/result_view_widget.py:272
-src/vibeocr/widgets/result_view_widget.py:277
 src/vibeocr/widgets/result_view_widget.py:940
 src/vibeocr/widgets/screen_capture_overlay.py:426
 src/vibeocr/widgets/screen_capture_overlay.py:427

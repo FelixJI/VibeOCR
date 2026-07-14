@@ -17,8 +17,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from vibeocr.services.text_block_processor import TextBlockProcessor
 from vibeocr.ui import theme
+from vibeocr.utils.text_layout import TextBlockProcessor
 from vibeocr.views.tabs.base_tab import BaseOcrTab
 from vibeocr.widgets.preprocess_options_widget import PreprocessOptionsWidget
 from vibeocr.widgets.preview_widget import PreviewWidget
