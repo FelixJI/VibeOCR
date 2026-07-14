@@ -109,7 +109,7 @@ def _render_title(block: dict, index: int) -> str:
 
 
 def _render_table(block: dict, index: int) -> str:
-    from vibeocr.services.ocr_service import normalize_table_html
+    from vibeocr.utils.html_tables import normalize_table_html
 
     parts: list[str] = []
     captions = block.get("table_caption") or []

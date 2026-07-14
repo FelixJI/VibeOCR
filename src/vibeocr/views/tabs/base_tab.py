@@ -256,7 +256,7 @@ class BaseOcrTab(QWidget):
 
         # markdown/html 难以精确替换单个表格，全量重建最稳妥
         if result.has_content_list:
-            from vibeocr.services.ocr_service import (
+            from vibeocr.utils.html_tables import (
                 _extract_table_html,
                 _html_table_to_markdown,
             )
