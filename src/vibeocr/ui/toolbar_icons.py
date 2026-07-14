@@ -1,7 +1,7 @@
-# src/vibeocr/core/toolbar_icons.py
-"""截图工具栏 SVG 图标资源
+"""截图工具栏 SVG 图标资源（UI 层）。
 
-使用 Lucide 图标的 SVG 内容，通过 QSvgRenderer 渲染为 QIcon。
+使用 Lucide 图标的 SVG 内容，通过 QSvgRenderer 渲染为 QIcon。按 ADR §5.2，
+图标资源渲染属于 UI 层；从 ``vibeocr.core.toolbar_icons`` 迁移（Phase 4 预备）。
 """
 
 from PySide6.QtCore import QSize, Qt

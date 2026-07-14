@@ -28,8 +28,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from vibeocr.core.toolbar_icons import toolbar_icon
 from vibeocr.ui import theme
+from vibeocr.ui.toolbar_icons import toolbar_icon
 
 logger = logging.getLogger(__name__)
 

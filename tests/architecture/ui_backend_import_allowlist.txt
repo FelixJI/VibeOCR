@@ -1,7 +1,7 @@
 # Frozen baseline of PySide UI -> backend direct imports.
 # Phase 0 architecture allowlist. Only-shrink ratchet.
 # Format: <posix-file-path>:<line>
-# Total: 84  (services=32, models=21, core=17, managers=12, workers=2)
+# Total: 83  (services=32, models=21, core=16, managers=12, workers=2)
 #
 # Each line is a "file:line" key. A migration slice succeeds when
 # it removes entries here. NEW entries not in this file fail the
@@ -90,4 +90,3 @@ src/vibeocr/widgets/screen_capture_overlay.py:435
 src/vibeocr/widgets/screenshot_options_widget.py:26
 src/vibeocr/widgets/screenshot_options_widget.py:32
 src/vibeocr/widgets/text_block_options_widget.py:22
-src/vibeocr/widgets/toolbar.py:31
