@@ -49,4 +49,12 @@ public sealed partial class QrCodePage : Page
         if (image is null) return;
         await _saveCommands.SaveAsync(image, "qrcode.png", CancellationToken.None);
     }
+
+    private void OnPivotSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_generateActions is null || _decodeActions is null) return;
+        bool isDecode = e.AddedItems.Count > 0 && (e.AddedItems[0] as PivotItem)?.Header is string header && header is "识别";
+        _generateActions.Visibility = isDecode ? Visibility.Collapsed : Visibility.Visible;
+        _decodeActions.Visibility = isDecode ? Visibility.Visible : Visibility.Collapsed;
+    }
 }
