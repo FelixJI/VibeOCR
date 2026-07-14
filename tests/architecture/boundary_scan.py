@@ -22,13 +22,18 @@ if TYPE_CHECKING:
 # Packages that constitute the "backend" — the UI must not import these
 # directly. Phase 4 will physical-split these into a real workspace package;
 # until then the names match the current src/vibeocr/ sub-packages.
+#
+# NOTE: ``models`` is excluded — per ADR §5.3, pure data models (OCROptions,
+# OCRResult, TextBlockOptions, ExportSettings, PdfGlobalSettings, etc.) are
+# shared DTOs allowed on both sides. They are Qt-free dataclasses/enums.
+# (pdf_document.py has a QPixmap field — a known Phase-4 debt to split out,
+# tracked separately; it is not imported by the UI layer.)
 BACKEND_PACKAGES: frozenset[str] = frozenset(
     {
         "services",
         "managers",
         "workers",
         "core",
-        "models",
         "application",
         "migration",
     }
