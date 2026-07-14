@@ -1,7 +1,7 @@
 # Frozen baseline of PySide UI -> backend direct imports.
 # Phase 0 architecture allowlist. Only-shrink ratchet.
 # Format: <posix-file-path>:<line>
-# Total: 83  (services=32, models=21, core=16, managers=12, workers=2)
+# Total: 74  (services=25, models=21, core=14, managers=12, workers=2)
 #
 # Each line is a "file:line" key. A migration slice succeeds when
 # it removes entries here. NEW entries not in this file fail the
@@ -57,15 +57,6 @@ src/vibeocr/views/tabs/pdf_tab.py:54
 src/vibeocr/views/tabs/pdf_tab.py:303
 src/vibeocr/views/tabs/pdf_tab.py:2179
 src/vibeocr/views/tabs/pdf_tab.py:2326
-src/vibeocr/views/tabs/single_recognition_tab.py:312
-src/vibeocr/views/tabs/single_recognition_tab.py:355
-src/vibeocr/views/tabs/single_recognition_tab.py:370
-src/vibeocr/views/tabs/single_recognition_tab.py:415
-src/vibeocr/views/tabs/single_recognition_tab.py:416
-src/vibeocr/views/tabs/single_recognition_tab.py:425
-src/vibeocr/views/tabs/single_recognition_tab.py:435
-src/vibeocr/views/tabs/single_recognition_tab.py:451
-src/vibeocr/views/tabs/single_recognition_tab.py:486
 src/vibeocr/widgets/export_settings_widget.py:21
 src/vibeocr/widgets/export_settings_widget.py:101
 src/vibeocr/widgets/export_settings_widget.py:129

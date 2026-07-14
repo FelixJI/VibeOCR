@@ -194,14 +194,31 @@ def _response_ocr(p: dict[str, Any]) -> None:
     _closed(
         p,
         required={"text", "pipeline"},
-        optional={"raw_blocks", "markdown_text", "html_text", "raw_text"},
+        optional={
+            "raw_blocks",
+            "markdown_text",
+            "html_text",
+            "raw_text",
+            "text_blocks",
+            "text_with_scores",
+            "content_list",
+            "image_width",
+            "image_height",
+        },
         label="ocr.recognize response",
     )
     _string(p["text"], "text", allow_empty=True)
     if p["pipeline"] not in _PIPELINES:
         raise MethodPayloadError("pipeline is not supported by protocol v1")
-    if "raw_blocks" in p and not isinstance(p["raw_blocks"], list):
-        raise MethodPayloadError("raw_blocks must be an array")
+    for arr_name in ("raw_blocks", "text_blocks", "content_list"):
+        if arr_name in p and not isinstance(p[arr_name], list):
+            raise MethodPayloadError(f"{arr_name} must be an array")
+    if "text_with_scores" in p:
+        if not isinstance(p["text_with_scores"], list):
+            raise MethodPayloadError("text_with_scores must be an array")
+    for int_name in ("image_width", "image_height"):
+        if int_name in p:
+            _integer(p[int_name], int_name)
     for name in ("markdown_text", "html_text", "raw_text"):
         if name in p:
             _string(p[name], name, allow_empty=True)

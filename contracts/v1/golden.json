@@ -153,7 +153,17 @@
         "result": {
           "text": "Hello",
           "pipeline": "OCR",
-          "raw_blocks": []
+          "raw_blocks": [],
+          "markdown_text": "Hello",
+          "html_text": "",
+          "raw_text": "Hello",
+          "text_blocks": [
+            {"text": "Hello", "bbox": [0, 0, 100, 100], "confidence": 0.95, "order": 0}
+          ],
+          "text_with_scores": [["Hello", 0.95]],
+          "content_list": [],
+          "image_width": 800,
+          "image_height": 600
         }
       }
     },

@@ -92,6 +92,44 @@ async def test_ocr_handler_maps_payload_to_result(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_ocr_handler_returns_enriched_result_fields() -> None:
+    """The enriched ocr.recognize response carries text_blocks/scores/dims."""
+
+    class _EnrichedFacade:
+        last_request: OcrRequest | None = None
+
+        def recognize(self, request: OcrRequest, cancel: CancelToken) -> OcrResult:
+            _EnrichedFacade.last_request = request
+            return OcrResult(
+                text="Hello",
+                raw_blocks=[{"type": "text", "text": "Hello"}],
+                pipeline="OCR",
+                markdown_text="Hello",
+                html_text="<p>Hello</p>",
+                raw_text="Hello",
+                text_blocks=[
+                    {"text": "Hello", "bbox": [0, 0, 100, 100], "score": 0.95, "order": 0}
+                ],
+                text_with_scores=[["Hello", 0.95]],
+                content_list=[{"type": "text", "text": "Hello"}],
+                image_width=800,
+                image_height=600,
+            )
+
+    store = _FakePayloadStore(b"\x89PNG fake")
+    handler = OcrHandler(facade=_EnrichedFacade(), store=store)  # type: ignore[arg-type]
+    payload = {"image": _descriptor(store.last_bytes), "pipeline": "OCR"}
+    result = await handler.handle(payload, CancelToken())
+    assert result["text_blocks"] == [
+        {"text": "Hello", "bbox": [0, 0, 100, 100], "score": 0.95, "order": 0}
+    ]
+    assert result["text_with_scores"] == [["Hello", 0.95]]
+    assert result["content_list"] == [{"type": "text", "text": "Hello"}]
+    assert result["image_width"] == 800
+    assert result["image_height"] == 600
+
+
+@pytest.mark.asyncio
 async def test_ocr_handler_maps_ocr_error() -> None:
     class _FailingFacade:
         def recognize(self, request: OcrRequest, cancel: CancelToken) -> OcrResult:

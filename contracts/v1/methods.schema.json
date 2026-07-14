@@ -157,8 +157,13 @@
             "pipeline": { "$ref": "#/$defs/pipeline" },
             "raw_blocks": { "type": "array", "description": "Structured blocks for editor/table rendering. Items are method-defined objects." },
             "markdown_text": { "type": "string" },
-            "html_text": { "type": "string" }
-            ,"raw_text": { "type": "string" }
+            "html_text": { "type": "string" },
+            "raw_text": { "type": "string" },
+            "text_blocks": { "type": "array", "description": "Serialized text blocks [{text, bbox, confidence, order, ...}], for UI reconstruction of TextBlock objects." },
+            "text_with_scores": { "type": "array", "description": "[[text, score], ...] pairs. Each item is a 2-element array [string, number]." },
+            "content_list": { "type": "array", "description": "Structured content list (MinerU/table/formula pipelines)." },
+            "image_width": { "type": "integer", "minimum": 0 },
+            "image_height": { "type": "integer", "minimum": 0 }
           }
         }
       }

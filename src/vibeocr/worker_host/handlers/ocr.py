@@ -56,14 +56,21 @@ class OcrHandler:
             result = await asyncio.to_thread(self._facade.recognize, request, cancel)
         except OcrError as exc:
             raise WorkerError(ErrorCode.INTERNAL_ERROR, str(exc)) from exc
-        return {
+        response: dict[str, Any] = {
             "text": result.text,
             "pipeline": result.pipeline,
             "raw_blocks": list(result.raw_blocks),
             "markdown_text": result.markdown_text,
             "html_text": result.html_text,
             "raw_text": result.raw_text or result.text,
+            "text_blocks": list(result.text_blocks),
+            "text_with_scores": list(result.text_with_scores),
+            "content_list": list(result.content_list),
+            "image_width": result.image_width,
+            "image_height": result.image_height,
         }
+        # preprocessed_image, if present, is staged in shared memory.
+        return response
 
 
 class OcrExportHandler:

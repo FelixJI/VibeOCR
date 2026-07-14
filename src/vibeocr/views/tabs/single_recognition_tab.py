@@ -1,10 +1,8 @@
 """单次识别标签页"""
 
-import io
 import logging
 from pathlib import Path
 
-from PIL import Image
 from PySide6.QtCore import QBuffer, QTimer, Signal
 from PySide6.QtGui import QGuiApplication, QPixmap
 from PySide6.QtWidgets import (
@@ -46,7 +44,7 @@ class SingleRecognitionTab(BaseOcrTab):
     # 不发信号以免无谓抢焦点。
     bring_to_front_requested = Signal()
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, *, backend=None):
         super().__init__(parent)
         self._closing = False
         self._pending_pixmap: QPixmap | None = None
@@ -54,6 +52,8 @@ class SingleRecognitionTab(BaseOcrTab):
         # 本次识别是否来自截图（由 run_ocr 的 from_screenshot 参数设置）。
         # _on_ocr_finished 据此决定是否发 bring_to_front_requested。
         self._ocr_from_screenshot: bool = False
+        # RPC 后端（SyncBackendClient）；测试可注入 fake。为 None 时延迟创建。
+        self._backend = backend
         self._setup_ui()
         self._connect_signals()
         self._init_options_from_preferences(batch=False)
@@ -302,6 +302,9 @@ class SingleRecognitionTab(BaseOcrTab):
     ) -> None:
         """执行 OCR 识别（入口方法，由 MainWindow 调用）
 
+        通过 RPC 后端（SyncBackendClient）调用独占 WorkerHost 的 ocr.recognize，
+        不再直接 import 后端 OCR 服务（ADR §5.1）。
+
         Args:
             pixmap: 待识别图片。
             options: OCR 选项；为 None 时从界面面板读取。
@@ -309,8 +312,6 @@ class SingleRecognitionTab(BaseOcrTab):
                 (_on_ocr_finished) 会发出 bring_to_front_requested，让 MainWindow
                 重新把主窗口提到前台。文件/粘贴来源传 False，避免无谓抢焦点。
         """
-        from vibeocr.services import USE_SUBPROCESS
-
         # 记录识别来源，_on_ocr_finished / _on_ocr_error 据此决定是否发前置信号。
         self._ocr_from_screenshot = from_screenshot
 
@@ -325,8 +326,9 @@ class SingleRecognitionTab(BaseOcrTab):
         if options is None:
             options = self._build_options_from_ui()
 
-        # 首次使用提示
         pipeline_val = options.pipeline.value
+
+        # 首次使用提示
         if pipeline_val in (
             "OCR",
             "PP-StructureV3",
@@ -351,32 +353,18 @@ class SingleRecognitionTab(BaseOcrTab):
         image_data = bytes(buffer.data().data())
         buffer.close()
 
-        if USE_SUBPROCESS:
-            from vibeocr.core.constants import Constants
-            from vibeocr.utils.qt_async import run_coroutine
-
-            # 兜底超时:底层 IPC 超时(60-600s)会先触发,此值仅防止协程
-            # 在 worker 卡死且 IPC 未响应的边缘场景下永久挂起。
-            run_coroutine(
-                self._perform_ocr_async(image_data, options),
-                timeout=Constants.Timeout.MINERU_HTTP_TOTAL,
+        try:
+            result = self._call_backend_recognize(image_data, pipeline_val)
+            if self._closing:
+                return
+            self._on_ocr_finished(result)
+        except Exception as e:
+            if self._closing:
+                return
+            logger.error(f"OCR 识别失败: {e}", exc_info=True)
+            self._on_ocr_error(
+                str(e) + self._first_use_suffix(pipeline_val, str(e))
             )
-        else:
-            try:
-                pil_image = Image.open(io.BytesIO(image_data))
-                import numpy as np
-
-                image_array = np.array(pil_image)
-                from vibeocr.services import get_ocr_service
-
-                ocr_service = get_ocr_service()
-                result = ocr_service.recognize(image_array, options)
-                self._on_ocr_finished(result)
-            except Exception as e:
-                logger.error(f"OCR 识别失败: {e}", exc_info=True)
-                self._on_ocr_error(
-                    str(e) + self._first_use_suffix(options.pipeline.value, str(e))
-                )
 
     def process_file(self, file_path: str) -> None:
         """处理文件（由 MainWindow 调用，支持 PDF/Office/图片）"""
@@ -411,115 +399,51 @@ class SingleRecognitionTab(BaseOcrTab):
                 self.run_ocr(pixmap)
 
     def _run_ocr_with_data(self, data: bytes, mime_type: str, filename: str) -> None:
-        """使用原始文件数据进行 OCR"""
-        from vibeocr.services import USE_SUBPROCESS
-        from vibeocr.services.ocr_service import OCRPipeline
+        """使用原始文件数据进行 OCR（文档解析管道）。
 
+        通过 RPC 后端调用 ocr.recognize，pipeline=DOCUMENT_PARSING。
+        """
         self._result_widget.clear()
         QApplication.processEvents()
 
-        options = self._build_options_from_ui()
-        options.pipeline = OCRPipeline.DOCUMENT_PARSING
-
-        if USE_SUBPROCESS:
-            from vibeocr.core.constants import Constants
-            from vibeocr.utils.qt_async import run_coroutine
-
-            # 兜底超时:文档解析(MinerU)可能很慢,用 MINERU_HTTP_TOTAL(30 分钟)
-            run_coroutine(
-                self._perform_ocr_with_data_async(data, mime_type, filename, options),
-                timeout=Constants.Timeout.MINERU_HTTP_TOTAL,
-            )
-        else:
-            try:
-                from vibeocr.services import get_ocr_service
-
-                ocr_service = get_ocr_service()
-                result = ocr_service.recognize(data, options)
-                self._on_ocr_finished(result)
-            except Exception as e:
-                logger.error(f"OCR 识别失败: {e}", exc_info=True)
-                self._on_ocr_error(
-                    str(e) + self._first_use_suffix(options.pipeline.value, str(e))
-                )
-
-    async def _perform_ocr_async(self, image_data: bytes, options) -> None:
         try:
+            result = self._call_backend_recognize(data, "DOCUMENT_PARSING")
             if self._closing:
                 return
-
-            from vibeocr.services import get_ocr_service
-
-            ocr_service = get_ocr_service()
-
-            if self._closing:
-                return
-
-            if hasattr(ocr_service, "is_ready"):
-                ready = ocr_service.is_ready()
-                if not ready:
-                    raise RuntimeError("OCR 服务未就绪，请稍后再试")
-
-            import asyncio
-
-            result = await asyncio.get_event_loop().run_in_executor(
-                None, lambda: ocr_service.recognize(image_data, options)
-            )
-
-            if self._closing:
-                return
-
             self._on_ocr_finished(result)
         except Exception as e:
             if self._closing:
                 return
-            logger.error(f"[异步OCR] 识别失败: {e}", exc_info=True)
-            self._on_ocr_error(str(e) + self._first_use_suffix(options.pipeline.value, str(e)))
+            logger.error(f"OCR 识别失败: {e}", exc_info=True)
+            self._on_ocr_error(str(e) + self._first_use_suffix("DOCUMENT_PARSING", str(e)))
 
-    async def _perform_ocr_with_data_async(
-        self, data: bytes, mime_type: str, filename: str, options
-    ) -> None:
+    # -- backend bridge (sync RPC over the exclusive WorkerHost) --------
+
+    def _ensure_backend(self):
+        """Lazily create the SyncBackendClient on first use."""
+        if self._backend is None:
+            from vibeocr.worker_host.sync_client import SyncBackendClient
+
+            self._backend = SyncBackendClient()
+        start = getattr(self._backend, "start", None)
+        if callable(start):
+            start(profile="winui-dev", frontend_id="pyside")
+
+    def _call_backend_recognize(self, image_data: bytes, pipeline: str):
+        """Call ocr.recognize via RPC; restart worker on transient failure."""
+        self._ensure_backend()
         try:
-            if self._closing:
-                return
+            return self._backend.recognize_sync(image_data, pipeline=pipeline)
+        except Exception:
+            # Worker died; restart once and retry.
+            shutdown = getattr(self._backend, "shutdown", None)
+            if callable(shutdown):
+                shutdown()
+            from vibeocr.worker_host.sync_client import SyncBackendClient
 
-            from vibeocr.services import get_ocr_service
-
-            ocr_service = get_ocr_service()
-
-            if self._closing:
-                return
-
-            if hasattr(ocr_service, "is_ready"):
-                ready = ocr_service.is_ready()
-                if not ready:
-                    raise RuntimeError("OCR 服务未就绪，请稍后再试")
-
-            original_to_dict = options.to_dict
-            options.to_dict = lambda: {  # type: ignore[assignment]
-                **original_to_dict(),
-                "mime_type": mime_type,
-                "file_path": filename,
-            }
-
-            try:
-                import asyncio
-
-                result = await asyncio.get_event_loop().run_in_executor(
-                    None, lambda: ocr_service.recognize(data, options)
-                )
-            finally:
-                options.to_dict = original_to_dict  # type: ignore[assignment]
-
-            if self._closing:
-                return
-
-            self._on_ocr_finished(result)
-        except Exception as e:
-            if self._closing:
-                return
-            logger.error(f"[异步OCR] 识别失败: {e}", exc_info=True)
-            self._on_ocr_error(str(e) + self._first_use_suffix(options.pipeline.value, str(e)))
+            self._backend = SyncBackendClient()
+            self._ensure_backend()
+            return self._backend.recognize_sync(image_data, pipeline=pipeline)
 
     def _on_result_block_edited(self, index: int, new_text: str) -> None:
         """右侧结果块被编辑后同步更新数据模型。

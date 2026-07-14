@@ -244,6 +244,27 @@ class BackendClient:
         await self._store.release_owned(ref.name)
         return codes
 
+    async def recognize(
+        self,
+        image_bytes: bytes,
+        *,
+        pipeline: str = "OCR",
+        language: str | None = None,
+    ) -> dict[str, Any]:
+        """Run OCR on ``image_bytes`` via ``ocr.recognize``.
+
+        The image is staged in client-owned shared memory. Returns the raw
+        response dict (text, pipeline, raw_blocks, text_blocks,
+        text_with_scores, content_list, image_width, image_height, etc.).
+        """
+        ref = await self._store.put(image_bytes, media_type="image/png")
+        payload: dict[str, Any] = {"image": ref.to_descriptor(), "pipeline": pipeline}
+        if language is not None:
+            payload["language"] = language
+        result = await self.call("ocr.recognize", payload)
+        await self._store.release_owned(ref.name)
+        return result
+
     async def generate_qrcode(
         self, data: str, *, options: dict[str, Any] | None = None
     ) -> bytes:

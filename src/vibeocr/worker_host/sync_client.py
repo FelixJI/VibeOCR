@@ -242,6 +242,29 @@ class SyncBackendClient:
         assert self._client is not None
         return self._run_sync(self._client.decode_qrcode(image_bytes))
 
+    def recognize_sync(
+        self,
+        image_bytes: bytes,
+        *,
+        pipeline: str = "OCR",
+        language: str | None = None,
+        timeout: float = 300.0,
+    ) -> Any:
+        """Run OCR via ``ocr.recognize`` and reconstruct an ``OCRResult``.
+
+        Blocks until the RPC completes (up to ``timeout`` seconds). Returns a
+        ``vibeocr.models.ocr_result.OCRResult`` reconstructed from the wire
+        response (text_blocks deserialized into ``TextBlock`` objects).
+        """
+        assert self._client is not None
+        raw = self._run_sync(
+            self._client.recognize(
+                image_bytes, pipeline=pipeline, language=language
+            ),
+            timeout=timeout,
+        )
+        return _reconstruct_ocr_result(raw)
+
 
 class _suppress:
     """Inline contextlib.suppress."""
@@ -259,6 +282,59 @@ class _suppress:
         tb: object,
     ) -> bool:
         return exc_type is not None and issubclass(exc_type, self._exceptions)
+
+
+def _reconstruct_ocr_result(raw: dict[str, Any]) -> Any:
+    """Reconstruct a ``vibeocr.models.ocr_result.OCRResult`` from a wire dict.
+
+    Deserializes ``text_blocks`` dicts back into ``TextBlock`` dataclass
+    instances and ``text_with_scores`` [[text, score], ...] into tuples.
+    """
+    from vibeocr.models.ocr_result import OCRResult, TextBlock
+
+    raw_text = str(raw.get("raw_text") or raw.get("text") or "")
+    markdown_text = str(raw.get("markdown_text") or "")
+    html_text = str(raw.get("html_text") or "")
+    pipeline_type = str(raw.get("pipeline") or "OCR")
+
+    # Deserialize text_blocks: dicts → TextBlock objects.
+    text_blocks: list[Any] = []
+    for blk in raw.get("text_blocks", []) or []:
+        if isinstance(blk, dict):
+            bbox = blk.get("bbox")
+            if bbox is not None and not isinstance(bbox, (list, tuple)):
+                bbox = None
+            text_blocks.append(
+                TextBlock(
+                    text=str(blk.get("text", "")),
+                    score=float(blk.get("score", blk.get("confidence", 0.0))),
+                    bbox=tuple(bbox) if bbox is not None else None,  # type: ignore[arg-type]
+                    content_index=blk.get("content_index"),
+                    order=int(blk.get("order", -1)),
+                )
+            )
+
+    # text_with_scores: [[text, score], ...] → [(text, score), ...]
+    tws_raw = raw.get("text_with_scores", []) or []
+    text_with_scores = [
+        (str(pair[0]), float(pair[1]))
+        for pair in tws_raw
+        if isinstance(pair, (list, tuple)) and len(pair) == 2
+    ]
+
+    content_list = list(raw.get("content_list", []) or [])
+
+    return OCRResult(
+        raw_text=raw_text,
+        markdown_text=markdown_text,
+        html_text=html_text,
+        text_with_scores=text_with_scores,
+        pipeline_type=pipeline_type,
+        content_list=content_list,
+        text_blocks=text_blocks,
+        image_width=int(raw.get("image_width", 0) or 0),
+        image_height=int(raw.get("image_height", 0) or 0),
+    )
 
 
 __all__ = ["SyncBackendClient", "SyncBackendError"]
