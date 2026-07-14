@@ -2,6 +2,13 @@
 
 ## [Unreleased] - WinUI 切换候选（Phase 4–5）
 
+### Fixed — 布局对齐与 DPI 修复
+- fix(winui): 声明 PerMonitorV2 DPI 感知（app.manifest），修复高 DPI 显示器界面发虚模糊
+- fix(winui): 主窗口默认 900×600 + 最小尺寸（720×480）+ 记忆窗口几何（winui-layout.json）
+- refactor(winui): 各功能页布局参照 PySide6 重新对齐（单图两栏 / 批量三栏 / 二维码两栏+Pivot / PDF 两栏 / 设置分组卡片 / 关于双栏卡片）
+- refactor(winui): 热键、开机启动、隐藏到托盘选项从关于页迁移到设置页"应用设置"分组
+- feat(winui): WindowLayoutStore 窗口几何持久化（4 单测）；占位控件统一灰色禁用 + "功能开发中"
+
 ### Added — Phase 4 完整功能对等
 - feat(winui): 批量识别对等（BatchViewModel/Commands/Page + 14 测试 + E2E）
 - feat(winui): 二维码/条码对等（QrCodeViewModel + is_url 跨语言契约 + 16 测试 + E2E）

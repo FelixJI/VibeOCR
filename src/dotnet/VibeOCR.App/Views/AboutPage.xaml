@@ -2,41 +2,55 @@
     x:Class="VibeOCR.App.Views.AboutPage"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
-    <Grid Padding="28" RowSpacing="14">
-        <Grid.RowDefinitions>
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="*" />
-        </Grid.RowDefinitions>
+    <ScrollViewer Padding="8">
+        <Grid MaxWidth="980" HorizontalAlignment="Center" ColumnSpacing="16">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
 
-        <TextBlock Grid.Row="0" FontSize="28" FontWeight="SemiBold" Text="关于 VibeOCR" />
+            <!-- 左栏：品牌 + 详细信息 -->
+            <StackPanel Grid.Column="0" Spacing="12">
+                <Border Padding="20" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" CornerRadius="8">
+                    <StackPanel Spacing="6">
+                        <TextBlock FontSize="24" FontWeight="Bold" Text="VibeOCR" />
+                        <Border HorizontalAlignment="Left" Padding="8,2" Background="{ThemeResource AccentFillColorDefaultBrush}" CornerRadius="10">
+                            <TextBlock FontSize="11" Text="{x:Bind Shell.AppVersion, Mode=OneWay}" />
+                        </Border>
+                        <TextBlock Opacity="0.7" TextWrapping="Wrap" Text="基于 PaddleOCR 的多场景 OCR / PDF 处理 / 二维码工具。" />
+                    </StackPanel>
+                </Border>
+                <Border Padding="20" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" CornerRadius="8">
+                    <StackPanel Spacing="4">
+                        <TextBlock FontWeight="SemiBold" Text="详细信息" />
+                        <TextBlock><Run Text="版本：" /><Run Text="{x:Bind Shell.AppVersion, Mode=OneWay}" /></TextBlock>
+                        <TextBlock><Run Text="许可：" /><Run Text="{x:Bind Shell.License, Mode=OneWay}" /></TextBlock>
+                        <TextBlock Text="技术栈：.NET 10 · WinUI 3 · WebView2 · PaddleOCR" TextWrapping="Wrap" />
+                        <HyperlinkButton Content="项目主页" NavigateUri="{x:Bind Shell.ProjectUri, Mode=OneWay}" />
+                        <HyperlinkButton Content="GitHub 源码" NavigateUri="{x:Bind Shell.ProjectUri, Mode=OneWay}" />
+                    </StackPanel>
+                </Border>
+            </StackPanel>
 
-        <StackPanel Grid.Row="1" Spacing="4">
-            <TextBlock><Run Text="版本：" /><Run Text="{x:Bind Shell.AppVersion, Mode=OneWay}" /></TextBlock>
-            <TextBlock><Run Text="许可：" /><Run Text="{x:Bind Shell.License, Mode=OneWay}" /></TextBlock>
-            <HyperlinkButton Content="项目主页" NavigateUri="{x:Bind Shell.ProjectUri, Mode=OneWay}" />
-        </StackPanel>
-
-        <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="8">
-            <TextBlock VerticalAlignment="Center" Text="快捷键：" />
-            <TextBox Width="140" Text="{x:Bind Shell.PendingHotkey, Mode=TwoWay}" />
-            <Button Click="OnApplyHotkeyClicked" Content="应用" />
-            <TextBlock VerticalAlignment="Center" Text="{x:Bind Shell.HotkeyStatus, Mode=OneWay}" />
-        </StackPanel>
-
-        <StackPanel Grid.Row="3" Orientation="Horizontal" Spacing="8">
-            <CheckBox Content="开机启动" IsChecked="{x:Bind Shell.StartWithSystem, Mode=TwoWay}" Click="OnStartupClicked" />
-            <Button Click="OnHideToTrayClicked" Content="隐藏到托盘" />
-            <Button Click="OnQuitClicked" Content="退出" />
-        </StackPanel>
-
-        <StackPanel Grid.Row="4" Orientation="Horizontal" Spacing="8">
-            <Button Click="OnCheckUpdateClicked" Content="检查更新" />
-            <Button Click="OnDownloadUpdateClicked" Content="下载并安装" />
-            <Button Click="OnCancelUpdateClicked" Content="取消" />
-            <TextBlock VerticalAlignment="Center" Text="{x:Bind Update.Status, Mode=OneWay}" />
-        </StackPanel>
-    </Grid>
+            <!-- 右栏：更新日志 + 检查更新 -->
+            <Grid Grid.Column="1" RowSpacing="12">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                <Border Padding="20" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" CornerRadius="8" MinHeight="280">
+                    <StackPanel Spacing="6">
+                        <TextBlock FontWeight="SemiBold" Text="更新日志" />
+                        <TextBlock Opacity="0.6" Text="功能开发中（CHANGELOG 渲染待接入）" TextWrapping="Wrap" />
+                    </StackPanel>
+                </Border>
+                <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
+                    <Button Click="OnCheckUpdateClicked" Content="检查更新" />
+                    <Button Click="OnDownloadUpdateClicked" Content="下载并安装" />
+                    <Button Click="OnCancelUpdateClicked" Content="取消" />
+                    <TextBlock VerticalAlignment="Center" Text="{x:Bind Update.Status, Mode=OneWay}" />
+                </StackPanel>
+            </Grid>
+        </Grid>
+    </ScrollViewer>
 </Page>

@@ -10,6 +10,7 @@ using VibeOCR.App.Features.QrCode;
 using VibeOCR.App.Features.Settings;
 using VibeOCR.App.Features.Shell;
 using VibeOCR.App.Features.Update;
+using VibeOCR.App.Services;
 using VibeOCR.App.ViewModels;
 using VibeOCR.App.Views;
 using VibeOCR.Contracts;
@@ -29,6 +30,7 @@ public sealed partial class App : Application
     private readonly CancellationTokenSource _applicationShutdown = new();
     private readonly Dictionary<string, double> _startupMilestones = [];
     private MainWindow? _window;
+    private WindowLayoutStore? _windowLayoutStore;
     private Process? _workerProcess;
     private WorkerHostClient? _workerClient;
     private SingleInstanceService? _singleInstance;
@@ -89,6 +91,9 @@ public sealed partial class App : Application
         RecordMilestone(diagnostics, "T0", TimeSpan.Zero);
         RecordMilestone(diagnostics, "T1", _startup.Elapsed);
 
+        _windowLayoutStore = new WindowLayoutStore(
+            Path.Combine(layout.DataRoot, "winui-layout.json"));
+
         _window = new MainWindow(
             diagnostics,
             layout,
@@ -114,13 +119,14 @@ public sealed partial class App : Application
                 return new PdfPage(
                     new PdfViewModel(_workerGateway, new PdfFileSource(() => handle)));
             },
-            () => new SettingsPage(new SettingsViewModel(_workerGateway)),
+            () => new SettingsPage(new SettingsViewModel(_workerGateway), _shellViewModel!),
             () =>
             {
                 return new AboutPage(
                     _shellViewModel ?? throw new InvalidOperationException("Desktop shell is unavailable."),
                     _updateViewModel ?? throw new InvalidOperationException("Update service is unavailable."));
-            });
+            },
+            _windowLayoutStore);
         _window.AppWindow.Closing += OnAppWindowClosing;
         _window.Closed += OnWindowClosedFallback;
         _window.Activate();
@@ -598,6 +604,10 @@ public sealed partial class App : Application
         await _workerLifecycle.WaitAsync();
         try
         {
+            if (_window is not null && _windowLayoutStore is not null && _window.CaptureGeometry() is { } geometry)
+            {
+                _windowLayoutStore.Save(geometry);
+            }
             await StopWorkerAsync();
             await _workerGateway.DisposeAsync();
             await DisposeDesktopShellAsync();
