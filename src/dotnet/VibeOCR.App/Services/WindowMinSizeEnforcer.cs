@@ -43,7 +43,7 @@ internal static class WindowMinSizeEnforcer
     private static int _minWidth;
     private static int _minHeight;
 
-    /// <summary>对指定窗口句柄启用最小尺寸约束（逻辑像素）。</summary>
+    /// <summary>对指定窗口句柄启用最小尺寸约束（minWidth/minHeight 为物理像素，与 WM_GETMINMAXINFO.ptMinTrackSize 单位一致）。</summary>
     public static void Apply(IntPtr hwnd, int minWidth, int minHeight)
     {
         _minWidth = minWidth;

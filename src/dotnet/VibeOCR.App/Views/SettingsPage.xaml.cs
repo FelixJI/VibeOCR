@@ -28,5 +28,4 @@ public sealed partial class SettingsPage : Page
     private void OnApplyHotkeyClicked(object sender, RoutedEventArgs e) => Shell.ApplyHotkey();
     private void OnStartupClicked(object sender, RoutedEventArgs e)
         => Shell.SetStartWithSystem(Shell.StartWithSystem);
-    private void OnHideToTrayClicked(object sender, RoutedEventArgs e) => Shell.HideToTray();
 }
