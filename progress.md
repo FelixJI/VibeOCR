@@ -1,67 +1,57 @@
 # Progress Log — DUAL_UI_IMPLEMENTATION_PLAN.md 执行
 
-分支：`feat/dual-ui-phase0`（从 `main` 创建）
+分支策略：每阶段完成后合并到 `main` 并删除特性分支。
 
-## 已完成
+## 整体进度
 
 ### Phase 0：架构冻结与基线 ✅
-提交：`arch(phase0): freeze dual-frontend boundary with architecture guards`
-- ADR：`specs/2026-07-14-dual-frontend-exclusive-workerhost-adr.md`
-- UI→backend import 棘轮（allowlist）：`tests/architecture/ui_backend_import_allowlist.txt`，基线 90 处（services=38, models=21, core=17, managers=12, workers=2）
-- `tests/architecture/` 四重守卫（26 测试）：
-  1. UI→backend import 棘轮（只减不增）
-  2. backend→UI 禁止（已知 1 处 update_service.py Qt 对话框债务，Phase 4 清理）
-  3. WorkerHost UI-free（AST 扫描 + sys.modules delta）
-  4. 协议方法表一致性（schema ↔ C# ↔ Python，21 方法）
-- 验证：305 测试全绿；planted-leak 被拒绝（gate 有效）
+- ADR + `tests/architecture/` 四重守卫（26 测试）
+- UI→backend import 棘轮基线 90
 
-### Phase 1：跨产品互斥与独占生命周期 ✅
-提交：`feat(phase1): cross-product exclusive Mutex for PySide/WinUI mutual exclusion`
-- Python：`vibeocr.utils.frontend_exclusive_lock.FrontendExclusiveLock`（ctypes CreateMutexW，Qt-free）
-- C#：`VibeOCR.Platform.Windows.FrontendExclusiveLock`（mirrors SingleInstanceService Mutex 模式 + MessageBoxW 提示）
-- Mutex 名：`Local\VibeOCR.Frontend.Exclusive.v1`（两侧一致）
-- PySide `main.py`：同产品单实例后、后端初始化前获取；失败提示退出
-- WinUI `App.xaml.cs`：`IsPrimary` 后、WorkerHost 启动前获取；失败提示退出
-- 9 测试（acquire/mutual-exclusion/release/context-manager/non-windows/name-contract）
-- 注意：本机无 .NET SDK（仅 runtime 10.0.9），C# 编译由 CI 验证
+### Phase 1：跨产品互斥 Mutex ✅
+- Python `FrontendExclusiveLock` + C# `FrontendExclusiveLock`
+- 共享 `Local\VibeOCR.Frontend.Exclusive.v1`
 
 ### Phase 2：通用 WorkerHost + Python BackendClient ✅
-提交 1：`feat(phase2): generalize WorkerHost — frontend_id + production profile`
-- `worker_host.main`：新增 `--frontend-id`（pyside|winui），移除 `winui-dev` 硬编码限制
-- production 与 winui-dev profile 均可（ADR §7）
-- 5 新 process-lifecycle 测试
+- `--frontend-id` + production profile
+- `BackendClient`（关联/事件/取消/共享内存）+ `SyncBackendClient` 同步桥
 
-提交 2：`feat(phase2): high-level Python BackendClient for WorkerHost RPC`
-- `vibeocr.worker_host.backend_client.BackendClient`：C# WorkerHostClient 的 Python 对等实现
-- request correlation、typed call、event 去重、deadline/cancel、shared payload、bounded shutdown
-- 10 单元测试（fake connection，无需真实 pipe）
+### Phase 3：PySide 垂直迁移 🔄
 
-## 待办（Phase 3–6）
+**二维码生成/识别** ✅（allowlist 90→88）
+- `qrcode.generate` 扩展 11 样式选项 + `qrcode.generate_svg`
+- `QrcodeTab` → `SyncBackendClient`，删除 2 直接 import
+- 31 测试（FakeBackend）+ 5 handler 测试
 
-| Phase | 范围 | PR 边界（计划 §12） |
-|---|---|---|
-| 3 | PySide 垂直功能迁移（二维码→单图→批量→PDF→设置/更新） | #5–#9 |
-| 4 | 物理拆包与类型去 Qt 化（uv workspace） | #10 |
-| 5 | 双 CI 与双发布制品 | #11 |
-| 6 | 稳定性与完成签核 | #12 |
+**单图 OCR — 显示格式化器迁移** ✅（allowlist 88→84）
+- `TextBlockProcessor` → `vibeocr.utils.text_layout`（输出排版逻辑）
+- HTML 表格工具 → `vibeocr.utils.html_tables`（表格规整化/转换）
+- 两处均为纯函数、无 Qt 依赖，按 ADR §5.2 属 UI 层
+- 6 个 allowlist 条目删除
 
-## Test Results
-| Suite | Count | Status |
-|---|---|---|
-| architecture | 27 | ✅ |
-| worker_host + contracts | 273 | ✅ |
-| utils (含 FrontendExclusiveLock) | 9+ | ✅ |
-| 总计（安全子集） | 300+ | ✅ |
+**单图 OCR — 执行路径迁移** ⏳（待续）
+- 剩余 9 处 `single_recognition_tab.py` + 3 处 `base_tab.py` 导入
+- 涉及 `get_ocr_service`/`USE_SUBPROCESS`/`OCRPipeline`/`Constants`
+- 需要丰富 `ocr.recognize` 响应 DTO（text_blocks/text_with_scores/content_list/preprocessed_image）
+- 高风险切片，需专门设计
 
-## 分支提交历史
+## Allowlist 轨迹
+| 阶段 | 数量 | services | models | core | managers | workers |
+|---|---|---|---|---|---|---|
+| Phase 0 基线 | 90 | 38 | 21 | 17 | 12 | 2 |
+| Phase 3 QR | 88 | 36 | 21 | 17 | 12 | 2 |
+| Phase 3 格式化器 | 84 | 32 | 21 | 17 | 12 | 2 |
+
+## main 提交历史
 ```
+d39e47a merge: Phase 3 single-OCR slice — move display formatters to UI utils
+ebff010 refactor(phase3): move HTML table utilities to UI utils layer
+e69d2d0 refactor(phase3): move TextBlockProcessor to UI utils layer
+d8475e7 merge: Phase 3 QR slice — PySide QR generate/decode migrated to RPC
+2d6fe38 feat(phase3): migrate PySide QR generate/decode to RPC (first vertical slice)
+71c8be9 merge: dual-frontend Phase 0–2 (...)
 beaf0c3 feat(phase2): high-level Python BackendClient for WorkerHost RPC
 d73f886 feat(phase2): generalize WorkerHost — frontend_id + production profile
-5a051fb feat(phase1): cross-product exclusive Mutex for PySide/WinUI mutual exclusion
+5a051fb feat(phase1): cross-product exclusive Mutex
 bd1116d arch(phase0): freeze dual-frontend boundary with architecture guards
 ```
-
-## Notes
-- `.NET SDK` 本机不可用，C# 改动由结构/模式核对 + CI 验证。
-- `docs/` 被 `.gitignore` 忽略；ADR 放在已跟踪的 `specs/`。
-- Phase 0 的 allowlist 是迁移期间的棘轮：每完成一个 PySide 功能切片必须减少。
