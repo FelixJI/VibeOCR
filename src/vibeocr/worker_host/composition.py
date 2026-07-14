@@ -79,14 +79,24 @@ class OcrServiceAdapter:
         if cancel.is_cancelled:
             raise RuntimeError("OCR request cancelled")
 
-        blocks: list[Any] = list(getattr(result, "content_list", []) or [])
-        if not blocks:
-            blocks = [
-                dataclasses.asdict(cast("Any", block))
-                if dataclasses.is_dataclass(block) and not isinstance(block, type)
-                else block
-                for block in (getattr(result, "text_blocks", []) or [])
-            ]
+        content_list = list(getattr(result, "content_list", []) or [])
+        text_blocks_raw = list(getattr(result, "text_blocks", []) or [])
+        # Serialize TextBlock dataclass instances into plain dicts for the wire.
+        text_blocks: list[dict[str, Any]] = []
+        for block in text_blocks_raw:
+            if dataclasses.is_dataclass(block) and not isinstance(block, type):
+                text_blocks.append(dataclasses.asdict(cast("Any", block)))
+            elif isinstance(block, dict):
+                text_blocks.append(block)
+
+        blocks: list[Any] = content_list if content_list else text_blocks
+
+        # text_with_scores: [(text, score), ...] → [[text, score], ...] for JSON.
+        tws = getattr(result, "text_with_scores", []) or []
+        text_with_scores: list[list[Any]] = [
+            [t, s] for t, s in tws if isinstance(t, str) and isinstance(s, (int, float))
+        ]
+
         text = str(
             getattr(result, "copy_text", None) or getattr(result, "raw_text", "")
         )
@@ -98,6 +108,11 @@ class OcrServiceAdapter:
             markdown_text=str(getattr(result, "markdown_text", "") or text),
             html_text=str(getattr(result, "html_text", "") or ""),
             raw_text=str(getattr(result, "raw_text", "") or text),
+            text_blocks=text_blocks,
+            text_with_scores=text_with_scores,
+            content_list=content_list,
+            image_width=int(getattr(result, "image_width", 0) or 0),
+            image_height=int(getattr(result, "image_height", 0) or 0),
         )
 
     def export(self, request: OcrExportRequest, cancel: CancelToken) -> OcrExportResult:

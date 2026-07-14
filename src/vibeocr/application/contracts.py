@@ -64,6 +64,15 @@ class OcrResult:
         text: 识别出的纯文本。
         raw_blocks: 原始文本块（结构化数据，供编辑器/表格渲染）。
         pipeline: 使用的管道名称。
+        markdown_text: Markdown 格式内容。
+        html_text: HTML 格式内容。
+        raw_text: 原始纯文本。
+        text_blocks: 序列化的文本块列表（每块含 text/bbox/confidence/order）。
+        text_with_scores: [(text, score), ...] 文本块及置信度。
+        content_list: 结构化内容列表（MinerU/表格/公式管道）。
+        image_width: 原图宽度（像素）。
+        image_height: 原图高度（像素）。
+        preprocessed_image_ref: 预处理后图像的 shared-payload 描述符（可选）。
     """
 
     text: str
@@ -72,6 +81,12 @@ class OcrResult:
     markdown_text: str = ""
     html_text: str = ""
     raw_text: str = ""
+    text_blocks: list[dict[str, Any]] = field(default_factory=list)
+    text_with_scores: list[list[Any]] = field(default_factory=list)
+    content_list: list[dict[str, Any]] = field(default_factory=list)
+    image_width: int = 0
+    image_height: int = 0
+    preprocessed_image_ref: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True, slots=True)
