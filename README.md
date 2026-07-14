@@ -56,6 +56,30 @@ VibeOCR 是一款基于 [PySide6](https://www.qt.io/) + [PaddlePaddle](https://w
 - **程序内更新** —— 自动检查新版本，国内客户端走 gh 代理加速下载；含 `--self-update` 兜底替换通道
 - **系统托盘** —— 最小化到托盘，边缘悬浮工具栏快捷唤起
 
+### 🏗️ 双前端独占架构（进行中）
+
+VibeOCR 正在从单 PySide6 前端演进为**双前端并存**架构，两套 UI 各自独占一个 WorkerHost 后端进程，互斥运行：
+
+- **PySide6 Classic** —— 成熟的 Qt 桌面 UI（当前主力）
+- **WinUI Next** —— 基于 WinUI 3 的下一代 UI
+
+核心设计（详见 `specs/2026-07-14-dual-frontend-exclusive-workerhost-adr.md`）：
+
+| 约束 | 实现 |
+|------|------|
+| 两套产品互斥运行 | Windows 命名 Mutex `Local\VibeOCR.Frontend.Exclusive.v1`（不扫描进程名） |
+| 单份后端实现 | 两套前端共享同一 WorkerHost 代码库，各自启动独占实例 |
+| UI 不直接调后端 | 前端只依赖 `BackendClient` + 协议 DTO；架构守卫强制（`tests/architecture/`） |
+| 协议一致性 | schema / C# / Python 三方方法表一致性测试 |
+
+**自动化架构守卫**（`tests/architecture/`）：
+- UI→backend import 棘轮（只减不增的 allowlist）
+- WorkerHost UI-free import gate
+- 后端→UI 禁止反向依赖
+- 协议方法表三方一致性
+
+**迁移进度**：二维码生成/识别、单图 OCR 已迁移到 RPC；显示格式化器（TextBlockProcessor、HTML 表格工具、toolbar_icons）已移到 UI 层。批量识别、PDF、设置/更新迁移及物理拆包进行中。
+
 ## 下载安装
 
 ### 方式一：下载便携版（推荐，无需配置环境）
@@ -80,7 +104,7 @@ VibeOCR 是一款基于 [PySide6](https://www.qt.io/) + [PaddlePaddle](https://w
 | 深度学习运行时 | PyTorch（cu126，同时为 Paddle 提供 CUDA DLL） |
 | PDF 处理 | PyMuPDF、fontTools（CJK 子集化） |
 | PDF 后端进程 | FastAPI + uvicorn（子进程内 HTTP 服务） |
-| 进程间通信 | pydantic（共享 schema）、httpx（主进程客户端）、共享内存（OCR 张量） |
+| 进程间通信 | pydantic（共享 schema）、httpx（PDF 后端）、Named Pipe + 共享内存（WorkerHost RPC） |
 | 条码 | qrcode、python-barcode、pyzbar、OpenCV |
 | 导出 | python-docx（Word）、openpyxl（Excel） |
 | 异步集成 | qasync（Qt 事件循环 + asyncio） |
@@ -259,6 +283,8 @@ vibeocr/
 ### 架构总览
 
 VibeOCR 是一个 **多进程 + Qt 主线程** 的桌面应用。主进程只跑 GUI 和轻量协调，所有重依赖（PaddlePaddle、PyMuPDF）都下沉到独立子进程，通过 IPC 通信。
+
+> **架构演进**：VibeOCR 正在迁移到双前端独占 WorkerHost 架构。QR 生成/识别和单图 OCR 已通过 Named Pipe RPC 协议（`vibeocr.worker_host`）连接到独占 WorkerHost 后端进程；其余功能（批量、PDF、设置）仍使用直接服务调用，迁移进行中。详见上方「双前端独占架构」。
 
 ```
 ┌──────────────────────── 主进程（GUI，qasync 事件循环）────────────────────────┐
