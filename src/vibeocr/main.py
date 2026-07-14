@@ -443,6 +443,20 @@ def _install_qt_translations(app, locale: str | None = None) -> None:
             app._qt_translators.append(translator)  # type: ignore[attr-defined]
 
 
+def _show_another_product_running_dialog() -> None:
+    """检测到另一套 VibeOCR 产品（WinUI）运行时，提示用户退出后重试。
+
+    不转发参数、不激活对方、不连接对方的 WorkerHost（ADR §6.2）。
+    """
+    from PySide6.QtWidgets import QMessageBox
+
+    QMessageBox.warning(
+        None,
+        "VibeOCR",
+        "另一套 VibeOCR（WinUI 版）正在运行。\n请先退出它，再重试。",
+    )
+
+
 def launch_application() -> int:
     """启动应用程序"""
     from PySide6.QtWidgets import QApplication
@@ -470,6 +484,17 @@ def launch_application() -> int:
     if not guard.try_lock():
         # 已有实例在运行，本实例静默退出。
         return 0
+
+    # 跨产品互斥：确保同一登录会话内 PySide Classic 与 WinUI Next 不同时运行。
+    # 在同产品单实例通过后、任何后端/WorkerHost 初始化前获取；失败时提示退出，
+    # 不启动第二个 WorkerHost。Mutex 由 OS 在前端崩溃时自动释放（ADR §6）。
+    from vibeocr.utils.frontend_exclusive_lock import FrontendExclusiveLock
+
+    exclusive_lock = FrontendExclusiveLock()
+    if not exclusive_lock.try_acquire():
+        _show_another_product_running_dialog()
+        return 1
+    app.aboutToQuit.connect(exclusive_lock.release)
 
     # 注册退出清理：协作式取消残留的 InstallWorker 并 kill 其子进程。
     # 作为 closeEvent 的兜底——若用户在安装进行中直接退出应用（而非关闭对话框），
