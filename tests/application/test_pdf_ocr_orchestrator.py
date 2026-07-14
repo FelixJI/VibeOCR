@@ -16,7 +16,6 @@ from vibeocr.application.pdf_ocr_orchestrator import (
     BatchOutcome,
     LayerSource,
     OcrPageResult,
-    OcrRunResult,
     PageState,
     PdfOcrOrchestrator,
     project_layer_source,
@@ -299,7 +298,10 @@ def test_native_layer_pages_project_to_native_not_ocr(isolated_sidecar):
 
 def test_sidecar_root_override_isolates_winui_dev(isolated_sidecar, tmp_path):
     """The winui-dev sidecar root must not write the production sidecar."""
-    from vibeocr.application.pdf_ocr_orchestrator import _sidecar_root, restore_pending_pages_for
+    from vibeocr.application.pdf_ocr_orchestrator import (
+        _sidecar_root,
+        restore_pending_pages_for,
+    )
 
     prod_file = str(tmp_path / "prod.pdf")
     tmp_path.joinpath("prod.pdf").write_bytes(b"%PDF-1.4\n%test\n")

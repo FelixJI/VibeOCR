@@ -10,7 +10,9 @@
 """
 
 import builtins
+import json
 import os
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -124,7 +126,31 @@ def profile_imports() -> tuple[dict[str, float], float]:
         (import_times, total_import) — import_times 按耗时降序，
         total_import 是 profiler 活跃期间的总墙钟时间。
     """
-    # 清除可能已缓存的模块，强制重新 import（否则 sys.modules 命中不触发 __import__）
+    # Import profiling must never evict modules from a live GUI/test process:
+    # doing so changes class/singleton identities and invalidates patch targets.
+    result = subprocess.run(
+        [sys.executable, str(Path(__file__).resolve()), "--import-profile-json"],
+        cwd=Path(__file__).resolve().parent.parent,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr or "import profiling subprocess failed")
+    marker = "VIBEOCR_IMPORT_PROFILE="
+    payload = next(
+        (line[len(marker):] for line in reversed(result.stdout.splitlines()) if line.startswith(marker)),
+        None,
+    )
+    if payload is None:
+        raise RuntimeError("import profiling subprocess returned no result")
+    data = json.loads(payload)
+    return ({str(key): float(value) for key, value in data["times"].items()}, float(data["total"]))
+
+
+def _profile_imports_in_process() -> tuple[dict[str, float], float]:
+    """Child-process implementation used only by ``--import-profile-json``."""
     _evict_vibeocr_modules()
 
     profiler = ImportProfiler()
@@ -134,14 +160,14 @@ def profile_imports() -> tuple[dict[str, float], float]:
     # 执行真实 import：env_manager 是 main.py 的顶层导入，
     # 会触发 numpy/PIL/httpx/pydantic 等传递依赖的加载。
     try:
-        import vibeocr.env_manager  # noqa: F401  # pyright: ignore[reportUnusedImport]
-    except Exception:
-        # 即使 import 失败也恢复 __import__（避免全局污染）
-        pass
-    total_import = time.perf_counter() - t0
-
-    profiler.stop()
-    return profiler.get_results(), total_import
+        try:
+            import vibeocr.env_manager  # noqa: F401  # pyright: ignore[reportUnusedImport]
+        except Exception:
+            pass
+        total_import = time.perf_counter() - t0
+        return profiler.get_results(), total_import
+    finally:
+        profiler.stop()
 
 
 def _evict_vibeocr_modules() -> None:
@@ -150,9 +176,7 @@ def _evict_vibeocr_modules() -> None:
     只移除 vibeocr 自身模块；第三方依赖（numpy/PIL 等）若已在测试进程加载
     则保留（避免重复加载 C 扩展导致 crash）。在独立脚本进程中无此问题。
     """
-    to_remove = [
-        name for name in list(sys.modules) if name.startswith("vibeocr")
-    ]
+    to_remove = [name for name in list(sys.modules) if name.startswith("vibeocr")]
     for name in to_remove:
         del sys.modules[name]
 
@@ -335,9 +359,13 @@ if __name__ == "__main__":
         default="reports/local/python-startup.json",
         help="多次采样汇总输出路径",
     )
+    parser.add_argument("--import-profile-json", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
 
-    if args.runs > 0:
+    if args.import_profile_json:
+        times, total = _profile_imports_in_process()
+        print("VIBEOCR_IMPORT_PROFILE=" + json.dumps({"times": times, "total": total}))
+    elif args.runs > 0:
         run_multi_profile(args.runs, args.output)
     else:
         run_profile()

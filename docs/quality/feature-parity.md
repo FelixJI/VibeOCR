@@ -14,6 +14,7 @@
 | 二维码/条码 | QR services | PASS | `QrCodeViewModelTests`、`qrcode.spec.ps1` | 多码与高 DPI 渲染 |
 | PDF 会话与耐久文字层 | PDF orchestrator/sidecar | PASS | `PdfViewModelTests`、`pdf.spec.ps1`、`test_pdf_ocr_orchestrator.py` | 多批 PDF 崩溃续传、旋转全部、自动摆正 |
 | 设置与诊断 | Config/diagnostics | PASS | `SettingsViewModelTests`、`settings.switch_backend`/`settings.install_dependency` 协议 | 真实 GPU 切换与镜像网络 |
+| 桌面壳层（单实例/托盘/热键/开机启动/关于/更新下载校验） | PySide shell/update service | PASS | `ShellFeatureTests`、`WindowsPlatformTests`、`test_update_replacer.py` | 托盘菜单、键盘可达性与屏幕阅读器 |
 
 单图门禁命令：`powershell -File tests/e2e/winui/single-recognition.spec.ps1`。它同时验证 Python 导出真源、C# 命令状态与剪贴板重试、Web 语义渲染和 Unicode/XSS 夹具。
 

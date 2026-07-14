@@ -1046,7 +1046,7 @@ class TestLoadDoneSidecarHint:
         from vibeocr.models.pdf_document import PdfPageInfo
 
         pages = [PdfPageInfo(page_index=i) for i in range(4)]
-        session = self._inject(pdf_tab, pages)
+        self._inject(pdf_tab, pages)
 
         # 模拟 sidecar 有 2 页已保存（未完成）
         monkeypatch.setattr(
@@ -1366,6 +1366,7 @@ class TestPdfTabRotateNoSelectionFeedback:
     def test_rotate_no_selection_shows_message(self, pdf_tab, monkeypatch):
         """_on_rotate 无选中时应弹 information 提示，不调 manager。"""
         from unittest.mock import MagicMock
+
         from PySide6.QtWidgets import QMessageBox
 
         self._setup(pdf_tab)
@@ -1376,7 +1377,7 @@ class TestPdfTabRotateNoSelectionFeedback:
             MagicMock(side_effect=AssertionError("不应调 rotate_pages_async")),
         )
         # 无选中
-        monkeypatch.setattr(pdf_tab, "_get_selected_page_indices", lambda: [])
+        monkeypatch.setattr(pdf_tab, "_get_selected_page_indices", list)
         pdf_tab._on_rotate(90)
         assert len(called) == 1
         assert "请先选择" in called[0][2]

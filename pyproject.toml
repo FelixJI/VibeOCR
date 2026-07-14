@@ -135,6 +135,8 @@ known-first-party = ["vibeocr"]
 [tool.pyright]
 pythonVersion = "3.13"
 pythonPlatform = "Windows"
+venvPath = "."
+venv = ".venv"
 typeCheckingMode = "standard"
 include = ["src", "scripts", "tests", "qa", "examples"]
 exclude = [".venv", "**/__pycache__"]

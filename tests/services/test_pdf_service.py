@@ -2,6 +2,7 @@
 """Tests for PDF service (stateless static methods)."""
 
 from pathlib import Path
+from typing import Any, cast
 
 import fitz
 import pytest
@@ -950,6 +951,7 @@ class TestPdfServiceTextLayerPlacement:
         PdfService.add_text_layer(doc, pdf_doc, 0, result, pdf_settings=settings)
 
         page_rect = doc[0].rect
+        assert block.bbox is not None
         intended = PdfService._denormalize_and_unrotate_bbox(block.bbox, 0, page_rect)
         # 渲染并测量 ink 像素高度（与 OCR bbox 检测的 ink 高度同口径）
         pix = doc[0].get_pixmap(matrix=fitz.Matrix(4, 4))
@@ -963,7 +965,7 @@ class TestPdfServiceTextLayerPlacement:
         y1 = int(min(pix.height, intended.y1 * 4 + 10))
         crop = img[y0:y1, x0:x1]
         ink = crop[:, :, 0] < 128
-        ys, xs = np.where(ink)
+        ys, _xs = np.where(ink)
         assert len(ys) > 0, "宽行应写入可见文字（text_layer_visible=True）"
         ink_h = (ys.max() - ys.min()) / 4
         ink_top = (ys.min() + y0) / 4
@@ -993,10 +995,12 @@ class TestPdfServiceTextLayerPlacement:
         PdfService.add_text_layer(doc, pdf_doc, 0, result)
 
         page_rect = doc[0].rect
+        assert block.bbox is not None
         intended = PdfService._denormalize_and_unrotate_bbox(block.bbox, 0, page_rect)
+        page_text = cast("dict[str, Any]", doc[0].get_text("dict"))
         spans = [
-            s for b in doc[0].get_text("dict")["blocks"] if b["type"] == 0
-            for l in b.get("lines", []) for s in l.get("spans", [])
+            s for b in page_text["blocks"] if b["type"] == 0
+            for line in b.get("lines", []) for s in line.get("spans", [])
         ]
         assert spans, "窄高块应写入（可换行）"
         # 所有 span 的 x1 不得远超 rect 右边界（旧 bug 会到 x≈630）
@@ -1026,11 +1030,11 @@ class TestPdfServiceTextLayerPlacement:
             doc, pdf_doc, 0, result, pdf_settings=PdfGlobalSettings(text_layer_visible=True)
         )
 
-        page_rect = doc[0].rect
+        page_text = cast("dict[str, Any]", doc[0].get_text("dict"))
         spans_by_size = sorted(
             [
-                s for b in doc[0].get_text("dict")["blocks"] if b["type"] == 0
-                for l in b.get("lines", []) for s in l.get("spans", [])
+                s for b in page_text["blocks"] if b["type"] == 0
+                for line in b.get("lines", []) for s in line.get("spans", [])
             ],
             key=lambda s: s["size"],
         )
@@ -1056,7 +1060,7 @@ class TestPdfServiceTextLayerPlacement:
         """
         import numpy as np
 
-        from vibeocr.models.ocr_result import OCRResult, TextBlock
+        from vibeocr.models.ocr_result import TextBlock
         from vibeocr.models.pdf_ocr_options import PdfGlobalSettings
 
         def _check(rot, cropbox):
@@ -1089,9 +1093,10 @@ class TestPdfServiceTextLayerPlacement:
             blocks = [TextBlock(text="TEST", score=0.95, bbox=norm_bbox)]
             settings = PdfGlobalSettings(text_layer_visible=True)
             PdfService._write_blocks_to_page(doc, 0, blocks, 0, settings)
+            page_text = cast("dict[str, Any]", doc[0].get_text("dict"))
             spans = [
-                s for b in doc[0].get_text("dict")["blocks"] if b["type"] == 0
-                for l in b.get("lines", []) for s in l.get("spans", [])
+                s for b in page_text["blocks"] if b["type"] == 0
+                for line in b.get("lines", []) for s in line.get("spans", [])
             ]
             doc.close()
             if not spans:
@@ -1154,7 +1159,7 @@ class TestPdfServiceTextLayerPlacement:
             y1 = int(min(pix.height, intended.y1 * 4 + 10))
             crop = img[y0:y1, x0:x1]
             ink = crop[:, :, 0] < 128
-            ys, xs = np.where(ink)
+            ys, _xs = np.where(ink)
             assert len(ys) > 0, f"bbox {nbbox} 应有 ink"
             ink_h = (ys.max() - ys.min()) / 4
             ratio = ink_h / intended.height
@@ -1201,7 +1206,7 @@ class TestPdfServiceTextLayerPlacement:
             pix.height, pix.width, pix.n
         )
         ink = img[:, :, 0] < 128
-        ys, xs = np.where(ink)
+        ys, _xs = np.where(ink)
         assert len(ys) > 0, "rotation=90 应写入可见文字"
         ink_h = (ys.max() - ys.min()) / 4
         ink_top = ys.min() / 4
@@ -1342,7 +1347,7 @@ class TestPdfServiceTextLayerPlacement:
         assert fp is not None, "需系统 CJK 字体才能测真实字形宽度"
         font = fitz.Font(fontfile=fp)
         fs = 31.4  # 与上例相当的字号
-        true_w = font.text_length(chars, fontsize=fs)
+        true_w = font.text_length(chars, fontsize=fs)  # type: ignore[arg-type]
         heuristic_w = len(chars) * 0.5 * fs
         # 数字真实宽度比启发式大 ~17%
         assert true_w > heuristic_w * 1.10, (
@@ -1374,7 +1379,7 @@ class TestPdfServiceTextLayerPlacement:
             pix.height, pix.width, pix.n
         )
         ink = img[:, :, 0] < 128
-        ys, xs = np.where(ink)
+        _ys, xs = np.where(ink)
         ink_w = (xs.max() - xs.min()) / 4
         # 当 bbox 恰为真实宽度时，ink 不应超过 bbox 宽度的 1.2 倍
         assert ink_w / bbox_w_pt <= 1.2, (

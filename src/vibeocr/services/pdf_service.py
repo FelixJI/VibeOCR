@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import logging
 import shutil
-from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NamedTuple
 
@@ -15,12 +14,14 @@ import fitz
 import numpy as np
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     # 仅用于类型注解：render_page 返回 QPixmap，但 PDF 后端子进程是无头进程，
     # 不安装 PySide6；TYPE_CHECKING 块在运行时不执行，避免 ModuleNotFoundError。
     from PySide6.QtGui import QPixmap
 
-from vibeocr.models.pdf_document import PdfDocument, PdfPageInfo, TextLayerInfo
 from vibeocr.models.ocr_result import TextBlock
+from vibeocr.models.pdf_document import PdfDocument, PdfPageInfo, TextLayerInfo
 from vibeocr.utils.cjk_font_resolver import _CJK_RESOLVER
 
 logger = logging.getLogger(__name__)
@@ -690,7 +691,7 @@ class PdfService:
                 PdfService.delete_text_layers(doc, pdf_document, page_index)
             to_write.append((page_index, text_blocks, preproc_angle))
 
-        results: dict[int, tuple[int, int]] = {p: (0, 1) for p in skipped_pages}
+        results: dict[int, tuple[int, int]] = dict.fromkeys(skipped_pages, (0, 1))
 
         if not to_write:
             return results
@@ -858,7 +859,7 @@ class PdfService:
             有子集字体时用真实字形度量；无（china-s 回退）时退回启发式估算。
             """
             if _measure_font is not None:
-                return _measure_font.text_length(text, fontsize=fs)
+                return _measure_font.text_length(text, fontsize=fs)  # type: ignore[arg-type]
             units = 0.0
             for ch in text:
                 code = ord(ch)
@@ -1247,8 +1248,13 @@ class PdfService:
     ) -> tuple[float, float, float, float]:
         from vibeocr.utils.pdf_coords import bbox_to_pixel
 
-        return bbox_to_pixel(  # type: ignore[arg-type]
-            bbox, page_rect, render_dpi, source=source,
+        coordinates = (
+            (page_rect.x0, page_rect.y0, page_rect.x1, page_rect.y1)
+            if isinstance(page_rect, fitz.Rect)
+            else page_rect
+        )
+        return bbox_to_pixel(
+            bbox, coordinates, render_dpi, source=source,
             rotation=rotation, mediabox=mediabox,
         )
 

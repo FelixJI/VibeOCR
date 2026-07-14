@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 
 import pytest
@@ -19,6 +20,8 @@ from vibeocr.startup_metrics import (
     StartupEvent,
     StartupRecorder,
     percentile,
+    record_startup,
+    set_startup_origin,
     summarize_runs,
 )
 
@@ -43,6 +46,21 @@ class TestStartupEvent:
 
 
 class TestStartupRecorder:
+    def test_default_timestamps_are_relative_to_process_origin(self, monkeypatch):
+        import vibeocr.startup_metrics as startup_metrics
+
+        monkeypatch.setattr(startup_metrics, "_global_recorder", None)
+        set_startup_origin(time.perf_counter() - 1.0)
+        try:
+            record_startup(StartupEvent.PROCESS_START, 0.0)
+            record_startup(StartupEvent.RUNTIME_READY)
+            from vibeocr.startup_metrics import get_recorder
+
+            elapsed = get_recorder().events[StartupEvent.RUNTIME_READY]
+            assert 0.9 <= elapsed <= 1.5
+        finally:
+            set_startup_origin(time.perf_counter())
+
     def test_record_single_event(self):
         rec = StartupRecorder()
         rec.record(StartupEvent.PROCESS_START, 0.0)

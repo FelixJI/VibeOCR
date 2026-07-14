@@ -10,9 +10,12 @@ WinUI settings tab uses (no protected hook).
 from __future__ import annotations
 
 import json
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 from vibeocr.app_paths import resolve_app_paths
 from vibeocr.worker_host.composition import JsonSettingsAdapter

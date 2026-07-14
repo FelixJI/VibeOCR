@@ -399,6 +399,8 @@ class TestOcrFinishedEmitsBringToFront:
 
         只验证标记被正确设置，不真正执行识别（桩掉 run_coroutine）。
         """
+        import importlib
+
         from PySide6.QtGui import QPixmap
 
         from vibeocr.models.ocr_options import OCROptions
@@ -408,9 +410,15 @@ class TestOcrFinishedEmitsBringToFront:
         monkeypatch.setattr(
             "vibeocr.services.USE_SUBPROCESS", True, raising=False
         )
-        monkeypatch.setattr(
-            "vibeocr.utils.qt_async.run_coroutine", lambda *a, **k: None
-        )
+        qt_async = importlib.import_module("vibeocr.utils.qt_async")
+        scheduled = []
+
+        def discard(coro, *args, **kwargs):
+            del args, kwargs
+            scheduled.append(coro)
+            coro.close()
+
+        monkeypatch.setattr(qt_async, "run_coroutine", discard)
         options = OCROptions()
 
         pixmap = QPixmap(4, 4)
@@ -420,6 +428,7 @@ class TestOcrFinishedEmitsBringToFront:
 
         tab.run_ocr(pixmap, options)
         assert tab._ocr_from_screenshot is False
+        assert len(scheduled) == 2
 
 
 class _FakeWebView:
@@ -462,4 +471,3 @@ class TestResultBlockEditedFormulaSync:
         assert tab._current_ocr_result.text_blocks[0].is_manually_edited is True
         # has_content_list → 块类型模式刷新
         assert refreshed and refreshed[0][0] == "content_list"
-

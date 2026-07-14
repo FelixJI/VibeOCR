@@ -399,6 +399,7 @@ class TestRestoreMainWindowWhenMinimized:
 
         pixmap = QPixmap(10, 10)
         pixmap.fill(Qt.GlobalColor.white)
+        monkeypatch.setattr(main_window._single_tab, "run_ocr", lambda *args, **kwargs: None)
 
         with (
             _mock.patch.object(main_window, "showNormal") as mock_show,
@@ -447,6 +448,7 @@ class TestFreshOverlayPerCapture:
         from vibeocr.widgets.screen_capture_overlay import ScreenCaptureOverlay
 
         monkeypatch.setattr(ScreenCaptureOverlay, "start_capture", lambda self: None)
+        monkeypatch.setattr(main_window._single_tab, "run_ocr", lambda *args, **kwargs: None)
         main_window._start_fresh_overlay_capture()
         # confirmed 信号连接可触发槽（不报错）
         received: list = []

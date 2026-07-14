@@ -29,25 +29,19 @@ powershell -File scripts\benchmark_winui_startup.ps1 -AppPath <published-exe> -R
 uv run python scripts\compare_release_metrics.py --old reports\local\python-startup.json --new reports\local\winui-startup.json --require-gate
 ```
 
-## 现状（同机实测，2026-07-14）
+## 现状（迁移审查，2026-07-14）
 
-门禁已通过 `--require-gate`（rc=0）。同机各 30 个冷启动样本，对称测量（双方都在首窗 T3 后 smoke 退出）：
+此前记录的 11.6 MB、542.6 ms 与“门禁已通过”结论已撤销。审查发现旧采集脚本把 T3/T6 写成硬编码代理值，并把同一个进程退出耗时同时填入两个里程碑；这些数据不能作为发布证据。
 
-| 指标 | Python (PySide6) | WinUI (framework-dependent) | 变化 | 门限 |
-|---|---|---|---|---|
-| ZIP 体积 | 160 MB（基线，PyInstaller 干净构建） | 11.6 MB（实测 publish 目录压缩） | **−93.1%** | ≥ −30% ✓ |
-| 冷启动 T0–T3 p95 | 2041.4 ms（实测 main.py 全启动） | 542.6 ms（实测 WinUI.exe smoke） | **−73.4%** | ≥ −30% ✓ |
-| 解压体积 | 63.8 MB（src + venv site-packages） | 52.9 MB（publish 目录） | −17.1% | 诊断 |
-| 样本数 | 30 | 30 | — | ≥ 30 ✓ |
-| 机器 fingerprint | `<host>\|x64`（同机） | 同 | 一致 ✓ | — |
+修复后的采集器只接受应用写出的真实 T0/T3/T6 JSONL，缺失、非数值或非单调样本会失败，成功样本数不再等于请求次数。WinUI `t6` smoke 会等待 WorkerHost handshake 后写入 T6；`compare_release_metrics.py` 同时拒绝 T6、RSS 和 handle 的未批准回退。
 
-门禁结果：`compare_release_metrics.py --require-gate` → `zip -93.1%, t0-t3 -73.4%, samples old=30 new=30`，rc=0。两项主指标均远超 30% 改善门限，无未批准回退。
+审查期间已真实构建并验证 0.4.28 WinUI ZIP：`36,409,846` bytes（34.7 MiB）、190 个文件，SHA-256 `ebb278201c08a4e4221ead7d29ca666f0ba0214b000f7d7994319d4547be16b4`，包含正式 Bootstrapper、UI-free WorkerHost source、manifest 和独立 updater。该数值仅是新候选包的实际体积，不代表对旧版的改善结论；冷启动与旧版体积仍必须在同一基准口径下采集后才能签核。目前性能门禁状态为 **待重测**。
 
 采集命令（可复现）：
 ```powershell
 .\.venv\Scripts\python.exe scripts\collect_startup_metrics.py --target python --runs 30 --name python --zip-bytes 167772160 --output reports\local\python-startup.json
-.\.venv\Scripts\python.exe scripts\collect_startup_metrics.py --target <winui-exe> --runs 30 --name winui --zip-bytes 11585619 --output reports\local\winui-startup.json
+.\.venv\Scripts\python.exe scripts\collect_startup_metrics.py --target <winui-exe> --runs 30 --name winui --zip-bytes <final-zip-bytes> --output reports\local\winui-startup.json
 .\.venv\Scripts\python.exe scripts\compare_release_metrics.py --old reports\local\python-startup.json --new reports\local\winui-startup.json --require-gate
 ```
 
-注：WinUI T0–T3 含 .NET runtime 首次 JIT 与 worker 进程 spawn；Python T0–T3 含 PySide6/Qt 全量 import 与单实例/环境管理器初始化。双方均设 `VIBEOCR_SELF_TEST_SMOKE=1` 在首窗后退出，测量对称。门禁逻辑另由 `tests/test_compare_release_metrics.py`（10 测试）固化。
+注：T3 是首窗里程碑，T6 是 WorkerHost ready 后首次可交互里程碑。双方必须使用修复后的真实 trace；不得再用进程退出耗时或常量替代。门禁逻辑由 `tests/test_collect_startup_metrics.py` 与 `tests/test_compare_release_metrics.py` 固化。

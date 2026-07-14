@@ -91,7 +91,7 @@ class TestAddTextLayerBatchSharesSubsetFont:
 
         # 两页都应成功写入
         assert set(results.keys()) == {0, 1}
-        for page_idx, (written, skipped) in results.items():
+        for page_idx, (written, _skipped) in results.items():
             assert written >= 1, f"页 {page_idx} 应写入至少 1 块"
 
         # 保存后验证嵌入字体数
@@ -236,4 +236,3 @@ class TestAddTextLayerBatchCancel:
             assert results[idx][0] >= 1
             assert pdf_doc.pages[idx].has_text_layer
         doc.close()
-

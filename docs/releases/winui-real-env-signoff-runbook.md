@@ -2,7 +2,7 @@
 
 本文件给出 Phase 5.5 剩余真实环境签核项的可执行步骤。每项标注：负责角色、所需环境、执行命令、通过标准、产物。
 
-> 所有自动化门禁已在 `codex/winui-worker-migration`（HEAD `1ddf0a1`）闭环。以下为必须在真实桌面/物理机由人工完成的项。
+> 原迁移分支已合并到 `main`。自动化门禁由 `scripts/run_phase0_gate.ps1` 统一执行；以下项目仍必须在真实桌面/物理机由人工完成，不能用风险接受替代验证。
 
 ---
 
@@ -11,7 +11,7 @@
 **负责**：测试负责人。**环境**：Win10 1809 x64（1809, OS Build 17763）物理机或 VM。
 
 步骤：
-1. 在 Win10 1809 机器上 clone 仓库，checkout `codex/winui-worker-migration`。
+1. 在 Win10 1809 机器上 clone 仓库，checkout 最新 `main`。
 2. 安装 .NET Desktop Runtime 10.x、Windows App Runtime 2.2、WebView2 Evergreen、Python runtime。
 3. `scripts/build_winui_release.ps1` 构建。
 4. 解压产物到目标目录；启动 `VibeOCR.Bootstrapper.exe`。
@@ -53,7 +53,7 @@
   --report reports\local\soak-report.json
 ```
 
-harness 每 10 次迭代注入一次 worker crash（`VIBEOCR_SOAK_INJECT_CRASH=1`，需 app 侧 supervisor 支持；当前 smoke exit 不含 crash 注入，可作为增强）。通过标准：`failures==0` 且 `process_drift<=2`（无孤儿进程/共享内存持续增长）。rc=0 即通过。
+harness 每 10 次迭代注入一次 worker crash，并要求应用写出显式恢复结果；进程/句柄采样失败本身即为门禁失败。通过标准：`failures==0`、至少一次有效迭代、`process_drift<=2` 且句柄漂移不超阈值。rc=0 即通过。
 
 **产物**：`reports/local/soak-report.json` 附入 checklist 第 6 节。
 
@@ -83,12 +83,6 @@ harness 每 10 次迭代注入一次 worker crash（`VIBEOCR_SOAK_INJECT_CRASH=1
 
 ---
 
-## 6. 合入 main（正式切换）
+## 6. 发布审批
 
-完成 1–5 后，告知 agent（或自行执行）：
-```bash
-git checkout main
-git merge --no-ff codex/winui-worker-migration
-# cutover_sequence：verify→stop→replace→migrate→prereq→health→launch
-```
-失败只进 bootstrapper repair mode；不启动旧 UI（计划第 0 节第 5 条）。
+迁移代码已在 `main`；完成 1–5 后再创建发布 tag。更新流程必须校验 WinUI payload 与 SHA-256，通过 Bootstrapper 启动 `production`，等待 `startup.healthy`；失败只进入可见修复流程，不启动旧 UI。

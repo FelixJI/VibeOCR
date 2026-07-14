@@ -146,9 +146,12 @@ class TestOcrOrchestration:
 
         manager.set_ocr_service(_make_mock_ocr_service())
         progress_values: list[int] = []
-        last_total = [0]
+        determinate: list[tuple[int, int]] = []
         manager.ocr_progress.connect(
-            lambda _fp, cur, tot: (progress_values.append(cur), last_total.__setitem__(0, tot))
+            lambda _fp, cur, tot: (
+                progress_values.append(cur),
+                determinate.append((cur, tot)) if tot > 0 else None,
+            )
         )
 
         manager.start_ocr([0, 1])
@@ -157,10 +160,10 @@ class TestOcrOrchestration:
         assert progress_values, "ocr_progress 应触发"
         # 子步数 = 3（渲染/识别/写层），2 页 → 末值应为 6
         substeps = manager._OCR_PROGRESS_SUBSTEPS
-        assert last_total[0] == 2 * substeps
-        assert progress_values[-1] == 2 * substeps, "末值应等于 total"
+        assert determinate[-1] == (2 * substeps, 2 * substeps)
         # 进度单调不减
-        assert all(b >= a for a, b in itertools.pairwise(progress_values)), \
+        determinate_values = [current for current, _ in determinate]
+        assert all(b >= a for a, b in itertools.pairwise(determinate_values)), \
             "进度应单调不减"
 
     def test_cancel_ocr(self, manager, tmp_path, qapp):

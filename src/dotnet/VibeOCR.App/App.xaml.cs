@@ -14,7 +14,10 @@ using VibeOCR.App.ViewModels;
 using VibeOCR.App.Views;
 using VibeOCR.Contracts;
 using VibeOCR.Platform.Bootstrap;
+using VibeOCR.Platform.Migration;
+using VibeOCR.Platform.Update;
 using VibeOCR.Platform.Worker;
+using VibeOCR.Platform.Windows;
 
 namespace VibeOCR.App;
 
@@ -24,10 +27,21 @@ public sealed partial class App : Application
     private readonly DeferredWorkerHostClient _workerGateway = new();
     private readonly SemaphoreSlim _workerLifecycle = new(1, 1);
     private readonly CancellationTokenSource _applicationShutdown = new();
+    private readonly Dictionary<string, double> _startupMilestones = [];
     private MainWindow? _window;
     private Process? _workerProcess;
     private WorkerHostClient? _workerClient;
+    private SingleInstanceService? _singleInstance;
+    private WindowMessageService? _windowMessages;
+    private TrayIconService? _trayIcon;
+    private WindowsHotkeyRegistrar? _hotkeyRegistrar;
+    private ShellViewModel? _shellViewModel;
+    private UpdateViewModel? _updateViewModel;
+    private string? _startupHealthFile;
     private bool _shutdownStarted;
+
+    private const uint HotkeyMessage = 0x0312;
+    private const uint TrayMessage = 0x8001;
 
     public App()
     {
@@ -37,8 +51,30 @@ public sealed partial class App : Application
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
         AppLaunchOptions options = AppLaunchOptions.Parse(Environment.GetCommandLineArgs()[1..]);
+        _startupHealthFile = options.HealthFile;
+        _singleInstance = new SingleInstanceService(
+            $"VibeOCR-{options.Profile}",
+            _ =>
+            {
+                _window?.DispatcherQueue.TryEnqueue(ShowMainWindow);
+                return Task.CompletedTask;
+            });
+        if (!_singleInstance.IsPrimary)
+        {
+            _ = ForwardActivationAndExitAsync(Environment.GetCommandLineArgs()[1..]);
+            return;
+        }
         string executable = Environment.ProcessPath ?? AppContext.BaseDirectory;
         PortableLayout layout = PortableLayout.Resolve(executable, options.Profile);
+        if (layout.Profile == "production" && File.Exists(layout.ConfigFile))
+        {
+            MigrationResult migration = ProfileMigrationClient.MigrateConfig(layout.ConfigFile);
+            if (migration.Status == "skipped")
+            {
+                throw new InvalidDataException(
+                    $"Production profile migration failed: {migration.Message}");
+            }
+        }
         PrerequisiteReport prerequisites = new PrerequisiteDetector().Detect(layout);
         var diagnostics = new DiagnosticsViewModel(
             options.Profile,
@@ -50,8 +86,8 @@ public sealed partial class App : Application
                     await Windows.System.Launcher.LaunchUriAsync(uri);
                 }
             });
-        diagnostics.RecordMilestone("T0", TimeSpan.Zero);
-        diagnostics.RecordMilestone("T1", _startup.Elapsed);
+        RecordMilestone(diagnostics, "T0", TimeSpan.Zero);
+        RecordMilestone(diagnostics, "T1", _startup.Elapsed);
 
         _window = new MainWindow(
             diagnostics,
@@ -81,14 +117,15 @@ public sealed partial class App : Application
             () => new SettingsPage(new SettingsViewModel(_workerGateway)),
             () =>
             {
-                var shell = new ShellViewModel(new NoopHotkeyRegistrar(), new NoopStartupRegistrar());
-                var update = new UpdateViewModel(new NoopUpdateSource());
-                return new AboutPage(shell, update);
+                return new AboutPage(
+                    _shellViewModel ?? throw new InvalidOperationException("Desktop shell is unavailable."),
+                    _updateViewModel ?? throw new InvalidOperationException("Update service is unavailable."));
             });
         _window.AppWindow.Closing += OnAppWindowClosing;
         _window.Closed += OnWindowClosedFallback;
         _window.Activate();
-        diagnostics.RecordMilestone("T2", _startup.Elapsed);
+        InitializeDesktopShell(layout);
+        RecordMilestone(diagnostics, "T2", _startup.Elapsed);
 
         _workerGateway.ConfigureRecovery(
             cancellationToken => RestartWorkerAsync(layout, diagnostics, cancellationToken));
@@ -97,15 +134,112 @@ public sealed partial class App : Application
         // Perf-gate smoke mode: exit shortly after first window so cold-start
         // timing can be measured without the worker handshake. Production runs
         // never set this env var.
-        if (Environment.GetEnvironmentVariable("VIBEOCR_SELF_TEST_SMOKE") == "1")
+        if (Environment.GetEnvironmentVariable("VIBEOCR_SELF_TEST_SMOKE") is "1" or "t3")
         {
             _ = SmokeExitAsync();
         }
     }
 
+    private async Task ForwardActivationAndExitAsync(IReadOnlyList<string> arguments)
+    {
+        SingleInstanceService instance = _singleInstance
+            ?? throw new InvalidOperationException("Single-instance service is unavailable.");
+        try
+        {
+            await instance.ForwardAsync(arguments, CancellationToken.None);
+        }
+        finally
+        {
+            await instance.DisposeAsync();
+            _singleInstance = null;
+            Exit();
+        }
+    }
+
+    private void InitializeDesktopShell(PortableLayout layout)
+    {
+        nint handle = WinRT.Interop.WindowNative.GetWindowHandle(_window!);
+        _windowMessages = new WindowMessageService(handle);
+        _windowMessages.MessageReceived += OnWindowMessage;
+        _trayIcon = new TrayIconService();
+        _trayIcon.Show(handle, TrayMessage, "VibeOCR");
+
+        string hotkey = ReadConfiguredHotkey(layout.ConfigFile) ?? "Ctrl+Alt+Q";
+        _hotkeyRegistrar = new WindowsHotkeyRegistrar(
+            new GlobalHotkeyService(windowHandle: handle),
+            layout.ConfigFile);
+        _hotkeyRegistrar.Register(hotkey, out _);
+        _shellViewModel = new ShellViewModel(
+            _hotkeyRegistrar,
+            new WindowsStartupRegistrar(Path.Combine(layout.InstallRoot, "VibeOCR.Bootstrapper.exe")),
+            () => _window!.AppWindow.Hide(),
+            () => _window!.Close(),
+            hotkey);
+        _updateViewModel = new UpdateViewModel(
+            new GitHubUpdateSource(
+                typeof(App).Assembly.GetName().Version?.ToString(3) ?? "0.0.0",
+                layout.InstallRoot,
+                Path.Combine(layout.DataRoot, "cache", "update")),
+            () => _window!.Close());
+    }
+
+    private static string? ReadConfiguredHotkey(string configFile)
+    {
+        if (!File.Exists(configFile))
+        {
+            return null;
+        }
+        try
+        {
+            using JsonDocument document = JsonDocument.Parse(File.ReadAllText(configFile));
+            return document.RootElement
+                .GetProperty("hotkeys")
+                .GetProperty("global_screenshot")
+                .GetString();
+        }
+        catch (Exception error) when (error is JsonException or KeyNotFoundException)
+        {
+            return null;
+        }
+    }
+
+    private void OnWindowMessage(object? sender, WindowMessage message)
+    {
+        if (message.Id == HotkeyMessage)
+        {
+            _ = RecognizeFromHotkeyAsync();
+            return;
+        }
+        if (message.Id == TrayMessage && (uint)message.LParam is 0x0202 or 0x0203 or 0x0205)
+        {
+            ShowMainWindow();
+        }
+    }
+
+    private async Task RecognizeFromHotkeyAsync()
+    {
+        ShowMainWindow();
+        try
+        {
+            await _window!.RecognizeScreenshotAsync();
+        }
+        catch (Exception error) when (
+            error is InvalidOperationException or IOException or UnauthorizedAccessException)
+        {
+            // RecognitionViewModel owns localized status; activation must keep the shell alive.
+        }
+    }
+
+    private void ShowMainWindow()
+    {
+        _window?.AppWindow.Show();
+        _window?.Activate();
+    }
+
     private async Task SmokeExitAsync()
     {
         await Task.Delay(150);  // allow first-window render
+        FlushStartupTrace();
         Environment.Exit(0);
     }
 
@@ -113,8 +247,11 @@ public sealed partial class App : Application
         PortableLayout layout,
         DiagnosticsViewModel diagnostics)
     {
+        bool crashRequested =
+            Environment.GetEnvironmentVariable("VIBEOCR_SOAK_INJECT_CRASH") == "1";
+        bool recoverySucceeded = !crashRequested;
         diagnostics.UpdateWorker(new WorkerHealth(WorkerHealthState.Connecting, null, null, null));
-        diagnostics.RecordMilestone("T3", _startup.Elapsed);
+        RecordMilestone(diagnostics, "T3", _startup.Elapsed);
         if (!diagnostics.Prerequisites.All(item => item.IsInstalled))
         {
             diagnostics.UpdateWorker(new WorkerHealth(
@@ -134,14 +271,31 @@ public sealed partial class App : Application
                     await StartWorkerAsync(layout, _applicationShutdown.Token);
                 _workerProcess = process;
                 _workerClient = client;
-                diagnostics.RecordMilestone("T4", _startup.Elapsed);
-                diagnostics.RecordMilestone("T5", _startup.Elapsed);
+                RecordMilestone(diagnostics, "T4", _startup.Elapsed);
+                RecordMilestone(diagnostics, "T5", _startup.Elapsed);
                 _workerGateway.Attach(client);
                 diagnostics.UpdateWorker(ReadyHealth(handshake));
-                diagnostics.RecordMilestone("T6", _startup.Elapsed);
+                RecordMilestone(diagnostics, "T6", _startup.Elapsed);
+                WriteHealthSignal();
+                _ = UpdateArtifactCleaner.CleanupAsync(
+                    layout.InstallRoot,
+                    layout.DataRoot,
+                    TimeSpan.FromSeconds(3));
+                if (crashRequested)
+                {
+                    await ExerciseInjectedCrashAsync(layout, diagnostics);
+                    recoverySucceeded = true;
+                }
+                WriteSoakResult(crashRequested, recoverySucceeded);
+                if (Environment.GetEnvironmentVariable("VIBEOCR_SELF_TEST_SMOKE") == "t6")
+                {
+                    FlushStartupTrace();
+                    Environment.Exit(0);
+                }
             }
             catch (Exception error)
             {
+                WriteSoakResult(crashRequested, recovered: false, error: error.Message);
                 diagnostics.UpdateWorker(new WorkerHealth(
                     WorkerHealthState.Faulted,
                     null,
@@ -153,6 +307,61 @@ public sealed partial class App : Application
         {
             _workerLifecycle.Release();
         }
+    }
+
+    private async Task ExerciseInjectedCrashAsync(
+        PortableLayout layout,
+        DiagnosticsViewModel diagnostics)
+    {
+        Process process = _workerProcess
+            ?? throw new InvalidOperationException("WorkerHost is unavailable for crash injection.");
+        process.Kill(entireProcessTree: true);
+        await process.WaitForExitAsync(_applicationShutdown.Token);
+        await StopWorkerAsync();
+        (Process replacement, WorkerHostClient client, HandshakeResponse handshake) =
+            await StartWorkerAsync(layout, _applicationShutdown.Token);
+        _workerProcess = replacement;
+        _workerClient = client;
+        _workerGateway.Attach(client);
+        diagnostics.UpdateWorker(ReadyHealth(handshake));
+    }
+
+    private static void WriteSoakResult(bool requested, bool recovered, string? error = null)
+    {
+        string? resultPath = Environment.GetEnvironmentVariable("VIBEOCR_SOAK_RESULT");
+        if (string.IsNullOrWhiteSpace(resultPath))
+        {
+            return;
+        }
+
+        string fullPath = Path.GetFullPath(resultPath);
+        Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
+        File.WriteAllText(
+            fullPath,
+            JsonSerializer.Serialize(new
+            {
+                crash_requested = requested,
+                recovered,
+                error,
+            }));
+    }
+
+    private void WriteHealthSignal()
+    {
+        if (string.IsNullOrWhiteSpace(_startupHealthFile))
+        {
+            return;
+        }
+        string fullPath = Path.GetFullPath(_startupHealthFile);
+        Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
+        File.WriteAllText(
+            fullPath,
+            JsonSerializer.Serialize(new
+            {
+                status = "healthy",
+                pid = Environment.ProcessId,
+                timestamp = DateTimeOffset.UtcNow,
+            }));
     }
 
     private async Task<IWorkerHostClient> RestartWorkerAsync(
@@ -197,6 +406,30 @@ public sealed partial class App : Application
         handshake.ProtocolVersion,
         null);
 
+    private void RecordMilestone(
+        DiagnosticsViewModel diagnostics,
+        string name,
+        TimeSpan elapsed)
+    {
+        diagnostics.RecordMilestone(name, elapsed);
+        _startupMilestones.TryAdd(name, elapsed.TotalSeconds);
+    }
+
+    private void FlushStartupTrace()
+    {
+        string? tracePath = Environment.GetEnvironmentVariable("VIBEOCR_STARTUP_TRACE");
+        if (string.IsNullOrWhiteSpace(tracePath))
+        {
+            return;
+        }
+
+        string fullPath = Path.GetFullPath(tracePath);
+        Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
+        File.AppendAllText(
+            fullPath,
+            JsonSerializer.Serialize(_startupMilestones) + Environment.NewLine);
+    }
+
     private static async Task<(Process Process, WorkerHostClient Client, HandshakeResponse Handshake)>
         StartWorkerAsync(PortableLayout layout, CancellationToken cancellationToken)
     {
@@ -222,9 +455,14 @@ public sealed partial class App : Application
             startInfo.ArgumentList.Add("--token");
             startInfo.ArgumentList.Add(token);
             startInfo.ArgumentList.Add("--profile");
-            startInfo.ArgumentList.Add("winui-dev");
+            startInfo.ArgumentList.Add(layout.Profile);
             startInfo.ArgumentList.Add("--parent-pid");
             startInfo.ArgumentList.Add(Environment.ProcessId.ToString());
+            string workerRoot = ResolveWorkerRoot(layout);
+            string? existingPythonPath = startInfo.Environment["PYTHONPATH"];
+            startInfo.Environment["PYTHONPATH"] = string.IsNullOrWhiteSpace(existingPythonPath)
+                ? workerRoot
+                : workerRoot + Path.PathSeparator + existingPythonPath;
             process = Process.Start(startInfo)
                 ?? throw new InvalidOperationException("Failed to start WorkerHost.");
             _ = process.StandardError.ReadToEndAsync(cancellationToken);
@@ -283,6 +521,31 @@ public sealed partial class App : Application
         }
     }
 
+    public static string ResolveWorkerRoot(PortableLayout layout)
+    {
+        string packaged = Path.Combine(layout.InstallRoot, "worker");
+        if (Directory.Exists(Path.Combine(packaged, "vibeocr", "worker_host")))
+        {
+            return packaged;
+        }
+
+        if (layout.Profile == "winui-dev")
+        {
+            string? repository = Environment.GetEnvironmentVariable("VIBEOCR_REPOSITORY_ROOT");
+            if (!string.IsNullOrWhiteSpace(repository))
+            {
+                string source = Path.Combine(repository, "src");
+                if (Directory.Exists(Path.Combine(source, "vibeocr", "worker_host")))
+                {
+                    return source;
+                }
+            }
+        }
+
+        throw new DirectoryNotFoundException(
+            $"WorkerHost package is missing under {packaged}.");
+    }
+
     private async Task StopWorkerAsync()
     {
         WorkerHostClient? client = Interlocked.Exchange(ref _workerClient, null);
@@ -337,6 +600,7 @@ public sealed partial class App : Application
         {
             await StopWorkerAsync();
             await _workerGateway.DisposeAsync();
+            await DisposeDesktopShellAsync();
         }
         finally
         {
@@ -345,6 +609,25 @@ public sealed partial class App : Application
             appWindow.Closing -= OnAppWindowClosing;
             _window?.Close();
             Exit();
+        }
+    }
+
+    private async Task DisposeDesktopShellAsync()
+    {
+        _hotkeyRegistrar?.Dispose();
+        _hotkeyRegistrar = null;
+        _trayIcon?.Dispose();
+        _trayIcon = null;
+        if (_windowMessages is not null)
+        {
+            _windowMessages.MessageReceived -= OnWindowMessage;
+            _windowMessages.Dispose();
+            _windowMessages = null;
+        }
+        if (_singleInstance is not null)
+        {
+            await _singleInstance.DisposeAsync();
+            _singleInstance = null;
         }
     }
 
@@ -360,12 +643,38 @@ public sealed partial class App : Application
     }
 }
 
-public sealed record AppLaunchOptions(string Profile)
+public sealed record AppLaunchOptions(string Profile, string? HealthFile)
 {
     public static AppLaunchOptions Parse(IReadOnlyList<string> args)
     {
-        // Phase 2–4 is deliberately side-by-side. Production is enabled only by the cutover task.
-        return new AppLaunchOptions("winui-dev");
+        string profile = "production";
+        string? healthFile = null;
+        for (int index = 0; index < args.Count; index++)
+        {
+            if (string.Equals(args[index], "--profile", StringComparison.Ordinal))
+            {
+                if (index + 1 >= args.Count)
+                {
+                    throw new ArgumentException("--profile requires a value.", nameof(args));
+                }
+                profile = args[++index];
+            }
+            else if (string.Equals(args[index], "--health-file", StringComparison.Ordinal))
+            {
+                if (index + 1 >= args.Count)
+                {
+                    throw new ArgumentException("--health-file requires a value.", nameof(args));
+                }
+                healthFile = Path.GetFullPath(args[++index]);
+            }
+        }
+
+        if (profile is not ("production" or "winui-dev"))
+        {
+            throw new ArgumentException($"Unsupported profile: {profile}.", nameof(args));
+        }
+
+        return new AppLaunchOptions(profile, healthFile);
     }
 }
 

@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
@@ -8,7 +9,8 @@ namespace VibeOCR.App.Features.Batch;
 
 public sealed class BatchViewModel(IWorkerHostClient worker, IBatchFileSource files) : INotifyPropertyChanged
 {
-    private readonly Dictionary<Guid, CancellationTokenSource> _itemRuns = [];
+    private readonly ConcurrentDictionary<Guid, CancellationTokenSource> _itemRuns = [];
+    private readonly object _counterLock = new();
     private CancellationTokenSource? _run;
     private long _generation;
     private bool _isRunning;
@@ -102,11 +104,11 @@ public sealed class BatchViewModel(IWorkerHostClient worker, IBatchFileSource fi
             SharedPayloadRef payload = worker.CreatePayload(data, mediaType, TimeSpan.FromMinutes(5)); payloadName = payload.Name;
             RecognizeResponse result = await worker.CallAsync<RecognizeRequest, RecognizeResponse>(RpcMethods.Recognize, new RecognizeRequest { Image = payload, Pipeline = "OCR" }, itemRun.Token);
             if (generation != Volatile.Read(ref _generation)) return;
-            item.Result = result; item.State = BatchItemState.Completed; CompletedCount++;
+            item.Result = result; item.State = BatchItemState.Completed; IncrementCompleted();
         }
         catch (OperationCanceledException) { if (generation == Volatile.Read(ref _generation)) item.State = BatchItemState.Cancelled; }
-        catch (Exception error) { if (generation == Volatile.Read(ref _generation)) { item.Error = error.GetType().Name; item.State = BatchItemState.Failed; FailedCount++; } }
-        finally { if (payloadName is not null) worker.ReleasePayload(payloadName); _itemRuns.Remove(item.Id); try { budget.Release(); } catch (SemaphoreFullException) { } NotifyProgress(); }
+        catch (Exception error) { if (generation == Volatile.Read(ref _generation)) { item.Error = error.GetType().Name; item.State = BatchItemState.Failed; IncrementFailed(); } }
+        finally { if (payloadName is not null) worker.ReleasePayload(payloadName); _itemRuns.TryRemove(item.Id, out _); try { budget.Release(); } catch (SemaphoreFullException) { } NotifyProgress(); }
     }
 
     private static ExportOcrRequest ExportRequest(RecognizeResponse result, string path, string format, bool overwrite) => new()
@@ -116,5 +118,17 @@ public sealed class BatchViewModel(IWorkerHostClient worker, IBatchFileSource fi
     };
     private void NotifyQueue() { PropertyChanged?.Invoke(this, new(nameof(TotalCount))); NotifyProgress(); }
     private void NotifyProgress() => PropertyChanged?.Invoke(this, new(nameof(Progress)));
+    private void IncrementCompleted()
+    {
+        lock (_counterLock) { _completedCount++; }
+        PropertyChanged?.Invoke(this, new(nameof(CompletedCount)));
+        NotifyProgress();
+    }
+    private void IncrementFailed()
+    {
+        lock (_counterLock) { _failedCount++; }
+        PropertyChanged?.Invoke(this, new(nameof(FailedCount)));
+        NotifyProgress();
+    }
     private void Set<T>(ref T field, T value, [CallerMemberName] string? name = null) { if (EqualityComparer<T>.Default.Equals(field, value)) return; field = value; PropertyChanged?.Invoke(this, new(name)); if (name is nameof(CompletedCount) or nameof(FailedCount)) NotifyProgress(); }
 }

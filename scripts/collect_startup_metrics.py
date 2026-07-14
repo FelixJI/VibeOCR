@@ -17,12 +17,11 @@ T0-T6 mirrors it (the smoke run reaches interactive before exit).
 from __future__ import annotations
 
 import argparse
-import hashlib
+import json
 import os
-import statistics
 import subprocess
 import sys
-import time
+import tempfile
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -32,7 +31,7 @@ def _percentile(values: list[float], pct: float) -> float:
     if not values:
         return 0.0
     s = sorted(values)
-    idx = max(0, int(round(pct / 100.0 * (len(s) - 1))))
+    idx = max(0, round(pct / 100.0 * (len(s) - 1)))
     return s[idx]
 
 
@@ -47,60 +46,68 @@ def _dir_size(path: Path) -> int:
     return total
 
 
-def collect(target: str, runs: int, name: str, fingerprint: str) -> dict:
-    """Launch `target` `runs` times, measuring wall-clock seconds.
+def _read_trace(path: Path) -> tuple[float, float]:
+    """Return real T0-T3/T0-T6 milliseconds from the last JSONL record."""
+    if not path.exists():
+        raise ValueError("startup trace was not created")
+    lines = [line for line in path.read_text(encoding="utf-8-sig").splitlines() if line.strip()]
+    if not lines:
+        raise ValueError("startup trace is empty")
+    data = json.loads(lines[-1])
+    try:
+        t0 = float(data["T0"])
+        t3 = float(data["T3"])
+        t6 = float(data["T6"])
+    except (KeyError, TypeError, ValueError) as error:
+        raise ValueError("startup trace must contain numeric T0, T3 and T6") from error
+    if not t0 <= t3 <= t6:
+        raise ValueError(f"startup milestones are not monotonic: T0={t0}, T3={t3}, T6={t6}")
+    return (t3 - t0) * 1000.0, (t6 - t0) * 1000.0
 
-    For the Python target we run the minimal-to-T3 inline script (same one
-    profile_startup.py uses) so the process self-exits after first-window;
-    the wall clock from spawn to exit is the T0-T3 measurement. main.py's
-    own startup-metrics T0 baseline is buggy (hardcoded 0.0 vs absolute
-    perf_counter), so we measure externally.
-    """
+
+def collect(
+    target: str,
+    runs: int,
+    name: str,
+    fingerprint: str,
+    *,
+    timeout_seconds: float = 120.0,
+) -> dict:
+    """Launch ``target`` and collect its real T0/T3/T6 trace milestones."""
+    if runs < 1:
+        raise ValueError("runs must be at least 1")
     env = os.environ.copy()
     env["VIBEOCR_REPOSITORY_ROOT"] = str(REPO)
     env["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+    env["VIBEOCR_SELF_TEST_SMOKE"] = "t6"
     samples_t03: list[float] = []  # ms
     samples_t06: list[float] = []
 
-    minimal_script = (
-        "import os, sys; "
-        f"sys.path.insert(0, {str(REPO / 'src')!r}); "
-        "os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen'); "
-        "os.environ.setdefault('KMP_DUPLICATE_LIB_OK', 'TRUE'); "
-        "import vibeocr.main  # noqa: F401  (records T0/T1); "
-        "from vibeocr.startup_metrics import StartupEvent, record_startup, flush_startup; "
-        "record_startup(StartupEvent.SHELL_CREATED); "
-        "record_startup(StartupEvent.FIRST_WINDOW); "
-        "flush_startup()"
-    )
-
     for i in range(runs):
-        start = time.perf_counter()
-        try:
-            if target.endswith(".exe"):
-                env["VIBEOCR_SELF_TEST_SMOKE"] = "1"
-                proc = subprocess.run(
-                    [target], env=env, timeout=30,
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                )
-            else:
+        with tempfile.TemporaryDirectory(prefix="vibeocr-startup-") as temp_dir:
+            trace_path = Path(temp_dir) / "trace.jsonl"
+            env["VIBEOCR_STARTUP_TRACE"] = str(trace_path)
+            command = [target] if target.lower().endswith(".exe") else [sys.executable, target]
+            if not target.lower().endswith(".exe"):
                 env["QT_QPA_PLATFORM"] = "offscreen"
-                env["VIBEOCR_SELF_TEST_SMOKE"] = "1"
+            try:
                 proc = subprocess.run(
-                    [sys.executable, str(REPO / "src/vibeocr/main.py")],
-                    env=env, cwd=str(REPO), timeout=45,
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    command,
+                    env=env,
+                    cwd=str(REPO),
+                    timeout=timeout_seconds,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
                 )
-        except subprocess.TimeoutExpired:
-            print(f"  run {i+1}: TIMEOUT", file=sys.stderr)
-            continue
-        elapsed = (time.perf_counter() - start) * 1000.0  # ms
-        if proc.returncode != 0:
-            print(f"  run {i+1}: exit {proc.returncode}", file=sys.stderr)
-            continue
-        samples_t03.append(elapsed)
-        samples_t06.append(elapsed)
-        print(f"  run {i+1}: {elapsed:.0f} ms")
+                if proc.returncode != 0:
+                    raise ValueError(f"process exited with {proc.returncode}")
+                t03, t06 = _read_trace(trace_path)
+            except (subprocess.TimeoutExpired, OSError, ValueError, json.JSONDecodeError) as error:
+                print(f"  run {i + 1}: INVALID ({error})", file=sys.stderr)
+                continue
+            samples_t03.append(t03)
+            samples_t06.append(t06)
+            print(f"  run {i + 1}: T0-T3={t03:.0f} ms, T0-T6={t06:.0f} ms")
 
     # Unzipped size: Python uses the venv + src; WinUI uses its bin dir.
     if target.endswith(".exe"):
@@ -129,6 +136,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--output", required=True, type=Path)
     p.add_argument("--zip-bytes", type=int, default=0,
                    help="Release ZIP size in bytes (measured separately).")
+    p.add_argument("--timeout-seconds", type=float, default=120.0)
     args = p.parse_args(argv)
 
     fingerprint = f"{os.environ.get('COMPUTERNAME','host')}|{os.environ.get('PROCESSOR_ARCHITECTURE','x64')}"
@@ -139,17 +147,26 @@ def main(argv: list[str] | None = None) -> int:
     target = str(Path(target).resolve())
 
     print(f"Collecting {args.runs} cold-start samples for {args.name} ({target})...")
-    metrics = collect(target, args.runs, args.name, fingerprint)
+    try:
+        metrics = collect(
+            target,
+            args.runs,
+            args.name,
+            fingerprint,
+            timeout_seconds=args.timeout_seconds,
+        )
+    except ValueError as error:
+        p.error(str(error))
     if args.zip_bytes:
         metrics["zip_bytes"] = int(args.zip_bytes)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(
-        __import__("json").dumps(metrics, indent=2), encoding="utf-8"
+        json.dumps(metrics, indent=2), encoding="utf-8"
     )
     print(f"Wrote {args.output}: {metrics['samples']} samples, "
           f"t0-t3 p95={metrics['t0_t3_p95_ms']}ms, "
           f"unzipped={metrics['unzipped_bytes']}")
-    return 0 if metrics["samples"] >= 30 else 2
+    return 0 if metrics["samples"] == args.runs else 2
 
 
 if __name__ == "__main__":

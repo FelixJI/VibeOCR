@@ -8,9 +8,8 @@ and returns the result payload. Never imports PySide6.
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Protocol, runtime_checkable
-
 from pathlib import Path
+from typing import Any, Protocol, runtime_checkable
 
 from vibeocr.application.contracts import (
     CancelToken,
@@ -25,15 +24,19 @@ from vibeocr.worker_host.shared_payload import SharedPayloadRef, SharedPayloadSt
 
 
 @runtime_checkable
-class OcrFacade(Protocol):
+class OcrRecognizeFacade(Protocol):
     def recognize(self, request: OcrRequest, cancel: CancelToken) -> OcrResult: ...
+
+
+@runtime_checkable
+class OcrExportFacade(Protocol):
     def export(self, request: OcrExportRequest, cancel: CancelToken) -> OcrExportResult: ...
 
 
 class OcrHandler:
     """Handle ``ocr.recognize``: read image from shared memory and run OCR."""
 
-    def __init__(self, *, facade: OcrFacade, store: SharedPayloadStore) -> None:
+    def __init__(self, *, facade: OcrRecognizeFacade, store: SharedPayloadStore) -> None:
         self._facade = facade
         self._store = store
 
@@ -64,7 +67,7 @@ class OcrHandler:
 
 
 class OcrExportHandler:
-    def __init__(self, *, facade: OcrFacade) -> None:
+    def __init__(self, *, facade: OcrExportFacade) -> None:
         self._facade = facade
 
     async def handle(self, payload: dict[str, Any], cancel: CancelToken) -> dict[str, Any]:
@@ -87,4 +90,4 @@ class OcrExportHandler:
         return {"output_path": str(result.output_path), "bytes_written": result.bytes_written}
 
 
-__all__ = ["OcrExportHandler", "OcrFacade", "OcrHandler"]
+__all__ = ["OcrExportFacade", "OcrExportHandler", "OcrHandler", "OcrRecognizeFacade"]

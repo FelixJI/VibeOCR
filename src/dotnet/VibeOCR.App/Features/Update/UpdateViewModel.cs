@@ -4,13 +4,14 @@ using System.Runtime.CompilerServices;
 namespace VibeOCR.App.Features.Update;
 
 /// <summary>
-/// Update view model: check for updates, download, verify hash, and cancel.
-/// The production updater entry is NOT switched here (Task 5.4); this view
-/// model only orchestrates the UI affordance against an injected update source.
+/// Update view model: check, download, verify, hand off to the independent
+/// updater, and close the running application once the updater is ready.
 /// </summary>
-public sealed class UpdateViewModel(IUpdateSource source) : INotifyPropertyChanged
+public sealed class UpdateViewModel(IUpdateSource source, Action? requestShutdown = null)
+    : INotifyPropertyChanged
 {
     private readonly IUpdateSource _source = source ?? throw new ArgumentNullException(nameof(source));
+    private readonly Action _requestShutdown = requestShutdown ?? (() => { });
     private CancellationTokenSource? _activeRun;
     private bool _isBusy;
     private string _status = string.Empty;
@@ -61,8 +62,21 @@ public sealed class UpdateViewModel(IUpdateSource source) : INotifyPropertyChang
         Status = "正在下载";
         try
         {
-            bool ok = await _source.DownloadVerifyAsync(run.Token);
-            Status = ok ? "下载完成，校验通过" : "校验失败，请重试";
+            bool verified = await _source.DownloadVerifyAsync(run.Token);
+            if (!verified)
+            {
+                Status = "校验失败，请重试";
+                return;
+            }
+            Status = "正在启动更新器";
+            bool launched = await _source.LaunchUpdaterAsync(run.Token);
+            if (!launched)
+            {
+                Status = "更新器启动失败，请重试";
+                return;
+            }
+            Status = "更新器已就绪，应用即将退出";
+            _requestShutdown();
         }
         catch (OperationCanceledException)
         {
@@ -92,4 +106,5 @@ public interface IUpdateSource
 {
     Task<(string Version, bool Available)> FetchLatestAsync(CancellationToken cancellationToken);
     Task<bool> DownloadVerifyAsync(CancellationToken cancellationToken);
+    Task<bool> LaunchUpdaterAsync(CancellationToken cancellationToken);
 }

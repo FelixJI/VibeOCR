@@ -8,10 +8,7 @@ without requiring an actual dotnet publish.
 from __future__ import annotations
 
 import subprocess
-import sys
 from pathlib import Path
-
-import pytest
 
 REPO_ROOT = Path(__file__).parents[2]
 VERIFIER = REPO_ROOT / "scripts" / "verify_winui_artifact.ps1"
@@ -30,11 +27,21 @@ def _run_verifier(root: Path) -> tuple[int, str]:
 def _build_layout(root: Path, *, forbidden: list[str] | None = None) -> None:
     """Create a clean minimal layout plus any forbidden entries."""
     root.mkdir(parents=True, exist_ok=True)
-    (root / "VibeOCR.WinUI.exe").write_bytes(b"")
-    (root / "VibeOCR.Bootstrapper.exe").write_bytes(b"")
-    (root / "runtime").mkdir(exist_ok=True)
-    (root / "models").mkdir(exist_ok=True)
-    (root / "config").mkdir(exist_ok=True)
+    for relative in (
+        "VibeOCR.WinUI.exe",
+        "VibeOCR.Bootstrapper.exe",
+        "updater.exe",
+        "VibeOCR.WinUI.dll",
+        "VibeOCR.Contracts.dll",
+        "VibeOCR.Platform.dll",
+        "worker/vibeocr/worker_host/main.py",
+        "contracts/v1/golden.json",
+        "CHANGELOG.md",
+        "LICENSE",
+    ):
+        target = root / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(b"release-content")
     for entry in forbidden or []:
         target = root / entry
         target.mkdir(parents=True, exist_ok=True)
@@ -45,6 +52,33 @@ def test_clean_layout_passes(tmp_path: Path) -> None:
     _build_layout(root)
     code, output = _run_verifier(root)
     assert code == 0, output
+
+
+def test_missing_required_entry_is_rejected(tmp_path: Path) -> None:
+    root = tmp_path / "release"
+    _build_layout(root)
+    (root / "VibeOCR.Bootstrapper.exe").unlink()
+    code, output = _run_verifier(root)
+    assert code == 1, output
+    assert "required release file missing" in output
+
+
+def test_empty_required_entry_is_rejected(tmp_path: Path) -> None:
+    root = tmp_path / "release"
+    _build_layout(root)
+    (root / "VibeOCR.WinUI.exe").write_bytes(b"")
+    code, output = _run_verifier(root)
+    assert code == 1, output
+    assert "required release file is empty" in output
+
+
+def test_legacy_ui_entry_is_rejected(tmp_path: Path) -> None:
+    root = tmp_path / "release"
+    _build_layout(root)
+    (root / "worker/vibeocr/main.py").write_text("legacy", encoding="utf-8")
+    code, output = _run_verifier(root)
+    assert code == 1, output
+    assert "legacy PySide UI entry" in output
 
 
 def test_pyside6_modules_rejected(tmp_path: Path) -> None:

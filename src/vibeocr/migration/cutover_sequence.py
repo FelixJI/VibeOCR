@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import dataclasses
 import hashlib
-from typing import Any, Protocol, runtime_checkable
+from typing import Protocol, runtime_checkable
 
 
 class CutoverError(Exception):
@@ -69,11 +69,11 @@ def run_cutover(boundary: CutoverBoundary, plan: CutoverPlan) -> str:
     for name, action in steps:
         try:
             action()
-        except Exception as error:  # noqa: BLE001 - boundary
+        except Exception as error:
             reason = f"{name} failed: {error}"
             try:
                 boundary.enter_repair_mode(reason)
-            except Exception:  # noqa: BLE001 - best-effort repair
+            except Exception:
                 pass
             raise CutoverError(reason) from error
     return "launched"

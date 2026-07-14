@@ -26,6 +26,7 @@ import time
 import uuid
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 import fitz
 import uvicorn
@@ -64,10 +65,11 @@ from vibeocr.ipc.schemas import (
     UpdateBlockTextRequest,
 )
 from vibeocr.models.ocr_result import OCRResult, TextBlock
-from collections.abc import Iterator
-
 from vibeocr.models.pdf_document import PdfDocument, PdfPageInfo, TextLayerInfo
 from vibeocr.services.pdf_service import PdfService
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 logger = logging.getLogger(__name__)
 

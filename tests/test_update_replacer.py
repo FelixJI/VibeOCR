@@ -222,14 +222,10 @@ class TestRunReplacementNoVerifyZip:
 
 
 class TestUpdaterMainSelfExeNames:
-    """updater_main.main 组装 self_exe_names = detect() + ('VibeOCR.exe',)。
-
-    VibeOCR.exe 避让始终保留（容错：旧主程序锁未及时释放）。
-    updater.exe 避让随路径切换。
-    """
+    """updater_main.main 同时避让旧 UI 和新的 WinUI 正式入口。"""
 
     def test_staging_path_excludes_updater_exe(self, replacer, monkeypatch, tmp_path):
-        """新路径：updater 在暂存目录 → self_exe_names 仅含 VibeOCR.exe。"""
+        """新路径无需避让 updater 自身，但要覆盖新旧应用入口。"""
         import importlib.util
 
         # 加载 updater_main 模块（它 import update_replacer，需先注入 sys.modules）
@@ -262,10 +258,14 @@ class TestUpdaterMainSelfExeNames:
 
         updater_main.main()
 
-        assert captured["self_exe_names"] == ("VibeOCR.exe",)
+        assert captured["self_exe_names"] == (
+            "VibeOCR.exe",
+            "VibeOCR.WinUI.exe",
+            "VibeOCR.Bootstrapper.exe",
+        )
 
     def test_old_path_includes_updater_exe(self, replacer, monkeypatch, tmp_path):
-        """旧路径：updater 在 app_dir → self_exe_names 含 updater.exe + VibeOCR.exe。"""
+        """旧路径还需避让 app_dir 中正在运行的 updater。"""
         import importlib.util
 
         updater_main_script = Path(__file__).parent.parent / "scripts" / "updater_main.py"
@@ -293,7 +293,59 @@ class TestUpdaterMainSelfExeNames:
 
         updater_main.main()
 
-        assert captured["self_exe_names"] == ("updater.exe", "VibeOCR.exe")
+        assert captured["self_exe_names"] == (
+            "updater.exe",
+            "VibeOCR.exe",
+            "VibeOCR.WinUI.exe",
+            "VibeOCR.Bootstrapper.exe",
+        )
+
+
+class TestProductionRelaunch:
+    def test_launch_uses_bootstrapper_production_profile(
+        self, replacer, monkeypatch, tmp_path
+    ):
+        app_dir = tmp_path / "app"
+        app_dir.mkdir()
+        bootstrapper = app_dir / "VibeOCR.Bootstrapper.exe"
+        bootstrapper.write_bytes(b"entry")
+        calls = []
+
+        def fake_popen(*args, **kwargs):
+            calls.append((args, kwargs))
+            health_file = Path(args[0][-1])
+            health_file.parent.mkdir(parents=True, exist_ok=True)
+            health_file.write_text('{"status":"healthy"}', encoding="utf-8")
+
+        monkeypatch.setattr(replacer.subprocess, "Popen", fake_popen)
+
+        replacer.launch_app(app_dir)
+
+        assert calls[0][0][0] == [
+            str(bootstrapper),
+            "--profile",
+            "production",
+            "--health-file",
+            str(app_dir / "data/cache/update/startup.healthy"),
+        ]
+
+    def test_failure_never_relaunches_legacy_ui(
+        self, replacer, monkeypatch, tmp_path
+    ):
+        zip_path = tmp_path / "missing.zip"
+        app_dir = tmp_path / "app"
+        app_dir.mkdir()
+        launches = []
+        notices = []
+        monkeypatch.setattr(replacer, "launch_app", lambda *a, **k: launches.append(a))
+
+        assert replacer.run_replacement(
+            zip_path,
+            app_dir,
+            on_failure=notices.append,
+        ) == 1
+        assert launches == []
+        assert notices
 
 
 class TestSyncDependenciesLockBump:

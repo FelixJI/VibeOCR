@@ -12,13 +12,20 @@ internal static class Program
 {
     private const int PrerequisiteMissing = 2;
     private const int AppMissing = 3;
+    private const int InvalidArguments = 4;
 
     [STAThread]
     private static int Main(string[] args)
     {
         string installRoot = AppDomain.CurrentDomain.BaseDirectory;
         string appPath = ReadOption(args, "--app") ?? Path.Combine(installRoot, "VibeOCR.WinUI.exe");
-        string profile = ReadOption(args, "--profile") ?? "winui-dev";
+        string profile = ReadOption(args, "--profile") ?? "production";
+        string? healthFile = ReadOption(args, "--health-file");
+        if (profile is not ("production" or "winui-dev"))
+        {
+            Console.Error.WriteLine("Unsupported profile: " + profile);
+            return InvalidArguments;
+        }
         string scopedRoot = profile == "production"
             ? installRoot
             : Path.Combine(installRoot, "data", "profiles", profile);
@@ -52,13 +59,19 @@ internal static class Program
             return AppMissing;
         }
 
-        Process.Start(new ProcessStartInfo
+        string arguments = "--profile " + Quote(profile);
+        if (!string.IsNullOrWhiteSpace(healthFile))
+        {
+            arguments += " --health-file " + Quote(Path.GetFullPath(healthFile));
+        }
+        var startInfo = new ProcessStartInfo
         {
             FileName = appPath,
-            Arguments = "--profile " + Quote(profile),
+            Arguments = arguments,
             WorkingDirectory = Path.GetDirectoryName(appPath),
             UseShellExecute = true,
-        });
+        };
+        Process.Start(startInfo);
         return 0;
     }
 
@@ -116,5 +129,7 @@ internal static class Program
         }
     }
 
-    private static string Quote(string value) => "\"" + value.Replace("\"", "\\\"") + "\"";
+    private static string Quote(string value) =>
+        "\"" + value.Replace("\"", "\\\"") + "\"";
+
 }

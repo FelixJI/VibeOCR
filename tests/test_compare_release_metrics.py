@@ -23,11 +23,15 @@ compare = _mod.compare
 
 
 def _metrics(**over) -> Metrics:
-    base = dict(
-        name="x", fingerprint="machine|x64", samples=30,
-        zip_bytes=160_000_000, unzipped_bytes=400_000_000,
-        t0_t3_p95_ms=3000.0, t0_t6_p95_ms=5000.0,
-    )
+    base = {
+        "name": "x",
+        "fingerprint": "machine|x64",
+        "samples": 30,
+        "zip_bytes": 160_000_000,
+        "unzipped_bytes": 400_000_000,
+        "t0_t3_p95_ms": 3000.0,
+        "t0_t6_p95_ms": 5000.0,
+    }
     base.update(over)
     return Metrics(**base)
 
@@ -66,6 +70,27 @@ def test_gate_fails_on_unapproved_secondary_regression() -> None:
     ok, errors = compare(old, new, require_gate=True)
     assert not ok
     assert any("ZIP regression" in e for e in errors)
+
+
+def test_gate_fails_on_t0_t6_regression_even_when_t3_improves() -> None:
+    old = _metrics()
+    new = _metrics(t0_t3_p95_ms=1800.0, t0_t6_p95_ms=6000.0)
+    ok, errors = compare(old, new, require_gate=True)
+    assert not ok
+    assert any("T0-T6 regression" in error for error in errors)
+
+
+def test_gate_fails_on_idle_resource_regression_when_reported() -> None:
+    old = _metrics(rss_idle_mb=100.0, handle_count_idle=100)
+    new = _metrics(
+        zip_bytes=100_000_000,
+        rss_idle_mb=120.0,
+        handle_count_idle=120,
+    )
+    ok, errors = compare(old, new, require_gate=True)
+    assert not ok
+    assert any("RSS regression" in error for error in errors)
+    assert any("handle-count regression" in error for error in errors)
 
 
 def test_too_few_samples_rejected() -> None:

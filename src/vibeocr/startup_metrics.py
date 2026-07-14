@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
@@ -31,6 +32,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
 TRACE_ENV_VAR = "VIBEOCR_STARTUP_TRACE"
+_startup_origin = time.perf_counter()
 
 
 class StartupEvent(StrEnum):
@@ -183,6 +185,16 @@ def get_recorder() -> StartupRecorder:
     return _global_recorder
 
 
+def set_startup_origin(timestamp: float) -> None:
+    """Set the monotonic T0 origin used by :func:`record_startup`.
+
+    The process entry point calls this once with a timestamp captured before
+    importing application modules. Tests and alternate hosts may do the same.
+    """
+    global _startup_origin
+    _startup_origin = float(timestamp)
+
+
 def record_startup(event: StartupEvent, timestamp: float | None = None) -> None:
     """便捷函数：在全局 recorder 上记录里程碑。
 
@@ -191,9 +203,7 @@ def record_startup(event: StartupEvent, timestamp: float | None = None) -> None:
         timestamp: monotonic 时间戳（秒）。None 时用 time.perf_counter()。
     """
     if timestamp is None:
-        import time
-
-        timestamp = time.perf_counter()
+        timestamp = time.perf_counter() - _startup_origin
     get_recorder().record(event, timestamp)
 
 

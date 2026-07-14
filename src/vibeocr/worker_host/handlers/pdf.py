@@ -170,10 +170,9 @@ class PdfAddTextLayerHandler:
             raise WorkerError(ErrorCode.INVALID_REQUEST, "pdf.add_text_layer requires 'page_index'")
         overwrite = bool(payload.get("overwrite"))
         save = bool(payload.get("save", True))
-        result = await asyncio.to_thread(
+        return await asyncio.to_thread(
             self._backend.add_text_layer, session_id, page_index, overwrite, save
         )
-        return result
 
 
 class PdfDeleteTextLayersHandler:
@@ -183,10 +182,9 @@ class PdfDeleteTextLayersHandler:
     async def handle(self, payload: dict[str, Any], cancel: CancelToken) -> dict[str, Any]:
         session_id = _require_session_id(payload, "pdf.delete_text_layers")
         pages = _page_indices(payload, "pdf.delete_text_layers")
-        result = await asyncio.to_thread(
+        return await asyncio.to_thread(
             self._backend.delete_text_layers, session_id, pages, cancel
         )
-        return result
 
 
 class PdfSaveHandler:
@@ -218,7 +216,7 @@ class PdfStartOcrHandler:
         sidecar_root = payload.get("sidecar_root")
         if sidecar_root is not None and not isinstance(sidecar_root, str):
             raise WorkerError(ErrorCode.INVALID_REQUEST, "pdf.start_ocr 'sidecar_root' must be a string or null")
-        result = await asyncio.to_thread(
+        return await asyncio.to_thread(
             self._backend.start_ocr,
             session_id,
             file_path,
@@ -227,19 +225,18 @@ class PdfStartOcrHandler:
             sidecar_root,
             cancel,
         )
-        return result
 
 
 __all__ = [
-    "PdfFacade",
-    "PdfSessionBackend",
-    "PdfOpenHandler",
+    "PdfAddTextLayerHandler",
     "PdfCloseHandler",
+    "PdfDeletePagesHandler",
+    "PdfDeleteTextLayersHandler",
+    "PdfFacade",
+    "PdfOpenHandler",
     "PdfRenderPageHandler",
     "PdfRotateHandler",
-    "PdfDeletePagesHandler",
-    "PdfAddTextLayerHandler",
-    "PdfDeleteTextLayersHandler",
     "PdfSaveHandler",
+    "PdfSessionBackend",
     "PdfStartOcrHandler",
 ]
