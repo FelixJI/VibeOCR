@@ -109,7 +109,7 @@ def _render_title(block: dict, index: int) -> str:
 
 
 def _render_table(block: dict, index: int) -> str:
-    from vibeocr.services.ocr_service import normalize_table_html
+    from vibeocr.utils.html_tables import normalize_table_html
 
     parts: list[str] = []
     captions = block.get("table_caption") or []
@@ -274,7 +274,7 @@ def _build_text_layout_html(
         LINE_MODE_MERGE,
         LINE_MODE_SMART,
     )
-    from vibeocr.services.text_block_processor import TextBlockProcessor
+    from vibeocr.utils.text_layout import TextBlockProcessor
 
     # 用 (原始下标, 块) 配对跟踪位置，避免 drop_blank / 排序后 index 错位。
     indexed = list(enumerate(text_blocks))
