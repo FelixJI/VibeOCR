@@ -26,7 +26,9 @@
 
 param(
     [switch]$ValidateOnly,
-    [string]$ReportPath = ""
+    [switch]$BuildRelease,
+    [string]$ReportPath = "",
+    [string]$NodePath = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -36,6 +38,16 @@ $ErrorActionPreference = "Stop"
 # ---------------------------------------------------------------------------
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
 $ProjectRoot = Resolve-Path (Join-Path $ScriptDir "..")
+$Uv = Join-Path $ProjectRoot ".venv\Scripts\uv.exe"
+$Python = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
+$DotNet = Join-Path $env:ProgramFiles "dotnet\dotnet.exe"
+$Node = $NodePath
+if (-not $Node) { $Node = $env:VIBEOCR_NODE }
+if (-not $Node) { $Node = (Get-Command node.exe -ErrorAction SilentlyContinue).Source }
+if (-not (Test-Path $Uv)) { throw "project uv not found: $Uv" }
+if (-not (Test-Path $Python)) { throw "project Python not found: $Python" }
+if (-not (Test-Path $DotNet)) { throw "x64 dotnet not found: $DotNet" }
+if (-not $Node) { $Node = (Get-Command node -ErrorAction SilentlyContinue).Source }
 
 # ---------------------------------------------------------------------------
 # Baseline report output path (gitignored via reports/)
@@ -182,44 +194,81 @@ $steps = @()
 # Step 1: lockfile sync (deterministic install)
 $steps += Invoke-GateStep -Name "uv sync --frozen --group dev" -Action {
     Push-Location $ProjectRoot
-    uv sync --frozen --group dev
+    & $Uv sync --frozen --group dev --python $Python --no-managed-python `
+        --cache-dir (Join-Path $ProjectRoot ".vibeocr\uv-cache")
     Pop-Location
 }
 
 # Step 2: full pytest
-# The full suite occasionally triggers a Windows fatal exception (segfault,
-# exit code 127/139) from the GPU detection thread's nvidia-smi subprocess
-# racing with Qt event processing. This is a test-infrastructure issue, not a
-# code defect. We retry up to 2 times on non-zero exit to handle the flaky crash.
-$ptStep = Invoke-GateStep -Name "pytest -q" -Action {
+$steps += Invoke-GateStep -Name "pytest -q" -Action {
     Push-Location $ProjectRoot
-    uv run pytest -q
+    & $Python -m pytest -q
     Pop-Location
 }
-$ptRetry = 0
-while (-not $ptStep.ok -and $ptRetry -lt 2) {
-    $ptRetry++
-    Write-Host "    [pytest] non-zero exit (attempt 1), retry $ptRetry/2..." -ForegroundColor Yellow
-    $ptStep = Invoke-GateStep -Name "pytest -q (retry $ptRetry)" -Action {
-        Push-Location $ProjectRoot
-        uv run pytest -q
-        Pop-Location
-    }
-}
-$steps += $ptStep
 
 # Step 3: Ruff
 $steps += Invoke-GateStep -Name "ruff check src tests scripts" -Action {
     Push-Location $ProjectRoot
-    uv run ruff check src tests scripts
+    & $Python -m ruff check src tests scripts
     Pop-Location
 }
 
 # Step 4: Pyright
 $steps += Invoke-GateStep -Name "pyright" -Action {
     Push-Location $ProjectRoot
-    uv run pyright
+    & $Python -m pyright
     Pop-Location
+}
+
+# Step 5: complete .NET solution (x64 SDK; PATH can resolve the x86 host).
+$steps += Invoke-GateStep -Name "dotnet restore" -Action {
+    Push-Location $ProjectRoot
+    & $DotNet restore "src\dotnet\VibeOCR.slnx"
+    Pop-Location
+}
+$steps += Invoke-GateStep -Name "dotnet build -c Release" -Action {
+    Push-Location $ProjectRoot
+    & $DotNet build "src\dotnet\VibeOCR.slnx" -c Release --no-restore
+    Pop-Location
+}
+$steps += Invoke-GateStep -Name "dotnet test -c Release" -Action {
+    Push-Location $ProjectRoot
+    & $DotNet test "src\dotnet\VibeOCR.slnx" -c Release --no-restore
+    Pop-Location
+}
+
+# Step 6: Web semantic/security tests.
+$steps += Invoke-GateStep -Name "node --test tests/web/*.test.ts" -Action {
+    Push-Location $ProjectRoot
+    if (-not $Node) { throw "node not found" }
+    & $Node --test tests\web\*.test.ts
+    Pop-Location
+}
+
+# Step 7: feature parity must be complete, not merely schema-valid.
+$steps += Invoke-GateStep -Name "feature parity --require-pass" -Action {
+    Push-Location $ProjectRoot
+    & $Python tests\parity\validate_matrix.py docs\quality\feature-parity.md --require-pass
+    Pop-Location
+}
+
+if ($BuildRelease) {
+    $versionMatch = Select-String -Path (Join-Path $ProjectRoot "pyproject.toml") -Pattern '^version = "([0-9]+\.[0-9]+\.[0-9]+)"$'
+    if (-not $versionMatch) { throw "could not read project version" }
+    $version = $versionMatch.Matches[0].Groups[1].Value
+    $archive = Join-Path $ProjectRoot "dist\VibeOCR-v$version-win64.zip"
+    $steps += Invoke-GateStep -Name "build WinUI release" -Action {
+        Push-Location $ProjectRoot
+        & $Python scripts\bump_version.py --rebuild $version --force
+        Pop-Location
+    }
+    $steps += Invoke-GateStep -Name "verify WinUI artifact" -Action {
+        Push-Location $ProjectRoot
+        powershell -NoProfile -ExecutionPolicy Bypass -File `
+            (Join-Path $ProjectRoot "scripts\verify_winui_artifact.ps1") `
+            -Artifact $archive
+        Pop-Location
+    }
 }
 
 # ---------------------------------------------------------------------------
@@ -232,7 +281,7 @@ foreach ($s in $steps) {
 
 $report = [ordered]@{
     generated_at = (Get-Date -Format "yyyy-MM-ddTHH:mm:ssZ")
-    gate         = "phase0"
+    gate         = "full-migration"
     schema       = "tests/fixtures/startup/baseline.schema.json"
     result       = if ($failed) { "FAIL" } else { "PASS" }
     steps        = $steps

@@ -1985,9 +1985,7 @@ class PdfTab(QWidget):
             disp_w = mh if rotated else mw
             disp_h = mw if rotated else mh
             is_landscape = disp_w > disp_h
-            if target == "landscape" and not is_landscape:
-                to_rotate.append(idx)
-            elif target == "portrait" and is_landscape:
+            if (target == "landscape" and not is_landscape) or (target == "portrait" and is_landscape):
                 to_rotate.append(idx)
             else:
                 skipped += 1

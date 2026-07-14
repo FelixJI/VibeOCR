@@ -2,21 +2,16 @@
 import hashlib
 import json
 import os
-import time
 from pathlib import Path
 
-import pytest
-
 from vibeocr.utils.ocr_sidecar import (
-    SIDECAR_VERSION,
     compute_fingerprint,
-    sidecar_path,
     load_sidecar,
-    save_sidecar,
-    mark_pages_saved,
     mark_completed,
-    restore_pending_pages,
+    mark_pages_saved,
     refresh_baseline,
+    restore_pending_pages,
+    sidecar_path,
 )
 
 
@@ -27,7 +22,7 @@ def _bump_mtime(path: Path, extra_bytes: int = 100) -> None:
     """
     with open(path, "ab") as fh:
         fh.write(b"X" * extra_bytes)
-    st = os.stat(path)
+    st = path.stat()
     os.utime(path, ns=(st.st_atime_ns, st.st_mtime_ns + 1_000_000))
 
 
@@ -49,7 +44,7 @@ def test_sidecar_path_is_path_slug_under_vibeocr_cache(tmp_path):
     assert p.parent.parent.name == ".vibeocr"
     assert p.suffix == ".json"
     # 文件名 = md5(abspath)，32 位 hex
-    expected = hashlib.md5(os.path.abspath(str(f)).encode("utf-8")).hexdigest()
+    expected = hashlib.md5(str(f.resolve()).encode("utf-8")).hexdigest()
     assert p.stem == expected
 
 
@@ -71,12 +66,14 @@ def test_mark_pages_saved_merges_into_existing(tmp_path, monkeypatch):
     )
     assert mark_pages_saved(str(f), [0, 1], {0: 0, 1: 90}) is True
     data = load_sidecar(str(f))
+    assert data is not None
     assert data["completed"] is False
     assert data["pages"] == {"0": {"has_text_layer": True, "ocr_preproc_angle": 0},
                               "1": {"has_text_layer": True, "ocr_preproc_angle": 90}}
     # 第二批合并
     assert mark_pages_saved(str(f), [2], {2: 0}) is True
     data = load_sidecar(str(f))
+    assert data is not None
     assert set(data["pages"].keys()) == {"0", "1", "2"}
 
 
@@ -88,7 +85,9 @@ def test_mark_completed_sets_flag(tmp_path, monkeypatch):
     )
     mark_pages_saved(str(f), [0], {0: 0})
     assert mark_completed(str(f)) is True
-    assert load_sidecar(str(f))["completed"] is True
+    data = load_sidecar(str(f))
+    assert data is not None
+    assert data["completed"] is True
 
 
 def test_mark_completed_preserves_pages_when_validation_fails(tmp_path, monkeypatch):
@@ -106,7 +105,7 @@ def test_mark_completed_preserves_pages_when_validation_fails(tmp_path, monkeypa
     # 积累两批页记录
     assert mark_pages_saved(str(f), [0, 1], {0: 0, 1: 90}) is True
     # 文件缩小（模拟压缩/换文件），使 load_sidecar 增长校验失败
-    st = os.stat(f)
+    st = f.stat()
     f.write_bytes(b"short")  # 5 < 原 size
     os.utime(f, ns=(st.st_atime_ns, st.st_mtime_ns + 2_000_000))
     assert load_sidecar(str(f)) is None  # 校验确实失败
@@ -191,7 +190,7 @@ def test_file_shrink_invalidates_sidecar(tmp_path, monkeypatch):
     )
     mark_pages_saved(str(f), [0], {0: 0})
     # 用户用更小的文件替换（size 变小）—— 模拟回退/换文件
-    st = os.stat(f)
+    st = f.stat()
     f.write_bytes(b"short")  # 5 字节 < 28 字节
     os.utime(f, ns=(st.st_atime_ns, st.st_mtime_ns + 2_000_000))
     assert load_sidecar(str(f)) is None
@@ -206,7 +205,7 @@ def test_file_older_mtime_invalidates_sidecar(tmp_path, monkeypatch):
         "vibeocr.utils.ocr_sidecar._sessions_dir", lambda: tmp_path / "sessions"
     )
     mark_pages_saved(str(f), [0], {0: 0})
-    st = os.stat(f)
+    st = f.stat()
     # 同 size，但 mtime 回拨到更早
     f.write_bytes(b"same-size-content")
     os.utime(f, ns=(st.st_atime_ns, st.st_mtime_ns - 10_000_000_000))  # -10s
@@ -223,7 +222,7 @@ def test_refresh_baseline_after_compression(tmp_path, monkeypatch):
     )
     mark_pages_saved(str(f), [0, 1], {0: 0, 1: 0})
     # 模拟 6C 全量压缩重写：文件显著变小（实际场景子集字体合并 + deflate）
-    st_before = os.stat(f)
+    st_before = f.stat()
     f.write_bytes(b"small")
     os.utime(f, ns=(st_before.st_atime_ns, st_before.st_mtime_ns + 3_000_000))
     # 未 refresh 前 load_sidecar 失效
@@ -236,7 +235,9 @@ def test_refresh_baseline_after_compression(tmp_path, monkeypatch):
     assert set(data["pages"].keys()) == {"0", "1"}
     # 紧接着 mark_completed 也能成功（不再被增长校验拦截）
     assert mark_completed(str(f)) is True
-    assert load_sidecar(str(f))["completed"] is True
+    completed = load_sidecar(str(f))
+    assert completed is not None
+    assert completed["completed"] is True
 
 
 def test_refresh_baseline_missing_sidecar(tmp_path, monkeypatch):

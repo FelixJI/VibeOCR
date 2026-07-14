@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""语义化版本管理与打包脚本
+"""语义化版本管理与 WinUI 发布打包脚本
 
 在 main 分支上 bump 版本号 → 生成 CHANGELOG → commit → 打 tag。
 tag 一推（git push + push tag），GitHub Actions 自动打包并发布到
@@ -13,7 +13,7 @@ GitHub（代码另镜像到 CNB；见 .github/workflows/release.yml）。
     python scripts/bump_version.py 2.0.0        # 指定版本号
     python scripts/bump_version.py ... --no-edit  # 跳过编辑器
     python scripts/bump_version.py ... --yes      # 跳过推送/打包确认（直接 commit+tag+push）
-    python scripts/bump_version.py --build      # 打包当前版本
+    python scripts/bump_version.py --build      # 打包当前 WinUI 版本
     python scripts/bump_version.py --rebuild 1.2.3  # 重新打包指定版本
 """
 
@@ -1293,7 +1293,8 @@ def _package_zip(dist_dir: Path, version: str) -> Path | None:
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
         for file_path in dist_dir.rglob("*"):
             if file_path.is_file():
-                arcname = f"{top_folder}/{file_path.relative_to(dist_dir)}"
+                relative = file_path.relative_to(dist_dir).as_posix()
+                arcname = f"{top_folder}/{relative}"
                 zf.write(file_path, arcname)
         # manifest 放 ZIP 根目录（VibeOCR/artifact-manifest.json）
         zf.writestr(
@@ -1405,18 +1406,13 @@ def _get_pyinstaller_cmd(
 
 
 def _run_build(version: str, force: bool = False) -> bool:
-    """执行完整构建流程
+    """构建并验证正式 WinUI release artifact。
 
     Args:
         version: 版本号字符串
         force: True 时已存在的目标目录直接删除重建，不交互询问
             （CI/非交互场景用）。False 时遇到已存在目录会 input() 询问。
     """
-    if not _check_pyinstaller():
-        print("\n错误: PyInstaller 未安装")
-        print(f"请运行: {sys.executable} -m pip install pyinstaller")
-        return False
-
     dist_name = f"VibeOCR-v{version}-win64-Windows10_11"
     dist_path = DIST_BASE_DIR / dist_name / "VibeOCR"
 
@@ -1433,38 +1429,90 @@ def _run_build(version: str, force: bool = False) -> bool:
                 return False
             shutil.rmtree(DIST_BASE_DIR / dist_name, ignore_errors=True)
 
-    # 0. 生成版本信息文件（主程序与 updater 各一份，元数据须区分）
-    version_file = _generate_version_file(version, DIST_BASE_DIR, target="main")
-    updater_version_file = _generate_version_file(
-        version, DIST_BASE_DIR, target="updater"
-    )
-
-    # 1. 打包主程序
-    cmd = _get_pyinstaller_cmd(version, version_file=version_file)
-    print(f"\n[1/5] 打包主程序 VibeOCR v{version}...")
-    try:
-        subprocess.run(cmd, check=True)
-    except subprocess.CalledProcessError as e:
-        print(f"\n主程序打包失败，退出码: {e.returncode}")
+    build_script = PROJECT_ROOT / "scripts" / "build_winui_release.ps1"
+    verifier = PROJECT_ROOT / "scripts" / "verify_winui_artifact.ps1"
+    powershell = shutil.which("powershell.exe") or shutil.which("powershell")
+    if powershell is None:
+        print("\n错误: 找不到 Windows PowerShell，无法构建 WinUI release")
         return False
 
-    # 2. 打包 updater.exe
-    print("\n[2/5] 打包 updater.exe...")
+    # 1. 发布 WinUI App + Bootstrapper，并装配 UI-free WorkerHost source。
+    print(f"\n[1/4] 构建 WinUI release VibeOCR v{version}...")
+    try:
+        subprocess.run(
+            [
+                powershell,
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                str(build_script),
+                "-OutputDir",
+                str(dist_path),
+                "-Version",
+                version,
+            ],
+            check=True,
+            cwd=PROJECT_ROOT,
+        )
+    except subprocess.CalledProcessError as e:
+        print(f"\nWinUI release 构建失败，退出码: {e.returncode}")
+        return False
+
+    # 2. 生成版本/依赖元数据与纯 stdlib updater，并对 staging 做结构门禁。
+    print("\n[2/4] 生成 version.json、updater.exe 并验证 release layout...")
+    _generate_version_json(version, dist_path)
+    updater_version_file = _generate_version_file(
+        version,
+        DIST_BASE_DIR / f"build-{version}",
+        target="updater",
+    )
     if not _build_updater(dist_path, version_file=updater_version_file):
         return False
+    try:
+        subprocess.run(
+            [
+                powershell,
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                str(verifier),
+                "-Artifact",
+                str(dist_path),
+            ],
+            check=True,
+            cwd=PROJECT_ROOT,
+        )
+    except subprocess.CalledProcessError as e:
+        print(f"\nWinUI staging 验证失败，退出码: {e.returncode}")
+        return False
 
-    # 3. 清理无用 Qt 二进制（削减 ~230MB 体积）
-    print("\n[3/5] 清理无用 Qt 模块...")
-    _cleanup_dist(dist_path)
-
-    # 4. 生成 version.json
-    print("\n[4/5] 生成 version.json...")
-    _generate_version_json(version, dist_path)
-
-    # 5. 打主包 zip + SHA256（WebEngine 内置主包，不再拆分）
-    print("\n[5/5] 打包 zip...")
+    # 3. 打 ZIP + SHA256 + artifact manifest。
+    print("\n[3/4] 打包 zip...")
     zip_path = _package_zip(dist_path, version)
     if zip_path is None:
+        return False
+
+    # 4. 对最终 ZIP 再执行 WinUI required/forbidden layout 门禁。
+    print("\n[4/4] 验证最终 WinUI artifact...")
+    try:
+        subprocess.run(
+            [
+                powershell,
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                str(verifier),
+                "-Artifact",
+                str(zip_path),
+            ],
+            check=True,
+            cwd=PROJECT_ROOT,
+        )
+    except subprocess.CalledProcessError as e:
+        print(f"\nWinUI ZIP 验证失败，退出码: {e.returncode}")
         return False
 
     print(f"\n{'=' * 50}")
@@ -1486,7 +1534,7 @@ def _ask_build(version: str) -> bool:
     """
     print(f"\n{'=' * 50}")
     print(f"版本 v{version} 已升级并提交。")
-    print("是否立即执行 PyInstaller 打包? [Y/n]: ", end="", flush=True)
+    print("是否立即构建 WinUI release? [Y/n]: ", end="", flush=True)
     choice = input().strip().lower()
     return choice in ("", "y", "yes", "是")
 

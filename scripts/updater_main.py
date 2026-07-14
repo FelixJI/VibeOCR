@@ -67,10 +67,15 @@ def main() -> int:
 
     # 自动判断新旧路径：updater 自身是否在 app_dir。
     # 新路径（暂存目录运行）无需避让 updater.exe；旧路径（过渡期，自身在 app_dir）需避让。
-    # VibeOCR.exe 避让始终保留（容错：旧主程序 _force_quit 后锁可能未及时释放，
-    # 新路径下 rename 瞬时成功不产生持久 .old）。
+    # 同时避让旧 UI 与新的 WinUI/Bootstrapper 入口；不存在的文件会被安全忽略。
+    # 这样既能完成旧版本到 WinUI 的一次性迁移，也能支持后续 WinUI 自更新。
     detected = _detect_self_exe_names(app_dir)
-    self_exe_names = (*detected, "VibeOCR.exe")
+    self_exe_names = (
+        *detected,
+        "VibeOCR.exe",
+        "VibeOCR.WinUI.exe",
+        "VibeOCR.Bootstrapper.exe",
+    )
     logger.info(f"路径判定: detected={detected}, self_exe_names={self_exe_names}")
 
     # 就绪信号用默认的 updater.ready，与主程序端 _launch_updater 的轮询文件名对应。

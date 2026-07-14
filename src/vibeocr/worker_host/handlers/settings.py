@@ -65,7 +65,7 @@ class SwitchBackendHandler:
             )
         try:
             new_backend = await asyncio.to_thread(self._boundary.switch_backend, target)
-        except Exception as exc:  # noqa: BLE001 - boundary
+        except Exception as exc:
             raise WorkerError(ErrorCode.INTERNAL_ERROR, str(exc)) from exc
         return {"backend": new_backend, "restart_required": True}
 
@@ -92,16 +92,16 @@ class InstallDependencyHandler:
             result = await asyncio.to_thread(
                 self._boundary.install_dependency, name, source, cancel
             )
-        except Exception as exc:  # noqa: BLE001 - boundary
+        except Exception as exc:
             raise WorkerError(ErrorCode.INTERNAL_ERROR, str(exc)) from exc
         return result
 
 
 __all__ = [
-    "SettingsFacade",
     "BackendSwitchBoundary",
     "DependencyInstallBoundary",
+    "InstallDependencyHandler",
+    "SettingsFacade",
     "SettingsSnapshotHandler",
     "SwitchBackendHandler",
-    "InstallDependencyHandler",
 ]

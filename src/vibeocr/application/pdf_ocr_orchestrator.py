@@ -33,7 +33,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from typing import Any, Protocol, runtime_checkable
 
 from vibeocr.utils import ocr_sidecar
@@ -44,7 +44,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_BATCH_SIZE = 16
 
 
-class PageState(str, Enum):
+class PageState(StrEnum):
     """Closed set of page processing states."""
 
     NONE = "none"
@@ -53,7 +53,7 @@ class PageState(str, Enum):
     FAILED = "failed"
 
 
-class LayerSource(str, Enum):
+class LayerSource(StrEnum):
     """Orthogonal text-layer origin (gray / light green / dark green)."""
 
     NONE = "none"
@@ -122,6 +122,7 @@ class PdfOcrBackend(Protocol):
         cancel_check: Any,
     ) -> list[bytes]:
         """Render the given pages to PNG bytes, in order."""
+        ...
 
     def recognize_pages(
         self,
@@ -130,6 +131,7 @@ class PdfOcrBackend(Protocol):
         cancel_check: Any,
     ) -> list[OcrPageResult]:
         """Recognize rendered images; one result per input image."""
+        ...
 
     def write_batch(
         self,
@@ -141,9 +143,11 @@ class PdfOcrBackend(Protocol):
         cancel_check: Any,
     ) -> BatchOutcome:
         """Write one durable batch. ``save=True`` requests incremental save."""
+        ...
 
     def compress(self, session_id: str, cancel_check: Any) -> bool:
         """Final aggregate compress-in-place; return success."""
+        ...
 
     def cancel(self, session_id: str) -> None: ...
 
@@ -310,10 +314,10 @@ class PdfOcrOrchestrator:
                     ocr_sidecar.mark_pages_saved(
                         file_path,
                         list(outcome.saved_pages),
-                        {p: 0 for p in outcome.saved_pages},
+                        dict.fromkeys(outcome.saved_pages, 0),
                     )
             return outcome
-        except Exception as error:  # noqa: BLE001 - backend boundary
+        except Exception as error:
             logger.warning("PDF OCR batch failed (page boundary): %s", error)
             self._backend.cancel(session_id)
             return BatchOutcome(
@@ -358,7 +362,7 @@ class PdfOcrOrchestrator:
     ) -> bool:
         try:
             ok = self._backend.compress(session_id, cancel)
-        except Exception as error:  # noqa: BLE001
+        except Exception as error:
             logger.warning("PDF final compress failed: %s", error)
             return False
         if ok and not cancel.cancelled:
@@ -442,11 +446,11 @@ def _mark_unfinished(
 
 __all__ = [
     "DEFAULT_BATCH_SIZE",
-    "PageState",
+    "BatchOutcome",
     "LayerSource",
     "OcrPageResult",
-    "BatchOutcome",
     "OcrRunResult",
+    "PageState",
     "PdfOcrBackend",
     "PdfOcrOrchestrator",
     "project_layer_source",

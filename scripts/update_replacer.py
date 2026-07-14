@@ -713,7 +713,12 @@ def cleanup_leftover_old_exes(app_dir: Path) -> None:
     """
     if os.name != "nt" or not app_dir.is_dir():
         return
-    for exe_name in ("updater.exe", "VibeOCR.exe"):
+    for exe_name in (
+        "updater.exe",
+        "VibeOCR.exe",
+        "VibeOCR.WinUI.exe",
+        "VibeOCR.Bootstrapper.exe",
+    ):
         old_exe = app_dir / f"{exe_name}.old"
         if old_exe.exists():
             _safe_remove_running_exe(old_exe, label=old_exe.name)
@@ -915,26 +920,45 @@ def cleanup(zip_path: Path, tmp_dir: Path | None) -> None:
     # zip_path 形如 <app>/data/cache/update/VibeOCR-vX-win64.zip，向上回溯到 app_dir。
     app_dir = zip_path.parents[3] if len(zip_path.parents) >= 4 else None
     if app_dir is not None and os.name == "nt":
-        for exe_name in ("updater.exe", "VibeOCR.exe"):
+        for exe_name in (
+            "updater.exe",
+            "VibeOCR.exe",
+            "VibeOCR.WinUI.exe",
+            "VibeOCR.Bootstrapper.exe",
+        ):
             old_exe = app_dir / f"{exe_name}.old"
             if old_exe.exists():
                 _safe_remove_running_exe(old_exe, label=old_exe.name)
 
 
 def launch_app(app_dir: Path, exe_name: str = "") -> None:
-    """启动主程序。exe_name 默认按平台取 VibeOCR.exe / VibeOCR。"""
+    """通过正式 Bootstrapper 启动并等待 WinUI WorkerHost 健康信号。"""
     if not exe_name:
-        exe_name = "VibeOCR.exe" if os.name == "nt" else "VibeOCR"
+        exe_name = "VibeOCR.Bootstrapper.exe" if os.name == "nt" else "VibeOCR"
     exe_path = app_dir / exe_name
-    if exe_path.exists():
-        logger.info(f"启动 {exe_path}")
-        subprocess.Popen(
-            [str(exe_path)],
-            creationflags=0x8 if os.name == "nt" else 0,
-            cwd=str(app_dir),
+    if not exe_path.is_file():
+        raise FileNotFoundError(f"未找到正式启动入口: {exe_path}")
+    health_file = app_dir / "data" / "cache" / "update" / "startup.healthy"
+    health_file.parent.mkdir(parents=True, exist_ok=True)
+    health_file.unlink(missing_ok=True)
+    command = [str(exe_path)]
+    if os.name == "nt":
+        command.extend(
+            ["--profile", "production", "--health-file", str(health_file)]
         )
-    else:
-        logger.warning(f"未找到主程序 {exe_path}")
+    logger.info("通过正式入口启动 production profile: %s", exe_path)
+    subprocess.Popen(
+        command,
+        creationflags=0x8 if os.name == "nt" else 0,
+        cwd=str(app_dir),
+    )
+    deadline = time.monotonic() + 30.0
+    while time.monotonic() < deadline:
+        if health_file.is_file():
+            logger.info("WinUI startup.healthy 已确认")
+            return
+        time.sleep(0.1)
+    raise TimeoutError("WinUI 未在 30 秒内发布 startup.healthy；已进入修复流程。")
 
 
 # ---------------------------------------------------------------------------
@@ -980,10 +1004,6 @@ def run_replacement(
     # 解压目录引用：无论哪个阶段失败，都要清理掉，避免数百 MB 的临时文件长期堆积
     # （download_update 只清 update 目录里的「文件」，不清子目录，残留 tmp/ 会越积越多）。
     new_files_dir: Path | None = None
-    # 失败时是否尝试重启旧版本：仅替换失败并已回滚的场景需要（此刻旧文件仍在位）。
-    # zip/sha256 校验失败时根本没动 app_dir，旧版本必然完好，也可重启。
-    relaunch_on_fail = True
-
     try:
         # verify_zip(testzip) 已移交旧主程序端（递送时确保 zip 可读，可安全抽取 updater）。
         # 此处仅做 verify_sha256（更强，且由新代码校验自己要部署的包——黄金法则）。
@@ -1040,11 +1060,8 @@ def run_replacement(
         # _cleanup_update_artifacts），仅失败路径在此清理现场。
         if fail_reason:
             _safe_cleanup_artifacts(zip_path, new_files_dir)
-            # 替换失败并回滚后，旧版本仍在位 → 重启它，避免「主程序已退出、应用打不开」
-            # （主程序端 os._exit 后无法再自己起来，必须由替换器代为拉起）。重启在通知
-            # 之前发起，这样即使用户停在弹窗上，旧版应用也能在后台加载起来。
-            if relaunch_on_fail:
-                launch_app(app_dir)
+            # 正式切换后失败只能进入可见的修复/手工恢复路径，绝不能重新拉起旧 UI。
+            # replace_app_files 会尽力回滚文件，但应用保持关闭，等待用户处理失败提示。
             # 通知用户：替换器无 GUI 主体，windowed 运行下 stdout 不可见，唯一可见反馈
             # 是调用方注入的弹窗。历史 bug「更新失败无任何提示」即源于此缺失。
             if on_failure is not None:

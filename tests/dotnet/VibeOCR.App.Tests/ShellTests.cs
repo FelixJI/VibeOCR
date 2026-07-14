@@ -7,14 +7,48 @@ namespace VibeOCR.App.Tests;
 public sealed class ShellTests
 {
     [Fact]
-    public void SideBySideLaunchAlwaysUsesIsolatedProfile()
+    public void ProductionIsDefaultAndDevelopmentProfileMustBeExplicit()
     {
         AppLaunchOptions defaults = AppLaunchOptions.Parse([]);
-        AppLaunchOptions attemptedProduction = AppLaunchOptions.Parse(["--profile", "production"]);
+        AppLaunchOptions production = AppLaunchOptions.Parse(["--profile", "production"]);
+        AppLaunchOptions development = AppLaunchOptions.Parse(["--profile", "winui-dev"]);
+        AppLaunchOptions health = AppLaunchOptions.Parse(["--health-file", "startup.healthy"]);
 
-        Assert.Equal("winui-dev", defaults.Profile);
-        Assert.Equal("winui-dev", attemptedProduction.Profile);
+        Assert.Equal("production", defaults.Profile);
+        Assert.Equal("production", production.Profile);
+        Assert.Equal("winui-dev", development.Profile);
+        Assert.EndsWith("startup.healthy", health.HealthFile);
         Assert.Contains("diagnostics", ShellNavigation.Destinations);
+    }
+
+    [Theory]
+    [InlineData("other")]
+    [InlineData("")]
+    public void UnsupportedProfilesAreRejected(string profile) =>
+        Assert.Throws<ArgumentException>(() => AppLaunchOptions.Parse(["--profile", profile]));
+
+    [Fact]
+    public void MissingProfileValueIsRejected() =>
+        Assert.Throws<ArgumentException>(() => AppLaunchOptions.Parse(["--profile"]));
+
+    [Fact]
+    public void ProductionWorkerRootMustComeFromPackagedRelease()
+    {
+        string root = Path.Combine(Path.GetTempPath(), $"vibeocr-worker-{Guid.NewGuid():N}");
+        string workerHost = Path.Combine(root, "worker", "vibeocr", "worker_host");
+        Directory.CreateDirectory(workerHost);
+        try
+        {
+            PortableLayout layout = PortableLayout.Resolve(
+                Path.Combine(root, "VibeOCR.WinUI.exe"),
+                "production");
+
+            Assert.Equal(Path.Combine(root, "worker"), App.ResolveWorkerRoot(layout));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
     }
 
     [Fact]

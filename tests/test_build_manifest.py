@@ -65,6 +65,16 @@ def _sha256_bytes(data: bytes) -> str:
 
 
 class TestCreateManifest:
+    def test_other_nested_output_directory_remains_forbidden(self, tmp_path: Path) -> None:
+        root = tmp_path / "stage"
+        leaked = root / "worker" / "output" / "secret.pdf"
+        leaked.parent.mkdir(parents=True)
+        leaked.write_bytes(b"secret")
+
+        manifest = create_manifest(root, allowed_roots=(".",))
+
+        assert not any("secret.pdf" in entry["path"] for entry in manifest["entries"])
+
     def test_manifest_records_relative_path_size_sha256(self, tmp_path):
         root = tmp_path / "staging"
         _make_tree(root)

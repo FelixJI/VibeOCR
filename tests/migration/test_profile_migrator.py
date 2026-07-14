@@ -5,8 +5,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
 from vibeocr.migration.profile_migrator import (
     CURRENT_SCHEMA_VERSION,
     migrate_config,

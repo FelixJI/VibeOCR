@@ -1,6 +1,7 @@
 namespace VibeOCR.Platform.Bootstrap;
 
 public sealed record PortableLayout(
+    string Profile,
     string InstallRoot,
     string DataRoot,
     string RuntimeRoot,
@@ -30,6 +31,7 @@ public sealed record PortableLayout(
         string scopedRoot = profile == "production" ? installRoot : dataRoot;
 
         return new PortableLayout(
+            profile,
             installRoot,
             dataRoot,
             Path.Combine(scopedRoot, "python"),

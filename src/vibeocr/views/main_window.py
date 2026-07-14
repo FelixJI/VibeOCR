@@ -1087,6 +1087,8 @@ class MainWindow(QMainWindow):
         record_startup(StartupEvent.BACKEND_READY)  # T5
         record_startup(StartupEvent.INTERACTIVE)  # T6：预加载完成后用户可交互
         flush_startup()  # 若 VIBEOCR_STARTUP_TRACE 设置则写 JSONL
+        if os.environ.get("VIBEOCR_SELF_TEST_SMOKE") == "t6":
+            os._exit(0)
 
     @Slot(int, int, str)
     def _on_preload_progress(self, current: int, total: int, pipeline_name: str) -> None:

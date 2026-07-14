@@ -1,13 +1,11 @@
 # VibeOCR 自动打包发版流程
 #
-# 触发：推送 v* 格式的 tag（由本地 `bump_version.py --to-main` 创建并 push）
+# 触发：推送 v* 格式的 tag（由本地 `bump_version.py` 创建并 push）
 # 产物：Windows 便携版 zip + sha256，上传到对应 tag 的 GitHub Release
 #
-# 依赖策略：CI 不跑 uv sync（会拉数 GB 的 paddle/torch CUDA 包），
-# 而是显式安装 PyInstaller 打包真正需要 import 的最小依赖集。
-# paddle/torch 在打包时被 --exclude-module 排除（见 bump_version.py
-# EXCLUDED_PACKAGES），version.json 的依赖版本从 pyproject.toml 解析，
-# 不依赖实际安装的包。
+# 依赖策略：CI 不跑完整 uv sync（会拉数 GB 的 paddle/torch CUDA 包），
+# 而是安装 hash-pinned 的质量/构建壳依赖。正式产物由 .NET publish +
+# UI-free WorkerHost source staging 组成，不再发布 PyInstaller/PySide6 UI。
 
 name: Release
 
@@ -69,31 +67,59 @@ jobs:
           # fitz 从主 exe 排除后,版本约束走 version.json,由便携 Python 安装。
           pip install --require-hashes -r requirements/build-shell.lock
 
-      - name: Validate versioned WorkerHost contracts
+      - name: Restore .NET solution
         shell: pwsh
         run: |
           dotnet restore src/dotnet/VibeOCR.slnx --locked-mode
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          python -m pytest tests/contracts -q
+
+      - name: Validate Python migration and release gates
+        shell: pwsh
+        run: |
+          python -m pytest tests/contracts tests/worker_host tests/migration tests/parity tests/release_layout tests/application/test_pdf_ocr_orchestrator.py tests/test_compare_release_metrics.py tests/test_startup_metrics.py tests/test_collect_startup_metrics.py tests/test_soak_winui.py tests/test_update_replacer.py tests/test_bump_version.py -q
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          dotnet test tests/dotnet/VibeOCR.Contracts.Tests/VibeOCR.Contracts.Tests.csproj -c Release --no-restore
+
+      - name: Validate Python style
+        shell: pwsh
+        run: |
+          python -m ruff check src tests scripts
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Validate complete .NET solution
+        shell: pwsh
+        run: |
+          dotnet build src/dotnet/VibeOCR.slnx -c Release --no-restore
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet test src/dotnet/VibeOCR.slnx -c Release --no-restore
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Validate Web assets
+        shell: pwsh
+        run: |
+          node --test tests/web/*.test.ts
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Validate feature-parity matrix
         shell: bash
         run: |
-          python tests/parity/validate_matrix.py docs/quality/feature-parity.md
-          # Phase 5 cutover adds: --require-pass
+          python tests/parity/validate_matrix.py docs/quality/feature-parity.md --require-pass
           python -m pytest tests/parity -q
 
-      - name: Build (PyInstaller via bump_version.py)
-        shell: bash
-        # PYTHONUTF8=1 确保 bump_version.py 及其子进程（PyInstaller 等）在
+      - name: Build WinUI release via bump_version.py
+        shell: pwsh
+        # PYTHONUTF8=1 确保 bump_version.py 及其子进程在
         # Windows runner 上统一走 UTF-8，避免打印中文时 cp1252 编码崩溃。
         env:
           PYTHONUTF8: "1"
         run: |
           python scripts/bump_version.py --rebuild "${{ steps.version.outputs.version }}" --force
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Verify WinUI artifact
+        shell: pwsh
+        run: |
+          ./scripts/verify_winui_artifact.ps1 -Artifact "dist/VibeOCR-v${{ steps.version.outputs.version }}-win64.zip"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Extract release notes from CHANGELOG
         id: notes

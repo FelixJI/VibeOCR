@@ -17,10 +17,10 @@ import pytest
 from vibeocr.application.contracts import (
     CancelToken,
     OcrError,
-    OcrRequest,
-    OcrResult,
     OcrExportRequest,
     OcrExportResult,
+    OcrRequest,
+    OcrResult,
     PdfOpenRequest,
     PdfSessionDto,
 )
@@ -297,8 +297,8 @@ async def test_pdf_rotate_handler_maps_angle_and_returns_page_count() -> None:
 
 @pytest.mark.asyncio
 async def test_pdf_rotate_handler_rejects_invalid_angle() -> None:
-    from vibeocr.worker_host.handlers.pdf import PdfRotateHandler
     from vibeocr.worker_host.errors import WorkerError
+    from vibeocr.worker_host.handlers.pdf import PdfRotateHandler
 
     handler = PdfRotateHandler(backend=_FakePdfBackend())  # type: ignore[arg-type]
     with pytest.raises(WorkerError):

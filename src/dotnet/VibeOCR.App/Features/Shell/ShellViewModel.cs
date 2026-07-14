@@ -35,11 +35,22 @@ public sealed class ShellViewModel : INotifyPropertyChanged
 
     private readonly IHotkeyRegistrar _hotkeyRegistrar;
     private readonly IStartupRegistrar _startupRegistrar;
+    private readonly Action _hideWindow;
+    private readonly Action _quitApplication;
 
-    public ShellViewModel(IHotkeyRegistrar hotkeyRegistrar, IStartupRegistrar startupRegistrar)
+    public ShellViewModel(
+        IHotkeyRegistrar hotkeyRegistrar,
+        IStartupRegistrar startupRegistrar,
+        Action? hideWindow = null,
+        Action? quitApplication = null,
+        string initialHotkey = "Ctrl+Alt+Q")
     {
         _hotkeyRegistrar = hotkeyRegistrar ?? throw new ArgumentNullException(nameof(hotkeyRegistrar));
         _startupRegistrar = startupRegistrar ?? throw new ArgumentNullException(nameof(startupRegistrar));
+        _hideWindow = hideWindow ?? (() => { });
+        _quitApplication = quitApplication ?? (() => { });
+        _registeredHotkey = initialHotkey;
+        _pendingHotkey = initialHotkey;
     }
 
     /// <summary>
@@ -80,12 +91,14 @@ public sealed class ShellViewModel : INotifyPropertyChanged
 
     public void HideToTray()
     {
-        TrayVisible = true; // tray stays; the window just hides
+        _hideWindow();
+        TrayVisible = true;
     }
 
     public void Quit()
     {
         _hotkeyRegistrar.Unregister();
+        _quitApplication();
     }
 
     private void SetField<T>(ref T field, T value, [CallerMemberName] string? name = null)

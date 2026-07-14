@@ -46,6 +46,7 @@ def heavy_pdf(tmp_path):
 
     img = Image.new("RGB", (1200, 1600))
     px = img.load()
+    assert px is not None
     for y in range(1600):
         for x in range(1200):
             px[x, y] = ((x * y) % 256, (x + y) % 256, (x - y) % 256)

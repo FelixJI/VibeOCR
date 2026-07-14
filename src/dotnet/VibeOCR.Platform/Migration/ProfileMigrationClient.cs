@@ -70,7 +70,20 @@ public static class ProfileMigrationClient
             }
         }
 
-        string? backupPath = WriteHashedBackup(path);
+        string backupPath;
+        try
+        {
+            backupPath = WriteHashedBackup(path);
+        }
+        catch (Exception error)
+        {
+            return new MigrationResult(
+                "skipped",
+                configPath,
+                null,
+                CurrentSchemaVersion,
+                $"backup failed: {error.Message}");
+        }
         data["schema_version"] = CurrentSchemaVersion;
         try
         {
@@ -83,30 +96,49 @@ public static class ProfileMigrationClient
         return new MigrationResult("migrated", configPath, backupPath, CurrentSchemaVersion, string.Empty);
     }
 
-    private static string? WriteHashedBackup(FileInfo path)
+    private static string WriteHashedBackup(FileInfo path)
     {
-        try
-        {
-            byte[] original = File.ReadAllBytes(path.FullName);
-            string digest = Convert.ToHexStringLower(SHA256.HashData(original))[..16];
-            string backup = Path.Combine(
-                path.DirectoryName!,
-                $"{Path.GetFileNameWithoutExtension(path.Name)}.pre-migrate-{digest}{path.Extension}.bak");
-            File.WriteAllBytes(backup, original);
-            return backup;
-        }
-        catch (Exception)
-        {
-            return null;
-        }
+        byte[] original = File.ReadAllBytes(path.FullName);
+        string digest = Convert.ToHexStringLower(SHA256.HashData(original))[..16];
+        string backup = Path.Combine(
+            path.DirectoryName!,
+            $"{Path.GetFileNameWithoutExtension(path.Name)}.pre-migrate-{digest}{path.Extension}.bak");
+        using var stream = new FileStream(
+            backup,
+            FileMode.Create,
+            FileAccess.Write,
+            FileShare.None,
+            4096,
+            FileOptions.WriteThrough);
+        stream.Write(original);
+        stream.Flush(flushToDisk: true);
+        return backup;
     }
 
     private static void AtomicWrite(FileInfo path, Dictionary<string, object?> data)
     {
         string payload = JsonSerializer.Serialize(data, JsonOptions);
         string tmp = path.FullName + ".tmp";
-        File.WriteAllText(tmp, payload, new UTF8Encoding(false));
-        File.Replace(tmp, path.FullName, destinationBackupFileName: null);
+        try
+        {
+            using (var stream = new FileStream(
+                tmp,
+                FileMode.Create,
+                FileAccess.Write,
+                FileShare.None,
+                4096,
+                FileOptions.WriteThrough))
+            {
+                byte[] bytes = new UTF8Encoding(false).GetBytes(payload);
+                stream.Write(bytes);
+                stream.Flush(flushToDisk: true);
+            }
+            File.Move(tmp, path.FullName, overwrite: true);
+        }
+        finally
+        {
+            File.Delete(tmp);
+        }
     }
 }
 

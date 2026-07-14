@@ -2,7 +2,10 @@
 
 import os
 import sys
+import time as _time
 from pathlib import Path
+
+_PROCESS_START = _time.perf_counter()
 
 # ============================================================
 # 重要：必须在导入任何其他模块之前设置以下环境变量
@@ -37,7 +40,7 @@ except Exception:
 os.environ.setdefault("PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK", "True")
 
 # 导入环境管理模块
-from vibeocr import env_manager
+from vibeocr import env_manager  # noqa: E402 - startup clock must begin before imports
 
 # 确保src目录在路径中
 src_path = Path(__file__).parent.parent
@@ -47,15 +50,16 @@ if str(src_path) not in sys.path:
 # ============================================================
 # 启动里程碑记录：T0（进程入口）和 T1（运行时就绪）
 # ============================================================
-import time as _time  # noqa: E402
-
 from vibeocr.startup_metrics import (  # noqa: E402 — 必须在 env_manager 之后
     StartupEvent,
+    flush_startup,
     record_startup,
+    set_startup_origin,
 )
 
+set_startup_origin(_PROCESS_START)
 record_startup(StartupEvent.PROCESS_START, 0.0)  # T0：进程入口基准（0.0）
-record_startup(StartupEvent.RUNTIME_READY, _time.perf_counter())  # T1：env_manager 已就绪
+record_startup(StartupEvent.RUNTIME_READY)  # T1：env_manager 已就绪
 
 
 def check_production_dependencies() -> bool:
@@ -524,10 +528,11 @@ def launch_application() -> int:
     # Perf-gate smoke mode: exit shortly after first window so cold-start
     # timing can be measured symmetrically with the WinUI target. Production
     # runs never set this env var.
-    if os.environ.get("VIBEOCR_SELF_TEST_SMOKE") == "1":
+    if os.environ.get("VIBEOCR_SELF_TEST_SMOKE") in {"1", "t3"}:
         from PySide6.QtCore import QTimer
 
         def _smoke_exit() -> None:
+            flush_startup()
             os._exit(0)
 
         QTimer.singleShot(150, _smoke_exit)

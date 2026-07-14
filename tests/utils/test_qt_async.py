@@ -133,10 +133,8 @@ class TestRunCoroutine:
                 ran.append(True)
                 return "ok"
 
-            run_coroutine(quick(), timeout=1.0)
-
-            # 让循环处理一个 tick
             async def pump():
+                run_coroutine(quick(), timeout=1.0)
                 await asyncio.sleep(0.05)
 
             loop.run_until_complete(asyncio.wait_for(pump(), timeout=2.0))
@@ -153,13 +151,11 @@ class TestRunCoroutine:
             async def slow():
                 await asyncio.sleep(10)
 
-            # 用 on_error 捕获超时(run_coroutine 无返回值)
-            run_coroutine(slow(), timeout=0.05)
-
             # 注入一个 on_error 不便(签名限制),改为直接观察全局 runner 的任务
             runner = get_async_runner()
 
             async def pump():
+                run_coroutine(slow(), timeout=0.05)
                 # 等足够久让 timeout 触发
                 await asyncio.sleep(0.2)
                 # 等所有 pending 任务完成(它们应因 timeout 而完成)
@@ -261,9 +257,10 @@ class TestAsyncTaskDrainAndError:
             async def failing():
                 raise ValueError("test error")
 
-            run_coroutine(failing(), on_error=lambda e: errors.append(e), timeout=0.5)
-
             async def pump():
+                run_coroutine(
+                    failing(), on_error=lambda e: errors.append(e), timeout=0.5
+                )
                 await asyncio.sleep(0.3)
                 runner = get_async_runner()
                 for t in list(runner._tasks):
@@ -273,6 +270,22 @@ class TestAsyncTaskDrainAndError:
             loop.run_until_complete(asyncio.wait_for(pump(), timeout=2.0))
             assert len(errors) == 1
             assert isinstance(errors[0], ValueError)
+        finally:
+            loop.close()
+
+    def test_run_coroutine_rejects_nonrunning_loop_without_leaking(self):
+        """仅 set 但未运行的 loop 必须 fail-fast，并关闭原协程。"""
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+        async def pending():
+            await asyncio.sleep(1)
+
+        coroutine = pending()
+        try:
+            with pytest.raises(RuntimeError, match="running qasync"):
+                run_coroutine(coroutine)
+            assert coroutine.cr_frame is None
         finally:
             loop.close()
 

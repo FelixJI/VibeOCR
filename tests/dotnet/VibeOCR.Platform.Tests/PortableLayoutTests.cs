@@ -13,6 +13,7 @@ public sealed class PortableLayoutTests
         string root = Path.Combine(Path.GetTempPath(), "Vibe OCR With Spaces");
         PortableLayout layout = PortableLayout.Resolve(Path.Combine(root, "VibeOCR.WinUI.exe"), "production");
 
+        Assert.Equal("production", layout.Profile);
         Assert.Equal(Path.GetFullPath(root), layout.InstallRoot);
         Assert.Equal(Path.Combine(root, "data"), layout.DataRoot);
         Assert.Equal(Path.Combine(root, "python"), layout.RuntimeRoot);
@@ -32,6 +33,7 @@ public sealed class PortableLayoutTests
 
         PortableLayout layout = PortableLayout.Resolve(root, "winui-dev");
 
+        Assert.Equal("winui-dev", layout.Profile);
         string profileRoot = Path.Combine(root, "data", "profiles", "winui-dev");
         Assert.Equal(profileRoot, layout.DataRoot);
         Assert.Equal(Path.Combine(profileRoot, "python"), layout.RuntimeRoot);

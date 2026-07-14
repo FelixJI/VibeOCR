@@ -102,12 +102,35 @@ public sealed class ShellFeatureTests
     public async Task UpdateDownloadVerifySuccess()
     {
         var source = new FakeUpdateSource { Version = "1.2.0", Available = true, VerifyOk = true };
-        var vm = new UpdateViewModel(source);
+        bool shutdownRequested = false;
+        var vm = new UpdateViewModel(source, () => shutdownRequested = true);
         await vm.CheckAsync(TestContext.Current.CancellationToken);
 
         await vm.DownloadAndVerifyAsync(TestContext.Current.CancellationToken);
 
-        Assert.Contains("校验通过", vm.Status);
+        Assert.True(source.UpdaterLaunched);
+        Assert.True(shutdownRequested);
+        Assert.Contains("即将退出", vm.Status);
+    }
+
+    [Fact]
+    public async Task UpdateDoesNotExitWhenUpdaterFailsToStart()
+    {
+        var source = new FakeUpdateSource
+        {
+            Version = "1.2.0",
+            Available = true,
+            VerifyOk = true,
+            LaunchOk = false,
+        };
+        bool shutdownRequested = false;
+        var vm = new UpdateViewModel(source, () => shutdownRequested = true);
+        await vm.CheckAsync(TestContext.Current.CancellationToken);
+
+        await vm.DownloadAndVerifyAsync(TestContext.Current.CancellationToken);
+
+        Assert.False(shutdownRequested);
+        Assert.Contains("启动失败", vm.Status);
     }
 
     private sealed class FakeHotkeyRegistrar : IHotkeyRegistrar
@@ -133,6 +156,8 @@ public sealed class ShellFeatureTests
         public string Version { get; set; } = "0.0.0";
         public bool Available { get; set; }
         public bool VerifyOk { get; set; } = true;
+        public bool LaunchOk { get; set; } = true;
+        public bool UpdaterLaunched { get; private set; }
         public bool Throw { get; set; }
 
         public Task<(string Version, bool Available)> FetchLatestAsync(CancellationToken cancellationToken)
@@ -140,5 +165,11 @@ public sealed class ShellFeatureTests
 
         public Task<bool> DownloadVerifyAsync(CancellationToken cancellationToken)
             => Task.FromResult(VerifyOk);
+
+        public Task<bool> LaunchUpdaterAsync(CancellationToken cancellationToken)
+        {
+            UpdaterLaunched = true;
+            return Task.FromResult(LaunchOk);
+        }
     }
 }

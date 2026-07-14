@@ -95,6 +95,14 @@ def run_coroutine(
     logger.debug(
         f"[run_coroutine] 开始执行协程 (timeout={timeout})..."
     )
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError as error:
+        # A merely "set" loop does not execute tasks. Silently scheduling on
+        # it leaks both the wrapper and the caller-created coroutine forever.
+        # Production calls originate from Qt slots while qasync is running.
+        coro.close()
+        raise RuntimeError("run_coroutine requires a running qasync event loop") from error
     runner = get_async_runner()
     runner.run(coro, on_complete=callback, on_error=on_error, timeout=timeout)
 
@@ -177,7 +185,11 @@ class AsyncTaskRunner:
             asyncio.Task 对象
         """
 
+        started = False
+
         async def wrapped():
+            nonlocal started
+            started = True
             try:
                 if timeout:
                     result = await asyncio.wait_for(coro, timeout=timeout)
@@ -215,6 +227,15 @@ class AsyncTaskRunner:
 
         loop = _get_running_or_set_loop()
         task = loop.create_task(wrapped())
+
+        def _close_unstarted_coroutine(completed: asyncio.Task) -> None:
+            # A task can be cancelled before wrapped() receives its first tick.
+            # In that case the caller-created coroutine was never awaited and
+            # must be closed explicitly to avoid leaking resources/warnings.
+            if completed.cancelled() and not started:
+                coro.close()
+
+        task.add_done_callback(_close_unstarted_coroutine)
         self._tasks.append(task)
         return task
 

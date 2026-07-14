@@ -1,18 +1,15 @@
 # CI 打包壳的最小直接依赖集
 #
-# 这些是 PyInstaller 打包主 exe + updater 时实际需要 import 的全部第三方包。
-# paddle/torch 被 --exclude-module 排除（由便携 Python 运行时安装），不在此列。
-# fastapi/uvicorn/pymupdf(fitz) 由 PDF 后端子进程独立运行，也不在此列。
+# 这些是 WinUI release staging 与迁移质量门禁所需的最小第三方包。
+# paddle/torch/模型依赖仍由复用的便携 Python 运行时提供，不在 CI 安装。
 #
 # 生成 lock 文件：
 #   uv pip compile requirements/build-shell.in --generate-hashes -o requirements/build-shell.lock
 # CI 安装：
 #   python -m pip install --require-hashes -r requirements/build-shell.lock
 #
-# 清单须与 bump_version.py 的 HIDDEN_IMPORTS 对齐——凡 HIDDEN_IMPORTS 列出的包，
-# CI 必须安装，否则 PyInstaller 找不到模块打不进 bundle。
-#
-# 版本约束与 pyproject.toml 的生产依赖一致（CI 只装打包所需的子集）。
+# 正式 WinUI 主程序不再由 PyInstaller 打包；仅纯 stdlib 的 updater.exe 仍用
+# PyInstaller onefile 生成，以便旧版向 WinUI 切换时由新代码完成替换。
 
 pyinstaller>=6.6
 pyside6>=6.8
@@ -32,4 +29,7 @@ python-docx
 
 # Release CI 同时执行 WorkerHost v1 双语言契约门禁。
 pytest==9.1.1
+pytest-asyncio>=1.2.0
 jsonschema==4.25.1
+ruff>=0.15.13
+pyright>=1.1.409

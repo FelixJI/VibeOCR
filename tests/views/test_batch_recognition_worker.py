@@ -12,10 +12,8 @@
 
 from __future__ import annotations
 
-import contextlib
-import tempfile
-import time
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -29,13 +27,16 @@ except ImportError:
     HAS_MODULE = False
 
 
-def _make_worker(service, files, options=None) -> "BatchRecognitionWorker":
+def _make_worker(service, files, options=None) -> Any:
     """构造 worker（正常 __init__ 以激活 Qt 信号，但不 start 线程）。"""
     assert BatchRecognitionWorker is not None
+    if options is None:
+        from vibeocr.models.ocr_options import OCROptions
+
+        options = OCROptions()
     # 传 mock service；files 用真实 file_info；parent=None 避免线程归属问题。
     # 不调用 .start()，直接测 run() 同步逻辑。
-    worker = BatchRecognitionWorker(service, files, options, parent=None)
-    return worker
+    return BatchRecognitionWorker(service, files, options, parent=None)
 
 
 def _make_image_files(tmp_path: Path, n: int) -> list[dict]:
@@ -172,7 +173,7 @@ class TestBatchRecognitionWorkerRecognizeBatch:
         worker.run()
 
         # 中间文件 failed，其余 completed
-        statuses = dict((name, st) for name, st in completed_signals)
+        statuses = dict(completed_signals)
         assert statuses["g1.png"] == "completed"
         assert statuses["nonexistent.png"] == "failed"
         assert statuses["g2.png"] == "completed"
@@ -194,7 +195,7 @@ class TestBatchRecognitionWorkerRecognizeBatch:
 
         worker = _make_worker(mock_service, files)
         completed_signals = []
-        worker.file_completed.connect(lambda fp, st, res: completed_signals.append((st)))
+        worker.file_completed.connect(lambda fp, st, res: completed_signals.append(st))
         error_signals = []
         worker.error.connect(lambda msg: error_signals.append(msg))
 

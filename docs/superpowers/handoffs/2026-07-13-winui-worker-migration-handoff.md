@@ -1,12 +1,14 @@
 # WinUI 3 Worker 迁移交接（2026-07-13）
 
+> 历史交接记录：其“尚未合并/继续开发”状态已被 2026-07-14 的 `main` 合并取代。当前真源为 `main`、`docs/releases/winui-cutover-checklist.md` 和自动化质量门禁；不要再 checkout 已删除的迁移分支。
+
 ## 合并边界
 
 - 目标分支：`main`
 - 已验证成果截止提交：`84802b3 test(winui): close single-recognition parity loop`
 - 主分支合并提交：`8fc538d merge: WinUI worker migration phases 2-3`
 - 已进入主分支：Phase 2 全部任务、Phase 3 单图识别闭环与质量记录。
-- 未进入主分支：Phase 4.1 批量识别草稿 `dc4e9ad wip(winui): begin batch recognition parity`。该提交保留在 `codex/winui-worker-migration` 和工作树 `C:\tmp\VibeOCR-winui-phase2`，尚未完成测试，不得视为可发布成果。
+- 当时未进入主分支：Phase 4.1 批量识别草稿 `dc4e9ad wip(winui): begin batch recognition parity`。它曾位于 `codex/winui-worker-migration` 和临时工作树；后续迁移已完成并合入 `main`，原分支和临时工作树均不再是恢复入口。
 
 此次合并没有切换正式入口。`production` 继续运行现有 PySide6 UI；WinUI 使用隔离的 `winui-dev` profile，正式 config/model/output/sidecar 不应被旁路开发链路改写。
 
@@ -52,31 +54,17 @@ Task 4.3 必须以当前 `main` 的 Python/UI 行为为准，不照搬旧计划�
 
 详细约束已同步回 `docs/superpowers/plans/2026-07-11-winui3-worker-migration.md` 的 Task 4.3。
 
-## 继续开发
+## 继续开发（已作废）
 
-推荐顺序：
-
-1. 从 `codex/winui-worker-migration` 的 `dc4e9ad` 继续 Task 4.1，先补 Batch 单元测试和 E2E，再决定合入。
-2. 完成 Task 4.2 二维码。
-3. 按更新后的 Task 4.3 迁移 PDF；不要在 C# 重写 sidecar、保存和恢复状态机。
-4. 完成 Task 4.4–4.6，再进入 Phase 5 的数据迁移、打包、性能门禁和正式切换。
-
-恢复草稿时先检查：
-
-```powershell
-git -C C:\tmp\VibeOCR-winui-phase2 show --stat dc4e9ad
-git -C C:\tmp\VibeOCR-winui-phase2 status --short
-```
-
-该工作树中的 `task_plan.md`、`findings.md`、`progress.md` 是本地过程记录，未进入主分支；本文件是主分支上的正式交接记录。
+本节原先要求从迁移分支和临时工作树继续 Phase 4–5；该路径已被完整迁移与 2026-07-14 审查取代。后续工作必须从 `main` 新建分支，并以发布检查清单及自动化门禁为准。
 
 ## 常用验证命令
 
 ```powershell
 $env:VIBEOCR_REPOSITORY_ROOT = (Get-Location).Path
-dotnet restore src/dotnet/VibeOCR.slnx -p:Platform=x64
-dotnet build src/dotnet/VibeOCR.slnx -c Release -p:Platform=x64 --no-restore
-dotnet test src/dotnet/VibeOCR.slnx -c Release -p:Platform=x64 --no-build
+& 'C:\Program Files\dotnet\dotnet.exe' restore src/dotnet/VibeOCR.slnx
+& 'C:\Program Files\dotnet\dotnet.exe' build src/dotnet/VibeOCR.slnx -c Release --no-restore
+& 'C:\Program Files\dotnet\dotnet.exe' test src/dotnet/VibeOCR.slnx -c Release --no-build
 
 .\.venv\Scripts\python.exe -m pytest tests/worker_host tests/contracts -q
 C:\Users\felji\.cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin\node.exe --test tests/web/*.test.ts

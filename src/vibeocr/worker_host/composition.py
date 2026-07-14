@@ -13,10 +13,10 @@ from typing import TYPE_CHECKING, Any, cast
 from vibeocr.app_paths import AppPaths, resolve_app_paths
 from vibeocr.application.contracts import (
     CancelToken,
-    OcrRequest,
-    OcrResult,
     OcrExportRequest,
     OcrExportResult,
+    OcrRequest,
+    OcrResult,
     PdfOpenRequest,
     PdfSessionDto,
     SettingsSnapshot,

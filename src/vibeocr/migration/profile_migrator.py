@@ -62,7 +62,7 @@ def _atomic_write(path: Path, data: dict) -> None:
         f.write(payload)
         f.flush()
         os.fsync(f.fileno())
-    os.replace(tmp, path)
+    tmp.replace(path)
 
 
 def _write_hashed_backup(path: Path) -> Path | None:

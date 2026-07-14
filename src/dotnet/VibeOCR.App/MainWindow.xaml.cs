@@ -46,5 +46,16 @@ public sealed partial class MainWindow : Window
         ShowHome();
     }
 
-    private void ShowHome() => ContentFrame.Content = new Grid { Children = { new TextBlock { Text = "VibeOCR WinUI 迁移预览", FontSize = 28, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center } } };
+    private void ShowHome() => ContentFrame.Content = new Grid { Children = { new TextBlock { Text = "VibeOCR", FontSize = 28, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center } } };
+
+    internal async Task RecognizeScreenshotAsync()
+    {
+        NavigationViewItem item = RootNavigation.MenuItems
+            .OfType<NavigationViewItem>()
+            .Single(candidate => Equals(candidate.Tag, "recognition"));
+        RootNavigation.SelectedItem = item;
+        _recognition ??= _recognitionFactory();
+        ContentFrame.Content = new RecognitionPage(_recognition);
+        await _recognition.RecognizeScreenshotAsync(CancellationToken.None);
+    }
 }

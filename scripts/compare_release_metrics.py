@@ -82,6 +82,7 @@ def compare(old: Metrics, new: Metrics, *, require_gate: bool) -> tuple[bool, li
 
     zip_change = _pct_change(old.zip_bytes, new.zip_bytes)
     t03_change = _pct_change(old.t0_t3_p95_ms, new.t0_t3_p95_ms)
+    t06_change = _pct_change(old.t0_t6_p95_ms, new.t0_t6_p95_ms)
 
     if require_gate:
         zip_improved = zip_change <= -MIN_IMPROVEMENT
@@ -100,6 +101,28 @@ def compare(old: Metrics, new: Metrics, *, require_gate: bool) -> tuple[bool, li
             errors.append(
                 f"unapproved ZIP regression: {zip_change*100:+.1f}% (> +{int(MAX_REGRESSION*100)}%)"
             )
+        if t06_change > MAX_REGRESSION:
+            errors.append(
+                f"unapproved T0-T6 regression: {t06_change*100:+.1f}% "
+                f"(> +{int(MAX_REGRESSION*100)}%)"
+            )
+        if old.rss_idle_mb and new.rss_idle_mb:
+            rss_change = _pct_change(old.rss_idle_mb, new.rss_idle_mb)
+            if rss_change > MAX_REGRESSION:
+                errors.append(
+                    f"unapproved idle RSS regression: {rss_change*100:+.1f}% "
+                    f"(> +{int(MAX_REGRESSION*100)}%)"
+                )
+        if old.handle_count_idle and new.handle_count_idle:
+            handle_change = _pct_change(
+                float(old.handle_count_idle),
+                float(new.handle_count_idle),
+            )
+            if handle_change > MAX_REGRESSION:
+                errors.append(
+                    f"unapproved handle-count regression: {handle_change*100:+.1f}% "
+                    f"(> +{int(MAX_REGRESSION*100)}%)"
+                )
 
     return len(errors) == 0, errors
 

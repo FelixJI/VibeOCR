@@ -23,11 +23,10 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import os
 from pathlib import Path
 
-from vibeocr.machine_cache import get_cache_dir
 from vibeocr.env_manager import get_project_root
+from vibeocr.machine_cache import get_cache_dir
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +40,7 @@ def compute_fingerprint(file_path: str) -> str:
     仅作信息字段与诊断用——不再用于 sidecar 文件名或主校验
     （增量保存会让它在会话期漂移）。主校验改用 `original_*` 基线的增长检查。
     """
-    st = os.stat(file_path)
+    st = Path(file_path).stat()
     return f"{st.st_size}:{int(st.st_mtime_ns)}"
 
 
@@ -55,7 +54,7 @@ def _path_slug(file_path: str) -> str:
     路径在增量保存/末尾压缩期间不变，故同会话各批 + 重启续传都定位到同一
     sidecar 文件。
     """
-    abspath = os.path.abspath(file_path)
+    abspath = str(Path(file_path).resolve())
     return hashlib.md5(abspath.encode("utf-8")).hexdigest()
 
 
@@ -74,7 +73,7 @@ def _growth_ok(data: dict, file_path: str) -> bool:
     if orig_size is None or orig_mtime is None:
         return False
     try:
-        st = os.stat(file_path)
+        st = Path(file_path).stat()
     except OSError:
         return False
     return st.st_size >= int(orig_size) and int(st.st_mtime_ns) >= int(orig_mtime)
@@ -117,10 +116,11 @@ def save_sidecar(file_path: str, data: dict) -> bool:
 
 def _new_sidecar(file_path: str) -> dict:
     """新建 sidecar：捕获当前文件状态作为增长校验基线。"""
-    st = os.stat(file_path)
+    path = Path(file_path).resolve()
+    st = path.stat()
     return {
         "version": SIDECAR_VERSION,
-        "file_path": os.path.abspath(file_path),
+        "file_path": str(path),
         "fingerprint": compute_fingerprint(file_path),
         "original_size": st.st_size,
         "original_mtime_ns": int(st.st_mtime_ns),
@@ -187,7 +187,7 @@ def refresh_baseline(file_path: str) -> bool:
         return False
     try:
         data = json.loads(p.read_text(encoding="utf-8"))
-        st = os.stat(file_path)
+        st = Path(file_path).stat()
         data["original_size"] = st.st_size
         data["original_mtime_ns"] = int(st.st_mtime_ns)
         data["fingerprint"] = compute_fingerprint(file_path)
