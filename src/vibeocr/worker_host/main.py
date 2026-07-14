@@ -1,14 +1,22 @@
-"""WorkerHost process entry point (Task 1.6).
+"""WorkerHost process entry point.
 
-Launched by the WinUI shell as::
+Launched by either frontend shell (WinUI or PySide) as::
 
     python -m vibeocr.worker_host.main \\
-        --pipe <name> --token <hex> --profile winui-dev --parent-pid <pid>
+        --pipe <name> --token <hex> \\
+        --profile <production|winui-dev> \\
+        --frontend-id <pyside|winui> \\
+        --parent-pid <pid>
 
 The worker creates a current-user-isolated Named Pipe, accepts one client,
 authenticates the session token, then serves RPC requests until shutdown,
 client disconnect, parent-process exit, or deadline. It always exits within a
 bounded drain — never hanging indefinitely.
+
+``--frontend-id`` only labels the owner for logging/temp-dir isolation; it does
+NOT gate business capabilities (ADR §7). ``--profile`` selects the path layout
+(``app_paths.resolve_app_paths``); both ``production`` and ``winui-dev`` are
+accepted — the old "only permits winui-dev" gate has been removed.
 
 ``--self-test`` prints one line of machine-readable JSON describing the worker
 (version, protocol, capabilities) and exits 0, so the shell can sanity-check a
@@ -64,7 +72,16 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--profile",
         default="winui-dev",
-        help="App profile (winui-dev for side-by-side; never the production profile)",
+        help="Path/profile selector: 'production' (正式路径) or 'winui-dev' (旁路开发路径). "
+        "See app_paths.resolve_app_paths. Does not gate business capabilities.",
+    )
+    parser.add_argument(
+        "--frontend-id",
+        dest="frontend_id",
+        default="winui",
+        choices=("pyside", "winui"),
+        help="Which frontend launched this worker (pyside|winui). Used only for "
+        "logging/temp-dir/UI-settings isolation; does NOT select business capabilities.",
     )
     parser.add_argument("--parent-pid", type=int, help="Parent process PID to watch")
     parser.add_argument(
@@ -114,11 +131,20 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 async def _serve(args: argparse.Namespace) -> int:
     """Run the server loop until shutdown, disconnect, or parent exit."""
+    from vibeocr.app_paths import _ALLOWED_PROFILES
     from vibeocr.worker_host.named_pipe import NamedPipeServer
 
-    if args.profile != "winui-dev":
-        _log.error("Phase 1 WorkerHost only permits the winui-dev profile")
+    # The WorkerHost is now frontend-agnostic: it serves whichever frontend
+    # (pyside|winui) launched it, under either the production or winui-dev
+    # profile. The old "only permits winui-dev" gate is removed (ADR §7).
+    if args.profile not in _ALLOWED_PROFILES:
+        _log.error(
+            "unsupported profile %r; allowed: %s", args.profile, sorted(_ALLOWED_PROFILES)
+        )
         return 2
+    _log.info(
+        "WorkerHost serving frontend_id=%s profile=%s", args.frontend_id, args.profile
+    )
 
     from vibeocr.env_manager import get_project_root
     from vibeocr.worker_host.composition import WorkerServiceComposition
