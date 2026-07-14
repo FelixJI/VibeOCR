@@ -1,5 +1,6 @@
 """二维码生成与识别标签页"""
 
+import io
 import logging
 from pathlib import Path
 
@@ -33,9 +34,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from vibeocr.services.qrcode_decode_service import QrcodeDecodeService
-from vibeocr.services.qrcode_service import QrcodeService
 from vibeocr.ui import theme
+from vibeocr.worker_host.sync_client import SyncBackendClient, SyncBackendError
 
 logger = logging.getLogger(__name__)
 
@@ -211,10 +211,19 @@ class DecodeResultWidget(QWidget):
 class QrcodeTab(QWidget):
     """二维码生成与识别标签页（左侧共享预览 + 右侧生成/识别子标签页）。"""
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        *,
+        backend: object | None = None,
+    ) -> None:
         super().__init__(parent)
-        self._service = QrcodeService()
-        self._decode_service = QrcodeDecodeService()
+        # The QR tab talks to its exclusive WorkerHost over RPC (ADR §5.1):
+        # the UI never imports backend services directly. The SyncBackendClient
+        # owns the worker subprocess and a background asyncio loop. Tests inject
+        # a fake backend (duck-typed: generate_qrcode_sync/generate_qrcode_svg_sync/
+        # decode_qrcode_sync) to avoid spawning a real worker.
+        self._backend = backend if backend is not None else SyncBackendClient()
         self._current_image: Image.Image | None = None
         self._logo_path: str | None = None
 
@@ -617,25 +626,81 @@ class QrcodeTab(QWidget):
         self._debounce_timer.start()
 
     def _build_options(self) -> dict:
+        """Build the qrcode.generate RPC options bag from the UI controls."""
         fmt_key = FORMAT_ITEMS[self._format_combo.currentIndex()][1]
         ec_btn = self._ec_group.checkedButton()
         ec_val = ec_btn.property("ec_value") if ec_btn else "M"
 
-        options = self._service.default_options()
-        options["format"] = fmt_key
+        # Map the UI format key to the RPC format + barcode_format fields.
+        if fmt_key == "qr":
+            rpc_format = "qrcode"
+            barcode_format = None
+        else:
+            rpc_format = "barcode"
+            barcode_format = fmt_key
+
+        options: dict = {"format": rpc_format}
+        if barcode_format is not None:
+            options["barcode_format"] = barcode_format
         options["size"] = self._size_spin.value()
         options["error_correction"] = ec_val
         options["fg_color"] = self._fg_color
         options["bg_color"] = self._bg_color
         options["invert"] = self._invert_check.isChecked()
-        options["logo_path"] = self._logo_path if self._logo_check.isChecked() else None
-        options["logo_ratio"] = self._logo_ratio_spin.value() / 100.0
-        options["label_text"] = self._label_text_input.text()
-        options["label_position"] = LABEL_POS_MAP.get(
-            self._label_pos_combo.currentIndex(), "bottom"
-        )
-        options["label_font_size"] = self._label_font_spin.value()
+        logo_path = self._logo_path if self._logo_check.isChecked() else None
+        if logo_path:
+            options["logo_path"] = logo_path
+            options["logo_ratio"] = self._logo_ratio_spin.value() / 100.0
+        label_text = self._label_text_input.text()
+        if label_text:
+            options["label_text"] = label_text
+            options["label_position"] = LABEL_POS_MAP.get(
+                self._label_pos_combo.currentIndex(), "bottom"
+            )
+            options["label_font_size"] = self._label_font_spin.value()
         return options
+
+    # -- backend bridge (sync RPC over the exclusive WorkerHost) --------
+
+    def _ensure_backend(self) -> None:
+        """Start the WorkerHost on first use (lazy; idempotent).
+
+        Fakes injected for testing may not have ``start()``; skip in that case.
+        """
+        start = getattr(self._backend, "start", None)
+        if callable(start):
+            start(profile="winui-dev", frontend_id="pyside")
+
+    def _call_backend_generate(self, text: str, options: dict) -> bytes:
+        self._ensure_backend()
+        try:
+            return self._backend.generate_qrcode_sync(text, options=options)
+        except SyncBackendError:
+            # Worker died; restart once and retry.
+            self._backend.shutdown()
+            self._backend = SyncBackendClient()
+            self._ensure_backend()
+            return self._backend.generate_qrcode_sync(text, options=options)
+
+    def _call_backend_generate_svg(self, text: str, options: dict) -> str:
+        self._ensure_backend()
+        return self._backend.generate_qrcode_svg_sync(text, options=options)
+
+    def _call_backend_decode(self, image_bytes: bytes):
+        self._ensure_backend()
+        try:
+            return self._backend.decode_qrcode_sync(image_bytes)
+        except SyncBackendError:
+            self._backend.shutdown()
+            self._backend = SyncBackendClient()
+            self._ensure_backend()
+            return self._backend.decode_qrcode_sync(image_bytes)
+
+    @staticmethod
+    def _pil_to_png_bytes(img: Image.Image) -> bytes:
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        return buf.getvalue()
 
     def _refresh_preview(self) -> None:
         text = self._text_input.toPlainText().strip()
@@ -646,21 +711,10 @@ class QrcodeTab(QWidget):
 
         try:
             options = self._build_options()
-            img = self._service.generate(text, options)
-
-            if options.get("logo_path"):
-                img = self._service.apply_logo(
-                    img, options["logo_path"], options["logo_ratio"]
-                )
-
-            label_text = options.get("label_text") or text
-            img = self._service.apply_text_label(
-                img, label_text, options["label_position"], options["label_font_size"]
-            )
-
-            if options.get("invert"):
-                img = self._service.invert_colors(img)
-
+            # The worker runs the full generate → logo → label → invert pipeline
+            # server-side (ADR §5.2); the UI only stages input and renders output.
+            png_bytes = self._call_backend_generate(text, options)
+            img = Image.open(io.BytesIO(png_bytes))
             self._current_image = img
             pixmap = _pil_to_qpixmap(img)
             self._preview_label.setPixmap(
@@ -680,7 +734,7 @@ class QrcodeTab(QWidget):
         from PySide6.QtWidgets import QFileDialog
 
         options = self._build_options()
-        is_qr = options["format"] == "qr"
+        is_qr = options["format"] == "qrcode"
 
         filters = "PNG (*.png);;JPG (*.jpg)"
         if is_qr and not options.get("logo_path"):
@@ -693,7 +747,12 @@ class QrcodeTab(QWidget):
         try:
             if path.lower().endswith(".svg"):
                 text = self._text_input.toPlainText().strip()
-                svg_content = self._service.generate_svg(text, options)
+                svg_options = {
+                    k: v
+                    for k, v in options.items()
+                    if k in ("error_correction", "fg_color", "bg_color")
+                }
+                svg_content = self._call_backend_generate_svg(text, svg_options)
                 Path(path).write_text(svg_content, encoding="utf-8")
             else:
                 fmt = "JPEG" if path.lower().endswith((".jpg", ".jpeg")) else "PNG"
@@ -774,7 +833,8 @@ class QrcodeTab(QWidget):
         QApplication.processEvents()
         try:
             pil_img = _qpixmap_to_pil(self._decode_pending_pixmap)
-            results = self._decode_service.decode(pil_img)
+            img_bytes = self._pil_to_png_bytes(pil_img)
+            results = self._call_backend_decode(img_bytes)
         except Exception as e:
             logger.error(f"识别失败: {e}", exc_info=True)
             self._decode_result_list.clear()
@@ -807,7 +867,7 @@ class QrcodeTab(QWidget):
                 widget = DecodeResultWidget(
                     index=idx,
                     data=r.data,
-                    type_label=_decode_type_label(r.type),
+                    type_label=_decode_type_label(r.format),
                     is_url=r.is_url,
                     safe_data=safe_data,
                 )

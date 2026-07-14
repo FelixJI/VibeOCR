@@ -20,6 +20,7 @@ public static class RpcMethods
     public const string StartPdfOcr = "pdf.start_ocr";
     public const string DecodeQrCode = "qrcode.decode";
     public const string GenerateQrCode = "qrcode.generate";
+    public const string GenerateQrCodeSvg = "qrcode.generate_svg";
     public const string SettingsSnapshot = "settings.snapshot";
     public const string SwitchBackend = "settings.switch_backend";
     public const string InstallDependency = "settings.install_dependency";
@@ -44,6 +45,7 @@ public static class RpcMethods
         StartPdfOcr,
         DecodeQrCode,
         GenerateQrCode,
+        GenerateQrCodeSvg,
         SettingsSnapshot,
         SwitchBackend,
         InstallDependency,

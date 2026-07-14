@@ -133,6 +133,7 @@ def test_production_composition_registers_all_domain_handlers(tmp_path: Path) ->
         "pdf.start_ocr",
         "qrcode.decode",
         "qrcode.generate",
+        "qrcode.generate_svg",
         "settings.snapshot",
         "settings.switch_backend",
         "settings.install_dependency",

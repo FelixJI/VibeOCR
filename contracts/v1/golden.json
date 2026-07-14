@@ -464,6 +464,29 @@
         }
       }
     },
+    "qrcode.generate_svg": {
+      "request_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000035",
+        "task_id": "00000000-0000-4000-8000-000000000035",
+        "method": "qrcode.generate_svg",
+        "payload": {
+          "data": "https://example.com",
+          "error_correction": "M",
+          "fg_color": "#000000",
+          "bg_color": "#FFFFFF"
+        },
+        "deadline_unix_ms": 0
+      },
+      "response_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000035",
+        "task_id": "00000000-0000-4000-8000-000000000035",
+        "result": {
+          "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"600\" height=\"600\"></svg>"
+        }
+      }
+    },
     "settings.snapshot": {
       "request_envelope": {
         "protocol_version": 1,

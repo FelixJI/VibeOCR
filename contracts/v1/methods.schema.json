@@ -483,7 +483,7 @@
     },
     "qrcode.generate": {
       "type": "object",
-      "description": "Generate a QR/barcode image. Result returned as a shared payload owned by the worker.",
+      "description": "Generate a QR/barcode image with optional styling (size, colors, logo, text label, invert). Result returned as a shared payload (PNG) owned by the worker.",
       "required": ["request", "response"],
       "properties": {
         "request": {
@@ -492,7 +492,18 @@
           "required": ["data"],
           "properties": {
             "data": { "type": "string", "minLength": 1 },
-            "format": { "type": "string", "enum": ["qrcode", "barcode"], "description": "Symbol family." }
+            "format": { "type": "string", "enum": ["qrcode", "barcode"], "description": "Symbol family. 'qrcode' renders a QR code; 'barcode' renders the barcode_format." },
+            "barcode_format": { "type": "string", "description": "python-barcode class name when format=barcode (e.g. code128, ean13, code39). Ignored for qrcode." },
+            "size": { "type": "integer", "minimum": 32, "description": "Target pixel size (short edge / height)." },
+            "error_correction": { "type": "string", "enum": ["L", "M", "Q", "H"], "description": "QR error-correction level. Ignored for barcodes." },
+            "fg_color": { "type": "string", "description": "Foreground color (#RRGGBB hex)." },
+            "bg_color": { "type": "string", "description": "Background color (#RRGGBB hex)." },
+            "invert": { "type": "boolean", "description": "Invert foreground/background after generation." },
+            "logo_path": { "type": ["string", "null"], "description": "Absolute path to a logo image to embed (QR only)." },
+            "logo_ratio": { "type": "number", "minimum": 0.01, "maximum": 0.9, "description": "Logo size as a fraction of QR short edge." },
+            "label_text": { "type": "string", "description": "Optional text label rendered above/below the image." },
+            "label_position": { "type": "string", "enum": ["bottom", "top", "none"] },
+            "label_font_size": { "type": "integer", "minimum": 6 }
           }
         },
         "response": {
@@ -500,6 +511,30 @@
           "additionalProperties": false,
           "required": ["image"],
           "properties": { "image": { "$ref": "#/$defs/shared_payload_ref" } }
+        }
+      }
+    },
+    "qrcode.generate_svg": {
+      "type": "object",
+      "description": "Generate a QR code as an SVG string (vector export; no barcode support). The worker returns the raw SVG text in the response.",
+      "required": ["request", "response"],
+      "properties": {
+        "request": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["data"],
+          "properties": {
+            "data": { "type": "string", "minLength": 1 },
+            "error_correction": { "type": "string", "enum": ["L", "M", "Q", "H"] },
+            "fg_color": { "type": "string" },
+            "bg_color": { "type": "string" }
+          }
+        },
+        "response": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["svg"],
+          "properties": { "svg": { "type": "string", "minLength": 1, "description": "Raw SVG document text." } }
         }
       }
     },
