@@ -78,7 +78,7 @@ VibeOCR 正在从单 PySide6 前端演进为**双前端并存**架构，两套 U
 - 后端→UI 禁止反向依赖
 - 协议方法表三方一致性
 
-**迁移进度**：二维码生成/识别、单图 OCR 已迁移到 RPC；显示格式化器（TextBlockProcessor、HTML 表格工具、toolbar_icons）已移到 UI 层。批量识别、PDF、设置/更新迁移及物理拆包进行中。
+**迁移进度**：二维码生成/识别、单图 OCR 已迁移到 RPC；显示格式化器（TextBlockProcessor、HTML 表格工具、toolbar_icons）已移到 UI 层；`models/` 纯数据模型已归为共享 DTO 层。架构 allowlist 从基线 90 减至 53。批量识别、PDF、设置/更新迁移及物理拆包进行中。
 
 ## 下载安装
 
