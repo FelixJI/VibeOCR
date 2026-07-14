@@ -61,6 +61,52 @@ def test_unknown_arg_returns_non_zero(capsys: pytest.CaptureFixture[str]) -> Non
 
 
 # ---------------------------------------------------------------------------
+# frontend_id + profile generalization (Phase 2)
+# ---------------------------------------------------------------------------
+
+
+def test_arg_parser_accepts_frontend_id_pyside() -> None:
+    """The WorkerHost arg parser must accept --frontend-id pyside."""
+    from vibeocr.worker_host.main import _build_arg_parser
+
+    args = _build_arg_parser().parse_args(
+        ["--pipe", "x", "--token", "t", "--frontend-id", "pyside"]
+    )
+    assert args.frontend_id == "pyside"
+
+
+def test_arg_parser_accepts_frontend_id_winui() -> None:
+    from vibeocr.worker_host.main import _build_arg_parser
+
+    args = _build_arg_parser().parse_args(
+        ["--pipe", "x", "--token", "t", "--frontend-id", "winui"]
+    )
+    assert args.frontend_id == "winui"
+
+
+def test_arg_parser_defaults_frontend_id_to_winui() -> None:
+    from vibeocr.worker_host.main import _build_arg_parser
+
+    args = _build_arg_parser().parse_args(["--pipe", "x", "--token", "t"])
+    assert args.frontend_id == "winui"
+
+
+def test_arg_parser_accepts_production_profile() -> None:
+    """production profile must be accepted (no longer winui-dev-only)."""
+    from vibeocr.worker_host.main import _build_arg_parser
+
+    args = _build_arg_parser().parse_args(
+        ["--pipe", "x", "--token", "t", "--profile", "production"]
+    )
+    assert args.profile == "production"
+
+
+def test_arg_parser_rejects_invalid_frontend_id(capsys: pytest.CaptureFixture[str]) -> None:
+    rc = main(["--pipe", "x", "--token", "t", "--frontend-id", "flutter"])
+    assert rc != 0
+
+
+# ---------------------------------------------------------------------------
 # Subprocess: the real entry point behaves the same
 # ---------------------------------------------------------------------------
 

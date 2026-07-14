@@ -34,6 +34,7 @@ public sealed partial class App : Application
     private Process? _workerProcess;
     private WorkerHostClient? _workerClient;
     private SingleInstanceService? _singleInstance;
+    private FrontendExclusiveLock? _exclusiveLock;
     private WindowMessageService? _windowMessages;
     private TrayIconService? _trayIcon;
     private WindowsHotkeyRegistrar? _hotkeyRegistrar;
@@ -64,6 +65,17 @@ public sealed partial class App : Application
         if (!_singleInstance.IsPrimary)
         {
             _ = ForwardActivationAndExitAsync(Environment.GetCommandLineArgs()[1..]);
+            return;
+        }
+
+        // 跨产品互斥：同一登录会话内 PySide Classic 与 WinUI Next 不同时运行。
+        // 在同产品单实例通过后、WorkerHost 启动前获取；失败时提示退出，不启动
+        // 第二个 WorkerHost。Mutex 由 OS 在前端崩溃时自动释放（ADR §6）。
+        _exclusiveLock = new FrontendExclusiveLock();
+        if (!_exclusiveLock.IsAcquired)
+        {
+            FrontendExclusiveLock.ShowAnotherProductRunningPrompt();
+            Exit();
             return;
         }
         string executable = Environment.ProcessPath ?? AppContext.BaseDirectory;

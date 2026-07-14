@@ -60,8 +60,9 @@ dev = [
 ]
 
 [project.scripts]
-# WorkerHost console entry point (Task 1.6): launched by the WinUI shell as
-# `vibeocr-worker --pipe ... --token ... --profile winui-dev --parent-pid ...`.
+# WorkerHost console entry point: launched by either frontend shell as
+# `vibeocr-worker --pipe ... --token ... --profile <production|winui-dev>
+#   --frontend-id <pyside|winui> --parent-pid ...`.
 vibeocr-worker = "vibeocr.worker_host.main:main"
 
 [build-system]
