@@ -87,6 +87,24 @@ public sealed record RecognizeResponse : ResponseContract
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? RawText { get; init; }
 
+    // text_blocks: serialized TextBlock list [{text, bbox, confidence, order, ...}].
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public JsonElement[]? TextBlocks { get; init; }
+
+    // text_with_scores: [[text, score], ...] 2-element pairs.
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public JsonElement[]? TextWithScores { get; init; }
+
+    // content_list: structured content (MinerU/table/formula pipelines).
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public JsonElement[]? ContentList { get; init; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? ImageWidth { get; init; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? ImageHeight { get; init; }
+
     public override void Validate() => ContractValidation.OneOf(
         Pipeline,
         nameof(Pipeline),
@@ -240,6 +258,13 @@ public sealed record GenerateQrCodeResponse : ResponseContract
 {
     public required SharedPayloadRef Image { get; init; }
     public override void Validate() => Image.Validate();
+}
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record GenerateQrCodeSvgResponse : ResponseContract
+{
+    public required string Svg { get; init; }
+    public override void Validate() => ContractValidation.NonEmpty(Svg, nameof(Svg));
 }
 
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]

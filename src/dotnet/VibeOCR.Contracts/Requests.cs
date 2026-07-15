@@ -247,6 +247,30 @@ public sealed record GenerateQrCodeRequest : RequestContract
 }
 
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record GenerateQrCodeSvgRequest : RequestContract
+{
+    public required string Data { get; init; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? ErrorCorrection { get; init; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? FgColor { get; init; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? BgColor { get; init; }
+
+    public override void Validate()
+    {
+        ContractValidation.NonEmpty(Data, nameof(Data));
+        if (ErrorCorrection is not null)
+        {
+            ContractValidation.OneOf(ErrorCorrection, nameof(ErrorCorrection), "L", "M", "Q", "H");
+        }
+    }
+}
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public sealed record SettingsSnapshotRequest : RequestContract;
 
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
