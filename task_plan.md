@@ -6,7 +6,7 @@
 
 ## Current Phase
 
-Phase F：最终验证、提交与合并（in progress）
+Phase F：最终验证、提交与合并（complete）
 
 ## Phases
 
@@ -52,9 +52,9 @@ Phase F：最终验证、提交与合并（in progress）
 - [x] 完成本机可运行的契约、架构、WorkerHost、客户端、PDF 与构建验证
 - [x] 更新 README、正式计划状态与双前端发布签核清单
 - [x] 全量 pytest、Ruff、wheel/verifier、Git diff 最终门禁
-- [ ] 提交工作分支并非快进合并到 `main`
-- [ ] 确认 `main` 工作区干净
-- **Status:** in_progress
+- [x] 提交工作分支并非快进合并到 `main`
+- [x] 确认 `main` 工作区干净
+- **Status:** complete
 
 ## Decisions
 

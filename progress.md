@@ -15,11 +15,11 @@
 - 建立四个 uv workspace 项目并重新生成 `uv.lock`；移除 backend PDF 模型/服务中的 Qt 类型。
 - 更新 README、正式实施计划状态和 `docs/releases/dual-ui-release-checklist.md`。
 
-## 当前执行点
+## 完成状态
 
 - 最终 Ruff、全量 pytest、backend wheel/verifier、PySide artifact 绑定冒烟与 Git diff 门禁均已通过。
 - 构建 shell 锁已补齐 FastAPI、PyMuPDF、pytest-qt、uvicorn；`uv lock --check` 通过。
-- 下一步提交 `codex/dual-ui-completion`，切回 `main` 并 `--no-ff` 合并，随后推送 Gitee。
+- 工作分支已提交并以 `--no-ff` 合并到 `main`；Gitee 推送在 Git 收尾步骤执行。
 
 ## 验证记录
 
@@ -40,5 +40,5 @@
 
 ## 提交与合并
 
-- 尚未提交。
-- 尚未合并。
+- 实现提交：`e7fe825 feat: complete dual frontend WorkerHost migration`。
+- 合并提交：`c2a80a2 merge: complete dual frontend WorkerHost migration`。
