@@ -18,6 +18,9 @@ numpy
 markdown
 qasync
 httpx
+fastapi
+uvicorn
+pymupdf
 fonttools
 qrcode[pil]
 python-barcode
@@ -30,6 +33,7 @@ python-docx
 # Release CI 同时执行 WorkerHost v1 双语言契约门禁。
 pytest==9.1.1
 pytest-asyncio>=1.2.0
+pytest-qt==4.5.0
 jsonschema==4.25.1
 ruff>=0.15.13
 pyright>=1.1.409

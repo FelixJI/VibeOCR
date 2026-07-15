@@ -28,6 +28,7 @@ from vibeocr.worker_host.handlers.ocr import OcrExportHandler, OcrHandler
 from vibeocr.worker_host.handlers.pdf import (
     PdfAddTextLayerHandler,
     PdfCloseHandler,
+    PdfCommandHandler,
     PdfDeletePagesHandler,
     PdfDeleteTextLayersHandler,
     PdfOpenHandler,
@@ -261,6 +262,98 @@ class PdfBackendAdapter:
             "write_errors": list(result.write_errors),
         }
 
+    @staticmethod
+    def _wire(value: Any) -> Any:
+        if hasattr(value, "model_dump"):
+            return value.model_dump(mode="json")
+        if dataclasses.is_dataclass(value):
+            return dataclasses.asdict(value)
+        if isinstance(value, list):
+            return [PdfBackendAdapter._wire(item) for item in value]
+        if isinstance(value, tuple):
+            return [PdfBackendAdapter._wire(item) for item in value]
+        if isinstance(value, dict):
+            return {str(key): PdfBackendAdapter._wire(item) for key, item in value.items()}
+        return value
+
+    def command(
+        self, session_id: str, operation: str, params: dict[str, Any]
+    ) -> Any:
+        """Execute the Classic editor's remaining PDF operations in-host."""
+        client = self._get_client()
+        calls: dict[str, Callable[[], Any]] = {
+            "model": lambda: client.get_model(session_id),
+            "load": lambda: list(client.load_stream(session_id)),
+            "detect_text_layers": lambda: client.detect_text_layers(
+                session_id, int(params["page"])
+            ),
+            "rotate": lambda: client.rotate(
+                session_id,
+                [int(item) for item in params["pages"]],
+                int(params["angle"]),
+            ),
+            "delete_pages": lambda: client.delete_pages(
+                session_id, [int(item) for item in params["pages"]]
+            ),
+            "insert_blank": lambda: client.insert_blank(
+                session_id,
+                int(params["after_index"]),
+                float(params.get("width", 612.0)),
+                float(params.get("height", 792.0)),
+            ),
+            "insert_from": lambda: client.insert_from(
+                session_id, str(params["source_path"]), int(params["after_index"])
+            ),
+            "move_page": lambda: client.move_page(
+                session_id, int(params["from_index"]), int(params["to_index"])
+            ),
+            "reorder": lambda: client.reorder(
+                session_id, [int(item) for item in params["new_order"]]
+            ),
+            "add_text_layer": lambda: client.add_text_layer(
+                session_id,
+                int(params["page"]),
+                dict(params["ocr_result"]),
+                params.get("pdf_settings"),
+                bool(params.get("overwrite", False)),
+            ),
+            "add_text_layer_batch": lambda: client.add_text_layer_batch(
+                session_id,
+                list(params["pages"]),
+                params.get("pdf_settings"),
+                bool(params.get("overwrite", False)),
+                bool(params.get("save", False)),
+            ),
+            "rewrite_text_layer": lambda: client.rewrite_text_layer(
+                session_id,
+                int(params["page"]),
+                list(params["text_blocks"]),
+                int(params.get("preproc_angle", 0)),
+                params.get("pdf_settings"),
+            ),
+            "update_block_text": lambda: client.update_block_text(
+                session_id,
+                int(params["page"]),
+                int(params["block_index"]),
+                str(params["new_text"]),
+            ),
+            "delete_text_layers": lambda: list(
+                client.delete_text_layers_stream(
+                    session_id, [int(item) for item in params["pages"]]
+                )
+            ),
+            "save": lambda: client.save(
+                session_id, params.get("path"), params.get("pdf_settings")
+            ),
+            "cancel": lambda: client.cancel(session_id),
+            "reset_cancel": lambda: client.reset_cancel(session_id),
+        }
+        try:
+            call = calls[operation]
+        except KeyError as exc:
+            raise ValueError(f"unsupported PDF operation: {operation}") from exc
+        return self._wire(call())
+
     def shutdown(self) -> None:
         if self._client is not None:
             self._client.stop()
@@ -479,20 +572,34 @@ class JsonSettingsAdapter:
     def install_dependency(
         self, name: str, source: str | None, cancel: Any
     ) -> dict[str, Any]:
-        """Install a named dependency (runtime/model mirror). Best-effort stub.
-
-        The real install pipeline lives in the Python ``dependency_manager``;
-        this adapter surfaces the protocol surface so the WinUI tab can drive
-        it without a protected hook. Returns ``{installed, restarted}``.
-        """
+        """Install one named runtime dependency through the UI-free installer."""
         if cancel is not None and getattr(cancel, "is_cancelled", False):
             raise RuntimeError("dependency install cancelled")
         if not name:
             raise RuntimeError("dependency name is required")
-        # The heavy install is delegated to the dependency manager in production;
-        # this default adapter records the request and reports not-yet-installed
-        # so the handler can map the outcome without auto-retrying.
-        return {"installed": False, "restarted": False, "name": name, "source": source}
+
+        from vibeocr.env_manager import install_single_dependency
+
+        class _CancelEvent:
+            def is_set(self) -> bool:
+                return bool(
+                    cancel is not None and getattr(cancel, "is_cancelled", False)
+                )
+
+        network_type = source if source in {"domestic", "international"} else "domestic"
+        installed, message = install_single_dependency(
+            self._paths.install_root,
+            name,
+            network_type=cast("Any", network_type),
+            cancel_event=cast("Any", _CancelEvent()),
+        )
+        return {
+            "installed": bool(installed),
+            "restarted": False,
+            "name": name,
+            "source": source,
+            "message": message,
+        }
 
 
 class WorkerServiceComposition:
@@ -527,9 +634,9 @@ class WorkerServiceComposition:
             )
 
         def default_pdf() -> Any:
-            from vibeocr.services.pdf_backend_client import PdfBackendClient
+            from vibeocr.services.pdf_inprocess_client import InProcessPdfBackendClient
 
-            return PdfBackendClient.instance()
+            return InProcessPdfBackendClient()
 
         def default_qr_decode() -> Any:
             from vibeocr.services.qrcode_decode_service import QrcodeDecodeService
@@ -557,6 +664,7 @@ class WorkerServiceComposition:
             "ocr.export": OcrExportHandler(facade=self._ocr_adapter).handle,
             "pdf.open": PdfOpenHandler(facade=PdfFacade(self._pdf_adapter)).handle,
             "pdf.close": PdfCloseHandler(backend=self._pdf_adapter).handle,
+            "pdf.command": PdfCommandHandler(backend=self._pdf_adapter).handle,
             "pdf.render_page": PdfRenderPageHandler(
                 backend=self._pdf_adapter, store=store
             ).handle,

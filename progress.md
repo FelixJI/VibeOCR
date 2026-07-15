@@ -1,57 +1,44 @@
-# Progress Log — DUAL_UI_IMPLEMENTATION_PLAN.md 执行
+# Progress Log — DUAL_UI_IMPLEMENTATION_PLAN.md
 
-分支策略：每阶段完成后合并到 `main` 并删除特性分支。
+## 2026-07-15
 
-## 整体进度
+- 从本地 `main@590f92e` 创建 `codex/dual-ui-completion`，恢复既有 Phase 0–3 上下文并完成差距审计。
+- 补齐 Python typed client：OCR 导出、PDF、settings、批量、取消、资源释放与同步包装。
+- 建立 PySide 进程级唯一 BackendSession；单图、二维码、批量、PDF 共享一个 WorkerHost。
+- 把 pipeline/MinerU/frontend 元数据迁移到纯 contracts；UI→backend import 从 53→39→8→0，删除 allowlist。
+- 为 PDF 新增 `pdf.command` Python/C#/schema/golden 契约；Qt session manager/workers 移入 `vibeocr.pyside`。
+- 修复生产 dispatcher 方法漏注册、Named Pipe overlapped I/O 死锁和 WorkerHost stdout/stderr 回压。
+- 用 WorkerHost 内 `InProcessPdfBackendClient` 替换嵌套 FastAPI 子进程；真实 PDF open/model/load/close 通过。
+- 修复 pytest 结束阶段共享 WorkerHost 未及时关闭；PDF manager 39 passed 且正常退出。
+- 建立显式 backend wheel allowlist、构建器、AST verifier、PySide/WinUI artifact binder/verifier 与 product manifest。
+- 建立 contracts/backend/pyside/winui CI；release 改为单 backend wheel 扇出 Classic/Next 两个 ZIP。
+- 建立四个 uv workspace 项目并重新生成 `uv.lock`；移除 backend PDF 模型/服务中的 Qt 类型。
+- 更新 README、正式实施计划状态和 `docs/releases/dual-ui-release-checklist.md`。
 
-### Phase 0：架构冻结与基线 ✅
-- ADR + `tests/architecture/` 四重守卫（26 测试）
+## 当前执行点
 
-### Phase 1：跨产品互斥 Mutex ✅
-- Python `FrontendExclusiveLock` + C# `FrontendExclusiveLock`
+- 最终 Ruff、全量 pytest、backend wheel/verifier、PySide artifact 绑定冒烟与 Git diff 门禁均已通过。
+- 构建 shell 锁已补齐 FastAPI、PyMuPDF、pytest-qt、uvicorn；`uv lock --check` 通过。
+- 下一步提交 `codex/dual-ui-completion`，切回 `main` 并 `--no-ff` 合并，随后推送 Gitee。
 
-### Phase 2：通用 WorkerHost + Python BackendClient ✅
-- `--frontend-id` + production profile
-- `BackendClient` + `SyncBackendClient` 同步桥
+## 验证记录
 
-### Phase 3：PySide 垂直迁移 🔄
-
-| 切片 | 状态 | allowlist 变化 |
-|---|---|---|
-| 二维码生成/识别 | ✅ 完整 RPC 迁移 | 90→88 |
-| 单图 OCR — 显示格式化器 | ✅ TextBlockProcessor + HTML 表格 → utils | 88→84 |
-| 单图 OCR — toolbar_icons | ✅ core/ → ui/ | 84→83 |
-| 单图 OCR — 执行路径 | ✅ 完整 RPC 迁移（ocr.recognize DTO 丰富化） | 83→74 |
-| 批量 OCR | ⏳ 待续 | |
-| PDF | ⏳ 待续（PdfSessionManager 深度耦合） | |
-| 设置/更新 | ⏳ 待续（UpdateService Qt/backend 混合） | |
-
-### Phase 4：物理拆包与去 Qt 化 ⏳
-- `models.*` 共享数据模型需移到 contracts 包（21 条 allowlist）
-- `core.pipelines`/`core.constants` 共享枚举/常量需拆分
-- `log_service`/`update_service` Qt/backend 需拆分
-
-### Phase 5–6：双 CI/发布 + 稳定性 ⏳
-
-## Allowlist 轨迹
-| 阶段 | 数量 |
+| 检查 | 结果 |
 |---|---|
-| Phase 0 基线 | 90 |
-| Phase 3 QR | 88 |
-| Phase 3 格式化器 | 84 |
-| Phase 3 toolbar_icons | 83 |
-| Phase 3 OCR 执行路径 | **74** |
+| `tests/architecture tests/contracts tests/worker_host tests/client tests/release_layout` | 327 passed |
+| `tests/managers/test_pdf_session_manager.py` | 39 passed |
+| 真实 WorkerHost settings snapshot | passed |
+| 真实 WorkerHost PDF open/model/load/close | passed |
+| targeted Ruff（client/contracts/pyside/worker_host/scripts） | passed |
+| `ruff check src tests scripts` | passed |
+| 全量 pytest | 2758 passed, 10 skipped, 1 warning（ccache 缺失提示） |
+| 最终 backend wheel | 99 files；SHA-256 `64953c07627f9cc5582d79c86db12f2e5d0e8200bed4f44679ccd2d41ab34206` |
+| PySide artifact binder/verifier smoke | passed |
+| uv workspace lock | `uv lock` 成功，新增 4 个 workspace package |
+| `uv lock --check` / `git diff --check` | passed |
+| .NET 10.0.301 | 本机无 SDK；由 CI required gate 执行 |
 
-## main 提交历史（最新 10 条）
-```
-ce31d80 docs: document dual-frontend architecture in README
-8558373 merge: Phase 3 single-image OCR execution migrated to RPC
-a214943 feat(phase3): migrate single-image OCR execution to RPC
-b8e7cd2 refactor(phase3): move toolbar_icons from core/ to ui/ layer
-98a6e85 docs: update progress
-d39e47a merge: Phase 3 single-OCR slice — move display formatters
-ebff010 refactor(phase3): move HTML table utilities to UI utils layer
-e69d2d0 refactor(phase3): move TextBlockProcessor to UI utils layer
-d8475e7 merge: Phase 3 QR slice
-2d6fe38 feat(phase3): migrate PySide QR generate/decode to RPC
-```
+## 提交与合并
+
+- 尚未提交。
+- 尚未合并。

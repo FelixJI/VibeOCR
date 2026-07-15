@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace VibeOCR.Contracts;
@@ -115,6 +116,21 @@ public sealed record ClosePdfRequest : RequestContract
 {
     public required string SessionId { get; init; }
     public override void Validate() => ContractValidation.NonEmpty(SessionId, nameof(SessionId));
+}
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record PdfCommandRequest : RequestContract
+{
+    public required string SessionId { get; init; }
+    public required string Operation { get; init; }
+    public required JsonElement Params { get; init; }
+    public override void Validate()
+    {
+        ContractValidation.NonEmpty(SessionId, nameof(SessionId));
+        ContractValidation.NonEmpty(Operation, nameof(Operation));
+        if (Params.ValueKind != JsonValueKind.Object)
+            throw new ProtocolContractException("params must be an object.");
+    }
 }
 
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]

@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from vibeocr.core.pipelines import (
+from vibeocr.contracts.pipelines import (
     OCRPipeline,
     get_all_pipelines,
     get_pipeline_display_name,

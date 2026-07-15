@@ -1,0 +1,16 @@
+[project]
+name = "vibeocr-client-py"
+version = "0.4.28"
+description = "Python Named Pipe/shared-memory WorkerHost client"
+requires-python = ">=3.13,<3.14"
+dependencies = [
+    "vibeocr-contracts-py==0.4.28",
+    "pydantic>=2.13.4",
+]
+
+[build-system]
+requires = ["hatchling>=1.0.0"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/vibeocr_client_py"]

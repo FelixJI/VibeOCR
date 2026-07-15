@@ -236,6 +236,28 @@
         }
       }
     },
+    "pdf.command": {
+      "request_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000029",
+        "task_id": "00000000-0000-4000-8000-000000000029",
+        "method": "pdf.command",
+        "payload": {
+          "session_id": "sess-1",
+          "operation": "model",
+          "params": {}
+        },
+        "deadline_unix_ms": 0
+      },
+      "response_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000029",
+        "task_id": "00000000-0000-4000-8000-000000000029",
+        "result": {
+          "result": { "file_path": "C:/data/sample.pdf", "pages": [] }
+        }
+      }
+    },
     "pdf.render_page": {
       "request_envelope": {
         "protocol_version": 1,

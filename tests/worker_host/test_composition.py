@@ -124,6 +124,7 @@ def test_production_composition_registers_all_domain_handlers(tmp_path: Path) ->
         "ocr.export",
         "pdf.open",
         "pdf.close",
+        "pdf.command",
         "pdf.render_page",
         "pdf.rotate",
         "pdf.delete_pages",

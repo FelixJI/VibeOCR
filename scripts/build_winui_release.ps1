@@ -12,7 +12,8 @@ are preserved by the updater.
 param(
     [string]$Configuration = "Release",
     [string]$OutputDir = "$env:TEMP\VibeOCR-winui-publish",
-    [string]$Version = ""
+    [string]$Version = "",
+    [string]$BackendWheel = ""
 )
 $ErrorActionPreference = 'Stop'
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
@@ -50,19 +51,32 @@ $bootstrapper = Join-Path $repo 'src\dotnet\VibeOCR.Bootstrapper\VibeOCR.Bootstr
 & $dotnet publish $bootstrapper -c $Configuration -r win-x64 --self-contained false --no-restore -p:Version=$Version -o $outputFull
 if ($LASTEXITCODE -ne 0) { throw "bootstrapper build failed with exit $LASTEXITCODE" }
 
-# Stage WorkerHost source.  The portable runtime is reused, but it needs an
-# importable application package that is independent of the removed PySide UI.
-$workerPackage = Join-Path $outputFull 'worker\vibeocr'
-New-Item -ItemType Directory -Path (Split-Path -Parent $workerPackage) -Force | Out-Null
-Copy-Item -LiteralPath (Join-Path $repo 'src\vibeocr') -Destination $workerPackage -Recurse -Force
-foreach ($relative in @('main.py', 'views', 'widgets', 'ui', 'output')) {
-    $candidate = Join-Path $workerPackage $relative
-    if (Test-Path $candidate) { Remove-Item -LiteralPath $candidate -Recurse -Force }
+# Stage the exact prebuilt backend wheel. This is include-only: WinUI never
+# copies the source tree and therefore cannot accidentally inherit new UI dirs.
+if (-not $BackendWheel) {
+    $backendOut = Join-Path $outputFull '.backend-wheel'
+    python (Join-Path $repo 'scripts\build_backend_wheel.py') --output-dir $backendOut
+    if ($LASTEXITCODE -ne 0) { throw "backend wheel build failed with exit $LASTEXITCODE" }
+    $BackendWheel = (Get-ChildItem -LiteralPath $backendOut -Filter '*.whl' | Select-Object -First 1).FullName
 }
-Get-ChildItem -Path $workerPackage -Directory -Recurse -Filter '__pycache__' |
-    Remove-Item -Recurse -Force
-Get-ChildItem -Path $workerPackage -File -Recurse -Filter '*.pyc' |
-    Remove-Item -Force
+$backendFull = (Resolve-Path $BackendWheel).Path
+python (Join-Path $repo 'scripts\verify_backend_wheel.py') $backendFull
+if ($LASTEXITCODE -ne 0) { throw "backend wheel verification failed with exit $LASTEXITCODE" }
+$workerRoot = Join-Path $outputFull 'worker'
+New-Item -ItemType Directory -Path $workerRoot -Force | Out-Null
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+[IO.Compression.ZipFile]::ExtractToDirectory($backendFull, $workerRoot, $true)
+$backendHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $backendFull).Hash.ToLowerInvariant()
+$sourceCommit = (git -C $repo rev-parse HEAD).Trim()
+$productManifest = [ordered]@{
+    frontend = 'winui'
+    frontend_version = $Version
+    backend_wheel = [IO.Path]::GetFileName($backendFull)
+    backend_sha256 = $backendHash
+    protocol_major = 1
+    source_commit = $sourceCommit
+}
+$productManifest | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $outputFull 'product-manifest.json') -Encoding utf8
 
 Copy-Item -LiteralPath (Join-Path $repo 'contracts') -Destination (Join-Path $outputFull 'contracts') -Recurse -Force
 Copy-Item -LiteralPath (Join-Path $repo 'CHANGELOG.md') -Destination $outputFull -Force

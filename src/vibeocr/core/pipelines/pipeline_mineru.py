@@ -10,23 +10,15 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from vibeocr.contracts.mineru import (
+    MINERU_BACKEND_CHAIN as MINERU_BACKEND_CHAIN,
+)
+from vibeocr.contracts.mineru import (
+    MINERU_BACKEND_DEFAULT,
+    MINERU_EFFORT_DEFAULT,
+)
 from vibeocr.core.pipelines.base_options import BasePipelineOptions
 from vibeocr.core.pipelines.registry import PipelineSpec
-
-# MinerU backend 名称（3.3.1 canonical；2.x 的 *-auto-engine 已为 legacy 别名）
-MINERU_BACKEND_DEFAULT = "hybrid-engine"
-MINERU_BACKEND_CHAIN = ("hybrid-engine", "vlm-engine", "pipeline")  # 回退顺序
-MINERU_BACKEND_LABELS = {
-    "hybrid-engine": "混合引擎（推荐）",
-    "vlm-engine": "VLM 智能引擎",
-    "pipeline": "传统流水线",
-}
-# hybrid 解析强度（仅对 hybrid-engine 生效）
-MINERU_EFFORT_DEFAULT = "medium"  # 与 3.3.1 默认一致 → 保持当前行为
-MINERU_EFFORT_LABELS = {
-    "medium": "标准（更快，关闭图片/图表分析）",
-    "high": "高精度（启用图片/图表分析，更慢）",
-}
 
 
 @dataclass

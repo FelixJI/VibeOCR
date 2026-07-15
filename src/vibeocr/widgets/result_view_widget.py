@@ -937,19 +937,22 @@ class ResultViewWidget(QWidget):
             return
         from pathlib import Path
 
-        from vibeocr.services.export_service import ExportService
+        from vibeocr.client.export import export_result, get_output_filename
+        from vibeocr.client.session import get_backend_client
 
         filter_label = {
             "docx": "Word 文档 (*.docx)",
             "xlsx": "Excel 工作簿 (*.xlsx)",
         }[fmt]
-        default_name = ExportService.get_output_filename("ocr_result", fmt)
+        default_name = get_output_filename("ocr_result", fmt)
         path, _ = QFileDialog.getSaveFileName(
             self, f"导出 {fmt.upper()}", default_name, filter_label
         )
         if not path:
             return
-        ok = ExportService.export(self._current_result, Path(path), fmt)
+        ok = export_result(
+            get_backend_client(), self._current_result, Path(path), fmt
+        )
         if ok:
             QMessageBox.information(self, "导出成功", f"已导出到：\n{path}")
         else:

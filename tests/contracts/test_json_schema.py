@@ -158,6 +158,7 @@ PUBLIC_METHODS = [
     "ocr.export",
     "pdf.open",
     "pdf.close",
+    "pdf.command",
     "pdf.render_page",
     "pdf.rotate",
     "pdf.delete_pages",

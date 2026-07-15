@@ -160,6 +160,7 @@ def _load_win32() -> dict[str, Any]:
 # WaitForSingleObject return codes
 WAIT_OBJECT_0 = 0x00000000
 WAIT_TIMEOUT = 0x00000102
+INFINITE = 0xFFFFFFFF
 
 ERROR_IO_PENDING = 997
 ERROR_PIPE_CONNECTED = 535
@@ -258,22 +259,15 @@ class PipeConnection:
         buf = (ctypes.c_ubyte * n)()
         got = 0
         while got < n:
-            read = wt.DWORD(0)
-            ok = self._win["ReadFile"](
-                self._handle,
-                ctypes.byref(buf, got),
-                n - got,
-                ctypes.byref(read),
-                None,
+            transferred = self._overlapped_transfer(
+                "ReadFile", ctypes.byref(buf, got), n - got
             )
-            if not ok:
-                raise ConnectionError(f"ReadFile failed: GLE={ctypes.get_last_error()}")
-            if read.value == 0:
+            if transferred == 0:
                 # End of stream before n bytes: emulate asyncio truncation.
                 import asyncio as _aio
 
                 raise _aio.IncompleteReadError(bytes(buf)[:got], n)
-            got += read.value
+            got += transferred
         return bytes(buf)[:got]
 
     def _write_sync(self, data: bytes) -> int:
@@ -287,20 +281,53 @@ class PipeConnection:
         buf = (ctypes.c_ubyte * total).from_buffer_copy(data)
         written_so_far = 0
         while written_so_far < total:
-            written = wt.DWORD(0)
-            ok = self._win["WriteFile"](
-                self._handle,
+            transferred = self._overlapped_transfer(
+                "WriteFile",
                 ctypes.byref(buf, written_so_far),
                 total - written_so_far,
-                ctypes.byref(written),
-                None,
             )
-            if not ok:
-                raise ConnectionError(f"WriteFile failed: GLE={ctypes.get_last_error()}")
-            if written.value == 0:
+            if transferred == 0:
                 raise ConnectionError("WriteFile wrote 0 bytes (pipe full?)")
-            written_so_far += written.value
+            written_so_far += transferred
         return written_so_far
+
+    def _overlapped_transfer(self, operation: str, buffer: Any, size: int) -> int:
+        """Run one cancellable overlapped ReadFile/WriteFile operation."""
+        event = self._win["CreateEventW"](None, True, False, None)
+        if not event:
+            raise ConnectionError(f"CreateEventW failed: GLE={ctypes.get_last_error()}")
+        overlapped = OVERLAPPED()
+        overlapped.hEvent = event
+        immediate = wt.DWORD(0)
+        try:
+            ok = self._win[operation](
+                self._handle,
+                buffer,
+                size,
+                ctypes.byref(immediate),
+                ctypes.byref(overlapped),
+            )
+            if ok:
+                return int(immediate.value)
+            gle = ctypes.get_last_error()
+            if gle != ERROR_IO_PENDING:
+                raise ConnectionError(f"{operation} failed: GLE={gle}")
+            waited = self._win["WaitForSingleObject"](event, INFINITE)
+            if waited != WAIT_OBJECT_0:
+                raise ConnectionError(f"{operation} wait failed: result={waited}")
+            transferred = wt.DWORD(0)
+            if not self._win["GetOverlappedResult"](
+                self._handle,
+                ctypes.byref(overlapped),
+                ctypes.byref(transferred),
+                False,
+            ):
+                raise ConnectionError(
+                    f"{operation} result failed: GLE={ctypes.get_last_error()}"
+                )
+            return int(transferred.value)
+        finally:
+            self._win["CloseHandle"](event)
 
     async def close(self) -> None:
         if self._closed:
@@ -472,9 +499,6 @@ class NamedPipeServer:
     def _create_pipe_sync(self, name: str) -> None:
         sid = _current_user_sid()
         sa = _build_security_attributes(sid)
-        # Overlapped flag so ConnectNamedPipe can be cancelled on timeout via
-        # CancelIoEx; otherwise a blocking accept with no client hangs forever
-        # in an executor thread that Python cannot kill.
         handle = self._win["CreateNamedPipeW"](
             name,
             PIPE_ACCESS_DUPLEX | FILE_FLAG_FIRST_PIPE_INSTANCE | FILE_FLAG_OVERLAPPED,
@@ -503,9 +527,7 @@ class NamedPipeServer:
 
         connected = await asyncio.to_thread(self._connect_overlapped, timeout_ms)
         if not connected:
-            raise TimeoutError(
-                f"no client connected within {timeout_ms} ms"
-            )
+            raise TimeoutError(f"no client connected within {timeout_ms} ms")
 
         conn = PipeConnection(self._handle, server_side=True)
         assert self.endpoint is not None
@@ -596,7 +618,7 @@ class NamedPipeClient:
                     0,  # no sharing
                     None,
                     OPEN_EXISTING,
-                    0,  # blocking I/O offloaded to executor
+                    FILE_FLAG_OVERLAPPED,
                     None,
                 )
                 gle = ctypes.get_last_error()

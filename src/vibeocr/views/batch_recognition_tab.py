@@ -19,7 +19,6 @@ from PySide6.QtWidgets import (
 )
 
 from vibeocr.models.ocr_options import OCROptions
-from vibeocr.services.export_service import ExportService
 from vibeocr.ui import theme
 from vibeocr.views.tabs.base_tab import BaseOcrTab
 from vibeocr.widgets.batch_file_list_widget import BatchFileListWidget
@@ -191,10 +190,12 @@ class BatchRecognitionTab(BaseOcrTab):
 
     SPLITTER_ID = "batch_tab_v2"
 
-    def __init__(self, ocr_service=None, parent=None):
+    def __init__(self, ocr_service=None, parent=None, *, backend=None):
         super().__init__(parent)
         self._ocr_service = ocr_service  # MinerUBatchService
         self._paddlex_service = None  # OCRServiceSubprocess
+        self._backend = backend
+        self._batch_backend = None
         self._worker: BatchRecognitionWorker | None = None
         self._layout_manager = None
         self._current_file_path: str = ""
@@ -337,7 +338,7 @@ class BatchRecognitionTab(BaseOcrTab):
             return
 
         preprocess_options = self._preprocess_options.get_options()
-        service = self._get_service_for_pipeline(preprocess_options)
+        service = self._get_batch_backend()
 
         if not service:
             self._result_widget.clear()
@@ -374,6 +375,20 @@ class BatchRecognitionTab(BaseOcrTab):
         self._worker.finished.connect(self._on_finished)
         self._worker.error.connect(self._on_error)
         self._worker.start()
+
+    def _get_backend_client(self):
+        if self._backend is None:
+            from vibeocr.client.session import get_backend_client
+
+            self._backend = get_backend_client()
+        return self._backend
+
+    def _get_batch_backend(self):
+        if self._batch_backend is None:
+            from vibeocr.client.batch import BatchBackendAdapter
+
+            self._batch_backend = BatchBackendAdapter(self._get_backend_client())
+        return self._batch_backend
 
     def _on_cancel(self):
         """取消识别"""
@@ -438,14 +453,20 @@ class BatchRecognitionTab(BaseOcrTab):
             return
 
         export_dir = self._export_widget.get_export_dir(self._current_file_path)
-        output_name = ExportService.get_output_filename(
+        from vibeocr.client.export import (
+            export_result,
+            get_output_filename,
+            get_unique_output_path,
+        )
+
+        output_name = get_output_filename(
             Path(self._current_file_path).name, fmt
         )
-        output_path = ExportService.get_unique_output_path(
+        output_path = get_unique_output_path(
             Path(export_dir) / output_name
         )
 
-        success = ExportService.export(result, output_path, fmt)
+        success = export_result(self._get_backend_client(), result, output_path, fmt)
         if success:
             QMessageBox.information(self, "导出成功", f"已导出到:\n{output_path}")
         else:
@@ -453,6 +474,12 @@ class BatchRecognitionTab(BaseOcrTab):
 
     def _on_export_all(self, fmt: str) -> None:
         """导出全部已完成的文件"""
+        from vibeocr.client.export import (
+            export_result,
+            get_output_filename,
+            get_unique_output_path,
+        )
+
         files = self._file_list_widget._files
         completed_files = [
             f for f in files if f["status"] == "completed" and f.get("result")
@@ -469,14 +496,16 @@ class BatchRecognitionTab(BaseOcrTab):
         for f in completed_files:
             result = f["result"]
             export_dir = self._export_widget.get_export_dir(f["path"])
-            output_name = ExportService.get_output_filename(f["name"], fmt)
+            output_name = get_output_filename(f["name"], fmt)
             output_path = Path(export_dir) / output_name
-            actual_path = ExportService.get_unique_output_path(output_path)
+            actual_path = get_unique_output_path(output_path)
 
             if output_path != actual_path:
                 renamed.append(f"{output_name} → {actual_path.name}")
 
-            if ExportService.export(result, actual_path, fmt):
+            if export_result(
+                self._get_backend_client(), result, actual_path, fmt
+            ):
                 success_count += 1
             else:
                 fail_count += 1

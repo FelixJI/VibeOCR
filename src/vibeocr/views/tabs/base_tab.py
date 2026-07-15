@@ -5,12 +5,9 @@
 
 import logging
 from abc import abstractmethod
-from typing import TYPE_CHECKING, Any, Optional
+from typing import Any
 
 from PySide6.QtWidgets import QWidget
-
-if TYPE_CHECKING:
-    from vibeocr.services.ocr_service_subprocess import OCRServiceSubprocess
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +26,7 @@ class BaseOcrTab(QWidget):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self._ocr_service: OCRServiceSubprocess | None = None
+        self._ocr_service: Any = None
         self._paddlex_service: Any = None
         self._current_ocr_result: Any = None
         self._preview_widget: Any = None
@@ -42,7 +39,7 @@ class BaseOcrTab(QWidget):
         # self._connect_signals()
 
     @property
-    def ocr_service(self) -> Optional["OCRServiceSubprocess"]:
+    def ocr_service(self) -> Any:
         """获取 OCR 服务"""
         return self._ocr_service
 
@@ -51,7 +48,7 @@ class BaseOcrTab(QWidget):
         """检查是否正在处理"""
         return self._is_processing
 
-    def set_ocr_service(self, service: Optional["OCRServiceSubprocess"] | Any) -> None:
+    def set_ocr_service(self, service: Any) -> None:
         """设置 OCR 服务
 
         Args:
@@ -65,7 +62,7 @@ class BaseOcrTab(QWidget):
         # 子类可以重写此方法来响应服务变化
         self._on_service_changed(service)
 
-    def _on_service_changed(self, service: Optional["OCRServiceSubprocess"]) -> None:
+    def _on_service_changed(self, service: Any) -> None:
         """OCR 服务变化回调
 
         子类可以重写此方法来响应服务变化。
@@ -80,7 +77,7 @@ class BaseOcrTab(QWidget):
 
     def _get_service_for_pipeline(self, options):
         """根据管道类型路由到对应的服务"""
-        from vibeocr.core.pipelines import OCRPipeline
+        from vibeocr.contracts.pipelines import OCRPipeline
 
         if options.pipeline == OCRPipeline.DOCUMENT_PARSING:
             return self._ocr_service

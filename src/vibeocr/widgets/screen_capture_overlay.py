@@ -423,7 +423,7 @@ class ScreenCaptureOverlay(QWidget):
     def _build_pipeline_options(self, pipeline_name: str) -> Any:
         """为快捷管道构建 OCROptions，优先使用 screenshot 源的持久化配置"""
         try:
-            from vibeocr.core.pipelines import OCRPipeline
+            from vibeocr.contracts.pipelines import OCRPipeline
             from vibeocr.models.ocr_options import OCROptions
             from vibeocr.utils.ocr_preferences import OCRPreferences
 
@@ -431,7 +431,7 @@ class ScreenCaptureOverlay(QWidget):
             prefs = OCRPreferences.instance()
             return prefs.get_pipeline_options("screenshot", pipeline_enum)
         except Exception:
-            from vibeocr.core.pipelines import OCRPipeline
+            from vibeocr.contracts.pipelines import OCRPipeline
             from vibeocr.models.ocr_options import OCROptions
 
             try:

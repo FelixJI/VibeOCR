@@ -58,6 +58,13 @@ dev = [
     # WorkerHost framing/lifecycle 是 asyncio；测试用 pytest-asyncio。
     "pytest-asyncio>=1.2.0",
 ]
+lint = ["ruff>=0.15.13", "pyright>=1.1.409"]
+test-contracts = ["pytest>=9.0.3", "jsonschema>=4.25.0"]
+test-backend = ["pytest>=9.0.3", "pytest-asyncio>=1.2.0"]
+test-pyside = ["pytest>=9.0.3", "pytest-qt>=4.5.0"]
+build-common = ["hatchling>=1.0.0", "uv>=0.11.14"]
+build-pyside = ["pyinstaller>=6.6"]
+build-winui = []
 
 [project.scripts]
 # WorkerHost console entry point: launched by either frontend shell as
@@ -230,7 +237,15 @@ extra-index-url = [
 ]
 index-strategy = "unsafe-best-match"
 
+[tool.uv.workspace]
+members = ["packages/*", "apps/*"]
+
 [tool.uv.sources]
+vibeocr-contracts-py = { workspace = true }
+vibeocr-client-py = { workspace = true }
+vibeocr-backend = { workspace = true }
+vibeocr-pyside = { workspace = true }
+
 # paddlepaddle-gpu 和 torch 都用 CUDA 12.6 构建（cu126），保持同源：
 # - paddle cu126 找 cublas64_12.dll，torch cu126 的 torch/lib 正好提供
 # - 不用 cu129/cu130：cu129 paddle 要 cu12 DLL 但 torch 无 cu129 win wheel；
