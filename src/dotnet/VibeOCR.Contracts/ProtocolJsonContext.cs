@@ -26,6 +26,7 @@ namespace VibeOCR.Contracts;
 [JsonSerializable(typeof(RpcRequestEnvelope<StartPdfOcrRequest>))]
 [JsonSerializable(typeof(RpcRequestEnvelope<DecodeQrCodeRequest>))]
 [JsonSerializable(typeof(RpcRequestEnvelope<GenerateQrCodeRequest>))]
+[JsonSerializable(typeof(RpcRequestEnvelope<GenerateQrCodeSvgRequest>))]
 [JsonSerializable(typeof(RpcRequestEnvelope<SettingsSnapshotRequest>))]
 [JsonSerializable(typeof(RpcRequestEnvelope<SwitchBackendRequest>))]
 [JsonSerializable(typeof(RpcRequestEnvelope<InstallDependencyRequest>))]
@@ -48,6 +49,7 @@ namespace VibeOCR.Contracts;
 [JsonSerializable(typeof(RpcResponseEnvelope<StartPdfOcrResponse>))]
 [JsonSerializable(typeof(RpcResponseEnvelope<DecodeQrCodeResponse>))]
 [JsonSerializable(typeof(RpcResponseEnvelope<GenerateQrCodeResponse>))]
+[JsonSerializable(typeof(RpcResponseEnvelope<GenerateQrCodeSvgResponse>))]
 [JsonSerializable(typeof(RpcResponseEnvelope<SettingsSnapshotResponse>))]
 [JsonSerializable(typeof(RpcResponseEnvelope<SwitchBackendResponse>))]
 [JsonSerializable(typeof(RpcResponseEnvelope<InstallDependencyResponse>))]
@@ -128,6 +130,7 @@ public static class ProtocolJson
                 RpcMethods.StartPdfOcr => typeof(RpcRequestEnvelope<StartPdfOcrRequest>),
                 RpcMethods.DecodeQrCode => typeof(RpcRequestEnvelope<DecodeQrCodeRequest>),
                 RpcMethods.GenerateQrCode => typeof(RpcRequestEnvelope<GenerateQrCodeRequest>),
+                RpcMethods.GenerateQrCodeSvg => typeof(RpcRequestEnvelope<GenerateQrCodeSvgRequest>),
                 RpcMethods.SettingsSnapshot => typeof(RpcRequestEnvelope<SettingsSnapshotRequest>),
                 RpcMethods.SwitchBackend => typeof(RpcRequestEnvelope<SwitchBackendRequest>),
                 RpcMethods.InstallDependency => typeof(RpcRequestEnvelope<InstallDependencyRequest>),
@@ -191,6 +194,7 @@ public static class ProtocolJson
                 RpcMethods.StartPdfOcr => typeof(RpcResponseEnvelope<StartPdfOcrResponse>),
                 RpcMethods.DecodeQrCode => typeof(RpcResponseEnvelope<DecodeQrCodeResponse>),
                 RpcMethods.GenerateQrCode => typeof(RpcResponseEnvelope<GenerateQrCodeResponse>),
+                RpcMethods.GenerateQrCodeSvg => typeof(RpcResponseEnvelope<GenerateQrCodeSvgResponse>),
                 RpcMethods.SettingsSnapshot => typeof(RpcResponseEnvelope<SettingsSnapshotResponse>),
                 RpcMethods.SwitchBackend => typeof(RpcResponseEnvelope<SwitchBackendResponse>),
                 RpcMethods.InstallDependency => typeof(RpcResponseEnvelope<InstallDependencyResponse>),
