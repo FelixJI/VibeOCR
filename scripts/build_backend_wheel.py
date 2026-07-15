@@ -77,6 +77,7 @@ def build(output_dir: Path) -> Path:
         "Requires-Dist: python-barcode>=0.16.1\n"
         "Requires-Dist: opencv-contrib-python>=4.10.0.84\n"
         "Requires-Dist: pyzbar>=0.1.9\n"
+        "Requires-Dist: pynvml>=11.5.0\n"
         "Requires-Dist: paddlepaddle-gpu>=3.3.1\nRequires-Dist: torch>=2.6.0\n"
         "Requires-Dist: paddleocr[doc-parser]>=3.7.0\n"
         "Requires-Dist: mineru[core]>=3.4.3\n"
