@@ -36,10 +36,10 @@ jobs:
         with:
           python-version: "3.13"
 
-      - name: Set up .NET 10.0.301
+      - name: Set up .NET 10.0.302
         uses: actions/setup-dotnet@v5
         with:
-          dotnet-version: "10.0.301"
+          dotnet-version: "10.0.302"
 
       - name: Parse version from tag
         id: version

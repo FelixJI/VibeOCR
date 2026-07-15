@@ -63,9 +63,17 @@ $backendFull = (Resolve-Path $BackendWheel).Path
 python (Join-Path $repo 'scripts\verify_backend_wheel.py') $backendFull
 if ($LASTEXITCODE -ne 0) { throw "backend wheel verification failed with exit $LASTEXITCODE" }
 $workerRoot = Join-Path $outputFull 'worker'
+# Ensure a clean extraction target: the whole $outputFull is wiped at the top,
+# but be defensive in case worker/ already exists (e.g. a re-run) so that
+# ExtractToDirectory's two-arg overload (which does not overwrite) cannot fail
+# on a pre-existing file.
+if (Test-Path $workerRoot) { Remove-Item -LiteralPath $workerRoot -Recurse -Force }
 New-Item -ItemType Directory -Path $workerRoot -Force | Out-Null
 Add-Type -AssemblyName System.IO.Compression.FileSystem
-[IO.Compression.ZipFile]::ExtractToDirectory($backendFull, $workerRoot, $true)
+# Use the two-argument overload explicitly: it is the only one present in both
+# Windows PowerShell 5.1 (entryNameEncoding-only 3rd arg) and PowerShell 7+
+# (bool overwrite 3rd arg). Passing $true binds to Encoding in 5.1 and crashes.
+[IO.Compression.ZipFile]::ExtractToDirectory($backendFull, $workerRoot)
 $backendHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $backendFull).Hash.ToLowerInvariant()
 $sourceCommit = (git -C $repo rev-parse HEAD).Trim()
 $productManifest = [ordered]@{
