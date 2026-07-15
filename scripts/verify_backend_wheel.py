@@ -6,10 +6,27 @@ import argparse
 import ast
 import hashlib
 import json
+import re
+import tomllib
 import zipfile
 from pathlib import Path, PurePosixPath
 
 FORBIDDEN_PARTS = {"views", "widgets", "ui", "pyside", "PySide6", "tests"}
+
+ROOT = Path(__file__).resolve().parents[1]
+BACKEND_PYPROJECT = ROOT / "packages" / "vibeocr-backend" / "pyproject.toml"
+
+
+def _expected_requires_dist() -> list[str]:
+    """External runtime deps declared by the backend workspace package.
+
+    The wheel builder emits these verbatim into METADATA (see
+    build_backend_wheel._backend_metadata), so the wheel's Requires-Dist must
+    always match this list. This check catches manual edits to either file.
+    """
+    with BACKEND_PYPROJECT.open("rb") as handle:
+        deps = tomllib.load(handle)["project"]["dependencies"]
+    return [dep for dep in deps if not dep.startswith("vibeocr-")]
 
 
 def verify(wheel: Path) -> dict[str, object]:
@@ -42,6 +59,30 @@ def verify(wheel: Path) -> dict[str, object]:
         }
         missing = sorted(required - set(names))
         errors.extend(f"required backend file missing: {name}" for name in missing)
+
+        # Requires-Dist must match the backend package's external deps exactly.
+        metadata_name = next(
+            (n for n in names if n.endswith(".dist-info/METADATA")), None
+        )
+        if metadata_name is None:
+            errors.append("METADATA file missing from wheel")
+        else:
+            wheel_deps = sorted(
+                m.group(1)
+                for m in re.finditer(
+                    r"^Requires-Dist:\s*(.+)$",
+                    archive.read(metadata_name).decode("utf-8"),
+                    re.MULTILINE,
+                )
+            )
+            expected = sorted(_expected_requires_dist())
+            if wheel_deps != expected:
+                errors.append(
+                    f"wheel Requires-Dist drifts from backend pyproject:\n"
+                    f"  wheel only:    {sorted(set(wheel_deps) - set(expected))}\n"
+                    f"  pyproject only: {sorted(set(expected) - set(wheel_deps))}"
+                )
+
     if errors:
         raise RuntimeError("\n".join(errors))
     return {

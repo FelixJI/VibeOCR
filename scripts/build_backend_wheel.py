@@ -7,23 +7,33 @@ import base64
 import csv
 import hashlib
 import io
-import re
+import tomllib
 import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "src" / "vibeocr"
 ALLOWLIST = ROOT / "config" / "backend_artifact_include.txt"
+# The backend workspace package is the single source of truth for the UI-free
+# runtime dependency list. Reading it here (instead of duplicating the list as a
+# hardcoded METADATA string) keeps the wheel in lockstep with uv lock / uv sync
+# and qa/upgrade_deps.py, which both update this file.
+BACKEND_PYPROJECT = ROOT / "packages" / "vibeocr-backend" / "pyproject.toml"
 
 
-def _version() -> str:
-    match = re.search(
-        r'(?m)^version\s*=\s*"([0-9]+\.[0-9]+\.[0-9]+)"',
-        (ROOT / "pyproject.toml").read_text(encoding="utf-8"),
-    )
-    if not match:
-        raise RuntimeError("project version not found")
-    return match.group(1)
+def _backend_metadata() -> tuple[str, str, list[str]]:
+    """Return ``(version, requires_python, external_deps)`` from the backend package.
+
+    ``external_deps`` excludes ``vibeocr-*`` workspace-internal references: the
+    wheel is a standalone artifact and must not declare a dependency on a
+    package that only resolves inside the uv workspace.
+    """
+    with BACKEND_PYPROJECT.open("rb") as handle:
+        data = tomllib.load(handle)
+    project = data["project"]
+    deps = project["dependencies"]
+    external = [dep for dep in deps if not dep.startswith("vibeocr-")]
+    return project["version"], project["requires-python"], external
 
 
 def _allowed_files() -> list[Path]:
@@ -56,7 +66,7 @@ def _record_line(name: str, data: bytes) -> tuple[str, str, str]:
 
 
 def build(output_dir: Path) -> Path:
-    version = _version()
+    version, requires_python, external_deps = _backend_metadata()
     output_dir.mkdir(parents=True, exist_ok=True)
     wheel = output_dir / f"vibeocr_backend-{version}-py3-none-any.whl"
     dist_info = f"vibeocr_backend-{version}.dist-info"
@@ -64,23 +74,12 @@ def build(output_dir: Path) -> Path:
     for path in _allowed_files():
         relative = path.relative_to(SOURCE).as_posix()
         entries[f"vibeocr/{relative}"] = path.read_bytes()
+    requires_dist = "".join(f"Requires-Dist: {dep}\n" for dep in external_deps)
     entries[f"{dist_info}/METADATA"] = (
         "Metadata-Version: 2.4\n"
         f"Name: vibeocr-backend\nVersion: {version}\n"
-        "Requires-Python: >=3.13,<3.14\n"
-        "Requires-Dist: pillow>=12.3.0\nRequires-Dist: numpy>=2.3.5\n"
-        "Requires-Dist: httpx>=0.28.1\nRequires-Dist: pymupdf>=1.28.0\n"
-        "Requires-Dist: pydantic>=2.13.4\nRequires-Dist: fastapi>=0.139.0\n"
-        "Requires-Dist: uvicorn>=0.51.0\nRequires-Dist: fonttools>=4.63.0\n"
-        "Requires-Dist: markdown>=3.10.2\nRequires-Dist: python-docx>=1.2.0\n"
-        "Requires-Dist: openpyxl>=3.1.5\nRequires-Dist: qrcode[pil]>=8.2\n"
-        "Requires-Dist: python-barcode>=0.16.1\n"
-        "Requires-Dist: opencv-contrib-python>=4.10.0.84\n"
-        "Requires-Dist: pyzbar>=0.1.9\n"
-        "Requires-Dist: pynvml>=11.5.0\n"
-        "Requires-Dist: paddlepaddle-gpu>=3.3.1\nRequires-Dist: torch>=2.6.0\n"
-        "Requires-Dist: paddleocr[doc-parser]>=3.7.0\n"
-        "Requires-Dist: mineru[core]>=3.4.3\n"
+        f"Requires-Python: {requires_python}\n"
+        f"{requires_dist}"
     ).encode()
     entries[f"{dist_info}/WHEEL"] = (
         b"Wheel-Version: 1.0\nGenerator: vibeocr-build\n"
