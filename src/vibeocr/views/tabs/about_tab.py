@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
 )
 
 from vibeocr import __version__, env_manager
-from vibeocr.services.env_config import (
+from vibeocr.pyside.runtime import (
     GITEE_REPO_BASE,
     GITHUB_REPO_BASE,
     get_update_progress_path,
@@ -408,7 +408,7 @@ class AboutTab(QWidget):
         from PySide6.QtWidgets import QMessageBox
 
         async def _run():
-            from vibeocr.services.update_service import UpdateService
+            from vibeocr.pyside.update import UpdateService
 
             app_dir = env_manager.get_project_root()
             service = UpdateService(app_dir, status_callback=self._status_callback)
@@ -438,7 +438,7 @@ class AboutTab(QWidget):
         用 weakref.ref(self) 包装回调：AboutTab 被回收时回调自动变 no-op，
         无需 __del__（QWidget 的 __del__ 不可靠）。
         """
-        from vibeocr.services.update_service import UpdateService
+        from vibeocr.pyside.update import UpdateService
 
         self_ref = weakref.ref(self)
 
@@ -471,7 +471,7 @@ class AboutTab(QWidget):
         if state == "downloading":
             btn.setText("取消下载")
             btn.setStyleSheet(theme.button_qss("danger"))
-            from vibeocr.services.update_service import UpdateService
+            from vibeocr.pyside.update import UpdateService
 
             btn.clicked.connect(UpdateService.request_cancel)
         else:

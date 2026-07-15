@@ -132,6 +132,12 @@ public sealed record ClosePdfResponse : ResponseContract
 }
 
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record PdfCommandResponse : ResponseContract
+{
+    public required JsonElement Result { get; init; }
+}
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public sealed record RenderPdfPageResponse : ResponseContract
 {
     public required SharedPayloadRef Image { get; init; }

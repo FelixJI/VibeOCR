@@ -83,8 +83,8 @@ class TestQrcodeTabStructure:
         assert btn is not None
 
     def test_tab_has_backend(self, qrcode_tab):
-        """The tab holds a backend client (no direct service imports)."""
-        assert qrcode_tab._backend is not None
+        """The tab lazily attaches to the process-wide backend session."""
+        assert qrcode_tab._backend is not None or qrcode_tab._uses_shared_backend
 
     def test_format_combo_contains_qr(self, qrcode_tab):
         combo = qrcode_tab.findChild(QComboBox)

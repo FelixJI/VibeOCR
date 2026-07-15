@@ -35,7 +35,7 @@ from PySide6.QtWidgets import (
 )
 
 from vibeocr.ui import theme
-from vibeocr.worker_host.sync_client import SyncBackendClient, SyncBackendError
+from vibeocr.worker_host.sync_client import SyncBackendError
 
 logger = logging.getLogger(__name__)
 
@@ -223,7 +223,8 @@ class QrcodeTab(QWidget):
         # owns the worker subprocess and a background asyncio loop. Tests inject
         # a fake backend (duck-typed: generate_qrcode_sync/generate_qrcode_svg_sync/
         # decode_qrcode_sync) to avoid spawning a real worker.
-        self._backend = backend if backend is not None else SyncBackendClient()
+        self._backend = backend
+        self._uses_shared_backend = backend is None
         self._current_image: Image.Image | None = None
         self._logo_path: str | None = None
 
@@ -667,9 +668,14 @@ class QrcodeTab(QWidget):
 
         Fakes injected for testing may not have ``start()``; skip in that case.
         """
+        if self._backend is None:
+            from vibeocr.client.session import get_backend_client
+
+            self._backend = get_backend_client()
+            return
         start = getattr(self._backend, "start", None)
         if callable(start):
-            start(profile="winui-dev", frontend_id="pyside")
+            start(profile="production", frontend_id="pyside")
 
     def _call_backend_generate(self, text: str, options: dict) -> bytes:
         self._ensure_backend()
@@ -677,9 +683,13 @@ class QrcodeTab(QWidget):
             return self._backend.generate_qrcode_sync(text, options=options)
         except SyncBackendError:
             # Worker died; restart once and retry.
-            self._backend.shutdown()
-            self._backend = SyncBackendClient()
-            self._ensure_backend()
+            if self._uses_shared_backend:
+                from vibeocr.client.session import restart_backend_client
+
+                self._backend = restart_backend_client()
+            else:
+                self._backend.shutdown()
+                self._ensure_backend()
             return self._backend.generate_qrcode_sync(text, options=options)
 
     def _call_backend_generate_svg(self, text: str, options: dict) -> str:
@@ -691,9 +701,13 @@ class QrcodeTab(QWidget):
         try:
             return self._backend.decode_qrcode_sync(image_bytes)
         except SyncBackendError:
-            self._backend.shutdown()
-            self._backend = SyncBackendClient()
-            self._ensure_backend()
+            if self._uses_shared_backend:
+                from vibeocr.client.session import restart_backend_client
+
+                self._backend = restart_backend_client()
+            else:
+                self._backend.shutdown()
+                self._ensure_backend()
             return self._backend.decode_qrcode_sync(image_bytes)
 
     @staticmethod

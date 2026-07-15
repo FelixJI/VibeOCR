@@ -179,7 +179,7 @@
           "properties": {
             "raw_text": { "type": "string" }, "markdown_text": { "type": "string" }, "html_text": { "type": "string" },
             "raw_blocks": { "type": "array" }, "output_path": { "type": "string", "minLength": 1 },
-            "format": { "enum": ["txt", "markdown", "html"] }, "overwrite": { "type": "boolean" }
+            "format": { "enum": ["txt", "markdown", "html", "docx", "xlsx"] }, "overwrite": { "type": "boolean" }
           }
         },
         "response": {
@@ -227,6 +227,29 @@
           "additionalProperties": false,
           "required": ["closed"],
           "properties": { "closed": { "type": "boolean" } }
+        }
+      }
+    },
+    "pdf.command": {
+      "type": "object",
+      "description": "WorkerHost-owned compatibility command for Classic PDF editor operations. The operation allow-list is enforced by the handler; no executable code crosses the boundary.",
+      "required": ["request", "response"],
+      "properties": {
+        "request": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["session_id", "operation", "params"],
+          "properties": {
+            "session_id": { "type": "string", "minLength": 1 },
+            "operation": { "type": "string", "minLength": 1 },
+            "params": { "type": "object" }
+          }
+        },
+        "response": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["result"],
+          "properties": { "result": {} }
         }
       }
     },

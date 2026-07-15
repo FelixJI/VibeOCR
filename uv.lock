@@ -9,6 +9,13 @@ supported-markers = [
 ]
 
 [manifest]
+members = [
+    "vibeocr",
+    "vibeocr-backend",
+    "vibeocr-client-py",
+    "vibeocr-contracts-py",
+    "vibeocr-pyside",
+]
 overrides = [
     { name = "opencv-python", marker = "sys_platform == 'nonexistent'" },
     { name = "torchvision", specifier = "==0.27.1+cu126", index = "https://mirrors.nju.edu.cn/pytorch/whl/cu126" },
@@ -593,6 +600,21 @@ source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
 sdist = { url = "https://mirrors.aliyun.com/pypi/packages/01/ee/02a2c011bdab74c6fb3c75474d40b3052059d95df7e73351460c8588d963/h11-0.16.0.tar.gz", hash = "sha256:4e35b956cf45792e4caa5885e69fba00bdbc6ffafbfa020300e549b208ee5ff1" }
 wheels = [
     { url = "https://mirrors.aliyun.com/pypi/packages/04/4b/29cac41a4d98d144bf5f6d33995617b185d14b22401f75ca86f384e87ff1/h11-0.16.0-py3-none-any.whl", hash = "sha256:63cf8bbe7522de3bf65932fda1d9c2772064ffb3dae62d55932da54b31cb6c86" },
+]
+
+[[package]]
+name = "hatchling"
+version = "1.31.0"
+source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
+dependencies = [
+    { name = "packaging" },
+    { name = "pathspec" },
+    { name = "pluggy" },
+    { name = "trove-classifiers" },
+]
+sdist = { url = "https://mirrors.aliyun.com/pypi/packages/25/e2/dfa73fe78f773018dcaebc6d09b819bc10d328ff5a6b4a66efa1e3d71f52/hatchling-1.31.0.tar.gz", hash = "sha256:6b48ad4068a482ed7239b3a8215bc55b47aad3345d58dfc94e553c5d2d46211b" }
+wheels = [
+    { url = "https://mirrors.aliyun.com/pypi/packages/64/e2/2c0af0a52d16be74a4f194564fcdc417521ed863e9b65e4bc9052dacba6f/hatchling-1.31.0-py3-none-any.whl", hash = "sha256:aac80bec8b6fe35e8480f1c335be8910fa210a0e6f735a139be205dadcacb544" },
 ]
 
 [[package]]
@@ -1260,6 +1282,15 @@ wheels = [
     { url = "https://mirrors.aliyun.com/pypi/packages/2c/20/559ace4200982c3887d0b86bfd0d856a2143ef8ddab63cc07934951a964c/pandas-3.0.3-cp313-cp313-win_amd64.whl", hash = "sha256:a82d532a3351d435432cd913edbccaf8b8e01d4dd0e5ced5a8d2e8ecd94c7e44" },
     { url = "https://mirrors.aliyun.com/pypi/packages/3a/66/69055a09fe200f29f922a3eeec4804611900b95f52d932ece3393c3c0c19/pandas-3.0.3-cp313-cp313-win_arm64.whl", hash = "sha256:275c14e0fce14a2ec20eee474aecd305478ea3c1e6f6a9d8fe219a165542717e" },
     { url = "https://mirrors.aliyun.com/pypi/packages/45/a4/865e0e510cae5fc2194de4db28be638952de942571ba9125934fd9c01d47/pandas-3.0.3-cp313-cp313t-win_amd64.whl", hash = "sha256:08d789b41f87e0905880e293cedf6197ce71fe67cc081358b1e148a491b9bd13" },
+]
+
+[[package]]
+name = "pathspec"
+version = "1.1.1"
+source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
+sdist = { url = "https://mirrors.aliyun.com/pypi/packages/5a/82/42f767fc1c1143d6fd36efb827202a2d997a375e160a71eb2888a925aac1/pathspec-1.1.1.tar.gz", hash = "sha256:17db5ecd524104a120e173814c90367a96a98d07c45b2e10c2f3919fff91bf5a" }
+wheels = [
+    { url = "https://mirrors.aliyun.com/pypi/packages/f1/d9/7fb5aa316bc299258e68c73ba3bddbc499654a07f151cba08f6153988714/pathspec-1.1.1-py3-none-any.whl", hash = "sha256:a00ce642f577bf7f473932318056212bc4f8bfdf53128c78bbd5af0b9b20b189" },
 ]
 
 [[package]]
@@ -2217,6 +2248,15 @@ wheels = [
 ]
 
 [[package]]
+name = "trove-classifiers"
+version = "2026.6.1.19"
+source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
+sdist = { url = "https://mirrors.aliyun.com/pypi/packages/c2/e3/7ca82ee24c82d344584abd5b8637b3bd056f2900226e8d82fc22f1184b92/trove_classifiers-2026.6.1.19.tar.gz", hash = "sha256:c5132b4b61a829d11cfbd2d72e97f20a45ed6edb95e45c5efdeb5e00836b2745" }
+wheels = [
+    { url = "https://mirrors.aliyun.com/pypi/packages/7c/a4/81502f486f01db95bc8320646a8a12511f5e556cb63d5e224d91816605c4/trove_classifiers-2026.6.1.19-py3-none-any.whl", hash = "sha256:ab4c4ec93cc4a4e7815fa759906e05e6bb3f2fbd92ea0f897288c6a43efd15b3" },
+]
+
+[[package]]
 name = "typer"
 version = "0.26.8"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
@@ -2334,6 +2374,13 @@ dependencies = [
 ]
 
 [package.dev-dependencies]
+build-common = [
+    { name = "hatchling" },
+    { name = "uv" },
+]
+build-pyside = [
+    { name = "pyinstaller" },
+]
 dev = [
     { name = "jsonschema" },
     { name = "pre-commit" },
@@ -2345,6 +2392,22 @@ dev = [
     { name = "pytest-qt" },
     { name = "ruff" },
     { name = "uv" },
+]
+lint = [
+    { name = "pyright" },
+    { name = "ruff" },
+]
+test-backend = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+]
+test-contracts = [
+    { name = "jsonschema" },
+    { name = "pytest" },
+]
+test-pyside = [
+    { name = "pytest" },
+    { name = "pytest-qt" },
 ]
 
 [package.metadata]
@@ -2373,6 +2436,12 @@ requires-dist = [
 ]
 
 [package.metadata.requires-dev]
+build-common = [
+    { name = "hatchling", specifier = ">=1.0.0" },
+    { name = "uv", specifier = ">=0.11.14" },
+]
+build-pyside = [{ name = "pyinstaller", specifier = ">=6.6" }]
+build-winui = []
 dev = [
     { name = "jsonschema", specifier = ">=4.25.0" },
     { name = "pre-commit", specifier = ">=4.6.0" },
@@ -2384,6 +2453,112 @@ dev = [
     { name = "pytest-qt", specifier = ">=4.5.0" },
     { name = "ruff", specifier = ">=0.15.13" },
     { name = "uv", specifier = ">=0.11.14" },
+]
+lint = [
+    { name = "pyright", specifier = ">=1.1.409" },
+    { name = "ruff", specifier = ">=0.15.13" },
+]
+test-backend = [
+    { name = "pytest", specifier = ">=9.0.3" },
+    { name = "pytest-asyncio", specifier = ">=1.2.0" },
+]
+test-contracts = [
+    { name = "jsonschema", specifier = ">=4.25.0" },
+    { name = "pytest", specifier = ">=9.0.3" },
+]
+test-pyside = [
+    { name = "pytest", specifier = ">=9.0.3" },
+    { name = "pytest-qt", specifier = ">=4.5.0" },
+]
+
+[[package]]
+name = "vibeocr-backend"
+version = "0.4.28"
+source = { editable = "packages/vibeocr-backend" }
+dependencies = [
+    { name = "fastapi" },
+    { name = "fonttools" },
+    { name = "httpx" },
+    { name = "markdown" },
+    { name = "mineru", extra = ["core"] },
+    { name = "numpy" },
+    { name = "opencv-contrib-python" },
+    { name = "openpyxl" },
+    { name = "paddleocr", extra = ["doc-parser"] },
+    { name = "paddlepaddle-gpu" },
+    { name = "pillow" },
+    { name = "pydantic" },
+    { name = "pymupdf" },
+    { name = "python-barcode" },
+    { name = "python-docx" },
+    { name = "pyzbar" },
+    { name = "qrcode", extra = ["pil"] },
+    { name = "torch" },
+    { name = "uvicorn" },
+    { name = "vibeocr-contracts-py" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "fastapi", specifier = ">=0.139.0" },
+    { name = "fonttools", specifier = ">=4.63.0" },
+    { name = "httpx", specifier = ">=0.28.1" },
+    { name = "markdown", specifier = ">=3.10.2" },
+    { name = "mineru", extras = ["core"], specifier = ">=3.4.3" },
+    { name = "numpy", specifier = ">=2.3.5" },
+    { name = "opencv-contrib-python", specifier = ">=4.10.0.84" },
+    { name = "openpyxl", specifier = ">=3.1.5" },
+    { name = "paddleocr", extras = ["doc-parser"], specifier = ">=3.7.0" },
+    { name = "paddlepaddle-gpu", specifier = ">=3.3.1" },
+    { name = "pillow", specifier = ">=12.3.0" },
+    { name = "pydantic", specifier = ">=2.13.4" },
+    { name = "pymupdf", specifier = ">=1.28.0" },
+    { name = "python-barcode", specifier = ">=0.16.1" },
+    { name = "python-docx", specifier = ">=1.2.0" },
+    { name = "pyzbar", specifier = ">=0.1.9" },
+    { name = "qrcode", extras = ["pil"], specifier = ">=8.2" },
+    { name = "torch", specifier = ">=2.6.0", index = "https://mirrors.nju.edu.cn/pytorch/whl/cu126" },
+    { name = "uvicorn", specifier = ">=0.51.0" },
+    { name = "vibeocr-contracts-py", editable = "packages/vibeocr-contracts-py" },
+]
+
+[[package]]
+name = "vibeocr-client-py"
+version = "0.4.28"
+source = { editable = "packages/vibeocr-client-py" }
+dependencies = [
+    { name = "pydantic" },
+    { name = "vibeocr-contracts-py" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "pydantic", specifier = ">=2.13.4" },
+    { name = "vibeocr-contracts-py", editable = "packages/vibeocr-contracts-py" },
+]
+
+[[package]]
+name = "vibeocr-contracts-py"
+version = "0.4.28"
+source = { editable = "packages/vibeocr-contracts-py" }
+
+[[package]]
+name = "vibeocr-pyside"
+version = "0.4.28"
+source = { editable = "apps/vibeocr-pyside" }
+dependencies = [
+    { name = "pyside6" },
+    { name = "qasync" },
+    { name = "vibeocr-client-py" },
+    { name = "vibeocr-contracts-py" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "pyside6", specifier = ">=6.11.1" },
+    { name = "qasync", specifier = ">=0.28.0" },
+    { name = "vibeocr-client-py", editable = "packages/vibeocr-client-py" },
+    { name = "vibeocr-contracts-py", editable = "packages/vibeocr-contracts-py" },
 ]
 
 [[package]]

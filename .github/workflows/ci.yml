@@ -1,0 +1,51 @@
+name: Quality Gates
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  contracts:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with: { python-version: "3.13" }
+      - uses: actions/setup-dotnet@v5
+        with: { dotnet-version: "10.0.301" }
+      - run: pip install pytest==9.1.1 jsonschema==4.25.1
+      - run: python -m pytest tests/contracts tests/architecture/test_protocol_method_consistency.py -q
+      - run: dotnet test tests/dotnet/VibeOCR.Contracts.Tests/VibeOCR.Contracts.Tests.csproj -c Release
+
+  backend:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with: { python-version: "3.13" }
+      - run: pip install --require-hashes -r requirements/build-shell.lock
+      - run: python -m pytest tests/architecture tests/worker_host tests/application tests/services -q
+      - run: python scripts/build_backend_wheel.py --output-dir dist/backend
+      - shell: pwsh
+        run: python scripts/verify_backend_wheel.py (Get-ChildItem dist/backend/*.whl).FullName
+
+  pyside:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with: { python-version: "3.13" }
+      - run: pip install --require-hashes -r requirements/build-shell.lock
+      - run: python -m pytest tests/views tests/widgets tests/client tests/architecture/test_ui_backend_import_allowlist.py -q
+      - run: python -m ruff check src tests scripts
+
+  winui:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v5
+        with: { dotnet-version: "10.0.301" }
+      - run: dotnet restore src/dotnet/VibeOCR.slnx --locked-mode
+      - run: dotnet test src/dotnet/VibeOCR.slnx -c Release --no-restore
+      - run: node --test tests/web/*.test.ts

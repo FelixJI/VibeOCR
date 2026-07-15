@@ -43,7 +43,7 @@ class PdfOptionsWidget(QWidget):
         self._pipeline_options = PreprocessOptionsWidget()
         # PDF 文字层仅支持能正确返回 preproc_angle 的文本类管道
         # （MinerU/VL 文档理解模型不适合用于嵌入隐形文字层）
-        from vibeocr.core.pipelines import OCRPipeline
+        from vibeocr.contracts.pipelines import OCRPipeline
 
         self._pipeline_options.lock_to_pipelines(
             {

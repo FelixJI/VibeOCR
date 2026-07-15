@@ -35,6 +35,7 @@ def _build_layout(root: Path, *, forbidden: list[str] | None = None) -> None:
         "VibeOCR.Contracts.dll",
         "VibeOCR.Platform.dll",
         "worker/vibeocr/worker_host/main.py",
+        "product-manifest.json",
         "contracts/v1/golden.json",
         "CHANGELOG.md",
         "LICENSE",

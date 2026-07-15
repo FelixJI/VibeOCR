@@ -38,6 +38,7 @@ $requiredFiles = @(
     'VibeOCR.Contracts.dll',
     'VibeOCR.Platform.dll',
     'worker\vibeocr\worker_host\main.py',
+    'product-manifest.json',
     'contracts\v1\golden.json',
     'CHANGELOG.md',
     'LICENSE'
@@ -55,7 +56,8 @@ $legacyEntries = @(
     'worker\vibeocr\main.py',
     'worker\vibeocr\views',
     'worker\vibeocr\widgets',
-    'worker\vibeocr\ui'
+    'worker\vibeocr\ui',
+    'worker\vibeocr\pyside'
 )
 foreach ($relative in $legacyEntries) {
     if (Test-Path (Join-Path $root $relative)) {

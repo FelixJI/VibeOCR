@@ -48,6 +48,7 @@ from vibeocr.worker_host.contracts import (
 from vibeocr.worker_host.dispatcher import Dispatcher
 from vibeocr.worker_host.errors import ErrorCode, WorkerError
 from vibeocr.worker_host.framing import FramingError
+from vibeocr.worker_host.method_validation import PUBLIC_METHODS
 from vibeocr.worker_host.security import SessionTokenError
 from vibeocr.worker_host.shared_payload import SharedPayloadStore
 
@@ -437,16 +438,26 @@ def _build_dispatcher(
             "handler not wired in this build",
         )
 
-    for method, retryable in (
-        ("ocr.recognize", True),
-        ("pdf.open", True),
-        ("qrcode.decode", True),
-        ("qrcode.generate", False),
-        ("qrcode.generate_svg", False),
-        ("settings.snapshot", True),
-    ):
+    control_methods = {
+        "system.handshake",
+        "system.ping",
+        "system.shutdown",
+        "task.cancel",
+        "memory.release",
+    }
+    retryable_queries = {
+        "ocr.recognize",
+        "pdf.open",
+        "pdf.render_page",
+        "pdf.command",
+        "qrcode.decode",
+        "settings.snapshot",
+    }
+    for method in sorted(PUBLIC_METHODS - control_methods):
         handler = (domain_handlers or {}).get(method, _not_implemented)
-        dispatcher.register(method, handler, retryable=retryable)
+        dispatcher.register(
+            method, handler, retryable=method in retryable_queries
+        )
     return dispatcher
 
 

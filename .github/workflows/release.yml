@@ -105,7 +105,15 @@ jobs:
           python tests/parity/validate_matrix.py docs/quality/feature-parity.md --require-pass
           python -m pytest tests/parity -q
 
-      - name: Build WinUI release via bump_version.py
+      - name: Build shared backend wheel once
+        shell: pwsh
+        run: |
+          python scripts/build_backend_wheel.py --output-dir dist/backend
+          $wheel = (Get-ChildItem dist/backend/*.whl).FullName
+          python scripts/verify_backend_wheel.py $wheel --manifest dist/backend/backend-manifest.json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build PySide Classic release
         shell: pwsh
         # PYTHONUTF8=1 确保 bump_version.py 及其子进程在
         # Windows runner 上统一走 UTF-8，避免打印中文时 cp1252 编码崩溃。
@@ -115,10 +123,30 @@ jobs:
           python scripts/bump_version.py --rebuild "${{ steps.version.outputs.version }}" --force
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Verify WinUI artifact
+      - name: Bind backend wheel to PySide Classic artifact
         shell: pwsh
         run: |
-          ./scripts/verify_winui_artifact.ps1 -Artifact "dist/VibeOCR-v${{ steps.version.outputs.version }}-win64.zip"
+          $version = "${{ steps.version.outputs.version }}"
+          $wheel = (Get-ChildItem dist/backend/*.whl).FullName
+          python scripts/bind_backend_artifact.py --frontend pyside --version $version --input "dist/VibeOCR-v$version-win64.zip" --backend-wheel $wheel --output "dist/VibeOCR-Classic-v$version-win64.zip"
+          python scripts/verify_pyside_artifact.py "dist/VibeOCR-Classic-v$version-win64.zip"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build WinUI Next from the same backend wheel
+        shell: pwsh
+        run: |
+          $version = "${{ steps.version.outputs.version }}"
+          $wheel = (Get-ChildItem dist/backend/*.whl).FullName
+          ./scripts/build_winui_release.ps1 -Version $version -BackendWheel $wheel -OutputDir dist/winui-next
+          Compress-Archive -Path dist/winui-next/* -DestinationPath "dist/VibeOCR-Next-v$version-win64.zip" -Force
+          $hash = (Get-FileHash "dist/VibeOCR-Next-v$version-win64.zip" -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  VibeOCR-Next-v$version-win64.zip" | Set-Content "dist/VibeOCR-Next-v$version-win64.zip.sha256" -Encoding ascii
+
+      - name: Verify both product artifacts
+        shell: pwsh
+        run: |
+          python scripts/verify_pyside_artifact.py "dist/VibeOCR-Classic-v${{ steps.version.outputs.version }}-win64.zip"
+          ./scripts/verify_winui_artifact.ps1 -Artifact "dist/VibeOCR-Next-v${{ steps.version.outputs.version }}-win64.zip"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Extract release notes from CHANGELOG
@@ -157,8 +185,10 @@ jobs:
           # body 走文件，避免 GitHub Actions 多行字符串注入陷阱
           body_path: release_notes.md
           files: |
-            dist/VibeOCR-v${{ steps.version.outputs.version }}-win64.zip
-            dist/VibeOCR-v${{ steps.version.outputs.version }}-win64.zip.sha256
+            dist/VibeOCR-Classic-v${{ steps.version.outputs.version }}-win64.zip
+            dist/VibeOCR-Classic-v${{ steps.version.outputs.version }}-win64.zip.sha256
+            dist/VibeOCR-Next-v${{ steps.version.outputs.version }}-win64.zip
+            dist/VibeOCR-Next-v${{ steps.version.outputs.version }}-win64.zip.sha256
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

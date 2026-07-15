@@ -45,7 +45,7 @@ from vibeocr.machine_cache import is_cache_valid
 from vibeocr.widgets.backend_choice_dialog import BackendChoiceDialog
 
 if TYPE_CHECKING:
-    from vibeocr.services.ocr_service import OCRPipeline
+    from vibeocr.contracts.pipelines import OCRPipeline
 
 logger = logging.getLogger(__name__)
 
@@ -551,13 +551,13 @@ class SettingsPageController:
     @staticmethod
     def _get_preloadable_pipelines():
         """获取可预加载的管道列表"""
-        from vibeocr.core.pipelines import get_preloadable_pipelines
+        from vibeocr.contracts.pipelines import get_preloadable_pipelines
 
         return get_preloadable_pipelines()
 
     def _restore_preload_checkbox_state(self) -> None:
         """从配置恢复预加载 checkbox 状态（阻塞信号避免触发保存）"""
-        from vibeocr.managers.config_manager import ConfigManager
+        from vibeocr.pyside.runtime import ConfigManager
 
         cm = ConfigManager.instance()
         saved = cm.get_preload_pipelines()
@@ -582,7 +582,7 @@ class SettingsPageController:
         preload_options = self._ui.findChild(QWidget, "preloadOptions")
         if preload_options:
             preload_options.setEnabled(checked)
-        from vibeocr.managers.config_manager import ConfigManager
+        from vibeocr.pyside.runtime import ConfigManager
 
         ConfigManager.instance().set_preload_enabled(checked)
         self._show_settings_toast()
@@ -634,7 +634,7 @@ class SettingsPageController:
 
     def _save_preload_pipelines_config(self) -> None:
         """保存预加载管道配置"""
-        from vibeocr.managers.config_manager import ConfigManager
+        from vibeocr.pyside.runtime import ConfigManager
 
         pipelines = self._get_selected_preload_pipelines()
         pipeline_names = [p.value for p in pipelines]
@@ -739,7 +739,7 @@ class SettingsPageController:
 
                     from PIL import Image
 
-                    from vibeocr.services.ocr_service import OCROptions
+                    from vibeocr.models.ocr_options import OCROptions
 
                     warmup_image = Image.new("RGB", (100, 100), color="white")
                     buffer = io.BytesIO()
@@ -1123,7 +1123,7 @@ class SettingsPageController:
         """
         from PySide6.QtCore import Qt
 
-        from vibeocr.services.env_config import OCR_CHECK_MODULES
+        from vibeocr.pyside.runtime import OCR_CHECK_MODULES
 
         display_names = {
             "paddlepaddle": "PaddlePaddle",
@@ -1222,7 +1222,7 @@ class SettingsPageController:
 
     def _restore_pipeline_ttl_state(self) -> None:
         """从配置恢复 TTL spin 值。"""
-        from vibeocr.managers.config_manager import ConfigManager
+        from vibeocr.pyside.runtime import ConfigManager
 
         spin = self._ui.findChild(QSpinBox, "spinPipelineTtl")
         if spin:
@@ -1233,7 +1233,7 @@ class SettingsPageController:
 
     def _on_pipeline_ttl_changed(self, minutes: int) -> None:
         """TTL spin 变化 → 保存配置 + 通知 worker。"""
-        from vibeocr.managers.config_manager import ConfigManager
+        from vibeocr.pyside.runtime import ConfigManager
 
         ttl_sec = minutes * 60
         ConfigManager.instance().set_pipeline_ttl_seconds(ttl_sec)
@@ -1294,14 +1294,6 @@ class SettingsPageController:
                         heavy_only=self._heavy_only
                     )
                     # MinerU 在主进程独立管理，单独释放
-                    try:
-                        from vibeocr.services.mineru_service import MinerUService
-
-                        if MinerUService._api_process is not None:
-                            MinerUService().shutdown()
-                            released = [*released, "MinerU"]
-                    except Exception:
-                        pass
                     self._signals.finished.emit(released)
                 except Exception as e:
                     self._signals.error.emit(str(e))

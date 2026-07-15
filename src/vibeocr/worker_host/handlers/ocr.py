@@ -89,7 +89,7 @@ class OcrExportHandler:
         )
         if not request.output_path.is_absolute():
             raise WorkerError(ErrorCode.INVALID_REQUEST, "output_path must be absolute")
-        if request.format not in {"txt", "markdown", "html"}:
+        if request.format not in {"txt", "markdown", "html", "docx", "xlsx"}:
             raise WorkerError(ErrorCode.INVALID_REQUEST, "unsupported export format")
         if request.output_path.exists() and not request.overwrite:
             raise WorkerError(ErrorCode.INVALID_REQUEST, "output already exists")

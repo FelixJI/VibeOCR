@@ -16,6 +16,7 @@ namespace VibeOCR.Contracts;
 [JsonSerializable(typeof(RpcRequestEnvelope<ExportOcrRequest>))]
 [JsonSerializable(typeof(RpcRequestEnvelope<OpenPdfRequest>))]
 [JsonSerializable(typeof(RpcRequestEnvelope<ClosePdfRequest>))]
+[JsonSerializable(typeof(RpcRequestEnvelope<PdfCommandRequest>))]
 [JsonSerializable(typeof(RpcRequestEnvelope<RenderPdfPageRequest>))]
 [JsonSerializable(typeof(RpcRequestEnvelope<RotatePdfRequest>))]
 [JsonSerializable(typeof(RpcRequestEnvelope<DeletePdfPagesRequest>))]
@@ -37,6 +38,7 @@ namespace VibeOCR.Contracts;
 [JsonSerializable(typeof(RpcResponseEnvelope<ExportOcrResponse>))]
 [JsonSerializable(typeof(RpcResponseEnvelope<OpenPdfResponse>))]
 [JsonSerializable(typeof(RpcResponseEnvelope<ClosePdfResponse>))]
+[JsonSerializable(typeof(RpcResponseEnvelope<PdfCommandResponse>))]
 [JsonSerializable(typeof(RpcResponseEnvelope<RenderPdfPageResponse>))]
 [JsonSerializable(typeof(RpcResponseEnvelope<RotatePdfResponse>))]
 [JsonSerializable(typeof(RpcResponseEnvelope<DeletePdfPagesResponse>))]
@@ -116,6 +118,7 @@ public static class ProtocolJson
                 RpcMethods.ExportOcr => typeof(RpcRequestEnvelope<ExportOcrRequest>),
                 RpcMethods.OpenPdf => typeof(RpcRequestEnvelope<OpenPdfRequest>),
                 RpcMethods.ClosePdf => typeof(RpcRequestEnvelope<ClosePdfRequest>),
+                RpcMethods.PdfCommand => typeof(RpcRequestEnvelope<PdfCommandRequest>),
                 RpcMethods.RenderPdfPage => typeof(RpcRequestEnvelope<RenderPdfPageRequest>),
                 RpcMethods.RotatePdf => typeof(RpcRequestEnvelope<RotatePdfRequest>),
                 RpcMethods.DeletePdfPages => typeof(RpcRequestEnvelope<DeletePdfPagesRequest>),
@@ -178,6 +181,7 @@ public static class ProtocolJson
                 RpcMethods.ExportOcr => typeof(RpcResponseEnvelope<ExportOcrResponse>),
                 RpcMethods.OpenPdf => typeof(RpcResponseEnvelope<OpenPdfResponse>),
                 RpcMethods.ClosePdf => typeof(RpcResponseEnvelope<ClosePdfResponse>),
+                RpcMethods.PdfCommand => typeof(RpcResponseEnvelope<PdfCommandResponse>),
                 RpcMethods.RenderPdfPage => typeof(RpcResponseEnvelope<RenderPdfPageResponse>),
                 RpcMethods.RotatePdf => typeof(RpcResponseEnvelope<RotatePdfResponse>),
                 RpcMethods.DeletePdfPages => typeof(RpcResponseEnvelope<DeletePdfPagesResponse>),

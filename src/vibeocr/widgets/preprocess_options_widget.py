@@ -15,14 +15,14 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from vibeocr.core.pipelines import (
+from vibeocr.contracts.mineru import (
+    MINERU_BACKEND_LABELS,
+    MINERU_EFFORT_LABELS,
+)
+from vibeocr.contracts.pipelines import (
     OCRPipeline,
     get_all_pipelines,
     get_pipeline_display_name,
-)
-from vibeocr.core.pipelines.pipeline_mineru import (
-    MINERU_BACKEND_LABELS,
-    MINERU_EFFORT_LABELS,
 )
 from vibeocr.models.ocr_options import OCROptions
 from vibeocr.ui import theme
@@ -544,7 +544,7 @@ class PreprocessOptionsWidget(CollapsibleGroupBox):
 
     def _get_supported_options(self, pipeline: OCRPipeline) -> list[str]:
         """获取管道支持的选项列表"""
-        from vibeocr.core.pipelines import get_pipeline_supported_options
+        from vibeocr.contracts.pipelines import get_pipeline_supported_options
 
         return get_pipeline_supported_options(pipeline)
 
@@ -561,7 +561,7 @@ class PreprocessOptionsWidget(CollapsibleGroupBox):
 
     def get_options(self) -> OCROptions:
         """获取当前选项（仅包含当前管道支持的选项）"""
-        from vibeocr.core.pipelines import is_option_supported
+        from vibeocr.contracts.pipelines import is_option_supported
 
         pipeline = self.get_current_pipeline()
 

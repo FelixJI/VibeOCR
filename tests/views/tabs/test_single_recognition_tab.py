@@ -1,10 +1,37 @@
 """SingleRecognitionTab 测试"""
 
+import pytest
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import QWidget
 
 from vibeocr.views.tabs.base_tab import BaseOcrTab
 from vibeocr.views.tabs.single_recognition_tab import SingleRecognitionTab
+
+
+class _FakeBackend:
+    def start(self, **kwargs) -> None:
+        return None
+
+    def shutdown(self) -> None:
+        return None
+
+    def recognize_sync(self, *args, **kwargs):
+        from vibeocr.models.ocr_result import OCRResult
+
+        return OCRResult(raw_text="fake")
+
+
+@pytest.fixture(autouse=True)
+def _never_start_real_worker(monkeypatch):
+    """Delayed Qt timers must still resolve to a deterministic fake session."""
+    backend = _FakeBackend()
+    monkeypatch.setattr(
+        "vibeocr.client.session.get_backend_client", lambda: backend
+    )
+    monkeypatch.setattr(
+        "vibeocr.client.session.restart_backend_client", lambda: backend
+    )
+    return backend
 
 
 class TestSingleRecognitionTab:
@@ -397,38 +424,33 @@ class TestOcrFinishedEmitsBringToFront:
         from_screenshot=True（截图确认路径）→ True；
         不传或 False（文件/粘贴路径）→ False。
 
-        只验证标记被正确设置，不真正执行识别（桩掉 run_coroutine）。
+        只验证后端调用发生时标记正确，并验证完成后复位。
         """
-        import importlib
-
         from PySide6.QtGui import QPixmap
 
         from vibeocr.models.ocr_options import OCROptions
 
         tab = SingleRecognitionTab()
-        # 桩掉真正的异步执行（USE_SUBPROCESS 分支会 import 并调用 run_coroutine）
+        observed: list[bool] = []
+
+        def fake_recognize(*args, **kwargs):
+            observed.append(tab._ocr_from_screenshot)
+            return _make_plain_text_result()
+
+        monkeypatch.setattr(tab, "_call_backend_recognize", fake_recognize)
+        monkeypatch.setattr(tab, "_display_result", lambda result: None)
         monkeypatch.setattr(
-            "vibeocr.services.USE_SUBPROCESS", True, raising=False
+            "vibeocr.pipeline_status.is_pipeline_ever_succeeded", lambda *args: True
         )
-        qt_async = importlib.import_module("vibeocr.utils.qt_async")
-        scheduled = []
-
-        def discard(coro, *args, **kwargs):
-            del args, kwargs
-            scheduled.append(coro)
-            coro.close()
-
-        monkeypatch.setattr(qt_async, "run_coroutine", discard)
         options = OCROptions()
 
         pixmap = QPixmap(4, 4)
         pixmap.fill()
         tab.run_ocr(pixmap, options, from_screenshot=True)
-        assert tab._ocr_from_screenshot is True
 
         tab.run_ocr(pixmap, options)
+        assert observed == [True, False]
         assert tab._ocr_from_screenshot is False
-        assert len(scheduled) == 2
 
 
 class _FakeWebView:

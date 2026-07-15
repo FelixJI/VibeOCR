@@ -16,10 +16,6 @@ import numpy as np
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    # 仅用于类型注解：render_page 返回 QPixmap，但 PDF 后端子进程是无头进程，
-    # 不安装 PySide6；TYPE_CHECKING 块在运行时不执行，避免 ModuleNotFoundError。
-    from PySide6.QtGui import QPixmap
-
 from vibeocr.models.ocr_result import TextBlock
 from vibeocr.models.pdf_document import PdfDocument, PdfPageInfo, TextLayerInfo
 from vibeocr.utils.cjk_font_resolver import _CJK_RESOLVER
@@ -298,27 +294,6 @@ class PdfService:
             except Exception:
                 logger.error("save_incremental: 备份回滚失败", exc_info=True)
             return False
-
-    # ---- render -----------------------------------------------------
-
-    @staticmethod
-    def render_page(doc: fitz.Document, page_index: int, dpi: int = 96) -> QPixmap:
-        # 延迟导入：PDF 后端子进程是无头进程,不安装 PySide6；顶层导入会让后端
-        # 启动时 ModuleNotFoundError 退出码 1。仅在主进程 GUI 渲染路径用到时才导入。
-        from PySide6.QtGui import QImage, QPixmap
-
-        page = doc[page_index]
-        zoom = dpi / 72.0
-        mat = fitz.Matrix(zoom, zoom)
-        pixmap = page.get_pixmap(matrix=mat)
-        qimage = QImage(
-            pixmap.samples,
-            pixmap.width,
-            pixmap.height,
-            pixmap.stride,
-            QImage.Format.Format_RGB888,
-        )
-        return QPixmap.fromImage(qimage.copy())
 
     @staticmethod
     def render_page_as_array(

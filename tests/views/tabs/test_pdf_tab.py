@@ -2037,7 +2037,7 @@ class TestThumbnailWorkerLifecycle:
 
         monkeypatch.setattr(model, "_stop_render_worker", _stop_existing)
         monkeypatch.setattr(
-            "vibeocr.workers.pdf_render_thumb_ipc_worker.ThumbnailIpcWorker",
+            "vibeocr.pyside.pdf_render_thumb_worker.ThumbnailIpcWorker",
             _create_worker,
         )
         session = PdfSession(

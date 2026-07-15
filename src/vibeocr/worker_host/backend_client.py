@@ -221,6 +221,22 @@ class BackendClient:
         """Release a client-owned payload by name (idempotent)."""
         return await self._store.release_owned(name)
 
+    async def _read_worker_payload(self, descriptor: dict[str, Any]) -> bytes:
+        """Read and promptly release a payload owned by the WorkerHost."""
+        ref = SharedPayloadRef.from_descriptor(descriptor)
+        try:
+            return await self.read_payload(ref)
+        finally:
+            # Worker-produced payloads otherwise linger until their TTL expires.
+            # Releasing is best-effort because the useful response has already
+            # been consumed and a disconnect must not mask it.
+            with _suppress(Exception):
+                await self.call(
+                    "memory.release",
+                    {"name": ref.name},
+                    timeout=_CANCEL_DEADLINE_SECONDS,
+                )
+
     # -- typed QR helpers ----------------------------------------------
 
     async def decode_qrcode(self, image_bytes: bytes) -> list[DecodedCode]:
@@ -231,18 +247,20 @@ class BackendClient:
         :class:`DecodedCode`.
         """
         ref = await self._store.put(image_bytes, media_type="image/png")
-        result = await self.call("qrcode.decode", {"image": ref.to_descriptor()})
-        codes: list[DecodedCode] = []
-        for item in result.get("codes", []):
-            codes.append(
-                DecodedCode(
-                    data=str(item.get("data", "")),
-                    fmt=str(item.get("format", "")),
-                    is_url=bool(item.get("is_url", False)),
+        try:
+            result = await self.call("qrcode.decode", {"image": ref.to_descriptor()})
+            codes: list[DecodedCode] = []
+            for item in result.get("codes", []):
+                codes.append(
+                    DecodedCode(
+                        data=str(item.get("data", "")),
+                        fmt=str(item.get("format", "")),
+                        is_url=bool(item.get("is_url", False)),
+                    )
                 )
-            )
-        await self._store.release_owned(ref.name)
-        return codes
+            return codes
+        finally:
+            await self._store.release_owned(ref.name)
 
     async def recognize(
         self,
@@ -261,9 +279,190 @@ class BackendClient:
         payload: dict[str, Any] = {"image": ref.to_descriptor(), "pipeline": pipeline}
         if language is not None:
             payload["language"] = language
-        result = await self.call("ocr.recognize", payload)
-        await self._store.release_owned(ref.name)
-        return result
+        try:
+            return await self.call("ocr.recognize", payload)
+        finally:
+            await self._store.release_owned(ref.name)
+
+    async def recognize_batch(
+        self,
+        images: list[bytes],
+        *,
+        pipeline: str = "OCR",
+        language: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Recognize a batch over one authenticated WorkerHost session.
+
+        Calls are correlated independently, so cancelling this coroutine
+        propagates ``task.cancel`` to every in-flight image request.
+        """
+        return list(
+            await asyncio.gather(
+                *(
+                    self.recognize(image, pipeline=pipeline, language=language)
+                    for image in images
+                )
+            )
+        )
+
+    async def export_ocr(
+        self,
+        result: dict[str, Any],
+        *,
+        output_path: str,
+        export_format: str,
+        overwrite: bool = False,
+    ) -> dict[str, Any]:
+        """Export a wire OCR result through the backend-owned exporter."""
+        payload = {
+            "raw_text": str(result.get("raw_text") or result.get("text") or ""),
+            "markdown_text": str(result.get("markdown_text") or ""),
+            "html_text": str(result.get("html_text") or ""),
+            "raw_blocks": list(result.get("raw_blocks") or result.get("content_list") or []),
+            "output_path": output_path,
+            "format": export_format,
+            "overwrite": overwrite,
+        }
+        return await self.call("ocr.export", payload)
+
+    # -- typed PDF helpers ---------------------------------------------
+
+    async def open_pdf(self, file_path: str) -> dict[str, Any]:
+        return await self.call("pdf.open", {"file_path": file_path})
+
+    async def close_pdf(self, session_id: str) -> bool:
+        result = await self.call("pdf.close", {"session_id": session_id})
+        return bool(result["closed"])
+
+    async def pdf_command(
+        self,
+        session_id: str,
+        operation: str,
+        params: dict[str, Any] | None = None,
+        *,
+        timeout: float | None = None,
+    ) -> Any:
+        result = await self.call(
+            "pdf.command",
+            {
+                "session_id": session_id,
+                "operation": operation,
+                "params": params or {},
+            },
+            timeout=timeout,
+        )
+        return result.get("result")
+
+    async def render_pdf_page(
+        self,
+        session_id: str,
+        page_index: int,
+        *,
+        size: int | None = None,
+        dpi: int | None = None,
+    ) -> bytes:
+        payload: dict[str, Any] = {
+            "session_id": session_id,
+            "page_index": page_index,
+        }
+        if size is not None:
+            payload["size"] = size
+        if dpi is not None:
+            payload["dpi"] = dpi
+        result = await self.call("pdf.render_page", payload)
+        return await self._read_worker_payload(result["image"])
+
+    async def rotate_pdf_pages(
+        self, session_id: str, page_indices: list[int], angle: int
+    ) -> int:
+        result = await self.call(
+            "pdf.rotate",
+            {"session_id": session_id, "page_indices": page_indices, "angle": angle},
+        )
+        return int(result["page_count"])
+
+    async def delete_pdf_pages(self, session_id: str, page_indices: list[int]) -> int:
+        result = await self.call(
+            "pdf.delete_pages",
+            {"session_id": session_id, "page_indices": page_indices},
+        )
+        return int(result["page_count"])
+
+    async def add_pdf_text_layer(
+        self,
+        session_id: str,
+        page_index: int,
+        *,
+        overwrite: bool,
+        save: bool = True,
+    ) -> dict[str, Any]:
+        return await self.call(
+            "pdf.add_text_layer",
+            {
+                "session_id": session_id,
+                "page_index": page_index,
+                "overwrite": overwrite,
+                "save": save,
+            },
+        )
+
+    async def delete_pdf_text_layers(
+        self, session_id: str, page_indices: list[int]
+    ) -> dict[str, Any]:
+        return await self.call(
+            "pdf.delete_text_layers",
+            {"session_id": session_id, "page_indices": page_indices},
+        )
+
+    async def save_pdf(self, session_id: str, output_path: str | None = None) -> str:
+        result = await self.call(
+            "pdf.save",
+            {"session_id": session_id, "output_path": output_path},
+        )
+        return str(result["saved_path"])
+
+    async def start_pdf_ocr(
+        self,
+        session_id: str,
+        file_path: str,
+        page_indices: list[int],
+        *,
+        overwrite: bool,
+        sidecar_root: str | None = None,
+        timeout: float | None = None,
+    ) -> dict[str, Any]:
+        return await self.call(
+            "pdf.start_ocr",
+            {
+                "session_id": session_id,
+                "file_path": file_path,
+                "page_indices": page_indices,
+                "overwrite": overwrite,
+                "sidecar_root": sidecar_root,
+            },
+            timeout=timeout,
+        )
+
+    # -- typed settings helpers ----------------------------------------
+
+    async def settings_snapshot(self) -> dict[str, Any]:
+        return await self.call("settings.snapshot", {})
+
+    async def switch_backend(self, backend: str) -> dict[str, Any]:
+        return await self.call("settings.switch_backend", {"backend": backend})
+
+    async def install_dependency(
+        self,
+        name: str,
+        *,
+        source: str | None = None,
+        timeout: float | None = None,
+    ) -> dict[str, Any]:
+        return await self.call(
+            "settings.install_dependency",
+            {"name": name, "source": source},
+            timeout=timeout,
+        )
 
     async def generate_qrcode(
         self, data: str, *, options: dict[str, Any] | None = None
@@ -279,10 +478,7 @@ class BackendClient:
         if options:
             payload.update(options)
         result = await self.call("qrcode.generate", payload)
-        ref = SharedPayloadRef.from_descriptor(result["image"])
-        # The worker owns this segment; the client reads it and lets the worker
-        # reclaim it via TTL.
-        return await self.read_payload(ref)
+        return await self._read_worker_payload(result["image"])
 
     async def generate_qrcode_svg(
         self, data: str, *, options: dict[str, Any] | None = None

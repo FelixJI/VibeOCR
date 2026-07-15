@@ -3,7 +3,7 @@
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QPushButton, QVBoxLayout, QWidget
 
-from vibeocr.core.pipelines import (
+from vibeocr.contracts.pipelines import (
     OCRPipeline,
     get_all_pipelines,
     get_pipeline_short_name,

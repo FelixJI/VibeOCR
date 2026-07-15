@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 from PySide6.QtCore import (
     QPoint,
@@ -26,13 +26,13 @@ from PySide6.QtWidgets import (
 
 from vibeocr import env_manager
 from vibeocr.machine_cache import is_cache_valid, update_cache_field
-from vibeocr.managers import (
+from vibeocr.pyside.runtime import (
     ConfigManager,
     DependencyManager,
     LayoutManager,
     SubprocessManager,
+    setup_logging,
 )
-from vibeocr.services.log_service import setup_logging
 from vibeocr.ui.ui_main_window import Ui_MainWindowWidget
 from vibeocr.views.clipboard_controller import ClipboardController
 from vibeocr.views.settings_page_controller import SettingsPageController
@@ -43,7 +43,6 @@ from vibeocr.widgets.toolbar import EdgeToolbar
 
 if TYPE_CHECKING:
     from vibeocr.models.ocr_result import OCRResult
-    from vibeocr.services.ocr_service_base import OCRServiceBase
 
 # 延迟导入: OCR 服务模块导入很慢（~33s），延迟到首次使用时导入
 
@@ -170,7 +169,7 @@ class MainWindow(QMainWindow):
         if self._closing:
             return
         try:
-            from vibeocr.services.env_config import validate_dep_check_consistency
+            from vibeocr.pyside.runtime import validate_dep_check_consistency
 
             warnings = validate_dep_check_consistency(self._project_root)
         except Exception:
@@ -191,14 +190,8 @@ class MainWindow(QMainWindow):
         self._ocr_status_callback_fn = on_ocr_status
 
     def _ensure_ocr_status_callback(self) -> None:
-        """确保 OCR 状态回调已设置（首次 import OCRService 时调用）"""
-        if not hasattr(self, "_ocr_status_callback_fn"):
-            return
-        if self._ocr_status_callback_fn is not None:
-            from vibeocr.services.ocr_service import OCRService
-
-            OCRService.set_status_callback(self._ocr_status_callback_fn)
-            self._ocr_status_callback_fn = None
+        """WorkerHost 通过 RPC 事件报告状态；不再注册进程内 OCR 回调。"""
+        self._ocr_status_callback_fn = None
 
     @Slot(str)
     def _on_status_update(self, message: str) -> None:
@@ -477,7 +470,7 @@ class MainWindow(QMainWindow):
                     widget.set_paddlex_service(paddlex_service)
             elif role == "pdf":
                 if paddlex_service is not None and hasattr(widget, "set_ocr_service"):
-                    widget.set_ocr_service(cast("OCRServiceBase", paddlex_service))
+                    widget.set_ocr_service(paddlex_service)
         except Exception:
             logging.debug(f"[懒加载] 向 {role} 下发 OCR 服务失败（忽略）", exc_info=True)
 
@@ -671,7 +664,7 @@ class MainWindow(QMainWindow):
         Returns:
             是否存在待同步标记（True 表示已弹出升级对话框接管流程）
         """
-        from vibeocr.services.env_config import get_pending_sync_path
+        from vibeocr.pyside.runtime import get_pending_sync_path
 
         pending_path = get_pending_sync_path()
         if not pending_path.exists():
@@ -747,7 +740,7 @@ class MainWindow(QMainWindow):
         else:
             # 升级失败：递增 attempts 计数，达阈值提示重装 Python（P2）
             attempts = self._increment_sync_attempts()
-            from vibeocr.services.env_config import SYNC_MAX_ATTEMPTS
+            from vibeocr.pyside.runtime import SYNC_MAX_ATTEMPTS
 
             self._ocr_ready = False
             if attempts >= SYNC_MAX_ATTEMPTS:
@@ -775,7 +768,7 @@ class MainWindow(QMainWindow):
         读取失败或字段缺失时按 1 处理（首次失败）。写入失败仅记录警告，
         不阻断流程（最坏情况是提示滞后一次）。
         """
-        from vibeocr.services.env_config import get_pending_sync_path
+        from vibeocr.pyside.runtime import get_pending_sync_path
 
         pending_path = get_pending_sync_path()
         try:
@@ -820,7 +813,7 @@ class MainWindow(QMainWindow):
 
     def _delete_pending_sync(self) -> None:
         """删除 pending_sync.json 标记文件（同步成功或标记无效时调用）"""
-        from vibeocr.services.env_config import get_pending_sync_path
+        from vibeocr.pyside.runtime import get_pending_sync_path
 
         pending_path = get_pending_sync_path()
         try:
@@ -949,19 +942,12 @@ class MainWindow(QMainWindow):
         dialog.exec()
 
     def _start_subprocess_worker(self) -> None:
-        """依赖检测完成后启动子进程 Worker
-
-        使用 SubprocessManager 管理子进程生命周期。
-        """
+        """依赖检测完成后启动唯一的 PySide WorkerHost 会话。"""
         if self._closing:
-            logging.debug("[MainWindow] 应用程序正在关闭，跳过启动子进程 Worker")
+            logging.debug("[MainWindow] 应用程序正在关闭，跳过启动 WorkerHost")
             return
 
-        if self._subprocess_manager.is_ready:
-            logging.debug("[MainWindow] 子进程 Worker 已就绪，跳过启动")
-            return
-
-        logging.debug("[MainWindow] 正在启动子进程 Worker...")
+        logging.debug("[MainWindow] 正在启动共享 WorkerHost...")
         use_gpu = env_manager.resolve_use_gpu(self._project_root)
         device = "GPU" if use_gpu else "CPU"
         self._statusbar.showMessage(f"正在启动 OCR 服务({device})...")
@@ -971,8 +957,15 @@ class MainWindow(QMainWindow):
         # PdfOcrWorker 读到空值、误判为 CPU（日志误报 + batch 走 RAM 公式）。
         os.environ["VIBEOCR_USE_GPU"] = "true" if use_gpu else "false"
 
-        # 使用 SubprocessManager 启动
-        self._subprocess_manager.start(use_gpu=use_gpu, start_timeout=120.0)
+        try:
+            from vibeocr.client.session import get_backend_client
+
+            get_backend_client()
+        except Exception:
+            logging.exception("[MainWindow] 共享 WorkerHost 启动失败")
+            self._on_subprocess_worker_ready(False)
+            return
+        self._on_subprocess_worker_ready(True)
 
     @Slot(bool)
     def _on_subprocess_worker_ready(self, success: bool) -> None:
@@ -985,12 +978,14 @@ class MainWindow(QMainWindow):
             record_startup(StartupEvent.WORKER_READY)
             self._ensure_ocr_status_callback()
 
-            # 服务注入
-            from vibeocr.services import get_ocr_service
-            from vibeocr.services.mineru_batch_service import MinerUBatchService
+            # 迁移期 PDF 前端状态机仍使用 recognize_batch 形状；适配器本身
+            # 只委托到同一个 BackendSession，不再创建旧 OCR 子进程。
+            from vibeocr.client.batch import BatchBackendAdapter
+            from vibeocr.client.session import get_backend_client
 
-            paddlex_service = get_ocr_service(skip_auto_start=True)
-            mineru_batch = MinerUBatchService()
+            paddlex_service = BatchBackendAdapter(get_backend_client())
+            mineru_batch = paddlex_service
+            self._subprocess_manager.attach_service(paddlex_service)
             # 缓存服务句柄，供懒构造的 Tab 在 _on_lazy_tab_changed 时补发（懒构造的
             # Tab 错过了此处注入，构造后需自行获取服务句柄）
             self._paddlex_service = paddlex_service
@@ -1009,26 +1004,11 @@ class MainWindow(QMainWindow):
 
             # PDF 处理 Tab 服务注入
             if hasattr(self, "_pdf_tab") and self._pdf_tab:
-                self._pdf_tab.set_ocr_service(cast("OCRServiceBase", paddlex_service))
+                self._pdf_tab.set_ocr_service(paddlex_service)
                 logging.debug("[MainWindow] PDF 处理标签页已连接服务")
 
-            # 子进程就绪后，触发 TTL 下发 + 可选预加载
-            # TTL 总是需要下发，预加载仅当配置了管道且启用时执行
-            # 全部在后台线程，不阻塞 GUI
-            self._start_subprocess_preload()
-
-            # 状态提示：区分「进程就绪」与「模型预加载完成」两个阶段，
-            # 避免进程一就绪就显示"已就绪"误导用户在模型未加载时使用。
-            from vibeocr.managers.config_manager import ConfigManager
-
-            cm = ConfigManager.instance()
-            pipelines = cm.get_preload_pipelines()
-            if pipelines and cm.get_preload_enabled():
-                self._preload_in_progress = True
-                self._statusbar.showMessage("OCR 服务进程已就绪，正在预热模型...")
-            else:
-                self._preload_in_progress = False
-                self._statusbar.showMessage("OCR 服务已就绪（模型按需加载）")
+            self._preload_in_progress = False
+            self._statusbar.showMessage("OCR 服务已就绪（模型按需加载）")
         else:
             logging.warning("[MainWindow] 子进程 Worker 启动失败")
             self._statusbar.showMessage("OCR 服务启动失败")
@@ -1093,7 +1073,7 @@ class MainWindow(QMainWindow):
     @Slot(int, int, str)
     def _on_preload_progress(self, current: int, total: int, pipeline_name: str) -> None:
         """预加载逐管道进度回调"""
-        from vibeocr.core.pipelines import OCRPipeline, get_pipeline_display_name
+        from vibeocr.contracts.pipelines import OCRPipeline, get_pipeline_display_name
 
         # 管道名转中文显示名（如 "OCR" -> "通用 OCR"）
         try:
@@ -1126,7 +1106,7 @@ class MainWindow(QMainWindow):
             return
 
         # 读取用户配置的 TTL（无论是否预加载都需要下发）
-        from vibeocr.managers.config_manager import ConfigManager
+        from vibeocr.pyside.runtime import ConfigManager
 
         try:
             ttl = ConfigManager.instance().get_pipeline_ttl_seconds()
@@ -1135,7 +1115,7 @@ class MainWindow(QMainWindow):
             ttl = None
 
         # 读取用户配置的预加载管道
-        from vibeocr.core.pipelines import OCRPipeline
+        from vibeocr.contracts.pipelines import OCRPipeline
 
         cm = ConfigManager.instance()
         if not cm.get_preload_enabled():
@@ -1480,6 +1460,11 @@ class MainWindow(QMainWindow):
         if hasattr(self, "_pdf_tab") and self._pdf_tab:
             self._pdf_tab.shutdown()
 
+        # Single/QR/batch tabs share exactly one authenticated WorkerHost.
+        from vibeocr.client.session import shutdown_backend_client
+
+        shutdown_backend_client()
+
         # 关闭边缘工具栏
         if hasattr(self, "_edge_toolbar") and self._edge_toolbar:
             self._edge_toolbar.close()
@@ -1494,7 +1479,7 @@ class MainWindow(QMainWindow):
         self._closing = True  # 标记正在关闭，防止重复启动 Worker
 
         # 统一 drain 各后台子系统（有序、有界，os._exit 前尽力收拢任务）
-        from vibeocr.managers.shutdown_coordinator import ShutdownCoordinator
+        from vibeocr.pyside.runtime import ShutdownCoordinator
 
         coord = ShutdownCoordinator()
 
@@ -1513,31 +1498,6 @@ class MainWindow(QMainWindow):
             lambda: self._subprocess_manager.shutdown(timeout_ms=2000),  # type: ignore[arg-type]
         )
         coord.coordinate(timeout_ms=5000)
-
-        # 清理 OCR 资源
-        try:
-            from vibeocr.services import USE_SUBPROCESS
-
-            if not USE_SUBPROCESS:
-                # 直连/便携模式（仅调试逃生口）：清理主进程内持有的管道缓存。
-                # 子进程模式（默认）无需此清理——管道在独立 worker 进程中，
-                # 随 worker 生命周期管理。
-                from vibeocr.services.ocr_service import OCRService
-
-                OCRService._pipelines.clear()
-                logging.debug("OCR 管道缓存已清理")
-        except Exception as e:
-            logging.warning(f"清理 OCR 资源失败: {e}")
-
-        # 清理 MinerU API 进程
-        try:
-            from vibeocr.services.mineru_service import MinerUService
-
-            if MinerUService._api_process is not None:
-                MinerUService().shutdown()
-                logging.debug("MinerU API 服务已关闭")
-        except Exception as e:
-            logging.warning(f"关闭 MinerU API 服务失败: {e}")
 
         event.accept()
         logging.debug("应用程序已关闭")

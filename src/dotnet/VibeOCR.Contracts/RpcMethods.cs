@@ -11,6 +11,7 @@ public static class RpcMethods
     public const string ExportOcr = "ocr.export";
     public const string OpenPdf = "pdf.open";
     public const string ClosePdf = "pdf.close";
+    public const string PdfCommand = "pdf.command";
     public const string RenderPdfPage = "pdf.render_page";
     public const string RotatePdf = "pdf.rotate";
     public const string DeletePdfPages = "pdf.delete_pages";
@@ -36,6 +37,7 @@ public static class RpcMethods
         ExportOcr,
         OpenPdf,
         ClosePdf,
+        PdfCommand,
         RenderPdfPage,
         RotatePdf,
         DeletePdfPages,

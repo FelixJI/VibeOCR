@@ -41,6 +41,13 @@ def qapp():
     yield app
 
 
+def pytest_sessionfinish(session, exitstatus):
+    """Close the process-wide WorkerHost before pytest joins executor threads."""
+    from vibeocr.client.session import shutdown_backend_client
+
+    shutdown_backend_client()
+
+
 @pytest.fixture
 def sample_pixmap():
     """提供测试用 QPixmap（100x50 白色图片）。"""

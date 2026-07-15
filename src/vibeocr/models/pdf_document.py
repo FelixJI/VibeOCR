@@ -3,10 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from PySide6.QtGui import QPixmap
 
 
 @dataclass
@@ -29,7 +25,10 @@ class PdfPageInfo:
     has_text_layer: bool = False
     text_layers: list[TextLayerInfo] = field(default_factory=list)
     is_scanned: bool = False
-    thumbnail: QPixmap | None = None
+    # Frontends may cache their native thumbnail object here.  The shared
+    # model deliberately does not name a Qt type so backend/client wheels stay
+    # importable without PySide6.
+    thumbnail: object | None = None
     # 页面几何（x0, y0, x1, y1，PDF point）。打开/结构变更时由 PdfService 回填，
     # 供主进程预览 highlight 计算用——下沉子进程后主进程不再直接访问 fitz 对象。
     rect: tuple[float, float, float, float] = (0.0, 0.0, 0.0, 0.0)

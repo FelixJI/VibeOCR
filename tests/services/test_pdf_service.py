@@ -183,8 +183,10 @@ class TestPdfServiceSave:
 
 class TestPdfServiceRender:
     def test_render_thumbnail(self, opened_doc, qapp):
+        from vibeocr.pyside.pdf_render import render_page_pixmap
+
         doc, _ = opened_doc
-        pixmap = PdfService.render_page(doc, 0, dpi=96)
+        pixmap = render_page_pixmap(doc, 0, dpi=96)
         assert pixmap is not None
         assert not pixmap.isNull()
 

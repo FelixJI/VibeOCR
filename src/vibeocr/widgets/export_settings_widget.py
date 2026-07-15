@@ -98,7 +98,7 @@ class ExportSettingsWidget(QWidget):
     def _load_settings(self) -> None:
         """从 ConfigManager 加载导出设置"""
         try:
-            from vibeocr.managers.config_manager import ConfigManager
+            from vibeocr.pyside.runtime import ConfigManager
 
             config = ConfigManager.instance()
             data = config.get_export_settings()
@@ -126,7 +126,7 @@ class ExportSettingsWidget(QWidget):
     def _save_settings(self) -> None:
         """保存导出设置到 ConfigManager"""
         try:
-            from vibeocr.managers.config_manager import ConfigManager
+            from vibeocr.pyside.runtime import ConfigManager
 
             config = ConfigManager.instance()
             config.save_export_settings(

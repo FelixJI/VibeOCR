@@ -259,6 +259,11 @@ class SubprocessManager(QObject):
         """检查服务是否就绪"""
         return self._is_ready and self._service is not None
 
+    def attach_service(self, service: object) -> None:
+        """Attach the shared WorkerHost client adapter without spawning legacy OCR."""
+        self._service = service  # type: ignore[assignment]
+        self._is_ready = True
+
     def start(
         self,
         use_gpu: bool = True,

@@ -59,6 +59,9 @@ class PdfSessionBackend(Protocol):
         sidecar_root: str | None,
         cancel: CancelToken,
     ) -> dict[str, Any]: ...
+    def command(
+        self, session_id: str, operation: str, params: dict[str, Any]
+    ) -> Any: ...
 
 
 class PdfOpenHandler:
@@ -227,9 +230,38 @@ class PdfStartOcrHandler:
         )
 
 
+class PdfCommandHandler:
+    """Compatibility surface for the Classic PDF editor's rich mutations.
+
+    The operation is still executed inside the owning WorkerHost.  This
+    method exists while the two frontends converge on smaller typed PDF
+    methods; it must never dispatch code in the UI process.
+    """
+
+    def __init__(self, *, backend: PdfSessionBackend) -> None:
+        self._backend = backend
+
+    async def handle(self, payload: dict[str, Any], cancel: CancelToken) -> dict[str, Any]:
+        session_id = _require_session_id(payload, "pdf.command")
+        operation = payload.get("operation")
+        params = payload.get("params", {})
+        if not isinstance(operation, str) or not operation:
+            raise WorkerError(ErrorCode.INVALID_REQUEST, "pdf.command requires 'operation'")
+        if not isinstance(params, dict):
+            raise WorkerError(ErrorCode.INVALID_REQUEST, "pdf.command 'params' must be an object")
+        try:
+            result = await asyncio.to_thread(
+                self._backend.command, session_id, operation, params
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise WorkerError(ErrorCode.INVALID_REQUEST, str(exc)) from exc
+        return {"result": result}
+
+
 __all__ = [
     "PdfAddTextLayerHandler",
     "PdfCloseHandler",
+    "PdfCommandHandler",
     "PdfDeletePagesHandler",
     "PdfDeleteTextLayersHandler",
     "PdfFacade",

@@ -40,8 +40,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from vibeocr.core.constants import Constants
-from vibeocr.managers.pdf_session_manager import PdfSessionManager, _wait_thread
+from vibeocr.contracts.frontend import (
+    PDF_THUMBNAIL_DRAIN_WAIT_MS,
+    PDF_WORKER_TERMINATE_WAIT_MS,
+)
+from vibeocr.pyside.pdf_session_manager import PdfSessionManager, _wait_thread
 from vibeocr.ui.theme import Colors
 from vibeocr.utils.thumbnail_lru_cache import ThumbnailLruCache
 from vibeocr.views.pdf_preview_window import PdfPreviewWindow
@@ -50,8 +53,7 @@ if TYPE_CHECKING:
     from vibeocr.models.ocr_options import OCROptions
     from vibeocr.models.pdf_ocr_options import PdfGlobalSettings
     from vibeocr.models.pdf_session import PdfSession
-    from vibeocr.services.ocr_service_base import OCRServiceBase
-    from vibeocr.workers.pdf_render_thumb_ipc_worker import ThumbnailIpcWorker
+    from vibeocr.pyside.pdf_render_thumb_worker import ThumbnailIpcWorker
 
 logger = logging.getLogger(__name__)
 
@@ -300,7 +302,7 @@ class ThumbnailModel(QAbstractListModel):
 
     def _start_render_worker(self, session: PdfSession) -> None:
         # 进程化:缩略图走 IPC(client.render_thumbnail → PNG → QPixmap)
-        from vibeocr.workers.pdf_render_thumb_ipc_worker import ThumbnailIpcWorker
+        from vibeocr.pyside.pdf_render_thumb_worker import ThumbnailIpcWorker
 
         if self._shutdown:
             return
@@ -338,7 +340,7 @@ class ThumbnailModel(QAbstractListModel):
         worker.cancel()
         stopped = _wait_thread(
             worker,
-            timeout_ms=Constants.Timeout.Ms.PDF_WORKER_TERMINATE_WAIT,
+            timeout_ms=PDF_WORKER_TERMINATE_WAIT_MS,
         )
         if stopped:
             worker.deleteLater()
@@ -372,7 +374,7 @@ class ThumbnailModel(QAbstractListModel):
         for worker in tuple(self._draining_workers):
             stopped = _wait_thread(
                 worker,
-                timeout_ms=Constants.Timeout.Ms.PDF_THUMBNAIL_DRAIN_WAIT,
+                timeout_ms=PDF_THUMBNAIL_DRAIN_WAIT_MS,
             )
             if stopped or worker.isFinished():
                 self._release_draining_worker(worker)
@@ -2405,7 +2407,7 @@ class PdfTab(QWidget):
 
     # ---- public API for MainWindow ----------------------------------
 
-    def set_ocr_service(self, service: OCRServiceBase) -> None:
+    def set_ocr_service(self, service: object) -> None:
         """设置 OCR 服务实例（由 MainWindow 调用）。"""
         self._session_mgr.set_ocr_service(service)
 

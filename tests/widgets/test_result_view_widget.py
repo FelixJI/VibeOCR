@@ -750,10 +750,10 @@ class TestResultViewExportButtons:
             ),
             raising=False,
         )
-        # 让 ExportService.export 返回 False（导出失败）
+        # 让 RPC export adapter 返回 False（导出失败）
         monkeypatch.setattr(
-            "vibeocr.services.export_service.ExportService.export",
-            staticmethod(lambda *a, **k: False),
+            "vibeocr.client.export.export_result",
+            lambda *a, **k: False,
         )
         # 不应抛异常
         widget._on_export_file("docx")

@@ -54,6 +54,7 @@ class SingleRecognitionTab(BaseOcrTab):
         self._ocr_from_screenshot: bool = False
         # RPC 后端（SyncBackendClient）；测试可注入 fake。为 None 时延迟创建。
         self._backend = backend
+        self._uses_shared_backend = backend is None
         self._setup_ui()
         self._connect_signals()
         self._init_options_from_preferences(batch=False)
@@ -420,14 +421,15 @@ class SingleRecognitionTab(BaseOcrTab):
     # -- backend bridge (sync RPC over the exclusive WorkerHost) --------
 
     def _ensure_backend(self):
-        """Lazily create the SyncBackendClient on first use."""
+        """Lazily attach to the process-wide production BackendSession."""
         if self._backend is None:
-            from vibeocr.worker_host.sync_client import SyncBackendClient
+            from vibeocr.client.session import get_backend_client
 
-            self._backend = SyncBackendClient()
+            self._backend = get_backend_client()
+            return
         start = getattr(self._backend, "start", None)
         if callable(start):
-            start(profile="winui-dev", frontend_id="pyside")
+            start(profile="production", frontend_id="pyside")
 
     def _call_backend_recognize(self, image_data: bytes, pipeline: str):
         """Call ocr.recognize via RPC; restart worker on transient failure."""
@@ -436,13 +438,15 @@ class SingleRecognitionTab(BaseOcrTab):
             return self._backend.recognize_sync(image_data, pipeline=pipeline)
         except Exception:
             # Worker died; restart once and retry.
-            shutdown = getattr(self._backend, "shutdown", None)
-            if callable(shutdown):
-                shutdown()
-            from vibeocr.worker_host.sync_client import SyncBackendClient
+            if self._uses_shared_backend:
+                from vibeocr.client.session import restart_backend_client
 
-            self._backend = SyncBackendClient()
-            self._ensure_backend()
+                self._backend = restart_backend_client()
+            else:
+                shutdown = getattr(self._backend, "shutdown", None)
+                if callable(shutdown):
+                    shutdown()
+                self._ensure_backend()
             return self._backend.recognize_sync(image_data, pipeline=pipeline)
 
     def _on_result_block_edited(self, index: int, new_text: str) -> None:

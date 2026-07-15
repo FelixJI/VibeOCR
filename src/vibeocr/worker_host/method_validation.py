@@ -235,7 +235,7 @@ def _request_ocr_export(p: dict[str, Any]) -> None:
     if not isinstance(p["raw_blocks"], list):
         raise MethodPayloadError("raw_blocks must be an array")
     _string(p["output_path"], "output_path")
-    if p["format"] not in {"txt", "markdown", "html"}:
+    if p["format"] not in {"txt", "markdown", "html", "docx", "xlsx"}:
         raise MethodPayloadError("unsupported export format")
     _boolean(p["overwrite"], "overwrite")
 
@@ -281,6 +281,21 @@ def _request_pdf_close(p: dict[str, Any]) -> None:
 def _response_pdf_close(p: dict[str, Any]) -> None:
     _closed(p, required={"closed"}, label="pdf.close response")
     _boolean(p["closed"], "closed")
+
+
+def _request_pdf_command(p: dict[str, Any]) -> None:
+    _closed(
+        p,
+        required={"session_id", "operation", "params"},
+        label="pdf.command request",
+    )
+    _string(p["session_id"], "session_id")
+    _string(p["operation"], "operation")
+    _object(p["params"], "params")
+
+
+def _response_pdf_command(p: dict[str, Any]) -> None:
+    _closed(p, required={"result"}, label="pdf.command response")
 
 
 def _request_pdf_render_page(p: dict[str, Any]) -> None:
@@ -584,6 +599,7 @@ _VALIDATORS: dict[str, tuple[Validator, Validator]] = {
     "ocr.export": (_request_ocr_export, _response_ocr_export),
     "pdf.open": (_request_pdf, _response_pdf),
     "pdf.close": (_request_pdf_close, _response_pdf_close),
+    "pdf.command": (_request_pdf_command, _response_pdf_command),
     "pdf.render_page": (_request_pdf_render_page, _response_pdf_render_page),
     "pdf.rotate": (
         _request_pdf_rotate,

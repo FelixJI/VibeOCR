@@ -53,13 +53,16 @@ class SyncBackendClient:
         self._process: subprocess.Popen[str] | None = None
         self._started = False
         self._lock = threading.Lock()
+        self._active_lock = threading.Lock()
+        self._active_calls: set[Any] = set()
+        self._io_threads: list[threading.Thread] = []
 
     # -- lifecycle ------------------------------------------------------
 
     def start(
         self,
         *,
-        profile: str = "winui-dev",
+        profile: str = "production",
         frontend_id: str = "pyside",
         working_dir: Path | None = None,
     ) -> None:
@@ -134,6 +137,7 @@ class SyncBackendClient:
             self._await_ready(), timeout=_READY_TIMEOUT_SECONDS
         )
         _log.info("WorkerHost ready on %s", ready.get("pipe", pipe_name))
+        self._start_output_drains()
         self._client = BackendClient()
         await self._client.connect(
             PipeEndpoint(name=pipe_name, session_token=token)
@@ -173,6 +177,32 @@ class SyncBackendClient:
             if doc.get("event") == "worker.ready":
                 return doc
 
+    def _start_output_drains(self) -> None:
+        """Continuously drain worker pipes so backend imports cannot deadlock."""
+        assert self._process is not None
+
+        def drain(stream: Any, level: int) -> None:
+            if stream is None:
+                return
+            for raw in stream:
+                line = raw.rstrip()
+                if line:
+                    _log.log(level, "WorkerHost: %s", line)
+
+        self._io_threads = []
+        for stream, level, name in (
+            (self._process.stdout, logging.DEBUG, "stdout"),
+            (self._process.stderr, logging.WARNING, "stderr"),
+        ):
+            thread = threading.Thread(
+                target=drain,
+                args=(stream, level),
+                name=f"vibeocr-worker-{name}",
+                daemon=True,
+            )
+            thread.start()
+            self._io_threads.append(thread)
+
     @staticmethod
     def _app_version() -> str:
         try:
@@ -211,6 +241,7 @@ class SyncBackendClient:
             self._client = None
             self._process = None
             self._started = False
+            self._io_threads = []
 
     # -- synchronous QR surface ----------------------------------------
 
@@ -218,7 +249,20 @@ class SyncBackendClient:
         if not self._started or self._loop is None or self._client is None:
             raise SyncBackendError("SyncBackendClient is not started")
         fut = asyncio.run_coroutine_threadsafe(coro, self._loop)
-        return fut.result(timeout=timeout)
+        with self._active_lock:
+            self._active_calls.add(fut)
+        try:
+            return fut.result(timeout=timeout)
+        finally:
+            with self._active_lock:
+                self._active_calls.discard(fut)
+
+    def cancel_active(self) -> None:
+        """Best-effort cancel every active call on this frontend session."""
+        with self._active_lock:
+            active = tuple(self._active_calls)
+        for future in active:
+            future.cancel()
 
     def generate_qrcode_sync(
         self, data: str, *, options: dict[str, Any] | None = None
@@ -264,6 +308,173 @@ class SyncBackendClient:
             timeout=timeout,
         )
         return _reconstruct_ocr_result(raw)
+
+    def recognize_batch_sync(
+        self,
+        images: list[bytes],
+        *,
+        pipeline: str = "OCR",
+        language: str | None = None,
+        timeout: float = 1800.0,
+    ) -> list[Any]:
+        assert self._client is not None
+        raw_results = self._run_sync(
+            self._client.recognize_batch(
+                images, pipeline=pipeline, language=language
+            ),
+            timeout=timeout,
+        )
+        return [_reconstruct_ocr_result(raw) for raw in raw_results]
+
+    def export_ocr_sync(
+        self,
+        result: dict[str, Any],
+        *,
+        output_path: str,
+        export_format: str,
+        overwrite: bool = False,
+    ) -> dict[str, Any]:
+        assert self._client is not None
+        return self._run_sync(
+            self._client.export_ocr(
+                result,
+                output_path=output_path,
+                export_format=export_format,
+                overwrite=overwrite,
+            )
+        )
+
+    # -- synchronous PDF surface --------------------------------------
+
+    def open_pdf_sync(self, file_path: str) -> dict[str, Any]:
+        assert self._client is not None
+        return self._run_sync(self._client.open_pdf(file_path))
+
+    def close_pdf_sync(self, session_id: str) -> bool:
+        assert self._client is not None
+        return self._run_sync(self._client.close_pdf(session_id))
+
+    def pdf_command_sync(
+        self,
+        session_id: str,
+        operation: str,
+        params: dict[str, Any] | None = None,
+        *,
+        timeout: float = 600.0,
+    ) -> Any:
+        assert self._client is not None
+        return self._run_sync(
+            self._client.pdf_command(
+                session_id, operation, params, timeout=timeout
+            ),
+            timeout=timeout + 5.0,
+        )
+
+    def render_pdf_page_sync(
+        self,
+        session_id: str,
+        page_index: int,
+        *,
+        size: int | None = None,
+        dpi: int | None = None,
+        timeout: float = 120.0,
+    ) -> bytes:
+        assert self._client is not None
+        return self._run_sync(
+            self._client.render_pdf_page(
+                session_id, page_index, size=size, dpi=dpi
+            ),
+            timeout=timeout,
+        )
+
+    def rotate_pdf_pages_sync(
+        self, session_id: str, page_indices: list[int], angle: int
+    ) -> int:
+        assert self._client is not None
+        return self._run_sync(
+            self._client.rotate_pdf_pages(session_id, page_indices, angle)
+        )
+
+    def delete_pdf_pages_sync(self, session_id: str, page_indices: list[int]) -> int:
+        assert self._client is not None
+        return self._run_sync(self._client.delete_pdf_pages(session_id, page_indices))
+
+    def add_pdf_text_layer_sync(
+        self,
+        session_id: str,
+        page_index: int,
+        *,
+        overwrite: bool,
+        save: bool = True,
+    ) -> dict[str, Any]:
+        assert self._client is not None
+        return self._run_sync(
+            self._client.add_pdf_text_layer(
+                session_id, page_index, overwrite=overwrite, save=save
+            ),
+            timeout=300.0,
+        )
+
+    def delete_pdf_text_layers_sync(
+        self, session_id: str, page_indices: list[int]
+    ) -> dict[str, Any]:
+        assert self._client is not None
+        return self._run_sync(
+            self._client.delete_pdf_text_layers(session_id, page_indices),
+            timeout=300.0,
+        )
+
+    def save_pdf_sync(self, session_id: str, output_path: str | None = None) -> str:
+        assert self._client is not None
+        return self._run_sync(
+            self._client.save_pdf(session_id, output_path), timeout=300.0
+        )
+
+    def start_pdf_ocr_sync(
+        self,
+        session_id: str,
+        file_path: str,
+        page_indices: list[int],
+        *,
+        overwrite: bool,
+        sidecar_root: str | None = None,
+        timeout: float = 3600.0,
+    ) -> dict[str, Any]:
+        assert self._client is not None
+        return self._run_sync(
+            self._client.start_pdf_ocr(
+                session_id,
+                file_path,
+                page_indices,
+                overwrite=overwrite,
+                sidecar_root=sidecar_root,
+                timeout=timeout,
+            ),
+            timeout=timeout + 5.0,
+        )
+
+    # -- synchronous settings surface ---------------------------------
+
+    def settings_snapshot_sync(self) -> dict[str, Any]:
+        assert self._client is not None
+        return self._run_sync(self._client.settings_snapshot())
+
+    def switch_backend_sync(self, backend: str) -> dict[str, Any]:
+        assert self._client is not None
+        return self._run_sync(self._client.switch_backend(backend))
+
+    def install_dependency_sync(
+        self,
+        name: str,
+        *,
+        source: str | None = None,
+        timeout: float = 1800.0,
+    ) -> dict[str, Any]:
+        assert self._client is not None
+        return self._run_sync(
+            self._client.install_dependency(name, source=source, timeout=timeout),
+            timeout=timeout + 5.0,
+        )
 
 
 class _suppress:

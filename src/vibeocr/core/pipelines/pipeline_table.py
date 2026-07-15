@@ -473,7 +473,7 @@ def _backfill_empty_table_cells(
         ocr_items 索引集合。未被回填（已填单元格/无坐标/落点不在任何空格）
         的项不在 consumed 中，由调用方决定后续处理。
     """
-    from vibeocr.services.ocr_service import _RE_CELL, _RE_TR, _cell_text
+    from vibeocr.utils.html_tables import _RE_CELL, _RE_TR, _cell_text
 
     if not cell_box_list or not ocr_items:
         return table_html, set()
