@@ -52,6 +52,81 @@ public sealed class PortableLayoutTests
         Assert.Throws<ArgumentException>(() => PortableLayout.Resolve("C:\\VibeOCR", profile));
 
     [Fact]
+    public void ProductionPythonExecutableIsAlwaysThePackagedLayout()
+    {
+        // REPOSITORY_ROOT must not influence the production interpreter.
+        string root = Path.Combine(Path.GetTempPath(), $"vibeocr-prod-python-{Guid.NewGuid():N}");
+        PortableLayout layout = PortableLayout.Resolve(Path.Combine(root, "VibeOCR.WinUI.exe"), "production");
+        using var _ = WithEnvironment(PortableLayout.RepositoryRootVariable, root);
+
+        string exe = PortableLayout.ResolvePythonExecutable(layout);
+        Assert.Equal(Path.Combine(root, "python", "python.exe"), exe);
+    }
+
+    [Fact]
+    public void WinUiDevPythonPrefersRepositoryVenvWhenPresent()
+    {
+        // Build a fake repository with a .venv/Scripts/python.exe and point
+        // VIBEOCR_REPOSITORY_ROOT at it — the dev interpreter must win over the
+        // packaged layout (matching how ResolveWorkerRoot picks up the repo).
+        string repo = Path.Combine(Path.GetTempPath(), $"vibeocr-repo-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(Path.Combine(repo, ".venv", "Scripts"));
+        string venvExe = Path.Combine(repo, ".venv", "Scripts", "python.exe");
+        File.WriteAllText(venvExe, "fake");
+
+        PortableLayout layout = PortableLayout.Resolve(repo, "winui-dev");
+        using var _ = WithEnvironment(PortableLayout.RepositoryRootVariable, repo);
+
+        Assert.Equal(venvExe, PortableLayout.ResolvePythonExecutable(layout));
+    }
+
+    [Fact]
+    public void WinUiDevPythonFallsBackToPackagedLayoutWithoutVenv()
+    {
+        // REPOSITORY_ROOT set but no .venv — must not throw, returns packaged path.
+        string repo = Path.Combine(Path.GetTempPath(), $"vibeocr-novenv-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(repo);
+        PortableLayout layout = PortableLayout.Resolve(repo, "winui-dev");
+        using var _ = WithEnvironment(PortableLayout.RepositoryRootVariable, repo);
+
+        string expected = Path.Combine(layout.RuntimeRoot, "python.exe");
+        Assert.Equal(expected, PortableLayout.ResolvePythonExecutable(layout));
+    }
+
+    [Fact]
+    public void WinUiDevPythonIgnoresRepositoryRootWhenUnset()
+    {
+        string root = Path.Combine(Path.GetTempPath(), $"vibeocr-noroot-{Guid.NewGuid():N}");
+        PortableLayout layout = PortableLayout.Resolve(root, "winui-dev");
+        using var _ = WithEnvironment(PortableLayout.RepositoryRootVariable, null);
+
+        Assert.Equal(
+            Path.Combine(layout.RuntimeRoot, "python.exe"),
+            PortableLayout.ResolvePythonExecutable(layout));
+    }
+
+    /// <summary>Set an environment variable for the duration of a test, restoring the prior value on dispose.</summary>
+    private static IDisposable WithEnvironment(string name, string? value)
+    {
+        string? prior = Environment.GetEnvironmentVariable(name);
+        if (value is null)
+        {
+            Environment.SetEnvironmentVariable(name, null);
+        }
+        else
+        {
+            Environment.SetEnvironmentVariable(name, value);
+        }
+
+        return new EnvironmentRestore(name, prior);
+    }
+
+    private sealed class EnvironmentRestore(string name, string? prior) : IDisposable
+    {
+        public void Dispose() => Environment.SetEnvironmentVariable(name, prior);
+    }
+
+    [Fact]
     [Trait("Category", "WindowsIntegration")]
     public async Task MatchesPythonResolverForTheSameFixtures()
     {

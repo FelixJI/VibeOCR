@@ -31,6 +31,7 @@ dependencies = [
     "python-barcode>=0.16.1",
     "opencv-contrib-python>=4.10.0.84",
     "pyzbar>=0.1.9",
+    "pynvml>=11.5.0",
     "python-docx>=1.2.0",
     "openpyxl>=3.1.5",
     # PDF 后端子进程服务（FastAPI + uvicorn）。PDF 模块整体下沉到常驻子进程，
