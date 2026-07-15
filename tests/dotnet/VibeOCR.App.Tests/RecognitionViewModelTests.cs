@@ -25,8 +25,30 @@ public sealed class RecognitionViewModelTests
         Assert.Equal("识别完成", viewModel.Status);
         Assert.Equal([1, 2, 3, 4], worker.LastPayloadBytes);
         Assert.Equal("image/png", worker.LastRequest?.Image.MediaType);
+        Assert.Equal(origin, viewModel.CurrentInput?.Origin);
+        Assert.True(viewModel.HasResult);
         Assert.Single(worker.ReleasedPayloads);
         Assert.Equal(1, inputs.Calls[origin]);
+    }
+
+    [Fact]
+    public void ScreenSelectionMapsOverlayCoordinatesToVirtualDesktopPixels()
+    {
+        var desktop = new VibeOCR.Platform.Windows.PhysicalRectangle(-1920, -200, 5760, 2360);
+
+        VibeOCR.Platform.Windows.PhysicalRectangle selected = ScreenRegionPicker.ScaleSelection(
+            desktop,
+            left: 320,
+            top: 100,
+            width: 640,
+            height: 400,
+            canvasWidth: 1920,
+            canvasHeight: 1080);
+
+        Assert.Equal(-960, selected.X);
+        Assert.Equal(19, selected.Y);
+        Assert.Equal(1920, selected.Width);
+        Assert.Equal(874, selected.Height);
     }
 
     [Fact]

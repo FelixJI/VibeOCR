@@ -585,12 +585,18 @@ class TestResultViewExportButtons:
         class FakeClipboard:
             def __init__(self):
                 self._text = ""
+                self.mime = None
 
             def setText(self, text):
                 self._text = text
+                self.mime = None
 
             def text(self):
                 return self._text
+
+            def setMimeData(self, mime):
+                self.mime = mime
+                self._text = mime.text() if mime is not None else ""
 
         fake = FakeClipboard()
 
@@ -625,6 +631,59 @@ class TestResultViewExportButtons:
 
         fake.setText("SENTINEL")
         widget._on_copy_markdown()
+        assert fake.text() == "SENTINEL"
+
+    def test_copy_text_with_table_writes_rich_mime(self, widget, qtbot, monkeypatch):
+        """结果含表格时，「复制文本」写入 HTML + Tab 文本 + CF_HTML。
+
+        验证：剪贴板 plain 文本含 Tab 分隔（Excel 粘贴行列对齐），HTML 含
+        <table>（Word 粘贴原生表格），CF_HTML 含头部标记。
+        """
+        result = self._make_result(
+            markdown_text="",
+            raw_text="",
+        )
+        # 注入表格：content_list 里带 table 块（覆盖前后端分离下表格来源）
+        result.content_list = [
+            {
+                "type": "table",
+                "table_body": "<table><tr><td>A</td><td>B</td></tr><tr><td>1</td><td>2</td></tr></table>",
+            },
+        ]
+        widget._current_result = result
+        fake = self._fake_clipboard(monkeypatch)
+
+        widget._on_copy_text()
+
+        # 走富剪贴板分支：mime 非空
+        assert fake.mime is not None
+        # Tab 分隔纯文本：Excel 粘贴行列对齐
+        plain = fake.mime.text()
+        assert "A\tB" in plain
+        assert "1\t2" in plain
+        # HTML 含 <table>：Word 粘贴原生表格
+        html = fake.mime.html()
+        assert "<table>" in html
+        assert "<td>A</td>" in html
+        # CF_HTML 头部（Word/Excel 专用格式）
+        cf_html = fake.mime.data("HTML Format").data().decode("utf-8")
+        assert "Version:0.9" in cf_html
+        assert "StartFragment" in cf_html
+
+    def test_copy_text_no_table_falls_back_to_plain(self, widget, qtbot, monkeypatch):
+        """无表格时「复制文本」不写 mime（回退到 WebEngine JS 选区文本）。
+
+        这里 _current_result 无表格、web_view 未创建，_on_copy_text 应走
+        `if not self._web_view: return` 分支，不写剪贴板、不抛异常。
+        """
+        result = self._make_result(raw_text="普通文本，无表格")
+        widget._current_result = result
+        fake = self._fake_clipboard(monkeypatch)
+        fake.setText("SENTINEL")
+
+        widget._on_copy_text()
+        # 未走富剪贴板（mime 为 None），text 维持 SENTINEL（WebEngine 分支 noop）
+        assert fake.mime is None
         assert fake.text() == "SENTINEL"
 
     def test_buttons_hidden_initially(self, widget):

@@ -250,6 +250,110 @@ class TestOtherBlockTypes:
         assert any("E=mc^2" in str(v) for v in values)
 
 
+# --- 表格兜底：content_list 无 table 块时，从 html_text/markdown_text/text_blocks 提取 ---
+
+
+class TestTableFallbackExport:
+    """表格丢失修复：content_list 无 table 块但 html_text 含 <table> 时仍导出表格。
+
+    覆盖前后端分离下 content_list 未填充、表格只存活在 html_text 的场景。
+    """
+
+    def test_xlsx_table_from_html_text_fallback(self, tmp_path):
+        """content_list 为空、html_text 含 <table> → 仍生成「表格 1」工作表。"""
+        html_text = (
+            "<body><p>说明</p>"
+            "<table><tr><td>A</td><td>B</td></tr>"
+            "<tr><td>1</td><td>2</td></tr></table></body>"
+        )
+        result = _make_ocr_result(
+            content_list=[],
+            html_text=html_text,
+            raw_text="说明",
+        )
+        out = tmp_path / "test.xlsx"
+        assert ExportService.export(result, out, "xlsx")
+
+        from openpyxl import load_workbook
+
+        wb = load_workbook(str(out))
+        assert "表格 1" in wb.sheetnames
+        ws = wb["表格 1"]
+        assert ws.cell(1, 1).value == "A"
+        assert ws.cell(1, 2).value == "B"
+        assert ws.cell(2, 1).value == "1"
+        assert ws.cell(2, 2).value == "2"
+
+    def test_docx_table_from_html_text_fallback(self, tmp_path):
+        """content_list 为空、html_text 含 <table> → docx 仍含表格。"""
+        html_text = (
+            "<table><tr><td>H1</td><td>H2</td></tr>"
+            "<tr><td>v1</td><td>v2</td></tr></table>"
+        )
+        result = _make_ocr_result(content_list=[], html_text=html_text, raw_text="")
+        out = tmp_path / "test.docx"
+        assert ExportService.export(result, out, "docx")
+
+        from docx import Document  # type: ignore[import-untyped]
+
+        doc = Document(str(out))
+        assert len(doc.tables) == 1
+        assert doc.tables[0].rows[0].cells[0].text == "H1"
+        assert doc.tables[0].rows[1].cells[1].text == "v2"
+
+    def test_xlsx_prefers_content_list_table(self, tmp_path):
+        """content_list 有 table 块时优先用之，不被 html_text 干扰。"""
+        result = _make_ocr_result(
+            content_list=[
+                {"type": "table", "table_body": "<table><tr><td>CL</td></tr></table>"},
+            ],
+            html_text="<table><tr><td>HTMLTEXT</td></tr></table>",
+        )
+        out = tmp_path / "test.xlsx"
+        assert ExportService.export(result, out, "xlsx")
+
+        from openpyxl import load_workbook
+
+        wb = load_workbook(str(out))
+        # content_list 的表已写入；html_text 的表与 content_list 去重后不应重复
+        table_sheets = [n for n in wb.sheetnames if n.startswith("表格 ")]
+        assert len(table_sheets) == 1
+        ws = wb[table_sheets[0]]
+        assert ws.cell(1, 1).value == "CL"
+        assert ws.cell(1, 1).value != "HTMLTEXT"
+
+    def test_xlsx_raw_text_html_tags_stripped(self, tmp_path):
+        """raw_text 含裸 <td> 标签 → 标签不进单元格文字。
+
+        表格管道的 raw_text = "\\n".join(b.text)，而 table 块 text 是裸 HTML。
+        兜底应把这些 <table> 识别为表格工作表，单元格文字里不含标签。
+        """
+        result = _make_ocr_result(
+            content_list=[],
+            raw_text="<table><tr><td>oops</td></tr></table>",
+        )
+        out = tmp_path / "test.xlsx"
+        assert ExportService.export(result, out, "xlsx")
+
+        from openpyxl import load_workbook
+
+        wb = load_workbook(str(out))
+        # 裸 <table> 应被识别为表格工作表（不进文本汇总）
+        assert "表格 1" in wb.sheetnames
+        # 汇总所有工作表单元格文字，均不应残留 HTML 标签
+        values = [
+            str(cell.value or "")
+            for sheet in wb.worksheets
+            for row in sheet.iter_rows()
+            for cell in row
+            if cell.value
+        ]
+        for v in values:
+            assert "<" not in v and ">" not in v, f"文本含 HTML 标签: {v!r}"
+        # 表格内容应保留
+        assert "oops" in values
+
+
 # --- 同名文件自动重命名 ---
 
 

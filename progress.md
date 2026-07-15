@@ -1,44 +1,25 @@
-# Progress Log — DUAL_UI_IMPLEMENTATION_PLAN.md
+# 进度日志：WinUI 开发启动与核心界面
 
 ## 2026-07-15
 
-- 从本地 `main@590f92e` 创建 `codex/dual-ui-completion`，恢复既有 Phase 0–3 上下文并完成差距审计。
-- 补齐 Python typed client：OCR 导出、PDF、settings、批量、取消、资源释放与同步包装。
-- 建立 PySide 进程级唯一 BackendSession；单图、二维码、批量、PDF 共享一个 WorkerHost。
-- 把 pipeline/MinerU/frontend 元数据迁移到纯 contracts；UI→backend import 从 53→39→8→0，删除 allowlist。
-- 为 PDF 新增 `pdf.command` Python/C#/schema/golden 契约；Qt session manager/workers 移入 `vibeocr.pyside`。
-- 修复生产 dispatcher 方法漏注册、Named Pipe overlapped I/O 死锁和 WorkerHost stdout/stderr 回压。
-- 用 WorkerHost 内 `InProcessPdfBackendClient` 替换嵌套 FastAPI 子进程；真实 PDF open/model/load/close 通过。
-- 修复 pytest 结束阶段共享 WorkerHost 未及时关闭；PDF manager 39 passed 且正常退出。
-- 建立显式 backend wheel allowlist、构建器、AST verifier、PySide/WinUI artifact binder/verifier 与 product manifest。
-- 建立 contracts/backend/pyside/winui CI；release 改为单 backend wheel 扇出 Classic/Next 两个 ZIP。
-- 建立四个 uv workspace 项目并重新生成 `uv.lock`；移除 backend PDF 模型/服务中的 Qt 类型。
-- 更新 README、正式实施计划状态和 `docs/releases/dual-ui-release-checklist.md`。
-
-## 完成状态
-
-- 最终 Ruff、全量 pytest、backend wheel/verifier、PySide artifact 绑定冒烟与 Git diff 门禁均已通过。
-- 构建 shell 锁已补齐 FastAPI、PyMuPDF、pytest-qt、uvicorn；`uv lock --check` 通过。
-- 工作分支已提交并以 `--no-ff` 合并到 `main`；Gitee 推送在 Git 收尾步骤执行。
-
-## 验证记录
-
-| 检查 | 结果 |
-|---|---|
-| `tests/architecture tests/contracts tests/worker_host tests/client tests/release_layout` | 327 passed |
-| `tests/managers/test_pdf_session_manager.py` | 39 passed |
-| 真实 WorkerHost settings snapshot | passed |
-| 真实 WorkerHost PDF open/model/load/close | passed |
-| targeted Ruff（client/contracts/pyside/worker_host/scripts） | passed |
-| `ruff check src tests scripts` | passed |
-| 全量 pytest | 2758 passed, 10 skipped, 1 warning（ccache 缺失提示） |
-| 最终 backend wheel | 99 files；SHA-256 `64953c07627f9cc5582d79c86db12f2e5d0e8200bed4f44679ccd2d41ab34206` |
-| PySide artifact binder/verifier smoke | passed |
-| uv workspace lock | `uv lock` 成功，新增 4 个 workspace package |
-| `uv lock --check` / `git diff --check` | passed |
-| .NET 10.0.301 | 本机无 SDK；由 CI required gate 执行 |
-
-## 提交与合并
-
-- 实现提交：`e7fe825 feat: complete dual frontend WorkerHost migration`。
-- 合并提交：`c2a80a2 merge: complete dual frontend WorkerHost migration`。
+- 读取并启用 `planning-with-files` 与 `frontend-design` 技能。
+- 使用捆绑 Python 完成上一会话检查；旧任务已经结束，本轮已重新建立规划文件。
+- 记录并保留工作区中两个既有 `packages.lock.json` 改动。
+- 当前正在进行阶段 A：启动链路与双前端差异审计。
+- 完成首轮文件与关键字扫描：锁定 WinUI 启动、Worker 监督器、识别页和 PySide 对照范围。
+- 读取 WinUI 启动链路与 PySide 单次识别入口；确认 WinUI 目前先显示窗口后异步连后端，且前置依赖失败会完全跳过 Worker 启动。
+- 确认开发启动根因：默认 profile 为 production，且没有自动注入仓库根目录；源码运行因此解析不到 `.venv` 和 WorkerHost 源码。
+- 审阅现有测试与识别 ViewModel；确定启动修复需要新增仓库自动发现/开发构建默认值测试，页面重构可复用现有业务能力。
+- 进一步确认截图入口只抓整个虚拟桌面，且现有 Web 工作台具备图片预览能力但 C# 未接通；阶段 A 完成，进入启动链路修复。
+- 已实现启动链路第一版：Debug 默认开发 profile、自动向上发现仓库、Worker 启动只受 Python 运行时门槛约束，并补测试。
+- 尝试运行 .NET 定向测试失败：本机未安装 SDK（`global.json` 要求 10.0.302）。
+- 审计 Web bridge 后确定不能用 base64 消息传大图；下一步采用受控同源内存资源将当前输入送入现有 Web 工作台。
+- 已重构单次识别页：移除无效占位控件与重复双栏，明确主输入动作/状态/结果菜单，并将 Web 工作台改为紧凑、明暗主题自适应布局。
+- 已接通输入图片的同源内存预览，并新增原生区域截图遮罩（隐藏主窗、冻结全桌面、拖动框选、Esc 取消、从冻结帧裁剪）。
+- 验证 Web 资产 14 项测试通过，核心 XAML XML 解析通过；开始审计其余页面的低风险一致性收敛点。
+- 完成其余页面审计：确认空白首页、过小默认窗口和大量禁用占位控件共同造成整体杂乱；决定本轮做低风险壳层收敛，完整功能对齐另列清单。
+- 已移除空白主页，应用首屏直接进入单次识别；默认窗口改为 1180×760、最小 900×600；并用 Microsoft 官方文档核验区域遮罩所用窗口 API。
+- 完成全量 XAML XML、diff whitespace 和关键引用扫描；无尾随空白/残留旧主页引用。
+- 仓库 `.venv` 下 WorkerHost `--self-test` 通过，确认开发后端本体可加载；阶段 C/D 完成，进入最终验证。
+- 最终验证：Web 资产 14/14 通过；WorkerHost self-test 通过；核心 XAML XML 解析通过；`git diff --check` 通过。
+- 唯一未完成的运行级验证是 .NET 编译与真实 WinUI 操作，因为本机没有任何 .NET SDK（项目固定 10.0.302）。

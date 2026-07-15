@@ -73,8 +73,8 @@ public sealed record PortableLayout(
     {
         if (layout.Profile == "winui-dev")
         {
-            string? repository = Environment.GetEnvironmentVariable(RepositoryRootVariable);
-            if (!string.IsNullOrWhiteSpace(repository))
+            string? repository = FindRepositoryRoot(layout.InstallRoot);
+            if (repository is not null)
             {
                 string venvPython = Path.Combine(repository, ".venv", "Scripts", "python.exe");
                 if (File.Exists(venvPython))
@@ -86,4 +86,50 @@ public sealed record PortableLayout(
 
         return Path.Combine(layout.RuntimeRoot, "python.exe");
     }
+
+    /// <summary>
+    /// Locate a source checkout for a development run.
+    /// </summary>
+    /// <remarks>
+    /// An explicit <see cref="RepositoryRootVariable"/> always wins.  When it
+    /// is not set, walk upwards from the supplied WinUI output directory.
+    /// Visual Studio and <c>dotnet run</c> normally launch
+    /// from <c>bin/&lt;Configuration&gt;/...</c>, so requiring every developer to
+    /// maintain a machine-wide environment variable made the default debug
+    /// experience silently fall back to the packaged production layout.
+    /// </remarks>
+    public static string? FindRepositoryRoot(params string?[] seeds)
+    {
+        string? configured = Environment.GetEnvironmentVariable(RepositoryRootVariable);
+        if (!string.IsNullOrWhiteSpace(configured))
+        {
+            string candidate = Path.GetFullPath(configured);
+            if (IsRepositoryRoot(candidate))
+            {
+                return candidate;
+            }
+        }
+
+        foreach (string? seed in seeds.Where(value => !string.IsNullOrWhiteSpace(value)))
+        {
+            string fullPath = Path.GetFullPath(seed!);
+            var directory = new DirectoryInfo(
+                File.Exists(fullPath) ? Path.GetDirectoryName(fullPath)! : fullPath);
+            while (directory is not null)
+            {
+                if (IsRepositoryRoot(directory.FullName))
+                {
+                    return directory.FullName;
+                }
+
+                directory = directory.Parent;
+            }
+        }
+
+        return null;
+    }
+
+    private static bool IsRepositoryRoot(string path) =>
+        File.Exists(Path.Combine(path, "pyproject.toml")) &&
+        Directory.Exists(Path.Combine(path, "src", "vibeocr", "worker_host"));
 }

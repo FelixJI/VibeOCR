@@ -2,73 +2,130 @@
     x:Class="VibeOCR.App.Views.RecognitionPage"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-    AllowDrop="True" DragOver="OnDragOver" Drop="OnDrop">
-    <Grid ColumnSpacing="8" Padding="8">
-        <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="400*" MinWidth="300" />
-            <ColumnDefinition Width="500*" />
-        </Grid.ColumnDefinitions>
+    AllowDrop="True"
+    DragOver="OnDragOver"
+    Drop="OnDrop">
+    <Grid Padding="24,20,24,24" RowSpacing="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
 
-        <!-- 左栏：操作栏 + 预览 -->
-        <Grid Grid.Column="0" RowSpacing="4">
-            <Grid.RowDefinitions>
-                <RowDefinition Height="Auto" />
-                <RowDefinition Height="*" />
-            </Grid.RowDefinitions>
-            <StackPanel Orientation="Horizontal" Spacing="4">
-                <Button Click="OnFileClicked" Content="选择文件" />
-                <Button Click="OnClipboardClicked" Content="粘贴" />
-                <Button Click="OnScreenshotClicked" Content="截图" />
-                <ProgressRing Width="20" Height="20" IsActive="{x:Bind ViewModel.IsBusy, Mode=OneWay}" />
-                <Button Click="OnCancelClicked" Content="取消" />
+        <Grid ColumnSpacing="24">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <StackPanel Spacing="3">
+                <TextBlock FontSize="28" FontWeight="SemiBold" Text="单次识别" />
+                <TextBlock
+                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                    Text="截图、粘贴或拖入图片，在同一个工作台完成检查与复制。" />
             </StackPanel>
-            <Border Grid.Row="1" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" CornerRadius="8">
-                <WebView2 x:Name="PreviewWebView" />
-            </Border>
+            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                <Button Click="OnFileClicked">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <FontIcon FontSize="16" Glyph="&#xE8E5;" />
+                        <TextBlock Text="选择图片" />
+                    </StackPanel>
+                </Button>
+                <Button Click="OnClipboardClicked">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <FontIcon FontSize="16" Glyph="&#xE77F;" />
+                        <TextBlock Text="从剪贴板" />
+                    </StackPanel>
+                </Button>
+                <Button Click="OnScreenshotClicked" Style="{StaticResource AccentButtonStyle}">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <FontIcon FontSize="16" Glyph="&#xE7C8;" />
+                        <TextBlock Text="截图识别" />
+                    </StackPanel>
+                </Button>
+            </StackPanel>
         </Grid>
 
-        <!-- 右栏：预处理/文本块占位 + 状态 + 结果 -->
-        <Grid Grid.Column="1" MinWidth="300" RowSpacing="6">
-            <Grid.RowDefinitions>
-                <RowDefinition Height="Auto" />
-                <RowDefinition Height="Auto" />
-                <RowDefinition Height="Auto" />
-                <RowDefinition Height="*" />
-            </Grid.RowDefinitions>
-            <Expander IsExpanded="False" IsEnabled="False" Header="预处理选项">
-                <TextBlock Opacity="0.6" Text="功能开发中" />
-            </Expander>
-            <Expander Grid.Row="1" IsExpanded="False" IsEnabled="False" Header="文本块处理">
-                <TextBlock Opacity="0.6" Text="功能开发中" />
-            </Expander>
-            <Border Grid.Row="2" Padding="12" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" CornerRadius="8">
-                <StackPanel Orientation="Horizontal" Spacing="24">
-                    <TextBlock Text="{x:Bind ViewModel.Status, Mode=OneWay}" />
-                    <TextBlock x:Name="PreviewBridgeStatus" Text="Web 预览正在加载" />
-                </StackPanel>
-            </Border>
-            <Border Grid.Row="3" Padding="8" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" CornerRadius="8">
-                <Grid RowSpacing="8">
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="*" />
-                    </Grid.RowDefinitions>
-                    <StackPanel Orientation="Horizontal" Spacing="4">
-                        <Button Click="OnCopyRichClicked" Content="复制富文本" />
-                        <Button Click="OnCopyMarkdownClicked" Content="复制 Markdown" />
-                        <Button Click="OnCopyPlainClicked" Content="复制纯文本" />
+        <Border
+            Grid.Row="1"
+            Padding="12,9"
+            Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+            BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+            BorderThickness="1"
+            CornerRadius="8">
+            <Grid ColumnSpacing="12">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <ProgressRing Width="18" Height="18" IsActive="{x:Bind ViewModel.IsBusy, Mode=OneWay}" />
+                <TextBlock
+                    Grid.Column="1"
+                    VerticalAlignment="Center"
+                    FontWeight="SemiBold"
+                    Text="{x:Bind ViewModel.Status, Mode=OneWay}" />
+                <Button
+                    Grid.Column="2"
+                    Click="OnCancelClicked"
+                    Content="取消"
+                    IsEnabled="{x:Bind ViewModel.IsBusy, Mode=OneWay}" />
+                <Button Grid.Column="3" Content="结果操作" IsEnabled="{x:Bind ViewModel.HasResult, Mode=OneWay}">
+                    <Button.Flyout>
+                        <MenuFlyout Placement="BottomEdgeAlignedRight">
+                            <MenuFlyoutItem Click="OnCopyPlainClicked" Text="复制纯文本" />
+                            <MenuFlyoutItem Click="OnCopyMarkdownClicked" Text="复制 Markdown" />
+                            <MenuFlyoutItem Click="OnCopyRichClicked" Text="复制富文本" />
+                            <MenuFlyoutSeparator />
+                            <MenuFlyoutItem Click="OnExportTextClicked" Text="导出文本" />
+                            <MenuFlyoutItem Click="OnExportMarkdownClicked" Text="导出 Markdown" />
+                            <MenuFlyoutItem Click="OnExportHtmlClicked" Text="导出 HTML" />
+                        </MenuFlyout>
+                    </Button.Flyout>
+                </Button>
+            </Grid>
+        </Border>
+
+        <Border
+            Grid.Row="2"
+            MinHeight="420"
+            Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+            BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+            BorderThickness="1"
+            CornerRadius="10">
+            <Grid>
+                <WebView2 x:Name="PreviewWebView" DefaultBackgroundColor="Transparent" />
+                <Border
+                    x:Name="PreviewErrorPanel"
+                    Margin="24"
+                    Padding="16"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Center"
+                    Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
+                    CornerRadius="8"
+                    Visibility="Collapsed">
+                    <StackPanel Spacing="4">
+                        <TextBlock FontWeight="SemiBold" Text="预览暂不可用" />
+                        <TextBlock x:Name="PreviewError" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                     </StackPanel>
-                    <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="4">
-                        <Button Click="OnExportHtmlClicked" Content="导出 HTML" />
-                        <Button Click="OnExportMarkdownClicked" Content="导出 Markdown" />
-                        <Button Click="OnExportTextClicked" Content="导出文本" />
-                    </StackPanel>
-                    <Border Grid.Row="2" x:Name="PreviewErrorPanel" Background="Transparent" Visibility="Collapsed">
-                        <TextBlock x:Name="PreviewError" Text="预览资源未就绪" />
-                    </Border>
-                </Grid>
-            </Border>
+                </Border>
+            </Grid>
+        </Border>
+
+        <Grid Grid.Row="3" ColumnSpacing="12">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <TextBlock
+                Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                Text="也可以把 PNG、JPG、BMP 或 WebP 图片直接拖到此页。" />
+            <TextBlock
+                x:Name="PreviewBridgeStatus"
+                Grid.Column="1"
+                Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                Text="正在准备预览" />
         </Grid>
     </Grid>
 </Page>

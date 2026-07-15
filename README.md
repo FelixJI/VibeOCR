@@ -116,6 +116,26 @@ VibeOCR 采用**双前端并存**架构，两套 UI 各自独占一个 WorkerHos
 - Windows 10/11（64 位）
 - Python **3.13**（仅支持 3.13，见 `pyproject.toml`）
 - [uv](https://docs.astral.sh/uv/)（推荐）或 pip
+- .NET SDK **10.0.302**（构建 WinUI 前端，见 `global.json`）
+
+> ⚠️ **dotnet 路径陷阱**：若系统同时装了 x86 与 x64 .NET，PATH 里的 `dotnet` 可能解析到
+> `C:\Program Files (x86)\dotnet\dotnet.exe`（仅有运行时、**无 SDK**），导致
+> `A compatible .NET SDK was not found` / `Requested SDK version: 10.0.302`。
+> 验证：`dotnet --list-sdks` 应能看到 `10.0.302`；若为空，说明解析到了 x86 副本。
+> 修复：把 `C:\Program Files\dotnet\` 移到 PATH 中 x86 目录**之前**，或在 shell 里：
+>
+> ```powershell
+> # PowerShell：优先使用 x64 dotnet（仅当前会话）
+> $env:PATH = "$env:ProgramFiles\dotnet;$env:PATH"
+> dotnet --list-sdks   # 应列出 10.0.302
+> ```
+>
+> ```bash
+> # Git Bash：优先使用 x64 dotnet（仅当前会话）
+> export PATH="/c/Program Files/dotnet:$PATH"
+> ```
+>
+> 仓库内 `scripts/*.ps1` 已硬编码 `$env:ProgramFiles\dotnet\dotnet.exe`，不受此影响。
 
 ### 安装依赖
 
@@ -170,6 +190,25 @@ uv run pytest tests/views/tabs
 uv run pytest tests/services/test_pdf_service.py
 uv run pytest tests/services/test_pdf_service.py::test_add_text_layer
 ```
+
+### 构建 / 测试 WinUI（.NET）前端
+
+WinUI 前端位于 `src/dotnet/`，解决方案文件为 `src/dotnet/VibeOCR.slnx`（7 个项目：
+`Contracts` / `Platform` / `App`(WinUI) / `Bootstrapper` + 3 个测试项目）。确保先用上面的
+dotnet 路径陷阱说明修正 `dotnet` 解析，然后：
+
+```bash
+# 还原 + 构建整个解决方案（Debug）
+dotnet build src/dotnet/VibeOCR.slnx
+
+# 跑 .NET 测试（xUnit）
+dotnet test src/dotnet/VibeOCR.slnx --no-build
+
+# 打包 Release 便携版（硬编码 x64 dotnet，无需手动改 PATH）
+pwsh scripts/build_winui_release.ps1 -Version 0.4.10
+```
+
+> 也可单独构建：`dotnet build src/dotnet/VibeOCR.App/VibeOCR.App.csproj`
 
 ## 项目结构
 

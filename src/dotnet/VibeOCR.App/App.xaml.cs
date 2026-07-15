@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
@@ -80,6 +81,8 @@ public sealed partial class App : Application
         }
         string executable = Environment.ProcessPath ?? AppContext.BaseDirectory;
         PortableLayout layout = PortableLayout.Resolve(executable, options.Profile);
+        AppLog.Initialize(Path.Combine(layout.DataRoot, "logs"));
+        AppLog.Info($"OnLaunched: profile={options.Profile} shellOnly={options.ShellOnly}");
         if (layout.Profile == "production" && File.Exists(layout.ConfigFile))
         {
             MigrationResult migration = ProfileMigrationClient.MigrateConfig(layout.ConfigFile);
@@ -145,9 +148,24 @@ public sealed partial class App : Application
         InitializeDesktopShell(layout);
         RecordMilestone(diagnostics, "T2", _startup.Elapsed);
 
-        _workerGateway.ConfigureRecovery(
-            cancellationToken => RestartWorkerAsync(layout, diagnostics, cancellationToken));
-        _ = ConnectWorkerAfterFirstWindowAsync(layout, diagnostics);
+        // --shell-only: run the UI shell without launching the WorkerHost. Useful
+        // for inspecting layout / XAML without paying the dev cold-import cost.
+        // Without args the default is to bring the backend up automatically.
+        if (options.ShellOnly)
+        {
+            diagnostics.UpdateWorker(new WorkerHealth(
+                WorkerHealthState.NotReady,
+                null,
+                null,
+                "外壳模式：未拉起后端（--shell-only）。"));
+            RecordMilestone(diagnostics, "T6", _startup.Elapsed);
+        }
+        else
+        {
+            _workerGateway.ConfigureRecovery(
+                cancellationToken => RestartWorkerAsync(layout, diagnostics, cancellationToken));
+            _ = ConnectWorkerAfterFirstWindowAsync(layout, diagnostics);
+        }
 
         // Perf-gate smoke mode: exit shortly after first window so cold-start
         // timing can be measured without the worker handshake. Production runs
@@ -270,13 +288,14 @@ public sealed partial class App : Application
         bool recoverySucceeded = !crashRequested;
         diagnostics.UpdateWorker(new WorkerHealth(WorkerHealthState.Connecting, null, null, null));
         RecordMilestone(diagnostics, "T3", _startup.Elapsed);
-        if (!diagnostics.Prerequisites.All(item => item.IsInstalled))
+        if (!CanStartWorker(diagnostics.Prerequisites))
         {
+            AppLog.Warn("Worker not started: Python runtime prerequisite not detected.");
             diagnostics.UpdateWorker(new WorkerHealth(
                 WorkerHealthState.NotReady,
                 null,
                 null,
-                "One or more prerequisites require repair."));
+                "Python 运行时未就绪，无法启动 WorkerHost。"));
             return;
         }
 
@@ -293,6 +312,7 @@ public sealed partial class App : Application
                 RecordMilestone(diagnostics, "T5", _startup.Elapsed);
                 _workerGateway.Attach(client);
                 diagnostics.UpdateWorker(ReadyHealth(handshake));
+                AppLog.Info($"Worker ready: version={handshake.WorkerVersion} protocol=v{handshake.ProtocolVersion}");
                 RecordMilestone(diagnostics, "T6", _startup.Elapsed);
                 WriteHealthSignal();
                 _ = UpdateArtifactCleaner.CleanupAsync(
@@ -313,6 +333,7 @@ public sealed partial class App : Application
             }
             catch (Exception error)
             {
+                AppLog.Error("Worker connection failed", error);
                 WriteSoakResult(crashRequested, recovered: false, error: error.Message);
                 diagnostics.UpdateWorker(new WorkerHealth(
                     WorkerHealthState.Faulted,
@@ -477,25 +498,80 @@ public sealed partial class App : Application
             startInfo.ArgumentList.Add("--parent-pid");
             startInfo.ArgumentList.Add(Environment.ProcessId.ToString());
             string workerRoot = ResolveWorkerRoot(layout);
-            string? existingPythonPath = startInfo.Environment["PYTHONPATH"];
+            // Use TryGetValue: ProcessStartInfo.Environment indexer throws
+            // KeyNotFoundException for missing keys, which would abort worker
+            // launch before Process.Start is ever reached.
+            startInfo.Environment.TryGetValue("PYTHONPATH", out string? existingPythonPath);
             startInfo.Environment["PYTHONPATH"] = string.IsNullOrWhiteSpace(existingPythonPath)
                 ? workerRoot
                 : workerRoot + Path.PathSeparator + existingPythonPath;
+            // Force unbuffered stdout/stderr so the worker.ready line (and any
+            // import-time errors) reach this process immediately instead of
+            // sitting in Python's internal buffer behind non-flushed print()s.
+            startInfo.Environment["PYTHONUNBUFFERED"] = "1";
+            startInfo.Environment["PYTHONIOENCODING"] = "utf-8";
             process = Process.Start(startInfo)
                 ?? throw new InvalidOperationException("Failed to start WorkerHost.");
-            _ = process.StandardError.ReadToEndAsync(cancellationToken);
+            AppLog.Info($"Worker launched: PID={process.Id} pipe={pipeName}");
+            // Stream stderr line-by-line to the dev log so Python tracebacks and
+            // logging output are visible in real time. The accumulated text is kept
+            // so it can still be appended to a fault message on failure.
+            StringBuilder stderrAccumulator = new();
+            Task stderrTask = Task.Run(async () =>
+            {
+                try
+                {
+                    while (await process.StandardError.ReadLineAsync(cancellationToken) is { } errLine)
+                    {
+                        stderrAccumulator.AppendLine(errLine);
+                        AppLog.Info($"[worker] {errLine}");
+                    }
+                }
+                catch (OperationCanceledException) { }
+                catch (InvalidOperationException) { /* stream closed */ }
+            }, cancellationToken);
 
+            // The worker prints worker.ready only AFTER importing PaddlePaddle /
+            // PyTorch / PyMuPDF inside WorkerServiceComposition. Under winui-dev the
+            // repository .venv pays this cold-import cost on the first launch, which
+            // routinely exceeds the previous 10s budget and surfaced as a silent
+            // "not connected" fault. Give dev a far more generous budget; production
+            // keeps the tight bound because the packaged layout is warm-imported.
+            TimeSpan readinessBudget = layout.Profile == "winui-dev"
+                ? TimeSpan.FromSeconds(90)
+                : TimeSpan.FromSeconds(10);
             using var readinessTimeout = CancellationTokenSource.CreateLinkedTokenSource(
                 cancellationToken);
-            readinessTimeout.CancelAfter(TimeSpan.FromSeconds(10));
-            string? readyLine = await ReadReadyLineAsync(
-                process.StandardOutput,
-                readinessTimeout.Token);
+            readinessTimeout.CancelAfter(readinessBudget);
+            string? readyLine;
+            try
+            {
+                readyLine = await ReadReadyLineAsync(
+                    process.StandardOutput,
+                    readinessTimeout.Token);
+            }
+            catch (OperationCanceledException) when (readinessTimeout.IsCancellationRequested)
+            {
+                throw new InvalidDataException(
+                    $"WorkerHost did not publish worker.ready within {(int)readinessBudget.TotalSeconds}s. "
+                    + $"stderr: {await SafeReadAsync(stderrAccumulator)}");
+            }
+
+            if (process.HasExited && string.IsNullOrEmpty(readyLine))
+            {
+                throw new InvalidDataException(
+                    $"WorkerHost exited (code {process.ExitCode}) before publishing worker.ready. "
+                    + $"stderr: {await SafeReadAsync(stderrAccumulator)}");
+            }
+
             using JsonDocument ready = JsonDocument.Parse(
-                readyLine ?? throw new InvalidDataException("WorkerHost did not publish worker.ready."));
+                readyLine ?? throw new InvalidDataException(
+                    $"WorkerHost produced no ready output. stderr: {await SafeReadAsync(stderrAccumulator)}"));
             if (ready.RootElement.GetProperty("event").GetString() != "worker.ready")
             {
-                throw new InvalidDataException("WorkerHost published an invalid ready event.");
+                throw new InvalidDataException(
+                    $"WorkerHost published an invalid ready event: {readyLine}. "
+                    + $"stderr: {await SafeReadAsync(stderrAccumulator)}");
             }
 
             client = await WorkerHostClient.ConnectAsync(
@@ -539,6 +615,13 @@ public sealed partial class App : Application
         }
     }
 
+    /// <summary>
+    /// Returns the stderr accumulated so far by the background relay task,
+    /// without blocking the fault path.
+    /// </summary>
+    private static Task<string> SafeReadAsync(StringBuilder accumulator) =>
+        Task.FromResult(accumulator.Length == 0 ? "(empty)" : accumulator.ToString());
+
     public static string ResolveWorkerRoot(PortableLayout layout)
     {
         string packaged = Path.Combine(layout.InstallRoot, "worker");
@@ -549,8 +632,8 @@ public sealed partial class App : Application
 
         if (layout.Profile == "winui-dev")
         {
-            string? repository = Environment.GetEnvironmentVariable("VIBEOCR_REPOSITORY_ROOT");
-            if (!string.IsNullOrWhiteSpace(repository))
+            string? repository = PortableLayout.FindRepositoryRoot(layout.InstallRoot);
+            if (repository is not null)
             {
                 string source = Path.Combine(repository, "src");
                 if (Directory.Exists(Path.Combine(source, "vibeocr", "worker_host")))
@@ -563,6 +646,10 @@ public sealed partial class App : Application
         throw new DirectoryNotFoundException(
             $"WorkerHost package is missing under {packaged}.");
     }
+
+    public static bool CanStartWorker(IEnumerable<PrerequisiteStatus> prerequisites) =>
+        prerequisites.Any(item =>
+            item.Kind == PrerequisiteKind.PythonRuntime && item.IsInstalled);
 
     private async Task StopWorkerAsync()
     {
@@ -665,12 +752,13 @@ public sealed partial class App : Application
     }
 }
 
-public sealed record AppLaunchOptions(string Profile, string? HealthFile)
+public sealed record AppLaunchOptions(string Profile, string? HealthFile, bool ShellOnly)
 {
     public static AppLaunchOptions Parse(IReadOnlyList<string> args)
     {
-        string profile = "production";
+        string profile = AppBuildDefaults.Profile;
         string? healthFile = null;
+        bool shellOnly = false;
         for (int index = 0; index < args.Count; index++)
         {
             if (string.Equals(args[index], "--profile", StringComparison.Ordinal))
@@ -689,6 +777,10 @@ public sealed record AppLaunchOptions(string Profile, string? HealthFile)
                 }
                 healthFile = Path.GetFullPath(args[++index]);
             }
+            else if (string.Equals(args[index], "--shell-only", StringComparison.Ordinal))
+            {
+                shellOnly = true;
+            }
         }
 
         if (profile is not ("production" or "winui-dev"))
@@ -696,8 +788,17 @@ public sealed record AppLaunchOptions(string Profile, string? HealthFile)
             throw new ArgumentException($"Unsupported profile: {profile}.", nameof(args));
         }
 
-        return new AppLaunchOptions(profile, healthFile);
+        return new AppLaunchOptions(profile, healthFile, shellOnly);
     }
+}
+
+public static class AppBuildDefaults
+{
+#if DEBUG
+    public const string Profile = "winui-dev";
+#else
+    public const string Profile = "production";
+#endif
 }
 
 public static class ShellNavigation

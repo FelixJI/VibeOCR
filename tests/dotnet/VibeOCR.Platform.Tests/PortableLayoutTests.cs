@@ -70,6 +70,7 @@ public sealed class PortableLayoutTests
         // VIBEOCR_REPOSITORY_ROOT at it — the dev interpreter must win over the
         // packaged layout (matching how ResolveWorkerRoot picks up the repo).
         string repo = Path.Combine(Path.GetTempPath(), $"vibeocr-repo-{Guid.NewGuid():N}");
+        CreateFakeRepository(repo);
         Directory.CreateDirectory(Path.Combine(repo, ".venv", "Scripts"));
         string venvExe = Path.Combine(repo, ".venv", "Scripts", "python.exe");
         File.WriteAllText(venvExe, "fake");
@@ -85,7 +86,7 @@ public sealed class PortableLayoutTests
     {
         // REPOSITORY_ROOT set but no .venv — must not throw, returns packaged path.
         string repo = Path.Combine(Path.GetTempPath(), $"vibeocr-novenv-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(repo);
+        CreateFakeRepository(repo);
         PortableLayout layout = PortableLayout.Resolve(repo, "winui-dev");
         using var _ = WithEnvironment(PortableLayout.RepositoryRootVariable, repo);
 
@@ -103,6 +104,45 @@ public sealed class PortableLayoutTests
         Assert.Equal(
             Path.Combine(layout.RuntimeRoot, "python.exe"),
             PortableLayout.ResolvePythonExecutable(layout));
+    }
+
+    [Fact]
+    public void WinUiDevFindsRepositoryByWalkingUpFromBuildOutput()
+    {
+        string repo = Path.Combine(Path.GetTempPath(), $"vibeocr-discovery-{Guid.NewGuid():N}");
+        string output = Path.Combine(repo, "src", "dotnet", "VibeOCR.App", "bin", "Debug", "net10.0-windows10.0.19041.0");
+        string worker = Path.Combine(repo, "src", "vibeocr", "worker_host");
+        string interpreter = Path.Combine(repo, ".venv", "Scripts", "python.exe");
+        Directory.CreateDirectory(output);
+        Directory.CreateDirectory(worker);
+        Directory.CreateDirectory(Path.GetDirectoryName(interpreter)!);
+        File.WriteAllText(Path.Combine(repo, "pyproject.toml"), "[project]");
+        File.WriteAllText(interpreter, "fake");
+
+        try
+        {
+            using var _ = WithEnvironment(PortableLayout.RepositoryRootVariable, null);
+            PortableLayout layout = PortableLayout.Resolve(output, "winui-dev");
+
+            Assert.Equal(repo, PortableLayout.FindRepositoryRoot(output));
+            Assert.Equal(interpreter, PortableLayout.ResolvePythonExecutable(layout));
+        }
+        finally
+        {
+            Directory.Delete(repo, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// Materialize the minimum marker files <see cref="PortableLayout.IsRepositoryRoot"/>
+    /// requires (a <c>pyproject.toml</c> and <c>src/vibeocr/worker_host/</c>) so a fake
+    /// repository is recognized as a real checkout by the resolver.
+    /// </summary>
+    private static void CreateFakeRepository(string repo)
+    {
+        Directory.CreateDirectory(repo);
+        File.WriteAllText(Path.Combine(repo, "pyproject.toml"), "[project]");
+        Directory.CreateDirectory(Path.Combine(repo, "src", "vibeocr", "worker_host"));
     }
 
     /// <summary>Set an environment variable for the duration of a test, restoring the prior value on dispose.</summary>

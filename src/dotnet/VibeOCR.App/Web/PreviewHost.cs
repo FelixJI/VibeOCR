@@ -10,6 +10,9 @@ public sealed class PreviewHost : IDisposable
     public static readonly Uri StartUri = new($"https://{VirtualHost}/index.html");
     private readonly WebMessageRouter _router;
     private CoreWebView2? _core;
+    private string? _assetFolder;
+    private string? _previewImageFileName;
+    private string? _previewImageFilePath;
 
     public PreviewHost(WebMessageRouter router)
     {
@@ -37,6 +40,7 @@ public sealed class PreviewHost : IDisposable
         }
 
         string assets = Path.GetFullPath(assetFolder);
+        _assetFolder = assets;
         string applicationRoot = Path.GetFullPath(AppContext.BaseDirectory);
         if (!assets.StartsWith(applicationRoot, StringComparison.OrdinalIgnoreCase) ||
             !Directory.Exists(assets))
@@ -78,6 +82,38 @@ public sealed class PreviewHost : IDisposable
     {
         CoreWebView2 core = _core ?? throw new InvalidOperationException("Preview host is not initialized.");
         return _router.RequestAsync(type, payload, core.PostWebMessageAsJson, cancellationToken);
+    }
+
+    public async Task<Uri> SetPreviewImageAsync(
+        byte[] data,
+        string contentType,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(data);
+        ArgumentException.ThrowIfNullOrWhiteSpace(contentType);
+        if (!contentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidDataException("Preview content must be an image.");
+        }
+
+        // Write the image to a temp file under the virtual-host asset folder so
+        // the <img> element can load it via the normal folder mapping. The
+        // previous WebResourceRequested interception approach did not fire for
+        // <img> resource loads, producing a broken-image icon.
+        string extension = contentType.ToLowerInvariant() switch
+        {
+            "image/png" => ".png",
+            "image/jpeg" => ".jpg",
+            "image/bmp" => ".bmp",
+            "image/webp" => ".webp",
+            "image/gif" => ".gif",
+            _ => ".png",
+        };
+        _previewImageFileName = $"preview-{Guid.NewGuid():N}{extension}";
+        _previewImageFilePath = Path.Combine(_assetFolder!, "input", _previewImageFileName);
+        Directory.CreateDirectory(Path.GetDirectoryName(_previewImageFilePath)!);
+        await File.WriteAllBytesAsync(_previewImageFilePath, data, cancellationToken);
+        return new Uri($"https://{VirtualHost}/input/{_previewImageFileName}");
     }
 
     private static void OnNavigationStarting(
@@ -132,14 +168,18 @@ public sealed class PreviewHost : IDisposable
         }
     }
 
-    private static void OnWebResourceRequested(
+    private void OnWebResourceRequested(
         CoreWebView2 sender,
         CoreWebView2WebResourceRequestedEventArgs args)
     {
-        if (Uri.TryCreate(args.Request.Uri, UriKind.Absolute, out Uri? uri) &&
-            IsNavigationAllowed(uri))
+        if (Uri.TryCreate(args.Request.Uri, UriKind.Absolute, out Uri? uri))
         {
-            return;
+            // Preview images are now served as files under the virtual host's
+            // folder mapping, so they do not need interception here.
+            if (IsNavigationAllowed(uri))
+            {
+                return;
+            }
         }
 
         args.Response = sender.Environment.CreateWebResourceResponse(
@@ -152,19 +192,24 @@ public sealed class PreviewHost : IDisposable
     public void Dispose()
     {
         CoreWebView2? core = Interlocked.Exchange(ref _core, null);
-        if (core is null)
+        if (core is not null)
         {
-            return;
+            core.NavigationStarting -= OnNavigationStarting;
+            core.NavigationCompleted -= OnNavigationCompleted;
+            core.DOMContentLoaded -= OnDomContentLoaded;
+            core.NewWindowRequested -= OnNewWindowRequested;
+            core.PermissionRequested -= OnPermissionRequested;
+            core.DownloadStarting -= OnDownloadStarting;
+            core.WebMessageReceived -= OnWebMessageReceived;
+            core.WebResourceRequested -= OnWebResourceRequested;
+            core.ClearVirtualHostNameToFolderMapping(VirtualHost);
         }
 
-        core.NavigationStarting -= OnNavigationStarting;
-        core.NavigationCompleted -= OnNavigationCompleted;
-        core.DOMContentLoaded -= OnDomContentLoaded;
-        core.NewWindowRequested -= OnNewWindowRequested;
-        core.PermissionRequested -= OnPermissionRequested;
-        core.DownloadStarting -= OnDownloadStarting;
-        core.WebMessageReceived -= OnWebMessageReceived;
-        core.WebResourceRequested -= OnWebResourceRequested;
-        core.ClearVirtualHostNameToFolderMapping(VirtualHost);
+        // Clean up temp preview image files.
+        string? filePath = Interlocked.Exchange(ref _previewImageFilePath, null);
+        if (filePath is not null)
+        {
+            try { File.Delete(filePath); } catch { }
+        }
     }
 }

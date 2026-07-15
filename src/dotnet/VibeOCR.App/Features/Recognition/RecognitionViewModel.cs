@@ -15,6 +15,7 @@ public sealed class RecognitionViewModel : INotifyPropertyChanged
     private bool _isBusy;
     private string _resultText = string.Empty;
     private RecognizeResponse? _result;
+    private RecognitionInput? _currentInput;
     private string _status = "请选择图片";
 
     public RecognitionViewModel(IWorkerHostClient worker, IInputService inputs)
@@ -42,6 +43,14 @@ public sealed class RecognitionViewModel : INotifyPropertyChanged
         get => _status;
         private set => SetField(ref _status, value);
     }
+
+    public RecognitionInput? CurrentInput
+    {
+        get => _currentInput;
+        private set => SetField(ref _currentInput, value);
+    }
+
+    public bool HasResult => _result is not null;
 
     public string Pipeline { get; set; } = "OCR";
 
@@ -101,6 +110,15 @@ public sealed class RecognitionViewModel : INotifyPropertyChanged
                 return;
             }
 
+            if (generation == Volatile.Read(ref _generation))
+            {
+                CurrentInput = input;
+                _result = null;
+                ResultText = string.Empty;
+                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Result)));
+                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(HasResult)));
+            }
+
             SharedPayloadRef payload = _worker.CreatePayload(
                 input.Data,
                 input.MediaType,
@@ -125,6 +143,7 @@ public sealed class RecognitionViewModel : INotifyPropertyChanged
                 _result = response;
                 ResultText = response.Text;
                 PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Result)));
+                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(HasResult)));
                 Status = "识别完成";
             }
         }

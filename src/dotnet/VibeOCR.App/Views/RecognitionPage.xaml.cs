@@ -4,6 +4,7 @@ using System.ComponentModel;
 using Windows.ApplicationModel.DataTransfer;
 using Windows.Storage;
 using VibeOCR.App.Features.Recognition;
+using VibeOCR.App.Services;
 using VibeOCR.App.Web;
 using VibeOCR.Platform.Worker;
 
@@ -40,8 +41,14 @@ public sealed partial class RecognitionPage : Page
         {
             _bridgeTerminal = true;
             _bridgeReady = true;
-            PreviewBridgeStatus.Text = "Web 预览已就绪";
+            PreviewBridgeStatus.Text = "预览已就绪";
+            AppLog.Info("Bridge: preview.ready received");
+            _ = SendInputAsync();
             _ = SendResultAsync();
+        }
+        else if (message.Type == "editor.changed")
+        {
+            AppLog.Info($"Bridge: editor.changed payload={message.Payload}");
         }
     }
 
@@ -86,8 +93,36 @@ public sealed partial class RecognitionPage : Page
 
     private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs args)
     {
+        if (args.PropertyName == nameof(RecognitionViewModel.CurrentInput) && _bridgeReady) _ = SendInputAsync();
         if (args.PropertyName == nameof(RecognitionViewModel.ResultText) && _bridgeReady) _ = SendResultAsync();
         if (args.PropertyName == nameof(RecognitionViewModel.Result) && ViewModel.Result is not null) _resultActions.SetResult(ViewModel.Result);
+    }
+
+    private async Task SendInputAsync()
+    {
+        RecognitionInput? input = ViewModel.CurrentInput;
+        if (input is null) return;
+        AppLog.Info($"SendInputAsync: dataLen={input.Data.Length} mediaType={input.MediaType} bridgeReady={_bridgeReady}");
+
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        try
+        {
+            Uri source = await _previewHost.SetPreviewImageAsync(
+                input.Data,
+                input.MediaType,
+                timeout.Token);
+            AppLog.Info($"SendInputAsync: image URL={source.AbsoluteUri}");
+            await _previewHost.RequestAsync(
+                "preview.setImage",
+                new { url = source.AbsoluteUri, name = input.DisplayName, origin = input.Origin },
+                timeout.Token);
+            AppLog.Info("SendInputAsync: preview.setImage sent OK");
+        }
+        catch (Exception error) when (error is OperationCanceledException or WebBridgeProtocolException or InvalidOperationException)
+        {
+            AppLog.Error("SendInputAsync: failed", error);
+            PreviewBridgeStatus.Text = "图片预览同步失败";
+        }
     }
 
     private async Task SendResultAsync()

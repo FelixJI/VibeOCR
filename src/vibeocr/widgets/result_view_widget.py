@@ -15,7 +15,7 @@ import json
 import logging
 from typing import TYPE_CHECKING, Any
 
-from PySide6.QtCore import QObject, QTimer, QUrl, Signal, Slot
+from PySide6.QtCore import QMimeData, QObject, QTimer, QUrl, Signal, Slot
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import (
     QFileDialog,
@@ -28,6 +28,11 @@ from PySide6.QtWidgets import (
 )
 
 from vibeocr.models.ocr_result import DISCARDED_BLOCK_TYPES
+from vibeocr.utils.html_tables import (
+    html_tables_to_cell_grid,
+    normalize_table_html,
+    tables_from_result,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -781,6 +786,82 @@ document.addEventListener('copy', function(e) {{
 </html>"""
 
 
+def build_table_copy_payload(result: Any) -> tuple[str, str]:
+    """从 OCR 结果构建「复制到 Excel/Word」所需的 (html, tab_text) 二元组。
+
+    当结果含表格时：
+    - ``html``：所有表格的规整化 ``<table>`` HTML（无 inline style，便于
+      Excel/Word 识别为原生表格）。多个表格直接拼接。
+    - ``tab_text``：Tab 分隔的纯文本矩阵（行内单元格用 ``\\t``、表间空行），
+      Excel 粘贴即行列对齐。
+
+    当结果无表格时返回 ``("", "")``，调用方据此回退到普通纯文本复制。
+
+    Args:
+        result: ``OCRResult`` / ``SimpleNamespace`` / wire ``dict``。
+
+    Returns:
+        ``(html, tab_text)``。
+    """
+    table_htmls = tables_from_result(result)
+    if not table_htmls:
+        return "", ""
+
+    html_parts: list[str] = []
+    text_lines: list[str] = []
+    for raw_html in table_htmls:
+        # 规整化：剥离 inline style、补齐空单元格，确保 Excel 粘贴不错位。
+        clean_html = normalize_table_html(raw_html)
+        html_parts.append(clean_html)
+        grids = html_tables_to_cell_grid(clean_html)
+        for grid in grids:
+            for row in grid:
+                text_lines.append("\t".join(row))
+            text_lines.append("")  # 表间空行
+    # 去掉末尾多余空行
+    while text_lines and text_lines[-1] == "":
+        text_lines.pop()
+    return "".join(html_parts), "\n".join(text_lines)
+
+
+def _create_cf_html(html_fragment: str) -> str:
+    """构建 Microsoft Office CF_HTML 剪贴板格式（字节偏移头部 + 片段）。
+
+    复用 ``clipboard_controller`` 的思路：Word/Excel 粘贴时优先读 CF_HTML，
+    能把 ``<table>`` 还原为原生表格。
+    """
+    full_html = (
+        "<!DOCTYPE html>\n<html>\n<head><meta charset='utf-8'></head>\n<body>\n"
+        f"<!--StartFragment-->{html_fragment}<!--EndFragment-->\n"
+        "</body>\n</html>"
+    )
+    header_template = (
+        "Version:0.9\r\n"
+        "StartHTML:0000000000\r\n"
+        "EndHTML:0000000000\r\n"
+        "StartFragment:0000000000\r\n"
+        "EndFragment:0000000000\r\n"
+    )
+    header_len = len(header_template.encode("utf-8"))
+    start_marker = "<!--StartFragment-->"
+    end_marker = "<!--EndFragment-->"
+    start_frag_pos = full_html.find(start_marker)
+    end_frag_pos = full_html.find(end_marker)
+    start_fragment_byte = header_len + len(
+        full_html[: start_frag_pos + len(start_marker)].encode("utf-8")
+    )
+    end_fragment_byte = header_len + len(full_html[:end_frag_pos].encode("utf-8"))
+    end_html_byte = header_len + len(full_html.encode("utf-8"))
+    return (
+        f"Version:0.9\r\n"
+        f"StartHTML:{header_len:010d}\r\n"
+        f"EndHTML:{end_html_byte:010d}\r\n"
+        f"StartFragment:{start_fragment_byte:010d}\r\n"
+        f"EndFragment:{end_fragment_byte:010d}\r\n"
+        f"{full_html}"
+    )
+
+
 class _Bridge(QObject):
     """QWebChannel 通信桥"""
 
@@ -909,10 +990,32 @@ class ResultViewWidget(QWidget):
         return self._web_view
 
     def _on_copy_text(self) -> None:
-        """复制选中文本或全部文本到剪贴板"""
+        """复制选中文本/全部文本/表格到剪贴板。
+
+        结果含表格时写入 HTML + Tab 分隔纯文本 + CF_HTML，使粘贴到
+        Excel 保持行列网格、粘贴到 Word 保持原生表格；否则回退到 WebEngine
+        的 ``getCopyText()`` 纯文本（保留用户选区）。
+        """
+        # 优先：表格结果直接构建富剪贴板（不走 JS，保留表格结构）。
+        if self._current_result is not None:
+            html, tab_text = build_table_copy_payload(self._current_result)
+            if html and tab_text:
+                self._copy_rich_table(html, tab_text)
+                return
+        # 无表格：走 WebEngine 选区文本（若无 web_view 则 noop）。
         if not self._web_view:
             return
         self._web_view.page().runJavaScript("getCopyText()", self._do_copy_text)
+
+    def _copy_rich_table(self, html: str, tab_text: str) -> None:
+        """写入 HTML + Tab 文本 + CF_HTML 到剪贴板（Excel/Word 友好）。"""
+        mime = QMimeData()
+        mime.setHtml(html)
+        mime.setText(tab_text)
+        # CF_HTML：Microsoft Office 粘贴时优先读取，能把 <table> 还原为表格。
+        mime.setData("HTML Format", _create_cf_html(html).encode("utf-8"))
+        QGuiApplication.clipboard().setMimeData(mime)
+        self._show_copy_toast()
 
     def _do_copy_text(self, text: str | None) -> None:
         if text:

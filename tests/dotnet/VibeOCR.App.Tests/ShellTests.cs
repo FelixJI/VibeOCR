@@ -7,18 +7,36 @@ namespace VibeOCR.App.Tests;
 public sealed class ShellTests
 {
     [Fact]
-    public void ProductionIsDefaultAndDevelopmentProfileMustBeExplicit()
+    public void BuildConfigurationSelectsSafeDefaultAndExplicitProfileWins()
     {
         AppLaunchOptions defaults = AppLaunchOptions.Parse([]);
         AppLaunchOptions production = AppLaunchOptions.Parse(["--profile", "production"]);
         AppLaunchOptions development = AppLaunchOptions.Parse(["--profile", "winui-dev"]);
         AppLaunchOptions health = AppLaunchOptions.Parse(["--health-file", "startup.healthy"]);
 
-        Assert.Equal("production", defaults.Profile);
+        Assert.Equal(AppBuildDefaults.Profile, defaults.Profile);
         Assert.Equal("production", production.Profile);
         Assert.Equal("winui-dev", development.Profile);
         Assert.EndsWith("startup.healthy", health.HealthFile);
         Assert.Contains("diagnostics", ShellNavigation.Destinations);
+    }
+
+    [Fact]
+    public void WorkerStartupOnlyRequiresItsPythonRuntime()
+    {
+        var pythonReady = new PrerequisiteReport(
+        [
+            new(PrerequisiteKind.DotNetDesktopRuntime, false, null, "10.0.0", "https://example.test/dotnet"),
+            new(PrerequisiteKind.WebView2Runtime, false, null, "Evergreen", "https://example.test/webview"),
+            new(PrerequisiteKind.PythonRuntime, true, "3.13", "3.13", "repair://vibeocr/python-runtime"),
+        ]);
+        var pythonMissing = new PrerequisiteReport(
+        [
+            new(PrerequisiteKind.PythonRuntime, false, null, "3.13", "repair://vibeocr/python-runtime"),
+        ]);
+
+        Assert.True(App.CanStartWorker(pythonReady.Items));
+        Assert.False(App.CanStartWorker(pythonMissing.Items));
     }
 
     [Theory]

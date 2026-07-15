@@ -18,10 +18,10 @@ namespace VibeOCR.App;
 
 public sealed partial class MainWindow : Window
 {
-    private const int DefaultWidth = 900;
-    private const int DefaultHeight = 600;
-    private const int MinWidth = 720;
-    private const int MinHeight = 480;
+    private const int DefaultWidth = 1180;
+    private const int DefaultHeight = 760;
+    private const int MinWidth = 900;
+    private const int MinHeight = 600;
 
     [DllImport("user32.dll")]
     private static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
@@ -53,8 +53,11 @@ public sealed partial class MainWindow : Window
     public MainWindow(DiagnosticsViewModel diagnostics, PortableLayout layout, Func<RecognitionViewModel> recognitionFactory, Func<BatchViewModel> batchFactory, Func<QrCodePage> qrCodePageFactory, Func<PdfPage> pdfPageFactory, Func<SettingsPage> settingsPageFactory, Func<AboutPage> aboutPageFactory, WindowLayoutStore layoutStore)
     {
         _diagnostics = diagnostics; _layout = layout; _recognitionFactory = recognitionFactory; _batchFactory = batchFactory; _qrCodePageFactory = qrCodePageFactory; _pdfPageFactory = pdfPageFactory; _settingsPageFactory = settingsPageFactory; _aboutPageFactory = aboutPageFactory; _layoutStore = layoutStore;
-        InitializeComponent(); Title = "VibeOCR WinUI"; RootNavigation.SelectedItem = RootNavigation.MenuItems[0]; ShowHome();
+        InitializeComponent();
+        Title = "VibeOCR";
         ApplyPersistedOrDefaultGeometry();
+        RootNavigation.SelectedItem = RootNavigation.MenuItems[0];
+        ShowRecognition();
     }
 
     private void ApplyPersistedOrDefaultGeometry()
@@ -100,16 +103,20 @@ public sealed partial class MainWindow : Window
     {
         string? destination = (args.SelectedItemContainer as NavigationViewItem)?.Tag as string;
         if (destination == "diagnostics") { ContentFrame.Content = new DiagnosticsPage(_diagnostics, _layout); return; }
-        if (destination == "recognition") { _recognition ??= _recognitionFactory(); ContentFrame.Content = new RecognitionPage(_recognition); return; }
+        if (destination == "recognition") { ShowRecognition(); return; }
         if (destination == "batch") { _batch ??= _batchFactory(); ContentFrame.Content = new BatchPage(_batch); return; }
         if (destination == "qrcode") { _qrCodePage ??= _qrCodePageFactory(); ContentFrame.Content = _qrCodePage; return; }
         if (destination == "pdf") { _pdfPage ??= _pdfPageFactory(); ContentFrame.Content = _pdfPage; return; }
         if (destination == "settings") { _settingsPage ??= _settingsPageFactory(); ContentFrame.Content = _settingsPage; return; }
         if (destination == "about") { ContentFrame.Content = _aboutPageFactory(); return; }
-        ShowHome();
+        ShowRecognition();
     }
 
-    private void ShowHome() => ContentFrame.Content = new Grid { Children = { new TextBlock { Text = "VibeOCR", FontSize = 28, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center } } };
+    private void ShowRecognition()
+    {
+        _recognition ??= _recognitionFactory();
+        ContentFrame.Content = new RecognitionPage(_recognition);
+    }
 
     internal async Task RecognizeScreenshotAsync()
     {
@@ -117,8 +124,7 @@ public sealed partial class MainWindow : Window
             .OfType<NavigationViewItem>()
             .Single(candidate => Equals(candidate.Tag, "recognition"));
         RootNavigation.SelectedItem = item;
-        _recognition ??= _recognitionFactory();
-        ContentFrame.Content = new RecognitionPage(_recognition);
-        await _recognition.RecognizeScreenshotAsync(CancellationToken.None);
+        ShowRecognition();
+        await _recognition!.RecognizeScreenshotAsync(CancellationToken.None);
     }
 }

@@ -1,5 +1,4 @@
 using System.Buffers.Binary;
-using System.Runtime.InteropServices;
 using Windows.ApplicationModel.DataTransfer;
 using Windows.Storage;
 using Windows.Storage.Pickers;
@@ -22,9 +21,17 @@ public interface IInputService
     Task<RecognitionInput?> ReadDroppedFileAsync(string path, CancellationToken cancellationToken);
 }
 
-public sealed class InputService(Func<nint> windowHandle) : IInputService
+public sealed class InputService : IInputService
 {
     private const long MaximumInputBytes = 256L << 20;
+    private readonly Func<nint> _windowHandle;
+    private readonly IScreenRegionPicker _screenRegionPicker;
+
+    public InputService(Func<nint> windowHandle, IScreenRegionPicker? screenRegionPicker = null)
+    {
+        _windowHandle = windowHandle ?? throw new ArgumentNullException(nameof(windowHandle));
+        _screenRegionPicker = screenRegionPicker ?? new ScreenRegionPicker(windowHandle);
+    }
 
     public async Task<RecognitionInput?> PickFileAsync(CancellationToken cancellationToken)
     {
@@ -38,7 +45,7 @@ public sealed class InputService(Func<nint> windowHandle) : IInputService
         picker.FileTypeFilter.Add(".jpeg");
         picker.FileTypeFilter.Add(".bmp");
         picker.FileTypeFilter.Add(".webp");
-        WinRT.Interop.InitializeWithWindow.Initialize(picker, windowHandle());
+        WinRT.Interop.InitializeWithWindow.Initialize(picker, _windowHandle());
         StorageFile? file = await picker.PickSingleFileAsync();
         cancellationToken.ThrowIfCancellationRequested();
         return file is null ? null : await ReadFileAsync(file.Path, "file", cancellationToken);
@@ -74,23 +81,18 @@ public sealed class InputService(Func<nint> windowHandle) : IInputService
 
     public async Task<RecognitionInput?> CaptureScreenAsync(CancellationToken cancellationToken)
     {
-        int x = GetSystemMetrics(76);
-        int y = GetSystemMetrics(77);
-        int width = GetSystemMetrics(78);
-        int height = GetSystemMetrics(79);
-        cancellationToken.ThrowIfCancellationRequested();
-        if (width <= 0 || height <= 0 || checked((long)width * height * 4) > MaximumInputBytes)
+        ScreenRegionSelection? selection = await _screenRegionPicker.PickAsync(cancellationToken);
+        if (selection is null)
         {
-            throw new InvalidDataException("Virtual desktop capture exceeds 256 MiB.");
+            return null;
         }
 
-        await using var capture = new ScreenCaptureService(Guid.NewGuid());
-        CapturedFrame frame = capture.Capture(
-            new PhysicalRectangle(x, y, width, height),
-            TimeSpan.FromMinutes(1));
-        byte[] bgra = capture.Read(frame);
         return new RecognitionInput(
-            EncodeTopDownBmp(bgra, width, height, frame.Stride),
+            EncodeTopDownBmp(
+                selection.Bgra,
+                selection.Bounds.Width,
+                selection.Bounds.Height,
+                selection.Stride),
             "image/bmp",
             "screenshot.bmp",
             "screenshot");
@@ -152,7 +154,4 @@ public sealed class InputService(Func<nint> windowHandle) : IInputService
         bgra.CopyTo(bmp, 54);
         return bmp;
     }
-
-    [DllImport("user32.dll")]
-    private static extern int GetSystemMetrics(int index);
 }

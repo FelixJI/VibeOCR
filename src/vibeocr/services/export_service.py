@@ -10,6 +10,7 @@ import re
 from pathlib import Path
 
 from vibeocr.models.ocr_result import DISCARDED_BLOCK_TYPES, OCRResult
+from vibeocr.utils.html_tables import tables_from_result
 from vibeocr.utils.markdown_converter import HTML_STYLE
 
 logger = logging.getLogger(__name__)
@@ -151,6 +152,8 @@ class ExportService:
 
         doc = Document()
         content_list = getattr(result, "content_list", [])
+        table_written = False
+        written_table_htmls: set[str] = set()
 
         if content_list:
             for block in content_list:
@@ -174,7 +177,10 @@ class ExportService:
                         doc.add_paragraph(" ".join(table_captions), style="Caption")
                     html = block.get("table_body", "") or block.get("html", "")
                     if html:
-                        ExportService._add_html_table_to_docx(doc, html)
+                        written_table_htmls.add(html)
+                        table_written = ExportService._add_html_table_to_docx(
+                            doc, html
+                        ) or table_written
                     table_footnotes = block.get("table_footnote") or []
                     for fn in table_footnotes:
                         if fn:
@@ -221,9 +227,21 @@ class ExportService:
                     body = block.get("code_body", "")
                     if body:
                         doc.add_paragraph(body, style="No Spacing")
-        else:
-            # 回退：使用纯文本
-            text = result.raw_text or result.markdown_text
+
+        # 兜底：content_list 无 table 块时，从 html_text/markdown_text/text_blocks/
+        # raw_text 提取表格 HTML 补写为 Word 表格。
+        if not table_written:
+            for html in tables_from_result(result):
+                if html in written_table_htmls:
+                    continue
+                written_table_htmls.add(html)
+                ExportService._add_html_table_to_docx(doc, html)
+
+        if not content_list and not written_table_htmls:
+            # 既无结构化块也无表格：写纯文本（清洗裸 HTML 标签）。
+            text = ExportService._strip_html_tags(
+                result.raw_text or result.markdown_text
+            )
             for line in text.split("\n"):
                 doc.add_paragraph(line)
 
@@ -232,8 +250,12 @@ class ExportService:
         return True
 
     @staticmethod
-    def _add_html_table_to_docx(doc, html: str) -> None:
-        """从 HTML 表格提取数据并添加到 docx"""
+    def _add_html_table_to_docx(doc, html: str) -> bool:
+        """从 HTML 表格提取数据并添加到 docx。
+
+        Returns:
+            是否成功写入了至少一个表格（无有效行时返回 False）。
+        """
         rows_data: list[list[str]] = []
 
         # 提取行
@@ -249,7 +271,7 @@ class ExportService:
                 rows_data.append(cells)
 
         if not rows_data:
-            return
+            return False
 
         max_cols = max(len(row) for row in rows_data)
         table = doc.add_table(rows=len(rows_data), cols=max_cols)
@@ -259,6 +281,7 @@ class ExportService:
             for j, cell_text in enumerate(row):
                 if j < max_cols:
                     table.rows[i].cells[j].text = cell_text
+        return True
 
     @staticmethod
     def _export_xlsx(result: OCRResult, output_path: Path) -> bool:
@@ -271,10 +294,11 @@ class ExportService:
             ws_text = wb.create_sheet("Sheet")
         content_list = getattr(result, "content_list", [])
 
-        if content_list:
-            table_count = 0
-            has_text = False
+        table_count = 0
+        has_text = False
+        written_table_htmls: set[str] = set()
 
+        if content_list:
             for block in content_list:
                 block_type = block.get("type", "text")
                 text = block.get("text", "")
@@ -290,17 +314,10 @@ class ExportService:
                         ws_text.append([f"[表格标题] {' '.join(table_captions)}"])
                     html = block.get("table_body", "") or block.get("html", "")
                     if html:
-                        table_count += 1
-                        rows_data = ExportService._parse_html_table(html)
-                        if rows_data:
-                            ws = wb.create_sheet(title=f"表格 {table_count}")
-                            for row_idx, row in enumerate(rows_data):
-                                for col_idx, cell_text in enumerate(row):
-                                    ws.cell(
-                                        row=row_idx + 1,
-                                        column=col_idx + 1,
-                                        value=cell_text,
-                                    )
+                        written_table_htmls.add(html)
+                        table_count = ExportService._write_xlsx_table_sheet(
+                            wb, html, table_count
+                        )
 
                 elif block_type == "title" and text:
                     if not has_text:
@@ -327,7 +344,7 @@ class ExportService:
                     )
                     label = " ".join(caption) if caption else text
                     if label:
-                        ws_text.append([f"[图片: {label}]"])
+                        ws_text.append([f"[图片: {label}"])
 
                 elif block_type == "equation" and text:
                     if not has_text:
@@ -352,18 +369,58 @@ class ExportService:
                             ws_text.title = "文本汇总"
                         ws_text.append([f"[代码] {body}"])
 
-            if not has_text and table_count > 0:
-                if "Sheet" in wb.sheetnames:
-                    del wb["Sheet"]
-        else:
+        # 兜底：content_list 无 table 块时，从 html_text/markdown_text/text_blocks
+        # 提取表格 HTML，补写为工作表（前后端分离下表格可能只存活在 html_text）。
+        if table_count == 0:
+            for html in tables_from_result(result):
+                if html in written_table_htmls:
+                    continue
+                written_table_htmls.add(html)
+                table_count = ExportService._write_xlsx_table_sheet(
+                    wb, html, table_count
+                )
+
+        if not content_list and table_count == 0:
+            # 既无结构化块也无表格：写纯文本（清洗裸 HTML 标签，避免把
+            # <table><tr> 当文字写进单元格）。
             ws_text.title = "文本"
-            text = result.raw_text or result.markdown_text
+            text = ExportService._strip_html_tags(
+                result.raw_text or result.markdown_text
+            )
             for line in text.split("\n"):
                 ws_text.append([line])
+
+        if not has_text and table_count > 0:
+            if "Sheet" in wb.sheetnames:
+                del wb["Sheet"]
 
         wb.save(str(output_path))
         logger.debug("导出 Excel: %s", output_path)
         return True
+
+    @staticmethod
+    def _write_xlsx_table_sheet(
+        wb, html: str, table_count: int
+    ) -> int:
+        """把单个表格 HTML 写成一个「表格 N」工作表，返回新的 table_count。
+
+        无有效行时计数不变（也不创建空工作表）。
+        """
+        rows_data = ExportService._parse_html_table(html)
+        if not rows_data:
+            return table_count
+        table_count += 1
+        ws = wb.create_sheet(title=f"表格 {table_count}")
+        for row_idx, row in enumerate(rows_data):
+            for col_idx, cell_text in enumerate(row):
+                ws.cell(row=row_idx + 1, column=col_idx + 1, value=cell_text)
+        return table_count
+
+    @staticmethod
+    def _strip_html_tags(text: str) -> str:
+        """剥离 HTML 标签并规整空白（用于纯文本回退，避免裸标签进单元格）。"""
+        stripped = re.sub(r"<[^>]+>", " ", text or "")
+        return re.sub(r"[ \t]+", " ", stripped).strip()
 
     @staticmethod
     def _parse_html_table(html: str) -> list[list[str]]:
