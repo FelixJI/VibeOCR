@@ -21,6 +21,15 @@ PROJECT_ROOT = Path(__file__).parent.parent
 PYPROJECT_PATH = PROJECT_ROOT / "pyproject.toml"
 UV_LOCK_PATH = PROJECT_ROOT / "uv.lock"
 
+# 升级时需同步下界版本的 workspace 包。根 pyproject 是 PySide 壳的运行时
+# 依赖；vibeocr-backend 是 UI-free 后端运行时依赖，也是 backend wheel METADATA
+# 的唯一事实源（build_backend_wheel.py 构建时 tomllib 读它）。两者都必须跟随
+# uv lock --upgrade 的结果，否则 wheel METADATA 会与 lock 漂移。
+SYNCED_PYPROJECTS = [
+    PYPROJECT_PATH,
+    PROJECT_ROOT / "packages" / "vibeocr-backend" / "pyproject.toml",
+]
+
 # 必须来自 CUDA 索引的包，升级后需要验证
 CUDA_PACKAGES = {"torch", "torchvision"}
 
@@ -134,15 +143,24 @@ def parse_pyproject_dependencies() -> list[tuple[str, str, int, int]]:
 
 
 def update_pyproject_versions(
-    locked_versions: dict[str, str], *, dry_run: bool = False
+    locked_versions: dict[str, str],
+    pyproject_path: Path,
+    *,
+    dry_run: bool = False,
 ) -> list[str]:
-    """更新 pyproject.toml 中的依赖版本到锁定版本
+    """更新指定 pyproject.toml 中的依赖版本到锁定版本
 
-    返回: 变更列表
+    Args:
+        locked_versions: uv.lock 中解析出的 {包名: 版本}
+        pyproject_path: 要更新的 pyproject.toml 路径
+        dry_run: True 时只报告变更不写文件
+
+    返回: 变更列表（含相对路径前缀，便于多文件场景区分）
     """
-    content = PYPROJECT_PATH.read_text(encoding="utf-8")
+    content = pyproject_path.read_text(encoding="utf-8")
     lines = content.splitlines()
     changes = []
+    rel = pyproject_path.relative_to(PROJECT_ROOT).as_posix()
 
     in_deps_section = False
     for i, line in enumerate(lines):
@@ -168,7 +186,14 @@ def update_pyproject_versions(
 
                 # 查找锁定版本
                 locked_version = locked_versions.get(pkg_name)
-                if locked_version and pkg_name not in CUDA_PACKAGES:
+                # 跳过 workspace 内部包（vibeocr-*）：它们用 == 精确锁定到
+                # 仓库版本，由 bump_version 统一推进，不该被 uv lock 升级改写。
+                # CUDA 包单独由 Step 1.5/4.5 校验来源，不在此更新下界。
+                if (
+                    locked_version
+                    and pkg_name not in CUDA_PACKAGES
+                    and not pkg_name.startswith("vibeocr-")
+                ):
                     # 保留上界约束（如 <2.4），只更新下界
                     upper_bounds = (
                         [
@@ -191,10 +216,14 @@ def update_pyproject_versions(
                         if has_comma:
                             new_line += ","
                         lines[i] = new_line
-                        changes.append(f"  {pkg_name}: {dep_line} -> {new_dep_line}")
+                        changes.append(
+                            f"  [{rel}] {pkg_name}: {dep_line} -> {new_dep_line}"
+                        )
 
     if changes and not dry_run:
-        PYPROJECT_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        pyproject_path.write_text(
+            "\n".join(lines) + "\n", encoding="utf-8"
+        )
 
     return changes
 
@@ -362,19 +391,25 @@ def main() -> int:
 
     print(f"[INFO] 找到 {len(locked_versions)} 个锁定包")
 
-    # Step 3: 更新 pyproject.toml
-    print("\n[Step 3] 更新 pyproject.toml...")
-    changes = update_pyproject_versions(locked_versions, dry_run=args.dry_run)
+    # Step 3: 更新 pyproject.toml（根 + backend workspace 包同步）
+    print("\n[Step 3] 更新 pyproject.toml（根 + backend 包）...")
+    all_changes: list[str] = []
+    for pyproject_path in SYNCED_PYPROJECTS:
+        all_changes.extend(
+            update_pyproject_versions(
+                locked_versions, pyproject_path, dry_run=args.dry_run
+            )
+        )
 
-    if changes:
-        print(f"\n变更列表 ({len(changes)} 项):")
-        for change in changes:
+    if all_changes:
+        print(f"\n变更列表 ({len(all_changes)} 项):")
+        for change in all_changes:
             print(change)
 
         if args.dry_run:
             print("\n[DRY-RUN] 未实际修改文件")
         else:
-            print("\n[OK] pyproject.toml 已更新")
+            print("\n[OK] pyproject.toml 已更新（根 + backend 包）")
     else:
         print("\n[OK] 无需更新，所有依赖已是最新")
 
