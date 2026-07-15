@@ -459,7 +459,7 @@ public sealed partial class App : Application
             string token = Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(32));
             var startInfo = new ProcessStartInfo
             {
-                FileName = Path.Combine(layout.RuntimeRoot, "python.exe"),
+                FileName = PortableLayout.ResolvePythonExecutable(layout),
                 WorkingDirectory = layout.InstallRoot,
                 UseShellExecute = false,
                 CreateNoWindow = true,

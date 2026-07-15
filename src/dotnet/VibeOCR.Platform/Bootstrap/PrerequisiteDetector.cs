@@ -97,13 +97,24 @@ public sealed class PrerequisiteDetector
 
 internal static class WindowsPrerequisiteProbe
 {
-    public static PrerequisiteSnapshot Capture(PortableLayout layout) =>
-        new(
+    public static PrerequisiteSnapshot Capture(PortableLayout layout)
+    {
+        // Under winui-dev the interpreter may be the repository's .venv python
+        // (see PortableLayout.ResolvePythonExecutable). A venv python.exe does
+        // not carry python313.dll beside it (the DLL lives in the base install
+        // referenced by pyvenv.cfg), so the DLL check is only meaningful for
+        // the packaged production layout. In dev, the interpreter's own
+        // existence is the right signal.
+        string pythonExe = PortableLayout.ResolvePythonExecutable(layout);
+        bool packagedLayout = pythonExe == Path.Combine(layout.RuntimeRoot, "python.exe");
+        bool pythonPresent = File.Exists(pythonExe) &&
+            (!packagedLayout || File.Exists(Path.Combine(layout.RuntimeRoot, "python313.dll")));
+        return new PrerequisiteSnapshot(
             FindDotNetDesktopVersion(),
             FindWindowsAppRuntimeVersion(),
             FindWebView2Version(),
-            File.Exists(Path.Combine(layout.RuntimeRoot, "python.exe")) &&
-                File.Exists(Path.Combine(layout.RuntimeRoot, "python313.dll")));
+            pythonPresent);
+    }
 
     private static string? FindDotNetDesktopVersion()
     {
