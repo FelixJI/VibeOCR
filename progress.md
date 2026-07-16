@@ -1,51 +1,34 @@
-# 进度日志：稳定 NuGet 锁文件管理
+# 进度日志：PDF 文字层与批量识别优化
 
 ## 2026-07-16
 
-### 阶段 1：确认现状与方案
-
-- **状态：完成**
-- 已检查两份锁文件差异、项目 RID、SDK 固定、中央包版本和 CI restore 命令。
-- 已确认差异源于 RID 恢复图漂移，不是依赖版本漂移。
-- 已确定默认 locked mode、显式更新开关和统一更新脚本方案。
-
-### 阶段 2：实施
-
-- **状态：完成**
-- 已在 `Directory.Build.props` 中将普通 restore 设为 locked mode。
-- 已将 `VibeOCR.App.Tests` 固定为 `win-x64`。
-- 已新增 `scripts/update_dotnet_locks.ps1` 作为唯一显式更新入口。
-- 已清理未支持的 `win-arm64/win-x86` 图，并为 App 测试锁文件保留与新 RID 声明一致的 `win-x64` 图。
-
-## 测试结果
-
-| 检查 | 预期 | 实际 | 状态 |
-|---|---|---|---|
-| 工作区差异审计 | 仅两份 RID 漂移锁文件 | 符合 | 通过 |
-| XML/JSON 解析 | 配置与锁文件语法有效 | 全部可解析 | 通过 |
-| PowerShell AST 解析 | 更新脚本无语法错误 | 无解析错误 | 通过 |
-| locked mode 语义断言 | 默认锁定、更新脚本显式解锁 | 属性与参数符合 | 通过 |
-| RID 图断言 | App 与 App.Tests 仅 `win-x64` | 符合 | 通过 |
-| Git 空白检查 | 无 whitespace error | 通过 | 通过 |
-| App 锁文件恢复 | 与 HEAD 字节哈希一致 | `66a615b...` 一致 | 通过 |
-
-## 环境限制
-
-- 本机没有 `global.json` 要求的 .NET SDK 10.0.302；无法运行真实 `dotnet restore`。
-
-### 阶段 3：验证与交付
-
-- **状态：完成**
-- 所有可执行的静态和语义检查均通过。
-- App 锁文件已完全恢复；App.Tests 锁文件只新增与显式 `win-x64` 声明对应的图。
-
-## 错误记录
-
-| 时间 | 错误 | 尝试 | 处理 |
-|---|---|---:|---|
-| 2026-07-16 | 合并补丁更新计划阶段上下文不匹配，补丁整体未应用 | 1 | 拆分为独立补丁 |
-| 2026-07-16 | PowerShell 断言误执行 MSBuild 属性表达式 | 1 | 改用正则语义检查 |
-| 2026-07-16 | `apply_patch` 无法恢复末尾无换行字节状态 | 1 | 使用精确单文件 Git 恢复 |
-| 2026-07-16 | 沙箱拒绝创建 `.git/index.lock` | 1 | 授权后精确恢复单文件成功 |
-| 2026-07-16 | PowerShell 执行策略阻止技能完成检查 | 1 | 使用 `-ExecutionPolicy Bypass` 重试 |
-| 2026-07-16 | 技能脚本未识别中文阶段状态，报告 0/0 | 1 | 改用英文机器标记 |
+- 已读取 `planning-with-files` 技能并执行 session-catchup。
+- 全局 `python` 不可用，已切换为项目内置 CPython 完成恢复检查。
+- 发现旧规划文件属于上一项 UI 任务且编码乱码，已为当前任务重置。
+- 下一步：检索 PDF、OCR worker、IPC 与文字层写入代码和测试。
+- 已定位 stderr 崩溃根因：`Popen(text=True)` 隐式采用系统 GBK，未声明 WorkerHost 的 UTF-8 流编码。
+- 已初步确认 PDF 流程不是完全逐页 RPC；现有实现已有 16 页传输批、并发渲染、批量 OCR 和批量文字层写入，需要继续下钻各阶段是否仍有复制/保存/同步等待瓶颈。
+- 已定位 `BackendClient reader: terminal error: invalid state` 的代码级竞态：已取消的 Future 仍被响应处理器完成，异常逃逸后杀死 reader 循环。
+- 发现 WorkerHost 的 `recognize_batch()` 当前只是 N 个单图 RPC 的 `gather`；是否影响 PDF 主路径仍待确认。
+- 已确认 PySide PDF 的 OCR 是真批量 SHM 路径；当前主要可疑项转为跨阶段无流水化、每批全文件备份，以及末尾重复重写全部文字层并全量压缩。
+- 已审阅现有保存/编排测试；准备采用兼容性改造：普通保存继续全文档重写，OCR 收尾走专用 finalize；incremental 失败回滚改为利用 append-only 边界，避免每批全文件复制。
+- 已确认迁移后的实际批量路径存在协议级退化：`BatchBackendAdapter` → `BackendClient.recognize_batch` → N 个单图 WorkerHost RPC。计划把真批量能力补到 WorkerHost 协议/handler/adapter，而不是更换 named pipe。
+- 已列出协议批量方法所需的契约、Python/C# allow-list、handler、composition、client 与测试改动面。
+- 已修复 WorkerHost 输出流编码：父子两端固定 UTF-8，父端替换非法字节，drain 线程增加异常兜底。
+- 已修复响应/取消竞态：迟到响应遇到已完成 Future 时丢弃，不再以 `InvalidStateError` 终止唯一 reader。
+- 已为上述两个稳定性问题补充定向回归测试。
+- 已实现真批量 OCR 的 Python 主链：async/sync client、application facade、WorkerHost batch handler、production adapter 和 composition 注册；一批图片现在对应一次 WorkerHost RPC 和一次底层 `recognize_batch`。
+- 批量调用保留输入顺序与 `None` 失败槽位，并在 finally 逐一释放 client-owned SHM。
+- 已将 `ocr.recognize_batch` 加入 JSON Schema、Python method validator、WorkerHost retryable allow-list、C# `RpcMethods` 和契约测试方法集。
+- 首轮定向测试在收集阶段被本地 `.venv` 的 `rpds` DLL“拒绝访问”阻断，并显示缺少 pytest-asyncio；代码测试尚未实际执行，下一轮改用项目 uv/正确依赖组。
+- 确认 pytest-asyncio 实际已安装；失败来自沙箱禁止加载 `rpds` 原生 DLL。在沙箱外重跑 WorkerHost、契约和协议一致性定向集，结果 `170 passed`。
+- 已把每批 incremental save 的整文件 `.bak` 改为持久化“写前长度”marker；异常即时截断，下次打开也会恢复中断写入，消除每 16 页一次的 O(PDF 大小)复制。
+- 已增加 OCR 专用快速收尾标志：批量写层完成后仅做最终落盘/压缩，不再删除并重写所有刚写好的文字层；普通保存默认仍全文档重写。
+- 已补充“部分追加后失败截断”“下次打开自动恢复”“增量保存不复制整文件”“OCR finalize 不调用 rewrite”的回归测试；PDF service/manager 定向集 `117 passed`。
+- 已增加一批深度的渲染预取：当前批进入 WorkerHost/GPU OCR 前即提交下一批 PDF 渲染，最多保留两批图像；顺序测试证明事件为 `render batch0 → render batch1 → OCR batch0`，manager 集 `40 passed`。
+- Pyright 首轮指出 finalize 标志漏过实际 `client.pdf → pdf.command` 层；已补齐并新增两层转发测试。复检结果 `0 errors`（23 条均为相关文件既有 warning）。
+- Ruff 对本次涉及的源码与测试复检通过。
+- 扩大回归集覆盖 WorkerHost、全部协议/架构、批量图片、OCR facade、PDF service/manager/集成编排，结果 `502 passed`；补齐 pipeline allow-list 与 finalize command 转发后，定向复检 `181 passed`。
+- 试运行 .NET Contracts 测试时发现机器仅有 .NET runtime、没有 `global.json` 要求的 .NET SDK 10.0.302，因此该测试未执行；Python 侧协议集合/Schema/C# 常量一致性测试已通过。
+- 最终检查：相关文件 Ruff 全通过，核心改动 Pyright `0 errors, 0 warnings`，`git diff --check` 通过。
+- 已确认并保留本任务开始前已有的 `about_tab.py` / `test_about_tab.py` 工作区改动，未对其做修改或回滚。

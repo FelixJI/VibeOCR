@@ -25,6 +25,10 @@ class OcrAdapter(Protocol):
 
     def recognize(self, request: OcrRequest, cancel: CancelToken) -> OcrResult: ...
 
+    def recognize_batch(
+        self, requests: list[OcrRequest], cancel: CancelToken
+    ) -> list[OcrResult | None]: ...
+
 
 class OcrFacade:
     """OCR 应用服务实现。
@@ -65,3 +69,18 @@ class OcrFacade:
             raise
         except Exception as e:
             raise OcrError(f"OCR recognize failed: {e}") from e
+
+    def recognize_batch(
+        self, requests: list[OcrRequest], cancel: CancelToken
+    ) -> list[OcrResult | None]:
+        """Execute one engine-level batch while preserving input order."""
+        if cancel is not None and cancel.is_cancelled:
+            raise OcrError("cancelled before start")
+        if not requests:
+            return []
+        try:
+            return self._adapter.recognize_batch(requests, cancel)
+        except OcrError:
+            raise
+        except Exception as e:
+            raise OcrError(f"OCR batch recognize failed: {e}") from e

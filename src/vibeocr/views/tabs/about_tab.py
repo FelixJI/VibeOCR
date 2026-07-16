@@ -9,7 +9,7 @@ from datetime import date
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QSize, Qt
-from PySide6.QtGui import QIcon
+from PySide6.QtGui import QIcon, QTextDocument
 from PySide6.QtWidgets import (
     QFormLayout,
     QFrame,
@@ -57,6 +57,11 @@ _TECH_STACK = [
     ("MinerU", "文档解析"),
     ("PySide6", "UI 框架"),
 ]
+
+_CHANGELOG_MARKDOWN_FEATURES = (
+    QTextDocument.MarkdownFeature.MarkdownDialectGitHub
+    | QTextDocument.MarkdownFeature.MarkdownNoHTML
+)
 
 
 def _load_update_progress() -> dict | None:
@@ -289,7 +294,12 @@ class AboutTab(QWidget):
         if changelog_path is not None:
             try:
                 raw = changelog_path.read_text(encoding="utf-8")
-                self._changelog_browser.setMarkdown(raw)
+                # CHANGELOG 是纯 Markdown 文档，不需要原始 HTML。Qt 的 Markdown
+                # 解析器遇到正文中的字面量 ``<br>`` 时会错误吞掉后续普通文字，
+                # 只留下反引号包裹的代码片段；禁用 HTML 可保留完整正文。
+                self._changelog_browser.document().setMarkdown(
+                    raw, _CHANGELOG_MARKDOWN_FEATURES
+                )
             except Exception:
                 logger.exception("读取 CHANGELOG.md 失败: %s", changelog_path)
                 self._changelog_browser.setMarkdown("暂无更新日志")

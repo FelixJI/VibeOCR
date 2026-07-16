@@ -8,6 +8,7 @@ public static class RpcMethods
     public const string Cancel = "task.cancel";
     public const string ReleaseMemory = "memory.release";
     public const string Recognize = "ocr.recognize";
+    public const string RecognizeBatch = "ocr.recognize_batch";
     public const string ExportOcr = "ocr.export";
     public const string OpenPdf = "pdf.open";
     public const string ClosePdf = "pdf.close";
@@ -34,6 +35,7 @@ public static class RpcMethods
         Cancel,
         ReleaseMemory,
         Recognize,
+        RecognizeBatch,
         ExportOcr,
         OpenPdf,
         ClosePdf,

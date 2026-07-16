@@ -61,6 +61,46 @@ class TestSaveWithRewrite:
         assert dest.exists()
         doc.close()
 
+    def test_ocr_finalize_skips_rewriting_existing_text_layers(
+        self, tmp_path, monkeypatch
+    ):
+        path = tmp_path / "scan.pdf"
+        _make_scanned_pdf(path)
+        doc = fitz.open(str(path))
+        pdf_doc = PdfDocument(file_path=str(path))
+        pdf_doc.pages = [PdfPageInfo(page_index=0)]
+        PdfService.add_text_layer(
+            doc,
+            pdf_doc,
+            0,
+            OCRResult(
+                raw_text="Fast",
+                text_blocks=[
+                    TextBlock(text="Fast", score=0.9, bbox=(50, 50, 300, 100))
+                ],
+            ),
+        )
+
+        rewrite_calls = []
+        monkeypatch.setattr(
+            PdfService,
+            "rewrite_text_layer",
+            lambda *args, **kwargs: rewrite_calls.append((args, kwargs)),
+        )
+        result = PdfService.save_with_rewrite(
+            doc,
+            pdf_doc,
+            pdf_settings=PdfGlobalSettings(compress_on_save=False),
+            rewrite_text_layers=False,
+        )
+
+        assert result.rewritten_pages == []
+        assert rewrite_calls == []
+        doc.close()
+        verify = fitz.open(str(path))
+        assert "Fast" in verify[0].get_text()
+        verify.close()
+
 
 class TestSaveCompressOnSave:
     """A/D: compress_on_save 分流 + 临时文件原子替换 + clean。"""

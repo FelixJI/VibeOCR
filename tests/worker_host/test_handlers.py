@@ -24,7 +24,11 @@ from vibeocr.application.contracts import (
     PdfOpenRequest,
     PdfSessionDto,
 )
-from vibeocr.worker_host.handlers.ocr import OcrExportHandler, OcrHandler
+from vibeocr.worker_host.handlers.ocr import (
+    OcrBatchHandler,
+    OcrExportHandler,
+    OcrHandler,
+)
 from vibeocr.worker_host.handlers.pdf import PdfOpenHandler
 from vibeocr.worker_host.handlers.qrcode import (
     QrDecodeHandler,
@@ -143,6 +147,40 @@ async def test_ocr_handler_maps_ocr_error() -> None:
         await handler.handle(
             {"image": _descriptor(b"img"), "pipeline": "OCR"}, CancelToken()
         )
+
+
+@pytest.mark.asyncio
+async def test_ocr_batch_handler_calls_facade_once_and_preserves_failures() -> None:
+    class _BatchFacade:
+        calls: list[list[OcrRequest]] = []
+
+        def recognize_batch(
+            self, requests: list[OcrRequest], cancel: CancelToken
+        ) -> list[OcrResult | None]:
+            self.calls.append(requests)
+            return [
+                OcrResult(text="first", pipeline=requests[0].pipeline),
+                None,
+            ]
+
+    store = _FakePayloadStore(b"png")
+    facade = _BatchFacade()
+    handler = OcrBatchHandler(facade=facade, store=store)  # type: ignore[arg-type]
+    descriptor = _descriptor(store.last_bytes)
+
+    result = await handler.handle(
+        {
+            "images": [descriptor, descriptor],
+            "pipeline": "OCR",
+            "language": "ch",
+        },
+        CancelToken(),
+    )
+
+    assert len(facade.calls) == 1
+    assert [request.image_data for request in facade.calls[0]] == [b"png", b"png"]
+    assert result["results"][0]["text"] == "first"
+    assert result["results"][1] is None
 
 
 @pytest.mark.asyncio

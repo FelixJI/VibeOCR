@@ -904,13 +904,14 @@ class PdfSessionManager(QObject):
         settings_dict: dict,
         overwrite: bool,
     ) -> None:
-        """在 OCR runner 线程内:分批 [并发渲染 → 批量 OCR → 逐页写文字层]。
+        """在 OCR runner 线程内执行带一批预取的渲染/OCR/写层流水线。
 
         - 渲染:线程池并发调 render_preview(后端 fitz_lock 串行化栅格化，
           PNG 编码并行)，结果按页序对齐；返回原始 PNG bytes，不在主进程解码
           （由 worker 子进程解码一次，避免 PNG 双重编解码，性能1）。
         - 识别:recognize_batch() 一次 predict(list)，利用 PaddleOCR 内部
           ImageBatchSampler 分批，省去每页重复管道开销。
+        - 流水:当前批 OCR 时预取下一批渲染，重叠 PDF 栅格/PNG 与 GPU 计算。
         - 写层:逐页串行 add_text_layer(fitz 写操作不可并发)。
         """
         from vibeocr.models.ocr_options import OCROptions
@@ -947,23 +948,39 @@ class PdfSessionManager(QObject):
                 logger.error("渲染页 %d 失败: %s", idx, e)
                 return None
 
-        for batch_start in range(0, total, batch_size):
+        page_batches = [
+            pages[start : start + batch_size]
+            for start in range(0, total, batch_size)
+        ]
+        render_iter = None
+        for batch_number, batch_pages in enumerate(page_batches):
             if runner._cancelled:
                 break
-            batch_pages = pages[batch_start : batch_start + batch_size]
 
             # 阶段1：并发渲染(线程池，结果按 batch_pages 顺序对齐)
             images: list[bytes | None] = [None] * len(batch_pages)
             if not runner._cancelled:
                 # 复用 runner 生命周期内的线程池（_OcrRunner.__init__ 创建），
-                # 不再每批新建/销毁。pool.map 保持输入顺序，逐页结果对齐 images。
-                rendered = runner._render_pool.map(_render_page, batch_pages)
-                for i, arr in enumerate(rendered):
+                # 不再每批新建/销毁。除首批外，render_iter 已在上一批 OCR
+                # 开始前提交，消费时多数页面已经完成渲染。
+                if render_iter is None:
+                    render_iter = runner._render_pool.map(_render_page, batch_pages)
+                for i, arr in enumerate(render_iter):
                     images[i] = arr
+                render_iter = None
             page_failed = [arr is None for arr in images]
             # 渲染子步进度：本批每页 +1（含渲染失败的页，它们仍“处理完”了渲染阶段）
             progress += len(batch_pages)
             _emit_progress()
+
+            # 提前提交下一批渲染。ThreadPoolExecutor.map 会立即排队所有任务，
+            # iterator 留到下一轮再消费；当前线程随即进入 WorkerHost 批量 OCR，
+            # 从而让 PDF 栅格/PNG 编码与 OCR 子进程/GPU 计算重叠。仅预取一批，
+            # 把额外峰值内存限制在最多 2×_OCR_BATCH_SIZE 页。
+            if not runner._cancelled and batch_number + 1 < len(page_batches):
+                render_iter = runner._render_pool.map(
+                    _render_page, page_batches[batch_number + 1]
+                )
 
             # 阶段2：批量识别(单次 predict，跳过渲染失败的页)
             valid_indices = [i for i, img in enumerate(images) if img is not None]
@@ -1099,14 +1116,19 @@ class PdfSessionManager(QObject):
                 progress += 1
                 _emit_progress()
 
-        # 末尾整文档聚合压缩：把批级冗余子集字体合并为单一字体 + 全量压缩落盘。
-        # 复用后端 save 路由（path=None 覆盖原文件，compress_on_save 默认 True
-        # 走 _compress_in_place）。compress 失败时 sidecar 保持 completed=false
-        # （已 incremental 落盘的页仍有效，下次 start_ocr 续传）。
+        # 末尾整文档快速压缩：批量写层已经完成，显式跳过逐页删除/重写，
+        # 只复用 save 路由做最终压缩落盘。代价是保留每批一个字体子集，换取
+        # 不再二次处理全部页。compress 失败时 sidecar 保持 completed=false
+        #（已 incremental 落盘的页仍有效，下次 start_ocr 续传）。
         if not runner._cancelled and success > 0 and session.file_path:
             try:
                 runner.progress.emit(session_id, 0, 0)  # 不确定进度（COMPRESS 态）
-                self._client.save(session_id, None, settings_dict)
+                self._client.save(
+                    session_id,
+                    None,
+                    settings_dict,
+                    rewrite_text_layers=False,
+                )
                 # 全量压缩整体重写了 PDF（可能变小）。先刷新 sidecar 基线为
                 # 当前文件状态，否则 mark_completed→load_sidecar 的增长校验会
                 # 因 size < original 失败而落盘一个空 sidecar（同 Task1 的指纹
@@ -1119,7 +1141,7 @@ class PdfSessionManager(QObject):
                         "sidecar mark_completed 失败（忽略）", exc_info=True
                     )
             except Exception as e:
-                logger.error("OCR 末尾聚合压缩失败（中间结果已增量落盘）: %s", e)
+                logger.error("OCR 末尾压缩失败（中间结果已增量落盘）: %s", e)
 
         # 刷新 model(OCR 改变了 has_text_layer + ocr_text_blocks)
         # 大文件场景此步是内存峰值：get_model 返回全文档 mirror（含所有页的

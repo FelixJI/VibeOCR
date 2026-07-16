@@ -24,7 +24,7 @@ from typing import Any
 
 import pytest
 
-from vibeocr.worker_host.backend_client import BackendClient, BackendError
+from vibeocr.worker_host.backend_client import BackendClient, BackendError, _PendingCall
 from vibeocr.worker_host.contracts import (
     PROTOCOL_VERSION,
     RpcEnvelope,
@@ -239,6 +239,26 @@ async def test_deadline_timeout_sends_cancel(client: BackendClient) -> None:
     cancel_req = json.loads(conn.written[1])
     assert cancel_req["method"] == "task.cancel"
     assert "task_id" in cancel_req["payload"]
+
+
+async def test_late_response_for_cancelled_future_keeps_reader_valid(
+    client: BackendClient,
+) -> None:
+    """A response racing with cancellation must not raise InvalidStateError."""
+    request_id = "22222222-2222-4222-8222-222222222222"
+    pending = _PendingCall("ocr.recognize", _TASK_ID)
+    pending.future.cancel()
+    client._pending[request_id] = pending
+
+    envelope = RpcEnvelope(
+        request_id=request_id,
+        task_id=_TASK_ID,
+        result={"text": "late", "pipeline": "OCR"},
+    )
+    client._complete_response(envelope)
+
+    assert request_id not in client._pending
+    assert pending.future.cancelled()
 
 
 # ---------------------------------------------------------------------------

@@ -190,15 +190,55 @@ async def test_client_owned_input_payload_is_released_on_rpc_error(monkeypatch) 
     await client.close()
 
 
-async def test_recognize_batch_preserves_order_and_uses_one_client(monkeypatch) -> None:
+async def test_recognize_batch_uses_one_rpc_and_releases_all_payloads(monkeypatch) -> None:
     client = BackendClient()
+    created: list[str] = []
+    released: list[str] = []
+    calls: list[tuple[str, dict[str, Any]]] = []
 
-    async def fake_recognize(image, *, pipeline, language):
-        return {"text": image.decode(), "pipeline": pipeline, "language": language}
+    class Ref:
+        def __init__(self, name: str) -> None:
+            self.name = name
 
-    monkeypatch.setattr(client, "recognize", fake_recognize)
+        def to_descriptor(self) -> dict[str, Any]:
+            return {"name": self.name}
+
+    async def fake_put(image: bytes, *, media_type: str) -> Ref:
+        name = image.decode()
+        created.append(name)
+        assert media_type == "image/png"
+        return Ref(name)
+
+    async def fake_release(name: str) -> bool:
+        released.append(name)
+        return True
+
+    async def fake_call(method: str, payload: dict[str, Any]) -> dict[str, Any]:
+        calls.append((method, payload))
+        return {
+            "results": [
+                {"text": "first", "pipeline": "OCR"},
+                {"text": "second", "pipeline": "OCR"},
+            ]
+        }
+
+    monkeypatch.setattr(client._store, "put", fake_put)
+    monkeypatch.setattr(client._store, "release_owned", fake_release)
+    monkeypatch.setattr(client, "call", fake_call)
     results = await client.recognize_batch(
         [b"first", b"second"], pipeline="OCR", language="ch"
     )
     assert [item["text"] for item in results] == ["first", "second"]
+    assert created == ["first", "second"]
+    assert released == ["first", "second"]
+    assert calls == [
+        (
+            "ocr.recognize_batch",
+            {
+                "images": [{"name": "first"}, {"name": "second"}],
+                "pipeline": "OCR",
+                "language": "ch",
+            },
+        )
+    ]
     await client.close()

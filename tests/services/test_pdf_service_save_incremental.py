@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import fitz
 
 from vibeocr.services.pdf_service import PdfService
@@ -38,13 +40,19 @@ def test_save_incremental_returns_false_and_keeps_doc_usable_on_failure(
     doc = fitz.open(str(pdf))
     doc[0].insert_text((50, 100), "world")  # 内存改动
 
-    # 模拟 save 抛异常（incremental 写文件失败）
-    def boom(self, *a, **kw):
+    original_bytes = pdf.read_bytes()
+
+    # 模拟 incremental 已追加部分字节后抛异常。
+    def boom(self, path, *a, **kw):
+        with Path(path).open("ab") as stream:
+            stream.write(b"partial incremental bytes")
         raise RuntimeError("disk full")
     monkeypatch.setattr(fitz.Document, "save", boom)
 
     ok = PdfService.save_incremental(doc, str(pdf))
     assert ok is False
+    assert pdf.read_bytes() == original_bytes
+    assert not Path(str(pdf) + PdfService._INCREMENTAL_MARKER_SUFFIX).exists()
     # 关键：doc 仍可用（未 close），内存文字层保留，可继续后续操作
     assert doc.page_count == 1
     assert "world" in doc[0].get_text()  # 内存改动还在
@@ -55,3 +63,39 @@ def test_save_incremental_returns_false_and_keeps_doc_usable_on_failure(
     assert doc2.page_count == 1
     assert "world" not in doc2[0].get_text()
     doc2.close()
+
+
+def test_save_incremental_does_not_copy_whole_pdf(tmp_path, monkeypatch):
+    pdf = tmp_path / "fast.pdf"
+    doc = fitz.open()
+    doc.new_page()
+    doc.save(str(pdf))
+    doc.close()
+    doc = fitz.open(str(pdf))
+    doc[0].insert_text((50, 100), "fast")
+
+    def reject_copy(*args, **kwargs):
+        raise AssertionError("incremental checkpoint must not copy the whole PDF")
+
+    monkeypatch.setattr("vibeocr.services.pdf_service.shutil.copy2", reject_copy)
+    assert PdfService.save_incremental(doc, str(pdf)) is True
+    doc.close()
+
+
+def test_open_doc_recovers_interrupted_incremental_append(tmp_path):
+    pdf = tmp_path / "recover.pdf"
+    doc = fitz.open()
+    doc.new_page()
+    doc.save(str(pdf))
+    doc.close()
+    original = pdf.read_bytes()
+    marker = Path(str(pdf) + PdfService._INCREMENTAL_MARKER_SUFFIX)
+    marker.write_text(str(len(original)), encoding="ascii")
+    with pdf.open("ab") as stream:
+        stream.write(b"interrupted append")
+
+    recovered_doc, _ = PdfService.open_doc(str(pdf))
+    recovered_doc.close()
+
+    assert pdf.read_bytes() == original
+    assert not marker.exists()

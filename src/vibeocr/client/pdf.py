@@ -215,10 +215,18 @@ class PdfBackendClient:
         sid: str,
         path: str | None = None,
         pdf_settings: dict[str, Any] | None = None,
+        *,
+        rewrite_text_layers: bool = True,
     ) -> SaveResponse:
         return SaveResponse.model_validate(
             self._command(
-                sid, "save", {"path": path, "pdf_settings": pdf_settings}
+                sid,
+                "save",
+                {
+                    "path": path,
+                    "pdf_settings": pdf_settings,
+                    "rewrite_text_layers": rewrite_text_layers,
+                },
             )
         )
 

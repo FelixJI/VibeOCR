@@ -692,7 +692,7 @@ class TestOcrPageDoneIncrementalModel:
 
 class TestRunOcrIncrementalSave:
     """_run_ocr 阶段3 写层后应 incremental save + 写 sidecar；
-    末尾聚合压缩后 mark_completed。覆盖 6B + 6C。"""
+    末尾快速压缩后 mark_completed。覆盖 6B + 6C。"""
 
     def test_run_ocr_calls_add_text_layer_batch_with_save_and_writes_sidecar(
         self, qapp, tmp_path, monkeypatch
@@ -767,12 +767,72 @@ class TestRunOcrIncrementalSave:
         assert client.add_text_layer_batch.called
         _, kwargs = client.add_text_layer_batch.call_args
         assert kwargs.get("save") is True
-        # 末尾聚合压缩后 mark_completed，故 completed=True
+        assert client.save.call_args.kwargs.get("rewrite_text_layers") is False
+        # 末尾快速压缩后 mark_completed，故 completed=True
         from vibeocr.utils.ocr_sidecar import load_sidecar
 
         data = load_sidecar(str(pdf_path))
         assert data is not None
         assert data["completed"] is True
+
+    def test_run_ocr_prefetches_next_render_batch_before_current_ocr(
+        self, qapp, tmp_path, monkeypatch
+    ):
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+
+        from vibeocr.managers.pdf_session_manager import PdfSessionManager
+        from vibeocr.models.pdf_document import PdfDocument, PdfPageInfo
+
+        pdf_path = tmp_path / "pipeline.pdf"
+        pdf_path.write_bytes(b"%PDF-1.4 test")
+        mgr = PdfSessionManager.__new__(PdfSessionManager)
+        mgr._sessions = {}
+        mgr._active_path = str(pdf_path)
+        mgr._OCR_BATCH_SIZE = 2
+
+        doc = PdfDocument(file_path=str(pdf_path))
+        doc.pages = [PdfPageInfo(page_index=i) for i in range(3)]
+        session = MagicMock()
+        session.session_id = "sid1"
+        session.file_path = str(pdf_path)
+        session.pdf_document = doc
+        session.add_ocr_stats = MagicMock()
+        mgr._sessions[str(pdf_path)] = session
+
+        events = []
+
+        class RecordingPool:
+            def map(self, func, page_indices):
+                batch = list(page_indices)
+                events.append(("render", batch))
+                return iter([f"png-{idx}".encode() for idx in batch])
+
+        class RecordingOcr:
+            def recognize_batch(self, images, options):
+                events.append(("ocr", len(images)))
+                return [SimpleNamespace(text_blocks=[]) for _ in images]
+
+        mgr._client = MagicMock()
+        mgr._client.get_model.return_value = MagicMock()
+        mgr._ocr_service = RecordingOcr()
+        monkeypatch.setattr(
+            "vibeocr.pyside.pdf_session_manager.mirror_to_doc",
+            lambda _model: doc,
+        )
+        runner = MagicMock()
+        runner._cancelled = False
+        runner._task_id = 1
+        runner._render_pool = RecordingPool()
+
+        mgr._run_ocr(runner, "sid1", [0, 1, 2], None, {}, False)
+
+        assert events == [
+            ("render", [0, 1]),
+            ("render", [2]),
+            ("ocr", 2),
+            ("ocr", 1),
+        ]
 
 
 class TestStartOcrResumeFilter:

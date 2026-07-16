@@ -6,6 +6,8 @@ import re
 from collections.abc import Callable
 from typing import Any
 
+from vibeocr.contracts.pipelines import OCRPipeline
+
 _UUID_RE = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
 )
@@ -15,7 +17,7 @@ _SHARED_NAME_RE = re.compile(
     r"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
 )
 _SHA_RE = re.compile(r"^[0-9a-f]{64}$")
-_PIPELINES = frozenset({"OCR", "TABLE_RECOGNITION", "FORMULA_RECOGNITION"})
+_PIPELINES = frozenset(pipeline.value for pipeline in OCRPipeline)
 
 
 class MethodPayloadError(ValueError):
@@ -222,6 +224,34 @@ def _response_ocr(p: dict[str, Any]) -> None:
     for name in ("markdown_text", "html_text", "raw_text"):
         if name in p:
             _string(p[name], name, allow_empty=True)
+
+
+def _request_ocr_batch(p: dict[str, Any]) -> None:
+    _closed(
+        p,
+        required={"images"},
+        optional={"pipeline", "language"},
+        label="ocr.recognize_batch request",
+    )
+    images = p["images"]
+    if not isinstance(images, list) or not 1 <= len(images) <= 64:
+        raise MethodPayloadError("images must contain between 1 and 64 items")
+    for index, image in enumerate(images):
+        _shared_ref(image, f"images[{index}]")
+    if "pipeline" in p and p["pipeline"] not in _PIPELINES:
+        raise MethodPayloadError("pipeline is not supported by protocol v1")
+    if "language" in p and p["language"] is not None:
+        _string(p["language"], "language")
+
+
+def _response_ocr_batch(p: dict[str, Any]) -> None:
+    _closed(p, required={"results"}, label="ocr.recognize_batch response")
+    results = p["results"]
+    if not isinstance(results, list):
+        raise MethodPayloadError("results must be an array")
+    for result in results:
+        if result is not None:
+            _response_ocr(result)
 
 
 def _request_ocr_export(p: dict[str, Any]) -> None:
@@ -596,6 +626,7 @@ _VALIDATORS: dict[str, tuple[Validator, Validator]] = {
     "task.cancel": (_request_cancel, _response_cancel),
     "memory.release": (_request_release, _response_release),
     "ocr.recognize": (_request_ocr, _response_ocr),
+    "ocr.recognize_batch": (_request_ocr_batch, _response_ocr_batch),
     "ocr.export": (_request_ocr_export, _response_ocr_export),
     "pdf.open": (_request_pdf, _response_pdf),
     "pdf.close": (_request_pdf_close, _response_pdf_close),

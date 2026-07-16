@@ -29,6 +29,13 @@ class OcrRecognizeFacade(Protocol):
 
 
 @runtime_checkable
+class OcrBatchRecognizeFacade(Protocol):
+    def recognize_batch(
+        self, requests: list[OcrRequest], cancel: CancelToken
+    ) -> list[OcrResult | None]: ...
+
+
+@runtime_checkable
 class OcrExportFacade(Protocol):
     def export(self, request: OcrExportRequest, cancel: CancelToken) -> OcrExportResult: ...
 
@@ -56,21 +63,73 @@ class OcrHandler:
             result = await asyncio.to_thread(self._facade.recognize, request, cancel)
         except OcrError as exc:
             raise WorkerError(ErrorCode.INTERNAL_ERROR, str(exc)) from exc
-        response: dict[str, Any] = {
-            "text": result.text,
-            "pipeline": result.pipeline,
-            "raw_blocks": list(result.raw_blocks),
-            "markdown_text": result.markdown_text,
-            "html_text": result.html_text,
-            "raw_text": result.raw_text or result.text,
-            "text_blocks": list(result.text_blocks),
-            "text_with_scores": list(result.text_with_scores),
-            "content_list": list(result.content_list),
-            "image_width": result.image_width,
-            "image_height": result.image_height,
-        }
         # preprocessed_image, if present, is staged in shared memory.
-        return response
+        return _result_payload(result)
+
+
+class OcrBatchHandler:
+    """Handle one control RPC backed by one engine-level OCR batch."""
+
+    def __init__(
+        self, *, facade: OcrBatchRecognizeFacade, store: SharedPayloadStore
+    ) -> None:
+        self._facade = facade
+        self._store = store
+
+    async def handle(
+        self, payload: dict[str, Any], cancel: CancelToken
+    ) -> dict[str, Any]:
+        raw_refs = payload.get("images")
+        if not isinstance(raw_refs, list) or not raw_refs:
+            raise WorkerError(
+                ErrorCode.INVALID_REQUEST,
+                "ocr.recognize_batch requires a non-empty 'images' array",
+            )
+        refs = [SharedPayloadRef.from_descriptor(item) for item in raw_refs]
+        images = await asyncio.gather(*(self._store.read(ref) for ref in refs))
+        pipeline = str(payload.get("pipeline", "OCR"))
+        language = payload.get("language")
+        requests = [
+            OcrRequest(
+                image_data=image,
+                pipeline=pipeline,
+                language=str(language) if language is not None else None,
+            )
+            for image in images
+        ]
+        try:
+            results = await asyncio.to_thread(
+                self._facade.recognize_batch, requests, cancel
+            )
+        except OcrError as exc:
+            raise WorkerError(ErrorCode.INTERNAL_ERROR, str(exc)) from exc
+        if len(results) != len(requests):
+            raise WorkerError(
+                ErrorCode.INTERNAL_ERROR,
+                "OCR batch result count does not match request count",
+            )
+        return {
+            "results": [
+                _result_payload(result) if result is not None else None
+                for result in results
+            ]
+        }
+
+
+def _result_payload(result: OcrResult) -> dict[str, Any]:
+    return {
+        "text": result.text,
+        "pipeline": result.pipeline,
+        "raw_blocks": list(result.raw_blocks),
+        "markdown_text": result.markdown_text,
+        "html_text": result.html_text,
+        "raw_text": result.raw_text or result.text,
+        "text_blocks": list(result.text_blocks),
+        "text_with_scores": list(result.text_with_scores),
+        "content_list": list(result.content_list),
+        "image_width": result.image_width,
+        "image_height": result.image_height,
+    }
 
 
 class OcrExportHandler:
@@ -97,4 +156,11 @@ class OcrExportHandler:
         return {"output_path": str(result.output_path), "bytes_written": result.bytes_written}
 
 
-__all__ = ["OcrExportFacade", "OcrExportHandler", "OcrHandler", "OcrRecognizeFacade"]
+__all__ = [
+    "OcrBatchHandler",
+    "OcrBatchRecognizeFacade",
+    "OcrExportFacade",
+    "OcrExportHandler",
+    "OcrHandler",
+    "OcrRecognizeFacade",
+]

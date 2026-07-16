@@ -290,20 +290,26 @@ class BackendClient:
         *,
         pipeline: str = "OCR",
         language: str | None = None,
-    ) -> list[dict[str, Any]]:
-        """Recognize a batch over one authenticated WorkerHost session.
-
-        Calls are correlated independently, so cancelling this coroutine
-        propagates ``task.cancel`` to every in-flight image request.
-        """
-        return list(
-            await asyncio.gather(
-                *(
-                    self.recognize(image, pipeline=pipeline, language=language)
-                    for image in images
-                )
-            )
-        )
+    ) -> list[dict[str, Any] | None]:
+        """Recognize all images in one WorkerHost/engine-level batch RPC."""
+        if not images:
+            return []
+        refs: list[SharedPayloadRef] = []
+        try:
+            for image in images:
+                refs.append(await self._store.put(image, media_type="image/png"))
+            payload: dict[str, Any] = {
+                "images": [ref.to_descriptor() for ref in refs],
+                "pipeline": pipeline,
+            }
+            if language is not None:
+                payload["language"] = language
+            result = await self.call("ocr.recognize_batch", payload)
+            return list(result["results"])
+        finally:
+            for ref in refs:
+                with _suppress(Exception):
+                    await self._store.release_owned(ref.name)
 
     async def export_ocr(
         self,
@@ -550,6 +556,17 @@ class BackendClient:
         pending = self._pending.pop(envelope.request_id, None)
         if pending is None:
             # Stale response for an already-cancelled/timed-out call; ignore.
+            return
+        if pending.future.done():
+            # A timeout/caller cancellation cancels wait_for(pending.future).
+            # The response can race with call()'s finally block and reach the
+            # reader before _pending is removed. Completing that cancelled
+            # Future raises InvalidStateError and used to terminate the one
+            # reader task, failing every unrelated in-flight RPC.
+            _log.debug(
+                "BackendClient: late response for completed call %s",
+                envelope.request_id,
+            )
             return
         if envelope.kind is EnvelopeKind.RESPONSE_ERROR:
             err = envelope.error

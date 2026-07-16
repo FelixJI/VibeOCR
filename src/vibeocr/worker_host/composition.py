@@ -24,7 +24,11 @@ from vibeocr.application.contracts import (
 from vibeocr.application.ocr_facade import OcrFacade
 from vibeocr.application.pdf_facade import PdfFacade
 from vibeocr.application.settings_facade import SettingsFacade
-from vibeocr.worker_host.handlers.ocr import OcrExportHandler, OcrHandler
+from vibeocr.worker_host.handlers.ocr import (
+    OcrBatchHandler,
+    OcrExportHandler,
+    OcrHandler,
+)
 from vibeocr.worker_host.handlers.pdf import (
     PdfAddTextLayerHandler,
     PdfCloseHandler,
@@ -80,6 +84,40 @@ class OcrServiceAdapter:
         if cancel.is_cancelled:
             raise RuntimeError("OCR request cancelled")
 
+        return self._to_contract_result(result, request.pipeline)
+
+    def recognize_batch(
+        self, requests: list[OcrRequest], cancel: CancelToken
+    ) -> list[OcrResult | None]:
+        if cancel.is_cancelled:
+            raise RuntimeError("OCR request cancelled")
+        if not requests:
+            return []
+        first = requests[0]
+        if any(
+            request.pipeline != first.pipeline or request.language != first.language
+            for request in requests[1:]
+        ):
+            raise ValueError("all requests in an OCR batch must share options")
+        options: dict[str, Any] = {"pipeline": first.pipeline}
+        if first.language is not None:
+            options["language"] = first.language
+        raw_results = self._get_service().recognize_batch(
+            [request.image_data for request in requests], options
+        )
+        if cancel.is_cancelled:
+            raise RuntimeError("OCR request cancelled")
+        if len(raw_results) != len(requests):
+            raise RuntimeError("OCR batch result count mismatch")
+        return [
+            self._to_contract_result(result, first.pipeline)
+            if result is not None
+            else None
+            for result in raw_results
+        ]
+
+    @staticmethod
+    def _to_contract_result(result: Any, requested_pipeline: str) -> OcrResult:
         content_list = list(getattr(result, "content_list", []) or [])
         text_blocks_raw = list(getattr(result, "text_blocks", []) or [])
         # Serialize TextBlock dataclass instances into plain dicts for the wire.
@@ -101,7 +139,8 @@ class OcrServiceAdapter:
         text = str(
             getattr(result, "copy_text", None) or getattr(result, "raw_text", "")
         )
-        pipeline = str(getattr(result, "pipeline_type", request.pipeline))
+        pipeline_type = getattr(result, "pipeline_type", requested_pipeline)
+        pipeline = str(getattr(pipeline_type, "value", pipeline_type))
         return OcrResult(
             text=text,
             raw_blocks=blocks,
@@ -267,7 +306,7 @@ class PdfBackendAdapter:
         if hasattr(value, "model_dump"):
             return value.model_dump(mode="json")
         if dataclasses.is_dataclass(value):
-            return dataclasses.asdict(value)
+            return dataclasses.asdict(cast("Any", value))
         if isinstance(value, list):
             return [PdfBackendAdapter._wire(item) for item in value]
         if isinstance(value, tuple):
@@ -343,7 +382,10 @@ class PdfBackendAdapter:
                 )
             ),
             "save": lambda: client.save(
-                session_id, params.get("path"), params.get("pdf_settings")
+                session_id,
+                params.get("path"),
+                params.get("pdf_settings"),
+                rewrite_text_layers=bool(params.get("rewrite_text_layers", True)),
             ),
             "cancel": lambda: client.cancel(session_id),
             "reset_cancel": lambda: client.reset_cancel(session_id),
@@ -422,7 +464,7 @@ class _PdfOcrBackendBridge:
 
     def compress(self, session_id: str, cancel_check: Any) -> bool:
         try:
-            self._client.save(session_id, None)
+            self._client.save(session_id, None, rewrite_text_layers=False)
             return True
         except Exception:
             return False
@@ -659,6 +701,9 @@ class WorkerServiceComposition:
     def handlers(self, store: SharedPayloadStore) -> dict[str, Handler]:
         return {
             "ocr.recognize": OcrHandler(
+                facade=OcrFacade(self._ocr_adapter), store=store
+            ).handle,
+            "ocr.recognize_batch": OcrBatchHandler(
                 facade=OcrFacade(self._ocr_adapter), store=store
             ).handle,
             "ocr.export": OcrExportHandler(facade=self._ocr_adapter).handle,

@@ -167,6 +167,57 @@
         }
       }
     },
+    "ocr.recognize_batch": {
+      "request_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000012",
+        "task_id": "00000000-0000-4000-8000-000000000012",
+        "method": "ocr.recognize_batch",
+        "payload": {
+          "images": [
+            {
+              "name": "Local\\VibeOCR-00000000-0000-4000-8000-000000000000-00000000-0000-4000-8000-000000000012",
+              "size": 12345,
+              "media_type": "image/png",
+              "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+              "owner": "client",
+              "expires_unix_ms": 1800000000000
+            },
+            {
+              "name": "Local\\VibeOCR-00000000-0000-4000-8000-000000000000-00000000-0000-4000-8000-000000000013",
+              "size": 23456,
+              "media_type": "image/png",
+              "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+              "owner": "client",
+              "expires_unix_ms": 1800000000000
+            }
+          ],
+          "pipeline": "OCR",
+          "language": null
+        },
+        "deadline_unix_ms": 0
+      },
+      "response_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000012",
+        "task_id": "00000000-0000-4000-8000-000000000012",
+        "result": {
+          "results": [
+            {
+              "text": "First",
+              "pipeline": "OCR",
+              "raw_blocks": [],
+              "text_blocks": [],
+              "text_with_scores": [],
+              "content_list": [],
+              "image_width": 800,
+              "image_height": 600
+            },
+            null
+          ]
+        }
+      }
+    },
     "ocr.export": {
       "request_envelope": {
         "protocol_version": 1,

@@ -109,7 +109,7 @@ class ProgressPhase(StrEnum):
     DELETE = "delete"  # 删除文字层
     SAVE = "save"  # 保存落盘
     EXPORT = "export"  # 导出
-    COMPRESS = "compress"  # OCR 末尾整文档聚合压缩（不确定进度）
+    COMPRESS = "compress"  # OCR 末尾整文档压缩（不确定进度）
 
 
 class ProgressEvent(BaseModel):
@@ -133,6 +133,8 @@ class OpenRequest(BaseModel):
 class SaveRequest(BaseModel):
     path: str | None = None  # None = 覆盖原文件
     pdf_settings: dict[str, Any] | None = None
+    # OCR 分批写层已完成时无需删除并重写全部文字层；普通保存保持 True。
+    rewrite_text_layers: bool = True
 
 
 class RotateRequest(BaseModel):

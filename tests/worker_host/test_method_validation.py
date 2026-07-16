@@ -44,3 +44,12 @@ def test_invalid_nested_shared_descriptor_is_rejected(golden: dict[str, Any]) ->
 def test_unknown_method_is_rejected() -> None:
     with pytest.raises(MethodPayloadError, match="unknown method"):
         validate_method_payload("evil.eval", "request", {})
+
+
+def test_empty_ocr_batch_is_rejected() -> None:
+    with pytest.raises(MethodPayloadError, match="between 1 and 64"):
+        validate_method_payload(
+            "ocr.recognize_batch",
+            "request",
+            {"images": [], "pipeline": "OCR"},
+        )

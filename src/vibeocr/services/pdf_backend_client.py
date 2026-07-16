@@ -551,11 +551,22 @@ class PdfBackendClient:
         except httpx.HTTPError as e:
             raise PdfBackendError(f"删除文字层流式调用失败: {e}") from e
 
-    def save(self, sid: str, path: str | None = None, pdf_settings: dict | None = None) -> SaveResponse:
+    def save(
+        self,
+        sid: str,
+        path: str | None = None,
+        pdf_settings: dict | None = None,
+        *,
+        rewrite_text_layers: bool = True,
+    ) -> SaveResponse:
         return self._parse(
             self._post(
                 f"/session/{sid}/save",
-                SaveRequest(path=path, pdf_settings=pdf_settings).model_dump(),
+                SaveRequest(
+                    path=path,
+                    pdf_settings=pdf_settings,
+                    rewrite_text_layers=rewrite_text_layers,
+                ).model_dump(),
                 timeout=_HTTP_LONG_TIMEOUT,
             ),
             SaveResponse,

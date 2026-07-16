@@ -135,6 +135,14 @@ def test_methods_schema_is_draft_2020_12(methods_schema: dict[str, Any]) -> None
     Draft202012Validator.check_schema(methods_schema)
 
 
+def test_pipeline_enum_matches_frontend_contract(methods_schema: dict[str, Any]) -> None:
+    from vibeocr.contracts.pipelines import OCRPipeline
+
+    assert set(methods_schema["$defs"]["pipeline"]["enum"]) == {
+        pipeline.value for pipeline in OCRPipeline
+    }
+
+
 def test_protocol_version_is_integer_one(envelope_schema: dict[str, Any]) -> None:
     # The plan pins protocol_version to integer 1 (not string "1.0").
     req = envelope_schema["$defs"]["request"]["properties"]["protocol_version"]
@@ -155,6 +163,7 @@ PUBLIC_METHODS = [
     "task.cancel",
     "memory.release",
     "ocr.recognize",
+    "ocr.recognize_batch",
     "ocr.export",
     "pdf.open",
     "pdf.close",

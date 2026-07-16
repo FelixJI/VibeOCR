@@ -177,7 +177,7 @@ def mark_completed(file_path: str) -> bool:
 def refresh_baseline(file_path: str) -> bool:
     """把 sidecar 的增长校验基线刷新为当前文件状态。
 
-    用于 6C 末尾聚合压缩后：全量压缩会整体重写 PDF（可能比原文件小），
+    用于 OCR 末尾全量压缩后：压缩会整体重写 PDF（可能比原文件小），
     若不刷新基线，下次重开会因 `size < original` 通不过增长校验。直接读
     sidecar 原文（绕过 load_sidecar 的校验），更新 `original_size`/
     `original_mtime_ns`/`fingerprint`，再原子写回。

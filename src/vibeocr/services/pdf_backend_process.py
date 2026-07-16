@@ -770,6 +770,7 @@ def save(sid: str, req: SaveRequest) -> SaveResponse:
             result = PdfService.save_with_rewrite(
                 s.doc, s.pdf_document, path=req.path,
                 pdf_settings=_settings_from_dict(req.pdf_settings),
+                rewrite_text_layers=req.rewrite_text_layers,
             )
             # 全量压缩时 doc 被替换
             new_doc = getattr(result, "new_doc", None)

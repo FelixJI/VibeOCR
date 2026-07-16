@@ -57,6 +57,33 @@ def test_ocr_adapter_maps_existing_service_result() -> None:
     assert calls == [(b"png", {"pipeline": "OCR", "language": "ch"})]
 
 
+def test_ocr_adapter_uses_one_service_batch_call() -> None:
+    calls: list[tuple[list[bytes], dict[str, Any]]] = []
+
+    class Service:
+        def recognize_batch(
+            self, images: list[bytes], options: dict[str, Any]
+        ) -> list[Any | None]:
+            calls.append((images, options))
+            return [
+                SimpleNamespace(copy_text="one", pipeline_type="OCR"),
+                None,
+            ]
+
+    adapter = OcrServiceAdapter(Service)
+    results = adapter.recognize_batch(
+        [
+            OcrRequest(image_data=b"one", pipeline="OCR", language="ch"),
+            OcrRequest(image_data=b"two", pipeline="OCR", language="ch"),
+        ],
+        CancelToken(),
+    )
+
+    assert calls == [([b"one", b"two"], {"pipeline": "OCR", "language": "ch"})]
+    assert results[0] is not None and results[0].text == "one"
+    assert results[1] is None
+
+
 def test_pdf_adapter_maps_backend_response(tmp_path: Path) -> None:
     source = tmp_path / "sample.pdf"
     source.write_bytes(b"%PDF")
@@ -76,6 +103,40 @@ def test_pdf_adapter_maps_backend_response(tmp_path: Path) -> None:
     assert result.session_id == "session-1"
     assert result.page_count == 3
     assert result.file_path == source.resolve()
+
+
+def test_pdf_command_forwards_fast_finalize_flag() -> None:
+    calls: list[tuple[str, str | None, dict[str, Any] | None, bool]] = []
+
+    class Client:
+        def save(
+            self,
+            session_id: str,
+            path: str | None,
+            pdf_settings: dict[str, Any] | None,
+            *,
+            rewrite_text_layers: bool,
+        ) -> dict[str, Any]:
+            calls.append(
+                (session_id, path, pdf_settings, rewrite_text_layers)
+            )
+            return {"path": "C:/doc.pdf", "diff": {}}
+
+    adapter = PdfBackendAdapter(Client)
+    result = adapter.command(
+        "sid-1",
+        "save",
+        {
+            "path": None,
+            "pdf_settings": {"compress_on_save": True},
+            "rewrite_text_layers": False,
+        },
+    )
+
+    assert result["path"] == "C:/doc.pdf"
+    assert calls == [
+        ("sid-1", None, {"compress_on_save": True}, False)
+    ]
 
 
 def test_json_settings_adapter_reads_side_by_side_profile(tmp_path: Path) -> None:
@@ -121,6 +182,7 @@ def test_production_composition_registers_all_domain_handlers(tmp_path: Path) ->
     handlers = composition.handlers(SharedPayloadStore(owner="worker"))
     assert set(handlers) == {
         "ocr.recognize",
+        "ocr.recognize_batch",
         "ocr.export",
         "pdf.open",
         "pdf.close",

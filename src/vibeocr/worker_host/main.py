@@ -447,6 +447,7 @@ def _build_dispatcher(
     }
     retryable_queries = {
         "ocr.recognize",
+        "ocr.recognize_batch",
         "pdf.open",
         "pdf.render_page",
         "pdf.command",

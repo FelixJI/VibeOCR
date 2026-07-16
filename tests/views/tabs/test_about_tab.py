@@ -32,6 +32,36 @@ class TestAboutTab:
         html = about_tab._changelog_browser.toHtml()
         assert len(html) > 0
 
+    def test_changelog_literal_html_does_not_hide_following_text(
+        self, qtbot, monkeypatch, tmp_path
+    ):
+        """字面量 HTML 标签不能让 Qt 吞掉后续 Markdown 普通文字。"""
+        changelog = tmp_path / "CHANGELOG.md"
+        changelog.write_text(
+            "# Changelog\n\n"
+            "- 修复 Markdown 表格 <br>/实体丢失\n"
+            "- `_read_free_vram_mb` NVML 失败时增加 "
+            "`paddle.device.cuda` 二级兜底读取显存\n"
+            "- `OCROptions.use_doc_unwarping` 默认改为 `False`\n",
+            encoding="utf-8",
+        )
+
+        from vibeocr.views.tabs import about_tab
+
+        monkeypatch.setattr(
+            about_tab.env_manager,
+            "get_bundled_changelog_path",
+            lambda: changelog,
+        )
+        tab = about_tab.AboutTab()
+        qtbot.addWidget(tab)
+
+        text = tab._changelog_browser.toPlainText()
+        assert "<br>" in text
+        assert "NVML 失败时增加" in text
+        assert "二级兜底读取显存" in text
+        assert "默认改为 False" in text
+
     def test_left_right_columns_exist(self, about_tab):
         """左右两栏布局：左栏（品牌/信息/耗时）+ 右栏（更新日志/按钮）应同时存在。"""
         from PySide6.QtWidgets import QWidget

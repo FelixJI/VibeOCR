@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NamedTuple
@@ -56,6 +57,7 @@ class PdfService:
     # 词级 redact 的最大循环轮数。绝大多数页 1 轮清零；仅嵌套/合并异常的
     # 文本结构需多轮。内部常量，不暴露为用户配置。
     _DELETE_LAYER_MAX_ROUNDS = 5
+    _INCREMENTAL_MARKER_SUFFIX = ".vibeocr-incremental"
 
     # ---- open / save ------------------------------------------------
 
@@ -70,6 +72,7 @@ class PdfService:
         if not Path(file_path).exists():
             raise FileNotFoundError(f"文件不存在: {file_path}")
 
+        PdfService._recover_interrupted_incremental(file_path)
         doc = fitz.open(file_path)
         if doc.is_encrypted:
             doc.close()
@@ -175,6 +178,8 @@ class PdfService:
         pdf_document: PdfDocument,
         path: str | None = None,
         pdf_settings: object | None = None,
+        *,
+        rewrite_text_layers: bool = True,
     ) -> SaveResult:
         """对所有有 OCR 块的页重写文字层后落盘（保存/另存为共用）。
 
@@ -189,6 +194,8 @@ class PdfService:
             pdf_document: PdfDocument 状态对象。
             path: None=覆盖原文件；str=另存为到该路径。
             pdf_settings: PdfGlobalSettings（rewrite 用）。
+            rewrite_text_layers: False 表示文字层已由批量 OCR 正确写入，仅做
+                最终落盘/压缩；普通保存必须保持默认 True 以应用编辑后的块。
 
         Returns:
             SaveResult(rewritten_pages, path)。
@@ -206,9 +213,11 @@ class PdfService:
         # 整文档一次聚合子集字体：把所有有 OCR 块的页字符汇成一个子集，
         # 全文档共享单一字体对象，避免每页一份独立子集放大体积。
         # （探测失败为 None → rewrite_text_layer 内部回退 china-s。）
-        target_pages = [
-            info for info in pdf_document.pages if info.ocr_text_blocks
-        ]
+        target_pages = (
+            [info for info in pdf_document.pages if info.ocr_text_blocks]
+            if rewrite_text_layers
+            else []
+        )
         shared_font_path: str | None = None
         if target_pages:
             all_chars = "".join(
@@ -242,15 +251,8 @@ class PdfService:
             if need_full:
                 new_doc = PdfService._compress_in_place(doc, save_path, clean=clean)
             else:
-                backup_path = save_path + ".bak"
-                shutil.copy2(save_path, backup_path)
-                try:
-                    doc.save(save_path, incremental=True, encryption=0)
-                    Path(backup_path).unlink(missing_ok=True)
-                except Exception:
-                    shutil.copy2(backup_path, save_path)
-                    Path(backup_path).unlink(missing_ok=True)
-                    raise
+                if not PdfService.save_incremental(doc, save_path):
+                    raise RuntimeError("incremental save failed and was rolled back")
         else:
             doc.save(path, deflate=True, clean=clean)
 
@@ -262,8 +264,9 @@ class PdfService:
     def save_incremental(doc: fitz.Document, save_path: str) -> bool:
         """增量保存（纯加文字层场景）。doc 不 close/重开，内存对象始终可用。
 
-        先备份原文件 → doc.save(incremental=True) → 删备份；异常从备份回滚文件
-        但不 close doc（内存文字层保留，调用方可继续后续操作）。
+        PDF incremental save 只在文件尾追加。保存前把原长度写入一个小型恢复
+        marker；异常时按长度截断，进程若在写入中退出则下次 open_doc 也会先
+        截断恢复。避免每个 OCR 批次都复制整份、持续增长的 PDF。
         供 OCR 逐批落盘使用：每批写层后调用，崩溃只丢最后一批。
 
         Args:
@@ -273,27 +276,66 @@ class PdfService:
             True 已落盘；False 失败已回滚文件（doc 内存文字层保留可用，调用方
             不应标记该批已落盘/不写 sidecar）。
         """
-        backup_path = save_path + ".bak"
+        path = Path(save_path)
+        marker = Path(save_path + PdfService._INCREMENTAL_MARKER_SUFFIX)
         try:
-            shutil.copy2(save_path, backup_path)
+            if not doc.can_save_incrementally():
+                logger.error("save_incremental: 当前文档不支持增量保存")
+                return False
+            original_size = path.stat().st_size
+            with marker.open("w", encoding="ascii") as stream:
+                stream.write(str(original_size))
+                stream.flush()
+                os.fsync(stream.fileno())
         except Exception as e:
-            logger.error("save_incremental: 备份失败，跳过本批落盘: %s", e)
+            logger.error("save_incremental: 创建恢复标记失败，跳过本批落盘: %s", e)
             return False
         try:
             doc.save(save_path, incremental=True, encryption=0)
-            Path(backup_path).unlink(missing_ok=True)
+            marker.unlink()
             return True
         except Exception as e:
-            # incremental save 失败：文件可能半写，从备份恢复。
+            # incremental save 失败：文件可能只追加了一部分，截断到写前长度。
             # doc 内存对象未受影响（fitz save 失败不改内存 doc），保持可用，
             # 内存文字层保留。调用方据此返回 saved=False，不写 sidecar。
-            logger.error("save_incremental: 增量保存失败，从备份回滚文件: %s", e)
+            logger.error("save_incremental: 增量保存失败，按原长度回滚: %s", e)
             try:
-                shutil.copy2(backup_path, save_path)
-                Path(backup_path).unlink(missing_ok=True)
+                PdfService._truncate_incremental(path, marker, original_size)
             except Exception:
-                logger.error("save_incremental: 备份回滚失败", exc_info=True)
+                logger.error("save_incremental: 长度回滚失败", exc_info=True)
             return False
+
+    @staticmethod
+    def _truncate_incremental(path: Path, marker: Path, original_size: int) -> None:
+        current_size = path.stat().st_size
+        if current_size < original_size:
+            raise RuntimeError(
+                f"incremental target shrank unexpectedly: {current_size} < {original_size}"
+            )
+        if current_size != original_size:
+            with path.open("r+b") as stream:
+                stream.truncate(original_size)
+                stream.flush()
+                os.fsync(stream.fileno())
+        marker.unlink(missing_ok=True)
+
+    @staticmethod
+    def _recover_interrupted_incremental(save_path: str) -> bool:
+        """Recover an append interrupted after its marker reached disk."""
+        path = Path(save_path)
+        marker = Path(save_path + PdfService._INCREMENTAL_MARKER_SUFFIX)
+        if not marker.exists():
+            return False
+        try:
+            original_size = int(marker.read_text(encoding="ascii").strip())
+            if original_size < 0:
+                raise ValueError("negative original size")
+            PdfService._truncate_incremental(path, marker, original_size)
+            logger.warning("已恢复中断的 PDF 增量保存: %s", save_path)
+            return True
+        except Exception:
+            logger.error("恢复中断的 PDF 增量保存失败: %s", save_path, exc_info=True)
+            raise
 
     @staticmethod
     def render_page_as_array(

@@ -20,8 +20,8 @@
     },
     "pipeline": {
       "type": "string",
-      "enum": ["OCR", "TABLE_RECOGNITION", "FORMULA_RECOGNITION"],
-      "description": "Inference pipeline name. Matches vibeocr.application.contracts."
+      "enum": ["OCR", "PP-StructureV3", "MinerU", "PaddleOCR-VL", "TABLE_RECOGNITION", "FORMULA_RECOGNITION"],
+      "description": "Inference pipeline name. Matches vibeocr.contracts.pipelines.OCRPipeline."
     },
     "backend": { "type": "string", "enum": ["cpu", "gpu"] }
   },
@@ -164,6 +164,44 @@
             "content_list": { "type": "array", "description": "Structured content list (MinerU/table/formula pipelines)." },
             "image_width": { "type": "integer", "minimum": 0 },
             "image_height": { "type": "integer", "minimum": 0 }
+          }
+        }
+      }
+    },
+    "ocr.recognize_batch": {
+      "type": "object",
+      "description": "Multi-image OCR. All image payloads share one options set and are processed by one engine-level batch call.",
+      "required": ["request", "response"],
+      "properties": {
+        "request": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["images"],
+          "properties": {
+            "images": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 64,
+              "items": { "$ref": "#/$defs/shared_payload_ref" }
+            },
+            "pipeline": { "$ref": "#/$defs/pipeline" },
+            "language": { "type": ["string", "null"] }
+          }
+        },
+        "response": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["results"],
+          "properties": {
+            "results": {
+              "type": "array",
+              "items": {
+                "anyOf": [
+                  { "$ref": "#/properties/ocr.recognize/properties/response" },
+                  { "type": "null" }
+                ]
+              }
+            }
           }
         }
       }

@@ -126,12 +126,23 @@ class SyncBackendClient:
             str(parent_pid),
         ]
         _log.info("launching WorkerHost: %s", " ".join(cmd))
+        child_env = os.environ.copy()
+        # WorkerHost stdout/stderr is a machine-owned pipe, not a user console.
+        # Pin both ends to UTF-8: relying on the Windows ANSI code page makes a
+        # Chinese locale decode UTF-8 dependency logs as GBK and kills the drain
+        # thread. ``errors=replace`` also keeps native extensions that write
+        # malformed bytes directly to fd 1/2 from blocking the child on a full
+        # pipe.
+        child_env["PYTHONIOENCODING"] = "utf-8:backslashreplace"
         self._process = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             cwd=str(working_dir) if working_dir else None,
+            env=child_env,
             text=True,
+            encoding="utf-8",
+            errors="replace",
         )
         ready = await asyncio.wait_for(
             self._await_ready(), timeout=_READY_TIMEOUT_SECONDS
@@ -184,10 +195,16 @@ class SyncBackendClient:
         def drain(stream: Any, level: int) -> None:
             if stream is None:
                 return
-            for raw in stream:
-                line = raw.rstrip()
-                if line:
-                    _log.log(level, "WorkerHost: %s", line)
+            try:
+                for raw in stream:
+                    line = raw.rstrip()
+                    if line:
+                        _log.log(level, "WorkerHost: %s", line)
+            except Exception:
+                # Output forwarding must never take down the pipe drain. A
+                # stopped drain can eventually fill the OS pipe buffer and
+                # deadlock an otherwise healthy WorkerHost.
+                _log.warning("WorkerHost %s drain stopped unexpectedly", stream, exc_info=True)
 
         self._io_threads = []
         for stream, level, name in (
@@ -324,7 +341,10 @@ class SyncBackendClient:
             ),
             timeout=timeout,
         )
-        return [_reconstruct_ocr_result(raw) for raw in raw_results]
+        return [
+            _reconstruct_ocr_result(raw) if raw is not None else None
+            for raw in raw_results
+        ]
 
     def export_ocr_sync(
         self,

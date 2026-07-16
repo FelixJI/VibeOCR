@@ -202,8 +202,17 @@ class InProcessPdfBackendClient:
         sid: str,
         path: str | None = None,
         pdf_settings: dict[str, Any] | None = None,
+        *,
+        rewrite_text_layers: bool = True,
     ):
-        return backend.save(sid, SaveRequest(path=path, pdf_settings=pdf_settings))
+        return backend.save(
+            sid,
+            SaveRequest(
+                path=path,
+                pdf_settings=pdf_settings,
+                rewrite_text_layers=rewrite_text_layers,
+            ),
+        )
 
     def cancel(self, sid: str) -> None:
         backend.cancel(sid)
