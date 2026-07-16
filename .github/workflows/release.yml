@@ -13,6 +13,17 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      build_variants:
+        description: "生成哪些安装包：pyside6（PySide6 经典版）/ winui（WinUI 次世代版）/ all（两者）"
+        required: false
+        default: "pyside6"
+        type: choice
+        options:
+          - pyside6
+          - winui
+          - all
 
 # 同一 tag 重复推送时取消旧 run，避免并发打包
 concurrency:
@@ -21,6 +32,16 @@ concurrency:
 
 permissions:
   contents: write  # softprops/action-gh-release 创建 Release 需要
+
+env:
+  # 控制本次发版生成哪些安装包。取值：
+  #   pyside6  仅 PySide6 经典版（VibeOCR-Classic-*.zip）
+  #   winui    仅 WinUI 次世代版（VibeOCR-Next-*.zip）
+  #   all      两者都打
+  # tag 推送触发时读这里的默认值；workflow_dispatch 手动触发时读
+  # inputs.build_variants（缺省回退到这里）。默认仅打包 pyside6 版本，
+  # 想让 tag 发版也带上 WinUI，把这里改成 all 即可。
+  BUILD_VARIANTS_DEFAULT: "pyside6"
 
 jobs:
   build:
@@ -53,6 +74,31 @@ jobs:
           fi
           echo "version=$tag" >> "$GITHUB_OUTPUT"
           echo "解析到版本号: $tag"
+
+      - name: Resolve which installers to build
+        id: variants
+        shell: bash
+        run: |
+          # 决定本次生成哪些安装包。优先级：
+          #   1) workflow_dispatch 手动触发的 inputs.build_variants（缺省为空）
+          #   2) env.BUILD_VARIANTS_DEFAULT（tag 推送 / 手动未填时回退到这里）
+          # 归一化成 build_pyside / build_winui 两个布尔输出，供后续步骤的 if: 判定。
+          input="${{ inputs.build_variants }}"
+          variants="${input:-${BUILD_VARIANTS_DEFAULT}}"
+          echo "选择的安装包组合: $variants"
+          case "$variants" in
+            pyside6) build_pyside=true;  build_winui=false ;;
+            winui)   build_pyside=false; build_winui=true  ;;
+            all)     build_pyside=true;  build_winui=true  ;;
+            *)
+              echo "::error::未知 build_variants='$variants'（应为 pyside6 / winui / all）"
+              exit 1
+              ;;
+          esac
+          echo "build_pyside=$build_pyside" >> "$GITHUB_OUTPUT"
+          echo "build_winui=$build_winui"  >> "$GITHUB_OUTPUT"
+          echo "→ PySide6 经典版: $build_pyside"
+          echo "→ WinUI 次世代版: $build_winui"
 
       - name: Install minimal build dependencies (hash-pinned)
         shell: bash
@@ -114,6 +160,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Build PySide Classic release
+        if: ${{ steps.variants.outputs.build_pyside == 'true' }}
         shell: pwsh
         # PYTHONUTF8=1 确保 bump_version.py 及其子进程在
         # Windows runner 上统一走 UTF-8，避免打印中文时 cp1252 编码崩溃。
@@ -124,6 +171,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Bind backend wheel to PySide Classic artifact
+        if: ${{ steps.variants.outputs.build_pyside == 'true' }}
         shell: pwsh
         run: |
           $version = "${{ steps.version.outputs.version }}"
@@ -133,6 +181,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Build WinUI Next from the same backend wheel
+        if: ${{ steps.variants.outputs.build_winui == 'true' }}
         shell: pwsh
         run: |
           $version = "${{ steps.version.outputs.version }}"
@@ -142,10 +191,17 @@ jobs:
           $hash = (Get-FileHash "dist/VibeOCR-Next-v$version-win64.zip" -Algorithm SHA256).Hash.ToLowerInvariant()
           "$hash  VibeOCR-Next-v$version-win64.zip" | Set-Content "dist/VibeOCR-Next-v$version-win64.zip.sha256" -Encoding ascii
 
-      - name: Verify both product artifacts
+      - name: Verify PySide Classic artifact
+        if: ${{ steps.variants.outputs.build_pyside == 'true' }}
         shell: pwsh
         run: |
           python scripts/verify_pyside_artifact.py "dist/VibeOCR-Classic-v${{ steps.version.outputs.version }}-win64.zip"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Verify WinUI Next artifact
+        if: ${{ steps.variants.outputs.build_winui == 'true' }}
+        shell: pwsh
+        run: |
           ./scripts/verify_winui_artifact.ps1 -Artifact "dist/VibeOCR-Next-v${{ steps.version.outputs.version }}-win64.zip"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
@@ -184,6 +240,11 @@ jobs:
         with:
           # body 走文件，避免 GitHub Actions 多行字符串注入陷阱
           body_path: release_notes.md
+          # files 用 glob（而非字面路径）：当某个安装包本次未生成（见
+          # steps.variants 的 build_pyside / build_winui 开关）时，对应的 glob
+          # 匹配为空，配合 fail_on_unmatched_files: false（默认）只记 warning、
+          # 不让上传步失败。version 仍通过 tag 锁定，不会误传历史版本。
+          fail_on_unmatched_files: false
           files: |
             dist/VibeOCR-Classic-v${{ steps.version.outputs.version }}-win64.zip
             dist/VibeOCR-Classic-v${{ steps.version.outputs.version }}-win64.zip.sha256
