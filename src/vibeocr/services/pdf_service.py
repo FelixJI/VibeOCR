@@ -641,6 +641,7 @@ class PdfService:
                     text=b["text"],
                     score=b["score"],
                     bbox=tuple(b["bbox"]) if b.get("bbox") else None,
+                    polygon=tuple(b["polygon"]) if b.get("polygon") else None,
                     page_idx=b.get("page_idx"),
                     is_manually_edited=b.get("is_manually_edited", False),
                     label=b.get("label", "text"),
@@ -899,19 +900,29 @@ class PdfService:
             render_mode = 0 if settings.text_layer_visible else 3
             # insert_text 主路径覆盖 page_rotation ∈ {0, 90}（扫描件最常见的两种：
             # 竖向页与横向页）。180/270 几何（上下/左右翻转）基线放置复杂，仍用
-            # insert_textbox 矩形约束排版。窄/高块（竖排文字误检，display 宽<高）
-            # 也走 insert_textbox 自动换行。
+            # insert_textbox 矩形约束排版。竖排文本行（多字符）走 insert_textbox
+            # 自动换行。
             #
-            # 单字符守卫：单字符（数字/字母/汉字）天生高瘦字形（如数字 advance
-            # ≈0.586×fs、ink 高≈0.955×fs，bbox 宽<高），但单字符不可能是竖排排版
-            # （竖排至少 2 字）。若按 width>=height 判它会误判成竖排、踢进
-            # insert_textbox 兜底，被行距预算 _LINE_LEADING=1.6 把字号压到 bbox 的
-            # ~62%（『单数字文字层区域太小』）。故单字符永远横排，强制走主路径。
-            is_single_char = len(text.strip()) <= 1
-            use_insert_text = (
-                page_rotation in (0, 90)
-                and (is_single_char or disp_rect.width >= disp_rect.height)
+            # 方向判据优先级（用真实阅读方向替代 bbox 长宽比启发式）：
+            #   1) 多边形顶点排序（PaddleOCR DB 检测 4 点，长边方向编码阅读方向）；
+            #   2) 单字符 → 永远横排（排版公理：竖排至少 2 字；单字符字形天生高瘦，
+            #      多边形长边落在垂直方向会误判成竖排）；
+            #   3) 无多边形（旧 OCR 结果/其它管道）→ 回退 disp_rect 长宽比，绝不回归。
+            polygon = getattr(block, "polygon", None)
+            poly_pts = (
+                PdfService._denormalize_and_unrotate_polygon(
+                    polygon, preproc_angle, page_rect
+                )
+                if polygon
+                else None
             )
+            orient = PdfService._poly_orientation(poly_pts, text)
+            if orient == "unknown":
+                # 无多边形兜底：保留长宽比启发式（多字符竖排误检检测）。
+                is_horizontal = len(text.strip()) <= 1 or disp_rect.width >= disp_rect.height
+            else:
+                is_horizontal = orient == "horizontal"
+            use_insert_text = page_rotation in (0, 90) and is_horizontal
 
             if use_insert_text:
                 # 在『显示空间』算基线（ink 顶部 = disp_rect.y0）：
@@ -1216,6 +1227,58 @@ class PdfService:
             y1 = ny1 * ph
 
         return fitz.Rect(x0, y0, x1, y1)
+
+    @staticmethod
+    def _denormalize_and_unrotate_polygon(
+        polygon: tuple[float, ...],
+        preproc_angle: int,
+        page_rect: fitz.Rect,
+    ) -> list[fitz.Point]:
+        """将 [0,1000] 归一化的 4 点多边形逆旋转到 PDF 页面坐标（不塌缩成 AABB）。
+
+        与 _denormalize_and_unrotate_bbox 同一套象限旋转逻辑，但作用于 4 个点，
+        保留多边形的顶点排序（编码阅读方向），不取 min/max 外接矩形。
+        返回显示空间的 4 个 Point，顺序与输入多边形一致（PaddleOCR 顺时针 TL,TR,BR,BL）。
+        """
+        pw, ph = page_rect.width, page_rect.height
+        pts: list[fitz.Point] = []
+        for i in range(0, len(polygon) - 1, 2):
+            nx, ny = polygon[i] / 1000, polygon[i + 1] / 1000
+            if preproc_angle == 90:
+                x, y = (1 - ny) * pw, nx * ph
+            elif preproc_angle == 180:
+                x, y = (1 - nx) * pw, (1 - ny) * ph
+            elif preproc_angle == 270:
+                x, y = ny * pw, (1 - nx) * ph
+            else:
+                x, y = nx * pw, ny * ph
+            pts.append(fitz.Point(x, y))
+        return pts
+
+    @staticmethod
+    def _poly_orientation(
+        polygon_pts: list[fitz.Point] | None, text: str
+    ) -> str:
+        """判断文本行方向（horizontal/vertical）。
+
+        - 单字符：永远 horizontal（排版公理——竖排至少 2 字；单字符字形天生高瘦，
+          多边形长边落在垂直方向，会误判成 vertical，故单字符不看几何）。
+        - 多字符 + 有多边形：按顶点排序判——PaddleOCR 顺时针 TL,TR,BR,BL，
+          顶边(TL→TR)为长边则横排，左边(TL→BL)为长边则竖排（实测横排顶边角≈0°、
+          竖排左边角≈90°）。这是用真实阅读方向替代 bbox 长宽比启发式的核心。
+        - 多字符 + 无多边形：返回 unknown（调用方回退长宽比，绝不回归）。
+        """
+        if len(text.strip()) <= 1:
+            return "horizontal"
+        if polygon_pts is None or len(polygon_pts) < 4:
+            return "unknown"
+        import math
+
+        tl, tr, _br, bl = polygon_pts[0], polygon_pts[1], polygon_pts[2], polygon_pts[3]
+        top_len = math.hypot(tr.x - tl.x, tr.y - tl.y)
+        left_len = math.hypot(bl.x - tl.x, bl.y - tl.y)
+        # 顶边明显比左边长 → 横排（含等长容差，抗多边形轻微倾斜）。
+        return "horizontal" if top_len >= left_len * 0.9 else "vertical"
 
     # bbox_to_pixel 已抽到 vibeocr.utils.pdf_coords(纯数学,无 fitz 依赖),
     # 供主进程 PDF 预览窗口使用。保留 PdfService 入口以兼容旧调用方和测试。

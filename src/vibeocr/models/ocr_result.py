@@ -57,6 +57,38 @@ def normalize_bbox(
     return vals
 
 
+def normalize_polygon(
+    poly_raw: list | tuple,
+    img_w: int = 0,
+    img_h: int = 0,
+) -> tuple[float, ...] | None:
+    """将 4 点检测多边形 [x0,y0,x1,y1,...] 统一为 [0, 1000] 归一化坐标。
+
+    与 normalize_bbox 同口径：像素坐标需 img_w/img_h，[0,1] 自动放大。
+    多边形用于 PDF 文字层判断文本行方向（横/竖排），是 bbox AABB 之外的
+    几何补充——长边方向编码阅读方向，AABB 把它塌缩掉了。
+    返回 None 表示无法解析（调用方回退到 bbox 长宽比）。
+    """
+    flat: list[float] = []
+    for p in poly_raw:
+        if isinstance(p, (list, tuple)) and len(p) >= 2:
+            flat.append(float(p[0]))
+            flat.append(float(p[1]))
+        elif isinstance(p, (int, float)):
+            flat.append(float(p))
+    if len(flat) < 8 or len(flat) % 2 != 0:
+        return None
+    max_val = max(flat)
+    if max_val < 1.1:
+        return tuple(v * 1000 for v in flat)
+    if max_val > 1001 and img_w > 0 and img_h > 0:
+        out: list[float] = []
+        for i, v in enumerate(flat):
+            out.append(v / (img_w if i % 2 == 0 else img_h) * 1000)
+        return tuple(out)
+    return tuple(flat)
+
+
 # V2 类型 → 内部统一类型名映射
 _V2_TYPE_MAP: dict[str, str] = {
     "title": "title",
@@ -195,6 +227,7 @@ class TextBlock:
     text: str
     score: float
     bbox: tuple[float, float, float, float] | None  # 归一化 [0, 1000] 坐标
+    polygon: tuple[float, ...] | None = None  # 4 点检测多边形 [x,y,...]，归一化 [0,1000]
     page_idx: int | None = None  # 页码（0 起始），PDF 多页时使用
     is_manually_edited: bool = False  # 是否被手动修改过
     content_index: int | None = None  # 对应 content_list 中的索引（MinerU 管道）

@@ -509,7 +509,8 @@ class PdfBackendClient:
         from vibeocr.ipc.schemas import TextBlockMirror
         blocks = [
             TextBlockMirror(
-                text=b.text, score=b.score, bbox=b.bbox, page_idx=b.page_idx,
+                text=b.text, score=b.score, bbox=b.bbox, polygon=b.polygon,
+                page_idx=b.page_idx,
                 is_manually_edited=b.is_manually_edited, label=b.label, order=b.order,
             )
             for b in text_blocks

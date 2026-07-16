@@ -58,6 +58,7 @@ def _text_block_mirror_to_info(b: TextBlockMirror) -> TextBlock:
         text=b.text,
         score=b.score,
         bbox=b.bbox,
+        polygon=b.polygon,
         page_idx=b.page_idx,
         is_manually_edited=b.is_manually_edited,
         label=b.label,

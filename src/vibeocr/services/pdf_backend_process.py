@@ -101,6 +101,7 @@ def _text_block_to_mirror(b: TextBlock) -> TextBlockMirror:
         text=b.text,
         score=b.score,
         bbox=b.bbox,
+        polygon=b.polygon,
         page_idx=b.page_idx,
         is_manually_edited=b.is_manually_edited,
         label=b.label,
@@ -569,6 +570,7 @@ def add_text_layer(sid: str, req: AddTextLayerRequest) -> MutateResponse:
                 text=b["text"],
                 score=b["score"],
                 bbox=tuple(b["bbox"]) if b.get("bbox") else None,
+                polygon=tuple(b["polygon"]) if b.get("polygon") else None,
                 page_idx=b.get("page_idx"),
                 is_manually_edited=b.get("is_manually_edited", False),
                 label=b.get("label", "text"),
@@ -654,7 +656,7 @@ def rewrite_text_layer(sid: str, req: RewriteTextLayerRequest) -> MutateResponse
     try:
         blocks = [
             TextBlock(
-                text=b.text, score=b.score, bbox=b.bbox,
+                text=b.text, score=b.score, bbox=b.bbox, polygon=b.polygon,
                 page_idx=b.page_idx, is_manually_edited=b.is_manually_edited,
                 label=b.label, order=b.order,
             )

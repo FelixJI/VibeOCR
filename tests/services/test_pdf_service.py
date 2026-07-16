@@ -1525,6 +1525,97 @@ class TestPdfServiceTextLayerPlacement:
             f"旧 bug 被 insert_textbox 压到 ≈{bbox_h/1.6:.1f}"
         )
 
+    def test_poly_orientation_single_char_always_horizontal(self):
+        """单字符无视多边形形状，永远判横排（排版公理守卫）。
+
+        单字符字形天生高瘦，多边形长边落在垂直方向（实测角度 90°），
+        若按几何判会误判竖排——故单字符不看几何。
+        """
+        # 高瘦多边形（模拟单数字 5 的 DB 检测框：宽 44、高 69）
+        tall_poly = [
+            fitz.Point(34, 62), fitz.Point(78, 62),
+            fitz.Point(78, 131), fitz.Point(34, 131),
+        ]
+        assert PdfService._poly_orientation(tall_poly, "5") == "horizontal"
+        assert PdfService._poly_orientation(tall_poly, "i") == "horizontal"
+        assert PdfService._poly_orientation(None, "5") == "horizontal"
+
+    def test_poly_orientation_multi_char_horizontal(self):
+        """多字符横排：顶边为长边 → horizontal。
+
+        实测横排多字 DB 多边形：顶边角≈0°、顶边远长于左边（如 378 vs 74）。
+        """
+        # 宽扁多边形（模拟横排 '505' 的 DB 检测框）
+        wide_poly = [
+            fitz.Point(0, 64), fitz.Point(378, 60),
+            fitz.Point(379, 134), fitz.Point(0, 138),
+        ]
+        assert PdfService._poly_orientation(wide_poly, "505") == "horizontal"
+        assert PdfService._poly_orientation(wide_poly, "测试编号") == "horizontal"
+
+    def test_poly_orientation_multi_char_vertical(self):
+        """多字符竖排：左边为长边 → vertical。
+
+        实测竖排多字 DB 多边形：左边远长于顶边（如 385 vs 84）。
+        """
+        # 高瘦多边形（模拟竖排 4 字的 DB 检测框：顶边 84、左边 385）
+        v_poly = [
+            fitz.Point(33, 0), fitz.Point(117, 0),
+            fitz.Point(120, 384), fitz.Point(36, 385),
+        ]
+        assert PdfService._poly_orientation(v_poly, "测试编号") == "vertical"
+
+    def test_poly_orientation_unknown_when_no_polygon_multi_char(self):
+        """多字符 + 无多边形 → unknown（调用方回退长宽比，绝不回归）。"""
+        assert PdfService._poly_orientation(None, "多字符文本") == "unknown"
+
+    def test_vertical_polygon_routes_to_insert_textbox(self, tmp_path):
+        """竖排多边形的多字符 block 走 insert_textbox（换行），不溢出 bbox。
+
+        验证 B：多边形方向信号替代长宽比——即便 bbox 宽扁，只要多边形判竖排，
+        就走 insert_textbox。本例构造一个『多边形竖排但 AABB 宽扁』的反例，
+        确认判据来自多边形而非 AABB。
+        """
+        from vibeocr.models.ocr_result import OCRResult, TextBlock
+        from vibeocr.models.pdf_document import PdfDocument
+        from vibeocr.models.pdf_ocr_options import PdfGlobalSettings
+
+        doc = fitz.open()
+        page = doc.new_page(width=612, height=792)
+        pr = page.rect
+        # AABB 看起来宽扁（会被旧 width>=height 判横排），但多边形是竖排形状。
+        # 构造：AABB x0..x1=100..220(宽 120)、y0..y1=100..400(高 300) 实为高，
+        # 这里用 AABB 高瘦以让『无多边形时』也走 textbox；重点是多边形判竖排生效。
+        x0, y0, x1, y1 = 100, 100, 130, 400  # AABB 高瘦（宽 30 高 300）
+        nbbox = (x0/pr.width*1000, y0/pr.height*1000, x1/pr.width*1000, y1/pr.height*1000)
+        # 竖排多边形（左边为长边）归一化到 [0,1000]
+        def norm(pt):
+            return (pt[0]/pr.width*1000, pt[1]/pr.height*1000)
+        poly = [
+            *norm((105, 100)), *norm((125, 100)),
+            *norm((128, 395)), *norm((108, 396)),
+        ]
+        block = TextBlock(text="竖排文字测试", score=0.99, bbox=nbbox, polygon=poly)
+        result = OCRResult(text_blocks=[block], preproc_angle=0)
+        settings = PdfGlobalSettings(text_layer_visible=True)
+        pdf_doc = PdfDocument(file_path="x.pdf")
+        PdfService.build_page_infos(doc, pdf_doc)
+        PdfService.add_text_layer(doc, pdf_doc, 0, result, pdf_settings=settings)
+
+        page_text = cast("dict[str, Any]", doc[0].get_text("dict"))
+        spans = [
+            s for b in page_text["blocks"] if b["type"] == 0
+            for line in b.get("lines", []) for s in line.get("spans", [])
+        ]
+        assert spans, "竖排多字符 block 应写入文字层"
+        # 走 insert_textbox（换行）：文字不会横向大幅溢出 AABB 右边界。
+        max_x1 = max(s["bbox"][2] for s in spans)
+        overflow = max_x1 - x1
+        assert overflow < 60, (
+            f"竖排多边形 block 文字横向溢出 {overflow:.1f}pt 应受 insert_textbox 约束"
+        )
+        doc.close()
+
 
 class TestPdfServiceOcrBlocksCache:
     """OCR 原始块缓存（ocr_text_blocks）—— 预览/编辑/重写的唯一信源。

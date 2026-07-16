@@ -928,6 +928,15 @@ class OCRService(metaclass=SingletonMeta):
                     x1 / img_w * 1000,
                     y1 / img_h * 1000,
                 )
+            # 多边形与 bbox 同源、同像素空间，用同一 img_w/h 归一化（保持一致）。
+            # _parse_single_result 直接透传 PaddleOCR 像素坐标，这里统一归一化。
+            if block.polygon:
+                max_v = max(block.polygon)
+                if max_v > 1001:
+                    block.polygon = tuple(
+                        v / (img_w if i % 2 == 0 else img_h) * 1000
+                        for i, v in enumerate(block.polygon)
+                    )
         for cl_block in result.content_list:
             bbox = cl_block.get("bbox")
             if bbox and len(bbox) >= 4:

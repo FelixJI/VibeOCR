@@ -39,6 +39,7 @@ class TextBlockMirror(BaseModel):
     text: str
     score: float
     bbox: tuple[float, float, float, float] | None = None
+    polygon: tuple[float, ...] | None = None  # 4 点检测多边形 [x,y,...]，归一化 [0,1000]
     page_idx: int | None = None
     is_manually_edited: bool = False
     label: str = "text"

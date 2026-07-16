@@ -515,11 +515,15 @@ def _reconstruct_ocr_result(raw: dict[str, Any]) -> Any:
             bbox = blk.get("bbox")
             if bbox is not None and not isinstance(bbox, (list, tuple)):
                 bbox = None
+            polygon = blk.get("polygon")
+            if polygon is not None and not isinstance(polygon, (list, tuple)):
+                polygon = None
             text_blocks.append(
                 TextBlock(
                     text=str(blk.get("text", "")),
                     score=float(blk.get("score", blk.get("confidence", 0.0))),
                     bbox=tuple(bbox) if bbox is not None else None,  # type: ignore[arg-type]
+                    polygon=tuple(polygon) if polygon is not None else None,  # type: ignore[arg-type]
                     content_index=blk.get("content_index"),
                     order=int(blk.get("order", -1)),
                 )

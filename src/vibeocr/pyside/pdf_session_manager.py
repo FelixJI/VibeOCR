@@ -1379,6 +1379,7 @@ class PdfSessionManager(QObject):
                     "text": b.text,
                     "score": b.score,
                     "bbox": list(b.bbox) if b.bbox else None,
+                    "polygon": list(b.polygon) if b.polygon else None,
                     "page_idx": b.page_idx,
                     "is_manually_edited": b.is_manually_edited,
                     "label": b.label,

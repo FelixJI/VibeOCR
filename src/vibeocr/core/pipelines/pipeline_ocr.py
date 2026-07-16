@@ -98,6 +98,34 @@ def _extract_bbox(rec_boxes, index: int) -> tuple[float, float, float, float] | 
     return None
 
 
+def _extract_polygon(rec_polys, index: int) -> tuple[float, ...] | None:
+    """从 rec_polys 提取第 index 个文本行的 4 点检测多边形 [x0,y0,x1,y1,...]。
+
+    PaddleOCR 的 DB 检测输出 4 点多边形（顺时针 TL,TR,BR,BL），其顶点排序
+    编码阅读方向：横排顶边为长边、竖排左边为长边。AABB 把它塌缩成轴对齐
+    矩形会丢失这个方向信号，故单独透传给 PDF 文字层用于判横/竖排。
+
+    与 _extract_bbox 同源数据（rec_polys/dt_polys），但保留 4 点几何而非
+    取外接矩形。失败返回 None（调用方回退到 bbox 长宽比）。
+    """
+    try:
+        poly = rec_polys[index]
+        if hasattr(poly, "tolist"):
+            poly = poly.tolist()
+        if len(poly) < 4:
+            return None
+        flat: list[float] = []
+        for pt in poly:
+            if isinstance(pt, (list, tuple)) and len(pt) >= 2:
+                flat.append(float(pt[0]))
+                flat.append(float(pt[1]))
+        if len(flat) >= 8 and len(flat) % 2 == 0:
+            return tuple(flat)
+    except (IndexError, TypeError, ValueError):
+        pass
+    return None
+
+
 def _build_ocr_result(
     raw_text: str,
     markdown_text: str = "",
@@ -152,6 +180,9 @@ def _parse_single_result(res: Any) -> tuple[list[tuple[str, float]], list]:
     try:
         if hasattr(res, "rec_texts") and hasattr(res, "rec_scores"):
             rec_boxes = getattr(res, "rec_boxes", None)
+            rec_polys = getattr(res, "rec_polys", None) or getattr(
+                res, "dt_polys", None
+            )
             for i, (text, score) in enumerate(
                 zip(res.rec_texts, res.rec_scores, strict=False)
             ):
@@ -161,16 +192,33 @@ def _parse_single_result(res: Any) -> tuple[list[tuple[str, float]], list]:
                     bbox = (
                         _extract_bbox(rec_boxes, i) if rec_boxes is not None else None
                     )
-                    blocks.append(TextBlock(text=text, score=fs, bbox=bbox))
+                    polygon = (
+                        _extract_polygon(rec_polys, i)
+                        if rec_polys is not None
+                        else None
+                    )
+                    blocks.append(
+                        TextBlock(text=text, score=fs, bbox=bbox, polygon=polygon)
+                    )
         elif hasattr(res, "rec_texts"):
             rec_boxes = getattr(res, "rec_boxes", None)
+            rec_polys = getattr(res, "rec_polys", None) or getattr(
+                res, "dt_polys", None
+            )
             for i, text in enumerate(res.rec_texts):
                 if text:
                     tws.append((text, 1.0))
                     bbox = (
                         _extract_bbox(rec_boxes, i) if rec_boxes is not None else None
                     )
-                    blocks.append(TextBlock(text=text, score=1.0, bbox=bbox))
+                    polygon = (
+                        _extract_polygon(rec_polys, i)
+                        if rec_polys is not None
+                        else None
+                    )
+                    blocks.append(
+                        TextBlock(text=text, score=1.0, bbox=bbox, polygon=polygon)
+                    )
         elif hasattr(res, "ocr_text"):
             tws.append((res.ocr_text, 1.0))
             blocks.append(TextBlock(text=res.ocr_text, score=1.0, bbox=None))
@@ -178,6 +226,7 @@ def _parse_single_result(res: Any) -> tuple[list[tuple[str, float]], list]:
             rec_texts = res.get("rec_texts", [])
             rec_scores = res.get("rec_scores", [])
             rec_boxes = res.get("rec_boxes")
+            rec_polys = res.get("rec_polys") or res.get("dt_polys")
             if rec_scores:
                 for i, (text, score) in enumerate(
                     zip(rec_texts, rec_scores, strict=False)
@@ -190,7 +239,14 @@ def _parse_single_result(res: Any) -> tuple[list[tuple[str, float]], list]:
                             if rec_boxes is not None
                             else None
                         )
-                        blocks.append(TextBlock(text=text, score=fs, bbox=bbox))
+                        polygon = (
+                            _extract_polygon(rec_polys, i)
+                            if rec_polys is not None
+                            else None
+                        )
+                        blocks.append(
+                            TextBlock(text=text, score=fs, bbox=bbox, polygon=polygon)
+                        )
             else:
                 for i, text in enumerate(rec_texts):
                     if text:
@@ -200,7 +256,14 @@ def _parse_single_result(res: Any) -> tuple[list[tuple[str, float]], list]:
                             if rec_boxes is not None
                             else None
                         )
-                        blocks.append(TextBlock(text=text, score=1.0, bbox=bbox))
+                        polygon = (
+                            _extract_polygon(rec_polys, i)
+                            if rec_polys is not None
+                            else None
+                        )
+                        blocks.append(
+                            TextBlock(text=text, score=1.0, bbox=bbox, polygon=polygon)
+                        )
     except Exception as e:
         _logger.error("[_parse_single_result] 处理结果项时出错: %s", e)
     return tws, blocks
