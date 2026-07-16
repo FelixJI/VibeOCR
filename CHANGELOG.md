@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.4.31] - 2026-07-16
+
+### Fixed
+- fix(release): sync workspace versions and dedupe CHANGELOG archive
+
+### Dependencies
+- 新增:
+  - 新增 pynvml>=11.5.0
+
 ## [0.4.30] - 2026-07-16
 
 ### Added

@@ -1,10 +1,10 @@
 [project]
 name = "vibeocr-backend"
-version = "0.4.30"
+version = "0.4.31"
 description = "UI-free VibeOCR WorkerHost runtime"
 requires-python = ">=3.13,<3.14"
 dependencies = [
-    "vibeocr-contracts-py==0.4.30",
+    "vibeocr-contracts-py==0.4.31",
     "pillow>=12.3.0",
     "numpy>=2.3.5",
     "httpx>=0.28.1",

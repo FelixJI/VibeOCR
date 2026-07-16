@@ -1,10 +1,10 @@
 [project]
 name = "vibeocr-client-py"
-version = "0.4.30"
+version = "0.4.31"
 description = "Python Named Pipe/shared-memory WorkerHost client"
 requires-python = ">=3.13,<3.14"
 dependencies = [
-    "vibeocr-contracts-py==0.4.30",
+    "vibeocr-contracts-py==0.4.31",
     "pydantic>=2.13.4",
 ]
 
