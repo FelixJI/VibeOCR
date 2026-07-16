@@ -1,6 +1,6 @@
 """PreviewWidget 统一预览组件测试"""
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QPointF, Qt
 from PySide6.QtWidgets import QScrollArea
 
 from vibeocr.models.ocr_result import TextBlock
@@ -263,6 +263,194 @@ class TestConfidenceModeTableDoubleClick:
 
         widget._on_label_double_click(self._pos(50, 40))
         assert called == [0]
+
+
+class TestPreviewWidgetZoom:
+    """阶段 B：缩放 + 框对齐 + 漂移修复的回归测试。
+
+    overlay 挂在 image_label 上（随 label 滚动），框坐标是 label-relative，
+    故滚动无漂移；缩放后 _compute_scale_factor 与命中矩形同步重算。
+    """
+
+    def test_overlay_parented_to_image_label(self, qapp, sample_pixmap):
+        """overlay 必须挂在 image_label 下，否则滚动时会与 label 错位漂移。"""
+        widget = PreviewWidget()
+        widget.set_pixmap(sample_pixmap)
+        assert widget._overlay.parent() is widget._image_label
+
+    def test_widget_resizable_false(self, qapp):
+        """setWidgetResizable(False) 让 label 可超出 viewport 触发滚动。"""
+        widget = PreviewWidget()
+        assert widget._scroll_area.widgetResizable() is False
+
+    def test_zoom_controls_disabled_without_image(self, qapp):
+        widget = PreviewWidget()
+        assert widget._zoom_in_btn.isEnabled() is False
+        assert widget._zoom_out_btn.isEnabled() is False
+        assert widget._fit_btn.isEnabled() is False
+
+    def test_scale_reset_on_new_pixmap(self, qapp, sample_pixmap):
+        """设置新图时用户缩放倍数重置为 1.0（=fit）。"""
+        widget = PreviewWidget()
+        widget.set_pixmap(sample_pixmap)
+        widget._scale = 3.0
+        widget.set_pixmap(sample_pixmap)
+        assert widget._scale == 1.0
+
+    def test_zoom_by_changes_user_scale(self, qapp, sample_pixmap, qtbot):
+        widget = PreviewWidget()
+        qtbot.addWidget(widget)
+        widget.show()
+        widget.set_pixmap(sample_pixmap)
+        # 让布局完成，fit_scale 被算出
+        qtbot.wait(50)
+        before = widget._scale
+        widget._zoom_by(2.0)
+        assert widget._scale == before * 2.0
+
+    def test_zoom_clamped_to_range(self, qapp, sample_pixmap, qtbot):
+        widget = PreviewWidget()
+        qtbot.addWidget(widget)
+        widget.show()
+        widget.set_pixmap(sample_pixmap)
+        qtbot.wait(50)
+        widget._zoom_by(1000.0)
+        assert widget._scale == PreviewWidget._MAX_USER_SCALE
+        widget._zoom_fit()
+        widget._zoom_by(0.0001)
+        assert widget._scale == PreviewWidget._MIN_USER_SCALE
+
+    def test_compute_scale_factor_reflects_zoom(self, qapp, sample_pixmap, qtbot):
+        """缩放后 _compute_scale_factor 返回的 disp 尺寸应按总缩放放大。"""
+        widget = PreviewWidget()
+        qtbot.addWidget(widget)
+        widget.show()
+        widget.set_pixmap(sample_pixmap)
+        qtbot.wait(50)
+        img_w = widget._original_pixmap.width()
+        widget._scale = 2.0
+        disp_w, disp_h, _, _ = widget._compute_scale_factor()
+        total = widget._current_total_scale()
+        assert abs(disp_w - img_w * total) < 1.0
+        assert disp_h > 0
+
+    def test_block_screen_rects_rescaled_on_zoom(self, qapp, sample_pixmap, qtbot):
+        """缩放后 _update_block_overlay 应重算命中矩形到新的像素坐标。"""
+        widget = PreviewWidget()
+        qtbot.addWidget(widget)
+        widget.show()
+        widget.set_pixmap(sample_pixmap)
+        widget.set_text_blocks(
+            [TextBlock(text="A", score=0.9, bbox=(0, 0, 500, 500))]
+        )
+        qtbot.wait(50)
+        # fit 后的矩形宽度
+        rect0 = widget._block_screen_rects[0]
+        widget._scale = 2.0
+        widget._update_block_overlay()
+        rect2 = widget._block_screen_rects[0]
+        # 缩放 2x 后宽度应约为原来的 2 倍
+        assert rect2[2] > rect0[2] * 1.8
+
+    def test_zoom_label_shows_percentage(self, qapp, sample_pixmap, qtbot):
+        widget = PreviewWidget()
+        qtbot.addWidget(widget)
+        widget.show()
+        widget.set_pixmap(sample_pixmap)
+        qtbot.wait(50)
+        widget._update_zoom_controls()
+        # fit 时显示 100%（fit_scale × scale=1.0）；离屏可能 fit<1，故只校验非空
+        assert widget._zoom_label.text().endswith("%")
+
+
+class TestPreviewWidgetPolygon:
+    """阶段 C：多边形（旋转/倾斜文字框）渲染与命中测试。
+
+    TextBlock.polygon 透传 4 点检测多边形；有 polygon 时 overlay 画贴合的
+    平行四边形，命中测试用 QPolygonF.containsPoint；无 polygon 回退 AABB。
+    """
+
+    def test_polygon_to_screen_basic(self, qapp):
+        """_polygon_to_screen 把归一化多边形映射到屏幕坐标。"""
+        widget = PreviewWidget()
+        # [0,1000] 归一化的 4 点正方形 → 在 100×100 区域内应映射到 (0,0)~(100,100)
+        poly = widget._polygon_to_screen(
+            (0, 0, 1000, 0, 1000, 1000, 0, 1000), 100.0, 100.0, 0.0, 0.0
+        )
+        assert poly is not None
+        assert len(poly) == 4
+        assert poly[0] == QPointF(0, 0)
+        assert poly[2] == QPointF(100, 100)
+
+    def test_polygon_to_screen_none_for_short(self, qapp):
+        """点数不足 3 的多边形返回 None（回退 AABB）。"""
+        widget = PreviewWidget()
+        assert widget._polygon_to_screen((1, 2, 3, 4), 100, 100, 0, 0) is None
+        assert widget._polygon_to_screen(None, 100, 100, 0, 0) is None
+
+    def test_hit_test_prefers_polygon(self, qapp, sample_pixmap):
+        """有多边形时用多边形命中：点落在 AABB 外但 polygon 内的应命中。"""
+        from PySide6.QtGui import QPolygonF
+
+        widget = PreviewWidget()
+        widget.set_pixmap(sample_pixmap)
+        # AABB 是 (10,10)-(20,20) 的小矩形，但多边形是覆盖 (10,10)-(80,80) 的大平行四边形
+        widget._block_screen_rects = [(10, 10, 10, 10)]  # w=h=10
+        widget._block_screen_polys = [
+            QPolygonF(
+                [QPointF(10, 10), QPointF(80, 10), QPointF(80, 80), QPointF(10, 80)]
+            )
+        ]
+        # (50,50) 落在 AABB 外、polygon 内 → 应命中（证明用了 polygon 而非 AABB）
+        assert widget._hit_test_block(50, 50) == 0
+
+    def test_hit_test_falls_back_to_rect_without_polygon(self, qapp, sample_pixmap):
+        """无多边形时回退 AABB 命中。"""
+        widget = PreviewWidget()
+        widget.set_pixmap(sample_pixmap)
+        widget._block_screen_rects = [(10, 10, 50, 50)]
+        widget._block_screen_polys = [None]
+        assert widget._hit_test_block(30, 30) == 0
+        assert widget._hit_test_block(100, 100) == -1
+
+    def test_hit_test_polygon_excludes_aabb_outside(self, qapp, sample_pixmap):
+        """有多边形的块，点落在 AABB 内但 polygon 外 → 不命中该块。"""
+        from PySide6.QtGui import QPolygonF
+
+        widget = PreviewWidget()
+        widget.set_pixmap(sample_pixmap)
+        # AABB 大 (0,0,100,100)，但 polygon 小 (10,10)-(20,20)
+        widget._block_screen_rects = [(0, 0, 100, 100)]
+        widget._block_screen_polys = [
+            QPolygonF(
+                [QPointF(10, 10), QPointF(20, 10), QPointF(20, 20), QPointF(10, 20)]
+            )
+        ]
+        # (5,5) 在 AABB 内、polygon 外 → 不命中
+        assert widget._hit_test_block(5, 5) == -1
+        # (15,15) 在 polygon 内 → 命中
+        assert widget._hit_test_block(15, 15) == 0
+
+    def test_update_block_overlay_populates_polys(self, qapp, sample_pixmap, qtbot):
+        """set_text_blocks 后，_update_block_overlay 把 polygon 填入屏幕多边形列表。"""
+        widget = PreviewWidget()
+        qtbot.addWidget(widget)
+        widget.show()
+        widget.set_pixmap(sample_pixmap)
+        widget.set_text_blocks(
+            [
+                TextBlock(
+                    text="A",
+                    score=0.9,
+                    bbox=(0, 0, 500, 500),
+                    polygon=(0, 0, 500, 0, 500, 500, 0, 500),
+                )
+            ]
+        )
+        qtbot.wait(50)
+        assert len(widget._block_screen_polys) == 1
+        assert widget._block_screen_polys[0] is not None
+        assert len(widget._block_screen_polys[0]) == 4
 
 
 class TestDoubleClickOriginalImage:

@@ -2,8 +2,8 @@
 
 from pathlib import Path
 
-from PySide6.QtCore import QRectF, Qt, QTimer, Signal
-from PySide6.QtGui import QAction, QColor, QPainter, QPen, QPixmap
+from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
+from PySide6.QtGui import QAction, QColor, QPainter, QPen, QPixmap, QPolygonF
 from PySide6.QtPdf import QPdfDocument
 from PySide6.QtWidgets import (
     QDialog,
@@ -98,8 +98,10 @@ class UnifiedBBoxOverlay(QWidget):
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
-        # 置信度模式数据: list of (x, y, w, h, score, text, is_manually_edited)
-        self._conf_rects: list[tuple[float, float, float, float, float, str, bool]] = []
+        # 置信度模式数据: list of (x, y, w, h, score, text, is_manually_edited, polygon)
+        self._conf_rects: list[
+            tuple[float, float, float, float, float, str, bool, QPolygonF | None]
+        ] = []
         # 块类型模式数据: list of (content_index, rect, block_type, fill, border, confidence)
         self._type_rects: list[
             tuple[int, QRectF, str, QColor, QColor, float | None]
@@ -144,7 +146,7 @@ class UnifiedBBoxOverlay(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-        for i, (x, y, w, h, score, _text, is_manually_edited) in enumerate(
+        for i, (x, y, w, h, score, _text, is_manually_edited, poly) in enumerate(
             self._conf_rects
         ):
             rect = QRectF(x, y, w, h)
@@ -165,10 +167,17 @@ class UnifiedBBoxOverlay(QWidget):
                 fill = QColor(fill)
                 fill.setAlpha(min(fill.alpha() + 80, 200))
 
-            painter.fillRect(rect, fill)
             pen = QPen(border, 2)
-            painter.setPen(pen)
-            painter.drawRect(rect)
+            if poly is not None and len(poly) >= 3:
+                # 旋转/倾斜文本：画贴合的平行四边形（drawPolygon 同时填色+描边）
+                painter.setBrush(fill)
+                painter.setPen(pen)
+                painter.drawPolygon(poly)
+            else:
+                # 轴对齐矩形（AABB）：fillRect 忽略 pen，单独描边
+                painter.fillRect(rect, fill)
+                painter.setPen(pen)
+                painter.drawRect(rect)
 
         # 置信度模式下：若存在手动修改的块，绘制图例说明橙色含义
         # （橙色 = 手动修改）。普通高/低置信度颜色固定且语义明显，不入图例。
@@ -413,11 +422,15 @@ class ImageViewerDialog(QDialog):
 class PreviewWidget(QWidget):
     """统一图片预览组件
 
-    支持图片/PDF 加载、截图触发、BBox 高亮、翻页导航。
+    支持图片/PDF 加载、截图触发、BBox 高亮、翻页导航、滚轮缩放。
     支持两种覆盖层模式：
     - 置信度模式（单次识别）：通过 set_text_blocks 设置
     - 块类型模式（批量识别/文档解析）：通过 set_content_list 设置
     """
+
+    # 用户缩放倍数范围（叠加在 fit_scale 之上）
+    _MIN_USER_SCALE = 0.1
+    _MAX_USER_SCALE = 8.0
 
     screenshot_requested = Signal()
     file_open_requested = Signal()
@@ -441,6 +454,8 @@ class PreviewWidget(QWidget):
         self._img_h: int = 0
         self._text_blocks: list[TextBlock] = []
         self._block_screen_rects: list[tuple[float, float, float, float]] = []
+        # 多边形屏幕坐标（与 _block_screen_rects 同序，None 表示该块用 AABB）
+        self._block_screen_polys: list[QPolygonF | None] = []
         # 块类型模式的命中矩形：list of (content_index, screen_rect, block_type)
         self._type_screen_rects: list[tuple[int, QRectF, str]] = []
         self._hovered_block: int | str = -1
@@ -454,6 +469,12 @@ class PreviewWidget(QWidget):
         self._pdf_doc: QPdfDocument | None = None
         self._current_page: int = 0
         self._total_pages: int = 0
+
+        # 缩放：_fit_scale 是 fit-to-window 的基础比例；_scale 是用户在其上
+        # 叠加的倍数（1.0=fit）。总缩放 = _fit_scale * _scale。分离二者是为了
+        # 让“适应窗口”按钮能精确回到 fit，而 wheel 在 fit 基础上放大/缩小。
+        self._fit_scale: float = 1.0
+        self._scale: float = 1.0
 
         self._setup_ui()
 
@@ -484,11 +505,36 @@ class PreviewWidget(QWidget):
         nav_layout.addStretch()
         nav_layout.addWidget(self._next_btn)
 
+        # 缩放控件（翻页栏右侧）
+        self._zoom_out_btn = QPushButton("−")
+        self._zoom_out_btn.setFixedWidth(28)
+        self._zoom_out_btn.setToolTip("缩小")
+        self._zoom_out_btn.setEnabled(False)
+        self._zoom_in_btn = QPushButton("+")
+        self._zoom_in_btn.setFixedWidth(28)
+        self._zoom_in_btn.setToolTip("放大")
+        self._zoom_in_btn.setEnabled(False)
+        self._zoom_label = QLabel("100%")
+        self._zoom_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._zoom_label.setMinimumWidth(52)
+        self._zoom_label.setEnabled(False)
+        self._fit_btn = QPushButton("适应")
+        self._fit_btn.setFixedWidth(46)
+        self._fit_btn.setToolTip("适应窗口")
+        self._fit_btn.setEnabled(False)
+        nav_layout.addWidget(self._zoom_out_btn)
+        nav_layout.addWidget(self._zoom_label)
+        nav_layout.addWidget(self._zoom_in_btn)
+        nav_layout.addWidget(self._fit_btn)
+
         layout.addWidget(self._nav_bar)
 
         # 预览区域（带滚动）
         self._scroll_area = QScrollArea()
-        self._scroll_area.setWidgetResizable(True)
+        # setWidgetResizable(False)：label 尺寸由我们按缩放显式 resize，可超出
+        # viewport 触发滚动。overlay 挂在 label 上，滚动时随 label 平移——
+        # 框坐标是 label-relative，故天然无漂移（无需读 scrollbar 值）。
+        self._scroll_area.setWidgetResizable(False)
         self._scroll_area.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         self._image_label = QLabel()
@@ -507,8 +553,9 @@ class PreviewWidget(QWidget):
 
         layout.addWidget(self._scroll_area, stretch=1)
 
-        # 覆盖层
-        self._overlay = UnifiedBBoxOverlay(self._scroll_area.viewport())
+        # 覆盖层：挂在 image_label 上（而非 viewport），随 label 滚动；
+        # 几何设为 pixmap 在 label 内的显示矩形（见 _apply_overlay_geometry）。
+        self._overlay = UnifiedBBoxOverlay(self._image_label)
 
         # 内联文本编辑器
         self._inline_editor = QLineEdit(self._image_label)
@@ -529,6 +576,10 @@ class PreviewWidget(QWidget):
         # 翻页信号
         self._prev_btn.clicked.connect(self._on_prev_page)
         self._next_btn.clicked.connect(self._on_next_page)
+        # 缩放信号
+        self._zoom_in_btn.clicked.connect(lambda: self._zoom_by(1.25))
+        self._zoom_out_btn.clicked.connect(lambda: self._zoom_by(1 / 1.25))
+        self._fit_btn.clicked.connect(self._zoom_fit)
 
     # ── 事件过滤器 ──
 
@@ -711,8 +762,16 @@ class PreviewWidget(QWidget):
         self._editing_index = -1
 
     def _hit_test_block(self, x: int, y: int) -> int:
+        # 有多边形的块用 polygon 精确命中（贴合旋转/倾斜文字）；
+        # 无多边形的块回退 AABB rect 命中。AABB 比 polygon 大，故已有多边形
+        # 的块不再参与 rect 命中，避免重叠块被外接矩形误命中。
+        polys = self._block_screen_polys
         for i, (bx, by, bw, bh) in enumerate(self._block_screen_rects):
-            if bx <= x <= bx + bw and by <= y <= by + bh:
+            poly = polys[i] if i < len(polys) else None
+            if poly is not None and len(poly) >= 3:
+                if poly.containsPoint(QPointF(x, y), Qt.FillRule.OddEvenFill):
+                    return i
+            elif bx <= x <= bx + bw and by <= y <= by + bh:
                 return i
         return -1
 
@@ -766,10 +825,12 @@ class PreviewWidget(QWidget):
         """设置预览图片（截图或打开图片）"""
         self._text_blocks = []
         self._block_screen_rects = []
+        self._block_screen_polys = []
         self._content_list = []
         self._type_screen_rects = []
         self._hovered_block = -1
         self._highlight_block_index = -1
+        self._scale = 1.0  # 新图重置用户缩放
         self._overlay.clear()
 
         if pixmap.devicePixelRatio() != 1.0:
@@ -811,10 +872,12 @@ class PreviewWidget(QWidget):
 
         self._text_blocks = []
         self._block_screen_rects = []
+        self._block_screen_polys = []
         self._content_list = []
         self._type_screen_rects = []
         self._hovered_block = -1
         self._highlight_block_index = -1
+        self._scale = 1.0  # 新文件重置用户缩放
         self._overlay.clear()
 
         if self._is_pdf:
@@ -957,7 +1020,7 @@ class PreviewWidget(QWidget):
 
         self._type_screen_rects = type_screen_rects
         self._overlay.set_type_blocks(overlay_rects)
-        self._overlay.setGeometry(self._scroll_area.viewport().rect())
+        self._apply_overlay_geometry()
 
     # ── 高亮 ──
 
@@ -1006,6 +1069,7 @@ class PreviewWidget(QWidget):
         self._original_pixmap = None
         self._text_blocks = []
         self._block_screen_rects = []
+        self._block_screen_polys = []
         self._content_list = []
         self._type_screen_rects = []
         self._hovered_block = -1
@@ -1029,9 +1093,11 @@ class PreviewWidget(QWidget):
     # ── 显示更新 ──
 
     def _compute_scale_factor(self) -> tuple[float, float, float, float]:
-        """基于 _original_pixmap 和 label 尺寸计算显示区域和偏移
+        """基于 _original_pixmap 和当前总缩放计算 pixmap 显示尺寸与偏移
 
-        不依赖已设置的 scaled pixmap，消除时序问题。
+        总缩放 = _fit_scale（fit-to-window 基础）× _scale（用户倍数）。
+        disp_w/disp_h 是 pixmap 在 label 内的实际像素尺寸；offset 是 pixmap
+        相对 label 原点的居中偏移（label-relative，overlay 挂在 label 上故直接生效）。
 
         Returns: (disp_w, disp_h, offset_x, offset_y)
         """
@@ -1039,36 +1105,140 @@ class PreviewWidget(QWidget):
             return 0, 0, 0, 0
         img_w = self._original_pixmap.width()
         img_h = self._original_pixmap.height()
-        label_w = self._image_label.width()
-        label_h = self._image_label.height()
-        if label_w <= 0 or label_h <= 0 or img_w <= 0 or img_h <= 0:
+        if img_w <= 0 or img_h <= 0:
             return 0, 0, 0, 0
-        max_w = label_w - 20
-        max_h = label_h - 20
-        if max_w <= 0 or max_h <= 0:
-            return 0, 0, 0, 0
-        scale = min(max_w / img_w, max_h / img_h)
+        scale = self._fit_scale * self._scale
         disp_w = img_w * scale
         disp_h = img_h * scale
-        offset_x = (label_w - disp_w) / 2
-        offset_y = (label_h - disp_h) / 2
+        # label 已被 resize 到 disp_w/disp_h（见 _update_display），故居中偏移为 0；
+        # 但当 pixmap 因 KeepAspectRatio 与 label 尺寸不完全一致时仍需居中。
+        label_w = self._image_label.width()
+        label_h = self._image_label.height()
+        offset_x = max((label_w - disp_w) / 2, 0)
+        offset_y = max((label_h - disp_h) / 2, 0)
         return disp_w, disp_h, offset_x, offset_y
+
+    # ── 缩放 ──
+
+    def _polygon_to_screen(
+        self,
+        polygon: tuple[float, ...] | None,
+        disp_w: float,
+        disp_h: float,
+        offset_x: float,
+        offset_y: float,
+    ) -> QPolygonF | None:
+        """把归一化 [0,1000] 的扁平多边形 [x0,y0,x1,y1,...] 转成屏幕坐标 QPolygonF。
+
+        与 bbox 换算同口径（/1000 × disp + offset）。点数 < 3 或解析失败返回 None，
+        调用方回退到 AABB rect。
+        """
+        if not polygon or len(polygon) < 6 or len(polygon) % 2 != 0:
+            return None
+        pts = QPolygonF()
+        for i in range(0, len(polygon), 2):
+            px = polygon[i] / 1000.0 * disp_w + offset_x
+            py = polygon[i + 1] / 1000.0 * disp_h + offset_y
+            pts.append(QPointF(px, py))
+        return pts if len(pts) >= 3 else None
+
+    def _compute_fit_scale(self) -> float:
+        """计算 fit-to-window 的基础缩放比例（让 pixmap 适应 viewport）。"""
+        if not self._original_pixmap or self._original_pixmap.isNull():
+            return 1.0
+        img_w = self._original_pixmap.width()
+        img_h = self._original_pixmap.height()
+        viewport = self._scroll_area.viewport()
+        max_w = max(viewport.width() - 20, 1)
+        max_h = max(viewport.height() - 20, 1)
+        if img_w <= 0 or img_h <= 0:
+            return 1.0
+        return min(max_w / img_w, max_h / img_h)
+
+    def _current_total_scale(self) -> float:
+        """总缩放（fit × user）。"""
+        return self._fit_scale * self._scale
+
+    def _zoom_by(self, factor: float) -> None:
+        """以当前缩放为中心按 factor 放大/缩小（用户倍数层）。"""
+        if self._pixmap is None:
+            return
+        new_scale = max(
+            self._MIN_USER_SCALE, min(self._MAX_USER_SCALE, self._scale * factor)
+        )
+        if new_scale == self._scale:
+            return
+        self._scale = new_scale
+        self._after_zoom()
+
+    def _zoom_fit(self) -> None:
+        """回到 fit-to-window（用户倍数 = 1.0）。"""
+        if self._pixmap is None:
+            return
+        self._scale = 1.0
+        self._fit_scale = self._compute_fit_scale()
+        self._after_zoom()
+
+    def _after_zoom(self) -> None:
+        """缩放变化后刷新显示、框、命中矩形与控件状态。"""
+        self._update_display()
+        self._reapply_highlight()
+        self._update_zoom_controls()
+
+    def _update_zoom_controls(self) -> None:
+        """同步缩放按钮/标签的启用状态与百分比文本。"""
+        has_img = self._pixmap is not None
+        for w in (
+            self._zoom_in_btn,
+            self._zoom_out_btn,
+            self._fit_btn,
+            self._zoom_label,
+        ):
+            w.setEnabled(has_img)
+        if has_img:
+            self._zoom_label.setText(f"{self._current_total_scale():.0%}")
+
+    def _apply_overlay_geometry(self) -> None:
+        """把 overlay 几何对齐到 label 内容区。
+
+        overlay 挂在 image_label 上，随 label 一起被 QScrollArea 滚动，
+        故框坐标（label-relative）天然跟随，滚动时无漂移。overlay 覆盖整个
+        label；pixmap 在 label 内居中，框换算用 _compute_scale_factor 的 offset。
+        """
+        self._overlay.setGeometry(self._image_label.rect())
+
+    def wheelEvent(self, event) -> None:
+        """滚轮缩放（Ctrl 修饰时），否则交给默认（不拦截）。"""
+        if self._pixmap is not None and event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            delta = event.angleDelta().y()
+            if delta > 0:
+                self._zoom_by(1.15)
+            elif delta < 0:
+                self._zoom_by(1 / 1.15)
+            event.accept()
+            return
+        super().wheelEvent(event)
 
     def _update_display(self) -> None:
         if self._pixmap:
-            viewport = self._scroll_area.viewport()
             dpr = self.devicePixelRatio()
-            max_w = max(viewport.width() - 20, 200)
-            max_h = max(viewport.height() - 20, 200)
+            # 重新计算 fit_scale（viewport 可能已变化），再叠加用户倍数。
+            self._fit_scale = self._compute_fit_scale()
+            total = self._current_total_scale()
+            disp_w = int(self._img_w * total)
+            disp_h = int(self._img_h * total)
 
             scaled = self._pixmap.scaled(
-                int(max_w * dpr),
-                int(max_h * dpr),
+                max(int(disp_w * dpr), 1),
+                max(int(disp_h * dpr), 1),
                 Qt.AspectRatioMode.KeepAspectRatio,
                 Qt.TransformationMode.SmoothTransformation,
             )
             scaled.setDevicePixelRatio(dpr)
             self._image_label.setPixmap(scaled)
+            # label 尺寸 = 缩放后 pixmap 尺寸；超出 viewport 时 QScrollArea 自动滚动。
+            # setWidgetResizable(False) 让此 resize 生效（不被 viewport 强制夹住）。
+            self._image_label.resize(max(disp_w, 200), max(disp_h, 200))
             self._image_label.setStyleSheet(
                 f"QLabel {{ background-color: {theme.Colors.surface};"
                 f" border: 1px solid {theme.Colors.border}; }}"
@@ -1081,12 +1251,14 @@ class PreviewWidget(QWidget):
             self._update_type_overlay()
         elif self._text_blocks:
             self._update_block_overlay()
-        self._overlay.setGeometry(self._scroll_area.viewport().rect())
+        self._apply_overlay_geometry()
+        self._update_zoom_controls()
 
     def _update_block_overlay(self) -> None:
         """根据当前文本块和图片显示计算置信度模式覆盖矩形"""
         self._overlay.clear()
         self._block_screen_rects.clear()
+        self._block_screen_polys.clear()
         self._type_screen_rects = []
 
         if not self._pixmap or not self._text_blocks:
@@ -1100,6 +1272,7 @@ class PreviewWidget(QWidget):
         for block in self._text_blocks:
             if block.bbox is None:
                 self._block_screen_rects.append((0, 0, 0, 0))
+                self._block_screen_polys.append(None)
                 continue
             x0, y0, x1, y1 = block.bbox
             sx = x0 / 1000.0 * disp_w + offset_x
@@ -1107,18 +1280,30 @@ class PreviewWidget(QWidget):
             sw = (x1 - x0) / 1000.0 * disp_w
             sh = (y1 - y0) / 1000.0 * disp_h
             self._block_screen_rects.append((sx, sy, sw, sh))
+            # 多边形：若有则转成屏幕坐标 QPolygonF，让 overlay 画贴合的平行四边形
+            # （旋转/倾斜文字不再用过大的 AABB）；否则 None，回退到 AABB rect。
+            poly = self._polygon_to_screen(block.polygon, disp_w, disp_h, offset_x, offset_y)
+            self._block_screen_polys.append(poly)
             overlay_rects.append(
-                (sx, sy, sw, sh, block.score, block.text, block.is_manually_edited)
+                (
+                    sx,
+                    sy,
+                    sw,
+                    sh,
+                    block.score,
+                    block.text,
+                    block.is_manually_edited,
+                    poly,
+                )
             )
 
         self._overlay.set_confidence_blocks(overlay_rects)
-        self._overlay.setGeometry(self._scroll_area.viewport().rect())
+        self._apply_overlay_geometry()
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         if self._original_pixmap and not self._original_pixmap.isNull():
             self._update_display()
             self._reapply_highlight()
-        QTimer.singleShot(
-            0, lambda: self._overlay.setGeometry(self._scroll_area.viewport().rect())
-        )
+        else:
+            QTimer.singleShot(0, self._apply_overlay_geometry)
