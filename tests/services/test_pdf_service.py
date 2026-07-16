@@ -1463,6 +1463,68 @@ class TestPdfServiceTextLayerPlacement:
         )
         doc.close()
 
+    def _single_char_fontsize(self, tmp_path, ch):
+        """写一个『高瘦单字符』block，返回写入的 span 字号。
+
+        高瘦 bbox（宽 < 高）：单个数字/字母字形天然如此（advance≈0.586×fs、
+        ink 高≈0.955×fs）。旧路由 `width >= height` 把它判成『竖排误检』踢进
+        insert_textbox 兜底，字号被行距预算 _LINE_LEADING=1.6 压成
+        bbox_height/1.6 ≈ 62%；正确主路径 insert_text 给 bbox_height/_INK_RATIO
+        ≈ 100% 覆盖。读回 span 字号即可区分两条路径。
+        """
+        from vibeocr.models.ocr_result import OCRResult, TextBlock
+        from vibeocr.models.pdf_document import PdfDocument
+        from vibeocr.models.pdf_ocr_options import PdfGlobalSettings
+
+        doc = fitz.open()
+        page = doc.new_page(width=612, height=792)
+        pr = page.rect
+        # 高瘦 bbox：宽 22、高 28pt（单字符 OCR 典型）
+        x0, y0, x1, y1 = 100, 100, 122, 128
+        nbbox = (
+            x0 / pr.width * 1000, y0 / pr.height * 1000,
+            x1 / pr.width * 1000, y1 / pr.height * 1000,
+        )
+        block = TextBlock(text=ch, score=0.99, bbox=nbbox)
+        result = OCRResult(text_blocks=[block], preproc_angle=0)
+        settings = PdfGlobalSettings(text_layer_visible=True)
+        pdf_doc = PdfDocument(file_path="x.pdf")
+        PdfService.build_page_infos(doc, pdf_doc)
+        PdfService.add_text_layer(doc, pdf_doc, 0, result, pdf_settings=settings)
+
+        page_text = cast("dict[str, Any]", doc[0].get_text("dict"))
+        spans = [
+            s for b in page_text["blocks"] if b["type"] == 0
+            for line in b.get("lines", []) for s in line.get("spans", [])
+        ]
+        doc.close()
+        assert spans, f"单字符 {ch!r} 应写入文字层"
+        return spans[0]["size"], (y1 - y0)  # 字号, bbox 高度
+
+    def test_single_digit_routes_to_insert_text(self, tmp_path):
+        """单数字走 insert_text 主路径，字号≈bbox_h/_INK_RATIO（非被压到 /1.6）。
+
+        Bug：路由 `width >= height` 把高瘦单数字判成竖排误检 → insert_textbox
+        兜底 → 行距预算压字号 → ink 区域只有 bbox 的 ~62%（『区域太小』）。
+        修复：单字符（len≤1）永远横排，强制走 insert_text 主路径。
+        """
+        size, bbox_h = self._single_char_fontsize(tmp_path, "5")
+        # insert_text 路径：fontsize = bbox_h / _INK_RATIO(0.955) ≈ 29.3
+        # insert_textbox 路径：fontsize ≤ bbox_h / _LINE_LEADING(1.6) ≈ 17.5
+        # 取两者中点 22 作分界。
+        assert size >= bbox_h / 1.3, (
+            f"单数字字号 {size:.1f} 应走 insert_text 主路径（≈bbox_h/_INK_RATIO="
+            f"{bbox_h/0.955:.1f}），旧 bug 被 insert_textbox 压到 ≈{bbox_h/1.6:.1f}（区域太小）"
+        )
+
+    def test_single_narrow_letter_routes_to_insert_text(self, tmp_path):
+        """单窄字母（i/l）同样走 insert_text 主路径（同一守卫一并修复）。"""
+        size, bbox_h = self._single_char_fontsize(tmp_path, "i")
+        assert size >= bbox_h / 1.3, (
+            f"单窄字母字号 {size:.1f} 应走 insert_text 主路径，"
+            f"旧 bug 被 insert_textbox 压到 ≈{bbox_h/1.6:.1f}"
+        )
+
 
 class TestPdfServiceOcrBlocksCache:
     """OCR 原始块缓存（ocr_text_blocks）—— 预览/编辑/重写的唯一信源。

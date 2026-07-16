@@ -901,9 +901,16 @@ class PdfService:
             # 竖向页与横向页）。180/270 几何（上下/左右翻转）基线放置复杂，仍用
             # insert_textbox 矩形约束排版。窄/高块（竖排文字误检，display 宽<高）
             # 也走 insert_textbox 自动换行。
+            #
+            # 单字符守卫：单字符（数字/字母/汉字）天生高瘦字形（如数字 advance
+            # ≈0.586×fs、ink 高≈0.955×fs，bbox 宽<高），但单字符不可能是竖排排版
+            # （竖排至少 2 字）。若按 width>=height 判它会误判成竖排、踢进
+            # insert_textbox 兜底，被行距预算 _LINE_LEADING=1.6 把字号压到 bbox 的
+            # ~62%（『单数字文字层区域太小』）。故单字符永远横排，强制走主路径。
+            is_single_char = len(text.strip()) <= 1
             use_insert_text = (
                 page_rotation in (0, 90)
-                and disp_rect.width >= disp_rect.height
+                and (is_single_char or disp_rect.width >= disp_rect.height)
             )
 
             if use_insert_text:
