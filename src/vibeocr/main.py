@@ -16,9 +16,12 @@ _PROCESS_START = _time.perf_counter()
 # 当多个库（PaddlePaddle、NumPy、Intel MKL）各自捆绑不同版本的 OpenMP 时会发生冲突
 os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 
-# 禁用 OneDNN 以提高兼容性（某些 CPU 指令集不兼容会导致崩溃）
-# 注：CPU 模式下的精细 oneDNN 判定见 OCRService（can_safely_enable_onednn），
-# 这里仅作为兜底默认关闭，避免历史崩溃场景。
+# 兜底关闭 Paddle 的 oneDNN 全局 FLAGS（eager/动态图路径用）。
+# 重要：PaddleOCR 推理走 paddle.inference.Config（AnalysisConfig），其 mkldnn 开关
+# 由构造函数 enable_mkldnn 参数控制（见 OCRService._decide_enable_mkldnn），
+# 这俩 FLAGS 对推理路径【不生效】——paddleocr/paddlex 零处读取它们。保留只为
+# 保险地关闭任何 eager 路径的 oneDNN（某些 CPU 指令集不兼容会崩溃）。
+# 真正的 CPU mkldnn 决策（含 paddle 3.3 黑名单）见 _decide_enable_mkldnn。
 os.environ.setdefault("FLAGS_enable_onednn_backend", "0")
 os.environ.setdefault("FLAGS_use_mkldnn", "0")
 

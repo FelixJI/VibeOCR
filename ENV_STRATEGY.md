@@ -169,11 +169,11 @@ nvidia 包**。旧文档里的 `cublas64_13.dll` / `nvidia-cublas==13.0.2.14` �
 - **无陈旧 fallback**:`_load_dep_specs` 读不到源时 raise(含修复提示),不再悄悄
   回退到硬编码旧版本。
 
-## 4.1 CPU 推理禁用 mkldnn(paddle 3.3 PIR+oneDNN bug 绕过)
+## 4.1 oneDNN 决策机制（探测为唯一真相）
 
-### 现象
+### 现象（历史）
 
-CPU 推理(predict)抛出:
+CPU 推理(predict)曾抛出:
 ```
 NotImplementedError: (Unimplemented) ConvertPirAttribute2RuntimeAttribute
 not support [pir::ArrayAttribute<pir::DoubleAttribute>]
@@ -188,19 +188,43 @@ PP-OCRv6 模型推理触发该路径即崩溃。上游已知问题:
 - https://github.com/PaddlePaddle/PaddleOCR/issues/17539
 - https://github.com/PaddlePaddle/Paddle/issues/77340
 
-### 绕过
+### 关键事实：FLAGS 对推理路径无效
 
-`OCRService._create_pipeline` 在 `device == "cpu"` 时向 `PaddleOCR` / `PPStructureV3` /
-`PaddleOCRVL` 传 `enable_mkldnn=False`,避开有 bug 的 oneDNN PIR 转换路径。
-代价:CPU 推理略慢(GPU 不受影响)。上游修复后可移除。
+PaddleOCR 推理走 `paddle.inference.Config`（AnalysisConfig），其 mkldnn 开关由**构造函数
+`enable_mkldnn` 参数**控制（最终落到 `config.enable_mkldnn()` / `config.disable_mkldnn()`，
+见 paddlex `runner.py`）。进程级 FLAGS（`FLAGS_use_mkldnn` / `FLAGS_enable_onednn_backend`）
+对这条推理路径**不生效**——paddleocr/paddlex 零处读取它们，仅对 eager/动态图路径有意义。
+故早期代码里用 `FLAGS_*=0` "禁用 mkldnn" 的做法对推理实际无效；真正生效的是 kwarg。
 
-### 命令行验证(2026-06-17)
+`main.py` / `profile_startup.py` 仍保留 `FLAGS_*=0` 的 `setdefault`，但仅为兜底关闭
+eager 路径的 oneDNN，注释已说明它对推理无效。
+
+### 真正的控制路径
+
+`OCRService._decide_enable_mkldnn(device)` 是 oneDNN 是否启用的**唯一真相**：其返回值直接
+成为 `PaddleOCR(enable_mkldnn=...)` kwarg。CPU 设备下调用 `cpu_info.can_safely_enable_onednn()`
+综合判定（结果进程级缓存）：
+
+1. **用户强制覆盖**：`VIBEOCR_FORCE_ONEDNN=1` 强制启用、`=0` 强制禁用。
+2. **指令集门槛**：无 AVX2 → 拒绝（oneDNN 在纯 SSE/AVX1 上会崩溃或回退慢路径）。
+3. **paddle 版本黑名单**：落在 `3.3.0–3.3.99` → 拒绝（上述 PIR/oneDNN bug）。
+
+GPU 设备一律不传 `enable_mkldnn`（PaddleOCR 默认，返回 False）。当前 pin `paddlepaddle-gpu
+3.3.1` 落在黑名单内，故 CPU 探测恒返回 False——与历史硬编码 `enable_mkldnn=False` 效果一致，
+但探测机制为将来升级到 paddle ≥3.4（上游修复后）自动启用 oneDNN 留好了口子。
+
+### `VIBEOCR_FORCE_ONEDNN` 调试
+
+仅当怀疑探测误判、或想在受影响版本强行验证 oneDNN 行为时使用：
 
 ```
-PaddleOCR(device="cpu", enable_mkldnn=False)
-  -> init OK
-  -> predict OK(结果数: 1)   # NotImplementedError 消失
+VIBEOCR_FORCE_ONEDNN=1   # 强制启用（即便在 3.3 黑名单内，可能触发上述崩溃）
+VIBEOCR_FORCE_ONEDNN=0   # 强制禁用
 ```
+
+注：另有一个 PaddleX 自身的环境变量 `PADDLE_PDX_ENABLE_MKLDNN_BYDEFAULT=0` 可让
+`enable_mkldnn=True` 也无效（PaddleX 默认关闭 mkldnn），排查"mkldnn 没生效"时应一并检查。
+
 
 ## 5. pip / PyTorch 镜像源
 

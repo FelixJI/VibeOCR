@@ -29,6 +29,7 @@
 ### Fixed
 - fix(winui): BatchViewModel.CancelAll 现在也取消 Pending 项（对齐 Python 批量队列）
 - fix(winui): PdfViewModel OpenPathAsync/StartOcrAsync 重复递增 generation 导致结果被丢弃
+- fix(cpu): oneDNN 决策澄清——`_decide_enable_mkldnn`（enable_mkldnn kwarg）为唯一真相；查明 `FLAGS_use_mkldnn`/`FLAGS_enable_onednn_backend` 对 PaddleOCR 推理路径（AnalysisConfig）不生效，paddleocr/paddlex 零处读取。`_reset()` 现清空 `_onednn_safe_cache`（修测试隔离泄漏）；registry 测试改 mock 探测、补 True 分支
 
 ## [0.4.28] - 2026-07-13
 

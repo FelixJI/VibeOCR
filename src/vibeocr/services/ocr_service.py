@@ -173,6 +173,9 @@ class OCRService(metaclass=SingletonMeta):
                 instance.__dict__.pop("_cache_manager", None)
             cls._preloaded_pipelines = set()
             cls._is_preloading = False
+            # oneDNN 判定缓存必须随重置清空，否则测试间会泄漏上一个探测结果，
+            # 导致 _decide_enable_mkldnn 在 monkeypatch 后仍返回旧值。
+            cls._onednn_safe_cache = None
 
     @classmethod
     def set_preload_progress_callback(
@@ -500,6 +503,12 @@ class OCRService(metaclass=SingletonMeta):
     @classmethod
     def _decide_enable_mkldnn(cls, device: str) -> bool:
         """决定是否向 PaddleOCR 构造函数传入 ``enable_mkldnn=True``。
+
+        **这是 oneDNN 是否启用的唯一真相**：返回值直接成为构造函数 kwarg，
+        而 PaddleOCR 推理路径只读这个 kwarg（最终落到
+        ``paddle.inference.Config.enable_mkldnn()``）。进程级 FLAGS
+        （FLAGS_use_mkldnn / FLAGS_enable_onednn_backend）对推理路径【不生效】
+        ——paddleocr/paddlex 零处读取它们，那些 FLAGS 仅影响 eager 路径。
 
         - GPU 设备：不传（PaddleOCR 默认），返回 False。
         - CPU 设备：调用 ``cpu_info.can_safely_enable_onednn`` 综合判定

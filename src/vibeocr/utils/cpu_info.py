@@ -5,6 +5,15 @@
   浪费多核 CPU（i9-14900KF 这类 32 线程 CPU 默认仅用 1 核）。
 - 在构造 PaddleOCR 管道前判定当前 CPU 是否能安全启用 oneDNN（MKL-DNN），
   替代历史代码里硬编码的 ``enable_mkldnn=False``。
+
+关于 oneDNN 的控制路径（重要）：
+- PaddleOCR 推理走 ``paddle.inference.Config``（AnalysisConfig），mkldnn 开关
+  由构造函数 ``enable_mkldnn`` 参数控制（最终落到
+  ``config.enable_mkldnn()`` / ``config.disable_mkldnn()``）。
+- 进程级 FLAGS（``FLAGS_use_mkldnn`` / ``FLAGS_enable_onednn_backend``）对这条
+  推理路径【不生效】——paddleocr/paddlex 零处读取它们，只对 eager 路径有意义。
+  故本模块的 ``can_safely_enable_onednn`` 返回值（经 OCRService 转成
+  ``enable_mkldnn`` kwarg）才是 oneDNN 是否启用的唯一真相。
 """
 
 from __future__ import annotations

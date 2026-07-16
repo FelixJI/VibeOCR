@@ -20,6 +20,8 @@ from typing import Any
 
 # 环境变量（与 main.py 一致）
 os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
+# 见 main.py 说明：这俩 FLAGS 对 PaddleOCR 推理路径不生效（推理由 enable_mkldnn
+# kwarg / AnalysisConfig 控制），仅兜底关闭 eager 路径的 oneDNN。
 os.environ.setdefault("FLAGS_enable_onednn_backend", "0")
 os.environ.setdefault("FLAGS_use_mkldnn", "0")
 os.environ.setdefault("PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK", "True")

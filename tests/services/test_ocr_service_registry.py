@@ -76,9 +76,9 @@ class TestGetOrCreatePipeline:
     def test_creates_pipeline_via_registry(self):
         """Uses spec.create_pipeline from registry when pipeline is registered.
 
-        On CPU, enable_mkldnn=False must be forwarded to the factory to work
-        around paddle 3.3's PIR/oneDNN incompatibility
-        (ConvertPirAttribute2RuntimeAttribute NotImplementedError).
+        On CPU, enable_mkldnn must be forwarded to the factory. The probe is
+        mocked so the assertion is stable regardless of the host's CPU/paddle
+        version (avoids order-dependent leakage of the process-level cache).
         """
         service = OCRService()
         service._pipelines = {}
@@ -104,15 +104,56 @@ class TestGetOrCreatePipeline:
             patch(
                 "vibeocr.services.ocr_service.OCRService._create_pipeline"
             ) as mock_old_create,
+            # 固定探测结果为 False，断言不依赖宿主环境
+            patch(
+                "vibeocr.utils.cpu_info.can_safely_enable_onednn",
+                return_value=(False, "mocked: paddle 3.3 黑名单"),
+            ),
         ):
             result = service.get_or_create_pipeline("OCR")
 
         # Should use registry, not old _create_pipeline.
-        # On CPU the factory must receive enable_mkldnn=False.
+        # On CPU the factory must receive enable_mkldnn=False (mocked probe).
         mock_spec.create_pipeline.assert_called_once_with("cpu", enable_mkldnn=False)
         mock_old_create.assert_not_called()
         assert result is mock_pipeline
         assert "OCR" in service._pipelines
+
+    def test_cpu_forwards_enable_mkldnn_true_when_probe_says_safe(self):
+        """When the probe says oneDNN is safe, enable_mkldnn=True is forwarded.
+
+        Covers the True branch so the assertion doesn't silently rot until a
+        future paddle upgrade makes the probe return True on the host.
+        """
+        service = OCRService()
+        service._pipelines = {}
+
+        mock_pipeline = MagicMock(name="ocr_pipeline_mkldnn")
+        mock_spec = MagicMock()
+        mock_spec.create_pipeline.return_value = mock_pipeline
+
+        mock_registry = MagicMock()
+        mock_registry.has.return_value = True
+        mock_registry.get.return_value = mock_spec
+
+        with (
+            patch("vibeocr.services.ocr_service.OCRService._setup_cuda_dll_path"),
+            patch(
+                "vibeocr.services.ocr_service.OCRService._get_device",
+                return_value="cpu",
+            ),
+            patch(
+                "vibeocr.core.pipelines.get_registry",
+                return_value=mock_registry,
+            ),
+            patch(
+                "vibeocr.utils.cpu_info.can_safely_enable_onednn",
+                return_value=(True, "mocked: AVX2 + 新 paddle"),
+            ),
+        ):
+            service.get_or_create_pipeline("OCR")
+
+        mock_spec.create_pipeline.assert_called_once_with("cpu", enable_mkldnn=True)
 
     def test_gpu_device_omits_enable_mkldnn(self):
         """On GPU the factory is called with device only — no enable_mkldnn kwarg."""
