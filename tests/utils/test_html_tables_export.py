@@ -11,8 +11,6 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-import pytest
-
 from vibeocr.utils.html_tables import (
     html_tables_to_cell_grid,
     tables_from_result,

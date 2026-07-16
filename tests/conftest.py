@@ -22,9 +22,6 @@ import sys
 from pathlib import Path
 
 import pytest
-from PIL import Image
-from PySide6.QtGui import QPixmap
-from PySide6.QtWidgets import QApplication
 
 # Add src directory to Python path
 src_path = Path(__file__).parent.parent / "src"
@@ -35,6 +32,8 @@ if str(src_path) not in sys.path:
 @pytest.fixture(scope="session")
 def qapp():
     """提供 QApplication 实例（GUI 测试必需）。"""
+    from PySide6.QtWidgets import QApplication
+
     app = QApplication.instance()
     if app is None:
         app = QApplication([])
@@ -51,6 +50,8 @@ def pytest_sessionfinish(session, exitstatus):
 @pytest.fixture
 def sample_pixmap():
     """提供测试用 QPixmap（100x50 白色图片）。"""
+    from PySide6.QtGui import QPixmap
+
     pixmap = QPixmap(100, 50)
     pixmap.fill()
     return pixmap
@@ -59,6 +60,8 @@ def sample_pixmap():
 @pytest.fixture
 def sample_image_bytes():
     """提供测试图片的字节数据。"""
+    from PIL import Image
+
     img = Image.new("RGB", (100, 50), color="white")
     buffer = io.BytesIO()
     img.save(buffer, format="PNG")
@@ -68,7 +71,7 @@ def sample_image_bytes():
 @pytest.fixture
 def sample_image_with_text_bytes():
     """提供包含简单文字的测试图片字节数据。"""
-    from PIL import ImageDraw
+    from PIL import Image, ImageDraw
 
     img = Image.new("RGB", (200, 100), color="white")
     draw = ImageDraw.Draw(img)

@@ -5,6 +5,12 @@ on:
   push:
     branches: [main]
 
+env:
+  # Windows runners otherwise default Python stdout to a legacy code page,
+  # and subprocesses need the src-layout package on their import path.
+  PYTHONUTF8: "1"
+  PYTHONPATH: "${{ github.workspace }}/src"
+
 jobs:
   contracts:
     runs-on: windows-latest
