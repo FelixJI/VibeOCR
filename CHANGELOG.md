@@ -1,6 +1,90 @@
 # Changelog
 
-## [Unreleased] - WinUI 切换候选（Phase 4–5）
+## [0.4.29] - 2026-07-16
+
+### Added
+- feat(preview): 滚轮缩放 + 多边形覆盖层 + 滚动漂移修复
+- feat(pdf): 用 OCR 检测多边形方向替换 bbox 长宽比启发式判竖排
+- feat: WinUI screenshot region picker + export table fallback
+- feat(winui): dev profile launches WorkerHost from repo .venv
+- feat: complete dual frontend WorkerHost migration
+- feat(phase3): migrate single-image OCR execution to RPC
+- feat(phase3): migrate PySide QR generate/decode to RPC (first vertical slice)
+- feat(phase2): high-level Python BackendClient for WorkerHost RPC
+- feat(phase2): generalize WorkerHost — frontend_id + production profile
+- feat(phase1): cross-product exclusive Mutex for PySide/WinUI mutual exclusion
+- feat(winui): add WindowLayoutStore for window geometry persistence
+- feat(protocol): settings.switch_backend + install_dependency (parity --require-pass green)
+- feat(update): safe WinUI cutover sequence (Phase 5.4)
+- feat(migration): idempotent config migrator (Phase 5.1)
+- feat(winui): add tray/hotkey/about/update shell (Task 4.5)
+- feat(winui): add settings/backend tab (Task 4.4)
+- feat(winui): add C# PDF tab (Task 4.3 part 4)
+- feat(pdf): wire WorkerHost handlers for PDF session methods (Task 4.3 part 3)
+- feat(protocol): extend PDF RPC methods (Task 4.3 part 2)
+- feat(pdf): extract UI-free OCR orchestrator (Task 4.3 part 1)
+- feat(winui): reach QR code parity
+- feat(winui): reach batch recognition parity
+- feat(winui): migrate preview editor and result rendering
+- feat(winui): host secure WebView2 preview bridge
+- feat(winui): implement cancellable single-image OCR
+- feat(winui): validate required Windows desktop capabilities
+- feat(winui): add side-by-side shell and diagnostics
+- feat(winui): bootstrap framework and portable prerequisites
+- feat(winui): connect to Python WorkerHost
+- feat(protocol): share golden contracts with C sharp
+
+### Fixed
+- fix(pdf): 单字符文字层走主路径，修复单数字区域过小
+- fix(deps): declare pynvml — the one undeclared backend import
+- fix(contracts): sync C# DTOs with golden after dual-frontend migration
+- fix(build): unblock local WinUI build — SDK 10.0.302 + PS 5.1 compat
+- fix(winui): default 900x600 window + min size + geometry persistence
+- fix(winui): declare PerMonitorV2 DPI awareness via app.manifest
+- fix(winui): harden migration cutover and release gates
+
+### Changed
+- docs+fix(cpu): 澄清 oneDNN 控制路径——_decide_enable_mkldnn 是唯一真相
+- docs(readme): 说明两条前端路线与开发状态，标注 WinUI Next 基本不可用
+- ci(release): 用环境变量控制生成哪些安装包
+- refactor(deps): single source of truth for backend wheel METADATA
+- docs: record dual UI implementation completion
+- docs: update README migration progress (allowlist 90→53)
+- arch(phase4): treat models/ as shared DTO layer (not backend)
+- docs: update progress — Phase 3 OCR execution migrated, allowlist 90→74
+- docs: document dual-frontend architecture and migration progress in README
+- refactor(phase3): move toolbar_icons from core/ to ui/ layer
+- docs: update progress — Phase 3 allowlist 90→84 (QR + display formatters)
+- refactor(phase3): move HTML table utilities to UI utils layer
+- refactor(phase3): move TextBlockProcessor to UI utils layer
+- arch(phase0): freeze dual-frontend boundary with architecture guards
+- refactor(winui): drop orphan OnHideToTrayClicked; fix min-size enforcer doc (physical px)
+- chore(winui): layout parity + DPI fix changelog
+- refactor(winui): about page two-column cards, move shell options out
+- refactor(winui): settings page grouped cards + migrate shell options
+- refactor(winui): pdf page two-column layout (PySide6 parity)
+- refactor(winui): qr code page two-column + pivot layout (PySide6 parity)
+- refactor(winui): batch page three-column layout (PySide6 parity)
+- refactor(winui): recognition page two-column layout (PySide6 parity)
+- plan(winui): layout PySide6 parity + DPI fix implementation plan
+- docs(winui): layout PySide6 parity + DPI fix design
+- docs(release): real-env sign-off runbook + soak harness (Phase 5.5)
+- test(settings): real GPU backend-switch integration (Phase 5.5 sign-off)
+- perf(winui): real perf-gate data + manual sign-off checklist (Phase 5.5)
+- release: Phase 5 WinUI cutover candidate checklist + changelog (Phase 5.5)
+- perf(winui): release metrics comparison gate (Phase 5.3)
+- build(winui): framework-dependent release layout (Phase 5.2)
+- test(winui): enforce feature parity matrix (Task 4.6)
+- docs(winui): mark PDF row PASS in parity matrix (Task 4.3 complete)
+- test(winui): add PDF E2E spec (Task 4.3 part 5)
+- docs: record WinUI migration handoff
+- test(winui): close single-recognition parity loop
+- docs(winui): align PDF migration with durable OCR flow
+- build(winui): scaffold framework-dependent solution
+
+### Dependencies
+- 新增:
+  - 新增 pynvml>=11.5.0
 
 ### Fixed — 布局对齐与 DPI 修复
 - fix(winui): 声明 PerMonitorV2 DPI 感知（app.manifest），修复高 DPI 显示器界面发虚模糊
