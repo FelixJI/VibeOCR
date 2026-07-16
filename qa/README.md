@@ -85,6 +85,7 @@ python qa/coverage.py --min 80  # 设置最低覆盖率阈值
 python qa/upgrade_deps.py           # 升级依赖并更新 pyproject.toml
 python qa/upgrade_deps.py --dry-run # 预览变更
 python qa/upgrade_deps.py --sync    # 升级后同步环境
+python qa/upgrade_deps.py --dotnet-locks # 同时通过统一入口重建 .NET 锁文件
 ```
 
 ## 命令行选项
@@ -120,7 +121,7 @@ python qa/run.py --all --report
 | `lint.py` | 代码问题检查（ruff） |
 | `type_check.py` | 静态类型检查（pyright，可选 mypy） |
 | `coverage.py` | 测试覆盖率（pytest-cov） |
-| `upgrade_deps.py` | 依赖升级（uv lock --upgrade + 同步 pyproject.toml） |
+| `upgrade_deps.py` | 依赖升级（uv lock + pyproject，可选委托统一脚本更新 .NET locks） |
 
 ## 推荐工作流
 

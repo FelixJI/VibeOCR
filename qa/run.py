@@ -53,7 +53,7 @@ CHECKS = {
     "upgrade_deps": {
         "name": "依赖升级",
         "script": "upgrade_deps.py",
-        "description": "升级依赖并同步 pyproject.toml",
+        "description": "升级 Python 依赖，并可选重建 .NET 锁文件",
     },
     "resources": {
         "name": "资源文件检查",

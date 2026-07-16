@@ -8,11 +8,13 @@
     python qa/upgrade_deps.py --dry-run # 预览变更
     python qa/upgrade_deps.py --sync    # 升级后同步环境
     python qa/upgrade_deps.py --stable  # 仅升级到正式版本（排除预发布版本）
+    python qa/upgrade_deps.py --dotnet-locks # 同时重建 .NET 锁文件
 """
 
 import argparse
 import os
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -20,6 +22,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).parent.parent
 PYPROJECT_PATH = PROJECT_ROOT / "pyproject.toml"
 UV_LOCK_PATH = PROJECT_ROOT / "uv.lock"
+DOTNET_LOCK_UPDATE_SCRIPT = PROJECT_ROOT / "scripts" / "update_dotnet_locks.ps1"
 
 # 升级时需同步下界版本的 workspace 包。根 pyproject 是 PySide 壳的运行时
 # 依赖；vibeocr-backend 是 UI-free 后端运行时依赖，也是 backend wheel METADATA
@@ -320,6 +323,48 @@ def run_uv_sync(*, dry_run: bool = False) -> int:
     return run_command_streaming(["uv", "sync"])
 
 
+def _powershell_prefix() -> list[str]:
+    """返回可执行 PowerShell 命令前缀，优先使用跨平台 PowerShell 7。"""
+    pwsh = shutil.which("pwsh")
+    if pwsh:
+        return [pwsh, "-NoProfile"]
+
+    powershell = shutil.which("powershell")
+    if powershell:
+        return [
+            powershell,
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+        ]
+
+    return []
+
+
+def run_dotnet_lock_update(*, dry_run: bool = False) -> int:
+    """调用仓库唯一的 .NET 锁文件更新入口。"""
+    relative_script = DOTNET_LOCK_UPDATE_SCRIPT.relative_to(PROJECT_ROOT)
+    if dry_run:
+        print(
+            "[DRY-RUN] 将运行: pwsh -NoProfile -File "
+            f"{relative_script.as_posix()}"
+        )
+        return 0
+
+    if not DOTNET_LOCK_UPDATE_SCRIPT.exists():
+        print(f"[FAIL] 找不到 .NET 锁文件更新脚本: {relative_script}")
+        return 1
+
+    prefix = _powershell_prefix()
+    if not prefix:
+        print("[FAIL] 找不到 pwsh 或 powershell，无法更新 .NET 锁文件")
+        return 1
+
+    return run_command_streaming(
+        [*prefix, "-File", str(DOTNET_LOCK_UPDATE_SCRIPT)]
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="依赖升级工具",
@@ -329,6 +374,7 @@ def main() -> int:
   python qa/upgrade_deps.py           # 升级依赖并更新 pyproject.toml
   python qa/upgrade_deps.py --dry-run # 预览变更
   python qa/upgrade_deps.py --sync    # 升级后同步环境
+  python qa/upgrade_deps.py --dotnet-locks # 同时重建 .NET 锁文件
         """,
     )
     parser.add_argument(
@@ -350,6 +396,11 @@ def main() -> int:
         "--stable",
         action="store_true",
         help="仅升级到正式版本（排除预发布版本，等价于 uv lock --no-prerelease）",
+    )
+    parser.add_argument(
+        "--dotnet-locks",
+        action="store_true",
+        help="升级 Python 依赖后，通过统一脚本重建 .NET packages.lock.json",
     )
     args = parser.parse_args()
 
@@ -433,6 +484,18 @@ def main() -> int:
                     "[HINT] 运行 'uv lock --upgrade' 重新解析，或检查 pyproject.toml 索引配置"
                 )
                 return 1
+
+    # Step 5: 显式重建 .NET 锁文件（可选）
+    if args.dotnet_locks:
+        print("\n[Step 5] 重建 .NET packages.lock.json...")
+        result = run_dotnet_lock_update(dry_run=args.dry_run)
+        if result != 0:
+            print(f"[FAIL] .NET 锁文件更新失败 (code: {result})")
+            return result
+        if args.dry_run:
+            print("[DRY-RUN] 未实际更新 .NET 锁文件")
+        else:
+            print("[OK] .NET 锁文件已通过统一入口更新")
 
     print("\n" + "=" * 60)
     print("[OK] 依赖升级完成!")

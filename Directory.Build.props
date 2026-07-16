@@ -7,5 +7,8 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <Deterministic>true</Deterministic>
     <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+    <!-- Normal restores must consume the committed graph without rewriting it.
+         scripts/update_dotnet_locks.ps1 is the only supported update entrypoint. -->
+    <RestoreLockedMode Condition="'$(UpdatePackageLocks)' != 'true'">true</RestoreLockedMode>
   </PropertyGroup>
 </Project>

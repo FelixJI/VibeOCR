@@ -236,6 +236,31 @@ pwsh scripts/build_winui_release.ps1 -Version 0.4.28
 
 > 也可单独构建：`dotnet build src/dotnet/VibeOCR.App/VibeOCR.App.csproj`
 
+### NuGet 依赖锁文件
+
+仓库将各 .NET 应用 / 测试入口的 `packages.lock.json` 纳入 Git，用于锁定完整的传递依赖图。
+`global.json` 固定 .NET SDK 版本，`Directory.Packages.props` 集中声明直接依赖版本；普通 Restore
+默认启用 locked mode，只能读取已提交的锁文件。项目声明与锁文件不一致时，Restore 会失败，
+不会因 Visual Studio、开发机架构或隐式 Restore 而静默改写锁文件。
+
+```powershell
+# 日常还原：严格使用已提交的锁文件
+dotnet restore src/dotnet/VibeOCR.slnx
+
+# 仅在升级包版本、修改 PackageReference / TFM / RID 时更新锁文件
+powershell -ExecutionPolicy Bypass -File scripts/update_dotnet_locks.ps1
+# PowerShell 7 也可使用：pwsh -File scripts/update_dotnet_locks.ps1
+
+# 通过 QA 依赖升级入口执行同一脚本（同时升级 Python 依赖）
+python qa/upgrade_deps.py --dotnet-locks
+```
+
+更新依赖时，应将 `Directory.Packages.props` / `.csproj` 与生成的 `packages.lock.json` 放在同一提交中，
+并审查锁文件 diff。当前 WinUI App 及其测试只支持 `win-x64`；若出现 `win-x86` 或 `win-arm64`
+依赖图，不应直接提交，应先检查 Restore 命令或 IDE 平台设置。若将来正式支持新架构，应先更新
+项目中的 `RuntimeIdentifiers`，再通过上述脚本统一重建并提交锁文件。CI 同样使用 locked mode，
+锁文件过期会直接阻止构建。
+
 ## 项目结构
 
 ```
