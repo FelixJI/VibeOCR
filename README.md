@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/FelixJI/VibeOCR/releases"><img alt="版本" src="https://img.shields.io/badge/version-0.4.10-blue" /></a>
+  <a href="https://github.com/FelixJI/VibeOCR/releases"><img alt="版本" src="https://img.shields.io/badge/version-0.4.28-blue" /></a>
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-green" /></a>
   <img alt="Python" src="https://img.shields.io/badge/python-3.13-blue" />
   <img alt="Platform" src="https://img.shields.io/badge/platform-Windows%2064--bit-lightgrey" />
@@ -24,6 +24,30 @@ VibeOCR 是一款基于 [PySide6](https://www.qt.io/) + [PaddlePaddle](https://w
 
 支持文字识别、表格识别、公式识别、文档解析（MinerU / PaddleOCR-VL）等多条推理流水线，
 并对 GPU（CUDA）与 CPU 双后端做了适配。
+
+## 🚦 开发状态与两条路线
+
+VibeOCR 目前存在**两条并行的桌面产品路线**，共用同一份 Python 后端（OCR / PDF / 二维码 / 设置），
+但前端实现、成熟度和可用性差异巨大。**请先了解现状再选择使用哪一条。**
+
+### 路线一：PySide6 Classic —— ✅ 当前主力，推荐使用
+
+- 基于 [PySide6](https://www.qt.io/) 的成熟 Qt 桌面 UI，是当前发布与日常使用的**默认产品**。
+- 功能完整：截图识别、单文件 / 批量识别、PDF 处理与文字层写入、二维码生成与解码、多引擎流水线、设置、托盘、程序内更新等均已落地并通过回归。
+- Releases 页的 `VibeOCR-Classic-vX.Y.Z-win64.zip` 即此路线。
+- **绝大多数用户应当下载并使用 Classic 版本。**
+
+### 路线二：WinUI Next —— ⚠️ 早期开发阶段，目前基本不可用
+
+- 基于 [WinUI 3](https://learn.microsoft.com/windows/apps/winui/winui3/) 的下一代 UI，目标是长期取代 Classic。
+- **当前状态：早期开发中，不可用于日常使用。** 大多数功能页面仍是占位状态或尚未接通后端：
+  - 单次识别页：开发启动时存在**后端不自动拉起**的问题（已修，但尚未在任何已发布版本中体现），区域截图框选刚具备雏形。
+  - 批量识别 / PDF / 二维码 / 设置等页面：ViewModel 与协议方法已搭建并有单元测试，但实际 UI 交互、文件预览、页面操作、缩略图渲染、导出等**尚未完成对等**。
+  - 真实 WinUI 运行级验证仍需 .NET 10.0.302 SDK 环境；多数改动目前只通过静态 / 单元测试覆盖。
+- Releases 页的 `VibeOCR-Next-vX.Y.Z-win64.zip` 虽然会随版本一起构建发布，但**仅为开发预览，不建议普通用户使用**。
+- 适用人群：WinUI / .NET 开发者、愿意参与早期建设或做技术评估的贡献者。
+
+> 两套前端通过 Windows 命名 Mutex **互斥运行**，不能同时启动；架构细节见下方「双前端独占架构」一节。
 
 ## 功能特性
 
@@ -82,7 +106,9 @@ VibeOCR 采用**双前端并存**架构，两套 UI 各自独占一个 WorkerHos
 
 ### 方式一：下载便携版（推荐，无需配置环境）
 
-前往 [Releases](https://github.com/FelixJI/VibeOCR/releases) 下载最新版 `VibeOCR-vX.Y.Z-win64.zip`，解压后运行 `VibeOCR.exe` 即可。
+前往 [Releases](https://github.com/FelixJI/VibeOCR/releases) 下载最新版 **`VibeOCR-Classic-vX.Y.Z-win64.zip`**（即 PySide6 Classic 路线，功能完整、当前主力），解压后运行 `VibeOCR.exe` 即可。
+
+> ⚠️ 同一 Release 里的 `VibeOCR-Next-vX.Y.Z-win64.zip` 是 WinUI Next 路线，**目前处于早期开发阶段、基本不可用**，仅供开发预览，普通用户请勿下载。详见上方「开发状态与两条路线」一节。
 
 > 国内用户访问 GitHub 较慢时，可在程序内检查更新（自动走 gh 代理加速），或使用 gh 代理前缀手动下载。
 
@@ -205,7 +231,7 @@ dotnet build src/dotnet/VibeOCR.slnx
 dotnet test src/dotnet/VibeOCR.slnx --no-build
 
 # 打包 Release 便携版（硬编码 x64 dotnet，无需手动改 PATH）
-pwsh scripts/build_winui_release.ps1 -Version 0.4.10
+pwsh scripts/build_winui_release.ps1 -Version 0.4.28
 ```
 
 > 也可单独构建：`dotnet build src/dotnet/VibeOCR.App/VibeOCR.App.csproj`
@@ -432,7 +458,7 @@ views/batch_recognition_tab.py（拖入多文件）
 推送到 `v*` 格式的 tag 后，GitHub Actions（[`.github/workflows/release.yml`](.github/workflows/release.yml)）会：
 
 1. 构建并验证一次 UI-free backend wheel
-2. 用同一 wheel SHA-256 组合 `VibeOCR-Classic`（PySide）与 `VibeOCR-Next`（WinUI）两个 ZIP
+2. 用同一 wheel SHA-256 组合 `VibeOCR-Classic`（PySide，**正式发布**）与 `VibeOCR-Next`（WinUI，**开发预览、基本不可用**）两个 ZIP
 3. 分别运行制品 verifier 并生成 SHA-256 文件
 4. 上传两个产品到 GitHub Release，并镜像代码到 CNB
 
