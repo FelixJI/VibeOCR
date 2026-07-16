@@ -32,3 +32,20 @@
 - 试运行 .NET Contracts 测试时发现机器仅有 .NET runtime、没有 `global.json` 要求的 .NET SDK 10.0.302，因此该测试未执行；Python 侧协议集合/Schema/C# 常量一致性测试已通过。
 - 最终检查：相关文件 Ruff 全通过，核心改动 Pyright `0 errors, 0 warnings`，`git diff --check` 通过。
 - 已确认并保留本任务开始前已有的 `about_tab.py` / `test_about_tab.py` 工作区改动，未对其做修改或回滚。
+
+---
+
+# 进度日志：版本升级与 CHANGELOG 归档修复
+
+## 2026-07-16
+
+- 已定位版本遗漏根因：主流程目标清单不完整，且单文件仅替换首次出现。
+- 已定位重复归档根因：0.4.29 release commit 存在但 tag 缺失，收集逻辑只认 tag。
+- 已确认当前 CHANGELOG 的 0.4.30 条目重复收录 0.4.29 大部分内容；真正新增提交应为 0.4.29 release 之后到 0.4.30 release 之前的 3 条非 release 提交。
+- 已执行 planning-with-files session-catchup；全局 `python` 不可用后改用项目内置 CPython。
+- 已实现 workspace 自动发现、单文件全量版本替换，并将所有实际变更文件纳入 release commit staging。
+- 已实现 release commit 优先、最近 tag 兜底的 CHANGELOG 提交边界，并增加缺 tag 回归测试。
+- 已把 4 个 workspace 项目的版本、内部依赖 pin、包级 `__version__` 和 `uv.lock` 从滞后的 0.4.28 修正到 0.4.30。
+- 已将 0.4.30 CHANGELOG 收敛为实际新增的 3 条提交，删除从 0.4.29 重复归档的 79 行。
+- pytest 首轮收集 53 项，其中 19 项通过；其余 34 项因沙箱拒绝创建临时目录停在 setup。沙箱外重跑授权被环境额度策略拒绝，未继续绕过。
+- Pyright 因沙箱拒绝读取 editable `.pth` 未能运行；Ruff、AST、真实 Git 边界验证、版本/锁文件一致性检查和 `git diff --check` 全部通过。

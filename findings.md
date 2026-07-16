@@ -51,3 +51,15 @@
 - incremental checkpoint 的整文件复制：`ceil(N/16)` 次 → 0 次；只写一个长度 marker 并执行 append。
 - OCR 完成后的文字层逐页重写：`N` 页 → 0 页；保留 1 次整文档压缩。因此产物会保留“每批一个字体子集”，文件体积可能略高于全文档单字体重写，但明显降低收尾耗时。
 - 渲染/OCR：原先批间完全串行；现在 OCR 当前批时预取下一批，额外内存上限为一批（最多同时持有 32 页 PNG）。
+
+---
+
+# 调研记录：版本升级与 CHANGELOG 归档
+
+- `update_file_version()` 使用 `replace(..., 1)`，每个文件只替换第一个旧版本；因此子项目 `pyproject.toml` 内的内部依赖约束即使文件被处理也会漏掉。
+- 主流程只更新根 `pyproject.toml` 和 `src/vibeocr/__init__.py`，完全没有遍历 `[tool.uv.workspace]` 下的 `apps/*`、`packages/*`。
+- 当前根版本和根包为 0.4.30，但四个 workspace 项目的版本、内部包精确依赖与包级 `__version__` 仍停留在 0.4.28。
+- Git 历史存在 `release: v0.4.29` commit `3843945`，但本地 tag 列表没有 `v0.4.29`；`get_commits_since_last_tag()` 因而从 `v0.4.28` 开始收集，0.4.30 条目重复包含了 0.4.29 的全部内容。
+- `v0.4.30` 之后目前没有工作区改动；开始修复前 git 状态干净。
+- 修复后自动发现 10 个受控版本文件（根项目 2 个 + 4 个 workspace 项目的 pyproject/init），全部与根版本 0.4.30 对齐；`uv.lock` 中 5 个内部发行包也一致为 0.4.30。
+- 用真实仓库调用新边界逻辑：0.4.29 release commit 之后只得到 `fix(ci)`、`build(deps)`、PDF 优化提交以及 0.4.30 release 本身；不再包含 0.4.29 已归档的 preview/WinUI 等提交。

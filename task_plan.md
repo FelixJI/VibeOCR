@@ -59,3 +59,50 @@
 | 批量补丁假设 `method_validation.py` import 块次序与实际不符 | 1 | 读取精确文件头后拆分补丁，不重复原上下文 |
 | 无法运行 .NET Contracts 测试：未安装 `global.json` 要求的 .NET SDK 10.0.302 | 1 | 记录环境限制；已通过 Python 侧 JSON Schema、golden、C# `RpcMethods` 集合一致性测试 |
 | 直接运行 planning-with-files 完成检查被 PowerShell ExecutionPolicy 拒绝 | 1 | 按技能脚本说明改用 `powershell -ExecutionPolicy Bypass -File` |
+| 当前任务首次运行 session-catchup 时全局 `python` 不可用 | 1 | 改用仓库 `.vibeocr/uv-python/.../python.exe` 成功执行 |
+
+---
+
+# 任务计划：修复版本升级遗漏与 CHANGELOG 重复归档
+
+## 目标
+
+让 `bump_version.py` 一次性更新 monorepo 中所有应用/内部包的版本声明和内部包精确依赖；即使当前版本 tag 缺失，也能从对应 release commit 正确截取新提交，避免 CHANGELOG 重复归档，并修正当前重复条目。
+
+## 当前阶段
+
+已完成
+
+## 阶段
+
+### Phase 1：定位根因
+
+- [x] 审计版本文件、依赖声明与替换入口
+- [x] 检查 0.4.29/0.4.30 的 tag、release commit 和 CHANGELOG 差异
+- **Status:** complete
+
+### Phase 2：实现修复
+
+- [x] 扩展版本目标发现与全量精确替换
+- [x] 让提交收集优先使用当前版本 release commit 作为边界
+- [x] 去除当前 0.4.30 中从 0.4.29 重复归档的内容
+- [x] 增加回归测试
+- **Status:** complete
+
+### Phase 3：验证
+
+- [x] 尝试运行 bump_version 定向 pytest，并对受限项目完成直接函数级替代验证
+- [x] 运行 Ruff、AST/锁文件一致性检查和 diff 审核
+- **Status:** complete
+
+## 决策记录
+
+- 不对仓库做无边界的版本字符串全局替换；只更新 workspace 的 `pyproject.toml` 与其包 `__init__.py`，避免改写 README 示例和历史 CHANGELOG。
+- CHANGELOG 边界优先取 `release: v{current_version}` commit；找不到时兼容回退到最近 tag。
+
+## 验证限制
+
+| 限制 | 处理 |
+|---|---|
+| pytest 在沙箱内无法创建用户临时目录；沙箱外授权又被环境额度策略拒绝 | 已收集 53 项，19 项通过、34 项在 setup 阶段因权限错误未运行；用真实 0.4.29 缺 tag 历史和版本文件发现函数完成直接验证 |
+| Pyright 无法读取 `.venv/Lib/site-packages/_editable_impl_vibeocr.pth`（EPERM） | 记录为环境限制；Ruff、AST 解析、直接导入执行和 `git diff --check` 均通过 |

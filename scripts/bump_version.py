@@ -353,17 +353,67 @@ def bump_version(current: tuple[int, int, int], bump_type: str) -> tuple[int, in
     raise ValueError(f"未知升级类型: {bump_type}")
 
 
-def update_file_version(file_path: Path, old_version: str, new_version: str) -> None:
-    """替换文件中第一次出现的版本号字符串
+def update_file_version(file_path: Path, old_version: str, new_version: str) -> bool:
+    """替换文件中所有旧版本号字符串
 
     Args:
         file_path: 目标文件路径
         old_version: 旧版本号字符串 (如 "0.1.0")
         new_version: 新版本号字符串 (如 "0.2.0")
+    Returns:
+        文件内容是否发生变化。
     """
     text = file_path.read_text(encoding="utf-8")
-    text = text.replace(old_version, new_version, 1)
-    file_path.write_text(text, encoding="utf-8")
+    updated = text.replace(old_version, new_version)
+    if updated == text:
+        return False
+    file_path.write_text(updated, encoding="utf-8")
+    return True
+
+
+def _discover_version_files() -> list[Path]:
+    """发现根项目及 uv workspace 成员的版本文件。
+
+    workspace 成员从根 ``pyproject.toml`` 的 ``tool.uv.workspace.members``
+    读取，避免新增应用/包时还要手工维护 bump 脚本。每个成员纳入自身
+    ``pyproject.toml`` 以及 ``src/*/__init__.py``。
+    """
+    files = [PYPROJECT_TOML]
+    if INIT_PY.is_file():
+        files.append(INIT_PY)
+
+    try:
+        import tomllib
+
+        data = tomllib.loads(PYPROJECT_TOML.read_text(encoding="utf-8"))
+        members = (
+            data.get("tool", {}).get("uv", {}).get("workspace", {}).get("members", [])
+        )
+    except (OSError, ValueError):
+        members = []
+
+    root = PYPROJECT_TOML.parent
+    for pattern in members:
+        for member_dir in sorted(root.glob(pattern)):
+            member_pyproject = member_dir / "pyproject.toml"
+            if member_pyproject.is_file():
+                files.append(member_pyproject)
+            files.extend(sorted(member_dir.glob("src/*/__init__.py")))
+
+    # 多个 workspace glob 可能命中同一路径，保持顺序去重。
+    return list(dict.fromkeys(files))
+
+
+def update_project_versions(old_version: str, new_version: str) -> list[Path]:
+    """更新根项目和全部 workspace 成员中的版本引用。
+
+    返回实际发生变化的文件，供主流程输出并纳入 release commit。
+    """
+    changed: list[Path] = []
+    for file_path in _discover_version_files():
+        if update_file_version(file_path, old_version, new_version):
+            changed.append(file_path)
+    return changed
 
 
 def _collect_commits(
@@ -407,23 +457,52 @@ def _collect_commits(
     return commits
 
 
-def get_commits_since_last_tag() -> list[tuple[str, str]]:
-    """获取自上次 tag 以来的 git 提交（bump 时用于生成 CHANGELOG 条目）"""
-    # 查找最近的 tag
+def get_commits_since_last_tag(
+    current_version: str | None = None, cwd: Path | None = None
+) -> list[tuple[str, str]]:
+    """获取当前 release 点之后的 git 提交。
+
+    优先以 ``release: v{current_version}`` commit 为边界；这样即使 tag
+    被漏打、漏拉取或本地删除，也不会退回更老 tag 并重复归档提交。
+    找不到对应 release commit 时，再兼容回退到最近 tag。
+    """
+    kwargs: dict[str, object] = {"capture_output": True, "encoding": "utf-8", "check": True}
+    if cwd is not None:
+        kwargs["cwd"] = str(cwd)
+
+    if current_version:
+        escaped_version = current_version.replace(".", r"\.")
+        try:
+            result = subprocess.run(
+                [
+                    "git",
+                    "log",
+                    "--grep",
+                    f"^release: v{escaped_version}$",
+                    "--pretty=%H",
+                    "-1",
+                ],
+                **kwargs,  # type: ignore[arg-type]
+            )
+            release_hash = (result.stdout or "").strip()
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            release_hash = ""
+        if release_hash:
+            return _collect_commits(f"{release_hash}..HEAD", cwd=cwd)
+
+    # 兼容首次引入 release commit 约定前的历史仓库。
     try:
         result = subprocess.run(
             ["git", "describe", "--tags", "--abbrev=0"],
-            capture_output=True,
-            encoding="utf-8",
-            check=True,
+            **kwargs,  # type: ignore[arg-type]
         )
         last_tag = result.stdout.strip()
     except (subprocess.CalledProcessError, FileNotFoundError):
         last_tag = ""
 
     if last_tag:
-        return _collect_commits(f"{last_tag}..HEAD")
-    return _collect_commits("HEAD")
+        return _collect_commits(f"{last_tag}..HEAD", cwd=cwd)
+    return _collect_commits("HEAD", cwd=cwd)
 
 
 def check_unversioned_commits(
@@ -1747,13 +1826,10 @@ def main() -> int:
     new_str = ".".join(map(str, new_version))
     print(f"版本升级: {current_str} → {new_str}")
 
-    # 更新版本号文件（pyproject.toml / __init__.py）
-    update_file_version(PYPROJECT_TOML, current_str, new_str)
-    print(f"  已更新 {PYPROJECT_TOML}")
-
-    if INIT_PY.exists():
-        update_file_version(INIT_PY, current_str, new_str)
-        print(f"  已更新 {INIT_PY}")
+    # 更新根项目和 uv workspace 全部成员的版本声明/内部包精确约束。
+    changed_version_files = update_project_versions(current_str, new_str)
+    for version_file in changed_version_files:
+        print(f"  已更新 {version_file}")
 
     # 注意：main.py 通过 __version__ 引用版本号（无字面量），无需在此更新。
 
@@ -1761,7 +1837,7 @@ def main() -> int:
     _sync_uv_lock(new_str)
 
     # 更新 CHANGELOG（生成条目，弹编辑器审阅，纳入 release 提交）
-    commits = get_commits_since_last_tag()
+    commits = get_commits_since_last_tag(current_str)
     # P3：对比上个 release tag 的依赖，生成依赖变更说明
     old_deps = _get_last_release_pyproject_deps(current_str)
     new_deps = _parse_dependencies(PYPROJECT_TOML)
@@ -1778,9 +1854,8 @@ def main() -> int:
 
     # Git 操作：版本号 + CHANGELOG + uv.lock 进入同一个 release 提交，并打 tag。
     try:
-        subprocess.run(["git", "add", str(PYPROJECT_TOML)], check=True)
-        if INIT_PY.exists():
-            subprocess.run(["git", "add", str(INIT_PY)], check=True)
+        for version_file in changed_version_files:
+            subprocess.run(["git", "add", str(version_file)], check=True)
         subprocess.run(["git", "add", str(CHANGELOG)], check=True)
         # uv.lock 与版本号同源，纳入同一 release 提交
         if UV_LOCK.exists():

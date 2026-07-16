@@ -253,8 +253,32 @@ class TestVersionBumping:
         assert mod.bump_version((1, 2, 3), "minor") == (1, 3, 0)
         assert mod.bump_version((1, 2, 3), "major") == (2, 0, 0)
 
-    def test_update_file_version_replaces_first_occurrence(self, tmp_path):
-        """验证 update_file_version 只替换第一次出现的版本号"""
+    def test_workspace_version_files_match_root_version(self, monkeypatch):
+        """真实 workspace 的包版本和内部精确依赖不得再次漂移"""
+        import importlib.util
+        import re
+
+        for key in ("PYPROJECT_TOML", "INIT_PY", "MAIN_PY", "CHANGELOG"):
+            monkeypatch.delenv(key, raising=False)
+        spec = importlib.util.spec_from_file_location("bump_version", SCRIPT)
+        assert spec is not None and spec.loader is not None
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+
+        current = ".".join(map(str, mod.read_current_version(mod.PYPROJECT_TOML)))
+        for path in mod._discover_version_files():
+            content = path.read_text(encoding="utf-8")
+            if path.name == "pyproject.toml":
+                assert f'version = "{current}"' in content, path
+                internal_pins = re.findall(
+                    r'"vibeocr-[a-z0-9-]+==(\d+\.\d+\.\d+)"', content
+                )
+                assert all(version == current for version in internal_pins), path
+            else:
+                assert f'__version__ = "{current}"' in content, path
+
+    def test_update_file_version_replaces_all_occurrences(self, tmp_path):
+        """项目版本与内部包精确约束中的旧版本都应被替换"""
         import importlib.util
 
         spec = importlib.util.spec_from_file_location("bump_version", SCRIPT)
@@ -273,7 +297,64 @@ class TestVersionBumping:
 
         content = test_file.read_text(encoding="utf-8")
         assert 'version = "0.2.0"' in content
-        assert "# still 0.1.0" in content  # 第二次出现不被替换
+        assert "0.1.0" not in content
+        assert "# still 0.2.0" in content
+
+    def test_update_project_versions_discovers_workspace_members(
+        self, tmp_path, monkeypatch
+    ):
+        """workspace 子包版本、内部包约束与 __version__ 一次性同步"""
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location("bump_version", SCRIPT)
+        assert spec is not None and spec.loader is not None
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+
+        pyproject = tmp_path / "pyproject.toml"
+        init_py = tmp_path / "src" / "vibeocr" / "__init__.py"
+        member = tmp_path / "packages" / "vibeocr-client-py"
+        member_init = member / "src" / "vibeocr_client_py" / "__init__.py"
+        init_py.parent.mkdir(parents=True)
+        member_init.parent.mkdir(parents=True)
+        pyproject.write_text(
+            textwrap.dedent("""\
+            [project]
+            name = "vibeocr"
+            version = "0.1.0"
+
+            [tool.uv.workspace]
+            members = ["packages/*"]
+            """),
+            encoding="utf-8",
+        )
+        init_py.write_text('__version__ = "0.1.0"', encoding="utf-8")
+        (member / "pyproject.toml").write_text(
+            textwrap.dedent("""\
+            [project]
+            name = "vibeocr-client-py"
+            version = "0.1.0"
+            dependencies = ["vibeocr-contracts-py==0.1.0"]
+            """),
+            encoding="utf-8",
+        )
+        member_init.write_text('__version__ = "0.1.0"', encoding="utf-8")
+        monkeypatch.setattr(mod, "PYPROJECT_TOML", pyproject)
+        monkeypatch.setattr(mod, "INIT_PY", init_py)
+
+        changed = mod.update_project_versions("0.1.0", "0.2.0")
+
+        assert set(changed) == {
+            pyproject,
+            init_py,
+            member / "pyproject.toml",
+            member_init,
+        }
+        for path in changed:
+            assert "0.1.0" not in path.read_text(encoding="utf-8")
+        assert "vibeocr-contracts-py==0.2.0" in (member / "pyproject.toml").read_text(
+            encoding="utf-8"
+        )
 
 
 class TestChangelogGeneration:
@@ -1044,6 +1125,44 @@ class TestCollectCommits:
         assert "fix: real change" in subjects
         assert not any(s.startswith("Merge branch") for s in subjects)
 
+    def test_release_commit_is_boundary_when_current_tag_is_missing(self, tmp_path):
+        """缺少当前版本 tag 时，不应从更老 tag 重复收集提交"""
+        mod = self._load_module()
+
+        subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True)
+        subprocess.run(
+            ["git", "config", "user.email", "t@t.com"], cwd=tmp_path, capture_output=True
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "T"], cwd=tmp_path, capture_output=True
+        )
+        subprocess.run(
+            ["git", "commit", "--allow-empty", "-m", "release: v0.1.0"],
+            cwd=tmp_path,
+            capture_output=True,
+        )
+        subprocess.run(["git", "tag", "v0.1.0"], cwd=tmp_path, capture_output=True)
+        subprocess.run(
+            ["git", "commit", "--allow-empty", "-m", "feat: already archived"],
+            cwd=tmp_path,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", "commit", "--allow-empty", "-m", "release: v0.1.1"],
+            cwd=tmp_path,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", "commit", "--allow-empty", "-m", "fix: only new change"],
+            cwd=tmp_path,
+            capture_output=True,
+        )
+
+        commits = mod.get_commits_since_last_tag("0.1.1", cwd=tmp_path)
+        subjects = [subject for _, subject in commits]
+
+        assert subjects == ["fix: only new change"]
+
 
 class TestCheckUnversionedCommits:
     """测试 check_unversioned_commits 发版前未版本化提交检测"""
@@ -1157,9 +1276,9 @@ class TestBumpPushConfirm:
     def _stub_bump_deps(self, mod, monkeypatch):
         """桩掉 bump 流程里的文件/git/changelog 副作用"""
         monkeypatch.setattr(mod, "read_current_version", lambda path: (0, 1, 5))
-        monkeypatch.setattr(mod, "update_file_version", lambda f, old, new: None)
+        monkeypatch.setattr(mod, "update_project_versions", lambda old, new: [])
         monkeypatch.setattr(mod, "_sync_uv_lock", lambda v: False)
-        monkeypatch.setattr(mod, "get_commits_since_last_tag", list)
+        monkeypatch.setattr(mod, "get_commits_since_last_tag", lambda *_args: [])
         monkeypatch.setattr(mod, "update_changelog", lambda v, c, *a, **k: None)
         monkeypatch.setattr(mod.subprocess, "run", lambda *a, **k: None)
 
@@ -1518,4 +1637,3 @@ class TestBuildManifestIntegration:
         # 此处验证没有 >= / ~= / > 形式的版本约束出现在包定义行
         bad = re.findall(r"^[a-zA-Z0-9_\-\.\[\]]+(>=|~=|>|<)", text, re.MULTILINE)
         assert bad == [], f"lock file should use == only, found: {bad}"
-
