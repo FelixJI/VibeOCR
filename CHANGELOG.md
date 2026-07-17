@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.36] - 2026-07-17
+
+### Fixed
+- fix(update): 拆分 update_service 的 Qt 表现层，修复架构门禁与 C408
+
+### Changed
+- docs(readme): 版本徽章改用动态 shields，打包脚本说明 Version 缺省读 pyproject
+
 ## [0.4.35] - 2026-07-17
 
 ### Fixed
