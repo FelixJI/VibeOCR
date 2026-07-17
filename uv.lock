@@ -2368,7 +2368,7 @@ wheels = [
 
 [[package]]
 name = "vibeocr"
-version = "0.4.31"
+version = "0.4.32"
 source = { editable = "." }
 dependencies = [
     { name = "fastapi" },
@@ -2496,7 +2496,7 @@ test-pyside = [
 
 [[package]]
 name = "vibeocr-backend"
-version = "0.4.31"
+version = "0.4.32"
 source = { editable = "packages/vibeocr-backend" }
 dependencies = [
     { name = "fastapi" },
@@ -2549,7 +2549,7 @@ requires-dist = [
 
 [[package]]
 name = "vibeocr-client-py"
-version = "0.4.31"
+version = "0.4.32"
 source = { editable = "packages/vibeocr-client-py" }
 dependencies = [
     { name = "pydantic" },
@@ -2564,12 +2564,12 @@ requires-dist = [
 
 [[package]]
 name = "vibeocr-contracts-py"
-version = "0.4.31"
+version = "0.4.32"
 source = { editable = "packages/vibeocr-contracts-py" }
 
 [[package]]
 name = "vibeocr-pyside"
-version = "0.4.31"
+version = "0.4.32"
 source = { editable = "apps/vibeocr-pyside" }
 dependencies = [
     { name = "pyside6" },

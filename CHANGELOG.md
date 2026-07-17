@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.4.32] - 2026-07-17
+
+### Fixed
+- fix(contracts): 补全 ocr.recognize_batch 的 .NET DTO + JSON 注册
+
+### Changed
+- test(pdf): 并行渲染提速断言改中位数采样 + 阈值降至 1.05 抗 CI 抖动
+- ci: winui job 改测 Contracts+Platform 契约层 + 给所有 job 加 timeout-minutes
+
 ## [0.4.31] - 2026-07-16
 
 ### Fixed
