@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.4.33] - 2026-07-17
+
+### Fixed
+- fix(test): main_window fixture 用 isValid 守卫 close，消除 teardown 竞态
+- fix(release): 用 .NET SHA256 替换 Get-FileHash，修 PS 5.1 cmdlet 加载失败
+
+### Changed
+- test(pdf): 并行渲染提速断言阈值 1.05→1.0，抗 CI 共享 runner 噪声
+
 ## [0.4.32] - 2026-07-17
 
 ### Fixed
