@@ -47,6 +47,10 @@ jobs:
   build:
     name: Build & Release (Windows)
     runs-on: windows-latest
+    # 发版流程含 .NET 测试 + PySide 打包 + WinUI 打包 + 上传 + 镜像，
+    # 正常 ~5-10min；45min 宽裕上限。dotnet test 同样可能因 App.Tests 挂起
+    # （见 ci.yml winui job 注释），超时护栏避免烧满 6h 默认配额。
+    timeout-minutes: 45
 
     steps:
       - name: Checkout
@@ -134,9 +138,16 @@ jobs:
       - name: Validate complete .NET solution
         shell: pwsh
         run: |
+          # build 整个解决方案（含 App + App.Tests，以捕获编译错误），但只 test
+          # 两个契约层项目。App.Tests 测的是 WinUI 专属 ViewModel 层，不进
+          # PySide6 发布包，且其 testhost 在 Session 0 runner 上会挂起（见
+          # ci.yml winui job 注释）。仍可本地 `dotnet test src/dotnet/VibeOCR.slnx`
+          # 手动验证 WinUI 层。
           dotnet build src/dotnet/VibeOCR.slnx -c Release --no-restore
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          dotnet test src/dotnet/VibeOCR.slnx -c Release --no-restore
+          dotnet test tests/dotnet/VibeOCR.Contracts.Tests/VibeOCR.Contracts.Tests.csproj -c Release --no-build
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet test tests/dotnet/VibeOCR.Platform.Tests/VibeOCR.Platform.Tests.csproj -c Release --no-build
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Validate Web assets
