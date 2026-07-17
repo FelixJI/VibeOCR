@@ -62,6 +62,12 @@ MAIN_PY = Path(
 CHANGELOG = Path(os.environ.get("CHANGELOG", str(PROJECT_ROOT / "CHANGELOG.md")))
 UV_LOCK = Path(os.environ.get("UV_LOCK", str(PROJECT_ROOT / "uv.lock")))
 
+# 默认打包前端：pyside → PyInstaller 打 main.py（PySide6 Classic）；
+# winui → dotnet publish（WinUI Next）。与 release.yml 的 BUILD_VARIANTS_DEFAULT
+# 对齐。e7fe825 后 _run_build 一度只走 winui 路径，导致 Classic 发版全挂
+# （v0.4.29+）。现恢复双路径：pyside=PyInstaller、winui=dotnet 各走原生工具链。
+DEFAULT_FRONTEND = "pyside"
+
 # ---------------------------------------------------------------------------
 # sys.path 注入 src/：CI 只装 build-shell.lock（PyInstaller + 壳依赖），不安装
 # vibeocr 包本身（避免拉 GB 级 paddle/torch）。但 _package_zip 需要 import
@@ -1484,8 +1490,88 @@ def _get_pyinstaller_cmd(
     return cmd
 
 
-def _run_build(version: str, force: bool = False) -> bool:
-    """构建并验证正式 WinUI release artifact。
+def _run_build_pyside(version: str, force: bool = False) -> bool:
+    """PySide6 Classic 路径：PyInstaller 打 main.py。
+
+    v0.4.28 的发版流程。e7fe825「dual frontend migration」一度把 _run_build
+    改成只走 WinUI(dotnet)，导致 Classic 发版全挂（v0.4.29+）。现恢复为独立
+    函数，与 _run_build_winui 并存，由 _run_build 按 --frontend 分发。
+
+    Args:
+        version: 版本号字符串
+        force: True 时已存在的目标目录直接删除重建，不交互询问
+            （CI/非交互场景用）。False 时遇到已存在目录会 input() 询问。
+    """
+    if not _check_pyinstaller():
+        print("\n错误: PyInstaller 未安装")
+        print(f"请运行: {sys.executable} -m pip install pyinstaller")
+        return False
+
+    dist_name = f"VibeOCR-v{version}-win64-Windows10_11"
+    dist_path = DIST_BASE_DIR / dist_name / "VibeOCR"
+
+    if dist_path.exists():
+        if force:
+            print(f"\n目标目录已存在（--force）: {dist_path}，直接删除重建")
+            shutil.rmtree(DIST_BASE_DIR / dist_name, ignore_errors=True)
+        else:
+            print(f"\n目标目录已存在: {dist_path}")
+            print("是否删除后重新打包? [Y/n]: ", end="", flush=True)
+            choice = input().strip().lower()
+            if choice not in ("", "y", "yes", "是"):
+                print("已取消打包")
+                return False
+            shutil.rmtree(DIST_BASE_DIR / dist_name, ignore_errors=True)
+
+    # 0. 生成版本信息文件（主程序与 updater 各一份，元数据须区分）
+    version_file = _generate_version_file(version, DIST_BASE_DIR, target="main")
+    updater_version_file = _generate_version_file(
+        version, DIST_BASE_DIR, target="updater"
+    )
+
+    # 1. 打包主程序（PyInstaller 打 main.py，PySide6 Qt UI）
+    cmd = _get_pyinstaller_cmd(version, version_file=version_file)
+    print(f"\n[1/5] 打包主程序 VibeOCR v{version} (PySide6 via PyInstaller)...")
+    try:
+        subprocess.run(cmd, check=True)
+    except subprocess.CalledProcessError as e:
+        print(f"\n主程序打包失败，退出码: {e.returncode}")
+        return False
+
+    # 2. 打包 updater.exe
+    print("\n[2/5] 打包 updater.exe...")
+    if not _build_updater(dist_path, version_file=updater_version_file):
+        return False
+
+    # 3. 清理无用 Qt 二进制（削减 ~230MB 体积）
+    print("\n[3/5] 清理无用 Qt 模块...")
+    _cleanup_dist(dist_path)
+
+    # 4. 生成 version.json
+    print("\n[4/5] 生成 version.json...")
+    _generate_version_json(version, dist_path)
+
+    # 5. 打主包 zip + SHA256
+    print("\n[5/5] 打包 zip...")
+    zip_path = _package_zip(dist_path, version)
+    if zip_path is None:
+        return False
+
+    print(f"\n{'=' * 50}")
+    print("构建完成!")
+    print(f"  应用目录:   {dist_path}")
+    print(f"  主分发包:   {zip_path}")
+    print(f"{'=' * 50}")
+    return True
+
+
+def _run_build_winui(version: str, force: bool = False) -> bool:
+    """WinUI Next 路径：dotnet publish + verify_winui_artifact.ps1。
+
+    与 _run_build_pyside 并存。注意 build_winui_release.ps1 经 powershell.exe
+    （Windows PS 5.1）调起，cmdlet 自动加载在 Win Server 2025 runner 上偶发
+    失败（见 build_winui_release.ps1 / verify_winui_artifact.ps1 的 .NET 直调
+    修复：Get-FileHash→SHA256.Create、New-Guid→[guid]::NewGuid）。
 
     Args:
         version: 版本号字符串
@@ -1516,7 +1602,7 @@ def _run_build(version: str, force: bool = False) -> bool:
         return False
 
     # 1. 发布 WinUI App + Bootstrapper，并装配 UI-free WorkerHost source。
-    print(f"\n[1/4] 构建 WinUI release VibeOCR v{version}...")
+    print(f"\n[1/4] 构建 WinUI release VibeOCR v{version} (dotnet publish)...")
     try:
         subprocess.run(
             [
@@ -1600,6 +1686,34 @@ def _run_build(version: str, force: bool = False) -> bool:
     print(f"  主分发包:   {zip_path}")
     print(f"{'=' * 50}")
     return True
+
+
+def _run_build(
+    version: str, force: bool = False, frontend: str = DEFAULT_FRONTEND
+) -> bool:
+    """构建并打包 release artifact，按 frontend 分发到原生工具链。
+
+    - pyside（默认）→ _run_build_pyside：PyInstaller 打 main.py（PySide6
+      Classic）。这是发版默认路径，与 release.yml 的 BUILD_VARIANTS_DEFAULT
+      对齐。
+    - winui → _run_build_winui：dotnet publish（WinUI Next），仅供开发预览。
+
+    保留 (version, force) 二参签名：main() 三处调用与 test_bump_version.py 的
+    monkeypatch 都依赖它；frontend 通过关键字参传入，缺省回退到
+    DEFAULT_FRONTEND。
+
+    Args:
+        version: 版本号字符串
+        force: True 时已存在的目标目录直接删除重建，不交互询问
+            （CI/非交互场景用）。False 时遇到已存在目录会 input() 询问。
+        frontend: 打包前端，pyside 或 winui。
+
+    Returns:
+        True=构建成功，False=失败
+    """
+    if frontend == "winui":
+        return _run_build_winui(version, force)
+    return _run_build_pyside(version, force)
 
 
 def _ask_build(version: str) -> bool:
@@ -1755,6 +1869,15 @@ def main() -> int:
         help="打包时遇到已存在的目标目录直接删除重建，不交互询问（CI/非交互场景用）",
     )
     parser.add_argument(
+        "--frontend",
+        choices=("pyside", "winui"),
+        default=DEFAULT_FRONTEND,
+        help=(
+            "打包前端：pyside（默认，PyInstaller 打 PySide6 Classic）/ "
+            "winui（dotnet publish 打 WinUI Next，仅供开发预览）"
+        ),
+    )
+    parser.add_argument(
         "--no-build",
         action="store_true",
         dest="no_build",
@@ -1785,7 +1908,7 @@ def main() -> int:
                 print("已取消打包")
                 return 0
 
-        return 0 if _run_build(current_str, force=args.force) else 1
+        return 0 if _run_build(current_str, force=args.force, frontend=args.frontend) else 1
 
     # 模式2: 重新打包指定版本
     if args.rebuild:
@@ -1793,7 +1916,7 @@ def main() -> int:
         if not SEMVER_RE.match(rebuild_version):
             print(f"错误: 无效版本号 '{rebuild_version}'")
             return 1
-        return 0 if _run_build(rebuild_version, force=args.force) else 1
+        return 0 if _run_build(rebuild_version, force=args.force, frontend=args.frontend) else 1
 
     # 模式3: 版本升级流程（在 main 上 bump → commit → tag）
     try:
@@ -1812,7 +1935,7 @@ def main() -> int:
             return 0
         if new_version == "build":
             # 仅打包当前版本（不升级版本号、不动 git）
-            return 0 if _run_build(current_str, force=args.force) else 1
+            return 0 if _run_build(current_str, force=args.force, frontend=args.frontend) else 1
     elif args.version in ("patch", "minor", "major"):
         new_version = bump_version(current, args.version)
     elif SEMVER_RE.match(args.version):
@@ -1885,7 +2008,7 @@ def main() -> int:
     # 未推送时才问本地打包（已推送则 CI 会打包，本地打包多余）。
     # 本地打包确认默认否，与推送确认共用 --yes 跳过。
     if not pushed and not args.yes and not args.no_build and _ask_build(new_str):
-        _run_build(new_str, force=args.force)
+        _run_build(new_str, force=args.force, frontend=args.frontend)
 
     print(f"\n完成! 版本已升级到 {new_str}")
     return 0

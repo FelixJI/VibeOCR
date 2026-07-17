@@ -44,7 +44,7 @@ VibeOCR 目前存在**两条并行的桌面产品路线**，共用同一份 Pyth
   - 单次识别页：开发启动时存在**后端不自动拉起**的问题（已修，但尚未在任何已发布版本中体现），区域截图框选刚具备雏形。
   - 批量识别 / PDF / 二维码 / 设置等页面：ViewModel 与协议方法已搭建并有单元测试，但实际 UI 交互、文件预览、页面操作、缩略图渲染、导出等**尚未完成对等**。
   - 真实 WinUI 运行级验证仍需 .NET 10.0.302 SDK 环境；多数改动目前只通过静态 / 单元测试覆盖。
-- Releases 页的 `VibeOCR-Next-vX.Y.Z-win64.zip` 虽然会随版本一起构建发布，但**仅为开发预览，不建议普通用户使用**。
+- Releases 页的 `VibeOCR-Next-vX.Y.Z-win64.zip` **默认不随 tag 发版**——发版流水线默认只产 Classic；需要时由维护者手动 `workflow_dispatch` 选 `winui`/`all` 才会构建，**仅为开发预览，不建议普通用户使用**。
 - 适用人群：WinUI / .NET 开发者、愿意参与早期建设或做技术评估的贡献者。
 
 > 两套前端通过 Windows 命名 Mutex **互斥运行**，不能同时启动；架构细节见下方「双前端独占架构」一节。
@@ -108,7 +108,7 @@ VibeOCR 采用**双前端并存**架构，两套 UI 各自独占一个 WorkerHos
 
 前往 [Releases](https://github.com/FelixJI/VibeOCR/releases) 下载最新版 **`VibeOCR-Classic-vX.Y.Z-win64.zip`**（即 PySide6 Classic 路线，功能完整、当前主力），解压后运行 `VibeOCR.exe` 即可。
 
-> ⚠️ 同一 Release 里的 `VibeOCR-Next-vX.Y.Z-win64.zip` 是 WinUI Next 路线，**目前处于早期开发阶段、基本不可用**，仅供开发预览，普通用户请勿下载。详见上方「开发状态与两条路线」一节。
+> ⚠️ 部分历史或手动构建的 Release 里可能附带 `VibeOCR-Next-vX.Y.Z-win64.zip`（WinUI Next 路线），**目前处于早期开发阶段、基本不可用**，仅供开发预览，普通用户请勿下载。默认 tag 发版只产 Classic；详见上方「开发状态与两条路线」一节。
 
 > 国内用户访问 GitHub 较慢时，可在程序内检查更新（自动走 gh 代理加速），或使用 gh 代理前缀手动下载。
 

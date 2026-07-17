@@ -16,7 +16,7 @@ on:
   workflow_dispatch:
     inputs:
       build_variants:
-        description: "生成哪些安装包：pyside6（PySide6 经典版）/ winui（WinUI 次世代版）/ all（两者）"
+        description: "生成哪些安装包：pyside6（Classic 主力，PyInstaller）/ winui（Next 开发预览，dotnet）/ all（两者）。默认 pyside6。"
         required: false
         default: "pyside6"
         type: choice
@@ -35,11 +35,14 @@ permissions:
 
 env:
   # 控制本次发版生成哪些安装包。取值：
-  #   pyside6  仅 PySide6 经典版（VibeOCR-Classic-*.zip）
-  #   winui    仅 WinUI 次世代版（VibeOCR-Next-*.zip）
+  #   pyside6  仅 PySide6 Classic（PyInstaller 打 main.py，VibeOCR-Classic-*.zip）
+  #   winui    仅 WinUI Next（dotnet publish，VibeOCR-Next-*.zip，开发预览）
   #   all      两者都打
   # tag 推送触发时读这里的默认值；workflow_dispatch 手动触发时读
-  # inputs.build_variants（缺省回退到这里）。默认仅打包 pyside6 版本，
+  # inputs.build_variants（缺省回退到这里）。
+  #
+  # ⚠️ 当前默认仅打包 pyside6（Classic，主力产品）。WinUI Next 处于早期开发、
+  # 基本不可用，不随 tag 自动发版；需要时手动 workflow_dispatch 选 winui/all。
   # 想让 tag 发版也带上 WinUI，把这里改成 all 即可。
   BUILD_VARIANTS_DEFAULT: "pyside6"
 
@@ -47,9 +50,9 @@ jobs:
   build:
     name: Build & Release (Windows)
     runs-on: windows-latest
-    # 发版流程含 .NET 测试 + PySide 打包 + WinUI 打包 + 上传 + 镜像，
-    # 正常 ~5-10min；45min 宽裕上限。dotnet test 同样可能因 App.Tests 挂起
-    # （见 ci.yml winui job 注释），超时护栏避免烧满 6h 默认配额。
+    # 发版流程含 .NET 契约测试 + Classic(PyInstaller) 打包 + 可选 WinUI(dotnet)
+    # 打包 + 上传 + 镜像，正常 ~5-10min；45min 宽裕上限。dotnet test 同样可能
+    # 因 App.Tests 挂起（见 ci.yml winui job 注释），超时护栏避免烧满 6h 默认配额。
     timeout-minutes: 45
 
     steps:
@@ -170,18 +173,21 @@ jobs:
           python scripts/verify_backend_wheel.py $wheel --manifest dist/backend/backend-manifest.json
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Build PySide Classic release
+      - name: Build PySide6 Classic (PyInstaller)
         if: ${{ steps.variants.outputs.build_pyside == 'true' }}
         shell: pwsh
         # PYTHONUTF8=1 确保 bump_version.py 及其子进程在
         # Windows runner 上统一走 UTF-8，避免打印中文时 cp1252 编码崩溃。
+        # --frontend pyside：PyInstaller 打 main.py（PySide6 Classic）。e7fe825
+        # 后 _run_build 一度只走 WinUI(dotnet)，v0.4.29 起 Classic 发版全挂；
+        # 现双路径恢复：pyside=PyInstaller、winui=dotnet 各走原生工具链。
         env:
           PYTHONUTF8: "1"
         run: |
-          python scripts/bump_version.py --rebuild "${{ steps.version.outputs.version }}" --force
+          python scripts/bump_version.py --rebuild "${{ steps.version.outputs.version }}" --force --frontend pyside
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Bind backend wheel to PySide Classic artifact
+      - name: Bind backend wheel → VibeOCR-Classic-*.zip
         if: ${{ steps.variants.outputs.build_pyside == 'true' }}
         shell: pwsh
         run: |
@@ -191,7 +197,7 @@ jobs:
           python scripts/verify_pyside_artifact.py "dist/VibeOCR-Classic-v$version-win64.zip"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Build WinUI Next from the same backend wheel
+      - name: Build WinUI Next (.NET publish)
         if: ${{ steps.variants.outputs.build_winui == 'true' }}
         shell: pwsh
         run: |

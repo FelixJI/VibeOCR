@@ -14,7 +14,11 @@ param(
 $ErrorActionPreference = 'Stop'
 
 if ($Artifact -and (Test-Path $Artifact -PathType Leaf) -and $Artifact.EndsWith('.zip')) {
-    $extract = Join-Path $env:TEMP "VibeOCR-verify-$(New-Guid)"
+    # 用 [guid]::NewGuid() 而非 New-Guid cmdlet：本脚本经 powershell.exe（Windows PS
+    # 5.1）被 bump_version.py 调起，cmdlet 自动加载在 Win Server 2025 runner 上偶发
+    # 失败（release v0.4.33 "New-Guid not recognized"）。直接调 .NET Guid 不依赖
+    # 模块发现，PS 5.1 与 7+ 行为一致。同 build_winui_release.ps1 的 Get-FileHash 修复。
+    $extract = Join-Path $env:TEMP "VibeOCR-verify-$([guid]::NewGuid().ToString())"
     Expand-Archive -Path $Artifact -DestinationPath $extract -Force
     $rootEntries = @(Get-ChildItem -LiteralPath $extract -Force)
     if ($rootEntries.Count -eq 1 -and $rootEntries[0].PSIsContainer) {
