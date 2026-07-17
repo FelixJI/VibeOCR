@@ -6,6 +6,7 @@ import pytest
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import QApplication
+from shiboken6 import isValid
 
 from vibeocr.models.ocr_result import OCRResult
 from vibeocr.views.main_window import MainWindow
@@ -22,7 +23,13 @@ def main_window(qapp, qtbot, tmp_path):
     window.show()
     qtbot.addWidget(window)
     yield window
-    window.close()
+    # closeEvent 会触发整条应用关闭链（settings/pdf/subprocess...），
+    # 与 qtbot 的 widget 回收存在竞态：teardown 时 MainWindow 的 C++ 对象
+    # 可能已被 Qt 父对象回收，再调 close() 抛
+    # "libshiboken: Internal C++ object already deleted."。
+    # isValid 守卫：仅当底层 C++ 对象仍存活时才触发关闭链。
+    if isValid(window):
+        window.close()
     ConfigManager.reset_instance()
 
 
