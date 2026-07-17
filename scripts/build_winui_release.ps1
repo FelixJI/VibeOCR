@@ -74,7 +74,14 @@ Add-Type -AssemblyName System.IO.Compression.FileSystem
 # Windows PowerShell 5.1 (entryNameEncoding-only 3rd arg) and PowerShell 7+
 # (bool overwrite 3rd arg). Passing $true binds to Encoding in 5.1 and crashes.
 [IO.Compression.ZipFile]::ExtractToDirectory($backendFull, $workerRoot)
-$backendHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $backendFull).Hash.ToLowerInvariant()
+# 用 .NET SHA256 直接计算哈希，而非 Get-FileHash cmdlet：
+# bump_version.py 经 powershell.exe（Windows PS 5.1）调起本脚本，
+# Add-Type 之后偶发破坏 cmdlet 自动加载，导致 Get-FileHash not recognized
+# （release v0.4.32 失败）。直接调 SHA256.Create 不依赖模块发现。
+$hashBytes = [Security.Cryptography.SHA256]::Create().ComputeHash([IO.File]::ReadAllBytes($backendFull))
+$hashSb = New-Object System.Text.StringBuilder($hashBytes.Length * 2)
+foreach ($b in $hashBytes) { [void]$hashSb.Append($b.ToString('x2')) }
+$backendHash = $hashSb.ToString()
 $sourceCommit = (git -C $repo rev-parse HEAD).Trim()
 $productManifest = [ordered]@{
     frontend = 'winui'
