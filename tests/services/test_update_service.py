@@ -25,14 +25,14 @@ def _make_update_info(**overrides):
     """
     from vibeocr.services.update_service import UpdateInfo
 
-    defaults = dict(
-        version="0.3.1",
-        download_url="https://example.com/zip",
-        sha256_url="https://example.com/sha",
-        changelog="",
-        zip_filename="VibeOCR-v0.3.1-win64.zip",
-        sha256_filename="VibeOCR-v0.3.1-win64.zip.sha256",
-    )
+    defaults = {
+        "version": "0.3.1",
+        "download_url": "https://example.com/zip",
+        "sha256_url": "https://example.com/sha",
+        "changelog": "",
+        "zip_filename": "VibeOCR-v0.3.1-win64.zip",
+        "sha256_filename": "VibeOCR-v0.3.1-win64.zip.sha256",
+    }
     defaults.update(overrides)
     return UpdateInfo(**defaults)
 
@@ -152,7 +152,7 @@ class TestUpdateInfo:
         assert info.sha256_url == "https://github.com/test/v0.3.0.zip.sha256"
 
     def test_changelog_dialog_text_uses_only_user_facing_top_level_items(self):
-        from vibeocr.services.update_service import _format_changelog_for_dialog
+        from vibeocr.pyside.update import _format_changelog_for_dialog
 
         raw = """
 ### Fixed
@@ -337,16 +337,20 @@ class TestLocalVersion:
         assert read_local_version(version_file) == "0.1.0"
 
     def test_read_version_json_missing(self, tmp_path):
+        # 缺失时回退到 __version__（开发态也能检查更新），而非 0.0.0。
+        from vibeocr import __version__
         from vibeocr.services.update_service import read_local_version
 
-        assert read_local_version(tmp_path / "nonexistent.json") == "0.0.0"
+        assert read_local_version(tmp_path / "nonexistent.json") == __version__
 
     def test_read_version_json_corrupt(self, tmp_path):
+        # 损坏时同样回退到 __version__，与缺失语义一致。
+        from vibeocr import __version__
         from vibeocr.services.update_service import read_local_version
 
         version_file = tmp_path / "version.json"
         version_file.write_text("not json", encoding="utf-8")
-        assert read_local_version(version_file) == "0.0.0"
+        assert read_local_version(version_file) == __version__
 
 
 class TestCheckForUpdates:
@@ -873,10 +877,8 @@ class TestFormatFailureMessage:
         )
 
     def test_sha_mismatch_mentions_integrity(self):
-        from vibeocr.services.update_service import (
-            DOWNLOAD_REASON_SHA_MISMATCH,
-            _format_failure_message,
-        )
+        from vibeocr.pyside.update import _format_failure_message
+        from vibeocr.services.update_service import DOWNLOAD_REASON_SHA_MISMATCH
 
         with self._patch_net():
             msg = _format_failure_message(
@@ -887,10 +889,8 @@ class TestFormatFailureMessage:
         assert "网络" not in msg
 
     def test_sha_missing_mentions_missing_checksum(self):
-        from vibeocr.services.update_service import (
-            DOWNLOAD_REASON_SHA_MISSING,
-            _format_failure_message,
-        )
+        from vibeocr.pyside.update import _format_failure_message
+        from vibeocr.services.update_service import DOWNLOAD_REASON_SHA_MISSING
 
         with self._patch_net():
             msg = _format_failure_message(
@@ -899,10 +899,8 @@ class TestFormatFailureMessage:
         assert "缺少 SHA256 校验文件" in msg
 
     def test_all_http_errors_mentions_network(self):
-        from vibeocr.services.update_service import (
-            DOWNLOAD_REASON_HTTP_ERROR,
-            _format_failure_message,
-        )
+        from vibeocr.pyside.update import _format_failure_message
+        from vibeocr.services.update_service import DOWNLOAD_REASON_HTTP_ERROR
 
         with self._patch_net():
             msg = _format_failure_message(
@@ -911,10 +909,8 @@ class TestFormatFailureMessage:
         assert "无法连接服务器" in msg
 
     def test_message_includes_manual_download_link(self):
-        from vibeocr.services.update_service import (
-            DOWNLOAD_REASON_HTTP_ERROR,
-            _format_failure_message,
-        )
+        from vibeocr.pyside.update import _format_failure_message
+        from vibeocr.services.update_service import DOWNLOAD_REASON_HTTP_ERROR
 
         with self._patch_net("domestic"):
             msg = _format_failure_message([DOWNLOAD_REASON_HTTP_ERROR])
@@ -942,7 +938,8 @@ class TestCheckAndPromptConcurrency:
 
     def _make_service(self, tmp_path, monkeypatch):
         """构造 UpdateService，version.json/缓存/设置均落在 tmp_path 隔离区。"""
-        from vibeocr.services import env_config, update_service
+        from vibeocr.pyside import update as update_ui
+        from vibeocr.services import env_config
 
         # 隔离 data 目录，避免污染真实用户态目录
         (tmp_path / "version.json").write_text(
@@ -967,9 +964,9 @@ class TestCheckAndPromptConcurrency:
         )
 
         # 重置类级锁，避免上一个测试遗留的锁状态干扰
-        update_service.UpdateService._check_lock = None
+        update_ui.UpdateService._check_lock = None
 
-        return update_service.UpdateService(tmp_path)
+        return update_ui.UpdateService(tmp_path)
 
     def test_two_concurrent_check_and_prompt_do_not_overlap(self, tmp_path, monkeypatch):
         """两并发 check_and_prompt：临界区互斥，第二个等第一个释放后才进入。"""
@@ -1039,7 +1036,7 @@ class TestAwaitDialog:
 
     def test_await_dialog_returns_finished_code_and_is_nonblocking(self):
         """await_dialog：返回 finished 结果码；show 期间事件循环可并发跑其它任务。"""
-        from vibeocr.services.update_service import await_dialog
+        from vibeocr.pyside.update import await_dialog
 
         class _FakeSignal:
             """最小信号桩：connect 注册回调，emit 调用它（仿 PySide6 Signal 语义）。"""
@@ -1418,8 +1415,8 @@ class TestUpdateServiceStateSharing:
 
     def test_request_cancel_noop_when_idle(self, tmp_path, monkeypatch):
         """idle 态调用 request_cancel() 不抛异常（_active_cancel_event 为 None）。"""
+        from vibeocr.pyside import update as us_mod
         from vibeocr.services import env_config
-        from vibeocr.services import update_service as us_mod
 
         monkeypatch.setattr(env_config, "get_update_cache_dir", lambda: tmp_path / "c")
         monkeypatch.setattr(env_config, "get_update_settings_path", lambda: tmp_path / "s.json")
@@ -1435,8 +1432,8 @@ class TestUpdateServiceStateSharing:
         """A 实例进入 downloading 后，B 实例 request_cancel() 能 set A 的 event。"""
         import asyncio
 
+        from vibeocr.pyside import update as us_mod
         from vibeocr.services import env_config
-        from vibeocr.services import update_service as us_mod
 
         monkeypatch.setattr(env_config, "get_update_cache_dir", lambda: tmp_path / "c")
         monkeypatch.setattr(env_config, "get_update_settings_path", lambda: tmp_path / "s.json")
@@ -1462,7 +1459,7 @@ class TestUpdateServiceStateSharing:
 
     def test_register_state_listener_syncs_current_state(self):
         """注册监听器时立即同步当前 download_state（漏洞2回归）。"""
-        from vibeocr.services.update_service import UpdateService
+        from vibeocr.pyside.update import UpdateService
 
         original_state = UpdateService._download_state
         received = []
@@ -1487,8 +1484,8 @@ class TestDoDownloadAndUpdateNewArch:
         """构造 service + 假 zip（含 VibeOCR/updater.exe）。"""
         import zipfile
 
+        from vibeocr.pyside.update import UpdateService
         from vibeocr.services import env_config
-        from vibeocr.services.update_service import UpdateService
         monkeypatch.setattr(env_config, "get_update_cache_dir", lambda: tmp_path / "cache" / "update")
         monkeypatch.setattr(env_config, "get_update_settings_path", lambda: tmp_path / "settings.json")
         app_dir = tmp_path / "app"
@@ -1533,7 +1530,7 @@ class TestDoDownloadAndUpdateNewArch:
         extract_called = []
         monkeypatch.setattr(service, "_extract_updater_from_zip", lambda p: extract_called.append(1) or p)
 
-        from vibeocr.services import update_service as us_mod
+        from vibeocr.pyside import update as us_mod
         async def fake_download(*a, **k):
             return zip_path, []
         monkeypatch.setattr(us_mod, "download_update", fake_download)
@@ -1554,7 +1551,7 @@ class TestDoDownloadAndUpdateNewArch:
         force_quit_called = []
         monkeypatch.setattr(service, "_force_quit", lambda: force_quit_called.append(1))
 
-        from vibeocr.services import update_service as us_mod
+        from vibeocr.pyside import update as us_mod
         async def fake_download(*a, **k):
             return zip_path, []
         monkeypatch.setattr(us_mod, "download_update", fake_download)
@@ -1577,7 +1574,7 @@ class TestDoDownloadAndUpdateNewArch:
         force_quit_called = []
         monkeypatch.setattr(service, "_force_quit", lambda: force_quit_called.append(1))
 
-        from vibeocr.services import update_service as us_mod
+        from vibeocr.pyside import update as us_mod
         async def fake_download(*a, **k):
             return zip_path, []
         monkeypatch.setattr(us_mod, "download_update", fake_download)
@@ -1614,7 +1611,7 @@ class TestDoDownloadAndUpdateNewArch:
         force_quit_called = []
         monkeypatch.setattr(service, "_force_quit", lambda: force_quit_called.append(1))
 
-        from vibeocr.services import update_service as us_mod
+        from vibeocr.pyside import update as us_mod
         async def fake_download(*a, **k):
             return zip_path, []
         monkeypatch.setattr(us_mod, "download_update", fake_download)
@@ -1636,7 +1633,7 @@ class TestAboutTabButtonStateMachine:
 
         证明注册监听器时同步了当前状态（漏洞2修复）。
         """
-        from vibeocr.services.update_service import UpdateService
+        from vibeocr.pyside.update import UpdateService
         from vibeocr.views.tabs.about_tab import AboutTab
 
         original_state = UpdateService._download_state
@@ -1655,7 +1652,7 @@ class TestAboutTabButtonStateMachine:
 
     def test_button_toggles_on_state_change(self, qtbot):
         """状态变更时按钮文本/样式切换。"""
-        from vibeocr.services.update_service import UpdateService
+        from vibeocr.pyside.update import UpdateService
         from vibeocr.views.tabs.about_tab import AboutTab
 
         original_state = UpdateService._download_state
@@ -1881,8 +1878,8 @@ class TestExtractUpdaterFromZip:
 
     def _make_service(self, tmp_path, monkeypatch):
         """构造 UpdateService，隔离 cache_dir 到 tmp_path。"""
+        from vibeocr.pyside.update import UpdateService
         from vibeocr.services import env_config
-        from vibeocr.services.update_service import UpdateService
 
         monkeypatch.setattr(
             env_config,
@@ -1950,8 +1947,8 @@ class TestVerifyZipIntegrity:
     """_verify_zip_integrity：zipfile testzip 包装。"""
 
     def _make_service(self, tmp_path, monkeypatch):
+        from vibeocr.pyside.update import UpdateService
         from vibeocr.services import env_config
-        from vibeocr.services.update_service import UpdateService
 
         monkeypatch.setattr(
             env_config,
@@ -1999,8 +1996,8 @@ class TestDoDownloadAndUpdateThreadedDelivery:
     def _make_service_with_zip(self, tmp_path, monkeypatch, qapp):
         import zipfile
 
+        from vibeocr.pyside.update import UpdateService
         from vibeocr.services import env_config
-        from vibeocr.services.update_service import UpdateService
 
         monkeypatch.setattr(env_config, "get_update_cache_dir", lambda: tmp_path / "cache" / "update")
         monkeypatch.setattr(env_config, "get_update_settings_path", lambda: tmp_path / "settings.json")
@@ -2052,7 +2049,7 @@ class TestDoDownloadAndUpdateThreadedDelivery:
         """
         import threading
 
-        from vibeocr.services import update_service as us
+        from vibeocr.pyside import update as us
 
         service, zip_path = self._make_service_with_zip(tmp_path, monkeypatch, qapp)
         zip_path.write_bytes(b"corrupt")  # 让 testzip 失败，走 critical 分支
@@ -2091,7 +2088,7 @@ class TestDoDownloadAndUpdateThreadedDelivery:
         """
         import threading
 
-        from vibeocr.services import update_service as us
+        from vibeocr.pyside import update as us
 
         service, zip_path = self._make_service_with_zip(tmp_path, monkeypatch, qapp)
 

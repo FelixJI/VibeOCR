@@ -580,7 +580,7 @@ def launch_application() -> int:
         async def _check_update():
             import logging
 
-            from vibeocr.services.update_service import UpdateService
+            from vibeocr.pyside.update import UpdateService
 
             log = logging.getLogger(__name__)
             try:

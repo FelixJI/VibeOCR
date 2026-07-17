@@ -318,7 +318,7 @@ class TestAwaitDialogFutureGuard:
         """Future 被取消后，对话框 finished 不再 set_result（不抛 InvalidStateError）"""
         from unittest.mock import MagicMock
 
-        from vibeocr.services.update_service import await_dialog
+        from vibeocr.pyside.update import await_dialog
 
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)

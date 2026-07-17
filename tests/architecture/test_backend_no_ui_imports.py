@@ -4,11 +4,11 @@ Per ADR §强制边界: the dependency direction is strictly UI → BackendClien
 WorkerHost → application → domain. No backend package may import
 ``vibeocr.views`` / ``vibeocr.widgets`` / ``vibeocr.ui``.
 
-This direction should be zero. There is exactly one known legacy debt
-(``update_service.py`` co-locates a Qt dialog with backend logic) that Phase 4
-will split. Until then it is recorded in ``BACKEND_UI_KNOWN_DEBT`` so the gate
-catches any NEW leak while tracking the single known exception. Adding to the
-debt list requires an ADR amendment.
+This direction must be zero. Phase 4「去 Qt 化」已完成 ``update_service.py`` 的
+物理拆分——Qt 对话框与更新流程编排（``UpdateDialog`` / ``await_dialog`` /
+``UpdateService`` 编排器）移至 ``vibeocr.pyside.update``（Qt 平台壳层），backend
+纯逻辑留在 ``vibeocr.services.update_service``。历史唯一已知债务随之清零，
+``BACKEND_UI_KNOWN_DEBT`` 现为空集，本守卫对任何 backend→UI 泄漏零容忍。
 """
 
 from __future__ import annotations
@@ -32,14 +32,10 @@ BACKEND_PACKAGE_DIRS: tuple[str, ...] = (
 
 UI_MODULES: frozenset[str] = frozenset({"views", "widgets", "ui"})
 
-# Known legacy Qt-into-backend leak. Phase 4 (去 Qt 化) splits
-# update_service.py into a UI-free download/verify module + a Qt dialog that
-# moves to the PySide app. This is the ONLY allowed backend→UI import.
-BACKEND_UI_KNOWN_DEBT: frozenset[str] = frozenset(
-    {
-        "src/vibeocr/services/update_service.py:503",
-    }
-)
+# Known legacy Qt-into-backend leak. Phase 4 (去 Qt 化) 已完成 update_service.py
+# 拆分：Qt 对话框与编排移至 vibeocr.pyside.update，backend 纯逻辑留在
+# services.update_service。债务清零，集合为空；新增条目需 ADR 修正案。
+BACKEND_UI_KNOWN_DEBT: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True)
