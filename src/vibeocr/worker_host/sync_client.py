@@ -26,13 +26,12 @@ from __future__ import annotations
 import asyncio
 import logging
 import subprocess
+import sys
 import threading
-from typing import TYPE_CHECKING, Any
+from pathlib import Path
+from typing import Any
 
 from vibeocr.worker_host.backend_client import BackendClient, DecodedCode
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 _log = logging.getLogger(__name__)
 
@@ -102,7 +101,6 @@ class SyncBackendClient:
     ) -> None:
         import os
         import secrets
-        import sys
         import uuid
 
         from vibeocr.worker_host.named_pipe import PipeEndpoint
@@ -110,40 +108,35 @@ class SyncBackendClient:
         pipe_name = f"\\\\.\\pipe\\VibeOCR-{uuid.uuid4()}"
         token = secrets.token_hex(32)
         parent_pid = os.getpid()
-        cmd = [
-            sys.executable,
-            "-m",
-            "vibeocr.worker_host.main",
-            "--pipe",
-            pipe_name,
-            "--token",
-            token,
-            "--profile",
-            profile,
-            "--frontend-id",
-            frontend_id,
-            "--parent-pid",
-            str(parent_pid),
-        ]
+        cmd, child_env = self._resolve_worker_command(
+            pipe_name=pipe_name,
+            token=token,
+            profile=profile,
+            frontend_id=frontend_id,
+            parent_pid=parent_pid,
+        )
         _log.info("launching WorkerHost: %s", " ".join(cmd))
-        child_env = os.environ.copy()
         # WorkerHost stdout/stderr is a machine-owned pipe, not a user console.
         # Pin both ends to UTF-8: relying on the Windows ANSI code page makes a
         # Chinese locale decode UTF-8 dependency logs as GBK and kills the drain
         # thread. ``errors=replace`` also keeps native extensions that write
         # malformed bytes directly to fd 1/2 from blocking the child on a full
         # pipe.
-        child_env["PYTHONIOENCODING"] = "utf-8:backslashreplace"
-        self._process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            cwd=str(working_dir) if working_dir else None,
-            env=child_env,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-        )
+        popen_kwargs: dict[str, Any] = {
+            "stdout": subprocess.PIPE,
+            "stderr": subprocess.PIPE,
+            "cwd": str(working_dir) if working_dir else None,
+            "env": child_env,
+            "text": True,
+            "encoding": "utf-8",
+            "errors": "replace",
+        }
+        # Parent is a ``--windowed`` PyInstaller exe; the embedded python.exe
+        # child would otherwise flash a console window. Mirrors
+        # ``ocr_worker_process.py`` CREATE_NO_WINDOW usage.
+        if os.name == "nt":
+            popen_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+        self._process = subprocess.Popen(cmd, **popen_kwargs)
         ready = await asyncio.wait_for(
             self._await_ready(), timeout=_READY_TIMEOUT_SECONDS
         )
@@ -161,6 +154,110 @@ class SyncBackendClient:
                 "protocol_version": 1,
             },
         )
+
+    def _resolve_worker_command(
+        self,
+        *,
+        pipe_name: str,
+        token: str,
+        profile: str,
+        frontend_id: str,
+        parent_pid: int,
+    ) -> tuple[list[str], dict[str, str]]:
+        """Build the WorkerHost launch command and child environment.
+
+        Packaged (PyInstaller ``--windowed``) build: ``sys.executable`` *is*
+        ``VibeOCR.exe`` and the frozen bootloader ignores ``-m``, so spawning
+        ``[sys.executable, "-m", "vibeocr.worker_host.main"]`` recurses into
+        the full GUI instead of the WorkerHost (symptom: ``WorkerHost exited
+        (code=None) before ready. stderr:``). Use the embedded portable
+        Python and put ``_MEIPASS`` on ``PYTHONPATH`` so the bundled-as-datas
+        ``vibeocr`` package is importable. Mirrors the contract already proven
+        in ``services/ocr_worker_process.py`` and the WinUI
+        ``PortableLayout.ResolvePythonExecutable`` path.
+
+        Dev build: use ``sys.executable`` and the repo ``src/`` dir.
+        """
+        import os
+
+        child_env = os.environ.copy()
+        # WorkerHost stdout/stderr is a machine-owned pipe, not a user
+        # console. Pin both ends to UTF-8: relying on the Windows ANSI code
+        # page makes a Chinese locale decode UTF-8 dependency logs as GBK and
+        # kills the drain thread. ``errors=replace`` also keeps native
+        # extensions that write malformed bytes directly to fd 1/2 from
+        # blocking the child on a full pipe.
+        child_env["PYTHONIOENCODING"] = "utf-8:backslashreplace"
+        # Force unbuffered stdio so the ``worker.ready`` line and any
+        # import-time traceback reach this process immediately instead of
+        # sitting in Python's internal buffer.
+        child_env["PYTHONUNBUFFERED"] = "1"
+
+        python_exe = self._resolve_python_executable(child_env)
+
+        return [
+            python_exe,
+            "-m",
+            "vibeocr.worker_host.main",
+            "--pipe",
+            pipe_name,
+            "--token",
+            token,
+            "--profile",
+            profile,
+            "--frontend-id",
+            frontend_id,
+            "--parent-pid",
+            str(parent_pid),
+        ], child_env
+
+    @staticmethod
+    def _resolve_python_executable(child_env: dict[str, str]) -> str:
+        """Return the interpreter that should run ``vibeocr.worker_host.main``.
+
+        Frozen build: the embedded portable Python at
+        ``<exe_dir>/python/python.exe`` (resolved via
+        ``env_manager.get_embedded_python_executable``). The ``vibeocr``
+        source is bundled by PyInstaller as datas under ``_MEIPASS`` — the
+        embedded interpreter cannot read the PYZ archive, so ``_MEIPASS``
+        must be on ``PYTHONPATH``. Falls back to ``sys.executable`` only if
+        the embedded interpreter is missing (then import failures surface in
+        the dependency-detect/install flow, not as recursive GUI spawns).
+
+        Dev build: the current interpreter plus the repo ``src/`` dir on
+        ``PYTHONPATH`` (mirrors ``ocr_worker_process._get_worker_env``).
+        """
+        import os
+
+        if not getattr(sys, "frozen", False):
+            import vibeocr
+
+            src_dir = str(Path(vibeocr.__file__).resolve().parent.parent)
+            sep = os.pathsep
+            existing = child_env.get("PYTHONPATH", "")
+            if src_dir not in existing.split(sep):
+                child_env["PYTHONPATH"] = (
+                    f"{src_dir}{sep}{existing}" if existing else src_dir
+                )
+            return sys.executable
+
+        from vibeocr import env_manager
+
+        project_root = env_manager.get_project_root()
+        python_exe = env_manager.get_embedded_python_executable(project_root)
+        if not python_exe.exists():
+            return sys.executable
+
+        meipass = getattr(sys, "_MEIPASS", None)
+        if meipass:
+            sep = os.pathsep
+            existing = child_env.get("PYTHONPATH", "")
+            meipass_str = str(meipass)
+            if meipass_str not in existing.split(sep):
+                child_env["PYTHONPATH"] = (
+                    f"{meipass_str}{sep}{existing}" if existing else meipass_str
+                )
+        return str(python_exe)
 
     async def _await_ready(self) -> dict[str, Any]:
         import json
