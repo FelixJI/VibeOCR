@@ -13,6 +13,7 @@ namespace VibeOCR.Contracts;
 [JsonSerializable(typeof(RpcRequestEnvelope<CancelRequest>))]
 [JsonSerializable(typeof(RpcRequestEnvelope<ReleaseMemoryRequest>))]
 [JsonSerializable(typeof(RpcRequestEnvelope<RecognizeRequest>))]
+[JsonSerializable(typeof(RpcRequestEnvelope<RecognizeBatchRequest>))]
 [JsonSerializable(typeof(RpcRequestEnvelope<ExportOcrRequest>))]
 [JsonSerializable(typeof(RpcRequestEnvelope<OpenPdfRequest>))]
 [JsonSerializable(typeof(RpcRequestEnvelope<ClosePdfRequest>))]
@@ -36,6 +37,7 @@ namespace VibeOCR.Contracts;
 [JsonSerializable(typeof(RpcResponseEnvelope<CancelResponse>))]
 [JsonSerializable(typeof(RpcResponseEnvelope<ReleaseMemoryResponse>))]
 [JsonSerializable(typeof(RpcResponseEnvelope<RecognizeResponse>))]
+[JsonSerializable(typeof(RpcResponseEnvelope<RecognizeBatchResponse>))]
 [JsonSerializable(typeof(RpcResponseEnvelope<ExportOcrResponse>))]
 [JsonSerializable(typeof(RpcResponseEnvelope<OpenPdfResponse>))]
 [JsonSerializable(typeof(RpcResponseEnvelope<ClosePdfResponse>))]
@@ -117,6 +119,7 @@ public static class ProtocolJson
                 RpcMethods.Cancel => typeof(RpcRequestEnvelope<CancelRequest>),
                 RpcMethods.ReleaseMemory => typeof(RpcRequestEnvelope<ReleaseMemoryRequest>),
                 RpcMethods.Recognize => typeof(RpcRequestEnvelope<RecognizeRequest>),
+                RpcMethods.RecognizeBatch => typeof(RpcRequestEnvelope<RecognizeBatchRequest>),
                 RpcMethods.ExportOcr => typeof(RpcRequestEnvelope<ExportOcrRequest>),
                 RpcMethods.OpenPdf => typeof(RpcRequestEnvelope<OpenPdfRequest>),
                 RpcMethods.ClosePdf => typeof(RpcRequestEnvelope<ClosePdfRequest>),
@@ -181,6 +184,7 @@ public static class ProtocolJson
                 RpcMethods.Cancel => typeof(RpcResponseEnvelope<CancelResponse>),
                 RpcMethods.ReleaseMemory => typeof(RpcResponseEnvelope<ReleaseMemoryResponse>),
                 RpcMethods.Recognize => typeof(RpcResponseEnvelope<RecognizeResponse>),
+                RpcMethods.RecognizeBatch => typeof(RpcResponseEnvelope<RecognizeBatchResponse>),
                 RpcMethods.ExportOcr => typeof(RpcResponseEnvelope<ExportOcrResponse>),
                 RpcMethods.OpenPdf => typeof(RpcResponseEnvelope<OpenPdfResponse>),
                 RpcMethods.ClosePdf => typeof(RpcResponseEnvelope<ClosePdfResponse>),

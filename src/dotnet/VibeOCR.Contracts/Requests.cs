@@ -76,6 +76,46 @@ public sealed record RecognizeRequest : RequestContract
                 Pipeline,
                 nameof(Pipeline),
                 "OCR",
+                "PP-StructureV3",
+                "MinerU",
+                "PaddleOCR-VL",
+                "TABLE_RECOGNITION",
+                "FORMULA_RECOGNITION");
+        }
+    }
+}
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record RecognizeBatchRequest : RequestContract
+{
+    // 1..64 与 contracts/v1/methods.schema.json 的 minItems/maxItems 对齐，
+    // 也与 worker_host/method_validation.py 的 _request_ocr_batch 一致。
+    public required SharedPayloadRef[] Images { get; init; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Pipeline { get; init; }
+
+    public string? Language { get; init; }
+
+    public override void Validate()
+    {
+        if (Images is not { Length: >= 1 and <= 64 })
+        {
+            throw new ProtocolContractException("images must contain between 1 and 64 items.");
+        }
+        foreach (SharedPayloadRef image in Images)
+        {
+            image.Validate();
+        }
+        if (Pipeline is not null)
+        {
+            ContractValidation.OneOf(
+                Pipeline,
+                nameof(Pipeline),
+                "OCR",
+                "PP-StructureV3",
+                "MinerU",
+                "PaddleOCR-VL",
                 "TABLE_RECOGNITION",
                 "FORMULA_RECOGNITION");
         }

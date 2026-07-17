@@ -109,8 +109,27 @@ public sealed record RecognizeResponse : ResponseContract
         Pipeline,
         nameof(Pipeline),
         "OCR",
+        "PP-StructureV3",
+        "MinerU",
+        "PaddleOCR-VL",
         "TABLE_RECOGNITION",
         "FORMULA_RECOGNITION");
+}
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record RecognizeBatchResponse : ResponseContract
+{
+    // 元素可空：批处理中单个槽位失败时为 null（与 golden.json fixture 及
+    // methods.schema.json 的 anyOf [..., {type:null}] 一致）。
+    public required RecognizeResponse?[] Results { get; init; }
+
+    public override void Validate()
+    {
+        foreach (RecognizeResponse? result in Results)
+        {
+            result?.Validate();
+        }
+    }
 }
 
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
