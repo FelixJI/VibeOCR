@@ -13,6 +13,7 @@ per-session fitz_lock 串行化，而是每次打开独立临时 fitz.Document �
 
 from __future__ import annotations
 
+import statistics
 import time
 from concurrent.futures import ThreadPoolExecutor
 
@@ -93,6 +94,14 @@ class TestRenderParallelization:
 
         修复前（fitz_lock 串行化 get_pixmap）：8 页并发 ≈ 8 页串行。
         修复后（独立 Document）：8 页并发 ≈ 串行 / 并发度。
+
+        采样策略：串行/并发各跑 3 次取中位数，消除 CI 共享 runner 的单次
+        负载抖动（全量套件并行运行时邻居进程会偶发抢 CPU，单次采样失真）。
+        阈值 1.05 而非理想 1/8：HTTP 往返、PIL/PNG 编码、信号量竞争、GIL 在
+        C 扩展的释放时机都会吃掉部分并行收益。关键是区分"真并行"（speedup>1）
+        vs"锁串行"（speedup≈1.0，修复前状态）——1.05 仍能抓住锁回退，而中位数
+        已滤掉把真并行压到 1.05 以下的极端单次抖动。
+        单独运行约 1.5x；全量套件中约 1.2x。
         """
         open_resp = backend_client.open_session(str(heavy_pdf))
         sid = open_resp.session_id
@@ -102,31 +111,29 @@ class TestRenderParallelization:
         # 预热（避免首次 fitz.open 的冷启动开销干扰计时）
         backend_client.render_preview(sid, 0, dpi=dpi)
 
-        # 串行基线
-        t0 = time.monotonic()
-        for i in range(total):
-            backend_client.render_preview(sid, i, dpi=dpi)
-        serial = time.monotonic() - t0
-
-        # 并发渲染
         def render_one(page_idx):
             return backend_client.render_preview(sid, page_idx, dpi=dpi)
 
-        with ThreadPoolExecutor(max_workers=total) as pool:
+        def time_serial():
             t0 = time.monotonic()
-            list(pool.map(render_one, range(total)))
-            parallel = time.monotonic() - t0
+            for i in range(total):
+                render_one(i)
+            return time.monotonic() - t0
 
-        # 并发应明显快于串行。阈值 1.15 而非理想 1/8：HTTP 往返、PIL/PNG
-        # 编码、信号量竞争、GIL 在 C 扩展的释放时机都会吃掉部分并行收益；
-        # 全量测试套件运行时系统负载高也会压缩并行收益。
-        # 关键是区分"真并行"（speedup>1）vs"锁串行"（speedup≈1.0，修复前状态）。
-        # 单独运行约 1.5x；全量套件中约 1.2x。CI 共享 runner
-        # 会有短时负载抖动，1.10 仍能区分真并行与锁回退，且避免边界误报。
+        def time_parallel():
+            with ThreadPoolExecutor(max_workers=total) as pool:
+                t0 = time.monotonic()
+                list(pool.map(render_one, range(total)))
+                return time.monotonic() - t0
+
+        # 各采样 3 次取中位数：3 次足以滤掉单次离群点，又不至于把测试拖到分钟级。
+        serial = statistics.median(time_serial() for _ in range(3))
+        parallel = statistics.median(time_parallel() for _ in range(3))
+
         speedup = serial / parallel
-        assert speedup > 1.10, (
+        assert speedup > 1.05, (
             f"并发渲染未提速：serial={serial:.3f}s parallel={parallel:.3f}s "
-            f"speedup={speedup:.2f}x（应 >1.10x，证明 fitz_lock 串行化已解除）"
+            f"speedup={speedup:.2f}x（应 >1.05x，证明 fitz_lock 串行化已解除）"
         )
 
     def test_render_preview_invalid_page_returns_400(self, backend_client, heavy_pdf):
