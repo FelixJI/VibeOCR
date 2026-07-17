@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.4.34] - 2026-07-17
+
+### Fixed
+- fix(release): 恢复 Classic(PyInstaller) 发版路径，修通 v0.4.29+ 全挂
+
 ## [0.4.33] - 2026-07-17
 
 ### Fixed

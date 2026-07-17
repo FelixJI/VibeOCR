@@ -1,3 +1,3 @@
 """Distribution marker for the VibeOCR Python client workspace project."""
 
-__version__ = "0.4.33"
+__version__ = "0.4.34"
