@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/FelixJI/VibeOCR/releases"><img alt="版本" src="https://img.shields.io/badge/version-0.4.28-blue" /></a>
+  <a href="https://github.com/FelixJI/VibeOCR/releases"><img alt="版本" src="https://img.shields.io/github/v/release/FelixJI/VibeOCR?label=version&color=blue" /></a>
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-green" /></a>
   <img alt="Python" src="https://img.shields.io/badge/python-3.13-blue" />
   <img alt="Platform" src="https://img.shields.io/badge/platform-Windows%2064--bit-lightgrey" />
@@ -231,7 +231,8 @@ dotnet build src/dotnet/VibeOCR.slnx
 dotnet test src/dotnet/VibeOCR.slnx --no-build
 
 # 打包 Release 便携版（硬编码 x64 dotnet，无需手动改 PATH）
-pwsh scripts/build_winui_release.ps1 -Version 0.4.28
+# Version 缺省自动从 pyproject.toml 读取，也可显式传入：-Version <x.y.z>
+pwsh scripts/build_winui_release.ps1
 ```
 
 > 也可单独构建：`dotnet build src/dotnet/VibeOCR.App/VibeOCR.App.csproj`
