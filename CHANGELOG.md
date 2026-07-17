@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.4.35] - 2026-07-17
+
+### Fixed
+- fix(update): 修复 WinUI 侧 owner 拼错与双产物崩溃
+- fix(update): 修复 Classic 侧 v0.4.29+ 更新全挂——硬编码文件名改为从 release API 动态获取
+
 ## [0.4.34] - 2026-07-17
 
 ### Fixed
