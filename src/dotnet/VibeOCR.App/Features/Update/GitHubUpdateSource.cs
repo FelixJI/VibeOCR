@@ -12,8 +12,11 @@ internal sealed class GitHubUpdateSource(
     string updateRoot,
     HttpClient? httpClient = null) : IUpdateSource
 {
+    // owner 必须与 Python 侧 env_config.GITHUB_OWNER（"FelixJI"）一致（SSOT）。
+    // 早期误写成全小写 "felji" → GitHub API 返回 404 → 检查更新 100% 失败，
+    // 被 UpdateViewModel 的 catch 吞成「检查更新失败，请检查网络」。
     private const string LatestRelease =
-        "https://api.github.com/repos/felji/VibeOCR/releases/latest";
+        "https://api.github.com/repos/FelixJI/VibeOCR/releases/latest";
     private readonly Version _currentVersion = ParseVersion(currentVersion);
     private readonly string _installRoot = Path.GetFullPath(installRoot);
     private readonly string _updateRoot = updateRoot;
@@ -29,10 +32,8 @@ internal sealed class GitHubUpdateSource(
             ?? throw new InvalidDataException("GitHub release response was empty.");
         string versionText = release.TagName.TrimStart('v', 'V');
         Version latest = ParseVersion(versionText);
-        _package = release.Assets.SingleOrDefault(asset =>
-            asset.Name.EndsWith("-win64.zip", StringComparison.OrdinalIgnoreCase));
-        _checksum = release.Assets.SingleOrDefault(asset =>
-            asset.Name.EndsWith("-win64.zip.sha256", StringComparison.OrdinalIgnoreCase));
+        _package = SelectAsset(release.Assets, "-win64.zip");
+        _checksum = SelectAsset(release.Assets, "-win64.zip.sha256");
         bool available = latest > _currentVersion && _package is not null && _checksum is not null;
         return (versionText, available);
     }
@@ -103,6 +104,31 @@ internal sealed class GitHubUpdateSource(
         return false;
     }
 
+    /// <summary>
+    /// 从 release assets 中选出本进程要下载的 asset。选择规则与 Classic 侧
+    /// update_service._find_asset 对齐，但前端是 Next：
+    /// 1. 优先：名字含 "-Next-" 且后缀匹配（本进程是 WinUI Next 运行态）。
+    /// 2. 回退：任意后缀匹配的 asset（兼容未来命名变化 / 单产物 release）。
+    /// </summary>
+    /// <remarks>
+    /// 早期用 SingleOrDefault 按后缀匹配，在双产物 release（Classic+Next 同时发布）
+    /// 时会抛 InvalidOperationException 导致检查更新崩溃；单产物时还会下到错误前端
+    /// 的包（如 WinUI 进程下到 Classic zip，前端错配无法运行）。
+    /// </remarks>
+    internal static ReleaseAsset? SelectAsset(IEnumerable<ReleaseAsset> assets, string suffix)
+    {
+        ReleaseAsset? fallback = null;
+        foreach (ReleaseAsset asset in assets)
+        {
+            if (!asset.Name.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+                continue;
+            if (asset.Name.Contains("-Next-", StringComparison.OrdinalIgnoreCase))
+                return asset;
+            fallback ??= asset;
+        }
+        return fallback;
+    }
+
     private string ExtractStagedUpdater(string packagePath)
     {
         using ZipArchive archive = ZipFile.OpenRead(packagePath);
@@ -122,6 +148,10 @@ internal sealed class GitHubUpdateSource(
         return updaterPath;
     }
 
+    // TODO: 当前只硬连 browser_download_url（GitHub 直链），国内用户可能因 GitHub
+    // 被墙下载失败。Classic 侧（update_service.py + env_config.py）有完整 3 源回退
+    // （gh-proxy → ghproxy → GitHub 直连，按 network_type 选序）。WinUI 当前不发版、
+    // 用户极少，暂不移植；正式发版前需补齐。
     private async Task DownloadAsync(string url, string destination, CancellationToken cancellationToken)
     {
         using HttpResponseMessage response = await _http.GetAsync(
@@ -155,7 +185,9 @@ internal sealed class GitHubUpdateSource(
         [property: JsonPropertyName("tag_name")] string TagName,
         [property: JsonPropertyName("assets")] ReleaseAsset[] Assets);
 
-    private sealed record ReleaseAsset(
+    // 提为 internal 供测试直接构造（SelectAsset 的入参类型）。Release 仍是 private
+    // （只在 FetchLatestAsync 反序列化内部使用）。
+    internal sealed record ReleaseAsset(
         [property: JsonPropertyName("name")] string Name,
         [property: JsonPropertyName("browser_download_url")] string BrowserDownloadUrl);
 }
