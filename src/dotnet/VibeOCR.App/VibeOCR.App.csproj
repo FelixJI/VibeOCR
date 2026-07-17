@@ -22,4 +22,9 @@
     <Content Include="WebAssets/index.html" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="WebAssets/src/**/*.css;WebAssets/src/**/*.js" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
+  <ItemGroup>
+    <!-- 暴露 internal 成员给测试程序集（GitHubUpdateSource.SelectAsset 等）。
+         生产程序集不受影响；仅测试可访问 internal 辅助方法。 -->
+    <InternalsVisibleTo Include="VibeOCR.App.Tests" />
+  </ItemGroup>
 </Project>

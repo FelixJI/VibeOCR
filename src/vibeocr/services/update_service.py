@@ -70,51 +70,86 @@ class UpdateInfo:
     sha256_url: str
     changelog: str
     file_size: int = 0
+    # release 真实 asset 文件名（如 VibeOCR-Classic-v0.4.34-win64.zip）。
+    # download_update 用它拼代理 URL——早期版本硬编码 ``VibeOCR-v{version}-win64.zip``，
+    # 在 v0.4.29+ 产物改名加 ``-Classic-`` 后会拼出 404 URL，导致所有源失败。
+    # 现在从 release API 把真实文件名带下来，与发版产物解耦。
+    zip_filename: str = ""
+    sha256_filename: str = ""
 
     @classmethod
     def from_release(cls, release: dict) -> UpdateInfo:
+        zip_name, zip_url = _find_asset(release, ".zip")
+        sha_name, sha_url = _find_asset(release, ".sha256")
         return cls(
             version=release["tag_name"].lstrip("v"),
-            download_url=_find_asset_url(release, ".zip"),
-            sha256_url=_find_asset_url(release, ".sha256"),
+            download_url=zip_url,
+            sha256_url=sha_url,
             changelog=release.get("body", ""),
             file_size=_find_asset_size(release, ".zip"),
+            zip_filename=zip_name,
+            sha256_filename=sha_name,
         )
 
 
-def _find_asset_url(release: dict, suffix: str) -> str:
-    for asset in release.get("assets", []):
+def _asset_matches(name: str, suffix: str) -> bool:
+    """判断 asset 名是否匹配目标类型（zip 主包 / sha256 校验文件）。
+
+    主包（.zip）：必须 ``.zip`` 结尾，排除 ``.sha256`` 自身（避免把
+    ``VibeOCR-...-win64.zip.sha256`` 当主包）和 ``-webengine-``（历史单独发布
+    的 webengine 资源包，现已内置主包，保留排除作历史 release 防御）。
+    校验文件（.sha256）：同理排除 webengine 的。
+    """
+    if suffix == ".zip":
+        return name.endswith(".zip") and ".sha256" not in name and "-webengine-" not in name
+    if suffix == ".sha256":
+        return name.endswith(".sha256") and "-webengine-" not in name
+    return False
+
+
+def _find_asset(release: dict, suffix: str) -> tuple[str, str]:
+    """从 release assets 中选出本模块要下载的 asset (name, url)。
+
+    本模块（update_service.py）**只在 Classic（PySide6/Python）进程运行**——
+    WinUI Next 是 C# 应用，有独立更新链路，不 import 本文件。故当 release 同时
+    发布 Classic 与 Next 两个 zip 时（release.yml 双前端产物命名规则），
+    必须选 ``-Classic-`` 命名的那个，否则会下到错误前端的包。
+
+    选择规则：
+    1. **优先**：名字含 ``-Classic-`` 且匹配 suffix（本运行态前端）。
+    2. **回退**：任意匹配 suffix 的 asset（兼容历史 release v0.4.28 及之前无
+       ``-Classic-`` 命名的产物，以及单元测试 fixture）。回退取第一个匹配项。
+
+    找不到返回 ``("", "")``。
+    """
+    assets = release.get("assets", [])
+    fallback: tuple[str, str] = ("", "")
+    for asset in assets:
         name = asset["name"]
-        # 主包匹配：排除 .sha256 校验文件，也排除历史 webengine 资源包
-        # （旧版曾单独发布 VibeOCR-v*-webengine-win64.zip，现已内置主包；
-        # 此排除守卫保留作历史 release asset 的防御）
-        if (
-            suffix == ".zip"
-            and name.endswith(".zip")
-            and ".sha256" not in name
-            and "-webengine-" not in name
-        ):
-            # GitHub Release asset 用 browser_download_url；download_url 兜底防御
-            return asset.get("browser_download_url") or asset.get("download_url", "")
-        # sha256 校验文件同理排除 webengine 的
-        if (
-            suffix == ".sha256"
-            and name.endswith(".sha256")
-            and "-webengine-" not in name
-        ):
-            return asset.get("browser_download_url") or asset.get("download_url", "")
-    return ""
+        if not _asset_matches(name, suffix):
+            continue
+        url = asset.get("browser_download_url") or asset.get("download_url", "")
+        # 优先：Classic 命名（本模块运行态前端）。命中即返回，不继续。
+        if "-Classic-" in name:
+            return name, url
+        # 回退：记下第一个匹配的非 Classic asset，循环结束若无 Classic 命中再用。
+        if fallback == ("", ""):
+            fallback = (name, url)
+    return fallback
+
+
+def _find_asset_url(release: dict, suffix: str) -> str:
+    """薄封装：返回匹配 asset 的 URL（向后兼容现有调用点）。"""
+    return _find_asset(release, suffix)[1]
 
 
 def _find_asset_size(release: dict, suffix: str) -> int:
+    """返回匹配 asset 的 size（与 _find_asset 同选择规则，保证 name/size/url 一致）。"""
+    name = _find_asset(release, suffix)[0]
+    if not name:
+        return 0
     for asset in release.get("assets", []):
-        name = asset["name"]
-        if (
-            suffix == ".zip"
-            and name.endswith(".zip")
-            and ".sha256" not in name
-            and "-webengine-" not in name
-        ):
+        if asset["name"] == name:
             return asset.get("size", 0)
     return 0
 
@@ -160,6 +195,13 @@ def _detect_network_type() -> str:
 
 async def _probe_github_reachable(timeout: float = 3.0) -> bool:
     """快速探测 GitHub API（api.github.com）是否可达。
+
+    .. todo::
+        本探测只打 api.github.com（API host，国内常可达），不打 release download
+        host（github.com/.../releases/download/...，国内更易被墙）。结果是国内
+        用户即便探测「通过」、走国际分支直连 GitHub，下载时仍可能失败。完整修复
+        应同时探测一个 release asset 的 HEAD（如 latest release 的 .sha256 文件，
+        体积小）。非本次 bug 根因，留待后续改进。
 
     与 ``NetworkDetector`` 的国内/海外判定互补：那个判断用户所在网络环境（中国 vs
     海外），本函数判断「此刻能不能直连 GitHub」。典型场景：海外或代理环境下
@@ -354,10 +396,16 @@ async def download_update(
 ) -> tuple[Path | None, list[str]]:
     """下载更新包（按网络环境多源回退）。
 
-    不再直接用 update_info.download_url（API 返回的原始直链，仅作参考），
-    而是由 env_config.build_asset_url_pairs 按 tag 重拼 (zip, sha256) 配对候选，
-    逐个尝试，确保 GitHub 来源在国内有 gh 代理加速（gh-proxy / ghproxy）。
-    校验文件 URL 与 zip 同源同 tag 精确匹配，不再盲拼 ``{zip}.sha256``。
+    不直接用 update_info.download_url（API 返回的 GitHub 直链）下载——那样国内
+    用户访问 github.com 会被墙。而是由 env_config.build_asset_url_pairs 按 tag
+    + **真实 asset 文件名**重拼 (zip, sha256) 配对候选，逐个尝试，确保 GitHub
+    来源在国内有 gh 代理加速（gh-proxy / ghproxy）。校验文件 URL 与 zip 同源同 tag
+    精确匹配，不再盲拼 ``{zip}.sha256``。
+
+    文件名取自 ``update_info.zip_filename`` / ``sha256_filename``（由 ``UpdateInfo.from_release``
+    从 release API 的 assets 列表带下来，按当前运行态前端选 ``-Classic-`` 命名的 asset）。
+    早期版本在此硬编码 ``VibeOCR-v{version}-win64.zip``，但 v0.4.29+ 发版产物改名加
+    ``-Classic-``（区分双前端）后，硬编码名拼出的 URL 全部 404，导致更新全挂。
 
     Args:
         source_switch_callback: 某源失败时回调 ``(failed_source_name, reason)``，
@@ -389,8 +437,17 @@ async def download_update(
             except OSError:
                 pass
 
-    zip_filename = f"VibeOCR-v{update_info.version}-win64.zip"
-    sha_filename = f"{zip_filename}.sha256"
+    # 真实文件名来自 release API（UpdateInfo.from_release 按 -Classic- 优先选 asset）。
+    # 不再硬编码 ``VibeOCR-v{version}-win64.zip``——v0.4.29+ 产物改名后硬编码会拼出
+    # 404 URL。sha256 文件名优先用 release 带下来的；缺失时退化为 ``{zip}.sha256``
+    # （历史上 sha 文件名恒等于 zip 名加 .sha256，此退化路径仅作防御）。
+    zip_filename = update_info.zip_filename
+    sha_filename = update_info.sha256_filename or f"{zip_filename}.sha256"
+    if not zip_filename:
+        logger.error(
+            "UpdateInfo 缺失真实 zip 文件名（release 无匹配 asset），无法拼下载 URL"
+        )
+        return None, [DOWNLOAD_REASON_HTTP_ERROR]
     zip_path = cache_dir / zip_filename
     sha256_path = cache_dir / sha_filename
     network_type = _detect_network_type()
