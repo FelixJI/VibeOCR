@@ -14,6 +14,29 @@ def _run(coro):
     return asyncio.run(coro)
 
 
+def _make_update_info(**overrides):
+    """构造一个填好真实字段的 UpdateInfo（默认 0.3.1，Classic 命名）。
+
+    生产代码里 UpdateInfo 总由 ``from_release`` 创建，会带下来 ``zip_filename`` /
+    ``sha256_filename``（从 release assets 选出的真实文件名）。早期测试直接
+    ``UpdateInfo(version=..., download_url=...)`` 省略文件名，但 ``download_update``
+    现在依赖 ``zip_filename`` 拼 URL（空会触发空守卫失败）。本助手统一填默认值，
+    调用方可用 ``**overrides`` 覆盖任一字段。
+    """
+    from vibeocr.services.update_service import UpdateInfo
+
+    defaults = dict(
+        version="0.3.1",
+        download_url="https://example.com/zip",
+        sha256_url="https://example.com/sha",
+        changelog="",
+        zip_filename="VibeOCR-v0.3.1-win64.zip",
+        sha256_filename="VibeOCR-v0.3.1-win64.zip.sha256",
+    )
+    defaults.update(overrides)
+    return UpdateInfo(**defaults)
+
+
 # ---------------------------------------------------------------------------
 # _download_zip_with_sha 直接测试用的 mock 构造助手
 # ---------------------------------------------------------------------------
@@ -207,6 +230,101 @@ class TestUpdateInfo:
         assert _find_asset_url(release, ".sha256") == "http://main.sha256"
         assert _find_asset_size(release, ".zip") == 100
 
+    def test_zip_filename_from_classic_release(self):
+        """v0.4.29+ 产物改名加 -Classic- 后，from_release 必须带下真实文件名。
+
+        回归 v0.4.29+ 更新全挂的根因：download_update 早期硬编码
+        ``VibeOCR-v{version}-win64.zip``，而 release 实际 asset 名是
+        ``VibeOCR-Classic-v{version}-win64.zip``，文件名对不上 → URL 404。
+        现在文件名从 release API 带下来，与产物解耦。
+        """
+        from vibeocr.services.update_service import UpdateInfo
+
+        release = {
+            "tag_name": "v0.4.34",
+            "body": "",
+            "assets": [
+                {
+                    "name": "VibeOCR-Classic-v0.4.34-win64.zip",
+                    "browser_download_url": "https://github.com/x/Classic.zip",
+                    "size": 171532573,
+                },
+                {
+                    "name": "VibeOCR-Classic-v0.4.34-win64.zip.sha256",
+                    "browser_download_url": "https://github.com/x/Classic.zip.sha256",
+                },
+            ],
+        }
+        info = UpdateInfo.from_release(release)
+        assert info.version == "0.4.34"
+        assert info.zip_filename == "VibeOCR-Classic-v0.4.34-win64.zip"
+        assert info.sha256_filename == "VibeOCR-Classic-v0.4.34-win64.zip.sha256"
+        assert "Classic" in info.download_url
+        assert info.file_size == 171532573
+
+    def test_classic_preferred_when_both_zip_present(self):
+        """release 同时发布 Classic 与 Next 两个 zip 时，必须选 Classic。
+
+        本模块（update_service.py）只在 Classic（PySide6/Python）进程运行；
+        WinUI Next 是 C# 应用有独立更新链路。选错前端会导致下到无法运行的包。
+        """
+        from vibeocr.services.update_service import UpdateInfo
+
+        release = {
+            "tag_name": "v0.5.0",
+            "body": "",
+            "assets": [
+                {
+                    "name": "VibeOCR-Next-v0.5.0-win64.zip",
+                    "browser_download_url": "https://github.com/x/Next.zip",
+                    "size": 50000000,
+                },
+                {
+                    "name": "VibeOCR-Next-v0.5.0-win64.zip.sha256",
+                    "browser_download_url": "https://github.com/x/Next.zip.sha256",
+                },
+                {
+                    "name": "VibeOCR-Classic-v0.5.0-win64.zip",
+                    "browser_download_url": "https://github.com/x/Classic.zip",
+                    "size": 170000000,
+                },
+                {
+                    "name": "VibeOCR-Classic-v0.5.0-win64.zip.sha256",
+                    "browser_download_url": "https://github.com/x/Classic.zip.sha256",
+                },
+            ],
+        }
+        info = UpdateInfo.from_release(release)
+        assert info.zip_filename == "VibeOCR-Classic-v0.5.0-win64.zip"
+        assert info.download_url == "https://github.com/x/Classic.zip"
+        assert info.file_size == 170000000
+
+    def test_legacy_release_without_classic_still_works(self):
+        """历史 release（v0.4.28 及之前，无 -Classic- 命名）走回退分支仍能解析。
+
+        兼容性：回退取第一个匹配 .zip 的 asset，保证老 release 的 asset 也能被选中。
+        """
+        from vibeocr.services.update_service import UpdateInfo
+
+        release = {
+            "tag_name": "v0.4.28",
+            "body": "",
+            "assets": [
+                {
+                    "name": "VibeOCR-v0.4.28-win64.zip",
+                    "browser_download_url": "https://github.com/x/legacy.zip",
+                    "size": 160000000,
+                },
+                {
+                    "name": "VibeOCR-v0.4.28-win64.zip.sha256",
+                    "browser_download_url": "https://github.com/x/legacy.zip.sha256",
+                },
+            ],
+        }
+        info = UpdateInfo.from_release(release)
+        assert info.zip_filename == "VibeOCR-v0.4.28-win64.zip"
+        assert info.download_url == "https://github.com/x/legacy.zip"
+
 
 class TestLocalVersion:
     """本地版本读取测试"""
@@ -365,16 +483,10 @@ class TestDownloadUpdateMultiSource:
         from vibeocr.services.update_service import (
             DOWNLOAD_REASON_OK,
             SourceAttempt,
-            UpdateInfo,
             download_update,
         )
 
-        info = UpdateInfo(
-            version="0.3.1",
-            download_url="https://example.com/zip",
-            sha256_url="https://example.com/sha",
-            changelog="",
-        )
+        info = _make_update_info()
         with patch(
             "vibeocr.services.update_service._download_zip_with_sha",
             new_callable=AsyncMock,
@@ -392,16 +504,10 @@ class TestDownloadUpdateMultiSource:
             DOWNLOAD_REASON_HTTP_ERROR,
             DOWNLOAD_REASON_OK,
             SourceAttempt,
-            UpdateInfo,
             download_update,
         )
 
-        info = UpdateInfo(
-            version="0.3.1",
-            download_url="https://example.com/zip",
-            sha256_url="https://example.com/sha",
-            changelog="",
-        )
+        info = _make_update_info()
         with patch(
             "vibeocr.services.update_service._detect_network_type",
             return_value="domestic",
@@ -423,16 +529,10 @@ class TestDownloadUpdateMultiSource:
         from vibeocr.services.update_service import (
             DOWNLOAD_REASON_SHA_MISMATCH,
             SourceAttempt,
-            UpdateInfo,
             download_update,
         )
 
-        info = UpdateInfo(
-            version="0.3.1",
-            download_url="https://example.com/zip",
-            sha256_url="https://example.com/sha",
-            changelog="",
-        )
+        info = _make_update_info()
         with patch(
             "vibeocr.services.update_service._detect_network_type",
             return_value="international",
@@ -451,16 +551,10 @@ class TestDownloadUpdateMultiSource:
         from vibeocr.services.update_service import (
             DOWNLOAD_REASON_HTTP_ERROR,
             SourceAttempt,
-            UpdateInfo,
             download_update,
         )
 
-        info = UpdateInfo(
-            version="0.3.1",
-            download_url="https://example.com/zip",
-            sha256_url="https://example.com/sha",
-            changelog="",
-        )
+        info = _make_update_info()
         with patch(
             "vibeocr.services.update_service._detect_network_type",
             return_value="domestic",
@@ -477,16 +571,10 @@ class TestDownloadUpdateMultiSource:
         from vibeocr.services.update_service import (
             DOWNLOAD_REASON_SHA_MISMATCH,
             SourceAttempt,
-            UpdateInfo,
             download_update,
         )
 
-        info = UpdateInfo(
-            version="0.3.1",
-            download_url="https://example.com/zip",
-            sha256_url="https://example.com/sha",
-            changelog="",
-        )
+        info = _make_update_info()
         switches: list[tuple[str, str]] = []
 
         def _on_switch(source_name: str, reason: str) -> None:
@@ -515,6 +603,71 @@ class TestDownloadUpdateMultiSource:
         ]
         # reason 正确透传
         assert all(r == DOWNLOAD_REASON_SHA_MISMATCH for _, r in switches)
+
+    def test_uses_real_filename_from_update_info(self, tmp_path):
+        """回归 v0.4.29+ 更新全挂：download_update 必须用 update_info.zip_filename
+        拼 URL，而非硬编码 ``VibeOCR-v{version}-win64.zip``。
+
+        场景：release v0.4.34 的真实 asset 名是 ``VibeOCR-Classic-v0.4.34-win64.zip``
+        （bind_backend 步骤重命名加 -Classic- 区分双前端）。早期代码硬编码无 Classic
+        的名字 → 三路源全 404 → 用户看到「连接失败」「校验失败」。
+        现在从 update_info 带真实文件名下来，URL 必须含 Classic。
+        """
+        from vibeocr.services.update_service import (
+            DOWNLOAD_REASON_OK,
+            SourceAttempt,
+            download_update,
+        )
+
+        info = _make_update_info(
+            version="0.4.34",
+            zip_filename="VibeOCR-Classic-v0.4.34-win64.zip",
+            sha256_filename="VibeOCR-Classic-v0.4.34-win64.zip.sha256",
+        )
+        captured_urls: list[str] = []
+
+        async def _capture_dl(client, zip_url, sha_url, zip_path, sha_path, cb, **kw):
+            captured_urls.append(zip_url)
+            return SourceAttempt(True, DOWNLOAD_REASON_OK)
+
+        with patch(
+            "vibeocr.services.update_service._detect_network_type",
+            return_value="domestic",
+        ), patch(
+            "vibeocr.services.update_service._download_zip_with_sha",
+            side_effect=_capture_dl,
+        ):
+            result, reasons = _run(download_update(info, tmp_path))
+
+        assert result is not None
+        assert reasons == []
+        # 首源（gh-proxy）的 URL 必须含真实 Classic 文件名，而非硬编码名
+        assert captured_urls, "未捕获到任何下载 URL"
+        assert "VibeOCR-Classic-v0.4.34-win64.zip" in captured_urls[0]
+        # 硬编码的旧名（无 Classic）绝不能出现
+        assert "VibeOCR-v0.4.34-win64.zip" not in captured_urls[0].replace(
+            "VibeOCR-Classic-v0.4.34-win64.zip", ""
+        )
+
+    def test_empty_zip_filename_returns_failure(self, tmp_path):
+        """UpdateInfo 缺失 zip_filename（release 无匹配 asset）→ 立即失败，不拼 URL。
+
+        空守卫防御：避免 download_update 拿空文件名拼出无意义的 URL 去重试 3 次。
+        """
+        from vibeocr.services.update_service import (
+            DOWNLOAD_REASON_HTTP_ERROR,
+            download_update,
+        )
+
+        info = _make_update_info(zip_filename="", sha256_filename="")
+        with patch(
+            "vibeocr.services.update_service._download_zip_with_sha",
+            new_callable=AsyncMock,
+        ) as mock_dl:
+            result, reasons = _run(download_update(info, tmp_path))
+        assert result is None
+        assert reasons == [DOWNLOAD_REASON_HTTP_ERROR]
+        mock_dl.assert_not_called()
 
 
 class TestDownloadZipWithSha:
@@ -950,14 +1103,7 @@ class TestDownloadCancel:
     """
 
     def _make_info(self):
-        from vibeocr.services.update_service import UpdateInfo
-
-        return UpdateInfo(
-            version="0.3.1",
-            download_url="https://example.com/zip",
-            sha256_url="https://example.com/sha",
-            changelog="",
-        )
+        return _make_update_info()
 
     def test_download_update_aborts_when_cancel_event_set_before_start(self, tmp_path):
         """进入 download_update 前 cancel_event 已 set → 立即返回，不触发任何下载。"""
@@ -1357,9 +1503,13 @@ class TestDoDownloadAndUpdateNewArch:
         return service, zip_path
 
     def _make_info(self):
-        from vibeocr.services.update_service import UpdateInfo
-        return UpdateInfo(version="9.9.9", download_url="http://x",
-                          sha256_url="http://x.sha256", changelog="")
+        return _make_update_info(
+            version="9.9.9",
+            download_url="http://x",
+            sha256_url="http://x.sha256",
+            zip_filename="VibeOCR-v9.9.9-win64.zip",
+            sha256_filename="VibeOCR-v9.9.9-win64.zip.sha256",
+        )
 
     def _mock_msgbox(self, us_mod, monkeypatch, critical_texts=None):
         """桩住 await_dialog：critical 弹窗捕获文案，其余直接返回 Ok。"""
@@ -1591,16 +1741,10 @@ class TestDownloadUpdateGithubProbeFallback:
         from vibeocr.services.update_service import (
             DOWNLOAD_REASON_HTTP_ERROR,
             SourceAttempt,
-            UpdateInfo,
             download_update,
         )
 
-        info = UpdateInfo(
-            version="0.3.1",
-            download_url="https://example.com/zip",
-            sha256_url="https://example.com/sha",
-            changelog="",
-        )
+        info = _make_update_info()
         with patch(
             "vibeocr.services.update_service._detect_network_type",
             return_value="international",
@@ -1622,16 +1766,10 @@ class TestDownloadUpdateGithubProbeFallback:
         from vibeocr.services.update_service import (
             DOWNLOAD_REASON_HTTP_ERROR,
             SourceAttempt,
-            UpdateInfo,
             download_update,
         )
 
-        info = UpdateInfo(
-            version="0.3.1",
-            download_url="https://example.com/zip",
-            sha256_url="https://example.com/sha",
-            changelog="",
-        )
+        info = _make_update_info()
         with patch(
             "vibeocr.services.update_service._detect_network_type",
             return_value="international",
@@ -1653,16 +1791,10 @@ class TestDownloadUpdateGithubProbeFallback:
         from vibeocr.services.update_service import (
             DOWNLOAD_REASON_HTTP_ERROR,
             SourceAttempt,
-            UpdateInfo,
             download_update,
         )
 
-        info = UpdateInfo(
-            version="0.3.1",
-            download_url="https://example.com/zip",
-            sha256_url="https://example.com/sha",
-            changelog="",
-        )
+        info = _make_update_info()
         with patch(
             "vibeocr.services.update_service._detect_network_type",
             return_value="domestic",
@@ -1884,9 +2016,13 @@ class TestDoDownloadAndUpdateThreadedDelivery:
         return service, zip_path
 
     def _make_info(self):
-        from vibeocr.services.update_service import UpdateInfo
-        return UpdateInfo(version="9.9.9", download_url="http://x",
-                          sha256_url="http://x.sha256", changelog="")
+        return _make_update_info(
+            version="9.9.9",
+            download_url="http://x",
+            sha256_url="http://x.sha256",
+            zip_filename="VibeOCR-v9.9.9-win64.zip",
+            sha256_filename="VibeOCR-v9.9.9-win64.zip.sha256",
+        )
 
     def _mock_msgbox(self, us_mod, monkeypatch, critical_texts=None):
         """桩住 await_dialog：critical 弹窗捕获文案，其余直接返回 Ok。
