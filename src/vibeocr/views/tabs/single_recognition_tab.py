@@ -1,12 +1,12 @@
 """单次识别标签页"""
 
+import asyncio
 import logging
 from pathlib import Path
 
 from PySide6.QtCore import QBuffer, QTimer, Signal
 from PySide6.QtGui import QGuiApplication, QPixmap
 from PySide6.QtWidgets import (
-    QApplication,
     QHBoxLayout,
     QLabel,
     QPushButton,
@@ -55,6 +55,9 @@ class SingleRecognitionTab(BaseOcrTab):
         # RPC 后端（SyncBackendClient）；测试可注入 fake。为 None 时延迟创建。
         self._backend = backend
         self._uses_shared_backend = backend is None
+        # 异步识别协程的 Task 引用，用于忙时串行与关闭时取消。None 表示当前
+        # 没有识别在进行。忙时状态同时由基类 _is_processing 反映（驱动按钮禁用）。
+        self._recognize_task: asyncio.Task | None = None
         self._setup_ui()
         self._connect_signals()
         self._init_options_from_preferences(batch=False)
@@ -190,7 +193,7 @@ class SingleRecognitionTab(BaseOcrTab):
                 self.set_pixmap(pixmap)
                 self._pending_pixmap = pixmap
 
-        self._start_btn.setEnabled(True)
+        self._refresh_start_btn_enabled()
         self._start_btn.setText("开始识别")
 
     def _on_paste(self) -> None:
@@ -255,7 +258,17 @@ class SingleRecognitionTab(BaseOcrTab):
             pass
 
     def set_closing(self, closing: bool) -> None:
+        """标记 tab 正在关闭。
+
+        除设置标志外，在进入关闭态时主动取消正在跑的识别协程，避免其回调
+        在 _result_widget 已被 cleanup 后写入已销毁的 web view。closeEvent
+        应在 widget 清理之前调用本方法。
+        """
         self._closing = closing
+        if closing and self._recognize_task is not None:
+            task = self._recognize_task
+            if not task.done():
+                task.cancel()
 
     # ── 公共接口（由 MainWindow 调用）──
 
@@ -272,7 +285,7 @@ class SingleRecognitionTab(BaseOcrTab):
         """记录待识别图（用于粘贴 / 截图后启用「重新识别」）。
 
         - 存入 _pending_pixmap，清空 _pending_file_path
-        - 启用 _start_btn
+        - 启用 _start_btn（OCR 进行中除外，保持禁用以防重入）
 
         截图入口与粘贴入口都应经过此方法，确保识别完成后按钮可用、
         能用界面面板选项（main 源）反复重识别。
@@ -281,7 +294,7 @@ class SingleRecognitionTab(BaseOcrTab):
         """
         self._pending_pixmap = pixmap
         self._pending_file_path = None
-        self._start_btn.setEnabled(True)
+        self._refresh_start_btn_enabled()
         self._update_copy_image_enabled()
 
     def pixmap(self):
@@ -306,6 +319,16 @@ class SingleRecognitionTab(BaseOcrTab):
         通过 RPC 后端（SyncBackendClient）调用独占 WorkerHost 的 ocr.recognize，
         不再直接 import 后端 OCR 服务（ADR §5.1）。
 
+        异步化：本方法仅做轻量前置工作（DPR 归一、清空结果区、PNG 编码），随后把
+        后端调用派发到 qasync 事件循环上（经 asyncio.to_thread 跑在线程池），
+        GUI 事件循环在 OCR 期间保持响应。识别完成/失败由
+        _on_ocr_async_finished / _on_ocr_async_error 回调处理，它们在 qasync loop
+        上执行，可直接操作 Qt widget。
+
+        重入守卫：识别进行中（_is_processing）再次调用会被静默忽略，避免旧结果
+        覆盖新图。所有触发入口（开始/重新识别、截图确认、拖文件、粘贴）最终都汇到
+        这里，一处拦截覆盖全部。
+
         Args:
             pixmap: 待识别图片。
             options: OCR 选项；为 None 时从界面面板读取。
@@ -313,6 +336,11 @@ class SingleRecognitionTab(BaseOcrTab):
                 (_on_ocr_finished) 会发出 bring_to_front_requested，让 MainWindow
                 重新把主窗口提到前台。文件/粘贴来源传 False，避免无谓抢焦点。
         """
+        # 重入守卫：异步化后事件循环在 OCR 期间照常转动，用户可能再次触发识别。
+        if self._is_processing:
+            logger.debug("识别进行中，忽略新的 run_ocr 请求")
+            return
+
         # 记录识别来源，_on_ocr_finished / _on_ocr_error 据此决定是否发前置信号。
         self._ocr_from_screenshot = from_screenshot
 
@@ -346,26 +374,117 @@ class SingleRecognitionTab(BaseOcrTab):
                     "<p>正在识别，首次使用可能需要下载模型，请耐心等待…</p></div>"
                 )
 
-        QApplication.processEvents()
-
         buffer = QBuffer()
         buffer.open(QBuffer.OpenModeFlag.ReadWrite)
         pixmap.save(buffer, "PNG")
         image_data = bytes(buffer.data().data())
         buffer.close()
 
+        # 派发协程，立即返回；GUI 事件循环在 OCR 期间保持响应。
+        self._dispatch_recognize(image_data, pipeline_val)
+
+    def _dispatch_recognize(self, payload: bytes, pipeline_val: str) -> None:
+        """把识别请求派发到 qasync loop，并设置忙时状态。
+
+        run_ocr（图片）与 _run_ocr_with_data（文档字节）都经此入口，统一管理
+        忙时状态与 task 引用。用全局 AsyncTaskRunner 派发（而非 run_coroutine），
+        因后者强制要求 running loop，测试环境 loop 仅 set 不 running；AsyncTaskRunner
+        用 _get_running_or_set_loop 兜底，两者在生产环境（qasync loop running）行为
+        一致，且都纳入 closeEvent 的 cancel_all 取消范围。
+        """
+        from vibeocr.utils.qt_async import get_async_runner
+
+        self._set_processing(True)
+        self._refresh_start_btn_enabled()
+
+        runner = get_async_runner()
+        self._recognize_task = runner.run(
+            self._run_ocr_async(payload, pipeline_val),
+            on_complete=self._on_ocr_async_finished,
+            on_error=lambda exc: self._on_ocr_async_error(exc, pipeline_val),
+        )
+
+        # 兜底清理：正常完成/失败由 on_complete/on_error 清 _recognize_task，
+        # 但 cancel 路径（set_closing）不触发这两个回调，故用 done_callback 确保
+        # task 引用最终被释放（避免持有已完成 task 阻止下一次识别）。
+        # 同时 retrieve 异常：AsyncTaskRunner.wrapped 即使调了 on_error 仍会 raise，
+        # 导致 task 带异常结束；on_error 已完整处理（显示给用户），这里消费掉异常
+        # 避免 "Task exception was never retrieved" 警告。
+        task = self._recognize_task
+        if task is not None:
+
+            def _clear_ref(completed: asyncio.Task) -> None:
+                # 消费异常（cancel 路径除外，cancelled() 取异常会抛 CancelledError）
+                if not completed.cancelled():
+                    try:
+                        completed.exception()
+                    except Exception:
+                        pass
+                if self._recognize_task is completed:
+                    self._recognize_task = None
+                # cancel 路径下 on_complete/on_error 不会被调，需手动复位忙时。
+                # 正常路径下 _on_ocr_async_* 已清过，这里幂等。
+                if self._is_processing and completed.cancelled():
+                    self._set_processing(False)
+                    self._refresh_start_btn_enabled()
+
+            task.add_done_callback(_clear_ref)
+
+    async def _run_ocr_async(self, payload: bytes, pipeline_val: str):
+        """异步执行后端识别调用。
+
+        _call_backend_recognize 是同步阻塞调用（经 SyncBackendClient.recognize_sync
+        → fut.result(timeout=300)），用 asyncio.to_thread 把它整个跑在线程池里，
+        不阻塞 qasync loop。失败重试逻辑（restart backend）封装在同步方法内部，
+        无需在此重复。
+        """
+        return await asyncio.to_thread(
+            self._call_backend_recognize, payload, pipeline_val
+        )
+
+    def _on_ocr_async_finished(self, result) -> None:
+        """异步识别完成回调（在 qasync loop 上执行）。"""
         try:
-            result = self._call_backend_recognize(image_data, pipeline_val)
             if self._closing:
                 return
             self._on_ocr_finished(result)
-        except Exception as e:
+        finally:
+            self._recognize_task = None
+            self._set_processing(False)
+            self._refresh_start_btn_enabled()
+
+    def _on_ocr_async_error(self, exc: Exception, pipeline_val: str) -> None:
+        """异步识别失败回调（在 qasync loop 上执行）。
+
+        run_coroutine 的 on_error 收到的是底层异常；CancelledError（关闭取消）
+        已被 AsyncTaskRunner 单独处理，不会走到这里。
+        """
+        try:
             if self._closing:
                 return
-            logger.error(f"OCR 识别失败: {e}", exc_info=True)
+            logger.error(f"OCR 识别失败: {exc}", exc_info=exc)
             self._on_ocr_error(
-                str(e) + self._first_use_suffix(pipeline_val, str(e))
+                str(exc) + self._first_use_suffix(pipeline_val, str(exc))
             )
+        finally:
+            self._recognize_task = None
+            self._set_processing(False)
+            self._refresh_start_btn_enabled()
+
+    def _refresh_start_btn_enabled(self) -> None:
+        """根据忙时状态与是否有待识别图，统一管理 _start_btn 启用状态。
+
+        OCR 进行中强制禁用（即使此时 set_image_for_recognition 被调用）；
+        否则按 _pending_pixmap / _pending_file_path 是否存在恢复。
+        """
+        if self._is_processing:
+            self._start_btn.setEnabled(False)
+            return
+        has_pending = (
+            self._pending_pixmap is not None
+            and not self._pending_pixmap.isNull()
+        ) or self._pending_file_path is not None
+        self._start_btn.setEnabled(has_pending)
 
     def process_file(self, file_path: str) -> None:
         """处理文件（由 MainWindow 调用，支持 PDF/Office/图片）"""
@@ -403,20 +522,17 @@ class SingleRecognitionTab(BaseOcrTab):
         """使用原始文件数据进行 OCR（文档解析管道）。
 
         通过 RPC 后端调用 ocr.recognize，pipeline=DOCUMENT_PARSING。
-        """
-        self._result_widget.clear()
-        QApplication.processEvents()
 
-        try:
-            result = self._call_backend_recognize(data, "DOCUMENT_PARSING")
-            if self._closing:
-                return
-            self._on_ocr_finished(result)
-        except Exception as e:
-            if self._closing:
-                return
-            logger.error(f"OCR 识别失败: {e}", exc_info=True)
-            self._on_ocr_error(str(e) + self._first_use_suffix("DOCUMENT_PARSING", str(e)))
+        异步化：与 run_ocr 一致，经 _dispatch_recognize 派发到 qasync loop。
+        """
+        # 重入守卫：与 run_ocr 共用同一忙时状态。
+        if self._is_processing:
+            logger.debug("识别进行中，忽略新的 _run_ocr_with_data 请求")
+            return
+
+        self._result_widget.clear()
+
+        self._dispatch_recognize(data, "DOCUMENT_PARSING")
 
     # -- backend bridge (sync RPC over the exclusive WorkerHost) --------
 
@@ -555,6 +671,11 @@ class SingleRecognitionTab(BaseOcrTab):
 
     def _on_ocr_finished(self, result) -> None:
         """OCR 完成回调"""
+        # 异步化后，识别完成时窗口可能已在关闭流程中（_result_widget 已 cleanup），
+        # 此时写入已销毁的 web view 会崩溃。set_closing(True) 会先取消 task，
+        # 这里作为双重保险。
+        if self._closing:
+            return
         self._current_ocr_result = result
         self._start_btn.setText("重新识别")
 
@@ -647,6 +768,9 @@ class SingleRecognitionTab(BaseOcrTab):
 
     def _on_ocr_error(self, error_msg: str) -> None:
         """OCR 失败回调"""
+        # 同 _on_ocr_finished，关闭流程中不再触碰可能已销毁的 widget。
+        if self._closing:
+            return
         # 失败不复位标记会让下次识别误判来源，显式复位。
         self._ocr_from_screenshot = False
         self._current_ocr_result = None

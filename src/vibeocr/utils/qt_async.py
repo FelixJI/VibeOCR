@@ -217,8 +217,14 @@ class AsyncTaskRunner:
                 raise
 
             finally:
-                # 从任务列表中移除（防御性：task 可能已被 cancel_all 清空）
-                task = asyncio.current_task()
+                # 从任务列表中移除（防御性：task 可能已被 cancel_all 清空）。
+                # current_task() 在 loop 非 running 时（如单元测试用 set-only
+                # loop 推进）会抛 RuntimeError，这里容忍：清理是 best-effort，
+                # 不应掩盖协程本身的异常。生产环境 loop running 时正常返回 task。
+                try:
+                    task = asyncio.current_task()
+                except RuntimeError:
+                    task = None
                 if task is not None:
                     try:
                         self._tasks.remove(task)
