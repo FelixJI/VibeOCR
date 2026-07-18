@@ -418,16 +418,19 @@ class TestOcrFinishedEmitsBringToFront:
         # 失败后标记应复位
         assert tab._ocr_from_screenshot is False
 
-    def test_run_ocr_sets_screenshot_flag(self, qapp, monkeypatch):
+    def test_run_ocr_sets_screenshot_flag(self, qapp, qtbot, qasync_loop, monkeypatch):
         """run_ocr 应根据参数设置 _ocr_from_screenshot 标记。
 
         from_screenshot=True（截图确认路径）→ True；
         不传或 False（文件/粘贴路径）→ False。
 
-        只验证后端调用发生时标记正确，并验证完成后复位。
+        异步化后 run_ocr 立即返回，后端调用在 qasync loop 上跑。这里在
+        fake_recognize 内捕获标记值，再用 wait_until_done 推进协程完成。两次
+        调用必须串行（忙时守卫会吞掉并发请求），故第一次完成后再启动第二次。
         """
         from PySide6.QtGui import QPixmap
 
+        from tests.conftest import wait_until_done
         from vibeocr.models.ocr_options import OCROptions
 
         tab = SingleRecognitionTab()
@@ -447,10 +450,230 @@ class TestOcrFinishedEmitsBringToFront:
         pixmap = QPixmap(4, 4)
         pixmap.fill()
         tab.run_ocr(pixmap, options, from_screenshot=True)
+        # 等第一次识别完成（_on_ocr_async_finished 会清 _recognize_task）
+        wait_until_done(qtbot, qasync_loop, lambda: tab._recognize_task is None)
+        assert observed == [True]
 
         tab.run_ocr(pixmap, options)
+        wait_until_done(qtbot, qasync_loop, lambda: tab._recognize_task is None)
         assert observed == [True, False]
         assert tab._ocr_from_screenshot is False
+
+
+class TestRunOcrAsync:
+    """异步化 run_ocr 的行为测试。
+
+    异步化根因：截图确认 → run_ocr 此前在 GUI 线程同步阻塞于
+    SyncBackendClient.recognize_sync → fut.result(timeout=300)，模型未加载完成
+    时窗口完全无响应。改造后 run_ocr 把后端调用派发到 qasync loop，GUI 保持响应。
+    """
+
+    def test_run_ocr_completes_and_renders(
+        self, qapp, qtbot, qasync_loop, monkeypatch
+    ):
+        """run_ocr 异步完成后应调 _on_ocr_finished 并清忙时状态。"""
+        from PySide6.QtGui import QPixmap
+
+        from tests.conftest import wait_until_done
+        from vibeocr.models.ocr_options import OCROptions
+
+        tab = SingleRecognitionTab()
+        finished_calls: list = []
+
+        monkeypatch.setattr(
+            tab, "_call_backend_recognize", lambda *a, **k: _make_plain_text_result()
+        )
+        monkeypatch.setattr(tab, "_display_result", lambda r: None)
+        monkeypatch.setattr(
+            tab, "_on_ocr_finished", lambda r: finished_calls.append(r)
+        )
+        monkeypatch.setattr(
+            "vibeocr.pipeline_status.is_pipeline_ever_succeeded", lambda *a: True
+        )
+
+        pixmap = QPixmap(4, 4)
+        pixmap.fill()
+        tab.run_ocr(pixmap, OCROptions())
+
+        # 异步：立即返回时结果尚未就绪
+        assert finished_calls == []
+        assert tab.is_processing is True
+        wait_until_done(qtbot, qasync_loop, lambda: tab._recognize_task is None)
+
+        assert len(finished_calls) == 1
+        assert tab.is_processing is False
+
+    def test_run_ocr_does_not_block_qt_event_loop(
+        self, qapp, qtbot, qasync_loop, monkeypatch
+    ):
+        """核心回归测试：OCR in-flight 期间 Qt 事件循环必须保持响应。
+
+        这是本次异步化的全部意义。用阻塞的 fake_recognize 模拟长耗时后端调用，
+        在 OCR 期间触发一个 QTimer.singleShot(0, ...)；若事件循环被阻塞
+        （改造前的同步路径），该 timer 在 barrier 释放前不可能触发。
+        异步化后，to_thread 把阻塞调用挪到线程池，主线程的 Qt 事件循环照常
+        推进，timer 在识别仍 in-flight 时即触发。
+        """
+        import threading
+
+        from PySide6.QtCore import QTimer
+        from PySide6.QtGui import QPixmap
+
+        from tests.conftest import wait_until_done
+        from vibeocr.models.ocr_options import OCROptions
+
+        tab = SingleRecognitionTab()
+        barrier = threading.Event()
+
+        def blocking_recognize(*args, **kwargs):
+            # 模拟长耗时后端调用（在 to_thread 的线程池里跑，不阻塞 GUI）
+            barrier.wait(timeout=2.0)
+            return _make_plain_text_result()
+
+        monkeypatch.setattr(tab, "_call_backend_recognize", blocking_recognize)
+        monkeypatch.setattr(tab, "_display_result", lambda r: None)
+        monkeypatch.setattr(
+            "vibeocr.pipeline_status.is_pipeline_ever_succeeded", lambda *a: True
+        )
+
+        timer_fired: list[bool] = []
+        pixmap = QPixmap(4, 4)
+        pixmap.fill()
+        tab.run_ocr(pixmap, OCROptions())
+        assert tab.is_processing is True, "识别应仍 in-flight"
+
+        # OCR in-flight 期间排一个 timer。wait_until_done 推进 qasync loop +
+        # Qt 事件：timer 应在被释放的 barrier 之前触发（证明主线程未被阻塞）。
+        QTimer.singleShot(0, lambda: timer_fired.append(True))
+        wait_until_done(qtbot, qasync_loop, lambda: timer_fired == [True])
+
+        # 此时识别仍 in-flight（barrier 未释放），但 timer 已触发 → 非阻塞证据
+        assert tab.is_processing is True
+        assert timer_fired == [True]
+
+        # 释放阻塞的后端调用，让识别完成、task 清理
+        barrier.set()
+        wait_until_done(qtbot, qasync_loop, lambda: tab._recognize_task is None)
+
+    def test_run_ocr_busy_guard_ignores_second_call(
+        self, qapp, qtbot, qasync_loop, monkeypatch
+    ):
+        """OCR 进行中再次调用 run_ocr 应被忽略（不产生第二个 task）。"""
+        import threading
+
+        from PySide6.QtGui import QPixmap
+
+        from tests.conftest import wait_until_done
+        from vibeocr.models.ocr_options import OCROptions
+
+        tab = SingleRecognitionTab()
+        barrier = threading.Event()
+        recognize_calls: list = []
+
+        def blocking_recognize(*args, **kwargs):
+            recognize_calls.append(True)
+            barrier.wait(timeout=2.0)
+            return _make_plain_text_result()
+
+        monkeypatch.setattr(tab, "_call_backend_recognize", blocking_recognize)
+        monkeypatch.setattr(tab, "_display_result", lambda r: None)
+        monkeypatch.setattr(
+            "vibeocr.pipeline_status.is_pipeline_ever_succeeded", lambda *a: True
+        )
+
+        pixmap = QPixmap(4, 4)
+        pixmap.fill()
+        tab.run_ocr(pixmap, OCROptions())
+        first_task = tab._recognize_task
+        assert first_task is not None
+
+        # 忙时第二次调用应被吞
+        tab.run_ocr(pixmap, OCROptions())
+        assert tab._recognize_task is first_task
+
+        # 释放并等待完成
+        barrier.set()
+        wait_until_done(qtbot, qasync_loop, lambda: tab._recognize_task is None)
+        assert len(recognize_calls) == 1, "第二次 run_ocr 不应触发后端调用"
+
+    def test_run_ocr_error_path_calls_on_ocr_error(
+        self, qapp, qtbot, qasync_loop, monkeypatch
+    ):
+        """后端调用抛异常时应走 _on_ocr_error，并复位忙时状态。"""
+        from PySide6.QtGui import QPixmap
+
+        from tests.conftest import wait_until_done
+        from vibeocr.models.ocr_options import OCROptions
+
+        tab = SingleRecognitionTab()
+        error_calls: list[str] = []
+
+        def raising_recognize(*args, **kwargs):
+            raise RuntimeError("backend boom")
+
+        monkeypatch.setattr(tab, "_call_backend_recognize", raising_recognize)
+        monkeypatch.setattr(
+            tab, "_on_ocr_error", lambda msg: error_calls.append(msg)
+        )
+        monkeypatch.setattr(
+            "vibeocr.pipeline_status.is_pipeline_ever_succeeded", lambda *a: True
+        )
+
+        tab._ocr_from_screenshot = True  # 验证错误路径不复位由 _on_ocr_error 负责
+        pixmap = QPixmap(4, 4)
+        pixmap.fill()
+        tab.run_ocr(pixmap, OCROptions())
+
+        wait_until_done(qtbot, qasync_loop, lambda: tab._recognize_task is None)
+        assert len(error_calls) == 1
+        assert "backend boom" in error_calls[0]
+        assert tab.is_processing is False
+
+    def test_set_closing_cancels_inflight_task(
+        self, qapp, qtbot, qasync_loop, monkeypatch
+    ):
+        """set_closing(True) 应取消进行中的识别 task，且 _on_ocr_finished 不被调。"""
+        import threading
+
+        from PySide6.QtGui import QPixmap
+
+        from tests.conftest import wait_until_done
+        from vibeocr.models.ocr_options import OCROptions
+
+        tab = SingleRecognitionTab()
+        barrier = threading.Event()
+        finished_calls: list = []
+
+        def blocking_recognize(*args, **kwargs):
+            barrier.wait(timeout=2.0)
+            return _make_plain_text_result()
+
+        monkeypatch.setattr(tab, "_call_backend_recognize", blocking_recognize)
+        monkeypatch.setattr(tab, "_display_result", lambda r: None)
+        monkeypatch.setattr(
+            tab, "_on_ocr_finished", lambda r: finished_calls.append(r)
+        )
+        monkeypatch.setattr(
+            "vibeocr.pipeline_status.is_pipeline_ever_succeeded", lambda *a: True
+        )
+
+        pixmap = QPixmap(4, 4)
+        pixmap.fill()
+        tab.run_ocr(pixmap, OCROptions())
+        task = tab._recognize_task
+        assert task is not None
+
+        # 关闭态应立即取消 task（不等 barrier）
+        tab.set_closing(True)
+        wait_until_done(qtbot, qasync_loop, lambda: task.cancelled() or task.done())
+
+        # 释放 barrier 让 to_thread 线程不卡死（task 已 cancel，结果被忽略）
+        barrier.set()
+        wait_until_done(qtbot, qasync_loop, lambda: tab._recognize_task is None)
+
+        # _on_ocr_finished 被 closing 守卫短路
+        assert finished_calls == []
+        assert tab._closing is True
 
 
 class _FakeWebView:

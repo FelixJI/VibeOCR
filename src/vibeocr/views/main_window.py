@@ -1200,6 +1200,9 @@ class MainWindow(QMainWindow):
         """打开图片文件"""
         if not self._check_ocr_ready():
             return
+        if self._single_tab.is_processing:
+            self._statusbar.showMessage("上一次识别尚未完成，请稍候", 2000)
+            return
         logging.debug("打开图片文件对话框")
 
         from vibeocr.utils.mime_types import (
@@ -1230,6 +1233,9 @@ class MainWindow(QMainWindow):
     def _on_open_file_from_preview(self) -> None:
         """从预览区域打开文件（支持图片和 PDF）"""
         if not self._check_ocr_ready():
+            return
+        if self._single_tab.is_processing:
+            self._statusbar.showMessage("上一次识别尚未完成，请稍候", 2000)
             return
         logging.debug("打开文件对话框（图片/PDF）")
 
@@ -1394,6 +1400,11 @@ class MainWindow(QMainWindow):
         """
         # 识别需要立即展示 OCR 结果，故激活并置顶主窗口。
         self._restore_main_window(activate=True)
+        # 异步化后事件循环在 OCR 期间照常转动，用户可能在上一次识别未完成时
+        # 再次触发截图确认；此时静默忽略并提示，避免旧结果覆盖新图。
+        if self._single_tab.is_processing:
+            self._statusbar.showMessage("上一次识别尚未完成，请稍候", 2000)
+            return
         if not pixmap.isNull():
             self._single_tab.set_image_for_recognition(pixmap)
             self._single_tab.set_pixmap(pixmap)
@@ -1439,6 +1450,12 @@ class MainWindow(QMainWindow):
             return
 
         logging.debug("正在关闭应用程序...")
+
+        # 异步识别可能仍在 qasync loop 上运行；在清理任何 widget 之前先标记关闭态
+        # 并取消进行中的识别 task，否则 _on_ocr_finished/_on_ocr_error 回调会在
+        # _result_widget.cleanup() 之后写入已销毁的 web view。
+        if hasattr(self, "_single_tab") and self._single_tab is not None:
+            self._single_tab.set_closing(True)
 
         if hasattr(self, "_settings_controller"):
             self._settings_controller.shutdown()

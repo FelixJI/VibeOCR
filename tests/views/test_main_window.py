@@ -390,6 +390,39 @@ class TestOcrFinishedRaisesWindow:
 
         assert captured.get("from_screenshot") is True
 
+    def test_on_overlay_confirmed_skips_when_busy(self, main_window, monkeypatch):
+        """异步化回归：OCR 进行中再次截图确认应被忽略，不触发 run_ocr。
+
+        异步化前 run_ocr 同步阻塞，天然串行；异步化后事件循环在 OCR 期间转动，
+        用户可能再次触发截图确认。_on_overlay_confirmed 应检查 is_processing 并
+        静默跳过（状态栏提示），避免旧结果覆盖新图。
+        """
+        pixmap = QPixmap(10, 10)
+        pixmap.fill(Qt.GlobalColor.white)
+
+        run_calls: list = []
+        monkeypatch.setattr(
+            main_window._single_tab, "run_ocr",
+            lambda *a, **kw: run_calls.append(kw),
+        )
+        monkeypatch.setattr(
+            main_window._single_tab, "set_image_for_recognition", lambda *a, **k: None
+        )
+        monkeypatch.setattr(main_window._single_tab, "set_pixmap", lambda *a, **k: None)
+        # is_processing 是只读 property，patch 它需走 __dict__
+        monkeypatch.setattr(
+            type(main_window._single_tab), "is_processing",
+            property(lambda self: True),
+        )
+        monkeypatch.setattr(main_window, "showNormal", lambda: None)
+        monkeypatch.setattr(main_window, "activateWindow", lambda: None)
+        monkeypatch.setattr(main_window, "raise_", lambda: None)
+
+        main_window._main_window_minimized_before_capture = False
+        main_window._on_overlay_confirmed(pixmap, None)
+
+        assert run_calls == [], "忙时不应调用 run_ocr"
+
 
 class TestRestoreMainWindowWhenMinimized:
     """_restore_main_window 在「识别路径 + 截图前已最小化」时仍应恢复可见。

@@ -1,5 +1,6 @@
 """Pytest configuration and fixtures for VibeOCR tests."""
 
+import asyncio
 import os
 
 # ---------------------------------------------------------------------------
@@ -108,3 +109,82 @@ def wait_worker():
         QCoreApplication.processEvents()
 
     return _wait
+
+
+# ---------------------------------------------------------------------------
+# qasync 测试范式
+#
+# 仓库首个「Qt slot 异步 + qtbot 断言」组合。生产环境由 main.py 的
+# create_qasync_event_loop 提前安装并 run_forever 一个 qasync.QEventLoop；
+# 测试进程不经过 main.py，故需要本 fixture 在 qapp 上安装一个 qasync loop。
+#
+# qasync.QEventLoop 把 asyncio 与 Qt 事件循环融合。但 qasync.run_forever 内部
+# 调 QApplication.exec（必须在主线程），无法放独立线程；而在主线程 run_forever
+# 会阻塞测试。故采用「set loop + 显式推进」模式：loop 仅 set 不 running，
+# 通过 wait_until_done 辅助反复调 loop.run_until_complete(asyncio.sleep(0))
+# 单步推进协程。生产代码用 AsyncTaskRunner（_get_running_or_set_loop 兜底，
+# set 即可），不依赖 running loop。
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def qasync_loop(qapp):
+    """为当前 qapp 安装一个 qasync 事件循环（function 级，隔离干净）。
+
+    loop 仅 set 不 run_forever（避免阻塞测试或触发「QApplication.exec 必须
+    主线程」警告）。被测代码通过 AsyncTaskRunner 派发的任务用 wait_until_done
+    辅助显式推进。每步 loop.run_until_complete(asyncio.sleep(0)) 既推进
+    asyncio 任务又经 qasync 触发 Qt 事件处理。
+    """
+    import asyncio
+
+    from vibeocr.utils.qt_async import create_qasync_event_loop
+
+    loop = create_qasync_event_loop(qapp)
+    asyncio.set_event_loop(loop)
+
+    try:
+        yield loop
+    finally:
+        # 全局 AsyncTaskRunner 是模块级单例，测试间共享。本测试派发的 task 绑定
+        # 在当前 loop 上，若残留会污染后续测试（尤其 test_qt_async 复用该单例）。
+        # close loop 前先取消所有未完成 task，避免跨 loop 残留。
+        try:
+            from vibeocr.utils.qt_async import get_async_runner
+
+            runner = get_async_runner()
+            runner.cancel_all()
+            runner._tasks.clear()
+        except Exception:
+            pass
+        try:
+            loop.close()
+        except Exception:
+            pass
+        # 避免关闭的 loop 污染后续测试的线程当前 loop
+        asyncio.set_event_loop(None)
+
+
+def wait_until_done(qtbot, loop, condition, *, timeout_ms: int = 2000):
+    """反复推进 qasync loop + Qt 事件，直到 condition() 为真或超时。
+
+    单步用 loop.run_until_complete(asyncio.sleep(0)) 推进 asyncio 任务一步，
+    再让 qtbot.waitUntil 的小窗口泵 Qt 事件。两者交替直到 condition 满足。
+
+    Args:
+        qtbot: pytest-qt 的 qtbot fixture。
+        loop: qasync_loop fixture yield 的 qasync 事件循环。
+        condition: 无参 callable，返回 bool；为 True 时结束。
+        timeout_ms: 总超时毫秒。
+    """
+    import time
+
+    deadline = time.monotonic() + timeout_ms / 1000
+    while not condition():
+        if time.monotonic() > deadline:
+            break
+        # 推进 asyncio 任务一步（qasync 内部会处理 Qt 事件）
+        loop.run_until_complete(asyncio.sleep(0))
+        # 再让 qtbot 泵一小段 Qt 事件（处理 QTimer 等）
+        qtbot.waitUntil(lambda: condition() or time.monotonic() > deadline, timeout=50)
+    assert condition(), f"等待条件在 {timeout_ms}ms 内未满足"
