@@ -377,6 +377,9 @@ def _recognize_ocr_batch(service: Any, images: list, options: OCROptions) -> lis
     _logger.debug("[_recognize_ocr_batch] 获取 OCR 管道...")
     pipeline = service.get_or_create_pipeline("OCR")
     _logger.debug("[_recognize_ocr_batch] 执行批量 predict (%d 张)...", len(images))
+    import time as _time
+
+    _predict_start = _time.perf_counter()
     try:
         output_list = _consume_generator_safely(
             pipeline.predict(
@@ -386,11 +389,20 @@ def _recognize_ocr_batch(service: Any, images: list, options: OCROptions) -> lis
                 use_textline_orientation=options.use_textline_orientation,
             )
         )
+        _predict_elapsed = _time.perf_counter() - _predict_start
+        _logger.info(
+            "[识别] pipeline.predict 耗时 %.2fs (%d 张, %.2fs/页)",
+            _predict_elapsed, len(images), _predict_elapsed / max(len(images), 1),
+        )
         _logger.debug(
             "[_recognize_ocr_batch] predict 返回 %d 个结果项", len(output_list)
         )
     except Exception as e:
-        _logger.error("[_recognize_ocr_batch] predict 调用失败: %s", e, exc_info=True)
+        _predict_elapsed = _time.perf_counter() - _predict_start
+        _logger.error(
+            "[_recognize_ocr_batch] predict 调用失败 (耗时 %.2fs): %s",
+            _predict_elapsed, e, exc_info=True,
+        )
         raise
 
     # predict(list) 逐图产出结果；若个别图失败，对应项为 {"error": ...}。

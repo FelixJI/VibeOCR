@@ -676,9 +676,13 @@ class WorkerServiceComposition:
             )
 
         def default_pdf() -> Any:
-            from vibeocr.services.pdf_inprocess_client import InProcessPdfBackendClient
+            # PDF 后端独立子进程：fitz 在专用子进程里跑，崩溃只死子进程，
+            # PdfBackendClient._ensure_started 透明重启，WorkerHost/GUI 不受影响。
+            # 这是 PyMuPDF 1.28.0 在密集表格（数百块/页）上原生内存损坏
+            # （0xC0000409）的架构级修复——隔离而非阻止崩溃。
+            from vibeocr.services.pdf_backend_client import PdfBackendClient
 
-            return InProcessPdfBackendClient()
+            return PdfBackendClient.instance()
 
         def default_qr_decode() -> Any:
             from vibeocr.services.qrcode_decode_service import QrcodeDecodeService

@@ -27,7 +27,6 @@ services/ocr_service_subprocess.py
 services/ocr_worker_process.py
 services/pdf_backend_client.py
 services/pdf_backend_process.py
-services/pdf_inprocess_client.py
 services/pdf_service.py
 services/pipeline_cache_manager.py
 services/qrcode_decode_service.py

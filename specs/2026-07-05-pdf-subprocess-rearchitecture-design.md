@@ -1,7 +1,7 @@
 # PDF 模块进程化重构设计
 
 **日期**: 2026-07-05
-**状态**: 设计评审中(未启动实现)
+**状态**: Phase 1 已实现并接入生产（2026-07-18）。子进程服务器 `pdf_backend_process.py` 与 HTTP 客户端 `pdf_backend_client.py` 完整实现并通过集成测试；`worker_host/composition.py:default_pdf()` 切换到 `PdfBackendClient.instance()`，原 `InProcessPdfBackendClient` 已删除（不留回退）。触发原因：PyMuPDF 1.28.0 在密集表格页（数百块/页）上原生内存损坏（0xC0000409），in-process 路径让整个 WorkerHost 崩溃；子进程隔离把崩溃限制在 PDF 子进程内，客户端透明重启。Phase 2（model_diff 增量、检查点、自动重开 session）待办。
 **范围**: 把整个 PDF 处理模块(fitz + PdfDocument 模型 + 全部渲染/变更/保存)从主进程的 QThread 下沉到常驻子进程,主进程退化为纯 UI + IPC 客户端
 
 ---

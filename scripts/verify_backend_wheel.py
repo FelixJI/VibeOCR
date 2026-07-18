@@ -55,7 +55,9 @@ def verify(wheel: Path) -> dict[str, object]:
             "vibeocr/worker_host/main.py",
             "vibeocr/worker_host/backend_client.py",
             "vibeocr/contracts/pipelines.py",
-            "vibeocr/services/pdf_inprocess_client.py",
+            # PDF 后端走独立子进程：服务器与 HTTP 客户端都必须进 backend wheel
+            "vibeocr/services/pdf_backend_process.py",
+            "vibeocr/services/pdf_backend_client.py",
         }
         missing = sorted(required - set(names))
         errors.extend(f"required backend file missing: {name}" for name in missing)

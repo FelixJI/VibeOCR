@@ -2683,11 +2683,13 @@ def detect_cuda_version() -> str | None:
         # 方法1: 解析 nvidia-smi 输出获取 CUDA 版本
         # 注意: nvidia-smi 的 --query-gpu 不支持 cuda_version 字段
         # 需要解析 nvidia-smi 的表头输出
+        # timeout=10s：nvidia-smi 首次调用在驱动冷启动时可能 >5s（实测触发
+        # TimeoutExpired → 被误判为"无 CUDA"）。提到 10s 留足冷启动余量。
         result = subprocess.run(
             ["nvidia-smi"],
             capture_output=True,
             text=True,
-            timeout=5,
+            timeout=10,
             creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
         )
         if result.returncode == 0 and result.stdout:
@@ -2697,16 +2699,25 @@ def detect_cuda_version() -> str | None:
             match = re.search(r"CUDA Version:\s*(\d+\.\d+)", result.stdout)
             if match:
                 cuda_version = match.group(1)
-                print(f"[硬件检测] CUDA版本 (nvidia-smi): {cuda_version}")
+                logger.info("[硬件检测] CUDA版本 (nvidia-smi): %s", cuda_version)
 
                 major_minor = ".".join(cuda_version.split(".")[:2])
                 paddle_cuda = find_best_match(major_minor)
                 if paddle_cuda:
-                    print(f"[硬件检测] 对应PaddlePaddle CUDA版本: {paddle_cuda}")
+                    logger.info(
+                        "[硬件检测] 对应PaddlePaddle CUDA版本: %s", paddle_cuda
+                    )
                     return paddle_cuda
 
+    except FileNotFoundError:
+        # nvidia-smi 不在 PATH（非 NVIDIA 机器 / 打包态 PATH 裁剪）→ 静默，属正常
+        logger.debug("[硬件检测] nvidia-smi 不在 PATH，跳过该方法")
+    except subprocess.TimeoutExpired:
+        logger.warning(
+            "[硬件检测] nvidia-smi 10s 超时（驱动卡死或冷启动），跳过该方法"
+        )
     except Exception as e:
-        print(f"[硬件检测] nvidia-smi检测失败: {e}")
+        logger.warning("[硬件检测] nvidia-smi 检测失败: %s: %s", type(e).__name__, e)
 
     try:
         # 方法2: 检查nvcc版本
@@ -2714,7 +2725,7 @@ def detect_cuda_version() -> str | None:
             ["nvcc", "--version"],
             capture_output=True,
             text=True,
-            timeout=5,
+            timeout=10,
             creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
         )
         if result.returncode == 0:
@@ -2724,17 +2735,26 @@ def detect_cuda_version() -> str | None:
             match = re.search(r"release\s+(\d+\.\d+)", result.stdout)
             if match:
                 cuda_version = match.group(1)
-                print(f"[硬件检测] CUDA版本 (nvcc): {cuda_version}")
+                logger.info("[硬件检测] CUDA版本 (nvcc): %s", cuda_version)
 
                 paddle_cuda = find_best_match(cuda_version)
                 if paddle_cuda:
-                    print(f"[硬件检测] 对应PaddlePaddle CUDA版本: {paddle_cuda}")
+                    logger.info(
+                        "[硬件检测] 对应PaddlePaddle CUDA版本: %s", paddle_cuda
+                    )
                     return paddle_cuda
 
-    except Exception:
-        pass
+    except FileNotFoundError:
+        logger.debug("[硬件检测] nvcc 不在 PATH（未装 CUDA Toolkit），跳过")
+    except subprocess.TimeoutExpired:
+        logger.warning("[硬件检测] nvcc 10s 超时，跳过")
+    except Exception as e:
+        logger.warning("[硬件检测] nvcc 检测失败: %s: %s", type(e).__name__, e)
 
-    print("[硬件检测] 无法检测CUDA版本")
+    logger.warning(
+        "[硬件检测] 无法检测CUDA版本（nvidia-smi 与 nvcc 均不可用/失败，"
+        "将回退 CPU；若机器确有 NVIDIA GPU，请检查驱动安装与 PATH）"
+    )
     return None
 
 
@@ -2750,17 +2770,21 @@ def detect_gpu() -> tuple[bool, str | None]:
             ["nvidia-smi", "-L"],
             capture_output=True,
             text=True,
-            timeout=5,
+            timeout=10,
             creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
         )
         if result.returncode == 0 and result.stdout.strip():
-            print(f"[硬件检测] 检测到GPU: {result.stdout.strip()}")
+            logger.info("[硬件检测] 检测到GPU: %s", result.stdout.strip())
             cuda_version = detect_cuda_version()
             return True, cuda_version
-    except Exception:
-        pass
+    except FileNotFoundError:
+        logger.debug("[硬件检测] nvidia-smi 不在 PATH（无 NVIDIA GPU 或打包态裁剪）")
+    except subprocess.TimeoutExpired:
+        logger.warning("[硬件检测] nvidia-smi -L 10s 超时")
+    except Exception as e:
+        logger.warning("[硬件检测] nvidia-smi -L 失败: %s: %s", type(e).__name__, e)
 
-    print("[硬件检测] 未检测到NVIDIA GPU，将使用CPU版本")
+    logger.info("[硬件检测] 未检测到NVIDIA GPU，将使用CPU版本")
     return False, None
 
 
@@ -2797,7 +2821,7 @@ def detect_gpu_info() -> dict[str, object]:
             ],
             capture_output=True,
             text=True,
-            timeout=5,
+            timeout=10,
             creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
         )
         if result.returncode != 0 or not result.stdout.strip():
@@ -2826,7 +2850,9 @@ def detect_gpu_info() -> dict[str, object]:
         info["cuda"] = detect_cuda_version()
         return info
     except Exception as e:
-        print(f"[硬件检测] detect_gpu_info 解析失败: {e}")
+        logger.warning(
+            "[硬件检测] detect_gpu_info 解析失败: %s: %s", type(e).__name__, e
+        )
         has_gpu, cuda = detect_gpu()
         info["has_gpu"] = has_gpu
         info["cuda"] = cuda

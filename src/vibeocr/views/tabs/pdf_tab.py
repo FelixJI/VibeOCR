@@ -1244,16 +1244,19 @@ class PdfTab(QWidget):
         )
 
     def _on_ocr_finished(self, file_path: str, success: int, fail: int) -> None:
+        logger.info("[PdfTab] _on_ocr_finished 进入")
         self._progress_bar.setVisible(False)
         self._btn_cancel.setVisible(False)
         self._set_file_buttons_enabled(True)
         self._btn_open.setEnabled(True)
         self._btn_add_file.setEnabled(True)
         self._update_status()
+        logger.info("[PdfTab] _on_ocr_finished _sync_layer_grid_from_model 前")
         # 不全量重建网格（保留用户在 OCR 期间的选中状态）。但逐页
         # _update_layer_grid_page 依赖 page_done 信号即时送达，取消时信号可能
         # 被搁置；这里按刷新后的 model 兜底同步所有格子颜色（见 Bug A）。
         self._sync_layer_grid_from_model()
+        logger.info("[PdfTab] _on_ocr_finished _sync_layer_grid_from_model 后")
         msg = f"OCR 完成：成功 {success} 页" + (f"，失败 {fail} 页" if fail else "")
         self._status_label.setText(msg)
         # 写层失败时把后端错误详情弹给用户（此前只记日志，用户无法排查）
@@ -1268,6 +1271,7 @@ class PdfTab(QWidget):
                 f"部分页面添加文字层失败：\n{detail}",
             )
             self._ocr_write_errors.clear()
+        logger.info("[PdfTab] _on_ocr_finished 完成")
 
     def _on_ocr_stats_ready(self, session_id: str, written: int, skipped: int) -> None:
         """文字层 OCR 完成后：汇总写入结果（成功/跳过）。
@@ -1276,6 +1280,10 @@ class PdfTab(QWidget):
         本方法负责文字层特有的"成功/跳过"汇总。网格格子已由逐页
         _update_layer_grid_page 即时更新，此处仅刷新汇总计数。
         """
+        logger.info(
+            "[PdfTab] _on_ocr_stats_ready 进入 (written=%d, skipped=%d)",
+            written, skipped,
+        )
         if written == 0 and skipped == 0:
             # 没有任何文字块产出（例如全部页面 OCR 失败），不误报“已添加”。
             self._status_label.setText("文字层未添加：未识别到任何文字块")
@@ -1287,7 +1295,9 @@ class PdfTab(QWidget):
             )
         else:
             self._status_label.setText(f"文字层已添加（{written} 块）")
+        logger.info("[PdfTab] _on_ocr_stats_ready _refresh_layer_summary 前")
         self._refresh_layer_summary()
+        logger.info("[PdfTab] _on_ocr_stats_ready 完成")
 
     def _on_ocr_write_error(self, file_path: str, error: str) -> None:
         """写文字层失败时：记录错误详情，供 _on_ocr_finished 完成后一并展示。

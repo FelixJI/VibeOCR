@@ -1,6 +1,7 @@
 # tests/test_env_manager_gpu_info.py
 """env_manager 的 GPU 信息探测与运行时能力缓存测试。"""
 
+import logging
 from unittest.mock import patch
 
 import vibeocr.env_manager as em
@@ -64,3 +65,80 @@ class TestGetRuntimeGpuCapability:
         monkeypatch.setattr(em, "_runtime_gpu_capability_cache", None)
         monkeypatch.setattr(em, "resolve_use_gpu", lambda pr: False)
         assert em.get_runtime_gpu_capability(tmp_path) is False
+
+
+class TestCudaDetectionLogging:
+    """detect_cuda_version / detect_gpu 的诊断日志测试。
+
+    回归：此前用 print() 输出硬件检测信息，仅到 stdout（被 WorkerHost 子进程
+    转发为 WorkerHost: 前缀 WARNING），不进 vibeocr.log，难以排查"无法检测
+    CUDA 版本"的根因。改为 logger 后应能被 caplog 捕获、capsys 无 print。
+    """
+
+    def test_detect_cuda_version_failure_uses_logger_not_print(
+        self, caplog, capsys, monkeypatch
+    ):
+        """nvidia-smi 与 nvcc 都不可用时，应走 logger.warning（非 print），
+        且返回 None。"""
+        # 让两个子进程调用都抛 FileNotFoundError（nvidia-smi/nvcc 不在 PATH）
+        def fake_run(*a, **kw):
+            raise FileNotFoundError("nvidia-smi not found")
+
+        monkeypatch.setattr(em.subprocess, "run", fake_run)
+
+        with caplog.at_level(logging.WARNING, logger=em.logger.name):
+            result = em.detect_cuda_version()
+
+        assert result is None
+        # 应有 logger 记录（而非 print）
+        captured = capsys.readouterr()
+        assert "[硬件检测]" not in captured.out, (
+            "detect_cuda_version 不应再 print，应走 logger"
+        )
+        # logger 应记录关键诊断
+        msgs = [r.message for r in caplog.records]
+        assert any("nvidia-smi" in m and "PATH" in m for m in msgs), (
+            f"应记录 nvidia-smi PATH 诊断，实际: {msgs}"
+        )
+        assert any("无法检测CUDA版本" in m for m in msgs), (
+            f"应记录最终回退日志，实际: {msgs}"
+        )
+
+    def test_detect_cuda_version_timeout_uses_logger(self, caplog, capsys, monkeypatch):
+        """nvidia-smi 超时应记 warning（含'超时'），不再静默或 print。"""
+        import subprocess as sp
+
+        def fake_run(*a, **kw):
+            raise sp.TimeoutExpired(cmd="nvidia-smi", timeout=10)
+
+        monkeypatch.setattr(em.subprocess, "run", fake_run)
+
+        with caplog.at_level(logging.WARNING, logger=em.logger.name):
+            em.detect_cuda_version()
+
+        captured = capsys.readouterr()
+        assert "[硬件检测]" not in captured.out
+        msgs = [r.message for r in caplog.records]
+        assert any("超时" in m for m in msgs), f"应记录超时诊断，实际: {msgs}"
+
+    def test_detect_gpu_no_nvidia_smi_uses_logger(self, caplog, capsys, monkeypatch):
+        """detect_gpu 在 nvidia-smi 缺失时应走 logger，不 print。"""
+        # detect_gpu 先调 nvidia-smi -L（失败），内部再调 detect_cuda_version
+        # （也失败），两者都应走 logger。
+        call_count = {"n": 0}
+
+        def fake_run(*a, **kw):
+            call_count["n"] += 1
+            raise FileNotFoundError("not found")
+
+        monkeypatch.setattr(em.subprocess, "run", fake_run)
+
+        with caplog.at_level(logging.INFO, logger=em.logger.name):
+            has_gpu, cuda = em.detect_gpu()
+
+        assert has_gpu is False
+        assert cuda is None
+        captured = capsys.readouterr()
+        assert "[硬件检测]" not in captured.out, "detect_gpu 不应 print"
+        msgs = [r.message for r in caplog.records]
+        assert any("未检测到NVIDIA GPU" in m for m in msgs)

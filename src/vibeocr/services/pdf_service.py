@@ -141,35 +141,50 @@ class PdfService:
     ) -> fitz.Document:
         """全量压缩覆盖原文件（Windows 兼容），返回重开后的新 doc。
 
-        流程：先备份原文件 → tobytes(garbage+deflate[+clean]) 取压缩字节 →
-        关闭 doc 释放文件锁 → 写回原路径 → 重新打开。失败时用备份回滚
-        （但 doc 已关闭，无法恢复原 doc 对象，调用方需处理）。
+        流程：先备份原文件 → doc.save(tmp, garbage+deflate[+clean]) 落到临时文件
+        → 关闭 doc 释放文件锁 → os.replace(tmp, save_path) 原子替换 → 重开。
 
-        关闭/重开是必须的：Windows 锁定被 fitz 打开的文件，不关 doc 无法覆盖。
+        **关键：用 doc.save 而非 doc.tobytes**。tobytes(garbage=4) 在 doc 累积大量
+        insert_text 修改后，会留下不一致的内部 xref/对象状态，随后的 doc.close()
+        遍历这些失效引用触发原生内存破坏（0xC0000409 STATUS_STACK_BUFFER_OVERRUN，
+        PyMuPDF 1.28.0 实测稳定复现）。doc.save 是官方推荐的"修改后落盘"路径，
+        在写文件时正确 finalize 文档内部状态，使后续 close 安全。
+
+        落到临时文件而非直接覆盖原文件：Windows 锁定被 fitz 打开的文件，不能在
+        doc 仍打开时覆盖原路径；save 到新路径无锁冲突，close 后再 os.replace。
 
         Args:
             clean: 是否深度清理内容流（PyMuPDF clean 参数）。True 重写规范化
-                内容流；False 保留原始内容流压缩——对用 ObjStm/CrossRefStream
-                高度压缩的扫描件，False 避免解压重写导致的体积膨胀。
+            内容流；False 保留原始内容流压缩——对用 ObjStm/CrossRefStream
+            高度压缩的扫描件，False 避免解压重写导致的体积膨胀。
         """
         backup_path = save_path + ".bak"
+        tmp_path = save_path + ".tmp"
         shutil.copy2(save_path, backup_path)
+        # 清理可能残留的临时文件（上次崩溃留下的）
+        Path(tmp_path).unlink(missing_ok=True)
         try:
-            data = doc.tobytes(garbage=4, deflate=True, clean=clean)
+            doc.save(
+                tmp_path, garbage=4, deflate=True, clean=clean, encryption=0
+            )
             doc.close()
-            with open(save_path, "wb") as f:
-                f.write(data)
+            # close 释放了原文件锁，现在可以原子替换
+            Path(tmp_path).replace(save_path)
             new_doc = fitz.open(save_path)
             Path(backup_path).unlink(missing_ok=True)
             return new_doc
         except Exception:
-            # 失败回滚：doc 可能已关闭，原文件从备份恢复
+            # 失败回滚：doc 可能已关闭，原文件从备份恢复，清理临时文件
             try:
                 doc.close()
             except Exception:
                 pass
-            shutil.copy2(backup_path, save_path)
+            try:
+                Path(backup_path).replace(save_path)
+            except OSError:
+                shutil.copy2(backup_path, save_path)
             Path(backup_path).unlink(missing_ok=True)
+            Path(tmp_path).unlink(missing_ok=True)
             raise
 
     @staticmethod
@@ -280,7 +295,20 @@ class PdfService:
         marker = Path(save_path + PdfService._INCREMENTAL_MARKER_SUFFIX)
         try:
             if not doc.can_save_incrementally():
-                logger.error("save_incremental: 当前文档不支持增量保存")
+                # 记录诊断字段，便于定位为何增量不可用：
+                # - is_encrypted/needs_pass：加密 PDF（open_doc 已拦截，但防御）
+                # - is_form_pdf：表单 PDF（AcroForm/XFA）MuPDF 标记结构变更后不可增量
+                # - is_dirty：内存 doc 有未保存修改（正常，加文字层即如此）
+                # 实测稳定复现 0xC0000409 的场景：增量恒 False → 跨批字体累积 →
+                # 末尾 _compress_in_place 全量重写崩。见 add_text_layer_batch 回退。
+                logger.error(
+                    "save_incremental: 当前文档不支持增量保存 "
+                    "(is_encrypted=%s, needs_pass=%s, is_form_pdf=%s, is_dirty=%s)",
+                    doc.is_encrypted,
+                    doc.needs_pass,
+                    getattr(doc, "is_form_pdf", None),
+                    getattr(doc, "is_dirty", None),
+                )
                 return False
             original_size = path.stat().st_size
             with marker.open("w", encoding="ascii") as stream:
@@ -1038,7 +1066,7 @@ class PdfService:
 
             inserted = False
             last_fontsize = fontsize
-            for _ in range(settings.font_size_retry_count):
+            for _retry_idx in range(settings.font_size_retry_count):
                 rc = page.insert_textbox(
                     rect,
                     text,

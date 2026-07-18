@@ -641,6 +641,34 @@ def add_text_layer_batch(
                     e,
                 )
                 saved = False
+            if not saved:
+                # 增量保存不可用（can_save_incrementally()=False 等）：文字层与
+                # 子集字体留在内存 doc 跨批累积，末尾 _compress_in_place 对累积
+                # 字体做 garbage=4 全量重写会触发 PyMuPDF 1.28.0 原生内存破坏
+                # （0xC0000409）。这里每批失败就立即全量压缩落盘，把累积字体
+                # 收敛到磁盘，末尾压缩面对的是干净文档。
+                # _compress_in_place 失败会 close 原 doc（无法恢复原对象），
+                # 需从备份回滚后的文件重新打开以保证 s.doc 始终可用。
+                try:
+                    s.doc = PdfService._compress_in_place(
+                        s.doc, save_path, clean=False
+                    )
+                    saved = True
+                except Exception as e2:
+                    logger.error(
+                        "[pdf-backend] add_text_layer_batch 全量压缩回退也失败"
+                        "（文字层仍在内存 doc，但本批未落盘）: %s",
+                        e2,
+                    )
+                    # _compress_in_place 已 close 原 doc 并回滚文件，需重开
+                    try:
+                        s.doc = fitz.open(save_path)
+                    except Exception:
+                        logger.error(
+                            "[pdf-backend] 全量压缩失败后重开 doc 也失败",
+                            exc_info=True,
+                        )
+                    saved = False
     return MutateResponse(
         diff=_diff_pages(
             s.pdf_document, written_pages,
@@ -772,13 +800,12 @@ def save(sid: str, req: SaveRequest) -> SaveResponse:
                 pdf_settings=_settings_from_dict(req.pdf_settings),
                 rewrite_text_layers=req.rewrite_text_layers,
             )
-            # 全量压缩时 doc 被替换
+            # 全量压缩时 doc 被替换。
+            # 注意：_compress_in_place 内部已经 close 了传入的 s.doc（释放
+            # Windows 文件锁的必要步骤）。这里不能再 close 一次——对已关闭
+            # 的 fitz doc 调 close 会触发原生 use-after-free（0xC0000409）。
             new_doc = getattr(result, "new_doc", None)
             if new_doc is not None:
-                try:
-                    s.doc.close()
-                except Exception:
-                    pass
                 s.doc = new_doc
         saved_path = result.path or s.pdf_document.file_path or ""
         return SaveResponse(path=saved_path, diff=_diff_full(s.pdf_document))

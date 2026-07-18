@@ -854,7 +854,9 @@ class PdfSessionManager(QObject):
                     self.failed.emit(self._sid, str(e))
                 finally:
                     # runner 退出即关闭线程池，释放 4 个工作线程及其 httpx Client。
+                    logger.info("[OCR] _render_pool.shutdown(wait=True) 前")
                     self._render_pool.shutdown(wait=True)
+                    logger.info("[OCR] _render_pool.shutdown(wait=True) 后")
 
         self._ocr_worker = _OcrRunner(
             self,
@@ -868,10 +870,16 @@ class PdfSessionManager(QObject):
         self._ocr_worker.page_done.connect(self._on_ocr_page_done_signal)
         self._ocr_worker.progress.connect(self._on_ocr_progress_signal)
         self._ocr_worker.all_done.connect(self._on_ocr_all_done_signal)
-        # failed 信号此前只记日志，不清状态/不发 ocr_done，UI 永久卡死。
+        # failed 信号此前只连了一个记日志的 lambda，不清状态/不发 ocr_done，UI 永久卡死。
         # 改连 _on_ocr_failed_signal：重置 _ocr_running/_ocr_worker 并发 ocr_done
         # 让 PdfTab._on_ocr_finished 复位 UI（隐进度条、启用按钮）。
         self._ocr_worker.failed.connect(self._on_ocr_failed_signal)
+        # QThread 生命周期安全：finished 信号在 run() 完整返回后才发出（晚于
+        # all_done——all_done 是 run() 末尾发的，之后还要跑 finally 里的
+        # _render_pool.shutdown）。这里在 finished 时才清 _ocr_worker 引用并
+        # deleteLater，避免在 run() 仍在 finally 中（thread 仍活）时丢弃 Python
+        # 引用→GC 在活线程上销毁 QThread→Qt 原生崩（0xC0000409）。
+        self._ocr_worker.finished.connect(self._on_ocr_worker_finished)
         self._ocr_worker.start()
 
     # 三层批关系（性能2）：
@@ -957,6 +965,11 @@ class PdfSessionManager(QObject):
             if runner._cancelled:
                 break
 
+            import time as _time
+
+            _batch_start = _time.monotonic()
+            _stage_render_start = _batch_start
+
             # 阶段1：并发渲染(线程池，结果按 batch_pages 顺序对齐)
             images: list[bytes | None] = [None] * len(batch_pages)
             if not runner._cancelled:
@@ -972,6 +985,7 @@ class PdfSessionManager(QObject):
             # 渲染子步进度：本批每页 +1（含渲染失败的页，它们仍“处理完”了渲染阶段）
             progress += len(batch_pages)
             _emit_progress()
+            _render_elapsed = _time.monotonic() - _stage_render_start
 
             # 提前提交下一批渲染。ThreadPoolExecutor.map 会立即排队所有任务，
             # iterator 留到下一轮再消费；当前线程随即进入 WorkerHost 批量 OCR，
@@ -983,6 +997,7 @@ class PdfSessionManager(QObject):
                 )
 
             # 阶段2：批量识别(单次 predict，跳过渲染失败的页)
+            _stage_ocr_start = _time.monotonic()
             valid_indices = [i for i, img in enumerate(images) if img is not None]
             results_map: dict[int, object] = {}
             if valid_indices and not runner._cancelled:
@@ -1001,12 +1016,21 @@ class PdfSessionManager(QObject):
             # 识别子步进度：仅识别成功的页（渲染失败的页不再走识别）
             progress += len(valid_indices)
             _emit_progress()
+            _ocr_elapsed = _time.monotonic() - _stage_ocr_start
+            _ocr_pages = len(valid_indices)
+            if _ocr_pages > 0:
+                logger.info(
+                    "[OCR] 批 %d (起始页 %d, %d 页) 识别耗时 %.2fs (%.2fs/页)",
+                    batch_number, batch_pages[0], _ocr_pages,
+                    _ocr_elapsed, _ocr_elapsed / _ocr_pages,
+                )
 
             # 阶段3：批量写层（一次 HTTP，共享聚合子集字体）+ 逐页进度信号。
             # 先收集本批要写层的有效页，一次 add_text_layer_batch 调用让后端聚合
             # 所有页字符解析单一子集字体（避免逐页各解析一份放大体积），写层返回
             # 后再逐页发 page_done 信号，保持 UI 流式反馈不变。
             # 取消/失败/空结果页不进 batch，单独处理。
+            _stage_write_start = _time.monotonic()
             write_items: list[dict] = []  # [{page, ocr_result, result_ref, list_idx}]
             for i, idx in enumerate(batch_pages):
                 if runner._cancelled or page_failed[i]:
@@ -1116,12 +1140,22 @@ class PdfSessionManager(QObject):
                 progress += 1
                 _emit_progress()
 
+            _write_elapsed = _time.monotonic() - _stage_write_start
+            _batch_total = _time.monotonic() - _batch_start
+            logger.info(
+                "[OCR] 批 %d 完成：渲染 %.2fs | 识别 %.2fs | 写层 %.2fs | 总计 %.2fs "
+                "(%d 页，写层 %d 块)",
+                batch_number, _render_elapsed, _ocr_elapsed, _write_elapsed,
+                _batch_total, len(batch_pages), len(write_items),
+            )
+
         # 末尾整文档快速压缩：批量写层已经完成，显式跳过逐页删除/重写，
         # 只复用 save 路由做最终压缩落盘。代价是保留每批一个字体子集，换取
         # 不再二次处理全部页。compress 失败时 sidecar 保持 completed=false
         #（已 incremental 落盘的页仍有效，下次 start_ocr 续传）。
         if not runner._cancelled and success > 0 and session.file_path:
             try:
+                logger.info("[OCR] 末尾全量压缩开始")
                 runner.progress.emit(session_id, 0, 0)  # 不确定进度（COMPRESS 态）
                 self._client.save(
                     session_id,
@@ -1129,6 +1163,7 @@ class PdfSessionManager(QObject):
                     settings_dict,
                     rewrite_text_layers=False,
                 )
+                logger.info("[OCR] 末尾全量压缩完成")
                 # 全量压缩整体重写了 PDF（可能变小）。先刷新 sidecar 基线为
                 # 当前文件状态，否则 mark_completed→load_sidecar 的增长校验会
                 # 因 size < original 失败而落盘一个空 sidecar（同 Task1 的指纹
@@ -1151,11 +1186,18 @@ class PdfSessionManager(QObject):
         # _OcrRunner.run()，线程静默死亡导致 UI 卡死。放宽到 Exception 确保
         # all_done 始终发出（UI 得以复位），刷新失败仅记日志（OCR 结果已写层）。
         try:
+            logger.info("[OCR] get_model 刷新开始")
             full = self._client.get_model(session_id)
+            logger.info(
+                "[OCR] get_model 返回: %d 页", len(full.pages) if full else 0
+            )
             session.pdf_document = mirror_to_doc(full)
+            logger.info("[OCR] mirror_to_doc 完成")
         except Exception as e:
             logger.error("OCR 后刷新 model 失败: %s", e)
+        logger.info("[OCR] all_done.emit 前")
         runner.all_done.emit(session_id, success, fail, runner._task_id)
+        logger.info("[OCR] all_done.emit 后")
 
     def _on_ocr_page_done_signal(
         self, session_id: str, page_index: int, result: object
@@ -1190,6 +1232,7 @@ class PdfSessionManager(QObject):
     def _on_ocr_all_done_signal(
         self, session_id: str, success: int, fail: int, task_id: int = 0
     ) -> None:
+        logger.info("[OCR] _on_ocr_all_done_signal 进入（主线程）")
         # 只接受当前代的信号，丢弃旧任务的迟到信号
         if task_id != 0 and task_id != self._task_generation:
             logger.debug(
@@ -1197,13 +1240,38 @@ class PdfSessionManager(QObject):
             )
             return
         self._ocr_running = False
-        self._ocr_worker = None
+        # 不在此清 _ocr_worker：all_done 是 worker 的 run() 末尾发的，之后还要
+        # 跑 finally 里的 _render_pool.shutdown(wait=True)，run() 尚未返回、
+        # QThread 仍活。此时丢弃 Python 引用→GC 销毁活 QThread→Qt 原生崩。
+        # _ocr_worker 引用改在 _on_ocr_worker_finished（finished 信号，run()
+        # 完整返回后才发）里清。
         file_path = self._path_for_session_id(session_id)
         if file_path:
             session = self._sessions[file_path]
             stats = session.ocr_stats
+            logger.info(
+                "[OCR] ocr_stats_ready.emit 前 (written=%s, skipped=%s)",
+                stats["written"], stats["skipped"],
+            )
             self.ocr_stats_ready.emit(file_path, stats["written"], stats["skipped"])
+            logger.info("[OCR] ocr_done.emit 前 (success=%d, fail=%d)", success, fail)
             self.ocr_done.emit(file_path, success, fail)
+            logger.info("[OCR] _on_ocr_all_done_signal 完成")
+
+    def _on_ocr_worker_finished(self) -> None:
+        """QThread.finished 槽：run() 完整返回（含 finally 的 shutdown）后才触发。
+
+        此时线程确已结束，丢弃 Python 引用安全。配合下面 deleteLater 让 Qt
+        在事件循环里清理 QThread 对象（不再依赖 GC 抢跑）。
+        """
+        logger.info("[OCR] _on_ocr_worker_finished（QThread 已结束，清引用）")
+        w = getattr(self, "_ocr_worker", None)
+        if w is not None:
+            try:
+                w.deleteLater()
+            except Exception:
+                pass
+        self._ocr_worker = None
 
     def _on_ocr_failed_signal(self, session_id: str, error: str) -> None:
         """OCR runner 未捕获异常时调用：重置内部状态并通知 UI 复位。
@@ -1216,7 +1284,8 @@ class PdfSessionManager(QObject):
         """
         logger.error("OCR runner 失败: %s", error)
         self._ocr_running = False
-        self._ocr_worker = None
+        # 不在此清 _ocr_worker（同 _on_ocr_all_done_signal 的理由：failed 是
+        # run() 里发的，之后还有 finally，QThread 仍活）。引用在 finished 槽清。
         file_path = self._path_for_session_id(session_id)
         if file_path:
             session = self._sessions.get(file_path)
