@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.37] - 2026-07-18
+
+### Fixed
+- fix(worker_host): 打包态用嵌入式 Python 启动 WorkerHost，避免 GUI 递归
+
+### Changed
+- refactor(pdf): PDF 后端下沉独立子进程 + 修 QThread 生命周期崩溃
+
 ## [0.4.36] - 2026-07-17
 
 ### Fixed
