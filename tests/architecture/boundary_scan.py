@@ -20,8 +20,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 # Packages that constitute the "backend" — the UI must not import these
-# directly. Phase 4 will physical-split these into a real workspace package;
-# until then the names match the current src/vibeocr/ sub-packages.
+# directly. The source now lives in the physical pyside workspace package.
 #
 # NOTE: ``models`` is excluded — per ADR §5.3, pure data models (OCROptions,
 # OCRResult, TextBlockOptions, ExportSettings, PdfGlobalSettings, etc.) are
@@ -39,7 +38,7 @@ BACKEND_PACKAGES: frozenset[str] = frozenset(
     }
 )
 
-# UI-layer sub-packages under src/vibeocr/. These are the PySide6 frontend.
+# UI-layer sub-packages under apps/vibeocr-pyside/src/vibeocr/.
 UI_PACKAGE_DIRS: tuple[str, ...] = ("views", "widgets", "ui")
 
 
@@ -88,14 +87,14 @@ def scan_ui_backend_imports(
     """Scan all UI-layer .py files for direct backend-package imports.
 
     Args:
-        ui_dirs: sub-package names under ``root / "src" / "vibeocr"``
+        ui_dirs: sub-package names under the pyside workspace source root.
             (e.g. ``("views", "widgets", "ui")``).
-        root: repository root containing ``src/vibeocr``.
+        root: repository root containing ``apps/vibeocr-pyside``.
 
     Returns:
         Sorted list of :class:`BackendImport` (by file then line).
     """
-    base = root / "src" / "vibeocr"
+    base = root / "apps" / "vibeocr-pyside" / "src" / "vibeocr"
     hits: list[BackendImport] = []
 
     for sub in ui_dirs:

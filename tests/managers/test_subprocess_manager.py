@@ -1,5 +1,6 @@
 """SubprocessManager 测试"""
 
+import threading
 from pathlib import Path
 from unittest.mock import Mock
 
@@ -11,6 +12,7 @@ from vibeocr.managers.subprocess_manager import (
     SubprocessManager,
     SubprocessStartSignals,
     SubprocessStartTask,
+    WorkerHostStartTask,
 )
 
 
@@ -39,6 +41,13 @@ class TestSubprocessStartTask:
         task = SubprocessStartTask(Path("/tmp"))
         task.cancel()
         assert task._cancelled is True
+
+
+class TestWorkerHostStartTask:
+    def test_cancel_uses_thread_safe_event(self):
+        task = WorkerHostStartTask()
+        task.cancel()
+        assert task._cancelled.is_set()
 
 
 class TestPreloadSignals:
@@ -167,6 +176,39 @@ class TestSubprocessManager:
 
         # 清理
         manager._start_task = None
+
+    def test_worker_host_start_keeps_qt_event_loop_responsive(
+        self, manager, qtbot, monkeypatch
+    ):
+        """慢 ready 握手在后台运行时，GUI 事件仍能被处理。"""
+        entered = threading.Event()
+        release = threading.Event()
+        fake_client = Mock()
+
+        def slow_get_backend_client():
+            entered.set()
+            assert release.wait(5)
+            return fake_client
+
+        monkeypatch.setattr(
+            "vibeocr.client.session.get_backend_client", slow_get_backend_client
+        )
+        ready: list[bool] = []
+        manager.service_ready.connect(ready.append)
+
+        manager.start_worker_host()
+        qtbot.waitUntil(entered.is_set, timeout=2000)
+
+        gui_tick: list[bool] = []
+        from PySide6.QtCore import QTimer
+
+        QTimer.singleShot(0, lambda: gui_tick.append(True))
+        qtbot.waitUntil(lambda: bool(gui_tick), timeout=1000)
+
+        release.set()
+        qtbot.waitUntil(lambda: ready == [True], timeout=3000)
+        assert manager.is_ready is True
+        assert manager.service is not None
 
     def test_preload_pipelines_skips_if_not_ready(self, manager):
         """测试未就绪时跳过预加载"""

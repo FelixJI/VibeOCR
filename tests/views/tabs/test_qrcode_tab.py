@@ -49,12 +49,22 @@ class _FakeBackend:
 
 
 @pytest.fixture()
-def qrcode_tab(qtbot):
+def qrcode_tab(qtbot, qasync_loop):
     from vibeocr.views.tabs.qrcode_tab import QrcodeTab
 
     tab = QrcodeTab(backend=_FakeBackend())
     qtbot.addWidget(tab)
     return tab
+
+
+def _wait_async(qtbot, condition, *, timeout_ms: int = 2000):
+    import asyncio
+
+    from tests.conftest import wait_until_done
+
+    wait_until_done(
+        qtbot, asyncio.get_event_loop(), condition, timeout_ms=timeout_ms
+    )
 
 
 class TestQrcodeTabStructure:
@@ -149,14 +159,18 @@ class TestQrcodeTabBehavior:
     def test_text_input_triggers_preview_via_rpc(self, qrcode_tab, qtbot):
         """Text input calls generate_qrcode_sync on the backend."""
         qrcode_tab._text_input.setPlainText("Hello World")
-        qtbot.wait(400)
+        qrcode_tab._debounce_timer.stop()
+        qrcode_tab._refresh_preview()
+        _wait_async(qtbot, lambda: qrcode_tab._current_image is not None)
         assert qrcode_tab._current_image is not None
         assert len(qrcode_tab._backend.generate_calls) >= 1
         assert qrcode_tab._backend.generate_calls[-1][0] == "Hello World"
 
     def test_empty_text_shows_placeholder(self, qrcode_tab, qtbot):
         qrcode_tab._text_input.setPlainText("Hello")
-        qtbot.wait(400)
+        qrcode_tab._debounce_timer.stop()
+        qrcode_tab._refresh_preview()
+        _wait_async(qtbot, lambda: qrcode_tab._current_image is not None)
         qrcode_tab._text_input.setPlainText("")
         qtbot.wait(400)
         assert qrcode_tab._current_image is None
@@ -172,7 +186,9 @@ class TestQrcodeTabBehavior:
         from PySide6.QtGui import QGuiApplication
 
         qrcode_tab._text_input.setPlainText("Copy test")
-        qtbot.wait(400)
+        qrcode_tab._debounce_timer.stop()
+        qrcode_tab._refresh_preview()
+        _wait_async(qtbot, lambda: qrcode_tab._current_image is not None)
         if qrcode_tab._current_image is not None:
             qrcode_tab._btn_copy.click()
             clipboard_pixmap = QGuiApplication.clipboard().pixmap()
@@ -220,6 +236,7 @@ class TestQrcodeDecodeBehavior:
         qrcode_tab._on_image_input(pm)
         qtbot.waitUntil(lambda: qrcode_tab._btn_decode.isEnabled())
         qrcode_tab._btn_decode.click()
+        _wait_async(qtbot, lambda: qrcode_tab._decode_task is None)
         assert qrcode_tab._decode_result_list.count() == 1
         assert "1" in qrcode_tab._result_count_label.text()
         assert len(qrcode_tab._backend.decode_calls) == 1
@@ -254,6 +271,7 @@ class TestQrcodeDecodeBehavior:
         pm = _pil_to_qpixmap(blank)
         qrcode_tab._on_image_input(pm)
         qrcode_tab._btn_decode.click()
+        _wait_async(qtbot, lambda: qrcode_tab._decode_task is None)
         assert qrcode_tab._decode_results == []
         assert qrcode_tab._decode_result_list.count() == 1  # 提示项
         assert "0" in qrcode_tab._result_count_label.text()
@@ -277,3 +295,106 @@ class TestQrcodeDecodeBehavior:
         qrcode_tab.show()
         qrcode_tab._sub_tabs.setCurrentIndex(0)
         assert qrcode_tab._preview_label.acceptDrops() is False
+
+
+class TestQrcodeAsyncLifecycle:
+    def test_slow_decode_keeps_qt_timer_responsive(
+        self, qrcode_tab, qtbot, monkeypatch
+    ):
+        import threading
+
+        from PySide6.QtCore import QTimer
+        from PySide6.QtGui import QPixmap
+
+        started = threading.Event()
+        release = threading.Event()
+
+        def slow_decode(_payload):
+            started.set()
+            release.wait(timeout=2)
+            return []
+
+        monkeypatch.setattr(qrcode_tab._backend, "decode_qrcode_sync", slow_decode)
+        pm = QPixmap(10, 10)
+        pm.fill()
+        qrcode_tab._on_image_input(pm)
+        qrcode_tab._on_decode()
+        _wait_async(qtbot, started.is_set)
+
+        timer_fired: list[bool] = []
+        QTimer.singleShot(0, lambda: timer_fired.append(True))
+        _wait_async(qtbot, lambda: timer_fired == [True])
+        assert qrcode_tab._decode_task is not None
+
+        release.set()
+        _wait_async(qtbot, lambda: qrcode_tab._decode_task is None)
+
+    def test_old_preview_result_cannot_overwrite_newer_input(
+        self, qrcode_tab, qtbot, monkeypatch
+    ):
+        import threading
+
+        old_started = threading.Event()
+        release_old = threading.Event()
+        old_finished = threading.Event()
+
+        def generate(data, *, options=None):
+            if data == "old":
+                old_started.set()
+                release_old.wait(timeout=2)
+                old_finished.set()
+                color = "red"
+            else:
+                color = "blue"
+            buf = io.BytesIO()
+            Image.new("RGB", (10, 10), color).save(buf, format="PNG")
+            return buf.getvalue()
+
+        monkeypatch.setattr(qrcode_tab._backend, "generate_qrcode_sync", generate)
+        qrcode_tab._text_input.setPlainText("old")
+        qrcode_tab._debounce_timer.stop()
+        qrcode_tab._refresh_preview()
+        _wait_async(qtbot, old_started.is_set)
+        qrcode_tab._text_input.setPlainText("new")
+        qrcode_tab._debounce_timer.stop()
+        qrcode_tab._refresh_preview()
+        _wait_async(
+            qtbot,
+            lambda: qrcode_tab._current_image is not None
+            and qrcode_tab._current_image.getpixel((0, 0)) == (0, 0, 255),
+        )
+
+        release_old.set()
+        _wait_async(qtbot, old_finished.is_set)
+        assert qrcode_tab._current_image.getpixel((0, 0)) == (0, 0, 255)
+
+    def test_close_cancels_decode_and_duplicate_request_is_ignored(
+        self, qrcode_tab, qtbot, monkeypatch
+    ):
+        import threading
+
+        from PySide6.QtGui import QPixmap
+
+        started = threading.Event()
+        release = threading.Event()
+        calls: list[bool] = []
+
+        def slow_decode(_payload):
+            calls.append(True)
+            started.set()
+            release.wait(timeout=2)
+            return [DecodedCode(data="late", fmt="QRCODE", is_url=False)]
+
+        monkeypatch.setattr(qrcode_tab._backend, "decode_qrcode_sync", slow_decode)
+        pm = QPixmap(10, 10)
+        pm.fill()
+        qrcode_tab._on_image_input(pm)
+        qrcode_tab._on_decode()
+        _wait_async(qtbot, started.is_set)
+
+        qrcode_tab._on_decode()
+        assert calls == [True]
+        qrcode_tab.set_closing(True)
+        release.set()
+        _wait_async(qtbot, lambda: qrcode_tab._decode_task is None)
+        assert qrcode_tab._decode_results == []

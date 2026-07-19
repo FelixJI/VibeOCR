@@ -45,6 +45,8 @@
 
 | 错误 | 尝试 | 处理 |
 |---|---:|---|
+| 把 `vibeocr --help` 当成无副作用 CLI，实际启动 GUI 并等待事件循环 | 1 | 终止该进程；复用已安装环境，以直接模块导入和物理模块遍历完成单包验证 |
+| 新增运行态路径测试保留未使用的 `Path` 导入，定向 Ruff 失败 | 1 | 删除未使用导入；测试本身 10 项已全部通过 |
 | 系统找不到全局 `python` 命令，首次 session-catchup 失败 | 1 | 改用项目 `.vibeocr/uv-python/.../python.exe` 后成功运行 |
 | `.venv` 定向 pytest 在收集合约测试时无法加载 `rpds` DLL（WinError 5），且环境缺少 pytest-asyncio | 1 | 记录为测试环境问题；后续改用项目 uv/隔离依赖组运行，不重复相同命令 |
 | 用 `rg --files` 在隐藏运行时目录查找 `uv.exe` 无结果 | 1 | 改用 PowerShell 定向枚举 |
@@ -106,3 +108,241 @@
 |---|---|
 | pytest 在沙箱内无法创建用户临时目录；沙箱外授权又被环境额度策略拒绝 | 已收集 53 项，19 项通过、34 项在 setup 阶段因权限错误未运行；用真实 0.4.29 缺 tag 历史和版本文件发现函数完成直接验证 |
 | Pyright 无法读取 `.venv/Lib/site-packages/_editable_impl_vibeocr.pth`（EPERM） | 记录为环境限制；Ruff、AST 解析、直接导入执行和 `git diff --check` 均通过 |
+
+---
+
+# 任务计划：PySide6 架构与运行治理审计
+
+## 目标
+
+以只读方式核查 PySide6 前端的模块边界、信号/槽与依赖注入接线、界面功能落地、异步/线程/进程和批处理模型、日志结构、依赖管理、模型缓存及超时治理；通过代码、配置和测试证据判断正确性，并输出按优先级排序的优化决策。本任务不修改产品代码。
+
+## 当前阶段
+
+已完成
+
+## 阶段
+
+### Phase 1：资产与入口盘点
+
+- [x] 识别 PySide6 应用入口、composition root、窗口/页面/服务/worker 边界
+- [x] 盘点配置、依赖声明、缓存目录、日志与超时常量
+- **Status:** complete
+
+### Phase 2：接线与功能正确性审计
+
+- [x] 逐项核对界面控件、action、信号/槽、状态更新和后端调用
+- [x] 对照测试与实现，标出完整、占位、失配和无覆盖功能
+- **Status:** complete
+
+### Phase 3：异步、批处理与生命周期审计
+
+- [x] 核查 UI 线程安全、任务取消、并发上限、背压、批次策略和资源释放
+- [x] 核查依赖装配、模型缓存命中/失效/容量管理和多进程复用效果
+- **Status:** complete
+
+### Phase 4：日志与超时治理审计
+
+- [x] 核查日志上下文、分层、轮转、敏感信息、UI 展示和异常链
+- [x] 汇总所有超时入口，评估默认值、覆盖层级、取消语义与集中配置
+- **Status:** complete
+
+### Phase 5：验证与决策
+
+- [x] 运行适度的静态检查和定向测试
+- [x] 形成问题清单、风险级别、证据位置与分阶段优化路线
+- **Status:** complete
+
+## 审计判定标准
+
+- 正确性：界面操作能到达预期用例，状态和异常能回到 UI，停止/关闭可回收资源。
+- 性能：UI 线程不做重 CPU/I/O；批处理减少固定开销且有内存/并发上限；缓存能观测到命中并有失效策略。
+- 可维护性：composition root 集中、依赖方向稳定、日志和超时由语义化策略治理而非散落魔数。
+
+## 错误记录
+
+| 错误 | 尝试 | 处理 |
+|---|---:|---|
+| 当前任务首次执行 session-catchup 时全局 `python` 不可用 | 1 | 使用 Codex 工作区依赖中提供的 Python 后成功执行 |
+| 二维码联合检索引用了不存在的 `src/vibeocr/client/qrcode.py`，导致该组命令返回 1 | 1 | 已确认 typed API 位于 `worker_host/backend_client.py`，后续改用现有路径并拆开读取 |
+
+---
+
+# 任务计划：PySide6 三阶段治理实施
+
+## 实施错误记录
+
+| 日期 | 环节 | 现象 | 处理 |
+|---|---|---|---|
+| 2026-07-19 | Phase 1 子代理测试 | 沙箱内 pytest 收集时 `rpds` 原生 DLL 被拒绝访问 | 不绕过权限；由主线使用已授权的项目虚拟环境在沙箱外统一验证 |
+| 2026-07-19 | PySide 定向回归退出 | 39 项均通过、进程返回 0，但 pytest-qt 清理事件时报告 Windows `0x8001010d`，后台 GPU 检测线程仍在 `subprocess.communicate()` | 记入 Phase 3 退出治理，集中收拢环境检测线程；当前不把非失败退出误判为功能失败 |
+| 2026-07-19 | 协议一致性回归 | 350 项通过、1 项失败；C# 方法解析正则不允许域名含下划线，误报 5 个 `pipeline_cache.*` 方法缺失 | 将测试解析器域名从 `[a-z]+` 修正为 `[a-z_]+`，随后重跑 |
+| 2026-07-19 | WorkerHost 异步启动首轮回归 | 后台 task 的 ready 信号在测试 teardown 后迟到，manager 已清空 task，主窗口递归进入失败提示并触发 Windows 堆异常 | manager 忽略无活动 task 的迟到 started，MainWindow 忽略 closing 后 ready；主窗口单元 fixture 隔离真实 WorkerHost，专项真实线程测试覆盖响应性；重跑 56 passed |
+| 2026-07-19 | workspace wheel 离线 smoke | 首次沙箱内 uv cache 初始化失败；按规则在沙箱外重跑后，两个 wheel 均因当前 venv 未安装 hatchling、offline 无法建立隔离构建环境而未构建 | 不联网安装；记录为构建环境限制。manifest/包内容静态核查仍确认子包只有 marker，不能把依赖隔离判为已生效 |
+| 2026-07-19 | Phase 3 首轮扩展回归 | UI 新增代码直接 import `core` 破坏架构门禁；按类型桩将 `QImage.save` 格式改为 bytes 又触发真实运行时错误 | 增加 `pyside` 壳层转发，恢复 PySide 运行时要求的字符串格式并局部注明类型桩偏差；相关 72 项与最终 681 项均通过 |
+| 2026-07-19 | 静态检查 | 全仓 Pyright 仍包含生成 UI 与既有模块的存量类型错误；pytest-qt 在 Windows 退出时偶发打印 `0x8001010d`，但测试进程返回 0 | 以本次变更源码为门禁：0 errors/8 warnings；Ruff 与 diff check 全通过。MainWindow 单测隔离真实 GPU 子进程，保留专项取消测试；不把存量/非失败诊断包装成已清零 |
+
+## 目标
+
+将 2026-07-18 的只读审计结论落实为三个可验收阶段，修复生产接线、异步/批处理生命周期、日志与超时治理，并以真实 PySide6 → typed client → WorkerHost 路径测试证明功能有效。保留用户已有规划文件改动，不覆盖无关工作。
+
+## 当前阶段
+
+已完成
+
+## 阶段
+
+### Phase 1：正确性与生产接线止血
+
+- [x] typed client 使用统一端到端 deadline，消除外层 300/1800 秒被内层 30 秒截断
+- [x] 增加真实 pipeline cache status/set_ttl/release/preload RPC，并让生产 `BatchBackendAdapter` 可读回验证（设置页可见区在 Phase 3 落地）
+- [x] 修复批量 QThread cancel/error/finished 状态机、禁止重入并纳入 MainWindow 退出 drain
+- [x] 补充生产适配器、协议契约、真实 QThread 生命周期定向测试
+- **Status:** complete
+
+### Phase 2：交互与异步生命周期
+
+- [x] PDF 保存成功后再切换/继续 OCR，mutate 采用明确 busy gate/排队且不在 GUI 线程阻塞等待
+- [x] WorkerHost 启动、二维码生成/识别、单图大文件读取与编码移出 GUI 线程
+- [x] 统一取消语义为 running/cancelling/cancelled/completed/partial_failed，并清理迟到信号
+- [x] 补充 UI 响应性、continuation、取消与关闭回归测试
+- **Status:** complete
+
+### Phase 3：可观测性、性能与工程边界
+
+- [x] 主进程/WorkerHost 统一结构化日志上下文与级别转发，状态栏脱离日志关键词
+- [x] 统一 connect/queue/execution/stall/cancel/shutdown budget，并从单一总预算扣减
+- [x] 批大小同时受数量、总字节/像素与资源预算约束；缓存状态显示命中、常驻、TTL 与释放结果
+- [x] 验证依赖缓存/模型磁盘缓存语义、workspace 包边界与可安装/启动 smoke test（构建环境限制与 marker 包结论已记录）
+- [x] 运行完整相关测试、Ruff、Pyright、协议一致性与 diff 审核
+- **Status:** complete
+
+## 子代理路由
+
+- Phase 1 使用两个互斥写入工作包：A 负责 deadline + pipeline cache RPC/契约；B 负责批量 QThread 生命周期与测试。
+- 主代理负责规划文件、跨工作包复核、MainWindow 组合根接线、冲突处理和阶段验收。
+- 子代理不得继续生成下一层代理；所有结论必须由主代理用源码与测试复核。
+
+## 验收标准
+
+- 所有长任务只有一个真正生效的端到端 deadline，测试检查 envelope deadline 而非仅外层 wait。
+- 设置页 TTL/释放/状态必须命中当前 `BatchBackendAdapter(SyncBackendClient)` 生产路径并可读回。
+- 取消后不得释放仍运行的 QThread 引用、不得重新启用开始按钮、不得把取消显示为 100% 完成。
+- GUI 线程不得同步等待 WorkerHost 启动、模型推理或 5 秒 QThread wait。
+- 日志可按 request/task/session/pipeline/page/batch 关联，且 WorkerHost severity/traceback 不丢失。
+- 每阶段通过定向测试；最终通过相关全量测试、静态检查和完成审计。
+
+## 错误记录
+
+| 错误 | 尝试 | 处理 |
+|---|---:|---|
+| 定向 pytest 在沙箱内无法创建用户临时目录/pytest cache，批量出现 WinError 5 | 1 | 按权限规则在沙箱外重跑相同定向集，225 项全部通过 |
+| 尝试把 pytest basetemp 改到 `C:\tmp` 仍被当前命令沙箱拒绝创建目录 | 1 | 不再重复绕过；使用已批准的沙箱外 pytest 前缀完成验证 |
+| 本地 `.venv` 在沙箱内未加载 pytest-asyncio，单个 sync_client async 用例被误报失败 | 1 | 沙箱外完整环境已加载 pytest-asyncio；本次产品审计验证集排除环境误报，未将其计入产品缺陷 |
+| PDF 测试联合检索假设存在 `tests/pyside` 目录，导致命令返回 1 | 1 | 改为先用 `rg --files tests` 发现实际 PDF 测试路径，再按现有文件读取 |
+| 超时审计预设 `src/vibeocr/constants.py`/`config.py` 存在，联合命令因路径不存在返回 1 | 1 | 改为先按 `class Constants`/`Timeout` 全仓发现定义，再读取真实路径 |
+| 二维码联合检索引用了不存在的 `src/vibeocr/client/qrcode.py`，导致该组命令返回 1 | 1 | 已确认 typed API 位于 `worker_host/backend_client.py`，后续改用现有路径并拆开读取 |
+
+---
+
+# 任务计划：四包物理拆分与联网重依赖安装
+
+## 目标
+
+把现有 workspace 的 marker 包落实为四个包含真实生产代码、可独立构建和安装的 wheel：`vibeocr-contracts`、`vibeocr-client`、`vibeocr-backend`、`vibeocr-pyside`；根 `vibeocr` 作为兼容 meta package 保留现有安装和导入体验。CI 允许联网构建，最终用户安装时允许联网下载 Paddle/Torch/MinerU 等重依赖，并验证不会破坏现有 WorkerHost、GPU/CPU 选择和应用启动链。
+
+## 当前阶段
+
+已完成
+
+## 阶段
+
+### Phase 1：包归属与构建拓扑
+
+- [x] 盘点根 `src/vibeocr` 的模块依赖、入口点、动态导入和资源文件
+- [x] 确定四个 wheel 的真实文件归属、依赖方向和兼容 namespace 策略
+- [x] 核查现有 workspace/build hook/CI/重依赖来源，形成不破坏用户联网安装的迁移方案
+- **Status:** completed
+
+### Phase 2：真实代码与元数据拆分
+
+- [x] 将生产模块/资源物理归入四个 workspace 包，并保留 `vibeocr.*` 兼容导入
+- [x] 更新四包与根 meta package 的 build-system、依赖、入口点和版本同步
+- [x] 更新源码/架构守卫，禁止 marker wheel 或跨层直接依赖回归
+- **Status:** completed
+
+### Phase 3：用户联网安装与 CI 构建链
+
+- [x] 确保 backend wheel 声明并正确解析 CPU/GPU/平台相关重依赖与自定义 index
+- [x] 更新 CI 构建顺序、wheelhouse/安装 smoke 和全新环境启动验证
+- [x] 验证根 meta package、PySide-only 开发安装、完整用户安装和 WorkerHost 启动
+- **Status:** completed
+
+### Phase 4：回归、文档与交付
+
+- [x] 运行可执行的协议/架构/PySide/WorkerHost 回归、Ruff 与 wheel 内容审核
+- [x] 更新安装/开发/发布文档，明确联网、GPU/CPU 与兼容周期
+- [x] 记录剩余平台限制并完成规划检查
+- **Status:** completed
+
+## 关键约束
+
+- 不通过复制同一份生产代码到多个 wheel 实现“拆包”；同一模块只有一个真实归属。
+- 四包继续组成 `vibeocr` namespace，现有 `vibeocr.*` 导入在兼容期保持可用。
+- `contracts → client → pyside` 不得反向依赖 backend；backend 可依赖 contracts，WorkerHost 不得导入 Qt。
+- 重依赖必须由用户机标准联网安装链正确解析；CI 成功不能依赖开发机已有 `.venv`。
+- 保留当前未提交的三阶段治理改动，不回滚或覆盖。
+
+## 错误记录
+
+| 错误 | 尝试 | 处理 |
+|---|---:|---|
+| `uv build` 默认用户缓存目录不可写 | 1 | 显式使用工作区 `.uv-cache`，五个 wheel 全部构建成功 |
+| 完整 pytest 收集被既有 venv 的 `pytest_asyncio`/`rpds` 文件 ACL 拒绝 | 2 | 不绕过权限；保留 CI 完整回归，沙箱内完成架构、重依赖关键链、版本发布等可执行测试 |
+| Pyright 读取既有 editable `.pth` 时被 ACL 拒绝 | 1 | 记录为环境限制；Ruff 与 `git diff --check` 均通过，CI 保留 Pyright |
+| 首个 Classic 绑定 smoke 误用旧 WinUI ZIP，校验器报告缺少 `VibeOCR.exe` | 1 | 改用最小 Classic 夹具，五 wheel 绑定、manifest 和哈希校验通过 |
+
+---
+
+# 任务计划：拆包变更终审、提交与合并
+
+## 目标
+
+对当前“四包 + 根兼容包”及此前同一工作区内的 PySide6 治理改动进行提交前终审；修复确认的问题，完成足量测试和发布制品复核；把当前未提交工作转移到特性分支提交，合并回 `main`，并仅在成功合并后删除特性分支。
+
+## 当前阶段
+
+Phase 2：验证与提交
+
+## 阶段
+
+### Phase 1：变更与分支审计
+
+- [x] 核实当前分支、远端基线、工作区变更归属与未跟踪文件
+- [x] 审查真实物理拆包、namespace、依赖、CI/release 与用户安装链
+- [x] 识别并修复 P0/P1 问题
+- **Status:** completed
+
+### Phase 2：验证与提交
+
+- [x] 运行 wheel 构建/安装、架构、依赖、发布、静态检查与适用回归
+- [ ] 检查 diff、版本、资源归属和 Git 变更完整性
+- [ ] 在特性分支创建提交
+- **Status:** in_progress
+
+### Phase 3：合并与清理
+
+- [ ] 切回 `main` 并以非快进合并特性分支
+- [ ] 验证合并提交、工作区清洁和 main 指向
+- [ ] 删除已合并的本地特性分支
+- **Status:** pending
+
+## 错误记录
+
+| 错误 | 尝试 | 处理 |
+|---|---:|---|
+| 把 `vibeocr --help` 当成无副作用 CLI，实际启动 GUI并等待事件循环 | 1 | 终止进程；改用直接模块导入和物理模块遍历 |
+| `C:\tmp` 与权限声明不一致，创建隔离 venv 被拒绝 | 1 | 改用任务明确可写的可视化工作区，保持仓库外隔离条件 |
+| 首次根 wheel smoke 的内部四包被 uv 同版本缓存替换 | 1 | 确认 wheel 本身含新代码；改为显式安装五个本地 wheel，CI/README 同步采用该方式 |
+| Pyright 即使指定干净解释器仍读取旧 `.venv` editable `.pth` 并被 ACL 拒绝 | 2 | 停止重试；Ruff、全模块导入、wheel smoke 和分组测试通过，CI 保留 Pyright |
+| UI 回归出现 WMIC/nvidia-smi 输出编码导致的 reader thread warning | 2 | 所有环境探测文本子进程增加 `errors="replace"`；复测 warning 消失 |

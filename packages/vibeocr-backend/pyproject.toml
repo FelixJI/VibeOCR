@@ -4,6 +4,7 @@ version = "0.4.37"
 description = "UI-free VibeOCR WorkerHost runtime"
 requires-python = ">=3.13,<3.14"
 dependencies = [
+    "vibeocr-client-py==0.4.37",
     "vibeocr-contracts-py==0.4.37",
     "pillow>=12.3.0",
     "numpy>=2.3.5",
@@ -21,15 +22,27 @@ dependencies = [
     "opencv-contrib-python>=4.10.0.84",
     "pyzbar>=0.1.9",
     "pynvml>=11.5.0",
+]
+
+[project.optional-dependencies]
+cpu = [
+    "paddlepaddle>=3.3.1",
+    "paddleocr[doc-parser]>=3.7.0",
+    "mineru[core]>=3.4.3",
+]
+gpu-cu126 = [
     "paddlepaddle-gpu>=3.3.1",
     "torch>=2.6.0",
     "paddleocr[doc-parser]>=3.7.0",
     "mineru[core]>=3.4.3",
 ]
 
+[project.scripts]
+vibeocr-worker = "vibeocr.worker_host.main:main"
+
 [build-system]
 requires = ["hatchling>=1.0.0"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/vibeocr_backend"]
+packages = ["src/vibeocr"]

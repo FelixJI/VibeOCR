@@ -10,6 +10,81 @@ from vibeocr.worker_host import sync_client
 from vibeocr.worker_host.sync_client import SyncBackendClient
 
 
+def test_output_drains_delegate_structured_lines_with_stream_metadata(
+    monkeypatch,
+) -> None:
+    import io
+    import logging
+
+    captured: list[tuple[str, int, str]] = []
+
+    class FakeProcess:
+        stdout = io.StringIO('{"level":"INFO","message":"ready"}\n')
+        stderr = io.StringIO("native warning\n")
+
+    def fake_forward(logger, line, *, fallback_level, stream_name):
+        captured.append((line, fallback_level, stream_name))
+        return True
+
+    monkeypatch.setattr(sync_client, "forward_worker_output_line", fake_forward)
+    client = SyncBackendClient()
+    client._process = FakeProcess()  # type: ignore[assignment]
+    client._start_output_drains()
+    for thread in client._io_threads:
+        thread.join(timeout=1)
+
+    assert sorted(captured, key=lambda item: item[2]) == [
+        ("native warning", logging.WARNING, "stderr"),
+        ('{"level":"INFO","message":"ready"}', logging.DEBUG, "stdout"),
+    ]
+
+
+def test_sync_long_operations_forward_rpc_timeout_with_outer_grace(monkeypatch) -> None:
+    typed_calls: list[tuple[str, float]] = []
+    outer_timeouts: list[float] = []
+
+    class FakeBackendClient:
+        def recognize(self, image, *, pipeline, language, timeout):
+            typed_calls.append(("recognize", timeout))
+            return {"text": "ok", "pipeline": pipeline}
+
+        def recognize_batch(self, images, *, pipeline, language, timeout):
+            typed_calls.append(("recognize_batch", timeout))
+            return [{"text": "ok", "pipeline": pipeline}]
+
+        def render_pdf_page(
+            self, session_id, page_index, *, size, dpi, timeout
+        ):
+            typed_calls.append(("render_pdf_page", timeout))
+            return b"png"
+
+        def save_pdf(self, session_id, output_path, *, timeout):
+            typed_calls.append(("save_pdf", timeout))
+            return "C:/saved.pdf"
+
+    client = SyncBackendClient()
+    client._client = FakeBackendClient()  # type: ignore[assignment]
+
+    def fake_run_sync(value, *, timeout):
+        outer_timeouts.append(timeout)
+        return value
+
+    monkeypatch.setattr(client, "_run_sync", fake_run_sync)
+
+    client.recognize_sync(b"image", timeout=300)
+    client.recognize_batch_sync([b"image"], timeout=1800)
+    client.render_pdf_page_sync("s", 0, timeout=120)
+    client.save_pdf_sync("s", timeout=300)
+
+    assert typed_calls == [
+        ("recognize", 300),
+        ("recognize_batch", 1800),
+        ("render_pdf_page", 120),
+        ("save_pdf", 300),
+    ]
+    assert outer_timeouts == [305, 1805, 125, 305]
+
+
 def _install_launch_mocks(monkeypatch, captured: dict[str, Any]) -> None:
     """Wire the launch-time mocks shared by the launcher tests.
 

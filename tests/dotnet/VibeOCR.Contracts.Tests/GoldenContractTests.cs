@@ -99,7 +99,14 @@ public sealed class GoldenContractTests
             DirectoryInfo? directory = string.IsNullOrWhiteSpace(seed) ? null : new(seed);
             while (directory is not null)
             {
-                string candidate = Path.Combine(directory.FullName, "contracts", "v1");
+                string candidate = Path.Combine(
+                    directory.FullName,
+                    "packages",
+                    "vibeocr-contracts-py",
+                    "src",
+                    "vibeocr",
+                    "protocol",
+                    "v1");
                 if (File.Exists(Path.Combine(candidate, "golden.json")))
                 {
                     return candidate;
@@ -109,6 +116,6 @@ public sealed class GoldenContractTests
             }
         }
 
-        throw new DirectoryNotFoundException("Could not locate contracts/v1 from test output.");
+        throw new DirectoryNotFoundException("Could not locate vibeocr protocol/v1 from test output.");
     }
 }

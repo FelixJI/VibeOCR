@@ -161,6 +161,26 @@ async def test_request_envelope_has_correct_shape(client: BackendClient) -> None
         await call_task
 
 
+async def test_execution_timeout_sets_the_rpc_envelope_deadline(
+    client: BackendClient, monkeypatch
+) -> None:
+    """The server-visible deadline uses the caller's execution budget."""
+    conn = _FakeConnection()
+    await _start_client(client, conn)
+    monkeypatch.setattr("vibeocr.worker_host.backend_client.time.time", lambda: 1000.0)
+
+    call_task = asyncio.create_task(
+        client.call("system.ping", {"nonce": "long"}, timeout=300.0)
+    )
+    await asyncio.sleep(0.05)
+    request = json.loads(conn.written[0])
+    assert request["deadline_unix_ms"] == 1_300_000
+
+    call_task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await call_task
+
+
 # ---------------------------------------------------------------------------
 # Error mapping
 # ---------------------------------------------------------------------------

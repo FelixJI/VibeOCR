@@ -12,7 +12,7 @@ import os
 # ENTRYPOINT_NOT_FOUND (0xc0000139) 致命异常（在 torch._load_dll_libraries 处），
 # 可能杀死整个 pytest 进程或留下后台线程崩溃的诊断噪音（行为非确定）。
 #
-# 生产环境 src/vibeocr/main.py 顶部已设置同样的兜底；测试进程不经过 main.py，
+# 生产环境 apps/vibeocr-pyside/src/vibeocr/main.py 顶部已设置同样的兜底；测试进程不经过 main.py，
 # 故在此复制。KMP_DUPLICATE_LIB_OK=TRUE 让 Intel OpenMP 运行时容忍重复加载，
 # 减少致命冲突。另见 test_ocr_service.py 的 PADDLE_TORCH_CONFLICT 跳过（治本）。
 # ---------------------------------------------------------------------------
@@ -24,10 +24,22 @@ from pathlib import Path
 
 import pytest
 
-# Add src directory to Python path
-src_path = Path(__file__).parent.parent / "src"
-if str(src_path) not in sys.path:
-    sys.path.insert(0, str(src_path))
+# Add all physical workspace source roots to this process and spawned workers.
+repo_root = Path(__file__).parent.parent
+source_paths = [
+    repo_root / "packages/vibeocr-contracts-py/src",
+    repo_root / "packages/vibeocr-client-py/src",
+    repo_root / "packages/vibeocr-backend/src",
+    repo_root / "apps/vibeocr-pyside/src",
+]
+for source_path in reversed(source_paths):
+    if str(source_path) not in sys.path:
+        sys.path.insert(0, str(source_path))
+existing_pythonpath = os.environ.get("PYTHONPATH", "")
+pythonpath_parts = [str(path) for path in source_paths]
+if existing_pythonpath:
+    pythonpath_parts.append(existing_pythonpath)
+os.environ["PYTHONPATH"] = os.pathsep.join(pythonpath_parts)
 
 
 @pytest.fixture(scope="session")

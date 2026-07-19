@@ -24,7 +24,15 @@ import referencing.jsonschema
 from jsonschema import Draft202012Validator
 from jsonschema import exceptions as js_exceptions
 
-CONTRACTS_DIR = Path(__file__).resolve().parents[2] / "contracts" / "v1"
+CONTRACTS_DIR = (
+    Path(__file__).resolve().parents[2]
+    / "packages"
+    / "vibeocr-contracts-py"
+    / "src"
+    / "vibeocr"
+    / "protocol"
+    / "v1"
+)
 
 
 # ---------------------------------------------------------------------------

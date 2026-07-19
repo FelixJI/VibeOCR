@@ -1,6 +1,7 @@
 """Tests for MainWindow."""
 
 import os
+from types import SimpleNamespace
 
 import pytest
 from PySide6.QtCore import Qt
@@ -13,12 +14,23 @@ from vibeocr.views.main_window import MainWindow
 
 
 @pytest.fixture
-def main_window(qapp, qtbot, tmp_path):
+def main_window(qapp, qtbot, tmp_path, monkeypatch):
     """提供 MainWindow 实例。"""
     from vibeocr.managers.config_manager import ConfigManager
 
     ConfigManager.reset_instance()
     ConfigManager.instance(tmp_path)
+    # 主窗口单元测试不应建立真实 WorkerHost；后台启动由 manager 专项测试覆盖。
+    monkeypatch.setattr(
+        "vibeocr.managers.subprocess_manager.SubprocessManager.start_worker_host",
+        lambda self: None,
+    )
+    # GPU 探测线程由 BackendOptionsWidget 专项测试覆盖；MainWindow 单元测试
+    # 隔离真实 nvidia-smi 子进程，避免跨用例 COM/clipboard teardown 污染。
+    monkeypatch.setattr(
+        "vibeocr.widgets.backend_options_widget.BackendOptionsWidget._start_gpu_detection",
+        lambda self: None,
+    )
     window = MainWindow()
     window.show()
     qtbot.addWidget(window)
@@ -39,6 +51,84 @@ class TestMainWindow:
     def test_window_title(self, main_window):
         """窗口标题正确。"""
         assert main_window.windowTitle() == "VibeOCR"
+
+    def test_close_drains_batch_before_webview_and_backend(self, qapp, monkeypatch):
+        """关闭时先冻结回调并收拢批线程，再销毁视图和共享后端。"""
+        calls: list[str] = []
+
+        class _ResultWidget:
+            def __init__(self, name: str) -> None:
+                self._name = name
+
+            def cleanup(self) -> None:
+                calls.append(f"cleanup:{self._name}")
+
+        window = SimpleNamespace(
+            _force_quit=True,
+            _app_settings=SimpleNamespace(
+                minimize_to_tray=False,
+                save=lambda: calls.append("settings:save"),
+            ),
+            _tray_icon=None,
+            _closing=False,
+            _single_tab=SimpleNamespace(
+                set_closing=lambda value: calls.append(f"single:closing:{value}"),
+                _result_widget=_ResultWidget("single"),
+            ),
+            _batch_tab=SimpleNamespace(
+                shutdown=lambda timeout_ms: calls.append(
+                    f"batch:shutdown:{timeout_ms}"
+                )
+                or True,
+                drain=lambda timeout_ms: calls.append(f"batch:drain:{timeout_ms}")
+                or True,
+                _result_widget=_ResultWidget("batch"),
+            ),
+            _settings_controller=SimpleNamespace(
+                request_shutdown=lambda: calls.append("settings:request"),
+                drain=lambda timeout_ms: calls.append(
+                    f"settings:drain:{timeout_ms}"
+                )
+                or True,
+            ),
+            _pdf_tab=SimpleNamespace(
+                request_shutdown=lambda: calls.append("pdf:request"),
+                drain=lambda timeout_ms: calls.append(f"pdf:drain:{timeout_ms}")
+                or True,
+            ),
+            _edge_toolbar=SimpleNamespace(close=lambda: calls.append("edge:close")),
+            _subprocess_manager=SimpleNamespace(
+                shutdown=lambda timeout_ms: calls.append(
+                    f"subprocess:shutdown:{timeout_ms}"
+                )
+            ),
+            _save_layout=lambda: calls.append("layout:save"),
+        )
+        event = SimpleNamespace(
+            accept=lambda: calls.append("event:accept"),
+            ignore=lambda: calls.append("event:ignore"),
+        )
+        monkeypatch.setattr(
+            "vibeocr.client.session.shutdown_backend_client",
+            lambda: calls.append("backend:shutdown"),
+        )
+        monkeypatch.setattr(
+            "vibeocr.utils.qt_async.get_async_runner",
+            lambda: SimpleNamespace(active_count=0),
+        )
+
+        MainWindow.closeEvent(window, event)
+
+        assert window._closing is True
+        assert calls.index("single:closing:True") < calls.index("batch:shutdown:0")
+        assert calls.index("settings:request") < calls.index("settings:drain:700")
+        assert calls.index("settings:drain:700") < calls.index("pdf:drain:1250")
+        assert calls.index("pdf:request") < calls.index("pdf:drain:1250")
+        assert calls.index("batch:shutdown:0") < calls.index("batch:drain:650")
+        assert calls.index("pdf:drain:1250") < calls.index("batch:drain:650")
+        assert calls.index("batch:drain:650") < calls.index("backend:shutdown")
+        assert calls.index("backend:shutdown") < calls.index("cleanup:batch")
+        assert calls[-1] == "event:accept"
 
     def test_copy_result_to_clipboard(self, main_window, qtbot):
         """复制识别结果到剪贴板。"""
@@ -187,15 +277,20 @@ class TestSettingsInstallSucceededTriggersRecheck:
 class TestMainWindowShutdown:
     def test_close_shuts_down_settings_controller(self, main_window, monkeypatch):
         called = []
-        original_shutdown = getattr(main_window._settings_controller, "shutdown", None)
+        original_request = getattr(
+            main_window._settings_controller, "request_shutdown", None
+        )
 
-        def shutdown():
+        def request_shutdown():
             called.append(True)
-            if original_shutdown is not None:
-                original_shutdown()
+            if original_request is not None:
+                original_request()
 
         monkeypatch.setattr(
-            main_window._settings_controller, "shutdown", shutdown, raising=False
+            main_window._settings_controller,
+            "request_shutdown",
+            request_shutdown,
+            raising=False,
         )
 
         main_window.close()

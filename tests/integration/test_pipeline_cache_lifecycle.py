@@ -123,3 +123,27 @@ def test_set_ttl_handles_exception():
     svc._paddlex_manager = mock_manager
 
     assert svc.set_pipeline_ttl(600) is False
+
+
+def test_status_flow_reads_real_worker_snapshot():
+    from vibeocr.services.ocr_service_subprocess import OCRServiceSubprocess
+
+    svc = OCRServiceSubprocess.__new__(OCRServiceSubprocess)
+    svc._initialized = True
+    mock_manager = MagicMock()
+    mock_manager.execute.return_value = {
+        "ttl_seconds": 600,
+        "max_heavy": 2,
+        "loaded_pipelines": ["OCR"],
+        "last_used_unix_ms": {"OCR": 1234},
+    }
+    svc._paddlex_manager = mock_manager
+
+    status = svc.get_pipeline_cache_status()
+
+    assert status["ready"] is True
+    assert status["loaded_pipelines"] == ["OCR"]
+    task_fn = mock_manager.execute.call_args.args[0]
+    worker = MagicMock()
+    task_fn(worker)
+    worker.cache_status.assert_called_once()

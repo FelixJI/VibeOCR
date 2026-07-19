@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+from io import BytesIO
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
@@ -27,7 +28,7 @@ except ImportError:
     HAS_MODULE = False
 
 
-def _make_worker(service, files, options=None) -> Any:
+def _make_worker(service, files, options=None, *, batch_budget=None) -> Any:
     """构造 worker（正常 __init__ 以激活 Qt 信号，但不 start 线程）。"""
     assert BatchRecognitionWorker is not None
     if options is None:
@@ -36,7 +37,9 @@ def _make_worker(service, files, options=None) -> Any:
         options = OCROptions()
     # 传 mock service；files 用真实 file_info；parent=None 避免线程归属问题。
     # 不调用 .start()，直接测 run() 同步逻辑。
-    return BatchRecognitionWorker(service, files, options, parent=None)
+    return BatchRecognitionWorker(
+        service, files, options, parent=None, batch_budget=batch_budget
+    )
 
 
 def _make_image_files(tmp_path: Path, n: int) -> list[dict]:
@@ -67,7 +70,13 @@ class TestBatchRecognitionWorkerRecognizeBatch:
         completed_signals = []
         worker.file_completed.connect(lambda fp, st, res: completed_signals.append((fp, st, res)))
         finished_results = {}
-        worker.finished.connect(lambda r: finished_results.update(r))
+        terminal_statuses = []
+        worker.terminal.connect(
+            lambda status, results: (
+                terminal_statuses.append(status),
+                finished_results.update(results),
+            )
+        )
 
         worker.run()
 
@@ -77,6 +86,7 @@ class TestBatchRecognitionWorkerRecognizeBatch:
         statuses = [st for _, st, _ in completed_signals]
         assert statuses == ["completed", "completed", "completed"]
         assert len(finished_results) == 3
+        assert terminal_statuses == [worker.STATUS_COMPLETED]
 
     def test_multi_batch_chunking(self, tmp_path, qtbot):
         """超过 16 个文件时分多批，每批一次 recognize_batch 调用。"""
@@ -90,7 +100,7 @@ class TestBatchRecognitionWorkerRecognizeBatch:
         worker = _make_worker(mock_service, files)
         completed_signals = []
         worker.file_completed.connect(lambda fp, st, res: completed_signals.append((fp, st)))
-        worker.finished.connect(lambda r: None)
+        worker.terminal.connect(lambda status, results: None)
 
         worker.run()
 
@@ -105,6 +115,100 @@ class TestBatchRecognitionWorkerRecognizeBatch:
         statuses = [st for _, st in completed_signals]
         assert all(s == "completed" for s in statuses)
         assert len(statuses) == 20
+
+    def test_encoded_byte_budget_is_applied_before_file_reads(self, tmp_path, qtbot):
+        """按 stat 大小先分批，单批读取量不超过字节预算。"""
+        from vibeocr.core.batch_budget import BatchBudget
+
+        sizes = [6, 6, 4]
+        files = []
+        for index, size in enumerate(sizes):
+            path = tmp_path / f"bytes_{index}.bin"
+            path.write_bytes(bytes([index]) * size)
+            files.append({"path": str(path), "name": path.name})
+
+        service = MagicMock()
+        service.recognize_batch.side_effect = lambda images, _options: [
+            MagicMock() for _ in images
+        ]
+        worker = _make_worker(
+            service,
+            files,
+            batch_budget=BatchBudget(
+                max_items=16, max_encoded_bytes=10, max_pixels=1_000_000
+            ),
+        )
+
+        worker.run()
+
+        calls = service.recognize_batch.call_args_list
+        assert [[len(image) for image in call.args[0]] for call in calls] == [
+            [6],
+            [6, 4],
+        ]
+
+    def test_pixel_budget_splits_decodable_images_and_preserves_order(
+        self, tmp_path, qtbot
+    ):
+        from PIL import Image
+
+        from vibeocr.core.batch_budget import BatchBudget
+
+        files = []
+        for index in range(3):
+            path = tmp_path / f"pixel_{index}.png"
+            Image.new("RGB", (10, 10), (index, 0, 0)).save(path)
+            files.append({"path": str(path), "name": path.name})
+
+        seen_markers = []
+
+        def recognize(images, _options):
+            seen_markers.extend(
+                Image.open(BytesIO(image)).getpixel((0, 0))[0] for image in images
+            )
+            return [MagicMock() for _ in images]
+
+        service = MagicMock()
+        service.recognize_batch.side_effect = recognize
+        worker = _make_worker(
+            service,
+            files,
+            batch_budget=BatchBudget(
+                max_items=16, max_encoded_bytes=1_000_000, max_pixels=150
+            ),
+        )
+
+        worker.run()
+
+        assert [len(call.args[0]) for call in service.recognize_batch.call_args_list] == [
+            1,
+            1,
+            1,
+        ]
+        assert seen_markers == [0, 1, 2]
+
+    def test_oversized_single_image_is_still_submitted(self, tmp_path, qtbot):
+        from vibeocr.core.batch_budget import BatchBudget
+
+        path = tmp_path / "oversized.bin"
+        path.write_bytes(b"x" * 11)
+        service = MagicMock()
+        service.recognize_batch.return_value = [MagicMock()]
+        worker = _make_worker(
+            service,
+            [{"path": str(path), "name": path.name}],
+            batch_budget=BatchBudget(
+                max_items=2, max_encoded_bytes=5, max_pixels=5
+            ),
+        )
+        terminal = []
+        worker.terminal.connect(lambda status, _results: terminal.append(status))
+
+        worker.run()
+
+        service.recognize_batch.assert_called_once()
+        assert service.recognize_batch.call_args.args[0] == [b"x" * 11]
+        assert terminal == [worker.STATUS_COMPLETED]
 
     def test_single_image_failure_mapped_to_error(self, tmp_path, qtbot):
         """recognize_batch 返回 None 表示该图失败 → file_completed 发 failed。"""
@@ -142,12 +246,21 @@ class TestBatchRecognitionWorkerRecognizeBatch:
 
         worker = _make_worker(mock_service, files)
         worker.file_completed.connect(lambda *a: None)
-        worker.finished.connect(lambda r: None)
+        terminal_signals = []
+        progress_signals = []
+        worker.terminal.connect(
+            lambda status, results: terminal_signals.append((status, results))
+        )
+        worker.progress.connect(lambda *args: progress_signals.append(args))
 
         worker.run()
 
         # 只处理了第一批 16 个，取消后不再调
         assert mock_service.recognize_batch.call_count == 1
+        assert terminal_signals[0][0] == worker.STATUS_CANCELLED
+        assert progress_signals[-1][1:] == (40, "已取消")
+        assert progress_signals[-1][0] < 40
+        assert progress_signals[-1] != (40, 40, "完成")
 
     def test_read_failure_marks_single_file_failed(self, tmp_path, qtbot):
         """读取文件失败时该文件标记 failed，其余正常识别。"""
@@ -197,7 +310,11 @@ class TestBatchRecognitionWorkerRecognizeBatch:
         completed_signals = []
         worker.file_completed.connect(lambda fp, st, res: completed_signals.append(st))
         error_signals = []
+        terminal_signals = []
         worker.error.connect(lambda msg: error_signals.append(msg))
+        worker.terminal.connect(
+            lambda status, results: terminal_signals.append((status, results))
+        )
 
         worker.run()
 
@@ -206,3 +323,4 @@ class TestBatchRecognitionWorkerRecognizeBatch:
         # 第二批正常 → 4 个 completed
         assert completed_signals[:16] == ["failed"] * 16
         assert completed_signals[16:] == ["completed"] * 4
+        assert terminal_signals[0][0] == worker.STATUS_PARTIAL_FAILED

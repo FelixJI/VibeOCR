@@ -92,10 +92,11 @@ class TestEnvConfigFunctions:
         root = get_project_root()
         assert isinstance(root, Path)
 
-    def test_get_project_root_contains_src_vibeocr(self):
-        """项目根目录应含 src/vibeocr（判断条件与 env_manager.get_project_root 一致）"""
+    def test_get_project_root_contains_physical_workspace(self):
+        """项目根目录应包含 client 与 pyside 的真实 source root。"""
         root = get_project_root()
-        assert (root / "src" / "vibeocr").exists()
+        assert (root / "packages/vibeocr-client-py/src/vibeocr").is_dir()
+        assert (root / "apps/vibeocr-pyside/src/vibeocr").is_dir()
 
     def test_get_config_dir_returns_path(self):
         """测试获取配置目录返回 Path"""

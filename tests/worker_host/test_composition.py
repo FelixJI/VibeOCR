@@ -184,6 +184,11 @@ def test_production_composition_registers_all_domain_handlers(tmp_path: Path) ->
         "ocr.recognize",
         "ocr.recognize_batch",
         "ocr.export",
+        "pipeline_cache.status",
+        "pipeline_cache.set_ttl",
+        "pipeline_cache.release",
+        "pipeline_cache.preload",
+        "pipeline_cache.warmup",
         "pdf.open",
         "pdf.close",
         "pdf.command",
@@ -202,6 +207,39 @@ def test_production_composition_registers_all_domain_handlers(tmp_path: Path) ->
         "settings.install_dependency",
     }
     assert factories_called == [], "domain services must remain lazy until first use"
+
+
+def test_ocr_adapter_delegates_pipeline_cache_lifecycle() -> None:
+    from vibeocr.worker_host.composition import OcrServiceAdapter
+
+    class Service:
+        def get_pipeline_cache_status(self):
+            return {
+                "ready": True,
+                "ttl_seconds": 300,
+                "max_heavy": 2,
+                "loaded_pipelines": ["OCR"],
+                "last_used_unix_ms": {},
+            }
+
+        def set_pipeline_ttl(self, ttl_seconds):
+            return ttl_seconds == 600
+
+        def release_pipelines(self, *, heavy_only):
+            return ["PP-StructureV3"] if heavy_only else ["OCR"]
+
+        def preload_pipelines(self, pipelines):
+            return dict.fromkeys(pipelines, True)
+
+        def warmup_pipelines(self, pipelines):
+            return dict.fromkeys(pipelines, True)
+
+    adapter = OcrServiceAdapter(Service)
+    assert adapter.pipeline_cache_status()["loaded_pipelines"] == ["OCR"]
+    assert adapter.set_pipeline_ttl(600) is True
+    assert adapter.release_pipelines() == ["PP-StructureV3"]
+    assert adapter.preload_pipelines(["OCR"]) == {"OCR": True}
+    assert adapter.warmup_pipelines(["OCR"]) == {"OCR": True}
 
 
 @pytest.mark.asyncio

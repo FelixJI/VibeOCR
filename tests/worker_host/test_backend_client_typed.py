@@ -194,7 +194,7 @@ async def test_recognize_batch_uses_one_rpc_and_releases_all_payloads(monkeypatc
     client = BackendClient()
     created: list[str] = []
     released: list[str] = []
-    calls: list[tuple[str, dict[str, Any]]] = []
+    calls: list[tuple[str, dict[str, Any], float | None]] = []
 
     class Ref:
         def __init__(self, name: str) -> None:
@@ -213,8 +213,13 @@ async def test_recognize_batch_uses_one_rpc_and_releases_all_payloads(monkeypatc
         released.append(name)
         return True
 
-    async def fake_call(method: str, payload: dict[str, Any]) -> dict[str, Any]:
-        calls.append((method, payload))
+    async def fake_call(
+        method: str,
+        payload: dict[str, Any],
+        *,
+        timeout: float | None = None,
+    ) -> dict[str, Any]:
+        calls.append((method, payload, timeout))
         return {
             "results": [
                 {"text": "first", "pipeline": "OCR"},
@@ -239,6 +244,84 @@ async def test_recognize_batch_uses_one_rpc_and_releases_all_payloads(monkeypatc
                 "pipeline": "OCR",
                 "language": "ch",
             },
+            None,
         )
+    ]
+    await client.close()
+
+
+async def test_ocr_typed_methods_forward_the_execution_timeout(monkeypatch) -> None:
+    client = BackendClient()
+    calls: list[tuple[str, float | None]] = []
+
+    class Ref:
+        name = "input"
+
+        @staticmethod
+        def to_descriptor() -> dict[str, Any]:
+            return {"name": "input"}
+
+    async def fake_put(*args, **kwargs):
+        return Ref()
+
+    async def fake_release(name: str) -> bool:
+        return True
+
+    async def fake_call(method, payload, *, timeout=None):
+        calls.append((method, timeout))
+        if method == "ocr.recognize_batch":
+            return {"results": [{"text": "ok", "pipeline": "OCR"}]}
+        return {"text": "ok", "pipeline": "OCR"}
+
+    monkeypatch.setattr(client._store, "put", fake_put)
+    monkeypatch.setattr(client._store, "release_owned", fake_release)
+    monkeypatch.setattr(client, "call", fake_call)
+
+    await client.recognize(b"one", timeout=300.0)
+    await client.recognize_batch([b"one"], timeout=1800.0)
+
+    assert calls == [
+        ("ocr.recognize", 300.0),
+        ("ocr.recognize_batch", 1800.0),
+    ]
+    await client.close()
+
+
+async def test_pipeline_cache_typed_methods_map_payloads_and_timeouts(
+    monkeypatch,
+) -> None:
+    client = BackendClient()
+    calls: list[tuple[str, dict[str, Any], float | None]] = []
+
+    async def fake_call(method, payload=None, *, timeout=None):
+        calls.append((method, payload or {}, timeout))
+        return {
+            "pipeline_cache.status": {
+                "ready": True,
+                "ttl_seconds": 600,
+                "max_heavy": 2,
+                "loaded_pipelines": ["OCR"],
+                "last_used_unix_ms": {},
+            },
+            "pipeline_cache.set_ttl": {"updated": True, "ttl_seconds": 600},
+            "pipeline_cache.release": {"released": ["PP-StructureV3"]},
+            "pipeline_cache.preload": {"results": {"OCR": True}},
+            "pipeline_cache.warmup": {"results": {"OCR": True}},
+        }[method]
+
+    monkeypatch.setattr(client, "call", fake_call)
+    assert (await client.pipeline_cache_status(timeout=11))["ready"] is True
+    assert (await client.set_pipeline_cache_ttl(600, timeout=12))["updated"] is True
+    assert await client.release_pipeline_cache(heavy_only=True, timeout=13) == [
+        "PP-StructureV3"
+    ]
+    assert await client.preload_pipeline_cache(["OCR"], timeout=14) == {"OCR": True}
+    assert await client.warmup_pipeline_cache(["OCR"], timeout=15) == {"OCR": True}
+    assert calls == [
+        ("pipeline_cache.status", {}, 11),
+        ("pipeline_cache.set_ttl", {"ttl_seconds": 600}, 12),
+        ("pipeline_cache.release", {"heavy_only": True}, 13),
+        ("pipeline_cache.preload", {"pipelines": ["OCR"]}, 14),
+        ("pipeline_cache.warmup", {"pipelines": ["OCR"]}, 15),
     ]
     await client.close()

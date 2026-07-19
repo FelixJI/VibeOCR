@@ -1194,6 +1194,25 @@ doc-parser = [
 ]
 
 [[package]]
+name = "paddlepaddle"
+version = "3.3.1"
+source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
+dependencies = [
+    { name = "httpx" },
+    { name = "networkx" },
+    { name = "numpy" },
+    { name = "opt-einsum" },
+    { name = "pillow" },
+    { name = "protobuf" },
+    { name = "safetensors" },
+    { name = "setuptools" },
+    { name = "typing-extensions" },
+]
+wheels = [
+    { url = "https://mirrors.aliyun.com/pypi/packages/f4/c8/408b9e94ac2e10a55c1122b787359f7a6f79ef894ee1d57d78c5cca838d0/paddlepaddle-3.3.1-cp313-cp313-win_amd64.whl", hash = "sha256:1203e2e1114b49e73a8440b68837ce5c93fdab51fe4838c5e5874ab40f58f747" },
+]
+
+[[package]]
 name = "paddlepaddle-gpu"
 version = "3.3.1"
 source = { registry = "https://www.paddlepaddle.org.cn/packages/stable/cu126/" }
@@ -2371,28 +2390,10 @@ name = "vibeocr"
 version = "0.4.37"
 source = { editable = "." }
 dependencies = [
-    { name = "fastapi" },
-    { name = "fonttools" },
-    { name = "httpx" },
-    { name = "markdown" },
-    { name = "mineru", extra = ["core"] },
-    { name = "numpy" },
-    { name = "opencv-contrib-python" },
-    { name = "openpyxl" },
-    { name = "paddleocr", extra = ["doc-parser"] },
-    { name = "paddlepaddle-gpu" },
-    { name = "pillow" },
-    { name = "pydantic" },
-    { name = "pymupdf" },
-    { name = "pynvml" },
-    { name = "pyside6" },
-    { name = "python-barcode" },
-    { name = "python-docx" },
-    { name = "pyzbar" },
-    { name = "qasync" },
-    { name = "qrcode", extra = ["pil"] },
-    { name = "torch" },
-    { name = "uvicorn" },
+    { name = "vibeocr-backend" },
+    { name = "vibeocr-client-py" },
+    { name = "vibeocr-contracts-py" },
+    { name = "vibeocr-pyside" },
 ]
 
 [package.dev-dependencies]
@@ -2434,28 +2435,10 @@ test-pyside = [
 
 [package.metadata]
 requires-dist = [
-    { name = "fastapi", specifier = ">=0.139.0" },
-    { name = "fonttools", specifier = ">=4.63.0" },
-    { name = "httpx", specifier = ">=0.28.1" },
-    { name = "markdown", specifier = ">=3.10.2" },
-    { name = "mineru", extras = ["core"], specifier = ">=3.4.3" },
-    { name = "numpy", specifier = ">=2.3.5" },
-    { name = "opencv-contrib-python", specifier = ">=4.10.0.84" },
-    { name = "openpyxl", specifier = ">=3.1.5" },
-    { name = "paddleocr", extras = ["doc-parser"], specifier = ">=3.7.0" },
-    { name = "paddlepaddle-gpu", specifier = ">=3.3.1" },
-    { name = "pillow", specifier = ">=12.3.0" },
-    { name = "pydantic", specifier = ">=2.13.4" },
-    { name = "pymupdf", specifier = ">=1.28.0" },
-    { name = "pynvml", specifier = ">=11.5.0" },
-    { name = "pyside6", specifier = ">=6.11.1" },
-    { name = "python-barcode", specifier = ">=0.16.1" },
-    { name = "python-docx", specifier = ">=1.2.0" },
-    { name = "pyzbar", specifier = ">=0.1.9" },
-    { name = "qasync", specifier = ">=0.28.0" },
-    { name = "qrcode", extras = ["pil"], specifier = ">=8.2" },
-    { name = "torch", specifier = ">=2.6.0", index = "https://mirrors.nju.edu.cn/pytorch/whl/cu126" },
-    { name = "uvicorn", specifier = ">=0.51.0" },
+    { name = "vibeocr-backend", editable = "packages/vibeocr-backend" },
+    { name = "vibeocr-client-py", editable = "packages/vibeocr-client-py" },
+    { name = "vibeocr-contracts-py", editable = "packages/vibeocr-contracts-py" },
+    { name = "vibeocr-pyside", editable = "apps/vibeocr-pyside" },
 ]
 
 [package.metadata.requires-dev]
@@ -2503,12 +2486,9 @@ dependencies = [
     { name = "fonttools" },
     { name = "httpx" },
     { name = "markdown" },
-    { name = "mineru", extra = ["core"] },
     { name = "numpy" },
     { name = "opencv-contrib-python" },
     { name = "openpyxl" },
-    { name = "paddleocr", extra = ["doc-parser"] },
-    { name = "paddlepaddle-gpu" },
     { name = "pillow" },
     { name = "pydantic" },
     { name = "pymupdf" },
@@ -2517,9 +2497,22 @@ dependencies = [
     { name = "python-docx" },
     { name = "pyzbar" },
     { name = "qrcode", extra = ["pil"] },
-    { name = "torch" },
     { name = "uvicorn" },
+    { name = "vibeocr-client-py" },
     { name = "vibeocr-contracts-py" },
+]
+
+[package.optional-dependencies]
+cpu = [
+    { name = "mineru", extra = ["core"] },
+    { name = "paddleocr", extra = ["doc-parser"] },
+    { name = "paddlepaddle" },
+]
+gpu-cu126 = [
+    { name = "mineru", extra = ["core"] },
+    { name = "paddleocr", extra = ["doc-parser"] },
+    { name = "paddlepaddle-gpu" },
+    { name = "torch" },
 ]
 
 [package.metadata]
@@ -2528,12 +2521,15 @@ requires-dist = [
     { name = "fonttools", specifier = ">=4.63.0" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "markdown", specifier = ">=3.10.2" },
-    { name = "mineru", extras = ["core"], specifier = ">=3.4.3" },
+    { name = "mineru", extras = ["core"], marker = "extra == 'cpu'", specifier = ">=3.4.3" },
+    { name = "mineru", extras = ["core"], marker = "extra == 'gpu-cu126'", specifier = ">=3.4.3" },
     { name = "numpy", specifier = ">=2.3.5" },
     { name = "opencv-contrib-python", specifier = ">=4.10.0.84" },
     { name = "openpyxl", specifier = ">=3.1.5" },
-    { name = "paddleocr", extras = ["doc-parser"], specifier = ">=3.7.0" },
-    { name = "paddlepaddle-gpu", specifier = ">=3.3.1" },
+    { name = "paddleocr", extras = ["doc-parser"], marker = "extra == 'cpu'", specifier = ">=3.7.0" },
+    { name = "paddleocr", extras = ["doc-parser"], marker = "extra == 'gpu-cu126'", specifier = ">=3.7.0" },
+    { name = "paddlepaddle", marker = "extra == 'cpu'", specifier = ">=3.3.1" },
+    { name = "paddlepaddle-gpu", marker = "extra == 'gpu-cu126'", specifier = ">=3.3.1" },
     { name = "pillow", specifier = ">=12.3.0" },
     { name = "pydantic", specifier = ">=2.13.4" },
     { name = "pymupdf", specifier = ">=1.28.0" },
@@ -2542,22 +2538,34 @@ requires-dist = [
     { name = "python-docx", specifier = ">=1.2.0" },
     { name = "pyzbar", specifier = ">=0.1.9" },
     { name = "qrcode", extras = ["pil"], specifier = ">=8.2" },
-    { name = "torch", specifier = ">=2.6.0", index = "https://mirrors.nju.edu.cn/pytorch/whl/cu126" },
+    { name = "torch", marker = "extra == 'gpu-cu126'", specifier = ">=2.6.0", index = "https://mirrors.nju.edu.cn/pytorch/whl/cu126" },
     { name = "uvicorn", specifier = ">=0.51.0" },
+    { name = "vibeocr-client-py", editable = "packages/vibeocr-client-py" },
     { name = "vibeocr-contracts-py", editable = "packages/vibeocr-contracts-py" },
 ]
+provides-extras = ["cpu", "gpu-cu126"]
 
 [[package]]
 name = "vibeocr-client-py"
 version = "0.4.37"
 source = { editable = "packages/vibeocr-client-py" }
 dependencies = [
+    { name = "fonttools" },
+    { name = "httpx" },
+    { name = "markdown" },
+    { name = "packaging" },
+    { name = "pillow" },
     { name = "pydantic" },
     { name = "vibeocr-contracts-py" },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "fonttools", specifier = ">=4.63.0" },
+    { name = "httpx", specifier = ">=0.28.1" },
+    { name = "markdown", specifier = ">=3.10.2" },
+    { name = "packaging", specifier = ">=24.0" },
+    { name = "pillow", specifier = ">=12.3.0" },
     { name = "pydantic", specifier = ">=2.13.4" },
     { name = "vibeocr-contracts-py", editable = "packages/vibeocr-contracts-py" },
 ]
@@ -2572,6 +2580,8 @@ name = "vibeocr-pyside"
 version = "0.4.37"
 source = { editable = "apps/vibeocr-pyside" }
 dependencies = [
+    { name = "numpy" },
+    { name = "pymupdf" },
     { name = "pyside6" },
     { name = "qasync" },
     { name = "vibeocr-client-py" },
@@ -2580,6 +2590,8 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "numpy", specifier = ">=2.3.5" },
+    { name = "pymupdf", specifier = ">=1.28.0" },
     { name = "pyside6", specifier = ">=6.11.1" },
     { name = "qasync", specifier = ">=0.28.0" },
     { name = "vibeocr-client-py", editable = "packages/vibeocr-client-py" },

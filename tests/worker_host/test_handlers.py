@@ -30,6 +30,13 @@ from vibeocr.worker_host.handlers.ocr import (
     OcrHandler,
 )
 from vibeocr.worker_host.handlers.pdf import PdfOpenHandler
+from vibeocr.worker_host.handlers.pipeline_cache import (
+    PipelineCacheStatusHandler,
+    PreloadPipelineCacheHandler,
+    ReleasePipelineCacheHandler,
+    SetPipelineCacheTtlHandler,
+    WarmupPipelineCacheHandler,
+)
 from vibeocr.worker_host.handlers.qrcode import (
     QrDecodeHandler,
     QrGenerateHandler,
@@ -545,6 +552,64 @@ async def test_pdf_session_handlers_reject_missing_session_id() -> None:
 # ---------------------------------------------------------------------------
 # Settings handler
 # ---------------------------------------------------------------------------
+
+
+class _FakePipelineCache:
+    def pipeline_cache_status(self) -> dict[str, Any]:
+        return {
+            "ready": True,
+            "ttl_seconds": 300,
+            "max_heavy": 2,
+            "loaded_pipelines": ["OCR"],
+            "last_used_unix_ms": {"OCR": 1234},
+        }
+
+    def set_pipeline_ttl(self, ttl_seconds: int) -> bool:
+        self.ttl_seconds = ttl_seconds
+        return True
+
+    def release_pipelines(self, heavy_only: bool = True) -> list[str]:
+        self.heavy_only = heavy_only
+        return ["PP-StructureV3"]
+
+    def preload_pipelines(self, pipelines: list[str]) -> dict[str, bool]:
+        self.preloaded = pipelines
+        return dict.fromkeys(pipelines, True)
+
+    def warmup_pipelines(self, pipelines: list[str]) -> dict[str, bool]:
+        self.warmed = pipelines
+        return dict.fromkeys(pipelines, True)
+
+
+@pytest.mark.asyncio
+async def test_pipeline_cache_handlers_reach_boundary() -> None:
+    boundary = _FakePipelineCache()
+    cancel = CancelToken()
+
+    status = await PipelineCacheStatusHandler(
+        boundary=boundary
+    ).handle({}, cancel)
+    ttl = await SetPipelineCacheTtlHandler(boundary=boundary).handle(
+        {"ttl_seconds": 600}, cancel
+    )
+    released = await ReleasePipelineCacheHandler(boundary=boundary).handle(
+        {"heavy_only": False}, cancel
+    )
+    preloaded = await PreloadPipelineCacheHandler(boundary=boundary).handle(
+        {"pipelines": ["OCR"]}, cancel
+    )
+    warmed = await WarmupPipelineCacheHandler(boundary=boundary).handle(
+        {"pipelines": ["OCR"]}, cancel
+    )
+
+    assert status["loaded_pipelines"] == ["OCR"]
+    assert ttl == {"updated": True, "ttl_seconds": 600}
+    assert released == {"released": ["PP-StructureV3"]}
+    assert preloaded == {"results": {"OCR": True}}
+    assert warmed == {"results": {"OCR": True}}
+    assert boundary.ttl_seconds == 600
+    assert boundary.heavy_only is False
+
 
 
 @pytest.mark.asyncio

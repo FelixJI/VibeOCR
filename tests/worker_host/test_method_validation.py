@@ -13,11 +13,20 @@ from vibeocr.worker_host.method_validation import (
 )
 
 ROOT = Path(__file__).resolve().parents[2]
+CONTRACTS_DIR = (
+    ROOT
+    / "packages"
+    / "vibeocr-contracts-py"
+    / "src"
+    / "vibeocr"
+    / "protocol"
+    / "v1"
+)
 
 
 @pytest.fixture(scope="module")
 def golden() -> dict[str, Any]:
-    return json.loads((ROOT / "contracts" / "v1" / "golden.json").read_text(encoding="utf-8"))
+    return json.loads((CONTRACTS_DIR / "golden.json").read_text(encoding="utf-8"))
 
 
 @pytest.mark.parametrize("method", sorted(PUBLIC_METHODS))

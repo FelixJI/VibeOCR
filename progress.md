@@ -49,3 +49,104 @@
 - 已将 0.4.30 CHANGELOG 收敛为实际新增的 3 条提交，删除从 0.4.29 重复归档的 79 行。
 - pytest 首轮收集 53 项，其中 19 项通过；其余 34 项因沙箱拒绝创建临时目录停在 setup。沙箱外重跑授权被环境额度策略拒绝，未继续绕过。
 - Pyright 因沙箱拒绝读取 editable `.pth` 未能运行；Ruff、AST、真实 Git 边界验证、版本/锁文件一致性检查和 `git diff --check` 全部通过。
+
+---
+
+# 进度日志：PySide6 架构与运行治理审计
+
+## 2026-07-18
+
+- 已读取 `planning-with-files` 技能并完成 session-catchup；全局 `python` 不可用，已改用工作区依赖中的 Python。
+- 审计开始前 Git 工作区干净；保留已有规划文件中的历史任务记录并追加本次计划。
+- 当前仅授权只读审计，不修改产品代码；下一步盘点 PySide6 入口、模块树、配置与测试资产。
+- 已完成第一轮文件与依赖扫描：确认真实 UI 位于根包，运行时并存 qasync、Qt 线程池、QThread 和 WorkerHost 子进程；下一步读取入口和主窗口装配代码。
+- 已审阅启动与主窗口装配：确认单一 WorkerHost/批量适配器注入主链完整，同时记录同步启动、退出顺序和分散等待预算三个待验证风险。
+- 已完成 UI signal/connect 与占位实现初筛；多数功能有显式接线，下一步逐个验证单图、批量、二维码、PDF 的 handler、取消和错误回传。
+- 已核查单图与批量主链：单图异步路径总体成熟；确认批量取消/错误/退出生命周期存在高优先级接线缺口，且现有测试未覆盖真实线程重入。
+- 二维码联合检索有一个路径假设错误，已记录并改用真实 BackendClient 路径；现有证据已确认识别子页并非占位。
+- 已完成二维码 handler/typed RPC/UI 对照：功能真实且测试充分，但生成与识别仍同步阻塞 GUI，是明确的体验优化点。
+- PDF 首轮联合检索因测试目录假设错误未完整返回，已记录并改为先发现真实测试路径。
+- 已核查 PDF 主接线和 worker 生命周期：确认批处理与状态回传设计成熟，同时发现保存后切换、保存后继续 OCR、mutate 重入/GUI 等待三个明确缺口。
+- 已完成缓存/依赖管理初筛：依赖缓存确实减少启动复检，内存管道管理器具备 TTL/LRU/显存释放；正在追踪其生产调用链与设置页实际目标。
+- 已确认容量淘汰与显式释放有效，但发现 TTL sweep 仍只接在旧 worker 主循环，当前 WorkerHost 下属于“配置可下发、策略不执行”的实质失效。
+- 已审计 workspace 与发布依赖：发布壳哈希锁有效控制重量，但 workspace 包仍多为 marker，真实代码和开发依赖保持根项目单体。
+- 已完成日志审计：主进程轮转/降噪可用，但当前 WorkerHost 未初始化日志且父进程丢失级别/结构，通用子进程转发器尚未接入主架构。
+- 超时首轮扫描有常量文件路径假设错误，已记录；下一步先定位真实配置定义再分类汇总。
+- 纠正缓存链结论：当前 MainWindow 注入的 `BatchBackendAdapter` 对 `release_pipelines` 和 `set_pipeline_ttl` 是无 RPC 空实现；此前“显式释放有效/TTL 可下发”的判断只适用于旧 `OCRServiceSubprocess`，不适用于当前 PySide6 生产接线。
+- 已确认预加载确实通过白图识别加载模型，但“preload + warmup”在当前适配器中会重复识别两次；容量淘汰仍真实有效，TTL/主动释放/缓存状态不可观测则不可靠。
+- 已完成超时链核查：核心常量分类齐全，但 WorkerHost typed client 多数未使用；OCR 300 秒、批量 1800 秒及多项 PDF 外层等待仍被内层默认 30 秒 deadline 截短。
+- 已完成依赖/模型缓存语义核查：`.vibeocr/cache.json` 只是环境检测与曾成功标记；设置页“刷新/清除模型缓存”文案与实际只操作该 JSON 的行为不一致。
+- 沙箱内定向测试因系统临时目录权限受阻；按权限规则在沙箱外重跑单图/二维码/PDF/批量/cache/SubprocessManager/设置预加载，225 项全部通过。随后架构边界、client adapter、machine cache 与日志 36 项全部通过。
+- 测试通过说明 happy path 与既有状态分支回归资产较强；当前缓存空接线、batch 真实 QThread 生命周期与端到端 deadline 仍无对应生产路径测试。
+
+---
+
+# 进度日志：PySide6 三阶段治理实施
+
+## 2026-07-19
+
+- 已确认线程目标处于 active，目标为完成三个阶段，不设置任意 token 预算。
+- 已完整读取 `planning-with-files` 与 `route-subagents` 技能，并成功运行 session-catchup。
+- 当前工作树只有上一轮审计产生的 `findings.md/progress.md/task_plan.md` 修改，无产品代码改动；这些记录将继续保留。
+- 已建立三个实施阶段：Phase 1 正确性/生产接线，Phase 2 交互/异步生命周期，Phase 3 可观测性/性能/工程边界。
+- 子代理路由：A 处理 deadline + pipeline cache RPC/契约；B 处理批量 QThread 生命周期；主代理负责跨模块复核和阶段验收。
+- 批处理生命周期工作包已返回并完成主线初审：取消、单批失败、迟到信号和有界关闭均有真实 QThread 测试；下一步接入 MainWindow 关闭顺序后统一运行回归。
+- 主窗口已把 `_closing` 前置，并在销毁结果 WebView/PDF/WorkerHost 前调用批处理 `shutdown(1000ms)`；新增关闭顺序回归。
+- Phase 1 首轮 PySide 定向回归 `39 passed`。测试进程返回 0，但退出清理仍暴露后台 GPU 检测线程未 drain 的 COM fatal diagnostic，已纳入 Phase 3 统一关闭治理。
+- Phase 1 已完成：typed API 的 envelope deadline 与外层 wait 统一，五个真实 pipeline cache RPC 贯通至推理 worker，批线程状态机和主窗口关闭顺序完成；协议/缓存/批处理/关闭链整体验收 `390 passed`。
+- 协议一致性首次发现测试解析器不接受 `pipeline_cache` 下划线域名，修正守卫后重跑通过；这是测试基础设施缺陷，不是 C# 方法遗漏。
+- 当前进入 Phase 2：PDF continuation/mutate busy gate，以及 WorkerHost/二维码/单图 payload 的 GUI 线程卸载。
+- WorkerHost ready/握手已从 MainWindow GUI 线程迁入 `SubprocessManager` 的后台任务，并增加重复启动、关闭取消、迟到 ready 隔离；manager + main window 定向回归 `56 passed`。
+- Phase 3 预检确认 workspace 子包仍是 marker wheel：源码 import guard 有效，但 PySide/后端的实际安装依赖尚未被物理拆分；最终验收将如实区分“架构守卫”与“可独立安装”。
+- Phase 2 已完成：PDF 保存 continuation 在 save_done 与 QThread.finished 双条件后执行，mutate/OCR 共用独占写门且取消不再 GUI wait；PDF 复核 `140 passed`。
+- WorkerHost ready 已后台化，二维码生成/识别具备 generation/关闭隔离，单图 PNG 编码与大文件读取移出 GUI，业务错误不盲目重启；QR/单图复核 `71 passed`，启动/主窗口复核 `56 passed`。
+- 主线额外修正 `is_ocr_running`：业务 all_done 后到原生 QThread.finished 前仍占用 PDF 写门，避免 finalize 窗口误切会话。
+- 当前进入 Phase 3；模型运行缓存可见区与后台状态回读已先行落地，设置页定向回归 `11 passed`。
+- workspace wheel 离线 smoke 已尝试：当前 venv 缺 hatchling，offline 构建环境无法创建；静态包内容仍确认 PySide/backend 子包仅含 marker，物理拆包未生效，作为明确限制保留。
+- Phase 3 已完成 WorkerHost→主进程 JSONL 日志级别/上下文/异常转发，主文件日志也改为结构化轮转；状态栏只接受显式 `ui_status` 记录，不再解析中文关键词。
+- 图片批处理与 PDF OCR 已统一采用数量、压缩字节、解码像素三重预算分批；超大单项保持可诊断的独立批，传输失败只污染当前子批并保留结果顺序。
+- 模型运行缓存 UI 已真实接到 WorkerHost cache RPC，可读回常驻管道、TTL 和释放结果；环境检测缓存文案已与模型/显存缓存分开。
+- 关闭流程新增绝对截止时间协调器；PDF/批处理先在 GUI 线程请求取消，再在 5 秒应用总预算内按剩余时间 drain，消除了 PDF 3s+5s+6s 固定等待的串行叠加。
+- GPU 探测改用可取消 Popen；关闭时 cancellation event 会终止硬件探测子进程，避免设置页销毁后仍有后台检测线程。
+- 设置页也已拆成 request/drain 两阶段，GPU 探测与 PDF、batch、async runner、WorkerHost 共用 5 秒应用关闭总预算；Popen kill 后输出管道 drain 使用集中定义的短宽限。
+- 最终扩展回归覆盖架构、协议、WorkerHost、日志、缓存、批处理、PDF/QR/单图与关闭链，结果 `681 passed`；Ruff 全通过，变更范围 Pyright `0 errors, 8 warnings`，`git diff --check` 通过。
+- Phase 3 与三个阶段总目标已完成；独立 workspace wheel 仍是 marker/构建环境缺 hatchling 的明确工程限制，不影响本轮运行时治理验收。
+
+---
+
+# 进度日志：四包物理拆分与联网重依赖安装
+
+## 2026-07-19
+
+- 用户确认采用 `contracts/client/backend/pyside + 根兼容 meta package` 的真实物理拆分。
+- CI 构建允许联网；最终用户安装也允许联网获取重依赖，必须验证 Paddle/Torch/MinerU 等安装与 WorkerHost 启动不受影响。
+- 已启用 planning-with-files，并完成 session-catchup；本轮不启用并行子代理，跨包移动由主线统一控制。
+- Phase 1 已完成：冻结 `contracts → client ← backend / pyside` 拓扑，确认跨 wheel 子命名空间由 client 单点持有可扩展 `__init__.py`。
+- Phase 2 已完成首轮实现：根产品源码已按所有权移动到四个工作区，v1 schema/golden 成为 contracts 包资源，根 wheel 改为无代码 meta package，marker 文件全部移除。
+- 各发行包入口与依赖已归位：`vibeocr` 在 pyside、`vibeocr-worker` 在 backend、`vibeocr-install-backend` 在 client；backend 重引擎使用 CPU/`gpu-cu126` profile，在线安装复用原 env_manager 内核。
+- 架构守卫已改为扫描真实工作区，并新增 wheel archive 路径唯一所有权、meta 无代码、profile 漂移门禁；首轮架构测试 `32 passed`。
+- 开发态子进程 PYTHONPATH 已改为传播四个 source root，避免顶层 `vibeocr.__init__` 迁入 contracts 后 WorkerHost 只能发现单一源根。
+- CI 与 release 已改为联网安装 `build/hatchling`、构建五个真实 wheel、执行唯一所有权检查，并在干净 venv 中从根 meta wheel 安装和运行 WorkerHost 自检；Classic/WinUI 发布清单均携带实际 wheel 集及 SHA-256。
+- 最新五个 wheel 已本地重建；内容校验确认根 wheel 无代码、四个代码 wheel 无归档路径冲突，且依赖 profile、Qt `.ui` 与 protocol schema 均随正确 wheel 分发。
+- 干净虚拟环境从 wheelhouse 安装 `vibeocr==0.4.37` 成功，共解析 43 个基础包；四个内部代码包、根 meta 包、`vibeocr.main`、`vibeocr.worker_host.main`、包内 profile、安装器帮助和 WorkerHost `--self-test` 均通过。
+- 重依赖安装关键链定向回归 `39 passed`，覆盖安装态包资源 fallback、根 `version.json` 合并、CPU/GPU profile、Paddle/PyTorch cu126 专用 index、无错误 PyPI fallback 与 CLI 自动选型；版本/发布元数据回归 `54 passed`。
+- 架构守卫在组合回归超时前 32 项全部通过；Ruff 全量通过，`git diff --check` 通过。完整异步/JSON Schema 回归与 Pyright 被既有 `.venv` 文件 ACL 拒绝，未产生产品断言失败，完整检查继续由联网 CI 承担。
+- Classic 五 wheel 绑定已用最小前端夹具验证，产物 manifest、五个 wheel 文件与 SHA-256 全部通过；WinUI PowerShell 发布脚本通过语法解析。
+- 四包物理拆分与联网重依赖安装任务完成。
+
+---
+
+# 进度日志：拆包变更终审、提交与合并
+
+## 2026-07-19
+
+- 已重新读取 planning-with-files 并执行 session-catchup；确认当前分支为 `main`，全部拆包/治理工作尚未提交，远端 `main` 仍停在更早版本。
+- 已审阅包清单、CI/release、五 wheel 绑定与验证脚本；确定创建临时特性分支后提交、非快进合并回 main 的安全路径。
+- PySide-only 安装成功解析 25 个包并能导入主入口；误把 `vibeocr --help` 当 CLI help 导致实际 GUI 启动，随后终止冒烟并记录。该启动暴露 PDF 懒加载被 `utils.__getattr__` 错误要求 backend wheel。
+- 已修复 client utils 懒加载顺序并新增 source-root 隔离回归；不含 backend 的环境导入全部 PySide 模块 `78/78`，contracts+client `78/78`，backend `37/37` 且未加载任何 PySide6 模块。
+- 已加强发布稳健性：拒绝重复/错版本 wheel、强制五包版本一致、WinUI 只选择当前发布版本、CI 直接安装本次根 meta wheel 文件。
+- 已修复普通 wheel 安装的运行根：源码态仅接受模块确实位于 client source root 的工作区，安装态使用 `sys.prefix/sys.executable`。新增 2 项运行形态回归并通过。
+- 最新五个 wheel 再次构建成功；显式本地五轮强制安装后，仓库外隔离 venv 确认运行根、目标解释器、安装器和 WorkerHost 自检正确；PySide-only 三轮隔离安装确认 backend 未安装且 78 个前端模块全部导入。
+- 发布负向验证通过：重复 distribution wheel 被拒绝、0.4.38 发布绑定 0.4.37 wheel 被拒绝；正向 Classic 五轮绑定和 WinUI PowerShell 解析通过。
+- 分组回归：架构 `33 passed`，版本发布 `54 passed`，application/managers/WorkerHost 同步核心 `242 passed`，PySide 生命周期与功能 `225 passed, 3 skipped`，缓存/安装运行态 `37 passed`；Ruff 全量和 `git diff --check` 通过。
+- 修复 WMIC/nvidia-smi 非 UTF-8 输出导致的后台 reader thread warning；MainWindow 专项复测仅剩当前环境未加载 pytest-asyncio 的已知配置 warning。

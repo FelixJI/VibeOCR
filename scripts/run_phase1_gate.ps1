@@ -38,10 +38,10 @@ try {
     & $Python -m pytest tests/contracts tests/worker_host -q
     if ($LASTEXITCODE -ne 0) { throw "Phase 1 pytest failed" }
 
-    & $Ruff check src/vibeocr/worker_host tests/worker_host tests/contracts
+    & $Ruff check packages/vibeocr-client-py/src/vibeocr/worker_host packages/vibeocr-backend/src/vibeocr/worker_host tests/worker_host tests/contracts
     if ($LASTEXITCODE -ne 0) { throw "Phase 1 Ruff failed" }
 
-    & $Pyright --pythonpath $Python src/vibeocr/worker_host tests/worker_host tests/contracts
+    & $Pyright --pythonpath $Python packages/vibeocr-client-py/src/vibeocr/worker_host packages/vibeocr-backend/src/vibeocr/worker_host tests/worker_host tests/contracts
     if ($LASTEXITCODE -ne 0) { throw "Phase 1 Pyright failed" }
 
     & $Python -m vibeocr.worker_host.main --self-test

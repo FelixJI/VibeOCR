@@ -1437,6 +1437,119 @@ class TestPdfTabSaveAsync:
         mock_mgr.save_async.assert_called_once()
 
 
+class TestPdfTabSaveContinuation:
+    @staticmethod
+    def _setup(pdf_tab, monkeypatch):
+        from unittest.mock import MagicMock
+
+        from vibeocr.models.pdf_document import PdfDocument, PdfPageInfo
+        from vibeocr.models.pdf_session import PdfSession
+
+        doc = PdfDocument(file_path="a.pdf", pages=[PdfPageInfo(page_index=0)])
+        session = PdfSession(file_path="a.pdf", session_id="sid-a", pdf_document=doc)
+        session.pdf_document.is_modified = True
+        mgr = MagicMock()
+        mgr.active_session = session
+        mgr.save_async.return_value = True
+        mgr.switch_session.return_value = True
+        mgr.is_ocr_ready = True
+        mgr._OCR_PROGRESS_SUBSTEPS = 3
+        pdf_tab._session_mgr = mgr
+        monkeypatch.setattr(pdf_tab, "_load_ocr_prefs", lambda: (MagicMock(), None))
+        pdf_tab._file_selector.blockSignals(True)
+        pdf_tab._file_selector.clear()
+        pdf_tab._file_selector.addItem("a.pdf", "a.pdf")
+        pdf_tab._file_selector.addItem("b.pdf", "b.pdf")
+        pdf_tab._file_selector.setCurrentIndex(0)
+        pdf_tab._file_selector.blockSignals(False)
+        return mgr, session
+
+    def test_save_success_then_worker_finished_switches_file(
+        self, pdf_tab, monkeypatch
+    ):
+        from PySide6.QtWidgets import QMessageBox
+
+        mgr, session = self._setup(pdf_tab, monkeypatch)
+        monkeypatch.setattr(
+            QMessageBox,
+            "question",
+            staticmethod(lambda *a, **k: QMessageBox.StandardButton.Save),
+        )
+
+        pdf_tab._on_file_selected(1)
+        mgr.switch_session.assert_not_called()
+        assert pdf_tab._pending_after_save is not None
+        assert pdf_tab._file_selector.currentData() == "a.pdf"
+
+        session.pdf_document.is_modified = False
+        pdf_tab._on_save_done("a.pdf")
+        mgr.switch_session.assert_not_called()
+        pdf_tab._on_mutate_state_changed("a.pdf", "save", "completed")
+
+        mgr.switch_session.assert_called_once_with("b.pdf")
+        assert pdf_tab._pending_after_save is None
+        assert pdf_tab._file_selector.currentData() == "b.pdf"
+
+    def test_save_failure_clears_pending_without_switch(self, pdf_tab, monkeypatch):
+        from PySide6.QtWidgets import QMessageBox
+
+        mgr, _session = self._setup(pdf_tab, monkeypatch)
+        monkeypatch.setattr(
+            QMessageBox,
+            "question",
+            staticmethod(lambda *a, **k: QMessageBox.StandardButton.Save),
+        )
+        monkeypatch.setattr(QMessageBox, "warning", staticmethod(lambda *a, **k: None))
+
+        pdf_tab._on_file_selected(1)
+        pdf_tab._on_mutate_failed("a.pdf", "disk full")
+        pdf_tab._on_mutate_state_changed("a.pdf", "save", "completed")
+
+        assert pdf_tab._pending_after_save is None
+        mgr.switch_session.assert_not_called()
+
+    def test_save_success_then_finished_continues_ocr(self, pdf_tab, monkeypatch):
+        from unittest.mock import MagicMock
+
+        from PySide6.QtWidgets import QMessageBox
+
+        mgr, session = self._setup(pdf_tab, monkeypatch)
+        answers = iter(
+            [QMessageBox.StandardButton.Save, QMessageBox.StandardButton.Yes]
+        )
+        monkeypatch.setattr(
+            QMessageBox, "question", staticmethod(lambda *a, **k: next(answers))
+        )
+        monkeypatch.setattr(pdf_tab, "_get_selected_page_indices", lambda: [0])
+        monkeypatch.setattr(pdf_tab, "_begin_ocr_ui", MagicMock())
+        mgr.start_ocr.return_value = True
+
+        pdf_tab._on_add_text_layer()
+        mgr.start_ocr.assert_not_called()
+        session.pdf_document.is_modified = False
+        pdf_tab._on_save_done("a.pdf")
+        pdf_tab._on_mutate_state_changed("a.pdf", "save", "completed")
+
+        mgr.start_ocr.assert_called_once()
+        assert mgr.start_ocr.call_args.args[0] == [0]
+
+    def test_save_cancelled_clears_pending(self, pdf_tab, monkeypatch):
+        from PySide6.QtWidgets import QMessageBox
+
+        mgr, _session = self._setup(pdf_tab, monkeypatch)
+        monkeypatch.setattr(
+            QMessageBox,
+            "question",
+            staticmethod(lambda *a, **k: QMessageBox.StandardButton.Save),
+        )
+        pdf_tab._on_file_selected(1)
+
+        pdf_tab._on_mutate_state_changed("a.pdf", "save", "cancelled")
+
+        assert pdf_tab._pending_after_save is None
+        mgr.switch_session.assert_not_called()
+
+
 class TestPdfTabLoadHint:
     def test_load_progress_updates_status(self, pdf_tab):
         """_on_load_progress 应更新状态栏显示加载进度。"""
@@ -1961,23 +2074,33 @@ class TestThumbnailWorkerLifecycle:
         calls: list[str] = []
         monkeypatch.setattr(
             pdf_tab._thumbnail_model,
-            "_stop_render_worker",
-            lambda: calls.append("thumbnail"),
+            "request_shutdown",
+            lambda: calls.append("thumbnail:request"),
         )
         monkeypatch.setattr(
             pdf_tab._thumbnail_model,
             "wait_for_draining",
-            lambda: calls.append("drain") or True,
+            lambda _timeout_ms: calls.append("thumbnail:drain") or True,
         )
         monkeypatch.setattr(
             pdf_tab._session_mgr,
-            "shutdown",
-            lambda: calls.append("manager"),
+            "request_shutdown",
+            lambda: calls.append("manager:request"),
+        )
+        monkeypatch.setattr(
+            pdf_tab._session_mgr,
+            "drain",
+            lambda _timeout_ms: calls.append("manager:drain") or True,
         )
 
         pdf_tab.shutdown()
 
-        assert calls == ["thumbnail", "manager", "drain"]
+        assert calls == [
+            "thumbnail:request",
+            "manager:request",
+            "thumbnail:drain",
+            "manager:drain",
+        ]
 
     def test_timed_out_thumbnail_worker_is_retained_until_finished(
         self, qapp, monkeypatch

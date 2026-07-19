@@ -23,15 +23,17 @@ from pathlib import Path
 import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-_SRC_DIR = _REPO_ROOT / "src"
-if str(_SRC_DIR) not in sys.path:
-    sys.path.insert(0, str(_SRC_DIR))
-
-_WORKER_HOST_DIR = _SRC_DIR / "vibeocr" / "worker_host"
+_WORKER_HOST_DIRS = (
+    _REPO_ROOT / "packages" / "vibeocr-client-py" / "src" / "vibeocr" / "worker_host",
+    _REPO_ROOT / "packages" / "vibeocr-backend" / "src" / "vibeocr" / "worker_host",
+)
 _FORBIDDEN_MODULES = ("PySide6", "qasync", "PyQt5", "PyQt6")
 
 
-@pytest.mark.parametrize("py_file", sorted(_WORKER_HOST_DIR.rglob("*.py")))
+@pytest.mark.parametrize(
+    "py_file",
+    sorted(path for root in _WORKER_HOST_DIRS for path in root.rglob("*.py")),
+)
 def test_worker_host_source_has_no_ui_imports(py_file: Path) -> None:
     """No worker_host .py file may import PySide6/qasync/PyQt."""
     tree = ast.parse(py_file.read_text(encoding="utf-8"), filename=str(py_file))

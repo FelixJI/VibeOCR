@@ -23,6 +23,11 @@ public static class RpcMethods
     public const string DecodeQrCode = "qrcode.decode";
     public const string GenerateQrCode = "qrcode.generate";
     public const string GenerateQrCodeSvg = "qrcode.generate_svg";
+    public const string PipelineCacheStatus = "pipeline_cache.status";
+    public const string SetPipelineCacheTtl = "pipeline_cache.set_ttl";
+    public const string ReleasePipelineCache = "pipeline_cache.release";
+    public const string PreloadPipelineCache = "pipeline_cache.preload";
+    public const string WarmupPipelineCache = "pipeline_cache.warmup";
     public const string SettingsSnapshot = "settings.snapshot";
     public const string SwitchBackend = "settings.switch_backend";
     public const string InstallDependency = "settings.install_dependency";
@@ -50,6 +55,11 @@ public static class RpcMethods
         DecodeQrCode,
         GenerateQrCode,
         GenerateQrCodeSvg,
+        PipelineCacheStatus,
+        SetPipelineCacheTtl,
+        ReleasePipelineCache,
+        PreloadPipelineCache,
+        WarmupPipelineCache,
         SettingsSnapshot,
         SwitchBackend,
         InstallDependency,

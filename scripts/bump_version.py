@@ -54,10 +54,23 @@ PYPROJECT_TOML = Path(
     os.environ.get("PYPROJECT_TOML", str(PROJECT_ROOT / "pyproject.toml"))
 )
 INIT_PY = Path(
-    os.environ.get("INIT_PY", str(PROJECT_ROOT / "src" / "vibeocr" / "__init__.py"))
+    os.environ.get(
+        "INIT_PY",
+        str(
+            PROJECT_ROOT
+            / "packages"
+            / "vibeocr-contracts-py"
+            / "src"
+            / "vibeocr"
+            / "__init__.py"
+        ),
+    )
 )
 MAIN_PY = Path(
-    os.environ.get("MAIN_PY", str(PROJECT_ROOT / "src" / "vibeocr" / "main.py"))
+    os.environ.get(
+        "MAIN_PY",
+        str(PROJECT_ROOT / "apps" / "vibeocr-pyside" / "src" / "vibeocr" / "main.py"),
+    )
 )
 CHANGELOG = Path(os.environ.get("CHANGELOG", str(PROJECT_ROOT / "CHANGELOG.md")))
 UV_LOCK = Path(os.environ.get("UV_LOCK", str(PROJECT_ROOT / "uv.lock")))
@@ -69,14 +82,20 @@ UV_LOCK = Path(os.environ.get("UV_LOCK", str(PROJECT_ROOT / "uv.lock")))
 DEFAULT_FRONTEND = "pyside"
 
 # ---------------------------------------------------------------------------
-# sys.path 注入 src/：CI 只装 build-shell.lock（PyInstaller + 壳依赖），不安装
+# sys.path 注入四个 workspace source root：CI 只装 build-shell.lock，不安装
 # vibeocr 包本身（避免拉 GB 级 paddle/torch）。但 _package_zip 需要 import
 # vibeocr.build_manifest 生成/校验产物清单。本地 editable 安装时无需此举，加上
 # 是幂等的——与 tests/conftest.py 的处理方式一致。必须在任何 from vibeocr...
 # 之前执行。
-_SRC_DIR = PROJECT_ROOT / "src"
-if str(_SRC_DIR) not in sys.path:
-    sys.path.insert(0, str(_SRC_DIR))
+_SOURCE_DIRS = (
+    PROJECT_ROOT / "packages" / "vibeocr-contracts-py" / "src",
+    PROJECT_ROOT / "packages" / "vibeocr-client-py" / "src",
+    PROJECT_ROOT / "packages" / "vibeocr-backend" / "src",
+    PROJECT_ROOT / "apps" / "vibeocr-pyside" / "src",
+)
+for _source_dir in reversed(_SOURCE_DIRS):
+    if str(_source_dir) not in sys.path:
+        sys.path.insert(0, str(_source_dir))
 
 VERSION_RE = re.compile(r'version\s*=\s*"(\d+)\.(\d+)\.(\d+)"')
 SEMVER_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
@@ -276,7 +295,9 @@ PACKAGE_DATA = [
     # 目标目录与 PYZ 内同名为 vibeocr：主 exe 与便携 Python 是两个独立解释器，
     # 主 exe 走 PyInstaller bootstrap（PYZ 优先），便携 Python 走 PYTHONPATH 的
     # 平铺 .py，互不干扰。
-    ("src/vibeocr", "vibeocr"),
+    ("packages/vibeocr-contracts-py/src/vibeocr", "vibeocr"),
+    ("packages/vibeocr-client-py/src/vibeocr", "vibeocr"),
+    ("packages/vibeocr-backend/src/vibeocr", "vibeocr"),
     # update_replacer.py：主程序 --self-update 兜底模式需要 import 它（updater.exe
     # 坏时主程序自身充当替换器）。打入 .（_internal/ 根），由 main.py 的
     # _resolve_replacer_module_dir 通过 sys._MEIPASS 定位后注入 sys.path。
@@ -665,6 +686,17 @@ def _get_last_release_pyproject_deps(
     if cwd is None:
         cwd = PROJECT_ROOT
     try:
+        repo_probe = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            capture_output=True,
+            encoding="utf-8",
+            cwd=str(cwd),
+        )
+        if (
+            repo_probe.returncode != 0
+            or Path(repo_probe.stdout.strip()).resolve() != Path(cwd).resolve()
+        ):
+            return {}
         current_tag = f"v{version}"
         last_tag = ""
         # 候选 ref（按优先级）：v{version}^（release commit 的父，bump 流程）→
@@ -1027,8 +1059,22 @@ def _generate_version_json(version: str, dist_dir: Path) -> None:
     import re as _re
     import tomllib
 
-    tomldata = tomllib.loads(PYPROJECT_TOML.read_text(encoding="utf-8"))
-    deps = tomldata.get("project", {}).get("dependencies", [])
+    backend_pyproject = (
+        PROJECT_ROOT / "packages" / "vibeocr-backend" / "pyproject.toml"
+    )
+    dependency_manifest = (
+        backend_pyproject
+        if (
+            backend_pyproject.exists()
+            and PYPROJECT_TOML.resolve() == (PROJECT_ROOT / "pyproject.toml").resolve()
+        )
+        else PYPROJECT_TOML
+    )
+    tomldata = tomllib.loads(dependency_manifest.read_text(encoding="utf-8"))
+    project = tomldata.get("project", {})
+    deps = list(project.get("dependencies", []))
+    for optional_deps in project.get("optional-dependencies", {}).values():
+        deps.extend(optional_deps)
 
     # 需要追踪版本的包前缀（对应 EXCLUDED_PACKAGES 中排除的大依赖）
     # PDF 后端依赖(pymupdf/fastapi/uvicorn/pydantic/fonttools)已从主 exe 排除,
@@ -1340,7 +1386,7 @@ def _cleanup_dist(dist_dir: Path) -> None:
     freed_mb = freed_bytes / (1024 * 1024)
     print(f"  清理无用 Qt 文件: 删除 {deleted} 个，释放 {freed_mb:.1f} MB")
 
-    # 清理 __pycache__ 目录：src/vibeocr 经 --add-data 作为 datas 收集（worker
+    # 清理 __pycache__ 目录：三个 worker source root 经 --add-data 合并收集（worker
     # 子进程用便携 Python 以原始 .py 形式 import，见 PACKAGE_DATA 注释），而
     # PyInstaller 会把源码树下的 __pycache__/*.pyc 一并复制进 _internal/vibeocr。
     # manifest 校验将 __pycache__ 视为禁止路径（见 build_manifest.FORBIDDEN_TOP_NAMES），
@@ -1448,7 +1494,13 @@ def _get_pyinstaller_cmd(
         "--clean",
         "--noconfirm",
         "--paths",
-        str(PROJECT_ROOT / "src"),
+        str(PROJECT_ROOT / "packages" / "vibeocr-contracts-py" / "src"),
+        "--paths",
+        str(PROJECT_ROOT / "packages" / "vibeocr-client-py" / "src"),
+        "--paths",
+        str(PROJECT_ROOT / "packages" / "vibeocr-backend" / "src"),
+        "--paths",
+        str(PROJECT_ROOT / "apps" / "vibeocr-pyside" / "src"),
         # 禁用 UPX 压缩：UPX 压缩的 DLL（尤其 PySide6 的 Qt6*.dll，数十 MB）
         # 每次启动都要在内存解压，是 .exe 启动慢的主因。
         # 牺牲约 30% 磁盘体积换取启动免解压提速。

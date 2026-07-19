@@ -34,6 +34,7 @@ permissions:
   contents: write  # softprops/action-gh-release 创建 Release 需要
 
 env:
+  PYTHONPATH: "${{ github.workspace }}/packages/vibeocr-contracts-py/src;${{ github.workspace }}/packages/vibeocr-client-py/src;${{ github.workspace }}/packages/vibeocr-backend/src;${{ github.workspace }}/apps/vibeocr-pyside/src"
   # 控制本次发版生成哪些安装包。取值：
   #   pyside6  仅 PySide6 Classic（PyInstaller 打 main.py，VibeOCR-Classic-*.zip）
   #   winui    仅 WinUI Next（dotnet publish，VibeOCR-Next-*.zip，开发预览）
@@ -119,6 +120,7 @@ jobs:
           # 独立运行，不进主 exe（见 pdf_backend_client._resolve_python_exe）。
           # fitz 从主 exe 排除后,版本约束走 version.json,由便携 Python 安装。
           pip install --require-hashes -r requirements/build-shell.lock
+          pip install build==1.3.0 hatchling==1.27.0
 
       - name: Restore .NET solution
         shell: pwsh
@@ -135,7 +137,7 @@ jobs:
       - name: Validate Python style
         shell: pwsh
         run: |
-          python -m ruff check src tests scripts
+          python -m ruff check apps packages tests scripts
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Validate complete .NET solution
@@ -165,12 +167,15 @@ jobs:
           python tests/parity/validate_matrix.py docs/quality/feature-parity.md --require-pass
           python -m pytest tests/parity -q
 
-      - name: Build shared backend wheel once
+      - name: Build physical Python workspace wheels
         shell: pwsh
         run: |
-          python scripts/build_backend_wheel.py --output-dir dist/backend
-          $wheel = (Get-ChildItem dist/backend/*.whl).FullName
-          python scripts/verify_backend_wheel.py $wheel --manifest dist/backend/backend-manifest.json
+          python -m build --wheel packages/vibeocr-contracts-py --outdir dist/wheels
+          python -m build --wheel packages/vibeocr-client-py --outdir dist/wheels
+          python -m build --wheel packages/vibeocr-backend --outdir dist/wheels
+          python -m build --wheel apps/vibeocr-pyside --outdir dist/wheels
+          python -m build --wheel . --outdir dist/wheels
+          python scripts/verify_workspace_wheels.py dist/wheels
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Build PySide6 Classic (PyInstaller)
@@ -192,8 +197,7 @@ jobs:
         shell: pwsh
         run: |
           $version = "${{ steps.version.outputs.version }}"
-          $wheel = (Get-ChildItem dist/backend/*.whl).FullName
-          python scripts/bind_backend_artifact.py --frontend pyside --version $version --input "dist/VibeOCR-v$version-win64.zip" --backend-wheel $wheel --output "dist/VibeOCR-Classic-v$version-win64.zip"
+          python scripts/bind_backend_artifact.py --frontend pyside --version $version --input "dist/VibeOCR-v$version-win64.zip" --wheel-dir dist/wheels --output "dist/VibeOCR-Classic-v$version-win64.zip"
           python scripts/verify_pyside_artifact.py "dist/VibeOCR-Classic-v$version-win64.zip"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
@@ -202,8 +206,7 @@ jobs:
         shell: pwsh
         run: |
           $version = "${{ steps.version.outputs.version }}"
-          $wheel = (Get-ChildItem dist/backend/*.whl).FullName
-          ./scripts/build_winui_release.ps1 -Version $version -BackendWheel $wheel -OutputDir dist/winui-next
+          ./scripts/build_winui_release.ps1 -Version $version -WheelDirectory dist/wheels -OutputDir dist/winui-next
           Compress-Archive -Path dist/winui-next/* -DestinationPath "dist/VibeOCR-Next-v$version-win64.zip" -Force
           $hash = (Get-FileHash "dist/VibeOCR-Next-v$version-win64.zip" -Algorithm SHA256).Hash.ToLowerInvariant()
           "$hash  VibeOCR-Next-v$version-win64.zip" | Set-Content "dist/VibeOCR-Next-v$version-win64.zip.sha256" -Encoding ascii
@@ -221,6 +224,13 @@ jobs:
         run: |
           ./scripts/verify_winui_artifact.ps1 -Artifact "dist/VibeOCR-Next-v${{ steps.version.outputs.version }}-win64.zip"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Package Python wheelhouse
+        shell: pwsh
+        run: |
+          Compress-Archive -Path dist/wheels/*.whl -DestinationPath "dist/VibeOCR-Python-wheels-v${{ steps.version.outputs.version }}.zip" -Force
+          $hash = (Get-FileHash "dist/VibeOCR-Python-wheels-v${{ steps.version.outputs.version }}.zip" -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  VibeOCR-Python-wheels-v${{ steps.version.outputs.version }}.zip" | Set-Content "dist/VibeOCR-Python-wheels-v${{ steps.version.outputs.version }}.zip.sha256" -Encoding ascii
 
       - name: Extract release notes from CHANGELOG
         id: notes
@@ -267,6 +277,8 @@ jobs:
             dist/VibeOCR-Classic-v${{ steps.version.outputs.version }}-win64.zip.sha256
             dist/VibeOCR-Next-v${{ steps.version.outputs.version }}-win64.zip
             dist/VibeOCR-Next-v${{ steps.version.outputs.version }}-win64.zip.sha256
+            dist/VibeOCR-Python-wheels-v${{ steps.version.outputs.version }}.zip
+            dist/VibeOCR-Python-wheels-v${{ steps.version.outputs.version }}.zip.sha256
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

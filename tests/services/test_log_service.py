@@ -92,3 +92,43 @@ def test_setup_logging_silences_noisy_third_party_loggers():
             h for h in root_logger.handlers if not isinstance(h, logging.RootLogger)
         ]:
             root_logger.removeHandler(h)
+
+
+def test_qt_log_handler_requires_explicit_ui_status(qapp):
+    from vibeocr.services.log_service import QtLogHandler
+
+    handler = QtLogHandler()
+    handler.setFormatter(logging.Formatter("%(message)s"))
+    emitted: list[str] = []
+    handler.status_signal.connect(emitted.append)
+
+    keyword_only = logging.LogRecord(
+        "test", logging.INFO, __file__, 1, "OCR 服务已就绪", (), None
+    )
+    handler.emit(keyword_only)
+    explicit = logging.LogRecord(
+        "test", logging.INFO, __file__, 2, "model ready", (), None
+    )
+    explicit.ui_status = True
+    handler.emit(explicit)
+
+    assert emitted == ["model ready"]
+
+
+def test_setup_logging_uses_jsonl_file_formatter():
+    from logging.handlers import RotatingFileHandler
+
+    from vibeocr.logging_context import JsonLogFormatter
+    from vibeocr.services.log_service import setup_logging
+
+    setup_logging()
+    root_logger = logging.getLogger()
+    try:
+        file_handler = next(
+            h for h in root_logger.handlers if isinstance(h, RotatingFileHandler)
+        )
+        assert isinstance(file_handler.formatter, JsonLogFormatter)
+    finally:
+        for item in root_logger.handlers[:]:
+            root_logger.removeHandler(item)
+            item.close()

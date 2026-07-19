@@ -28,6 +28,34 @@ def test_batch_adapter_maps_options_and_cancel() -> None:
     client.cancel_active.assert_called_once_with()
 
 
+def test_batch_adapter_uses_real_pipeline_cache_client_surface() -> None:
+    client = MagicMock()
+    client.preload_pipeline_cache_sync.return_value = {"OCR": True}
+    client.warmup_pipeline_cache_sync.return_value = {"OCR": True}
+    client.release_pipeline_cache_sync.return_value = ["PP-StructureV3"]
+    client.set_pipeline_cache_ttl_sync.return_value = True
+    client.pipeline_cache_status_sync.return_value = {
+        "ready": True,
+        "ttl_seconds": 600,
+        "max_heavy": 2,
+        "loaded_pipelines": ["OCR"],
+        "last_used_unix_ms": {},
+    }
+    adapter = BatchBackendAdapter(client)
+
+    assert adapter.preload_pipelines(["OCR"]) == {"OCR": True}
+    assert adapter.warmup_pipelines(["OCR"]) == {"OCR": True}
+    assert adapter.release_pipelines(heavy_only=True) == ["PP-StructureV3"]
+    assert adapter.set_pipeline_ttl(600) is True
+    assert adapter.get_pipeline_cache_status()["loaded_pipelines"] == ["OCR"]
+
+    client.preload_pipeline_cache_sync.assert_called_once_with(["OCR"])
+    client.warmup_pipeline_cache_sync.assert_called_once_with(["OCR"])
+    client.release_pipeline_cache_sync.assert_called_once_with(heavy_only=True)
+    client.set_pipeline_cache_ttl_sync.assert_called_once_with(600)
+    client.pipeline_cache_status_sync.assert_called_once_with()
+
+
 def test_export_helpers_and_rpc_dispatch(tmp_path) -> None:
     occupied = tmp_path / "result.docx"
     occupied.write_bytes(b"old")

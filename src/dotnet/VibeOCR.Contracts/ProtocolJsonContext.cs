@@ -28,6 +28,11 @@ namespace VibeOCR.Contracts;
 [JsonSerializable(typeof(RpcRequestEnvelope<DecodeQrCodeRequest>))]
 [JsonSerializable(typeof(RpcRequestEnvelope<GenerateQrCodeRequest>))]
 [JsonSerializable(typeof(RpcRequestEnvelope<GenerateQrCodeSvgRequest>))]
+[JsonSerializable(typeof(RpcRequestEnvelope<PipelineCacheStatusRequest>))]
+[JsonSerializable(typeof(RpcRequestEnvelope<SetPipelineCacheTtlRequest>))]
+[JsonSerializable(typeof(RpcRequestEnvelope<ReleasePipelineCacheRequest>))]
+[JsonSerializable(typeof(RpcRequestEnvelope<PreloadPipelineCacheRequest>))]
+[JsonSerializable(typeof(RpcRequestEnvelope<WarmupPipelineCacheRequest>))]
 [JsonSerializable(typeof(RpcRequestEnvelope<SettingsSnapshotRequest>))]
 [JsonSerializable(typeof(RpcRequestEnvelope<SwitchBackendRequest>))]
 [JsonSerializable(typeof(RpcRequestEnvelope<InstallDependencyRequest>))]
@@ -52,6 +57,11 @@ namespace VibeOCR.Contracts;
 [JsonSerializable(typeof(RpcResponseEnvelope<DecodeQrCodeResponse>))]
 [JsonSerializable(typeof(RpcResponseEnvelope<GenerateQrCodeResponse>))]
 [JsonSerializable(typeof(RpcResponseEnvelope<GenerateQrCodeSvgResponse>))]
+[JsonSerializable(typeof(RpcResponseEnvelope<PipelineCacheStatusResponse>))]
+[JsonSerializable(typeof(RpcResponseEnvelope<SetPipelineCacheTtlResponse>))]
+[JsonSerializable(typeof(RpcResponseEnvelope<ReleasePipelineCacheResponse>))]
+[JsonSerializable(typeof(RpcResponseEnvelope<PreloadPipelineCacheResponse>))]
+[JsonSerializable(typeof(RpcResponseEnvelope<WarmupPipelineCacheResponse>))]
 [JsonSerializable(typeof(RpcResponseEnvelope<SettingsSnapshotResponse>))]
 [JsonSerializable(typeof(RpcResponseEnvelope<SwitchBackendResponse>))]
 [JsonSerializable(typeof(RpcResponseEnvelope<InstallDependencyResponse>))]
@@ -134,6 +144,11 @@ public static class ProtocolJson
                 RpcMethods.DecodeQrCode => typeof(RpcRequestEnvelope<DecodeQrCodeRequest>),
                 RpcMethods.GenerateQrCode => typeof(RpcRequestEnvelope<GenerateQrCodeRequest>),
                 RpcMethods.GenerateQrCodeSvg => typeof(RpcRequestEnvelope<GenerateQrCodeSvgRequest>),
+                RpcMethods.PipelineCacheStatus => typeof(RpcRequestEnvelope<PipelineCacheStatusRequest>),
+                RpcMethods.SetPipelineCacheTtl => typeof(RpcRequestEnvelope<SetPipelineCacheTtlRequest>),
+                RpcMethods.ReleasePipelineCache => typeof(RpcRequestEnvelope<ReleasePipelineCacheRequest>),
+                RpcMethods.PreloadPipelineCache => typeof(RpcRequestEnvelope<PreloadPipelineCacheRequest>),
+                RpcMethods.WarmupPipelineCache => typeof(RpcRequestEnvelope<WarmupPipelineCacheRequest>),
                 RpcMethods.SettingsSnapshot => typeof(RpcRequestEnvelope<SettingsSnapshotRequest>),
                 RpcMethods.SwitchBackend => typeof(RpcRequestEnvelope<SwitchBackendRequest>),
                 RpcMethods.InstallDependency => typeof(RpcRequestEnvelope<InstallDependencyRequest>),
@@ -199,6 +214,11 @@ public static class ProtocolJson
                 RpcMethods.DecodeQrCode => typeof(RpcResponseEnvelope<DecodeQrCodeResponse>),
                 RpcMethods.GenerateQrCode => typeof(RpcResponseEnvelope<GenerateQrCodeResponse>),
                 RpcMethods.GenerateQrCodeSvg => typeof(RpcResponseEnvelope<GenerateQrCodeSvgResponse>),
+                RpcMethods.PipelineCacheStatus => typeof(RpcResponseEnvelope<PipelineCacheStatusResponse>),
+                RpcMethods.SetPipelineCacheTtl => typeof(RpcResponseEnvelope<SetPipelineCacheTtlResponse>),
+                RpcMethods.ReleasePipelineCache => typeof(RpcResponseEnvelope<ReleasePipelineCacheResponse>),
+                RpcMethods.PreloadPipelineCache => typeof(RpcResponseEnvelope<PreloadPipelineCacheResponse>),
+                RpcMethods.WarmupPipelineCache => typeof(RpcResponseEnvelope<WarmupPipelineCacheResponse>),
                 RpcMethods.SettingsSnapshot => typeof(RpcResponseEnvelope<SettingsSnapshotResponse>),
                 RpcMethods.SwitchBackend => typeof(RpcResponseEnvelope<SwitchBackendResponse>),
                 RpcMethods.InstallDependency => typeof(RpcResponseEnvelope<InstallDependencyResponse>),
