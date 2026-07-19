@@ -7,16 +7,33 @@ without requiring an actual dotnet publish.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import subprocess
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).parents[2]
 VERIFIER = REPO_ROOT / "scripts" / "verify_winui_artifact.ps1"
+FIXTURE_VERSION = "0.0.0"
+RUNTIME_WHEELS = (
+    f"vibeocr_contracts_py-{FIXTURE_VERSION}-py3-none-any.whl",
+    f"vibeocr_client_py-{FIXTURE_VERSION}-py3-none-any.whl",
+    f"vibeocr_backend-{FIXTURE_VERSION}-py3-none-any.whl",
+)
 
 
 def _run_verifier(root: Path) -> tuple[int, str]:
     proc = subprocess.run(
-        ["powershell.exe", "-NoProfile", "-File", str(VERIFIER), "-Artifact", str(root)],
+        [
+            "powershell.exe",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(VERIFIER),
+            "-Artifact",
+            str(root),
+        ],
         capture_output=True,
     )
     stdout = (proc.stdout or b"").decode("utf-8", errors="replace")
@@ -35,7 +52,6 @@ def _build_layout(root: Path, *, forbidden: list[str] | None = None) -> None:
         "VibeOCR.Contracts.dll",
         "VibeOCR.Platform.dll",
         "worker/vibeocr/worker_host/main.py",
-        "product-manifest.json",
         "contracts/v1/golden.json",
         "CHANGELOG.md",
         "LICENSE",
@@ -43,6 +59,30 @@ def _build_layout(root: Path, *, forbidden: list[str] | None = None) -> None:
         target = root / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(b"release-content")
+
+    wheel_records = []
+    for name in RUNTIME_WHEELS:
+        wheel = root / "backend" / name
+        wheel.parent.mkdir(parents=True, exist_ok=True)
+        content = f"fixture:{name}".encode()
+        wheel.write_bytes(content)
+        wheel_records.append(
+            {"file": name, "sha256": hashlib.sha256(content).hexdigest()}
+        )
+
+    backend_record = wheel_records[-1]
+    manifest = {
+        "frontend": "winui",
+        "frontend_version": FIXTURE_VERSION,
+        "backend_wheel": backend_record["file"],
+        "backend_sha256": backend_record["sha256"],
+        "python_wheels": wheel_records,
+        "protocol_major": 1,
+        "source_commit": "0" * 40,
+    }
+    (root / "product-manifest.json").write_text(
+        json.dumps(manifest), encoding="utf-8"
+    )
     for entry in forbidden or []:
         target = root / entry
         target.mkdir(parents=True, exist_ok=True)
@@ -113,3 +153,21 @@ def test_self_contained_runtime_rejected(tmp_path: Path) -> None:
     code, output = _run_verifier(root)
     assert code == 1, output
     assert "self-contained" in output
+
+
+def test_invalid_product_manifest_is_rejected(tmp_path: Path) -> None:
+    root = tmp_path / "release"
+    _build_layout(root)
+    (root / "product-manifest.json").write_text("not-json", encoding="utf-8")
+    code, output = _run_verifier(root)
+    assert code == 1, output
+    assert "product manifest is invalid JSON" in output
+
+
+def test_runtime_wheel_hash_mismatch_is_rejected(tmp_path: Path) -> None:
+    root = tmp_path / "release"
+    _build_layout(root)
+    (root / "backend" / RUNTIME_WHEELS[0]).write_bytes(b"tampered")
+    code, output = _run_verifier(root)
+    assert code == 1, output
+    assert "bound runtime wheel hash mismatch" in output

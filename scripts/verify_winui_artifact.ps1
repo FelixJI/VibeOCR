@@ -58,22 +58,39 @@ foreach ($relative in $requiredFiles) {
 
 $manifestPath = Join-Path $root 'product-manifest.json'
 if (Test-Path $manifestPath -PathType Leaf) {
-    $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
-    $records = @($manifest.python_wheels)
-    if ($records.Count -ne 3) {
-        $errors.Add("expected 3 WinUI runtime wheels, found $($records.Count)")
+    $manifest = $null
+    try {
+        $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+    } catch {
+        $errors.Add("product manifest is invalid JSON: $($_.Exception.Message)")
     }
-    foreach ($record in $records) {
-        $wheelPath = Join-Path (Join-Path $root 'backend') $record.file
-        if (-not (Test-Path $wheelPath -PathType Leaf)) {
-            $errors.Add("bound runtime wheel missing: $($record.file)")
-            continue
+    if ($null -ne $manifest) {
+        $records = @($manifest.python_wheels)
+        if ($records.Count -ne 3) {
+            $errors.Add("expected 3 WinUI runtime wheels, found $($records.Count)")
         }
-        $bytes = [IO.File]::ReadAllBytes($wheelPath)
-        $hashBytes = [Security.Cryptography.SHA256]::Create().ComputeHash($bytes)
-        $actualHash = -join ($hashBytes | ForEach-Object { $_.ToString('x2') })
-        if ($actualHash -ne $record.sha256) {
-            $errors.Add("bound runtime wheel hash mismatch: $($record.file)")
+        $expectedWheelPrefixes = @(
+            'vibeocr_contracts_py-',
+            'vibeocr_client_py-',
+            'vibeocr_backend-'
+        )
+        foreach ($prefix in $expectedWheelPrefixes) {
+            if (@($records | Where-Object { $_.file -like "$prefix*" }).Count -ne 1) {
+                $errors.Add("expected exactly one WinUI runtime wheel matching $prefix")
+            }
+        }
+        foreach ($record in $records) {
+            $wheelPath = Join-Path (Join-Path $root 'backend') $record.file
+            if (-not (Test-Path $wheelPath -PathType Leaf)) {
+                $errors.Add("bound runtime wheel missing: $($record.file)")
+                continue
+            }
+            $bytes = [IO.File]::ReadAllBytes($wheelPath)
+            $hashBytes = [Security.Cryptography.SHA256]::Create().ComputeHash($bytes)
+            $actualHash = -join ($hashBytes | ForEach-Object { $_.ToString('x2') })
+            if ($actualHash -ne $record.sha256) {
+                $errors.Add("bound runtime wheel hash mismatch: $($record.file)")
+            }
         }
     }
 }
