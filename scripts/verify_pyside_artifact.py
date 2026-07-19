@@ -16,30 +16,39 @@ def _verify_frozen_startup(root: Path, timeout_seconds: float = 45.0) -> None:
     """真实启动冻结入口并要求它到达 T3 首窗里程碑。"""
     exe = root / "VibeOCR.exe"
     trace = root / ".startup-smoke.jsonl"
+    stdout_log = root / ".startup-smoke.stdout.log"
+    stderr_log = root / ".startup-smoke.stderr.log"
     trace.unlink(missing_ok=True)
+    stdout_log.unlink(missing_ok=True)
+    stderr_log.unlink(missing_ok=True)
     env = os.environ.copy()
     env["VIBEOCR_SELF_TEST_SMOKE"] = "t3"
     env["VIBEOCR_STARTUP_TRACE"] = str(trace)
     env["QT_QPA_PLATFORM"] = "offscreen"
     env.pop("VIBEOCR_REPOSITORY_ROOT", None)
     try:
-        result = subprocess.run(
-            [str(exe)],
-            cwd=root,
-            env=env,
-            capture_output=True,
-            text=True,
-            errors="replace",
-            timeout=timeout_seconds,
-            check=False,
-            creationflags=(
-                subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
-            ),
-        )
+        # 不使用 PIPE：启动阶段的后台清理子进程可能继承 stdout/stderr，
+        # 即使主进程已 os._exit，communicate() 仍会等待继承的管道关闭并误报超时。
+        with stdout_log.open("wb") as stdout_handle, stderr_log.open(
+            "wb"
+        ) as stderr_handle:
+            result = subprocess.run(
+                [str(exe)],
+                cwd=root,
+                env=env,
+                stdout=stdout_handle,
+                stderr=stderr_handle,
+                timeout=timeout_seconds,
+                check=False,
+                creationflags=(
+                    subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+                ),
+            )
         if result.returncode != 0:
+            stderr = stderr_log.read_text(encoding="utf-8", errors="replace").strip()
             raise RuntimeError(
                 f"frozen PySide startup smoke exited with {result.returncode}: "
-                f"{result.stderr.strip()}"
+                f"{stderr}"
             )
         if not trace.is_file():
             raise RuntimeError("frozen PySide startup smoke produced no trace")
@@ -53,11 +62,15 @@ def _verify_frozen_startup(root: Path, timeout_seconds: float = 45.0) -> None:
                 f"frozen PySide startup smoke did not reach T3: {records[-1:] or 'empty'}"
             )
     except subprocess.TimeoutExpired as error:
+        stderr = stderr_log.read_text(encoding="utf-8", errors="replace").strip()
         raise RuntimeError(
-            f"frozen PySide startup smoke timed out after {timeout_seconds:.0f}s"
+            f"frozen PySide startup smoke timed out after {timeout_seconds:.0f}s: "
+            f"{stderr}"
         ) from error
     finally:
         trace.unlink(missing_ok=True)
+        stdout_log.unlink(missing_ok=True)
+        stderr_log.unlink(missing_ok=True)
 
 
 def main() -> int:

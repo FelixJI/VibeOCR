@@ -29,6 +29,8 @@ def test_frozen_startup_smoke_requires_t3(monkeypatch, tmp_path: Path) -> None:
     def fake_run(command, **kwargs):
         captured["command"] = command
         captured["env"] = kwargs["env"]
+        captured["stdout"] = kwargs["stdout"]
+        captured["stderr"] = kwargs["stderr"]
         trace = Path(kwargs["env"]["VIBEOCR_STARTUP_TRACE"])
         trace.write_text(
             json.dumps({"T0": 0.0, "T1": 0.1, "T2": 0.2, "T3": 0.3}) + "\n",
@@ -43,7 +45,11 @@ def test_frozen_startup_smoke_requires_t3(monkeypatch, tmp_path: Path) -> None:
     assert captured["command"] == [str(exe)]
     assert captured["env"]["VIBEOCR_SELF_TEST_SMOKE"] == "t3"
     assert captured["env"]["QT_QPA_PLATFORM"] == "offscreen"
+    assert captured["stdout"] is not verifier.subprocess.PIPE
+    assert captured["stderr"] is not verifier.subprocess.PIPE
     assert not (tmp_path / ".startup-smoke.jsonl").exists()
+    assert not (tmp_path / ".startup-smoke.stdout.log").exists()
+    assert not (tmp_path / ".startup-smoke.stderr.log").exists()
 
 
 def test_frozen_startup_smoke_rejects_missing_trace(

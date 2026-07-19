@@ -45,6 +45,8 @@
 - 第一版显式 hidden imports 单测通过但真实构建仍显示跨根模块 not found；已否决该单独方案，转为构建前合并 namespace staging。
 - 合并 staging 的第二版本地构建已通过，Analysis/PYZ 证据确认 startup_metrics 与全部 vibeocr 分片已收集；正在准备 0.5.0 wheel 绑定和真实 EXE smoke。
 - 已完成 0.5.0 五 wheel 构建、绑定、最终 ZIP 真实 EXE T3 smoke；146 项回归和全部静态/清单检查通过，准备提交并重发 tag。
+- 修复提交 `d337bd0` 已推送并将 `v0.5.0` 标签从 `70420ac` 更新至该提交；Release 运行 `29689958012` 的 PyInstaller 阶段成功。
+- 首次远端真实 EXE 门禁在绑定阶段假超时：主程序使用 `os._exit` 后，后台清理子进程仍可能继承 `capture_output` 的 PIPE，使 `communicate()` 等不到 EOF。已改为普通临时日志文件，既避免继承管道拖住验证器，也保留非零退出诊断。
 
 ---
 

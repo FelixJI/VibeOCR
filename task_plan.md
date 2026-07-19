@@ -95,7 +95,8 @@
 - **Status:** complete
 
 ### Phase 3：重新发布验收
-- [ ] 提交推送并更新 v0.5.0 tag 触发打包
+- [x] 提交推送并更新 v0.5.0 tag 触发打包
+- [ ] 修复 CI 启动 smoke 因继承 PIPE 导致的假超时并重新触发
 - [ ] 跟踪工作流并验证新 Classic 产物可启动
 - **Status:** in_progress
 
