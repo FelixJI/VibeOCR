@@ -150,3 +150,6 @@
 - 发布负向验证通过：重复 distribution wheel 被拒绝、0.4.38 发布绑定 0.4.37 wheel 被拒绝；正向 Classic 五轮绑定和 WinUI PowerShell 解析通过。
 - 分组回归：架构 `33 passed`，版本发布 `54 passed`，application/managers/WorkerHost 同步核心 `242 passed`，PySide 生命周期与功能 `225 passed, 3 skipped`，缓存/安装运行态 `37 passed`；Ruff 全量和 `git diff --check` 通过。
 - 修复 WMIC/nvidia-smi 非 UTF-8 输出导致的后台 reader thread warning；MainWindow 专项复测仅剩当前环境未加载 pytest-asyncio 的已知配置 warning。
+- 终审变更已提交到临时特性分支：`8cf38e2 refactor: harden runtime and physically split workspace packages`。
+- 已切回 `main` 并以非快进方式合并，合并提交为 `39794ca merge: integrate workspace physical split and runtime hardening`；已验证 `8cf38e2` 是 `main` 的祖先提交。
+- 本地特性分支 `codex/workspace-physical-split` 已在确认合并成功后删除；未执行远端推送。
