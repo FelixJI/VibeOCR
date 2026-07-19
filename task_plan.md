@@ -87,6 +87,7 @@
 | 读取 startup_metrics 后附带的复合 `rg` 未匹配，整组命令返回 1 | 1 | 已获得所需模块内容；后续只使用单一确定模式检索测试位置 |
 | 第一版逐项 hidden import 在真实 PyInstaller Analysis 中仍无法跨 contracts 根解析 namespace 分片 | 1 | 保留确定性模块清单，但增加合并后的单一 workspace staging 作为最高优先 pathex |
 | `uv build` 默认用户缓存 `AppData/Local/uv/cache` 初始化失败（os error 183） | 1 | 改用仓库既有可写 `.uv-cache`，不重复使用全局缓存 |
+| 第二次 Release 的真实 EXE smoke 仍超时，普通文件日志揭示 `main.py:663` 中文输出在 CI 的 cp1252 编码下失败 | 1 | 门禁进程显式设置 `PYTHONIOENCODING=utf-8` 与 `PYTHONUTF8=1`，匹配项目 UTF-8 输出约定 |
 
 ### Phase 2：修复与回归
 - [x] 修正 PyInstaller 的 workspace namespace 收集策略

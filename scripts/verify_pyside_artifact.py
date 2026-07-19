@@ -25,6 +25,8 @@ def _verify_frozen_startup(root: Path, timeout_seconds: float = 45.0) -> None:
     env["VIBEOCR_SELF_TEST_SMOKE"] = "t3"
     env["VIBEOCR_STARTUP_TRACE"] = str(trace)
     env["QT_QPA_PLATFORM"] = "offscreen"
+    env["PYTHONIOENCODING"] = "utf-8"
+    env["PYTHONUTF8"] = "1"
     env.pop("VIBEOCR_REPOSITORY_ROOT", None)
     try:
         # 不使用 PIPE：启动阶段的后台清理子进程可能继承 stdout/stderr，

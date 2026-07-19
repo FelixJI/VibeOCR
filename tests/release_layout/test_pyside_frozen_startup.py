@@ -45,6 +45,8 @@ def test_frozen_startup_smoke_requires_t3(monkeypatch, tmp_path: Path) -> None:
     assert captured["command"] == [str(exe)]
     assert captured["env"]["VIBEOCR_SELF_TEST_SMOKE"] == "t3"
     assert captured["env"]["QT_QPA_PLATFORM"] == "offscreen"
+    assert captured["env"]["PYTHONIOENCODING"] == "utf-8"
+    assert captured["env"]["PYTHONUTF8"] == "1"
     assert captured["stdout"] is not verifier.subprocess.PIPE
     assert captured["stderr"] is not verifier.subprocess.PIPE
     assert not (tmp_path / ".startup-smoke.jsonl").exists()
