@@ -50,6 +50,8 @@
 - 第二次运行 `29690421627` 的保留 stderr 证明真正启动阻断是 CI 重定向输出采用 cp1252，中文启动提示编码失败；验证进程已增加 `PYTHONIOENCODING=utf-8`/`PYTHONUTF8=1`。
 - 第三次运行 `29690773080` 证明冻结运行时忽略上述父进程编码变量；已将 UTF-8 标准流配置前移到 `vibeocr.main` 的最早入口，并新增 release-layout 级回归。
 - 入口修复完成本地全链重建：PyInstaller、五-wheel 绑定、最终 Classic ZIP 解压与真实 EXE T3 smoke 均通过；专项 4 passed、Ruff 与 diff check 通过。
+- 入口修复提交 `1928092` 已推送并成为 `v0.5.0` 标签目标；最终 Release 运行 `29691245564` 6m39s 全绿，绑定与独立 Classic 启动门禁均通过。
+- GitHub Release 已更新：Classic ZIP 172,269,093 bytes，SHA256 `b3c3124812adf17ea31e94daeb7855aa4300b18155ae4f4e40f984d42173ceda`，资产 digest 与 `.sha256` 文件一致。
 
 ---
 

@@ -99,9 +99,9 @@
 ### Phase 3：重新发布验收
 - [x] 提交推送并更新 v0.5.0 tag 触发打包
 - [x] 消除 PIPE 假超时并定位冻结入口 cp1252 编码问题
-- [ ] 提交入口级 UTF-8 修复并重新触发
-- [ ] 跟踪工作流并验证新 Classic 产物可启动
-- **Status:** in_progress
+- [x] 提交入口级 UTF-8 修复并重新触发
+- [x] 跟踪工作流并验证新 Classic 产物可启动
+- **Status:** complete
 
 ---
 

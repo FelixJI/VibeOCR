@@ -82,6 +82,7 @@
 - 已在工作区缓存下重建并验证五个 0.5.0 wheel，最终 Classic ZIP 完成绑定后由 verifier 真正启动到 T3，冻结入口 smoke 通过。
 - 定向回归共 146 项通过；workspace wheel verification、Ruff、`git diff --check` 全部通过。
 - 本地最终 Classic ZIP 为 170,993,151 bytes，SHA256 `4bbab9cdab7fbf76df7ae829940fae2a5ca14f1f1287f54374d24451c39339f5`；该摘要仅用于本地证据，CI 重建后会产生不同但应自洽的摘要。
+- 最终运行 `29691245564` 在 6m39s 后全绿：绑定后的首次真实 EXE smoke 与独立 `Verify PySide Classic artifact` 均通过。发布 ZIP 为 172,269,093 bytes，GitHub digest 和随附 `.sha256` 内容一致，均为 `b3c3124812adf17ea31e94daeb7855aa4300b18155ae4f4e40f984d42173ceda`。
 
 ---
 
