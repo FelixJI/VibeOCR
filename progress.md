@@ -153,3 +153,25 @@
 - 终审变更已提交到临时特性分支：`8cf38e2 refactor: harden runtime and physically split workspace packages`。
 - 已切回 `main` 并以非快进方式合并，合并提交为 `39794ca merge: integrate workspace physical split and runtime hardening`；已验证 `8cf38e2` 是 `main` 的祖先提交。
 - 本地特性分支 `codex/workspace-physical-split` 已在确认合并成功后删除；未执行远端推送。
+
+---
+
+# 进度日志：GitHub 工作流修复与 0.5.0 发布
+
+## 2026-07-19
+
+- 已启用 planning-with-files；全局 `py -3` 不存在，session-catchup 将改用仓库内解释器或人工根据现有规划与 Git 状态恢复。
+- 当前任务授权包含使用 GitHub CLI 读取失败日志、修复新物理拆包架构下的工作流、提交推送并重新发布 0.5.0。
+- GitHub CLI 认证有效；已读取失败运行 `29672925992`。失败发生在发布前迁移/发布门禁，8 个 WinUI 布局测试因夹具给 `product-manifest.json` 写入非 JSON 占位内容而失败。
+- 已修正准确契约为 `product-manifest.json` 和 WinUI 的三运行时 wheel（contracts/client/backend）；测试夹具现生成真实清单与哈希，并补充非法 JSON、哈希篡改回归。首次本地 pytest 因默认临时目录 ACL 在 setup 阶段阻断，尚未执行产品断言。
+- 第二次定向测试越过临时目录 ACL，但被本机 PowerShell ExecutionPolicy 阻断；已给测试子进程增加显式 Bypass，避免开发机策略影响发布布局门禁。
+- 定向 WinUI 发布布局测试 `10 passed`，覆盖原 8 项以及新增的非法 manifest、wheel 哈希篡改场景。完整 release-gate 本地收集仍被既有 `.venv` 的 rpds DLL ACL 阻断；远端旧提交除该夹具外已有 `464 passed` 证据。
+- Ruff 全量与 `git diff --check` 通过；改用已有 uv/hatchling 缓存构建五个 0.5.0 wheel，`verify_workspace_wheels.py` 已确认五包版本一致、根 meta wheel 无生产代码、四个物理包路径唯一。
+- 五 wheel 联网安装已成功解析全部公开基础依赖并下载 PySide6 等包，但深目录 venv 在解压 PySide6 QML 调试对象时触发 Windows 长路径限制；将以短路径 venv 复测，不改变产品依赖声明。
+- `C:\tmp\v050` 短路径干净环境完成五 wheel 联网安装；0.5.0 导入、安装态运行根、安装器 help 和 WorkerHost 自检均通过。
+- `C:\tmp\vp50` 仅安装 contracts/client/pyside，确认 backend 未安装且 155 个已发现前端/共享模块全部导入。
+- 架构与 WinUI 发布布局组合回归 `43 passed`；Ruff 全量和 `git diff --check` 再次通过。Phase 3 本地发布验证完成。
+- 修复已提交为 `2120617 fix(release): validate physical wheel manifests` 并推送 GitHub main。
+- GitHub Quality Gates `29674920765` 四作业全部成功；允许进入 v0.5.0 标签重建与 Release 发布阶段。
+- 旧 `v0.5.0` 标签已删除并在 `2120617` 重建推送；新 Release 运行 `29675075394` 在 6m9s 后成功完成。
+- GitHub Release `v0.5.0` 已正式发布，标签指向修复提交；Classic 与五-wheel wheelhouse 及各自 SHA-256 共四项资产均为 uploaded 状态。

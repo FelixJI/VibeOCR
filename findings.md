@@ -283,3 +283,19 @@
 - 普通 wheel 安装态此前没有独立运行根语义：在仓库内 venv 会被祖先工作区误判为源码态，在普通用户机又回退到 venv 的 `Lib`，使 GUI 依赖检测寻找 `Lib/python/python.exe`，无法识别 bootstrap 已安装到当前环境的重依赖。现已要求模块自身确实位于 client source root 才判定工作区，否则返回 `sys.prefix`，并让所有 embedded-python helper 返回 `sys.executable`。
 - 隔离 venv 首次只把根 wheel 作为直接文件时，uv 对内部四包复用了同版本旧缓存。这证明“find-links + 根包直装”不足以严格验证本次五轮。CI 与 README 改为显式传入五个 wheel 路径；强制重装后确认五个发行包全部来自本地 wheelhouse，运行根与解释器断言通过。
 - Windows 原生 WMIC/nvidia-smi 输出可能不遵循 `PYTHONUTF8=1`。依赖/硬件探测子进程现统一使用 replacement decoding，避免日志读取线程因单个不可解码字节退出；MainWindow 回归已从两个 thread-exception warning 降为仅环境缺少 pytest-asyncio 的配置 warning。
+# GitHub 工作流修复与 0.5.0 发布（2026-07-19）
+
+## 远端失败结论
+
+- GitHub Actions 运行 `29672925992`（Release，标签 `v0.5.0`，提交 `66e45d0`）在 `Validate Python migration and release gates` 失败；Quality Gates 在同一提交成功。
+- 失败集为 `tests/release_layout/test_winui_layout.py` 的 8 个用例，统一报错：`verify_winui_artifact.ps1` 对 `product-manifest.json` 执行 `ConvertFrom-Json` 时读到普通字符串 `release-content`。
+- 新物理拆包架构把 WinUI 所需的 `contracts + client + backend` 三个运行时 wheel 及其 SHA-256 纳入 `product-manifest.json`；PySide wheel 与根 meta wheel不进入 WinUI 制品。该文件因此从普通布局占位文件升级为结构化发布契约。测试夹具仍写统一占位文本，也没有创建清单引用的三个 wheel。
+- 修复方向应在测试夹具层提供符合当前架构的最小合法 manifest，并保留校验脚本对真实 WinUI 制品的严格 JSON/三运行时 wheel 验证，不能通过放宽生产校验绕过。
+- 本地与两个远端的 `main`、本地/远端 `v0.5.0` 当前均指向 `66e45d0`；版本源、四个子包内部 pin、`uv.lock`、协议 golden 与 CHANGELOG 已经是 0.5.0，无需再次运行版本提升脚本。
+- 重新发布应把现有 `v0.5.0` 标签移动到修复提交。失败工作流在上传 Release 步骤前终止，因此需先查询是否存在残留 draft/空 Release，再按实际远端状态清理。
+- GitHub CLI 已确认 `v0.5.0` Release 不存在，只有远端标签指向旧提交；重新发布只需在 main 修复通过后删除并重建该标签，不需要删除 Release 资产。
+- 五个显式本地 0.5.0 wheel 在短路径干净 venv 中联网安装成功；基础公开依赖解析正常，运行根为 `sys.prefix`，WorkerHost `--self-test` 返回 0.5.0。
+- 仅安装 contracts/client/pyside 三 wheel 时，backend distribution 未被安装，已成功导入安装环境中发现的 155 个 `vibeocr.*` 模块，证明前端物理包边界有效。
+- 修复提交 `2120617` 的 Quality Gates 运行 `29674920765` 全部通过：contracts 1m21s、pyside 1m41s、winui 2m5s、backend 4m38s；backend 包含五 wheel 构建、所有权校验和根 meta wheel 干净安装。
+- `v0.5.0` 已从失败提交 `66e45d0` 移动到已验证提交 `2120617`；Release 运行 `29675075394` 以成功结束，标签 API 也确认目标 SHA 为 `2120617`。
+- Release 为正式版、非 draft/非 prerelease，共上传四个资产：Classic ZIP（约 72.4 MiB）及 SHA-256、五-wheel wheelhouse ZIP（约 714 KiB）及 SHA-256。默认发布变体为 pyside6，因此 WinUI 安装包按配置跳过；WinUI 代码仍通过主分支和发布流程中的 .NET build/test 门禁。

@@ -346,3 +346,56 @@
 | 首次根 wheel smoke 的内部四包被 uv 同版本缓存替换 | 1 | 确认 wheel 本身含新代码；改为显式安装五个本地 wheel，CI/README 同步采用该方式 |
 | Pyright 即使指定干净解释器仍读取旧 `.venv` editable `.pth` 并被 ACL 拒绝 | 2 | 停止重试；Ruff、全模块导入、wheel smoke 和分组测试通过，CI 保留 Pyright |
 | UI 回归出现 WMIC/nvidia-smi 输出编码导致的 reader thread warning | 2 | 所有环境探测文本子进程增加 `errors="replace"`；复测 warning 消失 |
+
+---
+
+# 任务计划：修复 GitHub 工作流并发布 0.5.0
+
+## 目标
+
+使用 GitHub CLI 定位当前失败的 GitHub Actions 工作流，按“四包 + 根兼容包”物理拆分后的真实架构修复 CI/release 链；同步项目版本到 0.5.0，完成本地构建、安装和关键回归验证后提交、推送、创建并验证 0.5.0 发布。
+
+## 当前阶段
+
+已完成
+
+## 阶段
+
+### Phase 1：远端失败诊断
+
+- [x] 核实本地分支、远端、标签和工作区状态
+- [x] 使用 GitHub CLI 读取失败工作流、失败步骤与日志
+- [x] 将失败原因映射到新物理拆包和发布架构
+- **Status:** completed
+
+### Phase 2：修复与版本升级
+
+- [x] 修复 CI/release、构建或测试问题
+- [x] 将所有发布版本源、内部依赖 pin 与锁文件升级到 0.5.0
+- [x] 更新必要的发行说明与架构文档
+- **Status:** completed
+
+### Phase 3：本地发布验证
+
+- [x] 运行静态检查、架构与关键回归
+- [x] 构建并校验五个 0.5.0 wheel
+- [x] 在隔离环境验证根兼容包、PySide-only 和 WorkerHost 安装/启动链
+- **Status:** completed
+
+### Phase 4：提交与远端发布
+
+- [x] 提交并推送修复到 GitHub
+- [x] 观察修复后的 GitHub Actions 通过
+- [x] 创建 0.5.0 标签/发行版并验证发布工作流和制品
+- **Status:** completed
+
+## 错误记录
+
+| 错误 | 尝试 | 处理 |
+|---|---:|---|
+| `py -3` 无可用全局 Python，planning session-catchup 未运行 | 1 | 后续改用仓库内可用解释器；先依据现有规划文件和 Git 状态人工恢复上下文 |
+| `.venv` 未安装 `build` 模块，首次五-wheel 构建命令不可用 | 1 | 改用仓库已有 `uv.exe` 与工作区 `.uv-cache`，五个 0.5.0 wheel 构建和所有权验证通过 |
+| 定向 pytest 默认使用用户临时目录与仓库 `.pytest_cache`，均被沙箱 ACL 拒绝 | 1 | 改用明确可写的可视化工作区作为 `TEMP/TMP/--basetemp`，并禁用 pytest cacheprovider |
+| 定向测试调用 `powershell.exe -File` 受本机 ExecutionPolicy 阻止，10 项均未进入校验逻辑 | 1 | 测试调用显式增加 `-ExecutionPolicy Bypass`，与 CI/项目脚本的非交互执行方式一致 |
+| 本地完整 release-gate 收集读取既有 `.venv` 的 `rpds` DLL 被 ACL 拒绝，且缺少 pytest-asyncio 插件 | 1 | 不重复绕过；本次修改相关 10 项已全部通过，原 GitHub 同提交 release-gate 除旧夹具外为 `464 passed`，推送后用干净 GitHub runner 复核全量 |
+| 隔离 venv 位于较深的可视化目录，pip 解压 PySide6 QML 调试对象时超过 Windows 路径长度 | 1 | 下载和依赖解析均成功；改用明确可写且更短的 `C:\tmp\v050` 重试，避免把操作系统长路径限制误判为包问题 |
