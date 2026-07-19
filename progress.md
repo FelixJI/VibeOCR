@@ -35,6 +35,19 @@
 
 ---
 
+# 2026-07-19：Classic 启动缺少 startup_metrics
+
+- 已恢复发布后上下文，工作区起始状态干净。
+- 已定位缺失模块的物理路径与 PyInstaller 配置，正在审计 namespace 收集和产物分析结果。
+- 已确认入口是静态 import，且 pyside 源码分片未进入 PACKAGE_DATA；下一步检查实际 PyInstaller Analysis/PYZ 清单并复现。
+- collect helper 单独运行能看到 `startup_metrics`；准备核对入口常量并运行当前 Classic 构建来获取真实 Analysis 证据。
+- 正式本地构建完成并复现整个 Classic namespace 分片漏收；根因已定位到 spec 顶层 collect 与 Analysis pathex 的时序差异。
+- 第一版显式 hidden imports 单测通过但真实构建仍显示跨根模块 not found；已否决该单独方案，转为构建前合并 namespace staging。
+- 合并 staging 的第二版本地构建已通过，Analysis/PYZ 证据确认 startup_metrics 与全部 vibeocr 分片已收集；正在准备 0.5.0 wheel 绑定和真实 EXE smoke。
+- 已完成 0.5.0 五 wheel 构建、绑定、最终 ZIP 真实 EXE T3 smoke；146 项回归和全部静态/清单检查通过，准备提交并重发 tag。
+
+---
+
 # 2026-07-19：重新打包 0.5.0
 
 - 已恢复上下文并确认当前在 `main`，修复与测试尚未提交。

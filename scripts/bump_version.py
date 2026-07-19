@@ -305,7 +305,8 @@ PACKAGE_DATA = [
     ("scripts/update_replacer.py", "."),
 ]
 
-# vibeocr 子模块通过 --collect-submodules 自动收集，此处只列出第三方包
+# vibeocr workspace 子模块由 _workspace_vibeocr_modules() 从四个物理 source root
+# 确定性枚举；此处只列出第三方包。
 #
 # markdown 已移至 EXCLUDED_PACKAGES（由便携 Python 安装，主进程仅用 HTML_STYLE
 # 字符串常量，import 下沉到函数内）。故不在此处声明 hidden-import。
@@ -1467,14 +1468,60 @@ def _check_pyinstaller() -> bool:
         return False
 
 
+def _workspace_vibeocr_modules() -> list[str]:
+    """枚举物理 workspace 中所有可导入的 ``vibeocr`` Python 模块。
+
+    不能依赖 PyInstaller 的 ``--collect-submodules vibeocr``：该选项生成的 spec
+    会在 ``Analysis(pathex=...)`` 之前调用 ``collect_submodules``，此时四个
+    workspace source root 尚未注入分析路径，导致 Classic 分片被静默漏收。
+    """
+    modules = {"vibeocr"}
+    for source_dir in _SOURCE_DIRS:
+        package_dir = source_dir / "vibeocr"
+        if not package_dir.is_dir():
+            continue
+        for path in package_dir.rglob("*.py"):
+            relative = path.relative_to(source_dir).with_suffix("")
+            parts = list(relative.parts)
+            if "__pycache__" in parts:
+                continue
+            if parts[-1] == "__init__":
+                parts.pop()
+            if parts:
+                modules.add(".".join(parts))
+    return sorted(modules)
+
+
+def _prepare_workspace_source(version: str) -> Path:
+    """把四个 namespace 分片合并为 PyInstaller 可静态分析的单一包。"""
+    stage_root = DIST_BASE_DIR / f"build-{version}" / "workspace-src"
+    package_dir = stage_root / "vibeocr"
+    if stage_root.exists():
+        shutil.rmtree(stage_root)
+    package_dir.mkdir(parents=True)
+    for source_dir in _SOURCE_DIRS:
+        source_package = source_dir / "vibeocr"
+        if source_package.is_dir():
+            shutil.copytree(
+                source_package,
+                package_dir,
+                dirs_exist_ok=True,
+                ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo"),
+            )
+    return stage_root
+
+
 def _get_pyinstaller_cmd(
-    version: str, version_file: Path | None = None
+    version: str,
+    version_file: Path | None = None,
+    workspace_source: Path | None = None,
 ) -> list[str]:
     """构建 PyInstaller 命令行参数
 
     Args:
         version: 版本号字符串
         version_file: PyInstaller --version-file 路径（可选）
+        workspace_source: 合并后的 workspace source root（正式构建必须传入）
 
     Returns:
         PyInstaller 命令列表
@@ -1493,6 +1540,11 @@ def _get_pyinstaller_cmd(
         "VibeOCR",
         "--clean",
         "--noconfirm",
+    ]
+    if workspace_source is not None:
+        cmd.extend(["--paths", str(workspace_source)])
+    cmd.extend(
+        [
         "--paths",
         str(PROJECT_ROOT / "packages" / "vibeocr-contracts-py" / "src"),
         "--paths",
@@ -1511,7 +1563,8 @@ def _get_pyinstaller_cmd(
         # 需 PyInstaller >= 6.6（--optimize 参数自此版本引入）。
         "--optimize",
         "2",
-    ]
+        ]
+    )
 
     if APP_ICON.exists():
         cmd.extend(["--icon", str(APP_ICON)])
@@ -1524,6 +1577,10 @@ def _get_pyinstaller_cmd(
         src_path = PROJECT_ROOT / src
         if src_path.exists():
             cmd.extend(["--add-data", f"{src_path}{separator}{dst}"])
+    if workspace_source is not None:
+        cmd.extend(
+            ["--add-data", f"{workspace_source / 'vibeocr'}{separator}vibeocr"]
+        )
 
     for pkg in EXCLUDED_PACKAGES:
         cmd.extend(["--exclude-module", pkg])
@@ -1531,7 +1588,8 @@ def _get_pyinstaller_cmd(
     for qt_mod in EXCLUDED_QT_MODULES:
         cmd.extend(["--exclude-module", qt_mod])
 
-    cmd.extend(["--collect-submodules", "vibeocr"])
+    for mod in _workspace_vibeocr_modules():
+        cmd.extend(["--hidden-import", mod])
 
     for mod in HIDDEN_IMPORTS:
         cmd.extend(["--hidden-import", mod])
@@ -1581,8 +1639,14 @@ def _run_build_pyside(version: str, force: bool = False) -> bool:
         version, DIST_BASE_DIR, target="updater"
     )
 
-    # 1. 打包主程序（PyInstaller 打 main.py，PySide6 Qt UI）
-    cmd = _get_pyinstaller_cmd(version, version_file=version_file)
+    # 1. 合并 workspace namespace 后打包主程序（PySide6 Qt UI）。PyInstaller
+    # ModuleGraph 不执行 pkgutil.extend_path，不能直接分析四个物理 vibeocr 分片。
+    workspace_source = _prepare_workspace_source(version)
+    cmd = _get_pyinstaller_cmd(
+        version,
+        version_file=version_file,
+        workspace_source=workspace_source,
+    )
     print(f"\n[1/5] 打包主程序 VibeOCR v{version} (PySide6 via PyInstaller)...")
     try:
         subprocess.run(cmd, check=True)

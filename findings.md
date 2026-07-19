@@ -54,6 +54,34 @@
 
 ---
 
+# 2026-07-19：Classic 启动缺少 startup_metrics
+
+- 用户现场在 `main.py:56` 导入 `vibeocr.startup_metrics` 时立即失败，属于 PyInstaller PYZ 漏收模块，不是 wheel 下载问题。
+- 模块实际位于 `apps/vibeocr-pyside/src/vibeocr/startup_metrics.py`；该 source root 虽已作为 `--paths` 传给 PyInstaller，但共享 namespace `vibeocr` 横跨四个物理 source root。
+- 当前只使用一次 `--collect-submodules vibeocr`，需要核对 PyInstaller 是否只从被解析为主 package 的物理根收集，导致 app root 下模块遗漏。
+- 现有 `verify_pyside_artifact.py` 只检查 ZIP 布局、manifest 和 wheel 哈希，不执行 `VibeOCR.exe`，因此没有发现冻结入口导入失败。
+- `main.py` 在设置环境后静态导入 `vibeocr.startup_metrics`，因此正常 PyInstaller Analysis 本应收集；缺失说明 namespace 解析/分析发生偏差，而非运行时可选功能。
+- 四个 workspace root 中只有 contracts 根提供 `vibeocr/__init__.py`（使用 `pkgutil.extend_path`），其余为无 `__init__.py` 的 namespace 分片；PyInstaller 入口同时传四个 `--paths`，但 package 主体首先解析到 contracts 根。
+- `PACKAGE_DATA` 只把 contracts/client/backend 三个源码分片作为原始 `.py` 数据合并进 `_internal/vibeocr`，没有加入 app/pyside 分片；即便主进程 PYZ 漏收 app 模块，运行时数据目录也无法兜底找到 `startup_metrics.py`。
+- 在本地按 release 的四段 `PYTHONPATH` 调用 PyInstaller `collect_submodules('vibeocr')`，可正确解析四个 `__path__` 分片并包含 `vibeocr.startup_metrics`（共 193 个模块）。因此问题可能发生在实际命令分析顺序、入口选择或最终 PYZ/EXE 组装，而不是 collect helper 本身完全不支持 namespace。
+- 本地 `dist/` 只有 0.4.28 主程序构建缓存和 updater 分析文件，没有 0.5.0 Analysis/PYZ 可直接审阅；需要以当前 release 命令本地重建复现。
+- 已按正式命令成功本地构建 0.5.0；`warn-VibeOCR.txt` 明确列出 `vibeocr.startup_metrics`、`vibeocr.env_manager`、`vibeocr.pyside/views/managers/utils` 等整个 Classic 分片缺失。
+- 生成的 spec 在 `Analysis(...)` 前执行 `hiddenimports += collect_submodules('vibeocr')`；此时 CLI 的 `pathex` 尚未进入 Analysis，导致 namespace 分片收集取决于 spec 进程环境。实际 spec 的 hiddenimports 最终只有第三方显式项，没有任何 `vibeocr.*`。
+- `Analysis-00.toc/PYZ-00.toc` 均不含 `startup_metrics`，用户报错已在本地构建证据中完整复现。
+- 修复应改为从仓库四个已知 source root 静态枚举 `vibeocr` 模块，并逐项生成 `--hidden-import`，避免依赖 spec 执行期 `sys.path`；同时在 release 中执行冻结入口 smoke。
+- 现有主程序已支持 `VIBEOCR_SELF_TEST_SMOKE=1/t3`：创建首窗并在 150ms 后 `flush_startup()` + `os._exit(0)`；配合 `VIBEOCR_STARTUP_TRACE` 可作为真实冻结入口 smoke，无需新增产品 CLI。
+- `check_production_dependencies()` 只导入 PyInstaller 包内的 PySide6/PIL，不要求 Paddle/Torch 等嵌入式 AI 环境，因此 t3 smoke 可在干净 CI artifact 上执行。
+- 第一版“逐项 hidden import + 四个 pathex”构建仍失败：PyInstaller ModuleGraph 将 `vibeocr` 锁定到含 `__init__.py` 的 contracts 根，除 contracts 外的大多数 hidden import 均报 not found。ModuleGraph 不执行/不采纳运行时 `pkgutil.extend_path` 来扩展静态包路径。
+- 下一策略是在构建前把四个物理分片合并到临时 `workspace-src/vibeocr`，并把其父目录作为最高优先 pathex；这样 Analysis 面对一个完整物理包，hidden import 与静态 import 均可确定解析。
+- 合并 staging 后真实构建成功：`warn-VibeOCR.txt` 不再含任何缺失 `vibeocr` 模块，`PYZ-00.toc` 明确包含 `vibeocr.startup_metrics`。
+- 修复后的原始 Classic ZIP 约 162.4MB（此前错误产物约 70MB）；体积增长主要来自此前整段 Classic GUI/服务模块根本未进入冻结产物，需在 CI 最小依赖环境继续观察最终尺寸。
+- 本地 `dist/wheels` 仍是 0.4.37 wheel，无法直接绑定 0.5.0；需重建五 wheel 或下载新 wheelhouse 后再执行最终 ZIP smoke。
+- 已在工作区缓存下重建并验证五个 0.5.0 wheel，最终 Classic ZIP 完成绑定后由 verifier 真正启动到 T3，冻结入口 smoke 通过。
+- 定向回归共 146 项通过；workspace wheel verification、Ruff、`git diff --check` 全部通过。
+- 本地最终 Classic ZIP 为 170,993,151 bytes，SHA256 `4bbab9cdab7fbf76df7ae829940fae2a5ca14f1f1287f54374d24451c39339f5`；该摘要仅用于本地证据，CI 重建后会产生不同但应自洽的摘要。
+
+---
+
 # 2026-07-19：重新打包 0.5.0
 
 - Release workflow 支持 tag push 与手动 dispatch，默认只打 Classic。

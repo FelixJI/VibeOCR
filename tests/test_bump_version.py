@@ -1418,6 +1418,44 @@ class TestPyInstallerNoUpx:
         cmd = mod._get_pyinstaller_cmd("0.1.7")
         assert "--onedir" in cmd
 
+    def test_cmd_collects_all_physical_workspace_modules(self):
+        """Classic namespace 的四个物理分片必须确定性进入 hidden imports。"""
+        mod = self._load_module()
+        cmd = mod._get_pyinstaller_cmd("0.5.0")
+        hidden = {
+            cmd[index + 1]
+            for index, value in enumerate(cmd[:-1])
+            if value == "--hidden-import"
+        }
+
+        assert {
+            "vibeocr.startup_metrics",
+            "vibeocr.env_manager",
+            "vibeocr.views.main_window",
+            "vibeocr.worker_host.main",
+            "vibeocr.contracts.pipelines",
+        }.issubset(hidden)
+        assert "--collect-submodules" not in cmd
+        assert len(subprocess.list2cmdline(cmd)) < 30_000
+
+    def test_build_stages_namespace_as_one_physical_package(
+        self, monkeypatch, tmp_path
+    ):
+        """PyInstaller pathex 必须优先使用合并后的完整 workspace 包。"""
+        mod = self._load_module()
+        monkeypatch.setattr(mod, "DIST_BASE_DIR", tmp_path / "dist")
+
+        stage = mod._prepare_workspace_source("0.5.0")
+        cmd = mod._get_pyinstaller_cmd("0.5.0", workspace_source=stage)
+
+        assert (stage / "vibeocr/startup_metrics.py").is_file()
+        assert (stage / "vibeocr/env_manager.py").is_file()
+        assert (stage / "vibeocr/worker_host/main.py").is_file()
+        assert not list(stage.rglob("*.pyc"))
+        first_paths = cmd.index("--paths")
+        assert cmd[first_paths + 1] == str(stage)
+        assert f"{stage / 'vibeocr'}{';' if mod.os.name == 'nt' else ':'}vibeocr" in cmd
+
 
 class TestVersionInfoFileDescription:
     """VibeOCR.exe 的 FileDescription 必须是 'VibeOCR'（任务管理器/属性页显示名）。

@@ -65,6 +65,42 @@
 
 ---
 
+# 任务计划：修复 0.5.0 Classic 打包漏收 startup_metrics
+
+## 目标
+
+修复重打包后的 `VibeOCR.exe` 启动时报 `ModuleNotFoundError: vibeocr.startup_metrics`；补充能在 CI 打包阶段发现缺失模块的门禁，并重新发布可启动的 0.5.0 Classic 资产。
+
+## 阶段
+
+### Phase 1：定位打包根因
+- [x] 核对入口 import、物理 workspace 包归属与 PyInstaller 分析结果
+- [x] 复现/确认产物中缺失模块及现有门禁盲点
+- **Status:** complete
+
+## 错误记录
+
+| 错误 | 尝试 | 处理 |
+|---|---:|---|
+| 并行检查中 `rg startup_metrics dist` 无匹配返回 1，使同组目录列表输出被工具折叠 | 1 | 将目录/分析文件读取拆成独立命令；不重复组合无匹配检索 |
+| 并行打印 PyInstaller 命令的一侧非零退出，工具只保留入口常量输出 | 1 | 已确认 `MAIN_PY` 正确；下一步直接运行正式构建获取 Analysis，不重复该拼接探针 |
+| 读取 startup_metrics 后附带的复合 `rg` 未匹配，整组命令返回 1 | 1 | 已获得所需模块内容；后续只使用单一确定模式检索测试位置 |
+| 第一版逐项 hidden import 在真实 PyInstaller Analysis 中仍无法跨 contracts 根解析 namespace 分片 | 1 | 保留确定性模块清单，但增加合并后的单一 workspace staging 作为最高优先 pathex |
+| `uv build` 默认用户缓存 `AppData/Local/uv/cache` 初始化失败（os error 183） | 1 | 改用仓库既有可写 `.uv-cache`，不重复使用全局缓存 |
+
+### Phase 2：修复与回归
+- [x] 修正 PyInstaller 的 workspace namespace 收集策略
+- [x] 增加 Classic 冻结产物启动/import smoke 门禁
+- [x] 运行定向测试与静态检查
+- **Status:** complete
+
+### Phase 3：重新发布验收
+- [ ] 提交推送并更新 v0.5.0 tag 触发打包
+- [ ] 跟踪工作流并验证新 Classic 产物可启动
+- **Status:** in_progress
+
+---
+
 # 任务计划：重新打包 0.5.0 更新修复
 
 ## 目标

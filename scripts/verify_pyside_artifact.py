@@ -5,9 +5,59 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
+import subprocess
 import tempfile
 import zipfile
 from pathlib import Path
+
+
+def _verify_frozen_startup(root: Path, timeout_seconds: float = 45.0) -> None:
+    """真实启动冻结入口并要求它到达 T3 首窗里程碑。"""
+    exe = root / "VibeOCR.exe"
+    trace = root / ".startup-smoke.jsonl"
+    trace.unlink(missing_ok=True)
+    env = os.environ.copy()
+    env["VIBEOCR_SELF_TEST_SMOKE"] = "t3"
+    env["VIBEOCR_STARTUP_TRACE"] = str(trace)
+    env["QT_QPA_PLATFORM"] = "offscreen"
+    env.pop("VIBEOCR_REPOSITORY_ROOT", None)
+    try:
+        result = subprocess.run(
+            [str(exe)],
+            cwd=root,
+            env=env,
+            capture_output=True,
+            text=True,
+            errors="replace",
+            timeout=timeout_seconds,
+            check=False,
+            creationflags=(
+                subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+            ),
+        )
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"frozen PySide startup smoke exited with {result.returncode}: "
+                f"{result.stderr.strip()}"
+            )
+        if not trace.is_file():
+            raise RuntimeError("frozen PySide startup smoke produced no trace")
+        records = [
+            json.loads(line)
+            for line in trace.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        if not records or not {"T0", "T1", "T2", "T3"}.issubset(records[-1]):
+            raise RuntimeError(
+                f"frozen PySide startup smoke did not reach T3: {records[-1:] or 'empty'}"
+            )
+    except subprocess.TimeoutExpired as error:
+        raise RuntimeError(
+            f"frozen PySide startup smoke timed out after {timeout_seconds:.0f}s"
+        ) from error
+    finally:
+        trace.unlink(missing_ok=True)
 
 
 def main() -> int:
@@ -50,6 +100,8 @@ def main() -> int:
         actual = hashlib.sha256(wheel.read_bytes()).hexdigest()
         if actual != manifest.get("backend_sha256"):
             raise RuntimeError("bound backend wheel hash mismatch")
+        if os.name == "nt":
+            _verify_frozen_startup(root)
     return 0
 
 
