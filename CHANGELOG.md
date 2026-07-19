@@ -5,6 +5,7 @@
 ### Fixed
 - fix(ocr): 截图识别路径异步化，消除 GUI 阻塞与重入/关闭竞态
 - fix(release): 适配物理拆包后的 WinUI 三-wheel 发布清单验证与测试夹具
+- fix(update): Classic 更新完成后回退启动 `VibeOCR.exe`，不再误报缺少 WinUI Bootstrapper
 
 ### Changed
 - docs: record workspace split integration

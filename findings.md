@@ -54,6 +54,17 @@
 
 ---
 
+# 2026-07-19：重新打包 0.5.0
+
+- Release workflow 支持 tag push 与手动 dispatch，默认只打 Classic。
+- workflow 的版本解析直接读取 `GITHUB_REF_NAME` 并要求 `vX.Y.Z`；在 `main` 上手动 dispatch 会因 ref 名不是版本号而失败。
+- `v0.5.0` 现有 tag 指向修复前提交，因此直接 rerun 旧任务无法带入更新器入口修复。
+- 当前成功 Release run 为 `29675075394`，tag 指向 `2120617`；Classic zip 当前摘要为 `1a5f274e...`，发布时间为 2026-07-19 13:41（北京时间）。
+- 工作流使用 `softprops/action-gh-release@v3` 上传同名资产；同一 tag 的上一轮修复重推已成功覆盖现有 0.5.0 Release，证明仓库支持该恢复路径。
+- 0.5.0 CHANGELOG 已补充 Classic 更新重启修复，重打包上传时 Release 正文会同步包含该说明。
+
+---
+
 # 调研记录：版本升级与 CHANGELOG 归档
 
 - `update_file_version()` 使用 `replace(..., 1)`，每个文件只替换第一个旧版本；因此子项目 `pyproject.toml` 内的内部依赖约束即使文件被处理也会漏掉。
@@ -299,3 +310,17 @@
 - 修复提交 `2120617` 的 Quality Gates 运行 `29674920765` 全部通过：contracts 1m21s、pyside 1m41s、winui 2m5s、backend 4m38s；backend 包含五 wheel 构建、所有权校验和根 meta wheel 干净安装。
 - `v0.5.0` 已从失败提交 `66e45d0` 移动到已验证提交 `2120617`；Release 运行 `29675075394` 以成功结束，标签 API 也确认目标 SHA 为 `2120617`。
 - Release 为正式版、非 draft/非 prerelease，共上传四个资产：Classic ZIP（约 72.4 MiB）及 SHA-256、五-wheel wheelhouse ZIP（约 714 KiB）及 SHA-256。默认发布变体为 pyside6，因此 WinUI 安装包按配置跳过；WinUI 代码仍通过主分支和发布流程中的 .NET build/test 门禁。
+# 2026-07-19：0.5.0 更新启动失败调查
+
+- 用户日志表明旧 `VibeOCR.exe` 已成功改名避让，备份、删除、复制均完成；失败仅发生在新版启动阶段。
+- `scripts/update_replacer.py::launch_app` 在 Windows 默认硬编码 `VibeOCR.Bootstrapper.exe`，文件不存在就直接抛 `FileNotFoundError`。
+- `scripts/updater_main.py` 虽会把旧 `VibeOCR.exe`、`VibeOCR.WinUI.exe`、`VibeOCR.Bootstrapper.exe` 都纳入替换前避让名单，但这不等于启动阶段支持这些入口。
+- README 当前仍把 `VibeOCR-Classic-vX.Y.Z-win64.zip` / `VibeOCR.exe` 标为主力发布路线；仓库同时存在要求 Bootstrapper 的 WinUI 独立发布布局。因此替换器必须识别两种正式产物，而不能假设所有更新包都是 WinUI。
+- 失败发生在替换成功之后，用户安装目录中很可能已有新版 `VibeOCR.exe`；安全修复应按明确优先级选择存在的正式入口，并仅对支持健康参数的入口追加 WinUI 参数。
+- 本地历史证据确认回归由提交 `d5b39e6` 引入：此前 Windows 默认启动 `VibeOCR.exe` 且不等待健康文件；该提交改为硬编码 Bootstrapper + 30 秒健康握手。
+- `scripts/bump_version.py` 当前明确规定默认 `pyside` 发布为 Classic，`winui` 仅为开发预览；注释还说明曾因只走 WinUI 导致 v0.4.29+ Classic 发版失败，现已恢复双路径。0.5.0 的版本与 tag 均存在，用户现场符合 Classic 更新包。
+- 修复必须保留 WinUI 优先走 Bootstrapper 和健康握手，同时让 Classic `VibeOCR.exe` 恢复无参数启动；不能对 Classic 等待它不会写出的 `startup.healthy`。
+- 最终入口策略：显式入口参数保持精确选择；Windows 默认按 Bootstrapper → Classic 排序；仅存在 `VibeOCR.WinUI.exe` 时仍报布局缺失，避免绕过 Bootstrapper。
+- 失败/回滚语义未改变：只有文件替换成功后才调用新入口；替换或校验失败仍不会误启旧 UI。Classic 启动沿用回归前的无参数 detached Popen，WinUI 继续执行 30 秒健康握手。
+
+---

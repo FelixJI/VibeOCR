@@ -35,6 +35,15 @@
 
 ---
 
+# 2026-07-19：重新打包 0.5.0
+
+- 已恢复上下文并确认当前在 `main`，修复与测试尚未提交。
+- 正在核对 GitHub Release、tag 与 workflow 的安全重打包方式。
+- 已确认采用既有的 `v0.5.0` 修复重推流程；下一步补充发布说明、复核、提交和推送。
+- 已补充 0.5.0 发布说明，准备做提交前最终验证。
+
+---
+
 # 进度日志：版本升级与 CHANGELOG 归档修复
 
 ## 2026-07-16
@@ -175,3 +184,15 @@
 - GitHub Quality Gates `29674920765` 四作业全部成功；允许进入 v0.5.0 标签重建与 Release 发布阶段。
 - 旧 `v0.5.0` 标签已删除并在 `2120617` 重建推送；新 Release 运行 `29675075394` 在 6m9s 后成功完成。
 - GitHub Release `v0.5.0` 已正式发布，标签指向修复提交；Classic 与五-wheel wheelhouse 及各自 SHA-256 共四项资产均为 uploaded 状态。
+# 2026-07-19：修复升级到 0.5.0 后无法启动
+
+- 已运行 planning-with-files session catchup（改用工作区自带 Python）。
+- 已确认用户现场异常对应 `scripts/update_replacer.py:941` 的硬编码启动入口缺失。
+- 正在核对打包产物和测试，尚未修改产品代码。
+- 已确认仓库并行维护 Classic（`VibeOCR.exe`）与 WinUI（Bootstrapper）两种发布布局；根因是启动逻辑只覆盖后者。
+- 已用 git 历史定位引入回归的提交，并确认 0.5.0 默认发版仍是 PySide6 Classic。
+- 已实现双正式入口选择并新增 Classic 回退、WinUI 优先级、缺失入口诊断测试；Ruff check 已通过，待格式化和运行测试。
+- 定向启动用例 4/4、共享更新链测试 78/78 已通过；已撤回 Ruff 对既有代码产生的无关格式化噪音，仅保留本次功能差异。
+- 最终验证：`tests/test_update_replacer.py + tests/test_updater_main.py` 共 78 passed；Ruff check、`git diff --check` 均通过。任务完成。
+
+---

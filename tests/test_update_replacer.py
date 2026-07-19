@@ -309,6 +309,7 @@ class TestProductionRelaunch:
         app_dir.mkdir()
         bootstrapper = app_dir / "VibeOCR.Bootstrapper.exe"
         bootstrapper.write_bytes(b"entry")
+        (app_dir / "VibeOCR.exe").write_bytes(b"classic entry")
         calls = []
 
         def fake_popen(*args, **kwargs):
@@ -328,6 +329,44 @@ class TestProductionRelaunch:
             "--health-file",
             str(app_dir / "data/cache/update/startup.healthy"),
         ]
+
+    def test_launch_falls_back_to_classic_without_winui_arguments(
+        self, replacer, monkeypatch, tmp_path
+    ):
+        app_dir = tmp_path / "app"
+        app_dir.mkdir()
+        classic = app_dir / "VibeOCR.exe"
+        classic.write_bytes(b"classic entry")
+        calls = []
+        monkeypatch.setattr(
+            replacer.subprocess,
+            "Popen",
+            lambda *args, **kwargs: calls.append((args, kwargs)),
+        )
+
+        replacer.launch_app(app_dir)
+
+        assert calls == [
+            (
+                ([str(classic)],),
+                {"creationflags": 0x8, "cwd": str(app_dir)},
+            )
+        ]
+        assert not (app_dir / "data/cache/update/startup.healthy").exists()
+
+    def test_missing_entrypoint_reports_all_supported_candidates(
+        self, replacer, tmp_path
+    ):
+        app_dir = tmp_path / "app"
+        app_dir.mkdir()
+        (app_dir / "VibeOCR.WinUI.exe").write_bytes(b"not a formal entry")
+
+        with pytest.raises(FileNotFoundError) as exc_info:
+            replacer.launch_app(app_dir)
+
+        message = str(exc_info.value)
+        assert "VibeOCR.Bootstrapper.exe" in message
+        assert "VibeOCR.exe" in message
 
     def test_failure_never_relaunches_legacy_ui(
         self, replacer, monkeypatch, tmp_path

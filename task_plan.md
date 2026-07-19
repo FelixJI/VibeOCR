@@ -65,6 +65,36 @@
 
 ---
 
+# 任务计划：重新打包 0.5.0 更新修复
+
+## 目标
+
+将 Classic 更新启动入口修复提交到远端，并触发包含该修复的 Windows Classic 打包流程；确认工作流成功且发布产物已更新。
+
+## 阶段
+
+### Phase 1：确认发布策略
+- [x] 核对 workflow_dispatch/tag 的代码引用、0.5.0 Release 与现有运行记录
+- [x] 选择不会误用旧 tag 代码且可安全更新产物的触发方式
+- **Status:** complete
+
+### Phase 2：提交并触发
+- [ ] 最终复核并提交当前修复
+- [ ] 推送修复并触发 Classic 打包
+- **Status:** in_progress
+
+### Phase 3：跟踪与验收
+- [ ] 跟踪 GitHub Actions 到完成
+- [ ] 核对 0.5.0 Release 产物、SHA256 与时间
+- **Status:** pending
+
+## 风险记录
+
+- 当前 `v0.5.0` tag 指向修复前提交；单纯 rerun 旧 workflow 或在该 tag 上 dispatch 都不会包含本地修复。
+- 采用仓库已有的同 tag 修复重推流程：先推 `main`，再把 `v0.5.0` 更新到新提交并 force-with-lease 推送；远端历史显示 0.5.0 已按此方式恢复过一次。
+
+---
+
 # 任务计划：修复版本升级遗漏与 CHANGELOG 重复归档
 
 ## 目标
@@ -399,3 +429,35 @@
 | 定向测试调用 `powershell.exe -File` 受本机 ExecutionPolicy 阻止，10 项均未进入校验逻辑 | 1 | 测试调用显式增加 `-ExecutionPolicy Bypass`，与 CI/项目脚本的非交互执行方式一致 |
 | 本地完整 release-gate 收集读取既有 `.venv` 的 `rpds` DLL 被 ACL 拒绝，且缺少 pytest-asyncio 插件 | 1 | 不重复绕过；本次修改相关 10 项已全部通过，原 GitHub 同提交 release-gate 除旧夹具外为 `464 passed`，推送后用干净 GitHub runner 复核全量 |
 | 隔离 venv 位于较深的可视化目录，pip 解压 PySide6 QML 调试对象时超过 Windows 路径长度 | 1 | 下载和依赖解析均成功；改用明确可写且更短的 `C:\tmp\v050` 重试，避免把操作系统长路径限制误判为包问题 |
+# 任务计划：修复升级到 0.5.0 后无法启动
+
+## 目标
+
+修复更新替换器在完成文件替换后只查找 `VibeOCR.Bootstrapper.exe`、导致 0.5.0 实际产物缺少该入口时更新失败的问题；补充回归测试并验证兼容旧版与 0.5.0 的启动布局。
+
+## 阶段
+
+### Phase 1：定位根因
+- [x] 核对替换器启动入口、更新包布局和打包配置
+- [x] 核对现有启动测试与 0.5.0 迁移要求
+- **Status:** complete
+
+### Phase 2：实现修复
+- [x] 设计兼容且不会启动错误程序的入口选择策略
+- [x] 修改替换器并补充回归测试
+- **Status:** complete
+
+### Phase 3：验证
+- [x] 运行定向测试和静态检查
+- [x] 审核最终差异与回滚/失败语义
+- **Status:** complete
+
+## 错误记录
+
+| 错误 | 尝试 | 处理 |
+|---|---:|---|
+| 当前 PowerShell 无全局 `python`，首次 session-catchup 失败 | 1 | 改用 Codex 工作区依赖中的 Python，已成功运行 |
+| Ruff 语义检查通过，但首次 `ruff format --check` 报两个修改文件需格式化 | 1 | 使用仓库 Ruff 执行机械格式化后重新验证 |
+| 沙箱内 GitHub CLI 无权读取用户配置 | 1 | 按权限规则使用已批准的 `gh` 前缀在沙箱外读取远端状态 |
+
+---

@@ -933,20 +933,57 @@ def cleanup(zip_path: Path, tmp_dir: Path | None) -> None:
 
 
 def launch_app(app_dir: Path, exe_name: str = "") -> None:
-    """通过正式 Bootstrapper 启动并等待 WinUI WorkerHost 健康信号。"""
-    if not exe_name:
-        exe_name = "VibeOCR.Bootstrapper.exe" if os.name == "nt" else "VibeOCR"
-    exe_path = app_dir / exe_name
-    if not exe_path.is_file():
-        raise FileNotFoundError(f"未找到正式启动入口: {exe_path}")
+    """启动新版正式入口；WinUI 等待健康信号，Classic 直接启动。
+
+    Windows 发行物同时存在两种合法布局：
+
+    - WinUI Next：``VibeOCR.Bootstrapper.exe``（必须通过 Bootstrapper 启动）；
+    - PySide6 Classic：``VibeOCR.exe``（当前默认 release）。
+
+    默认优先 Bootstrapper，避免混合目录中绕过 WinUI 的先决条件检查；仅当它不存在
+    时回退到 Classic。``VibeOCR.WinUI.exe`` 不属于可直启的正式入口。
+    """
+    if exe_name:
+        candidates = (exe_name,)
+    elif os.name == "nt":
+        candidates = ("VibeOCR.Bootstrapper.exe", "VibeOCR.exe")
+    else:
+        candidates = ("VibeOCR",)
+
+    exe_path = next(
+        (
+            app_dir / candidate
+            for candidate in candidates
+            if (app_dir / candidate).is_file()
+        ),
+        None,
+    )
+    if exe_path is None:
+        searched = ", ".join(str(app_dir / candidate) for candidate in candidates)
+        raise FileNotFoundError(f"未找到正式启动入口（已检查: {searched}）")
+
+    is_winui_bootstrapper = (
+        os.name == "nt" and exe_path.name.casefold() == "vibeocr.bootstrapper.exe"
+    )
+    if not is_winui_bootstrapper:
+        logger.info("启动 Classic 正式入口: %s", exe_path)
+        subprocess.Popen(
+            [str(exe_path)],
+            creationflags=0x8 if os.name == "nt" else 0,
+            cwd=str(app_dir),
+        )
+        return
+
     health_file = app_dir / "data" / "cache" / "update" / "startup.healthy"
     health_file.parent.mkdir(parents=True, exist_ok=True)
     health_file.unlink(missing_ok=True)
-    command = [str(exe_path)]
-    if os.name == "nt":
-        command.extend(
-            ["--profile", "production", "--health-file", str(health_file)]
-        )
+    command = [
+        str(exe_path),
+        "--profile",
+        "production",
+        "--health-file",
+        str(health_file),
+    ]
     logger.info("通过正式入口启动 production profile: %s", exe_path)
     subprocess.Popen(
         command,
