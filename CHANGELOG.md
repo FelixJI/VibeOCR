@@ -1,5 +1,44 @@
 # Changelog
 
+## [0.5.0] - 2026-07-19
+
+### Fixed
+- fix(ocr): 截图识别路径异步化，消除 GUI 阻塞与重入/关闭竞态
+
+### Changed
+- docs: record workspace split integration
+- refactor: harden runtime and physically split workspace packages
+
+### Dependencies
+- 新增:
+  - 新增 vibeocr-contracts-py==0.5.0
+  - 新增 vibeocr-client-py==0.5.0
+  - 新增 vibeocr-backend==0.5.0
+  - 新增 vibeocr-pyside==0.5.0
+- 移除:
+  - 移除 pyside6>=6.11.1
+  - 移除 pillow>=12.3.0
+  - 移除 numpy>=2.3.5
+  - 移除 markdown>=3.10.2
+  - 移除 qasync>=0.28.0
+  - 移除 paddlepaddle-gpu>=3.3.1
+  - 移除 torch>=2.6.0
+  - 移除 paddleocr[doc-parser]>=3.7.0
+  - 移除 httpx>=0.28.1
+  - 移除 mineru[core]>=3.4.3
+  - 移除 pymupdf>=1.28.0
+  - 移除 fonttools>=4.63.0
+  - 移除 qrcode[pil]>=8.2
+  - 移除 python-barcode>=0.16.1
+  - 移除 opencv-contrib-python>=4.10.0.84
+  - 移除 pyzbar>=0.1.9
+  - 移除 pynvml>=11.5.0
+  - 移除 python-docx>=1.2.0
+  - 移除 openpyxl>=3.1.5
+  - 移除 fastapi>=0.139.0
+  - 移除 uvicorn>=0.51.0
+  - 移除 pydantic>=2.13.4
+
 ## [0.4.37] - 2026-07-18
 
 ### Fixed
