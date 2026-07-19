@@ -7,6 +7,22 @@ from pathlib import Path
 
 _PROCESS_START = _time.perf_counter()
 
+
+def _configure_standard_streams() -> None:
+    """统一冻结入口的文本输出编码，避免非 UTF-8 重定向阻断启动。"""
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors="replace")
+        except (OSError, ValueError):
+            # GUI 启动时标准流可能已关闭或不支持重配置，保持静默即可。
+            pass
+
+
+_configure_standard_streams()
+
 # ============================================================
 # 重要：必须在导入任何其他模块之前设置以下环境变量
 # 这些设置解决 Windows + PaddlePaddle + NumPy 环境下的常见崩溃问题

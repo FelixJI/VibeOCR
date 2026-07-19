@@ -62,6 +62,7 @@
 - 现有 `verify_pyside_artifact.py` 只检查 ZIP 布局、manifest 和 wheel 哈希，不执行 `VibeOCR.exe`，因此没有发现冻结入口导入失败。
 - 首次重发运行 `29689958012` 已成功完成 PyInstaller 冻结，但真实 EXE smoke 在绑定阶段等待 45 秒后失败。堆栈停在 `subprocess.communicate()`；验证器使用 `capture_output=True`，而应用启动的后台清理子进程可能继承 PIPE，导致主 EXE 已 `os._exit` 后管道仍不关闭。验证日志应重定向到普通文件，避免把继承管道误判为应用未退出。
 - 第二次运行 `29690421627` 的普通文件 stderr 揭示更深一层原因：CI 冻结进程的重定向 stdout 使用 cp1252，`main.py:663` 的中文启动提示触发 `UnicodeEncodeError`。启动 smoke 必须显式传入 UTF-8 Python I/O 环境；否则验证环境本身会在进入 Qt 前破坏被测程序。
+- 第三次运行 `29690773080` 仍在同一行报告 cp1252，证明 PyInstaller 冻结运行时不受父进程 `PYTHONIOENCODING/PYTHONUTF8` 影响。最终修复必须进入应用入口，在任何中文 `print` 前直接重配 stdout/stderr；只修改 CI 环境不足以保护真实的日志重定向场景。
 - `main.py` 在设置环境后静态导入 `vibeocr.startup_metrics`，因此正常 PyInstaller Analysis 本应收集；缺失说明 namespace 解析/分析发生偏差，而非运行时可选功能。
 - 四个 workspace root 中只有 contracts 根提供 `vibeocr/__init__.py`（使用 `pkgutil.extend_path`），其余为无 `__init__.py` 的 namespace 分片；PyInstaller 入口同时传四个 `--paths`，但 package 主体首先解析到 contracts 根。
 - `PACKAGE_DATA` 只把 contracts/client/backend 三个源码分片作为原始 `.py` 数据合并进 `_internal/vibeocr`，没有加入 app/pyside 分片；即便主进程 PYZ 漏收 app 模块，运行时数据目录也无法兜底找到 `startup_metrics.py`。

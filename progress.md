@@ -48,6 +48,8 @@
 - 修复提交 `d337bd0` 已推送并将 `v0.5.0` 标签从 `70420ac` 更新至该提交；Release 运行 `29689958012` 的 PyInstaller 阶段成功。
 - 首次远端真实 EXE 门禁在绑定阶段假超时：主程序使用 `os._exit` 后，后台清理子进程仍可能继承 `capture_output` 的 PIPE，使 `communicate()` 等不到 EOF。已改为普通临时日志文件，既避免继承管道拖住验证器，也保留非零退出诊断。
 - 第二次运行 `29690421627` 的保留 stderr 证明真正启动阻断是 CI 重定向输出采用 cp1252，中文启动提示编码失败；验证进程已增加 `PYTHONIOENCODING=utf-8`/`PYTHONUTF8=1`。
+- 第三次运行 `29690773080` 证明冻结运行时忽略上述父进程编码变量；已将 UTF-8 标准流配置前移到 `vibeocr.main` 的最早入口，并新增 release-layout 级回归。
+- 入口修复完成本地全链重建：PyInstaller、五-wheel 绑定、最终 Classic ZIP 解压与真实 EXE T3 smoke 均通过；专项 4 passed、Ruff 与 diff check 通过。
 
 ---
 

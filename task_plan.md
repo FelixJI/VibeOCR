@@ -88,6 +88,7 @@
 | 第一版逐项 hidden import 在真实 PyInstaller Analysis 中仍无法跨 contracts 根解析 namespace 分片 | 1 | 保留确定性模块清单，但增加合并后的单一 workspace staging 作为最高优先 pathex |
 | `uv build` 默认用户缓存 `AppData/Local/uv/cache` 初始化失败（os error 183） | 1 | 改用仓库既有可写 `.uv-cache`，不重复使用全局缓存 |
 | 第二次 Release 的真实 EXE smoke 仍超时，普通文件日志揭示 `main.py:663` 中文输出在 CI 的 cp1252 编码下失败 | 1 | 门禁进程显式设置 `PYTHONIOENCODING=utf-8` 与 `PYTHONUTF8=1`，匹配项目 UTF-8 输出约定 |
+| 第三次 Release 仍报告相同 cp1252 异常，说明 PyInstaller 冻结运行时未采纳父进程 Python 编码环境变量 | 1 | 在 `vibeocr.main` 最早入口直接 reconfigure 标准流为 UTF-8，并增加 release-layout 回归 |
 
 ### Phase 2：修复与回归
 - [x] 修正 PyInstaller 的 workspace namespace 收集策略
@@ -97,7 +98,8 @@
 
 ### Phase 3：重新发布验收
 - [x] 提交推送并更新 v0.5.0 tag 触发打包
-- [ ] 修复 CI 启动 smoke 因继承 PIPE 导致的假超时并重新触发
+- [x] 消除 PIPE 假超时并定位冻结入口 cp1252 编码问题
+- [ ] 提交入口级 UTF-8 修复并重新触发
 - [ ] 跟踪工作流并验证新 Classic 产物可启动
 - **Status:** in_progress
 
