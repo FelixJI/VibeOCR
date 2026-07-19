@@ -41,6 +41,9 @@
 - 正在核对 GitHub Release、tag 与 workflow 的安全重打包方式。
 - 已确认采用既有的 `v0.5.0` 修复重推流程；下一步补充发布说明、复核、提交和推送。
 - 已补充 0.5.0 发布说明，准备做提交前最终验证。
+- 78 项更新链回归和 Ruff/diff 检查再次通过；已创建提交 `70420ac`。
+- 已推送 `main`，并用旧 SHA lease 保护将 `v0.5.0` 从 `2120617` 更新到 `70420ac`；Release workflow 已由 tag push 触发。
+- GitHub Actions run `29688528417` 成功完成；0.5.0 Classic ZIP 与 SHA256 已覆盖上传，摘要核对通过，任务完成。
 
 ---
 

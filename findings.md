@@ -62,6 +62,9 @@
 - 当前成功 Release run 为 `29675075394`，tag 指向 `2120617`；Classic zip 当前摘要为 `1a5f274e...`，发布时间为 2026-07-19 13:41（北京时间）。
 - 工作流使用 `softprops/action-gh-release@v3` 上传同名资产；同一 tag 的上一轮修复重推已成功覆盖现有 0.5.0 Release，证明仓库支持该恢复路径。
 - 0.5.0 CHANGELOG 已补充 Classic 更新重启修复，重打包上传时 Release 正文会同步包含该说明。
+- 新 Release run `29688528417` 在提交 `70420ac` 上成功完成，Windows job 6m03s；Classic 构建、结构校验、上传与 CNB 镜像均成功。
+- 新 Classic ZIP 上传时间为 2026-07-19T13:21:08Z，GitHub 资产摘要与 `.sha256` 文件内容一致：`c94c0193109d85d78411786cb0701a27716cbda2ac323fef3b889213bbaaf569`。
+- 远端 `main` 与 `v0.5.0` 均已确认指向 `70420ac`；Release 正文包含本次 update 修复说明。
 
 ---
 

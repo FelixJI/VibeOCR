@@ -79,14 +79,14 @@
 - **Status:** complete
 
 ### Phase 2：提交并触发
-- [ ] 最终复核并提交当前修复
-- [ ] 推送修复并触发 Classic 打包
-- **Status:** in_progress
+- [x] 最终复核并提交当前修复
+- [x] 推送修复并触发 Classic 打包
+- **Status:** complete
 
 ### Phase 3：跟踪与验收
-- [ ] 跟踪 GitHub Actions 到完成
-- [ ] 核对 0.5.0 Release 产物、SHA256 与时间
-- **Status:** pending
+- [x] 跟踪 GitHub Actions 到完成
+- [x] 核对 0.5.0 Release 产物、SHA256 与时间
+- **Status:** complete
 
 ## 风险记录
 
