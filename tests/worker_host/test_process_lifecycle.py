@@ -106,6 +106,39 @@ def test_arg_parser_rejects_invalid_frontend_id(capsys: pytest.CaptureFixture[st
     assert rc != 0
 
 
+def test_serving_main_configures_worker_json_logging_before_run(
+    monkeypatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import vibeocr.worker_host.main as worker_main
+
+    configured: list[dict[str, str]] = []
+
+    def fake_configure(**kwargs):
+        configured.append(kwargs)
+
+    def fake_run(coro):
+        coro.close()
+        return 0
+
+    monkeypatch.setattr(worker_main, "configure_worker_stderr_logging", fake_configure)
+    monkeypatch.setattr(worker_main.asyncio, "run", fake_run)
+
+    assert worker_main.main(
+        [
+            "--pipe",
+            "pipe-name",
+            "--token",
+            "token",
+            "--frontend-id",
+            "pyside",
+            "--profile",
+            "production",
+        ]
+    ) == 0
+    assert configured == [{"frontend": "pyside", "profile": "production"}]
+    assert capsys.readouterr().out == ""
+
+
 # ---------------------------------------------------------------------------
 # Subprocess: the real entry point behaves the same
 # ---------------------------------------------------------------------------

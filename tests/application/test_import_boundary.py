@@ -30,7 +30,13 @@ if loaded:
 def _assert_import_does_not_load_pyside6(module_name: str) -> None:
     """在干净子进程中验证导入边界，不破坏 pytest-qt 的 Qt 模块状态。"""
     env = os.environ.copy()
-    env["PYTHONPATH"] = str(_PROJECT_ROOT / "src")
+    env["PYTHONPATH"] = os.pathsep.join(
+        [
+            str(_PROJECT_ROOT / "packages/vibeocr-contracts-py/src"),
+            str(_PROJECT_ROOT / "packages/vibeocr-client-py/src"),
+            str(_PROJECT_ROOT / "packages/vibeocr-backend/src"),
+        ]
+    )
     result = subprocess.run(
         [sys.executable, "-c", _IMPORT_PROBE, module_name],
         cwd=_PROJECT_ROOT,

@@ -23,7 +23,15 @@ from vibeocr.worker_host.contracts import (
 )
 from vibeocr.worker_host.errors import ErrorCode, WorkerError
 
-CONTRACTS_DIR = Path(__file__).resolve().parents[2] / "contracts" / "v1"
+CONTRACTS_DIR = (
+    Path(__file__).resolve().parents[2]
+    / "packages"
+    / "vibeocr-contracts-py"
+    / "src"
+    / "vibeocr"
+    / "protocol"
+    / "v1"
+)
 
 
 def _load_errors_registry() -> dict:

@@ -314,6 +314,61 @@ public sealed record GenerateQrCodeSvgRequest : RequestContract
 public sealed record SettingsSnapshotRequest : RequestContract;
 
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record PipelineCacheStatusRequest : RequestContract;
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record SetPipelineCacheTtlRequest : RequestContract
+{
+    public required int TtlSeconds { get; init; }
+
+    public override void Validate()
+    {
+        if (TtlSeconds < 0)
+        {
+            throw new ProtocolContractException("ttl_seconds must be non-negative.");
+        }
+    }
+}
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record ReleasePipelineCacheRequest : RequestContract
+{
+    public required bool HeavyOnly { get; init; }
+}
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record PreloadPipelineCacheRequest : RequestContract
+{
+    public required string[] Pipelines { get; init; }
+
+    public override void Validate()
+    {
+        foreach (string pipeline in Pipelines)
+        {
+            ContractValidation.OneOf(
+                pipeline, nameof(Pipelines), "OCR", "PP-StructureV3", "MinerU",
+                "PaddleOCR-VL", "TABLE_RECOGNITION", "FORMULA_RECOGNITION");
+        }
+    }
+}
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record WarmupPipelineCacheRequest : RequestContract
+{
+    public required string[] Pipelines { get; init; }
+
+    public override void Validate()
+    {
+        foreach (string pipeline in Pipelines)
+        {
+            ContractValidation.OneOf(
+                pipeline, nameof(Pipelines), "OCR", "PP-StructureV3", "MinerU",
+                "PaddleOCR-VL", "TABLE_RECOGNITION", "FORMULA_RECOGNITION");
+        }
+    }
+}
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public sealed record SwitchBackendRequest : RequestContract
 {
     public required string Backend { get; init; }

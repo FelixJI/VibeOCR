@@ -4,7 +4,7 @@
 os._exit 仍保留为 DLL 卸载安全网，但在其之前由本协调器尽力收拢任务。
 """
 
-import time
+import threading
 
 
 class TestShutdownCoordinator:
@@ -26,17 +26,21 @@ class TestShutdownCoordinator:
         assert order == ["settings", "pdf", "subprocess", "async_runner"]
 
     def test_coordinate_returns_false_on_timeout(self):
-        """某子系统超时，coordinator 返回 False 但继续后续"""
+        """步骤超时后可显式允许独立后续步骤继续。"""
         from vibeocr.managers.shutdown_coordinator import ShutdownCoordinator
 
         coord = ShutdownCoordinator()
-        coord.register("slow", lambda: time.sleep(2))
-        coord.register("fast", lambda: None)
+        order = []
+        release = threading.Event()
+        coord.register("slow", lambda: release.wait(2), max_timeout_ms=50)
+        coord.register("fast", lambda: order.append("fast"))
 
         result = coord.coordinate(timeout_ms=100)
 
         # 即使 slow 超时，也返回 False（非完全成功）
         assert result is False
+        assert order == ["fast"]
+        release.set()
 
     def test_coordinate_continues_after_exception(self):
         """某子系统抛异常，coordinator 记录但继续后续"""
@@ -63,15 +67,36 @@ class TestShutdownCoordinator:
         coord = ShutdownCoordinator()
         assert coord.coordinate(timeout_ms=1000) is True
 
-    def test_coordinate_per_step_timeout(self):
-        """每个步骤有独立超时（总超时均分）"""
+    def test_fast_step_preserves_remaining_global_budget(self):
+        """总预算按绝对截止时间扣减，不再机械均分。"""
         from vibeocr.managers.shutdown_coordinator import ShutdownCoordinator
 
         coord = ShutdownCoordinator()
-        coord.register("a", lambda: None)
-        coord.register("b", lambda: None)
-        coord.register("c", lambda: None)
+        coord.register("a", lambda: None, max_timeout_ms=20)
+        coord.register("b", lambda: None, max_timeout_ms=250)
 
-        # 总超时 300ms，3 步各 100ms
         result = coord.coordinate(timeout_ms=300)
         assert result is True
+        assert coord.results[0].allowance_ms <= 20
+        # a 几乎立即完成，b 获得接近全部剩余预算，而不是固定 150ms。
+        assert coord.results[1].allowance_ms > 200
+
+    def test_dependent_steps_stop_after_timeout(self):
+        """资源相关步骤可禁止在前一步仍运行时继续，避免并发清理。"""
+        from vibeocr.managers.shutdown_coordinator import ShutdownCoordinator
+
+        coord = ShutdownCoordinator()
+        order = []
+        release = threading.Event()
+        coord.register(
+            "owner",
+            lambda: release.wait(1),
+            max_timeout_ms=20,
+            continue_on_timeout=False,
+        )
+        coord.register("dependent", lambda: order.append("dependent"))
+
+        assert coord.coordinate(timeout_ms=200) is False
+        assert order == []
+        assert coord.results[-1].status == "timeout"
+        release.set()

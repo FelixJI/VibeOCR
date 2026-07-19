@@ -28,6 +28,22 @@ def main() -> int:
         manifest = json.loads((root / "product-manifest.json").read_text(encoding="utf-8-sig"))
         if manifest.get("frontend") != "pyside":
             raise RuntimeError("product manifest frontend is not pyside")
+        records = manifest.get("python_wheels", [])
+        expected = {
+            "vibeocr",
+            "vibeocr-backend",
+            "vibeocr-client-py",
+            "vibeocr-contracts-py",
+            "vibeocr-pyside",
+        }
+        if {record.get("distribution") for record in records} != expected:
+            raise RuntimeError("bound Python wheel set is incomplete")
+        for record in records:
+            bound = root / "backend" / str(record.get("file", ""))
+            if not bound.is_file():
+                raise RuntimeError(f"bound wheel is missing: {bound.name}")
+            if hashlib.sha256(bound.read_bytes()).hexdigest() != record.get("sha256"):
+                raise RuntimeError(f"bound wheel hash mismatch: {bound.name}")
         wheel = root / "backend" / str(manifest.get("backend_wheel", ""))
         if not wheel.is_file():
             raise RuntimeError("bound backend wheel is missing")

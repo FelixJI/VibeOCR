@@ -50,7 +50,7 @@ class Violation:
 
 
 def _scan() -> list[Violation]:
-    base = _REPO_ROOT / "src" / "vibeocr"
+    base = _REPO_ROOT / "packages" / "vibeocr-backend" / "src" / "vibeocr"
     hits: list[Violation] = []
     for sub in BACKEND_PACKAGE_DIRS:
         pkg = base / sub

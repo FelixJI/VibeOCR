@@ -3,13 +3,14 @@
 被两个调用方复用：
 1. ``scripts/updater_main.py`` —— 独立 updater.exe（新架构首选替换器）。
    updater 自动判断新旧路径（``_detect_self_exe_names``）决定 ``self_exe_names``。
-2. ``src/vibeocr/main.py`` —— 复用本模块的 ``cleanup_leftover_old_exes`` 做后台残留清理
+2. ``apps/vibeocr-pyside/src/vibeocr/main.py`` —— 复用本模块的
+   ``cleanup_leftover_old_exes`` 做后台残留清理
    （主程序启动时 daemon 线程调用）；``update_replacer`` 内的工具函数（``_busy_remove`` 等）
    也可被主程序侧动态 import 复用。
 
 设计约束（重要）：
 - **纯 stdlib**，不依赖 vibeocr 任何模块。原因：updater.exe 用 PyInstaller ``--onefile``
-  打包且 ``pathex=[]``、无 ``--paths src``，无法 import ``src/vibeocr/`` 下任何模块。
+  打包且 ``pathex=[]``、无工作区 ``--paths``，无法 import ``vibeocr`` 生产模块。
   本模块放在 ``scripts/``，与 ``updater_main.py`` 同目录，updater 打包时自动收集；
   主程序侧把本文件作为 ``--add-data`` 资源打进 ``_internal/``，运行时注入 sys.path。
 

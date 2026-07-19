@@ -683,6 +683,83 @@ class _FakeWebView:
         self.last_html = html
 
 
+class TestRecognitionPreparationAsync:
+    def test_png_encoding_runs_off_gui_thread(
+        self, qapp, qtbot, qasync_loop, monkeypatch
+    ):
+        import threading
+
+        from PySide6.QtGui import QPixmap
+
+        from tests.conftest import wait_until_done
+        from vibeocr.models.ocr_options import OCROptions
+
+        tab = SingleRecognitionTab()
+        gui_thread = threading.get_ident()
+        encode_threads: list[int] = []
+        original = tab._qimage_to_png_bytes
+
+        def record_thread(image):
+            encode_threads.append(threading.get_ident())
+            return original(image)
+
+        monkeypatch.setattr(tab, "_qimage_to_png_bytes", record_thread)
+        monkeypatch.setattr(tab, "_display_result", lambda result: None)
+        monkeypatch.setattr(
+            "vibeocr.pipeline_status.is_pipeline_ever_succeeded", lambda *args: True
+        )
+        pixmap = QPixmap(8, 8)
+        pixmap.fill()
+        tab.run_ocr(pixmap, OCROptions())
+        wait_until_done(qtbot, qasync_loop, lambda: tab._recognize_task is None)
+
+        assert encode_threads and encode_threads[0] != gui_thread
+
+    def test_document_read_runs_off_gui_thread(
+        self, qapp, qtbot, qasync_loop, monkeypatch, tmp_path
+    ):
+        import threading
+        from pathlib import Path
+
+        from tests.conftest import wait_until_done
+
+        tab = SingleRecognitionTab()
+        path = tmp_path / "large.pdf"
+        path.write_bytes(b"payload")
+        gui_thread = threading.get_ident()
+        read_threads: list[int] = []
+        original = Path.read_bytes
+
+        def record_read(file_path):
+            read_threads.append(threading.get_ident())
+            return original(file_path)
+
+        monkeypatch.setattr(Path, "read_bytes", record_read)
+        monkeypatch.setattr(tab, "_display_result", lambda result: None)
+        tab._run_ocr_with_file(path)
+        wait_until_done(qtbot, qasync_loop, lambda: tab._recognize_task is None)
+
+        assert read_threads and read_threads[0] != gui_thread
+
+    def test_business_error_does_not_restart_backend(self, qapp):
+        class BusinessErrorBackend:
+            def __init__(self):
+                self.shutdown_calls = 0
+
+            def recognize_sync(self, *args, **kwargs):
+                raise ValueError("invalid request")
+
+            def shutdown(self):
+                self.shutdown_calls += 1
+
+        backend = BusinessErrorBackend()
+        tab = SingleRecognitionTab(backend=backend)
+
+        with pytest.raises(ValueError, match="invalid request"):
+            tab._call_backend_recognize(b"payload", "OCR")
+        assert backend.shutdown_calls == 0
+
+
 def _raise_async(msg):
     async def _coro(*a, **k):
         raise AssertionError(msg)

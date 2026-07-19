@@ -9,7 +9,7 @@ chkPreloadFormula），与控制器查找的 chkPreload_{OCRPipeline.name} 不�
 from unittest.mock import MagicMock, patch
 
 import pytest
-from PySide6.QtWidgets import QCheckBox, QPushButton, QWidget
+from PySide6.QtWidgets import QCheckBox, QLabel, QPushButton, QSpinBox, QWidget
 
 from vibeocr.core.pipelines import OCRPipeline, get_preloadable_pipelines
 from vibeocr.ui.ui_main_window import Ui_MainWindowWidget
@@ -73,6 +73,60 @@ def test_all_preloadable_pipelines_have_checkboxes(controller):
         assert chk is not None, (
             f"缺少复选框 chkPreload_{pipeline.name}（管道 {pipeline.value}）"
         )
+
+
+def test_runtime_pipeline_cache_controls_are_present(controller):
+    """缓存生命周期槽函数必须有真实可见控件，不得再是死接线。"""
+    _ctrl, host = controller
+    assert host.findChild(QCheckBox, "chkEnablePipelineTtl") is not None
+    assert host.findChild(QSpinBox, "spinPipelineTtl") is not None
+    assert host.findChild(QPushButton, "btnRefreshPipelineCache") is not None
+    assert host.findChild(QPushButton, "btnReleaseHeavy") is not None
+    assert host.findChild(QPushButton, "btnReleaseAll") is not None
+    assert host.findChild(QLabel, "labelReleaseStatus") is not None
+
+
+def test_pipeline_cache_status_is_rendered_from_worker_readback(controller):
+    ctrl, host = controller
+    ctrl._cache_generation = 4
+    ctrl._on_pipeline_cache_status(
+        {
+            "ready": True,
+            "ttl_seconds": 300,
+            "max_heavy": 2,
+            "loaded_pipelines": ["OCR", "PP-StructureV3"],
+            "last_used_unix_ms": {},
+        },
+        generation=4,
+    )
+    text = host.findChild(QLabel, "labelReleaseStatus").text()
+    assert "驻留 2 个" in text
+    assert "TTL 5 分钟" in text
+    assert "重模型上限 2" in text
+
+
+def test_pipeline_cache_refresh_runs_off_gui_and_reads_real_status(
+    controller, qtbot
+):
+    ctrl, host = controller
+    service = MagicMock()
+    service.get_pipeline_cache_status.return_value = {
+        "ready": True,
+        "ttl_seconds": 0,
+        "max_heavy": 1,
+        "loaded_pipelines": [],
+        "last_used_unix_ms": {},
+    }
+    ctrl._subprocess_manager.is_ready = True
+    ctrl._subprocess_manager.service = service
+
+    host.findChild(QPushButton, "btnRefreshPipelineCache").click()
+
+    qtbot.waitUntil(
+        lambda: "TTL 禁用" in host.findChild(QLabel, "labelReleaseStatus").text(),
+        timeout=2000,
+    )
+    service.get_pipeline_cache_status.assert_called_once()
 
 
 def _check_silently(chk: QCheckBox, checked: bool) -> None:
@@ -230,4 +284,3 @@ def test_shutdown_no_error_when_no_preload_task(controller):
 
     # 不应抛异常
     ctrl.shutdown()
-

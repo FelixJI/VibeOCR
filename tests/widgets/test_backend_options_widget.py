@@ -42,6 +42,7 @@ class _RunningStubGpuDetectWorker(QObject):
         self.quit_called = False
         self.wait_calls: list[int] = []
         self._running = False
+        self.cancel_called = False
 
     def start(self):
         self._running = True
@@ -51,6 +52,9 @@ class _RunningStubGpuDetectWorker(QObject):
 
     def quit(self):
         self.quit_called = True
+
+    def cancel(self):
+        self.cancel_called = True
 
     def wait(self, timeout_ms):
         self.wait_calls.append(timeout_ms)
@@ -234,5 +238,6 @@ def test_close_stops_running_gpu_detection_worker(_cleanup, qtbot, tmp_path):
     widget.close()
 
     assert isinstance(worker, _RunningStubGpuDetectWorker)
+    assert worker.cancel_called
     assert worker.quit_called
     assert worker.wait_calls

@@ -1,0 +1,861 @@
+{
+  "version": 1,
+  "description": "Golden request/response fixtures for the v1 WorkerHost contract. Each public method has at least one positive case. Python (tests/contracts) and C# (tests/dotnet/VibeOCR.Contracts.Tests) both deserialize/serialize these and compare semantically. Negative cases live under 'negative' and MUST be rejected by schema validation. SharedPayloadRef sha256/name values are stable fixtures (not real secrets).",
+  "shared_payload_ref_template": {
+    "name": "Local\\VibeOCR-00000000-0000-4000-8000-000000000000-00000000-0000-4000-8000-000000000001",
+    "size": 12345,
+    "media_type": "image/png",
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "owner": "client",
+    "expires_unix_ms": 1800000000000
+  },
+  "positive": {
+    "system.handshake": {
+      "request_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000001",
+        "task_id": "00000000-0000-4000-8000-000000000001",
+        "method": "system.handshake",
+        "payload": {
+          "app_version": "0.5.0",
+          "protocol_version": 1,
+          "max_message_bytes": 8388608,
+          "max_shared_payload_bytes": 268435456
+        },
+        "deadline_unix_ms": 0
+      },
+      "response_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000001",
+        "task_id": "00000000-0000-4000-8000-000000000001",
+        "result": {
+          "worker_version": "0.5.0",
+          "protocol_version": 1,
+          "capabilities": [
+            "ocr",
+            "pdf",
+            "qrcode",
+            "mineru",
+            "settings"
+          ],
+          "python_version": "3.13.2",
+          "backend": "cpu",
+          "max_message_bytes": 8388608,
+          "max_shared_payload_bytes": 268435456
+        }
+      }
+    },
+    "system.ping": {
+      "request_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000002",
+        "task_id": "00000000-0000-4000-8000-000000000002",
+        "method": "system.ping",
+        "payload": {
+          "nonce": "abc123"
+        },
+        "deadline_unix_ms": 0
+      },
+      "response_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000002",
+        "task_id": "00000000-0000-4000-8000-000000000002",
+        "result": {
+          "nonce": "abc123"
+        }
+      }
+    },
+    "system.shutdown": {
+      "request_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000003",
+        "task_id": "00000000-0000-4000-8000-000000000003",
+        "method": "system.shutdown",
+        "payload": {
+          "reason": "user-quit"
+        },
+        "deadline_unix_ms": 0
+      },
+      "response_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000003",
+        "task_id": "00000000-0000-4000-8000-000000000003",
+        "result": {
+          "acknowledged": true
+        }
+      }
+    },
+    "task.cancel": {
+      "request_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000004",
+        "task_id": "00000000-0000-4000-8000-000000000004",
+        "method": "task.cancel",
+        "payload": {
+          "task_id": "11111111-1111-4111-8111-111111111111"
+        },
+        "deadline_unix_ms": 0
+      },
+      "response_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000004",
+        "task_id": "00000000-0000-4000-8000-000000000004",
+        "result": {
+          "accepted": true,
+          "state": "running"
+        }
+      }
+    },
+    "memory.release": {
+      "request_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000005",
+        "task_id": "00000000-0000-4000-8000-000000000005",
+        "method": "memory.release",
+        "payload": {
+          "name": "Local\\VibeOCR-00000000-0000-4000-8000-000000000000-00000000-0000-4000-8000-000000000001"
+        },
+        "deadline_unix_ms": 0
+      },
+      "response_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000005",
+        "task_id": "00000000-0000-4000-8000-000000000005",
+        "result": {
+          "released": true
+        }
+      }
+    },
+    "ocr.recognize": {
+      "request_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000010",
+        "task_id": "00000000-0000-4000-8000-000000000010",
+        "method": "ocr.recognize",
+        "payload": {
+          "image": {
+            "name": "Local\\VibeOCR-00000000-0000-4000-8000-000000000000-00000000-0000-4000-8000-000000000010",
+            "size": 12345,
+            "media_type": "image/png",
+            "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+            "owner": "client",
+            "expires_unix_ms": 1800000000000
+          },
+          "pipeline": "OCR",
+          "language": null
+        },
+        "deadline_unix_ms": 0
+      },
+      "response_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000010",
+        "task_id": "00000000-0000-4000-8000-000000000010",
+        "result": {
+          "text": "Hello",
+          "pipeline": "OCR",
+          "raw_blocks": [],
+          "markdown_text": "Hello",
+          "html_text": "",
+          "raw_text": "Hello",
+          "text_blocks": [
+            {"text": "Hello", "bbox": [0, 0, 100, 100], "confidence": 0.95, "order": 0}
+          ],
+          "text_with_scores": [["Hello", 0.95]],
+          "content_list": [],
+          "image_width": 800,
+          "image_height": 600
+        }
+      }
+    },
+    "ocr.recognize_batch": {
+      "request_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000012",
+        "task_id": "00000000-0000-4000-8000-000000000012",
+        "method": "ocr.recognize_batch",
+        "payload": {
+          "images": [
+            {
+              "name": "Local\\VibeOCR-00000000-0000-4000-8000-000000000000-00000000-0000-4000-8000-000000000012",
+              "size": 12345,
+              "media_type": "image/png",
+              "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+              "owner": "client",
+              "expires_unix_ms": 1800000000000
+            },
+            {
+              "name": "Local\\VibeOCR-00000000-0000-4000-8000-000000000000-00000000-0000-4000-8000-000000000013",
+              "size": 23456,
+              "media_type": "image/png",
+              "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+              "owner": "client",
+              "expires_unix_ms": 1800000000000
+            }
+          ],
+          "pipeline": "OCR",
+          "language": null
+        },
+        "deadline_unix_ms": 0
+      },
+      "response_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000012",
+        "task_id": "00000000-0000-4000-8000-000000000012",
+        "result": {
+          "results": [
+            {
+              "text": "First",
+              "pipeline": "OCR",
+              "raw_blocks": [],
+              "text_blocks": [],
+              "text_with_scores": [],
+              "content_list": [],
+              "image_width": 800,
+              "image_height": 600
+            },
+            null
+          ]
+        }
+      }
+    },
+    "ocr.export": {
+      "request_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000011",
+        "task_id": "00000000-0000-4000-8000-000000000011",
+        "method": "ocr.export",
+        "payload": {
+          "raw_text": "Hello 世界",
+          "markdown_text": "# Hello 世界",
+          "html_text": "<h1>Hello 世界</h1>",
+          "raw_blocks": [],
+          "output_path": "C:/data/结果.md",
+          "format": "markdown",
+          "overwrite": false
+        },
+        "deadline_unix_ms": 0
+      },
+      "response_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000011",
+        "task_id": "00000000-0000-4000-8000-000000000011",
+        "result": {
+          "output_path": "C:/data/结果.md",
+          "bytes_written": 14
+        }
+      }
+    },
+    "pdf.open": {
+      "request_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000020",
+        "task_id": "00000000-0000-4000-8000-000000000020",
+        "method": "pdf.open",
+        "payload": {
+          "file_path": "C:/data/sample.pdf"
+        },
+        "deadline_unix_ms": 0
+      },
+      "response_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000020",
+        "task_id": "00000000-0000-4000-8000-000000000020",
+        "result": {
+          "session_id": "sess-1",
+          "file_path": "C:/data/sample.pdf",
+          "page_count": 3
+        }
+      }
+    },
+    "pdf.close": {
+      "request_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000021",
+        "task_id": "00000000-0000-4000-8000-000000000021",
+        "method": "pdf.close",
+        "payload": {
+          "session_id": "sess-1"
+        },
+        "deadline_unix_ms": 0
+      },
+      "response_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000021",
+        "task_id": "00000000-0000-4000-8000-000000000021",
+        "result": {
+          "closed": true
+        }
+      }
+    },
+    "pdf.command": {
+      "request_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000029",
+        "task_id": "00000000-0000-4000-8000-000000000029",
+        "method": "pdf.command",
+        "payload": {
+          "session_id": "sess-1",
+          "operation": "model",
+          "params": {}
+        },
+        "deadline_unix_ms": 0
+      },
+      "response_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000029",
+        "task_id": "00000000-0000-4000-8000-000000000029",
+        "result": {
+          "result": { "file_path": "C:/data/sample.pdf", "pages": [] }
+        }
+      }
+    },
+    "pdf.render_page": {
+      "request_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000022",
+        "task_id": "00000000-0000-4000-8000-000000000022",
+        "method": "pdf.render_page",
+        "payload": {
+          "session_id": "sess-1",
+          "page_index": 0,
+          "size": 160
+        },
+        "deadline_unix_ms": 0
+      },
+      "response_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000022",
+        "task_id": "00000000-0000-4000-8000-000000000022",
+        "result": {
+          "image": {
+            "name": "Local\\VibeOCR-00000000-0000-4000-8000-000000000000-00000000-0000-4000-8000-000000000020",
+            "size": 12345,
+            "media_type": "image/png",
+            "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+            "owner": "worker",
+            "expires_unix_ms": 1800000000000
+          }
+        }
+      }
+    },
+    "pdf.rotate": {
+      "request_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000023",
+        "task_id": "00000000-0000-4000-8000-000000000023",
+        "method": "pdf.rotate",
+        "payload": {
+          "session_id": "sess-1",
+          "page_indices": [
+            0,
+            1
+          ],
+          "angle": 90
+        },
+        "deadline_unix_ms": 0
+      },
+      "response_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000023",
+        "task_id": "00000000-0000-4000-8000-000000000023",
+        "result": {
+          "page_count": 3
+        }
+      }
+    },
+    "pdf.delete_pages": {
+      "request_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000024",
+        "task_id": "00000000-0000-4000-8000-000000000024",
+        "method": "pdf.delete_pages",
+        "payload": {
+          "session_id": "sess-1",
+          "page_indices": [
+            2
+          ]
+        },
+        "deadline_unix_ms": 0
+      },
+      "response_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000024",
+        "task_id": "00000000-0000-4000-8000-000000000024",
+        "result": {
+          "page_count": 2
+        }
+      }
+    },
+    "pdf.add_text_layer": {
+      "request_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000025",
+        "task_id": "00000000-0000-4000-8000-000000000025",
+        "method": "pdf.add_text_layer",
+        "payload": {
+          "session_id": "sess-1",
+          "page_index": 0,
+          "overwrite": false,
+          "save": true
+        },
+        "deadline_unix_ms": 0
+      },
+      "response_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000025",
+        "task_id": "00000000-0000-4000-8000-000000000025",
+        "result": {
+          "written": true,
+          "saved": true
+        }
+      }
+    },
+    "pdf.delete_text_layers": {
+      "request_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000026",
+        "task_id": "00000000-0000-4000-8000-000000000026",
+        "method": "pdf.delete_text_layers",
+        "payload": {
+          "session_id": "sess-1",
+          "page_indices": [
+            0,
+            1
+          ]
+        },
+        "deadline_unix_ms": 0
+      },
+      "response_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000026",
+        "task_id": "00000000-0000-4000-8000-000000000026",
+        "result": {
+          "deleted_count": 2,
+          "residual_pages": []
+        }
+      }
+    },
+    "pdf.save": {
+      "request_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000027",
+        "task_id": "00000000-0000-4000-8000-000000000027",
+        "method": "pdf.save",
+        "payload": {
+          "session_id": "sess-1"
+        },
+        "deadline_unix_ms": 0
+      },
+      "response_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000027",
+        "task_id": "00000000-0000-4000-8000-000000000027",
+        "result": {
+          "saved_path": "C:/data/sample.pdf"
+        }
+      }
+    },
+    "pdf.start_ocr": {
+      "request_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000028",
+        "task_id": "00000000-0000-4000-8000-000000000028",
+        "method": "pdf.start_ocr",
+        "payload": {
+          "session_id": "sess-1",
+          "file_path": "C:/data/sample.pdf",
+          "page_indices": [
+            0,
+            1,
+            2
+          ],
+          "overwrite": false
+        },
+        "deadline_unix_ms": 0
+      },
+      "response_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000028",
+        "task_id": "00000000-0000-4000-8000-000000000028",
+        "result": {
+          "completed": 3,
+          "failed": 0,
+          "cancelled": false,
+          "compressed": true,
+          "write_errors": []
+        }
+      }
+    },
+    "qrcode.decode": {
+      "request_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000030",
+        "task_id": "00000000-0000-4000-8000-000000000030",
+        "method": "qrcode.decode",
+        "payload": {
+          "image": {
+            "name": "Local\\VibeOCR-00000000-0000-4000-8000-000000000000-00000000-0000-4000-8000-000000000030",
+            "size": 500,
+            "media_type": "image/png",
+            "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+            "owner": "client",
+            "expires_unix_ms": 1800000000000
+          }
+        },
+        "deadline_unix_ms": 0
+      },
+      "response_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000030",
+        "task_id": "00000000-0000-4000-8000-000000000030",
+        "result": {
+          "codes": [
+            {
+              "data": "https://example.com",
+              "format": "QR_CODE",
+              "is_url": true
+            }
+          ]
+        }
+      }
+    },
+    "qrcode.generate": {
+      "request_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000031",
+        "task_id": "00000000-0000-4000-8000-000000000031",
+        "method": "qrcode.generate",
+        "payload": {
+          "data": "https://example.com",
+          "format": "qrcode"
+        },
+        "deadline_unix_ms": 0
+      },
+      "response_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000031",
+        "task_id": "00000000-0000-4000-8000-000000000031",
+        "result": {
+          "image": {
+            "name": "Local\\VibeOCR-00000000-0000-4000-8000-000000000000-00000000-0000-4000-8000-000000000031",
+            "size": 800,
+            "media_type": "image/png",
+            "sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+            "owner": "worker",
+            "expires_unix_ms": 1800000000000
+          }
+        }
+      }
+    },
+    "qrcode.generate_svg": {
+      "request_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000035",
+        "task_id": "00000000-0000-4000-8000-000000000035",
+        "method": "qrcode.generate_svg",
+        "payload": {
+          "data": "https://example.com",
+          "error_correction": "M",
+          "fg_color": "#000000",
+          "bg_color": "#FFFFFF"
+        },
+        "deadline_unix_ms": 0
+      },
+      "response_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000035",
+        "task_id": "00000000-0000-4000-8000-000000000035",
+        "result": {
+          "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"600\" height=\"600\"></svg>"
+        }
+      }
+    },
+    "pipeline_cache.status": {
+      "request_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000036",
+        "task_id": "00000000-0000-4000-8000-000000000036",
+        "method": "pipeline_cache.status",
+        "payload": {},
+        "deadline_unix_ms": 0
+      },
+      "response_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000036",
+        "task_id": "00000000-0000-4000-8000-000000000036",
+        "result": {
+          "ready": true,
+          "ttl_seconds": 3600,
+          "max_heavy": 2,
+          "loaded_pipelines": ["OCR"],
+          "last_used_unix_ms": {"OCR": 1700000000000}
+        }
+      }
+    },
+    "pipeline_cache.set_ttl": {
+      "request_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000037",
+        "task_id": "00000000-0000-4000-8000-000000000037",
+        "method": "pipeline_cache.set_ttl",
+        "payload": {"ttl_seconds": 600},
+        "deadline_unix_ms": 0
+      },
+      "response_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000037",
+        "task_id": "00000000-0000-4000-8000-000000000037",
+        "result": {"updated": true, "ttl_seconds": 600}
+      }
+    },
+    "pipeline_cache.release": {
+      "request_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000038",
+        "task_id": "00000000-0000-4000-8000-000000000038",
+        "method": "pipeline_cache.release",
+        "payload": {"heavy_only": true},
+        "deadline_unix_ms": 0
+      },
+      "response_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000038",
+        "task_id": "00000000-0000-4000-8000-000000000038",
+        "result": {"released": ["PP-StructureV3"]}
+      }
+    },
+    "pipeline_cache.preload": {
+      "request_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000039",
+        "task_id": "00000000-0000-4000-8000-000000000039",
+        "method": "pipeline_cache.preload",
+        "payload": {"pipelines": ["OCR"]},
+        "deadline_unix_ms": 0
+      },
+      "response_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000039",
+        "task_id": "00000000-0000-4000-8000-000000000039",
+        "result": {"results": {"OCR": true}}
+      }
+    },
+    "pipeline_cache.warmup": {
+      "request_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000042",
+        "task_id": "00000000-0000-4000-8000-000000000042",
+        "method": "pipeline_cache.warmup",
+        "payload": {"pipelines": ["OCR"]},
+        "deadline_unix_ms": 0
+      },
+      "response_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000042",
+        "task_id": "00000000-0000-4000-8000-000000000042",
+        "result": {"results": {"OCR": true}}
+      }
+    },
+    "settings.snapshot": {
+      "request_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000040",
+        "task_id": "00000000-0000-4000-8000-000000000040",
+        "method": "settings.snapshot",
+        "payload": {},
+        "deadline_unix_ms": 0
+      },
+      "response_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000040",
+        "task_id": "00000000-0000-4000-8000-000000000040",
+        "result": {
+          "backend": "cpu",
+          "preload_pipelines": [
+            "OCR"
+          ],
+          "ttl_seconds": 3600
+        }
+      }
+    },
+    "settings.switch_backend": {
+      "request_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000040",
+        "task_id": "00000000-0000-4000-8000-000000000040",
+        "method": "settings.switch_backend",
+        "payload": {
+          "backend": "gpu"
+        },
+        "deadline_unix_ms": 0
+      },
+      "response_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000040",
+        "task_id": "00000000-0000-4000-8000-000000000040",
+        "result": {
+          "backend": "gpu",
+          "restart_required": true
+        }
+      }
+    },
+    "settings.install_dependency": {
+      "request_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000041",
+        "task_id": "00000000-0000-4000-8000-000000000041",
+        "method": "settings.install_dependency",
+        "payload": {
+          "name": "runtime"
+        },
+        "deadline_unix_ms": 0
+      },
+      "response_envelope": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000041",
+        "task_id": "00000000-0000-4000-8000-000000000041",
+        "result": {
+          "installed": true,
+          "restarted": false,
+          "name": "runtime"
+        }
+      }
+    },
+    "task.progress_event": {
+      "description": "Example asynchronous event (not a request/response). Used to validate the event envelope shape.",
+      "event_envelope": {
+        "protocol_version": 1,
+        "task_id": "00000000-0000-4000-8000-000000000010",
+        "event": "task.progress",
+        "sequence": 0,
+        "payload": {
+          "stage": "recognize",
+          "current": 1,
+          "total": 3
+        }
+      }
+    }
+  },
+  "negative": {
+    "malformed_envelope_not_json": "this is not json",
+    "unknown_extra_field_request": {
+      "protocol_version": 1,
+      "request_id": "00000000-0000-4000-8000-000000000099",
+      "task_id": "00000000-0000-4000-8000-000000000099",
+      "method": "system.ping",
+      "payload": {
+        "nonce": "x"
+      },
+      "deadline_unix_ms": 0,
+      "sneaky_unknown_field": true
+    },
+    "wrong_protocol_version": {
+      "protocol_version": 2,
+      "request_id": "00000000-0000-4000-8000-000000000099",
+      "task_id": "00000000-0000-4000-8000-000000000099",
+      "method": "system.ping",
+      "payload": {
+        "nonce": "x"
+      },
+      "deadline_unix_ms": 0
+    },
+    "missing_request_id": {
+      "protocol_version": 1,
+      "task_id": "00000000-0000-4000-8000-000000000099",
+      "method": "system.ping",
+      "payload": {
+        "nonce": "x"
+      },
+      "deadline_unix_ms": 0
+    },
+    "missing_task_id": {
+      "protocol_version": 1,
+      "request_id": "00000000-0000-4000-8000-000000000099",
+      "method": "system.ping",
+      "payload": {
+        "nonce": "x"
+      },
+      "deadline_unix_ms": 0
+    },
+    "malformed_uuid": {
+      "protocol_version": 1,
+      "request_id": "not-a-uuid",
+      "task_id": "00000000-0000-4000-8000-000000000099",
+      "method": "system.ping",
+      "payload": {
+        "nonce": "x"
+      },
+      "deadline_unix_ms": 0
+    },
+    "unknown_method": {
+      "protocol_version": 1,
+      "request_id": "00000000-0000-4000-8000-000000000099",
+      "task_id": "00000000-0000-4000-8000-000000000099",
+      "method": "evil.eval",
+      "payload": {
+        "code": "import os; os.system('rm -rf /')"
+      },
+      "deadline_unix_ms": 0
+    },
+    "response_both_result_and_error": {
+      "protocol_version": 1,
+      "request_id": "00000000-0000-4000-8000-000000000099",
+      "task_id": "00000000-0000-4000-8000-000000000099",
+      "result": {},
+      "error": {
+        "code": "INTERNAL_ERROR",
+        "message": "x",
+        "retryable": false
+      }
+    },
+    "response_neither_result_nor_error": {
+      "protocol_version": 1,
+      "request_id": "00000000-0000-4000-8000-000000000099",
+      "task_id": "00000000-0000-4000-8000-000000000099"
+    },
+    "invalid_shared_payload_bad_sha": {
+      "protocol_version": 1,
+      "request_id": "00000000-0000-4000-8000-000000000010",
+      "task_id": "00000000-0000-4000-8000-000000000010",
+      "method": "ocr.recognize",
+      "payload": {
+        "image": {
+          "name": "Local\\VibeOCR-00000000-0000-4000-8000-000000000000-00000000-0000-4000-8000-000000000001",
+          "size": 1,
+          "media_type": "image/png",
+          "sha256": "tooshort",
+          "owner": "client",
+          "expires_unix_ms": 1
+        }
+      },
+      "deadline_unix_ms": 0
+    },
+    "invalid_shared_payload_bad_name": {
+      "protocol_version": 1,
+      "request_id": "00000000-0000-4000-8000-000000000011",
+      "task_id": "00000000-0000-4000-8000-000000000011",
+      "method": "ocr.recognize",
+      "payload": {
+        "image": {
+          "name": "C:/Windows/System32/evil.dll",
+          "size": 1,
+          "media_type": "image/png",
+          "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+          "owner": "client",
+          "expires_unix_ms": 1
+        }
+      },
+      "deadline_unix_ms": 0
+    },
+    "unknown_error_code": {
+      "protocol_version": 1,
+      "request_id": "00000000-0000-4000-8000-000000000099",
+      "task_id": "00000000-0000-4000-8000-000000000099",
+      "error": {
+        "code": "NUKE_EVERYTHING",
+        "message": "x",
+        "retryable": true
+      }
+    }
+  }
+}

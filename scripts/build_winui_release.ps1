@@ -13,6 +13,7 @@ param(
     [string]$Configuration = "Release",
     [string]$OutputDir = "$env:TEMP\VibeOCR-winui-publish",
     [string]$Version = "",
+    [string]$WheelDirectory = "",
     [string]$BackendWheel = ""
 )
 $ErrorActionPreference = 'Stop'
@@ -51,17 +52,32 @@ $bootstrapper = Join-Path $repo 'src\dotnet\VibeOCR.Bootstrapper\VibeOCR.Bootstr
 & $dotnet publish $bootstrapper -c $Configuration -r win-x64 --self-contained false --no-restore -p:Version=$Version -o $outputFull
 if ($LASTEXITCODE -ne 0) { throw "bootstrapper build failed with exit $LASTEXITCODE" }
 
-# Stage the exact prebuilt backend wheel. This is include-only: WinUI never
-# copies the source tree and therefore cannot accidentally inherit new UI dirs.
-if (-not $BackendWheel) {
-    $backendOut = Join-Path $outputFull '.backend-wheel'
-    python (Join-Path $repo 'scripts\build_backend_wheel.py') --output-dir $backendOut
-    if ($LASTEXITCODE -ne 0) { throw "backend wheel build failed with exit $LASTEXITCODE" }
-    $BackendWheel = (Get-ChildItem -LiteralPath $backendOut -Filter '*.whl' | Select-Object -First 1).FullName
+# Stage the exact contracts + client + backend wheel set. WinUI never copies
+# workspace source directly; all three wheels retain their physical ownership.
+if (-not $WheelDirectory -and $BackendWheel) {
+    $WheelDirectory = Split-Path -Parent (Resolve-Path $BackendWheel).Path
 }
-$backendFull = (Resolve-Path $BackendWheel).Path
-python (Join-Path $repo 'scripts\verify_backend_wheel.py') $backendFull
-if ($LASTEXITCODE -ne 0) { throw "backend wheel verification failed with exit $LASTEXITCODE" }
+if (-not $WheelDirectory) {
+    $WheelDirectory = Join-Path $outputFull '.python-wheels'
+    New-Item -ItemType Directory -Path $WheelDirectory -Force | Out-Null
+    foreach ($project in @(
+        'packages\vibeocr-contracts-py',
+        'packages\vibeocr-client-py',
+        'packages\vibeocr-backend'
+    )) {
+        python -m build --wheel (Join-Path $repo $project) --outdir $WheelDirectory
+        if ($LASTEXITCODE -ne 0) { throw "wheel build failed for $project" }
+    }
+}
+$wheelDirFull = (Resolve-Path $WheelDirectory).Path
+$runtimeWheels = @(
+    Get-ChildItem -LiteralPath $wheelDirFull -Filter "vibeocr_contracts_py-$Version-*.whl" | Select-Object -First 1
+    Get-ChildItem -LiteralPath $wheelDirFull -Filter "vibeocr_client_py-$Version-*.whl" | Select-Object -First 1
+    Get-ChildItem -LiteralPath $wheelDirFull -Filter "vibeocr_backend-$Version-*.whl" | Select-Object -First 1
+)
+if (@($runtimeWheels | Where-Object { $_ -eq $null }).Count -gt 0) {
+    throw 'contracts/client/backend wheel set is incomplete'
+}
 $workerRoot = Join-Path $outputFull 'worker'
 # Ensure a clean extraction target: the whole $outputFull is wiped at the top,
 # but be defensive in case worker/ already exists (e.g. a re-run) so that
@@ -73,27 +89,32 @@ Add-Type -AssemblyName System.IO.Compression.FileSystem
 # Use the two-argument overload explicitly: it is the only one present in both
 # Windows PowerShell 5.1 (entryNameEncoding-only 3rd arg) and PowerShell 7+
 # (bool overwrite 3rd arg). Passing $true binds to Encoding in 5.1 and crashes.
-[IO.Compression.ZipFile]::ExtractToDirectory($backendFull, $workerRoot)
-# 用 .NET SHA256 直接计算哈希，而非 Get-FileHash cmdlet：
-# bump_version.py 经 powershell.exe（Windows PS 5.1）调起本脚本，
-# Add-Type 之后偶发破坏 cmdlet 自动加载，导致 Get-FileHash not recognized
-# （release v0.4.32 失败）。直接调 SHA256.Create 不依赖模块发现。
-$hashBytes = [Security.Cryptography.SHA256]::Create().ComputeHash([IO.File]::ReadAllBytes($backendFull))
-$hashSb = New-Object System.Text.StringBuilder($hashBytes.Length * 2)
-foreach ($b in $hashBytes) { [void]$hashSb.Append($b.ToString('x2')) }
-$backendHash = $hashSb.ToString()
+$wheelStore = Join-Path $outputFull 'backend'
+New-Item -ItemType Directory -Path $wheelStore -Force | Out-Null
+$wheelRecords = @()
+foreach ($wheel in $runtimeWheels) {
+    [IO.Compression.ZipFile]::ExtractToDirectory($wheel.FullName, $workerRoot)
+    Copy-Item -LiteralPath $wheel.FullName -Destination $wheelStore -Force
+    $hashBytes = [Security.Cryptography.SHA256]::Create().ComputeHash([IO.File]::ReadAllBytes($wheel.FullName))
+    $hashSb = New-Object System.Text.StringBuilder($hashBytes.Length * 2)
+    foreach ($b in $hashBytes) { [void]$hashSb.Append($b.ToString('x2')) }
+    $wheelRecords += [ordered]@{ file = $wheel.Name; sha256 = $hashSb.ToString() }
+}
+$backendRecord = $wheelRecords | Where-Object { $_.file -like 'vibeocr_backend-*' } | Select-Object -First 1
 $sourceCommit = (git -C $repo rev-parse HEAD).Trim()
 $productManifest = [ordered]@{
     frontend = 'winui'
     frontend_version = $Version
-    backend_wheel = [IO.Path]::GetFileName($backendFull)
-    backend_sha256 = $backendHash
+    backend_wheel = $backendRecord.file
+    backend_sha256 = $backendRecord.sha256
+    python_wheels = $wheelRecords
     protocol_major = 1
     source_commit = $sourceCommit
 }
 $productManifest | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $outputFull 'product-manifest.json') -Encoding utf8
 
-Copy-Item -LiteralPath (Join-Path $repo 'contracts') -Destination (Join-Path $outputFull 'contracts') -Recurse -Force
+$protocolSource = Join-Path $repo 'packages\vibeocr-contracts-py\src\vibeocr\protocol'
+Copy-Item -LiteralPath $protocolSource -Destination (Join-Path $outputFull 'contracts') -Recurse -Force
 Copy-Item -LiteralPath (Join-Path $repo 'CHANGELOG.md') -Destination $outputFull -Force
 Copy-Item -LiteralPath (Join-Path $repo 'LICENSE') -Destination $outputFull -Force
 

@@ -309,6 +309,101 @@ public sealed record SettingsSnapshotResponse : ResponseContract
 }
 
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record PipelineCacheStatusResponse : ResponseContract
+{
+    public required bool Ready { get; init; }
+    public required int TtlSeconds { get; init; }
+    public required int MaxHeavy { get; init; }
+    public required string[] LoadedPipelines { get; init; }
+    public required Dictionary<string, long> LastUsedUnixMs { get; init; }
+
+    public override void Validate()
+    {
+        if (TtlSeconds < 0 || MaxHeavy < 0)
+        {
+            throw new ProtocolContractException("Pipeline cache limits must be non-negative.");
+        }
+        foreach (string pipeline in LoadedPipelines)
+        {
+            ContractValidation.OneOf(
+                pipeline, nameof(LoadedPipelines), "OCR", "PP-StructureV3", "MinerU",
+                "PaddleOCR-VL", "TABLE_RECOGNITION", "FORMULA_RECOGNITION");
+        }
+        foreach ((string name, long timestamp) in LastUsedUnixMs)
+        {
+            ContractValidation.NonEmpty(name, nameof(LastUsedUnixMs));
+            if (timestamp < 0)
+            {
+                throw new ProtocolContractException("last_used_unix_ms must be non-negative.");
+            }
+        }
+    }
+}
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record SetPipelineCacheTtlResponse : ResponseContract
+{
+    public required bool Updated { get; init; }
+    public required int TtlSeconds { get; init; }
+
+    public override void Validate()
+    {
+        if (TtlSeconds < 0)
+        {
+            throw new ProtocolContractException("ttl_seconds must be non-negative.");
+        }
+    }
+}
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record ReleasePipelineCacheResponse : ResponseContract
+{
+    public required string[] Released { get; init; }
+
+    public override void Validate()
+    {
+        foreach (string pipeline in Released)
+        {
+            ContractValidation.OneOf(
+                pipeline, nameof(Released), "OCR", "PP-StructureV3", "MinerU",
+                "PaddleOCR-VL", "TABLE_RECOGNITION", "FORMULA_RECOGNITION");
+        }
+    }
+}
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record PreloadPipelineCacheResponse : ResponseContract
+{
+    public required Dictionary<string, bool> Results { get; init; }
+
+    public override void Validate()
+    {
+        foreach (string pipeline in Results.Keys)
+        {
+            ContractValidation.OneOf(
+                pipeline, nameof(Results), "OCR", "PP-StructureV3", "MinerU",
+                "PaddleOCR-VL", "TABLE_RECOGNITION", "FORMULA_RECOGNITION");
+        }
+    }
+}
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record WarmupPipelineCacheResponse : ResponseContract
+{
+    public required Dictionary<string, bool> Results { get; init; }
+
+    public override void Validate()
+    {
+        foreach (string pipeline in Results.Keys)
+        {
+            ContractValidation.OneOf(
+                pipeline, nameof(Results), "OCR", "PP-StructureV3", "MinerU",
+                "PaddleOCR-VL", "TABLE_RECOGNITION", "FORMULA_RECOGNITION");
+        }
+    }
+}
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public sealed record SwitchBackendResponse : ResponseContract
 {
     public required string Backend { get; init; }

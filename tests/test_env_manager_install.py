@@ -837,33 +837,33 @@ class TestLoadDepSpecs:
         # torch（CUDA 运行时由 torch/lib 提供，不再声明 nvidia-*-cu13 包）
         assert "torch" in specs
 
-    def test_raises_when_pyproject_missing_and_no_version_json(self, tmp_path):
-        """pyproject.toml 和 version.json 都不存在时，应 raise 而非返回空 dict"""
+    def test_uses_packaged_profile_when_repository_files_missing(self, tmp_path):
+        """普通 wheel 安装无仓库文件时，应读取随 client wheel 分发的 profile。"""
         # 重置缓存
         import vibeocr.env_manager as em
 
         em._dep_specs_cache = None
 
-        with (
-            patch("vibeocr.env_manager.get_project_root", return_value=tmp_path),
-            pytest.raises(RuntimeError, match=r"pyproject\.toml"),
-        ):
-            _load_dep_specs()
+        with patch("vibeocr.env_manager.get_project_root", return_value=tmp_path):
+            specs = _load_dep_specs()
+        assert specs["paddleocr"] == "paddleocr[doc-parser]>=3.7.0"
+        assert specs["paddlepaddle-gpu"] == "paddlepaddle-gpu>=3.3.1"
 
-    def test_raises_with_repair_hint(self, tmp_path):
-        """raise 时应包含修复提示（告知用户如何修复）"""
+    def test_raises_when_packaged_profile_is_empty(self, tmp_path):
+        """仓库文件与随包 profile 都不可用时才报告损坏。"""
         import vibeocr.env_manager as em
 
         em._dep_specs_cache = None
 
         with (
             patch("vibeocr.env_manager.get_project_root", return_value=tmp_path),
-            pytest.raises(RuntimeError) as exc_info,
+            patch(
+                "vibeocr.env_manager._load_packaged_dependency_profiles",
+                return_value={},
+            ),
+            pytest.raises(RuntimeError, match="随包分发"),
         ):
             _load_dep_specs()
-        # 提示应指向 pyproject.toml 或 uv sync
-        msg = str(exc_info.value)
-        assert "pyproject.toml" in msg
 
     def test_uses_cache_on_second_call(self):
         """第二次调用应命中缓存，不重新解析"""
@@ -3117,12 +3117,15 @@ class TestRunPip:
         proc.poll.side_effect = [None, 0]  # 首轮"运行中"，次轮已退出
         proc.communicate.return_value = ("stdout-content", "stderr-content")
 
-        with patch("vibeocr.env_manager.subprocess.Popen", return_value=proc):
+        with patch(
+            "vibeocr.env_manager.subprocess.Popen", return_value=proc
+        ) as popen:
             result = _run_pip(["python", "-m", "pip", "install", "x"], timeout=10)
 
         assert result.returncode == 0
         assert result.stdout == "stdout-content"
         assert result.stderr == "stderr-content"
+        assert popen.call_args.kwargs["errors"] == "replace"
 
     def test_on_proc_callback_receives_popen_handle(self):
         """on_proc 回调应收到 Popen 句柄（调用方可据此 kill 子进程）"""
@@ -3529,5 +3532,3 @@ class TestDetectDependencyUpdatesLockedVersions:
             "开发态（.venv）下 detect_dependency_updates 必须短路返回空，"
             "依赖更新仅便携模式生效"
         )
-
-

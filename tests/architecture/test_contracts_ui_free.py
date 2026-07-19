@@ -8,7 +8,14 @@ from pathlib import Path
 from vibeocr.contracts.pipelines import OCRPipeline as ContractPipeline
 from vibeocr.core.pipelines import OCRPipeline as CompatibilityPipeline
 
-_CONTRACTS = Path(__file__).parents[2] / "src" / "vibeocr" / "contracts"
+_CONTRACTS = (
+    Path(__file__).parents[2]
+    / "packages"
+    / "vibeocr-contracts-py"
+    / "src"
+    / "vibeocr"
+    / "contracts"
+)
 
 
 def test_contracts_do_not_import_vibeocr_or_ui_packages() -> None:

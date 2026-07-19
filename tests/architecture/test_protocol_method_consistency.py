@@ -6,7 +6,7 @@ adding a protocol method must update all three surfaces or CI fails:
 1. ``contracts/v1/methods.schema.json`` — the JSON-Schema allow-list of method
    names + their request/response payload shapes.
 2. ``src/dotnet/VibeOCR.Contracts/RpcMethods.cs`` — C# ``RpcMethods.All``.
-3. ``src/vibeocr/worker_host/method_validation.py`` — Python ``PUBLIC_METHODS``.
+3. backend workspace ``worker_host/method_validation.py`` — Python ``PUBLIC_METHODS``.
 
 This test parses each source and asserts the method-name sets are identical.
 """
@@ -21,7 +21,16 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def _schema_methods() -> set[str]:
-    schema_path = _REPO_ROOT / "contracts" / "v1" / "methods.schema.json"
+    schema_path = (
+        _REPO_ROOT
+        / "packages"
+        / "vibeocr-contracts-py"
+        / "src"
+        / "vibeocr"
+        / "protocol"
+        / "v1"
+        / "methods.schema.json"
+    )
     doc = json.loads(schema_path.read_text(encoding="utf-8"))
     props = doc.get("properties", {})
     # Every top-level property is a method name.
@@ -44,7 +53,7 @@ def _csharp_methods() -> set[str]:
     cs_path = _REPO_ROOT / "src" / "dotnet" / "VibeOCR.Contracts" / "RpcMethods.cs"
     text = cs_path.read_text(encoding="utf-8")
     # Match: public const string <Name> = "<method>";
-    return set(re.findall(r'=\s*"([a-z]+\.[a-z_]+)"\s*;', text))
+    return set(re.findall(r'=\s*"([a-z_]+\.[a-z_]+)"\s*;', text))
 
 
 def test_schema_python_csharp_method_sets_agree() -> None:
@@ -67,7 +76,7 @@ def test_schema_python_csharp_method_sets_agree() -> None:
         "协议方法名在三方 source-of-truth 中不一致。\n"
         "新增协议方法必须同时更新 contracts/v1/methods.schema.json、\n"
         "src/dotnet/VibeOCR.Contracts/RpcMethods.cs 和\n"
-        "src/vibeocr/worker_host/method_validation.py：\n"
+        "packages/vibeocr-backend/.../worker_host/method_validation.py：\n"
         + "\n".join(problems)
     )
 

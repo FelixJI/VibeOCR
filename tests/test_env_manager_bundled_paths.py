@@ -45,7 +45,7 @@ class TestGetBundledResourcesDir:
         """开发态：resources 位于仓库根下。"""
         d = get_bundled_resources_dir()
         assert d.name == "resources"
-        # 仓库根 src/vibeocr/env_manager.py，resources 在仓库根
+        # client workspace 的 env_manager.py 向上定位仓库根，resources 在仓库根
         assert (d / "app_icon.ico").exists()
 
     def test_frozen_mode_returns_meipass_resources(self, _frozen):

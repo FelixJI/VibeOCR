@@ -1,0 +1,140 @@
+from __future__ import annotations
+
+import io
+import json
+import logging
+
+from vibeocr.logging_context import (
+    JsonLogFormatter,
+    configure_worker_stderr_logging,
+    forward_worker_output_line,
+)
+
+
+def _isolated_logger(name: str, stream: io.StringIO) -> logging.Logger:
+    logger = logging.getLogger(name)
+    logger.handlers.clear()
+    logger.propagate = False
+    logger.setLevel(logging.DEBUG)
+    handler = logging.StreamHandler(stream)
+    handler.setFormatter(JsonLogFormatter(frontend="pyside", profile="production"))
+    logger.addHandler(handler)
+    return logger
+
+
+def test_json_formatter_has_stable_fields_context_and_exception() -> None:
+    stream = io.StringIO()
+    logger = _isolated_logger("test.structured", stream)
+    try:
+        raise ValueError("broken")
+    except ValueError:
+        logger.exception(
+            "recognition failed",
+            extra={
+                "event": "ocr.failed",
+                "request_id": "req-1",
+                "pipeline": "OCR",
+            },
+        )
+
+    document = json.loads(stream.getvalue())
+    assert {
+        "timestamp",
+        "level",
+        "logger",
+        "process",
+        "thread",
+        "event",
+        "frontend",
+        "profile",
+        "message",
+        "exception",
+    }.issubset(document)
+    assert document["level"] == "ERROR"
+    assert document["event"] == "ocr.failed"
+    assert document["request_id"] == "req-1"
+    assert document["pipeline"] == "OCR"
+    assert "ValueError: broken" in document["exception"]
+
+
+def test_worker_stderr_jsonl_does_not_write_stdout(capsys) -> None:
+    from vibeocr.worker_host.main import _emit_ready
+
+    stderr = io.StringIO()
+    root = logging.getLogger()
+    old_handlers = root.handlers[:]
+    old_level = root.level
+    try:
+        configure_worker_stderr_logging(
+            frontend="pyside", profile="production", stream=stderr
+        )
+        logging.getLogger("worker.test").warning(
+            "warming up", extra={"event": "worker.warmup"}
+        )
+        _emit_ready("pipe-name")
+    finally:
+        root.handlers.clear()
+        root.handlers.extend(old_handlers)
+        root.setLevel(old_level)
+
+    ready = json.loads(capsys.readouterr().out)
+    worker_log = json.loads(stderr.getvalue())
+    assert ready == {
+        "event": "worker.ready",
+        "pipe": "pipe-name",
+        "protocol_version": ready["protocol_version"],
+    }
+    assert worker_log["level"] == "WARNING"
+    assert worker_log["frontend"] == "pyside"
+    assert worker_log["profile"] == "production"
+    assert worker_log["message"] == "warming up"
+
+
+def test_forward_worker_json_preserves_severity_traceback_and_context() -> None:
+    stream = io.StringIO()
+    logger = _isolated_logger("main.worker_bridge", stream)
+    line = json.dumps(
+        {
+            "timestamp": "2026-07-19T01:02:03.004Z",
+            "level": "ERROR",
+            "logger": "vibeocr.worker_host.handler",
+            "process": 42,
+            "thread": "worker-thread",
+            "event": "ocr.failed",
+            "frontend": "pyside",
+            "profile": "production",
+            "message": "backend failed",
+            "exception": "Traceback...\nRuntimeError: boom",
+            "request_id": "req-7",
+            "pipeline": "OCR",
+            "model": "detector-v1",
+        }
+    )
+
+    assert forward_worker_output_line(
+        logger, line, fallback_level=logging.WARNING, stream_name="stderr"
+    )
+    document = json.loads(stream.getvalue())
+    assert document["level"] == "ERROR"
+    assert document["logger"] == "vibeocr.worker_host.handler"
+    assert document["process"] == 42
+    assert document["thread"] == "worker-thread"
+    assert document["exception"].endswith("RuntimeError: boom")
+    assert document["request_id"] == "req-7"
+    assert document["pipeline"] == "OCR"
+    assert document["context"] == {"model": "detector-v1"}
+
+
+def test_forward_non_json_line_uses_safe_fallback_level() -> None:
+    stream = io.StringIO()
+    logger = _isolated_logger("main.worker_fallback", stream)
+    assert not forward_worker_output_line(
+        logger,
+        "native library warning",
+        fallback_level=logging.WARNING,
+        stream_name="stderr",
+    )
+    document = json.loads(stream.getvalue())
+    assert document["level"] == "WARNING"
+    assert document["event"] == "worker.output"
+    assert document["message"] == "WorkerHost stderr: native library warning"

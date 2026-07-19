@@ -100,7 +100,7 @@ VibeOCR 采用**双前端并存**架构，两套 UI 各自独占一个 WorkerHos
 - 后端→UI 禁止反向依赖
 - 协议方法表三方一致性
 
-**实施状态**：二维码、单图/批量 OCR、五种导出、PDF open/render/mutate/OCR/save、业务设置、预热/缓存和有界 shutdown 均通过 typed client/RPC；UI→backend import 从基线 90 清零。contracts、Python client、backend、PySide app 已形成独立 workspace 边界，发布流水线单次构建 backend wheel，并把同一 SHA-256 精确绑定到 Classic/Next 两个制品。
+**实施状态**：二维码、单图/批量 OCR、五种导出、PDF open/render/mutate/OCR/save、业务设置、预热/缓存和有界 shutdown 均通过 typed client/RPC；UI→backend import 从基线 90 清零。contracts、Python client、backend、PySide app 已形成真实物理 workspace 包；发布流水线构建并校验五个无文件冲突的 wheel，再把同一组 SHA-256 精确绑定到产品制品。
 
 ## 下载安装
 
@@ -114,7 +114,27 @@ VibeOCR 采用**双前端并存**架构，两套 UI 各自独占一个 WorkerHos
 
 首次启动时，应用会自动检测 GPU/CPU 并引导安装推理依赖；WebEngine 渲染组件已内置主包。
 
-### 方式二：从源码运行（开发者）
+### 方式二：安装 Python wheelhouse
+
+Release 同时提供 `VibeOCR-Python-wheels-vX.Y.Z.zip`。解压后先安装本地五包，
+再由安装器联网选择 CPU 或 CUDA 12.6 官方 wheel 源：
+
+```powershell
+py -3.13 -m venv .venv
+$wheels = @(Get-ChildItem .\wheels\*.whl)
+if ($wheels.Count -ne 5) { throw "wheelhouse 应恰好包含五个 VibeOCR wheel" }
+$wheelPaths = @($wheels | ForEach-Object { $_.FullName })
+.venv\Scripts\python -m pip install @wheelPaths
+.venv\Scripts\vibeocr-install-backend --profile auto --network domestic
+.venv\Scripts\vibeocr
+```
+
+显式传入五个 wheel 可避免同版本旧缓存或公开索引候选覆盖本次发布文件。
+`vibeocr-install-backend` 默认安装到当前 Python 环境；GPU profile 会显式使用
+Paddle cu126 与 PyTorch cu126 index，CPU profile 不安装 GPU Paddle。安装过程需要联网，
+但 OCR 运行和用户文件处理仍完全本地进行。
+
+### 方式三：从源码运行（开发者）
 
 详见下方 [开发指南](#开发指南)。
 
@@ -170,8 +190,11 @@ VibeOCR 采用**双前端并存**架构，两套 UI 各自独占一个 WorkerHos
 git clone https://github.com/FelixJI/VibeOCR.git
 cd VibeOCR
 
-# 使用 uv（推荐，国内镜像已在 pyproject.toml 配置）
-uv sync
+# 安装四个工作区包与根兼容包
+uv sync --all-packages
+
+# 联网安装当前机器的推理重依赖；也可显式改为 cpu / gpu-cu126
+uv run vibeocr-install-backend --profile auto --network domestic
 ```
 
 > 说明：PaddlePaddle-GPU 与 PyTorch 均为 CUDA 12.6 构建（cu126）以保持 CUDA DLL 同源。
@@ -180,7 +203,7 @@ uv sync
 ### 运行应用
 
 ```bash
-uv run python src/vibeocr/main.py
+uv run vibeocr
 ```
 
 ### 代码质量检查
@@ -264,9 +287,19 @@ python qa/upgrade_deps.py --dotnet-locks
 
 ## 项目结构
 
+Python 的 `vibeocr.*` 兼容导入由四个物理 source root 共同组成，同一路径只属于
+一个 wheel；根 `vibeocr` wheel 不含产品代码，只精确聚合四包。
+
+| 发行包 | 物理源码根 | 主要所有权 |
+|---|---|---|
+| `vibeocr-contracts-py` | `packages/vibeocr-contracts-py/src/vibeocr` | 顶层版本、DTO、`protocol/v1` schema/golden |
+| `vibeocr-client-py` | `packages/vibeocr-client-py/src/vibeocr` | typed client、IPC/model、环境安装器、Qt-free 共享层 |
+| `vibeocr-backend` | `packages/vibeocr-backend/src/vibeocr` | WorkerHost 服务端、OCR/PDF/二维码实现、推理 worker |
+| `vibeocr-pyside` | `apps/vibeocr-pyside/src/vibeocr` | `main.py`、Qt managers/views/widgets/ui |
+
 ```
-vibeocr/
-├── src/vibeocr/
+vibeocr/（下列为合并后的逻辑命名空间；物理所有权见上表）
+├── vibeocr/
 │   ├── main.py                       # 应用入口（环境变量预处理 + 单实例 + 启动 + --self-update 兜底）
 │   ├── env_manager.py                # 环境与依赖管理（python-build-standalone 部署、CUDA DLL 路径）
 │   ├── pipeline_status.py            # 流水线首次成功状态记录（防重复引导）
@@ -390,8 +423,8 @@ PySide Classic / WinUI Next（互斥）
 
 | 层 | 目录 | 职责 | 依赖方向 |
 |----|------|------|----------|
-| **入口** | `main.py`, `env_manager.py` | 环境变量预处理、单实例、依赖检测、启动 | → 所有层 |
-| **纯契约** | `contracts/`, `ipc/` | 协议 DTO、流水线元数据、模型桥接 | 无 Qt |
+| **入口** | `apps/vibeocr-pyside/.../main.py`, `client/.../env_manager.py` | 单实例、依赖检测、启动 | → client/backend |
+| **纯契约** | `packages/vibeocr-contracts-py/...` | 协议 DTO、schema、golden | stdlib-only |
 | **Python 客户端** | `client/`, `worker_host/backend_client.py` | 会话、typed RPC、取消、共享载荷 | → contracts |
 | **后端** | `worker_host/`, `application/`, `services/` | OCR/PDF/二维码/设置业务实现 | → contracts/models |
 | **PySide 壳** | `pyside/`, `views/`, `widgets/`, `ui/` | Qt 平台能力、展示与输入采集 | → client/contracts |
@@ -443,7 +476,7 @@ views/batch_recognition_tab.py（拖入多文件）
 按以下顺序读，能在最短时间内建立完整心智模型：
 
 1. **`main.py`** —— 启动流程：环境变量预处理 → 单实例守卫 → `ConfigManager` → `MainWindow` → qasync 循环。注意 `--self-update` 兜底通道（抢在 Qt import 之前拦截）。
-2. **`contracts/` + `contracts/v1/`** —— 纯 Python DTO、JSON Schema、golden fixture 与公开方法表。
+2. **`packages/vibeocr-contracts-py/src/vibeocr/contracts/` + `protocol/v1/`** —— 纯 Python DTO、JSON Schema、golden fixture 与公开方法表。
 3. **`client/session.py` + `worker_host/backend_client.py`** —— PySide 的进程级独占会话与 typed RPC。
 4. **`worker_host/main.py` + `composition.py`** —— Named Pipe 生命周期、公开方法注册与 UI-free 生产组合。
 5. **`pyside/pdf_session_manager.py` + `client/pdf.py`** —— PDF Qt ViewModel 与 WorkerHost 边界。
@@ -465,7 +498,7 @@ views/batch_recognition_tab.py（拖入多文件）
 | 新加一种识别流水线？ | `core/pipelines/`（新建 `pipeline_xxx.py` + 注册到 `__init__.py`） |
 | 改 OCR 选项 UI？ | `widgets/backend_options_widget.py` + `models/ocr_options.py` |
 | 改 PDF 页面操作？ | `views/tabs/pdf_tab.py`（UI）→ `pyside/pdf_session_manager.py` |
-| 新增 PDF 后端 API？ | `contracts/v1/methods.schema.json` → WorkerHost handler/composition → Python/C# typed client |
+| 新增 PDF 后端 API？ | `packages/vibeocr-contracts-py/src/vibeocr/protocol/v1/methods.schema.json` → WorkerHost handler/composition → Python/C# typed client |
 | 改导出格式？ | `services/export_service.py` |
 | 改快捷键/托盘？ | `views/main_window.py` + `main.py` |
 | 调整流水线缓存策略？ | `services/pipeline_cache_manager.py` |
@@ -483,10 +516,10 @@ views/batch_recognition_tab.py（拖入多文件）
 打包与发版由 [`scripts/bump_version.py`](scripts/bump_version.py) 编排（基于 PyInstaller），
 推送到 `v*` 格式的 tag 后，GitHub Actions（[`.github/workflows/release.yml`](.github/workflows/release.yml)）会：
 
-1. 构建并验证一次 UI-free backend wheel
-2. 用同一 wheel SHA-256 组合 `VibeOCR-Classic`（PySide，**正式发布**）与 `VibeOCR-Next`（WinUI，**开发预览、基本不可用**）两个 ZIP
-3. 分别运行制品 verifier 并生成 SHA-256 文件
-4. 上传两个产品到 GitHub Release，并镜像代码到 CNB
+1. 独立构建 contracts/client/backend/pyside 四包与根兼容 meta wheel
+2. 校验 wheel 内容无路径冲突、根 wheel 无代码、CPU/GPU profile 元数据正确
+3. 用同一 wheel 集合组合 `VibeOCR-Classic` 与 `VibeOCR-Next`，并生成 Python wheelhouse
+4. 分别运行制品 verifier、生成 SHA-256 并上传 GitHub Release
 
 ```bash
 # 本地打包当前版本

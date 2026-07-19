@@ -5,40 +5,10 @@ description = "A screenshot OCR application"
 authors = [{name = "Felix Ji"}]
 requires-python = ">=3.13,<3.14"
 dependencies = [
-    "pyside6>=6.11.1",
-    "pillow>=12.3.0",
-    "numpy>=2.3.5",
-    "markdown>=3.10.2",
-    "qasync>=0.28.0",
-    "paddlepaddle-gpu>=3.3.1",
-    # paddlepaddle-gpu 3.3.1 是 CUDA 12 构建，运行时需要 cublas64_12.dll /
-    # cudnn64_9.dll / cufft64_*.dll 等 CUDA 12 + cuDNN 9 全套 DLL。
-    # paddle wheel 本身不含这些 DLL，且 uv 不会自动安装 paddle 声明的
-    # nvidia-*-cu12 传递依赖（uv.lock 不收录）。
-    # 这些 DLL 由 torch wheel 自带（torch/lib 目录提供完整的 CUDA 12.6 +
-    # cuDNN 9 运行时），OCRService._setup_cuda_dll_path 会把 torch/lib
-    # 注册到 DLL 搜索路径供 paddle 使用。因此这里显式声明 torch 依赖，
-    # 确保它的 wheel 被安装；无需再声明 nvidia-*-cu12 系列。
-    "torch>=2.6.0",
-    "paddleocr[doc-parser]>=3.7.0",
-    "httpx>=0.28.1",
-    "mineru[core]>=3.4.3",
-    "pymupdf>=1.28.0",
-    # PDF 文字层字体内嵌：fontTools 按字符集子集化系统 CJK 字体，
-    # 嵌入后 PyMuPDF 自动生成 ToUnicode CMap，使文字层在所有阅读器可搜索。
-    "fonttools>=4.63.0",
-    "qrcode[pil]>=8.2",
-    "python-barcode>=0.16.1",
-    "opencv-contrib-python>=4.10.0.84",
-    "pyzbar>=0.1.9",
-    "pynvml>=11.5.0",
-    "python-docx>=1.2.0",
-    "openpyxl>=3.1.5",
-    # PDF 后端子进程服务（FastAPI + uvicorn）。PDF 模块整体下沉到常驻子进程，
-    # 主进程通过 localhost HTTP 调用，规避 PyMuPDF 不支持多线程的隐患。
-    "fastapi>=0.139.0",
-    "uvicorn>=0.51.0",
-    "pydantic>=2.13.4",
+    "vibeocr-contracts-py==0.4.37",
+    "vibeocr-client-py==0.4.37",
+    "vibeocr-backend==0.4.37",
+    "vibeocr-pyside==0.4.37",
 ]
 
 [dependency-groups]
@@ -67,15 +37,12 @@ build-common = ["hatchling>=1.0.0", "uv>=0.11.14"]
 build-pyside = ["pyinstaller>=6.6"]
 build-winui = []
 
-[project.scripts]
-# WorkerHost console entry point: launched by either frontend shell as
-# `vibeocr-worker --pipe ... --token ... --profile <production|winui-dev>
-#   --frontend-id <pyside|winui> --parent-pid ...`.
-vibeocr-worker = "vibeocr.worker_host.main:main"
-
 [build-system]
 requires = ["hatchling>=1.0.0"]
 build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+bypass-selection = true
 
 # =============================================================================
 # Ruff - Linter + Formatter
@@ -137,6 +104,8 @@ known-first-party = ["vibeocr"]
 # SIM117: 测试中嵌套 patch 上下文管理器可读性优于合并（3+ 层 patch）
 "tests/*" = ["S101", "ARG", "PLR2004", "SIM117"]
 "__init__.py" = ["F401"]
+# pyside6-uic 生成代码，源文件是同目录 .ui；不要手工格式化生成物。
+"apps/vibeocr-pyside/src/vibeocr/ui/ui_*.py" = ["ALL"]
 
 # =============================================================================
 # Pyright - 静态类型检查
@@ -147,7 +116,7 @@ pythonPlatform = "Windows"
 venvPath = "."
 venv = ".venv"
 typeCheckingMode = "standard"
-include = ["src", "scripts", "tests", "qa", "examples"]
+include = ["apps", "packages", "scripts", "tests", "qa", "examples"]
 exclude = [".venv", "**/__pycache__"]
 reportMissingImports = true
 reportMissingTypeStubs = false
@@ -202,12 +171,18 @@ addopts = "-v --tb=short"
 # WorkerHost framing/lifecycle tests are asyncio; auto mode collects coroutines
 # as async tests without per-test markers.
 asyncio_mode = "auto"
+pythonpath = [
+    "packages/vibeocr-contracts-py/src",
+    "packages/vibeocr-client-py/src",
+    "packages/vibeocr-backend/src",
+    "apps/vibeocr-pyside/src",
+]
 
 # =============================================================================
 # Coverage
 # =============================================================================
 [tool.coverage.run]
-source = ["src"]
+source = ["vibeocr"]
 branch = true
 
 [tool.coverage.report]

@@ -290,6 +290,97 @@ class TestPdfSessionManagerProperties:
         assert manager.get_modified_sessions() == []
 
 
+class TestPdfMutateLifecycle:
+    @staticmethod
+    def _manager_with_session(qapp):
+        from unittest.mock import MagicMock
+
+        mgr = PdfSessionManager(parent=qapp)
+        session = MagicMock()
+        session.file_path = "a.pdf"
+        session.session_id = "sid-a"
+        mgr._sessions = {"a.pdf": session}
+        mgr._active_path = "a.pdf"
+        mgr._client = MagicMock()
+        return mgr
+
+    def test_busy_gate_rejects_second_mutate_without_cancelling_first(self, qapp):
+        from unittest.mock import MagicMock
+
+        mgr = self._manager_with_session(qapp)
+        current = MagicMock()
+        mgr._mutate_worker = current
+        mgr._mutate_state = "running"
+
+        assert mgr._start_mutate("rotate", {"pages": [0], "angle": 90}) is False
+        current.cancel.assert_not_called()
+        current.wait.assert_not_called()
+        assert mgr._mutate_worker is current
+
+    def test_cancel_is_request_only_and_reference_lives_until_finished(self, qapp):
+        from unittest.mock import MagicMock
+
+        mgr = self._manager_with_session(qapp)
+        worker = MagicMock()
+        mgr._mutate_worker = worker
+        mgr._mutate_state = "running"
+        mgr._mutate_op = "rotate"
+        mgr._mutate_path = "a.pdf"
+        mgr._mutate_task_id = 7
+
+        assert mgr._cancel_mutate_worker() is True
+        worker.cancel.assert_called_once_with()
+        worker.wait.assert_not_called()
+        assert mgr._mutate_worker is worker
+        assert mgr.mutate_state == "cancelling"
+
+        states = []
+        mgr.mutate_state_changed.connect(lambda *args: states.append(args))
+        mgr._on_mutate_worker_finished(worker, 7)
+        assert mgr._mutate_worker is None
+        assert mgr.mutate_state == "cancelled"
+        assert states[-1] == ("a.pdf", "rotate", "cancelled")
+
+    def test_shutdown_does_not_wait_for_running_mutate(self, qapp):
+        import time
+        from unittest.mock import MagicMock
+
+        mgr = self._manager_with_session(qapp)
+        worker = MagicMock()
+        mgr._mutate_worker = worker
+        mgr._mutate_state = "running"
+        mgr._mutate_op = "save"
+        mgr._mutate_path = "a.pdf"
+
+        started = time.monotonic()
+        mgr.shutdown()
+        elapsed = time.monotonic() - started
+
+        worker.cancel.assert_called_once_with()
+        worker.wait.assert_not_called()
+        assert elapsed < 0.2
+
+    def test_late_mutate_signal_from_old_worker_is_ignored(self, qapp):
+        from unittest.mock import MagicMock
+
+        mgr = self._manager_with_session(qapp)
+        current = MagicMock()
+        old = MagicMock()
+        mgr._mutate_worker = current
+        mgr._mutate_state = "running"
+        mgr._mutate_task_id = 2
+        mgr._task_generation = 2
+        done = []
+        mgr.mutate_done.connect(lambda *args: done.append(args))
+
+        mgr._on_mutate_all_done(
+            "sid-a", MagicMock(), {}, task_id=1, worker=old
+        )
+
+        assert done == []
+        assert mgr._mutate_worker is current
+
+
 # ---- task generation ---------------------------------------------------
 
 
@@ -333,7 +424,8 @@ class TestPdfTaskGeneration:
         mgr._on_ocr_all_done_signal("session_2", 5, 0, task_id=2)
 
         assert mgr._ocr_running is False
-        assert mgr._ocr_worker is None
+        # all_done 只结束业务态；QThread 引用保留到原生 finished 槽。
+        assert mgr._ocr_worker is not None
 
     def test_ocr_done_without_task_id_accepted(self):
         """无 task_id 参数（默认 0）时正常处理（向后兼容）"""
@@ -349,7 +441,8 @@ class TestPdfTaskGeneration:
         mgr._on_ocr_all_done_signal("session_1", 5, 0)
 
         assert mgr._ocr_running is False
-        assert mgr._ocr_worker is None
+        # 无 task_id 兼容路径同样不能提前释放仍可能在 finally 的 QThread。
+        assert mgr._ocr_worker is not None
 
     def test_mutate_done_with_stale_task_id_ignored(self):
         """旧 task_id 的 mutate all_done 信号被忽略，不清 _mutate_worker"""
@@ -449,7 +542,7 @@ class TestOcrRunnerFailure:
     """
 
     def test_failed_signal_resets_state_and_emits_ocr_done(self, qapp):
-        """_on_ocr_failed_signal 应清 _ocr_running/_ocr_worker 并发 ocr_done。"""
+        """failed 应清业务 running、保留 worker 到 finished，并发 ocr_done。"""
         from unittest.mock import MagicMock
 
         mgr = PdfSessionManager.__new__(PdfSessionManager)
@@ -471,7 +564,8 @@ class TestOcrRunnerFailure:
         mgr._on_ocr_failed_signal("session_1", "boom")
 
         assert mgr._ocr_running is False
-        assert mgr._ocr_worker is None
+        # failed 在 worker.run 内发出；引用必须保留到原生 finished。
+        assert mgr._ocr_worker is not None
         # ocr_done 以 (0, total) 发出，让 UI 复位
         assert len(captured) == 1
         path, success, fail = captured[0]
@@ -480,7 +574,7 @@ class TestOcrRunnerFailure:
         assert fail == 5
 
     def test_failed_signal_no_session_still_resets(self, qapp):
-        """无匹配 session 时仍重置 _ocr_running/_ocr_worker（不崩）。"""
+        """无匹配 session 时仍重置业务态且不提前释放 worker。"""
         from unittest.mock import MagicMock
 
         mgr = PdfSessionManager.__new__(PdfSessionManager)
@@ -494,7 +588,8 @@ class TestOcrRunnerFailure:
         mgr._on_ocr_failed_signal("unknown_session", "error")
 
         assert mgr._ocr_running is False
-        assert mgr._ocr_worker is None
+        # 无会话时也不能在 QThread.finished 前提前释放引用。
+        assert mgr._ocr_worker is not None
         # 无匹配 session 时不发 ocr_done（无 file_path）
         mgr.ocr_done.emit.assert_not_called()
 
@@ -832,6 +927,68 @@ class TestRunOcrIncrementalSave:
             ("render", [2]),
             ("ocr", 2),
             ("ocr", 1),
+        ]
+
+    def test_run_ocr_repartitions_rendered_bytes_and_isolates_transfer_failure(
+        self, qapp, tmp_path, monkeypatch
+    ):
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+
+        from vibeocr.core.batch_budget import BatchBudget
+        from vibeocr.managers.pdf_session_manager import PdfSessionManager
+        from vibeocr.models.pdf_document import PdfDocument, PdfPageInfo
+
+        pdf_path = tmp_path / "transfer-budget.pdf"
+        pdf_path.write_bytes(b"%PDF-1.4 test")
+        mgr = PdfSessionManager.__new__(PdfSessionManager)
+        mgr._sessions = {}
+        mgr._active_path = str(pdf_path)
+        mgr._ocr_batch_budget_override = BatchBudget(
+            max_items=16, max_encoded_bytes=5, max_pixels=1_000_000
+        )
+
+        doc = PdfDocument(file_path=str(pdf_path))
+        doc.pages = [PdfPageInfo(page_index=i) for i in range(3)]
+        session = MagicMock()
+        session.session_id = "sid1"
+        session.file_path = str(pdf_path)
+        session.pdf_document = doc
+        session.add_ocr_stats = MagicMock()
+        mgr._sessions[str(pdf_path)] = session
+
+        class RecordingOcr:
+            def __init__(self):
+                self.calls = []
+
+            def recognize_batch(self, images, _options):
+                batch = list(images)
+                self.calls.append(batch)
+                if batch == [b"bbbb"]:
+                    raise RuntimeError("transfer failed")
+                return [SimpleNamespace(text_blocks=[]) for _ in batch]
+
+        ocr = RecordingOcr()
+        mgr._ocr_service = ocr
+        mgr._client = MagicMock()
+        mgr._client.get_model.return_value = MagicMock()
+        monkeypatch.setattr(
+            "vibeocr.pyside.pdf_session_manager.mirror_to_doc", lambda _model: doc
+        )
+
+        runner = MagicMock()
+        runner._cancelled = False
+        runner._task_id = 1
+        runner._render_pool = MagicMock()
+        runner._render_pool.map.return_value = iter([b"aaaa", b"bbbb", b"cc"])
+
+        mgr._run_ocr(runner, "sid1", [0, 1, 2], None, {}, False)
+
+        assert ocr.calls == [[b"aaaa"], [b"bbbb"], [b"cc"]]
+        assert [call.args[1] for call in runner.page_done.emit.call_args_list] == [
+            0,
+            1,
+            2,
         ]
 
 

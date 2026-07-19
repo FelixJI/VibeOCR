@@ -19,7 +19,7 @@ class TestDetectGpuInfo:
             "NVIDIA GeForce RTX 4090, 24564 MiB, 560.94\n"
             "NVIDIA GeForce RTX 4090, 24564 MiB, 560.94\n"
         )
-        with patch.object(em.subprocess, "run") as mock_run, patch.object(
+        with patch.object(em, "_run_pip") as mock_run, patch.object(
             em, "detect_cuda_version", return_value="cu126"
         ):
             mock_run.return_value = _mk_completed(stdout=sample)
@@ -32,7 +32,7 @@ class TestDetectGpuInfo:
 
     def test_no_gpu_falls_back(self):
         """nvidia-smi 不可用时回退到 detect_gpu 的简单结果。"""
-        with patch.object(em.subprocess, "run") as mock_run, patch.object(
+        with patch.object(em, "_run_pip") as mock_run, patch.object(
             em, "detect_gpu", return_value=(False, None)
         ):
             mock_run.return_value = _mk_completed(returncode=1)
@@ -84,7 +84,7 @@ class TestCudaDetectionLogging:
         def fake_run(*a, **kw):
             raise FileNotFoundError("nvidia-smi not found")
 
-        monkeypatch.setattr(em.subprocess, "run", fake_run)
+        monkeypatch.setattr(em, "_run_pip", fake_run)
 
         with caplog.at_level(logging.WARNING, logger=em.logger.name):
             result = em.detect_cuda_version()
@@ -111,7 +111,7 @@ class TestCudaDetectionLogging:
         def fake_run(*a, **kw):
             raise sp.TimeoutExpired(cmd="nvidia-smi", timeout=10)
 
-        monkeypatch.setattr(em.subprocess, "run", fake_run)
+        monkeypatch.setattr(em, "_run_pip", fake_run)
 
         with caplog.at_level(logging.WARNING, logger=em.logger.name):
             em.detect_cuda_version()
@@ -131,7 +131,7 @@ class TestCudaDetectionLogging:
             call_count["n"] += 1
             raise FileNotFoundError("not found")
 
-        monkeypatch.setattr(em.subprocess, "run", fake_run)
+        monkeypatch.setattr(em, "_run_pip", fake_run)
 
         with caplog.at_level(logging.INFO, logger=em.logger.name):
             has_gpu, cuda = em.detect_gpu()

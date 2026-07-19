@@ -56,6 +56,28 @@ foreach ($relative in $requiredFiles) {
     }
 }
 
+$manifestPath = Join-Path $root 'product-manifest.json'
+if (Test-Path $manifestPath -PathType Leaf) {
+    $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+    $records = @($manifest.python_wheels)
+    if ($records.Count -ne 3) {
+        $errors.Add("expected 3 WinUI runtime wheels, found $($records.Count)")
+    }
+    foreach ($record in $records) {
+        $wheelPath = Join-Path (Join-Path $root 'backend') $record.file
+        if (-not (Test-Path $wheelPath -PathType Leaf)) {
+            $errors.Add("bound runtime wheel missing: $($record.file)")
+            continue
+        }
+        $bytes = [IO.File]::ReadAllBytes($wheelPath)
+        $hashBytes = [Security.Cryptography.SHA256]::Create().ComputeHash($bytes)
+        $actualHash = -join ($hashBytes | ForEach-Object { $_.ToString('x2') })
+        if ($actualHash -ne $record.sha256) {
+            $errors.Add("bound runtime wheel hash mismatch: $($record.file)")
+        }
+    }
+}
+
 $legacyEntries = @(
     'worker\vibeocr\main.py',
     'worker\vibeocr\views',
