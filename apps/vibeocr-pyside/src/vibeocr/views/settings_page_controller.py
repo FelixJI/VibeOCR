@@ -43,6 +43,7 @@ from vibeocr.env_manager import (
     get_environment_mode,
 )
 from vibeocr.machine_cache import is_cache_valid
+from vibeocr.pyside import settings_runtime
 from vibeocr.widgets.backend_choice_dialog import BackendChoiceDialog
 
 if TYPE_CHECKING:
@@ -577,9 +578,7 @@ class SettingsPageController:
         row_layout.addStretch(1)
         layout.addWidget(row)
 
-        from vibeocr.managers.config_manager import ConfigManager
-
-        saved = ConfigManager.instance().get_log_level()
+        saved = settings_runtime.get_log_level()
         index = combo.findData(saved)
         combo.setCurrentIndex(max(0, index))
         combo.currentIndexChanged.connect(self._on_log_level_changed)
@@ -589,11 +588,7 @@ class SettingsPageController:
         if combo is None:
             return
         level = str(combo.currentData() or "INFO")
-        from vibeocr.managers.config_manager import ConfigManager
-        from vibeocr.services.log_service import apply_log_level
-
-        if ConfigManager.instance().set_log_level(level):
-            apply_log_level(level)
+        if settings_runtime.set_log_level(level):
             self._show_settings_toast("日志级别已更新；WorkerHost 将在下次重连时应用")
 
     def _wrap_settings_pages_in_scroll(self) -> None:
