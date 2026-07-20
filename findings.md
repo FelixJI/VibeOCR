@@ -232,3 +232,32 @@
 - WebEngine 文档只有在 `loadFinished` 后回读 token 匹配时才标为 rendered；旧 DOM 编辑与迟到 JS copy payload 均被 document token 和 generation 拒绝。
 - PDF open worker 的 cancel 与 session ownership snapshot、最终 pop/保留关闭权必须共用同一锁；barrier 回归验证竞态 session 恰好关闭一次。
 - 最终发布级验证：3156 passed、7 skipped；独立终审确认无剩余 P0/P1/P2 阻塞。
+
+## 2026-07-21 GitHub Actions 失败证据
+
+- `v0.5.2` 的 Release 运行 `29787873143` 已成功；同一提交 `43a29aa` 的 Quality Gates 运行 `29787873103` 失败。
+- 失败仅发生在 `backend` 作业；`pyside`、`contracts`、`winui` 均成功。
+- 精确失败为 `tests/services/test_pdf_backend_render.py::TestRenderParallelization::test_concurrent_render_is_faster_than_serial`。
+- GitHub runner 实测：serial=18.466s、parallel=18.545s、speedup=0.9957x；断言要求 `speedup > 1.0`。
+- backend 其余结果为 858 passed、8 skipped；该失败带有明显的计时/runner 噪声特征，但仍需本地重复运行并审查测试意图后才能下结论。
+- 本地单项命令已运行并通过：`.venv\\Scripts\\python.exe -m pytest tests/services/test_pdf_backend_render.py::TestRenderParallelization::test_concurrent_render_is_faster_than_serial -q`，耗时 53.66s；说明失败并非稳定逻辑回归。
+- 该测试历史上已先后把阈值从 1.15x 降到 1.05x、再降到 1.0x；注释还记录共享 runner 真并行实测仅 1.01x。这进一步表明“严格大于 1.0”的计时断言缺乏噪声裕量。
+- `v0.5.1..v0.5.2` 仍需核对是否改动渲染实现；当前搜索已确认实现中有独立文档渲染函数 `_render_page_pixels` 和容量 8 的 `_RENDER_SEMAPHORE`。
+
+### 可证伪假设（按优先级）
+
+1. 测试判据不稳定：重复运行会在 1.0 附近跨线，但结构路径仍使用独立文档。
+2. 后端入口实际串行化：受控并发探针会显示最大并发数为 1。
+3. v0.5.2 引入真实回归：版本差异会命中渲染实现或并发执行器。
+
+### 根因与修复
+
+- 根因是假设 1：测试使用 `serial / parallel > 1.0` 证明结构性并发，没有任何噪声裕量；GitHub 共享 runner 的 0.4% 抖动即可误报。
+- 假设 3 已排除：`v0.5.1..v0.5.2` 对目标实现与测试无差异，仅 CI 新增了后续 Python 测试步骤。
+- 假设 2 已排除：当前入口没有获取 `session.fitz_lock`，而是调用每次独立 `fitz.open` 的 `_render_page_pixels`，并由容量 8 的信号量限流。
+- 修复将耗时比替换为 `threading.Barrier` 并发重叠探针，直接验证两个 `render_preview` 请求能同时进入栅格化函数。
+- 红能力验证：临时注入 `fitz_lock` 后，新测试 6.26s 确定性失败（`BrokenBarrierError`）；撤销注入后 0.70s 通过。临时产品代码改动已撤销。
+- 目标测试文件全量已通过：3 passed in 8.61s；Ruff lint 通过，格式化后 format check 通过。
+- 仓库发布约定：先提交普通修复并推送 main，通过 Quality Gates 后用 `scripts/bump_version.py patch --no-edit --yes` 统一升级 workspace 版本、CHANGELOG、uv.lock，创建 `release: vX.Y.Z` 提交和标签并推送触发 Release。
+- 下一补丁版本应为 `0.5.3`；当前 `v0.5.2` Release 已成功，不应覆写既有标签/资产。
+- 与失败 Actions 相同的 backend 门禁已本地通过：862 passed、5 skipped in 32.96s（本机可用 CUDA 条件使跳过数与 runner 略有不同）。

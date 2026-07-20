@@ -139,3 +139,17 @@
 - 二次终审继续关闭重复文本错位、GUI 50k 快照/5秒复制、pickle 内存放大、未知对象恶意等值和跨线程 QTimer probe 等 P2。
 - 终审返修交叉组 238 passed，最终守卫组 123 passed；最后发布级全量为 3156 passed、7 skipped。
 - 最终独立只读审查确认无 P0/P1/P2 交付阻塞；Ruff、compileall 与 `git diff --check` 再次通过。
+
+## 2026-07-21 GitHub 工作流失败修复与重新发版
+
+- 已确认工作树干净，`main`、GitHub/main、gitee/main 与标签 `v0.5.2` 都指向 `43a29aa`。
+- 已读取最近 Actions：Release 成功，Quality Gates 失败。
+- 已取得 backend 失败日志，唯一失败是 PDF 并发渲染性能断言在 runner 上得到 0.9957x。
+- session-catchup 首次因系统 `python` 不在 PATH 失败；后续使用仓库虚拟环境解释器。
+- 单项性能测试本地通过（1 passed in 53.66s），与 GitHub 的 0.9957x 失败共同证明该问题具有环境/计时敏感性。
+- 已形成三条可证伪假设，开始核对实现并构造确定性的并发回归信号。
+- 已将不稳定的性能阈值测试替换为确定性的栅栏并发测试。
+- 负向控制（临时加回锁）按预期失败；恢复真实实现后新测试通过，且临时注入已撤销。
+- 目标测试文件 3 项通过；Ruff lint/format 与 `git diff --check` 已通过。
+- 已核对发布脚本与版本文件，确定按补丁版本 `0.5.3` 重新发版，且先等待修复提交的 Quality Gates 成功。
+- 与失败 Actions 完全相同的 backend 测试路径已通过：862 passed、5 skipped；进入提交与远端门禁阶段。

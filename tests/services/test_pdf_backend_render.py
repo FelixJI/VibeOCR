@@ -13,9 +13,9 @@ per-session fitz_lock 串行化，而是每次打开独立临时 fitz.Document �
 
 from __future__ import annotations
 
-import statistics
-import time
+import threading
 from concurrent.futures import ThreadPoolExecutor
+from unittest.mock import MagicMock
 
 import fitz
 import pytest
@@ -87,57 +87,44 @@ class TestRenderParallelization:
             # 验证是有效 PNG
             assert png[:8] == b"\x89PNG\r\n\x1a\n", "应返回 PNG 字节流"
 
-    def test_concurrent_render_is_faster_than_serial(
-        self, backend_client, heavy_pdf
-    ):
-        """并发渲染应不慢于串行（证明栅格化真正并行）。
+    def test_concurrent_render_enters_rasterizer_in_parallel(self, monkeypatch):
+        """两个预览请求必须同时进入独立 Document 栅格化路径。
 
-        修复前（fitz_lock 串行化 get_pixmap）：8 页并发 ≈ 8 页串行。
-        修复后（独立 Document）：8 页并发 ≈ 串行 / 并发度。
-
-        采样策略：串行/并发各跑 3 次取中位数，消除 CI 共享 runner 的单次
-        负载抖动（全量套件并行运行时邻居进程会偶发抢 CPU，单次采样失真）。
-        阈值 1.0（而非理想的 1/8 或早期的 1.05）：本断言的唯一目的是抓
-        "锁回退"——即 fitz_lock 把 get_pixmap 重新串行化，此时并发严格
-        不快于串行（speedup ≤ 1.0）。HTTP 往返、PIL/PNG 编码、信号量竞争、
-        GIL 在 C 扩展的释放时机都会吃掉并行收益，在 GitHub 共享 runner
-        上并发甚至可能仅快 1%（v0.4.32 实测 1.01x）——这是真并行下的正常
-        噪声，不是锁回退。阈值降到 1.0 既能可靠抓住锁串行（speedup≈1.0，
-        修复前状态），又不被 CI 单次抖动误伤。
-        单独运行约 1.5x；全量套件中约 1.2x。
+        这里用栅栏直接验证并发重叠，不再用共享 CI runner 上接近 1.0x 的
+        耗时比推断并发。若 render_preview 重新获取 session.fitz_lock，首个
+        请求会在栅栏超时，测试将确定性失败。
         """
-        open_resp = backend_client.open_session(str(heavy_pdf))
-        sid = open_resp.session_id
-        total = len(open_resp.model.pages)
-        dpi = 150
+        from vibeocr.ipc.schemas import RenderPreviewRequest
+        from vibeocr.services import pdf_backend_process as backend
 
-        # 预热（避免首次 fitz.open 的冷启动开销干扰计时）
-        backend_client.render_preview(sid, 0, dpi=dpi)
-
-        def render_one(page_idx):
-            return backend_client.render_preview(sid, page_idx, dpi=dpi)
-
-        def time_serial():
-            t0 = time.monotonic()
-            for i in range(total):
-                render_one(i)
-            return time.monotonic() - t0
-
-        def time_parallel():
-            with ThreadPoolExecutor(max_workers=total) as pool:
-                t0 = time.monotonic()
-                list(pool.map(render_one, range(total)))
-                return time.monotonic() - t0
-
-        # 各采样 3 次取中位数：3 次足以滤掉单次离群点，又不至于把测试拖到分钟级。
-        serial = statistics.median(time_serial() for _ in range(3))
-        parallel = statistics.median(time_parallel() for _ in range(3))
-
-        speedup = serial / parallel
-        assert speedup > 1.0, (
-            f"并发渲染未提速：serial={serial:.3f}s parallel={parallel:.3f}s "
-            f"speedup={speedup:.2f}x（应 >1.0x，证明 fitz_lock 串行化已解除）"
+        session = backend.BackendSession(
+            session_id="parallel-render",
+            file_path="unused.pdf",
+            doc=MagicMock(),
+            pdf_document=MagicMock(),
         )
+        registry = MagicMock()
+        registry.get.return_value = session
+        monkeypatch.setattr(backend, "_get_registry", lambda: registry)
+
+        entered = threading.Barrier(2, timeout=5.0)
+
+        def rasterize(_file_path: str, _page_index: int, _dpi: float):
+            entered.wait()
+            return b"\x00\x00\x00", 1, 1
+
+        monkeypatch.setattr(backend, "_render_page_pixels", rasterize)
+        request = RenderPreviewRequest(page=0, dpi=150)
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            responses = list(
+                pool.map(
+                    lambda _: backend.render_preview(session.session_id, request),
+                    range(2),
+                )
+            )
+
+        assert all(response.media_type == "image/png" for response in responses)
 
     def test_render_preview_invalid_page_returns_400(self, backend_client, heavy_pdf):
         """页索引越界应返回 400（而非 500）。"""
@@ -150,6 +137,4 @@ class TestRenderParallelization:
         with pytest.raises(PdfBackendError) as exc_info:
             backend_client.render_preview(sid, total + 100, dpi=72)
         # PdfBackendError 的 message 含 HTTP 状态码
-        assert "400" in str(exc_info.value), (
-            f"越界应返回 400，实际：{exc_info.value}"
-        )
+        assert "400" in str(exc_info.value), f"越界应返回 400，实际：{exc_info.value}"

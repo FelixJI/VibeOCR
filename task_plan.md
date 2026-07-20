@@ -241,3 +241,38 @@
 - 第二次全量回归发现的唯一 MainWindow 游离 `singleShot` 关闭竞态已改为 GUI 事件内直接推进；80 项关闭分组及第三次全量回归均通过。
 - 终审继续发现并关闭连续大结果编辑、ResultView 活模型/旧 DOM、PDF cancel ownership 三个 P1，以及 50k 快照/复制、稀疏 overlay、未知类型稳定比较和跨线程 timer probe 等 P2。
 - 最终独立复审确认无 P0/P1/P2 交付阻塞；发布级全量回归 3156 passed、7 skipped，Ruff、compileall、Gate 0 和 `git diff --check` 全部通过。
+
+## 2026-07-21 GitHub 工作流失败修复与重新发版
+
+### Phase 18: 获取失败证据并建立反馈回路
+**Status:** complete
+
+- 定位最新失败 Actions 运行、失败作业和精确断言。
+- 在本地用最小 pytest 命令稳定复现同一症状。
+
+### Phase 19: 假设验证与最小修复
+**Status:** complete
+
+- 对失败原因列出可证伪假设，逐项验证。
+- 先固化正确的回归信号，再做最小代码/测试修复。
+
+### Phase 20: 发布级验证
+**Status:** complete
+
+- 运行定向测试、相关工作流命令、Ruff 与差异检查。
+- 复核版本号、CHANGELOG、工作流和发布资产约定。
+
+### Phase 21: 提交、推送与重新发版
+**Status:** in_progress
+
+- 提交根因明确的修复并推送 main，等待 Quality Gates 成功。
+- 按仓库既有约定创建下一补丁版本并等待 Release 成功。
+
+## 本轮错误记录
+
+| 错误 | 尝试 | 处理 |
+|---|---:|---|
+| `python` 不在 PATH，session-catchup 无法运行 | 1 | 改用仓库 `.venv\\Scripts\\python.exe`；不重复直接调用 `python` |
+| 沙箱内 `gh` 无法读取用户配置 | 1 | 已通过权限流程读取 Actions 记录与失败日志 |
+| 并行只读检查因一个 `rg` 路径不存在导致聚合调用失败 | 1 | 改为使用 `rg --files` 确认真实路径后分开读取，不重复错误路径 |
+| 新测试首次 Ruff format check 报需格式化 | 1 | 已仅格式化目标测试文件，lint 与 format check 均通过 |
