@@ -6,14 +6,25 @@ service implementations directly.
 
 from __future__ import annotations
 
-from vibeocr.managers.config_manager import ConfigManager
-from vibeocr.services.log_service import apply_log_level
+
+def _config_manager():
+    """Resolve the config singleton lazily to keep the shell import lightweight."""
+    from vibeocr.managers.config_manager import ConfigManager
+
+    return ConfigManager.instance()
+
+
+def _apply_log_level(level: str) -> None:
+    """Resolve the logging service only when the user changes the setting."""
+    from vibeocr.services.log_service import apply_log_level
+
+    apply_log_level(level)
 
 
 def get_log_level() -> str:
     """Return the persisted application log level."""
     try:
-        return ConfigManager.instance().get_log_level()
+        return _config_manager().get_log_level()
     except RuntimeError:
         # Isolated settings-page construction (tests/embedding) can happen
         # before MainWindow initializes the application configuration root.
@@ -23,12 +34,12 @@ def get_log_level() -> str:
 def set_log_level(level: str) -> bool:
     """Persist and immediately apply an application log level."""
     try:
-        config = ConfigManager.instance()
+        config = _config_manager()
     except RuntimeError:
         return False
     if not config.set_log_level(level):
         return False
-    apply_log_level(level)
+    _apply_log_level(level)
     return True
 
 

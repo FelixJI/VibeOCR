@@ -9,9 +9,9 @@ def test_settings_runtime_persists_then_applies(monkeypatch) -> None:
     config = MagicMock()
     config.get_log_level.return_value = "WARNING"
     config.set_log_level.return_value = True
-    monkeypatch.setattr(settings_runtime.ConfigManager, "instance", lambda: config)
+    monkeypatch.setattr(settings_runtime, "_config_manager", lambda: config)
     apply = MagicMock()
-    monkeypatch.setattr(settings_runtime, "apply_log_level", apply)
+    monkeypatch.setattr(settings_runtime, "_apply_log_level", apply)
 
     assert settings_runtime.get_log_level() == "WARNING"
     assert settings_runtime.set_log_level("DEBUG") is True
@@ -24,9 +24,9 @@ def test_settings_runtime_does_not_apply_when_persistence_fails(monkeypatch) -> 
 
     config = MagicMock()
     config.set_log_level.return_value = False
-    monkeypatch.setattr(settings_runtime.ConfigManager, "instance", lambda: config)
+    monkeypatch.setattr(settings_runtime, "_config_manager", lambda: config)
     apply = MagicMock()
-    monkeypatch.setattr(settings_runtime, "apply_log_level", apply)
+    monkeypatch.setattr(settings_runtime, "_apply_log_level", apply)
 
     assert settings_runtime.set_log_level("INFO") is False
     apply.assert_not_called()

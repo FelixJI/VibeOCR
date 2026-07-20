@@ -31,3 +31,20 @@ def test_configure_standard_streams_tolerates_missing_stream(monkeypatch) -> Non
     monkeypatch.setattr(main_module.sys, "stderr", object())
 
     main_module._configure_standard_streams()
+
+
+def test_finish_t3_smoke_flushes_before_immediate_exit(monkeypatch) -> None:
+    events: list[object] = []
+
+    class _FakeApp:
+        def processEvents(self) -> None:
+            events.append("paint")
+
+    monkeypatch.setattr(main_module, "flush_startup", lambda: events.append("flush"))
+    monkeypatch.setattr(
+        main_module.os, "_exit", lambda code: events.append(("exit", code))
+    )
+
+    main_module._finish_t3_smoke(_FakeApp())
+
+    assert events == ["paint", "flush", ("exit", 0)]

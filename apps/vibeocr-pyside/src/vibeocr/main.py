@@ -81,6 +81,13 @@ record_startup(StartupEvent.PROCESS_START, 0.0)  # T0：进程入口基准（0.0
 record_startup(StartupEvent.RUNTIME_READY)  # T1：env_manager 已就绪
 
 
+def _finish_t3_smoke(app) -> None:
+    """Flush the rendered T3 milestone and terminate before background startup."""
+    app.processEvents()
+    flush_startup()
+    os._exit(0)
+
+
 def check_production_dependencies() -> bool:
     """检查生产环境依赖
 
@@ -568,17 +575,13 @@ def launch_application() -> int:
     window.show()
     record_startup(StartupEvent.FIRST_WINDOW)  # T3：首窗可见
 
-    # Perf-gate smoke mode: exit shortly after first window so cold-start
-    # timing can be measured symmetrically with the WinUI target. Production
-    # runs never set this env var.
+    # Perf-gate smoke mode: process one paint turn, persist T3, then terminate
+    # before tray/update/background startup work begins.  A delayed QTimer exit
+    # raced constructor-started native threads on Windows hosted runners and
+    # could report 0xC0000374 after the window had already reached T3.
+    # Production runs never set this environment variable.
     if os.environ.get("VIBEOCR_SELF_TEST_SMOKE") in {"1", "t3"}:
-        from PySide6.QtCore import QTimer
-
-        def _smoke_exit() -> None:
-            flush_startup()
-            os._exit(0)
-
-        QTimer.singleShot(150, _smoke_exit)
+        _finish_t3_smoke(app)
 
     # 主窗口已显示，splash 衔接关闭（finish 会等窗口完全绘制后再隐藏 splash，避免闪空）
     if splash is not None:
