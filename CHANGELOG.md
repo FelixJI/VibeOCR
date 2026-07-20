@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.5.2] - 2026-07-21
+
+### Fixed
+- fix: harden updates and oneDNN fallback
+- fix(release): make frozen startup smoke deterministic
+- fix(pyside): route log settings through runtime boundary
+
+### Changed
+- refactor(pyside): eliminate UI thread blocking
+
+
 ## [0.5.1] - 2026-07-20
 
 ### Fixed

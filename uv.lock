@@ -2387,7 +2387,7 @@ wheels = [
 
 [[package]]
 name = "vibeocr"
-version = "0.5.1"
+version = "0.5.2"
 source = { editable = "." }
 dependencies = [
     { name = "vibeocr-backend" },
@@ -2479,7 +2479,7 @@ test-pyside = [
 
 [[package]]
 name = "vibeocr-backend"
-version = "0.5.1"
+version = "0.5.2"
 source = { editable = "packages/vibeocr-backend" }
 dependencies = [
     { name = "fastapi" },
@@ -2547,7 +2547,7 @@ provides-extras = ["cpu", "gpu-cu126"]
 
 [[package]]
 name = "vibeocr-client-py"
-version = "0.5.1"
+version = "0.5.2"
 source = { editable = "packages/vibeocr-client-py" }
 dependencies = [
     { name = "fonttools" },
@@ -2572,12 +2572,12 @@ requires-dist = [
 
 [[package]]
 name = "vibeocr-contracts-py"
-version = "0.5.1"
+version = "0.5.2"
 source = { editable = "packages/vibeocr-contracts-py" }
 
 [[package]]
 name = "vibeocr-pyside"
-version = "0.5.1"
+version = "0.5.2"
 source = { editable = "apps/vibeocr-pyside" }
 dependencies = [
     { name = "numpy" },

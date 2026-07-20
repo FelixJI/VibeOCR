@@ -1,11 +1,11 @@
 [project]
 name = "vibeocr-pyside"
-version = "0.5.1"
+version = "0.5.2"
 description = "VibeOCR PySide6 Classic desktop shell"
 requires-python = ">=3.13,<3.14"
 dependencies = [
-    "vibeocr-client-py==0.5.1",
-    "vibeocr-contracts-py==0.5.1",
+    "vibeocr-client-py==0.5.2",
+    "vibeocr-contracts-py==0.5.2",
     "pyside6>=6.11.1",
     "qasync>=0.28.0",
     "numpy>=2.3.5",
