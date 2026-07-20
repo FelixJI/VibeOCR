@@ -888,18 +888,43 @@ class TestCleanupLeftoverOldExes:
 
 
 class TestRunReplacementExceptionGuard:
-    def test_writes_ready_signal_before_work(self, updater, tmp_path):
-        """run_replacement 应在做任何替换前写出就绪信号文件（供主程序端握手）。"""
+    def test_invalid_package_does_not_request_main_process_exit(
+        self, updater, tmp_path
+    ):
+        """校验失败不能写 ready；旧主程序必须保持运行并展示失败。"""
         zp = tmp_path / "pkg.zip"
         zp.write_bytes(b"data")
-        # 校验会失败（缺 .sha256），但 ready 信号应已写出。
+        # 校验会失败（缺 .sha256），ready 不应写出。
         app_dir = tmp_path / "app"
         app_dir.mkdir()
 
         updater.run_replacement(zp, app_dir, ready_filename="updater.ready")
 
         ready = app_dir / "data" / "cache" / "update" / "updater.ready"
-        assert ready.exists(), "应在替换前写出就绪信号"
+        assert not ready.exists(), "无效更新包不能触发主程序退出"
+
+    def test_valid_package_writes_ready_after_sha_validation(
+        self, updater, tmp_path, monkeypatch
+    ):
+        """ready 只在 SHA 校验成功后写出，且仍早于解压/替换。"""
+        zp = tmp_path / "pkg.zip"
+        zp.write_bytes(b"data")
+        (tmp_path / "pkg.zip.sha256").write_text(
+            hashlib.sha256(b"data").hexdigest(), encoding="utf-8"
+        )
+        app_dir = tmp_path / "app"
+        app_dir.mkdir()
+        ready_seen: list[bool] = []
+
+        def stop_after_ready(*_args, **_kwargs):
+            ready_seen.append(
+                (app_dir / "data/cache/update/updater.ready").exists()
+            )
+            raise RuntimeError("stop after handshake")
+
+        monkeypatch.setattr(updater, "extract_zip", stop_after_ready)
+        assert updater.run_replacement(zp, app_dir) == 1
+        assert ready_seen == [True]
 
     def test_uncaught_exception_returns_1_and_logs(
         self, updater, tmp_path, monkeypatch

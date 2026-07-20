@@ -434,15 +434,18 @@ class UpdateService:
         ``_enter_task`` 重入 ``RuntimeError``（详见 ``await_dialog`` 文档）。
         """
         async with self._get_check_lock():
+            self._status("正在检查更新…", 0)
             current = read_local_version(self._version_json_path)
             if current == "0.0.0":
                 logger.debug("无法读取本地版本，跳过更新检查")
+                self._status("无法读取当前版本，已跳过更新检查", 5000)
                 return
 
             update_info, fetch_ok = await check_for_updates(current)
 
             # 自动检查失败：提示用户去下载页手动下载并覆盖安装（需先退出程序）。
             if not fetch_ok:
+                self._status("检查更新失败，请检查网络", 5000)
                 manual_url = GITHUB_RELEASES_BASE
                 await await_dialog(
                     QMessageBox(
@@ -459,10 +462,12 @@ class UpdateService:
                 return
 
             if update_info is None:
+                self._status("当前已是最新版本", 3000)
                 return
 
             if should_skip_version(update_info.version, self._settings_path):
                 logger.debug(f"用户已跳过版本 {update_info.version}")
+                self._status(f"已跳过版本 v{update_info.version}", 3000)
                 return
 
             dialog = UpdateDialog(update_info, current, parent)

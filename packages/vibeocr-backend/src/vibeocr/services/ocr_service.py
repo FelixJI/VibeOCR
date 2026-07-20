@@ -176,6 +176,7 @@ class OCRService(metaclass=SingletonMeta):
             # oneDNN 判定缓存必须随重置清空，否则测试间会泄漏上一个探测结果，
             # 导致 _decide_enable_mkldnn 在 monkeypatch 后仍返回旧值。
             cls._onednn_safe_cache = None
+            cls._onednn_runtime_disabled = False
 
     @classmethod
     def set_preload_progress_callback(
@@ -499,6 +500,8 @@ class OCRService(metaclass=SingletonMeta):
 
     # oneDNN 安全性判定结果缓存（进程级，避免每次创建管道重复探测指令集）
     _onednn_safe_cache: bool | None = None
+    # 真实推理一旦命中已知 PIR/oneDNN 回归，本进程永久禁用，直到服务重置。
+    _onednn_runtime_disabled = False
 
     @classmethod
     def _decide_enable_mkldnn(cls, device: str) -> bool:
@@ -512,15 +515,17 @@ class OCRService(metaclass=SingletonMeta):
 
         - GPU 设备：不传（PaddleOCR 默认），返回 False。
         - CPU 设备：调用 ``cpu_info.can_safely_enable_onednn`` 综合判定
-          （指令集 + paddle 版本黑名单 + 用户强制覆盖）。结果缓存。
+          （指令集产品门槛 + 已验证版本范围 + 用户强制覆盖）。结果缓存。
 
         历史背景：paddle 3.3.x 的 PIR 新执行器与 oneDNN 不兼容
         （ConvertPirAttribute2RuntimeAttribute 未实现，predict 抛
         NotImplementedError），参考 PaddleOCR #17539、Paddle #77340。
-        故默认对受影响版本拒绝；满足条件（新 paddle + AVX2+ CPU）时
-        才启用以拿回 oneDNN 加速。
+        故默认对受影响、未知和未验证版本拒绝；只有真实模型验证过的版本范围
+        才默认启用。若运行时仍命中该已知异常，会锁定本进程禁用并重建管道。
         """
         if device != "cpu":
+            return False
+        if cls._onednn_runtime_disabled:
             return False
         if cls._onednn_safe_cache is None:
             try:
@@ -533,7 +538,44 @@ class OCRService(metaclass=SingletonMeta):
                 # 探测失败保守禁用（与历史行为一致）
                 cls._onednn_safe_cache = False
                 _logger.warning("[oneDNN] 安全性探测失败，保守禁用: %s", e)
-        return cls._onednn_safe_cache
+        return bool(cls._onednn_safe_cache)
+
+    @staticmethod
+    def _is_known_onednn_pir_failure(exc: BaseException) -> bool:
+        """判断异常链是否命中 Paddle 3.3 PIR/oneDNN 已知回归。"""
+        seen: set[int] = set()
+        current: BaseException | None = exc
+        while current is not None and id(current) not in seen:
+            seen.add(id(current))
+            message = str(current)
+            if (
+                "ConvertPirAttribute2RuntimeAttribute" in message
+                and "onednn_instruction" in message.lower()
+            ):
+                return True
+            current = current.__cause__ or current.__context__
+        return False
+
+    def _disable_onednn_and_release_pipeline(self, pipeline_name: str) -> None:
+        """锁定进程级禁用 oneDNN，并只释放发生兼容错误的管道。"""
+        cls = type(self)
+        with cls._lock:
+            cls._onednn_runtime_disabled = True
+            cls._onednn_safe_cache = False
+            released = self.cache_manager.release_one(pipeline_name)
+            with cls._preload_lock:
+                cls._preloaded_pipelines.discard(pipeline_name)
+
+        _logger.warning(
+            "[oneDNN] 管道 %s 命中已知 PIR/oneDNN 兼容错误；"
+            "已锁定本进程禁用并%s管道，当前请求仅重试一次",
+            pipeline_name,
+            "释放" if released else "清理",
+        )
+        self._notify_status(
+            "兼容性回退",
+            f"{pipeline_name} 的 oneDNN 路径不兼容，已切换到标准 CPU 推理",
+        )
 
     @staticmethod
     def _log_gpu_summary() -> None:
@@ -639,7 +681,7 @@ class OCRService(metaclass=SingletonMeta):
             )
 
         # CPU 设备的 mkldnn 启用与否由 _decide_enable_mkldnn 综合判定
-        # （指令集 + paddle 版本黑名单），而非硬编码 False。
+        # （指令集产品门槛 + 已验证版本范围），而非硬编码 False。
         enable_mkldnn = self._decide_enable_mkldnn(device)
         kwargs = {"enable_mkldnn": enable_mkldnn} if device == "cpu" else {}
 
@@ -701,9 +743,11 @@ class OCRService(metaclass=SingletonMeta):
                         spec = registry.get(pipeline_name)
                         device = self._get_device()
                         # CPU 设备的 mkldnn 启用与否由 _decide_enable_mkldnn
-                        # 综合判定（指令集 + paddle 版本黑名单）。
+                        # 综合判定（指令集产品门槛 + 已验证版本范围）。
                         enable_mkldnn = self._decide_enable_mkldnn(device)
-                        kwargs = {"enable_mkldnn": enable_mkldnn} if device == "cpu" else {}
+                        kwargs = (
+                            {"enable_mkldnn": enable_mkldnn} if device == "cpu" else {}
+                        )
                         self._pipelines[pipeline_name] = spec.create_pipeline(
                             device, **kwargs
                         )
@@ -850,10 +894,8 @@ class OCRService(metaclass=SingletonMeta):
         if not images:
             return []
 
-        # 根据管道类型分发
-        try:
-            results: list[OCRResult]
-            # 尝试通过注册表分发
+        def _dispatch_once() -> list[OCRResult]:
+            """执行一次注册表分发；兼容回退由外层严格控制为至多一次。"""
             from vibeocr.core.pipelines import get_registry
 
             registry = get_registry()
@@ -861,23 +903,32 @@ class OCRService(metaclass=SingletonMeta):
                 registry.get(pipeline_name).recognize_batch is not None
             ):
                 spec = registry.get(pipeline_name)
-                # OCR 批量路径：单次 predict(list)，bbox 尚未归一化
-                results = spec.recognize_batch(  # type: ignore[misc]
+                return spec.recognize_batch(  # type: ignore[misc,no-any-return]
                     self, images, actual_options
                 )
-            else:
-                # 回退：管道未提供批量接口时，逐张识别以保持兼容。
-                # 统一通过注册表的单图 recognize 分发，避免硬编码 if/elif
-                # 漏掉某管道（曾导致 TABLE/FORMULA 被当 OCR 处理）。
-                _logger.debug(
-                    "[recognize_batch] 管道 %s 未注册批量接口，回退逐张识别",
-                    pipeline_name,
-                )
-                spec = registry.get(pipeline_name)
-                results = []
-                for img in images:
-                    r = spec.recognize(self, img, actual_options)
-                    results.append(r)
+
+            _logger.debug(
+                "[recognize_batch] 管道 %s 未注册批量接口，回退逐张识别",
+                pipeline_name,
+            )
+            spec = registry.get(pipeline_name)
+            return [spec.recognize(self, img, actual_options) for img in images]
+
+        # 根据管道类型分发
+        try:
+            try:
+                results = _dispatch_once()
+            except Exception as first_error:
+                # 只有确实以 oneDNN 创建的 CPU 管道、且异常精确命中已知
+                # PIR 转换回归时才回退；其他异常保持原语义，不掩盖业务错误。
+                if not (
+                    type(self)._onednn_safe_cache is True
+                    and self._is_known_onednn_pir_failure(first_error)
+                ):
+                    raise
+                self._disable_onednn_and_release_pipeline(pipeline_name)
+                # 不再包一层同类 catch：第二次失败必须原样抛出，禁止循环重试。
+                results = _dispatch_once()
 
             # Normalize each result's bbox from pixel coords to [0-1000]
             for img, result in zip(images, results, strict=False):

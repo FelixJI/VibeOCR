@@ -205,13 +205,13 @@ eager 路径的 oneDNN，注释已说明它对推理无效。
 成为 `PaddleOCR(enable_mkldnn=...)` kwarg。CPU 设备下调用 `cpu_info.can_safely_enable_onednn()`
 综合判定（结果进程级缓存）：
 
-1. **用户强制覆盖**：`VIBEOCR_FORCE_ONEDNN=1` 强制启用、`=0` 强制禁用。
-2. **指令集门槛**：无 AVX2 → 拒绝（oneDNN 在纯 SSE/AVX1 上会崩溃或回退慢路径）。
-3. **paddle 版本黑名单**：落在 `3.3.0–3.3.99` → 拒绝（上述 PIR/oneDNN bug）。
+1. **用户强制覆盖**：`VIBEOCR_FORCE_ONEDNN=1` 跳过安全门槛强制启用（仅用于不安全诊断）、`=0` 强制禁用。
+2. **指令集产品门槛**：无 AVX2 → 拒绝。oneDNN 的 FP32 实现可以支持 SSE4.1；这里的 AVX2 是项目真实性能与测试覆盖门槛，不是 oneDNN 库的普遍最低要求。
+3. **paddle 版本策略**：`3.3.0–3.3.99` 明确拒绝；未知、无法解析、未来未验证版本同样拒绝。只有加入 `_ONEDNN_VALIDATED_SAFE_PADDLE_RANGES` 且通过真实 PP-OCR CPU 冒烟测试的版本才默认启用。
 
 GPU 设备一律不传 `enable_mkldnn`（PaddleOCR 默认，返回 False）。当前 pin `paddlepaddle-gpu
-3.3.1` 落在黑名单内，故 CPU 探测恒返回 False——与历史硬编码 `enable_mkldnn=False` 效果一致，
-但探测机制为将来升级到 paddle ≥3.4（上游修复后）自动启用 oneDNN 留好了口子。
+3.3.1` 落在黑名单内，故 CPU 探测恒返回 False——与历史硬编码 `enable_mkldnn=False` 效果一致。
+未来升级 Paddle 后也不会仅凭版本号自动启用；必须先完成真实模型验证并显式更新安全范围。
 
 ### `VIBEOCR_FORCE_ONEDNN` 调试
 
@@ -222,8 +222,25 @@ VIBEOCR_FORCE_ONEDNN=1   # 强制启用（即便在 3.3 黑名单内，可能触
 VIBEOCR_FORCE_ONEDNN=0   # 强制禁用
 ```
 
-注：另有一个 PaddleX 自身的环境变量 `PADDLE_PDX_ENABLE_MKLDNN_BYDEFAULT=0` 可让
-`enable_mkldnn=True` 也无效（PaddleX 默认关闭 mkldnn），排查"mkldnn 没生效"时应一并检查。
+当前使用的 PaddleOCR 3.7.0 / PaddleX 3.7.2 不读取
+`PADDLE_PDX_ENABLE_MKLDNN_BYDEFAULT`，不得把该历史环境变量当作安全兜底。
+
+### 升级 Paddle 前的真实模型门禁
+
+`tests/integration/test_onednn_cpu_smoke.py` 提供默认跳过的真实 PP-OCR CPU 门禁。
+在隔离 CPU 环境中设置检测/识别模型目录与以下变量：
+
+```powershell
+$env:VIBEOCR_RUN_ONEDNN_SMOKE = "1"
+$env:VIBEOCR_VALIDATE_ONEDNN_CANDIDATE = "1"
+$env:VIBEOCR_ONEDNN_DET_MODEL_DIR = "<PP-OCR detection model dir>"
+$env:VIBEOCR_ONEDNN_REC_MODEL_DIR = "<PP-OCR recognition model dir>"
+python -m pytest tests/integration/test_onednn_cpu_smoke.py -q
+```
+
+禁用 oneDNN 的基线和启用 oneDNN 的候选测试都通过后，才可把对应 Paddle
+版本加入 `_ONEDNN_VALIDATED_SAFE_PADDLE_RANGES`。不要在 GPU/cuDNN 混合环境的
+导入失败现场更新安全范围。
 
 
 ## 5. pip / PyTorch 镜像源

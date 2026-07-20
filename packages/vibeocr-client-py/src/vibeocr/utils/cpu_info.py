@@ -61,6 +61,7 @@ def get_cpu_thread_count() -> int:
 # CPU 指令集探测
 # ---------------------------------------------------------------------------
 
+
 def detect_cpu_features() -> dict[str, bool]:
     """探测当前 CPU 的关键指令集支持情况。
 
@@ -70,7 +71,13 @@ def detect_cpu_features() -> dict[str, bool]:
     """
     flags_text = _read_cpu_flags_text()
     if not flags_text:
-        return {"avx": False, "avx2": False, "avx512": False, "fma": False, "amx": False}
+        return {
+            "avx": False,
+            "avx2": False,
+            "avx512": False,
+            "fma": False,
+            "amx": False,
+        }
 
     return {
         "avx": "avx" in flags_text,
@@ -163,17 +170,26 @@ _ONEDNN_UNSAFE_PADDLE_RANGES: list[tuple[str, str]] = [
     ("3.3.0", "3.3.99"),
 ]
 
+#: 已通过项目真实 PP-OCR CPU 推理验证、允许默认启用 oneDNN 的版本区间。
+#:
+#: 该列表有意默认为空：截至 2026-07-20，上游 #77340/#17539 仍未给出
+#: 明确修复版本。只有在项目的真实模型冒烟测试通过后才能加入新区间，不能
+#: 因版本号“不在黑名单”就推断安全。高级用户仍可用 VIBEOCR_FORCE_ONEDNN=1
+#: 做显式的不安全诊断。
+_ONEDNN_VALIDATED_SAFE_PADDLE_RANGES: list[tuple[str, str]] = []
+
 
 def can_safely_enable_onednn() -> tuple[bool, str]:
     """判定当前环境下能否安全启用 oneDNN（MKL-DNN）。
 
     综合三个维度：
-    1. **指令集**：oneDNN 至少需要 AVX2（纯 SSE/AVX1 上某些算子会回退到
-       慢路径甚至崩溃）；项目历史记录"某些 CPU 指令集不兼容会导致崩溃"，
-       对无 AVX2 的老旧 CPU 一律拒绝。
-    2. **paddle 版本**：落在 PIR/oneDNN 不兼容黑名单（3.3.x）内则拒绝。
-    3. **用户强制覆盖**：``VIBEOCR_FORCE_ONEDNN=1`` 强制启用（仅供高级
-       用户/调试），``=0`` 强制禁用。
+    1. **指令集产品门槛**：项目仅在 AVX2+ CPU 上考虑启用。oneDNN 的 FP32
+       实现本身可支持更早的 ISA，因此这是一条保守的性能/测试覆盖门槛，
+       不是声称 oneDNN 普遍以 AVX2 为最低要求。
+    2. **paddle 版本**：黑名单版本明确拒绝；只有命中真实推理验证过的安全
+       版本区间才允许，未知版本、解析失败和未来未验证版本均 fail-closed。
+    3. **用户强制覆盖**：``VIBEOCR_FORCE_ONEDNN=1`` 跳过上述门槛强制启用
+       （仅供高级用户做不安全诊断），``=0`` 强制禁用。
 
     Returns:
         ``(safe, reason)``：``safe`` 为是否可启用，``reason`` 为决策依据
@@ -189,28 +205,33 @@ def can_safely_enable_onednn() -> tuple[bool, str]:
     # 1. 指令集门槛
     feats = detect_cpu_features()
     if not feats["avx2"]:
-        return False, "CPU 不支持 AVX2，oneDNN 可能崩溃或回退到慢路径"
+        return False, "CPU 不支持项目要求的 AVX2 oneDNN 验证门槛"
 
-    # 2. paddle 版本黑名单
+    # 2. paddle 版本必须可读且命中已验证安全范围
     paddle_ver = _get_paddle_version()
-    if paddle_ver:
-        for lo, hi in _ONEDNN_UNSAFE_PADDLE_RANGES:
-            if _version_in_range(paddle_ver, lo, hi):
-                return (
-                    False,
-                    f"paddle {paddle_ver} 的 PIR 执行器与 oneDNN 不兼容"
-                    f"（参考 Paddle #77340）",
-                )
+    if not paddle_ver:
+        return False, "无法读取 paddle 版本，保守禁用 oneDNN"
 
-    # 3. 满足条件：允许启用
-    feat_summary = ",".join(k for k, v in feats.items() if v)
-    return True, f"CPU 支持 {feat_summary} 且 paddle 版本未在黑名单"
+    for lo, hi in _ONEDNN_UNSAFE_PADDLE_RANGES:
+        if _version_in_range(paddle_ver, lo, hi):
+            return (
+                False,
+                f"paddle {paddle_ver} 的 PIR 执行器与 oneDNN 不兼容"
+                f"（参考 Paddle #77340）",
+            )
+
+    for lo, hi in _ONEDNN_VALIDATED_SAFE_PADDLE_RANGES:
+        if _version_in_range(paddle_ver, lo, hi):
+            feat_summary = ",".join(k for k, v in feats.items() if v)
+            return True, f"CPU 支持 {feat_summary}，paddle {paddle_ver} 已通过验证"
+
+    return False, f"paddle {paddle_ver} 尚未通过项目 oneDNN 真实推理验证"
 
 
 def _get_paddle_version() -> str | None:
     """返回已安装 paddle 的版本号（短格式如 '3.3.1'），未安装返回 None。
 
-    延迟 import 避免模块加载副作用；失败静默返回 None（判定走保守分支）。
+    延迟 import 避免模块加载副作用；失败静默返回 None，调用方必须 fail-closed。
     """
     try:
         import paddle

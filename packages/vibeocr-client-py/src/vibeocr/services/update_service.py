@@ -321,6 +321,18 @@ def verify_sha256(file_path: Path, sha256_file: Path) -> bool:
     return True
 
 
+def _valid_sha256_text(text: str) -> bool:
+    """校验 release 校验文件的首字段，避免把代理错误页当成 SHA 文件。"""
+    fields = text.strip().split()
+    if not fields or len(fields[0]) != 64:
+        return False
+    try:
+        int(fields[0], 16)
+    except ValueError:
+        return False
+    return True
+
+
 async def _download_zip_with_sha(
     client: httpx.AsyncClient,
     zip_url: str,
@@ -342,11 +354,31 @@ async def _download_zip_with_sha(
     返回 SourceAttempt；失败时清理残留。供 download_update 在多源候选间逐个调用。
     """
     try:
-        # 流式下载 zip（带进度回调）
+        if cancel_event is not None and cancel_event.is_set():
+            return SourceAttempt(False, DOWNLOAD_REASON_CANCELLED)
+
+        # 先下载只有几十字节的 SHA 文件，作为当前源的低成本预检。旧流程先下完整
+        # 170MB+ ZIP，最后才发现代理的 SHA 端点 404/错误页，换源前白等一整包。
+        # SHA 先行能让坏源在数秒内失败，同时不削弱最终完整性校验。
+        sha_resp = await client.get(sha_url)
+        if sha_resp.status_code != 200:
+            logger.warning(f"sha256 下载失败({sha_resp.status_code})：{sha_url}")
+            return SourceAttempt(False, DOWNLOAD_REASON_SHA_MISSING)
+        if not _valid_sha256_text(sha_resp.text):
+            logger.warning(f"sha256 响应格式无效，换源：{sha_url}")
+            return SourceAttempt(False, DOWNLOAD_REASON_SHA_MISMATCH)
+        sha256_path.write_text(sha_resp.text, encoding="utf-8")
+
+        if cancel_event is not None and cancel_event.is_set():
+            sha256_path.unlink(missing_ok=True)
+            return SourceAttempt(False, DOWNLOAD_REASON_CANCELLED)
+
+        # SHA 预检通过后再流式下载大 ZIP（带进度回调）
         cancelled = False
         async with client.stream("GET", zip_url) as resp:
             if resp.status_code != 200:
                 logger.warning(f"zip 下载失败({resp.status_code})：{zip_url}")
+                sha256_path.unlink(missing_ok=True)
                 return SourceAttempt(False, DOWNLOAD_REASON_HTTP_ERROR)
             total = int(resp.headers.get("content-length", 0))
             with open(zip_path, "wb") as f:
@@ -363,21 +395,8 @@ async def _download_zip_with_sha(
                         break
         if cancelled:
             zip_path.unlink(missing_ok=True)
+            sha256_path.unlink(missing_ok=True)
             return SourceAttempt(False, DOWNLOAD_REASON_CANCELLED)
-
-        # SHA 下载前检查取消：zip 已下完、即将进入 sha 下载，用户在此间隙点取消
-        # 应能立即中止，而不是继续下 sha 文件。
-        if cancel_event is not None and cancel_event.is_set():
-            zip_path.unlink(missing_ok=True)
-            return SourceAttempt(False, DOWNLOAD_REASON_CANCELLED)
-
-        # 下载 sha256
-        sha_resp = await client.get(sha_url)
-        if sha_resp.status_code != 200:
-            logger.warning(f"sha256 下载失败({sha_resp.status_code})：{sha_url}")
-            zip_path.unlink(missing_ok=True)
-            return SourceAttempt(False, DOWNLOAD_REASON_SHA_MISSING)
-        sha256_path.write_text(sha_resp.text, encoding="utf-8")
 
         # verify_sha256 启动前检查取消：哈希计算是数秒级 CPU/IO 操作（线程池），
         # 启动后不强制中断（成本高且很快完成），但启动前拦截可避免这段等待。
@@ -478,7 +497,11 @@ async def download_update(
     )
 
     fail_reasons: list[str] = []
-    async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+    # connect/pool 失败要快速换源；大包只在连续 15 秒收不到任何字节时判定当前源
+    # 卡住。httpx 的 read timeout 是“无数据间隔”而非整包总时限，正常慢速下载不会
+    # 因包体较大被粗暴截断。
+    timeout = httpx.Timeout(30.0, connect=5.0, read=15.0, write=15.0, pool=5.0)
+    async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
         for url, sha_url in url_pairs:
             # 换源间隙检查取消（前一源失败后、下一源开始前）
             if cancel_event is not None and cancel_event.is_set():

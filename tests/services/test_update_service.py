@@ -721,11 +721,11 @@ class TestDownloadZipWithSha:
         # 校验文件也落盘
         assert sha_path.exists()
 
-    def test_zip_non_200_returns_false_and_no_sha_fetch(self, tmp_path):
+    def test_zip_non_200_returns_false_after_sha_preflight(self, tmp_path):
         _download_zip_with_sha = self._import()
 
         stream = _make_stream_response(404, [b"not found"])
-        client = _make_client(stream_cm=stream)
+        client = _make_client(stream_cm=stream, sha_text="0" * 64)
         zip_path = tmp_path / "x.zip"
         sha_path = tmp_path / "x.zip.sha256"
 
@@ -737,16 +737,17 @@ class TestDownloadZipWithSha:
 
         assert ok.ok is False
         assert ok.reason == "http_error"
-        # zip 非 200 直接返回，不应落盘、不应尝试取 sha
+        # SHA 小文件先行预检；通过后 zip 非 200 直接返回且不落盘。
         assert not zip_path.exists()
-        client.get.assert_not_awaited()
+        assert not sha_path.exists()
+        client.get.assert_awaited_once_with(self.EXPECTED_SHA_URL)
 
     def test_sha_non_200_cleans_up_zip(self, tmp_path):
         _download_zip_with_sha = self._import()
 
         zip_bytes = b"fake-zip-content"
         stream = _make_stream_response(200, [zip_bytes])
-        # zip 成功，但 sha 端点非 200
+        # SHA 预检端点非 200，应跳过大包下载。
         client = _make_client(stream_cm=stream, sha_status=404)
         zip_path = tmp_path / "x.zip"
         sha_path = tmp_path / "x.zip.sha256"
@@ -763,6 +764,29 @@ class TestDownloadZipWithSha:
         # sha 非 200：已落盘的 zip 必须被清理；sha 文件根本没写
         assert not zip_path.exists()
         assert not sha_path.exists()
+
+    def test_invalid_sha_response_skips_large_zip_download(self, tmp_path):
+        """代理返回 HTML/错误页时应在下载大包前立即换源。"""
+        _download_zip_with_sha = self._import()
+        stream = _make_stream_response(200, [b"large package"])
+        client = _make_client(
+            stream_cm=stream,
+            sha_status=200,
+            sha_text="<html>bad gateway</html>",
+        )
+        zip_path = tmp_path / "x.zip"
+        sha_path = tmp_path / "x.zip.sha256"
+
+        result = _run(
+            _download_zip_with_sha(
+                client, self.ZIP_URL, self.EXPECTED_SHA_URL, zip_path, sha_path, None
+            )
+        )
+
+        assert result.ok is False
+        assert result.reason == "sha_mismatch"
+        client.stream.assert_not_called()
+        assert not zip_path.exists()
 
     def test_sha_mismatch_cleans_up_zip_and_sha(self, tmp_path):
         _download_zip_with_sha = self._import()
@@ -795,7 +819,10 @@ class TestDownloadZipWithSha:
         _download_zip_with_sha = self._import()
 
         # client.stream 抛异常（被宽 except 捕获）
-        client = _make_client(stream_side_effect=httpx.ConnectError("boom"))
+        client = _make_client(
+            stream_side_effect=httpx.ConnectError("boom"),
+            sha_text="0" * 64,
+        )
         zip_path = tmp_path / "x.zip"
         sha_path = tmp_path / "x.zip.sha256"
 
@@ -1198,7 +1225,8 @@ class TestDownloadCancel:
 
         chunk_a, chunk_b = b"AAAA", b"BBBBBBBB"  # 2 块
         stream = _make_stream_response(200, [chunk_a, chunk_b])
-        client = _make_client(stream_cm=stream, sha_status=200, sha_text="dummy")
+        digest = hashlib.sha256(chunk_a + chunk_b).hexdigest()
+        client = _make_client(stream_cm=stream, sha_status=200, sha_text=digest)
 
         cancel_event = asyncio.Event()
         calls: list[tuple[int, int]] = []
@@ -1227,10 +1255,11 @@ class TestDownloadCancel:
         assert attempt.ok is False
         assert attempt.reason == DOWNLOAD_REASON_CANCELLED
         assert not zip_path.exists()
+        assert not sha_path.exists()
         # 关键：只回调了第一块就 break，没把第二块也写入（< 总块数 2）
         assert len(calls) == 1, f"应在第一块后立即中断，实际回调次数={len(calls)}"
-        # sha 下载不应被触发（取消优先于 sha 拉取）
-        client.get.assert_not_called()
+        # SHA 已完成低成本预检，大包在第一块后立即中止。
+        client.get.assert_awaited_once()
 
     def test_download_zip_with_sha_completes_when_not_cancelled(self, tmp_path):
         """回归保护：未取消时正常完成（取消逻辑不破坏成功路径）。"""
@@ -1265,12 +1294,10 @@ class TestDownloadCancel:
 
 
 class TestDownloadZipWithShaCancelAtShaStage:
-    """SHA 下载 / 校验阶段的取消检查点回归测试。
+    """SHA 预检与最终校验阶段的取消检查点回归测试。
 
-    核心修复：_download_zip_with_sha 原来只在 zip 流式下载循环检查取消，
-    SHA 下载（client.get(sha_url)）与 verify_sha256 启动前完全不检查。
-    用户在 zip 下完、校验开始时点取消，这两个 await 照样跑完。
-    现在在 SHA 下载前 + verify 启动前各补一个检查点。
+    SHA 先行后仍需覆盖三个窗口：单源开始前、SHA 预检完成后、ZIP 下载完成到
+    verify_sha256 启动前，确保换源优化不牺牲取消响应。
     """
 
     def _make_stream_response(self, status_code=200, chunks=None):
@@ -1299,11 +1326,7 @@ class TestDownloadZipWithShaCancelAtShaStage:
         return _StreamCM()
 
     def test_cancel_before_sha_download(self, tmp_path):
-        """zip 下完后、SHA 下载前 set cancel_event → 返回 cancelled 且 zip 被清理。
-
-        模拟：在最后一个 chunk yield 后 set cancel_event，使流式循环结束、
-        进入 SHA 下载前检查点时 event 已 set，从而在进入 client.get(sha) 前中止。
-        """
+        """进入单源尝试前已取消时，不发出 SHA 或 ZIP 请求。"""
         import asyncio
 
         from vibeocr.services.update_service import (
@@ -1312,34 +1335,9 @@ class TestDownloadZipWithShaCancelAtShaStage:
         )
 
         cancel_event = asyncio.Event()
-        chunks = [b"zipdata" * 100]
-
-        # 自定义 stream CM：最后一个 chunk 后 set cancel_event
-        async def _aiter_then_cancel():
-            for i, c in enumerate(chunks):
-                yield c
-                if i == len(chunks) - 1:
-                    cancel_event.set()
-
-        class _StreamCMCancel:
-            def __init__(self) -> None:
-                total = sum(len(c) for c in chunks)
-                self.status_code = 200
-                self.headers = {"content-length": str(total)}
-
-            async def __aenter__(self) -> "_StreamCMCancel":
-                return self
-
-            async def __aexit__(self, *exc) -> bool:
-                return False
-
-            def aiter_bytes(self, chunk_size: int = 65536):
-                return _aiter_then_cancel()
-
-        stream_cm = _StreamCMCancel()
         client = MagicMock()
-        client.stream.return_value = stream_cm
         client.get = AsyncMock()
+        cancel_event.set()
 
         zip_path = tmp_path / "pkg.zip"
         sha_path = tmp_path / "pkg.sha256"
@@ -1352,9 +1350,9 @@ class TestDownloadZipWithShaCancelAtShaStage:
 
         assert result.ok is False
         assert result.reason == DOWNLOAD_REASON_CANCELLED
-        assert not zip_path.exists(), "zip 应被清理"
-        # sha 下载不应被触发（取消在它之前拦截）
+        assert not zip_path.exists()
         client.get.assert_not_called()
+        client.stream.assert_not_called()
 
     def test_cancel_before_verify(self, tmp_path):
         """SHA 文件下完后、verify_sha256 启动前 set cancel → 返回 cancelled。
@@ -1369,32 +1367,27 @@ class TestDownloadZipWithShaCancelAtShaStage:
             _download_zip_with_sha,
         )
 
-        stream_cm = self._make_stream_response(200, [b"zipdata" * 100])
+        zip_bytes = b"zipdata" * 100
+        cancel_event = asyncio.Event()
+
+        async def _aiter_then_cancel():
+            yield zip_bytes
+            cancel_event.set()
+
+        stream_cm = self._make_stream_response(200, [zip_bytes])
+        stream_cm.aiter_bytes = lambda chunk_size=65536: _aiter_then_cancel()
         client = MagicMock()
         client.stream.return_value = stream_cm
         sha_resp = MagicMock()
         sha_resp.status_code = 200
-        sha_resp.text = "abc123  pkg.zip"
+        sha_resp.text = f"{hashlib.sha256(zip_bytes).hexdigest()}  pkg.zip"
         client.get = AsyncMock(return_value=sha_resp)
-
-        cancel_event = asyncio.Event()
 
         # verify_sha256 不会真正执行（取消在它之前），但 mock 确保它不被调用
         with patch(
             "vibeocr.services.update_service.verify_sha256",
             side_effect=lambda *a: (_ for _ in ()).throw(AssertionError("不应到达 verify")),
         ):
-            # SHA 下载返回后、verify 前设置取消：用 client.get 的 wrapper
-            original_get = client.get.return_value
-
-            async def _delayed_get(*a, **kw):
-                result = original_get
-                # SHA 下载"完成"后立即取消（此时 verify 尚未启动）
-                cancel_event.set()
-                return result
-
-            client.get = _delayed_get
-
             zip_path = tmp_path / "pkg.zip"
             sha_path = tmp_path / "pkg.sha256"
             result = _run(

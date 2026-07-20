@@ -428,3 +428,95 @@
 - 失败/回滚语义未改变：只有文件替换成功后才调用新入口；替换或校验失败仍不会误启旧 UI。Classic 启动沿用回归前的无参数 detached Popen，WinUI 继续执行 30 秒健康握手。
 
 ---
+# 2026-07-20：本地虚拟环境修复发现
+
+- 项目根目录不存在 `envn`，存在 `.venv`；本次按用户意图将目标解释为 `.venv`。
+- 当前 PowerShell 的 PATH 中没有全局 `python`。
+- 修复前 Git 简短状态无条目（仅有用户级 global ignore 权限警告），工作树看起来干净。
+- `.venv` 解释器是 CPython 3.13.2，符合 `.python-version=3.13` 与 `requires-python >=3.13,<3.14`；虚拟环境自带 `uv 0.11.28`，但没有 `pip` 模块。
+- 仓库根项目与四个 workspace 包已经是 0.5.1，而 `.venv` 中五个 editable distribution 仍停留在 0.5.0。
+- 使用仓库 `.uv-cache` 执行 `uv sync --check --offline` 明确报告环境过期。
+- `uv pip check` 发现 20 项不一致：多个 `.dist-info/METADATA` 无法读取（包括五个 VibeOCR workspace 包、jsonschema/rpds/pytest-asyncio 等），并有 GPU 依赖缺口；直接读取这些 METADATA 同样被 ACL 拒绝。环境不是简单少装一个包，而是已有 site-packages 权限/元数据损坏。
+- 未指定 `UV_CACHE_DIR` 时，uv 会尝试访问用户 AppData cache 并在当前受限环境失败；仓库已有 `.uv-cache`，后续命令应显式使用它。
+- 离线重建首次失败，因为锁定的 `pytest-qt==4.5.0` 不在本地缓存；获得联网许可后，从锁文件成功创建 `.venv-repair`。
+- 新环境共有 75 个基础开发包；五个 VibeOCR workspace distribution 均为 0.5.1。`uv sync --all-packages --frozen --check --offline` 与 `uv pip check` 均通过，核心 contracts/worker_host/UI 导入通过。
+- 新环境仍没有 `pip`，这是 uv 创建的非 seed venv 的正常结果；项目开发文档统一使用 `uv sync` / `uv run`，因此不额外引入锁文件之外的 pip。需要 pip 的便携 wheel 安装流程是另一类环境。
+- 旧 `.venv` 的 83,326 个文件 ACL 已成功重置，之后原本拒绝读取的 VibeOCR METADATA 可以正常读取。
+- `.venv` 根目录无法改名的实际占用者是 PyCharm 启动的 `pyright-langserver.exe` 及其 Python 子进程；确认命令行仅为 `server --stdio` 后停止。根目录仍有外部句柄，因此采用保留根目录的原位修复。
+- 使用外置临时 uv 对正式 `.venv` 执行 `sync --all-packages --frozen --offline --reinstall` 成功：75 个基础开发包重装，五个 workspace 包由 0.5.0 升到 0.5.1，旧的未锁定重型推理包被移除。
+- 正式 `.venv` 最终冻结同步检查与 `uv pip check` 均为 0；Python 3.13.2、五个 0.5.1 workspace 包、PySide6/pytest/ruff/pyright/uv 版本和关键导入均正常。
+- 定向验证 124 项全部通过（contracts、WorkerHost contracts、runtime paths、app paths）。首轮另有 8 项因沙箱拒绝创建 `C:\tmp` 测试父目录而 setup error，改用仓库 `.tmp` 后同一测试集全绿，确认不是产品/环境依赖错误。
+- 已删除本次创建的嵌套 `.venv-repair`、部分旧环境备份、临时 uv、Pyright repair-hold 与测试临时目录；正式 `.venv` 根目录恢复为标准 `Lib/Scripts/share + pyvenv.cfg` 布局。
+- 清理后再次执行冻结同步检查、包一致性检查、五个 workspace 版本断言、关键导入和 Pyright 入口，全部通过。
+- 完整后端安装器首次失败的直接原因是 uv venv 没有 pip；用 uv 安装 `pip 26.1.2` 后安装器成功安装 GPU profile。安装器的失败输出还存在 GBK 不能编码 `⚠` 的次要问题，本次通过 `PYTHONUTF8/PYTHONIOENCODING=utf-8` 避免。
+- 安装器对 Torch 未固定锁版本，从镜像选到 `torch 2.13.0+cpu` / `torchvision 0.28.0`；已用 `uv sync --extra gpu-cu126 --frozen --inexact` 按 `uv.lock` 纠正为 `torch 2.12.1+cu126` / `torchvision 0.27.1+cu126`，完整 profile 共检查 193 个包且无变化。
+- 裸进程中先导入 Torch 再导入 Paddle 会因未注册 CUDA DLL 目录报 `cudnn_cnn64_9.dll` 依赖错误；按生产 `OCRService._setup_cuda_dll_path()` 顺序后，Paddle 3.3.1/CUDA 12.6 在 RTX 4090 完成 GPU 矩阵运算。Torch CUDA 矩阵运算同样成功，CUDA DLL 路径测试 4 passed。
+- 完整 GPU profile 下最终合并回归 128 passed；测试临时目录已删除。
+
+---
+# 0.5.0 更新链排查记录（2026-07-20）
+
+- 当前主线为 v0.5.1；v0.5.0 tag 为 `1928092`，其后已有 `fix(update): restore Classic relaunch after upgrade`，说明 0.5.0 发布包确实包含过更新后重启故障。
+- Classic Qt 编排目前已把 ZIP `testzip`、updater 抽取与握手轮询放到 `asyncio.to_thread`，这是 0.5.0 之后/附近已有的“下载后卡死”缓解，但仍需对照 tag 判断是否进入 0.5.0 包。
+- 当前成功交接逻辑将 updater 的 `ready` 和“15 秒超时但进程仍活着”都视为可立即 `os._exit(0)`；需要确认 updater 是否在写 ready 前已拥有完整接管信息，否则该语义会表现为主程序闪退。
+- Next 的 `GitHubUpdateSource` 仍只走 GitHub 直链且没有显式 HttpClient 总超时/分阶段换源，源码 TODO 已明确国内慢；不过 0.5.0 用户主要使用 Classic，优先修 Classic 的真实路径。
+- 工作区开始时仅规划文件已有未提交改动，产品源码无未提交改动；必须保留既有规划记录。
+- v0.5.0 tag 已包含 Classic relaunch 回退修复，因此用户当前的“下载成功后闪退”不是简单缺少 `VibeOCR.exe` 回退；更可能是主程序收到过早的 ready 后主动 `os._exit(0)`，随后 updater 在校验/解压/替换/重启阶段失败。
+- `run_replacement` 目前进入函数后第一时间写 `updater.ready`，写入时尚未验证 SHA、ZIP、应用目录或替换可行性；主程序见到 ready 就硬退出。该信号只证明“进程开始运行”，不足以证明“已经安全接管”，是闪退观感的直接契约缺陷。
+- Classic 多源下载对每个候选先下载完整 ZIP，再请求极小的 SHA 文件；慢代理可能浪费一次 170MB 完整下载后才暴露 SHA 不可用。应改成先取/校验 SHA 响应格式，再下载大包。
+- 下载使用 `httpx.AsyncClient(timeout=30.0)`；这是每次网络操作的 inactivity timeout，不是整个源的总预算。慢速但持续吐数据的代理可无限占用当前候选，导致“换源很慢”。
+- 检查更新本身已有 5 秒超时且使用异步 httpx，但开始检查时没有立即写“正在检查更新”状态，用户容易把无反馈的 5 秒理解为卡死。
+- 现有下载日志样本只记录到 0.5.0 当时“已是最新”，没有覆盖 0.5.0→0.5.1 的失败现场；需依靠契约测试复现并修复。
+- 最终实现将源内顺序改为“SHA 小文件预检 → ZIP 大包下载 → SHA256 校验”；代理返回 404、HTML 错误页或非法摘要时不会再先下载完整大包。
+- 网络超时细分为 connect/pool 5 秒、read/write 15 秒；read 是无数据间隔，正常持续下载不会受 170MB 包体大小影响，但卡住的代理会更快切换。
+- 检查更新开始、当前已是最新、无法读版本、检查失败和已跳过版本均有即时状态栏反馈，消除异步等待期间的无反馈假卡死。
+- updater.ready 改为 SHA 校验通过后才写入；无效包不会请求旧主程序退出。ready 后增加 0.5 秒锁释放窗口，配合既有 WinError 5/32 退避重试降低交接竞态。
+- 最终验证：更新服务/Qt 编排/updater/replacer 157 passed；Ruff、compileall、`git diff --check` 通过。
+
+---
+# 2026-07-20：PaddlePaddle 3.3.1 CPU/oneDNN 审计
+
+- 审计范围：项目 oneDNN 判定与传参、Paddle 3.3.1 本地 CPU 运行、PaddleOCR/PaddleX 实际行为、上游兼容证据。
+- 本次仅审计与报告，不修改产品代码。
+- 项目把整个 Paddle `3.3.0–3.3.99` 黑名单化；当前 3.3.1 因此在 CPU 管道一律传 `enable_mkldnn=False`。该结果会同时透传到 OCR、PP-Structure、表格、VL、公式等注册管道。
+- `main.py` 的 `FLAGS_enable_onednn_backend=0` / `FLAGS_use_mkldnn=0` 只声称保护 eager 路径；PaddleOCR/PaddleX 推理路径真正由构造器 `enable_mkldnn` 控制。
+- 当前策略的明显缺口：`_get_paddle_version()` 导入失败返回 `None` 后，代码并未按注释所说“保守禁用”，反而只要 AVX2 存在就返回允许启用。
+- `VIBEOCR_FORCE_ONEDNN=1` 优先级最高，会同时绕过 AVX2 门槛和 3.3.x 黑名单；它适合诊断，但作为普通环境变量误设时没有二次保护。
+- “无 AVX2 一律不安全”是项目自定的保守门槛；现有测试只验证门槛实现，没有证据验证 oneDNN/Paddle wheel 的真实最低 ISA 或崩溃条件。
+- 现有单测覆盖 False/True/GPU 不传参和黑名单边界，但没有真实 PaddleOCR/PaddleX CPU pipeline 创建/预测，也没有验证异常后自动回退。
+- WorkerHost 入口自身不设置 `FLAGS_use_mkldnn` / `FLAGS_enable_onednn_backend`。PySide 启动的 WorkerHost 会继承 GUI `main.py` 的环境；WinUI 或直接运行 `vibeocr-worker` 不保证继承这些 FLAGS。由于正式推理靠构造器 kwarg，这主要影响 eager/动态图路径，但说明“全进程兜底”并不统一。
+- 当前安装版 PaddleX/PaddleOCR Python 源码中未检索到字面量 `enable_mkldnn`/`mkldnn`，需要继续追踪参数规范/配置转换；仅凭项目文档所称的 `runner.py` 无法在当前安装版直接复核。
+- 直接导入 PaddleOCR 时触发 Torch/cuDNN DLL `WinError 127`；这是此前确认的 CUDA DLL 注册/导入顺序问题，与 CPU oneDNN 本身不同。后续本地实验必须先调用 `OCRService._setup_cuda_dll_path()`，否则会把 CUDA 环境问题误判成 oneDNN 问题。
+- 本机已有 PP-OCRv6 medium det/rec 等官方模型缓存，可以做无下载的真实 CPU pipeline A/B 实验。
+- PaddlePaddle 上游 issue #77340 仍为开放状态：Paddle 3.3.0 CPU + oneDNN 会触发 `ConvertPirAttribute2RuntimeAttribute`，3.2.x 正常，公开绕过方案是退回 3.2.2；页面未给出已合并修复或确定修复版本。因此“3.4 起自动恢复启用”目前没有可靠依据。
+- PaddleOCR issue #17539 同样仍开放，并被标记为上游 PaddlePaddle/依赖问题；Windows CPU 用户复现相同 PIR/oneDNN 错误，`enable_mkldnn=False` 是已知可用绕过方案。
+- PaddleOCR 3.0.3 更新说明明确修复过 `enable_mkldnn` 参数不生效，并恢复 CPU 默认使用 oneDNN；PaddleOCR-VL 文档也将该参数定义为 CPU 加速开关。这支持项目通过构造器显式传参的总体方向。
+- oneDNN 官方文档显示运行时分派支持 SSE4.1、AVX、AVX2 等 ISA；FP32 最低为 SSE4.1，而 int8/u8 最低为 AVX2。因此“oneDNN 本身必须 AVX2”不成立，项目的 AVX2 判定只能视为保守的产品门槛，不能视为库的兼容性事实。
+- 当前证据支持 Paddle 3.3.1 保持 `enable_mkldnn=False`；但不支持用“只要不在 3.3.x 黑名单就自动开启”的方式判断未来版本安全。
+- 已建立完全隔离的 Windows CPU 环境：Python 3.13.2、`paddlepaddle==3.3.1`、`paddleocr==3.7.0`、`paddlex==3.7.2`，确认 `paddle.device.is_compiled_with_cuda() == False`，无 Torch/CUDA/cuDNN 干扰。
+- 使用本机缓存的 `PP-OCRv6_medium_det/rec` 和同一张 128×384 白图实测：`enable_mkldnn=False` 初始化 1.458s、推理 0.486s，成功返回 1 个结果；`enable_mkldnn=True` 初始化成功，但首次检测预测稳定抛出 `ConvertPirAttribute2RuntimeAttribute not support [pir::ArrayAttribute<pir::DoubleAttribute>]`。
+- 复现机器是 Intel i9-14900KF，明确支持 SSE4.1/AVX/AVX2，因此本次崩溃不是老 CPU 缺少 AVX2，而是 Paddle 3.3.1 的 PIR/oneDNN 执行器回归。
+- 即使同时设置项目现有的 `FLAGS_enable_onednn_backend=0` 和 `FLAGS_use_mkldnn=0`，只要 PaddleOCR 构造参数仍为 `enable_mkldnn=True`，同一异常仍然复现；这验证了全局 FLAGS 不能保护 Paddle Inference 路径。
+- 额外尝试 `engine_config.paddle_static.enable_new_ir=False` 并保留 mkldnn，仍发生同一异常；对当前 PP-OCRv6 PIR 模型没有发现“关闭 new IR 但保留 oneDNN”的可用替代。
+- 安装版 PaddleOCR 3.7.0 默认 `DEFAULT_ENABLE_MKLDNN=True`；False 会显式生成 `run_mode='paddle'`，True 则保留/生成 mkldnn 配置，PaddleX runner 最终调用 `config.enable_mkldnn()`。因此项目显式传 False 是必要的，不能依赖默认值。
+- 在 PaddleOCR/PaddleX 3.7.x 源码中未找到 `PADDLE_PDX_ENABLE_MKLDNN_BYDEFAULT`；项目文档称它可禁用 mkldnn 的说明至少对当前安装版本无法成立，应删除或注明只适用于特定旧版本。
+
+---
+# 2026-07-20：oneDNN 兼容性整改发现
+
+- oneDNN 相关产品文件当前没有未提交差异；工作区已有未提交修改集中在更新链，整改必须保持隔离。
+- 所有识别最终汇入 `OCRService.recognize_batch()`；注册表的批量或单图分发异常都能在这一层统一捕获，因此单次安全回退应放在此处，避免在每种管道私有方法重复实现。
+- 回退必须同时做到：严格匹配已知 `NotImplementedError`/PIR/oneDNN 特征、从 `_pipelines` 移除并释放当前实例、把进程级 oneDNN 决策锁为 False、重新执行同一分发一次；第二次异常原样抛出。
+- 仅把未来版本从黑名单排除就自动启用没有证据。整改将采用显式“已验证安全版本区间”策略；没有命中安全范围时禁用，以安全性优先。
+- `PipelineCacheManager` 已集中维护 `_pipelines` 与 `_last_used`，但只有全部/重管道释放和私有 `_release_one`。运行时回退应新增公开 `release_one()`，避免 OCRService 直接操作缓存管理器私有状态。
+- 当前项目要求 Paddle >=3.3.1，而尚无已确认修复版本；初始“已验证安全范围”应为空。`VIBEOCR_FORCE_ONEDNN=1` 仍保留为明确的不安全诊断通道，正常路径不会因未来版本号自动开启。
+- 识别重试采用局部 dispatch 函数：第一次严格匹配已知错误后禁用/释放/重建；重试调用放在 `except` 之外的单次分支中，确保第二次失败不会形成循环。
+- 缓存管理器已有完整 FIFO/TTL/release 测试，可在同一测试文件补充公开 `release_one()` 的命中与缺失语义；OCRService 回退行为则放在 registry 分发测试中覆盖批量路径、逐张路径、非目标异常和只重试一次。
+- 定向回归共 68 项全部通过：安全版本判定 22 项、缓存管理 22 项、OCRService 注册/回退 24 项。已证明正常分发不退化、已知错误只重试一次、普通异常不重试、GPU/未启用 CPU oneDNN 时不回退。
+- 代码差异复核确认没有触碰既有更新链产品文件；本次产品差异限于 `cpu_info`、`ocr_service`、`pipeline_cache_manager` 与环境策略文档。
+- 真实模型门禁不能默认下载大型模型，因此新增显式 opt-in 集成测试：常规套件只收集并跳过；升级 Paddle 时在隔离 CPU 环境提供本地模型目录，同时验证 oneDNN 关闭基线和开启候选，二者通过后才允许更新安全范围。
+- 加入真实门禁后的定向套件结果为 `68 passed, 2 skipped`；两项 skip 是未设置模型环境变量时的预期行为，Ruff format/check 全通过。
+- 最终扩展回归范围将覆盖全部 OCRService 测试、PipelineCacheManager 以及 `tests/core` 下 8 个管道注册/工厂/选项测试，验证回退重构没有破坏其他管道分发。
+- 表格管道测试在全新进程中 `25 passed`，确认混合进程失败仅为既有 Paddle/Torch cuDNN 加载顺序问题；oneDNN 整改未破坏表格管道。
+
+---

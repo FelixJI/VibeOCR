@@ -196,6 +196,20 @@ class PipelineCacheManager:
         )
         return released
 
+    def release_one(self, pipeline_name: str) -> bool:
+        """显式释放单个管道并清理其使用记录。
+
+        供运行时兼容回退使用：只丢弃发生错误的管道，不影响其他已加载模型。
+
+        Returns:
+            管道原本存在并已释放时返回 True；不存在时返回 False。
+        """
+        existed = pipeline_name in self._service._pipelines
+        self._release_one(pipeline_name)
+        if existed:
+            logger.info("[CacheManager] 释放单个管道: %s", pipeline_name)
+        return existed
+
     def status(self) -> dict[str, object]:
         """Return an immutable wire-friendly snapshot of the real worker cache."""
         loaded = sorted(str(name) for name in self._service._pipelines)

@@ -203,6 +203,27 @@ def test_release_all_includes_ocr():
     assert len(mgr._service._pipelines) == 0
 
 
+def test_release_one_removes_only_target_and_usage_record():
+    """release_one 只释放目标管道并清理 last_used。"""
+    mgr = _make_manager(max_heavy=3)
+    mgr._service._pipelines = {"OCR": object(), "PP-StructureV3": object()}
+    mgr._last_used = {"OCR": 100.0, "PP-StructureV3": 200.0}
+
+    assert mgr.release_one("OCR") is True
+    assert "OCR" not in mgr._service._pipelines
+    assert mgr.get_last_used("OCR") is None
+    assert "PP-StructureV3" in mgr._service._pipelines
+
+
+def test_release_one_missing_is_idempotent():
+    """释放不存在的管道安全返回 False，并清掉可能残留的时间记录。"""
+    mgr = _make_manager(max_heavy=3)
+    mgr._last_used = {"OCR": 100.0}
+
+    assert mgr.release_one("OCR") is False
+    assert mgr.get_last_used("OCR") is None
+
+
 # --- touch / ttl setter ---
 
 

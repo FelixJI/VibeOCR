@@ -17,7 +17,7 @@
 新架构（黄金法则）：旧主程序只"递送"（testzip + 从 zip 抽取新 updater），由新 updater
 （从暂存目录运行，新代码）完成部署。
 
-核心流程：signal_ready → verify_sha256 → extract → replace_app_files
+核心流程：verify_sha256 → signal_ready → extract → replace_app_files
         （备份-删除-复制-失败回滚）→ sync deps → launch_app
         （cleanup 已移交新主程序后台线程，见 main.py _cleanup_update_artifacts）
 """
@@ -213,11 +213,12 @@ def setup_logging(app_dir: Path, log_filename: str) -> None:
 
 
 def signal_ready(app_dir: Path, ready_filename: str) -> None:
-    """写就绪标记文件，供主程序端轮询确认替换器「活着」。
+    """写就绪标记文件，供主程序端确认替换器已通过接管前校验。
 
-    替换器启动后、做任何替换前第一时间调用。这个文件证明：进程已起来、Python
-    解释器已初始化、日志目录可写——即「能干活」。崩溃的替换器写不出这个文件，
-    主程序端据此走兜底路径。
+    仅在 SHA256 校验通过后、做任何替换前调用。这个文件证明：进程已起来、Python
+    解释器已初始化、更新包可信且日志/数据目录可写——即已具备接管条件。旧逻辑在
+    任何校验前就写 ready，随后即使包损坏也会让主程序先硬退出，用户看到的就是
+    “下载成功后闪退”。
 
     Args:
         app_dir: 应用安装目录，ready 文件落在 ``app_dir/data/cache/update/``。
@@ -1033,11 +1034,6 @@ def run_replacement(
     # 重置本轮阶段耗时记录（模块级状态，防御上次运行残留）。
     _stage_records.clear()
 
-    # 第一时间写就绪信号，让主程序端确认替换器「活着」。
-    # 必须在任何可能失败的替换步骤之前，否则主程序端握不到手会误判。
-    with _StageTimer("写就绪信号"):
-        signal_ready(app_dir, ready_filename)
-
     fail_reason = ""
     # 解压目录引用：无论哪个阶段失败，都要清理掉，避免数百 MB 的临时文件长期堆积
     # （download_update 只清 update 目录里的「文件」，不清子目录，残留 tmp/ 会越积越多）。
@@ -1050,6 +1046,16 @@ def run_replacement(
         if not sha_ok:
             fail_reason = "更新包完整性（SHA256）校验失败，文件可能损坏或被篡改。"
             return 1
+
+        # SHA 校验通过后才允许旧主程序退出。ready 是“安全接管”信号，不再只是
+        # “进程启动”信号；校验失败时旧程序保持运行，避免无谓闪退。
+        with _StageTimer("写就绪信号"):
+            signal_ready(app_dir, ready_filename)
+
+        # Classic 收到 ready 后会先让出一个事件循环 turn，再硬退出。给文件映射和
+        # DLL 句柄一个短暂释放窗口，减少替换阶段 WinError 5/32；后续 busy retry
+        # 仍是最终兜底。延时很短且发生在后台 updater，不会冻结主界面。
+        time.sleep(0.5)
 
         with _StageTimer("解压更新包"):
             new_files_dir = extract_zip(zip_path, app_dir)

@@ -18,6 +18,7 @@ from vibeocr.core.pipelines import OCRPipeline
 from vibeocr.models.ocr_options import OCROptions
 from vibeocr.models.ocr_result import OCRResult
 from vibeocr.services.ocr_service import OCRService
+from vibeocr.services.pipeline_cache_manager import PipelineCacheManager
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -46,6 +47,14 @@ def _make_ocr_result(**overrides) -> OCRResult:
     }
     defaults.update(overrides)
     return OCRResult(**defaults)
+
+
+def _known_onednn_pir_error() -> NotImplementedError:
+    return NotImplementedError(
+        "ConvertPirAttribute2RuntimeAttribute not support "
+        "[pir::ArrayAttribute<pir::DoubleAttribute>] "
+        "(at ..\\instruction\\onednn\\onednn_instruction.cc:118)"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -665,3 +674,141 @@ class TestRecognizeBatch:
         assert got.raw_text == "single"
         mock_spec.recognize_batch.assert_called_once()
         assert len(mock_spec.recognize_batch.call_args[0][1]) == 1
+
+    def test_known_onednn_failure_rebuilds_disabled_and_retries_once(self):
+        """已知 PIR/oneDNN 异常会释放管道，以 mkldnn=False 重建并成功重试。"""
+        import numpy as np
+
+        service = OCRService()
+        service._pipelines = {}
+        service._cache_manager = PipelineCacheManager(service, max_heavy=1)
+        type(service)._onednn_safe_cache = True
+
+        first_pipeline = MagicMock(name="onednn_pipeline")
+        fallback_pipeline = MagicMock(name="plain_cpu_pipeline")
+        mock_spec = MagicMock()
+        mock_spec.create_pipeline.side_effect = [first_pipeline, fallback_pipeline]
+
+        dispatch_count = 0
+
+        def recognize_batch(svc, _images, _options):
+            nonlocal dispatch_count
+            dispatch_count += 1
+            svc.get_or_create_pipeline("OCR")
+            if dispatch_count == 1:
+                raise _known_onednn_pir_error()
+            return [_make_ocr_result(raw_text="fallback-ok")]
+
+        mock_spec.recognize_batch.side_effect = recognize_batch
+        mock_registry = MagicMock()
+        mock_registry.has.return_value = True
+        mock_registry.get.return_value = mock_spec
+
+        with (
+            patch("vibeocr.services.ocr_service.OCRService._setup_cuda_dll_path"),
+            patch(
+                "vibeocr.services.ocr_service.OCRService._get_device",
+                return_value="cpu",
+            ),
+            patch("vibeocr.core.pipelines.get_registry", return_value=mock_registry),
+        ):
+            got = service.recognize_batch(
+                [np.zeros((50, 100, 3), dtype=np.uint8)],
+                OCROptions(pipeline=OCRPipeline.OCR),
+            )
+
+        assert got[0].raw_text == "fallback-ok"
+        assert dispatch_count == 2
+        assert mock_spec.create_pipeline.call_args_list == [
+            (("cpu",), {"enable_mkldnn": True}),
+            (("cpu",), {"enable_mkldnn": False}),
+        ]
+        assert service._pipelines["OCR"] is fallback_pipeline
+        assert type(service)._onednn_runtime_disabled is True
+        assert type(service)._onednn_safe_cache is False
+
+    def test_non_onednn_failure_is_not_retried(self):
+        """普通业务异常不触发兼容回退，也不改变 oneDNN 决策。"""
+        import numpy as np
+
+        service = OCRService()
+        type(service)._onednn_safe_cache = True
+        mock_spec = MagicMock()
+        mock_spec.recognize_batch.side_effect = ValueError("bad input")
+        mock_registry = MagicMock()
+        mock_registry.has.return_value = True
+        mock_registry.get.return_value = mock_spec
+
+        with (
+            patch("vibeocr.core.pipelines.get_registry", return_value=mock_registry),
+            pytest.raises(ValueError, match="bad input"),
+        ):
+            service.recognize_batch(
+                [np.zeros((50, 100, 3), dtype=np.uint8)],
+                OCROptions(pipeline=OCRPipeline.OCR),
+            )
+
+        assert mock_spec.recognize_batch.call_count == 1
+        assert type(service)._onednn_runtime_disabled is False
+        assert type(service)._onednn_safe_cache is True
+
+    def test_known_onednn_failure_on_retry_is_propagated_without_loop(self):
+        """禁用重建后若仍失败，第二次异常原样抛出且不继续循环。"""
+        import numpy as np
+
+        service = OCRService()
+        service._pipelines = {}
+        service._cache_manager = PipelineCacheManager(service, max_heavy=1)
+        type(service)._onednn_safe_cache = True
+        mock_spec = MagicMock()
+        mock_spec.create_pipeline.side_effect = [MagicMock(), MagicMock()]
+
+        def recognize_batch(svc, _images, _options):
+            svc.get_or_create_pipeline("OCR")
+            raise _known_onednn_pir_error()
+
+        mock_spec.recognize_batch.side_effect = recognize_batch
+        mock_registry = MagicMock()
+        mock_registry.has.return_value = True
+        mock_registry.get.return_value = mock_spec
+
+        with (
+            patch("vibeocr.services.ocr_service.OCRService._setup_cuda_dll_path"),
+            patch(
+                "vibeocr.services.ocr_service.OCRService._get_device",
+                return_value="cpu",
+            ),
+            patch("vibeocr.core.pipelines.get_registry", return_value=mock_registry),
+            pytest.raises(NotImplementedError, match="ConvertPirAttribute"),
+        ):
+            service.recognize_batch(
+                [np.zeros((50, 100, 3), dtype=np.uint8)],
+                OCROptions(pipeline=OCRPipeline.OCR),
+            )
+
+        assert mock_spec.recognize_batch.call_count == 2
+        assert mock_spec.create_pipeline.call_count == 2
+
+    def test_gpu_path_does_not_apply_cpu_onednn_fallback(self):
+        """未启用 CPU oneDNN 的路径即使出现同文案异常也不执行重建。"""
+        import numpy as np
+
+        service = OCRService()
+        type(service)._onednn_safe_cache = None
+        mock_spec = MagicMock()
+        mock_spec.recognize_batch.side_effect = _known_onednn_pir_error()
+        mock_registry = MagicMock()
+        mock_registry.has.return_value = True
+        mock_registry.get.return_value = mock_spec
+
+        with (
+            patch("vibeocr.core.pipelines.get_registry", return_value=mock_registry),
+            pytest.raises(NotImplementedError, match="ConvertPirAttribute"),
+        ):
+            service.recognize_batch(
+                [np.zeros((50, 100, 3), dtype=np.uint8)],
+                OCROptions(pipeline=OCRPipeline.OCR),
+            )
+
+        assert mock_spec.recognize_batch.call_count == 1
+        assert type(service)._onednn_runtime_disabled is False

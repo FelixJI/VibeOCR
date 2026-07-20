@@ -257,3 +257,78 @@
 - 最终验证：`tests/test_update_replacer.py + tests/test_updater_main.py` 共 78 passed；Ruff check、`git diff --check` 均通过。任务完成。
 
 ---
+# 2026-07-20：本地 `.venv` 修复
+
+- 已读取 planning-with-files 技能并尝试 session-catchup；因 PATH 中无全局 Python 而未运行。
+- 已确认项目不存在 `envn`、存在 `.venv`，按 `.venv` 作为修复目标继续。
+- 已记录初始状态，开始核对项目环境策略、虚拟环境元数据与可用工具。
+- 已确认环境整体损坏且落后于项目版本：锁文件检查不通过，五个 workspace 包仍为 0.5.0，大量 METADATA 读取被拒绝。
+- 由于损坏涉及多个包和 ACL，局部补装风险高；下一步核对项目推荐开发安装命令后，采用可回退的重建方案。
+- 首次旁路重建因本地缓存缺少 pytest-qt 失败；联网后 `.venv-repair` 已按冻结锁文件完整创建。
+- 新环境冻结同步检查、包兼容检查、workspace 版本与关键导入全部通过；准备保留旧环境备份并切换目录。
+- 旧环境目录切换先后受 ACL 与 Pyright 进程锁阻塞；已重置全部 ACL，并确认/停止 PyCharm 的旧 Pyright language server。
+- 已改为正式 `.venv` 原位强制同步，75 个基础开发包重装成功，workspace 包全部恢复为 0.5.1；进入最终验证与临时目录清理。
+- 正式环境的冻结同步、包一致性、解释器/入口、关键导入全部通过；定向测试最终 124 passed。
+- 首轮测试因 `C:\tmp` 父目录创建被沙箱拒绝而出现 8 个 setup error，改用仓库 `.tmp` 后全部通过；准备移除本次创建的重复环境与临时备份。
+- 已移除所有修复临时产物，释放重复环境占用；旧损坏环境碎片不可恢复，但其内容已由冻结锁文件完整重建。
+- 清理后最终复核通过：正式 `.venv` 是 Python 3.13.2，75 个基础开发包一致，五个 workspace 包均为 0.5.1，任务完成。
+- 复核 README 后发现完整开发安装还要求运行 `vibeocr-install-backend --profile auto --network domestic`；已重新打开任务，继续恢复此前存在的 OCR/GPU 重依赖，避免基础测试通过但实际 OCR 缺包。
+- 后端安装器因 uv venv 无 pip 首次失败；已补装 pip 并以 UTF-8 环境重跑成功。
+- 发现安装器误选 CPU Torch 2.13.0，已按锁文件 gpu-cu126 extra 精确纠正为 Torch 2.12.1+cu126 / Torchvision 0.27.1+cu126。
+- Paddle 与 Torch 均已在 RTX 4090 上执行真实 CUDA 矩阵运算；生产 DLL 注册路径有效，CUDA 路径回归 4 passed。
+- 完整 GPU profile 最终合并回归 128 passed，临时目录清理完成，任务完成。
+
+---
+# 进度日志：0.5.0 更新链修复
+
+## 2026-07-20
+
+- 已读取 planning-with-files 技能并执行 session-catchup；保留现有三个规划文件的历史追加内容。
+- 已确认当前主线 v0.5.1、v0.5.0 tag 与后续 Classic relaunch 修复提交的关系。
+- 已定位 Classic Qt 编排器、纯网络服务、独立 updater 与对应测试；正在对照 tag 和当前源码确定仍可复现的根因。
+- 已确认多源下载存在“大文件先于小 SHA 探测”的顺序问题，且单源仅有 inactivity timeout、没有总时限。
+- 已确认 updater.ready 写入过早：主程序在 updater 尚未完成任何校验前就硬退出，可稳定解释“下载成功后闪退但没有完成更新”的用户观感。
+- 首轮定向测试收集 157 项，其中无需临时目录的 33 项通过；其余 124 项因系统临时目录权限在 setup 阶段失败，并非产品/断言失败。下一轮切换到 `C:/tmp`。
+- 改用工作区 `.tmp` 后，更新服务、Qt 编排器、updater/replacer 共 157 项全部通过。
+- Ruff、compileall、`git diff --check` 全部通过。Pyright 对四个同名物理 namespace source root 无法合并，定向运行只产生既有工程解析错误与 unused warning，没有可归因于本次改动的新类型诊断。
+- 最终复跑仍为 157 passed；SHA 先行后的失败/取消路径会同时清理 ZIP 与 SHA 临时文件，Ruff、compileall、diff check 再次通过。任务完成。
+
+---
+# 2026-07-20：PaddlePaddle 3.3.1 CPU/oneDNN 兼容性审计
+
+- 已读取 planning-with-files 技能并完成 session-catchup。
+- 已建立审计计划；下一步读取 oneDNN 判定、调用点和测试。
+- 已审计 `cpu_info`、OCRService 管道创建、启动 FLAGS、注册工厂与现有测试；发现未知版本 fail-open、强制覆盖绕过全部安全门槛、AVX2 证据不足和缺少真实推理/回退测试。
+- 下一步核对 WorkerHost 继承语义与当前安装版 PaddleX 对 `enable_mkldnn` 的实际处理。
+- 已确认 WorkerHost 入口不统一设置 eager oneDNN FLAGS；PySide 继承、WinUI/直启不保证。
+- 首次安装版签名探测因未走项目 CUDA DLL 注册路径而在导入 Torch 时失败；已记录为独立环境错误，下一次实验改用真实 OCRService 初始化顺序。
+- 已核对 Paddle/PaddleOCR 与 oneDNN 官方资料：3.3.x 的 PIR/oneDNN 回归仍未关闭，禁用 oneDNN 的绕过方案有上游问题记录支持；“3.4 自动安全”和“oneDNN 必须 AVX2”缺少证据。
+- 为排除现有 GPU/cuDNN 环境干扰，下一步在独立临时 CPU 虚拟环境做 Paddle 3.3.1 A/B 验证，不修改正式 `.venv`。
+- 独立 CPU 环境验证完成：禁用 oneDNN 的 PP-OCRv6 推理成功；启用 oneDNN 稳定复现上游 PIR 属性转换异常。机器具备 AVX2，排除指令集不足。
+- 已验证两个全局 FLAGS 不能覆盖 PaddleOCR 构造器的 mkldnn 配置；关闭 new IR 也未规避该异常。
+- 已从安装版源码确认 PaddleOCR 3.7.0 默认启用 mkldnn，且当前 PaddleX/PaddleOCR 3.7.x 不识别项目文档提到的 `PADDLE_PDX_ENABLE_MKLDNN_BYDEFAULT`。
+- 现有 oneDNN 判定与 OCRService 注册测试共 40 项通过；这些测试证明传参与策略分支未退化，但不替代真实推理兼容测试。
+- 三阶段审计全部完成，准备清理独立 CPU 环境并输出分级修改建议；未修改产品代码。
+- 已删除本次创建的独立 CPU 虚拟环境与专用 uv 缓存；正式 `.venv` 和产品代码未变。
+
+---
+# 2026-07-20：oneDNN 兼容性整改
+
+- 已创建持久目标并启用 planning-with-files；session-catchup 完成。
+- 已确认 oneDNN 相关源码/测试无既有差异，更新链未提交修改属于其他任务，将保持不触碰。
+- Phase 1 完成：冻结 fail-closed、严格异常匹配、单次重建重试和 GPU 不变契约。
+- Phase 2 完成：安全判定改为未知/未验证版本 fail-closed，初始验证白名单为空；AVX2 和 PaddleX 历史环境变量文档已修正。
+- Phase 3 实现完成待验证：新增单管道缓存释放、严格异常链识别、进程级禁用、同请求一次性重建重试和状态日志。
+- 已补充缓存释放及 OCRService 回退/非目标异常/二次失败/GPU 不回退测试，进入定向验证。
+- Ruff format 仅格式化 3 个本次相关文件；定向 Ruff check 全通过。
+- 第一轮定向测试 68 passed；唯一 warning 是环境未安装 ccache，与整改无关。
+- compileall 与 `git diff --check` 通过。首次 Pyright 因物理拆包 namespace 解析限制报告 27 个 missing import/既有诊断；本次返回值已显式收窄为 bool，下一轮按诊断行号确认无新增类型问题。
+- 新增可选真实 CPU 模型门禁及运行说明；默认套件复跑 `68 passed, 2 skipped`，Ruff 全通过。
+- Pyright 复跑从 27 降至 26 个诊断，消失项是本次已修正的 Optional bool 返回；剩余项均为物理 namespace missing import 或原文件既有行，新增回退方法无类型诊断。
+- 扩展回归首轮 `165 passed, 7 skipped, 3 failed`；3 项失败均来自同进程先加载 Paddle 后再由 ModelScope 导入 Torch 触发的既有 cuDNN DLL 冲突，oneDNN 相关及其余管道测试已通过。下一步把表格依赖测试隔离到新进程复核。
+- 表格依赖测试在隔离的新 pytest 进程中 `25 passed`，排除产品回归；最终审阅同时修正真实门禁未提供模型变量时 `Path('')` 误指向工作区的边界情况。
+- 最终定向复跑 `69 passed, 2 skipped`；Ruff、compileall、`git diff --check` 全部通过。
+- 当前 `.venv` 实际调用 `can_safely_enable_onednn()` 返回 False，并明确记录 Paddle 3.3.1 PIR/oneDNN 不兼容原因。
+- 四阶段整改完成；未创建提交，未改动既有更新链产品差异。
+
+---

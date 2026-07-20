@@ -91,6 +91,14 @@
 
 | 错误 | 尝试 | 处理 |
 |---|---:|---|
+| 搜索缓存释放实现时使用了已不存在的 `packages/vibeocr-backend/src/vibeocr/core` 路径 | 1 | 有效实现位于 `services/pipeline_cache_manager.py`；停止使用旧路径并基于现有缓存管理器扩展单管道释放 |
+| PowerShell 下把 `packages/*/pyproject.toml` 作为 ripgrep 文件参数时通配符未展开 | 1 | 根配置已成功定位；后续只读取明确路径，不重复使用该参数形式 |
+| 直接对物理拆包文件运行 Pyright 无法合并多个同名 `vibeocr` namespace 根，报告 27 个 missing import/既有诊断 | 1 | compileall 与 diff check 已通过；显式收窄本次 oneDNN 缓存返回值后复跑，以行号审计区分新增与工程解析噪音 |
+| 追加 Pyright 错误记录时补丁上下文已因返回值提前收窄而不匹配 | 1 | 代码改动已实际存在；改用当前计划尾部的精确上下文补记，不重复修改产品代码 |
+| 搜索缓存释放实现时使用了已不存在的 `packages/vibeocr-backend/src/vibeocr/core` 路径 | 1 | 有效实现位于 `services/pipeline_cache_manager.py`；停止使用旧路径并基于现有缓存管理器扩展单管道释放 |
+| PowerShell 下把 `packages/*/pyproject.toml` 作为 ripgrep 文件参数时通配符未展开 | 1 | 根配置已成功定位；后续用 PowerShell `Get-ChildItem` 或只读取根 `pyproject.toml`，不重复使用该参数形式 |
+| 当前 GPU 开发环境直接导入 PaddleOCR 时触发 cuDNN DLL `WinError 127` | 2 | 认定为与 oneDNN 无关的 CUDA 运行库冲突；使用隔离 CPU 环境验证，避免污染结论 |
+| 直接导入 PaddleOCR 因 Torch/cuDNN DLL 搜索顺序触发 `WinError 127` | 1 | 后续所有实验先执行 `OCRService._setup_cuda_dll_path()`；不把该 CUDA 问题计入 oneDNN 结论 |
 | 当前 PowerShell 未注册全局 `python`，首次 session-catchup 失败 | 1 | 改用 Codex 工作区依赖提供的 Python，恢复脚本成功 |
 | 并行读取命令中 `rg` 无匹配返回 1，导致聚合工具隐藏同组部分输出 | 1 | 后续拆开无匹配检索，避免把 `rg` 返回 1 当作整体失败 |
 | 大范围 `rg` 经 `Select-Object -First` 截断后返回 1，导致同组日志统计输出被折叠 | 1 | 将日志统计和代码检索拆开，检索改按子系统限定路径 |
@@ -598,5 +606,168 @@
 | 当前 PowerShell 无全局 `python`，首次 session-catchup 失败 | 1 | 改用 Codex 工作区依赖中的 Python，已成功运行 |
 | Ruff 语义检查通过，但首次 `ruff format --check` 报两个修改文件需格式化 | 1 | 使用仓库 Ruff 执行机械格式化后重新验证 |
 | 沙箱内 GitHub CLI 无权读取用户配置 | 1 | 按权限规则使用已批准的 `gh` 前缀在沙箱外读取远端状态 |
+
+---
+# 任务计划：修复本地 `.venv` 开发环境（2026-07-20）
+
+## 目标
+
+恢复项目本地 Python 虚拟环境的解释器、依赖和项目安装状态，使后续开发命令稳定、可复现；用户所说的 `envn` 按现有目录判断为 `.venv`。
+
+## 阶段
+
+### Phase 1：环境与依赖契约诊断
+- [x] 核对 Python 版本、uv/解释器来源、虚拟环境元数据与项目环境策略
+- [x] 检查 `.venv` 的解释器、pip/uv、已安装包和项目导入状态
+- **Status:** completed
+
+### Phase 2：最小修复
+- [x] 按锁文件恢复开发依赖和 workspace 安装状态
+- [x] 修复会造成后续漂移或命令不可用的环境配置
+- **Status:** completed
+
+### Phase 3：验证
+- [x] 验证解释器、依赖一致性、关键导入和开发工具
+- [x] 运行与环境相关的最小测试/静态检查
+- **Status:** completed
+
+### Phase 4：完整 OCR 后端恢复
+- [x] 按项目 README 使用 `auto/domestic` profile 安装当前机器的推理重依赖
+- [x] 验证后端依赖检测与基础导入
+- **Status:** completed
+
+## 错误记录
+
+| 错误 | 尝试 | 处理 |
+|---|---:|---|
+| 当前 PowerShell 找不到全局 `python`，planning session-catchup 未运行 | 1 | 使用项目/工作区内可用解释器继续，修复后再补跑 |
+| uv 默认用户缓存目录在当前受限环境初始化失败 | 1 | 显式使用仓库内 `.uv-cache` |
+| 多个 `.dist-info/METADATA` 被 ACL 拒绝读取，`uv pip check` 报 20 项不一致 | 1 | 放弃逐包覆盖修复，准备以可回退方式重建 `.venv` |
+| 离线重建缺少 `pytest-qt==4.5.0` 缓存 | 1 | 获得联网许可后按冻结锁文件下载并完成重建 |
+| 旧 `.venv` 根目录与 `Lib` 不能改名 | 3 | 重置 83,326 个文件 ACL；定位并停止 PyCharm 旧 Pyright language server；保留根目录改用 uv 原位强制重装 |
+| 首轮定向 pytest 的 `C:\tmp` 父目录创建被拒，8 项 fixture setup error | 1 | 改用仓库内 `.tmp` 重跑，同一 124 项全部通过 |
+| 后端安装器因 uv venv 缺少 pip 失败，并在错误输出阶段触发 GBK 编码异常 | 1 | 用 uv 安装 pip 26.1.2，并设置 UTF-8 环境后重跑成功 |
+| 后端安装器从 CUDA 镜像误装 `torch 2.13.0+cpu` | 1 | 用冻结锁文件的 `gpu-cu126` extra 纠正为 `torch 2.12.1+cu126` / `torchvision 0.27.1+cu126` |
+| 裸烟测未注册 DLL 路径时 Paddle 导入失败 | 1 | 按生产 `OCRService._setup_cuda_dll_path()` 顺序验证，Paddle/Torch GPU 运算均成功 |
+
+---
+# 任务计划：修复 0.5.0 更新卡死、换源慢与下载后闪退（2026-07-20）
+
+## 目标
+
+修复 Classic 0.5.0 在检查更新、下载/换源及更新器交接阶段的无响应或异常退出；在当前主线补充可靠超时、非阻塞处理、快速换源和更新器握手契约，并完成定向回归。
+
+## 阶段
+
+### Phase 1：证据与根因
+- [x] 核对 Classic 检查/下载的网络超时、事件循环与多源顺序
+- [x] 核对下载完成后的 ZIP 校验、更新器启动、ready 文件与退出顺序
+- [x] 对照 v0.5.0 与当前主线，区分已修复项和仍存在项
+- **Status:** complete
+
+### Phase 2：实现
+- [x] 消除检查/下载/换源中的长时间无反馈或不合理串行等待
+- [x] 加固下载成功后的更新器接管，禁止把异常退出伪装成正常更新
+- [x] 补充状态反馈和兼容性回归契约
+- **Status:** complete
+
+### Phase 3：验证
+- [x] 运行更新服务、Qt 编排器和 updater 定向测试
+- [x] 运行 Ruff、Pyright（适用范围）与 git diff 检查
+- [x] 汇总根因、修复范围和 0.5.0 用户升级建议
+- **Status:** complete
+
+## 错误记录
+
+| 错误 | 尝试 | 处理 |
+|---|---:|---|
+| 初次按旧单体路径读取 `src/vibeocr/pyside/update_service.py` 失败 | 1 | 按物理拆包后的路径定位到 `apps/vibeocr-pyside/.../pyside/update.py` 与 `packages/vibeocr-client-py/.../services/update_service.py` |
+| 首轮 pytest 在系统 `%TEMP%/pytest-of-felji` 创建夹具目录被沙箱拒绝，124 项 setup error | 1 | 测试本身已有 33 项通过；后续改用可写的 `C:/tmp` basetemp 并禁用 pytest cache 重跑 |
+| `C:/tmp` 在当前命令沙箱中仍不可创建，第二轮 pytest 同样只有 setup error | 2 | 改用工作区内既有可写 `.tmp/update-tests`，随后 157 项全部通过 |
+| 直接对物理拆包文件运行 Pyright 时无法合并四个 `vibeocr` namespace 根，报告 7 个 missing import | 1 | 使用仅用于验证的临时 Pyright 配置显式列出四个 source root，避免把工程解析限制误判为代码错误 |
+| Pyright 即使配置四个 `extraPaths` 仍将同名 `vibeocr` 物理 namespace 根视为互斥，持续报告相同 missing import | 2-3 | 停止重复尝试；以 Ruff、compileall、157 项定向测试及仓库既有 namespace 架构事实验收，删除临时配置。`scripts/update_replacer.py` 本身无新增类型错误（仅既有 unused warning） |
+
+---
+# 任务计划：审计 PaddlePaddle 3.3.1 CPU/oneDNN 兼容策略（2026-07-20）
+
+## 目标
+
+核实 PaddlePaddle 3.3.1 CPU 推理中 oneDNN 的实际兼容性，审计项目现有探测、禁用、回退和测试是否合理，并给出有证据的修改建议；本次仅审计，不修改产品代码。
+
+## 阶段
+
+### Phase 1：项目实现与契约
+- [x] 审计 oneDNN 判定、环境变量、PaddleOCR 参数与调用时序
+- [x] 审计现有单元/集成测试和历史兼容注释
+- **Status:** completed
+
+### Phase 2：本地运行验证
+- [x] 在 PaddlePaddle 3.3.1 CPU 设备上验证禁用/启用 oneDNN 的关键路径
+- [x] 区分 eager FLAGS 与 Paddle Inference/PaddleOCR 构造参数的实际语义
+- **Status:** completed
+
+### Phase 3：上游证据与结论
+- [x] 对照 Paddle/PaddleOCR 官方文档、源码或 issue
+- [x] 评估现有策略的正确部分、过度保守处和缺失保护
+- **Status:** completed
+
+## 错误记录
+
+| 错误 | 尝试 | 处理 |
+|---|---:|---|
+| 当前 GPU 开发环境直接导入 PaddleOCR 时触发 cuDNN DLL `WinError 127` | 2 | 认定为与 oneDNN 无关的 CUDA 运行库冲突；改用隔离 CPU 环境验证 |
+
+## 结论
+
+- PaddlePaddle CPU 3.3.1 与 oneDNN 并非全面不可用，但当前 PP-OCRv6 PIR 静态推理路径存在可稳定复现的上游回归；项目必须显式传 `enable_mkldnn=False`。
+- 现有 3.3.x 黑名单对当前版本合理；未知/无法导入 Paddle 时 fail-open、未经验证自动放行未来版本、AVX2 绝对化表述和过时环境变量说明需要修正。
+- 推荐加入只针对已知 oneDNN/PIR 异常的一次性禁用重建回退，以及真实 CPU 模型冒烟测试。
+
+---
+# 任务计划：oneDNN 兼容性整改（2026-07-20）
+
+## 目标
+
+修复审计确认的 oneDNN 安全判定、运行时回退、文档和测试缺口；确保 PaddlePaddle 3.3.1 CPU 默认禁用 oneDNN，未来未知版本不会失效开放，GPU 路径保持不变。
+
+## 阶段
+
+### Phase 1：范围与契约
+- [x] 确认相关文件没有与既有未提交更新链改动重叠
+- [x] 冻结 fail-closed、已知异常单次回退、GPU 不受影响的契约
+- **Status:** completed
+
+### Phase 2：安全判定与文档
+- [x] 未知/不可解析 Paddle 版本改为保守禁用
+- [x] 未来版本改为已验证版本策略，修正 AVX2 与过时环境变量说明
+- **Status:** completed
+
+### Phase 3：运行时回退
+- [x] 只识别已知 PIR/oneDNN 异常并使当前进程永久禁用 oneDNN
+- [x] 安全释放并重建受影响管道，原请求只重试一次
+- **Status:** completed
+
+### Phase 4：验证
+- [x] 补齐判定、回退、非目标异常与 GPU 回归测试
+- [x] 增加默认跳过、升级时显式启用的真实 PP-OCR CPU/oneDNN 模型门禁
+- [x] 运行定向测试、Ruff、Pyright/compile 与 diff 检查
+- **Status:** completed
+
+## 错误记录
+
+| 错误 | 尝试 | 处理 |
+|---|---:|---|
+| 搜索缓存释放实现时使用了已不存在的 backend `core` 路径 | 1 | 改为读取 `services/pipeline_cache_manager.py` 并扩展现有缓存管理器 |
+| PowerShell 未展开传给 ripgrep 的 `packages/*/pyproject.toml` | 1 | 后续使用明确路径读取配置 |
+| 物理拆包的多个 `vibeocr` 源根使定向 Pyright 报 27 个 missing import/既有诊断 | 1 | 显式收窄本次返回类型后复跑为 26 项；减少的一项是本次 Optional bool，剩余均不位于新增回退逻辑 |
+| 记录 Pyright 结果的补丁上下文已变化 | 1 | 读取计划尾部后用唯一 Phase 4 上下文补记 |
+| 扩展回归把 Paddle OCR 测试与需导入 Torch 的表格依赖测试放进同一进程，触发已知 cuDNN DLL 版本冲突；后续两项因 PaddleX 半初始化连带失败 | 1 | 165 passed/7 skipped 已完成；改为将 `test_pipeline_table.py` 放到全新 pytest 进程单独运行，避免把 GPU DLL 导入顺序问题误判为 oneDNN 回归 |
+
+## 最终验收
+
+- 当前环境实际判定：Paddle 3.3.1 CPU oneDNN 禁用，原因指向上游 #77340。
+- 定向最终回归：`69 passed, 2 skipped`；隔离表格管道：`25 passed`；扩展混合套件除已知跨框架 cuDNN 导入冲突外其余 `165 passed, 7 skipped`。
+- Ruff、compileall、`git diff --check` 通过；Pyright 的本次 Optional 返回问题已消除，剩余为仓库物理 namespace 解析及既有诊断。
+- oneDNN 产品改动与工作区既有更新链改动不重叠。
 
 ---

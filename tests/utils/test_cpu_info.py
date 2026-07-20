@@ -18,6 +18,7 @@ from vibeocr.utils.cpu_info import (
 # get_cpu_thread_count
 # ---------------------------------------------------------------------------
 
+
 def test_get_cpu_thread_count_returns_positive_int():
     """在真实环境上应返回正值。"""
     result = get_cpu_thread_count()
@@ -57,6 +58,7 @@ def test_get_cpu_thread_count_fallback_on_probe_failure(monkeypatch):
 # detect_cpu_features
 # ---------------------------------------------------------------------------
 
+
 def test_detect_cpu_features_returns_dict_with_expected_keys():
     """返回的字典必须含约定键。"""
     feats = detect_cpu_features()
@@ -92,6 +94,7 @@ def test_detect_cpu_features_parses_linux_flags():
 # can_safely_enable_onednn
 # ---------------------------------------------------------------------------
 
+
 def test_onednn_force_enable(monkeypatch):
     """VIBEOCR_FORCE_ONEDNN=1 强制启用。"""
     monkeypatch.setenv("VIBEOCR_FORCE_ONEDNN", "1")
@@ -114,7 +117,13 @@ def test_onednn_rejected_without_avx2(monkeypatch):
     monkeypatch.setattr(cpu_info, "_get_paddle_version", lambda: "3.4.0")
     with patch(
         "vibeocr.utils.cpu_info.detect_cpu_features",
-        return_value={"avx": True, "avx2": False, "avx512": False, "fma": False, "amx": False},
+        return_value={
+            "avx": True,
+            "avx2": False,
+            "avx512": False,
+            "fma": False,
+            "amx": False,
+        },
     ):
         safe, reason = cpu_info.can_safely_enable_onednn()
     assert safe is False
@@ -127,24 +136,79 @@ def test_onednn_rejected_for_blacklisted_paddle(monkeypatch):
     monkeypatch.setattr(cpu_info, "_get_paddle_version", lambda: "3.3.1")
     with patch(
         "vibeocr.utils.cpu_info.detect_cpu_features",
-        return_value={"avx": True, "avx2": True, "avx512": False, "fma": False, "amx": False},
+        return_value={
+            "avx": True,
+            "avx2": True,
+            "avx512": False,
+            "fma": False,
+            "amx": False,
+        },
     ):
         safe, reason = cpu_info.can_safely_enable_onednn()
     assert safe is False
     assert "77340" in reason
 
 
-def test_onednn_allowed_for_new_paddle_with_avx2(monkeypatch):
-    """新 paddle 版本 + AVX2 CPU 允许启用。"""
+def test_onednn_rejected_for_unvalidated_future_paddle(monkeypatch):
+    """未来版本即使有 AVX2，也不能因不在黑名单就自动启用。"""
     monkeypatch.delenv("VIBEOCR_FORCE_ONEDNN", raising=False)
     monkeypatch.setattr(cpu_info, "_get_paddle_version", lambda: "3.4.0")
     with patch(
         "vibeocr.utils.cpu_info.detect_cpu_features",
-        return_value={"avx": True, "avx2": True, "avx512": True, "fma": True, "amx": False},
+        return_value={
+            "avx": True,
+            "avx2": True,
+            "avx512": True,
+            "fma": True,
+            "amx": False,
+        },
+    ):
+        safe, reason = cpu_info.can_safely_enable_onednn()
+    assert safe is False
+    assert "尚未通过" in reason
+
+
+def test_onednn_rejected_when_paddle_version_unknown(monkeypatch):
+    """paddle 未安装或导入失败时必须 fail-closed。"""
+    monkeypatch.delenv("VIBEOCR_FORCE_ONEDNN", raising=False)
+    monkeypatch.setattr(cpu_info, "_get_paddle_version", lambda: None)
+    with patch(
+        "vibeocr.utils.cpu_info.detect_cpu_features",
+        return_value={
+            "avx": True,
+            "avx2": True,
+            "avx512": False,
+            "fma": False,
+            "amx": False,
+        },
+    ):
+        safe, reason = cpu_info.can_safely_enable_onednn()
+    assert safe is False
+    assert "无法读取" in reason
+
+
+def test_onednn_allowed_only_for_validated_paddle_range(monkeypatch):
+    """只有显式加入真实推理验证范围的版本才默认启用。"""
+    monkeypatch.delenv("VIBEOCR_FORCE_ONEDNN", raising=False)
+    monkeypatch.setattr(cpu_info, "_get_paddle_version", lambda: "3.4.1")
+    monkeypatch.setattr(
+        cpu_info,
+        "_ONEDNN_VALIDATED_SAFE_PADDLE_RANGES",
+        [("3.4.0", "3.4.2")],
+    )
+    with patch(
+        "vibeocr.utils.cpu_info.detect_cpu_features",
+        return_value={
+            "avx": True,
+            "avx2": True,
+            "avx512": True,
+            "fma": True,
+            "amx": False,
+        },
     ):
         safe, reason = cpu_info.can_safely_enable_onednn()
     assert safe is True
-    assert "未在黑名单" in reason
+    assert "已通过验证" in reason
 
 
 def test_onednn_paddle_version_with_build_suffix(monkeypatch):
@@ -153,7 +217,13 @@ def test_onednn_paddle_version_with_build_suffix(monkeypatch):
     monkeypatch.setattr(cpu_info, "_get_paddle_version", lambda: "3.3.1+cu126")
     with patch(
         "vibeocr.utils.cpu_info.detect_cpu_features",
-        return_value={"avx": True, "avx2": True, "avx512": False, "fma": False, "amx": False},
+        return_value={
+            "avx": True,
+            "avx2": True,
+            "avx512": False,
+            "fma": False,
+            "amx": False,
+        },
     ):
         safe, _ = cpu_info.can_safely_enable_onednn()
     assert safe is False
@@ -162,6 +232,7 @@ def test_onednn_paddle_version_with_build_suffix(monkeypatch):
 # ---------------------------------------------------------------------------
 # _version_in_range
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.parametrize(
     "ver,lo,hi,expected",
