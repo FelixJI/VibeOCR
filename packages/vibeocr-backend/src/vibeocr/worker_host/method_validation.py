@@ -182,7 +182,7 @@ def _request_ocr(p: dict[str, Any]) -> None:
     _closed(
         p,
         required={"image"},
-        optional={"pipeline", "language"},
+        optional={"pipeline", "language", "options"},
         label="ocr.recognize request",
     )
     _shared_ref(p["image"], "image")
@@ -190,6 +190,8 @@ def _request_ocr(p: dict[str, Any]) -> None:
         raise MethodPayloadError("pipeline is not supported by protocol v1")
     if "language" in p and p["language"] is not None:
         _string(p["language"], "language")
+    if "options" in p and not isinstance(p["options"], dict):
+        raise MethodPayloadError("options must be an object")
 
 
 def _response_ocr(p: dict[str, Any]) -> None:
@@ -206,6 +208,9 @@ def _response_ocr(p: dict[str, Any]) -> None:
             "content_list",
             "image_width",
             "image_height",
+            "preproc_angle",
+            "preproc_img_w",
+            "preproc_img_h",
         },
         label="ocr.recognize response",
     )
@@ -218,7 +223,13 @@ def _response_ocr(p: dict[str, Any]) -> None:
     if "text_with_scores" in p:
         if not isinstance(p["text_with_scores"], list):
             raise MethodPayloadError("text_with_scores must be an array")
-    for int_name in ("image_width", "image_height"):
+    for int_name in (
+        "image_width",
+        "image_height",
+        "preproc_angle",
+        "preproc_img_w",
+        "preproc_img_h",
+    ):
         if int_name in p:
             _integer(p[int_name], int_name)
     for name in ("markdown_text", "html_text", "raw_text"):
@@ -230,7 +241,7 @@ def _request_ocr_batch(p: dict[str, Any]) -> None:
     _closed(
         p,
         required={"images"},
-        optional={"pipeline", "language"},
+        optional={"pipeline", "language", "options"},
         label="ocr.recognize_batch request",
     )
     images = p["images"]
@@ -242,6 +253,8 @@ def _request_ocr_batch(p: dict[str, Any]) -> None:
         raise MethodPayloadError("pipeline is not supported by protocol v1")
     if "language" in p and p["language"] is not None:
         _string(p["language"], "language")
+    if "options" in p and not isinstance(p["options"], dict):
+        raise MethodPayloadError("options must be an object")
 
 
 def _response_ocr_batch(p: dict[str, Any]) -> None:

@@ -10,6 +10,22 @@ from vibeocr.worker_host import sync_client
 from vibeocr.worker_host.sync_client import SyncBackendClient
 
 
+def test_reconstruct_ocr_result_preserves_preproc_metadata() -> None:
+    result = sync_client._reconstruct_ocr_result(
+        {
+            "text": "ok",
+            "pipeline": "OCR",
+            "preproc_angle": 270,
+            "preproc_img_w": 3508,
+            "preproc_img_h": 2480,
+        }
+    )
+
+    assert result.preproc_angle == 270
+    assert result.preproc_img_w == 3508
+    assert result.preproc_img_h == 2480
+
+
 def test_output_drains_delegate_structured_lines_with_stream_metadata(
     monkeypatch,
 ) -> None:

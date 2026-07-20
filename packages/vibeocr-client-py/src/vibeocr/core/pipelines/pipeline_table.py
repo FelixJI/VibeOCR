@@ -234,7 +234,9 @@ def _recognize_table(service: Any, image: Any, options: TableRecognitionOptions)
         # 已在 post-processing 中 clip 到原图范围）。表格整体外接框需从
         # cell_box_list 的并集推导，否则过滤条件永远为空，overall_ocr_res
         # 里整图文字（含表格内文字）会被原样再展示一遍。
-        table_bboxes: list[tuple[float, float, float, float]] = []
+        table_match_regions: list[
+            tuple[tuple[float, float, float, float], str]
+        ] = []
 
         # 先把 overall_ocr_res 解析为统一的 ocr_items（text + center + score +
         # bbox），供回填与去重共享。center 为文本框中心点（原图坐标），
@@ -339,7 +341,6 @@ def _recognize_table(service: Any, image: Any, options: TableRecognitionOptions)
                             max(xs_max),
                             max(ys_max),
                         )
-                        table_bboxes.append(current_bbox)
                 except (TypeError, ValueError, IndexError):
                     pass
 
@@ -358,6 +359,13 @@ def _recognize_table(service: Any, image: Any, options: TableRecognitionOptions)
                     table_html, cell_box_list, ocr_items
                 )
                 consumed_ocr_indices |= consumed
+
+            if current_bbox is not None:
+                from vibeocr.utils.html_tables import _cell_text
+
+                table_match_regions.append(
+                    (current_bbox, _normalize_match_text(_cell_text(table_html)))
+                )
 
             table_md = _html_table_to_markdown(table_html)
             if table_md:
@@ -387,9 +395,8 @@ def _recognize_table(service: Any, image: Any, options: TableRecognitionOptions)
         # 但保留以兼容"表格 + 周边文字"的图片。
         # 注意：overall_ocr_res 包含整图所有文本（含表格内文字）。处理策略：
         # 1. 已被回填进空单元格的 OCR（consumed_ocr_indices）→ 跳过（已在表格中展示）。
-        # 2. 落在表格 bbox 内、但未被回填的 OCR → 旧逻辑直接丢弃（continue），
-        #    会漏掉"单元格已填但 IoU 漏匹配"的文字；新逻辑改为保留为独立 text
-        #    块（label="text"），至少不漏字，用户可在网格编辑器手动处理。
+        # 2. 落在单元格内的 OCR 已被合并进表格；无精确单元格但文本已存在于
+        #    表格中的 OCR 也按表格 bbox + 文字匹配去重。
         # 3. 表格外的 OCR → 正常展示。
         if ocr_items:
             for i, item in enumerate(ocr_items):
@@ -400,9 +407,15 @@ def _recognize_table(service: Any, image: Any, options: TableRecognitionOptions)
                     continue
                 bbox_tuple = item["bbox"]
                 center = item["center"]
-                # 落在表格区域内的未吸收文本：保留（不再 continue 丢弃），
-                # 仅当无中心坐标时无法判定，仍按表外处理。
-                # （语义：宁可重复，不可漏字）
+                normalized_text = _normalize_match_text(text)
+                if center is not None and normalized_text:
+                    if any(
+                        _point_in_box(float(center[0]), float(center[1]), bbox)
+                        and normalized_text in table_text
+                        for bbox, table_text in table_match_regions
+                    ):
+                        continue
+                # 剩余项属于表格外文字，或无法安全定位/去重的 OCR；保留以防漏字。
                 cl_idx = len(content_list)
                 text_blocks.append(
                     TextBlock(
@@ -442,22 +455,27 @@ def _point_in_box(
     return box[0] <= cx <= box[2] and box[1] <= cy <= box[3]
 
 
+def _normalize_match_text(text: str) -> str:
+    """用于表格 OCR 去重的宽松文本规范化。"""
+    return "".join(str(text).split()).casefold()
+
+
 def _backfill_empty_table_cells(
     table_html: str,
     cell_box_list: list[Any] | None,
     ocr_items: list[dict[str, Any]],
 ) -> tuple[str, set[int]]:
-    """把落在"空单元格"内的 OCR 文本回填进 pred_html，救回上游漏填的字。
+    """把表内 OCR 吸收到对应单元格，并救回上游漏填的字。
 
     根因：PaddleX ``match_table_and_ocr`` 要求 IoU>0.7 才把 OCR 文字填进
     单元格，失配时输出空 ``<td></td>`` / ``<th></th>``；但那些文字其实躺在
-    ``overall_ocr_res`` 里。本函数把这些"漏填但识别到"的字按几何落点回填
-    进对应的空单元格，避免彻底漏字。
+    ``overall_ocr_res`` 里。本函数按几何落点吸收所有表内 OCR：空格回填，
+    已填格去重或追加缺失文字，从而避免 UI 再显示独立文本框。
 
     匹配策略——**几何优先，不依赖位置序号**：
     PaddleX 的 cell_box_list 与 pred_html 单元格虽都是 row-major，但二者
     的 row 切分机制独立（一个几何、一个结构 token），错位时 1:1 位置对应
-    不保证。故本函数对每个空单元格，按其在 cell_box_list 的位置取候选框，
+    不保证。故本函数对每个单元格，按其在 cell_box_list 的位置取候选框，
     再用 OCR 文本中心点是否落在框内做匹配——位置序号仅用于取候选框，几何
     才是判据。
 
@@ -469,39 +487,38 @@ def _backfill_empty_table_cells(
             为文本框中心点（原图坐标）；None 表示无坐标，跳过。
 
     Returns:
-        (new_table_html, consumed_indices)：回填后的 HTML，与被消费的
-        ocr_items 索引集合。未被回填（已填单元格/无坐标/落点不在任何空格）
-        的项不在 consumed 中，由调用方决定后续处理。
+        (new_table_html, consumed_indices)：合并后的 HTML，与被消费的
+        ocr_items 索引集合。无坐标或落点不在任何单元格的项由调用方处理。
     """
     from vibeocr.utils.html_tables import _RE_CELL, _RE_TR, _cell_text
 
     if not cell_box_list or not ocr_items:
         return table_html, set()
 
-    # 收集空单元格：遍历 <tr>/<td|th>（row-major 顺序，与 cell_box_list 对应）
+    # 收集全部单元格：表格内已有内容对应的 OCR 也需要吸收，否则 UI 会
+    # 同时显示表格和一套独立文本框。
     # 注意：_RE_CELL 在 tr_match.group(1) 内匹配，其 start/end 是相对该子串
     # 的偏移；需加上 tr_match.start(1) 换算成 table_html 内的绝对偏移，否则
     # 注入会落到错误位置（如把字插进 <table> 标签中间）。
-    empty_cell_indices: list[int] = []
     all_cell_spans: list[tuple[int, int]] = []  # (start, end) in table_html
+    all_cell_texts: list[str] = []
     global_idx = 0
     for tr_match in _RE_TR.finditer(table_html):
         tr_offset = tr_match.start(1)
         for cm in _RE_CELL.finditer(tr_match.group(1)):
             inner = cm.group(3)
-            if not _cell_text(inner).strip():
-                empty_cell_indices.append(global_idx)
             all_cell_spans.append(
                 (tr_offset + cm.start(3), tr_offset + cm.end(3))
             )
+            all_cell_texts.append(_cell_text(inner).strip())
             global_idx += 1
 
-    if not empty_cell_indices:
+    if not all_cell_spans:
         return table_html, set()
 
-    # 为每个空单元格取候选框（按位置序号；越界则跳过该格）
+    # 为每个单元格取候选框（按位置序号；越界则跳过该格）
     candidate_boxes: dict[int, tuple[float, float, float, float]] = {}
-    for ci in empty_cell_indices:
+    for ci in range(len(all_cell_spans)):
         if ci < len(cell_box_list):
             box = cell_box_list[ci]
             if hasattr(box, "tolist"):
@@ -521,8 +538,7 @@ def _backfill_empty_table_cells(
     if not candidate_boxes:
         return table_html, set()
 
-    # 几何匹配：OCR 文本中心落在空单元格框内 → 回填进该格
-    # cell_to_text: 一个空格可能吸收多条 OCR（少见但兼容），用空格连接
+    # 几何匹配：OCR 文本中心落在任意单元格框内 → 吸收进该格。
     cell_to_text: dict[int, list[str]] = {ci: [] for ci in candidate_boxes}
     consumed: set[int] = set()
     for i, item in enumerate(ocr_items):
@@ -537,13 +553,13 @@ def _backfill_empty_table_cells(
             if _point_in_box(cx, cy, box):
                 cell_to_text[ci].append(text)
                 consumed.add(i)
-                break  # 一个 OCR 项只回填到一个空格
+                break  # 一个 OCR 项只吸收到一个单元格
 
     if not consumed:
         return table_html, set()
 
-    # 注入：从后往前替换空单元格 inner（避免 span 偏移）
-    # 每个空格的 inner 区域替换为回填文字（已转义 HTML 特殊字符）
+    # 空格直接回填；已有内容只追加尚未出现的 OCR 文本，既消除独立文本框，
+    # 又避免结构模型漏字时静默丢失。
     import html as _html
 
     replacements: list[tuple[int, int, str]] = []
@@ -551,7 +567,19 @@ def _backfill_empty_table_cells(
         if not texts:
             continue
         span_start, span_end = all_cell_spans[ci]
-        filled = _html.escape(" ".join(texts))
+        existing = all_cell_texts[ci]
+        normalized_existing = _normalize_match_text(existing)
+        additions = [
+            value
+            for value in texts
+            if _normalize_match_text(value)
+            and _normalize_match_text(value) not in normalized_existing
+        ]
+        if not additions:
+            continue
+        escaped = _html.escape(" ".join(additions))
+        original = table_html[span_start:span_end]
+        filled = f"{original}<br>{escaped}" if existing else escaped
         replacements.append((span_start, span_end, filled))
 
     # 按位置降序替换

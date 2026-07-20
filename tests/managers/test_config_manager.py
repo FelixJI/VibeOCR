@@ -51,3 +51,14 @@ def test_set_max_heavy_pipelines_none(cm):
     cm.set_max_heavy_pipelines(3)
     cm.set_max_heavy_pipelines(None)
     assert cm.get_max_heavy_pipelines() is None
+
+
+def test_log_level_defaults_to_info_and_persists(cm):
+    assert cm.get_log_level() == "INFO"
+    assert cm.set_log_level("debug")
+    assert cm.get_log_level() == "DEBUG"
+
+
+def test_invalid_log_level_falls_back_to_info(cm):
+    assert cm.set_log_level("trace")
+    assert cm.get_log_level() == "INFO"

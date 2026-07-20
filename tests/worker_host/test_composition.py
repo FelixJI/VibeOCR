@@ -42,6 +42,9 @@ def test_ocr_adapter_maps_existing_service_result() -> None:
                 pipeline_type="OCR",
                 content_list=[{"text": "recognized"}],
                 text_blocks=[],
+                preproc_angle=90,
+                preproc_img_w=3508,
+                preproc_img_h=2480,
             )
 
         def shutdown(self) -> None:
@@ -49,12 +52,26 @@ def test_ocr_adapter_maps_existing_service_result() -> None:
 
     adapter = OcrServiceAdapter(Service)
     result = adapter.recognize(
-        OcrRequest(image_data=b"png", pipeline="OCR", language="ch"),
+        OcrRequest(
+            image_data=b"png",
+            pipeline="OCR",
+            language="ch",
+            options={"use_doc_orientation_classify": False},
+        ),
         CancelToken(),
     )
     assert result.text == "recognized"
     assert result.raw_blocks == [{"text": "recognized"}]
-    assert calls == [(b"png", {"pipeline": "OCR", "language": "ch"})]
+    assert result.preproc_angle == 90
+    assert (result.preproc_img_w, result.preproc_img_h) == (3508, 2480)
+    assert calls == [(
+        b"png",
+        {
+            "pipeline": "OCR",
+            "language": "ch",
+            "use_doc_orientation_classify": False,
+        },
+    )]
 
 
 def test_ocr_adapter_uses_one_service_batch_call() -> None:

@@ -84,7 +84,8 @@ class OcrServiceAdapter:
     def recognize(self, request: OcrRequest, cancel: CancelToken) -> OcrResult:
         if cancel.is_cancelled:
             raise RuntimeError("OCR request cancelled")
-        options: dict[str, Any] = {"pipeline": request.pipeline}
+        options: dict[str, Any] = dict(request.options)
+        options["pipeline"] = request.pipeline
         if request.language is not None:
             options["language"] = request.language
         result = self._get_service().recognize(request.image_data, options)
@@ -102,11 +103,14 @@ class OcrServiceAdapter:
             return []
         first = requests[0]
         if any(
-            request.pipeline != first.pipeline or request.language != first.language
+            request.pipeline != first.pipeline
+            or request.language != first.language
+            or request.options != first.options
             for request in requests[1:]
         ):
             raise ValueError("all requests in an OCR batch must share options")
-        options: dict[str, Any] = {"pipeline": first.pipeline}
+        options: dict[str, Any] = dict(first.options)
+        options["pipeline"] = first.pipeline
         if first.language is not None:
             options["language"] = first.language
         raw_results = self._get_service().recognize_batch(
@@ -160,6 +164,9 @@ class OcrServiceAdapter:
             content_list=content_list,
             image_width=int(getattr(result, "image_width", 0) or 0),
             image_height=int(getattr(result, "image_height", 0) or 0),
+            preproc_angle=int(getattr(result, "preproc_angle", 0) or 0),
+            preproc_img_w=int(getattr(result, "preproc_img_w", 0) or 0),
+            preproc_img_h=int(getattr(result, "preproc_img_h", 0) or 0),
         )
 
     def export(self, request: OcrExportRequest, cancel: CancelToken) -> OcrExportResult:

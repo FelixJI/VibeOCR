@@ -77,6 +77,8 @@ class DependencyManager(QObject):
         self._project_root = project_root or env_manager.get_project_root()
         self._thread_pool = QThreadPool()
         self._is_checking = False
+        self._pending_check = False
+        self._generation = 0
         self._is_ready = False
         self._missing_dependencies: list = []
 
@@ -86,15 +88,28 @@ class DependencyManager(QObject):
         在后台线程中执行依赖检查，通过信号返回结果。
         """
         if self._is_checking:
-            logger.debug("依赖检查已在进行中，跳过")
+            logger.debug("依赖检查已在进行中，完成后将重新检查")
+            self._pending_check = True
             return
 
         self._is_checking = True
+        self._generation += 1
+        generation = self._generation
         self.check_started.emit()
 
         task = DependencyCheckTask(self._project_root)
-        task.signals.finished.connect(self._on_check_finished)
+        task.signals.finished.connect(
+            lambda ready, missing: self._on_task_finished(
+                generation, ready, missing
+            )
+        )
         self._thread_pool.start(task)
+
+    def _on_task_finished(self, generation: int, ready: bool, missing: list) -> None:
+        if generation != self._generation:
+            logger.debug("忽略已重置依赖检查的迟到结果")
+            return
+        self._on_check_finished(ready, missing)
 
     def _on_check_finished(self, ready: bool, missing: list) -> None:
         """依赖检查完成回调"""
@@ -102,6 +117,9 @@ class DependencyManager(QObject):
         self._is_ready = ready
         self._missing_dependencies = missing
         self.check_completed.emit(ready, missing)
+        if self._pending_check:
+            self._pending_check = False
+            self.check_dependencies()
 
     def is_checking(self) -> bool:
         """检查是否正在检查依赖"""
@@ -117,6 +135,8 @@ class DependencyManager(QObject):
 
     def reset(self) -> None:
         """重置状态"""
+        self._generation += 1
         self._is_checking = False
+        self._pending_check = False
         self._is_ready = False
         self._missing_dependencies = []

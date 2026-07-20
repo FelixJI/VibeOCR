@@ -170,6 +170,20 @@ class ConfigManager(QObject):
         data["max_heavy_pipelines"] = value
         return self._save_json("app_settings.json", data)
 
+    def get_log_level(self) -> str:
+        """返回持久化日志级别；无效旧值自动回退到 INFO。"""
+        data = self._load_json("app_settings.json", {})
+        level = str(data.get("log_level", "INFO")).upper()
+        return level if level in {"DEBUG", "INFO", "WARNING"} else "INFO"
+
+    def set_log_level(self, level: str) -> bool:
+        normalized = str(level).upper()
+        if normalized not in {"DEBUG", "INFO", "WARNING"}:
+            normalized = "INFO"
+        data = self._load_json("app_settings.json", {})
+        data["log_level"] = normalized
+        return self._save_json("app_settings.json", data)
+
     def get_export_settings(self) -> dict:
         return self._load_json(
             "export_settings.json",

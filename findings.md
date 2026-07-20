@@ -1,3 +1,72 @@
+# 调研记录：PDF 收尾压缩与 RTX 4060 吞吐（2026-07-20）
+
+## 已确认起点
+
+- WorkerHost 批量 OCR 还存在确定的无效开销：每页复制约 8.7MP 预处理图并重新编码 PNG，结果经共享内存回传后又在合同转换处丢弃；5 页返回一度达到 13–17MiB。应让 PDF/WorkerHost 批量路径只回传角度与尺寸，不回传预处理图。
+- `text_recognition_batch_size=8` 是文字行识别批次，不代表 8/16 个 PDF 页面并行。300 DPI 下 16 页外批被 48MP 预算切为 5+5+5+1；稳态 5 页子批约 6.2–7.6 秒，单纯增大页批无法把 1.5 秒/页降到 0.5 秒/页。
+- PyMuPDF 文档说明与本地 1.28.0 API 均支持 `garbage=3`、`use_objstms=1`、`compression_effort`；`garbage=4` 会额外比较大 stream 去重，是扫描文档 453 秒保存的最可信热点，但现场旧日志无子阶段计时，不能宣称已经精确量到。
+
+- 01:14:07 发起最终保存；01:21:40 PDF 后端返回 HTTP 200，说明文件压缩/落盘成功，后端耗时约 453.5 秒。
+- HTTP 保存响应约 15,543,259 字节；WorkerHost 封装后的控制帧 15,543,403 字节，超过 8,388,608 字节上限，导致连接关闭和前端假失败。
+- 保存响应过大的直接原因是 `SaveResponse(path, diff=_diff_full(pdf_document))` 序列化 682 页及全部 OCR 文本块；OCR finalize 调用方并不需要该全量 diff。
+- 随后的全文档 `get_model` 也可能再次超过 8 MiB，修复不能只扩大帧上限或只裁剪 save 返回。
+- 约 1.547 秒/页是 OCR 阶段均摊，不是压缩耗时；是否符合 RTX 4060 需要结合具体模型、批大小、GPU 利用和尾部退化判断。
+- `PdfSessionManager._on_ocr_page_done_signal` 已把每页 `text_blocks`、角度和文字层状态增量写入本地 `session.pdf_document`，因此 OCR 完成后再取全文档 `get_model` 不是保持 UI 正确所必需，且对大文档会再次触发控制帧超限。
+- `PdfService.save_with_rewrite(..., rewrite_text_layers=False)` 的 OCR 收尾没有逻辑页模型变更；保存接口返回 `_diff_full` 属于过度响应。该路径可安全返回空 `ModelDiff`/最小 modified 状态，普通结构编辑保存仍可保留原契约。
+- OCR 每批已经是真批量调用，并在当前批 GPU OCR 时预取下一批 300 DPI 渲染；写层使用批量 HTTP 和共享字体，项目并非逐页串行。但识别阶段单个批次仍是一次 GPU predict，不能通过同时启动多个 GPU OCR 简单线性加速。
+- 最终压缩由 `doc.save(tmp, garbage=4, deflate=True, clean=False)` 完成，并在前后复制 `.bak`、关闭、原子替换、重开；当前没有子阶段计时，必须先埋点或建立基准才能区分 453 秒主要耗在垃圾回收/deflate 还是文件复制。
+- 日志中的 43 个 16 页渲染批实际被像素预算拆成 170 次 GPU 传输/推理调用：128 次 5 页、42 次 1 页，平均每次 4.01 页。每张 300 DPI 页面约 8.70 MP，48 MP 上限最多容纳 5 页；因此“16 页批”不是一次 16 页模型推理。
+- OCR 吞吐中位数约 1.49 秒/页，前 10 批 1.541、中央 10 批 1.488；总体 1.547 被最后两批 2.37 和 5.85 秒/页明显拉高。常态吞吐约 1.5 秒/页，末尾退化是另一个需观测的异常，不应拿总体均值直接当 RTX 4060 稳态能力。
+- PDF 渲染当前硬编码 300 DPI；虽然 `PdfGlobalSettings` 有 `render_dpi/max_pixels/adjusted_dpi`，OCR 热路径没有使用用户设置。现场 A4 页约 8.7 MP，低于默认 16 MP 单页上限，故不会自动降 DPI。降低到 200–240 DPI 可减少渲染、PNG、SHM 和解码成本，但是否降低 GPU OCR 核心耗时需基准验证。
+
+---
+
+# 调研记录：运行时阻塞、日志、表格与预加载（2026-07-20）
+
+## 用户报告
+
+- 依赖安装期间及安装结束后重新连接 Python 运行时期间，主窗口疑似同步阻塞。
+- 一早晨日志达到约 3 MB，底层日志过密；希望设置中可配置日志级别。
+- 需从日志评估 PDF 文字层添加速度和优化空间。
+- 表格识别结果同时保留表格和表格内部独立文本框，表格格式也可能失真。
+- “立即预加载”似乎没有触发模型加载，需要判断功能价值并修正语义。
+
+## 调研方法
+
+- 对 `C:\Users\felji\Downloads\vibeocr.log` 做级别、logger、消息模板和耗时统计。
+- 对四条调用链做静态审计，并以现有/新增测试约束行为。
+- 子代理只读并行收集证据，产品代码由主代理统一写入和复核。
+
+## 初步证据
+
+- 表格管线已有较完整回归资产；`tests/core/test_pipeline_table.py` 明确包含“保留未被表格吸收的内部 OCR 文本”测试，这与用户看到的表格内独立文本框高度相关，可能是现有契约而非纯渲染错误。
+- 表格 HTML 会经过 `result_view_widget.py` 的规整化再渲染/复制，需区分模型 `pred_html` 本身结构错误、后端回填策略和前端规整化造成的格式变化。
+- 当前代码同时存在 `preload_pipelines` 与 `warmup_pipelines` 两条 WorkerHost RPC；“预加载”是否真正推理取决于 UI 调用的是哪条以及 backend cache manager 的实现。
+- 用户日志实际为 3.35 MiB、12,780 行，跨度约 53 分 39 秒；其中 DEBUG 11,433 行（89.5%）、INFO 1,156、WARNING 189、ERROR 2。
+- 日志膨胀主要来自第三方 HTTP 底层：`httpcore.http11` 7,440 行、`httpcore.connection` 2,108 行、`httpx` 744 行，合计 10,292 行（80.5%）。默认生产日志显然不应采集这些 DEBUG 帧。
+- PDF 记录含 43 批、682 页：渲染累计 227.87s、OCR 1055.05s、写层 109.03s、合计 1391.94s。写层平均 0.160s/页，只占三阶段合计约 7.8%；OCR 平均 1.547s/页，是主要耗时。写层本身总体合理，但尾部批次出现 7.79s/16页、10.65s/10页的退化，仍需看保存/后端资源状态。
+- `SettingsPageController` 的“立即预加载”已在 `QRunnable` 中逐管道调用 preload，再执行白图 warmup；后台线程设计存在，但用户日志开头明确记录“预加载功能: 禁用”，需要区分自动预加载开关和手动按钮行为。
+- `MainWindow._on_settings_install_succeeded()` 当前直接在主线程调用 `DependencyManager.check_dependencies()`；如果该函数执行外部探测/重连，安装结束瞬间会冻结 UI。安装过程本身还需继续检查对话框 worker 的信号与 post-install 逻辑。
+- 日志子代理定位到级别泄漏边界：主进程 `services/log_service.py` 已压低 `httpcore/httpx`，但 WorkerHost/PDF 后端使用 `packages/vibeocr-client-py/src/vibeocr/logging_context.py::configure_worker_stderr_logging()` 重置 root 为 DEBUG 且未重设 noisy logger，子进程第三方 DEBUG 因而被转发回主日志。
+- PDF 真正显著的尾部热点不是文字层批量写入，而是最终全量压缩：日志显示约 461 秒后失败并伴随 WorkerHost connection closed，约占该次 PDF OCR 端到端时长的 35%。应优先修复压缩的超时/后台状态/可选语义，而非微优化平均 0.16s/页的写层。
+- 当前批量 16 页、共享字体和增量保存设计已有合理性能基础；需要保留，并为尾部压缩增加内部阶段计时及可控策略。
+- 现场日志证明安装主体在 `Dummy-28` 后台线程执行；但从“所有OCR依赖安装完成”(00:45:31.660) 到主窗口启动 WorkerHost (00:47:03.226) 有约 91.6 秒，期间后台进行了多项导入校验且至少两个 import 超时。即使事件循环未阻塞，这段缺少细粒度进度/阶段反馈也会造成“安装完成后卡住”的感知。
+- WorkerHost 进程 00:47:05.999 已 ready，但 `SubprocessManager` 到 00:47:18.222 才报告服务就绪，另有约 12.2 秒初始化间隙；需核对 adapter/服务构造是否在后台任务中以及 UI 状态文本是否覆盖该阶段。
+- 现场日志也直接证明“立即预加载”在 00:48:17–00:48:59 成功完成：OCR preload 约 11 秒+warmup 0.85 秒，表格 preload 约 23.7 秒+warmup 6.5 秒。功能真实有效；用户感知问题主要是 DEBUG 才记录关键过程、完成状态不够可验证，以及“自动预加载开关/立即执行”语义可能混淆。
+- 表格重复的直接代码原因已确认：`pipeline_table._recognize_table()` 只把“回填进空单元格”的 OCR 标为 consumed；其余位于表格 cell/bbox 内的 OCR 无条件追加为独立 `text` 块，且注释明确采用“宁可重复，不可漏字”。现有测试还把这种重复固化为期望行为。
+- 表格格式失真的本地原因也已确认：`utils/html_tables.py::normalize_table_html()` 为去除 inline style 会剥掉单元格所有属性，因此模型输出中的 `rowspan`/`colspan` 被一并丢失；同时按每行标签数量补空格，没有考虑跨行/跨列占位，会进一步改变合并单元格表格结构。
+- 更合理的边界是：保留并规范化安全的结构属性 `rowspan/colspan`，只移除 style/class 等展示属性；将几何上落入表格单元格的 OCR 吸收到表格语义中并去重，表格外文字才保留独立块。
+
+## 实施结果
+
+- 安装主体、GPU 检测、安装后环境/版本/直接依赖探测均不再占用 GUI 线程；运行时维护先让旧服务失效，再由安装线程关闭 WorkerHost，成功后异步重检并重新建会话。
+- 日志默认 INFO，WorkerHost 不再泄漏 httpcore/httpx DEBUG；设置页可选普通、调试、仅警告与错误。
+- 自动预加载原本是未调用的死代码，现于 WorkerHost ready 后触发；手动按钮和自动路径共享同一任务，预加载与预热都成功才显示完整成功。
+- 表格内 OCR 不再输出独立文本框：相同内容消费，模型结构漏字则追加回对应格；rowspan/colspan 在清洗、渲染与网格转换中保留。
+- 本轮没有直接取消 PDF 最终压缩：它影响产物体积/结构，且现场写层并非瓶颈。461 秒压缩失败属于独立的大文档收尾策略问题，建议以该 PDF 做 A/B 基准后再决定“大文档跳过压缩”或显式设置项。
+
+---
+
 # 调研记录：PDF 文字层与批量识别
 
 ## 用户报告

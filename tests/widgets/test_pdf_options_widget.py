@@ -56,6 +56,8 @@ class TestPdfOptionsWidget:
             font_size_retry_count=3,
             font_size_shrink_factor=0.5,
             min_font_size=6.0,
+            compress_on_save=False,
+            clean_on_save=True,
         )
         widget.set_settings(custom)
         loaded = widget.get_settings()
@@ -66,6 +68,8 @@ class TestPdfOptionsWidget:
         assert loaded.font_size_retry_count == 3
         assert loaded.font_size_shrink_factor == 0.5
         assert loaded.min_font_size == 6.0
+        assert loaded.compress_on_save is False
+        assert loaded.clean_on_save is True
 
     def test_settings_changed_signal(self, widget, qtbot):
         """修改 spinbox 应触发 settings_changed 信号。"""

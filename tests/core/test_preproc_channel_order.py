@@ -137,3 +137,15 @@ def test_readonly_array_handled():
     _angle, png, _w, _h = _extract_preproc_info(_make_res(readonly))
     assert png is not None
     _assert_png_matches_rgb(png, base)
+
+
+def test_extract_preproc_info_can_skip_png_but_preserve_geometry():
+    """批量 PDF 路径不编码大 PNG，但方向与尺寸仍须用于 bbox 回写。"""
+    src = _build_rgb_blocks()
+    res = _FakeRes({"angle": 90, "output_img": src})
+
+    angle, png, width, height = _extract_preproc_info(res, include_image=False)
+
+    assert angle == 90
+    assert png is None
+    assert (width, height) == (src.shape[1], src.shape[0])

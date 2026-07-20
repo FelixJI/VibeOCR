@@ -97,16 +97,14 @@ class TestNormalizeTableHtml:
         assert normalize_table_html("<table></table>") == "<table></table>"
         assert normalize_table_html("") == "<table></table>"
 
-    def test_no_style_attribute_in_output(self) -> None:
-        """综合：多个 style、class、colspan 等属性都应被剥离，只留标签+文本。"""
+    def test_only_structural_span_attributes_remain(self) -> None:
+        """样式属性被剥离，但 colspan/rowspan 结构必须保留。"""
         html = (
             '<table><tr><td class="c" colspan="2" style="bg:1">text</td></tr>'
             '<tr><th id="h" style="font:bold">h</th><td>2</td></tr></table>'
         )
         out = normalize_table_html(html)
-        # 输出中不应有任何属性
-        # 匹配 <td ...> 或 <th ...> 中是否有额外属性
-        tags = re.findall(r"<t[dh][^>]*>", out)
-        for tag in tags:
-            # 只允许纯 <td> 或 <th>，无属性
-            assert tag in ("<td>", "<th>"), f"unexpected attrs in {tag}"
+        assert 'colspan="2"' in out
+        assert "style=" not in out
+        assert "class=" not in out
+        assert "id=" not in out

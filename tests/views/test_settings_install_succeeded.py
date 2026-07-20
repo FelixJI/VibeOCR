@@ -139,11 +139,11 @@ def test_install_succeeded_emission_invokes_callback(controller, monkeypatch):
     )
 
 
-def test_finished_still_refreshes_env(controller, monkeypatch):
-    """finished 信号行为不变：仍刷新环境维护状态（不回归）
+def test_cancelled_finished_still_refreshes_env(controller, monkeypatch):
+    """取消/失败的 finished 信号仍刷新环境维护状态。
 
     用 QDialog 子类提供真实的 finished Signal（Qt 要求 Signal 在类级定义），
-    emit(1) 驱动 _on_finished 槽，验证它仍调用 _refresh_env_maintenance_state。
+    emit(0) 驱动 _on_finished 槽，验证它仍调用 _refresh_env_maintenance_state。
     """
     ctrl, _host, _install_cb = controller
 
@@ -176,10 +176,9 @@ def test_finished_still_refreshes_env(controller, monkeypatch):
     ctrl._open_reinstall_dialog()
     dialog = ctrl._active_dialogs[-1]
 
-    # QDialog.finished 是内置真实 Signal；emit(1) 驱动 _on_finished 槽刷新环境
-    dialog.finished.emit(1)
+    # 成功 result=1 已由 install_succeeded 刷新；此处验证取消 result=0。
+    dialog.finished.emit(0)
 
     assert refresh_calls["n"] >= 1, "finished 仍应刷新环境维护状态"
     # finished 后对话框应从 _active_dialogs 移除（允许回收）
     assert dialog not in ctrl._active_dialogs, "finished 应移除对话框引用"
-

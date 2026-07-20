@@ -1082,8 +1082,9 @@ class PdfSessionManager(QObject):
     # 三层批关系（性能2）：
     #   页批(此处 16) ≥ 传输批(SHM 一条消息装下的页数) ≥ 计算批(GPU predict)。
     #   计算批 = text_recognition_batch_size=8（pipeline_ocr.py，GPU）；
-    #   传输批 由 SHM 预算 0.7×(128MB−9)≈90MB 决定，足以装下 16 页 → 传输不卡计算。
-    #   页批=16 正好 2×计算批，喂满 GPU 且不让单批 predict 超时。
+    #   传输批同时受 SHM/编码字节和 48MP 像素预算限制；A4 300 DPI 约
+    #   8.7MP/页，因此一个 16 页外批通常被拆成 5+5+5+1。这里的 16 主要
+    #   控制渲染预取与内存上限，不代表 16 页同时在 GPU 上推理。
     _OCR_BATCH_SIZE = 16
     # 渲染并发线程数。后端 fitz 栅格化由 fitz_lock 串行化，但 PIL/PNG 编码 +
     # HTTP 往返可并行，N 并发可掩盖单页往返延迟。httpx Client 按线程独立(见
@@ -1130,9 +1131,10 @@ class PdfSessionManager(QObject):
         - 识别:recognize_batch() 一次 predict(list)，利用 PaddleOCR 内部
           ImageBatchSampler 分批，省去每页重复管道开销。
         - 流水:当前批 OCR 时预取下一批渲染，重叠 PDF 栅格/PNG 与 GPU 计算。
-        - 写层:逐页串行 add_text_layer(fitz 写操作不可并发)。
+        - 写层:整批 add_text_layer_batch，共享字体并一次增量落盘。
         """
         from vibeocr.models.ocr_options import OCROptions
+        from vibeocr.models.pdf_ocr_options import PdfGlobalSettings
 
         session = self._sessions.get(self._active_path or "")
         if session is None or session.session_id != session_id:
@@ -1142,6 +1144,7 @@ class PdfSessionManager(QObject):
         fail = 0
         done = 0  # 已写层页数(跨批次累计，用于 page_done 与最终统计)
         opts = ocr_options if ocr_options is not None else OCROptions()
+        pdf_settings = PdfGlobalSettings.from_dict(settings_dict or {})
         batch_budget = self._get_ocr_batch_budget()
         batch_size = batch_budget.max_items
         client = self._client
@@ -1150,19 +1153,29 @@ class PdfSessionManager(QObject):
         substeps = self._OCR_PROGRESS_SUBSTEPS
         progress_total = total * substeps
         progress = 0
+        all_write_batches_persisted = True
+        unpersisted_pages: dict[int, int] = {}
 
         def _emit_progress() -> None:
             runner.progress.emit(session_id, progress, progress_total)
 
         def _render_page(idx: int) -> bytes | None:
-            """渲染单页 300dpi → 原始 PNG bytes。
+            """按 PDF 设置渲染单页 → 原始 PNG bytes。
 
             不在主进程解码为 ndarray：recognize_batch 的 IPC 路径对 bytes 输入
             原样透传（_prepare_image_data:419-420），由 worker 子进程的 _to_ndarray
             解码一次即可。省去主进程的 PNG 解码 + 重新 PNG 编码（性能1）。
             """
             try:
-                return client.render_preview(session_id, idx, dpi=300)
+                dpi = pdf_settings.render_dpi
+                page_info = session.pdf_document.get_page(idx)
+                if page_info is not None:
+                    x0, y0, x1, y1 = page_info.rect
+                    width = abs(x1 - x0)
+                    height = abs(y1 - y0)
+                    if width > 0 and height > 0:
+                        dpi = pdf_settings.adjust_dpi(width, height)
+                return client.render_preview(session_id, idx, dpi=dpi)
             except Exception as e:
                 logger.error("渲染页 %d 失败: %s", idx, e)
                 return None
@@ -1311,6 +1324,18 @@ class PdfSessionManager(QObject):
                     for item in write_items:
                         write_page_results[item["page"]] = False
 
+            if write_items and not batch_persisted:
+                all_write_batches_persisted = False
+                unpersisted_pages.update(
+                    {
+                        item["page"]: int(
+                            getattr(item["_result"], "preproc_angle", 0) or 0
+                        )
+                        for item in write_items
+                        if write_page_results.get(item["page"], False)
+                    }
+                )
+
             # 把后端写层错误详情通知 UI（此前只记日志，用户看不到原因，
             # 只看到"失败 N 页"无法排查）。取 file_path 翻译 session_id。
             if batch_write_error:
@@ -1388,52 +1413,60 @@ class PdfSessionManager(QObject):
                 _batch_total, len(batch_pages), len(write_items),
             )
 
-        # 末尾整文档快速压缩：批量写层已经完成，显式跳过逐页删除/重写，
-        # 只复用 save 路由做最终压缩落盘。代价是保留每批一个字体子集，换取
-        # 不再二次处理全部页。compress 失败时 sidecar 保持 completed=false
-        #（已 incremental 落盘的页仍有效，下次 start_ocr 续传）。
-        if not runner._cancelled and success > 0 and session.file_path:
+        # 每批 add_text_layer_batch(save=True) 已经安全增量落盘。全部批次均落盘
+        # 时，末尾再次全量重写整份数百页 PDF 只是在合并字体
+        # 子集/回收对象，现场耗时 453 秒且不影响正确性，因此直接完成。只有某批
+        # 未能持久化时才回退到一次最终保存，保证内存中的文字层不会丢失。
+        finalized = all_write_batches_persisted
+        if (
+            not runner._cancelled
+            and success > 0
+            and session.file_path
+            and not all_write_batches_persisted
+        ):
             try:
-                logger.info("[OCR] 末尾全量压缩开始")
-                runner.progress.emit(session_id, 0, 0)  # 不确定进度（COMPRESS 态）
+                logger.info("[OCR] 存在未落盘批次，执行末尾保存")
+                runner.progress.emit(session_id, 0, 0)  # 不确定进度（SAVE 态）
                 self._client.save(
                     session_id,
                     None,
                     settings_dict,
                     rewrite_text_layers=False,
                 )
-                logger.info("[OCR] 末尾全量压缩完成")
-                # 全量压缩整体重写了 PDF（可能变小）。先刷新 sidecar 基线为
-                # 当前文件状态，否则 mark_completed→load_sidecar 的增长校验会
-                # 因 size < original 失败而落盘一个空 sidecar（同 Task1 的指纹
-                # 漂移 bug 的等价表现）。
+                finalized = True
+                logger.info("[OCR] 末尾保存完成")
+                # 全量保存可能使文件缩小，刷新 sidecar 基线后才能继续校验。
                 try:
                     ocr_sidecar.refresh_baseline(session.file_path)
-                    ocr_sidecar.mark_completed(session.file_path)
                 except Exception:
-                    logger.debug(
-                        "sidecar mark_completed 失败（忽略）", exc_info=True
-                    )
+                    logger.debug("sidecar refresh_baseline 失败（忽略）", exc_info=True)
+                if unpersisted_pages:
+                    try:
+                        ocr_sidecar.mark_pages_saved(
+                            session.file_path,
+                            list(unpersisted_pages),
+                            unpersisted_pages,
+                        )
+                    except Exception:
+                        logger.debug(
+                            "sidecar 补记末尾保存页失败（忽略）", exc_info=True
+                        )
             except Exception as e:
-                logger.error("OCR 末尾压缩失败（中间结果已增量落盘）: %s", e)
+                logger.error("OCR 末尾保存失败（已落盘批次仍安全）: %s", e)
+        elif not runner._cancelled and success > 0:
+            logger.info("[OCR] 所有批次已增量落盘，跳过末尾整文档压缩")
 
-        # 刷新 model(OCR 改变了 has_text_layer + ocr_text_blocks)
-        # 大文件场景此步是内存峰值：get_model 返回全文档 mirror（含所有页的
-        # ocr_text_blocks），mirror_to_doc 全量重建 PdfPageInfo + TextBlock。
-        # 可能抛非 PdfBackendError（pydantic.ValidationError / MemoryError /
-        # httpx 传输错误）。此前只捕获 PdfBackendError，其余异常逃逸到
-        # _OcrRunner.run()，线程静默死亡导致 UI 卡死。放宽到 Exception 确保
-        # all_done 始终发出（UI 得以复位），刷新失败仅记日志（OCR 结果已写层）。
-        try:
-            logger.info("[OCR] get_model 刷新开始")
-            full = self._client.get_model(session_id)
-            logger.info(
-                "[OCR] get_model 返回: %d 页", len(full.pages) if full else 0
-            )
-            session.pdf_document = mirror_to_doc(full)
-            logger.info("[OCR] mirror_to_doc 完成")
-        except Exception as e:
-            logger.error("OCR 后刷新 model 失败: %s", e)
+        if finalized:
+            session.pdf_document.is_modified = False
+            session.pdf_document.has_structural_change = False
+        if finalized and not runner._cancelled and fail == 0 and session.file_path:
+            try:
+                ocr_sidecar.mark_completed(session.file_path)
+            except Exception:
+                logger.debug("sidecar mark_completed 失败（忽略）", exc_info=True)
+
+        # page_done 已逐页同步本地 PdfDocument；这里不再 get_model 全量拉回全部
+        # OCR 块，避免大文档再次超过 WorkerHost 8 MiB 控制帧上限。
         logger.info("[OCR] all_done.emit 前")
         runner.all_done.emit(session_id, success, fail, runner._task_id)
         logger.info("[OCR] all_done.emit 后")

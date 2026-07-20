@@ -1,3 +1,41 @@
+# 进度日志：PDF 收尾压缩与 RTX 4060 吞吐
+
+## 2026-07-20
+
+- 用户要求执行压缩修复，并进一步梳理 453 秒压缩耗时以及 RTX 4060 下约 1.5 秒/页的 OCR 吞吐。
+- 已重新读取 `route-subagents`、`planning-with-files`，完成 session-catchup；保留上一轮未提交改动，在其上继续增量实现。
+- 已确认现场“压缩失败”的直接原因是保存成功后返回 15.5 MiB 全量模型，超过 WorkerHost 8 MiB 控制帧；本阶段继续拆分真实压缩耗时并设计最小响应。
+- 已修复 461 秒后“失败”的双重根因：OCR 批次全部增量落盘时跳过末尾整文档压缩；保存响应不再返回 682 页完整模型，末尾也不再 `get_model`。
+- 显式/普通全量保存从 `garbage=4` 调整为 `garbage=3 + use_objstms=1 + compression_effort=1`，并新增 backup/save/replace/reopen 分段计时。
+- PDF OCR 已使用 `render_dpi/max_pixels/adjust_dpi`，不再硬编码 300 DPI；完整 OCROptions 已穿过 WorkerHost，方向分类等 UI 开关开始生效。
+- 批量 OCR 不再复制并 PNG 编码每页预处理图，仅保留角度与尺寸；修通 preproc_angle/w/h 的 WorkerHost 返回链，避免 PDF 方向校正恒为 0。
+- 新增批量落盘、最终补救保存、轻量保存响应、压缩参数、DPI、选项透传、预处理元数据测试；相关回归 177 项通过。
+- 沙箱内契约测试一度因 `rpds` DLL 权限无法收集；沙箱外最终合并回归 313 项全部通过，包含 PDF、JSON Schema、WorkerHost 异步 handler/client 和设置链。
+- Ruff、compileall、标准库 JSON 解析与 `git diff --check` 均通过。
+
+---
+
+# 进度日志：运行时阻塞、日志、表格与预加载
+
+## 2026-07-20
+
+- 已完整读取 `route-subagents` 与 `planning-with-files` 技能，并按独立风险面规划 3 个只读子代理；主代理保留所有写入权和最终验证责任。
+- 已运行 session-catchup；首次因无全局 `python` 失败，改用 Codex 工作区 Python 后成功。
+- 已确认工作区无未提交产品代码变更；现有三个规划文件包含历史记录，本任务在文件顶部新增独立章节并保留旧记录。
+- 当前进入 Phase 1：日志统计与四条调用链审计。
+- Phase 1 已完成：三个子代理均返回只读证据，主代理已复核日志与关键调用链。
+- 已确认四个本地根因：安装后 GUI 同步依赖树刷新；WorkerHost 未真正重启且自动预加载死代码；worker DEBUG 级别泄漏；表格适配层重复 + HTML 清洗丢失 spans。
+- 已进入 Phase 2，按“运行时生命周期、日志、表格/跨度、预加载、PDF 收尾”顺序实施并补回归测试。
+- 已将安装后的环境状态/依赖树探测移入线程池，GPU 后端探测也改为 QRunnable；安装线程先关闭旧 WorkerHost，主窗口立即失效旧服务，完成后异步重检并重新连接。
+- 已为依赖检查增加排队复检与迟到结果隔离，成功回调不再和 dialog.finished 重复刷新。
+- 已把生产日志默认级别设为 INFO；主进程和 WorkerHost 统一读取 `VIBEOCR_LOG_LEVEL`，设置页新增 INFO/DEBUG/WARNING 持久化选择，HTTP/模型框架日志至少为 WARNING。
+- 已将自动预加载接入 WorkerHost ready；手动“立即预加载”统一复用 SubprocessManager 的 preload+warmup、增加 single-flight 和真实两阶段成功判定。
+- 已修复表格适配层：单元格内 OCR 被吸收到表格，表外文本保留；HTML 清洗保留安全数字 rowspan/colspan，逻辑网格按跨度占位。
+- PDF 日志量化结论：682 页写层 109.03s（0.160s/页、约 7.8%）合理；OCR 为主要耗时，异常 461s 来自末尾全量压缩。未在缺少真实 PDF 基准的情况下改变产物压缩语义。
+- 最终定向回归集 154 passed；另主窗口/设置页扩展集 76 passed、安装相关集 22 passed；Ruff、compileall、git diff --check 均通过。pytest 仅保留仓库既有 `asyncio_mode` 未知配置警告。
+
+---
+
 # 进度日志：PDF 文字层与批量识别优化
 
 ## 2026-07-16

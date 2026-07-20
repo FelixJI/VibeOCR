@@ -272,6 +272,7 @@ class BackendClient:
         *,
         pipeline: str = "OCR",
         language: str | None = None,
+        options: dict[str, Any] | None = None,
         timeout: float | None = None,
     ) -> dict[str, Any]:
         """Run OCR on ``image_bytes`` via ``ocr.recognize``.
@@ -284,6 +285,8 @@ class BackendClient:
         payload: dict[str, Any] = {"image": ref.to_descriptor(), "pipeline": pipeline}
         if language is not None:
             payload["language"] = language
+        if options:
+            payload["options"] = options
         try:
             return await self.call("ocr.recognize", payload, timeout=timeout)
         finally:
@@ -295,6 +298,7 @@ class BackendClient:
         *,
         pipeline: str = "OCR",
         language: str | None = None,
+        options: dict[str, Any] | None = None,
         timeout: float | None = None,
     ) -> list[dict[str, Any] | None]:
         """Recognize all images in one WorkerHost/engine-level batch RPC."""
@@ -310,6 +314,8 @@ class BackendClient:
             }
             if language is not None:
                 payload["language"] = language
+            if options:
+                payload["options"] = options
             result = await self.call("ocr.recognize_batch", payload, timeout=timeout)
             return list(result["results"])
         finally:

@@ -133,7 +133,7 @@ def test_sync_success_deletes_marker_and_rechecks(tmp_path):
         stub._on_sync_finished(1)
 
     assert not pending.exists(), "成功后标记应删除"
-    stub._dependency_manager.reset.assert_called_once()
+    stub._dependency_manager.reset.assert_not_called()
     stub._dependency_manager.check_dependencies.assert_called_once()
 
 

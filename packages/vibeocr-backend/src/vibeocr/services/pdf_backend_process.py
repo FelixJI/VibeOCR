@@ -669,10 +669,15 @@ def add_text_layer_batch(
                             exc_info=True,
                         )
                     saved = False
+        if saved:
+            # 本批文字层已经持久化；保持后端规范模型与磁盘状态一致。后续 OCR
+            # 收尾可据此跳过没有必要的整文档重写。
+            s.pdf_document.is_modified = False
     return MutateResponse(
         diff=_diff_pages(
             s.pdf_document, written_pages,
-            invalidate_thumbnails=written_pages, modified=True
+            invalidate_thumbnails=written_pages,
+            modified=not (req.save and saved),
         ),
         extra={"saved": saved} if req.save else None,
     )
@@ -808,7 +813,13 @@ def save(sid: str, req: SaveRequest) -> SaveResponse:
             if new_doc is not None:
                 s.doc = new_doc
         saved_path = result.path or s.pdf_document.file_path or ""
-        return SaveResponse(path=saved_path, diff=_diff_full(s.pdf_document))
+        # 保存只改变持久化状态，不改变页内容/结构。返回完整文档会把数百页 OCR
+        # 块重复序列化进 WorkerHost 控制帧；现场 682 页回包达 15.5 MiB，超过
+        # 8 MiB 帧上限并在保存已经成功后误报连接失败。
+        return SaveResponse(
+            path=saved_path,
+            diff=ModelDiff(modified_flag=False, structural_flag=False),
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"保存失败: {e}") from e
 

@@ -28,13 +28,14 @@ class PdfGlobalSettings:
         min_font_size: 字号下限（pt）。矮行/窄框导致字号过小时夹紧到此值，
             确保隐形文字层仍可被阅读器提取，避免因“塞不进”整块丢弃。
         compress_on_save: 覆盖保存时的压缩策略。True（默认）= 全量重写
-            （garbage=4 + deflate + clean + 临时文件原子替换），体积最优，代价是
+            （garbage=3 + deflate + object streams + 临时文件原子替换），兼顾体积与速度，
+            代价是
             大文件保存稍慢；False = 增量追加快路径（incremental，快但大，保留
             旧行为）。OCR 加文字层后建议 True，否则字体/文字流不压缩、旧对象
             不回收，720MB 文档可膨胀上百 MB。
         clean_on_save: 全量压缩时是否『深度清理』内容流（PyMuPDF clean 参数）。
-            True = tobytes(garbage=4 + deflate + clean)，重写并规范化所有内容流，
-            适合来源不规范/需要清洗的 PDF。False（默认）= tobytes(garbage=4 +
+            True = save(garbage=3 + deflate + object streams + clean)，重写并规范化所有内容流，
+            适合来源不规范/需要清洗的 PDF。False（默认）= save(garbage=3 +
             deflate + clean=False)，保留原始内容流压缩，不重写。
             重要：很多扫描件驱动用 ObjStm/CrossRefStream 高度压缩，MuPDF（PyMuPDF
             底层）在序列化时无法保留这种压缩结构（会展平成传统 xref 表），

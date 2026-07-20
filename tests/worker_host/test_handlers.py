@@ -125,6 +125,9 @@ async def test_ocr_handler_returns_enriched_result_fields() -> None:
                 content_list=[{"type": "text", "text": "Hello"}],
                 image_width=800,
                 image_height=600,
+                preproc_angle=90,
+                preproc_img_w=600,
+                preproc_img_h=800,
             )
 
     store = _FakePayloadStore(b"\x89PNG fake")
@@ -138,6 +141,9 @@ async def test_ocr_handler_returns_enriched_result_fields() -> None:
     assert result["content_list"] == [{"type": "text", "text": "Hello"}]
     assert result["image_width"] == 800
     assert result["image_height"] == 600
+    assert result["preproc_angle"] == 90
+    assert result["preproc_img_w"] == 600
+    assert result["preproc_img_h"] == 800
 
 
 @pytest.mark.asyncio

@@ -167,6 +167,10 @@ class PdfOptionsWidget(QWidget):
             font_size_retry_count=self._retry_spin.value(),
             font_size_shrink_factor=self._shrink_spin.value(),
             min_font_size=self._minfont_spin.value(),
+            # 这两个保存策略尚未暴露为控件，但从偏好设置载入后不能在用户
+            # 调整 DPI/字号时悄悄重置为默认值。
+            compress_on_save=self._current_settings.compress_on_save,
+            clean_on_save=self._current_settings.clean_on_save,
         )
 
     def set_settings(self, settings: PdfGlobalSettings):

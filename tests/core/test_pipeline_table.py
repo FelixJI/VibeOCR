@@ -289,8 +289,8 @@ class TestBackfillEmptyTableCells:
         # 已填单元格不被覆盖
         assert "已填" in new_html
 
-    def test_does_not_overwrite_filled_cell(self):
-        """OCR 文本落在已填单元格内时，不回填、不消费该 OCR。"""
+    def test_absorbs_conflicting_text_in_filled_cell(self):
+        """已填单元格吸收额外 OCR，保留文字且不再生成独立文本框。"""
         from vibeocr.core.pipelines.pipeline_table import (
             _backfill_empty_table_cells,
         )
@@ -302,11 +302,11 @@ class TestBackfillEmptyTableCells:
             table_html, cell_box_list, ocr_items
         )
         assert "原有" in new_html
-        assert "不该回填" not in new_html
-        assert consumed == set()
+        assert "不该回填" in new_html
+        assert consumed == {0}
 
-    def test_no_empty_cells_returns_unchanged(self):
-        """没有空单元格时，HTML 不变，无 OCR 被消费。"""
+    def test_filled_cells_absorb_unmatched_ocr(self):
+        """没有空单元格时仍吸收表内 OCR，避免独立文本框重复。"""
         from vibeocr.core.pipelines.pipeline_table import (
             _backfill_empty_table_cells,
         )
@@ -317,8 +317,8 @@ class TestBackfillEmptyTableCells:
         new_html, consumed = _backfill_empty_table_cells(
             table_html, cell_box_list, ocr_items
         )
-        assert new_html == table_html
-        assert consumed == set()
+        assert "A<br>X" in new_html
+        assert consumed == {0}
 
     def test_none_cell_box_list_returns_unchanged(self):
         """无 cell_box_list 时安全降级：不回填、不崩。"""
@@ -414,12 +414,8 @@ def test_recognize_table_backfills_empty_cell_from_ocr():
     assert not any(b.get("text") == "漏掉的字" for b in text_blocks)
 
 
-def test_recognize_table_keeps_unabsorbed_in_table_text():
-    """落在表格内但无法回填（单元格已填/无可对应空格）的 OCR 文本不再被丢弃。
-
-    旧逻辑：中心在 table_bbox 内 → continue（彻底丢）。新逻辑：保留为独立
-    text 块（label="text"），至少不漏字。用户可在网格编辑器手动处理。
-    """
+def test_recognize_table_absorbs_unmatched_in_table_text():
+    """表内 OCR 被吸收到对应单元格，不再产生独立文本框。"""
     import numpy as np
 
     # 两个单元格都已填，无空格可回填
@@ -440,9 +436,8 @@ def test_recognize_table_keeps_unabsorbed_in_table_text():
     result = _recognize_table(service, image=None, options=TableRecognitionOptions())
 
     text_blocks = [b for b in result.content_list if b.get("type") == "text"]
-    assert any(b.get("text") == "表内未吸收" for b in text_blocks), (
-        "表内未吸收的文本应保留为独立块，不应被丢弃"
-    )
+    assert not any(b.get("text") == "表内未吸收" for b in text_blocks)
+    assert "表内未吸收" in result.content_list[0]["table_body"]
 
 
 def test_recognize_table_filters_text_inside_table_bbox():
@@ -479,10 +474,10 @@ def test_recognize_table_filters_text_inside_table_bbox():
     assert any(b["type"] == "table" for b in result.content_list)
     # 表格外文字应保留
     assert any(b.get("text") == "表格外文字" for b in result.content_list)
-    # 表格内文字不再无条件丢弃：单元格已填无空格，保留为独立 text 块
-    assert any(b.get("text") == "表格内文字" for b in result.content_list), (
-        "表内未吸收文本应保留，不应丢弃（避免漏字）"
-    )
+    # 表格内文字被吸收到表格，不再作为独立 text 块重复显示
+    assert not any(b.get("text") == "表格内文字" for b in result.content_list)
+    table = next(b for b in result.content_list if b.get("type") == "table")
+    assert "表格内文字" in table["table_body"]
 
 
 def test_recognize_table_backfill_safe_without_cell_box_list():
@@ -574,5 +569,4 @@ def test_recognize_table_bbox_multiple_tables_no_misalignment():
     # 第二个表格 bbox 为 None（无 cell_box_list），但内容正常
     assert table_blocks[1].bbox is None
     assert "B" in table_blocks[1].text
-
 

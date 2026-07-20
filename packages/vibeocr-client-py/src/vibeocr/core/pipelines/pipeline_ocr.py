@@ -269,7 +269,9 @@ def _parse_single_result(res: Any) -> tuple[list[tuple[str, float]], list]:
     return tws, blocks
 
 
-def _extract_preproc_info(res: Any) -> tuple[int, bytes | None, int, int]:
+def _extract_preproc_info(
+    res: Any, *, include_image: bool = True
+) -> tuple[int, bytes | None, int, int]:
     """从单个结果项提取预处理信息 (angle, preprocessed_png, w, h)。
 
     实际预处理图在 doc_preprocessor_res['output_img']（numpy RGB，
@@ -285,15 +287,16 @@ def _extract_preproc_info(res: Any) -> tuple[int, bytes | None, int, int]:
         preproc_angle = dp_res.get("angle", 0)
         out_arr = dp_res.get("output_img")
         if out_arr is not None:
-            from PIL import Image as _PILImage
+            preproc_h, preproc_w = out_arr.shape[:2]
+            if include_image:
+                from PIL import Image as _PILImage
 
-            # output_img 已是 RGB，直接转换；取可写副本避免 PIL 共享只读缓冲
-            rgb = out_arr.copy()
-            pil_img = _PILImage.fromarray(rgb)
-            preproc_w, preproc_h = pil_img.size
-            buf = io.BytesIO()
-            pil_img.save(buf, format="PNG")
-            preprocessed_png = buf.getvalue()
+                # output_img 已是 RGB，直接转换；取可写副本避免 PIL 共享只读缓冲
+                rgb = out_arr.copy()
+                pil_img = _PILImage.fromarray(rgb)
+                buf = io.BytesIO()
+                pil_img.save(buf, format="PNG")
+                preprocessed_png = buf.getvalue()
     return preproc_angle, preprocessed_png, preproc_w, preproc_h
 
 
@@ -412,7 +415,12 @@ def _recognize_ocr_batch(service: Any, images: list, options: OCROptions) -> lis
         preproc_angle, preprocessed_png, preproc_w, preproc_h = (0, None, 0, 0)
         if not (isinstance(res, dict) and "error" in res):
             preproc_angle, preprocessed_png, preproc_w, preproc_h = (
-                _extract_preproc_info(res)
+                _extract_preproc_info(
+                    res,
+                    include_image=bool(
+                        getattr(options, "_include_preprocessed_image", True)
+                    ),
+                )
             )
         raw_text = "\n".join(t for t, _ in tws)
         result = _build_ocr_result(

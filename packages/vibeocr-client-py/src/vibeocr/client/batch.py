@@ -18,19 +18,21 @@ class BatchBackendAdapter:
         pipeline = getattr(options, "pipeline", "OCR")
         pipeline_name = str(getattr(pipeline, "value", pipeline))
         language = getattr(options, "language", None)
-        return self._client.recognize_batch_sync(
-            images,
-            pipeline=pipeline_name,
-            language=language,
-        )
+        options_dict = options.to_dict() if hasattr(options, "to_dict") else {}
+        kwargs: dict[str, Any] = {"pipeline": pipeline_name, "language": language}
+        if options_dict:
+            kwargs["options"] = options_dict
+        return self._client.recognize_batch_sync(images, **kwargs)
 
     def recognize(self, image: bytes, options: Any = None) -> Any:
         pipeline = getattr(options, "pipeline", "OCR")
         pipeline_name = str(getattr(pipeline, "value", pipeline))
         language = getattr(options, "language", None)
-        return self._client.recognize_sync(
-            image, pipeline=pipeline_name, language=language
-        )
+        options_dict = options.to_dict() if hasattr(options, "to_dict") else {}
+        kwargs: dict[str, Any] = {"pipeline": pipeline_name, "language": language}
+        if options_dict:
+            kwargs["options"] = options_dict
+        return self._client.recognize_sync(image, **kwargs)
 
     def preload_pipeline(self, pipeline: Any) -> bool:
         pipeline_name = str(getattr(pipeline, "value", pipeline))

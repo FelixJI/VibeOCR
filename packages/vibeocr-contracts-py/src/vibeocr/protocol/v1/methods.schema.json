@@ -145,7 +145,8 @@
           "properties": {
             "image": { "$ref": "#/$defs/shared_payload_ref" },
             "pipeline": { "$ref": "#/$defs/pipeline" },
-            "language": { "type": ["string", "null"] }
+            "language": { "type": ["string", "null"] },
+            "options": { "type": "object", "additionalProperties": true }
           }
         },
         "response": {
@@ -163,7 +164,10 @@
             "text_with_scores": { "type": "array", "description": "[[text, score], ...] pairs. Each item is a 2-element array [string, number]." },
             "content_list": { "type": "array", "description": "Structured content list (MinerU/table/formula pipelines)." },
             "image_width": { "type": "integer", "minimum": 0 },
-            "image_height": { "type": "integer", "minimum": 0 }
+            "image_height": { "type": "integer", "minimum": 0 },
+            "preproc_angle": { "type": "integer", "minimum": 0 },
+            "preproc_img_w": { "type": "integer", "minimum": 0 },
+            "preproc_img_h": { "type": "integer", "minimum": 0 }
           }
         }
       }
@@ -185,7 +189,8 @@
               "items": { "$ref": "#/$defs/shared_payload_ref" }
             },
             "pipeline": { "$ref": "#/$defs/pipeline" },
-            "language": { "type": ["string", "null"] }
+            "language": { "type": ["string", "null"] },
+            "options": { "type": "object", "additionalProperties": true }
           }
         },
         "response": {

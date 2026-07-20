@@ -1,6 +1,7 @@
 """日志服务模块"""
 
 import logging
+import os
 import sys
 import time
 from logging.handlers import RotatingFileHandler
@@ -72,7 +73,25 @@ def _cleanup_old_logs(log_dir: Path, max_age_days: int = 7) -> None:
             f.unlink(missing_ok=True)
 
 
-def setup_logging() -> QtLogHandler:
+def _coerce_level(level: int | str) -> int:
+    if isinstance(level, int):
+        return level
+    value = logging.getLevelNamesMapping().get(str(level).upper())
+    return value if isinstance(value, int) else logging.INFO
+
+
+def apply_log_level(level: int | str) -> int:
+    """立即调整本进程日志级别，并传递给后续启动的 WorkerHost。"""
+    effective_level = _coerce_level(level)
+    os.environ["VIBEOCR_LOG_LEVEL"] = logging.getLevelName(effective_level)
+    root_logger = logging.getLogger()
+    for handler in root_logger.handlers:
+        if isinstance(handler, RotatingFileHandler):
+            handler.setLevel(effective_level)
+    return effective_level
+
+
+def setup_logging(level: int | str = logging.INFO) -> QtLogHandler:
     """配置全局日志处理器
 
     Returns:
@@ -118,7 +137,7 @@ def setup_logging() -> QtLogHandler:
         encoding="utf-8",
         delay=True,
     )
-    file_handler.setLevel(logging.DEBUG)
+    file_handler.setLevel(_coerce_level(level))
     file_handler.setFormatter(JsonLogFormatter(frontend="pyside", profile="production"))
     root_logger.addHandler(file_handler)
 
@@ -144,5 +163,7 @@ def setup_logging() -> QtLogHandler:
     )
     for name in _noisy_loggers:
         logging.getLogger(name).setLevel(logging.WARNING)
+
+    apply_log_level(level)
 
     return handler

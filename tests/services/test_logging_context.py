@@ -90,6 +90,32 @@ def test_worker_stderr_jsonl_does_not_write_stdout(capsys) -> None:
     assert worker_log["message"] == "warming up"
 
 
+def test_worker_logging_defaults_to_info_and_suppresses_http_debug(
+    monkeypatch,
+) -> None:
+    monkeypatch.delenv("VIBEOCR_LOG_LEVEL", raising=False)
+    stream = io.StringIO()
+    root = logging.getLogger()
+    old_handlers = root.handlers[:]
+    old_level = root.level
+    noisy = logging.getLogger("httpcore.http11")
+    old_noisy_level = noisy.level
+    try:
+        handler = configure_worker_stderr_logging(
+            frontend="pyside", profile="production", stream=stream
+        )
+        assert handler.level == logging.INFO
+        assert root.level == logging.INFO
+        assert noisy.getEffectiveLevel() == logging.WARNING
+        noisy.debug("receive_response_headers.started")
+        assert stream.getvalue() == ""
+    finally:
+        root.handlers.clear()
+        root.handlers.extend(old_handlers)
+        root.setLevel(old_level)
+        noisy.setLevel(old_noisy_level)
+
+
 def test_forward_worker_json_preserves_severity_traceback_and_context() -> None:
     stream = io.StringIO()
     logger = _isolated_logger("main.worker_bridge", stream)

@@ -8,6 +8,7 @@ from __future__ import annotations
 import logging
 import os
 import shutil
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NamedTuple
 
@@ -96,10 +97,10 @@ class PdfService:
         """落盘 PDF，返回覆盖保存后的新 doc（全量压缩时 doc 已重开）。
 
         覆盖保存（path is None）按 compress_on_save 分流：True（默认）= 全量
-        压缩（garbage=4 + deflate + clean）。PyMuPDF 不能全量保存覆盖自身已打开
+        压缩（garbage=3 + deflate + object streams）。PyMuPDF 不能全量保存覆盖自身已打开
         源文件，且 Windows 锁定打开的文件，因此全量压缩采用
-        tobytes→close→write→reopen：先取压缩字节、关闭释放文件锁、写回原路径、
-        重新打开并返回新 doc（调用方需更新其 doc 引用，如 session.doc）。
+        save(tmp)→close→replace→reopen：先写同目录临时文件、关闭释放文件锁、
+        原子替换原路径，再打开并返回新 doc（调用方需更新其 doc 引用）。
         False = 增量追加快路径（incremental，doc 不变，返回 None）。
         另存为（path 指定）统一 deflate + clean（新文件，doc 不变）。
         """
@@ -144,7 +145,7 @@ class PdfService:
         流程：先备份原文件 → doc.save(tmp, garbage+deflate[+clean]) 落到临时文件
         → 关闭 doc 释放文件锁 → os.replace(tmp, save_path) 原子替换 → 重开。
 
-        **关键：用 doc.save 而非 doc.tobytes**。tobytes(garbage=4) 在 doc 累积大量
+        **关键：用 doc.save 而非 doc.tobytes**。旧版 tobytes(garbage=4) 在 doc 累积大量
         insert_text 修改后，会留下不一致的内部 xref/对象状态，随后的 doc.close()
         遍历这些失效引用触发原生内存破坏（0xC0000409 STATUS_STACK_BUFFER_OVERRUN，
         PyMuPDF 1.28.0 实测稳定复现）。doc.save 是官方推荐的"修改后落盘"路径，
@@ -152,6 +153,8 @@ class PdfService:
 
         落到临时文件而非直接覆盖原文件：Windows 锁定被 fitz 打开的文件，不能在
         doc 仍打开时覆盖原路径；save 到新路径无锁冲突，close 后再 os.replace。
+        默认采用 garbage=3 + object streams；garbage=4 会比较大型 stream 去重，
+        对数百页扫描件可能从秒级恶化到数分钟。
 
         Args:
             clean: 是否深度清理内容流（PyMuPDF clean 参数）。True 重写规范化
@@ -160,20 +163,58 @@ class PdfService:
         """
         backup_path = save_path + ".bak"
         tmp_path = save_path + ".tmp"
+        started_at = time.monotonic()
+        source_size = Path(save_path).stat().st_size
+        page_count = doc.page_count
+        stage_started = time.monotonic()
         shutil.copy2(save_path, backup_path)
+        backup_elapsed = time.monotonic() - stage_started
         # 清理可能残留的临时文件（上次崩溃留下的）
         Path(tmp_path).unlink(missing_ok=True)
         try:
+            stage_started = time.monotonic()
             doc.save(
-                tmp_path, garbage=4, deflate=True, clean=clean, encryption=0
+                tmp_path,
+                garbage=3,
+                deflate=True,
+                clean=clean,
+                encryption=0,
+                use_objstms=1,
+                compression_effort=1,
             )
+            save_elapsed = time.monotonic() - stage_started
+            output_size = Path(tmp_path).stat().st_size
+            stage_started = time.monotonic()
             doc.close()
             # close 释放了原文件锁，现在可以原子替换
             Path(tmp_path).replace(save_path)
+            replace_elapsed = time.monotonic() - stage_started
+            stage_started = time.monotonic()
             new_doc = fitz.open(save_path)
+            reopen_elapsed = time.monotonic() - stage_started
             Path(backup_path).unlink(missing_ok=True)
+            logger.info(
+                "PDF 全量压缩完成: pages=%d clean=%s size=%d->%d "
+                "backup=%.2fs save=%.2fs replace=%.2fs reopen=%.2fs total=%.2fs",
+                page_count,
+                clean,
+                source_size,
+                output_size,
+                backup_elapsed,
+                save_elapsed,
+                replace_elapsed,
+                reopen_elapsed,
+                time.monotonic() - started_at,
+            )
             return new_doc
         except Exception:
+            logger.exception(
+                "PDF 全量压缩失败: pages=%d clean=%s source_size=%d elapsed=%.2fs",
+                page_count,
+                clean,
+                source_size,
+                time.monotonic() - started_at,
+            )
             # 失败回滚：doc 可能已关闭，原文件从备份恢复，清理临时文件
             try:
                 doc.close()

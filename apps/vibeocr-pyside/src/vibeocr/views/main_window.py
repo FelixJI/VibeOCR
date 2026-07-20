@@ -492,7 +492,7 @@ class MainWindow(QMainWindow):
 
     def _setup_console(self) -> None:
         """初始化日志"""
-        self._log_handler = setup_logging()
+        self._log_handler = setup_logging(ConfigManager.instance().get_log_level())
         self._log_handler.status_signal.connect(self._on_log_status_update)
         logging.info("VibeOCR 启动")
 
@@ -581,7 +581,6 @@ class MainWindow(QMainWindow):
             return
         logging.info("[设置安装] 依赖安装成功，重新检测以联动截图功能")
         # reset 确保重入安全（若上一次检测仍在进行，避免 _is_checking 短路）
-        self._dependency_manager.reset()
         self._dependency_manager.check_dependencies()
 
     def _try_load_cache(self) -> None:
@@ -733,7 +732,6 @@ class MainWindow(QMainWindow):
             import vibeocr.env_manager as em
 
             em._dep_specs_cache = None
-            self._dependency_manager.reset()
             self._dependency_manager.check_dependencies()
             # 同步会重装 python/ 内的包，Python 运行时状态可能变化，刷新设置页 label
             self._refresh_settings_env_state()
@@ -888,7 +886,6 @@ class MainWindow(QMainWindow):
             import vibeocr.env_manager as em
 
             em._dep_specs_cache = None
-            self._dependency_manager.reset()
             self._dependency_manager.check_dependencies()
 
     def _check_pending_backend(self) -> tuple[bool, str | None]:
@@ -1006,6 +1003,7 @@ class MainWindow(QMainWindow):
 
             self._preload_in_progress = False
             self._statusbar.showMessage("OCR 服务已就绪（模型按需加载）")
+            self._start_subprocess_preload()
         else:
             logging.warning("[MainWindow] 子进程 Worker 启动失败")
             self._statusbar.showMessage("OCR 服务启动失败")
@@ -1041,6 +1039,12 @@ class MainWindow(QMainWindow):
         preload_total = len(preload)
         warmup_ok = sum(1 for v in warmup.values() if v)
         warmup_total = len(warmup)
+        self._preload_complete = (
+            preload_total > 0
+            and preload_ok == preload_total
+            and warmup_total == preload_total
+            and warmup_ok == warmup_total
+        )
 
         if preload_total > 0 and preload_ok > 0:
             if warmup_total > 0 and warmup_ok < warmup_total:
@@ -1143,12 +1147,15 @@ class MainWindow(QMainWindow):
         logging.debug(f"[子进程预加载] 开始预加载管道: {pipelines}")
 
         # TTL 下发与预加载均在后台线程执行
-        self._subprocess_manager.preload_pipelines(pipelines, ttl_seconds=ttl)
+        self._preload_in_progress = self._subprocess_manager.preload_pipelines(
+            pipelines, ttl_seconds=ttl
+        )
 
     def _show_install_dialog(self, missing: list) -> None:
         """显示后端选择 + 安装对话框（首启合并对话框）"""
         from vibeocr.widgets.backend_choice_dialog import BackendChoiceDialog
 
+        self._subprocess_manager.invalidate_worker_host()
         dialog = BackendChoiceDialog(self._project_root, self)
         dialog.finished.connect(self._on_install_finished)
         dialog.install_succeeded.connect(self._on_install_succeeded)

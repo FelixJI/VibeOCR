@@ -430,6 +430,7 @@ class SyncBackendClient:
         *,
         pipeline: str = "OCR",
         language: str | None = None,
+        options: dict[str, Any] | None = None,
         timeout: float = 300.0,
     ) -> Any:
         """Run OCR via ``ocr.recognize`` and reconstruct an ``OCRResult``.
@@ -439,13 +440,15 @@ class SyncBackendClient:
         response (text_blocks deserialized into ``TextBlock`` objects).
         """
         assert self._client is not None
+        call_kwargs: dict[str, Any] = {
+            "pipeline": pipeline,
+            "language": language,
+            "timeout": timeout,
+        }
+        if options:
+            call_kwargs["options"] = options
         raw = self._run_sync(
-            self._client.recognize(
-                image_bytes,
-                pipeline=pipeline,
-                language=language,
-                timeout=timeout,
-            ),
+            self._client.recognize(image_bytes, **call_kwargs),
             timeout=timeout + _RPC_COMPLETION_GRACE_SECONDS,
         )
         return _reconstruct_ocr_result(raw)
@@ -456,16 +459,19 @@ class SyncBackendClient:
         *,
         pipeline: str = "OCR",
         language: str | None = None,
+        options: dict[str, Any] | None = None,
         timeout: float = 1800.0,
     ) -> list[Any]:
         assert self._client is not None
+        call_kwargs: dict[str, Any] = {
+            "pipeline": pipeline,
+            "language": language,
+            "timeout": timeout,
+        }
+        if options:
+            call_kwargs["options"] = options
         raw_results = self._run_sync(
-            self._client.recognize_batch(
-                images,
-                pipeline=pipeline,
-                language=language,
-                timeout=timeout,
-            ),
+            self._client.recognize_batch(images, **call_kwargs),
             timeout=timeout + _RPC_COMPLETION_GRACE_SECONDS,
         )
         return [
@@ -802,6 +808,9 @@ def _reconstruct_ocr_result(raw: dict[str, Any]) -> Any:
         text_blocks=text_blocks,
         image_width=int(raw.get("image_width", 0) or 0),
         image_height=int(raw.get("image_height", 0) or 0),
+        preproc_angle=int(raw.get("preproc_angle", 0) or 0),
+        preproc_img_w=int(raw.get("preproc_img_w", 0) or 0),
+        preproc_img_h=int(raw.get("preproc_img_h", 0) or 0),
     )
 
 

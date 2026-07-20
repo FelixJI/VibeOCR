@@ -58,6 +58,7 @@ class OcrHandler:
             image_data=image_data,
             pipeline=pipeline,
             language=str(language) if language is not None else None,
+            options=dict(payload.get("options") or {}),
         )
         try:
             result = await asyncio.to_thread(self._facade.recognize, request, cancel)
@@ -94,6 +95,7 @@ class OcrBatchHandler:
                 image_data=image,
                 pipeline=pipeline,
                 language=str(language) if language is not None else None,
+                options=dict(payload.get("options") or {}),
             )
             for image in images
         ]
@@ -129,6 +131,9 @@ def _result_payload(result: OcrResult) -> dict[str, Any]:
         "content_list": list(result.content_list),
         "image_width": result.image_width,
         "image_height": result.image_height,
+        "preproc_angle": result.preproc_angle,
+        "preproc_img_w": result.preproc_img_w,
+        "preproc_img_h": result.preproc_img_h,
     }
 
 

@@ -28,6 +28,24 @@ def test_batch_adapter_maps_options_and_cancel() -> None:
     client.cancel_active.assert_called_once_with()
 
 
+def test_batch_adapter_forwards_full_ocr_options() -> None:
+    from vibeocr.models.ocr_options import OCROptions
+
+    client = MagicMock()
+    client.recognize_batch_sync.return_value = []
+    adapter = BatchBackendAdapter(client)
+    options = OCROptions(
+        use_doc_orientation_classify=False,
+        use_doc_unwarping=True,
+    )
+
+    adapter.recognize_batch([b"png"], options)
+
+    kwargs = client.recognize_batch_sync.call_args.kwargs
+    assert kwargs["options"]["use_doc_orientation_classify"] is False
+    assert kwargs["options"]["use_doc_unwarping"] is True
+
+
 def test_batch_adapter_uses_real_pipeline_cache_client_surface() -> None:
     client = MagicMock()
     client.preload_pipeline_cache_sync.return_value = {"OCR": True}

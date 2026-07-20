@@ -787,7 +787,7 @@ class TestOcrPageDoneIncrementalModel:
 
 class TestRunOcrIncrementalSave:
     """_run_ocr 阶段3 写层后应 incremental save + 写 sidecar；
-    末尾快速压缩后 mark_completed。覆盖 6B + 6C。"""
+    全部批次已落盘时跳过末尾全量压缩并 mark_completed。"""
 
     def test_run_ocr_calls_add_text_layer_batch_with_save_and_writes_sidecar(
         self, qapp, tmp_path, monkeypatch
@@ -805,7 +805,10 @@ class TestRunOcrIncrementalSave:
         mgr._active_path = str(pdf_path)
 
         doc = PdfDocument(file_path=str(pdf_path))
-        doc.pages = [PdfPageInfo(page_index=i) for i in range(3)]
+        doc.pages = [
+            PdfPageInfo(page_index=i, rect=(0.0, 0.0, 595.0, 842.0))
+            for i in range(3)
+        ]
         session = MagicMock()
         session.session_id = "sid1"
         session.file_path = str(pdf_path)
@@ -823,7 +826,6 @@ class TestRunOcrIncrementalSave:
         resp = MagicMock()
         resp.extra = {"saved": True}
         client.add_text_layer_batch.return_value = resp
-        client.get_model.return_value = MagicMock()
         mgr._client = client
 
         # mock OCR service：每页返回带 text_blocks 的 result
@@ -854,21 +856,95 @@ class TestRunOcrIncrementalSave:
         runner.all_done = MagicMock()
         # _run_ocr 通过 runner._render_pool.map 并发渲染；mock 成返回 3 份 PNG bytes。
         runner._render_pool = MagicMock()
-        runner._render_pool.map.return_value = [b"\x89PNG p0", b"\x89PNG p1", b"\x89PNG p2"]
+        runner._render_pool.map.side_effect = (
+            lambda func, indices: [func(index) for index in indices]
+        )
 
-        mgr._run_ocr(runner, "sid1", [0, 1, 2], None, {}, False)
+        mgr._run_ocr(
+            runner,
+            "sid1",
+            [0, 1, 2],
+            None,
+            {"render_dpi": 200, "max_pixels": 16_000_000},
+            False,
+        )
 
         # 关键断言：add_text_layer_batch 被调用且 save=True
         assert client.add_text_layer_batch.called
         _, kwargs = client.add_text_layer_batch.call_args
         assert kwargs.get("save") is True
-        assert client.save.call_args.kwargs.get("rewrite_text_layers") is False
-        # 末尾快速压缩后 mark_completed，故 completed=True
+        # 每批已增量落盘，不再整文档压缩，也不再全量拉取模型。
+        client.save.assert_not_called()
+        client.get_model.assert_not_called()
         from vibeocr.utils.ocr_sidecar import load_sidecar
 
         data = load_sidecar(str(pdf_path))
         assert data is not None
         assert data["completed"] is True
+        assert doc.is_modified is False
+        assert doc.has_structural_change is False
+        assert [call.kwargs["dpi"] for call in client.render_preview.call_args_list] == [
+            200,
+            200,
+            200,
+        ]
+
+    def test_run_ocr_final_save_recovers_unpersisted_batch(
+        self, qapp, tmp_path, monkeypatch
+    ):
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+
+        from vibeocr.managers.pdf_session_manager import PdfSessionManager
+        from vibeocr.models.pdf_document import PdfDocument, PdfPageInfo
+
+        pdf_path = tmp_path / "fallback.pdf"
+        pdf_path.write_bytes(b"%PDF-1.4 test")
+        mgr = PdfSessionManager.__new__(PdfSessionManager)
+        mgr._active_path = str(pdf_path)
+        document = PdfDocument(file_path=str(pdf_path))
+        document.pages = [PdfPageInfo(page_index=0)]
+        session = MagicMock()
+        session.session_id = "sid1"
+        session.file_path = str(pdf_path)
+        session.pdf_document = document
+        session.add_ocr_stats = MagicMock()
+        mgr._sessions = {str(pdf_path): session}
+
+        client = MagicMock()
+        client.render_preview.return_value = b"png"
+        client.add_text_layer_batch.return_value = SimpleNamespace(
+            extra={"saved": False}
+        )
+        mgr._client = client
+        block = SimpleNamespace(
+            text="正文", score=0.9, bbox=(0, 0, 100, 100), polygon=None,
+            page_idx=0, is_manually_edited=False, label="text", order=0,
+        )
+        mgr._ocr_service = MagicMock()
+        mgr._ocr_service.recognize_batch.return_value = [
+            SimpleNamespace(text_blocks=[block], preproc_angle=90)
+        ]
+        monkeypatch.setattr(
+            "vibeocr.utils.ocr_sidecar._sessions_dir", lambda: tmp_path / "sessions"
+        )
+
+        runner = MagicMock()
+        runner._cancelled = False
+        runner._task_id = 1
+        runner._render_pool.map.side_effect = (
+            lambda func, indices: [func(index) for index in indices]
+        )
+
+        mgr._run_ocr(runner, "sid1", [0], None, {}, False)
+
+        assert client.save.call_args.kwargs["rewrite_text_layers"] is False
+        client.get_model.assert_not_called()
+        from vibeocr.utils.ocr_sidecar import load_sidecar
+
+        data = load_sidecar(str(pdf_path))
+        assert data is not None and data["completed"] is True
+        assert data["pages"]["0"]["ocr_preproc_angle"] == 90
 
     def test_run_ocr_prefetches_next_render_batch_before_current_ocr(
         self, qapp, tmp_path, monkeypatch

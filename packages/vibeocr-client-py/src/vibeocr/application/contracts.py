@@ -54,6 +54,7 @@ class OcrRequest:
     image_data: bytes
     pipeline: str = "OCR"
     language: str | None = None
+    options: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,6 +87,9 @@ class OcrResult:
     content_list: list[dict[str, Any]] = field(default_factory=list)
     image_width: int = 0
     image_height: int = 0
+    preproc_angle: int = 0
+    preproc_img_w: int = 0
+    preproc_img_h: int = 0
     preprocessed_image_ref: dict[str, Any] | None = None
 
 

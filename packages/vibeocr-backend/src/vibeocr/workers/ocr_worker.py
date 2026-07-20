@@ -342,6 +342,10 @@ def run_worker(shm_name: str, shm_size: int, use_gpu: bool) -> None:
                             f"[Worker] 批量识别 {len(images)} 张，选项: {options_dict}"
                         )
                         options = OCROptions.from_dict(options_dict)
+                        # WorkerHost/图片批处理不会消费预处理图；若仍为每页复制
+                        # 8.7MP ndarray 并编码 PNG，会产生十余 MiB 的无效 SHM
+                        # 回包。保留角度/尺寸，仅批量消息禁用图像编码。
+                        options._include_preprocessed_image = False  # type: ignore[attr-defined]
 
                         # PNG bytes → ndarray，OCRService.recognize_batch 接收 ndarray 列表。
                         # images 为 list[bytes]（来自 deserialize），_to_ndarray(bytes)

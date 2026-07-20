@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import Signal, Slot
+from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal, Slot
 from PySide6.QtWidgets import (
     QButtonGroup,
     QDialog,
@@ -25,6 +25,28 @@ from vibeocr.widgets.install_dialog import InstallWorker
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+
+class _GpuDetectSignals(QObject):
+    finished = Signal(dict)
+
+
+class _GpuDetectTask(QRunnable):
+    def __init__(self, detector) -> None:
+        super().__init__()
+        self._detector = detector
+        self.signals = _GpuDetectSignals()
+
+    def run(self) -> None:
+        try:
+            info = self._detector()
+        except Exception:
+            info = {"has_gpu": False, "name": "", "vram_mb": 0, "cuda": None}
+        try:
+            self.signals.finished.emit(info)
+        except RuntimeError:
+            # 对话框可能已在硬件探测结束前关闭。
+            pass
 
 
 class BackendChoiceDialog(QDialog):
@@ -122,7 +144,13 @@ class BackendChoiceDialog(QDialog):
         layout.addLayout(btn_layout)
 
     def _detect_and_set_default(self) -> None:
-        info = env_manager.detect_gpu_info()
+        self._install_button.setEnabled(False)
+        self._gpu_detect_task = _GpuDetectTask(env_manager.detect_gpu_info)
+        self._gpu_detect_task.signals.finished.connect(self._apply_gpu_info)
+        QThreadPool.globalInstance().start(self._gpu_detect_task)
+
+    @Slot(dict)
+    def _apply_gpu_info(self, info: dict) -> None:
         self._has_gpu = bool(info["has_gpu"])
         cuda = info["cuda"]
 
@@ -148,6 +176,8 @@ class BackendChoiceDialog(QDialog):
             self._gpu_radio.setEnabled(False)
             self._gpu_radio.setToolTip("未检测到 NVIDIA GPU")
             self._cpu_radio.setChecked(True)
+        self._install_button.setEnabled(True)
+        self._gpu_detect_task = None
 
     def selected_backend(self) -> str:
         return "gpu" if self._gpu_radio.isChecked() else "cpu"

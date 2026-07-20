@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sys
 from datetime import UTC, datetime
 from typing import Any, TextIO
@@ -21,6 +22,22 @@ _BASE_FIELDS = {
     "exception",
 }
 LOG_CONTEXT_FIELDS = ("request_id", "task_id", "pipeline", "page", "batch")
+
+_NOISY_LOGGERS = (
+    "fontTools",
+    "PIL",
+    "paddle",
+    "paddlex",
+    "paddleocr",
+    "urllib3",
+    "matplotlib",
+    "huggingface_hub",
+    "filelock",
+    "asyncio",
+    "qasync",
+    "httpcore",
+    "httpx",
+)
 
 
 def _timestamp(record: logging.LogRecord) -> str:
@@ -71,18 +88,28 @@ class JsonLogFormatter(logging.Formatter):
 
 
 def configure_worker_stderr_logging(
-    *, frontend: str, profile: str, stream: TextIO | None = None
+    *,
+    frontend: str,
+    profile: str,
+    stream: TextIO | None = None,
+    level: int | str | None = None,
 ) -> logging.Handler:
     """Configure serving-mode logs as JSONL on stderr only."""
+    effective_level = _coerce_level(
+        level if level is not None else os.environ.get("VIBEOCR_LOG_LEVEL"),
+        logging.INFO,
+    )
     handler = logging.StreamHandler(stream or sys.stderr)
     handler.setFormatter(JsonLogFormatter(frontend=frontend, profile=profile))
-    handler.setLevel(logging.DEBUG)
+    handler.setLevel(effective_level)
 
     root = logging.getLogger()
     for existing in root.handlers[:]:
         root.removeHandler(existing)
-    root.setLevel(logging.DEBUG)
+    root.setLevel(effective_level)
     root.addHandler(handler)
+    for name in _NOISY_LOGGERS:
+        logging.getLogger(name).setLevel(max(effective_level, logging.WARNING))
     return handler
 
 

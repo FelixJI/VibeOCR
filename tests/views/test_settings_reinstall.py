@@ -191,7 +191,7 @@ def test_buttons_disabled_in_non_portable_mode(controller, monkeypatch):
     assert not btn_deps.isEnabled(), "venv 模式应禁用重装依赖"
 
 
-def test_env_status_label_shows_python_info(controller, monkeypatch):
+def test_env_status_label_shows_python_info(controller, monkeypatch, qtbot):
     """labelEnvStatus 应显示 Python 路径/就绪状态"""
     _ctrl, host = controller
     from PySide6.QtWidgets import QLabel
@@ -211,6 +211,7 @@ def test_env_status_label_shows_python_info(controller, monkeypatch):
     controller[0]._refresh_env_maintenance_state()
 
     label = host.findChild(QLabel, "labelEnvStatus")
+    qtbot.waitUntil(lambda: "python.exe" in label.text(), timeout=3000)
     text = label.text()
     assert "python.exe" in text or "就绪" in text or "已安装" in text, (
         f"应显示 Python 状态，实际: {text}"
@@ -290,7 +291,7 @@ def test_click_install_missing_opens_dialog_with_missing_only(controller, monkey
     )
 
 
-def test_refresh_fills_deps_tree(controller, monkeypatch):
+def test_refresh_fills_deps_tree(controller, monkeypatch, qtbot):
     """_refresh_env_maintenance_state 应填充依赖状态树
 
     顶层 OCR 依赖每个一行（QTreeWidget 顶层节点），状态列三态：
@@ -343,6 +344,9 @@ def test_refresh_fills_deps_tree(controller, monkeypatch):
 
     tree = host.findChild(QTreeWidget, "treeDepsStatus")
     assert tree is not None
+    qtbot.waitUntil(
+        lambda: tree.topLevelItemCount() == len(OCR_CHECK_MODULES), timeout=3000
+    )
     # 顶层节点数 == OCR_CHECK_MODULES 数量
     assert tree.topLevelItemCount() == len(OCR_CHECK_MODULES), (
         f"应有 {len(OCR_CHECK_MODULES)} 个顶层节点，实际: {tree.topLevelItemCount()}"
@@ -360,7 +364,7 @@ def test_refresh_fills_deps_tree(controller, monkeypatch):
     )
 
 
-def test_deps_tree_uses_detailed_fresh_check(controller, monkeypatch):
+def test_deps_tree_uses_detailed_fresh_check(controller, monkeypatch, qtbot):
     """依赖状态树应使用 check_dependencies_status_detailed（fresh，含缺失模块名）
 
     回归：旧逻辑用 check_embedded_environment_dependencies_fresh（仅布尔），
@@ -402,10 +406,11 @@ def test_deps_tree_uses_detailed_fresh_check(controller, monkeypatch):
 
     ctrl._refresh_env_maintenance_state()
 
+    qtbot.waitUntil(lambda: detailed_called["count"] >= 1, timeout=3000)
     assert detailed_called["count"] >= 1, "应调用 detailed 三元检测"
 
 
-def test_deps_tree_expands_direct_dependencies(controller, monkeypatch):
+def test_deps_tree_expands_direct_dependencies(controller, monkeypatch, qtbot):
     """依赖树顶层节点应可展开显示动态推导的直接依赖子节点"""
     ctrl, host = controller
     from PySide6.QtWidgets import QTreeWidget
@@ -439,6 +444,7 @@ def test_deps_tree_expands_direct_dependencies(controller, monkeypatch):
     ctrl._refresh_env_maintenance_state()
 
     tree = host.findChild(QTreeWidget, "treeDepsStatus")
+    qtbot.waitUntil(lambda: tree.topLevelItemCount() > 0, timeout=3000)
     # 遍历找到 mineru 节点（OCR_CHECK_MODULES 顺序中它不是第 0 个）
     mineru_item = None
     for i in range(tree.topLevelItemCount()):
@@ -454,7 +460,7 @@ def test_deps_tree_expands_direct_dependencies(controller, monkeypatch):
     assert "opencv-python" in child0 or "rapid-table" in child0
 
 
-def test_click_reinstall_selected_batch_reinstalls(controller, monkeypatch):
+def test_click_reinstall_selected_batch_reinstalls(controller, monkeypatch, qtbot):
     """选中顶层节点后点"重装选中项"：确认后走 InstallDialog(packages=[...])"""
     ctrl, host = controller
     from PySide6.QtWidgets import QMessageBox, QPushButton, QTreeWidget
@@ -486,6 +492,7 @@ def test_click_reinstall_selected_batch_reinstalls(controller, monkeypatch):
     ctrl._refresh_env_maintenance_state()
 
     tree = host.findChild(QTreeWidget, "treeDepsStatus")
+    qtbot.waitUntil(lambda: tree.topLevelItemCount() >= 2, timeout=3000)
     # 选中两个顶层节点
     tree.topLevelItem(0).setSelected(True)
     tree.topLevelItem(1).setSelected(True)

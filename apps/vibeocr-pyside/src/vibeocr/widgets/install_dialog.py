@@ -92,6 +92,16 @@ class InstallWorker(QThread):
     def run(self) -> None:
         """执行安装"""
         try:
+            # 运行时文件可能正被 WorkerHost 占用。关闭动作放在安装线程中，
+            # 避免 GUI 卡顿，也保证重装 Python 不会残留被锁定的旧文件。
+            self._emit_progress("运行时维护", "正在断开 OCR 运行时...")
+            try:
+                from vibeocr.client.session import shutdown_backend_client
+
+                shutdown_backend_client()
+            except Exception as exc:
+                logger.warning("关闭旧 WorkerHost 失败，将继续安装: %s", exc)
+
             # 单包重装模式：跳过网络/GPU/Python 检测，直接装指定包。
             # 复用 install_single_dependency 的取消/超时/进度机制。
             if self._single_pkg is not None:

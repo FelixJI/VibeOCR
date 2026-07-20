@@ -62,3 +62,15 @@ def test_empty_ocr_batch_is_rejected() -> None:
             "request",
             {"images": [], "pipeline": "OCR"},
         )
+
+
+def test_ocr_options_and_preproc_metadata_validate(golden: dict[str, Any]) -> None:
+    request = dict(golden["positive"]["ocr.recognize"]["request_envelope"]["payload"])
+    request["options"] = {"use_doc_orientation_classify": False}
+    validate_method_payload("ocr.recognize", "request", request)
+
+    response = dict(golden["positive"]["ocr.recognize"]["response_envelope"]["result"])
+    response.update(
+        {"preproc_angle": 90, "preproc_img_w": 2480, "preproc_img_h": 3508}
+    )
+    validate_method_payload("ocr.recognize", "response", response)

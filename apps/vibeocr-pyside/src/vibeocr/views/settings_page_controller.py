@@ -7,7 +7,6 @@ import logging
 import os
 import subprocess
 import sys
-import threading
 from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -16,6 +15,7 @@ from PySide6.QtCore import QObject, QRunnable, QThreadPool, QTimer, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
+    QComboBox,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -133,12 +133,12 @@ class SettingsPageController:
         # 的回调，使设置页安装成功后与首启路径行为一致（检测完成回调里自动
         # 设 _ocr_ready + 启动 Worker + 消费 pending_backend）。
         self._install_succeeded_callback = install_succeeded_callback
-        self._manual_preload_total = 0
         self._manual_preload_task: object | None = None
         self._backend_options = None
         self._closing = False
         self._cache_tasks: set[object] = set()
         self._cache_generation = 0
+        self._env_refresh_generation = 0
         self._ttl_sync_timer = QTimer(ui)
         self._ttl_sync_timer.setSingleShot(True)
         self._ttl_sync_timer.setInterval(300)
@@ -208,6 +208,15 @@ class SettingsPageController:
         btn_preload_now = self._ui.findChild(QPushButton, "btnPreloadNow")
         if btn_preload_now:
             btn_preload_now.clicked.connect(self._on_preload_now_clicked)
+
+        self._subprocess_manager.preload_progress.connect(
+            self._on_manual_preload_progress
+        )
+        self._subprocess_manager.preload_finished.connect(
+            self._on_manual_preload_finished
+        )
+
+        self._init_log_level_control()
 
         for pipeline in self._get_preloadable_pipelines():
             chk = self._ui.findChild(QCheckBox, f"chkPreload_{pipeline.name}")
@@ -545,6 +554,48 @@ class SettingsPageController:
         self._update_preload_status()
         self._restore_preload_checkbox_state()
 
+    def _init_log_level_control(self) -> None:
+        """在应用设置页加入持久化日志级别选择。"""
+        if self._ui.findChild(QComboBox, "comboLogLevel") is not None:
+            return
+        layout = self._ui.findChild(QVBoxLayout, "appSettingsLayout")
+        if layout is None:
+            return
+        row = QWidget(self._ui)
+        row.setObjectName("logLevelRow")
+        row_layout = QHBoxLayout(row)
+        row_layout.setContentsMargins(0, 0, 0, 0)
+        label = QLabel("日志级别：", row)
+        combo = QComboBox(row)
+        combo.setObjectName("comboLogLevel")
+        combo.addItem("普通（推荐）", "INFO")
+        combo.addItem("调试（详细）", "DEBUG")
+        combo.addItem("仅警告与错误", "WARNING")
+        combo.setToolTip("普通模式会过滤 HTTP、模型框架等底层调试输出")
+        row_layout.addWidget(label)
+        row_layout.addWidget(combo)
+        row_layout.addStretch(1)
+        layout.addWidget(row)
+
+        from vibeocr.managers.config_manager import ConfigManager
+
+        saved = ConfigManager.instance().get_log_level()
+        index = combo.findData(saved)
+        combo.setCurrentIndex(max(0, index))
+        combo.currentIndexChanged.connect(self._on_log_level_changed)
+
+    def _on_log_level_changed(self) -> None:
+        combo = self._ui.findChild(QComboBox, "comboLogLevel")
+        if combo is None:
+            return
+        level = str(combo.currentData() or "INFO")
+        from vibeocr.managers.config_manager import ConfigManager
+        from vibeocr.services.log_service import apply_log_level
+
+        if ConfigManager.instance().set_log_level(level):
+            apply_log_level(level)
+            self._show_settings_toast("日志级别已更新；WorkerHost 将在下次重连时应用")
+
     def _wrap_settings_pages_in_scroll(self) -> None:
         """把 settingsStackedWidget 的每个子页包进 QScrollArea。
 
@@ -662,7 +713,6 @@ class SettingsPageController:
         logger.debug(f"[预加载] 开始预加载和预热管道: {pipeline_names}")
 
         self._update_preload_status("正在预加载和预热模型...")
-        self._manual_preload_total = len(pipelines_to_preload)
         self._start_manual_preload_with_warmup(pipelines_to_preload)
 
     def _get_selected_preload_pipelines(self) -> list["OCRPipeline"]:
@@ -689,122 +739,31 @@ class SettingsPageController:
 
     def _start_manual_preload_with_warmup(self, pipelines: list["OCRPipeline"]) -> None:
         """启动手动预加载和预热"""
-        from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal
+        from vibeocr.pyside.runtime import ConfigManager
 
-        self._update_preload_status("正在预加载...")
-
-        class _PreloadSignals(QObject):
-            status_changed = Signal(str)
-            finished = Signal(dict)
-
-        class PreloadWithWarmupTask(QRunnable):
-            def __init__(self, service, pipelines, controller):
-                super().__init__()
-                self._service = service
-                self._pipelines = pipelines
-                self._controller = controller
-                self.signals = _PreloadSignals()
-                # 协作取消事件：controller shutdown 时设置，run() 在每个管道前检查
-                self._cancelled = threading.Event()
-
-            def cancel(self):
-                """请求取消：run() 在下一个检查点退出。"""
-                self._cancelled.set()
-
-            def run(self):
-                results = {}
-                service = self._service
-                if service is None:
-                    self.signals.finished.emit(results)
-                    return
-
-                for pipeline in self._pipelines:
-                    # 取消检查点：每个管道预加载前
-                    if self._cancelled.is_set():
-                        logger.debug("[预加载] 任务已取消，跳过剩余管道")
-                        break
-                    try:
-                        self.signals.status_changed.emit(
-                            f"正在预加载 {pipeline.display_name}..."
-                        )
-                        logger.debug(f"[预加载] 正在预加载 {pipeline.display_name}...")
-                        success = service.preload_pipeline(pipeline)
-                        if not success:
-                            logger.warning(
-                                f"[预加载] {pipeline.display_name} 预加载失败"
-                            )
-                            results[pipeline.name] = False
-                            continue
-                        results[pipeline.name] = True
-                        logger.debug(f"[预加载] {pipeline.display_name} 预加载成功!")
-
-                        # 预热前再次检查取消
-                        if self._cancelled.is_set():
-                            logger.debug("[预加载] 任务已取消，跳过预热")
-                            break
-                        self.signals.status_changed.emit(
-                            f"正在预热 {pipeline.display_name}..."
-                        )
-                        logger.debug(f"[预热] 正在预热 {pipeline.display_name}...")
-                        if self._warmup_pipeline(pipeline):
-                            logger.debug(f"[预热] {pipeline.display_name} 预热成功!")
-                    except Exception as e:
-                        logger.error(f"预加载 {pipeline.name} 失败: {e}")
-                        results[pipeline.name] = False
-
-                success_count = sum(1 for v in results.values() if v)
-                total = len(results)
-                if self._cancelled.is_set():
-                    self.signals.status_changed.emit("预加载已取消")
-                    logger.debug("[预加载] 已取消")
-                elif success_count == total:
-                    self.signals.status_changed.emit("预加载成功")
-                    logger.debug(f"[预加载] 全部完成! 成功: {success_count}/{total}")
-                elif success_count > 0:
-                    self.signals.status_changed.emit(
-                        f"预加载部分成功 ({success_count}/{total})"
-                    )
-                    logger.warning(f"[预加载] 部分完成: {success_count}/{total}")
-                else:
-                    self.signals.status_changed.emit("预加载失败")
-                    logger.error("[预加载] 全部失败!")
-
-                self.signals.finished.emit(results)
-                # 清零引用，避免延迟 signal 访问已销毁的 controller/service
-                self._service = None
-                self._controller = None
-
-            def _warmup_pipeline(self, pipeline) -> bool:
-                """预热管道"""
-                try:
-                    import io
-
-                    from PIL import Image
-
-                    from vibeocr.models.ocr_options import OCROptions
-
-                    warmup_image = Image.new("RGB", (100, 100), color="white")
-                    buffer = io.BytesIO()
-                    warmup_image.save(buffer, format="PNG")
-                    image_data = buffer.getvalue()
-
-                    options = OCROptions(pipeline=pipeline)
-                    svc = self._service
-                    if svc is not None:
-                        svc.recognize(image_data, options=options)
-                    return True
-                except Exception as e:
-                    logger.warning(f"[预热] {pipeline.display_name} 预热失败: {e}")
-                    return False
-
-        task = PreloadWithWarmupTask(self._subprocess_manager.service, pipelines, self)
-        task.signals.status_changed.connect(self._update_preload_status)
-        task.signals.finished.connect(self._on_manual_preload_finished)
-        self._manual_preload_task = task
-        QThreadPool.globalInstance().start(task)
+        values = [pipeline.value for pipeline in pipelines]
+        self._manual_preload_requested = set(values)
+        self._manual_preload_task = True
+        started = self._subprocess_manager.preload_pipelines(
+            values,
+            ttl_seconds=ConfigManager.instance().get_pipeline_ttl_seconds(),
+        )
+        if not started:
+            self._manual_preload_task = None
+            self._manual_preload_requested = set()
+            button = self._ui.findChild(QPushButton, "btnPreloadNow")
+            if button:
+                button.setEnabled(True)
+            progress = self._ui.findChild(QProgressBar, "progressPreload")
+            if progress:
+                progress.setVisible(False)
+            self._update_preload_status("已有预加载任务正在运行，请稍后再试")
+        return
 
     def _on_manual_preload_finished(self, results: dict) -> None:
         """手动预加载完成回调（主线程槽函数）"""
+        if self._manual_preload_task is None:
+            return
         self._manual_preload_task = None
 
         btn_preload_now = self._ui.findChild(QWidget, "btnPreloadNow")
@@ -815,12 +774,34 @@ class SettingsPageController:
         if progress_bar:
             progress_bar.setVisible(False)
 
-        if self._preload_complete_callback:
+        preload = results.get("preload", {}) if isinstance(results, dict) else {}
+        warmup = results.get("warmup", {}) if isinstance(results, dict) else {}
+        requested = getattr(self, "_manual_preload_requested", set())
+        all_loaded = bool(requested) and all(preload.get(name) for name in requested)
+        all_warmed = all_loaded and all(warmup.get(name) for name in requested)
+        if all_warmed:
+            self._update_preload_status(f"预加载和预热成功（{len(requested)} 个模型）")
+        elif all_loaded:
+            self._update_preload_status("模型已加载，但部分预热失败；首次识别可能稍慢")
+        else:
+            self._update_preload_status("预加载失败，请查看日志")
+        self._manual_preload_requested = set()
+
+        if all_warmed and self._preload_complete_callback:
             self._preload_complete_callback()
 
-        success_count = sum(1 for v in results.values() if v)
-        total = len(results)
-        logger.debug(f"[预加载] 完成: {success_count}/{total}")
+    def _on_manual_preload_progress(
+        self, current: int, total: int, pipeline_name: str
+    ) -> None:
+        if self._manual_preload_task is None:
+            return
+        progress = self._ui.findChild(QProgressBar, "progressPreload")
+        if progress:
+            progress.setMaximum(max(1, total))
+            progress.setValue(current)
+        self._update_preload_status(
+            f"正在加载模型 {current}/{total}：{pipeline_name}"
+        )
 
     def _update_preload_status(self, status: str | None = None) -> None:
         """更新预加载状态"""
@@ -858,6 +839,7 @@ class SettingsPageController:
         由 MainWindow 触发 dependency_manager.check_dependencies，使截图界面立即可用，
         无需重启程序。
         """
+        self._subprocess_manager.invalidate_worker_host()
         dialog = BackendChoiceDialog(
             self._project_root,
             reinstall_python=reinstall_python,
@@ -865,7 +847,9 @@ class SettingsPageController:
         )
 
         def _on_finished(_result: int) -> None:
-            self._refresh_env_maintenance_state()
+            # 成功路径由 install_succeeded 刷新一次；取消/失败才在这里刷新。
+            if _result != 1:
+                self._refresh_env_maintenance_state()
             # 移除引用，允许对话框被回收（用户也可再次打开新的）
             try:
                 self._active_dialogs.remove(dialog)
@@ -1015,6 +999,7 @@ class SettingsPageController:
         """
         from vibeocr.widgets.install_dialog import InstallDialog
 
+        self._subprocess_manager.invalidate_worker_host()
         dialog = InstallDialog(
             self._project_root,
             missing_only=missing_only,
@@ -1024,7 +1009,8 @@ class SettingsPageController:
         )
 
         def _on_finished(_result: int) -> None:
-            self._refresh_env_maintenance_state()
+            if _result != 1:
+                self._refresh_env_maintenance_state()
             try:
                 self._active_dialogs.remove(dialog)
             except ValueError:
@@ -1095,7 +1081,63 @@ class SettingsPageController:
         self._open_install_dialog(packages=unique)
 
     def _refresh_env_maintenance_state(self) -> None:
-        """刷新环境维护区状态：显示 Python 路径/就绪，依赖状态树，非 portable 禁用按钮"""
+        """异步刷新环境维护区，避免多轮 Python 子进程探测阻塞 GUI。"""
+        label = self._ui.findChild(QLabel, "labelEnvStatus")
+        tree = self._ui.findChild(QTreeWidget, "treeDepsStatus")
+        if label:
+            label.setText("正在检测 Python 运行时和依赖...")
+        if tree:
+            tree.clear()
+        self._env_refresh_generation += 1
+        generation = self._env_refresh_generation
+        mode_fn = get_environment_mode
+        info_fn = get_embedded_python_info
+        python_fn = get_embedded_python_executable
+        status_fn = check_dependencies_status_detailed
+        versions_fn = get_dependency_versions
+        direct_deps_fn = get_direct_dependencies
+
+        def operation() -> dict:
+            from vibeocr.pyside.runtime import OCR_CHECK_MODULES
+
+            mode = mode_fn(self._project_root)
+            info = info_fn(self._project_root)
+            snapshot: dict = {"mode": mode, "info": info}
+            if mode == "portable":
+                python_exe = python_fn(self._project_root)
+                deps_status = status_fn(self._project_root)
+                versions = versions_fn(python_exe) if python_exe.exists() else {}
+                direct_deps = {
+                    pkg: direct_deps_fn(python_exe, pkg)
+                    for pkg in OCR_CHECK_MODULES.values()
+                    if deps_status.get(pkg, (False, False, None))[0]
+                }
+                snapshot.update(
+                    deps_status=deps_status,
+                    versions=versions,
+                    direct_deps=direct_deps,
+                )
+            return snapshot
+
+        self._run_cache_operation(
+            operation,
+            lambda snapshot: self._apply_env_maintenance_state(
+                generation, snapshot
+            ),
+            lambda error: self._on_env_refresh_error(generation, error),
+        )
+
+    def _on_env_refresh_error(self, generation: int, error: str) -> None:
+        if generation != self._env_refresh_generation:
+            return
+        label = self._ui.findChild(QLabel, "labelEnvStatus")
+        if label:
+            label.setText(f"运行时检测失败：{error}")
+        logger.warning("环境维护状态刷新失败: %s", error)
+
+    def _apply_env_maintenance_state(self, generation: int, snapshot: dict) -> None:
+        if generation != self._env_refresh_generation:
+            return
         label = self._ui.findChild(QLabel, "labelEnvStatus")
         btn_py = self._ui.findChild(QPushButton, "btnReinstallPython")
         btn_deps = self._ui.findChild(QPushButton, "btnReinstallDeps")
@@ -1104,8 +1146,8 @@ class SettingsPageController:
         btn_reinstall_sel = self._ui.findChild(QPushButton, "btnReinstallSelected")
         tree = self._ui.findChild(QTreeWidget, "treeDepsStatus")
 
-        mode = get_environment_mode(self._project_root)
-        info = get_embedded_python_info(self._project_root)
+        mode = snapshot.get("mode", "none")
+        info = snapshot.get("info", {})
 
         if label:
             if mode == "portable":
@@ -1132,7 +1174,7 @@ class SettingsPageController:
 
         # 填充依赖状态树（仅 portable 模式）
         if tree and mode == "portable":
-            self._populate_deps_tree(tree)
+            self._populate_deps_tree(tree, snapshot)
             # 连接一次选择/按钮信号（用标志位避免重复 connect 触发 disconnect 噪音）。
             # 首次调用 connect，后续 refresh 只重填树内容，信号连接保持有效。
             if not getattr(self, "_deps_tree_signals_connected", False):
@@ -1155,7 +1197,7 @@ class SettingsPageController:
         btn.setEnabled(count > 0)
         btn.setText(f"重装选中项 ({count})" if count > 0 else "重装选中项")
 
-    def _populate_deps_tree(self, tree: QTreeWidget) -> None:
+    def _populate_deps_tree(self, tree: QTreeWidget, snapshot: dict | None = None) -> None:
         """填充依赖状态树（依赖/状态/版本）
 
         顶层 OCR 依赖作为可展开父节点，点击展开其**直接依赖**（由
@@ -1176,12 +1218,14 @@ class SettingsPageController:
         }
 
         python_exe = get_embedded_python_executable(self._project_root)
-        # 三元检测（含缺失模块名）：设置页是用户查看实时状态的入口，走 fresh 检测
-        # 忽略缓存，配合 env_manager 安装成功后主动写缓存双保险保证状态及时准确。
-        deps_status = check_dependencies_status_detailed(self._project_root)
-        versions = (
-            get_dependency_versions(python_exe) if python_exe.exists() else {}
-        )
+        snapshot = snapshot or {}
+        deps_status = snapshot.get("deps_status")
+        if deps_status is None:
+            deps_status = check_dependencies_status_detailed(self._project_root)
+        versions = snapshot.get("versions")
+        if versions is None:
+            versions = get_dependency_versions(python_exe) if python_exe.exists() else {}
+        direct_deps_snapshot = snapshot.get("direct_deps", {})
 
         tree.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         tree.clear()
@@ -1207,7 +1251,9 @@ class SettingsPageController:
             # 只在包已安装时查 requires；未装时无 metadata 可查，子节点留空。
             direct_deps: list[str] = []
             if installed:
-                direct_deps = get_direct_dependencies(python_exe, pkg)
+                direct_deps = direct_deps_snapshot.get(pkg)
+                if direct_deps is None:
+                    direct_deps = get_direct_dependencies(python_exe, pkg)
             for dep in direct_deps:
                 child = QTreeWidgetItem([f"  └ {dep}", "", ""])
                 child.setData(0, Qt.ItemDataRole.UserRole, dep)

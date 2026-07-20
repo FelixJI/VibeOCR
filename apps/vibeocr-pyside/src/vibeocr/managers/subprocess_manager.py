@@ -381,7 +381,7 @@ class SubprocessManager(QObject):
         self,
         pipelines: list[str],
         ttl_seconds: int | None = None,
-    ) -> None:
+    ) -> bool:
         """预加载管道（在后台线程执行，同时下发 TTL）
 
         Args:
@@ -390,11 +390,15 @@ class SubprocessManager(QObject):
         """
         if not self._service:
             logger.warning("[SubprocessManager] 服务未就绪，无法预加载")
-            return
+            return False
+
+        if self._preload_task is not None:
+            logger.info("[SubprocessManager] 已有预加载任务进行中，忽略重复请求")
+            return False
 
         if not pipelines and ttl_seconds is None:
             logger.debug("[SubprocessManager] 无预加载管道且无需下发 TTL")
-            return
+            return False
 
         logger.debug(
             f"[SubprocessManager] 开始预加载管道: {pipelines}"
@@ -407,6 +411,22 @@ class SubprocessManager(QObject):
         self._preload_task.signals.finished.connect(self._on_preload_done)
         self._preload_task.signals.progress.connect(self.preload_progress.emit)
         self._thread_pool.start(self._preload_task)
+        return True
+
+    def invalidate_worker_host(self) -> None:
+        """安装维护前立即使旧服务失效；真正关闭在安装线程中完成。"""
+        self._cancel_event.set()
+        if self._start_task is not None:
+            self._start_task.cancel()
+            try:
+                self._start_task.signals.started.disconnect(self._on_started)
+            except (RuntimeError, TypeError):
+                pass
+            self._start_task = None
+        if self._preload_task is not None:
+            self._preload_task.cancel()
+        self._service = None
+        self._is_ready = False
 
     def _on_preload_done(self, results: dict) -> None:
         """预加载完成，清理引用并转发信号"""

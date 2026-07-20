@@ -66,56 +66,100 @@ def _cell_text(inner: str) -> str:
     return "\n".join(ln for ln in lines if ln)
 
 
+def _span_value(attrs: str, name: str) -> int:
+    match = _re.search(
+        rf"\b{name}\s*=\s*['\"]?([1-9]\d*)", attrs, flags=_re.IGNORECASE
+    )
+    return min(int(match.group(1)), 1000) if match else 1
+
+
+def _layout_rows(
+    rows: list[list[tuple[str, str, int, int]]], target_width: int | None = None
+) -> tuple[list[str], int]:
+    """按 rowspan/colspan 占位布局并生成已清洗的行 HTML。"""
+    active: list[int] = []
+    rendered: list[str] = []
+    max_width = 0
+    for row in rows:
+        cells_html: list[str] = []
+        col = 0
+        for tag, text, rowspan, colspan in row:
+            while col < len(active) and active[col] > 0:
+                col += 1
+            needed = col + colspan
+            if needed > len(active):
+                active.extend([0] * (needed - len(active)))
+            for occupied_col in range(col, needed):
+                active[occupied_col] = max(active[occupied_col], rowspan)
+            attrs = ""
+            if rowspan > 1:
+                attrs += f' rowspan="{rowspan}"'
+            if colspan > 1:
+                attrs += f' colspan="{colspan}"'
+            safe = _html.escape(text).replace("\n", "<br>")
+            cells_html.append(f"<{tag}{attrs}>{safe}</{tag}>")
+            col = needed
+
+        width = max(len(active), col)
+        max_width = max(max_width, width)
+        if target_width is not None:
+            if len(active) < target_width:
+                active.extend([0] * (target_width - len(active)))
+            for pad_col in range(col, target_width):
+                if active[pad_col] == 0:
+                    cells_html.append("<td></td>")
+        rendered.append(f"<tr>{''.join(cells_html)}</tr>")
+        active = [max(0, remaining - 1) for remaining in active]
+    return rendered, max_width
+
+
 def normalize_table_html(html: str) -> str:
     """规整化表格 HTML：剥离 inline style、补齐空单元格、统一标签。
 
     解决两类问题：
     1. **复制带底纹**：PaddleX pred_html 的单元格常带 ``style="background:..."``
-       inline 属性，渲染→原生 Ctrl+C 会把样式带进剪贴板。这里剥离所有
-       属性（含 style），输出纯净的 ``<td>``/``<th>``。
+       inline 属性，渲染→原生 Ctrl+C 会把样式带进剪贴板。这里剥离展示
+       属性，仅保留决定表格结构的数字 ``rowspan``/``colspan``。
     2. **空单元格错位**：若某行单元格数不足（空 ``<td>`` 缺失或 HTML 不规则），
        Excel/Word 粘贴时会把后续单元格前移（如 A1 空、A2 有内容，结果 A2
        内容跑到 A1）。这里按最大列数补齐，保证每行规整矩形。
 
-    本函数**保留原 td/th 标签类型**（不强制首行 th），仅清洗属性 + 补空格，
+    本函数**保留原 td/th 标签类型和合并单元格结构**（不强制首行 th），
     适合渲染展示与复制。
 
     Args:
         html: 原始表格 HTML（含/不含 ``<html><body>`` 外壳均可）。
 
     Returns:
-        规整化的 ``<table>...</table>``，所有单元格无属性、每行列数一致。
+        规整化的 ``<table>...</table>``，无展示属性、逻辑列数一致。
     """
     table_match = _RE_TABLE.search(html)
     table_html = table_match.group(1) if table_match else html
 
-    # 解析为 [(tag, text), ...] 的行列表，保留原 td/th 标签
-    rows: list[list[tuple[str, str]]] = []
+    # 只保留安全的数字 rowspan/colspan；style/class/id 等展示属性全部剥离。
+    rows: list[list[tuple[str, str, int, int]]] = []
     for tr_match in _RE_TR.finditer(table_html):
-        row: list[tuple[str, str]] = []
+        row: list[tuple[str, str, int, int]] = []
         for cm in _RE_CELL.finditer(tr_match.group(1)):
             tag = cm.group(1).lower()  # td 或 th
             text = _cell_text(cm.group(3))
-            row.append((tag, text))
+            attrs = cm.group(2)
+            row.append(
+                (
+                    tag,
+                    text,
+                    _span_value(attrs, "rowspan"),
+                    _span_value(attrs, "colspan"),
+                )
+            )
         if row:  # 跳过空 <tr></tr>
             rows.append(row)
 
     if not rows:
         return "<table></table>"
 
-    max_cols = max(len(r) for r in rows)
-    rows_html: list[str] = []
-    for row in rows:
-        cells_html: list[str] = []
-        for c_i in range(max_cols):
-            if c_i < len(row):
-                tag, text = row[c_i]
-            else:
-                # 列数不足：补空 td（不破坏 Excel 的列对齐）
-                tag, text = "td", ""
-            safe = _html.escape(text).replace("\n", "<br>")
-            cells_html.append(f"<{tag}>{safe}</{tag}>")
-        rows_html.append(f"<tr>{''.join(cells_html)}</tr>")
+    _, max_cols = _layout_rows(rows)
+    rows_html, _ = _layout_rows(rows, max_cols)
     return f"<table>{''.join(rows_html)}</table>"
 
 
@@ -134,10 +178,34 @@ def html_table_to_cell_grid(html: str) -> list[list[str]]:
     """
     table_html = extract_table_html(html)
     rows: list[list[str]] = []
+    active: list[int] = []
     for tr_match in _RE_TR.finditer(table_html):
-        cells = [_cell_text(td.group(1)) for td in _RE_TD.finditer(tr_match.group(1))]
-        if cells:
+        cells: list[str] = []
+        col = 0
+        for cell in _RE_CELL.finditer(tr_match.group(1)):
+            while col < len(active) and active[col] > 0:
+                while len(cells) <= col:
+                    cells.append("")
+                col += 1
+            rowspan = _span_value(cell.group(2), "rowspan")
+            colspan = _span_value(cell.group(2), "colspan")
+            needed = col + colspan
+            if len(active) < needed:
+                active.extend([0] * (needed - len(active)))
+            while len(cells) < needed:
+                cells.append("")
+            cells[col] = _cell_text(cell.group(3))
+            for occupied_col in range(col, needed):
+                active[occupied_col] = max(active[occupied_col], rowspan)
+            col = needed
+        if cells or any(active):
+            if len(cells) < len(active):
+                cells.extend([""] * (len(active) - len(cells)))
             rows.append(cells)
+        active = [max(0, remaining - 1) for remaining in active]
+    width = max((len(row) for row in rows), default=0)
+    for row in rows:
+        row.extend([""] * (width - len(row)))
     return rows
 
 
