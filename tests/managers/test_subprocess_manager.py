@@ -212,18 +212,19 @@ class TestSubprocessManager:
 
     def test_preload_pipelines_skips_if_not_ready(self, manager):
         """测试未就绪时跳过预加载"""
-        manager.preload_pipelines(["OCR"])
+        result = manager.preload_pipelines(["OCR"])
 
-        # 不应该有任务添加到线程池
-        # 由于服务未就绪，直接返回
+        assert result is False
+        assert manager._preload_task is None
 
     def test_preload_pipelines_skips_if_empty(self, manager):
         """测试空管道列表时跳过预加载"""
         manager._service = Mock()
 
-        manager.preload_pipelines([])
+        result = manager.preload_pipelines([])
 
-        # 不应该有任务添加到线程池
+        assert result is False
+        assert manager._preload_task is None
 
     def test_shutdown_resets_state(self, manager):
         """测试关闭重置状态"""
@@ -235,6 +236,40 @@ class TestSubprocessManager:
         assert result is True
         assert manager._service is None
         assert manager._is_ready is False
+
+    def test_take_shutdown_callable_recovers_service_from_drained_start_task(
+        self, manager
+    ):
+        """started 信号断开后完成的任务不能泄漏其新建 service。"""
+        from types import SimpleNamespace
+
+        service = Mock()
+        manager._service = None
+        manager._start_task = SimpleNamespace(service=service)
+
+        shutdown = manager.take_shutdown_callable()
+
+        assert shutdown is not None
+        shutdown()
+        service.shutdown.assert_called_once_with()
+        assert manager._start_task is None
+        assert manager._service is None
+
+    def test_take_shutdown_callable_prefers_published_service(self, manager):
+        """正常发布的 service 优先于旧启动任务快照，避免重复关闭。"""
+        from types import SimpleNamespace
+
+        published = Mock()
+        stale = Mock()
+        manager._service = published
+        manager._start_task = SimpleNamespace(service=stale)
+
+        shutdown = manager.take_shutdown_callable()
+        assert shutdown is not None
+        shutdown()
+
+        published.shutdown.assert_called_once_with()
+        stale.shutdown.assert_not_called()
 
     def test_shutdown_cancels_start_task(self, manager):
         """测试关闭取消启动任务"""

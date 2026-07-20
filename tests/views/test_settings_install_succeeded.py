@@ -36,8 +36,8 @@ def controller(qtbot, tmp_path):
     with (
         patch("vibeocr.widgets.backend_options_widget.env_manager") as mock_em,
         patch(
-            "vibeocr.widgets.backend_options_widget.is_cache_valid",
-            return_value=(False, None),
+            "vibeocr.widgets.backend_options_widget.load_cache",
+            return_value=None,
         ),
         patch(
             "vibeocr.views.settings_page_controller.is_cache_valid",

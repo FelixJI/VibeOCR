@@ -11,14 +11,149 @@ PDF 模块进程化后,所有 fitz 操作在后端子进程。主进程通过 Pd
 from __future__ import annotations
 
 import logging
+import threading
 from typing import TYPE_CHECKING, Any
 
 from PySide6.QtCore import QThread, Signal
+from PySide6.QtGui import QImage
 
 if TYPE_CHECKING:
     from vibeocr.client.pdf import PdfBackendClient
 
 logger = logging.getLogger(__name__)
+
+
+class MinerUPreflightWorker(QThread):
+    """在后台准备 MinerU 模型；取消后不再发布进度或成功结果。"""
+
+    progress = Signal(str, str)
+    completed = Signal(bool, str)
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self._cancelled = False
+
+    def cancel(self) -> None:
+        self._cancelled = True
+        self.requestInterruption()
+
+    @property
+    def is_cancelled(self) -> bool:
+        return self._cancelled
+
+    def run(self) -> None:
+        from vibeocr.env_manager import ensure_mineru_models, get_project_root
+
+        def report(stage: str, message: str) -> None:
+            if not self._cancelled:
+                self.progress.emit(stage, message)
+
+        try:
+            ok, message = ensure_mineru_models(
+                get_project_root(), progress_callback=report
+            )
+        except Exception as exc:
+            ok, message = False, str(exc)
+        # cancel() 只能协作式中断底层下载；若调用已越过取消检查点，run()
+        # 仍可能自然返回。取消后的业务结果必须丢弃，最终状态由原生
+        # QThread.finished 统一发布，避免 UI 在 worker 尚存活时解除 busy。
+        if not self._cancelled:
+            self.completed.emit(bool(ok), str(message))
+
+
+class PdfIpcPreviewWorker(QThread):
+    """后台渲染预览，并按需获取文字层详情。"""
+
+    completed = Signal(str, int, int, object, object)
+    failed = Signal(str, int, int, str)
+
+    def __init__(
+        self,
+        client: PdfBackendClient,
+        session_id: str,
+        page_index: int,
+        generation: int,
+        detect_text: bool,
+        parent=None,
+    ) -> None:
+        super().__init__(parent)
+        self._client = client
+        self._session_id = session_id
+        self._page_index = page_index
+        self._generation = generation
+        self._detect_text = detect_text
+        self._cancelled = False
+
+    def cancel(self) -> None:
+        self._cancelled = True
+
+    def run(self) -> None:
+        try:
+            png = self._client.render_preview(
+                self._session_id, self._page_index, dpi=150
+            )
+            image = QImage.fromData(png, "PNG")
+            if image.isNull():
+                raise RuntimeError("PDF 预览 PNG 解码失败")
+            layers = None
+            if self._detect_text and not self._cancelled:
+                layers = self._client.detect_text_layers(
+                    self._session_id, self._page_index
+                ).text_layers
+            if not self._cancelled:
+                self.completed.emit(
+                    self._session_id,
+                    self._page_index,
+                    self._generation,
+                    image,
+                    layers,
+                )
+        except Exception as exc:
+            if not self._cancelled:
+                self.failed.emit(
+                    self._session_id,
+                    self._page_index,
+                    self._generation,
+                    str(exc),
+                )
+
+
+class PdfIpcCloseWorker(QThread):
+    """后台关闭一个后端 PDF session。"""
+
+    completed = Signal(str)
+    failed = Signal(str, str)
+
+    def __init__(self, client: PdfBackendClient, session_id: str, parent=None) -> None:
+        super().__init__(parent)
+        self._client = client
+        self._session_id = session_id
+
+    @property
+    def session_id(self) -> str:
+        return self._session_id
+
+    def run(self) -> None:
+        try:
+            self._client.close_session(self._session_id)
+            self.completed.emit(self._session_id)
+        except Exception as exc:
+            self.failed.emit(self._session_id, str(exc))
+
+
+class PdfIpcCancelWorker(QThread):
+    """后台发送协作取消请求，避免 cancel() 调用者线程执行同步 IPC。"""
+
+    def __init__(self, client: PdfBackendClient, session_id: str, parent=None) -> None:
+        super().__init__(parent)
+        self._client = client
+        self._session_id = session_id
+
+    def run(self) -> None:
+        try:
+            self._client.cancel(self._session_id)
+        except Exception:
+            logger.debug("[ipc-cancel] 通知后端取消失败（忽略）", exc_info=True)
 
 
 class PdfIpcOpenWorker(QThread):
@@ -56,39 +191,127 @@ class PdfIpcOpenWorker(QThread):
         self._client = client
         self._paths = paths
         self._cancelled = False
+        # worker 线程内先登记、再发 doc_opened。manager 可在 queued GUI 回调
+        # 尚未送达时取得后端会话所有权，避免 shutdown 漏掉 orphan session。
+        self._opened_sessions: dict[str, str] = {}
+        self._incomplete_sessions: dict[str, str] = {}
+        self._sessions_lock = threading.Lock()
 
     def cancel(self) -> None:
-        self._cancelled = True
+        self.cancel_and_snapshot_sessions()
+
+    def cancel_and_snapshot_sessions(
+        self,
+    ) -> tuple[dict[str, str], dict[str, str]]:
+        """原子取消并返回 manager 判定 close ownership 所需的快照。"""
+        with self._sessions_lock:
+            self._cancelled = True
+            return dict(self._opened_sessions), dict(self._incomplete_sessions)
 
     @property
     def is_cancelled(self) -> bool:
-        return self._cancelled
+        with self._sessions_lock:
+            return self._cancelled
+
+    @property
+    def opened_sessions(self) -> dict[str, str]:
+        with self._sessions_lock:
+            return dict(self._opened_sessions)
+
+    @property
+    def incomplete_sessions(self) -> dict[str, str]:
+        with self._sessions_lock:
+            return dict(self._incomplete_sessions)
+
+    def _cancelled_session_owned_by_worker(self, path: str) -> str | None:
+        """若已取消，返回仍由 worker 负责回收的后端 session。"""
+        with self._sessions_lock:
+            if not self._cancelled:
+                return None
+            return self._incomplete_sessions.get(path)
+
+    def _complete_load_or_keep_cancel_ownership(self, path: str) -> str | None:
+        """原子决定正常移交给 manager，或保留取消回收 ownership。"""
+        with self._sessions_lock:
+            session_id = self._incomplete_sessions.get(path)
+            if self._cancelled:
+                return session_id
+            self._incomplete_sessions.pop(path, None)
+            return None
 
     def run(self) -> None:
         total = len(self._paths)
-        for n, path in enumerate(self._paths):
-            if self._cancelled:
-                break
+        try:
             try:
-                # 阶段 1:open(快)→ 立即 emit 占位 model
-                open_resp = self._client.open_session(path)
-                self.doc_opened.emit(path, open_resp.session_id, open_resp.model)
+                # backend 进程启动/健康等待可能阻塞数秒，必须留在 worker 内。
+                self._client.start()
+            except Exception as exc:
+                logger.error("[ipc-open] 启动 PDF 后端失败: %s", exc)
+                for n, path in enumerate(self._paths):
+                    self.open_failed.emit(path, str(exc))
+                    self.open_progress.emit(n + 1, total)
+                return
 
-                # 阶段 2:流式 load → 逐页 emit
-                for ev in self._client.load_stream(open_resp.session_id):
-                    if self._cancelled:
+            for n, path in enumerate(self._paths):
+                if self.is_cancelled:
+                    break
+                try:
+                    # 阶段 1:open(快)→ 立即 emit 占位 model
+                    open_resp = self._client.open_session(path)
+                    with self._sessions_lock:
+                        self._opened_sessions[path] = open_resp.session_id
+                        self._incomplete_sessions[path] = open_resp.session_id
+                    cancelled_session_id = self._cancelled_session_owned_by_worker(path)
+                    if cancelled_session_id is not None:
+                        # open 已成功但请求已失效，在线程内回收后端 session。
+                        try:
+                            self._client.close_session(cancelled_session_id)
+                        except Exception:
+                            logger.debug("[ipc-open] 回收取消会话失败", exc_info=True)
                         break
-                    if ev.page_index is not None:
-                        self.page_loaded.emit(path, ev.page_index, ev.page_payload)
-                    if ev.total > 0:
-                        self.load_progress.emit(path, ev.current, ev.total)
-                    if ev.message == "done":
+                    self.doc_opened.emit(path, open_resp.session_id, open_resp.model)
+
+                    # 阶段 2:流式 load → 逐页 emit
+                    for ev in self._client.load_stream(open_resp.session_id):
+                        if self.is_cancelled:
+                            break
+                        if ev.page_index is not None:
+                            self.page_loaded.emit(path, ev.page_index, ev.page_payload)
+                        if ev.total > 0:
+                            self.load_progress.emit(path, ev.current, ev.total)
+                        if ev.message == "done":
+                            break
+                    cancelled_session_id = (
+                        self._complete_load_or_keep_cancel_ownership(path)
+                    )
+                    if cancelled_session_id is not None:
+                        # doc_opened 可能已被 GUI 接纳；取消的半加载会话不能继续
+                        # 留在本地模型或后端。close 归 open worker 自身串行完成，
+                        # drain 等待该 worker 即同时覆盖回收。
+                        try:
+                            self._client.close_session(cancelled_session_id)
+                        except Exception:
+                            logger.debug(
+                                "[ipc-open] 回收半加载会话失败", exc_info=True
+                            )
                         break
-            except Exception as e:
-                logger.error("[ipc-open] 打开 %s 失败: %s", path, e)
-                self.open_failed.emit(path, str(e))
-            self.open_progress.emit(n + 1, total)
-        self.all_done.emit()
+                except Exception as e:
+                    logger.error("[ipc-open] 打开 %s 失败: %s", path, e)
+                    with self._sessions_lock:
+                        incomplete_session_id = self._incomplete_sessions.get(path)
+                    if incomplete_session_id is not None:
+                        # 阶段 1 已成功、阶段 2 load 失败：与取消路径相同，
+                        # worker 在退出前回收后端半会话。
+                        try:
+                            self._client.close_session(incomplete_session_id)
+                        except Exception:
+                            logger.debug(
+                                "[ipc-open] 回收加载失败会话失败", exc_info=True
+                            )
+                    self.open_failed.emit(path, str(e))
+                self.open_progress.emit(n + 1, total)
+        finally:
+            self.all_done.emit()
 
 
 class PdfIpcMutateWorker(QThread):
@@ -123,11 +346,6 @@ class PdfIpcMutateWorker(QThread):
 
     def cancel(self) -> None:
         self._cancelled = True
-        # 通知后端取消(协作式)
-        try:
-            self._client.cancel(self._session_id)
-        except Exception:
-            pass
 
     @property
     def is_cancelled(self) -> bool:
@@ -139,6 +357,13 @@ class PdfIpcMutateWorker(QThread):
 
     def run(self) -> None:
         try:
+            # reset_cancel 也是阻塞 IPC，必须和实际写操作一起留在线程内。
+            try:
+                self._client.reset_cancel(self._session_id)
+            except Exception:
+                logger.debug("[ipc-mutate] reset_cancel 失败（忽略）", exc_info=True)
+            if self._cancelled:
+                return
             if self._op == "delete_text_layers":
                 # 流式:迭代 ProgressEvent
                 pages = self._params.get("pages", [])

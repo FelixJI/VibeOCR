@@ -662,18 +662,28 @@ class TestRunOcrAsync:
         tab.run_ocr(pixmap, OCROptions())
         task = tab._recognize_task
         assert task is not None
+        # Ensure asyncio.to_thread has entered the native call before testing the
+        # split task/native-completion shutdown contract.  Cancelling earlier is
+        # a different (and already drained) state.
+        wait_until_done(qtbot, qasync_loop, tab._has_native_calls)
 
         # 关闭态应立即取消 task（不等 barrier）
         tab.set_closing(True)
         wait_until_done(qtbot, qasync_loop, lambda: task.cancelled() or task.done())
 
+        # asyncio Task 已取消不代表 to_thread 已退出；关闭轮询必须继续持有 owner。
+        assert tab.is_processing is True
+        assert tab.drain(0) is False
+        assert tab.is_drained() is False
+
         # 释放 barrier 让 to_thread 线程不卡死（task 已 cancel，结果被忽略）
         barrier.set()
-        wait_until_done(qtbot, qasync_loop, lambda: tab._recognize_task is None)
+        wait_until_done(qtbot, qasync_loop, tab.is_drained)
 
         # _on_ocr_finished 被 closing 守卫短路
         assert finished_calls == []
         assert tab._closing is True
+        assert tab.is_processing is False
 
 
 class _FakeWebView:

@@ -26,7 +26,14 @@ from vibeocr.core.batch_budget import (
 from vibeocr.ipc.model_bridge import apply_diff, mirror_to_doc
 from vibeocr.ipc.schemas import ModelDiff, PdfDocumentMirror
 from vibeocr.models.pdf_session import PdfSession
-from vibeocr.pyside.pdf_ipc_worker import PdfIpcMutateWorker, PdfIpcOpenWorker
+from vibeocr.pyside.pdf_ipc_worker import (
+    MinerUPreflightWorker,
+    PdfIpcCancelWorker,
+    PdfIpcCloseWorker,
+    PdfIpcMutateWorker,
+    PdfIpcOpenWorker,
+    PdfIpcPreviewWorker,
+)
 from vibeocr.utils import ocr_sidecar
 
 if TYPE_CHECKING:
@@ -79,6 +86,7 @@ class PdfSessionManager(QObject):
     delete_layer_done = Signal(str, list)
     export_progress = Signal(int, int, str)
     export_done = Signal(list)
+    export_failed = Signal(str)
     deskew_page_done = Signal(str, int, bool)
     deskew_progress = Signal(str, int, int)
     deskew_done = Signal(str, object)
@@ -87,12 +95,25 @@ class PdfSessionManager(QObject):
     open_failed = Signal(str, str)
     thumbnails_invalidated = Signal(list)
     open_done = Signal()
+    preview_ready = Signal(str, int, int, object)
+    preview_failed = Signal(str, int, int, str)
+    close_done = Signal(str)
+    close_failed = Signal(str, str)
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self._sessions: dict[str, PdfSession] = {}
         self._active_path: str | None = None
         self._open_worker: PdfIpcOpenWorker | None = None
+        self._open_generation = 0
+        self._draining_open_workers: set[PdfIpcOpenWorker] = set()
+        self._preview_worker: PdfIpcPreviewWorker | None = None
+        self._preview_generation = 0
+        self._edit_revision = 0
+        self._draining_preview_workers: set[PdfIpcPreviewWorker] = set()
+        self._close_workers: set[PdfIpcCloseWorker] = set()
+        self._control_workers: set[PdfIpcCancelWorker] = set()
+        self._close_started_session_ids: set[str] = set()
         self._mutate_worker: PdfIpcMutateWorker | None = None
         self._mutate_state: str = "idle"
         self._mutate_op: str = ""
@@ -101,6 +122,8 @@ class PdfSessionManager(QObject):
         self._mutate_terminal_received: bool = False
         self._shutting_down: bool = False
         self._export_worker: QThread | None = None
+        self._export_result_pending: list[str] | None = None
+        self._export_error_pending: str | None = None
         # OCR 编排状态(主进程:后端渲染 → 主进程 OCR → 后端写层)
         self._ocr_service: Any | None = None
         self._pdf_settings: PdfGlobalSettings | None = None
@@ -109,11 +132,20 @@ class PdfSessionManager(QObject):
         self._ocr_cancelled: bool = False
         self._ocr_state: str = "idle"
         self._ocr_worker: QThread | None = None
+        self._preflight_worker: MinerUPreflightWorker | None = None
+        self._preflight_generation = 0
+        self._preflight_result: tuple[bool, str] | None = None
+        self._preflight_cancel_path: str | None = None
+        self._pending_ocr_request: tuple[
+            str, list[int], object, object, bool
+        ] | None = None
         self._client = PdfBackendClient.instance()
         # task generation：每类操作（OCR/mutate/export）启动时递增，
         # 信号携带 task_id，done 槽只接受当前代，避免旧任务的迟到信号
         # 清掉新任务状态（ABA/代际竞态）。
         self._task_generation: int = 0
+        self._shutdown_stable_polls = 0
+        self._shutdown_finalized = False
 
     # ---- 属性 -----------------------------------------------------------
 
@@ -147,7 +179,9 @@ class PdfSessionManager(QObject):
 
     @property
     def is_mutate_running(self) -> bool:
-        return self._mutate_worker is not None
+        return self._mutate_worker is not None or bool(
+            getattr(self, "_control_workers", set())
+        )
 
     @property
     def mutate_state(self) -> str:
@@ -157,7 +191,20 @@ class PdfSessionManager(QObject):
     def is_ocr_running(self) -> bool:
         # all_done/failed 属于业务终态信号，发出后 QThread 还可能在 finally 中
         # drain 渲染线程池；直到原生 finished 清除引用前，都仍占用 PDF 写门。
-        return self._ocr_running or self._ocr_worker is not None
+        return (
+            self._ocr_running
+            or self._ocr_worker is not None
+            or self._preflight_worker is not None
+        )
+
+    def _pdf_write_busy(self) -> bool:
+        """业务 done 不释放写门；以原生 worker finished/引用清理为边界。"""
+        return bool(
+            self._mutate_worker is not None
+            or getattr(self, "_control_workers", set())
+            or self.is_ocr_running
+            or self._export_worker is not None
+        )
 
     @property
     def backend_client(self) -> PdfBackendClient:
@@ -200,6 +247,8 @@ class PdfSessionManager(QObject):
 
     def open_sessions_async(self, paths: list[str]) -> None:
         """批量异步打开(后台 IPC open + load)。"""
+        if self._shutting_down or self._pdf_write_busy():
+            return
         new_paths = [p for p in paths if p not in self._sessions]
         if not new_paths:
             if paths:
@@ -208,22 +257,40 @@ class PdfSessionManager(QObject):
             return
 
         self._cancel_open_worker()
-        try:
-            self._client.start()
-        except PdfBackendError as e:
-            for p in new_paths:
-                self.open_failed.emit(p, str(e))
-            self.open_done.emit()
-            return
-
+        self._open_generation += 1
+        generation = self._open_generation
         worker = PdfIpcOpenWorker(self._client, new_paths)
-        worker.finished.connect(worker.deleteLater)
-        worker.doc_opened.connect(self._on_doc_opened)
-        worker.page_loaded.connect(self._on_page_loaded)
-        worker.load_progress.connect(self._on_load_progress)
-        worker.open_failed.connect(self._on_open_failed)
-        worker.open_progress.connect(self.open_progress)
-        worker.all_done.connect(self._on_open_all_done)
+        worker.doc_opened.connect(
+            lambda path, sid, model, w=worker, gen=generation: self._on_doc_opened_guarded(
+                path, sid, model, w, gen
+            )
+        )
+        worker.page_loaded.connect(
+            lambda path, page, payload, w=worker, gen=generation: self._on_page_loaded_guarded(
+                path, page, payload, w, gen
+            )
+        )
+        worker.load_progress.connect(
+            lambda path, current, total, w=worker, gen=generation: self._on_load_progress_guarded(
+                path, current, total, w, gen
+            )
+        )
+        worker.open_failed.connect(
+            lambda path, error, w=worker, gen=generation: self._on_open_failed_guarded(
+                path, error, w, gen
+            )
+        )
+        worker.open_progress.connect(
+            lambda current, total, w=worker, gen=generation: self._on_open_progress_guarded(
+                current, total, w, gen
+            )
+        )
+        worker.all_done.connect(
+            lambda w=worker, gen=generation: self._on_open_all_done_guarded(w, gen)
+        )
+        worker.finished.connect(
+            lambda w=worker: self._release_open_worker(w)
+        )
         self._open_worker = worker
         worker.start()
 
@@ -295,23 +362,91 @@ class PdfSessionManager(QObject):
 
     def _on_open_failed(self, file_path: str, error: str) -> None:
         logger.warning("异步打开失败 %s: %s", file_path, error)
+        partial = self._sessions.pop(file_path, None)
+        if partial is not None:
+            self.session_removed.emit(file_path)
+            if self._active_path == file_path:
+                self._active_path = next(reversed(self._sessions), None)
+                self.active_changed.emit(self._active_path or "")
         self.open_failed.emit(file_path, error)
 
     def _on_open_all_done(self) -> None:
         # 所有文件 load 完成后,逐个发 load_done
         for path in list(self._sessions.keys()):
             self.load_done.emit(path)
-        self._open_worker = None
         self.open_done.emit()
 
-    def _cancel_open_worker(self, *, wait: bool = True) -> None:
+    def _is_current_open(self, worker: PdfIpcOpenWorker, generation: int) -> bool:
+        return (
+            not self._shutting_down
+            and worker is self._open_worker
+            and generation == self._open_generation
+        )
+
+    def _on_doc_opened_guarded(self, path, sid, model, worker, generation) -> None:
+        if self._is_current_open(worker, generation):
+            self._on_doc_opened(path, sid, model)
+        else:
+            # open 已在旧 worker 内成功，但排队信号到达时 generation 已淘汰。
+            # 本地不能接纳该 session，必须异步通知后端回收，避免隐形泄漏。
+            self._start_close_worker(sid)
+
+    def _on_page_loaded_guarded(self, path, page, payload, worker, generation) -> None:
+        if self._is_current_open(worker, generation):
+            self._on_page_loaded(path, page, payload)
+
+    def _on_load_progress_guarded(self, path, current, total, worker, generation) -> None:
+        if self._is_current_open(worker, generation):
+            self._on_load_progress(path, current, total)
+
+    def _on_open_failed_guarded(self, path, error, worker, generation) -> None:
+        if self._is_current_open(worker, generation):
+            self._on_open_failed(path, error)
+
+    def _on_open_progress_guarded(self, current, total, worker, generation) -> None:
+        if self._is_current_open(worker, generation):
+            self.open_progress.emit(current, total)
+
+    def _on_open_all_done_guarded(self, worker, generation) -> None:
+        if self._is_current_open(worker, generation):
+            self._on_open_all_done()
+
+    def _release_open_worker(self, worker: PdfIpcOpenWorker) -> None:
+        if worker is self._open_worker:
+            self._open_worker = None
+        self._draining_open_workers.discard(worker)
+        worker.deleteLater()
+
+    def _cancel_open_worker(self, *, wait: bool = False) -> None:
+        """取消旧 open；始终保留所有权到 finished，GUI 线程不等待。"""
         w = self._open_worker
         if w is not None:
-            w.cancel()
-            if wait:
-                w.wait(3000)
-                if w.isFinished():
-                    self._open_worker = None
+            self._open_worker = None
+            self._open_generation += 1
+            self._draining_open_workers.add(w)
+            opened, incomplete = w.cancel_and_snapshot_sessions()
+            started_ids = self._close_started_session_ids
+            removed_active = False
+            for path, session_id in incomplete.items():
+                # 半加载会话由 open worker 在退出前串行 close；登记 ownership
+                # 防止迟到 doc_opened GUI 回调再创建重复 close worker。
+                started_ids.add(session_id)
+                session = self._sessions.get(path)
+                if session is not None and session.session_id == session_id:
+                    self._sessions.pop(path, None)
+                    self.session_removed.emit(path)
+                    removed_active |= self._active_path == path
+            for path, session_id in opened.items():
+                if path in incomplete:
+                    continue
+                session = self._sessions.get(path)
+                if session is None or session.session_id != session_id:
+                    # load 已完成但 doc_opened 仍在 GUI 队列中：manager 必须显式
+                    # 接管 orphan close，shutdown drain 才能观察到它。
+                    self._start_close_worker(session_id)
+            if removed_active:
+                self._active_path = next(reversed(self._sessions), None)
+                self.active_changed.emit(self._active_path or "")
 
     def switch_session(self, file_path: str) -> bool:
         if file_path not in self._sessions:
@@ -320,25 +455,19 @@ class PdfSessionManager(QObject):
             return True
         # 切换会话不能与旧会话写操作并发。UI 在保存 continuation 或当前
         # 操作 finished 后重试，不在这里取消后立即切换。
-        if self.is_mutate_running or self.is_ocr_running:
+        if self._pdf_write_busy():
             return False
         self._active_path = file_path
         self.active_changed.emit(file_path)
         return True
 
     def close_session(self, file_path: str) -> bool:
+        """从 UI 立即移除会话，并在线程中通知后端关闭。"""
         session = self._sessions.get(file_path)
         if session is None:
             return False
-        if self._active_path == file_path:
-            if self.is_mutate_running or self.is_ocr_running:
-                return False
-        # 通知后端关闭 session
-        try:
-            self._client.close_session(session.session_id)
-        except PdfBackendError as e:
-            logger.warning("后端关闭 session 失败: %s", e)
-
+        if self._pdf_write_busy():
+            return False
         self._sessions.pop(file_path, None)
         self.session_removed.emit(file_path)
 
@@ -350,7 +479,39 @@ class PdfSessionManager(QObject):
                 self.active_changed.emit(last_path)
             else:
                 self.active_changed.emit("")
+        self._start_close_worker(session.session_id, file_path)
         return True
+
+    def _start_close_worker(self, session_id: str, file_path: str = "") -> None:
+        started_ids = getattr(self, "_close_started_session_ids", None)
+        if started_ids is None:
+            started_ids = self._close_started_session_ids = set()
+        if session_id in started_ids:
+            return
+        worker = PdfIpcCloseWorker(self._client, session_id)
+        started_ids.add(session_id)
+        self._close_workers.add(worker)
+        worker.completed.connect(
+            lambda _sid, path=file_path: self.close_done.emit(path)
+        )
+        worker.failed.connect(
+            lambda _sid, error, path=file_path: self._on_close_failed(path, error)
+        )
+        worker.finished.connect(lambda w=worker: self._release_close_worker(w))
+        worker.start()
+
+    def _on_close_failed(self, file_path: str, error: str) -> None:
+        logger.warning("后端关闭 session 失败: %s", error)
+        self.close_failed.emit(file_path, error)
+
+    def _release_close_worker(self, worker: PdfIpcCloseWorker) -> None:
+        self._close_workers.discard(worker)
+        if not any(
+            session.session_id == worker.session_id
+            for session in self._sessions.values()
+        ):
+            self._close_started_session_ids.discard(worker.session_id)
+        worker.deleteLater()
 
     def rerender_thumbnails_async(self, page_indices: list[int]) -> None:
         if page_indices:
@@ -358,27 +519,92 @@ class PdfSessionManager(QObject):
 
     # ---- 文字层检测(预览按需)------------------------------------------
 
-    def detect_text_layers(self, page_index: int) -> list:
-        """同步检测文字层(预览按需)。返回 [TextLayerInfo]。
-
-        走 IPC,GUI 线程会短暂阻塞(单页 ~180ms 可接受,用户主动触发)。
-        """
+    def request_preview(self, page_index: int, *, revision: int = 0) -> int:
+        """异步渲染预览并按需检测文字层，返回本次 generation。"""
         session = self.active_session
         if session is None:
-            return []
-        try:
-            resp = self._client.detect_text_layers(session.session_id, page_index)
+            return 0
+        page = session.pdf_document.get_page(page_index)
+        if page is None:
+            return 0
+        self._preview_generation = max(self._preview_generation + 1, revision)
+        generation = self._preview_generation
+        old = self._preview_worker
+        if old is not None:
+            self._preview_worker = None
+            self._draining_preview_workers.add(old)
+            old.cancel()
+        worker = PdfIpcPreviewWorker(
+            self._client,
+            session.session_id,
+            page_index,
+            generation,
+            bool(page.has_text_layer and not page.text_layers),
+        )
+        worker.completed.connect(
+            lambda sid, idx, gen, png, layers, w=worker: self._on_preview_completed(
+                sid, idx, gen, png, layers, w
+            )
+        )
+        worker.failed.connect(
+            lambda sid, idx, gen, error, w=worker: self._on_preview_failed(
+                sid, idx, gen, error, w
+            )
+        )
+        worker.finished.connect(lambda w=worker: self._release_preview_worker(w))
+        self._preview_worker = worker
+        worker.start()
+        return generation
+
+    def _is_current_preview(self, worker, generation: int) -> bool:
+        return (
+            not self._shutting_down
+            and worker is self._preview_worker
+            and generation == self._preview_generation
+        )
+
+    def _on_preview_completed(
+        self, session_id, page_index, generation, png, layers, worker
+    ) -> None:
+        if not self._is_current_preview(worker, generation):
+            return
+        file_path = self._path_for_session_id(session_id)
+        if file_path is None:
+            return
+        if layers is not None:
             from vibeocr.ipc.model_bridge import _text_layer_mirror_to_info
 
-            infos = [_text_layer_mirror_to_info(m) for m in resp.text_layers]
-            # 同步更新本地 mirror
-            if 0 <= page_index < len(session.pdf_document.pages):
-                session.pdf_document.pages[page_index].text_layers = infos
-                session.pdf_document.pages[page_index].has_text_layer = len(infos) > 0
-            return infos
-        except PdfBackendError as e:
-            logger.error("检测文字层失败: %s", e)
-            return []
+            infos = [_text_layer_mirror_to_info(item) for item in layers]
+            session = self._sessions[file_path]
+            page = session.pdf_document.get_page(page_index)
+            if page is not None:
+                page.text_layers = infos
+                page.has_text_layer = bool(infos)
+        self.preview_ready.emit(file_path, page_index, generation, png)
+
+    def _on_preview_failed(
+        self, session_id, page_index, generation, error, worker
+    ) -> None:
+        if not self._is_current_preview(worker, generation):
+            return
+        file_path = self._path_for_session_id(session_id)
+        if file_path:
+            self.preview_failed.emit(file_path, page_index, generation, error)
+
+    def _release_preview_worker(self, worker: PdfIpcPreviewWorker) -> None:
+        if worker is self._preview_worker:
+            self._preview_worker = None
+        self._draining_preview_workers.discard(worker)
+        worker.deleteLater()
+
+    def cancel_preview(self) -> None:
+        worker = self._preview_worker
+        if worker is None:
+            return
+        self._preview_worker = None
+        self._preview_generation += 1
+        self._draining_preview_workers.add(worker)
+        worker.cancel()
 
     # ---- 变更操作(异步,通过 IPC mutate worker)---------------------------
 
@@ -387,15 +613,11 @@ class PdfSessionManager(QObject):
         session = self.active_session
         if session is None or self._shutting_down:
             return False
-        if self._mutate_worker is not None or self._ocr_running:
+        if self._pdf_write_busy():
             return False
         # 递增 task generation，使旧 runner 的迟到信号被 done 槽丢弃
         self._task_generation += 1
         current_task_id = self._task_generation
-        try:
-            self._client.reset_cancel(session.session_id)
-        except Exception:
-            logger.debug("reset_cancel 失败（忽略）", exc_info=True)
         worker = PdfIpcMutateWorker(self._client, session.session_id, op, params)
         worker._task_id = current_task_id  # type: ignore[attr-defined]
         worker.progress.connect(
@@ -431,6 +653,13 @@ class PdfSessionManager(QObject):
         worker.start()
         return True
 
+    def _reset_backend_cancel(self, session_id: str, operation: str) -> None:
+        """仅供 worker 线程调用的阻塞 IPC 边界。"""
+        try:
+            self._client.reset_cancel(session_id)
+        except Exception:
+            logger.debug("%s reset_cancel 失败（忽略）", operation, exc_info=True)
+
     def _cancel_mutate_worker(self) -> bool:
         """仅请求取消；引用保留到 QThread.finished，GUI 线程绝不 wait。"""
         w = self._mutate_worker
@@ -442,7 +671,23 @@ class PdfSessionManager(QObject):
                 self._mutate_path, self._mutate_op, "cancelling"
             )
             w.cancel()
+            session_id = getattr(w, "session_id", getattr(w, "_sid", ""))
+            if session_id:
+                self._request_backend_cancel_async(session_id)
         return True
+
+    def _request_backend_cancel_async(self, session_id: str) -> None:
+        worker = PdfIpcCancelWorker(self._client, session_id)
+        workers = getattr(self, "_control_workers", None)
+        if workers is None:
+            workers = self._control_workers = set()
+        workers.add(worker)
+        worker.finished.connect(lambda w=worker: self._release_control_worker(w))
+        worker.start()
+
+    def _release_control_worker(self, worker: PdfIpcCancelWorker) -> None:
+        self._control_workers.discard(worker)
+        worker.deleteLater()
 
     def save_async(self, path: str | None = None, pdf_settings=None) -> bool:
         """异步保存。pdf_settings 转 dict 传后端。"""
@@ -496,7 +741,7 @@ class PdfSessionManager(QObject):
         session = self.active_session
         if session is None or self._ocr_service is None or self._shutting_down:
             return False
-        if self._mutate_worker is not None or self._ocr_running:
+        if self._pdf_write_busy():
             return False
         self._task_generation += 1
         current_task_id = self._task_generation
@@ -532,6 +777,9 @@ class PdfSessionManager(QObject):
 
             def run(self):
                 try:
+                    self._mgr._reset_backend_cancel(self._sid, "deskew")
+                    if self._cancelled:
+                        return
                     self._mgr._run_deskew(self, self._sid, self._pages)
                 except Exception as e:
                     self.failed.emit(self._sid, str(e))
@@ -681,12 +929,20 @@ class PdfSessionManager(QObject):
                 progress += 1  # 旋转子步
                 _emit_progress()
 
+        diff = None
+        if not runner._cancelled:
+            try:
+                full_model = client.get_model(session_id)
+                diff = ModelDiff(full_model=full_model)
+            except Exception as exc:
+                logger.error("摆正后在线程中刷新 model 失败: %s", exc)
         runner.all_done.emit(
             session_id,
             {
                 "corrected": len(self._deskew_corrected),
                 "skipped": total - len(self._deskew_corrected),
                 "corrected_pages": list(self._deskew_corrected),
+                "_diff": diff,
             },
         )
 
@@ -727,17 +983,12 @@ class PdfSessionManager(QObject):
             return
         self._mutate_terminal_received = True
         session = self._sessions.get(self._active_path or "")
-        if session is not None:
-            # 刷新 model(旋转改变了 rotation + 缩略图)
-            try:
-                full = self._client.get_model(session.session_id)
-                invalidated = apply_diff(
-                    session.pdf_document, ModelDiff(full_model=full)
-                )
+        if session is not None and isinstance(summary, dict):
+            diff = summary.pop("_diff", None)
+            if isinstance(diff, ModelDiff):
+                invalidated = apply_diff(session.pdf_document, diff)
                 if invalidated:
                     self.thumbnails_invalidated.emit(invalidated)
-            except PdfBackendError as e:
-                logger.error("摆正后刷新 model 失败: %s", e)
         # 翻译 session_id → file_path，UI 处理器按 file_path 匹配
         file_path = self._path_for_session_id(session_id)
         if file_path:
@@ -841,7 +1092,18 @@ class PdfSessionManager(QObject):
             self.delete_layer_done.emit(file_path, extra_dict["residual_pages"])
         elif "path" in extra_dict:
             self.save_done.emit(file_path)
-        self.mutate_done.emit(file_path, {"diff_applied": True, "extra": extra_dict})
+        op = getattr(worker, "_op", self._mutate_op)
+        params = getattr(worker, "_params", {})
+        self.mutate_done.emit(
+            file_path,
+            {
+                "diff_applied": True,
+                "extra": extra_dict,
+                "op": op,
+                "page": params.get("page"),
+                "revision": params.get("revision", 0),
+            },
+        )
 
     def _on_mutate_failed(
         self,
@@ -892,19 +1154,26 @@ class PdfSessionManager(QObject):
     def update_page_block_text(
         self, page_index: int, block_index: int, new_text: str
     ) -> bool:
-        """更新某页某块文字(走 IPC,后端更新规范模型)。"""
-        session = self.active_session
-        if session is None:
-            return False
-        try:
-            resp = self._client.update_block_text(
-                session.session_id, page_index, block_index, new_text
-            )
-            apply_diff(session.pdf_document, resp.diff)
-            return True
-        except PdfBackendError as e:
-            logger.error("更新块文字失败: %s", e)
-            return False
+        """异步更新某页某块文字；revision 用于淘汰编辑前的预览。"""
+        self._edit_revision += 1
+        self._preview_generation = max(self._preview_generation + 1, self._edit_revision)
+        return self._start_mutate(
+            "update_block_text",
+            {
+                "page": page_index,
+                "block_index": block_index,
+                "new_text": new_text,
+                "revision": self._edit_revision,
+            },
+        )
+
+    def update_page_block_text_async(
+        self, page_index: int, block_index: int, new_text: str
+    ) -> bool:
+        return self.update_page_block_text(page_index, block_index, new_text)
+
+    def close_session_async(self, file_path: str) -> bool:
+        return self.close_session(file_path)
 
     # ---- OCR(主进程编排:后端渲染 → 主进程 OCR → 后端写文字层)--------
 
@@ -914,6 +1183,8 @@ class PdfSessionManager(QObject):
         ocr_options: OCROptions | None = None,
         pdf_settings: PdfGlobalSettings | None = None,
         overwrite: bool = False,
+        *,
+        _preflight_complete: bool = False,
     ) -> bool:
         from vibeocr.models.pdf_ocr_options import PdfGlobalSettings
 
@@ -928,12 +1199,20 @@ class PdfSessionManager(QObject):
             getattr(self, "_shutting_down", False)
             or getattr(self, "_mutate_worker", None) is not None
             or getattr(self, "_ocr_worker", None) is not None
+            or getattr(self, "_preflight_worker", None) is not None
+            or bool(getattr(self, "_ocr_running", False))
+            or bool(getattr(self, "_control_workers", set()))
         ):
             return False
 
-        if self._is_mineru_first_use(ocr_options):
-            if not self._ensure_mineru_models_blocking(session.file_path):
-                return False
+        if not _preflight_complete and self._is_mineru_first_use(ocr_options):
+            return self._start_mineru_preflight(
+                session.file_path,
+                list(page_indices),
+                ocr_options,
+                pdf_settings,
+                overwrite,
+            )
 
         self._pdf_settings = pdf_settings
         self._overwrite_text_layer = overwrite
@@ -945,10 +1224,6 @@ class PdfSessionManager(QObject):
         # cancel_event 若不清，会让本次 OCR 写层时后端 add_text_layer_batch
         # 立即停在页边界（协作式取消语义）。reset_cancel 原本全代码库无调用点，
         # 属遗漏。
-        try:
-            self._client.reset_cancel(session.session_id)
-        except Exception:
-            logger.debug("reset_cancel 失败（忽略）", exc_info=True)
         # 断点续传：读取 sidecar，过滤掉已增量落盘的页（崩溃恢复）。
         # overwrite=True 时不过滤（用户明确要求重写）。
         if not overwrite and session.file_path:
@@ -1021,16 +1296,15 @@ class PdfSessionManager(QObject):
 
             def cancel(self):
                 self._cancelled = True
-                # 通知后端协作式取消（对齐 PdfIpcMutateWorker.cancel 的成熟模式）：
-                # 后端 add_text_layer_batch 逐页检查 cancel_event，停在页边界，
-                # 让当前 HTTP 尽快返回，避免 runner 一直阻塞到整批写完。
-                try:
-                    self._client.cancel(self._sid)
-                except Exception:
-                    logger.debug("通知后端取消失败（忽略）", exc_info=True)
 
             def run(self):
                 try:
+                    self._mgr._reset_backend_cancel(self._sid, "OCR")
+                    if self._cancelled:
+                        self.all_done.emit(
+                            self._sid, self._success, self._fail, self._task_id
+                        )
+                        return
                     self._mgr._run_ocr(
                         self,
                         self._sid,
@@ -1579,10 +1853,23 @@ class PdfSessionManager(QObject):
 
     def _cancel_ocr(self) -> None:
         self._ocr_cancelled = True
+        preflight = getattr(self, "_preflight_worker", None)
+        if preflight is not None:
+            request = self._pending_ocr_request
+            self._pending_ocr_request = None
+            self._preflight_cancel_path = request[0] if request is not None else None
+            # asyncio/QThread 的取消请求不是原生终态。保持写门与 UI busy，
+            # 直到 QThread.finished；否则下一次 OCR 会撞上仍在下载的 worker。
+            self._ocr_running = True
+            self._ocr_state = "cancelling"
+            preflight.cancel()
         w = getattr(self, "_ocr_worker", None)
         if w is not None and hasattr(w, "cancel"):
             self._ocr_state = "cancelling"
             w.cancel()
+            session_id = getattr(w, "_sid", "")
+            if session_id:
+                self._request_backend_cancel_async(session_id)
             # 请求式取消：引用由 QThread.finished 槽释放，GUI 线程不等待。
 
     def get_pages_without_text_layer(self, session_id: str) -> list[int]:
@@ -1594,7 +1881,137 @@ class PdfSessionManager(QObject):
             p.page_index for p in session.pdf_document.pages if not p.has_text_layer
         ]
 
-    # ---- MinerU 模型下载(保留原逻辑)-----------------------------------
+    # ---- MinerU 模型准备 ---------------------------------------------
+
+    def _start_mineru_preflight(
+        self,
+        file_path: str,
+        page_indices: list[int],
+        ocr_options: object,
+        pdf_settings: object,
+        overwrite: bool,
+    ) -> bool:
+        if self._preflight_worker is not None:
+            return False
+        self._task_generation += 1
+        self._preflight_generation = self._task_generation
+        generation = self._preflight_generation
+        self._preflight_result = None
+        self._preflight_cancel_path = None
+        self._pending_ocr_request = (
+            file_path,
+            page_indices,
+            ocr_options,
+            pdf_settings,
+            overwrite,
+        )
+        self._ocr_running = True
+        self._ocr_cancelled = False
+        self._ocr_state = "preflight"
+        worker = MinerUPreflightWorker()
+        worker.progress.connect(
+            lambda stage, message, w=worker, gen=generation: self._on_preflight_progress(
+                stage, message, w, gen
+            )
+        )
+        worker.completed.connect(
+            lambda ok, message, w=worker, gen=generation: self._on_preflight_completed(
+                ok, message, w, gen
+            )
+        )
+        worker.finished.connect(
+            lambda w=worker, gen=generation: self._on_preflight_finished(w, gen)
+        )
+        self._preflight_worker = worker
+        self.mineru_models_status.emit(
+            "首次使用文档解析，正在下载 MinerU 模型（约数 GB）..."
+        )
+        worker.start()
+        return True
+
+    def _is_current_preflight(self, worker, generation: int) -> bool:
+        return (
+            worker is self._preflight_worker
+            and generation == self._preflight_generation
+        )
+
+    def _on_preflight_progress(
+        self, stage: str, message: str, worker, generation: int
+    ) -> None:
+        if (
+            self._is_current_preflight(worker, generation)
+            and not self._shutting_down
+            and self._ocr_state == "preflight"
+        ):
+            self.mineru_models_status.emit(f"[{stage}] {message}")
+
+    def _on_preflight_completed(
+        self, ok: bool, message: str, worker, generation: int
+    ) -> None:
+        if not self._is_current_preflight(worker, generation):
+            return
+        if self._shutting_down or worker.is_cancelled or self._ocr_state != "preflight":
+            return
+        # completed 是业务结果，不是原生线程终态。只暂存；真正继续 OCR、
+        # 发布失败或取消均在 finished 槽完成。
+        self._preflight_result = (bool(ok), str(message))
+
+    def _on_preflight_finished(self, worker, generation: int) -> None:
+        if not self._is_current_preflight(worker, generation):
+            worker.deleteLater()
+            return
+
+        request = self._pending_ocr_request
+        cancel_path = self._preflight_cancel_path
+        result = self._preflight_result
+        was_cancelled = bool(
+            worker.is_cancelled
+            or self._ocr_state == "cancelling"
+            or self._shutting_down
+        )
+        self._preflight_worker = None
+        self._pending_ocr_request = None
+        self._preflight_result = None
+        self._preflight_cancel_path = None
+        worker.deleteLater()
+
+        if was_cancelled:
+            self._ocr_running = False
+            self._ocr_state = "cancelled"
+            if cancel_path and not self._shutting_down:
+                self.ocr_done.emit(cancel_path, 0, 0)
+            return
+
+        if request is None:
+            self._ocr_running = False
+            self._ocr_state = "cancelled"
+            return
+
+        file_path, pages, options, settings, overwrite = request
+        if result is None or not result[0]:
+            message = result[1] if result is not None else "模型准备线程未返回结果"
+            self._ocr_running = False
+            self._ocr_state = "completed"
+            self.mineru_models_status.emit(f"模型下载失败: {message}")
+            self.ocr_done.emit(file_path, 0, 1)
+            return
+
+        self.mineru_models_status.emit("MinerU 模型准备就绪")
+        self._ocr_running = False
+        if self._active_path != file_path:
+            self._ocr_state = "cancelled"
+            self.ocr_done.emit(file_path, 0, 0)
+            return
+        started = self.start_ocr(
+            pages,
+            options,
+            settings,
+            overwrite,
+            _preflight_complete=True,
+        )
+        if not started:
+            self._ocr_state = "cancelled"
+            self.ocr_done.emit(file_path, 0, 0)
 
     def _is_mineru_first_use(self, ocr_options: OCROptions | None) -> bool:
         if ocr_options is None:
@@ -1610,28 +2027,6 @@ class PdfSessionManager(QObject):
             return not is_pipeline_ever_succeeded("MinerU", get_project_root())
         except Exception:
             return False
-
-    def _ensure_mineru_models_blocking(self, file_path: str) -> bool:
-        from PySide6.QtWidgets import QApplication
-
-        from vibeocr.env_manager import ensure_mineru_models, get_project_root
-
-        def on_progress(stage: str, message: str):
-            self.mineru_models_status.emit(f"[{stage}] {message}")
-            QApplication.processEvents()
-
-        self.mineru_models_status.emit(
-            "首次使用文档解析，正在下载 MinerU 模型（约数 GB）..."
-        )
-        ok, msg = ensure_mineru_models(
-            get_project_root(), progress_callback=on_progress
-        )
-        if ok:
-            self.mineru_models_status.emit("MinerU 模型准备就绪")
-            return True
-        self.mineru_models_status.emit(f"模型下载失败: {msg}")
-        self.ocr_done.emit(file_path, 0, 1)
-        return False
 
     # ---- 批量导出 -------------------------------------------------------
 
@@ -1677,18 +2072,28 @@ class PdfSessionManager(QObject):
         """
         from PySide6.QtCore import QThread
 
-        sessions = [s for _, s in self.get_modified_sessions()]
-        if not sessions:
+        if self._shutting_down or self._pdf_write_busy():
+            return
+        session_snapshots = tuple(
+            (file_path, session.session_id)
+            for file_path, session in self.get_modified_sessions()
+        )
+        if not session_snapshots:
             self.export_done.emit([])
             return
+        settings_snapshot = self._settings_to_dict(self._pdf_settings)
+        client = self._client
 
         class _ExportRunner(QThread):
             progress = Signal(int, int, str)
             done = Signal(list)
+            failed = Signal(str)
 
-            def __init__(self, mgr, out_dir):
+            def __init__(self, backend, items, settings, out_dir):
                 super().__init__()
-                self._mgr = mgr
+                self._backend = backend
+                self._items = items
+                self._settings = settings
                 self._out = out_dir
                 self._cancelled = False
 
@@ -1696,19 +2101,87 @@ class PdfSessionManager(QObject):
                 self._cancelled = True
 
             def run(self):
-                exported = self._mgr.export_all_modified(
-                    self._out, cancel_check=lambda: self._cancelled
-                )
-                self.done.emit(exported)
+                try:
+                    exported: list[str] = []
+                    out = Path(self._out)
+                    out.mkdir(parents=True, exist_ok=True)
+                    total = len(self._items)
+                    for index, (file_path, session_id) in enumerate(
+                        self._items, start=1
+                    ):
+                        if self._cancelled:
+                            break
+                        dest = out / Path(file_path).name
+                        if dest.exists():
+                            stem = dest.stem
+                            counter = 1
+                            while (out / f"{stem}_{counter}{dest.suffix}").exists():
+                                counter += 1
+                            dest = out / f"{stem}_{counter}{dest.suffix}"
+                        try:
+                            self._backend.save(
+                                session_id,
+                                path=str(dest),
+                                pdf_settings=self._settings,
+                            )
+                        except PdfBackendError as exc:
+                            # 可预期的单文件后端错误不终止整个批次。
+                            logger.error("导出失败 %s: %s", file_path, exc)
+                        else:
+                            exported.append(str(dest))
+                        self.progress.emit(index, total, file_path)
+                    self.done.emit(exported)
+                except Exception as exc:
+                    # ValidationError/MemoryError/本地文件系统错误等也必须形成业务
+                    # 终态；否则只有原生 finished，PdfTab 会永久停在导出中。
+                    logger.exception("批量导出异常终止")
+                    self.failed.emit(str(exc) or type(exc).__name__)
 
-        worker = _ExportRunner(self, output_dir)
-        worker.done.connect(self._on_export_done)
+        worker = _ExportRunner(
+            client,
+            session_snapshots,
+            settings_snapshot,
+            output_dir,
+        )
+        worker.done.connect(
+            lambda paths, w=worker: self._on_export_done(paths, w)
+        )
+        worker.failed.connect(
+            lambda error, w=worker: self._on_export_failed(error, w)
+        )
+        worker.finished.connect(
+            lambda w=worker: self._on_export_worker_finished(w)
+        )
+        self._export_result_pending = None
+        self._export_error_pending = None
         self._export_worker = worker
         worker.start()
 
-    def _on_export_done(self, exported_paths: list) -> None:
+    def _on_export_done(self, exported_paths: list, worker) -> None:
+        """业务结果先暂存；QThread.run 尚可能处于返回/析构窗口。"""
+        if worker is self._export_worker:
+            self._export_result_pending = list(exported_paths)
+
+    def _on_export_failed(self, error: str, worker) -> None:
+        """暂存意外失败；等原生 ``finished`` 后再释放写门并通知 UI。"""
+        if worker is self._export_worker:
+            self._export_error_pending = error
+
+    def _on_export_worker_finished(self, worker) -> None:
+        """原生 finished 才释放所有权、允许下一次导出。"""
+        if worker is not self._export_worker:
+            worker.deleteLater()
+            return
+        result = self._export_result_pending
+        error = self._export_error_pending
+        self._export_result_pending = None
+        self._export_error_pending = None
         self._export_worker = None
-        self.export_done.emit(exported_paths)
+        worker.deleteLater()
+        if error is not None and not self._shutting_down:
+            self.export_failed.emit(error)
+        elif result is not None and not self._shutting_down:
+            self.export_done.emit(result)
 
     # ---- 辅助 -----------------------------------------------------------
 
@@ -1751,61 +2224,103 @@ class PdfSessionManager(QObject):
 
     def request_shutdown(self) -> None:
         """只发协作取消请求；不在 GUI 线程等待任何 QThread。"""
+        assert QThread.currentThread() is self.thread()
         if self._shutting_down:
             return
         self._shutting_down = True
         self._cancel_mutate_worker()
         self._cancel_ocr()
         self._cancel_open_worker(wait=False)
+        preview = self._preview_worker
+        if preview is not None:
+            self._preview_worker = None
+            self._preview_generation += 1
+            self._draining_preview_workers.add(preview)
+            preview.cancel()
         if self._export_worker is not None:
             cancel = getattr(self._export_worker, "cancel", None)
             if callable(cancel):
                 cancel()
+        # idle 场景可立即在 owner GUI 线程创建 close worker；有写/打开任务时
+        # 由后续 GUI poll 在它们 native-finished 后推进，绝不并发关闭 session。
+        self._advance_shutdown_session_closes()
 
-    def drain(self, timeout_ms: int) -> bool:
-        """在一个 wall-clock 预算内收拢 PDF worker 并释放后端会话。"""
-        import time
-
-        deadline = time.monotonic() + max(0, timeout_ms) / 1000
+    def _shutdown_operation_workers(self) -> set[QThread]:
         workers = {
             worker
             for worker in (
                 self._open_worker,
                 self._mutate_worker,
                 self._ocr_worker,
+                self._preflight_worker,
+                self._preview_worker,
                 self._export_worker,
             )
             if worker is not None
         }
-        all_stopped = True
-        for worker in workers:
-            remaining_ms = max(0, int((deadline - time.monotonic()) * 1000))
-            if not worker.isFinished() and (
-                remaining_ms <= 0 or not worker.wait(remaining_ms)
-            ):
-                all_stopped = False
+        workers.update(tuple(self._draining_open_workers))
+        workers.update(tuple(self._draining_preview_workers))
+        workers.update(tuple(self._control_workers))
+        return workers
 
-        if not all_stopped:
-            logger.warning("PDF worker 未在统一关闭预算内全部结束")
+    def _advance_shutdown_session_closes(self) -> None:
+        """GUI owner 状态机：业务 worker 全停后才创建 session close worker。"""
+        assert QThread.currentThread() is self.thread()
+        if any(not worker.isFinished() for worker in self._shutdown_operation_workers()):
+            return
+        for session in list(self._sessions.values()):
+            if session.session_id not in self._close_started_session_ids:
+                self._start_close_worker(session.session_id)
+
+    def is_drained(self) -> bool:
+        """GUI 线程零等待推进/探测；连续两轮稳定后才确认全部排空。"""
+        assert QThread.currentThread() is self.thread()
+        if self._shutdown_finalized:
+            return True
+        if not self._shutting_down:
             return False
 
-        # 关闭所有后端 session
-        for session in list(self._sessions.values()):
-            try:
-                self._client.close_session(session.session_id)
-            except Exception:
-                pass
-        self._sessions.clear()
-        self._active_path = None
-        # 停后端子进程
-        try:
-            self._client.stop()
-        except Exception:
-            pass
-        from vibeocr.utils.cjk_font_resolver import _CJK_RESOLVER
+        self._advance_shutdown_session_closes()
+        workers = self._shutdown_operation_workers() | set(self._close_workers)
+        if any(not worker.isFinished() for worker in workers):
+            self._shutdown_stable_polls = 0
+            return False
+        if any(
+            session.session_id not in self._close_started_session_ids
+            for session in self._sessions.values()
+        ):
+            self._shutdown_stable_polls = 0
+            return False
 
-        _CJK_RESOLVER.cleanup()
+        # 给 queued doc_opened/open_failed/finished 回调至少一个事件循环周期，
+        # 防止检查边界刚加入 orphan close worker。
+        self._shutdown_stable_polls += 1
+        if self._shutdown_stable_polls < 2:
+            return False
+        self._sessions.clear()
+        self._close_started_session_ids.clear()
+        self._active_path = None
+        self._shutdown_finalized = True
         return True
+
+    def drain(self, timeout_ms: int) -> bool:
+        """兼容独立调用；生产 MainWindow 只使用 GUI ``is_drained`` 轮询。"""
+        import time
+
+        from PySide6.QtCore import QCoreApplication
+
+        deadline = time.monotonic() + max(0, timeout_ms) / 1000
+        if QThread.currentThread() is not self.thread():
+            # 非 owner 线程绝不推进/修改 QObject 状态；调用方应改用 GUI poll。
+            return False
+        while True:
+            if self.is_drained():
+                return True
+            if timeout_ms <= 0 or time.monotonic() >= deadline:
+                return False
+            QCoreApplication.processEvents()
+            # 最多让出一小片，避免兼容入口形成长时间 GUI 硬等待。
+            QThread.msleep(5)
 
     def shutdown(self, timeout_ms: int = 5000) -> bool:
         """兼容独立调用：请求取消后按单一预算等待。"""

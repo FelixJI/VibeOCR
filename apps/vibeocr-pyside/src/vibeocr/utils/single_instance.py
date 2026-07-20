@@ -15,8 +15,9 @@ OCR 子进程、WebEngine、nvidia-smi 探测等重资源。
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass, field
 
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QObject, QTimer, Signal
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 
 logger = logging.getLogger(__name__)
@@ -31,6 +32,15 @@ _ACK = b"K"
 
 # 连接/读写等待超时（毫秒）。第二实例退出路径不应长时间阻塞。
 _TIMEOUT_MS = 1000
+
+
+@dataclass
+class _ServerConnectionState:
+    """主实例侧单条连接的异步协议状态。"""
+
+    buffer: bytearray = field(default_factory=bytearray)
+    timer: QTimer | None = None
+    response_started: bool = False
 
 
 class SingleInstanceGuard(QObject):
@@ -53,6 +63,9 @@ class SingleInstanceGuard(QObject):
         super().__init__(parent)
         self._app_id = app_id
         self._server: QLocalServer | None = None
+        # QLocalServer 不替应用持有 pending socket 的 Python wrapper；必须一直
+        # 保活到 ACK 写完或连接断开，同时为每条连接保存分片缓冲和超时 timer。
+        self._connections: dict[QLocalSocket, _ServerConnectionState] = {}
 
     def try_lock(self) -> bool:
         """尝试成为主实例。
@@ -94,20 +107,99 @@ class SingleInstanceGuard(QObject):
         return True
 
     def _on_new_connection(self) -> None:
-        """主实例收到第二实例连接：读取指令并处理。"""
+        """接纳所有 pending 连接；读取/回写完全由 Qt 信号驱动。"""
         if self._server is None:
             return
-        conn = self._server.nextPendingConnection()
-        if conn is None:
+        while self._server.hasPendingConnections():
+            conn = self._server.nextPendingConnection()
+            if conn is None:
+                break
+            self._track_connection(conn)
+
+    def _track_connection(self, conn: QLocalSocket) -> None:
+        state = _ServerConnectionState()
+        timer = QTimer(conn)
+        timer.setSingleShot(True)
+        timer.setInterval(_TIMEOUT_MS)
+        timer.timeout.connect(lambda conn=conn: self._abort_connection(conn))
+        state.timer = timer
+        self._connections[conn] = state
+
+        conn.readyRead.connect(lambda conn=conn: self._on_connection_ready_read(conn))
+        conn.bytesWritten.connect(
+            lambda _count, conn=conn: self._on_connection_bytes_written(conn)
+        )
+        conn.disconnected.connect(lambda conn=conn: self._cleanup_connection(conn))
+        conn.errorOccurred.connect(
+            lambda _error, conn=conn: self._abort_connection(conn)
+        )
+        timer.start()
+
+        # newConnection 与 readyRead 可能在同一事件循环轮次合并；接纳时已有
+        # 数据则主动消费一次，仍然不做任何阻塞等待。
+        if conn.bytesAvailable() > 0:
+            self._on_connection_ready_read(conn)
+
+    def _on_connection_ready_read(self, conn: QLocalSocket) -> None:
+        state = self._connections.get(conn)
+        if state is None or state.response_started:
             return
-        # 读取指令（带超时，避免恶意/异常连接挂起主线程）。
-        # 持有 conn 引用防止过早 GC，连接在本回调结束后由 Qt 回收。
-        if conn.waitForReadyRead(_TIMEOUT_MS):
-            data = bytes(conn.readAll())  # type: ignore[arg-type]
-            # 回写 ACK 让客户端确认已收到，再断开。
-            conn.write(_ACK)
-            conn.flush()
-            conn.waitForBytesWritten(_TIMEOUT_MS)
-            if data == _CMD_RAISE:
-                self.raise_requested.emit()
+        state.buffer.extend(bytes(conn.readAll()))  # type: ignore[arg-type]
+        # 当前协议为固定 5 字节命令。少于完整帧时继续等待后续 readyRead；
+        # 超时或客户端提前断开会走清理，不阻塞 GUI。
+        if len(state.buffer) < len(_CMD_RAISE):
+            return
+
+        state.response_started = True
+        if state.timer is not None:
+            # 进入 ACK drain 是一个新的异步阶段，重新给完整超时预算；不能
+            # 沿用读取阶段可能只剩几毫秒的 deadline，也不能停掉 timer 后让
+            # bytesToWrite 永久非零的异常连接一直留在 _connections。
+            state.timer.start(_TIMEOUT_MS)
+        if bytes(state.buffer[: len(_CMD_RAISE)]) == _CMD_RAISE:
+            self.raise_requested.emit()
+
+        # 完整帧（含未知命令）均回 ACK，避免异常客户端一直等待；ACK 写入由
+        # bytesWritten 推进到断开状态，不在回调中 waitForBytesWritten。
+        if conn.write(_ACK) < 0:
+            self._abort_connection(conn)
+            return
+        conn.flush()
+        if conn.bytesToWrite() == 0:
+            self._finish_connection(conn)
+
+    def _on_connection_bytes_written(self, conn: QLocalSocket) -> None:
+        state = self._connections.get(conn)
+        if state is not None and state.response_started and conn.bytesToWrite() == 0:
+            self._finish_connection(conn)
+
+    def _finish_connection(self, conn: QLocalSocket) -> None:
+        if conn not in self._connections:
+            return
         conn.disconnectFromServer()
+        if conn.state() == QLocalSocket.LocalSocketState.UnconnectedState:
+            self._cleanup_connection(conn)
+
+    def _abort_connection(self, conn: QLocalSocket) -> None:
+        if conn not in self._connections:
+            return
+        conn.abort()
+        self._cleanup_connection(conn)
+
+    def _cleanup_connection(self, conn: QLocalSocket) -> None:
+        state = self._connections.pop(conn, None)
+        if state is not None and state.timer is not None:
+            state.timer.stop()
+        conn.deleteLater()
+
+    def close(self) -> None:
+        """停止监听并断开所有仍在途的第二实例连接。"""
+        server = self._server
+        self._server = None
+        if server is not None:
+            server.close()
+            server.deleteLater()
+        for conn in tuple(self._connections):
+            conn.abort()
+            self._cleanup_connection(conn)
+        QLocalServer.removeServer(self._app_id)

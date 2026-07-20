@@ -1,6 +1,7 @@
 """Tests for result_view_widget block rendering functions."""
 
 import re
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -444,6 +445,11 @@ class TestEventBindingDecoupledFromQWebChannel:
         # click 处理器里的 _bridge.onBlockClick 必须有守卫
         assert "if (_bridge) _bridge.onBlockClick" in html
 
+    def test_edit_callback_carries_document_identity(self):
+        html = self._full_html()
+        assert "onBlockEditedForDocument(_documentToken" in html
+        assert "var _documentToken" in html
+
     def test_formula_in_equation_edit_branch(self):
         """dblclick 的公式编辑分支应包含 'formula' 类型。"""
         html = self._full_html()
@@ -613,6 +619,7 @@ class TestResultViewExportButtons:
         fake = self._fake_clipboard(monkeypatch)
 
         widget._on_copy_markdown()
+        qtbot.waitUntil(lambda: widget._copy_job is None, timeout=2000)
         assert fake.text() == "# H1\n内容"
 
     def test_copy_markdown_falls_back_to_raw(self, widget, qtbot, monkeypatch):
@@ -622,6 +629,7 @@ class TestResultViewExportButtons:
         fake = self._fake_clipboard(monkeypatch)
 
         widget._on_copy_markdown()
+        qtbot.waitUntil(lambda: widget._copy_job is None, timeout=2000)
         assert fake.text() == "纯文本"
 
     def test_copy_markdown_no_result_is_noop(self, widget, qtbot, monkeypatch):
@@ -631,6 +639,134 @@ class TestResultViewExportButtons:
 
         fake.setText("SENTINEL")
         widget._on_copy_markdown()
+        assert fake.text() == "SENTINEL"
+
+    def test_copy_after_snapshot_invalidation_rebuilds_latest_plain_and_markdown(
+        self, widget, qtbot, monkeypatch
+    ):
+        """A pending aggregate rebuild must not expose the pre-edit copy payload."""
+        from vibeocr.models.ocr_result import TextBlock
+        from vibeocr.utils.export_jobs import snapshot_ocr_result
+
+        result = self._make_result(markdown_text="old aggregate", raw_text="old aggregate")
+        result.text_blocks = [TextBlock("old block", 1.0, None)]
+        result.content_list = [{"type": "text", "text": "old block"}]
+        widget._current_result = result
+        widget._current_snapshot = snapshot_ocr_result(
+            result, include_content_list=True, include_text_blocks=True
+        )
+        result.text_blocks[0].text = "latest accepted edit"
+        result.content_list[0]["text"] = "latest accepted edit"
+        widget.invalidate_snapshot()
+        fake = self._fake_clipboard(monkeypatch)
+
+        widget._on_copy_markdown()
+        qtbot.waitUntil(lambda: widget._copy_job is None, timeout=2000)
+        assert fake.text() == "latest accepted edit"
+
+        fake.setText("SENTINEL")
+        widget._on_copy_text()
+        qtbot.waitUntil(lambda: widget._copy_job is None, timeout=2000)
+        assert fake.text() == "latest accepted edit"
+
+    def test_copy_after_snapshot_invalidation_uses_latest_table_html(
+        self, widget, qtbot, monkeypatch
+    ):
+        """Rich HTML and plain table payloads both reflect the accepted edit."""
+        from vibeocr.utils.export_jobs import snapshot_ocr_result
+
+        result = self._make_result(markdown_text="old aggregate", raw_text="old aggregate")
+        result.content_list = [
+            {
+                "type": "table",
+                "table_body": "<table><tr><td>old</td></tr></table>",
+            }
+        ]
+        result.text_blocks = []
+        widget._current_result = result
+        widget._current_snapshot = snapshot_ocr_result(result)
+        result.content_list[0]["table_body"] = (
+            "<table><tr><td>latest accepted edit</td></tr></table>"
+        )
+        widget.invalidate_snapshot()
+        fake = self._fake_clipboard(monkeypatch)
+
+        widget._on_copy_text()
+        qtbot.waitUntil(lambda: widget._copy_job is None, timeout=2000)
+
+        assert fake.mime is not None
+        assert "latest accepted edit" in fake.mime.text()
+        assert "latest accepted edit" in fake.mime.html()
+        assert "old" not in fake.mime.html()
+
+    def test_50k_invalid_snapshot_copy_is_async_and_eventually_latest(
+        self, widget, qtbot, monkeypatch
+    ):
+        from tests.qt_responsiveness import assert_qt_event_loop_responsive
+        from vibeocr.utils.export_jobs import snapshot_ocr_result
+
+        result = self._make_result(markdown_text="old aggregate", raw_text="old aggregate")
+        result.content_list = [
+            {"type": "text", "text": f"line-{index}"} for index in range(50_000)
+        ]
+        result.text_blocks = []
+        widget._current_result = result
+        widget._current_snapshot = snapshot_ocr_result(result)
+        result.content_list[-1]["text"] = "latest accepted edit"
+        widget.invalidate_snapshot()
+        fake = self._fake_clipboard(monkeypatch)
+
+        started = time.perf_counter()
+        widget._on_copy_markdown()
+        elapsed_ms = (time.perf_counter() - started) * 1000
+
+        assert elapsed_ms < 150
+        assert widget._copy_md_btn.isEnabled() is False
+        assert_qt_event_loop_responsive(
+            qtbot, in_flight=lambda: widget._copy_job is not None
+        )
+        qtbot.waitUntil(lambda: widget._copy_job is None, timeout=15_000)
+        assert widget._copy_md_btn.isEnabled() is True
+        assert "latest accepted edit" in fake.text()
+        assert "old aggregate" not in fake.text()
+
+    def test_late_javascript_copy_callback_is_dropped_after_document_switch(
+        self, widget, monkeypatch
+    ):
+        class FakePage:
+            def __init__(self):
+                self.callbacks = []
+
+            def runJavaScript(self, _script, callback):
+                self.callbacks.append(callback)
+
+        class FakeWebView:
+            def __init__(self):
+                self.fake_page = FakePage()
+
+            def page(self):
+                return self.fake_page
+
+        web = FakeWebView()
+        widget._web_view = web
+        widget._current_result = self._make_result(raw_text="current")
+        widget._active_document_token = "document-1"
+        widget._rendered_document_token = "document-1"
+        fake = self._fake_clipboard(monkeypatch)
+        fake.setText("SENTINEL")
+
+        widget._on_copy_text()
+        callback = web.fake_page.callbacks.pop()
+        widget._cancel_copy()
+        widget._activate_next_document()
+        callback(
+            {
+                "documentToken": "document-1",
+                "html": "",
+                "text": "late old document text",
+            }
+        )
+
         assert fake.text() == "SENTINEL"
 
     def test_copy_text_with_table_writes_rich_mime(self, widget, qtbot, monkeypatch):
@@ -654,6 +790,7 @@ class TestResultViewExportButtons:
         fake = self._fake_clipboard(monkeypatch)
 
         widget._on_copy_text()
+        qtbot.waitUntil(lambda: widget._copy_job is None, timeout=2000)
 
         # 走富剪贴板分支：mime 非空
         assert fake.mime is not None
@@ -682,9 +819,10 @@ class TestResultViewExportButtons:
         fake.setText("SENTINEL")
 
         widget._on_copy_text()
-        # 未走富剪贴板（mime 为 None），text 维持 SENTINEL（WebEngine 分支 noop）
+        qtbot.waitUntil(lambda: widget._copy_job is None, timeout=2000)
+        # WebEngine 尚未加载时由后台稳定快照提供纯文本。
         assert fake.mime is None
-        assert fake.text() == "SENTINEL"
+        assert fake.text() == "普通文本，无表格"
 
     def test_buttons_hidden_initially(self, widget):
         """初始（无结果）三个新按钮隐藏。
@@ -701,6 +839,9 @@ class TestResultViewExportButtons:
         """导出 Word：mock 另存为对话框，断言生成 .docx 文件。"""
         result = self._make_result(raw_text="导出测试内容")
         widget._current_result = result
+        from vibeocr.utils.export_jobs import snapshot_ocr_result
+
+        widget._current_snapshot = snapshot_ocr_result(result)
 
         out = tmp_path / "out.docx"
         # mock QFileDialog.getSaveFileName 返回 (路径, 过滤)
@@ -727,6 +868,7 @@ class TestResultViewExportButtons:
             raising=False,
         )
         widget._on_export_file("docx")
+        qtbot.waitUntil(lambda: widget._export_job is None, timeout=2000)
         assert out.exists()
         # docx 是 zip 包，文件头 PK
         assert out.read_bytes()[:2] == b"PK"
@@ -735,6 +877,9 @@ class TestResultViewExportButtons:
         """导出 Excel：断言生成 .xlsx 文件。"""
         result = self._make_result(raw_text="表格导出测试")
         widget._current_result = result
+        from vibeocr.utils.export_jobs import snapshot_ocr_result
+
+        widget._current_snapshot = snapshot_ocr_result(result)
 
         out = tmp_path / "out.xlsx"
         monkeypatch.setattr(
@@ -759,6 +904,7 @@ class TestResultViewExportButtons:
             raising=False,
         )
         widget._on_export_file("xlsx")
+        qtbot.waitUntil(lambda: widget._export_job is None, timeout=2000)
         assert out.exists()
         # xlsx 也是 zip 包
         assert out.read_bytes()[:2] == b"PK"
@@ -767,6 +913,9 @@ class TestResultViewExportButtons:
         """用户取消对话框（返回空路径）不报错、不生成文件。"""
         result = self._make_result(raw_text="取消测试")
         widget._current_result = result
+        from vibeocr.utils.export_jobs import snapshot_ocr_result
+
+        widget._current_snapshot = snapshot_ocr_result(result)
 
         monkeypatch.setattr(
             "vibeocr.widgets.result_view_widget.QFileDialog",
@@ -786,6 +935,9 @@ class TestResultViewExportButtons:
         """ExportService.export 返回 False 时走 warning 分支，不抛异常。"""
         result = self._make_result(raw_text="失败测试")
         widget._current_result = result
+        from vibeocr.utils.export_jobs import snapshot_ocr_result
+
+        widget._current_snapshot = snapshot_ocr_result(result)
 
         out = tmp_path / "fail.docx"
         monkeypatch.setattr(
@@ -816,5 +968,6 @@ class TestResultViewExportButtons:
         )
         # 不应抛异常
         widget._on_export_file("docx")
+        qtbot.waitUntil(lambda: widget._export_job is None, timeout=2000)
         # 失败时不应写出文件
         assert not out.exists()

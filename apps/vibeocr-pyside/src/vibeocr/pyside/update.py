@@ -48,6 +48,7 @@ from vibeocr.services.update_service import (
     should_skip_version,
 )
 from vibeocr.ui import theme
+from vibeocr.utils.qt_async import tracked_to_thread
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -567,17 +568,17 @@ class UpdateService:
             # 新架构（黄金法则）：旧主程序只"递送"——testzip + 抽取新 updater，
             # 由新 updater（新代码）完成部署。旧主程序不解释新格式。
             #
-            # 下载完成后的 testzip → extract → handshake 各阶段虽已 asyncio.to_thread
+            # 下载完成后的 testzip → extract → handshake 各阶段虽已 tracked_to_thread
             # 派发（不冻结事件循环），但此前无任何 UI 反馈：用户点「确定」后状态栏
             # 残留的「更新已就绪」5 秒后自动清空，随后最长 15 秒空白（onefile updater
             # 解压 + Python 初始化 + 杀软扫描），用户无法区分「正在工作」与「卡死」。
             # 各阶段前发持久状态栏消息（timeout=0 不自动清空）消除这一感知性卡死。
             # 1. testzip 确保能安全读出 updater 条目
-            # 经 asyncio.to_thread 派发：testzip 同步读整个 zip（~50-170MB）做 CRC 校验，
+            # 经 tracked_to_thread 派发：testzip 同步读整个 zip（~50-170MB）做 CRC 校验，
             # 在 qasync 事件循环里直接调用会冻结 UI（历史 bug：下载完成后无响应退出）。
             # 与 _download_zip_with_sha 里 verify_sha256 的处理一致。
             self._status("正在校验更新包完整性…", 0)
-            if not await asyncio.to_thread(self._verify_zip_integrity, zip_path):
+            if not await tracked_to_thread(self._verify_zip_integrity, zip_path):
                 await await_dialog(
                     QMessageBox(
                         QMessageBox.Icon.Critical,
@@ -591,12 +592,12 @@ class UpdateService:
                 return
 
             # 2. 从 zip 抽取新 updater 到暂存目录 data/cache/update/updater.exe
-            # 经 asyncio.to_thread 派发：zf.read + write_bytes 是同步 I/O，与 testzip 同属
+            # 经 tracked_to_thread 派发：zf.read + write_bytes 是同步 I/O，与 testzip 同属
             # 下载后冻结事件循环的嫌疑点（见 1. testzip 注释）。updater.exe 虽仅 ~8-12MB，
             # 但在 qasync 协程里同步读写仍会阻塞，统一上 to_thread 保持一致。
             self._status("正在准备更新器…", 0)
             try:
-                staged_updater = await asyncio.to_thread(
+                staged_updater = await tracked_to_thread(
                     self._extract_updater_from_zip, zip_path
                 )
             except RuntimeError as e:
@@ -797,7 +798,7 @@ class UpdateService:
             return "crashed"
 
         # 轮询放后台线程，主事件循环不阻塞。
-        return await asyncio.to_thread(
+        return await tracked_to_thread(
             self._poll_ready, proc, ready_path, label, self._HANDSHAKE_TIMEOUT
         )
 

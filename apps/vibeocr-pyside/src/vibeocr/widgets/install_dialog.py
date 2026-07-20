@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
 
 from vibeocr import env_manager
 from vibeocr.network_detector import NetworkDetector
+from vibeocr.utils.dialog_workers import track_dialog_worker
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +26,7 @@ class InstallWorker(QThread):
     """安装工作线程"""
 
     progress = Signal(str, str)  # (stage, message)
-    finished = Signal(bool, str)  # (success, message)
+    completed = Signal(bool, str)  # (success, message)
 
     def __init__(
         self,
@@ -119,7 +120,7 @@ class InstallWorker(QThread):
                     cancel_event=self._cancel_event,
                     on_proc=self._on_proc,
                 )
-                self.finished.emit(success, msg)
+                self.completed.emit(success, msg)
                 return
 
             # 批量重装模式：跳过网络/GPU/Python 检测，直接批量装指定包。
@@ -140,7 +141,7 @@ class InstallWorker(QThread):
                     cancel_event=self._cancel_event,
                     on_proc=self._on_proc,
                 )
-                self.finished.emit(success, msg)
+                self.completed.emit(success, msg)
                 return
 
             # 1. 检测网络环境
@@ -172,7 +173,7 @@ class InstallWorker(QThread):
                     progress_callback=self._emit_progress,
                 )
                 if not success:
-                    self.finished.emit(False, f"重装 Python 运行时失败:\n{msg}")
+                    self.completed.emit(False, f"重装 Python 运行时失败:\n{msg}")
                     return
             else:
                 # 常规模式：检查嵌入式Python是否存在，不存在才装
@@ -185,7 +186,7 @@ class InstallWorker(QThread):
                         self._project_root, network_type
                     )
                     if not success:
-                        self.finished.emit(False, f"安装嵌入式Python失败:\n{msg}")
+                        self.completed.emit(False, f"安装嵌入式Python失败:\n{msg}")
                         return
 
             # 4. 安装OCR依赖（增量或全量）
@@ -207,14 +208,14 @@ class InstallWorker(QThread):
                 on_proc=self._on_proc,
             )
             if not success:
-                self.finished.emit(success, msg)
+                self.completed.emit(success, msg)
                 return
 
-            self.finished.emit(True, msg)
+            self.completed.emit(True, msg)
 
         except Exception as e:
             logger.error("安装异常: %s", e)
-            self.finished.emit(False, f"安装异常: {e}")
+            self.completed.emit(False, f"安装异常: {e}")
 
 
 class InstallDialog(QDialog):
@@ -309,8 +310,9 @@ class InstallDialog(QDialog):
             single_pkg=self._single_pkg,
             packages=self._packages,
         )
+        track_dialog_worker(self._worker)
         self._worker.progress.connect(self._on_progress)
-        self._worker.finished.connect(self._on_finished)
+        self._worker.completed.connect(self._on_finished)
         self._worker.start()
         # 安装开始后显示取消按钮
         self._cancel_button.setVisible(True)
@@ -376,16 +378,12 @@ class InstallDialog(QDialog):
         scrollbar.setValue(scrollbar.maximum())
 
     def closeEvent(self, event) -> None:
-        """关闭事件：协作式取消安装，绝不强杀线程。
-
-        旧实现用 QThread.terminate() 会制造孤儿 pip 子进程并使 Python 层
-        timeout 失效（详见 vibeocr.log 分析）。改为：set cancel_event + kill
-        当前子进程 + 等待 worker 自然结束（最多 5s），保证子进程被回收。
-        """
+        """Request cancellation and return immediately; registry owns the worker."""
         if self._worker and self._worker.isRunning():
             self._worker.request_cancel()
-            # 等待 worker 自然结束（cancel 后通常数秒内退出）；
-            # 超时则强制接受关闭（worker 作为 daemon 线程不会阻止进程退出，
-            # 且 aboutToQuit 会兜底清理）。
-            self._worker.wait(5000)
         event.accept()
+
+    def request_shutdown(self) -> None:
+        if self._worker and self._worker.isRunning():
+            self._worker.request_cancel()
+        self.close()

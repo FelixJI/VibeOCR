@@ -78,7 +78,9 @@ class DependencyManager(QObject):
         self._thread_pool = QThreadPool()
         self._is_checking = False
         self._pending_check = False
+        self._closing = False
         self._generation = 0
+        self._tasks: set[DependencyCheckTask] = set()
         self._is_ready = False
         self._missing_dependencies: list = []
 
@@ -87,6 +89,8 @@ class DependencyManager(QObject):
 
         在后台线程中执行依赖检查，通过信号返回结果。
         """
+        if self._closing:
+            return
         if self._is_checking:
             logger.debug("依赖检查已在进行中，完成后将重新检查")
             self._pending_check = True
@@ -98,15 +102,24 @@ class DependencyManager(QObject):
         self.check_started.emit()
 
         task = DependencyCheckTask(self._project_root)
+        self._tasks.add(task)
         task.signals.finished.connect(
-            lambda ready, missing: self._on_task_finished(
-                generation, ready, missing
+            lambda ready, missing, current=task: self._on_task_finished(
+                current, generation, ready, missing
             )
         )
         self._thread_pool.start(task)
 
-    def _on_task_finished(self, generation: int, ready: bool, missing: list) -> None:
-        if generation != self._generation:
+    def _on_task_finished(
+        self,
+        task: DependencyCheckTask,
+        generation: int,
+        ready: bool,
+        missing: list,
+    ) -> None:
+        self._tasks.discard(task)
+        if self._closing or generation != self._generation:
+            self._is_checking = False
             logger.debug("忽略已重置依赖检查的迟到结果")
             return
         self._on_check_finished(ready, missing)
@@ -140,3 +153,13 @@ class DependencyManager(QObject):
         self._pending_check = False
         self._is_ready = False
         self._missing_dependencies = []
+
+    def request_shutdown(self) -> None:
+        """Freeze new checks; the running QRunnable is allowed to return naturally."""
+        self._closing = True
+        self._generation += 1
+        self._pending_check = False
+
+    def is_drained(self) -> bool:
+        """Non-blocking native thread-pool probe for GUI shutdown polling."""
+        return self._thread_pool.activeThreadCount() == 0 and not self._tasks

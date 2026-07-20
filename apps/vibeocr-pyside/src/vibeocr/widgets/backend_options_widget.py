@@ -23,10 +23,11 @@ from PySide6.QtWidgets import (
 )
 
 from vibeocr import env_manager
-from vibeocr.machine_cache import is_cache_valid, update_cache_field
+from vibeocr.machine_cache import CACHE_VERSION, load_cache, update_cache_field
 from vibeocr.ui import theme
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
     from PySide6.QtGui import QCloseEvent
@@ -45,36 +46,72 @@ class _GpuDetectWorker(QThread):
 
     finished_info = Signal(dict)  # detect_gpu_info() 的返回值
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(self, project_root: Path, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        self._project_root = project_root
         self._cancelled = threading.Event()
 
     def cancel(self) -> None:
         self._cancelled.set()
 
     def run(self) -> None:
+        if self._cancelled.is_set():
+            return
         try:
             info = env_manager.detect_gpu_info(cancel_event=self._cancelled)
         except Exception:
             # detect_gpu_info 自身有兜底，理论上不抛；防御性捕获避免线程静默挂起。
             logger.exception("[BackendOptions] 后台 GPU 探测异常")
             info = {"has_gpu": False, "name": "", "vram_mb": 0, "cuda": None}
+        if self._cancelled.is_set():
+            return
+        try:
+            runtime_has_gpu = env_manager.get_runtime_gpu_capability(
+                self._project_root,
+                detected_has_gpu=bool(info.get("has_gpu")),
+            )
+        except Exception:
+            logger.exception("[BackendOptions] 后台运行时 GPU 能力解析异常")
+            runtime_has_gpu = bool(info.get("has_gpu"))
+        if self._cancelled.is_set():
+            return
+        info["runtime_has_gpu"] = runtime_has_gpu
         self.finished_info.emit(dict(info))
+
+
+_ACTIVE_GPU_DETECT_WORKERS: set[_GpuDetectWorker] = set()
+
+
+def _release_gpu_detect_worker(worker: _GpuDetectWorker) -> None:
+    """释放模块级保活引用；可由自然完成或非 GUI drain 重复调用。"""
+    _ACTIVE_GPU_DETECT_WORKERS.discard(worker)
+    worker.deleteLater()
 
 
 class BackendOptionsWidget(QWidget):
     """推理后端设置组件"""
 
     backend_changed = Signal()  # pending_backend 写入后发射
+    gpu_capability_resolved = Signal(bool)
 
-    def __init__(self, project_root: Path, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        project_root: Path,
+        parent: QWidget | None = None,
+        *,
+        gpu_capability_callback: Callable[[bool], None] | None = None,
+    ) -> None:
         super().__init__(parent)
         self._project_root = project_root
         self._has_gpu = False
         self._current = "cpu"
         self._pending: str | None = None
         self._detect_worker: _GpuDetectWorker | None = None
+        self._detect_generation = 0
+        self._closing = False
         self._setup_ui()
+        if gpu_capability_callback is not None:
+            self.gpu_capability_resolved.connect(gpu_capability_callback)
         # 缓存读取（纯文件 IO，无 subprocess）可在构造期同步完成；
         # detect_gpu_info 的 nvidia-smi 探测改为后台线程，避免阻塞启动。
         self._load_cached_state()
@@ -144,7 +181,11 @@ class BackendOptionsWidget(QWidget):
         ``_has_gpu``（能否选 GPU）要等实时探测 ``_apply_detected_state`` 回填。
         在探测完成前，radio/apply 均禁用，仅展示"检测中..."。
         """
-        is_valid, cached = is_cache_valid(self._project_root)
+        # This display-only snapshot must never validate machine identity here:
+        # validation can launch WMIC.  The background detector resolves the
+        # authoritative runtime capability before controls become interactive.
+        cached = load_cache(self._project_root)
+        is_valid = bool(cached and cached.get("version") == CACHE_VERSION)
         hw = (cached or {}).get("hardware_info", {}) if is_valid else {}
         self._current = "gpu" if hw.get("has_gpu") else "cpu"
         self._pending = (cached or {}).get("pending_backend") if is_valid else None
@@ -154,23 +195,51 @@ class BackendOptionsWidget(QWidget):
 
     def _start_gpu_detection(self) -> None:
         """启动后台线程探测 GPU，完成后回填 UI。"""
-        self._detect_worker = _GpuDetectWorker(self)
-        self._detect_worker.finished_info.connect(self._apply_detected_state)
-        self._detect_worker.finished.connect(self._on_gpu_detection_finished)
-        self._detect_worker.start()
+        self._detect_generation += 1
+        generation = self._detect_generation
+        worker = _GpuDetectWorker(self._project_root)
+        self._detect_worker = worker
+        _ACTIVE_GPU_DETECT_WORKERS.add(worker)
+        worker.finished_info.connect(
+            lambda info, worker=worker, generation=generation: (
+                self._apply_detected_state_if_current(worker, generation, info)
+            )
+        )
+        worker.finished.connect(
+            lambda worker=worker, generation=generation: (
+                self._on_gpu_detection_finished(worker, generation)
+            )
+        )
+        worker.finished.connect(
+            lambda worker=worker: _release_gpu_detect_worker(worker)
+        )
+        worker.start()
 
-    def _on_gpu_detection_finished(self) -> None:
-        self._detect_worker = None
+    def _apply_detected_state_if_current(
+        self, worker: _GpuDetectWorker, generation: int, info: dict[str, Any]
+    ) -> None:
+        if (
+            self._closing
+            or generation != self._detect_generation
+            or worker is not self._detect_worker
+        ):
+            return
+        self._apply_detected_state(info)
+
+    def _on_gpu_detection_finished(
+        self, worker: _GpuDetectWorker, generation: int
+    ) -> None:
+        del generation
+        if worker is self._detect_worker:
+            self._detect_worker = None
 
     def request_gpu_detection_shutdown(self) -> None:
         """Request hardware-probe cancellation without blocking the GUI thread."""
+        self._closing = True
+        self._detect_generation += 1
         worker = self._detect_worker
         if worker is None:
             return
-        try:
-            worker.finished_info.disconnect(self._apply_detected_state)
-        except (RuntimeError, TypeError):
-            pass
         if worker.isRunning():
             if hasattr(worker, "cancel"):
                 worker.cancel()
@@ -186,7 +255,14 @@ class BackendOptionsWidget(QWidget):
             logger.warning("[BackendOptions] GPU detection worker did not stop")
             return False
         self._detect_worker = None
+        _release_gpu_detect_worker(worker)
         return True
+
+    def is_gpu_detection_drained(self) -> bool:
+        """Non-blocking GUI-thread probe used by application shutdown."""
+        # Requiring the GUI finished callback to clear the reference also proves
+        # that no queued lambda still captures this QWidget owner.
+        return self._detect_worker is None
 
     def shutdown_gpu_detection(self, timeout_ms: int = 3000) -> bool:
         """Compatibility entry point for standalone widget shutdown."""
@@ -194,7 +270,7 @@ class BackendOptionsWidget(QWidget):
         return self.drain_gpu_detection(timeout_ms)
 
     def closeEvent(self, event: QCloseEvent) -> None:
-        self.shutdown_gpu_detection()
+        self.request_gpu_detection_shutdown()
         super().closeEvent(event)
 
     def _apply_detected_state(self, info: dict[str, Any]) -> None:
@@ -213,9 +289,11 @@ class BackendOptionsWidget(QWidget):
         """
         self._has_gpu = bool(info.get("has_gpu"))
         # 实际运行后端：与 main_window 启动 worker 用同一判断，保证展示与推理一致。
-        self._current = (
-            "gpu" if env_manager.resolve_use_gpu(self._project_root) else "cpu"
-        )
+        # 运行时后端已在 _GpuDetectWorker 中解析；这里绝不再
+        # 调 resolve_use_gpu，否则缓存缺失时会在 GUI 线程再跑
+        # nvidia-smi，拖动浮动工具栏时表现为卡死。
+        runtime_has_gpu = bool(info.get("runtime_has_gpu", self._current == "gpu"))
+        self._current = "gpu" if runtime_has_gpu else "cpu"
 
         if not self._has_gpu:
             self._gpu_radio.setEnabled(False)
@@ -245,6 +323,7 @@ class BackendOptionsWidget(QWidget):
             self._cpu_radio.setChecked(True)
 
         self._update_apply_state()
+        self.gpu_capability_resolved.emit(runtime_has_gpu)
 
     def current_backend(self) -> str:
         return self._current

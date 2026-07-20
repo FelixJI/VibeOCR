@@ -4,10 +4,16 @@ from __future__ import annotations
 
 import logging
 import os
+import time
+from importlib import import_module
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from PySide6.QtCore import (
     QPoint,
+    Qt,
+    QThread,
+    QThreadPool,
     QTimer,
     Signal,
     Slot,
@@ -16,11 +22,13 @@ from PySide6.QtGui import QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import (
     QCheckBox,
     QFileDialog,
+    QLabel,
     QMainWindow,
     QMessageBox,
     QSizePolicy,
     QSpinBox,
     QStatusBar,
+    QVBoxLayout,
     QWidget,
 )
 
@@ -34,6 +42,9 @@ from vibeocr.pyside.runtime import (
     setup_logging,
 )
 from vibeocr.ui.ui_main_window import Ui_MainWindowWidget
+from vibeocr.utils.image_jobs import GenerationImageJobs, decode_image_file
+from vibeocr.utils.shutdown_jobs import ExternalShutdownJob
+from vibeocr.views.background_tasks import DependencyUpdateCheckTask, FunctionTask
 from vibeocr.views.clipboard_controller import ClipboardController
 from vibeocr.views.settings_page_controller import SettingsPageController
 from vibeocr.views.tabs.single_recognition_tab import SingleRecognitionTab
@@ -52,6 +63,8 @@ class MainWindow(QMainWindow):
 
     # 状态更新信号（用于线程安全的状态栏更新）
     _status_update_signal = Signal(str)
+    _SHUTDOWN_POLL_INTERVAL_MS = 25
+    _SHUTDOWN_UX_BUDGET_MS = 5000
 
     def __init__(self) -> None:
         super().__init__()
@@ -66,6 +79,28 @@ class MainWindow(QMainWindow):
         self._tray_icon = None  # 系统托盘图标
         self._ocr_status_callback_fn: Any = None  # OCR 状态回调
         self._app_settings = None  # 应用设置
+        self._runtime_gpu_capability: bool | None = None
+        self._worker_start_pending = False
+        self._machine_cache_data: dict | None = None
+        self._machine_cache_tasks: set[FunctionTask] = set()
+        self._machine_cache_generation = 0
+        self._machine_cache_running = False
+        self._machine_cache_pending_startup = False
+        self._dependency_update_install_pending = False
+        self._startup_update_check_complete = False
+        self._image_load_jobs = GenerationImageJobs(self)
+        self._image_load_jobs.completed.connect(self._on_image_file_loaded)
+        self._image_load_jobs.failed.connect(self._on_image_file_load_failed)
+
+        self._dependency_update_task = DependencyUpdateCheckTask(
+            self._project_root, self
+        )
+        self._dependency_update_task.completed.connect(
+            self._on_dependency_update_check_completed
+        )
+        self._dependency_update_task.failed.connect(
+            self._on_dependency_update_check_failed
+        )
 
         # 懒加载 Tab：批量/二维码/PDF 在启动期仅插占位空页，首次切换时才真正构造，
         # 把 MainWindow 构造耗时从 ~1.5s 砍到 <0.5s（首屏仅需单次识别 Tab）。
@@ -75,6 +110,21 @@ class MainWindow(QMainWindow):
         self._pdf_tab: Any = None
         # 占位页 -> 构造方法 的映射，供 currentChanged 触发懒构造
         self._lazy_tab_builders: dict[int, tuple[str, Any]] = {}
+        self._lazy_tab_generation = 0
+        self._lazy_tab_inflight: tuple[int, int, FunctionTask] | None = None
+        self._lazy_tab_tasks: set[FunctionTask] = set()
+        self._lazy_tab_pending_index: int | None = None
+        self._lazy_tab_build_scheduled: tuple[int, int] | None = None
+        self._shutdown_phase = "idle"
+        self._shutdown_stage = "idle"
+        self._shutdown_external_job: Any = None
+        self._shutdown_started_at = 0.0
+        self._shutdown_timed_out = False
+        self._shutdown_gui_probes: tuple[tuple[str, Any], ...] = ()
+        self._startup_update_task: Any = None
+        self._shutdown_poll_timer = QTimer(self)
+        self._shutdown_poll_timer.setInterval(self._SHUTDOWN_POLL_INTERVAL_MS)
+        self._shutdown_poll_timer.timeout.connect(self._poll_shutdown_state)
         # OCR 服务句柄缓存（_on_subprocess_worker_ready 时写入），供懒构造的 Tab
         # 构造后补发服务注入
         self._paddlex_service: Any = None
@@ -124,27 +174,16 @@ class MainWindow(QMainWindow):
         self._try_load_cache()
         # 异步检查嵌入式依赖（在UI显示后）
         QTimer.singleShot(100, self._check_embedded_dependencies)
-        # 异步计算运行时 GPU 能力并广播到所有 PreprocessOptionsWidget（CPU 后端下
-        # 禁用文档解析/VL 管道）。延迟到 UI 显示后，避免 nvidia-smi 阻塞启动。
-        QTimer.singleShot(200, self._apply_gpu_gating_to_all)
+        # GPU 探测由设置页 worker 在后台完成，结果通过
+        # gpu_capability_callback 回传并广播给所有选项组件。
         # 后台校验 OCR_CHECK_MODULES 与 pyproject.toml 一致性（仅开发期告警，
         # 防止新增 OCR 依赖时漏更新清单/漏 bump CACHE_VERSION）。延迟 2s 避免抢启动资源。
         QTimer.singleShot(2000, self._check_dep_check_consistency)
 
-    def _apply_gpu_gating_to_all(self) -> None:
-        """计算运行时 GPU 能力并对所有已创建的 PreprocessOptionsWidget 应用门控。
-
-        get_runtime_gpu_capability 首次调用可能触发 nvidia-smi（~5s，无缓存时），
-        故用 singleShot 延迟到 UI 显示后执行，避免阻塞启动。结果写入进程级缓存，
-        此后懒加载构造的 PreprocessOptionsWidget（如截图 inline 面板）会自动从
-        缓存读取并应用（见其 __init__）。
-        """
+    @Slot(bool)
+    def _apply_gpu_gating_to_all(self, has_gpu: bool) -> None:
+        """在 GUI 线程将已探测的运行时 GPU 能力广播到选项组件。"""
         if self._closing:
-            return
-        try:
-            has_gpu = env_manager.get_runtime_gpu_capability(self._project_root)
-        except Exception:
-            logging.exception("[GPU 门控] 获取运行时 GPU 能力失败，跳过")
             return
 
         from vibeocr.widgets.preprocess_options_widget import (
@@ -158,6 +197,27 @@ class MainWindow(QMainWindow):
             widget.apply_gpu_gating(has_gpu)
         for widget in self.findChildren(ScreenshotOptionsWidget):
             widget.apply_gpu_gating(has_gpu)
+        batch_tab = getattr(self, "_batch_tab", None)
+        if batch_tab is not None:
+            refresh = getattr(batch_tab, "refresh_gpu_capability", None)
+            if callable(refresh):
+                refresh()
+
+    @Slot(bool)
+    def _on_gpu_capability_resolved(self, has_gpu: bool) -> None:
+        """消费设置页既有后台 GPU 探测结果，不在 GUI 线程二次 shell out。"""
+        if self._closing:
+            return
+        self._runtime_gpu_capability = bool(has_gpu)
+        self._apply_gpu_gating_to_all(bool(has_gpu))
+
+        if self._dependency_update_install_pending:
+            self._dependency_update_install_pending = False
+            self._open_dependency_update_dialog()
+
+        if self._worker_start_pending:
+            self._worker_start_pending = False
+            self._start_subprocess_worker()
 
     def _check_dep_check_consistency(self) -> None:
         """后台校验 OCR_CHECK_MODULES 与 pyproject.toml 一致性。
@@ -328,6 +388,7 @@ class MainWindow(QMainWindow):
     def _init_preset_combo(self) -> None:
         """初始化截图组件"""
         self._overlay = ScreenCaptureOverlay()
+        self._retired_overlays: set[ScreenCaptureOverlay] = set()
         # 记录截图开始前主窗口的最小化状态，用于截图结束后恢复窗口状态。
         self._main_window_minimized_before_capture = False
 
@@ -351,6 +412,11 @@ class MainWindow(QMainWindow):
             at_end: 是否插到末尾（设置页之后）。
         """
         placeholder = QWidget()
+        placeholder.setObjectName(f"lazySkeleton_{role}")
+        skeleton_layout = QVBoxLayout(placeholder)
+        skeleton_label = QLabel("正在准备页面…", placeholder)
+        skeleton_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        skeleton_layout.addWidget(skeleton_label)
         tw = self._ui.tabWidget
         if at_end:
             insert_at = tw.count()
@@ -389,22 +455,116 @@ class MainWindow(QMainWindow):
         return PdfTab()
 
     def _on_lazy_tab_changed(self, index: int) -> None:
-        """tabWidget.currentChanged 回调：若目标页是未构造的占位页，则懒构造并替换。
+        """显示 skeleton，并 single-flight 启动纯数据/模块定位预热。"""
+        if self._closing:
+            return
+        inflight = self._lazy_tab_inflight
+        if inflight is not None and inflight[0] == index:
+            self._lazy_tab_pending_index = index
+            return
 
-        构造完成后恢复该页的分割器布局（与 _restore_layout 中即时恢复一致）。
-        构造失败时保留占位页并记录错误，不阻塞应用。
-        """
-        entry = self._lazy_tab_builders.pop(index, None)
+        self._lazy_tab_generation += 1
+        self._lazy_tab_pending_index = (
+            index if index in self._lazy_tab_builders else None
+        )
+        if inflight is not None:
+            return
+        self._start_lazy_tab_prewarm(index)
+
+    @staticmethod
+    def _prewarm_lazy_tab(role: str) -> object:
+        """Import the tab module off-GUI; QWidget construction remains on GUI."""
+        module_names = {
+            "batch": "vibeocr.views.batch_recognition_tab",
+            "qrcode": "vibeocr.views.tabs.qrcode_tab",
+            "pdf": "vibeocr.views.tabs.pdf_tab",
+            "about": "vibeocr.views.tabs.about_tab",
+        }
+        module_name = module_names.get(role)
+        if module_name is None:
+            return None
+        # Importing defines classes and warms pure dependencies (httpx/pydantic,
+        # update metadata); no QWidget is instantiated or transferred here.
+        return import_module(module_name).__name__
+
+    def _start_lazy_tab_prewarm(self, index: int) -> None:
+        if self._closing or self._lazy_tab_inflight is not None:
+            return
+        entry = self._lazy_tab_builders.get(index)
+        if entry is None or self._ui.tabWidget.currentIndex() != index:
+            return
+        role, _builder = entry
+        generation = self._lazy_tab_generation
+        task = FunctionTask(lambda role=role: self._prewarm_lazy_tab(role))
+        self._lazy_tab_tasks.add(task)
+        self._lazy_tab_inflight = (index, generation, task)
+        task.signals.finished.connect(
+            lambda result, idx=index, gen=generation, current=task: self._on_lazy_prewarm_done(
+                idx, gen, current, result
+            )
+        )
+        task.signals.error.connect(
+            lambda error, idx=index, gen=generation, current=task: self._on_lazy_prewarm_failed(
+                idx, gen, current, error
+            )
+        )
+        QThreadPool.globalInstance().start(task)
+
+    def _on_lazy_prewarm_done(
+        self, index: int, generation: int, task: FunctionTask, _result: object
+    ) -> None:
+        self._lazy_tab_tasks.discard(task)
+        if self._lazy_tab_inflight is not None and self._lazy_tab_inflight[2] is task:
+            self._lazy_tab_inflight = None
+        if (
+            self._closing
+            or generation != self._lazy_tab_generation
+            or self._ui.tabWidget.currentIndex() != index
+            or index not in self._lazy_tab_builders
+        ):
+            self._resume_pending_lazy_tab()
+            return
+        self._lazy_tab_build_scheduled = (index, generation)
+        # 这是 GUI 事件循环切片，不是后台构造：先让 skeleton 获得一次绘制机会，
+        # 下一轮才在 GUI 线程创建 QWidget。
+        QTimer.singleShot(0, lambda: self._build_lazy_tab_on_gui(index, generation))
+
+    def _on_lazy_prewarm_failed(
+        self, index: int, generation: int, task: FunctionTask, error: str
+    ) -> None:
+        logging.warning("[懒加载] %s 预热失败: %s", index, error)
+        self._on_lazy_prewarm_done(index, generation, task, None)
+
+    def _resume_pending_lazy_tab(self) -> None:
+        index = self._lazy_tab_pending_index
+        if (
+            not self._closing
+            and index is not None
+            and self._ui.tabWidget.currentIndex() == index
+        ):
+            self._start_lazy_tab_prewarm(index)
+
+    def _build_lazy_tab_on_gui(self, index: int, generation: int) -> None:
+        if self._lazy_tab_build_scheduled == (index, generation):
+            self._lazy_tab_build_scheduled = None
+        if (
+            self._closing
+            or generation != self._lazy_tab_generation
+            or self._ui.tabWidget.currentIndex() != index
+        ):
+            return
+        entry = self._lazy_tab_builders.get(index)
         if entry is None:
-            return  # 已构造或非懒加载页
+            return
         role, builder = entry
+        assert QThread.currentThread() is self.thread(), "QWidget 必须在 GUI 线程构造"
         try:
             widget = builder()
         except Exception:
             logging.exception(f"[懒加载] 构造 {role} 标签页失败")
-            # 失败时放回映射，允许用户再次切换重试
-            self._lazy_tab_builders[index] = (role, builder)
             return
+
+        self._lazy_tab_builders.pop(index, None)
 
         # 回填属性，使下游 hasattr/getattr 防御逻辑生效
         attr_map = {
@@ -437,6 +597,8 @@ class MainWindow(QMainWindow):
         # 若 OCR 服务已就绪，需把服务句柄下发给懒构造的 tab（原本在
         # _on_subprocess_worker_ready 时同步下发，懒构造的 tab 错过了那次下发）
         self._maybe_dispatch_ocr_service_to_lazy_tab(role, widget)
+        if self._runtime_gpu_capability is not None:
+            self._apply_gpu_gating_to_all(self._runtime_gpu_capability)
 
     def _restore_lazy_tab_layout(self, role: str, widget: Any) -> None:
         """懒构造的 tab 在替换占位页后恢复其分割器布局。
@@ -520,14 +682,10 @@ class MainWindow(QMainWindow):
         # 截图组件
         overlay = self._overlay
         if overlay is not None:
-            overlay.confirmed.connect(self._on_overlay_confirmed)
-            overlay.copied.connect(self._on_overlay_copied)
-            overlay.saved.connect(self._on_overlay_saved)
-            overlay.cancelled.connect(self._on_overlay_cancelled)
+            self._connect_overlay_signals(overlay)
 
         # 单次识别 Tab 的截图/文件请求由 MainWindow 处理
         self._single_tab.screenshot_requested.connect(self._on_screenshot)
-        self._single_tab.file_open_requested.connect(self._on_open_file_from_preview)
         # 截图来源识别完成时，重新把主窗口提到前台（见 _bring_main_window_to_front）
         self._single_tab.bring_to_front_requested.connect(
             self._bring_main_window_to_front
@@ -558,6 +716,10 @@ class MainWindow(QMainWindow):
             # 检测完成回调（_on_dependency_check_finished）自动设 _ocr_ready、
             # 启动子进程 Worker、消费 pending_backend，与首启路径行为一致。
             install_succeeded_callback=self._on_settings_install_succeeded,
+            gpu_capability_callback=self._on_gpu_capability_resolved,
+            dependency_update_task=self._dependency_update_task,
+            defer_backend_initialization=True,
+            defer_machine_cache_status=True,
         )
         self._settings_controller.connect_signals()
 
@@ -584,27 +746,80 @@ class MainWindow(QMainWindow):
         self._dependency_manager.check_dependencies()
 
     def _try_load_cache(self) -> None:
-        """尝试从缓存加载依赖检测结果"""
-        is_valid, cached_data = is_cache_valid(self._project_root)
-        if is_valid and cached_data:
-            dependencies = cached_data.get("dependencies", {})
-            # 检查关键依赖
-            paddlepaddle_ok = dependencies.get("paddlepaddle", False)
-            paddlex_ok = dependencies.get("paddleocr", False)
-            mineru_ok = dependencies.get("mineru", False)
-            if paddlepaddle_ok and paddlex_ok and mineru_ok:
-                self._ocr_ready = True
-                self._dependency_check_complete = True
-                self._statusbar.showMessage("OCR功能已就绪（缓存）")
-                logging.info("OCR功能已就绪（缓存）")
+        """在线程池校验机器缓存；WMIC 永不进入 MainWindow 构造线程。"""
+        self._request_machine_cache_load(after_dependency=False)
+
+    def _request_machine_cache_load(self, *, after_dependency: bool) -> None:
+        """读取一份经过机器码校验的缓存快照。
+
+        依赖检查可能重建缓存；若初始校验尚未完成，记录一次 pending 并在其
+        完成后重跑，保证后端切换消费的是依赖检查之后的快照。
+        """
+        if self._closing:
+            return
+        if self._machine_cache_running:
+            self._machine_cache_pending_startup |= after_dependency
+            return
+
+        self._machine_cache_running = True
+        self._machine_cache_generation += 1
+        generation = self._machine_cache_generation
+        task = FunctionTask(lambda: is_cache_valid(self._project_root))
+        self._machine_cache_tasks.add(task)
+
+        def finished(result: object) -> None:
+            self._machine_cache_tasks.discard(task)
+            self._machine_cache_running = False
+            if self._closing or generation != self._machine_cache_generation:
+                return
+            valid, data = result if isinstance(result, tuple) else (False, None)
+            self._machine_cache_data = data if valid and isinstance(data, dict) else None
+            controller = getattr(self, "_settings_controller", None)
+            if controller is not None:
+                controller.initialize_deferred_backend_options()
+                controller.apply_deferred_machine_cache_status(bool(valid))
+
+            if not after_dependency and not self._dependency_check_complete:
+                self._apply_provisional_machine_cache()
+
+            if self._machine_cache_pending_startup:
+                self._machine_cache_pending_startup = False
+                self._request_machine_cache_load(after_dependency=True)
+            elif after_dependency:
+                self._continue_ready_startup()
+
+        def failed(error: str) -> None:
+            logging.warning("[缓存] 后台机器缓存校验失败: %s", error)
+            finished((False, None))
+
+        task.signals.finished.connect(finished)
+        task.signals.error.connect(failed)
+        QThreadPool.globalInstance().start(task)
+
+    def _apply_provisional_machine_cache(self) -> None:
+        cached_data = self._machine_cache_data
+        if not cached_data:
+            return
+        dependencies = cached_data.get("dependencies", {})
+        if all(
+            dependencies.get(name, False)
+            for name in ("paddlepaddle", "paddleocr", "mineru")
+        ):
+            self._ocr_ready = True
+            self._statusbar.showMessage("OCR功能已就绪（缓存）")
+            logging.info("OCR功能已就绪（缓存，等待后台复核）")
 
     def _check_embedded_dependencies(self) -> None:
         """异步检查嵌入式OCR依赖"""
+        if self._closing:
+            return
         self._dependency_manager.check_dependencies()
 
     @Slot(bool, list)
     def _on_dependency_check_finished(self, ready: bool, missing: list) -> None:
         """依赖检查完成"""
+        if self._closing:
+            return
         # 优先消费"待同步"标记：更新流程中 updater 写入 pending_sync.json，
         # 标记新版依赖需升级。存在时先升级 python/（复用 InstallDialog + 正确的
         # GPU/CUDA/镜像逻辑），完成后再走常规依赖检查。避免用裸 pip 装 CPU 版。
@@ -620,19 +835,9 @@ class MainWindow(QMainWindow):
                 self._statusbar.showMessage("OCR功能已就绪")
             logging.info("OCR功能已就绪")
 
-            # 覆盖安装检测：version.json 的 dep_versions 可能比已装版本新（用户直接
-            # 覆盖文件升级、无 pending_sync.json）。便携环境就绪时检测并提示更新。
-            # 与 pending_sync 互斥（pending_sync 已 return 接管），开发态不触发。
-            self._maybe_prompt_dependency_updates()
-
-            # 检测是否有待生效的后端切换（重启消费 pending_backend）
-            needs_switch, target = self._check_pending_backend()
-            if needs_switch and target:
-                self._show_switch_dialog(target)
-                return  # 切换完成后再启动 worker
-
-            # 启动子进程 Worker（依赖检测完成后立即启动）
-            self._start_subprocess_worker()
+            # 依赖检测可能刚重建缓存。后台重新校验并回填后，再消费
+            # pending_backend；避免初始缓存读取与依赖检查写缓存竞态。
+            self._request_machine_cache_load(after_dependency=True)
         else:
             self._ocr_ready = False
             missing_str = ", ".join(missing)
@@ -645,6 +850,20 @@ class MainWindow(QMainWindow):
             # 用 singleShot 延迟，避免在依赖检查回调线程上下文直接弹模态对话框。
             if any("Python 运行时" in m for m in missing):
                 QTimer.singleShot(300, self._start_install)
+
+    def _continue_ready_startup(self) -> None:
+        """缓存复核完成后的启动编排（仅在 GUI 线程应用结果）。"""
+        if self._closing or not self._ocr_ready:
+            return
+
+        if not self._startup_update_check_complete:
+            self._maybe_prompt_dependency_updates()
+            return
+        needs_switch, target = self._check_pending_backend(self._machine_cache_data)
+        if needs_switch and target:
+            self._show_switch_dialog(target)
+            return
+        self._start_subprocess_worker()
 
     def _check_pending_sync(self) -> bool:
         """检测并消费"依赖版本待同步"标记（updater 写入的 pending_sync.json）
@@ -820,7 +1039,7 @@ class MainWindow(QMainWindow):
             logging.warning(f"[依赖同步] 删除 pending_sync.json 失败: {e}")
 
     def _maybe_prompt_dependency_updates(self) -> None:
-        """启动时检测 OCR 依赖是否有版本更新，有则弹窗提示用户升级。
+        """请求共享后台任务检测 OCR 依赖更新。
 
         覆盖安装场景（用户直接覆盖文件升级 app，无 pending_sync.json）下，
         version.json 的 dep_versions 可能比便携 Python 里已装的版本新。
@@ -831,19 +1050,28 @@ class MainWindow(QMainWindow):
         开发态由 uv 管理环境）。
         每个进程生命周期内只提示一次（_deps_update_prompted 标志）。
         """
-        # 防止依赖检查多次回调导致重复弹窗
-        if getattr(self, "_deps_update_prompted", False):
+        if self._closing or getattr(self, "_deps_update_requested", False):
             return
-        try:
-            import vibeocr.env_manager as em
+        self._deps_update_requested = True
+        started = self._dependency_update_task.request("startup")
+        if not started and self._dependency_update_task.is_running:
+            # 设置页已占用共享 single-flight：该入口负责展示结果。启动流程
+            # 不再等待一个 source="startup" 的完成信号，否则会永久停住；
+            # 同时不重复提示，直接用当前已验证环境继续启动。
+            self._startup_update_check_complete = True
+            self._continue_ready_startup()
 
-            updates = em.detect_dependency_updates(self._project_root)
-        except Exception as e:
-            logging.warning(f"[依赖更新] 启动检测失败: {e}")
+    @Slot(str, object)
+    def _on_dependency_update_check_completed(
+        self, source: str, result: object
+    ) -> None:
+        if source != "startup" or self._closing:
             return
+        updates = dict(result) if isinstance(result, dict) else {}
         if not updates:
+            self._startup_update_check_complete = True
+            self._continue_ready_startup()
             return
-
         self._deps_update_prompted = True
         lines = []
         for pkg, (installed, required) in updates.items():
@@ -861,10 +1089,28 @@ class MainWindow(QMainWindow):
             QMessageBox.StandardButton.Yes,
         )
         if reply != QMessageBox.StandardButton.Yes:
+            self._startup_update_check_complete = True
+            self._continue_ready_startup()
             return
 
-        # 走全量安装升级，后端用当前值；复用 InstallDialog 进度 UI
-        current_backend = "gpu" if em.resolve_use_gpu(self._project_root) else "cpu"
+        if self._runtime_gpu_capability is None:
+            self._dependency_update_install_pending = True
+            self._statusbar.showMessage("等待后台 GPU 探测完成后更新 OCR 依赖...")
+            return
+        self._open_dependency_update_dialog()
+
+    @Slot(str, str)
+    def _on_dependency_update_check_failed(self, source: str, error: str) -> None:
+        if source == "startup" and not self._closing:
+            logging.warning("[依赖更新] 启动检测失败: %s", error)
+            self._startup_update_check_complete = True
+            self._continue_ready_startup()
+
+    def _open_dependency_update_dialog(self) -> None:
+        """使用后台已解析的运行时后端打开更新对话框。"""
+        if self._closing or self._runtime_gpu_capability is None:
+            return
+        current_backend = "gpu" if self._runtime_gpu_capability else "cpu"
         from vibeocr.widgets.install_dialog import InstallDialog
 
         dialog = InstallDialog(
@@ -886,17 +1132,26 @@ class MainWindow(QMainWindow):
             import vibeocr.env_manager as em
 
             em._dep_specs_cache = None
+            self._startup_update_check_complete = True
             self._dependency_manager.check_dependencies()
+        else:
+            # 用户取消/更新失败时仍允许用当前已验证环境启动。
+            self._startup_update_check_complete = True
+            self._continue_ready_startup()
 
-    def _check_pending_backend(self) -> tuple[bool, str | None]:
+    def _check_pending_backend(
+        self, cached_data: dict | None = None
+    ) -> tuple[bool, str | None]:
         """检测是否有待生效的后端切换（重启消费 pending_backend）
 
         Returns:
             (是否需要切换, 目标后端 "gpu"/"cpu"/None)
         """
-        is_valid, cached_data = is_cache_valid(self._project_root)
-        if not (is_valid and cached_data):
-            return False, None
+        # 兼容独立调用/旧测试；真实启动路径总是传入后台校验后的快照。
+        if cached_data is None:
+            is_valid, cached_data = is_cache_valid(self._project_root)
+            if not (is_valid and cached_data):
+                return False, None
 
         pending = cached_data.get("pending_backend")
         if not pending:
@@ -944,8 +1199,13 @@ class MainWindow(QMainWindow):
             logging.debug("[MainWindow] 应用程序正在关闭，跳过启动 WorkerHost")
             return
 
+        if self._runtime_gpu_capability is None:
+            self._worker_start_pending = True
+            self._statusbar.showMessage("正在等待后台 GPU 检测...")
+            return
+
         logging.debug("[MainWindow] 正在启动共享 WorkerHost...")
-        use_gpu = env_manager.resolve_use_gpu(self._project_root)
+        use_gpu = self._runtime_gpu_capability
         device = "GPU" if use_gpu else "CPU"
         self._statusbar.showMessage(f"正在启动 OCR 服务({device})...")
 
@@ -1153,6 +1413,8 @@ class MainWindow(QMainWindow):
 
     def _show_install_dialog(self, missing: list) -> None:
         """显示后端选择 + 安装对话框（首启合并对话框）"""
+        if self._closing:
+            return
         from vibeocr.widgets.backend_choice_dialog import BackendChoiceDialog
 
         self._subprocess_manager.invalidate_worker_host()
@@ -1163,11 +1425,15 @@ class MainWindow(QMainWindow):
 
     def _start_install(self) -> None:
         """开始安装依赖（保留入口，直接走首启合并对话框）"""
+        if self._closing:
+            return
         self._show_install_dialog([])
 
     @Slot(int)
     def _on_install_finished(self, result: int) -> None:
         """安装完成"""
+        if self._closing:
+            return
         if result == 1:
             self._statusbar.showMessage("OCR依赖安装成功")
             # 安装成功后启动子进程 Worker
@@ -1180,6 +1446,8 @@ class MainWindow(QMainWindow):
     @Slot()
     def _on_install_succeeded(self) -> None:
         """安装成功后标记就绪"""
+        if self._closing:
+            return
         self._ocr_ready = True
         self._statusbar.showMessage("OCR依赖安装成功，首次识别将自动下载模型")
         # 安装完成后 Python 运行时状态已变，刷新设置页环境维护区 label
@@ -1209,29 +1477,12 @@ class MainWindow(QMainWindow):
             return
         logging.debug("打开图片文件对话框")
 
-        from vibeocr.utils.mime_types import (
-            FILE_FILTER_DOCUMENTS,
-            FILE_FILTER_IMAGES,
-            is_document_file,
-        )
+        from vibeocr.utils.mime_types import FILE_FILTER_DOCUMENTS, FILE_FILTER_IMAGES
 
-        file_path, _ = QFileDialog.getOpenFileName(
-            self,
+        self._open_file_dialog_and_dispatch(
             "打开文件",
-            "",
             f"{FILE_FILTER_IMAGES};;{FILE_FILTER_DOCUMENTS};;所有文件 (*)",
         )
-        if file_path:
-            if is_document_file(file_path):
-                self._single_tab._preview_widget.clear()
-                self._single_tab.process_file(file_path)
-                return
-
-            pixmap = QPixmap(file_path)
-            if not pixmap.isNull():
-                self._single_tab.set_image_for_recognition(pixmap)
-                self._single_tab.set_pixmap(pixmap)
-                self._single_tab.run_ocr(pixmap)
 
     @Slot()
     def _on_open_file_from_preview(self) -> None:
@@ -1243,14 +1494,17 @@ class MainWindow(QMainWindow):
             return
         logging.debug("打开文件对话框（图片/PDF）")
 
-        from vibeocr.utils.mime_types import FILE_FILTER_ALL, is_document_file
+        from vibeocr.utils.mime_types import FILE_FILTER_ALL
 
-        file_path, _ = QFileDialog.getOpenFileName(
-            self,
-            "选择文件",
-            "",
-            f"{FILE_FILTER_ALL};;所有文件 (*)",
+        self._open_file_dialog_and_dispatch(
+            "选择文件", f"{FILE_FILTER_ALL};;所有文件 (*)"
         )
+
+    def _open_file_dialog_and_dispatch(self, title: str, file_filter: str) -> None:
+        """统一三处文件入口；图片后台解码，文档沿现有异步识别路径。"""
+        from vibeocr.utils.mime_types import is_document_file
+
+        file_path, _ = QFileDialog.getOpenFileName(self, title, "", file_filter)
         if not file_path:
             return
 
@@ -1258,12 +1512,44 @@ class MainWindow(QMainWindow):
             self._single_tab._preview_widget.clear()
             self._single_tab.process_file(file_path)
             return
+        self._request_image_load(file_path)
 
-        pixmap = QPixmap(file_path)
-        if not pixmap.isNull():
-            self._single_tab.set_image_for_recognition(pixmap)
-            self._single_tab.set_pixmap(pixmap)
-            self._single_tab.run_ocr(pixmap)
+    @Slot(str)
+    def _request_image_load(self, file_path: str) -> None:
+        """提交可被新请求取代的图片解码任务。"""
+        if self._closing:
+            return
+        self._statusbar.showMessage(f"正在读取图片：{Path(file_path).name}...")
+        self._image_load_jobs.submit(
+            lambda cancel_event: (
+                file_path,
+                decode_image_file(file_path, cancel_event),
+            )
+        )
+
+    @Slot(int, object)
+    def _on_image_file_loaded(self, _generation: int, result: object) -> None:
+        """GUI 线程只负责 QImage→QPixmap 与控件赋值。"""
+        if self._closing or not isinstance(result, tuple) or len(result) != 2:
+            return
+        if self._single_tab.is_processing:
+            self._statusbar.showMessage("上一次识别尚未完成，已忽略迟到的图片", 3000)
+            return
+        file_path, image = result
+        if image.isNull():
+            return
+        pixmap = QPixmap.fromImage(image)
+        if pixmap.isNull():
+            self._on_image_file_load_failed(_generation, f"无法显示图片：{file_path}")
+            return
+        self._single_tab.set_image_for_recognition(pixmap)
+        self._single_tab.set_pixmap(pixmap)
+        self._single_tab.run_ocr(pixmap)
+
+    @Slot(int, str)
+    def _on_image_file_load_failed(self, _generation: int, error: str) -> None:
+        if not self._closing:
+            self._statusbar.showMessage(f"图片读取失败：{error}", 5000)
 
     def _check_ocr_ready(self) -> bool:
         """检查OCR功能是否可用"""
@@ -1300,6 +1586,8 @@ class MainWindow(QMainWindow):
     @Slot()
     def _on_screenshot(self) -> None:
         """开始截图"""
+        if self._closing:
+            return
         if not self._check_ocr_ready():
             return
 
@@ -1316,7 +1604,7 @@ class MainWindow(QMainWindow):
         与 _on_screenshot 相同，但预先设置管道名称，截图选区完成后
         直接进入对应管道识别，跳过截图编辑界面。
         """
-        if not self._check_ocr_ready():
+        if self._closing or not self._check_ocr_ready():
             return
 
         self._main_window_minimized_before_capture = self.isMinimized()
@@ -1337,24 +1625,45 @@ class MainWindow(QMainWindow):
         _cleanup 时 deleteLater() 释放。代价是每轮一次轻量窗口创建，
         远小于残留帧带来的体验问题。
         """
+        if self._closing:
+            return
         # 释放上一轮（若未正常 _cleanup，防御性清理）
         if self._overlay is not None:
+            previous = self._overlay
             try:
-                self._overlay.finish_capture()
+                previous.finish_capture()
+                previous.request_save_shutdown()
             except Exception:
                 logging.exception("清理旧截图覆盖层失败")
-            self._overlay.deleteLater()
+            if previous.drain_saves(0):
+                previous.deleteLater()
+            else:
+                # 已确认保存不可因下一轮截图而取消；保留 QObject 到完成/失败
+                # 通知送达，随后在 GUI 事件循环释放。
+                self._retired_overlays.add(previous)
             self._overlay = None
 
         self._overlay = ScreenCaptureOverlay()
-        self._overlay.confirmed.connect(self._on_overlay_confirmed)
-        self._overlay.copied.connect(self._on_overlay_copied)
-        self._overlay.saved.connect(self._on_overlay_saved)
-        self._overlay.cancelled.connect(self._on_overlay_cancelled)
+        self._connect_overlay_signals(self._overlay)
+        if self._runtime_gpu_capability is not None:
+            self._apply_gpu_gating_to_all(self._runtime_gpu_capability)
 
         if pipeline_name is not None:
             self._overlay.set_pending_pipeline(pipeline_name)
         self._overlay.start_capture()
+
+    def _connect_overlay_signals(self, overlay: ScreenCaptureOverlay) -> None:
+        overlay.confirmed.connect(self._on_overlay_confirmed)
+        overlay.copied.connect(self._on_overlay_copied)
+        overlay.saved.connect(
+            lambda path, current=overlay: self._on_overlay_saved_for(current, path)
+        )
+        overlay.save_failed.connect(
+            lambda error, current=overlay: self._on_overlay_save_failed_for(
+                current, error
+            )
+        )
+        overlay.cancelled.connect(self._on_overlay_cancelled)
 
     def _restore_main_window(self, *, activate: bool) -> None:
         """截图结束后恢复主窗口状态。
@@ -1367,6 +1676,8 @@ class MainWindow(QMainWindow):
         Args:
             activate: True 时额外激活窗口并置顶（仅识别路径）。
         """
+        if self._closing:
+            return
         if activate or not self._main_window_minimized_before_capture:
             self.showNormal()
         if activate:
@@ -1426,9 +1737,30 @@ class MainWindow(QMainWindow):
     @Slot(str)
     def _on_overlay_saved(self, file_path: str) -> None:
         """截图保存完成"""
+        if self._closing:
+            return
         # 保存为静默操作，仅恢复可见性、不抢焦点。
         self._restore_main_window(activate=False)
         self._statusbar.showMessage(f"图片已保存: {file_path}")
+
+    def _on_overlay_saved_for(
+        self, overlay: ScreenCaptureOverlay, file_path: str
+    ) -> None:
+        self._on_overlay_saved(file_path)
+        QTimer.singleShot(0, lambda: self._release_retired_overlay(overlay))
+
+    def _on_overlay_save_failed_for(
+        self, overlay: ScreenCaptureOverlay, error: str
+    ) -> None:
+        if not self._closing:
+            self._statusbar.showMessage(error, 5000)
+        QTimer.singleShot(0, lambda: self._release_retired_overlay(overlay))
+
+    def _release_retired_overlay(self, overlay: ScreenCaptureOverlay) -> None:
+        if overlay not in self._retired_overlays or not overlay.drain_saves(0):
+            return
+        self._retired_overlays.discard(overlay)
+        overlay.deleteLater()
 
     @Slot()
     def _on_overlay_cancelled(self) -> None:
@@ -1437,10 +1769,16 @@ class MainWindow(QMainWindow):
         self._restore_main_window(activate=False)
 
     def closeEvent(self, event) -> None:
-        """关闭窗口事件
+        """两阶段关闭：首次仅冻结/请求取消，后台 drain 后第二次才 accept。"""
+        phase = getattr(self, "_shutdown_phase", "idle")
+        if phase == "ready":
+            event.accept()
+            logging.debug("应用程序已关闭")
+            return
+        if phase == "draining":
+            event.ignore()
+            return
 
-        如果启用了托盘最小化且不是强制退出，则隐藏到托盘而不关闭。
-        """
         # 检查是否应最小化到托盘
         if (
             not self._force_quit
@@ -1454,38 +1792,105 @@ class MainWindow(QMainWindow):
             return
 
         logging.debug("正在关闭应用程序...")
+        event.ignore()
+        self._shutdown_phase = "draining"
+        self._shutdown_stage = "gui"
+        self._shutdown_started_at = time.monotonic()
+        self._shutdown_timed_out = False
+        self._begin_shutdown_requests()
+        self._shutdown_gui_probes = self._collect_shutdown_gui_probes()
+        self._shutdown_poll_timer.start()
+        self._poll_shutdown_state()
+
+    def _begin_shutdown_requests(self) -> None:
+        """GUI 阶段：冻结回调和控件，只发协作取消，不等待 worker。"""
+
+        assert QThread.currentThread() is self.thread()
 
         # 从这里开始拒绝任何迟到的 ready/安装/识别回调重新启动共享 WorkerHost。
-        # 托盘隐藏分支已在上方返回，因此此处可以安全进入不可逆关闭态。
         self._closing = True
+        self._lazy_tab_generation = getattr(self, "_lazy_tab_generation", 0) + 1
+        self._lazy_tab_pending_index = None
+        self._lazy_tab_build_scheduled = None
+        if hasattr(self, "setEnabled"):
+            self.setEnabled(False)
+        image_load_jobs = getattr(self, "_image_load_jobs", None)
+        if image_load_jobs is not None:
+            image_load_jobs.close()
+        dependency_update_task = getattr(self, "_dependency_update_task", None)
+        if dependency_update_task is not None:
+            dependency_update_task.close()
+        dependency_manager = getattr(self, "_dependency_manager", None)
+        if dependency_manager is not None and hasattr(
+            dependency_manager, "request_shutdown"
+        ):
+            dependency_manager.request_shutdown()
+        startup_update_task = getattr(self, "_startup_update_task", None)
+        if startup_update_task is not None:
+            startup_update_task.request_shutdown()
+        overlays = [getattr(self, "_overlay", None)]
+        overlays.extend(tuple(getattr(self, "_retired_overlays", set())))
+        for overlay in overlays:
+            if overlay is None:
+                continue
+            if hasattr(overlay, "request_shutdown"):
+                overlay.request_shutdown()
+            elif hasattr(overlay, "request_save_shutdown"):
+                overlay.request_save_shutdown()
+        self._machine_cache_generation = getattr(
+            self, "_machine_cache_generation", 0
+        ) + 1
 
         # 异步识别可能仍在 qasync loop 上运行；在清理任何 widget 之前先标记关闭态
         # 并取消进行中的识别 task，否则 _on_ocr_finished/_on_ocr_error 回调会在
         # _result_widget.cleanup() 之后写入已销毁的 web view。
         if hasattr(self, "_single_tab") and self._single_tab is not None:
-            self._single_tab.set_closing(True)
+            if hasattr(self._single_tab, "request_shutdown"):
+                self._single_tab.request_shutdown()
+            else:
+                self._single_tab.set_closing(True)
         qrcode_tab = getattr(self, "_qrcode_tab", None)
-        if qrcode_tab is not None and hasattr(qrcode_tab, "set_closing"):
-            qrcode_tab.set_closing(True)
+        if qrcode_tab is not None:
+            if hasattr(qrcode_tab, "request_shutdown"):
+                qrcode_tab.request_shutdown()
+            elif hasattr(qrcode_tab, "set_closing"):
+                qrcode_tab.set_closing(True)
 
-        # 批处理线程会继续向结果 WebView 发信号；必须先请求取消并有界 drain，
-        # 再销毁 WebView、关闭 PDF 和共享 WorkerHost。
+        # 批处理没有独立 request API；shutdown(0) 只请求取消并进行零等待探测。
         batch_tab = getattr(self, "_batch_tab", None)
-        if batch_tab is not None and hasattr(batch_tab, "shutdown"):
-            batch_tab.shutdown(timeout_ms=0)
+        if batch_tab is not None:
+            if hasattr(batch_tab, "request_shutdown"):
+                batch_tab.request_shutdown()
+            elif hasattr(batch_tab, "shutdown"):
+                batch_tab.shutdown(timeout_ms=0)
 
         if hasattr(self, "_settings_controller"):
             if hasattr(self._settings_controller, "request_shutdown"):
                 self._settings_controller.request_shutdown()
-            else:
-                self._settings_controller.shutdown()
 
         # PDF 页签只发取消请求，实际等待纳入下方统一 wall-clock 预算。
         if hasattr(self, "_pdf_tab") and self._pdf_tab:
             if hasattr(self._pdf_tab, "request_shutdown"):
                 self._pdf_tab.request_shutdown()
-            else:
-                self._pdf_tab.shutdown()
+
+        subprocess_manager = getattr(self, "_subprocess_manager", None)
+        if subprocess_manager is not None and hasattr(
+            subprocess_manager, "request_shutdown"
+        ):
+            subprocess_manager.request_shutdown()
+
+        from vibeocr.utils.dialog_workers import request_dialog_workers_shutdown
+
+        request_dialog_workers_shutdown()
+
+        try:
+            from vibeocr.utils.qt_async import get_async_runner
+
+            runner = get_async_runner()
+            if runner.active_count > 0:
+                runner.cancel_all()
+        except Exception:
+            logging.debug("请求取消 async runner 失败", exc_info=True)
 
         # 关闭边缘工具栏
         if hasattr(self, "_edge_toolbar") and self._edge_toolbar:
@@ -1498,69 +1903,184 @@ class MainWindow(QMainWindow):
         # 保存布局
         self._save_layout()
 
-        # 统一 drain 各后台子系统。所有步骤共享一个绝对截止时间，前一步快速完成
-        # 会把时间留给后续步骤；不再叠加多个互不知情的 1s/2s/5s 等待。
-        from vibeocr.pyside.runtime import Constants, ShutdownCoordinator
+    def _collect_shutdown_gui_probes(self) -> tuple[tuple[str, Any], ...]:
+        """Snapshot side-effect-free probes; every callable runs on the GUI owner."""
+        assert QThread.currentThread() is self.thread()
+        probes: list[tuple[str, Any]] = []
 
-        coord = ShutdownCoordinator()
+        def add_method(name: str, owner: object | None, method_name: str) -> None:
+            method = getattr(owner, method_name, None)
+            if callable(method):
+                probes.append((name, method))
 
-        settings_controller = getattr(self, "_settings_controller", None)
-        if settings_controller is not None and hasattr(settings_controller, "drain"):
-            coord.register(
-                "settings",
-                lambda: settings_controller.drain(
-                    timeout_ms=Constants.Timeout.Ms.SETTINGS_DRAIN
-                ),
-                max_timeout_ms=Constants.Timeout.Ms.SETTINGS_SHUTDOWN,
+        add_method(
+            "dependency_manager",
+            getattr(self, "_dependency_manager", None),
+            "is_drained",
+        )
+        add_method(
+            "dependency_update",
+            getattr(self, "_dependency_update_task", None),
+            "is_drained",
+        )
+        add_method(
+            "startup_update",
+            getattr(self, "_startup_update_task", None),
+            "is_drained",
+        )
+        add_method(
+            "settings",
+            getattr(self, "_settings_controller", None),
+            "is_drained",
+        )
+        for name, attr in (
+            ("single", "_single_tab"),
+            ("qrcode", "_qrcode_tab"),
+            ("batch", "_batch_tab"),
+            ("pdf", "_pdf_tab"),
+        ):
+            add_method(name, getattr(self, attr, None), "is_drained")
+
+        image_jobs = getattr(self, "_image_load_jobs", None)
+        if image_jobs is not None:
+            probes.append(("main_image_load", lambda jobs=image_jobs: jobs.drain(0)))
+
+        probes.append(
+            (
+                "machine_cache",
+                lambda: not getattr(self, "_machine_cache_tasks", set()),
             )
+        )
+        probes.append(
+            ("lazy_tabs", lambda: not getattr(self, "_lazy_tab_tasks", set()))
+        )
 
-        pdf_tab = getattr(self, "_pdf_tab", None)
-        if pdf_tab is not None and hasattr(pdf_tab, "drain"):
-            coord.register(
-                "pdf",
-                lambda: pdf_tab.drain(timeout_ms=Constants.Timeout.Ms.PDF_DRAIN),
-                max_timeout_ms=Constants.Timeout.Ms.PDF_SHUTDOWN,
-            )
+        overlays = [getattr(self, "_overlay", None)]
+        overlays.extend(tuple(getattr(self, "_retired_overlays", set())))
+        for index, overlay in enumerate(overlays):
+            if overlay is not None:
+                if hasattr(overlay, "is_drained"):
+                    probes.append((f"overlay_{index}", overlay.is_drained))
+                elif hasattr(overlay, "drain_saves"):
+                    probes.append(
+                        (
+                            f"overlay_{index}",
+                            lambda current=overlay: current.drain_saves(0),
+                        )
+                    )
 
-        if batch_tab is not None and hasattr(batch_tab, "drain"):
-            coord.register(
-                "batch",
-                lambda: batch_tab.drain(
-                    timeout_ms=Constants.Timeout.Ms.BATCH_DRAIN
-                ),
-                max_timeout_ms=Constants.Timeout.Ms.BATCH_SHUTDOWN,
-            )
+        add_method(
+            "subprocess",
+            getattr(self, "_subprocess_manager", None),
+            "is_drained",
+        )
+        from vibeocr.utils.dialog_workers import are_dialog_workers_drained
 
-        # async runner cancel（仅在有运行中事件循环时才有意义）
+        probes.append(("dialog_workers", are_dialog_workers_drained))
         try:
-            from vibeocr.utils.qt_async import get_async_runner
+            from vibeocr.utils.qt_async import (
+                are_tracked_native_jobs_drained,
+                get_async_runner,
+            )
 
             runner = get_async_runner()
-            if runner.active_count > 0:
-                coord.register(
-                    "async_runner",
-                    runner.cancel_all,
-                    max_timeout_ms=Constants.Timeout.Ms.ASYNC_RUNNER_SHUTDOWN,
-                )
+            probes.append(("async_runner", lambda: runner.active_count == 0))
+            probes.append(("async_native", are_tracked_native_jobs_drained))
         except Exception:
-            pass
+            logging.debug("Unable to snapshot async runner during shutdown", exc_info=True)
+        return tuple(probes)
 
-        # Single/QR/batch tabs share exactly one authenticated WorkerHost.
+    @Slot()
+    def _poll_shutdown_state(self) -> None:
+        """Advance shutdown without blocking the Qt event loop."""
+        if getattr(self, "_shutdown_phase", "idle") != "draining":
+            return
+        assert QThread.currentThread() is self.thread()
+
+        elapsed_ms = (time.monotonic() - self._shutdown_started_at) * 1000
+        if elapsed_ms >= self._SHUTDOWN_UX_BUDGET_MS and not self._shutdown_timed_out:
+            self._shutdown_timed_out = True
+            logging.warning(
+                "Shutdown exceeded the %d ms UX budget; keeping owners alive until drained",
+                self._SHUTDOWN_UX_BUDGET_MS,
+            )
+
+        if self._shutdown_stage != "gui":
+            return
+
+        pending: list[str] = []
+        for name, probe in self._shutdown_gui_probes:
+            try:
+                if not bool(probe()):
+                    pending.append(name)
+            except Exception:
+                pending.append(name)
+                logging.exception("Shutdown probe failed: %s", name)
+        if pending:
+            return
+        self._start_external_shutdown()
+
+    def _start_external_shutdown(self) -> None:
+        """Detach plain-Python resources only after every Qt owner is drained."""
+        assert QThread.currentThread() is self.thread()
+        if self._shutdown_stage != "gui":
+            return
+
         from vibeocr.client.session import shutdown_backend_client
 
-        coord.register(
-            "backend_session",
-            shutdown_backend_client,
-            max_timeout_ms=Constants.Timeout.Ms.BACKEND_SESSION_SHUTDOWN,
-        )
-        coord.register(
-            "subprocess",
-            lambda: self._subprocess_manager.shutdown(  # type: ignore[arg-type]
-                timeout_ms=Constants.Timeout.Ms.SUBPROCESS_SHUTDOWN
-            ),
-            max_timeout_ms=Constants.Timeout.Ms.SUBPROCESS_SHUTDOWN,
-        )
-        coord.coordinate(timeout_ms=Constants.Timeout.Ms.APP_SHUTDOWN_TOTAL)
+        operations: list[tuple[str, Any]] = [
+            ("backend_session", shutdown_backend_client)
+        ]
+        subprocess_manager = getattr(self, "_subprocess_manager", None)
+        if subprocess_manager is not None and hasattr(
+            subprocess_manager, "take_shutdown_callable"
+        ):
+            service_shutdown = subprocess_manager.take_shutdown_callable()
+            if callable(service_shutdown):
+                operations.append(("subprocess_service", service_shutdown))
+
+        job = ExternalShutdownJob(tuple(operations), self)
+        self._shutdown_external_job = job
+        self._shutdown_stage = "external"
+        job.finished.connect(self._on_external_shutdown_finished)
+        job.start()
+
+    @Slot()
+    def _on_external_shutdown_finished(self) -> None:
+        assert QThread.currentThread() is self.thread()
+        job = self._shutdown_external_job
+        if job is None:
+            return
+        self._shutdown_external_job = None
+        if job.errors:
+            logging.warning("External shutdown operations failed: %s", job.errors)
+        job.deleteLater()
+        self._finalize_shutdown()
+
+    def _finalize_shutdown(self) -> None:
+        """Destroy GUI resources only after native and external work has returned."""
+        assert QThread.currentThread() is self.thread()
+        self._shutdown_poll_timer.stop()
+        self._cleanup_overlay_widgets()
+        self._cleanup_webengine_widgets()
+        self._shutdown_stage = "ready"
+        self._shutdown_phase = "ready"
+        self.close()
+
+    def _cleanup_overlay_widgets(self) -> None:
+        """保存 drain 成功后才在 GUI 线程释放 current/retired overlay。"""
+        assert QThread.currentThread() is self.thread()
+        overlays = [getattr(self, "_overlay", None)]
+        overlays.extend(tuple(getattr(self, "_retired_overlays", set())))
+        self._overlay = None
+        self._retired_overlays.clear()
+        for overlay in overlays:
+            if overlay is not None:
+                overlay.deleteLater()
+
+    def _cleanup_webengine_widgets(self) -> None:
+        """只能在 GUI 线程、所有成功 drain 之后调用。"""
+        assert QThread.currentThread() is self.thread()
 
         # 所有会写结果的后台任务已请求取消/尽力 drain 后，再销毁 WebEngine。
         for tab in (
@@ -1569,13 +2089,6 @@ class MainWindow(QMainWindow):
         ):
             if tab and hasattr(tab, "_result_widget") and tab._result_widget:
                 tab._result_widget.cleanup()
-
-        from PySide6.QtCore import QCoreApplication
-
-        QCoreApplication.processEvents()
-
-        event.accept()
-        logging.debug("应用程序已关闭")
 
     # ============================================================
     # 系统托盘与边缘工具栏集成

@@ -26,6 +26,13 @@ from vibeocr.pyside.batch_budget import (
     partition_batches,
 )
 from vibeocr.ui import theme
+from vibeocr.utils.export_jobs import (
+    BatchExportReport,
+    ExportItem,
+    ExportSaveJob,
+    export_batch_operation,
+    snapshot_ocr_result,
+)
 from vibeocr.views.tabs.base_tab import BaseOcrTab
 from vibeocr.widgets.batch_file_list_widget import BatchFileListWidget
 from vibeocr.widgets.export_settings_widget import ExportSettingsWidget
@@ -39,15 +46,22 @@ PreprocessOptions = OCROptions
 logger = logging.getLogger(__name__)
 
 
+# BatchRecognitionTab 可能在统一关闭预算耗尽后先被销毁。worker 没有 QWidget
+# parent，必须独立保活到原生 QThread.finished，避免析构仍运行的 QThread。
+_ACTIVE_BATCH_WORKERS: set = set()
+
+
 class BatchRecognitionWorker(QThread):
     """批量识别工作线程"""
 
     progress = Signal(int, int, str)  # completed, total, current_file
     file_completed = Signal(str, str, object)  # file_path, status, result
+    file_snapshot_ready = Signal(str, object)  # file_path, immutable export DTO
     # 业务终态与 QThread.finished 分离。后者只表示线程已经真正退出，UI 只能在
     # 收到 QThread.finished 后释放 worker 引用。
     terminal = Signal(str, dict)  # status, results
     error = Signal(str)
+    native_stopped = Signal(object)
 
     STATUS_COMPLETED = "completed"
     STATUS_CANCELLED = "cancelled"
@@ -70,6 +84,21 @@ class BatchRecognitionWorker(QThread):
         self._batch_budget = batch_budget or BatchBudget.ocr_default()
         self._terminal_status: str | None = None
         self._results: dict = {}
+        self.finished.connect(self._on_native_finished)
+
+    def start(self, priority=QThread.Priority.InheritPriority) -> None:  # type: ignore[override]
+        _ACTIVE_BATCH_WORKERS.add(self)
+        try:
+            super().start(priority)
+        except Exception:
+            _ACTIVE_BATCH_WORKERS.discard(self)
+            raise
+
+    def _on_native_finished(self) -> None:
+        """仅在原生线程结束后释放全局保活并通知仍存活的 GUI。"""
+        _ACTIVE_BATCH_WORKERS.discard(self)
+        self.native_stopped.emit(self)
+        self.deleteLater()
 
     @property
     def terminal_status(self) -> str | None:
@@ -84,14 +113,36 @@ class BatchRecognitionWorker(QThread):
     def run(self):
         """执行批量识别，并保证每次运行都产生一个明确业务终态。"""
         try:
+            if self._cancelled:
+                raise InterruptedError("批量识别已取消")
+            if self._service is None:
+                # Session startup may wait on a process and a global lock.  It is
+                # intentionally resolved inside this native worker, never in GUI.
+                from vibeocr.client.batch import BatchBackendAdapter
+                from vibeocr.client.session import get_backend_client
+
+                self._service = BatchBackendAdapter(get_backend_client())
+            if self._cancelled:
+                raise InterruptedError("批量识别已取消")
             results, completed, total, failed = self._run_batches()
-        except Exception as exc:  # 防止意外异常绕过终态和 UI 清理
-            logger.exception("批量识别线程异常终止")
-            self.error.emit(str(exc))
+        except InterruptedError:
             results = dict(self._results)
             completed = len(results)
             total = len(self._files)
-            failed = max(1, sum("error" in item for item in results.values()))
+            failed = sum("error" in item for item in results.values())
+        except Exception as exc:  # 防止意外异常绕过终态和 UI 清理
+            # 冷启动期间可能与关闭/取消并发；此时取消终态优先，不弹伪错误。
+            if not self._cancelled:
+                logger.exception("批量识别线程异常终止")
+                self.error.emit(str(exc))
+            results = dict(self._results)
+            completed = len(results)
+            total = len(self._files)
+            failed = (
+                sum("error" in item for item in results.values())
+                if self._cancelled
+                else max(1, sum("error" in item for item in results.values()))
+            )
 
         if self._cancelled:
             status = self.STATUS_CANCELLED
@@ -188,9 +239,7 @@ class BatchRecognitionWorker(QThread):
                     for bi, file_info in enumerate(batch_files):
                         file_path = file_info["path"]
                         error = read_errors.get(bi, str(e))
-                        self.file_completed.emit(
-                            file_path, "failed", {"error": error}
-                        )
+                        self.file_completed.emit(file_path, "failed", {"error": error})
                         results[file_path] = {
                             "file_path": file_path,
                             "error": error,
@@ -198,7 +247,8 @@ class BatchRecognitionWorker(QThread):
                         failed += 1
                         completed += 1
                         self.progress.emit(
-                            completed, total,
+                            completed,
+                            total,
                             f"失败: {Path(file_path).name}",
                         )
                     # 继续下一批（单批失败不中断整体）
@@ -245,6 +295,17 @@ class BatchRecognitionWorker(QThread):
                         }
                         failed += 1
                     else:
+                        # Capture the immutable export payload while the result is
+                        # still exclusively owned by this worker.  The GUI receives
+                        # this signal before file_completed, so exporting never has
+                        # to race a mutable OCRResult or deep-copy it on the UI thread.
+                        result_snapshot = snapshot_ocr_result(
+                            res,
+                            include_content_list=True,
+                            include_images=False,
+                            include_text_blocks=False,
+                        )
+                        self.file_snapshot_ready.emit(file_path, result_snapshot)
                         self.file_completed.emit(file_path, "completed", res)
                         results[file_path] = {
                             "file_path": file_path,
@@ -288,12 +349,17 @@ class BatchRecognitionTab(BaseOcrTab):
         self._backend = backend
         self._batch_backend = None
         self._worker: BatchRecognitionWorker | None = None
+        self._export_job: ExportSaveJob | None = None
+        self._export_generation = 0
+        self._export_mode = ""
+        self._has_document_files = False
         self._run_state = self.STATE_IDLE
         self._run_total = 0
         self._last_terminal_status: str | None = None
         self._shutting_down = False
         self._layout_manager = None
         self._current_file_path: str = ""
+        self._result_snapshots: dict[str, object] = {}
 
         self._setup_ui()
         self._connect_signals()
@@ -396,21 +462,25 @@ class BatchRecognitionTab(BaseOcrTab):
         self._file_list_widget.files_changed.connect(self._on_files_changed)
         self._export_widget.export_requested.connect(self._on_export_current)
         self._export_widget.export_all_requested.connect(self._on_export_all)
+        self._result_widget.snapshot_ready.connect(self._on_render_snapshot_ready)
 
     def _on_files_changed(self, files: list[dict]) -> None:
         """文件列表变化时，根据是否包含文档文件锁定管道"""
         from vibeocr.utils.mime_types import is_document_file
 
+        live_paths = {item["path"] for item in files}
+        self._result_snapshots = {
+            path: snapshot
+            for path, snapshot in self._result_snapshots.items()
+            if path in live_paths
+        }
         has_document = any(is_document_file(f["path"]) for f in files)
+        self._has_document_files = has_document
         if has_document:
-            # 文档文件需 MinerU 文档解析（GPU 后端）。CPU 后端下文档解析被禁用，
-            # 此时提示用户而非静默锁定到不可用管道。
-            from vibeocr.env_manager import (
-                get_project_root,
-                get_runtime_gpu_capability,
-            )
-
-            if not get_runtime_gpu_capability(get_project_root()):
+            # 这里只消费 MainWindow 后台探测后写入的三态缓存，绝不能在文件
+            # 变化这一 GUI 槽内 shell-out。None 表示探测尚未完成。
+            gpu_capability = self._preprocess_options.gpu_capability
+            if gpu_capability is False:
                 from PySide6.QtWidgets import QMessageBox
 
                 QMessageBox.warning(
@@ -419,17 +489,46 @@ class BatchRecognitionTab(BaseOcrTab):
                     "当前为 CPU 后端，文档解析(MinerU)需要 GPU 支持。\n"
                     "请移除文档文件，或在设置页切换到 GPU 后端后重启。",
                 )
-            self._preprocess_options.lock_to_document_parsing(
-                "队列含文档文件，仅支持文档解析"
+            reason = (
+                "正在检测 GPU 能力，文档解析暂未就绪"
+                if gpu_capability is None
+                else "队列含文档文件，仅支持文档解析"
             )
+            self._preprocess_options.lock_to_document_parsing(
+                reason
+            )
+            if gpu_capability is None:
+                self._progress_label.setText("正在检测 GPU 能力，文档解析暂未就绪")
         else:
             self._preprocess_options.unlock_pipeline()
+
+    def refresh_gpu_capability(self) -> None:
+        """Refresh document-queue status after the shared async probe resolves."""
+        if not self._has_document_files or self._shutting_down:
+            return
+        capability = self._preprocess_options.gpu_capability
+        if capability is None:
+            reason = "正在检测 GPU 能力，文档解析暂未就绪"
+            status = reason
+        elif capability:
+            reason = "队列含文档文件，仅支持文档解析"
+            status = f"0/{self._file_list_widget.get_pending_count()}"
+        else:
+            reason = "CPU 后端不支持文档解析"
+            status = reason
+        self._preprocess_options.lock_to_document_parsing(reason)
+        if self._worker is None and self._export_job is None:
+            self._progress_label.setText(status)
 
     def _on_start(self):
         """开始识别"""
         # QThread 对象必须保留到原生 finished 信号到达。在 cancelling 或线程
         # 刚退出但 finished 尚未派发的窗口内，一律禁止重入。
-        if self._shutting_down or self._worker is not None:
+        if (
+            self._shutting_down
+            or self._worker is not None
+            or self._export_job is not None
+        ):
             return
 
         files = self._file_list_widget.get_selected_files()
@@ -437,49 +536,54 @@ class BatchRecognitionTab(BaseOcrTab):
             self._result_widget.clear()
             return
 
-        preprocess_options = self._preprocess_options.get_options()
-        service = self._get_batch_backend()
+        if self._has_document_files:
+            gpu_capability = self._preprocess_options.gpu_capability
+            if gpu_capability is not True:
+                from PySide6.QtWidgets import QMessageBox
 
-        if not service:
-            self._result_widget.clear()
-            return
+                if gpu_capability is None:
+                    title = "文档解析检测中"
+                    message = "正在检测 GPU 能力，请稍候再开始文档解析。"
+                else:
+                    title = "文档解析不可用"
+                    message = (
+                        "当前为 CPU 后端，文档解析(MinerU)需要 GPU 支持。\n"
+                        "请移除文档文件，或在设置页切换到 GPU 后端后重启。"
+                    )
+                QMessageBox.information(self, title, message)
+                return
+
+        preprocess_options = self._preprocess_options.get_options()
+        # An injected adapter is consumed directly.  Cold shared-client startup is
+        # deferred to BatchRecognitionWorker.run so clicking Start cannot block Qt.
+        service = self._batch_backend
 
         self._start_btn.setEnabled(False)
         self._cancel_btn.setEnabled(True)
         self._run_state = self.STATE_RUNNING
         self._run_total = len(files)
         self._last_terminal_status = None
+        for file_info in files:
+            self._result_snapshots.pop(file_info["path"], None)
 
         self._progress_label.setText(f"0/{len(files)}")
 
         self._result_widget.clear()
 
-        # 首次使用提示
-        pipeline_val = preprocess_options.pipeline.value
-        if pipeline_val in (
-            "OCR",
-            "PP-StructureV3",
-            "TABLE_RECOGNITION",
-            "FORMULA_RECOGNITION",
-        ):
-            from vibeocr.env_manager import get_project_root
-            from vibeocr.pipeline_status import is_pipeline_ever_succeeded
-
-            if not is_pipeline_ever_succeeded(pipeline_val, get_project_root()):
-                self._result_widget._ensure_web_view().setHtml(
-                    '<div style="display:flex;align-items:center;justify-content:center;'
-                    'height:100%;color:#666;font-size:14px;">'
-                    "<p>正在识别，首次使用可能需要下载模型，请耐心等待…</p></div>"
-                )
-
         worker = BatchRecognitionWorker(service, files, preprocess_options)
         self._worker = worker
         worker.progress.connect(self._on_progress)
+        worker.file_snapshot_ready.connect(self._on_file_snapshot_ready)
         worker.file_completed.connect(self._on_file_completed)
         worker.terminal.connect(self._on_terminal)
         worker.error.connect(self._on_error)
-        worker.finished.connect(lambda: self._on_worker_stopped(worker))
+        worker.native_stopped.connect(self._on_worker_stopped)
         worker.start()
+
+    def _on_file_snapshot_ready(self, file_path: str, snapshot: object) -> None:
+        """Store a worker-produced immutable export payload on the GUI thread."""
+        if self._is_current_worker_signal():
+            self._result_snapshots[file_path] = snapshot
 
     def _get_backend_client(self):
         if self._backend is None:
@@ -497,6 +601,14 @@ class BatchRecognitionTab(BaseOcrTab):
 
     def _on_cancel(self):
         """请求取消；线程真正结束前不释放引用、也不允许重新开始。"""
+        export_job = self._export_job
+        if export_job is not None:
+            self._export_generation += 1
+            self._cancel_btn.setEnabled(False)
+            self._progress_label.setText("正在取消导出…")
+            export_job.cancel()
+            return
+
         worker = self._worker
         if worker is None or self._run_state != self.STATE_RUNNING:
             return
@@ -537,6 +649,15 @@ class BatchRecognitionTab(BaseOcrTab):
             self._display_result(result)
             self._export_widget.set_current_result(result)
 
+    def _on_render_snapshot_ready(self, result: object, snapshot: object) -> None:
+        """Refresh the cache after an edit has been re-rendered in the result view."""
+        if self._shutting_down or snapshot is None or not self._current_file_path:
+            return
+        for item in self._file_list_widget._files:
+            if item["path"] == self._current_file_path and item.get("result") is result:
+                self._result_snapshots[self._current_file_path] = snapshot
+                return
+
     def _on_terminal(self, status: str, results: dict):
         """记录业务终态；引用释放仍等待 QThread.finished。"""
         if not self._is_current_worker_signal():
@@ -569,9 +690,10 @@ class BatchRecognitionTab(BaseOcrTab):
         if worker is not self._worker:
             return
 
-        # drain() 阻塞等待期间 Qt 事件不会派发，直接从 worker 快照补齐终态。
         if self._last_terminal_status is None and not self._shutting_down:
-            status = worker.terminal_status or BatchRecognitionWorker.STATUS_PARTIAL_FAILED
+            status = (
+                worker.terminal_status or BatchRecognitionWorker.STATUS_PARTIAL_FAILED
+            )
             self._apply_terminal(status, worker.results)
 
         self._release_worker(worker)
@@ -585,7 +707,6 @@ class BatchRecognitionTab(BaseOcrTab):
         )
         self._start_btn.setEnabled(not self._shutting_down)
         self._cancel_btn.setEnabled(False)
-        worker.deleteLater()
 
     def _on_error(self, error_msg: str):
         """记录单批错误；worker 会继续处理，故不得重置 UI。"""
@@ -593,6 +714,8 @@ class BatchRecognitionTab(BaseOcrTab):
 
     def _on_file_selected(self, file_path: str):
         """文件选择变更：加载预览和结果"""
+        if self._shutting_down:
+            return
         self._current_file_path = file_path
 
         # 加载文件预览
@@ -614,36 +737,28 @@ class BatchRecognitionTab(BaseOcrTab):
 
     def _on_export_current(self, fmt: str, result) -> None:
         """导出当前文件"""
-        if not result:
+        if not result or self._export_job is not None or self._worker is not None:
             return
 
+        snapshot = self._result_widget.current_snapshot()
+        if snapshot is None or self._result_widget.get_result() is not result:
+            # A large result may still be producing its immutable render/export
+            # payload.  Do not fall back to a live model reference.
+            self._progress_label.setText("正在准备导出数据…")
+            return
         export_dir = self._export_widget.get_export_dir(self._current_file_path)
-        from vibeocr.client.export import (
-            export_result,
-            get_output_filename,
-            get_unique_output_path,
+        item = ExportItem(
+            source_name=Path(self._current_file_path).name,
+            result=snapshot,
+            output_dir=Path(export_dir),
+            export_format=fmt,
         )
-
-        output_name = get_output_filename(
-            Path(self._current_file_path).name, fmt
-        )
-        output_path = get_unique_output_path(
-            Path(export_dir) / output_name
-        )
-
-        success = export_result(self._get_backend_client(), result, output_path, fmt)
-        if success:
-            QMessageBox.information(self, "导出成功", f"已导出到:\n{output_path}")
-        else:
-            QMessageBox.warning(self, "导出失败", f"导出失败:\n{output_path}")
+        self._start_export_job((item,), mode="current")
 
     def _on_export_all(self, fmt: str) -> None:
         """导出全部已完成的文件"""
-        from vibeocr.client.export import (
-            export_result,
-            get_output_filename,
-            get_unique_output_path,
-        )
+        if self._export_job is not None or self._worker is not None:
+            return
 
         files = self._file_list_widget._files
         completed_files = [
@@ -654,33 +769,109 @@ class BatchRecognitionTab(BaseOcrTab):
             QMessageBox.information(self, "提示", "没有可导出的结果")
             return
 
-        success_count = 0
-        fail_count = 0
-        renamed: list[str] = []
+        items_list: list[ExportItem] = []
+        for file_info in completed_files:
+            snapshot = self._result_snapshots.get(file_info["path"])
+            if snapshot is None:
+                self._progress_label.setText("正在准备导出数据…")
+                return
+            items_list.append(
+                ExportItem(
+                    source_name=file_info["name"],
+                    result=snapshot,
+                    output_dir=Path(
+                        self._export_widget.get_export_dir(file_info["path"])
+                    ),
+                    export_format=fmt,
+                )
+            )
+        items = tuple(items_list)
+        self._start_export_job(items, mode="all")
 
-        for f in completed_files:
-            result = f["result"]
-            export_dir = self._export_widget.get_export_dir(f["path"])
-            output_name = get_output_filename(f["name"], fmt)
-            output_path = Path(export_dir) / output_name
-            actual_path = get_unique_output_path(output_path)
+    def _start_export_job(self, items: tuple[ExportItem, ...], *, mode: str) -> None:
+        """Consume pre-detached immutable inputs and execute RPC/write in worker."""
+        if self._shutting_down or self._export_job is not None:
+            return
+        source_items = tuple(items)
+        backend = self._backend
 
-            if output_path != actual_path:
-                renamed.append(f"{output_name} → {actual_path.name}")
+        def export(cancel_event, progress):
+            return export_batch_operation(backend, source_items)(cancel_event, progress)
 
-            if export_result(
-                self._get_backend_client(), result, actual_path, fmt
-            ):
-                success_count += 1
+        self._export_generation += 1
+        job = ExportSaveJob(export)
+        job.setProperty("generation", self._export_generation)
+        self._export_job = job
+        self._export_mode = mode
+        self._export_widget.setEnabled(False)
+        self._start_btn.setEnabled(False)
+        self._cancel_btn.setEnabled(True)
+        self._progress_label.setText(f"0/{len(source_items)} 正在导出")
+        job.progress.connect(self._on_export_progress)
+        job.completed.connect(self._on_export_completed)
+        job.failed.connect(self._on_export_failed)
+        job.cancelled.connect(self._on_export_cancelled)
+        job.stopped.connect(self._on_export_job_finished)
+        job.start()
+
+    def _is_current_export_signal(self) -> bool:
+        job = self.sender()
+        return bool(
+            not self._shutting_down
+            and job is self._export_job
+            and job.property("generation") == self._export_generation
+        )
+
+    def _on_export_progress(self, completed: int, total: int, name: str) -> None:
+        if self._is_current_export_signal():
+            self._progress_label.setText(f"{completed}/{total} {name}")
+
+    def _on_export_completed(self, report: BatchExportReport) -> None:
+        if not self._is_current_export_signal():
+            return
+        if self._export_mode == "current":
+            exported = report.files[0]
+            if exported.success:
+                QMessageBox.information(
+                    self, "导出成功", f"已导出到:\n{exported.actual_path}"
+                )
             else:
-                fail_count += 1
+                QMessageBox.warning(
+                    self, "导出失败", f"导出失败:\n{exported.actual_path}"
+                )
+            return
 
-        msg = f"导出完成: {success_count} 成功"
-        if fail_count:
-            msg += f", {fail_count} 失败"
-        if renamed:
+        msg = f"导出完成: {report.success_count} 成功"
+        if report.fail_count:
+            msg += f", {report.fail_count} 失败"
+        if report.renamed:
+            renamed = [
+                f"{item.requested_path.name} → {item.actual_path.name}"
+                for item in report.renamed
+            ]
             msg += "\n\n以下文件因同名已自动重命名:\n" + "\n".join(renamed)
         QMessageBox.information(self, "导出结果", msg)
+
+    def _on_export_failed(self, error: str) -> None:
+        if self._is_current_export_signal():
+            QMessageBox.warning(self, "导出失败", f"导出失败:\n{error}")
+
+    def _on_export_cancelled(self) -> None:
+        if self._is_current_export_signal():
+            self._progress_label.setText("导出已取消")
+
+    def _on_export_job_finished(self, job: ExportSaveJob) -> None:
+        if job is not self._export_job:
+            return
+        # drain() 期间没有事件派发时，也能从线程快照恢复最终进度。
+        if not self._shutting_down and job.status == ExportSaveJob.STATUS_CANCELLED:
+            self._progress_label.setText("导出已取消")
+        self._export_job = None
+        self._export_mode = ""
+        self._export_widget.setEnabled(not self._shutting_down)
+        self._start_btn.setEnabled(not self._shutting_down)
+        self._cancel_btn.setEnabled(False)
+        job.deleteLater()
 
     def _reset_ui(self):
         """兼容性 UI 复位；运行中的 worker 永远不能由此释放。"""
@@ -691,39 +882,72 @@ class BatchRecognitionTab(BaseOcrTab):
         self._run_state = self.STATE_IDLE
 
     def drain(self, timeout_ms: int = 0) -> bool:
-        """有界等待当前 worker 退出；成功时安全释放引用。
+        """只做有界等待并返回状态；可安全地由非 GUI 关闭线程调用。
 
-        该方法供 MainWindow 的统一退出协调器调用。timeout_ms=0 仅探测，
-        不进入事件循环，也不会无限等待。
+        所有 QWidget 更新、worker 引用释放和 deleteLater 均由原生 finished
+        派发到 GUI 线程的槽完成。timeout_ms=0 仅探测，不进入事件循环。
         """
+        import time
+
+        deadline = time.monotonic() + max(0, timeout_ms) / 1000
+
+        def remaining_ms() -> int:
+            return max(0, int((deadline - time.monotonic()) * 1000))
+
+        all_stopped = True
+        all_stopped = self.drain_base_jobs(remaining_ms()) and all_stopped
+        all_stopped = self._preview_widget.drain(remaining_ms()) and all_stopped
+        export_job = self._export_job
+        if export_job is not None:
+            all_stopped = export_job.drain(remaining_ms()) and all_stopped
+
         worker = self._worker
-        if worker is None:
-            return True
-        if QThread.currentThread() is worker:
-            return False
+        if worker is not None:
+            if QThread.currentThread() is worker:
+                all_stopped = False
+            else:
+                if worker.isRunning() and remaining_ms() > 0:
+                    worker.wait(remaining_ms())
+                all_stopped = not worker.isRunning() and all_stopped
 
-        if worker.isRunning() and timeout_ms > 0:
-            worker.wait(max(0, int(timeout_ms)))
-        if worker.isRunning():
-            return False
+        # ResultViewWidget 的 drain 同样只等待其确认导出，不改按钮/引用。
+        return self._result_widget.drain(remaining_ms()) and all_stopped
 
-        self._on_worker_stopped(worker)
-        return self._worker is None
-
-    def shutdown(self, timeout_ms: int = 1000) -> bool:
-        """请求取消并在给定预算内排空线程，绝不丢失运行中引用。"""
+    def request_shutdown(self) -> None:
+        """GUI 阶段：冻结界面并只发协作取消，不等待任何线程。"""
+        if self._shutting_down:
+            return
         self._shutting_down = True
-        worker = self._worker
-        if worker is None:
-            self._run_state = self.STATE_SHUTDOWN
-            self._start_btn.setEnabled(False)
-            self._cancel_btn.setEnabled(False)
-            return True
-
-        self._run_state = self.STATE_CANCELLING
+        self.request_base_shutdown()
+        self._export_generation += 1
+        self._result_widget.set_closing(True)
+        self._preview_widget.request_shutdown()
+        self._export_widget.setEnabled(False)
         self._start_btn.setEnabled(False)
         self._cancel_btn.setEnabled(False)
-        worker.cancel()
+
+        export_job = self._export_job
+        if export_job is not None:
+            export_job.cancel()
+        worker = self._worker
+        if worker is not None:
+            self._run_state = self.STATE_CANCELLING
+            worker.cancel()
+        else:
+            self._run_state = self.STATE_SHUTDOWN
+
+    def is_drained(self) -> bool:
+        """Non-blocking probe for the application shutdown state machine."""
+        return self.drain(0)
+
+    def closeEvent(self, event) -> None:
+        """Standalone tabs use the same cooperative shutdown path as MainWindow."""
+        self.request_shutdown()
+        super().closeEvent(event)
+
+    def shutdown(self, timeout_ms: int = 1000) -> bool:
+        """兼容入口：GUI 请求阶段后，在同一预算内做纯等待。"""
+        self.request_shutdown()
         return self.drain(timeout_ms)
 
     def set_layout_manager(self, layout_manager) -> None:

@@ -298,6 +298,76 @@ class TestQrcodeDecodeBehavior:
 
 
 class TestQrcodeAsyncLifecycle:
+    def test_completed_native_events_are_released_during_long_session(
+        self, qrcode_tab, qtbot
+    ):
+        """正常完成也应主动清账，不能等应用关闭时才回收 Event。"""
+        for index in range(12):
+            qrcode_tab._text_input.setPlainText(f"payload-{index}")
+            qrcode_tab._debounce_timer.stop()
+            qrcode_tab._refresh_preview()
+            _wait_async(
+                qtbot,
+                lambda: qrcode_tab._preview_task is None
+                and not qrcode_tab._native_done_events,
+            )
+
+        assert qrcode_tab._native_done_events == set()
+
+    @pytest.mark.parametrize("native_kind", ["preview", "decode"])
+    def test_cancelled_task_remains_undrained_until_native_call_finishes(
+        self, qrcode_tab, qtbot, monkeypatch, native_kind
+    ):
+        import threading
+
+        from PySide6.QtGui import QPixmap
+
+        started = threading.Event()
+        release = threading.Event()
+
+        if native_kind == "preview":
+
+            def blocking_generate(_data, *, options=None):
+                started.set()
+                release.wait(timeout=2)
+                buf = io.BytesIO()
+                Image.new("RGB", (10, 10), "black").save(buf, format="PNG")
+                return buf.getvalue()
+
+            monkeypatch.setattr(
+                qrcode_tab._backend, "generate_qrcode_sync", blocking_generate
+            )
+            qrcode_tab._text_input.setPlainText("blocking")
+            qrcode_tab._debounce_timer.stop()
+            qrcode_tab._refresh_preview()
+            task_attr = "_preview_task"
+        else:
+
+            def blocking_decode(_payload):
+                started.set()
+                release.wait(timeout=2)
+                return []
+
+            monkeypatch.setattr(
+                qrcode_tab._backend, "decode_qrcode_sync", blocking_decode
+            )
+            pixmap = QPixmap(10, 10)
+            pixmap.fill()
+            qrcode_tab._on_image_input(pixmap)
+            qrcode_tab._on_decode()
+            task_attr = "_decode_task"
+
+        _wait_async(qtbot, started.is_set)
+        try:
+            qrcode_tab.set_closing(True)
+            _wait_async(qtbot, lambda: getattr(qrcode_tab, task_attr) is None)
+            assert qrcode_tab.drain(0) is False
+        finally:
+            release.set()
+
+        qtbot.waitUntil(qrcode_tab.is_drained, timeout=2000)
+        assert qrcode_tab.drain(0) is True
+
     def test_slow_decode_keeps_qt_timer_responsive(
         self, qrcode_tab, qtbot, monkeypatch
     ):

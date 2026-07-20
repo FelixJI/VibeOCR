@@ -88,10 +88,13 @@ class ShutdownCoordinator:
 
             done = threading.Event()
             exception: list[BaseException] = []
+            outcome: list[object] = []
 
-            def run(fn=step.fn, errors=exception, signal=done) -> None:
+            def run(
+                fn=step.fn, errors=exception, result=outcome, signal=done
+            ) -> None:
                 try:
-                    fn()
+                    result.append(fn())
                 except BaseException as exc:
                     errors.append(exc)
                 finally:
@@ -142,6 +145,27 @@ class ShutdownCoordinator:
                     },
                 )
                 all_ok = False
+                if not step.continue_on_timeout:
+                    break
+                continue
+
+            if outcome and outcome[0] is False:
+                self.results.append(
+                    ShutdownStepResult(
+                        step.name, "failed", elapsed_ms, allowance_ms
+                    )
+                )
+                logger.warning(
+                    "shutdown step reported incomplete drain",
+                    extra={
+                        "event": "shutdown.step",
+                        "step": step.name,
+                        "elapsed_ms": elapsed_ms,
+                    },
+                )
+                all_ok = False
+                if not step.continue_on_timeout:
+                    break
                 continue
 
             self.results.append(

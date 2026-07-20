@@ -36,6 +36,19 @@ jobs:
         with: { python-version: "3.13" }
       - run: pip install --require-hashes -r requirements/build-shell.lock
       - run: python -m pytest tests/architecture tests/worker_host tests/application tests/services tests/test_dependency_bootstrap.py -q
+      - name: Run remaining Python unit tests
+        shell: pwsh
+        run: |
+          # Keep C#/WinUI-only checks out of the Python gate. Root-level Python
+          # tests are discovered explicitly because pytest path arguments do
+          # not expand globs consistently on Windows.
+          $excludedRootTests = @('test_soak_winui.py', 'test_upgrade_deps.py')
+          $rootTests = @(
+            Get-ChildItem -LiteralPath tests -Filter 'test_*.py' |
+              Where-Object { $_.Name -notin $excludedRootTests } |
+              ForEach-Object { $_.FullName }
+          )
+          python -m pytest tests/core tests/managers tests/migration tests/models tests/release_layout/test_pyside_frozen_startup.py tests/release_layout/test_pyside_stdio.py tests/ui tests/utils tests/workers @rootTests -q
       - run: pip install build==1.3.0 hatchling==1.27.0
       - run: python -m build --wheel packages/vibeocr-contracts-py --outdir dist/wheels
       - run: python -m build --wheel packages/vibeocr-client-py --outdir dist/wheels

@@ -257,6 +257,10 @@ class TestGetOrCreatePipeline:
                 "vibeocr.core.pipelines.get_registry",
                 return_value=mock_registry,
             ),
+            patch(
+                "vibeocr.utils.cpu_info.can_safely_enable_onednn",
+                return_value=(False, "mocked for registry locking test"),
+            ),
         ):
             # Call twice — second should return cached instance
             result1 = service.get_or_create_pipeline("OCR")

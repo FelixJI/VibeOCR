@@ -21,7 +21,7 @@ def test_force_backend_gpu_skips_detect_and_passes_force(qtbot, tmp_path):
         # GPU 分支会调一次 detect_gpu 取 cuda_version
         mock_em.detect_gpu.return_value = (True, "cu126")
 
-        with qtbot.waitSignal(worker.finished, timeout=5000):
+        with qtbot.waitSignal(worker.completed, timeout=5000):
             worker.start()
 
     mock_em.install_embedded_dependencies.assert_called_once()
@@ -43,7 +43,7 @@ def test_force_backend_cpu_skips_detect(qtbot, tmp_path):
         mock_em.install_embedded_dependencies.return_value = (True, "ok")
         mock_em.detect_gpu.side_effect = AssertionError("cpu 不应调用 detect_gpu")
 
-        with qtbot.waitSignal(worker.finished, timeout=5000):
+        with qtbot.waitSignal(worker.completed, timeout=5000):
             worker.start()
 
     kwargs = mock_em.install_embedded_dependencies.call_args.kwargs
@@ -64,7 +64,7 @@ def test_force_backend_none_keeps_auto_detect(qtbot, tmp_path):
         mock_em.detect_gpu.return_value = (True, "cu126")
         mock_em.install_embedded_dependencies.return_value = (True, "ok")
 
-        with qtbot.waitSignal(worker.finished, timeout=5000):
+        with qtbot.waitSignal(worker.completed, timeout=5000):
             worker.start()
 
     mock_em.detect_gpu.assert_called_once()
@@ -86,7 +86,7 @@ def test_missing_only_calls_install_missing_dependencies(qtbot, tmp_path):
         mock_em.detect_gpu.return_value = (False, None)
         mock_em.install_missing_dependencies.return_value = (True, "ok")
 
-        with qtbot.waitSignal(worker.finished, timeout=5000):
+        with qtbot.waitSignal(worker.completed, timeout=5000):
             worker.start()
 
     mock_em.install_missing_dependencies.assert_called_once()
@@ -107,7 +107,7 @@ def test_missing_only_false_calls_install_embedded_dependencies(qtbot, tmp_path)
         mock_em.detect_gpu.return_value = (False, None)
         mock_em.install_embedded_dependencies.return_value = (True, "ok")
 
-        with qtbot.waitSignal(worker.finished, timeout=5000):
+        with qtbot.waitSignal(worker.completed, timeout=5000):
             worker.start()
 
     mock_em.install_embedded_dependencies.assert_called_once()

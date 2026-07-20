@@ -64,7 +64,7 @@ def test_install_passes_cancel_event_and_on_proc(qtbot, tmp_path):
         # force_backend=None 走自动检测，detect_gpu 需返回可解包的元组
         mock_em.detect_gpu.return_value = (False, None)
 
-        with qtbot.waitSignal(worker.finished, timeout=5000):
+        with qtbot.waitSignal(worker.completed, timeout=5000):
             worker.start()
 
     kwargs = mock_em.install_embedded_dependencies.call_args.kwargs
@@ -79,7 +79,7 @@ def test_install_passes_cancel_event_and_on_proc(qtbot, tmp_path):
 def test_close_does_not_use_terminate(qtbot, tmp_path):
     """closeEvent 触发的取消不应调用危险的 QThread.terminate()
 
-    回归核心：旧 closeEvent 用 self._worker.terminate()，新实现用 request_cancel + wait。
+    回归核心：旧 closeEvent 用 self._worker.terminate()，新实现只 request_cancel 并立即返回。
     本测试验证 request_cancel 路径生效（terminate 不会被调用）。
     """
     worker = InstallWorker(tmp_path)
@@ -93,7 +93,7 @@ def test_close_does_not_use_terminate(qtbot, tmp_path):
         (tmp_path / "python.exe").touch()
         mock_em.install_embedded_dependencies.return_value = (True, "ok")
 
-        with qtbot.waitSignal(worker.finished, timeout=5000):
+        with qtbot.waitSignal(worker.completed, timeout=5000):
             worker.start()
 
     # worker 已结束，模拟关闭时的取消检查（worker.request_cancel 应安全）

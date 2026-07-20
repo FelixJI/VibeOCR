@@ -46,15 +46,10 @@ class TestCleanupUpdateArtifacts:
 
     def test_cleans_all_but_progress(self, tmp_path):
         """清理 tmp/zip/sha/staged/ready，保留 progress.json。"""
-        import pytest
-
         cache_dir = tmp_path / "data" / "cache" / "update"
         paths = _make_update_residue(cache_dir)
 
         from vibeocr import main as main_mod
-
-        if not hasattr(main_mod, "_cleanup_update_artifacts"):
-            pytest.skip("_cleanup_update_artifacts 尚未实现")
 
         # cache_dir = app_dir/data/cache/update → app_dir = cache_dir.parent.parent.parent
         app_dir = cache_dir.parent.parent.parent
@@ -69,28 +64,23 @@ class TestCleanupUpdateArtifacts:
 
     def test_idempotent(self, tmp_path):
         """多次调用无副作用。"""
-        import pytest
-
         cache_dir = tmp_path / "data" / "cache" / "update"
-        _make_update_residue(cache_dir)
+        paths = _make_update_residue(cache_dir)
         from vibeocr import main as main_mod
-
-        if not hasattr(main_mod, "_cleanup_update_artifacts"):
-            pytest.skip("_cleanup_update_artifacts 尚未实现")
 
         app_dir = cache_dir.parent.parent.parent
         main_mod._cleanup_update_artifacts(app_dir)
-        main_mod._cleanup_update_artifacts(app_dir)  # 第二次不应报错
-        assert True
+        main_mod._cleanup_update_artifacts(app_dir)
+
+        for name in ("tmp", "zip", "sha", "staged", "ready"):
+            assert not paths[name].exists()
+        assert paths["progress"].read_text() == '{"version": "9.9.9", "success": true}'
 
     def test_no_artifacts_no_error(self, tmp_path):
         """无残留时调用不报错。"""
-        import pytest
-
         from vibeocr import main as main_mod
 
-        if not hasattr(main_mod, "_cleanup_update_artifacts"):
-            pytest.skip("_cleanup_update_artifacts 尚未实现")
+        result = main_mod._cleanup_update_artifacts(tmp_path)
 
-        main_mod._cleanup_update_artifacts(tmp_path)  # 空目录
-        assert True
+        assert result is None
+        assert list(tmp_path.iterdir()) == []

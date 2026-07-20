@@ -1,773 +1,243 @@
-# 任务计划：修复 PDF 收尾压缩与核验 RTX 4060 吞吐
+# 任务计划：修复 CUDA/OCR 依赖检测问题
 
 ## 目标
 
-修复大 PDF 最终保存响应超过 WorkerHost 控制帧导致的假失败，量化并解决整文档压缩耗时，梳理 PDF OCR 的批处理、GPU 并行和流水线，并判断现场约 1.5 秒/页是否合理以及能否安全接近 0.5 秒/页。
-
-## 当前阶段
-
-全部完成
+- 修复 CUDA 版本检测失败。
+- 修复 OCR 依赖检测进行中拖动工具栏导致界面卡死/闪退。
+- 为两个精确症状建立可自动运行的回归信号，并运行项目相关验证。
 
 ## 阶段
 
-### Phase 1：证据与契约
-- [x] 精确定位压缩各子阶段耗时和 15.5 MiB 响应来源
-- [x] 审计 OCR 批大小、GPU 调用、渲染预取与写层并行度
-- [x] 梳理最小响应、模型同步、断点 sidecar 和回归测试契约
-- **Status:** completed
+### Phase 1：建立失败回路
 
-### Phase 2：实现
-- [x] 将 OCR finalize 改为最小响应，避免 8 MiB 控制帧溢出
-- [x] 移除/替代 OCR 后全文档 get_model 大响应
-- [x] 为压缩备份、save、替换、重开增加分阶段计时并采用安全的大文档快路径
-- [x] 修复 DPI/OCROptions 失效与批量预处理图无效传输
-- **Status:** completed
+**Status:** complete
 
-### Phase 3：验证
-- [x] 补充协议、PDF 保存、sidecar、主流程和性能契约测试
-- [x] 运行定向回归、Ruff、编译/契约/差异检查
-- [x] 汇总 RTX 4060 性能判断、可达目标和剩余硬件/模型限制
-- **Status:** completed
+### Phase 2：复现并最小化
 
-## 子代理路由
+**Status:** complete
 
-- 压缩审计：复杂跨进程保存链路，只读追踪耗时、响应和安全快路径。
-- OCR 吞吐审计：只读分析现场日志、批处理、GPU/CPU 阶段和并行上限。
-- 契约测试审计：只读列出最小响应/模型同步/sidecar 的回归面与兼容风险。
-- 主代理：复核三方证据、实施全部写入、执行基准与统一验证。
+### Phase 3：验证可证伪假设
 
----
+**Status:** complete
 
-# 任务计划：修复运行时阻塞、日志噪声、表格重复与预加载
+### Phase 4：回归测试与最小修复
 
-## 目标
+**Status:** complete
 
-修复依赖安装及重连导致的主窗口无响应，控制日志级别与噪声并评估 PDF 文字层性能，梳理并修复表格识别重复文本框/格式问题，验证并校正“立即预加载”的实际语义。
+### Phase 5：原始复现、相关测试和静态检查
 
-## 当前阶段
+**Status:** complete
 
-已完成
+### Phase 6：清理与根因记录
 
-## 阶段
+**Status:** complete
 
-### Phase 1：证据收集与链路审计
-- [x] 分析用户日志的体积、级别、热点与 PDF 各阶段耗时
-- [x] 定位依赖安装/运行时重连的 GUI 线程阻塞点
-- [x] 定位表格结构化结果到渲染/导出的重复链路
-- [x] 定位预加载触发、模型缓存和状态回读链路
-- **Status:** complete
+## 当前状态
 
-### Phase 2：设计与实现
-- [x] 后台化依赖安装完成后的运行时重连并保持 UI 状态正确
-- [x] 增加持久化日志级别设置，压低底层高频日志
-- [x] 修正表格与内部文本框去重及格式保真
-- [x] 让立即预加载具备真实、可观察且不重复的加载语义
-- [x] 依据日志量化 PDF 各阶段，确认写层合理、末尾压缩为独立风险
-- **Status:** complete
-
-## 当前实施决策
-
-- 安装主体已经在线程中；修复重点放在安装成功后 GUI 线程同步刷新依赖树、真正重启旧 WorkerHost、重复刷新与迟到检测竞态，并补充明确的“验证/连接运行时”阶段反馈。
-- 自动预加载在 WorkerHost ready 后调用现有后台 `SubprocessManager` 两阶段任务；手动预加载也统一到同一管理器，避免两套语义。预加载保留，因为对常用单一模型能显著降低首次识别延迟，但 UI 会说明 TTL/容量可能淘汰模型。
-- 默认日志级别改为 INFO，并在设置中提供 INFO/DEBUG/WARNING；主进程与后端进程统一读取级别，第三方 noisy logger 始终至少 WARNING。
-- 表格去重在模型输出适配层完成：几何落入单元格且与结构化文本相同的 OCR 被消费；冲突文本吸收到对应格或诊断信息，不再作为主结果独立文本框；表外文字保留。
-- 表格清洗只去展示/事件属性，保留安全数值 `rowspan/colspan`，并让逻辑网格/复制理解跨度。
-- PDF 平均写层 0.16s/页无需大改；本轮优先让末尾全量压缩可观测、可控且有明确失败语义，不破坏现有批量/共享字体路径。
-
-### Phase 3：验证与交付
-- [x] 运行定向测试、静态检查和差异审计
-- [x] 用日志统计/调用链证据验证改进
-- [x] 汇总根因、修改、剩余风险与使用说明
-- **Status:** complete
-
-## 子代理路由
-
-- 子代理 A：只读审计依赖安装/运行时重连与预加载链路，返回根因、文件行号和测试建议。
-- 子代理 B：只读分析日志与 PDF 文字层性能，返回统计证据、热点和低风险优化建议。
-- 子代理 C：只读审计表格识别到渲染/导出的链路，返回重复来源、格式问题和修复契约。
-- 主代理：复核证据、决定方案、实施所有写入并统一验证，避免多代理修改冲突。
+- 已完成
 
 ## 错误记录
 
 | 错误 | 尝试 | 处理 |
 |---|---:|---|
-| 搜索缓存释放实现时使用了已不存在的 `packages/vibeocr-backend/src/vibeocr/core` 路径 | 1 | 有效实现位于 `services/pipeline_cache_manager.py`；停止使用旧路径并基于现有缓存管理器扩展单管道释放 |
-| PowerShell 下把 `packages/*/pyproject.toml` 作为 ripgrep 文件参数时通配符未展开 | 1 | 根配置已成功定位；后续只读取明确路径，不重复使用该参数形式 |
-| 直接对物理拆包文件运行 Pyright 无法合并多个同名 `vibeocr` namespace 根，报告 27 个 missing import/既有诊断 | 1 | compileall 与 diff check 已通过；显式收窄本次 oneDNN 缓存返回值后复跑，以行号审计区分新增与工程解析噪音 |
-| 追加 Pyright 错误记录时补丁上下文已因返回值提前收窄而不匹配 | 1 | 代码改动已实际存在；改用当前计划尾部的精确上下文补记，不重复修改产品代码 |
-| 搜索缓存释放实现时使用了已不存在的 `packages/vibeocr-backend/src/vibeocr/core` 路径 | 1 | 有效实现位于 `services/pipeline_cache_manager.py`；停止使用旧路径并基于现有缓存管理器扩展单管道释放 |
-| PowerShell 下把 `packages/*/pyproject.toml` 作为 ripgrep 文件参数时通配符未展开 | 1 | 根配置已成功定位；后续用 PowerShell `Get-ChildItem` 或只读取根 `pyproject.toml`，不重复使用该参数形式 |
-| 当前 GPU 开发环境直接导入 PaddleOCR 时触发 cuDNN DLL `WinError 127` | 2 | 认定为与 oneDNN 无关的 CUDA 运行库冲突；使用隔离 CPU 环境验证，避免污染结论 |
-| 直接导入 PaddleOCR 因 Torch/cuDNN DLL 搜索顺序触发 `WinError 127` | 1 | 后续所有实验先执行 `OCRService._setup_cuda_dll_path()`；不把该 CUDA 问题计入 oneDNN 结论 |
-| 当前 PowerShell 未注册全局 `python`，首次 session-catchup 失败 | 1 | 改用 Codex 工作区依赖提供的 Python，恢复脚本成功 |
-| 并行读取命令中 `rg` 无匹配返回 1，导致聚合工具隐藏同组部分输出 | 1 | 后续拆开无匹配检索，避免把 `rg` 返回 1 当作整体失败 |
-| 大范围 `rg` 经 `Select-Object -First` 截断后返回 1，导致同组日志统计输出被折叠 | 1 | 将日志统计和代码检索拆开，检索改按子系统限定路径 |
+| `python` 命令不在 PATH，无法运行 session-catchup | 1 | 已加载 Codex 工作区依赖，后续改用捆绑 Python 绝对路径 |
+| `Get-Command uv, nvidia-smi, py` 因 `uv` 不存在退出 1 | 1 | 已获得 `nvidia-smi`/`py` 信息，不再依赖 `uv` |
+| `py -0p` 报告无系统 Python | 1 | 继续使用 Codex 捆绑 Python 绝对路径 |
+| Codex 捆绑 Python 运行 pytest 时报 `No module named pytest` | 1 | 已找到仓库 `.venv\Scripts\python.exe`，后续测试改用该解释器 |
+| pytest `tmp_path` 访问 `%LOCALAPPDATA%\Temp\pytest-of-felji` 被沙箱拒绝 | 1 | 拟用唯一 `--basetemp` 指向可写 `C:\tmp` |
+| 设置 `TEMP`/`TMP` 后 pytest 仍用旧临时根目录 | 2 | 不再重复，改用 pytest `--basetemp` 参数 |
+| `--basetemp=C:\tmp\...` 仍被拒绝 | 3 | 改用工作区内唯一 basetemp 后成功；后续固定该方式 |
+| 首次合并补丁因 `env_manager.py` CUDA 上下文匹配失败未应用 | 1 | 改为按文件拆分小补丁，先重新定位精确片段 |
+| 新增 DependencyManager 线程亲和性用例单跑通过、整组定向测试中超时 | 1 | 重跑 manager 文件确认是否可复现；若仅测试污染，收紧或移除该排除性用例 |
+| 清理/补测的第二个合并补丁因注释空格不同校验失败 | 2 | 已确认无部分应用；后续每个文件单独补丁，使用新定位的精确上下文 |
+| Ruff 定向检查报 TC003/I001/RUF100 | 1 | 将类型导入移入 `TYPE_CHECKING`，整理回归测试导入并移除多余 noqa |
+| Ruff format 检查报 6 个既有文件需全文格式化 | 1 | 不扩大用户差异；仅格式化新增测试，lint 已全通过 |
+| `detected_has_gpu` Args 说明因泛化上下文误插到其他函数 | 1 | 使用函数特有文档段上下文删除并精确加入目标函数 |
+| 117 项 UI 扩大套件在 55% 处无失败摘要退出 1 | 1 | 不原样重跑；按最后组件拆分运行，判定是哪个文件/线程污染 |
+| 并行拆分 UI 文件时 `test_settings_reinstall.py` 第 11/14 项后无摘要退出 | 2 | 不再并行 GUI 进程；先 collect-only 定位后 3 项，再串行单用例/前缀组合 |
+| 清理时 `rg "[DEBUG-"` 零匹配退出 1 | 1 | 这是 rg 的正常“无匹配”语义，确认无临时调试标记 |
+| manager 测试文件因临时补丁留下 mixed EOL | 1 | `ruff format --diff` 确认仅换行符变化，用 formatter 恢复一致 EOL |
+| check-complete 首次未识别中文编号阶段，报 0/0 | 1 | 将已完成阶段改为脚本可识别的 `Phase N`格式后重跑 |
+| check-complete 改为 `Phase N` 后仍报 0/0 | 2 | 不再猜测格式；读取脚本的实际匹配规则后做最后一次调整 |
+| 脚本要求三级阶段标题和状态行，而非 checkbox | 3 | 已按脚本源码的精确格式重写六个阶段 |
 
----
+## 2026-07-20 UI 主线程阻塞审计
 
-# 任务计划：优化 PDF 文字层与批量识别流程
+**Goal:** 找出仍可由 GUI 主线程触发的同步耗时操作，区分已异步、应异步与无需异步的路径，并形成带源码证据和优先级的改造清单。本轮仅审计，不改业务代码。
 
-## 目标
+### Phase 7: 子代理路由与审计边界
+**Status:** complete
 
-梳理 PDF 批量识别、工作进程通信和文字层写入的完整链路；修复 stderr 的 GBK/UTF-8 解码崩溃及其导致的后端状态异常；在测试约束下实施可验证的吞吐性能优化，并记录后续可量化的优化方向。
+- 将主窗口/设置、业务页/控件、底层阻塞原语与反向调用链拆为三个只读工作包。
+- 子代理不得修改文件、运行 GUI 或产生外部副作用，也不得继续派生子代理。
 
-## 当前阶段
+### Phase 8: 并行扫描与证据采集
+**Status:** complete
 
-已完成
+- 每项候选必须给出准确文件与行号、UI 触发点、同步调用链、可能耗时和现有异步边界。
+- 重点排查同步子进程、网络、磁盘、模型/OCR/PDF/图像重计算，以及在主线程中的 wait/sleep。
 
-## 阶段
+### Phase 9: 主代理交叉验证与去重
+**Status:** complete
 
-### Phase 1：代码与调用链审计
+- 逐项复核高风险路径，排除只在 worker 中运行、轻量配置访问和有意的模态交互。
+- 评估触发频率、最长阻塞时间、崩溃/死锁风险和生命周期约束。
 
-- [x] 定位批量 PDF 识别、任务调度、进程通信和文字层写入实现
-- [x] 定位现有测试、性能参数和潜在串行瓶颈
-- [x] 复现/解释 stderr 解码崩溃与 `invalid state` 的因果链
-- **Status:** complete
+### Phase 10: 排序与交付
+**Status:** complete
 
-### Phase 2：设计与实现
+- 输出 P0/P1/P2 改造清单、推荐异步边界、建议测试，以及无需改写项。
+- 明确残余不确定性，不对业务代码做变更。
 
-- [x] 修复跨平台子进程文本解码和读取线程稳定性
-- [x] 新增 WorkerHost 真批量 OCR RPC，恢复 Paddle 批推理
-- [x] 消除每批增量保存的整文件备份，并增加 OCR 快速收尾路径
-- [x] 评估并实现安全的跨批渲染预取
-- [x] 补充针对并发、批量和异常输出的回归测试
-- **Status:** complete
-
-### Phase 3：验证与总结
-
-- [x] 运行相关单元/集成测试和静态检查
-- [x] 对比关键路径、吞吐或调用次数
-- [x] 审核最终差异并形成流程与后续建议
-- **Status:** complete
-
-## 决策记录
-
-- 优先修复 stderr drain 线程解码异常；该线程崩溃会丢失真实后端诊断信息，并可能放大进程终止时的状态机问题。
-- 性能改造以现有架构和测试证据为依据，不预设必须替换 IPC。
-- 保留 named pipe + 共享内存，新增批量 RPC；控制通道只传描述符和 JSON 结果。
-- 普通“保存”仍保留全文档文字层重写；只有 OCR 编排末尾使用“无需重写”的快速 finalize。
-- incremental save 利用 PDF 增量保存只追加的性质，用失败时截断到原长度代替每批完整 `.bak`。
-
-## 错误记录
+## 本轮错误记录
 
 | 错误 | 尝试 | 处理 |
 |---|---:|---|
-| 把 `vibeocr --help` 当成无副作用 CLI，实际启动 GUI 并等待事件循环 | 1 | 终止该进程；复用已安装环境，以直接模块导入和物理模块遍历完成单包验证 |
-| 新增运行态路径测试保留未使用的 `Path` 导入，定向 Ruff 失败 | 1 | 删除未使用导入；测试本身 10 项已全部通过 |
-| 系统找不到全局 `python` 命令，首次 session-catchup 失败 | 1 | 改用项目 `.vibeocr/uv-python/.../python.exe` 后成功运行 |
-| `.venv` 定向 pytest 在收集合约测试时无法加载 `rpds` DLL（WinError 5），且环境缺少 pytest-asyncio | 1 | 记录为测试环境问题；后续改用项目 uv/隔离依赖组运行，不重复相同命令 |
-| 用 `rg --files` 在隐藏运行时目录查找 `uv.exe` 无结果 | 1 | 改用 PowerShell 定向枚举 |
-| PowerShell `Get-ChildItem -Filter` 误传多个模式导致参数错误 | 1 | 后续分开查询，不重复数组 Filter 写法 |
-| 沙箱内无法加载 `rpds` 原生 DLL | 2 | 按权限规则在沙箱外重跑同一定向测试，170 项全部通过 |
-| 新增流水线测试 monkeypatch 了兼容重导出模块，找不到 `mirror_to_doc` | 1 | 改为 patch 实现类函数实际所属的 `vibeocr.pyside.pdf_session_manager` |
-| Ruff 首轮发现 3 处 import 排序问题 | 1 | 对涉及文件运行 Ruff 自动排序后复检 |
-| Pyright 沙箱内无法读取 editable `.pth` | 1 | 按权限规则在沙箱外重跑 |
-| Pyright 发现 OCR finalize 新参数未穿过 `client.pdf` WorkerHost command 层 | 1 | 补齐实际运行时调用链及测试后复检；另有 1 个 composition 既有 asdict 类型错误一并收紧 |
-| 首次 `rg` 测试检索的 PowerShell/正则引号组合不完整 | 1 | 改用单引号完整正则后成功定位；不重复原命令 |
-| 第二次组合 `rg` 在 JSON/PowerShell 双层引号下再次形成不完整正则 | 2 | 停止组合复杂模式，后续只用简单单模式检索 |
-| 批量补丁假设 `method_validation.py` import 块次序与实际不符 | 1 | 读取精确文件头后拆分补丁，不重复原上下文 |
-| 无法运行 .NET Contracts 测试：未安装 `global.json` 要求的 .NET SDK 10.0.302 | 1 | 记录环境限制；已通过 Python 侧 JSON Schema、golden、C# `RpcMethods` 集合一致性测试 |
-| 直接运行 planning-with-files 完成检查被 PowerShell ExecutionPolicy 拒绝 | 1 | 按技能脚本说明改用 `powershell -ExecutionPolicy Bypass -File` |
-| 当前任务首次运行 session-catchup 时全局 `python` 不可用 | 1 | 改用仓库 `.vibeocr/uv-python/.../python.exe` 成功执行 |
+| 读取 `packages/vibeocr-client-py/src/vibeocr/utils/env_manager.py` 失败，路径假设错误 | 1 | 先用 `rg --files` 定位真实模块，再读取实现；不重复猜路径 |
+| 直接执行 `check-complete.ps1` 被系统 ExecutionPolicy 拒绝 | 1 | 使用独立 PowerShell 进程的 `-ExecutionPolicy Bypass -File` 只读运行该检查脚本 |
+| Gate 0 新架构测试首次 Ruff format check 报 1 文件需格式化 | 1 | 只格式化两个新测试文件，不触碰既有文件 |
+| 预读两阶段关闭实现时误写 `pyside/shutdown_coordinator.py` 路径 | 1 | 已用 `rg` 定位真实 `managers/shutdown_coordinator.py`，后续按真实模块审查 |
+| 复核 basetemp 清理时目录已由 pytest 自动移除，`Resolve-Path` 报不存在 | 1 | 确认无残留，无需执行删除；后续只清理实际存在的临时目录 |
 
----
+## 2026-07-20 异步改造实施路线图
 
-# 任务计划：修复 0.5.0 Classic 打包漏收 startup_metrics
+### Phase 11: 编制 P0/P1/P2 实施计划
+**Status:** complete
 
-## 目标
+**目标：** 将 UI 主线程阻塞审计转换为可按批次实施、可独立回滚、每批都有响应性回归门槛的工程计划。本阶段只制定计划，不修改业务代码。
 
-修复重打包后的 `VibeOCR.exe` 启动时报 `ModuleNotFoundError: vibeocr.startup_metrics`；补充能在 CI 打包阶段发现缺失模块的门禁，并重新发布可启动的 0.5.0 Classic 资产。
+#### Gate 0：统一回归护栏（实施前置，约 0.5–1 人日）
 
-## 阶段
+- 抽取 Qt 事件循环 heartbeat/工具栏拖动延迟测试 helper；阻塞假实现持续至少 250ms，GUI 事件延迟门槛设为 100–150ms。
+- 增加架构护栏：GUI slot 不得直接调用 `SyncBackendClient` 或同步 `PdfBackendClient`；仅允许在 QThread、QRunnable、`asyncio.to_thread` 的明确运行体中调用。
+- 定义后台任务共同契约：generation/revision、cancel、closing、finished/error、引用持有与 drain。
+- 完成标准：护栏能让至少一个现有同步候选稳定报红，且不改变产品行为。
 
-### Phase 1：定位打包根因
-- [x] 核对入口 import、物理 workspace 包归属与 PyInstaller 分析结果
-- [x] 复现/确认产物中缺失模块及现有门禁盲点
-- **Status:** complete
+#### Milestone P0：MinerU 首次模型准备（约 1–2 人日）
 
-## 错误记录
+- 将 `_ensure_mineru_models_blocking()` 整体迁入独立 preflight worker；网络源探测、Popen、输出读取和 wait 全部离开 GUI。
+- UI 只负责进入“模型准备中”、展示进度、允许取消；成功后按原请求参数启动 OCR，失败/取消时恢复按钮与进度状态。
+- 使用 task generation 防止用户切换 PDF、关闭页签或重新发起 OCR 后的迟到结果回写。
+- 完成标准：模拟模型准备阻塞 500ms 时，工具栏/窗口事件延迟不超过 150ms；取消、失败、关闭、成功续跑四条路径均有测试。
 
-| 错误 | 尝试 | 处理 |
-|---|---:|---|
-| 并行检查中 `rg startup_metrics dist` 无匹配返回 1，使同组目录列表输出被工具折叠 | 1 | 将目录/分析文件读取拆成独立命令；不重复组合无匹配检索 |
-| 并行打印 PyInstaller 命令的一侧非零退出，工具只保留入口常量输出 | 1 | 已确认 `MAIN_PY` 正确；下一步直接运行正式构建获取 Analysis，不重复该拼接探针 |
-| 读取 startup_metrics 后附带的复合 `rg` 未匹配，整组命令返回 1 | 1 | 已获得所需模块内容；后续只使用单一确定模式检索测试位置 |
-| 第一版逐项 hidden import 在真实 PyInstaller Analysis 中仍无法跨 contracts 根解析 namespace 分片 | 1 | 保留确定性模块清单，但增加合并后的单一 workspace staging 作为最高优先 pathex |
-| `uv build` 默认用户缓存 `AppData/Local/uv/cache` 初始化失败（os error 183） | 1 | 改用仓库既有可写 `.uv-cache`，不重复使用全局缓存 |
-| 第二次 Release 的真实 EXE smoke 仍超时，普通文件日志揭示 `main.py:663` 中文输出在 CI 的 cp1252 编码下失败 | 1 | 门禁进程显式设置 `PYTHONIOENCODING=utf-8` 与 `PYTHONUTF8=1`，匹配项目 UTF-8 输出约定 |
-| 第三次 Release 仍报告相同 cp1252 异常，说明 PyInstaller 冻结运行时未采纳父进程 Python 编码环境变量 | 1 | 在 `vibeocr.main` 最早入口直接 reconfigure 标准流为 UTF-8，并增加 release-layout 回归 |
+#### Milestone P1-A：统一 PDF 后台命令边界（约 3–5 人日）
 
-### Phase 2：修复与回归
-- [x] 修正 PyInstaller 的 workspace namespace 收集策略
-- [x] 增加 Classic 冻结产物启动/import smoke 门禁
-- [x] 运行定向测试与静态检查
-- **Status:** complete
+- 建立 PDF session command queue/worker，禁止 GUI 直接调用同步 PDF client。
+- 第一批迁移：preview + detect_text_layers、文字块编辑 + 重渲染、close session。
+- 第二批收口：将 `reset_cancel` 移入 mutate/OCR worker 第一阶段；deskew worker 返回 model/diff；打开与缩略图 worker 取消后不再 GUI wait。
+- 预览采用 generation；文字编辑采用 revision 串行化；结构修改保持 session 独占写顺序。
+- 完成标准：快速翻页、连续编辑、重复打开、切换 session、移除文件、关闭窗口时无主线程 wait、无旧结果覆盖、无丢失 worker 引用。
 
-### Phase 3：重新发布验收
-- [x] 提交推送并更新 v0.5.0 tag 触发打包
-- [x] 消除 PIPE 假超时并定位冻结入口 cp1252 编码问题
-- [x] 提交入口级 UTF-8 修复并重新触发
-- [x] 跟踪工作流并验证新 Classic 产物可启动
-- **Status:** complete
+#### Milestone P1-B：启动与设置环境探测（约 2–3 人日）
 
----
+- 抽取共享 `DependencyUpdateCheckTask`，同时服务启动自动检测与设置页主动检测；按钮提供“检测中”状态并防重复触发。
+- 将机器缓存/机器码/WMIC 校验移出 `MainWindow.__init__`，缓存结果异步回填；实现进程内 single-flight。
+- 设置页刷新缓存复用现有 `_run_cache_operation()`；GPU 选择只消费后台探测结果，不允许 `resolve_use_gpu()` 在 GUI 回退 shell-out。
+- 完成标准：portable 慢探测、开发态短路、关闭后迟到完成、并发点击、缓存损坏/缺失均有覆盖；首窗可先显示且持续响应。
 
-# 任务计划：重新打包 0.5.0 更新修复
+#### Milestone P1-C：统一导出与保存 worker（约 2–3 人日）
 
-## 目标
+- 新建可复用 Export/Save job，覆盖批量页当前/全部导出、结果页 DOCX/XLSX、QR SVG/PNG/JPEG 保存。
+- 工作线程只处理序列化结果、PIL/QImage detached 数据、IPC、编码和文件写入；禁止创建或操作 QWidget/QPixmap。
+- 批量导出提供逐项进度、取消、同名重命名摘要；关闭时纳入统一 drain。
+- 完成标准：大结果、批量 N 项、写盘失败、取消、关闭、同名冲突均有测试，GUI 延迟不超过 150ms。
 
-将 Classic 更新启动入口修复提交到远端，并触发包含该修复的 Windows Classic 打包流程；确认工作流成功且发布产物已更新。
+#### Milestone P1-D：设置页外部命令（约 1 人日）
 
-## 阶段
+- PowerShell 快捷方式创建放入 QRunnable；执行期间只禁用对应按钮，完成后主线程提示。
+- 复查所有设置按钮，确保无新的同步 subprocess/WorkerHost 回退路径。
+- 完成标准：PowerShell 假实现阻塞/超时/失败时 UI 可响应，任务结束后按钮与提示状态正确。
 
-### Phase 1：确认发布策略
-- [x] 核对 workflow_dispatch/tag 的代码引用、0.5.0 Release 与现有运行记录
-- [x] 选择不会误用旧 tag 代码且可安全更新产物的触发方式
-- **Status:** complete
+#### Milestone P2-A：截图和大图路径（约 2–3 人日）
 
-### Phase 2：提交并触发
-- [x] 最终复核并提交当前修复
-- [x] 推送修复并触发 Classic 打包
-- **Status:** complete
+- 截图每块屏幕只抓取一次并复用；Qt 要求的 `grabWindow`、scene snapshot、QPixmap 最终赋值保留在 GUI。
+- snapshot 后转 detached QImage/bytes，将多屏合成、PNG/JPEG 编码、临时文件和正式写盘迁入 worker。
+- 统一三条图片打开入口：后台读取/解码 QImage，主线程只 `QPixmap.fromImage` 并校验 generation。
+- 完成标准：4K/多屏、超大图片、快速重复打开、截图后立即关闭均无卡顿和迟到覆盖。
 
-### Phase 3：跟踪与验收
-- [x] 跟踪 GitHub Actions 到完成
-- [x] 核对 0.5.0 Release 产物、SHA256 与时间
-- **Status:** complete
+#### Milestone P2-B：结果渲染与批量列表（约 2–3 人日）
 
-## 风险记录
+- 将 content blocks 遍历、图片 base64、HTML 拼接移入纯数据 worker；主线程只调用 WebEngine `setHtml()`。
+- 批量文件去重改用 path set；大量新增切换为 model/view 或分帧批量插入，避免 O(N²)+逐行重绘。
+- resize 缩放增加防抖和缩略图缓存，避免高频重复全尺寸重采样。
+- 完成标准：复杂嵌图 OCR 结果、数千文件导入、连续 resize 均有耗时基准，事件延迟不超过 150ms。
 
-- 当前 `v0.5.0` tag 指向修复前提交；单纯 rerun 旧 workflow 或在该 tag 上 dispatch 都不会包含本地修复。
-- 采用仓库已有的同 tag 修复重推流程：先推 `main`，再把 `v0.5.0` 更新到新提交并 force-with-lease 推送；远端历史显示 0.5.0 已按此方式恢复过一次。
+#### Milestone P2-C：单实例、懒加载与退出体验（约 2–4 人日）
 
----
+- 单实例服务端用 `readyRead/bytesWritten` 信号状态机替代 `newConnection` 回调中的同步 wait；第二实例退出端可保留短等待。
+- 懒加载 Tab 先显示 skeleton；后台只做安全的模块/数据预热，QWidget 构造留在主线程并按事件循环切片。
+- 退出体验若要优化，采用两阶段关闭：首次 close ignore + 冻结 UI，后台 coordinator 完成后真正 quit；不得删除安装/PDF 的安全 drain。
+- 完成标准：异常单实例客户端、冷切换重型 Tab、后台任务未完成时退出均无冻结、重入或对象销毁竞态。
 
-# 任务计划：修复版本升级遗漏与 CHANGELOG 重复归档
+#### 发布批次与依赖关系
 
-## 目标
+1. Gate 0 → P0，单独发布并观察首次 MinerU 使用。
+2. P1-A 单独发布；它改动 PDF 状态机，禁止与其他 PDF 功能改动混批。
+3. P1-B、P1-C、P1-D 可在独立分支并行，合并顺序建议 B → D → C。
+4. P2-A、P2-B 可并行；P2-C 最后实施，退出状态机需基于前述 worker 生命周期稳定后再做。
+5. 每个批次必须通过定向测试、扩展 UI 套件、Ruff、`git diff --check`；出现响应性回归时不得进入下一批。
 
-让 `bump_version.py` 一次性更新 monorepo 中所有应用/内部包的版本声明和内部包精确依赖；即使当前版本 tag 缺失，也能从对应 release commit 正确截取新提交，避免 CHANGELOG 重复归档，并修正当前重复条目。
+#### 总体完成定义
 
-## 当前阶段
+- P0/P1/P2 所列 GUI 入口不再直接执行同步 subprocess、网络、WorkerHost RPC、大文件编码或有界 wait。
+- 所有后台任务都具备 cancel、generation/closing、防迟到回写和可验证 drain。
+- GUI 线程只保留 QWidget/QPixmap/clipboard/WebEngine 最终操作和短小本地状态更新。
+- 慢调用注入下交互延迟稳定不超过 150ms，且现有功能回归全绿。
 
-已完成
+## 2026-07-20 全量异步改造执行
 
-## 阶段
+### Phase 12: Gate 0 与第一波 P0/P1 实现
+**Status:** complete
 
-### Phase 1：定位根因
-
-- [x] 审计版本文件、依赖声明与替换入口
-- [x] 检查 0.4.29/0.4.30 的 tag、release commit 和 CHANGELOG 差异
-- **Status:** complete
-
-### Phase 2：实现修复
-
-- [x] 扩展版本目标发现与全量精确替换
-- [x] 让提交收集优先使用当前版本 release commit 作为边界
-- [x] 去除当前 0.4.30 中从 0.4.29 重复归档的内容
-- [x] 增加回归测试
-- **Status:** complete
-
-### Phase 3：验证
-
-- [x] 尝试运行 bump_version 定向 pytest，并对受限项目完成直接函数级替代验证
-- [x] 运行 Ruff、AST/锁文件一致性检查和 diff 审核
-- **Status:** complete
-
-## 决策记录
-
-- 不对仓库做无边界的版本字符串全局替换；只更新 workspace 的 `pyproject.toml` 与其包 `__init__.py`，避免改写 README 示例和历史 CHANGELOG。
-- CHANGELOG 边界优先取 `release: v{current_version}` commit；找不到时兼容回退到最近 tag。
-
-## 验证限制
-
-| 限制 | 处理 |
-|---|---|
-| pytest 在沙箱内无法创建用户临时目录；沙箱外授权又被环境额度策略拒绝 | 已收集 53 项，19 项通过、34 项在 setup 阶段因权限错误未运行；用真实 0.4.29 缺 tag 历史和版本文件发现函数完成直接验证 |
-| Pyright 无法读取 `.venv/Lib/site-packages/_editable_impl_vibeocr.pth`（EPERM） | 记录为环境限制；Ruff、AST 解析、直接导入执行和 `git diff --check` 均通过 |
-
----
-
-# 任务计划：PySide6 架构与运行治理审计
-
-## 目标
-
-以只读方式核查 PySide6 前端的模块边界、信号/槽与依赖注入接线、界面功能落地、异步/线程/进程和批处理模型、日志结构、依赖管理、模型缓存及超时治理；通过代码、配置和测试证据判断正确性，并输出按优先级排序的优化决策。本任务不修改产品代码。
-
-## 当前阶段
-
-已完成
-
-## 阶段
-
-### Phase 1：资产与入口盘点
-
-- [x] 识别 PySide6 应用入口、composition root、窗口/页面/服务/worker 边界
-- [x] 盘点配置、依赖声明、缓存目录、日志与超时常量
-- **Status:** complete
-
-### Phase 2：接线与功能正确性审计
-
-- [x] 逐项核对界面控件、action、信号/槽、状态更新和后端调用
-- [x] 对照测试与实现，标出完整、占位、失配和无覆盖功能
-- **Status:** complete
-
-### Phase 3：异步、批处理与生命周期审计
-
-- [x] 核查 UI 线程安全、任务取消、并发上限、背压、批次策略和资源释放
-- [x] 核查依赖装配、模型缓存命中/失效/容量管理和多进程复用效果
-- **Status:** complete
-
-### Phase 4：日志与超时治理审计
-
-- [x] 核查日志上下文、分层、轮转、敏感信息、UI 展示和异常链
-- [x] 汇总所有超时入口，评估默认值、覆盖层级、取消语义与集中配置
-- **Status:** complete
-
-### Phase 5：验证与决策
-
-- [x] 运行适度的静态检查和定向测试
-- [x] 形成问题清单、风险级别、证据位置与分阶段优化路线
-- **Status:** complete
-
-## 审计判定标准
-
-- 正确性：界面操作能到达预期用例，状态和异常能回到 UI，停止/关闭可回收资源。
-- 性能：UI 线程不做重 CPU/I/O；批处理减少固定开销且有内存/并发上限；缓存能观测到命中并有失效策略。
-- 可维护性：composition root 集中、依赖方向稳定、日志和超时由语义化策略治理而非散落魔数。
-
-## 错误记录
-
-| 错误 | 尝试 | 处理 |
-|---|---:|---|
-| 当前任务首次执行 session-catchup 时全局 `python` 不可用 | 1 | 使用 Codex 工作区依赖中提供的 Python 后成功执行 |
-| 二维码联合检索引用了不存在的 `src/vibeocr/client/qrcode.py`，导致该组命令返回 1 | 1 | 已确认 typed API 位于 `worker_host/backend_client.py`，后续改用现有路径并拆开读取 |
-
----
-
-# 任务计划：PySide6 三阶段治理实施
-
-## 实施错误记录
-
-| 日期 | 环节 | 现象 | 处理 |
-|---|---|---|---|
-| 2026-07-19 | Phase 1 子代理测试 | 沙箱内 pytest 收集时 `rpds` 原生 DLL 被拒绝访问 | 不绕过权限；由主线使用已授权的项目虚拟环境在沙箱外统一验证 |
-| 2026-07-19 | PySide 定向回归退出 | 39 项均通过、进程返回 0，但 pytest-qt 清理事件时报告 Windows `0x8001010d`，后台 GPU 检测线程仍在 `subprocess.communicate()` | 记入 Phase 3 退出治理，集中收拢环境检测线程；当前不把非失败退出误判为功能失败 |
-| 2026-07-19 | 协议一致性回归 | 350 项通过、1 项失败；C# 方法解析正则不允许域名含下划线，误报 5 个 `pipeline_cache.*` 方法缺失 | 将测试解析器域名从 `[a-z]+` 修正为 `[a-z_]+`，随后重跑 |
-| 2026-07-19 | WorkerHost 异步启动首轮回归 | 后台 task 的 ready 信号在测试 teardown 后迟到，manager 已清空 task，主窗口递归进入失败提示并触发 Windows 堆异常 | manager 忽略无活动 task 的迟到 started，MainWindow 忽略 closing 后 ready；主窗口单元 fixture 隔离真实 WorkerHost，专项真实线程测试覆盖响应性；重跑 56 passed |
-| 2026-07-19 | workspace wheel 离线 smoke | 首次沙箱内 uv cache 初始化失败；按规则在沙箱外重跑后，两个 wheel 均因当前 venv 未安装 hatchling、offline 无法建立隔离构建环境而未构建 | 不联网安装；记录为构建环境限制。manifest/包内容静态核查仍确认子包只有 marker，不能把依赖隔离判为已生效 |
-| 2026-07-19 | Phase 3 首轮扩展回归 | UI 新增代码直接 import `core` 破坏架构门禁；按类型桩将 `QImage.save` 格式改为 bytes 又触发真实运行时错误 | 增加 `pyside` 壳层转发，恢复 PySide 运行时要求的字符串格式并局部注明类型桩偏差；相关 72 项与最终 681 项均通过 |
-| 2026-07-19 | 静态检查 | 全仓 Pyright 仍包含生成 UI 与既有模块的存量类型错误；pytest-qt 在 Windows 退出时偶发打印 `0x8001010d`，但测试进程返回 0 | 以本次变更源码为门禁：0 errors/8 warnings；Ruff 与 diff check 全通过。MainWindow 单测隔离真实 GPU 子进程，保留专项取消测试；不把存量/非失败诊断包装成已清零 |
-
-## 目标
-
-将 2026-07-18 的只读审计结论落实为三个可验收阶段，修复生产接线、异步/批处理生命周期、日志与超时治理，并以真实 PySide6 → typed client → WorkerHost 路径测试证明功能有效。保留用户已有规划文件改动，不覆盖无关工作。
-
-## 当前阶段
-
-已完成
-
-## 阶段
-
-### Phase 1：正确性与生产接线止血
-
-- [x] typed client 使用统一端到端 deadline，消除外层 300/1800 秒被内层 30 秒截断
-- [x] 增加真实 pipeline cache status/set_ttl/release/preload RPC，并让生产 `BatchBackendAdapter` 可读回验证（设置页可见区在 Phase 3 落地）
-- [x] 修复批量 QThread cancel/error/finished 状态机、禁止重入并纳入 MainWindow 退出 drain
-- [x] 补充生产适配器、协议契约、真实 QThread 生命周期定向测试
-- **Status:** complete
-
-### Phase 2：交互与异步生命周期
-
-- [x] PDF 保存成功后再切换/继续 OCR，mutate 采用明确 busy gate/排队且不在 GUI 线程阻塞等待
-- [x] WorkerHost 启动、二维码生成/识别、单图大文件读取与编码移出 GUI 线程
-- [x] 统一取消语义为 running/cancelling/cancelled/completed/partial_failed，并清理迟到信号
-- [x] 补充 UI 响应性、continuation、取消与关闭回归测试
-- **Status:** complete
-
-### Phase 3：可观测性、性能与工程边界
-
-- [x] 主进程/WorkerHost 统一结构化日志上下文与级别转发，状态栏脱离日志关键词
-- [x] 统一 connect/queue/execution/stall/cancel/shutdown budget，并从单一总预算扣减
-- [x] 批大小同时受数量、总字节/像素与资源预算约束；缓存状态显示命中、常驻、TTL 与释放结果
-- [x] 验证依赖缓存/模型磁盘缓存语义、workspace 包边界与可安装/启动 smoke test（构建环境限制与 marker 包结论已记录）
-- [x] 运行完整相关测试、Ruff、Pyright、协议一致性与 diff 审核
-- **Status:** complete
-
-## 子代理路由
-
-- Phase 1 使用两个互斥写入工作包：A 负责 deadline + pipeline cache RPC/契约；B 负责批量 QThread 生命周期与测试。
-- 主代理负责规划文件、跨工作包复核、MainWindow 组合根接线、冲突处理和阶段验收。
-- 子代理不得继续生成下一层代理；所有结论必须由主代理用源码与测试复核。
-
-## 验收标准
-
-- 所有长任务只有一个真正生效的端到端 deadline，测试检查 envelope deadline 而非仅外层 wait。
-- 设置页 TTL/释放/状态必须命中当前 `BatchBackendAdapter(SyncBackendClient)` 生产路径并可读回。
-- 取消后不得释放仍运行的 QThread 引用、不得重新启用开始按钮、不得把取消显示为 100% 完成。
-- GUI 线程不得同步等待 WorkerHost 启动、模型推理或 5 秒 QThread wait。
-- 日志可按 request/task/session/pipeline/page/batch 关联，且 WorkerHost severity/traceback 不丢失。
-- 每阶段通过定向测试；最终通过相关全量测试、静态检查和完成审计。
-
-## 错误记录
-
-| 错误 | 尝试 | 处理 |
-|---|---:|---|
-| 定向 pytest 在沙箱内无法创建用户临时目录/pytest cache，批量出现 WinError 5 | 1 | 按权限规则在沙箱外重跑相同定向集，225 项全部通过 |
-| 尝试把 pytest basetemp 改到 `C:\tmp` 仍被当前命令沙箱拒绝创建目录 | 1 | 不再重复绕过；使用已批准的沙箱外 pytest 前缀完成验证 |
-| 本地 `.venv` 在沙箱内未加载 pytest-asyncio，单个 sync_client async 用例被误报失败 | 1 | 沙箱外完整环境已加载 pytest-asyncio；本次产品审计验证集排除环境误报，未将其计入产品缺陷 |
-| PDF 测试联合检索假设存在 `tests/pyside` 目录，导致命令返回 1 | 1 | 改为先用 `rg --files tests` 发现实际 PDF 测试路径，再按现有文件读取 |
-| 超时审计预设 `src/vibeocr/constants.py`/`config.py` 存在，联合命令因路径不存在返回 1 | 1 | 改为先按 `class Constants`/`Timeout` 全仓发现定义，再读取真实路径 |
-| 二维码联合检索引用了不存在的 `src/vibeocr/client/qrcode.py`，导致该组命令返回 1 | 1 | 已确认 typed API 位于 `worker_host/backend_client.py`，后续改用现有路径并拆开读取 |
-
----
-
-# 任务计划：四包物理拆分与联网重依赖安装
-
-## 目标
-
-把现有 workspace 的 marker 包落实为四个包含真实生产代码、可独立构建和安装的 wheel：`vibeocr-contracts`、`vibeocr-client`、`vibeocr-backend`、`vibeocr-pyside`；根 `vibeocr` 作为兼容 meta package 保留现有安装和导入体验。CI 允许联网构建，最终用户安装时允许联网下载 Paddle/Torch/MinerU 等重依赖，并验证不会破坏现有 WorkerHost、GPU/CPU 选择和应用启动链。
-
-## 当前阶段
-
-已完成
-
-## 阶段
-
-### Phase 1：包归属与构建拓扑
-
-- [x] 盘点根 `src/vibeocr` 的模块依赖、入口点、动态导入和资源文件
-- [x] 确定四个 wheel 的真实文件归属、依赖方向和兼容 namespace 策略
-- [x] 核查现有 workspace/build hook/CI/重依赖来源，形成不破坏用户联网安装的迁移方案
-- **Status:** completed
-
-### Phase 2：真实代码与元数据拆分
-
-- [x] 将生产模块/资源物理归入四个 workspace 包，并保留 `vibeocr.*` 兼容导入
-- [x] 更新四包与根 meta package 的 build-system、依赖、入口点和版本同步
-- [x] 更新源码/架构守卫，禁止 marker wheel 或跨层直接依赖回归
-- **Status:** completed
-
-### Phase 3：用户联网安装与 CI 构建链
-
-- [x] 确保 backend wheel 声明并正确解析 CPU/GPU/平台相关重依赖与自定义 index
-- [x] 更新 CI 构建顺序、wheelhouse/安装 smoke 和全新环境启动验证
-- [x] 验证根 meta package、PySide-only 开发安装、完整用户安装和 WorkerHost 启动
-- **Status:** completed
-
-### Phase 4：回归、文档与交付
-
-- [x] 运行可执行的协议/架构/PySide/WorkerHost 回归、Ruff 与 wheel 内容审核
-- [x] 更新安装/开发/发布文档，明确联网、GPU/CPU 与兼容周期
-- [x] 记录剩余平台限制并完成规划检查
-- **Status:** completed
-
-## 关键约束
-
-- 不通过复制同一份生产代码到多个 wheel 实现“拆包”；同一模块只有一个真实归属。
-- 四包继续组成 `vibeocr` namespace，现有 `vibeocr.*` 导入在兼容期保持可用。
-- `contracts → client → pyside` 不得反向依赖 backend；backend 可依赖 contracts，WorkerHost 不得导入 Qt。
-- 重依赖必须由用户机标准联网安装链正确解析；CI 成功不能依赖开发机已有 `.venv`。
-- 保留当前未提交的三阶段治理改动，不回滚或覆盖。
-
-## 错误记录
-
-| 错误 | 尝试 | 处理 |
-|---|---:|---|
-| `uv build` 默认用户缓存目录不可写 | 1 | 显式使用工作区 `.uv-cache`，五个 wheel 全部构建成功 |
-| 完整 pytest 收集被既有 venv 的 `pytest_asyncio`/`rpds` 文件 ACL 拒绝 | 2 | 不绕过权限；保留 CI 完整回归，沙箱内完成架构、重依赖关键链、版本发布等可执行测试 |
-| Pyright 读取既有 editable `.pth` 时被 ACL 拒绝 | 1 | 记录为环境限制；Ruff 与 `git diff --check` 均通过，CI 保留 Pyright |
-| 首个 Classic 绑定 smoke 误用旧 WinUI ZIP，校验器报告缺少 `VibeOCR.exe` | 1 | 改用最小 Classic 夹具，五 wheel 绑定、manifest 和哈希校验通过 |
-
----
-
-# 任务计划：拆包变更终审、提交与合并
-
-## 目标
-
-对当前“四包 + 根兼容包”及此前同一工作区内的 PySide6 治理改动进行提交前终审；修复确认的问题，完成足量测试和发布制品复核；把当前未提交工作转移到特性分支提交，合并回 `main`，并仅在成功合并后删除特性分支。
-
-## 当前阶段
-
-已完成
-
-## 阶段
-
-### Phase 1：变更与分支审计
-
-- [x] 核实当前分支、远端基线、工作区变更归属与未跟踪文件
-- [x] 审查真实物理拆包、namespace、依赖、CI/release 与用户安装链
-- [x] 识别并修复 P0/P1 问题
-- **Status:** completed
-
-### Phase 2：验证与提交
-
-- [x] 运行 wheel 构建/安装、架构、依赖、发布、静态检查与适用回归
-- [x] 检查 diff、版本、资源归属和 Git 变更完整性
-- [x] 在特性分支创建提交
-- **Status:** completed
-
-### Phase 3：合并与清理
-
-- [x] 切回 `main` 并以非快进合并特性分支
-- [x] 验证合并提交、工作区清洁和 main 指向
-- [x] 删除已合并的本地特性分支
-- **Status:** completed
-
-## 错误记录
-
-| 错误 | 尝试 | 处理 |
-|---|---:|---|
-| 把 `vibeocr --help` 当成无副作用 CLI，实际启动 GUI并等待事件循环 | 1 | 终止进程；改用直接模块导入和物理模块遍历 |
-| `C:\tmp` 与权限声明不一致，创建隔离 venv 被拒绝 | 1 | 改用任务明确可写的可视化工作区，保持仓库外隔离条件 |
-| 首次根 wheel smoke 的内部四包被 uv 同版本缓存替换 | 1 | 确认 wheel 本身含新代码；改为显式安装五个本地 wheel，CI/README 同步采用该方式 |
-| Pyright 即使指定干净解释器仍读取旧 `.venv` editable `.pth` 并被 ACL 拒绝 | 2 | 停止重试；Ruff、全模块导入、wheel smoke 和分组测试通过，CI 保留 Pyright |
-| UI 回归出现 WMIC/nvidia-smi 输出编码导致的 reader thread warning | 2 | 所有环境探测文本子进程增加 `errors="replace"`；复测 warning 消失 |
-
----
-
-# 任务计划：修复 GitHub 工作流并发布 0.5.0
-
-## 目标
-
-使用 GitHub CLI 定位当前失败的 GitHub Actions 工作流，按“四包 + 根兼容包”物理拆分后的真实架构修复 CI/release 链；同步项目版本到 0.5.0，完成本地构建、安装和关键回归验证后提交、推送、创建并验证 0.5.0 发布。
-
-## 当前阶段
-
-已完成
-
-## 阶段
-
-### Phase 1：远端失败诊断
-
-- [x] 核实本地分支、远端、标签和工作区状态
-- [x] 使用 GitHub CLI 读取失败工作流、失败步骤与日志
-- [x] 将失败原因映射到新物理拆包和发布架构
-- **Status:** completed
-
-### Phase 2：修复与版本升级
-
-- [x] 修复 CI/release、构建或测试问题
-- [x] 将所有发布版本源、内部依赖 pin 与锁文件升级到 0.5.0
-- [x] 更新必要的发行说明与架构文档
-- **Status:** completed
-
-### Phase 3：本地发布验证
-
-- [x] 运行静态检查、架构与关键回归
-- [x] 构建并校验五个 0.5.0 wheel
-- [x] 在隔离环境验证根兼容包、PySide-only 和 WorkerHost 安装/启动链
-- **Status:** completed
-
-### Phase 4：提交与远端发布
-
-- [x] 提交并推送修复到 GitHub
-- [x] 观察修复后的 GitHub Actions 通过
-- [x] 创建 0.5.0 标签/发行版并验证发布工作流和制品
-- **Status:** completed
-
-## 错误记录
-
-| 错误 | 尝试 | 处理 |
-|---|---:|---|
-| `py -3` 无可用全局 Python，planning session-catchup 未运行 | 1 | 后续改用仓库内可用解释器；先依据现有规划文件和 Git 状态人工恢复上下文 |
-| `.venv` 未安装 `build` 模块，首次五-wheel 构建命令不可用 | 1 | 改用仓库已有 `uv.exe` 与工作区 `.uv-cache`，五个 0.5.0 wheel 构建和所有权验证通过 |
-| 定向 pytest 默认使用用户临时目录与仓库 `.pytest_cache`，均被沙箱 ACL 拒绝 | 1 | 改用明确可写的可视化工作区作为 `TEMP/TMP/--basetemp`，并禁用 pytest cacheprovider |
-| 定向测试调用 `powershell.exe -File` 受本机 ExecutionPolicy 阻止，10 项均未进入校验逻辑 | 1 | 测试调用显式增加 `-ExecutionPolicy Bypass`，与 CI/项目脚本的非交互执行方式一致 |
-| 本地完整 release-gate 收集读取既有 `.venv` 的 `rpds` DLL 被 ACL 拒绝，且缺少 pytest-asyncio 插件 | 1 | 不重复绕过；本次修改相关 10 项已全部通过，原 GitHub 同提交 release-gate 除旧夹具外为 `464 passed`，推送后用干净 GitHub runner 复核全量 |
-| 隔离 venv 位于较深的可视化目录，pip 解压 PySide6 QML 调试对象时超过 Windows 路径长度 | 1 | 下载和依赖解析均成功；改用明确可写且更短的 `C:\tmp\v050` 重试，避免把操作系统长路径限制误判为包问题 |
-# 任务计划：修复升级到 0.5.0 后无法启动
-
-## 目标
-
-修复更新替换器在完成文件替换后只查找 `VibeOCR.Bootstrapper.exe`、导致 0.5.0 实际产物缺少该入口时更新失败的问题；补充回归测试并验证兼容旧版与 0.5.0 的启动布局。
-
-## 阶段
-
-### Phase 1：定位根因
-- [x] 核对替换器启动入口、更新包布局和打包配置
-- [x] 核对现有启动测试与 0.5.0 迁移要求
-- **Status:** complete
-
-### Phase 2：实现修复
-- [x] 设计兼容且不会启动错误程序的入口选择策略
-- [x] 修改替换器并补充回归测试
-- **Status:** complete
-
-### Phase 3：验证
-- [x] 运行定向测试和静态检查
-- [x] 审核最终差异与回滚/失败语义
-- **Status:** complete
-
-## 错误记录
-
-| 错误 | 尝试 | 处理 |
-|---|---:|---|
-| 当前 PowerShell 无全局 `python`，首次 session-catchup 失败 | 1 | 改用 Codex 工作区依赖中的 Python，已成功运行 |
-| Ruff 语义检查通过，但首次 `ruff format --check` 报两个修改文件需格式化 | 1 | 使用仓库 Ruff 执行机械格式化后重新验证 |
-| 沙箱内 GitHub CLI 无权读取用户配置 | 1 | 按权限规则使用已批准的 `gh` 前缀在沙箱外读取远端状态 |
-
----
-# 任务计划：修复本地 `.venv` 开发环境（2026-07-20）
-
-## 目标
-
-恢复项目本地 Python 虚拟环境的解释器、依赖和项目安装状态，使后续开发命令稳定、可复现；用户所说的 `envn` 按现有目录判断为 `.venv`。
-
-## 阶段
-
-### Phase 1：环境与依赖契约诊断
-- [x] 核对 Python 版本、uv/解释器来源、虚拟环境元数据与项目环境策略
-- [x] 检查 `.venv` 的解释器、pip/uv、已安装包和项目导入状态
-- **Status:** completed
-
-### Phase 2：最小修复
-- [x] 按锁文件恢复开发依赖和 workspace 安装状态
-- [x] 修复会造成后续漂移或命令不可用的环境配置
-- **Status:** completed
-
-### Phase 3：验证
-- [x] 验证解释器、依赖一致性、关键导入和开发工具
-- [x] 运行与环境相关的最小测试/静态检查
-- **Status:** completed
-
-### Phase 4：完整 OCR 后端恢复
-- [x] 按项目 README 使用 `auto/domestic` profile 安装当前机器的推理重依赖
-- [x] 验证后端依赖检测与基础导入
-- **Status:** completed
-
-## 错误记录
-
-| 错误 | 尝试 | 处理 |
-|---|---:|---|
-| 当前 PowerShell 找不到全局 `python`，planning session-catchup 未运行 | 1 | 使用项目/工作区内可用解释器继续，修复后再补跑 |
-| uv 默认用户缓存目录在当前受限环境初始化失败 | 1 | 显式使用仓库内 `.uv-cache` |
-| 多个 `.dist-info/METADATA` 被 ACL 拒绝读取，`uv pip check` 报 20 项不一致 | 1 | 放弃逐包覆盖修复，准备以可回退方式重建 `.venv` |
-| 离线重建缺少 `pytest-qt==4.5.0` 缓存 | 1 | 获得联网许可后按冻结锁文件下载并完成重建 |
-| 旧 `.venv` 根目录与 `Lib` 不能改名 | 3 | 重置 83,326 个文件 ACL；定位并停止 PyCharm 旧 Pyright language server；保留根目录改用 uv 原位强制重装 |
-| 首轮定向 pytest 的 `C:\tmp` 父目录创建被拒，8 项 fixture setup error | 1 | 改用仓库内 `.tmp` 重跑，同一 124 项全部通过 |
-| 后端安装器因 uv venv 缺少 pip 失败，并在错误输出阶段触发 GBK 编码异常 | 1 | 用 uv 安装 pip 26.1.2，并设置 UTF-8 环境后重跑成功 |
-| 后端安装器从 CUDA 镜像误装 `torch 2.13.0+cpu` | 1 | 用冻结锁文件的 `gpu-cu126` extra 纠正为 `torch 2.12.1+cu126` / `torchvision 0.27.1+cu126` |
-| 裸烟测未注册 DLL 路径时 Paddle 导入失败 | 1 | 按生产 `OCRService._setup_cuda_dll_path()` 顺序验证，Paddle/Torch GPU 运算均成功 |
-
----
-# 任务计划：修复 0.5.0 更新卡死、换源慢与下载后闪退（2026-07-20）
-
-## 目标
-
-修复 Classic 0.5.0 在检查更新、下载/换源及更新器交接阶段的无响应或异常退出；在当前主线补充可靠超时、非阻塞处理、快速换源和更新器握手契约，并完成定向回归。
-
-## 阶段
-
-### Phase 1：证据与根因
-- [x] 核对 Classic 检查/下载的网络超时、事件循环与多源顺序
-- [x] 核对下载完成后的 ZIP 校验、更新器启动、ready 文件与退出顺序
-- [x] 对照 v0.5.0 与当前主线，区分已修复项和仍存在项
-- **Status:** complete
-
-### Phase 2：实现
-- [x] 消除检查/下载/换源中的长时间无反馈或不合理串行等待
-- [x] 加固下载成功后的更新器接管，禁止把异常退出伪装成正常更新
-- [x] 补充状态反馈和兼容性回归契约
-- **Status:** complete
-
-### Phase 3：验证
-- [x] 运行更新服务、Qt 编排器和 updater 定向测试
-- [x] 运行 Ruff、Pyright（适用范围）与 git diff 检查
-- [x] 汇总根因、修复范围和 0.5.0 用户升级建议
-- **Status:** complete
-
-## 错误记录
-
-| 错误 | 尝试 | 处理 |
-|---|---:|---|
-| 初次按旧单体路径读取 `src/vibeocr/pyside/update_service.py` 失败 | 1 | 按物理拆包后的路径定位到 `apps/vibeocr-pyside/.../pyside/update.py` 与 `packages/vibeocr-client-py/.../services/update_service.py` |
-| 首轮 pytest 在系统 `%TEMP%/pytest-of-felji` 创建夹具目录被沙箱拒绝，124 项 setup error | 1 | 测试本身已有 33 项通过；后续改用可写的 `C:/tmp` basetemp 并禁用 pytest cache 重跑 |
-| `C:/tmp` 在当前命令沙箱中仍不可创建，第二轮 pytest 同样只有 setup error | 2 | 改用工作区内既有可写 `.tmp/update-tests`，随后 157 项全部通过 |
-| 直接对物理拆包文件运行 Pyright 时无法合并四个 `vibeocr` namespace 根，报告 7 个 missing import | 1 | 使用仅用于验证的临时 Pyright 配置显式列出四个 source root，避免把工程解析限制误判为代码错误 |
-| Pyright 即使配置四个 `extraPaths` 仍将同名 `vibeocr` 物理 namespace 根视为互斥，持续报告相同 missing import | 2-3 | 停止重复尝试；以 Ruff、compileall、157 项定向测试及仓库既有 namespace 架构事实验收，删除临时配置。`scripts/update_replacer.py` 本身无新增类型错误（仅既有 unused warning） |
-
----
-# 任务计划：审计 PaddlePaddle 3.3.1 CPU/oneDNN 兼容策略（2026-07-20）
-
-## 目标
-
-核实 PaddlePaddle 3.3.1 CPU 推理中 oneDNN 的实际兼容性，审计项目现有探测、禁用、回退和测试是否合理，并给出有证据的修改建议；本次仅审计，不修改产品代码。
-
-## 阶段
-
-### Phase 1：项目实现与契约
-- [x] 审计 oneDNN 判定、环境变量、PaddleOCR 参数与调用时序
-- [x] 审计现有单元/集成测试和历史兼容注释
-- **Status:** completed
-
-### Phase 2：本地运行验证
-- [x] 在 PaddlePaddle 3.3.1 CPU 设备上验证禁用/启用 oneDNN 的关键路径
-- [x] 区分 eager FLAGS 与 Paddle Inference/PaddleOCR 构造参数的实际语义
-- **Status:** completed
-
-### Phase 3：上游证据与结论
-- [x] 对照 Paddle/PaddleOCR 官方文档、源码或 issue
-- [x] 评估现有策略的正确部分、过度保守处和缺失保护
-- **Status:** completed
-
-## 错误记录
-
-| 错误 | 尝试 | 处理 |
-|---|---:|---|
-| 当前 GPU 开发环境直接导入 PaddleOCR 时触发 cuDNN DLL `WinError 127` | 2 | 认定为与 oneDNN 无关的 CUDA 运行库冲突；改用隔离 CPU 环境验证 |
-
-## 结论
-
-- PaddlePaddle CPU 3.3.1 与 oneDNN 并非全面不可用，但当前 PP-OCRv6 PIR 静态推理路径存在可稳定复现的上游回归；项目必须显式传 `enable_mkldnn=False`。
-- 现有 3.3.x 黑名单对当前版本合理；未知/无法导入 Paddle 时 fail-open、未经验证自动放行未来版本、AVX2 绝对化表述和过时环境变量说明需要修正。
-- 推荐加入只针对已知 oneDNN/PIR 异常的一次性禁用重建回退，以及真实 CPU 模型冒烟测试。
-
----
-# 任务计划：oneDNN 兼容性整改（2026-07-20）
-
-## 目标
-
-修复审计确认的 oneDNN 安全判定、运行时回退、文档和测试缺口；确保 PaddlePaddle 3.3.1 CPU 默认禁用 oneDNN，未来未知版本不会失效开放，GPU 路径保持不变。
-
-## 阶段
-
-### Phase 1：范围与契约
-- [x] 确认相关文件没有与既有未提交更新链改动重叠
-- [x] 冻结 fail-closed、已知异常单次回退、GPU 不受影响的契约
-- **Status:** completed
-
-### Phase 2：安全判定与文档
-- [x] 未知/不可解析 Paddle 版本改为保守禁用
-- [x] 未来版本改为已验证版本策略，修正 AVX2 与过时环境变量说明
-- **Status:** completed
-
-### Phase 3：运行时回退
-- [x] 只识别已知 PIR/oneDNN 异常并使当前进程永久禁用 oneDNN
-- [x] 安全释放并重建受影响管道，原请求只重试一次
-- **Status:** completed
-
-### Phase 4：验证
-- [x] 补齐判定、回退、非目标异常与 GPU 回归测试
-- [x] 增加默认跳过、升级时显式启用的真实 PP-OCR CPU/oneDNN 模型门禁
-- [x] 运行定向测试、Ruff、Pyright/compile 与 diff 检查
-- **Status:** completed
-
-## 错误记录
-
-| 错误 | 尝试 | 处理 |
-|---|---:|---|
-| 搜索缓存释放实现时使用了已不存在的 backend `core` 路径 | 1 | 改为读取 `services/pipeline_cache_manager.py` 并扩展现有缓存管理器 |
-| PowerShell 未展开传给 ripgrep 的 `packages/*/pyproject.toml` | 1 | 后续使用明确路径读取配置 |
-| 物理拆包的多个 `vibeocr` 源根使定向 Pyright 报 27 个 missing import/既有诊断 | 1 | 显式收窄本次返回类型后复跑为 26 项；减少的一项是本次 Optional bool，剩余均不位于新增回退逻辑 |
-| 记录 Pyright 结果的补丁上下文已变化 | 1 | 读取计划尾部后用唯一 Phase 4 上下文补记 |
-| 扩展回归把 Paddle OCR 测试与需导入 Torch 的表格依赖测试放进同一进程，触发已知 cuDNN DLL 版本冲突；后续两项因 PaddleX 半初始化连带失败 | 1 | 165 passed/7 skipped 已完成；改为将 `test_pipeline_table.py` 放到全新 pytest 进程单独运行，避免把 GPU DLL 导入顺序问题误判为 oneDNN 回归 |
-
-## 最终验收
-
-- 当前环境实际判定：Paddle 3.3.1 CPU oneDNN 禁用，原因指向上游 #77340。
-- 定向最终回归：`69 passed, 2 skipped`；隔离表格管道：`25 passed`；扩展混合套件除已知跨框架 cuDNN 导入冲突外其余 `165 passed, 7 skipped`。
-- Ruff、compileall、`git diff --check` 通过；Pyright 的本次 Optional 返回问题已消除，剩余为仓库物理 namespace 解析及既有诊断。
-- oneDNN 产品改动与工作区既有更新链改动不重叠。
-
----
+- 主代理：新增只写新测试文件的响应性/架构护栏，负责集成与冲突检查。
+- PDF 子代理：独占 `pdf_session_manager.py`、`pdf_tab.py` 及其新增/专属测试，完成 P0 + P1-A。
+- 启动设置子代理：独占 `main_window.py`、`settings_page_controller.py`、`machine_cache.py`、必要的 `env_manager.py` 及专属测试，完成 P1-B + P1-D。
+- 导出子代理：独占 `batch_recognition_tab.py`、`result_view_widget.py`、`qrcode_tab.py`、新增共享导出 worker 及专属测试，完成 P1-C。
+- 所有子代理必须保留现有 dirty worktree 修改，不得重置、提交、安装依赖或继续派生子代理。
+- 第一波实现已交付并完成首轮主审：PDF 定向 151 项、导出相关 108 项、启动/设置分组回归均通过；主审额外修正了导出控件关闭槽等待和 PDF 打开前同步 backend start。
+- Gate 0 从初始 34 个违规收敛到 12 个，剩余项全部属于 P2-A/B/C；启动/设置 single-flight 交叉入口竞态正在补最后一项回归，完成后关闭本阶段。
+
+### Phase 13: 第二波 P2 实现
+**Status:** complete
+
+- P2-A 已完成首轮实现：统一后台 QImage 解码、截图单次抓屏复用、后台多屏合成/编码/写盘，并覆盖 generation、关闭和事件循环响应性；等待独立审查。
+- P2-B 已完成结果 HTML worker、批量列表 path set/分帧插入和 resize 防抖；主审发现 Preview/QR 选择图片仍同步解码，已退回原实现者补齐并扩展架构门禁。
+- P2-C 单实例服务端信号状态机已完成并通过主代理专属回归；懒加载 skeleton/预热与主窗口两阶段退出正在最后实现。
+- 当前并行边界：导出代理只改 Preview/QR 图片解码，PDF 代理独占 `main_window.py`/`main.py`/关闭协调器/PDF 页关闭；独立审查代理只读检查已稳定的启动设置与 P2-A 非主窗口部分。
+
+### Phase 14: 集成与分层回归
+**Status:** complete
+
+- P0/P1/P2 定向组合回归均通过；最终全量串行回归为 3132 passed、7 skipped。
+- Gate 0 架构守卫 8 项通过，Ruff、compileall 与 `git diff --check` 全部通过。
+
+### Phase 15: P2-C Qt 亲和安全关闭返修
+**Status:** complete
+
+- 先新增线程亲和、超时保活、PDF drain 不创建线程及 preflight native-finished 写门红测。
+- 将 MainWindow 关闭改为 GUI QTimer 轮询状态机；GUI owner 仅在自身线程 request/poll。
+- GUI worker 全部结束后才启动非 Qt 后端清理，并保活至其自然结束后再 accept。
+- PDF request 阶段创建 session close worker；poll/drain 阶段只观察，不创建或改写 GUI-owned 状态。
+- 修复 MinerU preflight cancel 的业务终态，使 busy/ocr_done 与 native finished 对齐。
+- 错误记录：首次 GUI poll 红测的 fake batch shutdown 不接受关键字 `timeout_ms`；已改为 `**_kwargs`，让失败聚焦目标状态机。
+- 红测阶段完成：4 个最小用例分别覆盖 Qt 亲和 poll、预算超时保活、PDF request 命令边界、preflight native-finished 终态。
+
+- 每个工作包先跑专属测试，主代理再串行跑合并后的 UI/PDF/设置/导出套件。
+- 运行 Ruff、架构护栏、`git diff --check`，核对线程亲和性、取消、closing、generation 和 drain。
+
+### Phase 16: 独立代码审查
+**Status:** complete
+
+- 使用未参与对应实现的子代理做只读审查，按正确性、竞态、Qt 线程规则、资源泄漏、测试缺口给出证据。
+- 主代理逐项复核审查结论并修正；审查未通过不得完成目标。
+- 首轮审查发现单图页独立使用退化、截图保存被后续 capture 取消、GPU 线程 close wait/析构竞态；单图页已由主代理恢复自有异步 loader 并通过 40 项回归，其余两项已退回原实现者。
+- PDF/单实例独立只读审查与 P2-C 完成后的主窗口/退出交叉审查仍在进行。
+
+### Phase 17: 最终清理与交付
+**Status:** complete
+
+- 删除临时测试目录/调试标记，确认没有覆盖用户既有修改。
+- 完整回归、最终差异审查、计划完整性检查后才将目标标记完成。
+- 第二次全量回归发现的唯一 MainWindow 游离 `singleShot` 关闭竞态已改为 GUI 事件内直接推进；80 项关闭分组及第三次全量回归均通过。
+- 终审继续发现并关闭连续大结果编辑、ResultView 活模型/旧 DOM、PDF cancel ownership 三个 P1，以及 50k 快照/复制、稀疏 overlay、未知类型稳定比较和跨线程 timer probe 等 P2。
+- 最终独立复审确认无 P0/P1/P2 交付阻塞；发布级全量回归 3156 passed、7 skipped，Ruff、compileall、Gate 0 和 `git diff --check` 全部通过。

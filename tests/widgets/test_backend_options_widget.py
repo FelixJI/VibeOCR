@@ -1,9 +1,11 @@
 """设置页"推理后端"组件测试"""
 
+import threading
+import time
 from unittest.mock import patch
 
 import pytest
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QObject, QThread, Signal
 
 
 class _StubGpuDetectWorker(QObject):
@@ -16,7 +18,7 @@ class _StubGpuDetectWorker(QObject):
     finished_info = Signal(dict)
     finished = Signal()
 
-    def __init__(self, parent=None):
+    def __init__(self, _project_root=None, parent=None):
         super().__init__(parent)
 
     def start(self):  # 真线程启动的空操作
@@ -37,7 +39,7 @@ class _RunningStubGpuDetectWorker(QObject):
     finished_info = Signal(dict)
     finished = Signal()
 
-    def __init__(self, parent=None):
+    def __init__(self, _project_root=None, parent=None):
         super().__init__(parent)
         self.quit_called = False
         self.wait_calls: list[int] = []
@@ -62,6 +64,41 @@ class _RunningStubGpuDetectWorker(QObject):
         return True
 
 
+class _SlowWaitStubGpuDetectWorker(_RunningStubGpuDetectWorker):
+    def wait(self, timeout_ms):
+        self.wait_calls.append(timeout_ms)
+        time.sleep(0.4)
+        self._running = False
+        return True
+
+
+class _SlowQThreadGpuDetectWorker(QThread):
+    finished_info = Signal(dict)
+
+    def __init__(self, _project_root=None, parent=None):
+        super().__init__(parent)
+        self.entered = threading.Event()
+        self.release = threading.Event()
+        self.cancel_called = False
+
+    def cancel(self):
+        self.cancel_called = True
+
+    def run(self):
+        self.entered.set()
+        self.release.wait(timeout=2)
+        # 故意模拟不协作的底层调用：即使取消后仍发迟到结果。
+        self.finished_info.emit(
+            {
+                "has_gpu": False,
+                "name": "late",
+                "vram_mb": 0,
+                "cuda": None,
+                "runtime_has_gpu": False,
+            }
+        )
+
+
 def _make_widget(
     tmp_path,
     has_gpu=True,
@@ -81,37 +118,37 @@ def _make_widget(
 
     # 直接替换模块级引用（widget 内 from ... import 拿到的就是模块属性）
     orig_em = bow.env_manager
-    orig_cache = bow.is_cache_valid
+    orig_load_cache = bow.load_cache
     orig_worker = bow._GpuDetectWorker
 
     mock_em = patch.object(bow, "env_manager").start()
-    mock_cache = patch.object(bow, "is_cache_valid").start()
+    mock_load_cache = patch.object(bow, "load_cache").start()
     mock_update = patch.object(bow, "update_cache_field").start()
 
     mock_em.detect_gpu.return_value = (has_gpu, "cu126") if has_gpu else (False, None)
-    detect_info = {
-        "has_gpu": has_gpu,
-        "name": "NVIDIA GeForce RTX 4090" if has_gpu else "",
-        "vram_mb": 24564 if has_gpu else 0,
-        "cuda": "cu126" if has_gpu else None,
-    }
-    mock_em.detect_gpu_info.return_value = detect_info
-    # resolve_use_gpu 决定"当前后端"展示值，须与实际推理（main_window 启动 worker）
-    # 一致。此处用 cached_hardware_gpu/pending 推导期望值，模拟 resolve_use_gpu 逻辑。
+    # 运行时 GPU 能力由后台 worker 计算；用缓存/待切换状态
+    # 推导期望值，并随 finished_info 一起回传主线程。
     if pending == "gpu":
         resolved_gpu = True
     elif pending == "cpu":
         resolved_gpu = False
     else:
         resolved_gpu = cached_hardware_gpu
+    detect_info = {
+        "has_gpu": has_gpu,
+        "name": "NVIDIA GeForce RTX 4090" if has_gpu else "",
+        "vram_mb": 24564 if has_gpu else 0,
+        "cuda": "cu126" if has_gpu else None,
+        "runtime_has_gpu": resolved_gpu,
+    }
+    mock_em.detect_gpu_info.return_value = detect_info
     mock_em.resolve_use_gpu.return_value = resolved_gpu
-    mock_cache.return_value = (
-        True,
-        {
-            "hardware_info": {"has_gpu": cached_hardware_gpu},
-            "pending_backend": pending,
-        },
-    )
+    mock_em.get_runtime_gpu_capability.return_value = resolved_gpu
+    mock_load_cache.return_value = {
+        "version": bow.CACHE_VERSION,
+        "hardware_info": {"has_gpu": cached_hardware_gpu},
+        "pending_backend": pending,
+    }
     mock_update.return_value = True
 
     # 用桩替换真 worker 类，构造时不会启动真线程
@@ -122,10 +159,12 @@ def _make_widget(
         # 显式触发回填（模拟后台探测完成回调在主线程执行）
         assert widget._detect_worker is not None
         widget._detect_worker.finished_info.emit(detect_info)
+        if not widget._detect_worker.isRunning():
+            widget._detect_worker.finished.emit()
     finally:
         # 恢复模块引用（构造已完成，状态已读入 widget 实例）
         patch.object(bow, "env_manager", orig_em).start()
-        patch.object(bow, "is_cache_valid", orig_cache).start()
+        patch.object(bow, "load_cache", orig_load_cache).start()
         bow._GpuDetectWorker = orig_worker
         # 注意：update_cache_field 保持 mock，因为 _apply 才调用
         bow.update_cache_field = mock_update
@@ -223,7 +262,30 @@ def test_current_backend_matches_resolve_use_gpu_not_live_detect(
 
 
 def test_close_stops_running_gpu_detection_worker(_cleanup, qtbot, tmp_path):
-    """Closing the widget should not leave GPU detection running."""
+    """Closing requests cancellation without waiting on the GUI thread."""
+    widget = _make_widget(
+        tmp_path,
+        has_gpu=True,
+        cached_hardware_gpu=True,
+        worker_cls=_SlowWaitStubGpuDetectWorker,
+    )
+    qtbot.addWidget(widget)
+    worker = widget._detect_worker
+    assert worker is not None
+    assert worker.isRunning()
+
+    started = time.perf_counter()
+    widget.close()
+    elapsed_ms = (time.perf_counter() - started) * 1000
+
+    assert isinstance(worker, _RunningStubGpuDetectWorker)
+    assert elapsed_ms < 150
+    assert worker.cancel_called
+    assert worker.quit_called
+    assert worker.wait_calls == []
+
+
+def test_close_drops_late_gpu_detection_result(_cleanup, qtbot, tmp_path):
     widget = _make_widget(
         tmp_path,
         has_gpu=True,
@@ -233,11 +295,99 @@ def test_close_stops_running_gpu_detection_worker(_cleanup, qtbot, tmp_path):
     qtbot.addWidget(widget)
     worker = widget._detect_worker
     assert worker is not None
-    assert worker.isRunning()
+    original_status = widget._status_label.text()
+    original_backend = widget.current_backend()
 
     widget.close()
+    worker.finished_info.emit(
+        {
+            "has_gpu": False,
+            "name": "",
+            "vram_mb": 0,
+            "cuda": None,
+            "runtime_has_gpu": False,
+        }
+    )
 
-    assert isinstance(worker, _RunningStubGpuDetectWorker)
-    assert worker.cancel_called
-    assert worker.quit_called
-    assert worker.wait_calls
+    assert widget._status_label.text() == original_status
+    assert widget.current_backend() == original_backend
+
+
+def test_cancelled_gpu_worker_does_not_emit_result(
+    _cleanup, tmp_path, monkeypatch
+):
+    from vibeocr.widgets import backend_options_widget as bow
+
+    def detect(cancel_event):
+        cancel_event.set()
+        return {"has_gpu": True, "name": "late", "vram_mb": 1, "cuda": "x"}
+
+    monkeypatch.setattr(bow.env_manager, "detect_gpu_info", detect)
+    monkeypatch.setattr(
+        bow.env_manager, "get_runtime_gpu_capability", lambda *_args, **_kwargs: True
+    )
+    worker = bow._GpuDetectWorker(tmp_path)
+    received: list[dict] = []
+    worker.finished_info.connect(received.append)
+
+    worker.run()
+
+    assert received == []
+
+
+def test_gpu_worker_is_kept_until_finished_then_released(
+    _cleanup, qtbot, tmp_path
+):
+    from vibeocr.widgets import backend_options_widget as bow
+
+    widget = _make_widget(
+        tmp_path,
+        has_gpu=True,
+        cached_hardware_gpu=True,
+        worker_cls=_RunningStubGpuDetectWorker,
+    )
+    qtbot.addWidget(widget)
+    worker = widget._detect_worker
+    assert worker is not None
+    assert worker in bow._ACTIVE_GPU_DETECT_WORKERS
+
+    widget.close()
+    assert worker in bow._ACTIVE_GPU_DETECT_WORKERS
+    worker._running = False
+    worker.finished.emit()
+
+    qtbot.waitUntil(
+        lambda: worker not in bow._ACTIVE_GPU_DETECT_WORKERS, timeout=1000
+    )
+    assert widget._detect_worker is None
+
+
+def test_running_qthread_outlives_widget_and_releases_after_finished(
+    _cleanup, qtbot, tmp_path
+):
+    from vibeocr.widgets import backend_options_widget as bow
+
+    widget = _make_widget(
+        tmp_path,
+        has_gpu=True,
+        cached_hardware_gpu=True,
+        worker_cls=_SlowQThreadGpuDetectWorker,
+    )
+    worker = widget._detect_worker
+    assert isinstance(worker, _SlowQThreadGpuDetectWorker)
+    assert worker.entered.wait(timeout=1)
+    assert worker.parent() is None
+    assert worker in bow._ACTIVE_GPU_DETECT_WORKERS
+
+    started = time.perf_counter()
+    widget.close()
+    elapsed_ms = (time.perf_counter() - started) * 1000
+    widget.deleteLater()
+    qtbot.wait(10)
+    assert elapsed_ms < 150
+    assert worker.isRunning()
+
+    worker.release.set()
+    qtbot.waitUntil(
+        lambda: worker not in bow._ACTIVE_GPU_DETECT_WORKERS, timeout=1000
+    )

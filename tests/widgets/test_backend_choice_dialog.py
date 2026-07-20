@@ -81,6 +81,7 @@ def test_reinstall_python_passed_to_worker(_cleanup, qtbot, tmp_path):
             captured["reinstall_python"] = reinstall_python
 
         progress = MagicMock()
+        completed = MagicMock()
         finished = MagicMock()
 
         def start(self):
@@ -127,6 +128,7 @@ def test_missing_only_passed_to_install_worker(_cleanup, qtbot, tmp_path):
             captured["missing_only"] = missing_only
 
         progress = MagicMock()
+        completed = MagicMock()
         finished = MagicMock()
 
         def start(self):

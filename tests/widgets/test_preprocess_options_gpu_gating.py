@@ -41,6 +41,15 @@ GPU_PIPELINES = {OCRPipeline.DOCUMENT_PARSING, OCRPipeline.PADDLEOCR_VL}
 
 
 class TestGpuGating:
+    def test_capability_is_tristate_until_gating_result_arrives(self, widget):
+        assert widget.gpu_capability is None
+
+        widget.apply_gpu_gating(False)
+        assert widget.gpu_capability is False
+
+        widget.apply_gpu_gating(True)
+        assert widget.gpu_capability is True
+
     def test_no_gpu_disables_document_and_vl(self, widget):
         """无 GPU 时文档解析与 VL 禁用，其余启用。"""
         widget.apply_gpu_gating(False)
@@ -101,6 +110,7 @@ class TestGpuGating:
         monkeypatch.setattr(em, "_runtime_gpu_capability_cache", False)
         w = PreprocessOptionsWidget()
         qtbot.addWidget(w)
+        assert w.gpu_capability is False
         em_map = _enabled_map(w)
         for p in GPU_PIPELINES:
             assert em_map[p] is False

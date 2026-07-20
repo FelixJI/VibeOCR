@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 )
 
 from vibeocr import env_manager
+from vibeocr.utils.dialog_workers import track_dialog_worker
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -30,7 +31,7 @@ class SwitchWorker(QThread):
     """后端切换工作线程（协作式取消，复用 InstallWorker 范式）"""
 
     progress = Signal(str, str)  # (stage, message)
-    finished = Signal(bool, str)  # (success, message)
+    completed = Signal(bool, str)  # (success, message)
 
     def __init__(self, project_root: Path, target: str) -> None:
         super().__init__()
@@ -89,10 +90,10 @@ class SwitchWorker(QThread):
                 cancel_event=self._cancel_event,
                 on_proc=self._on_proc,
             )
-            self.finished.emit(success, msg)
+            self.completed.emit(success, msg)
         except Exception as e:
             logger.error("后端切换异常: %s", e)
-            self.finished.emit(False, f"切换异常: {e}")
+            self.completed.emit(False, f"切换异常: {e}")
 
 
 class SwitchDialog(QDialog):
@@ -145,8 +146,9 @@ class SwitchDialog(QDialog):
     def _start(self) -> None:
         self._log("开始切换后端...")
         self._worker = SwitchWorker(self._project_root, self._target)
+        track_dialog_worker(self._worker)
         self._worker.progress.connect(self._on_progress)
-        self._worker.finished.connect(self._on_finished)
+        self._worker.completed.connect(self._on_finished)
         self._worker.start()
 
     @Slot(str, str)
@@ -178,12 +180,12 @@ class SwitchDialog(QDialog):
         scrollbar.setValue(scrollbar.maximum())
 
     def closeEvent(self, event) -> None:
-        """关闭事件：协作式取消 worker + 有界等待。
-
-        使用 request_cancel（set event + kill pip）替代危险的 QThread.terminate()，
-        并用有界 wait(5000) 替代无限 wait()，避免冻结关闭。
-        """
+        """Request cancellation and return immediately; registry owns the worker."""
         if self._worker and self._worker.isRunning():
             self._worker.request_cancel()
-            self._worker.wait(5000)  # 有界等待，不再无限 wait
         event.accept()
+
+    def request_shutdown(self) -> None:
+        if self._worker and self._worker.isRunning():
+            self._worker.request_cancel()
+        self.close()

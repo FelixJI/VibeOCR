@@ -3,11 +3,13 @@
 import asyncio
 import io
 import logging
+import threading
+import time
 from pathlib import Path
 from typing import Any, cast
 
 from PIL import Image
-from PySide6.QtCore import Qt, QTimer, QUrl, Signal
+from PySide6.QtCore import Qt, QTimer, QUrl, Signal, Slot
 from PySide6.QtGui import (
     QColor,
     QDesktopServices,
@@ -37,9 +39,46 @@ from PySide6.QtWidgets import (
 )
 
 from vibeocr.ui import theme
+from vibeocr.utils.export_jobs import (
+    ExportSaveJob,
+    save_bitmap_operation,
+    save_svg_operation,
+)
+from vibeocr.utils.image_jobs import GenerationImageJobs, decode_image_file
 from vibeocr.worker_host.sync_client import SyncBackendError
 
 logger = logging.getLogger(__name__)
+
+
+# Cancelling the asyncio waiter does not stop work already submitted by
+# asyncio.to_thread(). Keep the owning tab alive and expose the real native
+# completion boundary to the shutdown coordinator.
+_QR_NATIVE_CALLS_LOCK = threading.Lock()
+_ACTIVE_QR_NATIVE_CALLS: dict[threading.Event, object] = {}
+
+
+def _run_tracked_native_call(
+    owner: object,
+    done_event: threading.Event,
+    schedule_on_gui: Any,
+    cleanup_on_gui: Any,
+    operation: Any,
+    *args: Any,
+) -> Any:
+    try:
+        return operation(*args)
+    finally:
+        # Do not dereference the QWidget owner from the native worker.  The
+        # completion event and module keepalive are sufficient for GUI polling.
+        done_event.set()
+        with _QR_NATIVE_CALLS_LOCK:
+            _ACTIVE_QR_NATIVE_CALLS.pop(done_event, None)
+        # Never mutate QWidget-owned bookkeeping from the executor thread.
+        try:
+            schedule_on_gui(cleanup_on_gui)
+        except RuntimeError:
+            # The loop may already be closed during interpreter teardown.
+            pass
 
 FORMAT_ITEMS = [
     ("QR Code", "qr"),
@@ -125,14 +164,21 @@ class DropLabel(QLabel):
     """支持拖入图片数据的 QLabel。"""
 
     imageDropped = Signal(QPixmap)
+    fileDropped = Signal(str)
 
     def dragEnterEvent(self, event):
-        if event.mimeData().hasImage():
+        if event.mimeData().hasImage() or event.mimeData().hasUrls():
             event.acceptProposedAction()
         else:
             event.ignore()
 
     def dropEvent(self, event):
+        for url in event.mimeData().urls():
+            path = url.toLocalFile()
+            if path:
+                self.fileDropped.emit(path)
+                event.acceptProposedAction()
+                return
         pm = QPixmap(event.mimeData().imageData())
         if not pm.isNull():
             self.imageDropped.emit(pm)
@@ -239,6 +285,17 @@ class QrcodeTab(QWidget):
         self._decode_generation = 0
         self._preview_task: asyncio.Task | None = None
         self._decode_task: asyncio.Task | None = None
+        self._native_done_events: set[threading.Event] = set()
+        self._save_job: ExportSaveJob | None = None
+        self._save_generation = 0
+        self._file_load_jobs = GenerationImageJobs(self)
+        self._file_load_jobs.completed.connect(self._on_decode_image_file_loaded)
+        self._file_load_jobs.failed.connect(self._on_decode_image_file_failed)
+        self._preview_scale_cache_key: tuple[int, int, int, int, int] | None = None
+        self._preview_scale_timer = QTimer(self)
+        self._preview_scale_timer.setSingleShot(True)
+        self._preview_scale_timer.setInterval(24)
+        self._preview_scale_timer.timeout.connect(self._apply_preview_scale)
 
         self._debounce_timer = QTimer(self)
         self._debounce_timer.setSingleShot(True)
@@ -279,6 +336,7 @@ class QrcodeTab(QWidget):
         )
         self._preview_label.setAcceptDrops(False)  # 仅识别子页激活时开启
         self._preview_label.imageDropped.connect(self._on_image_input)
+        self._preview_label.fileDropped.connect(self._request_decode_image_file)
         left_layout.addWidget(self._preview_label, stretch=1)
 
         # 生成操作栏（保存/复制）—— 子页切换时显隐
@@ -525,26 +583,16 @@ class QrcodeTab(QWidget):
         is_decode = index == 1
 
         if is_decode:
-            # 离开生成页：保存当前预览
-            pm = self._preview_label.pixmap()
-            self._gen_preview_pixmap = pm if (pm and not pm.isNull()) else None
             # 恢复识别页预览
             if self._decode_pending_pixmap is not None:
-                self._preview_label.setPixmap(
-                    _scale_pixmap_for_label(
-                        self._decode_pending_pixmap, self._preview_label
-                    )
-                )
+                self._apply_preview_scale(force=True)
             else:
                 self._preview_label.clear()
                 self._preview_label.setText("粘贴、拖入或选择图片以识别")
         else:
             # 恢复生成页预览
-            if self._current_image is not None:
-                pixmap = _pil_to_qpixmap(self._current_image)
-                self._preview_label.setPixmap(
-                    _scale_pixmap_for_label(pixmap, self._preview_label)
-                )
+            if self._gen_preview_pixmap is not None:
+                self._apply_preview_scale(force=True)
             else:
                 self._preview_label.clear()
                 self._preview_label.setText("输入内容后自动生成预览")
@@ -554,6 +602,30 @@ class QrcodeTab(QWidget):
         self._preview_label.setAcceptDrops(is_decode)
         if hasattr(self, "_decode_paste_shortcut"):
             self._decode_paste_shortcut.setEnabled(is_decode)
+
+    def _active_preview_source(self) -> QPixmap | None:
+        if self._sub_tabs.currentIndex() == 1:
+            return self._decode_pending_pixmap
+        return self._gen_preview_pixmap
+
+    def _apply_preview_scale(self, *, force: bool = False) -> None:
+        source = self._active_preview_source()
+        if source is None or source.isNull():
+            return
+        dpr = self._preview_label.devicePixelRatio()
+        cache_key = (
+            int(source.cacheKey()),
+            self._preview_label.width(),
+            self._preview_label.height(),
+            int(dpr * 1000),
+            self._sub_tabs.currentIndex(),
+        )
+        if not force and cache_key == self._preview_scale_cache_key:
+            return
+        self._preview_scale_cache_key = cache_key
+        self._preview_label.setPixmap(
+            _scale_pixmap_for_label(source, self._preview_label)
+        )
 
     # ── helpers ──
 
@@ -764,7 +836,31 @@ class QrcodeTab(QWidget):
                 pass
 
     async def _generate_preview_async(self, text: str, options: dict) -> Image.Image:
-        return await asyncio.to_thread(self._generate_preview_sync, text, options)
+        return await self._to_thread_tracked(
+            self._generate_preview_sync, text, options
+        )
+
+    async def _to_thread_tracked(self, operation: Any, *args: Any) -> Any:
+        """Run one native call while tracking its lifetime beyond Task.cancel()."""
+        loop = asyncio.get_running_loop()
+        done_event = threading.Event()
+        with _QR_NATIVE_CALLS_LOCK:
+            self._native_done_events.add(done_event)
+            _ACTIVE_QR_NATIVE_CALLS[done_event] = self
+
+        def cleanup_on_gui() -> None:
+            with _QR_NATIVE_CALLS_LOCK:
+                self._native_done_events.discard(done_event)
+
+        return await asyncio.to_thread(
+            _run_tracked_native_call,
+            self,
+            done_event,
+            loop.call_soon_threadsafe,
+            cleanup_on_gui,
+            operation,
+            *args,
+        )
 
     def _generate_preview_sync(self, text: str, options: dict) -> Image.Image:
         png_bytes = self._call_backend_generate(text, options)
@@ -776,6 +872,8 @@ class QrcodeTab(QWidget):
         if not text:
             self._preview_label.setText("输入内容后自动生成预览")
             self._current_image = None
+            self._gen_preview_pixmap = None
+            self._preview_scale_cache_key = None
             return
 
         try:
@@ -805,9 +903,9 @@ class QrcodeTab(QWidget):
             return
         self._current_image = image
         pixmap = _pil_to_qpixmap(image)
-        self._preview_label.setPixmap(
-            _scale_pixmap_for_label(pixmap, self._preview_label)
-        )
+        self._gen_preview_pixmap = pixmap
+        if self._sub_tabs.currentIndex() == 0:
+            self._apply_preview_scale(force=True)
 
     def _on_preview_error(self, generation: int, exc: Exception) -> None:
         if self._closing or generation != self._preview_generation:
@@ -817,9 +915,11 @@ class QrcodeTab(QWidget):
             f"<span style='color:{theme.Colors.danger};'>生成失败：{exc}</span>"
         )
         self._current_image = None
+        self._gen_preview_pixmap = None
+        self._preview_scale_cache_key = None
 
     def _on_save(self) -> None:
-        if self._current_image is None:
+        if self._current_image is None or self._save_job is not None or self._closing:
             return
 
         from PySide6.QtWidgets import QFileDialog
@@ -835,24 +935,99 @@ class QrcodeTab(QWidget):
         if not path:
             return
 
-        try:
-            if path.lower().endswith(".svg"):
-                text = self._text_input.toPlainText().strip()
-                svg_options = {
-                    k: v
-                    for k, v in options.items()
-                    if k in ("error_correction", "fg_color", "bg_color")
-                }
-                svg_content = self._call_backend_generate_svg(text, svg_options)
-                Path(path).write_text(svg_content, encoding="utf-8")
-            else:
-                fmt = "JPEG" if path.lower().endswith((".jpg", ".jpeg")) else "PNG"
-                self._current_image.save(path, fmt)
-        except Exception as e:
-            logger.error(f"保存失败: {e}", exc_info=True)
-            from PySide6.QtWidgets import QMessageBox
+        output_path = Path(path)
+        if path.lower().endswith(".svg"):
+            text = self._text_input.toPlainText().strip()
+            svg_options = {
+                k: v
+                for k, v in options.items()
+                if k in ("error_correction", "fg_color", "bg_color")
+            }
+            operation = save_svg_operation(
+                self._backend, text, svg_options, output_path
+            )
+        else:
+            fmt = "JPEG" if path.lower().endswith((".jpg", ".jpeg")) else "PNG"
+            # PIL.copy() 在 GUI 线程完成 detached 快照；编码与写盘进入 worker。
+            operation = save_bitmap_operation(
+                self._current_image.copy(), output_path, fmt
+            )
 
-            QMessageBox.warning(self, "保存失败", str(e))
+        self._save_generation += 1
+        job = ExportSaveJob(operation)
+        job.setProperty("generation", self._save_generation)
+        self._save_job = job
+        self._btn_save.setEnabled(False)
+        self._btn_copy.setEnabled(False)
+        job.completed.connect(self._on_save_completed)
+        job.failed.connect(self._on_save_failed)
+        job.stopped.connect(self._on_save_job_finished)
+        job.start()
+
+    def _is_current_save_signal(self) -> bool:
+        job = self.sender()
+        return bool(
+            not self._closing
+            and job is self._save_job
+            and job.property("generation") == self._save_generation
+        )
+
+    def _on_save_completed(self, output_path: object) -> None:
+        if self._is_current_save_signal():
+            logger.info("二维码已保存: %s", output_path)
+
+    def _on_save_failed(self, error: str) -> None:
+        if not self._is_current_save_signal():
+            return
+        logger.error("保存失败: %s", error)
+        from PySide6.QtWidgets import QMessageBox
+
+        QMessageBox.warning(self, "保存失败", error)
+
+    def _on_save_job_finished(self, job: ExportSaveJob) -> None:
+        if job is not self._save_job:
+            return
+        self._save_job = None
+        enabled = not self._closing and self._current_image is not None
+        self._btn_save.setEnabled(enabled)
+        self._btn_copy.setEnabled(enabled)
+        job.deleteLater()
+
+    def cancel_save(self) -> None:
+        """协作式取消保存，并丢弃所有迟到结果。"""
+        self._save_generation += 1
+        if self._save_job is not None:
+            self._save_job.cancel()
+
+    def drain(self, timeout_ms: int = 0) -> bool:
+        """只等待保存、图像加载和真实 to_thread 调用；不触碰 GUI/引用。"""
+        deadline = time.monotonic() + max(0, timeout_ms) / 1000
+
+        def remaining_ms() -> int:
+            return max(0, int((deadline - time.monotonic()) * 1000))
+
+        job = self._save_job
+        if job is not None and not job.drain(remaining_ms()):
+            return False
+        if not self._file_load_jobs.drain(remaining_ms()):
+            return False
+        with _QR_NATIVE_CALLS_LOCK:
+            done_events = tuple(self._native_done_events)
+        for done_event in done_events:
+            if done_event.is_set():
+                continue
+            remaining = deadline - time.monotonic()
+            if remaining <= 0 or not done_event.wait(remaining):
+                return False
+        return True
+
+    def is_drained(self) -> bool:
+        """无副作用探测所有 QR 后台原生工作是否已经结束。"""
+        with _QR_NATIVE_CALLS_LOCK:
+            self._native_done_events = {
+                event for event in self._native_done_events if not event.is_set()
+            }
+        return self.drain(0)
 
     def _on_copy(self) -> None:
         if self._current_image is None:
@@ -868,6 +1043,12 @@ class QrcodeTab(QWidget):
 
     def _on_image_input(self, pixmap: QPixmap) -> None:
         """统一的图片输入入口（粘贴/拖入/选择文件）。"""
+        self._file_load_jobs.cancel_current()
+        self._btn_select_img.setEnabled(not self._closing)
+        self._apply_decode_pixmap(pixmap)
+
+    def _apply_decode_pixmap(self, pixmap: QPixmap) -> None:
+        """GUI 线程应用已经解码或来自剪贴板的 QPixmap。"""
         if pixmap.isNull():
             return
         self._invalidate_decode_task()
@@ -876,9 +1057,7 @@ class QrcodeTab(QWidget):
             pixmap = QPixmap(pixmap)
             pixmap.setDevicePixelRatio(1.0)
         self._decode_pending_pixmap = pixmap
-        self._preview_label.setPixmap(
-            _scale_pixmap_for_label(pixmap, self._preview_label)
-        )
+        self._apply_preview_scale(force=True)
         self._btn_decode.setEnabled(True)
         # 清空上次结果
         self._decode_result_list.clear()
@@ -902,16 +1081,58 @@ class QrcodeTab(QWidget):
             ";;所有文件 (*)",
         )
         if path:
-            pm = QPixmap(path)
-            if not pm.isNull():
-                self._on_image_input(pm)
+            self._request_decode_image_file(path)
 
-    def _on_clear_decode(self) -> None:
+    @Slot(str)
+    def _request_decode_image_file(self, path: str) -> None:
+        if self._closing:
+            return
         self._invalidate_decode_task()
         self._decode_pending_pixmap = None
+        self._btn_decode.setEnabled(False)
+        self._btn_select_img.setEnabled(False)
+        self._decode_result_list.clear()
+        self._decode_results = []
+        self._result_count_label.setText("识别到 0 条结果")
+        self._preview_label.clear()
+        self._preview_label.setText(f"正在加载图片：{Path(path).name}...")
+        self._file_load_jobs.submit(
+            lambda cancel_event: (path, decode_image_file(path, cancel_event))
+        )
+
+    @Slot(int, object)
+    def _on_decode_image_file_loaded(self, _generation: int, result: object) -> None:
+        if self._closing or not isinstance(result, tuple) or len(result) != 2:
+            return
+        _path, image = result
+        if image.isNull():
+            return
+        pixmap = QPixmap.fromImage(image)
+        if pixmap.isNull():
+            self._on_decode_image_file_failed(_generation, "无法显示所选图片")
+            return
+        self._btn_select_img.setEnabled(True)
+        self._apply_decode_pixmap(pixmap)
+
+    @Slot(int, str)
+    def _on_decode_image_file_failed(self, _generation: int, error: str) -> None:
+        if self._closing:
+            return
+        self._btn_select_img.setEnabled(True)
+        self._preview_label.clear()
+        self._preview_label.setText(
+            f"<span style='color:{theme.Colors.danger};'>加载失败：{error}</span>"
+        )
+
+    def _on_clear_decode(self) -> None:
+        self._file_load_jobs.cancel_current()
+        self._invalidate_decode_task()
+        self._decode_pending_pixmap = None
+        self._preview_scale_cache_key = None
         self._decode_results = []
         self._decode_result_list.clear()
         self._btn_decode.setEnabled(False)
+        self._btn_select_img.setEnabled(not self._closing)
         self._result_count_label.setText("识别到 0 条结果")
         self._preview_label.clear()
         self._preview_label.setText("粘贴、拖入或选择图片以识别")
@@ -946,7 +1167,7 @@ class QrcodeTab(QWidget):
         task.add_done_callback(_clear_ref)
 
     async def _decode_async(self, image: QImage):
-        return await asyncio.to_thread(self._decode_image_sync, image)
+        return await self._to_thread_tracked(self._decode_image_sync, image)
 
     def _decode_image_sync(self, image: QImage):
         return self._call_backend_decode(self._qimage_to_png_bytes(image))
@@ -1010,13 +1231,25 @@ class QrcodeTab(QWidget):
     def set_closing(self, closing: bool) -> None:
         self._closing = closing
         if not closing:
+            self._btn_save.setEnabled(
+                self._save_job is None and self._current_image is not None
+            )
+            self._btn_copy.setEnabled(
+                self._save_job is None and self._current_image is not None
+            )
             return
         self._debounce_timer.stop()
+        self._preview_scale_timer.stop()
+        self._file_load_jobs.close()
         self._preview_generation += 1
         self._decode_generation += 1
         for task in (self._preview_task, self._decode_task):
             if task is not None and not task.done():
                 task.cancel()
+        self.cancel_save()
+        self._btn_select_img.setEnabled(False)
+        self._btn_save.setEnabled(False)
+        self._btn_copy.setEnabled(False)
 
     def _on_open_url(self, url: str) -> None:
         QDesktopServices.openUrl(QUrl(url))
@@ -1030,11 +1263,7 @@ class QrcodeTab(QWidget):
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
-        if self._current_image is not None:
-            pixmap = _pil_to_qpixmap(self._current_image)
-            self._preview_label.setPixmap(
-                _scale_pixmap_for_label(pixmap, self._preview_label)
-            )
+        self._preview_scale_timer.start()
 
     def closeEvent(self, event) -> None:
         self.set_closing(True)

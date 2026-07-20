@@ -1630,6 +1630,24 @@ class TestPdfTabExportAsync:
         pdf_tab._on_export_all()
         mock_mgr.export_all_async.assert_called_once_with("/tmp/out")
 
+    def test_export_failure_restores_buttons_and_progress(self, pdf_tab, monkeypatch):
+        from PySide6.QtWidgets import QMessageBox
+
+        critical = []
+        monkeypatch.setattr(
+            QMessageBox, "critical", staticmethod(lambda *args: critical.append(args))
+        )
+        pdf_tab._set_file_buttons_enabled(False)
+        pdf_tab._progress_bar.setVisible(True)
+
+        pdf_tab._on_export_failed("out of memory")
+
+        assert pdf_tab._progress_bar.isHidden()
+        assert pdf_tab._btn_open.isEnabled()
+        assert pdf_tab._btn_add_file.isEnabled()
+        assert pdf_tab._status_label.text() == "批量导出失败"
+        assert critical and critical[0][-1] == "out of memory"
+
 
 class TestPdfTabAutoDeskew:
     """自动摆正按钮：点击 → 调 manager.auto_deskew_async(selected_indices)。"""
@@ -2111,28 +2129,23 @@ class TestThumbnailWorkerLifecycle:
         worker = MagicMock()
         worker.isFinished.return_value = False
         model._render_worker = worker
-        monkeypatch.setattr(
-            "vibeocr.views.tabs.pdf_tab._wait_thread",
-            lambda *_args, **_kwargs: False,
-        )
-
         model._stop_render_worker()
 
         assert model._render_worker is None
         assert worker in model._draining_workers
         worker.finished.connect.assert_called_once()
 
-    def test_close_event_triggers_shutdown(self, pdf_tab, qtbot, monkeypatch):
+    def test_close_event_only_requests_shutdown(self, pdf_tab, qtbot, monkeypatch):
         from unittest.mock import MagicMock
 
-        shutdown = MagicMock()
-        monkeypatch.setattr(pdf_tab, "shutdown", shutdown)
+        request_shutdown = MagicMock()
+        monkeypatch.setattr(pdf_tab, "request_shutdown", request_shutdown)
         pdf_tab.show()
 
         pdf_tab.close()
-        qtbot.waitUntil(lambda: shutdown.call_count == 1)
+        qtbot.waitUntil(lambda: request_shutdown.call_count == 1)
 
-        shutdown.assert_called_once_with()
+        request_shutdown.assert_called_once_with()
 
     def test_start_render_worker_stops_existing_before_replacement(
         self, qapp, monkeypatch

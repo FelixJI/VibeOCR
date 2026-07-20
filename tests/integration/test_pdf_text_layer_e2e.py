@@ -148,11 +148,16 @@ class TestEditFlowE2E:
         # 双击改字(IPC)
         changed = manager.update_page_block_text(0, 0, "签收联")
         assert changed is True
+        edit_deadline = time.monotonic() + 20.0
+        while manager.is_mutate_running and time.monotonic() < edit_deadline:
+            qapp.processEvents()
+            time.sleep(0.01)
+        assert not manager.is_mutate_running, "编辑 worker 应在保存前原生退出"
 
         # 保存(含 rewrite + 落盘),等待 save_done
         saved = [False]
         manager.save_done.connect(lambda *a: saved.__setitem__(0, True))
-        manager.save_async()
+        assert manager.save_async()
         deadline = time.monotonic() + 20.0
         while not saved[0] and time.monotonic() < deadline:
             qapp.processEvents()
@@ -199,11 +204,16 @@ class TestEditFlowE2E:
         session.pdf_document = mirror_to_doc(full)
 
         # 只改第二块
-        manager.update_page_block_text(0, 1, "B改")
+        assert manager.update_page_block_text(0, 1, "B改")
+        edit_deadline = time.monotonic() + 20.0
+        while manager.is_mutate_running and time.monotonic() < edit_deadline:
+            qapp.processEvents()
+            time.sleep(0.01)
+        assert not manager.is_mutate_running, "编辑 worker 应在保存前原生退出"
 
         saved = [False]
         manager.save_done.connect(lambda *a: saved.__setitem__(0, True))
-        manager.save_async()
+        assert manager.save_async()
         deadline = time.monotonic() + 20.0
         while not saved[0] and time.monotonic() < deadline:
             qapp.processEvents()

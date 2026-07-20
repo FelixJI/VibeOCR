@@ -184,7 +184,7 @@ class TestTextLayoutVisualModes:
 class TestTextLayoutIntegration:
     """通过 ResultViewWidget.display_text_layout 端到端验证。"""
 
-    def test_display_text_layout_renders_to_webview(self, qapp, monkeypatch):
+    def test_display_text_layout_renders_to_webview(self, qapp, qtbot, monkeypatch):
         from vibeocr.widgets.result_view_widget import ResultViewWidget
 
         widget = ResultViewWidget()
@@ -201,6 +201,7 @@ class TestTextLayoutIntegration:
         result = _plain_text_result()
         opts = TextBlockOptions(line_mode=LINE_MODE_MERGE)
         widget.display_text_layout(result, opts)
+        qtbot.waitUntil(lambda: not widget._render_jobs, timeout=2000)
 
         html = captured.get("html", "")
         # 块身份保留 + 视觉合并
@@ -252,4 +253,3 @@ class TestEditPathInLayoutMode:
         assert result.text_blocks[2].is_manually_edited is True
         # 甲（index=0）不应被误改
         assert result.text_blocks[0].text == "甲"
-

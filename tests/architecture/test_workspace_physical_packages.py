@@ -6,6 +6,7 @@ import json
 import os
 import subprocess
 import sys
+import sysconfig
 import tomllib
 from pathlib import Path
 
@@ -74,13 +75,19 @@ def test_pyside_pdf_module_does_not_require_backend_wheel() -> None:
             "vibeocr-pyside",
         )
     )
+    # ``-S`` prevents editable-install .pth files from silently adding every
+    # workspace source root. Add site-packages back as a plain directory so
+    # third-party dependencies remain importable without processing those
+    # editable .pth files.
+    site_packages = sysconfig.get_path("purelib")
     probe = (
+        f"import sys; sys.path.append({site_packages!r}); "
         "import importlib.util; "
         "import vibeocr.views.tabs.pdf_tab; "
         "assert importlib.util.find_spec('vibeocr.utils.shared_memory_v2') is None"
     )
     result = subprocess.run(
-        [sys.executable, "-c", probe],
+        [sys.executable, "-S", "-c", probe],
         cwd=ROOT,
         env=env,
         capture_output=True,

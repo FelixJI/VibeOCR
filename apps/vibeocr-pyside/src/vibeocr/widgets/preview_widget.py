@@ -1,10 +1,10 @@
 """Preview widget for image display, file loading and screenshot trigger"""
 
+import logging
 from pathlib import Path
 
-from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
+from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal, Slot
 from PySide6.QtGui import QAction, QColor, QPainter, QPen, QPixmap, QPolygonF
-from PySide6.QtPdf import QPdfDocument
 from PySide6.QtWidgets import (
     QDialog,
     QHBoxLayout,
@@ -19,9 +19,37 @@ from PySide6.QtWidgets import (
 
 from vibeocr.models.ocr_result import DISCARDED_BLOCK_TYPES, TextBlock
 from vibeocr.ui import theme
+from vibeocr.utils.image_jobs import GenerationImageJobs, decode_image_file
+
+logger = logging.getLogger(__name__)
 
 # 置信度阈值
 LOW_CONFIDENCE_THRESHOLD = 0.80
+
+
+def _render_pdf_page(
+    file_path: str, page_index: int, cancel_event
+) -> tuple[str, int, int, object]:
+    """Load and render one PDF page entirely inside a thread-pool invocation."""
+    from PySide6.QtPdf import QPdfDocument
+
+    document = QPdfDocument()
+    try:
+        error = document.load(file_path)
+        if error != QPdfDocument.Error.None_:
+            raise RuntimeError(f"无法加载 PDF: {file_path}")
+        if cancel_event.is_set():
+            raise RuntimeError("已取消 PDF 预览")
+        page_count = document.pageCount()
+        if page_index < 0 or page_index >= page_count:
+            raise RuntimeError(f"PDF 页码越界: {page_index}")
+        page_size = document.pagePointSize(page_index)
+        image = document.render(page_index, (page_size * 2.0).toSize())
+        if cancel_event.is_set():
+            raise RuntimeError("已取消 PDF 预览")
+        return file_path, page_index, page_count, image
+    finally:
+        document.close()
 
 # 无真实文本置信度的块类型：结构识别（表格/图片/图表/印章）与公式管道
 # 在 pipeline 里 score 是占位值（0.9 / 1.0），不应在 tooltip 里显示为
@@ -41,6 +69,10 @@ EDIT_BORDER = QColor(255, 152, 0, 200)  # 橙色边框（手动修改）
 
 # 块类型着色常量（来自 FilePreviewWidget）
 BBOX_NORM = 1000.0
+# Painting tens of thousands of translucent Qt paths in one frame can monopolize
+# the GUI thread for seconds.  Keep a bounded interactive working set for the
+# current page; the full OCR model remains available to the result view/export.
+MAX_INTERACTIVE_OVERLAY_BLOCKS = 2000
 
 BLOCK_COLORS = {
     "text": QColor(59, 130, 246, 30),
@@ -453,20 +485,30 @@ class PreviewWidget(QWidget):
         self._img_w: int = 0
         self._img_h: int = 0
         self._text_blocks: list[TextBlock] = []
-        self._block_screen_rects: list[tuple[float, float, float, float]] = []
+        self._text_page_indices: dict[int, list[int]] = {}
+        self._text_by_content_index: dict[int, int] = {}
+        self._confidence_overlay_indices: list[int] = []
+        self._confidence_overlay_local_by_source: dict[int, int] = {}
+        self._block_screen_rects: (
+            dict[int, tuple[float, float, float, float]]
+            | list[tuple[float, float, float, float]]
+        ) = {}
         # 多边形屏幕坐标（与 _block_screen_rects 同序，None 表示该块用 AABB）
-        self._block_screen_polys: list[QPolygonF | None] = []
+        self._block_screen_polys: (
+            dict[int, QPolygonF | None] | list[QPolygonF | None]
+        ) = {}
         # 块类型模式的命中矩形：list of (content_index, screen_rect, block_type)
         self._type_screen_rects: list[tuple[int, QRectF, str]] = []
         self._hovered_block: int | str = -1
         self._editing_index: int = -1
         self._content_list: list[dict] = []
+        self._content_page_indices: dict[int, list[int]] = {}
         self._current_file: str = ""
         self._is_pdf = False
         self._highlight_block_index: int = -1
 
         # PDF
-        self._pdf_doc: QPdfDocument | None = None
+        self._pdf_doc = None  # compatibility marker; PDF work is never GUI-owned
         self._current_page: int = 0
         self._total_pages: int = 0
 
@@ -475,6 +517,26 @@ class PreviewWidget(QWidget):
         # 让“适应窗口”按钮能精确回到 fit，而 wheel 在 fit 基础上放大/缩小。
         self._fit_scale: float = 1.0
         self._scale: float = 1.0
+        self._display_cache_key: tuple[int, int, int, int] | None = None
+        self._display_cache_pixmap: QPixmap | None = None
+        self._last_resize_viewport_size: tuple[int, int, int] | None = None
+        self._resize_timer = QTimer(self)
+        self._resize_timer.setSingleShot(True)
+        self._resize_timer.setInterval(24)
+        self._resize_timer.timeout.connect(self._apply_debounced_resize)
+        self._closing = False
+        self._image_load_jobs = GenerationImageJobs(self)
+        self._image_load_jobs.completed.connect(self._on_image_file_loaded)
+        self._image_load_jobs.failed.connect(self._on_image_file_load_failed)
+        self._pdf_jobs = GenerationImageJobs(self)
+        self._pdf_jobs.completed.connect(self._on_pdf_page_loaded)
+        self._pdf_jobs.failed.connect(self._on_pdf_page_failed)
+        self._block_index_jobs = GenerationImageJobs(self)
+        self._block_index_jobs.completed.connect(self._on_block_indexes_ready)
+        self._block_index_jobs.failed.connect(self._on_block_indexes_failed)
+        self._content_index_jobs = GenerationImageJobs(self)
+        self._content_index_jobs.completed.connect(self._on_content_indexes_ready)
+        self._content_index_jobs.failed.connect(self._on_content_indexes_failed)
 
         self._setup_ui()
 
@@ -621,7 +683,9 @@ class PreviewWidget(QWidget):
             self._hovered_block = hover_key
             if idx >= 0:
                 # 置信度模式命中
-                self._overlay.set_hovered(idx)
+                self._overlay.set_hovered(
+                    self._confidence_overlay_local_by_source.get(idx, -1)
+                )
                 self.block_hovered.emit(idx)
                 block = self._text_blocks[idx]
                 self._image_label.setToolTip(
@@ -638,11 +702,7 @@ class PreviewWidget(QWidget):
                 self._overlay.set_hovered(cl_idx)
                 self.block_hovered.emit(cl_idx)
                 tb_idx = self._find_text_block_by_content_index(cl_idx)
-                block = (
-                    self._text_blocks[tb_idx]
-                    if tb_idx >= 0
-                    else None
-                )
+                block = self._text_blocks[tb_idx] if tb_idx >= 0 else None
                 if block is not None:
                     self._image_label.setToolTip(
                         self._build_block_tooltip(
@@ -733,9 +793,10 @@ class PreviewWidget(QWidget):
         dialog.exec()
 
     def _start_inline_edit(self, index: int) -> None:
-        if index < 0 or index >= len(self._block_screen_rects):
+        screen_rect = self._block_screen_rect_at(index)
+        if screen_rect is None or index < 0 or index >= len(self._text_blocks):
             return
-        bx, by, bw, bh = self._block_screen_rects[index]
+        bx, by, bw, bh = screen_rect
         block = self._text_blocks[index]
         self._editing_index = index
         self._inline_editor.setText(block.text)
@@ -761,13 +822,35 @@ class PreviewWidget(QWidget):
         self._inline_editor.hide()
         self._editing_index = -1
 
+    def _block_screen_rect_at(
+        self, index: int
+    ) -> tuple[float, float, float, float] | None:
+        if isinstance(self._block_screen_rects, dict):
+            return self._block_screen_rects.get(index)
+        if 0 <= index < len(self._block_screen_rects):
+            return self._block_screen_rects[index]
+        return None
+
+    def _block_screen_poly_at(self, index: int) -> QPolygonF | None:
+        if isinstance(self._block_screen_polys, dict):
+            return self._block_screen_polys.get(index)
+        if 0 <= index < len(self._block_screen_polys):
+            return self._block_screen_polys[index]
+        return None
+
     def _hit_test_block(self, x: int, y: int) -> int:
         # 有多边形的块用 polygon 精确命中（贴合旋转/倾斜文字）；
         # 无多边形的块回退 AABB rect 命中。AABB 比 polygon 大，故已有多边形
         # 的块不再参与 rect 命中，避免重叠块被外接矩形误命中。
-        polys = self._block_screen_polys
-        for i, (bx, by, bw, bh) in enumerate(self._block_screen_rects):
-            poly = polys[i] if i < len(polys) else None
+        indices = self._confidence_overlay_indices or range(
+            len(self._block_screen_rects)
+        )
+        for i in indices:
+            screen_rect = self._block_screen_rect_at(i)
+            if screen_rect is None:
+                continue
+            bx, by, bw, bh = screen_rect
+            poly = self._block_screen_poly_at(i)
             if poly is not None and len(poly) >= 3:
                 if poly.containsPoint(QPointF(x, y), Qt.FillRule.OddEvenFill):
                     return i
@@ -775,9 +858,7 @@ class PreviewWidget(QWidget):
                 return i
         return -1
 
-    def _hit_test_type_block(
-        self, x: int, y: int
-    ) -> tuple[int, str]:
+    def _hit_test_type_block(self, x: int, y: int) -> tuple[int, str]:
         """块类型模式命中测试，返回 (content_list 索引, block_type)。
 
         未命中返回 (-1, "")。用于双击表格块进入网格编辑、或双击普通文本块
@@ -793,10 +874,7 @@ class PreviewWidget(QWidget):
         命中普通文本块后复用置信度模式的内联编辑）。"""
         if cl_idx < 0:
             return -1
-        for i, b in enumerate(self._text_blocks):
-            if getattr(b, "content_index", None) == cl_idx:
-                return i
-        return -1
+        return self._text_by_content_index.get(cl_idx, -1)
 
     # ── 标签点击（空状态触发截图/文件选择）──
 
@@ -823,10 +901,19 @@ class PreviewWidget(QWidget):
 
     def set_pixmap(self, pixmap: QPixmap) -> None:
         """设置预览图片（截图或打开图片）"""
+        self._image_load_jobs.cancel_current()
+        self._pdf_jobs.cancel_current()
+        self._block_index_jobs.cancel_current()
+        self._content_index_jobs.cancel_current()
         self._text_blocks = []
+        self._text_page_indices = {}
+        self._text_by_content_index = {}
+        self._confidence_overlay_indices = []
+        self._confidence_overlay_local_by_source = {}
         self._block_screen_rects = []
         self._block_screen_polys = []
         self._content_list = []
+        self._content_page_indices = {}
         self._type_screen_rects = []
         self._hovered_block = -1
         self._highlight_block_index = -1
@@ -838,6 +925,7 @@ class PreviewWidget(QWidget):
             pixmap.setDevicePixelRatio(1.0)
         self._pixmap = pixmap
         self._original_pixmap = pixmap
+        self._invalidate_display_cache()
         self._img_w = pixmap.width()
         self._img_h = pixmap.height()
         self._total_pages = 1
@@ -859,21 +947,110 @@ class PreviewWidget(QWidget):
 
     def set_text_blocks(self, blocks: list[TextBlock]) -> None:
         """设置文本块用于置信度模式高亮"""
+        if self._closing:
+            return
+        if blocks is self._text_blocks:
+            if self._content_list:
+                self._update_type_overlay()
+            else:
+                self._update_block_overlay()
+            return
+
         self._text_blocks = blocks
+        if len(blocks) > MAX_INTERACTIVE_OVERLAY_BLOCKS:
+            # Seed only the bounded interactive set synchronously.  Full page
+            # and content-index maps are pure data and can be built off-thread.
+            seed_count = min(len(blocks), MAX_INTERACTIVE_OVERLAY_BLOCKS)
+            page_indices, content_lookup = self._build_text_block_indexes(
+                blocks, None, limit=seed_count
+            )
+            self._text_page_indices = page_indices
+            self._text_by_content_index = content_lookup
+            self._update_block_overlay()
+            self._block_index_jobs.submit(
+                lambda cancel_event: (
+                    blocks,
+                    *self._build_text_block_indexes(blocks, cancel_event),
+                )
+            )
+            return
+
+        self._block_index_jobs.cancel_current()
+        page_indices, content_lookup = self._build_text_block_indexes(blocks, None)
+        self._text_page_indices = page_indices
+        self._text_by_content_index = content_lookup
         self._update_block_overlay()
+
+    def set_text_content_index(self, text_index_by_content: dict[int, int]) -> None:
+        """Install a worker-prepared reverse index without a GUI-thread copy."""
+        if not self._closing:
+            self._text_by_content_index = text_index_by_content
+
+    @staticmethod
+    def _build_text_block_indexes(
+        blocks: list[TextBlock], cancel_event, *, limit: int | None = None
+    ) -> tuple[dict[int, list[int]], dict[int, int]]:
+        page_indices: dict[int, list[int]] = {}
+        content_lookup: dict[int, int] = {}
+        block_count = len(blocks) if limit is None else min(len(blocks), limit)
+        for index in range(block_count):
+            if (
+                cancel_event is not None
+                and index % 256 == 0
+                and cancel_event.is_set()
+            ):
+                return {}, {}
+            block = blocks[index]
+            page_indices.setdefault(getattr(block, "page_idx", None) or 0, []).append(
+                index
+            )
+            content_index = getattr(block, "content_index", None)
+            if content_index is not None:
+                content_lookup[content_index] = index
+        return page_indices, content_lookup
+
+    @Slot(int, object)
+    def _on_block_indexes_ready(self, _generation: int, payload: object) -> None:
+        if self._closing or not isinstance(payload, tuple) or len(payload) != 3:
+            return
+        blocks, page_indices, content_lookup = payload
+        if blocks is not self._text_blocks:
+            return
+        self._text_page_indices = page_indices
+        self._text_by_content_index = content_lookup
+        if self._content_list:
+            self._update_type_overlay()
+        else:
+            self._update_block_overlay()
+
+    @Slot(int, str)
+    def _on_block_indexes_failed(self, _generation: int, error: str) -> None:
+        if not self._closing:
+            logger.error("后台构建 OCR 文本块索引失败: %s", error)
 
     # ── 文件加载（PDF/图片）──
 
     def load_file(self, file_path: str) -> None:
         """从文件路径加载（自动检测 PDF/图片）"""
+        if self._closing:
+            return
+        self._image_load_jobs.cancel_current()
+        self._pdf_jobs.cancel_current()
         self._current_file = file_path
         ext = Path(file_path).suffix.lower()
         self._is_pdf = ext == ".pdf"
 
+        self._block_index_jobs.cancel_current()
+        self._content_index_jobs.cancel_current()
         self._text_blocks = []
+        self._text_page_indices = {}
+        self._text_by_content_index = {}
+        self._confidence_overlay_indices = []
+        self._confidence_overlay_local_by_source = {}
         self._block_screen_rects = []
         self._block_screen_polys = []
         self._content_list = []
+        self._content_page_indices = {}
         self._type_screen_rects = []
         self._hovered_block = -1
         self._highlight_block_index = -1
@@ -886,18 +1063,10 @@ class PreviewWidget(QWidget):
             self._load_image_file(file_path)
 
     def _load_pdf(self, file_path: str) -> None:
-        if self._pdf_doc is not None:
-            self._pdf_doc.close()
-
-        self._pdf_doc = QPdfDocument(self)
-        error = self._pdf_doc.load(file_path)
-        if error != QPdfDocument.Error.None_:
-            self._image_label.setText(f"无法加载 PDF: {file_path}")
-            self._total_pages = 0
-            self._update_nav()
-            return
-
-        self._total_pages = self._pdf_doc.pageCount()
+        self._pixmap = None
+        self._original_pixmap = None
+        self._invalidate_display_cache()
+        self._total_pages = 0
         self._current_page = 0
         self._render_current_page()
         self._update_nav()
@@ -905,29 +1074,90 @@ class PreviewWidget(QWidget):
     def _load_image_file(self, file_path: str) -> None:
         self._total_pages = 1
         self._current_page = 0
-        self._original_pixmap = QPixmap(file_path)
-
-        if self._original_pixmap.isNull():
-            self._image_label.setText(f"无法加载图片: {file_path}")
-        else:
-            self._pixmap = self._original_pixmap
-            self._update_display()
-
+        self._pdf_jobs.cancel_current()
+        self._pixmap = None
+        self._original_pixmap = None
+        self._invalidate_display_cache()
+        self._image_label.clear()
+        self._image_label.setText(f"正在加载图片: {Path(file_path).name}...")
         self._update_nav()
+        self._image_load_jobs.submit(
+            lambda cancel_event: (
+                file_path,
+                decode_image_file(file_path, cancel_event),
+            )
+        )
+
+    @Slot(int, object)
+    def _on_image_file_loaded(self, _generation: int, result: object) -> None:
+        if self._closing or not isinstance(result, tuple) or len(result) != 2:
+            return
+        file_path, image = result
+        if file_path != self._current_file or image.isNull():
+            return
+        pixmap = QPixmap.fromImage(image)
+        if pixmap.isNull():
+            self._on_image_file_load_failed(_generation, f"无法显示图片: {file_path}")
+            return
+        self._original_pixmap = pixmap
+        self._pixmap = pixmap
+        self._img_w = pixmap.width()
+        self._img_h = pixmap.height()
+        self._invalidate_display_cache()
+        self._update_display()
+        self.image_changed.emit()
+
+    @Slot(int, str)
+    def _on_image_file_load_failed(self, _generation: int, error: str) -> None:
+        if self._closing:
+            return
+        self._image_label.clear()
+        self._image_label.setText(error)
 
     def _render_current_page(self) -> None:
-        if self._pdf_doc is None:
+        if self._closing or not self._current_file or not self._is_pdf:
             return
-        if self._current_page >= self._pdf_doc.pageCount():
-            return
+        file_path = self._current_file
+        page_index = self._current_page
+        self._image_label.setText(
+            f"正在加载 PDF: {Path(file_path).name} 第 {page_index + 1} 页..."
+        )
+        self._pdf_jobs.submit(
+            lambda cancel_event: _render_pdf_page(
+                file_path, page_index, cancel_event
+            )
+        )
 
-        page_size = self._pdf_doc.pagePointSize(self._current_page)
-        scale = 2.0
-        render_size = (page_size * scale).toSize()
-        qimage = self._pdf_doc.render(self._current_page, render_size)
-        self._original_pixmap = QPixmap.fromImage(qimage)
+    @Slot(int, object)
+    def _on_pdf_page_loaded(self, _generation: int, result: object) -> None:
+        if self._closing or not isinstance(result, tuple) or len(result) != 4:
+            return
+        file_path, page_index, page_count, image = result
+        if file_path != self._current_file or page_index != self._current_page:
+            return
+        pixmap = QPixmap.fromImage(image)
+        if pixmap.isNull():
+            self._on_pdf_page_failed(_generation, f"无法显示 PDF: {file_path}")
+            return
+        self._total_pages = int(page_count)
+        self._original_pixmap = pixmap
         self._pixmap = self._original_pixmap
+        self._img_w = pixmap.width()
+        self._img_h = pixmap.height()
+        self._invalidate_display_cache()
         self._update_display()
+        self._update_nav()
+        self._reapply_highlight()
+        self.image_changed.emit()
+
+    @Slot(int, str)
+    def _on_pdf_page_failed(self, _generation: int, error: str) -> None:
+        if self._closing:
+            return
+        self._image_label.clear()
+        self._image_label.setText(error)
+        if self._total_pages <= 0:
+            self._update_nav()
 
     # ── 翻页 ──
 
@@ -966,8 +1196,67 @@ class PreviewWidget(QWidget):
 
     def set_content_list(self, content_list: list[dict]) -> None:
         """设置 content_list 用于块类型着色覆盖"""
+        if self._closing:
+            return
+        if content_list is self._content_list:
+            self._update_type_overlay()
+            return
+
         self._content_list = content_list
+        if len(content_list) > MAX_INTERACTIVE_OVERLAY_BLOCKS:
+            self._content_page_indices = self._build_content_page_indexes(
+                content_list, None, limit=MAX_INTERACTIVE_OVERLAY_BLOCKS
+            )
+            self._update_type_overlay()
+            self._content_index_jobs.submit(
+                lambda cancel_event: (
+                    content_list,
+                    self._build_content_page_indexes(content_list, cancel_event),
+                )
+            )
+            return
+
+        self._content_index_jobs.cancel_current()
+        self._content_page_indices = self._build_content_page_indexes(
+            content_list, None
+        )
         self._update_type_overlay()
+
+    @staticmethod
+    def _build_content_page_indexes(
+        content_list: list[dict], cancel_event, *, limit: int | None = None
+    ) -> dict[int, list[int]]:
+        page_indices: dict[int, list[int]] = {}
+        block_count = (
+            len(content_list) if limit is None else min(len(content_list), limit)
+        )
+        for index in range(block_count):
+            if (
+                cancel_event is not None
+                and index % 256 == 0
+                and cancel_event.is_set()
+            ):
+                return {}
+            block = content_list[index]
+            if block.get("type", "") in DISCARDED_BLOCK_TYPES:
+                continue
+            page_indices.setdefault(block.get("page_idx", 0) or 0, []).append(index)
+        return page_indices
+
+    @Slot(int, object)
+    def _on_content_indexes_ready(self, _generation: int, payload: object) -> None:
+        if self._closing or not isinstance(payload, tuple) or len(payload) != 2:
+            return
+        content_list, page_indices = payload
+        if content_list is not self._content_list:
+            return
+        self._content_page_indices = page_indices
+        self._update_type_overlay()
+
+    @Slot(int, str)
+    def _on_content_indexes_failed(self, _generation: int, error: str) -> None:
+        if not self._closing:
+            logger.error("后台构建 OCR 内容块索引失败: %s", error)
 
     def _update_type_overlay(self) -> None:
         """绘制所有 content_list 块的 bbox 覆盖层"""
@@ -982,12 +1271,15 @@ class PreviewWidget(QWidget):
 
         overlay_rects = []
         type_screen_rects: list[tuple[int, QRectF, str]] = []
-        for i, block in enumerate(self._content_list):
-            if block.get("type", "") in DISCARDED_BLOCK_TYPES:
-                continue
-            page_idx = block.get("page_idx", 0)
-            if page_idx != self._current_page:
-                continue
+        page_indices = self._content_page_indices.get(self._current_page, [])
+        visible_indices = page_indices[:MAX_INTERACTIVE_OVERLAY_BLOCKS]
+        if (
+            self._highlight_block_index in page_indices
+            and self._highlight_block_index not in visible_indices
+        ):
+            visible_indices = [*visible_indices, self._highlight_block_index]
+        for i in visible_indices:
+            block = self._content_list[i]
             bbox = block.get("bbox")
             if not bbox or len(bbox) < 4:
                 continue
@@ -1045,7 +1337,9 @@ class PreviewWidget(QWidget):
             return
 
         # 置信度模式：直接设置 overlay hovered index
-        self._overlay.set_hovered(index)
+        self._overlay.set_hovered(
+            self._confidence_overlay_local_by_source.get(index, -1)
+        )
 
     def clear_highlight(self) -> None:
         """清除悬停高亮（保留永久覆盖层）"""
@@ -1065,12 +1359,22 @@ class PreviewWidget(QWidget):
 
     def clear(self) -> None:
         """清除图片"""
+        self._image_load_jobs.cancel_current()
+        self._pdf_jobs.cancel_current()
+        self._block_index_jobs.cancel_current()
+        self._content_index_jobs.cancel_current()
         self._pixmap = None
         self._original_pixmap = None
+        self._invalidate_display_cache()
         self._text_blocks = []
+        self._text_page_indices = {}
+        self._text_by_content_index = {}
+        self._confidence_overlay_indices = []
+        self._confidence_overlay_local_by_source = {}
         self._block_screen_rects = []
         self._block_screen_polys = []
         self._content_list = []
+        self._content_page_indices = {}
         self._type_screen_rects = []
         self._hovered_block = -1
         self._highlight_block_index = -1
@@ -1081,9 +1385,6 @@ class PreviewWidget(QWidget):
             f"QLabel {{ background-color: {theme.Colors.surface_alt};"
             f" border: 2px dashed {theme.Colors.border}; }}"
         )
-        if self._pdf_doc is not None:
-            self._pdf_doc.close()
-            self._pdf_doc = None
         self._current_file = ""
         self._total_pages = 0
         self._current_page = 0
@@ -1209,7 +1510,10 @@ class PreviewWidget(QWidget):
 
     def wheelEvent(self, event) -> None:
         """滚轮缩放（Ctrl 修饰时），否则交给默认（不拦截）。"""
-        if self._pixmap is not None and event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+        if (
+            self._pixmap is not None
+            and event.modifiers() & Qt.KeyboardModifier.ControlModifier
+        ):
             delta = event.angleDelta().y()
             if delta > 0:
                 self._zoom_by(1.15)
@@ -1228,13 +1532,28 @@ class PreviewWidget(QWidget):
             disp_w = int(self._img_w * total)
             disp_h = int(self._img_h * total)
 
-            scaled = self._pixmap.scaled(
-                max(int(disp_w * dpr), 1),
-                max(int(disp_h * dpr), 1),
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation,
+            target_w = max(int(disp_w * dpr), 1)
+            target_h = max(int(disp_h * dpr), 1)
+            cache_key = (
+                int(self._pixmap.cacheKey()),
+                target_w,
+                target_h,
+                int(dpr * 1000),
             )
-            scaled.setDevicePixelRatio(dpr)
+            if cache_key != self._display_cache_key:
+                scaled = self._pixmap.scaled(
+                    target_w,
+                    target_h,
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation,
+                )
+                scaled.setDevicePixelRatio(dpr)
+                self._display_cache_key = cache_key
+                self._display_cache_pixmap = scaled
+            else:
+                scaled = self._display_cache_pixmap
+            if scaled is None:
+                return
             self._image_label.setPixmap(scaled)
             # label 尺寸 = 缩放后 pixmap 尺寸；超出 viewport 时 QScrollArea 自动滚动。
             # setWidgetResizable(False) 让此 resize 生效（不被 viewport 强制夹住）。
@@ -1244,6 +1563,26 @@ class PreviewWidget(QWidget):
                 f" border: 1px solid {theme.Colors.border}; }}"
             )
             QTimer.singleShot(0, self._update_overlay_deferred)
+
+    def _invalidate_display_cache(self) -> None:
+        self._display_cache_key = None
+        self._display_cache_pixmap = None
+
+    def _apply_debounced_resize(self) -> None:
+        viewport = self._scroll_area.viewport().size()
+        size_key = (
+            viewport.width(),
+            viewport.height(),
+            int(self.devicePixelRatio() * 1000),
+        )
+        if size_key == self._last_resize_viewport_size:
+            return
+        self._last_resize_viewport_size = size_key
+        if self._original_pixmap and not self._original_pixmap.isNull():
+            self._update_display()
+            self._reapply_highlight()
+        else:
+            self._apply_overlay_geometry()
 
     def _update_overlay_deferred(self) -> None:
         """延迟一帧更新 overlay，确保布局已完成"""
@@ -1257,8 +1596,10 @@ class PreviewWidget(QWidget):
     def _update_block_overlay(self) -> None:
         """根据当前文本块和图片显示计算置信度模式覆盖矩形"""
         self._overlay.clear()
-        self._block_screen_rects.clear()
-        self._block_screen_polys.clear()
+        self._block_screen_rects = {}
+        self._block_screen_polys = {}
+        self._confidence_overlay_indices = []
+        self._confidence_overlay_local_by_source = {}
         self._type_screen_rects = []
 
         if not self._pixmap or not self._text_blocks:
@@ -1268,22 +1609,28 @@ class PreviewWidget(QWidget):
         if disp_w <= 0 or disp_h <= 0:
             return
 
+        candidates = self._text_page_indices.get(self._current_page, [])[
+            :MAX_INTERACTIVE_OVERLAY_BLOCKS
+        ]
         overlay_rects = []
-        for block in self._text_blocks:
+        for source_index in candidates:
+            block = self._text_blocks[source_index]
             if block.bbox is None:
-                self._block_screen_rects.append((0, 0, 0, 0))
-                self._block_screen_polys.append(None)
                 continue
             x0, y0, x1, y1 = block.bbox
             sx = x0 / 1000.0 * disp_w + offset_x
             sy = y0 / 1000.0 * disp_h + offset_y
             sw = (x1 - x0) / 1000.0 * disp_w
             sh = (y1 - y0) / 1000.0 * disp_h
-            self._block_screen_rects.append((sx, sy, sw, sh))
+            self._block_screen_rects[source_index] = (sx, sy, sw, sh)
             # 多边形：若有则转成屏幕坐标 QPolygonF，让 overlay 画贴合的平行四边形
             # （旋转/倾斜文字不再用过大的 AABB）；否则 None，回退到 AABB rect。
-            poly = self._polygon_to_screen(block.polygon, disp_w, disp_h, offset_x, offset_y)
-            self._block_screen_polys.append(poly)
+            poly = self._polygon_to_screen(
+                block.polygon, disp_w, disp_h, offset_x, offset_y
+            )
+            self._block_screen_polys[source_index] = poly
+            self._confidence_overlay_local_by_source[source_index] = len(overlay_rects)
+            self._confidence_overlay_indices.append(source_index)
             overlay_rects.append(
                 (
                     sx,
@@ -1302,8 +1649,36 @@ class PreviewWidget(QWidget):
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
-        if self._original_pixmap and not self._original_pixmap.isNull():
-            self._update_display()
-            self._reapply_highlight()
-        else:
-            QTimer.singleShot(0, self._apply_overlay_geometry)
+        self._resize_timer.start()
+
+    def closeEvent(self, event) -> None:
+        self.request_shutdown()
+        super().closeEvent(event)
+
+    def request_shutdown(self) -> None:
+        if self._closing:
+            return
+        self._closing = True
+        self._resize_timer.stop()
+        self._image_load_jobs.close()
+        self._pdf_jobs.close()
+        self._block_index_jobs.close()
+        self._content_index_jobs.close()
+
+    def drain(self, timeout_ms: int = 0) -> bool:
+        import time
+
+        deadline = time.monotonic() + max(0, timeout_ms) / 1000
+        if not self._image_load_jobs.drain(max(0, timeout_ms)):
+            return False
+        remaining_ms = max(0, int((deadline - time.monotonic()) * 1000))
+        if not self._pdf_jobs.drain(remaining_ms):
+            return False
+        remaining_ms = max(0, int((deadline - time.monotonic()) * 1000))
+        if not self._block_index_jobs.drain(remaining_ms):
+            return False
+        remaining_ms = max(0, int((deadline - time.monotonic()) * 1000))
+        return self._content_index_jobs.drain(remaining_ms)
+
+    def is_drained(self) -> bool:
+        return self.drain(0)

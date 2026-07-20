@@ -10,9 +10,12 @@
 from __future__ import annotations
 
 import base64
+import contextvars
 import html as html_lib
 import json
 import logging
+import time
+from dataclasses import fields, is_dataclass, replace
 from typing import TYPE_CHECKING, Any
 
 from PySide6.QtCore import QMimeData, QObject, QTimer, QUrl, Signal, Slot
@@ -28,6 +31,12 @@ from PySide6.QtWidgets import (
 )
 
 from vibeocr.models.ocr_result import DISCARDED_BLOCK_TYPES
+from vibeocr.utils.export_jobs import (
+    ExportJobCancelled,
+    ExportSaveJob,
+    export_single_operation,
+    snapshot_ocr_result,
+)
 from vibeocr.utils.html_tables import (
     html_tables_to_cell_grid,
     normalize_table_html,
@@ -37,6 +46,7 @@ from vibeocr.utils.html_tables import (
 if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
+    from threading import Event
 
     # QWebEngineView / QWebChannel 仅作类型注解引用，运行时延迟 import
     # （WebEngine 内置主包：Qt6WebEngineCore.dll 随 _internal/ 一起分发，
@@ -45,6 +55,8 @@ if TYPE_CHECKING:
     from PySide6.QtWebEngineWidgets import QWebEngineView
 
 logger = logging.getLogger(__name__)
+
+_DOCUMENT_TOKEN_PLACEHOLDER = "__VIBEOCR_DOCUMENT_TOKEN_8E2C4A75__"
 
 
 def _get_resources_dir() -> Path:
@@ -97,6 +109,15 @@ BLOCK_TYPE_LABELS: dict[str, str] = {
 
 # 存储当前结果的 images 字典，供渲染函数访问
 _current_images: dict[str, bytes] = {}
+_render_images: contextvars.ContextVar[dict[str, bytes] | None] = (
+    contextvars.ContextVar("result_render_images", default=None)
+)
+
+
+def _active_render_images() -> dict[str, bytes]:
+    """返回当前纯数据构建上下文的图片；兼容直接调用 renderer 的旧测试。"""
+    images = _render_images.get()
+    return _current_images if images is None else images
 
 
 # ── 块类型渲染函数 ──────────────────────────────────────────
@@ -144,8 +165,9 @@ def _render_table(block: dict, index: int) -> str:
 def _render_image(block: dict, index: int) -> str:
     parts: list[str] = []
     img_path = block.get("img_path", "")
-    if img_path and img_path in _current_images:
-        img_bytes = _current_images[img_path]
+    images = _active_render_images()
+    if img_path and img_path in images:
+        img_bytes = images[img_path]
         b64 = base64.b64encode(img_bytes).decode()
         ext = img_path.rsplit(".", 1)[-1].lower()
         mime = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg"}.get(
@@ -174,8 +196,9 @@ def _render_image(block: dict, index: int) -> str:
 def _render_chart(block: dict, index: int) -> str:
     parts: list[str] = []
     img_path = block.get("img_path", "")
-    if img_path and img_path in _current_images:
-        img_bytes = _current_images[img_path]
+    images = _active_render_images()
+    if img_path and img_path in images:
+        img_bytes = images[img_path]
         b64 = base64.b64encode(img_bytes).decode()
         parts.append(
             f'<img src="data:image/png;base64,{b64}" style="max-width:100%;border-radius:4px;">'
@@ -226,8 +249,9 @@ def _render_code(block: dict, index: int) -> str:
 
 def _render_seal(block: dict, index: int) -> str:
     img_path = block.get("img_path", "")
-    if img_path and img_path in _current_images:
-        img_bytes = _current_images[img_path]
+    images = _active_render_images()
+    if img_path and img_path in images:
+        img_bytes = images[img_path]
         b64 = base64.b64encode(img_bytes).decode()
         return f'<img src="data:image/png;base64,{b64}" style="max-width:60%;border-radius:4px;">'
     return '<p style="color:#888;font-size:12px;">[印章]</p>'
@@ -256,7 +280,9 @@ BLOCK_RENDERERS: dict[str, Callable[[dict, int], str]] = {
 
 
 def _build_text_layout_html(
-    text_blocks: list, options: Any
+    text_blocks: list | tuple,
+    options: Any,
+    cancel_event: Event | None = None,
 ) -> str:
     """按文本块处理选项排版纯文本块为 HTML，保留逐块可编辑性。
 
@@ -282,9 +308,18 @@ def _build_text_layout_html(
     from vibeocr.utils.text_layout import TextBlockProcessor
 
     # 用 (原始下标, 块) 配对跟踪位置，避免 drop_blank / 排序后 index 错位。
+    if cancel_event is not None and cancel_event.is_set():
+        raise ExportJobCancelled
     indexed = list(enumerate(text_blocks))
     if options.drop_blank_blocks:
-        indexed = [(i, b) for i, b in indexed if b.text and b.text.strip()]
+        filtered: list[tuple[int, Any]] = []
+        for position, (index, block) in enumerate(indexed):
+            if position % 128 == 0 and cancel_event is not None:
+                if cancel_event.is_set():
+                    raise ExportJobCancelled
+            if block.text and block.text.strip():
+                filtered.append((index, block))
+        indexed = filtered
     if not indexed:
         return ""
     indexed = TextBlockProcessor._sort_indexed(indexed)
@@ -293,12 +328,17 @@ def _build_text_layout_html(
 
     # keep：每块独立成行（块级 .ocr-block）。
     if options.line_mode == LINE_MODE_KEEP:
-        return "\n".join(
-            _text_layout_block_html(
-                i, b, prefix=cjk_indent if pos == 0 else ""
+        parts: list[str] = []
+        for pos, (index, block) in enumerate(indexed):
+            if pos % 128 == 0 and cancel_event is not None:
+                if cancel_event.is_set():
+                    raise ExportJobCancelled
+            parts.append(
+                _text_layout_block_html(
+                    index, block, prefix=cjk_indent if pos == 0 else ""
+                )
             )
-            for pos, (i, b) in enumerate(indexed)
-        )
+        return "\n".join(parts)
 
     # merge / smart：段内块横排（inline），段间空行。
     if options.line_mode == LINE_MODE_SMART:
@@ -310,13 +350,16 @@ def _build_text_layout_html(
 
     sep = " " if options.block_join_space else ""
     parts: list[str] = []
+    processed = 0
     for seg in segments:
         chunks: list[str] = []
         for pos, (i, b) in enumerate(seg):
+            if processed % 128 == 0 and cancel_event is not None:
+                if cancel_event.is_set():
+                    raise ExportJobCancelled
+            processed += 1
             prefix = cjk_indent if pos == 0 else ""
-            chunks.append(
-                _text_layout_block_html(i, b, inline=True, prefix=prefix)
-            )
+            chunks.append(_text_layout_block_html(i, b, inline=True, prefix=prefix))
             # 段内块间插入分隔（HTML 文本节点，非编辑内容）
             if sep and pos < len(seg) - 1:
                 chunks.append(sep)
@@ -399,14 +442,13 @@ def _build_full_html(
         # 必须用绝对路径：早期版本传相对路径 resources/katex/katex.min.js，
         # QUrl.fromLocalFile 会生成畸形 URL（file:resources/... 而非 file:///...），
         # Chromium WebEngine 无法加载 → KaTeX 不执行 → 公式显示为原始 LaTeX。
-        katex_css_url = QUrl.fromLocalFile(str((katex_dir / "katex.min.css").resolve()))
-        katex_js_url = QUrl.fromLocalFile(str((katex_dir / "katex.min.js").resolve()))
-        katex_css = f'<link rel="stylesheet" href="{katex_css_url.toString()}">'
+        katex_css_url = (katex_dir / "katex.min.css").resolve().as_uri()
+        katex_js_url = (katex_dir / "katex.min.js").resolve().as_uri()
+        katex_css = f'<link rel="stylesheet" href="{katex_css_url}">'
         # KaTeX 加载完成后再触发渲染（onload），避免外部脚本加载失败时
         # 阻塞其后内联脚本（编辑/光标逻辑）的执行。
         katex_js_tag = (
-            f'<script src="{katex_js_url.toString()}" '
-            f'onload="renderAllMath()"></script>'
+            f'<script src="{katex_js_url}" onload="renderAllMath()"></script>'
         )
 
     # qwebchannel.js：QWebChannel 桥接必需。
@@ -418,8 +460,8 @@ def _build_full_html(
     if resources_dir:
         qwebchannel_path = resources_dir / "qwebchannel.js"
         if qwebchannel_path.exists():
-            qwebchannel_js_url = QUrl.fromLocalFile(str(qwebchannel_path.resolve()))
-            qwebchannel_js_tag = f'<script src="{qwebchannel_js_url.toString()}"></script>'
+            qwebchannel_js_url = qwebchannel_path.resolve().as_uri()
+            qwebchannel_js_tag = f'<script src="{qwebchannel_js_url}"></script>'
 
     return f"""<!DOCTYPE html>
 <html>
@@ -463,6 +505,7 @@ body {{ margin:0; padding:8px; font-family:"Microsoft YaHei","Segoe UI",sans-ser
 {blocks_html}
 </div>
 <script>
+var _documentToken = "{_DOCUMENT_TOKEN_PLACEHOLDER}";
 // 公式渲染函数：由 KaTeX <script onload> 触发，也可被编辑后手动调用。
 // 放在内联脚本最前面定义，确保 KaTeX 加载完成时函数已存在。
 function renderAllMath() {{
@@ -490,7 +533,7 @@ function _finishTextEdit(block) {{
     block.removeAttribute('contenteditable');
     if (newText !== _editOriginals[index]) {{
         block.classList.add('manually-edited');
-        if (_bridge) _bridge.onBlockEdited(index, newText);
+        if (_bridge) _bridge.onBlockEditedForDocument(_documentToken, index, newText);
     }}
     delete _editOriginals[index];
 }}
@@ -506,7 +549,7 @@ function _finishTableEdit(block) {{
     }});
     if (newHtml !== _editOriginals[index]) {{
         block.classList.add('manually-edited');
-        if (_bridge) _bridge.onBlockEdited(index, newHtml);
+        if (_bridge) _bridge.onBlockEditedForDocument(_documentToken, index, newHtml);
     }}
     delete _editOriginals[index];
 }}
@@ -541,7 +584,7 @@ function _startEquationEdit(block, index) {{
         }}
         if (newLatex !== _editOriginals[index]) {{
             block.classList.add('manually-edited');
-            if (_bridge) _bridge.onBlockEdited(index, newLatex);
+            if (_bridge) _bridge.onBlockEditedForDocument(_documentToken, index, newLatex);
         }}
         delete _editOriginals[index];
     }});
@@ -673,6 +716,35 @@ function getCopyText() {{
         if (t) parts.push(t);
     }});
     return parts.join('\\n\\n');
+}}
+
+function getCopyPayload() {{
+    var tables = Array.from(document.querySelectorAll('.ocr-table table'));
+    if (tables.length === 0) {{
+        return {{ documentToken: _documentToken, html: '', text: getCopyText() }};
+    }}
+    var htmlParts = [];
+    var textParts = [];
+    tables.forEach(function(table) {{
+        var clean = table.cloneNode(true);
+        clean.querySelectorAll('*').forEach(function(el) {{
+            Array.from(el.attributes).forEach(function(attr) {{
+                el.removeAttribute(attr.name);
+            }});
+        }});
+        htmlParts.push(clean.outerHTML);
+        var rows = [];
+        table.querySelectorAll('tr').forEach(function(row) {{
+            var cells = Array.from(row.querySelectorAll(':scope > th, :scope > td'));
+            rows.push(cells.map(function(cell) {{ return cell.innerText.trim(); }}).join('\\t'));
+        }});
+        textParts.push(rows.join('\\n'));
+    }});
+    return {{
+        documentToken: _documentToken,
+        html: htmlParts.join(''),
+        text: textParts.join('\\n')
+    }};
 }}
 
 // ── 表格单元格级拖选（Word/Excel 式）──
@@ -862,6 +934,184 @@ def _create_cf_html(html_fragment: str) -> str:
     )
 
 
+def _result_value(result: Any, name: str, default: Any) -> Any:
+    if isinstance(result, dict):
+        return result.get(name, default)
+    return getattr(result, name, default)
+
+
+def _build_result_html(
+    result: Any,
+    resources_dir: Path,
+    cancel_event: Event | None = None,
+) -> str:
+    """只使用普通 Python 数据构建完整结果 HTML，可安全在线程中执行。"""
+    content_list = _result_value(result, "content_list", []) or []
+    images = _result_value(result, "images", {}) or {}
+    token = _render_images.set(images)
+    try:
+        if content_list:
+            blocks_html: list[str] = []
+            for index, block in enumerate(content_list):
+                if cancel_event is not None and cancel_event.is_set():
+                    raise ExportJobCancelled
+                if block.get("type", "") in DISCARDED_BLOCK_TYPES:
+                    continue
+                blocks_html.append(_render_block(block, index))
+            body = "\n".join(blocks_html)
+        else:
+            text = _result_value(result, "raw_text", "") or ""
+            if text:
+                body = (
+                    f'<pre style="white-space:pre-wrap;">{html_lib.escape(text)}</pre>'
+                )
+            else:
+                body = '<p style="color:#888;">未识别到文字</p>'
+        if cancel_event is not None and cancel_event.is_set():
+            raise ExportJobCancelled
+        return _build_full_html(body, resources_dir / "katex", resources_dir)
+    finally:
+        _render_images.reset(token)
+
+
+def _capture_stable_result_snapshot(
+    result: Any,
+    cancel_event: Event,
+    *,
+    include_content_list: bool,
+    include_images: bool,
+    include_text_blocks: bool,
+) -> Any:
+    """Optimistically detach a stable source revision outside the GUI thread.
+
+    The editable OCR model has no intrinsic revision counter.  Two consecutive,
+    equal detached views therefore act as a seqlock read: an intermediate mixed
+    view is never returned.  Normal UI edits also cancel the owning generation,
+    so retries are only needed for direct source mutations.
+    """
+    previous = None
+    last_error: Exception | None = None
+    for _attempt in range(3):
+        if cancel_event.is_set():
+            raise ExportJobCancelled
+        try:
+            current = snapshot_ocr_result(
+                result,
+                include_content_list=include_content_list,
+                include_images=include_images,
+                include_text_blocks=include_text_blocks,
+            )
+        except Exception as error:  # mutable containers may change mid-copy
+            last_error = error
+            previous = None
+            continue
+        if previous is not None and _stable_values_equal(
+            current, previous, cancel_event
+        ):
+            return current
+        previous = current
+    if cancel_event.is_set():
+        raise ExportJobCancelled
+    if last_error is not None:
+        raise RuntimeError("OCR result changed while creating a stable snapshot") from last_error
+    raise RuntimeError("OCR result did not reach a stable revision")
+
+
+def _stable_values_equal(left: Any, right: Any, cancel_event: Event) -> bool:
+    """Compare detached JSON-like/dataclass trees without a serialized copy."""
+    visited = 0
+    scalar_types = (type(None), str, bytes, int, float, bool)
+
+    def equal(a: Any, b: Any) -> bool:
+        nonlocal visited
+        visited += 1
+        if visited % 128 == 0 and cancel_event.is_set():
+            raise ExportJobCancelled
+        if type(a) is not type(b):
+            return False
+        if type(a) in scalar_types:
+            if type(a) is float and a != a and b != b:
+                return True
+            return a == b
+        if is_dataclass(a) and not isinstance(a, type):
+            return all(equal(getattr(a, field.name), getattr(b, field.name)) for field in fields(a))
+        if type(a) is dict:
+            if len(a) != len(b):
+                return False
+            if any(type(key) not in scalar_types for key in a):
+                return False
+            if any(type(key) not in scalar_types for key in b):
+                return False
+            for key, value in a.items():
+                if key not in b or not equal(value, b[key]):
+                    return False
+            return True
+        if type(a) in (list, tuple):
+            return len(a) == len(b) and all(
+                equal(a_item, b_item) for a_item, b_item in zip(a, b, strict=True)
+            )
+        return False
+
+    if cancel_event.is_set():
+        raise ExportJobCancelled
+    matched = equal(left, right)
+    if cancel_event.is_set():
+        raise ExportJobCancelled
+    return matched
+
+
+def _rebuild_copy_snapshot(
+    snapshot: Any,
+    cancel_event: Event,
+    *,
+    include_markdown: bool,
+) -> Any:
+    """Rebuild aggregates from an already detached, worker-owned snapshot."""
+    raw_parts: list[str] = []
+    for index, block in enumerate(snapshot.text_blocks):
+        if index % 128 == 0 and cancel_event.is_set():
+            raise ExportJobCancelled
+        if block.text:
+            raw_parts.append(block.text)
+    raw_text = "\n".join(raw_parts)
+    if not raw_text:
+        raw_text = snapshot.raw_text
+
+    markdown_text = raw_text
+    if include_markdown and snapshot.content_list:
+        from vibeocr.utils.html_tables import (
+            _extract_table_html,
+            _html_table_to_markdown,
+        )
+
+        markdown_parts: list[str] = []
+        for index, block in enumerate(snapshot.content_list):
+            if index % 128 == 0 and cancel_event.is_set():
+                raise ExportJobCancelled
+            if block.get("type") == "table":
+                markdown = _html_table_to_markdown(
+                    _extract_table_html(block.get("table_body", ""))
+                )
+                if markdown:
+                    markdown_parts.append(markdown)
+            else:
+                text = str(block.get("text", "") or "")
+                if text:
+                    markdown_parts.append(text)
+        if markdown_parts:
+            markdown_text = "\n\n".join(markdown_parts)
+
+    if cancel_event.is_set():
+        raise ExportJobCancelled
+
+    return replace(
+        snapshot,
+        raw_text=raw_text,
+        markdown_text=markdown_text,
+        html_text="",
+    )
+
+
 class _Bridge(QObject):
     """QWebChannel 通信桥"""
 
@@ -869,6 +1119,14 @@ class _Bridge(QObject):
     blockUnhovered = Signal()
     blockClicked = Signal(int)
     blockEdited = Signal(int, str)  # (block_index, new_text)
+
+    def __init__(self, parent: QObject | None = None):
+        super().__init__(parent)
+        self._active_document_token = ""
+
+    def set_active_document(self, token: str) -> None:
+        """Accept edits only from the document currently owned by the widget."""
+        self._active_document_token = token
 
     @Slot(int)
     def onBlockHover(self, index: int):
@@ -882,9 +1140,10 @@ class _Bridge(QObject):
     def onBlockClick(self, index: int):
         self.blockClicked.emit(index)
 
-    @Slot(int, str)
-    def onBlockEdited(self, index: int, text: str):
-        self.blockEdited.emit(index, text)
+    @Slot(str, int, str)
+    def onBlockEditedForDocument(self, token: str, index: int, text: str):
+        if token == self._active_document_token:
+            self.blockEdited.emit(index, text)
 
 
 class ResultViewWidget(QWidget):
@@ -897,11 +1156,33 @@ class ResultViewWidget(QWidget):
     # WebEngine 不可用时触发（保留信号：内置打包后通常不会触发，
     # 但作为 import 失败时的防御性通知机制保留）。
     webengine_missing = Signal()
+    # Emitted only after the worker has produced the exact immutable payload that
+    # is rendered.  Containers such as BatchRecognitionTab can cache this value
+    # instead of copying a live, GUI-editable OCRResult when Export is clicked.
+    snapshot_ready = Signal(object, object)  # source result, OCRResultSnapshot
+    snapshot_failed = Signal(object)  # source result
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self._current_result: Any = None
+        self._current_snapshot: Any = None
+        self._submission_snapshot: Any = None
+        self._snapshot_invalidated_by_edit = False
+        self._source_generation = 0
         self._highlighted_index: int = -1
+        self._copy_job: ExportSaveJob | None = None
+        self._copy_generation = 0
+        self._copy_js_pending = False
+        self._export_job: ExportSaveJob | None = None
+        self._export_generation = 0
+        self._export_path = ""
+        self._closing = False
+        self._render_generation = 0
+        self._render_jobs: set[ExportSaveJob] = set()
+        self._document_generation = 0
+        self._active_document_token = "0"
+        self._rendered_document_token = ""
+        self._pending_document_token = ""
         self._setup_ui()
 
     def _setup_ui(self) -> None:
@@ -976,8 +1257,10 @@ class ResultViewWidget(QWidget):
         self._web_view = QWebEngineView(self)
         self._channel = QWebChannel(self._web_view)
         self._bridge = _Bridge(self)
+        self._bridge.set_active_document(self._active_document_token)
         self._channel.registerObject("bridge", self._bridge)
         self._web_view.page().setWebChannel(self._channel)
+        self._web_view.loadFinished.connect(self._on_web_load_finished)
 
         self._bridge.blockHovered.connect(self.block_hovered.emit)
         self._bridge.blockUnhovered.connect(self.block_unhovered.emit)
@@ -996,16 +1279,25 @@ class ResultViewWidget(QWidget):
         Excel 保持行列网格、粘贴到 Word 保持原生表格；否则回退到 WebEngine
         的 ``getCopyText()`` 纯文本（保留用户选区）。
         """
-        # 优先：表格结果直接构建富剪贴板（不走 JS，保留表格结构）。
-        if self._current_result is not None:
-            html, tab_text = build_table_copy_payload(self._current_result)
-            if html and tab_text:
-                self._copy_rich_table(html, tab_text)
-                return
-        # 无表格：走 WebEngine 选区文本（若无 web_view 则 noop）。
-        if not self._web_view:
+        if self._closing or self._current_result is None or self._copy_job is not None:
             return
-        self._web_view.page().runJavaScript("getCopyText()", self._do_copy_text)
+        if (
+            self._web_view is not None
+            and self._rendered_document_token == self._active_document_token
+        ):
+            self._copy_generation += 1
+            generation = self._copy_generation
+            expected_token = self._active_document_token
+            self._copy_js_pending = True
+            self._set_copy_busy(True)
+            self._web_view.page().runJavaScript(
+                "getCopyPayload()",
+                lambda payload: self._on_web_copy_payload(
+                    generation, expected_token, payload
+                ),
+            )
+            return
+        self._start_copy_job("text")
 
     def _copy_rich_table(self, html: str, tab_text: str) -> None:
         """写入 HTML + Tab 文本 + CF_HTML 到剪贴板（Excel/Word 友好）。"""
@@ -1017,31 +1309,149 @@ class ResultViewWidget(QWidget):
         QGuiApplication.clipboard().setMimeData(mime)
         self._show_copy_toast()
 
-    def _do_copy_text(self, text: str | None) -> None:
-        if text:
+    def _on_copy_markdown(self) -> None:
+        """复制与当前已接纳编辑一致的 Markdown，不走 WebEngine JS。"""
+        if self._closing or self._current_result is None or self._copy_job is not None:
+            return
+        self._start_copy_job("markdown")
+
+    def _start_copy_job(self, kind: str) -> None:
+        source_result = self._current_result
+        if source_result is None or self._closing:
+            return
+        detached_snapshot = self._current_snapshot or self._submission_snapshot
+        rebuild_aggregates = self._snapshot_invalidated_by_edit
+        source_generation = self._source_generation
+        self._copy_generation += 1
+        generation = self._copy_generation
+
+        def prepare(cancel_event, _progress):
+            snapshot = detached_snapshot
+            if snapshot is None:
+                snapshot = _capture_stable_result_snapshot(
+                    source_result,
+                    cancel_event,
+                    include_content_list=True,
+                    include_images=False,
+                    include_text_blocks=True,
+                )
+            if cancel_event.is_set():
+                raise ExportJobCancelled
+            if rebuild_aggregates:
+                snapshot = _rebuild_copy_snapshot(
+                    snapshot,
+                    cancel_event,
+                    include_markdown=kind == "markdown",
+                )
+            if kind == "markdown":
+                text = snapshot.markdown_text or snapshot.raw_text
+                return kind, "", text
+            from types import SimpleNamespace
+
+            copy_result = SimpleNamespace(
+                raw_text=snapshot.raw_text,
+                markdown_text=snapshot.markdown_text,
+                html_text=snapshot.html_text,
+                content_list=list(snapshot.content_list),
+                text_blocks=list(snapshot.text_blocks),
+            )
+            html, tab_text = build_table_copy_payload(copy_result)
+            return kind, html, tab_text or snapshot.raw_text
+
+        job = ExportSaveJob(prepare)
+        job.setProperty("generation", generation)
+        job.setProperty("source_generation", source_generation)
+        self._copy_job = job
+        self._set_copy_busy(True)
+        job.completed.connect(self._on_copy_job_completed)
+        job.failed.connect(self._on_copy_job_failed)
+        job.stopped.connect(self._on_copy_job_stopped)
+        job.start()
+
+    def _is_current_copy_signal(self) -> bool:
+        job = self.sender()
+        return bool(
+            not self._closing
+            and job is self._copy_job
+            and job.property("generation") == self._copy_generation
+            and job.property("source_generation") == self._source_generation
+        )
+
+    def _on_copy_job_completed(self, payload: object) -> None:
+        if not self._is_current_copy_signal():
+            return
+        kind, html, text = payload
+        if html and text:
+            self._copy_rich_table(html, text)
+        elif text:
+            QGuiApplication.clipboard().setText(text)
+            self._show_copy_toast(
+                "Markdown 已复制" if kind == "markdown" else "已复制到剪贴板"
+            )
+
+    def _on_copy_job_failed(self, error: str) -> None:
+        if self._is_current_copy_signal():
+            logger.error("复制内容准备失败: %s", error)
+
+    def _on_copy_job_stopped(self, job: ExportSaveJob) -> None:
+        if job is self._copy_job:
+            self._copy_job = None
+            self._set_copy_busy(False)
+        job.deleteLater()
+
+    def _on_web_copy_payload(
+        self, generation: int, expected_token: str, payload: object
+    ) -> None:
+        if generation != self._copy_generation:
+            return
+        self._copy_js_pending = False
+        if not (
+            not self._closing
+            and expected_token == self._active_document_token
+            and expected_token == self._rendered_document_token
+            and isinstance(payload, dict)
+            and payload.get("documentToken") == expected_token
+        ):
+            self._set_copy_busy(False)
+            return
+        html = str(payload.get("html") or "")
+        text = str(payload.get("text") or "")
+        if html and text:
+            self._copy_rich_table(html, text)
+        elif text:
             QGuiApplication.clipboard().setText(text)
             self._show_copy_toast()
+        self._set_copy_busy(False)
 
-    def _on_copy_markdown(self) -> None:
-        """复制 Markdown 到剪贴板（直读 _current_result，不走 WebEngine JS）。"""
-        if self._current_result is None:
-            return
-        md = getattr(self._current_result, "markdown_text", "") or getattr(
-            self._current_result, "raw_text", ""
+    def _cancel_copy(self) -> None:
+        self._copy_generation += 1
+        self._copy_js_pending = False
+        if self._copy_job is not None:
+            self._copy_job.cancel()
+        self._set_copy_busy(self._copy_job is not None)
+
+    def _set_copy_busy(self, busy: bool) -> None:
+        self._copy_md_btn.setEnabled(
+            not busy and not self._closing and self._current_result is not None
         )
-        if not md:
-            return
-        QGuiApplication.clipboard().setText(md)
-        self._show_copy_toast("Markdown 已复制")
+        self._copy_btn.setEnabled(
+            not busy
+            and not self._closing
+            and self._rendered_document_token == self._active_document_token
+        )
 
     def _on_export_file(self, fmt: str) -> None:
         """导出为 Word/Excel 文件（另存为对话框 + ExportService）。"""
-        if self._current_result is None:
+        if (
+            self._current_result is None
+            or self._current_snapshot is None
+            or self._export_job is not None
+            or self._closing
+        ):
             return
         from pathlib import Path
 
-        from vibeocr.client.export import export_result, get_output_filename
-        from vibeocr.client.session import get_backend_client
+        from vibeocr.client.export import get_output_filename
 
         filter_label = {
             "docx": "Word 文档 (*.docx)",
@@ -1053,13 +1463,102 @@ class ResultViewWidget(QWidget):
         )
         if not path:
             return
-        ok = export_result(
-            get_backend_client(), self._current_result, Path(path), fmt
+        source_result = self._current_snapshot
+        self._export_generation += 1
+
+        def export(cancel_event, progress):
+            return export_single_operation(
+                None, source_result, Path(path), fmt
+            )(cancel_event, progress)
+
+        job = ExportSaveJob(export)
+        job.setProperty("generation", self._export_generation)
+        self._export_job = job
+        self._export_path = path
+        self._set_export_busy(True)
+        job.completed.connect(self._on_export_completed)
+        job.failed.connect(self._on_export_failed)
+        job.stopped.connect(self._on_export_job_finished)
+        job.start()
+
+    def _set_export_busy(self, busy: bool) -> None:
+        enabled = (
+            not busy
+            and not self._closing
+            and self._current_result is not None
+            and self._current_snapshot is not None
         )
-        if ok:
-            QMessageBox.information(self, "导出成功", f"已导出到：\n{path}")
-        else:
+        self._export_docx_btn.setEnabled(enabled)
+        self._export_xlsx_btn.setEnabled(enabled)
+
+    def _is_current_export_signal(self) -> bool:
+        job = self.sender()
+        return bool(
+            not self._closing
+            and job is self._export_job
+            and job.property("generation") == self._export_generation
+        )
+
+    def _on_export_completed(self, _path: object) -> None:
+        if self._is_current_export_signal():
+            QMessageBox.information(
+                self, "导出成功", f"已导出到：\n{self._export_path}"
+            )
+
+    def _on_export_failed(self, _error: str) -> None:
+        if self._is_current_export_signal():
             QMessageBox.warning(self, "导出失败", "导出失败，请重试或查看日志。")
+
+    def _on_export_job_finished(self, job: ExportSaveJob) -> None:
+        if job is not self._export_job:
+            return
+        self._export_job = None
+        self._export_path = ""
+        self._set_export_busy(False)
+        job.deleteLater()
+
+    def cancel_export(self) -> None:
+        """取消当前导出并使其所有迟到回调失效。"""
+        self._export_generation += 1
+        if self._export_job is not None:
+            self._export_job.cancel()
+
+    def drain(self, timeout_ms: int = 0) -> bool:
+        """Drain copy, export, and render jobs under one shared wall-clock budget."""
+        deadline = time.monotonic() + max(0, timeout_ms) / 1000
+        copy_job = self._copy_job
+        if copy_job is not None and not copy_job.drain(max(0, timeout_ms)):
+            return False
+        job = self._export_job
+        remaining_ms = max(0, int((deadline - time.monotonic()) * 1000))
+        if job is not None and not job.drain(remaining_ms):
+            return False
+        for render_job in tuple(self._render_jobs):
+            remaining_ms = max(0, int((deadline - time.monotonic()) * 1000))
+            if not render_job.drain(remaining_ms):
+                return False
+        # Requiring the GUI stopped slots to remove jobs proves queued callbacks
+        # no longer capture this QWidget before MainWindow destroys it.
+        return (
+            self._copy_job is None
+            and self._export_job is None
+            and not self._render_jobs
+        )
+
+    def set_closing(self, closing: bool) -> None:
+        self._closing = closing
+        if closing:
+            self._cancel_copy()
+            self.cancel_export()
+            self._invalidate_render_jobs()
+            self._activate_next_document()
+            self._set_export_busy(True)
+        else:
+            self._set_export_busy(self._export_job is not None)
+
+    def closeEvent(self, event) -> None:
+        self.set_closing(True)
+        super().closeEvent(event)
 
     def _show_copy_toast(self, message: str = "已复制到剪贴板") -> None:
         """显示复制成功浮层"""
@@ -1074,47 +1573,129 @@ class ResultViewWidget(QWidget):
         QTimer.singleShot(1500, self._copy_toast.hide)
 
     def display_result(self, result: Any) -> None:
-        """显示 OCR 识别结果"""
+        """异步构建 OCR 结果 HTML；WebEngine 交互只发生在 GUI 线程。"""
+        if self._closing:
+            return
+        self._cancel_copy()
+        self._invalidate_render_jobs()
+        self._source_generation += 1
+        self._activate_next_document()
         # 先记录结果并显示 WebEngine 无关的按钮（复制MD/导出），
         # 这样即便 WebEngine 不可用，用户仍可复制 Markdown、导出 Word/Excel。
         self._current_result = result
+        self._current_snapshot = None
+        self._submission_snapshot = None
+        self._snapshot_invalidated_by_edit = False
+        self._highlighted_index = -1
         self._copy_md_btn.show()
         self._export_docx_btn.show()
         self._export_xlsx_btn.show()
+        self._set_export_busy(self._export_job is not None)
+        generation = self._render_generation
+        source_generation = self._source_generation
+        document_token = self._active_document_token
 
+        def build(cancel_event, _progress):
+            result_snapshot = _capture_stable_result_snapshot(
+                result,
+                cancel_event,
+                include_content_list=True,
+                include_images=True,
+                include_text_blocks=False,
+            )
+            resources_dir = _get_resources_dir()
+            return _build_result_html(
+                result_snapshot, resources_dir, cancel_event
+            ), str(resources_dir), result_snapshot
+
+        job = ExportSaveJob(build)
+        job.setProperty("generation", generation)
+        job.setProperty("source_generation", source_generation)
+        job.setProperty("document_token", document_token)
+        self._render_jobs.add(job)
+        job.completed.connect(self._on_render_completed)
+        job.failed.connect(self._on_render_failed)
+        job.stopped.connect(self._on_render_stopped)
+        job.start()
+
+    def _invalidate_render_jobs(self) -> None:
+        self._render_generation += 1
+        for job in tuple(self._render_jobs):
+            job.cancel()
+
+    def _activate_next_document(self) -> None:
+        """Invalidate all callbacks from the previously rendered WebEngine DOM."""
+        self._document_generation += 1
+        self._active_document_token = str(self._document_generation)
+        self._rendered_document_token = ""
+        self._pending_document_token = ""
+        self._copy_btn.hide()
+        if self._bridge is not None:
+            self._bridge.set_active_document(self._active_document_token)
+
+    def _is_current_render_signal(self) -> bool:
+        job = self.sender()
+        return bool(
+            not self._closing
+            and job in self._render_jobs
+            and job.property("generation") == self._render_generation
+            and job.property("source_generation") == self._source_generation
+        )
+
+    def _on_render_completed(self, payload: object) -> None:
+        if not self._is_current_render_signal():
+            return
+        full_html, resources_path, snapshot = payload
+        self._current_snapshot = snapshot
+        self._submission_snapshot = snapshot
+        self._snapshot_invalidated_by_edit = False
+        self.snapshot_ready.emit(self._current_result, snapshot)
+        self._set_export_busy(self._export_job is not None)
         web_view = self._ensure_web_view()
         if web_view is None:
-            # WebEngine 未就绪：发出信号供上层弹下载引导（上层连接此信号）。
             self.webengine_missing.emit()
             return
-        self._copy_btn.show()
-        global _current_images
-        self._highlighted_index = -1
-
-        content_list = getattr(result, "content_list", [])
-        _current_images = getattr(result, "images", {})
-
-        if content_list:
-            blocks_html = []
-            for i, block in enumerate(content_list):
-                if block.get("type", "") in DISCARDED_BLOCK_TYPES:
-                    continue
-                blocks_html.append(_render_block(block, i))
-            body = "\n".join(blocks_html)
-        else:
-            text = getattr(result, "raw_text", "")
-            if text:
-                body = (
-                    f'<pre style="white-space:pre-wrap;">{html_lib.escape(text)}</pre>'
-                )
-            else:
-                body = '<p style="color:#888;">未识别到文字</p>'
-
-        resources_dir = _get_resources_dir()
-        katex_dir = resources_dir / "katex"
-        full_html = _build_full_html(body, katex_dir, resources_dir)
-        base_url = QUrl.fromLocalFile(str(resources_dir) + "/")
+        job = self.sender()
+        document_token = str(job.property("document_token"))
+        token_literal = json.dumps(document_token)
+        full_html = full_html.replace(
+            f'"{_DOCUMENT_TOKEN_PLACEHOLDER}"', token_literal, 1
+        )
+        self._pending_document_token = document_token
+        base_url = QUrl.fromLocalFile(str(resources_path) + "/")
         web_view.setHtml(full_html, base_url)
+
+    @Slot(bool)
+    def _on_web_load_finished(self, loaded: bool) -> None:
+        if not loaded or self._closing or self._web_view is None:
+            return
+        self._web_view.page().runJavaScript(
+            "typeof _documentToken === 'string' ? _documentToken : ''",
+            self._on_loaded_document_token,
+        )
+
+    def _on_loaded_document_token(self, token: object) -> None:
+        document_token = str(token or "")
+        if not (
+            not self._closing
+            and document_token
+            and document_token == self._pending_document_token
+            and document_token == self._active_document_token
+        ):
+            return
+        self._rendered_document_token = document_token
+        self._pending_document_token = ""
+        self._copy_btn.show()
+        self._set_copy_busy(self._copy_job is not None or self._copy_js_pending)
+
+    def _on_render_failed(self, error: str) -> None:
+        if self._is_current_render_signal():
+            logger.error("结果 HTML 构建失败: %s", error)
+            self.snapshot_failed.emit(self._current_result)
+
+    def _on_render_stopped(self, job: ExportSaveJob) -> None:
+        self._render_jobs.discard(job)
+        job.deleteLater()
 
     def display_text_layout(self, result: Any, options: Any) -> None:
         """按文本块处理选项排版纯文本结果，同时保留逐块可编辑性。
@@ -1131,29 +1712,63 @@ class ResultViewWidget(QWidget):
         merge 模式段内多个块视觉上连成一行（display:inline），但 DOM 仍是
         多个 .ocr-block；smart 模式按垂直间距分段，段间留空行（margin）。
         """
-        web_view = self._ensure_web_view()
-        if web_view is None:
-            self.webengine_missing.emit()
+        if self._closing:
             return
+        from vibeocr.models.text_block_options import TextBlockOptions
 
-        result_text_blocks = getattr(result, "text_blocks", []) or []
-        if result_text_blocks:
-            body = _build_text_layout_html(result_text_blocks, options)
-        else:
-            text = getattr(result, "raw_text", "")
-            if text:
-                body = (
-                    f'<pre style="white-space:pre-wrap;">'
-                    f"{html_lib.escape(text)}</pre>"
+        self._cancel_copy()
+        self._invalidate_render_jobs()
+        self._source_generation += 1
+        self._activate_next_document()
+        self._current_result = result
+        self._current_snapshot = None
+        self._submission_snapshot = None
+        self._snapshot_invalidated_by_edit = False
+        self._set_export_busy(True)
+        options_snapshot = TextBlockOptions.from_dict(options.to_dict())
+        generation = self._render_generation
+        source_generation = self._source_generation
+        document_token = self._active_document_token
+
+        def build(cancel_event, _progress):
+            result_snapshot = _capture_stable_result_snapshot(
+                result,
+                cancel_event,
+                include_content_list=False,
+                include_images=False,
+                include_text_blocks=True,
+            )
+            result_text_blocks = result_snapshot.text_blocks
+            if result_text_blocks:
+                body = _build_text_layout_html(
+                    result_text_blocks, options_snapshot, cancel_event
                 )
             else:
-                body = '<p style="color:#888;">未识别到文字</p>'
+                text = result_snapshot.raw_text
+                if text:
+                    body = (
+                        '<pre style="white-space:pre-wrap;">'
+                        f"{html_lib.escape(text)}</pre>"
+                    )
+                else:
+                    body = '<p style="color:#888;">未识别到文字</p>'
+            if cancel_event.is_set():
+                raise ExportJobCancelled
+            resources_dir = _get_resources_dir()
+            full_html = _build_full_html(
+                body, resources_dir / "katex", resources_dir
+            )
+            return full_html, str(resources_dir), result_snapshot
 
-        resources_dir = _get_resources_dir()
-        katex_dir = resources_dir / "katex"
-        full_html = _build_full_html(body, katex_dir, resources_dir)
-        base_url = QUrl.fromLocalFile(str(resources_dir) + "/")
-        web_view.setHtml(full_html, base_url)
+        job = ExportSaveJob(build)
+        job.setProperty("generation", generation)
+        job.setProperty("source_generation", source_generation)
+        job.setProperty("document_token", document_token)
+        self._render_jobs.add(job)
+        job.completed.connect(self._on_render_completed)
+        job.failed.connect(self._on_render_failed)
+        job.stopped.connect(self._on_render_stopped)
+        job.start()
 
     def update_block_text(self, index: int, text: str) -> None:
         """从外部更新指定块的显示文本（如左侧编辑同步时调用）。
@@ -1207,6 +1822,8 @@ class ResultViewWidget(QWidget):
         STATUS_STACK_BUFFER_OVERRUN (0xC0000409)，必须在 Qt 事件循环
         仍在运行时主动销毁。
         """
+        self._cancel_copy()
+        self._invalidate_render_jobs()
         if self._web_view is not None:
             self._web_view.stop()
             self._web_view.setHtml("")
@@ -1222,7 +1839,14 @@ class ResultViewWidget(QWidget):
             self._bridge = None
 
     def clear(self) -> None:
+        self._cancel_copy()
+        self._invalidate_render_jobs()
+        self._source_generation += 1
+        self._activate_next_document()
         self._current_result = None
+        self._current_snapshot = None
+        self._submission_snapshot = None
+        self._snapshot_invalidated_by_edit = False
         self._highlighted_index = -1
         self._copy_btn.hide()
         self._copy_md_btn.hide()
@@ -1233,3 +1857,17 @@ class ResultViewWidget(QWidget):
 
     def get_result(self) -> Any:
         return self._current_result
+
+    def current_snapshot(self) -> Any:
+        """Return the immutable payload backing the currently rendered result."""
+        return self._current_snapshot
+
+    def invalidate_snapshot(self) -> None:
+        """Freeze export while an incremental model edit is being aggregated."""
+        self._cancel_copy()
+        self._source_generation += 1
+        self._current_snapshot = None
+        self._submission_snapshot = None
+        self._snapshot_invalidated_by_edit = True
+        self._invalidate_render_jobs()
+        self._set_export_busy(True)

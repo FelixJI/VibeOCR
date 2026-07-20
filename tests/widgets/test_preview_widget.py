@@ -65,9 +65,10 @@ class TestPreviewWidgetTextBlocks:
 
 
 class TestPreviewWidgetFileLoading:
-    def test_load_image_file(self, qapp, temp_image_file):
+    def test_load_image_file(self, qapp, qtbot, temp_image_file):
         widget = PreviewWidget()
         widget.load_file(str(temp_image_file))
+        qtbot.waitUntil(lambda: not widget._image_load_jobs.is_running, timeout=2000)
         assert widget._original_pixmap is not None
         assert widget._total_pages == 1
 
@@ -340,9 +341,7 @@ class TestPreviewWidgetZoom:
         qtbot.addWidget(widget)
         widget.show()
         widget.set_pixmap(sample_pixmap)
-        widget.set_text_blocks(
-            [TextBlock(text="A", score=0.9, bbox=(0, 0, 500, 500))]
-        )
+        widget.set_text_blocks([TextBlock(text="A", score=0.9, bbox=(0, 0, 500, 500))])
         qtbot.wait(50)
         # fit 后的矩形宽度
         rect0 = widget._block_screen_rects[0]
@@ -627,11 +626,16 @@ class TestTooltipBlockTypeMode:
 
         widget = PreviewWidget()
         widget.set_pixmap(sample_pixmap)
-        widget._content_list = [{"type": "formula", "text": "E=mc^2", "bbox": [0, 0, 1, 1]}]
+        widget._content_list = [
+            {"type": "formula", "text": "E=mc^2", "bbox": [0, 0, 1, 1]}
+        ]
         widget._type_screen_rects = [(0, QRectF(10, 10, 190, 70), "formula")]
         widget._text_blocks = [
             TextBlock(
-                text="E=mc^2", score=1.0, bbox=(10, 10, 200, 80), label="formula",
+                text="E=mc^2",
+                score=1.0,
+                bbox=(10, 10, 200, 80),
+                label="formula",
                 content_index=0,
             )
         ]
@@ -751,5 +755,100 @@ class TestLegendModifiedEntry:
         assert formula_color.green() < 150
 
 
+def test_fifty_thousand_blocks_use_bounded_overlay_working_set(
+    qapp, qtbot, sample_pixmap
+):
+    """大结果保留完整模型，但单帧只创建有界数量的 Qt 绘制对象。"""
+    import time
+
+    from vibeocr.widgets.preview_widget import MAX_INTERACTIVE_OVERLAY_BLOCKS
+
+    widget = PreviewWidget()
+    qtbot.addWidget(widget)
+    widget.set_pixmap(sample_pixmap)
+    blocks = [
+        TextBlock(text=str(index), score=0.9, bbox=(0, 0, 10, 10))
+        for index in range(50_000)
+    ]
+
+    before = time.perf_counter()
+    widget.set_text_blocks(blocks)
+    elapsed_ms = (time.perf_counter() - before) * 1000
+
+    assert elapsed_ms < 150
+    assert len(widget._text_blocks) == 50_000
+    assert len(widget._overlay._conf_rects) <= MAX_INTERACTIVE_OVERLAY_BLOCKS
+    assert len(widget._confidence_overlay_indices) <= MAX_INTERACTIVE_OVERLAY_BLOCKS
+    assert len(widget._block_screen_rects) <= MAX_INTERACTIVE_OVERLAY_BLOCKS
+    assert len(widget._block_screen_polys) <= MAX_INTERACTIVE_OVERLAY_BLOCKS
 
 
+def test_repeated_large_block_update_reuses_indexes_and_bounded_overlay(
+    qapp, qtbot, sample_pixmap
+):
+    """Editing the same large result must not rescan all blocks on the GUI thread."""
+    from vibeocr.widgets.preview_widget import MAX_INTERACTIVE_OVERLAY_BLOCKS
+
+    class ObservedBlocks(list):
+        iterations = 0
+
+        def __iter__(self):
+            type(self).iterations += 1
+            return super().__iter__()
+
+    widget = PreviewWidget()
+    qtbot.addWidget(widget)
+    widget.set_pixmap(sample_pixmap)
+    blocks = ObservedBlocks(
+        TextBlock(
+            text=str(index),
+            score=0.9,
+            bbox=(0, 0, 10, 10),
+            content_index=index,
+        )
+        for index in range(50_000)
+    )
+    widget.set_text_blocks(blocks)
+    ObservedBlocks.iterations = 0
+
+    blocks[0].text = "changed"
+    widget.set_text_blocks(blocks)
+
+    assert ObservedBlocks.iterations == 0
+    assert len(widget._block_screen_rects) <= MAX_INTERACTIVE_OVERLAY_BLOCKS
+    assert len(widget._block_screen_polys) <= MAX_INTERACTIVE_OVERLAY_BLOCKS
+
+
+def test_rapid_large_edits_and_resizes_keep_qt_heartbeat(
+    qapp, qtbot, sample_pixmap
+):
+    """A burst of edits and resize notifications must yield before 150 ms."""
+    import time
+
+    from PySide6.QtCore import QTimer
+
+    widget = PreviewWidget()
+    qtbot.addWidget(widget)
+    widget.set_pixmap(sample_pixmap)
+    blocks = [
+        TextBlock(
+            text=str(index),
+            score=0.9,
+            bbox=(0, 0, 10, 10),
+            content_index=index,
+        )
+        for index in range(50_000)
+    ]
+    widget.set_text_blocks(blocks)
+    qtbot.waitUntil(lambda: not widget._block_index_jobs.is_running, timeout=2000)
+
+    fired_at = []
+    started = time.perf_counter()
+    QTimer.singleShot(0, lambda: fired_at.append(time.perf_counter()))
+    for index in range(12):
+        blocks[index].text = f"changed-{index}"
+        widget.set_text_blocks(blocks)
+        widget.resize(640 + index, 480 + index)
+
+    qtbot.waitUntil(lambda: bool(fired_at), timeout=150)
+    assert (fired_at[0] - started) * 1000 <= 150

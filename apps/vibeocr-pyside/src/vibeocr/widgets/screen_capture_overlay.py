@@ -14,6 +14,8 @@ import logging
 import os
 import sys
 import tempfile
+import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -26,10 +28,12 @@ from PySide6.QtCore import (
     Qt,
     QUrl,
     Signal,
+    Slot,
 )
 from PySide6.QtGui import (
     QColor,
     QGuiApplication,
+    QImage,
     QMouseEvent,
     QPainter,
     QPen,
@@ -44,6 +48,14 @@ from PySide6.QtWidgets import (
 )
 
 from vibeocr.ui import theme
+from vibeocr.utils.image_jobs import (
+    ClipboardPngResult,
+    GenerationImageJobs,
+    compose_screen_images,
+    delete_files,
+    save_image_file,
+    write_clipboard_png,
+)
 from vibeocr.widgets.editor.annotation_items import (
     BlurItem,
     MosaicItem,
@@ -63,6 +75,10 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+# 已经由用户确认的保存任务不能随着覆盖层的下一次 capture generation 失效。
+# 模块级引用还确保覆盖层关闭后，QRunnable 的完成回调对象不会被提前回收。
+_ACTIVE_SAVE_JOB_CONTROLLERS: set[GenerationImageJobs] = set()
+
 
 class ScreenCaptureOverlay(QWidget):
     """统一的截图+编辑覆盖层
@@ -71,12 +87,14 @@ class ScreenCaptureOverlay(QWidget):
         confirmed(QPixmap, object): 确认识别，传递截图和 OCROptions
         copied(QPixmap): 复制到剪贴板
         saved(str): 另存为文件路径
+        save_failed(str): 已确认的另存为任务失败原因
         cancelled(): 取消
     """
 
     confirmed = Signal(QPixmap, object)
     copied = Signal(QPixmap)
     saved = Signal(str)
+    save_failed = Signal(str)
     cancelled = Signal()
 
     # 最小选区尺寸
@@ -109,9 +127,22 @@ class ScreenCaptureOverlay(QWidget):
         # 维护进程内列表以滚动清理，避免常驻进程长期堆积临时文件。
         self._temp_clip_files: list[Path] = []
         self._temp_clip_max = 10
+        self._closing = False
+        self._capture_jobs = GenerationImageJobs(self)
+        self._capture_jobs.completed.connect(self._on_screen_composed)
+        self._capture_jobs.failed.connect(self._on_background_job_failed)
+        self._clipboard_jobs = GenerationImageJobs(self)
+        self._clipboard_jobs.completed.connect(self._on_clipboard_job_completed)
+        self._clipboard_jobs.failed.connect(self._on_background_job_failed)
+        self._save_jobs: dict[
+            GenerationImageJobs, tuple[str, threading.Event]
+        ] = {}
+        self._save_jobs_lock = threading.Lock()
+        self._save_shutdown_requested = False
+        self._cleanup_jobs = GenerationImageJobs(self)
         app = QApplication.instance()
         if app is not None:
-            app.aboutToQuit.connect(self._cleanup_temp_clip_files)
+            app.aboutToQuit.connect(self._schedule_temp_clip_cleanup)
 
         # 截图相关
         self._start_pos: QPoint | None = None
@@ -158,6 +189,9 @@ class ScreenCaptureOverlay(QWidget):
 
     def start_capture(self) -> None:
         """开始截图（支持多屏幕和高DPI）"""
+        if self._closing:
+            return
+        self._clipboard_jobs.cancel_current()
         screens = QGuiApplication.screens()
         if not screens:
             return
@@ -179,12 +213,16 @@ class ScreenCaptureOverlay(QWidget):
 
         max_dpr = max(screen.devicePixelRatio() for screen in screens)
 
+        # QScreen.grabWindow 必须留在 GUI 线程；每块屏幕只抓取一次，mapper 与
+        # 后台 QImage 合成都复用同一份结果。
+        grabs = [(screen, screen.grabWindow(0)) for screen in screens]
+
         # 构建 per-screen info for mapper
         screen_infos = []
-        for screen in screens:
+        image_parts = []
+        for screen, grab in grabs:
             sg = screen.geometry()
             offset = sg.topLeft() - virtual_geometry.topLeft()
-            grab = screen.grabWindow(0)
             screen_infos.append(
                 ScreenInfo(
                     geometry=QRect(
@@ -198,29 +236,13 @@ class ScreenCaptureOverlay(QWidget):
                     offset=offset,
                 )
             )
+            image_parts.append((offset, grab.toImage().copy()))
 
         self._mapper = ScreenCoordinateMapper(screen_infos)
         self._virtual_geometry = virtual_geometry
 
-        # 创建合并所有屏幕的截图（用 max_dpr 保证分辨率）
+        # 合并大画布交给后台 QImage job；GUI 完成后只做 fromImage。
         physical_size = virtual_geometry.size() * max_dpr
-        pixmap = QPixmap(physical_size)
-        if pixmap.isNull():
-            return
-
-        pixmap.fill(Qt.GlobalColor.black)
-        pixmap.setDevicePixelRatio(max_dpr)
-
-        painter = QPainter(pixmap)
-        for screen in screens:
-            screen_geometry = screen.geometry()
-            offset = screen_geometry.topLeft() - virtual_geometry.topLeft()
-            screen_grab = screen.grabWindow(0)
-            painter.drawPixmap(offset, screen_grab)
-        painter.end()
-
-        self._screen_pixmap = pixmap
-
         # 设置窗口大小为虚拟桌面大小
         self.setGeometry(virtual_geometry)
         self.setMouseTracking(True)
@@ -229,6 +251,21 @@ class ScreenCaptureOverlay(QWidget):
         hwnd = int(self.winId())
         if WindowDetector is not None:
             self._window_detector = WindowDetector(hwnd)
+
+        self._capture_jobs.submit(
+            lambda cancel_event: compose_screen_images(
+                image_parts, physical_size, max_dpr, cancel_event
+            )
+        )
+
+    @Slot(int, object)
+    def _on_screen_composed(self, _generation: int, image: object) -> None:
+        if self._closing or not hasattr(image, "isNull") or image.isNull():
+            return
+        pixmap = QPixmap.fromImage(image)
+        if pixmap.isNull():
+            return
+        self._screen_pixmap = pixmap
 
         # 新原生窗口（由 MainWindow._start_fresh_overlay_capture 每次新建）天然无
         # 残留后备存储，show() 直接以本次截图上屏，无「一闪而过」。
@@ -727,27 +764,43 @@ class ScreenCaptureOverlay(QWidget):
         if not self._canvas:
             return
         pixmap = self._canvas.export_image()
-
-        # 统一编码为 PNG 字节，供位图格式与临时文件共用
-        png_bytes = self._pixmap_to_png(pixmap)
-
         clipboard = QApplication.clipboard()
         if sys.platform == "win32":
-            mime_data = QMimeData()
-            if png_bytes is not None:
-                mime_data.setImageData(png_bytes)
-            # 写入临时文件并附带本地路径，Qt 在 Windows 上会据此生成
-            # CF_HDROP/FileNameW，使资源管理器能够粘贴出文件。
-            temp_path = self._write_temp_clip_file(png_bytes)
-            if temp_path is not None:
-                mime_data.setUrls([QUrl.fromLocalFile(str(temp_path))])
-                self._prune_temp_clip_files()
-            clipboard.setMimeData(mime_data)
+            # 位图剪贴板必须在 GUI 线程；PNG 编码/临时文件写入完成后再补
+            # CF_HDROP，本次先让普通应用立即可粘贴图片。
+            image = pixmap.toImage().copy()
+            clipboard.setImage(image)
+            existing = list(self._temp_clip_files)
+            max_files = self._temp_clip_max
+            self._clipboard_jobs.submit(
+                lambda cancel_event: write_clipboard_png(
+                    image, existing, max_files, cancel_event
+                )
+            )
         else:
             clipboard.setPixmap(pixmap)
 
         self.copied.emit(pixmap)
         self._cleanup()
+
+    @Slot(int, object)
+    def _on_clipboard_job_completed(self, _generation: int, result: object) -> None:
+        """在 GUI 线程应用最新一次复制任务生成的剪贴板 MIME。"""
+        if self._closing:
+            if hasattr(result, "discard"):
+                result.discard()
+            return
+        if isinstance(result, ClipboardPngResult):
+            self._temp_clip_files = result.kept_paths
+            mime_data = QMimeData()
+            mime_data.setImageData(result.image)
+            mime_data.setUrls([QUrl.fromLocalFile(str(result.path))])
+            QApplication.clipboard().setMimeData(mime_data)
+
+    @Slot(int, str)
+    def _on_background_job_failed(self, _generation: int, error: str) -> None:
+        if not self._closing:
+            logger.warning("截图后台任务失败: %s", error)
 
     @staticmethod
     def _pixmap_to_png(pixmap: QPixmap) -> bytes | None:
@@ -816,7 +869,7 @@ class ScreenCaptureOverlay(QWidget):
 
     def _on_save(self) -> None:
         """另存为"""
-        if not self._canvas:
+        if not self._canvas or self._save_shutdown_requested:
             return
         from PySide6.QtWidgets import QFileDialog
 
@@ -825,9 +878,119 @@ class ScreenCaptureOverlay(QWidget):
             self, "另存为", "", "PNG (*.png);;JPEG (*.jpg);;BMP (*.bmp)"
         )
         if path:
-            pixmap.save(path)
-            self.saved.emit(path)
+            image = pixmap.toImage().copy()
+            self._submit_confirmed_save(image, path)
         self._cleanup()
+
+    def _submit_confirmed_save(self, image: QImage, path: str) -> None:
+        """启动独立保存；后续截图、复制或保存均不得取消该任务。"""
+        controller = GenerationImageJobs()
+        completed_event = threading.Event()
+        with self._save_jobs_lock:
+            self._save_jobs[controller] = (path, completed_event)
+        _ACTIVE_SAVE_JOB_CONTROLLERS.add(controller)
+        controller.completed.connect(
+            lambda _generation, result, controller=controller: (
+                self._on_confirmed_save_completed(controller, result)
+            )
+        )
+        controller.failed.connect(
+            lambda _generation, error, controller=controller: (
+                self._on_confirmed_save_failed(controller, error)
+            )
+        )
+        controller.submit(
+            lambda cancel_event: save_image_file(image, path, cancel_event)
+        )
+
+    def _save_job_path(self, controller: GenerationImageJobs) -> str:
+        with self._save_jobs_lock:
+            entry = self._save_jobs.get(controller)
+        return entry[0] if entry is not None else ""
+
+    def _release_save_controller(self, controller: GenerationImageJobs) -> None:
+        with self._save_jobs_lock:
+            entry = self._save_jobs.pop(controller, None)
+        completed_event = entry[1] if entry is not None else None
+        _ACTIVE_SAVE_JOB_CONTROLLERS.discard(controller)
+        controller.deleteLater()
+        if completed_event is not None:
+            completed_event.set()
+
+    def _on_confirmed_save_completed(
+        self, controller: GenerationImageJobs, result: object
+    ) -> None:
+        path = self._save_job_path(controller)
+        try:
+            if isinstance(result, str) and result:
+                self.saved.emit(result)
+                return
+            message = f"保存失败：{path or '未知路径'}"
+            logger.warning(message)
+            self.save_failed.emit(message)
+        finally:
+            self._release_save_controller(controller)
+
+    def _on_confirmed_save_failed(
+        self, controller: GenerationImageJobs, error: str
+    ) -> None:
+        path = self._save_job_path(controller)
+        message = f"保存失败（{path or '未知路径'}）：{error}"
+        logger.warning(message)
+        try:
+            self.save_failed.emit(message)
+        finally:
+            self._release_save_controller(controller)
+
+    def _schedule_temp_clip_cleanup(self) -> None:
+        """异步清理临时剪贴板文件，不等待 worker。"""
+        paths = list(self._temp_clip_files)
+        self._temp_clip_files.clear()
+        if paths:
+            self._cleanup_jobs.submit(
+                lambda cancel_event: delete_files(paths, cancel_event)
+            )
+
+    def request_save_shutdown(self) -> None:
+        """停止接受新的保存请求，但不取消任何已由用户确认的保存。"""
+        self._save_shutdown_requested = True
+
+    def request_shutdown(self) -> None:
+        """Freeze interaction and cancel disposable image jobs without waiting."""
+        if self._closing:
+            return
+        self._closing = True
+        self.request_save_shutdown()
+        self._capture_jobs.close()
+        self._clipboard_jobs.close()
+        self.finish_capture()
+        self._schedule_temp_clip_cleanup()
+        self._cleanup_jobs.close()
+
+    def is_drained(self) -> bool:
+        """Non-blocking probe for every overlay-owned background boundary."""
+        return (
+            self._capture_jobs.drain(0)
+            and self._clipboard_jobs.drain(0)
+            and self._cleanup_jobs.drain(0)
+            and self.drain_saves(0)
+        )
+
+    def drain_saves(self, timeout_ms: int) -> bool:
+        """供非 GUI 关闭协调器等待已确认保存完成及完成/失败通知。"""
+        with self._save_jobs_lock:
+            completed_events = [entry[1] for entry in self._save_jobs.values()]
+        deadline = time.monotonic() + max(0, timeout_ms) / 1000
+        for completed_event in completed_events:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0 or not completed_event.wait(remaining):
+                return False
+        return True
+
+    def closeEvent(self, event) -> None:
+        """仅请求取消；绝不在 GUI 线程等待编码/写盘任务。"""
+        self.request_shutdown()
+        super().closeEvent(event)
 
     def _do_cancel(self) -> None:
         """取消操作"""

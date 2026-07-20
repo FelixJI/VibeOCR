@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
 )
 
 from vibeocr import env_manager
+from vibeocr.utils.dialog_workers import track_dialog_worker
 from vibeocr.widgets.install_dialog import InstallWorker
 
 if TYPE_CHECKING:
@@ -202,8 +203,9 @@ class BackendChoiceDialog(QDialog):
             reinstall_python=self._reinstall_python,
             missing_only=self._missing_only,
         )
+        track_dialog_worker(self._worker)
         self._worker.progress.connect(self._on_progress)
-        self._worker.finished.connect(self._on_finished)
+        self._worker.completed.connect(self._on_finished)
         self._worker.start()
 
     def _on_cancel_clicked(self) -> None:
@@ -264,5 +266,9 @@ class BackendChoiceDialog(QDialog):
         """关闭事件：协作式取消安装，绝不强杀线程（避免孤儿 pip 进程）。"""
         if self._worker and self._worker.isRunning():
             self._worker.request_cancel()
-            self._worker.wait(5000)
         event.accept()
+
+    def request_shutdown(self) -> None:
+        if self._worker and self._worker.isRunning():
+            self._worker.request_cancel()
+        self.close()

@@ -15,6 +15,7 @@ from PySide6.QtCore import (
     QSignalBlocker,
     QSize,
     Qt,
+    QThread,
     QTimer,
     Signal,
 )
@@ -43,9 +44,8 @@ from PySide6.QtWidgets import (
 
 from vibeocr.contracts.frontend import (
     PDF_THUMBNAIL_DRAIN_WAIT_MS,
-    PDF_WORKER_TERMINATE_WAIT_MS,
 )
-from vibeocr.pyside.pdf_session_manager import PdfSessionManager, _wait_thread
+from vibeocr.pyside.pdf_session_manager import PdfSessionManager
 from vibeocr.ui.theme import Colors
 from vibeocr.utils.thumbnail_lru_cache import ThumbnailLruCache
 from vibeocr.views.pdf_preview_window import PdfPreviewWindow
@@ -236,6 +236,7 @@ class ThumbnailModel(QAbstractListModel):
         self._session: PdfSession | None = None
         self._cache = ThumbnailLruCache(capacity=200)
         self._render_worker: ThumbnailIpcWorker | None = None
+        self._worker_generation = 0
         # cancel 后超过短等待窗口的 worker 仍由 model 持有，直到 finished。
         # 不能丢引用：其线程池可能仍在等待有界 HTTP 请求返回。
         self._draining_workers: set[ThumbnailIpcWorker] = set()
@@ -312,13 +313,27 @@ class ThumbnailModel(QAbstractListModel):
         mgr = self._get_manager()
         if mgr is None:
             return
+        self._worker_generation += 1
+        generation = self._worker_generation
         self._render_worker = ThumbnailIpcWorker(
             client=mgr.backend_client,
             session_id=session.session_id,
             size=self._thumb_size,
         )
-        self._render_worker.thumbnail_ready.connect(self._on_thumbnail_ready)
+        worker = self._render_worker
+        worker.thumbnail_ready.connect(
+            lambda page, png, gen, w=worker, worker_gen=generation: self._on_thumbnail_ready_guarded(
+                page, png, gen, w, worker_gen
+            )
+        )
         self._render_worker.start()
+
+    def _on_thumbnail_ready_guarded(
+        self, page_index: int, png_bytes: object, gen: int, worker, worker_gen: int
+    ) -> None:
+        if worker is not self._render_worker or worker_gen != self._worker_generation:
+            return
+        self._on_thumbnail_ready(page_index, png_bytes, gen)
 
     def _get_manager(self):
         """从父 PdfTab 拿 manager(渲染需要 backend_client)。延迟绑定避免构造期依赖。"""
@@ -334,21 +349,14 @@ class ThumbnailModel(QAbstractListModel):
         if worker is None:
             return
         self._render_worker = None
+        self._worker_generation += 1
         try:
-            worker.thumbnail_ready.disconnect(self._on_thumbnail_ready)
+            worker.thumbnail_ready.disconnect()
         except (RuntimeError, TypeError):
             pass
         worker.cancel()
-        stopped = _wait_thread(
-            worker,
-            timeout_ms=PDF_WORKER_TERMINATE_WAIT_MS,
-        )
-        if stopped:
-            worker.deleteLater()
-            return
-
-        # 超时不强杀、不丢所有权；finished 后再回收。先连接再复查状态，
-        # 覆盖 _wait_thread 返回与 connect 之间自然结束的竞态窗口。
+        # 旧 worker 的有界 HTTP 调用可能仍在途；保留所有权到 finished，
+        # 但切换/尺寸变化路径绝不在 GUI 线程 wait。
         self._draining_workers.add(worker)
         worker.finished.connect(
             lambda worker=worker: self._release_draining_worker(worker)
@@ -374,8 +382,9 @@ class ThumbnailModel(QAbstractListModel):
         worker = self._render_worker
         if worker is not None:
             self._render_worker = None
+            self._worker_generation += 1
             try:
-                worker.thumbnail_ready.disconnect(self._on_thumbnail_ready)
+                worker.thumbnail_ready.disconnect()
             except (RuntimeError, TypeError):
                 pass
             worker.cancel()
@@ -693,6 +702,7 @@ class PdfTab(QWidget):
         self._shutdown_started = False
         self._session_mgr = PdfSessionManager(self)
         self._preview_window: PdfPreviewWindow | None = None
+        self._preview_request_generation = 0
         # 网格 ↔ 缩略图双向同步的重入保护，避免 itemSelectionChanged 递归
         self._syncing_selection = False
         # 批量异步打开期间的失败项收集（open_done 后统一弹一次提示）
@@ -995,6 +1005,7 @@ class PdfTab(QWidget):
         mgr.render_progress.connect(self._on_render_progress_update)
         mgr.export_progress.connect(self._on_export_progress)
         mgr.export_done.connect(self._on_export_done)
+        mgr.export_failed.connect(self._on_export_failed)
         mgr.deskew_page_done.connect(self._on_deskew_page_done)
         mgr.deskew_progress.connect(self._on_deskew_progress)
         mgr.deskew_done.connect(self._on_deskew_done)
@@ -1003,6 +1014,8 @@ class PdfTab(QWidget):
         mgr.open_failed.connect(self._on_open_failed)
         mgr.open_done.connect(self._on_open_done)
         mgr.thumbnails_invalidated.connect(self._on_thumbnails_invalidated)
+        mgr.preview_ready.connect(self._on_preview_ready)
+        mgr.preview_failed.connect(self._on_preview_failed)
 
     # ---- splitter layout persistence --------------------------------
 
@@ -1196,6 +1209,12 @@ class PdfTab(QWidget):
             if "page" in result:
                 self._update_layer_grid_page(result["page"])
             elif result.get("diff_applied"):
+                if result.get("op") == "update_block_text":
+                    page = result.get("page")
+                    if isinstance(page, int):
+                        self._update_layer_grid_page(page)
+                        self._request_preview_refresh(page, result.get("revision", 0))
+                    return
                 # 结构变更:model 已刷新,重置缩略图模型数据源 + 文字层网格。
                 self._after_structural_change()
 
@@ -1316,6 +1335,13 @@ class PdfTab(QWidget):
             f"成功导出 {len(exported_paths)} 个文件。",
         )
 
+    def _on_export_failed(self, error: str) -> None:
+        """任何导出终态都必须恢复按钮和进度 UI。"""
+        self._progress_bar.setVisible(False)
+        self._set_file_buttons_enabled(True)
+        self._status_label.setText("批量导出失败")
+        QMessageBox.critical(self, "批量导出失败", error)
+
     def _on_ocr_finished(self, file_path: str, success: int, fail: int) -> None:
         logger.info("[PdfTab] _on_ocr_finished 进入")
         self._progress_bar.setVisible(False)
@@ -1387,9 +1413,17 @@ class PdfTab(QWidget):
 
         实际写回 PDF 文字层在用户点'保存'时由 rewrite_modified_pages 执行。
         """
-        if self._session_mgr.update_page_block_text(page_index, block_index, new_text):
-            self._update_layer_grid_page(page_index)
-            self._refresh_preview_window_if_current(page_index)
+        if not self._session_mgr.update_page_block_text_async(
+            page_index, block_index, new_text
+        ):
+            self._status_label.setText("文字块正在更新，请稍候再试")
+
+    def _request_preview_refresh(self, page_index: int, revision: int = 0) -> None:
+        win = self._preview_window
+        if win is not None and win.isVisible() and win.current_page_index() == page_index:
+            self._preview_request_generation = self._session_mgr.request_preview(
+                page_index, revision=revision
+            )
 
     def _refresh_preview_window_if_current(self, page_index: int) -> None:
         """若预览弹窗正打开且显示该页，重新渲染填充（编辑块文字后刷新）。"""
@@ -1858,7 +1892,7 @@ class PdfTab(QWidget):
             )
             if reply != QMessageBox.StandardButton.Yes:
                 return
-        self._session_mgr.close_session(session.file_path)
+        self._session_mgr.close_session_async(session.file_path)
         self._status_label.setText(f"已移除 {name}")
 
     def _on_save(self) -> bool:
@@ -2235,48 +2269,39 @@ class PdfTab(QWidget):
         session = self._session_mgr.active_session
         if session is None or self._preview_window is None:
             return
+        if session.pdf_document.get_page(page_idx) is None:
+            return
+        self._preview_request_generation = self._session_mgr.request_preview(page_idx)
+
+    def _on_preview_ready(
+        self, file_path: str, page_idx: int, generation: int, image: object
+    ) -> None:
+        session = self._session_mgr.active_session
+        win = self._preview_window
+        if (
+            session is None
+            or session.file_path != file_path
+            or win is None
+            or not win.isVisible()
+            or win.current_page_index() != page_idx
+            or generation != self._preview_request_generation
+        ):
+            return
+        pixmap = QPixmap.fromImage(image)  # type: ignore[arg-type]
+        if pixmap.isNull():
+            return
         page_info = session.pdf_document.get_page(page_idx)
         if page_info is None:
             return
-        # IPC 取预览 PNG(同步,GUI 短暂阻塞;单页 150dpi ~50-200ms 可接受)
-        try:
-            png = self._session_mgr.backend_client.render_preview(
-                session.session_id, page_idx, dpi=150
-            )
-            pixmap = QPixmap()
-            pixmap.loadFromData(png, "PNG")  # type: ignore[call-overload,arg-type]
-        except Exception as e:
-            logger.error("预览渲染页 %d 失败: %s", page_idx, e)
-            return
-        if pixmap.isNull():
-            return
-        win = self._preview_window
-        assert win is not None
         if page_info.ocr_text_blocks:
             win.set_ocr_blocks(page_idx, page_info.ocr_text_blocks, pixmap)
             win.setWindowTitle(
                 f"文字层预览 — 第{page_idx + 1}页 ({len(page_info.ocr_text_blocks)}个文字块)"
             )
         elif page_info.has_text_layer and not page_info.text_layers:
-            # 延迟加载:后端只判 has_text_layer 不取 text_layers 详情,
-            # 预览时按需调 IPC detect_text_layers 取 bbox(单页 ~180ms,用户主动触发可接受)。
-            page_info.text_layers = self._session_mgr.detect_text_layers(page_idx)
-            if page_info.text_layers:
-                # page_rect 已由 load worker 缓存到模型，不再直接读 fitz 对象。
-                win.set_highlight(
-                    pixmap,
-                    page_info.text_layers,
-                    render_dpi=150,
-                    page_rect=page_info.rect,
-                    source="pdf",
-                    rotation=page_info.rotation,
-                )
-                win.setWindowTitle(
-                    f"文字层预览 — 第{page_idx + 1}页 ({len(page_info.text_layers)}个文字块)"
-                )
-            else:
-                win.set_page_pixmap(pixmap)
-                win.setWindowTitle(f"文字层预览 — 第{page_idx + 1}页 (无文字层)")
+            # worker 已将按需检测结果写回 model；空列表表示没有可高亮文字。
+            win.set_page_pixmap(pixmap)
+            win.setWindowTitle(f"文字层预览 — 第{page_idx + 1}页 (无文字层)")
         elif page_info.text_layers:
             win.set_highlight(
                 pixmap,
@@ -2293,6 +2318,15 @@ class PdfTab(QWidget):
             win.set_page_pixmap(pixmap)
             win.setWindowTitle(f"文字层预览 — 第{page_idx + 1}页 (无文字层)")
 
+    def _on_preview_failed(
+        self, file_path: str, page_idx: int, generation: int, error: str
+    ) -> None:
+        if generation != self._preview_request_generation:
+            return
+        session = self._session_mgr.active_session
+        if session is not None and session.file_path == file_path:
+            logger.error("预览渲染页 %d 失败: %s", page_idx, error)
+
     def _close_preview_window_if_open(self) -> None:
         """关闭预览窗口（若有）。在切换文件/删除页时调用，避免 _page_indices 失效。
 
@@ -2301,6 +2335,7 @@ class PdfTab(QWidget):
         """
         if self._preview_window is not None and self._preview_window.isVisible():
             self._preview_window.close()
+        self._session_mgr.cancel_preview()
 
     # ---- text layer operations --------------------------------------
 
@@ -2578,11 +2613,19 @@ class PdfTab(QWidget):
             logger.warning("PDF tab 关闭时仍有缩略图 worker 在有界等待后运行")
         return thumbnails_stopped and sessions_stopped
 
+    def is_drained(self) -> bool:
+        """GUI 关闭状态机的零等待探测。"""
+        assert QThread.currentThread() is self.thread()
+        thumbnails_stopped = self._thumbnail_model.wait_for_draining(0)
+        return thumbnails_stopped and self._session_mgr.is_drained()
+
     def shutdown(self, timeout_ms: int = 5000) -> bool:
         """兼容页签单独关闭：请求取消后按单一预算 drain。"""
         self.request_shutdown()
         return self.drain(timeout_ms)
 
     def closeEvent(self, event: QCloseEvent) -> None:
-        self.shutdown()
+        # 顶层 MainWindow 的两阶段退出协调器负责统一预算 drain；子控件自身
+        # close 只冻结并请求取消，绝不在 GUI closeEvent 内等待 5 秒。
+        self.request_shutdown()
         super().closeEvent(event)

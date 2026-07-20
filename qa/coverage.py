@@ -17,6 +17,24 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).parent.parent
 
+# Coverage is a Python unit-test gate. Native-model/subprocess integration and
+# C#/WinUI-only checks run in dedicated jobs and are intentionally excluded so
+# this command remains deterministic in one Python process.
+PYTHON_COVERAGE_IGNORES = (
+    "tests/integration",
+    "tests/e2e/winui",
+    "tests/parity",
+    "tests/release_layout/test_winui_layout.py",
+    "tests/test_soak_winui.py",
+    "tests/test_upgrade_deps.py",
+    "tests/architecture/test_protocol_method_consistency.py",
+)
+
+
+def _append_python_test_scope(cmd: list[str]) -> None:
+    cmd.extend(f"--ignore={path}" for path in PYTHON_COVERAGE_IGNORES)
+    cmd.append("tests/")
+
 
 def run_command(cmd: list[str]) -> subprocess.CompletedProcess:
     """运行命令并返回结果"""
@@ -46,12 +64,12 @@ def run_coverage(
     verbose: bool = True,
 ) -> int:
     """运行测试并生成覆盖率报告"""
-    cmd = ["pytest"]
+    cmd = [sys.executable, "-m", "pytest"]
 
     if verbose:
         cmd.append("-v")
 
-    cmd.extend(["--cov=src", "--cov-report=term-missing"])
+    cmd.extend(["--cov=vibeocr", "--cov-report=term-missing"])
 
     if html:
         cmd.append("--cov-report=html:htmlcov")
@@ -60,14 +78,22 @@ def run_coverage(
     if min_coverage is not None:
         cmd.append(f"--cov-fail-under={min_coverage}")
 
-    cmd.append("tests/")
+    _append_python_test_scope(cmd)
 
     return run_command(cmd).returncode
 
 
 def run_quick_coverage() -> int:
     """快速覆盖率检查（无详细输出）"""
-    cmd = ["pytest", "--cov=src", "--cov-report=term", "-q", "tests/"]
+    cmd = [
+        sys.executable,
+        "-m",
+        "pytest",
+        "--cov=vibeocr",
+        "--cov-report=term",
+        "-q",
+    ]
+    _append_python_test_scope(cmd)
     return run_command(cmd).returncode
 
 

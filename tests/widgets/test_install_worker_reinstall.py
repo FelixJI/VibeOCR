@@ -25,7 +25,7 @@ def test_reinstall_python_calls_reinstall_then_install(qtbot, tmp_path):
         # force_backend=None 走自动检测分支，需 mock detect_gpu
         mock_em.detect_gpu.return_value = (False, None)
 
-        with qtbot.waitSignal(worker.finished, timeout=5000):
+        with qtbot.waitSignal(worker.completed, timeout=5000):
             worker.start()
 
     assert call_order == ["reinstall"], "应先调 reinstall_embedded_python"
@@ -51,7 +51,7 @@ def test_reinstall_python_aborts_when_reinstall_fails(qtbot, tmp_path):
         # force_backend=None 走自动检测分支，需 mock detect_gpu
         mock_em.detect_gpu.return_value = (False, None)
 
-        with qtbot.waitSignal(worker.finished, timeout=5000) as blocker:
+        with qtbot.waitSignal(worker.completed, timeout=5000) as blocker:
             worker.start()
 
     ok, msg = blocker.args
@@ -75,7 +75,7 @@ def test_progress_signal_also_logged(qtbot, tmp_path, caplog):
 
         with (
             caplog.at_level(logging.INFO, logger="vibeocr.widgets.install_dialog"),
-            qtbot.waitSignal(worker.finished, timeout=5000),
+            qtbot.waitSignal(worker.completed, timeout=5000),
         ):
             worker.start()
 

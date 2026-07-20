@@ -53,6 +53,7 @@ class PreprocessOptionsWidget(CollapsibleGroupBox):
         # apply_gpu_gating 写入，_apply_pipeline_enabled_states 读取；
         # 与上下文锁定取并集禁用，且不被 unlock_pipeline 冲掉。
         self._gpu_disabled_pipelines: set[OCRPipeline] = set()
+        self._gpu_capability: bool | None = None
         self._setup_ui()
         self._connect_signals()
 
@@ -848,6 +849,11 @@ class PreprocessOptionsWidget(CollapsibleGroupBox):
 
     # ── GPU 门控（正交于上下文锁定） ──
 
+    @property
+    def gpu_capability(self) -> bool | None:
+        """返回异步运行时探测结果；``None`` 表示探测尚未完成。"""
+        return self._gpu_capability
+
     def apply_gpu_gating(self, has_gpu: bool) -> None:
         """根据运行时是否使用 GPU 后端，禁用/启用需 GPU 的重管道。
 
@@ -860,6 +866,7 @@ class PreprocessOptionsWidget(CollapsibleGroupBox):
         Args:
             has_gpu: 运行时是否使用 GPU 后端（见 env_manager.get_runtime_gpu_capability）
         """
+        self._gpu_capability = bool(has_gpu)
         self._gpu_disabled_pipelines = (
             set() if has_gpu else set(self._GPU_REQUIRED_PIPELINES)
         )

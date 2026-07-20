@@ -69,7 +69,7 @@ class TestPdfFacade:
     def test_facade_implements_protocol(self):
         adapter = _FakePdfAdapter()
         facade = PdfFacade(adapter)
-        assert isinstance(facade, PdfApplication) or hasattr(facade, "open")
+        assert isinstance(facade, PdfApplication)
 
     def test_open_passes_request_and_cancel(self):
         adapter = _FakePdfAdapter()

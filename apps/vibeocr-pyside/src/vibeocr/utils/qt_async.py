@@ -4,8 +4,11 @@
 """
 
 import asyncio
+import concurrent.futures
+import contextvars
 import functools
 import logging
+import threading
 import warnings
 import weakref
 from collections.abc import Callable, Coroutine
@@ -15,6 +18,46 @@ logger = logging.getLogger(__name__)
 
 # 存储异步任务引用，防止垃圾回收
 _async_tasks: weakref.WeakSet[asyncio.Task] = weakref.WeakSet()
+
+# ``asyncio.to_thread`` 的 asyncio Future 被取消时会立即进入 done，但其原生
+# executor callable 仍可能运行。应用关闭若只探测 Task，会过早销毁 callable
+# 捕获的 Qt owner。这里保留底层 concurrent Future，直到原生调用真正返回。
+_native_executor: concurrent.futures.ThreadPoolExecutor | None = None
+_native_futures: set[concurrent.futures.Future[Any]] = set()
+_native_futures_lock = threading.Lock()
+
+
+def _get_native_executor() -> concurrent.futures.ThreadPoolExecutor:
+    global _native_executor
+    with _native_futures_lock:
+        if _native_executor is None:
+            _native_executor = concurrent.futures.ThreadPoolExecutor(
+                max_workers=2,
+                thread_name_prefix="vibeocr-async-native",
+            )
+        return _native_executor
+
+
+async def tracked_to_thread(func: Callable[..., Any], /, *args, **kwargs) -> Any:
+    """Run a sync callable off-loop while retaining a native shutdown probe."""
+    context = contextvars.copy_context()
+    call = functools.partial(context.run, func, *args, **kwargs)
+    future = _get_native_executor().submit(call)
+    with _native_futures_lock:
+        _native_futures.add(future)
+
+    def release(completed: concurrent.futures.Future[Any]) -> None:
+        with _native_futures_lock:
+            _native_futures.discard(completed)
+
+    future.add_done_callback(release)
+    return await asyncio.wrap_future(future)
+
+
+def are_tracked_native_jobs_drained() -> bool:
+    """Thread-safe, zero-wait native completion probe used by MainWindow."""
+    with _native_futures_lock:
+        return not _native_futures
 
 
 def _get_running_or_set_loop() -> asyncio.AbstractEventLoop:
@@ -273,6 +316,58 @@ class AsyncTaskRunner:
     def active_count(self) -> int:
         """获取活动任务数量"""
         return sum(1 for t in self._tasks if not t.done())
+
+
+class DelayedAsyncTask:
+    """Own a delayed coroutine from timer creation through coroutine terminal state.
+
+    ``request_shutdown`` cancels the not-yet-fired timer and invokes a cooperative
+    cancellation hook for work already in flight. The global ``AsyncTaskRunner``
+    owns/cancels the asyncio Task; native thread calls must use ``tracked_to_thread``
+    so shutdown can retain captured Qt owners after asyncio cancellation.
+    """
+
+    def __init__(
+        self,
+        loop: asyncio.AbstractEventLoop,
+        delay_seconds: float,
+        coroutine_factory: Callable[[], Coroutine[Any, Any, Any]],
+        *,
+        should_start: Callable[[], bool] | None = None,
+        request_cancel: Callable[[], None] | None = None,
+    ) -> None:
+        self._loop = loop
+        self._coroutine_factory = coroutine_factory
+        self._should_start = should_start
+        self._request_cancel = request_cancel
+        self._closing = False
+        self._task: asyncio.Task | None = None
+        self._handle: asyncio.TimerHandle | None = loop.call_later(
+            delay_seconds, self._start
+        )
+
+    def _start(self) -> None:
+        self._handle = None
+        if self._closing or (
+            self._should_start is not None and not self._should_start()
+        ):
+            return
+        self._task = get_async_runner().run(self._coroutine_factory())
+
+    def request_shutdown(self) -> None:
+        self._closing = True
+        handle = self._handle
+        self._handle = None
+        if handle is not None:
+            handle.cancel()
+        if self._task is not None and not self._task.done() and self._request_cancel:
+            self._request_cancel()
+
+    def is_drained(self) -> bool:
+        handle = self._handle
+        timer_drained = handle is None or handle.cancelled()
+        task = self._task
+        return timer_drained and (task is None or task.done())
 
 
 # 全局任务运行器实例

@@ -17,19 +17,13 @@ class TestGPUMemoryMonitor:
 
     def test_init_without_gpu(self):
         """测试无 GPU 环境下的初始化"""
-        with (
-            patch("pynvml.nvmlInit", side_effect=ImportError),
-            patch("paddle.is_compiled_with_cuda", return_value=False),
-        ):
+        with patch("pynvml.nvmlInit", side_effect=ImportError):
             monitor = GPUMemoryMonitor()
             assert not monitor.is_available()
 
     def test_get_status_unavailable(self):
         """测试 GPU 不可用时返回默认值"""
-        with (
-            patch("pynvml.nvmlInit", side_effect=ImportError),
-            patch("paddle.is_compiled_with_cuda", return_value=False),
-        ):
+        with patch("pynvml.nvmlInit", side_effect=ImportError):
             monitor = GPUMemoryMonitor()
             status = monitor.get_status()
 
@@ -39,10 +33,7 @@ class TestGPUMemoryMonitor:
 
     def test_estimate_batch_size_no_gpu(self):
         """测试无 GPU 时返回保守 batch_size"""
-        with (
-            patch("pynvml.nvmlInit", side_effect=ImportError),
-            patch("paddle.is_compiled_with_cuda", return_value=False),
-        ):
+        with patch("pynvml.nvmlInit", side_effect=ImportError):
             monitor = GPUMemoryMonitor()
             # 1920x1080 图片
             batch_size = monitor.estimate_batch_size(1920 * 1080)
@@ -79,7 +70,11 @@ class TestGPUMemoryMonitor:
 
     def test_context_manager(self):
         """测试上下文管理器"""
-        with GPUMemoryMonitor() as monitor:
-            # 应该能正常使用
-            status = monitor.get_status()
-            assert isinstance(status, GPUMemoryInfo)
+        with (
+            patch("pynvml.nvmlInit"),
+            patch("pynvml.nvmlShutdown") as shutdown,
+            GPUMemoryMonitor() as monitor,
+        ):
+            assert monitor.is_available()
+
+        shutdown.assert_called_once()

@@ -1,5 +1,6 @@
 """测试 DependencyManager"""
 
+import threading
 from unittest.mock import MagicMock, Mock, patch
 
 from vibeocr.managers.dependency_manager import (
@@ -160,3 +161,46 @@ class TestDependencyManager:
         manager = DependencyManager()
         assert hasattr(manager, "check_completed")
         assert hasattr(manager, "check_started")
+
+    def test_shutdown_keeps_running_task_and_discards_late_result(
+        self, qtbot, monkeypatch, tmp_path
+    ):
+        entered = threading.Event()
+        release = threading.Event()
+
+        monkeypatch.setattr(
+            "vibeocr.managers.dependency_manager.env_manager.get_environment_mode",
+            lambda _root: "embedded",
+        )
+        monkeypatch.setattr(
+            "vibeocr.managers.dependency_manager.env_manager.get_embedded_python_executable",
+            lambda _root: "python.exe",
+        )
+
+        def slow_check(_root):
+            entered.set()
+            release.wait(timeout=2)
+            return True, []
+
+        monkeypatch.setattr(
+            "vibeocr.managers.dependency_manager.env_manager.is_embedded_environment_ready",
+            slow_check,
+        )
+        manager = DependencyManager(project_root=tmp_path)
+        completed = Mock()
+        manager.check_completed.connect(completed)
+
+        manager.check_dependencies()
+        qtbot.waitUntil(entered.is_set, timeout=1000)
+        assert len(manager._tasks) == 1
+
+        manager.request_shutdown()
+        assert len(manager._tasks) == 1
+        assert manager.is_drained() is False
+
+        release.set()
+        qtbot.waitUntil(manager.is_drained, timeout=2000)
+        assert manager._tasks == set()
+        assert manager._thread_pool.activeThreadCount() == 0
+        assert manager.is_ready() is False
+        completed.assert_not_called()

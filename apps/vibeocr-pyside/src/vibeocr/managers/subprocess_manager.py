@@ -275,6 +275,7 @@ class SubprocessManager(QObject):
         self._is_ready = False
         self._start_task: SubprocessStartTask | WorkerHostStartTask | None = None
         self._preload_task: PreloadTask | None = None
+        self._shutdown_requested = False
         # 取消事件:shutdown 时 set,中断 WorkerManager.execute 内的 5 分钟长等待
         import threading
 
@@ -432,6 +433,60 @@ class SubprocessManager(QObject):
         """预加载完成，清理引用并转发信号"""
         self._preload_task = None
         self.preload_finished.emit(results)
+
+    def request_preload_shutdown(self) -> None:
+        """Cancel only the settings-triggered preload, without stopping service."""
+        task = self._preload_task
+        if task is not None:
+            task.cancel()
+
+    def is_preload_drained(self) -> bool:
+        """Zero-wait probe for a preload owned by the manager thread pool."""
+        return self._preload_task is None or self._thread_pool.activeThreadCount() == 0
+
+    def request_shutdown(self) -> None:
+        """GUI 阶段只请求取消 Qt 任务；不 wait、不关闭外部 service。"""
+        if self._shutdown_requested:
+            return
+        self._shutdown_requested = True
+        self._cancel_event.set()
+        if self._start_task is not None:
+            self._start_task.cancel()
+            try:
+                self._start_task.signals.started.disconnect(self._on_started)
+                self._start_task.signals.progress.disconnect(self.progress_update.emit)
+            except RuntimeError:
+                pass
+        if self._preload_task is not None:
+            self._preload_task.cancel()
+            try:
+                self._preload_task.signals.finished.disconnect(self._on_preload_done)
+                self._preload_task.signals.progress.disconnect(
+                    self.preload_progress.emit
+                )
+            except RuntimeError:
+                pass
+
+    def is_drained(self) -> bool:
+        """纯状态探测：Qt 线程池无 native runnable 才可释放 owner。"""
+        return self._thread_pool.activeThreadCount() == 0
+
+    def take_shutdown_callable(self):
+        """GUI 线程 detach 普通 service，返回可在非 GUI 线程执行的 callable。"""
+        if not self.is_drained():
+            raise RuntimeError("subprocess Qt tasks are still running")
+        # request_shutdown 会断开 started 信号。若启动任务恰好在断开后完成，
+        # _on_started 不会把 task.service 搬到 _service；线程池虽已 drained，
+        # 但服务仍由已完成的 QRunnable 持有。detach 时必须覆盖这个竞态窗口。
+        start_task = self._start_task
+        service = self._service or (
+            getattr(start_task, "service", None) if start_task is not None else None
+        )
+        self._start_task = None
+        self._preload_task = None
+        self._service = None
+        self._is_ready = False
+        return getattr(service, "shutdown", None) if service is not None else None
 
     def shutdown(self, timeout_ms: int = 3000) -> bool:
         """关闭子进程服务

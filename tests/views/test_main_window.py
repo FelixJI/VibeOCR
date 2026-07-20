@@ -41,6 +41,14 @@ def main_window(qapp, qtbot, tmp_path, monkeypatch):
     # "libshiboken: Internal C++ object already deleted."。
     # isValid 守卫：仅当底层 C++ 对象仍存活时才触发关闭链。
     if isValid(window):
+        window._force_quit = True
+        if getattr(window, "_shutdown_phase", "idle") == "idle":
+            window._begin_shutdown_requests()
+            probes = window._collect_shutdown_gui_probes()
+            qtbot.waitUntil(
+                lambda: all(bool(probe()) for _name, probe in probes), timeout=7000
+            )
+            window._shutdown_phase = "ready"
         window.close()
     ConfigManager.reset_instance()
 
@@ -52,8 +60,10 @@ class TestMainWindow:
         """窗口标题正确。"""
         assert main_window.windowTitle() == "VibeOCR"
 
-    def test_close_drains_batch_before_webview_and_backend(self, qapp, monkeypatch):
-        """关闭时先冻结回调并收拢批线程，再销毁视图和共享后端。"""
+    def test_close_polls_gui_owners_before_backend_and_widget_cleanup(
+        self, main_window, qtbot, monkeypatch
+    ):
+        """Qt owner 只在 GUI poll，全部终态后才后台关后端并清理视图。"""
         calls: list[str] = []
 
         class _ResultWidget:
@@ -63,51 +73,78 @@ class TestMainWindow:
             def cleanup(self) -> None:
                 calls.append(f"cleanup:{self._name}")
 
-        window = SimpleNamespace(
-            _force_quit=True,
-            _app_settings=SimpleNamespace(
-                minimize_to_tray=False,
-                save=lambda: calls.append("settings:save"),
-            ),
-            _tray_icon=None,
-            _closing=False,
-            _single_tab=SimpleNamespace(
-                set_closing=lambda value: calls.append(f"single:closing:{value}"),
-                _result_widget=_ResultWidget("single"),
-            ),
-            _batch_tab=SimpleNamespace(
-                shutdown=lambda timeout_ms: calls.append(
-                    f"batch:shutdown:{timeout_ms}"
-                )
-                or True,
-                drain=lambda timeout_ms: calls.append(f"batch:drain:{timeout_ms}")
-                or True,
-                _result_widget=_ResultWidget("batch"),
-            ),
-            _settings_controller=SimpleNamespace(
-                request_shutdown=lambda: calls.append("settings:request"),
-                drain=lambda timeout_ms: calls.append(
-                    f"settings:drain:{timeout_ms}"
-                )
-                or True,
-            ),
-            _pdf_tab=SimpleNamespace(
-                request_shutdown=lambda: calls.append("pdf:request"),
-                drain=lambda timeout_ms: calls.append(f"pdf:drain:{timeout_ms}")
-                or True,
-            ),
-            _edge_toolbar=SimpleNamespace(close=lambda: calls.append("edge:close")),
-            _subprocess_manager=SimpleNamespace(
-                shutdown=lambda timeout_ms: calls.append(
-                    f"subprocess:shutdown:{timeout_ms}"
-                )
-            ),
-            _save_layout=lambda: calls.append("layout:save"),
+        window = main_window
+        # 构造阶段的真实依赖探测必须先送达 GUI，再替换为顺序记录桩；否则
+        # 迟到信号会命中已失去 owner 的 DependencyManager。
+        real_dependency_manager = window._dependency_manager
+        real_dependency_manager.request_shutdown()
+        qtbot.waitUntil(real_dependency_manager.is_drained, timeout=3000)
+        window._force_quit = True
+        window._app_settings = SimpleNamespace(
+            minimize_to_tray=False,
+            save=lambda: calls.append("settings:save"),
         )
-        event = SimpleNamespace(
-            accept=lambda: calls.append("event:accept"),
-            ignore=lambda: calls.append("event:ignore"),
+        window._tray_icon = None
+        window._single_tab = SimpleNamespace(
+            request_shutdown=lambda: calls.append("single:request"),
+            is_drained=lambda: calls.append("single:probe") or True,
+            _result_widget=_ResultWidget("single"),
         )
+        window._batch_tab = SimpleNamespace(
+            request_shutdown=lambda: calls.append("batch:request"),
+            is_drained=lambda: calls.append("batch:probe") or True,
+            _result_widget=_ResultWidget("batch"),
+        )
+        window._qrcode_tab = SimpleNamespace(
+            request_shutdown=lambda: calls.append("qr:request"),
+            is_drained=lambda: calls.append("qr:probe") or True,
+        )
+
+        class _Overlay:
+            def __init__(self, name: str) -> None:
+                self.name = name
+
+            def request_shutdown(self) -> None:
+                calls.append(f"overlay:{self.name}:request")
+
+            def is_drained(self) -> bool:
+                calls.append(f"overlay:{self.name}:probe")
+                return True
+
+            def deleteLater(self) -> None:
+                calls.append(f"overlay:{self.name}:delete")
+
+        current_overlay = _Overlay("current")
+        retired_overlay = _Overlay("retired")
+        window._overlay = current_overlay
+        window._retired_overlays = {retired_overlay}
+        window._settings_controller = SimpleNamespace(
+            request_shutdown=lambda: calls.append("settings:request"),
+            is_drained=lambda: calls.append("settings:probe") or True,
+        )
+        window._pdf_tab = SimpleNamespace(
+            request_shutdown=lambda: calls.append("pdf:request"),
+            is_drained=lambda: calls.append("pdf:probe") or True,
+        )
+        window._edge_toolbar = SimpleNamespace(
+            close=lambda: calls.append("edge:close")
+        )
+        window._subprocess_manager = SimpleNamespace(
+            request_shutdown=lambda: calls.append("subprocess:request"),
+            is_drained=lambda: calls.append("subprocess:probe") or True,
+            take_shutdown_callable=lambda: (
+                lambda: calls.append("subprocess:shutdown")
+            ),
+        )
+        window._dependency_manager = SimpleNamespace(
+            request_shutdown=lambda: calls.append("dependency:request"),
+            is_drained=lambda: calls.append("dependency:probe") or True,
+        )
+        window._dependency_update_task = SimpleNamespace(
+            close=lambda: calls.append("dependency-update:request"),
+            is_drained=lambda: calls.append("dependency-update:probe") or True,
+        )
+        monkeypatch.setattr(window, "_save_layout", lambda: calls.append("layout:save"))
         monkeypatch.setattr(
             "vibeocr.client.session.shutdown_backend_client",
             lambda: calls.append("backend:shutdown"),
@@ -117,18 +154,20 @@ class TestMainWindow:
             lambda: SimpleNamespace(active_count=0),
         )
 
-        MainWindow.closeEvent(window, event)
+        window.close()
+        qtbot.waitUntil(lambda: window._shutdown_phase == "ready", timeout=2000)
 
         assert window._closing is True
-        assert calls.index("single:closing:True") < calls.index("batch:shutdown:0")
-        assert calls.index("settings:request") < calls.index("settings:drain:700")
-        assert calls.index("settings:drain:700") < calls.index("pdf:drain:1250")
-        assert calls.index("pdf:request") < calls.index("pdf:drain:1250")
-        assert calls.index("batch:shutdown:0") < calls.index("batch:drain:650")
-        assert calls.index("pdf:drain:1250") < calls.index("batch:drain:650")
-        assert calls.index("batch:drain:650") < calls.index("backend:shutdown")
+        assert calls.index("single:request") < calls.index("single:probe")
+        assert calls.index("settings:request") < calls.index("settings:probe")
+        assert calls.index("pdf:request") < calls.index("pdf:probe")
+        assert calls.index("batch:request") < calls.index("batch:probe")
+        assert calls.index("overlay:current:probe") < calls.index("backend:shutdown")
         assert calls.index("backend:shutdown") < calls.index("cleanup:batch")
-        assert calls[-1] == "event:accept"
+        assert calls.index("subprocess:shutdown") < calls.index("cleanup:batch")
+        assert calls.index("overlay:current:probe") < calls.index(
+            "overlay:current:delete"
+        )
 
     def test_copy_result_to_clipboard(self, main_window, qtbot):
         """复制识别结果到剪贴板。"""
@@ -590,6 +629,61 @@ class TestFreshOverlayPerCapture:
         main_window._overlay.confirmed.connect(lambda *a: received.append(a))
         main_window._overlay.confirmed.emit(QPixmap(2, 2), None)
         assert len(received) == 1
+
+    def test_fresh_overlay_retires_until_confirmed_save_notification_finishes(
+        self, main_window, qtbot, monkeypatch
+    ):
+        from vibeocr.widgets.screen_capture_overlay import ScreenCaptureOverlay
+
+        old_overlay = main_window._overlay
+        drained = False
+        deleted: list[bool] = []
+        monkeypatch.setattr(ScreenCaptureOverlay, "start_capture", lambda self: None)
+        monkeypatch.setattr(old_overlay, "finish_capture", lambda: None)
+        monkeypatch.setattr(old_overlay, "request_save_shutdown", lambda: None)
+        monkeypatch.setattr(old_overlay, "drain_saves", lambda _timeout: drained)
+        monkeypatch.setattr(old_overlay, "deleteLater", lambda: deleted.append(True))
+
+        main_window._start_fresh_overlay_capture()
+
+        assert old_overlay in main_window._retired_overlays
+        assert deleted == []
+
+        drained = True
+        old_overlay.saved.emit("C:/saved.png")
+        qtbot.waitUntil(lambda: old_overlay not in main_window._retired_overlays)
+
+        assert deleted == [True]
+        assert "C:/saved.png" in main_window._statusbar.currentMessage()
+
+    def test_late_overlay_save_during_shutdown_only_releases_retired_overlay(
+        self, main_window, qtbot, monkeypatch
+    ):
+        overlay = main_window._overlay
+        restored: list[bool] = []
+        messages: list[str] = []
+        deleted: list[bool] = []
+        monkeypatch.setattr(overlay, "drain_saves", lambda _timeout: True)
+        monkeypatch.setattr(overlay, "deleteLater", lambda: deleted.append(True))
+        monkeypatch.setattr(
+            main_window,
+            "_restore_main_window",
+            lambda **_kwargs: restored.append(True),
+        )
+        monkeypatch.setattr(
+            main_window._statusbar,
+            "showMessage",
+            lambda message, *_args: messages.append(message),
+        )
+        main_window._retired_overlays.add(overlay)
+        main_window._closing = True
+
+        main_window._on_overlay_saved_for(overlay, "C:/late.png")
+        qtbot.waitUntil(lambda: overlay not in main_window._retired_overlays)
+
+        assert restored == []
+        assert messages == []
+        assert deleted == [True]
 
     def test_pipeline_passed_to_fresh_overlay(self, main_window, monkeypatch):
         """快捷管道截图应把 pipeline 传给新 overlay。"""

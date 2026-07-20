@@ -31,8 +31,8 @@ def controller(qtbot, tmp_path):
             "vibeocr.widgets.backend_options_widget.env_manager"
         ) as mock_em,
         patch(
-            "vibeocr.widgets.backend_options_widget.is_cache_valid",
-            return_value=(False, None),
+            "vibeocr.widgets.backend_options_widget.load_cache",
+            return_value=None,
         ),
         patch(
             "vibeocr.views.settings_page_controller.is_cache_valid",
@@ -248,7 +248,7 @@ def test_restore_preload_checkbox_case_insensitive(controller, monkeypatch):
 
 
 def test_shutdown_cancels_manual_preload_task(controller):
-    """shutdown 应取消 _manual_preload_task 并清零引用。"""
+    """shutdown 通过真正拥有 QRunnable 的 SubprocessManager 请求取消。"""
     ctrl, _host = controller
 
     # 模拟一个正在运行的手动预加载任务
@@ -257,14 +257,13 @@ def test_shutdown_cancels_manual_preload_task(controller):
 
     ctrl.shutdown()
 
-    # cancel() 必须被调用
-    mock_task.cancel.assert_called_once()
+    ctrl._subprocess_manager.request_preload_shutdown.assert_called_once()
     # 引用清零
     assert ctrl._manual_preload_task is None
 
 
-def test_shutdown_disconnects_manual_preload_signals(controller):
-    """shutdown 应断开预加载任务的 signal，避免迟到回调。"""
+def test_shutdown_drops_late_manual_preload_callbacks(controller):
+    """Settings 只持有忙时 marker；清零后迟到进度/完成回调应成为 no-op。"""
     ctrl, _host = controller
 
     mock_task = MagicMock()
@@ -272,9 +271,13 @@ def test_shutdown_disconnects_manual_preload_signals(controller):
 
     ctrl.shutdown()
 
-    # signal disconnect 应被调用（status_changed 和 finished）
-    mock_task.signals.status_changed.disconnect.assert_called()
-    mock_task.signals.finished.disconnect.assert_called()
+    assert ctrl._manual_preload_task is None
+    ctrl._subprocess_manager.request_preload_shutdown.assert_called_once()
+    # The real task stays strongly owned by SubprocessManager until its native
+    # thread-pool completion; Settings' closing/marker guards drop these callbacks.
+    ctrl._on_manual_preload_progress(1, 1, "OCR")
+    ctrl._on_manual_preload_finished({"preload": {"OCR": True}})
+    assert ctrl._manual_preload_task is None
 
 
 def test_shutdown_no_error_when_no_preload_task(controller):

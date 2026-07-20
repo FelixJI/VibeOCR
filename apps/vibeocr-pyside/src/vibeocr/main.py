@@ -489,7 +489,7 @@ def launch_application() -> int:
     from vibeocr import __version__
     from vibeocr.managers.config_manager import ConfigManager
     from vibeocr.utils.app_settings import AppSettings
-    from vibeocr.utils.qt_async import create_qasync_event_loop
+    from vibeocr.utils.qt_async import DelayedAsyncTask, create_qasync_event_loop
     from vibeocr.views.main_window import MainWindow
 
     app = QApplication(sys.argv)
@@ -525,21 +525,9 @@ def launch_application() -> int:
     # 作为 closeEvent 的兜底——若用户在安装进行中直接退出应用（而非关闭对话框），
     # 避免留下孤儿 pip 子进程（main.py 末尾的 os._exit 不会回收它们）。
     def _cleanup_install_workers_on_quit() -> None:
-        from PySide6.QtCore import QThread
-        from PySide6.QtWidgets import QApplication
+        from vibeocr.utils.dialog_workers import request_dialog_workers_shutdown
 
-        # 用 QApplication.instance() 取全局实例而非闭包捕获局部变量 app，
-        # 既消除 ruff 的 F821（闭包内未定义名）误报，也保证 aboutToQuit 回调
-        # 触发时取到的一定是当前 QApplication。其声明返回基类 QCoreApplication，
-        # 需 isinstance 收窄到 QApplication 才能访问 topLevelWidgets()。
-        instance = QApplication.instance()
-        if not isinstance(instance, QApplication):
-            return
-        for widget in instance.topLevelWidgets():
-            for thread in widget.findChildren(QThread):
-                if hasattr(thread, "request_cancel"):
-                    thread.request_cancel()
-                    thread.wait(3000)
+        request_dialog_workers_shutdown()
 
     app.aboutToQuit.connect(_cleanup_install_workers_on_quit)
 
@@ -593,12 +581,10 @@ def launch_application() -> int:
 
     # 打包环境下延迟检查更新
     if getattr(sys, "frozen", False):
-        import asyncio
+        from vibeocr.pyside.update import UpdateService
 
         async def _check_update():
             import logging
-
-            from vibeocr.pyside.update import UpdateService
 
             log = logging.getLogger(__name__)
             try:
@@ -612,7 +598,16 @@ def launch_application() -> int:
                 # 否则"检查更新失败"对用户和开发者都不可见。
                 log.exception("启动检查更新失败")
 
-        loop.call_later(5, lambda: asyncio.ensure_future(_check_update()))
+        # timer 与 coroutine 都成为 MainWindow 关闭状态机的显式 owner。关闭边界
+        # 会取消未触发 timer、协作取消下载，再由 AsyncTaskRunner + tracked native
+        # probe 等待真实终态，避免 asyncio.to_thread 取消后仍访问已销毁窗口。
+        window._startup_update_task = DelayedAsyncTask(
+            loop,
+            5,
+            _check_update,
+            should_start=lambda: not window._closing,  # noqa: F821
+            request_cancel=UpdateService.request_cancel,
+        )
 
     # 创建系统托盘图标
     tray = _create_tray_icon(app, window, app_settings)

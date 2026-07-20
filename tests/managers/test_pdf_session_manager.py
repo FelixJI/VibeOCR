@@ -494,15 +494,13 @@ class TestPdfTaskGeneration:
         assert mgr._task_generation == 1
         start_mock.assert_called_once_with()
 
-    def test_start_ocr_resets_cancel_flag(self, qapp):
-        """start_ocr 应在开始前 reset_cancel，清掉可能残留的后端 cancel 标志。
+    def test_ocr_worker_resets_cancel_flag(self, qapp):
+        """OCR worker 应在线程内 reset_cancel，清掉残留的后端 cancel 标志。
 
         回归：reset_cancel 全代码库原本无调用点；一旦某次取消置位了
         cancel_event，会污染后续 delete_text_layers 等协作式取消操作。
         """
         from unittest.mock import MagicMock, patch
-
-        from PySide6.QtCore import QThread
 
         mgr = PdfSessionManager.__new__(PdfSessionManager)
         mgr._task_generation = 0
@@ -522,13 +520,13 @@ class TestPdfTaskGeneration:
         mgr._ocr_service = MagicMock()
         mgr._is_mineru_first_use = MagicMock(return_value=False)
 
-        with (
-            patch.object(mgr, "_cancel_ocr"),
-            patch.object(QThread, "start"),
-        ):
+        with patch.object(mgr, "_run_ocr"):
             mgr.start_ocr([0])
+            worker = mgr._ocr_worker
+            assert worker is not None
+            assert worker.wait(3000)
 
-        # 关键断言：start_ocr 调用了 client.reset_cancel(sid)
+        # 关键断言：reset 仍执行，但由 OCR QThread 而非 GUI 入口执行。
         mgr._client.reset_cancel.assert_called_once_with("sid1")
 
 
@@ -595,10 +593,10 @@ class TestOcrRunnerFailure:
 
 
 class TestOcrRunnerCancel:
-    """OCR runner 取消应通知后端（协作式取消），不再只设本地 flag。"""
+    """OCR 取消应在后台通知后端，不再只设本地 flag。"""
 
     def test_cancel_notifies_backend(self, qapp):
-        """_OcrRunner.cancel() 应调用 client.cancel(sid)。
+        """manager 取消应异步调用 client.cancel(sid)。
 
         回归：旧 _OcrRunner.cancel() 只设本地 _cancelled bool，不通知后端；
         后端 add_text_layer_batch 一直跑完，取消形同虚设。修复后对齐
@@ -639,18 +637,19 @@ class TestOcrRunnerCancel:
 
         from PySide6.QtCore import QThread
 
-        with (
-            patch.object(mgr, "_cancel_ocr"),
-            patch.object(QThread, "start"),
-        ):
+        with patch.object(QThread, "start"):
             mgr.start_ocr([0])
 
         runner = mgr._ocr_worker
         assert runner is not None, "start_ocr 应创建 runner"
 
-        # 取消：应同时设 flag 并通知后端
-        runner.cancel()
+        # 取消：runner 仅设 flag，阻塞 cancel IPC 由独立 control worker 执行。
+        mgr._cancel_ocr()
         assert runner._cancelled is True
+        deadline = time.monotonic() + 3
+        while client.cancel.call_count == 0 and time.monotonic() < deadline:
+            qapp.processEvents()
+            time.sleep(0.01)
         client.cancel.assert_called_once_with(sid)
 
 
@@ -1208,7 +1207,9 @@ class TestStartOcrResumeFilter:
         mgr._task_generation = 0
         mgr._sessions = {}
         mgr._active_path = str(pdf_path)
-        mgr._ocr_running = True  # 预设，应被复位为 False
+        # 新写门会拒绝已有 running；从 idle 进入后 start_ocr 自己置 True，
+        # sidecar 全命中短路再负责复位为 False。
+        mgr._ocr_running = False
         mgr._ocr_cancelled = False
         mgr._ocr_worker = None
         mgr._client = MagicMock()

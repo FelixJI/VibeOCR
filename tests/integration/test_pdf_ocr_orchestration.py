@@ -66,6 +66,15 @@ def _wait_signal(qapp, signal, timeout=20.0):
     return fired[0]
 
 
+def _wait_until(qapp, condition, timeout=20.0):
+    deadline = time.monotonic() + timeout
+    while not condition() and time.monotonic() < deadline:
+        qapp.processEvents()
+        time.sleep(0.05)
+    qapp.processEvents()
+    return condition()
+
+
 @pytest.fixture
 def manager(qapp):
     mgr = PdfSessionManager(parent=qapp)
@@ -167,14 +176,21 @@ class TestOcrOrchestration:
             "进度应单调不减"
 
     def test_cancel_ocr(self, manager, tmp_path, qapp):
-        """cancel_ocr 应设置取消标志,不阻塞。"""
+        """cancel_ocr 只请求取消，并在 QThread 结束后释放写门。"""
         path = _make_scanned_pdf(tmp_path / "cancel.pdf", num_pages=1)
         manager.open_session(str(path))
         _wait_signal(qapp, manager.load_done, timeout=15.0)
         manager.set_ocr_service(_make_mock_ocr_service())
         manager.start_ocr([0])
+        worker = manager._ocr_worker
+
         manager.cancel_ocr()
-        assert manager.is_ocr_running is False
+
+        assert manager._ocr_cancelled is True
+        assert manager._ocr_state == "cancelling"
+        assert manager._ocr_worker is worker
+        assert _wait_until(qapp, lambda: not manager.is_ocr_running, timeout=25.0)
+        assert manager._ocr_state == "cancelled"
 
 
 class TestDeskewOrchestration:

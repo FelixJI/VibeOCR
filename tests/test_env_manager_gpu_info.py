@@ -66,6 +66,33 @@ class TestGetRuntimeGpuCapability:
         monkeypatch.setattr(em, "resolve_use_gpu", lambda pr: False)
         assert em.get_runtime_gpu_capability(tmp_path) is False
 
+    def test_reuses_background_detection_without_second_gpu_probe(
+        self, monkeypatch, tmp_path
+    ):
+        """后台已有物理 GPU 结果时，不应再次调用 detect_gpu。"""
+        monkeypatch.setattr(em, "_runtime_gpu_capability_cache", None)
+        monkeypatch.setattr(em, "is_cache_valid", lambda _pr: (False, None))
+
+        def fail_if_probed():
+            raise AssertionError("不应重复调用 nvidia-smi GPU 探测")
+
+        monkeypatch.setattr(em, "detect_gpu", fail_if_probed)
+
+        assert em.get_runtime_gpu_capability(tmp_path, detected_has_gpu=True) is True
+
+    def test_cached_pending_backend_overrides_background_detection(
+        self, monkeypatch, tmp_path
+    ):
+        """用户选择的 CPU 后端优先于物理 GPU 探测结果。"""
+        monkeypatch.setattr(em, "_runtime_gpu_capability_cache", None)
+        monkeypatch.setattr(
+            em,
+            "is_cache_valid",
+            lambda _pr: (True, {"pending_backend": "cpu"}),
+        )
+
+        assert em.get_runtime_gpu_capability(tmp_path, detected_has_gpu=True) is False
+
 
 class TestCudaDetectionLogging:
     """detect_cuda_version / detect_gpu 的诊断日志测试。
@@ -103,6 +130,22 @@ class TestCudaDetectionLogging:
         assert any("无法检测CUDA版本" in m for m in msgs), (
             f"应记录最终回退日志，实际: {msgs}"
         )
+
+    def test_detect_cuda_version_accepts_new_cuda_umd_label(self, monkeypatch):
+        """新版 NVIDIA 驱动将表头改为 CUDA UMD Version，仍应识别。"""
+        sample = (
+            "NVIDIA-SMI 610.74  KMD Version: 610.74  "
+            "CUDA UMD Version: 13.3\n"
+        )
+
+        def fake_run(command, **_kwargs):
+            if command == ["nvidia-smi"]:
+                return _mk_completed(stdout=sample)
+            raise FileNotFoundError(command[0])
+
+        monkeypatch.setattr(em, "_run_pip", fake_run)
+
+        assert em.detect_cuda_version() == "cu126"
 
     def test_detect_cuda_version_timeout_uses_logger(self, caplog, capsys, monkeypatch):
         """nvidia-smi 超时应记 warning（含'超时'），不再静默或 print。"""

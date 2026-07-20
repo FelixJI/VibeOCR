@@ -82,7 +82,7 @@ class TestOcrFacade:
         """OcrFacade 应满足 OcrApplication Protocol。"""
         adapter = _FakeOcrAdapter()
         facade = OcrFacade(adapter)
-        assert isinstance(facade, OcrApplication) or hasattr(facade, "recognize")
+        assert isinstance(facade, OcrApplication)
 
     def test_recognize_passes_request_and_cancel(self):
         adapter = _FakeOcrAdapter()

@@ -100,3 +100,21 @@ class TestShutdownCoordinator:
         assert order == []
         assert coord.results[-1].status == "timeout"
         release.set()
+
+    def test_incomplete_drain_stops_dependent_cleanup(self):
+        """显式 False 表示 worker 仍活，不能继续销毁其依赖资源。"""
+        from vibeocr.managers.shutdown_coordinator import ShutdownCoordinator
+
+        coord = ShutdownCoordinator()
+        order: list[str] = []
+        coord.register(
+            "drain",
+            lambda: False,
+            max_timeout_ms=50,
+            continue_on_timeout=False,
+        )
+        coord.register("dependent", lambda: order.append("dependent"))
+
+        assert coord.coordinate(timeout_ms=100) is False
+        assert order == []
+        assert coord.results[-1].status == "failed"

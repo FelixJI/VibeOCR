@@ -5,7 +5,7 @@
 
 用法:
     python qa/run.py              # 交互式选择检查项
-    python qa/run.py --all        # 运行所有检查
+    python qa/run.py --all        # 运行全部非修改性检查
     python qa/run.py --fix        # 自动修复问题
     python qa/run.py --quick      # 快速检查（跳过测试）
     python qa/run.py --ci         # CI 模式（严格检查）
@@ -61,6 +61,10 @@ CHECKS = {
         "description": "检查 KaTeX 等离线资源是否存在",
     },
 }
+
+# 质量检查入口不得隐式修改依赖。依赖升级只能通过显式选择
+# ``python qa/run.py upgrade_deps`` 执行。
+NON_MUTATING_CHECKS = tuple(key for key in CHECKS if key != "upgrade_deps")
 
 
 def ensure_reports_dir() -> None:
@@ -378,6 +382,24 @@ def save_report(results: dict, format_type: str = "all") -> None:
         print(f"[REPORT] JSON报告: {json_file}")
 
 
+def _select_checks(args: argparse.Namespace) -> list[str]:
+    """Resolve CLI selection without implicitly choosing mutating operations."""
+    if args.checks:
+        selected = (
+            list(NON_MUTATING_CHECKS)
+            if "all" in args.checks
+            else list(args.checks)
+        )
+    elif args.all or args.no_interactive or args.ci:
+        selected = list(NON_MUTATING_CHECKS)
+    else:
+        selected = select_checks_interactively()
+
+    if args.quick:
+        selected = [check for check in selected if check != "coverage"]
+    return selected
+
+
 def main() -> int:
     # 确保 stdout/stderr 使用 UTF-8，避免 Windows 终端乱码
     if hasattr(sys.stdout, "reconfigure"):
@@ -391,7 +413,7 @@ def main() -> int:
         epilog="""
 示例:
   python qa/run.py              # 交互式选择检查项
-  python qa/run.py --all        # 运行所有检查
+  python qa/run.py --all        # 运行全部非修改性检查
   python qa/run.py format lint  # 只运行格式化和代码检查
   python qa/run.py --fix        # 自动修复问题并生成报告
   python qa/run.py --report     # 生成报告文件
@@ -402,6 +424,11 @@ def main() -> int:
         nargs="*",
         choices=[*list(CHECKS.keys()), "all"],
         help="要运行的检查项",
+    )
+    parser.add_argument(
+        "--all",
+        action="store_true",
+        help="运行全部非修改性检查",
     )
     parser.add_argument(
         "--fix",
@@ -442,14 +469,7 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    # 确定要运行的检查项
-    if args.checks:
-        selected = list(CHECKS.keys()) if "all" in args.checks else args.checks
-    elif args.no_interactive or args.ci:
-        selected = list(CHECKS.keys())
-    else:
-        # 交互式选择
-        selected = select_checks_interactively()
+    selected = _select_checks(args)
 
     if not selected:
         print("未选择任何检查项")

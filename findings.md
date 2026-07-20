@@ -1,522 +1,234 @@
-# 调研记录：PDF 收尾压缩与 RTX 4060 吞吐（2026-07-20）
-
-## 已确认起点
-
-- WorkerHost 批量 OCR 还存在确定的无效开销：每页复制约 8.7MP 预处理图并重新编码 PNG，结果经共享内存回传后又在合同转换处丢弃；5 页返回一度达到 13–17MiB。应让 PDF/WorkerHost 批量路径只回传角度与尺寸，不回传预处理图。
-- `text_recognition_batch_size=8` 是文字行识别批次，不代表 8/16 个 PDF 页面并行。300 DPI 下 16 页外批被 48MP 预算切为 5+5+5+1；稳态 5 页子批约 6.2–7.6 秒，单纯增大页批无法把 1.5 秒/页降到 0.5 秒/页。
-- PyMuPDF 文档说明与本地 1.28.0 API 均支持 `garbage=3`、`use_objstms=1`、`compression_effort`；`garbage=4` 会额外比较大 stream 去重，是扫描文档 453 秒保存的最可信热点，但现场旧日志无子阶段计时，不能宣称已经精确量到。
-
-- 01:14:07 发起最终保存；01:21:40 PDF 后端返回 HTTP 200，说明文件压缩/落盘成功，后端耗时约 453.5 秒。
-- HTTP 保存响应约 15,543,259 字节；WorkerHost 封装后的控制帧 15,543,403 字节，超过 8,388,608 字节上限，导致连接关闭和前端假失败。
-- 保存响应过大的直接原因是 `SaveResponse(path, diff=_diff_full(pdf_document))` 序列化 682 页及全部 OCR 文本块；OCR finalize 调用方并不需要该全量 diff。
-- 随后的全文档 `get_model` 也可能再次超过 8 MiB，修复不能只扩大帧上限或只裁剪 save 返回。
-- 约 1.547 秒/页是 OCR 阶段均摊，不是压缩耗时；是否符合 RTX 4060 需要结合具体模型、批大小、GPU 利用和尾部退化判断。
-- `PdfSessionManager._on_ocr_page_done_signal` 已把每页 `text_blocks`、角度和文字层状态增量写入本地 `session.pdf_document`，因此 OCR 完成后再取全文档 `get_model` 不是保持 UI 正确所必需，且对大文档会再次触发控制帧超限。
-- `PdfService.save_with_rewrite(..., rewrite_text_layers=False)` 的 OCR 收尾没有逻辑页模型变更；保存接口返回 `_diff_full` 属于过度响应。该路径可安全返回空 `ModelDiff`/最小 modified 状态，普通结构编辑保存仍可保留原契约。
-- OCR 每批已经是真批量调用，并在当前批 GPU OCR 时预取下一批 300 DPI 渲染；写层使用批量 HTTP 和共享字体，项目并非逐页串行。但识别阶段单个批次仍是一次 GPU predict，不能通过同时启动多个 GPU OCR 简单线性加速。
-- 最终压缩由 `doc.save(tmp, garbage=4, deflate=True, clean=False)` 完成，并在前后复制 `.bak`、关闭、原子替换、重开；当前没有子阶段计时，必须先埋点或建立基准才能区分 453 秒主要耗在垃圾回收/deflate 还是文件复制。
-- 日志中的 43 个 16 页渲染批实际被像素预算拆成 170 次 GPU 传输/推理调用：128 次 5 页、42 次 1 页，平均每次 4.01 页。每张 300 DPI 页面约 8.70 MP，48 MP 上限最多容纳 5 页；因此“16 页批”不是一次 16 页模型推理。
-- OCR 吞吐中位数约 1.49 秒/页，前 10 批 1.541、中央 10 批 1.488；总体 1.547 被最后两批 2.37 和 5.85 秒/页明显拉高。常态吞吐约 1.5 秒/页，末尾退化是另一个需观测的异常，不应拿总体均值直接当 RTX 4060 稳态能力。
-- PDF 渲染当前硬编码 300 DPI；虽然 `PdfGlobalSettings` 有 `render_dpi/max_pixels/adjusted_dpi`，OCR 热路径没有使用用户设置。现场 A4 页约 8.7 MP，低于默认 16 MP 单页上限，故不会自动降 DPI。降低到 200–240 DPI 可减少渲染、PNG、SHM 和解码成本，但是否降低 GPU OCR 核心耗时需基准验证。
-
----
-
-# 调研记录：运行时阻塞、日志、表格与预加载（2026-07-20）
-
-## 用户报告
-
-- 依赖安装期间及安装结束后重新连接 Python 运行时期间，主窗口疑似同步阻塞。
-- 一早晨日志达到约 3 MB，底层日志过密；希望设置中可配置日志级别。
-- 需从日志评估 PDF 文字层添加速度和优化空间。
-- 表格识别结果同时保留表格和表格内部独立文本框，表格格式也可能失真。
-- “立即预加载”似乎没有触发模型加载，需要判断功能价值并修正语义。
-
-## 调研方法
-
-- 对 `C:\Users\felji\Downloads\vibeocr.log` 做级别、logger、消息模板和耗时统计。
-- 对四条调用链做静态审计，并以现有/新增测试约束行为。
-- 子代理只读并行收集证据，产品代码由主代理统一写入和复核。
-
-## 初步证据
-
-- 表格管线已有较完整回归资产；`tests/core/test_pipeline_table.py` 明确包含“保留未被表格吸收的内部 OCR 文本”测试，这与用户看到的表格内独立文本框高度相关，可能是现有契约而非纯渲染错误。
-- 表格 HTML 会经过 `result_view_widget.py` 的规整化再渲染/复制，需区分模型 `pred_html` 本身结构错误、后端回填策略和前端规整化造成的格式变化。
-- 当前代码同时存在 `preload_pipelines` 与 `warmup_pipelines` 两条 WorkerHost RPC；“预加载”是否真正推理取决于 UI 调用的是哪条以及 backend cache manager 的实现。
-- 用户日志实际为 3.35 MiB、12,780 行，跨度约 53 分 39 秒；其中 DEBUG 11,433 行（89.5%）、INFO 1,156、WARNING 189、ERROR 2。
-- 日志膨胀主要来自第三方 HTTP 底层：`httpcore.http11` 7,440 行、`httpcore.connection` 2,108 行、`httpx` 744 行，合计 10,292 行（80.5%）。默认生产日志显然不应采集这些 DEBUG 帧。
-- PDF 记录含 43 批、682 页：渲染累计 227.87s、OCR 1055.05s、写层 109.03s、合计 1391.94s。写层平均 0.160s/页，只占三阶段合计约 7.8%；OCR 平均 1.547s/页，是主要耗时。写层本身总体合理，但尾部批次出现 7.79s/16页、10.65s/10页的退化，仍需看保存/后端资源状态。
-- `SettingsPageController` 的“立即预加载”已在 `QRunnable` 中逐管道调用 preload，再执行白图 warmup；后台线程设计存在，但用户日志开头明确记录“预加载功能: 禁用”，需要区分自动预加载开关和手动按钮行为。
-- `MainWindow._on_settings_install_succeeded()` 当前直接在主线程调用 `DependencyManager.check_dependencies()`；如果该函数执行外部探测/重连，安装结束瞬间会冻结 UI。安装过程本身还需继续检查对话框 worker 的信号与 post-install 逻辑。
-- 日志子代理定位到级别泄漏边界：主进程 `services/log_service.py` 已压低 `httpcore/httpx`，但 WorkerHost/PDF 后端使用 `packages/vibeocr-client-py/src/vibeocr/logging_context.py::configure_worker_stderr_logging()` 重置 root 为 DEBUG 且未重设 noisy logger，子进程第三方 DEBUG 因而被转发回主日志。
-- PDF 真正显著的尾部热点不是文字层批量写入，而是最终全量压缩：日志显示约 461 秒后失败并伴随 WorkerHost connection closed，约占该次 PDF OCR 端到端时长的 35%。应优先修复压缩的超时/后台状态/可选语义，而非微优化平均 0.16s/页的写层。
-- 当前批量 16 页、共享字体和增量保存设计已有合理性能基础；需要保留，并为尾部压缩增加内部阶段计时及可控策略。
-- 现场日志证明安装主体在 `Dummy-28` 后台线程执行；但从“所有OCR依赖安装完成”(00:45:31.660) 到主窗口启动 WorkerHost (00:47:03.226) 有约 91.6 秒，期间后台进行了多项导入校验且至少两个 import 超时。即使事件循环未阻塞，这段缺少细粒度进度/阶段反馈也会造成“安装完成后卡住”的感知。
-- WorkerHost 进程 00:47:05.999 已 ready，但 `SubprocessManager` 到 00:47:18.222 才报告服务就绪，另有约 12.2 秒初始化间隙；需核对 adapter/服务构造是否在后台任务中以及 UI 状态文本是否覆盖该阶段。
-- 现场日志也直接证明“立即预加载”在 00:48:17–00:48:59 成功完成：OCR preload 约 11 秒+warmup 0.85 秒，表格 preload 约 23.7 秒+warmup 6.5 秒。功能真实有效；用户感知问题主要是 DEBUG 才记录关键过程、完成状态不够可验证，以及“自动预加载开关/立即执行”语义可能混淆。
-- 表格重复的直接代码原因已确认：`pipeline_table._recognize_table()` 只把“回填进空单元格”的 OCR 标为 consumed；其余位于表格 cell/bbox 内的 OCR 无条件追加为独立 `text` 块，且注释明确采用“宁可重复，不可漏字”。现有测试还把这种重复固化为期望行为。
-- 表格格式失真的本地原因也已确认：`utils/html_tables.py::normalize_table_html()` 为去除 inline style 会剥掉单元格所有属性，因此模型输出中的 `rowspan`/`colspan` 被一并丢失；同时按每行标签数量补空格，没有考虑跨行/跨列占位，会进一步改变合并单元格表格结构。
-- 更合理的边界是：保留并规范化安全的结构属性 `rowspan/colspan`，只移除 style/class 等展示属性；将几何上落入表格单元格的 OCR 吸收到表格语义中并去重，表格外文字才保留独立块。
-
-## 实施结果
-
-- 安装主体、GPU 检测、安装后环境/版本/直接依赖探测均不再占用 GUI 线程；运行时维护先让旧服务失效，再由安装线程关闭 WorkerHost，成功后异步重检并重新建会话。
-- 日志默认 INFO，WorkerHost 不再泄漏 httpcore/httpx DEBUG；设置页可选普通、调试、仅警告与错误。
-- 自动预加载原本是未调用的死代码，现于 WorkerHost ready 后触发；手动按钮和自动路径共享同一任务，预加载与预热都成功才显示完整成功。
-- 表格内 OCR 不再输出独立文本框：相同内容消费，模型结构漏字则追加回对应格；rowspan/colspan 在清洗、渲染与网格转换中保留。
-- 本轮没有直接取消 PDF 最终压缩：它影响产物体积/结构，且现场写层并非瓶颈。461 秒压缩失败属于独立的大文档收尾策略问题，建议以该 PDF 做 A/B 基准后再决定“大文档跳过压缩”或显式设置项。
-
----
-
-# 调研记录：PDF 文字层与批量识别
-
-## 用户报告
-
-- PDF 添加文字层及批量识别速度仍有较大提升空间。
-- 可在必要时调整进程间通信与批处理方式。
-- `vibeocr-worker-stderr` 线程在 `sync_client.py:187` 遍历子进程 stderr 时按 GBK 解码 UTF-8 字节失败：`UnicodeDecodeError: 'gbk' codec can't decode byte 0xa8 ...`。
-- 随后日志出现：`BackendClient reader: terminal error: invalid state`。
-
-## 待确认
-
-- 子进程启动时 `text/encoding/errors/bufsize` 的配置及 stderr drain 生命周期。
-- IPC 是逐页、逐图片还是批量传输，是否存在 Base64/JSON/临时文件复制。
-- OCR 后端内部是否已批处理，而上层又按页串行等待。
-- 文字层写入是否逐页保存、重复打开/解析 PDF，或触发全量重写。
-- `invalid state` 是解码线程崩溃后的次生问题，还是独立状态机竞争。
-
-## 已确认
-
-- `SyncBackendClient._start_async()` 以 `subprocess.Popen(..., text=True)` 启动 WorkerHost，但未显式指定 `encoding/errors`；Windows 中文系统因此采用 GBK 解码 stdout/stderr，而 Python WorkerHost/依赖输出包含 UTF-8 字节，直接导致 drain 线程的 `UnicodeDecodeError`。
-- 同一文本包装也被 `_await_ready()` 使用；如果 ready 前 stdout 出现非 GBK 输出，启动路径同样可能崩溃。修复点应放在 `Popen` 的统一流配置，而不是只在 drain 内捕获。
-- `_start_output_drains()` 中 drain 线程没有异常保护，任何读取/日志异常都会让管道停止排空，子进程后续可能因管道缓冲区填满而阻塞。
-- `SyncBackendClient` 已通过 Windows named pipe 执行 RPC；在确认传输负载之前，没有证据表明需要整体替换 IPC。
-- PDF 主流程集中在 `pyside/pdf_session_manager.py`：注释显示现有路径已采用每批并发渲染、`recognize_batch()` 批量识别、`add_text_layer_batch()` 聚合写层，默认传输批为 16。
-- `BackendClient.call()` 在超时/取消时会取消 `pending.future`；reader 可能已从 `_pending` 取出同一个对象，随后 `_complete_response()` 无条件 `set_result/set_exception`，会抛 `asyncio.InvalidStateError`（日志文本即 `invalid state`），并使唯一 reader 任务退出、所有在途 RPC 统一失败。这是独立且严重的竞态，应在完成响应前检查 future 状态。
-- `BackendClient.recognize_batch()` 名称虽为 batch，实际是对每张图片并发调用 `ocr.recognize`，即 N 个 SHM payload + N 个 RPC；这条 WorkerHost API 没有把整批送入 OCR 引擎。不过 PySide PDF 路径看起来使用另一套 `OCRServiceSubprocess.recognize_batch`，需确认两个前端/组合根的实际走向后再决定是否改协议。
-- Named pipe 帧 I/O 使用线程池包装 Win32 overlapped `ReadFile/WriteFile`，并对大于 64 KiB 的部分写入做循环；控制通道本身已有长度帧和共享 payload，不是首要可疑点。
-- PySide PDF 一批的真实流水线是严格串行的三个阶段：16 页全部渲染完成 → 整批 OCR 完成 → 整批写层并落盘完成，下一批才开始；阶段内部只有渲染并发，没有跨批渲染/OCR/写层重叠。
-- `add_text_layer_batch(save=True)` 每 16 页调用一次 `PdfService.save_incremental()`；后者每次先 `shutil.copy2` 整个不断增长的 PDF 到 `.bak`，再做 append-only incremental save。大文件会产生约 `批次数 × 当前文件大小` 的额外全文件 I/O，是明确的非 OCR 瓶颈。
-- OCR 完成后 `_run_ocr()` 又调用普通 `/save`。`save_with_rewrite()` 会遍历所有有 `ocr_text_blocks` 的页，删除并重写刚才已经逐批写入的文字层，再执行整文档 `tobytes(garbage=4, deflate=True)`、关闭、全量写回和重开。该收尾阶段把文字层写入工作做了第二遍，且全量压缩本身也昂贵。
-- 逐批写层共享一个子集字体，末尾重写的目标是把所有批次再合并成全文档单一字体；这是文件体积与吞吐的显式权衡，不应在没有选项/测试的情况下直接取消。
-- PySide OCR IPC 的 `OCRServiceSubprocess.recognize_batch()` 已实现真正的单消息 RCBG 共享内存批请求，并在 worker 内调用一次 `OCRService.recognize_batch(list)`；128 MiB SHM 下按约 90 MiB 有效预算自动分子批。这里无需整体替换通信方式。
-- 工作区已有与本任务无关的用户改动：`src/vibeocr/views/tabs/about_tab.py`、`tests/views/tabs/test_about_tab.py`。后续必须避开并保留。
-- `save_incremental` 已有成功持久化和失败回滚测试，但失败测试只模拟 `fitz.Document.save` 在写入前抛错，没有覆盖“已追加部分字节再失败”的回滚边界，也没有断言必须通过全量 `.bak` 复制来实现安全性。
-- `save_with_rewrite` 有全文档单一子集字体的行为测试；若新增 OCR 快速收尾路径，应只供“刚刚批量写层且未编辑”的 OCR 编排调用，保留普通用户保存的重写语义。
-- 当前没有针对 `SyncBackendClient` 子进程 UTF-8 流配置或 `BackendClient._complete_response()` 取消竞态的直接测试，需要新增。
-- 关键架构更正：当前 `MainWindow._on_subprocess_worker_ready()` 给批量图片 Tab 和 PDF Tab 注入的是 `BatchBackendAdapter(SyncBackendClient)`，旧的 `OCRServiceSubprocess` 真批量路径已不再由前端直接使用。因此 PDF 的 `recognize_batch()` 最终确实走 WorkerHost 中 N 个 `ocr.recognize` RPC 的 `gather`，并没有单次引擎 batch；现有 PDF 代码注释与运行时架构已经脱节。
-- WorkerHost 内 `OcrServiceAdapter` 只暴露单图 `recognize`，但其底层生产 service 已有真 `recognize_batch`。可以在 v1 协议新增 `ocr.recognize_batch`：客户端一次性建立多份 SHM 引用、handler 一次读入并调用 adapter batch、一次返回结果数组；这会直接恢复 PDF/批量图片的 Paddle 真批处理。
-- `PdfBackendAdapter.start_ocr()` / `_PdfOcrBackendBridge` 目前仍是占位实现（识别返回空 placeholder），但 PySide PDF Tab 实际仍由 `PdfSessionManager` 主进程编排，不走该 `pdf.start_ocr`；本次不应把 WinUI 尚未完成的占位路径混进 PySide 优化范围。
-- 新增 `ocr.recognize_batch` 必须同步更新四个协议真源/镜像：`contracts/v1/methods.schema.json`、`contracts/v1/golden.json`、Python `method_validation.PUBLIC_METHODS`、C# `RpcMethods.All`；架构测试会校验集合一致。
-- `SyncBackendClient.recognize_batch_sync()` 已经期待一次返回结果列表，调用方无需变化；只需将 async `BackendClient.recognize_batch()` 从 N 个 `recognize()` 改为一份 batch RPC，并保持对所有 client-owned SHM 的 finally 释放。
-- WorkerHost handler 可以复用单图的 wire 序列化格式，把响应定义为 `{results: [单图响应...]}`；生产 `OcrServiceAdapter` 需把底层 service `recognize_batch(images, options)` 的结果逐个转换为 application `OcrResult`，并保留结果顺序/None 失败槽位的语义。
-- PDF 后端的 `SaveRequest` 是内部 Pydantic IPC 模型，HTTP 与 in-process client 共用；可安全增加默认 `rewrite_text_layers=True` 字段，在 OCR 收尾调用显式传 False，同时保持所有现有普通保存调用兼容。
-- 当前 PySide `PdfSessionManager` 的实际 PDF 调用也已迁移到 `vibeocr.client.pdf.PdfBackendClient` → WorkerHost `pdf.command` → composition adapter → in-process PDF backend；OCR finalize 标志还必须穿过这一层 command params，不能只修改旧 HTTP client。
-- 审计发现 WorkerHost v1 的 pipeline allow-list 仍只有 OCR/表格/公式，但前端可选枚举已有 `PP-StructureV3`、`MinerU`、`PaddleOCR-VL`。迁移到 WorkerHost 后这些管道会在单图/批量方法进入 handler 前被拒绝；批量协议应同步修正该既有契约缺口。
-
-## 关键路径对比（页批 = 16）
-
-- N 页 OCR 控制 RPC：`N` 次单图调用 → `ceil(N/16)` 次真批量调用；100 页即 100 → 7。
-- OCR 引擎入口：`N` 次单图 `recognize` → `ceil(N/16)` 次 `recognize_batch`。
-- incremental checkpoint 的整文件复制：`ceil(N/16)` 次 → 0 次；只写一个长度 marker 并执行 append。
-- OCR 完成后的文字层逐页重写：`N` 页 → 0 页；保留 1 次整文档压缩。因此产物会保留“每批一个字体子集”，文件体积可能略高于全文档单字体重写，但明显降低收尾耗时。
-- 渲染/OCR：原先批间完全串行；现在 OCR 当前批时预取下一批，额外内存上限为一批（最多同时持有 32 页 PNG）。
-
----
-
-# 2026-07-19：Classic 启动缺少 startup_metrics
-
-- 用户现场在 `main.py:56` 导入 `vibeocr.startup_metrics` 时立即失败，属于 PyInstaller PYZ 漏收模块，不是 wheel 下载问题。
-- 模块实际位于 `apps/vibeocr-pyside/src/vibeocr/startup_metrics.py`；该 source root 虽已作为 `--paths` 传给 PyInstaller，但共享 namespace `vibeocr` 横跨四个物理 source root。
-- 当前只使用一次 `--collect-submodules vibeocr`，需要核对 PyInstaller 是否只从被解析为主 package 的物理根收集，导致 app root 下模块遗漏。
-- 现有 `verify_pyside_artifact.py` 只检查 ZIP 布局、manifest 和 wheel 哈希，不执行 `VibeOCR.exe`，因此没有发现冻结入口导入失败。
-- 首次重发运行 `29689958012` 已成功完成 PyInstaller 冻结，但真实 EXE smoke 在绑定阶段等待 45 秒后失败。堆栈停在 `subprocess.communicate()`；验证器使用 `capture_output=True`，而应用启动的后台清理子进程可能继承 PIPE，导致主 EXE 已 `os._exit` 后管道仍不关闭。验证日志应重定向到普通文件，避免把继承管道误判为应用未退出。
-- 第二次运行 `29690421627` 的普通文件 stderr 揭示更深一层原因：CI 冻结进程的重定向 stdout 使用 cp1252，`main.py:663` 的中文启动提示触发 `UnicodeEncodeError`。启动 smoke 必须显式传入 UTF-8 Python I/O 环境；否则验证环境本身会在进入 Qt 前破坏被测程序。
-- 第三次运行 `29690773080` 仍在同一行报告 cp1252，证明 PyInstaller 冻结运行时不受父进程 `PYTHONIOENCODING/PYTHONUTF8` 影响。最终修复必须进入应用入口，在任何中文 `print` 前直接重配 stdout/stderr；只修改 CI 环境不足以保护真实的日志重定向场景。
-- `main.py` 在设置环境后静态导入 `vibeocr.startup_metrics`，因此正常 PyInstaller Analysis 本应收集；缺失说明 namespace 解析/分析发生偏差，而非运行时可选功能。
-- 四个 workspace root 中只有 contracts 根提供 `vibeocr/__init__.py`（使用 `pkgutil.extend_path`），其余为无 `__init__.py` 的 namespace 分片；PyInstaller 入口同时传四个 `--paths`，但 package 主体首先解析到 contracts 根。
-- `PACKAGE_DATA` 只把 contracts/client/backend 三个源码分片作为原始 `.py` 数据合并进 `_internal/vibeocr`，没有加入 app/pyside 分片；即便主进程 PYZ 漏收 app 模块，运行时数据目录也无法兜底找到 `startup_metrics.py`。
-- 在本地按 release 的四段 `PYTHONPATH` 调用 PyInstaller `collect_submodules('vibeocr')`，可正确解析四个 `__path__` 分片并包含 `vibeocr.startup_metrics`（共 193 个模块）。因此问题可能发生在实际命令分析顺序、入口选择或最终 PYZ/EXE 组装，而不是 collect helper 本身完全不支持 namespace。
-- 本地 `dist/` 只有 0.4.28 主程序构建缓存和 updater 分析文件，没有 0.5.0 Analysis/PYZ 可直接审阅；需要以当前 release 命令本地重建复现。
-- 已按正式命令成功本地构建 0.5.0；`warn-VibeOCR.txt` 明确列出 `vibeocr.startup_metrics`、`vibeocr.env_manager`、`vibeocr.pyside/views/managers/utils` 等整个 Classic 分片缺失。
-- 生成的 spec 在 `Analysis(...)` 前执行 `hiddenimports += collect_submodules('vibeocr')`；此时 CLI 的 `pathex` 尚未进入 Analysis，导致 namespace 分片收集取决于 spec 进程环境。实际 spec 的 hiddenimports 最终只有第三方显式项，没有任何 `vibeocr.*`。
-- `Analysis-00.toc/PYZ-00.toc` 均不含 `startup_metrics`，用户报错已在本地构建证据中完整复现。
-- 修复应改为从仓库四个已知 source root 静态枚举 `vibeocr` 模块，并逐项生成 `--hidden-import`，避免依赖 spec 执行期 `sys.path`；同时在 release 中执行冻结入口 smoke。
-- 现有主程序已支持 `VIBEOCR_SELF_TEST_SMOKE=1/t3`：创建首窗并在 150ms 后 `flush_startup()` + `os._exit(0)`；配合 `VIBEOCR_STARTUP_TRACE` 可作为真实冻结入口 smoke，无需新增产品 CLI。
-- `check_production_dependencies()` 只导入 PyInstaller 包内的 PySide6/PIL，不要求 Paddle/Torch 等嵌入式 AI 环境，因此 t3 smoke 可在干净 CI artifact 上执行。
-- 第一版“逐项 hidden import + 四个 pathex”构建仍失败：PyInstaller ModuleGraph 将 `vibeocr` 锁定到含 `__init__.py` 的 contracts 根，除 contracts 外的大多数 hidden import 均报 not found。ModuleGraph 不执行/不采纳运行时 `pkgutil.extend_path` 来扩展静态包路径。
-- 下一策略是在构建前把四个物理分片合并到临时 `workspace-src/vibeocr`，并把其父目录作为最高优先 pathex；这样 Analysis 面对一个完整物理包，hidden import 与静态 import 均可确定解析。
-- 合并 staging 后真实构建成功：`warn-VibeOCR.txt` 不再含任何缺失 `vibeocr` 模块，`PYZ-00.toc` 明确包含 `vibeocr.startup_metrics`。
-- 修复后的原始 Classic ZIP 约 162.4MB（此前错误产物约 70MB）；体积增长主要来自此前整段 Classic GUI/服务模块根本未进入冻结产物，需在 CI 最小依赖环境继续观察最终尺寸。
-- 本地 `dist/wheels` 仍是 0.4.37 wheel，无法直接绑定 0.5.0；需重建五 wheel 或下载新 wheelhouse 后再执行最终 ZIP smoke。
-- 已在工作区缓存下重建并验证五个 0.5.0 wheel，最终 Classic ZIP 完成绑定后由 verifier 真正启动到 T3，冻结入口 smoke 通过。
-- 定向回归共 146 项通过；workspace wheel verification、Ruff、`git diff --check` 全部通过。
-- 本地最终 Classic ZIP 为 170,993,151 bytes，SHA256 `4bbab9cdab7fbf76df7ae829940fae2a5ca14f1f1287f54374d24451c39339f5`；该摘要仅用于本地证据，CI 重建后会产生不同但应自洽的摘要。
-- 最终运行 `29691245564` 在 6m39s 后全绿：绑定后的首次真实 EXE smoke 与独立 `Verify PySide Classic artifact` 均通过。发布 ZIP 为 172,269,093 bytes，GitHub digest 和随附 `.sha256` 内容一致，均为 `b3c3124812adf17ea31e94daeb7855aa4300b18155ae4f4e40f984d42173ceda`。
-
----
-
-# 2026-07-19：重新打包 0.5.0
-
-- Release workflow 支持 tag push 与手动 dispatch，默认只打 Classic。
-- workflow 的版本解析直接读取 `GITHUB_REF_NAME` 并要求 `vX.Y.Z`；在 `main` 上手动 dispatch 会因 ref 名不是版本号而失败。
-- `v0.5.0` 现有 tag 指向修复前提交，因此直接 rerun 旧任务无法带入更新器入口修复。
-- 当前成功 Release run 为 `29675075394`，tag 指向 `2120617`；Classic zip 当前摘要为 `1a5f274e...`，发布时间为 2026-07-19 13:41（北京时间）。
-- 工作流使用 `softprops/action-gh-release@v3` 上传同名资产；同一 tag 的上一轮修复重推已成功覆盖现有 0.5.0 Release，证明仓库支持该恢复路径。
-- 0.5.0 CHANGELOG 已补充 Classic 更新重启修复，重打包上传时 Release 正文会同步包含该说明。
-- 新 Release run `29688528417` 在提交 `70420ac` 上成功完成，Windows job 6m03s；Classic 构建、结构校验、上传与 CNB 镜像均成功。
-- 新 Classic ZIP 上传时间为 2026-07-19T13:21:08Z，GitHub 资产摘要与 `.sha256` 文件内容一致：`c94c0193109d85d78411786cb0701a27716cbda2ac323fef3b889213bbaaf569`。
-- 远端 `main` 与 `v0.5.0` 均已确认指向 `70420ac`；Release 正文包含本次 update 修复说明。
-
----
-
-# 调研记录：版本升级与 CHANGELOG 归档
-
-- `update_file_version()` 使用 `replace(..., 1)`，每个文件只替换第一个旧版本；因此子项目 `pyproject.toml` 内的内部依赖约束即使文件被处理也会漏掉。
-- 主流程只更新根 `pyproject.toml` 和 `src/vibeocr/__init__.py`，完全没有遍历 `[tool.uv.workspace]` 下的 `apps/*`、`packages/*`。
-- 当前根版本和根包为 0.4.30，但四个 workspace 项目的版本、内部包精确依赖与包级 `__version__` 仍停留在 0.4.28。
-- Git 历史存在 `release: v0.4.29` commit `3843945`，但本地 tag 列表没有 `v0.4.29`；`get_commits_since_last_tag()` 因而从 `v0.4.28` 开始收集，0.4.30 条目重复包含了 0.4.29 的全部内容。
-- `v0.4.30` 之后目前没有工作区改动；开始修复前 git 状态干净。
-- 修复后自动发现 10 个受控版本文件（根项目 2 个 + 4 个 workspace 项目的 pyproject/init），全部与根版本 0.4.30 对齐；`uv.lock` 中 5 个内部发行包也一致为 0.4.30。
-- 用真实仓库调用新边界逻辑：0.4.29 release commit 之后只得到 `fix(ci)`、`build(deps)`、PDF 优化提交以及 0.4.30 release 本身；不再包含 0.4.29 已归档的 preview/WinUI 等提交。
-
----
-
-# 调研记录：PySide6 架构与运行治理审计
-
-## 初始事实
-
-- 仓库是包含 `apps/`、`packages/`、`src/`、`contracts/`、`requirements/` 的多项目工作区，PySide6 审计需同时覆盖应用层与共享包，不能只看 `src/vibeocr/views`。
-- 审计开始时 `git status --short` 无产品代码改动；命令仅提示无法读取用户级 Git ignore，不影响仓库状态判断。
-- 历史记录显示项目近期已重构 WorkerHost 真批量 OCR、PDF 流水线和 UTF-8 子进程日志，但本次仍需基于当前代码重新核实 UI 接线、缓存、依赖和超时的全局一致性。
-
-## 架构初筛
-
-- `apps/vibeocr-pyside` 目前基本是发布/工作区壳，真实 PySide6 产品代码仍集中在根包 `src/vibeocr`；UI 相关代码横跨 `main.py`、`views/`、`widgets/`、`managers/`、`workers/`、`pyside/`，业务边界同时延伸到 `application/`、`client/`、`worker_host/` 和 `services/`。
-- 主入口 `src/vibeocr/main.py` 创建 `QApplication` 后使用 qasync 统一 Qt/asyncio 事件循环；同时仓库仍大量使用 `QThread`、`QRunnable/QThreadPool`、子进程和 WorkerHost asyncio，属于四种并发模型并存，必须检查它们的所有权和关闭顺序。
-- 现有测试资产较丰富，至少覆盖主窗口后端切换/待处理配置、单图/PDF/批量/二维码 Tab、Qt async、批量队列与取消、WorkerHost 生命周期/协议、pipeline cache 和模型预加载；但测试“存在”不等同于 UI 全接线，需要逐项映射控件到用例。
-- 依赖已拆成 `vibeocr-pyside`、`vibeocr-backend`、client/contracts 等 workspace 包，但根 `pyproject.toml` 仍同时声明 PySide6 与完整 GPU/Paddle/Torch 后端栈；发布壳是否真正实现前后端依赖隔离需要进一步核对构建入口与锁文件组。
-- 锁文件把 PySide6 6.11.1、qasync 0.28.0、Paddle GPU、PaddleOCR、Torch CUDA、ONNX Runtime 等集中锁定，并对 Torch/Paddle CUDA ABI 做了显式来源约束；版本可复现性较强，但 GPU 运行时耦合较重且升级存在人工同步点。
-
-## 入口与 composition root
-
-- 启动顺序总体合理：`QApplication` → 单实例/跨前端互斥 → 配置/OCRPreferences → qasync loop → `MainWindow` → 延迟更新检查与 Worker 初始化；首窗前不主动启动 WorkerHost，并用 splash + Tab 懒加载改善冷启动感知。
-- `MainWindow` 是事实上的 UI composition root，但职责很重：它同时管理依赖检测、后端进程、预加载、所有 Tab 的服务注入、设置、截图、托盘、布局和退出协调。后端注入集中在 `_on_subprocess_worker_ready()`，单图/批量/PDF 共用同一个 `BatchBackendAdapter(get_backend_client())`，避免重复 WorkerHost，这条主接线是完整的。
-- 懒加载 Tab 会错过 Worker-ready 信号，因此代码专门缓存 `_paddlex_service/_mineru_batch_service` 并在构造后补注入；这是正确的生命周期补偿点，批量/PDF 延迟构造后都能获得同一个适配器。
-- 后端启动在 `_start_subprocess_worker()` 中同步调用 `get_backend_client()`；该方法会在调用线程等待 WorkerHost ready/握手，最坏约 40 秒，因此明确占用 GUI 线程。虽然 `SubprocessManager` 具备后台启动任务，当前主路径绕过了其异步启动能力。
-- 退出路径有集中协调器和有界等待，但仍存在顺序风险：`_closing` 直到关闭流程后段才置 `True`，在此之前已关闭 PDF/WorkerHost；若依赖检测或安装完成信号同期到达，可能触发重新启动。`os._exit(0)` 也会绕过 Python 常规清理/日志 flush，必须确认文件日志在此之前同步落盘或显式 flush。
-- `aboutToQuit` 对安装线程逐个 `wait(3000)`，主窗口关闭又有 `ShutdownCoordinator.coordinate(5000)`；最坏退出等待可能叠加，当前超时属于分散魔数而非统一 shutdown budget。
-
-## UI 接线初筛
-
-- 单图、批量、PDF、二维码、设置、更新/安装对话框和编辑器的大部分可见按钮都有显式 `connect`；主窗口复制按钮则通过独立 `ClipboardController` 接线，整体不是“只有界面没有槽”的空壳。
-- `qrcode_tab.py` 的识别子页仍留有“Task 5 填充真实内容，先占位”的注释，但实际选择/粘贴/识别/清空/复制 handler 和测试均已落地；这是陈旧注释，不是空功能。
-- `BaseRecognitionTab.cancel_recognition()` 默认只记录“取消功能未实现”，但单图界面没有暴露取消按钮，批量/PDF 均各自实现了取消；因此没有直接的“可点击假取消”，真正缺陷在批量/PDF 的取消完成语义与线程等待。
-- 搜索到的 `return None/[]`、`pass` 多数位于防御性分支、绘制/缓存 miss 或异常清理，不能据文本搜索直接判缺陷；后续只把可由用户操作到达且缺少状态/结果的分支列为问题。
-
-## 单图与批量功能核查
-
-- 单图主链正确且 UI 线程安全意识较好：所有入口汇入 `run_ocr/_dispatch_recognize`，重入有 `_is_processing` 守卫，阻塞 RPC 通过 `asyncio.to_thread` 执行，完成/失败回到 qasync loop 更新 Qt，关闭时取消 task 并阻止写入已销毁 WebView；相关异步响应性、错误与关闭测试存在。
-- 单图仍有两处体验/性能空间：大文档 `Path.read_bytes()` 和大图 PNG 编码发生在 GUI 线程，极端文件可能造成可见卡顿/内存峰值；`_call_backend_recognize()` 对所有异常无差别重启 WorkerHost 再重试，会把参数/格式等确定性错误也执行两遍，应该只对明确的传输/进程死亡错误重试。
-- **高优先级：批量取消的 UI 生命周期不正确。** `_on_cancel()` 只设置协作取消标志，随后立即 `_reset_ui()`、启用“开始”并把 `self._worker=None`，但当前 16 张的阻塞 `recognize_batch` 仍可能运行。用户可立即启动第二批，旧线程也仍会继续发信号；无 parent 的运行中 `QThread` 失去最后 Python 引用还存在被销毁风险。
-- **高优先级：批量错误信号语义与控制流冲突。** worker 遇到单批异常会发 `error`，明确继续下一批；Tab 的 `_on_error()` 却立即重置 UI/清空 worker 引用。结果是“后台继续、前台显示空闲”，可造成重入和结果串批。
-- **中优先级：取消状态被伪装成完成。** worker 无论是否在批边界取消，最终都发 `progress(total,total,"完成")` 与普通 `finished(results)`；界面无法区分成功完成、部分取消与部分失败。
-- `MainWindow.closeEvent()` 没有调用批量 Tab 的 `cancel()+wait()`/`shutdown()`，而是较早关闭共享后端。批量线程若仍在 RPC，退出顺序与资源所有权不完整；现有取消测试只验证 `cancel()` 在 100ms 内返回，worker 测试也直接同步调用 `run()`，没有覆盖真实 QThread 取消→等待→重启/关闭的生命周期。
-- 批量真批处理本身是合理优化：16 个文件一次 `recognize_batch`，每批返回后逐文件流式更新，显著减少 RPC/SHM 固定开销；问题在于批大小固定且只按文件数量，不按解码后像素、压缩文件字节或可用显存动态约束，16 个超大图仍可能形成高峰值。
-- `BaseOcrTab.set_ocr_service()` 默认不改变按钮状态；批量 `_on_start()` 又会自行构造 shared backend adapter，因此服务未就绪时按钮并未被硬禁用，点击可能在 GUI 线程触发 WorkerHost 懒启动/失败。建议把 readiness 做成显式 UI 状态而不是依赖“通常已注入”。
-
-## 二维码功能判定
-
-- “识别子页先占位”的注释已经过时：测试和 WorkerHost handler 证据表明生成 PNG/SVG、图片解码、URL 打开、单项/全部复制、空结果提示、拖放与粘贴均有真实 typed RPC 实现和行为测试。应删除陈旧注释以免后续审计/维护误判。
-- **中高优先级：二维码 RPC 全部在 GUI 线程同步执行。** 300ms 防抖后的实时预览直接调用 `generate_qrcode_sync`，识别按钮直接做 QPixmap→PIL→PNG 再 `decode_qrcode_sync`，并用 `QApplication.processEvents()` 人工刷新一次。首次调用还可能懒启动 WorkerHost；大图转换、进程启动或 RPC 超时时界面都会冻结。应复用全局 async runner/`to_thread`，并用 generation token 丢弃过时的预览结果。
-- 二维码接线和错误展示完整，数据写入 rich text 前也做了转义；PNG 生成与 decode 只对 `SyncBackendError` 重启一次，比单图的“所有异常均重启”更合理。SVG 保存路径没有相同的重启策略，属于小型一致性缺口。
-
-## PDF 测试资产初筛
-
-- PDF Tab 测试不仅验证控件存在，还覆盖文字层选择/覆盖决策、状态网格、进度/统计、选择保持、编辑后保存、字体嵌入/ToUnicode 和实际 PDF 往返，功能正确性证据明显强于普通 UI 冒烟测试；仍需补查真实 worker 生命周期、并发冲突与取消。
-
-## PDF 接线与异步生命周期
-
-- PDF 的按钮→SessionManager→worker→signal→UI 主链基本完整：打开、保存、另存、批量导出、旋转/重排/删插页、摆正、OCR 写层、删除/预览文字层都有真实后端调用；批量打开、按需缩略图、结构变更和 OCR 采用后台线程，且 model diff、状态网格、错误汇总与缩略图失效有集中回传。
-- PDF OCR/摆正的批处理设计合理：16 页为一批、4 个渲染线程复用连接、渲染→真批量 OCR→串行写 PDF 三阶段流水，带 task generation 丢弃旧任务迟到信号；QThread 引用延迟到 `finished` 后释放，修复了典型“运行中线程被 GC”风险。
-- **高优先级：切换文件时“保存后切换”接线错误。** `_on_file_selected()` 用户选择 Save 后调用异步 `_on_save()`，但不等待 `save_done` 就立即 `switch_session()`。保存完成回调因当前 active file 已变化而 early-return，可能导致按钮持续禁用/进度条不消失，也无法保证切换语义。应保存 pending target，在 `save_done` 成功后再切换；失败则留在原文件。
-- **中优先级：OCR 前“先保存”没有 continuation。** 修改态下用户选择 Save 后启动异步保存，随即检查 `session.is_modified`（此刻通常仍为 True）并退出，因此不会在保存成功后继续 OCR；文案暗示会“先保存再识别”，实际需要用户再次点击。
-- **高优先级：通用 mutate 的并发策略会阻塞 GUI 且可能静默丢操作。** 每次 `_start_mutate()` 都先对旧 worker `cancel()+wait(5000)`；旋转、重排等入口没有统一 busy gate/按钮禁用，连续点击会在 GUI 线程最多冻结 5 秒，并把上一操作取消。若 5 秒后仍未结束，代码忽略 `wait()` 返回值、清引用并启动共享会话的新变更，存在并发写风险。
-- PDF 的取消同样在 GUI 线程调用 `wait(5000)`；即使最终能靠 worker 的迟到完成信号复位界面，点击“取消”本身可能冻结数秒，而且完成信号没有独立 canceled 语义，容易把部分完成显示成普通完成。
-- Deskew manager 已正确把内部 `session_id` 翻译为 `file_path` 再发 UI；PdfTab handler 参数仍命名为 `session_id` 但实际值是路径，属于易误导的类型/命名债，不是当前功能错误。
-- 所有请求页已由 sidecar 落盘时，manager 会显式发 `ocr_done` 复位 UI，这个曾经容易卡死的提前返回分支已正确补齐。
-
-## 缓存与依赖管理初筛
-
-- 依赖检测缓存是真实生效的，不是展示字段：`.vibeocr/cache.json` 有 schema version、machine_id、原子替换和 7 天 TTL；有效期内的已安装项跳过复检，缺失项每次复核，过期后 true 项也重验。`pipeline_status` 已收敛到同一 SSOT，测试覆盖版本/机器不匹配、损坏文件、空依赖和 TTL 过期。
-- `PipelineCacheManager` 管理的是后端进程链路中已实例化的管道，不是磁盘模型文件：记录 last-used，对重模型实施 TTL/LRU 容量回收，显式 release 后调用 Paddle CUDA `empty_cache()`；最大重模型数可按显存估算。机制本身合理，但 UI 是否真实到达它取决于 WorkerHost RPC 接线。
-- 设置中的预加载开关、管道列表、TTL、释放重模型/全部模型都有 UI handler；配置已从历史 machine cache 字段迁到 `app_settings.json`。既有生命周期集成测试针对旧 `OCRServiceSubprocess`，没有覆盖当前 shared WorkerHost 适配器。
-- 当前存在三个名为“缓存”的不同概念（依赖检测结果、内存管道实例、模型下载磁盘文件），设置页如果只写“清缓存”会让用户误以为能释放显存或删除模型；应按作用域分别命名并展示大小/命中/最近使用。
-
-## 管道缓存生产链核查
-
-- `OCRService.get_or_create_pipeline()` 的生产路径确实会 touch last-used，并在加载新重管道前执行显存分档容量淘汰；因此“最大并存重管道数/LRU”有实际效果。
-- **高优先级：当前 PySide6 的 TTL 与主动释放接线实际是空实现。** `MainWindow` 注入的是 `BatchBackendAdapter(SyncBackendClient)`；该适配器的 `release_pipelines()` 固定返回 `[]`，`set_pipeline_ttl()` 仅返回 `ttl_seconds >= 0`，没有任何 WorkerHost RPC。设置页因此会把 TTL 更新显示为成功，把释放操作显示为“没有需要释放的管道”，但后端状态未改变。WorkerHost 的公开方法表也没有 pipeline cache mutate/status RPC。
-- **高优先级：即使只看 WorkerHost 内部，TTL 自动回收仍不生效。** `cache_manager.evict_idle()` 仅存在于 WorkerHost 下面再次启动的旧 `workers/ocr_worker.py` 主循环；但 PySide6 保存的 TTL 未穿透到这个内部 worker，启动快照只用于 backend 选择。旧 worker 会保留默认 300 秒，且 UI 后续修改不会同步。因此当前只有容量淘汰可靠，TTL 配置与主动释放不可靠。
-- 即使复用“每次消息后 evict”旧模式也不科学：真正空闲时没有消息便不会回收，只会在下一次请求附近才触发，既晚释放显存又可能把刚要使用的模型先卸载。应在 WorkerHost 内设置低频定时 sweep（如 `min(TTL/4, 30s)`，有下限），并在任务 in-flight 时跳过当前管道。
-- 配置层声明 `TTL=0` 表示禁用，但设置页恢复值时强制 `max(1, ttl//60)`，UI 无法表达 0；需要统一为明确的“自动回收开关 + 分钟数”，并在 WorkerHost 返回当前生效策略供诊断页显示。
-- 目前缓存管理缺少可观测性：UI 只能看到“释放了哪些”，看不到当前常驻管道、last-used、估算显存、TTL 下一次回收时间和预加载/命中来源，难以判断缓存是否带来收益。建议增加只读 `settings.cache_status` RPC，而不是依赖日志猜测。
-- 预加载本身有实际效果，因为适配器通过一次 100×100 白图识别触发模型创建；但启动预加载任务随后又调用 `warmup_pipelines()`，而该方法同样再次执行白图识别。手动预加载也先 `preload_pipeline()`（已经识别一次），再显式 `service.recognize()`，因此每个管道重复跑两次识别。可合并为单一 `preload_and_warmup` RPC，并返回 loaded/downloaded/warmed/duration 等真实状态。
-- `.vibeocr/cache.json` 的 `pipeline_success` 只表示“此机器曾跑通”，用于首用提示；它不验证 Paddle/ModelScope/HuggingFace 的磁盘模型文件是否仍存在，也不记录目录大小。设置页的依赖缓存清理同样不是删除模型文件。三类缓存应在命名和诊断页中明确分开。
-- 设置页“刷新缓存”的日志写成“依赖缓存 + 模型缓存”，“清除所有缓存”的对话框也容易扩大用户预期；实际 `refresh_cache()/clear_cache()` 只重建/删除 `.vibeocr/cache.json`，不会刷新或删除任何磁盘模型。建议改名为“重新检测环境/清除检测记录”，并另设带目录、大小和二次确认的模型文件管理入口。
-
-## 超时治理审计
-
-- `core/constants.py` 已按 OCR、预加载、Worker、IPC、MinerU、Qt 毫秒等待做了较完整的语义常量，这是正确方向；但当前主 WorkerHost client 没有消费多数常量，文件内“所有超时收敛到此处”的注释与运行代码不符。
-- **最高优先级：RPC 内外层截止时间冲突。** `BackendClient` 默认 deadline 是 30 秒，`recognize()`、`recognize_batch()` 以及多数 PDF typed helper 调用 `call()` 时没有传 timeout。`SyncBackendClient.recognize_sync(timeout=300)`、`recognize_batch_sync(timeout=1800)`、`save_pdf_sync(timeout=300)` 等只延长外层 `Future.result()` 等待，无法覆盖内层 30 秒 envelope/`asyncio.wait_for`；实际任务仍会在约 30 秒被取消。首次模型下载、复杂结构识别、大批量和大型 PDF 最容易误超时。
-- `pdf.command`、`pdf.start_ocr` 与依赖安装能把 timeout 传到 envelope，属于正确范式；但 `render_pdf_page_sync(timeout=120)` 也没有把 120 秒传给 async typed helper，仍是内层 30 秒。需要让所有 typed API 显式接收同一个 deadline/budget 并端到端传递，禁止“外层更长、内层更短”。
-- 启动、关闭和取消仍有散落魔数：WorkerHost ready 30+10 秒、client close 5 秒、loop thread join 5 秒、PDF 多处 GUI `wait(5000)`、主窗口 coordinator 5 秒、aboutToQuit 安装线程逐个 3 秒。它们会串行叠加，且没有共享 shutdown budget；关闭 UI 最坏可能卡住十余秒后再被 `os._exit(0)` 强制结束。
-- 科学规划应区分 connect、queue、execution、stall/heartbeat、cancel grace、shutdown total 六类预算：根据模型是否已载入、页数、像素/字节和管道类型计算 execution；只生成一次绝对 deadline 并沿 RPC 传播；进度事件刷新 stall timer 但不无限延长 total；取消必须有 ACK 和短 grace，超时后再隔离/重启 worker；shutdown 从一个总预算倒推各阶段剩余时间。
-
-## 定向验证
-
-- 定向运行单图、二维码、PDF、批量、pipeline cache、SubprocessManager 与设置预加载测试，共 225 项全部通过（9.39 秒）。这证明现有 happy path 与大量 UI 状态分支有回归保护，但不否定上述真实线程生命周期、空 RPC 接线和分层 timeout 缺陷：pipeline lifecycle 集成测试仍直接覆盖旧 `OCRServiceSubprocess`，没有覆盖 MainWindow 实际注入的 `BatchBackendAdapter`；也没有测试 WorkerHost 缓存状态或 envelope deadline。
-- pytest 退出后打印一次 Windows Qt COM `0x8001010d` fatal exception 栈，但进程退出码为 0 且 225 项均已完成；应作为测试环境 teardown 噪声单独跟踪，不计为产品功能失败。
-- 另行运行 UI→backend import 边界、`BatchBackendAdapter`、machine cache 与日志服务测试 36 项，全部通过；合计本次定向验证 261 项通过。
-
-## 优化决策与实施顺序
-
-1. **P0 正确性止血**：统一 typed client 的绝对 deadline 传播；为 pipeline cache 增加真实 `status/set_ttl/release/preload` RPC；修复批量 QThread 的 cancel/error/finished 状态机并在 MainWindow 退出时 drain。三项都应先补生产路径测试再改 UI 文案。
-2. **P1 交互与生命周期**：PDF 保存成功后再切换/继续 OCR，mutate 改为单一串行队列或明确 busy gate，所有取消不在 GUI 线程 `wait()`；WorkerHost 启动、二维码生成/识别和单图大文件读取统一下沉到 async runner。
-3. **P1 日志与诊断**：应用最早期初始化文件日志，WorkerHost 输出结构化 JSONL 并保留 severity/logger/exception，加入 request/task/session/pipeline/page/batch/duration；状态栏改用显式业务信号。
-4. **P2 性能与工程边界**：批大小从固定 16 改为文件数 + 总字节/像素/显存预算；暴露缓存命中与常驻模型指标后再调 TTL；完成 `vibeocr-pyside` 可独立安装/启动与 wheel smoke test，减轻开发环境的全栈依赖。
-
-验收指标建议：GUI 主线程单次阻塞 P95 < 50ms；取消按钮 100ms 内恢复为“正在取消”且禁止重入；所有长任务只有一个端到端 deadline；首次/缓存命中耗时、batch throughput、峰值内存/显存、关闭总时长均可从结构化日志统计；缓存设置修改后可由 `cache_status` 读回验证。
-
-## 依赖与工作区拆分判定
-
-- 依赖版本治理较强：Python 锁在 3.13，uv.lock 集中锁定，Torch/Paddle CUDA 12.6 来源和 DLL 复用关系有明确注释；发布 CI 另用带 hash 的 `requirements/build-shell.lock`，避免拉取数 GB 后端依赖，壳构建可复现性和成本控制合理。
-- **workspace 拆包目前主要是清单/迁移脚手架，不是实际代码隔离。** `apps/vibeocr-pyside` 只打包 `vibeocr_pyside` 分发标记，真实入口和 UI 仍在根 `vibeocr`；`packages/vibeocr-backend/client/contracts` 的 wheel 配置同样指向各自 marker 包，而生产代码仍在根 `src/vibeocr`（后端 wheel另有自定义构建脚本）。因此不能仅凭 workspace pyproject 认为前端已不依赖后端实现。
-- 根项目 `pyproject.toml` 仍无条件同时声明 PySide6、Paddle GPU、Torch、MinerU、FastAPI 等全栈依赖；普通 `uv sync` 的开发环境仍是重量级单体。真正的发布壳通过 build-shell lock 规避了这一点，所以“发布依赖优化有效、开发/包边界隔离未完成”。
-- `vibeocr-pyside` 清单只依赖 client/contracts/PySide6/qasync，却没有可执行脚本也不包含真实 `vibeocr.main`，单独安装该 workspace 包无法启动当前应用。若它被当作可发布产品包，这是功能缺口；若仅作迁移标记，应在文档/包名中明确，避免误用。
-- 建议以“可独立安装并运行”为拆包完成标准：把 Qt composition/视图迁入 pyside 包、UI-free 实现迁入 backend 包、共享 DTO/typed client 迁入对应包，并用 import-boundary + wheel smoke test 验证，而不是继续维护重复依赖清单。
-
-## 日志结构审计
-
-- 主进程日志有基本生产能力：统一 root logger、UTF-8、10MB×3 轮转、7 天旧文件清理、第三方降噪；文件包含时间/级别/logger 名。对单机桌面应用足够作为底座。
-- **高优先级：当前 WorkerHost 没有初始化 logging。** `worker_host/main.py` 没有 `basicConfig/dictConfig`，因此 INFO/DEBUG 通常丢失，WARNING+ 走 Python lastResort 到 stderr；父进程 `sync_client` 又把 stdout 一律记 DEBUG、stderr 一律记 WARNING，原始级别、logger 名和异常结构全部丢失。近期新增的通用 `SubprocessLogForwarder` 并未用于当前 WorkerHost。
-- WorkerHost 原始 stdout/stderr 被逐行原样写入主日志，未采用 `SubprocessLogForwarder` 的“结构化级别还原 + 裸 print 折叠/防文档内容泄漏”策略；Paddle/模型库如果打印用户文本或大段调试内容，既可能泄漏也会污染日志。
-- 主日志缺少结构化上下文：没有 session/request/task/page/batch/pipeline/backend/duration 等统一字段，排查同一时刻的单图、批量和 PDF 任务只能靠中文自由文本与手写前缀；多个模块同时存在 `[MainWindow]`、`[OCR]`、logger name 的重复来源标记。
-- `QtLogHandler` 通过消息关键词判断是否写状态栏，属于日志反向驱动 UI 的脆弱接线；改文案可能静默失效，第三方/子进程同词也可能误触发。状态栏应只消费显式 domain/progress signal，日志 handler 不应承担业务状态机。
-- 日志初始化发生在 `MainWindow` 构造中段，之前的单实例、配置、图标、缓存和启动异常大量使用 `print`；windowed 打包态可能无控制台，这些关键启动诊断不会进入文件。应在 `QApplication` 前后尽早初始化非 Qt 文件日志，窗口创建后再附加 Qt sink。
-- 建议采用一条 JSONL/结构化文本标准：`timestamp level process/thread logger event request_id task_id pipeline page batch elapsed_ms message exception`；主进程和 WorkerHost分别落源字段，父进程只转发而不改 severity。用户可见状态继续走 signal，日志仅诊断。
-
----
-
-# 实施发现：PySide6 三阶段治理
-
-## Phase 1 组合根与设置页
-
-### 批处理线程复核
-
-- 新增的真实 `QThread` 回归覆盖了取消窗口禁止重启、原生 `finished` 后才释放引用、单批失败继续后续批次、关闭超时保留 worker，以及旧 worker 迟到信号隔离；这组边界正好补上旧测试只直接调用 `run()` 的缺口。
-- 批处理 Tab 现在暴露有界 `shutdown()/drain()`，但只有 MainWindow 在关闭 WorkerHost 和销毁结果 WebView 之前调用它才构成完整接线；该顺序仍需主线补齐。
-- 当前 `batch_cancel()` 最终会走共享 `SyncBackendClient.cancel_active()`，它可能同时取消单图/PDF 调用。第一阶段先保证线程生命周期安全，第三阶段需要把取消收敛到 task/request 作用域，避免跨功能误伤。
-- 设置控制器已有 TTL、释放重管道、释放全部管道和状态 label 的查找/槽函数，但 `main_window.ui` 与生成的 `ui_main_window.py` 根本没有 `spinPipelineTtl`、`btnReleaseHeavy`、`btnReleaseAll`、`labelReleaseStatus` 控件；旧逻辑因此是完全不可见的“死接线”。Phase 3 必须把模型运行缓存独立成真实 UI 区域，并保留现有“环境检测缓存”区域的准确语义。
-
-- 设置页的 release 已在 `QRunnable` 中执行，不阻塞 GUI；Phase 1 无需重写其线程模型，重点是让 service 方法从空实现变成真实 RPC，并在完成后读取 cache status 验证后端状态。
-- TTL UI 当前只能表达最小 1 分钟，而配置允许 0=禁用；Phase 1 RPC 应保留 0 语义，Phase 3 再把 UI 改成“启用开关 + TTL 数值”，避免在协议层丢失能力。
-- `MainWindow.closeEvent()` 当前在 `_closing=True` 之前清理 PDF/WorkerHost，且没有 drain batch tab；Phase 1 集成时应把 `_closing` 前置，并在关闭共享 WorkerHost 前调用 batch tab 的有界 shutdown。
-- MainWindow close 测试当前没有直接覆盖真实 closeEvent 顺序；需新增轻量 fake 组件测试，断言 batch drain 先于 `shutdown_backend_client()`。
-- `tests/views/test_main_window.py` 的主 fixture 在 teardown 会触发完整 close 链，适合保留冒烟覆盖，但不适合精确断言顺序；应补一个绕过完整构造、直接调用 `MainWindow.closeEvent` 的 fake-object 单元测试。
-- 设置预加载测试已有真实 UI fixture，可直接扩展 TTL=0 恢复、release 后 status 读回和 machine cache 文案；无需新增昂贵 E2E fixture。
-- `ShutdownCoordinator` 当前把总预算平均分给步骤，但每步超时后 daemon 线程会继续运行，后续步骤可能与前一步并发清理同一资源；Phase 3 需要改为显式剩余总预算、依赖顺序和可检查完成状态，不能只靠“均分 timeout”。
-- UI 文件的缓存按钮 tooltip 已明确“清除依赖检测缓存（不影响模型）”，但按钮文字/控制器日志仍写“清除缓存/依赖缓存+模型缓存”，而刷新按钮 tooltip 又写“扫描模型缓存状态”；存在三套相互冲突的语义，Phase 3 应统一为环境检测缓存与模型运行缓存两个区域。
-
-## Phase 2 异步入口
-
-- QR 预览 debounce 后直接同步调用 WorkerHost，decode 还用 `QApplication.processEvents()` 人工让界面刷新；改造应复用 `AsyncTaskRunner + asyncio.to_thread`，生成任务用递增 generation 丢弃过时结果，decode 用单一 in-flight task 禁止重复点击。
-- QR 现有测试断言按钮点击后立即得到结果，异步化后需改成 `qtbot.waitUntil` 并增加“慢 backend 时 UI timer 仍触发”“旧预览结果不覆盖新文本”测试。
-- 单图后端调用已经正确下沉到 `asyncio.to_thread`，但 QPixmap→PNG 和文档 `Path.read_bytes()` 仍在主线程；应把 payload 准备也纳入 async task，而不是再创建一套 worker。
-- 单图 `_call_backend_recognize()` 捕获所有异常并重启 WorkerHost，Phase 2 应仅对 `SyncBackendError`/连接终止类错误重试，确定性的 payload/业务错误直接回 UI。
-- PDF continuation 可由 `PdfTab` 自己维护一个 pending action（switch target 或 OCR 参数），在 `_on_save_done(file_path)` 校验原文件后执行；保存失败槽必须清除 pending action 并恢复原选择。
-- `PdfSessionManager._start_mutate()` 现有 task generation 已能丢弃迟到 UI 信号，但不能阻止两个后端写操作并发；Phase 2 应在 manager 层拒绝/排队新 mutate，而不是仅在 tab 层禁按钮。
-- 现有 PDF 测试覆盖 OCR 防重复和大量状态网格，但没有覆盖“保存后切换/保存后继续 OCR”以及 mutate busy；需要新增直接触发 save_done/failed 的状态机测试。
-- WorkerHost 启动已迁入 `SubprocessManager` 自有 `QThreadPool`，由同一个 `service_ready` 信号回到 MainWindow；真实慢握手测试证明后台阻塞时 Qt timer 仍能触发。关闭时还必须以“活动 task 是否仍存在”过滤已排队 ready 信号，否则会在 widget 已销毁后弹失败对话框。
-- 主窗口单元测试此前会在每个 fixture 的依赖检测完成后建立真实 WorkerHost，造成测试间跨进程生命周期污染；现在 fixture 层禁用真实启动，另由 manager 专项真实线程测试覆盖启动行为。
-
-## Phase 3 工程边界预检
-
-- 根 `pyproject.toml` 仍同时声明 PySide6 与完整 Paddle/Torch/MinerU/PDF 后端依赖；`apps/vibeocr-pyside` 和 `packages/vibeocr-backend|client-py|contracts-py` 虽有独立发布声明，但各自 wheel 当前只包含一个 marker `__init__.py`，真实实现仍全部来自根 `src/vibeocr`。因此 workspace 依赖边界目前只约束元数据/未来迁移，不会实际减小 PySide 安装体积或阻止 UI 导入后端。
-- Phase 3 的“依赖边界验证”应区分两件事：现有 architecture import guard 对源码依赖方向确实有效；独立 workspace wheel 的运行时可用性则尚未成立。此次应增加可重复 smoke/清晰判定，不把 marker 包描述成已完成拆包。
-
-## Phase 3 最终实施判定
-
-- WorkerHost stdout 现在只承担 ready 握手，诊断日志固定写 stderr JSONL；父进程按原始 severity/logger/exception 转发，并保留 request/task/pipeline/page/batch 上下文，解决了此前 stderr 全部降格为 WARNING 的问题。
-- 固定 16 项批次不足以控制高分辨率 PNG 解码后的内存。新预算同时约束 16 项、64 MiB 编码数据和 4800 万像素；PDF 仍只预取一批渲染，但在提交 OCR 前会进一步切分传输批，因此吞吐与峰值内存之间的边界更可信。
-- ShutdownCoordinator 采用一个绝对 deadline 和逐步剩余预算，不再平均切片；PDF 的 request/drain 拆分补上了主窗口此前绕开协调器的固定等待漏洞。超时 worker 保留所有权并由原生 finished 回收，不使用 terminate。
-- 模型缓存管理的后端机制与 UI 接线现已都有效：TTL=0 可表达禁用，状态可读回，释放后再查询实际常驻集合。磁盘模型文件仍不属于该功能，界面已明确区分“环境检测缓存”和“模型运行缓存”。
-- workspace import guard 有实际效果，但独立 wheel 仍只有 marker 包；本轮离线 wheel smoke 又受缺少 hatchling 阻断。因此“发布壳依赖优化有效、源码物理拆包尚未完成”仍是最终工程边界结论，不应宣称已完成独立安装。
-
----
-
-# 实施发现：四包物理拆分与联网重依赖安装
-
-- 用户已确认真正拆包，不再把 workspace 清单视作迁移占位。
-- 用户安装允许联网，因此重点是正确的 PEP 517 构建、依赖元数据和平台/索引解析；不需要把 hatchling 或重依赖 wheel 内嵌进应用安装包。
-- 现有四个 workspace wheel 的 Hatch `packages` 都只指向各自 marker 包；真实 `vibeocr.*` 代码仍全部位于根 `src/vibeocr`。
-- `scripts/build_backend_wheel.py` 虽能生成包含真实后端代码的 wheel，但实现方式是读取 `config/backend_artifact_include.txt`，从根源码临时复制并手工生成 METADATA；这属于发布制品拼装，不是 workspace 的物理所有权。
-- 根 `pyproject.toml` 当前无条件声明 Paddle GPU、Torch CUDA、PaddleOCR、MinerU、PySide6 等全栈依赖。根兼容包可继续聚合四包，但子包必须各自携带准确依赖，不能依赖根环境“碰巧已装”。
-- 四个 wheel 需要共享 `vibeocr` 顶层 namespace，同时每个模块只由一个 wheel 提供；根兼容发行包应主要作为 meta dependency，避免与子 wheel 重复安装相同文件。
-- 当前前端不仅使用 `contracts/client`，还直接使用 `models`、部分 `core`、`ipc` 和轻量 `utils`；后端同样依赖这些模块。四包约束下不能再新增第五个 common wheel，因此 `vibeocr-client-py` 需要承担“共享 Python SDK”职责：typed transport + IPC schema/model bridge + Qt-free domain models/core helpers。backend 和 pyside 均依赖 client，client 依赖 contracts。
-- `worker_host` 目录同时包含客户端 transport（`backend_client.py`、`sync_client.py`、framing/named_pipe/security/shared_payload/contracts/errors）和服务端 dispatcher/handlers/composition/main。物理拆分时可让两个 wheel共同贡献同一个 namespace 子目录，但必须消除冲突的 `worker_host/__init__.py`，并按文件级归属构建。
-- PySide 层大量使用 `env_manager`、`machine_cache`、安装/更新逻辑；这些属于桌面壳的环境治理而非推理 backend。需要确认 backend 是否仍有直接引用，若无则归 pyside；若有则抽取最小 Qt-free配置到 client，不能继续整文件被两个 wheel 重复打包。
-- 现有 architecture 测试硬编码扫描根 `src/vibeocr`，物理移动后会失去保护；测试必须改为扫描四个 workspace source root，并新增 wheel 文件唯一归属检查。
-- `env_manager` 被 PySide 安装界面、WorkerHost composition、OCR/PDF backend 和 shared client shutdown 同时调用，且自身不依赖 Qt。它应归入 client/shared SDK，而不是 pyside 或 backend；相应的 `machine_cache`、`network_detector`、`pipeline_status`、`app_paths`、`python_path_manager` 也归 client。
-- `services`、`utils`、`core` 和 `application` 都存在跨 wheel 文件级拆分需求。它们现有 `__init__.py` 有 eager imports（尤其 `services.__init__` 会选择 OCR 实现），会让轻量 client/pyside 意外加载 backend。需要由 client 持有最小 namespace `__init__`，使用 `pkgutil.extend_path` 支持 editable 多 source root，并把兼容导出改为按需加载。
-- `core/base_worker.py` 是唯一明显 Qt core 文件，可归 pyside，其余 core/pipeline 配置归 client；`application/contracts.py` 归 client，facade/orchestrator 归 backend；models/ipc 全部归 client。
-- `src/vibeocr/output` 含运行产生的大量文档/图片，不属于任何 wheel，也不能在物理移动时带入包目录；新 wheel 内容审核必须显式拒绝该路径。
-- 官方安装文档确认 CUDA wheel 需要显式 index：PyTorch 2.6/cu126 要求 `--index-url https://download.pytorch.org/whl/cu126`，Paddle Windows GPU/cu126 也要求 Paddle 官方 cu126 index。PEP 508/Core Metadata 只能携带名称、版本、extra、marker 或直接 URL，不能把项目级 index 选择随普通 `Requires-Dist` 传播给 pip。
-- 因此不能把“开发仓库 `[tool.uv.index]` 能解析”当作最终用户安装保障。发布方案必须区分：四个标准 wheel 的静态依赖元数据；以及 VibeOCR 自有的联网 backend bootstrap/profile 安装器，后者按硬件显式传入官方/镜像 index 并在安装后做 import/版本/运行检查。
-- 根 meta package 默认安装四个 VibeOCR wheel 和 PyPI 可解析的公共依赖；GPU/CPU 引擎不应靠不可传播的 uv index 隐式选型。完整用户入口应调用现有 `env_manager` 安装链选择 `cpu`/`cu126`，失败时保留可重试状态，避免得到 CPU Torch + GPU Paddle 的 ABI 混装。
-- 现有 `env_manager._install_paddle_stack()` 已具备显式 pip 源、Torch CUDA index、Paddle CPU/GPU profile、失败重试、取消和安装后快速验证，适合作为最终用户联网安装重依赖的唯一实现，不应另造一套 CI 专用安装逻辑。
-- 当前依赖规格在开发态读取根 `pyproject.toml`、打包态读取项目根 `version.json`；物理拆包后普通 site-packages 安装不保证能找到这两个仓库文件。需要把 profile/锁定版本数据作为 `vibeocr-client-py` 的包资源随 wheel 分发，并让仓库文件只作为开发态优先源。
-- 根源目录共有 16 个业务子目录和 11 个顶层模块；`output/` 与 `__pycache__/` 属于运行产物，必须排除。四个 workspace 目前均只有单个 marker 文件，迁移目标路径不存在历史产品代码冲突。
-- 物理移动已按文件所有权落到四个工作区；根 `src/vibeocr` 只剩明确排除的运行产物/缓存，不再作为任何 wheel 的隐式代码来源。跨 wheel 的 `application/core/services/utils/worker_host/workers` 由 client 持有可扩展初始化文件，其它 wheel 只贡献无冲突模块。
-- v1 JSON Schema、error registry 与 golden fixture 已归属 contracts wheel 的 `vibeocr.protocol.v1` 包资源；运行时错误映射通过 `importlib.resources` 读取，不再假设仓库根存在 `contracts/v1`。
-- 根 `vibeocr` 改为无代码 meta wheel，精确依赖四个发行包；PySide 与 WorkerHost console entry point 分别迁入 pyside/backend wheel。backend 基础依赖不再隐式选择 GPU 引擎，CPU 与 `gpu-cu126` 作为显式 profile，client 提供 `vibeocr-install-backend` 联网安装入口并与便携安装器共用实现。
-- 依赖 profile 已作为 `vibeocr-client-py` 包资源分发；开发态从 backend 工作区 manifest 读取并覆盖，安装态不再依赖仓库根 `pyproject.toml/version.json`。这同时保留了 PyInstaller `version.json` 的旧发行兼容路径。
-- 最终安装策略刻意不把 Paddle/Torch/MinerU 设为根 meta package 的无条件依赖：普通 `pip install vibeocr` 安装可启动的桌面壳与后端基础层；随后 `vibeocr-install-backend --profile auto` 在用户机联网检测 CPU/GPU，并用显式 Paddle/PyTorch index 安装重引擎。这样避免 pip 无法从 `Requires-Dist` 继承自定义 index 导致 CPU/GPU 混装。
-- 五 wheel 干净环境 smoke 已证明普通用户安装不再依赖 workspace、editable 路径或本机源码；client wheel 内的 `dependency_profiles.json` 也已通过 `importlib.resources` 实际读取。
-- `vibeocr-backend[cpu]` / `[gpu-cu126]` 保留标准 extras 作为元数据与高级安装入口，但 GPU 的可靠推荐路径仍是 bootstrap 命令，因为只有它能显式选择 Paddle 与 PyTorch CUDA 12.6 index。README 已明确该区别。
-- 发布期五 wheel 校验同时检查：根包无代码、模块路径无重复所有者、重引擎不是 backend 无条件依赖、CPU/GPU extra 存在、profile/UI/protocol 非 Python 资源进入正确 wheel。该门禁能阻止重新退化成 marker 或“构建成功但运行资源缺失”。
-
----
-
-# 终审发现：拆包提交前复核
-
-- 当前所有改动直接位于 `main` 的未提交工作树，尚无特性分支。为满足可审计合并历史，应在提交前创建 `codex/workspace-physical-split`，提交后再非快进合并回 `main`。
-- PySide-only 实际安装冒烟发现 `from vibeocr.utils import ocr_sidecar` 会先触发 client `utils.__getattr__`，而该实现对任何未知属性都先导入 backend 所有的 `shared_memory_v2`，导致未安装 backend 时 PDF 页懒加载失败。根 meta 安装因包含 backend 会掩盖该问题。
-- 正确修复是让 `__getattr__` 在导入 backend 模块前先验证名称；未知名称抛 `AttributeError` 后 Python 才能按标准语义继续导入真实子模块。修复后不含 backend 的环境可导入全部 78 个 PySide 物理模块，contracts+client 的 78 个模块也全部通过。
-- backend 三 source-root 环境导入全部 37 个 backend 物理模块，零失败且 `PySide6` 加载数为 0，UI-free 边界成立。
-- 发布脚本原先对同一 distribution 的多版本 wheel 会字典覆盖或取目录中第一个文件，存在本地/复用目录静默绑定旧版本的风险；终审改为拒绝重复 wheel、拒绝与发布版本不一致的 wheel，并让五包内容校验强制版本一致。
-- CI 根 meta smoke 原先按发行名解析，理论上可能从索引选择比本地 wheel 更新的公开版本；改为定位本次唯一根 wheel 文件后直接安装，内部四包仍由精确 pin 从 wheelhouse 解析。
-- 普通 wheel 安装态此前没有独立运行根语义：在仓库内 venv 会被祖先工作区误判为源码态，在普通用户机又回退到 venv 的 `Lib`，使 GUI 依赖检测寻找 `Lib/python/python.exe`，无法识别 bootstrap 已安装到当前环境的重依赖。现已要求模块自身确实位于 client source root 才判定工作区，否则返回 `sys.prefix`，并让所有 embedded-python helper 返回 `sys.executable`。
-- 隔离 venv 首次只把根 wheel 作为直接文件时，uv 对内部四包复用了同版本旧缓存。这证明“find-links + 根包直装”不足以严格验证本次五轮。CI 与 README 改为显式传入五个 wheel 路径；强制重装后确认五个发行包全部来自本地 wheelhouse，运行根与解释器断言通过。
-- Windows 原生 WMIC/nvidia-smi 输出可能不遵循 `PYTHONUTF8=1`。依赖/硬件探测子进程现统一使用 replacement decoding，避免日志读取线程因单个不可解码字节退出；MainWindow 回归已从两个 thread-exception warning 降为仅环境缺少 pytest-asyncio 的配置 warning。
-# GitHub 工作流修复与 0.5.0 发布（2026-07-19）
-
-## 远端失败结论
-
-- GitHub Actions 运行 `29672925992`（Release，标签 `v0.5.0`，提交 `66e45d0`）在 `Validate Python migration and release gates` 失败；Quality Gates 在同一提交成功。
-- 失败集为 `tests/release_layout/test_winui_layout.py` 的 8 个用例，统一报错：`verify_winui_artifact.ps1` 对 `product-manifest.json` 执行 `ConvertFrom-Json` 时读到普通字符串 `release-content`。
-- 新物理拆包架构把 WinUI 所需的 `contracts + client + backend` 三个运行时 wheel 及其 SHA-256 纳入 `product-manifest.json`；PySide wheel 与根 meta wheel不进入 WinUI 制品。该文件因此从普通布局占位文件升级为结构化发布契约。测试夹具仍写统一占位文本，也没有创建清单引用的三个 wheel。
-- 修复方向应在测试夹具层提供符合当前架构的最小合法 manifest，并保留校验脚本对真实 WinUI 制品的严格 JSON/三运行时 wheel 验证，不能通过放宽生产校验绕过。
-- 本地与两个远端的 `main`、本地/远端 `v0.5.0` 当前均指向 `66e45d0`；版本源、四个子包内部 pin、`uv.lock`、协议 golden 与 CHANGELOG 已经是 0.5.0，无需再次运行版本提升脚本。
-- 重新发布应把现有 `v0.5.0` 标签移动到修复提交。失败工作流在上传 Release 步骤前终止，因此需先查询是否存在残留 draft/空 Release，再按实际远端状态清理。
-- GitHub CLI 已确认 `v0.5.0` Release 不存在，只有远端标签指向旧提交；重新发布只需在 main 修复通过后删除并重建该标签，不需要删除 Release 资产。
-- 五个显式本地 0.5.0 wheel 在短路径干净 venv 中联网安装成功；基础公开依赖解析正常，运行根为 `sys.prefix`，WorkerHost `--self-test` 返回 0.5.0。
-- 仅安装 contracts/client/pyside 三 wheel 时，backend distribution 未被安装，已成功导入安装环境中发现的 155 个 `vibeocr.*` 模块，证明前端物理包边界有效。
-- 修复提交 `2120617` 的 Quality Gates 运行 `29674920765` 全部通过：contracts 1m21s、pyside 1m41s、winui 2m5s、backend 4m38s；backend 包含五 wheel 构建、所有权校验和根 meta wheel 干净安装。
-- `v0.5.0` 已从失败提交 `66e45d0` 移动到已验证提交 `2120617`；Release 运行 `29675075394` 以成功结束，标签 API 也确认目标 SHA 为 `2120617`。
-- Release 为正式版、非 draft/非 prerelease，共上传四个资产：Classic ZIP（约 72.4 MiB）及 SHA-256、五-wheel wheelhouse ZIP（约 714 KiB）及 SHA-256。默认发布变体为 pyside6，因此 WinUI 安装包按配置跳过；WinUI 代码仍通过主分支和发布流程中的 .NET build/test 门禁。
-# 2026-07-19：0.5.0 更新启动失败调查
-
-- 用户日志表明旧 `VibeOCR.exe` 已成功改名避让，备份、删除、复制均完成；失败仅发生在新版启动阶段。
-- `scripts/update_replacer.py::launch_app` 在 Windows 默认硬编码 `VibeOCR.Bootstrapper.exe`，文件不存在就直接抛 `FileNotFoundError`。
-- `scripts/updater_main.py` 虽会把旧 `VibeOCR.exe`、`VibeOCR.WinUI.exe`、`VibeOCR.Bootstrapper.exe` 都纳入替换前避让名单，但这不等于启动阶段支持这些入口。
-- README 当前仍把 `VibeOCR-Classic-vX.Y.Z-win64.zip` / `VibeOCR.exe` 标为主力发布路线；仓库同时存在要求 Bootstrapper 的 WinUI 独立发布布局。因此替换器必须识别两种正式产物，而不能假设所有更新包都是 WinUI。
-- 失败发生在替换成功之后，用户安装目录中很可能已有新版 `VibeOCR.exe`；安全修复应按明确优先级选择存在的正式入口，并仅对支持健康参数的入口追加 WinUI 参数。
-- 本地历史证据确认回归由提交 `d5b39e6` 引入：此前 Windows 默认启动 `VibeOCR.exe` 且不等待健康文件；该提交改为硬编码 Bootstrapper + 30 秒健康握手。
-- `scripts/bump_version.py` 当前明确规定默认 `pyside` 发布为 Classic，`winui` 仅为开发预览；注释还说明曾因只走 WinUI 导致 v0.4.29+ Classic 发版失败，现已恢复双路径。0.5.0 的版本与 tag 均存在，用户现场符合 Classic 更新包。
-- 修复必须保留 WinUI 优先走 Bootstrapper 和健康握手，同时让 Classic `VibeOCR.exe` 恢复无参数启动；不能对 Classic 等待它不会写出的 `startup.healthy`。
-- 最终入口策略：显式入口参数保持精确选择；Windows 默认按 Bootstrapper → Classic 排序；仅存在 `VibeOCR.WinUI.exe` 时仍报布局缺失，避免绕过 Bootstrapper。
-- 失败/回滚语义未改变：只有文件替换成功后才调用新入口；替换或校验失败仍不会误启旧 UI。Classic 启动沿用回归前的无参数 detached Popen，WinUI 继续执行 30 秒健康握手。
-
----
-# 2026-07-20：本地虚拟环境修复发现
-
-- 项目根目录不存在 `envn`，存在 `.venv`；本次按用户意图将目标解释为 `.venv`。
-- 当前 PowerShell 的 PATH 中没有全局 `python`。
-- 修复前 Git 简短状态无条目（仅有用户级 global ignore 权限警告），工作树看起来干净。
-- `.venv` 解释器是 CPython 3.13.2，符合 `.python-version=3.13` 与 `requires-python >=3.13,<3.14`；虚拟环境自带 `uv 0.11.28`，但没有 `pip` 模块。
-- 仓库根项目与四个 workspace 包已经是 0.5.1，而 `.venv` 中五个 editable distribution 仍停留在 0.5.0。
-- 使用仓库 `.uv-cache` 执行 `uv sync --check --offline` 明确报告环境过期。
-- `uv pip check` 发现 20 项不一致：多个 `.dist-info/METADATA` 无法读取（包括五个 VibeOCR workspace 包、jsonschema/rpds/pytest-asyncio 等），并有 GPU 依赖缺口；直接读取这些 METADATA 同样被 ACL 拒绝。环境不是简单少装一个包，而是已有 site-packages 权限/元数据损坏。
-- 未指定 `UV_CACHE_DIR` 时，uv 会尝试访问用户 AppData cache 并在当前受限环境失败；仓库已有 `.uv-cache`，后续命令应显式使用它。
-- 离线重建首次失败，因为锁定的 `pytest-qt==4.5.0` 不在本地缓存；获得联网许可后，从锁文件成功创建 `.venv-repair`。
-- 新环境共有 75 个基础开发包；五个 VibeOCR workspace distribution 均为 0.5.1。`uv sync --all-packages --frozen --check --offline` 与 `uv pip check` 均通过，核心 contracts/worker_host/UI 导入通过。
-- 新环境仍没有 `pip`，这是 uv 创建的非 seed venv 的正常结果；项目开发文档统一使用 `uv sync` / `uv run`，因此不额外引入锁文件之外的 pip。需要 pip 的便携 wheel 安装流程是另一类环境。
-- 旧 `.venv` 的 83,326 个文件 ACL 已成功重置，之后原本拒绝读取的 VibeOCR METADATA 可以正常读取。
-- `.venv` 根目录无法改名的实际占用者是 PyCharm 启动的 `pyright-langserver.exe` 及其 Python 子进程；确认命令行仅为 `server --stdio` 后停止。根目录仍有外部句柄，因此采用保留根目录的原位修复。
-- 使用外置临时 uv 对正式 `.venv` 执行 `sync --all-packages --frozen --offline --reinstall` 成功：75 个基础开发包重装，五个 workspace 包由 0.5.0 升到 0.5.1，旧的未锁定重型推理包被移除。
-- 正式 `.venv` 最终冻结同步检查与 `uv pip check` 均为 0；Python 3.13.2、五个 0.5.1 workspace 包、PySide6/pytest/ruff/pyright/uv 版本和关键导入均正常。
-- 定向验证 124 项全部通过（contracts、WorkerHost contracts、runtime paths、app paths）。首轮另有 8 项因沙箱拒绝创建 `C:\tmp` 测试父目录而 setup error，改用仓库 `.tmp` 后同一测试集全绿，确认不是产品/环境依赖错误。
-- 已删除本次创建的嵌套 `.venv-repair`、部分旧环境备份、临时 uv、Pyright repair-hold 与测试临时目录；正式 `.venv` 根目录恢复为标准 `Lib/Scripts/share + pyvenv.cfg` 布局。
-- 清理后再次执行冻结同步检查、包一致性检查、五个 workspace 版本断言、关键导入和 Pyright 入口，全部通过。
-- 完整后端安装器首次失败的直接原因是 uv venv 没有 pip；用 uv 安装 `pip 26.1.2` 后安装器成功安装 GPU profile。安装器的失败输出还存在 GBK 不能编码 `⚠` 的次要问题，本次通过 `PYTHONUTF8/PYTHONIOENCODING=utf-8` 避免。
-- 安装器对 Torch 未固定锁版本，从镜像选到 `torch 2.13.0+cpu` / `torchvision 0.28.0`；已用 `uv sync --extra gpu-cu126 --frozen --inexact` 按 `uv.lock` 纠正为 `torch 2.12.1+cu126` / `torchvision 0.27.1+cu126`，完整 profile 共检查 193 个包且无变化。
-- 裸进程中先导入 Torch 再导入 Paddle 会因未注册 CUDA DLL 目录报 `cudnn_cnn64_9.dll` 依赖错误；按生产 `OCRService._setup_cuda_dll_path()` 顺序后，Paddle 3.3.1/CUDA 12.6 在 RTX 4090 完成 GPU 矩阵运算。Torch CUDA 矩阵运算同样成功，CUDA DLL 路径测试 4 passed。
-- 完整 GPU profile 下最终合并回归 128 passed；测试临时目录已删除。
-
----
-# 0.5.0 更新链排查记录（2026-07-20）
-
-- 当前主线为 v0.5.1；v0.5.0 tag 为 `1928092`，其后已有 `fix(update): restore Classic relaunch after upgrade`，说明 0.5.0 发布包确实包含过更新后重启故障。
-- Classic Qt 编排目前已把 ZIP `testzip`、updater 抽取与握手轮询放到 `asyncio.to_thread`，这是 0.5.0 之后/附近已有的“下载后卡死”缓解，但仍需对照 tag 判断是否进入 0.5.0 包。
-- 当前成功交接逻辑将 updater 的 `ready` 和“15 秒超时但进程仍活着”都视为可立即 `os._exit(0)`；需要确认 updater 是否在写 ready 前已拥有完整接管信息，否则该语义会表现为主程序闪退。
-- Next 的 `GitHubUpdateSource` 仍只走 GitHub 直链且没有显式 HttpClient 总超时/分阶段换源，源码 TODO 已明确国内慢；不过 0.5.0 用户主要使用 Classic，优先修 Classic 的真实路径。
-- 工作区开始时仅规划文件已有未提交改动，产品源码无未提交改动；必须保留既有规划记录。
-- v0.5.0 tag 已包含 Classic relaunch 回退修复，因此用户当前的“下载成功后闪退”不是简单缺少 `VibeOCR.exe` 回退；更可能是主程序收到过早的 ready 后主动 `os._exit(0)`，随后 updater 在校验/解压/替换/重启阶段失败。
-- `run_replacement` 目前进入函数后第一时间写 `updater.ready`，写入时尚未验证 SHA、ZIP、应用目录或替换可行性；主程序见到 ready 就硬退出。该信号只证明“进程开始运行”，不足以证明“已经安全接管”，是闪退观感的直接契约缺陷。
-- Classic 多源下载对每个候选先下载完整 ZIP，再请求极小的 SHA 文件；慢代理可能浪费一次 170MB 完整下载后才暴露 SHA 不可用。应改成先取/校验 SHA 响应格式，再下载大包。
-- 下载使用 `httpx.AsyncClient(timeout=30.0)`；这是每次网络操作的 inactivity timeout，不是整个源的总预算。慢速但持续吐数据的代理可无限占用当前候选，导致“换源很慢”。
-- 检查更新本身已有 5 秒超时且使用异步 httpx，但开始检查时没有立即写“正在检查更新”状态，用户容易把无反馈的 5 秒理解为卡死。
-- 现有下载日志样本只记录到 0.5.0 当时“已是最新”，没有覆盖 0.5.0→0.5.1 的失败现场；需依靠契约测试复现并修复。
-- 最终实现将源内顺序改为“SHA 小文件预检 → ZIP 大包下载 → SHA256 校验”；代理返回 404、HTML 错误页或非法摘要时不会再先下载完整大包。
-- 网络超时细分为 connect/pool 5 秒、read/write 15 秒；read 是无数据间隔，正常持续下载不会受 170MB 包体大小影响，但卡住的代理会更快切换。
-- 检查更新开始、当前已是最新、无法读版本、检查失败和已跳过版本均有即时状态栏反馈，消除异步等待期间的无反馈假卡死。
-- updater.ready 改为 SHA 校验通过后才写入；无效包不会请求旧主程序退出。ready 后增加 0.5 秒锁释放窗口，配合既有 WinError 5/32 退避重试降低交接竞态。
-- 最终验证：更新服务/Qt 编排/updater/replacer 157 passed；Ruff、compileall、`git diff --check` 通过。
-
----
-# 2026-07-20：PaddlePaddle 3.3.1 CPU/oneDNN 审计
-
-- 审计范围：项目 oneDNN 判定与传参、Paddle 3.3.1 本地 CPU 运行、PaddleOCR/PaddleX 实际行为、上游兼容证据。
-- 本次仅审计与报告，不修改产品代码。
-- 项目把整个 Paddle `3.3.0–3.3.99` 黑名单化；当前 3.3.1 因此在 CPU 管道一律传 `enable_mkldnn=False`。该结果会同时透传到 OCR、PP-Structure、表格、VL、公式等注册管道。
-- `main.py` 的 `FLAGS_enable_onednn_backend=0` / `FLAGS_use_mkldnn=0` 只声称保护 eager 路径；PaddleOCR/PaddleX 推理路径真正由构造器 `enable_mkldnn` 控制。
-- 当前策略的明显缺口：`_get_paddle_version()` 导入失败返回 `None` 后，代码并未按注释所说“保守禁用”，反而只要 AVX2 存在就返回允许启用。
-- `VIBEOCR_FORCE_ONEDNN=1` 优先级最高，会同时绕过 AVX2 门槛和 3.3.x 黑名单；它适合诊断，但作为普通环境变量误设时没有二次保护。
-- “无 AVX2 一律不安全”是项目自定的保守门槛；现有测试只验证门槛实现，没有证据验证 oneDNN/Paddle wheel 的真实最低 ISA 或崩溃条件。
-- 现有单测覆盖 False/True/GPU 不传参和黑名单边界，但没有真实 PaddleOCR/PaddleX CPU pipeline 创建/预测，也没有验证异常后自动回退。
-- WorkerHost 入口自身不设置 `FLAGS_use_mkldnn` / `FLAGS_enable_onednn_backend`。PySide 启动的 WorkerHost 会继承 GUI `main.py` 的环境；WinUI 或直接运行 `vibeocr-worker` 不保证继承这些 FLAGS。由于正式推理靠构造器 kwarg，这主要影响 eager/动态图路径，但说明“全进程兜底”并不统一。
-- 当前安装版 PaddleX/PaddleOCR Python 源码中未检索到字面量 `enable_mkldnn`/`mkldnn`，需要继续追踪参数规范/配置转换；仅凭项目文档所称的 `runner.py` 无法在当前安装版直接复核。
-- 直接导入 PaddleOCR 时触发 Torch/cuDNN DLL `WinError 127`；这是此前确认的 CUDA DLL 注册/导入顺序问题，与 CPU oneDNN 本身不同。后续本地实验必须先调用 `OCRService._setup_cuda_dll_path()`，否则会把 CUDA 环境问题误判成 oneDNN 问题。
-- 本机已有 PP-OCRv6 medium det/rec 等官方模型缓存，可以做无下载的真实 CPU pipeline A/B 实验。
-- PaddlePaddle 上游 issue #77340 仍为开放状态：Paddle 3.3.0 CPU + oneDNN 会触发 `ConvertPirAttribute2RuntimeAttribute`，3.2.x 正常，公开绕过方案是退回 3.2.2；页面未给出已合并修复或确定修复版本。因此“3.4 起自动恢复启用”目前没有可靠依据。
-- PaddleOCR issue #17539 同样仍开放，并被标记为上游 PaddlePaddle/依赖问题；Windows CPU 用户复现相同 PIR/oneDNN 错误，`enable_mkldnn=False` 是已知可用绕过方案。
-- PaddleOCR 3.0.3 更新说明明确修复过 `enable_mkldnn` 参数不生效，并恢复 CPU 默认使用 oneDNN；PaddleOCR-VL 文档也将该参数定义为 CPU 加速开关。这支持项目通过构造器显式传参的总体方向。
-- oneDNN 官方文档显示运行时分派支持 SSE4.1、AVX、AVX2 等 ISA；FP32 最低为 SSE4.1，而 int8/u8 最低为 AVX2。因此“oneDNN 本身必须 AVX2”不成立，项目的 AVX2 判定只能视为保守的产品门槛，不能视为库的兼容性事实。
-- 当前证据支持 Paddle 3.3.1 保持 `enable_mkldnn=False`；但不支持用“只要不在 3.3.x 黑名单就自动开启”的方式判断未来版本安全。
-- 已建立完全隔离的 Windows CPU 环境：Python 3.13.2、`paddlepaddle==3.3.1`、`paddleocr==3.7.0`、`paddlex==3.7.2`，确认 `paddle.device.is_compiled_with_cuda() == False`，无 Torch/CUDA/cuDNN 干扰。
-- 使用本机缓存的 `PP-OCRv6_medium_det/rec` 和同一张 128×384 白图实测：`enable_mkldnn=False` 初始化 1.458s、推理 0.486s，成功返回 1 个结果；`enable_mkldnn=True` 初始化成功，但首次检测预测稳定抛出 `ConvertPirAttribute2RuntimeAttribute not support [pir::ArrayAttribute<pir::DoubleAttribute>]`。
-- 复现机器是 Intel i9-14900KF，明确支持 SSE4.1/AVX/AVX2，因此本次崩溃不是老 CPU 缺少 AVX2，而是 Paddle 3.3.1 的 PIR/oneDNN 执行器回归。
-- 即使同时设置项目现有的 `FLAGS_enable_onednn_backend=0` 和 `FLAGS_use_mkldnn=0`，只要 PaddleOCR 构造参数仍为 `enable_mkldnn=True`，同一异常仍然复现；这验证了全局 FLAGS 不能保护 Paddle Inference 路径。
-- 额外尝试 `engine_config.paddle_static.enable_new_ir=False` 并保留 mkldnn，仍发生同一异常；对当前 PP-OCRv6 PIR 模型没有发现“关闭 new IR 但保留 oneDNN”的可用替代。
-- 安装版 PaddleOCR 3.7.0 默认 `DEFAULT_ENABLE_MKLDNN=True`；False 会显式生成 `run_mode='paddle'`，True 则保留/生成 mkldnn 配置，PaddleX runner 最终调用 `config.enable_mkldnn()`。因此项目显式传 False 是必要的，不能依赖默认值。
-- 在 PaddleOCR/PaddleX 3.7.x 源码中未找到 `PADDLE_PDX_ENABLE_MKLDNN_BYDEFAULT`；项目文档称它可禁用 mkldnn 的说明至少对当前安装版本无法成立，应删除或注明只适用于特定旧版本。
-
----
-# 2026-07-20：oneDNN 兼容性整改发现
-
-- oneDNN 相关产品文件当前没有未提交差异；工作区已有未提交修改集中在更新链，整改必须保持隔离。
-- 所有识别最终汇入 `OCRService.recognize_batch()`；注册表的批量或单图分发异常都能在这一层统一捕获，因此单次安全回退应放在此处，避免在每种管道私有方法重复实现。
-- 回退必须同时做到：严格匹配已知 `NotImplementedError`/PIR/oneDNN 特征、从 `_pipelines` 移除并释放当前实例、把进程级 oneDNN 决策锁为 False、重新执行同一分发一次；第二次异常原样抛出。
-- 仅把未来版本从黑名单排除就自动启用没有证据。整改将采用显式“已验证安全版本区间”策略；没有命中安全范围时禁用，以安全性优先。
-- `PipelineCacheManager` 已集中维护 `_pipelines` 与 `_last_used`，但只有全部/重管道释放和私有 `_release_one`。运行时回退应新增公开 `release_one()`，避免 OCRService 直接操作缓存管理器私有状态。
-- 当前项目要求 Paddle >=3.3.1，而尚无已确认修复版本；初始“已验证安全范围”应为空。`VIBEOCR_FORCE_ONEDNN=1` 仍保留为明确的不安全诊断通道，正常路径不会因未来版本号自动开启。
-- 识别重试采用局部 dispatch 函数：第一次严格匹配已知错误后禁用/释放/重建；重试调用放在 `except` 之外的单次分支中，确保第二次失败不会形成循环。
-- 缓存管理器已有完整 FIFO/TTL/release 测试，可在同一测试文件补充公开 `release_one()` 的命中与缺失语义；OCRService 回退行为则放在 registry 分发测试中覆盖批量路径、逐张路径、非目标异常和只重试一次。
-- 定向回归共 68 项全部通过：安全版本判定 22 项、缓存管理 22 项、OCRService 注册/回退 24 项。已证明正常分发不退化、已知错误只重试一次、普通异常不重试、GPU/未启用 CPU oneDNN 时不回退。
-- 代码差异复核确认没有触碰既有更新链产品文件；本次产品差异限于 `cpu_info`、`ocr_service`、`pipeline_cache_manager` 与环境策略文档。
-- 真实模型门禁不能默认下载大型模型，因此新增显式 opt-in 集成测试：常规套件只收集并跳过；升级 Paddle 时在隔离 CPU 环境提供本地模型目录，同时验证 oneDNN 关闭基线和开启候选，二者通过后才允许更新安全范围。
-- 加入真实门禁后的定向套件结果为 `68 passed, 2 skipped`；两项 skip 是未设置模型环境变量时的预期行为，Ruff format/check 全通过。
-- 最终扩展回归范围将覆盖全部 OCRService 测试、PipelineCacheManager 以及 `tests/core` 下 8 个管道注册/工厂/选项测试，验证回退重构没有破坏其他管道分发。
-- 表格管道测试在全新进程中 `25 passed`，确认混合进程失败仅为既有 Paddle/Torch cuDNN 加载顺序问题；oneDNN 整改未破坏表格管道。
-
----
+# 调查发现
+
+## 2026-07-20 P2-C 关闭返修
+
+- 当前 `ShutdownCoordinatorJob -> ShutdownCoordinator` 会再次创建 daemon `threading.Thread`，并在线程中调用 settings/pdf/batch 等 QObject 的 drain，违反 Qt 线程亲和。
+- `PdfSessionManager.drain()` 当前既等待又创建 `PdfIpcCloseWorker`、修改 QObject owner 持有的集合；不能从后台协调线程调用。
+- 固定 UX 超时不能作为析构许可：Qt worker 未 native-finished 时必须继续保活 owner 和轮询，不能 accept/delete。
+- MinerU preflight 取消路径提前清 `_ocr_running`/发 `ocr_done`，而 `_preflight_worker` 尚未 native-finished；业务终态必须推迟到 finished。
+- Settings、Batch、QR 的现有 `drain()` 均可能 wait 或修改 widget/引用，不能作为后台调用；Main 需要优先使用纯 `is_drained` hook，并为尚未迁移的组件仅在 GUI 定时器里做 `drain(0)` 兼容探测。
+- `SubprocessManager` 本身是 QObject，当前 `shutdown()` 会取消任务、断信号、等待线程池并清 QObject state，不能直接交给后台清理线程；需拆成 GUI request/poll 与非 Qt service shutdown，或保持 GUI owner 存活到后台工作完成。
+- QR `drain(0)` 会在成功时清 `_save_job` 并启用按钮，也不是纯观察；Main 的动态 hook 必须优先 `is_drained`，兼容调用仍限定 GUI 线程。
+- `PdfSessionManager.request_shutdown()` 当前只 cancel active workers；全部 session 的 `PdfIpcCloseWorker` 仍由 `drain()` 创建，必须迁到 request 阶段。随后 `is_drained()` 只检查所有 native worker 是否 finished，最终状态清理也留 GUI 槽处理。
+- ThumbnailModel 已有 request-only，但 `wait_for_draining()` 会 wait/释放引用；需新增纯 `is_drained()`，PdfTab 聚合 thumbnail/session 状态。
+- BackendOptions 的 `drain_gpu_detection(0)` 会在已结束时清引用；Settings 尚无纯探测 hook，因此 Main 兼容轮询必须在 GUI 线程执行。
+- `SubprocessManager._service` 的生产类型（WorkerHost client adapter / OCRServiceSubprocess）不是 QObject；可以在 GUI 线程待 QThreadPool active=0 后 detach 为纯 callable，再由单一 QThread 顺序执行 service/backend shutdown。
+- `shutdown_backend_client()` 通过进程级锁取得并清空普通 SyncBackendClient，然后调用其 shutdown；适合作为 Qt owner 全部 drained 后的外部清理 callable，但不应再套 daemon step timeout。
+
+- 诊断流程要求在推断根因前，先建立能对用户精确症状报红的自动化回路。
+- 系统 PATH 中无 `python`；可用捆绑运行时 `C:\Users\felji\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe`。
+- session-catchup 改用捆绑 Python 后成功，未报告遗留上下文。
+- 仓库同时包含 PySide 和 WinUI 前端；已有 CUDA/GPU 检测、依赖管理、工具栏及 WinUI 设置页面相关测试。
+- 顶层文件列表未发现 `CONTEXT.md`；有双前端 ADR，待确认实际故障路径后阅读相关部分。
+- `tests/test_env_manager_gpu_info.py` 已覆盖 GPU 信息、CUDA 检测失败/超时日志，但尚未覆盖具体版本输出解析失败的症状。
+- `tests/managers/test_dependency_manager.py` 覆盖依赖检测任务和管理器基本状态，但没有验证检测期间 UI 事件处理或任务生命周期。
+- 工作树已有多项用户修改（CI/QA 与多个测试文件），后续只修改与本次 Bug 直接相关的文件，不触碰其余差异。
+- 故障路径集中在 PySide：`env_manager.detect_cuda_version()` 负责 CUDA 版本映射，`DependencyManager` 在 `QRunnable` 后台任务中调用嵌入式环境检测。
+- `env_manager.py` 的依赖检测附近特别注释了它运行在 `DependencyCheckTask(QRunnable)` 后台线程，这是为 UI 卡死/闪退构建回归回路的候选边界。
+- 本机 `nvidia-smi` 可稳定运行，GPU 为 RTX 4090；新驱动输出中版本标题是 `CUDA UMD Version: 13.3`，而现有测试/搜索显示实现只匹配 `CUDA Version: X.Y`。这提供了 CUDA 检测失败的真实、确定性输入。
+- `uv` 和常规 Python launcher 环境不可用：`Get-Command uv,...` 因 `uv` 缺失返回退出码 1，`py -0p` 报告无已安装 Python；需继续用 Codex 捆绑 Python。
+- 真实调用命令 `...python.exe -c "... print(em.detect_cuda_version())"` 稳定返回 `None`，同一台机器的 `nvidia-smi` 明确报告 `CUDA UMD Version: 13.3`；CUDA 问题已有约 2 秒的真实红灯回路。
+- `DependencyManager.check_dependencies()` 创建局部 `DependencyCheckTask`，将其 `finished` 信号连接到 Python lambda，再交给自有 `QThreadPool`；完成回调更改 manager 状态并发出 UI 可见信号。
+- 实时依赖检测在后台任务中可能执行多个嵌入式 Python 导入子进程，并在末尾检测 GPU/写入缓存；因此需将回归回路放在真实 `QThreadPool` + Qt 主事件循环边界。
+- 用户所述“工具栏”在代码中有明确对应：`EdgeToolbar` 是无边框置顶浮窗，拖动时在 `mouseMoveEvent`/按钮事件过滤器中频繁调用 `move()`，释放后发出 `position_changed`。
+- 测试工程已提供 `qapp`/pytest-qt，可在同一主线程事件循环中同时驱动 `EdgeToolbar` 拖动与真实 `QThreadPool` 依赖任务完成。
+- Codex 捆绑 Python 不含 pytest；仓库自有 `.venv\Scripts\python.exe` 存在，应改用该环境运行项目测试。
+- `.venv` 可正常加载 pytest/PySide，且不需 `tmp_path` 的 14 个相关测试通过；其余 8 个因 pytest 默认临时根目录在沙箱不可写的 `%LOCALAPPDATA%\Temp` 失败，与产品逻辑无关。
+- 单纯设置 `TEMP`/`TMP` 未改变 pytest 已选定的临时根目录；下一次改用唯一的 `--basetemp=C:\tmp\...` 精确指定。
+- 沙箱实际不允许 pytest 在 `C:\tmp` 创建 basetemp，但允许在工作区内创建；改用工作区唯一 basetemp 后，CUDA/依赖管理/工具栏现有 22 项测试全部通过（0.35s）。
+- `logs/vibeocr.log` 提供了同一现象的历史证据：RTX 4090 能被 `nvidia-smi -L` 识别，紧接着 CUDA 版本检测却回退失败；这与当前真实复现一致。
+- 日志中大量 MainThread GPU 检测来自同一 pytest 进程内多个用例/对话框，未发现能直接指向产品闪退的 Python traceback 或 Qt 致命信息。
+- `EdgeToolbar.position_changed` 只连接到 `MainWindow._on_toolbar_position_changed`；GPU 实时检测的 UI 调用点在 backend 选项组件和依赖安装对话框，需继续区分“启动依赖检查”与“安装对话框硬件检测”的并发边界。
+- 依赖安装对话框的 `InstallWorker(QThread)` 在工作线程中执行网络/GPU/环境/安装检测，进度和结果通过 Qt 信号回主线程；它未在已读部分直接操作 QWidget。
+- 设置页 `_GpuDetectWorker(QThread)` 也明确将 `nvidia-smi` 放在后台，并由父 QWidget 持有；这条路径的寿命周期/关闭测试可作为对照。
+- `InstallDialog` 持有 `InstallWorker`，进度 slot 有 `@Slot`；安装进行中关闭会在 GUI 线程 `wait(5000)`，这会有最长 5 秒的界面停顿，但与“仅拖动工具栏”还没有直接因果证据。
+- `MainWindow` 在显示后 100ms 启动后台依赖检查，200ms 又调度 `_apply_gpu_gating_to_all`；后者与启动检测时间重叠，需确认是否在主线程内同步调用 `nvidia-smi`。
+- 已确认 `_apply_gpu_gating_to_all()` 由 GUI 线程的 `QTimer.singleShot` 直接执行，其首次 `get_runtime_gpu_capability()` 可同步调用 `detect_gpu()`/`nvidia-smi`；`singleShot` 只是延迟，没有将工作移出 GUI 线程。
+- 新增精确 UI 红灯用例：让 GPU 探测持续 250ms，在 25ms 时投递真实 `EdgeToolbar` 鼠标拖动事件；实际拖动延迟 0.263s，超过 0.15s 上限，稳定报红。
+- CUDA 最小化输入仅需 `CUDA UMD Version: 13.3`；mock `nvidia-smi` 返回该行、`nvcc` 不存在时，`detect_cuda_version()` 稳定得到 `None`（期望 `cu126`）。
+- 两个最小回归用例同时运行时均稳定报红：CUDA `None != cu126`；工具栏拖动 0.263s > 0.15s。
+- 假设 3（`DependencyManager` 完成回调落在非 GUI 线程）已被定向线程亲和性测试证伪：真实 `QThreadPool` 执行后，`_on_task_finished` 记录到的是 `qapp.thread()`，测试 0.13s 通过。
+- 假设 4（`EdgeToolbar` 自身拖动有故障）同样不受支持：无慢探测时现有 3 项 toolbar 测试通过，只有将同步 GPU 探测投递到主线程后才能复现延迟。
+- 综合判定：假设 1（CUDA 新字段名未匹配）和假设 2（GPU 门控同步阻塞 GUI）为真；其余排除。
+- `MainWindow` 当前只有一个用于状态栏的跨线程信号，尚无 GPU 门控专用 worker/信号。
+- 设置控制器已持有一个 `BackendOptionsWidget` GPU 检测线程并实现关闭期取消/排空，但结果没有作为公共信号转发给 MainWindow；直接读其私有属性会形成不必要耦合。
+- `MainWindow.closeEvent` 已将设置控制器纳入统一取消/drain 预算；如复用 `BackendOptionsWidget` 现有探测结果，无需再新增一套 MainWindow 线程关闭机制。
+- 设置控制器目前是组合对象，`request_shutdown()` 已会通知 backend GPU worker 取消，`drain()` 会在共享截止时间内等待；这是可复用的安全生命周期边界。
+- 仅转发 `BackendOptionsWidget` 的物理 GPU 信息还不够：它当前在主线程 `_apply_detected_state()` 再调 `resolve_use_gpu()`，缓存无效时仍会同步执行 `nvidia-smi`。
+- 更完整的最小边界是：让现有 `_GpuDetectWorker` 同时计算物理 GPU 信息与“实际运行后端”布尔值，主线程只应用结果并将运行能力转发给 MainWindow。
+- 首轮修复后定向回归中，CUDA 新格式和工具栏响应性用例已转绿，backend widget/toolbar 测试也全部通过；总计 32/33 通过。
+- 唯一失败是新加的 `DependencyManager` 线程亲和性排除用例在整组运行时等待超时；它单独运行已通过，且不在本次生产代码修改路径上，需判定是测试隔离问题还是真实时序。
+- 重跑整个 `test_dependency_manager.py` 时 13 项在 0.15s 内全部通过，确认上述超时是跨文件 Qt 测试时序污染，不是产品故障。该用例只用于排除假设 3，将在清理时移除，避免引入无关不稳定性。
+- 差异审查确认修复范围为 4 个生产文件：CUDA 解析/运行能力缓存、backend GPU worker、设置控制器转发、MainWindow 应用结果；未触碰其他用户修改。
+- 运行时 GPU 能力新边界已有两个额外不变式测试：后台物理探测结果会被直接复用（不二次调 `detect_gpu`）；用户 `pending_backend=cpu` 仍优先于物理 GPU。
+- 清理排除性临时测试后，定向套件 34 项全部通过（0.74s）；包含 CUDA 新表头、UI 拖动响应性、backend worker 生命周期和依赖 manager 基线。
+- 修复后重跑本机原始真实 CUDA 命令，`detect_cuda_version()` 已从 `None` 变为 `cu126`。
+- Ruff 首轮定向检查仅报 3 个新代码样式问题：类型专用 `Callable` 应放入 `TYPE_CHECKING`，UI 回归测试导入顺序，以及未启用的 `N802` noqa。
+- 上述 3 项已清理，定向 Ruff lint 现为 `All checks passed`。
+- Ruff format 全文检查显示 6 个既有大文件将被整体重排；为避免扩大差异，不对旧文件做全量格式化，只格式化本次新建的 UI 回归测试。
+- 新建 UI 回归测试已单独格式化并通过 format check；`git diff --check` 无空白错误。
+- 文档参数检查发现 `detected_has_gpu` 说明曾被泛化上下文误插到依赖详细检查函数；已用唯一上下文移到 `get_runtime_gpu_capability` 的 Args。
+- 扩大到 117 项的首轮 UI 套件在约 55% 处进程无 pytest 失败摘要地退出 1，最后完整显示的是 `test_settings_preload.py` 3 项通过。这更像 Qt/QThread 进程级退出或套件污染，需拆文件隔离，不盲目重跑同一组合。
+- 并行拆文件尝试显示 `test_settings_reinstall.py` 单文件收集 14 项、运行到第 11 项后同样无摘要退出；这已将异常收窄到该文件后 3 项或前序对话框/线程残留。其他并行进程输出未完整返回，后续改为串行精确用例，避免多 GUI 进程干扰。
+- collect-only 确认第 12–14 项依次为 detailed fresh check、direct dependencies 展开、批量重装。只运行这 3 项时，第 12 项通过后进程立即退出，故障进一步收窄到第 12 项 teardown 或第 13 项启动。
+- 第 12 和第 13 项各自单独运行都通过（0.35s/0.39s），只有连续运行才会进程退出。这证实是用例 teardown 遗留的 backend GPU QThread 与下一个 Qt 对象生命周期冲突，而不是第 13 项功能断言。
+- 该设置控制器测试的目标是依赖表/按钮，backend GPU worker 已有独立专项测试；设置页测试应在 fixture 中禁用真线程，以避免 patch 恢复时 worker 跨用例运行。
+- `test_settings_reinstall.py` fixture 已按上述边界禁用 backend 真探测线程；整文件 14 项现在稳定通过（0.69s），不再无摘要退出。
+- 扩大 UI 回归套件重跑已全绿：117 项中 114 passed / 3 skipped（2.96s），覆盖 MainWindow、设置页、backend 切换、GPU 门控、截图/预处理选项和 EdgeToolbar。
+- 包含新增测试隔离修正后，所有本次相关文件的 Ruff lint 再次通过。
+- 清理检查未找到任何 `[DEBUG-...]` 临时仪器标记；`rg` 因零匹配按约定返回退出码 1。
+- 已逐一验证 13 个 `codex_test_tmp_019f7eaa*` pytest 临时目录均位于工作区内，并全部删除。
+- 最终 `git diff --check` 通过；本次 7 个已跟踪代码/测试文件差异为 145 行新增、50 行删除，另有 1 个新 UI 回归测试文件。
+- `tests/managers/test_dependency_manager.py` 在 status 中因工作树换行符混合显示 `M`，但 `git diff --exit-code -- <file>` 返回 0，确认内容与索引一致；需只做换行符机械规整。
+- `ruff format --diff` 预览确认 manager 测试所谓“重格式化”仅是将本次临时补丁触及的 LF 行恢复为文件主体使用的 CRLF，无语义内容变化；可安全机械规整。
+- manager 测试换行符已用 formatter 恢复，其 `git diff --exit-code` 为 0 且不再出现于定向 status。
+
+## 根因与预防
+
+- CUDA 根因：驱动输出升级为 `CUDA UMD Version`，解析器只接受旧标签。预防手段是保留真实新版输出回归用例。
+- UI 根因：`QTimer.singleShot` 被误当作后台执行，实际仍在 GUI 线程同步 shell out `nvidia-smi`；设置页完成 slot 中还有第二个同步回退。预防手段是将所有探测/解析放入既有 QThread，并用工具栏事件延迟上限作为回归信号。
+- 本次已有合适测试缝，无需额外架构改造。
+- planning-with-files 最终检查为 `ALL PHASES COMPLETE (6/6)`。
+- 最终定向 status 只包含 4 个生产文件、3 个既有测试文件和 1 个新 UI 回归测试；临时 manager 测试差异已清除，`git diff --check` 仍通过。
+
+## 2026-07-20 UI 主线程阻塞审计
+
+- 用户明确要求调用合适子代理；按路由技能拆为三个互补只读工作包，并保留主代理负责交叉验证。
+- 当前审计范围覆盖 PySide 主窗口/设置、业务页面与控件，以及底层同步 I/O/子进程/重计算到 GUI 的反向调用链。
+- 本轮只允许更新审计计划文件，不改业务代码；候选项必须经过“是否真的在 GUI 线程执行”的二次核验。
+- 前一轮已确认 `QTimer.singleShot` 只延迟执行、不切换线程，因此本轮会专门检查类似“看似异步、实际仍在主线程”的路径。
+- 初始阻塞原语扫描命中多处 `QThread.wait(...)`：应用退出、PDF 会话/标签、批量页，以及安装/后端切换对话框；需要逐项判断是否只发生在关闭路径、等待上限是否可接受。
+- 主窗口存在少量同步 JSON 状态文件读写；二维码页存在 PNG/SVG 编解码与写盘；单图页存在图片 `read_bytes()` 后调用识别函数。下一步重点确认这些调用是否已被 worker 包裹。
+- 设置控制器中的 `subprocess.run` 位于第 96 行附近，但静态命中本身不足以判定 UI 阻塞，需沿调用者和线程类复核。
+- `QFileDialog`/`dialog.exec()` 命中大多是用户主动模态交互，不能仅因嵌套事件循环就列为异步改造项；只在伴随重计算或 qasync 重入风险时保留。
+- 批量页“导出全部”在 GUI 方法中串行遍历所有完成项，并逐项调用 `export_result(...)` 写文件；文件越多阻塞越线性，属于高置信候选，需继续定位 slot 与导出实现。
+- 应用 `aboutToQuit` 清理会对每个可取消 QThread 最多 `wait(3000)`，且按线程串行等待；这是退出卡顿而非日常交互卡顿，但最坏时长可随线程数增长。
+- PDF 会话 `drain()` 在关闭预算内等待多个 worker，之后仍同步关闭所有后端 session、停止 client 和清理字体解析器；关闭阶段存在超出预算的潜在同步尾部，需核对各 stop/cleanup 实现。
+- `SettingsPageController._create_windows_shortcut()` 同步运行 PowerShell，超时上限 15 秒；如果由设置页 checkbox/按钮直接调用，则应列为高优先级候选。
+- `_create_windows_shortcut()` 在设置控制器第 371/388 行直接调用；待读取其 UI 连接可确认桌面/开始菜单快捷方式按钮路径。
+- 批量页第 398 行把 `export_all_requested` 直接连到 `_on_export_all()`，该方法第 640 行开始同步逐项导出；相比 PDF 页已经使用 `export_all_async()`，这是清晰的异步改造对照。
+- PDF “批量导出”已由按钮回调转交 `PdfSessionManager.export_all_async()`，不应重复列为问题。
+- `_wait_thread()` 由 PDF 页第 342 行调用，需判断它是页面切换/文件打开时的频繁等待还是只在退出时触发。
+- 快捷方式按钮的 `clicked` 信号直接进入 `_on_create_desktop_shortcut()` / `_on_create_start_menu_shortcut()`，随后在 GUI 线程调用 `_create_windows_shortcut()`；同步 PowerShell 超时 15 秒，确认为高置信交互阻塞候选。
+- 批量页不仅“导出全部”，`_on_export_current()` 也在 GUI callback 中同步调用 `SyncBackendClient.export_ocr_sync()`；单文件可能受 WorkerHost IPC、DOCX/XLSX 生成和磁盘影响，应一并异步化，但优先级低于批量循环。
+- `get_unique_output_path()` 会同步反复查询文件是否存在；通常轻量，但大量同名冲突会放大，适合随导出 worker 一起移出 GUI，而非单独设计线程。
+- PDF 缩略图模型启动新渲染 worker 前会在 GUI 线程 `_stop_render_worker()`，协作取消旧 worker 后调用 `_wait_thread()`；该 helper 通过 `processEvents()+短 wait` 轮询，可能造成可见停顿与重入，且不是仅退出路径。
+- 结果组件的 Word/Excel 按钮（`result_view_widget.py:954-955`）直接调用 `_on_export_file()`，在保存对话框返回后同步执行 `export_result()`；与批量页共享同一高置信同步 IPC/生成/写盘问题，应统一复用 ExportWorker。
+- PDF 预览打开与翻页信号直接进入 `_render_preview_page()`，其中同步调用 `backend_client.render_preview()` 并在 GUI 线程解码 PNG；方法注释也明确“同步、GUI 短暂阻塞”。后续文字层按需检测可能还有第二次同步 IPC。
+- 二维码 SVG 保存直接调用 `generate_qrcode_svg_sync()` 后 `Path.write_text()`；普通 PNG/JPEG 保存也在 GUI callback 对 PIL Image 执行 `.save()`，SVG 的同步 WorkerHost RPC 风险更高，二者可一起迁入后台保存任务。
+- `PdfSessionManager.open_sessions_async()` 每次启动新批量打开前调用默认 `wait=True` 的 `_cancel_open_worker()`，会在 GUI 调用线程最多等待旧 worker 3 秒；应采用 generation/迟到信号丢弃而不是 cancel 后同步等待。
+- PDF 预览不仅同步 `render_preview`，当页面只有延迟文字层标记时还会紧接着同步 `detect_text_layers()`；单次翻页可能串行两次 WorkerHost IPC，风险高于注释中的单次 50–200ms。
+- 截图 `start_capture()` 在 GUI 线程对每块屏幕调用两次 `screen.grabWindow(0)`：第一次构建 mapper、第二次合成虚拟桌面。Qt 抓屏本身通常需留在 GUI 线程，优先改为“一次抓取复用”，再把后续 QImage 合成/编码移到后台；不能简单把 QPixmap 搬到 worker。
+- 截图复制路径同步执行全画布 `export_image()`、QPixmap→PNG 编码、临时文件写入与清理；保存路径同步 `pixmap.save()`。在 4K/多屏选区或多标注场景属于中高风险，异步边界应在 GUI 快照完成后的 detached QImage/bytes。
+- `PdfSessionManager.open_session()` 本身包含同步 open + 流式逐页 load，但当前搜索未发现 UI 生产调用者；主路径使用 `open_sessions_async()`，暂不列改造项，保留为静态调用面风险。
+- 对 views/widgets 的同步后端方法做了全量名称扫描：除已确认的 PDF preview、QR SVG 保存和导出路径外，单图/QR 正常识别方法虽命名 `_sync`，调用点均被 `asyncio.to_thread` 包裹，不应误报。
+- PDF 缩略图替换等待上限为 500ms；重新打开 PDF 取消旧加载的等待上限为 3000ms。前者偏高频短卡顿，后者偏低频明显卡顿，应分别处理。
+- 大图同步加载命中主窗口、单图页、二维码页和 PreviewWidget 的 `QPixmap(path)`；需要按实际 UI 入口合并为一个“文件读取/解码异步化”共性改造，而不是按每个调用点重复立项。
+- 结果页在 GUI 线程构建 HTML，并可能对多张图片 base64 编码后 `QWebEngineView.setHtml()`；复杂 OCR 结果会放大 CPU/内存拷贝，属于中优先级响应性候选。
+- 主窗口“打开图片”与预览区“选择文件”两个 slot 在 GUI 线程 `QPixmap(file_path)` 解码完成后才启动异步 OCR；单图页自己的文件按钮也有同样同步解码，统一改造应避免三条入口行为分叉。
+- 批量文件列表 `add_files()` 对每个新路径用 `any(...)` 扫描现有列表，并逐行 `QTableWidget.insertRow/setItem`；大量拖入时为 O(N²)+高频 UI 更新，适合改用 path set 与 model/view 或分帧批量插入，但这不是后台线程能完全解决的问题。
+- `ResultViewWidget.display_result()` 从 OCR 完成信号进入后同步遍历所有 content blocks、渲染图片/base64、拼接完整 HTML 并调用 WebEngine；可把纯数据 HTML 构建移到 worker，主线程只做结果代次校验和 `setHtml()`。
+- 设置控制器仍在 GUI 方法中调用 `env_manager.detect_dependency_updates()` 以及 `get_dependency_versions()`；这些函数可能启动嵌入式 Python/读取包元数据，需视实现与触发点判为高风险，正在深入复核。
+- 更新器的大 ZIP CRC、解压和握手已明确使用 `asyncio.to_thread`；其内部 `time.sleep`/`write_bytes`/`Popen` 不在 GUI 事件循环执行，不应误报。
+- `SingleInstanceGuard` 的 `waitForConnected/ReadyRead/BytesWritten` 只在第二实例启动/本地 IPC 路径，且短超时；不属于当前主窗口交互异步改造重点。
+- 设置页环境状态 `_refresh_env_maintenance_state()` 已把 Python/依赖/直接依赖多轮探测整体交给 `_run_cache_operation()` 后台执行，再以 generation 应用 UI；这是正确异步基线，不应因内部同步子进程命中而误报。
+- 设置页“更新依赖”按钮 `_on_update_deps()` 则直接在 GUI slot 调用 `env_manager.detect_dependency_updates()`，与上述环境刷新边界不一致；若该函数逐包调用嵌入式 Python，属于高优先级修复。
+- `_populate_deps_tree()` 有 snapshot 缺失时同步回退探测，但生产调用由异步刷新传入完整 snapshot；应优先消除/保护回退而非另建后台任务，避免未来调用者误用。
+- 设置页 pipeline TTL、缓存状态刷新和释放操作均通过 `_run_cache_operation(QRunnable)` 执行同步 WorkerHost RPC；这些按钮已正确异步，不应列入整改。
+- `env_manager.detect_dependency_updates()` 另有主窗口第 830 行调用，需要确认该路径是否已经位于依赖检测 worker 的完成数据中，还是 GUI 回调内再次同步探测；它可能与设置页主动入口构成重复问题。
+- `_populate_deps_tree()` 的生产调用点只有异步 snapshot 路径，当前无需单列整改，只建议收紧接口契约。
+- `detect_dependency_updates()` 调用 `get_dependency_versions(python_exe)` 获取已安装版本；主窗口在依赖检测完成的 GUI slot `_on_dependency_check_finished()` 中直接进入 `_maybe_prompt_dependency_updates()`，因此启动时仍可能在 GUI 线程再次执行嵌入式环境探测。
+- 同一同步更新检测也由设置页按钮直接触发，建议抽成单一 `DependencyUpdateCheckTask`/QRunnable，返回 updates 后再决定是否展示对话框；这样同时覆盖启动自动检测和主动检测。
+- 主窗口 pending_sync JSON 读取/删除仅为小型本地状态文件，通常可保持同步；真正需要移出的不是该标记访问，而是后续环境版本探测。
+- 更新安装对话框虽然使用 `dialog.exec()`，安装任务本身由 worker 执行；模态性属于产品交互选择，不应与同步版本检测混为一项。
+- `MainWindow.__init__()` 在 `show()` 前直接 `_try_load_cache()`；缓存文件存在且版本匹配时，`is_cache_valid()` 首次调用 `generate_machine_id()`，Windows 下串行运行 CPU/主板两个 WMIC，各 5 秒超时。重复启动的可见 splash 可能冻结，确认为高优先级启动异步候选。
+- 设置页“刷新缓存”按钮直接调用 `refresh_cache()`；若进程尚未生成 machine id，同样会触发两次 WMIC。常规重复启动已缓存 machine id 时很快，因此列中优先级条件风险，可复用现有 `_run_cache_operation()`。
+- 机器码生成有进程级 `_cached_machine_id`，因此 WMIC 风险主要集中在每个进程第一次需要校验/创建缓存；异步化时也需保证单飞，避免并发重复探测。
+- `get_dependency_versions()` 对每个 OCR 顶层依赖先启动一次 metadata Python 子进程（15 秒超时），失败再启动 import 回退子进程；因此启动/按钮更新检测不是轻量比较，而是 N 个串行进程，必须整体移出 GUI。
+- `resolve_use_gpu()` 在机器缓存缺失/失效或没有 `hardware_info.has_gpu` 时同步回退 `detect_gpu()`，会执行 `nvidia-smi`/CUDA 探测。设置页补装、更新确认和 WorkerHost 启动均有条件到达；应复用后台 GPU worker 结果，避免任何 GUI 槽触发 shell-out。
+- 懒加载标签页在 `currentChanged` 回调里同步冷导入并构造整个 QWidget 树；QWidget 构造不能搬到 worker，因此应把数据/服务预热移到后台并先显示 skeleton，必要时将 UI 构造分帧。这是 P2 架构优化，不应简单包装成 QThread。
+- 当前工作树已有多项用户/前序任务改动；本轮子代理未修改业务文件，新增变化仅限审计计划三文件。最终报告不将现有 dirty status 误认为本轮产出。
+- 主关闭流程先发取消，再用 `ShutdownCoordinator` 把各 drain 放到 daemon 线程，并由 GUI 线程在统一 5 秒预算内等待；关闭期间可能无响应，但这是资源生命周期安全权衡，暂不列普通异步改造，若优化需设计“关闭中”状态而非直接 fire-and-forget。
+- `PdfTab.closeEvent()` 单独调用默认 5 秒 `shutdown()`，但主窗口正常关闭已先统一 drain；独立页签关闭才明显阻塞。安装/切换对话框关闭的 5 秒等待同样用于回收 pip 子进程，不能简单删除。
+- PDF `start_ocr()` 在创建 `_OcrRunner` 之前检查 MinerU 首次使用，并直接调用 `_ensure_mineru_models_blocking()`；后者在 GUI 线程下载数 GB 模型，仅靠 `QApplication.processEvents()` 泵事件，可能持续数分钟并产生重入，属于本次最高优先级 P0。
+- 所有 PDF mutate“异步”入口在 `worker.start()` 前同步调用 `reset_cancel(session_id)`；该 RPC 经同步客户端等待 Future，意味着保存/旋转/删页等操作仍有阻塞前缀。应把 reset 作为 worker 的第一步。
+- PDF OCR 启动同样在 `_OcrRunner.start()` 前同步 `reset_cancel()`；可与 MinerU preflight 一并纳入后台状态机。
+- 自动摆正主体在 worker，但完成 slot `_on_deskew_all_done()` 回到 GUI 后同步 `get_model()` 刷新完整模型；这是典型“后台任务尾部回调再次阻塞主线程”，应让 worker 携带 model/diff 返回。
+- PDF 预览双击编辑文字块直接在 GUI slot 调用同步 `update_block_text()`，成功后又立即同步重新渲染当前页；单次提交形成“写命令 + render（必要时再 detect）”串行阻塞链，应改为带 revision/generation 的后台串行命令队列。
+- 从 PDF 文件列表移除文件时 `close_session()` 同步通知后端关闭 session，之后才更新镜像/UI；应异步关闭或乐观移除后后台 best-effort close，避免 WorkerHost 忙时卡界面。
+- MinerU 模型准备内部还同步做网络源探测并 `Popen(...models_download)`、`proc.wait()`，默认超时可达约 30 分钟；P0 结论有明确原语证据，不只是推测。
+- 主实例收到第二实例连接时，在 `newConnection` GUI 回调里 `waitForReadyRead(1000)` 再 `waitForBytesWritten(1000)`；异常客户端可让现有界面冻结约 2 秒，应把服务端改为 readyRead/bytesWritten 信号状态机。第二实例自身的同步短等待可保留。
+- 所有同步 WorkerHost 客户端最终经 `SyncBackendClient._run_sync()` 的 `Future.result(timeout)` 阻塞调用线程；“后台有 asyncio loop”不等于调用方非阻塞。PDF command 默认 600 秒、预览渲染 120 秒、close session 60 秒，结构性风险明确。
+- PDF 文件列表“移除”按钮直接调用同步 `close_session()`；保存/旋转按钮虽然标注异步，但在 manager 创建 worker 前仍有 `reset_cancel` 的同步 10 秒命令前缀。
+- 因此 PDF 建议不是零散给每个按钮套线程，而是统一规定：GUI 不得直接调用同步 `PdfBackendClient`；所有命令（含 reset、编辑、预览、close、model refresh）必须进入同一后台调度/代次状态机。
+
+## 审计结论分组
+
+- P0：MinerU 首次模型准备必须立即移出 GUI；当前路径可能同步数分钟并以 `processEvents()` 引入重入。
+- P1：建立统一 PDF 后台命令边界，覆盖 preview/detect、编辑+重渲染、close session、reset_cancel、摆正后 get_model、打开/缩略图 worker 替换等待。
+- P1：将启动与设置页的依赖版本检测合并为共享后台任务；将首次机器缓存/WMIC 校验从 MainWindow 构造移出。
+- P1：统一 ExportWorker，覆盖批量页当前/全部导出及结果组件 DOCX/XLSX 导出；QR SVG/PNG/JPEG 保存也应使用后台保存任务。
+- P1：设置页 PowerShell 快捷方式创建异步化；GPU 选择只消费后台探测结果，不在 GUI 回退 shell-out。
+- P2：截图一次抓屏复用，快照后的编码/写盘后台化；图片文件解码、复杂结果 HTML 构建、批量列表 O(N²)、单实例服务端 wait、懒加载 Tab 冷构造按遥测逐步处理。
+- 保持现状：正常依赖检测、WorkerHost 启动/预加载、设置页环境/缓存 RPC、单图 OCR、批量 OCR、PDF 主体 mutate/OCR/批量导出、QR 预览/解码、在线更新的大文件操作均已有真实后台边界。
+- 不直接改：模态 `dialog.exec()`、短小配置 JSON、主关闭统一有界 drain 和安装取消 wait 属交互/生命周期安全选择；若优化退出体验，应实现两阶段关闭状态机。
+
+## 建议回归护栏
+
+- 为每个 P0/P1 GUI 入口注入 250ms 以上的阻塞假实现，同时用 `QTimer`/工具栏拖动事件测量主事件循环延迟；目标上限建议 100–150ms。
+- PDF preview/edit/open/mutate worker 必须有 generation/revision 测试，验证取消、快速翻页、重复打开和关闭后迟到结果不会回写当前 UI。
+- 增加架构测试：views/widgets 的 GUI slot 不得直接调用 `SyncBackendClient` 或同步 `PdfBackendClient`；允许列表仅限明确运行于 QThread/QRunnable/to_thread 的函数。
+- 导出/保存 worker 测试覆盖进度、取消、同名路径、错误提示和关闭时 drain；不可在线程中创建/操作 QPixmap/QWidget。
+- 启动缓存与依赖更新任务测试覆盖 single-flight、关闭后不弹窗、开发态快速短路和 portable 慢探测时主界面可响应。
+
+## 2026-07-20 实施计划决策
+
+- 先建立响应性和架构护栏，再实施 P0；避免“代码看似进线程”但 GUI callback 仍同步回退的历史问题。
+- PDF 同步点必须作为一个 session 命令边界治理，不能按按钮零散套线程，否则会破坏写操作顺序、取消和迟到结果语义。
+- P1-B（启动/设置）、P1-C（导出）、P1-D（外部命令）文件重叠较少，可在 P0/P1-A 稳定后并行实施。
+- P2 截图/图片路径需要区分 Qt 线程亲和性：QPixmap、QWidget、WebEngine 最终操作留在 GUI，纯数据转换和 I/O 才迁入 worker。
+- 退出 wait 暂不直接删除；P2 若优化退出体验，必须使用两阶段关闭状态机维持资源安全。
+
+## 2026-07-20 全量执行路由
+
+- 用户明确要求设置目标、调用合适子代理完成全部计划并注意审核；已创建覆盖 Gate 0、P0、P1、P2、回归和独立审查的活动目标。
+- 第一波按文件所有权拆为 PDF、启动/设置、导出三包，主代理只写新的架构/响应性测试并负责集成，避免并行写同一文件。
+- 当前工作树已有大量用户/前序任务差异，尤其 `main_window.py`、`settings_page_controller.py`、`env_manager.py`；所有实现必须增量编辑，禁止 reset/checkout。
+- P2 延后为第二波，因为它与第一波在 main_window、qrcode、result/batch 文件上重叠；顺序派发比同时写更安全。
+- 独立审查将放在实现和集成测试之后，审查者不得复核自己刚完成的同一工作包。
+- 测试树已有 `tests/architecture` 边界扫描体系和 `tests/conftest.py` 的 qasync/Qt 等待 helper；Gate 0 应在这些现有约定上增量扩展，不另建第二套测试框架。
+- 现有单图识别测试已有通过 QTimer 验证异步期间事件循环可运行的案例，可复用其模式构造统一响应性断言。
+- Gate 0 采用两层护栏：可复用的 Qt timer/in-flight 动态断言，以及针对已知 GUI entrypoint 的 AST 静态禁调用规则；同步 client 在明确 worker 内仍允许使用。
+- Gate 0 初始红灯稳定捕获 34 个直接调用点，分布与审计清单一致；说明静态规则覆盖了两波目标，没有把 worker 内同步 client 一刀切禁用。
+- P2 入口预扫描确认：单实例服务端等待可在独立文件先实现，但懒加载与两阶段关闭都修改主窗口；截图/大图与批量/结果优化也分别和第一波启动、导出文件所有权重叠，因此第二波必须等第一波完成并验收后再重分配。
+- 第一波主审证明仅依赖包内测试不足以捕获跨入口竞态：共享依赖检查若由设置页先占用，启动请求被 single-flight 拒绝后必须显式继续启动状态机，否则 WorkerHost 永不启动；该顺序需要专门交叉测试。
+- QWidget 的 `closeEvent` 不能调用即使“有界”的 `drain(1000)`；正确做法是同步设置 closing/generation、请求取消并立即返回，由全局保活或上层两阶段关闭在后台执行 drain。
+- PDF 打开 worker 的异步边界必须包含 backend `start()`，不能只把 `open_session/load_stream` 放入线程；generation 丢弃已经成功的 open 结果时还必须异步关闭未知 session，避免 WorkerHost 隐形泄漏。
+- 两阶段关闭可以复用现有 `ShutdownCoordinator.coordinate()` 的顺序/预算语义，但必须把 coordinate 本身移出 GUI；它内部虽逐步使用 daemon thread，调用方仍会在 `Event.wait()` 阻塞，因此不能直接留在 `closeEvent`。
+- 静态门禁只覆盖已登记入口，P2-B 首轮虽然门禁归零，主审仍通过行为调用链发现 `PreviewWidget._load_image_file()` 和 `QrcodeTab._on_select_image()` 的同步 `QPixmap(path)`；最终验收必须同时做架构扫描和人工入口复核。
+- 批量文件去重若用 `Path.resolve()` 会触发文件系统解析，尤其 UNC/断连盘可能阻塞 GUI；用于 UI 去重的路径键应保持纯词法规范化，不能为“更精确”重新引入 I/O。
+- P2-A 的通用图像任务保活、generation 丢弃和 close-no-wait 基本边界已经建立；独立审查需重点确认快速再次截图是否会无声取消用户已确认的保存任务，以及单图页脱离主窗口使用时信号化加载是否保持兼容。
+- 独立审查确认 `GenerationImageJobs` 的 latest-wins 语义适合图片加载/屏幕合成，但不适合用户已在保存对话框确认的写盘：下一次 `start_capture()` 不应取消先前保存，保存任务需要独立保活和完成/失败通知。
+- QThread 的 `quit()` 不能中断重写 `run()` 中的同步 `nvidia-smi`；若 `closeEvent` 等待时间短于探测超时，又让 worker 以 widget 为 parent，既会冻结 GUI，也可能触发 `QThread: Destroyed while thread is still running`。正确边界是 request-only close、模块级保活到 finished、取消/代次校验阻止 UI 回写，上层协调器才可在后台 drain。
+- SingleRecognitionTab 是可独立构造的公开 QWidget，不能把自身文件按钮和 `process_file` 语义隐式绑定到 MainWindow signal receiver。修复采用 tab 自有 generation-aware QImage loader；MainWindow 顶部入口仍可独立协调，不再重复消费 tab 信号。
+- QThread 的业务 `done/all_done` 信号不等于原生 `finished`：`run()` 可能还在 finally、线程池 shutdown 或信号发射后的返回路径。worker 唯一引用、写独占门和“允许下一任务”都必须以原生 `finished` 为最终边界。
+- PDF open 在 `doc_opened` 后才进入逐页 load；取消发生在此区间时，session 已被 manager 接纳，不能只 break。必须明确撤销/关闭该 session，且不能让后续 `open_done` 把半加载模型标为完整。
+- 关闭 drain 面对 GUI 事件循环仍在处理迟到信号时，worker 集合不是静态的；入口单次快照不足以证明排空。应先用 shutdown gate 阻止新生产任务，迟到资源只走受统一跟踪的回收路径，并在同一绝对截止时间内稳定迭代到集合为空。
+
+## 2026-07-20 最终验收结论
+
+- CUDA 检测失败的实际输入包含 `CUDA UMD Version`；解析器现可识别该字段并将驱动报告的 13.3 映射到受支持的 `cu126`，本机实测不再返回 `None`。
+- OCR 依赖检查、依赖更新、GPU 探测和工具栏设置写入已拆离耗时检测路径；拖动工具栏期间不再在 GUI 回调中执行同步 shell/版本探测。
+- 所有异步任务都必须同时满足业务终态与原生线程终态；最终实现统一使用 generation/closing、强引用注册表和可观察 drain，关闭阶段不销毁仍在运行的 QObject/QThread。
+- 大结果渲染、50k content 聚合、50k overlay 命中、批量文件插入、导出快照和图片编码已迁移为后台纯数据任务；QWidget、QPixmap、WebEngine 最终提交仍留在 GUI 线程。
+- MainWindow 最终偶发竞态来自 QObject-owned 轮询 timer 之外额外注册的 Python bound-method `QTimer.singleShot`；窗口先销毁时回调会命中已删除的 C++ 对象。改为当前 GUI 事件内直接推进并同步发出最终 close 后，全量回归稳定通过。
+- 最终验证：3132 passed、7 skipped；Gate 0 为 8 passed；MainWindow/依赖/关闭分组为 80 passed；Ruff、compileall、`git diff --check` 均通过。
+
+## 2026-07-20 终审返修补充
+
+- 大结果 latest-wins 不能只记录 `(old_text, new_text)` 并对聚合字符串 `replace(..., 1)`；重复文本会改错块。最终实现仅在唯一命中时保留原格式，存在歧义则按当前块顺序安全重建。
+- ResultView 不可在 GUI 提交阶段深复制 50k 模型，也不能让 worker 无条件接纳活模型快照。最终使用 source/render generation 与后台连续稳定快照比较，只接纳稳定代次；未知对象与未知字典键一律保守判为不稳定。
+- 快照失效后的 50k 复制必须是独立可取消作业；Markdown/文本复制不再计算无用 HTML，每 128 项检查取消，剪贴板只在通过 generation/token 的 GUI 完成槽写入。
+- WebEngine 文档只有在 `loadFinished` 后回读 token 匹配时才标为 rendered；旧 DOM 编辑与迟到 JS copy payload 均被 document token 和 generation 拒绝。
+- PDF open worker 的 cancel 与 session ownership snapshot、最终 pop/保留关闭权必须共用同一锁；barrier 回归验证竞态 session 恰好关闭一次。
+- 最终发布级验证：3156 passed、7 skipped；独立终审确认无剩余 P0/P1/P2 阻塞。

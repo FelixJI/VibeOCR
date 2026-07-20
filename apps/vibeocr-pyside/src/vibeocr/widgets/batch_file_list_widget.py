@@ -3,9 +3,11 @@
 显示待处理的文件列表，支持添加、删除、勾选操作。
 """
 
+import os
+from collections import deque
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -35,11 +37,26 @@ class BatchFileListWidget(QWidget):
     files_changed = Signal(list)  # List[dict]
     # 选中文件变更信号
     selection_changed = Signal(str)  # file_path
+    _ROW_CHUNK_SIZE = 96
+    _SYNC_ROW_LIMIT = 128
+    _ROW_FRAME_INTERVAL_MS = 1
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
 
         self._files: list[dict] = []
+        self._path_keys: set[str] = set()
+        self._file_index_by_key: dict[str, int] = {}
+        self._status_counts = {
+            "pending": 0,
+            "processing": 0,
+            "completed": 0,
+            "failed": 0,
+        }
+        self._pending_rows: deque[tuple[int, dict]] = deque()
+        self._row_timer = QTimer(self)
+        self._row_timer.setSingleShot(True)
+        self._row_timer.timeout.connect(self._drain_row_chunk)
 
         self._setup_ui()
         self._connect_signals()
@@ -130,7 +147,13 @@ class BatchFileListWidget(QWidget):
 
     def _on_clear(self):
         """清空列表"""
+        self._row_timer.stop()
+        self._pending_rows.clear()
         self._files.clear()
+        self._path_keys.clear()
+        self._file_index_by_key.clear()
+        for status in self._status_counts:
+            self._status_counts[status] = 0
         self._table.setRowCount(0)
         self._update_status()
         self.files_changed.emit([])
@@ -145,10 +168,11 @@ class BatchFileListWidget(QWidget):
                 self.selection_changed.emit(file_path)
 
     def add_files(self, file_paths: list[str]):
-        """添加文件"""
+        """添加文件；数据立即可见，大批表格行分帧创建以保持事件循环响应。"""
+        rows: list[tuple[int, dict]] = []
         for path in file_paths:
-            # 检查是否已存在
-            if any(f["path"] == path for f in self._files):
+            key = self._normalize_path(path)
+            if key in self._path_keys:
                 continue
 
             file_info = {
@@ -156,27 +180,80 @@ class BatchFileListWidget(QWidget):
                 "name": Path(path).name,
                 "status": "pending",
             }
+            row = len(self._files)
             self._files.append(file_info)
+            self._path_keys.add(key)
+            self._file_index_by_key[key] = row
+            self._status_counts["pending"] += 1
+            rows.append((row, file_info))
 
-            # 添加到表格
-            row = self._table.rowCount()
-            self._table.insertRow(row)
-
-            # 状态
-            status_item = QTableWidgetItem("...")
-            status_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            self._table.setItem(row, 0, status_item)
-
-            # 文件名
-            name_item = QTableWidgetItem(file_info["name"])
-            self._table.setItem(row, 1, name_item)
-
-            # 删除按钮占位
-            del_item = QTableWidgetItem("")
-            self._table.setItem(row, 2, del_item)
+        if not rows:
+            self._update_status()
+            return
 
         self._update_status()
+        # 数据模型已经完整更新；管道锁定/Start 语义不能等待表格分帧物化。
+        # 每次实际数据变更只在这里立即发一次，row timer 不再重复发射。
         self.files_changed.emit(self._files)
+        if not self._pending_rows and len(rows) <= self._SYNC_ROW_LIMIT:
+            self._append_table_rows(rows)
+            return
+        self._pending_rows.extend(rows)
+        if not self._row_timer.isActive():
+            self._row_timer.start(self._ROW_FRAME_INTERVAL_MS)
+
+    @staticmethod
+    def _normalize_path(path: str) -> str:
+        """纯字符串生成去重键；禁止 resolve/stat 触碰网络盘或文件系统。"""
+        normalized = os.path.normpath(path)
+        absolute = os.path.abspath(normalized)  # noqa: PTH100 - intentionally no resolve()
+        return os.path.normcase(absolute)
+
+    @staticmethod
+    def _status_icon(status: str) -> str:
+        return {
+            "pending": "...",
+            "processing": "...",
+            "completed": "[OK]",
+            "failed": "[X]",
+        }.get(status, "...")
+
+    def _drain_row_chunk(self) -> None:
+        rows: list[tuple[int, dict]] = []
+        while self._pending_rows and len(rows) < self._ROW_CHUNK_SIZE:
+            rows.append(self._pending_rows.popleft())
+        self._append_table_rows(rows)
+        if self._pending_rows:
+            # A repeating zero-delay timer can starve timers posted by toolbar
+            # drag/paint/input on Windows.  Yield at least one millisecond between
+            # chunks so other event sources are guaranteed a scheduling turn.
+            self._row_timer.start(self._ROW_FRAME_INTERVAL_MS)
+
+    def _append_table_rows(self, rows: list[tuple[int, dict]]) -> None:
+        if not rows:
+            return
+        table = self._table
+        old_blocked = table.blockSignals(True)
+        table.setUpdatesEnabled(False)
+        try:
+            required_rows = rows[-1][0] + 1
+            if table.rowCount() < required_rows:
+                table.setRowCount(required_rows)
+            for row, file_info in rows:
+                status = file_info["status"]
+                status_item = QTableWidgetItem(self._status_icon(status))
+                status_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                table.setItem(row, 0, status_item)
+
+                name_item = QTableWidgetItem(file_info["name"])
+                if status == "failed":
+                    name_item.setForeground(QColor("red"))
+                table.setItem(row, 1, name_item)
+                table.setItem(row, 2, QTableWidgetItem(""))
+        finally:
+            table.setUpdatesEnabled(True)
+            table.blockSignals(old_blocked)
+        table.viewport().update()
 
     def update_file_status(self, file_path: str, status: str, result=None):
         """更新文件状态
@@ -186,29 +263,24 @@ class BatchFileListWidget(QWidget):
             status: 状态 (pending, processing, completed, failed)
             result: 识别结果（可选）
         """
-        for i, f in enumerate(self._files):
-            if f["path"] == file_path:
-                f["status"] = status
-                f["result"] = result
+        index = self._file_index_by_key.get(self._normalize_path(file_path))
+        if index is not None:
+            file_info = self._files[index]
+            old_status = file_info["status"]
+            if old_status != status:
+                self._status_counts[old_status] -= 1
+                self._status_counts[status] = self._status_counts.get(status, 0) + 1
+            file_info["status"] = status
+            file_info["result"] = result
 
-                # 更新表格
-                status_icons = {
-                    "pending": "...",
-                    "processing": "...",
-                    "completed": "[OK]",
-                    "failed": "[X]",
-                }
-                status_item = self._table.item(i, 0)
-                if status_item:
-                    status_item.setText(status_icons.get(status, "..."))
-
-                # 失败时高亮
-                if status == "failed":
-                    name_item = self._table.item(i, 1)
-                    if name_item:
-                        name_item.setForeground(QColor("red"))
-
-                break
+            status_item = self._table.item(index, 0)
+            if status_item:
+                status_item.setText(self._status_icon(status))
+            name_item = self._table.item(index, 1)
+            if name_item:
+                name_item.setForeground(
+                    QColor("red" if status == "failed" else "black")
+                )
 
         self._update_status()
 
@@ -222,14 +294,14 @@ class BatchFileListWidget(QWidget):
 
     def get_pending_count(self) -> int:
         """获取待处理数量"""
-        return len([f for f in self._files if f["status"] == "pending"])
+        return self._status_counts["pending"]
 
     def _update_status(self):
         """更新状态显示"""
         total = len(self._files)
         pending = self.get_pending_count()
-        completed = len([f for f in self._files if f["status"] == "completed"])
-        failed = len([f for f in self._files if f["status"] == "failed"])
+        completed = self._status_counts["completed"]
+        failed = self._status_counts["failed"]
 
         status_text = (
             f"共: {total} | 待处理: {pending} | 完成: {completed} | 失败: {failed}"
@@ -238,16 +310,26 @@ class BatchFileListWidget(QWidget):
 
     def clear_results(self):
         """清除所有结果（重置状态）"""
-        for i, f in enumerate(self._files):
-            f["status"] = "pending"
-            f["result"] = None
+        old_blocked = self._table.blockSignals(True)
+        self._table.setUpdatesEnabled(False)
+        try:
+            for i, f in enumerate(self._files):
+                f["status"] = "pending"
+                f["result"] = None
 
-            status_item = self._table.item(i, 0)
-            if status_item:
-                status_item.setText("...")
+                status_item = self._table.item(i, 0)
+                if status_item:
+                    status_item.setText("...")
 
-            name_item = self._table.item(i, 1)
-            if name_item:
-                name_item.setForeground(QColor("black"))
+                name_item = self._table.item(i, 1)
+                if name_item:
+                    name_item.setForeground(QColor("black"))
+        finally:
+            self._table.setUpdatesEnabled(True)
+            self._table.blockSignals(old_blocked)
+        for status in self._status_counts:
+            self._status_counts[status] = 0
+        self._status_counts["pending"] = len(self._files)
+        self._table.viewport().update()
 
         self._update_status()

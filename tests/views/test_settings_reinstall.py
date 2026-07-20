@@ -26,8 +26,13 @@ def controller(qtbot, tmp_path):
         # BackendOptionsWidget 构造读 env_manager / machine_cache
         patch("vibeocr.widgets.backend_options_widget.env_manager") as mock_em,
         patch(
-            "vibeocr.widgets.backend_options_widget.is_cache_valid",
-            return_value=(False, None),
+            "vibeocr.widgets.backend_options_widget.load_cache",
+            return_value=None,
+        ),
+        # 本文件测试依赖表/按钮，GPU worker 由组件专项测试覆盖。
+        # 禁用真线程，避免 with 退出恢复 mock 时 worker 仍跨用例运行。
+        patch(
+            "vibeocr.widgets.backend_options_widget.BackendOptionsWidget._start_gpu_detection"
         ),
         # _init_settings_page 读 ConfigManager / machine_cache / pipelines
         patch(

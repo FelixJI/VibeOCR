@@ -2787,10 +2787,13 @@ def detect_cuda_version(
             cancel_event=cancel_event,
         )
         if result.returncode == 0 and result.stdout:
-            # 在输出中查找 "CUDA Version: X.Y"
+            # 新版 Windows 驱动显示 "CUDA UMD Version: X.Y"，
+            # 旧版/其他平台仍为 "CUDA Version: X.Y"。
             import re
 
-            match = re.search(r"CUDA Version:\s*(\d+\.\d+)", result.stdout)
+            match = re.search(
+                r"CUDA(?:\s+UMD)?\s+Version:\s*(\d+\.\d+)", result.stdout
+            )
             if match:
                 cuda_version = match.group(1)
                 logger.info("[硬件检测] CUDA版本 (nvidia-smi): %s", cuda_version)
@@ -2959,6 +2962,24 @@ def detect_gpu_info(
         return info
 
 
+def _resolve_cached_use_gpu(project_root: Path) -> bool | None:
+    """从机器缓存解析实际 GPU 后端，缓存不足时返回 None。"""
+    is_valid, cached_data = is_cache_valid(project_root)
+    if not (is_valid and cached_data):
+        return None
+
+    pending = cached_data.get("pending_backend")
+    if pending == "gpu":
+        return True
+    if pending == "cpu":
+        return False
+
+    hardware_info = cached_data.get("hardware_info") or {}
+    if "has_gpu" in hardware_info:
+        return bool(hardware_info["has_gpu"])
+    return None
+
+
 def resolve_use_gpu(project_root: Path) -> bool:
     """决定运行时是否使用 GPU（缓存优先 + 探测回退）
 
@@ -2976,18 +2997,9 @@ def resolve_use_gpu(project_root: Path) -> bool:
     Returns:
         是否使用 GPU
     """
-    is_valid, cached_data = is_cache_valid(project_root)
-    if is_valid and cached_data:
-        # 优先级 1：用户在设置页选择的待生效后端
-        pending = cached_data.get("pending_backend")
-        if pending == "gpu":
-            return True
-        if pending == "cpu":
-            return False
-        # 优先级 2：依赖检测时写入的硬件信息
-        hardware_info = cached_data.get("hardware_info") or {}
-        if "has_gpu" in hardware_info:
-            return bool(hardware_info["has_gpu"])
+    cached = _resolve_cached_use_gpu(project_root)
+    if cached is not None:
+        return cached
 
     # 缓存不可用，实时探测
     has_gpu, _cuda_version = detect_gpu()
@@ -3000,7 +3012,9 @@ def resolve_use_gpu(project_root: Path) -> bool:
 _runtime_gpu_capability_cache: bool | None = None
 
 
-def get_runtime_gpu_capability(project_root: Path) -> bool:
+def get_runtime_gpu_capability(
+    project_root: Path, *, detected_has_gpu: bool | None = None
+) -> bool:
     """获取运行时是否具备 GPU 推理能力（进程级缓存）
 
     与 ``resolve_use_gpu`` 的语义一致：基于"实际运行后端"判断，而非单纯的
@@ -3012,8 +3026,13 @@ def get_runtime_gpu_capability(project_root: Path) -> bool:
     缓存在进程生命周期内有效——后端切换需要重启才生效（见 switch_paddle_backend
     写入 pending_backend 的注释），故无需主动失效。
 
+    ``detected_has_gpu`` 供已在后台完成物理 GPU 探测的调用方传入。
+    缓存中的 pending/current 后端仍优先；缓存不足时直接复用
+    该结果，避免再次 shell out ``nvidia-smi``。
+
     Args:
         project_root: 项目根目录
+        detected_has_gpu: 后台已探测的物理 GPU 结果，可选
 
     Returns:
         运行时是否使用 GPU 后端
@@ -3021,7 +3040,15 @@ def get_runtime_gpu_capability(project_root: Path) -> bool:
     global _runtime_gpu_capability_cache
     if _runtime_gpu_capability_cache is not None:
         return _runtime_gpu_capability_cache
-    _runtime_gpu_capability_cache = resolve_use_gpu(project_root)
+
+    cached = _resolve_cached_use_gpu(project_root)
+    if cached is not None:
+        resolved = cached
+    elif detected_has_gpu is not None:
+        resolved = bool(detected_has_gpu)
+    else:
+        resolved = resolve_use_gpu(project_root)
+    _runtime_gpu_capability_cache = resolved
     return _runtime_gpu_capability_cache
 
 

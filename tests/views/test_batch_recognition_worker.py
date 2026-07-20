@@ -17,20 +17,11 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
-import pytest
-
-try:
-    from vibeocr.views.batch_recognition_tab import BatchRecognitionWorker
-
-    HAS_MODULE = True
-except ImportError:
-    BatchRecognitionWorker = None  # type: ignore[assignment,misc]
-    HAS_MODULE = False
+from vibeocr.views.batch_recognition_tab import BatchRecognitionWorker
 
 
 def _make_worker(service, files, options=None, *, batch_budget=None) -> Any:
     """构造 worker（正常 __init__ 以激活 Qt 信号，但不 start 线程）。"""
-    assert BatchRecognitionWorker is not None
     if options is None:
         from vibeocr.models.ocr_options import OCROptions
 
@@ -52,7 +43,6 @@ def _make_image_files(tmp_path: Path, n: int) -> list[dict]:
     return files
 
 
-@pytest.mark.skipif(not HAS_MODULE, reason="batch_recognition_tab not available")
 class TestBatchRecognitionWorkerRecognizeBatch:
     """验证 run() 分小批调用 recognize_batch。"""
 
@@ -87,6 +77,33 @@ class TestBatchRecognitionWorkerRecognizeBatch:
         assert statuses == ["completed", "completed", "completed"]
         assert len(finished_results) == 3
         assert terminal_statuses == [worker.STATUS_COMPLETED]
+
+    def test_worker_emits_immutable_snapshot_before_live_result(self, tmp_path, qtbot):
+        """识别线程独占结果时产出 DTO，GUI 永不对活动模型做提交时深拷贝。"""
+        files = _make_image_files(tmp_path, 1)
+        live_result = {
+            "raw_text": "recognized",
+            "content_list": [{"type": "text", "text": "block"}],
+        }
+        service = MagicMock()
+        service.recognize_batch.return_value = [live_result]
+        worker = _make_worker(service, files)
+        events = []
+        worker.file_snapshot_ready.connect(
+            lambda path, snapshot: events.append(("snapshot", path, snapshot))
+        )
+        worker.file_completed.connect(
+            lambda path, _status, result: events.append(("result", path, result))
+        )
+
+        worker.run()
+        live_result["raw_text"] = "mutated"
+        live_result["content_list"][0]["text"] = "mutated"
+
+        assert [event[0] for event in events] == ["snapshot", "result"]
+        snapshot = events[0][2]
+        assert snapshot.raw_text == "recognized"
+        assert snapshot.content_list[0]["text"] == "block"
 
     def test_multi_batch_chunking(self, tmp_path, qtbot):
         """超过 16 个文件时分多批，每批一次 recognize_batch 调用。"""

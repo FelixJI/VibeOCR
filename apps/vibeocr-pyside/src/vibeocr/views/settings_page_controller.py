@@ -11,7 +11,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QObject, QRunnable, QThreadPool, QTimer, Signal
+from PySide6.QtCore import QThreadPool, QTimer
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -44,12 +44,17 @@ from vibeocr.env_manager import (
 )
 from vibeocr.machine_cache import is_cache_valid
 from vibeocr.pyside import settings_runtime
+from vibeocr.views.background_tasks import DependencyUpdateCheckTask, FunctionTask
 from vibeocr.widgets.backend_choice_dialog import BackendChoiceDialog
 
 if TYPE_CHECKING:
     from vibeocr.contracts.pipelines import OCRPipeline
 
 logger = logging.getLogger(__name__)
+
+# QRunnable 运行期间的进程级强引用。窗口可先于慢 WMIC/PowerShell/RPC 完成销毁；
+# 保留 wrapper 到结果回调，避免 Qt 线程池仍持有 C++ runnable 时 Python 对象被回收。
+_BACKGROUND_TASKS: set[object] = set()
 
 
 def _is_bundled() -> bool:
@@ -120,6 +125,10 @@ class SettingsPageController:
         subprocess_manager,
         preload_complete_callback: Callable[[], None] | None = None,
         install_succeeded_callback: Callable[[], None] | None = None,
+        gpu_capability_callback: Callable[[bool], None] | None = None,
+        dependency_update_task: DependencyUpdateCheckTask | None = None,
+        defer_backend_initialization: bool = False,
+        defer_machine_cache_status: bool = False,
     ) -> None:
         self._ui = ui
         self._project_root = project_root
@@ -134,12 +143,25 @@ class SettingsPageController:
         # 的回调，使设置页安装成功后与首启路径行为一致（检测完成回调里自动
         # 设 _ocr_ready + 启动 Worker + 消费 pending_backend）。
         self._install_succeeded_callback = install_succeeded_callback
+        self._gpu_capability_callback = gpu_capability_callback
+        self._dependency_update_task = dependency_update_task or DependencyUpdateCheckTask(
+            project_root, ui
+        )
+        self._owns_dependency_update_task = dependency_update_task is None
+        self._runtime_has_gpu: bool | None = None
+        self._defer_backend_initialization = defer_backend_initialization
+        self._defer_machine_cache_status = defer_machine_cache_status
+        self._pending_update_install = False
+        self._manual_dependency_update_waiting = False
         self._manual_preload_task: object | None = None
         self._backend_options = None
         self._closing = False
         self._cache_tasks: set[object] = set()
         self._cache_generation = 0
         self._env_refresh_generation = 0
+        self._machine_cache_generation = 0
+        self._cache_refresh_running = False
+        self._shortcut_running = False
         self._ttl_sync_timer = QTimer(ui)
         self._ttl_sync_timer.setSingleShot(True)
         self._ttl_sync_timer.setInterval(300)
@@ -148,6 +170,17 @@ class SettingsPageController:
         # 对话框 finished 时从列表移除，允许再次打开。
         self._active_dialogs: list = []
 
+        # 控制器不是 QObject，独立测试/嵌入场景可能不会显式调用 shutdown；
+        # 宿主 widget 销毁时先冻结后台回调，避免迟到结果访问已释放的 Qt 对象。
+        ui.destroyed.connect(self.request_shutdown)
+
+        self._dependency_update_task.completed.connect(
+            self._on_dependency_update_check_completed
+        )
+        self._dependency_update_task.failed.connect(
+            self._on_dependency_update_check_failed
+        )
+
     def request_shutdown(self) -> None:
         """Release background workers owned by settings-page widgets.
 
@@ -155,28 +188,28 @@ class SettingsPageController:
         已销毁的 UI。再关闭 GPU 检测线程。
         """
         self._closing = True
+        if self._owns_dependency_update_task:
+            self._dependency_update_task.close()
         self._ttl_sync_timer.stop()
-        for task in tuple(self._cache_tasks):
-            try:
-                task.signals.finished.disconnect()  # type: ignore[attr-defined]
-                task.signals.error.disconnect()  # type: ignore[attr-defined]
-            except (RuntimeError, TypeError):
-                pass
-        self._cache_tasks.clear()
+        for dialog in tuple(self._active_dialogs):
+            request_shutdown = getattr(dialog, "request_shutdown", None)
+            if callable(request_shutdown):
+                request_shutdown()
+            else:
+                close = getattr(dialog, "close", None)
+                if callable(close):
+                    close()
+        # 不清空正在运行的 QRunnable 引用：QThreadPool 结束前销毁其 Python
+        # wrapper/Signals 可能导致 use-after-free。完成回调会先 discard，再由
+        # _closing 守卫跳过所有 UI 操作。
 
         # 取消正在运行的手动预加载任务（运行在全局 QThreadPool 上）
         if self._manual_preload_task is not None:
-            task = self._manual_preload_task
-            # 协作取消：设置 _cancelled 事件，run() 在下一个检查点退出
-            if hasattr(task, "cancel"):
-                task.cancel()
-            # 断开 signal，避免迟到回调
-            try:
-                if hasattr(task, "signals"):
-                    task.signals.status_changed.disconnect(self._update_preload_status)
-                    task.signals.finished.disconnect(self._on_manual_preload_finished)
-            except RuntimeError:
-                pass  # signal 已断开
+            cancel_preload = getattr(
+                self._subprocess_manager, "request_preload_shutdown", None
+            )
+            if callable(cancel_preload):
+                cancel_preload()
             self._manual_preload_task = None
 
         backend_options = self._backend_options
@@ -184,11 +217,47 @@ class SettingsPageController:
             backend_options.request_gpu_detection_shutdown()
 
     def drain(self, timeout_ms: int) -> bool:
-        """Drain the cancellable hardware probe within the shared app budget."""
+        """Compatibility drain covering every settings-owned native/UI task."""
+        import time
+
+        from PySide6.QtCore import QCoreApplication, QThread
+
+        deadline = time.monotonic() + max(0, timeout_ms) / 1000
+        while True:
+            if self.is_drained():
+                return True
+            if timeout_ms <= 0 or time.monotonic() >= deadline:
+                return False
+            # 独立调用场景没有 MainWindow poll timer；推进 queued completion，
+            # 让 cache/dialog/update 引用在 owner GUI 线程上安全释放。
+            QCoreApplication.processEvents()
+            QThread.msleep(5)
+
+    def is_drained(self) -> bool:
+        """Poll all settings-owned native jobs without waiting on the GUI thread."""
         backend_options = self._backend_options
-        if backend_options is None:
-            return True
-        return bool(backend_options.drain_gpu_detection(timeout_ms))
+        gpu_drained = backend_options is None or bool(
+            backend_options.is_gpu_detection_drained()
+        )
+        # The completion callback removes each task on the GUI thread.  Waiting
+        # for the set to become empty also drains queued callbacks that capture UI.
+        cache_drained = not self._cache_tasks
+        update_drained = (
+            not self._owns_dependency_update_task
+            or self._dependency_update_task.is_drained()
+        )
+        preload_probe = getattr(self._subprocess_manager, "is_preload_drained", None)
+        preload_drained = not callable(preload_probe) or bool(preload_probe())
+        from vibeocr.utils.dialog_workers import are_dialog_workers_drained
+
+        dialogs_drained = are_dialog_workers_drained()
+        return (
+            gpu_drained
+            and cache_drained
+            and update_drained
+            and preload_drained
+            and dialogs_drained
+        )
 
     def shutdown(self, timeout_ms: int = 3000) -> bool:
         """Compatibility entry point for callers outside MainWindow."""
@@ -282,7 +351,8 @@ class SettingsPageController:
 
         self._init_screenshot_options(nav_list, stacked)
         self._init_pdf_options(nav_list, stacked)
-        self._init_backend_options_in_group()
+        if not self._defer_backend_initialization:
+            self._init_backend_options_in_group()
         self._init_settings_page()
 
         # 所有子页（静态 .ui 页 + 动态插入页）就绪后统一包滚动条，
@@ -366,10 +436,9 @@ class SettingsPageController:
         icon = _resolve_shortcut_icon_path()
         wd = str(Path(sys.executable).parent)
 
-        if _create_windows_shortcut(target, lnk, "VibeOCR", icon, wd):
-            self._show_settings_toast("桌面快捷方式已创建")
-        else:
-            QMessageBox.warning(None, "创建失败", "创建桌面快捷方式失败，请检查权限。")
+        self._start_shortcut_creation(
+            target, lnk, icon, wd, success_text="桌面快捷方式已创建"
+        )
 
     def _on_create_start_menu_shortcut(self) -> None:
         """在开始菜单创建 VibeOCR 快捷方式。"""
@@ -383,10 +452,55 @@ class SettingsPageController:
         icon = _resolve_shortcut_icon_path()
         wd = str(Path(sys.executable).parent)
 
-        if _create_windows_shortcut(target, lnk, "VibeOCR", icon, wd):
-            self._show_settings_toast("开始菜单快捷方式已创建")
-        else:
-            QMessageBox.warning(None, "创建失败", "创建开始菜单快捷方式失败，请检查权限。")
+        self._start_shortcut_creation(
+            target, lnk, icon, wd, success_text="开始菜单快捷方式已创建"
+        )
+
+    def _start_shortcut_creation(
+        self,
+        target: str,
+        shortcut_path: str,
+        icon: str,
+        working_dir: str,
+        *,
+        success_text: str,
+    ) -> None:
+        """在线程池创建快捷方式，同一时刻只允许一个 PowerShell 操作。"""
+        if self._closing or self._shortcut_running:
+            return
+        self._shortcut_running = True
+        self._set_shortcut_buttons_enabled(False)
+
+        def operation() -> bool:
+            return _create_windows_shortcut(
+                target, shortcut_path, "VibeOCR", icon, working_dir
+            )
+
+        def finished(success: bool) -> None:
+            self._shortcut_running = False
+            self._set_shortcut_buttons_enabled(True)
+            if success:
+                self._show_settings_toast(success_text)
+            else:
+                QMessageBox.warning(
+                    None,
+                    "创建失败",
+                    "创建快捷方式失败或操作超时，请检查权限。",
+                )
+
+        def failed(error: str) -> None:
+            logger.warning("创建快捷方式后台任务失败: %s", error)
+            finished(False)
+
+        self._run_cache_operation(operation, finished, failed)
+
+    def _set_shortcut_buttons_enabled(self, enabled: bool) -> None:
+        if not _is_bundled():
+            enabled = False
+        for name in ("_btn_desktop", "_btn_startmenu"):
+            button = getattr(self, name, None)
+            if button is not None:
+                button.setEnabled(enabled)
 
     # ----------------------------------------------------------------
     # 截图 / PDF 选项页初始化
@@ -495,12 +609,15 @@ class SettingsPageController:
         分组，不再单列导航项。
         """
         container = self._ui.findChild(QWidget, "backendOptionsContainer")
-        if container is None:
+        if container is None or self._backend_options is not None:
             return
 
         from vibeocr.widgets.backend_options_widget import BackendOptionsWidget
 
-        self._backend_options = BackendOptionsWidget(self._project_root)
+        self._backend_options = BackendOptionsWidget(
+            self._project_root,
+            gpu_capability_callback=self._on_gpu_capability_resolved,
+        )
         layout = container.layout()
         if layout is not None:
             layout.addWidget(self._backend_options)
@@ -509,6 +626,30 @@ class SettingsPageController:
         self._backend_options.backend_changed.connect(
             lambda: self._show_settings_toast()
         )
+
+    def initialize_deferred_backend_options(self) -> None:
+        """机器缓存已在后台预热后，再构造 GPU 设置组件。"""
+        if not self._closing:
+            self._init_backend_options_in_group()
+
+    def apply_deferred_machine_cache_status(self, valid: bool) -> None:
+        """应用 MainWindow 后台缓存校验结果，不再次触发机器码探测。"""
+        if not self._closing:
+            self._update_cache_status("缓存有效" if valid else "无有效缓存")
+
+    def _on_gpu_capability_resolved(self, has_gpu: bool) -> None:
+        """记录既有后台探测结果，并向 MainWindow 广播。"""
+        if self._closing:
+            return
+        self._runtime_has_gpu = bool(has_gpu)
+        if self._gpu_capability_callback is not None:
+            self._gpu_capability_callback(bool(has_gpu))
+        if self._pending_update_install:
+            self._pending_update_install = False
+            self._open_install_dialog(
+                missing_only=False,
+                force_backend="gpu" if has_gpu else "cpu",
+            )
 
     def _on_pdf_pipeline_switching(self, old_pipeline, options) -> None:
         self._pdf_switching = True
@@ -551,7 +692,12 @@ class SettingsPageController:
 
     def _init_settings_page(self) -> None:
         """初始化设置页面状态"""
-        self._update_cache_status()
+        if self._defer_machine_cache_status:
+            self._update_cache_status("正在检查缓存...")
+        else:
+            # 独立嵌入场景没有 MainWindow 的共享启动快照；避免仅为初始文案
+            # 主动触发 WMIC，用户点击“刷新缓存”时再走后台 operation。
+            self._update_cache_status("缓存状态尚未刷新")
         self._update_preload_status()
         self._restore_preload_checkbox_state()
 
@@ -815,14 +961,46 @@ class SettingsPageController:
     # ============================================================
 
     def _on_refresh_cache_clicked(self) -> None:
-        """刷新缓存按钮点击"""
-        from vibeocr.machine_cache import refresh_cache
-
+        """在线程池刷新机器缓存，避免机器码探测阻塞 GUI。"""
+        if self._closing or self._cache_refresh_running:
+            return
+        self._cache_refresh_running = True
+        button = self._ui.findChild(QPushButton, "btnRefreshCache")
+        if button:
+            button.setEnabled(False)
         self._update_cache_status("正在刷新缓存...")
-        refresh_cache(self._project_root)
-        self._update_cache_status("缓存已刷新")
-        self._show_settings_toast("缓存已刷新")
-        logger.debug("[缓存] 已刷新（依赖缓存 + 模型缓存）")
+        self._machine_cache_generation += 1
+        generation = self._machine_cache_generation
+
+        def finished(result: tuple[bool, str]) -> None:
+            self._cache_refresh_running = False
+            if button:
+                button.setEnabled(True)
+            if generation != self._machine_cache_generation:
+                return
+            success, info = result
+            if success:
+                self._apply_cache_status(generation, True, info, "缓存已刷新")
+                self._show_settings_toast("缓存已刷新")
+                logger.debug("[缓存] 已刷新（依赖缓存 + 模型缓存）")
+            else:
+                self._apply_cache_status(generation, False, "", "缓存刷新失败")
+
+        def failed(error: str) -> None:
+            self._cache_refresh_running = False
+            if button:
+                button.setEnabled(True)
+            if generation == self._machine_cache_generation:
+                self._update_cache_status(f"缓存刷新失败：{error}")
+
+        self._run_cache_operation(self._refresh_machine_cache_operation, finished, failed)
+
+    def _refresh_machine_cache_operation(self) -> tuple[bool, str]:
+        """QRunnable 内执行的机器缓存重建与快照读取。"""
+        from vibeocr.machine_cache import get_cache_info, refresh_cache
+
+        success = refresh_cache(self._project_root)
+        return success, get_cache_info(self._project_root) if success else ""
 
     def _open_reinstall_dialog(
         self, reinstall_python: bool = False, missing_only: bool = False
@@ -919,9 +1097,10 @@ class SettingsPageController:
             return
 
         # 读当前后端作为补装后端，避免二次提示
-        from vibeocr import env_manager
-
-        current_backend = "gpu" if env_manager.resolve_use_gpu(self._project_root) else "cpu"
+        current_backend = self._runtime_backend_or_none()
+        if current_backend is None:
+            self._show_settings_toast("正在检测推理后端，请稍后再试")
+            return
         self._open_install_dialog(missing_only=True, force_backend=current_backend)
 
     def _on_update_deps(self) -> None:
@@ -930,8 +1109,6 @@ class SettingsPageController:
         用户要求：① 新增独立入口；② 启动时检测到 version.json 规格比已装版本新也弹窗
         （覆盖安装场景）。本方法处理①的主动入口；启动弹窗在 MainWindow。
         """
-        from vibeocr import env_manager
-
         logger.info("[依赖更新] 按钮被点击，开始检测")
         python_exe = get_embedded_python_executable(self._project_root)
         if not python_exe.exists():
@@ -943,15 +1120,30 @@ class SettingsPageController:
             )
             return
 
-        # 检测：返回需更新的包 {pkg: (installed_ver, required_spec)}
-        try:
-            updates = env_manager.detect_dependency_updates(self._project_root)
-        except Exception as e:
-            logger.exception("[依赖更新] 检测失败")
-            QMessageBox.warning(None, "检测失败", f"检测依赖更新时出错：\n{e}")
-            return
+        button = self._ui.findChild(QPushButton, "btnUpdateDeps")
+        if button:
+            button.setEnabled(False)
+            button.setText("正在检测更新...")
+        self._manual_dependency_update_waiting = True
+        self._dependency_update_task.request("settings")
 
-        logger.info("[依赖更新] 检测完成，待更新包数=%d：%s", len(updates), dict(updates))
+    def _on_dependency_update_check_completed(
+        self, source: str, result: object
+    ) -> None:
+        if self._closing:
+            return
+        if self._manual_dependency_update_waiting:
+            self._manual_dependency_update_waiting = False
+            button = self._ui.findChild(QPushButton, "btnUpdateDeps")
+            if button:
+                button.setEnabled(True)
+                button.setText("更新依赖")
+        if source != "settings":
+            return
+        updates = dict(result) if isinstance(result, dict) else {}
+        logger.info(
+            "[依赖更新] 检测完成，待更新包数=%d：%s", len(updates), updates
+        )
         if not updates:
             self._show_settings_toast("依赖已是最新")
             return
@@ -974,9 +1166,40 @@ class SettingsPageController:
             return
 
         # 走全量安装（install_embedded_dependencies），后端用当前值
-        current_backend = "gpu" if env_manager.resolve_use_gpu(self._project_root) else "cpu"
+        current_backend = self._runtime_backend_or_none()
+        if current_backend is None:
+            self._pending_update_install = True
+            self._show_settings_toast("等待后台 GPU 探测完成后开始更新")
+            return
         logger.info("[依赖更新] 用户确认，开始打开安装对话框（后端=%s）", current_backend)
         self._open_install_dialog(missing_only=False, force_backend=current_backend)
+
+    def _on_dependency_update_check_failed(self, source: str, error: str) -> None:
+        if self._closing:
+            return
+        if self._manual_dependency_update_waiting:
+            self._manual_dependency_update_waiting = False
+            button = self._ui.findChild(QPushButton, "btnUpdateDeps")
+            if button:
+                button.setEnabled(True)
+                button.setText("更新依赖")
+        if source != "settings":
+            return
+        logger.warning("[依赖更新] 检测失败: %s", error)
+        QMessageBox.warning(None, "检测失败", f"检测依赖更新时出错：\n{error}")
+
+    def _runtime_backend_or_none(self) -> str | None:
+        """只消费后台 GPU worker 已回填的运行时后端，不在 GUI 线程探测。"""
+        if self._runtime_has_gpu is None:
+            backend_options = self._backend_options
+            if backend_options is None or not hasattr(
+                backend_options, "current_backend"
+            ):
+                return None
+            # 探测完成前该值来自 _load_cached_state；缓存缺失时安全回退 CPU，
+            # 不会调用 resolve_use_gpu / nvidia-smi。
+            return str(backend_options.current_backend())
+        return "gpu" if self._runtime_has_gpu else "cpu"
 
     def _open_install_dialog(
         self,
@@ -1287,19 +1510,46 @@ class SettingsPageController:
             logger.debug("[缓存] 已清除")
 
     def _update_cache_status(self, status: str | None = None) -> None:
-        """更新缓存状态"""
+        """更新缓存状态；校验机器码的路径始终在线程池执行。"""
         from vibeocr.machine_cache import get_cache_info
 
         label = self._ui.findChild(QLabel, "labelCacheStatus")
+        if label is None:
+            return
+        if status:
+            label.setText(status)
+            return
+
+        label.setText("正在检查缓存...")
+        self._machine_cache_generation += 1
+        generation = self._machine_cache_generation
+
+        def operation() -> tuple[bool, str]:
+            valid, _cached = is_cache_valid(self._project_root)
+            return valid, get_cache_info(self._project_root) if valid else ""
+
+        self._run_cache_operation(
+            operation,
+            lambda result: self._apply_cache_status(
+                generation, result[0], result[1]
+            ),
+            lambda error: self._apply_cache_status(
+                generation, False, "", f"缓存检查失败：{error}"
+            ),
+        )
+
+    def _apply_cache_status(
+        self,
+        generation: int,
+        valid: bool,
+        info: str,
+        status: str | None = None,
+    ) -> None:
+        if generation != self._machine_cache_generation:
+            return
+        label = self._ui.findChild(QLabel, "labelCacheStatus")
         if label:
-            if status:
-                label.setText(status)
-            else:
-                if is_cache_valid(self._project_root):
-                    info = get_cache_info(self._project_root)
-                    label.setText(f"缓存有效: {info}")
-                else:
-                    label.setText("无有效缓存")
+            label.setText(status or (f"缓存有效: {info}" if valid else "无有效缓存"))
 
     # --- 管道缓存生命周期管理 ---
 
@@ -1345,32 +1595,19 @@ class SettingsPageController:
 
     def _run_cache_operation(self, operation, on_success, on_error) -> None:
         """在线程池执行同步缓存 RPC，并隔离关闭后的迟到结果。"""
-
-        class _Signals(QObject):
-            finished = Signal(object)
-            error = Signal(str)
-
-        class _Task(QRunnable):
-            def __init__(self) -> None:
-                super().__init__()
-                self.signals = _Signals()
-
-            def run(self) -> None:
-                try:
-                    self.signals.finished.emit(operation())
-                except Exception as exc:
-                    self.signals.error.emit(str(exc))
-
-        task = _Task()
+        task = FunctionTask(operation)
         self._cache_tasks.add(task)
+        _BACKGROUND_TASKS.add(task)
 
         def finish(result) -> None:
             self._cache_tasks.discard(task)
+            _BACKGROUND_TASKS.discard(task)
             if not self._closing:
                 on_success(result)
 
         def fail(error: str) -> None:
             self._cache_tasks.discard(task)
+            _BACKGROUND_TASKS.discard(task)
             if not self._closing:
                 on_error(error)
 
