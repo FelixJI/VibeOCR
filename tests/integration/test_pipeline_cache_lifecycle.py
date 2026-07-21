@@ -12,6 +12,7 @@ def test_release_heavy_only_flow():
 
     timeout 现在在 task 闭包内传给 worker.release_pipelines(timeout=),
     而非 execute(timeout=)（后者已移除死参数）。
+    release_pipelines 用 execute_control（轻量 RPC，不抢 worker busy）。
     """
     from vibeocr.services.ocr_service_subprocess import OCRServiceSubprocess
 
@@ -19,15 +20,15 @@ def test_release_heavy_only_flow():
     svc._initialized = True
 
     mock_manager = MagicMock()
-    mock_manager.execute.return_value = ["PP-StructureV3", "PaddleOCR-VL"]
+    mock_manager.execute_control.return_value = ["PP-StructureV3", "PaddleOCR-VL"]
     svc._paddlex_manager = mock_manager
 
     result = svc.release_pipelines(heavy_only=True)
     assert result == ["PP-StructureV3", "PaddleOCR-VL"]
-    mock_manager.execute.assert_called_once()
-    # 验证 task 闭包:execute 的第一个位置参数是 lambda,
+    mock_manager.execute_control.assert_called_once()
+    # 验证 task 闭包:execute_control 的第一个位置参数是 lambda,
     # 调用它应触发 worker.release_pipelines(heavy_only=True, timeout=WORKER_TIMEOUT)
-    task_fn = mock_manager.execute.call_args.args[0]
+    task_fn = mock_manager.execute_control.call_args.args[0]
     mock_worker = MagicMock()
     task_fn(mock_worker)
     mock_worker.release_pipelines.assert_called_once()
@@ -44,7 +45,7 @@ def test_release_all_flow():
     svc._initialized = True
 
     mock_manager = MagicMock()
-    mock_manager.execute.return_value = ["PP-StructureV3", "OCR"]
+    mock_manager.execute_control.return_value = ["PP-StructureV3", "OCR"]
     svc._paddlex_manager = mock_manager
 
     result = svc.release_pipelines(heavy_only=False)
@@ -65,6 +66,7 @@ def test_set_ttl_flow():
 
     timeout 现在在 task 闭包内传给 worker.set_ttls(timeout=),
     而非 execute(timeout=)（后者已移除死参数）。
+    set_pipeline_ttls 用 execute_control（轻量 RPC）。
     """
     from vibeocr.services.ocr_service_subprocess import OCRServiceSubprocess
 
@@ -72,14 +74,14 @@ def test_set_ttl_flow():
     svc._initialized = True
 
     mock_manager = MagicMock()
-    mock_manager.execute.return_value = True
+    mock_manager.execute_control.return_value = True
     svc._paddlex_manager = mock_manager
 
     ttls = {"OCR": 0, "PP-StructureV3": 600}
     assert svc.set_pipeline_ttls(ttls)
-    mock_manager.execute.assert_called_once()
+    mock_manager.execute_control.assert_called_once()
     # 验证 task 闭包正确调用 worker.set_ttls(ttls, timeout=)
-    task_fn = mock_manager.execute.call_args.args[0]
+    task_fn = mock_manager.execute_control.call_args.args[0]
     mock_worker = MagicMock()
     task_fn(mock_worker)
     mock_worker.set_ttls.assert_called_once()
@@ -105,7 +107,7 @@ def test_release_handles_exception():
     svc._initialized = True
 
     mock_manager = MagicMock()
-    mock_manager.execute.side_effect = RuntimeError("RPC failed")
+    mock_manager.execute_control.side_effect = RuntimeError("RPC failed")
     svc._paddlex_manager = mock_manager
 
     result = svc.release_pipelines()
@@ -120,7 +122,7 @@ def test_set_ttl_handles_exception():
     svc._initialized = True
 
     mock_manager = MagicMock()
-    mock_manager.execute.side_effect = RuntimeError("RPC failed")
+    mock_manager.execute_control.side_effect = RuntimeError("RPC failed")
     svc._paddlex_manager = mock_manager
 
     assert svc.set_pipeline_ttls({"OCR": 0}) is False
@@ -132,7 +134,7 @@ def test_status_flow_reads_real_worker_snapshot():
     svc = OCRServiceSubprocess.__new__(OCRServiceSubprocess)
     svc._initialized = True
     mock_manager = MagicMock()
-    mock_manager.execute.return_value = {
+    mock_manager.execute_control.return_value = {
         "pipeline_ttls": {"OCR": 0, "PP-StructureV3": 600},
         "max_heavy": 2,
         "loaded_pipelines": ["OCR"],
@@ -144,7 +146,7 @@ def test_status_flow_reads_real_worker_snapshot():
 
     assert status["ready"] is True
     assert status["loaded_pipelines"] == ["OCR"]
-    task_fn = mock_manager.execute.call_args.args[0]
+    task_fn = mock_manager.execute_control.call_args.args[0]
     worker = MagicMock()
     task_fn(worker)
     worker.cache_status.assert_called_once()

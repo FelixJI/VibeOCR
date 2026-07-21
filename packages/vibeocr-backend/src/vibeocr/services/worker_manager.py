@@ -345,8 +345,11 @@ class WorkerManager:
                 raise OCRWorkerProcessError("无可用 Worker")
 
         try:
-            # 执行任务
-            result = task(worker_info.process)
+            # 执行任务。_shm_lock 与 execute_control 共享，保证重 RPC
+            # （recognize/preload）与轻 RPC （cache_status/set_ttls/release）
+            # 不会同时 write_message 破坏共享内存协议状态。
+            with worker_info.process._shm_lock:
+                result = task(worker_info.process)
             self._release_worker(worker_info, success=True)
             return result
 
@@ -364,6 +367,43 @@ class WorkerManager:
                         # 重试任务
                         return self.execute(task, retry_count + 1)
             raise
+
+    def execute_control(self, task: Callable[[OCRWorkerProcess], Any]) -> Any:
+        """执行轻量控制 RPC（cache_status / set_ttls / release_pipelines）。
+
+        与 execute() 的关键区别：**不做 busy 预留、不等待 worker 空闲**。
+        直接拿第一个 ready worker，用其 _shm_lock 串行化共享内存访问。
+
+        这三个 RPC 在 worker 主循环里都是毫秒级处理。控制 RPC 与正在跑的
+        OCR 共享同一共享内存段，必须用 _shm_lock 互斥（避免并发
+        write_message 破坏 SHM 状态）；但不必等待 worker.busy=False，
+        因为 worker 主循环会优先处理 control 消息（毫秒级延迟）。
+
+        修复 bug：cache_status 走 execute() 时，若 worker 正被 preload/
+        recognize 占用（busy=True），_reserve_worker 等到 300s 才放弃，
+        UI 这边 10s 已超时。用户日志显示 status 在 worker 做 preload 时
+        100% 失败。
+
+        Args:
+            task: 控制任务，接收 OCRWorkerProcess 参数。
+
+        Returns:
+            任务结果。
+
+        Raises:
+            OCRWorkerProcessError: 无可用 worker（未启动或全部已停止）。
+        """
+        with self._workers_lock:
+            for info in self._workers:
+                if info.process.is_ready:
+                    worker = info.process
+                    break
+            else:
+                raise OCRWorkerProcessError("无可用 Worker（控制 RPC）")
+        # 抢共享内存协议锁：与正在执行的 recognize/preload 互斥，
+        # 但不等 worker.busy。锁内 task 是 write+read 一次完整 RPC。
+        with worker._shm_lock:
+            return task(worker)
 
     def _restart_worker(self, worker_info: WorkerInfo) -> bool:
         """重启指定 Worker（仅在 worker 未就绪时真正重启）

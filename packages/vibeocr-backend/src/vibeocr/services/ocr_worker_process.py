@@ -116,6 +116,12 @@ class OCRWorkerProcess:
         self.busy = False
         self._ready = False
 
+        # 共享内存协议锁：所有 RPC 方法（recognize/preload/cache_status/
+        # set_ttls/release）共用同一把锁，避免并发 write_message 破坏 SHM 状态。
+        # 由 execute_control（轻量 RPC）和 execute（重 RPC）共同遵守。
+        # recognize/preload 的 task 闭包内部不再单独加锁，由调用方负责。
+        self._shm_lock = threading.RLock()
+
         # 预加载兜底防护：连续读到自身请求的计数（超过阈值判定异常）
         self._preload_self_read_count = 0
 

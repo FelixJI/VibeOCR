@@ -371,7 +371,9 @@ class OCRServiceSubprocess:
         if not self._initialized:
             return []
         try:
-            return self._paddlex_manager.execute(
+            # 用 execute_control 而非 execute：release 是轻量控制 RPC，
+            # 不应被 OCR/preload 阻塞（worker 主循环里毫秒级处理）。
+            return self._paddlex_manager.execute_control(
                 lambda w: w.release_pipelines(
                     heavy_only=heavy_only, timeout=Constants.Timeout.WORKER_TIMEOUT
                 ),
@@ -392,7 +394,8 @@ class OCRServiceSubprocess:
         if not self._initialized:
             return False
         try:
-            return self._paddlex_manager.execute(
+            # 用 execute_control：TTL 设置是轻量控制 RPC，不应被 OCR 阻塞。
+            return self._paddlex_manager.execute_control(
                 lambda w: w.set_ttls(
                     pipeline_ttls, timeout=Constants.Timeout.SHM_WRITE
                 )
@@ -420,8 +423,10 @@ class OCRServiceSubprocess:
         start = _time.monotonic()
         logger.info("[cache_status] 进入 (worker 调用开始)")
         try:
+            # 用 execute_control：cache_status 是只读快查询（worker 毫秒级处理），
+            # 不应被 OCR/preload 阻塞。原走 execute() 在 worker busy 时等 300s。
             status = dict(
-                self._paddlex_manager.execute(
+                self._paddlex_manager.execute_control(
                     lambda w: w.cache_status(
                         timeout=Constants.Timeout.WORKER_TIMEOUT
                     )
