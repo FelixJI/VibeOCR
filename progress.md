@@ -153,3 +153,6 @@
 - 目标测试文件 3 项通过；Ruff lint/format 与 `git diff --check` 已通过。
 - 已核对发布脚本与版本文件，确定按补丁版本 `0.5.3` 重新发版，且先等待修复提交的 Quality Gates 成功。
 - 与失败 Actions 完全相同的 backend 测试路径已通过：862 passed、5 skipped；进入提交与远端门禁阶段。
+- 修复提交已推送，首轮远端验证确认原 backend 失败步骤转绿；remaining Python tests 又暴露 3 个依赖真实 `paddlex` 的隔离缺陷，发版继续暂停。
+- 已让 3 个依赖探测测试使用最小假 `paddlex.utils.deps`；无 PaddleX 红绿回路从 3 failed 转为 4 passed。
+- 完整 remaining Python 门禁已本地通过：1157 passed；进入第二个修复提交与远端复验。

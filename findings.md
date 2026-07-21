@@ -261,3 +261,12 @@
 - 仓库发布约定：先提交普通修复并推送 main，通过 Quality Gates 后用 `scripts/bump_version.py patch --no-edit --yes` 统一升级 workspace 版本、CHANGELOG、uv.lock，创建 `release: vX.Y.Z` 提交和标签并推送触发 Release。
 - 下一补丁版本应为 `0.5.3`；当前 `v0.5.2` Release 已成功，不应覆写既有标签/资产。
 - 与失败 Actions 相同的 backend 门禁已本地通过：862 passed、5 skipped in 32.96s（本机可用 CUDA 条件使跳过数与 runner 略有不同）。
+
+### 第二个远端失败
+
+- 修复提交 `327ba9a` 的 Quality Gates 运行 `29788869845` 中，原 backend 测试步骤已经成功；新失败发生于 `Run remaining Python unit tests`。
+- 精确失败为 `tests/core/test_pipeline_table.py` 的 3 个 `TestCheckTableDeps` 用例，均在测试体直接 `import paddlex.utils.deps` 时因 build-shell 未安装可选 `paddlex` 而失败。
+- 这些用例本意是 mock PaddleX 依赖探测函数，却先依赖真实可选包，属于测试隔离缺陷；CI 轻量依赖策略明确不应安装大型 OCR 运行时。
+- 修复应在测试中注入最小假的 `paddlex.utils.deps` 模块，保留对 `_check_table_deps` 导入/判定路径的真实覆盖。
+- 已建立无 PaddleX 复现脚本：修复前 3 failed、1 passed；测试注入假模块后 4 passed in 0.11s。临时复现脚本随后删除。
+- CI 对应的完整 remaining Python 集合本地通过：1157 passed in 102.87s。

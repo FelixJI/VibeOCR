@@ -1,9 +1,29 @@
-# tests/core/test_pipeline_table.py
+import sys
+from types import ModuleType
+
 from vibeocr.core.pipelines.pipeline_table import (
     TABLE_RECOGNITION_SPEC,
     TableRecognitionOptions,
     _recognize_table,
 )
+
+
+def _install_fake_paddlex_deps(monkeypatch):
+    """注入最小 PaddleX deps 模块，避免单测依赖可选 OCR 运行时。"""
+    paddlex = ModuleType("paddlex")
+    utils = ModuleType("paddlex.utils")
+    deps = ModuleType("paddlex.utils.deps")
+    deps.EXTRAS = {
+        "ocr": ["paddleocr", "opencv-contrib-python", "pyclipper"],
+    }
+    deps.is_extra_available = lambda extra: True
+    deps.is_dep_available = lambda dep: True
+    paddlex.utils = utils
+    utils.deps = deps
+    monkeypatch.setitem(sys.modules, "paddlex", paddlex)
+    monkeypatch.setitem(sys.modules, "paddlex.utils", utils)
+    monkeypatch.setitem(sys.modules, "paddlex.utils.deps", deps)
+    return deps
 
 
 def test_table_options_defaults():
@@ -60,10 +80,9 @@ class TestCheckTableDeps:
 
     def test_all_present_passes(self, monkeypatch):
         """is_extra_available('ocr') 返回 True 时不抛错。"""
-        import paddlex.utils.deps as pdx_deps
-
         from vibeocr.core.pipelines import pipeline_table
 
+        pdx_deps = _install_fake_paddlex_deps(monkeypatch)
         monkeypatch.setattr(pdx_deps, "is_extra_available", lambda extra: True)
         monkeypatch.setattr(pdx_deps, "is_dep_available", lambda dep: True)
         # 不抛异常即通过
@@ -71,14 +90,10 @@ class TestCheckTableDeps:
 
     def test_missing_raises_with_package_names(self, monkeypatch):
         """is_extra_available 返回 False 时抛错，且消息含具体缺失发行版名。"""
-        import paddlex.utils.deps as pdx_deps
-
         from vibeocr.core.pipelines import pipeline_table
 
-        # 选取当前 paddlex 版本 ocr extra 中确实存在的一个包作为缺失项
-        # （不同 paddlex 版本 extra 清单不同，不能硬编码）
+        pdx_deps = _install_fake_paddlex_deps(monkeypatch)
         ocr_deps = list(pdx_deps.EXTRAS.get("ocr", []))
-        assert ocr_deps, "测试前提失效：paddlex ocr extra 为空"
         missing_pkg = ocr_deps[0]
         monkeypatch.setattr(pdx_deps, "is_extra_available", lambda extra: False)
         monkeypatch.setattr(
@@ -97,10 +112,9 @@ class TestCheckTableDeps:
 
     def test_multiple_missing_all_listed(self, monkeypatch):
         """多个包缺失时全部列在错误消息里。"""
-        import paddlex.utils.deps as pdx_deps
-
         from vibeocr.core.pipelines import pipeline_table
 
+        pdx_deps = _install_fake_paddlex_deps(monkeypatch)
         # 让 ocr extra 前 3 个包不可用
         missing_pkgs = list(pdx_deps.EXTRAS.get("ocr", []))[:3]
         monkeypatch.setattr(pdx_deps, "is_extra_available", lambda extra: False)
@@ -328,9 +342,7 @@ class TestBackfillEmptyTableCells:
 
         table_html = "<table><tr><td></td></tr></table>"
         ocr_items = [{"text": "X", "center": (30.0, 30.0)}]
-        new_html, consumed = _backfill_empty_table_cells(
-            table_html, None, ocr_items
-        )
+        new_html, consumed = _backfill_empty_table_cells(table_html, None, ocr_items)
         assert new_html == table_html
         assert consumed == set()
 
@@ -460,7 +472,9 @@ def test_recognize_table_filters_text_inside_table_bbox():
     ]
     # 两个文本：一个在表格内（中心点 100,50），一个在表格外（中心点 300,300）
     inside_poly = np.array([[80, 40], [120, 40], [120, 60], [80, 60]], dtype=float)
-    outside_poly = np.array([[280, 290], [320, 290], [320, 310], [280, 310]], dtype=float)
+    outside_poly = np.array(
+        [[280, 290], [320, 290], [320, 310], [280, 310]], dtype=float
+    )
 
     res = _make_table_result(
         ocr_texts=["表格内文字", "表格外文字"],
@@ -509,9 +523,7 @@ def test_recognize_table_assigns_bbox_from_cell_box_union():
     ]
     res = _make_table_result(cell_box_list=cell_box_list)
     service = _FakeService([res])
-    result = _recognize_table(
-        service, image=None, options=TableRecognitionOptions()
-    )
+    result = _recognize_table(service, image=None, options=TableRecognitionOptions())
 
     # TextBlock 的 bbox 应为单元格并集 [10,20,500,200]
     table_block = result.text_blocks[0]
@@ -534,9 +546,7 @@ def test_recognize_table_bbox_none_when_no_cell_box_list():
     """
     res = _make_table_result()  # 不传 cell_box_list
     service = _FakeService([res])
-    result = _recognize_table(
-        service, image=None, options=TableRecognitionOptions()
-    )
+    result = _recognize_table(service, image=None, options=TableRecognitionOptions())
 
     assert len(result.text_blocks) == 1
     assert result.text_blocks[0].bbox is None
@@ -558,9 +568,7 @@ def test_recognize_table_bbox_multiple_tables_no_misalignment():
     )
     res2 = _make_table_result(pred_html="<table><tr><td>B</td></tr></table>")
     service = _FakeService([res1, res2])
-    result = _recognize_table(
-        service, image=None, options=TableRecognitionOptions()
-    )
+    result = _recognize_table(service, image=None, options=TableRecognitionOptions())
 
     table_blocks = [b for b in result.text_blocks if b.label == "table"]
     assert len(table_blocks) == 2
@@ -569,4 +577,3 @@ def test_recognize_table_bbox_multiple_tables_no_misalignment():
     # 第二个表格 bbox 为 None（无 cell_box_list），但内容正常
     assert table_blocks[1].bbox is None
     assert "B" in table_blocks[1].text
-

@@ -276,3 +276,6 @@
 | 沙箱内 `gh` 无法读取用户配置 | 1 | 已通过权限流程读取 Actions 记录与失败日志 |
 | 并行只读检查因一个 `rg` 路径不存在导致聚合调用失败 | 1 | 改为使用 `rg --files` 确认真实路径后分开读取，不重复错误路径 |
 | 新测试首次 Ruff format check 报需格式化 | 1 | 已仅格式化目标测试文件，lint 与 format check 均通过 |
+| 修复提交的首轮 Quality Gates 在 remaining Python tests 失败 | 1 | 原 backend 失败步骤已绿；继续修复 3 个错误依赖真实 `paddlex` 的单测，不提前发版 |
+| 第二次并行检索使用 PowerShell 不支持的路径 glob 导致 `rg` 失败 | 1 | 已改用目录参数加 `-g` 过滤，后续不在 Windows 参数中传此类 glob |
+| 新假模块 helper 首次 Ruff 报 B010 | 1 | 按 lint 建议改为模块属性直接赋值后重跑 |
