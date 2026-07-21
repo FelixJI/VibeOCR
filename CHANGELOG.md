@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.5.4] - 2026-07-21
+
+### Added
+- feat(ui): per-pipeline TTL ComboBox + split cache/pipeline status labels
+- feat(config): per-pipeline TTL dict + legacy migration
+- feat(contracts): add cache_kind metadata + paddle/mineru partition
+
+### Fixed
+- fix(about): scroll CHANGELOG to top after setMarkdown
+- fix(worker): cache_status/set_ttls/release 绕过 worker busy 等待
+- fix(cache): 读取驻留状态按钮的超时/反馈/文案
+- fix(cache): pass ttls at cache_manager construction + adapt tests to per-pipeline TTL API
+- fix(cache): misleading copy + real refresh_cache detection + machine_id warmup
+- fix(config): repair preload_pipelines caller + reject bool legacy TTL value
+
+### Changed
+- chore: remove obsolete MinerU output and .ui exclusion rules
+- diag(cache): add TTL watcher observability logs
+- diag(ui): add TTL Combos creation logging for missing-ComboBox debugging
+- refactor(protocol): upgrade TTL payload to per-pipeline dict (ttl_seconds -> pipeline_ttls)
+- refactor(worker): drop lazy evict_idle, add shutdown, accept dict TTL payload
+- test(cache): background tick thread wake/shutdown behavior
+- refactor(cache): per-pipeline TTL + background tick thread + mineru cache_kind split
+- docs(spec): correct TTL upgrade point list (preload has no ttl; settings.snapshot does; add composition.py)
+- docs(plan): pipeline cache TTL redesign implementation plan
+- docs(spec): add gate compliance section to TTL redesign
+- docs(spec): pipeline cache TTL redesign + bug fixes
+
+
 ## [0.5.3] - 2026-07-21
 
 ### Fixed

@@ -1,14 +1,14 @@
 [project]
 name = "vibeocr"
-version = "0.5.3"
+version = "0.5.4"
 description = "A screenshot OCR application"
 authors = [{name = "Felix Ji"}]
 requires-python = ">=3.13,<3.14"
 dependencies = [
-    "vibeocr-contracts-py==0.5.3",
-    "vibeocr-client-py==0.5.3",
-    "vibeocr-backend==0.5.3",
-    "vibeocr-pyside==0.5.3",
+    "vibeocr-contracts-py==0.5.4",
+    "vibeocr-client-py==0.5.4",
+    "vibeocr-backend==0.5.4",
+    "vibeocr-pyside==0.5.4",
 ]
 
 [dependency-groups]
