@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+import time
 from unittest.mock import MagicMock
 
 from vibeocr.services.pipeline_cache_manager import (
@@ -392,3 +393,59 @@ def test_compute_max_heavy_by_vram_8gb_threshold() -> None:
     assert compute_max_heavy_by_vram(8192) == 1    # 8GB 边界
     assert compute_max_heavy_by_vram(8193) == 2    # 刚过 8GB
     assert compute_max_heavy_by_vram(24576) == 2   # 24GB
+
+
+# =============================================================================
+# Task 3: live background tick thread behavior (real __init__, no __new__ bypass)
+# =============================================================================
+
+
+def test_background_tick_evicts_after_ttl(monkeypatch) -> None:
+    """启动后台线程，注入短 tick_interval，验证 TTL 到期后被回收。"""
+    monkeypatch.setenv("VIBEOCR_USE_GPU", "false")
+    svc = _FakeService()
+    svc._pipelines = {"PP-StructureV3": object()}
+    # 真实 __init__，会启动后台线程
+    mgr = PipelineCacheManager(
+        svc,
+        {"PP-StructureV3": 1},  # 1 秒 TTL
+        max_heavy=2,
+        tick_interval=0.05,
+    )
+    try:
+        mgr.touch("PP-StructureV3")
+        time.sleep(0.3)  # 等 tick + ttl 过期
+        assert "PP-StructureV3" not in svc._pipelines
+    finally:
+        mgr.shutdown()
+
+
+def test_shutdown_joins_thread_cleanly(monkeypatch) -> None:
+    """shutdown() 后线程在 2s 内退出。"""
+    monkeypatch.setenv("VIBEOCR_USE_GPU", "false")
+    svc = _FakeService()
+    mgr = PipelineCacheManager(
+        svc, {"OCR": 0}, max_heavy=1, tick_interval=0.01
+    )
+    mgr.shutdown()
+    assert not mgr._thread.is_alive()
+
+
+def test_touch_wakes_blocked_thread(monkeypatch) -> None:
+    """空缓存时线程阻塞，touch 唤醒后开始 tick。"""
+    monkeypatch.setenv("VIBEOCR_USE_GPU", "false")
+    svc = _FakeService()
+    mgr = PipelineCacheManager(
+        svc, {"PP-StructureV3": 1}, max_heavy=1, tick_interval=0.05
+    )
+    try:
+        time.sleep(0.1)  # 空缓存期，线程阻塞
+        assert svc._pipelines == {}  # 未被回收（本来就空）
+        svc._pipelines["PP-StructureV3"] = object()
+        mgr.touch("PP-StructureV3")  # 唤醒
+        # TTL=1s 且 touch 记录的是真实当前时间，因此 sleep 必须 > TTL 才能触发回收。
+        # 1.3s = 1.0s(TTL) + 0.3s(6 个 tick 周期 + 调度余量)。
+        time.sleep(1.3)
+        assert "PP-StructureV3" not in svc._pipelines  # 被回收
+    finally:
+        mgr.shutdown()
