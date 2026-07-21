@@ -1,15 +1,18 @@
 """管道缓存生命周期管理（在 worker 子进程内运行）。
 
 接管 OCRService._pipelines 的生命周期：
-- 记录每个重管道的 last_used 时间戳
-- FIFO 淘汰（超并存上限时淘汰最久未用的）
-- TTL 闲置回收（evict_idle）
+- 记录每个管道的 last_used 时间戳
+- FIFO 淘汰（超并存上限时淘汰最久未用的 paddle 重管道；MinerU 不计入）
+- TTL 闲置回收（后台线程每 30s tick，空缓存阻塞唤醒）
 - 显式释放（release）
+- 按 cache_kind 分流回收：paddle 调 paddle.device.cuda.empty_cache()，mineru 不调
 """
 
 from __future__ import annotations
 
 import logging
+import os
+import threading
 import time
 from typing import TYPE_CHECKING
 
@@ -18,31 +21,26 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-#: 默认 TTL（秒）。
-DEFAULT_TTL_SECONDS = 300
-#: 显存分档阈值（MB）。
-VRAM_TIER_6GB = 6144
-VRAM_TIER_12GB = 12288
-#: pynvml 不可用时的回退并存上限。
-FALLBACK_MAX_HEAVY = 2
+#: 显存分档阈值（MB）。≤8GB=1 并存，>8GB=2 并存。
+VRAM_TIER_8GB = 8192
+#: pynvml 不可用时的回退并存上限（保守，防 OOM）。
+FALLBACK_MAX_HEAVY = 1
 
 
 def compute_max_heavy_by_vram(total_vram_mb: int) -> int:
-    """按显存总量计算重管道并存上限。
+    """按显存计算 paddle 重管道并存上限。
 
     Args:
         total_vram_mb: GPU 显存总量（MB），0 表示无法读取。
 
     Returns:
-        并存上限：≤6G=1, ≤12G=2, >12G=3, 未知=2。
+        并存上限：≤8G=1, >8G=2, 未知=1。
     """
     if total_vram_mb <= 0:
         return FALLBACK_MAX_HEAVY
-    if total_vram_mb <= VRAM_TIER_6GB:
+    if total_vram_mb <= VRAM_TIER_8GB:
         return 1
-    if total_vram_mb <= VRAM_TIER_12GB:
-        return 2
-    return 3
+    return 2
 
 
 class PipelineCacheManager:
@@ -54,24 +52,31 @@ class PipelineCacheManager:
     def __init__(
         self,
         service: OCRService,
-        ttl_seconds: int = DEFAULT_TTL_SECONDS,
+        ttls: dict[str, int],
         max_heavy: int | None = None,
+        tick_interval: float = 30.0,
     ) -> None:
         self._service = service
-        self._ttl = ttl_seconds
+        self._ttls = dict(ttls)
         self._last_used: dict[str, float] = {}
-        # max_heavy=None 时按显存自动计算
         self._max_heavy = (
             max_heavy if max_heavy is not None else self._detect_max_heavy()
         )
+        self._tick_interval = tick_interval
+        self._stop_event = threading.Event()
+        self._wakeup_event = threading.Event()
+        self._thread = threading.Thread(
+            target=self._tick_loop,
+            name="PipelineTTLWatcher",
+            daemon=True,
+        )
+        self._thread.start()
 
     def _detect_max_heavy(self) -> int:
         """读 GPU 显存总量算并存上限，失败回退。
 
         CPU 模式（VIBEOCR_USE_GPU != true）固定返回 1（串行更稳）。
         """
-        import os
-
         if os.environ.get("VIBEOCR_USE_GPU", "").lower() != "true":
             return 1
         try:
@@ -82,25 +87,43 @@ class PipelineCacheManager:
                 return compute_max_heavy_by_vram(info.total)
         except Exception as e:
             logger.warning(
-                "[CacheManager] 检测显存失败，回退上限 %d: %s", FALLBACK_MAX_HEAVY, e
+                "[CacheManager] 检测显存失败，回退上限 %d: %s",
+                FALLBACK_MAX_HEAVY,
+                e,
             )
         return FALLBACK_MAX_HEAVY
 
+    # ------------------------------------------------------------------
+    # 公共属性
+    # ------------------------------------------------------------------
     @property
-    def ttl_seconds(self) -> int:
-        return self._ttl
+    def ttls(self) -> dict[str, int]:
+        return dict(self._ttls)
 
-    @ttl_seconds.setter
-    def ttl_seconds(self, value: int) -> None:
-        self._ttl = max(0, int(value))
+    @ttls.setter
+    def ttls(self, value: dict[str, int]) -> None:
+        from vibeocr.core.pipelines import get_all_pipelines
+
+        valid_names = {p.value for p in get_all_pipelines()}
+        validated: dict[str, int] = {}
+        for name, ttl in value.items():
+            if name not in valid_names:
+                logger.warning("[CacheManager] 忽略未知管道 TTL: %s", name)
+                continue
+            validated[name] = max(0, int(ttl))
+        self._ttls = validated
 
     @property
     def max_heavy(self) -> int:
         return self._max_heavy
 
+    # ------------------------------------------------------------------
+    # 时间戳 / 容量管理
+    # ------------------------------------------------------------------
     def touch(self, pipeline_name: str, now: float | None = None) -> None:
         """记录管道使用时间。每次 get_or_create_pipeline 后调用。"""
         self._last_used[pipeline_name] = now if now is not None else time.time()
+        self._wakeup_event.set()
 
     def get_last_used(self, pipeline_name: str) -> float | None:
         return self._last_used.get(pipeline_name)
@@ -108,9 +131,10 @@ class PipelineCacheManager:
     def enforce_capacity(
         self, new_pipeline: str, now: float | None = None
     ) -> list[str]:
-        """加载新重管道前，FIFO 淘汰至不超并存上限。
+        """加载新 paddle 重管道前，FIFO 淘汰至不超并存上限。
 
-        只淘汰重管道，不动 OCR 等轻管道。不淘汰 new_pipeline 本身。
+        只淘汰 paddle 重管道，不动 OCR/表格/公式（轻）和 MinerU（不计名额）。
+        不淘汰 new_pipeline 本身。
 
         Args:
             new_pipeline: 即将加载的管道名（排除在淘汰候选外）。
@@ -120,18 +144,19 @@ class PipelineCacheManager:
             被释放的管道名列表。
         """
         now = now if now is not None else time.time()
+        from vibeocr.core.pipelines import get_paddle_pipelines
+
+        paddle_names = {p.value for p in get_paddle_pipelines()}
         from vibeocr.core.pipelines import get_heavy_pipelines
 
-        heavy_names = {p.value for p in get_heavy_pipelines()}
-        # 当前缓存中的重管道（排除 new_pipeline）
+        heavy_paddle_names = paddle_names & {p.value for p in get_heavy_pipelines()}
         cached_heavy = [
             name
             for name in self._service._pipelines
-            if name in heavy_names and name != new_pipeline
+            if name in heavy_paddle_names and name != new_pipeline
         ]
         evicted: list[str] = []
         while len(cached_heavy) >= self._max_heavy:
-            # 按 last_used 升序，淘汰最旧的
             cached_heavy.sort(key=lambda n: self._last_used.get(n, 0.0))
             victim = cached_heavy.pop(0)
             self._release_one(victim)
@@ -139,9 +164,10 @@ class PipelineCacheManager:
         return evicted
 
     def evict_idle(self, now: float | None = None) -> list[str]:
-        """回收闲置超 TTL 的重管道。worker 主循环每次消息处理后调用。
+        """回收闲置超 TTL 的管道。
 
-        OCR 等轻管道不受 TTL 回收。
+        ttl<=0 的管道（含所有持久管道、所有 MinerU 默认配置）不回收。
+        回收动作按 cache_kind 分流：paddle 调 empty_cache，mineru 不调。
 
         Args:
             now: 当前时间戳（测试注入用）。
@@ -149,23 +175,21 @@ class PipelineCacheManager:
         Returns:
             被释放的管道名列表。
         """
-        if self._ttl <= 0:
-            return []
         now = now if now is not None else time.time()
-        from vibeocr.core.pipelines import get_heavy_pipelines
-
-        heavy_names = {p.value for p in get_heavy_pipelines()}
         evicted: list[str] = []
         for name in list(self._service._pipelines.keys()):
-            if name not in heavy_names:
-                continue  # 轻管道跳过
+            ttl = self._ttls.get(name, 0)
+            if ttl <= 0:
+                continue
             last = self._last_used.get(name, 0.0)
-            if last + self._ttl < now:
+            if last + ttl < now:
                 self._release_one(name)
                 evicted.append(name)
         if evicted:
             logger.info(
-                "[CacheManager] TTL 回收 %d 个闲置管道: %s", len(evicted), evicted
+                "[CacheManager] TTL 回收 %d 个闲置管道: %s",
+                len(evicted),
+                evicted,
             )
         return evicted
 
@@ -173,7 +197,7 @@ class PipelineCacheManager:
         """显式释放管道。
 
         Args:
-            heavy_only: True 只释放重管道，False 释放全部（含 OCR）。
+            heavy_only: True 只释放重管道，False 释放全部。
 
         Returns:
             被释放的管道名列表。
@@ -187,7 +211,6 @@ class PipelineCacheManager:
                 continue
             self._release_one(name)
             released.append(name)
-        self._empty_cache()
         logger.info(
             "[CacheManager] release(heavy_only=%s) 释放 %d 个管道: %s",
             heavy_only,
@@ -214,7 +237,7 @@ class PipelineCacheManager:
         """Return an immutable wire-friendly snapshot of the real worker cache."""
         loaded = sorted(str(name) for name in self._service._pipelines)
         return {
-            "ttl_seconds": self._ttl,
+            "pipeline_ttls": dict(self._ttls),
             "max_heavy": self._max_heavy,
             "loaded_pipelines": loaded,
             "last_used_unix_ms": {
@@ -224,21 +247,50 @@ class PipelineCacheManager:
             },
         }
 
+    def shutdown(self) -> None:
+        """停止后台 tick 线程，等待最多 2 秒退出。"""
+        self._stop_event.set()
+        self._wakeup_event.set()
+        if self._thread is not None and self._thread.is_alive():
+            self._thread.join(timeout=2.0)
+
+    # ------------------------------------------------------------------
+    # 后台线程
+    # ------------------------------------------------------------------
+    def _tick_loop(self) -> None:
+        """每 tick_interval 秒做一次 evict_idle；空缓存阻塞唤醒。"""
+        while not self._stop_event.is_set():
+            if not self._service._pipelines:
+                # 空缓存：阻塞等新管道加载，避免周期空转
+                self._wakeup_event.wait(timeout=60.0)
+                self._wakeup_event.clear()
+                continue
+            try:
+                self.evict_idle()
+            except Exception as e:
+                logger.warning("[CacheManager] tick evict_idle 失败: %s", e)
+            self._stop_event.wait(self._tick_interval)
+
+    # ------------------------------------------------------------------
+    # 内部
+    # ------------------------------------------------------------------
     def _release_one(self, pipeline_name: str) -> None:
-        """释放单个管道（del + empty_cache），并清理记录。"""
-        try:
-            del self._service._pipelines[pipeline_name]
-        except KeyError:
-            pass
+        """释放单个管道，按 cache_kind 决定是否调 empty_cache。"""
+        self._service._pipelines.pop(pipeline_name, None)
         self._last_used.pop(pipeline_name, None)
-        self._empty_cache()
+        if self._is_paddle(pipeline_name):
+            self._empty_cache()
+
+    @staticmethod
+    def _is_paddle(pipeline_name: str) -> bool:
+        from vibeocr.core.pipelines import get_paddle_pipelines
+
+        return pipeline_name in {p.value for p in get_paddle_pipelines()}
 
     @staticmethod
     def _empty_cache() -> None:
         """GPU 模式下回收显存碎片。"""
         try:
-            import os
-
             if os.environ.get("VIBEOCR_USE_GPU", "").lower() == "true":
                 import paddle
 
