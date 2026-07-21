@@ -230,9 +230,27 @@ async def _serve_connection(
 
     async def dispatch_and_write(request: RpcEnvelope) -> None:
         assert request.deadline_unix_ms is not None
+        # 诊断日志：定位请求卡在哪一层（dispatch / write / handler）
+        # 对所有 method 启用 INFO，对 cache 相关的 4 个 method 单独标注。
+        method = request.method
+        is_cache_call = method.startswith("pipeline_cache.")
+        if is_cache_call:
+            _log.info("[dispatch] 收到 %s (task_id=%s)", method, request.task_id)
+        import time as _time
+
+        dispatch_start = _time.monotonic()
         response = await dispatcher.dispatch(
             request, deadline_unix_ms=request.deadline_unix_ms
         )
+        dispatch_secs = _time.monotonic() - dispatch_start
+        if is_cache_call:
+            kind = getattr(response, "kind", None)
+            _log.info(
+                "[dispatch] %s 完成 (%.2fs, kind=%s)",
+                method,
+                dispatch_secs,
+                kind,
+            )
         async with write_lock:
             await conn.write_frame(envelope_to_json_bytes(response))
         if request.method == "system.shutdown":

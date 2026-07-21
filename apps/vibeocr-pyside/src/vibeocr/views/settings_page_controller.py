@@ -1798,8 +1798,27 @@ class SettingsPageController:
             self._update_release_status(status_text)
 
     def _on_pipeline_cache_error(self, error: str, generation: int) -> None:
-        if generation == self._cache_generation:
-            self._update_release_status(f"运行时缓存操作失败：{error}")
+        if generation != self._cache_generation:
+            return
+        # 双 label 反馈：状态 label（用户盯着的位置）+ 动作反馈 label。
+        # 历史问题：失败只写 labelReleaseStatus，导致用户看到的
+        # labelPipelineCacheStatus 一直停在"尚未读取"，误以为没响应。
+        friendly = self._friendly_cache_error(error)
+        status_label = self._ui.findChild(QLabel, "labelPipelineCacheStatus")
+        if status_label is not None:
+            status_label.setText(friendly)
+        self._update_release_status(f"运行时缓存操作失败：{error}")
+
+    @staticmethod
+    def _friendly_cache_error(error: str) -> str:
+        """把底层超时错误翻译成用户能理解的状态文案。"""
+        msg = str(error)
+        if "TimeoutError" in msg or "超时" in msg or "timed out" in msg.lower():
+            return (
+                "读取驻留状态失败：worker 未在 10 秒内响应"
+                "（可能正在加载模型、执行 OCR 或已停止响应）"
+            )
+        return f"读取驻留状态失败：{msg}"
 
     def _on_release_heavy_clicked(self) -> None:
         """释放重管道按钮。"""

@@ -469,7 +469,10 @@
                <item>
                 <widget class="QPushButton" name="btnRefreshPipelineCache">
                  <property name="text">
-                  <string>刷新驻留状态</string>
+                  <string>读取驻留状态</string>
+                 </property>
+                 <property name="toolTip">
+                  <string>查询推理进程当前驻留的模型，不改变任何状态（只读）</string>
                  </property>
                 </widget>
                </item>

@@ -657,8 +657,10 @@ class SyncBackendClient:
     # -- synchronous pipeline cache surface --------------------------
 
     def pipeline_cache_status_sync(
-        self, *, timeout: float = 120.0
+        self, *, timeout: float = 10.0
     ) -> dict[str, Any]:
+        # status 是毫秒级查询（worker 只读内存字典），用 10s 超时即可。
+        # 历史 120s 让"worker 卡住"的故障表现为用户等 2 分钟才看到错误。
         assert self._client is not None
         return self._run_sync(
             self._client.pipeline_cache_status(timeout=timeout),
@@ -666,7 +668,7 @@ class SyncBackendClient:
         )
 
     def set_pipeline_cache_ttl_sync(
-        self, pipeline_ttls: dict[str, int], *, timeout: float = 120.0
+        self, pipeline_ttls: dict[str, int], *, timeout: float = 15.0
     ) -> bool:
         assert self._client is not None
         result = self._run_sync(

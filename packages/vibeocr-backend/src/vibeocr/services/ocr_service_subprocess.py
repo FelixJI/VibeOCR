@@ -404,6 +404,7 @@ class OCRServiceSubprocess:
     def get_pipeline_cache_status(self) -> dict[str, object]:
         """Return the real cache snapshot reported by the inference worker."""
         if not self._initialized:
+            logger.debug("[cache_status] 未初始化，返回 ready=False")
             return {
                 "ready": False,
                 "pipeline_ttls": {},
@@ -411,6 +412,13 @@ class OCRServiceSubprocess:
                 "loaded_pipelines": [],
                 "last_used_unix_ms": {},
             }
+        # 诊断日志：定位请求是否进入 worker 子进程 RPC 层。
+        # 若此日志不出现但外层报 TimeoutError，说明请求卡在 WorkerHost
+        # asyncio dispatcher / to_thread 队列，根本没到 worker。
+        import time as _time
+
+        start = _time.monotonic()
+        logger.info("[cache_status] 进入 (worker 调用开始)")
         try:
             status = dict(
                 self._paddlex_manager.execute(
@@ -420,9 +428,16 @@ class OCRServiceSubprocess:
                 )
             )
             status["ready"] = True
+            logger.info(
+                "[cache_status] 完成 (%.2fs, loaded=%s)",
+                _time.monotonic() - start,
+                status.get("loaded_pipelines", []),
+            )
             return status
         except Exception as e:
-            logger.error("get_pipeline_cache_status 失败: %s", e)
+            logger.error(
+                "[cache_status] 失败 (%.2fs): %s", _time.monotonic() - start, e
+            )
             return {
                 "ready": False,
                 "pipeline_ttls": {},
