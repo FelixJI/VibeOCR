@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 class PipelineCacheBoundary(Protocol):
     def pipeline_cache_status(self) -> dict[str, Any]: ...
 
-    def set_pipeline_ttl(self, ttl_seconds: int) -> bool: ...
+    def set_pipeline_ttls(self, pipeline_ttls: dict[str, int]) -> bool: ...
 
     def release_pipelines(self, heavy_only: bool = True) -> list[str]: ...
 
@@ -42,23 +42,19 @@ class SetPipelineCacheTtlHandler:
     async def handle(
         self, payload: dict[str, Any], cancel: CancelToken
     ) -> dict[str, Any]:
-        ttl_seconds = payload.get("ttl_seconds")
-        if (
-            isinstance(ttl_seconds, bool)
-            or not isinstance(ttl_seconds, int)
-            or ttl_seconds < 0
-        ):
+        ttls = payload.get("pipeline_ttls")
+        if not isinstance(ttls, dict):
             raise WorkerError(
-                ErrorCode.INVALID_REQUEST, "ttl_seconds must be a non-negative integer"
+                ErrorCode.INVALID_REQUEST, "pipeline_ttls must be an object"
             )
         updated = await asyncio.to_thread(
-            self._boundary.set_pipeline_ttl, ttl_seconds
+            self._boundary.set_pipeline_ttls, dict(ttls)
         )
         if not updated:
             raise WorkerError(
                 ErrorCode.WORKER_UNAVAILABLE, "pipeline cache TTL was not updated"
             )
-        return {"updated": True, "ttl_seconds": ttl_seconds}
+        return {"updated": True, "pipeline_ttls": dict(ttls)}
 
 
 class ReleasePipelineCacheHandler:

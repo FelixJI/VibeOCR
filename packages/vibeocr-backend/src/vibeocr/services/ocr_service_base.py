@@ -166,8 +166,8 @@ class OCRServiceBase(ABC):
         self.clear_pipelines()
         return names
 
-    def set_pipeline_ttl(self, ttl_seconds: int) -> bool:
-        """设置重管道 TTL 闲置回收时间。
+    def set_pipeline_ttls(self, pipeline_ttls: dict[str, int]) -> bool:
+        """设置每管道 TTL 闲置回收时间。
 
         子类应重写此方法。基类默认空实现。
 

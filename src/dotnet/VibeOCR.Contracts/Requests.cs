@@ -319,13 +319,17 @@ public sealed record PipelineCacheStatusRequest : RequestContract;
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public sealed record SetPipelineCacheTtlRequest : RequestContract
 {
-    public required int TtlSeconds { get; init; }
+    public required Dictionary<string, int> PipelineTtls { get; init; }
 
     public override void Validate()
     {
-        if (TtlSeconds < 0)
+        foreach ((string name, int ttl) in PipelineTtls)
         {
-            throw new ProtocolContractException("ttl_seconds must be non-negative.");
+            ContractValidation.NonEmpty(name, nameof(PipelineTtls));
+            if (ttl < 0)
+            {
+                throw new ProtocolContractException("pipeline_ttls values must be non-negative.");
+            }
         }
     }
 }

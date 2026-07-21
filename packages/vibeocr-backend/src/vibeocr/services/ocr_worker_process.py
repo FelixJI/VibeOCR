@@ -1250,11 +1250,13 @@ class OCRWorkerProcess:
             logger.warning(f"发送释放管道请求失败: {e}")
             return []
 
-    def set_ttl(self, ttl_seconds: int, timeout: float = Constants.Timeout.SHM_WRITE) -> bool:
-        """向 worker 发送 SET_TTL 命令。
+    def set_ttls(
+        self, pipeline_ttls: dict[str, int], timeout: float = Constants.Timeout.SHM_WRITE
+    ) -> bool:
+        """向 worker 发送 SET_TTL 命令（每管道 dict 格式）。
 
         Args:
-            ttl_seconds: TTL 秒数，0=禁用。
+            pipeline_ttls: 每管道 TTL 字典。
             timeout: 超时时间（秒）。
 
         Returns:
@@ -1269,9 +1271,11 @@ class OCRWorkerProcess:
         if protocol is None:
             raise OCRWorkerProcessError(f"Worker {self.worker_id} 通信协议未初始化")
         try:
-            payload = json.dumps({"ttl_seconds": int(ttl_seconds)}).encode("utf-8")
+            payload = json.dumps({"pipeline_ttls": pipeline_ttls}).encode("utf-8")
             protocol.write_message(MSG_SET_TTL, payload, timeout=timeout, sender="main")
-            logger.debug(f"Worker {self.worker_id} SET_TTL 请求已发送")
+            logger.debug(
+                f"Worker {self.worker_id} SET_TTL 请求已发送 (pipeline_ttls)"
+            )
 
             protocol.wait_for_read(timeout=timeout)
 
@@ -1292,7 +1296,7 @@ class OCRWorkerProcess:
 
         if not self.is_ready:
             return {
-                "ttl_seconds": 0,
+                "pipeline_ttls": {},
                 "max_heavy": 0,
                 "loaded_pipelines": [],
                 "last_used_unix_ms": {},

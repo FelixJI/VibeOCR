@@ -63,6 +63,18 @@ def _boolean(value: Any, label: str) -> bool:
     return value
 
 
+def _pipeline_ttls_object(value: Any, label: str) -> None:
+    """校验 pipeline_ttls：必须是 dict，key 是已知管道名，value 是 int>=0。"""
+    obj = _object(value, label)
+    for name, ttl in obj.items():
+        if name not in _PIPELINES:
+            raise MethodPayloadError(f"{label} 包含未知管道名: {name!r}")
+        if isinstance(ttl, bool) or not isinstance(ttl, int):
+            raise MethodPayloadError(f"{label}.{name} 必须是整数")
+        if ttl < 0:
+            raise MethodPayloadError(f"{label}.{name} 必须 >= 0")
+
+
 def _uuid(value: Any, label: str) -> str:
     value = _string(value, label)
     if not _UUID_RE.match(value):
@@ -582,7 +594,7 @@ def _response_pipeline_cache_status(p: dict[str, Any]) -> None:
         p,
         required={
             "ready",
-            "ttl_seconds",
+            "pipeline_ttls",
             "max_heavy",
             "loaded_pipelines",
             "last_used_unix_ms",
@@ -590,7 +602,7 @@ def _response_pipeline_cache_status(p: dict[str, Any]) -> None:
         label="pipeline_cache.status response",
     )
     _boolean(p["ready"], "ready")
-    _integer(p["ttl_seconds"], "ttl_seconds")
+    _pipeline_ttls_object(p["pipeline_ttls"], "pipeline_ttls")
     _integer(p["max_heavy"], "max_heavy")
     if not isinstance(p["loaded_pipelines"], list) or not all(
         isinstance(item, str) and item in _PIPELINES
@@ -606,20 +618,20 @@ def _response_pipeline_cache_status(p: dict[str, Any]) -> None:
 def _request_pipeline_cache_set_ttl(p: dict[str, Any]) -> None:
     _closed(
         p,
-        required={"ttl_seconds"},
+        required={"pipeline_ttls"},
         label="pipeline_cache.set_ttl request",
     )
-    _integer(p["ttl_seconds"], "ttl_seconds")
+    _pipeline_ttls_object(p["pipeline_ttls"], "pipeline_ttls")
 
 
 def _response_pipeline_cache_set_ttl(p: dict[str, Any]) -> None:
     _closed(
         p,
-        required={"updated", "ttl_seconds"},
+        required={"updated", "pipeline_ttls"},
         label="pipeline_cache.set_ttl response",
     )
     _boolean(p["updated"], "updated")
-    _integer(p["ttl_seconds"], "ttl_seconds")
+    _pipeline_ttls_object(p["pipeline_ttls"], "pipeline_ttls")
 
 
 def _request_pipeline_cache_release(p: dict[str, Any]) -> None:
@@ -663,7 +675,7 @@ def _response_pipeline_cache_load(p: dict[str, Any]) -> None:
 def _response_settings(p: dict[str, Any]) -> None:
     _closed(
         p,
-        required={"backend", "preload_pipelines", "ttl_seconds"},
+        required={"backend", "preload_pipelines", "pipeline_ttls"},
         label="settings.snapshot response",
     )
     if p["backend"] not in ("cpu", "gpu"):
@@ -672,7 +684,7 @@ def _response_settings(p: dict[str, Any]) -> None:
         isinstance(item, str) for item in p["preload_pipelines"]
     ):
         raise MethodPayloadError("preload_pipelines must be an array of strings")
-    _integer(p["ttl_seconds"], "ttl_seconds")
+    _pipeline_ttls_object(p["pipeline_ttls"], "pipeline_ttls")
 
 
 def _request_switch_backend(p: dict[str, Any]) -> None:

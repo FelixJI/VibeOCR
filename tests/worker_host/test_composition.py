@@ -172,7 +172,7 @@ def test_json_settings_adapter_reads_side_by_side_profile(tmp_path: Path) -> Non
             {
                 "backend": "gpu",
                 "preload_pipelines": ["OCR", "TABLE_RECOGNITION"],
-                "pipeline_ttl_seconds": 900,
+                "pipeline_ttls": {"OCR": 900, "PP-StructureV3": 300},
             }
         ),
         encoding="utf-8",
@@ -181,7 +181,8 @@ def test_json_settings_adapter_reads_side_by_side_profile(tmp_path: Path) -> Non
     snapshot = adapter.get_snapshot()
     assert snapshot.backend == "gpu"
     assert snapshot.preload_pipelines == ("OCR", "TABLE_RECOGNITION")
-    assert snapshot.ttl_seconds == 900
+    assert snapshot.pipeline_ttls["OCR"] == 900
+    assert snapshot.pipeline_ttls["PP-StructureV3"] == 300
     assert not (tmp_path / "config" / "app_settings.json").exists()
 
 
@@ -233,14 +234,14 @@ def test_ocr_adapter_delegates_pipeline_cache_lifecycle() -> None:
         def get_pipeline_cache_status(self):
             return {
                 "ready": True,
-                "ttl_seconds": 300,
+                "pipeline_ttls": {"OCR": 300},
                 "max_heavy": 2,
                 "loaded_pipelines": ["OCR"],
                 "last_used_unix_ms": {},
             }
 
-        def set_pipeline_ttl(self, ttl_seconds):
-            return ttl_seconds == 600
+        def set_pipeline_ttls(self, pipeline_ttls):
+            return pipeline_ttls == {"OCR": 600}
 
         def release_pipelines(self, *, heavy_only):
             return ["PP-StructureV3"] if heavy_only else ["OCR"]
@@ -253,7 +254,7 @@ def test_ocr_adapter_delegates_pipeline_cache_lifecycle() -> None:
 
     adapter = OcrServiceAdapter(Service)
     assert adapter.pipeline_cache_status()["loaded_pipelines"] == ["OCR"]
-    assert adapter.set_pipeline_ttl(600) is True
+    assert adapter.set_pipeline_ttls({"OCR": 600}) is True
     assert adapter.release_pipelines() == ["PP-StructureV3"]
     assert adapter.preload_pipelines(["OCR"]) == {"OCR": True}
     assert adapter.warmup_pipelines(["OCR"]) == {"OCR": True}
@@ -285,5 +286,12 @@ async def test_settings_domain_handler_is_live_in_dispatcher(tmp_path: Path) -> 
     assert response.result == {
         "backend": "cpu",
         "preload_pipelines": [],
-        "ttl_seconds": 300,
+        "pipeline_ttls": {
+            "OCR": 0,
+            "TABLE_RECOGNITION": 0,
+            "FORMULA_RECOGNITION": 0,
+            "PP-StructureV3": 300,
+            "MinerU": 0,
+            "PaddleOCR-VL": 300,
+        },
     }

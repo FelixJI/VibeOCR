@@ -585,7 +585,7 @@
         "task_id": "00000000-0000-4000-8000-000000000036",
         "result": {
           "ready": true,
-          "ttl_seconds": 3600,
+          "pipeline_ttls": {"OCR": 0, "TABLE_RECOGNITION": 0, "FORMULA_RECOGNITION": 0, "PP-StructureV3": 300, "MinerU": 0, "PaddleOCR-VL": 300},
           "max_heavy": 2,
           "loaded_pipelines": ["OCR"],
           "last_used_unix_ms": {"OCR": 1700000000000}
@@ -598,14 +598,14 @@
         "request_id": "00000000-0000-4000-8000-000000000037",
         "task_id": "00000000-0000-4000-8000-000000000037",
         "method": "pipeline_cache.set_ttl",
-        "payload": {"ttl_seconds": 600},
+        "payload": {"pipeline_ttls": {"OCR": 0, "TABLE_RECOGNITION": 0, "FORMULA_RECOGNITION": 0, "PP-StructureV3": 600, "MinerU": 0, "PaddleOCR-VL": 600}},
         "deadline_unix_ms": 0
       },
       "response_envelope": {
         "protocol_version": 1,
         "request_id": "00000000-0000-4000-8000-000000000037",
         "task_id": "00000000-0000-4000-8000-000000000037",
-        "result": {"updated": true, "ttl_seconds": 600}
+        "result": {"updated": true, "pipeline_ttls": {"OCR": 0, "TABLE_RECOGNITION": 0, "FORMULA_RECOGNITION": 0, "PP-StructureV3": 600, "MinerU": 0, "PaddleOCR-VL": 600}}
       }
     },
     "pipeline_cache.release": {
@@ -674,7 +674,7 @@
           "preload_pipelines": [
             "OCR"
           ],
-          "ttl_seconds": 3600
+          "pipeline_ttls": {"OCR": 0, "TABLE_RECOGNITION": 0, "FORMULA_RECOGNITION": 0, "PP-StructureV3": 300, "MinerU": 0, "PaddleOCR-VL": 300}
         }
       }
     },

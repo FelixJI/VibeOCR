@@ -43,7 +43,7 @@ class SettingsSnapshotHandler:
         return {
             "backend": snap.backend,
             "preload_pipelines": list(snap.preload_pipelines),
-            "ttl_seconds": snap.ttl_seconds,
+            "pipeline_ttls": dict(snap.pipeline_ttls),
         }
 
 

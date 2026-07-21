@@ -618,10 +618,13 @@
         "response": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["ready", "ttl_seconds", "max_heavy", "loaded_pipelines", "last_used_unix_ms"],
+          "required": ["ready", "pipeline_ttls", "max_heavy", "loaded_pipelines", "last_used_unix_ms"],
           "properties": {
             "ready": { "type": "boolean" },
-            "ttl_seconds": { "type": "integer", "minimum": 0 },
+            "pipeline_ttls": {
+              "type": "object",
+              "additionalProperties": { "type": "integer", "minimum": 0 }
+            },
             "max_heavy": { "type": "integer", "minimum": 0 },
             "loaded_pipelines": { "type": "array", "items": { "$ref": "#/$defs/pipeline" } },
             "last_used_unix_ms": {
@@ -639,15 +642,23 @@
       "properties": {
         "request": {
           "type": "object", "additionalProperties": false,
-          "required": ["ttl_seconds"],
-          "properties": { "ttl_seconds": { "type": "integer", "minimum": 0 } }
+          "required": ["pipeline_ttls"],
+          "properties": {
+            "pipeline_ttls": {
+              "type": "object",
+              "additionalProperties": { "type": "integer", "minimum": 0 }
+            }
+          }
         },
         "response": {
           "type": "object", "additionalProperties": false,
-          "required": ["updated", "ttl_seconds"],
+          "required": ["updated", "pipeline_ttls"],
           "properties": {
             "updated": { "type": "boolean" },
-            "ttl_seconds": { "type": "integer", "minimum": 0 }
+            "pipeline_ttls": {
+              "type": "object",
+              "additionalProperties": { "type": "integer", "minimum": 0 }
+            }
           }
         }
       }
@@ -712,11 +723,14 @@
         "response": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["backend", "preload_pipelines", "ttl_seconds"],
+          "required": ["backend", "preload_pipelines", "pipeline_ttls"],
           "properties": {
             "backend": { "$ref": "#/$defs/backend" },
             "preload_pipelines": { "type": "array", "items": { "type": "string" } },
-            "ttl_seconds": { "type": "integer", "minimum": 0 }
+            "pipeline_ttls": {
+              "type": "object",
+              "additionalProperties": { "type": "integer", "minimum": 0 }
+            }
           }
         }
       }

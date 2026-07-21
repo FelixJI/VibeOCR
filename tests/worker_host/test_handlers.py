@@ -564,14 +564,14 @@ class _FakePipelineCache:
     def pipeline_cache_status(self) -> dict[str, Any]:
         return {
             "ready": True,
-            "ttl_seconds": 300,
+            "pipeline_ttls": {"OCR": 300},
             "max_heavy": 2,
             "loaded_pipelines": ["OCR"],
             "last_used_unix_ms": {"OCR": 1234},
         }
 
-    def set_pipeline_ttl(self, ttl_seconds: int) -> bool:
-        self.ttl_seconds = ttl_seconds
+    def set_pipeline_ttls(self, pipeline_ttls: dict[str, int]) -> bool:
+        self.pipeline_ttls = pipeline_ttls
         return True
 
     def release_pipelines(self, heavy_only: bool = True) -> list[str]:
@@ -595,8 +595,9 @@ async def test_pipeline_cache_handlers_reach_boundary() -> None:
     status = await PipelineCacheStatusHandler(
         boundary=boundary
     ).handle({}, cancel)
+    ttl_payload = {"pipeline_ttls": {"OCR": 600}}
     ttl = await SetPipelineCacheTtlHandler(boundary=boundary).handle(
-        {"ttl_seconds": 600}, cancel
+        ttl_payload, cancel
     )
     released = await ReleasePipelineCacheHandler(boundary=boundary).handle(
         {"heavy_only": False}, cancel
@@ -609,11 +610,11 @@ async def test_pipeline_cache_handlers_reach_boundary() -> None:
     )
 
     assert status["loaded_pipelines"] == ["OCR"]
-    assert ttl == {"updated": True, "ttl_seconds": 600}
+    assert ttl == {"updated": True, "pipeline_ttls": {"OCR": 600}}
     assert released == {"released": ["PP-StructureV3"]}
     assert preloaded == {"results": {"OCR": True}}
     assert warmed == {"results": {"OCR": True}}
-    assert boundary.ttl_seconds == 600
+    assert boundary.pipeline_ttls == {"OCR": 600}
     assert boundary.heavy_only is False
 
 
@@ -625,14 +626,16 @@ async def test_settings_snapshot_handler_maps_payload_to_result() -> None:
     class _FakeSettings:
         def get_snapshot(self) -> SettingsSnapshot:
             return SettingsSnapshot(
-                backend="gpu", preload_pipelines=("OCR",), ttl_seconds=7200
+                backend="gpu",
+                preload_pipelines=("OCR",),
+                pipeline_ttls={"OCR": 7200},
             )
 
     handler = SettingsSnapshotHandler(facade=_FakeSettings())  # type: ignore[arg-type]
     result = await handler.handle({}, CancelToken())
     assert result["backend"] == "gpu"
     assert result["preload_pipelines"] == ["OCR"]
-    assert result["ttl_seconds"] == 7200
+    assert result["pipeline_ttls"] == {"OCR": 7200}
 
 
 @pytest.mark.asyncio

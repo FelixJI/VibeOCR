@@ -788,16 +788,16 @@ class OCRService(metaclass=SingletonMeta):
         return cls().cache_manager.release(heavy_only=heavy_only)
 
     @classmethod
-    def set_pipeline_ttl(cls, ttl_seconds: int) -> bool:
-        """设置重管道 TTL 闲置回收时间（直连模式）。
+    def set_pipeline_ttls(cls, pipeline_ttls: dict[str, int]) -> bool:
+        """设置每管道 TTL 闲置回收时间（直连模式）。
 
         Args:
-            ttl_seconds: TTL 秒数，0=禁用。
+            pipeline_ttls: 每管道 TTL 字典，0=持久。
 
         Returns:
             是否设置成功。
         """
-        cls().cache_manager.ttl_seconds = ttl_seconds
+        cls().cache_manager.ttls = pipeline_ttls
         return True
 
     @property

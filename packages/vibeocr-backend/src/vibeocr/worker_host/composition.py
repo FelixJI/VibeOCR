@@ -190,8 +190,8 @@ class OcrServiceAdapter:
     def pipeline_cache_status(self) -> dict[str, Any]:
         return dict(self._get_service().get_pipeline_cache_status())
 
-    def set_pipeline_ttl(self, ttl_seconds: int) -> bool:
-        return bool(self._get_service().set_pipeline_ttl(ttl_seconds))
+    def set_pipeline_ttls(self, pipeline_ttls: dict[str, int]) -> bool:
+        return bool(self._get_service().set_pipeline_ttls(pipeline_ttls))
 
     def release_pipelines(self, heavy_only: bool = True) -> list[str]:
         return list(self._get_service().release_pipelines(heavy_only=heavy_only))
@@ -603,16 +603,30 @@ class JsonSettingsAdapter:
         if not isinstance(pipelines, list):
             pipelines = []
         normalized = tuple(str(item) for item in pipelines if isinstance(item, str))
-        ttl = data.get("pipeline_ttl_seconds", 300)
-        if isinstance(ttl, bool) or not isinstance(ttl, int):
-            ttl = 300
+        ttls_raw = data.get("pipeline_ttls", {})
+        if not isinstance(ttls_raw, dict):
+            ttls_raw = {}
+        # 校验 + 补默认值（委托 ConfigManager 风格）
+        from vibeocr.contracts.pipelines import get_all_pipelines
+
+        valid_names = {p.value for p in get_all_pipelines()}
+        pipeline_ttls: dict[str, int] = {}
+        for name in valid_names:
+            raw = ttls_raw.get(name)
+            if isinstance(raw, bool) or not isinstance(raw, int):
+                # 默认值：paddle 重管道=300，其他=0
+                pipeline_ttls[name] = (
+                    300 if name in {"PP-StructureV3", "PaddleOCR-VL"} else 0
+                )
+            else:
+                pipeline_ttls[name] = max(0, raw)
         backend = data.get("backend")
         if backend not in ("cpu", "gpu"):
             backend = self._backend_resolver()
         return SettingsSnapshot(
             backend=str(backend),
             preload_pipelines=normalized,
-            ttl_seconds=max(0, ttl),
+            pipeline_ttls=pipeline_ttls,
         )
 
     def switch_backend(self, target: str) -> str:

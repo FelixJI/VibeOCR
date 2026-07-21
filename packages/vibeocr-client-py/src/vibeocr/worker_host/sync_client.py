@@ -666,11 +666,11 @@ class SyncBackendClient:
         )
 
     def set_pipeline_cache_ttl_sync(
-        self, ttl_seconds: int, *, timeout: float = 120.0
+        self, pipeline_ttls: dict[str, int], *, timeout: float = 120.0
     ) -> bool:
         assert self._client is not None
         result = self._run_sync(
-            self._client.set_pipeline_cache_ttl(ttl_seconds, timeout=timeout),
+            self._client.set_pipeline_cache_ttl(pipeline_ttls, timeout=timeout),
             timeout=timeout + _RPC_COMPLETION_GRACE_SECONDS,
         )
         return bool(result["updated"])

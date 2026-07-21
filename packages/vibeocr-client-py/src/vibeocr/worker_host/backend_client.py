@@ -504,11 +504,11 @@ class BackendClient:
         return await self.call("pipeline_cache.status", {}, timeout=timeout)
 
     async def set_pipeline_cache_ttl(
-        self, ttl_seconds: int, *, timeout: float | None = None
+        self, pipeline_ttls: dict[str, int], *, timeout: float | None = None
     ) -> dict[str, Any]:
         return await self.call(
             "pipeline_cache.set_ttl",
-            {"ttl_seconds": ttl_seconds},
+            {"pipeline_ttls": pipeline_ttls},
             timeout=timeout,
         )
 

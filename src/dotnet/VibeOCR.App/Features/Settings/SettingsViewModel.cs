@@ -27,7 +27,7 @@ public class SettingsViewModel(IWorkerHostClient worker) : INotifyPropertyChange
     public event PropertyChangedEventHandler? PropertyChanged;
 
     public ObservableCollection<string> PreloadPipelines { get; } = [];
-    public int TtlSeconds { get; private set; }
+    public Dictionary<string, int> PipelineTtls { get; private set; } = new();
 
     public bool IsBusy { get => _isBusy; private set => SetField(ref _isBusy, value); }
     public string Status { get => _status; private set => SetField(ref _status, value); }
@@ -52,7 +52,7 @@ public class SettingsViewModel(IWorkerHostClient worker) : INotifyPropertyChange
             if (generation != Volatile.Read(ref _generation)) return;
             Backend = response.Backend;
             PendingBackend = response.Backend;
-            TtlSeconds = response.TtlSeconds;
+            PipelineTtls = response.PipelineTtls;
             PreloadPipelines.Clear();
             foreach (string pipeline in response.PreloadPipelines) PreloadPipelines.Add(pipeline);
             Status = $"后端：{response.Backend}；预热管线：{response.PreloadPipelines.Length} 个";

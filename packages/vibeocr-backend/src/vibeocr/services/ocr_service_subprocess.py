@@ -380,11 +380,11 @@ class OCRServiceSubprocess:
             logger.error("release_pipelines 失败: %s", e)
             return []
 
-    def set_pipeline_ttl(self, ttl_seconds: int) -> bool:
-        """设置重管道 TTL 闲置回收时间（经 RPC 下发给 worker）。
+    def set_pipeline_ttls(self, pipeline_ttls: dict[str, int]) -> bool:
+        """设置每管道 TTL（经 RPC 下发）。
 
         Args:
-            ttl_seconds: TTL 秒数，0=禁用。
+            pipeline_ttls: 每管道 TTL 字典，0=持久。
 
         Returns:
             是否成功。
@@ -393,12 +393,12 @@ class OCRServiceSubprocess:
             return False
         try:
             return self._paddlex_manager.execute(
-                lambda w: w.set_ttl(
-                    ttl_seconds, timeout=Constants.Timeout.SHM_WRITE
+                lambda w: w.set_ttls(
+                    pipeline_ttls, timeout=Constants.Timeout.SHM_WRITE
                 )
             )
         except Exception as e:
-            logger.error("set_pipeline_ttl 失败: %s", e)
+            logger.error("set_pipeline_ttls 失败: %s", e)
             return False
 
     def get_pipeline_cache_status(self) -> dict[str, object]:
@@ -406,7 +406,7 @@ class OCRServiceSubprocess:
         if not self._initialized:
             return {
                 "ready": False,
-                "ttl_seconds": 0,
+                "pipeline_ttls": {},
                 "max_heavy": 0,
                 "loaded_pipelines": [],
                 "last_used_unix_ms": {},
@@ -425,7 +425,7 @@ class OCRServiceSubprocess:
             logger.error("get_pipeline_cache_status 失败: %s", e)
             return {
                 "ready": False,
-                "ttl_seconds": 0,
+                "pipeline_ttls": {},
                 "max_heavy": 0,
                 "loaded_pipelines": [],
                 "last_used_unix_ms": {},

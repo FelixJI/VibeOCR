@@ -291,14 +291,18 @@ public sealed record SettingsSnapshotResponse : ResponseContract
 {
     public required string Backend { get; init; }
     public required string[] PreloadPipelines { get; init; }
-    public required int TtlSeconds { get; init; }
+    public required Dictionary<string, int> PipelineTtls { get; init; }
 
     public override void Validate()
     {
         ContractValidation.OneOf(Backend, nameof(Backend), "cpu", "gpu");
-        if (TtlSeconds < 0)
+        foreach ((string name, int ttl) in PipelineTtls)
         {
-            throw new ProtocolContractException("ttl_seconds must be non-negative.");
+            ContractValidation.NonEmpty(name, nameof(PipelineTtls));
+            if (ttl < 0)
+            {
+                throw new ProtocolContractException("pipeline_ttls values must be non-negative.");
+            }
         }
 
         foreach (string pipeline in PreloadPipelines)
@@ -312,16 +316,26 @@ public sealed record SettingsSnapshotResponse : ResponseContract
 public sealed record PipelineCacheStatusResponse : ResponseContract
 {
     public required bool Ready { get; init; }
-    public required int TtlSeconds { get; init; }
+    public required Dictionary<string, int> PipelineTtls { get; init; }
     public required int MaxHeavy { get; init; }
     public required string[] LoadedPipelines { get; init; }
     public required Dictionary<string, long> LastUsedUnixMs { get; init; }
 
     public override void Validate()
     {
-        if (TtlSeconds < 0 || MaxHeavy < 0)
+        if (MaxHeavy < 0)
         {
             throw new ProtocolContractException("Pipeline cache limits must be non-negative.");
+        }
+        foreach ((string name, int ttl) in PipelineTtls)
+        {
+            ContractValidation.OneOf(
+                name, nameof(PipelineTtls), "OCR", "PP-StructureV3", "MinerU",
+                "PaddleOCR-VL", "TABLE_RECOGNITION", "FORMULA_RECOGNITION");
+            if (ttl < 0)
+            {
+                throw new ProtocolContractException("pipeline_ttls values must be non-negative.");
+            }
         }
         foreach (string pipeline in LoadedPipelines)
         {
@@ -344,13 +358,17 @@ public sealed record PipelineCacheStatusResponse : ResponseContract
 public sealed record SetPipelineCacheTtlResponse : ResponseContract
 {
     public required bool Updated { get; init; }
-    public required int TtlSeconds { get; init; }
+    public required Dictionary<string, int> PipelineTtls { get; init; }
 
     public override void Validate()
     {
-        if (TtlSeconds < 0)
+        foreach ((string name, int ttl) in PipelineTtls)
         {
-            throw new ProtocolContractException("ttl_seconds must be non-negative.");
+            ContractValidation.NonEmpty(name, nameof(PipelineTtls));
+            if (ttl < 0)
+            {
+                throw new ProtocolContractException("pipeline_ttls values must be non-negative.");
+            }
         }
     }
 }

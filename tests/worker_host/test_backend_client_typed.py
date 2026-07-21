@@ -298,12 +298,12 @@ async def test_pipeline_cache_typed_methods_map_payloads_and_timeouts(
         return {
             "pipeline_cache.status": {
                 "ready": True,
-                "ttl_seconds": 600,
+                "pipeline_ttls": {"OCR": 600},
                 "max_heavy": 2,
                 "loaded_pipelines": ["OCR"],
                 "last_used_unix_ms": {},
             },
-            "pipeline_cache.set_ttl": {"updated": True, "ttl_seconds": 600},
+            "pipeline_cache.set_ttl": {"updated": True, "pipeline_ttls": {"OCR": 600}},
             "pipeline_cache.release": {"released": ["PP-StructureV3"]},
             "pipeline_cache.preload": {"results": {"OCR": True}},
             "pipeline_cache.warmup": {"results": {"OCR": True}},
@@ -311,7 +311,9 @@ async def test_pipeline_cache_typed_methods_map_payloads_and_timeouts(
 
     monkeypatch.setattr(client, "call", fake_call)
     assert (await client.pipeline_cache_status(timeout=11))["ready"] is True
-    assert (await client.set_pipeline_cache_ttl(600, timeout=12))["updated"] is True
+    assert (
+        await client.set_pipeline_cache_ttl({"OCR": 600}, timeout=12)
+    )["updated"] is True
     assert await client.release_pipeline_cache(heavy_only=True, timeout=13) == [
         "PP-StructureV3"
     ]
@@ -319,7 +321,7 @@ async def test_pipeline_cache_typed_methods_map_payloads_and_timeouts(
     assert await client.warmup_pipeline_cache(["OCR"], timeout=15) == {"OCR": True}
     assert calls == [
         ("pipeline_cache.status", {}, 11),
-        ("pipeline_cache.set_ttl", {"ttl_seconds": 600}, 12),
+        ("pipeline_cache.set_ttl", {"pipeline_ttls": {"OCR": 600}}, 12),
         ("pipeline_cache.release", {"heavy_only": True}, 13),
         ("pipeline_cache.preload", {"pipelines": ["OCR"]}, 14),
         ("pipeline_cache.warmup", {"pipelines": ["OCR"]}, 15),

@@ -47,8 +47,8 @@ class BatchBackendAdapter:
     def release_pipelines(self, heavy_only: bool = True) -> list[str]:
         return self._client.release_pipeline_cache_sync(heavy_only=heavy_only)
 
-    def set_pipeline_ttl(self, ttl_seconds: int) -> bool:
-        return self._client.set_pipeline_cache_ttl_sync(ttl_seconds)
+    def set_pipeline_ttls(self, pipeline_ttls: dict[str, int]) -> bool:
+        return self._client.set_pipeline_cache_ttl_sync(pipeline_ttls)
 
     def get_pipeline_cache_status(self) -> dict[str, Any]:
         return self._client.pipeline_cache_status_sync()

@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
     from pathlib import Path
 
 # ---------------------------------------------------------------------------
@@ -153,12 +154,12 @@ class SettingsSnapshot:
     Attributes:
         backend: 当前后端（"cpu" 或 "gpu"）。
         preload_pipelines: 预加载管道列表。
-        ttl_seconds: 管道 TTL（秒）。
+        pipeline_ttls: 每管道 TTL（秒）字典，0=持久。
     """
 
     backend: str = "cpu"
     preload_pipelines: tuple[str, ...] = ()
-    ttl_seconds: int = 3600
+    pipeline_ttls: Mapping[str, int] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------

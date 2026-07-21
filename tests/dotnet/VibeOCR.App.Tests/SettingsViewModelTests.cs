@@ -18,7 +18,7 @@ public sealed class SettingsViewModelTests
 
         Assert.Equal("gpu", viewModel.Backend);
         Assert.Equal("gpu", viewModel.PendingBackend);
-        Assert.Equal(600, viewModel.TtlSeconds);
+        Assert.Equal(600, viewModel.PipelineTtls["OCR"]);
         Assert.Equal(2, viewModel.PreloadPipelines.Count);
         Assert.False(viewModel.IsBusy);
     }
@@ -171,7 +171,7 @@ public sealed class SettingsViewModelTests
                 {
                     Backend = "cpu",
                     PreloadPipelines = ["OCR"],
-                    TtlSeconds = 300,
+                    PipelineTtls = new() { ["OCR"] = 300 },
                 },
                 RpcMethods.SwitchBackend => RecordSwitch(request),
                 _ => throw new InvalidOperationException($"unexpected method {method}"),
@@ -247,7 +247,7 @@ public sealed class SettingsViewModelTests
                 {
                     Backend = backend,
                     PreloadPipelines = preload ?? ["OCR"],
-                    TtlSeconds = ttl,
+                    PipelineTtls = new() { ["OCR"] = ttl },
                 };
             }
             return Task.FromResult((TResponse)response);
