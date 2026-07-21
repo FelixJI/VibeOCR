@@ -630,15 +630,112 @@ Bug 1（文案）和 Bug 4（删文件）不写自动化测试——前者靠代
 
 ---
 
-## 八、实施顺序（粗略，详细计划由后续 writing-plans 生成）
+## 八、门控合规（项目强制要求）
 
-1. **数据模型层**：`pipelines.py` 加 `cache_kind` + `ConfigManager` 新 API + 迁移逻辑
-2. **Manager 层**：`PipelineCacheManager` 重构（每管道 TTL + 后台线程 + MinerU 分流）
-3. **Worker 层**：`ocr_worker.py` 删懒回收 + 加 shutdown
-4. **RPC 协议层**：`MSG_SET_TTL` payload 升级 + 接口签名同步
-5. **UI 层**：6 个 ComboBox + label 拆分 + 文案修复
-6. **Bug 修复**：refresh_cache 重检测 + machine_id warmup + 删死文件
-7. **测试**：A/B/C/D/E 各层补齐 + 现有测试适配
+本项目有两道门禁脚本（`scripts/run_phase0_gate.ps1`、`scripts/run_phase1_gate.ps1`）+ 多个架构守卫测试。本节列出本次改动必须满足的**所有门控点**，实施计划必须按此顺序验证。
+
+### 8.1 Phase 0 门禁（`scripts/run_phase0_gate.ps1`）
+
+四道阻断式检查，任一失败即阻断：
+
+| 步骤 | 要求 | 本次改动关联 |
+|---|---|---|
+| `uv sync --frozen --group dev` | 锁文件同步 | 不改依赖，无影响 |
+| `uv run pytest -q` | **0 failed** | 必须更新所有现有 TTL 相关测试（见第七节） |
+| `uv run ruff check src tests scripts` | **0 errors** | 新代码须符合 ruff 规则（见 8.5） |
+| `uv run pyright` | **0 errors** | 新代码须有完整类型注解；`reportUnusedImport="error"`、`reportDuplicateImport="error"` |
+
+### 8.2 Phase 1 门禁（`scripts/run_phase1_gate.ps1`）
+
+WorkerHost 契约 + 生命周期门禁，六道阻断式检查：
+
+| 步骤 | 要求 | 本次改动关联 |
+|---|---|---|
+| `pytest tests/contracts tests/worker_host -q` | 0 failed | **必改**：methods.schema.json + golden.json（见 8.3） |
+| `ruff check .../worker_host ...` | 0 errors | method_validation.py 改动须合规 |
+| `pyright --pythonpath ... worker_host ...` | 0 errors | method_validation.py 改动须有类型注解 |
+| `python -m vibeocr.worker_host.main --self-test` | 0 | WorkerHost 自检通过 |
+| `dotnet restore ... --locked-mode` | 0 | C# 锁文件不破坏 |
+| `dotnet test VibeOCR.Contracts.Tests -c Release` | 0 failed | **必改**：C# golden 须与 Python golden 一致（见 8.4） |
+
+### 8.3 协议契约三方一致性（架构守卫强约束）
+
+`tests/architecture/test_protocol_method_consistency.py` 强制三处 method table 完全一致：
+
+1. `packages/vibeocr-contracts-py/src/vibeocr/protocol/v1/methods.schema.json` — JSON Schema 白名单
+2. `src/dotnet/VibeOCR.Contracts/RpcMethods.cs` — C# `RpcMethods.All`
+3. `packages/vibeocr-backend/src/vibeocr/worker_host/method_validation.py` — Python `PUBLIC_METHODS`
+
+**本次改动保持 method 名 `pipeline_cache.set_ttl` 不变**（避免三处增删），只改 payload schema。具体改动点：
+
+| 文件:行 | 当前内容 | 改为 |
+|---|---|---|
+| `methods.schema.json:621` (status response required) | `["ready", "ttl_seconds", "max_heavy", "loaded_pipelines", "last_used_unix_ms"]` | `["ready", "pipeline_ttls", "max_heavy", "loaded_pipelines", "last_used_unix_ms"]` |
+| `methods.schema.json:624` | `"ttl_seconds": { "type": "integer", "minimum": 0 }` | `"pipeline_ttls": { "type": "object", "additionalProperties": { "type": "integer", "minimum": 0 } }` |
+| `methods.schema.json:642-643` (set_ttl request) | `required: ["ttl_seconds"]`, `ttl_seconds: integer` | `required: ["pipeline_ttls"]`, `pipeline_ttls: object<str→int≥0>` |
+| `methods.schema.json:647-650` (set_ttl response) | `required: ["updated", "ttl_seconds"]` | `required: ["updated", "pipeline_ttls"]` |
+| `methods.schema.json:715,719` (preload request) | `ttl_seconds: integer` | `pipeline_ttls: object<str→int≥0>` |
+| `golden.json:588,601,608,677` | `"ttl_seconds": <int>` 样例 | 替换为 `"pipeline_ttls": {...}` 完整 6 管道样例 |
+| `method_validation.py:580-590` (status response) | `_integer(p["ttl_seconds"], ...)` | 改为校验 `pipeline_ttls` 是 dict 且每 value≥0 |
+| `method_validation.py:606-622` (set_ttl req/resp) | `_integer(p["ttl_seconds"], ...)` | 同上，dict 校验 |
+| `method_validation.py:666-675` (preload validator) | `_integer(p["ttl_seconds"], ...)` | 同上 |
+
+### 8.4 C# GoldenContractTests 同步
+
+`tests/dotnet/VibeOCR.Contracts.Tests/GoldenContractTests.cs` 消费同一份 `golden.json`。改 `golden.json` 后：
+
+- 重新跑 `dotnet test VibeOCR.Contracts.Tests` 确认 C# 端 golden 通过
+- 若 C# 端有反序列化强类型（`TtlSeconds` 属性之类），须同步改名
+- `RpcMethods.cs:27` 的 `SetPipelineCacheTtl = "pipeline_cache.set_ttl"` 常量名**保持不变**（method 名不变）
+
+### 8.5 Ruff 规则合规
+
+`pyproject.toml` 启用的关键规则（新代码易触犯）：
+
+- `F` (Pyflakes)：未使用变量/导入 → `reportUnusedImport="error"` 拦截
+- `B` (bugbear)：mutable default args（`RUF012` 已 ignore 类属性，但函数默认值仍查）
+- `TCH` (type-checking)：TYPE_CHECKING 块外的 runtime import 会被建议移入
+- `PTH` (use-pathlib)：优先 `Path` 而非 `os.path` 字符串操作
+- `RET` (return)：所有路径 return 风格一致
+- `COM` (commas)：trailing comma 强制
+
+### 8.6 UI 线程阻塞架构守卫
+
+`tests/architecture/test_ui_thread_blocking_boundaries.py` 用 AST 扫描指定 UI 入口函数，禁止调用特定阻塞函数（如 `_ensure_mineru_models_blocking`、`reset_cancel`）。
+
+**本次新增/修改的 UI 入口函数**：
+- `_on_pipeline_ttl_combo_changed`（新）：只允许调 `ConfigManager.set_pipeline_ttl` + `_run_cache_operation`（已有模式），不得直接调 `env_manager.*` 或同步 RPC
+- `_refresh_machine_cache_operation`（改）：仍在 `_run_cache_operation` 后台执行，符合现有规则
+- 实施时核查：若新函数被加入 UI 入口扫描规则，确保不引入禁用调用
+
+### 8.7 其他架构守卫
+
+- `test_backend_no_ui_imports.py`：backend 不得 import PySide6/Qt → 本次改动不引入
+- `test_contracts_ui_free.py`：contracts 不得 import UI → `pipelines.py` 加 `cache_kind` 仍是 stdlib-only
+- `test_worker_host_ui_free.py`：worker_host 不得 import UI → method_validation 改动不引入
+- `test_workspace_physical_packages.py`：workspace 包结构 → 本次不动 workspace 配置
+
+### 8.8 门禁自验证命令
+
+实施过程中每个里程碑后，依次执行：
+
+```powershell
+# Phase 0（最频繁）
+./scripts/run_phase0_gate.ps1
+
+# Phase 1（改了 schema/golden 后必跑）
+./scripts/run_phase1_gate.ps1
+
+# 单独跑契约一致性守卫
+uv run pytest tests/architecture/test_protocol_method_consistency.py -v
+
+# 单独跑 UI 阻塞守卫
+uv run pytest tests/architecture/test_ui_thread_blocking_boundaries.py -v
+```
+
+### 8.9 报告脱敏要求（易忽略）
+
+`run_phase0_gate.ps1` 写报告后自检：**不得包含本机绝对路径**（`UserProfile`、绝对盘符路径）。本次新增测试若打印路径，须用 `Path.relative_to` 或 project_root 相对化。
 
 ---
 
@@ -651,14 +748,40 @@ Bug 1（文案）和 Bug 4（删文件）不写自动化测试——前者靠代
 | 硬切协议导致主/worker 版本不匹配 | 主/worker 配对启动，CI 构建保证一致性；不存在跨版本通信 |
 | 后台线程在测试中难控制 | `tick_interval` 参数可注入；shutdown 有 timeout join |
 | `refresh_cache` 真重检测耗时几十秒 | 后台线程执行；按钮 disable + 进度文案；用户已被告知 |
+| **协议契约三方不同步**（新增） | 阶段 5 必须**原子提交**：schema + golden + method_validation + C# 同 commit |
+| **Phase 1 门禁新增失败点**（新增） | method 名不变降低风险；payload schema 改动有 golden 测试兜底 |
+| **C# golden 反序列化强类型**（新增） | 实施时先 grep C# 端 `Ttl` 相关属性，确认无强类型或同步改名 |
 
 ---
 
-## 十、附录
+## 十、实施顺序（按门控分级）
 
-### 10.1 关键文件清单
+按"风险递增 + 门控覆盖度递增"排序，每个里程碑结束跑对应门禁：
 
-- `packages/vibeocr-contracts-py/src/vibeocr/contracts/pipelines.py`：元数据扩展
+| 阶段 | 内容 | 完成后跑 |
+|---|---|---|
+| 1 | `pipelines.py` 加 `cache_kind` + 辅助函数（纯增量，向后兼容） | Phase 0 |
+| 2 | `ConfigManager` 新 API + 迁移逻辑（保留旧 API 直到迁移完成） | Phase 0 |
+| 3 | `PipelineCacheManager` 重构（每管道 TTL + 后台线程 + MinerU 分流） | Phase 0 |
+| 4 | `ocr_worker.py` 删懒回收 + 加 shutdown + `_release_one` 分流 | Phase 0 |
+| 5 | 协议契约三方同步（schema + golden + method_validation + C#） | **Phase 0 + Phase 1** |
+| 6 | RPC 客户端层（`OCRWorkerProcess.set_ttls` + subprocess + composition） | Phase 0 |
+| 7 | UI 层（6 ComboBox + label 拆分 + 文案修复） | Phase 0 + UI 守卫 |
+| 8 | Bug 修复（refresh_cache + machine_id warmup + 删死文件） | Phase 0 |
+| 9 | 全量回归 + 手动 UI 验证清单 | **Phase 0 + Phase 1 全绿** |
+
+**关键约束**：阶段 5（协议契约）必须**一次性原子提交**——schema、golden、method_validation、C# golden 在同一个 commit，否则任一门禁单独跑都会红。
+
+---
+
+## 十一、附录
+
+### 11.1 关键文件清单
+
+**Python 后端**：
+- `packages/vibeocr-contracts-py/src/vibeocr/contracts/pipelines.py`：元数据扩展（`cache_kind`）
+- `packages/vibeocr-contracts-py/src/vibeocr/protocol/v1/methods.schema.json`：payload schema 升级
+- `packages/vibeocr-contracts-py/src/vibeocr/protocol/v1/golden.json`：golden 样例升级
 - `packages/vibeocr-backend/src/vibeocr/services/pipeline_cache_manager.py`：核心重构
 - `packages/vibeocr-backend/src/vibeocr/services/ocr_service.py`：`get_or_create_pipeline` 联动
 - `packages/vibeocr-backend/src/vibeocr/services/ocr_service_subprocess.py`：RPC 接口
@@ -666,20 +789,48 @@ Bug 1（文案）和 Bug 4（删文件）不写自动化测试——前者靠代
 - `packages/vibeocr-backend/src/vibeocr/workers/ocr_worker.py`：主循环改造 + shutdown
 - `packages/vibeocr-backend/src/vibeocr/worker_host/composition.py`：启动初始化
 - `packages/vibeocr-backend/src/vibeocr/worker_host/handlers/pipeline_cache.py`：handler
-- `packages/vibeocr-backend/src/vibeocr/worker_host/method_validation.py`：schema
+- `packages/vibeocr-backend/src/vibeocr/worker_host/method_validation.py`：schema 校验
+
+**Python 客户端**：
 - `packages/vibeocr-client-py/src/vibeocr/machine_cache.py`：Bug 2/3 修复
 - `packages/vibeocr-client-py/src/vibeocr/env_manager.py`：refresh_cache 联动
+
+**PySide UI**：
 - `apps/vibeocr-pyside/src/vibeocr/managers/config_manager.py`：新 API + 迁移
 - `apps/vibeocr-pyside/src/vibeocr/managers/subprocess_manager.py`：下发时机
 - `apps/vibeocr-pyside/src/vibeocr/views/settings_page_controller.py`：UI + Bug 1
 
-### 10.2 废弃项清单
+**C# 合约**：
+- `src/dotnet/VibeOCR.Contracts/RpcMethods.cs`：method 名保持不变（确认无需改）
+- `tests/dotnet/VibeOCR.Contracts.Tests/GoldenContractTests.cs`：跟随 golden.json
 
+### 11.2 废弃项清单
+
+**配置层**：
 - `pipeline_ttl_seconds`（ConfigManager 字段，迁移后删除）
-- `DEFAULT_TTL_SECONDS = 300`（manager 单值常量）
-- `compute_max_heavy_by_vram` 的 6GB/12GB 分档（改为 8GB 单档）
-- `VRAM_TIER_6GB`、`VRAM_TIER_12GB` 常量
+
+**Manager 常量**：
+- `DEFAULT_TTL_SECONDS = 300`（单值常量）
+- `VRAM_TIER_6GB`、`VRAM_TIER_12GB` 常量（改为 `VRAM_TIER_8GB`）
 - `FALLBACK_MAX_HEAVY = 2`（改为 1）
-- `machine_cache.refresh_cache` 函数（改名 `reset_cache_to_empty`）
-- `OCRService.set_pipeline_ttl` / `OCRServiceSubprocess.set_pipeline_ttl` / `OCRWorkerProcess.set_ttl`（改名为复数）
+
+**函数改名**：
+- `machine_cache.refresh_cache` → `reset_cache_to_empty`
+- `OCRService.set_pipeline_ttl` → `set_pipeline_ttls`
+- `OCRServiceSubprocess.set_pipeline_ttl` → `set_pipeline_ttls`
+- `OCRWorkerProcess.set_ttl` → `set_ttls`
+
+**协议层（payload 字段）**：
+- `ttl_seconds`（request/response 单值字段，全部位置）
+- 替换为 `pipeline_ttls`（dict）
+
+**死文件**：
 - `.vibeocr/model_cache.json`（孤儿文件，删除）
+
+### 11.3 门禁依赖的外部工具
+
+实施前须确认本机具备（Phase 1 门禁要求）：
+- `.venv/Scripts/python.exe`、`ruff.exe`、`pyright.exe`
+- `$env:ProgramFiles/dotnet/dotnet.exe`
+- `tests/dotnet/VibeOCR.Contracts.Tests/VibeOCR.Contracts.Tests.csproj`
+- `NuGet.Config`
