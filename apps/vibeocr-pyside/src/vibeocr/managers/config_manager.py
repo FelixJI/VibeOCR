@@ -175,10 +175,15 @@ class ConfigManager(QObject):
         # 一次性迁移：仅当 dict 不存在时执行
         if "pipeline_ttl_seconds" in data and "pipeline_ttls" not in data:
             legacy_raw = data.pop("pipeline_ttl_seconds")
-            try:
-                legacy = max(0, int(legacy_raw))
-            except (TypeError, ValueError):
+            # bool 是 int 子类：True→1 / False→0 都不应被静默接受，
+            # 视为损坏值，回退默认（300）。
+            if isinstance(legacy_raw, bool):
                 legacy = self._DEFAULT_PIPELINE_TTLS["PP-StructureV3"]
+            else:
+                try:
+                    legacy = max(0, int(legacy_raw))
+                except (TypeError, ValueError):
+                    legacy = self._DEFAULT_PIPELINE_TTLS["PP-StructureV3"]
             data["pipeline_ttls"] = {
                 "OCR": 0,
                 "TABLE_RECOGNITION": 0,

@@ -157,3 +157,29 @@ def test_legacy_field_not_migrated_when_dict_present(cm, tmp_path):
     # dict 模式下 legacy 字段不被删（避免误删用户手动数据）
     data = json.loads(config.read_text(encoding="utf-8"))
     assert "pipeline_ttl_seconds" in data
+
+
+def test_migrate_legacy_bool_value_falls_back_to_default(cm, tmp_path):
+    """Bug fix: 损坏 legacy 值 ``true``/``false`` 不能被 int() 静默转 1/0。
+
+    应视为损坏，回退到默认（重管道 300）。
+    """
+    import json
+
+    config = tmp_path / "config" / "app_settings.json"
+    config.parent.mkdir(parents=True, exist_ok=True)
+    config.write_text(
+        json.dumps({"pipeline_ttl_seconds": True}), encoding="utf-8"
+    )
+
+    ttls = cm.get_pipeline_ttls()
+    # True 不应被当作 1，应回退到默认 300
+    assert ttls["PP-StructureV3"] == 300
+    assert ttls["PaddleOCR-VL"] == 300
+    assert ttls["OCR"] == 0
+    assert ttls["MinerU"] == 0
+
+    # 旧字段已删除并迁移为新 dict
+    data = json.loads(config.read_text(encoding="utf-8"))
+    assert "pipeline_ttl_seconds" not in data
+    assert data["pipeline_ttls"]["PP-StructureV3"] == 300

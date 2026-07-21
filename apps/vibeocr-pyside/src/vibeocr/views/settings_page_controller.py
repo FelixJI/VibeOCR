@@ -887,7 +887,7 @@ class SettingsPageController:
         self._manual_preload_task = True
         started = self._subprocess_manager.preload_pipelines(
             values,
-            ttl_seconds=ConfigManager.instance().get_pipeline_ttl_seconds(),
+            pipeline_ttls=ConfigManager.instance().get_pipeline_ttls(),
         )
         if not started:
             self._manual_preload_task = None
