@@ -1370,10 +1370,10 @@ class MainWindow(QMainWindow):
         from vibeocr.pyside.runtime import ConfigManager
 
         try:
-            ttl = ConfigManager.instance().get_pipeline_ttl_seconds()
+            ttls = ConfigManager.instance().get_pipeline_ttls()
         except Exception as e:
             logging.warning("[子进程预加载] 读取 TTL 配置失败: %s", e)
-            ttl = None
+            ttls = None
 
         # 读取用户配置的预加载管道
         from vibeocr.contracts.pipelines import OCRPipeline
@@ -1382,7 +1382,7 @@ class MainWindow(QMainWindow):
         if not cm.get_preload_enabled():
             logging.debug("[子进程预加载] 预加载已禁用，仅下发 TTL")
             # 仍然下发 TTL（后台线程）
-            self._subprocess_manager.preload_pipelines([], ttl_seconds=ttl)
+            self._subprocess_manager.preload_pipelines([], pipeline_ttls=ttls)
             return
 
         raw_pipelines = cm.get_preload_pipelines()
@@ -1408,7 +1408,7 @@ class MainWindow(QMainWindow):
 
         # TTL 下发与预加载均在后台线程执行
         self._preload_in_progress = self._subprocess_manager.preload_pipelines(
-            pipelines, ttl_seconds=ttl
+            pipelines, pipeline_ttls=ttls
         )
 
     def _show_install_dialog(self, missing: list) -> None:
