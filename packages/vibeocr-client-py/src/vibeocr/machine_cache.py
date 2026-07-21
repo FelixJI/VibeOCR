@@ -170,6 +170,18 @@ def generate_machine_id() -> str:
         return _cached_machine_id
 
 
+def warmup_machine_id(project_root: Path | None = None) -> None:
+    """启动期后台预热机器码，避免后续 GUI 操作感知 wmic 延迟。
+
+    安全在任何线程调用。若 _cached_machine_id 已设置则立即返回。
+    project_root 参数仅为 API 一致性保留，实际不使用。
+
+    Args:
+        project_root: 项目根目录（未使用，仅为 API 一致性保留）
+    """
+    generate_machine_id()
+
+
 def get_cache_dir(project_root: Path) -> Path:
     """
     获取缓存目录路径
@@ -360,15 +372,17 @@ def update_cache_field(project_root: Path, key: str, value: object) -> bool:
     return save_cache(project_root, cached_data)
 
 
-def refresh_cache(project_root: Path) -> bool:
-    """
-    刷新缓存（重新生成缓存文件）
+def reset_cache_to_empty(project_root: Path) -> bool:
+    """重置缓存为空壳（仅清 deps/hardware_info，不重新检测）。
+
+    供测试和迁移使用。UI 的"刷新缓存"按钮应调用 env_manager 路径做真重检测
+    （见 SettingsPageController._refresh_machine_cache_operation）。
 
     Args:
         project_root: 项目根目录
 
     Returns:
-        是否刷新成功
+        是否重置成功
     """
     import sys
 
@@ -382,11 +396,11 @@ def refresh_cache(project_root: Path) -> bool:
             "hardware_info": {},
         }
         if save_cache(project_root, cache_data):
-            print("[缓存] 缓存已刷新")
+            print("[缓存] 缓存已重置为空壳")
             return True
         return False
     except Exception as e:
-        print(f"[缓存] 刷新缓存失败: {e}")
+        print(f"[缓存] 重置缓存失败: {e}")
         return False
 
 

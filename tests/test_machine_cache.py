@@ -562,3 +562,126 @@ class TestCacheVersionInvalidation:
             f"CACHE_VERSION 应为 3（leaf 包纳入检测），实际 {CACHE_VERSION}。"
             "若新增/移除检测项，请同步 bump 版本号并更新此测试。"
         )
+
+
+class TestResetCacheToEmpty:
+    """Bug 2: refresh_cache 改名为 reset_cache_to_empty，仅清空 deps/hardware_info。
+
+    回归：原 refresh_cache 名字暗示"重新检测"，但实现只写一个空壳，
+    既不调用 env_manager.check_embedded_environment_dependencies，也不读真实依赖。
+    UI 刷新按钮调用它会让用户以为缓存是最新检测结果，实则全是空。
+    改名 reset_cache_to_empty 明示语义；UI 刷新路径走 env_manager 做真检测
+    （见 SettingsPageController._refresh_machine_cache_operation）。
+    """
+
+    def test_reset_cache_to_empty_clears_dependencies(self, tmp_path):
+        """Bug 2: reset_cache_to_empty 清空 deps/hardware_info。"""
+        from vibeocr.machine_cache import (
+            create_cache_entry,
+            load_cache,
+            reset_cache_to_empty,
+        )
+
+        # 先建一个有内容的缓存
+        create_cache_entry(
+            tmp_path,
+            dependencies={"paddle": True},
+            hardware_info={"has_gpu": True},
+        )
+        cached = load_cache(tmp_path)
+        assert cached is not None
+        assert cached.get("dependencies") == {"paddle": True}
+
+        # 重置
+        assert reset_cache_to_empty(tmp_path) is True
+        reset = load_cache(tmp_path)
+        assert reset is not None
+        assert reset.get("dependencies") == {}
+        assert reset.get("hardware_info") == {}
+
+    def test_reset_cache_to_empty_preserves_version_and_machine_id(self, tmp_path):
+        """重置只清 deps/hardware_info，version/machine_id 必须保留以保证 is_cache_valid。"""
+        from vibeocr.machine_cache import (
+            CACHE_VERSION,
+            create_cache_entry,
+            generate_machine_id,
+            is_cache_valid,
+            load_cache,
+            reset_cache_to_empty,
+        )
+
+        create_cache_entry(
+            tmp_path,
+            dependencies={"paddlepaddle": True},
+            hardware_info={"has_gpu": False},
+        )
+        reset_cache_to_empty(tmp_path)
+        reset = load_cache(tmp_path)
+        assert reset is not None
+        assert reset["version"] == CACHE_VERSION
+        assert reset["machine_id"] == generate_machine_id()
+        # 机器码/version 仍匹配，缓存仍判为有效（只是 deps 空）
+        is_valid, _data = is_cache_valid(tmp_path)
+        assert is_valid is True
+
+
+class TestWarmupMachineId:
+    """Bug 3: warmup_machine_id 预热机器码缓存，避免 GUI 操作感知 wmic 锁争用。
+
+    回归：首次 generate_machine_id 触发 2 次 wmic 子进程（CPU + 主板，各最多 5s
+    超时），期间持有 _machine_id_lock。若多个 GUI 路径并发调用（设置页状态、
+    缓存校验、env_manager 检测），后续调用阻塞等锁，UI 卡顿数十秒。
+    warmup_machine_id 允许启动期后台线程提前跑一次，后续路径直接读 _cached_machine_id。
+    """
+
+    def test_warmup_machine_id_caches_result(self, monkeypatch):
+        """Bug 3: warmup_machine_id 调一次后 generate_machine_id 不再跑 wmic。"""
+        import vibeocr.machine_cache as mc
+
+        # 重置模块级缓存（其他测试可能已填充）
+        monkeypatch.setattr(mc, "_cached_machine_id", None)
+
+        call_count = {"cpu": 0, "baseboard": 0}
+
+        def fake_cpu() -> str:
+            call_count["cpu"] += 1
+            return "FAKE_CPU"
+
+        def fake_baseboard() -> str:
+            call_count["baseboard"] += 1
+            return "FAKE_BB"
+
+        monkeypatch.setattr(mc, "_get_cpu_id", fake_cpu)
+        monkeypatch.setattr(mc, "_get_baseboard_serial", fake_baseboard)
+
+        mc.warmup_machine_id()
+        assert call_count == {"cpu": 1, "baseboard": 1}
+
+        # 再次调用不应触发 wmic
+        mc.generate_machine_id()
+        mc.generate_machine_id()
+        assert call_count == {"cpu": 1, "baseboard": 1}
+
+    def test_warmup_machine_id_noop_when_already_cached(self, monkeypatch):
+        """若 _cached_machine_id 已设置，warmup_machine_id 应是 no-op，不跑 wmic。"""
+        import vibeocr.machine_cache as mc
+
+        monkeypatch.setattr(mc, "_cached_machine_id", "PRESET_ID")
+
+        call_count = {"cpu": 0, "baseboard": 0}
+
+        def fake_cpu() -> str:
+            call_count["cpu"] += 1
+            return "FAKE_CPU"
+
+        def fake_baseboard() -> str:
+            call_count["baseboard"] += 1
+            return "FAKE_BB"
+
+        monkeypatch.setattr(mc, "_get_cpu_id", fake_cpu)
+        monkeypatch.setattr(mc, "_get_baseboard_serial", fake_baseboard)
+
+        mc.warmup_machine_id()
+        assert call_count == {"cpu": 0, "baseboard": 0}
+        # 已设置的缓存值不被覆盖
+        assert mc.generate_machine_id() == "PRESET_ID"

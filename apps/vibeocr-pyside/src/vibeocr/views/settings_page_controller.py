@@ -1077,7 +1077,7 @@ class SettingsPageController:
         button = self._ui.findChild(QPushButton, "btnRefreshCache")
         if button:
             button.setEnabled(False)
-        self._update_cache_status("正在刷新缓存...")
+        self._update_cache_status("正在重新检测环境（可能需要数十秒）...")
         self._machine_cache_generation += 1
         generation = self._machine_cache_generation
 
@@ -1090,8 +1090,10 @@ class SettingsPageController:
             success, info = result
             if success:
                 self._apply_cache_status(generation, True, info, "缓存已刷新")
-                self._show_settings_toast("缓存已刷新")
-                logger.debug("[缓存] 已刷新（依赖缓存 + 模型缓存）")
+                self._show_settings_toast(
+                    "机器/依赖缓存已重置（下次启动时重新检测）"
+                )
+                logger.debug("[缓存] 已刷新机器/依赖缓存")
             else:
                 self._apply_cache_status(generation, False, "", "缓存刷新失败")
 
@@ -1105,11 +1107,22 @@ class SettingsPageController:
         self._run_cache_operation(self._refresh_machine_cache_operation, finished, failed)
 
     def _refresh_machine_cache_operation(self) -> tuple[bool, str]:
-        """QRunnable 内执行的机器缓存重建与快照读取。"""
-        from vibeocr.machine_cache import get_cache_info, refresh_cache
+        """真正重检测：清缓存 → 触发完整环境检测 → 读回 cache info。
 
-        success = refresh_cache(self._project_root)
-        return success, get_cache_info(self._project_root) if success else ""
+        在 _run_cache_operation 后台线程执行。完整检测耗时数十秒
+        （40+ subprocess + paddle import），UI 通过按钮 disable + 进度文案提示。
+        """
+        from vibeocr import env_manager
+        from vibeocr.machine_cache import clear_cache, get_cache_info
+
+        # 1. 先清旧缓存，强制下次检测为"全量"
+        clear_cache(self._project_root)
+        # 2. 跑完整检测（use_cache=False 强制走 _check_imports 全量探测）
+        env_manager.check_embedded_environment_dependencies(
+            self._project_root,
+            use_cache=False,
+        )
+        return True, get_cache_info(self._project_root)
 
     def _open_reinstall_dialog(
         self, reinstall_python: bool = False, missing_only: bool = False
