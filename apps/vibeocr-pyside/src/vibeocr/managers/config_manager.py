@@ -195,26 +195,6 @@ class ConfigManager(QObject):
             self._save_json("app_settings.json", data)
         return self._normalize_ttls(data.get("pipeline_ttls", {}))
 
-    def get_pipeline_ttl_seconds(self) -> int:
-        """[legacy bridge] 重管道 TTL 秒数（取 PP-StructureV3 的 TTL）。
-
-        保留给 ``settings_page_controller`` 旧 UI 路径使用；Task 7 重写 UI 后
-        会移除。新代码应使用 ``get_pipeline_ttls``。
-        """
-        return self.get_pipeline_ttls()["PP-StructureV3"]
-
-    def set_pipeline_ttl_seconds(self, ttl: int) -> bool:
-        """[legacy bridge] 同时把所有 paddle 重管道置为同一 TTL。
-
-        保留给 ``settings_page_controller`` 旧 UI 路径使用；Task 7 重写 UI 后
-        会移除。新代码应使用 ``set_pipeline_ttls``。
-        """
-        seconds = max(0, int(ttl))
-        ttls = self.get_pipeline_ttls()
-        ttls["PP-StructureV3"] = seconds
-        ttls["PaddleOCR-VL"] = seconds
-        return self.set_pipeline_ttls(ttls)
-
     def set_pipeline_ttl(self, pipeline_name: str, ttl: int) -> bool:
         """设置单个管道的 TTL（0=持久）。未知管道名返回 False。"""
         if pipeline_name not in self._DEFAULT_PIPELINE_TTLS:

@@ -26,7 +26,6 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSizePolicy,
     QSpacerItem,
-    QSpinBox,
     QStackedWidget,
     QTreeWidget,
     QTreeWidgetItem,
@@ -165,7 +164,7 @@ class SettingsPageController:
         self._ttl_sync_timer = QTimer(ui)
         self._ttl_sync_timer.setSingleShot(True)
         self._ttl_sync_timer.setInterval(300)
-        self._ttl_sync_timer.timeout.connect(self._sync_configured_pipeline_ttl)
+        self._ttl_sync_timer.timeout.connect(self._sync_configured_pipeline_ttls)
         # 非模态重装对话框引用：show() 后须持有，否则被 GC 立即销毁；
         # 对话框 finished 时从列表移除，允许再次打开。
         self._active_dialogs: list = []
@@ -302,14 +301,8 @@ class SettingsPageController:
             btn_clear_cache.clicked.connect(self._on_clear_cache_clicked)
 
         # --- 管道缓存生命周期管理 ---
-        spin_ttl = self._ui.findChild(QSpinBox, "spinPipelineTtl")
-        if spin_ttl:
-            spin_ttl.valueChanged.connect(self._on_pipeline_ttl_changed)
-
-        chk_ttl = self._ui.findChild(QCheckBox, "chkEnablePipelineTtl")
-        if chk_ttl:
-            chk_ttl.toggled.connect(self._on_pipeline_ttl_enabled_toggled)
-
+        # 旧的 spinPipelineTtl / chkEnablePipelineTtl 已被每管道 TTL ComboBox
+        # 取代（_init_pipeline_ttl_combos 在 _init_settings_page 内构造并接线）。
         btn_refresh_pipeline_cache = self._ui.findChild(
             QPushButton, "btnRefreshPipelineCache"
         )
@@ -325,8 +318,6 @@ class SettingsPageController:
         btn_release_all = self._ui.findChild(QPushButton, "btnReleaseAll")
         if btn_release_all:
             btn_release_all.clicked.connect(self._on_release_all_clicked)
-
-        self._restore_pipeline_ttl_state()
 
         # --- 环境维护：重装 Python 运行时 / 重装 OCR 依赖 / 补充安装缺失依赖 ---
         btn_reinstall_python = self._ui.findChild(QPushButton, "btnReinstallPython")
@@ -696,10 +687,14 @@ class SettingsPageController:
             self._update_cache_status("正在检查缓存...")
         else:
             # 独立嵌入场景没有 MainWindow 的共享启动快照；避免仅为初始文案
-            # 主动触发 WMIC，用户点击“刷新缓存”时再走后台 operation。
+            # 主动触发 WMIC，用户点击"刷新缓存"时再走后台 operation。
             self._update_cache_status("缓存状态尚未刷新")
         self._update_preload_status()
         self._restore_preload_checkbox_state()
+        # 引入拆分后的 labelPipelineCacheStatus（运行时层），再构造每管道 TTL
+        # ComboBox。前者由 _on_pipeline_cache_status 写入，后者由用户操作触发。
+        self._init_pipeline_cache_status_label()
+        self._init_pipeline_ttl_combos()
 
     def _init_log_level_control(self) -> None:
         """在应用设置页加入持久化日志级别选择。"""
@@ -736,6 +731,120 @@ class SettingsPageController:
         level = str(combo.currentData() or "INFO")
         if settings_runtime.set_log_level(level):
             self._show_settings_toast("日志级别已更新；WorkerHost 将在下次重连时应用")
+
+    # ----------------------------------------------------------------
+    # 每管道 TTL ComboBox（替代旧 spinPipelineTtl + chkEnablePipelineTtl）
+    # ----------------------------------------------------------------
+
+    #: TTL 预设档：显示文本 → 秒数（0 = 持久停留）。所有 ComboBox 共用同一档位表。
+    _TTL_PRESETS: list[tuple[str, int]] = [
+        ("持久停留", 0),
+        ("1 分钟", 60),
+        ("3 分钟", 180),
+        ("5 分钟", 300),
+        ("10 分钟", 600),
+        ("15 分钟", 900),
+        ("30 分钟", 1800),
+    ]
+
+    def _init_pipeline_ttl_combos(self) -> None:
+        """在「模型管理 → 运行时缓存」分组内追加每管道 TTL ComboBox。
+
+        原型由 spinPipelineTtl + chkEnablePipelineTtl（单 TTL 适用于所有管道）改为
+        6 个独立 ComboBox，分别对应 OCRPipeline 枚举的每一项。每个 ComboBox 携带
+        相同的 7 档预设（_TTL_PRESETS），选中项经 ConfigManager.set_pipeline_ttl
+        持久化，并通过 _sync_configured_pipeline_ttls 批量下发到 worker。
+
+        幂等：重复调用时若已存在 comboTtl_OCR 则直接返回。
+        """
+        layout = self._ui.findChild(QVBoxLayout, "runtimeCacheLayout")
+        if layout is None:
+            return
+        if self._ui.findChild(QComboBox, "comboTtl_OCR") is not None:
+            return
+
+        from vibeocr.contracts.pipelines import OCRPipeline, get_pipeline_display_name
+        from vibeocr.pyside.runtime import ConfigManager
+
+        ttls = ConfigManager.instance().get_pipeline_ttls()
+        for pipeline in OCRPipeline:
+            row = QWidget(self._ui)
+            row.setObjectName(f"ttlRow_{pipeline.value}")
+            row_layout = QHBoxLayout(row)
+            row_layout.setContentsMargins(0, 0, 0, 0)
+            row_layout.setSpacing(8)
+            label = QLabel(get_pipeline_display_name(pipeline), row)
+            combo = QComboBox(row)
+            combo.setObjectName(f"comboTtl_{pipeline.value}")
+            for display_text, secs in self._TTL_PRESETS:
+                # 第二参数写入 UserRole data，_restore_pipeline_ttl_combos 用
+                # findData 反查索引（比匹配显示文本更稳）。
+                combo.addItem(display_text, secs)
+            self._select_ttl_combo(combo, ttls.get(pipeline.value, 0))
+            # MinerU 是 HTTP 服务客户端：回收代理对象不会释放底层进程资源，
+            # 故默认持久停留，缩短 TTL 几乎无收益。给标签加 tooltip 提示用户。
+            if pipeline == OCRPipeline.DOCUMENT_PARSING:
+                label.setToolTip(
+                    "MinerU 是 HTTP 服务客户端，回收代理对象不释放底层进程资源。"
+                    "默认持久停留。改短 TTL 几乎无收益。"
+                )
+                combo.setToolTip(
+                    "MinerU 是 HTTP 服务客户端，回收代理对象不释放底层进程资源。"
+                    "默认持久停留。改短 TTL 几乎无收益。"
+                )
+            # 默认绑定 pipeline.value；lambda 显式捕获避免闭包晚绑定陷阱。
+            combo.currentIndexChanged.connect(
+                lambda _idx, name=pipeline.value, c=combo: (
+                    self._on_pipeline_ttl_combo_changed(name, c)
+                )
+            )
+            row_layout.addWidget(label)
+            row_layout.addWidget(combo)
+            row_layout.addStretch(1)
+            layout.addWidget(row)
+
+    def _select_ttl_combo(self, combo: QComboBox, ttl: int) -> None:
+        """根据 TTL 秒数选中 ComboBox 项（UserRole data 精确匹配，无匹配回退持久）。"""
+        index = combo.findData(ttl)
+        combo.setCurrentIndex(index if index >= 0 else 0)
+
+    def _restore_pipeline_ttl_combos(self) -> None:
+        """从配置恢复所有 TTL ComboBox 选中项（阻塞信号避免触发下发）。"""
+        from vibeocr.contracts.pipelines import OCRPipeline
+        from vibeocr.pyside.runtime import ConfigManager
+
+        ttls = ConfigManager.instance().get_pipeline_ttls()
+        for pipeline in OCRPipeline:
+            combo = self._ui.findChild(QComboBox, f"comboTtl_{pipeline.value}")
+            if combo is None:
+                continue
+            current_ttl = ttls.get(pipeline.value, 0)
+            combo.blockSignals(True)
+            self._select_ttl_combo(combo, current_ttl)
+            combo.blockSignals(False)
+
+    def _on_pipeline_ttl_combo_changed(
+        self, pipeline_name: str, combo: QComboBox
+    ) -> None:
+        """单个管道 TTL 改变 → 写配置 + 防抖下发 worker + toast。
+
+        UI 线程边界：本函数仅调用 ConfigManager（本地 JSON 读写，非阻塞）与
+        _ttl_sync_timer.start（异步触发 _sync_configured_pipeline_ttls，后者再走
+        _run_cache_operation 线程池）。**禁止**直接调用 env_manager.* 或同步 RPC。
+        """
+        idx = combo.currentIndex()
+        if idx < 0 or idx >= len(self._TTL_PRESETS):
+            return
+        _display, ttl = self._TTL_PRESETS[idx]
+        from vibeocr.pyside.runtime import ConfigManager
+
+        if not ConfigManager.instance().set_pipeline_ttl(pipeline_name, ttl):
+            logger.warning("[TTL] 写入配置失败: %s=%d", pipeline_name, ttl)
+            return
+        self._show_settings_toast()
+        # 防抖：连续切换档位时只下发最后一次到 worker（_ttl_sync_timer 在
+        # __init__ 已 connect 到 _sync_configured_pipeline_ttls）。
+        self._ttl_sync_timer.start()
 
     def _wrap_settings_pages_in_scroll(self) -> None:
         """把 settingsStackedWidget 的每个子页包进 QScrollArea。
@@ -1553,45 +1662,28 @@ class SettingsPageController:
 
     # --- 管道缓存生命周期管理 ---
 
-    def _restore_pipeline_ttl_state(self) -> None:
-        """从配置恢复 TTL 启用状态和分钟数。"""
-        from vibeocr.pyside.runtime import ConfigManager
+    def _init_pipeline_cache_status_label(self) -> None:
+        """在「运行时缓存」分组内追加 labelPipelineCacheStatus。
 
-        spin = self._ui.findChild(QSpinBox, "spinPipelineTtl")
-        checkbox = self._ui.findChild(QCheckBox, "chkEnablePipelineTtl")
-        ttl_sec = ConfigManager.instance().get_pipeline_ttl_seconds()
-        if spin:
-            spin.blockSignals(True)
-            spin.setValue(max(1, ttl_sec // 60))  # 秒转分钟
-            spin.setEnabled(ttl_sec > 0)
-            spin.blockSignals(False)
-        if checkbox:
-            checkbox.blockSignals(True)
-            checkbox.setChecked(ttl_sec > 0)
-            checkbox.blockSignals(False)
-
-    def _on_pipeline_ttl_changed(self, minutes: int) -> None:
-        """TTL spin 变化 → 保存配置并防抖下发到 worker。"""
-        from vibeocr.pyside.runtime import ConfigManager
-
-        checkbox = self._ui.findChild(QCheckBox, "chkEnablePipelineTtl")
-        if checkbox is not None and not checkbox.isChecked():
+        原型由 labelCacheStatus 同时承载机器缓存与管道运行时状态，复制粘贴的
+        文案让用户难以分辨"无有效缓存"指代哪一层。Task 7 拆分为两个标签：
+          - ``labelCacheStatus``：仅机器缓存（依赖/模型缓存路径、机器码探测）
+          - ``labelPipelineCacheStatus``：仅管道运行时（loaded_pipelines /
+            max_heavy / 每管道 TTL 摘要），由 _on_pipeline_cache_status 写入。
+        labelReleaseStatus 继续承载动作反馈（refresh/release 完成/失败）。
+        """
+        layout = self._ui.findChild(QVBoxLayout, "runtimeCacheLayout")
+        if layout is None:
             return
-        ttl_sec = minutes * 60
-        ConfigManager.instance().set_pipeline_ttl_seconds(ttl_sec)
-        self._show_settings_toast()
-        self._ttl_sync_timer.start()
-
-    def _on_pipeline_ttl_enabled_toggled(self, enabled: bool) -> None:
-        from vibeocr.pyside.runtime import ConfigManager
-
-        spin = self._ui.findChild(QSpinBox, "spinPipelineTtl")
-        if spin:
-            spin.setEnabled(enabled)
-        ttl_sec = (spin.value() * 60) if enabled and spin else 0
-        ConfigManager.instance().set_pipeline_ttl_seconds(ttl_sec)
-        self._show_settings_toast()
-        self._ttl_sync_timer.start()
+        if (
+            self._ui.findChild(QLabel, "labelPipelineCacheStatus") is not None
+        ):
+            return
+        label = QLabel(self._ui)
+        label.setObjectName("labelPipelineCacheStatus")
+        label.setWordWrap(True)
+        label.setText("运行时缓存状态：尚未读取")
+        layout.addWidget(label)
 
     def _run_cache_operation(self, operation, on_success, on_error) -> None:
         """在线程池执行同步缓存 RPC，并隔离关闭后的迟到结果。"""
@@ -1615,19 +1707,24 @@ class SettingsPageController:
         task.signals.error.connect(fail)
         QThreadPool.globalInstance().start(task)
 
-    def _sync_configured_pipeline_ttl(self) -> None:
+    def _sync_configured_pipeline_ttls(self) -> None:
+        """把配置中的 pipeline_ttls 整批下发到 worker（防抖 slot）。
+
+        UI 线程边界：仅做 service 句柄读取 + _run_cache_operation 派发，
+        真正的 RPC 在 QRunnable 内执行，不阻塞 GUI。
+        """
         if not self._subprocess_manager or not self._subprocess_manager.is_ready:
             self._update_release_status("运行时缓存状态：OCR 服务未连接")
             return
         from vibeocr.pyside.runtime import ConfigManager
 
-        ttl_sec = ConfigManager.instance().get_pipeline_ttl_seconds()
+        ttls = ConfigManager.instance().get_pipeline_ttls()
         self._cache_generation += 1
         generation = self._cache_generation
         service = self._subprocess_manager.service
 
-        def operation():
-            if not service.set_pipeline_ttl(ttl_sec):
+        def operation() -> dict:
+            if not service.set_pipeline_ttls(ttls):
                 raise RuntimeError("Worker 未接受 TTL 更新")
             return service.get_pipeline_cache_status()
 
@@ -1661,14 +1758,31 @@ class SettingsPageController:
         if generation != self._cache_generation:
             return
         loaded = [str(item) for item in status.get("loaded_pipelines", [])]
-        ttl_seconds = int(status.get("ttl_seconds", 0))
         max_heavy = int(status.get("max_heavy", 0))
+        # Task 5 起 status 字段从 ttl_seconds(int) 改为 pipeline_ttls(dict)。
+        # 兼容旧 worker：若仍返回 ttl_seconds，回退为单值摘要。
+        pipeline_ttls_raw = status.get("pipeline_ttls")
+        if isinstance(pipeline_ttls_raw, dict):
+            ttl_summary = ", ".join(
+                f"{name}={'持久' if int(v) == 0 else f'{int(v) // 60}分钟'}"
+                for name, v in pipeline_ttls_raw.items()
+            ) or "（无配置）"
+        else:
+            legacy = int(status.get("ttl_seconds", 0))
+            ttl_summary = "禁用" if legacy <= 0 else f"{legacy // 60}分钟"
         names = "、".join(loaded) if loaded else "无"
-        ttl_text = "禁用" if ttl_seconds <= 0 else f"{ttl_seconds // 60} 分钟"
-        self._update_release_status(
-            f"{prefix}：驻留 {len(loaded)} 个（{names}）；TTL {ttl_text}；"
+        status_text = (
+            f"{prefix}：驻留 {len(loaded)} 个（{names}）；TTL {ttl_summary}；"
             f"重模型上限 {max_heavy}"
         )
+        # 写入拆分后的 labelPipelineCacheStatus（运行时层），不再混淆进
+        # labelCacheStatus（机器缓存层）。
+        label = self._ui.findChild(QLabel, "labelPipelineCacheStatus")
+        if label is not None:
+            label.setText(status_text)
+        else:
+            # 回退：尚未构造时（理论上不会发生，因为 _init_settings_page 先建标签）
+            self._update_release_status(status_text)
 
     def _on_pipeline_cache_error(self, error: str, generation: int) -> None:
         if generation == self._cache_generation:

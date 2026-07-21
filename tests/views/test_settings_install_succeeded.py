@@ -59,7 +59,16 @@ def controller(qtbot, tmp_path):
         mock_em.detect_gpu.return_value = (False, None)
         mock_em.resolve_use_gpu.return_value = False
         mock_cm.instance.return_value = MagicMock(
-            get_pipeline_ttl_seconds=MagicMock(return_value=3600),
+            get_pipeline_ttls=MagicMock(
+                return_value={
+                    "OCR": 0,
+                    "TABLE_RECOGNITION": 0,
+                    "FORMULA_RECOGNITION": 0,
+                    "PP-StructureV3": 300,
+                    "MinerU": 0,
+                    "PaddleOCR-VL": 300,
+                }
+            ),
             get_preload_pipelines=MagicMock(return_value=[]),
             get_preload_enabled=MagicMock(return_value=False),
         )

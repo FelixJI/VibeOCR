@@ -9,7 +9,7 @@ chkPreloadFormula），与控制器查找的 chkPreload_{OCRPipeline.name} 不�
 from unittest.mock import MagicMock, patch
 
 import pytest
-from PySide6.QtWidgets import QCheckBox, QLabel, QPushButton, QSpinBox, QWidget
+from PySide6.QtWidgets import QCheckBox, QComboBox, QLabel, QPushButton, QWidget
 
 from vibeocr.core.pipelines import OCRPipeline, get_preloadable_pipelines
 from vibeocr.ui.ui_main_window import Ui_MainWindowWidget
@@ -50,7 +50,16 @@ def controller(qtbot, tmp_path):
             "cuda": None,
         }
         cm_class.instance.return_value = mock_cm
-        mock_cm.get_pipeline_ttl_seconds.return_value = 3600
+        # Task 7 起：UI 走每管道 TTL 字典 API（get_pipeline_ttls / set_pipeline_ttl）
+        mock_cm.get_pipeline_ttls.return_value = {
+            "OCR": 0,
+            "TABLE_RECOGNITION": 0,
+            "FORMULA_RECOGNITION": 0,
+            "PP-StructureV3": 300,
+            "MinerU": 0,
+            "PaddleOCR-VL": 300,
+        }
+        mock_cm.set_pipeline_ttl.return_value = True
         mock_cm.get_preload_pipelines.return_value = []
         mock_cm.get_preload_enabled.return_value = False
 
@@ -78,30 +87,38 @@ def test_all_preloadable_pipelines_have_checkboxes(controller):
 def test_runtime_pipeline_cache_controls_are_present(controller):
     """缓存生命周期槽函数必须有真实可见控件，不得再是死接线。"""
     _ctrl, host = controller
-    assert host.findChild(QCheckBox, "chkEnablePipelineTtl") is not None
-    assert host.findChild(QSpinBox, "spinPipelineTtl") is not None
+    # Task 7：旧的 spinPipelineTtl + chkEnablePipelineTtl 已被 6 个 per-pipeline
+    # QComboBox 替代。每个 OCRPipeline 枚举项应有对应 comboTtl_{value} 控件。
+    for pipeline in OCRPipeline:
+        combo = host.findChild(QComboBox, f"comboTtl_{pipeline.value}")
+        assert combo is not None, (
+            f"缺少每管道 TTL ComboBox comboTtl_{pipeline.value}"
+        )
     assert host.findChild(QPushButton, "btnRefreshPipelineCache") is not None
     assert host.findChild(QPushButton, "btnReleaseHeavy") is not None
     assert host.findChild(QPushButton, "btnReleaseAll") is not None
     assert host.findChild(QLabel, "labelReleaseStatus") is not None
+    # Task 7 新增的拆分标签：管道运行时状态独立于 labelCacheStatus（机器缓存）。
+    assert host.findChild(QLabel, "labelPipelineCacheStatus") is not None
 
 
 def test_pipeline_cache_status_is_rendered_from_worker_readback(controller):
+    """_on_pipeline_cache_status 应把 worker 回读状态写入 labelPipelineCacheStatus。"""
     ctrl, host = controller
     ctrl._cache_generation = 4
     ctrl._on_pipeline_cache_status(
         {
             "ready": True,
-            "ttl_seconds": 300,
+            "pipeline_ttls": {"OCR": 300, "PP-StructureV3": 300},
             "max_heavy": 2,
             "loaded_pipelines": ["OCR", "PP-StructureV3"],
             "last_used_unix_ms": {},
         },
         generation=4,
     )
-    text = host.findChild(QLabel, "labelReleaseStatus").text()
+    text = host.findChild(QLabel, "labelPipelineCacheStatus").text()
     assert "驻留 2 个" in text
-    assert "TTL 5 分钟" in text
+    assert "5分钟" in text
     assert "重模型上限 2" in text
 
 
@@ -112,7 +129,7 @@ def test_pipeline_cache_refresh_runs_off_gui_and_reads_real_status(
     service = MagicMock()
     service.get_pipeline_cache_status.return_value = {
         "ready": True,
-        "ttl_seconds": 0,
+        "pipeline_ttls": {"OCR": 0},
         "max_heavy": 1,
         "loaded_pipelines": [],
         "last_used_unix_ms": {},
@@ -123,7 +140,7 @@ def test_pipeline_cache_refresh_runs_off_gui_and_reads_real_status(
     host.findChild(QPushButton, "btnRefreshPipelineCache").click()
 
     qtbot.waitUntil(
-        lambda: "TTL 禁用" in host.findChild(QLabel, "labelReleaseStatus").text(),
+        lambda: "持久" in host.findChild(QLabel, "labelPipelineCacheStatus").text(),
         timeout=2000,
     )
     service.get_pipeline_cache_status.assert_called_once()
