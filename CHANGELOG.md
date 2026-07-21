@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.5.3] - 2026-07-21
+
+### Fixed
+- fix(ci): isolate table dependency tests from PaddleX
+- fix(ci): make PDF render concurrency test deterministic
+
+### Dependencies
+- 升级:
+  - 升级 vibeocr-contracts-py ==0.5.1 → ==0.5.3
+  - 升级 vibeocr-client-py ==0.5.1 → ==0.5.3
+  - 升级 vibeocr-backend ==0.5.1 → ==0.5.3
+  - 升级 vibeocr-pyside ==0.5.1 → ==0.5.3
+
 ## [0.5.2] - 2026-07-21
 
 ### Fixed
