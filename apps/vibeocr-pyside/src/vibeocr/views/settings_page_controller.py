@@ -759,14 +759,19 @@ class SettingsPageController:
         """
         layout = self._ui.findChild(QVBoxLayout, "runtimeCacheLayout")
         if layout is None:
+            logger.warning(
+                "[TTL Combos] runtimeCacheLayout 未找到，跳过 ComboBox 创建"
+            )
             return
         if self._ui.findChild(QComboBox, "comboTtl_OCR") is not None:
+            logger.debug("[TTL Combos] 已存在 comboTtl_OCR，跳过（幂等）")
             return
 
         from vibeocr.contracts.pipelines import OCRPipeline, get_pipeline_display_name
         from vibeocr.pyside.runtime import ConfigManager
 
         ttls = ConfigManager.instance().get_pipeline_ttls()
+        created_count = 0
         for pipeline in OCRPipeline:
             row = QWidget(self._ui)
             row.setObjectName(f"ttlRow_{pipeline.value}")
@@ -802,6 +807,12 @@ class SettingsPageController:
             row_layout.addWidget(combo)
             row_layout.addStretch(1)
             layout.addWidget(row)
+            created_count += 1
+        logger.info(
+            "[TTL Combos] 已创建 %d 个 ComboBox (layout count=%d)",
+            created_count,
+            layout.count(),
+        )
 
     def _select_ttl_combo(self, combo: QComboBox, ttl: int) -> None:
         """根据 TTL 秒数选中 ComboBox 项（UserRole data 精确匹配，无匹配回退持久）。"""
