@@ -9,7 +9,7 @@ from datetime import date
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QSize, Qt
-from PySide6.QtGui import QIcon, QTextDocument
+from PySide6.QtGui import QIcon, QTextCursor, QTextDocument
 from PySide6.QtWidgets import (
     QFormLayout,
     QFrame,
@@ -300,6 +300,12 @@ class AboutTab(QWidget):
                 self._changelog_browser.document().setMarkdown(
                     raw, _CHANGELOG_MARKDOWN_FEATURES
                 )
+                # setMarkdown 后光标停在文档末尾，CHANGELOG.md 是倒序排列
+                # （最新版本在顶部），需把光标移回开头，否则打开关于页默认滚到
+                # 最底部，看到的反而是最旧的更新条目。
+                cursor = self._changelog_browser.textCursor()
+                cursor.movePosition(QTextCursor.MoveOperation.Start)
+                self._changelog_browser.setTextCursor(cursor)
             except Exception:
                 logger.exception("读取 CHANGELOG.md 失败: %s", changelog_path)
                 self._changelog_browser.setMarkdown("暂无更新日志")
