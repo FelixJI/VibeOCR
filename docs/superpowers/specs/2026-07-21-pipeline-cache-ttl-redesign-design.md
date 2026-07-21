@@ -674,11 +674,12 @@ WorkerHost 契约 + 生命周期门禁，六道阻断式检查：
 | `methods.schema.json:624` | `"ttl_seconds": { "type": "integer", "minimum": 0 }` | `"pipeline_ttls": { "type": "object", "additionalProperties": { "type": "integer", "minimum": 0 } }` |
 | `methods.schema.json:642-643` (set_ttl request) | `required: ["ttl_seconds"]`, `ttl_seconds: integer` | `required: ["pipeline_ttls"]`, `pipeline_ttls: object<str→int≥0>` |
 | `methods.schema.json:647-650` (set_ttl response) | `required: ["updated", "ttl_seconds"]` | `required: ["updated", "pipeline_ttls"]` |
-| `methods.schema.json:715,719` (preload request) | `ttl_seconds: integer` | `pipeline_ttls: object<str→int≥0>` |
+| `methods.schema.json:715,719` (settings.snapshot response) | `ttl_seconds: integer` | `pipeline_ttls: object<str→int≥0>` |
 | `golden.json:588,601,608,677` | `"ttl_seconds": <int>` 样例 | 替换为 `"pipeline_ttls": {...}` 完整 6 管道样例 |
 | `method_validation.py:580-590` (status response) | `_integer(p["ttl_seconds"], ...)` | 改为校验 `pipeline_ttls` 是 dict 且每 value≥0 |
 | `method_validation.py:606-622` (set_ttl req/resp) | `_integer(p["ttl_seconds"], ...)` | 同上，dict 校验 |
-| `method_validation.py:666-675` (preload validator) | `_integer(p["ttl_seconds"], ...)` | 同上 |
+| `method_validation.py:663-675` (`_response_settings` settings.snapshot) | `_integer(p["ttl_seconds"], ...)` | 同上，dict 校验 |
+| `composition.py:193-194,606,615` (`SettingsSnapshot.ttl_seconds`) | `ttl_seconds: int` 字段 + 读取 `pipeline_ttl_seconds` | 改为 `pipeline_ttls: dict` + 读取 `pipeline_ttls` |
 
 ### 8.4 C# GoldenContractTests 同步
 
