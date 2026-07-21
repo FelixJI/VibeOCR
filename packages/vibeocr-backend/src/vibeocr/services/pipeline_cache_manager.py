@@ -71,6 +71,12 @@ class PipelineCacheManager:
             daemon=True,
         )
         self._thread.start()
+        logger.info(
+            "[CacheManager] PipelineTTLWatcher 启动 (ttls=%s, max_heavy=%d, tick=%ss)",
+            dict(self._ttls),
+            self._max_heavy,
+            self._tick_interval,
+        )
 
     def _detect_max_heavy(self) -> int:
         """读 GPU 显存总量算并存上限，失败回退。
@@ -266,6 +272,20 @@ class PipelineCacheManager:
                 self._wakeup_event.clear()
                 continue
             try:
+                # 诊断：tick 前快照（让 TTL 是否真的在跑可观察）
+                loaded = sorted(self._service._pipelines.keys())
+                now = time.time()
+                due = [
+                    n
+                    for n in loaded
+                    if self._ttls.get(n, 0) > 0
+                    and self._last_used.get(n, 0.0) + self._ttls[n] < now
+                ]
+                logger.debug(
+                    "[CacheManager] tick: loaded=%s due_for_evict=%s",
+                    loaded,
+                    due,
+                )
                 self.evict_idle()
             except Exception as e:
                 logger.warning("[CacheManager] tick evict_idle 失败: %s", e)
@@ -295,5 +315,6 @@ class PipelineCacheManager:
                 import paddle
 
                 paddle.device.cuda.empty_cache()
+                logger.info("[CacheManager] paddle.device.cuda.empty_cache() 已调用")
         except Exception as e:
             logger.debug("[CacheManager] empty_cache 跳过: %s", e)
