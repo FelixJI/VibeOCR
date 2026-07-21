@@ -33,6 +33,7 @@ _PIPELINE_METADATA: dict[OCRPipeline, dict[str, Any]] = {
         "short_name": "文字",
         "preloadable": True,
         "heavy": False,
+        "cache_kind": "paddle",
         "description": "识别图片中的文字内容，适用于纯文本场景",
         "supported_options": [
             "use_doc_orientation_classify",
@@ -45,6 +46,7 @@ _PIPELINE_METADATA: dict[OCRPipeline, dict[str, Any]] = {
         "short_name": "结构",
         "preloadable": True,
         "heavy": True,
+        "cache_kind": "paddle",
         "description": "文档结构分析，支持表格、公式、印章、图表识别",
         "supported_options": [
             "use_doc_orientation_classify",
@@ -61,6 +63,7 @@ _PIPELINE_METADATA: dict[OCRPipeline, dict[str, Any]] = {
         "short_name": "文档M",
         "preloadable": False,
         "heavy": True,
+        "cache_kind": "mineru",
         "description": "使用 MineRU 解析文档，支持 PDF/图片，提取文本、表格、公式等",
         "supported_options": [
             "parse_method",
@@ -78,6 +81,7 @@ _PIPELINE_METADATA: dict[OCRPipeline, dict[str, Any]] = {
         "short_name": "文档P",
         "preloadable": True,
         "heavy": True,
+        "cache_kind": "paddle",
         "description": "使用 PaddleOCR-VL-1.5 解析文档，支持图片/PDF，提取文本、表格、公式、图表等",
         "supported_options": [
             "use_doc_orientation_classify",
@@ -93,6 +97,7 @@ _PIPELINE_METADATA: dict[OCRPipeline, dict[str, Any]] = {
         "short_name": "表格",
         "preloadable": True,
         "heavy": False,
+        "cache_kind": "paddle",
         "description": "独立表格结构识别，支持有线和无线表格",
         "supported_options": [
             "use_doc_orientation_classify",
@@ -106,6 +111,7 @@ _PIPELINE_METADATA: dict[OCRPipeline, dict[str, Any]] = {
         "short_name": "公式",
         "preloadable": True,
         "heavy": False,
+        "cache_kind": "paddle",
         "description": "独立数学公式识别（LaTeX 输出）",
         "supported_options": [
             "use_doc_orientation_classify",
@@ -150,6 +156,16 @@ def get_heavy_pipelines() -> list[OCRPipeline]:
     return [p for p in OCRPipeline if _metadata(p).get("heavy", False)]
 
 
+def get_paddle_pipelines() -> list[OCRPipeline]:
+    """走 paddle 回收路径的管道（del + paddle.device.cuda.empty_cache）。"""
+    return [p for p in OCRPipeline if _metadata(p).get("cache_kind") == "paddle"]
+
+
+def get_mineru_pipelines() -> list[OCRPipeline]:
+    """走 mineru 回收路径的管道（仅移除 httpx 代理，不调 empty_cache）。"""
+    return [p for p in OCRPipeline if _metadata(p).get("cache_kind") == "mineru"]
+
+
 def is_option_supported(pipeline: OCRPipeline, option_name: str) -> bool:
     return option_name in get_pipeline_supported_options(pipeline)
 
@@ -158,6 +174,8 @@ __all__ = [
     "OCRPipeline",
     "get_all_pipelines",
     "get_heavy_pipelines",
+    "get_mineru_pipelines",
+    "get_paddle_pipelines",
     "get_pipeline_description",
     "get_pipeline_display_name",
     "get_pipeline_short_name",
