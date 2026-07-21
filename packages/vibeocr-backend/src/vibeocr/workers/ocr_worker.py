@@ -633,14 +633,16 @@ def run_worker(shm_name: str, shm_size: int, use_gpu: bool) -> None:
                         protocol.wait_for_read(timeout=5.0)
 
                 elif msg_type == MSG_SET_TTL:
-                    # 更新 TTL
+                    # 更新每管道 TTL
                     import json
 
                     try:
                         payload = json.loads(data.decode("utf-8")) if data else {}
-                        ttl = int(payload.get("ttl_seconds", 300))
-                        ocr_service.cache_manager.ttl_seconds = ttl
-                        logger.info("[Worker] TTL 更新为 %d 秒", ttl)
+                        ttls = payload.get("pipeline_ttls")
+                        if not isinstance(ttls, dict):
+                            raise ValueError("pipeline_ttls 缺失或非 dict")
+                        ocr_service.cache_manager.ttls = ttls
+                        logger.info("[Worker] 每管道 TTL 更新: %s", ttls)
                         protocol.write_message(MSG_ACK, b"ok", sender="worker")
                         # 等待主进程读取响应，避免读回自己刚写的消息
                         protocol.wait_for_read(timeout=5.0)
@@ -692,19 +694,8 @@ def run_worker(shm_name: str, shm_size: int, use_gpu: bool) -> None:
                         f"未知消息类型: {msg_type.decode('ascii', errors='replace')}"
                     )
 
-                # 每次处理完消息后检查闲置管道回收
-                try:
-                    ocr_service.cache_manager.evict_idle()
-                except Exception as ev_err:
-                    logger.debug("[Worker] evict_idle 失败: %s", ev_err)
-
             except SharedMemoryProtocolError as e:
                 if "超时" in str(e):
-                    # 读取超时，顺便检查闲置管道回收
-                    try:
-                        ocr_service.cache_manager.evict_idle()
-                    except Exception as ev_err:
-                        logger.debug("[Worker] evict_idle 失败: %s", ev_err)
                     continue
                 logger.error(f"通信错误: {e}")
                 break
@@ -713,6 +704,11 @@ def run_worker(shm_name: str, shm_size: int, use_gpu: bool) -> None:
         logger.info("收到中断信号，退出")
 
     finally:
+        # 停止 TTL 后台线程，避免线程泄漏
+        try:
+            ocr_service.cache_manager.shutdown()
+        except Exception as shutdown_err:
+            logger.debug("[Worker] cache_manager shutdown 失败: %s", shutdown_err)
         # 清理所有批量管理器
         for pipeline_name, mgr in batch_managers.items():
             if mgr:
