@@ -148,8 +148,11 @@ class OCRService(metaclass=SingletonMeta):
                 max_heavy_override = ConfigManager.instance().get_max_heavy_pipelines()
             except Exception:
                 pass  # ConfigManager 未初始化时用默认自动检测
+            # 直连模式下 worker 端没有 ConfigManager 持久化层；
+            # 初始 ttls 传空字典，由 SET_TTL RPC（subprocess_manager 预加载
+            # 时下发）或 set_pipeline_ttls 类方法在运行时填充。
             self._cache_manager = PipelineCacheManager(
-                self, max_heavy=max_heavy_override
+                self, ttls={}, max_heavy=max_heavy_override
             )
         return self._cache_manager
 

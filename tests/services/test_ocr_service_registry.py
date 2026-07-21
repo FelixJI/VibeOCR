@@ -685,7 +685,7 @@ class TestRecognizeBatch:
 
         service = OCRService()
         service._pipelines = {}
-        service._cache_manager = PipelineCacheManager(service, max_heavy=1)
+        service._cache_manager = PipelineCacheManager(service, {}, max_heavy=1)
         type(service)._onednn_safe_cache = True
 
         first_pipeline = MagicMock(name="onednn_pipeline")
@@ -762,7 +762,7 @@ class TestRecognizeBatch:
 
         service = OCRService()
         service._pipelines = {}
-        service._cache_manager = PipelineCacheManager(service, max_heavy=1)
+        service._cache_manager = PipelineCacheManager(service, {}, max_heavy=1)
         type(service)._onednn_safe_cache = True
         mock_spec = MagicMock()
         mock_spec.create_pipeline.side_effect = [MagicMock(), MagicMock()]

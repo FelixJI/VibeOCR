@@ -61,9 +61,9 @@ def test_release_not_initialized_returns_empty():
 
 
 def test_set_ttl_flow():
-    """设置 TTL 的 RPC 路径。
+    """设置每管道 TTL 的 RPC 路径。
 
-    timeout 现在在 task 闭包内传给 worker.set_ttl(timeout=),
+    timeout 现在在 task 闭包内传给 worker.set_ttls(timeout=),
     而非 execute(timeout=)（后者已移除死参数）。
     """
     from vibeocr.services.ocr_service_subprocess import OCRServiceSubprocess
@@ -75,25 +75,26 @@ def test_set_ttl_flow():
     mock_manager.execute.return_value = True
     svc._paddlex_manager = mock_manager
 
-    assert svc.set_pipeline_ttl(600)
+    ttls = {"OCR": 0, "PP-StructureV3": 600}
+    assert svc.set_pipeline_ttls(ttls)
     mock_manager.execute.assert_called_once()
-    # 验证 task 闭包正确调用 worker.set_ttl(ttl, timeout=)
+    # 验证 task 闭包正确调用 worker.set_ttls(ttls, timeout=)
     task_fn = mock_manager.execute.call_args.args[0]
     mock_worker = MagicMock()
     task_fn(mock_worker)
-    mock_worker.set_ttl.assert_called_once()
-    st_call = mock_worker.set_ttl.call_args
-    assert st_call.args[0] == 600
+    mock_worker.set_ttls.assert_called_once()
+    st_call = mock_worker.set_ttls.call_args
+    assert st_call.args[0] == ttls
     assert st_call.kwargs.get("timeout") is not None  # 已显式传入超时
 
 
 def test_set_ttl_not_initialized_returns_false():
-    """服务未初始化时 set_ttl 返回 False。"""
+    """服务未初始化时 set_pipeline_ttls 返回 False。"""
     from vibeocr.services.ocr_service_subprocess import OCRServiceSubprocess
 
     svc = OCRServiceSubprocess.__new__(OCRServiceSubprocess)
     svc._initialized = False
-    assert svc.set_pipeline_ttl(600) is False
+    assert svc.set_pipeline_ttls({"OCR": 0}) is False
 
 
 def test_release_handles_exception():
@@ -122,7 +123,7 @@ def test_set_ttl_handles_exception():
     mock_manager.execute.side_effect = RuntimeError("RPC failed")
     svc._paddlex_manager = mock_manager
 
-    assert svc.set_pipeline_ttl(600) is False
+    assert svc.set_pipeline_ttls({"OCR": 0}) is False
 
 
 def test_status_flow_reads_real_worker_snapshot():
@@ -132,7 +133,7 @@ def test_status_flow_reads_real_worker_snapshot():
     svc._initialized = True
     mock_manager = MagicMock()
     mock_manager.execute.return_value = {
-        "ttl_seconds": 600,
+        "pipeline_ttls": {"OCR": 0, "PP-StructureV3": 600},
         "max_heavy": 2,
         "loaded_pipelines": ["OCR"],
         "last_used_unix_ms": {"OCR": 1234},

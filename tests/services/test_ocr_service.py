@@ -381,8 +381,9 @@ class TestCacheManagerIntegration:
         assert len(svc._pipelines) == 0
 
     def test_set_pipeline_ttl_classmethod(self):
-        """set_pipeline_ttl 类方法可调用（直连模式）。"""
+        """set_pipeline_ttls 类方法可调用（直连模式）。"""
         OCRService._reset()
         svc = OCRService()
-        assert OCRService.set_pipeline_ttl(600) is True
-        assert svc.cache_manager.ttl_seconds == 600
+        ttls = {"OCR": 0, "PP-StructureV3": 600}
+        assert OCRService.set_pipeline_ttls(ttls) is True
+        assert svc.cache_manager.ttls["PP-StructureV3"] == 600
