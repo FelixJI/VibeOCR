@@ -580,6 +580,22 @@ class OCRServiceSubprocess:
                 f"[识别] 管道 {pipeline_name} 模型已缓存，使用标准超时 ({T.RECOGNIZE_CACHED}s)"
             )
             return T.RECOGNIZE_CACHED
+        # Fallback：cache.json 可能缺失 pipeline_success（被 clear_cache 清掉、
+        # 或新装未跑过）。检查 worker 是否已预加载该管道——若 loaded_pipelines
+        # 包含目标，说明模型实例已在内存，无需延长超时给下载留时间。
+        try:
+            status = self.get_pipeline_cache_status()
+            loaded = set(status.get("loaded_pipelines", []))
+            if pipeline_name_str in loaded:
+                logger.info(
+                    f"[识别] 管道 {pipeline_name} 未在 cache.json 记录成功，"
+                    f"但 worker 已预加载，使用标准超时 ({T.RECOGNIZE_CACHED}s)"
+                )
+                return T.RECOGNIZE_CACHED
+        except Exception as fallback_err:
+            logger.debug(
+                f"[识别] 预加载状态检查失败，回退到延长超时: {fallback_err}"
+            )
         logger.warning(
             f"[识别] 管道 {pipeline_name} 模型未缓存，使用延长超时 ({T.RECOGNIZE_UNCACHED}s)"
         )

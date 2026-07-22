@@ -1118,21 +1118,40 @@ class SettingsPageController:
         self._run_cache_operation(self._refresh_machine_cache_operation, finished, failed)
 
     def _refresh_machine_cache_operation(self) -> tuple[bool, str]:
-        """真正重检测：清缓存 → 触发完整环境检测 → 读回 cache info。
+        """真正重检测：清环境检测字段 → 触发完整检测 → 读回 cache info。
 
         在 _run_cache_operation 后台线程执行。完整检测耗时数十秒
         （40+ subprocess + paddle import），UI 通过按钮 disable + 进度文案提示。
+
+        注意：**不清 pipeline_success 字段**——它是运行时累积的状态（哪些
+        管道曾成功跑过），不属于"环境检测"范畴。清掉会导致 _decide_recognize_timeout
+        误判"模型未缓存"，给 OCR 600s 超时。用 reset_cache_to_empty 会清
+        deps/hardware_info 但不保留 pipeline_success，故这里手动保留。
         """
         from vibeocr import env_manager
-        from vibeocr.machine_cache import clear_cache, get_cache_info
+        from vibeocr.machine_cache import get_cache_info, load_cache, save_cache
 
-        # 1. 先清旧缓存，强制下次检测为"全量"
-        clear_cache(self._project_root)
-        # 2. 跑完整检测（use_cache=False 强制走 _check_imports 全量探测）
+        # 1. 备份 pipeline_success（运行时状态，不应被环境重检测清掉）
+        cached = load_cache(self._project_root) or {}
+        preserved_pipeline_success = cached.get("pipeline_success", {})
+        preserved_network = cached.get("network", {})
+        # 2. 清环境检测字段，强制下次检测为"全量"
+        from vibeocr.machine_cache import reset_cache_to_empty
+
+        reset_cache_to_empty(self._project_root)
+        # 3. 跑完整检测（use_cache=False 强制走 _check_imports 全量探测）
         env_manager.check_embedded_environment_dependencies(
             self._project_root,
             use_cache=False,
         )
+        # 4. 还原保留的运行时状态字段
+        if preserved_pipeline_success or preserved_network:
+            new_cached = load_cache(self._project_root) or {}
+            if preserved_pipeline_success:
+                new_cached["pipeline_success"] = preserved_pipeline_success
+            if preserved_network:
+                new_cached["network"] = preserved_network
+            save_cache(self._project_root, new_cached)
         return True, get_cache_info(self._project_root)
 
     def _open_reinstall_dialog(
@@ -1626,21 +1645,41 @@ class SettingsPageController:
         return "✗ 未安装"
 
     def _on_clear_cache_clicked(self) -> None:
-        """清除缓存按钮点击"""
-        from vibeocr.machine_cache import clear_cache
+        """清除缓存按钮点击。
 
+        保留 pipeline_success（运行时累积状态，清掉会导致 OCR 误判未缓存）。
+        """
         reply = QMessageBox.question(
             None,
             "确认清除",
-            "确定要清除所有缓存吗？\n这将删除机器配置缓存，下次启动时需要重新检测。",
+            "确定要清除环境检测缓存吗？\n"
+            "下次启动时需要重新检测依赖与硬件。\n"
+            "（管道运行状态会保留，不影响 OCR 超时判定）",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
 
         if reply == QMessageBox.StandardButton.Yes:
-            clear_cache(self._project_root)
+            from vibeocr.machine_cache import (
+                load_cache,
+                reset_cache_to_empty,
+                save_cache,
+            )
+
+            # 保留运行时状态字段，只清环境检测数据
+            cached = load_cache(self._project_root) or {}
+            preserved_pipeline_success = cached.get("pipeline_success", {})
+            preserved_network = cached.get("network", {})
+            reset_cache_to_empty(self._project_root)
+            if preserved_pipeline_success or preserved_network:
+                new_cached = load_cache(self._project_root) or {}
+                if preserved_pipeline_success:
+                    new_cached["pipeline_success"] = preserved_pipeline_success
+                if preserved_network:
+                    new_cached["network"] = preserved_network
+                save_cache(self._project_root, new_cached)
             self._update_cache_status("缓存已清除")
-            logger.debug("[缓存] 已清除")
+            logger.debug("[缓存] 已清除（保留 pipeline_success）")
 
     def _update_cache_status(self, status: str | None = None) -> None:
         """更新缓存状态；校验机器码的路径始终在线程池执行。"""
@@ -1807,6 +1846,8 @@ class SettingsPageController:
         else:
             # 回退：尚未构造时（理论上不会发生，因为 _init_settings_page 先建标签）
             self._update_release_status(status_text)
+        # 成功后清动作反馈 label（之前停在"正在读取..."，给用户"还在刷新"错觉）
+        self._update_release_status("就绪")
 
     def _on_pipeline_cache_error(self, error: str, generation: int) -> None:
         if generation != self._cache_generation:

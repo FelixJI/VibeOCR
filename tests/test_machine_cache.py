@@ -624,6 +624,39 @@ class TestResetCacheToEmpty:
         is_valid, _data = is_cache_valid(tmp_path)
         assert is_valid is True
 
+    def test_reset_cache_to_empty_loses_pipeline_success(self, tmp_path):
+        """reset_cache_to_empty 不保留 pipeline_success（底层行为）。
+
+        这是为什么 UI 层的 _refresh_machine_cache_operation / _on_clear_cache_clicked
+        必须在 reset 前后手动保存/还原 pipeline_success——否则会导致
+        _decide_recognize_timeout 误判"模型未缓存"，给 OCR 600s 超时。
+        此测试固化底层语义，防止误改。
+        """
+        from vibeocr.machine_cache import (
+            CACHE_VERSION,
+            generate_machine_id,
+            load_cache,
+            reset_cache_to_empty,
+            save_cache,
+        )
+
+        # 建一个含 pipeline_success 的缓存
+        save_cache(
+            tmp_path,
+            {
+                "version": CACHE_VERSION,
+                "machine_id": generate_machine_id(),
+                "dependencies": {"paddlepaddle": True},
+                "pipeline_success": {"OCR": True, "PP-StructureV3": True},
+            },
+        )
+        # reset 后 pipeline_success 丢失
+        reset_cache_to_empty(tmp_path)
+        reset = load_cache(tmp_path)
+        assert reset is not None
+        assert "pipeline_success" not in reset
+        # 这是 by-design：保留逻辑由 UI 调用方负责（见 settings_page_controller）。
+
 
 class TestWarmupMachineId:
     """Bug 3: warmup_machine_id 预热机器码缓存，避免 GUI 操作感知 wmic 锁争用。
