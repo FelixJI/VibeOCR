@@ -43,7 +43,9 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 # 更新时保留的目录
-_PRESERVE_DIRS = {"python", "data", "config"}
+# - python/data/config: 运行时依赖、缓存与用户配置，跨版本必须保留
+# - logs: 主程序运行日志（vibeocr.log 历史轮转文件），替换会丢失用户排查现场
+_PRESERVE_DIRS = {"python", "data", "config", "logs"}
 
 logger = logging.getLogger("updater")
 
@@ -1053,9 +1055,11 @@ def run_replacement(
             signal_ready(app_dir, ready_filename)
 
         # Classic 收到 ready 后会先让出一个事件循环 turn，再硬退出。给文件映射和
-        # DLL 句柄一个短暂释放窗口，减少替换阶段 WinError 5/32；后续 busy retry
-        # 仍是最终兜底。延时很短且发生在后台 updater，不会冻结主界面。
-        time.sleep(0.5)
+        # DLL 句柄一个释放窗口，减少替换阶段 WinError 5/32；后续 busy retry 仍是
+        # 最终兜底。实测主程序退出后 PE 映射、DLL 句柄、Qt 资源释放可达 1~2s（慢机器
+        # 或杀独占扫描更久），0.5s 余量不足会偶发瞬时占用误触发回滚。提到 2s 既覆盖
+        # 慢机器释放窗口，又不致显著拉长更新等待（发生在后台 updater，UI 已退出）。
+        time.sleep(2.0)
 
         with _StageTimer("解压更新包"):
             new_files_dir = extract_zip(zip_path, app_dir)
