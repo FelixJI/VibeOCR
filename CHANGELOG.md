@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.5.5] - 2026-07-22
+
+### Added
+- feat(log): 文件日志改为人可读文本格式
+
+### Fixed
+- fix(log): match asctime milliseconds in worker log forwarding
+- fix(worker): execute_control lock_timeout 防止阻塞后续 OCR
+- fix(cache): preserve pipeline_success + clear status label + fallback timeout
+- fix(updater): 保留 logs 目录并增大文件释放余量
+
+
 ## [0.5.4] - 2026-07-21
 
 ### Added
