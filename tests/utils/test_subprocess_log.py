@@ -56,6 +56,33 @@ class TestSubprocessLogForwarder:
             for r in caplog.records
         )
 
+    def test_structured_line_with_milliseconds_forwarded(
+        self, caplog, logger_name, source_label
+    ):
+        """带逗号毫秒的标准行（logging 默认 asctime 格式）必须转发。
+
+        回归 bug：_STRUCTURED_LINE_RE 原正则只匹配到秒（不含 ,123 毫秒），
+        导致 worker 子进程的所有结构化日志（logging.basicConfig 默认格式
+        ``%(asctime)s`` = "2024-01-15 10:30:45,123"）被当成裸 print 折叠丢弃。
+        用户日志里完全看不到 worker 的 [Worker] 前缀消息、PipelineTTLWatcher
+        启动、TTL 回收等日志。
+        """
+        forwarder = SubprocessLogForwarder(
+            logger_name=logger_name, source_label=source_label
+        )
+        line = (
+            "2024-01-15 10:30:45,123 [INFO] vibeocr.services.pipeline_cache_manager: "
+            "PipelineTTLWatcher 启动 (ttls={'OCR': 0}, max_heavy=1, tick=30s)"
+        )
+
+        with caplog.at_level("DEBUG", logger=logger_name):
+            forwarder.forward(line)
+
+        assert any(
+            "PipelineTTLWatcher 启动" in r.message and r.levelname == "INFO"
+            for r in caplog.records
+        ), "带逗号毫秒的结构化日志行未被转发——worker 日志丢失根因"
+
     def test_structured_warning_line_forwarded_at_warning_level(
         self, caplog, logger_name, source_label
     ):

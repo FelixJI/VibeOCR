@@ -27,7 +27,10 @@ __all__ = ["SubprocessLogForwarder"]
 
 # 子进程标准日志格式：2024-01-15 10:30:45 [INFO] module: message
 _STRUCTURED_LINE_RE = re.compile(
-    r"\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\s+\[(DEBUG|INFO|WARNING|ERROR|CRITICAL)\]\s+(.*)"
+    # %(asctime)s 默认格式是 "2026-07-22 13:16:50,123"（带逗号毫秒），
+    # 而非 "2026-07-22 13:16:50"。逗号毫秒必须可选匹配，否则 worker
+    # 子进程的所有结构化日志行都被当成裸 print 折叠丢失。
+    r"\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}(?:,\d{3})?\s+\[(DEBUG|INFO|WARNING|ERROR|CRITICAL)\]\s+(.*)"
 )
 
 # 日期时间模式：YYYY-MM-DD HH:MM:SS（用于分割无换行拼接的多行）
