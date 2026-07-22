@@ -1,4 +1,5 @@
 import logging
+import sys
 import time
 
 
@@ -115,11 +116,10 @@ def test_qt_log_handler_requires_explicit_ui_status(qapp):
     assert emitted == ["model ready"]
 
 
-def test_setup_logging_uses_jsonl_file_formatter():
+def test_setup_logging_uses_human_readable_file_formatter():
     from logging.handlers import RotatingFileHandler
 
-    from vibeocr.logging_context import JsonLogFormatter
-    from vibeocr.services.log_service import setup_logging
+    from vibeocr.services.log_service import HumanReadableFormatter, setup_logging
 
     setup_logging()
     root_logger = logging.getLogger()
@@ -127,8 +127,84 @@ def test_setup_logging_uses_jsonl_file_formatter():
         file_handler = next(
             h for h in root_logger.handlers if isinstance(h, RotatingFileHandler)
         )
-        assert isinstance(file_handler.formatter, JsonLogFormatter)
+        assert isinstance(file_handler.formatter, HumanReadableFormatter)
     finally:
         for item in root_logger.handlers[:]:
             root_logger.removeHandler(item)
             item.close()
+
+
+def test_human_readable_formatter_basic_line():
+    from vibeocr.services.log_service import HumanReadableFormatter
+
+    formatter = HumanReadableFormatter()
+    record = logging.LogRecord(
+        name="vibeocr.views.main_window",
+        level=logging.INFO,
+        pathname=__file__,
+        lineno=1,
+        msg="应用启动",
+        args=(),
+        exc_info=None,
+    )
+    record.created = time.mktime(time.strptime("2026-07-22 14:32:01", "%Y-%m-%d %H:%M:%S"))
+    record.msecs = 123
+
+    line = formatter.format(record)
+    assert line == "2026-07-22 14:32:01.123 INFO  vibeocr.views.main_window: 应用启动"
+
+
+def test_human_readable_formatter_appends_context_fields():
+    from vibeocr.services.log_service import HumanReadableFormatter
+
+    formatter = HumanReadableFormatter()
+    record = logging.LogRecord(
+        name="vibeocr.workers.ocr_worker",
+        level=logging.ERROR,
+        pathname=__file__,
+        lineno=1,
+        msg="OCR 失败",
+        args=(),
+        exc_info=None,
+    )
+    record.created = time.mktime(time.strptime("2026-07-22 14:32:02", "%Y-%m-%d %H:%M:%S"))
+    record.msecs = 456
+    # 模拟 forward_worker_output_line 注入的字段
+    record.request_id = "req-1"
+    record.task_id = "task-7"
+    record.worker_context = {"page": 3, "elapsed_ms": 1200}
+
+    line = formatter.format(record)
+    assert line.startswith(
+        "2026-07-22 14:32:02.456 ERROR vibeocr.workers.ocr_worker: OCR 失败  ["
+    )
+    # 上下文字段全部追加在行尾的方括号内
+    assert "request_id=req-1" in line
+    assert "task_id=task-7" in line
+    assert "page=3" in line
+    assert "elapsed_ms=1200" in line
+
+
+def test_human_readable_formatter_appends_traceback():
+    from vibeocr.services.log_service import HumanReadableFormatter
+
+    formatter = HumanReadableFormatter()
+    try:
+        raise ValueError("boom")
+    except ValueError:
+        exc_info = sys.exc_info()
+
+    record = logging.LogRecord(
+        name="vibeocr.test",
+        level=logging.ERROR,
+        pathname=__file__,
+        lineno=1,
+        msg="出错了",
+        args=(),
+        exc_info=exc_info,
+    )
+    record.created = time.time()
+
+    line = formatter.format(record)
+    assert "ValueError: boom" in line
+    assert "\nTraceback (most recent call last):" in line

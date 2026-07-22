@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QObject, Signal
 
-from vibeocr.logging_context import JsonLogFormatter, ui_status_extra
+from vibeocr.logging_context import LOG_CONTEXT_FIELDS, ui_status_extra
 
 if TYPE_CHECKING:
     from PySide6.QtCore import SignalInstance
@@ -20,6 +20,50 @@ class _SignalEmitter(QObject):
     """Qt 信号发射器，与 logging.Handler 分离以避免 emit 方法冲突"""
 
     status_signal = Signal(str)  # 发射状态栏消息
+
+
+class HumanReadableFormatter(logging.Formatter):
+    """人可读文本格式，用于落盘 vibeocr.log。
+
+    替换原 JsonLogFormatter——历史排查时单行 JSON 难读，且代码内无消费者读回
+    该文件（worker 转发链路仍走 stderr JSONL，与此独立）。保留上下文字段兜底：
+    LOG_CONTEXT_FIELDS 与 worker_context 在生产代码里极少被填充，但少数场景
+    （batch 提交、worker 转发）会携带，丢了可惜，故以 ``[k=v, k=v]`` 追加到行尾。
+    """
+
+    _BASE_FMT = "%(asctime)s.%(msecs)03d %(levelname)-5s %(name)s: %(message)s"
+    _DATE_FMT = "%Y-%m-%d %H:%M:%S"
+
+    def __init__(self) -> None:
+        super().__init__(fmt=self._BASE_FMT, datefmt=self._DATE_FMT)
+
+    def format(self, record: logging.LogRecord) -> str:
+        # 基础行：时间戳(毫秒) 级别(左对齐5) logger: 消息
+        line = super().format(record)
+
+        # 附加非空上下文字段（request_id/task_id/pipeline/page/batch）
+        pairs: list[str] = []
+        for field in LOG_CONTEXT_FIELDS:
+            value = getattr(record, field, None)
+            if value is not None:
+                pairs.append(f"{field}={value}")
+
+        # worker 转发的额外字段（forward_worker_output_line 打包的非标准键）
+        worker_context = getattr(record, "worker_context", None)
+        if isinstance(worker_context, dict):
+            for key, value in worker_context.items():
+                pairs.append(f"{key}={value}")
+
+        if pairs:
+            line += "  [" + ", ".join(pairs) + "]"
+
+        # 异常 traceback 走 logging 默认多行输出，附加在行尾
+        if record.exc_info and not record.exc_text:
+            record.exc_text = self.formatException(record.exc_info)
+        if record.exc_text:
+            line += "\n" + record.exc_text
+
+        return line
 
 
 class QtLogHandler(logging.Handler):
@@ -124,6 +168,9 @@ def setup_logging(level: int | str = logging.INFO) -> QtLogHandler:
     # 文件 handler：DEBUG 及以上（全量记录，便于排查）
     # 日志目录跟随 project_root（打包态在 exe 同级，开发态在仓库根），
     # 与 env_manager.get_project_root 保持一致，避免硬编码层级偏差。
+    # 落盘为人可读文本（HumanReadableFormatter）——历史排查时直接打开阅读，
+    # 不再有 JSON 解析开销与可读性损失。worker 转发链路仍用 stderr JSONL，
+    # 由 forward_worker_output_line 解析后转成普通 LogRecord，经此 formatter 输出。
     from vibeocr.env_manager import get_project_root
 
     log_dir = get_project_root() / "logs"
@@ -138,7 +185,7 @@ def setup_logging(level: int | str = logging.INFO) -> QtLogHandler:
         delay=True,
     )
     file_handler.setLevel(_coerce_level(level))
-    file_handler.setFormatter(JsonLogFormatter(frontend="pyside", profile="production"))
+    file_handler.setFormatter(HumanReadableFormatter())
     root_logger.addHandler(file_handler)
 
     # 第三方库降噪：根日志器是 DEBUG，若不显式降级，fontTools/paddle/urllib3 等
