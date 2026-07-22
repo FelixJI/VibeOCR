@@ -341,3 +341,60 @@ class TestForceRestartSemantics:
 
         assert len(forced) == 1, "stale worker 应被 force_restart"
         assert forced[0][1] == "stale_health_check"
+
+
+class TestExecuteControlLockTimeout:
+    """execute_control 的 _shm_lock 超时保护。
+
+    回归：用户反馈"读取驻留管道会影响后续 OCR，如果迟迟不结束"。
+    根因是 status 拿了 _shm_lock 等 worker 响应，worker 不响应时锁不释放，
+    后续 OCR（也用 _shm_lock）被无限阻塞。修复：execute_control 加
+    lock_timeout，超时抛错而非无限等锁。
+    """
+
+    def test_control_rpc_times_out_when_lock_held(self):
+        """锁被占着时，execute_control 在 lock_timeout 后抛错。"""
+        import threading
+        from unittest.mock import MagicMock
+
+        import pytest as _pytest
+
+        from vibeocr.services.ocr_worker_process import OCRWorkerProcessError
+
+        mgr = WorkerManager(max_workers=1, use_gpu=False, auto_restart=False)
+        mock_process = MagicMock()
+        mock_process.is_ready = True
+        # 用普通 Lock（与生产一致），预先在另一线程持有，模拟卡住的 RPC
+        lock = threading.Lock()
+        lock.acquire()
+        mock_process._shm_lock = lock
+        from vibeocr.services.worker_manager import WorkerInfo
+
+        info = WorkerInfo(
+            worker_id=0, process=mock_process, state=WorkerState.IDLE
+        )
+        mgr._workers.append(info)
+        try:
+            with _pytest.raises(OCRWorkerProcessError, match="超时"):
+                mgr.execute_control(lambda w: None, lock_timeout=0.3)
+        finally:
+            lock.release()
+
+    def test_control_rpc_succeeds_when_lock_free(self):
+        """锁空闲时，execute_control 正常调用 task。"""
+        import threading
+        from unittest.mock import MagicMock
+
+        from vibeocr.services.worker_manager import WorkerInfo
+
+        mgr = WorkerManager(max_workers=1, use_gpu=False, auto_restart=False)
+        mock_process = MagicMock()
+        mock_process.is_ready = True
+        mock_process._shm_lock = threading.Lock()
+        info = WorkerInfo(
+            worker_id=0, process=mock_process, state=WorkerState.IDLE
+        )
+        mgr._workers.append(info)
+
+        result = mgr.execute_control(lambda w: "ok", lock_timeout=1.0)
+        assert result == "ok"

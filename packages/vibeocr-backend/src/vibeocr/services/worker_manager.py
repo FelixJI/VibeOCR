@@ -368,7 +368,9 @@ class WorkerManager:
                         return self.execute(task, retry_count + 1)
             raise
 
-    def execute_control(self, task: Callable[[OCRWorkerProcess], Any]) -> Any:
+    def execute_control(
+        self, task: Callable[[OCRWorkerProcess], Any], *, lock_timeout: float = 15.0
+    ) -> Any:
         """执行轻量控制 RPC（cache_status / set_ttls / release_pipelines）。
 
         与 execute() 的关键区别：**不做 busy 预留、不等待 worker 空闲**。
@@ -379,19 +381,21 @@ class WorkerManager:
         write_message 破坏 SHM 状态）；但不必等待 worker.busy=False，
         因为 worker 主循环会优先处理 control 消息（毫秒级延迟）。
 
-        修复 bug：cache_status 走 execute() 时，若 worker 正被 preload/
-        recognize 占用（busy=True），_reserve_worker 等到 300s 才放弃，
-        UI 这边 10s 已超时。用户日志显示 status 在 worker 做 preload 时
-        100% 失败。
+        **lock_timeout 保护**：_shm_lock 被一个卡住的 RPC（worker 不响应）
+        占着时，最多等 lock_timeout 秒就放弃，避免阻塞后续 OCR 请求。
+        用户反馈："读取驻留管道行为会影响后续 OCR，如果迟迟不结束"——
+        根因是 status 拿了 _shm_lock 等 worker，worker 不响应导致锁不释放。
 
         Args:
             task: 控制任务，接收 OCRWorkerProcess 参数。
+            lock_timeout: 等待 _shm_lock 的最长秒数。超时抛
+                OCRWorkerProcessError，调用方收到失败而不是无限阻塞。
 
         Returns:
             任务结果。
 
         Raises:
-            OCRWorkerProcessError: 无可用 worker（未启动或全部已停止）。
+            OCRWorkerProcessError: 无可用 worker / 锁等待超时。
         """
         with self._workers_lock:
             for info in self._workers:
@@ -402,8 +406,16 @@ class WorkerManager:
                 raise OCRWorkerProcessError("无可用 Worker（控制 RPC）")
         # 抢共享内存协议锁：与正在执行的 recognize/preload 互斥，
         # 但不等 worker.busy。锁内 task 是 write+read 一次完整 RPC。
-        with worker._shm_lock:
+        # Lock 支持 timeout——卡住的 RPC 不会无限阻塞后续 OCR。
+        if not worker._shm_lock.acquire(timeout=lock_timeout):
+            raise OCRWorkerProcessError(
+                f"控制 RPC 等待 _shm_lock 超时（{lock_timeout}s）——"
+                "可能 worker 正在执行长任务且不响应"
+            )
+        try:
             return task(worker)
+        finally:
+            worker._shm_lock.release()
 
     def _restart_worker(self, worker_info: WorkerInfo) -> bool:
         """重启指定 Worker（仅在 worker 未就绪时真正重启）
