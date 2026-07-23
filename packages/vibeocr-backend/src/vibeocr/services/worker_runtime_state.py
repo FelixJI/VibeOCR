@@ -159,9 +159,7 @@ def _pipeline_name_from_options(options: object) -> str:
         value = options.get("pipeline", "OCR")
     elif options is not None and hasattr(options, "pipeline"):
         value = options.pipeline
-    if isinstance(value, Enum):
-        value = value.value
-    elif hasattr(value, "value"):
+    if isinstance(value, Enum) or hasattr(value, "value"):
         value = value.value
     text = str(value).strip()
     return text or "OCR"
