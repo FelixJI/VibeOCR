@@ -27,6 +27,8 @@ logger = logging.getLogger(__name__)
 VRAM_TIER_8GB = 8192
 #: pynvml 不可用时的回退并存上限（保守，防 OOM）。
 FALLBACK_MAX_HEAVY = 1
+#: Parent-side restart recovery embeds original timestamps under this private key.
+_RESTORE_LAST_USED_KEY = "__vibeocr_restore_last_used_unix_ms__"
 
 
 def compute_max_heavy_by_vram(total_vram_mb: int) -> int:
@@ -129,13 +131,17 @@ class PipelineCacheManager:
             return dict(self._ttls)
 
     @ttls.setter
-    def ttls(self, value: dict[str, int]) -> None:
+    def ttls(self, value: dict[str, object]) -> None:
         self._ensure_runtime_fields()
         from vibeocr.core.pipelines import get_all_pipelines
 
+        restore_raw = value.get(_RESTORE_LAST_USED_KEY)
+        restore_values = restore_raw if isinstance(restore_raw, dict) else None
         valid_names = {p.value for p in get_all_pipelines()}
         validated: dict[str, int] = {}
         for name, ttl in value.items():
+            if name == _RESTORE_LAST_USED_KEY:
+                continue
             if name not in valid_names:
                 logger.warning("[CacheManager] 忽略未知管道 TTL: %s", name)
                 continue
@@ -143,7 +149,7 @@ class PipelineCacheManager:
                 logger.warning("[CacheManager] 忽略 bool TTL: %s=%r", name, ttl)
                 continue
             try:
-                validated[name] = max(0, int(ttl))
+                validated[name] = max(0, int(ttl))  # type: ignore[arg-type]
             except (TypeError, ValueError):
                 logger.warning("[CacheManager] 忽略无效 TTL: %s=%r", name, ttl)
 
@@ -154,6 +160,8 @@ class PipelineCacheManager:
             # 而不是用 0 导致有限 TTL 被立刻回收。
             for name in self._service._pipelines:
                 self._last_used.setdefault(name, now)
+        if restore_values is not None:
+            self.restore_last_used_unix_ms(restore_values)
         self._wakeup_event.set()
 
     @property
