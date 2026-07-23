@@ -1,6 +1,9 @@
 name: TTL Diagnostics
 
 on:
+  push:
+    branches:
+      - agent/fix-persistent-model-residency
   pull_request:
     paths:
       - ".github/workflows/ttl-diagnostics.yml"
