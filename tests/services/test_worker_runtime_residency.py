@@ -100,7 +100,7 @@ class _FakeWorkerBase:
         self.loaded.update(names)
         for name in names:
             self.last_used[name] = self.clock[0]
-        return {name: True for name in names}
+        return dict.fromkeys(names, True)
 
     def warmup_pipelines(
         self, pipelines: list[str], *args: Any, **kwargs: Any
@@ -108,7 +108,7 @@ class _FakeWorkerBase:
         del args, kwargs
         names = [str(name) for name in pipelines]
         self.warmup_calls.append(names)
-        return {name: True for name in names}
+        return dict.fromkeys(names, True)
 
     def release_pipelines(
         self, heavy_only: bool = True, *args: Any, **kwargs: Any
