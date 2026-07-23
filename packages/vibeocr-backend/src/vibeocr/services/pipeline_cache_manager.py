@@ -14,11 +14,12 @@ import logging
 import os
 import threading
 import time
-from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from vibeocr.services.ocr_service import OCRService
 
 logger = logging.getLogger(__name__)
@@ -137,7 +138,7 @@ class PipelineCacheManager:
 
         restore_raw = value.get(_RESTORE_LAST_USED_KEY)
         restore_values = restore_raw if isinstance(restore_raw, dict) else None
-        valid_names = {p.value for p in get_all_pipelines()}
+        valid_names = {pipeline.value for pipeline in get_all_pipelines()}
         validated: dict[str, int] = {}
         for name, ttl in value.items():
             if name == _RESTORE_LAST_USED_KEY:
@@ -231,7 +232,7 @@ class PipelineCacheManager:
     def enforce_capacity(
         self, new_pipeline: str, now: float | None = None
     ) -> list[str]:
-        """加载新 paddle 重管道后，FIFO 淘汰至不超并存上限。
+        """加载新 paddle 重管道前，FIFO 淘汰至不超并存上限。
 
         TTL 只定义闲置回收；按既有设计，容量压力仍可提前淘汰 TTL=0 或尚未
         到期的重管道。正在使用的管道不会成为容量淘汰候选。
@@ -240,8 +241,10 @@ class PipelineCacheManager:
         self._ensure_runtime_fields()
         from vibeocr.core.pipelines import get_heavy_pipelines, get_paddle_pipelines
 
-        paddle_names = {p.value for p in get_paddle_pipelines()}
-        heavy_paddle_names = paddle_names & {p.value for p in get_heavy_pipelines()}
+        paddle_names = {pipeline.value for pipeline in get_paddle_pipelines()}
+        heavy_paddle_names = paddle_names & {
+            pipeline.value for pipeline in get_heavy_pipelines()
+        }
         evicted: list[str] = []
         with self._state_lock:
             cached_heavy = [
@@ -252,7 +255,7 @@ class PipelineCacheManager:
                 and self._active_counts.get(name, 0) <= 0
             ]
             while len(cached_heavy) >= self._max_heavy:
-                cached_heavy.sort(key=lambda n: self._last_used.get(n, 0.0))
+                cached_heavy.sort(key=lambda name: self._last_used.get(name, 0.0))
                 victim = cached_heavy.pop(0)
                 self._release_one(victim)
                 evicted.append(victim)
@@ -275,7 +278,7 @@ class PipelineCacheManager:
         current = now if now is not None else time.time()
         evicted: list[str] = []
         with self._state_lock:
-            for name in list(self._service._pipelines.keys()):
+            for name in list(self._service._pipelines):
                 if self._active_counts.get(name, 0) > 0:
                     continue
                 ttl = self._ttls.get(name, 0)
@@ -302,10 +305,10 @@ class PipelineCacheManager:
         self._ensure_runtime_fields()
         from vibeocr.core.pipelines import get_heavy_pipelines
 
-        heavy_names = {p.value for p in get_heavy_pipelines()}
+        heavy_names = {pipeline.value for pipeline in get_heavy_pipelines()}
         released: list[str] = []
         with self._state_lock:
-            for name in list(self._service._pipelines.keys()):
+            for name in list(self._service._pipelines):
                 if heavy_only and name not in heavy_names:
                     continue
                 self._release_one(name)
@@ -351,7 +354,7 @@ class PipelineCacheManager:
         self._ensure_runtime_fields()
         self._stop_event.set()
         self._wakeup_event.set()
-        thread = getattr(self, "_thread", None)
+        thread = self._thread if hasattr(self, "_thread") else None
         if thread is not None and thread.is_alive():
             thread.join(timeout=2.0)
 
@@ -389,7 +392,7 @@ class PipelineCacheManager:
                 break
             try:
                 with self._state_lock:
-                    loaded = sorted(self._service._pipelines.keys())
+                    loaded = sorted(self._service._pipelines)
                     now = time.time()
                     due = [
                         name
@@ -422,7 +425,9 @@ class PipelineCacheManager:
     def _is_paddle(pipeline_name: str) -> bool:
         from vibeocr.core.pipelines import get_paddle_pipelines
 
-        return pipeline_name in {p.value for p in get_paddle_pipelines()}
+        return pipeline_name in {
+            pipeline.value for pipeline in get_paddle_pipelines()
+        }
 
     @staticmethod
     def _empty_cache() -> None:
