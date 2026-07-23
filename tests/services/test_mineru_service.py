@@ -935,3 +935,148 @@ class TestMinerUModelCheck:
             f"探测命令未设 stdin=DEVNULL,非 TTY 下可能阻塞: {call.kwargs}"
         )
 
+
+class TestMinerUTextExtraction:
+    """直接覆盖 _extract_plain_text / _extract_block_text 的全分支。
+
+    这两个 staticmethod 是纯文本提取逻辑,无外部依赖。现有集成测试仅通过
+    _build_ocr_result 间接覆盖了 table/text 分支,image/chart/code/list 与
+    各种 caption 组合长期未覆盖(见覆盖率报告 537-590 行)。
+    """
+
+    def test_extract_plain_text_table_with_caption_and_body(self):
+        """table: caption + table_body 都有时两者都提取,HTML 被剥离"""
+        result = MinerUService._extract_plain_text(
+            [
+                {
+                    "type": "table",
+                    "table_caption": ["表1"],
+                    "table_body": "<tr><td>A</td><td>B</td></tr>",
+                }
+            ]
+        )
+        assert "表1" in result
+        assert "A" in result and "B" in result
+
+    def test_extract_plain_text_table_without_caption(self):
+        """table: 无 caption 时只取 table_body"""
+        result = MinerUService._extract_plain_text(
+            [{"type": "table", "table_body": "<td>X</td>"}]
+        )
+        assert result.strip() == "X"
+
+    def test_extract_plain_text_image_with_caption(self):
+        """image: caption 提取"""
+        result = MinerUService._extract_plain_text(
+            [{"type": "image", "image_caption": ["图1 说明"]}]
+        )
+        assert "图1 说明" in result
+
+    def test_extract_plain_text_chart_uses_chart_caption(self):
+        """chart: 回退到 chart_caption,无 caption 则无文本"""
+        result = MinerUService._extract_plain_text(
+            [{"type": "chart", "chart_caption": ["图表 A"]}]
+        )
+        assert "图表 A" in result
+
+    def test_extract_plain_text_list_items(self):
+        """list: list_items 逐项展开"""
+        result = MinerUService._extract_plain_text(
+            [{"type": "list", "list_items": ["一", "二", "三"]}]
+        )
+        assert "一" in result and "二" in result and "三" in result
+
+    def test_extract_plain_text_code_body(self):
+        """code: code_body 原样保留"""
+        result = MinerUService._extract_plain_text(
+            [{"type": "code", "code_body": "print('hi')"}]
+        )
+        assert "print('hi')" in result
+
+    def test_extract_plain_text_text_fallback(self):
+        """未知/普通 type 走 text 字段回退"""
+        result = MinerUService._extract_plain_text(
+            [{"type": "text", "text": "正文"}, {"type": "unknown", "text": "其他"}]
+        )
+        assert "正文" in result and "其他" in result
+
+    def test_extract_plain_text_discarded_blocks_skipped(self):
+        """DISCARDED_BLOCK_TYPES 的块被跳过"""
+        result = MinerUService._extract_plain_text(
+            [
+                {"type": "header", "text": "应被丢弃"},
+                {"type": "footer", "text": "应被丢弃"},
+                {"type": "text", "text": "保留"},
+            ]
+        )
+        assert "保留" in result
+        assert "应被丢弃" not in result
+
+    def test_extract_plain_text_empty_parts_filtered(self):
+        """空 text / 空 list_items 不产生空行"""
+        result = MinerUService._extract_plain_text(
+            [{"type": "text", "text": ""}, {"type": "list", "list_items": []}]
+        )
+        assert result == ""
+
+    def test_extract_block_text_table_caption_and_body(self):
+        """_extract_block_text: table 同时有 caption 与 body 时合并"""
+        text = MinerUService._extract_block_text(
+            {"type": "table", "table_caption": ["标题"], "table_body": "<td>体</td>"}
+        )
+        assert "标题" in text and "体" in text
+
+    def test_extract_block_text_table_caption_only(self):
+        """_extract_block_text: table 只有 caption 无 body"""
+        text = MinerUService._extract_block_text(
+            {"type": "table", "table_caption": ["仅标题"]}
+        )
+        assert text == "仅标题"
+
+    def test_extract_block_text_table_body_only(self):
+        """_extract_block_text: table 只有 body 无 caption"""
+        text = MinerUService._extract_block_text(
+            {"type": "table", "table_body": "<td>仅体</td>"}
+        )
+        assert text.strip() == "仅体"
+
+    def test_extract_block_text_image_caption_and_content(self):
+        """_extract_block_text: image caption + content 合并"""
+        text = MinerUService._extract_block_text(
+            {"type": "image", "image_caption": ["图"], "content": "base64data"}
+        )
+        assert "图" in text and "base64data" in text
+
+    def test_extract_block_text_image_no_caption_returns_placeholder(self):
+        """_extract_block_text: image 无 caption/content 时返回 [image] 占位"""
+        text = MinerUService._extract_block_text({"type": "image"})
+        assert text == "[image]"
+
+    def test_extract_block_text_chart_fallback_caption(self):
+        """_extract_block_text: chart 走 chart_caption"""
+        text = MinerUService._extract_block_text(
+            {"type": "chart", "chart_caption": ["图表"]}
+        )
+        assert "图表" in text
+
+    def test_extract_block_text_list_joins_items(self):
+        """_extract_block_text: list 用分号连接"""
+        text = MinerUService._extract_block_text(
+            {"type": "list", "list_items": ["a", "b"]}
+        )
+        assert text == "a; b"
+
+    def test_extract_block_text_code_truncated(self):
+        """_extract_block_text: code 截断到 200 字符"""
+        long_code = "x" * 300
+        text = MinerUService._extract_block_text(
+            {"type": "code", "code_body": long_code}
+        )
+        assert len(text) == 200
+
+    def test_extract_block_text_text_fallback(self):
+        """_extract_block_text: 普通 type 走 text 字段"""
+        text = MinerUService._extract_block_text({"type": "text", "text": "段落"})
+        assert text == "段落"
+
+
