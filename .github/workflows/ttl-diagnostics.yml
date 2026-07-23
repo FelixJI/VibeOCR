@@ -33,16 +33,17 @@ jobs:
           python-version: "3.13"
       - name: Install build shell
         run: pip install --require-hashes -r requirements/build-shell.lock
-      - name: Run focused diagnostics
+      - name: Run backend and lint diagnostics
         shell: pwsh
         run: |
           $ErrorActionPreference = "Continue"
           $log = "ttl-diagnostics.txt"
           python -m pytest `
-            tests/services/test_pipeline_cache_manager.py `
-            tests/services/test_pipeline_cache_ttl_semantics.py `
-            tests/services/test_worker_runtime_residency.py `
-            tests/services/test_mineru_runtime_cache.py `
+            tests/architecture `
+            tests/worker_host `
+            tests/application `
+            tests/services `
+            tests/test_dependency_bootstrap.py `
             -q *>&1 | Tee-Object -FilePath $log
           $testExit = $LASTEXITCODE
 
