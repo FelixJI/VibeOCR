@@ -85,7 +85,7 @@ def test_restart_restore_keeps_original_finite_ttl_deadline(monkeypatch) -> None
 
     manager.ttls = {
         "OCR": 60,
-        _RESTORE_LAST_USED_KEY: {"OCR": 950_000},  # type: ignore[dict-item]
+        _RESTORE_LAST_USED_KEY: {"OCR": 950_000},
     }
 
     assert manager.get_last_used("OCR") == 950.0
