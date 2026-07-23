@@ -34,7 +34,7 @@ if not getattr(BatchQueueManager, _BATCH_PATCH_MARKER, False):
             # make TTL/FIFO release only cosmetic.
             self.pipeline = None
 
-    BatchQueueManager.__init__ = _batch_init
+    setattr(BatchQueueManager, "__init__", _batch_init)
     setattr(BatchQueueManager, _BATCH_PATCH_MARKER, True)
 
 __all__ = []
