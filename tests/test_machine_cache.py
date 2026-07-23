@@ -718,3 +718,145 @@ class TestWarmupMachineId:
         assert call_count == {"cpu": 0, "baseboard": 0}
         # 已设置的缓存值不被覆盖
         assert mc.generate_machine_id() == "PRESET_ID"
+
+
+class TestIsEmbeddedEnvironmentReady:
+    """is_embedded_environment_ready 的真实逻辑测试（此前全被 mock 掉）。
+
+    覆盖 1347-1389 的三个分支：python 不存在、全就绪、缓存过期复核纠正。
+    """
+
+    def test_python_not_installed_returns_missing(self, tmp_path):
+        """Python 运行时不存在时返回 (False, ['Python 运行时未安装'])。"""
+        from vibeocr.env_manager import is_embedded_environment_ready
+
+        # python.exe 不存在
+        with patch(
+            "vibeocr.env_manager.get_embedded_python_executable",
+            return_value=tmp_path / "nonexistent" / "python.exe",
+        ):
+            ready, missing = is_embedded_environment_ready(tmp_path)
+
+        assert ready is False
+        assert missing == ["Python 运行时未安装"]
+
+    def test_all_required_deps_present_returns_ready(self, tmp_path):
+        """所有必需依赖都为 True 时返回 (True, [])。"""
+        from vibeocr.env_manager import is_embedded_environment_ready
+
+        python_exe = tmp_path / "python" / "python.exe"
+        python_exe.parent.mkdir(parents=True)
+        python_exe.touch()
+
+        all_ok = {
+            "paddlepaddle": True,
+            "paddleocr": True,
+            "mineru": True,
+            "markdown": True,
+            "pymupdf": True,
+            "fastapi": True,
+            "uvicorn": True,
+            "pydantic": True,
+            "fonttools": True,
+        }
+
+        with (
+            patch(
+                "vibeocr.env_manager.get_embedded_python_executable",
+                return_value=python_exe,
+            ),
+            patch(
+                "vibeocr.env_manager.check_embedded_environment_dependencies",
+                return_value=dict(all_ok),
+            ),
+        ):
+            ready, missing = is_embedded_environment_ready(tmp_path)
+
+        assert ready is True
+        assert missing == []
+
+    def test_missing_deps_returns_not_ready(self, tmp_path):
+        """缺依赖时返回 (False, [缺失项])。"""
+        from vibeocr.env_manager import is_embedded_environment_ready
+
+        python_exe = tmp_path / "python" / "python.exe"
+        python_exe.parent.mkdir(parents=True)
+        python_exe.touch()
+
+        deps = {
+            "paddlepaddle": True,
+            "paddleocr": True,
+            "mineru": False,  # 缺失
+            "markdown": True,
+            "pymupdf": True,
+            "fastapi": True,
+            "uvicorn": True,
+            "pydantic": True,
+            "fonttools": True,
+        }
+
+        # _quick_verify_deps 也报缺失 → still_missing == missing，不刷新
+        with (
+            patch(
+                "vibeocr.env_manager.get_embedded_python_executable",
+                return_value=python_exe,
+            ),
+            patch(
+                "vibeocr.env_manager.check_embedded_environment_dependencies",
+                return_value=dict(deps),
+            ),
+            patch(
+                "vibeocr.env_manager._quick_verify_deps",
+                return_value={"mineru": False},
+            ),
+        ):
+            ready, missing = is_embedded_environment_ready(tmp_path)
+
+        assert ready is False
+        assert "mineru" in missing
+
+    def test_stale_cache_corrected_by_recheck(self, tmp_path):
+        """缓存报缺失但实时复核显示已装 → missing 被纠正为空，缓存刷新。"""
+        from vibeocr.env_manager import is_embedded_environment_ready
+
+        python_exe = tmp_path / "python" / "python.exe"
+        python_exe.parent.mkdir(parents=True)
+        python_exe.touch()
+
+        # 缓存：paddlepaddle=False（过期），其余全 True
+        deps = {
+            "paddlepaddle": False,
+            "paddleocr": True,
+            "mineru": True,
+            "markdown": True,
+            "pymupdf": True,
+            "fastapi": True,
+            "uvicorn": True,
+            "pydantic": True,
+            "fonttools": True,
+        }
+
+        with (
+            patch(
+                "vibeocr.env_manager.get_embedded_python_executable",
+                return_value=python_exe,
+            ),
+            patch(
+                "vibeocr.env_manager.check_embedded_environment_dependencies",
+                return_value=dict(deps),
+            ),
+            # 复核显示 paddlepaddle 实际已装 → still_missing != missing → 纠正
+            patch(
+                "vibeocr.env_manager._quick_verify_deps",
+                return_value={"paddlepaddle": True},
+            ),
+            patch("vibeocr.env_manager.detect_gpu", return_value=(False, None)),
+            patch("vibeocr.env_manager.create_cache_entry") as mock_create,
+        ):
+            ready, missing = is_embedded_environment_ready(tmp_path)
+
+        assert ready is True
+        assert missing == []
+        # 过期缓存纠正后应写入新缓存
+        mock_create.assert_called_once()
+
