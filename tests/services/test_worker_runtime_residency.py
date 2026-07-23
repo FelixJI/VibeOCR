@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING
 
 import vibeocr.services.worker_runtime_state as runtime_state
+
+if TYPE_CHECKING:
+    from typing import Any
 
 
 class _FakeMinerUCache:
