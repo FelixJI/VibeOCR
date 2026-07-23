@@ -18,6 +18,7 @@ from typing import Any, Iterator
 logger = logging.getLogger(__name__)
 
 _PATCH_MARKER = "_vibeocr_mineru_runtime_cache_patch_v1"
+_ORIGINAL_SHUTDOWN_ATTR = "_vibeocr_original_shutdown_v1"
 
 
 class MinerURuntimeCache:
@@ -49,13 +50,17 @@ class MinerURuntimeCache:
             from vibeocr.services.mineru_service import MinerUService
 
             self._service_cls = MinerUService
+            if getattr(MinerUService, _PATCH_MARKER, False):
+                self._original_shutdown = getattr(
+                    MinerUService,
+                    _ORIGINAL_SHUTDOWN_ATTR,
+                    MinerUService.shutdown,
+                )
+                return
+
             original_parse = MinerUService.parse
             original_shutdown = MinerUService.shutdown
             self._original_shutdown = original_shutdown
-
-            if getattr(MinerUService, _PATCH_MARKER, False):
-                return
-
             runtime = self
 
             @functools.wraps(original_parse)
@@ -70,8 +75,9 @@ class MinerURuntimeCache:
                 finally:
                     runtime.mark_released()
 
-            MinerUService.parse = parse
-            MinerUService.shutdown = shutdown
+            setattr(MinerUService, _ORIGINAL_SHUTDOWN_ATTR, original_shutdown)
+            setattr(MinerUService, "parse", parse)
+            setattr(MinerUService, "shutdown", shutdown)
             setattr(MinerUService, _PATCH_MARKER, True)
 
     def _is_loaded_unlocked(self) -> bool:
@@ -160,6 +166,13 @@ class MinerURuntimeCache:
                 "release_pending": self._release_when_idle,
             }
 
+    def close(self) -> None:
+        """Stop this controller's watcher (mainly for deterministic tests)."""
+        self._stop_event.set()
+        self._wakeup_event.set()
+        if self._thread.is_alive():
+            self._thread.join(timeout=2.0)
+
     def _shutdown_now(self, reason: str) -> None:
         self._ensure_service_patch()
         with self._lock:
@@ -193,7 +206,10 @@ class MinerURuntimeCache:
             if self._last_used is None:
                 self._last_used = time.time()
             assert self._last_used is not None
-            return max(0.0, min(30.0, self._last_used + self._ttl_seconds - time.time()))
+            return max(
+                0.0,
+                min(30.0, self._last_used + self._ttl_seconds - time.time()),
+            )
 
     def _watch_loop(self) -> None:
         while not self._stop_event.is_set():
