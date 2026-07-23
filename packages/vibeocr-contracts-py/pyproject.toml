@@ -1,6 +1,6 @@
 [project]
 name = "vibeocr-contracts-py"
-version = "0.5.5"
+version = "0.5.6"
 description = "Qt-free VibeOCR protocol and DTO contracts"
 requires-python = ">=3.13,<3.14"
 dependencies = []

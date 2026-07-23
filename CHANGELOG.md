@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.5.6] - 2026-07-23
+
+### Fixed
+- fix(cache): honor persistent and finite model TTL semantics (#1)
+
+### Dependencies
+- 升级:
+  - 升级 vibeocr-contracts-py ==0.5.4 → ==0.5.6
+  - 升级 vibeocr-client-py ==0.5.4 → ==0.5.6
+  - 升级 vibeocr-backend ==0.5.4 → ==0.5.6
+  - 升级 vibeocr-pyside ==0.5.4 → ==0.5.6
+
 ## [0.5.5] - 2026-07-22
 
 ### Added
