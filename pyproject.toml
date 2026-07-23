@@ -191,6 +191,12 @@ exclude_lines = [
     "if TYPE_CHECKING:",
     "raise NotImplementedError",
 ]
+# 覆盖率门禁基线（ratchet：只升不降，防回归）。pytest-cov 7.x 会自动读取本值，
+# 无需在命令行重复传 --cov-fail-under——本地 ``python qa/coverage.py`` 与 CI
+# coverage job 都以这里为单一真相源。调高时改这一处即可。
+# 当前实测 ~68%（23709/32792 行覆盖；67.88% 取决于单次跑的 skip 数与子进程合并），
+# 设 67 为防回归基线（给约 330 行环境抖动缓冲）。目标 75%，按补测推进后逐步调高。
+fail_under = 67
 
 # =============================================================================
 # uv 配置
