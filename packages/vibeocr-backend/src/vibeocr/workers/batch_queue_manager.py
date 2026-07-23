@@ -56,7 +56,8 @@ class BatchQueueManager:
         """初始化队列管理器
 
         Args:
-            pipeline: PaddleX pipeline 对象（保留用于回退/兼容）
+            pipeline: PaddleX pipeline 对象。仅无 service 的测试/兼容路径保留；
+                生产路径通过 service + 注册表动态解析，不额外持有模型强引用。
             max_batch_size: 显存动态估算的上界（非固定 batch_size）。实际值由
                 _calculate_batch_size 按当前显存动态算出，低显存卡自动降级。
             progress_callback: 进度回调函数
@@ -67,7 +68,9 @@ class BatchQueueManager:
                 use_formula_recognition=True、表格管道的特殊模型名参数等），
                 并返回与单图一致的 OCRResult 对象。
         """
-        self.pipeline = pipeline
+        # 生产路径不保留 pipeline：否则 PipelineCacheManager 从缓存字典删除
+        # 模型后，这里的强引用仍会让对象/显存存活，使 TTL 回收只停留在状态层。
+        self.pipeline = pipeline if service is None else None
         self.max_batch_size = max_batch_size
         self.progress_callback = progress_callback
         self.service = service
@@ -387,6 +390,7 @@ class BatchQueueManager:
                     f"[批量] 管道 {pipeline_name} 无批量接口，回退逐张 recognize"
                 )
                 return [spec.recognize(self.service, img, options) for img in images]
+            raise RuntimeError(f"生产批量路径未注册管道: {pipeline_name}")
 
         # 无 service：原始 predict() 回退路径，按 supported_options 过滤
         from vibeocr.core.pipelines import (
