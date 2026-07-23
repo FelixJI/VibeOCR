@@ -185,3 +185,108 @@ class TestCudaDetectionLogging:
         assert "[硬件检测]" not in captured.out, "detect_gpu 不应 print"
         msgs = [r.message for r in caplog.records]
         assert any("未检测到NVIDIA GPU" in m for m in msgs)
+
+
+class TestCudaVersionMatching:
+    """detect_cuda_version 的版本匹配与 nvcc 回退分支。
+
+    现有测试只覆盖了 nvidia-smi 成功 / 全失败 / 超时三条路径。未覆盖：
+    nvcc 方法成功(2821-2842)、find_best_match 向下兼容(非精确匹配)、
+    nvidia-smi 解析不到版本走 nvcc、CancelEvent 中断。本类补齐这些分支。
+    """
+
+    def test_nvcc_method_succeeds_when_nvidia_smi_missing(self, monkeypatch):
+        """nvidia-smi 不可用但 nvcc 可用时，应通过 nvcc 解析 CUDA 版本。"""
+
+        def fake_run(command, **_kwargs):
+            if command == ["nvidia-smi"]:
+                raise FileNotFoundError("nvidia-smi not found")
+            if command == ["nvcc", "--version"]:
+                return _mk_completed(stdout="Cuda compilation tools, release 12.6")
+            raise FileNotFoundError(command[0])
+
+        monkeypatch.setattr(em, "_run_pip", fake_run)
+        assert em.detect_cuda_version() == "cu126"
+
+    def test_nvcc_succeeds_when_nvidia_smi_has_no_version(self, monkeypatch):
+        """nvidia-smi 成功返回但输出无 CUDA 版本字段时，回退到 nvcc。"""
+
+        def fake_run(command, **_kwargs):
+            if command == ["nvidia-smi"]:
+                # returncode 0 但输出里没有 "CUDA Version" 字段
+                return _mk_completed(stdout="NVIDIA-SMI 560.94\nDriver Version: 560.94\n")
+            if command == ["nvcc", "--version"]:
+                return _mk_completed(stdout="release 11.8")
+            raise FileNotFoundError(command[0])
+
+        monkeypatch.setattr(em, "_run_pip", fake_run)
+        assert em.detect_cuda_version() == "cu118"
+
+    def test_cuda_12_7_maps_to_cu126_via_downward_compat(self, monkeypatch):
+        """CUDA 12.7 不在精确映射表，应向下兼容到 cu126（12.x 共享）。"""
+
+        def fake_run(command, **_kwargs):
+            if command == ["nvidia-smi"]:
+                return _mk_completed(stdout="CUDA Version: 12.7\n")
+            raise FileNotFoundError(command[0])
+
+        monkeypatch.setattr(em, "_run_pip", fake_run)
+        assert em.detect_cuda_version() == "cu126"
+
+    def test_exact_cuda_11_8_matches_cu118(self, monkeypatch):
+        """CUDA 11.8 精确匹配 cu118。"""
+
+        def fake_run(command, **_kwargs):
+            if command == ["nvidia-smi"]:
+                return _mk_completed(stdout="CUDA Version: 11.8\n")
+            raise FileNotFoundError(command[0])
+
+        monkeypatch.setattr(em, "_run_pip", fake_run)
+        assert em.detect_cuda_version() == "cu118"
+
+    def test_cuda_below_supported_returns_none(self, monkeypatch):
+        """CUDA 版本低于所有支持的映射（如 10.0）时，find_best_match 返回 None。"""
+
+        def fake_run(command, **_kwargs):
+            if command == ["nvidia-smi"]:
+                return _mk_completed(stdout="CUDA Version: 10.0\n")
+            raise FileNotFoundError(command[0])
+
+        monkeypatch.setattr(em, "_run_pip", fake_run)
+        assert em.detect_cuda_version() is None
+
+    def test_cancel_event_returns_none(self, monkeypatch):
+        """cancel_event 被置位时，_run_pip 抛 InstallCancelled，返回 None。"""
+        import threading
+
+        from vibeocr.env_manager import InstallCancelled
+
+        cancel = threading.Event()
+        cancel.set()
+
+        def fake_run(*a, **kw):
+            raise InstallCancelled()
+
+        monkeypatch.setattr(em, "_run_pip", fake_run)
+        assert em.detect_cuda_version(cancel_event=cancel) is None
+
+    def test_nvcc_returncode_nonzero_falls_through_to_none(self, monkeypatch):
+        """nvcc 返回非 0 时跳过解析，最终返回 None。"""
+
+        def fake_run(command, **_kwargs):
+            return _mk_completed(stdout="", returncode=1)
+
+        monkeypatch.setattr(em, "_run_pip", fake_run)
+        assert em.detect_cuda_version() is None
+
+    def test_nvidia_smi_cuda_umd_label_parsed(self, monkeypatch):
+        """新版驱动 CUDA UMD Version 标签（13.3）应解析并向下兼容到 cu126。"""
+
+        def fake_run(command, **_kwargs):
+            if command == ["nvidia-smi"]:
+                return _mk_completed(stdout="CUDA UMD Version: 13.3\n")
+            raise FileNotFoundError(command[0])
+
+        monkeypatch.setattr(em, "_run_pip", fake_run)
+        assert em.detect_cuda_version() == "cu126"
+
