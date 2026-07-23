@@ -3308,7 +3308,19 @@ def ensure_mineru_models(
         report("模型下载", f"使用模型源: {source}")
 
         proc = subprocess.Popen(
-            [str(python_exe), "-m", "mineru.cli.models_download", "-s", source],
+            # 必须显式传 -m/--model_type=all:否则 MinerU CLI 进入 click.prompt
+            # 交互选择 (pipeline/vlm/all),非 TTY 下被 Aborted! -> returncode=1,
+            # 即使用户点"下载模型"也无法完成下载。stdin=DEVNULL 双保险防阻塞。
+            [
+                str(python_exe),
+                "-m",
+                "mineru.cli.models_download",
+                "-s",
+                source,
+                "-m",
+                "all",
+            ],
+            stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,

@@ -178,7 +178,21 @@ class MinerUService(metaclass=SingletonMeta):
             if source == "modelscope" and not env.get("MINERU_MODEL_SOURCE"):
                 env["MINERU_MODEL_SOURCE"] = "modelscope"
             result = subprocess.run(
-                [str(python_exe), "-m", "mineru.cli.models_download", "-s", source],
+                # 必须显式传 -m/--model_type=all:否则 MinerU CLI 进入
+                # click.prompt 交互选择 (pipeline/vlm/all),在非 TTY 子进程下
+                # 被 Click Aborted! -> returncode=1,已下载的模型被误判为缺失
+                # (见 2026-07-23 线上日志)。stdin=DEVNULL 双保险,防止任何
+                # 交互 prompt 在继承非 TTY stdin 时阻塞。
+                [
+                    str(python_exe),
+                    "-m",
+                    "mineru.cli.models_download",
+                    "-s",
+                    source,
+                    "-m",
+                    "all",
+                ],
+                stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 timeout=Constants.Timeout.MINERU_MODEL_PROBE,

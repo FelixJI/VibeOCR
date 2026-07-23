@@ -900,3 +900,38 @@ class TestMinerUModelCheck:
             with patch.object(service, "_check_models_available", return_value=False):
                 with pytest.raises(RuntimeError, match="模型未下载"):
                     service._ensure_api_running()
+
+    def test_probe_command_is_non_interactive(self):
+        """探测命令必须非交互式:带 -m/--model_type 且 stdin=DEVNULL。
+
+        回归守卫:MinerU CLI ``models_download`` 在缺 ``--model_type`` 时会
+        触发 ``click.prompt`` 交互选择 (pipeline/vlm/all),非 TTY 子进程下被
+        Click ``Aborted!`` -> returncode=1,导致已下载的模型被误判为缺失
+        (见 2026-07-23 线上日志)。本测试锁定命令参数契约,防止回退。
+        """
+        import subprocess as sp
+
+        service = MinerUService.__new__(MinerUService)
+        fake_python = MagicMock()
+        fake_python.exists.return_value = True
+        fake_python.__str__ = lambda self: "python"  # type: ignore[assignment]
+
+        with patch.object(service, "_resolve_python_executable", return_value=fake_python):
+            with patch("vibeocr.env_manager.detect_network_source") as mock_net:
+                mock_net.return_value = "international"
+                with patch("vibeocr.services.mineru_service.subprocess.run") as mock_run:
+                    mock_run.return_value = MagicMock(returncode=0, stdout=b"ok")
+                    service._check_models_available()
+
+        call = mock_run.call_args
+        assert call is not None, "subprocess.run 未被调用"
+        cmd = call.args[0]
+        # 必须显式指定 model_type,否则 MinerU CLI 进入交互 prompt
+        assert "-m" in cmd or "--model_type" in cmd, (
+            f"探测命令缺 -m/--model_type,会触发 MinerU 交互 prompt: {cmd}"
+        )
+        # stdin 必须 DEVNULL:即使将来 CLI 行为变化,也不会因继承非 TTY stdin 而阻塞
+        assert call.kwargs.get("stdin") == sp.DEVNULL, (
+            f"探测命令未设 stdin=DEVNULL,非 TTY 下可能阻塞: {call.kwargs}"
+        )
+

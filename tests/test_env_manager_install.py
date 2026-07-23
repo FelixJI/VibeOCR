@@ -367,8 +367,20 @@ class TestEnsureMineruModels:
             ok, _msg = ensure_mineru_models(tmp_path)
 
         assert ok
-        cmd = mock_popen.call_args[0][0]
+        call = mock_popen.call_args
+        cmd = call.args[0]
         assert "mineru.cli.models_download" in " ".join(cmd)
+        # 回归守卫:必须显式传 -m/--model_type,否则 MinerU CLI 进入交互 prompt,
+        # 非 TTY 下被 Aborted! -> 下载无法完成(见 2026-07-23 线上日志)。
+        assert "-m" in cmd or "--model_type" in cmd, (
+            f"下载命令缺 -m/--model_type,会触发 MinerU 交互 prompt: {cmd}"
+        )
+        # stdin 必须 DEVNULL,防止交互 prompt 在非 TTY 下阻塞数 GB 下载流程。
+        import subprocess as sp
+
+        assert call.kwargs.get("stdin") == sp.DEVNULL, (
+            f"下载命令未设 stdin=DEVNULL: {call.kwargs}"
+        )
 
     def test_progress_callback_receives_output(self, tmp_path):
         """progress_callback 应收到下载进度（逐行输出）"""
