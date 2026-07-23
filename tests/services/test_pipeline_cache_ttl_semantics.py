@@ -6,6 +6,7 @@ import threading
 from types import SimpleNamespace
 
 from vibeocr.services.pipeline_cache_manager import PipelineCacheManager
+from vibeocr.workers.batch_queue_manager import BatchQueueManager
 
 _RESTORE_LAST_USED_KEY = "__vibeocr_restore_last_used_unix_ms__"
 
@@ -119,3 +120,23 @@ def test_explicit_release_overrides_any_ttl() -> None:
 
     assert manager.release(heavy_only=False) == ["OCR", "PP-StructureV3"]
     assert service._pipelines == {}
+
+
+def test_service_backed_batch_manager_does_not_retain_pipeline() -> None:
+    """生产批量路径不得旁路缓存管理器强持有模型对象。"""
+    pipeline = object()
+    batch_manager = BatchQueueManager(pipeline, service=object())
+    try:
+        assert batch_manager.pipeline is None
+    finally:
+        batch_manager.close()
+
+
+def test_compat_batch_manager_retains_pipeline_without_service() -> None:
+    """无 service 的兼容/测试路径仍使用构造时传入的 pipeline。"""
+    pipeline = object()
+    batch_manager = BatchQueueManager(pipeline)
+    try:
+        assert batch_manager.pipeline is pipeline
+    finally:
+        batch_manager.close()
