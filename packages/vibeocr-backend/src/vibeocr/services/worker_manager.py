@@ -15,6 +15,11 @@ from typing import Any
 
 from vibeocr.core.constants import DEFAULT_SHM_SIZE, Constants
 from vibeocr.services.ocr_worker_process import OCRWorkerProcess, OCRWorkerProcessError
+from vibeocr.services.worker_runtime_state import (
+    install_ocr_worker_runtime_state_patch,
+)
+
+install_ocr_worker_runtime_state_patch(OCRWorkerProcess)
 
 logger = logging.getLogger(__name__)
 
@@ -389,7 +394,7 @@ class WorkerManager:
         Args:
             task: 控制任务，接收 OCRWorkerProcess 参数。
             lock_timeout: 等待 _shm_lock 的最长秒数。超时抛
-                OCRWorkerProcessError，调用方收到失败而不是无限阻塞。
+                OCRWorkerProcessError，调用方收到失败而不是无限等锁。
 
         Returns:
             任务结果。

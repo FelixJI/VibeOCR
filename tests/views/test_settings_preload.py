@@ -102,6 +102,30 @@ def test_runtime_pipeline_cache_controls_are_present(controller):
     assert host.findChild(QLabel, "labelPipelineCacheStatus") is not None
 
 
+def test_zero_ttl_copy_describes_idle_eviction_scope(controller):
+    """零 TTL 不是无条件常驻，选项和提示都应说明其剩余回收边界。"""
+    _ctrl, host = controller
+    combo = host.findChild(QComboBox, "comboTtl_OCR")
+    zero_index = combo.findData(0)
+
+    assert combo.itemText(zero_index) == "不因闲置 TTL 回收"
+    assert (
+        combo.toolTip()
+        == "不因闲置 TTL 回收，但仍受显存并存上限、显式释放、"
+        "应用退出和进程终止影响。"
+    )
+
+
+def test_mineru_ttl_tooltip_matches_api_process_shutdown(controller):
+    """有限 TTL 会停止 MinerU API 进程，不能再描述为几乎无收益。"""
+    _ctrl, host = controller
+    combo = host.findChild(QComboBox, "comboTtl_MinerU")
+
+    assert "MinerU 闲置到期会停止 API 进程" in combo.toolTip()
+    assert "下次使用时会重新启动" in combo.toolTip()
+    assert "几乎无收益" not in combo.toolTip()
+
+
 def test_pipeline_cache_status_is_rendered_from_worker_readback(controller):
     """_on_pipeline_cache_status 应把 worker 回读状态写入 labelPipelineCacheStatus。"""
     ctrl, host = controller
@@ -140,7 +164,8 @@ def test_pipeline_cache_refresh_runs_off_gui_and_reads_real_status(
     host.findChild(QPushButton, "btnRefreshPipelineCache").click()
 
     qtbot.waitUntil(
-        lambda: "持久" in host.findChild(QLabel, "labelPipelineCacheStatus").text(),
+        lambda: "不因闲置回收"
+        in host.findChild(QLabel, "labelPipelineCacheStatus").text(),
         timeout=2000,
     )
     service.get_pipeline_cache_status.assert_called_once()

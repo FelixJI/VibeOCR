@@ -60,6 +60,8 @@ def _make_legacy_manager(
     mgr._ttls = dict(ttls) if ttls is not None else {"PP-StructureV3": 300}
     mgr._max_heavy = max_heavy
     mgr._last_used = {}
+    mgr._active_counts = {}
+    mgr._state_lock = threading.RLock()
     mgr._tick_interval = 30.0
     mgr._stop_event = threading.Event()
     mgr._wakeup_event = threading.Event()
@@ -285,6 +287,8 @@ def _make_manager(
     mgr._ttls = dict(ttls)
     mgr._max_heavy = max_heavy if max_heavy is not None else 1
     mgr._last_used = {}
+    mgr._active_counts = {}
+    mgr._state_lock = threading.RLock()
     mgr._tick_interval = tick_interval
     mgr._stop_event = threading.Event()
     mgr._wakeup_event = threading.Event()
@@ -294,9 +298,7 @@ def _make_manager(
 
 def test_persistent_pipeline_never_evicted_by_ttl() -> None:
     """ttl=0 的管道 evict_idle 不回收。"""
-    mgr, svc = _make_manager(
-        {"OCR": object()}, {"OCR": 0}
-    )
+    mgr, svc = _make_manager({"OCR": object()}, {"OCR": 0})
     mgr.touch("OCR", now=1000.0)
     evicted = mgr.evict_idle(now=1000.0 + 999999)
     assert evicted == []
@@ -358,6 +360,7 @@ def test_release_mineru_does_not_call_empty_cache(monkeypatch) -> None:
     monkeypatch.setenv("VIBEOCR_USE_GPU", "true")
 
     import sys
+
     fake_paddle = MagicMock()
     fake_paddle.device.cuda.empty_cache = lambda: called.append("empty_cache")
     monkeypatch.setitem(sys.modules, "paddle", fake_paddle)
@@ -374,6 +377,7 @@ def test_release_paddle_calls_empty_cache(monkeypatch) -> None:
     monkeypatch.setenv("VIBEOCR_USE_GPU", "true")
 
     import sys
+
     fake_paddle = MagicMock()
     fake_paddle.device.cuda.empty_cache = lambda: called.append("empty_cache")
     monkeypatch.setitem(sys.modules, "paddle", fake_paddle)
@@ -388,11 +392,11 @@ def test_compute_max_heavy_by_vram_8gb_threshold() -> None:
     """≤8GB=1, >8GB=2, 未知=1。"""
     from vibeocr.services.pipeline_cache_manager import compute_max_heavy_by_vram
 
-    assert compute_max_heavy_by_vram(0) == 1       # 未知
-    assert compute_max_heavy_by_vram(4096) == 1    # 4GB
-    assert compute_max_heavy_by_vram(8192) == 1    # 8GB 边界
-    assert compute_max_heavy_by_vram(8193) == 2    # 刚过 8GB
-    assert compute_max_heavy_by_vram(24576) == 2   # 24GB
+    assert compute_max_heavy_by_vram(0) == 1  # 未知
+    assert compute_max_heavy_by_vram(4096) == 1  # 4GB
+    assert compute_max_heavy_by_vram(8192) == 1  # 8GB 边界
+    assert compute_max_heavy_by_vram(8193) == 2  # 刚过 8GB
+    assert compute_max_heavy_by_vram(24576) == 2  # 24GB
 
 
 # =============================================================================
@@ -414,7 +418,8 @@ def test_background_tick_evicts_after_ttl(monkeypatch) -> None:
     )
     try:
         mgr.touch("PP-StructureV3")
-        time.sleep(0.3)  # 等 tick + ttl 过期
+        # 必须等待超过 1 秒 TTL；旧测试的 0.3 秒只会命中“时间戳尚未写入”竞态。
+        time.sleep(1.3)
         assert "PP-StructureV3" not in svc._pipelines
     finally:
         mgr.shutdown()
@@ -424,9 +429,7 @@ def test_shutdown_joins_thread_cleanly(monkeypatch) -> None:
     """shutdown() 后线程在 2s 内退出。"""
     monkeypatch.setenv("VIBEOCR_USE_GPU", "false")
     svc = _FakeService()
-    mgr = PipelineCacheManager(
-        svc, {"OCR": 0}, max_heavy=1, tick_interval=0.01
-    )
+    mgr = PipelineCacheManager(svc, {"OCR": 0}, max_heavy=1, tick_interval=0.01)
     mgr.shutdown()
     assert not mgr._thread.is_alive()
 

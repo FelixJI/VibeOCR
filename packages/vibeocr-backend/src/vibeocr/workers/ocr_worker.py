@@ -239,11 +239,14 @@ def run_worker(shm_name: str, shm_size: int, use_gpu: bool) -> None:
             from vibeocr.workers.batch_queue_manager import BatchQueueManager
 
             logger.debug(f"[Worker] 正在初始化批量队列管理器（{pipeline_name}）...")
-            pipeline = ocr_service.get_pipeline(
-                OCRPipeline(pipeline_name)
-                if any(p.value == pipeline_name for p in OCRPipeline)
-                else OCRPipeline.OCR
-            )
+            # 模型构造也可能长于有限 TTL；用 lease 防止 watcher 在构造尚未
+            # 完成时把同名缓存删除，并从构造完成时开始计算闲置时间。
+            with ocr_service.cache_manager.lease(str(pipeline_name)):
+                pipeline = ocr_service.get_pipeline(
+                    OCRPipeline(pipeline_name)
+                    if any(p.value == pipeline_name for p in OCRPipeline)
+                    else OCRPipeline.OCR
+                )
             batch_managers[pipeline_name] = BatchQueueManager(
                 pipeline,
                 # max_batch_size 是显存动态估算(_calculate_batch_size)的上界，
@@ -301,10 +304,13 @@ def run_worker(shm_name: str, shm_size: int, use_gpu: bool) -> None:
                         )
                         # 使用 from_dict 正确处理 pipeline 字符串到枚举的转换
                         options = OCROptions.from_dict(options_dict)
+                        pipeline_name = options.pipeline.value
 
-                        # 执行识别
+                        # 执行识别。有限 TTL 从完整请求结束后开始计时；长任务期间
+                        # watcher 不能删除模型或调用 empty_cache。
                         logger.debug("[Worker] 开始执行 OCR 识别...")
-                        result = ocr_service.recognize(image_data, options)
+                        with ocr_service.cache_manager.lease(pipeline_name):
+                            result = ocr_service.recognize(image_data, options)
                         logger.debug(
                             f"[Worker] OCR 识别完成，结果字符数: {len(result.raw_text) if hasattr(result, 'raw_text') else 'N/A'}"
                         )
@@ -342,6 +348,7 @@ def run_worker(shm_name: str, shm_size: int, use_gpu: bool) -> None:
                             f"[Worker] 批量识别 {len(images)} 张，选项: {options_dict}"
                         )
                         options = OCROptions.from_dict(options_dict)
+                        pipeline_name = options.pipeline.value
                         # WorkerHost/图片批处理不会消费预处理图；若仍为每页复制
                         # 8.7MP ndarray 并编码 PNG，会产生十余 MiB 的无效 SHM
                         # 回包。保留角度/尺寸，仅批量消息禁用图像编码。
@@ -355,7 +362,8 @@ def run_worker(shm_name: str, shm_size: int, use_gpu: bool) -> None:
                         logger.debug(
                             f"[Worker] 解码完成 {len(ndimages)} 张，开始批量 OCR..."
                         )
-                        results = ocr_service.recognize_batch(ndimages, options)
+                        with ocr_service.cache_manager.lease(pipeline_name):
+                            results = ocr_service.recognize_batch(ndimages, options)
                         logger.debug(
                             f"[Worker] 批量 OCR 完成，返回 {len(results)} 个结果"
                         )
@@ -408,11 +416,14 @@ def run_worker(shm_name: str, shm_size: int, use_gpu: bool) -> None:
                                     results[pipeline_name] = False
                                     continue
 
-                                # 预加载管道
+                                # 预加载管道；从加载完成时开始有限 TTL 计时。
                                 logger.debug(
                                     f"开始预加载模型: {pipeline_name} ({pipeline_enum.value})"
                                 )
-                                success = ocr_service.preload_pipeline(pipeline_enum)
+                                with ocr_service.cache_manager.lease(
+                                    pipeline_enum.value
+                                ):
+                                    success = ocr_service.preload_pipeline(pipeline_enum)
                                 results[pipeline_name] = success
                                 logger.debug(
                                     f"预加载 {pipeline_name}: {'成功' if success else '失败'}"
@@ -560,11 +571,13 @@ def run_worker(shm_name: str, shm_size: int, use_gpu: bool) -> None:
                             )
                             _cancel_thread.start()
                             try:
-                                # 执行批量处理（带流式回调）
-                                results = mgr.commit(
-                                    preprocess_options,
-                                    file_completed_callback=on_file_done,
-                                )
+                                # 执行批量处理（带流式回调）。整个 commit 共用一个
+                                # lease，TTL 从最后一个子批完成后重新计时。
+                                with ocr_service.cache_manager.lease(pipeline_name):
+                                    results = mgr.commit(
+                                        preprocess_options,
+                                        file_completed_callback=on_file_done,
+                                    )
                             finally:
                                 _cancel_stop.set()
                                 protocol.clear_cancel_flag()

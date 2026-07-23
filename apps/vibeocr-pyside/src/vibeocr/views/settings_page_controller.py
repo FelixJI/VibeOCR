@@ -736,9 +736,9 @@ class SettingsPageController:
     # 每管道 TTL ComboBox（替代旧 spinPipelineTtl + chkEnablePipelineTtl）
     # ----------------------------------------------------------------
 
-    #: TTL 预设档：显示文本 → 秒数（0 = 持久停留）。所有 ComboBox 共用同一档位表。
+    #: TTL 预设档：显示文本 → 秒数。0 仅禁用闲置回收，并非无条件常驻。
     _TTL_PRESETS: list[tuple[str, int]] = [
-        ("持久停留", 0),
+        ("不因闲置 TTL 回收", 0),
         ("1 分钟", 60),
         ("3 分钟", 180),
         ("5 分钟", 300),
@@ -786,17 +786,20 @@ class SettingsPageController:
                 # findData 反查索引（比匹配显示文本更稳）。
                 combo.addItem(display_text, secs)
             self._select_ttl_combo(combo, ttls.get(pipeline.value, 0))
-            # MinerU 是 HTTP 服务客户端：回收代理对象不会释放底层进程资源，
-            # 故默认持久停留，缩短 TTL 几乎无收益。给标签加 tooltip 提示用户。
+            no_idle_eviction_tip = (
+                "不因闲置 TTL 回收，但仍受显存并存上限、显式释放、"
+                "应用退出和进程终止影响。"
+            )
+            combo.setToolTip(no_idle_eviction_tip)
+            # MinerU 使用独立 API 进程；有限 TTL 到期会真实停止该进程。
             if pipeline == OCRPipeline.DOCUMENT_PARSING:
-                label.setToolTip(
-                    "MinerU 是 HTTP 服务客户端，回收代理对象不释放底层进程资源。"
-                    "默认持久停留。改短 TTL 几乎无收益。"
+                mineru_tip = (
+                    f"{no_idle_eviction_tip}"
+                    "设置有限 TTL 后，MinerU 闲置到期会停止 API 进程；"
+                    "下次使用时会重新启动。"
                 )
-                combo.setToolTip(
-                    "MinerU 是 HTTP 服务客户端，回收代理对象不释放底层进程资源。"
-                    "默认持久停留。改短 TTL 几乎无收益。"
-                )
+                label.setToolTip(mineru_tip)
+                combo.setToolTip(mineru_tip)
             # 默认绑定 pipeline.value；lambda 显式捕获避免闭包晚绑定陷阱。
             combo.currentIndexChanged.connect(
                 lambda _idx, name=pipeline.value, c=combo: (
@@ -1827,7 +1830,7 @@ class SettingsPageController:
         pipeline_ttls_raw = status.get("pipeline_ttls")
         if isinstance(pipeline_ttls_raw, dict):
             ttl_summary = ", ".join(
-                f"{name}={'持久' if int(v) == 0 else f'{int(v) // 60}分钟'}"
+                f"{name}={'不因闲置回收' if int(v) == 0 else f'{int(v) // 60}分钟'}"
                 for name, v in pipeline_ttls_raw.items()
             ) or "（无配置）"
         else:
