@@ -8,7 +8,7 @@ on:
     paths:
       - ".github/workflows/ttl-diagnostics.yml"
       - "packages/vibeocr-backend/src/vibeocr/services/**"
-      - "packages/vibeocr-backend/src/vibeocr/workers/ocr_worker.py"
+      - "packages/vibeocr-backend/src/vibeocr/workers/**"
       - "tests/services/test_*ttl*.py"
       - "tests/services/test_worker_runtime_residency.py"
       - "tests/services/test_pipeline_cache_manager.py"
@@ -48,10 +48,11 @@ jobs:
           $testExit = $LASTEXITCODE
 
           python -m ruff check `
-            packages/vibeocr-backend/src/vibeocr/services/__init__.py `
             packages/vibeocr-backend/src/vibeocr/services/mineru_runtime_cache.py `
             packages/vibeocr-backend/src/vibeocr/services/pipeline_cache_manager.py `
+            packages/vibeocr-backend/src/vibeocr/services/worker_manager.py `
             packages/vibeocr-backend/src/vibeocr/services/worker_runtime_state.py `
+            packages/vibeocr-backend/src/vibeocr/workers/batch_queue_manager.py `
             packages/vibeocr-backend/src/vibeocr/workers/ocr_worker.py `
             tests/services/test_pipeline_cache_manager.py `
             tests/services/test_pipeline_cache_ttl_semantics.py `
