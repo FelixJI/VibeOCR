@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from typing import TYPE_CHECKING
 
 import vibeocr.services.worker_runtime_state as runtime_state
@@ -33,6 +34,7 @@ class _FakeMinerUCache:
 class _FakeWorkerBase:
     def __init__(self, clock: list[float]) -> None:
         self.worker_id = 0
+        self._shm_lock = threading.RLock()
         self.clock = clock
         self.loaded: set[str] = set()
         self.last_used: dict[str, float] = {}
@@ -202,3 +204,93 @@ def test_explicit_release_removes_model_from_restart_snapshot(monkeypatch) -> No
     assert worker.preload_calls == []
     assert restored == [({"OCR": 0}, {})]
     assert mineru.release_calls == 1
+
+
+def test_restart_holds_reentrant_protocol_lock_through_restore(monkeypatch) -> None:
+    """ready 边界到恢复完成全程串行，且已持锁的内部重启可同线程重入。"""
+    clock = [1000.0]
+    mineru = _FakeMinerUCache()
+    monkeypatch.setattr(runtime_state.time, "time", lambda: clock[0])
+    monkeypatch.setattr(
+        "vibeocr.services.mineru_runtime_cache.get_mineru_runtime_cache",
+        lambda: mineru,
+    )
+    observations: list[tuple[str, bool]] = []
+
+    class LockObservingWorker(_FakeWorkerBase):
+        def _record_lock(self, phase: str) -> None:
+            acquired: list[bool] = []
+
+            def probe_from_other_thread() -> None:
+                result = self._shm_lock.acquire(timeout=0.01)
+                acquired.append(result)
+                if result:
+                    self._shm_lock.release()
+
+            probe = threading.Thread(target=probe_from_other_thread, daemon=True)
+            probe.start()
+            probe.join(timeout=1.0)
+            assert not probe.is_alive()
+            observations.append((phase, acquired == [False]))
+
+        def start(self, *args: Any, **kwargs: Any) -> None:
+            self._record_lock("start")
+            super().start(*args, **kwargs)
+
+        def preload_pipelines(
+            self, pipelines: list[str], *args: Any, **kwargs: Any
+        ) -> dict[str, bool]:
+            self._record_lock("preload")
+            return super().preload_pipelines(pipelines, *args, **kwargs)
+
+        def warmup_pipelines(
+            self, pipelines: list[str], *args: Any, **kwargs: Any
+        ) -> dict[str, bool]:
+            self._record_lock("warmup")
+            return super().warmup_pipelines(pipelines, *args, **kwargs)
+
+        def cache_status(self, *args: Any, **kwargs: Any) -> dict[str, object]:
+            self._record_lock("status")
+            return super().cache_status(*args, **kwargs)
+
+    runtime_state.install_ocr_worker_runtime_state_patch(LockObservingWorker)
+    worker = LockObservingWorker(clock)
+
+    def send_state(
+        target: LockObservingWorker,
+        pipeline_ttls: dict[str, int],
+        last_used: dict[str, float],
+    ) -> bool:
+        target._record_lock("payload")
+        target.ttls = dict(pipeline_ttls)
+        target.last_used = dict(last_used)
+        return True
+
+    monkeypatch.setattr(runtime_state, "_send_state_payload", send_state)
+    worker.set_ttls({"OCR": 0})
+    worker.recognize(b"ocr", {"pipeline": "OCR"})
+    observations.clear()
+
+    # 模拟 recognize 已持有协议锁后触发内部重启；普通 Lock 会在这里死锁。
+    with worker._shm_lock:
+        worker.start()
+
+    assert observations == [
+        ("start", True),
+        ("preload", True),
+        ("warmup", True),
+        ("payload", True),
+        ("status", True),
+    ]
+
+
+def test_real_worker_protocol_lock_supports_same_thread_reentry() -> None:
+    from vibeocr.services.ocr_worker_process import OCRWorkerProcess
+
+    worker = OCRWorkerProcess(worker_id=0, use_gpu=False)
+    assert worker._shm_lock.acquire(timeout=0.1)
+    try:
+        assert worker._shm_lock.acquire(timeout=0.1)
+        worker._shm_lock.release()
+    finally:
+        worker._shm_lock.release()

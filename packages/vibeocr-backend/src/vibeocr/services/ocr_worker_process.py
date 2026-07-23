@@ -119,10 +119,10 @@ class OCRWorkerProcess:
         # 共享内存协议锁：所有 RPC 方法（recognize/preload/cache_status/
         # set_ttls/release）共用同一把锁，避免并发 write_message 破坏 SHM 状态。
         # 由 execute_control（轻量 RPC）和 execute（重 RPC）共同遵守。
-        # 用 Lock（非 RLock）：recognize/preload/cache_status 互不嵌套调用，
-        # 不需要可重入；普通 Lock 支持 acquire(timeout=)，让 execute_control
-        # 能在锁被卡住的 RPC 占着时超时放弃（保护后续 OCR 不被无限阻塞）。
-        self._shm_lock = threading.Lock()
+        # Worker 重启恢复也遵守这把锁，并可能发生在已持锁的 recognize 内部
+        # 重启路径中，因此必须可重入。RLock 同样支持 acquire(timeout=)，让
+        # execute_control 能在锁被卡住的 RPC 占着时超时放弃。
+        self._shm_lock = threading.RLock()
 
         # 预加载兜底防护：连续读到自身请求的计数（超过阈值判定异常）
         self._preload_self_read_count = 0

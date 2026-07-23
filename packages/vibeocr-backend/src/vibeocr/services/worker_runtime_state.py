@@ -341,10 +341,14 @@ def install_ocr_worker_runtime_state_patch(worker_cls: type[Any]) -> None:
 
     @functools.wraps(original_start)
     def start(worker: Any, *args: Any, **kwargs: Any) -> Any:
-        result = original_start(worker, *args, **kwargs)
-        if worker.is_ready if hasattr(worker, "is_ready") else False:
-            restore_after_start(worker)
-        return result
+        # 在子进程启动前获取协议锁，并一直持有到 ready 后的驻留恢复完成。
+        # 这样控制 RPC 即使观察到 is_ready=True，也只能在恢复完成后进入。
+        # recognize 内部重启时调用线程可能已持有该锁，所以锁必须是 RLock。
+        with worker._shm_lock:
+            result = original_start(worker, *args, **kwargs)
+            if worker.is_ready if hasattr(worker, "is_ready") else False:
+                restore_after_start(worker)
+            return result
 
     @functools.wraps(original_set_ttls)
     def set_ttls(
