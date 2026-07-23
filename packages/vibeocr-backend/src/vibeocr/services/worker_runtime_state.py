@@ -24,9 +24,12 @@ import threading
 import time
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
+from typing import TYPE_CHECKING
 
 from vibeocr.core.constants import Constants
+
+if TYPE_CHECKING:
+    from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -142,7 +145,7 @@ class _RuntimeResidencyState:
 
 
 def _state_for(worker: object) -> _RuntimeResidencyState:
-    state = getattr(worker, _STATE_ATTR, None)
+    state = worker.__dict__.get(_STATE_ATTR)
     if isinstance(state, _RuntimeResidencyState):
         return state
     state = _RuntimeResidencyState()
@@ -155,13 +158,17 @@ def _pipeline_name_from_options(options: object) -> str:
     if isinstance(options, dict):
         value = options.get("pipeline", "OCR")
     elif options is not None and hasattr(options, "pipeline"):
-        value = getattr(options, "pipeline")
+        value = options.pipeline
     if isinstance(value, Enum):
         value = value.value
     elif hasattr(value, "value"):
-        value = getattr(value, "value")
+        value = value.value
     text = str(value).strip()
     return text or "OCR"
+
+
+def _worker_label(worker: object) -> object:
+    return worker.worker_id if hasattr(worker, "worker_id") else "?"
 
 
 def _send_state_payload(
@@ -177,7 +184,7 @@ def _send_state_payload(
         OCRWorkerProcessError,
     )
 
-    protocol = getattr(worker, "protocol", None)
+    protocol = worker.protocol if hasattr(worker, "protocol") else None
     if protocol is None:
         raise OCRWorkerProcessError("Worker 通信协议未初始化，无法恢复缓存状态")
 
@@ -262,7 +269,7 @@ def install_ocr_worker_runtime_state_patch(worker_cls: type[Any]) -> None:
             pipeline_names = list(leases)
             logger.info(
                 "[RuntimeState] Worker %s 重启后恢复: ttls=%s, leases=%s",
-                getattr(worker, "worker_id", "?"),
+                _worker_label(worker),
                 pipeline_ttls,
                 pipeline_names,
             )
@@ -280,7 +287,7 @@ def install_ocr_worker_runtime_state_patch(worker_cls: type[Any]) -> None:
                     if failed:
                         logger.warning(
                             "[RuntimeState] Worker %s 驻留管道重载失败: %s",
-                            getattr(worker, "worker_id", "?"),
+                            _worker_label(worker),
                             failed,
                         )
 
@@ -297,7 +304,7 @@ def install_ocr_worker_runtime_state_patch(worker_cls: type[Any]) -> None:
                     if failed_warmup:
                         logger.warning(
                             "[RuntimeState] Worker %s 驻留管道预热失败: %s",
-                            getattr(worker, "worker_id", "?"),
+                            _worker_label(worker),
                             failed_warmup,
                         )
 
@@ -314,12 +321,12 @@ def install_ocr_worker_runtime_state_patch(worker_cls: type[Any]) -> None:
                 logger.debug("[RuntimeState] 恢复后读取缓存状态失败", exc_info=True)
             logger.info(
                 "[RuntimeState] Worker %s 驻留状态恢复完成",
-                getattr(worker, "worker_id", "?"),
+                _worker_label(worker),
             )
         except Exception:
             logger.exception(
                 "[RuntimeState] Worker %s 驻留状态恢复失败",
-                getattr(worker, "worker_id", "?"),
+                _worker_label(worker),
             )
             # Preserve at least the TTL policy, so the next on-demand load never
             # silently falls back to an infinite lease.
@@ -337,7 +344,7 @@ def install_ocr_worker_runtime_state_patch(worker_cls: type[Any]) -> None:
     @functools.wraps(original_start)
     def start(worker: Any, *args: Any, **kwargs: Any) -> Any:
         result = original_start(worker, *args, **kwargs)
-        if getattr(worker, "is_ready", False):
+        if worker.is_ready if hasattr(worker, "is_ready") else False:
             restore_after_start(worker)
         return result
 
@@ -416,15 +423,12 @@ def install_ocr_worker_runtime_state_patch(worker_cls: type[Any]) -> None:
         if not state.restoring:
             state.record_released(released)
 
-        # MinerU is classified as a heavy pipeline and therefore participates
-        # in both "release heavy" and "release all", despite living outside the
-        # Paddle worker process.
-        heavy_only = kwargs.get("heavy_only", args[0] if args else True)
-        if bool(heavy_only) or heavy_only is False:
-            from vibeocr.services.mineru_runtime_cache import get_mineru_runtime_cache
+        # MinerU is classified as heavy, so both release-heavy and release-all
+        # must also stop its separately managed API process.
+        from vibeocr.services.mineru_runtime_cache import get_mineru_runtime_cache
 
-            if get_mineru_runtime_cache().release() and "MinerU" not in released:
-                released.append("MinerU")
+        if get_mineru_runtime_cache().release() and "MinerU" not in released:
+            released.append("MinerU")
         return released if isinstance(result, list) else result
 
     worker_cls.start = start
