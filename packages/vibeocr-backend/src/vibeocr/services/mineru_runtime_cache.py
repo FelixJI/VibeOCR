@@ -13,10 +13,11 @@ import logging
 import threading
 import time
 from contextlib import contextmanager
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+    from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -79,8 +80,8 @@ class MinerURuntimeCache:
                     runtime.mark_released()
 
             setattr(MinerUService, _ORIGINAL_SHUTDOWN_ATTR, original_shutdown)
-            setattr(MinerUService, "parse", parse)
-            setattr(MinerUService, "shutdown", shutdown)
+            MinerUService.parse = parse
+            MinerUService.shutdown = shutdown
             setattr(MinerUService, _PATCH_MARKER, True)
 
     def _is_loaded_unlocked(self) -> bool:
