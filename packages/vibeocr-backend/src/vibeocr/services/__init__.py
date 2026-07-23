@@ -10,7 +10,6 @@ their classes:
 """
 
 import functools
-from typing import Any
 
 from vibeocr.services.ocr_worker_process import OCRWorkerProcess
 from vibeocr.services.worker_runtime_state import (
@@ -25,16 +24,16 @@ if not getattr(BatchQueueManager, _BATCH_PATCH_MARKER, False):
     _original_batch_init = BatchQueueManager.__init__
 
     @functools.wraps(_original_batch_init)
-    def _batch_init(self: Any, *args: Any, **kwargs: Any) -> None:
+    def _batch_init(self, *args, **kwargs) -> None:
         _original_batch_init(self, *args, **kwargs)
-        if getattr(self, "service", None) is not None:
+        if self.service is not None:
             # Production inference resolves the current model through
             # ``service``/the registry on every batch.  Keeping the constructor
             # model here would outlive PipelineCacheManager._pipelines.pop() and
             # make TTL/FIFO release only cosmetic.
             self.pipeline = None
 
-    setattr(BatchQueueManager, "__init__", _batch_init)
+    BatchQueueManager.__init__ = _batch_init
     setattr(BatchQueueManager, _BATCH_PATCH_MARKER, True)
 
 __all__ = []
