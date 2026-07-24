@@ -96,7 +96,7 @@ class TestOcrServiceAdapterCancelsAndEdges:
         service.recognize.assert_called_once()
 
     def test_recognize_without_language_omits_language_key(self) -> None:
-        calls: list[dict[str, Any]] = []
+        calls: list[Any] = []
 
         class Service:
             def recognize(self, image, options):
@@ -108,8 +108,11 @@ class TestOcrServiceAdapterCancelsAndEdges:
             OcrRequest(image_data=b"x", pipeline="OCR", language=None),
             CancelToken(),
         )
-        assert "language" not in calls[0]
-        assert calls[0]["pipeline"] == "OCR"
+        # adapter 传 OCROptions 对象（OCRService 契约），pipeline 注入。
+        opts = calls[0]
+        assert opts.pipeline.value == "OCR"
+        # OCROptions 无 language 字段（language 是请求级参数，不经 options 传）。
+        assert not hasattr(opts, "language")
 
     def test_recognize_batch_cancelled_before(self) -> None:
         service = MagicMock()

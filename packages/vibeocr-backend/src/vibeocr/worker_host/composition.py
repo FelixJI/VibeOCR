@@ -88,7 +88,13 @@ class OcrServiceAdapter:
         options["pipeline"] = request.pipeline
         if request.language is not None:
             options["language"] = request.language
-        result = self._get_service().recognize(request.image_data, options)
+        # OCRService.recognize 期望 OCROptions 对象（访问 .pipeline.value），
+        # 非 dict。OCRServiceSubprocess 接受 dict，但本 adapter 现在也服务
+        # 直接持 OCRService 的 HTTP worker，必须转成 OCROptions。
+        from vibeocr.models.ocr_options import OCROptions
+
+        ocr_options = OCROptions.from_dict(options)
+        result = self._get_service().recognize(request.image_data, ocr_options)
         if cancel.is_cancelled:
             raise RuntimeError("OCR request cancelled")
 
@@ -113,8 +119,11 @@ class OcrServiceAdapter:
         options["pipeline"] = first.pipeline
         if first.language is not None:
             options["language"] = first.language
+        from vibeocr.models.ocr_options import OCROptions
+
+        ocr_options = OCROptions.from_dict(options)
         raw_results = self._get_service().recognize_batch(
-            [request.image_data for request in requests], options
+            [request.image_data for request in requests], ocr_options
         )
         if cancel.is_cancelled:
             raise RuntimeError("OCR request cancelled")

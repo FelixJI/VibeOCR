@@ -167,10 +167,14 @@ python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
 qt_api = "pyside6"
-addopts = "-v --tb=short"
+addopts = "-v --tb=short -m 'not slow'"
 # WorkerHost framing/lifecycle tests are asyncio; auto mode collects coroutines
 # as async tests without per-test markers.
 asyncio_mode = "auto"
+markers = [
+    # 端到端烟雾测试（启动真实子进程，较慢）；默认跳过，需 -m "slow" 显式运行。
+    "slow: end-to-end tests that spawn real subprocesses",
+]
 pythonpath = [
     "packages/vibeocr-contracts-py/src",
     "packages/vibeocr-client-py/src",

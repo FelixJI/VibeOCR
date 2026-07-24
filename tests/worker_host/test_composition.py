@@ -31,10 +31,10 @@ def test_composition_import_does_not_load_pyside6() -> None:
 
 
 def test_ocr_adapter_maps_existing_service_result() -> None:
-    calls: list[tuple[bytes, dict[str, Any]]] = []
+    calls: list[tuple[bytes, Any]] = []
 
     class Service:
-        def recognize(self, image: bytes, options: dict[str, Any]) -> Any:
+        def recognize(self, image: bytes, options: Any) -> Any:
             calls.append((image, options))
             return SimpleNamespace(
                 copy_text="recognized",
@@ -64,22 +64,21 @@ def test_ocr_adapter_maps_existing_service_result() -> None:
     assert result.raw_blocks == [{"text": "recognized"}]
     assert result.preproc_angle == 90
     assert (result.preproc_img_w, result.preproc_img_h) == (3508, 2480)
-    assert calls == [(
-        b"png",
-        {
-            "pipeline": "OCR",
-            "language": "ch",
-            "use_doc_orientation_classify": False,
-        },
-    )]
+    # adapter 现在传 OCROptions 对象（OCRService 契约），pipeline/language 从
+    # request 注入。验证关键字段而非整个 dict（from_dict 会补默认值）。
+    assert len(calls) == 1
+    img, opts = calls[0]
+    assert img == b"png"
+    assert opts.pipeline.value == "OCR"
+    assert opts.use_doc_orientation_classify is False
 
 
 def test_ocr_adapter_uses_one_service_batch_call() -> None:
-    calls: list[tuple[list[bytes], dict[str, Any]]] = []
+    calls: list[tuple[list[bytes], Any]] = []
 
     class Service:
         def recognize_batch(
-            self, images: list[bytes], options: dict[str, Any]
+            self, images: list[bytes], options: Any
         ) -> list[Any | None]:
             calls.append((images, options))
             return [
@@ -96,7 +95,11 @@ def test_ocr_adapter_uses_one_service_batch_call() -> None:
         CancelToken(),
     )
 
-    assert calls == [([b"one", b"two"], {"pipeline": "OCR", "language": "ch"})]
+    # 单次 batch 调用，options 是 OCROptions 对象。
+    assert len(calls) == 1
+    imgs, opts = calls[0]
+    assert imgs == [b"one", b"two"]
+    assert opts.pipeline.value == "OCR"
     assert results[0] is not None and results[0].text == "one"
     assert results[1] is None
 
