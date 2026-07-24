@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from unittest.mock import patch
 
 import pytest
@@ -247,3 +248,111 @@ def test_onednn_paddle_version_with_build_suffix(monkeypatch):
 )
 def test_version_in_range(ver, lo, hi, expected):
     assert _version_in_range(ver, lo, hi) is expected
+
+
+# ---------------------------------------------------------------------------
+# _ver_tuple
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "ver,expected",
+    [
+        ("3.3.1", (3, 3, 1)),
+        ("3.3.1+cu126", (3, 3, 1)),
+        ("3.3.1~rc0", (3, 3, 1)),
+        ("1", (1,)),
+        ("10.20.30", (10, 20, 30)),
+    ],
+)
+def test_ver_tuple_parses_core_version(ver, expected):
+    from vibeocr.utils.cpu_info import _ver_tuple
+
+    assert _ver_tuple(ver) == expected
+
+
+def test_version_in_range_invalid_returns_false():
+    """畸形版本号返回 False 而非抛异常"""
+    assert _version_in_range("not.a.version", "3.0", "4.0") is False
+    assert _version_in_range(None, "3.0", "4.0") is False  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------------------------
+# _get_paddle_version
+# ---------------------------------------------------------------------------
+
+
+def test_get_paddle_version_returns_version_when_installed():
+    """paddle 已安装且有 __version__ 时返回版本号"""
+    import sys
+    from types import ModuleType
+
+    fake = ModuleType("paddle")
+    fake.__version__ = "3.3.1"  # type: ignore[attr-defined]
+    with patch.dict(sys.modules, {"paddle": fake}):
+        from vibeocr.utils.cpu_info import _get_paddle_version
+
+        assert _get_paddle_version() == "3.3.1"
+
+
+def test_get_paddle_version_none_when_not_installed():
+    """paddle 未安装时返回 None"""
+    import sys
+
+    with patch.dict(sys.modules, {"paddle": None}):
+        from vibeocr.utils.cpu_info import _get_paddle_version
+
+        assert _get_paddle_version() is None
+
+
+def test_get_paddle_version_none_when_empty_version():
+    """paddle 有 __version__ 但为空 → None"""
+    import sys
+    from types import ModuleType
+
+    fake = ModuleType("paddle")
+    fake.__version__ = ""  # type: ignore[attr-defined]
+    with patch.dict(sys.modules, {"paddle": fake}):
+        from vibeocr.utils.cpu_info import _get_paddle_version
+
+        assert _get_paddle_version() is None
+
+
+# ---------------------------------------------------------------------------
+# _read_windows_features / _read_linux_flags
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(
+    not sys.platform.startswith("win"),
+    reason="Windows 指令集探测仅在 Windows 可测",
+)
+def test_read_windows_features_returns_known_flags():
+    """Windows 上 _read_windows_features 应返回已知指令集子集（非空）"""
+    from vibeocr.utils.cpu_info import _read_windows_features
+
+    result = _read_windows_features()
+    # 现代 x86 CPU 至少有 sse/sse2
+    flags = set(result.split())
+    assert "sse" in flags or "sse2" in flags
+
+
+@pytest.mark.skipif(
+    sys.platform.startswith("win"),
+    reason="非 Windows 上 ctypes.windll 不存在，测异常回退",
+)
+def test_read_windows_features_returns_empty_on_non_windows():
+    """非 Windows 平台 _read_windows_features 走 except 返回空串"""
+    from vibeocr.utils.cpu_info import _read_windows_features
+
+    assert _read_windows_features() == ""
+
+
+def test_read_linux_flags_missing_proc(monkeypatch):
+    """/proc/cpuinfo 不存在时返回空串"""
+    from vibeocr.utils.cpu_info import _read_linux_flags
+
+    # Windows 上 /proc/cpuinfo 不存在，自然走 except 返回空串
+    result = _read_linux_flags()
+    assert isinstance(result, str)
+
