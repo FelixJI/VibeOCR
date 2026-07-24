@@ -171,7 +171,13 @@ class TestMinerUService:
         assert data["end_page_id"] == "10"
 
     def test_parse_empty_lang_list_not_sent(self):
-        """空 lang_list 不应传实际值"""
+        """空 lang_list 不应发送 lang_list 参数（让 mineru-api 用默认 ["ch"]）。
+
+        回归 bug：旧实现发 ``lang_list=""``，FastAPI 表单解析把空串解析成 ``[""]``
+        （含一个空字符串的列表），过不了 ``validate_public_ocr_lang``，报
+        ``Language  not supported``（注意报错里两个空格 = 空字符串）。正确做法是
+        **完全不传该字段**，让 mineru-api 用默认值 ``["ch"]``。
+        """
         service = MinerUService.__new__(MinerUService)
         service._api_url = "http://127.0.0.1:9999"
         service._api_process = None
@@ -193,7 +199,11 @@ class TestMinerUService:
             service.parse(b"data", "application/pdf", options)
 
         data = mock_httpx.post.call_args.kwargs["data"]
-        assert data.get("lang_list", "") == ""
+        # 关键：lang_list 字段必须不存在（而非空串），让 mineru-api 走默认 ["ch"]
+        assert "lang_list" not in data, (
+            "空 lang_list 时不应发送该字段：发 lang_list='' 会被 mineru-api "
+            "解析成 [''] 并报 Language not supported"
+        )
 
     def test_parse_checks_response_status(self):
         """非 completed 状态应抛异常"""
@@ -838,102 +848,49 @@ class TestBuildOcrResultV2:
         assert result.text_blocks[0].text == "Hello world"
 
 
-class TestMinerUModelCheck:
-    """MinerU 模型完整性校验测试(_check_models_available)"""
+class TestMinerUEnsureApiRunningNoModelProbe:
+    """_ensure_api_running 不预探测/预下载 MinerU 模型。
 
-    def test_models_available_returns_true_when_returncode_zero(self):
-        """子进程返回 0 时,判定模型就绪"""
-        from unittest.mock import MagicMock
+    回归 bug（用户反馈"mineru 为什么不能完整下完模型"）：旧实现用
+    ``mineru.cli.models_download -m all``（30s 超时）当探测命令，模型缺失时该命令
+    真去下载 GB 级模型、30s 后被 TimeoutExpired 杀掉，反而**打断 mineru 自己
+    正在进行的下载**，导致永远下不完。
 
+    正确认知（读 mineru 源码确认）：
+      - mineru-api 的 FastAPI lifespan（startup_app_state）不依赖模型即可启动，
+        只可选预加载 VLM；pipeline 模型不参与启动。
+      - 模型在首次 ``/file_parse`` 解析时由 mineru 自己按需下载
+        （``auto_download_and_get_model_root_path``，原子性 snapshot_download）。
+      - 因此**模型下载是 mineru 内部事务**，我们不应干涉：_ensure_api_running
+        直接 ``_start_api()``，不预探测、不预下载。首次解析的下载由 mineru 自理，
+        我们只保证识别超时够长（HTTP 总超时 30 分钟）。
+
+    本类锁定：``_ensure_api_running`` 不再调用任何模型探测/下载，直接启动 API。
+    """
+
+    def test_ensure_api_running_does_not_probe_models(self):
+        """_ensure_api_running 不应预探测模型，直接 _start_api。"""
         service = MinerUService.__new__(MinerUService)
-        fake_python = MagicMock()
-        fake_python.exists.return_value = True
-
-        with patch.object(service, "_resolve_python_executable", return_value=fake_python):
-            with patch("vibeocr.env_manager.detect_network_source") as mock_net:
-                mock_net.return_value = "international"
-                with patch("vibeocr.services.mineru_service.subprocess.run") as mock_run:
-                    mock_run.return_value = MagicMock(returncode=0, stdout=b"ok")
-                    assert service._check_models_available() is True
-
-    def test_models_available_returns_false_when_returncode_nonzero(self):
-        """子进程返回非 0 时,判定模型缺失"""
-        from unittest.mock import MagicMock
-
-        service = MinerUService.__new__(MinerUService)
-        fake_python = MagicMock()
-        fake_python.exists.return_value = True
-
-        with patch.object(service, "_resolve_python_executable", return_value=fake_python):
-            with patch("vibeocr.env_manager.detect_network_source") as mock_net:
-                mock_net.return_value = "international"
-                with patch("vibeocr.services.mineru_service.subprocess.run") as mock_run:
-                    mock_run.return_value = MagicMock(returncode=1, stdout=b"err")
-                    assert service._check_models_available() is False
-
-    def test_models_available_returns_false_on_timeout(self):
-        """子进程超时时(可能在下载),判定模型缺失"""
-        import subprocess as sp
-        from unittest.mock import MagicMock
-
-        service = MinerUService.__new__(MinerUService)
-        fake_python = MagicMock()
-        fake_python.exists.return_value = True
-
-        with patch.object(service, "_resolve_python_executable", return_value=fake_python):
-            with patch("vibeocr.env_manager.detect_network_source") as mock_net:
-                mock_net.return_value = "international"
-                with patch("vibeocr.services.mineru_service.subprocess.run") as mock_run:
-                    mock_run.side_effect = sp.TimeoutExpired(cmd="mineru", timeout=30)
-                    assert service._check_models_available() is False
-
-    def test_ensure_api_running_raises_when_models_missing(self):
-        """模型缺失时,_ensure_api_running 抛 RuntimeError 而非等 120s"""
-
-        service = MinerUService.__new__(MinerUService)
-        # 最小化初始化:跳过 __init__ 的单例逻辑
         service._lock = __import__("threading").Lock()
         MinerUService._api_url = None
         MinerUService._api_process = None
 
+        start_called = []
         with patch.object(service, "_check_api_running", return_value=False):
-            with patch.object(service, "_check_models_available", return_value=False):
-                with pytest.raises(RuntimeError, match="模型未下载"):
-                    service._ensure_api_running()
+            with patch.object(
+                service, "_start_api", side_effect=lambda: start_called.append(True)
+            ):
+                service._ensure_api_running()
 
-    def test_probe_command_is_non_interactive(self):
-        """探测命令必须非交互式:带 -m/--model_type 且 stdin=DEVNULL。
+        # 直接进入 _start_api，不因模型缺失而提前抛错。
+        assert start_called, "_ensure_api_running 应直接 _start_api，不预探测模型"
 
-        回归守卫:MinerU CLI ``models_download`` 在缺 ``--model_type`` 时会
-        触发 ``click.prompt`` 交互选择 (pipeline/vlm/all),非 TTY 子进程下被
-        Click ``Aborted!`` -> returncode=1,导致已下载的模型被误判为缺失
-        (见 2026-07-23 线上日志)。本测试锁定命令参数契约,防止回退。
-        """
-        import subprocess as sp
-
-        service = MinerUService.__new__(MinerUService)
-        fake_python = MagicMock()
-        fake_python.exists.return_value = True
-        fake_python.__str__ = lambda self: "python"  # type: ignore[assignment]
-
-        with patch.object(service, "_resolve_python_executable", return_value=fake_python):
-            with patch("vibeocr.env_manager.detect_network_source") as mock_net:
-                mock_net.return_value = "international"
-                with patch("vibeocr.services.mineru_service.subprocess.run") as mock_run:
-                    mock_run.return_value = MagicMock(returncode=0, stdout=b"ok")
-                    service._check_models_available()
-
-        call = mock_run.call_args
-        assert call is not None, "subprocess.run 未被调用"
-        cmd = call.args[0]
-        # 必须显式指定 model_type,否则 MinerU CLI 进入交互 prompt
-        assert "-m" in cmd or "--model_type" in cmd, (
-            f"探测命令缺 -m/--model_type,会触发 MinerU 交互 prompt: {cmd}"
+    def test_no_check_models_available_method(self):
+        """_check_models_available 方法应已删除（不再预探测）。"""
+        assert not hasattr(MinerUService, "_check_models_available"), (
+            "_check_models_available 应已删除：模型探测/下载交给 mineru 自理"
         )
-        # stdin 必须 DEVNULL:即使将来 CLI 行为变化,也不会因继承非 TTY stdin 而阻塞
-        assert call.kwargs.get("stdin") == sp.DEVNULL, (
-            f"探测命令未设 stdin=DEVNULL,非 TTY 下可能阻塞: {call.kwargs}"
-        )
+
 
 
 class TestMinerUTextExtraction:

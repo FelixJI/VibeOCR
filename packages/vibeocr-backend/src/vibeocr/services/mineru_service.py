@@ -153,70 +153,6 @@ class MinerUService(metaclass=SingletonMeta):
 
         return Path(sys.executable)
 
-    def _check_models_available(self) -> bool:
-        """快速探测 MinerU 模型是否已下载完整。
-
-        用嵌入式 Python 运行 ``mineru.cli.models_download``(模型已存在时
-        该命令会快速完成文件校验并返回 0)。若超时(可能在下载)或失败,
-        返回 False,调用方应给出"模型未就绪"的明确错误,而非等 120s API
-        启动超时。
-
-        Returns:
-            True 表示模型就绪;False 表示缺失/超时/探测异常(保守不阻塞)。
-        """
-        python_exe = self._resolve_python_executable()
-        if python_exe is None or not python_exe.exists():
-            # 无 Python 解释器,无法探测,交给后续流程报错
-            return True
-
-        from vibeocr.env_manager import detect_network_source
-
-        try:
-            network = detect_network_source()
-            source = "modelscope" if network == "domestic" else "huggingface"
-            env = os.environ.copy()
-            if source == "modelscope" and not env.get("MINERU_MODEL_SOURCE"):
-                env["MINERU_MODEL_SOURCE"] = "modelscope"
-            result = subprocess.run(
-                # 必须显式传 -m/--model_type=all:否则 MinerU CLI 进入
-                # click.prompt 交互选择 (pipeline/vlm/all),在非 TTY 子进程下
-                # 被 Click Aborted! -> returncode=1,已下载的模型被误判为缺失
-                # (见 2026-07-23 线上日志)。stdin=DEVNULL 双保险,防止任何
-                # 交互 prompt 在继承非 TTY stdin 时阻塞。
-                [
-                    str(python_exe),
-                    "-m",
-                    "mineru.cli.models_download",
-                    "-s",
-                    source,
-                    "-m",
-                    "all",
-                ],
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                timeout=Constants.Timeout.MINERU_MODEL_PROBE,
-                env=env,
-                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
-            )
-            if result.returncode == 0:
-                return True
-            _logger.warning(
-                f"[MinerU] 模型探测失败(returncode={result.returncode}): "
-                f"{result.stdout[:300]!r}"
-            )
-            return False
-        except subprocess.TimeoutExpired:
-            _logger.warning(
-                f"[MinerU] 模型探测超时(>{int(Constants.Timeout.MINERU_MODEL_PROBE)}s),"
-                f"模型可能仍在下载中"
-            )
-            return False
-        except Exception as e:
-            # 探测本身异常不阻塞主流程,交给 _start_api 兜底
-            _logger.warning(f"[MinerU] 模型探测异常(忽略): {e}")
-            return True
-
     def _start_api(self) -> None:
         """启动 mineru-api 进程"""
         python_exe = self._resolve_python_executable()
@@ -300,14 +236,11 @@ class MinerUService(metaclass=SingletonMeta):
                 except subprocess.TimeoutExpired:
                     self.__class__._api_process.kill()
                 self.__class__._api_process = None
-            # 启动前快速探测模型是否就绪,避免进入 120s API 启动轮询后才发现
-            # 模型缺失(用户体验差)。探测失败时抛清晰错误。
-            if not self._check_models_available():
-                raise RuntimeError(
-                    "MinerU 模型未下载完整,无法启动 API。\n"
-                    "请先在设置页下载 MinerU 模型(首次使用需数 GB),"
-                    "或在终端运行: python -m mineru.cli.models_download"
-                )
+            # 不预探测/预下载模型：mineru-api 不依赖模型即可启动，模型在首次
+            # /file_parse 解析时由 mineru 自己按需下载（auto_download_and_get_
+            # model_root_path）。旧的预探测用 mineru.cli.models_download 当探测
+            # 命令、30s 超时，反而会杀掉 mineru 自己正在进行的下载，导致"永远
+            # 下不完"。模型下载是 mineru 内部事务，我们只管发请求 + 给足超时。
             self._start_api()
 
     def _call_api(
@@ -342,7 +275,6 @@ class MinerUService(metaclass=SingletonMeta):
             "backend": backend,
             "effort": effort,
             "parse_method": parse_method,
-            "lang_list": lang_list_str,
             "start_page_id": str(options.start_page_id if options else 0),
             "end_page_id": str(
                 options.end_page_id
@@ -350,6 +282,12 @@ class MinerUService(metaclass=SingletonMeta):
                 else "99999"
             ),
         }
+        # 仅当 lang_list 非空时才发送该字段。发 lang_list="" 会被 mineru-api 的
+        # FastAPI 表单解析成 [""]（含一个空字符串），过不了 validate_public_ocr_lang，
+        # 报 "Language  not supported"（报错里两个空格 = 空字符串）。留空则 mineru-api
+        # 用默认 ["ch"]。
+        if lang_list_str:
+            params["lang_list"] = lang_list_str
 
         # 回退链: hybrid-engine → vlm-engine → pipeline
         fallback_chain = list(MINERU_BACKEND_CHAIN)
