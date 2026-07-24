@@ -385,23 +385,33 @@ class OCRServiceSubprocess:
     def set_pipeline_ttls(self, pipeline_ttls: dict[str, int]) -> bool:
         """设置每管道 TTL（经 RPC 下发）。
 
+        TTL 是**尽力而为**：已由 ConfigManager 持久化，且 worker 恢复时
+        ``restore_after_start`` 会用最新配置重新下发（``_send_state_payload``）。
+        所以当 ``_shm_lock`` 被占（worker 正在恢复预加载未缓存模型，可达数十秒~
+        数分钟，或正在跑 OCR）时，用**短** ``lock_timeout`` 快速失败返回 False，
+        不阻塞默认的 15s——避免后台任务打 traceback、并防止与 restore 抢锁
+        污染 SHM 状态导致后续 preload/OCR 连锁失败。上层据此提示「已保存，
+        重启后生效」。
+
         Args:
             pipeline_ttls: 每管道 TTL 字典，0=持久。
 
         Returns:
-            是否成功。
+            是否实时下发成功（False 不代表配置丢失，仅代表本轮未送达 worker）。
         """
         if not self._initialized:
             return False
         try:
             # 用 execute_control：TTL 设置是轻量控制 RPC，不应被 OCR 阻塞。
+            # 短 lock_timeout：锁被占时快速失败（尽力而为），不阻塞 15s。
             return self._paddlex_manager.execute_control(
                 lambda w: w.set_ttls(
                     pipeline_ttls, timeout=Constants.Timeout.SHM_WRITE
-                )
+                ),
+                lock_timeout=Constants.Timeout.CONTROL_RPC_LOCK_BEST_EFFORT,
             )
         except Exception as e:
-            logger.error("set_pipeline_ttls 失败: %s", e)
+            logger.debug("set_pipeline_ttls 实时下发失败（将重启后生效）: %s", e)
             return False
 
     def get_pipeline_cache_status(self) -> dict[str, object]:
