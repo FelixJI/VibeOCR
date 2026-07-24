@@ -18,7 +18,7 @@ from PySide6.QtCore import QThread, Signal
 from PySide6.QtGui import QImage
 
 if TYPE_CHECKING:
-    from vibeocr.client.pdf import PdfBackendClient
+    from vibeocr.services.pdf_backend_client import PdfBackendClient
 
 logger = logging.getLogger(__name__)
 

@@ -1778,6 +1778,12 @@ class SettingsPageController:
 
         UI 线程边界：仅做 service 句柄读取 + _run_cache_operation 派发，
         真正的 RPC 在 QRunnable 内执行，不阻塞 GUI。
+
+        TTL 下发是**非致命**的：配置已由 ConfigManager 持久化到 app_settings.json，
+        worker 下次启动时 PreloadTask 会自动读取并下发。所以当 worker 正忙
+        （预加载/OCR 持有 _shm_lock）导致实时下发超时或被拒时，不当作错误，
+        而是回读 worker 真实状态并提示「已保存，重启后生效」，避免红色失败和
+        后台任务 traceback（见 _run_sync 的 logger.exception）。
         """
         if not self._subprocess_manager or not self._subprocess_manager.is_ready:
             self._update_release_status("运行时缓存状态：OCR 服务未连接")
@@ -1789,16 +1795,27 @@ class SettingsPageController:
         generation = self._cache_generation
         service = self._subprocess_manager.service
 
+        # applied[0] 让成功回调区分「已实时更新」与「待 worker 重启后生效」，
+        # 二者都走成功路径（不触发 error 信号 / traceback）。
+        applied = [False]
+
         def operation() -> dict:
-            if not service.set_pipeline_ttls(ttls):
-                raise RuntimeError("Worker 未接受 TTL 更新")
+            try:
+                applied[0] = bool(service.set_pipeline_ttls(ttls))
+            except Exception as e:
+                # worker 正忙（_shm_lock 等待超时等）：TTL 已持久化，重启后生效。
+                logger.debug("TTL 实时下发失败，将提示重启后生效: %s", e)
+                applied[0] = False
+            # 无论是否实时下发，都回读 worker 真实状态用于刷新状态 label。
             return service.get_pipeline_cache_status()
+
+        def on_success(status: dict) -> None:
+            prefix = "TTL 已更新" if applied[0] else "TTL 已保存到配置，worker 重启后生效"
+            self._on_pipeline_cache_status(status, generation=generation, prefix=prefix)
 
         self._run_cache_operation(
             operation,
-            lambda status: self._on_pipeline_cache_status(
-                status, generation=generation, prefix="TTL 已更新"
-            ),
+            on_success,
             lambda error: self._on_pipeline_cache_error(error, generation),
         )
 

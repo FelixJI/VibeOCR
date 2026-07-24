@@ -16,7 +16,6 @@ from typing import TYPE_CHECKING, Any
 
 from PySide6.QtCore import QObject, QThread, Signal
 
-from vibeocr.client.pdf import PdfBackendClient, PdfClientError
 from vibeocr.core.batch_budget import (
     BatchBudget,
     BatchEntry,
@@ -34,6 +33,7 @@ from vibeocr.pyside.pdf_ipc_worker import (
     PdfIpcOpenWorker,
     PdfIpcPreviewWorker,
 )
+from vibeocr.services.pdf_backend_client import PdfBackendClient, PdfBackendError
 from vibeocr.utils import ocr_sidecar
 
 if TYPE_CHECKING:
@@ -41,8 +41,6 @@ if TYPE_CHECKING:
     from vibeocr.models.pdf_ocr_options import PdfGlobalSettings
 
 logger = logging.getLogger(__name__)
-
-PdfBackendError = PdfClientError
 
 
 class PdfSessionManager(QObject):

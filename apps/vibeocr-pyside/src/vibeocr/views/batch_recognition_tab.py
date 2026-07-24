@@ -539,8 +539,6 @@ class BatchRecognitionTab(BaseOcrTab):
         if self._has_document_files:
             gpu_capability = self._preprocess_options.gpu_capability
             if gpu_capability is not True:
-                from PySide6.QtWidgets import QMessageBox
-
                 if gpu_capability is None:
                     title = "文档解析检测中"
                     message = "正在检测 GPU 能力，请稍候再开始文档解析。"
@@ -552,6 +550,9 @@ class BatchRecognitionTab(BaseOcrTab):
                     )
                 QMessageBox.information(self, title, message)
                 return
+            # 不预探测/预下载 MinerU 模型：mineru-api 不依赖模型即可启动，模型在
+            # 首次解析时由 mineru 自己按需下载。我们只保证识别超时够长
+            # （MinerU HTTP 总超时 30 分钟），失败由 _recognize_one_mineru 兜底。
 
         preprocess_options = self._preprocess_options.get_options()
         # An injected adapter is consumed directly.  Cold shared-client startup is
@@ -726,7 +727,12 @@ class BatchRecognitionTab(BaseOcrTab):
         for f in files:
             if f["path"] == file_path:
                 result = f.get("result")
-                if result:
+                # 只有真正的 OCRResult（带 markdown_text 属性）才可显示。
+                # 失败项的 result 是 {"error": ...} dict（update_file_status 在
+                # status="failed" 时存入），没有 markdown_text；若直接交给
+                # _display_result，_reset_text_rebuild_state 访问 result.markdown_text
+                # 会抛 AttributeError。非 OCRResult 与 pending 一样走清空。
+                if getattr(result, "markdown_text", None) is not None:
                     self._display_result(result)
                     self._export_widget.set_current_result(result)
                 else:
