@@ -461,9 +461,22 @@ class OCRService(metaclass=SingletonMeta):
                                 candidate_dirs.append(arch_dir)
 
         # 2) torch/lib（CUDA 12 + cuDNN 9 全套）
-        torch_lib = Path(site_packages) / "torch" / "lib"
-        if torch_lib.is_dir():
-            candidate_dirs.append(torch_lib)
+        # 仅当 paddle 不自带 CUDA runtime 时才加 torch/lib 作为 fallback。
+        # paddle 3.x+ 自带完整 CUDA runtime（cu129 等），此时把 torch/lib（cu126）
+        # 加到 PATH 会导致版本冲突：paddle 加载的 cu129 符号与 torch/lib 的 cu126
+        # DLL 不匹配，torch 的 shm.dll 报 WinError 127（实测回归）。
+        paddle_has_cuda = False
+        try:
+            import paddle.version  # type: ignore[import-untyped]
+
+            paddle_has_cuda = bool(getattr(paddle.version, "cuda", lambda: None)())
+        except Exception:
+            pass
+
+        if not paddle_has_cuda:
+            torch_lib = Path(site_packages) / "torch" / "lib"
+            if torch_lib.is_dir():
+                candidate_dirs.append(torch_lib)
 
         for d in candidate_dirs:
             s = str(d)
