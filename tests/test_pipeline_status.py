@@ -1,7 +1,9 @@
 """tests/test_pipeline_status.py"""
 
 import json
+from datetime import date
 from pathlib import Path
+from unittest.mock import patch
 
 from vibeocr.machine_cache import CACHE_VERSION, generate_machine_id
 from vibeocr.pipeline_status import (
@@ -145,3 +147,82 @@ def test_local_markable_pipelines_excludes_mineru_and_covers_local():
         assert name in LOCAL_MARKABLE_PIPELINES, (
             f"{name} 缺失会导致其 is_pipeline_ever_succeeded 永久为 False"
         )
+
+
+# --------------------------------------------------------------------------
+# 每日重置：pipeline_success 标记当天有效，跨天视为未成功（重新用长超时验证）
+# --------------------------------------------------------------------------
+# 防止模型文件被删/损坏/换机器后仍用短超时快速失败。新格式：
+#   {name: {"succeeded": bool, "date": "YYYY-MM-DD"}}
+
+
+def test_mark_success_records_today_and_reads_true_same_day(tmp_path):
+    """mark 后当天 is_pipeline_ever_succeeded 应为 True。"""
+    _make_cache(tmp_path)
+    with patch("vibeocr.pipeline_status._today") as mock_today:
+        mock_today.return_value = date(2026, 7, 24)
+        mark_pipeline_success("OCR", tmp_path)
+        assert is_pipeline_ever_succeeded("OCR", tmp_path) is True
+
+
+def test_succeeded_marker_expires_next_day(tmp_path):
+    """跨天后视为未成功（走长超时重新验证）。
+
+    回归：旧格式 {name: bool} 永久标记，模型损坏后仍用短超时快速失败。
+    """
+    yesterday = date(2026, 7, 23)
+    today = date(2026, 7, 24)
+    # 用昨天的日期写入标记
+    _make_cache(
+        tmp_path,
+        {"OCR": {"succeeded": True, "date": yesterday.isoformat()}},
+    )
+    with patch("vibeocr.pipeline_status._today", return_value=today):
+        assert is_pipeline_ever_succeeded("OCR", tmp_path) is False
+
+
+def test_succeeded_marker_same_day_true(tmp_path):
+    """同一天标记成功 → True。"""
+    today = date(2026, 7, 24)
+    _make_cache(
+        tmp_path,
+        {"OCR": {"succeeded": True, "date": today.isoformat()}},
+    )
+    with patch("vibeocr.pipeline_status._today", return_value=today):
+        assert is_pipeline_ever_succeeded("OCR", tmp_path) is True
+
+
+def test_succeeded_marker_false_even_same_day(tmp_path):
+    """succeeded=False 即使同一天也为 False。"""
+    today = date(2026, 7, 24)
+    _make_cache(
+        tmp_path,
+        {"OCR": {"succeeded": False, "date": today.isoformat()}},
+    )
+    with patch("vibeocr.pipeline_status._today", return_value=today):
+        assert is_pipeline_ever_succeeded("OCR", tmp_path) is False
+
+
+def test_legacy_bool_format_still_recognized(tmp_path):
+    """旧格式 {name: bool} 向后兼容：True 仍返回 True（宽容，避免升级即失效）。
+
+    mark_pipeline_success 后会升级为新格式（带 date）。旧格式仅在尚未被
+    重新标记的过渡期出现，宽容返回避免老用户升级后首次识别白白用长超时。
+    """
+    _make_cache(tmp_path, {"OCR": True})
+    with patch("vibeocr.pipeline_status._today", return_value=date(2026, 7, 24)):
+        assert is_pipeline_ever_succeeded("OCR", tmp_path) is True
+
+
+def test_mark_success_upgrades_legacy_to_dated_format(tmp_path):
+    """mark 旧格式缓存后，应写入新格式 {succeeded, date}。"""
+    _make_cache(tmp_path, {"OCR": True})
+    with patch("vibeocr.pipeline_status._today", return_value=date(2026, 7, 24)):
+        mark_pipeline_success("OCR", tmp_path)
+
+    cache_file = tmp_path / ".vibeocr" / "cache.json"
+    data = json.loads(cache_file.read_text(encoding="utf-8"))
+    entry = data["pipeline_success"]["OCR"]
+    assert isinstance(entry, dict)
+    assert entry["succeeded"] is True
+    assert entry["date"] == "2026-07-24"

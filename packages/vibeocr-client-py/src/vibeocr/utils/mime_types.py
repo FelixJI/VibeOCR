@@ -53,6 +53,32 @@ def guess_mime_from_filename(filename: str) -> str:
     return EXT_TO_MIME.get(suffix, "application/pdf")
 
 
+def guess_mime_from_bytes(data: bytes) -> str:
+    """从文件字节内容嗅探 MIME 类型，未知时默认 application/pdf。
+
+    仅做轻量魔数（magic number）匹配，用于调用方无文件名时仍能正确
+    路由到 MinerU 文档解析服务（mime 决定扩展名，进而影响 mineru-api 解析）。
+    """
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if data[:4] == b"%PDF":
+        return "application/pdf"
+    if data[:3] == b"\xff\xd8\xff":
+        return "image/jpeg"
+    if data[:6] in (b"GIF87a", b"GIF89a"):
+        return "image/gif"
+    if data.startswith(b"BM"):
+        return "image/bmp"
+    if data[:4] == b"II*\x00" or data[:4] == b"MM\x00*":
+        return "image/tiff"
+    if data.startswith(b"RIFF") and data[8:12] == b"WEBP":
+        return "image/webp"
+    # DOCX/PPTX/XLSX 是 ZIP 容器，统一归到文档类型
+    if data[:4] == b"PK\x03\x04":
+        return "application/pdf"
+    return "application/pdf"
+
+
 def is_office_file(path_or_name: str) -> bool:
     """判断文件是否为 Office 文档（docx/pptx/xlsx）。"""
     suffix = Path(path_or_name).suffix.lower()

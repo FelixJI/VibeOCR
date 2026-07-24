@@ -128,6 +128,10 @@ class Constants:
         SHM_WRITE = 30.0  # write_message 默认超时
         SHM_READ = 60.0  # read_message 默认超时
         SHM_WAIT_FOR_READ = 5.0  # wait_for_read 默认超时
+        # 尽力而为控制 RPC（set_pipeline_ttls）的 _shm_lock 等待上限。
+        # TTL 已持久化且 worker 恢复时重新下发，锁被占（恢复预加载/OCR）时
+        # 快速失败返回 False，不阻塞 15s 导致后台任务 traceback + SHM 状态污染。
+        CONTROL_RPC_LOCK_BEST_EFFORT = 1.0
 
         # —— MinerU 远程服务 ——
         MINERU_API_START = 120.0  # mineru-api 启动轮询上限
