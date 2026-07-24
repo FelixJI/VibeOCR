@@ -447,3 +447,186 @@ class TestBatchQueueManagerWithGPU:
             # commit 会调用 _calculate_batch_size
             # 但这里我们只测试创建是否成功
             assert manager is not None
+
+    def test_calculate_batch_size_uses_gpu_when_available(self):
+        """GPU 可用时走 estimate_batch_size 路径"""
+        pipeline = MockPipeline()
+        with patch(
+            "vibeocr.workers.batch_queue_manager.GPUMemoryMonitor"
+        ) as MockMonitor:
+            mock_monitor = MagicMock()
+            mock_monitor.is_available.return_value = True
+            mock_monitor.estimate_batch_size.return_value = 3
+            MockMonitor.return_value = mock_monitor
+
+            manager = BatchQueueManager(pipeline, max_batch_size=8)
+            manager.add_request(_make_png_bytes(), {})
+            manager.add_request(_make_png_bytes(), {})
+
+            # commit 触发 _calculate_batch_size
+            manager.commit(PreprocessOptions())
+            assert manager.get_stats()["total_batches"] >= 1
+
+
+class TestBatchQueueManagerEdgeCases:
+    """补充边界路径：回调异常、取消、get_result、close、批次异常。"""
+
+    def test_progress_callback_exception_is_swallowed(self):
+        """进度回调抛异常时不应中断批量处理"""
+        pipeline = MockPipeline()
+
+        def bad_callback(_progress):
+            raise RuntimeError("callback boom")
+
+        manager = BatchQueueManager(
+            pipeline, max_batch_size=2, progress_callback=bad_callback
+        )
+        for _ in range(2):
+            manager.add_request(_make_png_bytes(), {})
+        # 不应抛
+        results = manager.commit(PreprocessOptions())
+        assert len(results) == 2
+
+    def test_file_completed_callback_exception_is_swallowed(self):
+        """单文件完成回调抛异常时不应中断"""
+        pipeline = MockPipeline()
+        manager = BatchQueueManager(pipeline, max_batch_size=2)
+
+        def bad_file_callback(_rid, _result):
+            raise RuntimeError("file cb boom")
+
+        manager.add_request(_make_png_bytes(), {})
+        results = manager.commit(
+            PreprocessOptions(), file_completed_callback=bad_file_callback
+        )
+        assert len(results) == 1
+
+    def test_get_result_returns_none_for_unknown(self):
+        """未知 request_id 返回 None"""
+        manager = BatchQueueManager(MockPipeline(), max_batch_size=2)
+        assert manager.get_result("nonexistent") is None
+
+    def test_get_result_returns_none_before_completion(self):
+        """未完成时返回 None"""
+        manager = BatchQueueManager(MockPipeline(), max_batch_size=2)
+        rid = manager.add_request(_make_png_bytes(), {})
+        # 未 commit，请求未完成
+        assert manager.get_result(rid) is None
+
+    def test_get_result_returns_value_after_completion(self):
+        """完成后返回结果"""
+        manager = BatchQueueManager(MockPipeline(), max_batch_size=2)
+        rid = manager.add_request(_make_png_bytes(), {})
+        manager.commit(PreprocessOptions())
+        result = manager.get_result(rid)
+        assert result is not None
+        assert "text" in result
+
+    def test_close_clears_queue(self):
+        """close 清空队列"""
+        manager = BatchQueueManager(MockPipeline(), max_batch_size=2)
+        manager.add_request(_make_png_bytes(), {})
+        assert manager.get_queue_size() == 1
+        manager.close()
+        assert manager.get_queue_size() == 0
+
+    def test_batch_failure_marks_requests_failed(self):
+        """pipeline.predict 抛异常时，请求被标记为失败"""
+        pipeline = MagicMock()
+        pipeline.predict.side_effect = RuntimeError("predict boom")
+        manager = BatchQueueManager(pipeline, max_batch_size=4)
+        rid = manager.add_request(_make_png_bytes(), {})
+        results = manager.commit(PreprocessOptions())
+        assert rid in results
+        assert "error" in results[rid]
+
+    def test_cancel_before_commit_is_reset_and_all_processed(self):
+        """commit 开始时会重置 _cancelled 标志，故之前 cancel 不影响处理。
+
+        覆盖 line 165: self._cancelled = False。
+        """
+        manager = BatchQueueManager(MockPipeline(), max_batch_size=4)
+        for _ in range(3):
+            manager.add_request(_make_png_bytes(), {})
+        manager.cancel()  # commit 会重置它
+        results = manager.commit(PreprocessOptions())
+        # 全部仍被处理
+        assert len(results) == 3
+
+    def test_cancel_during_callback_stops_subsequent_batches(self):
+        """通过进度回调在处理中触发 cancel，后续批次不再处理。"""
+        manager = BatchQueueManager(MockPipeline(), max_batch_size=1)
+        for _ in range(5):
+            manager.add_request(_make_png_bytes(), {})
+
+        cancel_triggered = []
+
+        def cancel_after_first(progress):
+            # completed 达到 1 后取消（首批处理完成、第二批开始前）
+            if progress.completed >= 1 and not cancel_triggered:
+                cancel_triggered.append(True)
+                manager.cancel()
+
+        manager.progress_callback = cancel_after_first
+        manager.commit(PreprocessOptions())
+        # 取消后只有部分完成（至少 1，少于 5）
+        stats = manager.get_stats()
+        assert stats["total_batches"] < 5
+
+    def test_to_ndarray_passes_through_non_bytes(self):
+        """_to_ndarray 对非 bytes 输入直接返回"""
+        import numpy as np
+
+        arr = np.zeros((4, 4, 3), dtype=np.uint8)
+        assert BatchQueueManager._to_ndarray(arr) is arr
+
+    def test_to_ndarray_converts_png_bytes(self):
+        """_to_ndarray 将 PNG bytes 转为 ndarray"""
+        import numpy as np
+
+        png = _make_png_bytes(5, 5)
+        result = BatchQueueManager._to_ndarray(png)
+        assert isinstance(result, np.ndarray)
+        assert result.shape[:2] == (5, 5)
+
+    def test_calculate_batch_size_empty_returns_one(self):
+        """空请求列表返回 batch_size=1"""
+        manager = BatchQueueManager(MockPipeline(), max_batch_size=4)
+        assert manager._calculate_batch_size([]) == 1
+
+    def test_calculate_batch_size_no_gpu_uses_max(self):
+        """无 GPU 时回退到 max_batch_size"""
+        with patch(
+            "vibeocr.workers.batch_queue_manager.GPUMemoryMonitor"
+        ) as MockMonitor:
+            mock_monitor = MagicMock()
+            mock_monitor.is_available.return_value = False
+            MockMonitor.return_value = mock_monitor
+            manager = BatchQueueManager(MockPipeline(), max_batch_size=4)
+            manager.add_request(_make_png_bytes(), {})
+            # 无 GPU → batch_size = min(max_batch_size, len, max) = 1
+            assert manager._calculate_batch_size(list(manager._queue.values())) == 1
+
+    def test_run_via_registry_no_service_unknown_pipeline_falls_back(self):
+        """无 service + 未知 pipeline 名 → 回退到 OCR 路径"""
+        pipeline = MockPipeline()
+        manager = BatchQueueManager(pipeline, max_batch_size=4)
+        manager.add_request(_make_png_bytes(), {})
+        from vibeocr.core.pipelines import OCRPipeline
+
+        options = PreprocessOptions(pipeline=OCRPipeline.OCR)
+        # _run_via_registry 无 service，走 predict 路径
+        results = manager._run_via_registry("UNKNOWN_PIPELINE", ["img"], options)
+        assert len(list(results)) >= 1
+
+    def test_run_via_registry_with_service_unknown_pipeline_raises(self):
+        """有 service + 未注册管道 → 抛 RuntimeError"""
+        with patch("vibeocr.core.pipelines.get_registry") as mock_get_registry:
+            registry = MagicMock()
+            registry.has.return_value = False
+            mock_get_registry.return_value = registry
+            manager = BatchQueueManager(
+                MockPipeline(), max_batch_size=4, service=MagicMock()
+            )
+            with pytest.raises(RuntimeError, match="未注册管道"):
+                manager._run_via_registry("EVIL", ["img"], PreprocessOptions())
