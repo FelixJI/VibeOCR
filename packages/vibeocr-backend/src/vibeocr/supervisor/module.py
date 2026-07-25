@@ -87,6 +87,7 @@ class SupervisorModule:
         options: SupervisorOptions,
         stager_root: Any,
         executor: Executor,
+        pdf_adapter: Any = None,
     ) -> None:
         self.options = options
         self.registry = JobRegistry(options.instance_id)
@@ -103,6 +104,11 @@ class SupervisorModule:
         # timestamp for the retention policy — executors do not need to know.
         self.registry.set_terminal_hook(self.retention.mark_terminal)
         self._executor = executor
+        # Optional PDF child-process adapter (Phase 6). When present, the v2
+        # PDF session routes proxy through it instead of the legacy
+        # PdfBackendClient singleton. Tests / supervisor builds without PDF
+        # support pass None and the routes return 503.
+        self.pdf_adapter = pdf_adapter
         self._lock = threading.RLock()
         self._draining = False
         self._shutdown = False
@@ -161,6 +167,12 @@ class SupervisorModule:
         except Exception:  # pragma: no cover - defensive
             pass
         self.stager.release_all()
+        # Tear down the PDF child if we own it.
+        if self.pdf_adapter is not None:
+            try:
+                self.pdf_adapter.stop()
+            except Exception:  # pragma: no cover - defensive
+                pass
 
     # ------------------------------------------------------------------
     # Submit

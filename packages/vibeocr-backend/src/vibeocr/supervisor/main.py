@@ -48,7 +48,12 @@ def run_supervisor(argv: list[str] | None = None) -> int:
     stager_root = Path(root_env) if root_env else None
 
     module, _ = build_supervisor(
-        instance_id=instance_id, stager_root=stager_root, bootstrap_handle=handle
+        instance_id=instance_id,
+        stager_root=stager_root,
+        bootstrap_handle=handle,
+        # The supervisor owns the PDF child so the GUI never talks to it
+        # directly (plan §6 / ADR §"Transport"). The child is spawned lazily.
+        with_pdf_adapter=True,
     )
     envelope = ReadyEnvelope(
         ready=True,

@@ -154,6 +154,12 @@ def _assert_allowed_import(file: Path, module: str, lineno: int) -> None:
         "vibeocr.services.export_service",
         "vibeocr.services.pdf_backend_client",
         "vibeocr.application.contracts",
+        # vibeocr.ipc.schemas is a pure pydantic DTO module (PdfDocumentMirror,
+        # ModelDiff, ProgressEvent, request/response bodies) shared by the PDF
+        # backend child, the supervisor v2 routes, and the supervisor client.
+        # It is schema, not transport (model_bridge/shm/named_pipe are the
+        # transport modules under vibeocr.ipc and stay forbidden).
+        "vibeocr.ipc.schemas",
     }
     for forbidden in _PY_FORBIDDEN_IMPORT_PREFIXES:
         if module in _REUSE_ALLOWED:
@@ -199,3 +205,50 @@ def test_pyside_supervisor_adapter_does_not_import_legacy_sync_client() -> None:
     assert "SyncBackendClient" not in text and "OcrHttpClient" not in text, (
         "supervisor_adapter must not reference legacy transport clients."
     )
+
+
+def test_pyside_app_does_not_import_pdf_backend_client() -> None:
+    """The PySide app must route PDF ops through the supervisor HTTP v2 client.
+
+    Plan §7A exit criterion: "PySide UI import scanner 不允许
+    services/mineru_service、pdf_backend_client、worker_host". After the
+    PDF→supervisor migration the GUI never imports
+    ``vibeocr.services.pdf_backend_client`` directly — the supervisor owns
+    the PDF child. This guard prevents regression.
+    """
+    pyside_src = _REPO_ROOT / "apps" / "vibeocr-pyside" / "src" / "vibeocr"
+    if not pyside_src.exists():
+        pytest.skip("pyside app source not present")
+    offenders: list[str] = []
+    for py_file in sorted(pyside_src.rglob("*.py")):
+        if py_file.name == "__pycache__":
+            continue
+        text = py_file.read_text(encoding="utf-8")
+        # Catch both ``from vibeocr.services.pdf_backend_client import ...``
+        # and ``import vibeocr.services.pdf_backend_client``. Comments/docstrings
+        # mentioning the name are allowed (the migration notes reference it);
+        # we only flag real import statements via AST.
+        try:
+            tree = ast.parse(text, filename=str(py_file))
+        except SyntaxError:
+            continue
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name == "vibeocr.services.pdf_backend_client":
+                        offenders.append(
+                            f"{py_file.relative_to(_REPO_ROOT)}:{node.lineno} "
+                            f"imports vibeocr.services.pdf_backend_client"
+                        )
+            elif isinstance(node, ast.ImportFrom):
+                if node.module == "vibeocr.services.pdf_backend_client":
+                    offenders.append(
+                        f"{py_file.relative_to(_REPO_ROOT)}:{node.lineno} "
+                        f"imports from vibeocr.services.pdf_backend_client"
+                    )
+    assert not offenders, (
+        "PySide app must not import vibeocr.services.pdf_backend_client — "
+        "PDF ops go through the supervisor (vibeocr.supervisor.pdf_client). "
+        "Offenders:\n  " + "\n  ".join(offenders)
+    )
+

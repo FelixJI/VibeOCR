@@ -25,7 +25,7 @@ class _FakePdfChild:
         self.opened.append(path)
         return sid
 
-    def render_preview(self, session_id: str, page: int) -> bytes:
+    def render_preview(self, session_id: str, page: int, dpi: int = 150) -> bytes:
         self.renders.append((session_id, page))
         return b"\x89PNG\r\n"
 

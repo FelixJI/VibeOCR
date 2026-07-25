@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import tempfile
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from .bootstrap import BootstrapHandle, generate_session_token, new_instance_id
 from .module import Executor, SupervisorModule, SupervisorOptions
@@ -80,6 +80,26 @@ def _paddle_available() -> bool:
     return True
 
 
+def _build_pdf_adapter() -> Any:
+    """Construct a PdfProcessAdapter backed by the legacy PdfBackendClient.
+
+    The child factory returns ``PdfBackendClient.instance()`` so the supervisor
+    reuses the existing FastAPI PDF child process (``pdf_backend_process.py``)
+    rather than reimplementing PyMuPDF. The supervisor becomes the sole owner
+    of that child; the GUI no longer holds a ``PdfBackendClient`` reference.
+    Import is lazy: the backend client pulls httpx + the process launcher, so
+    we defer it to first use (see ``PdfProcessAdapter.ensure_started``).
+    """
+    from .pdf.adapter import PdfProcessAdapter
+
+    def factory() -> Any:
+        from vibeocr.services.pdf_backend_client import PdfBackendClient
+
+        return PdfBackendClient.instance()
+
+    return PdfProcessAdapter(child_factory=factory)
+
+
 def build_supervisor(
     *,
     instance_id: str | None = None,
@@ -88,6 +108,7 @@ def build_supervisor(
     options: SupervisorOptions | None = None,
     bootstrap_handle: BootstrapHandle | None = None,
     use_real_paddle: bool | None = None,
+    with_pdf_adapter: bool = False,
 ) -> tuple[SupervisorModule, BootstrapHandle]:
     """Assemble a supervisor module + bootstrap handle (token out of band).
 
@@ -98,6 +119,14 @@ def build_supervisor(
     so recognition jobs actually run Paddle OCR. Otherwise (or in lightweight
     test environments without paddle) the null executor is used so the job
     engine stays importable and unit-testable without model dependencies.
+
+    When ``with_pdf_adapter`` is True, the module owns a
+    :class:`~vibeocr.supervisor.pdf.adapter.PdfProcessAdapter` whose
+    ``child_factory`` returns the legacy
+    :class:`~vibeocr.services.pdf_backend_client.PdfBackendClient` singleton.
+    The v2 PDF session routes then proxy through it instead of the GUI holding
+    the client directly (plan §6 / ADR §"Transport"). The PDF child subprocess
+    is spawned lazily on first ``open_session``; no cost at import.
     """
     iid = instance_id or new_instance_id()
     opts = options or SupervisorOptions(instance_id=iid)
@@ -108,7 +137,13 @@ def build_supervisor(
         exec_impl = _build_paddle_executor()
     else:
         exec_impl = _NullExecutor()
-    module = SupervisorModule(options=opts, stager_root=root, executor=exec_impl)
+    pdf_adapter = _build_pdf_adapter() if with_pdf_adapter else None
+    module = SupervisorModule(
+        options=opts,
+        stager_root=root,
+        executor=exec_impl,
+        pdf_adapter=pdf_adapter,
+    )
     # Clean stale staging left by a previous crashed instance (plan Phase 2).
     # At startup no jobs are known yet, so every existing dir is stale.
     module.stager.cleanup_stale(set())

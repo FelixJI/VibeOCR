@@ -95,10 +95,15 @@ class SubprocessStartTask(QRunnable):
 class WorkerHostStartTask(QRunnable):
     """在后台线程启动 supervisor 进程并连接前端适配器。
 
-    v2 path: starts the supervisor subprocess (python -m vibeocr.supervisor.main),
-    reads the ready envelope, constructs the SupervisorClient, and marks the
-    adapter as started. Falls back to legacy BatchBackendAdapter if supervisor
-    startup fails.
+    Launches the supervisor subprocess (``python -m vibeocr.supervisor.main``),
+    reads the ready envelope, then constructs the production
+    :class:`SupervisorClient` + :class:`SyncPdfSupervisorClient` and installs
+    them on the global adapter via :func:`set_supervisor_adapter`. After
+    ``adapter.start()``, PySide tabs route OCR/QR/export and the PDF session
+    manager routes PDF ops through supervisor HTTP v2.
+
+    The launched :class:`SupervisorProcess` is held on ``self.supervisor_proc``
+    so :class:`SubprocessManager` can terminate it on shutdown.
     """
 
     def __init__(self) -> None:
@@ -106,6 +111,8 @@ class WorkerHostStartTask(QRunnable):
         self._cancelled = threading.Event()
         self.signals = SubprocessStartSignals()
         self.service: Any = None
+        # The supervisor subprocess handle; None until run() succeeds.
+        self.supervisor_proc: Any = None
 
     def cancel(self) -> None:
         self._cancelled.set()
@@ -115,18 +122,75 @@ class WorkerHostStartTask(QRunnable):
             return
         self.signals.progress.emit("启动 Supervisor")
         try:
-            # Start the supervisor subprocess and attach the adapter.
-            from vibeocr.pyside.supervisor_adapter import get_supervisor_adapter
+            import sys
 
-            adapter = get_supervisor_adapter()
+            from vibeocr.pyside.supervisor_adapter import (
+                SupervisorClientAdapter,
+                set_supervisor_adapter,
+            )
+            from vibeocr.supervisor.client import SupervisorClient
+            from vibeocr.supervisor.pdf_client import SyncPdfSupervisorClient
+            from vibeocr.supervisor.process import SupervisorProcess
+
+            # 1. Launch the supervisor subprocess (loopback, OS-chosen port,
+            #    token via env). The child emits the ready envelope on stdout.
+            proc = SupervisorProcess.launch(python_exe=sys.executable)
+            if self._cancelled.is_set():
+                proc.shutdown()
+                return
+            self.supervisor_proc = proc
+
+            # 2. Build the async recognition/QR/export client bound to the
+            #    supervisor's loopback base_url + session token.
+            sup_client = SupervisorClient(
+                base_url=proc.base_url,
+                session_token=proc.session_token,
+                instance_id=proc.ready.instance_id if proc.ready else None,
+            )
+
+            # 3. Build a sync PDF client factory (same base_url + token) so
+            #    PdfSessionManager can call the supervisor PDF routes from
+            #    plain QThread workers.
+            def pdf_factory() -> Any:
+                return SyncPdfSupervisorClient(
+                    base_url=proc.base_url,
+                    session_token=proc.session_token,
+                    instance_id=proc.ready.instance_id if proc.ready else None,
+                )
+
+            # 4. Install the production adapter and mark it started.
+            adapter = SupervisorClientAdapter(
+                client_factory=lambda: sup_client,
+                pdf_sync_client_factory=pdf_factory,
+            )
+            set_supervisor_adapter(adapter)
             adapter.start()
             if self._cancelled.is_set():
                 return
             self.signals.started.emit(True)
         except Exception:
             logger.exception("[SubprocessManager] Supervisor 启动失败")
+            # Best-effort cleanup of a half-launched process.
+            proc = getattr(self, "supervisor_proc", None)
+            if proc is not None:
+                try:
+                    proc.shutdown()
+                except Exception:  # pragma: no cover - defensive
+                    pass
+                self.supervisor_proc = None
             if not self._cancelled.is_set():
                 self.signals.started.emit(False)
+
+    def shutdown_supervisor(self) -> None:
+        """Terminate the supervisor subprocess (idempotent)."""
+        proc = self.supervisor_proc
+        if proc is None:
+            return
+        self.supervisor_proc = None
+        try:
+            proc.shutdown()
+        except Exception:  # pragma: no cover - defensive
+            logger.debug("[SubprocessManager] supervisor shutdown error", exc_info=True)
 
 
 class PreloadSignals(QObject):
@@ -546,6 +610,23 @@ class SubprocessManager(QObject):
             except Exception as e:
                 logger.error(f"[SubprocessManager] 关闭服务失败: {e}")
                 timed_out = True
+
+        # 关闭 supervisor 适配器（取消 in-flight jobs）并终止 supervisor 子进程。
+        # 顺序：先 adapter.shutdown() 让 qasync loop 取消 handle，再
+        # WorkerHostStartTask.shutdown_supervisor() 终止进程（进程内 module
+        # shutdown_now 会再 stop PDF child）。两条独立路径都 best-effort。
+        try:
+            from vibeocr.pyside.supervisor_adapter import get_supervisor_adapter
+
+            get_supervisor_adapter().shutdown()
+        except Exception as e:  # pragma: no cover - defensive
+            logger.debug(f"[SubprocessManager] adapter shutdown 失败: {e}")
+        start_task = self._start_task
+        if isinstance(start_task, WorkerHostStartTask):
+            try:
+                start_task.shutdown_supervisor()
+            except Exception as e:  # pragma: no cover - defensive
+                logger.debug(f"[SubprocessManager] supervisor 进程关闭失败: {e}")
 
         self._start_task = None
         self._preload_task = None

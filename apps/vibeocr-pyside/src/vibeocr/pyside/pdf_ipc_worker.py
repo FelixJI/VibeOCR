@@ -1,9 +1,10 @@
-"""PySide PDF RPC worker：在线程中调用共享 WorkerHost 客户端。
+"""PySide PDF RPC worker：在线程中调用 supervisor PDF transport。
 
-PDF 模块进程化后,所有 fitz 操作在后端子进程。主进程通过 PdfBackendClient
-(httpx)调用,这些调用是阻塞的,不能在 GUI 线程跑。本 worker 包装常见的
-长耗时 IPC 操作(批量打开/加载/变更/删除文字层/保存/OCR 写层),把结果
-转成 Qt 信号。
+PDF 模块进程化后,所有 fitz 操作在 supervisor 拥有的 PDF 子进程。主进程
+通过 SyncPdfSupervisorClient (vibeocr.supervisor.pdf_client,httpx 经
+supervisor HTTP v2 代理)调用,这些调用是阻塞的,不能在 GUI 线程跑。本
+worker 包装常见的长耗时 IPC 操作(批量打开/加载/变更/删除文字层/保存/OCR
+写层),把结果转成 Qt 信号。
 
 协作式取消:通过 cancel_event 标志,后端侧也有 cancel_event(POST /cancel)。
 """
@@ -12,13 +13,10 @@ from __future__ import annotations
 
 import logging
 import threading
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from PySide6.QtCore import QThread, Signal
 from PySide6.QtGui import QImage
-
-if TYPE_CHECKING:
-    from vibeocr.services.pdf_backend_client import PdfBackendClient
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +67,7 @@ class PdfIpcPreviewWorker(QThread):
 
     def __init__(
         self,
-        client: PdfBackendClient,
+        client: Any,
         session_id: str,
         page_index: int,
         generation: int,
@@ -124,7 +122,7 @@ class PdfIpcCloseWorker(QThread):
     completed = Signal(str)
     failed = Signal(str, str)
 
-    def __init__(self, client: PdfBackendClient, session_id: str, parent=None) -> None:
+    def __init__(self, client: Any, session_id: str, parent=None) -> None:
         super().__init__(parent)
         self._client = client
         self._session_id = session_id
@@ -144,7 +142,7 @@ class PdfIpcCloseWorker(QThread):
 class PdfIpcCancelWorker(QThread):
     """后台发送协作取消请求，避免 cancel() 调用者线程执行同步 IPC。"""
 
-    def __init__(self, client: PdfBackendClient, session_id: str, parent=None) -> None:
+    def __init__(self, client: Any, session_id: str, parent=None) -> None:
         super().__init__(parent)
         self._client = client
         self._session_id = session_id
@@ -183,7 +181,7 @@ class PdfIpcOpenWorker(QThread):
 
     def __init__(
         self,
-        client: PdfBackendClient,
+        client: Any,
         paths: list[str],
         parent=None,
     ) -> None:
@@ -331,7 +329,7 @@ class PdfIpcMutateWorker(QThread):
 
     def __init__(
         self,
-        client: PdfBackendClient,
+        client: Any,
         session_id: str,
         op: str,
         params: dict[str, Any],

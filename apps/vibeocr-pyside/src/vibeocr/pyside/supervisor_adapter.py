@@ -28,7 +28,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from PySide6.QtCore import QObject, Signal
 
@@ -76,15 +76,33 @@ class SupervisorClientAdapter(QObject):
         self,
         *,
         client_factory: Callable[[], SupervisorClient | _AwaitableClient],
+        pdf_sync_client_factory: Callable[[], Any] | None = None,
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
         self._client_factory = client_factory
+        # Optional factory for a SyncPdfSupervisorClient bound to the same
+        # supervisor (same base_url + token). When None, PDF session ops are
+        # unavailable and PdfSessionManager will surface that as an error.
+        self._pdf_sync_client_factory = pdf_sync_client_factory
+        self._pdf_sync_client: Any = None
         self._client: SupervisorClient | None = None
         self._handles: dict[str, JobHandle] = {}
         self._generation = 0
         self._closing = False
         self._started = False
+
+    @property
+    def pdf_sync_client(self) -> Any:
+        """Lazily-built :class:`SyncPdfSupervisorClient` (or None if unwired).
+
+        PdfSessionManager reads this once at construction and treats it as the
+        PDF backend transport. The factory is set by the production startup
+        (WorkerHostStartTask) which knows the supervisor base_url + token.
+        """
+        if self._pdf_sync_client is None and self._pdf_sync_client_factory is not None:
+            self._pdf_sync_client = self._pdf_sync_client_factory()
+        return self._pdf_sync_client
 
     # ------------------------------------------------------------------
     # Client lifecycle

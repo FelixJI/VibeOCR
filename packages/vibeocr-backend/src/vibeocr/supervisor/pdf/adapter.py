@@ -4,16 +4,21 @@ Plan §4 Phase 6 goals addressed by this seam:
 
 * The supervisor is the sole owner of the PyMuPDF child process; the GUI no
   longer instantiates ``PdfBackendClient``.
-* Quick PDF session operations (open/render/mutate/save) are proxied through
-  the supervisor with bounded behaviour.
-* PDF OCR is a job: render batch → recognition microbatch, per-page item
-  state, microbatch/page-boundary cancel, partial page result, and a
-  transactional final save (temp file + replace).
-* Unresponsive PDF worker: cooperative cancel first, then terminate+rebuild
-  without affecting Paddle/MinerU.
+* Quick PDF session operations (open/render/mutate/save/text-layer/cancel) are
+  proxied through the supervisor with bounded behaviour.
+* PDF OCR stays orchestrated in the GUI process (render → recognize_batch →
+  write); only the PDF child transport moves into the supervisor. The job
+  kind ``pdf_ocr`` is reserved for a future supervisor-side orchestrator.
+* Transactional final save (temp file + fsync + atomic replace) so a wedged
+  save never publishes a half-finished file.
 
-This module provides the ownership seam and the transactional-save helper;
-the actual PyMuPDF calls reuse ``services/pdf_backend_process.py``.
+The actual PyMuPDF calls reuse ``services/pdf_backend_process.py``; the
+adapter is a thin ownership wrapper over the long-lived
+:class:`~vibeocr.services.pdf_backend_client.PdfBackendClient` singleton.
+
+Method names and DTOs (``vibeocr.ipc.schemas``) are identical to the legacy
+client so the supervisor's v2 routes can delegate verbatim and the GUI-side
+swap (in :mod:`vibeocr.supervisor.pdf_client`) needs no translation.
 """
 
 from __future__ import annotations
@@ -22,31 +27,124 @@ import os
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterator
+
+    from vibeocr.ipc.schemas import (
+        DetectTextLayersResponse,
+        MutateResponse,
+        OpenResponse,
+        PdfDocumentMirror,
+        ProgressEvent,
+        SaveResponse,
+    )
 
 
 class _PdfChildLike(Protocol):
-    """Minimal slice of the PDF child-process client we depend on."""
+    """The full PdfBackendClient surface the adapter proxies.
 
-    def open_session(self, path: str, *, password: str | None = None) -> str: ...
+    Every attribute is typed loosely: the adapter's job is ownership + bounded
+    proxy, not contract enforcement (DTO validation happens in the v2 routes).
+    """
 
-    def render_preview(self, session_id: str, page: int) -> bytes: ...
-
-    def save(self, session_id: str, target: str) -> None: ...
-
-    def rotate(self, session_id: str, pages: list[int], angle: int) -> int: ...
-
-    def delete_pages(self, session_id: str, pages: list[int]) -> int: ...
+    def open_session(self, path: str) -> Any: ...
 
     def close_session(self, session_id: str) -> None: ...
+
+    def get_model(self, session_id: str) -> Any: ...
+
+    def load_stream(self, session_id: str) -> Any: ...
+
+    def render_thumbnail(self, session_id: str, page: int, size: int = 160) -> bytes: ...
+
+    def render_preview(self, session_id: str, page: int, dpi: int = 150) -> bytes: ...
+
+    def detect_text_layers(self, session_id: str, page: int) -> Any: ...
+
+    def rotate(self, session_id: str, pages: list[int], angle: int) -> Any: ...
+
+    def delete_pages(self, session_id: str, pages: list[int]) -> Any: ...
+
+    def insert_blank(
+        self,
+        session_id: str,
+        after_index: int,
+        width: float = 612.0,
+        height: float = 792.0,
+    ) -> Any: ...
+
+    def insert_from(
+        self, session_id: str, source_path: str, after_index: int
+    ) -> Any: ...
+
+    def move_page(
+        self, session_id: str, from_index: int, to_index: int
+    ) -> Any: ...
+
+    def reorder(self, session_id: str, new_order: list[int]) -> Any: ...
+
+    def add_text_layer(
+        self,
+        session_id: str,
+        page: int,
+        ocr_result: dict[str, Any],
+        pdf_settings: dict[str, Any] | None = None,
+        overwrite: bool = False,
+    ) -> Any: ...
+
+    def add_text_layer_batch(
+        self,
+        session_id: str,
+        pages_data: list[dict[str, Any]],
+        pdf_settings: dict[str, Any] | None = None,
+        overwrite: bool = False,
+        save: bool = False,
+    ) -> Any: ...
+
+    def rewrite_text_layer(
+        self,
+        session_id: str,
+        page: int,
+        text_blocks: list[Any],
+        preproc_angle: int = 0,
+        pdf_settings: dict[str, Any] | None = None,
+    ) -> Any: ...
+
+    def update_block_text(
+        self, session_id: str, page: int, block_index: int, new_text: str
+    ) -> Any: ...
+
+    def delete_text_layers_stream(self, session_id: str, pages: list[int]) -> Any: ...
+
+    def save(
+        self,
+        session_id: str,
+        path: str | None = None,
+        pdf_settings: dict[str, Any] | None = None,
+        *,
+        rewrite_text_layers: bool = True,
+    ) -> Any: ...
+
+    def cancel(self, session_id: str) -> None: ...
+
+    def reset_cancel(self, session_id: str) -> None: ...
+
+    def start(self) -> None: ...
+
+    def stop(self) -> None: ...
 
 
 @dataclass
 class PdfProcessAdapter:
-    """Supervisor-owned PDF child adapter."""
+    """Supervisor-owned PDF child adapter.
+
+    ``child_factory`` returns the long-lived client (the legacy
+    ``PdfBackendClient.instance()`` singleton in production; a fake in tests).
+    The adapter owns its lifetime: ``ensure_started`` materialises it on first
+    use, ``stop`` tears it down at supervisor shutdown.
+    """
 
     child_factory: Callable[[], _PdfChildLike]
     _child: _PdfChildLike | None = None
@@ -56,14 +154,31 @@ class PdfProcessAdapter:
     # Ownership
     # ------------------------------------------------------------------
 
-    def ensure_started(self) -> None:
+    def ensure_started(self) -> _PdfChildLike:
         if self._child is None:
             self._child = self.child_factory()
+            # PdfBackendClient.start() is idempotent + thread-safe; calling it
+            # here ensures the FastAPI child subprocess is up before any op.
+            start = getattr(self._child, "start", None)
+            if callable(start):
+                start()
+        return self._child
 
     def stop(self) -> None:
         """Terminate the PDF child process."""
+        child = self._child
         self._child = None
         self._sessions.clear()
+        if child is not None:
+            stop = getattr(child, "stop", None)
+            if callable(stop):
+                try:
+                    stop()
+                except Exception:
+                    # Best-effort shutdown: a wedged child must not block
+                    # supervisor exit. The Job Object / process-group kill in
+                    # the launcher handles forceful termination.
+                    pass
 
     @property
     def is_owner(self) -> bool:
@@ -71,24 +186,160 @@ class PdfProcessAdapter:
         return True
 
     # ------------------------------------------------------------------
-    # Session operations (bounded proxies)
+    # Session lifecycle
     # ------------------------------------------------------------------
 
-    def open_session(self, path: str, *, password: str | None = None) -> str:
-        self.ensure_started()
-        assert self._child is not None
-        session_id = self._child.open_session(path, password=password)
-        self._sessions.add(session_id)
-        return session_id
+    def open_session(self, path: str) -> OpenResponse:
+        child = self.ensure_started()
+        result = child.open_session(path)
+        # OpenResponse carries session_id + model; track id for shutdown.
+        sid = getattr(result, "session_id", None)
+        if sid is not None:
+            self._sessions.add(sid)
+        return result
 
-    def render_preview(self, session_id: str, page: int) -> bytes:
-        self.ensure_started()
-        assert self._child is not None
-        return self._child.render_preview(session_id, page)
+    def close_session(self, session_id: str) -> None:
+        child = self.ensure_started()
+        child.close_session(session_id)
+        self._sessions.discard(session_id)
+
+    def get_model(self, session_id: str) -> PdfDocumentMirror:
+        return self.ensure_started().get_model(session_id)
+
+    def load_stream(self, session_id: str) -> Iterator[ProgressEvent]:
+        return self.ensure_started().load_stream(session_id)
 
     # ------------------------------------------------------------------
-    # Transactional save (temp + fsync + atomic replace)
+    # Render
     # ------------------------------------------------------------------
+
+    def render_thumbnail(
+        self, session_id: str, page: int, size: int = 160
+    ) -> bytes:
+        return self.ensure_started().render_thumbnail(session_id, page, size=size)
+
+    def render_preview(
+        self, session_id: str, page: int, dpi: int = 150
+    ) -> bytes:
+        return self.ensure_started().render_preview(session_id, page, dpi=dpi)
+
+    def detect_text_layers(
+        self, session_id: str, page: int
+    ) -> DetectTextLayersResponse:
+        return self.ensure_started().detect_text_layers(session_id, page)
+
+    # ------------------------------------------------------------------
+    # Page mutations (rotate/delete/insert/move/reorder)
+    # ------------------------------------------------------------------
+
+    def rotate(
+        self, session_id: str, pages: list[int], angle: int
+    ) -> MutateResponse:
+        return self.ensure_started().rotate(session_id, pages, angle)
+
+    def delete_pages(self, session_id: str, pages: list[int]) -> MutateResponse:
+        return self.ensure_started().delete_pages(session_id, pages)
+
+    def insert_blank(
+        self,
+        session_id: str,
+        after_index: int,
+        width: float = 612.0,
+        height: float = 792.0,
+    ) -> MutateResponse:
+        return self.ensure_started().insert_blank(
+            session_id, after_index, width, height
+        )
+
+    def insert_from(
+        self, session_id: str, source_path: str, after_index: int
+    ) -> MutateResponse:
+        return self.ensure_started().insert_from(
+            session_id, source_path, after_index
+        )
+
+    def move_page(
+        self, session_id: str, from_index: int, to_index: int
+    ) -> MutateResponse:
+        return self.ensure_started().move_page(session_id, from_index, to_index)
+
+    def reorder(self, session_id: str, new_order: list[int]) -> MutateResponse:
+        return self.ensure_started().reorder(session_id, new_order)
+
+    # ------------------------------------------------------------------
+    # Text layer
+    # ------------------------------------------------------------------
+
+    def add_text_layer(
+        self,
+        session_id: str,
+        page: int,
+        ocr_result: dict[str, Any],
+        pdf_settings: dict[str, Any] | None = None,
+        overwrite: bool = False,
+    ) -> MutateResponse:
+        return self.ensure_started().add_text_layer(
+            session_id, page, ocr_result, pdf_settings, overwrite
+        )
+
+    def add_text_layer_batch(
+        self,
+        session_id: str,
+        pages_data: list[dict[str, Any]],
+        pdf_settings: dict[str, Any] | None = None,
+        overwrite: bool = False,
+        save: bool = False,
+    ) -> MutateResponse:
+        return self.ensure_started().add_text_layer_batch(
+            session_id, pages_data, pdf_settings, overwrite, save
+        )
+
+    def rewrite_text_layer(
+        self,
+        session_id: str,
+        page: int,
+        text_blocks: list[Any],
+        preproc_angle: int = 0,
+        pdf_settings: dict[str, Any] | None = None,
+    ) -> MutateResponse:
+        return self.ensure_started().rewrite_text_layer(
+            session_id, page, text_blocks, preproc_angle, pdf_settings
+        )
+
+    def update_block_text(
+        self,
+        session_id: str,
+        page: int,
+        block_index: int,
+        new_text: str,
+    ) -> MutateResponse:
+        return self.ensure_started().update_block_text(
+            session_id, page, block_index, new_text
+        )
+
+    def delete_text_layers_stream(
+        self, session_id: str, pages: list[int]
+    ) -> Iterator[ProgressEvent]:
+        return self.ensure_started().delete_text_layers_stream(session_id, pages)
+
+    # ------------------------------------------------------------------
+    # Save
+    # ------------------------------------------------------------------
+
+    def save(
+        self,
+        session_id: str,
+        path: str | None = None,
+        pdf_settings: dict[str, Any] | None = None,
+        *,
+        rewrite_text_layers: bool = True,
+    ) -> SaveResponse:
+        return self.ensure_started().save(
+            session_id,
+            path,
+            pdf_settings,
+            rewrite_text_layers=rewrite_text_layers,
+        )
 
     def save_transactional(self, session_id: str, target_path: str) -> str:
         """Save the session to ``target_path`` atomically.
@@ -98,8 +349,7 @@ class PdfProcessAdapter:
         temp file is removed. This guarantees no half-finished file is ever
         published as a successful save.
         """
-        self.ensure_started()
-        assert self._child is not None
+        child = self.ensure_started()
         target = Path(target_path)
         target.parent.mkdir(parents=True, exist_ok=True)
         fd, tmp_name = tempfile.mkstemp(
@@ -107,7 +357,7 @@ class PdfProcessAdapter:
         )
         os.close(fd)
         try:
-            self._child.save(session_id, tmp_name)
+            child.save(session_id, tmp_name)
             self._fsync_path(tmp_name)
             Path(tmp_name).replace(target)
         except Exception:
@@ -117,6 +367,16 @@ class PdfProcessAdapter:
                 pass
             raise
         return str(target)
+
+    # ------------------------------------------------------------------
+    # Cancel
+    # ------------------------------------------------------------------
+
+    def cancel(self, session_id: str) -> None:
+        self.ensure_started().cancel(session_id)
+
+    def reset_cancel(self, session_id: str) -> None:
+        self.ensure_started().reset_cancel(session_id)
 
     @staticmethod
     def _fsync_path(path: str) -> None:

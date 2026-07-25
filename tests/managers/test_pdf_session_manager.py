@@ -1,10 +1,11 @@
 """Tests for PdfSessionManager(进程化版本)。
 
-新架构:manager 通过 PdfBackendClient(httpx)调用后端子进程,不持 fitz.Document。
-测试用真实后端子进程(端口自动分配),验证 public API + 信号。
+新架构:manager 通过 SyncPdfSupervisorClient (supervisor HTTP v2)调用
+supervisor 拥有的 PDF 后端子进程,不持 fitz.Document。
 
-注意:这些测试会启动 PDF 后端子进程,单测较慢(进程启动 ~3s)。
-标记为 slow,CI 可选跳过。
+注意:这些测试直接注入旧 PdfBackendClient 指向真实 PDF 后端子进程,
+作为 supervisor 端到端测试的临时替代(supervisor 进程启动较重)。
+标记为 slow,CI 可选跳过。完整迁移后应重写为真实 supervisor 端到端测试。
 """
 
 from __future__ import annotations
@@ -15,6 +16,10 @@ import fitz
 import pytest
 
 from vibeocr.managers.pdf_session_manager import PdfSessionManager
+
+# These are slow integration tests (spawn a real PDF backend child). They are
+# skipped by default (addopts = "-m 'not slow'"); run with `-m slow`.
+pytestmark = pytest.mark.slow
 
 
 def _create_test_pdf(path, num_pages=2):
@@ -29,7 +34,13 @@ def _create_test_pdf(path, num_pages=2):
 
 @pytest.fixture
 def manager(qapp):
-    mgr = PdfSessionManager(parent=qapp)
+    # Inject the legacy PdfBackendClient directly so these slow integration
+    # tests keep exercising the real PDF backend child without requiring the
+    # full supervisor process. Production resolves the transport lazily from
+    # the supervisor adapter; this injection is test-only.
+    from vibeocr.services.pdf_backend_client import PdfBackendClient
+
+    mgr = PdfSessionManager(parent=qapp, client=PdfBackendClient.instance())
     yield mgr
     mgr.shutdown()
 
