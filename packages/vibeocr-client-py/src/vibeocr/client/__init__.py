@@ -1,11 +1,12 @@
 """Frontend-only client SDK for the PySide application.
 
-Legacy worker_host client code has been removed. These stubs exist for
-backward compatibility during the transition period.
+Legacy worker_host client code has been removed. The remaining helpers here
+(filename derivation, unique-path, and a no-op shutdown hook) are still used
+by the export/main-window code; ``get_backend_client`` was deleted because the
+v2 supervisor is the only backend.
 """
 
 __all__ = [
-    "get_backend_client",
     "get_output_filename",
     "get_unique_output_path",
     "shutdown_backend_client",
@@ -39,9 +40,5 @@ def get_unique_output_path(output_path):
 
 
 def shutdown_backend_client():
-    """No-op stub for backward compatibility (worker_host removed)."""
+    """No-op; the v2 supervisor owns the backend. Kept for shutdown hooks."""
 
-
-def get_backend_client():
-    """Stub: worker_host removed. Raises to prevent accidental legacy use."""
-    raise RuntimeError("get_backend_client is no longer available; use SupervisorClientAdapter.")

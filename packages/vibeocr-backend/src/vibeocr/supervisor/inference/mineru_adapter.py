@@ -55,6 +55,19 @@ class _MinerUClientLike(Protocol):
     def file_parse(self, files: list[tuple[str, bytes]], **kwargs: Any) -> Any: ...
 
 
+class _MinerULifecycle(Protocol):
+    """Owns the mineru-api subprocess start/stop.
+
+    ``MinerUService`` is a singleton whose ``__init__`` blocks until the API is
+    up, so in production the lifecycle just ensures the singleton exists (start)
+    and tears it down (stop). Tests inject a no-op lifecycle or leave it None.
+    """
+
+    def start(self) -> None: ...
+
+    def stop(self) -> None: ...
+
+
 @dataclass
 class MinerUProcessAdapter:
     """Supervisor-owned MinerU adapter."""
@@ -67,6 +80,10 @@ class MinerUProcessAdapter:
             name="MinerU", real_batch=False, max_compute_batch=1
         )
     )
+    # Optional real subprocess lifecycle. When None the adapter falls back to a
+    # flag-flip (kept for unit tests that inject a fake client_factory without a
+    # backing process). Production wiring injects a lifecycle over MinerUService.
+    lifecycle: _MinerULifecycle | None = None
     _process_started: bool = False
 
     def capabilities(self) -> AdapterCapability:
@@ -77,11 +94,21 @@ class MinerUProcessAdapter:
     # ------------------------------------------------------------------
 
     def ensure_started(self) -> None:
-        if not self._process_started:
-            self._process_started = True  # real impl starts mineru-api subprocess
+        if self._process_started:
+            return
+        # When a real lifecycle is injected, drive the mineru-api subprocess
+        # through it; otherwise this is a no-op flag for test fakes.
+        if self.lifecycle is not None:
+            self.lifecycle.start()
+        self._process_started = True
 
     def stop(self) -> None:
         """Stop the MinerU API subprocess; disk models are NOT deleted."""
+        if self.lifecycle is not None and self._process_started:
+            try:
+                self.lifecycle.stop()
+            except Exception:  # pragma: no cover - defensive
+                pass
         self._process_started = False
 
     # ------------------------------------------------------------------

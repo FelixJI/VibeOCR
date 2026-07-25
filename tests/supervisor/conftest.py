@@ -189,6 +189,12 @@ class FakePdfAdapter:
         )
         return SaveResponse(path=path or "out.pdf", diff=ModelDiff())
 
+    def save_transactional(self, session_id: str, target_path: str) -> str:
+        # Fake: record the call and echo the target path (the real adapter
+        # writes to a temp file + fsync + Path.replace onto target_path).
+        self._record("save_transactional", (session_id, target_path), {})
+        return target_path
+
     def cancel(self, session_id: str) -> None:
         self._record("cancel", (session_id,), {})
         self._cancelled.add(session_id)

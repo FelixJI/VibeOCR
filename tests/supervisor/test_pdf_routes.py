@@ -168,9 +168,45 @@ async def test_render_preview_returns_png_bytes_and_forwards_dpi(
     assert kwargs == {"dpi": 300}
 
 
-# ---------------------------------------------------------------------------
-# Mutations
-# ---------------------------------------------------------------------------
+async def test_render_get_route_returns_png_and_reads_query_params(
+    pdf_app: FastAPI, supervisor_token: str, fake_pdf_adapter: FakePdfAdapter
+) -> None:
+    """The .NET client issues GET /render?page=&size= for quick previews."""
+    async with _http(supervisor_token, pdf_app) as http:
+        resp = await http.get(
+            "/v2/pdf/sessions/sid-1/render", params={"page": 3, "size": 96}
+        )
+    assert resp.status_code == 200
+    assert resp.content.startswith(b"\x89PNG")
+    name, args, kwargs = fake_pdf_adapter.calls[-1]
+    assert name == "render_thumbnail"
+    assert args == ("sid-1", 3)
+    assert kwargs == {"size": 96}
+
+
+async def test_save_transactional_returns_path_and_calls_adapter(
+    pdf_app: FastAPI, supervisor_token: str, fake_pdf_adapter: FakePdfAdapter
+) -> None:
+    async with _http(supervisor_token, pdf_app) as http:
+        resp = await http.post(
+            "/v2/pdf/sessions/sid-1/save_transactional",
+            json={"path": "/tmp/out.pdf"},
+        )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["path"] == "/tmp/out.pdf"
+    name, args, _kwargs = fake_pdf_adapter.calls[-1]
+    assert name == "save_transactional"
+    assert args == ("sid-1", "/tmp/out.pdf")
+
+
+async def test_save_transactional_rejects_missing_path(
+    pdf_app: FastAPI, supervisor_token: str
+) -> None:
+    async with _http(supervisor_token, pdf_app) as http:
+        resp = await http.post("/v2/pdf/sessions/sid-1/save_transactional", json={})
+    assert resp.status_code == 400
+    assert resp.json()["code"] == "VALIDATION_ERROR"
 
 
 async def test_rotate_proxies_pages_and_angle(

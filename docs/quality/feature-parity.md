@@ -5,7 +5,7 @@
 | 功能 | PySide 语义真源 | WinUI 状态 | 自动化证据 | 待人工签核 |
 |---|---|---|---|---|
 | 单图输入（文件/剪贴板/全桌面/拖放） | `SingleRecognitionTab` | PASS | `RecognitionViewModelTests` | 多显示器混合 DPI |
-| 取消、generation 丢弃、Worker 崩溃重试 | OCR/WorkerHost | PASS | `RecognitionViewModelTests` | 长任务取消体感 |
+| 取消、generation 丢弃、supervisor 崩溃重试 | inference supervisor (v2) | PASS | `RecognitionViewModelTests` | 长任务取消体感 |
 | 预览编辑（六类标注、移动、缩放、旋转、裁剪、撤销/重做） | PySide editor | PASS | `tests/web/editor.test.ts` | 触控笔与高 DPI |
 | 结果渲染（plain/Markdown/表格/公式/代码/Unicode/XSS） | `ResultViewWidget` | PASS | `tests/web/result-renderer.test.ts` | 高对比度与屏幕阅读器 |
 | 复制（富文本/Markdown/纯文本） | `ClipboardController` | PASS | `ResultActionsTests` | Office 粘贴矩阵 |
@@ -13,7 +13,9 @@
 | 批量识别 | `BatchRecognitionTab` | PASS | `BatchViewModelTests`、`batch.spec.ps1` | 大队列体感与并发预算上限 |
 | 二维码/条码 | QR services | PASS | `QrCodeViewModelTests`、`qrcode.spec.ps1` | 多码与高 DPI 渲染 |
 | PDF 会话与耐久文字层 | PDF orchestrator/sidecar | PASS | `PdfViewModelTests`、`pdf.spec.ps1`、`test_pdf_ocr_orchestrator.py` | 多批 PDF 崩溃续传、旋转全部、自动摆正 |
-| 设置与诊断 | Config/diagnostics | PASS | `SettingsViewModelTests`、`settings.switch_backend`/`settings.install_dependency` 协议 | 真实 GPU 切换与镜像网络 |
+| 设置与诊断 | Config/diagnostics | PASS | `SettingsViewModelTests`、`/v2/settings` residency | 真实 GPU 切换与镜像网络 |
+
+> 注：`switch-backend`（运行时切换 OCR 引擎）在 v2 首版 **scope out**：UI 入口（`SettingsPage.OnSwitchBackendClicked`）保留为 no-op stub，因 supervisor 尚无对应端点。设备/GPU 选择在 supervisor 启动时按运行时探测决定，运行中切换需重启。计划在后续发布补齐端点后恢复。
 | 桌面壳层（单实例/托盘/热键/开机启动/关于/更新下载校验） | PySide shell/update service | PASS | `ShellFeatureTests`、`WindowsPlatformTests`、`test_update_replacer.py` | 托盘菜单、键盘可达性与屏幕阅读器 |
 
 单图门禁命令：`powershell -File tests/e2e/winui/single-recognition.spec.ps1`。它同时验证 Python 导出真源、C# 命令状态与剪贴板重试、Web 语义渲染和 Unicode/XSS 夹具。

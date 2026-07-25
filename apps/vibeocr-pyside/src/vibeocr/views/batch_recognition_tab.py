@@ -668,14 +668,6 @@ class BatchRecognitionTab(BaseOcrTab):
         if self._is_current_worker_signal():
             self._result_snapshots[file_path] = snapshot
 
-    def _get_backend_client(self):
-        """Legacy backend client — no longer available in v2-only mode."""
-        raise RuntimeError("Legacy backend client removed; use SupervisorClientAdapter.")
-
-    def _get_batch_backend(self):
-        """Legacy batch backend — no longer available in v2-only mode."""
-        raise RuntimeError("Legacy batch backend removed; use SupervisorClientAdapter.")
-
     def submit_batch_via_supervisor(self, entries: list[tuple[str, bytes]]) -> int:
         """Submit all batch inputs as ONE logical recognition job via v2.
 

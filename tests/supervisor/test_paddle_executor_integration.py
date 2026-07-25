@@ -102,9 +102,42 @@ def test_submit_recognition_returns_real_text(tmp_path: Path) -> None:
     )
     results = module.result(ref.job_id)
     assert len(results) == 1
-    text = (results[0].payload.get("text") or "").upper()
-    # OCR on a tiny bitmap font may be imperfect; assert we got *some* non-empty
-    # text back, proving the real Paddle predict ran. If it matches the word,
-    # even better — but the core assertion is that real OCR executed and
-    # returned a payload through the v2 seam.
-    assert text.strip(), f"expected non-empty OCR text, got {text!r}"
+    payload = results[0].payload
+
+    # --- Structural assertions (these are the real "OCR ran" proof) ---
+    # The serializer must have produced the structured key set, NOT the old
+    # broken fallback {"text": str(result)} which only carried a dataclass repr.
+    # Guard against that regression explicitly: a real structured payload has
+    # `raw_text` (not `text`) and `text_blocks` as a list.
+    assert "raw_text" in payload, (
+        f"payload missing 'raw_text' — serializer regression? payload keys: "
+        f"{list(payload.keys())}"
+    )
+    # The old broken serializer produced only {"text": "<OCRResult repr>"}. If a
+    # `text` key is present it must NOT be a dataclass repr (which always starts
+    # with "OCRResult("), proving we did not regress to the str(result) fallback.
+    if "text" in payload:
+        assert not str(payload["text"]).startswith("OCRResult("), (
+            "payload['text'] looks like the broken str(result) fallback"
+        )
+    assert payload.get("pipeline_type") == "OCR", (
+        f"expected pipeline_type=='OCR', got {payload.get('pipeline_type')!r}"
+    )
+    text_blocks = payload.get("text_blocks")
+    assert isinstance(text_blocks, list), (
+        f"expected text_blocks list, got {type(text_blocks).__name__}"
+    )
+    # Paddle OCR must find at least one text block on a rendered glyph image.
+    assert len(text_blocks) >= 1, (
+        f"expected >=1 text block, got {len(text_blocks)}; raw_text={payload.get('raw_text')!r}"
+    )
+    block = text_blocks[0]
+    for key in ("text", "score", "bbox"):
+        assert key in block, f"text_block missing key {key!r}: {block}"
+    assert isinstance(block["bbox"], list), (
+        f"bbox must be JSON list (tuple->list conversion), got {type(block['bbox']).__name__}"
+    )
+
+    # Non-empty text proves the real Paddle predict actually decoded glyphs.
+    text = (payload["raw_text"] or "").upper()
+    assert text.strip(), f"expected non-empty OCR raw_text, got {text!r}"

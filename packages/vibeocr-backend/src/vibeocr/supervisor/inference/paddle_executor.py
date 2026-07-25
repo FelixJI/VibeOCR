@@ -10,6 +10,10 @@ machine (running → cancel_requested → cancelled).
 
 This is the production executor wired by :func:`build_supervisor` once a real
 ``OCRService`` is available.
+
+The job-driving state machine is backend-agnostic (it only calls
+``adapter.recognize_many`` / ``residency_status`` / ``release_idle``), so it
+lives in :class:`AdapterExecutor` and is reused by :class:`MinerUExecutor`.
 """
 
 from __future__ import annotations
@@ -32,21 +36,25 @@ from vibeocr.protocol.v2 import (
 from .budgets import InputItem
 
 
-class PaddleExecutor:
-    """Drives recognition jobs through a :class:`PaddlePipelineAdapter`.
+class AdapterExecutor:
+    """Backend-agnostic job driver over any ``recognize_many`` adapter.
 
-    ``adapter_factory`` is a callable returning a ready adapter (so the heavy
-    ``OCRService``/model load is deferred until the first job, not at import
-    time). Constructed with a factory so tests can inject a fake adapter and
-    production can lazily build the real ``OCRService`` singleton.
+    Subclasses (or callers) supply an ``adapter_factory`` returning an object
+    that exposes ``recognize_many(items)``, ``residency_status()`` and
+    ``release_idle(pipeline)``. The factory is called lazily on first use so
+    heavy model loads stay deferred until the first job.
+
+    The execute flow is identical for Paddle and MinerU: queued → running →
+    per-item mapping → completed/completed_with_errors, with whole-batch and
+    mid-flight cancel handling. Only the adapter differs.
     """
 
-    def __init__(self, adapter_factory: Callable[[], PaddlePipelineAdapter]) -> None:
+    def __init__(self, adapter_factory: Callable[[], Any]) -> None:
         self._adapter_factory = adapter_factory
-        self._adapter: PaddlePipelineAdapter | None = None
+        self._adapter: Any | None = None
 
     @property
-    def adapter(self) -> PaddlePipelineAdapter:
+    def adapter(self) -> Any:
         if self._adapter is None:
             self._adapter = self._adapter_factory()
         return self._adapter
@@ -56,7 +64,7 @@ class PaddleExecutor:
     # ------------------------------------------------------------------
 
     def execute(self, record: Any, staged: Any) -> None:
-        """Run the recognition job to terminal.
+        """Run the job to terminal.
 
         ``staged`` is the list of :class:`StagedInput` produced by InputStager.
         We build one :class:`InputItem` per staged file (carrying its raw
@@ -161,4 +169,21 @@ class PaddleExecutor:
         return out
 
 
-__all__ = ["PaddleExecutor"]
+class PaddleExecutor(AdapterExecutor):
+    """Drives recognition jobs through a :class:`PaddlePipelineAdapter`.
+
+    Thin specialization of :class:`AdapterExecutor`; kept as a named class so
+    composition and tests can reference the Paddle backend explicitly while
+    the generic state machine stays shared with MinerU.
+    """
+
+    def __init__(self, adapter_factory: Callable[[], PaddlePipelineAdapter]) -> None:
+        super().__init__(adapter_factory)
+
+    @property
+    def adapter(self) -> PaddlePipelineAdapter:  # type: ignore[override]
+        return super().adapter  # type: ignore[return-value]
+
+
+__all__ = ["AdapterExecutor", "PaddleExecutor"]
+

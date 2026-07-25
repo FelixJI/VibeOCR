@@ -146,20 +146,21 @@ class PaddlePipelineAdapter:
 
     @staticmethod
     def _result_to_payload(result: Any) -> dict[str, Any]:
-        """Best-effort conversion of an OCRResult to a JSON-native payload.
+        """Convert an OCRResult to a JSON-native payload.
 
-        Real OCRResult conversion lives in the existing services; this is a
-        thin fallback that surfaces text/blocks when available.
+        Delegates to :func:`vibeocr.models.ocr_result_serializer.ocr_result_to_payload`,
+        which is the single source of truth for the wire shape and produces the
+        key set consumed by downstream callers (``text_blocks``/``preproc_angle``
+        for PDF text-layer writeback, ``raw_text``/``markdown_text``/
+        ``html_text``/``content_list`` for export). ``dict`` inputs pass through
+        unchanged so test fakes keep working.
         """
-        if isinstance(result, dict):
-            return result
-        text = getattr(result, "text", None) or getattr(result, "full_text", None)
-        if text is None and hasattr(result, "to_dict"):
-            try:
-                return result.to_dict()
-            except Exception:
-                pass
-        return {"text": text if text is not None else str(result)}
+        # Imported lazily: the serializer lives in vibeocr-client-py (models),
+        # which the backend depends on via wheel. Lazy import keeps this module
+        # importable in minimal test environments that monkeypatch the adapter.
+        from vibeocr.models import ocr_result_to_payload
+
+        return ocr_result_to_payload(result)
 
 
 __all__ = ["PaddlePipelineAdapter"]

@@ -433,6 +433,26 @@ def create_app(module: SupervisorModule, session_token: str) -> FastAPI:
         except Exception as exc:
             return _pdf_error(exc)  # type: ignore[return-value]
 
+    @app.get("/v2/pdf/sessions/{session_id}/render")
+    async def pdf_render(
+        session_id: str, request: Request
+    ) -> Response:
+        """Render a page thumbnail via GET (quick-preview contract).
+
+        The .NET ``InferenceHttpClient.RenderPdfPageAsync`` issues a GET to
+        ``/v2/pdf/sessions/{id}/render?page=&size=`` for fast page previews.
+        This delegates to the adapter's ``render_thumbnail`` (same pixels as
+        the POST ``render_thumbnail`` route); the GET form is for callers that
+        embed the URL directly (e.g. an image source).
+        """
+        try:
+            page = int(request.query_params.get("page", 0))
+            size = int(request.query_params.get("size", 160))
+            data = _pdf_adapter().render_thumbnail(session_id, page, size=size)
+            return Response(content=data, media_type="image/png")
+        except Exception as exc:
+            return _pdf_error(exc)  # type: ignore[return-value]
+
     @app.post("/v2/pdf/sessions/{session_id}/detect_text_layers")
     async def pdf_detect_text_layers(
         session_id: str, request: Request
@@ -622,6 +642,31 @@ def create_app(module: SupervisorModule, session_token: str) -> FastAPI:
         except Exception as exc:
             return _pdf_error(exc)
 
+    @app.post("/v2/pdf/sessions/{session_id}/save_transactional")
+    async def pdf_save_transactional(
+        session_id: str, request: Request
+    ) -> dict[str, Any]:
+        """Atomic save: write to a temp file in the target's parent dir, fsync,
+        then ``Path.replace`` onto the target path. Returns ``{path}``.
+
+        This is the transactional publish path required by plan §6 ("PDF 最终
+        save 使用临时文件 + fsync/replace 的事务式发布") so a crash mid-save
+        never overwrites the original with a half-written file.
+        """
+        try:
+            body = await _pdf_body(request)
+            path = body.get("path")
+            if not path:
+                return _error_response(
+                    ErrorCode.VALIDATION_ERROR,
+                    instance_id,
+                    detail={"field": "path"},
+                )
+            saved = _pdf_adapter().save_transactional(session_id, path)
+            return _pdf_response({"path": saved})
+        except Exception as exc:
+            return _pdf_error(exc)
+
     @app.post("/v2/pdf/sessions/{session_id}/cancel")
     async def pdf_cancel(session_id: str) -> dict[str, Any]:
         try:
@@ -665,8 +710,17 @@ def create_app(module: SupervisorModule, session_token: str) -> FastAPI:
 
             svc = QrcodeDecodeService()
             items = svc.decode(img)
+            # DecodedItem exposes {data, type, is_url}. Surface the real fields
+            # (type = symbology like "QR"/"CODE128"; is_url = strict http(s)
+            # check computed by the service). Keep `format` as a backwards-
+            # compatible alias for `type`.
             codes = [
-                {"data": it.data, "format": getattr(it, "format", None) or "QR", "is_url": False}
+                {
+                    "data": it.data,
+                    "type": getattr(it, "type", None) or "QR",
+                    "format": getattr(it, "type", None) or "QR",
+                    "is_url": bool(getattr(it, "is_url", False)),
+                }
                 for it in items
             ]
         except Exception as exc:

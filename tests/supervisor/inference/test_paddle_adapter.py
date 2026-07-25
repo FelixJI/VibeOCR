@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 import pytest
 from PIL import Image
 
+from vibeocr.models.ocr_result import OCRResult, TextBlock
 from vibeocr.supervisor.inference.budgets import InputItem
 from vibeocr.supervisor.inference.paddle_adapter import PaddlePipelineAdapter
 
@@ -24,23 +25,28 @@ def _png_bytes(label: str, color: tuple[int, int, int] = (255, 0, 0)) -> bytes:
     # Attach a label so the fake service can echo it back.
 
 
-@dataclass
-class _FakeResult:
-    text: str
-    index: int
-
-
 class _FakeOCRService:
-    """Records calls and returns one result per input in order."""
+    """Records calls and returns one OCRResult per input in order.
+
+    Mirrors the real ``OCRService.recognize_batch`` contract (returns
+    ``list[OCRResult]``) so the adapter's serializer is exercised end-to-end.
+    """
 
     def __init__(self) -> None:
         self.calls: list[int] = []  # batch sizes
         self.predict_calls = 0
 
-    def recognize_batch(self, images: list[np.ndarray], options=None) -> list[_FakeResult]:
+    def recognize_batch(self, images: list[np.ndarray], options=None) -> list[OCRResult]:
         self.predict_calls += 1
         self.calls.append(len(images))
-        return [_FakeResult(text=f"text-{i}", index=i) for i in range(len(images))]
+        return [
+            OCRResult(
+                raw_text=f"text-{i}",
+                pipeline_type="OCR",
+                text_blocks=[TextBlock(text=f"text-{i}", score=0.9, bbox=(0.0, 0.0, 1.0, 1.0))],
+            )
+            for i in range(len(images))
+        ]
 
 
 def _make_items(*labels: str) -> list[InputItem]:
@@ -107,7 +113,11 @@ def test_recognize_many_preserves_order() -> None:
     adapter = PaddlePipelineAdapter(service=service, pipeline_name="OCR")
     items = _raw_items("a", "b", "c")
     results = adapter.recognize_many(items)
-    assert [r["text"] for r in results] == ["text-0", "text-1", "text-2"]
+    # The fake returns OCRResult(raw_text="text-N"); the serializer surfaces
+    # it as the structured `raw_text` key (not the old broken `text`+repr).
+    assert [r["raw_text"] for r in results] == ["text-0", "text-1", "text-2"]
+    # And text_blocks survived serialization as a list of dicts.
+    assert all(isinstance(r["text_blocks"], list) and r["text_blocks"] for r in results)
 
 
 def test_single_image_is_one_element_batch() -> None:

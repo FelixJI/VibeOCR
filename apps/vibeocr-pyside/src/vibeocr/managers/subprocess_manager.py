@@ -6,12 +6,9 @@
 import logging
 import threading
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal
-
-if TYPE_CHECKING:
-    from vibeocr.services.ocr_service_subprocess import OCRServiceSubprocess
 
 logger = logging.getLogger(__name__)
 
@@ -25,71 +22,6 @@ class SubprocessStartSignals(QObject):
 
     started = Signal(bool)  # 启动是否成功
     progress = Signal(str)  # stage
-
-
-class SubprocessStartTask(QRunnable):
-    """子进程启动任务（在后台线程执行）"""
-
-    def __init__(
-        self,
-        project_root: Path,
-        use_gpu: bool = True,
-        start_timeout: float = 120.0,
-    ) -> None:
-        super().__init__()
-        self._project_root = project_root
-        self._use_gpu = use_gpu
-        self._start_timeout = start_timeout
-        self._cancelled = False
-        self.signals = SubprocessStartSignals()
-        self.service: OCRServiceSubprocess | None = None
-
-    def cancel(self) -> None:
-        """取消启动任务"""
-        self._cancelled = True
-
-    def _update_progress(self, stage: str) -> None:
-        """更新进度
-
-        Args:
-            stage: 阶段描述
-        """
-        if not self._cancelled:
-            logger.info(f"[OCR 启动] {stage}")
-            self.signals.progress.emit(stage)
-
-    def run(self) -> None:
-        """启动子进程服务"""
-        if self._cancelled:
-            logger.debug("[SubprocessManager] 任务已取消")
-            return
-
-        try:
-            from vibeocr.services.ocr_service_subprocess import OCRServiceSubprocess
-
-            # 创建并启动子进程服务
-            self.service = OCRServiceSubprocess(
-                max_workers=1,
-                use_gpu=self._use_gpu,
-                auto_start=True,
-                start_timeout=self._start_timeout,
-                start_progress_callback=self._update_progress,
-            )
-
-            if not self._cancelled:
-                self.signals.started.emit(True)
-                logger.debug("[SubprocessManager] 子进程启动成功")
-            else:
-                # 取消后关闭服务
-                if self.service:
-                    self.service.shutdown()
-                logger.debug("[SubprocessManager] 启动成功但任务已取消，服务已关闭")
-
-        except Exception as e:
-            error_msg = str(e)
-            logger.error(f"[SubprocessManager] 启动失败: {error_msg}")
-            if not self._cancelled:
-                self.signals.started.emit(False)
 
 
 class WorkerHostStartTask(QRunnable):
@@ -214,12 +146,12 @@ class PreloadTask(QRunnable):
 
     def __init__(
         self,
-        service: "OCRServiceSubprocess",
+        service: Any,
         pipelines: list[str],
         pipeline_ttls: dict[str, int] | None = None,
     ) -> None:
         super().__init__()
-        self._service: OCRServiceSubprocess | None = service
+        self._service: Any = service
         self._pipelines = pipelines
         self._pipeline_ttls = pipeline_ttls
         self.signals = PreloadSignals()
@@ -343,7 +275,7 @@ class SubprocessManager(QObject):
         self._thread_pool = QThreadPool()
         self._service: Any = None
         self._is_ready = False
-        self._start_task: SubprocessStartTask | WorkerHostStartTask | None = None
+        self._start_task: WorkerHostStartTask | None = None
         self._preload_task: PreloadTask | None = None
         self._shutdown_requested = False
         # 取消事件:shutdown 时 set,中断 WorkerManager.execute 内的 5 分钟长等待
@@ -365,45 +297,6 @@ class SubprocessManager(QObject):
         """Attach the shared WorkerHost client adapter without spawning legacy OCR."""
         self._service = service  # type: ignore[assignment]
         self._is_ready = True
-
-    def start(
-        self,
-        use_gpu: bool = True,
-        start_timeout: float = 120.0,
-    ) -> None:
-        """启动子进程服务
-
-        Args:
-            use_gpu: 是否使用 GPU
-            start_timeout: 启动超时时间（秒）
-        """
-        if self._is_ready:
-            logger.debug("[SubprocessManager] 服务已就绪，跳过启动")
-            return
-
-        if self._start_task is not None:
-            logger.debug("[SubprocessManager] 正在启动中，跳过重复启动")
-            return
-
-        logger.debug("[SubprocessManager] 正在启动子进程服务...")
-        self._cancel_event.clear()
-
-        # 记录实际并发预算（集中配置，供未来多 worker 扩展参考）
-        try:
-            from vibeocr.core.concurrency_budget import ConcurrencyBudget
-
-            ConcurrencyBudget.default().log_summary()
-        except Exception:
-            pass
-
-        self._start_task = SubprocessStartTask(
-            self._project_root,
-            use_gpu=use_gpu,
-            start_timeout=start_timeout,
-        )
-        self._start_task.signals.started.connect(self._on_started)
-        self._start_task.signals.progress.connect(self.progress_update.emit)
-        self._thread_pool.start(self._start_task)
 
     def start_worker_host(self) -> None:
         """在管理器线程池中启动当前生产 WorkerHost，避免阻塞 GUI。"""

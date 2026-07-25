@@ -57,39 +57,6 @@ def test_json_formatter_has_stable_fields_context_and_exception() -> None:
     assert "ValueError: broken" in document["exception"]
 
 
-def test_worker_stderr_jsonl_does_not_write_stdout(capsys) -> None:
-    from vibeocr.worker_host.main import _emit_ready
-
-    stderr = io.StringIO()
-    root = logging.getLogger()
-    old_handlers = root.handlers[:]
-    old_level = root.level
-    try:
-        configure_worker_stderr_logging(
-            frontend="pyside", profile="production", stream=stderr
-        )
-        logging.getLogger("worker.test").warning(
-            "warming up", extra={"event": "worker.warmup"}
-        )
-        _emit_ready("pipe-name")
-    finally:
-        root.handlers.clear()
-        root.handlers.extend(old_handlers)
-        root.setLevel(old_level)
-
-    ready = json.loads(capsys.readouterr().out)
-    worker_log = json.loads(stderr.getvalue())
-    assert ready == {
-        "event": "worker.ready",
-        "pipe": "pipe-name",
-        "protocol_version": ready["protocol_version"],
-    }
-    assert worker_log["level"] == "WARNING"
-    assert worker_log["frontend"] == "pyside"
-    assert worker_log["profile"] == "production"
-    assert worker_log["message"] == "warming up"
-
-
 def test_worker_logging_defaults_to_info_and_suppresses_http_debug(
     monkeypatch,
 ) -> None:

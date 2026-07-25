@@ -166,14 +166,13 @@ public sealed partial class App : Application
         }
         else
         {
-            // Phase 8: supervisor process will be started here. For now, mark
-            // the diagnostics as draining until the supervisor Attach happens.
-            diagnostics.UpdateWorker(new WorkerHealth(
-                WorkerHealthState.NotReady,
-                null,
-                null,
-                "supervisor 尚未启动。"));
-            RecordMilestone(diagnostics, "T6", _startup.Elapsed);
+            // Phase 8 atomic switch: start the v2 inference supervisor after the
+            // first window is up. This spawns the supervisor subprocess, reads
+            // the ready envelope, and Attach()es the real InferenceHttpClient /
+            // QrCodeHttpClient into the deferred gateways so every ViewModel's
+            // v2 calls stop throwing. Fire-and-forget: the window is already
+            // interactive; the diagnostics panel reflects Connecting → Ready.
+            _ = ConnectSupervisorAfterFirstWindowAsync(layout, diagnostics);
         }
 
         // Perf-gate smoke mode: exit shortly after first window so cold-start
@@ -434,7 +433,30 @@ public sealed partial class App : Application
     public static bool CanStartWorker(IEnumerable<PrerequisiteStatus> prerequisites) =>
         prerequisites.Any(item => item.Kind == PrerequisiteKind.PythonRuntime && item.IsInstalled);
 
-    private async Task StopWorkerAsync() { await Task.CompletedTask; }
+    private async Task StopWorkerAsync()
+    {
+        // Phase 8: stop the v2 inference supervisor subprocess. The supervisor
+        // owns MinerU/PDF children via a Job Object, so disposing the process
+        // handle tears the whole tree down. Best-effort: shutdown must not hang
+        // the UI even if the child is unresponsive.
+        await Task.CompletedTask;
+        if (_supervisorProcess is null)
+        {
+            return;
+        }
+        try
+        {
+            _supervisorProcess.Dispose();
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warn($"Supervisor shutdown error: {ex.Message}");
+        }
+        finally
+        {
+            _supervisorProcess = null;
+        }
+    }
 
     private void OnAppWindowClosing(AppWindow sender, AppWindowClosingEventArgs args)
     {
@@ -460,7 +482,6 @@ public sealed partial class App : Application
             }
             await StopWorkerAsync();
             await _inferenceGateway.DisposeAsync();
-            _supervisorProcess?.Dispose();
             await DisposeDesktopShellAsync();
         }
         finally

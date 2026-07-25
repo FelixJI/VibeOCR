@@ -153,6 +153,7 @@ def _assert_allowed_import(file: Path, module: str, lineno: int) -> None:
         "vibeocr.services.qrcode_service",
         "vibeocr.services.export_service",
         "vibeocr.services.pdf_backend_client",
+        "vibeocr.services.mineru_service",
         "vibeocr.application.contracts",
         # vibeocr.ipc.schemas is a pure pydantic DTO module (PdfDocumentMirror,
         # ModelDiff, ProgressEvent, request/response bodies) shared by the PDF
@@ -250,5 +251,100 @@ def test_pyside_app_does_not_import_pdf_backend_client() -> None:
         "PySide app must not import vibeocr.services.pdf_backend_client — "
         "PDF ops go through the supervisor (vibeocr.supervisor.pdf_client). "
         "Offenders:\n  " + "\n  ".join(offenders)
+    )
+
+
+# ---------------------------------------------------------------------------
+# Repo-wide bans (Phase 8 atomic switch): the legacy modules are now deleted,
+# so these symbols must not be imported anywhere in the Python source trees.
+# This is the promoted guard: it was a scoped ratchet while the legacy code
+# existed, and is now an absolute ban.
+# ---------------------------------------------------------------------------
+
+_DELETED_PY_MODULES: tuple[str, ...] = (
+    "vibeocr.worker_host",
+    "vibeocr.services.ocr_worker_process",
+    "vibeocr.services.ocr_service_subprocess",
+    "vibeocr.services.worker_runtime_state",
+    "vibeocr.services.mineru_runtime_cache",
+    "vibeocr.services.mineru_batch_service",
+    "vibeocr.services.worker_manager",
+    "vibeocr.utils.shared_memory_v2",
+    "vibeocr.workers.ocr_worker",
+    "vibeocr.workers.batch_queue_manager",
+    "vibeocr.contracts.protocol.v1",
+    "vibeocr.protocol.v1",
+    "vibeocr.client.batch",
+    "vibeocr.client.session",
+)
+
+
+def _python_source_trees() -> list[Path]:
+    return [
+        _REPO_ROOT / "packages" / "vibeocr-backend" / "src",
+        _REPO_ROOT / "packages" / "vibeocr-client-py" / "src",
+        _REPO_ROOT / "packages" / "vibeocr-contracts-py" / "src",
+        _REPO_ROOT / "apps" / "vibeocr-pyside" / "src",
+    ]
+
+
+def test_repo_wide_has_no_deleted_legacy_module_imports() -> None:
+    """No Python source may import a Phase-8-deleted legacy module.
+
+    After the atomic switch these modules no longer exist; any import would be
+    a dangling reference that breaks at runtime. This guards against regression.
+    """
+    offenders: list[str] = []
+    for tree in _python_source_trees():
+        if not tree.exists():
+            continue
+        for py_file in sorted(tree.rglob("*.py")):
+            text = py_file.read_text(encoding="utf-8")
+            try:
+                ast_tree = ast.parse(text, filename=str(py_file))
+            except SyntaxError:
+                continue
+            for node in ast.walk(ast_tree):
+                mod = node.module if isinstance(node, ast.ImportFrom) else None
+                if mod:
+                    for deleted in _DELETED_PY_MODULES:
+                        if mod == deleted or mod.startswith(deleted + "."):
+                            offenders.append(
+                                f"{py_file.relative_to(_REPO_ROOT)}:{node.lineno} "
+                                f"imports {mod!r}"
+                            )
+                elif isinstance(node, ast.Import):
+                    for alias in node.names:
+                        for deleted in _DELETED_PY_MODULES:
+                            if alias.name == deleted or alias.name.startswith(deleted + "."):
+                                offenders.append(
+                                    f"{py_file.relative_to(_REPO_ROOT)}:{node.lineno} "
+                                    f"imports {alias.name!r}"
+                                )
+    assert not offenders, (
+        "Phase-8-deleted legacy modules are still imported. These modules no "
+        "longer exist; the imports are dangling and will fail at runtime:\n  "
+        + "\n  ".join(offenders)
+    )
+
+
+def test_repo_wide_has_no_vibeocr_ocr_transport_escape_hatch() -> None:
+    """The legacy transport env var must not appear anywhere in source.
+
+    Plan §8 + §5.3: ``VIBEOCR_OCR_TRANSPORT`` was the old runtime switch between
+    HTTP/SHM transports. The unified supervisor has no transport switch; the
+    symbol must not survive in any tree (the v2 trees were already guarded, but
+    after the atomic switch it is banned repo-wide).
+    """
+    offenders: list[str] = []
+    for tree in _python_source_trees():
+        if not tree.exists():
+            continue
+        for py_file in sorted(tree.rglob("*.py")):
+            if "VIBEOCR_OCR_TRANSPORT" in py_file.read_text(encoding="utf-8"):
+                offenders.append(str(py_file.relative_to(_REPO_ROOT)))
+    assert not offenders, (
+        "VIBEOCR_OCR_TRANSPORT still appears in source — the unified supervisor "
+        "has no transport switch:\n  " + "\n  ".join(offenders)
     )
 

@@ -100,6 +100,79 @@ def _build_pdf_adapter() -> Any:
     return PdfProcessAdapter(child_factory=factory)
 
 
+class _MinerUServiceLifecycle:
+    """Drives the mineru-api subprocess behind the MinerU singleton.
+
+    ``MinerUService`` is a lazy singleton: its ``__init__`` blocks until the
+    API is reachable, and ``shutdown()`` tears it down. The adapter's
+    lifecycle seam calls these so the supervisor owns start/stop of the API
+    subprocess exactly like it owns the Paddle model residency.
+    """
+
+    def start(self) -> None:
+        from vibeocr.services.mineru_service import MinerUService
+
+        MinerUService.instance()  # blocks until API up
+
+    def stop(self) -> None:
+        from vibeocr.services.mineru_service import MinerUService
+
+        try:
+            MinerUService.instance().shutdown()
+        except Exception:  # pragma: no cover - defensive
+            pass
+
+
+def _build_mineru_executor() -> Executor:
+    """Construct a real MinerUExecutor owning the MinerU API subprocess.
+
+    The ``client_factory`` returns the singleton ``MinerUService``, whose
+    ``file_parse`` issues one budgeted multi-file ``/file_parse`` request and
+    returns ``{stem: payload}``. The lifecycle wrapper starts/stops the
+    mineru-api subprocess; the heavy model download happens on first parse.
+    """
+    from .inference.mineru_adapter import MinerUProcessAdapter
+    from .inference.mineru_executor import MinerUExecutor
+
+    def adapter_factory() -> MinerUProcessAdapter:
+        from vibeocr.services.mineru_service import MinerUService
+
+        return MinerUProcessAdapter(
+            client_factory=lambda: MinerUService.instance(),
+            lifecycle=_MinerUServiceLifecycle(),
+        )
+
+    return MinerUExecutor(adapter_factory=adapter_factory)
+
+
+def _mineru_available() -> bool:
+    """Return True if a real MinerU backend is importable in this environment."""
+    try:
+        import mineru  # type: ignore  # noqa: F401
+    except Exception:
+        return False
+    return True
+
+
+def _build_composite_executor(*, use_paddle: bool, use_mineru: bool) -> Executor:
+    """Build a CompositeExecutor over whichever real backends are available.
+
+    Paddle handles ``RECOGNITION`` jobs; MinerU handles ``MINERU_PARSE`` jobs.
+    If only one is available the composite still routes correctly; if neither
+    is, the caller falls back to ``_NullExecutor``.
+    """
+    from vibeocr.protocol.v2 import JobKind
+
+    from .inference.composite_executor import CompositeExecutor
+
+    children: list[tuple[Executor, frozenset]] = []
+    if use_paddle:
+        children.append((_build_paddle_executor(), frozenset({JobKind.RECOGNITION})))
+    if use_mineru:
+        children.append((_build_mineru_executor(), frozenset({JobKind.MINERU_PARSE})))
+    return CompositeExecutor(children)
+
+
 def build_supervisor(
     *,
     instance_id: str | None = None,
@@ -108,6 +181,7 @@ def build_supervisor(
     options: SupervisorOptions | None = None,
     bootstrap_handle: BootstrapHandle | None = None,
     use_real_paddle: bool | None = None,
+    use_mineru: bool | None = None,
     with_pdf_adapter: bool = False,
 ) -> tuple[SupervisorModule, BootstrapHandle]:
     """Assemble a supervisor module + bootstrap handle (token out of band).
@@ -116,9 +190,18 @@ def build_supervisor(
     importable), the supervisor is wired with a real
     :class:`~vibeocr.supervisor.inference.paddle_executor.PaddleExecutor`
     backed by the singleton :class:`~vibeocr.services.ocr_service.OCRService`,
-    so recognition jobs actually run Paddle OCR. Otherwise (or in lightweight
-    test environments without paddle) the null executor is used so the job
-    engine stays importable and unit-testable without model dependencies.
+    so recognition jobs actually run Paddle OCR.
+
+    When ``use_mineru`` is True (or left as None and a MinerU backend is
+    importable), a real
+    :class:`~vibeocr.supervisor.inference.mineru_executor.MinerUExecutor`
+    (owning the mineru-api subprocess) is added alongside Paddle behind a
+    :class:`~vibeocr.supervisor.inference.composite_executor.CompositeExecutor`
+    that routes by ``JobKind`` (RECOGNITION → Paddle, MINERU_PARSE → MinerU).
+
+    Otherwise (or in lightweight test environments without paddle/mineru) the
+    null executor is used so the job engine stays importable and unit-testable
+    without model dependencies.
 
     When ``with_pdf_adapter`` is True, the module owns a
     :class:`~vibeocr.supervisor.pdf.adapter.PdfProcessAdapter` whose
@@ -133,10 +216,17 @@ def build_supervisor(
     root = stager_root or Path(tempfile.mkdtemp(prefix=f"vibeocr-sup-{iid}-"))
     if executor is not None:
         exec_impl = executor
-    elif use_real_paddle is True or (use_real_paddle is None and _paddle_available()):
-        exec_impl = _build_paddle_executor()
     else:
-        exec_impl = _NullExecutor()
+        want_paddle = use_real_paddle is True or (
+            use_real_paddle is None and _paddle_available()
+        )
+        want_mineru = use_mineru is True or (use_mineru is None and _mineru_available())
+        if want_paddle or want_mineru:
+            exec_impl = _build_composite_executor(
+                use_paddle=want_paddle, use_mineru=want_mineru
+            )
+        else:
+            exec_impl = _NullExecutor()
     pdf_adapter = _build_pdf_adapter() if with_pdf_adapter else None
     module = SupervisorModule(
         options=opts,
