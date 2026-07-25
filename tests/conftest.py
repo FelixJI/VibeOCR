@@ -55,7 +55,7 @@ def qapp():
 
 def pytest_sessionfinish(session, exitstatus):
     """Close the process-wide WorkerHost before pytest joins executor threads."""
-    from vibeocr.client.session import shutdown_backend_client
+    from vibeocr.client import shutdown_backend_client
 
     shutdown_backend_client()
 

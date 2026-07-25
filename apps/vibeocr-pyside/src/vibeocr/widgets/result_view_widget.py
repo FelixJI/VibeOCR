@@ -1451,7 +1451,7 @@ class ResultViewWidget(QWidget):
             return
         from pathlib import Path
 
-        from vibeocr.client.export import get_output_filename
+        from vibeocr.client import get_output_filename
 
         filter_label = {
             "docx": "Word 文档 (*.docx)",

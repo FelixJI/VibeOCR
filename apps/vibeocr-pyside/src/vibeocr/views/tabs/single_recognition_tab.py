@@ -5,7 +5,7 @@ import logging
 import threading
 import time
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 from PySide6.QtCore import QBuffer, QTimer, Signal, Slot
 from PySide6.QtGui import QGuiApplication, QImage, QPixmap
@@ -30,7 +30,6 @@ from vibeocr.widgets.preprocess_options_widget import PreprocessOptionsWidget
 from vibeocr.widgets.preview_widget import PreviewWidget
 from vibeocr.widgets.result_view_widget import ResultViewWidget
 from vibeocr.widgets.text_block_options_widget import TextBlockOptionsWidget
-from vibeocr.worker_host.sync_client import SyncBackendError
 
 logger = logging.getLogger(__name__)
 
@@ -729,7 +728,14 @@ class SingleRecognitionTab(BaseOcrTab):
             return any(not event.is_set() for event in self._native_call_events)
 
     def process_file(self, file_path: str) -> None:
-        """处理文件（由 MainWindow 调用，支持 PDF/Office/图片）"""
+        """处理文件（由 MainWindow 调用，支持 PDF/Office/图片）。
+
+        Attached-aware routing: when the supervisor adapter is started, route
+        image inputs through the v2 supervisor; otherwise use the legacy
+        backend. PDF/Office documents always use the legacy path (MinerU
+        document parsing is not yet on the v2 supervisor). Same safe
+        default-switch pattern as the WinUI ViewModels.
+        """
         if not self._accepting_new_input():
             logger.debug("识别进行中，忽略 process_file 请求")
             return
@@ -765,7 +771,24 @@ class SingleRecognitionTab(BaseOcrTab):
                 return
             self._run_ocr_with_file(path)
         else:
+            # Attached-aware routing: when the v2 supervisor is started, route
+            # image files through the supervisor (one-element recognition job);
+            # otherwise use the legacy image-load + sync-recognize path.
+            try:
+                from vibeocr.pyside.supervisor_adapter import get_supervisor_adapter
+
+                if get_supervisor_adapter().is_started:
+                    self._process_file_via_supervisor(file_path)
+                    return
+            except Exception:
+                pass  # fall through to legacy
             self._request_image_file_load(file_path, auto_recognize=True)
+
+    def _process_file_via_supervisor(self, file_path: str) -> None:
+        """Route an image file through the v2 supervisor (one-element job)."""
+        path = Path(file_path)
+        data = path.read_bytes()
+        self.recognize_via_supervisor(data, display_name=path.name)
 
     def _run_ocr_with_data(self, data: bytes, mime_type: str, filename: str) -> None:
         """使用原始文件数据进行 OCR（文档解析管道）。
@@ -791,39 +814,100 @@ class SingleRecognitionTab(BaseOcrTab):
         self._result_widget.clear()
         self._dispatch_file_recognize(path, "DOCUMENT_PARSING")
 
-    # -- backend bridge (sync RPC over the exclusive WorkerHost) --------
-
-    def _ensure_backend(self):
-        """Lazily attach to the process-wide production BackendSession."""
-        if self._backend is None:
-            from vibeocr.client.session import get_backend_client
-
-            self._backend = get_backend_client()
-            return
-        start = getattr(self._backend, "start", None)
-        if callable(start):
-            start(profile="production", frontend_id="pyside")
+    # -- backend bridge (v2 supervisor only) --------
 
     def _call_backend_recognize(self, image_data: bytes, pipeline: str):
-        """Call ocr.recognize via RPC; restart worker on transient failure."""
-        self._ensure_backend()
-        backend = cast("Any", self._backend)
-        try:
-            return backend.recognize_sync(image_data, pipeline=pipeline)
-        except (SyncBackendError, ConnectionError, BrokenPipeError, EOFError):
-            # Worker died; restart once and retry.
-            if self._uses_shared_backend:
-                from vibeocr.client.session import restart_backend_client
+        """Call OCR recognize via the v2 supervisor HTTP API."""
+        return self._recognize_via_supervisor_sync(image_data, pipeline)
 
-                self._backend = restart_backend_client()
-            else:
-                shutdown = getattr(self._backend, "shutdown", None)
-                if callable(shutdown):
-                    shutdown()
-                self._ensure_backend()
-            return cast("Any", self._backend).recognize_sync(
-                image_data, pipeline=pipeline
-            )
+    def _recognize_via_supervisor_sync(self, image_data: bytes, pipeline: str):
+        """Synchronous v2 supervisor recognition (called from asyncio.to_thread).
+
+        Submits a recognition job, polls until terminal, and returns an
+        OCRResult constructed from the v2 result payload. This bridges the
+        sync QThread/to_thread pattern to the async supervisor HTTP API.
+        """
+        import asyncio
+
+        import httpx
+
+        from vibeocr.models.ocr_result import OCRResult
+        from vibeocr.pyside.supervisor_adapter import get_supervisor_adapter
+
+        adapter = get_supervisor_adapter()
+        client = adapter._ensure_client()  # type: ignore[attr-defined]
+        base_url = getattr(client, "_base_url", "http://127.0.0.1")
+        token = getattr(client, "_token", "")
+
+        async def _do_recognize() -> OCRResult:
+            async with httpx.AsyncClient(
+                base_url=base_url,
+                headers={"Authorization": f"Bearer {token}"},
+                timeout=httpx.Timeout(120.0),
+            ) as http:
+                # Submit recognition job.
+                resp = await http.post(
+                    "/v2/jobs/recognition",
+                    files={"files": ("image.png", image_data, "image/png")},
+                )
+                resp.raise_for_status()
+                job_ref = resp.json()
+                job_id = job_ref["job_id"]
+
+                # Poll until terminal.
+                while True:
+                    snap_resp = await http.get(f"/v2/jobs/{job_id}")
+                    snap_resp.raise_for_status()
+                    snap = snap_resp.json()
+                    state = snap.get("state", "")
+                    if state in ("completed", "completed_with_errors", "cancelled", "failed"):
+                        break
+                    await asyncio.sleep(0.1)
+
+                if state in ("cancelled", "failed"):
+                    raise RuntimeError(f"Supervisor job {state}")
+
+                # Get result.
+                result_resp = await http.get(f"/v2/jobs/{job_id}/result")
+                result_resp.raise_for_status()
+                results = result_resp.json().get("results", [])
+                if not results:
+                    raise RuntimeError("Supervisor returned no results")
+
+                payload = results[0].get("payload", {})
+                text = payload.get("text", "")
+                return OCRResult(
+                    raw_text=text,
+                    markdown_text=text,
+                    html_text=text,
+                    pipeline_type=pipeline,
+                )
+
+        # Run synchronously in a new event loop (we're inside to_thread).
+        loop = asyncio.new_event_loop()
+        try:
+            return loop.run_until_complete(_do_recognize())
+        finally:
+            loop.close()
+
+    def recognize_via_supervisor(self, image_data: bytes, display_name: str = "image.png") -> int:
+        """Submit a one-element recognition job through the v2 supervisor.
+
+        Phase 7A path (coexists with the legacy sync path until the Phase 8
+        atomic switch). The image is submitted as a single-item recognition
+        job; results/cancel/progress arrive via the adapter's Qt signals on
+        the GUI thread. Returns the adapter generation for stale-result
+        scoping.
+
+        Callers connect to the adapter's ``recognition_result`` /
+        ``recognition_error`` / ``recognition_cancelled`` signals (filtered
+        by ``job_id``) instead of blocking on a synchronous return value.
+        """
+        from vibeocr.pyside.supervisor_adapter import get_supervisor_adapter
+
+        adapter = get_supervisor_adapter()
+        return adapter.submit_recognition([(display_name, None, image_data)])
+
 
     def _on_result_block_edited(self, index: int, new_text: str) -> None:
         """右侧结果块被编辑后同步更新数据模型。

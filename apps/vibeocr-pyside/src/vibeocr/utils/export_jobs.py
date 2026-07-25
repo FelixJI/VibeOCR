@@ -268,16 +268,14 @@ def _reserved_unique_path(path: Path, reserved: set[Path]) -> Path:
 
 
 def export_batch_operation(client: Any, items: tuple[ExportItem, ...]) -> JobOperation:
-    """构造顺序导出作业；同批次输出名也会预留，避免互相覆盖。"""
+    """构造顺序导出作业；同批次输出名也会预留，避免互相覆盖。
+
+    v2-only: always uses the supervisor's /v2/export endpoint.
+    """
 
     def operation(cancel_event: threading.Event, progress: ProgressCallback):
-        from vibeocr.client.export import export_result, get_output_filename
+        from vibeocr.client import get_output_filename
 
-        worker_client = client
-        if worker_client is None:
-            from vibeocr.client.session import get_backend_client
-
-            worker_client = get_backend_client()
         if cancel_event.is_set():
             raise ExportJobCancelled
         reserved: set[Path] = set()
@@ -295,7 +293,7 @@ def export_batch_operation(client: Any, items: tuple[ExportItem, ...]) -> JobOpe
         for index, (item, requested, actual) in enumerate(planned, start=1):
             if cancel_event.is_set():
                 raise ExportJobCancelled
-            ok = export_result(worker_client, item.result, actual, item.export_format)
+            ok = _export_via_supervisor(item.result, actual, item.export_format)
             if cancel_event.is_set():
                 raise ExportJobCancelled
             exported.append(ExportedFile(requested, actual, ok))
@@ -308,25 +306,80 @@ def export_batch_operation(client: Any, items: tuple[ExportItem, ...]) -> JobOpe
 def export_single_operation(
     client: Any, result: Any, output_path: Path, export_format: str
 ) -> JobOperation:
-    """构造单文件 OCR 导出作业；False 统一转换为失败回调。"""
+    """构造单文件 OCR 导出作业；False 统一转换为失败回调。
+
+    v2-only: always uses the supervisor's /v2/export endpoint.
+    """
 
     def operation(cancel_event: threading.Event, progress: ProgressCallback):
-        from vibeocr.client.export import export_result
-
         if cancel_event.is_set():
             raise ExportJobCancelled
-        worker_client = client
-        if worker_client is None:
-            from vibeocr.client.session import get_backend_client
-
-            worker_client = get_backend_client()
-        if cancel_event.is_set():
-            raise ExportJobCancelled
-        if not export_result(worker_client, result, output_path, export_format):
+        if not _export_via_supervisor(result, output_path, export_format):
             raise RuntimeError("导出失败，请重试或查看日志。")
         return output_path
 
+
+
+
     return operation
+
+
+def _export_via_supervisor(result: Any, output_path: Path, export_format: str) -> bool:
+    """Export OCR result via the v2 supervisor /v2/export endpoint.
+
+    This is a synchronous blocking call that runs inside a QThread (ExportSaveJob).
+    It constructs the HTTP request directly since the adapter's async signals
+    don't fit the QThread sync model.
+    """
+    import asyncio
+
+    import httpx
+
+    raw_text = str(_result_value(result, "raw_text", "") or _result_value(result, "text", "") or "")
+    markdown_text = str(_result_value(result, "markdown_text", "") or raw_text)
+    html_text = str(_result_value(result, "html_text", "") or raw_text)
+    fmt = export_format if export_format in ("txt", "markdown", "html") else "txt"
+
+    try:
+        from vibeocr.pyside.supervisor_adapter import get_supervisor_adapter
+
+        adapter = get_supervisor_adapter()
+        # Access the adapter's client to get base URL + token.
+        client = adapter._ensure_client()  # type: ignore[attr-defined]
+        base_url = getattr(client, "_base_url", "http://127.0.0.1")
+        token = getattr(client, "_token", "")
+
+        # Run the HTTP POST synchronously inside this QThread.
+        async def _do_export() -> dict:
+            async with httpx.AsyncClient(
+                base_url=base_url,
+                headers={"Authorization": f"Bearer {token}"},
+            ) as http:
+                resp = await http.post(
+                    "/v2/export",
+                    json={
+                        "raw_text": raw_text,
+                        "markdown_text": markdown_text,
+                        "html_text": html_text,
+                        "output_path": str(output_path),
+                        "format": fmt,
+                        "overwrite": output_path.exists(),
+                    },
+                )
+                resp.raise_for_status()
+                return resp.json()
+
+        # Use a new event loop in this thread.
+        loop = asyncio.new_event_loop()
+        try:
+            result_body = loop.run_until_complete(_do_export())
+        finally:
+            loop.close()
+
+        return bool(result_body.get("output_path"))
+    except Exception:
+        logger.exception("v2 supervisor export failed")
+        return False
 
 
 def save_bitmap_operation(image: Image.Image, output_path: Path, image_format: str):
@@ -344,22 +397,48 @@ def save_bitmap_operation(image: Image.Image, output_path: Path, image_format: s
 def save_svg_operation(
     backend: Any, text: str, options: dict[str, Any], output_path: Path
 ):
-    """构造 QR SVG 同步 RPC 与写盘作业。"""
+    """构造 QR 图片生成与写盘作业。
+
+    v2-only: always uses the supervisor's /v2/qrcode/generate endpoint.
+    Returns PNG bytes (supervisor does not produce SVG).
+    """
 
     def operation(cancel_event: threading.Event, progress: ProgressCallback):
         if cancel_event.is_set():
             raise ExportJobCancelled
-        worker_backend = backend
-        if worker_backend is None:
-            from vibeocr.client.session import get_backend_client
 
-            worker_backend = get_backend_client()
+        import asyncio
+        import base64
+
+        import httpx
+
+        from vibeocr.pyside.supervisor_adapter import get_supervisor_adapter
+
+        adapter = get_supervisor_adapter()
+        client = adapter._ensure_client()  # type: ignore[attr-defined]
+        base_url = getattr(client, "_base_url", "http://127.0.0.1")
+        token = getattr(client, "_token", "")
+
+        async def _gen() -> str:
+            async with httpx.AsyncClient(
+                base_url=base_url,
+                headers={"Authorization": f"Bearer {token}"},
+            ) as http:
+                resp = await http.post(
+                    "/v2/qrcode/generate",
+                    json={"data": text, "format": "qrcode"},
+                )
+                resp.raise_for_status()
+                return resp.json().get("image", "")
+
+        loop = asyncio.new_event_loop()
+        try:
+            b64 = loop.run_until_complete(_gen())
+        finally:
+            loop.close()
         if cancel_event.is_set():
             raise ExportJobCancelled
-        svg_content = worker_backend.generate_qrcode_svg_sync(text, options=options)
-        if cancel_event.is_set():
-            raise ExportJobCancelled
-        output_path.write_text(svg_content, encoding="utf-8")
+        output_path.write_bytes(base64.b64decode(b64))
         return output_path
 
     return operation

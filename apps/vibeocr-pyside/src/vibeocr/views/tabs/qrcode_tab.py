@@ -6,7 +6,7 @@ import logging
 import threading
 import time
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 from PIL import Image
 from PySide6.QtCore import Qt, QTimer, QUrl, Signal, Slot
@@ -45,7 +45,6 @@ from vibeocr.utils.export_jobs import (
     save_svg_operation,
 )
 from vibeocr.utils.image_jobs import GenerationImageJobs, decode_image_file
-from vibeocr.worker_host.sync_client import SyncBackendError
 
 logger = logging.getLogger(__name__)
 
@@ -745,58 +744,78 @@ class QrcodeTab(QWidget):
 
     # -- backend bridge (sync RPC over the exclusive WorkerHost) --------
 
-    def _ensure_backend(self) -> None:
-        """Start the WorkerHost on first use (lazy; idempotent).
-
-        Fakes injected for testing may not have ``start()``; skip in that case.
-        """
-        if self._backend is None:
-            from vibeocr.client.session import get_backend_client
-
-            self._backend = get_backend_client()
-            return
-        start = getattr(self._backend, "start", None)
-        if callable(start):
-            start(profile="production", frontend_id="pyside")
-
     def _call_backend_generate(self, text: str, options: dict) -> bytes:
-        self._ensure_backend()
-        backend = cast("Any", self._backend)
-        try:
-            return backend.generate_qrcode_sync(text, options=options)
-        except SyncBackendError:
-            # Worker died; restart once and retry.
-            if self._uses_shared_backend:
-                from vibeocr.client.session import restart_backend_client
-
-                self._backend = restart_backend_client()
-            else:
-                backend.shutdown()
-                self._ensure_backend()
-            return cast("Any", self._backend).generate_qrcode_sync(
-                text, options=options
-            )
+        """Generate QR via v2 supervisor."""
+        return self._generate_via_supervisor(text, options)
 
     def _call_backend_generate_svg(self, text: str, options: dict) -> str:
-        self._ensure_backend()
-        return cast("Any", self._backend).generate_qrcode_svg_sync(
-            text, options=options
-        )
+        """SVG generation not supported on v2; raise informative error."""
+        raise NotImplementedError("SVG QR generation requires legacy backend; use PNG via supervisor.")
 
     def _call_backend_decode(self, image_bytes: bytes):
-        self._ensure_backend()
-        backend = cast("Any", self._backend)
-        try:
-            return backend.decode_qrcode_sync(image_bytes)
-        except SyncBackendError:
-            if self._uses_shared_backend:
-                from vibeocr.client.session import restart_backend_client
+        """Decode QR via v2 supervisor."""
+        return self._decode_via_supervisor(image_bytes)
 
-                self._backend = restart_backend_client()
-            else:
-                backend.shutdown()
-                self._ensure_backend()
-            return cast("Any", self._backend).decode_qrcode_sync(image_bytes)
+    def _generate_via_supervisor(self, text: str, options: dict) -> bytes:
+        """Generate QR via supervisor /v2/qrcode/generate (sync, in QThread)."""
+        import asyncio
+        import base64
+
+        import httpx
+
+        from vibeocr.pyside.supervisor_adapter import get_supervisor_adapter
+
+        adapter = get_supervisor_adapter()
+        client = adapter._ensure_client()  # type: ignore[attr-defined]
+        base_url = getattr(client, "_base_url", "http://127.0.0.1")
+        token = getattr(client, "_token", "")
+        fmt = "qrcode" if options.get("format", "qr") == "qr" else options.get("format", "qrcode")
+
+        async def _gen() -> bytes:
+            async with httpx.AsyncClient(
+                base_url=base_url,
+                headers={"Authorization": f"Bearer {token}"},
+            ) as http:
+                resp = await http.post("/v2/qrcode/generate", json={"data": text, "format": fmt})
+                resp.raise_for_status()
+                b64 = resp.json().get("image", "")
+                return base64.b64decode(b64)
+
+        loop = asyncio.new_event_loop()
+        try:
+            return loop.run_until_complete(_gen())
+        finally:
+            loop.close()
+
+    def _decode_via_supervisor(self, image_bytes: bytes):
+        """Decode QR via supervisor /v2/qrcode/decode (sync, in QThread)."""
+        import asyncio
+        import base64
+
+        import httpx
+
+        from vibeocr.pyside.supervisor_adapter import get_supervisor_adapter
+
+        adapter = get_supervisor_adapter()
+        client = adapter._ensure_client()  # type: ignore[attr-defined]
+        base_url = getattr(client, "_base_url", "http://127.0.0.1")
+        token = getattr(client, "_token", "")
+
+        async def _dec() -> list:
+            async with httpx.AsyncClient(
+                base_url=base_url,
+                headers={"Authorization": f"Bearer {token}"},
+            ) as http:
+                b64 = base64.b64encode(image_bytes).decode("ascii")
+                resp = await http.post("/v2/qrcode/decode", json={"image": b64})
+                resp.raise_for_status()
+                return resp.json().get("codes", [])
+
+        loop = asyncio.new_event_loop()
+        try:
+            return loop.run_until_complete(_dec())
+        finally:
+            loop.close()
 
     @staticmethod
     def _pil_to_png_bytes(img: Image.Image) -> bytes:
@@ -946,7 +965,6 @@ class QrcodeTab(QWidget):
             operation = save_svg_operation(
                 self._backend, text, svg_options, output_path
             )
-        else:
             fmt = "JPEG" if path.lower().endswith((".jpg", ".jpeg")) else "PNG"
             # PIL.copy() 在 GUI 线程完成 detached 快照；编码与写盘进入 worker。
             operation = save_bitmap_operation(
@@ -1185,7 +1203,6 @@ class QrcodeTab(QWidget):
             self._decode_result_list.addItem(item)
             self._decode_result_list.setItemWidget(item, hint)
             item.setSizeHint(hint.sizeHint())
-        else:
             for idx, r in enumerate(results, start=1):
                 safe_data = _escape_for_richtext(r.data)
                 widget = DecodeResultWidget(

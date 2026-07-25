@@ -111,17 +111,26 @@ class BatchRecognitionWorker(QThread):
         return dict(self._results)
 
     def run(self):
-        """执行批量识别，并保证每次运行都产生一个明确业务终态。"""
+        """执行批量识别，并保证每次运行都产生一个明确业务终态。
+
+        v2 path: when the supervisor adapter is started, batch recognition
+        goes through the supervisor HTTP v2 API (one logical job for all
+        files). Falls back to legacy BatchBackendAdapter when not started.
+        """
         try:
             if self._cancelled:
                 raise InterruptedError("批量识别已取消")
-            if self._service is None:
-                # Session startup may wait on a process and a global lock.  It is
-                # intentionally resolved inside this native worker, never in GUI.
-                from vibeocr.client.batch import BatchBackendAdapter
-                from vibeocr.client.session import get_backend_client
 
-                self._service = BatchBackendAdapter(get_backend_client())
+            # Check if supervisor is available for v2 batch recognition.
+            self._use_supervisor = False
+            try:
+                from vibeocr.pyside.supervisor_adapter import get_supervisor_adapter
+
+                if get_supervisor_adapter().is_started:
+                    self._use_supervisor = True
+            except Exception:
+                pass
+
             if self._cancelled:
                 raise InterruptedError("批量识别已取消")
             results, completed, total, failed = self._run_batches()
@@ -228,9 +237,12 @@ class BatchRecognitionWorker(QThread):
             if valid_indices:
                 valid_images = [images[bi] for bi in valid_indices]  # type: ignore[list-item]
                 try:
-                    batch_results = self._service.recognize_batch(
-                        valid_images, self._preprocess_options
-                    )
+                    if self._use_supervisor:
+                        batch_results = self._recognize_batch_via_supervisor(valid_images)
+                    else:
+                        batch_results = self._service.recognize_batch(
+                            valid_images, self._preprocess_options
+                        )
                 except Exception as e:
                     logger.error("批量识别失败(batch=%d): %s", batch_index, e)
                     self.error.emit(str(e))
@@ -316,6 +328,76 @@ class BatchRecognitionWorker(QThread):
 
         self._results = results
         return results, completed, total, failed
+
+    def _recognize_batch_via_supervisor(self, images: list[bytes]) -> list:
+        """Submit all images as one logical recognition job via the v2 supervisor.
+
+        Returns a list of OCRResult objects (one per image, in order).
+        Constructs OCRResult from the v2 dict payload using the same pattern
+        as single_recognition_tab._recognize_via_supervisor_sync.
+        """
+        import asyncio
+
+        import httpx
+
+        from vibeocr.models.ocr_result import OCRResult
+        from vibeocr.pyside.supervisor_adapter import get_supervisor_adapter
+
+        adapter = get_supervisor_adapter()
+        client = adapter._ensure_client()  # type: ignore[attr-defined]
+        base_url = getattr(client, "_base_url", "http://127.0.0.1")
+        token = getattr(client, "_token", "")
+
+        async def _do_batch() -> list:
+            async with httpx.AsyncClient(
+                base_url=base_url,
+                headers={"Authorization": f"Bearer {token}"},
+                timeout=httpx.Timeout(300.0),
+            ) as http:
+                files = [
+                    ("files", (f"image_{i}.png", img, "image/png"))
+                    for i, img in enumerate(images)
+                ]
+                resp = await http.post("/v2/jobs/recognition", files=files)
+                resp.raise_for_status()
+                job_id = resp.json()["job_id"]
+
+                # Poll until terminal.
+                while True:
+                    snap_resp = await http.get(f"/v2/jobs/{job_id}")
+                    snap_resp.raise_for_status()
+                    state = snap_resp.json().get("state", "")
+                    if state in ("completed", "completed_with_errors", "cancelled", "failed"):
+                        break
+                    await asyncio.sleep(0.2)
+
+                if state in ("cancelled", "failed"):
+                    raise RuntimeError(f"Supervisor batch job {state}")
+
+                result_resp = await http.get(f"/v2/jobs/{job_id}/result")
+                result_resp.raise_for_status()
+                results_raw = result_resp.json().get("results", [])
+
+                # Map back to OCRResult list (one per image, in order).
+                ocr_results: list = []
+                for i in range(len(images)):
+                    if i < len(results_raw):
+                        payload = results_raw[i].get("payload", {})
+                        text = payload.get("text", "")
+                        error_code = results_raw[i].get("error_code")
+                        if error_code:
+                            ocr_results.append(None)  # type: ignore[list-item]
+                        else:
+                            ocr_results.append(OCRResult(raw_text=text, markdown_text=text, html_text=text))
+                    else:
+                        ocr_results.append(None)  # type: ignore[list-item]
+                return ocr_results
+
+        loop = asyncio.new_event_loop()
+        try:
+            return loop.run_until_complete(_do_batch())
+        finally:
+            loop.close()
 
     def cancel(self):
         """取消处理（协作式）。
@@ -587,18 +669,31 @@ class BatchRecognitionTab(BaseOcrTab):
             self._result_snapshots[file_path] = snapshot
 
     def _get_backend_client(self):
-        if self._backend is None:
-            from vibeocr.client.session import get_backend_client
-
-            self._backend = get_backend_client()
-        return self._backend
+        """Legacy backend client — no longer available in v2-only mode."""
+        raise RuntimeError("Legacy backend client removed; use SupervisorClientAdapter.")
 
     def _get_batch_backend(self):
-        if self._batch_backend is None:
-            from vibeocr.client.batch import BatchBackendAdapter
+        """Legacy batch backend — no longer available in v2-only mode."""
+        raise RuntimeError("Legacy batch backend removed; use SupervisorClientAdapter.")
 
-            self._batch_backend = BatchBackendAdapter(self._get_backend_client())
-        return self._batch_backend
+    def submit_batch_via_supervisor(self, entries: list[tuple[str, bytes]]) -> int:
+        """Submit all batch inputs as ONE logical recognition job via v2.
+
+        Phase 7A path. The plan requires "Batch tab 一次提交逻辑 job, 不在 UI
+        切 GPU 微批": instead of the UI slicing into transport/compute
+        microbatches, the whole input list is handed to the supervisor as a
+        single recognition job; the supervisor owns budgeting and the UI only
+        observes progress/cancel via the adapter's Qt signals.
+
+        ``entries`` is a list of ``(display_name, image_bytes)``. Returns the
+        adapter generation for stale-result scoping.
+        """
+        from vibeocr.protocol.v2 import JobPriority
+        from vibeocr.pyside.supervisor_adapter import get_supervisor_adapter
+
+        adapter = get_supervisor_adapter()
+        uploads = [(name, None, data) for name, data in entries]
+        return adapter.submit_recognition(uploads, priority=JobPriority.BACKGROUND)
 
     def _on_cancel(self):
         """请求取消；线程真正结束前不释放引用、也不允许重新开始。"""

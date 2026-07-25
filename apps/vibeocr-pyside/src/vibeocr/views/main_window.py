@@ -2026,7 +2026,7 @@ class MainWindow(QMainWindow):
         if self._shutdown_stage != "gui":
             return
 
-        from vibeocr.client.session import shutdown_backend_client
+        from vibeocr.client import shutdown_backend_client
 
         operations: list[tuple[str, Any]] = [
             ("backend_session", shutdown_backend_client)

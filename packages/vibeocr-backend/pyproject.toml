@@ -39,6 +39,9 @@ gpu-cu126 = [
 
 [project.scripts]
 vibeocr-worker = "vibeocr.worker_host.main:main"
+# Unified inference supervisor (HTTP v2 + job). Phase 8 makes this the only
+# backend entry point; until then it coexists with the legacy worker.
+vibeocr-supervisor = "vibeocr.supervisor.main:main"
 
 [build-system]
 requires = ["hatchling>=1.0.0"]

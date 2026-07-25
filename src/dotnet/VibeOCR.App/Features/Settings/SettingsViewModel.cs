@@ -1,21 +1,13 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
-using VibeOCR.Contracts;
-using VibeOCR.Platform.Worker;
+using VibeOCR.Contracts.HttpV2;
+using VibeOCR.Platform.Inference;
 
 namespace VibeOCR.App.Features.Settings;
 
-/// <summary>
-/// View model for the settings/dependency/backend tab. Reads the WorkerHost
-/// settings snapshot and exposes backend switching, dependency installation
-/// status, and preload state. Backend switch and dependency install never
-/// auto-retry; network/mirror errors surface as localized status.
-/// </summary>
-public class SettingsViewModel(IWorkerHostClient worker) : INotifyPropertyChanged
+public sealed class SettingsViewModel(IInferenceClient inference) : INotifyPropertyChanged
 {
-    private readonly IWorkerHostClient _worker = worker ?? throw new ArgumentNullException(nameof(worker));
-    private CancellationTokenSource? _activeRun;
     private long _generation;
     private bool _isBusy;
     private string _status = "正在读取设置";
@@ -25,10 +17,12 @@ public class SettingsViewModel(IWorkerHostClient worker) : INotifyPropertyChange
     private bool _gpuAvailable;
 
     public event PropertyChangedEventHandler? PropertyChanged;
-
     public ObservableCollection<string> PreloadPipelines { get; } = [];
-    public Dictionary<string, int> PipelineTtls { get; private set; } = new();
-
+    public ObservableCollection<ResidencyEntry> ResidencyEntries { get; } = [];
+    public ObservableCollection<PipelineSpec> ResidencyPipelines { get; } = [];
+    public int DefaultTtlSeconds { get; private set; } = 300;
+    public int? VramTotalMb { get; private set; }
+    public int? VramUsedMb { get; private set; }
     public bool IsBusy { get => _isBusy; private set => SetField(ref _isBusy, value); }
     public string Status { get => _status; private set => SetField(ref _status, value); }
     public string Backend { get => _backend; private set => SetField(ref _backend, value); }
@@ -40,128 +34,46 @@ public class SettingsViewModel(IWorkerHostClient worker) : INotifyPropertyChange
     public async Task LoadSnapshotAsync(CancellationToken cancellationToken)
     {
         long generation = Interlocked.Increment(ref _generation);
-        IsBusy = true;
-        Status = "正在读取设置";
+        if (generation == Volatile.Read(ref _generation)) { IsBusy = true; Status = "正在读取模型驻留状态"; }
         try
         {
-            SettingsSnapshotResponse response = await _worker.CallAsync<
-                SettingsSnapshotRequest, SettingsSnapshotResponse>(
-                RpcMethods.SettingsSnapshot,
-                new SettingsSnapshotRequest(),
-                cancellationToken);
+            ResidencyStatus status = await inference.GetResidencyAsync(cancellationToken);
             if (generation != Volatile.Read(ref _generation)) return;
-            Backend = response.Backend;
-            PendingBackend = response.Backend;
-            PipelineTtls = response.PipelineTtls;
-            PreloadPipelines.Clear();
-            foreach (string pipeline in response.PreloadPipelines) PreloadPipelines.Add(pipeline);
-            Status = $"后端：{response.Backend}；预热管线：{response.PreloadPipelines.Length} 个";
+            DefaultTtlSeconds = status.DefaultTtlSeconds;
+            VramTotalMb = status.VramTotalMb;
+            VramUsedMb = status.VramUsedMb;
+            ResidencyEntries.Clear(); foreach (var e in status.Entries) ResidencyEntries.Add(e);
+            ResidencyPipelines.Clear(); foreach (var p in status.Pipelines) ResidencyPipelines.Add(p);
+            PropertyChanged?.Invoke(this, new(nameof(DefaultTtlSeconds)));
+            PropertyChanged?.Invoke(this, new(nameof(VramTotalMb)));
+            PropertyChanged?.Invoke(this, new(nameof(VramUsedMb)));
+            Status = $"默认 TTL {status.DefaultTtlSeconds}s；已驻留管线 {status.Entries.Count} 个";
         }
-        catch (WorkerRpcException error)
-        {
-            if (generation == Volatile.Read(ref _generation))
-                Status = Localize(error.Error.Code);
-        }
-        catch (Exception) when (generation == Volatile.Read(ref _generation))
-        {
-            Status = "Worker 已断开，请重试";
-        }
-        finally
-        {
-            if (generation == Volatile.Read(ref _generation)) IsBusy = false;
-        }
+        catch (OperationCanceledException) { if (generation == Volatile.Read(ref _generation)) Status = "已取消"; }
+        catch (InferenceClientException error) { if (generation == Volatile.Read(ref _generation)) Status = LocalizeV2(error.Code); }
+        catch (Exception) when (generation == Volatile.Read(ref _generation)) { Status = "Supervisor 已断开，请重试"; }
+        finally { if (generation == Volatile.Read(ref _generation)) IsBusy = false; }
     }
 
-    /// <summary>
-    /// Switch the OCR backend (cpu/gpu). Never auto-retries; a network/mirror
-    /// error surfaces as a localized status and leaves the current backend
-    /// unchanged. A backend change requires a restart.
-    /// </summary>
-    public async Task SwitchBackendAsync(string target, CancellationToken cancellationToken)
-    {
-        if (IsBusy) return;
-        if (string.Equals(Backend, target, StringComparison.Ordinal))
-        {
-            Status = "已是该后端";
-            return;
-        }
-        if (target == "gpu" && !GpuAvailable)
-        {
-            Status = "未检测到可用 GPU";
-            return;
-        }
-        long generation = Interlocked.Increment(ref _generation);
-        IsBusy = true;
-        Status = $"正在切换到 {target}";
-        try
-        {
-            await OnSwitchBackendCoreAsync(target, cancellationToken);
-            if (generation != Volatile.Read(ref _generation)) return;
-            Backend = target;
-            PendingBackend = target;
-            RestartRequired = true;
-            Status = $"已切换到 {target}，需重启生效";
-        }
-        catch (OperationCanceledException)
-        {
-            if (generation == Volatile.Read(ref _generation)) Status = "已取消";
-        }
-        catch (WorkerRpcException error)
-        {
-            // Network/mirror/dependency errors never auto-retry.
-            if (generation == Volatile.Read(ref _generation))
-                Status = Localize(error.Error.Code);
-        }
-        catch (Exception) when (generation == Volatile.Read(ref _generation))
-        {
-            Status = "切换失败，后端未改变";
-        }
-        finally
-        {
-            if (generation == Volatile.Read(ref _generation)) IsBusy = false;
-        }
-    }
+    public void DetectGpu(bool available) { GpuAvailable = available; if (!available && PendingBackend == "gpu") PendingBackend = "cpu"; }
+    public void Cancel() { }
 
-    /// <summary>
-    /// Persist the backend switch through the WorkerHost
-    /// <c>settings.switch_backend</c> RPC. The mutation never auto-retries on
-    /// the worker side; a failure propagates to <see cref="SwitchBackendAsync"/>
-    /// which surfaces a localized status and leaves the current backend.
-    /// </summary>
-    protected virtual async Task OnSwitchBackendCoreAsync(string target, CancellationToken cancellationToken)
+    private static string LocalizeV2(HttpV2ErrorCode code) => code switch
     {
-        await _worker.CallAsync<SwitchBackendRequest, SwitchBackendResponse>(
-            RpcMethods.SwitchBackend,
-            new SwitchBackendRequest { Backend = target },
-            cancellationToken);
-    }
-
-    public void DetectGpu(bool available)
-    {
-        GpuAvailable = available;
-        if (!available && PendingBackend == "gpu") PendingBackend = "cpu";
-    }
-
-    public void Cancel() =>
-        Interlocked.Exchange(ref _activeRun, null)?.Cancel();
-
-    private static string Localize(ErrorCode code) => code switch
-    {
-        ErrorCode.DependencyMissing => "依赖尚未安装",
-        ErrorCode.WorkerUnavailable => "Worker 暂不可用，请重试",
-        ErrorCode.ResourceExhausted => "内存或显存不足",
-        ErrorCode.TaskTimeout => "操作超时，请重试",
+        HttpV2ErrorCode.Unauthorized => "Supervisor 会话无效",
+        HttpV2ErrorCode.ForbiddenLoopback => "Supervisor 拒绝非本地连接",
+        HttpV2ErrorCode.BackendUnavailable or HttpV2ErrorCode.TransientBackend => "Supervisor 暂不可用，请重试",
+        HttpV2ErrorCode.OutOfMemory => "内存或显存不足",
+        HttpV2ErrorCode.SupervisorDraining => "Supervisor 正在关闭，请稍后",
+        HttpV2ErrorCode.ProtocolMismatch => "Supervisor 协议不兼容",
         _ => "操作失败",
     };
 
     private void SetField<T>(ref T field, T value, [CallerMemberName] string? name = null)
     {
         if (EqualityComparer<T>.Default.Equals(field, value)) return;
-        field = value;
-        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
+        field = value; PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
         if (name is nameof(IsBusy) or nameof(Backend) or nameof(PendingBackend))
-        {
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CanSwitchBackend)));
-        }
     }
 }

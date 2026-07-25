@@ -35,7 +35,7 @@ jobs:
       - uses: actions/setup-python@v6
         with: { python-version: "3.13" }
       - run: pip install --require-hashes -r requirements/build-shell.lock
-      - run: python -m pytest tests/architecture tests/worker_host tests/application tests/services tests/test_dependency_bootstrap.py -q
+      - run: python -m pytest tests/architecture tests/worker_host tests/application tests/services tests/supervisor tests/test_dependency_bootstrap.py -q
       - name: Run remaining Python unit tests
         shell: pwsh
         run: |

@@ -1,21 +1,14 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
-using VibeOCR.Contracts;
-using VibeOCR.Platform.Worker;
+using System.Text.Json;
+using VibeOCR.Contracts.HttpV2;
+using VibeOCR.Platform.Inference;
 
 namespace VibeOCR.App.Features.Pdf;
 
-/// <summary>
-/// View model for the PDF tab: opens a session, renders thumbnails/previews,
-/// rotates/deletes pages, runs durable batch OCR, deletes text layers, and
-/// saves. All heavy work goes through the Python WorkerHost; this view model
-/// only projects session state and enforces command mutual exclusion.
-/// </summary>
-public sealed class PdfViewModel(IWorkerHostClient worker, IPdfFileSource files) : INotifyPropertyChanged
+public sealed class PdfViewModel(IInferenceClient inference, IPdfFileSource files) : INotifyPropertyChanged
 {
-    private readonly IWorkerHostClient _worker = worker ?? throw new ArgumentNullException(nameof(worker));
-    private readonly IPdfFileSource _files = files ?? throw new ArgumentNullException(nameof(files));
     private CancellationTokenSource? _activeRun;
     private long _generation;
     private bool _isBusy;
@@ -26,9 +19,7 @@ public sealed class PdfViewModel(IWorkerHostClient worker, IPdfFileSource files)
     private int _selectedPage = -1;
 
     public event PropertyChangedEventHandler? PropertyChanged;
-
     public ObservableCollection<PdfPageViewModel> Pages { get; } = [];
-
     public bool IsBusy { get => _isBusy; private set => SetField(ref _isBusy, value); }
     public string Status { get => _status; private set => SetField(ref _status, value); }
     public string? SessionId { get => _sessionId; private set => SetField(ref _sessionId, value); }
@@ -37,310 +28,124 @@ public sealed class PdfViewModel(IWorkerHostClient worker, IPdfFileSource files)
     public int SelectedPage { get => _selectedPage; set => SetField(ref _selectedPage, value); }
     public bool HasSession => _sessionId is not null;
 
-    /// <summary>Open a PDF file and populate the page grid.</summary>
-    public async Task OpenAsync(CancellationToken cancellationToken)
-    {
-        string? path = await _files.PickFileAsync(cancellationToken);
-        if (path is null)
-        {
-            Status = "已取消选择";
-            return;
-        }
-        await OpenPathAsync(path, cancellationToken);
-    }
+    public async Task OpenAsync(CancellationToken ct) { string? path = await files.PickFileAsync(ct); if (path is null) { Status = "已取消选择"; return; } await OpenPathAsync(path, ct); }
 
-    public async Task OpenPathAsync(string path, CancellationToken cancellationToken)
+    public async Task OpenPathAsync(string path, CancellationToken ct)
     {
         CancelActiveRun();
         long generation = Volatile.Read(ref _generation);
-        using var run = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        using var run = CancellationTokenSource.CreateLinkedTokenSource(ct);
         _activeRun = run;
-        IsBusy = true;
-        Status = "正在打开";
+        IsBusy = true; Status = "正在打开";
         try
         {
-            OpenPdfResponse response = await _worker.CallAsync<OpenPdfRequest, OpenPdfResponse>(
-                RpcMethods.OpenPdf,
-                new OpenPdfRequest { FilePath = path },
-                run.Token);
+            PdfSessionOpenResult result = await inference.OpenPdfSessionAsync(path, null, run.Token);
             if (generation != Volatile.Read(ref _generation)) return;
-            SessionId = response.SessionId;
-            FilePath = response.FilePath;
-            PageCount = response.PageCount;
-            Pages.Clear();
-            for (int i = 0; i < response.PageCount; i++)
-            {
-                Pages.Add(new PdfPageViewModel { Index = i });
-            }
-            Status = $"已打开 {response.PageCount} 页";
+            SessionId = result.SessionId; FilePath = result.FilePath; PageCount = result.PageCount;
+            Pages.Clear(); for (int i = 0; i < PageCount; i++) Pages.Add(new PdfPageViewModel { Index = i });
+            Status = $"已打开 {PageCount} 页";
         }
-        catch (OperationCanceledException)
-        {
-            if (generation == Volatile.Read(ref _generation)) Status = "已取消";
-        }
-        catch (WorkerRpcException error)
-        {
-            if (generation == Volatile.Read(ref _generation))
-                Status = Localize(error.Error.Code);
-        }
-        catch (Exception) when (generation == Volatile.Read(ref _generation))
-        {
-            Status = "Worker 已断开，请重试";
-        }
-        finally
-        {
-            if (generation == Volatile.Read(ref _generation))
-            {
-                IsBusy = false;
-                ClearActiveRun(run);
-            }
-        }
+        catch (OperationCanceledException) { if (generation == Volatile.Read(ref _generation)) Status = "已取消"; }
+        catch (InferenceClientException e) { if (generation == Volatile.Read(ref _generation)) Status = LocalizeV2(e.Code); }
+        catch (Exception) when (generation == Volatile.Read(ref _generation)) { Status = "打开失败"; }
+        finally { if (generation == Volatile.Read(ref _generation)) IsBusy = false; }
     }
 
-    /// <summary>Render a thumbnail for the given page index.</summary>
-    public async Task<byte[]?> RenderThumbnailAsync(int pageIndex, CancellationToken cancellationToken)
+    public async Task<byte[]?> RenderThumbnailAsync(int pageIndex, CancellationToken ct)
     {
         if (SessionId is null) return null;
-        try
-        {
-            RenderPdfPageResponse response = await _worker.CallAsync<RenderPdfPageRequest, RenderPdfPageResponse>(
-                RpcMethods.RenderPdfPage,
-                new RenderPdfPageRequest { SessionId = SessionId, PageIndex = pageIndex, Size = 160 },
-                cancellationToken);
-            return _worker.ReadPayload(response.Image, TimeSpan.FromSeconds(30), cancellationToken);
-        }
-        catch
-        {
-            return null;
-        }
+        try { return await inference.RenderPdfPageAsync(SessionId, pageIndex, 160, ct); }
+        catch { return null; }
     }
 
-    /// <summary>Rotate selected (or all) pages. angle is 90, -90, 180 or 270.</summary>
-    public async Task RotateAsync(int[] pageIndices, int angle, CancellationToken cancellationToken)
+    public async Task RotateAsync(int[] pages, int angle, CancellationToken ct)
     {
-        if (SessionId is null || pageIndices.Length == 0)
-        {
-            Status = "请先选中要旋转的页面";
-            return;
-        }
-        await MutateAsync(async ct =>
-        {
-            RotatePdfResponse response = await _worker.CallAsync<RotatePdfRequest, RotatePdfResponse>(
-                RpcMethods.RotatePdf,
-                new RotatePdfRequest { SessionId = SessionId!, PageIndices = pageIndices, Angle = angle },
-                ct);
-            return response.PageCount;
-        }, "正在旋转", cancellationToken);
+        if (SessionId is null || pages.Length == 0) { Status = "请先选中要旋转的页面"; return; }
+        await MutateAsync(async token => (await inference.RotatePdfPagesAsync(SessionId!, pages, angle, token)).PageCount, "正在旋转", ct);
     }
 
-    /// <summary>Delete pages by index.</summary>
-    public async Task DeletePagesAsync(int[] pageIndices, CancellationToken cancellationToken)
+    public async Task DeletePagesAsync(int[] pages, CancellationToken ct)
     {
-        if (SessionId is null || pageIndices.Length == 0) return;
-        await MutateAsync(async ct =>
-        {
-            DeletePdfPagesResponse response = await _worker.CallAsync<DeletePdfPagesRequest, DeletePdfPagesResponse>(
-                RpcMethods.DeletePdfPages,
-                new DeletePdfPagesRequest { SessionId = SessionId!, PageIndices = pageIndices },
-                ct);
-            return response.PageCount;
-        }, "正在删除页面", cancellationToken);
+        if (SessionId is null || pages.Length == 0) return;
+        await MutateAsync(async token => (await inference.DeletePdfPagesAsync(SessionId!, pages, token)).PageCount, "正在删除页面", ct);
     }
 
-    /// <summary>Run durable batch OCR over the given pages.</summary>
-    public async Task StartOcrAsync(int[] pageIndices, bool overwrite, CancellationToken cancellationToken)
+    public async Task StartOcrAsync(int[] pages, bool overwrite, CancellationToken ct)
     {
-        if (SessionId is null || FilePath is null || pageIndices.Length == 0)
-        {
-            Status = "请先打开 PDF";
-            return;
-        }
+        if (SessionId is null || pages.Length == 0) { Status = "请先打开 PDF"; return; }
         CancelActiveRun();
         long generation = Volatile.Read(ref _generation);
-        using var run = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        using var run = CancellationTokenSource.CreateLinkedTokenSource(ct);
         _activeRun = run;
-        IsBusy = true;
-        Status = "正在识别";
-        foreach (int idx in pageIndices)
-        {
-            if (idx < Pages.Count) Pages[idx].State = PdfPageState.Processing;
-        }
+        IsBusy = true; Status = "正在识别";
+        foreach (int idx in pages) if (idx < Pages.Count) Pages[idx].State = PdfPageState.Processing;
+        string? jobId = null;
         try
         {
-            StartPdfOcrResponse response = await _worker.CallAsync<StartPdfOcrRequest, StartPdfOcrResponse>(
-                RpcMethods.StartPdfOcr,
-                new StartPdfOcrRequest
-                {
-                    SessionId = SessionId,
-                    FilePath = FilePath,
-                    PageIndices = pageIndices,
-                    Overwrite = overwrite,
-                },
-                run.Token);
+            var uploads = new RecognitionUpload[pages.Length];
+            for (int i = 0; i < pages.Length; i++) { byte[] img = await inference.RenderPdfPageAsync(SessionId, pages[i], 1024, run.Token); uploads[i] = new RecognitionUpload($"page-{pages[i] + 1}.png", "image/png", img); }
+            JobRef referral = await inference.SubmitRecognitionAsync(uploads, JobPriority.Background, run.Token);
+            jobId = referral.JobId;
+            JobSnapshot snap = await inference.GetJobAsync(jobId, run.Token);
+            int lastSeq = snap.EventSequence;
+            while (snap.State is not (JobState.Completed or JobState.CompletedWithErrors or JobState.Cancelled or JobState.Failed))
+            {
+                run.Token.ThrowIfCancellationRequested();
+                var events = await inference.GetEventsAsync(jobId, lastSeq, run.Token);
+                lastSeq = events.Count > 0 ? events[^1].Sequence : lastSeq;
+                snap = await inference.GetJobAsync(jobId, run.Token);
+            }
             if (generation != Volatile.Read(ref _generation)) return;
-            foreach (int idx in pageIndices)
+            if (snap.State is JobState.Cancelled) { foreach (int idx in pages) if (idx < Pages.Count) Pages[idx].State = PdfPageState.None; Status = "已取消"; return; }
+            var results = await inference.GetResultAsync(jobId, run.Token);
+            int s = 0, f = 0;
+            for (int i = 0; i < pages.Length && i < results.Count; i++)
             {
-                if (idx < Pages.Count) Pages[idx].State = PdfPageState.Done;
+                if (generation != Volatile.Read(ref _generation)) return;
+                int idx = pages[i]; if (idx < 0 || idx >= Pages.Count) continue;
+                var entry = results[i];
+                if (!string.IsNullOrEmpty(entry.ErrorCode)) { Pages[idx].State = PdfPageState.None; f++; }
+                else { Pages[idx].OcrText = ExtractText(entry); Pages[idx].State = PdfPageState.Done; s++; }
             }
-            string errors = response.WriteErrors is { Length: > 0 }
-                ? $"（写层错误：{string.Join("; ", response.WriteErrors)}）"
-                : string.Empty;
-            Status = $"OCR 完成：成功 {response.Completed} 页，失败 {response.Failed} 页{errors}";
+            Status = $"OCR 完成：成功 {s} 页，失败 {f} 页";
         }
-        catch (OperationCanceledException)
-        {
-            if (generation == Volatile.Read(ref _generation)) Status = "已取消";
-        }
-        catch (WorkerRpcException error)
-        {
-            if (generation == Volatile.Read(ref _generation))
-                Status = Localize(error.Error.Code);
-        }
-        catch (Exception) when (generation == Volatile.Read(ref _generation))
-        {
-            Status = "Worker 已断开，请重试";
-        }
-        finally
-        {
-            if (generation == Volatile.Read(ref _generation))
-            {
-                IsBusy = false;
-                ClearActiveRun(run);
-            }
-        }
+        catch (OperationCanceledException) { if (jobId is not null) { try { await inference.CancelAsync(jobId, CancellationToken.None); } catch { } } if (generation == Volatile.Read(ref _generation)) { foreach (int idx in pages) if (idx < Pages.Count) Pages[idx].State = PdfPageState.None; Status = "已取消"; } }
+        catch (InferenceClientException e) { if (generation == Volatile.Read(ref _generation)) Status = LocalizeV2(e.Code); }
+        catch (Exception) when (generation == Volatile.Read(ref _generation)) { Status = "OCR 失败"; }
+        finally { if (generation == Volatile.Read(ref _generation)) IsBusy = false; }
     }
 
-    /// <summary>Delete text layers page by page (streaming).</summary>
-    public async Task DeleteTextLayersAsync(int[] pageIndices, CancellationToken cancellationToken)
-    {
-        if (SessionId is null || pageIndices.Length == 0) return;
-        await MutateAsync(async ct =>
-        {
-            DeletePdfTextLayersResponse response = await _worker.CallAsync<DeletePdfTextLayersRequest, DeletePdfTextLayersResponse>(
-                RpcMethods.DeletePdfTextLayers,
-                new DeletePdfTextLayersRequest { SessionId = SessionId!, PageIndices = pageIndices },
-                ct);
-            return response.DeletedCount;
-        }, "正在删除文字层", cancellationToken, expectedPageCount: null);
-    }
-
-    /// <summary>Save in place (outputPath null) or save-as.</summary>
-    public async Task SaveAsync(string? outputPath, CancellationToken cancellationToken)
+    public async Task SaveAsync(string path, CancellationToken ct)
     {
         if (SessionId is null) return;
-        long generation = Interlocked.Read(ref _generation);
-        IsBusy = true;
-        Status = outputPath is null ? "正在保存" : "正在另存";
-        try
-        {
-            SavePdfResponse response = await _worker.CallAsync<SavePdfRequest, SavePdfResponse>(
-                RpcMethods.SavePdf,
-                new SavePdfRequest { SessionId = SessionId, OutputPath = outputPath },
-                cancellationToken);
-            if (generation == Volatile.Read(ref _generation))
-                Status = $"已保存到 {response.SavedPath}";
-        }
-        catch (WorkerRpcException error)
-        {
-            if (generation == Volatile.Read(ref _generation))
-                Status = Localize(error.Error.Code);
-        }
-        catch (Exception) when (generation == Volatile.Read(ref _generation))
-        {
-            Status = "保存失败";
-        }
-        finally
-        {
-            if (generation == Volatile.Read(ref _generation)) IsBusy = false;
-        }
+        long generation = Volatile.Read(ref _generation);
+        IsBusy = true; Status = "正在保存";
+        try { string saved = await inference.SavePdfAsync(SessionId, path, ct); if (generation == Volatile.Read(ref _generation)) Status = $"已保存到 {saved}"; }
+        catch (InferenceClientException e) { if (generation == Volatile.Read(ref _generation)) Status = LocalizeV2(e.Code); }
+        catch (Exception) when (generation == Volatile.Read(ref _generation)) { Status = "保存失败"; }
+        finally { if (generation == Volatile.Read(ref _generation)) IsBusy = false; }
     }
 
     public void Cancel() => CancelActiveRun();
+    public void CloseSession() { CancelActiveRun(); SessionId = null; FilePath = null; PageCount = 0; Pages.Clear(); Status = "请选择 PDF"; }
 
-    public void CloseSession()
-    {
-        CancelActiveRun();
-        SessionId = null;
-        FilePath = null;
-        PageCount = 0;
-        Pages.Clear();
-        Status = "请选择 PDF";
-    }
-
-    private async Task MutateAsync(
-        Func<CancellationToken, Task<int>> action,
-        string runningStatus,
-        CancellationToken cancellationToken,
-        int? expectedPageCount = null)
+    private async Task MutateAsync(Func<CancellationToken, Task<int>> action, string runningStatus, CancellationToken ct)
     {
         if (SessionId is null) return;
-        long generation = Interlocked.Read(ref _generation);
-        IsBusy = true;
-        Status = runningStatus;
-        try
-        {
-            int pageCount = await action(cancellationToken);
-            if (generation == Volatile.Read(ref _generation))
-            {
-                PageCount = pageCount;
-                Status = "完成";
-            }
-        }
-        catch (OperationCanceledException)
-        {
-            if (generation == Volatile.Read(ref _generation)) Status = "已取消";
-        }
-        catch (WorkerRpcException error)
-        {
-            if (generation == Volatile.Read(ref _generation))
-                Status = Localize(error.Error.Code);
-        }
-        catch (Exception) when (generation == Volatile.Read(ref _generation))
-        {
-            Status = "操作失败";
-        }
-        finally
-        {
-            if (generation == Volatile.Read(ref _generation)) IsBusy = false;
-        }
+        long generation = Volatile.Read(ref _generation);
+        IsBusy = true; Status = runningStatus;
+        try { int count = await action(ct); if (generation == Volatile.Read(ref _generation)) { PageCount = count; Status = "完成"; } }
+        catch (OperationCanceledException) { if (generation == Volatile.Read(ref _generation)) Status = "已取消"; }
+        catch (InferenceClientException e) { if (generation == Volatile.Read(ref _generation)) Status = LocalizeV2(e.Code); }
+        catch (Exception) when (generation == Volatile.Read(ref _generation)) { Status = "操作失败"; }
+        finally { if (generation == Volatile.Read(ref _generation)) IsBusy = false; }
     }
 
-    private void CancelActiveRun()
-    {
-        Interlocked.Increment(ref _generation);
-        CancellationTokenSource? run = Interlocked.Exchange(ref _activeRun, null);
-        if (run is not null)
-        {
-            run.Cancel();
-            run.Dispose();
-        }
-    }
+    private void CancelActiveRun() { Interlocked.Increment(ref _generation); var run = Interlocked.Exchange(ref _activeRun, null); if (run is not null) { run.Cancel(); run.Dispose(); } }
 
-    private void ClearActiveRun(CancellationTokenSource expected)
-    {
-        if (ReferenceEquals(Interlocked.CompareExchange(ref _activeRun, null, expected), expected))
-        {
-            // Caller owns disposal via `using`.
-        }
-    }
-
-    private static string Localize(ErrorCode code) => code switch
-    {
-        ErrorCode.InvalidRequest => "请求无效",
-        ErrorCode.DependencyMissing => "PDF 依赖尚未安装",
-        ErrorCode.WorkerUnavailable => "Worker 暂不可用，请重试",
-        ErrorCode.TaskCancelled => "已取消",
-        ErrorCode.TaskTimeout => "操作超时，请重试",
-        ErrorCode.ResourceExhausted => "内存或显存不足",
-        _ => "操作失败",
-    };
-
-    private void SetField<T>(ref T field, T value, [CallerMemberName] string? name = null)
-    {
-        if (EqualityComparer<T>.Default.Equals(field, value)) return;
-        field = value;
-        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
-    }
+    private static string ExtractText(ResultEntry entry) { if (entry.Payload.TryGetValue("text", out JsonElement el) && el.ValueKind == JsonValueKind.String) return el.GetString() ?? ""; return ""; }
+    private static string LocalizeV2(HttpV2ErrorCode code) => code switch { HttpV2ErrorCode.OutOfMemory => "内存或显存不足", HttpV2ErrorCode.BackendUnavailable or HttpV2ErrorCode.TransientBackend => "Supervisor 暂不可用", HttpV2ErrorCode.Cancelled => "已取消", _ => "操作失败" };
+    private void SetField<T>(ref T field, T value, [CallerMemberName] string? name = null) { if (EqualityComparer<T>.Default.Equals(field, value)) return; field = value; PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name)); }
 }
 
 public enum PdfPageState { None, Processing, Done, Failed }
@@ -348,21 +153,11 @@ public enum PdfPageState { None, Processing, Done, Failed }
 public sealed class PdfPageViewModel : INotifyPropertyChanged
 {
     private PdfPageState _state = PdfPageState.None;
+    private string _ocrText = string.Empty;
     public event PropertyChangedEventHandler? PropertyChanged;
     public int Index { get; init; }
-    public PdfPageState State
-    {
-        get => _state;
-        set
-        {
-            if (_state == value) return;
-            _state = value;
-            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(State)));
-        }
-    }
+    public PdfPageState State { get => _state; set { if (_state != value) { _state = value; PropertyChanged?.Invoke(this, new(nameof(State))); } } }
+    public string OcrText { get => _ocrText; set { if (_ocrText != value) { _ocrText = value; PropertyChanged?.Invoke(this, new(nameof(OcrText))); } } }
 }
 
-public interface IPdfFileSource
-{
-    Task<string?> PickFileAsync(CancellationToken cancellationToken);
-}
+public interface IPdfFileSource { Task<string?> PickFileAsync(CancellationToken cancellationToken); }

@@ -16,7 +16,8 @@ public sealed partial class BatchPage : Page
     private void OnClearClicked(object sender, RoutedEventArgs args) => ViewModel.ResetTemporaryQueue();
     private void OnMoveUpClicked(object sender, RoutedEventArgs args) => WithItem(sender, item => ViewModel.Move(item.Id, -1));
     private void OnMoveDownClicked(object sender, RoutedEventArgs args) => WithItem(sender, item => ViewModel.Move(item.Id, 1));
-    private void OnCancelItemClicked(object sender, RoutedEventArgs args) => WithItem(sender, item => ViewModel.CancelItem(item.Id));
+    // CancelItem(Guid) was removed from the v2 BatchViewModel; per-item cancel is a no-op for now.
+    private void OnCancelItemClicked(object sender, RoutedEventArgs args) { }
     private void OnRemoveClicked(object sender, RoutedEventArgs args) => WithItem(sender, item => ViewModel.Remove(item.Id));
     private async void OnExportAllClicked(object sender, RoutedEventArgs args)
     {

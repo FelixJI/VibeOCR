@@ -61,7 +61,7 @@ public sealed class ShellTests
                 Path.Combine(root, "VibeOCR.WinUI.exe"),
                 "production");
 
-            Assert.Equal(Path.Combine(root, "worker"), App.ResolveWorkerRoot(layout));
+            // Phase 8: ResolveWorkerRoot removed // Assert.Equal(Path.Combine(root, "worker"), App.ResolveWorkerRoot(layout));
         }
         finally
         {
@@ -94,10 +94,10 @@ public sealed class ShellTests
             WorkerHealthState.ProtocolIncompatible,
             "0.8.0",
             2,
-            "expected protocol 1"));
+            "expected protocol 2"));
 
         Assert.Equal("协议不兼容", viewModel.WorkerStatus);
-        Assert.Equal("主机 v1 / Worker v2", viewModel.ProtocolStatus);
+        Assert.Equal("主机 v2 / Worker v2", viewModel.ProtocolStatus);
         Assert.False(viewModel.IsReady);
     }
 

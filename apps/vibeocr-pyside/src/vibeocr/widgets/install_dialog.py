@@ -97,7 +97,7 @@ class InstallWorker(QThread):
             # 避免 GUI 卡顿，也保证重装 Python 不会残留被锁定的旧文件。
             self._emit_progress("运行时维护", "正在断开 OCR 运行时...")
             try:
-                from vibeocr.client.session import shutdown_backend_client
+                from vibeocr.client import shutdown_backend_client
 
                 shutdown_backend_client()
             except Exception as exc:

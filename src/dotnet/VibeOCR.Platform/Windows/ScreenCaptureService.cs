@@ -1,7 +1,5 @@
 using System.ComponentModel;
 using System.Runtime.InteropServices;
-using VibeOCR.Contracts;
-using VibeOCR.Platform.Worker;
 
 namespace VibeOCR.Platform.Windows;
 
@@ -26,8 +24,12 @@ public sealed record MonitorGeometry(
     int DpiX,
     int DpiY);
 
+/// <summary>
+/// A captured screen frame. In the v2 architecture screenshots are returned as
+/// raw BGRA bytes (no shared memory payload).
+/// </summary>
 public sealed record CapturedFrame(
-    SharedPayloadRef Payload,
+    byte[] Pixels,
     int Width,
     int Height,
     int Stride,
@@ -40,12 +42,10 @@ public interface IScreenCaptureNativeMethods
 
 public sealed class ScreenCaptureService : IAsyncDisposable
 {
-    private readonly SharedPayloadClient _payloads;
     private readonly IScreenCaptureNativeMethods _native;
 
     public ScreenCaptureService(Guid sessionId, IScreenCaptureNativeMethods? native = null)
     {
-        _payloads = new SharedPayloadClient(sessionId);
         _native = native ?? new GdiScreenCaptureNativeMethods();
     }
 
@@ -78,20 +78,16 @@ public sealed class ScreenCaptureService : IAsyncDisposable
                 $"Native capture returned {pixels.Length} bytes; expected {expected} BGRA bytes.");
         }
 
-        SharedPayloadRef payload = _payloads.Create(
-            pixels,
-            "application/vnd.vibeocr.bgra",
-            ttl);
-        return new CapturedFrame(payload, bounds.Width, bounds.Height, bounds.Width * 4, "BGRA8");
+        return new CapturedFrame(pixels, bounds.Width, bounds.Height, bounds.Width * 4, "BGRA8");
     }
 
     public byte[] Read(CapturedFrame frame)
     {
         ArgumentNullException.ThrowIfNull(frame);
-        return _payloads.Read(frame.Payload);
+        return frame.Pixels;
     }
 
-    public ValueTask DisposeAsync() => _payloads.DisposeAsync();
+    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 
     private sealed class GdiScreenCaptureNativeMethods : IScreenCaptureNativeMethods
     {

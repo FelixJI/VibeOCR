@@ -4,7 +4,6 @@ using System.Runtime.CompilerServices;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.RegularExpressions;
-using VibeOCR.Contracts;
 using VibeOCR.Platform.Bootstrap;
 
 namespace VibeOCR.App.ViewModels;

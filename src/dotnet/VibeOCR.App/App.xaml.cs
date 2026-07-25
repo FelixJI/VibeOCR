@@ -9,16 +9,16 @@ using VibeOCR.App.Features.Batch;
 using VibeOCR.App.Features.Pdf;
 using VibeOCR.App.Features.QrCode;
 using VibeOCR.App.Features.Settings;
+using VibeOCR.App.Inference;
 using VibeOCR.App.Features.Shell;
 using VibeOCR.App.Features.Update;
 using VibeOCR.App.Services;
 using VibeOCR.App.ViewModels;
 using VibeOCR.App.Views;
-using VibeOCR.Contracts;
 using VibeOCR.Platform.Bootstrap;
 using VibeOCR.Platform.Migration;
 using VibeOCR.Platform.Update;
-using VibeOCR.Platform.Worker;
+using VibeOCR.Platform.Inference;
 using VibeOCR.Platform.Windows;
 
 namespace VibeOCR.App;
@@ -26,15 +26,19 @@ namespace VibeOCR.App;
 public sealed partial class App : Application
 {
     private readonly Stopwatch _startup = Stopwatch.StartNew();
-    private readonly DeferredWorkerHostClient _workerGateway = new();
+    /// <summary>
+    /// v2 supervisor client (deferred until the supervisor process is started).
+    /// Phase 8: this replaces the legacy _workerGateway.
+    /// </summary>
+    private readonly DeferredInferenceClient _inferenceGateway = new();
+    private readonly DeferredQrCodeClient _qrCodeGateway = new();
     private readonly SemaphoreSlim _workerLifecycle = new(1, 1);
     private readonly CancellationTokenSource _applicationShutdown = new();
     private readonly Dictionary<string, double> _startupMilestones = [];
     private MainWindow? _window;
     private WindowLayoutStore? _windowLayoutStore;
-    private Process? _workerProcess;
-    private WorkerHostClient? _workerClient;
     private SingleInstanceService? _singleInstance;
+    private InferenceSupervisorProcess? _supervisorProcess;
     private FrontendExclusiveLock? _exclusiveLock;
     private WindowMessageService? _windowMessages;
     private TrayIconService? _trayIcon;
@@ -113,28 +117,28 @@ public sealed partial class App : Application
             diagnostics,
             layout,
             () => new RecognitionViewModel(
-                _workerGateway,
+                _inferenceGateway,
                 new InputService(() => WinRT.Interop.WindowNative.GetWindowHandle(_window!))),
             () => new BatchViewModel(
-                _workerGateway,
+                _inferenceGateway,
                 new BatchFileSource(() => WinRT.Interop.WindowNative.GetWindowHandle(_window!))),
             () =>
             {
                 nint handle = WinRT.Interop.WindowNative.GetWindowHandle(_window!);
                 var qrViewModel = new QrCodeViewModel(
-                    _workerGateway,
+                    _qrCodeGateway,
                     new QrCodeInputService(() => handle));
                 return new QrCodePage(
                     qrViewModel,
-                    new QrCodeSaveCommands(_workerGateway, new QrCodeSavePlatform(() => handle)));
+                    new QrCodeSaveCommands(new QrCodeSavePlatform(() => handle)));
             },
             () =>
             {
                 nint handle = WinRT.Interop.WindowNative.GetWindowHandle(_window!);
                 return new PdfPage(
-                    new PdfViewModel(_workerGateway, new PdfFileSource(() => handle)));
+                    new PdfViewModel(_inferenceGateway, new PdfFileSource(() => handle)));
             },
-            () => new SettingsPage(new SettingsViewModel(_workerGateway), _shellViewModel!),
+            () => new SettingsPage(new SettingsViewModel(_inferenceGateway), _shellViewModel!),
             () =>
             {
                 return new AboutPage(
@@ -162,9 +166,14 @@ public sealed partial class App : Application
         }
         else
         {
-            _workerGateway.ConfigureRecovery(
-                cancellationToken => RestartWorkerAsync(layout, diagnostics, cancellationToken));
-            _ = ConnectWorkerAfterFirstWindowAsync(layout, diagnostics);
+            // Phase 8: supervisor process will be started here. For now, mark
+            // the diagnostics as draining until the supervisor Attach happens.
+            diagnostics.UpdateWorker(new WorkerHealth(
+                WorkerHealthState.NotReady,
+                null,
+                null,
+                "supervisor 尚未启动。"));
+            RecordMilestone(diagnostics, "T6", _startup.Elapsed);
         }
 
         // Perf-gate smoke mode: exit shortly after first window so cold-start
@@ -279,159 +288,80 @@ public sealed partial class App : Application
         Environment.Exit(0);
     }
 
-    private async Task ConnectWorkerAfterFirstWindowAsync(
+    // Phase 8: Worker lifecycle methods removed. Supervisor startup will go here.
+    // For now these are stubs so the build compiles. The production supervisor
+    // process (InferenceSupervisorProcess) lifecycle replaces this entire block.
+
+    private async Task ConnectSupervisorAfterFirstWindowAsync(
         PortableLayout layout,
         DiagnosticsViewModel diagnostics)
     {
-        bool crashRequested =
-            Environment.GetEnvironmentVariable("VIBEOCR_SOAK_INJECT_CRASH") == "1";
-        bool recoverySucceeded = !crashRequested;
-        diagnostics.UpdateWorker(new WorkerHealth(WorkerHealthState.Connecting, null, null, null));
+        diagnostics.UpdateWorker(new WorkerHealth(
+            WorkerHealthState.Connecting, null, null, null));
         RecordMilestone(diagnostics, "T3", _startup.Elapsed);
+
         if (!CanStartWorker(diagnostics.Prerequisites))
         {
-            AppLog.Warn("Worker not started: Python runtime prerequisite not detected.");
+            AppLog.Warn("Supervisor not started: Python runtime prerequisite not detected.");
             diagnostics.UpdateWorker(new WorkerHealth(
-                WorkerHealthState.NotReady,
-                null,
-                null,
-                "Python 运行时未就绪，无法启动 WorkerHost。"));
+                WorkerHealthState.NotReady, null, null,
+                "Python 运行时未就绪，无法启动 Supervisor。"));
             return;
         }
 
         await _workerLifecycle.WaitAsync();
         try
         {
-            try
-            {
-                (Process process, WorkerHostClient client, HandshakeResponse handshake) =
-                    await StartWorkerAsync(layout, _applicationShutdown.Token);
-                _workerProcess = process;
-                _workerClient = client;
-                RecordMilestone(diagnostics, "T4", _startup.Elapsed);
-                RecordMilestone(diagnostics, "T5", _startup.Elapsed);
-                _workerGateway.Attach(client);
-                diagnostics.UpdateWorker(ReadyHealth(handshake));
-                AppLog.Info($"Worker ready: version={handshake.WorkerVersion} protocol=v{handshake.ProtocolVersion}");
-                RecordMilestone(diagnostics, "T6", _startup.Elapsed);
-                WriteHealthSignal();
-                _ = UpdateArtifactCleaner.CleanupAsync(
-                    layout.InstallRoot,
-                    layout.DataRoot,
-                    TimeSpan.FromSeconds(3));
-                if (crashRequested)
-                {
-                    await ExerciseInjectedCrashAsync(layout, diagnostics);
-                    recoverySucceeded = true;
-                }
-                WriteSoakResult(crashRequested, recoverySucceeded);
-                if (Environment.GetEnvironmentVariable("VIBEOCR_SELF_TEST_SMOKE") == "t6")
-                {
-                    FlushStartupTrace();
-                    Environment.Exit(0);
-                }
-            }
-            catch (Exception error)
-            {
-                AppLog.Error("Worker connection failed", error);
-                WriteSoakResult(crashRequested, recovered: false, error: error.Message);
-                diagnostics.UpdateWorker(new WorkerHealth(
-                    WorkerHealthState.Faulted,
-                    null,
-                    null,
-                    error.Message));
-            }
-        }
-        finally
-        {
-            _workerLifecycle.Release();
-        }
-    }
+            // Construct supervisor process options.
+            string pythonExe = PortableLayout.ResolvePythonExecutable(layout);
+            string logPath = Path.Combine(layout.DataRoot, "supervisor.log");
+            string token = Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(32));
+            string workerRoot = ResolveSupervisorRoot(layout);
+            var options = new InferenceSupervisorOptions(
+                pythonExe,
+                ["-m", "vibeocr.supervisor.main"],
+                layout.InstallRoot,
+                logPath,
+                TimeSpan.FromSeconds(layout.Profile == "winui-dev" ? 90 : 15));
 
-    private async Task ExerciseInjectedCrashAsync(
-        PortableLayout layout,
-        DiagnosticsViewModel diagnostics)
-    {
-        Process process = _workerProcess
-            ?? throw new InvalidOperationException("WorkerHost is unavailable for crash injection.");
-        process.Kill(entireProcessTree: true);
-        await process.WaitForExitAsync(_applicationShutdown.Token);
-        await StopWorkerAsync();
-        (Process replacement, WorkerHostClient client, HandshakeResponse handshake) =
-            await StartWorkerAsync(layout, _applicationShutdown.Token);
-        _workerProcess = replacement;
-        _workerClient = client;
-        _workerGateway.Attach(client);
-        diagnostics.UpdateWorker(ReadyHealth(handshake));
-    }
+            // Start the supervisor process.
+            _supervisorProcess = new InferenceSupervisorProcess(options, token);
+            // Set PYTHONPATH so the supervisor can import vibeocr.* packages.
+            // The InferenceSupervisorProcess sets VIBEOCR_SUP_TOKEN via env.
+            SupervisorReadyEnvelope ready = await _supervisorProcess.StartAsync(_applicationShutdown.Token);
 
-    private static void WriteSoakResult(bool requested, bool recovered, string? error = null)
-    {
-        string? resultPath = Environment.GetEnvironmentVariable("VIBEOCR_SOAK_RESULT");
-        if (string.IsNullOrWhiteSpace(resultPath))
-        {
-            return;
-        }
+            RecordMilestone(diagnostics, "T4", _startup.Elapsed);
+            RecordMilestone(diagnostics, "T5", _startup.Elapsed);
 
-        string fullPath = Path.GetFullPath(resultPath);
-        Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
-        File.WriteAllText(
-            fullPath,
-            JsonSerializer.Serialize(new
-            {
-                crash_requested = requested,
-                recovered,
-                error,
-            }));
-    }
+            // Construct v2 clients and attach to the deferred gateways.
+            Uri baseUrl = ready.BaseUrl;
+            var inferenceClient = new InferenceHttpClient(baseUrl, token);
+            var qrClient = new QrCodeHttpClient(baseUrl, token);
+            _inferenceGateway.Attach(inferenceClient);
+            _qrCodeGateway.Attach(qrClient);
 
-    private void WriteHealthSignal()
-    {
-        if (string.IsNullOrWhiteSpace(_startupHealthFile))
-        {
-            return;
-        }
-        string fullPath = Path.GetFullPath(_startupHealthFile);
-        Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
-        File.WriteAllText(
-            fullPath,
-            JsonSerializer.Serialize(new
-            {
-                status = "healthy",
-                pid = Environment.ProcessId,
-                timestamp = DateTimeOffset.UtcNow,
-            }));
-    }
-
-    private async Task<IWorkerHostClient> RestartWorkerAsync(
-        PortableLayout layout,
-        DiagnosticsViewModel diagnostics,
-        CancellationToken cancellationToken)
-    {
-        await _workerLifecycle.WaitAsync(cancellationToken);
-        try
-        {
             diagnostics.UpdateWorker(new WorkerHealth(
-                WorkerHealthState.Connecting,
-                null,
-                null,
-                "WorkerHost exited; attempting one restart."));
-            await StopWorkerAsync();
-            (Process process, WorkerHostClient client, HandshakeResponse handshake) =
-                await StartWorkerAsync(layout, cancellationToken);
-            _workerProcess = process;
-            _workerClient = client;
-            diagnostics.UpdateWorker(ReadyHealth(handshake));
-            return client;
+                WorkerHealthState.Ready,
+                ready.InstanceId,
+                ready.ProtocolVersion,
+                null));
+            AppLog.Info($"Supervisor ready: instance={ready.InstanceId} port={ready.Port}");
+            RecordMilestone(diagnostics, "T6", _startup.Elapsed);
+            WriteHealthSignal();
+            _ = UpdateArtifactCleaner.CleanupAsync(
+                layout.InstallRoot, layout.DataRoot, TimeSpan.FromSeconds(3));
+
+            if (Environment.GetEnvironmentVariable("VIBEOCR_SELF_TEST_SMOKE") == "t6")
+            {
+                FlushStartupTrace();
+                Environment.Exit(0);
+            }
         }
         catch (Exception error)
         {
+            AppLog.Error("Supervisor connection failed", error);
             diagnostics.UpdateWorker(new WorkerHealth(
-                WorkerHealthState.Faulted,
-                null,
-                null,
-                error.Message));
-            throw;
+                WorkerHealthState.Faulted, null, null, error.Message));
         }
         finally
         {
@@ -439,193 +369,10 @@ public sealed partial class App : Application
         }
     }
 
-    private static WorkerHealth ReadyHealth(HandshakeResponse handshake) => new(
-        WorkerHealthState.Ready,
-        handshake.WorkerVersion,
-        handshake.ProtocolVersion,
-        null);
-
-    private void RecordMilestone(
-        DiagnosticsViewModel diagnostics,
-        string name,
-        TimeSpan elapsed)
-    {
-        diagnostics.RecordMilestone(name, elapsed);
-        _startupMilestones.TryAdd(name, elapsed.TotalSeconds);
-    }
-
-    private void FlushStartupTrace()
-    {
-        string? tracePath = Environment.GetEnvironmentVariable("VIBEOCR_STARTUP_TRACE");
-        if (string.IsNullOrWhiteSpace(tracePath))
-        {
-            return;
-        }
-
-        string fullPath = Path.GetFullPath(tracePath);
-        Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
-        File.AppendAllText(
-            fullPath,
-            JsonSerializer.Serialize(_startupMilestones) + Environment.NewLine);
-    }
-
-    private static async Task<(Process Process, WorkerHostClient Client, HandshakeResponse Handshake)>
-        StartWorkerAsync(PortableLayout layout, CancellationToken cancellationToken)
-    {
-        Process? process = null;
-        WorkerHostClient? client = null;
-        try
-        {
-            string pipeName = $@"\\.\pipe\VibeOCR-{Guid.NewGuid():D}";
-            string token = Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(32));
-            var startInfo = new ProcessStartInfo
-            {
-                FileName = PortableLayout.ResolvePythonExecutable(layout),
-                WorkingDirectory = layout.InstallRoot,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-            };
-            startInfo.ArgumentList.Add("-m");
-            startInfo.ArgumentList.Add("vibeocr.worker_host.main");
-            startInfo.ArgumentList.Add("--pipe");
-            startInfo.ArgumentList.Add(pipeName);
-            startInfo.ArgumentList.Add("--token");
-            startInfo.ArgumentList.Add(token);
-            startInfo.ArgumentList.Add("--profile");
-            startInfo.ArgumentList.Add(layout.Profile);
-            startInfo.ArgumentList.Add("--parent-pid");
-            startInfo.ArgumentList.Add(Environment.ProcessId.ToString());
-            string workerRoot = ResolveWorkerRoot(layout);
-            // Use TryGetValue: ProcessStartInfo.Environment indexer throws
-            // KeyNotFoundException for missing keys, which would abort worker
-            // launch before Process.Start is ever reached.
-            startInfo.Environment.TryGetValue("PYTHONPATH", out string? existingPythonPath);
-            startInfo.Environment["PYTHONPATH"] = string.IsNullOrWhiteSpace(existingPythonPath)
-                ? workerRoot
-                : workerRoot + Path.PathSeparator + existingPythonPath;
-            // Force unbuffered stdout/stderr so the worker.ready line (and any
-            // import-time errors) reach this process immediately instead of
-            // sitting in Python's internal buffer behind non-flushed print()s.
-            startInfo.Environment["PYTHONUNBUFFERED"] = "1";
-            startInfo.Environment["PYTHONIOENCODING"] = "utf-8";
-            process = Process.Start(startInfo)
-                ?? throw new InvalidOperationException("Failed to start WorkerHost.");
-            AppLog.Info($"Worker launched: PID={process.Id} pipe={pipeName}");
-            // Stream stderr line-by-line to the dev log so Python tracebacks and
-            // logging output are visible in real time. The accumulated text is kept
-            // so it can still be appended to a fault message on failure.
-            StringBuilder stderrAccumulator = new();
-            Task stderrTask = Task.Run(async () =>
-            {
-                try
-                {
-                    while (await process.StandardError.ReadLineAsync(cancellationToken) is { } errLine)
-                    {
-                        stderrAccumulator.AppendLine(errLine);
-                        AppLog.Info($"[worker] {errLine}");
-                    }
-                }
-                catch (OperationCanceledException) { }
-                catch (InvalidOperationException) { /* stream closed */ }
-            }, cancellationToken);
-
-            // The worker prints worker.ready only AFTER importing PaddlePaddle /
-            // PyTorch / PyMuPDF inside WorkerServiceComposition. Under winui-dev the
-            // repository .venv pays this cold-import cost on the first launch, which
-            // routinely exceeds the previous 10s budget and surfaced as a silent
-            // "not connected" fault. Give dev a far more generous budget; production
-            // keeps the tight bound because the packaged layout is warm-imported.
-            TimeSpan readinessBudget = layout.Profile == "winui-dev"
-                ? TimeSpan.FromSeconds(90)
-                : TimeSpan.FromSeconds(10);
-            using var readinessTimeout = CancellationTokenSource.CreateLinkedTokenSource(
-                cancellationToken);
-            readinessTimeout.CancelAfter(readinessBudget);
-            string? readyLine;
-            try
-            {
-                readyLine = await ReadReadyLineAsync(
-                    process.StandardOutput,
-                    readinessTimeout.Token);
-            }
-            catch (OperationCanceledException) when (readinessTimeout.IsCancellationRequested)
-            {
-                throw new InvalidDataException(
-                    $"WorkerHost did not publish worker.ready within {(int)readinessBudget.TotalSeconds}s. "
-                    + $"stderr: {await SafeReadAsync(stderrAccumulator)}");
-            }
-
-            if (process.HasExited && string.IsNullOrEmpty(readyLine))
-            {
-                throw new InvalidDataException(
-                    $"WorkerHost exited (code {process.ExitCode}) before publishing worker.ready. "
-                    + $"stderr: {await SafeReadAsync(stderrAccumulator)}");
-            }
-
-            using JsonDocument ready = JsonDocument.Parse(
-                readyLine ?? throw new InvalidDataException(
-                    $"WorkerHost produced no ready output. stderr: {await SafeReadAsync(stderrAccumulator)}"));
-            if (ready.RootElement.GetProperty("event").GetString() != "worker.ready")
-            {
-                throw new InvalidDataException(
-                    $"WorkerHost published an invalid ready event: {readyLine}. "
-                    + $"stderr: {await SafeReadAsync(stderrAccumulator)}");
-            }
-
-            client = await WorkerHostClient.ConnectAsync(
-                pipeName,
-                token,
-                TimeSpan.FromSeconds(10),
-                TimeSpan.FromSeconds(30),
-                cancellationToken);
-            HandshakeResponse handshake = await client.CallAsync<HandshakeRequest, HandshakeResponse>(
-                RpcMethods.Handshake,
-                new HandshakeRequest
-                {
-                    AppVersion = typeof(App).Assembly.GetName().Version?.ToString() ?? "0.0.0",
-                    ProtocolVersion = ProtocolConstants.Version,
-                    MaxMessageBytes = FrameCodec.DefaultMaxFrameBytes,
-                    MaxSharedPayloadBytes = 256L << 20,
-                },
-                cancellationToken);
-            if (handshake.ProtocolVersion != ProtocolConstants.Version)
-            {
-                throw new ProtocolContractException(
-                    $"Worker protocol v{handshake.ProtocolVersion} is incompatible.");
-            }
-
-            return (process, client, handshake);
-        }
-        catch
-        {
-            if (client is not null)
-            {
-                await client.DisposeAsync();
-            }
-
-            if (process is { HasExited: false })
-            {
-                process.Kill(entireProcessTree: true);
-            }
-
-            process?.Dispose();
-            throw;
-        }
-    }
-
-    /// <summary>
-    /// Returns the stderr accumulated so far by the background relay task,
-    /// without blocking the fault path.
-    /// </summary>
-    private static Task<string> SafeReadAsync(StringBuilder accumulator) =>
-        Task.FromResult(accumulator.Length == 0 ? "(empty)" : accumulator.ToString());
-
-    public static string ResolveWorkerRoot(PortableLayout layout)
+    private static string ResolveSupervisorRoot(PortableLayout layout)
     {
         string packaged = Path.Combine(layout.InstallRoot, "worker");
-        if (Directory.Exists(Path.Combine(packaged, "vibeocr", "worker_host")))
+        if (Directory.Exists(Path.Combine(packaged, "vibeocr", "supervisor")))
         {
             return packaged;
         }
@@ -636,54 +383,58 @@ public sealed partial class App : Application
             if (repository is not null)
             {
                 string source = Path.Combine(repository, "src");
-                if (Directory.Exists(Path.Combine(source, "vibeocr", "worker_host")))
+                if (Directory.Exists(Path.Combine(source, "vibeocr", "supervisor")))
                 {
                     return source;
+                }
+                // Also check packages layout.
+                string backendPkg = Path.Combine(repository, "packages", "vibeocr-backend", "src");
+                if (Directory.Exists(Path.Combine(backendPkg, "vibeocr", "supervisor")))
+                {
+                    return backendPkg;
                 }
             }
         }
 
-        throw new DirectoryNotFoundException(
-            $"WorkerHost package is missing under {packaged}.");
+        return layout.InstallRoot;
+    }
+
+    private static void WriteSoakResult(bool requested, bool recovered, string? error = null)
+    {
+        string? resultPath = Environment.GetEnvironmentVariable("VIBEOCR_SOAK_RESULT");
+        if (string.IsNullOrWhiteSpace(resultPath)) return;
+        string fullPath = Path.GetFullPath(resultPath);
+        Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
+        File.WriteAllText(fullPath, JsonSerializer.Serialize(new { crash_requested = requested, recovered, error }));
+    }
+
+    private void WriteHealthSignal()
+    {
+        if (string.IsNullOrWhiteSpace(_startupHealthFile)) return;
+        string fullPath = Path.GetFullPath(_startupHealthFile);
+        Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
+        File.WriteAllText(fullPath, JsonSerializer.Serialize(new { status = "healthy", pid = Environment.ProcessId, timestamp = DateTimeOffset.UtcNow }));
+    }
+
+    private void RecordMilestone(DiagnosticsViewModel diagnostics, string name, TimeSpan elapsed)
+    {
+        diagnostics.RecordMilestone(name, elapsed);
+        _startupMilestones.TryAdd(name, elapsed.TotalSeconds);
+    }
+
+    private void FlushStartupTrace()
+    {
+        string? tracePath = Environment.GetEnvironmentVariable("VIBEOCR_STARTUP_TRACE");
+        if (string.IsNullOrWhiteSpace(tracePath)) return;
+        string fullPath = Path.GetFullPath(tracePath);
+        Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
+        File.AppendAllText(fullPath, JsonSerializer.Serialize(_startupMilestones) + Environment.NewLine);
     }
 
     public static bool CanStartWorker(IEnumerable<PrerequisiteStatus> prerequisites) =>
-        prerequisites.Any(item =>
-            item.Kind == PrerequisiteKind.PythonRuntime && item.IsInstalled);
+        prerequisites.Any(item => item.Kind == PrerequisiteKind.PythonRuntime && item.IsInstalled);
 
-    private async Task StopWorkerAsync()
-    {
-        WorkerHostClient? client = Interlocked.Exchange(ref _workerClient, null);
-        if (client is not null)
-        {
-            _workerGateway.Detach(client);
-            await client.DisposeAsync();
-        }
-
-        Process? process = Interlocked.Exchange(ref _workerProcess, null);
-        if (process is { HasExited: false })
-        {
-            process.Kill(entireProcessTree: true);
-        }
-
-        process?.Dispose();
-    }
-
-    private static async Task<string?> ReadReadyLineAsync(
-        StreamReader reader,
-        CancellationToken cancellationToken)
-    {
-        for (int attempt = 0; attempt < 20; attempt++)
-        {
-            string? line = await reader.ReadLineAsync(cancellationToken);
-            if (line is null || line.TrimStart().StartsWith('{'))
-            {
-                return line;
-            }
-        }
-
-        return null;
-    }
+    private async Task StopWorkerAsync() { await Task.CompletedTask; }
 
     private void OnAppWindowClosing(AppWindow sender, AppWindowClosingEventArgs args)
     {
@@ -708,7 +459,8 @@ public sealed partial class App : Application
                 _windowLayoutStore.Save(geometry);
             }
             await StopWorkerAsync();
-            await _workerGateway.DisposeAsync();
+            await _inferenceGateway.DisposeAsync();
+            _supervisorProcess?.Dispose();
             await DisposeDesktopShellAsync();
         }
         finally

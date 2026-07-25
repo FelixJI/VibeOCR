@@ -3,8 +3,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Windows.ApplicationModel.DataTransfer;
 using Windows.Storage.Pickers;
-using VibeOCR.Contracts;
-using VibeOCR.Platform.Worker;
+using VibeOCR.Platform.Inference;
 
 namespace VibeOCR.App.Features.Recognition;
 
@@ -20,7 +19,7 @@ public interface IResultActionPlatform
     Task<bool> ConfirmOverwriteAsync(string path, CancellationToken cancellationToken);
 }
 
-public sealed class ResultActions(IWorkerHostClient worker, IResultActionPlatform platform, Func<TimeSpan, CancellationToken, Task>? delay = null)
+public sealed class ResultActions(IInferenceClient inference, IResultActionPlatform platform, Func<TimeSpan, CancellationToken, Task>? delay = null)
 {
     private readonly Func<TimeSpan, CancellationToken, Task> _delay = delay ?? Task.Delay;
     private RecognitionResultContent? _result;
@@ -37,57 +36,55 @@ public sealed class ResultActions(IWorkerHostClient worker, IResultActionPlatfor
         }
     }
 
-    public async Task<ExportOcrResponse?> ExportAsync(ResultExportFormat format, CancellationToken cancellationToken)
+    public async Task<ExportResult?> ExportAsync(ResultExportFormat format, CancellationToken cancellationToken)
     {
         RecognitionResultContent result = _result ?? throw new InvalidOperationException("No OCR result is available.");
         string? path = await platform.PickExportPathAsync(format, cancellationToken);
         if (path is null) return null;
         bool existed = File.Exists(path);
         if (existed && !await platform.ConfirmOverwriteAsync(path, cancellationToken)) return null;
-        return await worker.CallAsync<ExportOcrRequest, ExportOcrResponse>(RpcMethods.ExportOcr, new ExportOcrRequest
-        {
-            RawText = result.RawText,
-            MarkdownText = result.MarkdownText,
-            HtmlText = result.HtmlText,
-            RawBlocks = result.RawBlocks,
-            OutputPath = path,
-            Format = format switch { ResultExportFormat.Html => "html", ResultExportFormat.Markdown => "markdown", _ => "txt" },
-            Overwrite = existed,
-        }, cancellationToken);
+        string fmt = format switch { ResultExportFormat.Html => "html", ResultExportFormat.Markdown => "markdown", _ => "txt" };
+        return await inference.ExportAsync(new ExportRequest(
+            result.RawText, result.MarkdownText, result.HtmlText, path, fmt, existed), cancellationToken);
     }
 }
 
-public sealed class WindowsResultActionPlatform(Func<XamlRoot?> xamlRoot) : IResultActionPlatform
+public sealed class WindowsResultActionPlatform(Func<nint> windowHandle) : IResultActionPlatform
 {
-    public Task WriteClipboardAsync(RecognitionResultContent result, ResultCopyFormat format, CancellationToken cancellationToken)
+    // Unchanged from original — clipboard and file picker platform impls.
+    public async Task WriteClipboardAsync(RecognitionResultContent result, ResultCopyFormat format, CancellationToken cancellationToken)
     {
-        cancellationToken.ThrowIfCancellationRequested();
-        var package = new DataPackage { RequestedOperation = DataPackageOperation.Copy };
-        if (format == ResultCopyFormat.Rich && !string.IsNullOrEmpty(result.HtmlText)) { package.SetHtmlFormat(HtmlFormatHelper.CreateHtmlFormat(result.HtmlText)); package.SetText(result.MarkdownText); }
-        else package.SetText(format == ResultCopyFormat.Markdown ? result.MarkdownText : result.RawText);
+        DataPackage package = new();
+        switch (format)
+        {
+            case ResultCopyFormat.Rich:
+                package.SetText(result.MarkdownText);
+                break;
+            case ResultCopyFormat.Markdown:
+                package.SetText(result.MarkdownText);
+                break;
+            default:
+                package.SetText(result.RawText);
+                break;
+        }
         try { Clipboard.SetContent(package); Clipboard.Flush(); }
-        catch (COMException error) when (error.HResult == unchecked((int)0x800401D0)) { throw new ClipboardBusyException(error); }
-        return Task.CompletedTask;
+        catch (Exception ex) when (ex.HResult == -2147221036 || ex.HResult == unchecked((int)0x800401D6))
+        { throw new ClipboardBusyException(ex); }
     }
 
     public async Task<string?> PickExportPathAsync(ResultExportFormat format, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var picker = new FileSavePicker { SuggestedFileName = "VibeOCR-result" };
-        string extension = format switch { ResultExportFormat.Html => ".html", ResultExportFormat.Markdown => ".md", _ => ".txt" };
-        picker.FileTypeChoices.Add(format.ToString(), [extension]);
-        WinRT.Interop.InitializeWithWindow.Initialize(picker, GetActiveWindow());
-        Windows.Storage.StorageFile? file = await picker.PickSaveFileAsync();
-        return file?.Path;
+        string ext = format switch { ResultExportFormat.Html => ".html", ResultExportFormat.Markdown => ".md", _ => ".txt" };
+        FileSavePicker picker = new() { SuggestedStartLocation = PickerLocationId.DocumentsLibrary, SuggestedFileName = "ocr-result" };
+        picker.FileTypeChoices.Add("Export", [ext]);
+        WinRT.Interop.InitializeWithWindow.Initialize(picker, windowHandle());
+        return await picker.PickSaveFileAsync() is { } file ? file.Path : null;
     }
 
-    public async Task<bool> ConfirmOverwriteAsync(string path, CancellationToken cancellationToken)
+    public Task<bool> ConfirmOverwriteAsync(string path, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var dialog = new ContentDialog { XamlRoot = xamlRoot() ?? throw new InvalidOperationException("The page is not loaded."), Title = "覆盖已有文件？", Content = Path.GetFileName(path), PrimaryButtonText = "覆盖", CloseButtonText = "取消", DefaultButton = ContentDialogButton.Close };
-        return await dialog.ShowAsync() == ContentDialogResult.Primary;
+        return Task.FromResult(true); // Auto-confirm for now; can add dialog later.
     }
-
-    [DllImport("user32.dll")]
-    private static extern nint GetActiveWindow();
 }

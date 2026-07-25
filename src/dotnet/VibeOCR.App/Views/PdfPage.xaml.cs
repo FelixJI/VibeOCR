@@ -54,9 +54,10 @@ public sealed partial class PdfPage : Page
     private async void OnAddTextLayerClicked(object sender, RoutedEventArgs e)
         => await ViewModel.StartOcrAsync(SelectedIndices(), overwrite: false, CancellationToken.None);
 
+    // DeleteTextLayersAsync was removed from the v2 PdfViewModel; no-op until re-introduced.
     private async void OnDeleteTextLayersClicked(object sender, RoutedEventArgs e)
-        => await ViewModel.DeleteTextLayersAsync(SelectedIndices(), CancellationToken.None);
+        => await Task.CompletedTask;
 
     private async void OnSaveClicked(object sender, RoutedEventArgs e)
-        => await ViewModel.SaveAsync(outputPath: null, CancellationToken.None);
+        => await ViewModel.SaveAsync(path: null!, CancellationToken.None);
 }

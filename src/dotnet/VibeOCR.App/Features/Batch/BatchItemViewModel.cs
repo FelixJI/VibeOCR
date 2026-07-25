@@ -1,6 +1,5 @@
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
-using VibeOCR.Contracts;
 
 namespace VibeOCR.App.Features.Batch;
 

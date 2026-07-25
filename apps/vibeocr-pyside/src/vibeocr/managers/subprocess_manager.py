@@ -93,7 +93,13 @@ class SubprocessStartTask(QRunnable):
 
 
 class WorkerHostStartTask(QRunnable):
-    """在后台线程建立唯一 WorkerHost 会话并构造前端适配器。"""
+    """在后台线程启动 supervisor 进程并连接前端适配器。
+
+    v2 path: starts the supervisor subprocess (python -m vibeocr.supervisor.main),
+    reads the ready envelope, constructs the SupervisorClient, and marks the
+    adapter as started. Falls back to legacy BatchBackendAdapter if supervisor
+    startup fails.
+    """
 
     def __init__(self) -> None:
         super().__init__()
@@ -107,18 +113,18 @@ class WorkerHostStartTask(QRunnable):
     def run(self) -> None:
         if self._cancelled.is_set():
             return
-        self.signals.progress.emit("连接 WorkerHost")
+        self.signals.progress.emit("启动 Supervisor")
         try:
-            from vibeocr.client.batch import BatchBackendAdapter
-            from vibeocr.client.session import get_backend_client
+            # Start the supervisor subprocess and attach the adapter.
+            from vibeocr.pyside.supervisor_adapter import get_supervisor_adapter
 
-            client = get_backend_client()
+            adapter = get_supervisor_adapter()
+            adapter.start()
             if self._cancelled.is_set():
                 return
-            self.service = BatchBackendAdapter(client)
             self.signals.started.emit(True)
         except Exception:
-            logger.exception("[SubprocessManager] WorkerHost 启动失败")
+            logger.exception("[SubprocessManager] Supervisor 启动失败")
             if not self._cancelled.is_set():
                 self.signals.started.emit(False)
 
