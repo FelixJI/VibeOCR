@@ -11,6 +11,7 @@ import asyncio
 import base64
 import threading
 import time
+from datetime import timedelta
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
@@ -148,15 +149,69 @@ async def test_response_hook_logs_unconsumed_stream(monkeypatch) -> None:
     response = httpx.Response(
         200,
         headers={"content-length": "4"},
-        request=httpx.Request("GET", "http://127.0.0.1:9000/v2/events"),
+        request=httpx.Request(
+            "POST",
+            "http://127.0.0.1:9000/v2/events",
+            stream=httpx.ByteStream(b"request"),
+        ),
         stream=httpx.ByteStream(b"data"),
     )
+    response.elapsed = timedelta(milliseconds=25)
 
     await client._log_http_response(response)
 
     assert captured["stream"] is True
     assert captured["response_bytes"] == 4
     assert captured["status_code"] == 200
+    assert captured["elapsed_ms"] == 25
+
+
+async def test_client_lifecycle_health_and_utility_calls() -> None:
+    client = SupervisorClient(
+        base_url="http://127.0.0.1:9000/",
+        session_token="test",
+        instance_id="test",
+    )
+    assert client.base_url == "http://127.0.0.1:9000"
+    with pytest.raises(RuntimeError, match="async context manager"):
+        client._require_client()
+
+    async with client as entered:
+        assert entered is client
+        assert client._require_client() is not None
+    assert client._client is None
+
+    class StubHttpClient:
+        async def get(self, path, **_kwargs):
+            assert path == "/v2/health"
+            return httpx.Response(
+                200,
+                json={"ready": True},
+                request=httpx.Request("GET", f"http://127.0.0.1:9000{path}"),
+            )
+
+        async def post(self, path, **_kwargs):
+            payload = (
+                {"path": "out.md"}
+                if path == "/v2/export"
+                else {"codes": [{"text": "decoded"}]}
+            )
+            return httpx.Response(
+                200,
+                json=payload,
+                request=httpx.Request("POST", f"http://127.0.0.1:9000{path}"),
+            )
+
+    client._client = StubHttpClient()  # type: ignore[assignment]
+    assert await client.health() == {"ready": True}
+    assert await client.export_ocr(
+        raw_text="raw",
+        markdown_text="md",
+        html_text="<p>html</p>",
+        output_path="out.md",
+        fmt="markdown",
+    ) == {"path": "out.md"}
+    assert await client.decode_qrcode(b"png") == [{"text": "decoded"}]
 
 
 # ---------------------------------------------------------------------------

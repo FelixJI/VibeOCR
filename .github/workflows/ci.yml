@@ -134,3 +134,4 @@ jobs:
             --ignore=tests/test_soak_winui.py `
             --ignore=tests/test_upgrade_deps.py `
             tests/ -q
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
