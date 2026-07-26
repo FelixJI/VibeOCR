@@ -3,6 +3,7 @@
 ## [0.6.0] - 2026-07-26
 
 ### Added
+- feat(ui): 状态栏固定展示服务、管道驻留、当前任务与最近结果，识别结果补充文本框、低置信数量和耗时
 - feat(supervisor): complete job interface migration and diagnostics
 - feat(logging): HTTP 日志增加中文状态说明、耗时、请求/响应数据量与敏感查询参数脱敏
 - feat(inference-supervisor): 完成 Phase 8 迁移 — 删除 legacy、v2 为两端默认路径
@@ -13,6 +14,8 @@
 - feat(worker_host): 新增 OCR HTTP worker，替代 SHM/PDF IPC 通信
 
 ### Fixed
+- fix(pdf): 文字层删除及批量变更完成后从权威模型同步格子状态，避免旋转、插页、删页、重排等终态不刷新
+- fix(logging): Supervisor/PDF HTTP 响应日志兼容未消费的流式响应，避免 response hook 抛出 StreamError
 - fix(pdf): 删除文字层返回空页索引时安全刷新，避免 `None` 参与页码比较
 - fix(ocr_service_subprocess): set_pipeline_ttls 改为尽力而为，锁占用时快速失败
 - fix(ocr_service): paddle 自带 CUDA runtime 时不再混入 torch/lib 避免 DLL 冲突
@@ -20,6 +23,7 @@
 - fix(mineru): 模型探测/下载命令补 -m all，消除交互 prompt 误报
 
 ### Changed
+- perf(ocr): 单批解码像素预算从 48MP 提升到 64MP，A4 300 DPI 页面通常可按 7+7+2 传输
 - test: 补 worker_host/client/pdf_backend 低覆盖区测试（第七批）
 - test: 补 html_tables/cpu_info 纯函数测试（第六批）
 - test: 补 ocr_service staticmethod 纯逻辑测试（第五批）
