@@ -170,6 +170,7 @@ class TestOcrCheckLeafModules:
         """应覆盖 paddlex[ocr] 关键 leaf 包（表格识别爆炸的根因包）"""
         pkgs = set(OCR_CHECK_LEAF_MODULES.values())
         expected = {
+            "beautifulsoup4",
             "einops",
             "ftfy",
             "latex2mathml",
@@ -187,6 +188,10 @@ class TestOcrCheckLeafModules:
     def test_sklearn_import_name_differs_from_package(self):
         """scikit-learn 的 import 名是 sklearn（与 pip 包名不同）"""
         assert OCR_CHECK_LEAF_MODULES["sklearn"] == "scikit-learn"
+
+    def test_bs4_import_name_differs_from_package(self):
+        """beautifulsoup4 的 import 名是 bs4。"""
+        assert OCR_CHECK_LEAF_MODULES["bs4"] == "beautifulsoup4"
 
     def test_no_version_constraints(self):
         """包名不应含版本约束（清单只表达'检测哪些'）"""

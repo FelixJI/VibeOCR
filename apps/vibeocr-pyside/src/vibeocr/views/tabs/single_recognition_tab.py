@@ -5,7 +5,7 @@ import logging
 import threading
 import time
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 from PySide6.QtCore import QBuffer, QTimer, Signal, Slot
 from PySide6.QtGui import QGuiApplication, QImage, QPixmap
@@ -30,7 +30,6 @@ from vibeocr.widgets.preprocess_options_widget import PreprocessOptionsWidget
 from vibeocr.widgets.preview_widget import PreviewWidget
 from vibeocr.widgets.result_view_widget import ResultViewWidget
 from vibeocr.widgets.text_block_options_widget import TextBlockOptionsWidget
-from vibeocr.worker_host.sync_client import SyncBackendError
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +68,7 @@ class SingleRecognitionTab(BaseOcrTab):
         # 异步识别协程的 Task 引用，用于忙时串行与关闭时取消。None 表示当前
         # 没有识别在进行。忙时状态同时由基类 _is_processing 反映（驱动按钮禁用）。
         self._recognize_task: asyncio.Task | None = None
+        self._active_ocr_options: Any = None
         self._native_call_events: set[threading.Event] = set()
         self._native_call_events_lock = threading.Lock()
         self._image_load_jobs = GenerationImageJobs(self)
@@ -159,7 +159,7 @@ class SingleRecognitionTab(BaseOcrTab):
         self._text_options_widget = TextBlockOptionsWidget()
         right_layout.addWidget(self._text_options_widget)
 
-        self._result_widget = ResultViewWidget()
+        self._result_widget = ResultViewWidget(utility_client=self._backend)
         right_layout.addWidget(self._result_widget, stretch=1)
 
         right_panel.setMinimumWidth(300)
@@ -522,6 +522,7 @@ class SingleRecognitionTab(BaseOcrTab):
             options = self._build_options_from_ui()
 
         pipeline_val = options.pipeline.value
+        self._active_ocr_options = options
 
         # QPixmap 只在 GUI 线程访问；先生成脱离的 QImage 快照，
         # PNG 编码和后端 RPC 都在异步任务内执行。
@@ -612,18 +613,20 @@ class SingleRecognitionTab(BaseOcrTab):
     async def _prepare_image_and_run_async(
         self, image: QImage, pipeline_val: str
     ):
-        return await self._run_tracked_native_async(
-            self._prepare_image_and_run_sync, image, pipeline_val
+        payload = await self._run_tracked_native_async(
+            self._qimage_to_png_bytes, image
         )
+        return await self._recognize_payload_async(payload, pipeline_val)
 
     def _prepare_image_and_run_sync(self, image: QImage, pipeline_val: str):
         payload = self._qimage_to_png_bytes(image)
         return self._call_backend_recognize(payload, pipeline_val)
 
     async def _read_file_and_run_async(self, path: Path, pipeline_val: str):
-        return await self._run_tracked_native_async(
-            self._read_file_and_run_sync, path, pipeline_val
+        payload = await self._run_tracked_native_async(
+            path.read_bytes
         )
+        return await self._recognize_payload_async(payload, pipeline_val)
 
     def _read_file_and_run_sync(self, path: Path, pipeline_val: str):
         return self._call_backend_recognize(path.read_bytes(), pipeline_val)
@@ -636,9 +639,56 @@ class SingleRecognitionTab(BaseOcrTab):
         不阻塞 qasync loop。失败重试逻辑（restart backend）封装在同步方法内部，
         无需在此重复。
         """
-        return await self._run_tracked_native_async(
-            self._call_backend_recognize, payload, pipeline_val
+        return await self._recognize_payload_async(payload, pipeline_val)
+
+    async def _recognize_payload_async(
+        self, payload: bytes, pipeline_val: str
+    ):
+        # Explicitly injected sync backends and instance-level test seams stay
+        # off the GUI thread. Production uses only the public supervisor adapter.
+        if (
+            self._backend is not None
+            or "_call_backend_recognize" in self.__dict__
+        ):
+            return await self._run_tracked_native_async(
+                self._call_backend_recognize, payload, pipeline_val
+            )
+
+        from vibeocr.contracts.pipelines import (
+            OCRPipeline,
+            get_pipeline_supported_options,
         )
+        from vibeocr.models import ocr_result_from_payload
+        from vibeocr.protocol.v2 import PipelineSelection
+        from vibeocr.pyside.supervisor_adapter import get_supervisor_adapter
+
+        pipeline_id = (
+            "MinerU" if pipeline_val == "DOCUMENT_PARSING" else pipeline_val
+        )
+        try:
+            pipeline = OCRPipeline(pipeline_id)
+            allowed = set(get_pipeline_supported_options(pipeline))
+        except ValueError:
+            allowed = set()
+        raw_options = (
+            self._active_ocr_options.to_dict()
+            if self._active_ocr_options is not None
+            else {}
+        )
+        options = {
+            key: value
+            for key, value in raw_options.items()
+            if key in allowed and value is not None
+        }
+        entries = await get_supervisor_adapter().recognize(
+            [("input", None, payload)],
+            pipeline=PipelineSelection(pipeline_id, options=options),
+        )
+        if not entries or entries[0].error_code:
+            raise RuntimeError(
+                entries[0].error_code if entries else "识别结果缺失"
+            )
+        return ocr_result_from_payload(entries[0].payload)
 
     async def _run_tracked_native_async(self, operation, *args):
         """追踪无法随 asyncio Task 取消的 ``to_thread`` 原生调用。"""
@@ -653,7 +703,13 @@ class SingleRecognitionTab(BaseOcrTab):
                 self._native_call_finished.emit()
                 done_event.set()
 
-        return await asyncio.to_thread(invoke)
+        # ``run_ocr`` can be scheduled on a qasync loop that is installed but
+        # advanced in short ``run_until_complete`` steps (not continuously
+        # running).  The shared helper binds the concurrent future to that
+        # installed loop and also keeps the native call visible to shutdown.
+        from vibeocr.utils.qt_async import tracked_to_thread
+
+        return await tracked_to_thread(invoke)
 
     @Slot()
     def _on_native_call_finished(self) -> None:
@@ -729,7 +785,14 @@ class SingleRecognitionTab(BaseOcrTab):
             return any(not event.is_set() for event in self._native_call_events)
 
     def process_file(self, file_path: str) -> None:
-        """处理文件（由 MainWindow 调用，支持 PDF/Office/图片）"""
+        """处理文件（由 MainWindow 调用，支持 PDF/Office/图片）。
+
+        Attached-aware routing: when the supervisor adapter is started, route
+        image inputs through the v2 supervisor; otherwise use the legacy
+        backend. PDF/Office documents always use the legacy path (MinerU
+        document parsing is not yet on the v2 supervisor). Same safe
+        default-switch pattern as the WinUI ViewModels.
+        """
         if not self._accepting_new_input():
             logger.debug("识别进行中，忽略 process_file 请求")
             return
@@ -765,6 +828,7 @@ class SingleRecognitionTab(BaseOcrTab):
                 return
             self._run_ocr_with_file(path)
         else:
+            # Decode off-thread; run_ocr then submits one generic supervisor job.
             self._request_image_file_load(file_path, auto_recognize=True)
 
     def _run_ocr_with_data(self, data: bytes, mime_type: str, filename: str) -> None:
@@ -780,7 +844,7 @@ class SingleRecognitionTab(BaseOcrTab):
             return
 
         self._result_widget.clear()
-
+        self._active_ocr_options = self._preprocess_options.get_options()
         self._dispatch_recognize(data, "DOCUMENT_PARSING")
 
     def _run_ocr_with_file(self, path: Path) -> None:
@@ -789,41 +853,37 @@ class SingleRecognitionTab(BaseOcrTab):
             logger.debug("识别进行中，忽略新的文档识别请求")
             return
         self._result_widget.clear()
+        self._active_ocr_options = self._preprocess_options.get_options()
         self._dispatch_file_recognize(path, "DOCUMENT_PARSING")
 
-    # -- backend bridge (sync RPC over the exclusive WorkerHost) --------
-
-    def _ensure_backend(self):
-        """Lazily attach to the process-wide production BackendSession."""
-        if self._backend is None:
-            from vibeocr.client.session import get_backend_client
-
-            self._backend = get_backend_client()
-            return
-        start = getattr(self._backend, "start", None)
-        if callable(start):
-            start(profile="production", frontend_id="pyside")
+    # -- backend bridge (v2 supervisor only) --------
 
     def _call_backend_recognize(self, image_data: bytes, pipeline: str):
-        """Call ocr.recognize via RPC; restart worker on transient failure."""
-        self._ensure_backend()
-        backend = cast("Any", self._backend)
-        try:
-            return backend.recognize_sync(image_data, pipeline=pipeline)
-        except (SyncBackendError, ConnectionError, BrokenPipeError, EOFError):
-            # Worker died; restart once and retry.
-            if self._uses_shared_backend:
-                from vibeocr.client.session import restart_backend_client
+        """Test-only injected sync backend seam; production is async v2."""
+        if self._backend is None:
+            raise RuntimeError("no synchronous backend is attached")
+        return self._backend.recognize_sync(
+            image_data, pipeline=pipeline
+        )
 
-                self._backend = restart_backend_client()
-            else:
-                shutdown = getattr(self._backend, "shutdown", None)
-                if callable(shutdown):
-                    shutdown()
-                self._ensure_backend()
-            return cast("Any", self._backend).recognize_sync(
-                image_data, pipeline=pipeline
-            )
+    def recognize_via_supervisor(self, image_data: bytes, display_name: str = "image.png") -> int:
+        """Submit a one-element recognition job through the v2 supervisor.
+
+        Phase 7A path (coexists with the legacy sync path until the Phase 8
+        atomic switch). The image is submitted as a single-item recognition
+        job; results/cancel/progress arrive via the adapter's Qt signals on
+        the GUI thread. Returns the adapter generation for stale-result
+        scoping.
+
+        Callers connect to the adapter's ``recognition_result`` /
+        ``recognition_error`` / ``recognition_cancelled`` signals (filtered
+        by ``job_id``) instead of blocking on a synchronous return value.
+        """
+        from vibeocr.pyside.supervisor_adapter import get_supervisor_adapter
+
+        adapter = get_supervisor_adapter()
+        return adapter.submit_recognition([(display_name, None, image_data)])
+
 
     def _on_result_block_edited(self, index: int, new_text: str) -> None:
         """右侧结果块被编辑后同步更新数据模型。

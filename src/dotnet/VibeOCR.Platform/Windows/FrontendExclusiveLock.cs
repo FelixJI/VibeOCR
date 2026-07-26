@@ -12,14 +12,15 @@ namespace VibeOCR.Platform.Windows;
 /// exclusion uses a single Windows named Mutex shared by both frontends.
 /// Creating a Mutex is atomic and immune to exe renames, PID reuse and
 /// simultaneous-launch races; the OS releases it automatically when the
-/// frontend process exits or crashes, so no orphan WorkerHost can survive.
+/// frontend process exits or crashes. Supervisor process-tree ownership is
+/// enforced separately by the frontend's Job Object.
 /// </para>
 /// <para>
 /// This lock is distinct from the same-product single-instance Mutex
 /// (<c>Local\VibeOCR-{profile}</c>): the same-product lock forwards CLI args
 /// to the primary and activates it; this cross-product lock only prompts the
 /// user to quit the other product — it never forwards, activates, or connects
-/// to the other product's WorkerHost.
+/// to the other product's Supervisor.
 /// </para>
 /// <para>
 /// The Python <c>vibeocr.utils.frontend_exclusive_lock.FrontendExclusiveLock</c>
@@ -55,7 +56,7 @@ public sealed class FrontendExclusiveLock : IDisposable
     /// <see langword="true"/> when this process holds the exclusive lock (no
     /// other VibeOCR product is running). <see langword="false"/> means another
     /// product holds it; the caller must show the quit prompt and exit without
-    /// starting a WorkerHost.
+    /// starting a Supervisor.
     /// </summary>
     public bool IsAcquired => _acquired;
 

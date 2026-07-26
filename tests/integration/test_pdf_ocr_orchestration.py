@@ -12,11 +12,13 @@ from __future__ import annotations
 
 import itertools
 import time
-from unittest.mock import MagicMock
 
 import fitz
 import pytest
 
+from tests.fakes.sync_supervisor_job_client import (
+    FakeSyncSupervisorJobClient,
+)
 from vibeocr.managers.pdf_session_manager import PdfSessionManager
 from vibeocr.models.ocr_result import OCRResult, TextBlock
 
@@ -77,9 +79,13 @@ def _wait_until(qapp, condition, timeout=20.0):
 
 @pytest.fixture
 def manager(qapp):
-    mgr = PdfSessionManager(parent=qapp)
+    from vibeocr.services.pdf_backend_client import PdfBackendClient
+
+    pdf_client = PdfBackendClient()
+    mgr = PdfSessionManager(parent=qapp, client=pdf_client)
     yield mgr
     mgr.shutdown()
+    pdf_client.stop()
 
 
 def _make_ocr_result(text="识别文字", preproc_angle=0):
@@ -96,24 +102,10 @@ def _make_ocr_result(text="识别文字", preproc_angle=0):
     )
 
 
-def _make_mock_ocr_service(text="识别文字", preproc_angle=0):
-    """构造 mock OCR 服务,返回固定 OCRResult。
-
-    - recognize(单图):保留兼容(旧摆正路径曾用,现摆正已改走批量)。
-    - recognize_batch(批量):PDF 文字层 OCR 与自动摆正(auto_deskew)均用此批量
-      路径,按输入 images 数量返回等长列表(摆正只读 preproc_angle)。
-    """
-    service = MagicMock()
-    service.recognize = MagicMock(
-        return_value=_make_ocr_result(text, preproc_angle)
+def _make_fake_inference_client(text="识别文字", preproc_angle=0):
+    return FakeSyncSupervisorJobClient(
+        lambda _index, _request: _make_ocr_result(text, preproc_angle)
     )
-
-    def _batch_side_effect(images, options=None):
-        # 批量识别：按输入图像数量返回等长结果列表
-        return [_make_ocr_result(text, preproc_angle) for _ in images]
-
-    service.recognize_batch = MagicMock(side_effect=_batch_side_effect)
-    return service
 
 
 class TestOcrOrchestration:
@@ -130,8 +122,8 @@ class TestOcrOrchestration:
         _wait_signal(qapp, manager.load_done, timeout=15.0)
         qapp.processEvents()
 
-        mock_service = _make_mock_ocr_service(text="测试OCR")
-        manager.set_ocr_service(mock_service)
+        inference = _make_fake_inference_client(text="测试OCR")
+        manager.set_inference_client(inference)
 
         # 扫描件初始无 OCR 块
         assert len(session.pdf_document.pages[0].ocr_text_blocks) == 0
@@ -143,7 +135,7 @@ class TestOcrOrchestration:
         # OCR 完成后应有文字块(model 已刷新)
         assert len(session.pdf_document.pages[0].ocr_text_blocks) >= 1
         assert session.pdf_document.pages[0].ocr_text_blocks[0].text == "测试OCR"
-        assert mock_service.recognize_batch.called
+        assert len(inference.submit_calls) == 1
 
     def test_start_ocr_progress_emitted(self, manager, tmp_path, qapp):
         """OCR 期间应发 ocr_progress 信号，且进度单调递增、末值=页数×子步数。"""
@@ -153,7 +145,7 @@ class TestOcrOrchestration:
         _wait_signal(qapp, manager.load_done, timeout=15.0)
         qapp.processEvents()
 
-        manager.set_ocr_service(_make_mock_ocr_service())
+        manager.set_inference_client(_make_fake_inference_client())
         progress_values: list[int] = []
         determinate: list[tuple[int, int]] = []
         manager.ocr_progress.connect(
@@ -180,7 +172,7 @@ class TestOcrOrchestration:
         path = _make_scanned_pdf(tmp_path / "cancel.pdf", num_pages=1)
         manager.open_session(str(path))
         _wait_signal(qapp, manager.load_done, timeout=15.0)
-        manager.set_ocr_service(_make_mock_ocr_service())
+        manager.set_inference_client(_make_fake_inference_client())
         manager.start_ocr([0])
         worker = manager._ocr_worker
 
@@ -206,7 +198,9 @@ class TestDeskewOrchestration:
         _initial_rotation = session.pdf_document.pages[0].rotation  # 记录基线供人工排查
 
         # mock OCR 报告 90° 偏转
-        manager.set_ocr_service(_make_mock_ocr_service(preproc_angle=90))
+        manager.set_inference_client(
+            _make_fake_inference_client(preproc_angle=90)
+        )
         manager.auto_deskew_async([0])
         assert _wait_signal(qapp, manager.deskew_done, timeout=25.0)
         qapp.processEvents()
@@ -227,7 +221,9 @@ class TestDeskewOrchestration:
         _wait_signal(qapp, manager.load_done, timeout=15.0)
         qapp.processEvents()
 
-        manager.set_ocr_service(_make_mock_ocr_service(preproc_angle=0))
+        manager.set_inference_client(
+            _make_fake_inference_client(preproc_angle=0)
+        )
         summaries = []
         manager.deskew_done.connect(
             lambda sid, s: summaries.append(s)

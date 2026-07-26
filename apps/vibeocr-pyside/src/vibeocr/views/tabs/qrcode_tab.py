@@ -6,7 +6,7 @@ import logging
 import threading
 import time
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 from PIL import Image
 from PySide6.QtCore import Qt, QTimer, QUrl, Signal, Slot
@@ -45,7 +45,6 @@ from vibeocr.utils.export_jobs import (
     save_svg_operation,
 )
 from vibeocr.utils.image_jobs import GenerationImageJobs, decode_image_file
-from vibeocr.worker_host.sync_client import SyncBackendError
 
 logger = logging.getLogger(__name__)
 
@@ -745,58 +744,59 @@ class QrcodeTab(QWidget):
 
     # -- backend bridge (sync RPC over the exclusive WorkerHost) --------
 
-    def _ensure_backend(self) -> None:
-        """Start the WorkerHost on first use (lazy; idempotent).
-
-        Fakes injected for testing may not have ``start()``; skip in that case.
-        """
-        if self._backend is None:
-            from vibeocr.client.session import get_backend_client
-
-            self._backend = get_backend_client()
-            return
-        start = getattr(self._backend, "start", None)
-        if callable(start):
-            start(profile="production", frontend_id="pyside")
-
     def _call_backend_generate(self, text: str, options: dict) -> bytes:
-        self._ensure_backend()
-        backend = cast("Any", self._backend)
-        try:
-            return backend.generate_qrcode_sync(text, options=options)
-        except SyncBackendError:
-            # Worker died; restart once and retry.
-            if self._uses_shared_backend:
-                from vibeocr.client.session import restart_backend_client
-
-                self._backend = restart_backend_client()
-            else:
-                backend.shutdown()
-                self._ensure_backend()
-            return cast("Any", self._backend).generate_qrcode_sync(
-                text, options=options
-            )
+        """Generate QR via v2 supervisor."""
+        if self._backend is not None:
+            generate = getattr(self._backend, "generate_qrcode_sync", None)
+            if callable(generate):
+                return generate(text, options=options)
+        return self._generate_via_supervisor(text, options)
 
     def _call_backend_generate_svg(self, text: str, options: dict) -> str:
-        self._ensure_backend()
-        return cast("Any", self._backend).generate_qrcode_svg_sync(
-            text, options=options
-        )
+        """Generate SVG via an injected client or the v2 supervisor."""
+        if self._backend is not None:
+            generate = getattr(self._backend, "generate_qrcode_svg_sync", None)
+            if callable(generate):
+                return generate(text, options=options)
+        import base64
+
+        from vibeocr.pyside.supervisor_adapter import get_supervisor_adapter
+
+        client = get_supervisor_adapter().inference_sync_client
+        if client is None:
+            raise RuntimeError("supervisor utility client is unavailable")
+        return base64.b64decode(
+            client.generate_qrcode(text, fmt="svg", options=options)
+        ).decode("utf-8")
 
     def _call_backend_decode(self, image_bytes: bytes):
-        self._ensure_backend()
-        backend = cast("Any", self._backend)
-        try:
-            return backend.decode_qrcode_sync(image_bytes)
-        except SyncBackendError:
-            if self._uses_shared_backend:
-                from vibeocr.client.session import restart_backend_client
+        """Decode QR via v2 supervisor."""
+        return self._decode_via_supervisor(image_bytes)
 
-                self._backend = restart_backend_client()
-            else:
-                backend.shutdown()
-                self._ensure_backend()
-            return cast("Any", self._backend).decode_qrcode_sync(image_bytes)
+    def _generate_via_supervisor(self, text: str, options: dict) -> bytes:
+        """Generate QR via supervisor /v2/qrcode/generate (sync, in QThread)."""
+        import base64
+
+        from vibeocr.pyside.supervisor_adapter import get_supervisor_adapter
+
+        adapter = get_supervisor_adapter()
+        client = adapter.inference_sync_client
+        if client is None:
+            raise RuntimeError("supervisor utility client is unavailable")
+        fmt = "qrcode" if options.get("format", "qr") == "qr" else options.get("format", "qrcode")
+        return base64.b64decode(
+            client.generate_qrcode(text, fmt=fmt, options=options)
+        )
+
+    def _decode_via_supervisor(self, image_bytes: bytes):
+        """Decode QR via supervisor /v2/qrcode/decode (sync, in QThread)."""
+        from vibeocr.pyside.supervisor_adapter import get_supervisor_adapter
+
+        adapter = get_supervisor_adapter()
+        client = adapter.inference_sync_client
+        if client is None:
+            raise RuntimeError("supervisor utility client is unavailable")
+        return client.decode_qrcode(image_bytes)
 
     @staticmethod
     def _pil_to_png_bytes(img: Image.Image) -> bytes:
@@ -1185,7 +1185,6 @@ class QrcodeTab(QWidget):
             self._decode_result_list.addItem(item)
             self._decode_result_list.setItemWidget(item, hint)
             item.setSizeHint(hint.sizeHint())
-        else:
             for idx, r in enumerate(results, start=1):
                 safe_data = _escape_for_richtext(r.data)
                 widget = DecodeResultWidget(

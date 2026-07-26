@@ -35,6 +35,7 @@ from vibeocr.models.ocr_result import (
     normalize_bbox,
     normalize_content_list,
 )
+from vibeocr.utils.http_log import guess_response_size, log_http_response
 from vibeocr.utils.job_object import JobObjectGuard
 from vibeocr.utils.markdown_converter import markdown_to_html
 from vibeocr.utils.mime_types import mime_to_extension
@@ -125,10 +126,27 @@ class MinerUService(metaclass=SingletonMeta):
 
     def _check_api_running(self, url: str) -> bool:
         """检查 mineru-api 是否运行"""
+        request_url = f"{url}/health"
+        started = time.perf_counter()
         try:
-            resp = httpx.get(f"{url}/health", timeout=3)
+            resp = httpx.get(request_url, timeout=3)
+            log_http_response(
+                logger=_logger,
+                method="GET",
+                url=request_url,
+                status_code=resp.status_code,
+                reason=resp.reason_phrase,
+                elapsed_ms=(time.perf_counter() - started) * 1000,
+                response_bytes=guess_response_size(dict(resp.headers), resp.content),
+            )
             return resp.status_code == 200
-        except Exception:
+        except Exception as exc:
+            _logger.warning(
+                "[MinerU] GET %s failed after %.1f ms: %s",
+                request_url,
+                (time.perf_counter() - started) * 1000,
+                exc,
+            )
             return False
 
     def _find_free_port(self) -> int:
@@ -244,17 +262,32 @@ class MinerUService(metaclass=SingletonMeta):
             self._start_api()
 
     def _call_api(
-        self, data: bytes, filename: str, options: OCROptions | None = None
+        self,
+        data: bytes,
+        filename: str,
+        options: OCROptions | None = None,
+        *,
+        files: list[tuple[str, bytes]] | None = None,
     ) -> dict[str, Any]:
         """调用 mineru-api 的 /file_parse 端点
 
         Args:
-            data: 文件数据（bytes）
-            filename: 上传文件名（含扩展名）
+            data: 单个文件数据（bytes）。当 ``files`` 提供时本参数被忽略，
+                仅为保持向后兼容签名。
+            filename: 单个文件的上传文件名（含扩展名）。当 ``files`` 提供
+                时本参数被忽略。
             options: OCR 选项（含 backend 和 parse_method）
+            files: 可选的多文件上传列表 ``[(name, data), ...]``。提供时
+                以单次 HTTP 请求上传全部文件（同字段名 ``files`` 重复），
+                mineru-api 返回的 ``results`` 以文件 stem 为键。
 
         Returns:
-            API 响应字典
+            API 响应字典（多文件时 ``results`` 含多个 stem）
+
+        Note:
+            真实 mineru-api 是否接受单请求多文件在当前代码库尚未验证过。
+            若本地实测不支持，可在 :meth:`file_parse` 中降级为逐文件循环
+            （与 ``MinerUBatchService.batch_commit`` 的历史生产路径一致）。
         """
         self._ensure_api_running()
 
@@ -265,7 +298,14 @@ class MinerUService(metaclass=SingletonMeta):
             ",".join(options.lang_list) if options and options.lang_list else ""
         )
 
-        files = {"files": (filename, data)}
+        if files is not None:
+            # httpx 多文件上传：同一表单字段名重复出现即可。
+            upload = [("files", (name, payload)) for name, payload in files]
+            request_bytes = sum(len(payload) for _, payload in files)
+        else:
+            upload = {"files": (filename, data)}
+            request_bytes = len(data)
+        request_url = f"{self.__class__._api_url}/file_parse"
         params = {
             "return_md": "true",
             "return_content_list": "true",
@@ -302,14 +342,28 @@ class MinerUService(metaclass=SingletonMeta):
         for current_backend in backends_to_try:
             request_params = {**params, "backend": current_backend}
             _logger.debug(f"[MinerU] 使用后端: {current_backend}")
+            started = time.perf_counter()
             try:
                 resp = httpx.post(
-                    f"{self.__class__._api_url}/file_parse",
-                    files=files,
+                    request_url,
+                    files=upload,
                     data=request_params,
                     timeout=httpx.Timeout(
                         timeout=Constants.Timeout.MINERU_HTTP_TOTAL,
                         connect=Constants.Timeout.MINERU_HTTP_CONNECT,
+                    ),
+                )
+                log_http_response(
+                    logger=_logger,
+                    method="POST",
+                    url=request_url,
+                    status_code=resp.status_code,
+                    reason=resp.reason_phrase,
+                    elapsed_ms=(time.perf_counter() - started) * 1000,
+                    request_bytes=request_bytes,
+                    response_bytes=guess_response_size(
+                        dict(resp.headers),
+                        resp.content,
                     ),
                 )
             except httpx.TimeoutException as e:
@@ -365,6 +419,69 @@ class MinerUService(metaclass=SingletonMeta):
 
         api_result = self._call_api(data, filename, options)
         return self._build_ocr_result(api_result, filename, data=data)
+
+    def file_parse(
+        self,
+        files: list[tuple[str, bytes]],
+        *,
+        options: OCROptions | None = None,
+        backend: str | None = None,
+    ) -> dict[str, dict[str, Any]]:
+        """单次多文件解析，返回按上传文件名(stem)索引的 payload 字典。
+
+        供 supervisor 的 :class:`MinerUProcessAdapter.recognize_many` 调用：
+        一次 ``/file_parse`` 请求上传全部文件，再把 ``api_result["results"]``
+        （以文件 stem 为键）逐个构建为 :class:`OCRResult` 并序列化为 JSON-native
+        payload。键名 = 调用方传入的文件名 stem，调用方据此还原输入顺序。
+
+        Args:
+            files: ``[(filename, data), ...]``，文件名需全局唯一（adapter 已用
+                ``unique_stem`` 保证）。
+            options: OCR 选项。
+            backend: 可选 backend 覆盖（透传到 ``_call_api`` 的 options.backend）。
+
+        Returns:
+            ``{filename_stem: payload_dict}``。缺失 stem 不会出现在结果中，
+            调用方按位置把缺失项标记为空。
+        """
+        if not files:
+            return {}
+        # 把 backend 透传进 options（_call_api 从 options.backend 读取）。
+        effective_options = options
+        if backend is not None:
+            if effective_options is None:
+                from vibeocr.models.ocr_options import OCROptions as _Opt
+
+                effective_options = _Opt()
+            try:
+                effective_options.backend = backend
+            except Exception:  # pragma: no cover - defensive
+                pass
+
+        api_result = self._call_api(
+            b"",  # data/filename 在 files 分支被忽略
+            "multi.bin",
+            effective_options,
+            files=files,
+        )
+        results_map = api_result.get("results", {}) or {}
+        out: dict[str, dict[str, Any]] = {}
+        for filename, _data in files:
+            stem = Path(filename).stem
+            file_result = results_map.get(stem)
+            if file_result is None:
+                # mineru-api 可能用完整文件名而非 stem 作为键 —— 兼容两种形态。
+                file_result = results_map.get(filename)
+            if file_result is None:
+                continue
+            # 复用 _build_ocr_result：它按 stem 从 api_result["results"][stem] 取值，
+            # 所以这里用一个只含单 stem 的合成 api_result。
+            synthetic = {"results": {stem: file_result}}
+            ocr_result = self._build_ocr_result(synthetic, filename, data=None)
+            from vibeocr.models import ocr_result_to_payload
+
+            out[stem] = ocr_result_to_payload(ocr_result)
+        return out
 
     def _get_extension(self, mime_type: str) -> str:
         return mime_to_extension(mime_type) or ".pdf"

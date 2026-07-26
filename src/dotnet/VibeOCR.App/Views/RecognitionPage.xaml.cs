@@ -1,12 +1,13 @@
 using Microsoft.UI.Xaml;
+using VibeOCR.Platform.Inference;
 using Microsoft.UI.Xaml.Controls;
 using System.ComponentModel;
+using System.Runtime.InteropServices;
 using Windows.ApplicationModel.DataTransfer;
 using Windows.Storage;
 using VibeOCR.App.Features.Recognition;
 using VibeOCR.App.Services;
 using VibeOCR.App.Web;
-using VibeOCR.Platform.Worker;
 
 namespace VibeOCR.App.Views;
 
@@ -21,7 +22,7 @@ public sealed partial class RecognitionPage : Page
     public RecognitionPage(RecognitionViewModel viewModel)
     {
         ViewModel = viewModel ?? throw new ArgumentNullException(nameof(viewModel));
-        _resultActions = ViewModel.CreateResultActions(new WindowsResultActionPlatform(() => XamlRoot));
+        _resultActions = ViewModel.CreateResultActions(new WindowsResultActionPlatform(GetActiveWindow));
         _router = new WebMessageRouter();
         _previewHost = new PreviewHost(_router);
         _router.MessageReceived += OnWebMessageReceived;
@@ -153,7 +154,7 @@ public sealed partial class RecognitionPage : Page
     {
         try { await action(CancellationToken.None); PreviewBridgeStatus.Text = "结果操作完成"; }
         catch (InvalidOperationException) { PreviewBridgeStatus.Text = "请先完成识别"; }
-        catch (Exception error) when (error is WorkerRpcException or IOException or ClipboardBusyException) { PreviewBridgeStatus.Text = "结果操作失败，请重试"; }
+        catch (Exception error) when (error is InferenceClientException or IOException or ClipboardBusyException) { PreviewBridgeStatus.Text = "结果操作失败，请重试"; }
     }
 
     private Task RunResultActionAsync<T>(Func<CancellationToken, Task<T>> action) => RunResultActionAsync(async ct => { await action(ct); });
@@ -169,4 +170,7 @@ public sealed partial class RecognitionPage : Page
         IReadOnlyList<IStorageItem> items = await args.DataView.GetStorageItemsAsync();
         if (items.FirstOrDefault() is StorageFile file) await ViewModel.RecognizeDroppedFileAsync(file.Path, CancellationToken.None);
     }
+
+    [DllImport("user32.dll")]
+    private static extern nint GetActiveWindow();
 }

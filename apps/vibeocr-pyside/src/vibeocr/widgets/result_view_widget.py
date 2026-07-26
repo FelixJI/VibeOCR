@@ -1162,8 +1162,14 @@ class ResultViewWidget(QWidget):
     snapshot_ready = Signal(object, object)  # source result, OCRResultSnapshot
     snapshot_failed = Signal(object)  # source result
 
-    def __init__(self, parent: QWidget | None = None):
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        *,
+        utility_client: Any = None,
+    ):
         super().__init__(parent)
+        self._utility_client = utility_client
         self._current_result: Any = None
         self._current_snapshot: Any = None
         self._submission_snapshot: Any = None
@@ -1451,7 +1457,7 @@ class ResultViewWidget(QWidget):
             return
         from pathlib import Path
 
-        from vibeocr.client.export import get_output_filename
+        from vibeocr.client import get_output_filename
 
         filter_label = {
             "docx": "Word 文档 (*.docx)",
@@ -1468,7 +1474,7 @@ class ResultViewWidget(QWidget):
 
         def export(cancel_event, progress):
             return export_single_operation(
-                None, source_result, Path(path), fmt
+                self._utility_client, source_result, Path(path), fmt
             )(cancel_event, progress)
 
         job = ExportSaveJob(export)

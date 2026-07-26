@@ -93,6 +93,8 @@ def main() -> int:
         manifest = json.loads((root / "product-manifest.json").read_text(encoding="utf-8-sig"))
         if manifest.get("frontend") != "pyside":
             raise RuntimeError("product manifest frontend is not pyside")
+        if manifest.get("protocol_major") != 2:
+            raise RuntimeError("product manifest protocol_major is not 2")
         records = manifest.get("python_wheels", [])
         expected = {
             "vibeocr",
@@ -103,6 +105,9 @@ def main() -> int:
         }
         if {record.get("distribution") for record in records} != expected:
             raise RuntimeError("bound Python wheel set is incomplete")
+        records_by_distribution = {
+            str(record["distribution"]): record for record in records
+        }
         for record in records:
             bound = root / "backend" / str(record.get("file", ""))
             if not bound.is_file():
@@ -115,6 +120,30 @@ def main() -> int:
         actual = hashlib.sha256(wheel.read_bytes()).hexdigest()
         if actual != manifest.get("backend_sha256"):
             raise RuntimeError("bound backend wheel hash mismatch")
+        required_members = {
+            "vibeocr-backend": "vibeocr/supervisor/main.py",
+            "vibeocr-contracts-py": "vibeocr/protocol/v2/golden/golden.json",
+        }
+        for distribution, required_member in required_members.items():
+            record = records_by_distribution[distribution]
+            bound = root / "backend" / str(record["file"])
+            with zipfile.ZipFile(bound) as archive:
+                members = set(archive.namelist())
+            if required_member not in members:
+                raise RuntimeError(
+                    f"{distribution} wheel is missing {required_member}"
+                )
+            legacy = sorted(
+                member
+                for member in members
+                if member.startswith(
+                    ("vibeocr/worker_host/", "vibeocr/protocol/v1/")
+                )
+            )
+            if legacy:
+                raise RuntimeError(
+                    f"{distribution} wheel contains legacy runtime paths: {legacy}"
+                )
         if os.name == "nt":
             _verify_frozen_startup(root)
     return 0

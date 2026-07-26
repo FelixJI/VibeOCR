@@ -16,7 +16,9 @@ from pathlib import Path
 # v3：paddlex[ocr] leaf 包（einops/scipy/.../tokenizers 等 10 个）纳入
 # OCR_CHECK_LEAF_MODULES 检测，旧缓存（无这些 leaf key）必须失效重建，
 # 否则会被判为"已装"，掩盖便携安装中途失败导致的漏装（表格识别爆炸的根因）。
-CACHE_VERSION = 3
+# v4：补充 PaddleX[ocr] 当前必需的 beautifulsoup4（import 名 bs4）；
+# 旧 v3 缓存未检测该包，必须失效。
+CACHE_VERSION = 4
 
 # =============================================================================
 # cache.json Schema（权威定义——所有读写方必须遵守）

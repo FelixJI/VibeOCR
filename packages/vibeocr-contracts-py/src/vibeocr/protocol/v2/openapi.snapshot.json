@@ -1,0 +1,117 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "VibeOCR Inference Supervisor",
+    "version": "2.0.0",
+    "description": "Frozen HTTP v2 snapshot of the unified inference supervisor. Any breaking change requires a schema review and a golden update."
+  },
+  "servers": [{"url": "http://127.0.0.1:{port}", "variables": {"port": {"default": "0"}}}],
+  "components": {
+    "securitySchemes": {
+      "SessionToken": {"type": "http", "scheme": "bearer"}
+    }
+  },
+  "security": [{"SessionToken": []}],
+  "paths": {
+    "/v2/health": {
+      "get": {
+        "summary": "Supervisor health and capabilities",
+        "responses": {
+          "200": {
+            "description": "Health envelope",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Health"}}}
+          }
+        }
+      }
+    },
+    "/v2/jobs/recognition": {
+      "post": {
+        "summary": "Submit an image/document recognition job",
+        "requestBody": {"content": {"multipart/form-data": {"schema": {"$ref": "#/components/schemas/RecognitionManifest"}}}},
+        "responses": {
+          "202": {"description": "JobRef", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/JobRef"}}}}
+        }
+      }
+    },
+    "/v2/jobs/pdf-ocr": {
+      "post": {
+        "summary": "Submit page-level OCR for an open PDF session",
+        "requestBody": {"content": {"application/json": {"schema": {"$ref": "#/components/schemas/PdfOcrRequest"}}}},
+        "responses": {
+          "202": {"description": "JobRef", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/JobRef"}}}}
+        }
+      }
+    },
+    "/v2/jobs/{job_id}": {
+      "get": {
+        "summary": "Job status snapshot",
+        "parameters": [{"in": "path", "name": "job_id", "required": true, "schema": {"type": "string"}}],
+        "responses": {
+          "200": {"description": "JobSnapshot", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/JobSnapshot"}}}}
+        }
+      }
+    },
+    "/v2/jobs/{job_id}/events": {
+      "get": {
+        "summary": "Long-poll events after a sequence number",
+        "parameters": [
+          {"in": "path", "name": "job_id", "required": true, "schema": {"type": "string"}},
+          {"in": "query", "name": "after_sequence", "required": false, "schema": {"type": "integer", "minimum": 0}}
+        ],
+        "responses": {"200": {"description": "Ordered StageEvent list"}}
+      }
+    },
+    "/v2/jobs/{job_id}/result": {
+      "get": {
+        "summary": "Stable-ordered results (partial or final)",
+        "parameters": [{"in": "path", "name": "job_id", "required": true, "schema": {"type": "string"}}],
+        "responses": {"200": {"description": "Result list"}}
+      }
+    },
+    "/v2/jobs/{job_id}/cancel": {
+      "post": {
+        "summary": "Request cancellation; returns the actual cancel mode",
+        "parameters": [{"in": "path", "name": "job_id", "required": true, "schema": {"type": "string"}}],
+        "responses": {"200": {"description": "CancelAck"}}
+      }
+    },
+    "/v2/jobs/{job_id}/retry": {
+      "post": {
+        "summary": "Create a new job retrying failed/cancelled items only",
+        "parameters": [{"in": "path", "name": "job_id", "required": true, "schema": {"type": "string"}}],
+        "responses": {"202": {"description": "JobRef"}}
+      }
+    },
+    "/v2/jobs/{job_id}": {
+      "delete": {
+        "summary": "Release terminal job staging/results",
+        "parameters": [{"in": "path", "name": "job_id", "required": true, "schema": {"type": "string"}}],
+        "responses": {"204": {"description": "Released"}}
+      }
+    },
+    "/v2/runtime/residency": {
+      "get": {"summary": "Residency status", "responses": {"200": {"description": "ResidencyStatus"}}},
+      "put": {"summary": "Update global/per-pipeline TTL and pin", "responses": {"200": {"description": "ResidencyStatus"}}}
+    },
+    "/v2/runtime/release": {
+      "post": {"summary": "Release idle or specified models", "responses": {"200": {"description": "ResidencyStatus"}}}
+    },
+    "/v2/runtime/preload": {
+      "post": {"summary": "Preload selected pipelines", "responses": {"200": {"description": "ResidencyStatus"}}}
+    },
+    "/v2/settings": {
+      "get": {"summary": "Settings snapshot", "responses": {"200": {"description": "SettingsSnapshot"}}},
+      "put": {"summary": "Controlled settings update", "responses": {"200": {"description": "SettingsSnapshot"}}}
+    },
+    "/v2/qrcode/decode": {"post": {"summary": "Decode QR/barcode", "responses": {"200": {"description": "Decode result"}}}},
+    "/v2/qrcode/generate": {"post": {"summary": "Generate QR/barcode", "responses": {"200": {"description": "Image bytes"}}}}
+  },
+  "components_schemas_ref_only": {
+    "Health": {"schema_version": "integer", "instance_id": "string", "protocol_version": "integer", "ready": "boolean", "draining": "boolean", "capabilities": "string[]"},
+    "JobRef": {"job_id": "string", "schema_version": "integer", "instance_id": "string|null", "state": "JobState"},
+    "JobSnapshot": "see schemas/job.schema.json",
+    "RecognitionManifest": {"manifest": "object", "files": "UploadFile[]"},
+    "PdfOcrRequest": {"session_id": "string", "pages": "integer[]"},
+    "CancelAck": {"job_id": "string", "cancel_mode": "CancelMode"}
+  }
+}

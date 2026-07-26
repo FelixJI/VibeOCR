@@ -1,7 +1,12 @@
-"""PySide PDF 多文件会话管理器（WorkerHost 客户端版本）。
+"""PySide PDF 多文件会话管理器（supervisor HTTP v2 transport 版本）。
 
-管理 PdfSession 集合,通过 PdfBackendClient(httpx)调用 PDF 后端子进程,
-中转信号到 UI。fitz 调用全部在后端子进程,主进程零 fitz 直接访问。
+管理 PdfSession 集合,通过 SyncPdfSupervisorClient (httpx 经 supervisor
+HTTP v2 代理)调用 supervisor 拥有的 PDF 后端子进程,中转信号到 UI。fitz
+调用全部在后端子进程,主进程零 fitz 直接访问。
+
+GUI 不再实例化 PdfBackendClient (ADR §"Transport"; plan §6/§7A): supervisor
+是 PDF child 的唯一 owner。OCR/deskew 编排通过通用 job 接口完成
+渲染→submit/observe/command→写层。
 
 所有原有 Qt 信号签名保留不变,PdfTab 侧无需改信号连接。
 同步页操作(旋转/删除/插入/重排)改为异步:manager 发 *_async,完成后
@@ -33,7 +38,12 @@ from vibeocr.pyside.pdf_ipc_worker import (
     PdfIpcOpenWorker,
     PdfIpcPreviewWorker,
 )
-from vibeocr.services.pdf_backend_client import PdfBackendClient, PdfBackendError
+
+# Transport: the GUI no longer talks to the PDF child directly. It goes
+# through the supervisor HTTP v2 client (ADR §"Transport"; plan §6/§7A).
+# PdfBackendError is re-exported by the supervisor client for compat so
+# existing ``except PdfBackendError`` sites keep matching.
+from vibeocr.supervisor.pdf_client import PdfBackendError
 from vibeocr.utils import ocr_sidecar
 
 if TYPE_CHECKING:
@@ -98,7 +108,21 @@ class PdfSessionManager(QObject):
     close_done = Signal(str)
     close_failed = Signal(str, str)
 
-    def __init__(self, parent=None) -> None:
+    def __init__(
+        self,
+        parent=None,
+        *,
+        client: Any = None,
+        inference_client: Any = None,
+    ) -> None:
+        """Create the manager.
+
+        ``client`` is normally None in production: the transport is lazily
+        resolved from the global supervisor adapter on first use (see
+        :meth:`_ensure_client`). Tests that want to bypass the supervisor
+        (e.g. legacy integration tests that point at a real PDF backend child
+        directly, or unit tests with a fake client) pass it explicitly.
+        """
         super().__init__(parent)
         self._sessions: dict[str, PdfSession] = {}
         self._active_path: str | None = None
@@ -122,8 +146,10 @@ class PdfSessionManager(QObject):
         self._export_worker: QThread | None = None
         self._export_result_pending: list[str] | None = None
         self._export_error_pending: str | None = None
-        # OCR 编排状态(主进程:后端渲染 → 主进程 OCR → 后端写层)
-        self._ocr_service: Any | None = None
+        # OCR inference transport.  PDF rendering/editing uses the dedicated
+        # PDF session client, while rendered page bytes enter the same generic
+        # submit/observe/command job interface as Single and Batch.
+        self._inference_client: Any = inference_client
         self._pdf_settings: PdfGlobalSettings | None = None
         self._overwrite_text_layer: bool = False
         self._ocr_running: bool = False
@@ -137,13 +163,56 @@ class PdfSessionManager(QObject):
         self._pending_ocr_request: tuple[
             str, list[int], object, object, bool
         ] | None = None
-        self._client = PdfBackendClient.instance()
+        # PDF backend transport: lazily resolved from the supervisor adapter.
+        # The supervisor owns the PDF child process; we hold a
+        # SyncPdfSupervisorClient (vibeocr.supervisor.pdf_client) for the
+        # lifetime of the manager. ``self._client`` is a cached property —
+        # ``_ensure_client`` resolves it on first use so PDF tab construction
+        # does not require the supervisor to be up yet (lazy tab can build
+        # before SupervisorStartTask completes). Tests inject a client
+        # directly to bypass the supervisor.
+        self._client: Any = client
         # task generation：每类操作（OCR/mutate/export）启动时递增，
         # 信号携带 task_id，done 槽只接受当前代，避免旧任务的迟到信号
         # 清掉新任务状态（ABA/代际竞态）。
         self._task_generation: int = 0
         self._shutdown_stable_polls = 0
         self._shutdown_finalized = False
+
+    def _ensure_client(self) -> Any:
+        """Lazily resolve the SyncPdfSupervisorClient from the global adapter.
+
+        Returns the cached client; raises ``PdfBackendError`` if the
+        supervisor has not provided a PDF client factory (e.g. supervisor
+        startup failed or has not completed). Workers call this at the start
+        of each operation rather than holding a stale reference.
+        """
+        if self._client is not None:
+            return self._client
+        from vibeocr.pyside.supervisor_adapter import get_supervisor_adapter
+
+        client = get_supervisor_adapter().pdf_sync_client
+        if client is None:
+            raise PdfBackendError(
+                "PDF backend unavailable: supervisor not started or no PDF "
+                "client factory installed. Open the PDF tab after the OCR "
+                "backend finishes starting."
+            )
+        self._client = client
+        return client
+
+    def _ensure_inference_client(self) -> Any:
+        if self._inference_client is not None:
+            return self._inference_client
+        from vibeocr.pyside.supervisor_adapter import get_supervisor_adapter
+
+        client = get_supervisor_adapter().inference_sync_client
+        if client is None:
+            raise PdfBackendError(
+                "PDF OCR unavailable: supervisor generic job client is not ready"
+            )
+        self._inference_client = client
+        return client
 
     # ---- 属性 -----------------------------------------------------------
 
@@ -160,12 +229,132 @@ class PdfSessionManager(QObject):
     def get_session(self, file_path: str) -> PdfSession | None:
         return self._sessions.get(file_path)
 
-    def set_ocr_service(self, service: Any) -> None:
-        self._ocr_service = service
+    def set_inference_client(self, client: Any) -> None:
+        """Inject the generic sync job client (primarily for tests)."""
+        self._inference_client = client
 
     @property
     def is_ocr_ready(self) -> bool:
-        return self._ocr_service is not None
+        if self._inference_client is not None:
+            return True
+        try:
+            from vibeocr.pyside.supervisor_adapter import get_supervisor_adapter
+
+            adapter = get_supervisor_adapter()
+            return adapter.is_started and adapter.inference_sync_client is not None
+        except Exception:
+            return False
+
+    def _recognize_images_via_job(
+        self,
+        images: list[bytes],
+        ocr_options: Any,
+        *,
+        cancel_requested,
+    ) -> list[Any | None]:
+        """Run one transport chunk as a generic keyed supervisor job."""
+        import time
+        from uuid import uuid4
+
+        from vibeocr.contracts.pipelines import (
+            OCRPipeline,
+            get_pipeline_supported_options,
+        )
+        from vibeocr.models import ocr_result_from_payload
+        from vibeocr.protocol.v2 import (
+            TERMINAL_JOB_STATES,
+            ItemState,
+            JobCommand,
+            JobCommandKind,
+            JobKind,
+            JobPriority,
+            PipelineSelection,
+            SubmitItem,
+            SubmitRequest,
+        )
+
+        pipeline_value = getattr(
+            getattr(ocr_options, "pipeline", OCRPipeline.OCR),
+            "value",
+            getattr(ocr_options, "pipeline", OCRPipeline.OCR),
+        )
+        pipeline_id = str(pipeline_value)
+        try:
+            allowed = set(
+                get_pipeline_supported_options(OCRPipeline(pipeline_id))
+            )
+        except ValueError:
+            allowed = set()
+        raw_options = (
+            ocr_options.to_dict() if hasattr(ocr_options, "to_dict") else {}
+        )
+        options = {
+            key: value
+            for key, value in raw_options.items()
+            if key in allowed and value is not None
+        }
+        request_id = str(uuid4())
+        submit_items = tuple(
+            SubmitItem(
+                client_item_key=f"{request_id}:{index}",
+                ordinal=index,
+                display_name=f"page-{index}.png",
+                source={
+                    "type": "upload.v1",
+                    "attachment": f"page-{index}",
+                },
+            )
+            for index in range(len(images))
+        )
+        request = SubmitRequest(
+            request_id=request_id,
+            kind=JobKind.RECOGNITION,
+            priority=JobPriority.BACKGROUND,
+            pipeline=PipelineSelection(pipeline_id, options=options),
+            items=submit_items,
+        )
+        attachments = {
+            f"page-{index}": ("image/png", image)
+            for index, image in enumerate(images)
+        }
+        client = self._ensure_inference_client()
+        ref = client.submit(request, attachments)
+        last_sequence = 0
+        while True:
+            if cancel_requested():
+                client.command(
+                    JobCommand(
+                        command_id=str(uuid4()),
+                        kind=JobCommandKind.CANCEL,
+                        job_id=ref.job_id,
+                    )
+                )
+                return [None] * len(images)
+            update = client.observe(
+                ref.job_id, after_sequence=last_sequence
+            )
+            if update.snapshot.state in TERMINAL_JOB_STATES:
+                break
+            last_sequence = update.through_sequence
+            time.sleep(0.02)
+
+        # Re-observe from zero to obtain every terminal item outcome regardless
+        # of how many progress deltas the polling loop consumed.
+        final = client.observe(ref.job_id, after_sequence=0)
+        outcomes = {outcome.item_id: outcome for outcome in final.outcomes}
+        by_key = {item.client_item_key: item.item_id for item in ref.items}
+        results: list[Any | None] = []
+        for submit_item in submit_items:
+            outcome = outcomes.get(by_key.get(submit_item.client_item_key, ""))
+            if (
+                outcome is None
+                or outcome.state is not ItemState.SUCCEEDED
+                or outcome.payload is None
+            ):
+                results.append(None)
+            else:
+                results.append(ocr_result_from_payload(outcome.payload))
+        return results
 
     def get_modified_sessions(self) -> list[tuple[str, PdfSession]]:
         return [(p, s) for p, s in self._sessions.items() if s.is_modified]
@@ -205,9 +394,15 @@ class PdfSessionManager(QObject):
         )
 
     @property
-    def backend_client(self) -> PdfBackendClient:
-        """暴露 client 供 PdfTab 直接调渲染(缩略图/预览,这些是同步快调用)。"""
-        return self._client
+    def backend_client(self) -> Any:
+        """暴露 client 供 PdfTab 直接调渲染(缩略图/预览,这些是同步快调用)。
+
+        返回的是 :class:`~vibeocr.supervisor.pdf_client.SyncPdfSupervisorClient`
+        (supervisor HTTP v2 transport)。类型注解用 Any 以避免本模块顶层
+        import supervisor client (启动期重链)；PdfTab 只调 render_thumbnail /
+        render_preview 这两个同步方法。
+        """
+        return self._ensure_client()
 
     # ---- session lifecycle ---------------------------------------------
 
@@ -221,13 +416,14 @@ class PdfSessionManager(QObject):
             self.switch_session(file_path)
             return self._sessions[file_path]
         try:
-            self._client.start()
-            open_resp = self._client.open_session(file_path)
+            client = self._ensure_client()
+            client.start()
+            open_resp = client.open_session(file_path)
             session = self._make_session(
                 file_path, open_resp.session_id, open_resp.model
             )
             # 流式 load 逐页填充(同步,小文件可接受)
-            for ev in self._client.load_stream(open_resp.session_id):
+            for ev in client.load_stream(open_resp.session_id):
                 if ev.page_index is not None and ev.page_payload is not None:
                     self._apply_page_loaded(session, ev.page_index, ev.page_payload)
                 if ev.message == "done":
@@ -238,7 +434,7 @@ class PdfSessionManager(QObject):
             self.active_changed.emit(file_path)
             self.load_done.emit(file_path)
             return session
-        except PdfBackendError as e:
+        except Exception as e:
             logger.error("打开 %s 失败: %s", file_path, e)
             self.open_failed.emit(file_path, str(e))
             return None
@@ -257,7 +453,7 @@ class PdfSessionManager(QObject):
         self._cancel_open_worker()
         self._open_generation += 1
         generation = self._open_generation
-        worker = PdfIpcOpenWorker(self._client, new_paths)
+        worker = PdfIpcOpenWorker(self._ensure_client(), new_paths)
         worker.doc_opened.connect(
             lambda path, sid, model, w=worker, gen=generation: self._on_doc_opened_guarded(
                 path, sid, model, w, gen
@@ -486,7 +682,7 @@ class PdfSessionManager(QObject):
             started_ids = self._close_started_session_ids = set()
         if session_id in started_ids:
             return
-        worker = PdfIpcCloseWorker(self._client, session_id)
+        worker = PdfIpcCloseWorker(self._ensure_client(), session_id)
         started_ids.add(session_id)
         self._close_workers.add(worker)
         worker.completed.connect(
@@ -533,7 +729,7 @@ class PdfSessionManager(QObject):
             self._draining_preview_workers.add(old)
             old.cancel()
         worker = PdfIpcPreviewWorker(
-            self._client,
+            self._ensure_client(),
             session.session_id,
             page_index,
             generation,
@@ -616,7 +812,7 @@ class PdfSessionManager(QObject):
         # 递增 task generation，使旧 runner 的迟到信号被 done 槽丢弃
         self._task_generation += 1
         current_task_id = self._task_generation
-        worker = PdfIpcMutateWorker(self._client, session.session_id, op, params)
+        worker = PdfIpcMutateWorker(self._ensure_client(), session.session_id, op, params)
         worker._task_id = current_task_id  # type: ignore[attr-defined]
         worker.progress.connect(
             lambda sid, current, total, w=worker, tid=current_task_id: self._on_mutate_progress(
@@ -654,7 +850,7 @@ class PdfSessionManager(QObject):
     def _reset_backend_cancel(self, session_id: str, operation: str) -> None:
         """仅供 worker 线程调用的阻塞 IPC 边界。"""
         try:
-            self._client.reset_cancel(session_id)
+            self._ensure_client().reset_cancel(session_id)
         except Exception:
             logger.debug("%s reset_cancel 失败（忽略）", operation, exc_info=True)
 
@@ -675,7 +871,7 @@ class PdfSessionManager(QObject):
         return True
 
     def _request_backend_cancel_async(self, session_id: str) -> None:
-        worker = PdfIpcCancelWorker(self._client, session_id)
+        worker = PdfIpcCancelWorker(self._ensure_client(), session_id)
         workers = getattr(self, "_control_workers", None)
         if workers is None:
             workers = self._control_workers = set()
@@ -737,7 +933,7 @@ class PdfSessionManager(QObject):
         1. 后端渲染页 → 2. OCR 方向检测 → 3. 后端按角度旋转 + 文字层同步。
         """
         session = self.active_session
-        if session is None or self._ocr_service is None or self._shutting_down:
+        if session is None or not self.is_ocr_ready or self._shutting_down:
             return False
         if self._pdf_write_busy():
             return False
@@ -846,7 +1042,7 @@ class PdfSessionManager(QObject):
             )
             return
 
-        client = self._client
+        client = self._ensure_client()
         dpi = self._DESKEW_DPI
         batch_size = self._OCR_BATCH_SIZE
         substeps = self._OCR_PROGRESS_SUBSTEPS
@@ -886,17 +1082,24 @@ class PdfSessionManager(QObject):
             progress += len(batch_pages)  # 渲染子步
             _emit_progress()
 
-            # 阶段2：批量方向检测（单次 recognize_batch，跳过渲染失败的页）
+            # 阶段2：方向检测 job（跳过渲染失败的页）
             valid_indices = [i for i, png in enumerate(images) if png is not None]
             angles_map: dict[int, int] = {}
             if valid_indices and not runner._cancelled:
                 valid_images = [images[i] for i in valid_indices]  # type: ignore[list-item]
                 try:
-                    batch_results = self._ocr_service.recognize_batch(  # type: ignore[union-attr]
-                        valid_images, angle_opts
+                    batch_results = self._recognize_images_via_job(
+                        valid_images,
+                        angle_opts,
+                        cancel_requested=lambda: runner._cancelled,
                     )
                     for vi, res in zip(valid_indices, batch_results):
-                        angles_map[vi] = int(getattr(res, "preproc_angle", 0) or 0)
+                        if res is None:
+                            page_failed[vi] = True
+                        else:
+                            angles_map[vi] = int(
+                                getattr(res, "preproc_angle", 0) or 0
+                            )
                 except Exception as e:
                     logger.error(
                         "摆正批量方向检测失败(批起始页 %d): %s", batch_pages[0], e
@@ -1189,7 +1392,7 @@ class PdfSessionManager(QObject):
         if pdf_settings is None:
             pdf_settings = PdfGlobalSettings()
         session = self.active_session
-        if session is None or self._ocr_service is None:
+        if session is None or not self.is_ocr_ready:
             return False
 
         # OCR 会写入文字层，必须与通用 mutate 共用独占写门。
@@ -1271,7 +1474,7 @@ class PdfSessionManager(QObject):
             def __init__(self, mgr, sid, pages, opts, sdict, overwrite_, task_id):
                 super().__init__()
                 self._mgr = mgr
-                self._client = mgr._client
+                self._client = mgr._ensure_client()
                 self._sid = sid
                 self._pages = pages
                 self._opts = opts
@@ -1400,8 +1603,7 @@ class PdfSessionManager(QObject):
         - 渲染:线程池并发调 render_preview(后端 fitz_lock 串行化栅格化，
           PNG 编码并行)，结果按页序对齐；返回原始 PNG bytes，不在主进程解码
           （由 worker 子进程解码一次，避免 PNG 双重编解码，性能1）。
-        - 识别:recognize_batch() 一次 predict(list)，利用 PaddleOCR 内部
-          ImageBatchSampler 分批，省去每页重复管道开销。
+        - 识别:每个 transport chunk 提交一个逻辑 job；supervisor 负责计算微批。
         - 流水:当前批 OCR 时预取下一批渲染，重叠 PDF 栅格/PNG 与 GPU 计算。
         - 写层:整批 add_text_layer_batch，共享字体并一次增量落盘。
         """
@@ -1419,7 +1621,7 @@ class PdfSessionManager(QObject):
         pdf_settings = PdfGlobalSettings.from_dict(settings_dict or {})
         batch_budget = self._get_ocr_batch_budget()
         batch_size = batch_budget.max_items
-        client = self._client
+        client = self._ensure_client()
         # 进度按子步计：每页 渲染/识别/写层 各 1 步，total_steps = 页数 × 子步数。
         # 这样整批渲染/识别完成后进度也会推进，避免长时间静止被误判为卡死。
         substeps = self._OCR_PROGRESS_SUBSTEPS
@@ -1434,8 +1636,8 @@ class PdfSessionManager(QObject):
         def _render_page(idx: int) -> bytes | None:
             """按 PDF 设置渲染单页 → 原始 PNG bytes。
 
-            不在主进程解码为 ndarray：recognize_batch 的 IPC 路径对 bytes 输入
-            原样透传（_prepare_image_data:419-420），由 worker 子进程的 _to_ndarray
+            不在主进程解码为 ndarray：job upload 对 bytes 输入原样透传，
+            由 supervisor worker 的 _to_ndarray
             解码一次即可。省去主进程的 PNG 解码 + 重新 PNG 编码（性能1）。
             """
             try:
@@ -1523,11 +1725,16 @@ class PdfSessionManager(QObject):
                         },
                     )
                     try:
-                        batch_results = self._ocr_service.recognize_batch(  # type: ignore[union-attr]
-                            valid_images, opts
+                        batch_results = self._recognize_images_via_job(
+                            valid_images,
+                            opts,
+                            cancel_requested=lambda: runner._cancelled,
                         )
                         for vi, res in zip(transfer_indices, batch_results):
-                            results_map[vi] = res
+                            if res is None:
+                                page_failed[vi] = True
+                            else:
+                                results_map[vi] = res
                     except Exception as e:
                         logger.error(
                             "批量识别失败(render_batch=%d, transfer_batch=%d): %s",
@@ -1579,7 +1786,7 @@ class PdfSessionManager(QObject):
                         {key: value for key, value in item.items() if not key.startswith("_")}
                         for item in write_items
                     ]
-                    resp = self._client.add_text_layer_batch(
+                    resp = self._ensure_client().add_text_layer_batch(
                         session_id,
                         wire_items,
                         settings_dict,
@@ -1699,7 +1906,7 @@ class PdfSessionManager(QObject):
             try:
                 logger.info("[OCR] 存在未落盘批次，执行末尾保存")
                 runner.progress.emit(session_id, 0, 0)  # 不确定进度（SAVE 态）
-                self._client.save(
+                self._ensure_client().save(
                     session_id,
                     None,
                     settings_dict,
@@ -2055,7 +2262,7 @@ class PdfSessionManager(QObject):
                 dest = out / f"{stem}_{counter}{dest.suffix}"
             try:
                 settings_dict = self._settings_to_dict(self._pdf_settings)
-                self._client.save(
+                self._ensure_client().save(
                     session.session_id, path=str(dest), pdf_settings=settings_dict
                 )
                 exported.append(str(dest))
@@ -2080,7 +2287,7 @@ class PdfSessionManager(QObject):
             self.export_done.emit([])
             return
         settings_snapshot = self._settings_to_dict(self._pdf_settings)
-        client = self._client
+        client = self._ensure_client()
 
         class _ExportRunner(QThread):
             progress = Signal(int, int, str)

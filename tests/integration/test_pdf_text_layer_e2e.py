@@ -10,11 +10,15 @@
 from pathlib import Path
 
 import fitz
+import httpx
 import pytest
 
 from vibeocr.managers.pdf_session_manager import PdfSessionManager
 from vibeocr.models.ocr_result import OCRResult, TextBlock
 from vibeocr.services.pdf_service import PdfService
+from vibeocr.supervisor.app import create_app
+from vibeocr.supervisor.composition import build_supervisor
+from vibeocr.supervisor.pdf_client import SyncPdfSupervisorClient
 
 
 def _make_scanned_pdf(path, width=612, height=792):
@@ -32,10 +36,33 @@ def _make_scanned_pdf(path, width=612, height=792):
 
 
 @pytest.fixture
-def manager(qapp):
-    mgr = PdfSessionManager(parent=qapp)
-    yield mgr
-    mgr.shutdown()
+def manager(qapp, tmp_path):
+    """Exercise PDF editing through the migrated supervisor-owned transport."""
+    module, handle = build_supervisor(
+        stager_root=tmp_path / "supervisor-staging",
+        use_real_paddle=False,
+        use_mineru=False,
+        with_pdf_adapter=True,
+    )
+    app = create_app(module, handle.token)
+    client = SyncPdfSupervisorClient(
+        base_url="http://127.0.0.1",
+        session_token=handle.token,
+        instance_id=module.options.instance_id,
+    )
+    client._async._client = httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app),
+        base_url="http://127.0.0.1",
+        headers={"Authorization": f"Bearer {handle.token}"},
+    )
+    client._entered = True
+    mgr = PdfSessionManager(parent=qapp, client=client)
+    try:
+        yield mgr
+    finally:
+        mgr.shutdown()
+        client.close()
+        module.shutdown_now()
 
 
 class TestSingleSourceOfTruth:

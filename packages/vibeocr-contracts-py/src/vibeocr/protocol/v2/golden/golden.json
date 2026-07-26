@@ -1,0 +1,162 @@
+{
+  "version": 2,
+  "description": "Golden v2 protocol payloads frozen for Python ↔ C# cross-implementation agreement. Any change here MUST be reviewed: it changes the wire contract.",
+  "job_ref": {
+    "job_id": "11111111-1111-4111-8111-111111111111",
+    "schema_version": 2,
+    "instance_id": "sup-aabbccddee",
+    "state": "accepted",
+    "items": []
+  },
+  "job_snapshot_running": {
+    "job_id": "22222222-2222-4222-8222-222222222222",
+    "kind": "recognition",
+    "priority": "interactive",
+    "state": "running",
+    "schema_version": 2,
+    "instance_id": "sup-aabbccddee",
+    "created_at": "2026-07-24T10:00:00+00:00",
+    "started_at": "2026-07-24T10:00:01+00:00",
+    "finished_at": null,
+    "stage": "recognizing",
+    "progress_current": 1,
+    "progress_total": 3,
+    "items": [
+      {"item_id": "it-0", "display_name": "a.png", "state": "succeeded", "attempt": 0, "error": null, "client_item_key": null, "ordinal": 0, "source_item_id": null},
+      {"item_id": "it-1", "display_name": "b.png", "state": "running", "attempt": 0, "error": null, "client_item_key": null, "ordinal": 1, "source_item_id": null},
+      {"item_id": "it-2", "display_name": "c.png", "state": "queued", "attempt": 0, "error": null, "client_item_key": null, "ordinal": 2, "source_item_id": null}
+    ],
+    "summary": {"succeeded": 1, "failed": 0, "cancelled": 0, "total": 3},
+    "cancel_requested_at": null,
+    "cancel_mode": null,
+    "degraded": false,
+    "event_sequence": 4,
+    "result_available": false,
+    "request_id": null,
+    "source_job_id": null,
+    "pipeline": null
+  },
+  "job_snapshot_completed_with_errors": {
+    "job_id": "33333333-3333-4333-8333-333333333333",
+    "kind": "recognition",
+    "priority": "background",
+    "state": "completed_with_errors",
+    "schema_version": 2,
+    "instance_id": "sup-aabbccddee",
+    "created_at": "2026-07-24T11:00:00+00:00",
+    "started_at": "2026-07-24T11:00:01+00:00",
+    "finished_at": "2026-07-24T11:00:09+00:00",
+    "stage": "done",
+    "progress_current": 2,
+    "progress_total": 2,
+    "items": [
+      {"item_id": "it-0", "display_name": "ok.png", "state": "succeeded", "attempt": 0, "error": null, "client_item_key": null, "ordinal": 0, "source_item_id": null},
+      {"item_id": "it-1", "display_name": "bad.png", "state": "failed", "attempt": 2, "error": "OOM during predict", "client_item_key": null, "ordinal": 1, "source_item_id": null}
+    ],
+    "summary": {"succeeded": 1, "failed": 1, "cancelled": 0, "total": 2},
+    "cancel_requested_at": null,
+    "cancel_mode": null,
+    "degraded": true,
+    "event_sequence": 9,
+    "result_available": true,
+    "request_id": null,
+    "source_job_id": null,
+    "pipeline": null
+  },
+  "job_snapshot_cancelled": {
+    "job_id": "44444444-4444-4444-8444-444444444444",
+    "kind": "pdf_ocr",
+    "priority": "interactive",
+    "state": "cancelled",
+    "schema_version": 2,
+    "instance_id": "sup-aabbccddee",
+    "created_at": "2026-07-24T12:00:00+00:00",
+    "started_at": "2026-07-24T12:00:01+00:00",
+    "finished_at": "2026-07-24T12:00:04+00:00",
+    "stage": "cancelled",
+    "progress_current": 1,
+    "progress_total": 5,
+    "items": [
+      {"item_id": "page-0", "display_name": "page 1", "state": "succeeded", "attempt": 0, "error": null, "client_item_key": null, "ordinal": 0, "source_item_id": null},
+      {"item_id": "page-1", "display_name": "page 2", "state": "cancelled", "attempt": 0, "error": null, "client_item_key": null, "ordinal": 1, "source_item_id": null}
+    ],
+    "summary": {"succeeded": 1, "failed": 0, "cancelled": 1, "total": 2},
+    "cancel_requested_at": "2026-07-24T12:00:03+00:00",
+    "cancel_mode": "cooperative",
+    "degraded": false,
+    "event_sequence": 6,
+    "result_available": true,
+    "request_id": null,
+    "source_job_id": null,
+    "pipeline": null
+  },
+  "error_validation": {
+    "schema_version": 2,
+    "instance_id": "sup-aabbccddee",
+    "code": "VALIDATION_ERROR",
+    "message": "The request was malformed or failed schema validation.",
+    "category": "validation",
+    "retryable": false,
+    "detail": {"field": "files"},
+    "job_id": null
+  },
+  "error_oom": {
+    "schema_version": 2,
+    "instance_id": "sup-aabbccddee",
+    "code": "OUT_OF_MEMORY",
+    "message": "A GPU/host out-of-memory condition occurred; recovery may shrink the batch.",
+    "category": "oom",
+    "retryable": true,
+    "detail": {"device": 0},
+    "job_id": "33333333-3333-4333-8333-333333333333"
+  },
+  "error_cancelled": {
+    "schema_version": 2,
+    "instance_id": "sup-aabbccddee",
+    "code": "CANCELLED",
+    "message": "The job or item was cancelled.",
+    "category": "cancelled",
+    "retryable": false,
+    "detail": {},
+    "job_id": "44444444-4444-4444-8444-444444444444"
+  },
+  "residency_status": {
+    "schema_version": 2,
+    "default_ttl_seconds": 300,
+    "entries": [
+      {
+        "pipeline": "OCR",
+        "kind": "soft_ttl",
+        "active_leases": 1,
+        "remaining_ttl_seconds": 240,
+        "estimated_vram_mb": 1200,
+        "eviction_reason": "none"
+      },
+      {
+        "pipeline": "MinerU",
+        "kind": "pinned",
+        "active_leases": 0,
+        "remaining_ttl_seconds": null,
+        "estimated_vram_mb": 800,
+        "eviction_reason": "none"
+      }
+    ],
+    "pipelines": [
+      {"name": "OCR", "ttl_seconds": null, "pinned": false},
+      {"name": "MinerU", "ttl_seconds": 600, "pinned": false}
+    ],
+    "vram_total_mb": 24576,
+    "vram_used_mb": 2000
+  },
+  "settings_snapshot": {
+    "schema_version": 2,
+    "residency": {
+      "default_ttl_seconds": 300,
+      "pipelines": [
+        {"name": "OCR", "ttl_seconds": null, "pinned": false},
+        {"name": "MinerU", "ttl_seconds": 600, "pinned": false}
+      ]
+    },
+    "extra": {}
+  }
+}

@@ -275,7 +275,14 @@ class AsyncTaskRunner:
                         pass
 
         loop = _get_running_or_set_loop()
-        task = loop.create_task(wrapped())
+        wrapped_coro = wrapped()
+        try:
+            task = loop.create_task(wrapped_coro)
+        except Exception:
+            wrapped_coro.close()
+            if not started:
+                coro.close()
+            raise
 
         def _close_unstarted_coroutine(completed: asyncio.Task) -> None:
             # A task can be cancelled before wrapped() receives its first tick.

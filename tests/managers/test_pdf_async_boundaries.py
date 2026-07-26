@@ -9,6 +9,9 @@ from unittest.mock import MagicMock
 import pytest
 from PySide6.QtCore import QThread
 
+from tests.fakes.sync_supervisor_job_client import (
+    FakeSyncSupervisorJobClient,
+)
 from tests.qt_responsiveness import assert_qt_event_loop_responsive
 from vibeocr.ipc.schemas import ModelDiff, PdfDocumentMirror, PdfPageInfoMirror
 from vibeocr.models.pdf_document import PdfDocument, PdfPageInfo
@@ -52,7 +55,7 @@ def test_slow_mineru_preflight_keeps_event_loop_responsive(
 
     monkeypatch.setattr("vibeocr.env_manager.ensure_mineru_models", slow_prepare)
     monkeypatch.setattr(manager, "_is_mineru_first_use", lambda _opts: True)
-    manager._ocr_service = object()
+    manager._inference_client = object()
 
     assert manager.start_ocr([0], ocr_options=object()) is True
     qtbot.waitUntil(entered.is_set)
@@ -378,7 +381,7 @@ def test_preflight_late_success_is_ignored_after_shutdown(manager, qtbot, monkey
 
     monkeypatch.setattr("vibeocr.env_manager.ensure_mineru_models", slow_prepare)
     monkeypatch.setattr(manager, "_is_mineru_first_use", lambda _opts: True)
-    manager._ocr_service = object()
+    manager._inference_client = object()
     run_ocr = MagicMock()
     monkeypatch.setattr(manager, "_run_ocr", run_ocr)
 
@@ -520,8 +523,12 @@ def test_deskew_get_model_runs_in_worker_and_returns_diff(manager, qtbot):
     main_thread = threading.get_ident()
     get_model_threads: list[int] = []
     manager._sessions[manager._active_path] = _session(pages=1)
-    manager._ocr_service = SimpleNamespace(
-        recognize_batch=lambda _images, _options: [SimpleNamespace(preproc_angle=0)]
+    manager._inference_client = FakeSyncSupervisorJobClient(
+        lambda _index, _request: SimpleNamespace(
+            raw_text="",
+            text_blocks=[],
+            preproc_angle=0,
+        )
     )
     manager._client.render_preview.return_value = b"png"
 

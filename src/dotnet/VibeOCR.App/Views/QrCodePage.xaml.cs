@@ -1,7 +1,6 @@
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using VibeOCR.App.Features.QrCode;
-using VibeOCR.Contracts;
 
 namespace VibeOCR.App.Views;
 
@@ -45,9 +44,9 @@ public sealed partial class QrCodePage : Page
 
     private async void OnSaveClicked(object sender, RoutedEventArgs args)
     {
-        SharedPayloadRef? image = ViewModel.GeneratedImage;
-        if (image is null) return;
-        await _saveCommands.SaveAsync(image, "qrcode.png", CancellationToken.None);
+        string? base64 = ViewModel.GeneratedImageBase64;
+        if (string.IsNullOrEmpty(base64)) return;
+        await _saveCommands.SaveAsync(base64, "qrcode.png", CancellationToken.None);
     }
 
     private void OnPivotSelectionChanged(object sender, SelectionChangedEventArgs e)

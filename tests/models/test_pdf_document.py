@@ -77,6 +77,10 @@ class TestPdfDocument:
         assert doc.get_page(1) is p1
         assert doc.get_page(2) is None
 
+    def test_get_page_accepts_missing_page_index(self):
+        doc = PdfDocument(file_path="sample.pdf", pages=[])
+        assert doc.get_page(None) is None
+
     def test_page_count(self):
         doc = PdfDocument(pages=[PdfPageInfo(page_index=i) for i in range(5)])
         assert doc.page_count == 5

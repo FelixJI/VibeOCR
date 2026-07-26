@@ -1,7 +1,7 @@
 [project]
 name = "vibeocr-backend"
 version = "0.5.6"
-description = "UI-free VibeOCR WorkerHost runtime"
+description = "UI-free VibeOCR inference Supervisor runtime"
 requires-python = ">=3.13,<3.14"
 dependencies = [
     "vibeocr-client-py==0.5.6",
@@ -38,7 +38,7 @@ gpu-cu126 = [
 ]
 
 [project.scripts]
-vibeocr-worker = "vibeocr.worker_host.main:main"
+vibeocr-supervisor = "vibeocr.supervisor.main:main"
 
 [build-system]
 requires = ["hatchling>=1.0.0"]

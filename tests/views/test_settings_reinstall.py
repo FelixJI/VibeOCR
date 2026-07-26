@@ -3,10 +3,29 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
+from PySide6.QtCore import QObject, Signal
 from PySide6.QtWidgets import QWidget
 
 from vibeocr.ui.ui_main_window import Ui_MainWindowWidget
 from vibeocr.views.settings_page_controller import SettingsPageController
+
+
+class _ImmediateInvalidationEmitter(QObject):
+    invalidation_finished = Signal(bool, str)
+
+
+def _immediate_invalidation_manager() -> MagicMock:
+    manager = MagicMock()
+    emitter = _ImmediateInvalidationEmitter()
+    manager._test_invalidation_emitter = emitter
+    manager.invalidation_finished = emitter.invalidation_finished
+
+    def invalidate_supervisor() -> bool:
+        emitter.invalidation_finished.emit(True, "")
+        return True
+
+    manager.invalidate_supervisor.side_effect = invalidate_supervisor
+    return manager
 
 
 @pytest.fixture
@@ -66,8 +85,6 @@ def controller(qtbot, tmp_path):
                     "PaddleOCR-VL": 300,
                 }
             ),
-            get_preload_pipelines=MagicMock(return_value=[]),
-            get_preload_enabled=MagicMock(return_value=False),
         )
 
         ctrl = SettingsPageController(
@@ -75,7 +92,7 @@ def controller(qtbot, tmp_path):
             project_root=tmp_path,
             status_callback=lambda msg: None,
             ocr_ready_callback=lambda: True,
-            subprocess_manager=MagicMock(),
+            subprocess_manager=_immediate_invalidation_manager(),
         )
         ctrl.connect_signals()
     return ctrl, host

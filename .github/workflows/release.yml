@@ -5,7 +5,7 @@
 #
 # 依赖策略：CI 不跑完整 uv sync（会拉数 GB 的 paddle/torch CUDA 包），
 # 而是安装 hash-pinned 的质量/构建壳依赖。正式产物由 .NET publish +
-# UI-free WorkerHost source staging 组成，不再发布 PyInstaller/PySide6 UI。
+# UI-free Supervisor + protocol-v2 staging 组成，不再发布 PyInstaller/PySide6 UI。
 
 name: Release
 
@@ -131,7 +131,7 @@ jobs:
       - name: Validate Python migration and release gates
         shell: pwsh
         run: |
-          python -m pytest tests/contracts tests/worker_host tests/migration tests/parity tests/release_layout tests/application/test_pdf_ocr_orchestrator.py tests/test_compare_release_metrics.py tests/test_startup_metrics.py tests/test_collect_startup_metrics.py tests/test_soak_winui.py tests/test_update_replacer.py tests/test_bump_version.py -q
+          python -m pytest tests/contracts/v2 tests/supervisor tests/migration tests/parity tests/release_layout tests/application/test_pdf_ocr_orchestrator.py tests/test_compare_release_metrics.py tests/test_startup_metrics.py tests/test_collect_startup_metrics.py tests/test_soak_winui.py tests/test_update_replacer.py tests/test_bump_version.py -q
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Validate Python style

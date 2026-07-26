@@ -21,8 +21,9 @@ public sealed partial class SettingsPage : Page
     private async void OnRefreshClicked(object sender, RoutedEventArgs e)
         => await ViewModel.LoadSnapshotAsync(CancellationToken.None);
 
+    // switch-backend is not yet exposed by the Supervisor-backed ViewModel.
     private async void OnSwitchBackendClicked(object sender, RoutedEventArgs e)
-        => await ViewModel.SwitchBackendAsync(ViewModel.PendingBackend, CancellationToken.None);
+        => await Task.CompletedTask;
 
     // 以下从 AboutPage 迁移而来（可工作的 handler，保留绑定）：
     private void OnApplyHotkeyClicked(object sender, RoutedEventArgs e) => Shell.ApplyHotkey();

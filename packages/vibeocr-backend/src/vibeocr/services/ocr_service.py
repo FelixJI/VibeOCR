@@ -636,8 +636,8 @@ class OCRService(metaclass=SingletonMeta):
         必须通过 os.add_dll_directory() 注册。同时更新 PATH 环境变量，
         确保推理引擎（Paddle Inference）也能找到 CUDA DLL。
 
-        覆盖来源与 :meth:`_setup_cuda_dll_path` 一致：``nvidia/*`` 包 +
-        ``torch/lib``（后者提供 paddle 所需的 CUDA 12 运行时，见该方法说明）。
+        覆盖来源与 :meth:`_setup_cuda_dll_path` 一致：``nvidia/*`` 包，并且
+        仅在 Paddle 未自带 CUDA runtime 时回退到 ``torch/lib``。
 
         此方法必须在 PaddlePaddle 导入完成后调用，否则会触发 PaddlePaddle
         内部的路径错误。
@@ -670,10 +670,19 @@ class OCRService(metaclass=SingletonMeta):
                             if sub.is_dir():
                                 _register(arch_dir)
 
-        # 2) torch/lib（CUDA 12 + cuDNN 9 全套，paddle GPU 运行时来源）
-        torch_lib = Path(site_packages) / "torch" / "lib"
-        if torch_lib.is_dir():
-            _register(torch_lib)
+        # 2) torch/lib fallback。Paddle 自带 CUDA 时禁止混入不同版本的
+        # Torch runtime，否则后续加载 torch/shm.dll 可能触发 WinError 127。
+        paddle_has_cuda = False
+        try:
+            import paddle.version  # type: ignore[import-untyped]
+
+            paddle_has_cuda = bool(getattr(paddle.version, "cuda", lambda: None)())
+        except Exception:
+            pass
+        if not paddle_has_cuda:
+            torch_lib = Path(site_packages) / "torch" / "lib"
+            if torch_lib.is_dir():
+                _register(torch_lib)
 
     @staticmethod
     def _get_project_root():
@@ -747,6 +756,7 @@ class OCRService(metaclass=SingletonMeta):
             with self._lock:
                 if pipeline_name not in self._pipelines:  # 双重检查
                     self._setup_cuda_dll_path()
+                    self.cache_manager.prepare_load(pipeline_name)
                     _logger.debug(
                         "[get_or_create_pipeline] 创建管道 %s，已加载管道: %s",
                         pipeline_name,
@@ -780,13 +790,9 @@ class OCRService(metaclass=SingletonMeta):
                     _logger.debug(
                         "[get_or_create_pipeline] 管道 %s 创建完成", pipeline_name
                     )
-        # 记录使用时间 + 容量管理（重管道 FIFO 淘汰）
+        # 记录使用时间；容量已在加载前由 prepare_load 原子腾出。
         try:
             self.cache_manager.touch(pipeline_name)
-            from vibeocr.core.pipelines import get_heavy_pipelines
-
-            if pipeline_name in {p.value for p in get_heavy_pipelines()}:
-                self.cache_manager.enforce_capacity(pipeline_name)
         except Exception as e:
             _logger.debug("[get_or_create_pipeline] cache_manager 操作失败: %s", e)
         return self._pipelines[pipeline_name]

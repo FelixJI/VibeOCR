@@ -1,3 +1,4 @@
+using System.Text.Json;
 using VibeOCR.App.ViewModels;
 using VibeOCR.Platform.Bootstrap;
 using Xunit;
@@ -22,7 +23,7 @@ public sealed class ShellTests
     }
 
     [Fact]
-    public void WorkerStartupOnlyRequiresItsPythonRuntime()
+    public void SupervisorStartupOnlyRequiresItsPythonRuntime()
     {
         var pythonReady = new PrerequisiteReport(
         [
@@ -35,8 +36,8 @@ public sealed class ShellTests
             new(PrerequisiteKind.PythonRuntime, false, null, "3.13", "repair://vibeocr/python-runtime"),
         ]);
 
-        Assert.True(App.CanStartWorker(pythonReady.Items));
-        Assert.False(App.CanStartWorker(pythonMissing.Items));
+        Assert.True(App.CanStartSupervisor(pythonReady.Items));
+        Assert.False(App.CanStartSupervisor(pythonMissing.Items));
     }
 
     [Theory]
@@ -50,18 +51,18 @@ public sealed class ShellTests
         Assert.Throws<ArgumentException>(() => AppLaunchOptions.Parse(["--profile"]));
 
     [Fact]
-    public void ProductionWorkerRootMustComeFromPackagedRelease()
+    public void ProductionSupervisorRootComesFromPackagedRelease()
     {
-        string root = Path.Combine(Path.GetTempPath(), $"vibeocr-worker-{Guid.NewGuid():N}");
-        string workerHost = Path.Combine(root, "worker", "vibeocr", "worker_host");
-        Directory.CreateDirectory(workerHost);
+        string root = Path.Combine(Path.GetTempPath(), $"vibeocr-supervisor-{Guid.NewGuid():N}");
+        string supervisor = Path.Combine(root, "supervisor", "vibeocr", "supervisor");
+        Directory.CreateDirectory(supervisor);
         try
         {
             PortableLayout layout = PortableLayout.Resolve(
                 Path.Combine(root, "VibeOCR.WinUI.exe"),
                 "production");
 
-            Assert.Equal(Path.Combine(root, "worker"), App.ResolveWorkerRoot(layout));
+            Assert.Equal(Path.Combine(root, "supervisor"), App.ResolveSupervisorRoot(layout));
         }
         finally
         {
@@ -70,7 +71,7 @@ public sealed class ShellTests
     }
 
     [Fact]
-    public void DiagnosticsShowMissingRuntimeAndWorkerNotReady()
+    public void DiagnosticsShowMissingRuntimeAndSupervisorNotReady()
     {
         var report = new PrerequisiteReport(
         [
@@ -80,7 +81,7 @@ public sealed class ShellTests
         var viewModel = new DiagnosticsViewModel("winui-dev", report);
 
         Assert.False(viewModel.IsReady);
-        Assert.Equal("未就绪", viewModel.WorkerStatus);
+        Assert.Equal("未就绪", viewModel.SupervisorStatus);
         Assert.Contains(viewModel.Prerequisites, item =>
             item.Kind == PrerequisiteKind.WebView2Runtime && !item.IsInstalled);
     }
@@ -90,14 +91,15 @@ public sealed class ShellTests
     {
         var viewModel = new DiagnosticsViewModel("winui-dev", ReadyReport());
 
-        viewModel.UpdateWorker(new WorkerHealth(
-            WorkerHealthState.ProtocolIncompatible,
-            "0.8.0",
+        viewModel.UpdateSupervisor(new SupervisorHealth(
+            SupervisorHealthState.ProtocolIncompatible,
+            "sup-123",
             2,
-            "expected protocol 1"));
+            "expected protocol 2"));
 
-        Assert.Equal("协议不兼容", viewModel.WorkerStatus);
-        Assert.Equal("主机 v1 / Worker v2", viewModel.ProtocolStatus);
+        Assert.Equal("协议不兼容", viewModel.SupervisorStatus);
+        Assert.Equal("sup-123", viewModel.SupervisorInstanceId);
+        Assert.Equal("客户端 v2 / Supervisor v2", viewModel.ProtocolStatus);
         Assert.False(viewModel.IsReady);
     }
 
@@ -132,11 +134,11 @@ public sealed class ShellTests
         try
         {
             var viewModel = new DiagnosticsViewModel("winui-dev", ReadyReport());
-            viewModel.UpdateWorker(new WorkerHealth(
-                WorkerHealthState.Faulted,
-                "0.8.0",
+            viewModel.UpdateSupervisor(new SupervisorHealth(
+                SupervisorHealthState.Faulted,
+                "sup-123",
                 1,
-                @"token=top-secret; log=C:\Users\alice\private\worker.log"));
+                @"token=top-secret; log=C:\Users\alice\private\supervisor.log"));
             viewModel.RecordMilestone("T0", TimeSpan.Zero);
             viewModel.RecordMilestone("T6", TimeSpan.FromMilliseconds(320));
 
@@ -150,6 +152,11 @@ public sealed class ShellTests
             Assert.DoesNotContain(@"C:\Users\alice", exported, StringComparison.OrdinalIgnoreCase);
             Assert.Contains("<redacted>", exported, StringComparison.Ordinal);
             Assert.Contains("T6", exported, StringComparison.Ordinal);
+            using JsonDocument document = JsonDocument.Parse(exported);
+            Assert.Equal(2, document.RootElement.GetProperty("schema_version").GetInt32());
+            JsonElement supervisor = document.RootElement.GetProperty("supervisor");
+            Assert.Equal("sup-123", supervisor.GetProperty("instance_id").GetString());
+            Assert.False(document.RootElement.TryGetProperty("worker", out _));
         }
         finally
         {

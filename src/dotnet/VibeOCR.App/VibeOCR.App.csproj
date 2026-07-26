@@ -27,4 +27,22 @@
          生产程序集不受影响；仅测试可访问 internal 辅助方法。 -->
     <InternalsVisibleTo Include="VibeOCR.App.Tests" />
   </ItemGroup>
+  <!--
+    Windows App SDK writes compiled XAML and the PRI beside TargetPath, but
+    `dotnet publish -o` does not include them for this unpackaged WinUI app.
+    Without these files the published EXE starts and then crashes in
+    MainWindow.InitializeComponent with XamlParseException.
+  -->
+  <Target Name="CopyCompiledWinUIResourcesToPublish"
+          AfterTargets="Publish">
+    <ItemGroup>
+      <_CompiledWinUIResource Include="$(TargetDir)**\*.xbf" />
+      <_CompiledWinUIResource Include="$(TargetDir)$(AssemblyName).pri" />
+    </ItemGroup>
+    <Error Condition="'@(_CompiledWinUIResource)' == ''"
+           Text="No compiled WinUI XBF/PRI resources were produced." />
+    <Copy SourceFiles="@(_CompiledWinUIResource)"
+          DestinationFiles="@(_CompiledWinUIResource->'$(PublishDir)%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
+  </Target>
 </Project>

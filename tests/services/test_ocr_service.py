@@ -1,13 +1,11 @@
 """Tests for OCRService."""
 
 import threading
-from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
 from PIL import Image
 
-from vibeocr.core.constants import DEFAULT_SHM_SIZE
 from vibeocr.models.ocr_result import OCRResult
 from vibeocr.services.ocr_service import OCROptions, OCRPipeline, OCRService
 
@@ -199,86 +197,6 @@ class TestOCRServiceRecognize:
         assert isinstance(result, OCRResult)
         assert isinstance(result.raw_text, str)
         assert isinstance(result.text_with_scores, list)
-
-
-class TestMinerURouting:
-    """MineRU 管道应直接调用 MinerUService，不走共享内存"""
-
-    def setup_method(self):
-        from vibeocr.services.ocr_service_subprocess import OCRServiceSubprocess
-
-        OCRServiceSubprocess._instance = None
-
-    def teardown_method(self):
-        from vibeocr.services.ocr_service_subprocess import OCRServiceSubprocess
-
-        if OCRServiceSubprocess._instance is not None:
-            OCRServiceSubprocess._instance.shutdown()
-            OCRServiceSubprocess._instance = None
-
-    def test_recognize_mineru_calls_service_directly(self):
-        # MinerU 依赖 httpx；若当前环境未安装则跳过（生产环境为必需依赖）。
-        pytest.importorskip("httpx")
-        with patch("vibeocr.services.ocr_service_subprocess.WorkerManager"):
-            from vibeocr.services.ocr_service_subprocess import OCRServiceSubprocess
-
-            svc = OCRServiceSubprocess.__new__(OCRServiceSubprocess)
-            svc._initialized = True
-            svc.max_workers = 1
-            svc.use_gpu = False
-            svc.shm_size = DEFAULT_SHM_SIZE
-            svc.start_timeout = 120.0
-            svc._start_progress_callback = None
-            svc._paddlex_manager = MagicMock()
-            from vibeocr.services.mineru_batch_service import MinerUBatchService
-
-            svc._mineru_batch = MinerUBatchService()
-
-            mock_mineru_result = MagicMock()
-            mock_mineru_result.raw_text = "parsed"
-
-            # recognize() 内部为局部导入 MinerUService，需先把子模块注册为
-            # vibeocr.services 的属性，否则 mock.patch 在解析目标时会因
-            # getattr(vibeocr.services, "mineru_service") 失败而报错。
-            import vibeocr.services.mineru_service  # noqa: F401  # pyright: ignore[reportUnusedImport]
-
-            with patch("vibeocr.services.mineru_service.MinerUService") as MockMinerU:
-                MockMinerU.return_value.parse.return_value = mock_mineru_result
-                from vibeocr.core.pipelines import OCRPipeline
-                from vibeocr.models.ocr_options import OCROptions
-
-                options = OCROptions(pipeline=OCRPipeline.DOCUMENT_PARSING)
-                result = svc.recognize(b"pdf_data", options)
-
-            MockMinerU.return_value.parse.assert_called_once()
-            assert result.raw_text == "parsed"
-
-    def test_recognize_paddlex_uses_worker_manager(self):
-        with patch("vibeocr.services.ocr_service_subprocess.WorkerManager"):
-            from vibeocr.services.ocr_service_subprocess import OCRServiceSubprocess
-
-            svc = OCRServiceSubprocess.__new__(OCRServiceSubprocess)
-            svc._initialized = True
-            svc.max_workers = 1
-            svc.use_gpu = False
-            svc.shm_size = DEFAULT_SHM_SIZE
-            svc.start_timeout = 120.0
-            svc._start_progress_callback = None
-            svc._paddlex_manager = MagicMock()
-            from vibeocr.services.mineru_batch_service import MinerUBatchService
-
-            svc._mineru_batch = MinerUBatchService()
-
-            mock_result = MagicMock()
-            svc._paddlex_manager.execute.return_value = mock_result
-
-            from vibeocr.core.pipelines import OCRPipeline
-            from vibeocr.models.ocr_options import OCROptions
-
-            options = OCROptions(pipeline=OCRPipeline.OCR)
-            svc.recognize(b"img_data", options)
-
-            svc._paddlex_manager.execute.assert_called_once()
 
 
 class TestHtmlTableToMarkdown:

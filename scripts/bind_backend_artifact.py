@@ -19,6 +19,14 @@ EXPECTED_WHEELS = {
     "vibeocr-contracts-py",
     "vibeocr-pyside",
 }
+REQUIRED_WHEEL_MEMBERS = {
+    "vibeocr-backend": "vibeocr/supervisor/main.py",
+    "vibeocr-contracts-py": "vibeocr/protocol/v2/golden/golden.json",
+}
+FORBIDDEN_WHEEL_PREFIXES = (
+    "vibeocr/worker_host/",
+    "vibeocr/protocol/v1/",
+)
 
 
 def _distribution_metadata(wheel: Path) -> tuple[str, str]:
@@ -29,6 +37,25 @@ def _distribution_metadata(wheel: Path) -> tuple[str, str]:
         metadata = email.message_from_bytes(archive.read(metadata_name))
     name = str(metadata["Name"]).lower().replace("_", "-")
     return name, str(metadata["Version"])
+
+
+def _verify_runtime_layout(wheels: dict[str, Path]) -> None:
+    for distribution, required_member in REQUIRED_WHEEL_MEMBERS.items():
+        with zipfile.ZipFile(wheels[distribution]) as archive:
+            members = set(archive.namelist())
+        if required_member not in members:
+            raise RuntimeError(
+                f"{distribution} wheel is missing {required_member}"
+            )
+        legacy = sorted(
+            member
+            for member in members
+            if member.startswith(FORBIDDEN_WHEEL_PREFIXES)
+        )
+        if legacy:
+            raise RuntimeError(
+                f"{distribution} wheel contains legacy runtime paths: {legacy}"
+            )
 
 
 def main() -> int:
@@ -73,6 +100,7 @@ def main() -> int:
     missing = EXPECTED_WHEELS - set(wheels)
     if missing:
         raise RuntimeError(f"release wheel set incomplete: {sorted(missing)}")
+    _verify_runtime_layout(wheels)
     wheel_records = [
         {
             "distribution": name,
@@ -106,7 +134,7 @@ def main() -> int:
             "backend_wheel": backend_record["file"],
             "backend_sha256": backend_record["sha256"],
             "python_wheels": wheel_records,
-            "protocol_major": 1,
+            "protocol_major": 2,
             "source_commit": commit,
         }
         (root / "product-manifest.json").write_text(

@@ -33,17 +33,27 @@ if ($Artifact -and (Test-Path $Artifact -PathType Leaf) -and $Artifact.EndsWith(
 $errors = [System.Collections.Generic.List[string]]::new()
 
 # Required release surface.  A deny-only verifier allowed empty/zero-byte
-# fixtures to pass, so validate the stable entry points and worker contract.
+# fixtures to pass, so validate the stable entry points and supervisor contract.
 $requiredFiles = @(
     'VibeOCR.WinUI.exe',
     'VibeOCR.Bootstrapper.exe',
     'updater.exe',
     'VibeOCR.WinUI.dll',
+    'VibeOCR.WinUI.pri',
     'VibeOCR.Contracts.dll',
     'VibeOCR.Platform.dll',
-    'worker\vibeocr\worker_host\main.py',
+    'App.xbf',
+    'MainWindow.xbf',
+    'Views\AboutPage.xbf',
+    'Views\BatchPage.xbf',
+    'Views\DiagnosticsPage.xbf',
+    'Views\PdfPage.xbf',
+    'Views\QrCodePage.xbf',
+    'Views\RecognitionPage.xbf',
+    'Views\SettingsPage.xbf',
+    'supervisor\vibeocr\supervisor\main.py',
     'product-manifest.json',
-    'contracts\v1\golden.json',
+    'contracts\v2\golden\golden.json',
     'CHANGELOG.md',
     'LICENSE'
 )
@@ -65,6 +75,12 @@ if (Test-Path $manifestPath -PathType Leaf) {
         $errors.Add("product manifest is invalid JSON: $($_.Exception.Message)")
     }
     if ($null -ne $manifest) {
+        if ($manifest.frontend -ne 'winui') {
+            $errors.Add("product manifest frontend must be winui")
+        }
+        if ($manifest.protocol_major -ne 2) {
+            $errors.Add("product manifest protocol_major must be 2")
+        }
         $records = @($manifest.python_wheels)
         if ($records.Count -ne 3) {
             $errors.Add("expected 3 WinUI runtime wheels, found $($records.Count)")
@@ -95,6 +111,17 @@ if (Test-Path $manifestPath -PathType Leaf) {
     }
 }
 
+$legacyBackendEntries = @(
+    'worker',
+    'worker\vibeocr\worker_host',
+    'contracts\v1'
+)
+foreach ($relative in $legacyBackendEntries) {
+    if (Test-Path (Join-Path $root $relative)) {
+        $errors.Add("legacy backend entry present: $relative")
+    }
+}
+
 $legacyEntries = @(
     'worker\vibeocr\main.py',
     'worker\vibeocr\views',
@@ -119,10 +146,10 @@ $webview2 = Get-ChildItem -Path $root -Recurse -Directory -ErrorAction SilentlyC
     Where-Object { $_.Name -match 'WebView2' -or $_.Name -match 'Microsoft.Web.WebView2' }
 if (@($webview2).Count -gt 1) { $errors.Add("duplicate WebView2 SDK present ($(@($webview2).Count) copies)") }
 
-# Rule: no PySide6 UI modules in the worker.
+# Rule: no PySide6 UI modules in the Supervisor runtime.
 $pyside = Get-ChildItem -Path $root -Recurse -Directory -ErrorAction SilentlyContinue |
     Where-Object { $_.Name -eq 'PySide6' }
-if ($pyside) { $errors.Add('PySide6 UI modules present; worker must exclude the legacy UI') }
+if ($pyside) { $errors.Add('PySide6 UI modules present; Supervisor must exclude the legacy UI') }
 
 # Rule: no dev profile.
 $devProfile = Get-ChildItem -Path $root -Recurse -Directory -ErrorAction SilentlyContinue |
@@ -147,5 +174,5 @@ if ($extract -and (Test-Path $extract)) {
     Remove-Item -LiteralPath $extract -Recurse -Force
 }
 
-Write-Host "Artifact $Artifact verified OK (framework-dependent, no PySide6, no dev profile)"
+Write-Host "Artifact $Artifact verified OK (Supervisor/protocol v2, framework-dependent, no PySide6, no dev profile)"
 exit 0

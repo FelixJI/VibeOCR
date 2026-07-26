@@ -70,13 +70,17 @@ def verify(directory: Path) -> None:
         archive_owners["vibeocr/dependency_profiles.json"]
         == "vibeocr-client-py"
     )
-    assert archive_owners["vibeocr/worker_host/main.py"] == "vibeocr-backend"
+    assert archive_owners["vibeocr/supervisor/main.py"] == "vibeocr-backend"
     assert archive_owners["vibeocr/main.py"] == "vibeocr-pyside"
     assert archive_owners["vibeocr/ui/main_window.ui"] == "vibeocr-pyside"
     assert (
-        archive_owners["vibeocr/protocol/v1/methods.schema.json"]
+        archive_owners["vibeocr/protocol/v2/golden/golden.json"]
         == "vibeocr-contracts-py"
     )
+    assert not any(
+        path.startswith(("vibeocr/worker_host/", "vibeocr/protocol/v1/"))
+        for path in archive_owners
+    ), "legacy WorkerHost/protocol-v1 paths must not ship"
 
     with zipfile.ZipFile(wheels["vibeocr"]) as zf:
         requires = _metadata(zf).get_all("Requires-Dist", [])

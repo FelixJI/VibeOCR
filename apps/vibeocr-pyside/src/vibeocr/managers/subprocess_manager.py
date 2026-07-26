@@ -1,105 +1,42 @@
-"""子进程管理器
+"""Supervisor 子进程的 Qt 生命周期管理。
 
-管理 OCR 子进程服务的启动、预加载和生命周期。
+本模块只拥有启动任务、Supervisor 进程和就绪令牌。模型加载、TTL、排队与
+识别状态均由 Supervisor v2 自己管理，不能在 GUI 进程维护第二份状态。
 """
+
+from __future__ import annotations
 
 import logging
 import threading
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal
 
-if TYPE_CHECKING:
-    from vibeocr.services.ocr_service_subprocess import OCRServiceSubprocess
+from vibeocr import env_manager
+from vibeocr.utils.shutdown_jobs import ExternalShutdownJob
 
 logger = logging.getLogger(__name__)
 
-
-class PreloadCancelled(Exception):
-    """预加载任务被协作取消（由 cancel() 触发）。"""
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 class SubprocessStartSignals(QObject):
-    """子进程启动信号"""
+    """Supervisor 启动任务信号。"""
 
-    started = Signal(bool)  # 启动是否成功
-    progress = Signal(str)  # stage
+    started = Signal(bool)
+    progress = Signal(str)
 
 
-class SubprocessStartTask(QRunnable):
-    """子进程启动任务（在后台线程执行）"""
+class SupervisorStartTask(QRunnable):
+    """在线程池启动 Supervisor；Qt adapter 由 GUI 线程安装。"""
 
-    def __init__(
-        self,
-        project_root: Path,
-        use_gpu: bool = True,
-        start_timeout: float = 120.0,
-    ) -> None:
+    def __init__(self, python_exe: str | Path) -> None:
         super().__init__()
-        self._project_root = project_root
-        self._use_gpu = use_gpu
-        self._start_timeout = start_timeout
-        self._cancelled = False
-        self.signals = SubprocessStartSignals()
-        self.service: OCRServiceSubprocess | None = None
-
-    def cancel(self) -> None:
-        """取消启动任务"""
-        self._cancelled = True
-
-    def _update_progress(self, stage: str) -> None:
-        """更新进度
-
-        Args:
-            stage: 阶段描述
-        """
-        if not self._cancelled:
-            logger.info(f"[OCR 启动] {stage}")
-            self.signals.progress.emit(stage)
-
-    def run(self) -> None:
-        """启动子进程服务"""
-        if self._cancelled:
-            logger.debug("[SubprocessManager] 任务已取消")
-            return
-
-        try:
-            from vibeocr.services.ocr_service_subprocess import OCRServiceSubprocess
-
-            # 创建并启动子进程服务
-            self.service = OCRServiceSubprocess(
-                max_workers=1,
-                use_gpu=self._use_gpu,
-                auto_start=True,
-                start_timeout=self._start_timeout,
-                start_progress_callback=self._update_progress,
-            )
-
-            if not self._cancelled:
-                self.signals.started.emit(True)
-                logger.debug("[SubprocessManager] 子进程启动成功")
-            else:
-                # 取消后关闭服务
-                if self.service:
-                    self.service.shutdown()
-                logger.debug("[SubprocessManager] 启动成功但任务已取消，服务已关闭")
-
-        except Exception as e:
-            error_msg = str(e)
-            logger.error(f"[SubprocessManager] 启动失败: {error_msg}")
-            if not self._cancelled:
-                self.signals.started.emit(False)
-
-
-class WorkerHostStartTask(QRunnable):
-    """在后台线程建立唯一 WorkerHost 会话并构造前端适配器。"""
-
-    def __init__(self) -> None:
-        super().__init__()
+        self._python_exe = str(python_exe)
         self._cancelled = threading.Event()
         self.signals = SubprocessStartSignals()
-        self.service: Any = None
+        self.supervisor_proc: Any = None
 
     def cancel(self) -> None:
         self._cancelled.set()
@@ -107,161 +44,34 @@ class WorkerHostStartTask(QRunnable):
     def run(self) -> None:
         if self._cancelled.is_set():
             return
-        self.signals.progress.emit("连接 WorkerHost")
+        self.signals.progress.emit("启动 Supervisor")
         try:
-            from vibeocr.client.batch import BatchBackendAdapter
-            from vibeocr.client.session import get_backend_client
+            from vibeocr.supervisor.process import SupervisorProcess
 
-            client = get_backend_client()
+            proc = SupervisorProcess.launch(python_exe=self._python_exe)
+            self.supervisor_proc = proc
             if self._cancelled.is_set():
                 return
-            self.service = BatchBackendAdapter(client)
             self.signals.started.emit(True)
         except Exception:
-            logger.exception("[SubprocessManager] WorkerHost 启动失败")
+            logger.exception("[SubprocessManager] Supervisor 启动失败")
+            proc = self.supervisor_proc
+            if proc is not None:
+                try:
+                    proc.shutdown()
+                except Exception:  # pragma: no cover - defensive cleanup
+                    logger.debug("Supervisor 半启动清理失败", exc_info=True)
+                self.supervisor_proc = None
             if not self._cancelled.is_set():
                 self.signals.started.emit(False)
 
 
-class PreloadSignals(QObject):
-    """预加载信号"""
-
-    finished = Signal(dict)  # {pipeline_name: success}
-    # 逐管道进度：(当前 1-based 序号, 总数, 管道显示名)
-    progress = Signal(int, int, str)
-
-
-class PreloadTask(QRunnable):
-    """预加载任务（在后台线程执行）
-
-    在后台线程下发 TTL 并逐个预加载/预热管道，每完成一个上报进度，
-    避免长时间无反馈。避免阻塞 GUI 主线程。
-
-    协作取消：通过 ``_cancelled``（threading.Event）实现。``cancel()`` 设置
-    事件后，``run()`` 在每个昂贵步骤（TTL 下发、每管道预加载、预热）前检查
-    并提前退出。不使用 QThread.terminate()。
-    """
-
-    def __init__(
-        self,
-        service: "OCRServiceSubprocess",
-        pipelines: list[str],
-        pipeline_ttls: dict[str, int] | None = None,
-    ) -> None:
-        super().__init__()
-        self._service: OCRServiceSubprocess | None = service
-        self._pipelines = pipelines
-        self._pipeline_ttls = pipeline_ttls
-        self.signals = PreloadSignals()
-        # 协作取消事件：cancel() 设置后，run() 在下一个检查点退出
-        self._cancelled = threading.Event()
-
-    def cancel(self) -> None:
-        """请求取消：设置取消事件，run() 在下一个检查点退出。"""
-        self._cancelled.set()
-
-    def _raise_if_cancelled(self) -> None:
-        """检查取消事件，若已取消则抛出 PreloadCancelled 中断 run()。"""
-        if self._cancelled.is_set():
-            raise PreloadCancelled
-
-    def run(self) -> None:
-        """下发 TTL、逐个预加载管道并预热"""
-        # 捕获 service 到局部变量：finally 中清零 self._service 后，
-        # 局部变量仍持有有效引用，避免延迟回调访问已销毁的 service。
-        service = self._service
-        if service is None:
-            self.signals.finished.emit({"preload": {}, "warmup": {}})
-            return
-        try:
-            # 取消检查点 0：TTL 下发前
-            self._raise_if_cancelled()
-
-            # 先下发 TTL（无论是否预加载，TTL 配置都需要同步到 worker）
-            if self._pipeline_ttls is not None:
-                try:
-                    service.set_pipeline_ttls(self._pipeline_ttls)
-                    logger.debug(
-                        f"[SubprocessManager] 已下发 pipeline_ttls={self._pipeline_ttls} 到 worker"
-                    )
-                except Exception as e:
-                    logger.warning(f"[SubprocessManager] 下发 TTL 失败: {e}")
-
-            if not self._pipelines:
-                logger.debug("[SubprocessManager] 未配置预加载管道，仅完成 TTL 下发")
-                self.signals.finished.emit({"preload": {}, "warmup": {}})
-                return
-
-            # 逐个预加载：每完成一个上报进度，让状态栏实时反映
-            results: dict[str, bool] = {}
-            total = len(self._pipelines)
-            for i, pipeline_name in enumerate(self._pipelines, 1):
-                # 取消检查点：每个管道预加载前
-                self._raise_if_cancelled()
-                self.signals.progress.emit(i, total, pipeline_name)
-                try:
-                    single = service.preload_pipelines([pipeline_name])
-                    results.update(single)
-                except Exception as e:
-                    logger.warning(
-                        f"[SubprocessManager] 预加载 {pipeline_name} 失败: {e}"
-                    )
-                    results[pipeline_name] = False
-
-            success_count = sum(1 for v in results.values() if v)
-            logger.debug(
-                f"[SubprocessManager] 预加载完成: {success_count}/{len(results)} 个管道"
-            )
-
-            # 取消检查点：预热前
-            self._raise_if_cancelled()
-
-            # 预热：对预加载成功的管道执行一次虚拟识别，触发 CUDA 上下文初始化
-            succeeded_pipelines = [name for name, ok in results.items() if ok]
-            warmup_results: dict[str, bool] = {}
-            if succeeded_pipelines:
-                try:
-                    warmup_results = service.warmup_pipelines(succeeded_pipelines)
-                    warmup_ok = sum(1 for v in warmup_results.values() if v)
-                    logger.debug(
-                        f"[SubprocessManager] 预热完成: {warmup_ok}/{len(succeeded_pipelines)} 个管道"
-                    )
-                    # 预热失败的管道仍标记预加载成功（管道已加载，仅 CUDA 初始化未完成）
-                except Exception as e:
-                    logger.warning(f"[SubprocessManager] 预热失败（预加载仍有效）: {e}")
-
-            # 如实上报两阶段结果：preload（管道加载）+ warmup（CUDA 初始化）。
-            self.signals.finished.emit(
-                {"preload": results, "warmup": warmup_results}
-            )
-        except PreloadCancelled:
-            logger.debug("[SubprocessManager] 预加载已取消")
-            self.signals.finished.emit({"preload": {}, "warmup": {}, "cancelled": True})
-        except Exception as e:
-            logger.error(f"[SubprocessManager] 预加载失败: {e}")
-            self.signals.finished.emit({"preload": {}, "warmup": {}})
-        finally:
-            # 任务结束后清零 service 引用，避免延迟 signal 访问已销毁的 UI/service
-            self._service = None
-
-
 class SubprocessManager(QObject):
-    """子进程管理器
-
-    管理 OCR 子进程服务的启动、预加载和状态。
-
-    Signals:
-        service_ready: (bool) 服务是否就绪
-        progress_update: (str) (stage) 进度更新
-        preload_finished: (dict) 预加载结果
-    """
+    """Supervisor 进程 owner 与单一 readiness token。"""
 
     service_ready = Signal(bool)
     progress_update = Signal(str)
-    preload_finished = Signal(dict)
-    # 预加载逐管道进度：(当前 1-based 序号, 总数, 管道显示名)
-    preload_progress = Signal(int, int, str)
-    recognition_queued = Signal(str)  # 识别请求因预加载排队，参数为提示消息
+    invalidation_finished = Signal(bool, str)
 
     def __init__(
         self,
@@ -271,278 +81,287 @@ class SubprocessManager(QObject):
         super().__init__(parent)
         self._project_root = project_root
         self._thread_pool = QThreadPool()
-        self._service: Any = None
         self._is_ready = False
-        self._start_task: SubprocessStartTask | WorkerHostStartTask | None = None
-        self._preload_task: PreloadTask | None = None
+        self._start_task: SupervisorStartTask | None = None
+        self._start_signals_connected = False
+        self._supervisor_process: Any = None
         self._shutdown_requested = False
-        # 取消事件:shutdown 时 set,中断 WorkerManager.execute 内的 5 分钟长等待
-        import threading
-
-        self._cancel_event = threading.Event()
-
-    @property
-    def service(self) -> Any:
-        """获取子进程服务"""
-        return self._service
+        self._application_shutdown_requested = False
+        self._invalidation_job: ExternalShutdownJob | None = None
 
     @property
     def is_ready(self) -> bool:
-        """检查服务是否就绪"""
-        return self._is_ready and self._service is not None
+        return self._is_ready
 
-    def attach_service(self, service: object) -> None:
-        """Attach the shared WorkerHost client adapter without spawning legacy OCR."""
-        self._service = service  # type: ignore[assignment]
-        self._is_ready = True
+    @property
+    def is_invalidating(self) -> bool:
+        return self._invalidation_job is not None
 
-    def start(
-        self,
-        use_gpu: bool = True,
-        start_timeout: float = 120.0,
-    ) -> None:
-        """启动子进程服务
-
-        Args:
-            use_gpu: 是否使用 GPU
-            start_timeout: 启动超时时间（秒）
-        """
-        if self._is_ready:
-            logger.debug("[SubprocessManager] 服务已就绪，跳过启动")
+    def start_supervisor(self) -> None:
+        if self._application_shutdown_requested:
+            logger.debug("[SubprocessManager] 应用已进入关闭阶段，拒绝重新启动")
             return
-
-        if self._start_task is not None:
-            logger.debug("[SubprocessManager] 正在启动中，跳过重复启动")
+        if self._invalidation_job is not None:
+            logger.debug("[SubprocessManager] Supervisor 正在失效，拒绝并发启动")
             return
-
-        logger.debug("[SubprocessManager] 正在启动子进程服务...")
-        self._cancel_event.clear()
-
-        # 记录实际并发预算（集中配置，供未来多 worker 扩展参考）
-        try:
-            from vibeocr.core.concurrency_budget import ConcurrencyBudget
-
-            ConcurrencyBudget.default().log_summary()
-        except Exception:
-            pass
-
-        self._start_task = SubprocessStartTask(
-            self._project_root,
-            use_gpu=use_gpu,
-            start_timeout=start_timeout,
-        )
-        self._start_task.signals.started.connect(self._on_started)
-        self._start_task.signals.progress.connect(self.progress_update.emit)
-        self._thread_pool.start(self._start_task)
-
-    def start_worker_host(self) -> None:
-        """在管理器线程池中启动当前生产 WorkerHost，避免阻塞 GUI。"""
         if self._is_ready:
-            logger.debug("[SubprocessManager] WorkerHost 已就绪，跳过启动")
+            logger.debug("[SubprocessManager] Supervisor 已就绪，跳过重复启动")
             return
         if self._start_task is not None:
-            logger.debug("[SubprocessManager] WorkerHost 正在启动，跳过重复启动")
+            logger.debug("[SubprocessManager] Supervisor 正在启动，跳过重复启动")
             return
 
-        self._cancel_event.clear()
-        self._start_task = WorkerHostStartTask()
-        self._start_task.signals.started.connect(self._on_started)
-        self._start_task.signals.progress.connect(self.progress_update.emit)
-        self._thread_pool.start(self._start_task)
+        self._shutdown_requested = False
+        python_exe = env_manager.get_embedded_python_executable(self._project_root)
+        task = SupervisorStartTask(python_exe)
+        self._start_task = task
+        task.signals.started.connect(self._on_started)
+        task.signals.progress.connect(self.progress_update.emit)
+        self._start_signals_connected = True
+        self._thread_pool.start(task)
 
     def _on_started(self, success: bool) -> None:
-        """启动完成回调"""
-        # shutdown 会断开信号并清空任务；Windows/Qt 仍可能投递已经排队的 started。
-        # 该迟到信号不属于任何活动启动，必须忽略，不能重新挂接服务。
-        if self._start_task is None:
+        task = self._start_task
+        if task is None or self._shutdown_requested:
             logger.debug("[SubprocessManager] 忽略已取消启动任务的迟到结果")
             return
-        self._is_ready = success
-
-        if success and self._start_task is not None:
-            self._service = self._start_task.service
-            if self._service:
-                self._service.set_task_queued_callback(
-                    lambda: self.recognition_queued.emit(
-                        "正在预加载模型，识别请求将在预加载完成后自动执行..."
-                    )
-                )
-                # 下发取消事件,使 shutdown 时能中断 execute 内的长等待
-                self._service.set_cancel_event(self._cancel_event)
-
-        self._start_task = None
-        self.service_ready.emit(success)
 
         if success:
-            logger.info("[SubprocessManager] 子进程服务已就绪")
+            process = task.supervisor_proc
+            try:
+                self._install_runtime_adapter(process)
+            except Exception:
+                logger.exception("[SubprocessManager] Supervisor 适配器初始化失败")
+                success = False
+                if process is not None:
+                    try:
+                        process.shutdown()
+                    except Exception:
+                        logger.debug("Supervisor 适配器失败清理异常", exc_info=True)
+                task.supervisor_proc = None
+            else:
+                self._supervisor_process = process
+                task.supervisor_proc = None
+        self._is_ready = success
+        self._start_task = None
+        self._start_signals_connected = False
+        self.service_ready.emit(success)
+        if success:
+            logger.info("[SubprocessManager] Supervisor 已就绪")
         else:
-            logger.warning("[SubprocessManager] 子进程服务启动失败")
+            logger.warning("[SubprocessManager] Supervisor 启动失败")
 
-    def preload_pipelines(
-        self,
-        pipelines: list[str],
-        pipeline_ttls: dict[str, int] | None = None,
-    ) -> bool:
-        """预加载管道（在后台线程执行，同时下发 TTL）
+    @staticmethod
+    def _install_runtime_adapter(proc: Any) -> None:
+        """在 GUI 线程创建并安装 Qt adapter。
 
-        Args:
-            pipelines: 要预加载的管道名称列表（可为空，此时仅下发 TTL）
-            pipeline_ttls: 可选的每管道 TTL 字典，下发到 worker
+        Supervisor 的阻塞启动仍在 QThreadPool；QObject 必须等 ready signal
+        回到 SubprocessManager 所在线程后再构造，才能可靠投递 Qt signals。
         """
-        if not self._service:
-            logger.warning("[SubprocessManager] 服务未就绪，无法预加载")
-            return False
+        if proc is None:
+            raise RuntimeError("Supervisor ready 但进程句柄为空")
 
-        if self._preload_task is not None:
-            logger.info("[SubprocessManager] 已有预加载任务进行中，忽略重复请求")
-            return False
+        from vibeocr.pyside.supervisor_adapter import (
+            SupervisorClientAdapter,
+            set_supervisor_adapter,
+        )
+        from vibeocr.supervisor.client import SupervisorClient
+        from vibeocr.supervisor.pdf_client import SyncPdfSupervisorClient
+        from vibeocr.supervisor.sync_client import SyncSupervisorClient
 
-        if not pipelines and pipeline_ttls is None:
-            logger.debug("[SubprocessManager] 无预加载管道且无需下发 TTL")
-            return False
-
-        logger.debug(
-            f"[SubprocessManager] 开始预加载管道: {pipelines}"
-            + (
-                f"，下发 pipeline_ttls={pipeline_ttls}"
-                if pipeline_ttls is not None
-                else ""
+        def pdf_factory() -> SyncPdfSupervisorClient:
+            return SyncPdfSupervisorClient(
+                base_url=proc.base_url,
+                session_token=proc.session_token,
+                instance_id=proc.ready.instance_id,
             )
-        )
 
-        self._preload_task = PreloadTask(
-            self._service, pipelines, pipeline_ttls=pipeline_ttls
+        def inference_factory() -> SyncSupervisorClient:
+            return SyncSupervisorClient(
+                base_url=proc.base_url,
+                session_token=proc.session_token,
+                instance_id=proc.ready.instance_id,
+            )
+
+        client = SupervisorClient(
+            base_url=proc.base_url,
+            session_token=proc.session_token,
+            instance_id=proc.ready.instance_id,
         )
-        self._preload_task.signals.finished.connect(self._on_preload_done)
-        self._preload_task.signals.progress.connect(self.preload_progress.emit)
-        self._thread_pool.start(self._preload_task)
+        adapter = SupervisorClientAdapter(
+            client_factory=lambda: client,
+            pdf_sync_client_factory=pdf_factory,
+            inference_sync_client_factory=inference_factory,
+        )
+        set_supervisor_adapter(adapter)
+        adapter.start()
+
+    def invalidate_supervisor(self) -> bool:
+        """非阻塞关闭当前 runtime；完成后通过 ``invalidation_finished`` 通知。
+
+        安装/更新调用方只能在 ``success=True`` 后继续。失败时进程 owner 仍由
+        manager 持有，可再次调用本方法重试，不能带着旧 Supervisor 继续维护。
+        """
+
+        if self._application_shutdown_requested:
+            return False
+        if self._invalidation_job is not None:
+            return False
+
+        self._request_runtime_stop(application_shutdown=False)
+        job = ExternalShutdownJob(
+            (("supervisor_runtime", self._shutdown_runtime_for_invalidation),),
+            self,
+        )
+        self._invalidation_job = job
+        job.finished.connect(self._on_invalidation_finished)
+        job.start()
         return True
 
-    def invalidate_worker_host(self) -> None:
-        """安装维护前立即使旧服务失效；真正关闭在安装线程中完成。"""
-        self._cancel_event.set()
-        if self._start_task is not None:
-            self._start_task.cancel()
-            try:
-                self._start_task.signals.started.disconnect(self._on_started)
-            except (RuntimeError, TypeError):
-                pass
-            self._start_task = None
-        if self._preload_task is not None:
-            self._preload_task.cancel()
-        self._service = None
-        self._is_ready = False
-
-    def _on_preload_done(self, results: dict) -> None:
-        """预加载完成，清理引用并转发信号"""
-        self._preload_task = None
-        self.preload_finished.emit(results)
-
-    def request_preload_shutdown(self) -> None:
-        """Cancel only the settings-triggered preload, without stopping service."""
-        task = self._preload_task
-        if task is not None:
-            task.cancel()
-
-    def is_preload_drained(self) -> bool:
-        """Zero-wait probe for a preload owned by the manager thread pool."""
-        return self._preload_task is None or self._thread_pool.activeThreadCount() == 0
-
     def request_shutdown(self) -> None:
-        """GUI 阶段只请求取消 Qt 任务；不 wait、不关闭外部 service。"""
+        """请求取消 Qt 启动任务；调用方通过 ``is_drained`` 非阻塞轮询。"""
+
+        self._request_runtime_stop(application_shutdown=True)
+
+    def _request_runtime_stop(self, *, application_shutdown: bool) -> None:
+        if application_shutdown:
+            self._application_shutdown_requested = True
         if self._shutdown_requested:
             return
         self._shutdown_requested = True
-        self._cancel_event.set()
-        if self._start_task is not None:
-            self._start_task.cancel()
-            try:
-                self._start_task.signals.started.disconnect(self._on_started)
-                self._start_task.signals.progress.disconnect(self.progress_update.emit)
-            except RuntimeError:
-                pass
-        if self._preload_task is not None:
-            self._preload_task.cancel()
-            try:
-                self._preload_task.signals.finished.disconnect(self._on_preload_done)
-                self._preload_task.signals.progress.disconnect(
-                    self.preload_progress.emit
-                )
-            except RuntimeError:
-                pass
+        self._is_ready = False
+        task = self._start_task
+        if task is not None:
+            task.cancel()
+            if self._start_signals_connected:
+                try:
+                    task.signals.started.disconnect(self._on_started)
+                    task.signals.progress.disconnect(self.progress_update.emit)
+                except (RuntimeError, TypeError):
+                    pass
+                self._start_signals_connected = False
 
     def is_drained(self) -> bool:
-        """纯状态探测：Qt 线程池无 native runnable 才可释放 owner。"""
-        return self._thread_pool.activeThreadCount() == 0
+        return (
+            self._thread_pool.activeThreadCount() == 0
+            and self._invalidation_job is None
+        )
+
+    def _shutdown_runtime_for_invalidation(self) -> None:
+        """外部线程执行：等启动任务退出，再关闭仍由 manager 持有的 runtime。"""
+
+        if not self._thread_pool.waitForDone(30_000):
+            raise TimeoutError("Supervisor 启动任务未在 30 秒内停止")
+
+        task = self._start_task
+        process = self._supervisor_process
+        if process is None and task is not None:
+            process = task.supervisor_proc
+        if not self._is_ready and process is None:
+            return
+
+        errors: list[str] = []
+        try:
+            from vibeocr.pyside.supervisor_adapter import get_supervisor_adapter
+
+            get_supervisor_adapter().shutdown()
+        except Exception as exc:  # pragma: no cover - defensive aggregation
+            errors.append(f"adapter: {exc}")
+        if process is not None:
+            try:
+                process.shutdown()
+            except Exception as exc:
+                errors.append(f"process: {exc}")
+        if errors:
+            raise RuntimeError("; ".join(errors))
+
+    def _on_invalidation_finished(self) -> None:
+        job = self._invalidation_job
+        if job is None:
+            return
+        try:
+            job.finished.disconnect(self._on_invalidation_finished)
+        except (RuntimeError, TypeError):
+            pass
+
+        success = not job.errors
+        error = "; ".join(f"{name}: {message}" for name, message in job.errors)
+        if success:
+            task = self._start_task
+            if task is not None:
+                task.supervisor_proc = None
+            self._start_task = None
+            self._start_signals_connected = False
+            self._supervisor_process = None
+            self._is_ready = False
+            if not self._application_shutdown_requested:
+                self._shutdown_requested = False
+
+        self._invalidation_job = None
+        job.deleteLater()
+        self.invalidation_finished.emit(success, error)
 
     def take_shutdown_callable(self):
-        """GUI 线程 detach 普通 service，返回可在非 GUI 线程执行的 callable。"""
+        """在线程池排空后转移 runtime owner，供非 GUI 关闭阶段执行。"""
+
         if not self.is_drained():
             raise RuntimeError("subprocess Qt tasks are still running")
-        # request_shutdown 会断开 started 信号。若启动任务恰好在断开后完成，
-        # _on_started 不会把 task.service 搬到 _service；线程池虽已 drained，
-        # 但服务仍由已完成的 QRunnable 持有。detach 时必须覆盖这个竞态窗口。
-        start_task = self._start_task
-        service = self._service or (
-            getattr(start_task, "service", None) if start_task is not None else None
-        )
+
+        task = self._start_task
+        process = self._supervisor_process
+        if process is None and task is not None:
+            process = task.supervisor_proc
+        if task is not None:
+            task.supervisor_proc = None
+        had_runtime = self._is_ready or process is not None
+
         self._start_task = None
-        self._preload_task = None
-        self._service = None
+        self._start_signals_connected = False
+        self._supervisor_process = None
         self._is_ready = False
-        return getattr(service, "shutdown", None) if service is not None else None
+
+        if not had_runtime:
+            return None
+
+        def _shutdown() -> None:
+            try:
+                from vibeocr.pyside.supervisor_adapter import get_supervisor_adapter
+
+                get_supervisor_adapter().shutdown()
+            finally:
+                if process is not None:
+                    process.shutdown()
+
+        return _shutdown
 
     def shutdown(self, timeout_ms: int = 3000) -> bool:
-        """关闭子进程服务
+        """兼容独立调用的同步关闭入口。"""
 
-        Args:
-            timeout_ms: 等待超时时间（毫秒）
+        self.request_shutdown()
+        invalidation_job = self._invalidation_job
+        if invalidation_job is not None:
+            if not invalidation_job.wait(timeout_ms):
+                logger.warning("[SubprocessManager] 失效任务未在超时内排空")
+                return False
+            self._on_invalidation_finished()
 
-        Returns:
-            是否成功关闭
-        """
-        logger.debug("[SubprocessManager] 正在关闭子进程服务...")
-
-        # 立即触发取消事件,中断 WorkerManager.execute 内正在进行的 5 分钟长等待
-        self._cancel_event.set()
-
-        # 取消正在进行的启动任务并断开信号
-        if self._start_task is not None:
-            self._start_task.cancel()
-            try:
-                self._start_task.signals.started.disconnect(self._on_started)
-                self._start_task.signals.progress.disconnect(self.progress_update.emit)
-            except RuntimeError:
-                pass  # 信号已断开
-
-        # 取消正在进行的预加载任务（协作取消：设置 _cancelled 事件，
-        # run() 在下一个检查点退出；同时断开 signal 避免迟到回调）
-        if self._preload_task is not None:
-            self._preload_task.cancel()
-            try:
-                self._preload_task.signals.finished.disconnect(self._on_preload_done)
-                self._preload_task.signals.progress.disconnect(
-                    self.preload_progress.emit
-                )
-            except RuntimeError:
-                pass
-
-        # 等待线程池完成
         timed_out = not self._thread_pool.waitForDone(timeout_ms)
         if timed_out:
-            logger.warning("[SubprocessManager] 线程池未能在超时时间内完成")
+            logger.warning("[SubprocessManager] 启动任务未在超时内排空")
+            return False
 
-        # 关闭服务
-        if self._service:
+        shutdown = self.take_shutdown_callable()
+        if shutdown is not None:
             try:
-                self._service.shutdown()
-                logger.debug("[SubprocessManager] 子进程服务已关闭")
-            except Exception as e:
-                logger.error(f"[SubprocessManager] 关闭服务失败: {e}")
-                timed_out = True
+                shutdown()
+            except Exception:
+                logger.exception("[SubprocessManager] Supervisor 关闭失败")
+                return False
+        return True
 
-        self._start_task = None
-        self._preload_task = None
-        self._service = None
-        self._is_ready = False
-        return not timed_out
+
+__all__ = [
+    "SubprocessManager",
+    "SubprocessStartSignals",
+    "SupervisorStartTask",
+]

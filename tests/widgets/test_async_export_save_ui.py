@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import threading
 import time
+from pathlib import Path
 
 from PIL import Image
 from PySide6.QtCore import QThread
@@ -22,6 +23,14 @@ class _Messages:
 
     def warning(self, *args):
         self.warning_calls.append(args)
+
+
+class _ExportClient:
+    def __init__(self, export) -> None:
+        self._export = export
+
+    def export_ocr_sync(self, payload, *, output_path, **kwargs):
+        return self._export(payload, output_path, kwargs["format"])
 
 
 def _patch_save_dialog(monkeypatch, module: str, path) -> None:
@@ -45,32 +54,26 @@ def test_result_export_success_is_async_busy_and_reports_on_gui(
 ):
     from vibeocr.widgets.result_view_widget import ResultViewWidget
 
-    widget = ResultViewWidget()
-    qtbot.addWidget(widget)
-    widget._current_result = {"raw_text": "hello"}
-    widget._current_snapshot = snapshot_ocr_result(widget._current_result)
     started = threading.Event()
     release = threading.Event()
     messages = _Messages()
     output = tmp_path / "result.docx"
     backend_threads: list[QThread] = []
 
-    _patch_save_dialog(monkeypatch, "vibeocr.widgets.result_view_widget", output)
-
-    def get_backend():
+    def slow_export(_payload, path, _fmt):
         backend_threads.append(QThread.currentThread())
-        return object()
-
-    monkeypatch.setattr("vibeocr.client.session.get_backend_client", get_backend)
-    monkeypatch.setattr("vibeocr.widgets.result_view_widget.QMessageBox", messages)
-
-    def slow_export(_client, _result, path, _fmt):
         started.set()
         release.wait(timeout=2)
+        path = Path(path)
         path.write_bytes(b"PK")
-        return True
+        return {"output_path": str(path)}
 
-    monkeypatch.setattr("vibeocr.client.export.export_result", slow_export)
+    widget = ResultViewWidget(utility_client=_ExportClient(slow_export))
+    qtbot.addWidget(widget)
+    widget._current_result = {"raw_text": "hello"}
+    widget._current_snapshot = snapshot_ocr_result(widget._current_result)
+    _patch_save_dialog(monkeypatch, "vibeocr.widgets.result_view_widget", output)
+    monkeypatch.setattr("vibeocr.widgets.result_view_widget.QMessageBox", messages)
     widget._on_export_file("docx")
     qtbot.waitUntil(started.is_set, timeout=1000)
 
@@ -94,15 +97,15 @@ def test_result_export_failure_uses_existing_warning(
 ):
     from vibeocr.widgets.result_view_widget import ResultViewWidget
 
-    widget = ResultViewWidget()
+    widget = ResultViewWidget(
+        utility_client=_ExportClient(lambda *_args: {})
+    )
     qtbot.addWidget(widget)
     widget._current_result = {"raw_text": "hello"}
     widget._current_snapshot = snapshot_ocr_result(widget._current_result)
     messages = _Messages()
     output = tmp_path / "failed.xlsx"
     _patch_save_dialog(monkeypatch, "vibeocr.widgets.result_view_widget", output)
-    monkeypatch.setattr("vibeocr.client.session.get_backend_client", lambda: object())
-    monkeypatch.setattr("vibeocr.client.export.export_result", lambda *args: False)
     monkeypatch.setattr("vibeocr.widgets.result_view_widget.QMessageBox", messages)
 
     widget._on_export_file("xlsx")
@@ -121,32 +124,30 @@ def test_result_export_keeps_submission_snapshot_across_switch_and_clear(
 ):
     from vibeocr.widgets.result_view_widget import ResultViewWidget
 
-    widget = ResultViewWidget()
-    qtbot.addWidget(widget)
     live_result = {
         "raw_text": "submitted",
         "markdown_text": "submitted markdown",
         "content_list": [{"type": "text", "text": "submitted block"}],
     }
-    widget._current_result = live_result
-    widget._current_snapshot = snapshot_ocr_result(live_result)
     started = threading.Event()
     release = threading.Event()
     seen_results: list[object] = []
     messages = _Messages()
     output = tmp_path / "snapshot.docx"
     _patch_save_dialog(monkeypatch, "vibeocr.widgets.result_view_widget", output)
-    monkeypatch.setattr("vibeocr.client.session.get_backend_client", lambda: object())
-    monkeypatch.setattr("vibeocr.widgets.result_view_widget.QMessageBox", messages)
-
-    def slow_export(_client, result, path, _fmt):
+    def slow_export(payload, path, _fmt):
         started.set()
         release.wait(timeout=2)
-        seen_results.append(result)
+        seen_results.append(payload)
+        path = Path(path)
         path.write_bytes(b"snapshot")
-        return True
+        return {"output_path": str(path)}
 
-    monkeypatch.setattr("vibeocr.client.export.export_result", slow_export)
+    widget = ResultViewWidget(utility_client=_ExportClient(slow_export))
+    qtbot.addWidget(widget)
+    widget._current_result = live_result
+    widget._current_snapshot = snapshot_ocr_result(live_result)
+    monkeypatch.setattr("vibeocr.widgets.result_view_widget.QMessageBox", messages)
     widget._on_export_file("docx")
     qtbot.waitUntil(started.is_set, timeout=1000)
 
@@ -164,8 +165,8 @@ def test_result_export_keeps_submission_snapshot_across_switch_and_clear(
     qtbot.waitUntil(lambda: widget._export_job is None, timeout=2000)
 
     snapshot = seen_results[0]
-    assert snapshot.raw_text == "submitted"
-    assert snapshot.content_list[0]["text"] == "submitted block"
+    assert snapshot["raw_text"] == "submitted"
+    assert snapshot["content_list"][0]["text"] == "submitted block"
     assert len(messages.information_calls) == 1
     assert messages.warning_calls == []
 
@@ -175,26 +176,24 @@ def test_result_drain_from_non_gui_thread_waits_native_but_requires_gui_cleanup(
 ):
     from vibeocr.widgets.result_view_widget import ResultViewWidget
 
-    widget = ResultViewWidget()
-    qtbot.addWidget(widget)
-    widget._current_result = {"raw_text": "wait"}
-    widget._current_snapshot = snapshot_ocr_result(widget._current_result)
     started = threading.Event()
     release = threading.Event()
     output = tmp_path / "wait.docx"
     _patch_save_dialog(monkeypatch, "vibeocr.widgets.result_view_widget", output)
-    monkeypatch.setattr("vibeocr.client.session.get_backend_client", lambda: object())
+    def slow_export(_payload, path, _fmt):
+        started.set()
+        release.wait(timeout=2)
+        path = Path(path)
+        path.write_bytes(b"wait")
+        return {"output_path": str(path)}
+
+    widget = ResultViewWidget(utility_client=_ExportClient(slow_export))
+    qtbot.addWidget(widget)
+    widget._current_result = {"raw_text": "wait"}
+    widget._current_snapshot = snapshot_ocr_result(widget._current_result)
     monkeypatch.setattr(
         "vibeocr.widgets.result_view_widget.QMessageBox", _Messages()
     )
-
-    def slow_export(_client, _result, path, _fmt):
-        started.set()
-        release.wait(timeout=2)
-        path.write_bytes(b"wait")
-        return True
-
-    monkeypatch.setattr("vibeocr.client.export.export_result", slow_export)
     widget._on_export_file("docx")
     qtbot.waitUntil(started.is_set, timeout=1000)
     ui_calls: list[int] = []
@@ -227,25 +226,23 @@ def test_result_close_returns_immediately_and_drops_late_export_ui(
     from vibeocr.utils.export_jobs import _ACTIVE_JOBS
     from vibeocr.widgets.result_view_widget import ResultViewWidget
 
-    widget = ResultViewWidget()
-    qtbot.addWidget(widget)
-    widget._current_result = {"raw_text": "late"}
-    widget._current_snapshot = snapshot_ocr_result(widget._current_result)
     started = threading.Event()
     release = threading.Event()
     messages = _Messages()
     output = tmp_path / "late.docx"
     _patch_save_dialog(monkeypatch, "vibeocr.widgets.result_view_widget", output)
-    monkeypatch.setattr("vibeocr.client.session.get_backend_client", lambda: object())
-    monkeypatch.setattr("vibeocr.widgets.result_view_widget.QMessageBox", messages)
-
-    def slow_export(_client, _result, path, _fmt):
+    def slow_export(_payload, path, _fmt):
         started.set()
         release.wait(timeout=2)
+        path = Path(path)
         path.write_bytes(b"late")
-        return True
+        return {"output_path": str(path)}
 
-    monkeypatch.setattr("vibeocr.client.export.export_result", slow_export)
+    widget = ResultViewWidget(utility_client=_ExportClient(slow_export))
+    qtbot.addWidget(widget)
+    widget._current_result = {"raw_text": "late"}
+    widget._current_snapshot = snapshot_ocr_result(widget._current_result)
+    monkeypatch.setattr("vibeocr.widgets.result_view_widget.QMessageBox", messages)
     widget._on_export_file("docx")
     qtbot.waitUntil(started.is_set, timeout=1000)
     job = widget._export_job

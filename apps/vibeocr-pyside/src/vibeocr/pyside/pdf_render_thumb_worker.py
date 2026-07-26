@@ -22,12 +22,9 @@ import logging
 import queue
 import threading
 from concurrent.futures import ThreadPoolExecutor
-from typing import TYPE_CHECKING
+from typing import Any
 
 from PySide6.QtCore import QThread, Signal
-
-if TYPE_CHECKING:
-    from vibeocr.services.pdf_backend_client import PdfBackendClient
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +47,7 @@ class ThumbnailIpcWorker(QThread):
 
     def __init__(
         self,
-        client: PdfBackendClient,
+        client: Any,
         session_id: str,
         size: int = 160,
         parent=None,

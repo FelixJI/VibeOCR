@@ -1,9 +1,17 @@
 """PdfTab UI 结构测试。"""
 
+from unittest.mock import MagicMock
+
 import pytest
 from PySide6.QtCore import QItemSelectionModel, Qt
 from PySide6.QtWidgets import QListView, QListWidget, QScrollArea, QSplitter
 
+from vibeocr.ipc.schemas import (
+    OpenResponse,
+    PdfDocumentMirror,
+    ProgressEvent,
+    ProgressPhase,
+)
 from vibeocr.views.tabs.pdf_tab import (
     _LAYER_STATE_ROLE,
     _THUMBNAIL_HPAD,
@@ -17,7 +25,23 @@ from vibeocr.views.tabs.pdf_tab import (
 
 @pytest.fixture
 def pdf_tab(qtbot):
-    tab = PdfTab()
+    client = MagicMock()
+    client.open_session.side_effect = lambda path: OpenResponse(
+        session_id=path,
+        model=PdfDocumentMirror(file_path=path, pages=[]),
+    )
+    client.load_stream.side_effect = lambda _sid: iter(
+        [
+            ProgressEvent(
+                phase=ProgressPhase.LOAD,
+                current=0,
+                total=0,
+                message="done",
+            )
+        ]
+    )
+    client.render_thumbnail.return_value = b""
+    tab = PdfTab(pdf_client=client)
     qtbot.addWidget(tab)
     yield tab
     tab.shutdown()

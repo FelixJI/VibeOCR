@@ -1,8 +1,7 @@
 """Tests for OCRService CUDA DLL path setup.
 
-Verifies that ``_setup_cuda_dll_path`` and ``_register_dll_directories`` include
-``torch/lib`` so that paddlepaddle-gpu (CUDA 12 build) can find ``cublas64_12.dll``
-on machines without a system-level CUDA Toolkit install.
+Verifies that ``_setup_cuda_dll_path`` and ``_register_dll_directories`` use
+``torch/lib`` only as a fallback when Paddle does not bundle a CUDA runtime.
 
 Background: torch wheels ship a complete CUDA 12 + cuDNN 9 runtime under
 ``torch/lib``. Without registering that directory, paddle falls back to CPU with
@@ -37,8 +36,8 @@ class TestSetupCudaDllPathIncludesTorchLib:
     def teardown_method(self) -> None:
         OCRService._cuda_dll_registered = False
 
-    def test_torch_lib_added_to_path(self) -> None:
-        """When torch/lib exists, it is appended to PATH."""
+    def test_torch_lib_follows_paddle_runtime_policy(self) -> None:
+        """Do not mix Torch CUDA DLLs into a Paddle-bundled CUDA runtime."""
         site = _site_packages()
         if site is None or not (site / "torch" / "lib").is_dir():
             pytest.skip("torch/lib not present in this environment")
@@ -52,7 +51,12 @@ class TestSetupCudaDllPathIncludesTorchLib:
 
             OCRService._setup_cuda_dll_path()
 
-            assert torch_lib in os.environ["PATH"].split(os.pathsep)
+            import paddle.version
+
+            paddle_has_cuda = bool(paddle.version.cuda())
+            assert (torch_lib in os.environ["PATH"].split(os.pathsep)) is (
+                not paddle_has_cuda
+            )
 
     def test_idempotent(self) -> None:
         """Calling twice does not duplicate entries."""
@@ -84,9 +88,9 @@ class TestSetupCudaDllPathIncludesTorchLib:
     not hasattr(os, "add_dll_directory"), reason="os.add_dll_directory unavailable"
 )
 class TestRegisterDllDirectoriesIncludesTorchLib:
-    """``_register_dll_directories`` must register ``torch/lib`` via add_dll_directory."""
+    """``add_dll_directory`` follows the same Paddle/Torch runtime policy."""
 
-    def test_torch_lib_registered(self) -> None:
+    def test_torch_lib_registration_follows_paddle_runtime_policy(self) -> None:
         site = _site_packages()
         if site is None or not (site / "torch" / "lib").is_dir():
             pytest.skip("torch/lib not present in this environment")
@@ -96,6 +100,6 @@ class TestRegisterDllDirectoriesIncludesTorchLib:
         with patch("os.add_dll_directory", side_effect=lambda d: seen.append(d)):
             OCRService._register_dll_directories()
 
-        assert torch_lib in seen, (
-            f"torch/lib not registered via add_dll_directory; registered: {seen}"
-        )
+        import paddle.version
+
+        assert (torch_lib in seen) is (not bool(paddle.version.cuda()))

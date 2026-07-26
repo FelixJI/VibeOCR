@@ -7,7 +7,7 @@ import json
 import logging
 from pathlib import Path
 
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QObject
 
 logger = logging.getLogger(__name__)
 
@@ -20,8 +20,8 @@ class ConfigManager(QObject):
 
     _instance: "ConfigManager | None" = None
 
-    # 每管道默认 TTL（秒）。paddle 重管道（PP-StructureV3 / PaddleOCR-VL）5 分钟；
-    # 其他（OCR / TABLE / FORMULA / MinerU）持久缓存（0）。
+    # 每管道默认 TTL（秒）。paddle 重管道（PP-StructureV3 / PaddleOCR-VL）
+    # 显式 5 分钟；其他管道用 0 表示继承 Supervisor 默认 TTL。
     _DEFAULT_PIPELINE_TTLS: dict[str, int] = {
         "OCR": 0,
         "TABLE_RECOGNITION": 0,
@@ -30,8 +30,6 @@ class ConfigManager(QObject):
         "MinerU": 0,
         "PaddleOCR-VL": 300,
     }
-
-    preload_pipelines_changed = Signal(list)
 
     def __init__(self, project_root: Path, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -121,44 +119,56 @@ class ConfigManager(QObject):
             return False
 
     def get_preload_pipelines(self) -> list[str]:
+        """返回启动时预加载的管道，兼容迁移旧 cache.json 配置。"""
+        from vibeocr.contracts.pipelines import get_preloadable_pipelines
+
         data = self._load_json("app_settings.json", {})
-        pipelines = data.get("preload_pipelines", [])
-        if not pipelines:
-            cache = self._load_cache_json("cache.json", {})
-            pipelines = cache.get("preload_pipelines", [])
-            if pipelines:
-                self.set_preload_pipelines(pipelines)
-        self._preload_pipelines = pipelines
-        return pipelines
+        raw = data.get("preload_pipelines")
+        if raw is None:
+            legacy = self._load_cache_json("cache.json", {}).get(
+                "preload_pipelines"
+            )
+            raw = legacy if isinstance(legacy, list) else ["OCR"]
+        valid = {
+            pipeline.value.lower(): pipeline.value
+            for pipeline in get_preloadable_pipelines()
+        }
+        selected: list[str] = []
+        if isinstance(raw, list):
+            for value in raw:
+                if not isinstance(value, str):
+                    continue
+                normalized = valid.get(value.lower())
+                if normalized is not None and normalized not in selected:
+                    selected.append(normalized)
+        return selected
 
     def get_preload_enabled(self) -> bool:
         data = self._load_json("app_settings.json", {})
-        if "preload_enabled" not in data:
-            return len(data.get("preload_pipelines", [])) > 0
-        return bool(data["preload_enabled"])
+        if "preload_enabled" in data:
+            return bool(data["preload_enabled"])
+        return bool(self.get_preload_pipelines())
 
     def set_preload_enabled(self, enabled: bool) -> bool:
         data = self._load_json("app_settings.json", {})
-        data["preload_enabled"] = enabled
+        data["preload_enabled"] = bool(enabled)
         return self._save_json("app_settings.json", data)
 
     def set_preload_pipelines(self, pipelines: list[str]) -> bool:
+        from vibeocr.contracts.pipelines import get_preloadable_pipelines
+
+        valid = {
+            pipeline.value.lower(): pipeline.value
+            for pipeline in get_preloadable_pipelines()
+        }
+        normalized: list[str] = []
+        for value in pipelines:
+            selected = valid.get(str(value).lower())
+            if selected is not None and selected not in normalized:
+                normalized.append(selected)
         data = self._load_json("app_settings.json", {})
-        # 规范化管道名（大小写容错，兼容历史小写配置如 'table_recognition'）
-        from vibeocr.core.pipelines import OCRPipeline
-
-        valid_map = {p.value.lower(): p.value for p in OCRPipeline}
-        pipelines = [valid_map.get(p.lower(), p) for p in pipelines]
-        data["preload_pipelines"] = pipelines
-        self._preload_pipelines = pipelines
-        success = self._save_json("app_settings.json", data)
-        if success:
-            self.preload_pipelines_changed.emit(pipelines)
-        return success
-
-    @property
-    def preload_pipelines(self) -> list[str]:
-        return getattr(self, "_preload_pipelines", [])
+        data["preload_pipelines"] = normalized
+        return self._save_json("app_settings.json", data)
 
     def get_pipeline_ttls(self) -> dict[str, int]:
         """返回完整 6 管道 TTL 字典；缺失补默认；自动一次性迁移旧字段。
@@ -196,11 +206,12 @@ class ConfigManager(QObject):
         return self._normalize_ttls(data.get("pipeline_ttls", {}))
 
     def set_pipeline_ttl(self, pipeline_name: str, ttl: int) -> bool:
-        """设置单个管道的 TTL（0=持久）。未知管道名返回 False。"""
+        """设置单个管道的 TTL（-1=持久，0=继承）。未知管道名返回 False。"""
         if pipeline_name not in self._DEFAULT_PIPELINE_TTLS:
             return False
         ttls = self.get_pipeline_ttls()
-        ttls[pipeline_name] = max(0, int(ttl))
+        normalized_ttl = int(ttl)
+        ttls[pipeline_name] = normalized_ttl if normalized_ttl >= -1 else 0
         return self.set_pipeline_ttls(ttls)
 
     def set_pipeline_ttls(self, ttls: dict[str, int]) -> bool:
@@ -219,7 +230,7 @@ class ConfigManager(QObject):
             # bool 是 int 子类，必须显式拒绝（避免 True/False 被当成 1/0）
             if isinstance(val, bool) or not isinstance(val, int):
                 val = default
-            result[name] = max(0, val)
+            result[name] = val if val >= -1 else 0
         return result
 
     def get_max_heavy_pipelines(self) -> int | None:

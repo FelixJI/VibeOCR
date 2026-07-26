@@ -68,7 +68,7 @@ public sealed class PortableLayoutTests
     {
         // Build a fake repository with a .venv/Scripts/python.exe and point
         // VIBEOCR_REPOSITORY_ROOT at it — the dev interpreter must win over the
-        // packaged layout (matching how ResolveWorkerRoot picks up the repo).
+        // packaged layout (matching how ResolveSupervisorRoot picks up the repo).
         string repo = Path.Combine(Path.GetTempPath(), $"vibeocr-repo-{Guid.NewGuid():N}");
         CreateFakeRepository(repo);
         Directory.CreateDirectory(Path.Combine(repo, ".venv", "Scripts"));
@@ -111,10 +111,11 @@ public sealed class PortableLayoutTests
     {
         string repo = Path.Combine(Path.GetTempPath(), $"vibeocr-discovery-{Guid.NewGuid():N}");
         string output = Path.Combine(repo, "src", "dotnet", "VibeOCR.App", "bin", "Debug", "net10.0-windows10.0.19041.0");
-        string worker = Path.Combine(repo, "src", "vibeocr", "worker_host");
+        string supervisor = Path.Combine(
+            repo, "packages", "vibeocr-backend", "src", "vibeocr", "supervisor");
         string interpreter = Path.Combine(repo, ".venv", "Scripts", "python.exe");
         Directory.CreateDirectory(output);
-        Directory.CreateDirectory(worker);
+        Directory.CreateDirectory(supervisor);
         Directory.CreateDirectory(Path.GetDirectoryName(interpreter)!);
         File.WriteAllText(Path.Combine(repo, "pyproject.toml"), "[project]");
         File.WriteAllText(interpreter, "fake");
@@ -135,14 +136,21 @@ public sealed class PortableLayoutTests
 
     /// <summary>
     /// Materialize the minimum marker files <see cref="PortableLayout.IsRepositoryRoot"/>
-    /// requires (a <c>pyproject.toml</c> and <c>src/vibeocr/worker_host/</c>) so a fake
+    /// requires (a <c>pyproject.toml</c> and the backend supervisor package) so a fake
     /// repository is recognized as a real checkout by the resolver.
     /// </summary>
     private static void CreateFakeRepository(string repo)
     {
         Directory.CreateDirectory(repo);
         File.WriteAllText(Path.Combine(repo, "pyproject.toml"), "[project]");
-        Directory.CreateDirectory(Path.Combine(repo, "src", "vibeocr", "worker_host"));
+        Directory.CreateDirectory(
+            Path.Combine(
+                repo,
+                "packages",
+                "vibeocr-backend",
+                "src",
+                "vibeocr",
+                "supervisor"));
     }
 
     /// <summary>Set an environment variable for the duration of a test, restoring the prior value on dispose.</summary>

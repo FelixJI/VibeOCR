@@ -40,7 +40,7 @@ jobs:
           $log = "ttl-diagnostics.txt"
           python -m pytest `
             tests/architecture `
-            tests/worker_host `
+            tests/supervisor `
             tests/application `
             tests/services `
             tests/test_dependency_bootstrap.py `

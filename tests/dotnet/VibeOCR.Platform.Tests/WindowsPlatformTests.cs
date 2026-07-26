@@ -104,8 +104,7 @@ public sealed class WindowsPlatformTests
         Assert.Equal(2, frame.Height);
         Assert.Equal(8, frame.Stride);
         Assert.Equal("BGRA8", frame.PixelFormat);
-        Assert.Equal("application/vnd.vibeocr.bgra", frame.Payload.MediaType);
-        Assert.Equal(16, frame.Payload.Size);
+        Assert.Equal(16, frame.Pixels.Length);
         Assert.Equal(Enumerable.Range(0, 16).Select(value => (byte)value), bytes);
     }
 

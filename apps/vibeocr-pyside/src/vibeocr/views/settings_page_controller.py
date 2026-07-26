@@ -9,7 +9,6 @@ import subprocess
 import sys
 from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QThreadPool, QTimer
 from PySide6.QtWidgets import (
@@ -42,12 +41,16 @@ from vibeocr.env_manager import (
     get_environment_mode,
 )
 from vibeocr.machine_cache import is_cache_valid
+from vibeocr.protocol.v2 import (
+    PipelineSpec,
+    ResidencyKind,
+    ResidencyStatus,
+    SettingsSnapshot,
+)
 from vibeocr.pyside import settings_runtime
+from vibeocr.pyside.supervisor_adapter import get_supervisor_adapter
 from vibeocr.views.background_tasks import DependencyUpdateCheckTask, FunctionTask
 from vibeocr.widgets.backend_choice_dialog import BackendChoiceDialog
-
-if TYPE_CHECKING:
-    from vibeocr.contracts.pipelines import OCRPipeline
 
 logger = logging.getLogger(__name__)
 
@@ -122,7 +125,6 @@ class SettingsPageController:
         status_callback: Callable[[str], None],
         ocr_ready_callback: Callable[[], bool],
         subprocess_manager,
-        preload_complete_callback: Callable[[], None] | None = None,
         install_succeeded_callback: Callable[[], None] | None = None,
         gpu_capability_callback: Callable[[bool], None] | None = None,
         dependency_update_task: DependencyUpdateCheckTask | None = None,
@@ -134,7 +136,6 @@ class SettingsPageController:
         self._status_callback = status_callback
         self._ocr_ready_callback = ocr_ready_callback
         self._subprocess_manager = subprocess_manager
-        self._preload_complete_callback = preload_complete_callback
         # 设置页重装/补装依赖成功后的联动回调（由 MainWindow 提供）。
         # 回归（Bug A）：旧逻辑设置页 BackendChoiceDialog 只连 finished 刷新表格，
         # 没联动 MainWindow._ocr_ready / 子进程 Worker，导致装完仍提示"未就绪"。
@@ -152,7 +153,11 @@ class SettingsPageController:
         self._defer_machine_cache_status = defer_machine_cache_status
         self._pending_update_install = False
         self._manual_dependency_update_waiting = False
-        self._manual_preload_task: object | None = None
+        self._pending_maintenance_dialog: Callable[[], None] | None = None
+        self._runtime_adapter = None
+        self._runtime_settings_snapshot: SettingsSnapshot | None = None
+        self._runtime_action = ""
+        self._pending_ttl_sync = False
         self._backend_options = None
         self._closing = False
         self._cache_tasks: set[object] = set()
@@ -161,6 +166,10 @@ class SettingsPageController:
         self._machine_cache_generation = 0
         self._cache_refresh_running = False
         self._shortcut_running = False
+        self._preload_selected: tuple[str, ...] = ()
+        self._preload_poll_timer = QTimer(ui)
+        self._preload_poll_timer.setInterval(750)
+        self._preload_poll_timer.timeout.connect(self._poll_preload_residency)
         self._ttl_sync_timer = QTimer(ui)
         self._ttl_sync_timer.setSingleShot(True)
         self._ttl_sync_timer.setInterval(300)
@@ -187,8 +196,11 @@ class SettingsPageController:
         已销毁的 UI。再关闭 GPU 检测线程。
         """
         self._closing = True
+        self._cancel_pending_maintenance_dialog()
         if self._owns_dependency_update_task:
             self._dependency_update_task.close()
+        self._preload_poll_timer.stop()
+        self._preload_selected = ()
         self._ttl_sync_timer.stop()
         for dialog in tuple(self._active_dialogs):
             request_shutdown = getattr(dialog, "request_shutdown", None)
@@ -202,14 +214,7 @@ class SettingsPageController:
         # wrapper/Signals 可能导致 use-after-free。完成回调会先 discard，再由
         # _closing 守卫跳过所有 UI 操作。
 
-        # 取消正在运行的手动预加载任务（运行在全局 QThreadPool 上）
-        if self._manual_preload_task is not None:
-            cancel_preload = getattr(
-                self._subprocess_manager, "request_preload_shutdown", None
-            )
-            if callable(cancel_preload):
-                cancel_preload()
-            self._manual_preload_task = None
+        self._disconnect_runtime_adapter()
 
         backend_options = self._backend_options
         if backend_options is not None:
@@ -245,8 +250,6 @@ class SettingsPageController:
             not self._owns_dependency_update_task
             or self._dependency_update_task.is_drained()
         )
-        preload_probe = getattr(self._subprocess_manager, "is_preload_drained", None)
-        preload_drained = not callable(preload_probe) or bool(preload_probe())
         from vibeocr.utils.dialog_workers import are_dialog_workers_drained
 
         dialogs_drained = are_dialog_workers_drained()
@@ -254,7 +257,6 @@ class SettingsPageController:
             gpu_drained
             and cache_drained
             and update_drained
-            and preload_drained
             and dialogs_drained
         )
 
@@ -270,6 +272,10 @@ class SettingsPageController:
         if nav_list and stacked:
             nav_list.currentRowChanged.connect(stacked.setCurrentIndex)
 
+        self._connect_runtime_adapter()
+
+        self._init_log_level_control()
+
         chk_enable_preload = self._ui.findChild(QCheckBox, "chkEnablePreload")
         if chk_enable_preload:
             chk_enable_preload.toggled.connect(self._on_enable_preload_toggled)
@@ -277,20 +283,12 @@ class SettingsPageController:
         btn_preload_now = self._ui.findChild(QPushButton, "btnPreloadNow")
         if btn_preload_now:
             btn_preload_now.clicked.connect(self._on_preload_now_clicked)
-
-        self._subprocess_manager.preload_progress.connect(
-            self._on_manual_preload_progress
-        )
-        self._subprocess_manager.preload_finished.connect(
-            self._on_manual_preload_finished
-        )
-
-        self._init_log_level_control()
-
         for pipeline in self._get_preloadable_pipelines():
-            chk = self._ui.findChild(QCheckBox, f"chkPreload_{pipeline.name}")
-            if chk:
-                chk.toggled.connect(self._save_preload_pipelines_config)
+            checkbox = self._ui.findChild(
+                QCheckBox, f"chkPreload_{pipeline.name}"
+            )
+            if checkbox is not None:
+                checkbox.toggled.connect(self._save_preload_pipelines_config)
 
         btn_refresh_cache = self._ui.findChild(QPushButton, "btnRefreshCache")
         if btn_refresh_cache:
@@ -313,7 +311,10 @@ class SettingsPageController:
 
         btn_release_heavy = self._ui.findChild(QPushButton, "btnReleaseHeavy")
         if btn_release_heavy:
-            btn_release_heavy.clicked.connect(self._on_release_heavy_clicked)
+            btn_release_heavy.setEnabled(False)
+            btn_release_heavy.setToolTip(
+                "Supervisor v2 暂不支持按“重模型”筛选；请释放全部闲置模型。"
+            )
 
         btn_release_all = self._ui.findChild(QPushButton, "btnReleaseAll")
         if btn_release_all:
@@ -349,6 +350,40 @@ class SettingsPageController:
         # 所有子页（静态 .ui 页 + 动态插入页）就绪后统一包滚动条，
         # 规范设置界面滚动行为：内容超出窗口高度时出垂直滚动条而非被裁剪。
         self._wrap_settings_pages_in_scroll()
+        self._on_refresh_pipeline_cache_clicked()
+
+    def _connect_runtime_adapter(self):
+        """绑定当前 supervisor adapter 的 typed runtime signals。"""
+        adapter = get_supervisor_adapter()
+        if adapter is self._runtime_adapter:
+            return adapter
+        self._disconnect_runtime_adapter()
+        adapter.residency_status.connect(self._on_residency_status)
+        adapter.residency_error.connect(self._on_residency_error)
+        adapter.settings_updated.connect(self._on_settings_updated)
+        adapter.settings_error.connect(self._on_settings_error)
+        adapter.preload_completed.connect(self._on_preload_completed)
+        adapter.preload_error.connect(self._on_preload_error)
+        self._runtime_adapter = adapter
+        return adapter
+
+    def _disconnect_runtime_adapter(self) -> None:
+        adapter = self._runtime_adapter
+        if adapter is None:
+            return
+        for signal, slot in (
+            (adapter.residency_status, self._on_residency_status),
+            (adapter.residency_error, self._on_residency_error),
+            (adapter.settings_updated, self._on_settings_updated),
+            (adapter.settings_error, self._on_settings_error),
+            (adapter.preload_completed, self._on_preload_completed),
+            (adapter.preload_error, self._on_preload_error),
+        ):
+            try:
+                signal.disconnect(slot)
+            except (RuntimeError, TypeError):
+                pass
+        self._runtime_adapter = None
 
     # ----------------------------------------------------------------
     # Toast 提示
@@ -692,7 +727,7 @@ class SettingsPageController:
         self._update_preload_status()
         self._restore_preload_checkbox_state()
         # 引入拆分后的 labelPipelineCacheStatus（运行时层），再构造每管道 TTL
-        # ComboBox。前者由 _on_pipeline_cache_status 写入，后者由用户操作触发。
+        # ComboBox。前者由 typed ResidencyStatus signal 写入，后者由用户操作触发。
         self._init_pipeline_cache_status_label()
         self._init_pipeline_ttl_combos()
 
@@ -736,9 +771,10 @@ class SettingsPageController:
     # 每管道 TTL ComboBox（替代旧 spinPipelineTtl + chkEnablePipelineTtl）
     # ----------------------------------------------------------------
 
-    #: TTL 预设档：显示文本 → 秒数。0 仅禁用闲置回收，并非无条件常驻。
+    #: TTL 预设档：显示文本 → 秒数。0 在 v2 schema 中转换为继承默认 TTL。
     _TTL_PRESETS: list[tuple[str, int]] = [
-        ("不因闲置 TTL 回收", 0),
+        ("继承默认 TTL", 0),
+        ("持久驻留", -1),
         ("1 分钟", 60),
         ("3 分钟", 180),
         ("5 分钟", 300),
@@ -786,15 +822,12 @@ class SettingsPageController:
                 # findData 反查索引（比匹配显示文本更稳）。
                 combo.addItem(display_text, secs)
             self._select_ttl_combo(combo, ttls.get(pipeline.value, 0))
-            no_idle_eviction_tip = (
-                "不因闲置 TTL 回收，但仍受显存并存上限、显式释放、"
-                "应用退出和进程终止影响。"
-            )
-            combo.setToolTip(no_idle_eviction_tip)
+            inherit_ttl_tip = "可继承默认 TTL、选择有限 TTL，或设置为持久驻留。"
+            combo.setToolTip(inherit_ttl_tip)
             # MinerU 使用独立 API 进程；有限 TTL 到期会真实停止该进程。
             if pipeline == OCRPipeline.DOCUMENT_PARSING:
                 mineru_tip = (
-                    f"{no_idle_eviction_tip}"
+                    f"{inherit_ttl_tip}"
                     "设置有限 TTL 后，MinerU 闲置到期会停止 API 进程；"
                     "下次使用时会重新启动。"
                 )
@@ -818,7 +851,7 @@ class SettingsPageController:
         )
 
     def _select_ttl_combo(self, combo: QComboBox, ttl: int) -> None:
-        """根据 TTL 秒数选中 ComboBox 项（UserRole data 精确匹配，无匹配回退持久）。"""
+        """根据 TTL 秒数选中 ComboBox 项（UserRole data 精确匹配，无匹配回退继承）。"""
         index = combo.findData(ttl)
         combo.setCurrentIndex(index if index >= 0 else 0)
 
@@ -913,171 +946,172 @@ class SettingsPageController:
         return get_preloadable_pipelines()
 
     def _restore_preload_checkbox_state(self) -> None:
-        """从配置恢复预加载 checkbox 状态（阻塞信号避免触发保存）"""
+        """恢复持久化选择并根据总开关启用 Supervisor 预加载控件。"""
         from vibeocr.pyside.runtime import ConfigManager
 
-        cm = ConfigManager.instance()
-        saved = cm.get_preload_pipelines()
-        # 大小写不敏感匹配，兼容历史小写配置（如 'table_recognition'）
-        saved_lower = {s.lower() for s in saved}
+        config = ConfigManager.instance()
+        selected = set(config.get_preload_pipelines())
         for pipeline in self._get_preloadable_pipelines():
-            chk = self._ui.findChild(QCheckBox, f"chkPreload_{pipeline.name}")
-            if chk:
-                chk.blockSignals(True)
-                chk.setChecked(pipeline.value.lower() in saved_lower)
-                chk.blockSignals(False)
-
+            checkbox = self._ui.findChild(
+                QCheckBox, f"chkPreload_{pipeline.name}"
+            )
+            if checkbox is None:
+                continue
+            checkbox.blockSignals(True)
+            checkbox.setChecked(pipeline.value in selected)
+            checkbox.blockSignals(False)
         chk_enable = self._ui.findChild(QCheckBox, "chkEnablePreload")
-        if chk_enable:
+        enabled = config.get_preload_enabled()
+        if chk_enable is not None:
             chk_enable.blockSignals(True)
-            chk_enable.setChecked(cm.get_preload_enabled())
+            chk_enable.setChecked(enabled)
             chk_enable.blockSignals(False)
-            self._on_enable_preload_toggled(cm.get_preload_enabled())
+        self._set_preload_controls_enabled(enabled)
 
     def _on_enable_preload_toggled(self, checked: bool) -> None:
-        """启用/禁用预加载"""
-        preload_options = self._ui.findChild(QWidget, "preloadOptions")
-        if preload_options:
-            preload_options.setEnabled(checked)
+        """启用或禁用手动 Supervisor 预加载选择。"""
         from vibeocr.pyside.runtime import ConfigManager
 
         ConfigManager.instance().set_preload_enabled(checked)
-        self._show_settings_toast()
-        logger.debug(f"[设置] 预加载功能: {'启用' if checked else '禁用'}")
+        self._set_preload_controls_enabled(checked)
+
+    def _set_preload_controls_enabled(self, enabled: bool) -> None:
+        options = self._ui.findChild(QWidget, "preloadOptions")
+        if options is not None:
+            options.setEnabled(enabled)
+        button = self._ui.findChild(QPushButton, "btnPreloadNow")
+        if button is not None:
+            button.setEnabled(enabled)
+        self._update_preload_status(
+            "请选择管道并通过 Supervisor 预加载"
+            if enabled
+            else "模型预加载已禁用"
+        )
+
+    def on_supervisor_ready(self) -> None:
+        """Supervisor ready 后按持久配置异步预加载选中模型。"""
+        from vibeocr.pyside.runtime import ConfigManager
+
+        if ConfigManager.instance().get_preload_enabled():
+            self._on_preload_now_clicked()
+        else:
+            self._on_refresh_pipeline_cache_clicked()
 
     def _on_preload_now_clicked(self) -> None:
-        """立即预加载按钮点击"""
-        if not self._ocr_ready_callback():
-            QMessageBox.warning(None, "无法预加载", "OCR 功能未就绪，请先安装依赖。")
+        """把选中的管道交给 Supervisor 顺序预加载。"""
+        adapter = self._connect_runtime_adapter()
+        if not adapter.is_started:
+            self._update_preload_status("预加载失败：OCR 服务未连接")
             return
-
-        if not self._subprocess_manager.is_ready:
-            QMessageBox.warning(
-                None, "无法预加载", "OCR 子进程服务尚未就绪，请稍后再试。"
+        selected = tuple(
+            pipeline.value
+            for pipeline in self._get_preloadable_pipelines()
+            if (
+                (checkbox := self._ui.findChild(
+                    QCheckBox, f"chkPreload_{pipeline.name}"
+                ))
+                is not None
+                and checkbox.isChecked()
             )
+        )
+        if not selected:
+            self._update_preload_status("请至少选择一个预加载管道")
             return
+        button = self._ui.findChild(QPushButton, "btnPreloadNow")
+        if button is not None:
+            button.setEnabled(False)
+        self._update_preload_status(
+            f"正在通过 Supervisor 预加载 {len(selected)} 个管道..."
+        )
+        self._preload_selected = selected
+        self._poll_preload_residency()
+        self._preload_poll_timer.start()
+        adapter.preload(selected)
 
-        pipelines_to_preload = self._get_selected_preload_pipelines()
-
-        if not pipelines_to_preload:
-            QMessageBox.warning(None, "无法预加载", "请至少选择一个要预加载的管道。")
+    def _poll_preload_residency(self) -> None:
+        """预加载期间读取 Supervisor 的部分驻留快照。"""
+        if self._closing or not self._preload_selected:
+            self._preload_poll_timer.stop()
             return
+        adapter = self._connect_runtime_adapter()
+        if adapter.is_started:
+            adapter.refresh_residency()
 
-        btn_preload_now = self._ui.findChild(QPushButton, "btnPreloadNow")
-        if btn_preload_now:
-            btn_preload_now.setEnabled(False)
+    def _on_preload_completed(self, status: object) -> None:
+        if self._closing:
+            return
+        selected = self._preload_selected
+        self._preload_poll_timer.stop()
+        self._preload_selected = ()
+        button = self._ui.findChild(QPushButton, "btnPreloadNow")
+        if button is not None:
+            enabled = self._ui.findChild(QCheckBox, "chkEnablePreload")
+            button.setEnabled(bool(enabled is not None and enabled.isChecked()))
+        if isinstance(status, ResidencyStatus):
+            loaded_names = {
+                entry.pipeline
+                for entry in status.entries
+                if entry.kind is not ResidencyKind.EVICTED
+            }
+            selected_loaded = [
+                pipeline for pipeline in selected if pipeline in loaded_names
+            ]
+            loaded_detail = "、".join(selected_loaded) if selected_loaded else "无"
+            self._update_preload_status(
+                f"预加载完成；选中管道当前驻留 "
+                f"{len(selected_loaded)}/{len(selected)}：{loaded_detail}"
+            )
+        else:
+            self._update_preload_status("预加载完成")
+        if isinstance(status, ResidencyStatus):
+            self._on_residency_status(status)
 
-        progress_bar = self._ui.findChild(QProgressBar, "progressPreload")
-        if progress_bar:
-            progress_bar.setVisible(True)
-            progress_bar.setValue(0)
-            progress_bar.setMaximum(len(pipelines_to_preload) * 2)
-
-        pipeline_names = [p.display_name for p in pipelines_to_preload]
-        logger.debug(f"[预加载] 开始预加载和预热管道: {pipeline_names}")
-
-        self._update_preload_status("正在预加载和预热模型...")
-        self._start_manual_preload_with_warmup(pipelines_to_preload)
-
-    def _get_selected_preload_pipelines(self) -> list["OCRPipeline"]:
-        """获取选中的预加载管道"""
-        pipelines = []
-        for pipeline in self._get_preloadable_pipelines():
-            chk = self._ui.findChild(QCheckBox, f"chkPreload_{pipeline.name}")
-            if chk and chk.isChecked():
-                pipelines.append(pipeline)
-        return pipelines
+    def _on_preload_error(self, error: str) -> None:
+        if self._closing:
+            return
+        self._preload_poll_timer.stop()
+        self._preload_selected = ()
+        button = self._ui.findChild(QPushButton, "btnPreloadNow")
+        if button is not None:
+            enabled = self._ui.findChild(QCheckBox, "chkEnablePreload")
+            button.setEnabled(bool(enabled is not None and enabled.isChecked()))
+        self._update_preload_status(f"预加载失败：{error}")
 
     def _save_preload_pipelines_config(self) -> None:
-        """保存预加载管道配置"""
+        """持久化启动预加载管道；实际加载仍只经 Supervisor。"""
         from vibeocr.pyside.runtime import ConfigManager
 
-        pipelines = self._get_selected_preload_pipelines()
-        pipeline_names = [p.value for p in pipelines]
-
-        if ConfigManager.instance().set_preload_pipelines(pipeline_names):
-            self._show_settings_toast()
-            logger.debug(f"[设置] 预加载管道配置已保存: {pipeline_names}")
-        else:
-            logger.error("[设置] 保存预加载管道配置失败")
-
-    def _start_manual_preload_with_warmup(self, pipelines: list["OCRPipeline"]) -> None:
-        """启动手动预加载和预热"""
-        from vibeocr.pyside.runtime import ConfigManager
-
-        values = [pipeline.value for pipeline in pipelines]
-        self._manual_preload_requested = set(values)
-        self._manual_preload_task = True
-        started = self._subprocess_manager.preload_pipelines(
-            values,
-            pipeline_ttls=ConfigManager.instance().get_pipeline_ttls(),
-        )
-        if not started:
-            self._manual_preload_task = None
-            self._manual_preload_requested = set()
-            button = self._ui.findChild(QPushButton, "btnPreloadNow")
-            if button:
-                button.setEnabled(True)
-            progress = self._ui.findChild(QProgressBar, "progressPreload")
-            if progress:
-                progress.setVisible(False)
-            self._update_preload_status("已有预加载任务正在运行，请稍后再试")
-        return
-
-    def _on_manual_preload_finished(self, results: dict) -> None:
-        """手动预加载完成回调（主线程槽函数）"""
-        if self._manual_preload_task is None:
-            return
-        self._manual_preload_task = None
-
-        btn_preload_now = self._ui.findChild(QWidget, "btnPreloadNow")
-        if btn_preload_now:
-            btn_preload_now.setEnabled(True)
-
-        progress_bar = self._ui.findChild(QProgressBar, "progressPreload")
-        if progress_bar:
-            progress_bar.setVisible(False)
-
-        preload = results.get("preload", {}) if isinstance(results, dict) else {}
-        warmup = results.get("warmup", {}) if isinstance(results, dict) else {}
-        requested = getattr(self, "_manual_preload_requested", set())
-        all_loaded = bool(requested) and all(preload.get(name) for name in requested)
-        all_warmed = all_loaded and all(warmup.get(name) for name in requested)
-        if all_warmed:
-            self._update_preload_status(f"预加载和预热成功（{len(requested)} 个模型）")
-        elif all_loaded:
-            self._update_preload_status("模型已加载，但部分预热失败；首次识别可能稍慢")
-        else:
-            self._update_preload_status("预加载失败，请查看日志")
-        self._manual_preload_requested = set()
-
-        if all_warmed and self._preload_complete_callback:
-            self._preload_complete_callback()
-
-    def _on_manual_preload_progress(
-        self, current: int, total: int, pipeline_name: str
-    ) -> None:
-        if self._manual_preload_task is None:
-            return
-        progress = self._ui.findChild(QProgressBar, "progressPreload")
-        if progress:
-            progress.setMaximum(max(1, total))
-            progress.setValue(current)
-        self._update_preload_status(
-            f"正在加载模型 {current}/{total}：{pipeline_name}"
-        )
+        selected = [
+            pipeline.value
+            for pipeline in self._get_preloadable_pipelines()
+            if (
+                (checkbox := self._ui.findChild(
+                    QCheckBox, f"chkPreload_{pipeline.name}"
+                ))
+                is not None
+                and checkbox.isChecked()
+            )
+        ]
+        ConfigManager.instance().set_preload_pipelines(selected)
 
     def _update_preload_status(self, status: str | None = None) -> None:
         """更新预加载状态"""
         label = self._ui.findChild(QLabel, "labelPreloadStatus")
         if label:
-            if status:
-                label.setText(status)
-            else:
-                if self._subprocess_manager.is_ready:
-                    label.setText("就绪")
-                else:
-                    label.setText("服务未就绪")
+            label.setText(status or "可通过 Supervisor 预加载选定模型")
+
+    def _disable_legacy_preload_controls(self) -> None:
+        """禁用无法经 v2 job 表达的旧预加载 interface。"""
+        message = "Supervisor v2 当前按需加载模型，暂不支持手动预加载。"
+        for name in ("chkEnablePreload", "btnPreloadNow", "preloadOptions"):
+            widget = self._ui.findChild(QWidget, name)
+            if widget is not None:
+                widget.setEnabled(False)
+                widget.setToolTip(message)
+        progress = self._ui.findChild(QProgressBar, "progressPreload")
+        if progress is not None:
+            progress.setVisible(False)
+        self._update_preload_status("模型由 Supervisor 按需加载")
 
     # ============================================================
     # 缓存管理
@@ -1157,7 +1191,74 @@ class SettingsPageController:
             save_cache(self._project_root, new_cached)
         return True, get_cache_info(self._project_root)
 
+    def _run_after_supervisor_invalidated(
+        self, continuation: Callable[[], None]
+    ) -> None:
+        """维护操作只在旧 Supervisor 确认退出后继续。"""
+
+        if self._closing:
+            return
+        if self._pending_maintenance_dialog is not None:
+            self._status_callback("正在停止 OCR Supervisor，请稍候...")
+            return
+
+        self._pending_maintenance_dialog = continuation
+        manager = self._subprocess_manager
+        manager.invalidation_finished.connect(
+            self._on_supervisor_invalidated_for_maintenance
+        )
+        started = manager.invalidate_supervisor()
+        if not started:
+            self._cancel_pending_maintenance_dialog()
+            if manager.is_invalidating:
+                self._status_callback("已有 Supervisor 维护准备正在进行，请稍候...")
+                return
+            QMessageBox.warning(
+                None,
+                "无法开始维护",
+                "OCR Supervisor 无法安全停止，安装或更新未开始。",
+            )
+            return
+        self._status_callback("正在停止 OCR Supervisor...")
+
+    def _on_supervisor_invalidated_for_maintenance(
+        self, success: bool, error: str
+    ) -> None:
+        continuation = self._pending_maintenance_dialog
+        self._cancel_pending_maintenance_dialog()
+        if self._closing or continuation is None:
+            return
+        if not success:
+            QMessageBox.warning(
+                None,
+                "无法开始维护",
+                f"OCR Supervisor 未能安全停止，安装或更新未开始。\n{error}",
+            )
+            return
+        continuation()
+
+    def _cancel_pending_maintenance_dialog(self) -> None:
+        if self._pending_maintenance_dialog is None:
+            return
+        self._pending_maintenance_dialog = None
+        try:
+            self._subprocess_manager.invalidation_finished.disconnect(
+                self._on_supervisor_invalidated_for_maintenance
+            )
+        except (AttributeError, RuntimeError, TypeError):
+            pass
+
     def _open_reinstall_dialog(
+        self, reinstall_python: bool = False, missing_only: bool = False
+    ) -> None:
+        self._run_after_supervisor_invalidated(
+            lambda: self._show_reinstall_dialog(
+                reinstall_python=reinstall_python,
+                missing_only=missing_only,
+            )
+        )
+
+    def _show_reinstall_dialog(
         self, reinstall_python: bool = False, missing_only: bool = False
     ) -> None:
         """以非模态方式打开重装/补装对话框（不阻塞主窗口）。
@@ -1167,7 +1268,6 @@ class SettingsPageController:
         由 MainWindow 触发 dependency_manager.check_dependencies，使截图界面立即可用，
         无需重启程序。
         """
-        self._subprocess_manager.invalidate_worker_host()
         dialog = BackendChoiceDialog(
             self._project_root,
             reinstall_python=reinstall_python,
@@ -1363,6 +1463,22 @@ class SettingsPageController:
         single_pkg: str | None = None,
         packages: list[str] | None = None,
     ) -> None:
+        self._run_after_supervisor_invalidated(
+            lambda: self._show_install_dialog(
+                missing_only=missing_only,
+                force_backend=force_backend,
+                single_pkg=single_pkg,
+                packages=packages,
+            )
+        )
+
+    def _show_install_dialog(
+        self,
+        missing_only: bool = False,
+        force_backend: str | None = None,
+        single_pkg: str | None = None,
+        packages: list[str] | None = None,
+    ) -> None:
         """以非模态方式打开安装进度对话框（补装/更新/单包/批量重装共用，不阻塞主窗口）。
 
         与 _open_reinstall_dialog 的区别：不弹 BackendChoiceDialog 选后端，
@@ -1372,7 +1488,6 @@ class SettingsPageController:
         """
         from vibeocr.widgets.install_dialog import InstallDialog
 
-        self._subprocess_manager.invalidate_worker_host()
         dialog = InstallDialog(
             self._project_root,
             missing_only=missing_only,
@@ -1734,8 +1849,7 @@ class SettingsPageController:
         原型由 labelCacheStatus 同时承载机器缓存与管道运行时状态，复制粘贴的
         文案让用户难以分辨"无有效缓存"指代哪一层。Task 7 拆分为两个标签：
           - ``labelCacheStatus``：仅机器缓存（依赖/模型缓存路径、机器码探测）
-          - ``labelPipelineCacheStatus``：仅管道运行时（loaded_pipelines /
-            max_heavy / 每管道 TTL 摘要），由 _on_pipeline_cache_status 写入。
+          - ``labelPipelineCacheStatus``：仅 supervisor 驻留状态与 TTL/pin 策略
         labelReleaseStatus 继续承载动作反馈（refresh/release 完成/失败）。
         """
         layout = self._ui.findChild(QVBoxLayout, "runtimeCacheLayout")
@@ -1774,198 +1888,217 @@ class SettingsPageController:
         QThreadPool.globalInstance().start(task)
 
     def _sync_configured_pipeline_ttls(self) -> None:
-        """把配置中的 pipeline_ttls 整批下发到 worker（防抖 slot）。
+        """把完整 TTL snapshot 防抖下发到 supervisor。
 
-        UI 线程边界：仅做 service 句柄读取 + _run_cache_operation 派发，
-        真正的 RPC 在 QRunnable 内执行，不阻塞 GUI。
-
-        TTL 下发是**非致命**的：配置已由 ConfigManager 持久化到 app_settings.json，
-        worker 下次启动时 PreloadTask 会自动读取并下发。所以当 worker 正忙
-        （预加载/OCR 持有 _shm_lock）导致实时下发超时或被拒时，不当作错误，
-        而是回读 worker 真实状态并提示「已保存，重启后生效」，避免红色失败和
-        后台任务 traceback（见 _run_sync 的 logger.exception）。
+        首次更新前必须先读取 ``ResidencyStatus.pipelines``，以保留 UI 暂未
+        暴露的 pin 策略；不能用本地 TTL 字典覆盖 supervisor 的完整状态。
         """
-        if not self._subprocess_manager or not self._subprocess_manager.is_ready:
+        adapter = self._connect_runtime_adapter()
+        if not adapter.is_started:
             self._update_release_status("运行时缓存状态：OCR 服务未连接")
             return
+
+        current = self._runtime_settings_snapshot
+        if current is None:
+            self._pending_ttl_sync = True
+            self._runtime_action = "settings-bootstrap"
+            self._update_release_status("正在读取现有驻留策略...")
+            adapter.refresh_residency()
+            return
+
+        from vibeocr.contracts.pipelines import OCRPipeline
         from vibeocr.pyside.runtime import ConfigManager
 
-        ttls = ConfigManager.instance().get_pipeline_ttls()
-        self._cache_generation += 1
-        generation = self._cache_generation
-        service = self._subprocess_manager.service
-
-        # applied[0] 让成功回调区分「已实时更新」与「待 worker 重启后生效」，
-        # 二者都走成功路径（不触发 error 信号 / traceback）。
-        applied = [False]
-
-        def operation() -> dict:
-            try:
-                applied[0] = bool(service.set_pipeline_ttls(ttls))
-            except Exception as e:
-                # worker 正忙（_shm_lock 等待超时等）：TTL 已持久化，重启后生效。
-                logger.debug("TTL 实时下发失败，将提示重启后生效: %s", e)
-                applied[0] = False
-            # 无论是否实时下发，都回读 worker 真实状态用于刷新状态 label。
-            return service.get_pipeline_cache_status()
-
-        def on_success(status: dict) -> None:
-            prefix = "TTL 已更新" if applied[0] else "TTL 已保存到配置，worker 重启后生效"
-            self._on_pipeline_cache_status(status, generation=generation, prefix=prefix)
-
-        self._run_cache_operation(
-            operation,
-            on_success,
-            lambda error: self._on_pipeline_cache_error(error, generation),
+        configured_ttls = ConfigManager.instance().get_pipeline_ttls()
+        pipelines = tuple(
+            PipelineSpec(
+                name=pipeline.value,
+                ttl_seconds=(
+                    ttl
+                    if (ttl := int(configured_ttls.get(pipeline.value, 0))) > 0
+                    else None
+                ),
+                pinned=int(configured_ttls.get(pipeline.value, 0)) == -1,
+            )
+            for pipeline in OCRPipeline
         )
+        snapshot = SettingsSnapshot(
+            default_ttl_seconds=current.default_ttl_seconds,
+            pipelines=pipelines,
+            extra=dict(current.extra),
+        )
+        self._runtime_action = "settings"
+        self._update_release_status("正在更新 TTL...")
+        adapter.update_settings(snapshot)
 
     def _on_refresh_pipeline_cache_clicked(self) -> None:
-        if not self._subprocess_manager or not self._subprocess_manager.is_ready:
+        adapter = self._connect_runtime_adapter()
+        if not adapter.is_started:
             self._update_release_status("运行时缓存状态：OCR 服务未连接")
             return
-        self._cache_generation += 1
-        generation = self._cache_generation
-        service = self._subprocess_manager.service
-        self._update_release_status("正在读取推理进程缓存状态...")
-        self._run_cache_operation(
-            service.get_pipeline_cache_status,
-            lambda status: self._on_pipeline_cache_status(
-                status, generation=generation
-            ),
-            lambda error: self._on_pipeline_cache_error(error, generation),
+        self._runtime_action = "refresh"
+        self._update_release_status("正在读取 Supervisor 驻留状态...")
+        adapter.refresh_residency()
+
+    def _on_settings_updated(self, snapshot: object) -> None:
+        if self._closing or not isinstance(snapshot, SettingsSnapshot):
+            return
+        self._runtime_settings_snapshot = snapshot
+        self._runtime_action = "settings"
+        self._update_release_status("TTL 已更新，正在刷新驻留状态...")
+        self._connect_runtime_adapter().refresh_residency()
+
+    def _on_settings_error(self, error: str) -> None:
+        if self._closing:
+            return
+        self._runtime_action = ""
+        self._pending_ttl_sync = False
+        self._update_release_status(f"TTL 更新失败：{error}")
+
+    def _on_residency_status(self, status: object) -> None:
+        if self._closing or not isinstance(status, ResidencyStatus):
+            return
+        current = self._runtime_settings_snapshot
+        self._runtime_settings_snapshot = SettingsSnapshot(
+            default_ttl_seconds=status.default_ttl_seconds,
+            pipelines=status.pipelines,
+            extra=dict(current.extra) if current is not None else {},
         )
 
-    def _on_pipeline_cache_status(
-        self, status: dict, *, generation: int, prefix: str = "运行时缓存状态"
+        action = self._runtime_action
+        prefix = {
+            "settings": "TTL 已更新",
+            "release": "已完成闲置模型释放",
+        }.get(action, "运行时驻留状态")
+        self._runtime_action = ""
+        self._render_residency_status(status, prefix=prefix)
+        self._set_release_controls_enabled(True)
+
+        if self._preload_selected:
+            loaded_names = {
+                entry.pipeline
+                for entry in status.entries
+                if entry.kind is not ResidencyKind.EVICTED
+            }
+            selected_loaded = [
+                pipeline
+                for pipeline in self._preload_selected
+                if pipeline in loaded_names
+            ]
+            detail = "、".join(selected_loaded) if selected_loaded else "无"
+            self._update_preload_status(
+                f"正在通过 Supervisor 预加载 {len(self._preload_selected)} 个管道；"
+                f"已驻留 {len(selected_loaded)}/{len(self._preload_selected)}：{detail}"
+            )
+
+        if self._pending_ttl_sync:
+            self._pending_ttl_sync = False
+            self._sync_configured_pipeline_ttls()
+
+    def _render_residency_status(
+        self, status: ResidencyStatus, *, prefix: str
     ) -> None:
-        if generation != self._cache_generation:
-            return
-        loaded = [str(item) for item in status.get("loaded_pipelines", [])]
-        max_heavy = int(status.get("max_heavy", 0))
-        # Task 5 起 status 字段从 ttl_seconds(int) 改为 pipeline_ttls(dict)。
-        # 兼容旧 worker：若仍返回 ttl_seconds，回退为单值摘要。
-        pipeline_ttls_raw = status.get("pipeline_ttls")
-        if isinstance(pipeline_ttls_raw, dict):
-            ttl_summary = ", ".join(
-                f"{name}={'不因闲置回收' if int(v) == 0 else f'{int(v) // 60}分钟'}"
-                for name, v in pipeline_ttls_raw.items()
-            ) or "（无配置）"
-        else:
-            legacy = int(status.get("ttl_seconds", 0))
-            ttl_summary = "禁用" if legacy <= 0 else f"{legacy // 60}分钟"
-        names = "、".join(loaded) if loaded else "无"
-        status_text = (
-            f"{prefix}：驻留 {len(loaded)} 个（{names}）；TTL {ttl_summary}；"
-            f"重模型上限 {max_heavy}"
+        specs = {spec.name: spec for spec in status.pipelines}
+        entries: list[str] = []
+        resident_entries = tuple(
+            entry
+            for entry in status.entries
+            if entry.kind is not ResidencyKind.EVICTED
         )
-        # 写入拆分后的 labelPipelineCacheStatus（运行时层），不再混淆进
-        # labelCacheStatus（机器缓存层）。
+        for entry in resident_entries:
+            spec = specs.get(entry.pipeline)
+            details = [str(entry.kind.value)]
+            if spec is not None and spec.pinned:
+                details.append("已固定")
+            details.append(f"活动租约 {entry.active_leases}")
+            if entry.remaining_ttl_seconds is not None:
+                details.append(f"剩余 TTL {entry.remaining_ttl_seconds} 秒")
+            if entry.estimated_vram_mb is not None:
+                details.append(f"显存约 {entry.estimated_vram_mb} MB")
+            if entry.eviction_reason.value != "none":
+                details.append(f"最近回收原因 {entry.eviction_reason.value}")
+            entries.append(f"{entry.pipeline}（{'，'.join(details)}）")
+
+        loaded_summary = "、".join(entries) if entries else "无"
+        policies = "，".join(
+            (
+                f"{spec.name}="
+                f"{'固定' if spec.pinned else '继承默认' if spec.ttl_seconds is None else f'{spec.ttl_seconds}秒'}"
+            )
+            for spec in status.pipelines
+        )
+        vram = ""
+        if status.vram_used_mb is not None or status.vram_total_mb is not None:
+            used = "未知" if status.vram_used_mb is None else str(status.vram_used_mb)
+            total = (
+                "未知" if status.vram_total_mb is None else str(status.vram_total_mb)
+            )
+            vram = f"；显存 {used}/{total} MB"
+        status_text = (
+            f"{prefix}：驻留 {len(resident_entries)} 个（{loaded_summary}）；"
+            f"默认 TTL {status.default_ttl_seconds} 秒"
+            f"{f'；策略 {policies}' if policies else ''}{vram}"
+        )
         label = self._ui.findChild(QLabel, "labelPipelineCacheStatus")
         if label is not None:
             label.setText(status_text)
         else:
-            # 回退：尚未构造时（理论上不会发生，因为 _init_settings_page 先建标签）
             self._update_release_status(status_text)
-        # 成功后清动作反馈 label（之前停在"正在读取..."，给用户"还在刷新"错觉）
         self._update_release_status("就绪")
 
-    def _on_pipeline_cache_error(self, error: str, generation: int) -> None:
-        if generation != self._cache_generation:
+    def _on_residency_error(self, error: str) -> None:
+        if self._closing:
             return
-        # 双 label 反馈：状态 label（用户盯着的位置）+ 动作反馈 label。
-        # 历史问题：失败只写 labelReleaseStatus，导致用户看到的
-        # labelPipelineCacheStatus 一直停在"尚未读取"，误以为没响应。
+        self._runtime_action = ""
+        self._pending_ttl_sync = False
         friendly = self._friendly_cache_error(error)
         status_label = self._ui.findChild(QLabel, "labelPipelineCacheStatus")
         if status_label is not None:
             status_label.setText(friendly)
         self._update_release_status(f"运行时缓存操作失败：{error}")
+        self._set_release_controls_enabled(True)
 
     @staticmethod
     def _friendly_cache_error(error: str) -> str:
-        """把底层超时错误翻译成用户能理解的状态文案。"""
+        """把 supervisor 错误翻译成用户能理解的状态文案。"""
         msg = str(error)
         if "TimeoutError" in msg or "超时" in msg or "timed out" in msg.lower():
-            return (
-                "读取驻留状态失败：worker 未在 10 秒内响应"
-                "（可能正在加载模型、执行 OCR 或已停止响应）"
-            )
+            return "读取驻留状态失败：Supervisor 未及时响应"
         return f"读取驻留状态失败：{msg}"
 
     def _on_release_heavy_clicked(self) -> None:
-        """释放重管道按钮。"""
-        self._release_pipelines(heavy_only=True)
+        """旧入口不再模拟 supervisor 未定义的 heavy-only 语义。"""
+        QMessageBox.information(
+            None,
+            "无法按类型释放",
+            "Supervisor v2 暂不支持按“重模型”筛选，请使用“释放全部闲置模型”。",
+        )
 
     def _on_release_all_clicked(self) -> None:
-        """全部释放按钮。"""
-        self._release_pipelines(heavy_only=False)
-
-    def _release_pipelines(self, heavy_only: bool) -> None:
-        """后台释放并读取真实 worker 状态。"""
-        if not self._subprocess_manager or not getattr(
-            self._subprocess_manager, "is_ready", False
-        ):
+        """释放全部闲置模型；active/pinned 模型由 supervisor 自动跳过。"""
+        adapter = self._connect_runtime_adapter()
+        if not adapter.is_started:
             QMessageBox.warning(None, "无法释放", "OCR 服务尚未就绪。")
             return
 
-        label = "重管道" if heavy_only else "全部管道"
         reply = QMessageBox.question(
             None,
             "确认释放",
-            f"确定要释放{label}吗？正在进行的任务将在当前批次完成后受影响。",
+            "确定要释放全部闲置模型吗？活动租约和已固定模型不会被释放。",
         )
         if reply != QMessageBox.StandardButton.Yes:
             return
 
-        for name in ("btnReleaseHeavy", "btnReleaseAll"):
+        self._set_release_controls_enabled(False)
+        self._runtime_action = "release"
+        self._update_release_status("正在释放全部闲置模型...")
+        adapter.release_idle(None)
+
+    def _set_release_controls_enabled(self, enabled: bool) -> None:
+        for name in ("btnReleaseAll",):
             btn = self._ui.findChild(QPushButton, name)
-            if btn:
-                btn.setEnabled(False)
-        self._update_release_status(f"正在释放{label}...")
-
-        service = self._subprocess_manager.service
-
-        def operation():
-            released = service.release_pipelines(heavy_only=heavy_only)
-            return released, service.get_pipeline_cache_status()
-
-        self._run_cache_operation(
-            operation,
-            lambda result: self._on_release_finished(
-                result[0], heavy_only, status=result[1]
-            ),
-            self._on_release_error,
-        )
-
-    def _on_release_finished(
-        self, released: list, heavy_only: bool, status: dict | None = None
-    ) -> None:
-        """释放完成回调（主线程）。"""
-        for name in ("btnReleaseHeavy", "btnReleaseAll"):
-            btn = self._ui.findChild(QPushButton, name)
-            if btn:
-                btn.setEnabled(True)
-        label = "重管道" if heavy_only else "全部"
-        message = (
-            f"已释放{label}管道: {', '.join(released)}"
-            if released
-            else f"没有需要释放的{label}管道"
-        )
-        if status is None:
-            self._update_release_status(message)
-            return
-        self._cache_generation += 1
-        self._on_pipeline_cache_status(
-            status, generation=self._cache_generation, prefix=message
-        )
-
-    def _on_release_error(self, error: str) -> None:
-        """释放失败回调。"""
-        for name in ("btnReleaseHeavy", "btnReleaseAll"):
-            btn = self._ui.findChild(QPushButton, name)
-            if btn:
-                btn.setEnabled(True)
-        self._update_release_status(f"释放失败: {error}")
+            if btn is not None:
+                btn.setEnabled(enabled)
 
     def _update_release_status(self, status: str) -> None:
         """更新释放状态标签。"""

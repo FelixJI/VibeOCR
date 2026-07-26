@@ -1432,7 +1432,7 @@ class TestPyInstallerNoUpx:
             "vibeocr.startup_metrics",
             "vibeocr.env_manager",
             "vibeocr.views.main_window",
-            "vibeocr.worker_host.main",
+            "vibeocr.supervisor.main",
             "vibeocr.contracts.pipelines",
         }.issubset(hidden)
         assert "--collect-submodules" not in cmd
@@ -1450,7 +1450,7 @@ class TestPyInstallerNoUpx:
 
         assert (stage / "vibeocr/startup_metrics.py").is_file()
         assert (stage / "vibeocr/env_manager.py").is_file()
-        assert (stage / "vibeocr/worker_host/main.py").is_file()
+        assert (stage / "vibeocr/supervisor/main.py").is_file()
         assert not list(stage.rglob("*.pyc"))
         first_paths = cmd.index("--paths")
         assert cmd[first_paths + 1] == str(stage)
@@ -1605,7 +1605,7 @@ class TestBuildManifestIntegration:
             dist_dir
             / "_internal"
             / "vibeocr"
-            / "worker_host"
+            / "supervisor"
             / "__pycache__"
         )
         pycache.mkdir(parents=True)
@@ -1616,7 +1616,7 @@ class TestBuildManifestIntegration:
             dist_dir
             / "_internal"
             / "vibeocr"
-            / "worker_host"
+            / "supervisor"
             / "handlers"
             / "__pycache__"
         )
@@ -1649,7 +1649,7 @@ class TestBuildManifestIntegration:
             dist_dir
             / "_internal"
             / "vibeocr"
-            / "worker_host"
+            / "supervisor"
             / "__pycache__"
         )
         pycache.mkdir(parents=True)

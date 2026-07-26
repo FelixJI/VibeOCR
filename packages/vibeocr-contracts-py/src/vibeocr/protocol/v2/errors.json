@@ -1,0 +1,133 @@
+{
+  "version": 2,
+  "description": "Stable typed error registry for the HTTP v2 inference supervisor protocol. Error responses MUST carry schema_version, instance_id and one of these typed codes; the UI maps codes to user-visible behavior and MUST NEVER parse Python tracebacks. The 'retryable' flag is consumed by the client to decide automatic single retry for transient errors. Keep entries in sync with errors.schema.json#code enum.",
+  "categories": ["validation", "auth", "not_found", "conflict", "cancelled", "oom", "transient", "backend_unavailable", "internal"],
+  "codes": [
+    {
+      "code": "VALIDATION_ERROR",
+      "category": "validation",
+      "http_status": 400,
+      "retryable": false,
+      "message": "The request was malformed or failed schema validation."
+    },
+    {
+      "code": "QUOTA_EXCEEDED",
+      "category": "validation",
+      "http_status": 413,
+      "retryable": false,
+      "message": "The request exceeded a request body, part count or staging quota."
+    },
+    {
+      "code": "UNAUTHORIZED",
+      "category": "auth",
+      "http_status": 401,
+      "retryable": false,
+      "message": "Missing or invalid session token."
+    },
+    {
+      "code": "FORBIDDEN_LOOPBACK",
+      "category": "auth",
+      "http_status": 403,
+      "retryable": false,
+      "message": "The connection is not from the loopback interface."
+    },
+    {
+      "code": "JOB_NOT_FOUND",
+      "category": "not_found",
+      "http_status": 404,
+      "retryable": false,
+      "message": "The referenced job id does not exist or has been purged."
+    },
+    {
+      "code": "RESOURCE_NOT_FOUND",
+      "category": "not_found",
+      "http_status": 404,
+      "retryable": false,
+      "message": "The referenced resource (session, item, pipeline) does not exist."
+    },
+    {
+      "code": "JOB_NOT_CANCELLABLE",
+      "category": "conflict",
+      "http_status": 409,
+      "retryable": false,
+      "message": "The job is already terminal and cannot be cancelled."
+    },
+    {
+      "code": "JOB_NOT_RETRYABLE",
+      "category": "conflict",
+      "http_status": 409,
+      "retryable": false,
+      "message": "Only failed or cancelled items can be retried."
+    },
+    {
+      "code": "INPUT_EXPIRED",
+      "category": "not_found",
+      "http_status": 410,
+      "retryable": false,
+      "message": "The retained input required for retry has expired or is unavailable."
+    },
+    {
+      "code": "PIN_CAPACITY_CONFLICT",
+      "category": "conflict",
+      "http_status": 409,
+      "retryable": false,
+      "message": "Pinning the model would exceed capacity and block a running task."
+    },
+    {
+      "code": "SUPERVISOR_DRAINING",
+      "category": "conflict",
+      "http_status": 503,
+      "retryable": true,
+      "message": "The supervisor is draining and rejects new jobs."
+    },
+    {
+      "code": "CANCELLED",
+      "category": "cancelled",
+      "http_status": 499,
+      "retryable": false,
+      "message": "The job or item was cancelled."
+    },
+    {
+      "code": "OUT_OF_MEMORY",
+      "category": "oom",
+      "http_status": 507,
+      "retryable": true,
+      "message": "A GPU/host out-of-memory condition occurred; recovery may shrink the batch."
+    },
+    {
+      "code": "TRANSIENT_BACKEND",
+      "category": "transient",
+      "http_status": 502,
+      "retryable": true,
+      "message": "A transient backend error occurred; retrying may help."
+    },
+    {
+      "code": "BACKEND_UNAVAILABLE",
+      "category": "backend_unavailable",
+      "http_status": 503,
+      "retryable": true,
+      "message": "The required backend (Paddle/MinerU/PDF) is unavailable."
+    },
+    {
+      "code": "ADAPTER_PROTOCOL_VIOLATION",
+      "category": "internal",
+      "http_status": 502,
+      "retryable": false,
+      "message": "An inference adapter returned malformed, missing or mismatched item outcomes."
+    },
+    {
+      "code": "PROTOCOL_MISMATCH",
+      "category": "validation",
+      "http_status": 426,
+      "retryable": false,
+      "message": "Protocol major version is incompatible; an update is required."
+    },
+    {
+      "code": "INTERNAL_ERROR",
+      "category": "internal",
+      "http_status": 500,
+      "retryable": true,
+      "message": "An unexpected internal error occurred."
+    }
+  ]
+}

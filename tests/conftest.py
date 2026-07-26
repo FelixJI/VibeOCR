@@ -55,7 +55,7 @@ def qapp():
 
 def pytest_sessionfinish(session, exitstatus):
     """Close the process-wide WorkerHost before pytest joins executor threads."""
-    from vibeocr.client.session import shutdown_backend_client
+    from vibeocr.client import shutdown_backend_client
 
     shutdown_backend_client()
 
@@ -166,6 +166,18 @@ def qasync_loop(qapp):
 
             runner = get_async_runner()
             runner.cancel_all()
+            # ``Task.cancel()`` only schedules cancellation callbacks.  Drain
+            # them before closing the function-scoped loop so wrapper and
+            # caller coroutines both reach terminal state.
+            pending = [
+                task
+                for task in asyncio.all_tasks(loop)
+                if not task.done()
+            ]
+            if pending:
+                loop.run_until_complete(
+                    asyncio.gather(*pending, return_exceptions=True)
+                )
             runner._tasks.clear()
         except Exception:
             pass

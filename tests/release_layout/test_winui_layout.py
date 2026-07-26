@@ -49,10 +49,20 @@ def _build_layout(root: Path, *, forbidden: list[str] | None = None) -> None:
         "VibeOCR.Bootstrapper.exe",
         "updater.exe",
         "VibeOCR.WinUI.dll",
+        "VibeOCR.WinUI.pri",
         "VibeOCR.Contracts.dll",
         "VibeOCR.Platform.dll",
-        "worker/vibeocr/worker_host/main.py",
-        "contracts/v1/golden.json",
+        "App.xbf",
+        "MainWindow.xbf",
+        "Views/AboutPage.xbf",
+        "Views/BatchPage.xbf",
+        "Views/DiagnosticsPage.xbf",
+        "Views/PdfPage.xbf",
+        "Views/QrCodePage.xbf",
+        "Views/RecognitionPage.xbf",
+        "Views/SettingsPage.xbf",
+        "supervisor/vibeocr/supervisor/main.py",
+        "contracts/v2/golden/golden.json",
         "CHANGELOG.md",
         "LICENSE",
     ):
@@ -77,7 +87,7 @@ def _build_layout(root: Path, *, forbidden: list[str] | None = None) -> None:
         "backend_wheel": backend_record["file"],
         "backend_sha256": backend_record["sha256"],
         "python_wheels": wheel_records,
-        "protocol_major": 1,
+        "protocol_major": 2,
         "source_commit": "0" * 40,
     }
     (root / "product-manifest.json").write_text(
@@ -113,10 +123,22 @@ def test_empty_required_entry_is_rejected(tmp_path: Path) -> None:
     assert "required release file is empty" in output
 
 
+def test_missing_compiled_xaml_resource_is_rejected(tmp_path: Path) -> None:
+    root = tmp_path / "release"
+    _build_layout(root)
+    (root / "MainWindow.xbf").unlink()
+    code, output = _run_verifier(root)
+    assert code == 1, output
+    assert "required release file missing" in output
+    assert "MainW" in output
+
+
 def test_legacy_ui_entry_is_rejected(tmp_path: Path) -> None:
     root = tmp_path / "release"
     _build_layout(root)
-    (root / "worker/vibeocr/main.py").write_text("legacy", encoding="utf-8")
+    legacy = root / "worker/vibeocr/main.py"
+    legacy.parent.mkdir(parents=True)
+    legacy.write_text("legacy", encoding="utf-8")
     code, output = _run_verifier(root)
     assert code == 1, output
     assert "legacy PySide UI entry" in output
@@ -162,6 +184,29 @@ def test_invalid_product_manifest_is_rejected(tmp_path: Path) -> None:
     code, output = _run_verifier(root)
     assert code == 1, output
     assert "product manifest is invalid JSON" in output
+
+
+def test_protocol_v1_manifest_is_rejected(tmp_path: Path) -> None:
+    root = tmp_path / "release"
+    _build_layout(root)
+    manifest_path = root / "product-manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["protocol_major"] = 1
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    code, output = _run_verifier(root)
+    assert code == 1, output
+    assert "protocol_major must be 2" in output
+
+
+def test_legacy_backend_layout_is_rejected(tmp_path: Path) -> None:
+    root = tmp_path / "release"
+    _build_layout(root)
+    legacy = root / "worker/vibeocr/worker_host/main.py"
+    legacy.parent.mkdir(parents=True)
+    legacy.write_text("legacy", encoding="utf-8")
+    code, output = _run_verifier(root)
+    assert code == 1, output
+    assert "legacy backend entry present" in output
 
 
 def test_runtime_wheel_hash_mismatch_is_rejected(tmp_path: Path) -> None:

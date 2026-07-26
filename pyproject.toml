@@ -23,10 +23,10 @@ dev = [
     # 程序内更新链路的打包步骤（bump_version.py --build/--release）依赖它。
     # >=6.6：bump_version 打包注入 --optimize 2（字节码优化），该参数自此版本引入。
     "pyinstaller>=6.6",
-    # WorkerHost v1 跨语言契约校验（Phase 1+）。C# 端做语义 JSON 比较，
-    # Python 端用 JSON Schema (Draft 2020-12) 校验 envelope/methods/errors/golden。
+    # Supervisor HTTP v2 跨语言契约校验。C# 端做语义 JSON 比较，
+    # Python 端用 JSON Schema (Draft 2020-12) 校验 job/errors/golden。
     "jsonschema>=4.25.0",
-    # WorkerHost framing/lifecycle 是 asyncio；测试用 pytest-asyncio。
+    # Supervisor lifecycle 是 asyncio；测试用 pytest-asyncio。
     "pytest-asyncio>=1.2.0",
 ]
 lint = ["ruff>=0.15.13", "pyright>=1.1.409"]
@@ -168,7 +168,7 @@ python_classes = ["Test*"]
 python_functions = ["test_*"]
 qt_api = "pyside6"
 addopts = "-v --tb=short -m 'not slow'"
-# WorkerHost framing/lifecycle tests are asyncio; auto mode collects coroutines
+# Supervisor lifecycle tests are asyncio; auto mode collects coroutines
 # as async tests without per-test markers.
 asyncio_mode = "auto"
 markers = [

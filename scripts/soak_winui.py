@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """WinUI stability soak harness.
 
-Loops the WinUI app launch -> worker handshake -> smoke-exit cycle,
-injecting a worker crash mid-run, and samples residual process / handle
+Loops the WinUI app launch -> supervisor ready -> smoke-exit cycle,
+injecting a supervisor process crash mid-run, and samples residual process / handle
 growth. Run for the desired duration (e.g. 8h for the Phase 5.5
 soak gate); a non-growing baseline across the run is the pass criterion.
 
@@ -34,7 +34,7 @@ def _process_snapshot() -> tuple[int, int] | None:
         "$all=@(Get-CimInstance Win32_Process); "
         "$p=@($all | Where-Object { "
         "$_.Name -like 'VibeOCR*.exe' -or "
-        "($_.Name -like 'python*.exe' -and $_.CommandLine -match 'vibeocr\\.worker_host') }); "
+        "($_.Name -like 'python*.exe' -and $_.CommandLine -match 'vibeocr\\.supervisor\\.main') }); "
         "$h=0; foreach($item in $p){ try { $h += (Get-Process -Id $item.ProcessId).HandleCount } catch {} }; "
         "[pscustomobject]@{processes=$p.Count;handles=$h} | ConvertTo-Json -Compress"
     )
@@ -52,13 +52,15 @@ def _process_snapshot() -> tuple[int, int] | None:
 def run_iteration(
     winui_exe: str,
     crash_inject: bool,
+    profile: str = "winui-dev",
 ) -> tuple[int, float, dict[str, object] | None]:
     """One launch cycle; return exit code, elapsed ms, and verified app result."""
     env = os.environ.copy()
     env["VIBEOCR_REPOSITORY_ROOT"] = str(REPO)
     env["VIBEOCR_SELF_TEST_SMOKE"] = "t6"
     if crash_inject:
-        # Signal the worker supervisor to inject a crash on this run.
+        # Ask the app to launch its first supervisor with the test-only
+        # crash-after-ready override. The replacement supervisor is clean.
         env["VIBEOCR_SOAK_INJECT_CRASH"] = "1"
     with tempfile.TemporaryDirectory(prefix="vibeocr-soak-") as temp_dir:
         result_path = Path(temp_dir) / "result.json"
@@ -66,7 +68,7 @@ def run_iteration(
         start = time.perf_counter()
         try:
             proc = subprocess.run(
-                [winui_exe], env=env, timeout=120,
+                [winui_exe, "--profile", profile], env=env, timeout=120,
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             )
             code = proc.returncode
@@ -84,8 +86,20 @@ def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--winui-exe", required=True)
     p.add_argument("--duration-hours", type=float, default=8.0)
+    p.add_argument(
+        "--profile",
+        choices=("winui-dev", "production"),
+        default="winui-dev",
+        help="winui-dev uses the repository .venv; production requires artifact/python/python.exe",
+    )
     p.add_argument("--report", type=Path, default=Path("reports/local/soak-report.json"))
     p.add_argument("--max-iterations", type=int, default=0, help="0 = unlimited by duration")
+    p.add_argument(
+        "--crash-every",
+        type=int,
+        default=10,
+        help="inject a supervisor crash every Nth iteration",
+    )
     p.add_argument("--pause-seconds", type=float, default=1.0)
     p.add_argument("--max-process-drift", type=int, default=2)
     p.add_argument("--max-handle-drift", type=int, default=100)
@@ -95,6 +109,8 @@ def main(argv: list[str] | None = None) -> int:
         p.error("--duration-hours must be positive")
     if args.max_iterations < 0 or args.pause_seconds < 0:
         p.error("iteration and pause values must be non-negative")
+    if args.crash_every <= 0:
+        p.error("--crash-every must be positive")
     if not Path(args.winui_exe).is_file():
         p.error(f"WinUI app not found: {args.winui_exe}")
 
@@ -116,9 +132,9 @@ def main(argv: list[str] | None = None) -> int:
     while time.perf_counter() < deadline:
         if args.max_iterations and iterations >= args.max_iterations:
             break
-        # Inject a crash every 10th iteration to exercise recovery.
-        crash = (iterations % 10 == 9)
-        code, elapsed, result = run_iteration(args.winui_exe, crash)
+        # Periodically exercise the same unexpected-exit recovery used in production.
+        crash = (iterations % args.crash_every == args.crash_every - 1)
+        code, elapsed, result = run_iteration(args.winui_exe, crash, args.profile)
         iterations += 1
         elapsed_samples.append(elapsed)
         snapshot = _process_snapshot()
@@ -163,19 +179,19 @@ def main(argv: list[str] | None = None) -> int:
         "final_handles": end_handles,
         "handle_drift": handle_drift,
         "monitoring_errors": monitoring_errors,
-        "shared_memory_check": "covered indirectly by recovered worker/process lifetime; no fake counter",
+        "supervisor_lifetime_check": "real supervisor crash-after-ready and frontend reconnect result",
         "max_processes_observed": max(process_samples) if process_samples else 0,
         "max_handles_observed": max(handle_samples) if handle_samples else 0,
         "median_elapsed_ms": sorted(elapsed_samples)[len(elapsed_samples) // 2] if elapsed_samples else 0,
     }
     args.report.parent.mkdir(parents=True, exist_ok=True)
     args.report.write_text(json.dumps(report, indent=2), encoding="utf-8")
-    print(f"\nSoak complete: {iterations} iterations, {failures} non-injected failures")
+    print(f"\nSoak complete: {iterations} iterations, {failures} failed iterations")
     print(f"Process drift: {proc_drift} (baseline {start_procs} -> final {end_procs})")
     print(f"Report: {args.report}")
 
-    # Pass criterion: no failures beyond injected crashes, and process count
-    # did not grow without bound (allow small noise).
+    # Pass criterion: every normal and injected iteration succeeded, and
+    # process/handle counts did not grow without bound (allow small noise).
     ok = (
         iterations > 0
         and failures == 0

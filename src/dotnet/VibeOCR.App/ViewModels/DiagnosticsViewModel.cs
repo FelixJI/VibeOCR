@@ -4,12 +4,11 @@ using System.Runtime.CompilerServices;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.RegularExpressions;
-using VibeOCR.Contracts;
 using VibeOCR.Platform.Bootstrap;
 
 namespace VibeOCR.App.ViewModels;
 
-public enum WorkerHealthState
+public enum SupervisorHealthState
 {
     NotReady,
     Connecting,
@@ -18,9 +17,9 @@ public enum WorkerHealthState
     Faulted,
 }
 
-public sealed record WorkerHealth(
-    WorkerHealthState State,
-    string? WorkerVersion,
+public sealed record SupervisorHealth(
+    SupervisorHealthState State,
+    string? InstanceId,
     int? ProtocolVersion,
     string? Detail);
 
@@ -29,7 +28,7 @@ public sealed record StartupMilestone(string Name, double ElapsedMilliseconds);
 public sealed partial class DiagnosticsViewModel : INotifyPropertyChanged
 {
     private readonly Func<PrerequisiteStatus, CancellationToken, Task> _repair;
-    private WorkerHealth _worker = new(WorkerHealthState.NotReady, null, null, null);
+    private SupervisorHealth _supervisor = new(SupervisorHealthState.NotReady, null, null, null);
 
     public DiagnosticsViewModel(
         string profile,
@@ -51,34 +50,34 @@ public sealed partial class DiagnosticsViewModel : INotifyPropertyChanged
     public string AppVersion { get; } =
         typeof(DiagnosticsViewModel).Assembly.GetName().Version?.ToString() ?? "0.0.0";
 
-    public string WorkerVersion => _worker.WorkerVersion ?? "未知";
+    public string SupervisorInstanceId => _supervisor.InstanceId ?? "未知";
 
     public ObservableCollection<StartupMilestone> Milestones { get; } = [];
 
-    public string WorkerStatus => _worker.State switch
+    public string SupervisorStatus => _supervisor.State switch
     {
-        WorkerHealthState.NotReady => "未就绪",
-        WorkerHealthState.Connecting => "正在连接",
-        WorkerHealthState.Ready => "已就绪",
-        WorkerHealthState.ProtocolIncompatible => "协议不兼容",
-        WorkerHealthState.Faulted => "连接失败",
+        SupervisorHealthState.NotReady => "未就绪",
+        SupervisorHealthState.Connecting => "正在连接",
+        SupervisorHealthState.Ready => "已就绪",
+        SupervisorHealthState.ProtocolIncompatible => "协议不兼容",
+        SupervisorHealthState.Faulted => "连接失败",
         _ => "未知",
     };
 
-    public string ProtocolStatus => _worker.ProtocolVersion is int workerVersion
-        ? $"主机 v{ProtocolConstants.Version} / Worker v{workerVersion}"
-        : $"主机 v{ProtocolConstants.Version} / Worker 未知";
+    public string ProtocolStatus => _supervisor.ProtocolVersion is int supervisorVersion
+        ? $"客户端 v{ProtocolConstants.Version} / Supervisor v{supervisorVersion}"
+        : $"客户端 v{ProtocolConstants.Version} / Supervisor 未知";
 
     public bool IsReady =>
         Prerequisites.All(item => item.IsInstalled) &&
-        _worker.State == WorkerHealthState.Ready &&
-        _worker.ProtocolVersion == ProtocolConstants.Version;
+        _supervisor.State == SupervisorHealthState.Ready &&
+        _supervisor.ProtocolVersion == ProtocolConstants.Version;
 
-    public void UpdateWorker(WorkerHealth health)
+    public void UpdateSupervisor(SupervisorHealth health)
     {
-        _worker = health ?? throw new ArgumentNullException(nameof(health));
-        OnPropertyChanged(nameof(WorkerStatus));
-        OnPropertyChanged(nameof(WorkerVersion));
+        _supervisor = health ?? throw new ArgumentNullException(nameof(health));
+        OnPropertyChanged(nameof(SupervisorStatus));
+        OnPropertyChanged(nameof(SupervisorInstanceId));
         OnPropertyChanged(nameof(ProtocolStatus));
         OnPropertyChanged(nameof(IsReady));
     }
@@ -115,16 +114,16 @@ public sealed partial class DiagnosticsViewModel : INotifyPropertyChanged
         ArgumentException.ThrowIfNullOrWhiteSpace(destination);
         var document = new
         {
-            schema_version = 1,
+            schema_version = 2,
             profile = Profile,
             app_version = AppVersion,
             protocol_version = ProtocolConstants.Version,
-            worker = new
+            supervisor = new
             {
-                state = _worker.State.ToString(),
-                version = _worker.WorkerVersion,
-                protocol_version = _worker.ProtocolVersion,
-                detail = Redact(_worker.Detail),
+                state = _supervisor.State.ToString(),
+                instance_id = _supervisor.InstanceId,
+                protocol_version = _supervisor.ProtocolVersion,
+                detail = Redact(_supervisor.Detail),
             },
             prerequisites = Prerequisites.Select(item => new
             {

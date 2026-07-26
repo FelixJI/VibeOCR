@@ -2,8 +2,6 @@ using Windows.ApplicationModel.DataTransfer;
 using Windows.Storage;
 using Windows.Storage.Pickers;
 using Windows.Storage.Streams;
-using VibeOCR.Contracts;
-using VibeOCR.Platform.Worker;
 
 namespace VibeOCR.App.Features.QrCode;
 
@@ -94,19 +92,15 @@ public interface IQrCodeSavePlatform
 /// Save commands: resolve the generated image bytes from shared memory and write them
 /// to a user-chosen path. Overwrite confirmation mirrors the recognition export flow.
 /// </summary>
-public sealed class QrCodeSaveCommands(IWorkerHostClient worker, IQrCodeSavePlatform platform)
+public sealed class QrCodeSaveCommands(IQrCodeSavePlatform platform)
 {
-    public async Task<bool> SaveAsync(SharedPayloadRef image, string suggestedName, CancellationToken cancellationToken)
+    public async Task<bool> SaveAsync(string base64Image, string suggestedName, CancellationToken cancellationToken)
     {
-        ArgumentNullException.ThrowIfNull(image);
+        if (string.IsNullOrEmpty(base64Image)) return false;
         string? path = await platform.PickSavePathAsync(suggestedName, cancellationToken);
         if (path is null) return false;
-        if (File.Exists(path) && !await platform.ConfirmOverwriteAsync(path, cancellationToken))
-        {
-            return false;
-        }
-
-        byte[] data = worker.ReadPayload(image, TimeSpan.FromSeconds(30), cancellationToken);
+        if (File.Exists(path) && !await platform.ConfirmOverwriteAsync(path, cancellationToken)) return false;
+        byte[] data = Convert.FromBase64String(base64Image);
         await platform.WriteFileAsync(path, data, cancellationToken);
         return true;
     }

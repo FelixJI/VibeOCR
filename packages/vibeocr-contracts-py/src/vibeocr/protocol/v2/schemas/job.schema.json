@@ -1,0 +1,109 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://vibeocr/protocol/v2/job.schema.json",
+  "title": "VibeOCR v2 Job Snapshot",
+  "type": "object",
+  "required": [
+    "job_id",
+    "kind",
+    "priority",
+    "state",
+    "schema_version",
+    "created_at",
+    "items",
+    "summary"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "job_id": {"type": "string"},
+    "kind": {
+      "type": "string",
+      "enum": ["recognition", "pdf_ocr", "mineru_parse", "model_download", "settings_install"]
+    },
+    "priority": {"type": "string", "enum": ["interactive", "background"]},
+    "state": {
+      "type": "string",
+      "enum": [
+        "accepted",
+        "queued",
+        "running",
+        "completed",
+        "completed_with_errors",
+        "cancel_requested",
+        "cancelled",
+        "failed"
+      ]
+    },
+    "schema_version": {"type": "integer", "const": 2},
+    "instance_id": {"type": ["string", "null"]},
+    "created_at": {"type": "string", "format": "date-time"},
+    "started_at": {"type": ["string", "null"]},
+    "finished_at": {"type": ["string", "null"]},
+    "stage": {"type": ["string", "null"]},
+    "progress_current": {"type": "integer", "minimum": 0},
+    "progress_total": {"type": "integer", "minimum": 0},
+    "items": {"type": "array", "items": {"$ref": "#/$defs/JobItem"}},
+    "summary": {"$ref": "#/$defs/JobSummary"},
+    "cancel_requested_at": {"type": ["string", "null"]},
+    "cancel_mode": {"type": ["string", "null"], "enum": [null, "queued_only", "cooperative", "forced"]},
+    "degraded": {"type": "boolean"},
+    "event_sequence": {"type": "integer", "minimum": 0},
+    "result_available": {"type": "boolean"},
+    "request_id": {"type": ["string", "null"]},
+    "source_job_id": {"type": ["string", "null"]},
+    "pipeline": {
+      "oneOf": [
+        {"type": "null"},
+        {"$ref": "#/$defs/PipelineSelection"}
+      ]
+    }
+  },
+  "$defs": {
+    "JobItem": {
+      "type": "object",
+      "required": ["item_id", "display_name", "state"],
+      "additionalProperties": false,
+      "properties": {
+        "item_id": {"type": "string"},
+        "display_name": {"type": "string"},
+        "state": {"type": "string", "enum": ["queued", "running", "succeeded", "failed", "cancelled"]},
+        "attempt": {"type": "integer", "minimum": 0},
+        "error": {"type": ["string", "null"]},
+        "client_item_key": {"type": ["string", "null"]},
+        "ordinal": {"type": "integer", "minimum": 0},
+        "source_item_id": {"type": ["string", "null"]}
+      }
+    },
+    "JobSummary": {
+      "type": "object",
+      "required": ["succeeded", "failed", "cancelled", "total"],
+      "additionalProperties": false,
+      "properties": {
+        "succeeded": {"type": "integer", "minimum": 0},
+        "failed": {"type": "integer", "minimum": 0},
+        "cancelled": {"type": "integer", "minimum": 0},
+        "total": {"type": "integer", "minimum": 0}
+      }
+    },
+    "PipelineSelection": {
+      "type": "object",
+      "required": ["pipeline_id", "options_version", "options"],
+      "additionalProperties": false,
+      "properties": {
+        "pipeline_id": {
+          "type": "string",
+          "enum": [
+            "OCR",
+            "PP-StructureV3",
+            "MinerU",
+            "PaddleOCR-VL",
+            "TABLE_RECOGNITION",
+            "FORMULA_RECOGNITION"
+          ]
+        },
+        "options_version": {"type": "integer", "const": 1},
+        "options": {"type": "object"}
+      }
+    }
+  }
+}

@@ -18,7 +18,7 @@ from contextlib import contextmanager
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Iterator, Mapping
 
     from vibeocr.services.ocr_service import OCRService
 
@@ -51,9 +51,9 @@ def compute_max_heavy_by_vram(total_vram_mb: int) -> int:
 class PipelineCacheManager:
     """管道缓存生命周期管理器。
 
-    在 worker 子进程内实例化，由 OCRService 持有。``lease`` 在一次模型
-    加载/推理期间持有可重入锁，防止 TTL 线程在任务尚未完成时删除管道或调用
-    ``empty_cache``。有限 TTL 从任务完成时重新计时，而不是从任务开始时计时。
+    在 worker 子进程内实例化，由 OCRService 持有。``lease`` 用活动计数保护
+    一次模型加载/推理；TTL 线程据此跳过正在使用的管道，而状态锁只保护短暂的
+    快照更新。有限 TTL 从任务完成时重新计时，而不是从任务开始时计时。
     """
 
     def __init__(
@@ -67,6 +67,7 @@ class PipelineCacheManager:
         self._ttls = dict(ttls)
         self._last_used: dict[str, float] = {}
         self._active_counts: dict[str, int] = {}
+        self._pinned: set[str] = set()
         self._state_lock = threading.RLock()
         self._max_heavy = (
             max_heavy if max_heavy is not None else self._detect_max_heavy()
@@ -94,6 +95,8 @@ class PipelineCacheManager:
             self._state_lock = threading.RLock()
         if not hasattr(self, "_active_counts"):
             self._active_counts = {}
+        if not hasattr(self, "_pinned"):
+            self._pinned = set()
         if not hasattr(self, "_wakeup_event"):
             self._wakeup_event = threading.Event()
         if not hasattr(self, "_stop_event"):
@@ -132,7 +135,7 @@ class PipelineCacheManager:
             return dict(self._ttls)
 
     @ttls.setter
-    def ttls(self, value: dict[str, object]) -> None:
+    def ttls(self, value: Mapping[str, object]) -> None:
         self._ensure_runtime_fields()
         from vibeocr.core.pipelines import get_all_pipelines
 
@@ -173,24 +176,27 @@ class PipelineCacheManager:
     def lease(self, pipeline_name: str) -> Iterator[None]:
         """保护一次模型加载/推理，并在完成时重置闲置 TTL。
 
-        锁覆盖完整任务区间，TTL watcher 因此不能在长耗时推理过程中删除正在
-        使用的模型。``last_used`` 在 ``finally`` 中记录完成时间；异常请求也视为
-        一次使用，避免错误处理尚未结束时立刻触发回收。
+        只在更新活动计数和时间戳时持有状态锁；TTL/显式回收根据
+        ``active_counts`` 跳过活动管道。这样长耗时加载或推理不会阻塞只读状态
+        快照。``last_used`` 在 ``finally`` 中记录完成时间；异常请求也视为一次
+        使用，避免错误处理尚未结束时立刻触发回收。
         """
         self._ensure_runtime_fields()
-        self._state_lock.acquire()
-        self._active_counts[pipeline_name] = self._active_counts.get(pipeline_name, 0) + 1
+        with self._state_lock:
+            self._active_counts[pipeline_name] = (
+                self._active_counts.get(pipeline_name, 0) + 1
+            )
         try:
             yield
         finally:
-            count = self._active_counts.get(pipeline_name, 1) - 1
-            if count > 0:
-                self._active_counts[pipeline_name] = count
-            else:
-                self._active_counts.pop(pipeline_name, None)
-            if pipeline_name in self._service._pipelines:
-                self._last_used[pipeline_name] = time.time()
-            self._state_lock.release()
+            with self._state_lock:
+                count = self._active_counts.get(pipeline_name, 1) - 1
+                if count > 0:
+                    self._active_counts[pipeline_name] = count
+                else:
+                    self._active_counts.pop(pipeline_name, None)
+                if pipeline_name in self._service._pipelines:
+                    self._last_used[pipeline_name] = time.time()
             self._wakeup_event.set()
 
     # ------------------------------------------------------------------
@@ -211,7 +217,11 @@ class PipelineCacheManager:
         now = time.time()
         with self._state_lock:
             for name, raw_ms in values.items():
-                if name not in self._service._pipelines or isinstance(raw_ms, bool):
+                if (
+                    name not in self._service._pipelines
+                    or isinstance(raw_ms, bool)
+                    or not isinstance(raw_ms, (int, float, str))
+                ):
                     continue
                 try:
                     timestamp = max(0.0, float(raw_ms) / 1000.0)
@@ -253,6 +263,7 @@ class PipelineCacheManager:
                 if name in heavy_paddle_names
                 and name != new_pipeline
                 and self._active_counts.get(name, 0) <= 0
+                and name not in self._pinned
             ]
             while len(cached_heavy) >= self._max_heavy:
                 cached_heavy.sort(key=lambda name: self._last_used.get(name, 0.0))
@@ -268,6 +279,73 @@ class PipelineCacheManager:
             )
         return evicted
 
+    def prepare_load(self, new_pipeline: str) -> list[str]:
+        """Create capacity before loading without evicting active/pinned models."""
+        self._ensure_runtime_fields()
+        from vibeocr.core.pipelines import get_heavy_pipelines, get_paddle_pipelines
+
+        heavy = {pipeline.value for pipeline in get_heavy_pipelines()}
+        paddle = {pipeline.value for pipeline in get_paddle_pipelines()}
+        heavy_paddle = heavy & paddle
+        if new_pipeline not in heavy_paddle:
+            return []
+        evicted: list[str] = []
+        with self._state_lock:
+            loaded = [
+                name
+                for name in self._service._pipelines
+                if name in heavy_paddle and name != new_pipeline
+            ]
+            while len(loaded) >= self._max_heavy:
+                candidates = [
+                    name
+                    for name in loaded
+                    if self._active_counts.get(name, 0) <= 0
+                    and name not in self._pinned
+                ]
+                if not candidates:
+                    raise RuntimeError(
+                        "PIN_CAPACITY_CONFLICT: no idle unpinned model can be evicted"
+                    )
+                victim = min(
+                    candidates,
+                    key=lambda name: self._last_used.get(name, 0.0),
+                )
+                self._release_one(victim)
+                loaded.remove(victim)
+                evicted.append(victim)
+        return evicted
+
+    def configure_residency(
+        self,
+        *,
+        default_ttl_seconds: int,
+        pipelines: list[object],
+    ) -> None:
+        """Atomically translate supervisor settings into physical cache policy."""
+        from vibeocr.core.pipelines import get_all_pipelines
+
+        if default_ttl_seconds < 0:
+            raise ValueError("default_ttl_seconds must be >= 0")
+        known = {pipeline.value for pipeline in get_all_pipelines()}
+        ttls: dict[str, int] = dict.fromkeys(known, default_ttl_seconds)
+        pinned: set[str] = set()
+        for spec in pipelines:
+            name = str(getattr(spec, "name", ""))
+            if name not in known:
+                raise ValueError(f"unknown pipeline residency policy: {name}")
+            ttl = getattr(spec, "ttl_seconds", None)
+            if ttl is not None:
+                if int(ttl) < 0:
+                    raise ValueError(f"negative TTL for pipeline: {name}")
+                ttls[name] = int(ttl)
+            if bool(getattr(spec, "pinned", False)):
+                pinned.add(name)
+                ttls[name] = 0
+        with self._state_lock:
+            self._pinned = pinned
+        self.ttls = ttls
+
     def evict_idle(self, now: float | None = None) -> list[str]:
         """回收闲置时间达到各自 TTL 的管道。
 
@@ -280,6 +358,8 @@ class PipelineCacheManager:
         with self._state_lock:
             for name in list(self._service._pipelines):
                 if self._active_counts.get(name, 0) > 0:
+                    continue
+                if name in self._pinned:
                     continue
                 ttl = self._ttls.get(name, 0)
                 if ttl <= 0:
@@ -300,7 +380,9 @@ class PipelineCacheManager:
             )
         return evicted
 
-    def release(self, heavy_only: bool = True) -> list[str]:
+    def release(
+        self, heavy_only: bool = True, *, force: bool = False
+    ) -> list[str]:
         """显式释放管道。活跃任务会先持有 lease，故本调用等待任务完成。"""
         self._ensure_runtime_fields()
         from vibeocr.core.pipelines import get_heavy_pipelines
@@ -310,6 +392,8 @@ class PipelineCacheManager:
         with self._state_lock:
             for name in list(self._service._pipelines):
                 if heavy_only and name not in heavy_names:
+                    continue
+                if name in self._pinned and not force:
                     continue
                 self._release_one(name)
                 released.append(name)
@@ -322,12 +406,15 @@ class PipelineCacheManager:
         self._wakeup_event.set()
         return released
 
-    def release_one(self, pipeline_name: str) -> bool:
+    def release_one(self, pipeline_name: str, *, force: bool = False) -> bool:
         """显式释放单个管道并清理其使用记录。"""
         self._ensure_runtime_fields()
         with self._state_lock:
             existed = pipeline_name in self._service._pipelines
-            self._release_one(pipeline_name)
+            if pipeline_name not in self._pinned or force:
+                self._release_one(pipeline_name)
+            else:
+                existed = False
         if existed:
             logger.info("[CacheManager] 释放单个管道: %s", pipeline_name)
         self._wakeup_event.set()
@@ -342,6 +429,10 @@ class PipelineCacheManager:
                 "pipeline_ttls": dict(self._ttls),
                 "max_heavy": self._max_heavy,
                 "loaded_pipelines": loaded,
+                "active_counts": {
+                    name: self._active_counts.get(name, 0) for name in loaded
+                },
+                "pinned_pipelines": sorted(self._pinned),
                 "last_used_unix_ms": {
                     name: int(self._last_used[name] * 1000)
                     for name in loaded
@@ -371,7 +462,11 @@ class PipelineCacheManager:
             remaining: list[float] = []
             for name in self._service._pipelines:
                 ttl = self._ttls.get(name, 0)
-                if ttl <= 0 or self._active_counts.get(name, 0) > 0:
+                if (
+                    ttl <= 0
+                    or self._active_counts.get(name, 0) > 0
+                    or name in self._pinned
+                ):
                     continue
                 last = self._last_used.get(name)
                 if last is None:
@@ -398,6 +493,7 @@ class PipelineCacheManager:
                         name
                         for name in loaded
                         if self._active_counts.get(name, 0) <= 0
+                        and name not in self._pinned
                         and self._ttls.get(name, 0) > 0
                         and self._last_used.get(name, now) + self._ttls[name] <= now
                     ]

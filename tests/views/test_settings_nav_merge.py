@@ -65,8 +65,6 @@ def controller(qtbot, tmp_path):
                     "PaddleOCR-VL": 300,
                 }
             ),
-            get_preload_pipelines=MagicMock(return_value=[]),
-            get_preload_enabled=MagicMock(return_value=False),
         )
 
         ctrl = SettingsPageController(
