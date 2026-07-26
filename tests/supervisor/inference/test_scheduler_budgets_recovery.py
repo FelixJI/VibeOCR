@@ -145,6 +145,10 @@ def test_transport_plan_groups_under_all_caps() -> None:
     assert flat == [f"i{i}" for i in range(10)]
 
 
+def test_transport_default_pixel_cap_is_64m() -> None:
+    assert BudgetPlanner().max_decoded_pixels == 64_000_000
+
+
 def test_transport_plan_isolates_oversized_item() -> None:
     planner = BudgetPlanner(max_encoded_bytes=4096)
     items = [_item("small", encoded=100), _item("huge", encoded=999999), _item("small2", encoded=100)]

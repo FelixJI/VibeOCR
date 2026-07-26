@@ -67,7 +67,7 @@ class BudgetPlanner:
 
     max_file_count: int = 16
     max_encoded_bytes: int = 64 * 1024 * 1024
-    max_decoded_pixels: int = 48_000_000
+    max_decoded_pixels: int = 64_000_000
     max_pages: int = 64
     device_vram_mb: int = 0
 

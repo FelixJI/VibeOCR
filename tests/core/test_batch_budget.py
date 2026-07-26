@@ -3,10 +3,25 @@
 from __future__ import annotations
 
 from vibeocr.core.batch_budget import BatchBudget, BatchEntry, partition_batches
+from vibeocr.core.constants import Constants
 
 
 def _values(entries, budget):
     return [chunk.values for chunk in partition_batches(entries, budget)]
+
+
+def test_ocr_default_pixel_budget_is_64m() -> None:
+    assert BatchBudget.ocr_default().max_pixels == 64_000_000
+    assert Constants.OCR_BATCH_MAX_PIXELS == 64_000_000
+
+
+def test_ocr_default_a4_300dpi_pages_fit_seven_per_chunk() -> None:
+    entries = [
+        BatchEntry(value=index, encoded_bytes=1, pixels=8_700_000)
+        for index in range(8)
+    ]
+
+    assert [len(chunk.entries) for chunk in partition_batches(entries, BatchBudget.ocr_default())] == [7, 1]
 
 
 def test_item_limit_and_order_are_stable():

@@ -67,10 +67,10 @@ class Constants:
     # 低显存卡由动态估算自动降到更小值，无需改此常量。
     OCR_BATCH_GPU_SIZE_CAP = 16
     # 单次 OCR 传输/推理预算。字节预算低于 SHM 可用区约 90MB，给协议元数据、
-    # 结果与并发预取留余量；像素预算约等于 12 张 2000×2000 图，约束解码后
+    # 结果与并发预取留余量；像素预算约等于 16 张 2000×2000 图，约束解码后
     # 内存/显存，而不仅是压缩文件大小。
     OCR_BATCH_MAX_ENCODED_BYTES = 64 * 1024 * 1024
-    OCR_BATCH_MAX_PIXELS = 48_000_000
+    OCR_BATCH_MAX_PIXELS = 64_000_000
 
     # 日志配置
     LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"

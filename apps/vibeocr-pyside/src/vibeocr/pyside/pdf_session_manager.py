@@ -1557,8 +1557,8 @@ class PdfSessionManager(QObject):
     # 三层批关系（性能2）：
     #   页批(此处 16) ≥ 传输批(SHM 一条消息装下的页数) ≥ 计算批(GPU predict)。
     #   计算批 = text_recognition_batch_size=8（pipeline_ocr.py，GPU）；
-    #   传输批同时受 SHM/编码字节和 48MP 像素预算限制；A4 300 DPI 约
-    #   8.7MP/页，因此一个 16 页外批通常被拆成 5+5+5+1。这里的 16 主要
+    #   传输批同时受 SHM/编码字节和 64MP 像素预算限制；A4 300 DPI 约
+    #   8.7MP/页，因此一个 16 页外批通常被拆成约 7+7+2。这里的 16 主要
     #   控制渲染预取与内存上限，不代表 16 页同时在 GPU 上推理。
     _OCR_BATCH_SIZE = 16
     # 渲染并发线程数。后端 fitz 栅格化由 fitz_lock 串行化，但 PIL/PNG 编码 +
