@@ -1,5 +1,39 @@
 # Changelog
 
+## [0.6.0] - 2026-07-26
+
+### Added
+- feat(supervisor): complete job interface migration and diagnostics
+- feat(inference-supervisor): 完成 Phase 8 迁移 — 删除 legacy、v2 为两端默认路径
+- feat(pdf): PDF 会话迁移到 supervisor HTTP v2，GUI 不再直连 PdfBackendClient
+- feat: unified inference supervisor rewrite (Phase 0-10)
+- feat(pyside): 适配 OCR HTTP worker，移除 PDF IPC worker 依赖
+- feat(client): 以 OcrHttpClient 替换 PDF 客户端模块
+- feat(worker_host): 新增 OCR HTTP worker，替代 SHM/PDF IPC 通信
+
+### Fixed
+- fix(ocr_service_subprocess): set_pipeline_ttls 改为尽力而为，锁占用时快速失败
+- fix(ocr_service): paddle 自带 CUDA runtime 时不再混入 torch/lib 避免 DLL 冲突
+- fix(mineru): 移除模型预探测，修复 lang_list 空串导致 Language not supported
+- fix(mineru): 模型探测/下载命令补 -m all，消除交互 prompt 误报
+
+### Changed
+- test: 补 worker_host/client/pdf_backend 低覆盖区测试（第七批）
+- test: 补 html_tables/cpu_info 纯函数测试（第六批）
+- test: 补 ocr_service staticmethod 纯逻辑测试（第五批）
+- test: 补 pipeline_ocr/pp_structure 数据解析纯函数测试（第四批）
+- test: 补 env_manager/ocr_worker/main 低覆盖区测试（第三批）
+- test(env_manager): 补全 detect_cuda_version 分支覆盖
+- test(mineru): 补全文本提取分支测试，fail_under 67→68
+- ci(coverage): 新增 Python 测试覆盖率门禁（fail_under=67）
+
+### Dependencies
+- 升级:
+  - 升级 vibeocr-contracts-py ==0.5.5 → ==0.6.0
+  - 升级 vibeocr-client-py ==0.5.5 → ==0.6.0
+  - 升级 vibeocr-backend ==0.5.5 → ==0.6.0
+  - 升级 vibeocr-pyside ==0.5.5 → ==0.6.0
+
 ## [0.5.6] - 2026-07-23
 
 ### Fixed
