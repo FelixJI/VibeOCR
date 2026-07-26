@@ -119,11 +119,16 @@ def app(module: SupervisorModule, token: str):
 @pytest.fixture()
 async def client(app, token: str) -> AsyncIterator[SupervisorClient]:
     transport = httpx.ASGITransport(app=app)
+    c = SupervisorClient(
+        base_url="http://127.0.0.1", session_token=token, instance_id="test"
+    )
     async with httpx.AsyncClient(
-        transport=transport, base_url="http://127.0.0.1", headers={"Authorization": f"Bearer {token}"}
+        transport=transport,
+        base_url="http://127.0.0.1",
+        headers={"Authorization": f"Bearer {token}"},
+        event_hooks={"response": [c._log_http_response]},
     ) as http:
         # Patch the client to use this transport-backed httpx client.
-        c = SupervisorClient(base_url="http://127.0.0.1", session_token=token, instance_id="test")
         c._client = http
         yield c
 

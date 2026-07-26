@@ -313,12 +313,20 @@ class SupervisorClient:
                 },
             )
 
-    def _log_http_response(self, resp: httpx.Response) -> None:
+    async def _log_http_response(self, resp: httpx.Response) -> None:
         request = resp.request
-        req_size = guess_request_size(getattr(request, "content", None))
+        try:
+            request_content = request.content
+        except httpx.StreamError:
+            request_content = None
+        try:
+            response_content = resp.content
+        except httpx.StreamError:
+            response_content = None
+        req_size = guess_request_size(request_content)
         resp_size = guess_response_size(
             dict(resp.headers),
-            resp.content if getattr(resp, "num_bytes_downloaded", None) is not None else None,
+            response_content,
         )
         elapsed_ms = None
         try:
@@ -336,6 +344,7 @@ class SupervisorClient:
             elapsed_ms=elapsed_ms,
             request_bytes=req_size,
             response_bytes=resp_size,
+            stream=not resp.is_stream_consumed,
         )
 
 

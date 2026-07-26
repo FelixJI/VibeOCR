@@ -148,7 +148,7 @@ class PdfSupervisorClient:
             )
         return self._client
 
-    def _log_http_response(self, resp: httpx.Response) -> None:
+    async def _log_http_response(self, resp: httpx.Response) -> None:
         request = resp.request
         elapsed = None
         try:
@@ -158,9 +158,17 @@ class PdfSupervisorClient:
         except Exception:
             elapsed = None
 
-        request_bytes = guess_request_size(getattr(request, "content", None))
+        try:
+            request_content = request.content
+        except httpx.StreamError:
+            request_content = None
+        try:
+            response_content = resp.content
+        except httpx.StreamError:
+            response_content = None
+        request_bytes = guess_request_size(request_content)
         response_bytes = guess_response_size(
-            dict(resp.headers), getattr(resp, "content", None)
+            dict(resp.headers), response_content
         )
 
         log_http_response(
@@ -172,6 +180,7 @@ class PdfSupervisorClient:
             elapsed_ms=elapsed,
             request_bytes=request_bytes,
             response_bytes=response_bytes,
+            stream=not resp.is_stream_consumed,
         )
 
     def _error_from_response(self, resp: httpx.Response) -> PdfBackendError:

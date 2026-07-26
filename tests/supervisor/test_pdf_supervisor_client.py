@@ -40,6 +40,7 @@ def _build_async_client(app, token: str) -> PdfSupervisorClient:
         transport=httpx.ASGITransport(app=app),
         base_url="http://127.0.0.1",
         headers={"Authorization": f"Bearer {token}"},
+        event_hooks={"response": [client._log_http_response]},
     )
     return client
 
@@ -135,6 +136,7 @@ def sync_client(pdf_app: FastAPI, supervisor_token: str):
         transport=httpx.ASGITransport(app=pdf_app),
         base_url="http://127.0.0.1",
         headers={"Authorization": f"Bearer {supervisor_token}"},
+        event_hooks={"response": [sync._async._log_http_response]},
     )
     sync._entered = True
     yield sync

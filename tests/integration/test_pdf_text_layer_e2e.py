@@ -54,6 +54,7 @@ def manager(qapp, tmp_path):
         transport=httpx.ASGITransport(app=app),
         base_url="http://127.0.0.1",
         headers={"Authorization": f"Bearer {handle.token}"},
+        event_hooks={"response": [client._async._log_http_response]},
     )
     client._entered = True
     mgr = PdfSessionManager(parent=qapp, client=client)
