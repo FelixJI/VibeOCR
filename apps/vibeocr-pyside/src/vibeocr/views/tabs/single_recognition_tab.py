@@ -52,7 +52,13 @@ class SingleRecognitionTab(BaseOcrTab):
     # 仅截图来源识别需要抢焦点（用户离开过应用）；文件/粘贴来源用户本就在应用内，
     # 不发信号以免无谓抢焦点。
     bring_to_front_requested = Signal()
+    # status_changed 保留给既有调用方；typed 信号供全局仪表条避免任务与
+    # 结果互相覆盖。不复用普通日志，避免后台模型消息把识别结论说错。
+    status_changed = Signal(str)
+    task_status_changed = Signal(str)
+    result_status_changed = Signal(str)
     _native_call_finished = Signal()
+    _LOW_CONFIDENCE_THRESHOLD = 0.80
 
     def __init__(self, parent=None, *, backend=None):
         super().__init__(parent)
@@ -68,6 +74,7 @@ class SingleRecognitionTab(BaseOcrTab):
         # 异步识别协程的 Task 引用，用于忙时串行与关闭时取消。None 表示当前
         # 没有识别在进行。忙时状态同时由基类 _is_processing 反映（驱动按钮禁用）。
         self._recognize_task: asyncio.Task | None = None
+        self._recognition_started_at: float | None = None
         self._active_ocr_options: Any = None
         self._native_call_events: set[threading.Event] = set()
         self._native_call_events_lock = threading.Lock()
@@ -175,9 +182,7 @@ class SingleRecognitionTab(BaseOcrTab):
         self._preview_widget.block_clicked.connect(self._result_widget.highlight_block)
         self._result_widget.block_edited.connect(self._on_result_block_edited)
         # 文本块处理选项变化 → 实时重排当前结果（仅纯文本结果生效）。
-        self._text_options_widget.options_changed.connect(
-            self._on_text_options_changed
-        )
+        self._text_options_widget.options_changed.connect(self._on_text_options_changed)
 
         # 转发预览组件的截图/文件请求信号
         self._preview_widget.screenshot_requested.connect(self._request_screenshot)
@@ -224,9 +229,7 @@ class SingleRecognitionTab(BaseOcrTab):
             self._request_image_file_load(file_path, auto_recognize=False)
         self._start_btn.setText("开始识别")
 
-    def _request_image_file_load(
-        self, file_path: str, *, auto_recognize: bool
-    ) -> None:
+    def _request_image_file_load(self, file_path: str, *, auto_recognize: bool) -> None:
         if not self._accepting_new_input():
             return
         self._file_btn.setEnabled(False)
@@ -542,9 +545,7 @@ class SingleRecognitionTab(BaseOcrTab):
             self._run_ocr_async(payload, pipeline_val), pipeline_val
         )
 
-    def _dispatch_image_recognize(
-        self, image: QImage, pipeline_val: str
-    ) -> None:
+    def _dispatch_image_recognize(self, image: QImage, pipeline_val: str) -> None:
         self._dispatch_ocr_coroutine(
             self._prepare_image_and_run_async(image, pipeline_val), pipeline_val
         )
@@ -558,6 +559,9 @@ class SingleRecognitionTab(BaseOcrTab):
         """Dispatch preparation plus recognition as one cancellable UI task."""
         from vibeocr.utils.qt_async import get_async_runner
 
+        self._recognition_started_at = time.monotonic()
+        self.status_changed.emit("正在识别…")
+        self.task_status_changed.emit("单次识别 · 处理中")
         self._set_processing(True)
         self._refresh_start_btn_enabled()
 
@@ -610,12 +614,8 @@ class SingleRecognitionTab(BaseOcrTab):
         finally:
             buffer.close()
 
-    async def _prepare_image_and_run_async(
-        self, image: QImage, pipeline_val: str
-    ):
-        payload = await self._run_tracked_native_async(
-            self._qimage_to_png_bytes, image
-        )
+    async def _prepare_image_and_run_async(self, image: QImage, pipeline_val: str):
+        payload = await self._run_tracked_native_async(self._qimage_to_png_bytes, image)
         return await self._recognize_payload_async(payload, pipeline_val)
 
     def _prepare_image_and_run_sync(self, image: QImage, pipeline_val: str):
@@ -623,9 +623,7 @@ class SingleRecognitionTab(BaseOcrTab):
         return self._call_backend_recognize(payload, pipeline_val)
 
     async def _read_file_and_run_async(self, path: Path, pipeline_val: str):
-        payload = await self._run_tracked_native_async(
-            path.read_bytes
-        )
+        payload = await self._run_tracked_native_async(path.read_bytes)
         return await self._recognize_payload_async(payload, pipeline_val)
 
     def _read_file_and_run_sync(self, path: Path, pipeline_val: str):
@@ -641,15 +639,10 @@ class SingleRecognitionTab(BaseOcrTab):
         """
         return await self._recognize_payload_async(payload, pipeline_val)
 
-    async def _recognize_payload_async(
-        self, payload: bytes, pipeline_val: str
-    ):
+    async def _recognize_payload_async(self, payload: bytes, pipeline_val: str):
         # Explicitly injected sync backends and instance-level test seams stay
         # off the GUI thread. Production uses only the public supervisor adapter.
-        if (
-            self._backend is not None
-            or "_call_backend_recognize" in self.__dict__
-        ):
+        if self._backend is not None or "_call_backend_recognize" in self.__dict__:
             return await self._run_tracked_native_async(
                 self._call_backend_recognize, payload, pipeline_val
             )
@@ -662,9 +655,7 @@ class SingleRecognitionTab(BaseOcrTab):
         from vibeocr.protocol.v2 import PipelineSelection
         from vibeocr.pyside.supervisor_adapter import get_supervisor_adapter
 
-        pipeline_id = (
-            "MinerU" if pipeline_val == "DOCUMENT_PARSING" else pipeline_val
-        )
+        pipeline_id = "MinerU" if pipeline_val == "DOCUMENT_PARSING" else pipeline_val
         try:
             pipeline = OCRPipeline(pipeline_id)
             allowed = set(get_pipeline_supported_options(pipeline))
@@ -685,9 +676,7 @@ class SingleRecognitionTab(BaseOcrTab):
             pipeline=PipelineSelection(pipeline_id, options=options),
         )
         if not entries or entries[0].error_code:
-            raise RuntimeError(
-                entries[0].error_code if entries else "识别结果缺失"
-            )
+            raise RuntimeError(entries[0].error_code if entries else "识别结果缺失")
         return ocr_result_from_payload(entries[0].payload)
 
     async def _run_tracked_native_async(self, operation, *args):
@@ -715,9 +704,7 @@ class SingleRecognitionTab(BaseOcrTab):
     def _on_native_call_finished(self) -> None:
         with self._native_call_events_lock:
             self._native_call_events = {
-                event
-                for event in self._native_call_events
-                if not event.is_set()
+                event for event in self._native_call_events if not event.is_set()
             }
             has_native_calls = bool(self._native_call_events)
         task = self._recognize_task
@@ -768,8 +755,7 @@ class SingleRecognitionTab(BaseOcrTab):
             self._start_btn.setEnabled(False)
             return
         has_pending = (
-            self._pending_pixmap is not None
-            and not self._pending_pixmap.isNull()
+            self._pending_pixmap is not None and not self._pending_pixmap.isNull()
         ) or self._pending_file_path is not None
         self._start_btn.setEnabled(has_pending)
 
@@ -818,7 +804,6 @@ class SingleRecognitionTab(BaseOcrTab):
                 )
                 return
             if not gpu_capability:
-
                 QMessageBox.warning(
                     self,
                     "文档解析不可用",
@@ -862,11 +847,11 @@ class SingleRecognitionTab(BaseOcrTab):
         """Test-only injected sync backend seam; production is async v2."""
         if self._backend is None:
             raise RuntimeError("no synchronous backend is attached")
-        return self._backend.recognize_sync(
-            image_data, pipeline=pipeline
-        )
+        return self._backend.recognize_sync(image_data, pipeline=pipeline)
 
-    def recognize_via_supervisor(self, image_data: bytes, display_name: str = "image.png") -> int:
+    def recognize_via_supervisor(
+        self, image_data: bytes, display_name: str = "image.png"
+    ) -> int:
         """Submit a one-element recognition job through the v2 supervisor.
 
         Phase 7A path (coexists with the legacy sync path until the Phase 8
@@ -883,7 +868,6 @@ class SingleRecognitionTab(BaseOcrTab):
 
         adapter = get_supervisor_adapter()
         return adapter.submit_recognition([(display_name, None, image_data)])
-
 
     def _on_result_block_edited(self, index: int, new_text: str) -> None:
         """右侧结果块被编辑后同步更新数据模型。
@@ -981,9 +965,7 @@ class SingleRecognitionTab(BaseOcrTab):
         整体渲染（而非逐块），使排版变化在屏幕上可见。
         """
         result = self._current_ocr_result
-        if result is None or not getattr(
-            self, "_plain_text_at_recognition", False
-        ):
+        if result is None or not getattr(self, "_plain_text_at_recognition", False):
             return
 
         text_opts = self._text_options_widget.get_text_options()
@@ -1023,6 +1005,11 @@ class SingleRecognitionTab(BaseOcrTab):
         char_count = len(result.raw_text) if result.raw_text else 0
         block_count = len(result.text_with_scores)
         logger.info(f"OCR 完成: {block_count} 个文本块, {char_count} 个字符")
+        status = self._build_recognition_status(
+            result, self._take_recognition_elapsed_seconds()
+        )
+        self.status_changed.emit(status)
+        self.result_status_changed.emit(status)
 
         # 预处理改变了图像时，用预处理后的图像更新预览
         self._preprocessed_image_jobs.cancel_current()
@@ -1071,9 +1058,7 @@ class SingleRecognitionTab(BaseOcrTab):
         self._result_widget.display_text_layout(result, pending[1])
 
     @Slot(int, object)
-    def _on_preprocessed_image_loaded(
-        self, _generation: int, result: object
-    ) -> None:
+    def _on_preprocessed_image_loaded(self, _generation: int, result: object) -> None:
         if self._closing or not isinstance(result, QImage) or result.isNull():
             return
         pixmap = QPixmap.fromImage(result)
@@ -1081,9 +1066,7 @@ class SingleRecognitionTab(BaseOcrTab):
             self._preview_widget.set_pixmap(pixmap)
 
     @Slot(int, str)
-    def _on_preprocessed_image_load_failed(
-        self, _generation: int, error: str
-    ) -> None:
+    def _on_preprocessed_image_load_failed(self, _generation: int, error: str) -> None:
         if not self._closing:
             logger.warning("预处理图片解码失败: %s", error)
 
@@ -1130,6 +1113,88 @@ class SingleRecognitionTab(BaseOcrTab):
         self._result_widget._ensure_web_view().setHtml(
             f"<p style='color:#f44336;'>识别失败：{error_msg}</p>"
         )
+        elapsed = self._take_recognition_elapsed_seconds()
+        status = "识别失败"
+        if elapsed is not None:
+            status += f" · 耗时 {self._format_elapsed(elapsed)}"
+        self.status_changed.emit(status)
+        self.result_status_changed.emit(status)
+
+    def _take_recognition_elapsed_seconds(self) -> float | None:
+        """读取并清除本轮端到端识别计时，避免复用上一轮耗时。"""
+        started_at = self._recognition_started_at
+        self._recognition_started_at = None
+        if started_at is None:
+            return None
+        return max(0.0, time.monotonic() - started_at)
+
+    @classmethod
+    def _build_recognition_status(
+        cls, result: object, elapsed_seconds: float | None
+    ) -> str:
+        """生成紧凑、可核对且不夸大成功的识别摘要。
+
+        文本框与低置信数量都从同一组实际展示块计算，避免
+        ``low_confidence_items`` 与 ``text_blocks`` 来源不同导致分母对不上。
+        空结果明确提示“未识别到文本”；只有文本但后端未给框时也不伪造 0 框。
+        """
+        raw_blocks = getattr(result, "text_blocks", None) or []
+        visible_blocks = [
+            block
+            for block in raw_blocks
+            if str(getattr(block, "text", "") or "").strip()
+        ]
+
+        # 老结果或个别管道可能只返回 text_with_scores，用它作为可信的兼容回退。
+        scored_items = getattr(result, "text_with_scores", None) or []
+        if visible_blocks:
+            block_count = len(visible_blocks)
+            low_count = sum(
+                1
+                for block in visible_blocks
+                if cls._is_low_confidence(getattr(block, "score", None))
+            )
+        elif scored_items:
+            non_empty_items = [
+                (text, score) for text, score in scored_items if str(text or "").strip()
+            ]
+            block_count = len(non_empty_items)
+            low_count = sum(
+                1 for _, score in non_empty_items if cls._is_low_confidence(score)
+            )
+        else:
+            block_count = 0
+            low_count = 0
+
+        raw_text = str(getattr(result, "raw_text", "") or "").strip()
+        if block_count:
+            parts = [
+                f"识别到 {block_count} 个文本框",
+                f"低置信（<80%）{low_count} 个",
+            ]
+        elif raw_text:
+            parts = ["识别完成（未返回文本框统计）"]
+        else:
+            parts = ["未识别到文本"]
+
+        if elapsed_seconds is not None:
+            parts.append(f"耗时 {cls._format_elapsed(elapsed_seconds)}")
+        return " · ".join(parts)
+
+    @classmethod
+    def _is_low_confidence(cls, score: object) -> bool:
+        try:
+            return float(score) < cls._LOW_CONFIDENCE_THRESHOLD
+        except (TypeError, ValueError):
+            return False
+
+    @staticmethod
+    def _format_elapsed(elapsed_seconds: float) -> str:
+        if elapsed_seconds < 1:
+            return f"{max(1, round(elapsed_seconds * 1000))} 毫秒"
+        if elapsed_seconds < 10:
+            return f"{elapsed_seconds:.2f} 秒"
+        return f"{elapsed_seconds:.1f} 秒"
 
     def show_waiting_message(self, message: str) -> None:
         """在结果面板显示等待提示（预加载排队时调用）"""

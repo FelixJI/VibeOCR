@@ -133,7 +133,9 @@ class TestPdfTabLayerStatus:
         doc = fitz.open()
         doc.new_page()
         pdf_doc = PdfDocument(file_path="x.pdf", pages=[page_info])
-        session = PdfSession(file_path="x.pdf", session_id="test-sid", pdf_document=pdf_doc)
+        session = PdfSession(
+            file_path="x.pdf", session_id="test-sid", pdf_document=pdf_doc
+        )
         # active_session 是只读 property（读 _active_path + _sessions），直接注入底层字段
         pdf_tab._session_mgr._sessions["x.pdf"] = session
         pdf_tab._session_mgr._active_path = "x.pdf"
@@ -159,7 +161,9 @@ class TestPdfTabLayerStatus:
         for _ in range(4):
             doc.new_page()
         pdf_doc = PdfDocument(file_path="x.pdf", pages=pages)
-        session = PdfSession(file_path="x.pdf", session_id="test-sid", pdf_document=pdf_doc)
+        session = PdfSession(
+            file_path="x.pdf", session_id="test-sid", pdf_document=pdf_doc
+        )
         pdf_tab._session_mgr._sessions["x.pdf"] = session
         pdf_tab._session_mgr._active_path = "x.pdf"
 
@@ -189,7 +193,9 @@ class TestPdfTabLayerStatus:
         for _ in range(4):
             doc.new_page()
         pdf_doc = PdfDocument(file_path="x.pdf", pages=pages)
-        session = PdfSession(file_path="x.pdf", session_id="test-sid", pdf_document=pdf_doc)
+        session = PdfSession(
+            file_path="x.pdf", session_id="test-sid", pdf_document=pdf_doc
+        )
         pdf_tab._session_mgr._sessions["x.pdf"] = session
         pdf_tab._session_mgr._active_path = "x.pdf"
         pdf_tab._update_layer_status()
@@ -254,7 +260,9 @@ class TestPdfTabLayerStatusLinkage:
         for _ in range(3):
             doc.new_page()
         pdf_doc = PdfDocument(file_path="x.pdf", pages=pages)
-        session = PdfSession(file_path="x.pdf", session_id="test-sid", pdf_document=pdf_doc)
+        session = PdfSession(
+            file_path="x.pdf", session_id="test-sid", pdf_document=pdf_doc
+        )
         pdf_tab._session_mgr._sessions["x.pdf"] = session
         pdf_tab._session_mgr._active_path = "x.pdf"
         pdf_tab._refresh_thumbnails()
@@ -377,7 +385,9 @@ class TestAddTextLayerForPagesWithoutLayer:
     def _inject_session(self, pdf_tab, doc, pdf_doc):
         from vibeocr.models.pdf_session import PdfSession
 
-        session = PdfSession(file_path="x.pdf", session_id="test-sid", pdf_document=pdf_doc)
+        session = PdfSession(
+            file_path="x.pdf", session_id="test-sid", pdf_document=pdf_doc
+        )
         pdf_tab._session_mgr._sessions["x.pdf"] = session
         pdf_tab._session_mgr._active_path = "x.pdf"
         return session
@@ -446,7 +456,9 @@ class TestAddTextLayerSoftGuard:
         for _ in pages:
             doc.new_page()
         pdf_doc = PdfDocument(file_path="x.pdf", pages=pages)
-        session = PdfSession(file_path="x.pdf", session_id="test-sid", pdf_document=pdf_doc)
+        session = PdfSession(
+            file_path="x.pdf", session_id="test-sid", pdf_document=pdf_doc
+        )
         pdf_tab._session_mgr._sessions["x.pdf"] = session
         pdf_tab._session_mgr._active_path = "x.pdf"
         return session
@@ -632,7 +644,9 @@ class TestLayerStatusContextMenu:
         for _ in pages:
             doc.new_page()
         pdf_doc = PdfDocument(file_path="x.pdf", pages=pages)
-        session = PdfSession(file_path="x.pdf", session_id="test-sid", pdf_document=pdf_doc)
+        session = PdfSession(
+            file_path="x.pdf", session_id="test-sid", pdf_document=pdf_doc
+        )
         pdf_tab._session_mgr._sessions["x.pdf"] = session
         pdf_tab._session_mgr._active_path = "x.pdf"
         return session
@@ -752,7 +766,9 @@ class TestLayerStatusGrid:
         for _ in pages:
             doc.new_page()
         pdf_doc = PdfDocument(file_path="x.pdf", pages=pages)
-        session = PdfSession(file_path="x.pdf", session_id="test-sid", pdf_document=pdf_doc)
+        session = PdfSession(
+            file_path="x.pdf", session_id="test-sid", pdf_document=pdf_doc
+        )
         pdf_tab._session_mgr._sessions["x.pdf"] = session
         pdf_tab._session_mgr._active_path = "x.pdf"
         return session
@@ -892,7 +908,11 @@ class TestLayerStatusGrid:
             opt.rect = QRect(0, 0, 40, 40)
             opt.state = QStyle.StateFlag.State_Enabled
             idx = _StubIndex(
-                {(_LAYER_ROLE, 0), (_HAS_LAYER_ROLE, has_layer), (_LAYER_STATE_ROLE, state_str)}
+                {
+                    (_LAYER_ROLE, 0),
+                    (_HAS_LAYER_ROLE, has_layer),
+                    (_LAYER_STATE_ROLE, state_str),
+                }
             )
             pm = QPixmap(40, 40)
             pm.fill(QColor(0, 0, 0))
@@ -908,7 +928,9 @@ class TestLayerStatusGrid:
         assert _bg_for("done", has_layer=False).name() == QColor(Colors.success).name()
         assert _bg_for("done", has_layer=True).name() == QColor(Colors.success).name()
         # none 态（无 state）回退到 has_layer 推导
-        assert _bg_for("none", has_layer=False).name() == QColor(Colors.text_subtle).name()
+        assert (
+            _bg_for("none", has_layer=False).name() == QColor(Colors.text_subtle).name()
+        )
 
 
 class _StubIndex:
@@ -934,7 +956,9 @@ class TestOcrPerPageFeedback:
         for _ in pages:
             doc.new_page()
         pdf_doc = PdfDocument(file_path="x.pdf", pages=pages)
-        session = PdfSession(file_path="x.pdf", session_id="test-sid", pdf_document=pdf_doc)
+        session = PdfSession(
+            file_path="x.pdf", session_id="test-sid", pdf_document=pdf_doc
+        )
         pdf_tab._session_mgr._sessions["x.pdf"] = session
         pdf_tab._session_mgr._active_path = "x.pdf"
         pdf_tab._update_layer_status()
@@ -970,7 +994,8 @@ class TestOcrPerPageFeedback:
 
         called = []
         monkeypatch.setattr(
-            pdf_tab._thumbnail_model, "request_render",
+            pdf_tab._thumbnail_model,
+            "request_render",
             lambda row: called.append(row),
         )
         pdf_tab._session_mgr.ocr_page_done.emit("x.pdf", 0, object())
@@ -987,9 +1012,7 @@ class TestOcrPerPageFeedback:
         session = self._inject(pdf_tab, pages)
         # 第 0 页 OCR 完成：设置 has_text_layer + ocr_text_blocks 模拟 OCR 写层
         session.pdf_document.pages[0].has_text_layer = True
-        session.pdf_document.pages[0].ocr_text_blocks = [
-            {"text": "test"}
-        ]
+        session.pdf_document.pages[0].ocr_text_blocks = [{"text": "test"}]
         pdf_tab._session_mgr.ocr_page_done.emit("x.pdf", 0, object())
         text = pdf_tab._layer_summary_label.text()
         assert "OCR文字层 1 页" in text
@@ -1037,7 +1060,9 @@ class TestOcrPerPageFeedback:
         # 置第 0 页为 processing、第 1 页为 failed
         pdf_tab._update_layer_grid_page(0, state="processing")
         pdf_tab._update_layer_grid_page(1, state="failed")
-        assert pdf_tab._layer_status_grid.item(0).data(_LAYER_STATE_ROLE) == "processing"
+        assert (
+            pdf_tab._layer_status_grid.item(0).data(_LAYER_STATE_ROLE) == "processing"
+        )
         assert pdf_tab._layer_status_grid.item(1).data(_LAYER_STATE_ROLE) == "failed"
 
     def test_update_layer_grid_page_no_state_leaves_role_unset(self, pdf_tab):
@@ -1058,7 +1083,9 @@ class TestLoadDoneSidecarHint:
         from vibeocr.models.pdf_session import PdfSession
 
         pdf_doc = PdfDocument(file_path="x.pdf", pages=pages)
-        session = PdfSession(file_path="x.pdf", session_id="test-sid", pdf_document=pdf_doc)
+        session = PdfSession(
+            file_path="x.pdf", session_id="test-sid", pdf_document=pdf_doc
+        )
         pdf_tab._session_mgr._sessions["x.pdf"] = session
         pdf_tab._session_mgr._active_path = "x.pdf"
         return session
@@ -1133,7 +1160,9 @@ class TestThumbnailIncrementalUpdate:
             for i in range(n_pages)
         ]
         pdf_doc = PdfDocument(file_path="x.pdf", pages=pages)
-        session = PdfSession(file_path="x.pdf", session_id="test-sid", pdf_document=pdf_doc)
+        session = PdfSession(
+            file_path="x.pdf", session_id="test-sid", pdf_document=pdf_doc
+        )
         pdf_tab._session_mgr._sessions["x.pdf"] = session
         pdf_tab._session_mgr._active_path = "x.pdf"
         pdf_tab._refresh_thumbnails()
@@ -1143,7 +1172,8 @@ class TestThumbnailIncrementalUpdate:
         """拖拽排序应调 manager.reorder_async(不再操作 PdfService)。"""
         called = []
         monkeypatch.setattr(
-            pdf_tab._session_mgr, "reorder_async",
+            pdf_tab._session_mgr,
+            "reorder_async",
             lambda order: called.append(order),
         )
         self._setup(pdf_tab)
@@ -1170,7 +1200,8 @@ class TestThumbnailIncrementalUpdate:
 
         called = []
         monkeypatch.setattr(
-            pdf_tab._session_mgr, "rotate_pages_async",
+            pdf_tab._session_mgr,
+            "rotate_pages_async",
             lambda pages, angle: called.append((pages, angle)),
         )
         self._setup(pdf_tab)
@@ -1211,7 +1242,9 @@ class TestPdfTabRotateAllAndAspectDeskew:
                 for i in range(3)
             ]
         pdf_doc = PdfDocument(file_path="x.pdf", pages=pages)
-        session = PdfSession(file_path="x.pdf", session_id="test-sid", pdf_document=pdf_doc)
+        session = PdfSession(
+            file_path="x.pdf", session_id="test-sid", pdf_document=pdf_doc
+        )
         pdf_tab._session_mgr._sessions["x.pdf"] = session
         pdf_tab._session_mgr._active_path = "x.pdf"
         pdf_tab._refresh_thumbnails()
@@ -1221,7 +1254,8 @@ class TestPdfTabRotateAllAndAspectDeskew:
         """全部顺时针90° 按钮应调 rotate_pages_async(全部页, 90)。"""
         called = []
         monkeypatch.setattr(
-            pdf_tab._session_mgr, "rotate_pages_async",
+            pdf_tab._session_mgr,
+            "rotate_pages_async",
             lambda pages, angle: called.append((pages, angle)),
         )
         self._setup(pdf_tab)
@@ -1232,7 +1266,8 @@ class TestPdfTabRotateAllAndAspectDeskew:
         """全部逆时针90° 按钮应调 rotate_pages_async(全部页, -90)。"""
         called = []
         monkeypatch.setattr(
-            pdf_tab._session_mgr, "rotate_pages_async",
+            pdf_tab._session_mgr,
+            "rotate_pages_async",
             lambda pages, angle: called.append((pages, angle)),
         )
         self._setup(pdf_tab)
@@ -1250,13 +1285,15 @@ class TestPdfTabRotateAllAndAspectDeskew:
         ]
         called = []
         monkeypatch.setattr(
-            pdf_tab._session_mgr, "rotate_pages_async",
+            pdf_tab._session_mgr,
+            "rotate_pages_async",
             lambda pages_, angle: called.append((pages_, angle)),
         )
         self._setup(pdf_tab, pages)
         monkeypatch.setattr(pdf_tab, "_get_selected_page_indices", lambda: [0, 1])
         # 跳过弹窗
         from PySide6.QtWidgets import QMessageBox
+
         monkeypatch.setattr(QMessageBox, "information", lambda *a, **k: None)
 
         pdf_tab._on_deskew_by_aspect("landscape")
@@ -1273,12 +1310,14 @@ class TestPdfTabRotateAllAndAspectDeskew:
         ]
         called = []
         monkeypatch.setattr(
-            pdf_tab._session_mgr, "rotate_pages_async",
+            pdf_tab._session_mgr,
+            "rotate_pages_async",
             lambda pages_, angle: called.append((pages_, angle)),
         )
         self._setup(pdf_tab, pages)
         monkeypatch.setattr(pdf_tab, "_get_selected_page_indices", lambda: [0, 1])
         from PySide6.QtWidgets import QMessageBox
+
         monkeypatch.setattr(QMessageBox, "information", lambda *a, **k: None)
 
         pdf_tab._on_deskew_by_aspect("portrait")
@@ -1295,12 +1334,14 @@ class TestPdfTabRotateAllAndAspectDeskew:
         ]
         called = []
         monkeypatch.setattr(
-            pdf_tab._session_mgr, "rotate_pages_async",
+            pdf_tab._session_mgr,
+            "rotate_pages_async",
             lambda pages_, angle: called.append((pages_, angle)),
         )
         self._setup(pdf_tab, pages)
         monkeypatch.setattr(pdf_tab, "_get_selected_page_indices", lambda: [0])
         from PySide6.QtWidgets import QMessageBox
+
         monkeypatch.setattr(QMessageBox, "information", lambda *a, **k: None)
 
         pdf_tab._on_deskew_by_aspect("landscape")
@@ -1316,7 +1357,9 @@ class TestPdfTabLayerTypeIndicator:
         from vibeocr.models.pdf_session import PdfSession
 
         pdf_doc = PdfDocument(file_path="x.pdf", pages=pages)
-        session = PdfSession(file_path="x.pdf", session_id="test-sid", pdf_document=pdf_doc)
+        session = PdfSession(
+            file_path="x.pdf", session_id="test-sid", pdf_document=pdf_doc
+        )
         pdf_tab._session_mgr._sessions["x.pdf"] = session
         pdf_tab._session_mgr._active_path = "x.pdf"
         pdf_tab._update_layer_status()
@@ -1383,7 +1426,9 @@ class TestPdfTabRotateNoSelectionFeedback:
 
         pages = [PdfPageInfo(page_index=i) for i in range(3)]
         pdf_doc = PdfDocument(file_path="x.pdf", pages=pages)
-        session = PdfSession(file_path="x.pdf", session_id="test-sid", pdf_document=pdf_doc)
+        session = PdfSession(
+            file_path="x.pdf", session_id="test-sid", pdf_document=pdf_doc
+        )
         pdf_tab._session_mgr._sessions["x.pdf"] = session
         pdf_tab._session_mgr._active_path = "x.pdf"
 
@@ -1395,9 +1440,12 @@ class TestPdfTabRotateNoSelectionFeedback:
 
         self._setup(pdf_tab)
         called = []
-        monkeypatch.setattr(QMessageBox, "information", lambda *a, **k: called.append(a))
         monkeypatch.setattr(
-            pdf_tab._session_mgr, "rotate_pages_async",
+            QMessageBox, "information", lambda *a, **k: called.append(a)
+        )
+        monkeypatch.setattr(
+            pdf_tab._session_mgr,
+            "rotate_pages_async",
             MagicMock(side_effect=AssertionError("不应调 rotate_pages_async")),
         )
         # 无选中
@@ -1418,7 +1466,12 @@ class TestPdfTabDeleteTextLayerAsync:
         monkeypatch.setattr(pdf_tab, "_get_selected_page_indices", lambda: [0])
         # 跳过确认对话框（直接返回 Yes）
         from PySide6.QtWidgets import QMessageBox
-        monkeypatch.setattr(QMessageBox, "question", staticmethod(lambda *a, **k: QMessageBox.StandardButton.Yes))
+
+        monkeypatch.setattr(
+            QMessageBox,
+            "question",
+            staticmethod(lambda *a, **k: QMessageBox.StandardButton.Yes),
+        )
         # mock manager
         mock_mgr = MagicMock()
         pdf_tab._session_mgr = mock_mgr
@@ -1440,10 +1493,75 @@ class TestPdfTabDeleteTextLayerAsync:
         mock_mgr.active_session = session
 
         warnings = []
-        monkeypatch.setattr(QMessageBox, "warning", staticmethod(lambda *a, **k: warnings.append(a)))
+        monkeypatch.setattr(
+            QMessageBox, "warning", staticmethod(lambda *a, **k: warnings.append(a))
+        )
 
         pdf_tab._on_delete_layer_done("/tmp/x.pdf", [2, 5])
         assert len(warnings) == 1
+
+    def test_delete_layer_done_syncs_stale_grid_from_model(self, pdf_tab):
+        """逐页 mutate_done 丢失时，删除最终回调也必须把格子同步为无文字层。"""
+        from vibeocr.models.pdf_document import PdfDocument, PdfPageInfo
+        from vibeocr.models.pdf_session import PdfSession
+        from vibeocr.views.tabs.pdf_tab import _HAS_LAYER_ROLE
+
+        document = PdfDocument(
+            file_path="x.pdf",
+            pages=[PdfPageInfo(page_index=0, has_text_layer=True)],
+        )
+        session = PdfSession(
+            file_path="x.pdf",
+            session_id="sid",
+            pdf_document=document,
+        )
+        pdf_tab._session_mgr._sessions["x.pdf"] = session
+        pdf_tab._session_mgr._active_path = "x.pdf"
+        pdf_tab._update_layer_status()
+        item = pdf_tab._layer_status_grid.item(0)
+        assert item.data(_HAS_LAYER_ROLE) is True
+
+        # 模拟 manager 已应用删除结果，但逐页 mutate_done 信号未送达 UI。
+        document.pages[0].has_text_layer = False
+        document.pages[0].text_layers = []
+        document.pages[0].ocr_text_blocks = []
+
+        pdf_tab._on_delete_layer_done("x.pdf", [])
+
+        assert item.data(_HAS_LAYER_ROLE) is False
+        assert "无文字层" in item.toolTip()
+
+    def test_batch_mutate_done_with_page_key_uses_terminal_refresh(
+        self, pdf_tab, monkeypatch
+    ):
+        """整批完成即使带 page=None，也不能误判成逐页完成。"""
+        from vibeocr.models.pdf_document import PdfDocument
+        from vibeocr.models.pdf_session import PdfSession
+
+        session = PdfSession(
+            file_path="x.pdf",
+            session_id="sid",
+            pdf_document=PdfDocument(file_path="x.pdf", pages=[]),
+        )
+        pdf_tab._session_mgr._sessions["x.pdf"] = session
+        pdf_tab._session_mgr._active_path = "x.pdf"
+        refreshed = []
+        monkeypatch.setattr(
+            pdf_tab,
+            "_after_structural_change",
+            lambda: refreshed.append(True),
+        )
+
+        pdf_tab._on_mutate_done(
+            "x.pdf",
+            {
+                "diff_applied": True,
+                "op": "reorder",
+                "page": None,
+            },
+        )
+
+        assert refreshed == [True]
 
 
 class TestPdfTabSaveAsync:
@@ -1649,7 +1767,11 @@ class TestPdfTabExportAsync:
         # 有 modified session
         mock_mgr.get_modified_sessions.return_value = [("/tmp/a.pdf", MagicMock())]
         # mock 文件对话框返回目录
-        monkeypatch.setattr(QFileDialog, "getExistingDirectory", staticmethod(lambda *a, **k: "/tmp/out"))
+        monkeypatch.setattr(
+            QFileDialog,
+            "getExistingDirectory",
+            staticmethod(lambda *a, **k: "/tmp/out"),
+        )
 
         pdf_tab._on_export_all()
         mock_mgr.export_all_async.assert_called_once_with("/tmp/out")
@@ -1685,7 +1807,9 @@ class TestPdfTabAutoDeskew:
         doc = fitz.open()
         doc.new_page(width=200, height=300)
         pdf_doc = PdfDocument(file_path="x.pdf", pages=[PdfPageInfo(page_index=0)])
-        session = PdfSession(file_path="x.pdf", session_id="test-sid", pdf_document=pdf_doc)
+        session = PdfSession(
+            file_path="x.pdf", session_id="test-sid", pdf_document=pdf_doc
+        )
         pdf_tab._session_mgr._sessions["x.pdf"] = session
         pdf_tab._session_mgr._active_path = "x.pdf"
         pdf_tab._refresh_thumbnails()
@@ -1803,7 +1927,9 @@ def test_layer_cell_tooltip_no_deskew_when_false():
 class TestBatchOpenSuppressesSwitch:
     """批量异步导入：不在每个 session_added 时切换 active（避免 N 次全量重建）。"""
 
-    def test_batch_opening_suppresses_combo_switch(self, pdf_tab, tmp_path, monkeypatch):
+    def test_batch_opening_suppresses_combo_switch(
+        self, pdf_tab, tmp_path, monkeypatch
+    ):
         """导入多文件时,_batch_opening 抑制 setCurrentIndex;open_done 后切换一次。"""
         import fitz
         from PySide6.QtWidgets import QFileDialog
@@ -1826,9 +1952,7 @@ class TestBatchOpenSuppressesSwitch:
 
         # 记录 active_changed 触发次数（每次都会调 _on_active_changed → set_session）
         active_changes: list[str] = []
-        pdf_tab._session_mgr.active_changed.connect(
-            lambda p: active_changes.append(p)
-        )
+        pdf_tab._session_mgr.active_changed.connect(lambda p: active_changes.append(p))
 
         pdf_tab._on_open_file()
 
@@ -1964,6 +2088,7 @@ class TestThumbnailDetectionInProgress:
         icon = idx.data(Qt.ItemDataRole.DecorationRole)
         # 检测中图标与普通占位图标应是不同对象(不同缓存 dict)
         from vibeocr.views.tabs.pdf_tab import _placeholder_icon
+
         assert icon is not None
         # 普通 placeholder 不应等于检测中图标(两者视觉不同)。
         # PySide6 的 QIcon 无 serialized()(那是 PyQt5 API),用 cacheKey()
@@ -1971,7 +2096,9 @@ class TestThumbnailDetectionInProgress:
         normal = _placeholder_icon(model._thumb_size)
         assert icon.cacheKey() != normal.cacheKey()
 
-    def test_set_detection_done_starts_worker_and_clears_state(self, qtbot, monkeypatch):
+    def test_set_detection_done_starts_worker_and_clears_state(
+        self, qtbot, monkeypatch
+    ):
         """set_detection_done 后状态清除、worker 启动、占位恢复普通。"""
         started = []
         model = self._make_model_with_session(qtbot)
@@ -2036,7 +2163,9 @@ class TestThumbnailAutoRenderAfterStateChange:
         model = ThumbnailModel(parent=None)
         assert hasattr(model, "render_visible_requested")
 
-    def test_set_detection_done_emits_render_visible_requested(self, qtbot, monkeypatch):
+    def test_set_detection_done_emits_render_visible_requested(
+        self, qtbot, monkeypatch
+    ):
         """set_detection_done 后必须 emit render_visible_requested。
 
         Bug 2 核心断言：打开完成（load_done → set_detection_done）后缩略图应
@@ -2044,7 +2173,9 @@ class TestThumbnailAutoRenderAfterStateChange:
         """
         model = self._make_model_with_session(qtbot)
         monkeypatch.setattr(
-            model, "_start_render_worker", lambda _s: None  # 避免真实起 worker
+            model,
+            "_start_render_worker",
+            lambda _s: None,  # 避免真实起 worker
         )
         fired = []
         model.render_visible_requested.connect(lambda: fired.append(True))
@@ -2095,16 +2226,16 @@ class TestThumbnailAutoRenderAfterStateChange:
         若未连接，emit 不会触发渲染（Bug 2/3 复发）。
         """
         # ThumbnailListView 必须有 request_current_visible 公有方法
-        assert callable(getattr(pdf_tab._thumbnail_list, "request_current_visible", None)), (
-            "ThumbnailListView 缺 request_current_visible 公有方法"
-        )
+        assert callable(
+            getattr(pdf_tab._thumbnail_list, "request_current_visible", None)
+        ), "ThumbnailListView 缺 request_current_visible 公有方法"
         # emit render_visible_requested 应触发 view 的 _schedule_visible_range
         called = []
-        pdf_tab._thumbnail_list._schedule_visible_range = (
-            lambda: called.append(True)
-        )
+        pdf_tab._thumbnail_list._schedule_visible_range = lambda: called.append(True)
         pdf_tab._thumbnail_model.render_visible_requested.emit()
-        assert called, "render_visible_requested 应触发 view._schedule_visible_range（去抖渲染）"
+        assert called, (
+            "render_visible_requested 应触发 view._schedule_visible_range（去抖渲染）"
+        )
 
 
 class TestThumbnailWorkerLifecycle:

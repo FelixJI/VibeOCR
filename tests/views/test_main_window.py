@@ -126,15 +126,11 @@ class TestMainWindow:
             request_shutdown=lambda: calls.append("pdf:request"),
             is_drained=lambda: calls.append("pdf:probe") or True,
         )
-        window._edge_toolbar = SimpleNamespace(
-            close=lambda: calls.append("edge:close")
-        )
+        window._edge_toolbar = SimpleNamespace(close=lambda: calls.append("edge:close"))
         window._subprocess_manager = SimpleNamespace(
             request_shutdown=lambda: calls.append("subprocess:request"),
             is_drained=lambda: calls.append("subprocess:probe") or True,
-            take_shutdown_callable=lambda: (
-                lambda: calls.append("subprocess:shutdown")
-            ),
+            take_shutdown_callable=lambda: lambda: calls.append("subprocess:shutdown"),
         )
         window._dependency_manager = SimpleNamespace(
             request_shutdown=lambda: calls.append("dependency:request"),
@@ -225,14 +221,26 @@ class TestMainWindow:
         clipboard = QApplication.clipboard()
         assert clipboard.text() == "# 标题\n\n测试文本"
 
-    def test_status_bar_shows_copied(self, main_window, qtbot):
-        """复制后状态栏显示提示。"""
+    def test_status_bar_keeps_copy_as_latest_result(self, main_window, qtbot):
+        """复制是已完成结果，不应冒充仍在执行的任务。"""
         result = OCRResult(raw_text="测试文本")
         main_window._current_ocr_result = result
         main_window._clipboard_controller.set_result(result)
+        task_before_copy = main_window._statusbar.currentMessage()
         qtbot.mouseClick(main_window._ui.btnCopyPlain, Qt.MouseButton.LeftButton)
 
-        assert "复制" in main_window._statusbar.currentMessage()
+        assert "复制" in main_window._statusbar.resultMessage()
+        assert main_window._statusbar.currentMessage() == task_before_copy
+
+    def test_recognition_task_and_result_use_separate_channels(self, main_window):
+        main_window._single_tab.task_status_changed.emit("单次识别 · 处理中")
+        assert main_window._statusbar.currentMessage() == "单次识别 · 处理中"
+
+        main_window._single_tab.result_status_changed.emit(
+            "识别到 3 个文本框 · 低置信（<80%）1 个 · 耗时 280 ms"
+        )
+        assert main_window._statusbar.currentMessage() == "空闲"
+        assert "识别到 3 个文本框" in main_window._statusbar.resultMessage()
 
     def test_open_image_file_loads_pixmap(self, main_window, qtbot, temp_image_file):
         """直接加载图片文件到预览组件。"""
@@ -495,7 +503,9 @@ class TestOcrFinishedRaisesWindow:
         mock_activate.assert_called_once()
         mock_raise.assert_called_once()
 
-    def test_screenshot_confirmed_marks_screenshot_origin(self, main_window, monkeypatch):
+    def test_screenshot_confirmed_marks_screenshot_origin(
+        self, main_window, monkeypatch
+    ):
         """_on_overlay_confirmed 应标记本次识别来自截图（让 tab 在完成时发信号）。
 
         验证 run_ocr 以 from_screenshot=True 被调用。
@@ -505,7 +515,8 @@ class TestOcrFinishedRaisesWindow:
 
         captured: dict = {}
         monkeypatch.setattr(
-            main_window._single_tab, "run_ocr",
+            main_window._single_tab,
+            "run_ocr",
             lambda pm, options=None, **kw: captured.update(
                 {"from_screenshot": kw.get("from_screenshot", False)}
             ),
@@ -536,7 +547,8 @@ class TestOcrFinishedRaisesWindow:
 
         run_calls: list = []
         monkeypatch.setattr(
-            main_window._single_tab, "run_ocr",
+            main_window._single_tab,
+            "run_ocr",
             lambda *a, **kw: run_calls.append(kw),
         )
         monkeypatch.setattr(
@@ -545,7 +557,8 @@ class TestOcrFinishedRaisesWindow:
         monkeypatch.setattr(main_window._single_tab, "set_pixmap", lambda *a, **k: None)
         # is_processing 是只读 property，patch 它需走 __dict__
         monkeypatch.setattr(
-            type(main_window._single_tab), "is_processing",
+            type(main_window._single_tab),
+            "is_processing",
             property(lambda self: True),
         )
         monkeypatch.setattr(main_window, "showNormal", lambda: None)
@@ -573,7 +586,9 @@ class TestRestoreMainWindowWhenMinimized:
 
         pixmap = QPixmap(10, 10)
         pixmap.fill(Qt.GlobalColor.white)
-        monkeypatch.setattr(main_window._single_tab, "run_ocr", lambda *args, **kwargs: None)
+        monkeypatch.setattr(
+            main_window._single_tab, "run_ocr", lambda *args, **kwargs: None
+        )
 
         with (
             _mock.patch.object(main_window, "showNormal") as mock_show,
@@ -622,7 +637,9 @@ class TestFreshOverlayPerCapture:
         from vibeocr.widgets.screen_capture_overlay import ScreenCaptureOverlay
 
         monkeypatch.setattr(ScreenCaptureOverlay, "start_capture", lambda self: None)
-        monkeypatch.setattr(main_window._single_tab, "run_ocr", lambda *args, **kwargs: None)
+        monkeypatch.setattr(
+            main_window._single_tab, "run_ocr", lambda *args, **kwargs: None
+        )
         main_window._start_fresh_overlay_capture()
         # confirmed 信号连接可触发槽（不报错）
         received: list = []
@@ -719,8 +736,6 @@ class TestTabOrder:
         tw = main_window._ui.tabWidget
         assert tw.tabText(tw.count() - 1) == "关于", "关于页应在末尾"
         # 设置页应在关于页之前
-        settings_idx = next(
-            i for i in range(tw.count()) if tw.tabText(i) == "设置"
-        )
+        settings_idx = next(i for i in range(tw.count()) if tw.tabText(i) == "设置")
         about_idx = tw.count() - 1
         assert settings_idx < about_idx, "设置页应在关于页之前"

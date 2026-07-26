@@ -27,6 +27,23 @@ def test_start_task_cancel_uses_thread_safe_event() -> None:
     assert task._cancelled.is_set()
 
 
+def test_start_task_reports_process_and_handshake_stage(monkeypatch) -> None:
+    task = SupervisorStartTask("python")
+    progress: list[str] = []
+    started: list[bool] = []
+    task.signals.progress.connect(progress.append)
+    task.signals.started.connect(started.append)
+    monkeypatch.setattr(
+        "vibeocr.supervisor.process.SupervisorProcess.launch",
+        lambda **_kwargs: Mock(),
+    )
+
+    task.run()
+
+    assert progress == ["正在创建子进程并等待就绪握手"]
+    assert started == [True]
+
+
 @pytest.fixture()
 def manager(qapp, tmp_path):
     instance = SubprocessManager(tmp_path)

@@ -27,7 +27,6 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QSizePolicy,
     QSpinBox,
-    QStatusBar,
     QVBoxLayout,
     QWidget,
 )
@@ -48,6 +47,7 @@ from vibeocr.views.background_tasks import DependencyUpdateCheckTask, FunctionTa
 from vibeocr.views.clipboard_controller import ClipboardController
 from vibeocr.views.settings_page_controller import SettingsPageController
 from vibeocr.views.tabs.single_recognition_tab import SingleRecognitionTab
+from vibeocr.widgets.runtime_status_bar import RuntimeStatusBar
 from vibeocr.widgets.screen_capture_overlay import ScreenCaptureOverlay
 from vibeocr.widgets.toast_widget import show_toast
 from vibeocr.widgets.toolbar import EdgeToolbar
@@ -253,9 +253,15 @@ class MainWindow(QMainWindow):
     @Slot(str)
     def _on_log_status_update(self, message: str) -> None:
         """日志状态更新槽（用于显示 Worker 节点输出）"""
-        # 只在 OCR 服务未就绪时更新状态栏（启动/预加载阶段）
+        # 只在 Supervisor 未就绪时显示启动期节点消息。
         if not self._subprocess_manager.is_ready:
             self._statusbar.showMessage(message)
+
+    def _show_background_runtime_status(self, message: str) -> None:
+        """把模型预加载/驻留事实写入独立区，不与前台任务竞争。"""
+        if self._closing:
+            return
+        self._statusbar.set_residency(message)
 
     def _setup_ui(self) -> None:
         """设置UI"""
@@ -284,7 +290,7 @@ class MainWindow(QMainWindow):
         self.resize(900, 600)
 
         # 创建状态栏
-        self._statusbar = QStatusBar(self)
+        self._statusbar = RuntimeStatusBar(self)
         self.setStatusBar(self._statusbar)
         # 启动初期即提示，避免状态栏空白让用户以为程序无响应
         self._statusbar.showMessage("正在检测 OCR 环境...")
@@ -444,7 +450,10 @@ class MainWindow(QMainWindow):
         """
         from vibeocr.views.tabs.pdf_tab import PdfTab
 
-        return PdfTab()
+        tab = PdfTab()
+        tab.task_status_changed.connect(self._statusbar.showMessage)
+        tab.result_status_changed.connect(self._statusbar.finish_task)
+        return tab
 
     def _on_lazy_tab_changed(self, index: int) -> None:
         """显示 skeleton，并 single-flight 启动纯数据/模块定位预热。"""
@@ -491,13 +500,13 @@ class MainWindow(QMainWindow):
         self._lazy_tab_tasks.add(task)
         self._lazy_tab_inflight = (index, generation, task)
         task.signals.finished.connect(
-            lambda result, idx=index, gen=generation, current=task: self._on_lazy_prewarm_done(
-                idx, gen, current, result
+            lambda result, idx=index, gen=generation, current=task: (
+                self._on_lazy_prewarm_done(idx, gen, current, result)
             )
         )
         task.signals.error.connect(
-            lambda error, idx=index, gen=generation, current=task: self._on_lazy_prewarm_failed(
-                idx, gen, current, error
+            lambda error, idx=index, gen=generation, current=task: (
+                self._on_lazy_prewarm_failed(idx, gen, current, error)
             )
         )
         QThreadPool.globalInstance().start(task)
@@ -657,10 +666,12 @@ class MainWindow(QMainWindow):
         self._single_tab.bring_to_front_requested.connect(
             self._bring_main_window_to_front
         )
+        self._single_tab.task_status_changed.connect(self._statusbar.showMessage)
+        self._single_tab.result_status_changed.connect(self._statusbar.finish_task)
 
         # 剪贴板控制器（连接到 UI 中的复制按钮）
         self._clipboard_controller = ClipboardController(
-            status_callback=self._statusbar.showMessage,
+            status_callback=self._statusbar.set_result,
             copy_button=self._ui.btnCopyRich,
         )
         self._ui.btnCopyRich.clicked.connect(self._clipboard_controller.copy_rich)
@@ -674,6 +685,7 @@ class MainWindow(QMainWindow):
             ui=self,
             project_root=self._project_root,
             status_callback=self._statusbar.showMessage,
+            runtime_status_callback=self._show_background_runtime_status,
             ocr_ready_callback=lambda: self._ocr_ready,
             subprocess_manager=self._subprocess_manager,
             # 设置页重装/补装依赖成功后联动重新检测（Bug A 修复）：
@@ -735,7 +747,9 @@ class MainWindow(QMainWindow):
             if self._closing or generation != self._machine_cache_generation:
                 return
             valid, data = result if isinstance(result, tuple) else (False, None)
-            self._machine_cache_data = data if valid and isinstance(data, dict) else None
+            self._machine_cache_data = (
+                data if valid and isinstance(data, dict) else None
+            )
             controller = getattr(self, "_settings_controller", None)
             if controller is not None:
                 controller.initialize_deferred_backend_options()
@@ -768,8 +782,9 @@ class MainWindow(QMainWindow):
             for name in ("paddlepaddle", "paddleocr", "mineru")
         ):
             self._ocr_ready = True
-            self._statusbar.showMessage("OCR功能已就绪（缓存）")
-            logging.info("OCR功能已就绪（缓存，等待后台复核）")
+            self._statusbar.set_service("环境缓存可用 · 复核中")
+            self._statusbar.showMessage("后台复核运行环境")
+            logging.info("OCR 运行环境缓存可用（等待后台复核）")
 
     def _check_embedded_dependencies(self) -> None:
         """异步检查嵌入式OCR依赖"""
@@ -792,10 +807,11 @@ class MainWindow(QMainWindow):
         self._dependency_check_complete = True
         if ready:
             self._ocr_ready = True
+            self._statusbar.set_service("运行环境可用 · Supervisor 未连接")
             # 仅在未从缓存设置过就绪状态时更新状态栏（避免覆盖缓存提示）
             if not already_ready:
-                self._statusbar.showMessage("OCR功能已就绪")
-            logging.info("OCR功能已就绪")
+                self._statusbar.showMessage("准备 Supervisor")
+            logging.info("OCR 运行环境可用")
 
             # 依赖检测可能刚重建缓存。后台重新校验并回填后，再消费
             # pending_backend；避免初始缓存读取与依赖检查写缓存竞态。
@@ -803,7 +819,10 @@ class MainWindow(QMainWindow):
         else:
             self._ocr_ready = False
             missing_str = ", ".join(missing)
-            self._statusbar.showMessage(f"OCR功能未就绪: {missing_str}")
+            self._statusbar.set_service("运行环境不可用")
+            self._statusbar.set_residency("不可用")
+            self._statusbar.set_result(f"缺少依赖：{missing_str}")
+            self._statusbar.clearMessage()
 
             # 首启场景：Python 运行时未安装意味着用户首次运行，且无任何 OCR
             # 依赖。此时仅更新状态栏会让用户无所适从（安装入口原本只在用户
@@ -1145,7 +1164,7 @@ class MainWindow(QMainWindow):
             if result == 1:
                 # 切换成功，清除 pending 标记
                 update_cache_field(self._project_root, "pending_backend", None)
-                self._statusbar.showMessage("后端切换完成，正在启动 OCR 服务")
+                self._statusbar.showMessage("OCR 后端切换完成 · 正在启动 Supervisor")
                 self._start_supervisor()
             else:
                 self._statusbar.showMessage("后端切换失败，请在设置页重试")
@@ -1169,7 +1188,7 @@ class MainWindow(QMainWindow):
         logging.debug("[MainWindow] 正在启动共享 Supervisor...")
         use_gpu = self._runtime_gpu_capability
         device = "GPU" if use_gpu else "CPU"
-        self._statusbar.showMessage(f"正在启动 OCR 服务({device})...")
+        self._statusbar.showMessage(f"Supervisor 启动中 · {device} 后端")
 
         # 将决策同步到主进程环境变量。OCR 子进程会由 ocr_worker.run_worker
         # 自行设置该变量，但主进程此前从未设置，导致跑在主进程 QThread 里的
@@ -1188,6 +1207,7 @@ class MainWindow(QMainWindow):
             return
         if success:
             logging.debug("[MainWindow] Supervisor 已就绪")
+            self._statusbar.set_service("Supervisor 已连接")
             # 启动里程碑 T4：Supervisor ready
             from vibeocr.startup_metrics import StartupEvent, record_startup
 
@@ -1203,29 +1223,37 @@ class MainWindow(QMainWindow):
                 self._on_supervisor_ready(False)
                 return
             settings_controller = getattr(self, "_settings_controller", None)
+            # 先发布基础 ready；若启用了自动预加载，设置控制器随后会用更具体的
+            # “正在预加载 N 个模型”覆盖它。
+            self._statusbar.clearMessage()
+            self._statusbar.set_residency("按需加载 · 尚未确认驻留")
             if settings_controller is not None:
                 settings_controller.on_supervisor_ready()
-            self._statusbar.showMessage("OCR 服务已就绪（模型按需加载）")
             self._record_supervisor_ready()
         else:
-            logging.warning("[MainWindow] 子进程 Worker 启动失败")
-            self._statusbar.showMessage("OCR 服务启动失败")
+            logging.warning("[MainWindow] Supervisor 子进程启动失败")
+            self._statusbar.set_service("Supervisor 启动失败")
+            self._statusbar.set_residency("不可用")
+            self._statusbar.set_result("OCR 暂不可用")
+            self._statusbar.clearMessage()
             # 显示错误提示
             QMessageBox.warning(
                 self,
-                "OCR 服务启动失败",
-                "OCR 子进程服务启动失败。\n\n"
-                "可能原因:\n"
-                "1. 首次启动需要下载模型（请检查网络）\n"
-                "2. GPU 驱动或 CUDA 版本不兼容\n"
-                "3. 系统内存不足\n\n"
+                "Supervisor 启动失败",
+                "OCR Supervisor 子进程未能完成启动和就绪握手。\n\n"
+                "可能原因：\n"
+                "1. Python 运行环境或 OCR 依赖损坏\n"
+                "2. 子进程被安全软件拦截或异常退出\n"
+                "3. 本地通信初始化失败\n\n"
+                "模型尚未开始按需加载，因此通常不是模型下载问题。\n\n"
                 "请查看控制台日志了解详情。",
             )
 
     @Slot(str)
     def _on_subprocess_progress(self, stage: str) -> None:
         """子进程启动进度回调"""
-        self._statusbar.showMessage(f"正在启动 OCR 服务: {stage}")
+        self._statusbar.set_service("Supervisor 启动中")
+        self._statusbar.showMessage(stage)
 
     def _record_supervisor_ready(self) -> None:
         """记录 Supervisor 已可交互；模型驻留不参与进程 readiness。"""
@@ -1463,13 +1491,13 @@ class MainWindow(QMainWindow):
                 self._start_install()
             return False
 
-        # 依赖已就绪，但 OCR 子进程服务尚未启动完成 —— 拦截截图，
-        # 避免在 Worker 启动/预加载期间触发识别导致报错或长时间等待。
+        # 依赖已就绪，但 Supervisor 尚未完成就绪握手 —— 拦截截图。
+        # 模型预加载不参与本条件；Supervisor 可接单后即允许按需识别。
         if not self._subprocess_manager.is_ready:
             QMessageBox.information(
                 self,
-                "服务启动中",
-                "OCR 服务正在启动，请稍候片刻再试...",
+                "Supervisor 启动中",
+                "OCR Supervisor 子进程正在启动并等待就绪握手，请稍候再试。",
             )
             return False
         return True
@@ -1729,9 +1757,9 @@ class MainWindow(QMainWindow):
                 overlay.request_shutdown()
             elif hasattr(overlay, "request_save_shutdown"):
                 overlay.request_save_shutdown()
-        self._machine_cache_generation = getattr(
-            self, "_machine_cache_generation", 0
-        ) + 1
+        self._machine_cache_generation = (
+            getattr(self, "_machine_cache_generation", 0) + 1
+        )
 
         # 异步识别可能仍在 qasync loop 上运行；在清理任何 widget 之前先标记关闭态
         # 并取消进行中的识别 task，否则 _on_ocr_finished/_on_ocr_error 回调会在
@@ -1879,7 +1907,9 @@ class MainWindow(QMainWindow):
             probes.append(("async_runner", lambda: runner.active_count == 0))
             probes.append(("async_native", are_tracked_native_jobs_drained))
         except Exception:
-            logging.debug("Unable to snapshot async runner during shutdown", exc_info=True)
+            logging.debug(
+                "Unable to snapshot async runner during shutdown", exc_info=True
+            )
         return tuple(probes)
 
     @Slot()

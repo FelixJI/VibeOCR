@@ -1,5 +1,7 @@
 """SingleRecognitionTab 测试"""
 
+import time
+
 import pytest
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import QWidget
@@ -96,6 +98,57 @@ class TestSingleRecognitionTab:
         tab.screenshot_requested.connect(lambda: emitted.append(True))
         tab._screenshot_btn.click()
         assert emitted
+
+
+class TestRecognitionStatus:
+    """状态栏摘要必须使用同一组文本框统计，且不把空结果说成成功。"""
+
+    def test_status_counts_boxes_low_confidence_and_elapsed(self):
+        from vibeocr.models.ocr_result import OCRResult, TextBlock
+
+        result = OCRResult(
+            raw_text="可信\n待复核",
+            text_blocks=[
+                TextBlock("可信", 0.96, (0, 0, 10, 10)),
+                TextBlock("待复核", 0.79, (10, 0, 20, 10)),
+                TextBlock("   ", 0.20, (20, 0, 30, 10)),
+            ],
+        )
+
+        status = SingleRecognitionTab._build_recognition_status(result, 1.234)
+
+        assert status == (
+            "识别到 2 个文本框 · 低置信（<80%）1 个 · 耗时 1.23 秒"
+        )
+
+    def test_status_reports_empty_result_honestly(self):
+        from vibeocr.models.ocr_result import OCRResult
+
+        status = SingleRecognitionTab._build_recognition_status(
+            OCRResult(), 0.248
+        )
+
+        assert status == "未识别到文本 · 耗时 248 毫秒"
+
+    def test_status_does_not_claim_zero_boxes_when_statistics_are_missing(self):
+        from vibeocr.models.ocr_result import OCRResult
+
+        status = SingleRecognitionTab._build_recognition_status(
+            OCRResult(raw_text="后端只返回了文本"), 12.34
+        )
+
+        assert status == "识别完成（未返回文本框统计） · 耗时 12.3 秒"
+
+    def test_failed_run_replaces_previous_success_status(self, qapp, monkeypatch):
+        tab = SingleRecognitionTab()
+        emitted: list[str] = []
+        tab.status_changed.connect(emitted.append)
+        tab._recognition_started_at = 10.0
+        monkeypatch.setattr(time, "monotonic", lambda: 10.5)
+
+        tab._on_ocr_error("后端异常")
+
+        assert emitted[-1] == "识别失败 · 耗时 500 毫秒"
 
 
 class TestSingleRecognitionTabCopyImage:

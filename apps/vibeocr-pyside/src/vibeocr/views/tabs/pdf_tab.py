@@ -89,6 +89,7 @@ def _placeholder_icon(size: int = _THUMBNAIL_SIZE) -> QIcon:
         _PLACEHOLDER_ICONS[size] = icon
     return icon
 
+
 # 检测中占位图按 size 缓存:灰底 + "正在检测文字层…" 文字
 _DETECTING_ICONS: dict[int, QIcon] = {}
 
@@ -104,13 +105,12 @@ def _detecting_icon(size: int = _THUMBNAIL_SIZE) -> QIcon:
         font.setPointSize(max(7, size // 16))
         painter.setFont(font)
         painter.setPen(QColor(Colors.text_subtle))
-        painter.drawText(
-            pm.rect(), Qt.AlignmentFlag.AlignCenter, "正在检测文字层…"
-        )
+        painter.drawText(pm.rect(), Qt.AlignmentFlag.AlignCenter, "正在检测文字层…")
         painter.end()
         icon = QIcon(pm)
         _DETECTING_ICONS[size] = icon
     return icon
+
 
 # 文字层网格 item 数据角色：_LAYER_ROLE 存 page_index，_HAS_LAYER_ROLE 存 has_text_layer
 _LAYER_ROLE = Qt.ItemDataRole.UserRole
@@ -151,7 +151,7 @@ class LayerStatusDelegate(QStyledItemDelegate):
         elif state == "processing":
             bg = QColor(Colors.accent)  # 蓝：识别中
         elif state == "failed":
-            bg = QColor(Colors.danger)   # 红：失败
+            bg = QColor(Colors.danger)  # 红：失败
         elif (has_layer or state == "done") and layer_type == "ocr":
             bg = QColor(Colors.success)  # 深绿：OCR 文字层
         elif (has_layer or state == "done") and layer_type == "native":
@@ -322,8 +322,8 @@ class ThumbnailModel(QAbstractListModel):
         )
         worker = self._render_worker
         worker.thumbnail_ready.connect(
-            lambda page, png, gen, w=worker, worker_gen=generation: self._on_thumbnail_ready_guarded(
-                page, png, gen, w, worker_gen
+            lambda page, png, gen, w=worker, worker_gen=generation: (
+                self._on_thumbnail_ready_guarded(page, png, gen, w, worker_gen)
             )
         )
         self._render_worker.start()
@@ -440,7 +440,8 @@ class ThumbnailModel(QAbstractListModel):
         if not pixmap.loadFromData(data, "PNG"):  # type: ignore[call-overload,arg-type]
             return
         pixmap = pixmap.scaled(
-            self._thumb_size, self._thumb_size,
+            self._thumb_size,
+            self._thumb_size,
             Qt.AspectRatioMode.KeepAspectRatio,
             Qt.TransformationMode.SmoothTransformation,
         )
@@ -623,9 +624,7 @@ class ThumbnailListView(QListView):
         self._current_thumb_size = size
         self.setIconSize(QSize(size, size))
         # gridSize：缩略图边长 + 8px 左右边距；高 +28 给"第 N 页"文字留空间
-        self.setGridSize(
-            QSize(size + _THUMBNAIL_HPAD, size + _THUMBNAIL_TEXT_HEIGHT)
-        )
+        self.setGridSize(QSize(size + _THUMBNAIL_HPAD, size + _THUMBNAIL_TEXT_HEIGHT))
         return True
 
     def _emit_visible_range(self) -> None:
@@ -696,6 +695,8 @@ class PdfTab(QWidget):
     """PDF 处理标签页。"""
 
     ocr_requested = Signal()
+    task_status_changed = Signal(str)
+    result_status_changed = Signal(str)
 
     def __init__(
         self,
@@ -775,11 +776,12 @@ class PdfTab(QWidget):
         self._thumbnail_list.setMinimumWidth(120)
         # 初始 iconSize/gridSize 用默认尺寸；首次 showEvent 会按 viewport
         # 宽度自适应到实际尺寸（避免首帧空白/右侧留白）。
-        self._thumbnail_list.setIconSize(
-            QSize(_THUMBNAIL_SIZE, _THUMBNAIL_SIZE)
-        )
+        self._thumbnail_list.setIconSize(QSize(_THUMBNAIL_SIZE, _THUMBNAIL_SIZE))
         self._thumbnail_list.setGridSize(
-            QSize(_THUMBNAIL_SIZE + _THUMBNAIL_HPAD, _THUMBNAIL_SIZE + _THUMBNAIL_TEXT_HEIGHT)
+            QSize(
+                _THUMBNAIL_SIZE + _THUMBNAIL_HPAD,
+                _THUMBNAIL_SIZE + _THUMBNAIL_TEXT_HEIGHT,
+            )
         )
         self._thumbnail_list.setModel(self._thumbnail_model)
         # IconMode + 固定 gridSize：让 QListView 一次性算出全部内容高度，
@@ -805,9 +807,7 @@ class PdfTab(QWidget):
         self._thumbnail_list.customContextMenuRequested.connect(
             self._on_thumbnail_context_menu
         )
-        self._thumbnail_list.doubleClicked.connect(
-            self._on_thumbnail_double_clicked
-        )
+        self._thumbnail_list.doubleClicked.connect(self._on_thumbnail_double_clicked)
         self._thumbnail_list.pages_reordered.connect(
             self._on_pages_reordered_with_order
         )
@@ -1114,7 +1114,9 @@ class PdfTab(QWidget):
         session = self._session_mgr.active_session
         if session is None or session.file_path != file_path:
             return
-        self._status_label.setText(f"{Path(file_path).name} 正在加载 {loaded}/{total} 页…")
+        status = f"{Path(file_path).name} 正在加载 {loaded}/{total} 页…"
+        self._status_label.setText(status)
+        self.task_status_changed.emit(f"PDF 加载 · {loaded}/{total} 页")
 
     def _on_load_done(self, file_path: str) -> None:
         session = self._session_mgr.active_session
@@ -1123,9 +1125,13 @@ class PdfTab(QWidget):
             self._thumbnail_model.set_detection_done()
             self._update_layer_status()
             self._status_label.setText(f"{Path(file_path).name} 加载完成")
+            self.result_status_changed.emit(
+                f"PDF 加载完成 · {session.pdf_document.page_count} 页"
+            )
         # 续传检测：若有未完成 sidecar，提示用户可继续 OCR
         try:
             from vibeocr.utils.ocr_sidecar import restore_pending_pages
+
             if file_path:
                 pending = restore_pending_pages(file_path)
                 if pending:
@@ -1143,7 +1149,9 @@ class PdfTab(QWidget):
             return
         # OCR 注入的是隐形文字层，缩略图无视觉变化 → 不重新渲染。
         # 逐页更新文字层网格格子 + 汇总统计。
-        self._update_layer_grid_page(page_index, state="done" if result is not None else "failed")
+        self._update_layer_grid_page(
+            page_index, state="done" if result is not None else "failed"
+        )
         # 预览窗若正显示该页，刷新以叠加刚识别的文字层高亮
         self._refresh_preview_window_if_current(page_index)
 
@@ -1158,6 +1166,9 @@ class PdfTab(QWidget):
         pct = int(current * 100 / total) if total > 0 else 0
         self._status_label.setText(
             f"正在添加文字层… {pct}%（已处理 {pages_done}/{pages_total} 页）"
+        )
+        self.task_status_changed.emit(
+            f"PDF OCR · {pct}% · {pages_done}/{pages_total} 页"
         )
 
     def _on_mineru_models_status(self, message: str) -> None:
@@ -1180,7 +1191,9 @@ class PdfTab(QWidget):
         self._progress_bar.setRange(0, 0)
         self._progress_bar.setVisible(True)
 
-    def _on_render_progress_update(self, file_path: str, current: int, total: int) -> None:
+    def _on_render_progress_update(
+        self, file_path: str, current: int, total: int
+    ) -> None:
         """OCR 渲染前置阶段进度（render worker 渲染页面，OCR 未开始）。"""
         session = self._session_mgr.active_session
         if session is None or session.file_path != file_path:
@@ -1199,11 +1212,13 @@ class PdfTab(QWidget):
         op = getattr(worker, "_op", "") if worker else ""
         if op == "delete_text_layers":
             self._status_label.setText(f"正在删除文字层 {current}/{total}…")
+            self.task_status_changed.emit(f"删除文字层 · {current}/{total} 页")
             return
         if total > 0:
             self._progress_bar.setRange(0, total)
             self._progress_bar.setValue(current)
             self._status_label.setText(f"正在处理 {current}/{total}…")
+            self.task_status_changed.emit(f"PDF 处理 · {current}/{total}")
 
     def _on_mutate_done(self, file_path: str, result) -> None:
         """mutate 逐页/整体完成。
@@ -1216,14 +1231,26 @@ class PdfTab(QWidget):
         if session is None or session.file_path != file_path:
             return
         if isinstance(result, dict):
-            if "page" in result:
+            # 逐页事件带 payload；整批事件也会带 page 键（批任务通常为
+            # None），不能只凭 page 键存在来判型，否则会吞掉 diff_applied。
+            if "payload" in result and "page" in result:
                 self._update_layer_grid_page(result["page"])
             elif result.get("diff_applied"):
-                if result.get("op") == "update_block_text":
+                op = result.get("op")
+                if op == "update_block_text":
                     page = result.get("page")
                     if isinstance(page, int):
                         self._update_layer_grid_page(page)
                         self._request_preview_refresh(page, result.get("revision", 0))
+                    return
+                if op == "delete_text_layers":
+                    # 文字层删除不改变页结构，仅把格子投影校正到权威模型。
+                    self._sync_layer_grid_from_model()
+                    self._update_status()
+                    return
+                if op == "save":
+                    # save_done 已处理按钮和结果文案；这里只需校正未保存标记。
+                    self._update_status()
                     return
                 # 结构变更:model 已刷新,重置缩略图模型数据源 + 文字层网格。
                 self._after_structural_change()
@@ -1261,6 +1288,7 @@ class PdfTab(QWidget):
             return
         self._progress_bar.setVisible(False)
         self._set_file_buttons_enabled(True)
+        self.result_status_changed.emit(f"PDF 操作失败 · {error}")
         QMessageBox.warning(self, "操作失败", error)
 
     def _on_delete_layer_done(self, file_path: str, residual_pages: list) -> None:
@@ -1269,8 +1297,13 @@ class PdfTab(QWidget):
             return
         self._progress_bar.setVisible(False)
         self._set_file_buttons_enabled(True)
+        # 专用完成信号在 manager 应用 ModelDiff 后发出。逐页 mutate_done
+        # 可能因取消/队列时序未送达，因此终态必须从权威模型全量校正。
+        self._sync_layer_grid_from_model()
         self._update_status()
         if residual_pages:
+            result = f"文字层删除完成 · {len(residual_pages)} 页仍有残留"
+            self.result_status_changed.emit(result)
             QMessageBox.warning(
                 self,
                 "删除文字层",
@@ -1279,6 +1312,7 @@ class PdfTab(QWidget):
             )
         else:
             self._status_label.setText("文字层删除完成")
+            self.result_status_changed.emit("文字层删除完成")
 
     def _on_save_done(self, file_path: str) -> None:
         if self._save_in_flight_path == file_path:
@@ -1292,6 +1326,7 @@ class PdfTab(QWidget):
         self._btn_add_file.setEnabled(True)
         self._update_status()
         self._status_label.setText(f"{Path(file_path).name} 保存完成")
+        self.result_status_changed.emit(f"PDF 保存完成 · {Path(file_path).name}")
 
     def _on_mutate_state_changed(self, file_path: str, op: str, state: str) -> None:
         """统一 PDF 写任务 UI 状态，并在真实 finished 后恢复 continuation。"""
@@ -1322,6 +1357,7 @@ class PdfTab(QWidget):
             if op == "save" and self._save_in_flight_path == file_path:
                 self._clear_pending_after_save()
             self._status_label.setText("操作已取消")
+            self.result_status_changed.emit("PDF 操作已取消")
             return
 
         if (
@@ -1335,10 +1371,12 @@ class PdfTab(QWidget):
         self._progress_bar.setRange(0, total)
         self._progress_bar.setValue(current)
         self._status_label.setText(f"正在导出 {file_name} ({current}/{total})…")
+        self.task_status_changed.emit(f"PDF 导出 · {current}/{total}")
 
     def _on_export_done(self, exported_paths: list) -> None:
         self._progress_bar.setVisible(False)
         self._set_file_buttons_enabled(True)
+        self.result_status_changed.emit(f"PDF 导出完成 · {len(exported_paths)} 个文件")
         QMessageBox.information(
             self,
             "批量导出完成",
@@ -1350,6 +1388,7 @@ class PdfTab(QWidget):
         self._progress_bar.setVisible(False)
         self._set_file_buttons_enabled(True)
         self._status_label.setText("批量导出失败")
+        self.result_status_changed.emit(f"PDF 导出失败 · {error}")
         QMessageBox.critical(self, "批量导出失败", error)
 
     def _on_ocr_finished(self, file_path: str, success: int, fail: int) -> None:
@@ -1368,6 +1407,7 @@ class PdfTab(QWidget):
         logger.info("[PdfTab] _on_ocr_finished _sync_layer_grid_from_model 后")
         msg = f"OCR 完成：成功 {success} 页" + (f"，失败 {fail} 页" if fail else "")
         self._status_label.setText(msg)
+        self.result_status_changed.emit(msg)
         # 写层失败时把后端错误详情弹给用户（此前只记日志，用户无法排查）
         if self._ocr_write_errors:
             unique = list(dict.fromkeys(self._ocr_write_errors))  # 去重保序
@@ -1391,7 +1431,8 @@ class PdfTab(QWidget):
         """
         logger.info(
             "[PdfTab] _on_ocr_stats_ready 进入 (written=%d, skipped=%d)",
-            written, skipped,
+            written,
+            skipped,
         )
         if written == 0 and skipped == 0:
             # 没有任何文字块产出（例如全部页面 OCR 失败），不误报“已添加”。
@@ -1430,7 +1471,11 @@ class PdfTab(QWidget):
 
     def _request_preview_refresh(self, page_index: int, revision: int = 0) -> None:
         win = self._preview_window
-        if win is not None and win.isVisible() and win.current_page_index() == page_index:
+        if (
+            win is not None
+            and win.isVisible()
+            and win.current_page_index() == page_index
+        ):
             self._preview_request_generation = self._session_mgr.request_preview(
                 page_index, revision=revision
             )
@@ -1619,11 +1664,10 @@ class PdfTab(QWidget):
     def _update_layer_summary(self, pages) -> None:
         """更新网格上方汇总 Label（共 N 页 / OCR文字层 X / 原生文字层 Z / 无文字层 Y）。"""
         total = len(pages)
-        ocr_count = sum(
-            1 for p in pages if getattr(p, "ocr_text_blocks", None)
-        )
+        ocr_count = sum(1 for p in pages if getattr(p, "ocr_text_blocks", None))
         native_count = sum(
-            1 for p in pages
+            1
+            for p in pages
             if p.has_text_layer and not getattr(p, "ocr_text_blocks", None)
         )
         without = total - ocr_count - native_count
@@ -1900,8 +1944,7 @@ class PdfTab(QWidget):
                 self,
                 "移除文件",
                 f"{name} 有未保存的修改，确定移除吗？移除不会保存修改。",
-                QMessageBox.StandardButton.Yes
-                | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
                 QMessageBox.StandardButton.Cancel,
             )
             if reply != QMessageBox.StandardButton.Yes:
@@ -2083,9 +2126,7 @@ class PdfTab(QWidget):
         # 让已纠偏角标（_DESKEWED_ROLE）即时更新。
         self._update_layer_grid_page(page_index)
 
-    def _on_deskew_progress(
-        self, file_path: str, current: int, total: int
-    ) -> None:
+    def _on_deskew_progress(self, file_path: str, current: int, total: int) -> None:
         """摆正进度:total = 页数 × 3 子步（渲染/识别方向/旋转），逐阶段推进。"""
         session = self._session_mgr.active_session
         if session is None or session.file_path != file_path:
@@ -2169,16 +2210,16 @@ class PdfTab(QWidget):
             disp_w = mh if rotated else mw
             disp_h = mw if rotated else mh
             is_landscape = disp_w > disp_h
-            if (target == "landscape" and not is_landscape) or (target == "portrait" and is_landscape):
+            if (target == "landscape" and not is_landscape) or (
+                target == "portrait" and is_landscape
+            ):
                 to_rotate.append(idx)
             else:
                 skipped += 1
 
         verb = "横向" if target == "landscape" else "纵向"
         if not to_rotate:
-            QMessageBox.information(
-                self, "摆正", f"选中页本已全部{verb}，无需旋转。"
-            )
+            QMessageBox.information(self, "摆正", f"选中页本已全部{verb}，无需旋转。")
             return
         self._session_mgr.rotate_pages_async(to_rotate, 90)
         self._update_status()
@@ -2384,6 +2425,7 @@ class PdfTab(QWidget):
         # 把本次待识别页置 processing 态（蓝），让用户看到"哪些页在算"
         for idx in indices:
             self._update_layer_grid_page(idx, state="processing")
+        self.task_status_changed.emit(f"PDF OCR · 正在处理 {len(indices)} 页")
 
     def _on_add_text_layer_for_pages_without_layer(self) -> None:
         """一键为当前文件所有无文字层页面添加 OCR 文字层（不弹防重复框）。"""
@@ -2511,9 +2553,7 @@ class PdfTab(QWidget):
         has_layer_count = sum(1 for i in valid_indices if pages[i].has_text_layer)
         overwrite = False
         if has_layer_count > 0:
-            choice = self._prompt_overwrite_choice(
-                has_layer_count, len(valid_indices)
-            )
+            choice = self._prompt_overwrite_choice(has_layer_count, len(valid_indices))
             if choice == 2:
                 return
             overwrite = choice == 1
@@ -2570,7 +2610,9 @@ class PdfTab(QWidget):
         self._progress_bar.setVisible(True)
         self._btn_cancel.setVisible(True)
         self._set_file_buttons_enabled(False)
-        self._status_label.setText(f"正在删除 {len(indices)} 页文字层…")
+        status = f"正在删除 {len(indices)} 页文字层…"
+        self._status_label.setText(status)
+        self.task_status_changed.emit(f"删除文字层 · {len(indices)} 页")
 
         self._session_mgr.delete_text_layers_async(indices)
 

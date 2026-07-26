@@ -102,10 +102,12 @@ def runtime_controller(qtbot, tmp_path, monkeypatch):
             "_refresh_env_maintenance_state"
         ),
     ):
+        runtime_status = MagicMock()
         controller = SettingsPageController(
             ui=host,
             project_root=tmp_path,
             status_callback=lambda _message: None,
+            runtime_status_callback=runtime_status,
             ocr_ready_callback=lambda: True,
             subprocess_manager=_LifecycleOnlyManager(),
             defer_backend_initialization=True,
@@ -222,9 +224,10 @@ def test_release_all_uses_release_idle_and_reenables_on_status(
 
     adapter.residency_status.emit(ResidencyStatus(default_ttl_seconds=300))
     assert button.isEnabled()
-    assert "已完成闲置模型释放" in host.findChild(
-        QLabel, "labelPipelineCacheStatus"
-    ).text()
+    assert (
+        "已完成闲置模型释放"
+        in host.findChild(QLabel, "labelPipelineCacheStatus").text()
+    )
 
 
 def test_typed_errors_update_feedback(runtime_controller) -> None:
@@ -237,9 +240,10 @@ def test_typed_errors_update_feedback(runtime_controller) -> None:
     )
 
     adapter.residency_error.emit("backend unavailable")
-    assert "backend unavailable" in host.findChild(
-        QLabel, "labelPipelineCacheStatus"
-    ).text()
+    assert (
+        "backend unavailable"
+        in host.findChild(QLabel, "labelPipelineCacheStatus").text()
+    )
 
 
 def test_persistent_residency_ttl_option_sends_pinned_policy(
@@ -266,6 +270,7 @@ def test_preload_selected_pipelines_uses_supervisor_adapter(
     runtime_controller, qtbot
 ) -> None:
     controller, host, adapter, _ttls = runtime_controller
+    runtime_status = controller._runtime_status_callback
     controller._preload_poll_timer.setInterval(10)
     host.findChild(QCheckBox, "chkPreload_OCR").setChecked(True)
     host.findChild(QCheckBox, "chkPreload_PP_STRUCTURE_V3").setChecked(True)
@@ -275,6 +280,7 @@ def test_preload_selected_pipelines_uses_supervisor_adapter(
 
     assert adapter.preload_calls == [("OCR", "PP-StructureV3")]
     assert not preload.isEnabled()
+    runtime_status.assert_called_with("预加载中 · 0/2 驻留 · OCR、PP-StructureV3")
     qtbot.waitUntil(
         lambda: adapter.refresh_calls >= refresh_calls_before_preload + 2,
         timeout=500,
@@ -282,10 +288,12 @@ def test_preload_selected_pipelines_uses_supervisor_adapter(
 
     adapter.residency_status.emit(_initial_status())
     assert "已驻留 1/2" in host.findChild(QLabel, "labelPreloadStatus").text()
+    runtime_status.assert_called_with("预加载中 · 1/2 驻留 · OCR")
 
     adapter.preload_completed.emit(_initial_status())
     assert preload.isEnabled()
     assert "预加载完成" in host.findChild(QLabel, "labelPreloadStatus").text()
+    runtime_status.assert_called_with("已驻留 1 个管道 · OCR")
     refresh_calls_after_completion = adapter.refresh_calls
     qtbot.wait(40)
     assert adapter.refresh_calls == refresh_calls_after_completion
@@ -295,27 +303,23 @@ def test_preload_failure_stops_polling_and_keeps_partial_residency(
     runtime_controller, qtbot
 ) -> None:
     controller, host, adapter, _ttls = runtime_controller
+    runtime_status = controller._runtime_status_callback
     controller._preload_poll_timer.setInterval(10)
     host.findChild(QCheckBox, "chkPreload_OCR").setChecked(True)
-    host.findChild(
-        QCheckBox, "chkPreload_TABLE_RECOGNITION"
-    ).setChecked(True)
+    host.findChild(QCheckBox, "chkPreload_TABLE_RECOGNITION").setChecked(True)
     preload = host.findChild(QPushButton, "btnPreloadNow")
     preload.click()
 
     adapter.residency_status.emit(_initial_status())
-    adapter.preload_error.emit(
-        "表格识别缺少 PaddleX[ocr] 依赖：beautifulsoup4"
-    )
+    adapter.preload_error.emit("表格识别缺少 PaddleX[ocr] 依赖：beautifulsoup4")
 
     assert preload.isEnabled()
     assert not controller._preload_poll_timer.isActive()
-    assert "beautifulsoup4" in host.findChild(
-        QLabel, "labelPreloadStatus"
-    ).text()
+    assert "beautifulsoup4" in host.findChild(QLabel, "labelPreloadStatus").text()
     cache_text = host.findChild(QLabel, "labelPipelineCacheStatus").text()
     assert "驻留 1 个" in cache_text
     assert "OCR" in cache_text
+    runtime_status.assert_called_with("驻留未完成 · 1/2 · 其余按需加载")
 
 
 def test_supervisor_ready_automatically_preloads_persisted_selection(

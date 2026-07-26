@@ -44,7 +44,9 @@ class SupervisorStartTask(QRunnable):
     def run(self) -> None:
         if self._cancelled.is_set():
             return
-        self.signals.progress.emit("启动 Supervisor")
+        # launch 同时完成进程创建与 ready envelope 握手；明确陈述阶段，
+        # 避免用户误以为模型也在此时加载。
+        self.signals.progress.emit("正在创建子进程并等待就绪握手")
         try:
             from vibeocr.supervisor.process import SupervisorProcess
 
