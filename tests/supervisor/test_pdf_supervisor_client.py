@@ -45,6 +45,32 @@ def _build_async_client(app, token: str) -> PdfSupervisorClient:
     return client
 
 
+async def test_response_hook_logs_unconsumed_stream(monkeypatch) -> None:
+    client = PdfSupervisorClient(
+        base_url="http://127.0.0.1",
+        session_token="test",
+        instance_id="test",
+    )
+    captured: dict[str, object] = {}
+
+    def capture_log(**kwargs) -> None:
+        captured.update(kwargs)
+
+    monkeypatch.setattr("vibeocr.supervisor.pdf_client.log_http_response", capture_log)
+    response = httpx.Response(
+        206,
+        headers={"content-length": "4"},
+        request=httpx.Request("GET", "http://127.0.0.1/v2/pdf/preview"),
+        stream=httpx.ByteStream(b"data"),
+    )
+
+    await client._log_http_response(response)
+
+    assert captured["stream"] is True
+    assert captured["response_bytes"] == 4
+    assert captured["status_code"] == 206
+
+
 # ---------------------------------------------------------------------------
 # Async client
 # ---------------------------------------------------------------------------
@@ -91,9 +117,7 @@ async def test_async_load_stream_yields_progress_events(
     assert events[0].message == "done"
 
 
-async def test_async_save_returns_path(
-    pdf_app: FastAPI, supervisor_token: str
-) -> None:
+async def test_async_save_returns_path(pdf_app: FastAPI, supervisor_token: str) -> None:
     client = _build_async_client(pdf_app, supervisor_token)
     resp = await client.save("sid-1", "out.pdf", rewrite_text_layers=False)
     assert resp.path == "out.pdf"

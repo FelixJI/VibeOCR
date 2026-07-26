@@ -133,6 +133,32 @@ async def client(app, token: str) -> AsyncIterator[SupervisorClient]:
         yield c
 
 
+async def test_response_hook_logs_unconsumed_stream(monkeypatch) -> None:
+    client = SupervisorClient(
+        base_url="http://127.0.0.1:9000",
+        session_token="test",
+        instance_id="test",
+    )
+    captured: dict[str, object] = {}
+
+    def capture_log(**kwargs) -> None:
+        captured.update(kwargs)
+
+    monkeypatch.setattr("vibeocr.supervisor.client.log_http_response", capture_log)
+    response = httpx.Response(
+        200,
+        headers={"content-length": "4"},
+        request=httpx.Request("GET", "http://127.0.0.1:9000/v2/events"),
+        stream=httpx.ByteStream(b"data"),
+    )
+
+    await client._log_http_response(response)
+
+    assert captured["stream"] is True
+    assert captured["response_bytes"] == 4
+    assert captured["status_code"] == 200
+
+
 # ---------------------------------------------------------------------------
 # Auth enforcement
 # ---------------------------------------------------------------------------
@@ -140,7 +166,9 @@ async def client(app, token: str) -> AsyncIterator[SupervisorClient]:
 
 async def test_health_does_not_require_token(app) -> None:
     transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transport, base_url="http://127.0.0.1") as http:
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://127.0.0.1"
+    ) as http:
         resp = await http.get("/v2/health")
         assert resp.status_code == 200
         body = resp.json()
@@ -150,7 +178,9 @@ async def test_health_does_not_require_token(app) -> None:
 
 async def test_business_request_without_token_is_unauthorized(app) -> None:
     transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transport, base_url="http://127.0.0.1") as http:
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://127.0.0.1"
+    ) as http:
         resp = await http.get("/v2/runtime/residency")
         assert resp.status_code == 401
         body = resp.json()
@@ -173,7 +203,9 @@ async def test_qrcode_generate_supports_png_and_svg(
     assert b"<svg" in svg
 
 
-async def test_business_request_with_wrong_token_is_unauthorized(app, token: str) -> None:
+async def test_business_request_with_wrong_token_is_unauthorized(
+    app, token: str
+) -> None:
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(
         transport=transport,
@@ -299,10 +331,7 @@ async def test_generic_job_interface_preserves_intent_and_keyed_outcomes(
 
     deadline = time.time() + 3.0
     update = await client.observe(ref.job_id)
-    while (
-        time.time() < deadline
-        and update.snapshot.state not in TERMINAL_JOB_STATES
-    ):
+    while time.time() < deadline and update.snapshot.state not in TERMINAL_JOB_STATES:
         await asyncio.sleep(0.02)
         update = await client.observe(ref.job_id)
 

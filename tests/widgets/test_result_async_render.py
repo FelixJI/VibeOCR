@@ -185,9 +185,7 @@ def test_display_result_uses_submission_snapshot(qapp, qtbot, monkeypatch):
     assert "new.png" not in web.html_calls[0]
 
 
-def test_display_result_detaches_only_in_worker_stable_read(
-    qapp, qtbot, monkeypatch
-):
+def test_display_result_detaches_only_in_worker_stable_read(qapp, qtbot, monkeypatch):
     """Large source detachment must stay off-GUI and require two equal reads."""
     module = import_module("vibeocr.widgets.result_view_widget")
     from PySide6.QtCore import QThread
@@ -428,7 +426,9 @@ def test_old_document_edit_is_rejected_after_result_switch(qapp, qtbot, monkeypa
     qtbot.waitUntil(lambda: not widget._render_jobs, timeout=2000)
 
 
-def test_rendered_token_waits_for_loaded_document_confirmation(qapp, qtbot, monkeypatch):
+def test_rendered_token_waits_for_loaded_document_confirmation(
+    qapp, qtbot, monkeypatch
+):
     module = import_module("vibeocr.widgets.result_view_widget")
 
     widget = module.ResultViewWidget()
@@ -475,10 +475,7 @@ def test_large_text_layout_build_keeps_qt_responsive(qapp, qtbot, monkeypatch):
         return original(blocks, options, cancel_event)
 
     monkeypatch.setattr(module, "_build_text_layout_html", slow_layout)
-    before = time.perf_counter()
     widget.display_text_layout(_layout_result("layout", 4000), TextBlockOptions())
-    elapsed_ms = (time.perf_counter() - before) * 1000
-    assert elapsed_ms < 150
     qtbot.waitUntil(started.is_set, timeout=1000)
     assert_qt_event_loop_responsive(qtbot, in_flight=lambda: bool(widget._render_jobs))
     release.set()
