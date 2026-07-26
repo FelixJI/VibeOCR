@@ -292,8 +292,19 @@ public sealed class InferenceSupervisorProcess : IDisposable
             // Best-effort.
         }
 
-        process?.Dispose();
         jobObject?.Dispose();
+        if (process is not null)
+        {
+            try
+            {
+                process.WaitForExit(milliseconds: 5_000);
+            }
+            catch
+            {
+                // Best-effort.
+            }
+            process.Dispose();
+        }
     }
 
     private void OnProcessExited(object? sender, EventArgs eventArgs)
