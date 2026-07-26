@@ -20,7 +20,10 @@ from __future__ import annotations
 
 import os
 import sys
+import threading
+import time
 from pathlib import Path
+from typing import Any
 
 from .bootstrap import (
     BootstrapHandle,
@@ -31,6 +34,23 @@ from .bootstrap import (
     token_from_environment,
 )
 from .composition import build_supervisor
+
+
+def _build_uvicorn_config(
+    uvicorn_module: Any,
+    app: Any,
+    port: int,
+) -> Any:
+    """Create the local server config without per-request access-log noise."""
+    return uvicorn_module.Config(
+        app,
+        host="127.0.0.1",
+        port=port,
+        log_level="info",
+        access_log=False,
+        # Pass the pre-bound socket so uvicorn does not rebind (port-0 race).
+        workers=1,
+    )
 
 
 def run_supervisor(argv: list[str] | None = None) -> int:
@@ -65,6 +85,7 @@ def run_supervisor(argv: list[str] | None = None) -> int:
         capabilities=["recognition", "pdf_ocr", "mineru_parse", "qrcode", "settings"],
     )
     emit_ready(envelope)
+    _schedule_soak_crash_after_ready()
 
     # Import lazily so the module can be imported in environments without
     # uvicorn (e.g. pure contract tests).
@@ -77,14 +98,7 @@ def run_supervisor(argv: list[str] | None = None) -> int:
         return 3
 
     app = create_app(module, handle.token)
-    config = uvicorn.Config(
-        app,
-        host="127.0.0.1",
-        port=port,
-        log_level="info",
-        # Pass the pre-bound socket so uvicorn does not rebind (port-0 race).
-        workers=1,
-    )
+    config = _build_uvicorn_config(uvicorn, app, port)
     server = uvicorn.Server(config)
     config.load()
     # Hand the bound socket to the server.
@@ -102,11 +116,30 @@ def run_supervisor(argv: list[str] | None = None) -> int:
     return 0
 
 
+def _schedule_soak_crash_after_ready() -> None:
+    """Crash this process only when the WinUI soak harness explicitly asks.
+
+    The ready envelope is emitted first so the frontend exercises its normal
+    attach path.  ``os._exit`` intentionally bypasses graceful cleanup and
+    therefore tests the same unexpected-exit recovery used for real crashes.
+    """
+    if os.environ.get("VIBEOCR_SUPERVISOR_SOAK_CRASH_AFTER_READY") != "1":
+        return
+
+    def crash() -> None:
+        time.sleep(0.25)
+        os._exit(86)
+
+    threading.Thread(
+        target=crash,
+        name="vibeocr-soak-crash",
+        daemon=True,
+    ).start()
+
+
 async def _serve_with_socket(server, sock, app, token) -> None:  # pragma: no cover - integration
     """Serve using the pre-bound socket. Kept thin for testability."""
     config = server.config
-    import uvicorn.protocols.utils  # noqa: F401
-
     # uvicorn supports passing a configured socket via Server.startup via
     # the ``sockets`` kwarg once the server is started. For the test path we
     # exercise the app via httpx/ASGI directly; this function only runs in

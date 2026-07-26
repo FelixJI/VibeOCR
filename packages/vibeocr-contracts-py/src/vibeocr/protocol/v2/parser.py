@@ -19,22 +19,36 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from vibeocr.contracts.pipelines import (
+    OCRPipeline,
+    get_pipeline_supported_options,
+)
+
 from .dtos import (
     SCHEMA_VERSION,
     TERMINAL_ITEM_STATES,
     TERMINAL_JOB_STATES,
     CancelMode,
     EvictionReason,
+    ItemOutcome,
     ItemState,
+    JobCommand,
+    JobCommandKind,
     JobItem,
     JobKind,
     JobPriority,
+    JobRef,
     JobSnapshot,
     JobState,
     JobSummary,
+    JobUpdate,
+    PipelineSelection,
     PipelineSpec,
     ResidencyEntry,
     ResidencyKind,
+    StageEvent,
+    SubmitItem,
+    SubmitRequest,
 )
 from .errors import ErrorCode, ErrorPayload, error_registry
 
@@ -135,6 +149,189 @@ def _require_fields(payload: dict[str, Any], fields: tuple[str, ...], label: str
         raise ContractError(f"{label} missing required field(s): {', '.join(missing)}")
 
 
+def _reject_unknown_fields(
+    payload: dict[str, Any], allowed: frozenset[str], label: str
+) -> None:
+    unknown = sorted(set(payload).difference(allowed))
+    if unknown:
+        raise ContractError(f"{label} has unknown field(s): {', '.join(unknown)}")
+
+
+def parse_pipeline_selection(payload: dict[str, Any]) -> PipelineSelection:
+    if not isinstance(payload, dict):
+        raise ContractError("pipeline selection must be a JSON object")
+    _reject_unknown_fields(
+        payload,
+        frozenset({"pipeline_id", "options_version", "options"}),
+        "pipeline selection",
+    )
+    _require_fields(
+        payload, ("pipeline_id", "options_version", "options"), "pipeline selection"
+    )
+    pipeline_id = payload["pipeline_id"]
+    if not isinstance(pipeline_id, str):
+        raise ContractError("pipeline_id must be a string")
+    try:
+        pipeline = OCRPipeline(pipeline_id)
+    except ValueError as exc:
+        raise ContractError(f"unknown pipeline_id: {pipeline_id!r}") from exc
+    version = payload["options_version"]
+    if version != 1:
+        raise ContractError(f"unsupported options_version: {version!r}")
+    options = payload["options"]
+    if not isinstance(options, dict):
+        raise ContractError("pipeline options must be a JSON object")
+    allowed_options = set(get_pipeline_supported_options(pipeline))
+    unknown_options = sorted(set(options).difference(allowed_options))
+    if unknown_options:
+        raise ContractError(
+            f"unsupported option(s) for {pipeline.value}: {', '.join(unknown_options)}"
+        )
+    return PipelineSelection(
+        pipeline_id=pipeline.value,
+        options_version=version,
+        options=dict(options),
+    )
+
+
+def _parse_submit_item(payload: Any) -> SubmitItem:
+    if not isinstance(payload, dict):
+        raise ContractError("submit item must be a JSON object")
+    _reject_unknown_fields(
+        payload,
+        frozenset({"client_item_key", "ordinal", "display_name", "source"}),
+        "submit item",
+    )
+    _require_fields(
+        payload,
+        ("client_item_key", "ordinal", "display_name", "source"),
+        "submit item",
+    )
+    source = payload["source"]
+    if not isinstance(source, dict):
+        raise ContractError("submit item source must be a JSON object")
+    source_type = source.get("type")
+    if source_type == "upload.v1":
+        _reject_unknown_fields(
+            source, frozenset({"type", "attachment"}), "upload source"
+        )
+        _require_fields(source, ("type", "attachment"), "upload source")
+    elif source_type == "pdf_page.v1":
+        _reject_unknown_fields(
+            source,
+            frozenset({"type", "session_id", "session_revision", "page_index"}),
+            "pdf page source",
+        )
+        _require_fields(
+            source,
+            ("type", "session_id", "session_revision", "page_index"),
+            "pdf page source",
+        )
+        if not isinstance(source["page_index"], int) or source["page_index"] < 0:
+            raise ContractError("pdf page_index must be a non-negative integer")
+    else:
+        raise ContractError(f"unknown submit source type: {source_type!r}")
+    ordinal = payload["ordinal"]
+    if not isinstance(ordinal, int) or ordinal < 0:
+        raise ContractError("submit item ordinal must be a non-negative integer")
+    client_key = payload["client_item_key"]
+    if not isinstance(client_key, str) or not client_key:
+        raise ContractError("client_item_key must be a non-empty string")
+    display_name = payload["display_name"]
+    if not isinstance(display_name, str):
+        raise ContractError("display_name must be a string")
+    return SubmitItem(
+        client_item_key=client_key,
+        ordinal=ordinal,
+        display_name=display_name,
+        source=dict(source),
+    )
+
+
+def parse_submit_request(payload: dict[str, Any]) -> SubmitRequest:
+    if not isinstance(payload, dict):
+        raise ContractError("submit request must be a JSON object")
+    _reject_unknown_fields(
+        payload,
+        frozenset(
+            {
+                "schema_version",
+                "request_id",
+                "kind",
+                "priority",
+                "pipeline",
+                "items",
+                "parameters",
+            }
+        ),
+        "submit request",
+    )
+    _require_fields(
+        payload,
+        ("schema_version", "request_id", "kind", "priority", "pipeline", "items"),
+        "submit request",
+    )
+    if payload["schema_version"] != SCHEMA_VERSION:
+        raise ContractError(
+            f"schema_version mismatch: expected {SCHEMA_VERSION}, "
+            f"got {payload['schema_version']}"
+        )
+    request_id = payload["request_id"]
+    if not isinstance(request_id, str) or not request_id:
+        raise ContractError("request_id must be a non-empty string")
+    kind = _require_enum(JobKind, payload["kind"], "job kind")
+    if kind not in {JobKind.RECOGNITION, JobKind.MINERU_PARSE, JobKind.PDF_OCR}:
+        raise ContractError(f"job kind is not submittable: {kind.value}")
+    priority = _require_enum(JobPriority, payload["priority"], "job priority")
+    pipeline = parse_pipeline_selection(payload["pipeline"])
+    if kind is JobKind.MINERU_PARSE and pipeline.pipeline_id != OCRPipeline.DOCUMENT_PARSING.value:
+        raise ContractError("mineru_parse requires the MinerU pipeline")
+    if kind is JobKind.RECOGNITION and pipeline.pipeline_id == OCRPipeline.DOCUMENT_PARSING.value:
+        raise ContractError("MinerU requires kind=mineru_parse")
+    items_raw = payload["items"]
+    if not isinstance(items_raw, list) or not items_raw:
+        raise ContractError("submit request items must be a non-empty list")
+    items = tuple(_parse_submit_item(item) for item in items_raw)
+    keys = [item.client_item_key for item in items]
+    if len(keys) != len(set(keys)):
+        raise ContractError("client_item_key must be unique within a job")
+    ordinals = [item.ordinal for item in items]
+    if sorted(ordinals) != list(range(len(items))):
+        raise ContractError("submit item ordinals must be unique and contiguous from zero")
+    parameters = payload.get("parameters", {})
+    if not isinstance(parameters, dict):
+        raise ContractError("submit request parameters must be a JSON object")
+    return SubmitRequest(
+        request_id=request_id,
+        kind=kind,
+        priority=priority,
+        pipeline=pipeline,
+        items=items,
+        parameters=dict(parameters),
+    )
+
+
+def parse_job_ref(payload: dict[str, Any]) -> JobRef:
+    if not isinstance(payload, dict):
+        raise ContractError("job ref must be a JSON object")
+    _require_fields(payload, ("job_id", "schema_version", "state"), "job ref")
+    if payload["schema_version"] != SCHEMA_VERSION:
+        raise ContractError(
+            f"schema_version mismatch: expected {SCHEMA_VERSION}, "
+            f"got {payload['schema_version']}"
+        )
+    items_raw = payload.get("items", [])
+    if not isinstance(items_raw, list):
+        raise ContractError("job ref items must be a list")
+    return JobRef(
+        job_id=payload["job_id"],
+        schema_version=payload["schema_version"],
+        instance_id=payload.get("instance_id"),
+        state=_require_enum(JobState, payload["state"], "job state"),
+        items=tuple(_parse_job_item(item) for item in items_raw),
+    )
+
+
 def parse_job_snapshot(payload: dict[str, Any]) -> JobSnapshot:
     if not isinstance(payload, dict):
         raise ContractError("job snapshot must be a JSON object")
@@ -181,6 +378,13 @@ def parse_job_snapshot(payload: dict[str, Any]) -> JobSnapshot:
         degraded=bool(payload.get("degraded", False)),
         event_sequence=int(payload.get("event_sequence", 0)),
         result_available=bool(payload.get("result_available", False)),
+        request_id=payload.get("request_id"),
+        source_job_id=payload.get("source_job_id"),
+        pipeline=(
+            parse_pipeline_selection(payload["pipeline"])
+            if payload.get("pipeline") is not None
+            else None
+        ),
     )
 
 
@@ -194,6 +398,124 @@ def _parse_job_item(payload: Any) -> JobItem:
         state=_require_enum(ItemState, payload["state"], "item state"),
         attempt=int(payload.get("attempt", 0)),
         error=payload.get("error"),
+        client_item_key=payload.get("client_item_key"),
+        ordinal=int(payload.get("ordinal", 0)),
+        source_item_id=payload.get("source_item_id"),
+    )
+
+
+def _parse_stage_event(payload: Any) -> StageEvent:
+    if not isinstance(payload, dict):
+        raise ContractError("stage event must be a JSON object")
+    _require_fields(payload, ("sequence", "stage", "timestamp"), "stage event")
+    detail = payload.get("detail", {})
+    if not isinstance(detail, dict):
+        raise ContractError("stage event detail must be a JSON object")
+    return StageEvent(
+        sequence=int(payload["sequence"]),
+        stage=payload["stage"],
+        item_id=payload.get("item_id"),
+        timestamp=payload["timestamp"],
+        detail=detail,
+    )
+
+
+def _parse_item_outcome(payload: Any) -> ItemOutcome:
+    if not isinstance(payload, dict):
+        raise ContractError("item outcome must be a JSON object")
+    _require_fields(payload, ("item_id", "state", "attempt"), "item outcome")
+    state = _require_enum(ItemState, payload["state"], "item state")
+    if state not in TERMINAL_ITEM_STATES:
+        raise ContractError("item outcome state must be terminal")
+    result = payload.get("payload")
+    error_code = payload.get("error_code")
+    payload_type = payload.get("payload_type")
+    if state is ItemState.SUCCEEDED:
+        if not isinstance(result, dict) or not payload_type or error_code is not None:
+            raise ContractError(
+                "succeeded item outcome requires payload_type/payload and no error"
+            )
+    elif result is not None or payload_type is not None or not error_code:
+        raise ContractError(
+            "failed/cancelled item outcome requires error and no result payload"
+        )
+    error_detail = payload.get("error_detail", {})
+    if not isinstance(error_detail, dict):
+        raise ContractError("item outcome error_detail must be a JSON object")
+    return ItemOutcome(
+        item_id=payload["item_id"],
+        state=state,
+        attempt=int(payload["attempt"]),
+        payload_type=payload_type,
+        payload=result,
+        error_code=error_code,
+        error_detail=error_detail,
+    )
+
+
+def parse_job_update(payload: dict[str, Any]) -> JobUpdate:
+    if not isinstance(payload, dict):
+        raise ContractError("job update must be a JSON object")
+    _require_fields(
+        payload,
+        (
+            "schema_version",
+            "snapshot",
+            "events",
+            "outcomes",
+            "through_sequence",
+            "more",
+        ),
+        "job update",
+    )
+    if payload["schema_version"] != SCHEMA_VERSION:
+        raise ContractError(
+            f"schema_version mismatch: expected {SCHEMA_VERSION}, "
+            f"got {payload['schema_version']}"
+        )
+    events_raw = payload["events"]
+    outcomes_raw = payload["outcomes"]
+    if not isinstance(events_raw, list) or not isinstance(outcomes_raw, list):
+        raise ContractError("job update events/outcomes must be lists")
+    events = tuple(_parse_stage_event(event) for event in events_raw)
+    outcomes = tuple(_parse_item_outcome(outcome) for outcome in outcomes_raw)
+    through = int(payload["through_sequence"])
+    if through < 0 or any(event.sequence > through for event in events):
+        raise ContractError("job update through_sequence is inconsistent")
+    return JobUpdate(
+        snapshot=parse_job_snapshot(payload["snapshot"]),
+        events=events,
+        outcomes=outcomes,
+        through_sequence=through,
+        more=bool(payload["more"]),
+    )
+
+
+def parse_job_command(payload: dict[str, Any]) -> JobCommand:
+    if not isinstance(payload, dict):
+        raise ContractError("job command must be a JSON object")
+    _reject_unknown_fields(
+        payload,
+        frozenset(
+            {"command_id", "kind", "job_id", "item_ids", "priority_override"}
+        ),
+        "job command",
+    )
+    _require_fields(payload, ("command_id", "kind", "job_id"), "job command")
+    item_ids = payload.get("item_ids", [])
+    if not isinstance(item_ids, list) or any(not isinstance(item, str) for item in item_ids):
+        raise ContractError("job command item_ids must be a list of strings")
+    priority_raw = payload.get("priority_override")
+    return JobCommand(
+        command_id=payload["command_id"],
+        kind=_require_enum(JobCommandKind, payload["kind"], "job command kind"),
+        job_id=payload["job_id"],
+        item_ids=tuple(item_ids),
+        priority_override=(
+            _require_enum(JobPriority, priority_raw, "job priority")
+            if priority_raw is not None
+            else None
+        ),
     )
 
 
@@ -299,7 +621,12 @@ __all__ = [
     "is_terminal_item",
     "is_terminal_job",
     "parse_error_payload",
+    "parse_job_command",
+    "parse_job_ref",
     "parse_job_snapshot",
+    "parse_job_update",
+    "parse_pipeline_selection",
     "parse_pipeline_spec",
     "parse_residency_entry",
+    "parse_submit_request",
 ]

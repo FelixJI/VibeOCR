@@ -479,7 +479,7 @@ class TestPdfTaskGeneration:
         mgr._task_generation = 0
         mgr._sessions = {}
         mgr._active_path = None
-        mgr._ocr_service = None
+        mgr._inference_client = None
         mgr._ocr_running = False
         mgr._ocr_cancelled = False
         mgr._ocr_worker = None
@@ -492,7 +492,7 @@ class TestPdfTaskGeneration:
         mock_session.reset_ocr_stats = MagicMock()
         mgr._sessions["/fake.pdf"] = mock_session
         mgr._active_path = "/fake.pdf"
-        mgr._ocr_service = MagicMock()
+        mgr._inference_client = MagicMock()
         mgr._is_mineru_first_use = MagicMock(return_value=False)
 
         # 本测试只验证 generation，不应泄漏真实 OCR 后台线程到后续测试。
@@ -517,7 +517,7 @@ class TestPdfTaskGeneration:
         mgr._task_generation = 0
         mgr._sessions = {}
         mgr._active_path = None
-        mgr._ocr_service = None
+        mgr._inference_client = None
         mgr._ocr_running = False
         mgr._ocr_cancelled = False
         mgr._ocr_worker = None
@@ -528,7 +528,7 @@ class TestPdfTaskGeneration:
         mock_session.reset_ocr_stats = MagicMock()
         mgr._sessions["/fake.pdf"] = mock_session
         mgr._active_path = "/fake.pdf"
-        mgr._ocr_service = MagicMock()
+        mgr._inference_client = MagicMock()
         mgr._is_mineru_first_use = MagicMock(return_value=False)
 
         with patch.object(mgr, "_run_ocr"):
@@ -627,7 +627,7 @@ class TestOcrRunnerCancel:
         mgr._task_generation = 0
         mgr._sessions = {}
         mgr._active_path = None
-        mgr._ocr_service = None
+        mgr._inference_client = None
         mgr._ocr_running = False
         mgr._ocr_cancelled = False
         mgr._ocr_worker = None
@@ -641,7 +641,7 @@ class TestOcrRunnerCancel:
         mock_session.reset_ocr_stats = MagicMock()
         mgr._sessions["/fake.pdf"] = mock_session
         mgr._active_path = "/fake.pdf"
-        mgr._ocr_service = MagicMock()
+        mgr._inference_client = MagicMock()
         mgr._is_mineru_first_use = MagicMock(return_value=False)
 
         from unittest.mock import patch
@@ -839,7 +839,7 @@ class TestRunOcrIncrementalSave:
         mgr._client = client
 
         # mock OCR service：每页返回带 text_blocks 的 result
-        mgr._ocr_service = MagicMock()
+        mgr._inference_client = MagicMock()
         block = MagicMock()
         block.text = "t"
         block.score = 0.9
@@ -851,7 +851,7 @@ class TestRunOcrIncrementalSave:
         result = MagicMock()
         result.text_blocks = [block]
         result.preproc_angle = 0
-        mgr._ocr_service.recognize_batch.return_value = [result] * 3
+        mgr._recognize_images_via_job = MagicMock(return_value=[result] * 3)
 
         # sidecar 重定向到 tmp（隔离测试，避免污染真实缓存目录）
         monkeypatch.setattr(
@@ -931,10 +931,10 @@ class TestRunOcrIncrementalSave:
             text="正文", score=0.9, bbox=(0, 0, 100, 100), polygon=None,
             page_idx=0, is_manually_edited=False, label="text", order=0,
         )
-        mgr._ocr_service = MagicMock()
-        mgr._ocr_service.recognize_batch.return_value = [
-            SimpleNamespace(text_blocks=[block], preproc_angle=90)
-        ]
+        mgr._inference_client = MagicMock()
+        mgr._recognize_images_via_job = MagicMock(
+            return_value=[SimpleNamespace(text_blocks=[block], preproc_angle=90)]
+        )
         monkeypatch.setattr(
             "vibeocr.utils.ocr_sidecar._sessions_dir", lambda: tmp_path / "sessions"
         )
@@ -990,13 +990,14 @@ class TestRunOcrIncrementalSave:
                 return iter([f"png-{idx}".encode() for idx in batch])
 
         class RecordingOcr:
-            def recognize_batch(self, images, options):
+            def recognize(self, images, options, *, cancel_requested):
                 events.append(("ocr", len(images)))
                 return [SimpleNamespace(text_blocks=[]) for _ in images]
 
         mgr._client = MagicMock()
         mgr._client.get_model.return_value = MagicMock()
-        mgr._ocr_service = RecordingOcr()
+        mgr._inference_client = MagicMock()
+        mgr._recognize_images_via_job = RecordingOcr().recognize
         monkeypatch.setattr(
             "vibeocr.pyside.pdf_session_manager.mirror_to_doc",
             lambda _model: doc,
@@ -1047,7 +1048,7 @@ class TestRunOcrIncrementalSave:
             def __init__(self):
                 self.calls = []
 
-            def recognize_batch(self, images, _options):
+            def recognize(self, images, _options, *, cancel_requested):
                 batch = list(images)
                 self.calls.append(batch)
                 if batch == [b"bbbb"]:
@@ -1055,7 +1056,8 @@ class TestRunOcrIncrementalSave:
                 return [SimpleNamespace(text_blocks=[]) for _ in batch]
 
         ocr = RecordingOcr()
-        mgr._ocr_service = ocr
+        mgr._inference_client = MagicMock()
+        mgr._recognize_images_via_job = ocr.recognize
         mgr._client = MagicMock()
         mgr._client.get_model.return_value = MagicMock()
         monkeypatch.setattr(
@@ -1118,7 +1120,7 @@ class TestStartOcrResumeFilter:
         session.reset_ocr_stats = MagicMock()
         session.pdf_document = doc
         mgr._sessions[str(pdf_path)] = session
-        mgr._ocr_service = MagicMock()
+        mgr._inference_client = MagicMock()
         mgr._is_mineru_first_use = MagicMock(return_value=False)
         mgr._pdf_settings = MagicMock()
         mgr._overwrite_text_layer = False
@@ -1171,7 +1173,7 @@ class TestStartOcrResumeFilter:
         session.reset_ocr_stats = MagicMock()
         session.pdf_document = doc
         mgr._sessions[str(pdf_path)] = session
-        mgr._ocr_service = MagicMock()
+        mgr._inference_client = MagicMock()
         mgr._is_mineru_first_use = MagicMock(return_value=False)
         mgr._pdf_settings = MagicMock()
         mgr._overwrite_text_layer = False
@@ -1235,7 +1237,7 @@ class TestStartOcrResumeFilter:
         session.ocr_stats = {"written": 0, "skipped": 0}
         session.pdf_document = doc
         mgr._sessions[str(pdf_path)] = session
-        mgr._ocr_service = MagicMock()
+        mgr._inference_client = MagicMock()
         mgr._is_mineru_first_use = MagicMock(return_value=False)
         mgr._pdf_settings = MagicMock()
         mgr._overwrite_text_layer = False

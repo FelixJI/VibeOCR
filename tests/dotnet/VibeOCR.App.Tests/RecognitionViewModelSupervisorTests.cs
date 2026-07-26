@@ -7,7 +7,6 @@
 using System.Text.Json;
 using VibeOCR.App.Features.Recognition;
 using VibeOCR.App.Inference;
-using VibeOCR.Contracts;
 using VibeOCR.Contracts.HttpV2;
 using VibeOCR.Platform.Inference;
 using Xunit;
@@ -21,7 +20,6 @@ public sealed class RecognitionViewModelSupervisorTests
     {
         var fakeInference = new FakeInferenceClient("hello from supervisor");
         var inputs = new StubInputService();
-        // Legacy worker is unused on the v2 path but required by the constructor.
         var viewModel = new RecognitionViewModel(fakeInference, inputs);
 
         await viewModel.RecognizeViaSupervisorAsync(ct => inputs.PickFileAsync(ct), CancellationToken.None);
@@ -31,11 +29,17 @@ public sealed class RecognitionViewModelSupervisorTests
         Assert.True(viewModel.HasResult);
         // Exactly one submit with exactly one upload (single = one-element job).
         Assert.Equal(1, fakeInference.SubmitCalls);
-        Assert.NotNull(fakeInference.LastUploads);
-        Assert.Single(fakeInference.LastUploads!);
-        Assert.Equal("file.png", fakeInference.LastUploads![0].FileName);
-        Assert.Equal(new byte[] { 1, 2, 3, 4 }, fakeInference.LastUploads[0].Content);
-        Assert.Equal(JobPriority.Interactive, fakeInference.LastPriority);
+        Assert.NotNull(fakeInference.LastRequest);
+        Assert.Equal(JobKind.Recognition, fakeInference.LastRequest!.Kind);
+        Assert.Equal(JobPriority.Interactive, fakeInference.LastRequest.Priority);
+        Assert.Equal("OCR", fakeInference.LastRequest.Pipeline.PipelineId);
+        Assert.Single(fakeInference.LastRequest.Items);
+        Assert.Equal("recognition-input", fakeInference.LastRequest.Items[0].ClientItemKey);
+        Assert.Equal("file.png", fakeInference.LastRequest.Items[0].DisplayName);
+        IReadOnlyDictionary<string, SubmitUpload> uploads = Assert.IsAssignableFrom<
+            IReadOnlyDictionary<string, SubmitUpload>>(fakeInference.LastUploads);
+        Assert.Single(uploads);
+        Assert.Equal(new byte[] { 1, 2, 3, 4 }, uploads["input-0"].Content);
     }
 
     [Fact]
@@ -66,6 +70,41 @@ public sealed class RecognitionViewModelSupervisorTests
 
         Assert.Equal("已取消", viewModel.Status);
         Assert.False(viewModel.HasResult);
+    }
+
+    [Fact]
+    public async Task SupervisorPathPollsAtomicJobUpdatesBySequence()
+    {
+        var fakeInference = new FakeInferenceClient(
+            "sequenced",
+            runningUpdatesBeforeTerminal: 1);
+        var inputs = new StubInputService();
+        var viewModel = new RecognitionViewModel(fakeInference, inputs);
+
+        await viewModel.RecognizeViaSupervisorAsync(
+            ct => inputs.PickFileAsync(ct),
+            CancellationToken.None);
+
+        Assert.Equal([0, 1], fakeInference.ObservedAfterSequences);
+        Assert.Equal("sequenced", viewModel.ResultText);
+    }
+
+    [Fact]
+    public async Task LocalCancellationUsesGenericCancelCommand()
+    {
+        var fakeInference = new FakeInferenceClient("ignored");
+        var inputs = new StubInputService();
+        var viewModel = new RecognitionViewModel(fakeInference, inputs);
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        await viewModel.RecognizeViaSupervisorAsync(
+            ct => inputs.PickFileAsync(ct),
+            cancellation.Token);
+
+        Assert.NotNull(fakeInference.LastCommand);
+        Assert.Equal(JobCommandKind.Cancel, fakeInference.LastCommand!.Kind);
+        Assert.Equal("job-1", fakeInference.LastCommand.JobId);
     }
 
     [Fact]
@@ -119,11 +158,12 @@ public sealed class RecognitionViewModelSupervisorTests
 
     /// <summary>
     /// Fake v2 supervisor. By default the first submitted job returns a terminal
-    /// Completed snapshot on the first GetJobAsync probe; result text is taken
-    /// from the "text" payload key. Tests can opt into a hanging job, a custom
+    /// Completed JobUpdate on the first ObserveAsync probe; result text is
+    /// carried by the typed outcome's "raw_text" payload key. Tests can opt
+    /// into a hanging job, a custom
     /// terminal state, or a queue of follow-up jobs.
     /// </summary>
-    private sealed class FakeInferenceClient : IInferenceClient
+    private sealed class FakeInferenceClient : InferenceClientStub
     {
         private readonly string _text;
         private readonly bool _neverTerminal;
@@ -131,29 +171,37 @@ public sealed class RecognitionViewModelSupervisorTests
         private readonly InferenceClientException? _submitThrows;
         private readonly Queue<string> _queuedTexts = new();
         private string _currentJobText;
+        private int _runningUpdatesRemaining;
 
         public FakeInferenceClient(
             string text,
             bool neverTerminal = false,
             JobState terminalState = JobState.Completed,
-            InferenceClientException? submitThrows = null)
+            InferenceClientException? submitThrows = null,
+            int runningUpdatesBeforeTerminal = 0)
         {
             _text = text;
             _currentJobText = text;
             _neverTerminal = neverTerminal;
             _terminalState = terminalState;
             _submitThrows = submitThrows;
+            _runningUpdatesRemaining = runningUpdatesBeforeTerminal;
         }
 
         public int SubmitCalls { get; private set; }
-        public IReadOnlyList<RecognitionUpload>? LastUploads { get; private set; }
-        public JobPriority LastPriority { get; private set; }
-        public Uri BaseUrl => new("http://127.0.0.1:1");
+        private IReadOnlyList<JobItem> _items = Array.Empty<JobItem>();
+
+        public SubmitRequest? LastRequest { get; private set; }
+        public IReadOnlyDictionary<string, SubmitUpload>? LastUploads { get; private set; }
+        public JobCommand? LastCommand { get; private set; }
+        public List<int> ObservedAfterSequences { get; } = [];
 
         public void QueueTerminalJob(string text) => _queuedTexts.Enqueue(text);
 
-        public Task<JobRef> SubmitRecognitionAsync(
-            IReadOnlyList<RecognitionUpload> uploads, JobPriority priority, CancellationToken cancellationToken)
+        public override Task<JobRef> SubmitAsync(
+            SubmitRequest request,
+            IReadOnlyDictionary<string, SubmitUpload> uploads,
+            CancellationToken cancellationToken)
         {
             if (_submitThrows is not null)
             {
@@ -162,68 +210,99 @@ public sealed class RecognitionViewModelSupervisorTests
 
             SubmitCalls++;
             LastUploads = uploads;
-            LastPriority = priority;
+            LastRequest = request;
             if (_queuedTexts.Count > 0)
             {
                 _currentJobText = _queuedTexts.Dequeue();
             }
 
-            return Task.FromResult(new JobRef { JobId = $"job-{SubmitCalls}" });
-        }
-
-        public Task<JobSnapshot> GetJobAsync(string jobId, CancellationToken cancellationToken)
-        {
-            JobState state = _neverTerminal ? JobState.Running : _terminalState;
-            return Task.FromResult(new JobSnapshot
+            _items = request.Items.Select((item, index) => new JobItem
             {
-                JobId = jobId,
-                Kind = JobKind.Recognition,
-                Priority = JobPriority.Interactive,
-                State = state,
-                SchemaVersion = 2,
-                Stage = state is JobState.Completed ? "done" : "running",
-                ProgressCurrent = state is JobState.Completed ? 1 : 0,
-                ProgressTotal = 1,
-                EventSequence = 1,
-                ResultAvailable = state is JobState.Completed,
+                ItemId = $"it-{index}",
+                ClientItemKey = item.ClientItemKey,
+                Ordinal = item.Ordinal,
+                DisplayName = item.DisplayName,
+                State = ItemState.Queued,
+            }).ToArray();
+            return Task.FromResult(new JobRef
+            {
+                JobId = $"job-{SubmitCalls}",
+                Items = _items,
             });
         }
 
-        public Task<IReadOnlyList<StageEvent>> GetEventsAsync(
-            string jobId, int afterSequence, CancellationToken cancellationToken)
-            => Task.FromResult<IReadOnlyList<StageEvent>>(Array.Empty<StageEvent>());
-
-        public Task<IReadOnlyList<ResultEntry>> GetResultAsync(string jobId, CancellationToken cancellationToken)
+        public override Task<JobUpdate> ObserveAsync(
+            string jobId,
+            int afterSequence,
+            CancellationToken cancellationToken)
         {
-            var payload = new Dictionary<string, JsonElement>
+            ObservedAfterSequences.Add(afterSequence);
+            bool running = _neverTerminal || _runningUpdatesRemaining > 0;
+            if (_runningUpdatesRemaining > 0)
             {
-                ["text"] = JsonSerializer.SerializeToElement(_currentJobText),
-            };
-            return Task.FromResult<IReadOnlyList<ResultEntry>>(new[]
+                _runningUpdatesRemaining--;
+            }
+            JobState state = running ? JobState.Running : _terminalState;
+            ItemOutcome[] outcomes = running
+                ? Array.Empty<ItemOutcome>()
+                :
+                [
+                    new ItemOutcome
+                    {
+                        ItemId = _items[0].ItemId,
+                        State = state switch
+                        {
+                            JobState.Cancelled => ItemState.Cancelled,
+                            JobState.Completed or JobState.CompletedWithErrors => ItemState.Succeeded,
+                            _ => ItemState.Failed,
+                        },
+                        Attempt = 1,
+                        PayloadType = state is JobState.Completed or JobState.CompletedWithErrors
+                            ? "ocr.v1"
+                            : null,
+                        Payload = state is JobState.Completed or JobState.CompletedWithErrors
+                            ? new Dictionary<string, JsonElement>
+                            {
+                                ["raw_text"] = JsonSerializer.SerializeToElement(_currentJobText),
+                            }
+                            : null,
+                        ErrorCode = state is JobState.Failed ? "BACKEND_UNAVAILABLE" : null,
+                    },
+                ];
+            return Task.FromResult(new JobUpdate
             {
-                new ResultEntry { ItemId = "it-0", DisplayName = "file.png", Payload = payload },
+                Snapshot = new JobSnapshot
+                {
+                    JobId = jobId,
+                    Kind = JobKind.Recognition,
+                    Priority = JobPriority.Interactive,
+                    State = state,
+                    Items = _items,
+                    EventSequence = afterSequence + 1,
+                },
+                Events = Array.Empty<StageEvent>(),
+                Outcomes = outcomes,
+                ThroughSequence = afterSequence + 1,
             });
         }
 
-        public Task<CancelMode> CancelAsync(string jobId, CancellationToken cancellationToken)
-            => Task.FromResult(CancelMode.Cooperative);
+        public override Task<JobCommandResult> CommandAsync(
+            JobCommand command,
+            CancellationToken cancellationToken)
+        {
+            LastCommand = command;
+            return Task.FromResult(new JobCommandResult(
+                command.CommandId,
+                command.Kind,
+                CancelMode.Cooperative,
+                null));
+        }
 
-        public Task DeleteJobAsync(string jobId, CancellationToken cancellationToken) => Task.CompletedTask;
-
-        public Task<ResidencyStatus> GetResidencyAsync(CancellationToken cancellationToken)
+        public override Task<ResidencyStatus> GetResidencyAsync(CancellationToken cancellationToken)
             => Task.FromResult(new ResidencyStatus());
 
-        public Task<SettingsSnapshot> GetSettingsAsync(CancellationToken cancellationToken)
+        public override Task<SettingsSnapshot> GetSettingsAsync(CancellationToken cancellationToken)
             => Task.FromResult(new SettingsSnapshot());
-
-        public Task<PdfSessionOpenResult> OpenPdfSessionAsync(string path, string? password, CancellationToken ct) => throw new NotImplementedException();
-        public Task<byte[]> RenderPdfPageAsync(string sessionId, int page, int size, CancellationToken ct) => throw new NotImplementedException();
-        public Task<PdfMutateResult> RotatePdfPagesAsync(string sessionId, int[] pages, int angle, CancellationToken ct) => throw new NotImplementedException();
-        public Task<PdfMutateResult> DeletePdfPagesAsync(string sessionId, int[] pages, CancellationToken ct) => throw new NotImplementedException();
-        public Task<string> SavePdfAsync(string sessionId, string outputPath, CancellationToken ct) => throw new NotImplementedException();
-        public Task ClosePdfSessionAsync(string sessionId, CancellationToken ct) => throw new NotImplementedException();
-                public Task<ExportResult> ExportAsync(ExportRequest request, CancellationToken ct) => throw new NotImplementedException();
-        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 
 }

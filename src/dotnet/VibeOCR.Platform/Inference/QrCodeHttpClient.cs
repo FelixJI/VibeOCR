@@ -9,7 +9,6 @@ namespace VibeOCR.Platform.Inference;
 public sealed class QrCodeHttpClient : IQrCodeClient
 {
     private readonly HttpClient _http;
-    private readonly bool _ownsHttp;
     private readonly JsonSerializerOptions _options;
 
     public QrCodeHttpClient(Uri baseUrl, string sessionToken, HttpMessageHandler? handler = null)
@@ -20,7 +19,6 @@ public sealed class QrCodeHttpClient : IQrCodeClient
         }
 
         _options = HttpV2JsonContext.Default.Options;
-        _ownsHttp = handler is not null;
         _http = handler is null ? new HttpClient() : new HttpClient(handler);
         _http.BaseAddress = baseUrl;
         _http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", sessionToken);
@@ -79,10 +77,7 @@ public sealed class QrCodeHttpClient : IQrCodeClient
 
     public ValueTask DisposeAsync()
     {
-        if (_ownsHttp)
-        {
-            _http.Dispose();
-        }
+        _http.Dispose();
 
         return ValueTask.CompletedTask;
     }

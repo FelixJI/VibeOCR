@@ -7,7 +7,7 @@ dropped all structure.
 
 from __future__ import annotations
 
-from vibeocr.models import ocr_result_to_payload
+from vibeocr.models import ocr_result_from_payload, ocr_result_to_payload
 from vibeocr.models.ocr_result import OCRResult, TextBlock
 
 
@@ -109,3 +109,23 @@ def test_empty_ocr_result_still_has_keys() -> None:
     assert payload["raw_text"] == ""
     assert payload["text_blocks"] == []
     assert payload["pipeline_type"] == "OCR"
+
+
+def test_structured_payload_roundtrips_to_client_model() -> None:
+    original = OCRResult(
+        raw_text="hello",
+        markdown_text="**hello**",
+        avg_score=0.8,
+        text_blocks=[
+            TextBlock(
+                text="hello",
+                score=0.8,
+                bbox=(1.0, 2.0, 3.0, 4.0),
+            )
+        ],
+    )
+    restored = ocr_result_from_payload(ocr_result_to_payload(original))
+
+    assert restored.raw_text == "hello"
+    assert restored.markdown_text == "**hello**"
+    assert restored.text_blocks[0].bbox == (1.0, 2.0, 3.0, 4.0)

@@ -6,6 +6,9 @@ import threading
 import time
 from unittest.mock import MagicMock
 
+import pytest
+
+from vibeocr.protocol.v2 import PipelineSpec
 from vibeocr.services.pipeline_cache_manager import (
     FALLBACK_MAX_HEAVY,
     VRAM_TIER_8GB,
@@ -240,6 +243,65 @@ def test_release_one_missing_is_idempotent():
 
     assert mgr.release_one("OCR") is False
     assert mgr.get_last_used("OCR") is None
+
+
+def test_configured_pin_blocks_ttl_and_explicit_release() -> None:
+    mgr = _make_legacy_manager(
+        max_heavy=2, ttls={"PP-StructureV3": 1}
+    )
+    mgr._service._pipelines = {"PP-StructureV3": object()}
+    mgr._last_used = {"PP-StructureV3": 0.0}
+    mgr.configure_residency(
+        default_ttl_seconds=1,
+        pipelines=[PipelineSpec(name="PP-StructureV3", pinned=True)],
+    )
+
+    assert mgr.evict_idle(now=100.0) == []
+    assert mgr.release(heavy_only=False) == []
+    assert "PP-StructureV3" in mgr._service._pipelines
+    assert mgr.release(heavy_only=False, force=True) == ["PP-StructureV3"]
+
+
+def test_prepare_load_refuses_to_evict_pinned_capacity() -> None:
+    mgr = _make_legacy_manager(max_heavy=1)
+    mgr._service._pipelines = {"PP-StructureV3": object()}
+    mgr._pinned = {"PP-StructureV3"}
+
+    with pytest.raises(RuntimeError, match="PIN_CAPACITY_CONFLICT"):
+        mgr.prepare_load("PaddleOCR-VL")
+
+
+def test_status_does_not_wait_for_active_pipeline_lease() -> None:
+    """状态快照不能被一次长时间模型加载或推理阻塞。"""
+    mgr = _make_legacy_manager()
+    mgr._service._pipelines = {"OCR": object()}
+    lease_entered = threading.Event()
+    release_lease = threading.Event()
+    status_returned = threading.Event()
+    status_result: list[dict[str, object]] = []
+
+    def hold_lease() -> None:
+        with mgr.lease("OCR"):
+            lease_entered.set()
+            release_lease.wait(timeout=1.0)
+
+    def read_status() -> None:
+        status_result.append(mgr.status())
+        status_returned.set()
+
+    lease_thread = threading.Thread(target=hold_lease, daemon=True)
+    status_thread = threading.Thread(target=read_status, daemon=True)
+    lease_thread.start()
+    assert lease_entered.wait(timeout=0.5)
+
+    status_thread.start()
+    try:
+        assert status_returned.wait(timeout=0.1), "status() 被活动租约阻塞"
+        assert status_result[0]["active_counts"] == {"OCR": 1}
+    finally:
+        release_lease.set()
+        lease_thread.join(timeout=0.5)
+        status_thread.join(timeout=0.5)
 
 
 # --- touch / ttls setter ---

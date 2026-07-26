@@ -71,6 +71,21 @@ class BudgetPlanner:
     max_pages: int = 64
     device_vram_mb: int = 0
 
+    def __post_init__(self) -> None:
+        positive = {
+            "max_file_count": self.max_file_count,
+            "max_encoded_bytes": self.max_encoded_bytes,
+            "max_decoded_pixels": self.max_decoded_pixels,
+            "max_pages": self.max_pages,
+        }
+        invalid = [name for name, value in positive.items() if value <= 0]
+        if invalid:
+            raise ValueError(
+                "budget limits must be positive: " + ", ".join(invalid)
+            )
+        if self.device_vram_mb < 0:
+            raise ValueError("device_vram_mb must be >= 0")
+
     # ------------------------------------------------------------------
     # Transport batches
     # ------------------------------------------------------------------

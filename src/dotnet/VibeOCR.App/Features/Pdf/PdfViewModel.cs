@@ -1,7 +1,7 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
-using System.Text.Json;
+using VibeOCR.App.Inference;
 using VibeOCR.Contracts.HttpV2;
 using VibeOCR.Platform.Inference;
 
@@ -9,6 +9,7 @@ namespace VibeOCR.App.Features.Pdf;
 
 public sealed class PdfViewModel(IInferenceClient inference, IPdfFileSource files) : INotifyPropertyChanged
 {
+    private readonly InferenceJobRunner _jobs = new(inference);
     private CancellationTokenSource? _activeRun;
     private long _generation;
     private bool _isBusy;
@@ -34,7 +35,7 @@ public sealed class PdfViewModel(IInferenceClient inference, IPdfFileSource file
     {
         CancelActiveRun();
         long generation = Volatile.Read(ref _generation);
-        using var run = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var run = CancellationTokenSource.CreateLinkedTokenSource(ct);
         _activeRun = run;
         IsBusy = true; Status = "正在打开";
         try
@@ -48,7 +49,19 @@ public sealed class PdfViewModel(IInferenceClient inference, IPdfFileSource file
         catch (OperationCanceledException) { if (generation == Volatile.Read(ref _generation)) Status = "已取消"; }
         catch (InferenceClientException e) { if (generation == Volatile.Read(ref _generation)) Status = LocalizeV2(e.Code); }
         catch (Exception) when (generation == Volatile.Read(ref _generation)) { Status = "打开失败"; }
-        finally { if (generation == Volatile.Read(ref _generation)) IsBusy = false; }
+        finally
+        {
+            if (generation == Volatile.Read(ref _generation))
+            {
+                IsBusy = false;
+                if (ReferenceEquals(
+                    Interlocked.CompareExchange(ref _activeRun, null, run),
+                    run))
+                {
+                    run.Dispose();
+                }
+            }
+        }
     }
 
     public async Task<byte[]?> RenderThumbnailAsync(int pageIndex, CancellationToken ct)
@@ -75,44 +88,81 @@ public sealed class PdfViewModel(IInferenceClient inference, IPdfFileSource file
         if (SessionId is null || pages.Length == 0) { Status = "请先打开 PDF"; return; }
         CancelActiveRun();
         long generation = Volatile.Read(ref _generation);
-        using var run = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var run = CancellationTokenSource.CreateLinkedTokenSource(ct);
         _activeRun = run;
         IsBusy = true; Status = "正在识别";
         foreach (int idx in pages) if (idx < Pages.Count) Pages[idx].State = PdfPageState.Processing;
-        string? jobId = null;
         try
         {
-            var uploads = new RecognitionUpload[pages.Length];
-            for (int i = 0; i < pages.Length; i++) { byte[] img = await inference.RenderPdfPageAsync(SessionId, pages[i], 1024, run.Token); uploads[i] = new RecognitionUpload($"page-{pages[i] + 1}.png", "image/png", img); }
-            JobRef referral = await inference.SubmitRecognitionAsync(uploads, JobPriority.Background, run.Token);
-            jobId = referral.JobId;
-            JobSnapshot snap = await inference.GetJobAsync(jobId, run.Token);
-            int lastSeq = snap.EventSequence;
-            while (snap.State is not (JobState.Completed or JobState.CompletedWithErrors or JobState.Cancelled or JobState.Failed))
+            // The PDF session remains the bounded render/mutate module. Until
+            // a production PDF_OCR executor exists, all selected page images
+            // enter one generic RECOGNITION job; the UI never creates one job
+            // per page and never uses the unimplemented pdf_page.v1 path.
+            var inputs = new InferenceUploadInput[pages.Length];
+            for (int i = 0; i < pages.Length; i++)
             {
-                run.Token.ThrowIfCancellationRequested();
-                var events = await inference.GetEventsAsync(jobId, lastSeq, run.Token);
-                lastSeq = events.Count > 0 ? events[^1].Sequence : lastSeq;
-                snap = await inference.GetJobAsync(jobId, run.Token);
+                int pageIndex = pages[i];
+                byte[] image = await inference.RenderPdfPageAsync(
+                    SessionId,
+                    pageIndex,
+                    1024,
+                    run.Token);
+                inputs[i] = new InferenceUploadInput(
+                    $"page-{pageIndex}",
+                    $"page-{pageIndex + 1}.png",
+                    "image/png",
+                    image);
             }
+
+            InferenceJobRun job = await _jobs.RunRecognitionAsync(
+                "OCR",
+                JobPriority.Background,
+                inputs,
+                options: null,
+                run.Token);
+            JobSnapshot snap = job.Snapshot;
             if (generation != Volatile.Read(ref _generation)) return;
             if (snap.State is JobState.Cancelled) { foreach (int idx in pages) if (idx < Pages.Count) Pages[idx].State = PdfPageState.None; Status = "已取消"; return; }
-            var results = await inference.GetResultAsync(jobId, run.Token);
             int s = 0, f = 0;
-            for (int i = 0; i < pages.Length && i < results.Count; i++)
+            foreach (int idx in pages)
             {
                 if (generation != Volatile.Read(ref _generation)) return;
-                int idx = pages[i]; if (idx < 0 || idx >= Pages.Count) continue;
-                var entry = results[i];
-                if (!string.IsNullOrEmpty(entry.ErrorCode)) { Pages[idx].State = PdfPageState.None; f++; }
-                else { Pages[idx].OcrText = ExtractText(entry); Pages[idx].State = PdfPageState.Done; s++; }
+                if (idx < 0 || idx >= Pages.Count) continue;
+                ItemOutcome outcome = job.OutcomesByClientItemKey[$"page-{idx}"];
+                if (outcome.State is ItemState.Succeeded)
+                {
+                    Pages[idx].OcrText = RecognitionOutcomeMapper.ToResponse(outcome, "OCR").Text;
+                    Pages[idx].State = PdfPageState.Done;
+                    s++;
+                }
+                else if (outcome.State is ItemState.Cancelled)
+                {
+                    Pages[idx].State = PdfPageState.None;
+                }
+                else
+                {
+                    Pages[idx].State = PdfPageState.Failed;
+                    f++;
+                }
             }
             Status = $"OCR 完成：成功 {s} 页，失败 {f} 页";
         }
-        catch (OperationCanceledException) { if (jobId is not null) { try { await inference.CancelAsync(jobId, CancellationToken.None); } catch { } } if (generation == Volatile.Read(ref _generation)) { foreach (int idx in pages) if (idx < Pages.Count) Pages[idx].State = PdfPageState.None; Status = "已取消"; } }
+        catch (OperationCanceledException) { if (generation == Volatile.Read(ref _generation)) { foreach (int idx in pages) if (idx < Pages.Count) Pages[idx].State = PdfPageState.None; Status = "已取消"; } }
         catch (InferenceClientException e) { if (generation == Volatile.Read(ref _generation)) Status = LocalizeV2(e.Code); }
         catch (Exception) when (generation == Volatile.Read(ref _generation)) { Status = "OCR 失败"; }
-        finally { if (generation == Volatile.Read(ref _generation)) IsBusy = false; }
+        finally
+        {
+            if (generation == Volatile.Read(ref _generation))
+            {
+                IsBusy = false;
+                if (ReferenceEquals(
+                    Interlocked.CompareExchange(ref _activeRun, null, run),
+                    run))
+                {
+                    run.Dispose();
+                }
+            }
+        }
     }
 
     public async Task SaveAsync(string path, CancellationToken ct)
@@ -143,7 +193,6 @@ public sealed class PdfViewModel(IInferenceClient inference, IPdfFileSource file
 
     private void CancelActiveRun() { Interlocked.Increment(ref _generation); var run = Interlocked.Exchange(ref _activeRun, null); if (run is not null) { run.Cancel(); run.Dispose(); } }
 
-    private static string ExtractText(ResultEntry entry) { if (entry.Payload.TryGetValue("text", out JsonElement el) && el.ValueKind == JsonValueKind.String) return el.GetString() ?? ""; return ""; }
     private static string LocalizeV2(HttpV2ErrorCode code) => code switch { HttpV2ErrorCode.OutOfMemory => "内存或显存不足", HttpV2ErrorCode.BackendUnavailable or HttpV2ErrorCode.TransientBackend => "Supervisor 暂不可用", HttpV2ErrorCode.Cancelled => "已取消", _ => "操作失败" };
     private void SetField<T>(ref T field, T value, [CallerMemberName] string? name = null) { if (EqualityComparer<T>.Default.Equals(field, value)) return; field = value; PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name)); }
 }

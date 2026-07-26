@@ -28,17 +28,21 @@ public sealed partial class App : Application
     private readonly Stopwatch _startup = Stopwatch.StartNew();
     /// <summary>
     /// v2 supervisor client (deferred until the supervisor process is started).
-    /// Phase 8: this replaces the legacy _workerGateway.
+    /// Attached after the Supervisor process reports a v2 ready envelope.
     /// </summary>
     private readonly DeferredInferenceClient _inferenceGateway = new();
     private readonly DeferredQrCodeClient _qrCodeGateway = new();
-    private readonly SemaphoreSlim _workerLifecycle = new(1, 1);
+    private readonly SemaphoreSlim _supervisorLifecycle = new(1, 1);
     private readonly CancellationTokenSource _applicationShutdown = new();
     private readonly Dictionary<string, double> _startupMilestones = [];
     private MainWindow? _window;
     private WindowLayoutStore? _windowLayoutStore;
     private SingleInstanceService? _singleInstance;
     private InferenceSupervisorProcess? _supervisorProcess;
+    private IInferenceClient? _activeInferenceClient;
+    private IQrCodeClient? _activeQrCodeClient;
+    private PortableLayout? _supervisorLayout;
+    private DiagnosticsViewModel? _supervisorDiagnostics;
     private FrontendExclusiveLock? _exclusiveLock;
     private WindowMessageService? _windowMessages;
     private TrayIconService? _trayIcon;
@@ -47,13 +51,29 @@ public sealed partial class App : Application
     private UpdateViewModel? _updateViewModel;
     private string? _startupHealthFile;
     private bool _shutdownStarted;
+    private bool _soakCrashRequested;
+    private bool _soakCrashInjected;
+    private int _supervisorRecoveryScheduled;
 
     private const uint HotkeyMessage = 0x0312;
     private const uint TrayMessage = 0x8001;
 
     public App()
     {
+        UnhandledException += OnUnhandledException;
         InitializeComponent();
+    }
+
+    private void OnUnhandledException(
+        object sender,
+        Microsoft.UI.Xaml.UnhandledExceptionEventArgs args)
+    {
+        AppLog.Error("Unhandled WinUI exception", args.Exception);
+        WriteSoakResult(
+            Environment.GetEnvironmentVariable("VIBEOCR_SOAK_INJECT_CRASH") == "1",
+            recovered: false,
+            args.Exception.ToString());
+        FlushStartupTrace();
     }
 
     protected override void OnLaunched(LaunchActivatedEventArgs args)
@@ -74,8 +94,8 @@ public sealed partial class App : Application
         }
 
         // 跨产品互斥：同一登录会话内 PySide Classic 与 WinUI Next 不同时运行。
-        // 在同产品单实例通过后、WorkerHost 启动前获取；失败时提示退出，不启动
-        // 第二个 WorkerHost。Mutex 由 OS 在前端崩溃时自动释放（ADR §6）。
+        // 在同产品单实例通过后、Supervisor 启动前获取；失败时提示退出，不启动
+        // 第二个 Supervisor。Mutex 由 OS 在前端崩溃时自动释放（ADR §6）。
         _exclusiveLock = new FrontendExclusiveLock();
         if (!_exclusiveLock.IsAcquired)
         {
@@ -107,6 +127,10 @@ public sealed partial class App : Application
                     await Windows.System.Launcher.LaunchUriAsync(uri);
                 }
             });
+        _supervisorLayout = layout;
+        _supervisorDiagnostics = diagnostics;
+        _soakCrashRequested =
+            Environment.GetEnvironmentVariable("VIBEOCR_SOAK_INJECT_CRASH") == "1";
         RecordMilestone(diagnostics, "T0", TimeSpan.Zero);
         RecordMilestone(diagnostics, "T1", _startup.Elapsed);
 
@@ -152,13 +176,13 @@ public sealed partial class App : Application
         InitializeDesktopShell(layout);
         RecordMilestone(diagnostics, "T2", _startup.Elapsed);
 
-        // --shell-only: run the UI shell without launching the WorkerHost. Useful
+        // --shell-only: run the UI shell without launching the Supervisor. Useful
         // for inspecting layout / XAML without paying the dev cold-import cost.
         // Without args the default is to bring the backend up automatically.
         if (options.ShellOnly)
         {
-            diagnostics.UpdateWorker(new WorkerHealth(
-                WorkerHealthState.NotReady,
+            diagnostics.UpdateSupervisor(new SupervisorHealth(
+                SupervisorHealthState.NotReady,
                 null,
                 null,
                 "外壳模式：未拉起后端（--shell-only）。"));
@@ -176,7 +200,7 @@ public sealed partial class App : Application
         }
 
         // Perf-gate smoke mode: exit shortly after first window so cold-start
-        // timing can be measured without the worker handshake. Production runs
+        // timing can be measured without the supervisor handshake. Production runs
         // never set this env var.
         if (Environment.GetEnvironmentVariable("VIBEOCR_SELF_TEST_SMOKE") is "1" or "t3")
         {
@@ -287,47 +311,57 @@ public sealed partial class App : Application
         Environment.Exit(0);
     }
 
-    // Phase 8: Worker lifecycle methods removed. Supervisor startup will go here.
-    // For now these are stubs so the build compiles. The production supervisor
-    // process (InferenceSupervisorProcess) lifecycle replaces this entire block.
-
-    private async Task ConnectSupervisorAfterFirstWindowAsync(
+    private async Task<bool> ConnectSupervisorAfterFirstWindowAsync(
         PortableLayout layout,
-        DiagnosticsViewModel diagnostics)
+        DiagnosticsViewModel diagnostics,
+        bool isRecovery = false)
     {
-        diagnostics.UpdateWorker(new WorkerHealth(
-            WorkerHealthState.Connecting, null, null, null));
+        diagnostics.UpdateSupervisor(new SupervisorHealth(
+            SupervisorHealthState.Connecting, null, null, null));
         RecordMilestone(diagnostics, "T3", _startup.Elapsed);
 
-        if (!CanStartWorker(diagnostics.Prerequisites))
+        if (!CanStartSupervisor(diagnostics.Prerequisites))
         {
             AppLog.Warn("Supervisor not started: Python runtime prerequisite not detected.");
-            diagnostics.UpdateWorker(new WorkerHealth(
-                WorkerHealthState.NotReady, null, null,
+            diagnostics.UpdateSupervisor(new SupervisorHealth(
+                SupervisorHealthState.NotReady, null, null,
                 "Python 运行时未就绪，无法启动 Supervisor。"));
-            return;
+            FailSoakRun("Python runtime prerequisite is unavailable.");
+            return false;
         }
 
-        await _workerLifecycle.WaitAsync();
+        await _supervisorLifecycle.WaitAsync();
         try
         {
             // Construct supervisor process options.
             string pythonExe = PortableLayout.ResolvePythonExecutable(layout);
             string logPath = Path.Combine(layout.DataRoot, "supervisor.log");
             string token = Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(32));
-            string workerRoot = ResolveSupervisorRoot(layout);
+            string supervisorRoot = ResolveSupervisorRoot(layout);
+            IReadOnlyDictionary<string, string>? environmentOverrides = null;
+            if (_soakCrashRequested && !_soakCrashInjected && !isRecovery)
+            {
+                _soakCrashInjected = true;
+                environmentOverrides = new Dictionary<string, string>
+                {
+                    ["VIBEOCR_SUPERVISOR_SOAK_CRASH_AFTER_READY"] = "1",
+                };
+            }
             var options = new InferenceSupervisorOptions(
                 pythonExe,
                 ["-m", "vibeocr.supervisor.main"],
-                layout.InstallRoot,
+                supervisorRoot,
                 logPath,
-                TimeSpan.FromSeconds(layout.Profile == "winui-dev" ? 90 : 15));
+                TimeSpan.FromSeconds(layout.Profile == "winui-dev" ? 90 : 15),
+                environmentOverrides);
 
             // Start the supervisor process.
-            _supervisorProcess = new InferenceSupervisorProcess(options, token);
-            // Set PYTHONPATH so the supervisor can import vibeocr.* packages.
-            // The InferenceSupervisorProcess sets VIBEOCR_SUP_TOKEN via env.
-            SupervisorReadyEnvelope ready = await _supervisorProcess.StartAsync(_applicationShutdown.Token);
+            var process = new InferenceSupervisorProcess(options, token);
+            process.UnexpectedExit += OnSupervisorUnexpectedExit;
+            _supervisorProcess = process;
+            // The source-staged artifact uses its supervisor root as cwd; dev
+            // environments resolve the editable workspace packages.
+            SupervisorReadyEnvelope ready = await process.StartAsync(_applicationShutdown.Token);
 
             RecordMilestone(diagnostics, "T4", _startup.Elapsed);
             RecordMilestone(diagnostics, "T5", _startup.Elapsed);
@@ -338,9 +372,11 @@ public sealed partial class App : Application
             var qrClient = new QrCodeHttpClient(baseUrl, token);
             _inferenceGateway.Attach(inferenceClient);
             _qrCodeGateway.Attach(qrClient);
+            _activeInferenceClient = inferenceClient;
+            _activeQrCodeClient = qrClient;
 
-            diagnostics.UpdateWorker(new WorkerHealth(
-                WorkerHealthState.Ready,
+            diagnostics.UpdateSupervisor(new SupervisorHealth(
+                SupervisorHealthState.Ready,
                 ready.InstanceId,
                 ready.ProtocolVersion,
                 null));
@@ -350,27 +386,37 @@ public sealed partial class App : Application
             _ = UpdateArtifactCleaner.CleanupAsync(
                 layout.InstallRoot, layout.DataRoot, TimeSpan.FromSeconds(3));
 
-            if (Environment.GetEnvironmentVariable("VIBEOCR_SELF_TEST_SMOKE") == "t6")
+            bool soakCycleComplete = !_soakCrashRequested || isRecovery;
+            if (soakCycleComplete)
+            {
+                WriteSoakResult(_soakCrashRequested, recovered: true);
+            }
+            if (Environment.GetEnvironmentVariable("VIBEOCR_SELF_TEST_SMOKE") == "t6"
+                && soakCycleComplete)
             {
                 FlushStartupTrace();
                 Environment.Exit(0);
             }
+            return true;
         }
         catch (Exception error)
         {
             AppLog.Error("Supervisor connection failed", error);
-            diagnostics.UpdateWorker(new WorkerHealth(
-                WorkerHealthState.Faulted, null, null, error.Message));
+            await DisconnectSupervisorResourcesAsync();
+            diagnostics.UpdateSupervisor(new SupervisorHealth(
+                SupervisorHealthState.Faulted, null, null, error.Message));
+            FailSoakRun(error.Message);
+            return false;
         }
         finally
         {
-            _workerLifecycle.Release();
+            _supervisorLifecycle.Release();
         }
     }
 
-    private static string ResolveSupervisorRoot(PortableLayout layout)
+    internal static string ResolveSupervisorRoot(PortableLayout layout)
     {
-        string packaged = Path.Combine(layout.InstallRoot, "worker");
+        string packaged = Path.Combine(layout.InstallRoot, "supervisor");
         if (Directory.Exists(Path.Combine(packaged, "vibeocr", "supervisor")))
         {
             return packaged;
@@ -407,6 +453,22 @@ public sealed partial class App : Application
         File.WriteAllText(fullPath, JsonSerializer.Serialize(new { crash_requested = requested, recovered, error }));
     }
 
+    private void FailSoakRun(string error)
+    {
+        if (string.IsNullOrWhiteSpace(
+                Environment.GetEnvironmentVariable("VIBEOCR_SOAK_RESULT")))
+        {
+            return;
+        }
+
+        WriteSoakResult(_soakCrashRequested, recovered: false, error);
+        if (Environment.GetEnvironmentVariable("VIBEOCR_SELF_TEST_SMOKE") == "t6")
+        {
+            FlushStartupTrace();
+            Environment.Exit(1);
+        }
+    }
+
     private void WriteHealthSignal()
     {
         if (string.IsNullOrWhiteSpace(_startupHealthFile)) return;
@@ -430,31 +492,122 @@ public sealed partial class App : Application
         File.AppendAllText(fullPath, JsonSerializer.Serialize(_startupMilestones) + Environment.NewLine);
     }
 
-    public static bool CanStartWorker(IEnumerable<PrerequisiteStatus> prerequisites) =>
+    public static bool CanStartSupervisor(IEnumerable<PrerequisiteStatus> prerequisites) =>
         prerequisites.Any(item => item.Kind == PrerequisiteKind.PythonRuntime && item.IsInstalled);
 
-    private async Task StopWorkerAsync()
+    private void OnSupervisorUnexpectedExit(
+        object? sender,
+        SupervisorUnexpectedExitEventArgs eventArgs)
+    {
+        if (_applicationShutdown.IsCancellationRequested
+            || !ReferenceEquals(sender, _supervisorProcess)
+            || Interlocked.Exchange(ref _supervisorRecoveryScheduled, 1) != 0)
+        {
+            return;
+        }
+
+        AppLog.Warn(
+            $"Supervisor exited unexpectedly (code={eventArgs.ExitCode?.ToString() ?? "unknown"}); "
+            + "scheduling one reconnect attempt.");
+        void ScheduleRecovery()
+        {
+            _supervisorDiagnostics?.UpdateSupervisor(new SupervisorHealth(
+                SupervisorHealthState.Faulted,
+                null,
+                null,
+                "Supervisor 异常退出，正在自动恢复。"));
+            _ = RecoverSupervisorAfterExitAsync();
+        }
+
+        if (_window?.DispatcherQueue.TryEnqueue(ScheduleRecovery) != true)
+        {
+            _ = Task.Run(ScheduleRecovery);
+        }
+    }
+
+    private async Task RecoverSupervisorAfterExitAsync()
+    {
+        try
+        {
+            await _supervisorLifecycle.WaitAsync(_applicationShutdown.Token);
+            try
+            {
+                await DisconnectSupervisorResourcesAsync();
+            }
+            finally
+            {
+                _supervisorLifecycle.Release();
+            }
+
+            await Task.Delay(TimeSpan.FromMilliseconds(250), _applicationShutdown.Token);
+            if (_supervisorLayout is null || _supervisorDiagnostics is null)
+            {
+                throw new InvalidOperationException("Supervisor recovery context is unavailable.");
+            }
+
+            await ConnectSupervisorAfterFirstWindowAsync(
+                _supervisorLayout,
+                _supervisorDiagnostics,
+                isRecovery: true);
+        }
+        catch (OperationCanceledException) when (_applicationShutdown.IsCancellationRequested)
+        {
+            // Application shutdown won the race; no recovery is needed.
+        }
+        catch (Exception error)
+        {
+            AppLog.Error("Supervisor recovery failed", error);
+            _supervisorDiagnostics?.UpdateSupervisor(new SupervisorHealth(
+                SupervisorHealthState.Faulted, null, null, error.Message));
+            FailSoakRun(error.Message);
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _supervisorRecoveryScheduled, 0);
+        }
+    }
+
+    private async Task StopSupervisorAsync()
     {
         // Phase 8: stop the v2 inference supervisor subprocess. The supervisor
         // owns MinerU/PDF children via a Job Object, so disposing the process
         // handle tears the whole tree down. Best-effort: shutdown must not hang
         // the UI even if the child is unresponsive.
-        await Task.CompletedTask;
-        if (_supervisorProcess is null)
+        await DisconnectSupervisorResourcesAsync();
+    }
+
+    private async Task DisconnectSupervisorResourcesAsync()
+    {
+        IInferenceClient? inferenceClient = _activeInferenceClient;
+        _activeInferenceClient = null;
+        if (inferenceClient is not null)
+        {
+            _inferenceGateway.Detach(inferenceClient);
+            await inferenceClient.DisposeAsync();
+        }
+
+        IQrCodeClient? qrCodeClient = _activeQrCodeClient;
+        _activeQrCodeClient = null;
+        if (qrCodeClient is not null)
+        {
+            _qrCodeGateway.Detach(qrCodeClient);
+            await qrCodeClient.DisposeAsync();
+        }
+
+        InferenceSupervisorProcess? process = _supervisorProcess;
+        _supervisorProcess = null;
+        if (process is null)
         {
             return;
         }
+        process.UnexpectedExit -= OnSupervisorUnexpectedExit;
         try
         {
-            _supervisorProcess.Dispose();
+            process.Dispose();
         }
-        catch (Exception ex)
+        catch (Exception error)
         {
-            AppLog.Warn($"Supervisor shutdown error: {ex.Message}");
-        }
-        finally
-        {
-            _supervisorProcess = null;
+            AppLog.Warn($"Supervisor shutdown error: {error.Message}");
         }
     }
 
@@ -473,20 +626,21 @@ public sealed partial class App : Application
 
     private async Task ShutdownAndExitAsync(AppWindow appWindow)
     {
-        await _workerLifecycle.WaitAsync();
+        await _supervisorLifecycle.WaitAsync();
         try
         {
             if (_window is not null && _windowLayoutStore is not null && _window.CaptureGeometry() is { } geometry)
             {
                 _windowLayoutStore.Save(geometry);
             }
-            await StopWorkerAsync();
+            await StopSupervisorAsync();
             await _inferenceGateway.DisposeAsync();
+            await _qrCodeGateway.DisposeAsync();
             await DisposeDesktopShellAsync();
         }
         finally
         {
-            _workerLifecycle.Release();
+            _supervisorLifecycle.Release();
             _applicationShutdown.Dispose();
             appWindow.Closing -= OnAppWindowClosing;
             _window?.Close();
@@ -511,6 +665,8 @@ public sealed partial class App : Application
             await _singleInstance.DisposeAsync();
             _singleInstance = null;
         }
+        _exclusiveLock?.Dispose();
+        _exclusiveLock = null;
     }
 
     private void OnWindowClosedFallback(object sender, WindowEventArgs args)

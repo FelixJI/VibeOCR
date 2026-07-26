@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import threading
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 from PySide6.QtCore import QObject, QThread, Slot
 
@@ -14,9 +14,6 @@ from vibeocr.utils.export_jobs import (
     ExportSaveJob,
     export_batch_operation,
 )
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 
 def test_slow_job_keeps_qt_event_loop_responsive_and_callbacks_on_gui_thread(
@@ -55,18 +52,19 @@ def test_slow_job_keeps_qt_event_loop_responsive_and_callbacks_on_gui_thread(
 
 
 def test_batch_n_items_reserves_duplicate_names_and_reports_failures(
-    qapp, qtbot, monkeypatch, tmp_path
+    qapp, qtbot, tmp_path
 ):
     calls: list[Path] = []
 
-    def fake_export(_client, _result, output_path, _fmt):
-        calls.append(output_path)
-        if output_path.stem.endswith("_1"):
-            return False
-        output_path.write_text("ok", encoding="utf-8")
-        return True
+    class ExportClient:
+        def export_ocr_sync(self, _payload, *, output_path, **_kwargs):
+            path = Path(output_path)
+            calls.append(path)
+            if path.stem.endswith("_1"):
+                return {}
+            path.write_text("ok", encoding="utf-8")
+            return {"output_path": str(path)}
 
-    monkeypatch.setattr("vibeocr.client.export.export_result", fake_export)
     items = (
         ExportItem("same.png", {}, tmp_path, "txt"),
         ExportItem("same.jpg", {}, tmp_path, "txt"),
@@ -74,7 +72,7 @@ def test_batch_n_items_reserves_duplicate_names_and_reports_failures(
     )
     progress: list[tuple[int, int, str]] = []
     results: list[BatchExportReport] = []
-    job = ExportSaveJob(export_batch_operation(object(), items))
+    job = ExportSaveJob(export_batch_operation(ExportClient(), items))
     job.progress.connect(lambda *args: progress.append(args))
     job.completed.connect(results.append)
     job.start()

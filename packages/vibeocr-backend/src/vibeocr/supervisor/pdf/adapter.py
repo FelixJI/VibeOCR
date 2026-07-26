@@ -6,9 +6,8 @@ Plan §4 Phase 6 goals addressed by this seam:
   longer instantiates ``PdfBackendClient``.
 * Quick PDF session operations (open/render/mutate/save/text-layer/cancel) are
   proxied through the supervisor with bounded behaviour.
-* PDF OCR stays orchestrated in the GUI process (render → recognize_batch →
-  write); only the PDF child transport moves into the supervisor. The job
-  kind ``pdf_ocr`` is reserved for a future supervisor-side orchestrator.
+* PDF editing remains a bounded session API, while rendered pages enter the
+  same Supervisor recognition-job interface as every other OCR request.
 * Transactional final save (temp file + fsync + atomic replace) so a wedged
   save never publishes a half-finished file.
 

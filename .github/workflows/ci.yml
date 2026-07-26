@@ -23,7 +23,7 @@ jobs:
       - uses: actions/setup-dotnet@v5
         with: { dotnet-version: "10.0.302" }
       - run: pip install pytest==9.1.1 jsonschema==4.25.1
-      - run: python -m pytest tests/contracts tests/architecture/test_protocol_method_consistency.py -q
+      - run: python -m pytest tests/contracts -q
       - run: dotnet test tests/dotnet/VibeOCR.Contracts.Tests/VibeOCR.Contracts.Tests.csproj -c Release
 
   backend:
@@ -35,7 +35,7 @@ jobs:
       - uses: actions/setup-python@v6
         with: { python-version: "3.13" }
       - run: pip install --require-hashes -r requirements/build-shell.lock
-      - run: python -m pytest tests/architecture tests/worker_host tests/application tests/services tests/supervisor tests/test_dependency_bootstrap.py -q
+      - run: python -m pytest tests/architecture tests/contracts/v2 tests/application tests/services tests/supervisor tests/test_dependency_bootstrap.py -q
       - name: Run remaining Python unit tests
         shell: pwsh
         run: |
@@ -65,10 +65,10 @@ jobs:
           if ($workspaceWheels.Count -ne 5) { throw 'expected exactly five workspace wheels' }
           $wheelPaths = @($workspaceWheels | ForEach-Object { $_.FullName })
           .wheel-smoke\Scripts\python -m pip install @wheelPaths
-          .wheel-smoke\Scripts\python -c "import vibeocr, vibeocr.main, vibeocr.worker_host.main, vibeocr.dependency_bootstrap; print(vibeocr.__version__)"
+          .wheel-smoke\Scripts\python -c "import vibeocr, vibeocr.main, vibeocr.supervisor.main, vibeocr.protocol.v2, vibeocr.dependency_bootstrap; print(vibeocr.__version__)"
           .wheel-smoke\Scripts\python -c "import sys; from pathlib import Path; from vibeocr import env_manager; root=env_manager.get_project_root(); assert root == Path(sys.prefix).resolve(); assert env_manager.get_embedded_python_executable(root) == Path(sys.executable).resolve()"
           .wheel-smoke\Scripts\vibeocr-install-backend --help
-          .wheel-smoke\Scripts\vibeocr-worker --self-test
+          if (-not (Test-Path .wheel-smoke\Scripts\vibeocr-supervisor.exe)) { throw 'vibeocr-supervisor console entry point is missing' }
 
   pyside:
     runs-on: windows-latest
@@ -133,5 +133,4 @@ jobs:
             --ignore=tests/release_layout/test_winui_layout.py `
             --ignore=tests/test_soak_winui.py `
             --ignore=tests/test_upgrade_deps.py `
-            --ignore=tests/architecture/test_protocol_method_consistency.py `
             tests/ -q

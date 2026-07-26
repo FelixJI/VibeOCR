@@ -27,6 +27,7 @@ from .client import SupervisorClient
 from .errors import InferenceClientError, JobNotFound, QuotaExceeded, Unauthorized
 from .job_handle import JobHandle
 from .process import ReadyEnvelope, SupervisorLaunchError, SupervisorProcess
+from .sync_client import SyncSupervisorClient
 
 __all__ = [
     "InferenceClientError",
@@ -37,5 +38,6 @@ __all__ = [
     "SupervisorClient",
     "SupervisorLaunchError",
     "SupervisorProcess",
+    "SyncSupervisorClient",
     "Unauthorized",
 ]

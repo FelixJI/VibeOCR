@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from vibeocr.protocol.v2 import CancelMode, ResidencyStatus
+from vibeocr.protocol.v2 import CancelMode, ResidencyStatus, SettingsSnapshot
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -86,6 +86,9 @@ class CompositeExecutor:
         # same configured TTL in practice); entries are unioned.
         default_ttl = 300
         entries: list[Any] = []
+        pipelines: dict[str, Any] = {}
+        vram_total: int | None = None
+        vram_used: int | None = None
         for child in self._children:
             try:
                 status = child.executor.residency_status()
@@ -97,8 +100,22 @@ class CompositeExecutor:
                 pass
             child_entries = getattr(status, "entries", ()) or ()
             entries.extend(child_entries)
+            for spec in getattr(status, "pipelines", ()) or ():
+                pipelines[spec.name] = spec
+            child_total = getattr(status, "vram_total_mb", None)
+            child_used = getattr(status, "vram_used_mb", None)
+            if child_total is not None:
+                vram_total = max(vram_total or 0, int(child_total))
+            if child_used is not None:
+                vram_used = max(vram_used or 0, int(child_used))
         try:
-            return ResidencyStatus(default_ttl_seconds=default_ttl, entries=tuple(entries))
+            return ResidencyStatus(
+                default_ttl_seconds=default_ttl,
+                entries=tuple(entries),
+                pipelines=tuple(pipelines.values()),
+                vram_total_mb=vram_total,
+                vram_used_mb=vram_used,
+            )
         except TypeError:
             return ResidencyStatus()
 
@@ -109,6 +126,24 @@ class CompositeExecutor:
             except Exception:  # pragma: no cover - defensive
                 pass
         return self.residency_status()
+
+    def preload(self, pipelines: tuple[str, ...]) -> ResidencyStatus:
+        for child in self._children:
+            child.executor.preload(pipelines)
+        return self.residency_status()
+
+    def configure_settings(self, snapshot: SettingsSnapshot) -> ResidencyStatus:
+        for child in self._children:
+            child.executor.configure_settings(snapshot)
+        return self.residency_status()
+
+    def close(self) -> None:
+        for child in self._children:
+            try:
+                child.executor.close()
+            except Exception:  # pragma: no cover - defensive
+                pass
+        self._dispatch.clear()
 
 
 __all__ = ["CompositeExecutor"]

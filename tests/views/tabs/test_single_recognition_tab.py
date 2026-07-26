@@ -22,16 +22,9 @@ class _FakeBackend:
 
 
 @pytest.fixture(autouse=True)
-def _never_start_real_worker(monkeypatch):
-    """Delayed Qt timers must still resolve to a deterministic fake session."""
-    backend = _FakeBackend()
-    monkeypatch.setattr(
-        "vibeocr.client.session.get_backend_client", lambda: backend
-    )
-    monkeypatch.setattr(
-        "vibeocr.client.session.restart_backend_client", lambda: backend
-    )
-    return backend
+def _never_start_real_worker():
+    """Tests inject their sync seam explicitly; no legacy worker exists."""
+    return _FakeBackend()
 
 
 class TestSingleRecognitionTab:

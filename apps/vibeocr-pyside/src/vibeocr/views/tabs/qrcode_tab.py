@@ -746,11 +746,28 @@ class QrcodeTab(QWidget):
 
     def _call_backend_generate(self, text: str, options: dict) -> bytes:
         """Generate QR via v2 supervisor."""
+        if self._backend is not None:
+            generate = getattr(self._backend, "generate_qrcode_sync", None)
+            if callable(generate):
+                return generate(text, options=options)
         return self._generate_via_supervisor(text, options)
 
     def _call_backend_generate_svg(self, text: str, options: dict) -> str:
-        """SVG generation not supported on v2; raise informative error."""
-        raise NotImplementedError("SVG QR generation requires legacy backend; use PNG via supervisor.")
+        """Generate SVG via an injected client or the v2 supervisor."""
+        if self._backend is not None:
+            generate = getattr(self._backend, "generate_qrcode_svg_sync", None)
+            if callable(generate):
+                return generate(text, options=options)
+        import base64
+
+        from vibeocr.pyside.supervisor_adapter import get_supervisor_adapter
+
+        client = get_supervisor_adapter().inference_sync_client
+        if client is None:
+            raise RuntimeError("supervisor utility client is unavailable")
+        return base64.b64decode(
+            client.generate_qrcode(text, fmt="svg", options=options)
+        ).decode("utf-8")
 
     def _call_backend_decode(self, image_bytes: bytes):
         """Decode QR via v2 supervisor."""
@@ -758,64 +775,28 @@ class QrcodeTab(QWidget):
 
     def _generate_via_supervisor(self, text: str, options: dict) -> bytes:
         """Generate QR via supervisor /v2/qrcode/generate (sync, in QThread)."""
-        import asyncio
         import base64
-
-        import httpx
 
         from vibeocr.pyside.supervisor_adapter import get_supervisor_adapter
 
         adapter = get_supervisor_adapter()
-        client = adapter._ensure_client()  # type: ignore[attr-defined]
-        base_url = getattr(client, "_base_url", "http://127.0.0.1")
-        token = getattr(client, "_token", "")
+        client = adapter.inference_sync_client
+        if client is None:
+            raise RuntimeError("supervisor utility client is unavailable")
         fmt = "qrcode" if options.get("format", "qr") == "qr" else options.get("format", "qrcode")
-
-        async def _gen() -> bytes:
-            async with httpx.AsyncClient(
-                base_url=base_url,
-                headers={"Authorization": f"Bearer {token}"},
-            ) as http:
-                resp = await http.post("/v2/qrcode/generate", json={"data": text, "format": fmt})
-                resp.raise_for_status()
-                b64 = resp.json().get("image", "")
-                return base64.b64decode(b64)
-
-        loop = asyncio.new_event_loop()
-        try:
-            return loop.run_until_complete(_gen())
-        finally:
-            loop.close()
+        return base64.b64decode(
+            client.generate_qrcode(text, fmt=fmt, options=options)
+        )
 
     def _decode_via_supervisor(self, image_bytes: bytes):
         """Decode QR via supervisor /v2/qrcode/decode (sync, in QThread)."""
-        import asyncio
-        import base64
-
-        import httpx
-
         from vibeocr.pyside.supervisor_adapter import get_supervisor_adapter
 
         adapter = get_supervisor_adapter()
-        client = adapter._ensure_client()  # type: ignore[attr-defined]
-        base_url = getattr(client, "_base_url", "http://127.0.0.1")
-        token = getattr(client, "_token", "")
-
-        async def _dec() -> list:
-            async with httpx.AsyncClient(
-                base_url=base_url,
-                headers={"Authorization": f"Bearer {token}"},
-            ) as http:
-                b64 = base64.b64encode(image_bytes).decode("ascii")
-                resp = await http.post("/v2/qrcode/decode", json={"image": b64})
-                resp.raise_for_status()
-                return resp.json().get("codes", [])
-
-        loop = asyncio.new_event_loop()
-        try:
-            return loop.run_until_complete(_dec())
-        finally:
-            loop.close()
+        client = adapter.inference_sync_client
+        if client is None:
+            raise RuntimeError("supervisor utility client is unavailable")
+        return client.decode_qrcode(image_bytes)
 
     @staticmethod
     def _pil_to_png_bytes(img: Image.Image) -> bytes:
@@ -965,6 +946,7 @@ class QrcodeTab(QWidget):
             operation = save_svg_operation(
                 self._backend, text, svg_options, output_path
             )
+        else:
             fmt = "JPEG" if path.lower().endswith((".jpg", ".jpeg")) else "PNG"
             # PIL.copy() 在 GUI 线程完成 detached 快照；编码与写盘进入 worker。
             operation = save_bitmap_operation(

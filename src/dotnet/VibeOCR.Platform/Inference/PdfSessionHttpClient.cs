@@ -7,11 +7,9 @@ namespace VibeOCR.Platform.Inference;
 public sealed class PdfSessionHttpClient : IPdfSessionClient
 {
     private readonly HttpClient _http;
-    private readonly bool _ownsHttp;
 
     public PdfSessionHttpClient(Uri baseUrl, string sessionToken, HttpMessageHandler? handler = null)
     {
-        _ownsHttp = handler is not null;
         _http = handler is null ? new HttpClient() : new HttpClient(handler);
         _http.BaseAddress = baseUrl;
         _http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", sessionToken);
@@ -89,7 +87,7 @@ public sealed class PdfSessionHttpClient : IPdfSessionClient
 
     public ValueTask DisposeAsync()
     {
-        if (_ownsHttp) _http.Dispose();
+        _http.Dispose();
         return ValueTask.CompletedTask;
     }
 }

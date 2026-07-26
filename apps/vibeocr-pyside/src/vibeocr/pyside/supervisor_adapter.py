@@ -29,22 +29,27 @@ from __future__ import annotations
 import asyncio
 import logging
 from typing import TYPE_CHECKING, Any
+from uuid import uuid4
 
 from PySide6.QtCore import QObject, Signal
 
 from vibeocr.protocol.v2 import (
     TERMINAL_JOB_STATES,
+    JobKind,
     JobPriority,
     JobState,
+    PipelineSelection,
     SettingsSnapshot,
     StageEvent,
+    SubmitItem,
+    SubmitRequest,
 )
 from vibeocr.supervisor.errors import InferenceClientError
 from vibeocr.supervisor.job_handle import JobHandle
 from vibeocr.utils.qt_async import get_async_runner
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable
+    from collections.abc import Callable, Coroutine, Iterable
 
     from vibeocr.supervisor.client import SupervisorClient
 
@@ -71,12 +76,15 @@ class SupervisorClientAdapter(QObject):
     residency_error = Signal(str)
     settings_updated = Signal(object)  # SettingsSnapshot
     settings_error = Signal(str)
+    preload_completed = Signal(object)  # ResidencyStatus
+    preload_error = Signal(str)
 
     def __init__(
         self,
         *,
         client_factory: Callable[[], SupervisorClient | _AwaitableClient],
         pdf_sync_client_factory: Callable[[], Any] | None = None,
+        inference_sync_client_factory: Callable[[], Any] | None = None,
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
@@ -86,11 +94,18 @@ class SupervisorClientAdapter(QObject):
         # unavailable and PdfSessionManager will surface that as an error.
         self._pdf_sync_client_factory = pdf_sync_client_factory
         self._pdf_sync_client: Any = None
+        self._inference_sync_client_factory = inference_sync_client_factory
+        self._inference_sync_client: Any = None
         self._client: SupervisorClient | None = None
         self._handles: dict[str, JobHandle] = {}
         self._generation = 0
         self._closing = False
+        self._runtime_request_timeout_seconds = 10.0
+        self._preload_timeout_seconds = 600.0
         self._started = False
+        self._tasks: set[asyncio.Task[Any]] = set()
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._shutdown_task: asyncio.Task[Any] | None = None
 
     @property
     def pdf_sync_client(self) -> Any:
@@ -98,11 +113,21 @@ class SupervisorClientAdapter(QObject):
 
         PdfSessionManager reads this once at construction and treats it as the
         PDF backend transport. The factory is set by the production startup
-        (WorkerHostStartTask) which knows the supervisor base_url + token.
+        (SupervisorStartTask) which knows the supervisor base_url + token.
         """
         if self._pdf_sync_client is None and self._pdf_sync_client_factory is not None:
             self._pdf_sync_client = self._pdf_sync_client_factory()
         return self._pdf_sync_client
+
+    @property
+    def inference_sync_client(self) -> Any:
+        """Generic blocking job client for non-async worker threads."""
+        if (
+            self._inference_sync_client is None
+            and self._inference_sync_client_factory is not None
+        ):
+            self._inference_sync_client = self._inference_sync_client_factory()
+        return self._inference_sync_client
 
     # ------------------------------------------------------------------
     # Client lifecycle
@@ -148,31 +173,130 @@ class SupervisorClientAdapter(QObject):
             await client.__aenter__()
         return client
 
+    def _schedule(self, coro: Coroutine[Any, Any, Any]) -> asyncio.Task[Any] | None:
+        """Schedule and retain adapter-owned work until it reaches terminal state."""
+        if self._closing:
+            coro.close()
+            return None
+        task = get_async_runner().run(coro)
+        self._loop = task.get_loop()
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+        return task
+
     def shutdown(self) -> None:
         """Cancel in-flight jobs and close the client. Idempotent."""
         if self._closing:
             return
         self._closing = True
+        owned_tasks = tuple(self._tasks)
+
+        # Do not let ``get_async_runner`` manufacture a standard event loop
+        # during late teardown.  Such a loop has no owner to advance it and
+        # would strand both the wrapper and ``_drain`` coroutines.  Production
+        # calls arrive on a running qasync loop; tests may install a qasync
+        # loop and advance it explicitly.
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = self._loop
+        can_schedule = (
+            loop is not None
+            and not loop.is_closed()
+            and (
+                loop.is_running()
+                or loop.__class__.__module__.split(".", maxsplit=1)[0] == "qasync"
+            )
+        )
+        if not can_schedule:
+            for task in owned_tasks:
+                if not task.done():
+                    task.cancel()
+            self._tasks.clear()
+            self._handles.clear()
+            self._client = None
+            for sync_client in (
+                self._pdf_sync_client,
+                self._inference_sync_client,
+            ):
+                try:
+                    if sync_client is not None:
+                        sync_client.close()
+                except Exception:  # pragma: no cover - best effort
+                    pass
+            self._pdf_sync_client = None
+            self._inference_sync_client = None
+            self._loop = None
+            return
+
         runner = get_async_runner()
 
         async def _drain() -> None:
-            for _job_id, handle in list(self._handles.items()):
-                try:
-                    await handle.cancel()
-                except Exception:  # pragma: no cover - best effort
-                    pass
-            if self._client is not None and hasattr(self._client, "__aexit__"):
-                try:
-                    await self._client.__aexit__(None, None, None)
-                except Exception:  # pragma: no cover - best effort
-                    pass
+            try:
+                for _job_id, handle in list(self._handles.items()):
+                    try:
+                        await handle.cancel()
+                    except Exception:  # pragma: no cover - best effort
+                        pass
+                for task in owned_tasks:
+                    if not task.done():
+                        task.cancel()
+                if owned_tasks:
+                    await asyncio.gather(*owned_tasks, return_exceptions=True)
+                if self._client is not None and hasattr(self._client, "__aexit__"):
+                    try:
+                        await self._client.__aexit__(None, None, None)
+                    except Exception:  # pragma: no cover - best effort
+                        pass
+                for sync_client in (
+                    self._pdf_sync_client,
+                    self._inference_sync_client,
+                ):
+                    if sync_client is not None:
+                        try:
+                            sync_client.close()
+                        except Exception:  # pragma: no cover - best effort
+                            pass
+            finally:
+                self._tasks.clear()
+                self._handles.clear()
+                self._client = None
+                self._pdf_sync_client = None
+                self._inference_sync_client = None
+                self._loop = None
 
         try:
-            runner.run(_drain())
+            self._shutdown_task = runner.run(_drain())
         except RuntimeError:
-            # No running loop (e.g. test teardown) — synchronous best effort.
+            # No usable loop (e.g. late interpreter teardown).
+            for task in owned_tasks:
+                if not task.done():
+                    task.cancel()
+            self._tasks.clear()
             self._handles.clear()
             self._client = None
+            for sync_client in (
+                self._pdf_sync_client,
+                self._inference_sync_client,
+            ):
+                try:
+                    if sync_client is not None:
+                        sync_client.close()
+                except Exception:  # pragma: no cover - best effort
+                    pass
+            self._pdf_sync_client = None
+            self._inference_sync_client = None
+            self._loop = None
+
+    @property
+    def shutdown_drained(self) -> bool:
+        """Whether asynchronous shutdown has reached its terminal state."""
+        task = self._shutdown_task
+        return (
+            self._closing
+            and (task is None or task.done())
+            and not any(not owned.done() for owned in self._tasks)
+        )
 
     # ------------------------------------------------------------------
     # Recognition (single = one-element batch; batch = one logical job)
@@ -183,6 +307,7 @@ class SupervisorClientAdapter(QObject):
         uploads: list[tuple[str, str | None, bytes]],
         *,
         priority: JobPriority = JobPriority.INTERACTIVE,
+        pipeline: PipelineSelection | None = None,
     ) -> int:
         """Submit a recognition job (one or many inputs).
 
@@ -192,12 +317,16 @@ class SupervisorClientAdapter(QObject):
         """
         self._generation += 1
         generation = self._generation
-        runner = get_async_runner()
 
         async def _run() -> None:
             try:
                 client = await self._acquire_client()
-                ref = await client.submit_recognition(uploads, priority=priority)
+                ref = await self._submit_job(
+                    client,
+                    uploads,
+                    priority=priority,
+                    pipeline=pipeline,
+                )
                 handle = JobHandle(client=client, ref=ref)
                 self._handles[ref.job_id] = handle
                 if generation == self._generation:
@@ -211,8 +340,64 @@ class SupervisorClientAdapter(QObject):
                 if generation == self._generation:
                     self.recognition_error.emit("", str(exc))
 
-        runner.run(_run())
+        self._schedule(_run())
         return generation
+
+    async def recognize(
+        self,
+        uploads: list[tuple[str, str | None, bytes]],
+        *,
+        priority: JobPriority = JobPriority.INTERACTIVE,
+        pipeline: PipelineSelection | None = None,
+    ) -> list:
+        """Submit and await a logical job without exposing HTTP to UI code."""
+        client = await self._acquire_client()
+        ref = await self._submit_job(
+            client, uploads, priority=priority, pipeline=pipeline
+        )
+        handle = JobHandle(client=client, ref=ref)
+        self._handles[ref.job_id] = handle
+        await handle.wait_for_terminal()
+        return await handle.result()
+
+    @staticmethod
+    async def _submit_job(
+        client,
+        uploads: list[tuple[str, str | None, bytes]],
+        *,
+        priority: JobPriority,
+        pipeline: PipelineSelection | None,
+    ):
+        selection = pipeline or PipelineSelection("OCR")
+        request_id = str(uuid4())
+        items = tuple(
+            SubmitItem(
+                client_item_key=f"{request_id}:{index}",
+                ordinal=index,
+                display_name=name,
+                source={
+                    "type": "upload.v1",
+                    "attachment": f"input-{index}",
+                },
+            )
+            for index, (name, _content_type, _data) in enumerate(uploads)
+        )
+        request = SubmitRequest(
+            request_id=request_id,
+            kind=(
+                JobKind.MINERU_PARSE
+                if selection.pipeline_id == "MinerU"
+                else JobKind.RECOGNITION
+            ),
+            priority=priority,
+            pipeline=selection,
+            items=items,
+        )
+        attachments = {
+            f"input-{index}": (content_type, data)
+            for index, (_name, content_type, data) in enumerate(uploads)
+        }
+        return await client.submit(request, attachments)
 
     async def _pump_until_terminal(self, handle: JobHandle, generation: int) -> None:
         """Long-poll events until terminal, emitting progress/stage/result."""
@@ -220,7 +405,8 @@ class SupervisorClientAdapter(QObject):
         last_seq = 0
         while True:
             try:
-                snap = await handle.status()
+                update = await handle.observe(after_sequence=last_seq)
+                snap = update.snapshot
             except InferenceClientError as exc:
                 if generation == self._generation:
                     self.recognition_error.emit(job_id, exc.message)
@@ -229,14 +415,11 @@ class SupervisorClientAdapter(QObject):
                 self.recognition_progress.emit(job_id, snap.progress_current, snap.progress_total)
                 if snap.stage:
                     self.recognition_stage.emit(job_id, snap.stage)
-            try:
-                events: Iterable[StageEvent] = await handle.events(after_sequence=last_seq)
-            except InferenceClientError:
-                events = []
+            events: Iterable[StageEvent] = update.events
             for event in events:
-                last_seq = max(last_seq, event.sequence)
                 if generation == self._generation and event.stage:
                     self.recognition_stage.emit(job_id, event.stage)
+            last_seq = update.through_sequence
             if snap.state in TERMINAL_JOB_STATES:
                 break
             # Yield to the event loop between long-poll cycles so other
@@ -265,8 +448,6 @@ class SupervisorClientAdapter(QObject):
     # ------------------------------------------------------------------
 
     def cancel(self, job_id: str) -> None:
-        runner = get_async_runner()
-
         async def _cancel() -> None:
             handle = self._handles.get(job_id)
             if handle is None:
@@ -276,52 +457,96 @@ class SupervisorClientAdapter(QObject):
             except InferenceClientError:
                 pass
 
-        runner.run(_cancel())
+        self._schedule(_cancel())
 
     # ------------------------------------------------------------------
     # Runtime / settings
     # ------------------------------------------------------------------
 
     def refresh_residency(self) -> None:
-        runner = get_async_runner()
-
         async def _refresh() -> None:
             try:
-                client = await self._acquire_client()
-                status = await client.residency()
+                async def _request() -> Any:
+                    client = await self._acquire_client()
+                    return await client.residency()
+
+                status = await asyncio.wait_for(
+                    _request(), timeout=self._runtime_request_timeout_seconds
+                )
                 self.residency_status.emit(status)
+            except TimeoutError:
+                self.residency_error.emit(
+                    f"读取驻留状态超时（{self._runtime_request_timeout_seconds:g} 秒）"
+                )
             except InferenceClientError as exc:
                 self.residency_error.emit(exc.message)
             except Exception as exc:  # pragma: no cover - defensive
                 self.residency_error.emit(str(exc))
 
-        runner.run(_refresh())
+        self._schedule(_refresh())
 
     def release_idle(self, pipeline: str | None = None) -> None:
-        runner = get_async_runner()
-
         async def _release() -> None:
             try:
-                client = await self._acquire_client()
-                status = await client.release_idle(pipeline)
+                async def _request() -> Any:
+                    client = await self._acquire_client()
+                    return await client.release_idle(pipeline)
+
+                status = await asyncio.wait_for(
+                    _request(), timeout=self._runtime_request_timeout_seconds
+                )
                 self.residency_status.emit(status)
+            except TimeoutError:
+                self.residency_error.emit("释放闲置模型超时")
             except InferenceClientError as exc:
                 self.residency_error.emit(exc.message)
+            except Exception as exc:  # pragma: no cover - defensive
+                self.residency_error.emit(str(exc))
 
-        runner.run(_release())
+        self._schedule(_release())
+
+    def preload(self, pipelines: tuple[str, ...]) -> None:
+        async def _preload() -> None:
+            try:
+                async def _request() -> Any:
+                    client = await self._acquire_client()
+                    return await client.preload(pipelines)
+
+                status = await asyncio.wait_for(
+                    _request(), timeout=self._preload_timeout_seconds
+                )
+                self.preload_completed.emit(status)
+            except TimeoutError:
+                self.preload_error.emit("模型预加载超时")
+            except InferenceClientError as exc:
+                reason = exc.detail.get("reason")
+                self.preload_error.emit(
+                    reason if isinstance(reason, str) and reason else exc.message
+                )
+            except Exception as exc:  # pragma: no cover - defensive
+                self.preload_error.emit(str(exc))
+
+        self._schedule(_preload())
 
     def update_settings(self, snapshot: SettingsSnapshot) -> None:
-        runner = get_async_runner()
-
         async def _update() -> None:
             try:
-                client = await self._acquire_client()
-                updated = await client.put_settings(snapshot)
+                async def _request() -> Any:
+                    client = await self._acquire_client()
+                    return await client.put_settings(snapshot)
+
+                updated = await asyncio.wait_for(
+                    _request(), timeout=self._runtime_request_timeout_seconds
+                )
                 self.settings_updated.emit(updated)
+            except TimeoutError:
+                self.settings_error.emit("更新驻留策略超时")
             except InferenceClientError as exc:
                 self.settings_error.emit(exc.message)
+            except Exception as exc:  # pragma: no cover - defensive
+                self.settings_error.emit(str(exc))
 
-        runner.run(_update())
+        self._schedule(_update())
 
     # ------------------------------------------------------------------
     # Export / QR / PDF session (v2 surface extensions for PySide tabs)
@@ -346,81 +571,52 @@ class SupervisorClientAdapter(QObject):
         overwrite: bool = False,
     ) -> None:
         """Export OCR result to file via the supervisor /v2/export endpoint."""
-        runner = get_async_runner()
-
         async def _export() -> None:
             try:
                 client = await self._acquire_client()
-                resp = await client._client.post(  # type: ignore[union-attr]
-                    "/v2/export",
-                    json={
-                        "raw_text": raw_text,
-                        "markdown_text": markdown_text,
-                        "html_text": html_text,
-                        "output_path": output_path,
-                        "format": fmt,
-                        "overwrite": overwrite,
-                    },
+                body = await client.export_ocr(
+                    raw_text=raw_text,
+                    markdown_text=markdown_text,
+                    html_text=html_text,
+                    output_path=output_path,
+                    fmt=fmt,
+                    overwrite=overwrite,
                 )
-                if resp.status_code >= 400:
-                    self.export_error.emit(f"export failed: HTTP {resp.status_code}")
-                    return
-                body = resp.json()
                 self.export_done.emit(body.get("output_path", output_path))
             except InferenceClientError as exc:
                 self.export_error.emit(exc.message)
             except Exception as exc:  # pragma: no cover
                 self.export_error.emit(str(exc))
 
-        runner.run(_export())
+        self._schedule(_export())
 
     def decode_qrcode(self, image_bytes: bytes) -> None:
         """Decode QR/barcode via the supervisor /v2/qrcode/decode endpoint."""
-        import base64
-        runner = get_async_runner()
-
         async def _decode() -> None:
             try:
                 client = await self._acquire_client()
-                b64 = base64.b64encode(image_bytes).decode("ascii")
-                resp = await client._client.post(  # type: ignore[union-attr]
-                    "/v2/qrcode/decode",
-                    json={"image": b64},
-                )
-                if resp.status_code >= 400:
-                    self.qr_error.emit(f"decode failed: HTTP {resp.status_code}")
-                    return
-                body = resp.json()
-                self.qr_decoded.emit(body.get("codes", []))
+                self.qr_decoded.emit(await client.decode_qrcode(image_bytes))
             except InferenceClientError as exc:
                 self.qr_error.emit(exc.message)
             except Exception as exc:  # pragma: no cover
                 self.qr_error.emit(str(exc))
 
-        runner.run(_decode())
+        self._schedule(_decode())
 
     def generate_qrcode(self, data: str, fmt: str = "qrcode") -> None:
         """Generate QR/barcode via the supervisor /v2/qrcode/generate endpoint."""
-        runner = get_async_runner()
-
         async def _generate() -> None:
             try:
                 client = await self._acquire_client()
-                resp = await client._client.post(  # type: ignore[union-attr]
-                    "/v2/qrcode/generate",
-                    json={"data": data, "format": fmt},
+                self.qr_generated.emit(
+                    await client.generate_qrcode(data, fmt=fmt)
                 )
-                if resp.status_code >= 400:
-                    self.qr_error.emit(f"generate failed: HTTP {resp.status_code}")
-                    return
-                body = resp.json()
-                self.qr_generated.emit(body.get("image", ""))
             except InferenceClientError as exc:
                 self.qr_error.emit(exc.message)
             except Exception as exc:  # pragma: no cover
                 self.qr_error.emit(str(exc))
 
-        runner.run(_generate())
+        self._schedule(_generate())
 
 
 # ---------------------------------------------------------------------------

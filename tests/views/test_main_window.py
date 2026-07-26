@@ -22,7 +22,7 @@ def main_window(qapp, qtbot, tmp_path, monkeypatch):
     ConfigManager.instance(tmp_path)
     # 主窗口单元测试不应建立真实 WorkerHost；后台启动由 manager 专项测试覆盖。
     monkeypatch.setattr(
-        "vibeocr.managers.subprocess_manager.SubprocessManager.start_worker_host",
+        "vibeocr.managers.subprocess_manager.SubprocessManager.start_supervisor",
         lambda self: None,
     )
     # GPU 探测线程由 BackendOptionsWidget 专项测试覆盖；MainWindow 单元测试
@@ -146,7 +146,7 @@ class TestMainWindow:
         )
         monkeypatch.setattr(window, "_save_layout", lambda: calls.append("layout:save"))
         monkeypatch.setattr(
-            "vibeocr.client.session.shutdown_backend_client",
+            "vibeocr.client.shutdown_backend_client",
             lambda: calls.append("backend:shutdown"),
         )
         monkeypatch.setattr(
@@ -638,11 +638,17 @@ class TestFreshOverlayPerCapture:
         old_overlay = main_window._overlay
         drained = False
         deleted: list[bool] = []
+        messages: list[str] = []
         monkeypatch.setattr(ScreenCaptureOverlay, "start_capture", lambda self: None)
         monkeypatch.setattr(old_overlay, "finish_capture", lambda: None)
         monkeypatch.setattr(old_overlay, "request_save_shutdown", lambda: None)
         monkeypatch.setattr(old_overlay, "drain_saves", lambda _timeout: drained)
         monkeypatch.setattr(old_overlay, "deleteLater", lambda: deleted.append(True))
+        monkeypatch.setattr(
+            main_window._statusbar,
+            "showMessage",
+            lambda message, *_args: messages.append(message),
+        )
 
         main_window._start_fresh_overlay_capture()
 
@@ -654,7 +660,7 @@ class TestFreshOverlayPerCapture:
         qtbot.waitUntil(lambda: old_overlay not in main_window._retired_overlays)
 
         assert deleted == [True]
-        assert "C:/saved.png" in main_window._statusbar.currentMessage()
+        assert any("C:/saved.png" in message for message in messages)
 
     def test_late_overlay_save_during_shutdown_only_releases_retired_overlay(
         self, main_window, qtbot, monkeypatch

@@ -18,6 +18,7 @@ import socket
 import subprocess
 import sys
 import threading
+import time
 from typing import TYPE_CHECKING
 
 import httpx
@@ -50,6 +51,10 @@ from vibeocr.ipc.schemas import (
     SaveRequest,
     SaveResponse,
     UpdateBlockTextRequest,
+)
+from vibeocr.utils.http_log import (
+    guess_response_size,
+    log_http_response,
 )
 from vibeocr.utils.job_object import JobObjectGuard
 from vibeocr.utils.subprocess_log import SubprocessLogForwarder
@@ -224,13 +229,25 @@ class PdfBackendClient:
                 if tail:
                     msg += f"\n子进程输出末尾:\n{tail}"
                 raise PdfBackendError(msg)
+            started = time.perf_counter()
             try:
                 resp = httpx.get(f"{self._base_url}/health", timeout=2.0)
+                self._log_http_response(
+                    "GET",
+                    "/health",
+                    resp,
+                    elapsed_ms=(time.perf_counter() - started) * 1000,
+                )
                 if resp.status_code == 200:
                     logger.info("[pdf-backend] 就绪")
                     return
             except Exception as e:
                 last_err = e
+                logger.warning(
+                    "[pdf-backend] health check failed after %.1f ms: %s",
+                    (time.perf_counter() - started) * 1000,
+                    e,
+                )
             time.sleep(0.3)
         raise PdfBackendError(
             f"PDF 后端 {self._base_url} 启动超时({last_err})"
@@ -306,14 +323,77 @@ class PdfBackendClient:
         self._http_clients[tid] = client
         return client
 
+    def _log_http_response(
+        self,
+        method: str,
+        path: str,
+        resp: httpx.Response,
+        *,
+        request_payload: object | None = None,
+        elapsed_ms: float | None = None,
+        response_bytes: int | None = None,
+        stream: bool = False,
+    ) -> None:
+        log_http_response(
+            logger=logger,
+            method=method,
+            url=f"{self._base_url}{path}",
+            status_code=resp.status_code,
+            reason=resp.reason_phrase,
+            elapsed_ms=elapsed_ms,
+            request_bytes=self._estimate_request_bytes(request_payload),
+            response_bytes=(
+                response_bytes
+                if response_bytes is not None
+                else self._estimate_response_bytes(resp)
+            ),
+            stream=stream,
+        )
+
+    @staticmethod
+    def _estimate_request_bytes(payload: object | None) -> int | None:
+        if payload is None:
+            return None
+        if isinstance(payload, (bytes, bytearray)):
+            return len(payload)
+        if isinstance(payload, str):
+            return len(payload.encode("utf-8"))
+        try:
+            return len(str(payload).encode("utf-8"))
+        except Exception:
+            return None
+
+    @staticmethod
+    def _estimate_response_bytes(
+        resp: httpx.Response,
+        *,
+        include_content: bool = True,
+    ) -> int | None:
+        headers_obj = getattr(resp, "headers", None)
+        try:
+            headers = dict(headers_obj) if headers_obj is not None else None
+        except Exception:
+            headers = None
+        content_obj = getattr(resp, "content", None) if include_content else None
+        content = content_obj if isinstance(content_obj, (bytes, str)) else None
+        return guess_response_size(headers, content)
+
     # ---- HTTP 调用辅助 ---------------------------------------------------
 
     def _post(self, path: str, payload: object | None = None, *, timeout=None) -> httpx.Response:
         client = self._ensure_started()
+        started = time.perf_counter()
         try:
             resp = client.post(path, json=payload, timeout=timeout) if payload is not None else client.post(path, timeout=timeout)
         except httpx.HTTPError as e:
             raise PdfBackendError(f"后端调用失败 {path}: {e}") from e
+        self._log_http_response(
+            "POST",
+            path,
+            resp,
+            request_payload=payload,
+            elapsed_ms=(time.perf_counter() - started) * 1000.0,
+        )
         if resp.status_code >= 400:
             detail = resp.text
             try:
@@ -325,10 +405,17 @@ class PdfBackendClient:
 
     def _get(self, path: str, *, timeout=None) -> httpx.Response:
         client = self._ensure_started()
+        started = time.perf_counter()
         try:
             resp = client.get(path, timeout=timeout)
         except httpx.HTTPError as e:
             raise PdfBackendError(f"后端调用失败 {path}: {e}") from e
+        self._log_http_response(
+            "GET",
+            path,
+            resp,
+            elapsed_ms=(time.perf_counter() - started) * 1000.0,
+        )
         if resp.status_code >= 400:
             raise PdfBackendError(f"后端错误 {path} ({resp.status_code}): {resp.text}")
         return resp
@@ -361,19 +448,46 @@ class PdfBackendClient:
         末行 message="done" 表示完成。
         """
         client = self._ensure_started()
+        path = f"/session/{sid}/load"
+        started = time.perf_counter()
         try:
             with client.stream(
                 "POST",
-                f"/session/{sid}/load",
+                path,
                 timeout=_HTTP_LONG_TIMEOUT,
             ) as resp:
-                if resp.status_code >= 400:
-                    raise PdfBackendError(f"load 失败 ({resp.status_code})")
-                for line in resp.iter_lines():
-                    if not line:
-                        continue
-                    yield ProgressEvent.model_validate_json(line)
+                response_bytes = 0
+                try:
+                    if resp.status_code >= 400:
+                        raise PdfBackendError(f"load 失败 ({resp.status_code})")
+                    for line in resp.iter_lines():
+                        if not line:
+                            continue
+                        response_bytes += len(line.encode("utf-8")) + 1
+                        yield ProgressEvent.model_validate_json(line)
+                finally:
+                    self._log_http_response(
+                        "POST",
+                        path,
+                        resp,
+                        elapsed_ms=(time.perf_counter() - started) * 1000,
+                        response_bytes=(
+                            response_bytes
+                            or self._estimate_response_bytes(
+                                resp,
+                                include_content=False,
+                            )
+                            or 0
+                        ),
+                        stream=True,
+                    )
         except httpx.HTTPError as e:
+            logger.warning(
+                "[pdf-backend] POST %s stream failed after %.1f ms: %s",
+                path,
+                (time.perf_counter() - started) * 1000,
+                e,
+            )
             raise PdfBackendError(f"load 流式调用失败: {e}") from e
 
     def render_thumbnail(self, sid: str, page: int, size: int = 160) -> bytes:
@@ -533,20 +647,49 @@ class PdfBackendClient:
     def delete_text_layers_stream(self, sid: str, pages: list[int]) -> Iterator[ProgressEvent]:
         """逐页删除文字层,流式返回 ProgressEvent。"""
         client = self._ensure_started()
+        path = f"/session/{sid}/delete_text_layers"
+        payload = PageListRequest(pages=pages).model_dump()
+        started = time.perf_counter()
         try:
             with client.stream(
                 "POST",
-                f"/session/{sid}/delete_text_layers",
-                json=PageListRequest(pages=pages).model_dump(),
+                path,
+                json=payload,
                 timeout=_HTTP_LONG_TIMEOUT,
             ) as resp:
-                if resp.status_code >= 400:
-                    raise PdfBackendError(f"删除文字层失败 ({resp.status_code})")
-                for line in resp.iter_lines():
-                    if not line:
-                        continue
-                    yield ProgressEvent.model_validate_json(line)
+                response_bytes = 0
+                try:
+                    if resp.status_code >= 400:
+                        raise PdfBackendError(f"删除文字层失败 ({resp.status_code})")
+                    for line in resp.iter_lines():
+                        if not line:
+                            continue
+                        response_bytes += len(line.encode("utf-8")) + 1
+                        yield ProgressEvent.model_validate_json(line)
+                finally:
+                    self._log_http_response(
+                        "POST",
+                        path,
+                        resp,
+                        request_payload=payload,
+                        elapsed_ms=(time.perf_counter() - started) * 1000,
+                        response_bytes=(
+                            response_bytes
+                            or self._estimate_response_bytes(
+                                resp,
+                                include_content=False,
+                            )
+                            or 0
+                        ),
+                        stream=True,
+                    )
         except httpx.HTTPError as e:
+            logger.warning(
+                "[pdf-backend] POST %s stream failed after %.1f ms: %s",
+                path,
+                (time.perf_counter() - started) * 1000,
+                e,
+            )
             raise PdfBackendError(f"删除文字层流式调用失败: {e}") from e
 
     def save(

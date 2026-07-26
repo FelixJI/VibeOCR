@@ -28,6 +28,7 @@ def _golden() -> dict:
 
 JOB_SCHEMA = _load("job.schema.json")
 ERROR_SCHEMA = _load("errors.schema.json")
+JOB_INTERFACE_SCHEMA = _load("job-interface.schema.json")
 
 
 # ---------------------------------------------------------------------------
@@ -114,6 +115,48 @@ def test_error_schema_accepts_category_code_combo() -> None:
     payload = copy.deepcopy(_golden()["error_cancelled"])
     payload["category"] = "validation"  # valid enum value on its own
     jsonschema.validate(payload, ERROR_SCHEMA)
+
+
+def test_job_interface_schema_accepts_submit_manifest() -> None:
+    payload = {
+        "schema_version": 2,
+        "request_id": "req-1",
+        "kind": "recognition",
+        "priority": "background",
+        "pipeline": {
+            "pipeline_id": "OCR",
+            "options_version": 1,
+            "options": {"use_doc_orientation_classify": False},
+        },
+        "items": [
+            {
+                "client_item_key": "file-a",
+                "ordinal": 0,
+                "display_name": "a.png",
+                "source": {"type": "upload.v1", "attachment": "file-a"},
+            }
+        ],
+        "parameters": {},
+    }
+    jsonschema.validate(
+        payload, {"$ref": "#/$defs/SubmitRequest", **JOB_INTERFACE_SCHEMA}
+    )
+
+
+def test_job_interface_schema_rejects_empty_success_outcome() -> None:
+    payload = {
+        "item_id": "it-1",
+        "state": "succeeded",
+        "attempt": 0,
+        "payload_type": None,
+        "payload": None,
+        "error_code": None,
+        "error_detail": {},
+    }
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(
+            payload, {"$ref": "#/$defs/ItemOutcome", **JOB_INTERFACE_SCHEMA}
+        )
 
 
 # ---------------------------------------------------------------------------

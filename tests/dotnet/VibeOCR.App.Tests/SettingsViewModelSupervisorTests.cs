@@ -5,7 +5,6 @@
 // settings.snapshot path stays covered by SettingsViewModelTests; this file
 // is additive.
 using VibeOCR.App.Features.Settings;
-using VibeOCR.Contracts;
 using VibeOCR.Contracts.HttpV2;
 using VibeOCR.Platform.Inference;
 using Xunit;
@@ -108,7 +107,7 @@ public sealed class SettingsViewModelSupervisorTests
     // Fakes
     // ------------------------------------------------------------------
 
-    private sealed class FakeSettingsInferenceClient : IInferenceClient
+    private sealed class FakeSettingsInferenceClient : InferenceClientStub
     {
         private readonly int _defaultTtl;
         private readonly int? _vramTotal;
@@ -129,9 +128,7 @@ public sealed class SettingsViewModelSupervisorTests
 
         public List<ResidencyEntry> Entries { get; } = [];
         public List<PipelineSpec> Pipelines { get; } = [];
-        public Uri BaseUrl => new("http://127.0.0.1:1");
-
-        public Task<ResidencyStatus> GetResidencyAsync(CancellationToken cancellationToken)
+        public override Task<ResidencyStatus> GetResidencyAsync(CancellationToken cancellationToken)
         {
             if (_residencyThrows is not null)
             {
@@ -148,32 +145,8 @@ public sealed class SettingsViewModelSupervisorTests
             });
         }
 
-        public Task<SettingsSnapshot> GetSettingsAsync(CancellationToken cancellationToken)
+        public override Task<SettingsSnapshot> GetSettingsAsync(CancellationToken cancellationToken)
             => Task.FromResult(new SettingsSnapshot());
-
-        // Unused on the settings residency path.
-        public Task<JobRef> SubmitRecognitionAsync(
-            IReadOnlyList<RecognitionUpload> uploads, JobPriority priority, CancellationToken cancellationToken)
-            => throw new NotImplementedException();
-        public Task<JobSnapshot> GetJobAsync(string jobId, CancellationToken cancellationToken)
-            => throw new NotImplementedException();
-        public Task<IReadOnlyList<StageEvent>> GetEventsAsync(
-            string jobId, int afterSequence, CancellationToken cancellationToken)
-            => throw new NotImplementedException();
-        public Task<IReadOnlyList<ResultEntry>> GetResultAsync(string jobId, CancellationToken cancellationToken)
-            => throw new NotImplementedException();
-        public Task<CancelMode> CancelAsync(string jobId, CancellationToken cancellationToken)
-            => throw new NotImplementedException();
-        public Task DeleteJobAsync(string jobId, CancellationToken cancellationToken)
-            => throw new NotImplementedException();
-        public Task<PdfSessionOpenResult> OpenPdfSessionAsync(string path, string? password, CancellationToken ct) => throw new NotImplementedException();
-        public Task<byte[]> RenderPdfPageAsync(string sessionId, int page, int size, CancellationToken ct) => throw new NotImplementedException();
-        public Task<PdfMutateResult> RotatePdfPagesAsync(string sessionId, int[] pages, int angle, CancellationToken ct) => throw new NotImplementedException();
-        public Task<PdfMutateResult> DeletePdfPagesAsync(string sessionId, int[] pages, CancellationToken ct) => throw new NotImplementedException();
-        public Task<string> SavePdfAsync(string sessionId, string outputPath, CancellationToken ct) => throw new NotImplementedException();
-        public Task ClosePdfSessionAsync(string sessionId, CancellationToken ct) => throw new NotImplementedException();
-                public Task<ExportResult> ExportAsync(ExportRequest request, CancellationToken ct) => throw new NotImplementedException();
-        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 
 }

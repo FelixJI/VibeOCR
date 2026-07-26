@@ -17,7 +17,10 @@ import socket
 import sys
 import threading
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 READY_ENVELOPE_VERSION = 1
 
@@ -101,13 +104,13 @@ class BootstrapHandle:
             return self._token
 
 
-def token_from_environment(env: dict[str, str] | None = None) -> str | None:
+def token_from_environment(env: Mapping[str, str] | None = None) -> str | None:
     """Read a session token from the process environment, if present.
 
     The env var name is intentionally obfuscated to discourage logging.
     """
-    env = env if env is not None else os.environ
-    return env.get("VIBEOCR_SUP_TOKEN")
+    source = os.environ if env is None else env
+    return source.get("VIBEOCR_SUP_TOKEN")
 
 
 def emit_ready(envelope: ReadyEnvelope, *, stream: Any = None) -> None:

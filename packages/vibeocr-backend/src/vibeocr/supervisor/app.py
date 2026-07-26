@@ -7,9 +7,11 @@ both are injected so tests can drive the full surface with a fake executor.
 
 from __future__ import annotations
 
+import asyncio
+import json
 from typing import TYPE_CHECKING, Any
 
-from fastapi import FastAPI, Request, Response, status
+from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from vibeocr.ipc.schemas import ProgressEvent, ProgressPhase
@@ -21,17 +23,21 @@ from vibeocr.protocol.v2 import (
     SCHEMA_VERSION,
     ErrorCode,
     ErrorPayload,
-    JobKind,
-    JobPriority,
+    JobCommandKind,
     SettingsSnapshot,
+    parse_job_command,
     parse_pipeline_spec,
+    parse_submit_request,
 )
 from vibeocr.protocol.v2.errors import error_registry
 
 from .auth import check_bearer_token, check_loopback, is_bootstrap_path
 from .jobs.registry import JobNotFoundError
-from .jobs.staging import StagingQuotaError
+from .jobs.staging import InputExpiredError, StagingQuotaError
 from .module import ShutdownRequested, SupervisorModule
+
+type JsonResult = dict[str, Any] | JSONResponse
+type StreamResult = StreamingResponse | JSONResponse
 
 
 def _error_response(
@@ -99,117 +105,120 @@ def create_app(module: SupervisorModule, session_token: str) -> FastAPI:
             "capabilities": ["recognition", "pdf_ocr", "mineru_parse", "qrcode", "settings"],
         }
 
-    # ------------------------------------------------------------------
-    # Submit recognition
-    # ------------------------------------------------------------------
-
-    @app.post("/v2/jobs/recognition")
-    async def submit_recognition(request: Request) -> dict[str, Any]:
+    @app.post("/v2/jobs", response_model=None)
+    async def submit_job(request: Request) -> JsonResult:
+        """Submit one strict logical job manifest plus named attachments."""
         content_type = request.headers.get("content-type", "")
         if "multipart/form-data" not in content_type:
-            return _error_response(ErrorCode.VALIDATION_ERROR, instance_id, detail={"field": "content-type"})
+            return _error_response(
+                ErrorCode.VALIDATION_ERROR,
+                instance_id,
+                detail={"field": "content-type"},
+            )
         try:
             form = await request.form()
-        except Exception:
-            return _error_response(ErrorCode.VALIDATION_ERROR, instance_id)
-        uploads: list[tuple[str, str | None, bytes]] = []
-        files = form.getlist("files")
-        for upload in files:
-            data = await upload.read()  # type: ignore[union-attr]
-            uploads.append((upload.filename or "input", upload.content_type, data))  # type: ignore[union-attr]
-        try:
-            ref = module.submit(
-                kind=JobKind.RECOGNITION,
-                priority=JobPriority.INTERACTIVE,
-                uploads=uploads,
+            raw_manifest = form.get("manifest")
+            if not isinstance(raw_manifest, str):
+                raise ValueError("manifest must be a JSON form field")
+            manifest = parse_submit_request(json.loads(raw_manifest))
+            attachments: dict[str, tuple[str | None, bytes]] = {}
+            for item in manifest.items:
+                if item.source.get("type") != "upload.v1":
+                    continue
+                attachment = str(item.source["attachment"])
+                values = form.getlist(attachment)
+                if len(values) != 1 or not hasattr(values[0], "read"):
+                    raise ValueError(
+                        f"attachment {attachment!r} must occur exactly once"
+                    )
+                upload = values[0]
+                attachments[attachment] = (
+                    getattr(upload, "content_type", None),
+                    await upload.read(),
+                )
+            ref = module.submit_request(manifest, attachments)
+        except StagingQuotaError as exc:
+            return _error_response(
+                ErrorCode.QUOTA_EXCEEDED,
+                instance_id,
+                detail={"reason": str(exc)},
+            )
+        except (ValueError, TypeError, json.JSONDecodeError) as exc:
+            return _error_response(
+                ErrorCode.VALIDATION_ERROR,
+                instance_id,
+                detail={"reason": str(exc)},
             )
         except ShutdownRequested:
             return _error_response(ErrorCode.SUPERVISOR_DRAINING, instance_id)
-        except StagingQuotaError as exc:
-            return _error_response(
-                ErrorCode.QUOTA_EXCEEDED, instance_id, detail={"reason": str(exc)}
-            )
         return ref.to_payload()
 
-    # ------------------------------------------------------------------
-    # Job status / events / result
-    # ------------------------------------------------------------------
-
-    @app.get("/v2/jobs/{job_id}")
-    async def job_status(job_id: str) -> dict[str, Any]:
+    @app.get("/v2/jobs/{job_id}/observe", response_model=None)
+    async def observe_job(job_id: str, after_sequence: int = 0) -> JsonResult:
         try:
-            return module.status(job_id).to_payload()
+            return module.observe(job_id, after_sequence).to_payload()
         except JobNotFoundError:
-            return _error_response(ErrorCode.JOB_NOT_FOUND, instance_id, job_id=job_id)
-
-    @app.get("/v2/jobs/{job_id}/events")
-    async def job_events(job_id: str, after_sequence: int = 0) -> dict[str, Any]:
-        try:
-            events = module.events(job_id, after_sequence)
-        except JobNotFoundError:
-            return _error_response(ErrorCode.JOB_NOT_FOUND, instance_id, job_id=job_id)
-        return {
-            "schema_version": SCHEMA_VERSION,
-            "instance_id": instance_id,
-            "job_id": job_id,
-            "events": [e.to_payload() for e in events],
-        }
-
-    @app.get("/v2/jobs/{job_id}/result")
-    async def job_result(job_id: str) -> dict[str, Any]:
-        try:
-            entries = module.result(job_id)
-        except JobNotFoundError:
-            return _error_response(ErrorCode.JOB_NOT_FOUND, instance_id, job_id=job_id)
-        return {
-            "schema_version": SCHEMA_VERSION,
-            "instance_id": instance_id,
-            "job_id": job_id,
-            "results": [e.to_payload() for e in entries],
-        }
-
-    # ------------------------------------------------------------------
-    # Cancel / retry / delete
-    # ------------------------------------------------------------------
-
-    @app.post("/v2/jobs/{job_id}/cancel")
-    async def cancel_job(job_id: str) -> dict[str, Any]:
-        try:
-            mode = module.request_cancel(job_id)
-        except JobNotFoundError:
-            return _error_response(ErrorCode.JOB_NOT_FOUND, instance_id, job_id=job_id)
-        except ShutdownRequested:
             return _error_response(
-                ErrorCode.JOB_NOT_CANCELLABLE, instance_id, job_id=job_id
+                ErrorCode.JOB_NOT_FOUND, instance_id, job_id=job_id
             )
-        return {
-            "schema_version": SCHEMA_VERSION,
-            "instance_id": instance_id,
-            "job_id": job_id,
-            "cancel_mode": mode.value,
-        }
-
-    @app.post("/v2/jobs/{job_id}/retry")
-    async def retry_job(job_id: str) -> dict[str, Any]:
-        try:
-            ref = module.retry(job_id)
-        except JobNotFoundError:
-            return _error_response(ErrorCode.JOB_NOT_FOUND, instance_id, job_id=job_id)
-        except Exception:
-            return _error_response(ErrorCode.JOB_NOT_RETRYABLE, instance_id, job_id=job_id)
-        return ref.to_payload()
-
-    @app.delete("/v2/jobs/{job_id}")
-    async def delete_job(job_id: str) -> JSONResponse:
-        try:
-            module.delete(job_id)
-        except JobNotFoundError:
-            return _error_response(ErrorCode.JOB_NOT_FOUND, instance_id, job_id=job_id)
-        except ShutdownRequested:
+        except ValueError as exc:
             return _error_response(
-                ErrorCode.JOB_NOT_CANCELLABLE, instance_id, job_id=job_id
+                ErrorCode.VALIDATION_ERROR,
+                instance_id,
+                detail={"reason": str(exc)},
+                job_id=job_id,
             )
-        return JSONResponse(status_code=status.HTTP_204_NO_CONTENT, content=None)
+
+    @app.post("/v2/jobs/command", response_model=None)
+    async def command_job(request: Request) -> JsonResult:
+        try:
+            body = await request.json()
+            command = parse_job_command(body)
+            if command.kind is JobCommandKind.CANCEL:
+                mode = module.request_cancel(command.job_id)
+                return {
+                    "schema_version": SCHEMA_VERSION,
+                    "instance_id": instance_id,
+                    "command_id": command.command_id,
+                    "kind": command.kind.value,
+                    "cancel_mode": mode.value,
+                    "job_ref": None,
+                }
+            if command.kind is JobCommandKind.RETRY:
+                ref = module.retry(command.job_id)
+                return {
+                    "schema_version": SCHEMA_VERSION,
+                    "instance_id": instance_id,
+                    "command_id": command.command_id,
+                    "kind": command.kind.value,
+                    "cancel_mode": None,
+                    "job_ref": ref.to_payload(),
+                }
+            module.delete(command.job_id)
+            return {
+                "schema_version": SCHEMA_VERSION,
+                "instance_id": instance_id,
+                "command_id": command.command_id,
+                "kind": command.kind.value,
+                "cancel_mode": None,
+                "job_ref": None,
+            }
+        except JobNotFoundError:
+            return _error_response(ErrorCode.JOB_NOT_FOUND, instance_id)
+        except InputExpiredError as exc:
+            return _error_response(
+                ErrorCode.INPUT_EXPIRED,
+                instance_id,
+                detail={"reason": str(exc)},
+            )
+        except ShutdownRequested:
+            return _error_response(ErrorCode.JOB_NOT_CANCELLABLE, instance_id)
+        except (ValueError, TypeError) as exc:
+            return _error_response(
+                ErrorCode.VALIDATION_ERROR,
+                instance_id,
+                detail={"reason": str(exc)},
+            )
 
     # ------------------------------------------------------------------
     # Runtime / settings
@@ -231,38 +240,89 @@ def create_app(module: SupervisorModule, session_token: str) -> FastAPI:
         pipeline = body.get("pipeline")
         return module.release_idle(pipeline).to_payload()
 
+    @app.post("/v2/runtime/preload", response_model=None)
+    async def preload_runtime(request: Request) -> JsonResult:
+        try:
+            body = await request.json()
+        except Exception:
+            return _error_response(ErrorCode.VALIDATION_ERROR, instance_id)
+        raw_pipelines = body.get("pipelines") if isinstance(body, dict) else None
+        if (
+            not isinstance(raw_pipelines, list)
+            or not raw_pipelines
+            or any(not isinstance(name, str) for name in raw_pipelines)
+        ):
+            return _error_response(
+                ErrorCode.VALIDATION_ERROR,
+                instance_id,
+                detail={"reason": "pipelines must be a non-empty string list"},
+            )
+        from vibeocr.contracts.pipelines import OCRPipeline
+
+        known = {pipeline.value for pipeline in OCRPipeline}
+        unknown = [name for name in raw_pipelines if name not in known]
+        if unknown:
+            return _error_response(
+                ErrorCode.VALIDATION_ERROR,
+                instance_id,
+                detail={"reason": f"unknown pipelines: {', '.join(unknown)}"},
+            )
+        pipelines = tuple(dict.fromkeys(raw_pipelines))
+        try:
+            status = await asyncio.to_thread(module.preload, pipelines)
+        except Exception as exc:
+            return _error_response(
+                ErrorCode.INTERNAL_ERROR,
+                instance_id,
+                detail={"reason": str(exc)},
+            )
+        return status.to_payload()
+
     @app.get("/v2/settings")
     async def get_settings() -> dict[str, Any]:
         return module.settings().to_payload()
 
-    @app.put("/v2/settings")
-    async def put_settings(request: Request) -> dict[str, Any]:
+    @app.put("/v2/settings", response_model=None)
+    async def put_settings(request: Request) -> JsonResult:
         try:
             body = await request.json()
         except Exception:
             return _error_response(ErrorCode.VALIDATION_ERROR, instance_id)
         if not isinstance(body, dict):
             return _error_response(ErrorCode.VALIDATION_ERROR, instance_id)
-        residency = body.get("residency", {})
-        default_ttl = int(residency.get("default_ttl_seconds", 300))
-        raw_pipelines = residency.get("pipelines", [])
         try:
+            residency = body.get("residency", {})
+            if not isinstance(residency, dict):
+                raise ValueError("residency must be an object")
+            default_ttl = int(residency.get("default_ttl_seconds", 300))
+            if default_ttl < 0:
+                raise ValueError("default_ttl_seconds must be >= 0")
+            raw_pipelines = residency.get("pipelines", [])
+            if not isinstance(raw_pipelines, list):
+                raise ValueError("pipelines must be an array")
             pipelines = tuple(parse_pipeline_spec(p) for p in raw_pipelines)
-        except Exception:
-            return _error_response(ErrorCode.VALIDATION_ERROR, instance_id)
-        snapshot = SettingsSnapshot(
-            default_ttl_seconds=default_ttl,
-            pipelines=pipelines,
-            extra=body.get("extra", {}),
-        )
-        return module.update_settings(snapshot).to_payload()
+            extra = body.get("extra", {})
+            if not isinstance(extra, dict):
+                raise ValueError("extra must be an object")
+            snapshot = SettingsSnapshot(
+                default_ttl_seconds=default_ttl,
+                pipelines=pipelines,
+                extra=extra,
+            )
+            return module.update_settings(snapshot).to_payload()
+        except (TypeError, ValueError) as exc:
+            return _error_response(
+                ErrorCode.VALIDATION_ERROR,
+                instance_id,
+                detail={"reason": str(exc)},
+            )
 
     # ------------------------------------------------------------------
     # Export (plan §4.1 — bounded export capability)
     # ------------------------------------------------------------------
 
-    @app.post("/v2/export")
-    async def export_ocr(request: Request) -> dict[str, Any]:
+    @app.post("/v2/export", response_model=None)
+    async def export_ocr(request: Request) -> JsonResult:
         try:
             body = await request.json()
         except Exception:
@@ -360,8 +420,8 @@ def create_app(module: SupervisorModule, session_token: str) -> FastAPI:
             ErrorCode.INTERNAL_ERROR, instance_id, detail={"error": str(exc)}
         )
 
-    @app.post("/v2/pdf/sessions/open")
-    async def pdf_open(request: Request) -> dict[str, Any]:
+    @app.post("/v2/pdf/sessions/open", response_model=None)
+    async def pdf_open(request: Request) -> JsonResult:
         try:
             body = await _pdf_body(request)
             path = body.get("path", "")
@@ -373,28 +433,28 @@ def create_app(module: SupervisorModule, session_token: str) -> FastAPI:
         except Exception as exc:
             return _pdf_error(exc)
 
-    @app.post("/v2/pdf/sessions/{session_id}/close")
-    async def pdf_close(session_id: str) -> dict[str, Any]:
+    @app.post("/v2/pdf/sessions/{session_id}/close", response_model=None)
+    async def pdf_close(session_id: str) -> JsonResult:
         try:
             _pdf_adapter().close_session(session_id)
             return _pdf_response({"closed": True})
         except Exception as exc:
             return _pdf_error(exc)
 
-    @app.post("/v2/pdf/sessions/{session_id}/model")
-    async def pdf_model(session_id: str) -> dict[str, Any]:
+    @app.post("/v2/pdf/sessions/{session_id}/model", response_model=None)
+    async def pdf_model(session_id: str) -> JsonResult:
         try:
             return _pdf_response(_pdf_adapter().get_model(session_id))
         except Exception as exc:
             return _pdf_error(exc)
 
-    @app.post("/v2/pdf/sessions/{session_id}/load")
-    async def pdf_load(session_id: str) -> StreamingResponse:
+    @app.post("/v2/pdf/sessions/{session_id}/load", response_model=None)
+    async def pdf_load(session_id: str) -> StreamResult:
         """Stream per-page text-layer detection (NDJSON, one ProgressEvent per line)."""
         try:
             adapter = _pdf_adapter()
         except Exception as exc:
-            return _pdf_error(exc)  # type: ignore[return-value]
+            return _pdf_error(exc)
 
         def gen() -> Iterator[bytes]:
             try:
@@ -418,7 +478,7 @@ def create_app(module: SupervisorModule, session_token: str) -> FastAPI:
             data = _pdf_adapter().render_thumbnail(session_id, page, size=size)
             return Response(content=data, media_type="image/png")
         except Exception as exc:
-            return _pdf_error(exc)  # type: ignore[return-value]
+            return _pdf_error(exc)
 
     @app.post("/v2/pdf/sessions/{session_id}/render_preview")
     async def pdf_render_preview(
@@ -431,7 +491,7 @@ def create_app(module: SupervisorModule, session_token: str) -> FastAPI:
             data = _pdf_adapter().render_preview(session_id, page, dpi=dpi)
             return Response(content=data, media_type="image/png")
         except Exception as exc:
-            return _pdf_error(exc)  # type: ignore[return-value]
+            return _pdf_error(exc)
 
     @app.get("/v2/pdf/sessions/{session_id}/render")
     async def pdf_render(
@@ -451,12 +511,15 @@ def create_app(module: SupervisorModule, session_token: str) -> FastAPI:
             data = _pdf_adapter().render_thumbnail(session_id, page, size=size)
             return Response(content=data, media_type="image/png")
         except Exception as exc:
-            return _pdf_error(exc)  # type: ignore[return-value]
+            return _pdf_error(exc)
 
-    @app.post("/v2/pdf/sessions/{session_id}/detect_text_layers")
+    @app.post(
+        "/v2/pdf/sessions/{session_id}/detect_text_layers",
+        response_model=None,
+    )
     async def pdf_detect_text_layers(
         session_id: str, request: Request
-    ) -> dict[str, Any]:
+    ) -> JsonResult:
         try:
             body = await _pdf_body(request)
             page = int(body.get("page", 0))
@@ -466,8 +529,8 @@ def create_app(module: SupervisorModule, session_token: str) -> FastAPI:
         except Exception as exc:
             return _pdf_error(exc)
 
-    @app.post("/v2/pdf/sessions/{session_id}/rotate")
-    async def pdf_rotate(session_id: str, request: Request) -> dict[str, Any]:
+    @app.post("/v2/pdf/sessions/{session_id}/rotate", response_model=None)
+    async def pdf_rotate(session_id: str, request: Request) -> JsonResult:
         try:
             body = await _pdf_body(request)
             pages = body.get("pages", [])
@@ -476,8 +539,8 @@ def create_app(module: SupervisorModule, session_token: str) -> FastAPI:
         except Exception as exc:
             return _pdf_error(exc)
 
-    @app.post("/v2/pdf/sessions/{session_id}/delete_pages")
-    async def pdf_delete_pages(session_id: str, request: Request) -> dict[str, Any]:
+    @app.post("/v2/pdf/sessions/{session_id}/delete_pages", response_model=None)
+    async def pdf_delete_pages(session_id: str, request: Request) -> JsonResult:
         try:
             body = await _pdf_body(request)
             pages = body.get("pages", [])
@@ -485,8 +548,8 @@ def create_app(module: SupervisorModule, session_token: str) -> FastAPI:
         except Exception as exc:
             return _pdf_error(exc)
 
-    @app.post("/v2/pdf/sessions/{session_id}/insert_blank")
-    async def pdf_insert_blank(session_id: str, request: Request) -> dict[str, Any]:
+    @app.post("/v2/pdf/sessions/{session_id}/insert_blank", response_model=None)
+    async def pdf_insert_blank(session_id: str, request: Request) -> JsonResult:
         try:
             body = await _pdf_body(request)
             after_index = int(body.get("after_index", -1))
@@ -498,8 +561,8 @@ def create_app(module: SupervisorModule, session_token: str) -> FastAPI:
         except Exception as exc:
             return _pdf_error(exc)
 
-    @app.post("/v2/pdf/sessions/{session_id}/insert_from")
-    async def pdf_insert_from(session_id: str, request: Request) -> dict[str, Any]:
+    @app.post("/v2/pdf/sessions/{session_id}/insert_from", response_model=None)
+    async def pdf_insert_from(session_id: str, request: Request) -> JsonResult:
         try:
             body = await _pdf_body(request)
             source_path = body.get("source_path", "")
@@ -512,8 +575,8 @@ def create_app(module: SupervisorModule, session_token: str) -> FastAPI:
         except Exception as exc:
             return _pdf_error(exc)
 
-    @app.post("/v2/pdf/sessions/{session_id}/move_page")
-    async def pdf_move_page(session_id: str, request: Request) -> dict[str, Any]:
+    @app.post("/v2/pdf/sessions/{session_id}/move_page", response_model=None)
+    async def pdf_move_page(session_id: str, request: Request) -> JsonResult:
         try:
             body = await _pdf_body(request)
             from_index = int(body.get("from_index", -1))
@@ -524,8 +587,8 @@ def create_app(module: SupervisorModule, session_token: str) -> FastAPI:
         except Exception as exc:
             return _pdf_error(exc)
 
-    @app.post("/v2/pdf/sessions/{session_id}/reorder")
-    async def pdf_reorder(session_id: str, request: Request) -> dict[str, Any]:
+    @app.post("/v2/pdf/sessions/{session_id}/reorder", response_model=None)
+    async def pdf_reorder(session_id: str, request: Request) -> JsonResult:
         try:
             body = await _pdf_body(request)
             new_order = body.get("new_order", [])
@@ -533,8 +596,11 @@ def create_app(module: SupervisorModule, session_token: str) -> FastAPI:
         except Exception as exc:
             return _pdf_error(exc)
 
-    @app.post("/v2/pdf/sessions/{session_id}/add_text_layer")
-    async def pdf_add_text_layer(session_id: str, request: Request) -> dict[str, Any]:
+    @app.post(
+        "/v2/pdf/sessions/{session_id}/add_text_layer",
+        response_model=None,
+    )
+    async def pdf_add_text_layer(session_id: str, request: Request) -> JsonResult:
         try:
             body = await _pdf_body(request)
             page = int(body.get("page", 0))
@@ -549,10 +615,13 @@ def create_app(module: SupervisorModule, session_token: str) -> FastAPI:
         except Exception as exc:
             return _pdf_error(exc)
 
-    @app.post("/v2/pdf/sessions/{session_id}/add_text_layer_batch")
+    @app.post(
+        "/v2/pdf/sessions/{session_id}/add_text_layer_batch",
+        response_model=None,
+    )
     async def pdf_add_text_layer_batch(
         session_id: str, request: Request
-    ) -> dict[str, Any]:
+    ) -> JsonResult:
         try:
             body = await _pdf_body(request)
             pages_data = body.get("pages", [])
@@ -567,10 +636,13 @@ def create_app(module: SupervisorModule, session_token: str) -> FastAPI:
         except Exception as exc:
             return _pdf_error(exc)
 
-    @app.post("/v2/pdf/sessions/{session_id}/rewrite_text_layer")
+    @app.post(
+        "/v2/pdf/sessions/{session_id}/rewrite_text_layer",
+        response_model=None,
+    )
     async def pdf_rewrite_text_layer(
         session_id: str, request: Request
-    ) -> dict[str, Any]:
+    ) -> JsonResult:
         try:
             body = await _pdf_body(request)
             page = int(body.get("page", 0))
@@ -585,10 +657,13 @@ def create_app(module: SupervisorModule, session_token: str) -> FastAPI:
         except Exception as exc:
             return _pdf_error(exc)
 
-    @app.post("/v2/pdf/sessions/{session_id}/update_block_text")
+    @app.post(
+        "/v2/pdf/sessions/{session_id}/update_block_text",
+        response_model=None,
+    )
     async def pdf_update_block_text(
         session_id: str, request: Request
-    ) -> dict[str, Any]:
+    ) -> JsonResult:
         try:
             body = await _pdf_body(request)
             page = int(body.get("page", 0))
@@ -602,17 +677,20 @@ def create_app(module: SupervisorModule, session_token: str) -> FastAPI:
         except Exception as exc:
             return _pdf_error(exc)
 
-    @app.post("/v2/pdf/sessions/{session_id}/delete_text_layers")
+    @app.post(
+        "/v2/pdf/sessions/{session_id}/delete_text_layers",
+        response_model=None,
+    )
     async def pdf_delete_text_layers(
         session_id: str, request: Request
-    ) -> StreamingResponse:
+    ) -> StreamResult:
         """Stream per-page text-layer deletion (NDJSON)."""
         try:
             body = await _pdf_body(request)
             pages = body.get("pages", [])
             adapter = _pdf_adapter()
         except Exception as exc:
-            return _pdf_error(exc)  # type: ignore[return-value]
+            return _pdf_error(exc)
 
         def gen() -> Iterator[bytes]:
             try:
@@ -624,8 +702,8 @@ def create_app(module: SupervisorModule, session_token: str) -> FastAPI:
 
         return StreamingResponse(gen(), media_type="application/x-ndjson")
 
-    @app.post("/v2/pdf/sessions/{session_id}/save")
-    async def pdf_save(session_id: str, request: Request) -> dict[str, Any]:
+    @app.post("/v2/pdf/sessions/{session_id}/save", response_model=None)
+    async def pdf_save(session_id: str, request: Request) -> JsonResult:
         try:
             body = await _pdf_body(request)
             path = body.get("path")
@@ -642,10 +720,13 @@ def create_app(module: SupervisorModule, session_token: str) -> FastAPI:
         except Exception as exc:
             return _pdf_error(exc)
 
-    @app.post("/v2/pdf/sessions/{session_id}/save_transactional")
+    @app.post(
+        "/v2/pdf/sessions/{session_id}/save_transactional",
+        response_model=None,
+    )
     async def pdf_save_transactional(
         session_id: str, request: Request
-    ) -> dict[str, Any]:
+    ) -> JsonResult:
         """Atomic save: write to a temp file in the target's parent dir, fsync,
         then ``Path.replace`` onto the target path. Returns ``{path}``.
 
@@ -667,16 +748,16 @@ def create_app(module: SupervisorModule, session_token: str) -> FastAPI:
         except Exception as exc:
             return _pdf_error(exc)
 
-    @app.post("/v2/pdf/sessions/{session_id}/cancel")
-    async def pdf_cancel(session_id: str) -> dict[str, Any]:
+    @app.post("/v2/pdf/sessions/{session_id}/cancel", response_model=None)
+    async def pdf_cancel(session_id: str) -> JsonResult:
         try:
             _pdf_adapter().cancel(session_id)
             return _pdf_response({"cancelled": True})
         except Exception as exc:
             return _pdf_error(exc)
 
-    @app.post("/v2/pdf/sessions/{session_id}/reset_cancel")
-    async def pdf_reset_cancel(session_id: str) -> dict[str, Any]:
+    @app.post("/v2/pdf/sessions/{session_id}/reset_cancel", response_model=None)
+    async def pdf_reset_cancel(session_id: str) -> JsonResult:
         try:
             _pdf_adapter().reset_cancel(session_id)
             return _pdf_response({"reset": True})
@@ -687,8 +768,8 @@ def create_app(module: SupervisorModule, session_token: str) -> FastAPI:
     # QR decode / generate (plan §4.1 — bounded QR capability)
     # ------------------------------------------------------------------
 
-    @app.post("/v2/qrcode/decode")
-    async def qrcode_decode(request: Request) -> dict[str, Any]:
+    @app.post("/v2/qrcode/decode", response_model=None)
+    async def qrcode_decode(request: Request) -> JsonResult:
         try:
             body = await request.json()
         except Exception:
@@ -731,8 +812,8 @@ def create_app(module: SupervisorModule, session_token: str) -> FastAPI:
             "codes": codes,
         }
 
-    @app.post("/v2/qrcode/generate")
-    async def qrcode_generate(request: Request) -> dict[str, Any]:
+    @app.post("/v2/qrcode/generate", response_model=None)
+    async def qrcode_generate(request: Request) -> JsonResult:
         try:
             body = await request.json()
         except Exception:
@@ -749,10 +830,16 @@ def create_app(module: SupervisorModule, session_token: str) -> FastAPI:
             from vibeocr.services.qrcode_service import QrcodeService
 
             svc = QrcodeService()
-            pil_img = svc.generate(text, options)
-            buf = io.BytesIO()
-            pil_img.save(buf, format="PNG")
-            image_b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+            if fmt == "svg":
+                payload = svc.generate_svg(text, options).encode("utf-8")
+                media_type = "image/svg+xml"
+            else:
+                pil_img = svc.generate(text, options)
+                buf = io.BytesIO()
+                pil_img.save(buf, format="PNG")
+                payload = buf.getvalue()
+                media_type = "image/png"
+            image_b64 = base64.b64encode(payload).decode("ascii")
         except Exception as exc:
             return _error_response(ErrorCode.INTERNAL_ERROR, instance_id, detail={"error": str(exc)})
         return {
@@ -760,7 +847,7 @@ def create_app(module: SupervisorModule, session_token: str) -> FastAPI:
             "instance_id": instance_id,
             "image": image_b64,
             "format": fmt,
-            "media_type": "image/png",
+            "media_type": media_type,
         }
 
     return app

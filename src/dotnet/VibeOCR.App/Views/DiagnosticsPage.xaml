@@ -11,11 +11,11 @@
             <StackPanel Orientation="Horizontal" Spacing="16">
                 <TextBlock Text="App" />
                 <TextBlock FontFamily="Consolas" Text="{x:Bind ViewModel.AppVersion}" />
-                <TextBlock Text="Worker" />
-                <TextBlock FontFamily="Consolas" Text="{x:Bind ViewModel.WorkerVersion, Mode=OneWay}" />
+                <TextBlock Text="Supervisor 实例" />
+                <TextBlock FontFamily="Consolas" Text="{x:Bind ViewModel.SupervisorInstanceId, Mode=OneWay}" />
             </StackPanel>
-            <TextBlock Text="Worker 状态" />
-            <TextBlock FontSize="20" Text="{x:Bind ViewModel.WorkerStatus, Mode=OneWay}" />
+            <TextBlock Text="Supervisor 状态" />
+            <TextBlock FontSize="20" Text="{x:Bind ViewModel.SupervisorStatus, Mode=OneWay}" />
             <TextBlock Text="{x:Bind ViewModel.ProtocolStatus, Mode=OneWay}" />
             <TextBlock FontWeight="SemiBold" Text="运行时" />
             <ItemsControl ItemsSource="{x:Bind ViewModel.Prerequisites}">

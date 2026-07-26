@@ -93,6 +93,34 @@ def test_interactive_always_outranks_background() -> None:
     assert nxt == "fg"
 
 
+def test_non_head_cannot_bypass_priority_queue() -> None:
+    sched = DeviceScheduler(devices=["gpu:0"])
+    sched.enqueue(
+        job_id="bg", device="gpu:0", priority=JobPriority.BACKGROUND
+    )
+    sched.enqueue(
+        job_id="fg", device="gpu:0", priority=JobPriority.INTERACTIVE
+    )
+    assert sched.try_acquire("bg", "gpu:0") is None
+    lease = sched.try_acquire("fg", "gpu:0")
+    assert lease is not None
+
+
+def test_aging_is_recomputed_when_selecting_queue_head() -> None:
+    t = [0.0]
+    sched = DeviceScheduler(
+        devices=["gpu:0"], clock=lambda: t[0], aging_interval=1.0
+    )
+    sched.enqueue(
+        job_id="old-bg", device="gpu:0", priority=JobPriority.BACKGROUND
+    )
+    t[0] = 11.0
+    sched.enqueue(
+        job_id="fresh-fg", device="gpu:0", priority=JobPriority.INTERACTIVE
+    )
+    assert sched.next_job_for("gpu:0") == "old-bg"
+
+
 # ---------------------------------------------------------------------------
 # BudgetPlanner
 # ---------------------------------------------------------------------------
@@ -126,6 +154,15 @@ def test_transport_plan_isolates_oversized_item() -> None:
     assert batches[1].items[0].item_id == "huge"
     assert batches[0].oversized is False
     assert batches[2].oversized is False
+
+
+def test_budget_limits_must_be_positive() -> None:
+    try:
+        BudgetPlanner(max_file_count=0)
+    except ValueError as exc:
+        assert "max_file_count" in str(exc)
+    else:  # pragma: no cover
+        raise AssertionError("expected ValueError")
 
 
 def test_compute_plan_real_batch_caps_at_capability() -> None:

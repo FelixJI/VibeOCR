@@ -11,6 +11,7 @@ from vibeocr.protocol.v2 import (
     ResidencyEntry,
     ResidencyKind,
     ResidencyStatus,
+    SettingsSnapshot,
 )
 from vibeocr.supervisor.inference.composite_executor import CompositeExecutor
 
@@ -47,6 +48,7 @@ class _FakeExecutor:
     ) -> None:
         self.execute_calls: list[tuple[str, JobKind]] = []
         self.release_calls: list[str | None] = []
+        self.preload_calls: list[tuple[str, ...]] = []
         self._entry = entry
         self._cancel_mode = cancel_mode
 
@@ -65,6 +67,19 @@ class _FakeExecutor:
     def release_idle(self, pipeline: str | None = None) -> ResidencyStatus:
         self.release_calls.append(pipeline)
         return self.residency_status()
+
+    def preload(self, pipelines: tuple[str, ...]) -> ResidencyStatus:
+        self.preload_calls.append(pipelines)
+        return self.residency_status()
+
+    def configure_settings(self, snapshot: SettingsSnapshot) -> ResidencyStatus:
+        return ResidencyStatus(
+            default_ttl_seconds=snapshot.default_ttl_seconds,
+            pipelines=snapshot.pipelines,
+        )
+
+    def close(self) -> None:
+        return
 
 
 def _build(*, paddle: _FakeExecutor, mineru: _FakeExecutor) -> CompositeExecutor:
@@ -160,3 +175,14 @@ def test_release_idle_none_releases_all() -> None:
 
     assert paddle.release_calls == [None]
     assert mineru.release_calls == [None]
+
+
+def test_preload_fans_out_to_runtime_children() -> None:
+    paddle = _FakeExecutor()
+    mineru = _FakeExecutor()
+    comp = _build(paddle=paddle, mineru=mineru)
+
+    comp.preload(("OCR", "PP-StructureV3"))
+
+    assert paddle.preload_calls == [("OCR", "PP-StructureV3")]
+    assert mineru.preload_calls == [("OCR", "PP-StructureV3")]

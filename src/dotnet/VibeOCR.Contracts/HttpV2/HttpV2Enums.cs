@@ -62,6 +62,14 @@ public enum JobPriority
     [JsonStringEnumMemberName("background")] Background,
 }
 
+[JsonConverter(typeof(JsonStringEnumConverter<JobCommandKind>))]
+public enum JobCommandKind
+{
+    [JsonStringEnumMemberName("cancel")] Cancel,
+    [JsonStringEnumMemberName("retry")] Retry,
+    [JsonStringEnumMemberName("forget")] Forget,
+}
+
 [JsonConverter(typeof(JsonStringEnumConverter<CancelMode>))]
 public enum CancelMode
 {
@@ -120,12 +128,14 @@ public enum HttpV2ErrorCode
     [JsonStringEnumMemberName("RESOURCE_NOT_FOUND")] ResourceNotFound,
     [JsonStringEnumMemberName("JOB_NOT_CANCELLABLE")] JobNotCancellable,
     [JsonStringEnumMemberName("JOB_NOT_RETRYABLE")] JobNotRetryable,
+    [JsonStringEnumMemberName("INPUT_EXPIRED")] InputExpired,
     [JsonStringEnumMemberName("PIN_CAPACITY_CONFLICT")] PinCapacityConflict,
     [JsonStringEnumMemberName("SUPERVISOR_DRAINING")] SupervisorDraining,
     [JsonStringEnumMemberName("CANCELLED")] Cancelled,
     [JsonStringEnumMemberName("OUT_OF_MEMORY")] OutOfMemory,
     [JsonStringEnumMemberName("TRANSIENT_BACKEND")] TransientBackend,
     [JsonStringEnumMemberName("BACKEND_UNAVAILABLE")] BackendUnavailable,
+    [JsonStringEnumMemberName("ADAPTER_PROTOCOL_VIOLATION")] AdapterProtocolViolation,
     [JsonStringEnumMemberName("PROTOCOL_MISMATCH")] ProtocolMismatch,
     [JsonStringEnumMemberName("INTERNAL_ERROR")] InternalError,
 }

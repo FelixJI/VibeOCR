@@ -7,7 +7,7 @@ mock PdfBackendClient.save 验证 manager 导出逻辑。
 
 from __future__ import annotations
 
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -25,7 +25,7 @@ def _make_session(path, modified=True):
 
 @pytest.fixture
 def manager(qapp):
-    mgr = PdfSessionManager(parent=qapp)
+    mgr = PdfSessionManager(parent=qapp, client=MagicMock())
     yield mgr
     mgr.shutdown()
 

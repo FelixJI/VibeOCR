@@ -48,7 +48,15 @@
     "cancel_mode": {"type": ["string", "null"], "enum": [null, "queued_only", "cooperative", "forced"]},
     "degraded": {"type": "boolean"},
     "event_sequence": {"type": "integer", "minimum": 0},
-    "result_available": {"type": "boolean"}
+    "result_available": {"type": "boolean"},
+    "request_id": {"type": ["string", "null"]},
+    "source_job_id": {"type": ["string", "null"]},
+    "pipeline": {
+      "oneOf": [
+        {"type": "null"},
+        {"$ref": "#/$defs/PipelineSelection"}
+      ]
+    }
   },
   "$defs": {
     "JobItem": {
@@ -60,7 +68,10 @@
         "display_name": {"type": "string"},
         "state": {"type": "string", "enum": ["queued", "running", "succeeded", "failed", "cancelled"]},
         "attempt": {"type": "integer", "minimum": 0},
-        "error": {"type": ["string", "null"]}
+        "error": {"type": ["string", "null"]},
+        "client_item_key": {"type": ["string", "null"]},
+        "ordinal": {"type": "integer", "minimum": 0},
+        "source_item_id": {"type": ["string", "null"]}
       }
     },
     "JobSummary": {
@@ -72,6 +83,26 @@
         "failed": {"type": "integer", "minimum": 0},
         "cancelled": {"type": "integer", "minimum": 0},
         "total": {"type": "integer", "minimum": 0}
+      }
+    },
+    "PipelineSelection": {
+      "type": "object",
+      "required": ["pipeline_id", "options_version", "options"],
+      "additionalProperties": false,
+      "properties": {
+        "pipeline_id": {
+          "type": "string",
+          "enum": [
+            "OCR",
+            "PP-StructureV3",
+            "MinerU",
+            "PaddleOCR-VL",
+            "TABLE_RECOGNITION",
+            "FORMULA_RECOGNITION"
+          ]
+        },
+        "options_version": {"type": "integer", "const": 1},
+        "options": {"type": "object"}
       }
     }
   }

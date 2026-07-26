@@ -32,7 +32,7 @@ class TestStartupEvent:
         assert StartupEvent.RUNTIME_READY.value == "T1"
         assert StartupEvent.SHELL_CREATED.value == "T2"
         assert StartupEvent.FIRST_WINDOW.value == "T3"
-        assert StartupEvent.WORKER_READY.value == "T4"
+        assert StartupEvent.SUPERVISOR_READY.value == "T4"
         assert StartupEvent.BACKEND_READY.value == "T5"
         assert StartupEvent.INTERACTIVE.value == "T6"
 

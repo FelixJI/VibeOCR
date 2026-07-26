@@ -17,6 +17,7 @@ import json
 import shutil
 import subprocess
 import sys
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -42,6 +43,10 @@ class TestReleaseBuild:
         assert result.returncode == 0, f"contracts build failed: {result.stderr[-500:]}"
         wheels = list(tmp_path.glob("vibeocr_contracts_py-*.whl"))
         assert len(wheels) == 1, f"expected 1 contracts wheel, got {wheels}"
+        with zipfile.ZipFile(wheels[0]) as archive:
+            members = set(archive.namelist())
+        assert "vibeocr/protocol/v2/golden/golden.json" in members
+        assert not any(name.startswith("vibeocr/protocol/v1/") for name in members)
 
     def test_backend_wheel_builds(self, tmp_path: Path) -> None:
         """backend wheel builds and contains the supervisor entry point."""
@@ -58,6 +63,10 @@ class TestReleaseBuild:
         assert result.returncode == 0, f"backend build failed: {result.stderr[-500:]}"
         wheels = list(tmp_path.glob("vibeocr_backend-*.whl"))
         assert len(wheels) == 1, f"expected 1 backend wheel, got {wheels}"
+        with zipfile.ZipFile(wheels[0]) as archive:
+            members = set(archive.namelist())
+        assert "vibeocr/supervisor/main.py" in members
+        assert not any(name.startswith("vibeocr/worker_host/") for name in members)
 
     def test_supervisor_entry_point_exists(self) -> None:
         """The vibeocr-supervisor console script is registered in backend pyproject."""
@@ -153,12 +162,12 @@ class TestProtocolAssetIntegrity:
         for key in ("job_ref", "job_snapshot_running", "error_oom", "residency_status", "settings_snapshot"):
             assert key in data, f"golden fixture '{key}' missing"
 
-    def test_errors_registry_has_16_codes(self) -> None:
-        """Error registry has exactly 16 codes."""
+    def test_errors_registry_has_18_codes(self) -> None:
+        """Error registry includes the two job-interface failure codes."""
         errors = _REPO_ROOT / "packages" / "vibeocr-contracts-py" / "src" / "vibeocr" / "protocol" / "v2" / "errors.json"
         assert errors.exists(), "errors.json missing"
         data = json.loads(errors.read_text(encoding="utf-8"))
-        assert len(data["codes"]) == 16, f"expected 16 error codes, got {len(data['codes'])}"
+        assert len(data["codes"]) == 18, f"expected 18 error codes, got {len(data['codes'])}"
 
     def test_no_v1_protocol_remains(self) -> None:
         """Protocol v1 directory must not exist (deleted in Phase 8)."""

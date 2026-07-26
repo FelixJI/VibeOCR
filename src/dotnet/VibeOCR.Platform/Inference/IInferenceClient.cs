@@ -23,27 +23,24 @@ public interface IInferenceClient : IAsyncDisposable
     /// <summary>Supervisor base URL (always loopback).</summary>
     Uri BaseUrl { get; }
 
-    /// <summary>Submit a recognition job (one or many inputs). Returns the JobRef.</summary>
-    Task<JobRef> SubmitRecognitionAsync(
-        IReadOnlyList<RecognitionUpload> uploads,
-        JobPriority priority,
+    /// <summary>
+    /// Submit one logical job. Multipart uploads are keyed by the attachment
+    /// names referenced by <see cref="SubmitItem.Source"/>.
+    /// </summary>
+    Task<JobRef> SubmitAsync(
+        SubmitRequest request,
+        IReadOnlyDictionary<string, SubmitUpload> uploads,
         CancellationToken cancellationToken);
 
-    /// <summary>Fetch the current snapshot of a job.</summary>
-    Task<JobSnapshot> GetJobAsync(string jobId, CancellationToken cancellationToken);
-
-    /// <summary>Long-poll events strictly after <paramref name="afterSequence"/>.</summary>
-    Task<IReadOnlyList<StageEvent>> GetEventsAsync(
+    /// <summary>
+    /// Atomically observe the current snapshot, ordered events and typed
+    /// outcomes after <paramref name="afterSequence"/>.
+    /// </summary>
+    Task<JobUpdate> ObserveAsync(
         string jobId, int afterSequence, CancellationToken cancellationToken);
 
-    /// <summary>Fetch the stable-ordered result entries for a job.</summary>
-    Task<IReadOnlyList<ResultEntry>> GetResultAsync(string jobId, CancellationToken cancellationToken);
-
-    /// <summary>Request cancellation; returns the actual cancel mode the supervisor will apply.</summary>
-    Task<CancelMode> CancelAsync(string jobId, CancellationToken cancellationToken);
-
-    /// <summary>Release a terminal job's staging/results.</summary>
-    Task DeleteJobAsync(string jobId, CancellationToken cancellationToken);
+    /// <summary>Cancel, retry or forget a job through the generic command seam.</summary>
+    Task<JobCommandResult> CommandAsync(JobCommand command, CancellationToken cancellationToken);
 
     /// <summary>Residency status (model TTL/pin/LRU/VRAM).</summary>
     Task<ResidencyStatus> GetResidencyAsync(CancellationToken cancellationToken);
@@ -64,11 +61,21 @@ public interface IInferenceClient : IAsyncDisposable
 }
 
 /// <summary>
-/// One input for a recognition submission. <see cref="Content"/> is the raw
-/// image/document bytes; <see cref="FileName"/> is a display-only name (the
-/// supervisor generates internal ids and never trusts it as a path).
+/// Multipart content for one attachment referenced by a
+/// <see cref="SubmitItem"/>. Display names belong to the manifest rather than
+/// the transport payload.
 /// </summary>
-public sealed record RecognitionUpload(string FileName, string ContentType, IReadOnlyList<byte> Content);
+public sealed record SubmitUpload(string? ContentType, IReadOnlyList<byte> Content);
+
+/// <summary>
+/// Result of a generic job command. Cancel returns <see cref="CancelMode"/>,
+/// retry returns <see cref="JobRef"/>, and forget returns neither.
+/// </summary>
+public sealed record JobCommandResult(
+    string CommandId,
+    JobCommandKind Kind,
+    CancelMode? CancelMode,
+    JobRef? JobRef);
 
 /// <summary>Export request mirroring the v2 /v2/export endpoint.</summary>
 public sealed record ExportRequest(

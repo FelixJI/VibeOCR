@@ -16,24 +16,34 @@ This adapter is deliberately thin: it injects the existing
 
 from __future__ import annotations
 
+import contextlib
 import io
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Protocol
+import logging
+import time
+from dataclasses import dataclass, field
+from typing import Any, Protocol
 
 import numpy as np
 
-from vibeocr.protocol.v2 import ResidencyStatus
+from vibeocr.protocol.v2 import (
+    PipelineSelection,
+    ResidencyEntry,
+    ResidencyKind,
+    ResidencyStatus,
+    SettingsSnapshot,
+)
 
 from .budgets import AdapterCapability, ComputeBatch, InputItem
 
-if TYPE_CHECKING:
-    from .residency import ResidencyManager
+logger = logging.getLogger(__name__)
 
 
 class _OCRServiceLike(Protocol):
     """Minimal slice of :class:`OCRService` we depend on."""
 
     def recognize_batch(self, images: list[Any], options: Any | None = ...) -> list[Any]: ...
+
+    def preload_pipelines_sequential(self, pipelines: list[Any]) -> dict[str, bool]: ...
 
 
 @dataclass
@@ -42,33 +52,42 @@ class PaddlePipelineAdapter:
 
     service: _OCRServiceLike
     pipeline_name: str = "OCR"
-    residency: ResidencyManager | None = None
-    # Cached capability — populated lazily from the pipeline registry.
-    _capability: AdapterCapability | None = None
+    # Capability is cached per semantic pipeline, never globally.
+    _capabilities: dict[str, AdapterCapability] = field(default_factory=dict)
+    _settings: SettingsSnapshot = field(default_factory=SettingsSnapshot)
 
     # ------------------------------------------------------------------
     # Capability
     # ------------------------------------------------------------------
 
-    def capabilities(self) -> AdapterCapability:
-        if self._capability is not None:
-            return self._capability
-        real_batch = self._pipeline_supports_real_batch()
+    def capabilities(
+        self, options: PipelineSelection | None = None
+    ) -> AdapterCapability:
+        pipeline_name = (
+            options.pipeline_id
+            if isinstance(options, PipelineSelection)
+            else self.pipeline_name
+        )
+        cached = self._capabilities.get(pipeline_name)
+        if cached is not None:
+            return cached
+        real_batch = self._pipeline_supports_real_batch(pipeline_name)
         max_compute = 8 if real_batch else 1
-        self._capability = AdapterCapability(
-            name=self.pipeline_name,
+        capability = AdapterCapability(
+            name=pipeline_name,
             real_batch=real_batch,
             max_compute_batch=max_compute,
         )
-        return self._capability
+        self._capabilities[pipeline_name] = capability
+        return capability
 
-    def _pipeline_supports_real_batch(self) -> bool:
+    def _pipeline_supports_real_batch(self, pipeline_name: str) -> bool:
         """Return True only if the registry registers a real batch adapter."""
         try:
             from vibeocr.core.pipelines import get_registry  # type: ignore
 
             registry = get_registry()
-            spec = registry.get(self.pipeline_name) if registry.has(self.pipeline_name) else None
+            spec = registry.get(pipeline_name) if registry.has(pipeline_name) else None
             return bool(spec is not None and getattr(spec, "recognize_batch", None) is not None)
         except Exception:
             # In test environments without the pipeline registry we report
@@ -96,31 +115,171 @@ class PaddlePipelineAdapter:
         """
         if not items:
             return []
-        images = [self._to_ndarray(self._raw_bytes(it)) for it in items]
-        if self.residency is not None:
-            self.residency.lease(self.pipeline_name)
+        pipeline_name = (
+            options.pipeline_id
+            if isinstance(options, PipelineSelection)
+            else self.pipeline_name
+        )
+        started = time.perf_counter()
         try:
-            results = self.service.recognize_batch(images, options)
-        finally:
-            if self.residency is not None:
-                self.residency.release(self.pipeline_name)
-                self.residency.touch(self.pipeline_name)
-        return [self._result_to_payload(r) for r in results]
+            images = [self._to_ndarray(self._raw_bytes(it)) for it in items]
+            service_options = self._service_options(options)
+            manager = self._physical_cache_manager()
+            lease = (
+                manager.lease(pipeline_name)
+                if manager is not None and hasattr(manager, "lease")
+                else contextlib.nullcontext()
+            )
+            with lease:
+                results = self.service.recognize_batch(images, service_options)
+            payloads = [self._result_to_payload(r) for r in results]
+        except Exception:
+            logger.exception(
+                "[Supervisor][Recognize] action=recognize pipeline=%s "
+                "items=%d result=failed elapsed_ms=%.1f",
+                pipeline_name,
+                len(items),
+                (time.perf_counter() - started) * 1000,
+            )
+            raise
+        logger.info(
+            "[Supervisor][Recognize] action=recognize pipeline=%s "
+            "items=%d result=success elapsed_ms=%.1f",
+            pipeline_name,
+            len(items),
+            (time.perf_counter() - started) * 1000,
+        )
+        return payloads
+
+    def _service_options(self, options: Any | None) -> Any | None:
+        if not isinstance(options, PipelineSelection):
+            return options
+        # Temporary backend boundary conversion while the stable pipeline
+        # option implementation is moved out of vibeocr-client-py. The wire
+        # DTO itself remains contracts-owned and strictly validated.
+        from vibeocr.models.ocr_options import OCROptions
+
+        return OCROptions.from_dict(
+            {"pipeline": options.pipeline_id, **options.options}
+        )
 
     # ------------------------------------------------------------------
     # Residency passthrough
     # ------------------------------------------------------------------
 
+    def preload(self, pipelines: tuple[str, ...]) -> ResidencyStatus:
+        """顺序加载本 adapter 拥有的 Paddle 管道并返回真实驻留快照。"""
+        from vibeocr.contracts.pipelines import OCRPipeline, get_paddle_pipelines
+
+        paddle_pipelines = set(get_paddle_pipelines())
+        selected = [
+            pipeline
+            for name in pipelines
+            if (pipeline := OCRPipeline(name)) in paddle_pipelines
+        ]
+        if selected:
+            started = time.perf_counter()
+            try:
+                results = self.service.preload_pipelines_sequential(selected)
+            except Exception:
+                elapsed_ms = (time.perf_counter() - started) * 1000
+                for pipeline in selected:
+                    logger.exception(
+                        "[Supervisor][Preload] action=preload pipeline=%s "
+                        "result=failed elapsed_ms=%.1f",
+                        pipeline.value,
+                        elapsed_ms,
+                    )
+                raise
+            elapsed_ms = (time.perf_counter() - started) * 1000
+            for pipeline in selected:
+                succeeded = bool(results.get(pipeline.value, False))
+                log = logger.info if succeeded else logger.error
+                log(
+                    "[Supervisor][Preload] action=preload pipeline=%s "
+                    "result=%s elapsed_ms=%.1f",
+                    pipeline.value,
+                    "success" if succeeded else "failed",
+                    elapsed_ms,
+                )
+            failed = [
+                pipeline.value
+                for pipeline in selected
+                if not results.get(pipeline.value, False)
+            ]
+            if failed:
+                raise RuntimeError(f"管道预加载失败: {', '.join(failed)}")
+        return self.residency_status()
+
     def residency_status(self) -> ResidencyStatus:
-        if self.residency is None:
-            return ResidencyStatus()
-        return self.residency.status()
+        manager = self._physical_cache_manager()
+        if manager is None or not hasattr(manager, "status"):
+            return ResidencyStatus(
+                default_ttl_seconds=self._settings.default_ttl_seconds,
+                pipelines=self._settings.pipelines,
+            )
+        raw = manager.status()
+        loaded = raw.get("loaded_pipelines", [])
+        ttls = raw.get("pipeline_ttls", {})
+        active = raw.get("active_counts", {})
+        pinned = set(raw.get("pinned_pipelines", []))
+        last_used = raw.get("last_used_unix_ms", {})
+        now_ms = int(time.time() * 1000)
+        entries = []
+        for name in loaded:
+            ttl = int(ttls.get(name, self._settings.default_ttl_seconds))
+            remaining = None
+            if name not in pinned and ttl > 0:
+                used_ms = int(last_used.get(name, now_ms))
+                remaining = max(0, ttl - max(0, now_ms - used_ms) // 1000)
+            entries.append(
+                ResidencyEntry(
+                    pipeline=str(name),
+                    kind=(
+                        ResidencyKind.PINNED
+                        if name in pinned
+                        else ResidencyKind.SOFT_TTL
+                    ),
+                    active_leases=int(active.get(name, 0)),
+                    remaining_ttl_seconds=remaining,
+                )
+            )
+        return ResidencyStatus(
+            default_ttl_seconds=self._settings.default_ttl_seconds,
+            entries=tuple(entries),
+            pipelines=self._settings.pipelines,
+        )
 
     def release_idle(self, pipeline: str | None = None) -> ResidencyStatus:
-        if self.residency is None:
-            return ResidencyStatus()
-        self.residency.release_idle(pipeline)
-        return self.residency.status()
+        manager = self._physical_cache_manager()
+        if manager is not None:
+            if pipeline is None:
+                manager.release(heavy_only=False)
+            else:
+                manager.release_one(pipeline)
+        return self.residency_status()
+
+    def configure_settings(self, snapshot: SettingsSnapshot) -> None:
+        self._settings = snapshot
+        manager = self._physical_cache_manager()
+        if manager is not None and hasattr(manager, "configure_residency"):
+            manager.configure_residency(
+                default_ttl_seconds=snapshot.default_ttl_seconds,
+                pipelines=list(snapshot.pipelines),
+            )
+
+    def close(self) -> None:
+        manager = self._physical_cache_manager()
+        if manager is None:
+            return
+        manager.release(heavy_only=False, force=True)
+        manager.shutdown()
+
+    def _physical_cache_manager(self) -> Any | None:
+        try:
+            return self.service.cache_manager  # type: ignore[attr-defined]
+        except Exception:
+            return None
 
     # ------------------------------------------------------------------
     # Helpers

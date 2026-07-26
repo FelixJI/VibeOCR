@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import io
-from dataclasses import dataclass
-from typing import TYPE_CHECKING
+import logging
+from contextlib import contextmanager
+from typing import TYPE_CHECKING, Any
 
 import pytest
 from PIL import Image
 
 from vibeocr.models.ocr_result import OCRResult, TextBlock
+from vibeocr.protocol.v2 import PipelineSelection
 from vibeocr.supervisor.inference.budgets import InputItem
 from vibeocr.supervisor.inference.paddle_adapter import PaddlePipelineAdapter
 
@@ -35,6 +37,8 @@ class _FakeOCRService:
     def __init__(self) -> None:
         self.calls: list[int] = []  # batch sizes
         self.predict_calls = 0
+        self.preload_calls: list[list[object]] = []
+        self.cache_manager: Any | None = None
 
     def recognize_batch(self, images: list[np.ndarray], options=None) -> list[OCRResult]:
         self.predict_calls += 1
@@ -48,38 +52,25 @@ class _FakeOCRService:
             for i in range(len(images))
         ]
 
+    def preload_pipelines_sequential(self, pipelines: list[object]) -> dict[str, bool]:
+        self.preload_calls.append(pipelines)
+        return {getattr(pipeline, "value", str(pipeline)): True for pipeline in pipelines}
 
-def _make_items(*labels: str) -> list[InputItem]:
-    return [
-        InputItem(
-            item_id=f"it-{i}",
-            encoded_bytes=len(_png_bytes(lbl)),
-            decoded_pixels=64,
-            estimated_pages=1,
+
+def _raw_items(*labels: str) -> list[InputItem]:
+    items: list[InputItem] = []
+    for index, label in enumerate(labels):
+        raw = _png_bytes(label)
+        items.append(
+            InputItem(
+                item_id=f"it-{index}",
+                data=raw,
+                encoded_bytes=len(raw),
+                decoded_pixels=64,
+                estimated_pages=1,
+            )
         )
-        for i, lbl in enumerate(labels)
-    ]
-
-
-# Attach raw bytes via a small wrapper so the adapter can decode.
-@dataclass(frozen=True)
-class _BytesItem(InputItem.__class__ if False else object):  # type: ignore[misc]
-    pass
-
-
-class _RawItem:
-    """Lightweight item carrying raw bytes plus the budget fields."""
-
-    def __init__(self, item_id: str, raw: bytes) -> None:
-        self.item_id = item_id
-        self.data = raw
-        self.encoded_bytes = len(raw)
-        self.decoded_pixels = 64
-        self.estimated_pages = 1
-
-
-def _raw_items(*labels: str) -> list[_RawItem]:
-    return [_RawItem(f"it-{i}", _png_bytes(lbl)) for i, lbl in enumerate(labels)]
+    return items
 
 
 # ---------------------------------------------------------------------------
@@ -141,6 +132,31 @@ def test_recognize_many_uses_one_predict_call_for_batch() -> None:
     assert service.calls == [4]
 
 
+def test_recognize_many_logs_pipeline_items_result_and_elapsed(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    adapter = PaddlePipelineAdapter(service=_FakeOCRService(), pipeline_name="OCR")
+
+    with caplog.at_level(
+        logging.INFO,
+        logger="vibeocr.supervisor.inference.paddle_adapter",
+    ):
+        adapter.recognize_many(
+            _raw_items("a", "b"),
+            options=PipelineSelection("PP-StructureV3"),
+        )
+
+    message = next(
+        record.getMessage()
+        for record in caplog.records
+        if "[Supervisor][Recognize]" in record.getMessage()
+    )
+    assert "pipeline=PP-StructureV3" in message
+    assert "items=2" in message
+    assert "result=success" in message
+    assert "elapsed_ms=" in message
+
+
 def test_recognize_many_raises_on_missing_raw_bytes() -> None:
     adapter = PaddlePipelineAdapter(service=_FakeOCRService(), pipeline_name="OCR")
     # Plain InputItem has no .data attribute.
@@ -149,24 +165,120 @@ def test_recognize_many_raises_on_missing_raw_bytes() -> None:
         adapter.recognize_many([plain])
 
 
-def test_recognize_many_releases_residency_lease() -> None:
-    from vibeocr.supervisor.inference.residency import ResidencyManager
-
-    t = [0.0]
-    rm = ResidencyManager(default_ttl_seconds=100, clock=lambda: t[0])
+def test_preload_delegates_to_existing_ocr_service_loader() -> None:
     service = _FakeOCRService()
-    adapter = PaddlePipelineAdapter(service=service, pipeline_name="OCR", residency=rm)
+    adapter = PaddlePipelineAdapter(service=service)
+
+    adapter.preload(("OCR", "PP-StructureV3"))
+
+    assert [
+        getattr(pipeline, "value", None) for pipeline in service.preload_calls[0]
+    ] == ["OCR", "PP-StructureV3"]
+
+
+def test_preload_logs_each_pipeline_result_and_elapsed(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    adapter = PaddlePipelineAdapter(service=_FakeOCRService())
+
+    with caplog.at_level(
+        logging.INFO,
+        logger="vibeocr.supervisor.inference.paddle_adapter",
+    ):
+        adapter.preload(("OCR", "PP-StructureV3"))
+
+    messages = [
+        record.getMessage()
+        for record in caplog.records
+        if "[Supervisor][Preload]" in record.getMessage()
+    ]
+    assert len(messages) == 2
+    assert any(
+        "pipeline=OCR" in message
+        and "result=success" in message
+        and "elapsed_ms=" in message
+        for message in messages
+    )
+    assert any(
+        "pipeline=PP-StructureV3" in message
+        and "result=success" in message
+        and "elapsed_ms=" in message
+        for message in messages
+    )
+
+
+def test_preload_missing_result_is_reported_as_failure(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    class EmptyResultService(_FakeOCRService):
+        def preload_pipelines_sequential(
+            self, pipelines: list[object]
+        ) -> dict[str, bool]:
+            self.preload_calls.append(pipelines)
+            return {}
+
+    adapter = PaddlePipelineAdapter(service=EmptyResultService())
+
+    with (
+        caplog.at_level(
+            logging.ERROR,
+            logger="vibeocr.supervisor.inference.paddle_adapter",
+        ),
+        pytest.raises(RuntimeError, match="OCR"),
+    ):
+        adapter.preload(("OCR",))
+
+    assert any(
+        "pipeline=OCR" in record.getMessage()
+        and "result=failed" in record.getMessage()
+        for record in caplog.records
+    )
+
+
+def test_recognize_many_releases_residency_lease() -> None:
+    service = _FakeOCRService()
+
+    class PhysicalCache:
+        def __init__(self) -> None:
+            self.active = 0
+            self.max_active = 0
+
+        @contextmanager
+        def lease(self, pipeline):
+            assert pipeline == "OCR"
+            self.active += 1
+            self.max_active = max(self.max_active, self.active)
+            try:
+                yield
+            finally:
+                self.active -= 1
+
+        def status(self):
+            return {
+                "loaded_pipelines": ["OCR"],
+                "pipeline_ttls": {"OCR": 100},
+                "active_counts": {"OCR": self.active},
+                "pinned_pipelines": [],
+                "last_used_unix_ms": {},
+            }
+
+    cache = PhysicalCache()
+    service.cache_manager = cache
+    adapter = PaddlePipelineAdapter(service=service, pipeline_name="OCR")
     adapter.recognize_many(_raw_items("a"))
     status = adapter.residency_status()
     entry = next(e for e in status.entries if e.pipeline == "OCR")
-    # Lease was released after the call.
     assert entry.active_leases == 0
+    assert cache.max_active == 1
 
 
 def test_result_payload_passes_through_dict_results() -> None:
     class _DictService:
         def recognize_batch(self, images, options=None):
             return [{"text": "raw"} for _ in images]
+
+        def preload_pipelines_sequential(self, pipelines):
+            return {str(pipeline): True for pipeline in pipelines}
 
     adapter = PaddlePipelineAdapter(service=_DictService(), pipeline_name="OCR")
     results = adapter.recognize_many(_raw_items("a"))

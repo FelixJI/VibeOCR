@@ -24,6 +24,7 @@ from vibeocr.protocol.v2 import (
     TERMINAL_JOB_STATES,
     CancelMode,
     ContractError,
+    ItemOutcome,
     ItemState,
     JobItem,
     JobKind,
@@ -31,6 +32,8 @@ from vibeocr.protocol.v2 import (
     JobSnapshot,
     JobState,
     JobSummary,
+    JobUpdate,
+    PipelineSelection,
     StageEvent,
     assert_item_transition,
     assert_job_transition,
@@ -76,10 +79,13 @@ class JobRecord:
     # For retry linkage (does not mutate source history).
     source_job_id: str | None = None
     source_item_ids: tuple[str, ...] = ()
+    request_id: str | None = None
+    pipeline: PipelineSelection | None = None
     purged: bool = False
     _next_seq: int = 1
     _lock: threading.RLock = field(default_factory=threading.RLock, repr=False)
     _terminal_at: str | None = None
+    _outcomes: list[tuple[int, ItemOutcome]] = field(default_factory=list, repr=False)
     # Hook invoked on every terminal transition so the registry/retention
     # policy can record the timestamp without the executor knowing about it.
     _retention_hook: Callable[[JobRecord], None] = field(
@@ -137,8 +143,11 @@ class JobRecord:
                 state=target,
                 attempt=new_attempt,
                 error=error,
+                client_item_key=item.client_item_key,
+                ordinal=item.ordinal,
+                source_item_id=item.source_item_id,
             )
-            if target is ItemState.SUCCEEDED:
+            if target in TERMINAL_ITEM_STATES:
                 self.progress_current = min(self.progress_current + 1, self.progress_total)
 
     def set_item_result(self, item_id: str, payload: dict) -> None:
@@ -150,6 +159,136 @@ class JobRecord:
         with self._lock:
             self._require_item(item_id)
             self.item_errors[item_id] = error
+
+    def mark_degraded(self) -> None:
+        with self._lock:
+            self.degraded = True
+
+    def commit_item_success(
+        self,
+        item_id: str,
+        *,
+        payload_type: str,
+        payload: dict,
+    ) -> ItemOutcome:
+        """Atomically commit a validated successful outcome."""
+        if not payload_type or not isinstance(payload, dict) or not payload:
+            raise ContractError("successful item outcome requires a non-empty typed payload")
+        with self._lock:
+            item = self._require_item(item_id)
+            if item.state is ItemState.QUEUED:
+                self.transition_item(item_id, ItemState.RUNNING)
+                item = self._require_item(item_id)
+            if item.state is not ItemState.RUNNING:
+                raise ContractError(
+                    f"cannot commit success for item {item_id} in state {item.state.value}"
+                )
+            self.results[item_id] = payload
+            self.transition_item(item_id, ItemState.SUCCEEDED)
+            event = self.append_event("item_succeeded", item_id=item_id)
+            outcome = ItemOutcome(
+                item_id=item_id,
+                state=ItemState.SUCCEEDED,
+                attempt=item.attempt,
+                payload_type=payload_type,
+                payload=payload,
+            )
+            self._outcomes.append((event.sequence, outcome))
+            return outcome
+
+    def commit_item_failure(
+        self,
+        item_id: str,
+        *,
+        error_code: str,
+        error: str,
+        detail: dict | None = None,
+    ) -> ItemOutcome:
+        """Atomically commit a failed outcome, including admission failures."""
+        if not error_code:
+            raise ContractError("failed item outcome requires an error_code")
+        with self._lock:
+            item = self._require_item(item_id)
+            if item.state not in TERMINAL_ITEM_STATES:
+                if item.state is ItemState.QUEUED:
+                    self.transition_item(item_id, ItemState.RUNNING)
+                    item = self._require_item(item_id)
+                self.transition_item(item_id, ItemState.FAILED, error=error)
+            elif item.state is not ItemState.FAILED:
+                raise ContractError(
+                    f"cannot commit failure for item {item_id} in state {item.state.value}"
+                )
+            elif not any(
+                outcome.item_id == item_id for _sequence, outcome in self._outcomes
+            ):
+                # Admission/staging may construct the item directly in FAILED
+                # state before a JobRecord exists; count that terminal exactly once.
+                self.progress_current = min(
+                    self.progress_current + 1, self.progress_total
+                )
+            self.item_errors[item_id] = error_code
+            event = self.append_event(
+                "item_failed",
+                item_id=item_id,
+                detail={"code": error_code, "message": error, **(detail or {})},
+            )
+            outcome = ItemOutcome(
+                item_id=item_id,
+                state=ItemState.FAILED,
+                attempt=item.attempt,
+                error_code=error_code,
+                error_detail={"message": error, **(detail or {})},
+            )
+            self._outcomes.append((event.sequence, outcome))
+            return outcome
+
+    def commit_item_cancelled(self, item_id: str) -> ItemOutcome:
+        with self._lock:
+            item = self._require_item(item_id)
+            if item.state not in TERMINAL_ITEM_STATES:
+                self.transition_item(item_id, ItemState.CANCELLED)
+            elif item.state is not ItemState.CANCELLED:
+                raise ContractError(
+                    f"cannot cancel terminal item {item_id} in state {item.state.value}"
+                )
+            event = self.append_event("item_cancelled", item_id=item_id)
+            outcome = ItemOutcome(
+                item_id=item_id,
+                state=ItemState.CANCELLED,
+                attempt=item.attempt,
+                error_code="CANCELLED",
+            )
+            self._outcomes.append((event.sequence, outcome))
+            return outcome
+
+    def outcomes_after(self, after_sequence: int) -> list[ItemOutcome]:
+        with self._lock:
+            return [
+                outcome
+                for sequence, outcome in self._outcomes
+                if sequence > after_sequence
+            ]
+
+    def observe(self, after_sequence: int = 0) -> JobUpdate:
+        """Read snapshot, events and outcomes at one atomic sequence watermark."""
+        if after_sequence < 0:
+            raise ContractError("after_sequence must be >= 0")
+        with self._lock:
+            through = self._next_seq - 1
+            return JobUpdate(
+                snapshot=self.snapshot(),
+                events=tuple(
+                    event
+                    for event in self.events
+                    if after_sequence < event.sequence <= through
+                ),
+                outcomes=tuple(
+                    outcome
+                    for sequence, outcome in self._outcomes
+                    if after_sequence < sequence <= through
+                ),
+                through_sequence=through,
+            )
 
     # ------------------------------------------------------------------
     # Snapshot
@@ -188,6 +327,9 @@ class JobRecord:
                 degraded=self.degraded,
                 event_sequence=self._next_seq - 1,
                 result_available=result_available,
+                request_id=self.request_id,
+                source_job_id=self.source_job_id,
+                pipeline=self.pipeline,
             )
 
     # ------------------------------------------------------------------
@@ -239,6 +381,8 @@ class JobRegistry:
         stage: str = "accepted",
         source_job_id: str | None = None,
         source_item_ids: tuple[str, ...] = (),
+        request_id: str | None = None,
+        pipeline: PipelineSelection | None = None,
         job_id: str | None = None,
     ) -> JobRecord:
         record = JobRecord(
@@ -252,6 +396,8 @@ class JobRegistry:
             items=list(items),
             source_job_id=source_job_id,
             source_item_ids=source_item_ids,
+            request_id=request_id,
+            pipeline=pipeline,
         )
         record._retention_hook = self._terminal_hook  # type: ignore[method-assign]
         with self._lock:
@@ -326,9 +472,17 @@ class JobRegistry:
         source_item_ids: list[str] = []
         for it in source.items:
             if it.state in (ItemState.FAILED, ItemState.CANCELLED):
-                new_id = f"{it.item_id}-retry"
+                new_id = f"{new_job_id()}"
                 retry_items.append(
-                    JobItem(item_id=new_id, display_name=it.display_name, state=ItemState.QUEUED)
+                    JobItem(
+                        item_id=new_id,
+                        display_name=it.display_name,
+                        state=ItemState.QUEUED,
+                        attempt=it.attempt + 1,
+                        client_item_key=it.client_item_key,
+                        ordinal=it.ordinal,
+                        source_item_id=it.item_id,
+                    )
                 )
                 source_item_ids.append(it.item_id)
         if not retry_items:
@@ -341,6 +495,8 @@ class JobRegistry:
             stage="queued",
             source_job_id=source_job_id,
             source_item_ids=tuple(source_item_ids),
+            request_id=source.request_id,
+            pipeline=source.pipeline,
         )
 
     # ------------------------------------------------------------------

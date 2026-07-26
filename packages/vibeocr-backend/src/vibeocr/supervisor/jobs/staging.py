@@ -27,6 +27,10 @@ class StagingQuotaError(ValueError):
     """Raised when an upload violates the configured quota."""
 
 
+class InputExpiredError(ValueError):
+    """Raised when retry input retention has elapsed or become unavailable."""
+
+
 _SAFE_NAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
 
 
@@ -67,6 +71,9 @@ class InputStager:
     max_total_bytes: int = 256 * 1024 * 1024
     max_per_file_bytes: int = 64 * 1024 * 1024
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+    _staged_by_job: dict[str, dict[str, StagedInput]] = field(
+        default_factory=dict, repr=False
+    )
 
     def __post_init__(self) -> None:
         self.root.mkdir(parents=True, exist_ok=True)
@@ -152,7 +159,59 @@ class InputStager:
                 items.append(
                     JobItem(item_id=item_id, display_name=display_name or stem, state=ItemState.QUEUED)
                 )
+        self._staged_by_job[job_id] = {entry.item_id: entry for entry in staged}
         return staged, items
+
+    def clone_for_retry(
+        self,
+        *,
+        source_job_id: str,
+        retry_job_id: str,
+        source_to_retry_item_ids: list[tuple[str, str]],
+    ) -> list[StagedInput]:
+        """Clone retained source inputs into a retry job, keyed by item id."""
+        with self._lock:
+            source = self._staged_by_job.get(source_job_id, {})
+            missing = [
+                source_id
+                for source_id, _retry_id in source_to_retry_item_ids
+                if source_id not in source or not source[source_id].path.exists()
+            ]
+            if missing:
+                raise StagingQuotaError(
+                    "retry input expired or unavailable: " + ", ".join(missing)
+                )
+            retry_dir = self.root / _safe_dir(retry_job_id)
+            retry_dir.mkdir(parents=True, exist_ok=False)
+            cloned: list[StagedInput] = []
+            try:
+                for ordinal, (source_id, retry_id) in enumerate(
+                    source_to_retry_item_ids
+                ):
+                    original = source[source_id]
+                    target = retry_dir / f"{ordinal:04d}-{uuid.uuid4().hex[:8]}"
+                    shutil.copy2(original.path, target)
+                    cloned.append(
+                        StagedInput(
+                            item_id=retry_id,
+                            display_name=original.display_name,
+                            path=target,
+                            size_bytes=original.size_bytes,
+                            content_type=original.content_type,
+                        )
+                    )
+            except Exception:
+                self._safe_rmtree(retry_dir)
+                raise
+            self._staged_by_job[retry_job_id] = {
+                entry.item_id: entry for entry in cloned
+            }
+            return cloned
+
+    def has_staged_item(self, job_id: str, item_id: str) -> bool:
+        with self._lock:
+            entry = self._staged_by_job.get(job_id, {}).get(item_id)
+            return bool(entry is not None and entry.path.exists())
 
     # ------------------------------------------------------------------
     # Release
@@ -162,6 +221,7 @@ class InputStager:
         with self._lock:
             job_dir = self.root / _safe_dir(job_id)
             self._safe_rmtree(job_dir)
+            self._staged_by_job.pop(job_id, None)
 
     def release_all(self) -> int:
         """Remove every staging directory. Returns count removed."""
@@ -173,6 +233,7 @@ class InputStager:
                 if entry.is_dir():
                     self._safe_rmtree(entry)
                     removed += 1
+            self._staged_by_job.clear()
             return removed
 
     def cleanup_stale(self, known_job_ids: set[str]) -> int:
@@ -186,6 +247,9 @@ class InputStager:
                 if entry.is_dir() and entry.name not in known_dirs:
                     self._safe_rmtree(entry)
                     removed += 1
+            for job_id in list(self._staged_by_job):
+                if job_id not in known_job_ids:
+                    self._staged_by_job.pop(job_id, None)
             return removed
 
     # ------------------------------------------------------------------
@@ -212,4 +276,11 @@ def _safe_dir(job_id: str) -> str:
     return _SAFE_NAME_RE.sub("-", job_id)[:128]
 
 
-__all__ = ["InputStager", "StagedInput", "StagingQuotaError", "_safe_dir", "_safe_stem"]
+__all__ = [
+    "InputExpiredError",
+    "InputStager",
+    "StagedInput",
+    "StagingQuotaError",
+    "_safe_dir",
+    "_safe_stem",
+]

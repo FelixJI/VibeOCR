@@ -239,19 +239,24 @@ def test_stale_worker_signals_cannot_overwrite_current_run(qtbot, monkeypatch):
     assert tab._last_terminal_status is None
 
 
-def test_cold_backend_cancel_does_not_emit_error(qtbot, monkeypatch):
+def test_cold_backend_cancel_does_not_emit_error(qtbot, tmp_path):
     entered = threading.Event()
     release = threading.Event()
 
-    def failed_cold_start():
-        entered.set()
-        release.wait(timeout=2)
-        raise RuntimeError("backend stopped during cancellation")
+    class ColdService:
+        def recognize_batch(self, _images, _options):
+            entered.set()
+            release.wait(timeout=2)
+            raise RuntimeError("backend stopped during cancellation")
 
-    monkeypatch.setattr(
-        "vibeocr.client.session.get_backend_client", failed_cold_start
+        def batch_cancel(self):
+            return None
+
+    image = tmp_path / "cold.png"
+    image.write_bytes(b"not-an-image")
+    worker = BatchRecognitionWorker(
+        ColdService(), [{"path": str(image)}], MagicMock()
     )
-    worker = BatchRecognitionWorker(None, [], MagicMock())
     errors: list[str] = []
     terminals: list[str] = []
     worker.error.connect(errors.append)

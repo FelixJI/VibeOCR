@@ -16,7 +16,9 @@ from .bootstrap import BootstrapHandle, generate_session_token, new_instance_id
 from .module import Executor, SupervisorModule, SupervisorOptions
 
 if TYPE_CHECKING:
-    from vibeocr.protocol.v2 import ResidencyStatus
+    from vibeocr.protocol.v2 import CancelMode, ResidencyStatus
+
+    from .jobs.registry import JobRecord
 
 
 class _NullExecutor:
@@ -37,7 +39,7 @@ class _NullExecutor:
             except Exception:  # pragma: no cover - defensive
                 pass
 
-    def cancel_mode_for(self, record) -> str:  # type: ignore[no-untyped-def]
+    def cancel_mode_for(self, record: JobRecord) -> CancelMode:
         from vibeocr.protocol.v2 import CancelMode
 
         return CancelMode.COOPERATIVE
@@ -52,8 +54,25 @@ class _NullExecutor:
 
         return ResidencyStatus()
 
+    def preload(self, pipelines: tuple[str, ...]) -> ResidencyStatus:
+        from vibeocr.protocol.v2 import ResidencyStatus
 
-def _build_paddle_executor() -> Executor:
+        del pipelines
+        return ResidencyStatus()
+
+    def configure_settings(self, snapshot) -> ResidencyStatus:  # type: ignore[no-untyped-def]
+        from vibeocr.protocol.v2 import ResidencyStatus
+
+        return ResidencyStatus(
+            default_ttl_seconds=snapshot.default_ttl_seconds,
+            pipelines=snapshot.pipelines,
+        )
+
+    def close(self) -> None:
+        return
+
+
+def _build_paddle_executor(*, scheduler: Any = None) -> Executor:
     """Construct a real PaddleExecutor backed by the singleton OCRService.
 
     The heavy model load is deferred: OCRService is a lazy singleton, so the
@@ -68,13 +87,26 @@ def _build_paddle_executor() -> Executor:
 
         return PaddlePipelineAdapter(service=OCRService())
 
-    return PaddleExecutor(adapter_factory=factory)
+    def clear_cache() -> None:
+        try:
+            import paddle
+
+            if paddle.device.is_compiled_with_cuda():
+                paddle.device.cuda.empty_cache()
+        except Exception:
+            pass
+
+    return PaddleExecutor(
+        adapter_factory=factory,
+        scheduler=scheduler,
+        clear_cache=clear_cache,
+    )
 
 
 def _paddle_available() -> bool:
     """Return True if a real Paddle backend is importable in this environment."""
     try:
-        import paddle  # noqa: F401
+        __import__("paddle")
     except Exception:
         return False
     return True
@@ -123,7 +155,7 @@ class _MinerUServiceLifecycle:
             pass
 
 
-def _build_mineru_executor() -> Executor:
+def _build_mineru_executor(*, scheduler: Any = None) -> Executor:
     """Construct a real MinerUExecutor owning the MinerU API subprocess.
 
     The ``client_factory`` returns the singleton ``MinerUService``, whose
@@ -142,7 +174,7 @@ def _build_mineru_executor() -> Executor:
             lifecycle=_MinerUServiceLifecycle(),
         )
 
-    return MinerUExecutor(adapter_factory=adapter_factory)
+    return MinerUExecutor(adapter_factory=adapter_factory, scheduler=scheduler)
 
 
 def _mineru_available() -> bool:
@@ -164,12 +196,24 @@ def _build_composite_executor(*, use_paddle: bool, use_mineru: bool) -> Executor
     from vibeocr.protocol.v2 import JobKind
 
     from .inference.composite_executor import CompositeExecutor
+    from .inference.scheduler import DeviceScheduler
 
+    scheduler = DeviceScheduler(devices=["gpu:0"])
     children: list[tuple[Executor, frozenset]] = []
     if use_paddle:
-        children.append((_build_paddle_executor(), frozenset({JobKind.RECOGNITION})))
+        children.append(
+            (
+                _build_paddle_executor(scheduler=scheduler),
+                frozenset({JobKind.RECOGNITION}),
+            )
+        )
     if use_mineru:
-        children.append((_build_mineru_executor(), frozenset({JobKind.MINERU_PARSE})))
+        children.append(
+            (
+                _build_mineru_executor(scheduler=scheduler),
+                frozenset({JobKind.MINERU_PARSE}),
+            )
+        )
     return CompositeExecutor(children)
 
 

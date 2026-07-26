@@ -124,4 +124,59 @@ def ocr_result_to_payload(result: Any) -> dict[str, Any]:
     return payload
 
 
-__all__ = ["ocr_result_to_payload", "text_block_to_dict"]
+def ocr_result_from_payload(payload: dict[str, Any]) -> Any:
+    """Rebuild the stable client model from one typed ``ocr.v1`` payload."""
+    from vibeocr.models.ocr_result import OCRResult, TextBlock
+
+    blocks: list[TextBlock] = []
+    for raw in payload.get("text_blocks", []) or []:
+        if not isinstance(raw, dict):
+            continue
+        bbox = raw.get("bbox")
+        polygon = raw.get("polygon")
+        blocks.append(
+            TextBlock(
+                text=str(raw.get("text", "")),
+                score=float(raw.get("score", 0.0)),
+                bbox=tuple(bbox) if isinstance(bbox, list) else None,
+                polygon=(
+                    tuple(polygon) if isinstance(polygon, list) else None
+                ),
+                page_idx=raw.get("page_idx"),
+                is_manually_edited=bool(
+                    raw.get("is_manually_edited", False)
+                ),
+                content_index=raw.get("content_index"),
+                label=str(raw.get("label", "text")),
+                order=int(raw.get("order", -1)),
+            )
+        )
+    return OCRResult(
+        raw_text=str(payload.get("raw_text", payload.get("text", ""))),
+        markdown_text=str(payload.get("markdown_text", "")),
+        html_text=str(payload.get("html_text", "")),
+        text_with_scores=[
+            (str(item[0]), float(item[1]))
+            for item in payload.get("text_with_scores", []) or []
+            if isinstance(item, (list, tuple)) and len(item) >= 2
+        ],
+        avg_score=float(payload.get("avg_score", 0.0)),
+        low_confidence_items=[
+            (str(item[0]), float(item[1]))
+            for item in payload.get("low_confidence_items", []) or []
+            if isinstance(item, (list, tuple)) and len(item) >= 2
+        ],
+        pipeline_type=str(payload.get("pipeline_type", "OCR")),
+        content_list=list(payload.get("content_list", []) or []),
+        text_blocks=blocks,
+        image_width=int(payload.get("image_width", 0)),
+        image_height=int(payload.get("image_height", 0)),
+        preproc_angle=int(payload.get("preproc_angle", 0)),
+    )
+
+
+__all__ = [
+    "ocr_result_from_payload",
+    "ocr_result_to_payload",
+    "text_block_to_dict",
+]

@@ -10,7 +10,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from vibeocr.protocol.v2 import ItemState, JobKind, JobPriority, JobState
-from vibeocr.supervisor.inference.budgets import InputItem  # noqa: F401
 from vibeocr.supervisor.inference.paddle_adapter import PaddlePipelineAdapter
 from vibeocr.supervisor.inference.paddle_executor import PaddleExecutor
 from vibeocr.supervisor.jobs.registry import JobRegistry
@@ -31,6 +30,9 @@ class _FakeService:
         if self._fail:
             raise RuntimeError("OOM during predict")
         return [{"text": t} for t in self._texts]
+
+    def preload_pipelines_sequential(self, pipelines: list[Any]) -> dict[str, bool]:
+        return {str(pipeline): True for pipeline in pipelines}
 
 
 def _make_adapter(service: _FakeService) -> PaddlePipelineAdapter:

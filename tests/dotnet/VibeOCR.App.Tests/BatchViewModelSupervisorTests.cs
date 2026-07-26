@@ -1,14 +1,10 @@
 // Phase 7B tests: BatchViewModel v2 supervisor path.
 //
 // Verifies plan §7B: "BatchViewModel 一次提交逻辑 job, 不在 UI 切 GPU 微批".
-// The v2 path submits ALL pending inputs in ONE SubmitRecognitionAsync call
-// (one logical job), then maps the stable-ordered ResultEntry[] back onto the
-// per-item observable collection. The legacy per-item SemaphoreSlim loop stays
-// covered by BatchViewModelTests; this file is additive.
-using System.Collections.ObjectModel;
+// The v2 path submits ALL pending inputs in ONE generic recognition job, then
+// maps typed outcomes by client item key rather than response position.
 using System.Text.Json;
 using VibeOCR.App.Features.Batch;
-using VibeOCR.Contracts;
 using VibeOCR.Contracts.HttpV2;
 using VibeOCR.Platform.Inference;
 using Xunit;
@@ -31,9 +27,11 @@ public sealed class BatchViewModelSupervisorTests
         Assert.Equal(1, fake.SubmitCalls);
         Assert.NotNull(fake.LastUploads);
         Assert.Equal(3, fake.LastUploads!.Count);
-        Assert.Equal(JobPriority.Background, fake.LastPriority);
-        // Per-item results mapped back in input order, text derived from each
-        // item's actual display name (stem of the temp file).
+        Assert.Equal(JobKind.Recognition, fake.LastRequest?.Kind);
+        Assert.Equal(JobPriority.Background, fake.LastRequest?.Priority);
+        Assert.Equal("OCR", fake.LastRequest?.Pipeline.PipelineId);
+        // The fake returns outcomes in reverse order. Correct UI order proves
+        // mapping uses client_item_key through the JobRef item mapping.
         Assert.Equal(3, viewModel.CompletedCount);
         Assert.Equal(0, viewModel.FailedCount);
         Assert.Equal(BatchItemState.Completed, viewModel.Items[0].State);
@@ -96,6 +94,24 @@ public sealed class BatchViewModelSupervisorTests
     }
 
     [Fact]
+    public async Task LocalCancellationUsesOneGenericCancelCommand()
+    {
+        var files = new FakeBatchFileSource();
+        var fake = new FakeBatchInferenceClient();
+        var viewModel = new BatchViewModel(fake, files);
+        viewModel.AddFiles([CreateTempPng("a"), CreateTempPng("b")]);
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        await viewModel.StartAsync(cancellation.Token);
+
+        Assert.NotNull(fake.LastCommand);
+        Assert.Equal(JobCommandKind.Cancel, fake.LastCommand!.Kind);
+        Assert.Equal("batch-1", fake.LastCommand.JobId);
+        Assert.All(viewModel.Items, item => Assert.Equal(BatchItemState.Cancelled, item.State));
+    }
+
+    [Fact]
     public async Task EmptyBatchReturnsImmediately()
     {
         var viewModel = new BatchViewModel(new FakeBatchInferenceClient(), new FakeBatchFileSource());
@@ -124,16 +140,14 @@ public sealed class BatchViewModelSupervisorTests
     }
 
     /// <summary>
-    /// Fake v2 supervisor for batch. The first GetJobAsync returns terminal;
-    /// GetResultAsync returns one ResultEntry per upload, in input order. Each
-    /// entry's text is derived from its display name; entries in
-    /// <c>perItemFailures</c> carry a non-null ErrorCode (continue-on-failure).
+    /// Fake v2 supervisor for batch. ObserveAsync returns all terminal outcomes
+    /// in reverse order so tests detect positional result mapping.
     /// </summary>
-    private sealed class FakeBatchInferenceClient : IInferenceClient
+    private sealed class FakeBatchInferenceClient : InferenceClientStub
     {
         private readonly JobState _terminalState;
         private readonly IReadOnlySet<int> _failures;
-        private IReadOnlyList<RecognitionUpload>? _uploads;
+        private IReadOnlyList<JobItem> _items = Array.Empty<JobItem>();
 
         public FakeBatchInferenceClient(
             JobState terminalState = JobState.Completed,
@@ -144,91 +158,100 @@ public sealed class BatchViewModelSupervisorTests
         }
 
         public int SubmitCalls { get; private set; }
-        public IReadOnlyList<RecognitionUpload>? LastUploads => _uploads;
-        public JobPriority LastPriority { get; private set; }
-        public Uri BaseUrl => new("http://127.0.0.1:1");
+        public SubmitRequest? LastRequest { get; private set; }
+        public IReadOnlyDictionary<string, SubmitUpload>? LastUploads { get; private set; }
+        public JobCommand? LastCommand { get; private set; }
 
-        public Task<JobRef> SubmitRecognitionAsync(
-            IReadOnlyList<RecognitionUpload> uploads, JobPriority priority, CancellationToken cancellationToken)
+        public override Task<JobRef> SubmitAsync(
+            SubmitRequest request,
+            IReadOnlyDictionary<string, SubmitUpload> uploads,
+            CancellationToken cancellationToken)
         {
             SubmitCalls++;
-            _uploads = uploads;
-            LastPriority = priority;
-            return Task.FromResult(new JobRef { JobId = $"batch-{SubmitCalls}" });
-        }
-
-        public Task<JobSnapshot> GetJobAsync(string jobId, CancellationToken cancellationToken)
-            => Task.FromResult(new JobSnapshot
+            LastRequest = request;
+            LastUploads = uploads;
+            _items = request.Items.Select((item, index) => new JobItem
             {
-                JobId = jobId,
-                Kind = JobKind.Recognition,
-                Priority = JobPriority.Background,
-                State = _terminalState,
-                SchemaVersion = 2,
-                Stage = _terminalState is JobState.Completed ? "done" : "running",
-                ProgressCurrent = _terminalState is JobState.Completed ? (_uploads?.Count ?? 0) : 0,
-                ProgressTotal = _uploads?.Count ?? 0,
-                EventSequence = 1,
-                ResultAvailable = _terminalState is JobState.Completed,
+                ItemId = $"it-{index}",
+                ClientItemKey = item.ClientItemKey,
+                Ordinal = item.Ordinal,
+                DisplayName = item.DisplayName,
+                State = ItemState.Queued,
+            }).ToArray();
+            return Task.FromResult(new JobRef
+            {
+                JobId = $"batch-{SubmitCalls}",
+                Items = _items,
             });
-
-        public Task<IReadOnlyList<StageEvent>> GetEventsAsync(
-            string jobId, int afterSequence, CancellationToken cancellationToken)
-            => Task.FromResult<IReadOnlyList<StageEvent>>(Array.Empty<StageEvent>());
-
-        public Task<IReadOnlyList<ResultEntry>> GetResultAsync(string jobId, CancellationToken cancellationToken)
-        {
-            if (_uploads is null || _uploads.Count == 0)
-            {
-                return Task.FromResult<IReadOnlyList<ResultEntry>>(Array.Empty<ResultEntry>());
-            }
-
-            var results = new ResultEntry[_uploads.Count];
-            for (int i = 0; i < _uploads.Count; i++)
-            {
-                // Derive a deterministic text from the display name (strip ".png").
-                string stem = _uploads[i].FileName;
-                if (stem.EndsWith(".png", StringComparison.OrdinalIgnoreCase))
-                {
-                    stem = stem[..^4];
-                }
-
-                string text = $"ocr-{stem}";
-                var payload = new Dictionary<string, JsonElement>
-                {
-                    ["text"] = JsonSerializer.SerializeToElement(text),
-                };
-                results[i] = new ResultEntry
-                {
-                    ItemId = $"it-{i}",
-                    DisplayName = _uploads[i].FileName,
-                    Payload = payload,
-                    ErrorCode = _failures.Contains(i) ? "OUT_OF_MEMORY" : null,
-                };
-            }
-
-            return Task.FromResult<IReadOnlyList<ResultEntry>>(results);
         }
 
-        public Task<CancelMode> CancelAsync(string jobId, CancellationToken cancellationToken)
-            => Task.FromResult(CancelMode.Cooperative);
+        public override Task<JobUpdate> ObserveAsync(
+            string jobId,
+            int afterSequence,
+            CancellationToken cancellationToken)
+        {
+            JobState state = _terminalState is JobState.Completed && _failures.Count > 0
+                ? JobState.CompletedWithErrors
+                : _terminalState;
+            ItemOutcome[] outcomes = _items
+                .Reverse()
+                .Select(item =>
+                {
+                    bool failed = _failures.Contains(item.Ordinal);
+                    ItemState itemState = state is JobState.Cancelled
+                        ? ItemState.Cancelled
+                        : failed ? ItemState.Failed : ItemState.Succeeded;
+                    string stem = Path.GetFileNameWithoutExtension(item.DisplayName);
+                    return new ItemOutcome
+                    {
+                        ItemId = item.ItemId,
+                        State = itemState,
+                        Attempt = 1,
+                        PayloadType = itemState is ItemState.Succeeded ? "ocr.v1" : null,
+                        Payload = itemState is ItemState.Succeeded
+                            ? new Dictionary<string, JsonElement>
+                            {
+                                ["raw_text"] = JsonSerializer.SerializeToElement($"ocr-{stem}"),
+                            }
+                            : null,
+                        ErrorCode = itemState is ItemState.Failed ? "OUT_OF_MEMORY" : null,
+                    };
+                })
+                .ToArray();
+            return Task.FromResult(new JobUpdate
+            {
+                Snapshot = new JobSnapshot
+                {
+                    JobId = jobId,
+                    Kind = JobKind.Recognition,
+                    Priority = JobPriority.Background,
+                    State = state,
+                    Items = _items,
+                    EventSequence = afterSequence + 1,
+                },
+                Events = Array.Empty<StageEvent>(),
+                Outcomes = outcomes,
+                ThroughSequence = afterSequence + 1,
+            });
+        }
 
-        public Task DeleteJobAsync(string jobId, CancellationToken cancellationToken) => Task.CompletedTask;
+        public override Task<JobCommandResult> CommandAsync(
+            JobCommand command,
+            CancellationToken cancellationToken)
+        {
+            LastCommand = command;
+            return Task.FromResult(new JobCommandResult(
+                command.CommandId,
+                command.Kind,
+                CancelMode.Cooperative,
+                null));
+        }
 
-        public Task<ResidencyStatus> GetResidencyAsync(CancellationToken cancellationToken)
+        public override Task<ResidencyStatus> GetResidencyAsync(CancellationToken cancellationToken)
             => Task.FromResult(new ResidencyStatus());
 
-        public Task<SettingsSnapshot> GetSettingsAsync(CancellationToken cancellationToken)
+        public override Task<SettingsSnapshot> GetSettingsAsync(CancellationToken cancellationToken)
             => Task.FromResult(new SettingsSnapshot());
-
-        public Task<PdfSessionOpenResult> OpenPdfSessionAsync(string path, string? password, CancellationToken ct) => throw new NotImplementedException();
-        public Task<byte[]> RenderPdfPageAsync(string sessionId, int page, int size, CancellationToken ct) => throw new NotImplementedException();
-        public Task<PdfMutateResult> RotatePdfPagesAsync(string sessionId, int[] pages, int angle, CancellationToken ct) => throw new NotImplementedException();
-        public Task<PdfMutateResult> DeletePdfPagesAsync(string sessionId, int[] pages, CancellationToken ct) => throw new NotImplementedException();
-        public Task<string> SavePdfAsync(string sessionId, string outputPath, CancellationToken ct) => throw new NotImplementedException();
-        public Task ClosePdfSessionAsync(string sessionId, CancellationToken ct) => throw new NotImplementedException();
-                public Task<ExportResult> ExportAsync(ExportRequest request, CancellationToken ct) => throw new NotImplementedException();
-        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 
 }

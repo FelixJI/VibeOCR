@@ -120,22 +120,6 @@ def test_settings_drain_waits_for_owned_cache_task(qtbot, tmp_path):
     assert controller.drain(2000) is True
 
 
-def test_settings_shutdown_cancels_manager_owned_manual_preload(
-    qtbot, tmp_path
-):
-    controller = _controller(qtbot, tmp_path)
-    controller._manual_preload_task = True
-    controller._subprocess_manager.request_preload_shutdown = MagicMock()
-    controller._subprocess_manager.is_preload_drained.return_value = False
-
-    controller.request_shutdown()
-
-    controller._subprocess_manager.request_preload_shutdown.assert_called_once_with()
-    assert controller.is_drained() is False
-    controller._subprocess_manager.is_preload_drained.return_value = True
-    assert controller.is_drained() is True
-
-
 def test_settings_first_update_check_does_not_stall_startup(
     qtbot, tmp_path, monkeypatch
 ):

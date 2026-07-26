@@ -210,6 +210,7 @@ OCR_DIST_NAME_ALIASES: dict[str, tuple[str, ...]] = {
 # 纳入检测让漏装能在启动期/设置页暴露。
 # 注意 sklearn 的 import 名与 pip 包名不一致（scikit-learn）。
 OCR_CHECK_LEAF_MODULES: dict[str, str] = {
+    "bs4": "beautifulsoup4",
     "einops": "einops",
     "ftfy": "ftfy",
     "latex2mathml": "latex2mathml",
@@ -251,6 +252,7 @@ OCR_CHECK_TIMEOUTS: dict[str, int] = {
     "sentencepiece": 10,
     "tiktoken": 10,
     "einops": 5,
+    "bs4": 5,
     "ftfy": 5,
     "latex2mathml": 5,
     "premailer": 5,

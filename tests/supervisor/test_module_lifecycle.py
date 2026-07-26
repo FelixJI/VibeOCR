@@ -85,6 +85,18 @@ class FakeExecutor:
     def release_idle(self, pipeline: str | None = None) -> ResidencyStatus:
         return ResidencyStatus(default_ttl_seconds=300)
 
+    def preload(self, pipelines: tuple[str, ...]) -> ResidencyStatus:
+        return ResidencyStatus(default_ttl_seconds=300)
+
+    def configure_settings(self, snapshot: SettingsSnapshot) -> ResidencyStatus:
+        return ResidencyStatus(
+            default_ttl_seconds=snapshot.default_ttl_seconds,
+            pipelines=snapshot.pipelines,
+        )
+
+    def close(self) -> None:
+        return
+
 
 @pytest.fixture()
 def module(tmp_path: Path) -> SupervisorModule:
@@ -247,14 +259,38 @@ def test_retry_creates_new_job_for_failed_items(tmp_path: Path) -> None:
     assert new_snap.summary.succeeded == 1
 
 
-def test_retry_rejects_non_terminal(module: SupervisorModule) -> None:
-    ref = module.submit(
+def test_retry_rejects_non_terminal(tmp_path: Path) -> None:
+    class BlockingExecutor(FakeExecutor):
+        def __init__(self) -> None:
+            super().__init__()
+            self.entered = threading.Event()
+            self.release = threading.Event()
+
+        def execute(self, record, staged):  # type: ignore[no-untyped-def]
+            if record.state is JobState.QUEUED:
+                record.transition(JobState.RUNNING)
+            self.entered.set()
+            self.release.wait(timeout=2.0)
+            if record.state is JobState.RUNNING:
+                record.transition(JobState.COMPLETED)
+
+    executor = BlockingExecutor()
+    mod = SupervisorModule(
+        options=SupervisorOptions(instance_id="sup-test"),
+        stager_root=tmp_path / "staging",
+        executor=executor,
+    )
+    ref = mod.submit(
         kind=JobKind.RECOGNITION,
         priority=JobPriority.INTERACTIVE,
         uploads=[("a.png", None, b"1")],
     )
-    with pytest.raises(ContractError):
-        module.retry(ref.job_id)
+    assert executor.entered.wait(timeout=2.0)
+    try:
+        with pytest.raises(ContractError):
+            mod.retry(ref.job_id)
+    finally:
+        executor.release.set()
 
 
 def test_delete_releases_terminal_job(module: SupervisorModule) -> None:

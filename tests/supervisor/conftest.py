@@ -29,6 +29,8 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
 
+    from vibeocr.protocol.v2 import CancelMode, ResidencyStatus, SettingsSnapshot
+
 
 class FakePdfAdapter:
     """In-memory adapter recording every call; returns canned DTOs."""
@@ -216,20 +218,36 @@ class NullExecutor:
         if record.state not in (JobState.COMPLETED, JobState.FAILED, JobState.CANCELLED):
             record.transition(JobState.FAILED)
 
-    def cancel_mode_for(self, record) -> str:  # type: ignore[no-untyped-def]
+    def cancel_mode_for(self, record) -> CancelMode:  # type: ignore[no-untyped-def]
         from vibeocr.protocol.v2 import CancelMode
 
         return CancelMode.COOPERATIVE
 
-    def residency_status(self):  # type: ignore[no-untyped-def]
+    def residency_status(self) -> ResidencyStatus:
         from vibeocr.protocol.v2 import ResidencyStatus
 
         return ResidencyStatus()
 
-    def release_idle(self, pipeline: str | None = None):  # type: ignore[no-untyped-def]
+    def release_idle(self, pipeline: str | None = None) -> ResidencyStatus:
         from vibeocr.protocol.v2 import ResidencyStatus
 
         return ResidencyStatus()
+
+    def preload(self, pipelines: tuple[str, ...]) -> ResidencyStatus:
+        from vibeocr.protocol.v2 import ResidencyStatus
+
+        return ResidencyStatus()
+
+    def configure_settings(self, snapshot: SettingsSnapshot) -> ResidencyStatus:
+        from vibeocr.protocol.v2 import ResidencyStatus
+
+        return ResidencyStatus(
+            default_ttl_seconds=snapshot.default_ttl_seconds,
+            pipelines=snapshot.pipelines,
+        )
+
+    def close(self) -> None:
+        return
 
 
 @pytest.fixture()

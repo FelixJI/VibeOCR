@@ -9,6 +9,7 @@ terminal, and asserts the returned text contains the expected word.
 Heavy: loads PaddlePaddle + the OCR model (~seconds, GBs). Skipped in CI and
 on any environment without paddle; run locally with:
 
+    $env:VIBEOCR_RUN_REAL_PADDLE_GATE = "1"
     python -m pytest tests/supervisor/test_paddle_executor_integration.py -m slow
 
 The test is self-contained: it renders the input image with Pillow so there is
@@ -18,6 +19,7 @@ no binary fixture dependency.
 from __future__ import annotations
 
 import io
+import os
 import time
 from typing import TYPE_CHECKING
 
@@ -29,33 +31,13 @@ from vibeocr.supervisor.composition import build_supervisor
 if TYPE_CHECKING:
     from pathlib import Path
 
-_PADDLE_AVAILABLE = True
-try:
-    import paddle  # noqa: F401
-except Exception:
-    _PADDLE_AVAILABLE = False
-
-# Detect the known paddle+torch same-process DLL conflict (torch's bundled
-# CUDA runtime DLLs can clash with paddle's). Only an actual OSError from
-# loading torch DLLs counts as a conflict; ModuleNotFoundError (torch not
-# installed) means no conflict — paddleocr runs fine without torch.
-_PADDLE_TORCH_CONFLICT = False
-if _PADDLE_AVAILABLE:
-    try:
-        import torch  # noqa: F401
-        from paddleocr.utils import deps as _paddleocr_deps  # noqa: F401
-    except OSError:
-        # torch DLL load failure in the same process as paddle.
-        _PADDLE_TORCH_CONFLICT = True
-    except ModuleNotFoundError:
-        # torch not installed at all — no conflict, paddleocr works without it.
-        pass
+_RUN_REAL_PADDLE_GATE = os.environ.get("VIBEOCR_RUN_REAL_PADDLE_GATE") == "1"
 
 pytestmark = [
     pytest.mark.slow,
     pytest.mark.skipif(
-        not _PADDLE_AVAILABLE or _PADDLE_TORCH_CONFLICT,
-        reason="paddle not installed, or paddle+torch same-process DLL conflict",
+        not _RUN_REAL_PADDLE_GATE,
+        reason="set VIBEOCR_RUN_REAL_PADDLE_GATE=1 on the dedicated Paddle gate",
     ),
 ]
 
@@ -84,6 +66,10 @@ def _wait_for_terminal(module, job_id: str, *, timeout: float = 120.0) -> None:
 
 
 def test_submit_recognition_returns_real_text(tmp_path: Path) -> None:
+    # Import only inside the explicitly selected real-hardware gate. Importing
+    # Paddle and probing Torch during ordinary collection can crash the Windows
+    # loader before pytest has a chance to deselect this slow test.
+    pytest.importorskip("paddle")
     module, _handle = build_supervisor(use_real_paddle=True, stager_root=tmp_path / "staging")
     expected_word = "HELLO"
     image_bytes = _render_text_image(expected_word)

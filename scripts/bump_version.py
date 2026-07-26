@@ -1717,7 +1717,7 @@ def _run_build_winui(version: str, force: bool = False) -> bool:
         print("\n错误: 找不到 Windows PowerShell，无法构建 WinUI release")
         return False
 
-    # 1. 发布 WinUI App + Bootstrapper，并装配 UI-free WorkerHost source。
+    # 1. 发布 WinUI App + Bootstrapper，并装配 UI-free Supervisor/protocol v2。
     print(f"\n[1/4] 构建 WinUI release VibeOCR v{version} (dotnet publish)...")
     try:
         subprocess.run(
@@ -1740,15 +1740,14 @@ def _run_build_winui(version: str, force: bool = False) -> bool:
         print(f"\nWinUI release 构建失败，退出码: {e.returncode}")
         return False
 
-    # 2. 生成版本/依赖元数据与纯 stdlib updater，并对 staging 做结构门禁。
-    print("\n[2/4] 生成 version.json、updater.exe 并验证 release layout...")
-    _generate_version_json(version, dist_path)
-    updater_version_file = _generate_version_file(
-        version,
-        DIST_BASE_DIR / f"build-{version}",
-        target="updater",
-    )
-    if not _build_updater(dist_path, version_file=updater_version_file):
+    # 2. build_winui_release.ps1 已闭合生成 version.json/updater.exe；
+    # 此处只验证 staging，避免本地与 CI 走两套不同编排。
+    print("\n[2/4] 验证 version.json、updater.exe 与 release layout...")
+    if not (dist_path / "version.json").is_file():
+        print("WinUI staging 缺少 version.json")
+        return False
+    if not (dist_path / "updater.exe").is_file():
+        print("WinUI staging 缺少 updater.exe")
         return False
     try:
         subprocess.run(

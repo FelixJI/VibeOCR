@@ -45,18 +45,21 @@ def test_check_bearer_token_accepts_valid() -> None:
 def test_check_bearer_token_rejects_missing_header() -> None:
     decision = check_bearer_token(None, "abc123", instance_id=INSTANCE)
     assert not decision.ok
+    assert decision.error is not None
     assert decision.error.code is ErrorCode.UNAUTHORIZED
 
 
 def test_check_bearer_token_rejects_wrong_scheme() -> None:
     decision = check_bearer_token("Basic abc123", "abc123", instance_id=INSTANCE)
     assert not decision.ok
+    assert decision.error is not None
     assert decision.error.code is ErrorCode.UNAUTHORIZED
 
 
 def test_check_bearer_token_rejects_wrong_token() -> None:
     decision = check_bearer_token("Bearer wrong", "abc123", instance_id=INSTANCE)
     assert not decision.ok
+    assert decision.error is not None
     assert decision.error.code is ErrorCode.UNAUTHORIZED
 
 
@@ -68,12 +71,14 @@ def test_check_loopback_accepts_127() -> None:
 def test_check_loopback_rejects_external() -> None:
     decision = check_loopback("10.0.0.5", instance_id=INSTANCE)
     assert not decision.ok
+    assert decision.error is not None
     assert decision.error.code is ErrorCode.FORBIDDEN_LOOPBACK
 
 
 def test_check_loopback_rejects_unknown() -> None:
     decision = check_loopback(None, instance_id=INSTANCE)
     assert not decision.ok
+    assert decision.error is not None
     assert decision.error.code is ErrorCode.FORBIDDEN_LOOPBACK
 
 
@@ -148,6 +153,28 @@ def test_emit_ready_writes_single_json_line(tmp_path: Path) -> None:
     assert parsed["instance_id"] == "sup-abc"
     assert "token" not in parsed  # token must never appear on stdout
     assert "VIBEOCR_SUP_TOKEN" not in lines[0]
+
+
+def test_supervisor_uvicorn_config_disables_access_log() -> None:
+    from types import SimpleNamespace
+
+    import vibeocr.supervisor.main as main_module
+
+    captured: dict[str, object] = {}
+
+    def config_factory(app, **kwargs):
+        captured["app"] = app
+        captured.update(kwargs)
+        return object()
+
+    fake_uvicorn = SimpleNamespace(Config=config_factory)
+    app = object()
+
+    config = main_module._build_uvicorn_config(fake_uvicorn, app, 54321)
+
+    assert config is not None
+    assert captured["app"] is app
+    assert captured["access_log"] is False
 
 
 # ---------------------------------------------------------------------------

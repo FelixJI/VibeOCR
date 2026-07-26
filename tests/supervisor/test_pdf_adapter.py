@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
+from vibeocr.ipc.schemas import OpenResponse, PdfDocumentMirror
 from vibeocr.supervisor.pdf.adapter import PdfProcessAdapter
 
 if TYPE_CHECKING:
@@ -20,10 +21,15 @@ class _FakePdfChild:
         self._save_payload = save_payload
         self._fail_save = fail_save
 
-    def open_session(self, path: str, *, password: str | None = None) -> str:
+    def open_session(
+        self, path: str, *, password: str | None = None
+    ) -> OpenResponse:
         sid = f"session-{len(self.opened)}"
         self.opened.append(path)
-        return sid
+        return OpenResponse(
+            session_id=sid,
+            model=PdfDocumentMirror(file_path=path, pages=[]),
+        )
 
     def render_preview(self, session_id: str, page: int, dpi: int = 150) -> bytes:
         self.renders.append((session_id, page))
@@ -37,20 +43,25 @@ class _FakePdfChild:
         self.saved.append((session_id, target))
 
 
+def _adapter(child: _FakePdfChild | None = None) -> PdfProcessAdapter:
+    fake = child or _FakePdfChild()
+    return PdfProcessAdapter(child_factory=cast("Any", lambda: fake))
+
+
 # ---------------------------------------------------------------------------
 # Ownership
 # ---------------------------------------------------------------------------
 
 
 def test_supervisor_is_sole_owner() -> None:
-    adapter = PdfProcessAdapter(child_factory=lambda: _FakePdfChild())
+    adapter = _adapter()
     assert adapter.is_owner is True
 
 
 def test_open_session_creates_child_once() -> None:
     fake = _FakePdfChild()
-    adapter = PdfProcessAdapter(child_factory=lambda: fake)
-    sid = adapter.open_session("doc.pdf")
+    adapter = _adapter(fake)
+    sid = adapter.open_session("doc.pdf").session_id
     assert sid.startswith("session-")
     # Second call reuses the same child.
     adapter.render_preview(sid, 0)
@@ -59,7 +70,7 @@ def test_open_session_creates_child_once() -> None:
 
 
 def test_stop_clears_sessions_and_child() -> None:
-    adapter = PdfProcessAdapter(child_factory=lambda: _FakePdfChild())
+    adapter = _adapter()
     adapter.open_session("doc.pdf")
     adapter.stop()
     assert adapter._child is None
@@ -72,8 +83,8 @@ def test_stop_clears_sessions_and_child() -> None:
 
 def test_save_transactional_writes_and_replaces(tmp_path: Path) -> None:
     fake = _FakePdfChild(save_payload=b"final-content")
-    adapter = PdfProcessAdapter(child_factory=lambda: fake)
-    sid = adapter.open_session("doc.pdf")
+    adapter = _adapter(fake)
+    sid = adapter.open_session("doc.pdf").session_id
     target = tmp_path / "out.pdf"
     result = adapter.save_transactional(sid, str(target))
     assert target.read_bytes() == b"final-content"
@@ -85,8 +96,8 @@ def test_save_transactional_writes_and_replaces(tmp_path: Path) -> None:
 
 def test_save_transactional_leaves_original_on_failure(tmp_path: Path) -> None:
     fake = _FakePdfChild(fail_save=True)
-    adapter = PdfProcessAdapter(child_factory=lambda: fake)
-    sid = adapter.open_session("doc.pdf")
+    adapter = _adapter(fake)
+    sid = adapter.open_session("doc.pdf").session_id
     target = tmp_path / "existing.pdf"
     target.write_bytes(b"original")
     with pytest.raises(RuntimeError, match="simulated save failure"):
@@ -100,8 +111,8 @@ def test_save_transactional_leaves_original_on_failure(tmp_path: Path) -> None:
 
 def test_save_transactional_replaces_existing_atomically(tmp_path: Path) -> None:
     fake = _FakePdfChild(save_payload=b"new")
-    adapter = PdfProcessAdapter(child_factory=lambda: fake)
-    sid = adapter.open_session("doc.pdf")
+    adapter = _adapter(fake)
+    sid = adapter.open_session("doc.pdf").session_id
     target = tmp_path / "out.pdf"
     target.write_bytes(b"old")
     adapter.save_transactional(sid, str(target))

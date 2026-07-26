@@ -1,7 +1,7 @@
 """Backend packages must not import the UI layer (reverse-dependency guard).
 
-Per ADR §强制边界: the dependency direction is strictly UI → BackendClient →
-WorkerHost → application → domain. No backend package may import
+Per ADR §强制边界: the dependency direction is strictly UI → SupervisorClient →
+Supervisor → application → domain. No backend package may import
 ``vibeocr.views`` / ``vibeocr.widgets`` / ``vibeocr.ui``.
 
 This direction must be zero. Phase 4「去 Qt 化」已完成 ``update_service.py`` 的
@@ -27,7 +27,7 @@ BACKEND_PACKAGE_DIRS: tuple[str, ...] = (
     "models",
     "application",
     "migration",
-    "worker_host",
+    "supervisor",
 )
 
 UI_MODULES: frozenset[str] = frozenset({"views", "widgets", "ui"})

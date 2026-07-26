@@ -23,7 +23,11 @@ def main_window(qapp, qtbot, tmp_path, monkeypatch):
     ConfigManager.reset_instance()
     ConfigManager.instance(tmp_path)
     monkeypatch.setattr(
-        "vibeocr.managers.subprocess_manager.SubprocessManager.start_worker_host",
+        "vibeocr.managers.subprocess_manager.SubprocessManager.start_supervisor",
+        lambda self: None,
+    )
+    monkeypatch.setattr(
+        "vibeocr.managers.dependency_manager.DependencyManager.check_dependencies",
         lambda self: None,
     )
     monkeypatch.setattr(
@@ -88,7 +92,7 @@ def _configure_gui_poll_shutdown(window, monkeypatch, *, settings_is_drained):
     window._edge_toolbar = SimpleNamespace(close=lambda: None)
     monkeypatch.setattr(window, "_save_layout", lambda: None)
     monkeypatch.setattr(
-        "vibeocr.client.session.shutdown_backend_client", lambda: None
+        "vibeocr.client.shutdown_backend_client", lambda: None
     )
     return calls
 
@@ -210,7 +214,7 @@ def test_restored_heavy_tab_builds_after_first_show_on_gui_thread(
     ConfigManager.reset_instance()
     ConfigManager.instance(tmp_path)
     monkeypatch.setattr(
-        "vibeocr.managers.subprocess_manager.SubprocessManager.start_worker_host",
+        "vibeocr.managers.subprocess_manager.SubprocessManager.start_supervisor",
         lambda self: None,
     )
     monkeypatch.setattr(

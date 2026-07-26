@@ -72,8 +72,6 @@ class MainWindow(QMainWindow):
         self._ocr_ready = False
         self._dependency_check_complete = False  # 依赖检测是否完成
 
-        self._preload_complete = False  # 预加载是否完成
-        self._preload_in_progress = False  # 预加载是否进行中（状态栏三态区分）
         self._closing = False  # 是否正在关闭（防止关闭时重复启动 Worker）
         self._force_quit = False  # 是否强制退出（而非最小化到托盘）
         self._tray_icon = None  # 系统托盘图标
@@ -122,13 +120,10 @@ class MainWindow(QMainWindow):
         self._shutdown_timed_out = False
         self._shutdown_gui_probes: tuple[tuple[str, Any], ...] = ()
         self._startup_update_task: Any = None
+        self._pending_maintenance_dialog: Any = None
         self._shutdown_poll_timer = QTimer(self)
         self._shutdown_poll_timer.setInterval(self._SHUTDOWN_POLL_INTERVAL_MS)
         self._shutdown_poll_timer.timeout.connect(self._poll_shutdown_state)
-        # OCR 服务句柄缓存（_on_subprocess_worker_ready 时写入），供懒构造的 Tab
-        # 构造后补发服务注入
-        self._paddlex_service: Any = None
-        self._mineru_batch_service: Any = None
 
         # 当前 OCR 结果（用于复制操作）
         self._current_ocr_result: OCRResult | None = None
@@ -144,11 +139,8 @@ class MainWindow(QMainWindow):
 
         # 子进程管理器
         self._subprocess_manager = SubprocessManager(self._project_root, self)
-        self._subprocess_manager.service_ready.connect(self._on_subprocess_worker_ready)
+        self._subprocess_manager.service_ready.connect(self._on_supervisor_ready)
         self._subprocess_manager.progress_update.connect(self._on_subprocess_progress)
-        self._subprocess_manager.preload_finished.connect(self._on_preload_finished)
-        self._subprocess_manager.preload_progress.connect(self._on_preload_progress)
-        self._subprocess_manager.recognition_queued.connect(self._on_recognition_queued)
 
         self._setup_ui()
 
@@ -217,7 +209,7 @@ class MainWindow(QMainWindow):
 
         if self._worker_start_pending:
             self._worker_start_pending = False
-            self._start_subprocess_worker()
+            self._start_supervisor()
 
     def _check_dep_check_consistency(self) -> None:
         """后台校验 OCR_CHECK_MODULES 与 pyproject.toml 一致性。
@@ -250,7 +242,7 @@ class MainWindow(QMainWindow):
         self._ocr_status_callback_fn = on_ocr_status
 
     def _ensure_ocr_status_callback(self) -> None:
-        """WorkerHost 通过 RPC 事件报告状态；不再注册进程内 OCR 回调。"""
+        """Supervisor 通过 typed events 报告状态；不注册进程内 OCR 回调。"""
         self._ocr_status_callback_fn = None
 
     @Slot(str)
@@ -594,9 +586,6 @@ class MainWindow(QMainWindow):
         # 构造后恢复分割器布局（与 _restore_layout 逻辑对齐）
         self._restore_lazy_tab_layout(role, widget)
 
-        # 若 OCR 服务已就绪，需把服务句柄下发给懒构造的 tab（原本在
-        # _on_subprocess_worker_ready 时同步下发，懒构造的 tab 错过了那次下发）
-        self._maybe_dispatch_ocr_service_to_lazy_tab(role, widget)
         if self._runtime_gpu_capability is not None:
             self._apply_gpu_gating_to_all(self._runtime_gpu_capability)
 
@@ -613,28 +602,6 @@ class MainWindow(QMainWindow):
                     widget._splitter.restoreState(state)
         except Exception:
             logging.debug(f"[懒加载] 恢复 {role} 布局失败（忽略）", exc_info=True)
-
-    def _maybe_dispatch_ocr_service_to_lazy_tab(self, role: str, widget: Any) -> None:
-        """若 OCR 服务已就绪，向懒构造的 tab 下发服务句柄。
-
-        正常流程中服务在 _on_subprocess_worker_ready 时下发给所有 tab，但懒构造的
-        tab 在那时还不存在。这里在构造后补发，确保懒构造的 tab 也能立即识别。
-        """
-        if not getattr(self, "_ocr_ready", False):
-            return
-        try:
-            mineru_batch = getattr(self, "_mineru_batch_service", None)
-            paddlex_service = getattr(self, "_paddlex_service", None)
-            if role == "batch":
-                if mineru_batch is not None and hasattr(widget, "set_ocr_service"):
-                    widget.set_ocr_service(mineru_batch)
-                if paddlex_service is not None and hasattr(widget, "set_paddlex_service"):
-                    widget.set_paddlex_service(paddlex_service)
-            elif role == "pdf":
-                if paddlex_service is not None and hasattr(widget, "set_ocr_service"):
-                    widget.set_ocr_service(paddlex_service)
-        except Exception:
-            logging.debug(f"[懒加载] 向 {role} 下发 OCR 服务失败（忽略）", exc_info=True)
 
     def _init_about_tab(self) -> None:
         """初始化关于标签页（懒加载：首次切换到关于页才构造）。
@@ -709,7 +676,6 @@ class MainWindow(QMainWindow):
             status_callback=self._statusbar.showMessage,
             ocr_ready_callback=lambda: self._ocr_ready,
             subprocess_manager=self._subprocess_manager,
-            preload_complete_callback=self._on_preload_complete,
             # 设置页重装/补装依赖成功后联动重新检测（Bug A 修复）：
             # 旧逻辑设置页装完只刷新表格，不联动 _ocr_ready/Worker，截图界面
             # 仍提示"未就绪"。现复用 dependency_manager.check_dependencies，
@@ -722,10 +688,6 @@ class MainWindow(QMainWindow):
             defer_machine_cache_status=True,
         )
         self._settings_controller.connect_signals()
-
-    def _on_preload_complete(self) -> None:
-        """预加载完成回调"""
-        self._preload_complete = True
 
     def _on_settings_install_succeeded(self) -> None:
         """设置页重装/补装依赖成功后的联动回调（Bug A 修复）
@@ -863,7 +825,7 @@ class MainWindow(QMainWindow):
         if needs_switch and target:
             self._show_switch_dialog(target)
             return
-        self._start_subprocess_worker()
+        self._start_supervisor()
 
     def _check_pending_sync(self) -> bool:
         """检测并消费"依赖版本待同步"标记（updater 写入的 pending_sync.json）
@@ -1184,7 +1146,7 @@ class MainWindow(QMainWindow):
                 # 切换成功，清除 pending 标记
                 update_cache_field(self._project_root, "pending_backend", None)
                 self._statusbar.showMessage("后端切换完成，正在启动 OCR 服务")
-                self._start_subprocess_worker()
+                self._start_supervisor()
             else:
                 self._statusbar.showMessage("后端切换失败，请在设置页重试")
                 self._ocr_ready = False
@@ -1193,10 +1155,10 @@ class MainWindow(QMainWindow):
         dialog.finished.connect(_on_switch_finished)
         dialog.exec()
 
-    def _start_subprocess_worker(self) -> None:
-        """依赖检测完成后启动唯一的 PySide WorkerHost 会话。"""
+    def _start_supervisor(self) -> None:
+        """依赖检测完成后启动唯一的 PySide Supervisor 会话。"""
         if self._closing:
-            logging.debug("[MainWindow] 应用程序正在关闭，跳过启动 WorkerHost")
+            logging.debug("[MainWindow] 应用程序正在关闭，跳过启动 Supervisor")
             return
 
         if self._runtime_gpu_capability is None:
@@ -1204,7 +1166,7 @@ class MainWindow(QMainWindow):
             self._statusbar.showMessage("正在等待后台 GPU 检测...")
             return
 
-        logging.debug("[MainWindow] 正在启动共享 WorkerHost...")
+        logging.debug("[MainWindow] 正在启动共享 Supervisor...")
         use_gpu = self._runtime_gpu_capability
         device = "GPU" if use_gpu else "CPU"
         self._statusbar.showMessage(f"正在启动 OCR 服务({device})...")
@@ -1214,56 +1176,37 @@ class MainWindow(QMainWindow):
         # PdfOcrWorker 读到空值、误判为 CPU（日志误报 + batch 走 RAM 公式）。
         os.environ["VIBEOCR_USE_GPU"] = "true" if use_gpu else "false"
 
-        # WorkerHost 的进程启动、ready 握手和 typed client 初始化均可能耗时数十秒；
+        # Supervisor 的进程启动、ready 握手和 typed client 初始化可能耗时；
         # 交给 SubprocessManager 的线程池，完成后通过 service_ready 回到 Qt 主线程。
-        self._subprocess_manager.start_worker_host()
+        self._subprocess_manager.start_supervisor()
 
     @Slot(bool)
-    def _on_subprocess_worker_ready(self, success: bool) -> None:
-        """子进程 Worker 就绪回调"""
+    def _on_supervisor_ready(self, success: bool) -> None:
+        """Supervisor ready envelope 回调。"""
         if self._closing:
-            logging.debug("[MainWindow] 忽略关闭后的 WorkerHost ready 结果")
+            logging.debug("[MainWindow] 忽略关闭后的 Supervisor ready 结果")
             return
         if success:
-            logging.debug("[MainWindow] 子进程 Worker 已就绪")
-            # 启动里程碑 T4：WorkerHost ready
+            logging.debug("[MainWindow] Supervisor 已就绪")
+            # 启动里程碑 T4：Supervisor ready
             from vibeocr.startup_metrics import StartupEvent, record_startup
 
-            record_startup(StartupEvent.WORKER_READY)
+            record_startup(StartupEvent.SUPERVISOR_READY)
             self._ensure_ocr_status_callback()
 
-            # 迁移期 PDF 前端状态机仍使用 recognize_batch 形状；适配器本身
-            # 只委托到同一个 BackendSession，不再创建旧 OCR 子进程。
-            paddlex_service = self._subprocess_manager.service
-            if paddlex_service is None:
-                logging.error("[MainWindow] WorkerHost ready 但服务适配器缺失")
-                self._on_subprocess_worker_ready(False)
+            # 进程 ready envelope 与已启动的 typed adapter 共同构成唯一就绪条件。
+            from vibeocr.pyside.supervisor_adapter import get_supervisor_adapter
+
+            adapter = get_supervisor_adapter()
+            if not adapter.is_started:
+                logging.error("[MainWindow] Supervisor ready 但 v2 适配器未启动")
+                self._on_supervisor_ready(False)
                 return
-            mineru_batch = paddlex_service
-            # 缓存服务句柄，供懒构造的 Tab 在 _on_lazy_tab_changed 时补发（懒构造的
-            # Tab 错过了此处注入，构造后需自行获取服务句柄）
-            self._paddlex_service = paddlex_service
-            self._mineru_batch_service = mineru_batch
-
-            # 单次识别 Tab 服务注入
-            if hasattr(self, "_single_tab") and self._single_tab:
-                self._single_tab.set_paddlex_service(paddlex_service)
-                self._single_tab.set_ocr_service(mineru_batch)
-
-            # 批量识别 Tab 服务注入
-            if hasattr(self, "_batch_tab") and self._batch_tab:
-                self._batch_tab.set_ocr_service(mineru_batch)
-                self._batch_tab.set_paddlex_service(paddlex_service)
-                logging.debug("[MainWindow] 批量识别标签页已连接批量服务")
-
-            # PDF 处理 Tab 服务注入
-            if hasattr(self, "_pdf_tab") and self._pdf_tab:
-                self._pdf_tab.set_ocr_service(paddlex_service)
-                logging.debug("[MainWindow] PDF 处理标签页已连接服务")
-
-            self._preload_in_progress = False
+            settings_controller = getattr(self, "_settings_controller", None)
+            if settings_controller is not None:
+                settings_controller.on_supervisor_ready()
             self._statusbar.showMessage("OCR 服务已就绪（模型按需加载）")
-            self._start_subprocess_preload()
+            self._record_supervisor_ready()
         else:
             logging.warning("[MainWindow] 子进程 Worker 启动失败")
             self._statusbar.showMessage("OCR 服务启动失败")
@@ -1284,140 +1227,88 @@ class MainWindow(QMainWindow):
         """子进程启动进度回调"""
         self._statusbar.showMessage(f"正在启动 OCR 服务: {stage}")
 
-    @Slot(dict)
-    def _on_preload_finished(self, results: dict) -> None:
-        """预加载完成回调。
-
-        results 形如 {"preload": {pipeline: bool}, "warmup": {pipeline: bool}}。
-        preload=管道定义已加载；warmup=CUDA/模型权重已初始化（虚拟识别）。
-        预热失败不影响使用（首次真实识别会按需初始化，仅首次稍慢）。
-        """
-        self._preload_in_progress = False
-        preload = results.get("preload", {}) if isinstance(results, dict) else {}
-        warmup = results.get("warmup", {}) if isinstance(results, dict) else {}
-        preload_ok = sum(1 for v in preload.values() if v)
-        preload_total = len(preload)
-        warmup_ok = sum(1 for v in warmup.values() if v)
-        warmup_total = len(warmup)
-        self._preload_complete = (
-            preload_total > 0
-            and preload_ok == preload_total
-            and warmup_total == preload_total
-            and warmup_ok == warmup_total
-        )
-
-        if preload_total > 0 and preload_ok > 0:
-            if warmup_total > 0 and warmup_ok < warmup_total:
-                # 预加载成功但预热部分/全部失败：明确告知，避免"已预热"误导
-                self._statusbar.showMessage(
-                    f"OCR 服务已就绪（模型已加载 {preload_ok}/{preload_total}，"
-                    f"预热 {warmup_ok}/{warmup_total} 失败，首次识别会按需初始化）"
-                )
-            else:
-                self._statusbar.showMessage(
-                    f"OCR 服务已就绪（{preload_ok}/{preload_total} 个模型已预热）"
-                )
-        else:
-            self._statusbar.showMessage("OCR 服务已就绪")
-        logging.debug(
-            f"[MainWindow] 预加载完成: preload={preload}, warmup={warmup}"
-        )
-        # 启动里程碑 T5/T6：OCR backend ready + 首次可交互
+    def _record_supervisor_ready(self) -> None:
+        """记录 Supervisor 已可交互；模型驻留不参与进程 readiness。"""
         from vibeocr.startup_metrics import StartupEvent, flush_startup, record_startup
 
-        record_startup(StartupEvent.BACKEND_READY)  # T5
-        record_startup(StartupEvent.INTERACTIVE)  # T6：预加载完成后用户可交互
-        flush_startup()  # 若 VIBEOCR_STARTUP_TRACE 设置则写 JSONL
+        record_startup(StartupEvent.BACKEND_READY)
+        record_startup(StartupEvent.INTERACTIVE)
+        flush_startup()
         if os.environ.get("VIBEOCR_SELF_TEST_SMOKE") == "t6":
             os._exit(0)
 
-    @Slot(int, int, str)
-    def _on_preload_progress(self, current: int, total: int, pipeline_name: str) -> None:
-        """预加载逐管道进度回调"""
-        from vibeocr.contracts.pipelines import OCRPipeline, get_pipeline_display_name
+    def _run_after_supervisor_invalidated(self, continuation) -> None:
+        """维护对话框只能在旧 Supervisor 确认退出后创建。"""
 
-        # 管道名转中文显示名（如 "OCR" -> "通用 OCR"）
-        try:
-            pipeline = OCRPipeline(pipeline_name)
-            display_name = get_pipeline_display_name(pipeline)
-        except ValueError:
-            display_name = pipeline_name
-        self._statusbar.showMessage(
-            f"正在预热模型 {current}/{total}：{display_name}..."
-        )
-
-    @Slot(str)
-    def _on_recognition_queued(self, message: str) -> None:
-        """识别请求因预加载排队"""
-        self._statusbar.showMessage(message)
-        if hasattr(self, "_single_tab") and self._single_tab:
-            self._single_tab.show_waiting_message(message)
-        # PDF tab 的 OCR（添加文字层/自动摆正）也走同一 worker，
-        # 遇到 worker 忙（预热中）同样会排队，需告知用户"在排队"而非"卡住"。
-        if hasattr(self, "_pdf_tab") and self._pdf_tab:
-            self._pdf_tab.on_ocr_queued(message)
-
-    def _start_subprocess_preload(self) -> None:
-        """在子进程中下发 TTL 并（可选）预加载用户配置的管道
-
-        全部操作在 SubprocessManager 的后台线程执行，避免阻塞 GUI 主线程。
-        TTL 无论是否启用预加载都会下发。
-        """
-        if not self._subprocess_manager.is_ready:
+        if self._closing:
+            return
+        if self._pending_maintenance_dialog is not None:
+            self._statusbar.showMessage("正在停止 OCR Supervisor，请稍候...")
             return
 
-        # 读取用户配置的 TTL（无论是否预加载都需要下发）
-        from vibeocr.pyside.runtime import ConfigManager
-
-        try:
-            ttls = ConfigManager.instance().get_pipeline_ttls()
-        except Exception as e:
-            logging.warning("[子进程预加载] 读取 TTL 配置失败: %s", e)
-            ttls = None
-
-        # 读取用户配置的预加载管道
-        from vibeocr.contracts.pipelines import OCRPipeline
-
-        cm = ConfigManager.instance()
-        if not cm.get_preload_enabled():
-            logging.debug("[子进程预加载] 预加载已禁用，仅下发 TTL")
-            # 仍然下发 TTL（后台线程）
-            self._subprocess_manager.preload_pipelines([], pipeline_ttls=ttls)
-            return
-
-        raw_pipelines = cm.get_preload_pipelines()
-
-        # 过滤无效的管道名称（大小写不敏感匹配，兼容历史小写配置）
-        valid_values = {p.value for p in OCRPipeline}
-        value_lower_map = {p.value.lower(): p.value for p in OCRPipeline}
-        pipelines: list[str] = []
-        invalid: set[str] = set()
-        for p in raw_pipelines:
-            if p in valid_values:
-                pipelines.append(p)
-            elif p.lower() in value_lower_map:
-                # 历史小写配置自动归一化到标准值
-                pipelines.append(value_lower_map[p.lower()])
-            else:
-                invalid.add(p)
-
-        if invalid:
-            logging.warning(f"[子进程预加载] 忽略无效管道: {invalid}")
-
-        logging.debug(f"[子进程预加载] 开始预加载管道: {pipelines}")
-
-        # TTL 下发与预加载均在后台线程执行
-        self._preload_in_progress = self._subprocess_manager.preload_pipelines(
-            pipelines, pipeline_ttls=ttls
+        self._pending_maintenance_dialog = continuation
+        manager = self._subprocess_manager
+        manager.invalidation_finished.connect(
+            self._on_supervisor_invalidated_for_maintenance
         )
+        started = manager.invalidate_supervisor()
+        if not started:
+            self._cancel_pending_maintenance_dialog()
+            if manager.is_invalidating:
+                self._statusbar.showMessage(
+                    "已有 Supervisor 维护准备正在进行，请稍候..."
+                )
+                return
+            QMessageBox.warning(
+                self,
+                "无法开始维护",
+                "OCR Supervisor 无法安全停止，安装未开始。",
+            )
+            return
+        self._statusbar.showMessage("正在停止 OCR Supervisor...")
+
+    @Slot(bool, str)
+    def _on_supervisor_invalidated_for_maintenance(
+        self, success: bool, error: str
+    ) -> None:
+        continuation = self._pending_maintenance_dialog
+        self._cancel_pending_maintenance_dialog()
+        if self._closing or continuation is None:
+            return
+        if not success:
+            QMessageBox.warning(
+                self,
+                "无法开始维护",
+                f"OCR Supervisor 未能安全停止，安装未开始。\n{error}",
+            )
+            return
+        continuation()
+
+    def _cancel_pending_maintenance_dialog(self) -> None:
+        if self._pending_maintenance_dialog is None:
+            return
+        self._pending_maintenance_dialog = None
+        try:
+            self._subprocess_manager.invalidation_finished.disconnect(
+                self._on_supervisor_invalidated_for_maintenance
+            )
+        except (AttributeError, RuntimeError, TypeError):
+            pass
 
     def _show_install_dialog(self, missing: list) -> None:
         """显示后端选择 + 安装对话框（首启合并对话框）"""
         if self._closing:
             return
+        self._run_after_supervisor_invalidated(
+            lambda: self._show_install_dialog_after_invalidation(missing)
+        )
+
+    def _show_install_dialog_after_invalidation(self, missing: list) -> None:
+        """旧 Supervisor 已退出后显示安装对话框。"""
+        if self._closing:
+            return
         from vibeocr.widgets.backend_choice_dialog import BackendChoiceDialog
 
-        self._subprocess_manager.invalidate_worker_host()
         dialog = BackendChoiceDialog(self._project_root, self)
         dialog.finished.connect(self._on_install_finished)
         dialog.install_succeeded.connect(self._on_install_succeeded)
@@ -1437,7 +1328,7 @@ class MainWindow(QMainWindow):
         if result == 1:
             self._statusbar.showMessage("OCR依赖安装成功")
             # 安装成功后启动子进程 Worker
-            self._start_subprocess_worker()
+            self._start_supervisor()
             # 双保险刷新设置页（覆盖只发 finished 不发 install_succeeded 的路径）
             self._refresh_settings_env_state()
         else:
@@ -1807,8 +1698,9 @@ class MainWindow(QMainWindow):
 
         assert QThread.currentThread() is self.thread()
 
-        # 从这里开始拒绝任何迟到的 ready/安装/识别回调重新启动共享 WorkerHost。
+        # 从这里开始拒绝任何迟到回调重新启动共享 Supervisor。
         self._closing = True
+        self._cancel_pending_maintenance_dialog()
         self._lazy_tab_generation = getattr(self, "_lazy_tab_generation", 0) + 1
         self._lazy_tab_pending_index = None
         self._lazy_tab_build_scheduled = None

@@ -66,7 +66,7 @@ _RULES = (
     ),
     _Rule(
         "apps/vibeocr-pyside/src/vibeocr/views/main_window.py",
-        "_start_subprocess_worker",
+        "_start_supervisor",
         frozenset({"resolve_use_gpu"}),
     ),
     _Rule(

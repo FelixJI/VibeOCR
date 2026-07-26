@@ -18,3 +18,4 @@ packages = ["src/vibeocr"]
 "src/vibeocr/protocol/v2/golden/golden.json" = "vibeocr/protocol/v2/golden/golden.json"
 "src/vibeocr/protocol/v2/schemas/errors.schema.json" = "vibeocr/protocol/v2/schemas/errors.schema.json"
 "src/vibeocr/protocol/v2/schemas/job.schema.json" = "vibeocr/protocol/v2/schemas/job.schema.json"
+"src/vibeocr/protocol/v2/schemas/job-interface.schema.json" = "vibeocr/protocol/v2/schemas/job-interface.schema.json"

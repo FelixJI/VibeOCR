@@ -9,12 +9,17 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
+from uuid import uuid4
 
 from vibeocr.protocol.v2 import (
     TERMINAL_JOB_STATES,
     CancelMode,
+    ItemState,
+    JobCommand,
+    JobCommandKind,
     JobRef,
     JobSnapshot,
+    JobUpdate,
     ResultEntry,
     StageEvent,
 )
@@ -37,32 +42,60 @@ class JobHandle:
         return self.ref.job_id
 
     async def status(self) -> JobSnapshot:
-        return await self.client.status(self.job_id)
+        return (await self.observe()).snapshot
 
     async def events(self, *, after_sequence: int = 0) -> list[StageEvent]:
-        return await self.client.events(self.job_id, after_sequence=after_sequence)
+        return list((await self.observe(after_sequence=after_sequence)).events)
+
+    async def observe(self, *, after_sequence: int = 0) -> JobUpdate:
+        return await self.client.observe(
+            self.job_id, after_sequence=after_sequence
+        )
 
     async def result(self) -> list[ResultEntry]:
-        return await self.client.result(self.job_id)
+        update = await self.observe()
+        outcomes = {outcome.item_id: outcome for outcome in update.outcomes}
+        return [
+            ResultEntry(
+                item_id=item.item_id,
+                display_name=item.display_name,
+                payload=(
+                    outcomes[item.item_id].payload or {}
+                    if item.item_id in outcomes
+                    and outcomes[item.item_id].state is ItemState.SUCCEEDED
+                    else {}
+                ),
+                error_code=(
+                    outcomes[item.item_id].error_code
+                    if item.item_id in outcomes
+                    else None
+                ),
+            )
+            for item in self.ref.items
+        ]
 
     async def cancel(self) -> CancelMode:
-        return await self.client.cancel(self.job_id)
+        result = await self.client.command(
+            JobCommand(
+                command_id=str(uuid4()),
+                kind=JobCommandKind.CANCEL,
+                job_id=self.job_id,
+            )
+        )
+        if not isinstance(result, CancelMode):
+            raise RuntimeError("cancel command returned no cancel mode")
+        return result
 
     async def wait_for_terminal(self, *, timeout: float | None = None) -> JobSnapshot:
         """Poll status until terminal. Raises asyncio.TimeoutError on timeout."""
         async def _wait() -> JobSnapshot:
             last_seq = 0
             while True:
-                snap = await self.client.status(self.job_id)
+                update = await self.observe(after_sequence=last_seq)
+                snap = update.snapshot
                 if snap.state in TERMINAL_JOB_STATES:
                     return snap
-                # Long-poll events to avoid tight polling; fall back to a short sleep.
-                try:
-                    events = await self.client.events(self.job_id, after_sequence=last_seq)
-                    if events:
-                        last_seq = events[-1].sequence
-                except Exception:
-                    pass
+                last_seq = update.through_sequence
                 await asyncio.sleep(0.02)
         if timeout is None:
             return await _wait()
@@ -72,12 +105,11 @@ class JobHandle:
         """Yield events as they arrive until the job is terminal."""
         last_seq = 0
         while True:
-            snap = await self.client.status(self.job_id)
-            events = await self.client.events(self.job_id, after_sequence=last_seq)
-            for e in events:
+            update = await self.observe(after_sequence=last_seq)
+            for e in update.events:
                 yield e
-                last_seq = max(last_seq, e.sequence)
-            if snap.state in TERMINAL_JOB_STATES:
+            last_seq = update.through_sequence
+            if update.snapshot.state in TERMINAL_JOB_STATES:
                 return
             await asyncio.sleep(0.02)
 

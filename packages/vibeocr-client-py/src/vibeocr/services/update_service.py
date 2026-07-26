@@ -15,6 +15,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, NamedTuple
 
@@ -33,6 +34,11 @@ logger = logging.getLogger(__name__)
 from vibeocr.services.env_config import (  # noqa: E402
     GITHUB_API_LATEST,
     build_asset_url_pairs,
+)
+from vibeocr.utils.http_log import (  # noqa: E402
+    guess_request_size,
+    guess_response_size,
+    log_http_response,
 )
 
 # ---------------------------------------------------------------------------
@@ -58,6 +64,49 @@ def compare_versions(v1: str, v2: str) -> int:
     if len(parts1) < len(parts2):
         return -1
     return 0
+
+
+def _log_http_exchange(
+    method: str,
+    url: str,
+    resp: httpx.Response,
+    *,
+    request_bytes: int | None = None,
+    start_time: float | None = None,
+    response_bytes: int | None = None,
+    stream: bool = False,
+) -> None:
+    """统一输出 HTTP 请求/响应摘要。"""
+    elapsed_ms: float | None = None
+    if start_time is not None:
+        elapsed_ms = (time.perf_counter() - start_time) * 1000.0
+    headers_obj = getattr(resp, "headers", None)
+    try:
+        headers = dict(headers_obj) if headers_obj is not None else None
+    except Exception:
+        headers = None
+    content_obj = getattr(resp, "content", None)
+    content = content_obj if isinstance(content_obj, (bytes, str)) else None
+    resp_bytes = (
+        response_bytes
+        if response_bytes is not None
+        else guess_response_size(headers, content)
+    )
+    reason = getattr(resp, "reason_phrase", None)
+    if reason is None:
+        text = getattr(resp, "text", None)
+        reason = text[:32] if isinstance(text, str) and text else None
+    log_http_response(
+        logger=logger,
+        method=method,
+        url=url,
+        status_code=resp.status_code,
+        reason=reason,
+        elapsed_ms=elapsed_ms,
+        request_bytes=request_bytes,
+        response_bytes=resp_bytes,
+        stream=stream,
+    )
 
 
 @dataclass
@@ -188,8 +237,16 @@ def read_local_version(version_json_path: Path) -> str:
 async def _fetch_release(url: str, headers: dict | None = None) -> dict | None:
     """通用：获取单个 release API 端点的 JSON，失败返回 None。"""
     try:
+        started = time.perf_counter()
         async with httpx.AsyncClient(timeout=5.0) as client:
             resp = await client.get(url, headers=headers or {})
+            _log_http_exchange(
+                "GET",
+                url,
+                resp,
+                request_bytes=guess_request_size(getattr(resp.request, "content", None)),
+                start_time=started,
+            )
             if resp.status_code == 200:
                 return resp.json()
     except Exception:
@@ -228,10 +285,18 @@ async def _probe_github_reachable(timeout: float = 3.0) -> bool:
     4xx（如 403 限流）仍视为可达——说明能连上 GitHub，只是 rate limited。
     """
     try:
+        started = time.perf_counter()
         async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
             resp = await client.head(
                 GITHUB_API_LATEST,
                 headers={"Accept": "application/vnd.github+json"},
+            )
+            _log_http_exchange(
+                "HEAD",
+                GITHUB_API_LATEST,
+                resp,
+                request_bytes=0,
+                start_time=started,
             )
             return resp.status_code < 500
     except Exception as e:
@@ -360,7 +425,15 @@ async def _download_zip_with_sha(
         # 先下载只有几十字节的 SHA 文件，作为当前源的低成本预检。旧流程先下完整
         # 170MB+ ZIP，最后才发现代理的 SHA 端点 404/错误页，换源前白等一整包。
         # SHA 先行能让坏源在数秒内失败，同时不削弱最终完整性校验。
+        sha_started = time.perf_counter()
         sha_resp = await client.get(sha_url)
+        _log_http_exchange(
+            "GET",
+            sha_url,
+            sha_resp,
+            request_bytes=0,
+            start_time=sha_started,
+        )
         if sha_resp.status_code != 200:
             logger.warning(f"sha256 下载失败({sha_resp.status_code})：{sha_url}")
             return SourceAttempt(False, DOWNLOAD_REASON_SHA_MISSING)
@@ -375,14 +448,23 @@ async def _download_zip_with_sha(
 
         # SHA 预检通过后再流式下载大 ZIP（带进度回调）
         cancelled = False
+        zip_started = time.perf_counter()
         async with client.stream("GET", zip_url) as resp:
             if resp.status_code != 200:
+                _log_http_exchange(
+                    "GET",
+                    zip_url,
+                    resp,
+                    request_bytes=0,
+                    start_time=zip_started,
+                    stream=True,
+                )
                 logger.warning(f"zip 下载失败({resp.status_code})：{zip_url}")
                 sha256_path.unlink(missing_ok=True)
                 return SourceAttempt(False, DOWNLOAD_REASON_HTTP_ERROR)
             total = int(resp.headers.get("content-length", 0))
+            downloaded = 0
             with open(zip_path, "wb") as f:
-                downloaded = 0
                 async for chunk in resp.aiter_bytes(chunk_size=65536):
                     f.write(chunk)
                     downloaded += len(chunk)
@@ -393,6 +475,16 @@ async def _download_zip_with_sha(
                         cancelled = True
                         logger.info(f"用户取消下载，清理残留：{zip_url}")
                         break
+            if not cancelled:
+                _log_http_exchange(
+                    "GET",
+                    zip_url,
+                    resp,
+                    request_bytes=0,
+                    start_time=zip_started,
+                    response_bytes=downloaded,
+                    stream=True,
+                )
         if cancelled:
             zip_path.unlink(missing_ok=True)
             sha256_path.unlink(missing_ok=True)

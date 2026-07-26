@@ -21,7 +21,7 @@ public sealed partial class SettingsPage : Page
     private async void OnRefreshClicked(object sender, RoutedEventArgs e)
         => await ViewModel.LoadSnapshotAsync(CancellationToken.None);
 
-    // switch-backend is not yet ported to the v2 (IWorkerHostClient removed) ViewModel.
+    // switch-backend is not yet exposed by the Supervisor-backed ViewModel.
     private async void OnSwitchBackendClicked(object sender, RoutedEventArgs e)
         => await Task.CompletedTask;
 

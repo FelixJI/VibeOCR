@@ -1,6 +1,6 @@
 // Phase 8 blocker fix: PDF session client for v2 supervisor PDF endpoints.
 // Mirrors the supervisor's /v2/pdf/sessions/* routes so PdfViewModel can
-// open/render/rotate/delete/save/close without IWorkerHostClient.
+// open/render/rotate/delete/save/close through the Supervisor HTTP contract.
 namespace VibeOCR.Platform.Inference;
 
 public sealed record PdfSessionOpenResult(string SessionId, int PageCount, string FilePath);

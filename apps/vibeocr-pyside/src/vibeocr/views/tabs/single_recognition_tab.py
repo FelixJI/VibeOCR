@@ -68,6 +68,7 @@ class SingleRecognitionTab(BaseOcrTab):
         # 异步识别协程的 Task 引用，用于忙时串行与关闭时取消。None 表示当前
         # 没有识别在进行。忙时状态同时由基类 _is_processing 反映（驱动按钮禁用）。
         self._recognize_task: asyncio.Task | None = None
+        self._active_ocr_options: Any = None
         self._native_call_events: set[threading.Event] = set()
         self._native_call_events_lock = threading.Lock()
         self._image_load_jobs = GenerationImageJobs(self)
@@ -158,7 +159,7 @@ class SingleRecognitionTab(BaseOcrTab):
         self._text_options_widget = TextBlockOptionsWidget()
         right_layout.addWidget(self._text_options_widget)
 
-        self._result_widget = ResultViewWidget()
+        self._result_widget = ResultViewWidget(utility_client=self._backend)
         right_layout.addWidget(self._result_widget, stretch=1)
 
         right_panel.setMinimumWidth(300)
@@ -521,6 +522,7 @@ class SingleRecognitionTab(BaseOcrTab):
             options = self._build_options_from_ui()
 
         pipeline_val = options.pipeline.value
+        self._active_ocr_options = options
 
         # QPixmap 只在 GUI 线程访问；先生成脱离的 QImage 快照，
         # PNG 编码和后端 RPC 都在异步任务内执行。
@@ -611,18 +613,20 @@ class SingleRecognitionTab(BaseOcrTab):
     async def _prepare_image_and_run_async(
         self, image: QImage, pipeline_val: str
     ):
-        return await self._run_tracked_native_async(
-            self._prepare_image_and_run_sync, image, pipeline_val
+        payload = await self._run_tracked_native_async(
+            self._qimage_to_png_bytes, image
         )
+        return await self._recognize_payload_async(payload, pipeline_val)
 
     def _prepare_image_and_run_sync(self, image: QImage, pipeline_val: str):
         payload = self._qimage_to_png_bytes(image)
         return self._call_backend_recognize(payload, pipeline_val)
 
     async def _read_file_and_run_async(self, path: Path, pipeline_val: str):
-        return await self._run_tracked_native_async(
-            self._read_file_and_run_sync, path, pipeline_val
+        payload = await self._run_tracked_native_async(
+            path.read_bytes
         )
+        return await self._recognize_payload_async(payload, pipeline_val)
 
     def _read_file_and_run_sync(self, path: Path, pipeline_val: str):
         return self._call_backend_recognize(path.read_bytes(), pipeline_val)
@@ -635,9 +639,56 @@ class SingleRecognitionTab(BaseOcrTab):
         不阻塞 qasync loop。失败重试逻辑（restart backend）封装在同步方法内部，
         无需在此重复。
         """
-        return await self._run_tracked_native_async(
-            self._call_backend_recognize, payload, pipeline_val
+        return await self._recognize_payload_async(payload, pipeline_val)
+
+    async def _recognize_payload_async(
+        self, payload: bytes, pipeline_val: str
+    ):
+        # Explicitly injected sync backends and instance-level test seams stay
+        # off the GUI thread. Production uses only the public supervisor adapter.
+        if (
+            self._backend is not None
+            or "_call_backend_recognize" in self.__dict__
+        ):
+            return await self._run_tracked_native_async(
+                self._call_backend_recognize, payload, pipeline_val
+            )
+
+        from vibeocr.contracts.pipelines import (
+            OCRPipeline,
+            get_pipeline_supported_options,
         )
+        from vibeocr.models import ocr_result_from_payload
+        from vibeocr.protocol.v2 import PipelineSelection
+        from vibeocr.pyside.supervisor_adapter import get_supervisor_adapter
+
+        pipeline_id = (
+            "MinerU" if pipeline_val == "DOCUMENT_PARSING" else pipeline_val
+        )
+        try:
+            pipeline = OCRPipeline(pipeline_id)
+            allowed = set(get_pipeline_supported_options(pipeline))
+        except ValueError:
+            allowed = set()
+        raw_options = (
+            self._active_ocr_options.to_dict()
+            if self._active_ocr_options is not None
+            else {}
+        )
+        options = {
+            key: value
+            for key, value in raw_options.items()
+            if key in allowed and value is not None
+        }
+        entries = await get_supervisor_adapter().recognize(
+            [("input", None, payload)],
+            pipeline=PipelineSelection(pipeline_id, options=options),
+        )
+        if not entries or entries[0].error_code:
+            raise RuntimeError(
+                entries[0].error_code if entries else "识别结果缺失"
+            )
+        return ocr_result_from_payload(entries[0].payload)
 
     async def _run_tracked_native_async(self, operation, *args):
         """追踪无法随 asyncio Task 取消的 ``to_thread`` 原生调用。"""
@@ -652,7 +703,13 @@ class SingleRecognitionTab(BaseOcrTab):
                 self._native_call_finished.emit()
                 done_event.set()
 
-        return await asyncio.to_thread(invoke)
+        # ``run_ocr`` can be scheduled on a qasync loop that is installed but
+        # advanced in short ``run_until_complete`` steps (not continuously
+        # running).  The shared helper binds the concurrent future to that
+        # installed loop and also keeps the native call visible to shutdown.
+        from vibeocr.utils.qt_async import tracked_to_thread
+
+        return await tracked_to_thread(invoke)
 
     @Slot()
     def _on_native_call_finished(self) -> None:
@@ -771,24 +828,8 @@ class SingleRecognitionTab(BaseOcrTab):
                 return
             self._run_ocr_with_file(path)
         else:
-            # Attached-aware routing: when the v2 supervisor is started, route
-            # image files through the supervisor (one-element recognition job);
-            # otherwise use the legacy image-load + sync-recognize path.
-            try:
-                from vibeocr.pyside.supervisor_adapter import get_supervisor_adapter
-
-                if get_supervisor_adapter().is_started:
-                    self._process_file_via_supervisor(file_path)
-                    return
-            except Exception:
-                pass  # fall through to legacy
+            # Decode off-thread; run_ocr then submits one generic supervisor job.
             self._request_image_file_load(file_path, auto_recognize=True)
-
-    def _process_file_via_supervisor(self, file_path: str) -> None:
-        """Route an image file through the v2 supervisor (one-element job)."""
-        path = Path(file_path)
-        data = path.read_bytes()
-        self.recognize_via_supervisor(data, display_name=path.name)
 
     def _run_ocr_with_data(self, data: bytes, mime_type: str, filename: str) -> None:
         """使用原始文件数据进行 OCR（文档解析管道）。
@@ -803,7 +844,7 @@ class SingleRecognitionTab(BaseOcrTab):
             return
 
         self._result_widget.clear()
-
+        self._active_ocr_options = self._preprocess_options.get_options()
         self._dispatch_recognize(data, "DOCUMENT_PARSING")
 
     def _run_ocr_with_file(self, path: Path) -> None:
@@ -812,83 +853,18 @@ class SingleRecognitionTab(BaseOcrTab):
             logger.debug("识别进行中，忽略新的文档识别请求")
             return
         self._result_widget.clear()
+        self._active_ocr_options = self._preprocess_options.get_options()
         self._dispatch_file_recognize(path, "DOCUMENT_PARSING")
 
     # -- backend bridge (v2 supervisor only) --------
 
     def _call_backend_recognize(self, image_data: bytes, pipeline: str):
-        """Call OCR recognize via the v2 supervisor HTTP API."""
-        return self._recognize_via_supervisor_sync(image_data, pipeline)
-
-    def _recognize_via_supervisor_sync(self, image_data: bytes, pipeline: str):
-        """Synchronous v2 supervisor recognition (called from asyncio.to_thread).
-
-        Submits a recognition job, polls until terminal, and returns an
-        OCRResult constructed from the v2 result payload. This bridges the
-        sync QThread/to_thread pattern to the async supervisor HTTP API.
-        """
-        import asyncio
-
-        import httpx
-
-        from vibeocr.models.ocr_result import OCRResult
-        from vibeocr.pyside.supervisor_adapter import get_supervisor_adapter
-
-        adapter = get_supervisor_adapter()
-        client = adapter._ensure_client()  # type: ignore[attr-defined]
-        base_url = getattr(client, "_base_url", "http://127.0.0.1")
-        token = getattr(client, "_token", "")
-
-        async def _do_recognize() -> OCRResult:
-            async with httpx.AsyncClient(
-                base_url=base_url,
-                headers={"Authorization": f"Bearer {token}"},
-                timeout=httpx.Timeout(120.0),
-            ) as http:
-                # Submit recognition job.
-                resp = await http.post(
-                    "/v2/jobs/recognition",
-                    files={"files": ("image.png", image_data, "image/png")},
-                )
-                resp.raise_for_status()
-                job_ref = resp.json()
-                job_id = job_ref["job_id"]
-
-                # Poll until terminal.
-                while True:
-                    snap_resp = await http.get(f"/v2/jobs/{job_id}")
-                    snap_resp.raise_for_status()
-                    snap = snap_resp.json()
-                    state = snap.get("state", "")
-                    if state in ("completed", "completed_with_errors", "cancelled", "failed"):
-                        break
-                    await asyncio.sleep(0.1)
-
-                if state in ("cancelled", "failed"):
-                    raise RuntimeError(f"Supervisor job {state}")
-
-                # Get result.
-                result_resp = await http.get(f"/v2/jobs/{job_id}/result")
-                result_resp.raise_for_status()
-                results = result_resp.json().get("results", [])
-                if not results:
-                    raise RuntimeError("Supervisor returned no results")
-
-                payload = results[0].get("payload", {})
-                text = payload.get("text", "")
-                return OCRResult(
-                    raw_text=text,
-                    markdown_text=text,
-                    html_text=text,
-                    pipeline_type=pipeline,
-                )
-
-        # Run synchronously in a new event loop (we're inside to_thread).
-        loop = asyncio.new_event_loop()
-        try:
-            return loop.run_until_complete(_do_recognize())
-        finally:
-            loop.close()
+        """Test-only injected sync backend seam; production is async v2."""
+        if self._backend is None:
+            raise RuntimeError("no synchronous backend is attached")
+        return self._backend.recognize_sync(
+            image_data, pipeline=pipeline
+        )
 
     def recognize_via_supervisor(self, image_data: bytes, display_name: str = "image.png") -> int:
         """Submit a one-element recognition job through the v2 supervisor.

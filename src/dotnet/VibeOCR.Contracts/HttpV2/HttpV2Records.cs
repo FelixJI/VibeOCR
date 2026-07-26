@@ -13,6 +13,9 @@ public sealed record JobItem
     public required ItemState State { get; init; }
     public int Attempt { get; init; }
     public string? Error { get; init; }
+    public string? ClientItemKey { get; init; }
+    public int Ordinal { get; init; }
+    public string? SourceItemId { get; init; }
 }
 
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
@@ -42,6 +45,7 @@ public sealed record JobRef
     public int SchemaVersion { get; init; } = HttpV2Schema.Version;
     public string? InstanceId { get; init; }
     public JobState State { get; init; } = JobState.Accepted;
+    public IReadOnlyList<JobItem> Items { get; init; } = Array.Empty<JobItem>();
 }
 
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
@@ -66,6 +70,74 @@ public sealed record JobSnapshot
     public bool Degraded { get; init; }
     public int EventSequence { get; init; }
     public bool ResultAvailable { get; init; }
+    public string? RequestId { get; init; }
+    public string? SourceJobId { get; init; }
+    public PipelineSelection? Pipeline { get; init; }
+}
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record PipelineSelection
+{
+    public required string PipelineId { get; init; }
+    public int OptionsVersion { get; init; } = 1;
+    public IDictionary<string, JsonElement> Options { get; init; } =
+        new Dictionary<string, JsonElement>();
+}
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record SubmitItem
+{
+    public required string ClientItemKey { get; init; }
+    public required int Ordinal { get; init; }
+    public required string DisplayName { get; init; }
+    public required IDictionary<string, JsonElement> Source { get; init; }
+}
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record SubmitRequest
+{
+    public required string RequestId { get; init; }
+    public required JobKind Kind { get; init; }
+    public required JobPriority Priority { get; init; }
+    public required PipelineSelection Pipeline { get; init; }
+    public required IReadOnlyList<SubmitItem> Items { get; init; }
+    public int SchemaVersion { get; init; } = HttpV2Schema.Version;
+    public IDictionary<string, JsonElement> Parameters { get; init; } =
+        new Dictionary<string, JsonElement>();
+}
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record ItemOutcome
+{
+    public required string ItemId { get; init; }
+    public required ItemState State { get; init; }
+    public required int Attempt { get; init; }
+    public string? PayloadType { get; init; }
+    public IDictionary<string, JsonElement>? Payload { get; init; }
+    public string? ErrorCode { get; init; }
+    public IDictionary<string, JsonElement> ErrorDetail { get; init; } =
+        new Dictionary<string, JsonElement>();
+}
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record JobUpdate
+{
+    public required JobSnapshot Snapshot { get; init; }
+    public required IReadOnlyList<StageEvent> Events { get; init; }
+    public required IReadOnlyList<ItemOutcome> Outcomes { get; init; }
+    public required int ThroughSequence { get; init; }
+    public bool More { get; init; }
+    public int SchemaVersion { get; init; } = HttpV2Schema.Version;
+}
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record JobCommand
+{
+    public required string CommandId { get; init; }
+    public required JobCommandKind Kind { get; init; }
+    public required string JobId { get; init; }
+    public IReadOnlyList<string> ItemIds { get; init; } = Array.Empty<string>();
+    public JobPriority? PriorityOverride { get; init; }
 }
 
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]

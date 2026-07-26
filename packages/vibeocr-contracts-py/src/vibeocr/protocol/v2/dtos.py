@@ -84,6 +84,12 @@ class JobPriority(StrEnum):
     BACKGROUND = "background"
 
 
+class JobCommandKind(StrEnum):
+    CANCEL = "cancel"
+    RETRY = "retry"
+    FORGET = "forget"
+
+
 class CancelMode(StrEnum):
     """The actual strength of cancellation the supervisor will apply."""
 
@@ -121,6 +127,9 @@ class JobItem:
     state: ItemState
     attempt: int = 0
     error: str | None = None
+    client_item_key: str | None = None
+    ordinal: int = 0
+    source_item_id: str | None = None
 
     def to_payload(self) -> dict[str, Any]:
         d = asdict(self)
@@ -167,6 +176,7 @@ class JobRef:
     schema_version: int = SCHEMA_VERSION
     instance_id: str | None = None
     state: JobState = JobState.ACCEPTED
+    items: tuple[JobItem, ...] = ()
 
     def to_payload(self) -> dict[str, Any]:
         return {
@@ -174,6 +184,7 @@ class JobRef:
             "schema_version": self.schema_version,
             "instance_id": self.instance_id,
             "state": self.state.value,
+            "items": [item.to_payload() for item in self.items],
         }
 
 
@@ -200,6 +211,9 @@ class JobSnapshot:
     degraded: bool = False
     event_sequence: int = 0
     result_available: bool = False
+    request_id: str | None = None
+    source_job_id: str | None = None
+    pipeline: PipelineSelection | None = None
 
     def to_payload(self) -> dict[str, Any]:
         return {
@@ -222,6 +236,138 @@ class JobSnapshot:
             "degraded": self.degraded,
             "event_sequence": self.event_sequence,
             "result_available": self.result_available,
+            "request_id": self.request_id,
+            "source_job_id": self.source_job_id,
+            "pipeline": self.pipeline.to_payload() if self.pipeline else None,
+        }
+
+
+# ---------------------------------------------------------------------------
+# Submission / observation / command DTOs
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class PipelineSelection:
+    """Frozen user-semantic pipeline selection for one logical job."""
+
+    pipeline_id: str
+    options_version: int = 1
+    options: dict[str, Any] = field(default_factory=dict)
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "pipeline_id": self.pipeline_id,
+            "options_version": self.options_version,
+            "options": self.options,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class SubmitItem:
+    """One logical input. ``source`` is a strict discriminated wire object."""
+
+    client_item_key: str
+    ordinal: int
+    display_name: str
+    source: dict[str, Any]
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "client_item_key": self.client_item_key,
+            "ordinal": self.ordinal,
+            "display_name": self.display_name,
+            "source": self.source,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class SubmitRequest:
+    """Versioned manifest submitted alongside multipart attachments."""
+
+    request_id: str
+    kind: JobKind
+    priority: JobPriority
+    pipeline: PipelineSelection
+    items: tuple[SubmitItem, ...]
+    schema_version: int = SCHEMA_VERSION
+    parameters: dict[str, Any] = field(default_factory=dict)
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "request_id": self.request_id,
+            "kind": self.kind.value,
+            "priority": self.priority.value,
+            "pipeline": self.pipeline.to_payload(),
+            "items": [item.to_payload() for item in self.items],
+            "parameters": self.parameters,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class ItemOutcome:
+    """Typed terminal outcome delta for one item."""
+
+    item_id: str
+    state: ItemState
+    attempt: int
+    payload_type: str | None = None
+    payload: dict[str, Any] | None = None
+    error_code: str | None = None
+    error_detail: dict[str, Any] | None = None
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "item_id": self.item_id,
+            "state": self.state.value,
+            "attempt": self.attempt,
+            "payload_type": self.payload_type,
+            "payload": self.payload,
+            "error_code": self.error_code,
+            "error_detail": self.error_detail or {},
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class JobUpdate:
+    """Atomic snapshot + event/outcome delta at one sequence watermark."""
+
+    snapshot: JobSnapshot
+    events: tuple[StageEvent, ...]
+    outcomes: tuple[ItemOutcome, ...]
+    through_sequence: int
+    more: bool = False
+    schema_version: int = SCHEMA_VERSION
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "snapshot": self.snapshot.to_payload(),
+            "events": [event.to_payload() for event in self.events],
+            "outcomes": [outcome.to_payload() for outcome in self.outcomes],
+            "through_sequence": self.through_sequence,
+            "more": self.more,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class JobCommand:
+    command_id: str
+    kind: JobCommandKind
+    job_id: str
+    item_ids: tuple[str, ...] = ()
+    priority_override: JobPriority | None = None
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "command_id": self.command_id,
+            "kind": self.kind.value,
+            "job_id": self.job_id,
+            "item_ids": list(self.item_ids),
+            "priority_override": (
+                self.priority_override.value if self.priority_override else None
+            ),
         }
 
 
@@ -362,7 +508,10 @@ __all__ = [
     "TERMINAL_JOB_STATES",
     "CancelMode",
     "EvictionReason",
+    "ItemOutcome",
     "ItemState",
+    "JobCommand",
+    "JobCommandKind",
     "JobItem",
     "JobKind",
     "JobPriority",
@@ -370,6 +519,8 @@ __all__ = [
     "JobSnapshot",
     "JobState",
     "JobSummary",
+    "JobUpdate",
+    "PipelineSelection",
     "PipelineSpec",
     "ResidencyEntry",
     "ResidencyKind",
@@ -377,6 +528,8 @@ __all__ = [
     "ResultEntry",
     "SettingsSnapshot",
     "StageEvent",
+    "SubmitItem",
+    "SubmitRequest",
     "UnknownJobError",
     "new_job_id",
 ]

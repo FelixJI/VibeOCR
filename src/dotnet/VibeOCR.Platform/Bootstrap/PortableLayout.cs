@@ -11,8 +11,8 @@ public sealed record PortableLayout(
 {
     /// <summary>Environment variable naming the repository root for dev runs.</summary>
     /// <remarks>
-    /// Mirrors <c>VibeOCR.App.App.ResolveWorkerRoot</c>: when set under the
-    /// <c>winui-dev</c> profile, the worker source and (for this helper) the
+    /// Mirrors <c>VibeOCR.App.App.ResolveSupervisorRoot</c>: when set under the
+    /// <c>winui-dev</c> profile, the supervisor source and (for this helper) the
     /// repository's <c>.venv</c> Python are resolved from it instead of the
     /// packaged <c>python/</c> layout.
     /// </remarks>
@@ -50,7 +50,7 @@ public sealed record PortableLayout(
     }
 
     /// <summary>
-    /// Resolve the Python interpreter to launch the WorkerHost under.
+    /// Resolve the Python interpreter used to launch the Supervisor.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -58,10 +58,10 @@ public sealed record PortableLayout(
     /// <c>{RuntimeRoot}/python.exe</c>. Under <c>winui-dev</c>, if
     /// <see cref="RepositoryRootVariable"/> points at a repository whose
     /// <c>.venv/Scripts/python.exe</c> exists, that interpreter is used so the
-    /// worker runs against the same editable dependencies the developer
+    /// supervisor runs against the same editable dependencies the developer
     /// installed via <c>uv sync</c> — mirroring how the PySide shell uses
-    /// <c>sys.executable</c> and how <c>ResolveWorkerRoot</c> already picks up
-    /// the repo source tree.
+    /// <c>sys.executable</c> and how <c>ResolveSupervisorRoot</c> already picks up
+    /// the supervisor source tree.
     /// </para>
     /// <para>
     /// Otherwise the packaged-layout path is returned even though it may not
@@ -131,5 +131,12 @@ public sealed record PortableLayout(
 
     private static bool IsRepositoryRoot(string path) =>
         File.Exists(Path.Combine(path, "pyproject.toml")) &&
-        Directory.Exists(Path.Combine(path, "src", "vibeocr", "worker_host"));
+        Directory.Exists(
+            Path.Combine(
+                path,
+                "packages",
+                "vibeocr-backend",
+                "src",
+                "vibeocr",
+                "supervisor"));
 }

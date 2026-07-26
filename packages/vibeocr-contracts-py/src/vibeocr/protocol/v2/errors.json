@@ -60,6 +60,13 @@
       "message": "Only failed or cancelled items can be retried."
     },
     {
+      "code": "INPUT_EXPIRED",
+      "category": "not_found",
+      "http_status": 410,
+      "retryable": false,
+      "message": "The retained input required for retry has expired or is unavailable."
+    },
+    {
       "code": "PIN_CAPACITY_CONFLICT",
       "category": "conflict",
       "http_status": 409,
@@ -100,6 +107,13 @@
       "http_status": 503,
       "retryable": true,
       "message": "The required backend (Paddle/MinerU/PDF) is unavailable."
+    },
+    {
+      "code": "ADAPTER_PROTOCOL_VIOLATION",
+      "category": "internal",
+      "http_status": 502,
+      "retryable": false,
+      "message": "An inference adapter returned malformed, missing or mismatched item outcomes."
     },
     {
       "code": "PROTOCOL_MISMATCH",

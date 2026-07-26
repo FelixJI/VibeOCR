@@ -85,7 +85,7 @@ public sealed class HttpV2GoldenContractTests
             .Select<HttpV2ErrorCode, string>(WireName)
             .ToArray();
         Assert.Equal(registered.Order(), declared.Order());
-        Assert.Equal(16, registered.Length);
+        Assert.Equal(18, registered.Length);
 
         foreach (JsonElement entry in entries)
         {
@@ -142,8 +142,10 @@ public sealed class HttpV2GoldenContractTests
         HttpV2ErrorCode.ResourceNotFound => false,
         HttpV2ErrorCode.JobNotCancellable => false,
         HttpV2ErrorCode.JobNotRetryable => false,
+        HttpV2ErrorCode.InputExpired => false,
         HttpV2ErrorCode.PinCapacityConflict => false,
         HttpV2ErrorCode.Cancelled => false,
+        HttpV2ErrorCode.AdapterProtocolViolation => false,
         HttpV2ErrorCode.ProtocolMismatch => false,
         // Retryable: OOM, transient, draining, backend unavailable, internal.
         _ => true,

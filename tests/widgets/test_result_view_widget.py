@@ -2,6 +2,7 @@
 
 import re
 import time
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -20,6 +21,18 @@ from vibeocr.widgets.result_view_widget import (
     _render_text,
     _render_title,
 )
+
+
+class _ImmediateExportClient:
+    def export_ocr_sync(self, _payload, *, output_path, **_kwargs):
+        path = Path(output_path)
+        path.write_bytes(b"PK-test")
+        return {"output_path": str(path)}
+
+
+class _FailingExportClient:
+    def export_ocr_sync(self, _payload, **_kwargs):
+        return {}
 
 
 class TestRenderBlockTitleAttribute:
@@ -568,7 +581,7 @@ class TestResultViewExportButtons:
     def widget(self, app, qtbot):
         from vibeocr.widgets.result_view_widget import ResultViewWidget
 
-        w = ResultViewWidget()
+        w = ResultViewWidget(utility_client=_ImmediateExportClient())
         qtbot.addWidget(w)
         return w
 
@@ -961,11 +974,8 @@ class TestResultViewExportButtons:
             ),
             raising=False,
         )
-        # 让 RPC export adapter 返回 False（导出失败）
-        monkeypatch.setattr(
-            "vibeocr.client.export.export_result",
-            lambda *a, **k: False,
-        )
+        # 让注入的 v2 utility client 返回失败。
+        widget._utility_client = _FailingExportClient()
         # 不应抛异常
         widget._on_export_file("docx")
         qtbot.waitUntil(lambda: widget._export_job is None, timeout=2000)

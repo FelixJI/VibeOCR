@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import io
 import time
+from importlib.util import find_spec
 from typing import TYPE_CHECKING
 
 import pytest
@@ -22,32 +23,17 @@ if TYPE_CHECKING:
 
 from vibeocr.protocol.v2 import TERMINAL_JOB_STATES, JobState
 from vibeocr.supervisor.composition import build_supervisor
-from vibeocr.supervisor.inference.residency import ResidencyManager
 
 # ---------------------------------------------------------------------------
 # Availability checks (shared with integration test)
 # ---------------------------------------------------------------------------
 
-_PADDLE_AVAILABLE = True
-try:
-    import paddle  # noqa: F401
-except Exception:
-    _PADDLE_AVAILABLE = False
-
-_PADDLE_TORCH_CONFLICT = False
-if _PADDLE_AVAILABLE:
-    try:
-        import torch  # noqa: F401
-        from paddleocr.utils import deps as _paddleocr_deps  # noqa: F401
-    except OSError:
-        _PADDLE_TORCH_CONFLICT = True
-    except ModuleNotFoundError:
-        pass
+_PADDLE_AVAILABLE = find_spec("paddle") is not None
 
 slow = pytest.mark.slow
 skip_no_paddle = pytest.mark.skipif(
-    not _PADDLE_AVAILABLE or _PADDLE_TORCH_CONFLICT,
-    reason="paddle not installed or paddle+torch DLL conflict",
+    not _PADDLE_AVAILABLE,
+    reason="paddle not installed",
 )
 
 
@@ -221,54 +207,6 @@ class TestFaultInjection:
         d = policy.next_action(failure=FailureClass.TRANSIENT, current_batch_size=4, attempt=0)
         assert d.action is RecoveryAction.FAIL_FAST
         assert "budget" in d.reason
-
-    def test_ttl_expiry_evicts_idle_model(self) -> None:
-        """ResidencyManager: TTL expiry evicts only idle, non-pinned models."""
-        from vibeocr.protocol.v2 import EvictionReason, ResidencyKind
-
-        t = [0.0]
-        rm = ResidencyManager(default_ttl_seconds=100, clock=lambda: t[0])
-        rm.lease("OCR")
-        rm.release("OCR")
-        t[0] = 200  # past TTL
-        evicted = rm.evict_expired()
-        assert evicted == ["OCR"]
-        status = rm.status()
-        entry = next(e for e in status.entries if e.pipeline == "OCR")
-        assert entry.kind is ResidencyKind.EVICTED
-        assert entry.eviction_reason is EvictionReason.TTL_EXPIRED
-
-    def test_active_lease_not_evicted_by_ttl(self) -> None:
-        """An active lease must never be evicted by TTL or VRAM pressure."""
-        t = [0.0]
-        rm = ResidencyManager(default_ttl_seconds=100, capacity_vram_mb=10000, clock=lambda: t[0])
-        rm.lease("OCR")  # active
-        t[0] = 1000  # way past TTL
-        assert rm.evict_expired() == []
-        assert rm.apply_vram_pressure(9999) == []
-
-    def test_pinned_model_survives_vram_pressure(self) -> None:
-        """A pinned model is not evicted even under VRAM pressure."""
-        t = [0.0]
-        rm = ResidencyManager(default_ttl_seconds=10000, capacity_vram_mb=10000, clock=lambda: t[0])
-        rm.lease("MinerU", estimated_vram_mb=2000)
-        rm.release("MinerU")
-        rm.pin("MinerU")
-        evicted = rm.apply_vram_pressure(9999)
-        assert "MinerU" not in evicted
-
-    def test_pin_capacity_conflict(self) -> None:
-        """Pinning beyond capacity raises a typed error."""
-        from vibeocr.supervisor.inference.residency import PinCapacityConflict
-
-        t = [0.0]
-        rm = ResidencyManager(default_ttl_seconds=100, capacity_vram_mb=3000, clock=lambda: t[0])
-        rm.lease("OCR", estimated_vram_mb=2000)
-        rm.release("OCR")
-        rm.lease("MinerU", estimated_vram_mb=2000)
-        rm.release("MinerU")
-        with pytest.raises(PinCapacityConflict):
-            rm.pin("MinerU")
 
     def test_supervisor_drain_rejects_new_jobs(self, tmp_path: Path) -> None:
         """A draining supervisor rejects new job submissions."""

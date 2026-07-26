@@ -7,7 +7,7 @@ import contextlib
 import logging
 from pathlib import Path
 
-from PySide6.QtCore import QThread, Signal
+from PySide6.QtCore import QThread, QThreadPool, Signal
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -33,6 +33,7 @@ from vibeocr.utils.export_jobs import (
     export_batch_operation,
     snapshot_ocr_result,
 )
+from vibeocr.views.background_tasks import FunctionTask
 from vibeocr.views.tabs.base_tab import BaseOcrTab
 from vibeocr.widgets.batch_file_list_widget import BatchFileListWidget
 from vibeocr.widgets.export_settings_widget import ExportSettingsWidget
@@ -113,23 +114,13 @@ class BatchRecognitionWorker(QThread):
     def run(self):
         """执行批量识别，并保证每次运行都产生一个明确业务终态。
 
-        v2 path: when the supervisor adapter is started, batch recognition
-        goes through the supervisor HTTP v2 API (one logical job for all
-        files). Falls back to legacy BatchBackendAdapter when not started.
+        This worker is retained only for the legacy backend during migration.
+        The supervisor path is submitted once by the tab and never enters the
+        UI-side partition loop below.
         """
         try:
             if self._cancelled:
                 raise InterruptedError("批量识别已取消")
-
-            # Check if supervisor is available for v2 batch recognition.
-            self._use_supervisor = False
-            try:
-                from vibeocr.pyside.supervisor_adapter import get_supervisor_adapter
-
-                if get_supervisor_adapter().is_started:
-                    self._use_supervisor = True
-            except Exception:
-                pass
 
             if self._cancelled:
                 raise InterruptedError("批量识别已取消")
@@ -237,13 +228,12 @@ class BatchRecognitionWorker(QThread):
             if valid_indices:
                 valid_images = [images[bi] for bi in valid_indices]  # type: ignore[list-item]
                 try:
-                    if self._use_supervisor:
-                        batch_results = self._recognize_batch_via_supervisor(valid_images)
-                    else:
-                        batch_results = self._service.recognize_batch(
-                            valid_images, self._preprocess_options
-                        )
+                    batch_results = self._service.recognize_batch(
+                        valid_images, self._preprocess_options
+                    )
                 except Exception as e:
+                    if self._cancelled:
+                        break
                     logger.error("批量识别失败(batch=%d): %s", batch_index, e)
                     self.error.emit(str(e))
                     # 识别整批失败：有效文件使用 RPC 错误；本批读取失败文件仍
@@ -329,76 +319,6 @@ class BatchRecognitionWorker(QThread):
         self._results = results
         return results, completed, total, failed
 
-    def _recognize_batch_via_supervisor(self, images: list[bytes]) -> list:
-        """Submit all images as one logical recognition job via the v2 supervisor.
-
-        Returns a list of OCRResult objects (one per image, in order).
-        Constructs OCRResult from the v2 dict payload using the same pattern
-        as single_recognition_tab._recognize_via_supervisor_sync.
-        """
-        import asyncio
-
-        import httpx
-
-        from vibeocr.models.ocr_result import OCRResult
-        from vibeocr.pyside.supervisor_adapter import get_supervisor_adapter
-
-        adapter = get_supervisor_adapter()
-        client = adapter._ensure_client()  # type: ignore[attr-defined]
-        base_url = getattr(client, "_base_url", "http://127.0.0.1")
-        token = getattr(client, "_token", "")
-
-        async def _do_batch() -> list:
-            async with httpx.AsyncClient(
-                base_url=base_url,
-                headers={"Authorization": f"Bearer {token}"},
-                timeout=httpx.Timeout(300.0),
-            ) as http:
-                files = [
-                    ("files", (f"image_{i}.png", img, "image/png"))
-                    for i, img in enumerate(images)
-                ]
-                resp = await http.post("/v2/jobs/recognition", files=files)
-                resp.raise_for_status()
-                job_id = resp.json()["job_id"]
-
-                # Poll until terminal.
-                while True:
-                    snap_resp = await http.get(f"/v2/jobs/{job_id}")
-                    snap_resp.raise_for_status()
-                    state = snap_resp.json().get("state", "")
-                    if state in ("completed", "completed_with_errors", "cancelled", "failed"):
-                        break
-                    await asyncio.sleep(0.2)
-
-                if state in ("cancelled", "failed"):
-                    raise RuntimeError(f"Supervisor batch job {state}")
-
-                result_resp = await http.get(f"/v2/jobs/{job_id}/result")
-                result_resp.raise_for_status()
-                results_raw = result_resp.json().get("results", [])
-
-                # Map back to OCRResult list (one per image, in order).
-                ocr_results: list = []
-                for i in range(len(images)):
-                    if i < len(results_raw):
-                        payload = results_raw[i].get("payload", {})
-                        text = payload.get("text", "")
-                        error_code = results_raw[i].get("error_code")
-                        if error_code:
-                            ocr_results.append(None)  # type: ignore[list-item]
-                        else:
-                            ocr_results.append(OCRResult(raw_text=text, markdown_text=text, html_text=text))
-                    else:
-                        ocr_results.append(None)  # type: ignore[list-item]
-                return ocr_results
-
-        loop = asyncio.new_event_loop()
-        try:
-            return loop.run_until_complete(_do_batch())
-        finally:
-            loop.close()
-
     def cancel(self):
         """取消处理（协作式）。
 
@@ -431,6 +351,12 @@ class BatchRecognitionTab(BaseOcrTab):
         self._backend = backend
         self._batch_backend = None
         self._worker: BatchRecognitionWorker | None = None
+        self._submission_task: FunctionTask | None = None
+        self._supervisor_adapter = None
+        self._supervisor_job_id: str | None = None
+        self._supervisor_generation = 0
+        self._supervisor_files: list[dict] = []
+        self._supervisor_results: dict = {}
         self._export_job: ExportSaveJob | None = None
         self._export_generation = 0
         self._export_mode = ""
@@ -522,7 +448,7 @@ class BatchRecognitionTab(BaseOcrTab):
         )
         right_layout.addWidget(result_label)
 
-        self._result_widget = ResultViewWidget()
+        self._result_widget = ResultViewWidget(utility_client=self._backend)
         right_layout.addWidget(self._result_widget, stretch=1)
 
         self._splitter.addWidget(right_panel)
@@ -609,6 +535,8 @@ class BatchRecognitionTab(BaseOcrTab):
         if (
             self._shutting_down
             or self._worker is not None
+            or self._submission_task is not None
+            or self._supervisor_job_id is not None
             or self._export_job is not None
         ):
             return
@@ -653,6 +581,18 @@ class BatchRecognitionTab(BaseOcrTab):
 
         self._result_widget.clear()
 
+        try:
+            from vibeocr.pyside.supervisor_adapter import get_supervisor_adapter
+
+            supervisor = get_supervisor_adapter()
+        except Exception:
+            supervisor = None
+        if supervisor is not None and supervisor.is_started:
+            self._start_supervisor_batch(
+                supervisor, files, preprocess_options
+            )
+            return
+
         worker = BatchRecognitionWorker(service, files, preprocess_options)
         self._worker = worker
         worker.progress.connect(self._on_progress)
@@ -687,6 +627,228 @@ class BatchRecognitionTab(BaseOcrTab):
         uploads = [(name, None, data) for name, data in entries]
         return adapter.submit_recognition(uploads, priority=JobPriority.BACKGROUND)
 
+    def _start_supervisor_batch(
+        self, adapter, files: list[dict], options: OCROptions
+    ) -> None:
+        """Read inputs off-thread, then submit one logical supervisor job."""
+        self._bind_supervisor_adapter(adapter)
+        self._supervisor_generation += 1
+        generation = self._supervisor_generation
+        self._supervisor_files = []
+        self._supervisor_results = {}
+
+        def load_inputs() -> tuple[list[tuple[dict, bytes]], list[tuple[dict, str]]]:
+            loaded: list[tuple[dict, bytes]] = []
+            failed: list[tuple[dict, str]] = []
+            for file_info in files:
+                try:
+                    loaded.append(
+                        (file_info, Path(file_info["path"]).read_bytes())
+                    )
+                except OSError as exc:
+                    failed.append((file_info, str(exc)))
+            return loaded, failed
+
+        task = FunctionTask(load_inputs)
+        self._submission_task = task
+        task.signals.finished.connect(
+            lambda result: self._submit_loaded_supervisor_inputs(
+                generation, adapter, options, result
+            )
+        )
+        task.signals.error.connect(
+            lambda error: self._fail_supervisor_submission(generation, error)
+        )
+        QThreadPool.globalInstance().start(task)
+
+    def _bind_supervisor_adapter(self, adapter) -> None:
+        if self._supervisor_adapter is adapter:
+            return
+        previous = self._supervisor_adapter
+        if previous is not None:
+            for signal, slot in (
+                (previous.recognition_submitted, self._on_supervisor_submitted),
+                (previous.recognition_progress, self._on_supervisor_progress),
+                (previous.recognition_result, self._on_supervisor_result),
+                (previous.recognition_error, self._on_supervisor_error),
+                (previous.recognition_cancelled, self._on_supervisor_cancelled),
+            ):
+                with contextlib.suppress(RuntimeError):
+                    signal.disconnect(slot)
+        self._supervisor_adapter = adapter
+        adapter.recognition_submitted.connect(self._on_supervisor_submitted)
+        adapter.recognition_progress.connect(self._on_supervisor_progress)
+        adapter.recognition_result.connect(self._on_supervisor_result)
+        adapter.recognition_error.connect(self._on_supervisor_error)
+        adapter.recognition_cancelled.connect(self._on_supervisor_cancelled)
+
+    def _submit_loaded_supervisor_inputs(
+        self,
+        generation: int,
+        adapter,
+        options: OCROptions,
+        result: object,
+    ) -> None:
+        self._submission_task = None
+        if generation != self._supervisor_generation or self._shutting_down:
+            return
+        loaded, read_failures = result  # type: ignore[misc]
+        for file_info, error in read_failures:
+            path = file_info["path"]
+            self._file_list_widget.update_file_status(
+                path, "failed", {"error": error}
+            )
+            self._supervisor_results[path] = {
+                "file_path": path,
+                "error": error,
+            }
+        if not loaded:
+            self._finish_supervisor_batch()
+            return
+
+        from vibeocr.contracts.pipelines import get_pipeline_supported_options
+        from vibeocr.protocol.v2 import JobPriority, PipelineSelection
+
+        option_payload = options.to_dict()
+        pipeline = options.pipeline
+        pipeline_id = (
+            pipeline.value if hasattr(pipeline, "value") else str(pipeline)
+        )
+        allowed = set(get_pipeline_supported_options(pipeline))
+        semantic_options = {
+            name: value
+            for name, value in option_payload.items()
+            if name in allowed and value is not None
+        }
+        self._supervisor_files = [file_info for file_info, _data in loaded]
+        uploads = [
+            (Path(file_info["path"]).name, None, data)
+            for file_info, data in loaded
+        ]
+        adapter.submit_recognition(
+            uploads,
+            priority=JobPriority.BACKGROUND,
+            pipeline=PipelineSelection(
+                pipeline_id=pipeline_id,
+                options=semantic_options,
+            ),
+        )
+
+    def _fail_supervisor_submission(
+        self, generation: int, error: str
+    ) -> None:
+        self._submission_task = None
+        if generation != self._supervisor_generation or self._shutting_down:
+            return
+        self._on_supervisor_error("", error)
+
+    def _on_supervisor_submitted(self, job_id: str) -> None:
+        if self._run_state not in (
+            self.STATE_RUNNING,
+            self.STATE_CANCELLING,
+        ):
+            return
+        self._supervisor_job_id = job_id
+        if self._run_state == self.STATE_CANCELLING:
+            self._supervisor_adapter.cancel(job_id)
+
+    def _on_supervisor_progress(
+        self, job_id: str, current: int, total: int
+    ) -> None:
+        if job_id != self._supervisor_job_id:
+            return
+        self._progress_label.setText(f"{current}/{total}")
+
+    def _on_supervisor_result(self, job_id: str, entries: list) -> None:
+        if job_id != self._supervisor_job_id or self._shutting_down:
+            return
+        from vibeocr.models import ocr_result_from_payload
+
+        for index, file_info in enumerate(self._supervisor_files):
+            path = file_info["path"]
+            entry = entries[index] if index < len(entries) else {}
+            error_code = entry.get("error_code")
+            payload = entry.get("payload") or {}
+            if error_code or not payload:
+                error = error_code or "识别结果缺失"
+                self._file_list_widget.update_file_status(
+                    path, "failed", {"error": error}
+                )
+                self._supervisor_results[path] = {
+                    "file_path": path,
+                    "error": error,
+                }
+                continue
+            result = ocr_result_from_payload(payload)
+            self._result_snapshots[path] = snapshot_ocr_result(
+                result,
+                include_content_list=True,
+                include_images=False,
+                include_text_blocks=False,
+            )
+            self._file_list_widget.update_file_status(
+                path, "completed", result
+            )
+            self._supervisor_results[path] = {
+                "file_path": path,
+                "result": result,
+            }
+            if path == self._current_file_path:
+                self._display_result(result)
+                self._export_widget.set_current_result(result)
+        self._finish_supervisor_batch()
+
+    def _on_supervisor_error(self, job_id: str, message: str) -> None:
+        if job_id and job_id != self._supervisor_job_id:
+            return
+        if self._run_state not in (
+            self.STATE_RUNNING,
+            self.STATE_CANCELLING,
+        ):
+            return
+        for file_info in self._supervisor_files:
+            path = file_info["path"]
+            if path in self._supervisor_results:
+                continue
+            self._file_list_widget.update_file_status(
+                path, "failed", {"error": message}
+            )
+            self._supervisor_results[path] = {
+                "file_path": path,
+                "error": message,
+            }
+        self._finish_supervisor_batch()
+
+    def _on_supervisor_cancelled(self, job_id: str) -> None:
+        if job_id != self._supervisor_job_id:
+            return
+        self._apply_terminal(
+            BatchRecognitionWorker.STATUS_CANCELLED,
+            self._supervisor_results,
+        )
+        self._reset_supervisor_run()
+
+    def _finish_supervisor_batch(self) -> None:
+        failed = any(
+            "error" in result for result in self._supervisor_results.values()
+        )
+        status = (
+            BatchRecognitionWorker.STATUS_PARTIAL_FAILED
+            if failed
+            else BatchRecognitionWorker.STATUS_COMPLETED
+        )
+        self._apply_terminal(status, self._supervisor_results)
+        self._reset_supervisor_run()
+
+    def _reset_supervisor_run(self) -> None:
+        self._supervisor_job_id = None
+        self._supervisor_files = []
+        self._run_state = (
+            self.STATE_SHUTDOWN if self._shutting_down else self.STATE_IDLE
+        )
+        self._start_btn.setEnabled(not self._shutting_down)
+        self._cancel_btn.setEnabled(False)
+
     def _on_cancel(self):
         """请求取消；线程真正结束前不释放引用、也不允许重新开始。"""
         export_job = self._export_job
@@ -695,6 +857,18 @@ class BatchRecognitionTab(BaseOcrTab):
             self._cancel_btn.setEnabled(False)
             self._progress_label.setText("正在取消导出…")
             export_job.cancel()
+            return
+
+        if (
+            self._submission_task is not None
+            or self._supervisor_job_id is not None
+        ):
+            self._run_state = self.STATE_CANCELLING
+            self._start_btn.setEnabled(False)
+            self._cancel_btn.setEnabled(False)
+            self._progress_label.setText("正在取消…")
+            if self._supervisor_job_id is not None:
+                self._supervisor_adapter.cancel(self._supervisor_job_id)
             return
 
         worker = self._worker
@@ -993,6 +1167,11 @@ class BatchRecognitionTab(BaseOcrTab):
         export_job = self._export_job
         if export_job is not None:
             all_stopped = export_job.drain(remaining_ms()) and all_stopped
+        submission = self._submission_task
+        if submission is not None:
+            all_stopped = submission.is_drained() and all_stopped
+        if self._supervisor_job_id is not None:
+            all_stopped = False
 
         worker = self._worker
         if worker is not None:
@@ -1026,6 +1205,11 @@ class BatchRecognitionTab(BaseOcrTab):
         if worker is not None:
             self._run_state = self.STATE_CANCELLING
             worker.cancel()
+        elif self._supervisor_job_id is not None:
+            self._run_state = self.STATE_CANCELLING
+            self._supervisor_adapter.cancel(self._supervisor_job_id)
+        elif self._submission_task is not None:
+            self._run_state = self.STATE_CANCELLING
         else:
             self._run_state = self.STATE_SHUTDOWN
 

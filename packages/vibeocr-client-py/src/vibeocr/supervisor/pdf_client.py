@@ -20,6 +20,7 @@ Loopback + Bearer token are pinned exactly like :class:`SupervisorClient`.
 from __future__ import annotations
 
 import asyncio
+import logging
 import threading
 from typing import TYPE_CHECKING, Any
 
@@ -30,6 +31,7 @@ if TYPE_CHECKING:
 
 from vibeocr.ipc.schemas import (
     AddTextLayerRequest,
+    BatchAddTextLayerPage,
     BatchAddTextLayerRequest,
     DeletePagesRequest,
     DetectTextLayersRequest,
@@ -54,6 +56,11 @@ from vibeocr.ipc.schemas import (
     UpdateBlockTextRequest,
 )
 from vibeocr.protocol.v2 import ErrorCode
+from vibeocr.utils.http_log import (
+    guess_request_size,
+    guess_response_size,
+    log_http_response,
+)
 
 from .errors import InferenceClientError
 
@@ -91,6 +98,8 @@ class PdfBackendError(InferenceClientError):
 _HTTP_TIMEOUT = httpx.Timeout(60.0, connect=5.0)
 _HTTP_LONG_TIMEOUT = httpx.Timeout(600.0, connect=5.0)
 
+logger = logging.getLogger(__name__)
+
 
 class PdfSupervisorClient:
     """Async HTTP v2 client for PDF session ops. Use as an async context manager.
@@ -123,6 +132,7 @@ class PdfSupervisorClient:
             base_url=self._base_url,
             headers={"Authorization": f"Bearer {self._token}"},
             timeout=_HTTP_TIMEOUT,
+            event_hooks={"response": [self._log_http_response]},
         )
         return self
 
@@ -137,6 +147,32 @@ class PdfSupervisorClient:
                 "PdfSupervisorClient must be used as an async context manager"
             )
         return self._client
+
+    def _log_http_response(self, resp: httpx.Response) -> None:
+        request = resp.request
+        elapsed = None
+        try:
+            raw = getattr(resp, "elapsed", None)
+            if raw is not None:
+                elapsed = raw.total_seconds() * 1000.0
+        except Exception:
+            elapsed = None
+
+        request_bytes = guess_request_size(getattr(request, "content", None))
+        response_bytes = guess_response_size(
+            dict(resp.headers), getattr(resp, "content", None)
+        )
+
+        log_http_response(
+            logger=logger,
+            method=request.method,
+            url=str(request.url),
+            status_code=resp.status_code,
+            reason=getattr(resp, "reason_phrase", None),
+            elapsed_ms=elapsed,
+            request_bytes=request_bytes,
+            response_bytes=response_bytes,
+        )
 
     def _error_from_response(self, resp: httpx.Response) -> PdfBackendError:
         try:
@@ -334,7 +370,11 @@ class PdfSupervisorClient:
         client = self._require_client()
         body = BatchAddTextLayerRequest(
             pages=[
-                {"page": p["page"], "ocr_result": p["ocr_result"]} for p in pages_data
+                BatchAddTextLayerPage(
+                    page=p["page"],
+                    ocr_result=p["ocr_result"],
+                )
+                for p in pages_data
             ],
             pdf_settings=pdf_settings,
             overwrite=overwrite,

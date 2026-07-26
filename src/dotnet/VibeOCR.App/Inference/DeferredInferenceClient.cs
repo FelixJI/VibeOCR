@@ -1,20 +1,4 @@
-// Phase 8 wiring: a deferred IInferenceClient that mirrors DeferredWorkerHostClient.
-//
-// Until the Phase 8 atomic switch actually starts the supervisor process and
-// attaches a real InferenceHttpClient, this client throws
-// InvalidOperationException on any call. It lets the composition root wire the
-// v2 constructors of Recognition/Batch/Settings/Pdf ViewModels NOW (so the
-// production ViewModels are v2-capable instances) without flipping execution
-// to the supervisor path. The final switch is a single Attach() call plus the
-// supervisor-process lifecycle, done in the same change that deletes the
-// legacy worker.
-//
-// This keeps the rewrite branch internally consistent: ViewModels hold a real
-// IInferenceClient reference (exercising the v2 seam in tests), but production
-// still runs the legacy path until Attach() — matching the plan's "no runtime
-// dual-stack, atomic switch" rule (the branch is not released until Phase 8
-// completes, so a deferred-throw client is the safe pre-switch state).
-using System.Text.Json;
+// Deferred inference gateway used while the Supervisor is starting.
 using VibeOCR.Contracts.HttpV2;
 using VibeOCR.Platform.Inference;
 
@@ -23,7 +7,6 @@ namespace VibeOCR.App.Inference;
 /// <summary>
 /// An <see cref="IInferenceClient"/> whose calls delegate to an attached inner
 /// client once <see cref="Attach"/> is called; before that, every call throws.
-/// Mirrors <c>DeferredWorkerHostClient</c>.
 /// </summary>
 public sealed class DeferredInferenceClient : IInferenceClient
 {
@@ -57,28 +40,22 @@ public sealed class DeferredInferenceClient : IInferenceClient
     private IInferenceClient Current =>
         Volatile.Read(ref _inner)
         ?? throw new InvalidOperationException(
-            "v2 inference supervisor client is not attached yet; the atomic switch (Phase 8) "
-            + "has not started the supervisor process. Use the legacy worker path until then.");
+            "The inference Supervisor client is not attached. "
+            + "Wait for Supervisor startup to complete or inspect diagnostics.");
 
-    public Task<JobRef> SubmitRecognitionAsync(
-        IReadOnlyList<RecognitionUpload> uploads, JobPriority priority, CancellationToken cancellationToken)
-        => Current.SubmitRecognitionAsync(uploads, priority, cancellationToken);
+    public Task<JobRef> SubmitAsync(
+        SubmitRequest request,
+        IReadOnlyDictionary<string, SubmitUpload> uploads,
+        CancellationToken cancellationToken)
+        => Current.SubmitAsync(request, uploads, cancellationToken);
 
-    public Task<JobSnapshot> GetJobAsync(string jobId, CancellationToken cancellationToken)
-        => Current.GetJobAsync(jobId, cancellationToken);
-
-    public Task<IReadOnlyList<StageEvent>> GetEventsAsync(
+    public Task<JobUpdate> ObserveAsync(
         string jobId, int afterSequence, CancellationToken cancellationToken)
-        => Current.GetEventsAsync(jobId, afterSequence, cancellationToken);
+        => Current.ObserveAsync(jobId, afterSequence, cancellationToken);
 
-    public Task<IReadOnlyList<ResultEntry>> GetResultAsync(string jobId, CancellationToken cancellationToken)
-        => Current.GetResultAsync(jobId, cancellationToken);
-
-    public Task<CancelMode> CancelAsync(string jobId, CancellationToken cancellationToken)
-        => Current.CancelAsync(jobId, cancellationToken);
-
-    public Task DeleteJobAsync(string jobId, CancellationToken cancellationToken)
-        => Current.DeleteJobAsync(jobId, cancellationToken);
+    public Task<JobCommandResult> CommandAsync(
+        JobCommand command, CancellationToken cancellationToken)
+        => Current.CommandAsync(command, cancellationToken);
 
     public Task<ResidencyStatus> GetResidencyAsync(CancellationToken cancellationToken)
         => Current.GetResidencyAsync(cancellationToken);

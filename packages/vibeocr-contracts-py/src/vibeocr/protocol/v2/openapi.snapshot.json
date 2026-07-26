@@ -96,6 +96,9 @@
     "/v2/runtime/release": {
       "post": {"summary": "Release idle or specified models", "responses": {"200": {"description": "ResidencyStatus"}}}
     },
+    "/v2/runtime/preload": {
+      "post": {"summary": "Preload selected pipelines", "responses": {"200": {"description": "ResidencyStatus"}}}
+    },
     "/v2/settings": {
       "get": {"summary": "Settings snapshot", "responses": {"200": {"description": "SettingsSnapshot"}}},
       "put": {"summary": "Controlled settings update", "responses": {"200": {"description": "SettingsSnapshot"}}}

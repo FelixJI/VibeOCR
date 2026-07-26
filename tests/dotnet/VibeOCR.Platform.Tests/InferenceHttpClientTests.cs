@@ -1,7 +1,5 @@
-// Phase 7B tests for InferenceHttpClient against a fake HTTP "server"
-// (a scripted HttpMessageHandler). This proves the WinUI client surface
-// agrees with the v2 contract without a real socket/subprocess.
 using System.Net;
+using System.Text.Json;
 using VibeOCR.Contracts.HttpV2;
 using VibeOCR.Platform.Inference;
 using Xunit;
@@ -13,49 +11,136 @@ public sealed class InferenceHttpClientTests
     private static readonly Uri Base = new("http://127.0.0.1:1");
 
     [Fact]
-    public async Task SubmitRecognitionReturnsJobRefAsync()
+    public async Task SubmitPostsManifestAndAttachmentsToGenericJobsRouteAsync()
     {
         var handler = new FakeHandler("""
-            {"job_id":"job-1","schema_version":2,"instance_id":"sup-1","state":"accepted"}
+            {"job_id":"job-1","schema_version":2,"instance_id":"sup-1","state":"accepted","items":[]}
             """);
         await using var client = new InferenceHttpClient(Base, "tok", handler);
+        SubmitRequest request = UploadRequest();
 
-        var upload = new RecognitionUpload("a.png", "image/png", new byte[] { 1, 2, 3 });
-        JobRef referral = await client.SubmitRecognitionAsync(new[] { upload }, JobPriority.Interactive, TestContext.Current.CancellationToken);
+        JobRef referral = await client.SubmitAsync(
+            request,
+            new Dictionary<string, SubmitUpload>
+            {
+                ["file-a"] = new("image/png", new byte[] { 1, 2, 3 }),
+            },
+            TestContext.Current.CancellationToken);
 
         Assert.Equal("job-1", referral.JobId);
-        Assert.Equal(2, referral.SchemaVersion);
-        Assert.Equal("accepted", "accepted"); // sanity
-        Assert.Equal("/v2/jobs/recognition", handler.LastRequest!.RequestUri!.AbsolutePath);
-        // Bearer token sent.
-        Assert.Equal("Bearer", handler.LastRequest.Headers.Authorization!.Scheme);
-        Assert.Equal("tok", handler.LastRequest.Headers.Authorization.Parameter);
+        Assert.Equal(HttpMethod.Post, handler.LastMethod);
+        Assert.Equal("/v2/jobs", handler.LastPath);
+        Assert.Equal("Bearer", handler.LastAuthorizationScheme);
+        Assert.Equal("tok", handler.LastAuthorizationParameter);
+        Assert.StartsWith("multipart/form-data", handler.LastContentType);
+        Assert.Contains("name=manifest", handler.LastBody);
+        Assert.Contains("\"request_id\":\"request-1\"", handler.LastBody);
+        Assert.Contains("name=file-a", handler.LastBody);
+        Assert.Contains("filename=a.png", handler.LastBody);
     }
 
     [Fact]
-    public async Task GetJobReturnsSnapshotAsync()
+    public async Task SubmitRequiresUploadsToExactlyMatchManifestAsync()
+    {
+        var handler = new FakeHandler("{}");
+        await using var client = new InferenceHttpClient(Base, "tok", handler);
+
+        await Assert.ThrowsAsync<ArgumentException>(
+            () => client.SubmitAsync(
+                UploadRequest(),
+                new Dictionary<string, SubmitUpload>(),
+                TestContext.Current.CancellationToken));
+
+        Assert.Null(handler.LastPath);
+    }
+
+    [Fact]
+    public async Task ObserveReturnsAtomicJobUpdateAsync()
     {
         var handler = new FakeHandler("""
-            {"job_id":"job-1","kind":"recognition","priority":"interactive","state":"completed","schema_version":2,"instance_id":"sup-1","created_at":"2026-07-25T00:00:00+00:00","started_at":null,"finished_at":null,"stage":"done","progress_current":1,"progress_total":1,"items":[],"summary":{"succeeded":1,"failed":0,"cancelled":0,"total":1},"cancel_requested_at":null,"cancel_mode":null,"degraded":false,"event_sequence":3,"result_available":true}
+            {
+              "snapshot":{"job_id":"job-1","kind":"recognition","priority":"interactive","state":"running"},
+              "events":[{"sequence":4,"stage":"recognize","item_id":"item-1","timestamp":null,"detail":{}}],
+              "outcomes":[],
+              "through_sequence":4,
+              "more":false,
+              "schema_version":2
+            }
             """);
         await using var client = new InferenceHttpClient(Base, "tok", handler);
 
-        JobSnapshot snap = await client.GetJobAsync("job-1", TestContext.Current.CancellationToken);
+        JobUpdate update = await client.ObserveAsync(
+            "job-1",
+            3,
+            TestContext.Current.CancellationToken);
 
-        Assert.Equal("job-1", snap.JobId);
-        Assert.Equal(JobState.Completed, snap.State);
-        Assert.Equal(1, snap.Summary.Succeeded);
+        Assert.Equal(JobState.Running, update.Snapshot.State);
+        Assert.Equal(4, update.ThroughSequence);
+        Assert.Single(update.Events);
+        Assert.Equal("/v2/jobs/job-1/observe", handler.LastPath);
+        Assert.Equal("?after_sequence=3", handler.LastQuery);
     }
 
     [Fact]
-    public async Task CancelReturnsModeAsync()
+    public async Task CommandPostsTypedRequestAndParsesCancelResultAsync()
     {
-        var handler = new FakeHandler("""{"cancel_mode":"cooperative"}""");
+        var handler = new FakeHandler("""
+            {
+              "schema_version":2,
+              "instance_id":"sup-1",
+              "command_id":"command-1",
+              "kind":"cancel",
+              "cancel_mode":"cooperative",
+              "job_ref":null
+            }
+            """);
+        await using var client = new InferenceHttpClient(Base, "tok", handler);
+        var command = new JobCommand
+        {
+            CommandId = "command-1",
+            Kind = JobCommandKind.Cancel,
+            JobId = "job-1",
+        };
+
+        JobCommandResult result = await client.CommandAsync(
+            command,
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(JobCommandKind.Cancel, result.Kind);
+        Assert.Equal(CancelMode.Cooperative, result.CancelMode);
+        Assert.Null(result.JobRef);
+        Assert.Equal("/v2/jobs/command", handler.LastPath);
+        Assert.Equal("application/json", handler.LastContentType);
+        Assert.Contains("\"command_id\":\"command-1\"", handler.LastBody);
+        Assert.Contains("\"kind\":\"cancel\"", handler.LastBody);
+    }
+
+    [Fact]
+    public async Task CommandParsesRetryJobRefAsync()
+    {
+        var handler = new FakeHandler("""
+            {
+              "schema_version":2,
+              "instance_id":"sup-1",
+              "command_id":"command-2",
+              "kind":"retry",
+              "cancel_mode":null,
+              "job_ref":{"job_id":"job-2","schema_version":2,"instance_id":"sup-1","state":"accepted","items":[]}
+            }
+            """);
         await using var client = new InferenceHttpClient(Base, "tok", handler);
 
-        CancelMode mode = await client.CancelAsync("job-1", TestContext.Current.CancellationToken);
+        JobCommandResult result = await client.CommandAsync(
+            new JobCommand
+            {
+                CommandId = "command-2",
+                Kind = JobCommandKind.Retry,
+                JobId = "job-1",
+            },
+            TestContext.Current.CancellationToken);
 
-        Assert.Equal(CancelMode.Cooperative, mode);
+        Assert.Equal("job-2", result.JobRef?.JobId);
+        Assert.Null(result.CancelMode);
     }
 
     [Fact]
@@ -66,36 +151,44 @@ public sealed class InferenceHttpClientTests
             """, statusCode: HttpStatusCode.InsufficientStorage);
         await using var client = new InferenceHttpClient(Base, "tok", handler);
 
-        InferenceClientException? ex = null;
-        try
-        {
-            await client.GetJobAsync("job-1", TestContext.Current.CancellationToken);
-        }
-        catch (InferenceClientException caught)
-        {
-            ex = caught;
-        }
+        InferenceClientException exception = await Assert.ThrowsAsync<InferenceClientException>(
+            () => client.ObserveAsync(
+                "job-1",
+                0,
+                TestContext.Current.CancellationToken));
 
-        Assert.NotNull(ex);
-        Assert.Equal(HttpV2ErrorCode.OutOfMemory, ex!.Code);
-        Assert.True(ex.Retryable);
-    }
-
-    [Fact]
-    public async Task DeleteAccepts204Async()
-    {
-        var handler = new FakeHandler(string.Empty, statusCode: HttpStatusCode.NoContent);
-        await using var client = new InferenceHttpClient(Base, "tok", handler);
-
-        await client.DeleteJobAsync("job-1", TestContext.Current.CancellationToken);
-        Assert.Equal("/v2/jobs/job-1", handler.LastRequest!.RequestUri!.AbsolutePath);
+        Assert.Equal(HttpV2ErrorCode.OutOfMemory, exception.Code);
+        Assert.True(exception.Retryable);
     }
 
     [Fact]
     public void ConstructorRejectsNonLoopback()
     {
-        Assert.Throws<ArgumentException>(() => new InferenceHttpClient(new Uri("http://10.0.0.5:9"), "tok"));
+        Assert.Throws<ArgumentException>(
+            () => new InferenceHttpClient(new Uri("http://10.0.0.5:9"), "tok"));
     }
+
+    private static SubmitRequest UploadRequest() => new()
+    {
+        RequestId = "request-1",
+        Kind = JobKind.Recognition,
+        Priority = JobPriority.Interactive,
+        Pipeline = new PipelineSelection { PipelineId = "OCR" },
+        Items =
+        [
+            new SubmitItem
+            {
+                ClientItemKey = "client-a",
+                Ordinal = 0,
+                DisplayName = "a.png",
+                Source = new Dictionary<string, JsonElement>
+                {
+                    ["type"] = JsonSerializer.Deserialize<JsonElement>("\"upload.v1\""),
+                    ["attachment"] = JsonSerializer.Deserialize<JsonElement>("\"file-a\""),
+                },
+            },
+        ],
+    };
 
     private sealed class FakeHandler : HttpMessageHandler
     {
@@ -108,14 +201,30 @@ public sealed class InferenceHttpClientTests
             _status = statusCode;
         }
 
-        public HttpRequestMessage? LastRequest { get; private set; }
+        public HttpMethod? LastMethod { get; private set; }
+        public string? LastPath { get; private set; }
+        public string? LastQuery { get; private set; }
+        public string? LastAuthorizationScheme { get; private set; }
+        public string? LastAuthorizationParameter { get; private set; }
+        public string? LastContentType { get; private set; }
+        public string? LastBody { get; private set; }
 
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
         {
-            LastRequest = request;
+            LastMethod = request.Method;
+            LastPath = request.RequestUri?.AbsolutePath;
+            LastQuery = request.RequestUri?.Query;
+            LastAuthorizationScheme = request.Headers.Authorization?.Scheme;
+            LastAuthorizationParameter = request.Headers.Authorization?.Parameter;
+            LastContentType = request.Content?.Headers.ContentType?.MediaType;
+            LastBody = request.Content is null
+                ? null
+                : await request.Content.ReadAsStringAsync(cancellationToken);
             var content = new StringContent(_body);
             content.Headers.ContentType = new("application/json");
-            return Task.FromResult(new HttpResponseMessage(_status) { Content = content });
+            return new HttpResponseMessage(_status) { Content = content };
         }
     }
 }

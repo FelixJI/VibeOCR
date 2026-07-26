@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from PySide6.QtCore import (
     QAbstractListModel,
@@ -697,10 +697,20 @@ class PdfTab(QWidget):
 
     ocr_requested = Signal()
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        *,
+        pdf_client: Any = None,
+        inference_client: Any = None,
+    ) -> None:
         super().__init__(parent)
         self._shutdown_started = False
-        self._session_mgr = PdfSessionManager(self)
+        self._session_mgr = PdfSessionManager(
+            self,
+            client=pdf_client,
+            inference_client=inference_client,
+        )
         self._preview_window: PdfPreviewWindow | None = None
         self._preview_request_generation = 0
         # 网格 ↔ 缩略图双向同步的重入保护，避免 itemSelectionChanged 递归
@@ -1576,12 +1586,16 @@ class PdfTab(QWidget):
             tip += " · 已纠偏"
         return tip
 
-    def _update_layer_grid_page(self, page_index: int, state: str | None = None) -> None:
+    def _update_layer_grid_page(
+        self, page_index: int | None, state: str | None = None
+    ) -> None:
         """增量更新单页网格格子（不全量重建），用于 OCR/删除文字层即时反馈。
 
         保留用户当前选中状态（只改单格的颜色/tooltip，不清空网格）。
         state: none/processing/done/failed 视觉态；None 时按 has_text_layer 推导。
         """
+        if page_index is None:
+            return
         session = self._session_mgr.active_session
         if session is None:
             return
@@ -2586,9 +2600,9 @@ class PdfTab(QWidget):
 
     # ---- public API for MainWindow ----------------------------------
 
-    def set_ocr_service(self, service: object) -> None:
-        """设置 OCR 服务实例（由 MainWindow 调用）。"""
-        self._session_mgr.set_ocr_service(service)
+    def set_inference_client(self, client: object) -> None:
+        """Inject the generic supervisor job client."""
+        self._session_mgr.set_inference_client(client)
 
     def request_shutdown(self) -> None:
         """冻结 PDF 页签并请求所有后台任务取消；不阻塞 GUI。"""

@@ -41,6 +41,17 @@ def test_invalid_log_level_falls_back_to_info(cm):
     assert cm.get_log_level() == "INFO"
 
 
+def test_preload_selection_and_enabled_state_persist(cm):
+    assert cm.get_preload_pipelines() == ["OCR"]
+    assert cm.get_preload_enabled() is True
+
+    assert cm.set_preload_pipelines(["PP-StructureV3", "unknown"])
+    assert cm.set_preload_enabled(False)
+
+    assert cm.get_preload_pipelines() == ["PP-StructureV3"]
+    assert cm.get_preload_enabled() is False
+
+
 # ---------------- per-pipeline TTL dict API + migration ----------------
 
 
@@ -106,8 +117,14 @@ def test_set_pipeline_ttl_single(cm):
     assert cm.get_pipeline_ttls()["OCR"] == 180
 
 
-def test_set_pipeline_ttl_clamps_negative(cm):
-    """负值夹到 0（持久）。"""
+def test_set_pipeline_ttl_persists_persistent_sentinel(cm):
+    """-1 是 UI 本地配置中的持久驻留哨兵。"""
+    assert cm.set_pipeline_ttl("OCR", -1) is True
+    assert cm.get_pipeline_ttls()["OCR"] == -1
+
+
+def test_set_pipeline_ttl_clamps_values_below_persistent_sentinel(cm):
+    """小于 -1 的非法值仍回退到默认/继承值 0。"""
     assert cm.set_pipeline_ttl("OCR", -5) is True
     assert cm.get_pipeline_ttls()["OCR"] == 0
 

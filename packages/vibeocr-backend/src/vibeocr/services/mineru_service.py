@@ -35,6 +35,7 @@ from vibeocr.models.ocr_result import (
     normalize_bbox,
     normalize_content_list,
 )
+from vibeocr.utils.http_log import guess_response_size, log_http_response
 from vibeocr.utils.job_object import JobObjectGuard
 from vibeocr.utils.markdown_converter import markdown_to_html
 from vibeocr.utils.mime_types import mime_to_extension
@@ -125,10 +126,27 @@ class MinerUService(metaclass=SingletonMeta):
 
     def _check_api_running(self, url: str) -> bool:
         """检查 mineru-api 是否运行"""
+        request_url = f"{url}/health"
+        started = time.perf_counter()
         try:
-            resp = httpx.get(f"{url}/health", timeout=3)
+            resp = httpx.get(request_url, timeout=3)
+            log_http_response(
+                logger=_logger,
+                method="GET",
+                url=request_url,
+                status_code=resp.status_code,
+                reason=resp.reason_phrase,
+                elapsed_ms=(time.perf_counter() - started) * 1000,
+                response_bytes=guess_response_size(dict(resp.headers), resp.content),
+            )
             return resp.status_code == 200
-        except Exception:
+        except Exception as exc:
+            _logger.warning(
+                "[MinerU] GET %s failed after %.1f ms: %s",
+                request_url,
+                (time.perf_counter() - started) * 1000,
+                exc,
+            )
             return False
 
     def _find_free_port(self) -> int:
@@ -283,8 +301,11 @@ class MinerUService(metaclass=SingletonMeta):
         if files is not None:
             # httpx 多文件上传：同一表单字段名重复出现即可。
             upload = [("files", (name, payload)) for name, payload in files]
+            request_bytes = sum(len(payload) for _, payload in files)
         else:
             upload = {"files": (filename, data)}
+            request_bytes = len(data)
+        request_url = f"{self.__class__._api_url}/file_parse"
         params = {
             "return_md": "true",
             "return_content_list": "true",
@@ -321,14 +342,28 @@ class MinerUService(metaclass=SingletonMeta):
         for current_backend in backends_to_try:
             request_params = {**params, "backend": current_backend}
             _logger.debug(f"[MinerU] 使用后端: {current_backend}")
+            started = time.perf_counter()
             try:
                 resp = httpx.post(
-                    f"{self.__class__._api_url}/file_parse",
+                    request_url,
                     files=upload,
                     data=request_params,
                     timeout=httpx.Timeout(
                         timeout=Constants.Timeout.MINERU_HTTP_TOTAL,
                         connect=Constants.Timeout.MINERU_HTTP_CONNECT,
+                    ),
+                )
+                log_http_response(
+                    logger=_logger,
+                    method="POST",
+                    url=request_url,
+                    status_code=resp.status_code,
+                    reason=resp.reason_phrase,
+                    elapsed_ms=(time.perf_counter() - started) * 1000,
+                    request_bytes=request_bytes,
+                    response_bytes=guess_response_size(
+                        dict(resp.headers),
+                        resp.content,
                     ),
                 )
             except httpx.TimeoutException as e:

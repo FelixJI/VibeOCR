@@ -1,6 +1,6 @@
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
-using System.Text.Json;
+using VibeOCR.App.Inference;
 using VibeOCR.Contracts.HttpV2;
 using VibeOCR.Platform.Inference;
 
@@ -9,6 +9,7 @@ namespace VibeOCR.App.Features.Recognition;
 public sealed class RecognitionViewModel : INotifyPropertyChanged
 {
     private readonly IInferenceClient _inference;
+    private readonly InferenceJobRunner _jobs;
     private readonly IInputService _inputs;
     private CancellationTokenSource? _activeRun;
     private long _generation;
@@ -21,6 +22,7 @@ public sealed class RecognitionViewModel : INotifyPropertyChanged
     public RecognitionViewModel(IInferenceClient inference, IInputService inputs)
     {
         _inference = inference ?? throw new ArgumentNullException(nameof(inference));
+        _jobs = new InferenceJobRunner(inference);
         _inputs = inputs ?? throw new ArgumentNullException(nameof(inputs));
     }
 
@@ -68,8 +70,6 @@ public sealed class RecognitionViewModel : INotifyPropertyChanged
         previous?.Cancel();
         previous?.Dispose();
         CancellationTokenSource run = _activeRun;
-        string? submittedJobId = null;
-
         if (generation == Volatile.Read(ref _generation))
         {
             IsBusy = true;
@@ -95,44 +95,41 @@ public sealed class RecognitionViewModel : INotifyPropertyChanged
                 Status = "正在识别";
             }
 
-            var upload = new RecognitionUpload(input.DisplayName, input.MediaType, input.Data);
-            JobRef referral = await _inference.SubmitRecognitionAsync(
-                new[] { upload }, JobPriority.Interactive, run.Token);
-            submittedJobId = referral.JobId;
-
-            JobSnapshot snapshot = await _inference.GetJobAsync(referral.JobId, run.Token);
-            int lastSequence = snapshot.EventSequence;
-            while (snapshot.State is not (
-                JobState.Completed or JobState.CompletedWithErrors
-                or JobState.Cancelled or JobState.Failed))
-            {
-                run.Token.ThrowIfCancellationRequested();
-                IReadOnlyList<StageEvent> events = await _inference.GetEventsAsync(
-                    referral.JobId, lastSequence, run.Token);
-                lastSequence = events.Count > 0 ? events[^1].Sequence : lastSequence;
-                snapshot = await _inference.GetJobAsync(referral.JobId, run.Token);
-            }
+            const string clientItemKey = "recognition-input";
+            InferenceJobRun job = await _jobs.RunRecognitionAsync(
+                Pipeline,
+                JobPriority.Interactive,
+                [
+                    new InferenceUploadInput(
+                        clientItemKey,
+                        input.DisplayName,
+                        input.MediaType,
+                        input.Data),
+                ],
+                options: null,
+                run.Token);
+            JobSnapshot snapshot = job.Snapshot;
 
             if (generation != Volatile.Read(ref _generation)) return;
 
             if (snapshot.State is JobState.Cancelled) { Status = "已取消"; return; }
             if (snapshot.State is JobState.Failed) { Status = "识别失败"; return; }
 
-            IReadOnlyList<ResultEntry> results = await _inference.GetResultAsync(referral.JobId, run.Token);
-            string text = ExtractText(results);
-            _result = new RecognizeResponse { Text = text, Pipeline = Pipeline };
-            ResultText = text;
+            ItemOutcome outcome = job.OutcomesByClientItemKey[clientItemKey];
+            if (outcome.State is not ItemState.Succeeded)
+            {
+                Status = outcome.State is ItemState.Cancelled ? "已取消" : "识别失败";
+                return;
+            }
+
+            _result = RecognitionOutcomeMapper.ToResponse(outcome, Pipeline);
+            ResultText = _result.Text;
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Result)));
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(HasResult)));
             Status = "识别完成";
         }
         catch (OperationCanceledException)
         {
-            if (submittedJobId is not null)
-            {
-                try { await _inference.CancelAsync(submittedJobId, CancellationToken.None); }
-                catch (InferenceClientException) { }
-            }
             if (generation == Volatile.Read(ref _generation)) Status = "已取消";
         }
         catch (InferenceClientException error)
@@ -154,15 +151,6 @@ public sealed class RecognitionViewModel : INotifyPropertyChanged
                     run.Dispose();
             }
         }
-    }
-
-    private static string ExtractText(IReadOnlyList<ResultEntry> results)
-    {
-        if (results.Count == 0) return string.Empty;
-        if (results[0].Payload.TryGetValue("text", out JsonElement element)
-            && element.ValueKind == JsonValueKind.String)
-            return element.GetString() ?? string.Empty;
-        return string.Empty;
     }
 
     private static string LocalizeV2(HttpV2ErrorCode code) => code switch

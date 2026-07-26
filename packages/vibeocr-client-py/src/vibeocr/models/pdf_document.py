@@ -50,7 +50,9 @@ class PdfDocument:
     render_dpi: int = 300
     thumbnail_dpi: int = 96
 
-    def get_page(self, index: int) -> PdfPageInfo | None:
+    def get_page(self, index: int | None) -> PdfPageInfo | None:
+        if index is None:
+            return None
         if 0 <= index < len(self.pages):
             return self.pages[index]
         return None

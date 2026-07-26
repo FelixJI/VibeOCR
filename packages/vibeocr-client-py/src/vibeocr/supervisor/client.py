@@ -10,7 +10,8 @@ misbehaving server cannot smuggle unknown fields past the UI.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import json
+import logging
 from typing import Any
 
 import httpx
@@ -19,55 +20,28 @@ from vibeocr.protocol.v2 import (
     SCHEMA_VERSION,
     CancelMode,
     ErrorCode,
-    JobPriority,
+    JobCommand,
+    JobCommandKind,
     JobRef,
-    JobSnapshot,
+    JobUpdate,
     ResidencyStatus,
-    ResultEntry,
     SettingsSnapshot,
-    StageEvent,
+    SubmitRequest,
     parse_error_payload,
-    parse_job_snapshot,
+    parse_job_ref,
+    parse_job_update,
     parse_pipeline_spec,
     parse_residency_entry,
+)
+from vibeocr.utils.http_log import (
+    guess_request_size,
+    guess_response_size,
+    log_http_response,
 )
 
 from .errors import InferenceClientError
 
-
-@dataclass(frozen=True, slots=True)
-class _Endpoints:
-    base: str
-
-    def health(self) -> str:
-        return f"{self.base}/v2/health"
-
-    def submit_recognition(self) -> str:
-        return f"{self.base}/v2/jobs/recognition"
-
-    def job(self, job_id: str) -> str:
-        return f"{self.base}/v2/jobs/{job_id}"
-
-    def events(self, job_id: str) -> str:
-        return f"{self.base}/v2/jobs/{job_id}/events"
-
-    def result(self, job_id: str) -> str:
-        return f"{self.base}/v2/jobs/{job_id}/result"
-
-    def cancel(self, job_id: str) -> str:
-        return f"{self.base}/v2/jobs/{job_id}/cancel"
-
-    def retry(self, job_id: str) -> str:
-        return f"{self.base}/v2/jobs/{job_id}/retry"
-
-    def residency(self) -> str:
-        return f"{self.base}/v2/runtime/residency"
-
-    def release(self) -> str:
-        return f"{self.base}/v2/runtime/release"
-
-    def settings(self) -> str:
-        return f"{self.base}/v2/settings"
+logger = logging.getLogger(__name__)
 
 
 class SupervisorClient:
@@ -83,7 +57,6 @@ class SupervisorClient:
         self._base_url = base_url.rstrip("/")
         self._token = session_token
         self.instance_id = instance_id
-        self._endpoints = _Endpoints(self._base_url)
         self._client: httpx.AsyncClient | None = None
 
     @property
@@ -98,7 +71,8 @@ class SupervisorClient:
         self._client = httpx.AsyncClient(
             base_url=self._base_url,
             headers={"Authorization": f"Bearer {self._token}"},
-            timeout=httpx.Timeout(30.0, read=None),
+            timeout=httpx.Timeout(30.0),
+            event_hooks={"response": [self._log_http_response]},
         )
         return self
 
@@ -126,104 +100,72 @@ class SupervisorClient:
     # Submit
     # ------------------------------------------------------------------
 
-    async def submit_recognition(
+    async def submit(
         self,
-        uploads: list[tuple[str, str | None, bytes]],
-        *,
-        priority: JobPriority = JobPriority.INTERACTIVE,
+        request: SubmitRequest,
+        attachments: dict[str, tuple[str | None, bytes]],
     ) -> JobRef:
+        """Submit one logical manifest; attachments are keyed by source name."""
         client = self._require_client()
+        expected = {
+            str(item.source["attachment"]): item
+            for item in request.items
+            if item.source.get("type") == "upload.v1"
+        }
+        if set(expected) != set(attachments):
+            raise ValueError("attachments must exactly match manifest upload sources")
         files = []
-        for display_name, content_type, data in uploads:
+        for attachment, item in expected.items():
+            content_type, data = attachments[attachment]
             files.append(
-                ("files", (display_name, data, content_type or "application/octet-stream"))
+                (
+                    attachment,
+                    (
+                        item.display_name,
+                        data,
+                        content_type or "application/octet-stream",
+                    ),
+                )
             )
-        resp = await client.post("/v2/jobs/recognition", files=files)
-        if resp.status_code >= 400:
-            raise self._error_from_response(resp)
-        payload = resp.json()
-        return JobRef(
-            job_id=payload["job_id"],
-            schema_version=int(payload.get("schema_version", SCHEMA_VERSION)),
-            instance_id=payload.get("instance_id"),
+        resp = await client.post(
+            "/v2/jobs",
+            data={"manifest": json.dumps(request.to_payload(), ensure_ascii=False)},
+            files=files,
         )
-
-    # ------------------------------------------------------------------
-    # Status / events / result
-    # ------------------------------------------------------------------
-
-    async def status(self, job_id: str) -> JobSnapshot:
-        client = self._require_client()
-        resp = await client.get(f"/v2/jobs/{job_id}")
         if resp.status_code >= 400:
             raise self._error_from_response(resp)
-        return parse_job_snapshot(resp.json())
+        return parse_job_ref(resp.json())
 
-    async def events(self, job_id: str, *, after_sequence: int = 0) -> list[StageEvent]:
+    # ------------------------------------------------------------------
+    # Atomic observation
+    # ------------------------------------------------------------------
+
+    async def observe(
+        self, job_id: str, *, after_sequence: int = 0
+    ) -> JobUpdate:
         client = self._require_client()
         resp = await client.get(
-            f"/v2/jobs/{job_id}/events", params={"after_sequence": after_sequence}
+            f"/v2/jobs/{job_id}/observe",
+            params={"after_sequence": after_sequence},
         )
         if resp.status_code >= 400:
             raise self._error_from_response(resp)
-        body = resp.json()
-        events_raw = body.get("events", [])
-        return [
-            StageEvent(
-                sequence=int(e["sequence"]),
-                stage=e["stage"],
-                item_id=e.get("item_id"),
-                timestamp=e.get("timestamp", ""),
-                detail=e.get("detail", {}),
-            )
-            for e in events_raw
-        ]
+        return parse_job_update(resp.json())
 
-    async def result(self, job_id: str) -> list[ResultEntry]:
+    # ------------------------------------------------------------------
+    # Commands
+    # ------------------------------------------------------------------
+    async def command(self, command: JobCommand) -> JobRef | CancelMode | None:
         client = self._require_client()
-        resp = await client.get(f"/v2/jobs/{job_id}/result")
+        resp = await client.post("/v2/jobs/command", json=command.to_payload())
         if resp.status_code >= 400:
             raise self._error_from_response(resp)
         body = resp.json()
-        results = body.get("results", [])
-        return [
-            ResultEntry(
-                item_id=r["item_id"],
-                display_name=r["display_name"],
-                payload=r.get("payload", {}),
-                error_code=r.get("error_code"),
-            )
-            for r in results
-        ]
-
-    # ------------------------------------------------------------------
-    # Cancel / retry
-    # ------------------------------------------------------------------
-
-    async def cancel(self, job_id: str) -> CancelMode:
-        client = self._require_client()
-        resp = await client.post(f"/v2/jobs/{job_id}/cancel")
-        if resp.status_code >= 400:
-            raise self._error_from_response(resp)
-        return CancelMode(resp.json()["cancel_mode"])
-
-    async def retry(self, job_id: str) -> JobRef:
-        client = self._require_client()
-        resp = await client.post(f"/v2/jobs/{job_id}/retry")
-        if resp.status_code >= 400:
-            raise self._error_from_response(resp)
-        payload = resp.json()
-        return JobRef(
-            job_id=payload["job_id"],
-            schema_version=int(payload.get("schema_version", SCHEMA_VERSION)),
-            instance_id=payload.get("instance_id"),
-        )
-
-    async def delete(self, job_id: str) -> None:
-        client = self._require_client()
-        resp = await client.delete(f"/v2/jobs/{job_id}")
-        if resp.status_code >= 400 and resp.status_code != 204:
-            raise self._error_from_response(resp)
+        if command.kind is JobCommandKind.CANCEL:
+            return CancelMode(body["cancel_mode"])
+        if command.kind is JobCommandKind.RETRY:
+            return parse_job_ref(body["job_ref"])
+        return None
 
     # ------------------------------------------------------------------
     # Runtime / settings
@@ -234,34 +176,25 @@ class SupervisorClient:
         resp = await client.get("/v2/runtime/residency")
         if resp.status_code >= 400:
             raise self._error_from_response(resp)
-        body = resp.json()
-        entries = tuple(parse_residency_entry(e) for e in body.get("entries", []))
-        pipelines = tuple(parse_pipeline_spec(p) for p in body.get("pipelines", []))
-        from vibeocr.protocol.v2 import ResidencyStatus as _RS
-
-        return _RS(
-            schema_version=int(body.get("schema_version", SCHEMA_VERSION)),
-            default_ttl_seconds=int(body.get("default_ttl_seconds", 300)),
-            entries=entries,
-            pipelines=pipelines,
-            vram_total_mb=body.get("vram_total_mb"),
-            vram_used_mb=body.get("vram_used_mb"),
-        )
+        return self._parse_residency(resp.json())
 
     async def release_idle(self, pipeline: str | None = None) -> ResidencyStatus:
         client = self._require_client()
         resp = await client.post("/v2/runtime/release", json={"pipeline": pipeline})
         if resp.status_code >= 400:
             raise self._error_from_response(resp)
-        body = resp.json()
-        entries = tuple(parse_residency_entry(e) for e in body.get("entries", []))
-        from vibeocr.protocol.v2 import ResidencyStatus as _RS
+        return self._parse_residency(resp.json())
 
-        return _RS(
-            schema_version=int(body.get("schema_version", SCHEMA_VERSION)),
-            default_ttl_seconds=int(body.get("default_ttl_seconds", 300)),
-            entries=entries,
+    async def preload(self, pipelines: tuple[str, ...]) -> ResidencyStatus:
+        client = self._require_client()
+        resp = await client.post(
+            "/v2/runtime/preload",
+            json={"pipelines": list(pipelines)},
+            timeout=httpx.Timeout(600.0),
         )
+        if resp.status_code >= 400:
+            raise self._error_from_response(resp)
+        return self._parse_residency(resp.json())
 
     async def get_settings(self) -> SettingsSnapshot:
         client = self._require_client()
@@ -276,6 +209,79 @@ class SupervisorClient:
         if resp.status_code >= 400:
             raise self._error_from_response(resp)
         return self._parse_settings(resp.json())
+
+    # ------------------------------------------------------------------
+    # Bounded utility operations
+    # ------------------------------------------------------------------
+
+    async def export_ocr(
+        self,
+        *,
+        raw_text: str,
+        markdown_text: str,
+        html_text: str,
+        raw_blocks: list[dict[str, Any]] | None = None,
+        output_path: str,
+        fmt: str,
+        overwrite: bool = False,
+    ) -> dict[str, Any]:
+        client = self._require_client()
+        resp = await client.post(
+            "/v2/export",
+            json={
+                "raw_text": raw_text,
+                "markdown_text": markdown_text,
+                "html_text": html_text,
+                "raw_blocks": raw_blocks or [],
+                "output_path": output_path,
+                "format": fmt,
+                "overwrite": overwrite,
+            },
+        )
+        if resp.status_code >= 400:
+            raise self._error_from_response(resp)
+        return resp.json()
+
+    async def decode_qrcode(self, image_bytes: bytes) -> list[dict[str, Any]]:
+        import base64
+
+        client = self._require_client()
+        resp = await client.post(
+            "/v2/qrcode/decode",
+            json={"image": base64.b64encode(image_bytes).decode("ascii")},
+        )
+        if resp.status_code >= 400:
+            raise self._error_from_response(resp)
+        return list(resp.json().get("codes", []))
+
+    async def generate_qrcode(
+        self,
+        data: str,
+        *,
+        fmt: str = "qrcode",
+        options: dict[str, Any] | None = None,
+    ) -> str:
+        client = self._require_client()
+        resp = await client.post(
+            "/v2/qrcode/generate",
+            json={"data": data, "format": fmt, "options": options or {}},
+        )
+        if resp.status_code >= 400:
+            raise self._error_from_response(resp)
+        return str(resp.json().get("image", ""))
+
+    @staticmethod
+    def _parse_residency(body: dict[str, Any]) -> ResidencyStatus:
+        entries = tuple(parse_residency_entry(e) for e in body.get("entries", []))
+        pipelines = tuple(parse_pipeline_spec(p) for p in body.get("pipelines", []))
+        return ResidencyStatus(
+            schema_version=int(body.get("schema_version", SCHEMA_VERSION)),
+            default_ttl_seconds=int(body.get("default_ttl_seconds", 300)),
+            entries=entries,
+            pipelines=pipelines,
+            vram_total_mb=body.get("vram_total_mb"),
+            vram_used_mb=body.get("vram_used_mb"),
+        )
 
     def _parse_settings(self, body: dict[str, Any]) -> SettingsSnapshot:
         residency = body.get("residency", {})
@@ -299,10 +305,38 @@ class SupervisorClient:
         except Exception:
             return InferenceClientError(
                 ErrorCode.INTERNAL_ERROR,
-                f"unexpected response status={resp.status_code}",
+                f"unexpected response status={resp.status_code} ({resp.reason_phrase})",
                 retryable=False,
-                detail={"status_code": resp.status_code},
+                detail={
+                    "status_code": resp.status_code,
+                    "status_detail": resp.reason_phrase,
+                },
             )
+
+    def _log_http_response(self, resp: httpx.Response) -> None:
+        request = resp.request
+        req_size = guess_request_size(getattr(request, "content", None))
+        resp_size = guess_response_size(
+            dict(resp.headers),
+            resp.content if getattr(resp, "num_bytes_downloaded", None) is not None else None,
+        )
+        elapsed_ms = None
+        try:
+            raw_elapsed = getattr(resp, "elapsed", None)
+            if raw_elapsed is not None:
+                elapsed_ms = raw_elapsed.total_seconds() * 1000.0
+        except Exception:
+            elapsed_ms = None
+        log_http_response(
+            logger=logger,
+            method=request.method,
+            url=str(request.url),
+            status_code=resp.status_code,
+            reason=resp.reason_phrase,
+            elapsed_ms=elapsed_ms,
+            request_bytes=req_size,
+            response_bytes=resp_size,
+        )
 
 
 __all__ = ["SupervisorClient"]

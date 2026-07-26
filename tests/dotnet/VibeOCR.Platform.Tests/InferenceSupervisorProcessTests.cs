@@ -1,7 +1,7 @@
 // Tests for InferenceSupervisorProcess + SupervisorReadyEnvelope parsing.
 //
-// The full StartAsync path needs a real child script; here we cover the pure
-// envelope parser and the constructor/validation guards (no subprocess).
+// Parser tests are complemented by a lightweight PowerShell child that exercises
+// the owner lifecycle without requiring the Python backend.
 using VibeOCR.Platform.Inference;
 using Xunit;
 
@@ -32,6 +32,17 @@ public sealed class InferenceSupervisorProcessTests
         Assert.Equal(2, env.SchemaVersion);
     }
 
+    [Theory]
+    [InlineData("""{"ready":false,"pid":1,"port":2,"instance_id":"sup","protocol_version":2,"schema_version":2}""")]
+    [InlineData("""{"ready":true,"pid":1,"port":2,"instance_id":"sup","protocol_version":1,"schema_version":2}""")]
+    [InlineData("""{"ready":true,"pid":1,"port":2,"instance_id":"sup","protocol_version":2,"schema_version":1}""")]
+    [InlineData("""{"ready":true,"pid":0,"port":2,"instance_id":"sup","protocol_version":2,"schema_version":2}""")]
+    public void ReadyEnvelopeRejectsInvalidOrIncompatibleRuntime(string payload)
+    {
+        Assert.Throws<InvalidDataException>(
+            () => SupervisorReadyEnvelope.Parse(payload));
+    }
+
     [Fact]
     public void ConstructorRequiresSessionToken()
     {
@@ -48,5 +59,157 @@ public sealed class InferenceSupervisorProcessTests
             "python", Array.Empty<string>(), ".", "log.txt", TimeSpan.FromSeconds(5));
         var proc = new InferenceSupervisorProcess(options, "tok");
         Assert.Throws<InvalidOperationException>(() => proc.Ready);
+    }
+
+    [Fact]
+    public async Task SuccessfulStartIsOneShotAndDisposeClearsReady()
+    {
+        string root = Path.Combine(
+            Path.GetTempPath(), $"vibeocr-supervisor-process-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+        var proc = CreateReadyProcess(root);
+        try
+        {
+            SupervisorReadyEnvelope ready = await proc.StartAsync(
+                TestContext.Current.CancellationToken);
+
+            Assert.Equal("sup-test", ready.InstanceId);
+            Assert.Same(ready, proc.Ready);
+            await Assert.ThrowsAsync<InvalidOperationException>(
+                () => proc.StartAsync(TestContext.Current.CancellationToken));
+
+            proc.Dispose();
+            Assert.Throws<InvalidOperationException>(() => proc.Ready);
+        }
+        finally
+        {
+            proc.Dispose();
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task FailedLaunchAttemptCannotBeRetried()
+    {
+        string root = Path.Combine(
+            Path.GetTempPath(), $"vibeocr-supervisor-process-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+        using var proc = new InferenceSupervisorProcess(
+            new InferenceSupervisorOptions(
+                Path.Combine(root, "missing-supervisor.exe"),
+                [],
+                root,
+                Path.Combine(root, "supervisor.log"),
+                TimeSpan.FromSeconds(1)),
+            "tok");
+        try
+        {
+            await Assert.ThrowsAnyAsync<Exception>(
+                () => proc.StartAsync(TestContext.Current.CancellationToken));
+            await Assert.ThrowsAsync<InvalidOperationException>(
+                () => proc.StartAsync(TestContext.Current.CancellationToken));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task DisposedOwnerCannotBeStarted()
+    {
+        string root = Path.Combine(
+            Path.GetTempPath(), $"vibeocr-supervisor-process-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+        var proc = CreateReadyProcess(root);
+        proc.Dispose();
+        try
+        {
+            await Assert.ThrowsAsync<ObjectDisposedException>(
+                () => proc.StartAsync(TestContext.Current.CancellationToken));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task NaturalChildExitRaisesUnexpectedExitAndInvalidatesReady()
+    {
+        string root = Path.Combine(
+            Path.GetTempPath(), $"vibeocr-supervisor-process-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+        using var proc = CreateReadyProcess(root, lifetimeMilliseconds: 250);
+        var exited = new TaskCompletionSource<SupervisorUnexpectedExitEventArgs>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        proc.UnexpectedExit += (_, args) => exited.TrySetResult(args);
+        try
+        {
+            await proc.StartAsync(TestContext.Current.CancellationToken);
+
+            SupervisorUnexpectedExitEventArgs result = await exited.Task.WaitAsync(
+                TimeSpan.FromSeconds(5),
+                TestContext.Current.CancellationToken);
+
+            Assert.Equal(0, result.ExitCode);
+            Assert.Throws<InvalidOperationException>(() => proc.Ready);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task PlannedDisposeDoesNotRaiseUnexpectedExit()
+    {
+        string root = Path.Combine(
+            Path.GetTempPath(), $"vibeocr-supervisor-process-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+        var proc = CreateReadyProcess(root);
+        var exited = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        proc.UnexpectedExit += (_, _) => exited.TrySetResult();
+        try
+        {
+            await proc.StartAsync(TestContext.Current.CancellationToken);
+            proc.Dispose();
+            await Task.Delay(250, TestContext.Current.CancellationToken);
+
+            Assert.False(exited.Task.IsCompleted);
+        }
+        finally
+        {
+            proc.Dispose();
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    private static InferenceSupervisorProcess CreateReadyProcess(
+        string root,
+        int lifetimeMilliseconds = 30_000)
+    {
+        string powershell = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.System),
+            "WindowsPowerShell",
+            "v1.0",
+            "powershell.exe");
+        const string envelope =
+            """{"ready":true,"pid":4321,"port":5432,"instance_id":"sup-test","protocol_version":2,"schema_version":2}""";
+        return new InferenceSupervisorProcess(
+            new InferenceSupervisorOptions(
+                powershell,
+                [
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-Command",
+                    $"[Console]::Out.WriteLine('{envelope}'); "
+                    + $"Start-Sleep -Milliseconds {lifetimeMilliseconds}",
+                ],
+                root,
+                Path.Combine(root, "supervisor.log"),
+                TimeSpan.FromSeconds(5)),
+            "tok");
     }
 }

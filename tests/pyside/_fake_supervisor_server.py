@@ -18,7 +18,10 @@ from typing import Any
 
 from vibeocr.protocol.v2 import (
     CancelMode,
+    ItemOutcome,
     ItemState,
+    JobCommand,
+    JobCommandKind,
     JobItem,
     JobKind,
     JobPriority,
@@ -26,10 +29,12 @@ from vibeocr.protocol.v2 import (
     JobSnapshot,
     JobState,
     JobSummary,
+    JobUpdate,
     ResidencyStatus,
     ResultEntry,
     SettingsSnapshot,
     StageEvent,
+    SubmitRequest,
 )
 
 
@@ -83,6 +88,7 @@ class SharedFakeSupervisorServer:
         self.cancel_calls: list[str] = []
         self.put_settings_calls: list[SettingsSnapshot] = []
         self.release_calls: list[str | None] = []
+        self.preload_calls: list[tuple[str, ...]] = []
         self.closed = False
 
     # --- async context manager (matches SupervisorClient) ---
@@ -93,16 +99,68 @@ class SharedFakeSupervisorServer:
         self.closed = True
 
     # --- recognition surface ---
-    async def submit_recognition(
+    async def submit(
         self,
-        uploads: list[tuple[str, str | None, bytes]],
-        *,
-        priority: JobPriority = JobPriority.INTERACTIVE,
+        request: SubmitRequest,
+        attachments: dict[str, tuple[str | None, bytes]],
     ) -> JobRef:
+        assert len(request.items) == len(attachments)
         self.submit_calls += 1
         job_id = f"job-{self.submit_calls}"
+        uploads = [
+            (
+                item.display_name,
+                attachments[str(item.source["attachment"])][0],
+                attachments[str(item.source["attachment"])][1],
+            )
+            for item in request.items
+        ]
         self.jobs[job_id] = SharedFakeJob(job_id, uploads)
-        return JobRef(job_id=job_id)
+        items = tuple(
+            JobItem(
+                item_id=f"it-{index}",
+                display_name=item.display_name,
+                state=ItemState.QUEUED,
+                client_item_key=item.client_item_key,
+                ordinal=item.ordinal,
+            )
+            for index, item in enumerate(request.items)
+        )
+        return JobRef(job_id=job_id, items=items)
+
+    async def observe(
+        self, job_id: str, *, after_sequence: int = 0
+    ) -> JobUpdate:
+        job = self.jobs[job_id]
+        snapshot = job.snapshot()
+        events = tuple(
+            event
+            for event in (
+                StageEvent(sequence=1, stage="running", item_id=None),
+                StageEvent(sequence=2, stage="done", item_id=None),
+            )
+            if event.sequence > after_sequence
+        )
+        outcomes = (
+            tuple(
+                ItemOutcome(
+                    item_id=f"it-{index}",
+                    state=ItemState.SUCCEEDED,
+                    attempt=0,
+                    payload_type="ocr.v1",
+                    payload={"text": f"ocr-{name}"},
+                )
+                for index, name in enumerate(job.display_names)
+            )
+            if snapshot.state is JobState.COMPLETED and after_sequence < 2
+            else ()
+        )
+        return JobUpdate(
+            snapshot=snapshot,
+            events=events,
+            outcomes=outcomes,
+            through_sequence=2,
+        )
 
     async def status(self, job_id: str) -> JobSnapshot:
         return self.jobs[job_id].snapshot()
@@ -131,12 +189,20 @@ class SharedFakeSupervisorServer:
             self.jobs[job_id]._cancelled = True
         return CancelMode.COOPERATIVE
 
+    async def command(self, command: JobCommand):
+        assert command.kind is JobCommandKind.CANCEL
+        return await self.cancel(command.job_id)
+
     # --- runtime / settings ---
     async def residency(self) -> ResidencyStatus:
         return ResidencyStatus(default_ttl_seconds=300)
 
     async def release_idle(self, pipeline: str | None = None) -> ResidencyStatus:
         self.release_calls.append(pipeline)
+        return ResidencyStatus(default_ttl_seconds=300)
+
+    async def preload(self, pipelines: tuple[str, ...]) -> ResidencyStatus:
+        self.preload_calls.append(pipelines)
         return ResidencyStatus(default_ttl_seconds=300)
 
     async def put_settings(self, snapshot: SettingsSnapshot) -> SettingsSnapshot:

@@ -23,7 +23,10 @@ import pytest
 from vibeocr.protocol.v2 import (
     CancelMode,
     ErrorCode,
+    ItemOutcome,
     ItemState,
+    JobCommand,
+    JobCommandKind,
     JobItem,
     JobKind,
     JobPriority,
@@ -31,11 +34,13 @@ from vibeocr.protocol.v2 import (
     JobSnapshot,
     JobState,
     JobSummary,
+    JobUpdate,
     PipelineSpec,
     ResidencyStatus,
     ResultEntry,
     SettingsSnapshot,
     StageEvent,
+    SubmitRequest,
 )
 from vibeocr.pyside.supervisor_adapter import (
     SupervisorClientAdapter,
@@ -97,20 +102,60 @@ class FakeSupervisorClient:
         # and shutdown tests). Default False = auto-finish on first status.
         self.hold_running = False
 
-    async def submit_recognition(
+    async def submit(
         self,
-        uploads: list[tuple[str, str | None, bytes]],
-        *,
-        priority: JobPriority = JobPriority.INTERACTIVE,
+        request: SubmitRequest,
+        attachments: dict[str, tuple[str | None, bytes]],
     ) -> JobRef:
+        assert len(attachments) == len(request.items)
         self.submit_calls += 1
         job_id = f"job-{self.submit_calls}"
         items = [
-            JobItem(item_id=f"it-{i}", display_name=name, state=ItemState.SUCCEEDED)
-            for i, (name, _ct, _data) in enumerate(uploads)
+            JobItem(
+                item_id=f"it-{i}",
+                display_name=item.display_name,
+                state=ItemState.QUEUED,
+                client_item_key=item.client_item_key,
+                ordinal=item.ordinal,
+            )
+            for i, item in enumerate(request.items)
         ]
         self.jobs[job_id] = _FakeJob(job_id, items, auto_finish=not self.hold_running)
-        return JobRef(job_id=job_id)
+        return JobRef(job_id=job_id, items=tuple(items))
+
+    async def observe(
+        self, job_id: str, *, after_sequence: int = 0
+    ) -> JobUpdate:
+        job = self.jobs[job_id]
+        snapshot = job.snapshot()
+        events = tuple(
+            event
+            for event in (
+                StageEvent(sequence=1, stage="running", item_id=None),
+                StageEvent(sequence=2, stage="done", item_id=None),
+            )
+            if event.sequence > after_sequence
+        )
+        outcomes = (
+            tuple(
+                ItemOutcome(
+                    item_id=item.item_id,
+                    state=ItemState.SUCCEEDED,
+                    attempt=0,
+                    payload_type="ocr.v1",
+                    payload={"text": f"ocr-{item.display_name}"},
+                )
+                for item in job.items
+            )
+            if snapshot.state is JobState.COMPLETED and after_sequence < 2
+            else ()
+        )
+        return JobUpdate(
+            snapshot=snapshot,
+            events=events,
+            outcomes=outcomes,
+            through_sequence=2,
+        )
 
     async def status(self, job_id: str) -> JobSnapshot:
         return self.jobs[job_id].snapshot()
@@ -140,10 +185,18 @@ class FakeSupervisorClient:
             self.jobs[job_id]._state = JobState.CANCELLED
         return CancelMode.COOPERATIVE
 
+    async def command(self, command: JobCommand):
+        assert command.kind is JobCommandKind.CANCEL
+        return await self.cancel(command.job_id)
+
     async def residency(self) -> ResidencyStatus:
         return ResidencyStatus(default_ttl_seconds=300)
 
     async def release_idle(self, pipeline: str | None = None) -> ResidencyStatus:
+        return ResidencyStatus(default_ttl_seconds=300)
+
+    async def preload(self, pipelines: tuple[str, ...]) -> ResidencyStatus:
+        assert pipelines
         return ResidencyStatus(default_ttl_seconds=300)
 
     async def put_settings(self, snapshot: SettingsSnapshot) -> SettingsSnapshot:
@@ -185,6 +238,8 @@ def adapter(qasync_loop) -> SupervisorClientAdapter:
     adapter = SupervisorClientAdapter(client_factory=lambda: fake)
     set_supervisor_adapter(adapter)
     yield adapter
+    adapter.shutdown()
+    _drive(qasync_loop, lambda: adapter.shutdown_drained)
     set_supervisor_adapter(None)
 
 
@@ -247,6 +302,70 @@ def test_refresh_residency_emits_status(adapter, qasync_loop) -> None:
     assert statuses[0].default_ttl_seconds == 300
 
 
+def test_preload_emits_completed_status(adapter, qasync_loop) -> None:
+    statuses: list[ResidencyStatus] = []
+    adapter.preload_completed.connect(statuses.append)
+
+    adapter.preload(("OCR",))
+
+    _drive(qasync_loop, lambda: len(statuses) == 1)
+    assert statuses[0].default_ttl_seconds == 300
+
+
+def test_preload_error_prefers_backend_reason(qasync_loop) -> None:
+    class MissingDependencyClient(FakeSupervisorClient):
+        async def preload(
+            self, pipelines: tuple[str, ...]
+        ) -> ResidencyStatus:
+            raise InferenceClientError(
+                ErrorCode.INTERNAL_ERROR,
+                "internal error",
+                detail={
+                    "reason": (
+                        "表格识别缺少 PaddleX[ocr] 依赖：beautifulsoup4"
+                    )
+                },
+            )
+
+    runtime_adapter = SupervisorClientAdapter(
+        client_factory=lambda: MissingDependencyClient()
+    )
+    errors: list[str] = []
+    runtime_adapter.preload_error.connect(errors.append)
+
+    runtime_adapter.preload(("TABLE_RECOGNITION",))
+
+    _drive(qasync_loop, lambda: len(errors) == 1)
+    assert errors == ["表格识别缺少 PaddleX[ocr] 依赖：beautifulsoup4"]
+    runtime_adapter.shutdown()
+    _drive(qasync_loop, lambda: runtime_adapter.shutdown_drained)
+
+
+def test_refresh_residency_timeout_emits_error(qasync_loop, monkeypatch) -> None:
+    class HangingResidencyClient(FakeSupervisorClient):
+        async def residency(self) -> ResidencyStatus:
+            await asyncio.Event().wait()
+            raise AssertionError("unreachable")
+
+    client = HangingResidencyClient()
+    runtime_adapter = SupervisorClientAdapter(client_factory=lambda: client)
+    monkeypatch.setattr(
+        runtime_adapter,
+        "_runtime_request_timeout_seconds",
+        0.02,
+        raising=False,
+    )
+    errors: list[str] = []
+    runtime_adapter.residency_error.connect(errors.append)
+
+    runtime_adapter.refresh_residency()
+
+    _drive(qasync_loop, lambda: len(errors) == 1, timeout=0.5)
+    assert "超时" in errors[0]
+    runtime_adapter.shutdown()
+    _drive(qasync_loop, lambda: runtime_adapter.shutdown_drained)
+
+
 def test_update_settings_emits_snapshot(adapter, qasync_loop) -> None:
     updated: list[SettingsSnapshot] = []
     adapter.settings_updated.connect(lambda s: updated.append(s))
@@ -267,9 +386,40 @@ def test_shutdown_cancels_handles_and_closes_client(adapter, qasync_loop) -> Non
     assert len(fake.cancelled) == 1
 
 
+def test_shutdown_without_event_loop_does_not_schedule_orphan_task(
+    qapp, monkeypatch
+) -> None:
+    class _SyncClient:
+        closed = False
+
+        def close(self) -> None:
+            self.closed = True
+
+    def _no_loop():
+        raise RuntimeError("no current event loop")
+
+    sync_client = _SyncClient()
+    adapter = SupervisorClientAdapter(
+        client_factory=FakeSupervisorClient,
+        pdf_sync_client_factory=lambda: sync_client,
+    )
+    assert adapter.pdf_sync_client is sync_client
+    monkeypatch.setattr(asyncio, "get_running_loop", _no_loop)
+    monkeypatch.setattr(asyncio, "get_event_loop", _no_loop)
+    monkeypatch.setattr(
+        "vibeocr.pyside.supervisor_adapter.get_async_runner",
+        lambda: pytest.fail("shutdown must not create a task without an owned loop"),
+    )
+
+    adapter.shutdown()
+
+    assert adapter.shutdown_drained is True
+    assert sync_client.closed is True
+
+
 def test_error_signal_on_submit_failure(qasync_loop) -> None:
     class _BrokenClient(FakeSupervisorClient):
-        async def submit_recognition(self, uploads, *, priority=JobPriority.INTERACTIVE):
+        async def submit(self, request, attachments):
             raise InferenceClientError(ErrorCode.BACKEND_UNAVAILABLE, "boom")
 
     adapter = SupervisorClientAdapter(client_factory=lambda: _BrokenClient())

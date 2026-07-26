@@ -8,7 +8,7 @@ executor via :class:`~vibeocr.supervisor.inference.composite_executor.CompositeE
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -21,8 +21,12 @@ from .paddle_executor import AdapterExecutor
 class MinerUExecutor(AdapterExecutor):
     """Drives MinerU document-parse jobs through a MinerUProcessAdapter."""
 
-    def __init__(self, adapter_factory: Callable[[], MinerUProcessAdapter]) -> None:
-        super().__init__(adapter_factory)
+    def __init__(
+        self,
+        adapter_factory: Callable[[], MinerUProcessAdapter],
+        **coordinator_options: Any,
+    ) -> None:
+        super().__init__(adapter_factory, **coordinator_options)
 
     @property
     def adapter(self) -> MinerUProcessAdapter:  # type: ignore[override]

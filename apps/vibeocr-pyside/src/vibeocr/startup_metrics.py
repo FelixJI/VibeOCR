@@ -9,7 +9,7 @@
     T1 RUNTIME_READY   Python bootstrap 完成（env_manager 已就绪）
     T2 SHELL_CREATED   Qt/WinUI 壳创建（QApplication 构造完成）
     T3 FIRST_WINDOW    首窗可见（splash 或 MainWindow.show）
-    T4 WORKER_READY    WorkerHost ready（SubprocessManager.service_ready）
+    T4 SUPERVISOR_READY Supervisor ready envelope
     T5 BACKEND_READY   OCR backend ready（预加载完成）
     T6 INTERACTIVE     首次可交互（用户可操作）
 
@@ -42,7 +42,7 @@ class StartupEvent(StrEnum):
     RUNTIME_READY = "T1"
     SHELL_CREATED = "T2"
     FIRST_WINDOW = "T3"
-    WORKER_READY = "T4"
+    SUPERVISOR_READY = "T4"
     BACKEND_READY = "T5"
     INTERACTIVE = "T6"
 

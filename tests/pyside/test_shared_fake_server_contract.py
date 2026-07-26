@@ -20,6 +20,13 @@ import time
 
 import pytest
 
+from vibeocr.protocol.v2 import (
+    JobKind,
+    JobPriority,
+    PipelineSelection,
+    SubmitItem,
+    SubmitRequest,
+)
 from vibeocr.pyside.supervisor_adapter import (
     SupervisorClientAdapter,
     set_supervisor_adapter,
@@ -60,8 +67,13 @@ class TestRawClientContract:
     async def test_submit_events_result_roundtrip(self) -> None:
         # JobHandle talks to the high-level client surface; the shared fake
         # implements exactly that surface, so we can drive it directly.
-        ref = await SHARED_FAKE_SERVER.submit_recognition(
-            [("a.png", None, b"1"), ("b.png", None, b"2")]
+        request = _request("a.png", "b.png")
+        ref = await SHARED_FAKE_SERVER.submit(
+            request,
+            {
+                "input-0": (None, b"1"),
+                "input-1": (None, b"2"),
+            },
         )
         handle = JobHandle(client=SHARED_FAKE_SERVER, ref=ref)  # type: ignore[arg-type]
         # Pump status until terminal (the shared fake auto-completes after a
@@ -77,10 +89,33 @@ class TestRawClientContract:
         assert SHARED_FAKE_SERVER.submit_calls == 1
 
     async def test_cancel_roundtrip(self) -> None:
-        ref = await SHARED_FAKE_SERVER.submit_recognition([("a.png", None, b"1")])
+        ref = await SHARED_FAKE_SERVER.submit(
+            _request("a.png"), {"input-0": (None, b"1")}
+        )
         mode = await SHARED_FAKE_SERVER.cancel(ref.job_id)
         assert mode.value == "cooperative"
         assert SHARED_FAKE_SERVER.cancel_calls == [ref.job_id]
+
+
+def _request(*names: str) -> SubmitRequest:
+    return SubmitRequest(
+        request_id="request-test",
+        kind=JobKind.RECOGNITION,
+        priority=JobPriority.INTERACTIVE,
+        pipeline=PipelineSelection("OCR"),
+        items=tuple(
+            SubmitItem(
+                client_item_key=f"file-{index}",
+                ordinal=index,
+                display_name=name,
+                source={
+                    "type": "upload.v1",
+                    "attachment": f"input-{index}",
+                },
+            )
+            for index, name in enumerate(names)
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -93,6 +128,8 @@ def adapter(qasync_loop):
     adapter = SupervisorClientAdapter(client_factory=lambda: SHARED_FAKE_SERVER)
     set_supervisor_adapter(adapter)
     yield adapter
+    adapter.shutdown()
+    _drive(qasync_loop, lambda: adapter.shutdown_drained)
     set_supervisor_adapter(None)
 
 

@@ -1,7 +1,7 @@
-// Phase 7B: supervisor child-process owner for WinUI.
+// Supervisor child-process owner for WinUI.
 //
-// Reuses the WorkerProcessSupervisor conventions (process startup, log file
-// rotation, no-shell-execute) and adds the v2 specifics:
+// Applies the process startup, logging, and no-shell-execute conventions with
+// the v2-specific guarantees:
 //   * the child binds 127.0.0.1:0 itself and reports the chosen port back via
 //     the first stdout line (ready envelope) — no port-selection race;
 //   * the parent generates the 256-bit session token and passes it via the
@@ -18,18 +18,41 @@ namespace VibeOCR.Platform.Inference;
 /// <summary>Ready envelope emitted by the supervisor on its first stdout line.</summary>
 public sealed record SupervisorReadyEnvelope(int Pid, int Port, string InstanceId, int ProtocolVersion, int SchemaVersion)
 {
+    public const int CurrentProtocolVersion = 2;
+    public const int CurrentSchemaVersion = 2;
+
     public Uri BaseUrl => new($"http://127.0.0.1:{Port}");
 
     public static SupervisorReadyEnvelope Parse(string line)
     {
         using JsonDocument doc = JsonDocument.Parse(line);
         JsonElement root = doc.RootElement;
-        return new SupervisorReadyEnvelope(
+        if (!root.TryGetProperty("ready", out JsonElement ready)
+            || ready.ValueKind is not JsonValueKind.True)
+        {
+            throw new InvalidDataException("Supervisor did not emit a ready envelope.");
+        }
+
+        var envelope = new SupervisorReadyEnvelope(
             Pid: root.GetProperty("pid").GetInt32(),
             Port: root.GetProperty("port").GetInt32(),
             InstanceId: root.GetProperty("instance_id").GetString()!,
             ProtocolVersion: root.GetProperty("protocol_version").GetInt32(),
             SchemaVersion: root.GetProperty("schema_version").GetInt32());
+        if (envelope.Pid <= 0
+            || envelope.Port is <= 0 or > 65535
+            || string.IsNullOrWhiteSpace(envelope.InstanceId))
+        {
+            throw new InvalidDataException("Supervisor ready envelope contains invalid identity.");
+        }
+        if (envelope.ProtocolVersion != CurrentProtocolVersion
+            || envelope.SchemaVersion != CurrentSchemaVersion)
+        {
+            throw new InvalidDataException(
+                $"Supervisor protocol/schema mismatch: "
+                + $"{envelope.ProtocolVersion}/{envelope.SchemaVersion}.");
+        }
+        return envelope;
     }
 }
 
@@ -39,7 +62,11 @@ public sealed record InferenceSupervisorOptions(
     IReadOnlyList<string> Arguments,
     string WorkingDirectory,
     string LogPath,
-    TimeSpan StartupTimeout);
+    TimeSpan StartupTimeout,
+    IReadOnlyDictionary<string, string>? EnvironmentOverrides = null);
+
+/// <summary>Details for an unplanned supervisor-process exit.</summary>
+public sealed record SupervisorUnexpectedExitEventArgs(int? ExitCode);
 
 /// <summary>
 /// Owns the lifecycle of one supervisor child process. The supervisor binds its
@@ -51,7 +78,12 @@ public sealed class InferenceSupervisorProcess : IDisposable
     private readonly InferenceSupervisorOptions _options;
     private readonly string _sessionToken;
     private Process? _process;
+    private WindowsJobObject? _jobObject;
     private SupervisorReadyEnvelope? _ready;
+    private readonly object _lifecycleLock = new();
+    private bool _startAttempted;
+    private bool _disposed;
+    private bool _terminationRequested;
     private readonly object _logLock = new();
     private readonly List<string> _logLines = new();
 
@@ -62,9 +94,16 @@ public sealed class InferenceSupervisorProcess : IDisposable
         _sessionToken = sessionToken;
     }
 
+    /// <summary>
+    /// Raised when the child exits without this owner requesting termination.
+    /// Consumers can create a fresh one-shot owner and reconnect their clients.
+    /// </summary>
+    public event EventHandler<SupervisorUnexpectedExitEventArgs>? UnexpectedExit;
+
     /// <summary>The parsed ready envelope (valid after <see cref="StartAsync"/> succeeds).</summary>
     public SupervisorReadyEnvelope Ready
-        => _ready ?? throw new InvalidOperationException("Supervisor has not started.");
+        => Volatile.Read(ref _ready)
+            ?? throw new InvalidOperationException("Supervisor has not started.");
 
     /// <summary>The session token to pass to <see cref="InferenceHttpClient"/>.</summary>
     public string SessionToken => _sessionToken;
@@ -81,52 +120,106 @@ public sealed class InferenceSupervisorProcess : IDisposable
         }
     }
 
-    /// <summary>Launch the child and await its ready envelope.</summary>
+    /// <summary>
+    /// Launch the child and await its ready envelope. Each owner permits exactly
+    /// one launch attempt, including attempts that fail or are cancelled.
+    /// </summary>
     public async Task<SupervisorReadyEnvelope> StartAsync(CancellationToken cancellationToken = default)
     {
-        if (_process is { HasExited: false })
+        Process process;
+        lock (_lifecycleLock)
         {
-            throw new InvalidOperationException("Supervisor process is already running.");
-        }
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (_startAttempted)
+            {
+                throw new InvalidOperationException(
+                    "InferenceSupervisorProcess permits only one launch attempt.");
+            }
+            _startAttempted = true;
 
-        Directory.CreateDirectory(Path.GetDirectoryName(_options.LogPath)!);
-        var startInfo = new ProcessStartInfo
-        {
-            FileName = _options.FileName,
-            WorkingDirectory = _options.WorkingDirectory,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            // Merge stderr into stdout so a single drain keeps both pipes from
-            // filling and deadlocking the child.
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-        };
-        foreach (string argument in _options.Arguments)
-        {
-            startInfo.ArgumentList.Add(argument);
-        }
-        // Token via env — never on argv or in the ready envelope.
-        startInfo.Environment["VIBEOCR_SUP_TOKEN"] = _sessionToken;
+            Directory.CreateDirectory(Path.GetDirectoryName(_options.LogPath)!);
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = _options.FileName,
+                WorkingDirectory = _options.WorkingDirectory,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+            };
+            foreach (string argument in _options.Arguments)
+            {
+                startInfo.ArgumentList.Add(argument);
+            }
+            // Token via env — never on argv or in the ready envelope.
+            startInfo.Environment["VIBEOCR_SUP_TOKEN"] = _sessionToken;
+            if (_options.EnvironmentOverrides is not null)
+            {
+                foreach ((string name, string value) in _options.EnvironmentOverrides)
+                {
+                    if (string.Equals(name, "VIBEOCR_SUP_TOKEN", StringComparison.OrdinalIgnoreCase))
+                    {
+                        throw new ArgumentException(
+                            "Environment overrides cannot replace VIBEOCR_SUP_TOKEN.",
+                            nameof(_options));
+                    }
+                    startInfo.Environment[name] = value;
+                }
+            }
 
-        var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
-        process.ErrorDataReceived += (_, e) => AppendLog("stderr", e.Data);
-        if (!process.Start())
-        {
-            throw new InvalidOperationException("Failed to start supervisor process.");
-        }
+            process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
+            process.ErrorDataReceived += (_, e) => AppendLog("stderr", e.Data);
+            process.Exited += OnProcessExited;
+            try
+            {
+                if (!process.Start())
+                {
+                    throw new InvalidOperationException("Failed to start supervisor process.");
+                }
+            }
+            catch
+            {
+                process.Dispose();
+                throw;
+            }
 
-        _process = process;
+            _process = process;
+            try
+            {
+                _jobObject = new WindowsJobObject();
+                _jobObject.Assign(process);
+            }
+            catch
+            {
+                Terminate();
+                throw;
+            }
+        }
         // Read the first stdout line synchronously (it is the ready envelope).
         // Subsequent stdout is log text; drain stderr asynchronously.
         process.BeginErrorReadLine();
         try
         {
-            string firstLine = await process.StandardOutput.ReadLineAsync(cancellationToken)
+            using var startup = CancellationTokenSource.CreateLinkedTokenSource(
+                cancellationToken);
+            startup.CancelAfter(_options.StartupTimeout);
+            string firstLine = await process.StandardOutput.ReadLineAsync(startup.Token)
                 .ConfigureAwait(false) ?? string.Empty;
-            _ready = SupervisorReadyEnvelope.Parse(firstLine);
+            SupervisorReadyEnvelope ready = SupervisorReadyEnvelope.Parse(firstLine);
+            lock (_lifecycleLock)
+            {
+                ObjectDisposedException.ThrowIf(_disposed, this);
+                _ready = ready;
+            }
             // Drain remaining stdout to a background task so the pipe does not block.
             _ = Task.Run(() => DrainStdoutAsync(process), CancellationToken.None);
-            return _ready;
+            return ready;
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            Terminate();
+            throw new TimeoutException(
+                $"Supervisor did not become ready within {_options.StartupTimeout}.");
         }
         catch (OperationCanceledException)
         {
@@ -159,20 +252,39 @@ public sealed class InferenceSupervisorProcess : IDisposable
     }
 
     /// <summary>Terminate the supervisor child (and whole tree on Windows).</summary>
-    public void Dispose() => Terminate();
+    public void Dispose()
+    {
+        lock (_lifecycleLock)
+        {
+            if (_disposed)
+            {
+                return;
+            }
+            _disposed = true;
+        }
+        Terminate();
+        GC.SuppressFinalize(this);
+    }
 
     private void Terminate()
     {
-        if (_process is null)
+        Process? process;
+        WindowsJobObject? jobObject;
+        lock (_lifecycleLock)
         {
-            return;
+            _terminationRequested = true;
+            _ready = null;
+            process = _process;
+            _process = null;
+            jobObject = _jobObject;
+            _jobObject = null;
         }
 
         try
         {
-            if (!_process.HasExited)
+            if (process is not null && !process.HasExited)
             {
-                _process.Kill(entireProcessTree: true);
+                process.Kill(entireProcessTree: true);
             }
         }
         catch
@@ -180,8 +292,41 @@ public sealed class InferenceSupervisorProcess : IDisposable
             // Best-effort.
         }
 
-        _process.Dispose();
-        _process = null;
+        process?.Dispose();
+        jobObject?.Dispose();
+    }
+
+    private void OnProcessExited(object? sender, EventArgs eventArgs)
+    {
+        if (sender is not Process process)
+        {
+            return;
+        }
+
+        bool notify;
+        lock (_lifecycleLock)
+        {
+            notify = !_disposed && !_terminationRequested && ReferenceEquals(_process, process);
+            if (notify)
+            {
+                _ready = null;
+            }
+        }
+        if (!notify)
+        {
+            return;
+        }
+
+        int? exitCode = null;
+        try
+        {
+            exitCode = process.ExitCode;
+        }
+        catch (InvalidOperationException)
+        {
+            // The exit notification itself is authoritative; the code is optional.
+        }
+        UnexpectedExit?.Invoke(this, new SupervisorUnexpectedExitEventArgs(exitCode));
     }
 
     private void AppendLog(string channel, string? line)
@@ -194,6 +339,16 @@ public sealed class InferenceSupervisorProcess : IDisposable
         lock (_logLock)
         {
             _logLines.Add($"[{channel}] {line}");
+        }
+        try
+        {
+            File.AppendAllText(
+                _options.LogPath,
+                $"[{DateTimeOffset.Now:O}] [{channel}] {line}{Environment.NewLine}");
+        }
+        catch
+        {
+            // Diagnostics must not destabilize the process owner.
         }
     }
 }

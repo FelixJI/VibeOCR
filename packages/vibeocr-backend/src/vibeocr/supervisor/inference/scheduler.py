@@ -66,6 +66,7 @@ class DeviceScheduler:
         self._clock = clock or _monotonic
         self._aging_interval = aging_interval
         self._lock = threading.RLock()
+        self._changed = threading.Condition(self._lock)
         self._queue: list[_QueueEntry] = []
         self._leases: dict[str, DeviceLease] = {}  # device -> lease
         self._enqueued_at: dict[str, float] = {}  # job_id -> enqueue time
@@ -78,26 +79,33 @@ class DeviceScheduler:
     def enqueue(self, *, job_id: str, device: str, priority: JobPriority) -> None:
         if device not in self._devices:
             raise ValueError(f"unknown device: {device}")
-        with self._lock:
+        with self._changed:
+            if job_id in self._enqueued_at:
+                return
             self._enqueued_at[job_id] = self._clock()
+            self._cancelled.discard(job_id)
             entry = self._new_entry(job_id, device, priority)
             heapq.heappush(self._queue, entry)
+            self._changed.notify_all()
 
     def cancel(self, job_id: str) -> bool:
-        with self._lock:
+        with self._changed:
             if job_id in self._enqueued_at:
                 self._cancelled.add(job_id)
                 self._enqueued_at.pop(job_id, None)
+                self._remove_from_heap(job_id)
+                self._changed.notify_all()
                 return True
             return False
 
     def drain(self) -> list[str]:
         """Cancel every queued job and return the cancelled ids."""
-        with self._lock:
+        with self._changed:
             drained = list(self._enqueued_at.keys())
             self._cancelled.update(drained)
             self._enqueued_at.clear()
             self._queue.clear()
+            self._changed.notify_all()
             return drained
 
     # ------------------------------------------------------------------
@@ -105,7 +113,7 @@ class DeviceScheduler:
     # ------------------------------------------------------------------
 
     def try_acquire(self, job_id: str, device: str) -> DeviceLease | None:
-        """Non-blocking acquire; returns a lease or None if the device is busy."""
+        """Grant only the current queue head when the device is free."""
         with self._lock:
             if job_id in self._cancelled:
                 # Drop the cancelled entry from the heap lazily.
@@ -114,11 +122,35 @@ class DeviceScheduler:
                 return None
             if self._leases.get(device) is not None:
                 return None
+            if job_id not in self._enqueued_at:
+                return None
+            if self.next_job_for(device) != job_id:
+                return None
             lease = DeviceLease(device=device, job_id=job_id, acquired_at=self._clock())
             self._leases[device] = lease
             self._enqueued_at.pop(job_id, None)
             self._remove_from_heap(job_id)
             return lease
+
+    def acquire(
+        self,
+        *,
+        job_id: str,
+        device: str,
+        priority: JobPriority,
+        cancelled: Callable[[], bool] | None = None,
+    ) -> DeviceLease | None:
+        """Block until this job is the dynamic priority head or is cancelled."""
+        self.enqueue(job_id=job_id, device=device, priority=priority)
+        with self._changed:
+            while True:
+                if cancelled is not None and cancelled():
+                    self.cancel(job_id)
+                    return None
+                lease = self.try_acquire(job_id, device)
+                if lease is not None:
+                    return lease
+                self._changed.wait(timeout=0.05)
 
     def _remove_from_heap(self, job_id: str) -> None:
         """Remove all heap entries matching ``job_id`` (there should be one)."""
@@ -126,10 +158,11 @@ class DeviceScheduler:
         heapq.heapify(self._queue)
 
     def release(self, lease: DeviceLease) -> None:
-        with self._lock:
+        with self._changed:
             current = self._leases.get(lease.device)
             if current is not None and current.job_id == lease.job_id:
                 self._leases.pop(lease.device, None)
+                self._changed.notify_all()
 
     @property
     def busy_devices(self) -> list[str]:
@@ -171,6 +204,14 @@ class DeviceScheduler:
         age_seq = seq  # tiebreaker
         return _QueueEntry(sort_key=(eff, age_seq, seq), job_id=job_id, device=device, priority=priority)
 
+    def _current_key(self, entry: _QueueEntry) -> tuple[float, int, int]:
+        """Recompute the priority component so aging is not frozen at enqueue."""
+        return (
+            self.effective_priority(entry.job_id, entry.priority),
+            entry.sort_key[1],
+            entry.sort_key[2],
+        )
+
     def next_job_for(self, device: str) -> str | None:
         """Return the next non-cancelled job id for ``device`` (peek, no pop).
 
@@ -186,7 +227,7 @@ class DeviceScheduler:
                     continue
                 if entry.job_id in self._cancelled:
                     continue
-                if best is None or entry.sort_key < best.sort_key:
+                if best is None or self._current_key(entry) < self._current_key(best):
                     best = entry
             return best.job_id if best is not None else None
 

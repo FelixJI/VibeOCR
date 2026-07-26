@@ -1,7 +1,7 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
-using System.Text.Json;
+using VibeOCR.App.Inference;
 using VibeOCR.Contracts.HttpV2;
 using VibeOCR.Platform.Inference;
 
@@ -9,6 +9,7 @@ namespace VibeOCR.App.Features.Batch;
 
 public sealed class BatchViewModel(IInferenceClient inference, IBatchFileSource files) : INotifyPropertyChanged
 {
+    private readonly InferenceJobRunner _jobs = new(inference);
     private readonly object _counterLock = new();
     private CancellationTokenSource? _run;
     private long _generation;
@@ -49,28 +50,26 @@ public sealed class BatchViewModel(IInferenceClient inference, IBatchFileSource 
 
         foreach (BatchItemViewModel item in pending) { if (generation == Volatile.Read(ref _generation)) { item.Reset(); item.State = BatchItemState.Running; } }
 
-        string? submittedJobId = null;
         try
         {
-            var uploads = new RecognitionUpload[pending.Length];
+            var inputs = new InferenceUploadInput[pending.Length];
             for (int i = 0; i < pending.Length; i++)
             {
                 (byte[] data, string mediaType) = await files.ReadAsync(pending[i].Path, _run.Token);
-                uploads[i] = new RecognitionUpload(pending[i].Name, mediaType, data);
+                inputs[i] = new InferenceUploadInput(
+                    pending[i].Id.ToString("N"),
+                    pending[i].Name,
+                    mediaType,
+                    data);
             }
 
-            JobRef referral = await inference.SubmitRecognitionAsync(uploads, JobPriority.Background, _run.Token);
-            submittedJobId = referral.JobId;
-
-            JobSnapshot snapshot = await inference.GetJobAsync(referral.JobId, _run.Token);
-            int lastSequence = snapshot.EventSequence;
-            while (snapshot.State is not (JobState.Completed or JobState.CompletedWithErrors or JobState.Cancelled or JobState.Failed))
-            {
-                _run.Token.ThrowIfCancellationRequested();
-                IReadOnlyList<StageEvent> events = await inference.GetEventsAsync(referral.JobId, lastSequence, _run.Token);
-                lastSequence = events.Count > 0 ? events[^1].Sequence : lastSequence;
-                snapshot = await inference.GetJobAsync(referral.JobId, _run.Token);
-            }
+            InferenceJobRun job = await _jobs.RunRecognitionAsync(
+                "OCR",
+                JobPriority.Background,
+                inputs,
+                options: null,
+                _run.Token);
+            JobSnapshot snapshot = job.Snapshot;
 
             if (generation != Volatile.Read(ref _generation)) return;
 
@@ -81,20 +80,31 @@ public sealed class BatchViewModel(IInferenceClient inference, IBatchFileSource 
                 return;
             }
 
-            IReadOnlyList<ResultEntry> results = await inference.GetResultAsync(referral.JobId, _run.Token);
-            for (int i = 0; i < pending.Length && i < results.Count; i++)
+            foreach (BatchItemViewModel item in pending)
             {
                 if (generation != Volatile.Read(ref _generation)) return;
-                BatchItemViewModel item = pending[i];
-                ResultEntry entry = results[i];
-                if (!string.IsNullOrEmpty(entry.ErrorCode)) { item.Error = entry.ErrorCode; item.State = BatchItemState.Failed; IncrementFailed(); }
-                else { item.Result = new RecognizeResponse { Text = ExtractText(entry), Pipeline = "OCR" }; item.State = BatchItemState.Completed; IncrementCompleted(); }
+                ItemOutcome outcome = job.OutcomesByClientItemKey[item.Id.ToString("N")];
+                if (outcome.State is ItemState.Succeeded)
+                {
+                    item.Result = RecognitionOutcomeMapper.ToResponse(outcome, "OCR");
+                    item.State = BatchItemState.Completed;
+                    IncrementCompleted();
+                }
+                else if (outcome.State is ItemState.Cancelled)
+                {
+                    item.State = BatchItemState.Cancelled;
+                }
+                else
+                {
+                    item.Error = outcome.ErrorCode ?? "INFERENCE_FAILED";
+                    item.State = BatchItemState.Failed;
+                    IncrementFailed();
+                }
             }
             NotifyProgress();
         }
         catch (OperationCanceledException)
         {
-            if (submittedJobId is not null) { try { await inference.CancelAsync(submittedJobId, CancellationToken.None); } catch (InferenceClientException) { } }
             if (generation == Volatile.Read(ref _generation)) foreach (BatchItemViewModel item in pending) if (item.State is BatchItemState.Running) item.State = BatchItemState.Cancelled;
         }
         catch (InferenceClientException error)
@@ -132,13 +142,6 @@ public sealed class BatchViewModel(IInferenceClient inference, IBatchFileSource 
             exports.Add(await ExportAsync(item.Id, path, format, false, ct));
         }
         return exports;
-    }
-
-    private static string ExtractText(ResultEntry entry)
-    {
-        if (entry.Payload.TryGetValue("text", out JsonElement element) && element.ValueKind == JsonValueKind.String)
-            return element.GetString() ?? string.Empty;
-        return string.Empty;
     }
 
     private void NotifyQueue() { PropertyChanged?.Invoke(this, new(nameof(TotalCount))); NotifyProgress(); }
