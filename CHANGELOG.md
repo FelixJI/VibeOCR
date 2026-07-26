@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.6.0] - 2026-07-26
+## [0.6.0] - 2026-07-27
 
 ### Added
 - feat(ui): 状态栏固定展示服务、管道驻留、当前任务与最近结果，识别结果补充文本框、低置信数量和耗时
@@ -14,6 +14,7 @@
 - feat(worker_host): 新增 OCR HTTP worker，替代 SHM/PDF IPC 通信
 
 ### Fixed
+- fix(supervisor): 打包态为便携 Python 注入 `_internal` 源码路径，修复 Supervisor 无 ready envelope、OCR 服务无法启动
 - fix(pdf): 文字层删除及批量变更完成后从权威模型同步格子状态，避免旋转、插页、删页、重排等终态不刷新
 - fix(logging): Supervisor/PDF HTTP 响应日志兼容未消费的流式响应，避免 response hook 抛出 StreamError
 - fix(pdf): 删除文字层返回空页索引时安全刷新，避免 `None` 参与页码比较

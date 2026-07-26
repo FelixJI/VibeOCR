@@ -37,7 +37,7 @@ _UVICORN_ACCESS_LINE = re.compile(
     r'(?P<url>\S+) HTTP/\d(?:\.\d)?" (?P<status>\d{3})'
 )
 _HTTP_REQUEST_LINE = re.compile(
-    r'HTTP Request:\s+(?P<method>GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s+'
+    r"HTTP Request:\s+(?P<method>GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s+"
     r'(?P<url>\S+)\s+"HTTP/\d(?:\.\d)? (?P<status>\d{3})(?:\s+(?P<reason>[^"]+))?"'
 )
 
@@ -135,6 +135,19 @@ class SupervisorProcess:
         env = dict(os.environ)
         env.update(self.env)
         env["VIBEOCR_SUP_TOKEN"] = token
+        # In a PyInstaller build the portable Python is a separate interpreter:
+        # it cannot import modules from the executable's PYZ archive.  The build
+        # ships a flat ``vibeocr`` source tree under ``sys._MEIPASS`` for child
+        # processes, so expose that tree explicitly just like the OCR/PDF child
+        # launchers do.
+        if getattr(sys, "frozen", False):
+            bundle_root = getattr(sys, "_MEIPASS", None)
+            if bundle_root:
+                bundle_path = str(bundle_root)
+                existing = env.get("PYTHONPATH", "")
+                existing_parts = existing.split(os.pathsep) if existing else []
+                if bundle_path not in existing_parts:
+                    env["PYTHONPATH"] = os.pathsep.join([bundle_path, *existing_parts])
         # The parent decodes both pipes as UTF-8 below, so make Python's side
         # of the stdio contract explicit as well.  This also avoids locale-
         # encoded warnings when the Windows system code page is GBK.
@@ -187,7 +200,9 @@ class SupervisorProcess:
         try:
             self._ready = ReadyEnvelope.from_line(line)
         except Exception as exc:
-            raise SupervisorLaunchError(f"invalid ready envelope: {line!r}: {exc}") from exc
+            raise SupervisorLaunchError(
+                f"invalid ready envelope: {line!r}: {exc}"
+            ) from exc
         if not self._ready.ready:
             raise SupervisorLaunchError("supervisor reported not ready")
         # Subsequent stdout is log text; drain it on a background thread so the

@@ -118,9 +118,7 @@ class _FakeClient(SupervisorClient):
     def queue_events(self, *event_lists: list[StageEvent]) -> None:
         self._events = list(event_lists)
 
-    async def observe(
-        self, job_id: str, *, after_sequence: int = 0
-    ) -> JobUpdate:
+    async def observe(self, job_id: str, *, after_sequence: int = 0) -> JobUpdate:
         if not self._snapshots:
             raise AssertionError("no snapshots queued")
         events = tuple(self._events.pop(0)) if self._events else ()
@@ -135,9 +133,7 @@ class _FakeClient(SupervisorClient):
             through_sequence=through_sequence,
         )
 
-    async def command(
-        self, command: JobCommand
-    ) -> JobRef | CancelMode | None:
+    async def command(self, command: JobCommand) -> JobRef | CancelMode | None:
         assert command.kind is JobCommandKind.CANCEL
         assert command.job_id == "j"
         self._cancel_calls += 1
@@ -228,6 +224,53 @@ def test_supervisor_process_not_launched_accessors_raise() -> None:
     assert proc.shutdown() == 0
 
 
+def test_supervisor_process_launches_module_from_frozen_bundle(
+    monkeypatch, tmp_path
+) -> None:
+    """打包态的外部 Python 必须能从 PyInstaller ``_MEIPASS`` 导入模块。"""
+    import sys
+
+    from vibeocr.supervisor.process import SupervisorProcess
+
+    bundle_root = tmp_path / "_internal"
+    package = bundle_root / "fake_supervisor"
+    package.mkdir(parents=True)
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    (package / "main.py").write_text(
+        "\n".join(
+            [
+                "import json",
+                "import os",
+                "import time",
+                "print(json.dumps({",
+                "    'ready': True,",
+                "    'pid': os.getpid(),",
+                "    'port': 54321,",
+                "    'instance_id': 'frozen-bundle-test',",
+                "    'protocol_version': 2,",
+                "    'schema_version': 2,",
+                "    'capabilities': ['recognition'],",
+                "}), flush=True)",
+                "time.sleep(30)",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "_MEIPASS", str(bundle_root), raising=False)
+
+    proc = SupervisorProcess.launch(
+        python_exe=sys.executable,
+        module="fake_supervisor.main",
+        startup_timeout=5.0,
+    )
+    try:
+        assert proc.ready.ready is True
+        assert proc.ready.instance_id == "frozen-bundle-test"
+    finally:
+        proc.shutdown()
+
+
 def test_supervisor_process_binds_job_object_and_closes_it(monkeypatch) -> None:
     from io import StringIO
     from unittest.mock import Mock
@@ -280,12 +323,8 @@ def test_supervisor_process_decodes_utf8_logs_independent_of_windows_locale(
     def popen_factory(*_args, **kwargs):
         encoding = kwargs.get("encoding") or "gbk"
         errors = kwargs.get("errors") or "strict"
-        popen.stdout = TextIOWrapper(
-            BytesIO(), encoding=encoding, errors=errors
-        )
-        popen.stderr = TextIOWrapper(
-            BytesIO(payload), encoding=encoding, errors=errors
-        )
+        popen.stdout = TextIOWrapper(BytesIO(), encoding=encoding, errors=errors)
+        popen.stderr = TextIOWrapper(BytesIO(payload), encoding=encoding, errors=errors)
         popen.wait.return_value = 0
         return popen
 
@@ -322,8 +361,7 @@ def test_supervisor_process_forwards_child_output_to_application_log(caplog) -> 
 
     proc = process_module.SupervisorProcess(python_exe="python")
     child_line = (
-        "[Supervisor][Recognize] pipeline=OCR items=1 "
-        "result=success elapsed_ms=12.3\n"
+        "[Supervisor][Recognize] pipeline=OCR items=1 result=success elapsed_ms=12.3\n"
     )
 
     with caplog.at_level(logging.INFO, logger="vibeocr.supervisor.process"):
@@ -341,8 +379,7 @@ def test_supervisor_process_discards_http_access_log_noise(caplog) -> None:
 
     proc = process_module.SupervisorProcess(python_exe="python")
     access_line = (
-        'INFO:     127.0.0.1:57001 - '
-        '"GET /v2/runtime/residency HTTP/1.1" 200 OK\n'
+        'INFO:     127.0.0.1:57001 - "GET /v2/runtime/residency HTTP/1.1" 200 OK\n'
     )
 
     with caplog.at_level(logging.DEBUG, logger="vibeocr.supervisor.process"):
@@ -352,7 +389,9 @@ def test_supervisor_process_discards_http_access_log_noise(caplog) -> None:
     assert not caplog.records
 
 
-def test_supervisor_process_launch_failure_releases_process_and_job(monkeypatch) -> None:
+def test_supervisor_process_launch_failure_releases_process_and_job(
+    monkeypatch,
+) -> None:
     from io import StringIO
     from unittest.mock import Mock
 
@@ -369,9 +408,7 @@ def test_supervisor_process_launch_failure_releases_process_and_job(monkeypatch)
     def fail_ready(self) -> None:
         raise SupervisorLaunchError("bad ready")
 
-    monkeypatch.setattr(
-        process_module.SupervisorProcess, "_read_ready", fail_ready
-    )
+    monkeypatch.setattr(process_module.SupervisorProcess, "_read_ready", fail_ready)
     proc = process_module.SupervisorProcess(python_exe="python")
 
     with pytest.raises(SupervisorLaunchError, match="bad ready"):
