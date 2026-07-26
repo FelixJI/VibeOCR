@@ -4,6 +4,7 @@
 
 ### Added
 - feat(supervisor): complete job interface migration and diagnostics
+- feat(logging): HTTP 日志增加中文状态说明、耗时、请求/响应数据量与敏感查询参数脱敏
 - feat(inference-supervisor): 完成 Phase 8 迁移 — 删除 legacy、v2 为两端默认路径
 - feat(pdf): PDF 会话迁移到 supervisor HTTP v2，GUI 不再直连 PdfBackendClient
 - feat: unified inference supervisor rewrite (Phase 0-10)
@@ -12,6 +13,7 @@
 - feat(worker_host): 新增 OCR HTTP worker，替代 SHM/PDF IPC 通信
 
 ### Fixed
+- fix(pdf): 删除文字层返回空页索引时安全刷新，避免 `None` 参与页码比较
 - fix(ocr_service_subprocess): set_pipeline_ttls 改为尽力而为，锁占用时快速失败
 - fix(ocr_service): paddle 自带 CUDA runtime 时不再混入 torch/lib 避免 DLL 冲突
 - fix(mineru): 移除模型预探测，修复 lang_list 空串导致 Language not supported
