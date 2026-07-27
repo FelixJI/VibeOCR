@@ -78,3 +78,55 @@ class TestGPUMemoryMonitor:
             assert monitor.is_available()
 
         shutdown.assert_called_once()
+
+
+class TestPynvmlStatusPaths:
+    """_get_status_pynvml 成功/异常路径与 close 幂等性。"""
+
+    def test_get_status_pynvml_success(self):
+        """pynvml 可用时返回真实显存信息（line 62-72）。"""
+        from ctypes import Structure, c_ulonglong
+
+        class _FakeMemInfo(Structure):
+            _fields_ = [
+                ("total", c_ulonglong),
+                ("free", c_ulonglong),
+                ("used", c_ulonglong),
+            ]
+
+        mem = _FakeMemInfo()
+        mem.total = 8 * 1024 * 1024 * 1024  # 8GB
+        mem.free = 6 * 1024 * 1024 * 1024
+        mem.used = 2 * 1024 * 1024 * 1024
+
+        import pynvml
+
+        monitor = GPUMemoryMonitor()
+        with (
+            patch.object(pynvml, "nvmlDeviceGetHandleByIndex", return_value="handle"),
+            patch.object(pynvml, "nvmlDeviceGetMemoryInfo", return_value=mem),
+        ):
+            status = monitor.get_status()
+        assert status.available is True
+        assert status.total == 8 * 1024  # 8GB → 8192MB
+        assert status.free == 6 * 1024
+        assert status.used == 2 * 1024
+
+    def test_get_status_pynvml_exception_returns_unavailable(self):
+        """pynvml 调用抛异常时返回 available=False（line 73-75）。"""
+        import pynvml
+
+        monitor = GPUMemoryMonitor()
+        with patch.object(
+            pynvml, "nvmlDeviceGetHandleByIndex", side_effect=RuntimeError("no GPU")
+        ):
+            status = monitor.get_status()
+        assert status.available is False
+        assert status.total == 0
+
+    def test_close_when_unavailable_is_noop(self):
+        """pynvml 不可用时 close 不调 nvmlShutdown（line 108 分支 False）。"""
+        with patch("pynvml.nvmlInit", side_effect=ImportError):
+            monitor = GPUMemoryMonitor()
+        # close 不应抛（_pynvml_available=False 分支）
+        monitor.close()

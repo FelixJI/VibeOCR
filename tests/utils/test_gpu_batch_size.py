@@ -45,3 +45,27 @@ def test_estimate_gpu_batch_size_zero_free_returns_fallback():
 def test_estimate_gpu_batch_size_zero_pixels_returns_1():
     """非法像素输入（avg_pixels=0）→ 返回 1。"""
     assert estimate_gpu_batch_size(free_mb=6144, avg_pixels=0) == 1
+
+
+def test_estimate_gpu_batch_size_zero_pixels_returns_1():
+    """avg_pixels<=0 时返回 1（line 157-158）。"""
+    from vibeocr.utils.gpu_memory_monitor import estimate_gpu_batch_size
+
+    assert estimate_gpu_batch_size(free_mb=4096, avg_pixels=0) == 1
+    assert estimate_gpu_batch_size(free_mb=4096, avg_pixels=-10) == 1
+
+
+def test_estimate_gpu_batch_size_zero_vram_returns_fallback():
+    """free_mb<=0 时返回夹紧的 fallback（line 159-160）。"""
+    from vibeocr.utils.gpu_memory_monitor import (
+        GPU_BATCH_CAP,
+        GPU_FALLBACK_BATCH_SIZE,
+        estimate_gpu_batch_size,
+    )
+
+    assert estimate_gpu_batch_size(free_mb=0, avg_pixels=1_000_000) == max(
+        1, min(GPU_FALLBACK_BATCH_SIZE, GPU_BATCH_CAP)
+    )
+    assert estimate_gpu_batch_size(free_mb=-5, avg_pixels=1_000_000) == max(
+        1, min(GPU_FALLBACK_BATCH_SIZE, GPU_BATCH_CAP)
+    )
