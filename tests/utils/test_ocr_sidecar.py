@@ -248,3 +248,125 @@ def test_refresh_baseline_missing_sidecar(tmp_path, monkeypatch):
         "vibeocr.utils.ocr_sidecar._sessions_dir", lambda: tmp_path / "sessions"
     )
     assert refresh_baseline(str(f)) is False
+
+
+def test_growth_ok_false_when_baseline_missing(tmp_path):
+    """sidecar 缺 original_size/original_mtime_ns 时 _growth_ok 返回 False（line 74）。"""
+    from vibeocr.utils.ocr_sidecar import _growth_ok
+
+    f = tmp_path / "f.pdf"
+    f.write_bytes(b"x")
+    assert _growth_ok({}, str(f)) is False
+    assert _growth_ok({"original_size": 1}, str(f)) is False
+
+
+def test_growth_ok_false_when_stat_raises(tmp_path, monkeypatch):
+    """文件 stat 失败时 _growth_ok 返回 False（line 77-78）。"""
+    from vibeocr.utils import ocr_sidecar
+    from pathlib import Path
+
+    f = tmp_path / "missing.pdf"
+    data = {"original_size": 1, "original_mtime_ns": 1}
+    assert ocr_sidecar._growth_ok(data, str(f)) is False
+
+
+def test_load_sidecar_returns_none_on_version_mismatch(tmp_path, monkeypatch):
+    """sidecar 版本不符时返回 None（line 90）。"""
+    from vibeocr.utils import ocr_sidecar
+
+    f = tmp_path / "doc.pdf"
+    f.write_bytes(b"original")
+    # 直接写一个旧版本 sidecar
+    p = ocr_sidecar.sidecar_path(str(f))
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text('{"version": "0.0", "original_size": 5}', encoding="utf-8")
+    assert ocr_sidecar.load_sidecar(str(f)) is None
+
+
+def test_load_sidecar_returns_none_on_corrupt_json(tmp_path, monkeypatch):
+    """sidecar JSON 损坏时返回 None（line 94-96）。"""
+    from vibeocr.utils import ocr_sidecar
+
+    f = tmp_path / "doc.pdf"
+    f.write_bytes(b"original")
+    p = ocr_sidecar.sidecar_path(str(f))
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text("{ not valid json", encoding="utf-8")
+    assert ocr_sidecar.load_sidecar(str(f)) is None
+
+
+def test_save_sidecar_returns_false_on_write_failure(tmp_path, monkeypatch):
+    """save_sidecar 写入失败时返回 False 并清理 tmp（line 108-114）。"""
+    from vibeocr.utils import ocr_sidecar
+
+    f = tmp_path / "doc.pdf"
+    f.write_bytes(b"x")
+
+    def _fail_replace(self, _target):
+        raise OSError("replace denied")
+
+    monkeypatch.setattr("pathlib.Path.replace", _fail_replace)
+    assert ocr_sidecar.save_sidecar(str(f), {"version": "1.0"}) is False
+
+
+def test_save_sidecar_cleans_up_tmp_even_when_unlink_fails(tmp_path, monkeypatch):
+    """save_sidecar 写入失败且 tmp unlink 也失败时仍返回 False（line 112-113）。"""
+    from vibeocr.utils import ocr_sidecar
+
+    f = tmp_path / "doc.pdf"
+    f.write_bytes(b"x")
+
+    def _fail_replace(self, _target):
+        raise OSError("replace denied")
+
+    def _fail_unlink(self, *args, **kwargs):
+        raise OSError("unlink denied")
+
+    monkeypatch.setattr("pathlib.Path.replace", _fail_replace)
+    monkeypatch.setattr("pathlib.Path.unlink", _fail_unlink)
+    assert ocr_sidecar.save_sidecar(str(f), {"version": "1.0"}) is False
+
+
+def test_mark_completed_falls_back_when_sidecar_corrupt(tmp_path, monkeypatch):
+    """mark_completed 在 sidecar 损坏时回退新建（line 167-170）。"""
+    from vibeocr.utils import ocr_sidecar
+
+    f = tmp_path / "doc.pdf"
+    f.write_bytes(b"original-content-here")
+    p = ocr_sidecar.sidecar_path(str(f))
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text("{ corrupt", encoding="utf-8")
+    # mark_completed 应不崩溃，新建 sidecar 并标记 completed
+    assert ocr_sidecar.mark_completed(str(f)) is True
+    data = ocr_sidecar.load_sidecar(str(f))
+    assert data is not None
+    assert data.get("completed") is True
+
+
+def test_mark_completed_falls_back_when_version_old(tmp_path, monkeypatch):
+    """mark_completed 在 sidecar 版本旧时回退新建（line 166-167）。"""
+    from vibeocr.utils import ocr_sidecar
+
+    f = tmp_path / "doc.pdf"
+    f.write_bytes(b"original-content")
+    p = ocr_sidecar.sidecar_path(str(f))
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text('{"version": "ancient"}', encoding="utf-8")
+    assert ocr_sidecar.mark_completed(str(f)) is True
+
+
+def test_refresh_baseline_returns_false_on_inner_failure(tmp_path, monkeypatch):
+    """refresh_baseline 在内部步骤（如 compute_fingerprint）失败时返回 False（line 195-197）。"""
+    from vibeocr.utils import ocr_sidecar
+
+    f = tmp_path / "doc.pdf"
+    f.write_bytes(b"original")
+    # 先成功创建一个 sidecar
+    ocr_sidecar.mark_completed(str(f))
+
+    # 让 compute_fingerprint 抛异常 → refresh_baseline 进 except
+    def _fail(_p):
+        raise OSError("fingerprint failed")
+
+    monkeypatch.setattr(ocr_sidecar, "compute_fingerprint", _fail)
+    assert ocr_sidecar.refresh_baseline(str(f)) is False
