@@ -18,10 +18,7 @@ jobs:
     # Only checked-in synthetic fixtures; no network/model/GPU dependency.
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
-        with: { python-version: "3.13" }
-      - run: pip install --require-hashes -r requirements/build-shell.lock
+      - uses: ./.github/actions/setup-python-buildshell
       - name: Run offline table semantic contract gate
         shell: pwsh
         run: ./scripts/run_table_contract_gate.ps1 -PythonPath python -ReportDir reports/table-contract
@@ -43,10 +40,7 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
-        with: { python-version: "3.13" }
-      - run: pip install --require-hashes -r requirements/build-shell.lock
+      - uses: ./.github/actions/setup-python-buildshell
       - name: Run expanded table regression matrix
         shell: pwsh
         run: |
@@ -83,10 +77,7 @@ jobs:
     # 正常 ~2-3min（800+ 测试 + 构 wheel）；30min 宽裕上限防卡死。
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
-        with: { python-version: "3.13" }
-      - run: pip install --require-hashes -r requirements/build-shell.lock
+      - uses: ./.github/actions/setup-python-buildshell
       - run: python -m pytest tests/architecture tests/contracts/v2 tests/application tests/services tests/supervisor tests/test_dependency_bootstrap.py -q
       - name: Run remaining Python unit tests
         shell: pwsh
@@ -127,10 +118,7 @@ jobs:
     # 正常 ~2-3min；30min 宽裕上限防卡死。
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
-        with: { python-version: "3.13" }
-      - run: pip install --require-hashes -r requirements/build-shell.lock
+      - uses: ./.github/actions/setup-python-buildshell
       - run: python -m pytest tests/views tests/widgets tests/client tests/architecture/test_ui_backend_import_allowlist.py -q
       - run: python -m ruff check apps packages tests scripts
 
@@ -165,10 +153,7 @@ jobs:
     # 需全量数据才有意义），但作为独立 job 并行执行，不拖慢其它 job。
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
-        with: { python-version: "3.13" }
-      - run: pip install --require-hashes -r requirements/build-shell.lock
+      - uses: ./.github/actions/setup-python-buildshell
       - name: Run tests with coverage gate
         shell: pwsh
         run: |
