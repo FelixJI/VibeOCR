@@ -1,7 +1,7 @@
 """Tests for machine_cache module."""
 
 import subprocess
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from vibeocr.machine_cache import CACHE_VERSION
 
@@ -858,3 +858,268 @@ class TestIsEmbeddedEnvironmentReady:
         assert missing == []
         # 过期缓存纠正后应写入新缓存
         mock_create.assert_called_once()
+
+
+class TestGetCacheInfo:
+    """get_cache_info 多行调试格式化器（此前无任何测试）。"""
+
+    def test_no_cache_returns_placeholder(self, tmp_path):
+        """无缓存文件时应返回占位串。"""
+        from vibeocr.machine_cache import get_cache_info
+
+        assert get_cache_info(tmp_path) == "无缓存"
+
+    def test_full_cache_renders_all_fields(self, tmp_path):
+        """完整缓存应渲染所有顶层字段（含 pending_backend）。"""
+        from vibeocr.machine_cache import (
+            CACHE_VERSION,
+            generate_machine_id,
+            get_cache_info,
+            save_cache,
+        )
+
+        cache_data = {
+            "version": CACHE_VERSION,
+            "machine_id": generate_machine_id(),
+            "last_check_time": "2026-07-27T10:00:00",
+            "python_version": "3.13.0",
+            "dependencies": {"paddlepaddle": True, "torch": False},
+            "hardware_info": {"has_gpu": True, "cuda_version": "cu126"},
+            "pipeline_success": {"OCR": True, "PDF": False},
+            "network": {
+                "paddlex_source": "modelscope",
+                "mineru_source": "modelscope",
+                "last_detected": "2026-07-27T09:00:00",
+            },
+            "pending_backend": "gpu",
+        }
+        save_cache(tmp_path, cache_data)
+        info = get_cache_info(tmp_path)
+
+        # 各字段都应出现在输出中
+        assert "version=" + str(CACHE_VERSION) in info
+        assert "machine_id=" in info
+        assert "2026-07-27T10:00:00" in info
+        assert "python_version=3.13.0" in info
+        # dependencies 用 ✓/✗ 标记
+        assert "paddlepaddle=✓" in info
+        assert "torch=✗" in info
+        # pipeline_success 列出 key
+        assert "OCR" in info and "PDF" in info
+        # network 字段
+        assert "paddlex=modelscope" in info
+        assert "mineru=modelscope" in info
+        # pending_backend 有值时单独一行
+        assert "pending_backend=gpu" in info
+        # has_gpu / cuda
+        assert "has_gpu=True" in info
+        assert "cuda=cu126" in info
+
+    def test_minimal_cache_shows_empty_placeholders(self, tmp_path):
+        """缺 deps/pipeline/network/pending_backend 时用占位串。"""
+        from vibeocr.machine_cache import get_cache_info, save_cache
+
+        save_cache(tmp_path, {"version": 1, "machine_id": "abc"})
+        info = get_cache_info(tmp_path)
+
+        assert "dependencies: (空)" in info
+        assert "pipeline_success: (无)" in info
+        assert "network: (未探测)" in info
+        # pending_backend 为 None 时不出现该行
+        assert "pending_backend=" not in info
+
+
+class TestMachineCacheBranches:
+    """补 _get_cpu_id/_get_baseboard_serial/_get_mac_address 等的分支覆盖。"""
+
+    def test_get_cache_age_seconds_invalid_timestamp(self, tmp_path):
+        """last_check_time 非法时返回 None。"""
+        from vibeocr.machine_cache import get_cache_age_seconds, save_cache
+
+        save_cache(tmp_path, {"last_check_time": "not-a-date"})
+        assert get_cache_age_seconds(tmp_path) is None
+
+    def test_get_cache_age_seconds_missing_field(self, tmp_path):
+        """无 last_check_time 字段时返回 None。"""
+        from vibeocr.machine_cache import get_cache_age_seconds, save_cache
+
+        save_cache(tmp_path, {"version": 1})
+        assert get_cache_age_seconds(tmp_path) is None
+
+    def test_get_cache_age_seconds_valid(self, tmp_path):
+        """合法时间戳返回正秒数。"""
+        from datetime import datetime
+
+        from vibeocr.machine_cache import get_cache_age_seconds, save_cache
+
+        save_cache(tmp_path, {"last_check_time": datetime.now().isoformat()})
+        age = get_cache_age_seconds(tmp_path)
+        assert age is not None
+        assert age >= 0
+
+    def test_load_cache_handles_generic_exception(self, tmp_path):
+        """load_cache 在非 JSONDecodeError 异常时返回 None。"""
+        from vibeocr.machine_cache import load_cache
+
+        cache_dir = tmp_path / ".vibeocr"
+        cache_dir.mkdir()
+        # 用目录冒充 cache.json，open() 会抛 IsADirectoryError（非 JSONDecodeError）
+        (cache_dir / "cache.json").mkdir()
+        assert load_cache(tmp_path) is None
+
+    def test_clear_cache_failure_returns_false(self, tmp_path):
+        """clear_cache 在 unlink 抛异常时返回 False。"""
+        from vibeocr.machine_cache import clear_cache, save_cache
+
+        save_cache(tmp_path, {"x": 1})
+        with patch("pathlib.Path.unlink", side_effect=OSError("denied")):
+            assert clear_cache(tmp_path) is False
+
+    def test_reset_cache_to_empty_save_failure(self, tmp_path):
+        """save_cache 失败时 reset_cache_to_empty 返回 False。"""
+        from vibeocr.machine_cache import reset_cache_to_empty
+
+        with patch("vibeocr.machine_cache.save_cache", return_value=False):
+            assert reset_cache_to_empty(tmp_path) is False
+
+    def test_reset_cache_to_empty_exception(self, tmp_path):
+        """generate_machine_id 抛异常时 reset_cache_to_empty 返回 False。"""
+        from vibeocr.machine_cache import reset_cache_to_empty
+
+        with patch(
+            "vibeocr.machine_cache.generate_machine_id",
+            side_effect=RuntimeError("boom"),
+        ):
+            assert reset_cache_to_empty(tmp_path) is False
+
+    def test_create_cache_entry_save_failure(self, tmp_path):
+        """save_cache 失败时 create_cache_entry 返回 None。"""
+        from vibeocr.machine_cache import create_cache_entry
+
+        with patch("vibeocr.machine_cache.save_cache", return_value=False):
+            assert create_cache_entry(tmp_path, {}, {}) is None
+
+    def test_get_cpu_id_wmic_success(self):
+        """wmic 成功返回 processorid 时 _get_cpu_id 应解析第二行。"""
+        from vibeocr.machine_cache import _get_cpu_id
+
+        fake_result = MagicMock()
+        fake_result.returncode = 0
+        fake_result.stdout = "ProcessorId\nABC123\n"
+        with (
+            patch("vibeocr.machine_cache.os.name", "nt"),
+            patch(
+                "vibeocr.machine_cache.subprocess.run", return_value=fake_result
+            ),
+        ):
+            assert _get_cpu_id() == "ABC123"
+
+    def test_get_cpu_id_wmic_returncode_nonzero(self):
+        """wmic 返回非 0 时 _get_cpu_id 返回空串。"""
+        from vibeocr.machine_cache import _get_cpu_id
+
+        fake_result = MagicMock()
+        fake_result.returncode = 1
+        fake_result.stdout = ""
+        with (
+            patch("vibeocr.machine_cache.os.name", "nt"),
+            patch(
+                "vibeocr.machine_cache.subprocess.run", return_value=fake_result
+            ),
+        ):
+            assert _get_cpu_id() == ""
+
+    def test_get_cpu_id_non_windows(self):
+        """非 Windows 时 _get_cpu_id 返回空串。"""
+        from vibeocr.machine_cache import _get_cpu_id
+
+        with patch("vibeocr.machine_cache.os.name", "posix"):
+            assert _get_cpu_id() == ""
+
+    def test_get_baseboard_serial_wmic_success(self):
+        """wmic 成功返回 serialnumber 时 _get_baseboard_serial 应解析第二行。"""
+        from vibeocr.machine_cache import _get_baseboard_serial
+
+        fake_result = MagicMock()
+        fake_result.returncode = 0
+        fake_result.stdout = "SerialNumber\nSN-456\n"
+        with (
+            patch("vibeocr.machine_cache.os.name", "nt"),
+            patch(
+                "vibeocr.machine_cache.subprocess.run", return_value=fake_result
+            ),
+        ):
+            assert _get_baseboard_serial() == "SN-456"
+
+    def test_get_baseboard_serial_non_windows(self):
+        """非 Windows 时 _get_baseboard_serial 返回空串。"""
+        from vibeocr.machine_cache import _get_baseboard_serial
+
+        with patch("vibeocr.machine_cache.os.name", "posix"):
+            assert _get_baseboard_serial() == ""
+
+    def test_generate_machine_id_concurrent_double_check(self):
+        """锁内二次检查：_cached_machine_id 已设时直接返回，不重复探测。"""
+        import vibeocr.machine_cache as mc
+
+        # 预设缓存，模拟另一个线程已写入
+        sentinel = "a" * 64
+        mc._cached_machine_id = sentinel
+        try:
+            assert mc.generate_machine_id() == sentinel
+        finally:
+            mc._cached_machine_id = None
+
+    def test_update_cache_field_invalid_cache_returns_false(self, tmp_path):
+        """缓存无效（不存在）时 update_cache_field 返回 False。"""
+        from vibeocr.machine_cache import update_cache_field
+
+        assert update_cache_field(tmp_path, "pending_backend", "gpu") is False
+
+    def test_update_cache_field_writes_and_preserves_fields(self, tmp_path):
+        """有效缓存时 update_cache_field 增量写单字段并保留其余字段。"""
+        from vibeocr.machine_cache import (
+            create_cache_entry,
+            load_cache,
+            update_cache_field,
+        )
+
+        create_cache_entry(tmp_path, {"paddlepaddle": True}, {"has_gpu": False})
+        ok = update_cache_field(tmp_path, "pending_backend", "cpu")
+        assert ok is True
+        data = load_cache(tmp_path)
+        assert data is not None
+        assert data["pending_backend"] == "cpu"
+        # 原有字段保留
+        assert data["dependencies"] == {"paddlepaddle": True}
+        assert data["version"] == CACHE_VERSION
+
+    def test_get_cpu_id_single_line_output(self):
+        """wmic 只返回表头（无数据行）时 _get_cpu_id 返回空串。"""
+        from vibeocr.machine_cache import _get_cpu_id
+
+        fake_result = MagicMock()
+        fake_result.returncode = 0
+        fake_result.stdout = "ProcessorId\n"  # 只有表头
+        with (
+            patch("vibeocr.machine_cache.os.name", "nt"),
+            patch(
+                "vibeocr.machine_cache.subprocess.run", return_value=fake_result
+            ),
+        ):
+            assert _get_cpu_id() == ""
+
+    def test_get_baseboard_serial_single_line_output(self):
+        """wmic 只返回表头时 _get_baseboard_serial 返回空串。"""
+        from vibeocr.machine_cache import _get_baseboard_serial
+
+        fake_result = MagicMock()
+        fake_result.returncode = 0
+        fake_result.stdout = "SerialNumber\n"
+        with (
+            patch("vibeocr.machine_cache.os.name", "nt"),
+            patch(
+                "vibeocr.machine_cache.subprocess.run", return_value=fake_result
+            ),
+        ):
+            assert _get_baseboard_serial() == ""

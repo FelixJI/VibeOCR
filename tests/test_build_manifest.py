@@ -307,3 +307,172 @@ class TestCli:
             text=True,
         )
         assert result.returncode != 0
+
+
+class TestCreateManifestEdgeCases:
+    """补 create_manifest 的边界分支覆盖。"""
+
+    def test_nonexistent_allowed_root_skipped(self, tmp_path):
+        """allowed_root 指向不存在的路径时应跳过（不报错）。"""
+        root = tmp_path / "staging"
+        (root / "app").mkdir(parents=True)
+        (root / "app" / "main.exe").write_bytes(b"x")
+
+        manifest = create_manifest(root, allowed_roots=("app", "nonexistent"))
+        paths = {e["path"] for e in manifest["entries"]}
+        assert "app/main.exe" in paths
+        # 不存在的 root 被静默跳过
+        assert not any("nonexistent" in p for p in paths)
+
+    def test_single_file_allowed_root(self, tmp_path):
+        """allowed_root 指向单个文件（而非目录）时应纳入该文件。"""
+        root = tmp_path / "staging"
+        (root / "app").mkdir(parents=True)
+        (root / "app" / "main.exe").write_bytes(b"binary")
+        (root / "config.json").write_text("{}", encoding="utf-8")
+
+        manifest = create_manifest(root, allowed_roots=("config.json",))
+        paths = {e["path"] for e in manifest["entries"]}
+        assert "config.json" in paths
+        # 单文件 root 不纳入其他文件
+        assert "app/main.exe" not in paths
+
+    def test_empty_manifest_when_all_roots_forbidden(self, tmp_path):
+        """所有 allowed_roots 都是禁止路径时返回空 entries。"""
+        root = tmp_path / "staging"
+        (root / "output").mkdir(parents=True)
+        (root / "output" / "x.txt").write_bytes(b"x")
+
+        manifest = create_manifest(root, allowed_roots=("output",))
+        assert manifest["entry_count"] == 0
+        assert manifest["entries"] == []
+        assert manifest["total_bytes"] == 0
+
+
+class TestVerifyArchiveEdgeCases:
+    """补 verify_archive 的篡改/边界分支覆盖。"""
+
+    def test_archive_not_found_raises(self, tmp_path):
+        """archive 不存在时抛 FileNotFoundError。"""
+        from pathlib import Path
+
+        with pytest.raises(FileNotFoundError):
+            verify_archive(Path(tmp_path / "nope.zip"))
+
+    def test_sha256_mismatch_detected(self, tmp_path):
+        """同尺寸内容篡改应触发 sha256 mismatch（line 204）。"""
+        root = tmp_path / "staging"
+        _make_tree(root)
+        manifest = create_manifest(root, allowed_roots=("app",))
+
+        zip_path = tmp_path / "test.zip"
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+            # 写入同尺寸但不同内容的 main.exe（触发 sha mismatch 而非 size mismatch）
+            original = (root / "app" / "main.exe").read_bytes()
+            tampered = bytes((b ^ 0xFF) for b in original)  # 同长度翻转位
+            assert len(tampered) == len(original)
+            zf.writestr("VibeOCR/app/main.exe", tampered)
+            # lib.dll 正常
+            lib = (root / "app" / "sub" / "lib.dll").read_bytes()
+            zf.writestr("VibeOCR/app/sub/lib.dll", lib)
+            zf.writestr(
+                "VibeOCR/artifact-manifest.json",
+                json.dumps(manifest, ensure_ascii=False),
+            )
+
+        with pytest.raises(ValueError, match="sha256 mismatch"):
+            verify_archive(zip_path)
+
+    def test_manifest_entry_missing_in_archive(self, tmp_path):
+        """manifest 记录的文件在 zip 中缺失时抛 ValueError（line 195）。"""
+        root = tmp_path / "staging"
+        _make_tree(root)
+        manifest = create_manifest(root, allowed_roots=("app",))
+
+        zip_path = tmp_path / "test.zip"
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+            # 只写 lib.dll，漏写 main.exe
+            lib = (root / "app" / "sub" / "lib.dll").read_bytes()
+            zf.writestr("VibeOCR/app/sub/lib.dll", lib)
+            zf.writestr(
+                "VibeOCR/artifact-manifest.json",
+                json.dumps(manifest, ensure_ascii=False),
+            )
+
+        with pytest.raises(ValueError, match="missing in archive"):
+            verify_archive(zip_path)
+
+    def test_verify_skips_directory_entries(self, tmp_path):
+        """zip 内的目录条目（以 / 结尾）应被跳过，不误判为禁止路径（line 214）。"""
+        root = tmp_path / "staging"
+        _make_tree(root)
+        manifest = create_manifest(root, allowed_roots=("app",))
+
+        zip_path = tmp_path / "test.zip"
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+            for fp in root.rglob("*"):
+                if fp.is_file():
+                    zf.write(fp, f"VibeOCR/{fp.relative_to(root)}")
+            # 显式写一个目录条目（以 / 结尾）
+            zf.writestr("VibeOCR/app/sub/", b"")
+            zf.writestr(
+                "VibeOCR/artifact-manifest.json",
+                json.dumps(manifest, ensure_ascii=False),
+            )
+
+        # 不应抛异常（目录条目被跳过）
+        verify_archive(zip_path)
+
+
+class TestCliBranches:
+    """补 main() 的退出码分支（直接调用 main 而非 subprocess）。"""
+
+    def test_no_args_returns_2(self, capsys):
+        from vibeocr.build_manifest import main
+
+        assert main([]) == 2
+        captured = capsys.readouterr()
+        assert "usage" in captured.err.lower()
+
+    def test_unknown_command_returns_2(self, capsys):
+        from vibeocr.build_manifest import main
+
+        assert main(["bogus", "x.zip"]) == 2
+        captured = capsys.readouterr()
+        assert "unknown command" in captured.err.lower()
+
+    def test_verify_without_archive_returns_2(self, capsys):
+        from vibeocr.build_manifest import main
+
+        assert main(["verify"]) == 2
+        captured = capsys.readouterr()
+        assert "requires an archive path" in captured.err
+
+    def test_verify_nonexistent_archive_returns_1(self, tmp_path, capsys):
+        from vibeocr.build_manifest import main
+
+        rc = main(["verify", str(tmp_path / "missing.zip")])
+        assert rc == 1
+        captured = capsys.readouterr()
+        assert "VERIFY FAIL" in captured.err
+
+    def test_verify_clean_archive_returns_0(self, tmp_path, capsys):
+        from vibeocr.build_manifest import main
+
+        root = tmp_path / "staging"
+        _make_tree(root)
+        manifest = create_manifest(root, allowed_roots=("app", "config.json"))
+
+        zip_path = tmp_path / "test.zip"
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+            for fp in root.rglob("*"):
+                if fp.is_file():
+                    zf.write(fp, f"VibeOCR/{fp.relative_to(root)}")
+            zf.writestr(
+                "VibeOCR/artifact-manifest.json",
+                json.dumps(manifest, ensure_ascii=False),
+            )
+
+        assert main(["verify", str(zip_path)]) == 0
+        captured = capsys.readouterr()
+        assert "VERIFY OK" in captured.out

@@ -250,5 +250,5 @@ def main(argv: list[str] | None = None) -> int:
     return 2
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover - module-exec guard, covered by CLI tests via -m
     sys.exit(main())

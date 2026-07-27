@@ -179,3 +179,96 @@ class TestNetworkDetectorEnvVar:
         assert os.environ.get("PADDLE_PDX_MODEL_SOURCE") == "BOS"
         if "PADDLE_PDX_MODEL_SOURCE" in os.environ:
             del os.environ["PADDLE_PDX_MODEL_SOURCE"]
+
+
+class TestGetPipMirror:
+    """get_pip_mirror 模块函数（pip 源 SSOT）。"""
+
+    def test_domestic_returns_tsinghua(self):
+        from vibeocr.network_detector import get_pip_mirror
+
+        assert "tsinghua" in get_pip_mirror("domestic")
+
+    def test_international_returns_pypi(self):
+        from vibeocr.network_detector import get_pip_mirror
+
+        assert "pypi.org" in get_pip_mirror("international")
+
+
+class TestCacheValidationBranches:
+    """补 _is_cache_valid 的各失效分支（line 94/98/103）。"""
+
+    def test_cache_without_network_field_triggers_detect(self, tmp_path):
+        """缓存存在但无 network 字段 → 触发重新探测。"""
+        from vibeocr.network_detector import NetworkDetector
+
+        save_cache(
+            tmp_path,
+            {"version": CACHE_VERSION, "machine_id": generate_machine_id()},
+        )
+        with patch("vibeocr.network_detector.urlopen") as mock_urlopen:
+            mock_urlopen.side_effect = URLError(OSError("fail"))
+            detector = NetworkDetector(tmp_path)
+        # 触发了探测 → 默认 domestic
+        assert detector.network_type == "domestic"
+
+    def test_cache_version_mismatch_triggers_detect(self, tmp_path):
+        """缓存 version 不匹配 → 触发重新探测（line 98）。"""
+        from vibeocr.network_detector import NetworkDetector
+
+        network = {
+            "last_detected": datetime.now().isoformat(),
+            "paddlex_source": "huggingface",
+            "mineru_source": "huggingface",
+        }
+        save_cache(
+            tmp_path,
+            {
+                "version": 999,  # 旧版本
+                "machine_id": generate_machine_id(),
+                "network": network,
+            },
+        )
+        with patch("vibeocr.network_detector.urlopen") as mock_urlopen:
+            mock_urlopen.side_effect = URLError(OSError("fail"))
+            detector = NetworkDetector(tmp_path)
+        assert detector.network_type == "domestic"
+
+    def test_cache_missing_last_detected_triggers_detect(self, tmp_path):
+        """network 字段缺 last_detected → 视为无效（line 103）。"""
+        from vibeocr.network_detector import NetworkDetector
+
+        network = {"paddlex_source": "huggingface", "mineru_source": "huggingface"}
+        save_cache(
+            tmp_path,
+            {
+                "version": CACHE_VERSION,
+                "machine_id": generate_machine_id(),
+                "network": network,
+            },
+        )
+        with patch("vibeocr.network_detector.urlopen") as mock_urlopen:
+            mock_urlopen.side_effect = URLError(OSError("fail"))
+            detector = NetworkDetector(tmp_path)
+        assert detector.network_type == "domestic"
+
+
+class TestNon200ResponseBranch:
+    """resp.status != 200 时应记录端点不可达（line 127->131）。"""
+
+    @patch("vibeocr.network_detector.urlopen")
+    def test_non_200_status_treated_as_unreachable(self, mock_urlopen, tmp_path):
+        """HTTP 200 以外的响应（如 403/500）视为端点不可达。"""
+        from vibeocr.network_detector import NetworkDetector
+
+        def mock_response(req, *args, **kwargs):
+            response = MagicMock()
+            response.status = 403  # 非 200
+            response.__enter__ = MagicMock(return_value=response)
+            response.__exit__ = MagicMock(return_value=False)
+            return response
+
+        mock_urlopen.side_effect = mock_response
+        # 两端点都返回 403 → 都不可达 → 默认 domestic
+        detector = NetworkDetector(tmp_path, force_detect=True)
+        assert detector.network_type == "domestic"
