@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.6.1] - 2026-07-27
+
+### Added
+- feat(tables): add canonical table contract
+- feat(ui): structure runtime and PDF status feedback
+
+### Fixed
+- fix(export): preserve merged table semantics
+- fix(ocr): normalize structured table pipelines
+- fix(supervisor): expose bundled modules to portable Python
+- fix(ci): enforce the coverage quality gate
+- fix(logging): handle streaming HTTP response hooks
+- fix(platform): await supervisor process termination
+- fix(ci): install coverage and multipart test dependencies
+
+### Changed
+- ci: remove stale TTL diagnostic paths
+- ci(tables): gate table contract artifacts
+- test(release): verify frozen supervisor startup
+- test(ci): stabilize responsiveness coverage gate
+- docs(changelog): document v0.6.0 rebuild fixes
+- perf(ocr): raise batch pixel budget to 64MP
+- docs(changelog): clarify v0.6.0 user-facing changes
+
+
 ## [0.6.0] - 2026-07-27
 
 ### Added
