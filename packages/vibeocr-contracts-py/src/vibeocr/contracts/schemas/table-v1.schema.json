@@ -1,0 +1,155 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://vibeocr.local/schemas/table-v1.schema.json",
+  "title": "VibeOCR canonical table v1",
+  "$comment": "In addition to JSON Schema validation, consumers must enforce row_count * column_count <= 1000000.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "table_id",
+    "row_count",
+    "column_count",
+    "coordinate_space",
+    "cells",
+    "provenance"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "table_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "row_count": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 10000
+    },
+    "column_count": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 10000
+    },
+    "coordinate_space": {
+      "enum": [
+        "pixel",
+        "normalized_1",
+        "normalized_1000",
+        "unknown"
+      ]
+    },
+    "cells": {
+      "type": "array",
+      "maxItems": 100000,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "cell_id",
+          "row",
+          "column",
+          "rowspan",
+          "colspan",
+          "text",
+          "is_header",
+          "bbox",
+          "confidence",
+          "source_refs"
+        ],
+        "properties": {
+          "cell_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "row": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "column": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "rowspan": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10000
+          },
+          "colspan": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10000
+          },
+          "text": {
+            "type": "string"
+          },
+          "is_header": {
+            "type": "boolean"
+          },
+          "bbox": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                },
+                "minItems": 4,
+                "maxItems": 4
+              }
+            ]
+          },
+          "confidence": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "source_refs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "provenance": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "pipeline",
+            "provider_schema",
+            "provider_version",
+            "warnings"
+          ],
+          "properties": {
+            "pipeline": {
+              "type": "string"
+            },
+            "provider_schema": {
+              "type": "string"
+            },
+            "provider_version": {
+              "type": "string"
+            },
+            "warnings": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

@@ -269,7 +269,34 @@ def tables_from_result(result: object) -> list[str]:
 
     # 1. content_list table 块
     content_list = _get("content_list") or []
-    if isinstance(content_list, list):
+    if isinstance(content_list, (list, tuple)):
+        canonical_present = any(
+            isinstance(block, dict)
+            and str(block.get("type", "")).lower() == "table"
+            and isinstance(block.get("table"), dict)
+            for block in content_list
+        )
+        if canonical_present:
+            from vibeocr.tables.blocks import table_model_from_block
+            from vibeocr.tables.html_adapter import table_model_to_html
+
+            for index, block in enumerate(content_list):
+                if (
+                    not isinstance(block, dict)
+                    or str(block.get("type", "")).lower() != "table"
+                ):
+                    continue
+                table_html = table_model_to_html(
+                    table_model_from_block(
+                        block,
+                        fallback_table_id=f"table-{index}",
+                        strict_canonical=False,
+                    )
+                )
+                if table_html not in seen:
+                    seen.add(table_html)
+                    tables.append(table_html)
+            return tables
         for block in content_list:
             if not isinstance(block, dict):
                 continue
