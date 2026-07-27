@@ -194,3 +194,41 @@ class TestSvgExport:
         options["format"] = "qr"
         svg = service.generate_svg("Test SVG", options)
         assert len(svg) > 100
+
+
+class TestQrcodeServiceInternalBranches:
+    """_generate_qr no-canvas + _load_font 平台/回退分支。"""
+
+    def test_generate_qr_small_size_returns_image(self, service):
+        """size=1 时 _generate_qr 走 line 85 直接返回（actual==target 或无 padding）。"""
+        from PIL import Image
+
+        img = service.generate("x", {"type": "qr", "size": 1, "box_size": 1})
+        assert isinstance(img, Image.Image)
+
+    def test_load_font_darwin_candidates(self, monkeypatch):
+        """sys.platform=darwin 时返回 MAC 字体候选路径（line 146-150）。"""
+        import sys
+
+        from vibeocr.services.qrcode_service import QrcodeService
+
+        monkeypatch.setattr(sys, "platform", "darwin")
+        font = QrcodeService._load_font(20)
+        assert font is not None
+
+    def test_load_font_linux_candidates(self, monkeypatch):
+        """sys.platform=linux 时返回 Linux 字体候选（line 151-155）。"""
+        import sys
+
+        from vibeocr.services.qrcode_service import QrcodeService
+
+        monkeypatch.setattr(sys, "platform", "linux")
+        font = QrcodeService._load_font(20)
+        assert font is not None
+
+    def test_load_font_falls_back_to_default_when_all_missing(self, monkeypatch):
+        """所有候选字体都不存在/损坏时回退 load_default（line 161-163）。"""
+        from vibeocr.services.qrcode_service import QrcodeService
+
+        font = QrcodeService._load_font(16)
+        assert font is not None

@@ -149,3 +149,67 @@ class TestUrlDetection:
         from vibeocr.services.qrcode_decode_service import _is_http_url
 
         assert _is_http_url("HTTPS://example.com/path") is True
+
+
+def test_is_http_url_rejects_invalid_url(decode_service):
+    """_is_http_url 对非 http scheme 与无 netloc 返回 False。"""
+    from vibeocr.services.qrcode_decode_service import _is_http_url
+
+    # 正常情况
+    assert _is_http_url("https://example.com") is True
+    assert _is_http_url("http://example.com/path") is True
+    # 非 http scheme
+    assert _is_http_url("ftp://example.com") is False
+    assert _is_http_url("javascript:alert(1)") is False
+    assert _is_http_url("not a url") is False
+    # http:// 但无 netloc
+    assert _is_http_url("http://") is False
+
+
+def test_is_http_url_returns_false_when_urlparse_raises(monkeypatch):
+    """urlparse 抛 ValueError/TypeError 时返回 False（line 34-36）。"""
+    from vibeocr.services import qrcode_decode_service
+
+    def _raise(_v):
+        raise ValueError("bad url")
+
+    monkeypatch.setattr(qrcode_decode_service, "urlparse", _raise)
+    assert qrcode_decode_service._is_http_url("https://example.com") is False
+
+
+def test_decode_skips_empty_and_undecodable_results(
+    decode_service, gen_service, monkeypatch
+):
+    """decode 跳过空数据/解码失败的结果（line 70-73）。"""
+    from PIL import Image
+
+    # 构造 fake pyzbar decode 返回：一个空数据 + 一个解码失败 + 一个有效
+    class _FakeResult:
+        def __init__(self, data_bytes, rtype="QRCODE"):
+            self.data = data_bytes
+            self.type = rtype
+
+    valid = b"https://example.com"
+
+    def fake_zbar_decode(_gray):
+        return [
+            _FakeResult(None),  # None.data.decode 抛 AttributeError → 跳过 (line 70-71)
+            _FakeResult(b"   "),  # 空白 → 跳过 (line 72-73)
+            _FakeResult(valid),  # 有效
+        ]
+
+    # patch pyzbar.decode 在 decode() 内部 import
+    import sys
+
+    fake_pyzbar = type(sys)("pyzbar.pyzbar")
+    fake_pyzbar.decode = fake_zbar_decode
+    fake_pkg = type(sys)("pyzbar")
+    fake_pkg.pyzbar = fake_pyzbar
+    monkeypatch.setitem(sys.modules, "pyzbar", fake_pkg)
+    monkeypatch.setitem(sys.modules, "pyzbar.pyzbar", fake_pyzbar)
+
+    img = Image.new("RGB", (50, 50), "white")
+    results = decode_service.decode(img)
+    assert len(results) == 1  # 只有有效的那条
+    assert results[0].data == "https://example.com"
+    assert results[0].is_url is True
