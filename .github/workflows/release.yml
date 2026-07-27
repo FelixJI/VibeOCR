@@ -128,6 +128,19 @@ jobs:
           echo "should_release=$should_release" >> "$GITHUB_OUTPUT"
           echo "当前版本 v${version} 之后有 ${count} 个 main 提交"
 
+  quality-gates:
+    name: Quality gates (reuse CI)
+    needs: detect
+    # schedule/dispatch 路径：detect 先判断 should_release；
+    # tag push / workflow_call 路径无 detect（needs detect 被跳过 → result 'skipped'），
+    # 此 job 仍需运行，故同时放行 should_release == 'true' 与 detect 被跳过两种情况。
+    if: >-
+      needs.detect.result == 'skipped' ||
+      needs.detect.outputs.should_release == 'true'
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+
   build:
     name: Build & Release (Windows)
     runs-on: windows-latest
