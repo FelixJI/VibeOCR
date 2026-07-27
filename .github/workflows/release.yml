@@ -1,6 +1,8 @@
 # VibeOCR 自动打包发版流程
 #
-# 触发：推送 v* tag，或由 Scheduled Release 在创建 tag 后通过 workflow_call 调用
+# 触发：定时（每天 UTC 07:30）/ 推送 v* tag / 手动 workflow_dispatch / workflow_call。
+# 定时与手动触发经 detect→quality-gates→prepare-release 自动编排版本号并推 tag；
+# tag 推送与 workflow_call 跳过编排，直接 quality-gates→build。
 # 产物：Windows 便携版 zip + sha256，上传到对应 tag 的 GitHub Release
 #
 # 依赖策略：CI 不跑完整 uv sync（会拉数 GB 的 paddle/torch CUDA 包），
